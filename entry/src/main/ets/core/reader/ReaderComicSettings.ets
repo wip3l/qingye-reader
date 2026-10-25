@@ -62,7 +62,6 @@ export class ReaderComicOption {
 /** 漫画模式的全局设置。阅读方式另有按书覆盖（书籍变量 readerComicReadingMode）。 */
 export class ReaderComicSettings {
   static readonly PAGE_GAPS: number[] = [0, 6, 16];
-  static readonly PRELOAD_COUNTS: number[] = [0, 3, 5, 10];
 
   defaultMode: string = ReaderComicMode.WEBTOON;
   /** 横向漫画翻页动画，独立保存，避免改变小说的动画偏好。 */
@@ -78,8 +77,6 @@ export class ReaderComicSettings {
   doubleTapZoom: boolean = true;
   /** 横屏或宽屏时翻页模式并排两页。 */
   dualPage: boolean = true;
-  /** 网络图片向后预先下载的张数。 */
-  preloadCount: number = 5;
   /** 端侧 AI 超分（会员功能）；会员到期后保留开关值，续费后自动恢复。 */
   superResolution: boolean = false;
 
@@ -94,7 +91,6 @@ export class ReaderComicSettings {
     next.infoBar = this.infoBar;
     next.doubleTapZoom = this.doubleTapZoom;
     next.dualPage = this.dualPage;
-    next.preloadCount = this.preloadCount;
     next.superResolution = this.superResolution;
     return next;
   }
@@ -110,7 +106,6 @@ export class ReaderComicSettings {
       'infoBar': this.infoBar,
       'doubleTapZoom': this.doubleTapZoom,
       'dualPage': this.dualPage,
-      'preloadCount': this.preloadCount,
       'superResolution': this.superResolution
     };
     return JSON.stringify(record);
@@ -131,8 +126,6 @@ export class ReaderComicSettings {
       settings.infoBar = record['infoBar'] !== false;
       settings.doubleTapZoom = record['doubleTapZoom'] !== false;
       settings.dualPage = record['dualPage'] !== false;
-      settings.preloadCount = ReaderComicSettings.nearest(Number(record['preloadCount']),
-        ReaderComicSettings.PRELOAD_COUNTS, 5);
       settings.superResolution = record['superResolution'] === true;
     } catch (_) {
     }

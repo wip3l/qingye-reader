@@ -2153,7 +2153,6 @@ struct ReadBookPage {
         scroller: this.readerComicScroller,
         dataSource: this.readerComicPageDataSource,
         chapterTitle: (chapterIndex: number): string => this.getChapterTitle(chapterIndex),
-        preloadCount: this.readerComicSettings.preloadCount,
         onImageLongPress: (source: string, reload: () => void, snapshotId: string): void => {
           this.handleReaderComicImageLongPress(source, reload, snapshotId);
         },
@@ -2264,7 +2263,6 @@ struct ReadBookPage {
         infoTime: this.readerInfoTimeText,
         infoBattery: this.readerInfoBatteryPercent,
         infoBottomInset: this.readerComicInfoBadgeBottomInset(),
-        preloadCount: this.readerComicSettings.preloadCount,
         onImageLongPress: (source: string, reload: () => void, snapshotId: string): void => {
           this.handleReaderComicImageLongPress(source, reload, snapshotId);
         },
@@ -2803,7 +2801,6 @@ struct ReadBookPage {
       surface: this.readerComicSettings.background,
       pageGap: this.readerComicSettings.pageGap,
       fit: this.readerComicSettings.fit,
-      preloadCount: this.readerComicSettings.preloadCount,
       infoBar: this.readerComicSettings.infoBar,
       doubleTapZoom: this.readerComicSettings.doubleTapZoom,
       superResolution: this.readerComicSettings.superResolution,
@@ -2825,11 +2822,6 @@ struct ReadBookPage {
       onFitChange: (value: string): void => {
         this.updateReaderComicSettings((settings: ReaderComicSettings): void => {
           settings.fit = ReaderComicFit.normalize(value);
-        });
-      },
-      onPreloadCountChange: (value: number): void => {
-        this.updateReaderComicSettings((settings: ReaderComicSettings): void => {
-          settings.preloadCount = value;
         });
       },
       onInfoBarChange: (checked: boolean): void => {
@@ -5548,6 +5540,7 @@ struct ReadBookPage {
 
   /** 漫画模式下正文图片渐进加载：章节先显示，图片逐张补上（见 ReadBookEngine.setReaderImagesDeferred）。 */
   syncReaderImageDeferral(): void {
+    this.syncReaderPreloadChapterCounts();
     this.readerEngine().setReaderImagesDeferred(this.isReaderComicModeActive());
   }
 
@@ -8445,6 +8438,7 @@ struct ReadBookPage {
   }
 
   onReaderPreloadChanged(): void {
+    this.syncReaderPreloadChapterCounts();
     this.preloadReaderContentLater();
     this.saveReadConfig();
   }
@@ -10451,7 +10445,7 @@ struct ReadBookPage {
           Text('预缓存设置')
             .fontSize(AppFontSize.BODY_LARGE)
             .fontColor(this.readerPanelTextColor())
-          Text('阅读时提前缓存后续章节')
+          Text('提前缓存后续章节，包含漫画图片')
             .fontSize(AppFontSize.CAPTION)
             .fontColor(this.readerPanelSubTextColor())
             .margin({ top: AppSpacing.XS })
@@ -10470,7 +10464,7 @@ struct ReadBookPage {
       .alignItems(VerticalAlign.Center)
 
       if (this.readerPreloadEnabled) {
-        this.readerSelectSettingItem('下一章节数', '预缓存的后续章节数',
+        this.readerSelectSettingItem('下一章节数', '小说、漫画共用的预缓存章节数',
           this.readerPreloadChapterOptions(), this.readerPreloadChapterCount - 1,
           (index: number) => this.setReaderPreloadChapterCount(index + 1),
           'reader_preload_chapter_count_select')
@@ -16642,6 +16636,7 @@ struct ReadBookPage {
       this.preloadReaderContentForHiddenTts();
       return;
     }
+    this.syncReaderPreloadChapterCounts();
     if (!this.readerPreloadEnabled) return;
     // Current-page recovery is user-visible work. Do not let speculative adjacent Paragraph sessions compete
     // with it; retry once the authoritative current page has been published.
@@ -16670,6 +16665,12 @@ struct ReadBookPage {
 
   normalizePreloadChapterCount(count: number): number {
     return Math.max(1, Math.min(Math.round(count), 10));
+  }
+
+  syncReaderPreloadChapterCounts(): void {
+    if (!this.isCurrentReaderEngineBook()) return;
+    this.readerEngine().setPreloadChapterCounts(this.readerPreloadEnabled ?
+      this.normalizePreloadChapterCount(this.readerPreloadChapterCount) : 0);
   }
 
   preloadReaderContentLater(delayMs: number = 240): void {

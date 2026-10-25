@@ -2339,7 +2339,7 @@ struct SettingsPage {
   preloadSettingPanel() {
     SettingSwitchRow({
       title: '预缓存设置',
-      description: '阅读时提前缓存后续章节',
+      description: '提前缓存后续章节，包含漫画图片',
       isOn: this.readerPreloadEnabled,
       showDivider: this.readerPreloadEnabled,
       onChange: (checked: boolean) => {
@@ -2347,7 +2347,7 @@ struct SettingsPage {
       }
     })
     if (this.readerPreloadEnabled) {
-      this.selectItem('下一章节数', '预缓存的后续章节数',
+      this.selectItem('下一章节数', '小说、漫画共用的预缓存章节数',
         this.readerPreloadChapterOptions(), this.readerPreloadChapterCount - 1,
         (index: number) => this.setReaderPreloadChapterCount(index + 1),
         'settings_reader_preload_chapter_count_select', false)

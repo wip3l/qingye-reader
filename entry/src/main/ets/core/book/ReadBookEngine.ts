@@ -11,6 +11,12 @@ import { ReaderCacheBudget } from './ReaderCacheBudget';
 import { ReaderImageRequest, ReaderImageScheduler } from './ReaderImageScheduler';
 import { ReaderImageResults } from './ReaderImageResults';
 
+class ReaderChapterPreloadTask {
+  cancelled: boolean = false;
+  /** 已被当前页或相邻翻页画面接管，关闭预缓存不能打断阅读。 */
+  required: boolean = false;
+}
+
 export class ReadBookEngine {
   private static inst: ReadBookEngine | null = null;
   private webBook: WebBookService;
@@ -29,6 +35,9 @@ export class ReadBookEngine {
   private chapterLoadingCancel: Map<number, (() => boolean) | null> = new Map();
   private readonly chapterCacheLimit: number = 7;
   private preloadGeneration: number = 0;
+  private preloadForwardCount: number = 0;
+  private preloadBackwardCount: number = 0;
+  private chapterPreloads: Map<number, ReaderChapterPreloadTask> = new Map();
   private bookGeneration: number = 0;
   private sourceInteractionIdentity: string = '';
   private openBookTask: Promise<void> | null = null;
@@ -46,7 +55,7 @@ export class ReadBookEngine {
   /** 关闭渐进模式（离开阅读页、切到文字模式）时加一，作废还没处理完的后台图片。 */
   private deferredImageGeneration: number = 0;
   /** 渐进加载中、等图片补完再写缓存的各章正文；刷新本章后旧版本补完也不再写入。 */
-  private deferredChapterTexts: Map<number, string> = new Map();
+  private deferredChapterTexts: Map<number, Promise<string>> = new Map();
 
   private constructor() { this.webBook = new WebBookService(); }
 
@@ -217,6 +226,7 @@ export class ReadBookEngine {
     this.chapterCache.clear();
     this.chapterLoading.clear();
     this.preloadGeneration++;
+    this.cancelChapterPreloads();
     this.source = null;
     this.sourceLoadedAt = 0;
     this.sourceLoadedOrigin = '';
@@ -484,12 +494,15 @@ export class ReadBookEngine {
 
     this.curIdx = idx;
     this.preloadGeneration++;
+    this.requireChapterPreload(idx);
+    this.trimChapterPreloads();
     return await this.fetchContent(idx, shouldCancel);
   }
 
   async peekContent(idx: number): Promise<string> {
     if (idx < 0 || idx >= this.chapters.length || !this.book) return '';
 
+    this.requireChapterPreload(idx);
     return await this.fetchContent(idx);
   }
 
@@ -604,9 +617,10 @@ export class ReadBookEngine {
     // 缓存全文、手动缓存要完整的本地内容，始终等整章图片处理完。
     if (!background && this.foregroundReader && this.readerImagesDeferred) {
       const deferredGeneration = this.deferredImageGeneration;
+      const preload = this.chapterPreloads.get(idx);
       imageRequest.deferred = true;
       imageRequest.deferredCancelled = (): boolean => deferredGeneration !== this.deferredImageGeneration ||
-        !this.isCurrentBookSession(generation, sessionBookUrl);
+        !this.isCurrentBookSession(generation, sessionBookUrl) || (!!preload && preload.cancelled);
     }
     const text = await this.webBook.getContent(sessionSource, sessionBook, chapter, shouldCancel, null,
       imageRequest);
@@ -637,12 +651,13 @@ export class ReadBookEngine {
    */
   private saveWhenImagesReady(idx: number, text: string, chapter: BookChapter, generation: number,
     bookUrl: string, cancelled: () => boolean): void {
-    this.deferredChapterTexts.set(idx, text);
-    ReaderImageResults.finalize(text).then(async (finalText: string): Promise<void> => {
-      const latest = this.deferredChapterTexts.get(idx) === text;
+    const finalizing = ReaderImageResults.finalize(text);
+    this.deferredChapterTexts.set(idx, finalizing);
+    finalizing.then(async (finalText: string): Promise<void> => {
+      const latest = this.deferredChapterTexts.get(idx) === finalizing;
       if (latest) this.deferredChapterTexts.delete(idx);
       if (!finalText || cancelled()) {
-        if (this.chapterCache.get(idx) === text) this.chapterCache.delete(idx);
+        if (latest && this.chapterCache.get(idx) === text) this.chapterCache.delete(idx);
         return;
       }
       if (!latest || !this.isCurrentBookSession(generation, bookUrl) || ReaderImageMarker.hasFailure(finalText)) return;
@@ -659,6 +674,7 @@ export class ReadBookEngine {
     if (this.readerImagesDeferred === enabled) return;
     this.readerImagesDeferred = enabled;
     if (enabled) return;
+    this.cancelChapterPreloads();
     this.deferredImageGeneration++;
     this.deferredChapterTexts.clear();
     for (const item of [...this.chapterCache]) {
@@ -745,6 +761,7 @@ export class ReadBookEngine {
   }
 
   clearCurrentBookMemoryCache(): void {
+    this.cancelChapterPreloads();
     this.chapterCache.clear();
     this.chapterLoading.clear();
     for (const chapter of this.chapters) {
@@ -773,6 +790,7 @@ export class ReadBookEngine {
       return false;
     }
     this.sourceInteractionIdentity = nextIdentity;
+    this.cancelChapterPreloads();
     this.chapterCache.clear();
     this.chapterLoading.clear();
     this.content = '';
@@ -836,15 +854,46 @@ export class ReadBookEngine {
     return `v3:${source.bookSourceUrl || ''}:${(hash >>> 0).toString(16)}`;
   }
 
+  /** 章节数同时决定正文和整章图片的缓存范围；缩小范围立即取消尚未用于阅读的任务。 */
+  setPreloadChapterCounts(forwardCount: number, backwardCount: number = 0): void {
+    this.preloadForwardCount = Math.max(0, Math.min(10, Math.round(forwardCount)));
+    this.preloadBackwardCount = Math.max(0, Math.min(10, Math.round(backwardCount)));
+    this.trimChapterPreloads();
+  }
+
+  private requireChapterPreload(idx: number): void {
+    const task = this.chapterPreloads.get(idx);
+    if (task && !task.cancelled) task.required = true;
+  }
+
+  private trimChapterPreloads(): void {
+    for (const item of [...this.chapterPreloads]) {
+      const idx = item[0];
+      const task = item[1];
+      if (task.required || idx === this.curIdx ||
+        (idx >= this.curIdx - this.preloadBackwardCount && idx <= this.curIdx + this.preloadForwardCount)) continue;
+      task.cancelled = true;
+      this.chapterPreloads.delete(idx);
+      this.deferredChapterTexts.delete(idx);
+      if (ReaderImageMarker.hasPending(this.chapterCache.get(idx) || '')) this.chapterCache.delete(idx);
+    }
+  }
+
+  private cancelChapterPreloads(): void {
+    for (const task of this.chapterPreloads.values()) task.cancelled = true;
+    this.chapterPreloads.clear();
+  }
+
   preloadAround(idx: number, forwardCount: number = 2, backwardCount: number = 1): void {
+    this.setPreloadChapterCounts(forwardCount, backwardCount);
     if (this.chapters.length === 0 || !this.book) {
       return;
     }
     const generation = ++this.preloadGeneration;
-    for (let offset = 1; offset <= forwardCount; offset++) {
+    for (let offset = 1; offset <= this.preloadForwardCount; offset++) {
       this.schedulePreloadContent(idx + offset, idx, generation, offset * 80);
     }
-    for (let offset = 1; offset <= backwardCount; offset++) {
+    for (let offset = 1; offset <= this.preloadBackwardCount; offset++) {
       this.schedulePreloadContent(idx - offset, idx, generation, (forwardCount + offset) * 80);
     }
   }
@@ -852,6 +901,7 @@ export class ReadBookEngine {
   private schedulePreloadContent(idx: number, anchorIndex: number, generation: number, delayMs: number): void {
     setTimeout(() => {
       if (generation !== this.preloadGeneration || this.curIdx !== anchorIndex) return;
+      if (idx < this.curIdx - this.preloadBackwardCount || idx > this.curIdx + this.preloadForwardCount) return;
       this.preloadContent(idx);
     }, Math.max(0, delayMs));
   }
@@ -860,11 +910,18 @@ export class ReadBookEngine {
     if (idx < 0 || idx >= this.chapters.length) {
       return;
     }
-    if (this.chapterCache.has(idx) || this.chapterLoading.has(idx)) {
-      return;
-    }
-    this.fetchContent(idx).catch((err: Error) => {
-      console.error('[RE] preload chapter failed:', idx, err);
+    if (this.chapterCache.has(idx)) return;
+    const loadingCancel = this.chapterLoadingCancel.get(idx);
+    if (this.chapterLoading.has(idx) && (!loadingCancel || !loadingCancel())) return;
+    const task = new ReaderChapterPreloadTask();
+    this.chapterPreloads.set(idx, task);
+    this.fetchContent(idx, (): boolean => task.cancelled).then(async (): Promise<void> => {
+      const images = this.deferredChapterTexts.get(idx);
+      if (images) await images;
+    }).catch((err: Error) => {
+      if (!task.cancelled) console.error('[RE] preload chapter failed:', idx, err);
+    }).finally((): void => {
+      if (this.chapterPreloads.get(idx) === task) this.chapterPreloads.delete(idx);
     });
   }
 

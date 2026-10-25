@@ -804,8 +804,6 @@ export struct ReaderComicView {
   }
   scroller: ListScroller = new ListScroller();
   dataSource: ReaderContinuousDataSource = new ReaderContinuousDataSource();
-  /** 网络图片向后预先加载的张数（列表在视口外预先构建的项数）。 */
-  @Prop preloadCount: number = 2;
   /** 长按图片：source 为图片地址，reload 让这一项重新加载。 */
   /** 长按图片：source 为图片地址，reload 让这一项重新加载，snapshotId 是这张图的组件 id。 */
   onImageLongPress: (source: string, reload: () => void, snapshotId: string) => void = () => {};
@@ -1243,7 +1241,8 @@ export struct ReaderComicView {
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .scrollBar(BarState.Off)
       // 预先构建视口外的若干项，网络图片提前开始下载，快速下滑时少见空白占位。
-      .cachedCount(Math.max(2, this.preloadCount))
+      // 只保留少量相邻图片组件；整话网络缓存由阅读器的章节预缓存统一调度。
+      .cachedCount(2)
       .scale({ x: this.zoomScale, y: this.zoomScale })
       .translate({ x: this.zoomX, y: this.zoomY + this.transitionY })
       .opacity(this.transitionOpacity)

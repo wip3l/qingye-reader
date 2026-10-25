@@ -241,7 +241,6 @@ export struct ReaderComicDisplaySettingsPanel {
   @Prop surface: string = ReaderComicBackground.BLACK;
   @Prop pageGap: number = 0;
   @Prop fit: string = ReaderComicFit.WIDTH;
-  @Prop preloadCount: number = 5;
   @Prop infoBar: boolean = true;
   @Prop doubleTapZoom: boolean = true;
   /** 「AI超分」开关的保存值。 */
@@ -258,7 +257,6 @@ export struct ReaderComicDisplaySettingsPanel {
   onBackgroundChange: (value: string) => void = () => {};
   onPageGapChange: (value: number) => void = () => {};
   onFitChange: (value: string) => void = () => {};
-  onPreloadCountChange: (value: number) => void = () => {};
   onInfoBarChange: (checked: boolean) => void = () => {};
   onDoubleTapZoomChange: (checked: boolean) => void = () => {};
   onSuperResolutionChange: (checked: boolean) => void = () => {};
@@ -382,18 +380,6 @@ export struct ReaderComicDisplaySettingsPanel {
         selected: this.fit,
         colors: this.colors,
         onSelect: (value: string): void => this.onFitChange(value)
-      })
-      ReaderComicOptionGroup({
-        title: '网络图片预加载',
-        options: [
-          new ReaderComicOption('0', '关闭'),
-          new ReaderComicOption('3', '3 张'),
-          new ReaderComicOption('5', '5 张'),
-          new ReaderComicOption('10', '10 张')
-        ],
-        selected: `${this.preloadCount}`,
-        colors: this.colors,
-        onSelect: (value: string): void => this.onPreloadCountChange(Number(value) || 0)
       })
 
       this.superResolutionRow()

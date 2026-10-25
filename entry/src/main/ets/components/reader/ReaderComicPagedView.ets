@@ -82,8 +82,6 @@ export struct ReaderComicPagedView {
   @Prop infoTime: string = '';
   @Prop infoBattery: number = -1;
   @Prop infoBottomInset: number = 6;
-  /** 网络图片向后预先加载的页数。 */
-  @Prop preloadCount: number = 5;
   onImageLongPress: (source: string, reload: () => void, snapshotId: string) => void = () => {};
   onImageDenied: (chapterIndex: number) => void = () => {};
   onPageChanged: (pageIndex: number) => void = () => {};
@@ -518,11 +516,6 @@ export struct ReaderComicPagedView {
     });
   }
 
-  /** 按阅读方向排在当前跨页之后、需要预先下载的网络图片地址。 */
-  private prefetchSources(): string[] {
-    return this.prefetchMarkerSources().filter((source: string): boolean => ReaderComicImageSizes.isRemote(source));
-  }
-
   /** 预加载范围里还在渐进加载的图片：登记为屏幕附近，先于本章其余图片处理。 */
   private prefetchPendingRaws(): string[] {
     return this.prefetchMarkerSources().map((source: string): string => ReaderImageMarker.pendingRaw(source))
@@ -535,7 +528,8 @@ export struct ReaderComicPagedView {
     // 本话剩下的页不够时接着预取下一话（第一个跨页已在相邻格里显示，从它之后开始）。
     const nextStart = this.spreadSize();
     const total = this.pages.length + Math.max(0, this.nextChapterPages.length - nextStart);
-    for (let page = first; page < Math.min(total, first + this.preloadCount); page++) {
+    // 固定的小窗口只提升附近图片的调度优先级，不决定整话缓存范围。
+    for (let page = first; page < Math.min(total, first + 5); page++) {
       const text = (page < this.pages.length ? this.pages[page] :
         this.nextChapterPages[nextStart + page - this.pages.length] || '').trim();
       if (!LocalBookService.isEpubImageMarker(text)) continue;
@@ -854,17 +848,6 @@ export struct ReaderComicPagedView {
       .width('100%')
       .height('100%')
       .opacity(this.transitionOpacity)
-
-      // 预先下载后面几页的网络图片：1px 透明图片只为触发下载与缓存，autoResize 让解码也按 1px 进行。
-      ForEach(this.prefetchSources(), (source: string) => {
-        Image(source)
-          .width(1)
-          .height(1)
-          .opacity(0)
-          .autoResize(true)
-          .position({ x: 0, y: 0 })
-          .hitTestBehavior(HitTestMode.None)
-      }, (source: string) => source)
 
       ForEach(this.prefetchPendingRaws(), (raw: string) => {
         ReaderPendingImageHint({ raw: raw })

@@ -119,14 +119,6 @@ struct ComicSettingsPage {
             next.fit = ComicSettingsPage.FITS[index] || ReaderComicFit.WIDTH;
           });
         }, 'comic_settings_fit_select')
-      this.selectItem('网络图片预加载', '提前下载后面的图片',
-        ReaderComicSettings.PRELOAD_COUNTS.map((count: number): SelectOption =>
-          ({ value: count > 0 ? `${count} 张` : '关闭' })),
-        Math.max(0, ReaderComicSettings.PRELOAD_COUNTS.indexOf(this.settings.preloadCount)), (index: number) => {
-          this.update((next: ReaderComicSettings): void => {
-            next.preloadCount = ReaderComicSettings.PRELOAD_COUNTS[index] ?? 5;
-          });
-        }, 'comic_settings_preload_select')
       SettingSwitchRow({
         title: '双击缩放',
         description: '双击放大到 2 倍，再双击还原；关闭后单击响应更快',
