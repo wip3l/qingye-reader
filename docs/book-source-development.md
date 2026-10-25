@@ -54,7 +54,7 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 
 可导入[离线示例](../harmony-book-source-engine/docs/examples/native-inline-comments.json)验证交互；该示例无需网络，且仅面向支持 page/chapterPage 的宿主。完整验证命令和平台边界见[实施验证记录](source-capability-validation.md)。
 
-| 能力 | 轻页现状（4.4.930） |
+| 能力 | 轻页现状（4.4.931） |
 | --- | --- |
 | 原生书源 | 支持编辑、书源设置（变量、音色、账号登录、动作按钮）、搜索、发现、详情、目录、正文、听书、视频播放与漫画图片解密；书源管理和发现页的长按菜单可进入书源设置 |
 | 原生 JS | `js` 函数库与 `script` 阶段已接入；`http`、变量、Cookie、缓存、凭据和详情书籍变量通过内核宿主接口处理，与兼容书源迁移开关独立 |
@@ -71,6 +71,11 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 | 可选宿主端口 `SourceEngineHost` | 不安装，按内核默认行为运行；这不影响独立安装的 `NativeSourceInteraction` 界面处理器与 `BookSourceRuntimeStore` 持久化 |
 
 修改规则格式与开发说明请到内核仓库提交。轻页只维护自己的页面、导入与调试操作和宿主接入说明。
+
+## 4.4.931 验收补充
+
+- 原生内联评论页 `content.comments.page` / `chapterPage` 已接入：点击气泡后才执行页面的附加请求，HTML 在隔离的离线网页中显示。可先导入内核仓库的[离线示例](../harmony-book-source-engine/docs/examples/native-inline-comments.json)验证。
+- 网络选项（HTTP/1.1 兼容模式、图片下载并发 4/8/12）只在本机生效，不写入书源；`http.*` 结果的 `finalUrl` 拿不到时为空，书源不要假定它一定存在。
 
 ## 4.4.930 验收补充
 

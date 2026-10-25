@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.4.930`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.4.931`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -99,6 +99,8 @@
 - 本地漫画着色（会员专享；北京时间 2026-11-11 00:00 前，AI 着色、AI 超分与 AI 翻译向所有登录用户免费开放）：阅读器“画面设置 → AI着色”，按书记忆开关。翻页模式优先当前跨页并预取后两跨页；条漫优先可见画面、沿滚动方向预取约两屏。关闭开关恢复原图；长按“本页着色”可单独处理一张。支持的设备和页面自动使用 NNRT 加速，不支持或校验失败时回退 CPU；原生像素合成已接入，麒麟 9030 Pro 的测试页连续着色约 2.1～2.2 秒，首次加载与校验较慢。内置一个 CPU、两个 NPU 专用 AlacGAN 模型，原始资源合计约 176.25 MiB，图片不上传，与漫画超分共用会员规则及串行计算队列。单张超过 4:1 的超长图仍保留原图。测量范围和设备边界见 [漫画着色](docs/comic-colorizer.md)，阅读行为见 [彩色阅读交互](docs/comic-color-interaction.md)。
 - 漫画图片逐张下载、解密并显示，优先处理屏幕上的图片；预加载与全文缓存共用有上限的调度队列，单图失败不阻塞其他图片。原生书源图片脚本支持 `image.reorderStrips` 条带重排。
 - 段评与本章说显示为跟随主题的数字气泡；深色模式下的评论网页自动反色。
+- 原生书源可声明内联段评、章评页面（`content.comments.page` / `chapterPage`）：点击气泡后才发请求，在隔离的离线网页里显示，不加载外部资源。
+- 「其他设置 → 兼容与诊断」提供 HTTP/1.1 兼容模式和图片下载并发（4/8/12，默认 4），只保存在本机；书源调试页可看到请求的最终地址。
 - 可选的本地眼动翻页：注视底部后向上看即可翻页，相机画面仅在设备内处理，不上传、不保存。
 
 ### 朗读与有声书
@@ -248,8 +250,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.4.930` |
-| `versionCode` / `buildVersion` | `4040930` |
+| `versionName` | `4.4.931` |
+| `versionCode` / `buildVersion` | `4040931` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`CAMERA`（仅在用户启用眼动翻页时请求） |
 
@@ -376,6 +378,16 @@ for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-
 | `trial-read-shelf-check` | 试读后加入书架的生命周期：小说、有声等类型在保留、重开与保存后仍在书架。 |
 | `cloud-auto-sync-check` / `cloud-transfer-check` / `cloud-font-import-check` / `custom-font-lifecycle-check` / `cloud-files-ui-check` | 云空间：字体与本地书籍自动上传、关联与两种删除、占位书和隐私书架排除；传输续传；云端字体命名与导入；自定义字体生命周期；云空间页的异步刷新。 |
 | `membership-gift-check` / `membership-purchase-check` / `membership-theme-check` / `animated-avatar-check` | 会员：礼包档位与历史领取；购买恢复、重试与账号切换；会员主题授予与回收；动态头像的原始字节、裁剪与权益。 |
+| `comic-colorizer-check` / `comic-color-reading-check` / `ai-host-runtime-check` / `ai-trial-check` / `member-reader-settings-check` | AI 漫画着色：几何适配、提示通道与输出校验；彩色阅读的可视优先、取消与原图对比；AI 宿主的路径转发与缓存记账；登录用户限时试用；会员阅读设置。 |
+| `comic-text-check` | 漫画 OCR 与繁→简：字典、几何、取色、文字层、缓存与取消。 |
+| `reader-image-scheduler-check` / `reader-image-results-check` | 正文图片全局名额（4/8/12）与优先级；渐进加载的图片结果登记、去重与重试。 |
+| `network-compatibility-check` / `network-settings-check` / `web-request-deadline-check` | HTTP/1.1 兼容模式与网络错误提示；网络设置的保存与读取；网页请求的排队超时与中止。 |
+| `native-comment-page-service-check` / `native-comment-page-browser-check` / `reader-comment-panel-check` | 原生内联评论页：生成时限、取消与响应上限；用 Chromium 实测 CSP、无外部请求与安全注入；阅读页评论面板的尺寸、配色与失败重试。 |
+| `theme-package-check` / `custom-theme-quota-check` / `theme-typography-check` / `regex-bubble-color-check` | 主题包 `.qytheme` 的 ZIP 与清单校验；自定义方案额度；主题绑定排版；自定义气泡颜色的保存与生效。 |
+| `immersive-light-level-check` / `immersive-light-persistence-check` | 沉浸光感档位与设置持久化。 |
+| `app-data-backup-check` | 数据备份：文件复制失败时导出报错，而不是提示备份完成。 |
+| `book-cover-loading-check` / `search-explore-cover-check` | 书籍封面加载与搜索、发现结果共用的封面规则。 |
+| `book-source-return-viewport-check` / `reader-toc-search-check` | 编辑书源后返回保留列表位置；目录搜索、选择、倒序与分页。 |
 | `audio-rule-support-check` | 有声书规则辅助：`sourceRegex`（Java 方言、字面量、响应体捕获组）、地址携带的请求头、跨站请求头收敛、`@webjs:` 识别。 |
 
 这些脚本用于代码回归，不能替代授权审查、安全审计或法律意见。
