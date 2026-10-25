@@ -9,6 +9,9 @@ import { stripTypeScriptTypes } from 'node:module';
 const source = fs.readFileSync(new URL('../entry/src/main/ets/account/CloudAutoSync.ets', import.meta.url), 'utf8');
 const compiled = stripTypeScriptTypes(source.replace(/^import\s[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, ''),
   { mode: 'strip' });
+const bookTypes = fs.readFileSync(new URL('../harmony-book-source-engine/sourceengine/src/main/ets/core/book/BookTypeSupport.ts', import.meta.url), 'utf8');
+const bookTypesCompiled = stripTypeScriptTypes(bookTypes.replace(/^import\s[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, ''),
+  { mode: 'strip' });
 const settingsSource = fs.readFileSync(new URL('../entry/src/main/ets/account/CloudSyncSettingsStore.ets', import.meta.url), 'utf8');
 const settingsCompiled = stripTypeScriptTypes(settingsSource.replace(/^import\s[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, ''),
   { mode: 'strip' });
@@ -31,6 +34,7 @@ function fixture(settings = {}) {
       this.type = 1; this.group = 0; this.isPrivate = false; this.pendingAddToShelf = false; }
     getVariable(key) { return this.variables[key] || ''; }
     putVariable(key, value) { this.variables[key] = value; }
+    get variable() { return JSON.stringify(this.variables); }
   }
   const context = { filesDir: '/data/files', getApplicationContext: () => ({ setFont() {} }) };
   const sandbox = vm.createContext({
@@ -50,6 +54,10 @@ function fixture(settings = {}) {
     fileUri: { getUriFromPath: path => path },
     AccountSessionStore: { account: () => ({ userId: 'u1' }), isLoggedIn: () => true, activeMembershipSku: () => sku },
     CloudFileClient: {
+      fillMetadata: async (id, meta) => {
+        const file = cloud.files.find(file => file.id === id);
+        file.meta = { ...meta, ...file.meta };
+      },
       summary: async () => ({ configured: true, eligible: true }),
       listAll: async () => cloud.files.map(file => ({ ...file })),
       tombstones: async () => ({ tombstones: cloud.tombstones.map(t => ({ ...t })) }),
@@ -116,6 +124,7 @@ function fixture(settings = {}) {
     ReaderSettingsStore: { FONT_MODE_DEVICE: 'device', saveFontSettings: async () => { log.fontSaves++; } }
   });
   vm.runInContext(settingsCompiled, sandbox);
+  vm.runInContext(bookTypesCompiled, sandbox);
   vm.runInContext(compiled, sandbox);
   const sync = vm.runInContext('CloudAutoSync', sandbox);
   const settingsStore = vm.runInContext('CloudSyncSettingsStore', sandbox);
@@ -143,6 +152,65 @@ function fixture(settings = {}) {
   return { sync, settingsStore, context, storage, prefs, files, books, cloud, log, addFont, fontPaths, addBook, cloudFile,
     setSku: value => { sku = value; } };
 }
+
+test('local comic classification survives upload metadata and restores before downloading', async () => {
+  for (const format of ['epub', 'mobi']) {
+    const source = fixture();
+    const book = source.addBook('local://comic', '漫画', HASH.a, NOW, { type: 2 });
+    book.putVariable('localFormat', format);
+    book.putVariable('readerComicAutoDetected', '1');
+    await source.sync.reconcile(source.context);
+    const meta = source.log.staged[0].meta;
+    assert.equal(meta.mediaCategory, 'comic');
+    const target = fixture();
+    target.cloudFile('comic-file', 'BOOK', HASH.b, meta, `漫画.${format}`);
+    await target.sync.reconcile(target.context);
+    assert.equal(target.books[0].type, 2);
+    assert.equal(target.books[0].getVariable('readerComicAutoDetected'), '1');
+    assert.equal(target.sync.isPlaceholder(target.books[0]), true);
+    assert.equal(target.log.downloads.length, 0);
+  }
+});
+
+test('legacy metadata is backfilled from a downloaded book and existing placeholders refresh in place', async () => {
+  const source = fixture();
+  const book = source.addBook('local://comic', '漫画', HASH.a, NOW, { type: 2 });
+  book.putVariable('readerComicAutoDetected', '1');
+  const legacyMeta = { title: '漫画', format: 'epub', contentHash: HASH.a };
+  source.cloudFile('legacy-comic', 'BOOK', HASH.b, legacyMeta, '漫画.epub');
+  const target = fixture();
+  target.cloudFile('legacy-comic', 'BOOK', HASH.b, legacyMeta, '漫画.epub');
+  await target.sync.reconcile(target.context);
+  const placeholder = target.books[0];
+  placeholder.group = 8; placeholder.durChapterIndex = 12;
+  await source.sync.reconcile(source.context);
+  assert.equal(source.cloud.files[0].meta.mediaCategory, 'comic');
+  assert.equal(source.cloud.files[0].meta.title, '漫画');
+  assert.equal(source.log.staged.length, 0);
+  target.cloud.files[0].meta = source.cloud.files[0].meta;
+  target.storage.delete('shelfUpdateTime');
+  await target.sync.reconcile(target.context);
+  assert.equal(target.books.length, 1);
+  assert.equal(target.books[0], placeholder);
+  assert.equal(placeholder.getVariable('readerComicMode'), '1');
+  assert.equal(placeholder.group, 8);
+  assert.equal(placeholder.durChapterIndex, 12);
+  assert.ok(target.storage.get('shelfUpdateTime'));
+  assert.equal(target.log.downloads.length, 0);
+});
+
+test('local novels and manual text overrides do not become comics during sync', async () => {
+  const f = fixture();
+  const book = f.addBook('local://novel', '小说', HASH.a, NOW);
+  book.putVariable('readerComicAutoDetected', '1');
+  book.putVariable('readerComicManualMode', 'text');
+  await f.sync.reconcile(f.context);
+  assert.equal(f.log.staged[0].meta.mediaCategory, 'novel');
+  const remote = fixture();
+  remote.cloudFile('novel', 'BOOK', HASH.b, f.log.staged[0].meta, '小说.txt');
+  await remote.sync.reconcile(remote.context);
+  assert.equal(remote.books[0].getVariable('readerComicMode'), '0');
+});
 
 test('fonts: new ones upload, cloud copies link, others show as downloadable', async () => {
   const f = fixture();
@@ -292,7 +360,7 @@ test('books: upload new, placeholder for cloud-only, private stays local', async
     { title: '球状闪电', author: '刘慈欣', contentHash: HASH.d, format: 'epub' }, '球状闪电.epub');
   await f.sync.reconcile(f.context);
   assert.deepEqual(f.log.staged.map(s => s.name), ['三体.txt']);
-  assert.deepEqual({ ...f.log.staged[0].meta }, { title: '三体', author: '', format: 'txt', contentHash: HASH.a });
+  assert.deepEqual({ ...f.log.staged[0].meta }, { title: '三体', author: '', format: 'txt', mediaCategory: 'novel', contentHash: HASH.a });
   assert.equal(f.log.inserted.length, 1);
   const placeholder = f.log.inserted[0];
   assert.equal(placeholder.bookUrl, 'cloudbook://66666666-6666-6666-6666-666666666666');

@@ -18,6 +18,9 @@ export function registerCloudFileRoutes(app: FastifyInstance, service: CloudFile
     service.prepare(deps.userId(request), request.body));
   app.get<{ Params: { id: string } }>('/v1/cloud-files/:id', { preHandler: guard }, request =>
     service.manifest(deps.userId(request), request.params.id));
+  app.post<{ Params: { id: string }; Body: { meta?: unknown } }>('/v1/cloud-files/:id/metadata',
+    { preHandler: guard, bodyLimit: 4096 }, request =>
+      service.fillMetadata(deps.userId(request), request.params.id, request.body?.meta));
   app.post<{ Params: { id: string }; Body: CloudUploadChunk }>('/v1/cloud-files/:id/upload-ticket',
     { preHandler: guard, bodyLimit: 4096 }, request =>
       service.uploadTicket(deps.userId(request), request.params.id, request.body));

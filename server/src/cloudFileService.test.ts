@@ -159,6 +159,20 @@ test('cloud files: isolation, reservations, integrity, retries and quota enforce
   await assert.rejects(putChunk(owner, upload.id, 1, Buffer.from('abc')), { code: 'CLOUD_UPLOAD_CLOSED' });
   const app = Fastify(); t.after(() => app.close());
   registerCloudFileRoutes(app, service, { authenticate: async () => {}, userId: () => owner, limit: async () => {} });
+  const beforeMetadata = await service.summary(owner);
+  const metadataResponse = await app.inject({ method: 'POST', url: `/v1/cloud-files/${upload.id}/metadata`,
+    payload: { meta: { mediaCategory: 'comic' } } });
+  assert.equal(metadataResponse.statusCode, 200);
+  assert.equal((await service.manifest(owner, upload.id)).meta?.mediaCategory, 'comic');
+  await service.fillMetadata(owner, upload.id, { mediaCategory: 'novel' });
+  assert.equal((await service.list(owner)).files.find(f => f.id === upload.id)!.meta?.mediaCategory, 'comic');
+  assert.equal((await service.summary(owner)).usedBytes, beforeMetadata.usedBytes);
+  assert.equal((await service.summary(owner)).downloadBytes, beforeMetadata.downloadBytes);
+  await assert.rejects(service.fillMetadata(stranger, upload.id, { mediaCategory: 'comic' }), { code: 'CLOUD_FILE_NOT_FOUND' });
+  await assert.rejects(service.fillMetadata(free, upload.id, { mediaCategory: 'comic' }), { code: 'CLOUD_SUPER_REQUIRED' });
+  await assert.rejects(service.fillMetadata(owner, upload.id, { mediaCategory: 'audio' }), { code: 'CLOUD_INVALID_FILE' });
+  await assert.rejects(service.fillMetadata(owner, upload.id, { secret: 'no' }), { code: 'CLOUD_INVALID_FILE' });
+  await assert.rejects(service.fillMetadata(owner, upload.id, null), { code: 'CLOUD_INVALID_FILE' });
   assert.equal((await app.inject({ method: 'POST', url: `/v1/cloud-files/${upload.id}/chunks`, payload: { index: 1, data: 'YWJj' } })).statusCode, 404);
   assert.equal((await app.inject({ method: 'GET', url: `/v1/cloud-files/${upload.id}/chunks/1` })).statusCode, 404);
   const apiId = randomUUID();
@@ -273,7 +287,7 @@ test('cloud files: isolation, reservations, integrity, retries and quota enforce
   // Auto-synced books carry metadata; removal leaves a marker that re-adding the same content clears.
   await assert.rejects(service.prepare(stranger, { requestId: randomUUID(), name: 'x.txt', kind: 'BOOK', bytes: 3,
     meta: { title: 'ok', secret: 'no' } }), { code: 'CLOUD_INVALID_FILE' });
-  const bookMeta = { title: '三体', author: '刘慈欣', format: 'txt', contentHash: 'a'.repeat(64) };
+  const bookMeta = { title: '三体', author: '刘慈欣', format: 'txt', contentHash: 'a'.repeat(64), mediaCategory: 'novel' };
   const synced = await service.prepare(stranger, { requestId: randomUUID(), name: '三体.txt', kind: 'BOOK', bytes: 3, meta: bookMeta });
   await putChunk(stranger, synced.id, 0, Buffer.from('xyz'));
   const syncedHash = (await service.complete(stranger, synced.id)).manifestHash!;

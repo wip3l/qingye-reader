@@ -11,7 +11,7 @@ interface ChunkRow { chunk_index: number; bytes: number; sha256: string; object_
 export interface CloudPrepare { requestId: string; kind: string; name: string; bytes: number; manifestHash?: string; meta?: unknown; }
 export type CloudFileMeta = Record<string, string>;
 export type CloudRemoveReason = 'REMOVED' | 'DETACHED';
-const META_KEYS = new Set(['title', 'author', 'format', 'contentHash', 'fontName']);
+const META_KEYS = new Set(['title', 'author', 'format', 'contentHash', 'fontName', 'mediaCategory']);
 const TOMBSTONE_DAYS = 180;
 
 /** Only short display strings and a fingerprint; anything else is rejected rather than stored. */
@@ -24,6 +24,9 @@ function normalizeMeta(value: unknown): CloudFileMeta | null {
       fail(400, 'CLOUD_INVALID_FILE', '文件附加信息无效');
     }
     if (item) meta[key] = item as string;
+    if (key === 'mediaCategory' && !['novel', 'comic'].includes(item as string)) {
+      fail(400, 'CLOUD_INVALID_FILE', '书籍内容分类无效');
+    }
   }
   return Object.keys(meta).length ? meta : null;
 }
@@ -146,6 +149,23 @@ export class CloudFileService {
       return { id, name: file.name, kind: file.kind, state: file.state, bytes: Number(file.bytes),
         manifestHash: file.manifest_hash, meta: file.meta ?? null, chunkBytes: CLOUD_CHUNK_BYTES,
         chunks: chunks.filter(c => c.ready).map(c => ({ index: c.chunk_index, bytes: c.bytes, sha256: c.sha256 })) };
+    });
+  }
+
+  /** Backfill legacy metadata without reserving storage or transferring the file again. */
+  async fillMetadata(userId: string, id: string, value: unknown) {
+    this.configured();
+    const meta = normalizeMeta(value);
+    if (!meta) fail(400, 'CLOUD_INVALID_FILE', '文件附加信息无效');
+    return this.tx(async db => {
+      await this.lock(db, userId);
+      await this.member(db, userId);
+      const file = await this.file(db, userId, id);
+      if (file.state !== 'READY') fail(409, 'CLOUD_FILE_NOT_READY', '文件尚未上传完成');
+      // Existing values win, so older devices cannot erase or change a known classification.
+      await db.query('UPDATE cloud_files SET meta=$2,updated_at=now() WHERE id=$1',
+        [id, JSON.stringify({ ...meta, ...file.meta })]);
+      return { accepted: true };
     });
   }
 

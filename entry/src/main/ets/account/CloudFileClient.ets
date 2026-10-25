@@ -37,6 +37,10 @@ export class CloudFileClient {
   static async tombstones(): Promise<CloudTombstoneList> {
     return JSON.parse(await AccountCommerceApi.cloudRequest('/tombstones', 'GET', '', AccountSessionStore.token())) as CloudTombstoneList;
   }
+  /** 为历史云文件补齐分类等信息，不重新传输文件。 */
+  static async fillMetadata(id: string, meta: CloudFileMeta): Promise<void> {
+    await AccountCommerceApi.cloudRequest(`/${id}/metadata`, 'POST', JSON.stringify({ meta: meta }), AccountSessionStore.token());
+  }
   /** reason：REMOVED 让其他设备一并移除；DETACHED 只删云端副本，各设备保留本地文件。 */
   static async remove(id: string, reason: string = 'DETACHED'): Promise<void> {
     await AccountCommerceApi.cloudRequest(`/${id}/delete`, 'POST', JSON.stringify({ reason: reason }), AccountSessionStore.token());

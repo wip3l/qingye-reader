@@ -2,7 +2,7 @@ import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
 import preferences from '@ohos.data.preferences';
-import { Book } from '@legado/sourceengine';
+import { Book, BookTypeSupport } from '@legado/sourceengine';
 import { AccountSessionStore } from './AccountSessionStore';
 import { CloudSyncSettingsStore } from './CloudSyncSettingsStore';
 import { CloudSyncIssueStore } from './CloudSyncIssueStore';
@@ -381,6 +381,10 @@ export class CloudAutoSync {
           continue;
         }
         present.add(CloudAutoSync.bookFileKey(file));
+        if (CloudAutoSync.applyBookCategory(book, file.meta)) {
+          await db.updateBook(book, false, 'cloud_book_category');
+          changed = true;
+        }
         continue;
       }
       const hash = await LocalBookService.ensureContentHash(book);
@@ -390,6 +394,16 @@ export class CloudAutoSync {
       }
       if (linked) {
         present.add(CloudAutoSync.bookFileKey(linked));
+        if (!linked.meta?.mediaCategory && !book.isPrivate &&
+          LocalBookService.exists(book.getVariable('localFilePath'))) {
+          const meta = new CloudFileMeta();
+          meta.mediaCategory = BookTypeSupport.isImage(book) ? 'comic' : 'novel';
+          try {
+            await CloudFileClient.fillMetadata(linked.id, meta);
+          } catch (error) {
+            console.warn('[CloudAutoSync] fill book category failed:', (error as Error).message);
+          }
+        }
         if (book.getVariable(CloudAutoSync.CLOUD_FILE_ID_KEY) !== linked.id ||
           book.getVariable('cloudManifestHash') !== linked.manifestHash) {
           book.putVariable(CloudAutoSync.CLOUD_FILE_ID_KEY, linked.id);
@@ -422,6 +436,7 @@ export class CloudAutoSync {
       meta.title = (book.name || '').slice(0, 200);
       meta.author = (book.author || '').slice(0, 200);
       meta.format = format;
+      meta.mediaCategory = BookTypeSupport.isImage(book) ? 'comic' : 'novel';
       meta.contentHash = hash;
       job.meta = meta;
       job.key = `BOOK:${hash}`;
@@ -450,6 +465,7 @@ export class CloudAutoSync {
     book.canUpdate = false;
     book.group = 0;
     book.type = LocalBookService.bookTypeForFormat(format);
+    CloudAutoSync.applyBookCategory(book, meta);
     book.putVariable(CloudAutoSync.PLACEHOLDER_KEY, '1');
     book.putVariable(CloudAutoSync.CLOUD_FILE_ID_KEY, file.id);
     book.putVariable('cloudManifestHash', file.manifestHash || '');
@@ -457,6 +473,17 @@ export class CloudAutoSync {
     book.putVariable(LocalBookService.LOCAL_CONTENT_HASH_KEY, meta.contentHash || '');
     book.putVariable('bookAddTime', `${Date.now()}`);
     await db.insertBook(book, 'cloud_book_placeholder');
+  }
+
+  private static applyBookCategory(book: Book, meta: CloudFileMeta | null): boolean {
+    if (meta?.mediaCategory !== 'comic' && meta?.mediaCategory !== 'novel') return false;
+    const comic = meta.mediaCategory === 'comic' ? '1' : '0';
+    if (book.getVariable('readerComicAutoDetected') === comic && book.getVariable('readerComicMode') === comic) {
+      return false;
+    }
+    book.putVariable('readerComicAutoDetected', comic);
+    book.putVariable('readerComicMode', comic);
+    return true;
   }
 
   private static async removeShelfBook(context: Context, book: Book): Promise<void> {

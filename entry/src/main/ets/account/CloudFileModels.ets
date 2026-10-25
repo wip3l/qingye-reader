@@ -13,6 +13,8 @@ export class CloudFileMeta {
   title?: string;
   author?: string;
   format?: string;
+  /** 阅读内容分类，与 TXT/EPUB 等文件格式分开保存。 */
+  mediaCategory?: string;
   contentHash?: string;
   fontName?: string;
 }
