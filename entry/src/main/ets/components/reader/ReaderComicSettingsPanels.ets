@@ -78,6 +78,9 @@ export struct ReaderComicOptionGroup {
 /** 漫画「阅读方式」面板。设置的读写都在阅读页，这里只负责显示与回调。 */
 @Component
 export struct ReaderComicModeSettingsPanel {
+  @Prop animationOptions: SelectOption[] = [];
+  @Prop animationSelected: number = 1;
+  onAnimationChange: (index: number) => void = () => {};
   /** 本书当前生效的漫画阅读方式。 */
   @Prop mode: string = ReaderComicMode.WEBTOON;
   @Prop defaultMode: string = ReaderComicMode.WEBTOON;
@@ -153,6 +156,19 @@ export struct ReaderComicModeSettingsPanel {
       this.defaultModeRow()
 
       if (this.paged()) {
+        ReaderSettingSelectRow({
+          title: '翻页动画',
+          description: '翻页时的切换效果',
+          options: this.animationOptions,
+          selected: this.animationSelected,
+          controlId: 'reader_comic_page_animation_select',
+          textColor: this.colors.textColor,
+          subTextColor: this.colors.subTextColor,
+          accentColor: this.colors.accentColor,
+          dark: this.colors.dark,
+          menuColor: this.colors.menuColor,
+          onSelect: (index: number): void => this.onAnimationChange(index)
+        })
         ReaderSettingSwitchRow({
           title: '横屏双页',
           description: '横屏、折叠屏展开等宽屏下两页并排',

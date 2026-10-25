@@ -1,4 +1,5 @@
 import { Context } from '@kit.AbilityKit';
+import { ReaderPageTurnAnimation } from './ReaderPageTurnAnimation';
 import preferences from '@ohos.data.preferences';
 
 /** 漫画阅读方式。条漫为上下连续滚动；ltr/rtl 为单页左右翻页（rtl 为日漫的从右往左）。 */
@@ -64,6 +65,8 @@ export class ReaderComicSettings {
   static readonly PRELOAD_COUNTS: number[] = [0, 3, 5, 10];
 
   defaultMode: string = ReaderComicMode.WEBTOON;
+  /** 横向漫画翻页动画，独立保存，避免改变小说的动画偏好。 */
+  pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   background: string = ReaderComicBackground.BLACK;
   pageGap: number = 0;
   fit: string = ReaderComicFit.WIDTH;
@@ -83,6 +86,7 @@ export class ReaderComicSettings {
   copy(): ReaderComicSettings {
     const next = new ReaderComicSettings();
     next.defaultMode = this.defaultMode;
+    next.pageTurnAnimation = this.pageTurnAnimation;
     next.background = this.background;
     next.pageGap = this.pageGap;
     next.fit = this.fit;
@@ -98,6 +102,7 @@ export class ReaderComicSettings {
   toJson(): string {
     const record: Record<string, Object> = {
       'defaultMode': this.defaultMode,
+      'pageTurnAnimation': this.pageTurnAnimation,
       'background': this.background,
       'pageGap': this.pageGap,
       'fit': this.fit,
@@ -117,6 +122,8 @@ export class ReaderComicSettings {
     try {
       const record = JSON.parse(raw) as Record<string, Object>;
       settings.defaultMode = ReaderComicMode.normalize(String(record['defaultMode'] ?? ''));
+      settings.pageTurnAnimation = ReaderPageTurnAnimation.normalize(Number(record['pageTurnAnimation'] ??
+        ReaderPageTurnAnimation.SLIDE));
       settings.background = ReaderComicBackground.normalize(String(record['background'] ?? ''));
       settings.pageGap = ReaderComicSettings.nearest(Number(record['pageGap']), ReaderComicSettings.PAGE_GAPS, 0);
       settings.fit = ReaderComicFit.normalize(String(record['fit'] ?? ''));

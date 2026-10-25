@@ -1,4 +1,9 @@
 import { LocalBookService } from '../../core/book/LocalBookService';
+import { image } from '@kit.ImageKit';
+import { AnimatorResult } from '@kit.ArkUI';
+import { ReaderPageTurnAnimation } from '../../core/reader/ReaderPageTurnAnimation';
+import { ReaderPageCurlPainter } from '../ReaderPageCurlPainter';
+import { ReaderEmulationFlipPainter, ReaderEmulationFlipRegion } from '../ReaderEmulationFlipPainter';
 import { ReaderComicColorSession, ComicColorCandidate } from '@legado/aiengine';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
@@ -49,9 +54,11 @@ export struct ReaderComicPagedView {
   @Prop @Watch('onPageIndexChanged') pageIndex: number = 0;
   @Prop @Watch('onLayoutChanged') chapterIndex: number = 0;
   @Prop @Watch('onLayoutChanged') viewWidth: number = 0;
-  @Prop viewHeight: number = 0;
+  @Prop @Watch('onLayoutChanged') viewHeight: number = 0;
   @Prop @Watch('onLayoutChanged') dualPage: boolean = false;
-  @Prop rightToLeft: boolean = false;
+  @Prop @Watch('onLayoutChanged') rightToLeft: boolean = false;
+  @Prop @Watch('onLayoutChanged') animationType: number = ReaderPageTurnAnimation.SLIDE;
+  @Prop darkMode: boolean = false;
   @Prop doubleTapZoom: boolean = true;
   /** 漫画超分（会员功能）。 */
   @Prop superResolution: boolean = false;
@@ -89,7 +96,20 @@ export struct ReaderComicPagedView {
   static readonly MAX_ZOOM: number = 4;
   static readonly DOUBLE_TAP_ZOOM: number = 2;
   @State private spreadIndex: number = 0;
-  @State private dragOffset: number = 0;
+  @State @Watch('drawCurl') private dragOffset: number = 0;
+  @State private curlReady: boolean = false;
+  @State private curlDirection: number = 0;
+  private curlContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(new RenderingContextSettings(true));
+  private curlPainter: ReaderPageCurlPainter = new ReaderPageCurlPainter();
+  private emulationPainter: ReaderEmulationFlipPainter = new ReaderEmulationFlipPainter();
+  private curlFront: image.PixelMap | null = null;
+  private curlBack: image.PixelMap | null = null;
+  private captureSerial: number = 0;
+  private animationSerial: number = 0;
+  private turnAnimator: AnimatorResult | null = null;
+  private animationWatchdog: number = -1;
+  private captureTask: Promise<void> | null = null;
+  private canvasReady: boolean = false;
   @State private zoomScale: number = 1;
   @State private zoomX: number = 0;
   @State private zoomY: number = 0;
@@ -112,12 +132,15 @@ export struct ReaderComicPagedView {
     this.spreadIndex = this.spreadOf(this.pageIndex);
     this.controller.turn = (direction: number): void => this.turn(direction);
     this.controller.cancelCross = (): void => {
+      this.cancelAnimation();
       this.animating = false;
       this.settleBack();
     };
   }
 
   aboutToDisappear(): void {
+    this.cancelAnimation();
+    this.clearCurl();
     clearInterval(this.colorTimer);
     this.colorSession?.update([]);
     this.colorSession?.touch(false);
@@ -127,6 +150,8 @@ export struct ReaderComicPagedView {
 
   onLayoutChanged(): void {
     // 章节或分页变了（包括跨章停住后阅读页发布了新章）：停住的位移归零，按新页码重新定位。
+    this.cancelAnimation();
+    this.clearCurl();
     this.animating = false;
     this.dragOffset = 0;
     this.applyZoom(1, 0, 0);
@@ -137,6 +162,7 @@ export struct ReaderComicPagedView {
     if (this.animating) return;
     const target = this.spreadOf(this.pageIndex);
     if (target === this.spreadIndex) return;
+    this.clearCurl();
     this.dragOffset = 0;
     this.applyZoom(1, 0, 0);
     this.spreadIndex = target;
@@ -207,7 +233,166 @@ export struct ReaderComicPagedView {
   /** 第 k 个相邻跨页（k = 跨页序号 − 当前序号）在屏幕上的横向位置。 */
   private slotX(spread: number): number {
     const k = spread - this.spreadIndex;
+    const direction = this.dragDirection(this.dragOffset) || this.curlDirection;
+    if (this.animationType === ReaderPageTurnAnimation.NONE) return 0;
+    // 仿真从手势第一帧就使用固定页面；截图尚未就绪时不能借用平移布局。
+    if (this.animationType === ReaderPageTurnAnimation.FADE || this.usesCurl()) return 0;
+    if (this.animationType === ReaderPageTurnAnimation.STACK) {
+      // 下一跨页从上方覆盖；反向翻页时当前跨页移开，露出上一跨页。
+      if (direction > 0 && k === 0) return 0;
+      if (direction < 0 && k === -1) return 0;
+    }
     return (this.rightToLeft ? -k : k) * this.viewW() + this.dragOffset;
+  }
+
+  private turnProgress(): number {
+    return Math.min(1, Math.abs(this.dragOffset) / this.viewW());
+  }
+
+  private slotOpacity(spread: number): number {
+    const k = spread - this.spreadIndex;
+    const direction = this.dragDirection(this.dragOffset) || this.curlDirection;
+    if (this.animationType === ReaderPageTurnAnimation.NONE) {
+      return k === (this.turnProgress() >= 1 ? direction : 0) ? 1 : 0;
+    }
+    if (this.curlReady) return k === direction ? 1 : 0;
+    if (this.usesCurl()) {
+      // 截图期间只显示当前页；截图失败直接提交时仍能保留跨章目标页等待接管。
+      return k === (this.turnProgress() >= 1 ? direction : 0) ? 1 : 0;
+    }
+    if (this.animationType === ReaderPageTurnAnimation.FADE) {
+      return k === 0 ? 1 : (k === direction ? this.turnProgress() : 0);
+    }
+    return k === 0 || k === direction ? 1 : 0;
+  }
+
+  private slotZIndex(spread: number): number {
+    const k = spread - this.spreadIndex;
+    if (this.animationType === ReaderPageTurnAnimation.FADE) return k === 0 ? 0 : 1;
+    return k > 0 ? 2 : (k === 0 ? 1 : 0);
+  }
+
+  private usesCurl(): boolean {
+    return this.animationType === ReaderPageTurnAnimation.SIMULATION ||
+      this.animationType === ReaderPageTurnAnimation.THREE_D;
+  }
+
+  private snapshotId(spread: number): string {
+    return `reader_comic_spread_${this.slotKey(spread)}`;
+  }
+
+  private clearCurl(): void {
+    this.captureSerial++;
+    this.captureTask = null;
+    this.curlReady = false;
+    this.curlDirection = 0;
+    const front = this.curlFront;
+    const back = this.curlBack;
+    this.curlFront = null;
+    this.curlBack = null;
+    if (this.canvasReady) this.curlContext.clearRect(0, 0, this.viewW(), this.viewH());
+    // Canvas 的最后一帧提交到渲染线程后再释放位图。
+    setTimeout((): void => {
+      if (front) front.release().catch(() => {});
+      if (back) back.release().catch(() => {});
+    }, 48);
+  }
+
+  private prepareCurl(direction: number): Promise<void> {
+    if (!this.usesCurl() || direction === 0) return Promise.resolve();
+    if (this.curlDirection === direction && this.captureTask) return this.captureTask;
+    this.clearCurl();
+    this.curlDirection = direction;
+    const serial = this.captureSerial;
+    this.captureTask = this.captureCurl(direction, serial);
+    return this.captureTask;
+  }
+
+  private async captureCurl(direction: number, serial: number): Promise<void> {
+    let front: image.PixelMap | null = null;
+    let back: image.PixelMap | null = null;
+    try {
+      // 等待相邻页和 Canvas 完成布局；截取未做位移/透明度变换的内层节点。
+      await new Promise<void>((resolve) => setTimeout(resolve, 16));
+      if (serial !== this.captureSerial) return;
+      const snapshot = this.getUIContext().getComponentSnapshot();
+      front = await snapshot.get(this.snapshotId(this.spreadIndex));
+      if (serial !== this.captureSerial) return;
+      back = await snapshot.get(this.snapshotId(this.spreadIndex + direction));
+      if (serial !== this.captureSerial) return;
+      this.curlFront = front;
+      this.curlBack = back;
+      front = null;
+      back = null;
+      this.curlReady = true;
+      this.drawCurl();
+    } catch (error) {
+      // 截图不可用时由 animateOffset 直接完成翻页，不能临时改用平移。
+      console.warn('漫画翻页截图失败:', error);
+    } finally {
+      if (front) front.release().catch(() => {});
+      if (back) back.release().catch(() => {});
+    }
+  }
+
+  private drawCurl(): void {
+    if (!this.canvasReady || !this.curlReady || !this.curlFront || !this.curlBack) return;
+    // 绘制器接收物理翻动方向；RTL 时与阅读顺序相反，图片本身不做镜像。
+    const direction = this.rightToLeft ? -this.curlDirection : this.curlDirection;
+    if (this.animationType === ReaderPageTurnAnimation.THREE_D) {
+      this.emulationPainter.draw(this.curlContext, this.curlFront, this.curlBack,
+        this.viewW(), this.viewH(), this.turnProgress(), direction, ReaderEmulationFlipRegion.BOTTOM,
+        false, 0, 0, 1 / this.getUIContext().vp2px(1), this.surfaceColor, this.darkMode);
+    } else {
+      this.curlPainter.draw(this.curlContext, this.curlFront, this.curlBack,
+        this.viewW(), this.viewH(), this.turnProgress(), direction, false, this.darkMode);
+    }
+  }
+
+  private cancelAnimation(): void {
+    this.animationSerial++;
+    clearTimeout(this.animationWatchdog);
+    const animator = this.turnAnimator;
+    this.turnAnimator = null;
+    if (animator) animator.cancel();
+  }
+
+  private async animateOffset(target: number, onFinish: () => void): Promise<void> {
+    this.cancelAnimation();
+    const serial = this.animationSerial;
+    this.animating = true;
+    if (this.animationType !== ReaderPageTurnAnimation.NONE) {
+      await this.prepareCurl(this.dragDirection(target || this.dragOffset));
+    }
+    if (serial !== this.animationSerial) return;
+    const finish = (): void => {
+      if (serial !== this.animationSerial) return;
+      this.cancelAnimation();
+      this.dragOffset = target;
+      onFinish();
+    };
+    if (this.animationType === ReaderPageTurnAnimation.NONE || (this.usesCurl() && !this.curlReady)) {
+      finish();
+      return;
+    }
+    const duration = this.usesCurl() ? 320 : 240;
+    try {
+      const animator = this.getUIContext().createAnimator({
+        duration: duration, easing: 'ease-out', delay: 0, fill: 'forwards',
+        direction: 'normal', iterations: 1, begin: this.dragOffset, end: target
+      });
+      this.turnAnimator = animator;
+      animator.onFrame = (offset: number): void => {
+        if (serial !== this.animationSerial) return;
+        this.dragOffset = offset;
+      };
+      animator.onFinish = finish;
+      this.animationWatchdog = setTimeout(finish, duration + 100);
+      animator.play();
+    } catch (error) {
+      console.warn('漫画翻页动画失败:', error);
+      finish();
+    }
   }
 
   /** 翻到 direction 方向时当前跨页要移到的位置。 */
@@ -244,29 +429,18 @@ export struct ReaderComicPagedView {
 
   /** 翻进预先装好的相邻章节后停住，等阅读页发布新章（onLayoutChanged）或取消（cancelCross）。 */
   private animateCross(direction: number): void {
-    this.animating = true;
-    animateTo({
-      duration: 240,
-      curve: Curve.Friction,
-      onFinish: () => this.onCrossChapter(direction)
-    }, () => {
-      this.dragOffset = this.turnOffset(direction);
+    this.animateOffset(this.turnOffset(direction), (): void => {
+      this.onCrossChapter(direction);
     });
   }
 
   private animateTurn(direction: number): void {
-    this.animating = true;
-    animateTo({
-      duration: 240,
-      curve: Curve.Friction,
-      onFinish: () => this.finishTurn(direction)
-    }, () => {
-      this.dragOffset = this.turnOffset(direction);
-    });
+    this.animateOffset(this.turnOffset(direction), (): void => this.finishTurn(direction));
   }
 
   private finishTurn(direction: number): void {
     // 先换当前序号再归零位移：相邻格按新序号重新定位后恰好落在动画终点，不会闪动。
+    this.clearCurl();
     this.spreadIndex = Math.max(0, Math.min(this.spreadCount() - 1, this.spreadIndex + direction));
     this.dragOffset = 0;
     this.animating = false;
@@ -274,16 +448,17 @@ export struct ReaderComicPagedView {
   }
 
   private settleBack(): void {
-    if (this.dragOffset === 0) return;
-    this.animating = true;
-    animateTo({
-      duration: 200,
-      curve: Curve.Friction,
-      onFinish: () => {
-        this.animating = false;
-      }
-    }, () => {
+    if (this.dragOffset === 0 || (this.usesCurl() && !this.curlReady)) {
+      // 尚未显示卷页时取消手势，直接丢弃待完成截图，不再等待截图后补播回弹。
+      this.cancelAnimation();
+      this.clearCurl();
       this.dragOffset = 0;
+      this.animating = false;
+      return;
+    }
+    this.animateOffset(0, (): void => {
+      this.clearCurl();
+      this.animating = false;
     });
   }
 
@@ -410,6 +585,7 @@ export struct ReaderComicPagedView {
     this.touchDragged = true;
     this.panResync = true;
     if (this.dragOffset !== 0) {
+      this.clearCurl();
       this.dragOffset = 0;
     }
     this.zoomPanActive = true;
@@ -450,7 +626,9 @@ export struct ReaderComicPagedView {
       const direction = this.dragDirection(event.offsetX);
       const target = this.spreadIndex + direction;
       const outside = target < 0 || target >= this.spreadCount();
-      this.dragOffset = outside && !this.hasChapter(direction) ? event.offsetX * 0.3 : event.offsetX;
+      this.prepareCurl(direction);
+      this.dragOffset = this.clamp(outside && !this.hasChapter(direction) ? event.offsetX * 0.3 : event.offsetX,
+        -this.viewW(), this.viewW());
       return;
     }
     if (this.pinching || this.panResync) {
@@ -559,33 +737,41 @@ export struct ReaderComicPagedView {
   @Builder
   slot(spread: number) {
     Stack() {
-      if (spread >= 0 && spread < this.spreadCount()) {
-        Row() {
-          ForEach(this.spreadPages(spread), (pageIndex: number) => {
-            this.pageView(this.pages, this.chapterIndex, pageIndex, this.viewW() / this.spreadPages(spread).length)
-          }, (pageIndex: number) => `${pageIndex}_${this.spreadPages(spread).length}`)
+      Stack() {
+        if (spread >= 0 && spread < this.spreadCount()) {
+          Row() {
+            ForEach(this.spreadPages(spread), (pageIndex: number) => {
+              this.pageView(this.pages, this.chapterIndex, pageIndex, this.viewW() / this.spreadPages(spread).length)
+            }, (pageIndex: number) => `${pageIndex}_${this.spreadPages(spread).length}`)
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        } else if (this.hasNeighbor(spread < 0 ? -1 : 1)) {
+          Row() {
+            ForEach(this.neighborSpreadPages(spread < 0 ? -1 : 1), (pageIndex: number) => {
+              this.pageView(spread < 0 ? this.prevChapterPages : this.nextChapterPages,
+                this.chapterIndex + (spread < 0 ? -1 : 1), pageIndex,
+                this.viewW() / this.neighborSpreadPages(spread < 0 ? -1 : 1).length)
+            }, (pageIndex: number) => `${pageIndex}_${this.neighborSpreadPages(spread < 0 ? -1 : 1).length}`)
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        } else {
+          this.boundaryCard(spread < 0 ? -1 : 1)
         }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-      } else if (this.hasNeighbor(spread < 0 ? -1 : 1)) {
-        Row() {
-          ForEach(this.neighborSpreadPages(spread < 0 ? -1 : 1), (pageIndex: number) => {
-            this.pageView(spread < 0 ? this.prevChapterPages : this.nextChapterPages,
-              this.chapterIndex + (spread < 0 ? -1 : 1), pageIndex,
-              this.viewW() / this.neighborSpreadPages(spread < 0 ? -1 : 1).length)
-          }, (pageIndex: number) => `${pageIndex}_${this.neighborSpreadPages(spread < 0 ? -1 : 1).length}`)
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-      } else {
-        this.boundaryCard(spread < 0 ? -1 : 1)
       }
+      .width(this.viewW())
+      .height(this.viewH())
+      .backgroundColor(this.surfaceColor)
+      .id(this.snapshotId(spread))
     }
     .width(this.viewW())
     .height(this.viewH())
     .position({ x: this.slotX(spread), y: 0 })
+    .opacity(this.slotOpacity(spread))
+    .zIndex(this.slotZIndex(spread))
     .scale(spread === this.spreadIndex ? { x: this.zoomScale, y: this.zoomScale } : { x: 1, y: 1 })
     .translate(spread === this.spreadIndex ? { x: this.zoomX, y: this.zoomY } : { x: 0, y: 0 })
   }
@@ -653,6 +839,17 @@ export struct ReaderComicPagedView {
         ForEach([this.spreadIndex - 1, this.spreadIndex, this.spreadIndex + 1], (spread: number) => {
           this.slot(spread)
         }, (spread: number) => this.slotKey(spread))
+        Canvas(this.curlContext)
+          .width(this.viewW())
+          .height(this.viewH())
+          .position({ x: 0, y: 0 })
+          .opacity(this.curlReady ? 1 : 0)
+          .zIndex(3)
+          .hitTestBehavior(HitTestMode.None)
+          .onReady(() => {
+            this.canvasReady = true;
+            this.drawCurl();
+          })
       }
       .width('100%')
       .height('100%')

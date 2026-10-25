@@ -1,4 +1,5 @@
 import { BookCoverResolver } from '../utils/BookCoverResolver';
+import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
 import { ThemeBookCoverSettings } from '../utils/ThemeBookCoverSettings';
 import { NativeSourceService, HttpClient, Book, BookChapter, Bookmark, BookSource, HttpTTS, BookTypeSupport, VerificationSupport, ReaderActionData, ReaderActionMarker, ReaderActionMatch, BookSourceStageWebRuntime, StageWebRuntimeRequest, WebBookFetchRuntime, SourceRuntimeStage, CooperativeScheduler, sleepMs } from '@legado/sourceengine';
 import { router, window, promptAction } from '@kit.ArkUI';
@@ -2201,6 +2202,8 @@ struct ReadBookPage {
         viewHeight: this.pageViewHeight,
         dualPage: this.isReaderComicDualPageActive(),
         rightToLeft: this.isReaderComicRightToLeft(),
+        animationType: this.readerComicSettings.pageTurnAnimation,
+        darkMode: this.isReaderThemeDark(),
         doubleTapZoom: this.readerComicSettings.doubleTapZoom,
         superResolution: this.isReaderComicSuperResolutionActive(),
         textConvert: this.isReaderComicTextConvertActive(),
@@ -2712,6 +2715,14 @@ struct ReadBookPage {
   @Builder
   readerComicModeSettingsPanel() {
     ReaderComicModeSettingsPanel({
+      animationOptions: this.pageTurnAnimationOptions(true),
+      animationSelected: ReaderPageTurnAnimation.types().indexOf(this.readerComicSettings.pageTurnAnimation),
+      onAnimationChange: (index: number): void => {
+        const types = ReaderPageTurnAnimation.types();
+        this.updateReaderComicSettings((settings: ReaderComicSettings): void => {
+          settings.pageTurnAnimation = types[index] ?? ReaderPageTurnAnimation.SLIDE;
+        });
+      },
       mode: this.readerComicEffectiveMode(),
       defaultMode: this.readerComicSettings.defaultMode,
       tapTurn: this.readerComicSettings.tapTurn,
@@ -3310,10 +3321,8 @@ struct ReadBookPage {
   @Builder
   readerMaterialFloatingBottomMenu() {
     Column({ space: AppSpacing.XS }) {
-      if (this.isReaderComicModeActive()) {
-        this.readerMaterialChapterBar(true)
-      } else if (this.readerUseChapterQuickJump) {
-        this.readerMaterialChapterBar()
+      if (this.readerUseChapterQuickJump) {
+        this.readerMaterialChapterBar(this.isReaderComicModeActive())
       }
       this.readerMaterialActionBar(false)
     }
@@ -3812,7 +3821,7 @@ struct ReadBookPage {
   @Builder
   readerFloatingBottomMenu() {
     Column({ space: 10 }) {
-      if (this.isReaderComicModeActive()) {
+      if (this.readerUseChapterQuickJump && this.isReaderComicModeActive()) {
         this.readerFloatingComicPageRow()
       } else if (this.readerUseChapterQuickJump) {
         Row() {
@@ -4373,6 +4382,7 @@ struct ReadBookPage {
   @Builder
   readerLayoutElementSettingsDialog() {
     ReaderLayoutElementSettingsPanel({
+      comicMode: this.isReaderComicModeActive(),
       dark: this.appDarkMode,
       textColor: ThemeRuntime.primaryTextColor(this.appDarkMode),
       subTextColor: ThemeRuntime.subTextColor(this.appDarkMode),
@@ -4381,7 +4391,12 @@ struct ReadBookPage {
         this.showLayoutElementSettings = false;
       },
       onChapterQuickJumpChanged: (enabled: boolean): void => {
-        if (!enabled) this.resetMenuChapterPreview();
+        if (!enabled) {
+          this.resetMenuChapterPreview();
+          this.comicPageSliderActive = false;
+          this.comicPageTooltipVisible = false;
+          this.comicPageSliderPreview = this.currentPageIndex;
+        }
       }
     })
   }
@@ -7669,7 +7684,7 @@ struct ReadBookPage {
   }
 
   readerBottomMenuOverlayHeight(): number {
-    return (this.readerUseChapterQuickJump || this.isReaderComicModeActive() ? 120 : 56) +
+    return (this.readerUseChapterQuickJump ? 120 : 56) +
       this.readerFloatingBarBottomMargin();
   }
 
@@ -9887,32 +9902,14 @@ struct ReadBookPage {
     return index >= 0 ? index : 1;
   }
 
-  pageTurnAnimationOptions(): SelectOption[] {
-    const options: SelectOption[] = [
-      { value: '无动画' },
-      { value: '平移' },
-      { value: '淡入' },
-      { value: '叠页' }
-    ];
-    if (this.readerPageTurnMode === 2) {
-      options.push({ value: '仿真' });
-      options.push({ value: '3D仿真' });
-    }
-    return options;
+  pageTurnAnimationOptions(horizontal: boolean = this.readerPageTurnMode === 2): SelectOption[] {
+    return ReaderPageTurnAnimation.labels(horizontal).map((label: string): SelectOption => {
+      return { value: label };
+    });
   }
 
   pageTurnAnimationTypes(): number[] {
-    const types: number[] = [
-      ReaderSettingsStore.PAGE_TURN_ANIMATION_NONE,
-      ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE,
-      ReaderSettingsStore.PAGE_TURN_ANIMATION_FADE,
-      ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK
-    ];
-    if (this.readerPageTurnMode === 2) {
-      types.push(ReaderSettingsStore.PAGE_TURN_ANIMATION_SIMULATION);
-      types.push(ReaderSettingsStore.PAGE_TURN_ANIMATION_3D);
-    }
-    return types;
+    return ReaderPageTurnAnimation.types(this.readerPageTurnMode === 2);
   }
 
   pageTurnAnimationSelectedIndex(): number {
