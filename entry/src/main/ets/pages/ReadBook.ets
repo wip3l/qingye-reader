@@ -10972,7 +10972,7 @@ struct ReadBookPage {
           if (token !== this.ttsReadToken) {
             return;
           }
-          this.finishTtsReading();
+          this.finishTtsReading(true);
           HdsFeedback.showToast(message || '系统朗读失败');
         },
         onChunkStart: (chunk: TtsChunk) => {
@@ -11009,7 +11009,7 @@ struct ReadBookPage {
         (manualPageTurnResume && !this.isManualPageTurnTtsResumeCurrent(manualPageTurnResumeSerial))) {
         return;
       }
-      this.finishTtsReading();
+      this.finishTtsReading(true);
       HdsFeedback.showToast('当前系统不支持朗读或 TTS 初始化失败');
       console.error('启动系统 TTS 失败:', error);
     }
@@ -11310,14 +11310,22 @@ struct ReadBookPage {
     }
   }
 
-  finishTtsReading(): void {
+  finishTtsReading(preserveControls: boolean = false): void {
+    // A failed voice must leave the player usable so another voice can be selected and retried.
+    // Keep only an existing owned session; never replace a newer reader's controls.
+    const keepSession = preserveControls && ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId);
+    if (preserveControls) this.ttsReadToken++;
     this.cancelManualPageTurnTtsResume();
     this.flushTtsReadPosition();
     this.clearTtsSleepTimer();
     this.ttsAutoContinue = false;
     this.isTtsSpeaking = false;
-    this.isTtsPaused = false;
-    ReaderTtsFloatingSession.clear(this.ttsFloatingSessionOwnerId);
+    this.isTtsPaused = keepSession;
+    if (keepSession) {
+      this.updateTtsFloatingSession();
+    } else {
+      ReaderTtsFloatingSession.clear(this.ttsFloatingSessionOwnerId);
+    }
     this.releaseBackgroundProgressWriterAfterTtsStop();
     this.updateVolumeKeySubscription();
     this.ttsReader.stop();
