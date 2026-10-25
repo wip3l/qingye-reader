@@ -4,6 +4,8 @@
 // Usage: node --experimental-strip-types scripts/reader-info-bar-check.mjs
 
 import { loadReaderModules } from './lib/load-reader-modules.mjs';
+import { readFileSync } from 'node:fs';
+import { stripTypeScriptTypes } from 'node:module';
 
 const { ReaderInfoBarConfig: Config, ReaderInfoBarContext, ReaderInfoBarText: T, ReaderInfoItem: Item,
   ReaderInfoProgressBar: Bar, cleanup } = await loadReaderModules();
@@ -119,14 +121,75 @@ withBar.progressBar = Bar.FOOTER;
 check(withBar.layoutIdentity() !== base.layoutIdentity(), '进度条变化改变分页标识');
 const shifted = base.copy();
 shifted.footerOffset = 12;
-check(shifted.layoutIdentity() !== base.layoutIdentity(), '页脚上移改变分页标识');
+check(shifted.layoutIdentity() !== base.layoutIdentity(), '页脚位置改变分页标识');
 equal(Config.parse(JSON.stringify({ headerOffset: 999, footerOffset: -5 })).headerOffset, Config.OFFSET_MAX,
-  '页眉下移被限制在上限');
-equal(Config.parse(JSON.stringify({ footerOffset: -5 })).footerOffset, 0, '页脚上移不能为负');
+  '页眉位置被限制在上限');
+for (const field of ['headerOffset', 'footerOffset']) {
+  for (const [value, expected] of [[-5, -5], [-999, -350], [999, 350], [-1.8, -2], ['bad', 0]]) {
+    equal(Config.parse(JSON.stringify({ [field]: value }))[field], expected, `${field} 校验 ${value}`);
+  }
+  const negative = Config.parse(JSON.stringify({ [field]: -6 }));
+  equal(negative.copy()[field], -6, `${field} 负值保存与复制后保留`);
+  check(negative.layoutIdentity() !== base.layoutIdentity(), `${field} 负值改变分页标识`);
+  const header = field === 'headerOffset';
+  for (const inset of [0, 6, 8, 24, 48]) {
+    equal(base.edgeInset(header, inset), inset, '零位置保持默认间距');
+    equal(negative.edgeInset(header, inset), Math.max(0, inset - 6), '负位置朝屏幕边缘移动');
+    negative[field] = -350;
+    equal(negative.edgeInset(header, inset), 0, '极端负位置停在屏幕边缘');
+    negative[field] = 12;
+    equal(negative.edgeInset(header, inset), inset + 12, '正位置向正文方向移动');
+    negative[field] = -6;
+  }
+}
 equal(Config.parse(migrated.serialize()).footerOffset, 0, '旧配置没有位置偏移时默认为 0');
 equal(base.headerLineHeight(), 18, '默认字号下页眉行高保持 18');
 equal(base.footerExtraHeight(), 0, '默认配置页脚没有附加高度');
 equal(withBar.footerExtraHeight(), 5, '页脚进度条附加高度保持 5');
+
+// 执行阅读页和预览的真实几何方法，覆盖安全区、负位置与正文不重叠的边界。
+function layoutMethods(file, names) {
+  const source = readFileSync(new URL(`../entry/src/main/ets/pages/${file}`, import.meta.url), 'utf8');
+  const methods = names.map(name => source.match(new RegExp(`  ${name}\\([^]*?\\n  \\}`))[0]).join('\n');
+  return new (Function(stripTypeScriptTypes(`class Layout {\n${methods}\n}`, { mode: 'strip' }) +
+    '\nreturn Layout;')())();
+}
+const readerLayout = layoutMethods('ReadBook.ets', ['getReaderHeaderOverlayTopInset', 'getReaderHeaderTopGap',
+  'getReaderHeaderContentReserve', 'getReaderBottomInfoBarBottomInset', 'getReaderGestureIndicatorLift']);
+const previewLayout = layoutMethods('ThemeTypographySettings.ets', ['headerTopInset', 'statusInset',
+  'bodyTop', 'footerBottomInset']);
+const layoutConfig = new Config();
+Object.assign(readerLayout, {
+  getReaderInfoBarConfig: () => layoutConfig, isReaderHeaderVisible: () => true,
+  getReaderHeaderInfoBarHeight: () => layoutConfig.headerLineHeight(), readerVerticalGapWithinMargin: () => 4
+});
+Object.assign(previewLayout, { infoConfig: () => layoutConfig, headerVisible: () => true });
+for (const extend of [false, true]) {
+  for (const safe of [0, 24, 48]) {
+    readerLayout.readerExtendToStatusBar = extend;
+    readerLayout.statusBarSafeHeight = safe;
+    readerLayout.navBarHeight = safe;
+    previewLayout.statusBarHeight = safe;
+    previewLayout.navBarHeight = safe;
+    previewLayout.draft = { extendToStatusBar: extend, marginTop: 16 };
+    for (const offset of [-350, -48, -8, -2, 0, 20, 350]) {
+      layoutConfig.headerOffset = offset;
+      layoutConfig.footerOffset = offset;
+      const top = readerLayout.getReaderHeaderOverlayTopInset();
+      const bottom = readerLayout.getReaderBottomInfoBarBottomInset();
+      const bodyTop = (extend ? 0 : safe) + 16 + readerLayout.getReaderHeaderContentReserve();
+      check(top >= 0 && bottom >= 0, '页眉页脚不越出屏幕边缘');
+      check(bodyTop >= top + layoutConfig.headerLineHeight() + 4, '正文不会与移动后的页眉重叠');
+      equal(previewLayout.headerTopInset(true), top, '全屏预览页眉位置与阅读页一致');
+      equal(previewLayout.footerBottomInset(true), bottom, '全屏预览页脚位置与阅读页一致');
+      equal(previewLayout.bodyTop(true), bodyTop, '全屏预览正文预留与阅读页一致');
+      if (offset === -350) {
+        equal(top, 0, '页眉可抵消状态栏留白直到屏幕顶部');
+        equal(bottom, 0, '页脚可抵消手势条留白直到屏幕底部');
+      }
+    }
+  }
+}
 
 // 左右收缩：旧配置保持位置，正负值分别内收、外扩，且页眉页脚互不影响。
 const shrinkConfig = Config.parse(JSON.stringify({ headerShrink: 12, footerShrink: -8 }));

@@ -386,7 +386,7 @@ struct ThemeTypographySettingsPage {
       }
       .width('100%')
       .padding({
-        top: this.statusInset(full) + this.headerTopGap(),
+        top: this.headerTopInset(full),
         left: this.infoSidePadding(true, true),
         right: this.infoSidePadding(true, false)
       })
@@ -948,21 +948,22 @@ struct ThemeTypographySettingsPage {
     return this.headerEnabled && this.infoConfig().headerVisible();
   }
 
-  headerTopGap(): number {
-    return (this.draft.extendToStatusBar ? 8 : 0) + this.infoConfig().headerOffset;
+  headerTopInset(full: boolean): number {
+    return this.infoConfig().edgeInset(true, this.draft.extendToStatusBar ? 8 : this.statusInset(full));
   }
 
   bodyTop(full: boolean): number {
     let top = this.statusInset(full) + Math.max(0, this.draft.marginTop);
     if (this.headerVisible()) {
-      top += this.infoConfig().headerLineHeight() + this.infoConfig().headerExtraHeight() +
-        Math.min(4, Math.max(0, this.draft.marginTop)) + this.headerTopGap();
+      top += Math.max(0, this.infoConfig().headerLineHeight() + this.infoConfig().headerExtraHeight() +
+        Math.min(4, Math.max(0, this.draft.marginTop)) + this.headerTopInset(full) - this.statusInset(full));
     }
     return top;
   }
 
   footerBottomInset(full: boolean): number {
-    return (full ? this.navBarHeight : 0) + 6 + this.infoConfig().footerOffset;
+    const lift = Math.max(6, Math.min(8, Math.max(0, full ? this.navBarHeight : 0) * 0.5));
+    return this.infoConfig().edgeInset(false, lift);
   }
 
   footerBlockHeight(): number {

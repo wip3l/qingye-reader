@@ -338,7 +338,7 @@ export struct ReaderHeaderFooterEditor {
 
   private stepperMin(field: number): number {
     if (this.isShrinkStepper(field)) return ReaderInfoBarConfig.SHRINK_MIN;
-    if (this.isOffsetStepper(field)) return 0;
+    if (this.isOffsetStepper(field)) return ReaderInfoBarConfig.OFFSET_MIN;
     return this.isOpacityStepper(field) ?
       ReaderInfoBarConfig.OPACITY_MIN : ReaderInfoBarConfig.FONT_SIZE_MIN;
   }
@@ -408,7 +408,7 @@ export struct ReaderHeaderFooterEditor {
         this.colorItem('页眉颜色', true)
         this.stepperItem('页眉字号', ReaderHeaderFooterEditor.STEPPER_HEADER_FONT_SIZE)
         this.stepperItem('页眉不透明度', ReaderHeaderFooterEditor.STEPPER_HEADER_OPACITY)
-        this.stepperItem('页眉下移', ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET)
+        this.stepperItem('页眉位置', ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET)
         this.stepperItem('页眉收缩', ReaderHeaderFooterEditor.STEPPER_HEADER_SHRINK)
         this.switchItem({ title: '页眉分隔线', description: '页眉下方的细线',
           checked: this.config().headerDivider, onChange: (checked: boolean) => {
@@ -432,7 +432,7 @@ export struct ReaderHeaderFooterEditor {
         this.colorItem('页脚颜色', false)
         this.stepperItem('页脚字号', ReaderHeaderFooterEditor.STEPPER_FOOTER_FONT_SIZE)
         this.stepperItem('页脚不透明度', ReaderHeaderFooterEditor.STEPPER_FOOTER_OPACITY)
-        this.stepperItem('页脚上移', ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET)
+        this.stepperItem('页脚位置', ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET)
         this.stepperItem('页脚收缩', ReaderHeaderFooterEditor.STEPPER_FOOTER_SHRINK)
         this.switchItem({ title: '页脚分隔线', description: '页脚上方的细线',
           checked: this.config().footerDivider, onChange: (checked: boolean) => {
@@ -612,7 +612,7 @@ export struct ReaderHeaderFooterEditor {
   }
 
   // 可用状态在这里直接从配置读取。按值传进来的布尔参数不会随配置刷新：初始值在下限的项
-  // （页眉下移、页脚上移从 0 开始）减号一开始是禁用的，数值增加后也不会恢复可用。
+  // 减号一开始禁用时，数值增加后也不会恢复可用。
   @Builder
   stepperButton(icon: Resource, accessibilityText: string, field: number, direction: number) {
     ImmersiveBackButton({

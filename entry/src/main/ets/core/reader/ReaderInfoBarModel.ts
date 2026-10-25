@@ -93,6 +93,7 @@ export class ReaderInfoBarConfig {
   static readonly OPACITY_MAX: number = 100;
   static readonly OPACITY_STEP: number = 10;
   static readonly FIXED_SIDE_PADDING: number = 28;
+  static readonly OFFSET_MIN: number = -350;
   static readonly OFFSET_MAX: number = 350;
   static readonly OFFSET_STEP: number = 2;
   static readonly SHRINK_MIN: number = -350;
@@ -119,9 +120,9 @@ export class ReaderInfoBarConfig {
   footerOpacity: number = ReaderInfoBarConfig.OPACITY_MAX;
   /** 左右边距跟随正文边距；关闭时使用固定边距。 */
   followMargin: boolean = false;
-  /** 页眉在默认位置基础上再下移的距离（vp）。 */
+  /** 页眉相对默认位置的偏移（vp），正数向下，负数向屏幕顶端。 */
   headerOffset: number = 0;
-  /** 页脚在默认位置基础上再上移的距离（vp），用来让开手势指示条。 */
+  /** 页脚相对默认位置的偏移（vp），正数向上，负数向屏幕底端。 */
   footerOffset: number = 0;
   /** 左右两侧在原有边距基础上的收缩距离（vp），负数向外扩展。 */
   headerShrink: number = 0;
@@ -213,7 +214,12 @@ export class ReaderInfoBarConfig {
 
   static clampOffset(value: number): number {
     if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
-    return Math.max(0, Math.min(Math.round(value), ReaderInfoBarConfig.OFFSET_MAX));
+    return Math.max(ReaderInfoBarConfig.OFFSET_MIN, Math.min(Math.round(value), ReaderInfoBarConfig.OFFSET_MAX));
+  }
+
+  /** 相对默认位置移动，向外最多到屏幕边缘；正文占位与显示共用此结果。 */
+  edgeInset(header: boolean, baseInset: number): number {
+    return Math.max(0, baseInset + (header ? this.headerOffset : this.footerOffset));
   }
 
   static clampOpacity(value: number): number {

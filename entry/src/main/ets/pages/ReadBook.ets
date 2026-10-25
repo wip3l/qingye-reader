@@ -2032,9 +2032,6 @@ struct ReadBookPage {
       })
 
       Column() {
-        if (this.isReaderHeaderVisible()) {
-          this.readerHeaderInfoBar()
-        }
         Blank()
           .layoutWeight(1)
         if (this.readerFooterEnabled && !this.isReaderComicModeActive()) {
@@ -2996,9 +2993,6 @@ struct ReadBookPage {
               this.readerSimulationCurlCanvas()
             }
             Column() {
-              if (this.isReaderHeaderVisible()) {
-                this.readerHeaderInfoBar()
-              }
               Blank()
                 .layoutWeight(1)
               if (this.readerFooterEnabled) {
@@ -3027,6 +3021,17 @@ struct ReadBookPage {
       .backgroundColor(this.shouldRenderPrimaryReaderContent() ? this.readerContentLayerColor() :
         this.getBackgroundColor())
       .hitTestBehavior(HitTestMode.Default)
+
+      // 页眉放在全屏层，负位置可以越过正文安全区，且不会被正文容器裁掉。
+      if (this.shouldRenderPrimaryReaderContent() && this.isReaderHeaderVisible()) {
+        Column() {
+          this.readerHeaderInfoBar()
+        }
+        .width('100%')
+        .height('100%')
+        .opacity(this.readerInitialPageReady ? 1 : 0)
+        .hitTestBehavior(HitTestMode.None)
+      }
 
       if (!this.isReaderContinuousScrollSurfaceActive() && !this.showMenu && !this.showToc && !this.showSettings &&
         !this.shouldBlockReaderInteraction()) {
@@ -6280,22 +6285,19 @@ struct ReadBookPage {
   }
 
   getReaderHeaderOverlayTopInset(): number {
-    // 普通阅读容器已经通过 getReaderTopSafePadding() 避让状态栏；叠页/仿真为了让纸张
-    // 覆盖全屏而不消费顶部安全区，需要在页眉自身补回这段高度。
-    return (this.getReaderTopSafePadding() <= 0 ? this.getReaderPageContentTopPadding() : 0) +
-      this.getReaderHeaderTopGap();
+    return this.getReaderInfoBarConfig().edgeInset(true,
+      this.readerExtendToStatusBar ? 8 : this.statusBarSafeHeight);
   }
 
   getReaderHeaderTopGap(): number {
-    // 扩展模式下状态栏已隐藏，页眉从屏幕顶端开始；留一小段间距，避免文字紧贴屏幕边缘和圆角。
-    // 再加上用户设置的页眉下移距离。正文的页眉预留同步增加，页眉下移不会压住首行。
-    return (this.readerExtendToStatusBar ? 8 : 0) + this.getReaderInfoBarConfig().headerOffset;
+    // 换算为正文安全区内的相对位置；负值可抵消页眉占位，正文仍遵守状态栏安全区。
+    return this.getReaderHeaderOverlayTopInset() - (this.readerExtendToStatusBar ? 0 : this.statusBarSafeHeight);
   }
 
   getReaderHeaderContentReserve(): number {
     return this.isReaderHeaderVisible() ?
-      this.getReaderHeaderInfoBarHeight() + this.getReaderInfoBarConfig().headerExtraHeight() +
-        this.readerVerticalGapWithinMargin(4, true) + this.getReaderHeaderTopGap() : 0;
+      Math.max(0, this.getReaderHeaderInfoBarHeight() + this.getReaderInfoBarConfig().headerExtraHeight() +
+        this.readerVerticalGapWithinMargin(4, true) + this.getReaderHeaderTopGap()) : 0;
   }
 
   /**
@@ -7866,8 +7868,8 @@ struct ReadBookPage {
   getReaderBottomInfoBarBottomInset(): number {
     // Only lift the footer enough to sit immediately above the gesture indicator. Use half of the reported
     // navigation inset and keep the result in a narrow range so large three-button areas cannot create a gap.
-    // 用户设置的页脚上移距离加在这段上抬之上；正文的页脚预留用的是同一个值，页脚上移不会压住末行。
-    return this.getReaderGestureIndicatorLift() + this.getReaderInfoBarConfig().footerOffset;
+    // 正位置向上，负位置向下，最多贴到屏幕底端；正文预留使用相同的最终位置。
+    return this.getReaderInfoBarConfig().edgeInset(false, this.getReaderGestureIndicatorLift());
   }
 
   getReaderGestureIndicatorLift(): number {
