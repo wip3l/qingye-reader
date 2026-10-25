@@ -209,8 +209,8 @@ export class ThemeRuntime {
     if (!ThemeRuntime.glassEnabled()) {
       return color;
     }
-    // 菜单与沉浸面板统一为 50% 底色。
-    return `#80${color.substring(1)}`;
+    // 菜单比大面板更通透：浅色 30%、深色 45% 底色。
+    return `#${darkMode ? '73' : '4D'}${color.substring(1)}`;
   }
 
   static glassBorderColor(darkMode: boolean, surface: string = 'panel'): string {

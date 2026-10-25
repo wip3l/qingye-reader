@@ -108,7 +108,8 @@ export struct ReaderSettingSelectRow {
         .value(this.selectedValue())
         .font({ size: AppFontSize.BODY })
         .fontColor(this.textColor)
-        .backgroundColor(this.dark ? '#8030343B' : '#80ECEEF2')
+        .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel,
+          this.dark, this.dark ? '#30343B' : '#ECEEF2', true))
         .arrowPosition(ArrowPosition.END)
         .padding({ left: 12, right: 12 })
         // Keep the hit area rectangular, but soften its corners to match the rounded settings cards.

@@ -555,7 +555,7 @@ export struct SearchPage {
                   .height(SearchPage.HEADER_CONTROL_SIZE)
                   .borderRadius(SearchPage.HEADER_CONTROL_SIZE / 2)
                   .systemMaterial(this.searchFieldMaterial())
-                  .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel, this.appDarkMode))
+                  .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel, this.appDarkMode, '', true))
                   .backgroundBlurStyle(ImmersiveMaterialRuntime.surfaceBlur(this.immersiveLightLevel))
                   .border(ImmersiveMaterialRuntime.surfaceBorder(this.immersiveLightLevel, this.appDarkMode,
                     1, this.glassBorderColor()))
