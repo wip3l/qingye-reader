@@ -197,7 +197,6 @@ struct AccountCenterPage {
           this.accountActions()
         } else {
           this.loginGuide()
-          this.memberSettingsEntry()
         }
         this.serviceHint()
       }
@@ -1737,67 +1736,56 @@ struct AccountCenterPage {
   }
 
   @Builder
-  memberSettingsEntry() {
-    Column() {
-      this.serviceRow($r('sys.symbol.gearshape'), '会员设置', '会员身份与功能标识', false, () => {
-        router.pushUrl({ url: 'pages/MemberSettings' });
-      })
-    }
-    .width('100%')
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-    .backgroundColor(this.cardColor())
-  }
-
-  @Builder
   serviceList() {
     Column() {
-      this.serviceRow($r('sys.symbol.doc_text'), '会员订单', this.ordersExpanded ? '收起' : '最近 50 笔会员订单',
-        !this.ordersExpanded, () => {
-          this.toggleOrders();
-        })
-      if (this.ordersExpanded) {
-        Column({ space: AppSpacing.MD }) {
-          if (this.orders.length === 0) {
-            Text('暂无会员订单')
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.subTextColor())
-          }
-          ForEach(this.orders, (order: MembershipOrder) => {
-            Row({ space: AppSpacing.LG }) {
-              Image(MembershipIcons.forSku(order.sku))
-                .width(32)
-                .height(32)
-                .objectFit(ImageFit.Contain)
-              Column({ space: AppSpacing.XXS }) {
-                Text(MembershipIcons.label(order.sku) || '会员订单')
+      if (this.accountLoggedIn && this.membershipSku && AccountSessionStore.activeMembershipSku() !== '') {
+        this.serviceRow($r('sys.symbol.doc_text'), '会员订单', this.ordersExpanded ? '收起' : '最近 50 笔会员订单',
+          !this.ordersExpanded, () => {
+            this.toggleOrders();
+          })
+        if (this.ordersExpanded) {
+          Column({ space: AppSpacing.MD }) {
+            if (this.orders.length === 0) {
+              Text('暂无会员订单')
+                .fontSize(AppFontSize.CAPTION)
+                .fontColor(this.subTextColor())
+            }
+            ForEach(this.orders, (order: MembershipOrder) => {
+              Row({ space: AppSpacing.LG }) {
+                Image(MembershipIcons.forSku(order.sku))
+                  .width(32)
+                  .height(32)
+                  .objectFit(ImageFit.Contain)
+                Column({ space: AppSpacing.XXS }) {
+                  Text(MembershipIcons.label(order.sku) || '会员订单')
+                    .fontSize(AppFontSize.BODY)
+                    .fontColor(this.primaryTextColor())
+                  Text(this.formatDate(Number(order.createdAt)) +
+                    (Number(order.creditPoints) > 0 ? ` · 抵扣 ${order.creditPoints} 点` : ''))
+                    .fontSize(AppFontSize.CAPTION)
+                    .fontColor(this.subTextColor())
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+                Text(`-${order.pointsSpent} 点`)
                   .fontSize(AppFontSize.BODY)
                   .fontColor(this.primaryTextColor())
-                Text(this.formatDate(Number(order.createdAt)) +
-                  (Number(order.creditPoints) > 0 ? ` · 抵扣 ${order.creditPoints} 点` : ''))
-                  .fontSize(AppFontSize.CAPTION)
-                  .fontColor(this.subTextColor())
               }
-              .layoutWeight(1)
-              .alignItems(HorizontalAlign.Start)
-              Text(`-${order.pointsSpent} 点`)
-                .fontSize(AppFontSize.BODY)
-                .fontColor(this.primaryTextColor())
-            }
-            .width('100%')
-          }, (order: MembershipOrder) => order.id)
+              .width('100%')
+            }, (order: MembershipOrder) => order.id)
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding({ left: 56, right: AppSpacing.XL, bottom: AppSpacing.LG })
+          Divider()
+            .strokeWidth(0.5)
+            .color(this.dividerColor())
+            .margin({ left: 56, right: AppSpacing.XL })
         }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-        .padding({ left: 56, right: AppSpacing.XL, bottom: AppSpacing.LG })
-        Divider()
-          .strokeWidth(0.5)
-          .color(this.dividerColor())
-          .margin({ left: 56, right: AppSpacing.XL })
+        this.serviceRow($r('sys.symbol.gearshape'), '会员设置', '会员身份与功能标识', true, () => {
+          router.pushUrl({ url: 'pages/MemberSettings' });
+        })
       }
-      this.serviceRow($r('sys.symbol.gearshape'), '会员设置', '会员身份与功能标识', true, () => {
-        router.pushUrl({ url: 'pages/MemberSettings' });
-      })
       this.serviceRow($r('sys.symbol.info_circle'), '会员权益与购买说明', '开通、续费、礼包与云空间规则', false, () => {
         this.showPurchaseTerms();
       })
