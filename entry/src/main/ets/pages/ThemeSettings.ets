@@ -13,6 +13,7 @@ import { ThemeTrialManager } from '../utils/ThemeTrialManager';
 import { CustomThemeScheme, CustomThemeSchemeStore } from '../utils/CustomThemeSchemeStore';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { ThemeStartupCover } from '../components/ThemeStartupCover';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
@@ -1798,19 +1799,32 @@ struct ThemeSettingsPage {
       Text(`方案 ${this.customSchemes.length}/${this.customSchemeLimit}`)
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
-      Row({ space: AppSpacing.XXS }) {
-        SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
-          .fontSize(14)
-          .fontColor([this.accentColor()])
-        Text(this.preparingThemeImport ? '读取中' : '导入')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.accentColor())
-        MembershipBadge({ sku: 'MONTHLY' })
+      Stack() {
+        ImmersiveMaterialSurface({
+          surfaceWidth: 84,
+          surfaceHeight: 32,
+          darkMode: this.appDarkMode,
+          fallbackColor: this.cardColor(),
+          glowColor: this.withAlpha(this.accentColor(), '33')
+        }) {
+          Row({ space: AppSpacing.XXS }) {
+            SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
+              .fontSize(14)
+              .fontColor([this.accentColor()])
+            Text(this.preparingThemeImport ? '读取中' : '导入')
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.accentColor())
+              .maxLines(1)
+          }
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+        }
       }
-      .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.XXS, bottom: AppSpacing.XXS })
-      .borderRadius(12)
-      .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
-      .accessibilityText('导入主题包')
+      .width(84)
+      .height(32)
+      .enabled(!this.preparingThemeImport)
+      .accessibilityText(this.preparingThemeImport ? '正在读取主题包' : '导入主题包')
+      .accessibilityRole(AccessibilityRoleType.BUTTON)
       .onClick(() => this.requestThemeImport(''))
     }
     .width('100%')
@@ -2033,7 +2047,7 @@ struct ThemeSettingsPage {
           const schemeId = this.actionCustomSchemeId;
           this.closeCustomThemeActions();
           this.requestThemeExport(schemeId);
-        }, 'MONTHLY')
+        })
         this.contextActionItem($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => {
           this.showCustomThemeActionMenu = false;
           this.requestDeleteCustomTheme(this.actionCustomSchemeId);
@@ -2049,8 +2063,8 @@ struct ThemeSettingsPage {
   }
 
   @Builder
-  contextActionItem(icon: Resource, label: string, color: string, action: () => void, minimumMembership: string = '') {
-    PopupMenuAction(icon, label, color, action, true, '', '', minimumMembership)
+  contextActionItem(icon: Resource, label: string, color: string, action: () => void) {
+    PopupMenuAction(icon, label, color, action)
   }
 
   @Builder
