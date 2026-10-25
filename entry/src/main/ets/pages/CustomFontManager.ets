@@ -11,7 +11,7 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
-import { CloudAutoSync } from '../account/CloudAutoSync';
+import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 
 class ReaderCustomFontItem {
   familyName: string = '';
@@ -32,6 +32,7 @@ struct CustomFontManagerPage {
   @StorageLink('readerFontMode') readerFontMode: string = 'device';
   @StorageLink('readerSystemFontFamily') readerSystemFontFamily: string = '';
   @StorageLink('readerCustomFontsRaw') readerCustomFontsRaw: string = '';
+  @StorageLink('cloudRemoteFontsRaw') cloudRemoteFontsRaw: string = '';
   @StorageLink('readerActiveFontFamily') readerActiveFontFamily: string = '';
   @StorageLink('readerFontRegistered') readerFontRegistered: boolean = false;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
@@ -40,16 +41,20 @@ struct CustomFontManagerPage {
   @StorageLink('appDarkButtonColor') appDarkButtonColor: string = '#3F8CFF';
 
   @State customFonts: ReaderCustomFontItem[] = [];
+  @State refreshingCloudFonts: boolean = false;
+  @State cloudFontError: string = '';
+  @State downloadingCloudFontId: string = '';
+  @State cloudFontDownloadStatus: string = '';
 
   aboutToAppear(): void {
     this.refreshSystemFontFamily();
-    this.reloadCustomFonts();
+    this.refreshFontLists();
     this.syncBars();
   }
 
   onPageShow(): void {
     this.refreshSystemFontFamily();
-    this.reloadCustomFonts();
+    this.refreshFontLists();
     this.syncBars();
   }
 
@@ -80,13 +85,70 @@ struct CustomFontManagerPage {
       Column({ space: 1 }) {
         ForEach(this.customFonts, (item: ReaderCustomFontItem) => {
           this.fontItem(item)
-        })
+        }, (item: ReaderCustomFontItem): string => item.filePath)
       }
       .width('100%')
       .backgroundColor(this.cardColor())
     } else {
       this.emptyPanel()
     }
+
+    this.cloudFontsPanel()
+  }
+
+  remoteFonts(): CloudRemoteFont[] {
+    return CloudAutoSync.parseRemoteFonts(this.cloudRemoteFontsRaw);
+  }
+
+  async refreshFontLists(): Promise<void> {
+    if (this.refreshingCloudFonts || this.downloadingCloudFontId) return;
+    this.refreshingCloudFonts = true;
+    this.cloudFontError = '';
+    try {
+      await this.reloadCustomFonts();
+      await CloudAutoSync.reconcile(getContext(this));
+      // 对账可能移除其他设备已删除的字体，同步更新本机列表。
+      this.loadCustomFonts();
+    } catch (error) {
+      this.cloudFontError = error instanceof Error && error.message ? error.message : '获取云端字体失败，请重试';
+    } finally {
+      this.refreshingCloudFonts = false;
+    }
+  }
+
+  async downloadCloudFont(font: CloudRemoteFont): Promise<void> {
+    if (this.downloadingCloudFontId) return;
+    this.downloadingCloudFontId = font.id;
+    this.cloudFontDownloadStatus = '准备下载';
+    this.cloudFontError = '';
+    try {
+      const filePath = await CloudAutoSync.ensureFontDownloaded(getContext(this), font,
+        (done: number, total: number): void => {
+          this.cloudFontDownloadStatus = total > 0 ?
+            `下载中 ${Math.min(100, Math.floor(done * 100 / total))}%` : '下载中';
+        },
+        (seconds: number): void => {
+          this.cloudFontDownloadStatus = `${seconds} 秒后继续下载`;
+        });
+      this.loadCustomFonts();
+      const imported = this.customFonts.find((item: ReaderCustomFontItem): boolean => item.filePath === filePath);
+      if (!imported) throw new Error('字体已下载，但导入未完成，请重试');
+      if (this.registerCustomFont(imported)) {
+        HdsFeedback.showToast('已下载并导入，可在字体设置中选择');
+      } else {
+        HdsFeedback.showToast('字体已导入，但注册失败，请检查字体文件');
+      }
+    } catch (error) {
+      this.cloudFontError = error instanceof Error && error.message ? error.message : '云端字体下载失败，请重试';
+      HdsFeedback.showToast(this.cloudFontError);
+    } finally {
+      this.downloadingCloudFontId = '';
+      this.cloudFontDownloadStatus = '';
+    }
+  }
+
+  cloudFontSize(bytes: number): string {
+    return bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
   }
 
   async reloadCustomFonts(): Promise<void> {
@@ -604,6 +666,89 @@ struct CustomFontManagerPage {
     .width('100%')
     .padding({ top: 28, bottom: 28 })
     .backgroundColor(this.cardColor())
+  }
+
+  @Builder
+  cloudFontsPanel() {
+    Row() {
+      Text('云端待下载')
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.subTextColor())
+        .layoutWeight(1)
+      Text(this.refreshingCloudFonts ? '刷新中' : '刷新')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.buttonColor())
+        .padding({ left: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
+        .enabled(!this.refreshingCloudFonts && !this.downloadingCloudFontId)
+        .accessibilityText('刷新云端待下载字体')
+        .accessibilityRole(AccessibilityRoleType.BUTTON)
+        .onClick(() => this.refreshFontLists())
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.XL, bottom: AppSpacing.SM })
+
+    if (this.cloudFontError) {
+      Text(this.cloudFontError)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(ThemeRuntime.dangerColor(this.appDarkMode))
+        .width('100%')
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.MD })
+    }
+    if (this.remoteFonts().length > 0) {
+      Column({ space: 1 }) {
+        ForEach(this.remoteFonts(), (font: CloudRemoteFont) => {
+          this.cloudFontItem(font)
+        }, (font: CloudRemoteFont): string => font.id)
+      }
+      .width('100%')
+      .backgroundColor(this.cardColor())
+    } else {
+      Column({ space: AppSpacing.SM }) {
+        Text(this.refreshingCloudFonts ? '正在获取云端字体' :
+          (this.cloudFontError ? '暂时无法获取云端字体' : '暂无待下载的云端字体'))
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.subTextColor())
+        Text('已同步至云端但尚未下载到本机的字体会显示在这里')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: 28, bottom: 28 })
+      .backgroundColor(this.cardColor())
+    }
+  }
+
+  @Builder
+  cloudFontItem(font: CloudRemoteFont) {
+    Row({ space: AppSpacing.MD }) {
+      Column({ space: AppSpacing.XS }) {
+        Text(font.name)
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.primaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.downloadingCloudFontId === font.id ? this.cloudFontDownloadStatus :
+          `${this.cloudFontSize(font.bytes)} · 点击下载并导入`)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      SymbolGlyph($r('sys.symbol.download'))
+        .fontSize(20)
+        .fontColor([this.downloadingCloudFontId ? this.subTextColor() : this.buttonColor()])
+    }
+    .width('100%')
+    .constraintSize({ minHeight: 68 })
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .backgroundColor(this.cardColor())
+    .alignItems(VerticalAlign.Center)
+    .enabled(!this.downloadingCloudFontId)
+    .accessibilityText(`${font.name}，${this.downloadingCloudFontId === font.id ?
+      this.cloudFontDownloadStatus : '下载并导入'}`)
+    .accessibilityRole(AccessibilityRoleType.BUTTON)
+    .onClick(() => this.downloadCloudFont(font))
   }
 
   @Builder

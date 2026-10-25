@@ -70,7 +70,12 @@ function fixture(settings = {}) {
       upload: async () => 'uploaded-id',
       cancelUpload: async () => {},
       manifestHashOfFile: async path => files.get(path).hash,
-      download: async (_ctx, file) => { log.downloads.push(file.id); return '/data/files/cloud_transfers/tmp'; }
+      download: async (_ctx, file, progress, onWait) => {
+        log.downloads.push(file.id);
+        if (onWait) onWait(2);
+        if (progress) progress(file.bytes, file.bytes);
+        return '/data/files/cloud_transfers/tmp';
+      }
     },
     CloudFontImport: {
       uploadName: (name, path) => `${name}.${path.split('.').pop()}`,
@@ -486,6 +491,29 @@ test('metadata-free remote deletion follows the linked id; detached files stay l
   assert.deepEqual(f.log.deleted, ['local://gone']);
   assert.equal(f.books[0].bookUrl, 'local://keep');
   assert.equal(f.log.staged.length, 0);
+});
+
+test('cloud font download reports progress, imports once and removes only the downloaded pending row', async () => {
+  const f = fixture();
+  f.storage.set('readerFontFilePath', '/existing.ttf');
+  f.cloudFile('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'FONT', HASH.b, null, '中文字体.ttf');
+  f.cloudFile('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'FONT', HASH.c, null, '另一字体.ttf');
+  f.files.set('/data/files/cloud_transfers/tmp', { mtime: 0, size: 100, hash: HASH.b });
+  await f.sync.reconcile(f.context);
+  const font = f.sync.remoteFonts()[0];
+  const progress = [], waits = [];
+  const path = await f.sync.ensureFontDownloaded(f.context, font,
+    (done, total) => progress.push([done, total]), seconds => waits.push(seconds));
+  assert.deepEqual(progress, [[100, 100]]);
+  assert.deepEqual(waits, [2]);
+  assert.equal(f.fontPaths()[0], path);
+  assert.equal(f.log.fontNames[0].name, '中文字体.ttf');
+  assert.equal(f.sync.remoteFonts().length, 1);
+  assert.equal(f.sync.remoteFonts()[0].name, '另一字体.ttf');
+  assert.equal(f.storage.get('readerFontFilePath'), '/existing.ttf');
+  await f.sync.ensureFontDownloaded(f.context, font);
+  assert.equal(f.log.downloads.length, 1);
+  assert.equal(f.fontPaths().length, 1);
 });
 
 test('manual font upload registers staged bytes without downloading or changing the selected font', async () => {

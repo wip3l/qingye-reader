@@ -166,8 +166,10 @@ export class CloudAutoSync {
     CloudAutoSync.schedule(context, 1000);
   }
 
-  /** 下拉框选中未下载的云端字体：下载并登记为本机字体，返回字体文件路径。 */
-  static async ensureFontDownloaded(context: Context, font: CloudRemoteFont): Promise<string> {
+  /** 下载并登记为本机字体，返回字体文件路径；管理页可订阅下载进度。 */
+  static async ensureFontDownloaded(context: Context, font: CloudRemoteFont,
+    progress: (done: number, total: number) => void = (): void => {},
+    onWait?: (seconds: number) => void): Promise<string> {
     const item = new CloudFileItem();
     item.id = font.id;
     item.name = font.name;
@@ -177,7 +179,7 @@ export class CloudAutoSync {
     const target = CloudFontImport.localPath(context.filesDir, item);
     if (!target) throw new Error('字体格式无效');
     if (!fs.accessSync(target)) {
-      const downloaded = await CloudFileClient.download(context, item, () => {});
+      const downloaded = await CloudFileClient.download(context, item, progress, onWait);
       const dir = `${context.filesDir}/reader_fonts`;
       if (!fs.accessSync(dir)) await fs.mkdir(dir);
       await fs.copy(fileUri.getUriFromPath(downloaded), fileUri.getUriFromPath(target));
