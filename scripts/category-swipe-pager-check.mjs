@@ -85,6 +85,25 @@ Object.assign(explore, {
   exploreChannelScroller: { scrollToIndex() {} }
 });
 const keys = Array.from(explore.explorePageKeys());
+// 列表 Builder 的按值参数在首次挂载后固定；空 key 表示持续跟随当前分类。
+// 模拟首次挂载时分类尚未加载，随后分类/书源发生变化但 Builder 不重建。
+const listPageKey = '';
+explore.isLoading = true;
+assert.equal(explore.explorePageLoading(listPageKey), true);
+explore.isLoading = false;
+assert.equal(explore.explorePageLoading(listPageKey), false, 'list must stop loading when the first request finishes');
+assert.equal(explore.explorePageBooks(listPageKey), explore.books, 'list reads the loaded current books');
+explore.selectedIndex = 1;
+explore.books = [{ name: '第二类的书' }];
+assert.equal(explore.explorePageBooks(listPageKey)[0].name, '第二类的书', 'list follows category changes without remounting');
+explore.books = [];
+assert.equal(explore.explorePageLoading(listPageKey), false, 'empty/error results must leave loading state');
+assert.equal(explore.explorePageBooks(listPageKey).length, 0);
+explore.selectedSourceUrl = 'source-b';
+assert.equal(explore.isCurrentExplorePage(listPageKey), true, 'list actions keep targeting the current source');
+explore.selectedSourceUrl = 'source-a';
+explore.selectedIndex = 0;
+explore.books = [{ name: '第一类的书' }];
 explore.exploreBooksPageKey = keys[0];
 explore.selectExploreEntry(1);
 assert.equal(explore.explorePageBooks(keys[0])[0].name, '第一类的书', 'outgoing page keeps its content during the animation');

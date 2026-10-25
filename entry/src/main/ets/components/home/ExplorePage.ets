@@ -548,7 +548,8 @@ export struct ExplorePage {
         })
         .layoutWeight(1)
       } else {
-        this.exploreResultContent(this.explorePageKeys()[this.selectedIndex] || '')
+        // 列表始终展示当前分类；Builder 按值参数不能保存首次挂载时的分类 key。
+        this.exploreResultContent('')
       }
       }
       .width('100%')
@@ -1082,7 +1083,8 @@ export struct ExplorePage {
   }
 
   isCurrentExplorePage(key: string): boolean {
-    return key === (this.explorePageKeys()[this.selectedIndex] || '');
+    // 空 key 是列表模式的动态当前页，只有翻页容器使用固定分类 key。
+    return key === '' || key === (this.explorePageKeys()[this.selectedIndex] || '');
   }
 
   explorePageLoading(key: string): boolean {
