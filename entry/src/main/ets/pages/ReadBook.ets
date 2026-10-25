@@ -100,6 +100,9 @@ import { TtsVoiceCatalog } from '../utils/TtsVoiceCatalog';
 import { ReaderTtsQuickSettingsPanel, ReaderTtsVoicePickerPanel } from '../components/reader/ReaderTtsSettingsPanels';
 import { ReaderCustomThemeEditor } from '../components/reader/ReaderCustomThemeEditor';
 import { ReaderTtsCapsule } from '../components/reader/ReaderTtsControls';
+import { ReaderAutoScrollCapsule, ReaderAutoScrollSpeedPanel } from '../components/reader/ReaderAutoScrollControls';
+import { ReaderAutoScrollClock } from '../core/reader/ReaderAutoScrollClock';
+import { ReaderAutoScrollSettingsStore } from '../utils/ReaderAutoScrollSettingsStore';
 import { ReaderHeaderFooterSettings, ReaderTypographyField, ReaderTypographyStepper } from '../components/reader/ReaderLayoutSettings';
 import { ReaderCacheDialogContent } from '../components/reader/ReaderCacheDialogContent';
 import { ReaderTxtCharsetDialogContent, ReaderTxtCharsets } from '../components/reader/ReaderTxtCharsetDialogContent';
@@ -326,6 +329,23 @@ struct ReadBookPage {
   @StorageProp('aiTrialOpen') @Watch('onReaderAiAccessChanged') readerAiTrialOpen: boolean = false;
   // 加密的书源封面解密完成后递增，朗读面板等处的封面重新取到本地文件地址。
   @StorageProp('sourceCoverRevision') sourceCoverRevision: number = 0;
+  @State readerAutoScrollActive: boolean = false;
+  @State readerAutoScrollPaused: boolean = true;
+  @State readerAutoScrollSpeed: number = 20;
+  @State readerAutoScrollStatus: string = '';
+  @State showReaderAutoScrollSpeed: boolean = false;
+  @StorageLink('appLifecycleBackgroundRevision') @Watch('onReaderAutoScrollBackground')
+  readerAutoScrollBackgroundRevision: number = 0;
+  private readerAutoScrollClock: ReaderAutoScrollClock = new ReaderAutoScrollClock();
+  private readerAutoScrollTimer: number = -1;
+  private readerAutoScrollSaveTimer: number = -1;
+  private readerAutoScrollRequest: number = 0;
+  private readerAutoScrollStarting: boolean = false;
+  private readerAutoScrollSettingsLoaded: boolean = false;
+  private readerAutoScrollAnchor: number = -1;
+  private readerAutoScrollWaitingSince: number = 0;
+  private readerAutoScrollTouchPaused: boolean = false;
+
   @State isTtsSpeaking: boolean = false;
   @State isTtsPaused: boolean = false;
   @State showTtsQuickPlayer: boolean = false;
@@ -654,6 +674,7 @@ struct ReadBookPage {
   @StorageLink('readerPreloadEnabled') @Watch('onReaderPreloadChanged') readerPreloadEnabled: boolean = true;
   @StorageLink('readerPreloadChapterCount') @Watch('onReaderPreloadChanged') readerPreloadChapterCount: number = 1;
   @StorageLink('readerUseTtsQuickAction') readerUseTtsQuickAction: boolean = true;
+  @StorageLink('readerUseAutoScrollQuickAction') readerUseAutoScrollQuickAction: boolean = true;
   @StorageLink('readerUseChapterQuickJump') readerUseChapterQuickJump: boolean = true;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
   @StorageLink('readerHeaderEnabled') @Watch('onReaderChromeChanged') readerHeaderEnabled: boolean = false;
@@ -924,6 +945,10 @@ struct ReadBookPage {
   }
 
   onBackPress(): boolean {
+    if (this.showReaderAutoScrollSpeed) {
+      this.showReaderAutoScrollSpeed = false;
+      return true;
+    }
     if (this.eyeTurnState.showCalibration) {
       this.eyeTurn().cancelCalibration();
       return true;
@@ -1030,6 +1055,7 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    this.stopReaderAutoScroll(false);
     this.readerComicColor.setForeground(false);
     this.readerComicColorUnsubscribe?.();
     this.readerComicColorUnsubscribe = null;
@@ -1131,6 +1157,7 @@ struct ReadBookPage {
   }
 
   onPageHide(): void {
+    this.pauseReaderAutoScroll('已暂停');
     if (this.readerInlinePageMode) this.closeReaderCommentPanel();
     this.readerComicColor.setForeground(false);
     this.shortcutRoutingActive = false;
@@ -1441,6 +1468,7 @@ struct ReadBookPage {
   }
 
   resetReaderStateForBookLoad(): void {
+    this.stopReaderAutoScroll(false);
     this.contentLoadSerial++;
     this.cancelReaderPaginationWork(true);
     this.readerWebFetchRuntimeNeeded = false;
@@ -1799,6 +1827,10 @@ struct ReadBookPage {
     const serial = ++this.readerScreenTimeoutSerial;
     if (!this.readerPageVisible) {
       this.setReaderWindowKeepScreenOn(false, serial);
+      return;
+    }
+    if (this.readerAutoScrollActive && !this.readerAutoScrollPaused) {
+      this.setReaderWindowKeepScreenOn(true, serial);
       return;
     }
     const minutes = ReaderSettingsStore.normalizeScreenTimeoutMinutes(this.readerScreenTimeoutMinutes);
@@ -3045,6 +3077,9 @@ struct ReadBookPage {
           !this.isTtsSpeaking && !this.ttsReader.isSpeaking() && !this.globalTtsActive) {
           this.readerTtsQuickActionButton()
         }
+        if (this.readerUseAutoScrollQuickAction && !this.isReaderComicModeActive() && !this.readerAutoScrollActive) {
+          this.readerAutoScrollQuickActionButton()
+        }
       }
 
       if (this.showToc) {
@@ -3069,6 +3104,15 @@ struct ReadBookPage {
       } else if (this.readerUseTtsQuickAction && this.shouldShowGlobalTtsMiniPlayer()) {
         this.globalTtsMiniPlayer()
       }
+
+      if (this.readerAutoScrollActive && !this.showMenu && !this.showToc && !this.showSettings &&
+        !this.showTtsQuickPlayer && !this.showGlobalTtsQuickPlayer && !this.showReaderAutoScrollSpeed) {
+        this.readerAutoScrollCapsule()
+      }
+
+      Column().width(1).height(1).position({ x: 0, y: 0 }).hitTestBehavior(HitTestMode.None)
+        .bindSheet($$this.showReaderAutoScrollSpeed, this.readerAutoScrollSpeedPanel(),
+          this.readerAutoScrollSheetOptions())
 
       if (this.showTtsQuickPlayer) {
         this.sharedTtsPlayerPanel(true)
@@ -4107,6 +4151,18 @@ struct ReadBookPage {
             this.isTtsSpeaking ? (this.isTtsPaused ? '继续朗读' : '暂停朗读') : '开始朗读',
             () => this.toggleTtsReading()
           )
+          this.readerActionMenuItem(
+            $r('sys.symbol.arrow_down'),
+            '自动滚动',
+            () => {
+              if (this.readerAutoScrollActive) {
+                this.hideReaderPanels();
+                this.showReaderAutoScrollSpeed = true;
+              } else {
+                this.startReaderAutoScroll();
+              }
+            }
+          )
         }
         if (this.readerSourceNeedsLogin()) {
           this.readerActionMenuItem(
@@ -4472,6 +4528,259 @@ struct ReadBookPage {
     } else {
       this.loadContent();
     }
+  }
+
+  @Builder
+  readerAutoScrollQuickActionButton() {
+    ImmersiveBackButton({
+      icon: $r('sys.symbol.arrow_down'), iconOffsetX: 0,
+      iconColor: this.readerControlIconColor(), darkMode: this.isReaderThemeDark(),
+      buttonSize: 48, containerWidth: 48, containerHeight: 48, startInset: 0, compactLayout: true,
+      accessibilityLabel: '开始自动滚动', onBack: () => { this.startReaderAutoScroll(); }
+    })
+      .width(48).height(48)
+      .position({ x: Math.max(12, this.readerTtsQuickActionLeft() +
+        (this.readerUsesSideAnchoredControls() && this.readerMenuAnchorSide < 0 ? 60 : -60)), y: '100%' })
+      .translate({ y: -(this.readerBottomMenuOverlayHeight() + 62) })
+  }
+
+  @Builder
+  readerAutoScrollCapsule() {
+    ReaderAutoScrollCapsule({
+      speed: this.readerAutoScrollSpeed, paused: this.readerAutoScrollPaused,
+      status: this.readerAutoScrollStatus, textColor: this.readerPanelTextColor(),
+      subTextColor: this.readerPanelSubTextColor(), accentColor: this.accentColor(),
+      accentSurfaceColor: ThemeRuntime.accentSurfaceColor(this.appDarkMode),
+      panelColor: this.readerPanelColor(), dark: this.isReaderThemeDark(),
+      onOpen: () => { this.showReaderAutoScrollSpeed = true; },
+      onToggle: () => { this.toggleReaderAutoScroll(); }
+    })
+      .position({ x: Math.max(12, this.readerFloatingBarRight() - ReaderAutoScrollCapsule.WIDTH), y: '100%' })
+      .translate({ y: -(this.getReaderNavigationBottomReserve() + 82) })
+  }
+
+  @Builder
+  readerAutoScrollSpeedPanel() {
+    ReaderAutoScrollSpeedPanel({
+      speed: this.readerAutoScrollSpeed, paused: this.readerAutoScrollPaused,
+      status: this.readerAutoScrollStatus,
+      textColor: this.readerPanelTextColor(), subTextColor: this.readerPanelSubTextColor(),
+      accentColor: this.accentColor(),
+      accentSurfaceColor: ThemeRuntime.accentSurfaceColor(this.appDarkMode),
+      controlColor: ThemeRuntime.inputColor(this.isReaderThemeDark()),
+      onSpeed: (speed: number) => this.setReaderAutoScrollSpeed(speed),
+      onToggle: () => { this.toggleReaderAutoScroll(); },
+      onStop: () => { this.stopReaderAutoScroll(); },
+      onClose: () => { this.showReaderAutoScrollSpeed = false; }
+    })
+  }
+
+  readerAutoScrollSheetOptions(): SheetOptions {
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, {
+      height: 410,
+      dragBar: true,
+      showClose: false,
+      onDisappear: (): void => { this.showReaderAutoScrollSpeed = false; }
+    }, this.isReaderThemeDark(), this.accentColor());
+  }
+
+  onReaderAutoScrollBackground(): void {
+    this.pauseReaderAutoScroll('已暂停');
+  }
+
+  async startReaderAutoScroll(): Promise<void> {
+    if (this.readerAutoScrollStarting || !this.readerPageVisible || this.isReaderComicModeActive() ||
+      this.chapters.length === 0 || !this.content || !this.readerInitialPageReady || this.isLoading) return;
+    this.readerAutoScrollStarting = true;
+    const request = ++this.readerAutoScrollRequest;
+    try {
+      if (!this.readerAutoScrollSettingsLoaded) {
+        try {
+          this.readerAutoScrollSpeed = await ReaderAutoScrollSettingsStore.load(getContext(this));
+          this.readerAutoScrollSettingsLoaded = true;
+        } catch (error) {
+          console.warn('读取自动滚动速度失败:', error);
+        }
+      }
+      await ReaderTtsFloatingSession.pause();
+      if (this.ttsReader.isSpeaking() && !this.ttsReader.isPaused()) {
+        await this.ttsReader.pause();
+        this.isTtsPaused = this.ttsReader.isPaused();
+        this.updateTtsFloatingSession();
+      }
+      if (request !== this.readerAutoScrollRequest || !this.readerPageVisible) return;
+      if ((this.globalTtsActive && !this.globalTtsPaused) ||
+        (this.ttsReader.isSpeaking() && !this.ttsReader.isPaused())) {
+        HdsFeedback.showToast('请先暂停朗读后再启动自动滚动');
+        return;
+      }
+      const alreadyContinuous = this.isReaderNovelContinuousScrollModeActive();
+      const offset = this.getReaderStableReflowOffset();
+      this.setReaderTextSelectionActive(false);
+      this.cancelManualPageTurnTtsResume();
+      this.clearQueuedReaderPageTurns();
+      this.stopReaderComicScreenScroll();
+      this.cancelReaderComicPan();
+      this.hideReaderPanels();
+      this.showToc = false;
+      this.showTtsQuickPlayer = false;
+      this.showGlobalTtsQuickPlayer = false;
+      this.readerAutoScrollActive = true;
+      this.readerAutoScrollPaused = false;
+      this.readerAutoScrollStatus = '';
+      this.readerAutoScrollWaitingSince = 0;
+      if (!alreadyContinuous) {
+        this.readerAutoScrollAnchor = offset;
+        this.reflowReaderAutoScrollMode(offset);
+      }
+      this.readerAutoScrollClock.reset();
+      if (this.readerAutoScrollTimer >= 0) clearInterval(this.readerAutoScrollTimer);
+      this.readerAutoScrollTimer = setInterval(() => this.advanceReaderAutoScroll(), 16);
+      this.applyReaderScreenTimeout();
+    } catch (error) {
+      this.pauseReaderAutoScroll('启动失败，已暂停');
+      HdsFeedback.showToast('自动滚动启动失败，请重试');
+      console.warn('启动自动滚动失败:', error);
+    } finally {
+      this.readerAutoScrollStarting = false;
+    }
+  }
+
+  toggleReaderAutoScroll(): void {
+    if (this.readerAutoScrollActive && !this.readerAutoScrollPaused) this.pauseReaderAutoScroll('已暂停');
+    else this.startReaderAutoScroll();
+  }
+
+  pauseReaderAutoScroll(status: string): void {
+    this.readerAutoScrollRequest++;
+    if (this.readerAutoScrollTimer >= 0) clearInterval(this.readerAutoScrollTimer);
+    this.readerAutoScrollTimer = -1;
+    this.readerAutoScrollClock.reset();
+    if (!this.readerAutoScrollActive || this.readerAutoScrollPaused) return;
+    this.readerAutoScrollPaused = true;
+    this.readerAutoScrollStatus = status;
+    this.applyReaderScreenTimeout();
+    this.scheduleReaderComicProgressSave();
+  }
+
+  stopReaderAutoScroll(reflow: boolean = true): void {
+    const active = this.readerAutoScrollActive;
+    const visibleOffset = active ? this.readerContinuousV2FirstVisibleSourceOffset() : -1;
+    const offset = this.readerAutoScrollAnchor >= 0 ? this.readerAutoScrollAnchor :
+      (visibleOffset >= 0 ? visibleOffset : this.getReaderStableReflowOffset());
+    this.pauseReaderAutoScroll('已暂停');
+    this.readerAutoScrollActive = false;
+    this.showReaderAutoScrollSpeed = false;
+    this.readerAutoScrollAnchor = -1;
+    this.flushReaderAutoScrollSpeed();
+    if (active && reflow && this.readerPageTurnMode !== 3 && this.readerPageVisible) {
+      this.reflowReaderAutoScrollMode(offset);
+    }
+  }
+
+  reflowReaderAutoScrollMode(offset: number): void {
+    // Keep the durable page-turn preference untouched; only the effective rendering mode changes.
+    this.finishPageTurnAnimation(false);
+    this.cancelReaderPaginationWork(true);
+    this.readerPaginationCache.clear();
+    this.neighborLoader().reset();
+    this.readerComicPageDataSource.reset();
+    this.readerComicScrollRestoreSerial++;
+    this.readerComicScrollRestoring = false;
+    this.pendingRestorePageIndex = -1;
+    this.readerTypographyRestoreOffset = Math.max(0, offset);
+    this.paginateContent(this.content);
+  }
+
+  setReaderAutoScrollSpeed(speed: number): void {
+    this.readerAutoScrollSpeed = ReaderAutoScrollClock.normalizeSpeed(speed);
+    if (this.readerAutoScrollSaveTimer >= 0) clearTimeout(this.readerAutoScrollSaveTimer);
+    this.readerAutoScrollSaveTimer = setTimeout(() => this.flushReaderAutoScrollSpeed(), 350);
+  }
+
+  flushReaderAutoScrollSpeed(): void {
+    if (this.readerAutoScrollSaveTimer < 0) return;
+    clearTimeout(this.readerAutoScrollSaveTimer);
+    this.readerAutoScrollSaveTimer = -1;
+    ReaderAutoScrollSettingsStore.save(getContext(this), this.readerAutoScrollSpeed).catch((error: Error) => {
+      console.warn('保存自动滚动速度失败:', error);
+      HdsFeedback.showToast('滚动速度保存失败');
+    });
+  }
+
+  advanceReaderAutoScroll(): void {
+    if (!this.readerAutoScrollActive || this.readerAutoScrollPaused) return;
+    if (!this.readerPageVisible || this.isReaderComicModeActive() || this.showMenu || this.showToc ||
+      this.showSettings || this.showReaderCommentPanel || this.hasReaderTextSelection() ||
+      (this.globalTtsActive && !this.globalTtsPaused) || (this.isTtsSpeaking && !this.isTtsPaused)) {
+      this.pauseReaderAutoScroll('已暂停');
+      return;
+    }
+    const now = Date.now();
+    const ready = !this.isLoading && this.readerInitialPageReady && !this.readerComicScrollRestoring &&
+      this.pendingRestorePageIndex < 0 && this.readerTypographyRestoreOffset < 0 &&
+      this.readerContinuousCommitChapter < 0 && !this.readerComicChapterSwitching;
+    const delta = this.readerAutoScrollClock.advance(now, this.readerAutoScrollSpeed,
+      this.getEffectiveReaderLineHeight(), ready);
+    try {
+      if (!ready || (this.readerAutoScrollAnchor >= 0 && !this.restoreReaderAutoScrollAnchor())) {
+        this.waitReaderAutoScroll(now);
+        return;
+      }
+      if (this.readerComicScroller.isAtEnd()) {
+        if (this.readerComicPageDataSource.lastChapter() >= this.chapters.length - 1) {
+          this.pauseReaderAutoScroll('已到书末');
+          return;
+        }
+        const last = this.readerComicPageDataSource.itemAt(this.readerComicPageDataSource.totalCount() - 1);
+        if (last?.failed) {
+          this.pauseReaderAutoScroll('加载失败，已暂停');
+          return;
+        }
+        this.ensureReaderContinuousNeighbors(this.readerContinuousLastListStart,
+          this.readerContinuousLastListEnd, true);
+        this.waitReaderAutoScroll(now);
+        return;
+      }
+      this.readerAutoScrollWaitingSince = 0;
+      if (this.readerAutoScrollStatus) this.readerAutoScrollStatus = '';
+      if (delta > 0) this.readerComicScroller.scrollBy(0, delta);
+    } catch (error) {
+      this.pauseReaderAutoScroll('滚动异常，已暂停');
+      console.warn('自动滚动失败:', error);
+    }
+  }
+
+  waitReaderAutoScroll(now: number): void {
+    if (this.readerAutoScrollWaitingSince === 0) this.readerAutoScrollWaitingSince = now;
+    if (now - this.readerAutoScrollWaitingSince > 30000) {
+      this.pauseReaderAutoScroll('加载超时，已暂停');
+    } else if (now - this.readerAutoScrollWaitingSince > 500 && !this.readerAutoScrollStatus) {
+      this.readerAutoScrollStatus = '等待正文';
+    }
+  }
+
+  restoreReaderAutoScrollAnchor(): boolean {
+    const index = this.findPageIndexByOffset(this.readerAutoScrollAnchor);
+    const layout = this.readerContinuousV2Layout(index, this.contentPages[index] || '');
+    if (!layout) return false;
+    const document = this.readerContinuousV2Documents.get(layout.identity);
+    const chunkStart = this.readerContinuousV2Sources.get(layout.identity);
+    if (!document || chunkStart === undefined) return false;
+    const displayOffset = document.displayOffsetForSource(Math.max(0, this.readerAutoScrollAnchor - chunkStart));
+    let top = 0;
+    for (const fragment of layout.fragments) {
+      if (!fragment.paragraph) continue;
+      for (const line of fragment.paragraph.getLineMetrics()) {
+        if (fragment.displayStart + line.startIndex > displayOffset) break;
+        top = fragment.paragraphY + line.topHeight;
+      }
+    }
+    this.readerComicScroller.scrollToIndex(this.readerContinuousListIndex(index), false, ScrollAlign.START,
+      { extraOffset: LengthMetrics.vp(px2vp(top)) });
+    this.readerAutoScrollAnchor = -1;
+    this.readerAutoScrollClock.reset();
+    return true;
   }
 
   @Builder
@@ -5246,7 +5555,7 @@ struct ReadBookPage {
   }
 
   isReaderNovelContinuousScrollModeActive(): boolean {
-    return !this.isReaderComicModeActive() && this.readerPageTurnMode === 3;
+    return !this.isReaderComicModeActive() && (this.readerAutoScrollActive || this.readerPageTurnMode === 3);
   }
 
   isReaderContinuousScrollSurfaceActive(): boolean {
@@ -5254,7 +5563,7 @@ struct ReadBookPage {
   }
 
   readerEffectivePageTurnMode(): number {
-    return this.readerPageTurnMode;
+    return this.readerAutoScrollActive ? 3 : this.readerPageTurnMode;
   }
 
   comicBoundaryChapterSwipeDirection(offsetY: number): number {
@@ -5606,6 +5915,7 @@ struct ReadBookPage {
   commitReaderContinuousChapter(chapterIndex: number, pageIndex: number): void {
     if (this.readerContinuousCommitChapter >= 0 || this.readerComicChapterSwitching) return;
     this.runReaderContinuousChapterCommit(chapterIndex, pageIndex).catch((error: Error) => {
+      this.pauseReaderAutoScroll('加载失败，已暂停');
       console.error('滚动跨章切换当前章失败:', error);
     });
   }
@@ -5635,6 +5945,7 @@ struct ReadBookPage {
       if (this.currentChapterIndex !== chapterIndex && this.pendingRestorePageIndex >= 0) {
         this.pendingRestorePageIndex = -1;
       }
+      if (!switched) this.pauseReaderAutoScroll('加载失败，已暂停');
     }
     if (!this.readerPageVisible || this.currentChapterIndex !== chapterIndex) return;
     console.info(`[ReaderContinuous] chapter ${sourceChapterIndex} -> ${chapterIndex} switched=${switched}`);
@@ -6698,6 +7009,7 @@ struct ReadBookPage {
     this.readerPreloadEnabled = settings.preloadEnabled;
     this.readerPreloadChapterCount = settings.preloadChapterCount;
     this.readerUseTtsQuickAction = settings.useTtsQuickAction;
+    this.readerUseAutoScrollQuickAction = settings.useAutoScrollQuickAction;
     this.readerUseChapterQuickJump = settings.useChapterQuickJump;
     this.readerQuickBookmarkEnabled = settings.quickBookmarkEnabled;
     this.readerHeaderEnabled = settings.readerHeaderEnabled;
@@ -10168,6 +10480,7 @@ struct ReadBookPage {
   }
 
   switchPageTurnMode(mode: number) {
+    this.stopReaderAutoScroll();
     if (this.readerPageTurnMode === mode) {
       return;
     }
@@ -10513,6 +10826,9 @@ struct ReadBookPage {
   }
 
   async toggleTtsReading(): Promise<void> {
+    if (!this.isTtsSpeaking || this.isTtsPaused || this.ttsReader.isPaused()) {
+      this.pauseReaderAutoScroll('朗读中，已暂停');
+    }
     if (this.isReaderComicModeActive()) return;
     if (this.isTtsSpeaking || this.ttsReader.isSpeaking()) {
       try {
@@ -10550,6 +10866,7 @@ struct ReadBookPage {
   async startTtsReadingFromCurrentPosition(showToast: boolean,
     manualPageTurnResume: boolean = false, manualPageTurnResumeSerial: number = -1,
     readingStartOffset: number = -1, preserveExistingFocus: boolean = false): Promise<void> {
+    this.pauseReaderAutoScroll('朗读中，已暂停');
     if (!manualPageTurnResume) {
       this.cancelManualPageTurnTtsResume();
       this.clearQueuedReaderPageTurns();
@@ -13008,6 +13325,10 @@ struct ReadBookPage {
   }
 
   rememberContinuousReaderPointer(event: TouchEvent): void {
+    if (event.type === TouchType.Down) {
+      this.readerAutoScrollTouchPaused = this.readerAutoScrollActive && !this.readerAutoScrollPaused;
+      this.pauseReaderAutoScroll('已暂停');
+    }
     const point = event.changedTouches && event.changedTouches.length > 0 ? event.changedTouches[0] :
       (event.touches && event.touches.length > 0 ? event.touches[0] : null);
     if (!point) return;
@@ -13053,8 +13374,9 @@ struct ReadBookPage {
       this.cancelContinuousReaderSelectionTimer();
       const duration = Date.now() - this.readerContinuousSelectionDownAt;
       if (!this.readerContinuousSelectionMoved && duration < 380) {
-        this.handleContinuousReaderShortTap(globalX, globalY);
+        if (!this.readerAutoScrollTouchPaused) this.handleContinuousReaderShortTap(globalX, globalY);
       }
+      this.readerAutoScrollTouchPaused = false;
       return;
     }
     if (event.type === TouchType.Cancel) {
@@ -16274,6 +16596,7 @@ struct ReadBookPage {
   }
 
   scrollReaderComicByPage(direction: number): void {
+    this.pauseReaderAutoScroll('已暂停');
     if (this.isReaderComicModeActive()) {
       this.scrollReaderComicByScreen(direction);
       return;

@@ -8,7 +8,7 @@ import { AppSpacing } from '../../theme/AppSpacing';
 
 /**
  * 阅读页"布局元素设置"对话框内容：控制点击阅读页后出现哪些快捷组件。
- * 两个开关直接绑定全局设置并自行保存；由阅读页用系统对话框打开，配色跟随应用主题，由页面传入。
+ * 开关直接绑定全局设置并自行保存；由阅读页用系统对话框打开，配色跟随应用主题，由页面传入。
  */
 @Component
 export struct ReaderLayoutElementSettingsPanel {
@@ -24,11 +24,12 @@ export struct ReaderLayoutElementSettingsPanel {
   };
 
   @StorageLink('readerUseTtsQuickAction') readerUseTtsQuickAction: boolean = true;
+  @StorageLink('readerUseAutoScrollQuickAction') readerUseAutoScrollQuickAction: boolean = true;
   @StorageLink('readerUseChapterQuickJump') readerUseChapterQuickJump: boolean = true;
 
   private save(): void {
     ReaderSettingsStore.saveLayoutElementSettings(getContext(this), this.readerUseTtsQuickAction,
-      this.readerUseChapterQuickJump).catch((e: Error) => {
+      this.readerUseChapterQuickJump, this.readerUseAutoScrollQuickAction).catch((e: Error) => {
       console.error('保存阅读布局元素设置失败:', e);
       HdsFeedback.showToast('布局元素设置保存失败');
     });
@@ -69,6 +70,11 @@ export struct ReaderLayoutElementSettingsPanel {
         this.toggleRow('使用快速朗读组件', '显示朗读快捷按钮和悬浮胶囊', this.readerUseTtsQuickAction,
           (enabled: boolean) => {
             this.readerUseTtsQuickAction = enabled;
+            this.save();
+          })
+        this.toggleRow('使用快速滚动组件', '显示自动滚动快捷按钮', this.readerUseAutoScrollQuickAction,
+          (enabled: boolean) => {
+            this.readerUseAutoScrollQuickAction = enabled;
             this.save();
           })
       }

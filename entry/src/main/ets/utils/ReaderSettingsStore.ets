@@ -50,6 +50,7 @@ export class ReaderSettings {
   preloadEnabled: boolean = true;
   preloadChapterCount: number = 1;
   useTtsQuickAction: boolean = true;
+  useAutoScrollQuickAction: boolean = true;
   useChapterQuickJump: boolean = true;
   quickBookmarkEnabled: boolean = true;
   // 阅读页眉页脚配置。默认页眉关闭、页脚保持现有章节/页码信息。
@@ -135,6 +136,7 @@ export class ReaderSettingsStore {
   static readonly KEY_PRELOAD_ENABLED: string = 'readerPreloadEnabled';
   static readonly KEY_PRELOAD_CHAPTER_COUNT: string = 'readerPreloadChapterCount';
   static readonly KEY_USE_TTS_QUICK_ACTION: string = 'readerUseTtsQuickAction';
+  static readonly KEY_USE_AUTO_SCROLL_QUICK_ACTION: string = 'readerUseAutoScrollQuickAction';
   static readonly KEY_USE_CHAPTER_QUICK_JUMP: string = 'readerUseChapterQuickJump';
   static readonly KEY_QUICK_BOOKMARK_ENABLED: string = 'readerQuickBookmarkEnabled';
   static readonly KEY_HEADER_ENABLED: string = 'readerHeaderEnabled';
@@ -397,6 +399,11 @@ export class ReaderSettingsStore {
       store,
       ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION,
       AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION) ?? true
+    );
+    settings.useAutoScrollQuickAction = await ReaderSettingsStore.getBoolean(
+      store,
+      ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION,
+      AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION) ?? true
     );
     settings.useChapterQuickJump = await ReaderSettingsStore.getBoolean(
       store,
@@ -849,12 +856,15 @@ export class ReaderSettingsStore {
   }
 
   static saveLayoutElementSettings(context: Context, useTtsQuickAction: boolean,
-    useChapterQuickJump: boolean): Promise<void> {
+    useChapterQuickJump: boolean,
+    useAutoScrollQuickAction: boolean = AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION) ?? true): Promise<void> {
     const settings = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
     settings.useTtsQuickAction = useTtsQuickAction;
+    settings.useAutoScrollQuickAction = useAutoScrollQuickAction;
     settings.useChapterQuickJump = useChapterQuickJump;
     ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(settings);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION, useTtsQuickAction);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION, useAutoScrollQuickAction);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP, useChapterQuickJump);
     const snapshot = ReaderSettingsStore.clone(settings);
     const themeId = ReaderSettingsStore.activeThemeId();
@@ -863,6 +873,7 @@ export class ReaderSettingsStore {
     const next = previous.then(async () => {
       const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
       await store.put(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION, snapshot.useTtsQuickAction);
+      await store.put(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION, snapshot.useAutoScrollQuickAction);
       await store.put(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP, snapshot.useChapterQuickJump);
       await ReaderSettingsStore.persistThemeProfile(store, themeId, snapshot);
       await store.flush();
@@ -1021,7 +1032,8 @@ export class ReaderSettingsStore {
     await ReaderSettingsStore.saveLayoutElementSettings(
       context,
       settings.useTtsQuickAction,
-      settings.useChapterQuickJump
+      settings.useChapterQuickJump,
+      settings.useAutoScrollQuickAction
     );
     await ReaderSettingsStore.saveReaderChromeSettings(
       context,
@@ -1052,6 +1064,7 @@ export class ReaderSettingsStore {
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_PRELOAD_ENABLED, normalized.preloadEnabled);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_PRELOAD_CHAPTER_COUNT, normalized.preloadChapterCount);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION, normalized.useTtsQuickAction);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION, normalized.useAutoScrollQuickAction);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP, normalized.useChapterQuickJump);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED, normalized.quickBookmarkEnabled);
     ReaderSettingsStore.applyReaderChromeToStorage(normalized);
@@ -1715,6 +1728,8 @@ export class ReaderSettingsStore {
     settings.preloadChapterCount = ReaderSettingsStore.normalizePreloadChapterCount(source.preloadChapterCount);
     settings.useTtsQuickAction = typeof source.useTtsQuickAction === 'boolean' ? source.useTtsQuickAction :
       (AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION) ?? true);
+    settings.useAutoScrollQuickAction = typeof source.useAutoScrollQuickAction === 'boolean' ? source.useAutoScrollQuickAction :
+      (AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION) ?? true);
     settings.useChapterQuickJump = typeof source.useChapterQuickJump === 'boolean' ? source.useChapterQuickJump :
       (AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP) ?? true);
     settings.quickBookmarkEnabled = typeof source.quickBookmarkEnabled === 'boolean' ? source.quickBookmarkEnabled :
@@ -1855,6 +1870,7 @@ export class ReaderSettingsStore {
       AppStorage.get<number>(ReaderSettingsStore.KEY_PRELOAD_CHAPTER_COUNT) ?? 1
     );
     settings.useTtsQuickAction = AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION) ?? true;
+    settings.useAutoScrollQuickAction = AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION) ?? true;
     settings.useChapterQuickJump = AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP) ?? true;
     settings.quickBookmarkEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED) ?? true;
     settings.readerHeaderEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_HEADER_ENABLED) ?? false;

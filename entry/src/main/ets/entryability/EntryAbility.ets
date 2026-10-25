@@ -118,6 +118,7 @@ export default class EntryAbility extends UIAbility {
     PersistentStorage.persistProp('readerPreloadEnabled', true);
     PersistentStorage.persistProp('readerPreloadChapterCount', 1);
     PersistentStorage.persistProp('readerUseTtsQuickAction', true);
+    PersistentStorage.persistProp('readerUseAutoScrollQuickAction', true);
     PersistentStorage.persistProp('readerUseChapterQuickJump', true);
     PersistentStorage.persistProp('fullTextCacheCancelNonce', 0);
     PersistentStorage.persistProp('fullTextCacheCancelSignal', '');
