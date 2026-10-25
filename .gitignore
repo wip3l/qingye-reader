@@ -55,6 +55,7 @@ output/
 
 # Local configuration
 local.properties
+/AGENTS.md
 
 # OS generated files
 .DS_Store
