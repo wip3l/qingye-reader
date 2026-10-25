@@ -19,7 +19,7 @@
 </p>
 <p align="center">
   <a href="docs/manual/shots/06-layout.webp"><img src="docs/manual/shots/06-layout.webp" width="19%" alt="布局随心：字号、间距、缩进、对齐与页眉页脚" /></a>
-  <a href="docs/manual/shots/07-comic.webp"><img src="docs/manual/shots/07-comic.webp" width="19%" alt="漫画随心：漫画超分、繁体转简体与自由缩放" /></a>
+  <a href="docs/manual/shots/07-comic-ai.webp"><img src="docs/manual/shots/07-comic-ai.webp" width="19%" alt="漫画 AI：AI 着色、AI 超分、AI 翻译，黑白与着色效果对照" /></a>
   <a href="docs/manual/shots/08-voice.webp"><img src="docs/manual/shots/08-voice.webp" width="19%" alt="朗读音色自定义：手动新建、URL 导入与文件导入" /></a>
   <a href="docs/manual/shots/09-theme-share.webp"><img src="docs/manual/shots/09-theme-share.webp" width="19%" alt="主题分享与导入：导出、分享和导入 .qytheme 主题包" /></a>
   <a href="docs/manual/shots/10-theme.webp"><img src="docs/manual/shots/10-theme.webp" width="19%" alt="多变主题：多套主题切换与自定义方案" /></a>
