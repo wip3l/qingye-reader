@@ -5138,7 +5138,7 @@ struct ReadBookPage {
       return '';
     }
     const source = this.ttsPanelOffsetSource();
-    return this.cleanTtsPanelSlice(source.substring(this.ttsHighlightStart, this.ttsHighlightEnd));
+    return this.cleanTtsPanelSlice(source.substring(this.ttsHighlightStart, this.ttsHighlightEnd), false);
   }
 
   ttsQuickSentencePreview(): string {
@@ -5155,13 +5155,13 @@ struct ReadBookPage {
     const source = this.ttsPanelOffsetSource();
     if (this.ttsHighlightStart <= 0) return '';
     return this.cleanTtsPanelSlice(
-      source.substring(Math.max(0, this.ttsHighlightStart - 600), this.ttsHighlightStart));
+      source.substring(Math.max(0, this.ttsHighlightStart - 600), this.ttsHighlightStart), false);
   }
 
   ttsPanelTextAfter(): string {
     const source = this.ttsPanelOffsetSource();
     const start = this.ttsHighlightEnd > this.ttsHighlightStart ? this.ttsHighlightEnd : 0;
-    return this.cleanTtsPanelSlice(source.substring(start, Math.min(source.length, start + 900)));
+    return this.cleanTtsPanelSlice(source.substring(start, Math.min(source.length, start + 900)), false);
   }
 
   ttsPanelOffsetSource(): string {
@@ -5183,19 +5183,20 @@ struct ReadBookPage {
     return source;
   }
 
-  cleanTtsPanelSlice(text: string): string {
-    return (text || '')
+  cleanTtsPanelSlice(text: string, trimEdges: boolean = true): string {
+    const cleaned = (text || '')
       .replace(/[ \t]{2,}/g, ' ')
       .replace(/[ \t]*\n[ \t]*/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+      .replace(/\n{3,}/g, '\n\n');
+    // Inline highlighting needs the original paragraph/word separators at speech boundaries.
+    return trimEdges ? cleaned.trim() : cleaned;
   }
 
   ttsPanelFollowingText(): string {
     const before = this.ttsPanelTextBefore();
     const current = this.ttsCurrentSentence();
     const after = this.ttsPanelTextAfter();
-    return [before, current, after].filter((value: string): boolean => !!value).join('\n');
+    return before + current + after;
   }
 
   ttsQuickProgress(): number {

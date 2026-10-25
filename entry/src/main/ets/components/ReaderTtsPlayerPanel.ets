@@ -63,9 +63,9 @@ export struct ReaderTtsPlayerPanel {
   @StorageLink('globalTtsCover') globalTtsCover: ResourceStr = '';
   @StorageLink('globalTtsCoverFrame') globalTtsCoverFrame: ResourceStr = '';
   @StorageLink('globalTtsContent') globalTtsContent: string = '';
-  @StorageLink('globalTtsTextBefore') globalTtsTextBefore: string = '';
+  @StorageLink('globalTtsTextBefore') @Watch('onCurrentTextChanged') globalTtsTextBefore: string = '';
   @StorageLink('globalTtsCurrentText') @Watch('onCurrentTextChanged') globalTtsCurrentText: string = '';
-  @StorageLink('globalTtsTextAfter') globalTtsTextAfter: string = '';
+  @StorageLink('globalTtsTextAfter') @Watch('onCurrentTextChanged') globalTtsTextAfter: string = '';
   @StorageLink('globalTtsChapterProgress') globalTtsChapterProgress: string = '';
   @StorageLink('globalTtsProgress') globalTtsProgress: number = 0;
   @StorageLink('globalTtsSpeed') globalTtsSpeed: number = 1;
@@ -80,10 +80,18 @@ export struct ReaderTtsPlayerPanel {
   @StorageLink('globalTtsBusy') globalTtsBusy: boolean = false;
   @State optionsPanel: number = 0;
   @State audioVoiceMenuRevision: number = 0;
-  private textScroller: ListScroller = new ListScroller();
+  private textScroller: Scroller = new Scroller();
+  private readingTextController: TextController = new TextController();
+  private readingViewportHeight: number = 0;
+  private textUpdateTimer: number = -1;
 
   aboutToAppear(): void {
     this.scrollToCurrentSentence(false);
+  }
+
+  aboutToDisappear(): void {
+    if (this.textUpdateTimer >= 0) clearTimeout(this.textUpdateTimer);
+    this.textUpdateTimer = -1;
   }
 
   onCurrentTextChanged(): void {
@@ -309,37 +317,39 @@ export struct ReaderTtsPlayerPanel {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      List({ scroller: this.textScroller, space: AppSpacing.MD }) {
-        ListItem() {
-          Text(this.globalTtsTextBefore)
-            .fontSize(AppFontSize.BODY_LARGE)
-            .lineHeight(26)
+      Scroll(this.textScroller) {
+        Text(undefined, { controller: this.readingTextController }) {
+          Span(this.globalTtsTextBefore)
             .fontColor(this.subTextColor)
-            .width('100%')
-        }
-        ListItem() {
-          Text(this.globalTtsCurrentText || '正在定位当前朗读内容…')
-            .fontSize(AppFontSize.SUBTITLE)
-            .fontWeight(FontWeight.Medium)
-            .lineHeight(28)
+          Span(this.globalTtsCurrentText)
             .fontColor(this.primaryTextColor)
-            .width('100%')
-            .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
-            .borderRadius(ThemeRuntime.mediumRadius())
-            .backgroundColor(ThemeRuntime.accentSurfaceColor(this.darkMode))
-        }
-        ListItem() {
-          Text(this.globalTtsTextAfter || (this.globalTtsContent ? '' : '正在准备当前朗读内容…'))
-            .fontSize(AppFontSize.BODY_LARGE)
-            .lineHeight(26)
+            .fontWeight(FontWeight.Medium)
+            .textBackgroundStyle({ color: ThemeRuntime.accentSurfaceColor(this.darkMode), radius: 4 })
+          Span(this.globalTtsTextAfter || (!this.globalTtsTextBefore && !this.globalTtsCurrentText ?
+            (this.globalTtsContent || '正在准备当前朗读内容…') : ''))
             .fontColor(this.subTextColor)
-            .width('100%')
         }
+        .fontSize(AppFontSize.BODY_LARGE)
+        .lineHeight(28)
+        .wordBreak(WordBreak.NORMAL)
+        .width('100%')
+        .onAreaChange((oldArea: Area, area: Area): void => {
+          if (oldArea.width !== area.width || oldArea.height !== area.height) {
+            this.scrollToCurrentSentence(false);
+          }
+        })
       }
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .layoutWeight(1)
       .width('100%')
       .scrollBar(BarState.Off)
+      .align(Alignment.TopStart)
+      .onAreaChange((_oldArea: Area, area: Area): void => {
+        const height = Number(area.height);
+        if (this.readingViewportHeight === height) return;
+        this.readingViewportHeight = height;
+        this.scrollToCurrentSentence(false);
+      })
 
       if (this.hasTtsVoices()) {
         Row() {
@@ -868,10 +878,26 @@ export struct ReaderTtsPlayerPanel {
   }
 
   scrollToCurrentSentence(smooth: boolean): void {
-    setTimeout(() => {
-      if (this.isAudio()) return;
+    if (this.textUpdateTimer >= 0) clearTimeout(this.textUpdateTimer);
+    this.textUpdateTimer = setTimeout(() => {
+      this.textUpdateTimer = -1;
+      if (this.isAudio() || !this.globalTtsCurrentText || this.readingViewportHeight <= 0) return;
+      // Measure the spoken line inside the continuous paragraph, including very long paragraphs.
       try {
-        this.textScroller.scrollToIndex(1, smooth, ScrollAlign.CENTER);
+        const manager = this.readingTextController.getLayoutManager();
+        const firstSpokenCharacter = this.globalTtsCurrentText.search(/\S/);
+        const focusOffset = this.globalTtsTextBefore.length + Math.max(0, firstSpokenCharacter);
+        for (let index = 0; index < manager.getLineCount(); index++) {
+          const line = manager.getLineMetrics(index);
+          if (focusOffset < line.startIndex || focusOffset >= line.endIndex) continue;
+          const lineCenter = this.getUIContext().px2vp(line.baseline - line.ascent + line.height / 2);
+          this.textScroller.scrollTo({
+            xOffset: 0,
+            yOffset: Math.max(0, lineCenter - this.readingViewportHeight / 2),
+            animation: smooth ? { duration: 180, curve: Curve.EaseOut } : false
+          });
+          break;
+        }
       } catch (_) {}
     }, 0);
   }
