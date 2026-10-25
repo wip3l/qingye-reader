@@ -16,6 +16,7 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { ReaderTtsPlayerPanel } from '../components/ReaderTtsPlayerPanel';
+import { ReaderTtsCapsule } from '../components/reader/ReaderTtsControls';
 import { TtsCatalogSheet, CatalogTitleDataSource } from '../components/TtsCatalogSheet';
 import { BlankTabPage } from '../components/home/HomeTabShells';
 import { BookshelfPage } from '../components/home/BookshelfPage';
@@ -562,75 +563,40 @@ struct Index {
 
   @Builder
   globalTtsMiniPlayer() {
-    Row({ space: AppSpacing.SM }) {
-      Row({ space: AppSpacing.SM }) {
-        Stack({ alignContent: Alignment.Center }) {
-          Circle().width(30).height(30).fill(this.tabBarActiveColor())
-          SymbolGlyph($r('sys.symbol.speaker_wave_3'))
-            .fontSize(15)
-            .fontColor(['#FFFFFF'])
-        }
-        Column({ space: 1 }) {
-          Text(this.globalTtsBusy ? '加载中' :
-            (this.globalTtsPaused ? '已暂停' : (this.globalTtsMode === 'audio' ? '听书中' : '朗读中')))
-            .fontSize(AppFontSize.CAPTION)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
-          Text(this.globalTtsChapterProgress || (this.globalTtsMode === 'audio' ? '后台听书' : '后台朗读'))
-            .fontSize(9)
-            .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
+    ReaderTtsCapsule({
+      title: this.globalTtsBusy ? '加载中' :
+        (this.globalTtsPaused ? '已暂停' : (this.globalTtsMode === 'audio' ? '听书中' : '朗读中')),
+      subtitle: this.globalTtsChapterProgress || (this.globalTtsMode === 'audio' ? '后台听书' : '后台朗读'),
+      paused: this.globalTtsPaused,
+      playbackKey: `global_tts_capsule_playback_${this.globalTtsPaused}`,
+      panelColor: ThemeRuntime.cardColor(this.appDarkMode),
+      dark: this.appDarkMode,
+      textColor: ThemeRuntime.primaryTextColor(this.appDarkMode),
+      subTextColor: ThemeRuntime.subTextColor(this.appDarkMode),
+      accentColor: this.tabBarActiveColor(),
+      onCapsuleDragStart: (): void => {
+        this.globalTtsDragOriginX = this.globalTtsCapsuleLeft();
+        this.globalTtsDragOriginY = this.globalTtsCapsuleTop();
+      },
+      onCapsuleDragMove: (offsetX: number, offsetY: number): void => {
+        this.globalTtsCapsulePositionX = this.clampGlobalTtsPositionX(this.globalTtsDragOriginX + offsetX);
+        this.globalTtsCapsulePositionY = this.clampGlobalTtsPositionY(this.globalTtsDragOriginY + offsetY);
+      },
+      onOpen: (): void => this.openGlobalTtsPanel(),
+      onToggle: (): void => {
+        ReaderTtsFloatingSession.toggle();
+      },
+      onClose: (): void => {
+        this.closeGlobalTtsPanel();
+        ReaderTtsFloatingSession.stop();
       }
-      .layoutWeight(1)
-      .onClick(() => this.openGlobalTtsPanel())
-      SymbolGlyph(this.globalTtsPaused ? $r('sys.symbol.play') : $r('sys.symbol.pause'))
-        .id(`global_tts_capsule_playback_${this.globalTtsPaused}`)
-        .fontSize(17)
-        .fontColor([ThemeRuntime.primaryTextColor(this.appDarkMode)])
-        .width(28)
-        .height(34)
-        .onClick(() => ReaderTtsFloatingSession.toggle())
-      SymbolGlyph($r('sys.symbol.xmark'))
-        .fontSize(14)
-        .fontColor([ThemeRuntime.subTextColor(this.appDarkMode)])
-        .width(24)
-        .height(34)
-        .onClick(() => {
-          this.closeGlobalTtsPanel();
-          ReaderTtsFloatingSession.stop();
-        })
-    }
-    .width(184)
-    .height(46)
-    .padding({ left: AppSpacing.MD, right: AppSpacing.XS })
-    .borderRadius(23)
-    .clip(true)
-    .backgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
-    .border({ width: 0.5, color: this.appDarkMode ? '#30FFFFFF' : '#18000000' })
-    .shadow({ radius: 18, color: this.appDarkMode ? '#50000000' : '#26000000', offsetY: 6 })
-    .position({ x: 0, y: 0 })
-    .translate({
-      x: this.globalTtsCapsuleLeft(),
-      y: this.globalTtsCapsuleTop()
     })
-    .parallelGesture(
-      PanGesture({ direction: PanDirection.All, distance: 4 })
-        .onActionStart(() => {
-          this.globalTtsDragOriginX = this.globalTtsCapsuleLeft();
-          this.globalTtsDragOriginY = this.globalTtsCapsuleTop();
-        })
-        .onActionUpdate((event: GestureEvent) => {
-          this.globalTtsCapsulePositionX = this.clampGlobalTtsPositionX(
-            this.globalTtsDragOriginX + event.offsetX);
-          this.globalTtsCapsulePositionY = this.clampGlobalTtsPositionY(
-            this.globalTtsDragOriginY + event.offsetY);
-        })
-    )
-    .transition(this.globalTtsCapsuleTransition())
+      .position({ x: 0, y: 0 })
+      .translate({
+        x: this.globalTtsCapsuleLeft(),
+        y: this.globalTtsCapsuleTop()
+      })
+      .transition(this.globalTtsCapsuleTransition())
   }
 
   globalTtsCapsuleLeft(): number {
@@ -645,7 +611,7 @@ struct Index {
 
   clampGlobalTtsPositionX(position: number): number {
     const minLeft = 8;
-    const maxLeft = Math.max(minLeft, this.globalTtsViewportWidth - 184 - 8);
+    const maxLeft = Math.max(minLeft, this.globalTtsViewportWidth - ReaderTtsCapsule.WIDTH - 8);
     return Math.max(minLeft, Math.min(position, maxLeft));
   }
 
