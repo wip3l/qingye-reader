@@ -845,25 +845,21 @@ export struct ReaderTocPanel {
             .accessibilityText(this.quickJumpArmed ? '再次点击输入目标章节' : '点击回到当前章节')
             .onClick(() => this.handleCurrentPositionClick())
         }
-        Stack({ alignContent: Alignment.Center }) {
-          Column({ space: 0 }) {
-            SymbolGlyph($r('sys.symbol.chevron_up'))
-              .fontSize(11)
-              .fontColor([this.reverseOrder ? this.accentColor : this.textColor])
-            SymbolGlyph($r('sys.symbol.chevron_down'))
-              .fontSize(11)
-              .fontColor([this.reverseOrder ? this.accentColor : this.textColor])
-          }
-          .alignItems(HorizontalAlign.Center)
-        }
-        .width(34)
-        .height(34)
-        .borderRadius(17)
-        .backgroundColor(this.reverseOrder ? (this.dark ? '#24384A' : '#E8F1FF') :
-          (ThemeRuntime.softFillColor(this.dark)))
-        .accessibilityText(this.reverseOrder ? '切换为正序目录' : '切换为倒序目录')
-        .onClick(() => this.toggleOrder())
-        .margin({ left: AppSpacing.XS })
+        ImmersiveBackButton({
+          icon: $r('sys.symbol.text_arrow_up_and_down'),
+          iconOffsetX: 0,
+          iconColor: this.reverseOrder ? this.accentColor : this.textColor,
+          darkMode: this.dark,
+          buttonSize: 34,
+          containerWidth: 34,
+          containerHeight: 34,
+          startInset: 0,
+          materialScale: 0.7,
+          compactLayout: true,
+          accessibilityLabel: this.reverseOrder ? '切换为正序目录' : '切换为倒序目录',
+          onBack: () => this.toggleOrder()
+        })
+          .margin({ left: AppSpacing.XS })
         Blank()
           .layoutWeight(1)
         if (this.isSearchActive()) {
