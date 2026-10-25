@@ -12,6 +12,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
+import { CloudDownloadQueue } from '../account/CloudDownloadQueue';
 
 class ReaderCustomFontItem {
   familyName: string = '';
@@ -43,13 +44,19 @@ struct CustomFontManagerPage {
   @State customFonts: ReaderCustomFontItem[] = [];
   @State refreshingCloudFonts: boolean = false;
   @State cloudFontError: string = '';
-  @State downloadingCloudFontId: string = '';
-  @State cloudFontDownloadStatus: string = '';
+  @StorageLink('cloudDownloadQueueRaw') @Watch('onCloudDownloadQueueChanged') cloudDownloadQueueRaw: string = '[]';
+  @StorageLink('cloudDownloadStatus') cloudDownloadStatus: string = '';
+  private fontComponentActive: boolean = false;
 
   aboutToAppear(): void {
+    this.fontComponentActive = true;
     this.refreshSystemFontFamily();
     this.refreshFontLists();
     this.syncBars();
+  }
+
+  aboutToDisappear(): void {
+    this.fontComponentActive = false;
   }
 
   onPageShow(): void {
@@ -101,7 +108,8 @@ struct CustomFontManagerPage {
   }
 
   async refreshFontLists(): Promise<void> {
-    if (this.refreshingCloudFonts || this.downloadingCloudFontId) return;
+    this.loadCustomFonts();
+    if (this.refreshingCloudFonts || this.cloudDownloadQueueRaw !== '[]') return;
     this.refreshingCloudFonts = true;
     this.cloudFontError = '';
     try {
@@ -116,20 +124,33 @@ struct CustomFontManagerPage {
     }
   }
 
+  onCloudDownloadQueueChanged(): void {
+    if (this.fontComponentActive) this.loadCustomFonts();
+  }
+
   async downloadCloudFont(font: CloudRemoteFont): Promise<void> {
-    if (this.downloadingCloudFontId) return;
-    this.downloadingCloudFontId = font.id;
-    this.cloudFontDownloadStatus = '准备下载';
+    const key = `font:${font.id}`;
+    if (CloudDownloadQueue.position(this.cloudDownloadQueueRaw, key) >= 0) {
+      HdsFeedback.showToast(this.cloudFontStatus(font));
+      return;
+    }
+    const queued = this.cloudDownloadQueueRaw !== '[]';
+    const context = getContext(this);
     this.cloudFontError = '';
     try {
-      const filePath = await CloudAutoSync.ensureFontDownloaded(getContext(this), font,
-        (done: number, total: number): void => {
-          this.cloudFontDownloadStatus = total > 0 ?
-            `下载中 ${Math.min(100, Math.floor(done * 100 / total))}%` : '下载中';
-        },
-        (seconds: number): void => {
-          this.cloudFontDownloadStatus = `${seconds} 秒后继续下载`;
-        });
+      const download = CloudDownloadQueue.enqueue<string>(key, async (): Promise<string> => {
+        return await CloudAutoSync.ensureFontDownloaded(context, font,
+          (done: number, total: number): void => {
+            CloudDownloadQueue.status(key, total > 0 ?
+              `下载中 ${Math.min(100, Math.floor(done * 100 / total))}%` : '下载中');
+          },
+          (seconds: number): void => {
+            CloudDownloadQueue.status(key, `${seconds} 秒后继续下载`);
+          });
+      });
+      if (queued) HdsFeedback.showToast(`${font.name} 已加入下载队列`);
+      const filePath = await download;
+      if (!this.fontComponentActive) return;
       this.loadCustomFonts();
       const imported = this.customFonts.find((item: ReaderCustomFontItem): boolean => item.filePath === filePath);
       if (!imported) throw new Error('字体已下载，但导入未完成，请重试');
@@ -141,10 +162,14 @@ struct CustomFontManagerPage {
     } catch (error) {
       this.cloudFontError = error instanceof Error && error.message ? error.message : '云端字体下载失败，请重试';
       HdsFeedback.showToast(this.cloudFontError);
-    } finally {
-      this.downloadingCloudFontId = '';
-      this.cloudFontDownloadStatus = '';
     }
+  }
+
+  cloudFontStatus(font: CloudRemoteFont): string {
+    const position = CloudDownloadQueue.position(this.cloudDownloadQueueRaw, `font:${font.id}`);
+    if (position === 0) return this.cloudDownloadStatus || '等待下载';
+    if (position > 0) return `排队中 · 第 ${position} 位`;
+    return `${this.cloudFontSize(font.bytes)} · 点击下载并导入`;
   }
 
   cloudFontSize(bytes: number): string {
@@ -679,7 +704,7 @@ struct CustomFontManagerPage {
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.buttonColor())
         .padding({ left: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
-        .enabled(!this.refreshingCloudFonts && !this.downloadingCloudFontId)
+        .enabled(!this.refreshingCloudFonts && this.cloudDownloadQueueRaw === '[]')
         .accessibilityText('刷新云端待下载字体')
         .accessibilityRole(AccessibilityRoleType.BUTTON)
         .onClick(() => this.refreshFontLists())
@@ -728,8 +753,7 @@ struct CustomFontManagerPage {
           .fontColor(this.primaryTextColor())
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(this.downloadingCloudFontId === font.id ? this.cloudFontDownloadStatus :
-          `${this.cloudFontSize(font.bytes)} · 点击下载并导入`)
+        Text(this.cloudFontStatus(font))
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
       }
@@ -737,16 +761,15 @@ struct CustomFontManagerPage {
       .alignItems(HorizontalAlign.Start)
       SymbolGlyph($r('sys.symbol.download'))
         .fontSize(20)
-        .fontColor([this.downloadingCloudFontId ? this.subTextColor() : this.buttonColor()])
+        .fontColor([CloudDownloadQueue.position(this.cloudDownloadQueueRaw, `font:${font.id}`) >= 0 ?
+          this.subTextColor() : this.buttonColor()])
     }
     .width('100%')
     .constraintSize({ minHeight: 68 })
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
     .backgroundColor(this.cardColor())
     .alignItems(VerticalAlign.Center)
-    .enabled(!this.downloadingCloudFontId)
-    .accessibilityText(`${font.name}，${this.downloadingCloudFontId === font.id ?
-      this.cloudFontDownloadStatus : '下载并导入'}`)
+    .accessibilityText(`${font.name}，${this.cloudFontStatus(font)}`)
     .accessibilityRole(AccessibilityRoleType.BUTTON)
     .onClick(() => this.downloadCloudFont(font))
   }

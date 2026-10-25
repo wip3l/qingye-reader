@@ -210,7 +210,9 @@ export class CloudAutoSync {
   }
 
   /** 打开书架上的云端占位书：下载导入为真正的本地书，书架分组与阅读进度保留。 */
-  static async ensureBookDownloaded(context: Context, book: Book): Promise<Book> {
+  static async ensureBookDownloaded(context: Context, book: Book,
+    progress: (done: number, total: number) => void = (): void => {},
+    onWait?: (seconds: number) => void): Promise<Book> {
     if (!CloudAutoSync.isPlaceholder(book)) return book;
     const item = new CloudFileItem();
     item.id = book.getVariable(CloudAutoSync.CLOUD_FILE_ID_KEY);
@@ -219,7 +221,7 @@ export class CloudAutoSync {
     const format = (book.getVariable('localFormat') || 'txt').toLowerCase();
     item.name = `${LocalBookService.sanitizeFileName(book.name)}.${format}`;
     item.manifestHash = book.getVariable('cloudManifestHash');
-    const downloaded = await CloudFileClient.download(context, item, () => {});
+    const downloaded = await CloudFileClient.download(context, item, progress, onWait);
     try {
       return await CloudAutoSync.importBookFile(context, item, downloaded);
     } finally {

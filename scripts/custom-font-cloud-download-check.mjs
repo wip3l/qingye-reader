@@ -5,7 +5,9 @@ import test from 'node:test';
 import { stripTypeScriptTypes } from 'node:module';
 
 const source = fs.readFileSync(new URL('../entry/src/main/ets/pages/CustomFontManager.ets', import.meta.url), 'utf8');
-const methods = ['remoteFonts', 'refreshFontLists', 'downloadCloudFont', 'cloudFontSize'].map(name => {
+const queueSource = fs.readFileSync(new URL('../entry/src/main/ets/account/CloudDownloadQueue.ets', import.meta.url), 'utf8');
+const methods = ['remoteFonts', 'refreshFontLists', 'downloadCloudFont', 'cloudFontStatus', 'cloudFontSize',
+  'onCloudDownloadQueueChanged'].map(name => {
   const match = source.match(new RegExp(`^  (?:async )?${name}\\([\\s\\S]*?^  }`, 'm'));
   assert.ok(match, name);
   return match[0];
@@ -20,10 +22,12 @@ function deferred() {
 
 function fixture() {
   let page;
-  const state = { downloads: 0, refreshes: 0, fail: '', gate: null, records: [], notices: [],
-    progress: null, onWait: null, registered: [], registrationSucceeds: true };
+  const state = { downloads: 0, refreshes: 0, fail: '', gate: null, records: [], notices: [], order: [],
+    progress: null, onWait: null, registered: [], registrationSucceeds: true, failedIds: new Set() };
   const sandbox = vm.createContext({
     Error, getContext: () => ({}),
+    AccountSessionStore: { account: () => ({ userId: 'user' }) },
+    AppStorage: { setOrCreate: (key, value) => { page[key] = value; } },
     HdsFeedback: { showToast: message => state.notices.push(message) },
     CloudAutoSync: {
       parseRemoteFonts: raw => { try { return JSON.parse(raw) || []; } catch { return []; } },
@@ -35,21 +39,25 @@ function fixture() {
       },
       async ensureFontDownloaded(_context, selected, progress, onWait) {
         state.downloads++;
+        state.order.push(selected.id);
         state.progress = progress;
         state.onWait = onWait;
         if (state.gate) await state.gate.promise;
+        if (state.failedIds.has(selected.id)) throw new Error('连接失败');
         if (state.fail) throw new Error(state.fail);
         const filePath = `/files/${selected.id}.ttf`;
         state.records.push({ filePath, familyName: 'cloud-family', sourceName: selected.name });
-        page.cloudRemoteFontsRaw = '[]';
+        page.cloudRemoteFontsRaw = JSON.stringify(JSON.parse(page.cloudRemoteFontsRaw).filter(item => item.id !== selected.id));
         return filePath;
       }
     }
   });
+  vm.runInContext(stripTypeScriptTypes(queueSource.replace(/^import .*;\r?\n/gm, '').replace('export class', 'class'), { mode: 'strip' }), sandbox);
   vm.runInContext(stripTypeScriptTypes(`globalThis.page = {${methods}}`, { mode: 'strip' }), sandbox);
   page = sandbox.page;
   Object.assign(page, {
-    refreshingCloudFonts: false, downloadingCloudFontId: '', cloudFontError: '', cloudFontDownloadStatus: '',
+    refreshingCloudFonts: false, cloudDownloadQueueRaw: '[]', cloudFontError: '', cloudDownloadStatus: '',
+    fontComponentActive: true,
     cloudRemoteFontsRaw: JSON.stringify([font]), customFonts: [],
     readerFontFilePath: '/files/current.ttf', readerFontFamily: 'current-family', readerFontMode: 'custom',
     reloadCustomFonts: async () => {},
@@ -59,28 +67,33 @@ function fixture() {
   return { page, state };
 }
 
-test('download exposes progress, rejects duplicate taps, moves the row to local fonts and preserves selection', async () => {
+test('downloads queue distinct fonts, deduplicate taps, report progress and preserve selection', async () => {
   const { page, state } = fixture();
   state.gate = deferred();
   const downloading = page.downloadCloudFont(font);
-  assert.equal(page.downloadingCloudFontId, font.id);
+  await Promise.resolve();
   await page.downloadCloudFont(font);
-  await page.downloadCloudFont({ ...font, id: 'cloud-b' });
+  const second = { ...font, id: 'cloud-b' };
+  page.cloudRemoteFontsRaw = JSON.stringify([font, second]);
+  const queued = page.downloadCloudFont(second);
+  await page.downloadCloudFont(second);
+  assert.match(page.cloudFontStatus(second), /排队中.*1/);
   assert.equal(state.downloads, 1);
   state.progress(1, 2);
-  assert.equal(page.cloudFontDownloadStatus, '下载中 50%');
+  assert.equal(page.cloudFontStatus(font), '下载中 50%');
   state.onWait(3);
-  assert.equal(page.cloudFontDownloadStatus, '3 秒后继续下载');
+  assert.equal(page.cloudFontStatus(font), '3 秒后继续下载');
   state.gate.resolve();
-  await downloading;
+  await Promise.all([downloading, queued]);
+  assert.deepEqual(state.order, ['cloud-a', 'cloud-b']);
   assert.equal(page.remoteFonts().length, 0);
   assert.equal(page.customFonts[0].sourceName, font.name);
-  assert.equal(state.registered.length, 1);
+  assert.equal(state.registered.length, 2);
   assert.equal(page.readerFontFilePath, '/files/current.ttf');
   assert.equal(page.readerFontFamily, 'current-family');
   assert.equal(page.readerFontMode, 'custom');
-  assert.equal(page.downloadingCloudFontId, '');
-  assert.equal(page.cloudFontDownloadStatus, '');
+  assert.equal(page.cloudDownloadQueueRaw, '[]');
+  assert.equal(page.cloudDownloadStatus, '');
 });
 
 test('failed download keeps the cloud row, releases the busy state and can be retried', async () => {
@@ -89,7 +102,7 @@ test('failed download keeps the cloud row, releases the busy state and can be re
   await page.downloadCloudFont(font);
   assert.equal(page.remoteFonts().length, 1);
   assert.equal(page.customFonts.length, 0);
-  assert.equal(page.downloadingCloudFontId, '');
+  assert.equal(page.cloudDownloadQueueRaw, '[]');
   assert.equal(page.cloudFontError, state.fail);
   state.fail = '';
   await page.downloadCloudFont(font);
@@ -104,6 +117,33 @@ test('failed font registration does not claim the font is ready to use or change
   await page.downloadCloudFont(font);
   assert.match(state.notices.at(-1), /注册失败/);
   assert.equal(page.readerFontFilePath, '/files/current.ttf');
+});
+
+test('failed font does not block later queued fonts and remains available for retry', async () => {
+  const { page, state } = fixture();
+  const second = { ...font, id: 'cloud-b' };
+  page.cloudRemoteFontsRaw = JSON.stringify([font, second]);
+  state.failedIds.add(font.id);
+  await Promise.all([page.downloadCloudFont(font), page.downloadCloudFont(second)]);
+  assert.deepEqual(state.order, [font.id, second.id]);
+  assert.equal(page.remoteFonts().length, 1);
+  assert.equal(page.remoteFonts()[0].id, font.id);
+  assert.equal(page.customFonts.length, 1);
+  assert.equal(page.cloudDownloadQueueRaw, '[]');
+});
+
+test('leaving the font page keeps downloads running without registering against a destroyed UI', async () => {
+  const { page, state } = fixture();
+  state.gate = deferred();
+  const running = page.downloadCloudFont(font);
+  page.fontComponentActive = false;
+  state.gate.resolve();
+  await running;
+  assert.equal(state.records.length, 1);
+  assert.equal(state.registered.length, 0);
+  page.fontComponentActive = true;
+  page.onCloudDownloadQueueChanged();
+  assert.equal(page.customFonts.length, 1);
 });
 
 test('duplicate lifecycle refreshes are coalesced and failed refresh preserves known cloud fonts', async () => {

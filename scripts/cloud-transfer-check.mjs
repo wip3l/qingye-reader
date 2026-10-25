@@ -22,6 +22,30 @@ function fixture() {
   return { client: vm.runInContext('CloudFileClient', context), context, calls, waits, state, ApiError };
 }
 
+test('downloads wait for an occupied transfer slot and serialize even after failures', async () => {
+  const f = fixture();
+  f.client.beginTransfer(); // An existing upload owns the slot.
+  const first = assert.rejects(f.client.download({}, { id: 'a' }, () => {}), /云文件清单无效/);
+  const second = assert.rejects(f.client.download({}, { id: 'b' }, () => {}), /云文件清单无效/);
+  await Promise.resolve();
+  assert.equal(f.calls.length, 0);
+  f.client.endTransfer();
+  await Promise.all([first, second]);
+  assert.deepEqual(f.calls.map(call => call[0]), ['/a', '/b']);
+  assert.equal(f.client.isTransferring(), false);
+});
+
+test('account switch while waiting for a transfer slot sends no request', async () => {
+  const f = fixture();
+  f.client.beginTransfer();
+  const pending = assert.rejects(f.client.download({}, { id: 'a' }, () => {}), /账号已改变/);
+  f.state.user = 'other';
+  f.client.endTransfer();
+  await pending;
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.client.isTransferring(), false);
+});
+
 test('65 MiB upload crosses a 120-request window and resumes every chunk automatically', async () => {
   const f = fixture();
   let window = 0, count = 0;

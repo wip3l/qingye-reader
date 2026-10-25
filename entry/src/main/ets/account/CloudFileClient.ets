@@ -14,6 +14,17 @@ import { CloudTransferTicket, CloudFileItem, CloudFileList, CloudFileMeta, Cloud
 export class CloudFileClient {
   private static paused: boolean = false;
   private static transferring: boolean = false;
+  private static transferFinished: Promise<void> = Promise.resolve();
+  private static finishTransfer: () => void = (): void => {};
+  private static beginTransfer(): void {
+    CloudFileClient.transferring = true;
+    CloudFileClient.paused = false;
+    CloudFileClient.transferFinished = new Promise<void>((resolve) => { CloudFileClient.finishTransfer = resolve; });
+  }
+  private static endTransfer(): void {
+    CloudFileClient.transferring = false;
+    CloudFileClient.finishTransfer();
+  }
   static pause(): void { CloudFileClient.paused = true; }
   static async summary(): Promise<CloudFileSummary> {
     return JSON.parse(await AccountCommerceApi.cloudRequest('/summary', 'GET', '', AccountSessionStore.token())) as CloudFileSummary;
@@ -98,7 +109,7 @@ export class CloudFileClient {
   static async upload(context: Context, progress: (done: number, total: number) => void,
     onWait?: (seconds: number) => void, onUploaded?: (task: CloudUploadTask) => Promise<void>): Promise<string> {
     if (CloudFileClient.transferring) throw new Error('已有文件正在传输');
-    CloudFileClient.transferring = true; CloudFileClient.paused = false;
+    CloudFileClient.beginTransfer();
     const userId = AccountSessionStore.account().userId, token = AccountSessionStore.token();
     try {
       const task = await CloudFileClient.pending(context);
@@ -162,13 +173,15 @@ export class CloudFileClient {
       await store.delete(`upload_${userId}`); await store.flush();
       await fs.unlink(task.path);
       return task.fileId;
-    } finally { CloudFileClient.transferring = false; }
+    } finally { CloudFileClient.endTransfer(); }
   }
   static async download(context: Context, item: CloudFileItem,
     progress: (done: number, total: number) => void, onWait?: (seconds: number) => void): Promise<string> {
-    if (CloudFileClient.transferring) throw new Error('已有文件正在传输');
-    CloudFileClient.transferring = true; CloudFileClient.paused = false;
     const userId = AccountSessionStore.account().userId, token = AccountSessionStore.token();
+    // 等待已有上传/下载释放传输槽，不让页面点击因后台同步而失败。
+    while (CloudFileClient.transferring) await CloudFileClient.transferFinished;
+    if (!userId || AccountSessionStore.account().userId !== userId) throw new Error('账号已改变，请重新下载');
+    CloudFileClient.beginTransfer();
     try {
       const manifest = JSON.parse(await CloudFileClient.transferRequest(`/${item.id}`, 'GET', '', token, userId, onWait)) as CloudManifest;
       if (manifest.state !== 'READY' || manifest.chunkBytes !== 1048576 || manifest.bytes < 1 || manifest.bytes > 1073741824
@@ -207,7 +220,7 @@ export class CloudFileClient {
       } finally { await fs.close(file); }
       CloudFileClient.check(userId);
       return path;
-    } finally { CloudFileClient.transferring = false; }
+    } finally { CloudFileClient.endTransfer(); }
   }
   // All calls here are idempotent. Keep the same body/requestId when waiting for a rate-limit window.
   private static async transferRequest(path: string, method: string, body: string, token: string, userId: string,

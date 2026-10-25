@@ -39,6 +39,7 @@ import { RecentReadCardUpdater } from '../../utils/RecentReadCardUpdater';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { CloudAutoSync } from '../../account/CloudAutoSync';
+import { CloudDownloadQueue } from '../../account/CloudDownloadQueue';
 import { PopupMenuAction } from '../common/PopupMenuAction';
 
 const SHELF_FULL_TEXT_CACHE_NOTIFICATION_INTERVAL_MS: number = 5000;
@@ -128,7 +129,9 @@ export struct BookshelfPage {
   @StorageLink('appThemeId') appThemeId: string = AppThemeSettingsStore.DEFAULT_THEME_ID;
   @StorageLink('appCustomBaseThemeId') appCustomBaseThemeId: string = AppThemeSettingsStore.DEFAULT_THEME_ID;
   @State books: Book[] = [];
-  @State downloadingCloudBookUrl: string = '';
+  @StorageLink('cloudDownloadQueueRaw') cloudDownloadQueueRaw: string = '[]';
+  @StorageLink('cloudDownloadStatus') cloudDownloadStatus: string = '';
+  private cloudBookOpenRequest: number = 0;
   @State allBooks: Book[] = [];
   private shelfListBooksSource: ShelfBookDataSource = new ShelfBookDataSource();
   private shelfTileBooksSource: ShelfBookDataSource = new ShelfBookDataSource();
@@ -334,6 +337,7 @@ export struct BookshelfPage {
 
   aboutToDisappear(): void {
     this.shelfComponentActive = false;
+    this.cloudBookOpenRequest++;
     this.cancelShelfBookOpening();
     this.cancelNetworkCoverSearch();
     this.clearShelfScopeTransition();
@@ -3593,21 +3597,46 @@ export struct BookshelfPage {
     )
   }
 
-  /** 云端占位书：下载导入后照常打开，书架位置、分组与阅读进度都保留。 */
+  cloudBookStatus(book: Book): string {
+    const position = CloudDownloadQueue.position(this.cloudDownloadQueueRaw, `book:${book.bookUrl}`);
+    if (position === 0) return this.cloudDownloadStatus || '等待下载';
+    if (position > 0) return `排队 ${position}`;
+    return '点击下载';
+  }
+
+  /** 单本下载后打开；连续点选多本时只下载，避免完成时抢占阅读页。 */
   async openCloudPlaceholder(book: Book, touchX: number, touchY: number): Promise<void> {
-    if (this.downloadingCloudBookUrl) return;
-    this.downloadingCloudBookUrl = book.bookUrl;
+    const key = `book:${book.bookUrl}`;
+    if (CloudDownloadQueue.position(this.cloudDownloadQueueRaw, key) >= 0) {
+      HdsFeedback.showToast(this.cloudBookStatus(book));
+      return;
+    }
+    const request = ++this.cloudBookOpenRequest;
+    const openWhenReady = this.cloudDownloadQueueRaw === '[]';
+    const context = getContext(this);
+    const route = router.getState();
     try {
-      const ready = await CloudAutoSync.ensureBookDownloaded(getContext(this), book);
+      const download = CloudDownloadQueue.enqueue<Book>(key, async (): Promise<Book> => {
+        return await CloudAutoSync.ensureBookDownloaded(context, book,
+          (done: number, total: number): void => {
+            CloudDownloadQueue.status(key, total > 0 ?
+              `下载 ${Math.min(100, Math.floor(done * 100 / total))}%` : '下载中');
+          },
+          (seconds: number): void => { CloudDownloadQueue.status(key, `${seconds}秒后继续`); });
+      });
+      if (!openWhenReady) HdsFeedback.showToast(`《${book.name}》已加入下载队列`);
+      const ready = await download;
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-      await this.loadBooks();
-      this.downloadingCloudBookUrl = '';
-      this.openShelfBook(ready, touchX, touchY);
+      if (this.shelfComponentActive) await this.loadBooks();
+      if (openWhenReady && request === this.cloudBookOpenRequest && this.shelfComponentActive &&
+        router.getState().index === route.index && router.getState().path === route.path) {
+        this.openShelfBook(ready, touchX, touchY);
+      } else {
+        HdsFeedback.showToast(`《${book.name}》下载完成`);
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : '';
       HdsFeedback.showToast(message || '云端书籍下载失败，请稍后重试');
-    } finally {
-      this.downloadingCloudBookUrl = '';
     }
   }
 
@@ -3619,6 +3648,7 @@ export struct BookshelfPage {
       this.openCloudPlaceholder(book, touchX, touchY);
       return;
     }
+    this.cloudBookOpenRequest++;
     this.acknowledgeShelfBookUpdate(book);
     ReaderOpenTrace.begin(book.bookUrl);
     if (!this.bookshelfBookOpenAnimation) {
@@ -4187,24 +4217,26 @@ export struct BookshelfPage {
         .loop(true)
       }
       if (CloudAutoSync.isPlaceholder(book)) {
-        // 仅在云端、尚未下载：置灰并标出云端，点击即下载打开。
+        // 云端占位书显示当前进度或排队位置，其他书仍可继续点选下载。
         Stack({ alignContent: Alignment.Center }) {
-          if (this.downloadingCloudBookUrl === book.bookUrl) {
-            LoadingProgress()
-              .width(24)
-              .height(24)
-              .color('#FFFFFF')
+          if (CloudDownloadQueue.position(this.cloudDownloadQueueRaw, `book:${book.bookUrl}`) >= 0) {
+            Text(this.cloudBookStatus(book))
+              .fontSize(AppFontSize.MICRO)
+              .fontColor('#FFFFFF')
+              .maxLines(2)
+              .textAlign(TextAlign.Center)
           } else {
             SymbolGlyph($r('sys.symbol.download'))
               .fontSize(16)
               .fontColor(['#FFFFFF'])
           }
         }
-        .width(32)
+        .width(CloudDownloadQueue.position(this.cloudDownloadQueueRaw, `book:${book.bookUrl}`) >= 0 ?
+          (typeof width === 'number' ? Math.min(width, 64) : 64) : 32)
         .height(32)
         .borderRadius(16)
         .backgroundColor('#73000000')
-        .accessibilityText(`${book.name}在云端，点击下载`)
+        .accessibilityText(`${book.name}在云端，${this.cloudBookStatus(book)}`)
       }
       if (this.hasShelfBookUpdate(book)) {
         Text('新')
