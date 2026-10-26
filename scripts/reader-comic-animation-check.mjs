@@ -15,6 +15,7 @@ const sandbox = vm.createContext({ console, setTimeout, clearTimeout, setInterva
 });
 vm.runInContext(compile(readEtsModule('core/reader/ReaderPageTurnAnimation.ts')) +
   '\nglobalThis.Animation = ReaderPageTurnAnimation;', sandbox);
+vm.runInContext(compile(readEtsModule('core/reader/ReaderComicProcessing.ts')), sandbox);
 vm.runInContext(compile(readEtsModule('core/reader/ReaderComicSettings.ets')) +
   '\nglobalThis.Settings = ReaderComicSettings;', sandbox);
 const src = readEtsModule('components/reader/ReaderComicPagedView.ets');
