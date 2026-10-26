@@ -1,5 +1,7 @@
 import { BookCoverResolver } from '../utils/BookCoverResolver';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
+import { ReaderScreenScrollMotion } from '../core/reader/ReaderScreenScrollMotion';
+import displaySync from '@ohos.graphics.displaySync';
 import { ThemeBookCoverSettings } from '../utils/ThemeBookCoverSettings';
 import { NativeSourceService, HttpClient, Book, BookChapter, Bookmark, BookSource, HttpTTS, BookTypeSupport, VerificationSupport, ReaderActionData, ReaderActionMarker, ReaderActionMatch, BookSourceStageWebRuntime, StageWebRuntimeRequest, WebBookFetchRuntime, SourceRuntimeStage, CooperativeScheduler, sleepMs } from '@legado/sourceengine';
 import { router, window, promptAction } from '@kit.ArkUI';
@@ -416,9 +418,11 @@ struct ReadBookPage {
   private readerPagedProgressSaveTimerId: number = -1;
   private readerComicPanLastOffsetY: number = 0;
   private readerComicPanMoved: boolean = false;
-  /** 点击翻屏的逐帧滚动：定时器与尚未滚完的距离。 */
+  /** 点击翻屏的逐帧滚动：曲线、跟屏幕刷新同步的帧回调（不可用时退回定时器）。 */
+  private readonly readerComicScreenScrollMotion: ReaderScreenScrollMotion = new ReaderScreenScrollMotion();
+  private readerComicScreenScrollSync: displaySync.DisplaySync | null = null;
+  private readerComicScreenScrollSyncStarted: boolean = false;
   private readerComicScreenScrollTimerId: number = -1;
-  private readerComicScreenScrollRemaining: number = 0;
   // isAtEnd()/currentOffset() 是同步跨线程查询，手势更新事件频率高于刷新率；
   // 边界方向探测按时间片取样，提示徽标晚一两帧出现无感知。
   private readerComicBoundaryProbeNotUntil: number = 0;
@@ -1085,6 +1089,12 @@ struct ReadBookPage {
     this.cancelReaderPaginationWork(true);
     this.resetReaderPageCurl();
     this.stopReaderComicScreenScroll();
+    try {
+      this.readerComicScreenScrollSync?.off('frame');
+    } catch (error) {
+      console.warn('漫画点击翻屏帧同步释放失败:', error);
+    }
+    this.readerComicScreenScrollSync = null;
     if (this.readerExtendLayoutRefreshTimerId >= 0) {
       clearTimeout(this.readerExtendLayoutRefreshTimerId);
       this.readerExtendLayoutRefreshTimerId = -1;
@@ -2444,47 +2454,87 @@ struct ReadBookPage {
   /**
    * 点击翻屏的滚动动画。不用 scrollTo(绝对位置)：列表的绝对位置是按已量过的项估算的，滚进相邻章节时
    * 上方会去掉一章（或接上一章、图片加载后变高），估算值随之跳变，动画仍奔向旧目标，就会一下冲到下一章末尾。
-   * 这里每帧按相对距离 scrollBy，列表怎么增删都只滚这一屏。连点时把没滚完的距离并进下一次。
+   * 这里每帧按相对距离 scrollBy，列表怎么增删都只滚这一屏。连点时把没滚完的距离并进下一次，速度接着走。
+   * 帧由 displaySync 按屏幕刷新率（高刷屏 120Hz）回调，定时器节拍与刷新不同步会一顿一顿。
    */
   startReaderComicScreenScroll(distance: number): void {
-    const total = this.readerComicScreenScrollRemaining + distance;
-    this.stopReaderComicScreenScroll();
-    const durationMs = 260;
-    const startedAt = Date.now();
-    let applied = 0;
-    this.readerComicScreenScrollRemaining = total;
+    this.readerComicScreenScrollMotion.add(distance);
+    if (!this.readerComicScreenScrollMotion.isRunning()) return;
+    if (this.readerComicScreenScrollSyncStarted || this.readerComicScreenScrollTimerId >= 0) return;
+    const sync = this.ensureReaderComicScreenScrollSync();
+    if (sync) {
+      try {
+        sync.start();
+        this.readerComicScreenScrollSyncStarted = true;
+        return;
+      } catch (error) {
+        console.warn('漫画点击翻屏帧同步启动失败，改用定时器:', error);
+      }
+    }
     const tick = (): void => {
       this.readerComicScreenScrollTimerId = -1;
-      if (!this.readerPageVisible || !this.isReaderComicModeActive() || this.isReaderComicPagedMode()) {
-        this.readerComicScreenScrollRemaining = 0;
-        return;
+      if (this.advanceReaderComicScreenScroll(Date.now())) {
+        this.readerComicScreenScrollTimerId = setTimeout(tick, 16);
       }
-      const t = Math.min(1, (Date.now() - startedAt) / durationMs);
-      const eased = 1 - Math.pow(1 - t, 3);
-      const target = total * eased;
-      const delta = target - applied;
-      applied = target;
-      this.readerComicScreenScrollRemaining = total - applied;
-      if (Math.abs(delta) >= 0.01) {
-        try {
-          this.readerComicScroller.scrollBy(0, delta);
-        } catch (error) {
-          console.warn('漫画点击翻屏滚动失败:', error);
-          this.readerComicScreenScrollRemaining = 0;
-          return;
-        }
-      }
-      if (t < 1) this.readerComicScreenScrollTimerId = setTimeout(tick, 16);
     };
     tick();
   }
 
+  private ensureReaderComicScreenScrollSync(): displaySync.DisplaySync | null {
+    if (this.readerComicScreenScrollSync) return this.readerComicScreenScrollSync;
+    try {
+      const sync = displaySync.create();
+      sync.setExpectedFrameRateRange({ min: 60, max: 120, expected: 120 });
+      sync.on('frame', (info: displaySync.IntervalInfo): void => {
+        // targetTimestamp 是这一帧上屏的时刻（纳秒），按它取进度，画面匀速。
+        if (!this.advanceReaderComicScreenScroll(info.targetTimestamp / 1000000)) this.pauseReaderComicScreenScrollSync();
+      });
+      this.readerComicScreenScrollSync = sync;
+    } catch (error) {
+      console.warn('漫画点击翻屏帧同步不可用:', error);
+      this.readerComicScreenScrollSync = null;
+    }
+    return this.readerComicScreenScrollSync;
+  }
+
+  /** 推进一帧；返回 false 表示已经停下。 */
+  private advanceReaderComicScreenScroll(now: number): boolean {
+    const motion = this.readerComicScreenScrollMotion;
+    if (!motion.isRunning()) return false;
+    if (!this.readerPageVisible || !this.isReaderComicModeActive() || this.isReaderComicPagedMode()) {
+      motion.stop();
+      return false;
+    }
+    const delta = motion.step(now);
+    if (Math.abs(delta) >= 0.01) {
+      try {
+        this.readerComicScroller.scrollBy(0, delta);
+      } catch (error) {
+        console.warn('漫画点击翻屏滚动失败:', error);
+        motion.stop();
+        return false;
+      }
+    }
+    return motion.isRunning();
+  }
+
+  private pauseReaderComicScreenScrollSync(): void {
+    if (!this.readerComicScreenScrollSyncStarted) return;
+    this.readerComicScreenScrollSyncStarted = false;
+    try {
+      this.readerComicScreenScrollSync?.stop();
+    } catch (error) {
+      console.warn('漫画点击翻屏帧同步停止失败:', error);
+    }
+  }
+
   stopReaderComicScreenScroll(): void {
+    this.readerComicScreenScrollMotion.stop();
+    this.pauseReaderComicScreenScrollSync();
     if (this.readerComicScreenScrollTimerId >= 0) {
       clearTimeout(this.readerComicScreenScrollTimerId);
       this.readerComicScreenScrollTimerId = -1;
     }
-    this.readerComicScreenScrollRemaining = 0;
   }
 
   /** 已在本章首尾再往外翻：切到相邻一话。 */
