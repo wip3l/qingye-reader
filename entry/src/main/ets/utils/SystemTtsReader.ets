@@ -1109,6 +1109,10 @@ export class SystemTtsReader {
     }
     sourceStart = Math.max(0, Math.min(speechLength, sourceStart));
     sourceEnd = Math.max(sourceStart, Math.min(speechLength, sourceEnd));
+    // Normalize both sides identically: a quote omitted by one timing range belongs
+    // to that range, not to the next spoken sentence. Audio timestamps stay unchanged.
+    sourceStart = this.extendTtsBreak(job.chunk.text, sourceStart, speechLength);
+    sourceEnd = this.extendTtsBreak(job.chunk.text, sourceEnd, speechLength);
     if (sourceEnd <= sourceStart) {
       return null;
     }
@@ -1902,8 +1906,10 @@ export class SystemTtsReader {
         if (breakOffset >= absoluteEnd) {
           break;
         }
-        this.appendFocusChunk(result, chunk, partStart, breakOffset);
-        partStart = breakOffset;
+        const partEnd = this.extendTtsBreak(chunk.text, breakOffset - chunk.start,
+          absoluteEnd - chunk.start) + chunk.start;
+        this.appendFocusChunk(result, chunk, partStart, partEnd);
+        partStart = partEnd;
       }
       this.appendFocusChunk(result, chunk, partStart, absoluteEnd);
     }
@@ -2661,7 +2667,7 @@ export class SystemTtsReader {
       if (end <= start) {
         end = this.safeHardCutIndex(text, limit);
       }
-      end = this.extendCloudBreak(text, end, limit);
+      end = this.extendTtsBreak(text, end, text.length);
       this.appendAbsoluteTextChunk(chunks, text, start, end);
       start = end;
     }
@@ -2688,7 +2694,8 @@ export class SystemTtsReader {
         // middle of a sentence and used to add an audible pause on every page turn. Snap it
         // to the nearest sentence boundary; a boundary with no punctuation nearby keeps the
         // original offset, so behaviour is unchanged when snapping is not possible.
-        const breakOffset = this.snapPageBreakOffset(text, rawBreakOffset, partStart, chunk.end);
+        const breakOffset = this.extendTtsBreak(text,
+          this.snapPageBreakOffset(text, rawBreakOffset, partStart, chunk.end), chunk.end);
         if (breakOffset - partStart < minPart || chunk.end - breakOffset < minPart) {
           continue;
         }
@@ -2728,6 +2735,7 @@ export class SystemTtsReader {
       if (sentence > start) {
         end = sentence;
       }
+      end = this.extendTtsBreak(text, end, text.length);
       let chunkStart = start;
       let chunkEnd = end;
       while (chunkStart < chunkEnd && this.isTrimChar(text.charAt(chunkStart))) {
@@ -2783,6 +2791,7 @@ export class SystemTtsReader {
       if (sentence > start && sentence <= safeRangeEnd) {
         end = sentence;
       }
+      end = this.extendTtsBreak(text, end, safeRangeEnd);
       this.appendAbsoluteTextChunk(result, text, start, end);
       start = end;
     }
@@ -2825,7 +2834,7 @@ export class SystemTtsReader {
         breakPath = 'hard';
         end = this.safeHardCutIndex(text, limit);
       }
-      end = this.extendCloudBreak(text, end, limit);
+      end = this.extendTtsBreak(text, end, text.length);
       if (breakPath === 'weak' || breakPath === 'hard') {
         // Only the two degraded paths are worth surfacing: a comma-ended chunk and a hard cut
         // are exactly the cases that sound unnatural, and logging every chunk drowns hilog.
@@ -2881,12 +2890,54 @@ export class SystemTtsReader {
       value === '：' || value === ':' || value === '—' || value === '–';
   }
 
-  private extendCloudBreak(text: string, end: number, limit: number): number {
+  /** Keep a punctuation run and its closing quotes/brackets on the preceding range.
+   * Length targets are soft; limit is the actual source range (never a page/chunk target).
+   * Do not cross whitespace, consume an opening Chinese quote, or split a decimal.
+   */
+  private extendTtsBreak(text: string, end: number, limit: number): number {
     let result = end;
-    while (result < Math.min(text.length, limit) && this.isClosingPunctuation(text.charAt(result))) {
+    if (result <= 0 || this.isTrimChar(text.charAt(result - 1))) {
+      return result;
+    }
+    while (result < Math.min(text.length, limit)) {
+      const value = text.charAt(result);
+      if ((!this.isClosingPunctuationAt(text, result) && !this.isSentenceEnd(value)) ||
+        this.isNumericDecimalPoint(text, result)) {
+        break;
+      }
       result++;
     }
     return result;
+  }
+
+  private isClosingPunctuationAt(text: string, index: number): boolean {
+    const value = text.charAt(index);
+    if (!this.isClosingPunctuation(value)) return false;
+    if (value !== '"' && value !== '\'') return true;
+    // Straight quotes can also open the next sentence. Count matching, unescaped
+    // quotes, ignoring apostrophes inside English words (don't / reader's).
+    let quoteCount = 0;
+    let escaped = false;
+    for (let cursor = 0; cursor <= index; cursor++) {
+      const current = text.charAt(cursor);
+      if (escaped) {
+        escaped = false;
+        if (cursor === index) return false;
+        continue;
+      }
+      if (current === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (current !== value) continue;
+      if (value === '\'' && /[A-Za-z0-9]/.test(text.charAt(cursor - 1)) &&
+        /[A-Za-z0-9]/.test(text.charAt(cursor + 1))) {
+        if (cursor === index) return false;
+        continue;
+      }
+      quoteCount++;
+    }
+    return quoteCount % 2 === 0;
   }
 
   private isClosingPunctuation(value: string): boolean {

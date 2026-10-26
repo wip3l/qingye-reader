@@ -19,13 +19,20 @@ function slices(text, start, end) {
   return [host.ttsPanelTextBefore(), host.ttsCurrentSentence(), host.ttsPanelTextAfter()];
 }
 
-// Screenshot: a speech chunk begins at the previous closing quote and ends before the next quote.
+// Legacy incoming ranges must still render losslessly. Boundary correction belongs
+// to SystemTtsReader and is exercised by reader-tts-boundary-check.mjs.
 const before = '上一段。\n云果儿问：“明心，你猜里面是什么？';
 const current = '”\n　　明心摇头，又立马说道：“是吃的！';
 const after = '”\n　　云果儿笑了。';
 assert.deepEqual(slices(before + current + after, before.length, before.length + current.length),
   [before, current, after]);
 assert.equal(host.ttsPanelFollowingText(), before + current + after, 'speech boundaries must not add newlines');
+
+const fixedBefore = before + '”';
+const fixedCurrent = current.slice(1) + '”';
+const fixedAfter = after.slice(1);
+assert.deepEqual(slices(fixedBefore + fixedCurrent + fixedAfter,
+  fixedBefore.length, fixedBefore.length + fixedCurrent.length), [fixedBefore, fixedCurrent, fixedAfter]);
 
 // Check every boundary, including spaces, paragraph separators, quotation marks and UTF-16 offsets.
 for (const text of ['他说：“好！”她答：“嗯。”', 'Hello, world! Next word.',
