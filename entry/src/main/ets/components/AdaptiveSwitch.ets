@@ -49,8 +49,10 @@ export struct AdaptiveSwitch {
       style: ImmersiveMaterialRuntime.materialStyle(this.immersiveLightLevel),
       materialColor: '#22FFFFFF',
       applyShadow: true,
-      interactive: this.immersiveLightLevel !== 'weak',
-      lightEffect: ImmersiveMaterialRuntime.lightEffect(false, this.immersiveLightLevel)
+      // 开关的手势与动画由原生 Toggle 管理。通用材质只提供静态表面，
+      // 不叠加第二套触摸反馈，也不在触摸过程中替换材质、打断 Toggle 的切换。
+      interactive: false,
+      lightEffect: null
     }, this.immersiveLightLevel);
   }
 }
