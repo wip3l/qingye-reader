@@ -19,6 +19,8 @@ struct ReaderInfoBarSlot {
       if (this.text) {
         Text(this.text)
           .fontSize(this.textSize)
+          .lineHeight(this.textSize)
+          .textVerticalAlign(TextVerticalAlign.CENTER)
           .fontColor(this.textColor)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -48,6 +50,8 @@ struct ReaderInfoBarSlot {
 
         Text(`${this.battery}%`)
           .fontSize(this.textSize)
+          .lineHeight(this.textSize)
+          .textVerticalAlign(TextVerticalAlign.CENTER)
           .fontColor(this.textColor)
           .maxLines(1)
       }

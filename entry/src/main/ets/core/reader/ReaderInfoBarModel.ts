@@ -217,6 +217,23 @@ export class ReaderInfoBarConfig {
     return Math.max(ReaderInfoBarConfig.OFFSET_MIN, Math.min(Math.round(value), ReaderInfoBarConfig.OFFSET_MAX));
   }
 
+  static headerBaseInset(extendToStatusBar: boolean, statusBarHeight: number): number {
+    return extendToStatusBar ? 8 : Math.max(0, statusBarHeight);
+  }
+
+  static footerBaseInset(navBarHeight: number): number {
+    return Math.max(6, Math.min(8, Math.max(0, navBarHeight) * 0.5));
+  }
+
+  /** 设置使用整数 vp，最后一步允许不足 2vp，确保小数安全区也能抵达边缘。 */
+  static offsetMinForInset(baseInset: number): number {
+    return Math.max(ReaderInfoBarConfig.OFFSET_MIN, -Math.ceil(Math.max(0, baseInset)));
+  }
+
+  static clampOffsetToInset(value: number, baseInset: number): number {
+    return Math.max(ReaderInfoBarConfig.offsetMinForInset(baseInset), ReaderInfoBarConfig.clampOffset(value));
+  }
+
   /** 相对默认位置移动，向外最多到屏幕边缘；正文占位与显示共用此结果。 */
   edgeInset(header: boolean, baseInset: number): number {
     return Math.max(0, baseInset + (header ? this.headerOffset : this.footerOffset));

@@ -151,8 +151,50 @@ equal(withBar.footerExtraHeight(), 5, '页脚进度条附加高度保持 5');
 function layoutMethods(file, names) {
   const source = readFileSync(new URL(`../entry/src/main/ets/pages/${file}`, import.meta.url), 'utf8');
   const methods = names.map(name => source.match(new RegExp(`  ${name}\\([^]*?\\n  \\}`))[0]).join('\n');
-  return new (Function(stripTypeScriptTypes(`class Layout {\n${methods}\n}`, { mode: 'strip' }) +
-    '\nreturn Layout;')())();
+  return new (Function('ReaderInfoBarConfig', stripTypeScriptTypes(`class Layout {\n${methods}\n}`, { mode: 'strip' }) +
+    '\nreturn Layout;')(Config))();
+}
+
+// 执行编辑器真实步进方法：禁用下限、最后不足一步、旧值越界后立即反向移动。
+const editorSource = readFileSync(new URL(
+  '../entry/src/main/ets/components/reader/ReaderLayoutSettings.ets', import.meta.url), 'utf8');
+const editorBody = editorSource.slice(editorSource.indexOf('export struct ReaderHeaderFooterEditor'));
+const editorConstants = editorBody.match(/  private static readonly [^\n]+/g).join('\n');
+const editorMethods = ['config', 'stepperValue', 'isOffsetStepper', 'isShrinkStepper', 'isOpacityStepper',
+  'stepperMin', 'stepperMax', 'canStep', 'stepBy'].map(name =>
+  editorBody.match(new RegExp(`  private ${name}\\([^]*?\\n  \\}`))[0]).join('\n');
+const Editor = Function('ReaderInfoBarConfig', stripTypeScriptTypes(
+  `class ReaderHeaderFooterEditor {\n${editorConstants}\n${editorMethods}\n}`, { mode: 'strip' }) +
+  '\nreturn ReaderHeaderFooterEditor;')(Config);
+for (const inset of [0, 6, 7, 7.5, 8, 24, 48.25]) {
+  for (const header of [true, false]) {
+    const editor = new Editor();
+    const config = new Config();
+    const key = header ? 'headerOffset' : 'footerOffset';
+    const field = header ? Editor.STEPPER_HEADER_OFFSET : Editor.STEPPER_FOOTER_OFFSET;
+    editor.headerBaseInset = inset;
+    editor.footerBaseInset = inset;
+    editor.readerInfoBarConfig = config.serialize();
+    let commits = 0;
+    editor.commit = next => { editor.readerInfoBarConfig = next.serialize(); commits++; };
+    let steps = 0;
+    while (editor.canStep(field, -1) && steps++ < 200) editor.stepBy(field, -1);
+    check(steps < 200, '步进有限次后到达边缘');
+    equal(editor.stepperValue(field), -Math.ceil(inset), '下限由安全区决定');
+    equal(editor.config().edgeInset(header, inset), 0, '最后一步确实到达边缘');
+    const count = commits;
+    editor.stepBy(field, -1);
+    equal(commits, count, '到边缘后减号不再修改配置');
+    editor.stepBy(field, 1);
+    check(editor.config().edgeInset(header, inset) > 0, '边缘处加一次立即向内移动');
+    config[key] = -350;
+    editor.readerInfoBarConfig = config.serialize();
+    equal(editor.canStep(field, -1), false, '旧越界值不允许再减');
+    equal(editor.stepperValue(field), -Math.ceil(inset), '旧越界值显示有效位置');
+    editor.stepBy(field, 1);
+    check(editor.config().edgeInset(header, inset) > 0, '旧越界值加一次立即向内移动');
+    equal(editor.config()[header ? 'footerOffset' : 'headerOffset'], 0, '步进不改变另一侧位置');
+  }
 }
 const readerLayout = layoutMethods('ReadBook.ets', ['getReaderHeaderOverlayTopInset', 'getReaderHeaderTopGap',
   'getReaderHeaderContentReserve', 'getReaderBottomInfoBarBottomInset', 'getReaderGestureIndicatorLift']);

@@ -6286,7 +6286,7 @@ struct ReadBookPage {
 
   getReaderHeaderOverlayTopInset(): number {
     return this.getReaderInfoBarConfig().edgeInset(true,
-      this.readerExtendToStatusBar ? 8 : this.statusBarSafeHeight);
+      ReaderInfoBarConfig.headerBaseInset(this.readerExtendToStatusBar, this.statusBarSafeHeight));
   }
 
   getReaderHeaderTopGap(): number {
@@ -7873,7 +7873,7 @@ struct ReadBookPage {
   }
 
   getReaderGestureIndicatorLift(): number {
-    return Math.max(6, Math.min(8, Math.max(0, this.navBarHeight) * 0.5));
+    return ReaderInfoBarConfig.footerBaseInset(this.navBarHeight);
   }
 
   getReaderBottomInfoBarContentGap(): number {
@@ -8877,7 +8877,8 @@ struct ReadBookPage {
       }
       .width('100%')
       .height(this.getReaderHeaderInfoBarHeight())
-      .alignItems(VerticalAlign.Center)
+      // 行内文字靠顶部，额外行高只留在正文一侧，避免到边缘后仍有居中留白。
+      .alignItems(VerticalAlign.Top)
 
       if (this.getReaderInfoBarConfig().progressBar === ReaderInfoProgressBar.HEADER) {
         this.readerInfoBarAccentLine(true)
@@ -9908,6 +9909,7 @@ struct ReadBookPage {
   @Builder
   readerHeaderFooterSettingsPanel() {
     ReaderHeaderFooterSettings({
+      headerBaseInset: ReaderInfoBarConfig.headerBaseInset(this.readerExtendToStatusBar, this.statusBarSafeHeight),
       dark: this.isReaderThemeDark(),
       textColor: this.readerPanelTextColor(),
       subTextColor: this.readerPanelSubTextColor(),

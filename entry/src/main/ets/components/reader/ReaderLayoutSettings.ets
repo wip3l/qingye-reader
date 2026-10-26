@@ -206,6 +206,11 @@ export struct ReaderTypographyStepper {
  */
 @Component
 export struct ReaderHeaderFooterSettings {
+  // 阅读页传入实时安全区；独立设置页使用窗口共享的安全区。
+  @Prop headerBaseInset: number = -1;
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('readerExtendToStatusBar') readerExtendToStatusBar: boolean = false;
   @Prop dark: boolean = false;
   @Prop textColor: string = '#202124';
   @Prop subTextColor: string = '#80868B';
@@ -222,6 +227,9 @@ export struct ReaderHeaderFooterSettings {
 
   build() {
     ReaderHeaderFooterEditor({
+      headerBaseInset: this.headerBaseInset >= 0 ? this.headerBaseInset :
+        ReaderInfoBarConfig.headerBaseInset(this.readerExtendToStatusBar, this.statusBarHeight),
+      footerBaseInset: ReaderInfoBarConfig.footerBaseInset(this.navBarHeight),
       dark: this.dark,
       textColor: this.textColor,
       subTextColor: this.subTextColor,
@@ -245,6 +253,8 @@ export struct ReaderHeaderFooterSettings {
  */
 @Component
 export struct ReaderHeaderFooterEditor {
+  @Prop headerBaseInset: number = 0;
+  @Prop footerBaseInset: number = 6;
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @Prop dark: boolean = false;
   @Prop textColor: string = '#202124';
@@ -313,8 +323,12 @@ export struct ReaderHeaderFooterEditor {
 
   private stepperValue(field: number): number {
     const config = this.config();
-    if (field === ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET) return config.headerOffset;
-    if (field === ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET) return config.footerOffset;
+    if (field === ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET) {
+      return ReaderInfoBarConfig.clampOffsetToInset(config.headerOffset, this.headerBaseInset);
+    }
+    if (field === ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET) {
+      return ReaderInfoBarConfig.clampOffsetToInset(config.footerOffset, this.footerBaseInset);
+    }
     if (field === ReaderHeaderFooterEditor.STEPPER_HEADER_SHRINK) return config.headerShrink;
     if (field === ReaderHeaderFooterEditor.STEPPER_FOOTER_SHRINK) return config.footerShrink;
     if (field === ReaderHeaderFooterEditor.STEPPER_HEADER_OPACITY) return config.headerOpacity;
@@ -338,7 +352,10 @@ export struct ReaderHeaderFooterEditor {
 
   private stepperMin(field: number): number {
     if (this.isShrinkStepper(field)) return ReaderInfoBarConfig.SHRINK_MIN;
-    if (this.isOffsetStepper(field)) return ReaderInfoBarConfig.OFFSET_MIN;
+    if (this.isOffsetStepper(field)) {
+      return ReaderInfoBarConfig.offsetMinForInset(field === ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET ?
+        this.headerBaseInset : this.footerBaseInset);
+    }
     return this.isOpacityStepper(field) ?
       ReaderInfoBarConfig.OPACITY_MIN : ReaderInfoBarConfig.FONT_SIZE_MIN;
   }
@@ -366,13 +383,14 @@ export struct ReaderHeaderFooterEditor {
   }
 
   private stepBy(field: number, direction: number): void {
+    if (!this.canStep(field, direction)) return;
     const config = this.config();
     if (field === ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET) {
-      config.headerOffset = ReaderInfoBarConfig.clampOffset(
-        config.headerOffset + direction * ReaderInfoBarConfig.OFFSET_STEP);
+      config.headerOffset = ReaderInfoBarConfig.clampOffsetToInset(
+        this.stepperValue(field) + direction * ReaderInfoBarConfig.OFFSET_STEP, this.headerBaseInset);
     } else if (field === ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET) {
-      config.footerOffset = ReaderInfoBarConfig.clampOffset(
-        config.footerOffset + direction * ReaderInfoBarConfig.OFFSET_STEP);
+      config.footerOffset = ReaderInfoBarConfig.clampOffsetToInset(
+        this.stepperValue(field) + direction * ReaderInfoBarConfig.OFFSET_STEP, this.footerBaseInset);
     } else if (field === ReaderHeaderFooterEditor.STEPPER_HEADER_SHRINK) {
       config.headerShrink = ReaderInfoBarConfig.clampShrink(
         config.headerShrink + direction * ReaderInfoBarConfig.SHRINK_STEP);

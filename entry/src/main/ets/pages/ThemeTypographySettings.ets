@@ -376,7 +376,7 @@ struct ThemeTypographySettingsPage {
         }
         .width('100%')
         .height(this.infoConfig().headerLineHeight())
-        .alignItems(VerticalAlign.Center)
+        .alignItems(VerticalAlign.Top)
 
         if (this.infoConfig().progressBar === ReaderInfoProgressBar.HEADER) {
           this.infoAccentLine(true)
@@ -558,6 +558,8 @@ struct ThemeTypographySettingsPage {
       this.sectionTitle('页眉页脚')
       Column() {
         ReaderHeaderFooterEditor({
+          headerBaseInset: ReaderInfoBarConfig.headerBaseInset(this.draft.extendToStatusBar, this.statusBarHeight),
+          footerBaseInset: ReaderInfoBarConfig.footerBaseInset(this.navBarHeight),
           dark: this.appDarkMode,
           textColor: this.primaryTextColor(),
           subTextColor: this.subTextColor(),
@@ -949,7 +951,8 @@ struct ThemeTypographySettingsPage {
   }
 
   headerTopInset(full: boolean): number {
-    return this.infoConfig().edgeInset(true, this.draft.extendToStatusBar ? 8 : this.statusInset(full));
+    return this.infoConfig().edgeInset(true,
+      ReaderInfoBarConfig.headerBaseInset(this.draft.extendToStatusBar, this.statusInset(full)));
   }
 
   bodyTop(full: boolean): number {
@@ -962,7 +965,7 @@ struct ThemeTypographySettingsPage {
   }
 
   footerBottomInset(full: boolean): number {
-    const lift = Math.max(6, Math.min(8, Math.max(0, full ? this.navBarHeight : 0) * 0.5));
+    const lift = ReaderInfoBarConfig.footerBaseInset(full ? this.navBarHeight : 0);
     return this.infoConfig().edgeInset(false, lift);
   }
 
