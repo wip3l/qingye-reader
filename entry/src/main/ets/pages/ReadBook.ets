@@ -4703,6 +4703,7 @@ struct ReadBookPage {
       this.showToc = false;
       this.showTtsQuickPlayer = false;
       this.showGlobalTtsQuickPlayer = false;
+      this.showReaderAutoScrollSpeed = false;
       this.readerAutoScrollActive = true;
       this.readerAutoScrollPaused = false;
       this.readerAutoScrollStatus = '';
@@ -4787,10 +4788,19 @@ struct ReadBookPage {
     });
   }
 
+  shouldPauseReaderAutoScrollForPanel(): boolean {
+    // 顶部/底部悬浮栏和胶囊不遮挡大段正文，展开这些控件时继续滚动。
+    return this.showToc || this.showSettings || this.showLayoutElementSettings ||
+      this.showReaderCommentPanel || this.showReaderAutoScrollSpeed || this.showTapZoneSettings ||
+      this.showChangeSourceDialog || this.showTxtCharsetDialog || this.showReaderCacheDialog ||
+      this.showReaderChapterCacheDialog || this.showTtsQuickPlayer || this.showGlobalTtsQuickPlayer ||
+      this.showGlobalTtsCatalog;
+  }
+
   advanceReaderAutoScroll(): void {
     if (!this.readerAutoScrollActive || this.readerAutoScrollPaused) return;
-    if (!this.readerPageVisible || this.isReaderComicModeActive() || this.showMenu || this.showToc ||
-      this.showSettings || this.showReaderCommentPanel || this.hasReaderTextSelection() ||
+    if (!this.readerPageVisible || this.isReaderComicModeActive() ||
+      this.shouldPauseReaderAutoScrollForPanel() || this.hasReaderTextSelection() ||
       (this.globalTtsActive && !this.globalTtsPaused) || (this.isTtsSpeaking && !this.isTtsPaused)) {
       this.pauseReaderAutoScroll('已暂停');
       return;

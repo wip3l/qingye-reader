@@ -14,7 +14,7 @@ function method(name) {
   return reader.slice(start, end + 4);
 }
 const names = ['startReaderAutoScroll', 'toggleReaderAutoScroll', 'pauseReaderAutoScroll',
-  'stopReaderAutoScroll', 'advanceReaderAutoScroll', 'waitReaderAutoScroll',
+  'stopReaderAutoScroll', 'advanceReaderAutoScroll', 'shouldPauseReaderAutoScrollForPanel', 'waitReaderAutoScroll',
   'restoreReaderAutoScrollAnchor', 'onReaderAutoScrollBackground',
   'isReaderNovelContinuousScrollModeActive', 'readerEffectivePageTurnMode',
   'cancelReaderAutoScrollTap', 'handleReaderAutoScrollTap', 'rememberContinuousReaderPointer',
@@ -124,10 +124,27 @@ p.onReaderAutoScrollBackground(); frame(p, 5000);
 assert.equal(p.distance, 0.32);
 assert.equal(p.readerAutoScrollPaused, true, 'background must require explicit resume');
 
-for (const interrupt of ['showMenu', 'showToc', 'showSettings', 'showReaderCommentPanel', 'globalTtsActive']) {
+p = fixture(); p.showMenu = true; frame(p); frame(p);
+assert.equal(p.readerAutoScrollPaused, false, 'floating bars and capsule do not pause motion');
+assert.equal(p.shouldShowReaderAutoScrollCapsule(), true);
+assert.equal(p.distance, 0.16, 'content continues moving under floating controls');
+p.showMenu = false; frame(p);
+assert.equal(p.distance, 0.32, 'dismissing floating controls keeps scrolling');
+
+for (const interrupt of ['showToc', 'showSettings', 'showLayoutElementSettings', 'showReaderCommentPanel',
+  'showReaderAutoScrollSpeed', 'showTapZoneSettings', 'showChangeSourceDialog', 'showTxtCharsetDialog',
+  'showReaderCacheDialog', 'showReaderChapterCacheDialog', 'showTtsQuickPlayer', 'showGlobalTtsQuickPlayer',
+  'showGlobalTtsCatalog', 'globalTtsActive']) {
   p = fixture(); p[interrupt] = true; frame(p);
   assert.equal(p.readerAutoScrollPaused, true, `${interrupt} pauses motion`);
   assert.equal(p.distance, 0);
+  p[interrupt] = false; p.showMenu = true; frame(p);
+  assert.equal(p.readerAutoScrollPaused, true, `closing ${interrupt} requires explicit resume`);
+  assert.equal(p.distance, 0);
+}
+for (const settingsTab of [0, 1, 2]) {
+  p = fixture(); p.showSettings = true; p.settingsPanelTab = settingsTab; frame(p);
+  assert.equal(p.readerAutoScrollPaused, true, 'reading, TTS and typography settings all pause');
 }
 p = fixture(); p.atEnd = true; frame(p);
 assert.equal(p.loadRequests, 1, 'chapter boundary uses existing neighbor loader');
@@ -154,6 +171,14 @@ p.stopReaderAutoScroll();
 assert.deepEqual(p.reflows, [480, 960], 'exit restores original mode at newly reached position');
 assert.equal(p.readerEffectivePageTurnMode(), 1);
 assert.equal(p.isReaderNovelContinuousScrollModeActive(), false);
+
+p = fixture(); p.readerAutoScrollPaused = true; p.showReaderAutoScrollSpeed = true;
+await p.startReaderAutoScroll();
+assert.equal(p.showReaderAutoScrollSpeed, false, 'resume from speed panel closes the blocking sheet');
+frame(p); frame(p);
+assert.equal(p.readerAutoScrollPaused, false, 'speed-panel resume is not immediately paused again');
+assert.equal(p.distance, 0.16);
+p.stopReaderAutoScroll(false);
 
 p = fixture(); p.readerAutoScrollActive = false;
 const pendingStart = p.startReaderAutoScroll();
@@ -219,8 +244,9 @@ assert.equal(p.shortTaps, 0, 'second press must cancel the pending menu before i
 
 p = fixture(); tap(p); now += 301; fireTimer(p.readerAutoScrollTapTimer);
 assert.equal(p.shortTaps, 1, 'single tap still opens reader controls');
-frame(p);
-assert.equal(p.readerAutoScrollPaused, true, 'opening controls pauses scrolling');
+frame(p); frame(p);
+assert.equal(p.readerAutoScrollPaused, false, 'single tap opens controls without pausing');
+assert.equal(p.distance, 0.16, 'scrolling continues after the single-tap menu opens');
 assert.equal(p.shouldShowReaderAutoScrollCapsule(), true);
 for (const panel of ['showToc', 'showSettings', 'showTtsQuickPlayer', 'showGlobalTtsQuickPlayer',
   'showReaderAutoScrollSpeed']) {
