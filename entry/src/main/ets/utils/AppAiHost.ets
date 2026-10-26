@@ -6,6 +6,7 @@ import { ReaderCacheBudget } from '../core/book/ReaderCacheBudget';
 import { ReaderComicImageExport } from '../core/reader/ReaderComicImageExport';
 import { ReaderImageMarker } from '../core/book/ReaderImageMarker';
 import { ReaderImageResults } from '../core/book/ReaderImageResults';
+import { ComicColorModelDownload } from '../account/ComicColorModelDownload';
 
 /** The app retains membership, network/image source and cache policy. */
 export class AppAiHost implements AiHost {
@@ -13,6 +14,10 @@ export class AppAiHost implements AiHost {
   isAllowed(feature: string): boolean { return AiAccessPolicy.isAllowed(feature); }
   cacheDir(): string { return AppStorage.get<string>('appCacheDir') || ''; }
   downloadImage(source: string): Promise<Uint8Array> { return ReaderComicImageExport.downloadImage(source); }
+  downloadColorModel(file: string, destination: string, bytes: number, active: () => boolean,
+    progress: (received: number) => void): Promise<void> {
+    return ComicColorModelDownload.download(file, destination, bytes, active, progress);
+  }
   digestHashHex(algorithm: string, value: string): string { return digestHashHex(algorithm, value); }
   touchComicFile(path: string): void { ReaderCacheBudget.touchComicFile(path); }
   noteComicWrite(path?: string): void { ReaderCacheBudget.noteComicWrite(path); }

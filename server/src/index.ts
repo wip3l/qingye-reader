@@ -85,6 +85,7 @@ import { registerMembershipRoutes } from './membershipRoutes.js';
 import { CloudFileService } from './cloudFileService.js';
 import { registerCloudFileRoutes } from './cloudFileRoutes.js';
 import { createObsStore } from './cloudObjectStore.js';
+import { registerComicColorModelRoutes } from './comicColorModelRoutes.js';
 
 interface AuthenticatedRequest extends FastifyRequest {
   userId?: string;
@@ -211,6 +212,10 @@ registerMembershipRoutes(app, {
 });
 
 const obs = config.cloudFiles;
+registerComicColorModelRoutes(app,
+  obs.endpoint && obs.region && obs.bucket && obs.ak && obs.sk ? createObsStore(obs) : null,
+  { authenticate, userId: requiredUserId,
+    limit: userId => enforceAccountRateLimit(userId, 'ai-model-download', 20) });
 const cloudFiles = new CloudFileService(inTransaction,
   config.membershipEnabled && obs.enabled && obs.endpoint && obs.region && obs.bucket && obs.ak && obs.sk
     ? createObsStore(obs) : null);

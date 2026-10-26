@@ -114,7 +114,8 @@ import { ReaderComicImageItem, ReaderComicView } from '../components/reader/Read
 import { ReaderComicPagedController, ReaderComicPagedView } from '../components/reader/ReaderComicPagedView';
 import { ReaderComicImageActions } from '../core/reader/ReaderComicImageActions';
 import { ReaderComicColorSession, ComicColorCandidate } from '@legado/aiengine';
-import { ComicColorizer } from '@legado/aiengine';
+import { ComicColorizer, ComicColorModels } from '@legado/aiengine';
+import { ComicColorDownloadPrompt } from '../utils/ComicColorDownloadPrompt';
 import { AiAccessPolicy } from '../account/AiAccessPolicy';
 import { ReaderComicStyle } from '../core/reader/ReaderComicStyle';
 import { ReaderNeighborChapterLoader } from '../core/reader/ReaderNeighborChapterLoader';
@@ -299,6 +300,11 @@ struct ReadBookPage {
   /** 本书漫画图片繁→简（书籍变量 readerComicTextConvert = t2s）。 */
   @State readerComicTextConvert: boolean = false;
   @State readerComicColorEnabled: boolean = false;
+  @State readerComicModelStatus: string = '';
+  @State readerComicModelReceivedBytes: number = 0;
+  @State readerComicModelTotalBytes: number = 0;
+  private readerComicModelRequest: number = 0;
+  private readerComicModelBusy: boolean = false;
   @State readerComicColorRevision: number = 0;
   private readerComicColor: ReaderComicColorSession = new ReaderComicColorSession();
   private readerComicColorUnsubscribe: (() => void) | null = null;
@@ -1071,6 +1077,7 @@ struct ReadBookPage {
     this.readerEngine().setReaderImagesDeferred(false);
     this.resetReaderScreenOrientation();
     this.readerPageVisible = false;
+    this.readerComicModelRequest++;
     this.syncReaderInfoBarClock();
     readStatsTracker.setReadingActive('');
     this.eyeTurn().release('reader disappear release');
@@ -1169,6 +1176,7 @@ struct ReadBookPage {
     this.readerComicColor.setForeground(false);
     this.shortcutRoutingActive = false;
     this.readerPageVisible = false;
+    this.readerComicModelRequest++;
     this.syncReaderInfoBarClock();
     readStatsTracker.setReadingActive('');
     this.eyeTurn().release('reader background release');
@@ -2736,14 +2744,46 @@ struct ReadBookPage {
   }
 
   setReaderComicColor(enabled: boolean): void {
+    if (!enabled) this.readerComicModelRequest++;
     if (!this.book) return;
     if (enabled && this.readerComicColorAccess() !== ReaderComicSuperResolutionAccess.READY) return;
+    if (enabled && ComicColorModels.missingBytes(getContext(this)) > 0) {
+      this.downloadReaderComicModels();
+      return;
+    }
     this.readerComicColorEnabled = enabled;
     this.readerComicColor.setEnabled(enabled);
     this.book.putVariable('readerComicColorEnabled', enabled ? '1' : '');
     AppDatabase.getInstance().updateBook(this.book, false).catch((error: Error): void => {
       console.warn('保存彩色阅读设置失败:', error);
     });
+  }
+
+  private async downloadReaderComicModels(): Promise<void> {
+    if (this.readerComicModelBusy) return;
+    this.readerComicModelBusy = true;
+    const ticket = ++this.readerComicModelRequest;
+    const bookUrl = this.bookUrl;
+    const active = (): boolean => ticket === this.readerComicModelRequest && this.readerPageVisible &&
+      this.bookUrl === bookUrl && ComicColorizer.isAppForeground();
+    try {
+      if (await ComicColorDownloadPrompt.ensure(getContext(this), this.getUIContext(), active,
+        (status: string): void => { if (active()) this.readerComicModelStatus = status; },
+        (received: number, total: number): void => {
+          if (!active()) return;
+          this.readerComicModelReceivedBytes = received;
+          this.readerComicModelTotalBytes = total;
+        })) {
+        this.setReaderComicColor(true);
+      }
+    } catch (error) {
+      if (active()) HdsFeedback.showToast((error as Error).message || '模型下载失败，请重试');
+    } finally {
+      this.readerComicModelStatus = '';
+      this.readerComicModelReceivedBytes = 0;
+      this.readerComicModelTotalBytes = 0;
+      this.readerComicModelBusy = false;
+    }
   }
 
   @Builder
@@ -2799,6 +2839,10 @@ struct ReadBookPage {
   @Builder
   readerComicDisplaySettingsPanel() {
     ReaderComicDisplaySettingsPanel({
+      modelStatus: this.readerComicModelStatus,
+      modelReceivedBytes: this.readerComicModelReceivedBytes,
+      modelTotalBytes: this.readerComicModelTotalBytes,
+      onCancelModelDownload: (): void => { this.readerComicModelRequest++; },
       colorEnabled: this.readerComicColorEnabled,
       colorAccess: this.readerComicColorAccess(),
       onColorEnabled: (enabled: boolean): void => this.setReaderComicColor(enabled),
@@ -5507,7 +5551,8 @@ struct ReadBookPage {
     const bookMode = this.book?.getVariable('readerComicReadingMode') || '';
     this.readerComicBookMode = bookMode ? ReaderComicMode.normalize(bookMode) : '';
     this.readerComicTextConvert = this.book?.getVariable('readerComicTextConvert') === 't2s';
-    this.readerComicColorEnabled = this.book?.getVariable('readerComicColorEnabled') === '1';
+    this.readerComicColorEnabled = this.book?.getVariable('readerComicColorEnabled') === '1' &&
+      ComicColorModels.missingBytes(getContext(this)) === 0;
     if (!this.readerComicColorUnsubscribe) {
       this.readerComicColorUnsubscribe = this.readerComicColor.subscribe((): void => { this.readerComicColorRevision++; });
     }
@@ -15931,6 +15976,7 @@ struct ReadBookPage {
     // a shorter visible range (notably 3..3 for a short final item that was pinned below 3..4), which otherwise
     // downgrades a saved 5/5 position to 4/5 immediately before the exit checkpoint is serialized.
     this.readerPageVisible = false;
+    this.readerComicModelRequest++;
     this.clearReaderPagedProgressSaveTimer();
     this.hideReaderPanels();
     if (this.openedFromShortcut) {

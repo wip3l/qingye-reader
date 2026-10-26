@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 
 export interface CloudObjectStore {
-  signUpload(key: string, md5: string, seconds: number): string;
+  signUpload(key: string, md5: string, seconds: number, forbidOverwrite?: boolean): string;
   signDownload(key: string, seconds: number): string;
   head(key: string): Promise<{ bytes: number; etag: string }>;
   copy(source: string, destination: string, etag: string): Promise<void>;
@@ -36,9 +36,10 @@ export function createObsStore(options: { endpoint: string; bucket: string; regi
     return url;
   };
   return {
-    signUpload(key, md5, seconds) {
+    signUpload(key, md5, seconds, forbidOverwrite = false) {
       return sign({ Method: 'PUT', Bucket: options.bucket, Key: key, Expires: seconds,
-        Headers: { 'Content-Type': 'application/octet-stream', 'Content-MD5': md5 } });
+        Headers: { 'Content-Type': 'application/octet-stream', 'Content-MD5': md5,
+          ...(forbidOverwrite ? { 'x-obs-forbid-overwrite': 'true' } : {}) } });
     },
     signDownload(key, seconds) {
       return sign({ Method: 'GET', Bucket: options.bucket, Key: key, Expires: seconds,

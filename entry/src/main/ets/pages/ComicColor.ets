@@ -9,6 +9,8 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { ComicTextRequests } from '../core/reader/ComicTextRequests';
 import { ComicColorizer } from '@legado/aiengine';
 import { ReaderComicImageExport } from '../core/reader/ReaderComicImageExport';
+import { ComicColorDownloadPrompt } from '../utils/ComicColorDownloadPrompt';
+import { ComicColorDownloadProgress } from '../components/reader/ComicColorDownloadProgress';
 
 interface ComicColorParams {
   requestId: string;
@@ -27,6 +29,8 @@ struct ComicColorPage {
   @State private result: string = '';
   @State private status: string = '点击开始，在本机生成本页彩色预览';
   @State private loading: boolean = false;
+  @State private modelReceivedBytes: number = 0;
+  @State private modelTotalBytes: number = 0;
   @State private exporting: boolean = false;
   @State private showOriginal: boolean = true;
   @State private imageRatio: number = 0.7;
@@ -90,6 +94,8 @@ struct ComicColorPage {
     ComicColorizer.releaseIdleWorker();
     if (this.loading) this.status = '已取消着色';
     this.loading = false;
+    this.modelReceivedBytes = 0;
+    this.modelTotalBytes = 0;
   }
 
   private async start(): Promise<void> {
@@ -101,6 +107,17 @@ struct ComicColorPage {
     this.loading = true;
     this.status = '正在排队…';
     try {
+      if (!await ComicColorDownloadPrompt.ensure(getContext(this), this.getUIContext(), active,
+        (status: string): void => { if (active()) this.status = status; },
+        (received: number, total: number): void => {
+          if (!active()) return;
+          this.modelReceivedBytes = received;
+          this.modelTotalBytes = total;
+        })) {
+        if (active()) this.status = '尚未开启着色';
+        return;
+      }
+      this.modelTotalBytes = 0;
       const result = await ComicColorizer.colorize(getContext(this), this.source, active,
         (status: string): void => { if (active()) this.status = status; });
       if (!active()) return;
@@ -111,7 +128,10 @@ struct ComicColorPage {
     } catch (error) {
       if (active()) this.status = (error as Error).message || '着色未完成，请重试';
     } finally {
-      if (active()) this.loading = false;
+      if (active()) {
+        this.loading = false;
+        this.modelTotalBytes = 0;
+      }
     }
   }
 
@@ -158,8 +178,13 @@ struct ComicColorPage {
           .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
       }
       if (this.loading) {
-        LoadingProgress().width(32).height(32)
-        Button('取消着色').onClick(() => { this.cancel(); })
+        if (this.modelTotalBytes > 0) {
+          ComicColorDownloadProgress({ receivedBytes: this.modelReceivedBytes, totalBytes: this.modelTotalBytes,
+            accent: ThemeRuntime.accentColor(this.appDarkMode), labelColor: ThemeRuntime.subTextColor(this.appDarkMode) })
+        } else {
+          LoadingProgress().width(32).height(32)
+        }
+        Button(this.modelTotalBytes > 0 ? '取消模型下载' : '取消着色').onClick(() => { this.cancel(); })
       } else if (this.source && ComicColorizer.supported() && !this.memberAllowed) {
         Button(this.trialOpen ? '登录后免费试用' : '开通会员')
           .onClick(() => { router.pushUrl({ url: 'pages/AccountCenter' }); })

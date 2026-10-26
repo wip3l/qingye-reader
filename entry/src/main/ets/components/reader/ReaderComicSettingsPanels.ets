@@ -1,4 +1,5 @@
 import { ReaderComicTranslationRow } from './ReaderComicTranslationRow';
+import { ComicColorDownloadProgress } from './ComicColorDownloadProgress';
 import { AiAccessPolicy } from '../../account/AiAccessPolicy';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
@@ -232,6 +233,10 @@ export struct ReaderComicModeSettingsPanel {
 /** 漫画「画面设置」面板。 */
 @Component
 export struct ReaderComicDisplaySettingsPanel {
+  @Prop modelStatus: string = '';
+  @Prop modelReceivedBytes: number = 0;
+  @Prop modelTotalBytes: number = 0;
+  onCancelModelDownload: () => void = (): void => {};
   @StorageProp('aiTrialOpen') trialOpen: boolean = false;
   @StorageProp('accountLoggedIn') loggedIn: boolean = false;
   @Prop colorEnabled: boolean = false;
@@ -333,6 +338,20 @@ export struct ReaderComicDisplaySettingsPanel {
         buttonTextColor: this.colors.buttonTextColor,
         onAction: (): void => this.onOpenMembership()
       })
+    }
+    if (this.modelStatus) {
+      Column({ space: 12 }) {
+        Text(this.modelStatus).fontSize(AppFontSize.CAPTION).fontColor(this.colors.textColor).width('100%')
+        if (this.modelTotalBytes > 0) {
+          ComicColorDownloadProgress({ receivedBytes: this.modelReceivedBytes, totalBytes: this.modelTotalBytes,
+            accent: this.colors.accentColor, labelColor: this.colors.subTextColor })
+        } else {
+          LoadingProgress().width(24).height(24).color(this.colors.accentColor)
+        }
+        Button('取消模型下载').onClick(() => { this.onCancelModelDownload(); })
+      }
+      .width('100%')
+      .padding(AppSpacing.MD)
     }
   }
 

@@ -40,6 +40,9 @@ export class MembershipGiftResponse {
 }
 
 export class AccountCommerceApi {
+  static colorModelTicket(file: string, token: string): Promise<string> {
+    return AccountCommerceApi.request(`/v1/ai/color-models/${encodeURIComponent(file)}/download-ticket`, 'POST', '{}', token);
+  }
   static async membershipOrders(token: string): Promise<MembershipOrderList> {
     return JSON.parse(await AccountCommerceApi.request('/v1/membership/orders', 'GET', '', token)) as MembershipOrderList;
   }
