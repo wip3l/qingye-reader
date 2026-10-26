@@ -67,6 +67,10 @@ export struct SearchBookResultList {
   @Prop layoutMode: string = 'list';
   /** 分类翻页的顶栏只响应真实纵向滚动，忽略新页布局、回顶等产生的空闲滚动回调。 */
   @Prop userScrollOnly: boolean = false;
+  @Prop @Watch('onGridPageActiveChanged') gridPageActive: boolean = true;
+  /** 只在分类进入时对齐滚动位置，不参与列表尺寸计算或逐帧布局。 */
+  @Prop gridHeaderCollapse: number = 0;
+  private gridAlignTimer: number = -1;
   private gridUserScrolled: boolean = false;
   scroller: ListScroller = new ListScroller();
   private dataSource: SearchBookResultDataSource = new SearchBookResultDataSource();
@@ -84,6 +88,30 @@ export struct SearchBookResultList {
 
   aboutToAppear(): void {
     this.onBooksChanged();
+  }
+
+  aboutToDisappear(): void {
+    if (this.gridAlignTimer >= 0) clearTimeout(this.gridAlignTimer);
+  }
+
+  onGridPageActiveChanged(): void {
+    if (this.gridAlignTimer >= 0) clearTimeout(this.gridAlignTimer);
+    this.gridAlignTimer = -1;
+    if (this.layoutMode !== 'grid' || !this.userScrollOnly || !this.gridPageActive) return;
+    // 首次挂载需等 List 绑定 Scroller；重新进入已有分类时保留更深的阅读位置。
+    this.gridAlignTimer = setTimeout(() => {
+      this.gridAlignTimer = -1;
+      this.alignGridToHeader();
+    }, 0);
+  }
+
+  alignGridToHeader(): void {
+    if (this.layoutMode !== 'grid' || !this.userScrollOnly || !this.gridPageActive) return;
+    const offset = this.scroller.currentOffset().yOffset;
+    if (offset < this.gridHeaderCollapse) {
+      this.gridUserScrolled = false;
+      this.scroller.scrollTo({ xOffset: 0, yOffset: this.gridHeaderCollapse, animation: false });
+    }
   }
 
   onBooksChanged(): void {
@@ -131,6 +159,7 @@ export struct SearchBookResultList {
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
     .backgroundColor(this.pageColor)
     .scrollBar(BarState.Auto)
+    .onAppear(() => this.onGridPageActiveChanged())
     .onReachEnd(() => {
       this.onReachEnd();
     })

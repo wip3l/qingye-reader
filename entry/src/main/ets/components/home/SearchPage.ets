@@ -233,9 +233,8 @@ export struct SearchPage {
     if (category === this.effectiveSearchCategory()) return;
     this.searchResultCategory = category;
     this.applySearchResultsSnapshot(this.searchResults);
-    const scroller = this.searchResultLayout === 'grid' ?
-      this.searchCategoryScrollers.get(category) : this.searchResultScroller;
-    scroller?.scrollToIndex(0);
+    // 平铺分类保留各自的位置，进入时由结果列表对齐共享顶栏；列表模式仍从头展示。
+    if (this.searchResultLayout !== 'grid') this.searchResultScroller.scrollToIndex(0);
   }
 
   openSearchBookOrGroup(book: SearchBook): void {
@@ -654,7 +653,6 @@ export struct SearchPage {
 
         if (this.usesSearchCategoryPager()) {
           CategorySwipePager({
-            topInset: this.searchTopOverlayHeight() - this.searchHeaderCollapseValue(),
             pageKeys: this.searchCategoryChips().map((chip: SearchCategoryChip): string => chip.key),
             selectedIndex: this.searchCategoryChips().findIndex((chip: SearchCategoryChip): boolean =>
               chip.key === this.effectiveSearchCategory()),
@@ -728,6 +726,8 @@ export struct SearchPage {
         subTextColor: this.subTextColor(),
         topPadding: this.searchResultTopPadding(),
         userScrollOnly: this.usesSearchCategoryPager(),
+        gridPageActive: !category || category === this.effectiveSearchCategory(),
+        gridHeaderCollapse: this.searchHeaderCollapseValue(),
         bottomPadding: this.resultListBottomInset(),
         onOpenBook: (book: SearchBook) => {
           this.openSearchBookOrGroup(book);
@@ -1753,7 +1753,8 @@ export struct SearchPage {
   }
 
   searchResultTopPadding(): number {
-    return this.usesSearchCategoryPager() ? 0 : this.searchTopOverlayHeight();
+    // 固定滚动内容尺寸，避免收起量改变留白后触发新的滚动回调，导致顶栏来回抖动。
+    return this.searchTopOverlayHeight();
   }
 
   /** 平铺分类共享收起状态，切到暂时没有结果的分类也不展开。 */
@@ -1784,7 +1785,7 @@ export struct SearchPage {
   }
 
   onSearchListScroll(delta: number, offset: number): void {
-    // 翻页内容已放在顶栏下面，收起量不再受各分类独立的纵向位置限制。
+    // 分类共享顶栏收起量，不受各自纵向位置限制；布局变化由结果列表过滤，不驱动顶栏。
     if (this.usesSearchCategoryPager() && offset <= 0 && delta >= 0) return;
     const next = CollapsingHeader.next(this.searchHeaderCollapseValue(), delta,
       this.usesSearchCategoryPager() ? this.searchCollapsibleHeight() : offset,

@@ -535,7 +535,6 @@ export struct ExplorePage {
 
       if (this.usesExploreCategoryPager()) {
         CategorySwipePager({
-          topInset: this.exploreTopOverlayHeight() - this.exploreHeaderCollapseValue(),
           pageKeys: this.explorePageKeys(),
           selectedIndex: this.selectedIndex,
           onSelect: (key: string): void => {
@@ -1136,6 +1135,8 @@ export struct ExplorePage {
         subTextColor: this.subTextColor(),
         topPadding: this.exploreResultTopPadding(),
         userScrollOnly: this.usesExploreCategoryPager(),
+        gridPageActive: this.isCurrentExplorePage(key),
+        gridHeaderCollapse: this.exploreHeaderCollapseValue(),
         bottomPadding: this.resultListBottomInset(),
         onOpenBook: (book: SearchBook) => {
           this.openSearchBookDetail(book);
@@ -1892,7 +1893,8 @@ export struct ExplorePage {
   }
 
   exploreResultTopPadding(): number {
-    return this.usesExploreCategoryPager() ? 0 : this.exploreTopOverlayHeight();
+    // 固定滚动内容尺寸，避免收起量改变留白后触发新的滚动回调，导致顶栏来回抖动。
+    return this.exploreTopOverlayHeight();
   }
 
   /** 平铺分类共享顶栏状态，分类加载中或为空时保持原来的收起量。 */

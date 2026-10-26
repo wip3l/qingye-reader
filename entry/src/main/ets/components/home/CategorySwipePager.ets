@@ -23,13 +23,11 @@ class CategoryPageDataSource implements IDataSource {
   }
 }
 
-/** 原生横向翻页：跟手拖动、相邻页同时滑动、松手吸附及首尾回弹。 */
+/** 原生横向翻页：铺满顶栏背后的区域，顶部留白由各页滚动内容承载。 */
 @Component
 export struct CategorySwipePager {
   @Prop @Watch('onPagesChanged') pageKeys: string[] = [];
   @Prop selectedIndex: number = 0;
-  /** 翻页内容整体放在当前可见顶栏下方，各分类不再各自预留完整顶栏的空白。 */
-  @Prop topInset: number = 0;
   @BuilderParam pageContent: (key: string) => void;
   onSelect: (key: string) => void = (_key: string) => {};
   private dataSource: CategoryPageDataSource = new CategoryPageDataSource();
@@ -72,6 +70,5 @@ export struct CategorySwipePager {
     }
     .width('100%')
     .height('100%')
-    .padding({ top: this.topInset })
   }
 }

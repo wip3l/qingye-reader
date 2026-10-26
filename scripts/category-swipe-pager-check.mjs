@@ -23,8 +23,8 @@ Object.assign(context, {
   animateTo: (_options, update) => update()
 });
 vm.runInContext(stripTypeScriptTypes(read('utils/CollapsingHeader.ets').replace('export class', 'class')), context);
-function methods(file, names) {
-  const source = read(`components/home/${file}.ets`);
+function methods(file, names, folder = 'home') {
+  const source = read(`components/${folder}/${file}.ets`);
   const bodies = names.map(name => {
     const start = source.indexOf(`  ${name}(`);
     assert.ok(start >= 0, name);
@@ -149,9 +149,12 @@ for (const [file, prefix] of [['ExplorePage', 'explore'], ['SearchPage', 'search
   const value = () => page[`${prefix}HeaderCollapseValue`]();
   page[collapseKey] = distance;
   assert.equal(value(), distance, `${file}: loading/empty incoming page preserves the collapsed header`);
-  assert.equal(page[`${prefix}ResultTopPadding`](), 0, `${file}: no expanded-header spacer inside each page`);
-  assert.equal(page[`${prefix}TopOverlayHeight`]() - value(), 24 + 44 + 8,
-    `${file}: content begins directly after the remaining status/category bar and its normal margin`);
+  const expandedInset = page[`${prefix}TopOverlayHeight`]();
+  for (const collapse of [0, distance / 2, distance]) {
+    page[collapseKey] = collapse;
+    assert.equal(page[`${prefix}ResultTopPadding`](), expandedInset,
+      `${file}: header movement must not resize scroll content and feed back into scrolling`);
+  }
 
   const name = isSearch ? 'Search' : 'Explore';
   const list = { userScrollOnly: true, gridUserScrolled: false,
@@ -179,8 +182,48 @@ for (const [file, prefix] of [['ExplorePage', 'explore'], ['SearchPage', 'search
   page.isLoading = false;
   page.books = [{}]; page.displayedSearchResults = [{}];
   page.searchResultLayout = 'list'; page.exploreResultLayout = 'list';
+  assert.equal(page[`${prefix}ResultTopPadding`](), expandedInset,
+    `${file}: ordinary list mode retains its fixed expanded-header spacer`);
   page[`on${name}ListScroll`](0, 0);
   assert.equal(value(), 0, `${file}: ordinary list mode keeps its existing offset-based behavior`);
 }
 
-console.log('PASS category pager: page identity, aggregation, previews, bounded cache, shared header state, gap-free content inset and user-only vertical scroll');
+// 分类进入时补齐共享顶栏的滚动距离；滚动中只更新收起量，不能反过来调整列表位置或尺寸。
+const pending = new Map();
+let timerId = 0;
+context.setTimeout = callback => { pending.set(++timerId, callback); return timerId; };
+context.clearTimeout = id => pending.delete(id);
+const grid = methods('SearchBookResultList', [
+  'onGridPageActiveChanged', 'alignGridToHeader', 'aboutToDisappear'
+], 'book');
+let gridOffset = 0;
+let scrollCalls = 0;
+Object.assign(grid, {
+  layoutMode: 'grid', userScrollOnly: true, gridPageActive: true, gridHeaderCollapse: 56,
+  gridAlignTimer: -1, gridUserScrolled: false,
+  scroller: {
+    currentOffset: () => ({ yOffset: gridOffset }),
+    scrollTo: options => { gridOffset = options.yOffset; scrollCalls++; assert.equal(options.animation, false); }
+  }
+});
+const flush = () => { const callbacks = [...pending.values()]; pending.clear(); callbacks.forEach(callback => callback()); };
+grid.onGridPageActiveChanged();
+assert.equal(scrollCalls, 0, 'initial alignment waits for the List to mount');
+flush();
+assert.equal(gridOffset, 56, 'a new category starts below the collapsed header without a blank gap');
+grid.gridHeaderCollapse = 20;
+flush();
+assert.equal(scrollCalls, 1, 'header scrolling alone never queues another alignment');
+gridOffset = 240;
+grid.onGridPageActiveChanged(); flush();
+assert.equal(gridOffset, 240, 'returning to a category preserves its deeper scroll position');
+gridOffset = 0;
+grid.onGridPageActiveChanged();
+grid.gridPageActive = false;
+grid.onGridPageActiveChanged(); flush();
+assert.equal(gridOffset, 0, 'leaving a category cancels pending alignment');
+grid.gridPageActive = true;
+grid.onGridPageActiveChanged(); grid.aboutToDisappear(); flush();
+assert.equal(gridOffset, 0, 'unmounting cancels pending scroller work');
+
+console.log('PASS category pager: page identity, aggregation, previews, bounded cache, shared header, stable scroll layout and category-entry alignment');
