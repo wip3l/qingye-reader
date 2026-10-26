@@ -78,6 +78,48 @@ for (let c = 1; c <= D; c++) {
   assert(CollapsingHeader.scrimOpacity(c) >= CollapsingHeader.scrimOpacity(c - 1), 'scrim opacity is monotonic');
 }
 
+// Material geometry must retain the search boundary and feather in every scroll state.
+const backdropSource = read('components/common/HeaderBackdrop');
+const backdropMethods = backdropSource.slice(backdropSource.indexOf('  fadeProgress():'),
+  backdropSource.indexOf('  build()'));
+const Backdrop = vm.runInNewContext(compile(`class Backdrop { ${backdropMethods} }; Backdrop`), { CollapsingHeader });
+const backdrop = new Backdrop();
+Object.assign(backdrop, { statusBarHeight: 40, backdropHeight: 176, backdropColor: '#F8F2E9' });
+assert.equal(backdrop.surfaceHeight(), 176, 'expanded mask ends exactly at the content boundary');
+assert.equal(backdrop.tintColor(), '#55F8F2E9', 'theme tint stays translucent over the real background blur');
+assert.equal(backdrop.gradientColors().at(-1)[0], '#00FFFFFF', 'expanded material also has a transparent lower edge');
+assert.equal(backdrop.gradientColors()[1][1], 160 / 176, 'expanded feather remains inside the content boundary');
+for (let remaining = 56; remaining >= 0; remaining--) {
+  backdrop.backdropHeight = 40 + remaining;
+  const stops = backdrop.gradientColors();
+  assert(stops.every(([, position]) => position >= 0 && position <= 1), 'gradient stops stay in range');
+  assert(stops.every(([, position], index) => index === 0 || position >= stops[index - 1][1]),
+    'gradient stops stay ordered during reverse scroll');
+  assert(backdrop.surfaceHeight() >= backdrop.backdropHeight, 'material covers the reserved content region');
+  assert.equal(stops.at(-1)[0], '#00FFFFFF', 'every intermediate state ends transparently');
+  if (remaining >= 16) assert.equal(backdrop.fadeProgress(), 0, 'expanded material never extends into the glass bar');
+}
+assert.equal(backdrop.surfaceHeight(), 56, 'collapsed state restores the 16vp fade below the status bar');
+assert.equal(backdrop.gradientColors()[1][1], 40 / 56, 'collapsed feather starts at the status-bar bottom');
+assert.equal(backdrop.gradientColors().at(-1)[0], '#00FFFFFF', 'material fade ends transparent');
+backdrop.statusBarHeight = 0;
+backdrop.backdropHeight = 0;
+assert.equal(backdrop.surfaceHeight(), 0, 'zero safe-area height produces no phantom strip');
+
+const searchSource = read('components/home/SearchPage');
+const searchGeometry = searchSource.slice(searchSource.indexOf('  searchFieldRowHeight():'),
+  searchSource.indexOf('  searchHeaderRowOpacity('));
+const SearchGeometry = vm.runInNewContext(compile(`class SearchGeometry { ${searchGeometry} }; SearchGeometry`), {
+  SearchPage: { TITLE_ROW_HEIGHT: 56, HEADER_CONTROL_SIZE: 40, STATUS_ROW_HEIGHT: 32 }, AppSpacing: { MD: 8 }
+});
+const searchGeometryPage = new SearchGeometry();
+Object.assign(searchGeometryPage, { statusBarHeight: 40, statusMessage: '搜索完成', searchHeaderCollapseValue: () => 0 });
+assert.equal(searchGeometryPage.searchHeaderBackdropHeight(), 176, 'result message is covered by the main mask');
+searchGeometryPage.statusMessage = '';
+assert.equal(searchGeometryPage.searchHeaderBackdropHeight(), 136, 'no message leaves the mask at the search field bottom');
+searchGeometryPage.searchHeaderCollapseValue = () => 136;
+assert.equal(searchGeometryPage.searchHeaderBackdropHeight(), 40, 'fully collapsed search retains only the status-bar base');
+
 // Run the actual Index callbacks: native animations must not restart on every layout frame.
 const indexSource = read('pages/Index');
 const indexMethods = indexSource.slice(indexSource.indexOf('  onCurrentIndexChanged(): void {'),

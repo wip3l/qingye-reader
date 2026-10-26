@@ -3,7 +3,7 @@ import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { ImmersiveBackButton } from '../ImmersiveBackButton';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
-import { StatusBarScrim } from './StatusBarScrim';
+import { HeaderBackdrop } from './HeaderBackdrop';
 
 /**
  * 二级页面的统一骨架：页面底色、沉浸式顶栏（返回、标题、右侧操作）和状态栏/导航条的留白。
@@ -87,20 +87,19 @@ export struct PageScaffold {
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       }
 
+      HeaderBackdrop({
+        statusBarHeight: this.statusBarHeight,
+        backdropHeight: PageScaffold.BAR_HEIGHT + this.statusBarHeight - this.collapseAmount(),
+        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode)
+      })
+        .width('100%')
+
       if (this.collapsible) {
-        // 只有内容会滚进状态栏时才需要遮罩；普通 List 页的内容区本来就从状态栏下面开始。
-        if (this.scrollable || this.edgeToEdge) {
-          StatusBarScrim({ statusBarHeight: this.statusBarHeight, pageColor: ThemeRuntime.pageColor(this.appDarkMode),
-            scrimOpacity: CollapsingHeader.scrimOpacity(this.collapseAmount()) })
-            .width('100%')
-        }
         Column() {
           this.titleBar()
         }
         .width('100%')
         .height(PageScaffold.BAR_HEIGHT + this.statusBarHeight - this.collapseAmount())
-        // 保持顶栏透明，让返回按钮的沉浸光感材质采样下方滚动内容。
-        .backgroundColor(Color.Transparent)
         .clip(true)
         .opacity(CollapsingHeader.contentOpacity(this.collapseAmount()))
         .hitTestBehavior(CollapsingHeader.acceptsTouch(this.collapseAmount()) ? HitTestMode.Default : HitTestMode.None)

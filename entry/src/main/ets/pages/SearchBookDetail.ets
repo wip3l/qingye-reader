@@ -7,7 +7,7 @@ import { WebBookService } from '../core/book/WebBookService';
 import { syncSystemBars } from '../utils/SystemBars';
 import { BookDisplayHelper } from '../utils/BookDisplayHelper';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
-import { StatusBarScrim } from '../components/common/StatusBarScrim';
+import { HeaderBackdrop } from '../components/common/HeaderBackdrop';
 import { GlassTagModifier, ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { BookIdentity } from '../utils/BookIdentity';
 import { CoverUrlNormalizer } from '../utils/CoverUrlNormalizer';
@@ -310,10 +310,12 @@ struct SearchBookDetailPage {
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-      StatusBarScrim({ statusBarHeight: this.statusBarHeight, pageColor: this.pageColor(),
-        scrimOpacity: CollapsingHeader.scrimOpacity(this.headerCollapse) })
+      HeaderBackdrop({ statusBarHeight: this.statusBarHeight, backdropHeight: this.statusBarHeight,
+        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
         .width('100%')
         .position({ x: 0, y: 0 })
+        .opacity(CollapsingHeader.scrimOpacity(this.headerCollapse))
+        .hitTestBehavior(HitTestMode.None)
 
       this.titleBar()
 

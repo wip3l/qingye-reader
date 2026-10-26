@@ -10,7 +10,7 @@ import { SourcePickerKit } from './SourcePickerKit';
 import { ImmersiveMaterialSurface } from '../../components/ImmersiveMaterialSurface';
 import { GlassTagModifier, ImmersiveMaterialRuntime, ImmersiveTagModifier } from '../../utils/ImmersiveMaterialRuntime';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
-import { StatusBarScrim } from '../common/StatusBarScrim';
+import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { SearchBookShelfHelper } from '../../utils/SearchBookShelfHelper';
 import { SearchExploreSettings, SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
@@ -613,6 +613,7 @@ export struct SearchPage {
                       .fontSize(AppFontSize.CAPTION)
                       .fontWeight(FontWeight.Medium)
                       .fontColor(this.accentColor())
+                      .flexShrink(0)
                       .padding({ left: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
                       .onClick(() => {
                         this.openVerification();
@@ -645,8 +646,9 @@ export struct SearchPage {
         .position({ x: 0, y: 0 })
         .zIndex(4)
 
-        StatusBarScrim({ statusBarHeight: this.statusBarHeight, pageColor: this.pageColor(),
-          scrimOpacity: CollapsingHeader.scrimOpacity(this.searchHeaderCollapseValue(), this.searchCollapsibleHeight()) })
+        HeaderBackdrop({ backdropHeight: this.searchHeaderBackdropHeight(),
+          statusBarHeight: this.statusBarHeight,
+          backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
           .width('100%')
           .position({ x: 0, y: 0 })
           .zIndex(3)
@@ -1765,6 +1767,14 @@ export struct SearchPage {
 
   searchFieldRowHeight(): number {
     return SearchPage.HEADER_CONTROL_SIZE + AppSpacing.MD;
+  }
+
+  searchHeaderBackdropHeight(): number {
+    // 有结果/进度提示时衬底覆盖提示行；无提示时仍精确停在搜索框底边。
+    const contentBottom = this.statusMessage ? this.searchCollapsibleHeight() :
+      this.searchStatusRowTop() - AppSpacing.MD;
+    return this.statusBarHeight + Math.max(0,
+      contentBottom - this.searchHeaderCollapseValue());
   }
 
   searchStatusRowTop(): number {

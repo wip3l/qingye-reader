@@ -14,7 +14,7 @@ import { ImmersiveBackButton } from '../../components/ImmersiveBackButton';
 import { ImmersiveMaterialSurface } from '../../components/ImmersiveMaterialSurface';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
-import { StatusBarScrim } from '../common/StatusBarScrim';
+import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { BookDisplayHelper } from '../../utils/BookDisplayHelper';
 import { BookCoverCache } from '../../utils/BookCoverCache';
@@ -1132,8 +1132,9 @@ export struct BookshelfPage {
         .position({ x: 0, y: 0 })
         .zIndex(4)
 
-        StatusBarScrim({ statusBarHeight: this.statusBarHeight, pageColor: this.pageColor(),
-          scrimOpacity: CollapsingHeader.scrimOpacity(this.shelfHeaderCollapseValue()) })
+        HeaderBackdrop({ backdropHeight: this.shelfHeaderBackdropHeight(),
+          statusBarHeight: this.statusBarHeight,
+          backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
           .width('100%')
           .position({ x: 0, y: 0 })
           .zIndex(3)
@@ -2768,6 +2769,12 @@ export struct BookshelfPage {
       height += 42;
     }
     return height;
+  }
+
+  shelfHeaderBackdropHeight(): number {
+    // 搜索框的底边不包含下面的间距和沉浸光感分类栏。
+    return this.statusBarHeight + 56 - this.shelfHeaderCollapseValue() +
+      (this.shelfSearchActive ? BookshelfPage.SEARCH_BAR_HEIGHT : 0);
   }
 
   bookshelfTileTopSpacerHeight(): number {

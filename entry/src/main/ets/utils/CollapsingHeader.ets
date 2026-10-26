@@ -1,6 +1,6 @@
 /**
- * 首页（书架/发现/搜索）列表滚动时收起的大标题行：上滑跟手收起、下滑跟手展开，
- * 页签、频道栏、搜索框等仍固定在顶部。
+ * 首页和设置页的顶栏收起计算：上滑跟手收起、下滑跟手展开。
+ * 分类/频道栏常驻；搜索框是否一起收起由页面传入的 distance 决定。
  *
  * 收起量永远不超过列表实际滚动距离：列表顶部留白按标题行完全展开时的高度预留，
  * 所以刚开始滚动或顶部回弹时，标题行下方不会露出空隙。
@@ -47,8 +47,8 @@ export class CollapsingHeader {
   static readonly SCRIM_FADE_HEIGHT: number = 16;
 
   /**
-   * 状态栏渐变遮罩的不透明度：标题行内容快淡完时才开始显现，完全收起前到位，
-   * 两段过渡首尾相接，滚进状态栏的内容下面始终衬着页面底色。
+   * 书籍详情的封面延伸到顶栏，继续按标题淡出量显现状态栏渐变。
+   * 普通顶栏由 HeaderBackdrop 的可见高度控制渐变，不再叠加此透明度。
    */
   static scrimOpacity(collapse: number, distance: number = CollapsingHeader.DISTANCE): number {
     if (!(distance > 0) || !Number.isFinite(collapse)) {

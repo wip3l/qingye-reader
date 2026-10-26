@@ -185,6 +185,7 @@ struct NativeSourceEditPage {
       .width('100%')
       .height(56 + this.statusBarHeight)
       .padding({ top: this.statusBarHeight })
+      .backgroundColor(ThemeRuntime.topBarColor(this.appDarkMode))
       .alignItems(VerticalAlign.Center)
 
       if (this.problem) {

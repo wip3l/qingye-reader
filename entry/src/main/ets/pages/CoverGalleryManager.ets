@@ -15,7 +15,7 @@ import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
-import { StatusBarScrim } from '../components/common/StatusBarScrim';
+import { HeaderBackdrop } from '../components/common/HeaderBackdrop';
 
 class CoverGalleryExportResult {
   zipPath: string = '';
@@ -101,8 +101,9 @@ struct CoverGalleryManagerPage {
         }
       })
 
-      StatusBarScrim({ statusBarHeight: this.statusBarHeight, pageColor: this.pageColor(),
-        scrimOpacity: CollapsingHeader.scrimOpacity(this.headerCollapse) })
+      HeaderBackdrop({ backdropHeight: this.statusBarHeight + 56 - this.headerCollapse,
+        statusBarHeight: this.statusBarHeight,
+        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
         .width('100%')
 
       // 顶栏随列表上滑跟手收起、下滑展开，与其他二级页面一致。
@@ -111,7 +112,6 @@ struct CoverGalleryManagerPage {
       }
       .width('100%')
       .height(56 + this.statusBarHeight - this.headerCollapse)
-      .backgroundColor(this.pageColor())
       .clip(true)
       .opacity(CollapsingHeader.contentOpacity(this.headerCollapse))
       .hitTestBehavior(CollapsingHeader.acceptsTouch(this.headerCollapse) ? HitTestMode.Default : HitTestMode.None)

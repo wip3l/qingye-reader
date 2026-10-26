@@ -264,7 +264,7 @@ struct VerifyWebPage {
       .width('100%')
       .height(56)
       .padding({ right: AppSpacing.MD })
-      .backgroundColor(this.cardColor())
+      .backgroundColor(ThemeRuntime.topBarColor(this.appDarkMode))
       .alignItems(VerticalAlign.Center)
 
       if (this.progress > 0 && this.progress < 100) {

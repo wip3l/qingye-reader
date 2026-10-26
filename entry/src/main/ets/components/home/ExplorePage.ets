@@ -13,7 +13,7 @@ import { SearchBookResultList } from '../../components/book/SearchBookResultList
 import { ImmersiveMaterialSurface } from '../../components/ImmersiveMaterialSurface';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
-import { StatusBarScrim } from '../common/StatusBarScrim';
+import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { SearchBookShelfHelper } from '../../utils/SearchBookShelfHelper';
 import { SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
@@ -503,7 +503,12 @@ export struct ExplorePage {
               Text(this.status)
                 .fontSize(AppFontSize.BODY)
                 .fontColor(this.secondaryTextColor())
-                .layoutWeight(1)
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .flexShrink(1)
+                .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
+                .backgroundColor(ThemeRuntime.topBarColor(this.appDarkMode))
+                .borderRadius(12)
 
               if (this.verificationUrl) {
                 Button('去验证')
@@ -527,8 +532,9 @@ export struct ExplorePage {
         .position({ x: 0, y: 0 })
         .zIndex(4)
 
-      StatusBarScrim({ statusBarHeight: this.statusBarHeight, pageColor: this.pageColor(),
-        scrimOpacity: CollapsingHeader.scrimOpacity(this.exploreHeaderCollapseValue()) })
+      HeaderBackdrop({ backdropHeight: this.statusBarHeight + 56 - this.exploreHeaderCollapseValue(),
+        statusBarHeight: this.statusBarHeight,
+        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
         .width('100%')
         .position({ x: 0, y: 0 })
         .zIndex(3)

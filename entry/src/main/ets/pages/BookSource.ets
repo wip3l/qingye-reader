@@ -39,6 +39,7 @@ import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
+import { HeaderBackdrop } from '../components/common/HeaderBackdrop';
 import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
 
 const BOOK_SOURCE_IMPORT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
@@ -626,15 +627,12 @@ struct BookSourcePage {
               this.draggingSourceUrl = '';
             })
 
-            // 底板只到搜索框底边，不覆盖其下方间距与沉浸光感组合栏，供材质采样列表。
-            // 只改变遮挡高度，不改变列表占位或滚动偏移。
-            Row()
+            // 展开时止于搜索框底边；收起后由同一层过渡为状态栏渐变。
+            HeaderBackdrop({ backdropHeight: this.sourceHeaderBackdropHeight(),
+              statusBarHeight: this.statusBarHeight, backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
               .width('100%')
-              .height(this.sourceHeaderBackdropHeight())
               .position({ x: 0, y: 0 })
-              .backgroundColor(ThemeRuntime.topBarColor(this.appDarkMode))
               .zIndex(1)
-              .hitTestBehavior(HitTestMode.Block)
 
             this.sourceVirtualScrollbar()
           }
@@ -710,15 +708,6 @@ struct BookSourcePage {
       .height('100%')
       .padding({ top: 56 + this.statusBarHeight })
       .backgroundColor(this.pageColor())
-
-      // 状态栏单独遮挡，不向下渐变到常驻组合栏背后。
-      Row()
-        .width('100%')
-        .height(this.statusBarHeight)
-        .backgroundColor(ThemeRuntime.topBarColor(this.appDarkMode))
-        .position({ x: 0, y: 0 })
-        .hitTestBehavior(HitTestMode.None)
-        .accessibilityLevel('no')
 
       if (!this.selectionMode) {
         Column() {

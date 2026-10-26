@@ -7,7 +7,7 @@ import { CloudSyncSettingsStore } from '../../account/CloudSyncSettingsStore';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
-import { StatusBarScrim } from '../common/StatusBarScrim';
+import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { CommunityGroup } from '../../utils/CommunityGroup';
 import { MembershipIcons } from '../../account/MembershipIcons';
 import { AppThemeModeStore } from '../../utils/AppThemeModeStore';
@@ -150,8 +150,9 @@ export struct SettingsPage {
         }
       })
 
-      StatusBarScrim({ statusBarHeight: this.statusBarHeight, pageColor: this.pageColor(),
-        scrimOpacity: CollapsingHeader.scrimOpacity(this.headerCollapse) })
+      HeaderBackdrop({ backdropHeight: this.statusBarHeight + 56 - this.headerCollapse,
+        statusBarHeight: this.statusBarHeight,
+        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
         .width('100%')
 
       Column() {
