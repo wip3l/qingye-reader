@@ -1,8 +1,11 @@
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
+import { AppFontSize } from '../../theme/AppFontSize';
+import { AppSpacing } from '../../theme/AppSpacing';
+import { ReaderTtsCapsule } from './ReaderTtsControls';
 
-/** 轻盈光感：阅读时只保留调速与暂停，结束操作留在展开面板内。 */
+/** 与朗读胶囊统一尺寸，提供调速、暂停/继续和直接结束滚动。 */
 @Component
 export struct ReaderAutoScrollCapsule {
   @Prop speed: number = 20;
@@ -11,47 +14,66 @@ export struct ReaderAutoScrollCapsule {
   @Prop textColor: string;
   @Prop subTextColor: string;
   @Prop accentColor: string;
-  @Prop accentSurfaceColor: string;
   @Prop panelColor: string;
   @Prop dark: boolean = false;
   onOpen: () => void = (): void => {};
   onToggle: () => void = (): void => {};
+  onClose: () => void = (): void => {};
+  onCapsuleDragStart: () => void = (): void => {};
+  onCapsuleDragMove: (offsetX: number, offsetY: number) => void = (_offsetX: number, _offsetY: number): void => {};
 
-  static readonly WIDTH: number = 248;
-  static readonly HEIGHT: number = 56;
+  static readonly WIDTH: number = ReaderTtsCapsule.WIDTH;
+  static readonly HEIGHT: number = ReaderTtsCapsule.HEIGHT;
 
   build() {
-    ReaderMaterialPanel({
-      panelWidth: ReaderAutoScrollCapsule.WIDTH, panelHeight: ReaderAutoScrollCapsule.HEIGHT,
-      cornerRadius: 28, darkMode: this.dark, fallbackColor: this.panelColor
-    }) {
-      Row({ space: 4 }) {
-        Button({ type: ButtonType.Normal }) {
-          Row({ space: 8 }) {
-            SymbolGlyph($r('sys.symbol.arrow_down'))
-              .fontSize(20).fontColor([this.accentColor])
-            Column({ space: 2 }) {
-              Text(this.status || (this.paused ? '已暂停' : '自动滚动'))
-                .fontSize(14).fontWeight(FontWeight.Medium).fontColor(this.textColor)
-                .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(`${this.speed} 行/分钟 · 调速`)
-                .fontSize(11).fontColor(this.subTextColor).maxLines(1)
-            }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-          }.width('100%')
-        }
-        .layoutWeight(1).height(48).padding({ left: 8, right: 4 })
-        .borderRadius(24).backgroundColor(Color.Transparent)
-        .accessibilityText(`自动滚动，${this.speed} 行每分钟，点击调整速度`)
-        .onClick(() => this.onOpen())
-        Button({ type: ButtonType.Circle }) {
-          SymbolGlyph(this.paused ? $r('sys.symbol.play') : $r('sys.symbol.pause'))
-            .fontSize(20).fontColor([this.accentColor])
-        }
-        .width(44).height(44).backgroundColor(this.accentSurfaceColor)
-        .accessibilityText(this.paused ? '继续自动滚动' : '暂停自动滚动')
-        .onClick(() => this.onToggle())
-      }.width('100%').height('100%').padding({ left: 8, right: 8 })
+    Column() {
+      ReaderMaterialPanel({
+        panelWidth: ReaderAutoScrollCapsule.WIDTH, panelHeight: ReaderAutoScrollCapsule.HEIGHT,
+        cornerRadius: ReaderAutoScrollCapsule.HEIGHT / 2, darkMode: this.dark, fallbackColor: this.panelColor
+      }) {
+        Row({ space: AppSpacing.SM }) {
+          Button({ type: ButtonType.Normal }) {
+            Row({ space: AppSpacing.SM }) {
+              Stack({ alignContent: Alignment.Center }) {
+                Circle().width(30).height(30).fill(this.accentColor)
+                SymbolGlyph($r('sys.symbol.arrow_down'))
+                  .fontSize(15).fontColor([ThemeRuntime.onAccentColor(this.accentColor)])
+              }
+              Column({ space: 1 }) {
+                Text(this.status || (this.paused ? '已暂停' : '自动滚动'))
+                  .fontSize(AppFontSize.CAPTION).fontWeight(FontWeight.Medium).fontColor(this.textColor)
+                  .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(`${this.speed} 行/分钟`)
+                  .fontSize(9).fontColor(this.subTextColor).maxLines(1)
+              }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+            }.width('100%')
+          }
+          .layoutWeight(1).height(34).padding(0)
+          .borderRadius(17).backgroundColor(Color.Transparent)
+          .accessibilityText(`自动滚动，${this.speed} 行每分钟，点击调整速度`)
+          .onClick(() => this.onOpen())
+          Button({ type: ButtonType.Normal }) {
+            SymbolGlyph(this.paused ? $r('sys.symbol.play') : $r('sys.symbol.pause'))
+              .fontSize(17).fontColor([this.textColor])
+          }
+          .width(28).height(34).padding(0).borderRadius(17).backgroundColor(Color.Transparent)
+          .accessibilityText(this.paused ? '继续自动滚动' : '暂停自动滚动')
+          .onClick(() => this.onToggle())
+          Button({ type: ButtonType.Normal }) {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(14).fontColor([this.subTextColor])
+          }
+          .width(24).height(34).padding(0).borderRadius(17).backgroundColor(Color.Transparent)
+          .accessibilityText('结束自动滚动')
+          .onClick(() => this.onClose())
+        }.width('100%').height('100%').padding({ left: AppSpacing.MD, right: AppSpacing.XS })
+      }
     }
+    .parallelGesture(
+      PanGesture({ direction: PanDirection.All, distance: 4 })
+        .onActionStart(() => this.onCapsuleDragStart())
+        .onActionUpdate((event: GestureEvent) => this.onCapsuleDragMove(event.offsetX, event.offsetY))
+    )
   }
 }
 
@@ -145,7 +167,7 @@ export struct ReaderAutoScrollSpeedPanel {
           }
           .layoutWeight(1).height(44).backgroundColor(this.accentColor).onClick(() => this.onToggle())
         }.width('100%')
-        Text('触碰正文即暂停 · 速度自动记住').fontSize(12).fontColor(this.subTextColor)
+        Text('双击正文暂停 / 继续 · 速度自动记住').fontSize(12).fontColor(this.subTextColor)
       }.width('100%').padding({ left: 24, right: 24, top: 8, bottom: 24 })
     }.width('100%').height('100%').scrollBar(BarState.Off)
   }

@@ -344,7 +344,14 @@ struct ReadBookPage {
   private readerAutoScrollSettingsLoaded: boolean = false;
   private readerAutoScrollAnchor: number = -1;
   private readerAutoScrollWaitingSince: number = 0;
-  private readerAutoScrollTouchPaused: boolean = false;
+  @State readerAutoScrollPositionX: number = -1;
+  @State readerAutoScrollPositionY: number = -1;
+  private readerAutoScrollDragOriginX: number = 0;
+  private readerAutoScrollDragOriginY: number = 0;
+  private readerAutoScrollTapTimer: number = -1;
+  private readerAutoScrollTapAt: number = 0;
+  private readerAutoScrollTapX: number = 0;
+  private readerAutoScrollTapY: number = 0;
 
   @State isTtsSpeaking: boolean = false;
   @State isTtsPaused: boolean = false;
@@ -3070,12 +3077,13 @@ struct ReadBookPage {
         } else {
           this.readerFloatingBottomMenu()
         }
-        if (this.readerUseTtsQuickAction && !this.isReaderComicModeActive() &&
-          !this.isTtsSpeaking && !this.ttsReader.isSpeaking() && !this.globalTtsActive) {
-          this.readerTtsQuickActionButton()
-        }
-        if (this.readerUseAutoScrollQuickAction && !this.isReaderComicModeActive() && !this.readerAutoScrollActive) {
-          this.readerAutoScrollQuickActionButton()
+        if (this.shouldShowReaderSessionQuickActions()) {
+          if (this.readerUseTtsQuickAction) {
+            this.readerTtsQuickActionButton()
+          }
+          if (this.readerUseAutoScrollQuickAction) {
+            this.readerAutoScrollQuickActionButton()
+          }
         }
       }
 
@@ -3096,15 +3104,12 @@ struct ReadBookPage {
         }
       }
 
-      if (this.readerUseTtsQuickAction && this.shouldShowTtsMiniPlayer()) {
+      if (this.shouldShowReaderAutoScrollCapsule()) {
+        this.readerAutoScrollCapsule()
+      } else if (this.readerUseTtsQuickAction && this.shouldShowTtsMiniPlayer()) {
         this.ttsMiniPlayer()
       } else if (this.readerUseTtsQuickAction && this.shouldShowGlobalTtsMiniPlayer()) {
         this.globalTtsMiniPlayer()
-      }
-
-      if (this.readerAutoScrollActive && !this.showMenu && !this.showToc && !this.showSettings &&
-        !this.showTtsQuickPlayer && !this.showGlobalTtsQuickPlayer && !this.showReaderAutoScrollSpeed) {
-        this.readerAutoScrollCapsule()
       }
 
       Column().width(1).height(1).position({ x: 0, y: 0 }).hitTestBehavior(HitTestMode.None)
@@ -4547,13 +4552,45 @@ struct ReadBookPage {
       speed: this.readerAutoScrollSpeed, paused: this.readerAutoScrollPaused,
       status: this.readerAutoScrollStatus, textColor: this.readerPanelTextColor(),
       subTextColor: this.readerPanelSubTextColor(), accentColor: this.accentColor(),
-      accentSurfaceColor: ThemeRuntime.accentSurfaceColor(this.appDarkMode),
       panelColor: this.readerPanelColor(), dark: this.isReaderThemeDark(),
       onOpen: () => { this.showReaderAutoScrollSpeed = true; },
-      onToggle: () => { this.toggleReaderAutoScroll(); }
+      onToggle: () => { this.toggleReaderAutoScroll(); },
+      onClose: () => { this.stopReaderAutoScroll(); },
+      onCapsuleDragStart: (): void => {
+        this.readerAutoScrollDragOriginX = this.readerAutoScrollCapsuleLeft();
+        this.readerAutoScrollDragOriginY = this.readerAutoScrollCapsuleTop();
+      },
+      onCapsuleDragMove: (offsetX: number, offsetY: number): void => {
+        this.readerAutoScrollPositionX = this.clampTtsMiniPlayerPositionX(this.readerAutoScrollDragOriginX + offsetX);
+        this.readerAutoScrollPositionY = this.clampTtsMiniPlayerPositionY(this.readerAutoScrollDragOriginY + offsetY);
+      }
     })
-      .position({ x: Math.max(12, this.readerFloatingBarRight() - ReaderAutoScrollCapsule.WIDTH), y: '100%' })
-      .translate({ y: -(this.getReaderNavigationBottomReserve() + 82) })
+      .position({ x: 0, y: 0 })
+      .translate({ x: this.readerAutoScrollCapsuleLeft(), y: this.readerAutoScrollCapsuleTop() })
+      .transition(this.ttsMiniPlayerTransition())
+  }
+
+  shouldShowReaderSessionQuickActions(): boolean {
+    return !this.isReaderComicModeActive() && !this.readerAutoScrollActive &&
+      !this.isTtsSpeaking && !this.ttsReader.isSpeaking() && !this.globalTtsActive;
+  }
+
+  shouldShowReaderAutoScrollCapsule(): boolean {
+    return this.readerAutoScrollActive && this.showMenu && !this.showToc && !this.showSettings &&
+      this.chapters.length > 0 && !this.isReaderComicModeActive() && !this.shouldBlockReaderInteraction() &&
+      !this.showTtsQuickPlayer && !this.showGlobalTtsQuickPlayer && !this.showReaderAutoScrollSpeed;
+  }
+
+  readerAutoScrollCapsuleLeft(): number {
+    return this.clampTtsMiniPlayerPositionX(this.readerAutoScrollPositionX < 0 ?
+      this.readerFloatingBarRight() - ReaderAutoScrollCapsule.WIDTH : this.readerAutoScrollPositionX);
+  }
+
+  readerAutoScrollCapsuleTop(): number {
+    const viewportHeight = this.pageViewHeight > 0 ? this.pageViewHeight : 720;
+    const defaultTop = viewportHeight - this.readerBottomMenuOverlayHeight() - ReaderAutoScrollCapsule.HEIGHT - 8;
+    return this.clampTtsMiniPlayerPositionY(this.readerAutoScrollPositionY < 0 ?
+      defaultTop : this.readerAutoScrollPositionY);
   }
 
   @Builder
@@ -4649,6 +4686,7 @@ struct ReadBookPage {
   }
 
   pauseReaderAutoScroll(status: string): void {
+    this.cancelReaderAutoScrollTap();
     this.readerAutoScrollRequest++;
     if (this.readerAutoScrollTimer >= 0) clearInterval(this.readerAutoScrollTimer);
     this.readerAutoScrollTimer = -1;
@@ -4838,12 +4876,12 @@ struct ReadBookPage {
   }
 
   shouldShowTtsMiniPlayer(): boolean {
-    return this.showMenu && !this.showTtsQuickPlayer && !this.isReaderComicModeActive() &&
+    return !this.readerAutoScrollActive && this.showMenu && !this.showTtsQuickPlayer && !this.isReaderComicModeActive() &&
       (this.isTtsSpeaking || this.ttsReader.isSpeaking()) && !this.shouldBlockReaderInteraction();
   }
 
   shouldShowGlobalTtsMiniPlayer(): boolean {
-    return this.showMenu && this.globalTtsActive && !this.showGlobalTtsQuickPlayer &&
+    return !this.readerAutoScrollActive && this.showMenu && this.globalTtsActive && !this.showGlobalTtsQuickPlayer &&
       !ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId) &&
       !this.isReaderComicModeActive() && !this.shouldBlockReaderInteraction();
   }
@@ -13332,10 +13370,6 @@ struct ReadBookPage {
   }
 
   rememberContinuousReaderPointer(event: TouchEvent): void {
-    if (event.type === TouchType.Down) {
-      this.readerAutoScrollTouchPaused = this.readerAutoScrollActive && !this.readerAutoScrollPaused;
-      this.pauseReaderAutoScroll('已暂停');
-    }
     const point = event.changedTouches && event.changedTouches.length > 0 ? event.changedTouches[0] :
       (event.touches && event.touches.length > 0 ? event.touches[0] : null);
     if (!point) return;
@@ -13348,6 +13382,12 @@ struct ReadBookPage {
     this.readerContinuousPointerGlobalY = globalY;
     this.readerContinuousPointerAt = Date.now();
     if (!this.isReaderNovelContinuousScrollModeActive()) return;
+    if (event.touches && event.touches.length > 1) {
+      this.readerContinuousSelectionMoved = true;
+      this.cancelContinuousReaderSelectionTimer();
+      this.pauseReaderAutoScroll('已暂停');
+      return;
+    }
     if (this.hasReaderTextSelection()) {
       this.readerContinuousSelectionMoved = true;
       this.cancelContinuousReaderSelectionTimer();
@@ -13359,6 +13399,8 @@ struct ReadBookPage {
     if (event.type === TouchType.Down) {
       this.readerSelectionDismissArmed = false;
       this.cancelContinuousReaderSelectionTimer();
+      // 第二次按下后等待抬起或长按/拖动判定，不能让上一击的菜单定时器中途弹出遮罩。
+      if (this.readerAutoScrollTapTimer >= 0) clearTimeout(this.readerAutoScrollTapTimer);
       this.readerContinuousSelectionDownX = globalX;
       this.readerContinuousSelectionDownY = globalY;
       this.readerContinuousSelectionDownAt = Date.now();
@@ -13366,6 +13408,7 @@ struct ReadBookPage {
       this.readerContinuousSelectionTimerId = setTimeout(() => {
         this.readerContinuousSelectionTimerId = -1;
         if (!this.readerPageVisible || !this.isReaderNovelContinuousScrollModeActive()) return;
+        this.pauseReaderAutoScroll('已暂停');
         this.selectReaderTextAtPoint(this.readerContinuousSelectionDownX, this.readerContinuousSelectionDownY);
       }, 420);
       return;
@@ -13375,21 +13418,63 @@ struct ReadBookPage {
        Math.abs(globalY - this.readerContinuousSelectionDownY) > this.readerTapSlop)) {
       this.readerContinuousSelectionMoved = true;
       this.cancelContinuousReaderSelectionTimer();
+      this.pauseReaderAutoScroll('已暂停');
       return;
     }
     if (event.type === TouchType.Up) {
       this.cancelContinuousReaderSelectionTimer();
       const duration = Date.now() - this.readerContinuousSelectionDownAt;
       if (!this.readerContinuousSelectionMoved && duration < 380) {
-        if (!this.readerAutoScrollTouchPaused) this.handleContinuousReaderShortTap(globalX, globalY);
+        if (this.readerAutoScrollActive) this.handleReaderAutoScrollTap(globalX, globalY);
+        else this.handleContinuousReaderShortTap(globalX, globalY);
       }
-      this.readerAutoScrollTouchPaused = false;
       return;
     }
     if (event.type === TouchType.Cancel) {
       this.readerContinuousSelectionMoved = true;
       this.cancelContinuousReaderSelectionTimer();
+      this.cancelReaderAutoScrollTap();
     }
+  }
+
+  cancelReaderAutoScrollTap(): void {
+    if (this.readerAutoScrollTapTimer >= 0) clearTimeout(this.readerAutoScrollTapTimer);
+    this.readerAutoScrollTapTimer = -1;
+    this.readerAutoScrollTapAt = 0;
+  }
+
+  handleReaderAutoScrollTap(globalX: number, globalY: number): void {
+    if (!this.readerPageVisible || this.shouldBlockReaderInteraction() || this.hasReaderTextSelection()) {
+      this.cancelReaderAutoScrollTap();
+      return;
+    }
+    // 书源按钮保留单击行为，不把链接或评论入口当作正文双击。
+    if (this.readerSourceActionAtPoint(globalX, globalY)) {
+      this.cancelReaderAutoScrollTap();
+      this.handleContinuousReaderShortTap(globalX, globalY);
+      return;
+    }
+    const now = Date.now();
+    // 双击间隔按上一击抬起到本次按下计算，不能把第二击的按住时间算进间隔。
+    const doubleTap = this.readerAutoScrollTapTimer >= 0 &&
+      this.readerContinuousSelectionDownAt - this.readerAutoScrollTapAt <= 300 &&
+      Math.abs(globalX - this.readerAutoScrollTapX) <= 32 && Math.abs(globalY - this.readerAutoScrollTapY) <= 32;
+    this.cancelReaderAutoScrollTap();
+    if (doubleTap) {
+      this.toggleReaderAutoScroll();
+      return;
+    }
+    this.readerAutoScrollTapAt = now;
+    this.readerAutoScrollTapX = globalX;
+    this.readerAutoScrollTapY = globalY;
+    // 等待双击窗口结束后再展开菜单，避免第一击的遮罩截获第二击。
+    this.readerAutoScrollTapTimer = setTimeout(() => {
+      this.readerAutoScrollTapTimer = -1;
+      this.readerAutoScrollTapAt = 0;
+      if (!this.readerPageVisible || !this.readerAutoScrollActive || this.shouldBlockReaderInteraction() ||
+        this.hasReaderTextSelection() || this.readerContinuousSelectionMoved) return;
+      this.handleContinuousReaderShortTap(globalX, globalY);
+    }, 300);
   }
 
   handleContinuousReaderShortTap(globalX: number, globalY: number): void {
@@ -14154,14 +14239,20 @@ struct ReadBookPage {
       .width('100%')
       .height('100%')
       .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.hideReaderPanels();
-      })
       .gesture(
-        PanGesture({ direction: PanDirection.Horizontal })
-          .onActionStart(() => {
-            this.hideReaderPanels();
-          })
+        GestureGroup(GestureMode.Exclusive,
+          TapGesture({ count: 2 })
+            .onAction(() => {
+              if (this.readerAutoScrollActive) this.toggleReaderAutoScroll();
+              else this.hideReaderPanels();
+            }),
+          TapGesture({ count: 1 })
+            .onAction(() => this.hideReaderPanels()),
+          PanGesture({ direction: PanDirection.Horizontal })
+            .onActionStart(() => {
+              this.hideReaderPanels();
+            })
+        )
       )
   }
 

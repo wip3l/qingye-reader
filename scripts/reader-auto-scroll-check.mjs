@@ -16,7 +16,12 @@ function method(name) {
 const names = ['startReaderAutoScroll', 'toggleReaderAutoScroll', 'pauseReaderAutoScroll',
   'stopReaderAutoScroll', 'advanceReaderAutoScroll', 'waitReaderAutoScroll',
   'restoreReaderAutoScrollAnchor', 'onReaderAutoScrollBackground',
-  'isReaderNovelContinuousScrollModeActive', 'readerEffectivePageTurnMode'];
+  'isReaderNovelContinuousScrollModeActive', 'readerEffectivePageTurnMode',
+  'cancelReaderAutoScrollTap', 'handleReaderAutoScrollTap', 'rememberContinuousReaderPointer',
+  'cancelContinuousReaderSelectionTimer', 'shouldShowReaderAutoScrollCapsule',
+  'shouldShowReaderSessionQuickActions', 'shouldShowTtsMiniPlayer', 'shouldShowGlobalTtsMiniPlayer',
+  'readerAutoScrollCapsuleLeft', 'readerAutoScrollCapsuleTop',
+  'clampTtsMiniPlayerPositionX', 'clampTtsMiniPlayerPositionY'];
 let now = 1000;
 let id = 0;
 const timers = new Map();
@@ -28,8 +33,13 @@ const sandbox = vm.createContext({
   LengthMetrics: { vp: n => n }, ScrollAlign: { START: 0 },
   setInterval: fn => { timers.set(++id, fn); return id; },
   clearInterval: value => timers.delete(value),
+  setTimeout: fn => { timers.set(++id, fn); return id; },
+  clearTimeout: value => timers.delete(value),
+  TouchType: { Down: 0, Move: 1, Up: 2, Cancel: 3 },
+  ReaderAutoScrollCapsule: { WIDTH: 184, HEIGHT: 46 },
+  ReaderTtsCapsule: { WIDTH: 184, HEIGHT: 46 },
   HdsFeedback: { showToast() {} },
-  ReaderTtsFloatingSession: { pause: async () => {} },
+  ReaderTtsFloatingSession: { pause: async () => {}, isOwner: () => false },
   preferences: { getPreferences: async () => ({
     get: async () => storedSpeed,
     put: async (_key, value) => { await Promise.resolve(); storedSpeed = value; persisted.push(value); },
@@ -69,6 +79,10 @@ function fixture() {
     readerAutoScrollStatus: '', readerAutoScrollRequest: 0, readerAutoScrollStarting: false,
     readerAutoScrollSettingsLoaded: true, readerAutoScrollAnchor: -1,
     readerAutoScrollWaitingSince: 0, readerAutoScrollTimer: -1, readerAutoScrollClock: new Clock(),
+    readerAutoScrollTapTimer: -1, readerAutoScrollTapAt: 0,
+    readerContinuousSelectionTimerId: -1, readerContinuousSelectionMoved: false, readerTapSlop: 12,
+    readerAutoScrollPositionX: -1, readerAutoScrollPositionY: -1,
+    pageViewWidth: 360, pageViewHeight: 720, navBarHeight: 24,
     readerPageVisible: true, readerInitialPageReady: true, readerPageTurnMode: 1,
     chapters: [{}, {}, {}], currentChapterIndex: 0, content: 'test novel', contentPages: ['test novel'],
     pendingRestorePageIndex: -1, readerTypographyRestoreOffset: -1, readerContinuousCommitChapter: -1,
@@ -83,6 +97,12 @@ function fixture() {
     cancelReaderComicPan() {}, hideReaderPanels() {}, cancelManualPageTurnTtsResume() {},
     applyReaderScreenTimeout() {}, scheduleReaderComicProgressSave() {}, flushReaderAutoScrollSpeed() {},
     updateTtsFloatingSession() {},
+    shouldBlockReaderInteraction: () => false, readerSourceActionAtPoint: () => '',
+    shortTaps: 0, selections: 0,
+    handleContinuousReaderShortTap: () => { p.shortTaps++; p.showMenu = true; },
+    selectReaderTextAtPoint: () => { p.selections++; },
+    readerFloatingBarRight: () => 344, readerBottomMenuOverlayHeight: () => 120,
+    getReaderTopSafePadding: () => 24,
     ttsReader: { isSpeaking: () => p.nativeTts, isPaused: () => false, pause: async () => {} },
     readerComicScroller: { isAtEnd: () => p.atEnd, scrollBy: (_x, y) => { p.distance += y; } },
     readerComicPageDataSource: { lastChapter: () => p.lastChapter, totalCount: () => 2,
@@ -164,4 +184,107 @@ assert.equal(p.restoreReaderAutoScrollAnchor(), true);
 assert.equal(anchor[0], 3);
 assert.equal(anchor[3].extraOffset, 40, 'source offset restores the exact line within a multi-screen chunk');
 assert.equal(p.readerAutoScrollAnchor, -1);
-console.log('PASS reader auto-scroll: clock, ordered persistence, lifecycle, TTS exclusion, chapter boundaries and position restore');
+
+// Use the real touch handler so the first Down cannot silently pause a double tap.
+function touch(p, type, x = 180, y = 300) {
+  const point = { windowX: x, windowY: y };
+  p.rememberContinuousReaderPointer({ type, changedTouches: [point], touches: type === 2 ? [] : [point] });
+}
+function tap(p, x = 180, y = 300) {
+  touch(p, 0, x, y); now += 40; touch(p, 2, x, y);
+}
+function fireTimer(timerId) {
+  const fn = timers.get(timerId);
+  assert.ok(fn, 'expected pending timer');
+  timers.delete(timerId);
+  fn();
+}
+p = fixture();
+tap(p);
+assert.equal(p.readerAutoScrollPaused, false, 'first tap must not preemptively pause');
+assert.equal(p.shortTaps, 0, 'first tap defers opening the menu');
+now += 100; tap(p);
+assert.equal(p.readerAutoScrollPaused, true, 'double tap pauses running scroll');
+assert.equal(p.shortTaps, 0, 'double tap never opens the menu');
+assert.equal(p.readerAutoScrollTapTimer, -1);
+tap(p); now += 100; tap(p);
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(p.readerAutoScrollPaused, false, 'double tap resumes paused scroll');
+assert.equal(p.shortTaps, 0);
+p.stopReaderAutoScroll(false);
+
+p = fixture(); tap(p); now += 210; touch(p, 0); now += 105; touch(p, 2);
+assert.equal(p.readerAutoScrollPaused, true, 'double-tap gap excludes the second press duration');
+assert.equal(p.shortTaps, 0, 'second press must cancel the pending menu before its deadline');
+
+p = fixture(); tap(p); now += 301; fireTimer(p.readerAutoScrollTapTimer);
+assert.equal(p.shortTaps, 1, 'single tap still opens reader controls');
+frame(p);
+assert.equal(p.readerAutoScrollPaused, true, 'opening controls pauses scrolling');
+assert.equal(p.shouldShowReaderAutoScrollCapsule(), true);
+for (const panel of ['showToc', 'showSettings', 'showTtsQuickPlayer', 'showGlobalTtsQuickPlayer',
+  'showReaderAutoScrollSpeed']) {
+  p[panel] = true;
+  assert.equal(p.shouldShowReaderAutoScrollCapsule(), false, `${panel} hides the capsule`);
+  p[panel] = false;
+}
+p.showMenu = false;
+assert.equal(p.shouldShowReaderAutoScrollCapsule(), false, 'capsule follows bottom menu visibility');
+p.showMenu = true; p.readerAutoScrollActive = false;
+assert.equal(p.shouldShowReaderAutoScrollCapsule(), false, 'stopped sessions have no capsule');
+
+p = fixture(); tap(p); now += 100; tap(p, 260, 300);
+assert.equal(p.readerAutoScrollPaused, false, 'distant taps are not a double tap');
+p.onReaderAutoScrollBackground();
+assert.equal(p.readerAutoScrollTapTimer, -1, 'background cancels deferred single tap');
+assert.equal(p.shortTaps, 0);
+
+p = fixture(); tap(p); touch(p, 0); touch(p, 1, 180, 350); touch(p, 2, 180, 350);
+assert.equal(p.readerAutoScrollPaused, true, 'dragging still pauses');
+assert.equal(p.readerAutoScrollTapTimer, -1, 'drag cancels pending tap');
+assert.equal(p.shortTaps, 0, 'drag cannot open the menu');
+p = fixture(); touch(p, 0); now += 420; fireTimer(p.readerContinuousSelectionTimerId); touch(p, 2);
+assert.equal(p.readerAutoScrollPaused, true, 'long press pauses before selection');
+assert.equal(p.selections, 1);
+assert.equal(p.shortTaps, 0);
+p = fixture(); tap(p); touch(p, 3);
+assert.equal(p.readerAutoScrollTapTimer, -1, 'cancelled touch cannot become a delayed menu action');
+p = fixture(); p.readerSourceActionAtPoint = () => 'source-action'; tap(p);
+assert.equal(p.shortTaps, 1, 'source links retain immediate single-tap handling');
+assert.equal(p.readerAutoScrollTapTimer, -1);
+
+p = fixture();
+assert.equal(p.readerAutoScrollCapsuleLeft(), 160);
+assert.equal(p.readerAutoScrollCapsuleTop(), 546, 'default capsule clears the whole bottom menu');
+p.readerUseTtsQuickAction = true; p.isTtsSpeaking = true; p.isTtsPaused = true;
+assert.equal(p.readerAutoScrollCapsuleTop(), 546, 'hidden TTS session does not move the scroll capsule');
+p.readerAutoScrollPositionX = 999; p.readerAutoScrollPositionY = 999;
+assert.equal(p.readerAutoScrollCapsuleLeft(), 168, 'drag cannot leave right edge');
+assert.equal(p.readerAutoScrollCapsuleTop(), 642, 'drag cannot enter system navigation area');
+p.readerAutoScrollPositionX = 20; p.readerAutoScrollPositionY = 200;
+assert.equal(p.readerAutoScrollCapsuleLeft(), 20);
+assert.equal(p.readerAutoScrollCapsuleTop(), 200, 'user placement overrides default stacking');
+assert.equal(p.clampTtsMiniPlayerPositionX(-99), 8);
+assert.equal(p.clampTtsMiniPlayerPositionY(-99), 32);
+
+// Both quick actions follow the same session rule, including paused local/background TTS.
+for (const paused of [false, true]) {
+  for (const ttsKind of ['none', 'local', 'native', 'global']) {
+    p = fixture(); p.showMenu = true; p.readerAutoScrollPaused = paused;
+    p.isTtsSpeaking = ttsKind === 'local'; p.nativeTts = ttsKind === 'native';
+    p.globalTtsActive = ttsKind === 'global'; p.isTtsPaused = paused; p.globalTtsPaused = paused;
+    assert.equal(p.shouldShowReaderSessionQuickActions(), false, 'scroll session hides both quick actions');
+    assert.equal(p.shouldShowReaderAutoScrollCapsule(), true);
+    assert.equal(p.shouldShowTtsMiniPlayer(), false, 'scroll capsule excludes local TTS capsule');
+    assert.equal(p.shouldShowGlobalTtsMiniPlayer(), false, 'scroll capsule excludes background TTS capsule');
+    p.stopReaderAutoScroll();
+    assert.equal(p.readerAutoScrollActive, false, 'capsule close ends the session, not just pauses it');
+    assert.equal(p.shouldShowReaderAutoScrollCapsule(), false);
+    assert.equal(p.shouldShowReaderSessionQuickActions(), ttsKind === 'none',
+      'close restores quick actions only when no TTS session remains');
+    assert.equal(p.shouldShowTtsMiniPlayer(), ttsKind === 'local' || ttsKind === 'native');
+    assert.equal(p.shouldShowGlobalTtsMiniPlayer(), ttsKind === 'global');
+  }
+}
+assert.equal(timers.size, 0, 'gesture scenarios leave no pending timers');
+console.log('PASS reader auto-scroll: clock, persistence, lifecycle, TTS exclusion, chapter boundaries, position restore, double taps, gesture cancellation and capsule placement');
