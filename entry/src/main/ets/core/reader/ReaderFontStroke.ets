@@ -21,6 +21,7 @@ export class ReaderFontStroke {
     return { fontSize: style.fontSize, fontFamilies: style.fontFamilies, fontWeight: style.fontWeight,
       fontVariations: style.fontVariations, letterSpacing: style.letterSpacing,
       heightOnly: style.heightOnly, heightScale: style.heightScale, halfLeading: style.halfLeading,
+      baselineShift: style.baselineShift,
       locale: style.locale, color: { alpha: 0, red: 0, green: 0, blue: 0 } };
   }
 

@@ -1,5 +1,6 @@
 import { ReaderTypographyField } from '../components/reader/ReaderLayoutSettings';
 import { ReaderFontWeight } from '../core/reader/ReaderFontWeight';
+import { ReaderCommentBubbleSize } from '../core/reader/ReaderCommentBubbleSize';
 import { router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { syncSystemBars } from '../utils/SystemBars';
@@ -54,7 +55,7 @@ struct SettingsPage {
   @StorageLink('readerMarginRight') readerMarginRight: number = 18;
   @StorageLink('readerMarginTop') readerMarginTop: number = 18;
   @StorageLink('readerMarginBottom') readerMarginBottom: number = 18;
-  @StorageLink('readerCommentBubbleSize') readerCommentBubbleSize: number = 100;
+  @StorageLink('readerCommentBubbleSize') readerCommentBubbleSize: number = ReaderCommentBubbleSize.DEFAULT;
   @State typographySettingIndex: number = 0;
   @State showTypographyValueInput: boolean = false;
   @State typographyValueDraft: string = '';

@@ -489,9 +489,16 @@ export class ReaderV2Paginator {
     if (actionIndex < document.actions.length) {
       const action = document.actions[actionIndex];
       if (absoluteOffset >= action.displayStart && absoluteOffset < action.displayEnd) {
+        const bodyCenter = ReaderV2Paginator.commentTextCenter(base, '国', snapshot);
         const scale = ReaderCommentBubbleSize.scale(action.label, snapshot.commentBubbleSize);
         base.fontSize = snapshot.commentFontSizePx * scale;
         base.letterSpacing = snapshot.letterSpacingPx * scale;
+        // Shift the native glyphs themselves: bubble bounds, hit testing and pagination then consume the
+        // same adjusted metrics. Centre the complete body + tail silhouette, keeping the label in the body.
+        const tailHeight = ReaderCommentBubblePainter.tailHeightFor(
+          ReaderCommentBubblePainter.heightFor(base.fontSize), snapshot.commentBubble);
+        base.baselineShift = bodyCenter - ReaderV2Paginator.commentTextCenter(base, action.label, snapshot) -
+          tailHeight / 2;
         // The bubble behind the label is painted by the page node, not as a text background.
         base.color = ReaderV2Paginator.graphicsColor(snapshot.commentBubble.text);
         return base;
@@ -759,6 +766,36 @@ export class ReaderV2Paginator {
         Number(style.letterSpacing || 0)));
     }
     return result;
+  }
+
+  /** Measure with the actual face/fallback and weight, without line spacing or an existing baseline shift. */
+  private static commentTextCenter(style: graphicsText.TextStyle, label: string,
+    snapshot: ReaderV2LayoutSnapshot): number {
+    const key = JSON.stringify([style.fontFamilies, style.fontSize, style.fontWeight, style.fontVariations, label]);
+    const cached = snapshot.commentTextCenters.get(key);
+    if (cached !== undefined) return cached;
+    const builder = new graphicsText.ParagraphBuilder({ textStyle: style, includeFontPadding: true },
+      graphicsText.FontCollection.getGlobalInstance());
+    builder.pushStyle(style);
+    builder.addText(label);
+    builder.popStyle();
+    const paragraph = builder.build();
+    paragraph.layoutSync(Math.max(1, (style.fontSize ?? 1) + Math.abs(style.letterSpacing ?? 0)) *
+      Math.max(4, label.length * 2));
+    const boxes = paragraph.getRectsForRange({ start: 0, end: label.length },
+      graphicsText.RectWidthStyle.TIGHT, graphicsText.RectHeightStyle.TIGHT);
+    let top = Number.POSITIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
+    for (const box of boxes) {
+      if (box.rect.right <= box.rect.left || box.rect.bottom <= box.rect.top) continue;
+      top = Math.min(top, box.rect.top);
+      bottom = Math.max(bottom, box.rect.bottom);
+    }
+    const center = Number.isFinite(top) ? (top + bottom) / 2 - paragraph.getAlphabeticBaseline() : 0;
+    // Source actions may contain arbitrary labels; keep the per-layout measurement cache bounded.
+    if (snapshot.commentTextCenters.size >= 128) snapshot.commentTextCenters.clear();
+    snapshot.commentTextCenters.set(key, center);
+    return center;
   }
 
   private static appendActionAreas(page: ReaderV2PageLayout, fragment: ReaderV2PageFragment,

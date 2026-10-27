@@ -119,8 +119,8 @@ function openChromePanel(h) {
 const tests = {
   async 'paragraph bubble size defaults, clamps, persists and remains local across theme switches'() {
     const h = harness();
-    assert.equal((await h.settings.reload({})).commentBubbleSize, 100);
-    for (const [value, expected] of [[10, 10], [200, 200], [0, 10], [999, 200], [NaN, 100]]) {
+    assert.equal((await h.settings.reload({})).commentBubbleSize, 80);
+    for (const [value, expected] of [[10, 10], [80, 80], [100, 100], [200, 200], [0, 10], [999, 200], [NaN, 80]]) {
       await h.settings.saveLayoutSettings({}, 20, 12, 0, 18, 18, 18, 18, 0, 'justify', 450, 2, value);
       assert.equal(h.values.get('readerCommentBubbleSize'), expected);
       assert.equal(h.disk.get('readerCommentBubbleSize'), expected);
@@ -136,7 +136,7 @@ const tests = {
     assert.equal(h.sync.merge(style, { commentBubbleSize: 10 }).commentBubbleSize, 175);
     h.disk.set('readerThemeProfileV1_legacy', JSON.stringify({ fontSize: 20 }));
     h.values.set('appThemeId', 'legacy');
-    assert.equal((await h.settings.switchThemeProfile({}, 'classic-blue', 'legacy')).commentBubbleSize, 100);
+    assert.equal((await h.settings.switchThemeProfile({}, 'classic-blue', 'legacy')).commentBubbleSize, 80);
     h.values.set('appThemeId', 'classic-blue');
     assert.equal((await h.settings.switchThemeProfile({}, 'legacy', 'classic-blue')).commentBubbleSize, 175);
   },

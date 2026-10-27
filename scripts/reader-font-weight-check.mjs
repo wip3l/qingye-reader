@@ -151,6 +151,28 @@ for (const [draft, expected] of [['10', 10], ['200', 200], ['0', 10], ['999', 20
   assert.equal(controls.readerCommentBubbleSize, expected);
 }
 // Actual paragraph/action text styles: size and spacing scale together; chapter comments stay fixed.
+// Native metric fixture: CJK and numeric fallback faces have different ascent/descent proportions.
+context.graphicsText.RectWidthStyle = { TIGHT: 0 };
+context.graphicsText.RectHeightStyle = { TIGHT: 0, MAX: 1 };
+context.graphicsText.FontCollection = { getGlobalInstance: () => ({}) };
+let commentMeasurements = 0;
+context.graphicsText.ParagraphBuilder = class {
+  pushStyle(style) { this.style = style; }
+  addText(label) { this.label = label; }
+  popStyle() {}
+  build() {
+    commentMeasurements++;
+    const size = this.style.fontSize;
+    const ascent = (/\d/.test(this.label) ? 0.75 : 0.85) * size;
+    const descent = 0.15 * size;
+    return {
+      layoutSync() {},
+      getAlphabeticBaseline: () => ascent,
+      getRectsForRange: () => [{ rect: { left: 0, right: size * this.label.length, top: 0, bottom: ascent + descent } }]
+    };
+  }
+};
+vm.runInContext(compile(read('core/reader/ReaderCommentBubble.ets')), context);
 input.letterSpacingPx = 2;
 const actionDocument = { actions: [{ displayStart: 0, displayEnd: 5, label: '123' }] };
 const bubbleIdentities = new Set();
@@ -162,31 +184,49 @@ for (const size of [10, 100, 200]) {
   let style = Paginator.styleAt(actionDocument, block, 0, snapshot, []);
   assert.equal(style.fontSize, input.commentFontSizePx * size / 100);
   assert.equal(style.letterSpacing, 2 * size / 100);
+  const bodyCenter = -0.35 * input.fontSizePx;
+  assert(Math.abs(-0.3 * style.fontSize + style.baselineShift + style.fontSize * 1.32 * 0.3 / 2 - bodyCenter) < 1e-9,
+    'numeric label and full bubble including tail align with body at every bubble size');
+  const measured = commentMeasurements;
+  Paginator.styleAt(actionDocument, block, 0, snapshot, []);
+  assert.equal(commentMeasurements, measured, 'repeated labels reuse snapshot measurements');
   actionDocument.actions[0].label = ' 本章说 ';
   style = Paginator.styleAt(actionDocument, block, 0, snapshot, []);
   assert.equal(style.fontSize, input.commentFontSizePx);
   assert.equal(style.letterSpacing, 2);
+  assert(Math.abs(-0.35 * style.fontSize + style.baselineShift + style.fontSize * 1.32 * 0.3 / 2 - bodyCenter) < 1e-9,
+    'chapter label uses its CJK metrics, includes the tail and keeps its fixed size');
 }
 assert.equal(bubbleIdentities.size, 3);
 console.log('PASS: bubble controls clamp to 10–200; paragraph labels scale and chapter labels stay unchanged');
+vm.runInContext(compile(read('core/reader/ReaderFontStroke.ets')) + '\nglobalThis.stroke = ReaderFontStroke;', context);
+assert.equal(context.stroke.outlineStyle({ baselineShift: -4 }).baselineShift, -4,
+  'synthetic bold outline must retain the label baseline shift');
 
 // Use native glyph-box fixtures to verify bubble geometry and hit areas track the scaled label.
 context.graphicsText.RectWidthStyle = { TIGHT: 0 };
 context.graphicsText.RectHeightStyle = { TIGHT: 0, MAX: 1 };
-vm.runInContext(compile(read('core/reader/ReaderCommentBubble.ets')), context);
+for (const [styleId, ornament, tailRatio] of [['capsule', '', 0.18], ['classic-glass', 'sparkle', 0.3],
+  ['gilded-orbit', 'folio', 0.26]]) {
 for (const label of ['123', ' 本章说 ']) {
-  for (const size of [10, 100, 200]) {
+  for (const size of [10, 80, 100, 200]) {
     input.commentBubbleSize = size;
     const snapshot = Snapshot.create(input);
+    snapshot.commentBubble.styleId = styleId;
+    snapshot.commentBubble.ornament = ornament;
     const scale = label.includes('本章说') ? 1 : size / 100;
     const action = { id: 'a', marker: 'm', label, bubbleStart: 0, displayStart: 0, displayEnd: 3 };
+    const style = Paginator.styleAt({ actions: [action] }, block, 0, snapshot, []);
+    const ascent = (/\d/.test(label) ? 0.75 : 0.85) * style.fontSize;
+    const glyphTop = 100 - ascent + style.baselineShift;
+    const glyphBottom = 100 + 0.15 * style.fontSize + style.baselineShift;
     const fragment = {
       displayStart: 0, displayEnd: 3, localStart: 0, localEnd: 3,
       paragraphX: 10, paragraphY: 20,
       clipRect: { left: 0, top: 0, right: 1000, bottom: 1000 }, commentBubbleSegments: [],
       paragraph: {
         getLineMetrics: () => [{ startIndex: 0, endIndex: 3 }],
-        getRectsForRange: () => [{ rect: { left: 0, right: 60 * scale, top: 0, bottom: 30 * scale } }]
+        getRectsForRange: () => [{ rect: { left: 0, right: 60 * scale, top: glyphTop, bottom: glyphBottom } }]
       }
     };
     const page = { actions: [] };
@@ -198,7 +238,16 @@ for (const label of ['123', ' 本章说 ']) {
     assert.equal(bubble.tail, true);
     assert.equal(page.actions[0].rect.width(), 60 * scale);
     assert.equal(page.actions[0].actionId, action.id);
+    const expectedCenter = fragment.paragraphY + 100 - 0.35 * input.fontSizePx;
+    const tailHeight = bubble.rect.height() * tailRatio;
+    assert(Math.abs((bubble.rect.top + bubble.rect.bottom + tailHeight) / 2 - expectedCenter) < 1e-9,
+      `${styleId}: full bubble including tail is centred on body text`);
+    assert(Math.abs((bubble.rect.top + bubble.rect.bottom) / 2 - (glyphTop + glyphBottom) / 2 - fragment.paragraphY) < 1e-9,
+      'label remains centred inside the bubble body');
+    assert(Math.abs((page.actions[0].rect.top + page.actions[0].rect.bottom) / 2 + tailHeight / 2 - expectedCenter) < 1e-9,
+      'click target follows the shifted native bounds');
   }
+}
 }
 console.log('PASS: paragraph bubble geometry and action hit areas follow label scaling, including 10% and 200%');
 

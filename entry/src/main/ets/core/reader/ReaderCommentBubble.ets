@@ -112,7 +112,9 @@ export class ReaderCommentBubbleStyles {
     style.ornamentColor = colors[3];
     style.ornamentAltColor = colors[4];
     if (id === 'capsule') {
-      // The default theme uses a quiet outline. Alpha blends the reader's ink with any page colour or image.
+      // Keep the saved style ID, with a rounded rectangle rather than a full pill for default comments.
+      style.radiusRatio = 0.2;
+      // Alpha blends the reader's ink with any page colour or image.
       const ink = ReaderV2Color.parse(readerTextColor, dark ? 0xFFE1E1E1 : 0xFF262626);
       const alpha = Math.round(((ink >>> 24) & 0xFF) * (dark ? 0.55 : 0.45));
       const outline = ((alpha << 24) | (ink & 0x00FFFFFF)) >>> 0;
@@ -141,6 +143,11 @@ export class ReaderCommentBubblePainter {
   /** Height of a bubble around a label of this font size. */
   static heightFor(fontSizePx: number): number {
     return fontSizePx * 1.32;
+  }
+
+  /** Distance from the bubble body's bottom to the tail tip, shared by painting and alignment. */
+  static tailHeightFor(bodyHeight: number, style: ReaderCommentBubbleStyle): number {
+    return bodyHeight * (style.ornament === 'folio' ? 0.26 : (style.styleId === 'capsule' ? 0.18 : 0.3));
   }
 
   /** Room ornaments and the tail may use outside the bubble rect, as a fraction of its height. */
@@ -189,7 +196,8 @@ export class ReaderCommentBubblePainter {
       const w = Math.max(h, textWidth + padX * 2);
       const margin = Math.ceil(h * ReaderCommentBubblePainter.OVERHANG_RATIO);
       const width = Math.ceil(w + margin * 2);
-      const height = Math.ceil(h + margin * 2);
+      // ImageSpan centres the whole bitmap: include the tail below the body so previews match the reader.
+      const height = Math.ceil(h + ReaderCommentBubblePainter.tailHeightFor(h, style) + margin * 2);
       const options: image.InitializationOptions = {
         size: { width: width, height: height },
         pixelFormat: image.PixelMapFormat.RGBA_8888,
@@ -245,16 +253,17 @@ export class ReaderCommentBubblePainter {
     if (tail) {
       // The tail's base sits inside the body and the two are merged, so the outline runs around both as one shape.
       const baseLeft = left + Math.min(w * 0.34, h * 0.42);
+      const tailBottom = bottom + ReaderCommentBubblePainter.tailHeightFor(h, style);
       const tailPath = new drawing.Path();
       tailPath.moveTo(baseLeft, bottom - h * 0.25);
       tailPath.lineTo(baseLeft + h * 0.36, bottom - h * 0.25);
       if (style.ornament === 'folio') {
         // A small notched bookmark tail, within the same measured overhang as other comments.
-        tailPath.lineTo(baseLeft + h * 0.30, bottom + h * 0.26);
+        tailPath.lineTo(baseLeft + h * 0.30, tailBottom);
         tailPath.lineTo(baseLeft + h * 0.12, bottom + h * 0.16);
-        tailPath.lineTo(baseLeft - h * 0.06, bottom + h * 0.26);
+        tailPath.lineTo(baseLeft - h * 0.06, tailBottom);
       } else {
-        tailPath.lineTo(baseLeft - h * 0.1, bottom + h * (style.styleId === 'capsule' ? 0.18 : 0.3));
+        tailPath.lineTo(baseLeft - h * 0.1, tailBottom);
       }
       tailPath.close();
       body.op(tailPath, drawing.PathOp.UNION);
