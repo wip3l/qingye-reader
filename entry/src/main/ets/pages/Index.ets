@@ -1,4 +1,5 @@
 import { router, window } from '@kit.ArkUI';
+import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { webview } from '@kit.ArkWeb';
 import { WebRuntimeAvailability } from '../utils/WebRuntimeAvailability';
@@ -772,7 +773,9 @@ struct Index {
     .barMode(BarMode.Fixed)
     .barHeight(this.bookshelfMultiSelectActive ? 0 : 56)
     .barOverlap(true)
-    .borderRadius(30)
+    // Desktop already clips the entire window to its native outline. A second 30vp
+    // content radius cuts away the header backdrop inside the smaller window corners.
+    .borderRadius(deviceInfo.deviceType === '2in1' ? 0 : 30)
     .clip(true)
     .barFloatingStyle({
       systemMaterialEffect: {
