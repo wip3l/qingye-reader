@@ -14,6 +14,10 @@ export class ReadStatsCloudSyncResult {
 /** Uses the cloud-sync scheduler, but its own durable cursor/outbox and immutable event protocol. */
 export class ReadStatsCloudSync {
   static readonly STORAGE_REVISION: string = 'readingStatsCloudRevision';
+  private static readonly DEVICE_REFRESH_INTERVAL_MS: number = 30 * 60 * 1000;
+  private static deviceRefreshUserId: string = '';
+  private static deviceRefreshToken: string = '';
+  private static deviceRefreshAt: number = 0;
 
   static assertSession(userId: string, token: string): void {
     if (!AccountSessionStore.isLoggedIn() || AccountSessionStore.account().userId !== userId ||
@@ -21,14 +25,14 @@ export class ReadStatsCloudSync {
   }
 
   static async run(db: AppDatabase, userId: string,
-    deviceId: string, token: string): Promise<ReadStatsCloudSyncResult> {
+    deviceId: string, token: string, refreshDevices: boolean = false): Promise<ReadStatsCloudSyncResult> {
     ReadStatsCloudSync.assertSession(userId, token);
     const boundary = await db.getReadStatsUploadBoundary();
     let cursor = await db.getReadStatsSyncCursor(userId);
     const result = new ReadStatsCloudSyncResult();
+    let uploads = await db.getPendingReadStats(userId, deviceId, boundary);
     for (let page = 0; page < 20000; page++) {
       ReadStatsCloudSync.assertSession(userId, token);
-      const uploads = await db.getPendingReadStats(userId, deviceId, boundary);
       const request = new ReadStatsSyncRequest();
       request.deviceId = deviceId;
       request.cursor = cursor;
@@ -47,21 +51,37 @@ export class ReadStatsCloudSync {
         AppStorage.setOrCreate(ReadStatsCloudSync.STORAGE_REVISION,
           (AppStorage.get<number>(ReadStatsCloudSync.STORAGE_REVISION) || 0) + 1);
       }
+      // The response already contains the pull page. Check the durable outbox
+      // locally instead of sending an extra empty exchange after the last upload.
+      uploads = await db.getPendingReadStats(userId, deviceId, boundary);
       if (uploads.length === 0 && !response.hasMore) {
-        const devices = await AccountCommerceApi.fetchSyncDevices(token);
-        ReadStatsCloudSync.assertSession(userId, token);
-        await db.updateReadStatsDeviceNames(userId, devices.devices.map((device: CloudSyncDevice): ReadStatsDeviceOption => {
-          const option = new ReadStatsDeviceOption();
-          option.deviceId = device.deviceId;
-          option.deviceName = device.deviceName;
-          return option;
-        }));
-        AppStorage.setOrCreate(ReadStatsCloudSync.STORAGE_REVISION,
-          (AppStorage.get<number>(ReadStatsCloudSync.STORAGE_REVISION) || 0) + 1);
+        await ReadStatsCloudSync.refreshDeviceNames(db, userId, token, refreshDevices);
         return result;
       }
     }
     throw new Error('统计同步数据量较大，请再次同步以继续');
+  }
+
+  private static async refreshDeviceNames(db: AppDatabase, userId: string,
+    token: string, force: boolean): Promise<void> {
+    ReadStatsCloudSync.assertSession(userId, token);
+    if (!force && ReadStatsCloudSync.deviceRefreshUserId === userId &&
+      ReadStatsCloudSync.deviceRefreshToken === token && ReadStatsCloudSync.deviceRefreshAt > 0 &&
+      Date.now() - ReadStatsCloudSync.deviceRefreshAt < ReadStatsCloudSync.DEVICE_REFRESH_INTERVAL_MS) return;
+    const devices = await AccountCommerceApi.fetchSyncDevices(token);
+    ReadStatsCloudSync.assertSession(userId, token);
+    await db.updateReadStatsDeviceNames(userId, devices.devices.map((device: CloudSyncDevice): ReadStatsDeviceOption => {
+      const option = new ReadStatsDeviceOption();
+      option.deviceId = device.deviceId;
+      option.deviceName = device.deviceName;
+      return option;
+    }));
+    ReadStatsCloudSync.assertSession(userId, token);
+    ReadStatsCloudSync.deviceRefreshUserId = userId;
+    ReadStatsCloudSync.deviceRefreshToken = token;
+    ReadStatsCloudSync.deviceRefreshAt = Date.now();
+    AppStorage.setOrCreate(ReadStatsCloudSync.STORAGE_REVISION,
+      (AppStorage.get<number>(ReadStatsCloudSync.STORAGE_REVISION) || 0) + 1);
   }
 
   private static async exchange(request: ReadStatsSyncRequest, userId: string,

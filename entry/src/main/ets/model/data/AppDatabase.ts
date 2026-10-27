@@ -2616,7 +2616,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         if (!entry.dayKey || !entry.bookUrl || entry.durationMs <= 0) continue;
         await this.performReadStatsUpsert(entry);
       }
-      CloudSyncChangeTracker.markReadingProgressChanged();
+      // Statistics have their own durable outbox. Do not dirty the general sync
+      // revision: otherwise every saved minute forces a full data exchange.
     });
     this.readStatsWriteTask = task;
     await task;

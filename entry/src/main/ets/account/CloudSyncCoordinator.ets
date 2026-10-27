@@ -190,6 +190,12 @@ export class CloudSyncCoordinator {
 
   private static running: Promise<CloudSyncRunResult> | null = null;
   private static lastSyncAttemptAt: number = 0;
+  // A full exchange registers the device and checks all enabled scopes. Keep its
+  // clock separate so frequent statistics uploads cannot postpone remote pulls.
+  private static lastFullSyncAt: number = 0;
+  private static lastFullSyncUserId: string = '';
+  private static lastFullSyncToken: string = '';
+  private static lastFullSyncDeviceId: string = '';
   private static deferredAutomaticTimer: number = -1;
   private static readonly AUTOMATIC_MIN_INTERVAL_MS: number = 15 * 1000;
   private static readonly FOREGROUND_REFRESH_INTERVAL_MS: number = 30 * 60 * 1000;
@@ -205,11 +211,20 @@ export class CloudSyncCoordinator {
   private static readerSettingsBackfillPending: boolean = false;
 
   static async syncNow(context: Context, conflictPolicy: string = 'cloud'): Promise<CloudSyncRunResult> {
+    // An explicit refresh must not be satisfied by an in-flight statistics-only run.
+    if (CloudSyncCoordinator.running) {
+      try { await CloudSyncCoordinator.running; } catch (e) { /* Explicit retry follows. */ }
+    }
+    return CloudSyncCoordinator.startSync(context, conflictPolicy, false);
+  }
+
+  private static async startSync(context: Context, conflictPolicy: string,
+    automatic: boolean): Promise<CloudSyncRunResult> {
     if (CloudSyncCoordinator.running) {
       return await CloudSyncCoordinator.running;
     }
     AppStorage.setOrCreate(CloudSyncSettingsStore.STORAGE_RUNTIME_ACTIVE, true);
-    const task = CloudSyncCoordinator.run(context, conflictPolicy === 'local' ? 'local' : 'cloud');
+    const task = CloudSyncCoordinator.run(context, conflictPolicy === 'local' ? 'local' : 'cloud', automatic);
     CloudSyncCoordinator.running = task;
     CloudSyncCoordinator.lastSyncAttemptAt = Date.now();
     try {
@@ -245,12 +260,6 @@ export class CloudSyncCoordinator {
     const localChangeTrigger = trigger === CloudSyncCoordinator.TRIGGER_CHANGE;
     const backgroundTrigger = trigger === CloudSyncCoordinator.TRIGGER_BACKGROUND;
     let hasLocalChanges = CloudSyncChangeTracker.hasUnsyncedChanges();
-    if (CloudSyncCoordinator.running) {
-      if (hasLocalChanges) {
-        CloudSyncCoordinator.scheduleDeferredAutomaticSync(context, 2000);
-      }
-      return;
-    }
     await AccountSessionStore.load(context);
     if (!AccountSessionStore.isLoggedIn()) {
       return;
@@ -269,11 +278,18 @@ export class CloudSyncCoordinator {
         await CloudSyncStateStore.deviceId(context), await db.getReadStatsUploadBoundary());
       hasLocalChanges = hasLocalChanges || pending.length > 0;
     }
+    hasLocalChanges = hasLocalChanges || CloudSyncChangeTracker.hasUnsyncedChanges();
+    if (CloudSyncCoordinator.running) {
+      if (hasLocalChanges) CloudSyncCoordinator.scheduleDeferredAutomaticSync(context, 2000);
+      return;
+    }
     if ((localChangeTrigger || backgroundTrigger) && !hasLocalChanges) return;
     const now = Date.now();
+    const lastRefreshAt = CloudSyncCoordinator.lastFullSyncUserId === userId &&
+      CloudSyncCoordinator.lastFullSyncToken === AccountSessionStore.token() ?
+      CloudSyncCoordinator.lastFullSyncAt : settings.lastSuccessAt;
     if (trigger === CloudSyncCoordinator.TRIGGER_FOREGROUND && !hasLocalChanges &&
-      settings.lastSuccessAt > 0 &&
-      now - settings.lastSuccessAt < CloudSyncCoordinator.FOREGROUND_REFRESH_INTERVAL_MS) {
+      lastRefreshAt > 0 && now - lastRefreshAt < CloudSyncCoordinator.FOREGROUND_REFRESH_INTERVAL_MS) {
       return;
     }
     if (settings.wifiOnly && !CloudSyncCoordinator.isWifiConnected()) {
@@ -288,7 +304,7 @@ export class CloudSyncCoordinator {
       return;
     }
     try {
-      await CloudSyncCoordinator.syncNow(context);
+      await CloudSyncCoordinator.startSync(context, 'cloud', true);
     } catch (error) {
       console.warn('自动同步失败:', error);
     }
@@ -307,7 +323,8 @@ export class CloudSyncCoordinator {
     }, Math.max(500, Math.floor(delayMs)));
   }
 
-  private static async run(context: Context, conflictPolicy: string): Promise<CloudSyncRunResult> {
+  private static async run(context: Context, conflictPolicy: string,
+    automatic: boolean = false): Promise<CloudSyncRunResult> {
     await AccountSessionStore.load(context);
     if (!AccountSessionStore.isLoggedIn()) {
       throw new Error('请先登录华为账号');
@@ -321,6 +338,7 @@ export class CloudSyncCoordinator {
     await readStatsTracker.flushAndWait();
     ReadStatsCloudSync.assertSession(userId, sessionToken);
     const changeSnapshot: CloudSyncChangeSnapshot = CloudSyncChangeTracker.snapshot();
+    const previousError = settings.status === CloudSyncSettingsStore.STATUS_ERROR || settings.pendingCount > 0;
 
     const result = new CloudSyncRunResult();
     const issues: CloudSyncIssue[] = [];
@@ -339,76 +357,86 @@ export class CloudSyncCoordinator {
       const db = AppDatabase.getInstance();
       await db.initWithContext(context);
       const deviceId = await CloudSyncStateStore.deviceId(context);
-      const state = await CloudSyncStateStore.load(context, userId);
-      localEntities = (await CloudSyncCoordinator.buildLocalEntities(context, db, settings))
-        .filter((entity: LocalSyncEntity) =>
-          CloudSyncCoordinator.scopeAllows(settings, entity.entityType));
-      const operations = CloudSyncCoordinator.buildOperations(localEntities, state, settings);
-      settings.pendingCount = operations.length;
-      await CloudSyncSettingsStore.saveRuntimeState(context, userId, settings.status,
-        settings.lastSuccessAt, settings.pendingCount, settings.errorMessage);
+      const statsOnly = automatic && settings.readingDataEnabled && !previousError &&
+        !CloudSyncChangeTracker.hasUnsyncedChanges() &&
+        CloudSyncCoordinator.lastFullSyncUserId === userId &&
+        CloudSyncCoordinator.lastFullSyncToken === sessionToken &&
+        CloudSyncCoordinator.lastFullSyncDeviceId === deviceId &&
+        CloudSyncCoordinator.lastFullSyncAt > 0 &&
+        Date.now() - CloudSyncCoordinator.lastFullSyncAt < CloudSyncCoordinator.FOREGROUND_REFRESH_INTERVAL_MS;
+      if (!statsOnly) {
+        const state = await CloudSyncStateStore.load(context, userId);
+        localEntities = (await CloudSyncCoordinator.buildLocalEntities(context, db, settings))
+          .filter((entity: LocalSyncEntity) =>
+            CloudSyncCoordinator.scopeAllows(settings, entity.entityType));
+        const operations = CloudSyncCoordinator.buildOperations(localEntities, state, settings);
+        settings.pendingCount = operations.length;
+        await CloudSyncSettingsStore.saveRuntimeState(context, userId, settings.status,
+          settings.lastSuccessAt, settings.pendingCount, settings.errorMessage);
 
-      let remaining = operations.slice();
-      let hasMore = true;
-      let exchangePages = 0;
-      while (remaining.length > 0 || hasMore) {
-        ReadStatsCloudSync.assertSession(userId, sessionToken);
-        exchangePages++;
-        if (exchangePages > CloudSyncCoordinator.MAX_EXCHANGE_PAGES) {
-          throw new Error('同步分页次数异常，请稍后重试');
-        }
-        batch = CloudSyncCoordinator.takeOperationBatch(remaining);
-        const cursorBeforeExchange = state.cursor;
-        const request = await CloudSyncCoordinator.exchangeRequest(
-          context, deviceId, state.cursor, batch, conflictPolicy);
-        const response = await CloudSyncCoordinator.exchangeSyncWithRetry(request, userId, sessionToken);
-        ReadStatsCloudSync.assertSession(userId, sessionToken);
-        CloudSyncCoordinator.validateResponse(response);
-        const operationMap = CloudSyncCoordinator.operationEntityMap(batch, localEntities);
-        for (const ack of response.acknowledgements || []) {
-          if (ack.error) {
-            result.skipped++;
-            result.warning = ack.error.message;
-            issues.push(CloudSyncCoordinator.rejectionIssue(ack, operationMap[ack.opId]));
+        let remaining = operations.slice();
+        let hasMore = true;
+        let exchangePages = 0;
+        while (remaining.length > 0 || hasMore) {
+          ReadStatsCloudSync.assertSession(userId, sessionToken);
+          exchangePages++;
+          if (exchangePages > CloudSyncCoordinator.MAX_EXCHANGE_PAGES) {
+            throw new Error('同步分页次数异常，请稍后重试');
+          }
+          batch = CloudSyncCoordinator.takeOperationBatch(remaining);
+          const cursorBeforeExchange = state.cursor;
+          const request = await CloudSyncCoordinator.exchangeRequest(
+            context, deviceId, state.cursor, batch, conflictPolicy);
+          const response = await CloudSyncCoordinator.exchangeSyncWithRetry(request, userId, sessionToken);
+          ReadStatsCloudSync.assertSession(userId, sessionToken);
+          CloudSyncCoordinator.validateResponse(response);
+          const operationMap = CloudSyncCoordinator.operationEntityMap(batch, localEntities);
+          for (const ack of response.acknowledgements || []) {
+            if (ack.error) {
+              result.skipped++;
+              result.warning = ack.error.message;
+              issues.push(CloudSyncCoordinator.rejectionIssue(ack, operationMap[ack.opId]));
+            }
+          }
+          CloudSyncChangeTracker.beginRemoteApply();
+          try {
+            result.conflicts += await CloudSyncCoordinator.applyAcknowledgements(
+              context, db, response.acknowledgements || [], operationMap, state, deviceId);
+            result.downloaded += await CloudSyncCoordinator.applyChanges(
+              context, db, response.changes || [], state, deviceId, settings);
+          } finally {
+            CloudSyncChangeTracker.endRemoteApply();
+          }
+          if (CloudSyncCoordinator.readerSettingsBackfillPending) {
+            CloudSyncCoordinator.readerSettingsBackfillPending = false;
+            // The run snapshot was captured before this revision, so markSynced
+            // below cannot consume it. A following automatic/foreground sync
+            // will therefore backfill the versioned reader-settings payload.
+            CloudSyncChangeTracker.markPreferenceChanged();
+          }
+          if (CloudSyncCoordinator.protectedLocalBooksDuringSync > 0) {
+            CloudSyncCoordinator.protectedLocalBooksDuringSync = 0;
+            // Keep the locally re-added shelf item pending after markSynced(changeSnapshot).
+            CloudSyncChangeTracker.markDataChanged();
+          }
+          result.uploaded += (response.acknowledgements || []).filter(
+            (ack: CloudSyncAcknowledgement) => ack.accepted).length;
+          const nextCursor = Math.max(state.cursor, Math.floor(Number(response.nextCursor) || 0));
+          if (response.hasMore === true && batch.length === 0 && nextCursor <= cursorBeforeExchange) {
+            throw new Error('服务端同步游标未推进，请稍后重试');
+          }
+          state.cursor = nextCursor;
+          await CloudSyncStateStore.save(context, userId, state);
+          hasMore = response.hasMore === true;
+          if (batch.length === 0 && !hasMore) {
+            break;
           }
         }
-        CloudSyncChangeTracker.beginRemoteApply();
-        try {
-          result.conflicts += await CloudSyncCoordinator.applyAcknowledgements(
-            context, db, response.acknowledgements || [], operationMap, state, deviceId);
-          result.downloaded += await CloudSyncCoordinator.applyChanges(
-            context, db, response.changes || [], state, deviceId, settings);
-        } finally {
-          CloudSyncChangeTracker.endRemoteApply();
-        }
-        if (CloudSyncCoordinator.readerSettingsBackfillPending) {
-          CloudSyncCoordinator.readerSettingsBackfillPending = false;
-          // The run snapshot was captured before this revision, so markSynced
-          // below cannot consume it. A following automatic/foreground sync
-          // will therefore backfill the versioned reader-settings payload.
-          CloudSyncChangeTracker.markPreferenceChanged();
-        }
-        if (CloudSyncCoordinator.protectedLocalBooksDuringSync > 0) {
-          CloudSyncCoordinator.protectedLocalBooksDuringSync = 0;
-          // Keep the locally re-added shelf item pending after markSynced(changeSnapshot).
-          CloudSyncChangeTracker.markDataChanged();
-        }
-        result.uploaded += (response.acknowledgements || []).filter(
-          (ack: CloudSyncAcknowledgement) => ack.accepted).length;
-        const nextCursor = Math.max(state.cursor, Math.floor(Number(response.nextCursor) || 0));
-        if (response.hasMore === true && batch.length === 0 && nextCursor <= cursorBeforeExchange) {
-          throw new Error('服务端同步游标未推进，请稍后重试');
-        }
-        state.cursor = nextCursor;
-        await CloudSyncStateStore.save(context, userId, state);
-        hasMore = response.hasMore === true;
-        if (batch.length === 0 && !hasMore) {
-          break;
-        }
-      }
 
+      }
+      const generalDownloaded = result.downloaded;
       if (settings.readingDataEnabled) {
-        const stats = await ReadStatsCloudSync.run(db, userId, deviceId, sessionToken);
+        const stats = await ReadStatsCloudSync.run(db, userId, deviceId, sessionToken, !automatic);
         result.uploaded += stats.uploaded;
         result.downloaded += stats.downloaded;
       }
@@ -420,8 +448,16 @@ export class CloudSyncCoordinator {
       await CloudSyncSettingsStore.saveRuntimeState(context, userId, settings.status,
         settings.lastSuccessAt, settings.pendingCount, settings.errorMessage);
       await CloudSyncCoordinator.recordIssues(context, userId, issues);
-      CloudSyncChangeTracker.markSynced(changeSnapshot);
-      if (result.downloaded > 0) {
+      if (!statsOnly) {
+        CloudSyncChangeTracker.markSynced(changeSnapshot);
+        if (result.skipped === 0) {
+          CloudSyncCoordinator.lastFullSyncUserId = userId;
+          CloudSyncCoordinator.lastFullSyncToken = sessionToken;
+          CloudSyncCoordinator.lastFullSyncDeviceId = deviceId;
+          CloudSyncCoordinator.lastFullSyncAt = Date.now();
+        }
+      }
+      if (generalDownloaded > 0) {
         AppStorage.setOrCreate('shelfUpdateTime', Date.now());
       }
       return result;

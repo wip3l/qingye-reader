@@ -72,6 +72,7 @@ class Predicates {
   and() { return this; }
 }
 async function database(t) {
+  let progressMarks = 0;
   const sql = new DatabaseSync(':memory:');
   t.after(() => sql.close());
   sql.exec(`CREATE TABLE books (bookUrl TEXT PRIMARY KEY, name TEXT, author TEXT DEFAULT '', coverUrl TEXT DEFAULT '',
@@ -81,7 +82,7 @@ async function database(t) {
     ...syncModels,
     relationalStore: { RdbPredicates: Predicates }, util: { generateRandomUUID: randomUUID },
     BookIdentity: { cloudIdentityValue: book => `identity:${book.bookUrl}` },
-    CloudSyncChangeTracker: { markDataChanged() {}, markReadingProgressChanged() {} }
+    CloudSyncChangeTracker: { markDataChanged() {}, markReadingProgressChanged() { progressMarks++; } }
   }, 'appDb, ReadStatsEntry');
   db.store = {
     executeSql: async (query, args = []) => sql.prepare(query).run(...args),
@@ -100,7 +101,8 @@ async function database(t) {
     recordId: randomUUID(), bookUrl: 'book', dayKey: '2026-10-26', deviceId: 'phone', deviceName: '手机',
     durationMs: 60000, ownerId: 'alice', startedAt: date(2026,10,26), lastReadAt: date(2026,10,26)+60000
   }, overrides);
-  return { sql, db, book, entry, query: (device = '', owner = 'alice') => db.getReadStatsByDayRange('0000-00-00', '9999-99-99', device, owner) };
+  return { sql, db, book, entry, progressMarks: () => progressMarks,
+    query: (device = '', owner = 'alice') => db.getReadStatsByDayRange('0000-00-00', '9999-99-99', device, owner) };
 }
 test('legacy migration is resumable, preserves totals, snapshots and tombstones', async t => {
   const h = await database(t);
@@ -306,4 +308,93 @@ test('switching accounts while a response is in flight stops application and cur
   },'ReadStatsCloudSync');
   await assert.rejects(sync.run(db,'alice','phone','alice'),/账号已切换/);
   assert.equal(applied,0);
+});
+
+// Real SQLite outbox + production exchange loop, with only HTTP and native storage substituted.
+async function exchangeHarness(t) {
+  const h = await database(t); h.book('book', '书'); await h.db.migrateReadStats();
+  let now = 10000000, user = 'alice', token = 'alice', fetches = 0, hook = async () => {};
+  const requests = [], cloud = [], names = [];
+  const { ReadStatsCloudSync: sync } = load('account/ReadStatsCloudSync.ets', {
+    ...syncModels, ReadStatsDeviceOption: class {}, Date: class extends Date { static now() { return now; } },
+    AppStorage: { get() { return 0; }, setOrCreate() {} }, AccountApiError: class extends Error {},
+    AccountSessionStore: { isLoggedIn: () => true, account: () => ({ userId: user }), token: () => token },
+    AccountCommerceApi: {
+      fetchSyncDevices: async () => { fetches++; return { devices: names }; },
+      exchangeReadStats: async req => {
+        requests.push(req.operations.length);
+        for (const op of req.operations) cloud.push({ ...op, sequenceId: cloud.length + 1 });
+        await hook(req);
+        const remaining = cloud.filter(c => c.sequenceId > req.cursor);
+        const changes = remaining.slice(0, 100);
+        return { protocolVersion: 1, acknowledgements: req.operations.map(op => ({ recordId: op.recordId, deleted: op.deleted })),
+          changes, nextCursor: changes.at(-1)?.sequenceId ?? req.cursor, hasMore: remaining.length > 100 };
+      }
+    }
+  }, 'ReadStatsCloudSync');
+  return { ...h, sync, requests, cloud, names, fetches: () => fetches,
+    advance: ms => { now += ms; }, session: (u, tok = u) => { user = u; token = tok; },
+    hook: value => { hook = value; }, run: (force = false) => sync.run(h.db, user, 'phone', token, force) };
+}
+
+test('60 saved minutes upload in one exchange; no general dirty mark or trailing empty request', async t => {
+  const h = await exchangeHarness(t);
+  await h.db.addReadStats(Array.from({ length: 60 }, () => h.entry()));
+  assert.equal(h.progressMarks(), 0);
+  const result = await h.run();
+  assert.equal(result.uploaded, 60);
+  assert.deepEqual(h.requests, [60]);
+  assert.equal(h.fetches(), 1);
+  assert.equal((await h.query()).reduce((n, r) => n + r.durationMs, 0), 3600000);
+});
+
+test('upload and download pagination drains completely without a final empty exchange', async t => {
+  const h = await exchangeHarness(t);
+  await h.db.addReadStats(Array.from({ length: 205 }, () => h.entry()));
+  assert.equal((await h.run()).uploaded, 205);
+  assert.deepEqual(h.requests, [100, 100, 5]);
+  h.requests.length = 0;
+  const payload = h.cloud[0].payload;
+  for (let i = 0; i < 201; i++) h.cloud.push({ recordId: randomUUID(), deleted: false,
+    payload: { ...payload, deviceId: 'tablet' }, sequenceId: h.cloud.length + 1 });
+  assert.equal((await h.run()).downloaded, 201);
+  assert.deepEqual(h.requests, [0, 0, 0]);
+  assert.equal(await h.db.getReadStatsSyncCursor('alice'), 406);
+});
+
+test('device names cache expires, manual refresh bypasses it, and sessions cannot share it', async t => {
+  const h = await exchangeHarness(t);
+  await h.db.addReadStats([h.entry()]); await h.run();
+  h.names.push({ deviceId: 'phone', deviceName: '新名称' });
+  h.advance(60000); await h.run(); assert.equal(h.fetches(), 1);
+  await h.run(true); assert.equal(h.fetches(), 2);
+  assert.equal(h.sql.prepare('SELECT deviceName FROM read_stats_records LIMIT 1').get().deviceName, '新名称');
+  h.advance(30 * 60000); await h.run(); assert.equal(h.fetches(), 3);
+  h.session('alice', 'new-token'); await h.run(); assert.equal(h.fetches(), 4);
+  h.session('bob'); await h.run(); assert.equal(h.fetches(), 5);
+});
+
+test('new records in flight stay queued beyond the captured upload boundary', async t => {
+  const h = await exchangeHarness(t);
+  await h.db.addReadStats([h.entry()]);
+  let added = false;
+  h.hook(async () => { if (!added) { added = true; await h.db.addReadStats([h.entry()]); } });
+  assert.equal((await h.run()).uploaded, 1);
+  assert.deepEqual(h.requests, [1]);
+  assert.equal((await h.db.getPendingReadStats('alice', 'phone', 99999)).length, 1);
+  assert.equal((await h.run()).uploaded, 1);
+  assert.deepEqual(h.requests, [1, 1]);
+});
+
+test('a deletion created during upload is sent before ending the same run', async t => {
+  const h = await exchangeHarness(t);
+  await h.db.addReadStats([h.entry()]); let deleted = false;
+  h.hook(async () => {
+    if (!deleted) { deleted = true; await h.db.deleteReadStatsForBook('book', '0000-00-00', '9999-99-99'); }
+  });
+  await h.run();
+  assert.deepEqual(h.requests, [1, 1]);
+  assert.equal(h.cloud.at(-1).deleted, true);
+  assert.equal((await h.db.getPendingReadStats('alice', 'phone', 99999)).length, 0);
+  assert.equal((await h.query()).length, 0);
 });
