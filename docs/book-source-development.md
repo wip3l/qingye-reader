@@ -1,6 +1,6 @@
 # 书源规则开发文档
 
-开源轻页和简听共用书源解析内核 [harmony-book-source-engine](https://github.com/wip3l/harmony-book-source-engine)。规则格式、字段、表达式、选择器及示例在内核仓库统一维护；本文说明当前轻页的接入情况、开发入口和操作流程。
+本项目使用公共书源解析内核 [harmony-book-source-engine](https://github.com/wip3l/harmony-book-source-engine)。规则格式、字段、表达式、选择器及示例在内核仓库统一维护；本文说明当前应用的接入情况、开发入口和操作流程。
 
 - [当前内核的公共书源规则开发文档](../harmony-book-source-engine/docs/book-source-development.md)：第一部分原生书源（推荐），第二部分兼容书源（已过时）
 - [开发流程](../harmony-book-source-engine/docs/book-source-development.md#开发流程)、[网页书站示例](../harmony-book-source-engine/docs/book-source-development.md#网页书站示例)、[综合示例](../harmony-book-source-engine/docs/book-source-development.md#综合示例)：从零写一个原生书源
@@ -9,14 +9,30 @@
 - [后台脚本阶段 `script`](../harmony-book-source-engine/docs/book-source-development.md#脚本阶段-script)：请求、状态、登录、网页交互、完整示例与排错
 - [封面解密 coverDecode](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md#加密封面-coverdecode)：含封面请求头 `coverHeaders`
 - [自定义图片字节脚本](../harmony-book-source-engine/docs/book-source-development.md#自定义图片字节脚本)：`content.imageDecode.script`，以及标准算法的 `ivPrefixBytes`、`keyEncoding`
+- [视频网页回退](../harmony-book-source-engine/docs/book-source-development.md#视频网页回退)：`content.videoPage`、声明式与脚本示例、错误处理及播放限制
 - [宿主图片加载接入](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/cover-decoding.md)
 - [内核 HAR 接入说明](https://github.com/wip3l/harmony-book-source-engine/blob/main/sourceengine/README.md)
 
-本仓库以子模块 `harmony-book-source-engine/` 引用内核，克隆后先执行 `git submodule update --init`。轻页使用子模块固定的内核提交，内核新增的规则能力要等子模块升级后才在轻页里生效；[在线主分支文档](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md)可能领先于当前应用。
+本仓库以子模块 `harmony-book-source-engine/` 引用内核，克隆后先执行 `git submodule update --init`。应用使用子模块固定的内核提交，内核新增的规则能力要等子模块升级后才在应用里生效；[在线主分支文档](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md)可能领先于当前应用。
+
+## 视频播放接入
+
+视频书源使用 `type: "video"`，`content.video` 返回媒体直链，新增的可选字段 `content.videoPage` 返回当前集的原站播放网页。字段规则和示例统一维护在公共文档的[视频网页回退](../harmony-book-source-engine/docs/book-source-development.md#视频网页回退)章节。
+
+在包含该功能的应用开发构建中，从「剧集详情 → 开始观看」或书架进入播放页后，优先原生播放；明确不支持视频规格且有网页地址时自动回退。网络或未知播放错误重新获取直链一次，仍失败时可手动选择「网页播放」。只提供网页地址时，也通过播放页按钮手动进入。未配置有效 `videoPage` 的书源不会自动打开章节接口。
+
+网页模式支持应用选集、上一集、下一集、刷新网页、重试原生和全屏返回。网站自己的进度、倍速、清晰度与连播由网站控制；应用仅保留进入网页前的原生进度，不把网页中的选集和播放秒数同步到书架。后台暂停网页媒体，回到前台后手动继续播放。
+
+开发时注意：
+
+- `videoPage` 是字段规则；固定地址写为 `"= 'https://example.com/watch/1'"`，接口字段可以写 `"$.webUrl"`。不能直接把不含模板的固定 URL 当选择器规则填写。
+- 媒体请求头不会注入回退网页，当前原生 `Video` 组件仍不发送 `mediaHeaders`；网页使用对应域的 ArkWeb Cookie。网页回退不保证解决编码、鉴权或站点限制。
+- 通用正文调试不启用视频专用回退，空直链仍可能报错；仅网页的视频源需要进入实际播放页验证。
+- 该能力已通过自动化检查和构建，MateBook Fold 已安装启动；真实不支持格式的视频、网站登录及网页全屏仍需实际书源验收，不代表此前发布的所有同版本安装包已支持。
 
 ## 本轮新增与变更（2026-10-26）
 
-以下内容对应本工作区包含本轮改动的 4.4.934 开发构建，已经编译并安装到 API 26 设备验收；不表示此前发布的所有 4.4.934 安装包都包含这些功能。规则接口在公共文档维护，本页记录轻页接入及操作变化。
+以下内容对应本工作区包含本轮改动的 4.4.934 开发构建，已经编译并安装到 API 26 设备验收；不表示此前发布的所有 4.4.934 安装包都包含这些功能。规则接口在公共文档维护，本页记录应用接入及操作变化。
 
 | 内容 | 增加或变更 | 开发文档入口 |
 | --- | --- | --- |
@@ -48,7 +64,7 @@ JS 中调用内置函数时使用 `native.split(text, ',')` 等写法。若报�
 
 脚本阶段返回的是供规则解析的页面或 JSON，不必手动构造应用的数据库对象。返回后仍可使用 `let`、`fail`、`list`、`fields` 和正文提取规则；返回数组且省略 `list` 时逐项解析。目录与正文的脚本要自行完成分页，`nextUrl` 不再生效。完整接口、状态作用域和可复制示例见公共文档，不在此维护第二套规范。
 
-## 在轻页中开发与验证
+## 在应用中开发与验证
 
 1. 在「我的 → 书源管理 → 新建原生书源」编辑完整 JSON，先“校验”再“保存”。校验检查定义和函数等约束，不代表网站链路已经可用。
 2. 打开“调试”，输入能匹配样本书名的关键词并开始。书源管理入口默认运行全链路，没有阶段切换按钮；脚本请求、`log(...)` 与结果摘要出现在执行明细中，报错会带阶段和函数名。若单源搜索无结果，先排除关键词相关性过滤。
@@ -92,7 +108,7 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 
 完整证据、脚本与复现步骤见[本轮验证记录](native-source-capability-followup-validation.md)和[实施清单](native-source-capability-followup-plan.md)。临时测试服务及端口映射已停止；复测时按记录重新启动。
 
-## 轻页的宿主差异
+## 宿主实现差异
 
 网络选项位于“其他设置 → 兼容与诊断”：HTTP/1.1 兼容模式与图片下载并发（4/8/12，默认 4）均在本机保存。图片并发与脚本 `http.all` 的并发是两套独立限制；提高图片并发不会取消前台保留名额。详见[图片并发真机验证方法](image-concurrency-validation.md)。脚本请求的 `timeout`、`http.all` 选项及 `finalUrl` 语义见公共文档的“脚本阶段”接口表。
 
@@ -100,7 +116,7 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 
 可导入[离线示例](../harmony-book-source-engine/docs/examples/native-inline-comments.json)验证交互；该示例无需网络，且仅面向支持 page/chapterPage 的宿主。完整验证命令和平台边界见[实施验证记录](source-capability-validation.md)。
 
-| 能力 | 轻页现状（4.4.935） |
+| 能力 | 当前应用现状（4.4.935） |
 | --- | --- |
 | 原生书源 | 支持编辑、书源设置（变量、音色、账号登录、动作按钮）、搜索、发现、详情、目录、正文、听书、视频播放与漫画图片解密；书源管理和发现页的长按菜单可进入书源设置 |
 | 原生 JS | `js` 函数库与 `script` 阶段已接入；`http`、变量、Cookie、缓存、凭据和详情书籍变量通过内核宿主接口处理，与兼容书源迁移开关独立 |
@@ -118,7 +134,7 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 | 书籍类型 | 以详情阶段的结果为准：搜索或发现列表里标为有声、漫画、视频的书，如果详情接口返回的是小说信息，进入详情后按小说处理；书源的有声版与小说版不要共用同一个书籍 ID。有声书在详情页点“开始听书”直接进入听书页 |
 | 可选宿主端口 `SourceEngineHost` | 不安装，按内核默认行为运行；这不影响独立安装的 `NativeSourceInteraction` 界面处理器与 `BookSourceRuntimeStore` 持久化 |
 
-修改规则格式与开发说明请到内核仓库提交。轻页只维护自己的页面、导入与调试操作和宿主接入说明。
+修改规则格式与开发说明请到内核仓库提交。应用只维护自己的页面、导入与调试操作和宿主接入说明。
 
 ## 此前 4.4.934 的 AI 阅读体验验收
 
