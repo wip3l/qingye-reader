@@ -16,6 +16,7 @@ import { avSession } from '@kit.AVSessionKit';
 import { motion } from '@kit.MultimodalAwarenessKit';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
+import pasteboard from '@ohos.pasteboard';
 import fileUri from '@ohos.file.fileuri';
 import graphicsText from '@ohos.graphics.text';
 import { LengthMetrics } from '@ohos.arkui.node';
@@ -614,6 +615,28 @@ struct ReadBookPage {
   private readerSelectableTextScrollOffsets: Map<string, number> = new Map<string, number>();
   private readerSelectableTextValues: Map<string, string> = new Map<string, string>();
   @State private readerTextSelectionActive: boolean = false;
+  @State private readerDesktopSelectionMenuVisible: boolean = false;
+  private readerDesktopSelectionPage: ReaderV2PageLayout | null = null;
+  private readerDesktopSelectionStart: number = 0;
+  private readerDesktopSelectionEnd: number = 0;
+  private readerSelectionStartChunk: number = -1;
+  private readerSelectionEndChunk: number = -1;
+  @State private readerSelectionHandlesReady: boolean = false;
+  @State private readerSelectionStartX: number = 0;
+  @State private readerSelectionStartY: number = 0;
+  @State private readerSelectionEndX: number = 0;
+  @State private readerSelectionEndY: number = 0;
+  private readerSelectionPageOriginX: number = 0;
+  private readerSelectionPageOriginY: number = 0;
+  private readerSelectionDragX: number = 0;
+  private readerSelectionDragY: number = 0;
+  private readerSelectionDragAnchor: number = 0;
+  private readerSelectionDragAnchorChunk: number = -1;
+  @State private readerSelectionHandleDragging: boolean = false;
+  @State private readerSelectionMenuX: number = 8;
+  @State private readerSelectionMenuY: number = 8;
+  private readerSelectionMenuWidth: number = 284;
+  private readerSelectionMenuHeight: number = 56;
   private readerTextSelectionUntil: number = 0;
   private readerTextSelectionSerial: number = 0;
   private readerV2SelectionChapterIndex: number = -1;
@@ -2105,7 +2128,9 @@ struct ReadBookPage {
         top: this.isReaderNovelContinuousScrollModeActive() ? this.getEffectiveReaderMarginTop() : 0,
         bottom: this.isReaderNovelContinuousScrollModeActive() ? this.getReaderContinuousScrollBottomPadding() : 0
       })
-      .enableScrollInteraction(!this.readerTextSelectionActive)
+      // 与条漫一致：外层 Pan 驱动拖动，Scroller 驱动惯性；关闭列表内置手势避免重复位移。
+      // 原生 Text 的长按选择仍可识别，选区激活时外层 Pan 会停止驱动列表。
+      .enableScrollInteraction(false)
       .scrollBar(BarState.Off)
       // 每个滚动块都是整屏正文（可见 Text + 透明选择 Text 两次排版）。默认只在进入视口时才构建，
       // 快速滑动时会临时排版掉帧；预构建视口外 2 块把排版开销挪到滑动间隙的空闲帧。
@@ -2130,6 +2155,8 @@ struct ReadBookPage {
       Column() {
         Blank()
           .layoutWeight(1)
+          // 父 Column 的 None 不会屏蔽子节点；占位不拦截正文的长按选择。
+          .hitTestBehavior(HitTestMode.None)
         if (this.readerFooterEnabled && !this.isReaderComicModeActive()) {
           this.readerBottomInfoBar()
         }
@@ -2172,8 +2199,7 @@ struct ReadBookPage {
           .onActionCancel(() => {
             this.cancelReaderComicPan();
           }),
-      // Track chapter-boundary pans alongside the List and selectable Text instead of taking priority over them.
-      // A priority pan makes ArkUI cancel the child's native long press before it can create selection handles.
+      // 与条漫共用拖动/惯性处理；保持并行以兼容正文长按选择。
       GestureMask.Normal
     )
   }
@@ -2278,6 +2304,7 @@ struct ReadBookPage {
         },
         onTap: (x: number, y: number, width: number, height: number): void =>
           this.handleReaderComicTap(x, y, width, height),
+        onTouchStart: (): void => this.stopReaderComicScreenScroll(),
         onPanStart: (): void => {
           if (this.isReaderInteractiveActionActive()) return;
           this.beginReaderComicPan();
@@ -3319,6 +3346,14 @@ struct ReadBookPage {
 
       if (this.eyeTurnState.showCalibration) {
         this.readerEyeCalibrationPanel()
+      }
+
+      if (this.readerDesktopSelectionMenuVisible) {
+        this.readerDesktopSelectionMenu()
+        if (this.readerSelectionHandlesReady) {
+          this.readerSelectionHandle(true)
+          this.readerSelectionHandle(false)
+        }
       }
     }
     .width('100%')
@@ -5826,6 +5861,7 @@ struct ReadBookPage {
     this.resetReaderComicBoundaryFeedback(false);
   }
 
+  /** 小说和条漫都由外层手势驱动拖动；底下 List 不再重复处理同一触摸。 */
   updateReaderComicPan(event: GestureEvent): void {
     if (this.readerComicChapterSwitching) return;
     const previousOffsetY = this.readerComicPanLastOffsetY;
@@ -5867,7 +5903,7 @@ struct ReadBookPage {
     } else {
       if (this.readerComicPanMoved && !hadBoundaryPull) {
         this.readerComicSuppressClickUntil = Date.now() + 220;
-        this.readerComicScroller.fling(event.velocityY);
+        if (Math.abs(event.velocityY) > 0) this.readerComicScroller.fling(event.velocityY);
       }
       this.resetReaderComicBoundaryFeedback(true);
     }
@@ -13760,6 +13796,13 @@ struct ReadBookPage {
     if (event.type === TouchType.Down) {
       this.readerSelectionDismissArmed = false;
       this.cancelContinuousReaderSelectionTimer();
+      // 列表的触摸滚动已交给外层手势；按下时显式停止上一轮惯性，不能等超过拖动阈值才停。
+      try {
+        const offset = this.readerComicScroller.currentOffset();
+        this.readerComicScroller.scrollTo({ xOffset: offset.xOffset, yOffset: offset.yOffset, animation: false });
+      } catch (error) {
+        console.warn('停止小说惯性滚动失败:', error);
+      }
       // 第二次按下后等待抬起或长按/拖动判定，不能让上一击的菜单定时器中途弹出遮罩。
       if (this.readerAutoScrollTapTimer >= 0) clearTimeout(this.readerAutoScrollTapTimer);
       this.readerContinuousSelectionDownX = globalX;
@@ -14974,6 +15017,261 @@ struct ReadBookPage {
     };
   }
 
+  isReaderDesktopSelection(): boolean {
+    return deviceInfo.deviceType === '2in1' || deviceInfo.deviceType === 'pc';
+  }
+
+  readerDesktopSelectedText(): string {
+    if (this.readerSelectionStartChunk >= 0 && this.readerSelectionEndChunk >= this.readerSelectionStartChunk) {
+      let selected = '';
+      for (let index = this.readerSelectionStartChunk; index <= this.readerSelectionEndChunk; index++) {
+        const page = this.readerContinuousV2Layout(index, this.contentPages[index] || '');
+        if (!page) continue;
+        const part = page.selectionText.substring(index === this.readerSelectionStartChunk ?
+          this.readerDesktopSelectionStart : 0, index === this.readerSelectionEndChunk ?
+          this.readerDesktopSelectionEnd : page.selectionText.length);
+        if (selected && part && !selected.endsWith('\n') && !part.startsWith('\n')) selected += '\n';
+        selected += part;
+      }
+      return selected;
+    }
+    return this.readerDesktopSelectionPage?.selectionText.substring(
+      this.readerDesktopSelectionStart, this.readerDesktopSelectionEnd) || '';
+  }
+
+  async copyReaderDesktopSelection(): Promise<void> {
+    const text = this.readerDesktopSelectedText();
+    if (!text) return;
+    const serial = this.readerTextSelectionSerial;
+    try {
+      await pasteboard.getSystemPasteboard().setData(pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text));
+      if (serial === this.readerTextSelectionSerial) this.scheduleReaderTextSelectionClear();
+      HdsFeedback.showToast('已复制');
+    } catch (error) {
+      HdsFeedback.showToast('复制失败，请重试');
+      console.warn('复制正文选区失败:', error);
+    }
+  }
+
+  selectAllReaderDesktopText(): void {
+    const page = this.readerDesktopSelectionPage;
+    if (!page) return;
+    if (this.readerSelectionStartChunk >= 0) {
+      this.readerSelectionStartChunk = this.readerV2NativeSelectionPageIndex;
+      this.readerSelectionEndChunk = this.readerV2NativeSelectionPageIndex;
+    }
+    this.onReaderV2NativeSelectionChanged(page, this.readerV2NativeSelectionChapterIndex,
+      this.readerV2NativeSelectionPageIndex, 0, page.selectionText.length);
+    if (this.isReaderDesktopSelection()) return;
+    const key = this.readerV2NativeSelectionKey(this.readerV2NativeSelectionRole,
+      this.readerV2NativeSelectionChapterIndex, this.readerV2NativeSelectionPageIndex, page);
+    try {
+      this.readerSelectableTextController(key).setTextSelection(0, page.selectionText.length,
+        { menuPolicy: MenuPolicy.HIDE });
+    } catch (error) {
+      console.warn('全选正文失败:', error);
+    }
+  }
+
+  // [edge x, edge y, line centre y] in root-local pixels. Each scrolling endpoint owns its
+  // chunk and offset; a paragraph boundary must not clamp the other endpoint to the initial chunk.
+  readerSelectionEndpointGeometry(startHandle: boolean): number[] {
+    let page = this.readerDesktopSelectionPage;
+    const chunk = startHandle ? this.readerSelectionStartChunk : this.readerSelectionEndChunk;
+    if (chunk >= 0) page = this.readerContinuousV2Layout(chunk, this.contentPages[chunk] || '');
+    if (!page) return [];
+    const components = this.getUIContext().getComponentUtils();
+    const root = components.getRectangleById('reader_keyboard_surface');
+    const host = components.getRectangleById(chunk >= 0 ? this.readerContinuousV2ItemId(chunk) :
+      'reader_selection_host');
+    if (host.size.width <= 0 || host.size.height <= 0 || root.size.width <= 0) return [];
+    const originX = host.windowOffset.x - root.windowOffset.x - (chunk >= 0 ? 0 : page.selectionX);
+    const originY = host.windowOffset.y - root.windowOffset.y - (chunk >= 0 ? 0 : page.selectionY);
+    if (chunk < 0) {
+      this.readerSelectionPageOriginX = originX;
+      this.readerSelectionPageOriginY = originY;
+    }
+    const start = chunk >= 0 && chunk !== this.readerSelectionStartChunk ? 0 : this.readerDesktopSelectionStart;
+    const end = chunk >= 0 && chunk !== this.readerSelectionEndChunk ? page.selectionText.length :
+      this.readerDesktopSelectionEnd;
+    const boxes = this.readerV2DisplayHighlightRects(page, this.readerV2DisplayOffsetForPageSelection(page, start),
+      this.readerV2DisplayOffsetForPageSelection(page, end), 'selection');
+    if (boxes.length === 0) return [];
+    const box = startHandle ? boxes[0] : boxes[boxes.length - 1];
+    return [originX + box.leftPx + (startHandle ? 0 : box.widthPx),
+      originY + box.topPx + (startHandle ? 0 : box.heightPx), originY + box.topPx + box.heightPx / 2];
+  }
+
+  positionReaderSelectionMenu(width: number, height: number): void {
+    const margin = 8;
+    const top = Math.max(margin, this.getReaderTopSafePadding());
+    const bottom = Math.max(top, height - this.readerSelectionMenuHeight - margin);
+    const center = (this.readerSelectionStartX + this.readerSelectionEndX) / 2;
+    this.readerSelectionMenuX = Math.max(margin,
+      Math.min(width - this.readerSelectionMenuWidth - margin, center - this.readerSelectionMenuWidth / 2));
+    const above = this.readerSelectionStartY - 40 - this.readerSelectionMenuHeight;
+    const below = this.readerSelectionEndY + 40;
+    this.readerSelectionMenuY = Math.max(top, Math.min(bottom, above >= top ? above : below));
+  }
+
+  refreshReaderSelectionHandles(): void {
+    if (!this.readerDesktopSelectionPage || !this.readerDesktopSelectionMenuVisible) return;
+    try {
+      const first = this.readerSelectionEndpointGeometry(true);
+      const last = this.readerSelectionEndpointGeometry(false);
+      if (first.length < 3 || last.length < 3) return;
+      this.readerSelectionStartX = px2vp(first[0]);
+      this.readerSelectionStartY = px2vp(first[1]);
+      this.readerSelectionEndX = px2vp(last[0]);
+      this.readerSelectionEndY = px2vp(last[1]);
+      this.readerSelectionHandlesReady = true;
+      const root = this.getUIContext().getComponentUtils().getRectangleById('reader_keyboard_surface');
+      this.positionReaderSelectionMenu(px2vp(root.size.width), px2vp(root.size.height));
+    } catch (_) {
+      // The host's onAreaChange retries after it has been mounted.
+    }
+  }
+
+  beginReaderSelectionHandleDrag(startHandle: boolean): void {
+    const point = this.readerSelectionEndpointGeometry(startHandle);
+    if (point.length < 3) return;
+    this.readerSelectionDragX = point[0];
+    this.readerSelectionDragY = point[2];
+    this.readerSelectionDragAnchor = startHandle ? this.readerDesktopSelectionEnd : this.readerDesktopSelectionStart;
+    this.readerSelectionDragAnchorChunk = startHandle ? this.readerSelectionEndChunk : this.readerSelectionStartChunk;
+    this.readerSelectionHandleDragging = true;
+    this.readerSelectionDismissArmed = false;
+  }
+
+  updateReaderSelectionHandleDrag(event: GestureEvent): void {
+    let page = this.readerDesktopSelectionPage;
+    if (!page || !this.readerSelectionHandleDragging) return;
+    let x = this.readerSelectionDragX + vp2px(event.offsetX);
+    let y = this.readerSelectionDragY + vp2px(event.offsetY);
+    let chunk = -1;
+    if (this.readerSelectionDragAnchorChunk >= 0) {
+      const root = this.getUIContext().getComponentUtils().getRectangleById('reader_keyboard_surface');
+      const located = this.readerContinuousV2Locate(px2vp(root.windowOffset.x + x),
+        px2vp(root.windowOffset.y + y));
+      if (located.length < 3) return;
+      chunk = located[0];
+      page = this.readerContinuousV2Layout(chunk, this.contentPages[chunk] || '');
+      if (!page) return;
+      x = located[1];
+      y = located[2];
+    } else {
+      x -= this.readerSelectionPageOriginX;
+      y -= this.readerSelectionPageOriginY;
+    }
+    let nearest: ReaderV2PageFragment | null = null;
+    let distance = Number.MAX_VALUE;
+    for (const fragment of page.fragments) {
+      if (!fragment.paragraph || fragment.selectionPageEnd <= fragment.selectionPageStart) continue;
+      const dy = Math.max(fragment.clipRect.top - y, 0, y - fragment.clipRect.bottom);
+      const dx = Math.max(fragment.clipRect.left - x, 0, x - fragment.clipRect.right);
+      const nextDistance = dy * dy + dx * dx;
+      if (nextDistance < distance) { nearest = fragment; distance = nextDistance; }
+    }
+    if (!nearest || !nearest.paragraph) return;
+    const local = nearest.paragraph.getGlyphPositionAtCoordinate(
+      x - nearest.paragraphX, y - nearest.paragraphY).position;
+    let offset = nearest.selectionPageStart + Math.max(0,
+      Math.min(nearest.selectionPageEnd - nearest.selectionPageStart, local));
+    // A boundary at offset zero belongs to the preceding selected chunk's trailing glyph,
+    // otherwise an empty endpoint chunk has no rectangle from which to draw its handle.
+    if (chunk > this.readerSelectionDragAnchorChunk && this.readerSelectionDragAnchorChunk >= 0 && offset === 0) {
+      const previous = this.readerContinuousV2Layout(chunk - 1, this.contentPages[chunk - 1] || '');
+      if (previous && previous.selectionText.length > 0) {
+        chunk--;
+        page = previous;
+        offset = page.selectionText.length;
+      }
+    } else if (chunk >= 0 && chunk < this.readerSelectionDragAnchorChunk && offset === page.selectionText.length) {
+      const next = this.readerContinuousV2Layout(chunk + 1, this.contentPages[chunk + 1] || '');
+      if (next && next.selectionText.length > 0) {
+        chunk++;
+        page = next;
+        offset = 0;
+      }
+    }
+    // Never bisect a UTF-16 surrogate pair when a handle crosses an emoji.
+    if (offset > 0 && offset < page.selectionText.length &&
+      /[\uDC00-\uDFFF]/.test(page.selectionText.charAt(offset)) &&
+      /[\uD800-\uDBFF]/.test(page.selectionText.charAt(offset - 1))) {
+      offset += chunk < this.readerSelectionDragAnchorChunk ||
+        (chunk === this.readerSelectionDragAnchorChunk && offset < this.readerSelectionDragAnchor) ? -1 : 1;
+    }
+    if (chunk === this.readerSelectionDragAnchorChunk && offset === this.readerSelectionDragAnchor) return;
+    if (chunk >= 0) {
+      const beforeAnchor = chunk < this.readerSelectionDragAnchorChunk ||
+        (chunk === this.readerSelectionDragAnchorChunk && offset < this.readerSelectionDragAnchor);
+      this.readerSelectionStartChunk = beforeAnchor ? chunk : this.readerSelectionDragAnchorChunk;
+      this.readerSelectionEndChunk = beforeAnchor ? this.readerSelectionDragAnchorChunk : chunk;
+      this.readerDesktopSelectionStart = beforeAnchor ? offset : this.readerSelectionDragAnchor;
+      this.readerDesktopSelectionEnd = beforeAnchor ? this.readerSelectionDragAnchor : offset;
+      this.readerV2SelectionPaintVersion++;
+      this.refreshReaderSelectionHandles();
+      return;
+    }
+    this.onReaderV2NativeSelectionChanged(page, this.readerV2NativeSelectionChapterIndex,
+      this.readerV2NativeSelectionPageIndex, Math.min(offset, this.readerSelectionDragAnchor),
+      Math.max(offset, this.readerSelectionDragAnchor));
+  }
+
+  @Builder
+  readerSelectionHandle(startHandle: boolean) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Rect().width(2).height(12).fill(this.accentColor())
+        .position({ x: 19, y: startHandle ? 20 : 8 })
+      Circle().width(14).height(14).fill(this.accentColor()).position({ x: 13, y: 13 })
+    }
+    .width(40).height(40)
+    .position({ x: (startHandle ? this.readerSelectionStartX : this.readerSelectionEndX) - 20,
+      y: startHandle ? this.readerSelectionStartY - 32 : this.readerSelectionEndY - 8 })
+    .zIndex(11)
+    .id(startHandle ? 'reader_selection_start_handle' : 'reader_selection_end_handle')
+    .hitTestBehavior(HitTestMode.Block)
+    .onTouch((event: TouchEvent) => { event.stopPropagation(); })
+    .gesture(PanGesture({ direction: PanDirection.All, distance: 1 })
+      .onActionStart((event: GestureEvent) => {
+        this.beginReaderSelectionHandleDrag(startHandle);
+        this.updateReaderSelectionHandleDrag(event);
+      })
+      .onActionUpdate((event: GestureEvent) => this.updateReaderSelectionHandleDrag(event))
+      .onActionEnd(() => { this.readerSelectionHandleDragging = false; })
+      .onActionCancel(() => { this.readerSelectionHandleDragging = false; }))
+  }
+
+  @Builder
+  readerDesktopSelectionMenu() {
+    Row({ space: 4 }) {
+      Button('复制').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)
+        .id('reader_selection_copy').onClick(() => { this.copyReaderDesktopSelection(); })
+      Button('全选').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)
+        .id('reader_selection_all').onClick(() => { this.selectAllReaderDesktopText(); })
+      Button('替换').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)
+        .id('reader_selection_replace').onClick(() => {
+        const text = this.readerDesktopSelectedText();
+        this.scheduleReaderTextSelectionClear();
+        this.openReaderReplaceRuleWithSelection(text);
+      })
+      Button('取消').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)
+        .id('reader_selection_cancel').onClick(() => { this.scheduleReaderTextSelectionClear(); })
+    }
+    .padding(8)
+    .borderRadius(24)
+    .backgroundColor(this.readerSolidPanelColor())
+    .position({ x: this.readerSelectionMenuX, y: this.readerSelectionMenuY })
+    .visibility(this.readerSelectionHandleDragging || !this.readerSelectionHandlesReady ?
+      Visibility.Hidden : Visibility.Visible)
+    .onSizeChange((_oldValue: SizeOptions, newValue: SizeOptions) => {
+      this.readerSelectionMenuWidth = Number(newValue.width);
+      this.readerSelectionMenuHeight = Number(newValue.height);
+      this.refreshReaderSelectionHandles();
+    })
+    .zIndex(10)
+  }
+
   scheduleReaderTextSelectionClear(): void {
     if (this.readerTextSelectionClearPending) return;
     this.readerTextSelectionClearPending = true;
@@ -15114,7 +15412,8 @@ struct ReadBookPage {
     }
     .width(px2vp(rect.widthPx))
     .height(px2vp(rect.heightPx))
-    .backgroundColor(0x663B82F6)
+    .backgroundColor(this.accentColor())
+    .opacity(0.4)
     .position({ x: px2vp(rect.leftPx), y: px2vp(rect.topPx) })
     .zIndex(2)
     .hitTestBehavior(HitTestMode.None)
@@ -15641,11 +15940,17 @@ struct ReadBookPage {
     const safeStart = Math.max(0, Math.min(selectionStart, textLength));
     const safeEnd = Math.max(safeStart, Math.min(selectionEnd, textLength));
     if (safeEnd > safeStart) {
+      if (this.isReaderDesktopSelection()) {
+        this.readerDesktopSelectionPage = page;
+        this.readerDesktopSelectionStart = safeStart;
+        this.readerDesktopSelectionEnd = safeEnd;
+      }
       this.readerV2SelectionChapterIndex = chapterIndex;
       this.readerV2SelectionPageIndex = pageIndex;
       this.readerV2SelectionDisplayStart = this.readerV2DisplayOffsetForPageSelection(page, safeStart);
       this.readerV2SelectionDisplayEnd = this.readerV2DisplayOffsetForPageSelection(page, safeEnd);
       this.readerV2SelectionPaintVersion++;
+      this.refreshReaderSelectionHandles();
     }
   }
 
@@ -15656,7 +15961,10 @@ struct ReadBookPage {
   readerV2NativeSelectionText(role: string, chapterIndex: number, pageIndex: number,
     page: ReaderV2PageLayout, fragmentIndex: number, offsetX: number, offsetY: number) {
     Stack({ alignContent: Alignment.TopStart }) {
-      if (deviceInfo.sdkApiVersion >= 23) {
+      if (this.isReaderDesktopSelection()) {
+        // Only a geometry anchor is needed here; desktop handles and clipboard share our range.
+        Blank().width('100%').height('100%').hitTestBehavior(HitTestMode.None)
+      } else if (deviceInfo.sdkApiVersion >= 23) {
         Text('', { controller: this.readerV2NativeSelectionController(
           this.readerV2NativeSelectionKey(role, chapterIndex, pageIndex, page), page) })
           .lineSpacing(LengthMetrics.vp(px2vp(this.toMeasureNonNegativePx(this.readerLineHeight))),
@@ -15713,6 +16021,8 @@ struct ReadBookPage {
     .width(px2vp(page.selectionWidth))
     .height(px2vp(Math.max(1, page.selectionHeight)))
     .position({ x: px2vp(page.selectionX + offsetX), y: px2vp(page.selectionY + offsetY) })
+    .id('reader_selection_host')
+    .onAreaChange(() => this.refreshReaderSelectionHandles())
     .hitTestBehavior(HitTestMode.None)
   }
 
@@ -15730,6 +16040,14 @@ struct ReadBookPage {
   }
 
   clearReaderV2SelectionOverlay(): void {
+    this.readerSelectionStartChunk = -1;
+    this.readerSelectionEndChunk = -1;
+    this.readerSelectionHandlesReady = false;
+    this.readerSelectionHandleDragging = false;
+    this.readerDesktopSelectionMenuVisible = false;
+    this.readerDesktopSelectionPage = null;
+    this.readerDesktopSelectionStart = 0;
+    this.readerDesktopSelectionEnd = 0;
     const hasNativeHost = this.readerV2NativeSelectionFragmentIndex >= 0;
     if (this.readerV2SelectionDisplayStart < 0 && this.readerV2SelectionDisplayEnd < 0 && !hasNativeHost) return;
     this.readerV2SelectionChapterIndex = -1;
@@ -15860,6 +16178,16 @@ struct ReadBookPage {
         this.readerV2SelectionDisplayEnd = this.readerV2DisplayOffsetForPageSelection(page, end);
         this.readerV2SelectionPaintVersion++;
         this.readerV2NativeSelectionHostVersion++;
+        // PC / 二合一设备上 setTextSelection(MenuPolicy.SHOW) 不会显示系统菜单。
+        // 两种阅读方式共用这个操作条；复制内容随原生选区变化，而非固定取整页。
+        if (this.isReaderDesktopSelection()) {
+          this.readerDesktopSelectionPage = page;
+          this.readerDesktopSelectionStart = start;
+          this.readerDesktopSelectionEnd = end;
+          this.readerSelectionStartChunk = role === READER_V2_CONTINUOUS_ROLE ? pageIndex : -1;
+          this.readerSelectionEndChunk = this.readerSelectionStartChunk;
+          this.readerDesktopSelectionMenuVisible = true;
+        }
         return 1;
       } catch (error) {
         console.info('V2 正文选区布局尚未就绪，准备重试:', error);
@@ -16071,6 +16399,16 @@ struct ReadBookPage {
 
   readerContinuousV2SelectionRects(index: number, text: string,
     _paintVersion: number): ReaderV2HighlightRect[] {
+    if (this.readerDesktopSelectionMenuVisible && this.readerSelectionStartChunk >= 0 &&
+      this.readerV2SelectionChapterIndex === this.currentChapterIndex) {
+      if (index < this.readerSelectionStartChunk || index > this.readerSelectionEndChunk) return [];
+      const page = this.readerContinuousV2Layout(index, text);
+      if (!page) return [];
+      const start = index === this.readerSelectionStartChunk ? this.readerDesktopSelectionStart : 0;
+      const end = index === this.readerSelectionEndChunk ? this.readerDesktopSelectionEnd : page.selectionText.length;
+      return this.readerV2DisplayHighlightRects(page, this.readerV2DisplayOffsetForPageSelection(page, start),
+        this.readerV2DisplayOffsetForPageSelection(page, end), 'selection');
+    }
     if (this.readerV2SelectionChapterIndex !== this.currentChapterIndex ||
       this.readerV2SelectionPageIndex !== index || this.readerV2SelectionDisplayStart < 0 ||
       this.readerV2SelectionDisplayEnd <= this.readerV2SelectionDisplayStart) return [];

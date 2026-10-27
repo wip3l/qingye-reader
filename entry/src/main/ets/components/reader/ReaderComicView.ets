@@ -875,6 +875,8 @@ export struct ReaderComicView {
   onListAppear: () => void = () => {};
   /** 坐标相对视图左上角。 */
   onTap: (x: number, y: number, width: number, height: number) => void = () => {};
+  /** 手指按下立即停止阅读页驱动的翻屏动画，不等拖动手势识别。 */
+  onTouchStart: () => void = () => {};
   onPanStart: () => void = () => {};
   onPanUpdate: (event: GestureEvent) => void = () => {};
   onPanEnd: (event: GestureEvent) => void = () => {};
@@ -975,7 +977,18 @@ export struct ReaderComicView {
   private handleTouch(event: TouchEvent): void {
     if (event.type === TouchType.Down) this.colorSession?.touch(true);
     if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.colorSession?.touch(false);
-    if (event.type === TouchType.Down && event.touches.length <= 1) this.touchDragged = false;
+    if (event.type === TouchType.Down && event.touches.length <= 1) {
+      this.touchDragged = false;
+      this.onTouchStart();
+      // 透明交互层截住了触摸，底下 List 收不到按下事件，不能自动停止上一轮惯性。
+      // 原位无动画 scrollTo 会停止原生动画；只在按下时读取位置，不在拖动帧里追逐绝对目标。
+      try {
+        const offset = this.scroller.currentOffset();
+        this.scroller.scrollTo({ xOffset: offset.xOffset, yOffset: offset.yOffset, animation: false });
+      } catch (error) {
+        console.warn('停止漫画惯性滚动失败:', error);
+      }
+    }
   }
 
   private handleDoubleTap(event: GestureEvent): void {

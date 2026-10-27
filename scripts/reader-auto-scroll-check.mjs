@@ -82,6 +82,7 @@ function fixture() {
     readerAutoScrollTapTimer: -1, readerAutoScrollTapAt: 0,
     readerContinuousSelectionTimerId: -1, readerContinuousSelectionMoved: false, readerTapSlop: 12,
     readerAutoScrollPositionX: -1, readerAutoScrollPositionY: -1,
+    readerHoldingHandSide: 0, readerAutoScrollManuallyPositioned: false,
     pageViewWidth: 360, pageViewHeight: 720, navBarHeight: 24,
     readerPageVisible: true, readerInitialPageReady: true, readerPageTurnMode: 1,
     chapters: [{}, {}, {}], currentChapterIndex: 0, content: 'test novel', contentPages: ['test novel'],
@@ -104,7 +105,9 @@ function fixture() {
     readerFloatingBarRight: () => 344, readerBottomMenuOverlayHeight: () => 120,
     getReaderTopSafePadding: () => 24,
     ttsReader: { isSpeaking: () => p.nativeTts, isPaused: () => false, pause: async () => {} },
-    readerComicScroller: { isAtEnd: () => p.atEnd, scrollBy: (_x, y) => { p.distance += y; } },
+    readerComicScroller: { isAtEnd: () => p.atEnd, scrollBy: (_x, y) => { p.distance += y; },
+      currentOffset: () => ({ xOffset: 0, yOffset: p.distance }),
+      scrollTo: ({ yOffset }) => { p.distance = yOffset; p.inertiaStops = (p.inertiaStops || 0) + 1; } },
     readerComicPageDataSource: { lastChapter: () => p.lastChapter, totalCount: () => 2,
       itemAt: () => ({ failed: p.failed }) },
     ensureReaderContinuousNeighbors: () => { p.loadRequests++; },
@@ -266,6 +269,7 @@ assert.equal(p.readerAutoScrollTapTimer, -1, 'background cancels deferred single
 assert.equal(p.shortTaps, 0);
 
 p = fixture(); tap(p); touch(p, 0); touch(p, 1, 180, 350); touch(p, 2, 180, 350);
+assert.ok(p.inertiaStops > 0, 'touch down stops native inertia before a drag is recognized');
 assert.equal(p.readerAutoScrollPaused, true, 'dragging still pauses');
 assert.equal(p.readerAutoScrollTapTimer, -1, 'drag cancels pending tap');
 assert.equal(p.shortTaps, 0, 'drag cannot open the menu');
