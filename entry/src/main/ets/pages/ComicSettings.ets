@@ -69,8 +69,8 @@ struct ComicSettingsPage {
           });
         }, 'comic_settings_default_mode_select')
       SettingSwitchRow({
-        title: '横屏双页',
-        description: '翻页模式下，横屏、折叠屏展开等宽屏两页并排',
+        title: '使用双翻页',
+        description: '从左往右或从右往左阅读时，宽屏下并排显示两页；条漫不生效',
         isOn: this.settings.dualPage,
         onChange: (value: boolean) => {
           this.update((next: ReaderComicSettings): void => {
