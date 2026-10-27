@@ -118,6 +118,16 @@ try {
   const changed=await pipeline.materialize(http,source,raw('identity',fixed,{Referer:'https://a.example'}));
   const headersChanged=await pipeline.materialize(http,source,raw('identity',prefix,{Referer:'https://b.example'}));
   assert.notEqual(original,changed); assert.notEqual(original,headersChanged);
+  const tokenOne=await pipeline.materialize(http,source,raw('protected',prefix,{'X-Media-Token':'one',Host:'evil',Connection:'close','X-Bad':'a\r\nb'}));
+  assert.equal(requests.at(-1).request.headers['X-Media-Token'],'one');
+  assert.equal(requests.at(-1).request.headers.Host,undefined);
+  assert.equal(requests.at(-1).request.headers.Connection,undefined);
+  assert.equal(requests.at(-1).request.headers['X-Bad'],undefined);
+  assert.deepEqual([...requests.at(-1).request.protectedHeaderNames],['X-Media-Token']);
+  const tokenTwo=await pipeline.materialize(http,source,raw('protected',prefix,{'X-Media-Token':'two'}));
+  assert.notEqual(tokenOne,tokenTwo,'media credentials participate in cache identity');
+  await assert.rejects(pipeline.materialize({executeBinary:async()=>({success:false,statusCode:0,data:new Uint8Array(),error:'API 22 required'})},
+    source,raw('unsupported',null,{'X-Media-Token':'one'})),/API 22/);
   await assert.rejects(decoder.decodeAsync(new Uint8Array(20*1024*1024+1),{...prefix,keyEncoding:'hex'},20*1024*1024),/byte limit/);
   // data: images become cache files without a download, and imageDecode applies to them as well.
   const beforeData=downloads;

@@ -57,7 +57,7 @@ export class ComicImagePipeline {
         const record = headerObject as Record<string, Object>;
         for (const key in record) {
           const headerValue = String(record[key] || '').trim();
-          if (this.allowedHeader(key) && headerValue) spec.headers[key] = headerValue;
+          if (this.allowedHeader(key) && headerValue && !/[\r\n\0]/.test(headerValue)) spec.headers[key] = headerValue;
         }
       }
       const decode = options['decode'];
@@ -138,7 +138,7 @@ export class ComicImagePipeline {
     const cacheKey = spec.decodeScript ? digestHashHex('SHA256', JSON.stringify({
       version: 1, identity: cacheIdentity, js: scriptCode, config: scriptConfig, fn: spec.decodeScript,
       params: spec.decodeParams, plain: spec.processPlainImages, index: imageIndex
-    })) : this.hashText(cacheIdentity);
+    })) : (Object.keys(spec.headers).length ? digestHashHex('SHA256', cacheIdentity) : this.hashText(cacheIdentity));
     const basePath = `${dir}/${cacheKey}`;
     const existing = this.findExisting(basePath);
     if (existing) {
@@ -157,6 +157,8 @@ export class ComicImagePipeline {
         cancelCheck: cancelled,
         url: spec.url,
         method: 'GET',
+        protectedHeaderNames: Object.keys(spec.headers).filter((name: string): boolean =>
+          !/^(?:referer|origin|user-agent|accept|accept-language|authorization|cookie|range)$/i.test(name)),
         headers: {
           'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
           ...spec.headers
@@ -168,6 +170,10 @@ export class ComicImagePipeline {
       if (cancelled()) throw new Error(HttpClient.CANCELLED_ERROR);
       if (!response.success || response.data.length === 0) {
         if (spec.decodeAlgorithm || spec.decodeScript) throw new Error(`正文图片下载失败（HTTP ${response.statusCode}）`);
+        if (Object.keys(spec.headers).some((name: string): boolean =>
+          !/^(?:referer|origin|user-agent|accept|accept-language|authorization|cookie|range)$/i.test(name))) {
+          throw new Error(response.error || `正文图片下载失败（HTTP ${response.statusCode}）`);
+        }
         console.warn(`[ComicImagePipeline] download failed status=${response.statusCode} error=${response.error || ''}`);
         return spec.url;
       }
@@ -305,7 +311,8 @@ export class ComicImagePipeline {
   }
 
   private static allowedHeader(name: string): boolean {
-    return /^(?:referer|origin|user-agent|accept|accept-language|authorization|cookie|range)$/i.test(name || '');
+    return /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name || '') &&
+      !/^(?:host|connection|content-length|transfer-encoding|keep-alive|upgrade|te|trailer|proxy-.*|sec-.*|__proto__|constructor|prototype)$/i.test(name);
   }
 
   private static looksLikeImage(bytes: Uint8Array): boolean {
