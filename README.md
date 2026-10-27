@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.4.934`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.4.935`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -252,8 +252,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.4.934` |
-| `versionCode` / `buildVersion` | `4040934` |
+| `versionName` | `4.4.935` |
+| `versionCode` / `buildVersion` | `4040935` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`CAMERA`（仅在用户启用眼动翻页时请求） |
 
@@ -457,3 +457,11 @@ for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-
 - 源码地址：https://github.com/wip3l/qingye-reader
 
 项目包含的 QuickJS、ohos_quickjs 及 OpenHarmony/Huawei N-API 封装代码继续适用各自的 MIT 或 Apache-2.0 许可证，详见 [第三方开源软件声明](THIRD_PARTY_NOTICES.md)。相关完整许可文本同时打包进入 HAP，并可在应用“关于 → 开源许可”中查看。
+
+## 4.4.935 更新
+
+- 阅读统计重新设计，支持设备归属、书名快照、云端同步与四种分享海报；海报可选择展示个人资料，并通过系统分享图片。
+- 阅读页支持可配置的键盘翻页（默认关闭），滚动与朗读控件适配持握手；正文与正则样式支持精细字重，正则配色保留透明度。
+- 桌面窗口使用沉浸式标题栏，优化窗口圆角与顶部背景裁切；列表平铺统一按窗口宽度计算尺寸。
+- 书源调试补齐响应头、请求编号、耗时与大目录检查；修复书列表 JS 字段批处理，增强条件重试和漫画媒体跳转时的请求头保护。
+- 阅读统计同步减少交换请求。服务端部署请参阅 `server/` 中本次新增的增量更新脚本。
