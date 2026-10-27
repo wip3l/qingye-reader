@@ -334,6 +334,7 @@ export struct ReaderTtsPlayerPanel {
         .lineHeight(28)
         .wordBreak(WordBreak.NORMAL)
         .width('100%')
+        .constraintSize({ maxWidth: 840 })
         .onAreaChange((oldArea: Area, area: Area): void => {
           if (oldArea.width !== area.width || oldArea.height !== area.height) {
             this.scrollToCurrentSentence(false);
@@ -344,7 +345,7 @@ export struct ReaderTtsPlayerPanel {
       .layoutWeight(1)
       .width('100%')
       .scrollBar(BarState.Off)
-      .align(Alignment.TopStart)
+      .align(Alignment.Top)
       .onAreaChange((_oldArea: Area, area: Area): void => {
         const height = Number(area.height);
         if (this.readingViewportHeight === height) return;

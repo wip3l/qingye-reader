@@ -11,11 +11,13 @@ function method(source, name) {
   return source.slice(start, source.indexOf('\n  }', start) + 4);
 }
 const methods = ['cleanTtsPanelSlice', 'ttsCurrentSentence', 'ttsPanelTextBefore',
-  'ttsPanelTextAfter', 'ttsPanelFollowingText'];
+  'ttsPanelTextAfter', 'ttsPanelFollowingText', 'ttsPanelHasChapterFocus',
+  'ttsPanelHighlightStart', 'ttsPanelHighlightEnd', 'ttsPanelOffsetSource'];
 const host = vm.runInNewContext(stripTypeScriptTypes(`({${methods.map(name => method(readBook, name)).join(',')}})`));
 function slices(text, start, end) {
   Object.assign(host, { ttsDisplayText: text, ttsHighlightStart: start, ttsHighlightEnd: end,
-    ttsPanelOffsetSource: () => text });
+    readerV2TtsSourceStart: -1, readerV2TtsSourceEnd: -1,
+    ttsOffsetSanitizedText: value => value });
   return [host.ttsPanelTextBefore(), host.ttsCurrentSentence(), host.ttsPanelTextAfter()];
 }
 
@@ -46,6 +48,41 @@ for (const text of ['他说：“好！”她答：“嗯。”', 'Hello, world!
 }
 assert.deepEqual(slices('最后一句。', 0, 5), ['', '最后一句。', '']);
 assert.equal(host.cleanTtsPanelSlice(' \n　　下一段\n '), '下一段', 'preview cleanup still trims edges');
+
+// A short reader page must not limit the floating panel's chapter context.
+const chapterBefore = '前页内容。\n'.repeat(120);
+const spoken = '正在朗读的句子跨过分页边界。';
+const chapterAfter = '\n下一页仍然可见。'.repeat(180);
+const chapter = chapterBefore + spoken + chapterAfter;
+Object.assign(host, {
+  pagedContentText: chapter, currentChapterIndex: 4, ttsFocusChapterIndex: 4,
+  ttsDisplayText: spoken.slice(0, 6), ttsHighlightStart: 0, ttsHighlightEnd: 6,
+  readerV2TtsSourceStart: chapterBefore.length,
+  readerV2TtsSourceEnd: chapterBefore.length + spoken.length
+});
+assert.equal(host.ttsPanelTextBefore(), chapterBefore);
+assert.equal(host.ttsCurrentSentence(), spoken, 'highlight survives the page boundary');
+assert.equal(host.ttsPanelTextAfter(), chapterAfter);
+assert.equal(host.ttsPanelFollowingText(), chapter, 'normal chapters remain continuous');
+host.ttsFocusChapterIndex = 3;
+assert.equal(host.ttsPanelFollowingText(), spoken.slice(0, 6), 'stale chapter offsets use page fallback');
+host.ttsFocusChapterIndex = 4;
+host.readerV2TtsSourceStart = 0;
+host.readerV2TtsSourceEnd = 6;
+assert.equal(host.ttsPanelTextBefore(), '', 'chapter head');
+host.readerV2TtsSourceStart = chapter.length - 6;
+host.readerV2TtsSourceEnd = chapter.length;
+assert.equal(host.ttsPanelTextAfter(), '', 'chapter tail');
+
+// Very long chapters stay bounded, and window edges must not split surrogate pairs.
+const longBefore = '前'.repeat(10000) + '😀' + '前'.repeat(3999);
+const longAfter = '后'.repeat(5999) + '😀' + '后'.repeat(10000);
+host.pagedContentText = longBefore + spoken + longAfter;
+host.readerV2TtsSourceStart = longBefore.length;
+host.readerV2TtsSourceEnd = longBefore.length + spoken.length;
+assert.equal(host.ttsPanelTextBefore(), '😀' + '前'.repeat(3999));
+assert.equal(host.ttsCurrentSentence(), spoken);
+assert.equal(host.ttsPanelTextAfter(), '后'.repeat(5999) + '😀');
 
 // A long paragraph must follow the spoken line, not the center of the entire paragraph.
 const panel = fs.readFileSync(new URL('../entry/src/main/ets/components/ReaderTtsPlayerPanel.ets', import.meta.url), 'utf8');

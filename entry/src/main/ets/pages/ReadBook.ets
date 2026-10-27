@@ -5397,11 +5397,13 @@ struct ReadBookPage {
   }
 
   ttsCurrentSentence(): string {
-    if (this.ttsHighlightStart < 0 || this.ttsHighlightEnd <= this.ttsHighlightStart || !this.ttsDisplayText) {
+    const start = this.ttsPanelHighlightStart();
+    const end = this.ttsPanelHighlightEnd();
+    if (start < 0 || end <= start) {
       return '';
     }
     const source = this.ttsPanelOffsetSource();
-    return this.cleanTtsPanelSlice(source.substring(this.ttsHighlightStart, this.ttsHighlightEnd), false);
+    return this.cleanTtsPanelSlice(source.substring(start, end), false);
   }
 
   ttsQuickSentencePreview(): string {
@@ -5416,19 +5418,42 @@ struct ReadBookPage {
 
   ttsPanelTextBefore(): string {
     const source = this.ttsPanelOffsetSource();
-    if (this.ttsHighlightStart <= 0) return '';
-    return this.cleanTtsPanelSlice(
-      source.substring(Math.max(0, this.ttsHighlightStart - 600), this.ttsHighlightStart), false);
+    const end = this.ttsPanelHighlightStart();
+    if (end <= 0) return '';
+    // Bound unusually long chapters without tying the panel to the reader's page size.
+    let start = Math.max(0, end - 4000);
+    if (start > 0 && /[\uDC00-\uDFFF]/.test(source.charAt(start))) start--;
+    return this.cleanTtsPanelSlice(source.substring(start, end), false);
   }
 
   ttsPanelTextAfter(): string {
     const source = this.ttsPanelOffsetSource();
-    const start = this.ttsHighlightEnd > this.ttsHighlightStart ? this.ttsHighlightEnd : 0;
-    return this.cleanTtsPanelSlice(source.substring(start, Math.min(source.length, start + 900)), false);
+    const focusEnd = this.ttsPanelHighlightEnd();
+    const start = focusEnd > this.ttsPanelHighlightStart() ? focusEnd : 0;
+    let end = Math.min(source.length, start + 6000);
+    if (end < source.length && /[\uDC00-\uDFFF]/.test(source.charAt(end))) end++;
+    return this.cleanTtsPanelSlice(source.substring(start, end), false);
+  }
+
+  ttsPanelHasChapterFocus(): boolean {
+    return this.ttsFocusChapterIndex === this.currentChapterIndex &&
+      this.readerV2TtsSourceStart >= 0 && this.readerV2TtsSourceEnd > this.readerV2TtsSourceStart &&
+      this.readerV2TtsSourceStart < (this.pagedContentText || this.getPagedSourceText()).length;
+  }
+
+  ttsPanelHighlightStart(): number {
+    return this.ttsPanelHasChapterFocus() ? this.readerV2TtsSourceStart : this.ttsHighlightStart;
+  }
+
+  ttsPanelHighlightEnd(): number {
+    return this.ttsPanelHasChapterFocus() ? this.readerV2TtsSourceEnd : this.ttsHighlightEnd;
   }
 
   ttsPanelOffsetSource(): string {
-    return this.ttsOffsetSanitizedText(this.ttsDisplayText || this.currentPageText || '');
+    // Speech offsets refer to the chapter source; page-relative highlights are only a startup fallback.
+    const source = this.ttsPanelHasChapterFocus() ? (this.pagedContentText || this.getPagedSourceText()) :
+      (this.ttsDisplayText || this.currentPageText || '');
+    return this.ttsOffsetSanitizedText(source);
   }
 
   ttsOffsetSanitizedText(text: string): string {
@@ -11234,12 +11259,15 @@ struct ReadBookPage {
     // Keeps the floating catalog highlight on the chapter being read. Availability
     // published here is recomputed identically by updateDetails below.
     ReaderTtsFloatingSession.updateCatalogIndex(this.ttsFloatingSessionOwnerId, this.currentChapterIndex);
+    const textBefore = this.ttsPanelTextBefore();
+    const currentText = this.ttsCurrentSentence();
+    const textAfter = this.ttsPanelTextAfter();
     ReaderTtsFloatingSession.updateDetails(
       this.ttsFloatingSessionOwnerId,
-      this.ttsPanelFollowingText() || this.ttsQuickSentencePreview(),
-      this.ttsPanelTextBefore(),
-      this.ttsCurrentSentence(),
-      this.ttsPanelTextAfter(),
+      (textBefore + currentText + textAfter) || this.ttsQuickSentencePreview(),
+      textBefore,
+      currentText,
+      textAfter,
       this.getTtsFloatingCover(),
       this.shouldUseTtsThemeBookCover() ? this.activeTtsThemeShelfFrame() : '',
       `${this.currentChapterIndex + 1}/${Math.max(1, this.chapters.length)}章`,
