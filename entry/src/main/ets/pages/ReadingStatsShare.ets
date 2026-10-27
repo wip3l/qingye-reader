@@ -3,6 +3,7 @@ import { preferences } from '@kit.ArkData';
 import { fileUri } from '@kit.CoreFileKit';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { PageScaffold } from '../components/common/PageScaffold';
+import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { ReadStatsPosterSnapshot, ReadStatsPosterSession, ReadStatsPosterOptions, ReadStatsPosterLayout,
   ReadStatsPosterPage } from '../core/stats/ReadStatsPosterModel';
 import { ReadStatsPosterRenderer, ReadStatsPosterPalette } from '../core/stats/ReadStatsPosterRenderer';
@@ -26,6 +27,11 @@ struct ReadingStatsSharePage {
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @State headerCollapse: number = 0;
+  private headerScroller: Scroller = new Scroller();
+  private previewScroller: Scroller = new Scroller();
+  private settingsScroller: Scroller = new Scroller();
   @StorageProp('accountUserId') @Watch('accountChanged') accountUserId: string = '';
   @State snapshot: ReadStatsPosterSnapshot = new ReadStatsPosterSnapshot();
   @State options: ReadStatsPosterOptions = new ReadStatsPosterOptions();
@@ -319,23 +325,62 @@ struct ReadingStatsSharePage {
     Column() {
       if (this.wide) {
         Row({ space: 28 }) {
-          Scroll() { this.preview() }.layoutWeight(1).height('100%').scrollBar(BarState.Off).align(Alignment.Top)
-          Scroll() { this.settings() }.width(360).height('100%').scrollBar(BarState.Off).align(Alignment.Top)
-        }.layoutWeight(1).width('100%').padding({ left: 24, right: 24, top: 12 }).alignItems(VerticalAlign.Top)
+          Scroll(this.previewScroller) {
+            Column() { this.preview() }
+              .width('100%').padding({ top: PageScaffold.BAR_HEIGHT + this.statusBarHeight + 12, bottom: 12 })
+          }.layoutWeight(1).height('100%').scrollBar(BarState.Off).align(Alignment.Top)
+            .onDidScroll((_xOffset: number, yOffset: number) => {
+              this.headerCollapse = CollapsingHeader.next(this.headerCollapse, yOffset,
+                this.previewScroller.currentOffset().yOffset);
+            })
+            .onScrollStop(() => { this.settleHeader(this.previewScroller); })
+          Scroll(this.settingsScroller) {
+            Column() { this.settings() }
+              .width('100%').padding({ top: PageScaffold.BAR_HEIGHT + this.statusBarHeight + 12, bottom: 12 })
+          }.width(360).height('100%').scrollBar(BarState.Off).align(Alignment.Top)
+            .onDidScroll((_xOffset: number, yOffset: number) => {
+              this.headerCollapse = CollapsingHeader.next(this.headerCollapse, yOffset,
+                this.settingsScroller.currentOffset().yOffset);
+            })
+            .onScrollStop(() => { this.settleHeader(this.settingsScroller); })
+        }.layoutWeight(1).width('100%').padding({ left: 24, right: 24 }).alignItems(VerticalAlign.Top)
       } else {
-        Scroll() {
-          Column({ space: 20 }) { this.preview(); this.settings() }.width('100%').padding(20)
+        Scroll(this.headerScroller) {
+          Column({ space: 20 }) { this.preview(); this.settings() }.width('100%')
+            .padding({ top: PageScaffold.BAR_HEIGHT + this.statusBarHeight + 20, bottom: 20, left: 20, right: 20 })
         }.layoutWeight(1).width('100%').scrollBar(BarState.Off).align(Alignment.Top)
+          .onDidScroll((_xOffset: number, yOffset: number) => {
+            this.headerCollapse = CollapsingHeader.next(this.headerCollapse, yOffset,
+              this.headerScroller.currentOffset().yOffset);
+          })
+          .onScrollStop(() => { this.settleHeader(this.headerScroller); })
       }
       this.actions()
     }.width('100%').height('100%')
-      .onAreaChange((_old: Area, area: Area): void => { this.wide = Number(area.width) >= 840; })
+      .onAreaChange((_old: Area, area: Area): void => {
+        const wide = Number(area.width) >= 840;
+        if (wide !== this.wide) {
+          this.headerCollapse = 0;
+          this.wide = wide;
+        }
+      })
+  }
+
+  private settleHeader(scroller: Scroller): void {
+    const target = CollapsingHeader.settle(this.headerCollapse, scroller.currentOffset().yOffset);
+    if (target !== this.headerCollapse) {
+      this.getUIContext().animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => {
+        this.headerCollapse = target;
+      });
+    }
   }
 
   build() {
     Column() {
-      PageScaffold({ title: '分享阅读统计', scrollable: false, collapsible: false,
+      PageScaffold({ title: '分享阅读统计', scrollable: false, edgeToEdge: true, externalCollapse: this.headerCollapse,
         content: (): void => { this.content(); } })
     }.width('100%').height('100%')
+      .backgroundColor(ThemeRuntime.pageColor(this.appDarkMode))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

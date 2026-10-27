@@ -11,6 +11,10 @@ const context = vm.createContext({ SearchBookDetailPage: { TITLE_FADE_DISTANCE: 
 vm.runInContext(compile(read('utils/CollapsingHeader').replace('export class', 'class')), context);
 
 const pages = [
+  ['pages/ReadingStats', 'headerScroller', true],
+  ['pages/ReadingStatsShare', 'previewScroller', false, 0],
+  ['pages/ReadingStatsShare', 'settingsScroller', false, 1],
+  ['pages/ReadingStatsShare', 'headerScroller', false, 2],
   ['pages/ThemeSettings', 'themeListScroller', true],
   ['pages/SyncDevices', 'headerScroller', true],
   ['pages/SyncIssues', 'headerScroller', true],
@@ -25,9 +29,9 @@ const pages = [
   ['components/common/PageScaffold', 'scroller', false]
 ];
 
-for (const [file, scrollerName, isList] of pages) {
+for (const [file, scrollerName, isList, handlerIndex = 0] of pages) {
   const source = read(file);
-  const match = source.match(/\.onDidScroll\((\([^\n]*\) => \{[\s\S]*?\n\s*\})\)/);
+  const match = [...source.matchAll(/\.onDidScroll\((\([^\n]*\) => \{[\s\S]*?\n\s*\})\)/g)][handlerIndex];
   assert(match, `${file}: scroll handler exists`);
   let offset = 0;
   const page = {

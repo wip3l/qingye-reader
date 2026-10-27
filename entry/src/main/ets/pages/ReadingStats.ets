@@ -14,6 +14,7 @@ import { BookCover } from '../components/book/BookCover';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
+import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
@@ -50,6 +51,9 @@ struct ReadingStatsPage {
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @State headerCollapse: number = 0;
+  private headerScroller: Scroller = new Scroller();
   @StorageProp('readingStatsCloudRevision') @Watch('onCloudStatsChanged') cloudStatsRevision: number = 0;
   @StorageProp('accountUserId') @Watch('onStatsAccountChanged') statsAccountId: string = '';
   @State mode: string = 'week';
@@ -478,11 +482,12 @@ struct ReadingStatsPage {
   syncBars(): void { syncSystemBars(getContext(this), this.appDarkMode, this.pageColor()); }
   @Builder
   pageContent() {
-    List({ space: AppSpacing.SM }) {
+    List({ scroller: this.headerScroller, space: AppSpacing.SM }) {
       LazyForEach(this.source, (item: ReadStatsRank) => {
         if (!item.bookKey) {
           ListItem() { this.headerContent() }
-            .padding({ left: AppSpacing.XL, right: AppSpacing.XL }).clip(false)
+            .padding({ left: AppSpacing.XL, right: AppSpacing.XL,
+              top: PageScaffold.BAR_HEIGHT + this.statusBarHeight }).clip(false)
         } else if (deviceInfo.sdkApiVersion >= 26) {
           HdsListItem({ customItemBuilder: (): void => { this.bookRow(item) }, swipeActionOptions: this.itemSwipeActions(item) })
             .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
@@ -492,15 +497,28 @@ struct ReadingStatsPage {
             .swipeAction({ end: { builder: (): void => { this.deleteSwipeButton(item) } }, edgeEffect: SwipeEdgeEffect.Spring })
         }
       }, (item: ReadStatsRank): string => item.bookKey ? `${item.bookKey}:${item.durationMs}:${item.percent}:${item.rank}:${item.name}:${item.onShelf}` : 'header')
+      ListItem() {
+        Row().width('100%').height(this.navBarHeight + AppSpacing.XXL).hitTestBehavior(HitTestMode.None)
+      }
     }.width('100%').height('100%').cachedCount(4).scrollBar(BarState.Off)
-      // Keep horizontal gutters inside the items: List clips at its padded viewport,
-      // which otherwise cuts off the Select shadows at both content edges.
-      .padding({ bottom: this.navBarHeight + AppSpacing.XXL })
+      // 留白随内容滚动，避免裁切顶栏下方的内容、下拉框阴影和底部列表。
       .constraintSize({ maxWidth: 760 }).align(Alignment.Top)
+      .onDidScroll((yOffset: number) => {
+        this.headerCollapse = CollapsingHeader.next(this.headerCollapse, yOffset,
+          this.headerScroller.currentOffset().yOffset);
+      })
+      .onScrollStop(() => {
+        const target = CollapsingHeader.settle(this.headerCollapse, this.headerScroller.currentOffset().yOffset);
+        if (target !== this.headerCollapse) {
+          this.getUIContext().animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => {
+            this.headerCollapse = target;
+          });
+        }
+      })
   }
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      PageScaffold({ title: '阅读统计', scrollable: false, collapsible: false,
+      PageScaffold({ title: '阅读统计', scrollable: false, edgeToEdge: true, externalCollapse: this.headerCollapse,
         actions: (): void => { this.shareAction() }, content: (): void => { this.pageContent() } })
       Column().width(1).height(1).position({ x: this.contextMenuX, y: this.contextMenuY }).hitTestBehavior(HitTestMode.None)
         .bindPopup(this.showItemActionMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
