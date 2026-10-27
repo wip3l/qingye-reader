@@ -1,5 +1,5 @@
 import { Context } from '@kit.AbilityKit';
-import { util } from '@kit.ArkTS';
+import { ReadStatsDevice } from '../core/stats/ReadStatsDevice';
 import preferences from '@ohos.data.preferences';
 
 export class CloudSyncEntityState {
@@ -16,20 +16,11 @@ export class CloudSyncLocalState {
 
 export class CloudSyncStateStore {
   private static readonly STORE_NAME: string = 'account_cloud_sync_state';
-  private static readonly KEY_DEVICE_ID: string = 'device_id';
   private static readonly KEY_STATE_PREFIX: string = 'state_';
   private static writeQueue: Promise<void> = Promise.resolve();
 
   static async deviceId(context: Context): Promise<string> {
-    const store = await preferences.getPreferences(context, CloudSyncStateStore.STORE_NAME);
-    const existing = await store.get(CloudSyncStateStore.KEY_DEVICE_ID, '');
-    if (typeof existing === 'string' && existing) {
-      return existing;
-    }
-    const generated = util.generateRandomUUID();
-    await store.put(CloudSyncStateStore.KEY_DEVICE_ID, generated);
-    await store.flush();
-    return generated;
+    return ReadStatsDevice.id(context);
   }
 
   static async load(context: Context, userId: string): Promise<CloudSyncLocalState> {

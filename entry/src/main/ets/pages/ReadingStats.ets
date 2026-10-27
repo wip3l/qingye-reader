@@ -1,10 +1,14 @@
-import { router, promptAction, SymbolGlyphModifier } from '@kit.ArkUI';
+import { promptAction, SymbolGlyphModifier } from '@kit.ArkUI';
+import preferences from '@ohos.data.preferences';
 import deviceInfo from '@ohos.deviceInfo';
 import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
-import { appDb } from '../model/data/AppDatabase';
-import { ReadStatsTracker, readStatsTracker } from '../core/stats/ReadStatsTracker';
+import { appDb, ReadStatsDeviceOption } from '../model/data/AppDatabase';
+import { readStatsTracker } from '../core/stats/ReadStatsTracker';
+import { ReadStatsDevice } from '../core/stats/ReadStatsDevice';
+import { ReadStatsSummary, ReadStatsRank, ReadStatsBar } from '../core/stats/ReadStatsSummary';
+import { AccountSessionStore } from '../account/AccountSessionStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { BookCover } from '../components/book/BookCover';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -13,23 +17,23 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 
-const STATS_MODES: string[] = ['day', 'week', 'month'];
-const STATS_MODE_LABELS: string[] = ['日', '周', '月'];
-const WEEKDAY_LABELS: string[] = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-const DAY_MS: number = 86400000;
+const STATS_MODES: string[] = ['day', 'week', 'month', 'year', 'all'];
+const STATS_MODE_LABELS: string[] = ['日', '周', '月', '年', '全部'];
 
-class StatsRange {
-  startTs: number = 0;
-  endTs: number = 0;
-}
-
-class StatBookItem {
-  bookUrl: string = '';
-  name: string = '';
-  author: string = '';
-  coverUrl: string = '';
-  durationMs: number = 0;
-  percent: number = 0;
+/** 首项为页头，总览和排行共用一个惰性列表。 */
+class ReadStatsListDataSource implements IDataSource {
+  private rows: ReadStatsRank[] = [new ReadStatsRank()];
+  private listeners: DataChangeListener[] = [];
+  totalCount(): number { return this.rows.length; }
+  getData(index: number): ReadStatsRank { return this.rows[index]; }
+  registerDataChangeListener(listener: DataChangeListener): void { this.listeners.push(listener); }
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    this.listeners = this.listeners.filter((item: DataChangeListener): boolean => item !== listener);
+  }
+  update(rows: ReadStatsRank[]): void {
+    this.rows = [new ReadStatsRank(), ...rows];
+    this.listeners.forEach((listener: DataChangeListener): void => listener.onDataReloaded());
+  }
 }
 
 @Entry
@@ -38,599 +42,402 @@ struct ReadingStatsPage {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
-  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @State mode: string = 'week';
   @State anchorTs: number = Date.now();
   @State loading: boolean = true;
-  @State totalMs: number = 0;
-  @State activeDays: number = 0;
-  @State items: StatBookItem[] = [];
+  @State errorMessage: string = '';
+  @State summary: ReadStatsSummary = new ReadStatsSummary();
+  @State selectedDevice: string = '';
+  @State devices: ReadStatsDeviceOption[] = [];
+  @State localDeviceId: string = '';
+  @State selectedBar: string = '';
   @State showItemActionMenu: boolean = false;
-  @State actionBookUrl: string = '';
+  @State actionBookKey: string = '';
   @State contextMenuX: number = 16;
   @State contextMenuY: number = 96;
-  @State contextViewportWidth: number = 360;
-  @State contextViewportHeight: number = 720;
+  private source: ReadStatsListDataSource = new ReadStatsListDataSource();
+  private requestVersion: number = 0;
+  private alive: boolean = true;
+  private ownerId: string = '';
+  private selectionWrite: Promise<void> = Promise.resolve();
 
-  aboutToAppear(): void {
-    // 用户可能正听着书进本页，先结算一次未落库的时长再查询。
-    readStatsTracker.flush();
-    this.loadStats();
-    this.syncBars();
-  }
-
-  onPageShow(): void {
-    this.syncBars();
-  }
-
+  aboutToAppear(): void { this.alive = true; this.initialize(); this.syncBars(); }
+  aboutToDisappear(): void { this.alive = false; this.requestVersion++; }
+  onPageShow(): void { this.syncBars(); }
   onBackPress(): boolean {
-    if (this.showItemActionMenu) {
-      this.closeItemActions();
-      return true;
-    }
-    return false;
+    if (!this.showItemActionMenu) return false;
+    this.showItemActionMenu = false;
+    return true;
   }
 
-  async loadStats(silent: boolean = false): Promise<void> {
-    if (!silent) this.loading = true;
+  private async initialize(): Promise<void> {
+    try {
+      const context = getContext(this);
+      await AccountSessionStore.load(context);
+      this.ownerId = AccountSessionStore.isLoggedIn() ? AccountSessionStore.account().userId : '';
+      const store = await preferences.getPreferences(context, 'reading_stats_view');
+      const mode = await store.get('mode', 'week');
+      const device = await store.get(`device:${this.ownerId}`, '');
+      const localId = await ReadStatsDevice.id(context);
+      if (!this.alive) return;
+      this.localDeviceId = localId;
+      this.mode = typeof mode === 'string' && STATS_MODES.includes(mode) ? mode : 'week';
+      this.selectedDevice = typeof device === 'string' ? device : '';
+      await this.loadStats();
+    } catch (error) {
+      if (!this.alive) return;
+      this.loading = false;
+      this.errorMessage = '读取统计失败，请重试';
+      console.warn('初始化阅读统计失败:', error);
+    }
+  }
+  private async saveSelection(): Promise<void> {
+    const mode = this.mode;
+    const deviceId = this.selectedDevice;
+    const ownerId = this.ownerId;
+    this.selectionWrite = this.selectionWrite.catch(() => {}).then(async (): Promise<void> => {
+      const store = await preferences.getPreferences(getContext(this), 'reading_stats_view');
+      await store.put('mode', mode);
+      await store.put(`device:${ownerId}`, deviceId);
+      await store.flush();
+    });
+    try { await this.selectionWrite; } catch (error) { console.warn('保存统计筛选失败:', error); }
+  }
+  async loadStats(): Promise<void> {
+    const version = ++this.requestVersion;
+    const mode = this.mode;
+    const anchor = this.anchorTs;
+    let deviceId = this.selectedDevice;
+    this.loading = true;
+    this.errorMessage = '';
+    this.selectedBar = '';
+    this.summary = new ReadStatsSummary();
+    this.source.update([]);
     try {
       await appDb.init(getContext(this));
-      const range = this.currentRange();
-      const startKey = ReadStatsTracker.dayKeyOf(range.startTs);
-      const endKey = ReadStatsTracker.dayKeyOf(range.endTs);
-      const rows = await appDb.getReadStatsByDayRange(startKey, endKey);
-
-      const durationByBook = new Map<string, number>();
-      const activeDayKeys = new Set<string>();
-      let total = 0;
-      rows.forEach((row) => {
-        if (row.durationMs <= 0) return;
-        durationByBook.set(row.bookUrl, (durationByBook.get(row.bookUrl) || 0) + row.durationMs);
-        activeDayKeys.add(row.dayKey);
-        total += row.durationMs;
-      });
-
-      const items: StatBookItem[] = [];
-      durationByBook.forEach((duration: number, bookUrl: string) => {
-        const item = new StatBookItem();
-        item.bookUrl = bookUrl;
-        item.durationMs = duration;
-        item.percent = total > 0 ? Math.max(1, Math.round(duration * 100 / total)) : 0;
-        items.push(item);
-      });
-      items.sort((a: StatBookItem, b: StatBookItem): number => b.durationMs - a.durationMs);
-
-      const bookUrls: string[] = [];
-      durationByBook.forEach((_duration: number, bookUrl: string) => {
-        bookUrls.push(bookUrl);
-      });
-      if (bookUrls.length > 0) {
-        const metaMap = await appDb.getReadStatsBookMeta(bookUrls);
-        items.forEach((item: StatBookItem) => {
-          const meta = metaMap.get(item.bookUrl);
-          if (meta) {
-            item.name = meta.name || '未命名书籍';
-            item.author = meta.author || '';
-            item.coverUrl = meta.coverUrl || '';
-          } else {
-            item.name = '已删除书籍';
-            item.author = '';
-            item.coverUrl = '';
-          }
-        });
+      await readStatsTracker.flushAndWait();
+      const devices = await appDb.getReadStatsDevices(this.ownerId);
+      if (!devices.some((item: ReadStatsDeviceOption): boolean => item.deviceId === this.localDeviceId)) {
+        const local = new ReadStatsDeviceOption();
+        local.deviceId = this.localDeviceId;
+        local.deviceName = ReadStatsDevice.displayName();
+        devices.unshift(local);
       }
-
-      this.totalMs = total;
-      this.activeDays = activeDayKeys.size;
-      this.items = items;
-    } catch (e) {
-      console.warn('读取阅读统计失败:', e);
-      this.totalMs = 0;
-      this.activeDays = 0;
-      this.items = [];
+      if (deviceId && !devices.some((item: ReadStatsDeviceOption): boolean => item.deviceId === deviceId)) deviceId = '';
+      const range = ReadStatsSummary.range(mode, anchor);
+      const rows = await appDb.getReadStatsByDayRange(range.startKey, range.endKey, deviceId, this.ownerId);
+      if (!this.alive || version !== this.requestVersion) return;
+      this.devices = devices;
+      this.selectedDevice = deviceId;
+      this.summary = ReadStatsSummary.calculate(rows, mode, anchor, Date.now());
+      this.source.update(this.summary.items);
+    } catch (error) {
+      if (!this.alive || version !== this.requestVersion) return;
+      this.errorMessage = '读取统计失败，请重试';
+      console.warn('读取阅读统计失败:', error);
     } finally {
-      this.loading = false;
+      if (this.alive && version === this.requestVersion) this.loading = false;
     }
   }
 
-
-  build() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      PageScaffold({ title: '阅读统计', content: () => {
-        this.pageContent()
-      } })
-
-      Column()
-        .width(1)
-        .height(1)
-        .position({ x: this.contextMenuX, y: this.contextMenuY })
-        .hitTestBehavior(HitTestMode.None)
-        .bindPopup(this.showItemActionMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
-          this.itemActionMenu()
-        }, Placement.BottomLeft, this.appDarkMode, this.accentColor(), () => {
-          this.showItemActionMenu = false;
-        }))
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor(this.pageColor())
-    .onAreaChange((_oldValue: Area, newValue: Area) => this.updateContextViewport(newValue))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  private periodOptions(): SelectOption[] {
+    return STATS_MODE_LABELS.map((label: string): SelectOption => ({ value: label }));
+  }
+  private deviceOptions(): SelectOption[] {
+    const options: SelectOption[] = [{ value: '全部设备' }];
+    this.devices.forEach((item: ReadStatsDeviceOption): void => { options.push({ value: this.deviceLabel(item) }); });
+    return options;
+  }
+  private deviceLabel(item: ReadStatsDeviceOption): string {
+    return item.deviceId === this.localDeviceId ? '本机' : item.deviceName || '未命名设备';
+  }
+  private deviceIndex(): number {
+    return this.selectedDevice ? this.devices.findIndex((item: ReadStatsDeviceOption): boolean => item.deviceId === this.selectedDevice) + 1 : 0;
+  }
+  private deviceTitle(): string {
+    if (!this.selectedDevice) return this.devices.length > 1 ? '全部设备' : '本机';
+    const item = this.devices.find((device: ReadStatsDeviceOption): boolean => device.deviceId === this.selectedDevice);
+    return item ? this.deviceLabel(item) : '本机';
   }
 
   @Builder
-  pageContent() {
-    Column() {
-      this.summaryCard()
-
-      this.sectionTitle('书籍排行')
-      if (this.loading) {
-        this.loadingCard()
-      } else if (this.items.length === 0) {
-        this.emptyCard()
-      } else {
-        // 行需要侧滑，所以用 List；高度随内容撑开，滚动仍交给外层 Scroll。
-        List() {
-          ForEach(this.items, (item: StatBookItem) => {
-            if (deviceInfo.sdkApiVersion >= 26) {
-              HdsListItem({
-                customItemBuilder: (): void => {
-                  this.bookRow(item)
-                },
-                swipeActionOptions: this.itemSwipeActions(item)
-              })
-            }
-            if (deviceInfo.sdkApiVersion < 26) {
-              ListItem() {
-                this.bookRow(item)
-              }
-              .swipeAction({
-                end: {
-                  builder: (): void => {
-                    this.itemDeleteSwipeButton(item)
-                  },
-                  actionAreaDistance: 64,
-                  onAction: (): void => {
-                    this.confirmDeleteItem(item);
-                  }
-                },
-                edgeEffect: SwipeEdgeEffect.Spring
-              })
-            }
-          }, (item: StatBookItem) => `${item.bookUrl}_${item.durationMs}_${item.percent}`)
-        }
-        .divider({ strokeWidth: 0.5, color: this.dividerColor(), startMargin: 68, endMargin: 16 })
-        .edgeEffect(EdgeEffect.None)
-        .scrollBar(BarState.Off)
-        .enableScrollInteraction(false)
-        .width('calc(100% - 24vp)')
-        .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-        .borderRadius(ThemeRuntime.cardRadius())
-        .clip(true)
-        .backgroundColor(this.cardColor())
-      }
-    }
-    .width('100%')
-  }
-
-  @Builder
-  summaryCard() {
-    Column({ space: AppSpacing.LG }) {
-      Row() {
-        Row({ space: AppSpacing.XS }) {
-          ForEach(STATS_MODES, (value: string, index: number) => {
-            Text(STATS_MODE_LABELS[index])
-              .fontSize(AppFontSize.BODY)
-              .fontWeight(this.mode === value ? FontWeight.Medium : FontWeight.Normal)
-              .fontColor(this.mode === value ? Color.White : this.subTextColor())
-              .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
-              .borderRadius(ThemeRuntime.buttonRadius())
-              .backgroundColor(this.mode === value ? this.accentColor() : Color.Transparent)
-              .onClick(() => {
-                if (this.mode === value) return;
-                this.mode = value;
-                this.loadStats();
-              })
-          }, (value: string) => value)
-        }
-        .padding(AppSpacing.XXS)
-        .borderRadius(17)
-        .backgroundColor(this.softColor())
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.Start)
-
-      Row() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(18)
-          .fontColor([this.subTextColor()])
-          .padding(AppSpacing.MD)
-          .onClick(() => {
-            this.shiftPeriod(-1);
+  filters() {
+    Row() {
+      Column() {
+        Select(this.periodOptions())
+          .selected(STATS_MODES.indexOf(this.mode)).value(STATS_MODE_LABELS[STATS_MODES.indexOf(this.mode)])
+          .font({ size: AppFontSize.BODY_LARGE, weight: FontWeight.Medium }).fontColor(this.primaryTextColor())
+          .backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.buttonRadius()).height(44)
+          .optionFontColor(this.primaryTextColor()).selectedOptionFontColor(this.accentColor())
+          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+          .onSelect((index: number): void => {
+            this.mode = STATS_MODES[index]; this.saveSelection(); this.loadStats();
           })
-
-        Text(this.periodTitle())
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.primaryTextColor())
-          .layoutWeight(1)
-          .textAlign(TextAlign.Center)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        if (this.canGoForward()) {
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(18)
-            .fontColor([this.subTextColor()])
-            .padding(AppSpacing.MD)
-            .onClick(() => {
-              this.shiftPeriod(1);
+      }.alignItems(HorizontalAlign.Start)
+      Blank()
+      Column() {
+        if (this.devices.length > 1) {
+          Select(this.deviceOptions()).selected(this.deviceIndex()).value(this.deviceTitle())
+            .font({ size: AppFontSize.BODY, weight: FontWeight.Medium }).fontColor(this.primaryTextColor())
+            .backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.buttonRadius()).height(44)
+            .constraintSize({ maxWidth: 180 })
+            .optionFontColor(this.primaryTextColor()).selectedOptionFontColor(this.accentColor())
+            .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+            .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+            .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+            .onSelect((index: number): void => {
+              this.selectedDevice = index === 0 ? '' : this.devices[index - 1].deviceId;
+              this.saveSelection(); this.loadStats();
             })
         } else {
-          Row()
-            .width(34)
-            .height(34)
+          Text('本机').fontSize(AppFontSize.BODY).fontColor(this.primaryTextColor()).height(44)
+            .padding({ left: 18, right: 18 }).backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.buttonRadius())
         }
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      Column({ space: AppSpacing.SM }) {
-        Text(this.formatDuration(this.totalMs))
-          .fontSize(28)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.primaryTextColor())
-        Text(this.summarySubtitle())
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.subTextColor())
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
-    }
-    .width('calc(100% - 24vp)')
-    .padding(AppSpacing.XL)
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.LG })
-    .borderRadius(ThemeRuntime.cardRadius())
-    .backgroundColor(this.cardColor())
+      }.alignItems(HorizontalAlign.End)
+    }.width('100%').margin({ bottom: AppSpacing.LG })
   }
-
   @Builder
-  bookRow(item: StatBookItem) {
-    Row({ space: AppSpacing.LG }) {
+  periodSelector() {
+    Row() {
+      if (this.mode !== 'all') {
+        Button({ type: ButtonType.Normal }) {
+          SymbolGlyph($r('sys.symbol.chevron_left')).fontSize(18).fontColor([this.subTextColor()])
+        }.width(44).height(44).backgroundColor(Color.Transparent).accessibilityText('上一个统计周期')
+          .onClick((): void => this.shiftPeriod(-1))
+      }
+      Text(this.periodTitle()).fontSize(AppFontSize.BODY).fontWeight(FontWeight.Medium)
+        .fontColor(this.primaryTextColor()).layoutWeight(1).textAlign(TextAlign.Center).maxLines(2)
+      if (this.mode !== 'all') {
+        Button({ type: ButtonType.Normal }) {
+          SymbolGlyph($r('sys.symbol.chevron_right')).fontSize(18).fontColor([this.subTextColor()])
+        }.width(44).height(44).backgroundColor(Color.Transparent).enabled(this.canGoForward())
+          .opacity(this.canGoForward() ? 1 : 0.25).accessibilityText('下一个统计周期')
+          .onClick((): void => this.shiftPeriod(1))
+      }
+    }.width('100%').constraintSize({ minHeight: 44 }).margin({ bottom: AppSpacing.MD })
+  }
+  @Builder
+  metric(label: string, text: string) {
+    Column({ space: AppSpacing.SM }) {
+      Text(text).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor()).maxLines(2)
+      Text(label).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+    }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+  }
+  @Builder
+  summaryCard() {
+    Column({ space: AppSpacing.XL }) {
+      Text('阅读总时长').fontSize(AppFontSize.BODY).fontColor(this.subTextColor())
+      Text(this.loading || this.errorMessage ? '—' : ReadStatsSummary.duration(this.summary.totalMs))
+        .fontSize(AppFontSize.DISPLAY).fontWeight(FontWeight.Bold).fontColor(this.primaryTextColor()).maxLines(2)
+      Row({ space: AppSpacing.MD }) {
+        this.metric('阅读书籍', this.loading || this.errorMessage ? '—' : `${this.summary.items.length} 本`)
+        this.metric('阅读天数', this.loading || this.errorMessage ? '—' : `${this.summary.activeDays} 天`)
+        this.metric('日均时长', this.loading || this.errorMessage ? '—' : ReadStatsSummary.duration(this.summary.averageMs))
+      }.width('100%')
+    }.width('100%').alignItems(HorizontalAlign.Start).padding(AppSpacing.XXL)
+      .borderRadius(ThemeRuntime.cardRadius()).backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+  }
+  private barHeight(bar: ReadStatsBar): number {
+    const max = Math.max(1, ...this.summary.bars.map((item: ReadStatsBar): number => item.durationMs));
+    return bar.durationMs > 0 ? Math.max(2, bar.durationMs / max * 120) : 0;
+  }
+  private chartTicks(): ReadStatsBar[] {
+    const bars = this.summary.bars;
+    if (bars.length <= 7) return bars;
+    const ticks: ReadStatsBar[] = [];
+    for (let index = 0; index < 6; index++) ticks.push(bars[Math.round(index * (bars.length - 1) / 5)]);
+    return ticks;
+  }
+  private chartDetail(): string {
+    const chosen = this.summary.bars.find((bar: ReadStatsBar): boolean => bar.key === this.selectedBar);
+    if (chosen) return `${chosen.key} · ${ReadStatsSummary.duration(chosen.durationMs)}`;
+    return this.mode === 'all' ? '按年汇总 · 点击查看时长' : this.mode === 'year' ? '按月汇总 · 点击查看时长' : '按天汇总 · 点击查看时长';
+  }
+  @Builder
+  trendCard() {
+    Column({ space: AppSpacing.LG }) {
+      Row() {
+        Text('阅读趋势').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
+        Blank()
+        Text('时长').fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+      }.width('100%')
+      Row({ space: 3 }) {
+        ForEach(this.summary.bars, (bar: ReadStatsBar) => {
+          Column() {
+            Row().width('70%').height(this.barHeight(bar)).borderRadius({ topLeft: 3, topRight: 3 })
+              .backgroundColor(this.accentColor()).opacity(this.selectedBar === bar.key ? 1 : 0.65)
+          }.height(124).justifyContent(FlexAlign.End).layoutWeight(1)
+            .accessibilityText(`${bar.key}，${ReadStatsSummary.duration(bar.durationMs)}`)
+            .onClick((): void => { this.selectedBar = bar.key; })
+        }, (bar: ReadStatsBar): string => `${bar.key}:${bar.durationMs}`)
+      }.width('100%')
+      Row() {
+        ForEach(this.chartTicks(), (bar: ReadStatsBar) => {
+          Text(bar.label).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).maxLines(1)
+        }, (bar: ReadStatsBar): string => bar.key)
+      }.width('100%').justifyContent(FlexAlign.SpaceBetween)
+      Text(this.chartDetail()).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).maxLines(2)
+    }.width('100%').alignItems(HorizontalAlign.Start).padding(AppSpacing.XL)
+      .backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.cardRadius()).margin({ top: AppSpacing.LG })
+  }
+  @Builder
+  headerContent() {
+    Column() {
+      this.filters()
+      this.periodSelector()
+      this.summaryCard()
+      if (!this.loading && !this.errorMessage && this.summary.totalMs > 0 && this.mode !== 'day') { this.trendCard() }
+      Text(this.selectedDevice === ReadStatsDevice.LEGACY_ID ? '历史导入 · 原设备来源未留存' : '本地统计 · 阅读与听书合并计时')
+        .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).margin({ top: AppSpacing.LG, bottom: AppSpacing.LG })
+      Row() {
+        Text('书籍排行').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
+        Blank()
+        Text('按阅读时长').fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+      }.width('100%').padding({ top: AppSpacing.SM, bottom: AppSpacing.LG })
+      if (this.loading) {
+        Row({ space: AppSpacing.MD }) {
+          LoadingProgress().width(22).height(22).color(this.accentColor())
+          Text('正在统计阅读时长').fontSize(AppFontSize.BODY).fontColor(this.subTextColor())
+        }.height(120).width('100%').justifyContent(FlexAlign.Center)
+      } else if (this.errorMessage) {
+        Column({ space: AppSpacing.MD }) {
+          Text(this.errorMessage).fontSize(AppFontSize.BODY).fontColor(this.subTextColor())
+          Button('重试').fontColor(this.primaryTextColor()).backgroundColor(this.cardColor())
+            .onClick((): void => { this.initialize(); })
+        }.height(120).width('100%').justifyContent(FlexAlign.Center)
+      } else if (this.summary.items.length === 0) {
+        Column({ space: AppSpacing.LG }) {
+          SymbolGlyph($r('sys.symbol.book')).fontSize(30).fontColor([this.subTextColor()])
+          Text('该时段暂无阅读记录').fontSize(AppFontSize.BODY).fontColor(this.subTextColor())
+        }.height(140).width('100%').justifyContent(FlexAlign.Center).backgroundColor(this.cardColor())
+          .borderRadius(ThemeRuntime.cardRadius())
+      }
+    }.width('100%').padding({ top: AppSpacing.LG })
+  }
+  @Builder
+  bookRow(item: ReadStatsRank) {
+    Row({ space: AppSpacing.MD }) {
+      Text(`${item.rank}`.padStart(2, '0')).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width(22)
       BookCover({ bookUrl: item.bookUrl, name: item.name, author: item.author,
-        coverUrl: item.coverUrl, placeholderColor: this.accentColor() })
-        .width(40)
-        .height(56)
-
+        coverUrl: item.coverUrl, placeholderColor: this.accentColor() }).width(40).height(56)
       Column({ space: AppSpacing.SM }) {
         Row({ space: AppSpacing.MD }) {
-          Text(item.name)
-            .fontSize(AppFontSize.BODY_LARGE)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.primaryTextColor())
-            .layoutWeight(1)
-            .maxLines(1)
+          Text(item.name).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
+            .fontColor(this.primaryTextColor()).layoutWeight(1).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(ReadStatsSummary.duration(item.durationMs)).fontSize(AppFontSize.CAPTION)
+            .fontColor(this.primaryTextColor()).constraintSize({ maxWidth: 100 }).maxLines(2)
+        }.width('100%')
+        Row({ space: AppSpacing.SM }) {
+          Text(`${item.author}${!item.onShelf ? `${item.author ? ' · ' : ''}本机未上架` : ''}`)
+            .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).layoutWeight(1).maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(this.formatDuration(item.durationMs))
-            .fontSize(AppFontSize.BODY)
-            .fontColor(this.primaryTextColor())
-        }
-        .width('100%')
-
-        Row() {
-          Text(`${item.percent}%`)
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.subTextColor())
-            .layoutWeight(1)
-          if (item.author) {
-            Text(item.author)
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.subTextColor())
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-        }
-        .width('100%')
-
+          Text(item.percent < 1 ? '<1%' : `${Math.round(item.percent)}%`).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+        }.width('100%')
         Stack({ alignContent: Alignment.Start }) {
-          Row()
-            .width('100%')
-            .height(4)
-            .borderRadius(2)
-            .backgroundColor(this.softColor())
-          Row()
-            .width(`${item.percent}%`)
-            .height(4)
-            .borderRadius(2)
-            .backgroundColor(this.accentColor())
-        }
-        .width('100%')
-        .clip(true)
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-    }
-    .width('100%')
-    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
-    .backgroundColor(this.cardColor())
-    .alignItems(VerticalAlign.Top)
-    .gesture(
-      LongPressGesture({ repeat: false })
-        .onAction((event: GestureEvent) => {
-          this.openItemActions(item, event);
-        })
-    )
+          Row().width('100%').height(3).backgroundColor(this.softColor())
+          Row().width(`${item.percent}%`).height(3).backgroundColor(this.accentColor())
+        }.width('100%').borderRadius(2).clip(true)
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+    }.width('100%').padding(AppSpacing.XL).backgroundColor(this.cardColor())
+      .borderRadius(ThemeRuntime.cardRadius()).alignItems(VerticalAlign.Center)
+      .gesture(LongPressGesture({ repeat: false }).onAction((event: GestureEvent): void => {
+        const finger = event.fingerList.length > 0 ? event.fingerList[0] : undefined;
+        if (finger) { this.contextMenuX = finger.globalX; this.contextMenuY = finger.globalY; }
+        this.actionBookKey = item.bookKey;
+        this.showItemActionMenu = true;
+      }))
   }
-
-  private itemSwipeActions(item: StatBookItem): HdsSwipeActionOptions {
-    return { icons: [
-      { icon: new SymbolGlyphModifier($r('sys.symbol.trash')),
-        backgroundColor: ThemeRuntime.dangerColor(this.appDarkMode),
-        iconOptions: { accessibilityText: '删除记录' },
-        onAction: () => this.confirmDeleteItem(item) }
-    ] };
+  private itemSwipeActions(item: ReadStatsRank): HdsSwipeActionOptions {
+    return { icons: [{ icon: new SymbolGlyphModifier($r('sys.symbol.trash')),
+      backgroundColor: ThemeRuntime.dangerColor(this.appDarkMode),
+      iconOptions: { accessibilityText: '删除记录' }, onAction: () => this.confirmDeleteItem(item) }] };
   }
-
   @Builder
-  itemDeleteSwipeButton(item: StatBookItem) {
-    Column({ space: AppSpacing.XS }) {
-      SymbolGlyph($r('sys.symbol.trash'))
-        .fontSize(22)
-        .fontColor(['#FFFFFF'])
-      Text('删除')
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor('#FFFFFF')
-    }
-    .width(64)
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
-    .onClick(() => {
-      this.confirmDeleteItem(item);
-    })
+  deleteSwipeButton(item: ReadStatsRank) {
+    Button('删除').height('100%').width(64).backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
+      .onClick((): void => { this.confirmDeleteItem(item); })
   }
-
   @Builder
   itemActionMenu() {
-    Scroll() {
-      Column() {
-        PopupMenuAction($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode),
-          () => this.confirmDeleteActionItem())
-
-      }
-      .width('100%')
-    }
-    .width(176)
-    .constraintSize({ maxHeight: ImmersiveMaterialRuntime.popupMenuMaxHeight() })
-    .scrollBar(BarState.Off)
-    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+    Column() {
+      PopupMenuAction($r('sys.symbol.trash'), '删除记录', ThemeRuntime.dangerColor(this.appDarkMode), (): void => {
+        const item = this.summary.items.find((book: ReadStatsRank): boolean => book.bookKey === this.actionBookKey);
+        this.showItemActionMenu = false;
+        if (item) this.confirmDeleteItem(item);
+      })
+    }.width(176).padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
   }
-
-  @Builder
-  loadingCard() {
-    Row({ space: AppSpacing.MD }) {
-      LoadingProgress()
-        .width(22)
-        .height(22)
-        .color(this.accentColor())
-      Text('正在统计阅读时长')
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.subTextColor())
-    }
-    .width('calc(100% - 24vp)')
-    .height(88)
-    .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .borderRadius(ThemeRuntime.cardRadius())
-    .backgroundColor(this.cardColor())
-    .alignItems(VerticalAlign.Center)
-    .justifyContent(FlexAlign.Center)
-  }
-
-  @Builder
-  emptyCard() {
-    Column({ space: AppSpacing.MD }) {
-      SymbolGlyph($r('sys.symbol.timer'))
-        .fontSize(28)
-        .fontColor([this.subTextColor()])
-      Text('该时段暂无阅读记录')
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.subTextColor())
-    }
-    .width('calc(100% - 24vp)')
-    .constraintSize({ minHeight: 120 })
-    .padding({ top: AppSpacing.XXL, bottom: AppSpacing.XXL })
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .borderRadius(ThemeRuntime.cardRadius())
-    .backgroundColor(this.cardColor())
-    .justifyContent(FlexAlign.Center)
-  }
-
-  openItemActions(item: StatBookItem, event?: GestureEvent): void {
-    const finger = event && event.fingerList.length > 0 ? event.fingerList[0] : undefined;
-    if (finger) {
-      this.contextMenuX = finger.globalX;
-      this.contextMenuY = finger.globalY;
-    }
-    this.actionBookUrl = item.bookUrl;
-    this.showItemActionMenu = true;
-  }
-
-  closeItemActions(): void {
-    this.showItemActionMenu = false;
-    this.actionBookUrl = '';
-  }
-
-  confirmDeleteActionItem(): void {
-    const item = this.items.find((value: StatBookItem): boolean => value.bookUrl === this.actionBookUrl);
-    this.closeItemActions();
-    if (item) this.confirmDeleteItem(item);
-  }
-
-  async confirmDeleteItem(item: StatBookItem): Promise<void> {
-    const confirmation = await promptAction.showDialog({
-      title: '删除阅读记录',
-      message: `确定删除“${item.name}”在 ${this.periodTitle()} 的阅读时长记录吗？不会影响书籍本身。`,
-      buttons: [{ text: '取消', color: this.subTextColor() }, { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }]
-    });
-    if (confirmation.index !== 1) return;
+  async confirmDeleteItem(item: ReadStatsRank): Promise<void> {
+    const range = ReadStatsSummary.range(this.mode, this.anchorTs);
+    const deviceId = this.selectedDevice;
+    const ownerId = this.ownerId;
     try {
-      const range = this.currentRange();
-      await appDb.deleteReadStatsForBook(item.bookUrl,
-        ReadStatsTracker.dayKeyOf(range.startTs), ReadStatsTracker.dayKeyOf(range.endTs));
-      await this.loadStats(true);
+      const confirmation = await promptAction.showDialog({ title: '删除阅读记录',
+        message: `删除“${item.name}”在 ${this.periodTitle()}、${this.deviceTitle()} 范围内的阅读记录？不会删除书籍。`,
+        buttons: [{ text: '取消', color: this.subTextColor() }, { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }] });
+      if (confirmation.index !== 1) return;
+      await readStatsTracker.flushAndWait();
+      await appDb.deleteReadStatsSelection(item.bookKey, range.startKey, range.endKey, deviceId, ownerId);
+      if (this.alive) await this.loadStats();
       HdsFeedback.showToast('记录已删除');
-    } catch (e) {
-      console.warn('删除阅读统计失败:', e);
-      HdsFeedback.showToast('删除失败');
-    }
+    } catch (error) { console.warn('删除阅读记录失败:', error); HdsFeedback.showToast('删除失败，请重试'); }
   }
-
-  updateContextViewport(area: Area): void {
-    const width = Number(area.width);
-    const height = Number(area.height);
-    if (Number.isFinite(width) && width > 0) this.contextViewportWidth = width;
-    if (Number.isFinite(height) && height > 0) this.contextViewportHeight = height;
-  }
-
-  private shiftPeriod(direction: number): void {
-    const d = new Date(this.anchorTs);
-    if (this.mode === 'day') {
-      this.anchorTs = new Date(d.getFullYear(), d.getMonth(), d.getDate() + direction).getTime();
-    } else if (this.mode === 'week') {
-      this.anchorTs = new Date(d.getFullYear(), d.getMonth(), d.getDate() + direction * 7).getTime();
-    } else {
-      this.anchorTs = new Date(d.getFullYear(), d.getMonth() + direction, 1).getTime();
-    }
+  private shiftPeriod(step: number): void {
+    if (step > 0 && !this.canGoForward()) return;
+    this.anchorTs = ReadStatsSummary.shift(this.mode, this.anchorTs, step);
     this.loadStats();
   }
-
-  private currentRange(): StatsRange {
-    const range = new StatsRange();
-    const d = new Date(this.anchorTs);
-    if (this.mode === 'day') {
-      range.startTs = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-      range.endTs = range.startTs;
-    } else if (this.mode === 'week') {
-      const mondayOffset = (d.getDay() + 6) % 7;
-      range.startTs = new Date(d.getFullYear(), d.getMonth(), d.getDate() - mondayOffset).getTime();
-      range.endTs = range.startTs + 6 * DAY_MS;
-    } else {
-      range.startTs = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
-      range.endTs = new Date(d.getFullYear(), d.getMonth() + 1, 0).getTime();
-    }
-    return range;
-  }
-
   private canGoForward(): boolean {
-    const d = new Date(this.anchorTs);
-    let nextStart = 0;
-    if (this.mode === 'day') {
-      nextStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
-    } else if (this.mode === 'week') {
-      const mondayOffset = (d.getDay() + 6) % 7;
-      nextStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() - mondayOffset + 7).getTime();
-    } else {
-      nextStart = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
-    }
-    const todayStart = new Date().setHours(0, 0, 0, 0);
-    return nextStart <= todayStart;
+    return this.mode !== 'all' && ReadStatsSummary.range(this.mode,
+      ReadStatsSummary.shift(this.mode, this.anchorTs, 1)).startTs <= Date.now();
   }
-
   private periodTitle(): string {
     const d = new Date(this.anchorTs);
-    if (this.mode === 'day') {
-      const isToday = ReadStatsTracker.dayKeyOf(this.anchorTs) === ReadStatsTracker.dayKeyOf(Date.now());
-      return `${isToday ? '今天 · ' : ''}${d.getMonth() + 1}月${d.getDate()}日 ${WEEKDAY_LABELS[d.getDay()]}`;
-    }
-    if (this.mode === 'week') {
-      const range = this.currentRange();
-      const s = new Date(range.startTs);
-      const e = new Date(range.endTs);
-      return `${s.getMonth() + 1}月${s.getDate()}日 - ${e.getMonth() + 1}月${e.getDate()}日`;
-    }
-    return `${d.getFullYear()}年${d.getMonth() + 1}月`;
+    if (this.mode === 'all') return '全部阅读记录';
+    if (this.mode === 'year') return `${d.getFullYear()}年`;
+    if (this.mode === 'month') return `${d.getFullYear()}年${d.getMonth() + 1}月`;
+    if (this.mode === 'day') return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+    const range = ReadStatsSummary.range(this.mode, this.anchorTs);
+    const start = new Date(range.startTs);
+    const end = new Date(range.endTs);
+    return `${start.getFullYear()}年${start.getMonth() + 1}月${start.getDate()}日 — ` +
+      `${start.getFullYear() !== end.getFullYear() ? `${end.getFullYear()}年` : ''}${end.getMonth() + 1}月${end.getDate()}日`;
   }
-
-  private summarySubtitle(): string {
-    if (this.mode === 'day') {
-      if (this.totalMs > 0) {
-        return `共阅读 ${this.items.length} 本书`;
-      }
-      const isToday = ReadStatsTracker.dayKeyOf(this.anchorTs) === ReadStatsTracker.dayKeyOf(Date.now());
-      return isToday ? '今天还没有开始阅读' : '当日没有阅读记录';
-    }
-    const days = this.elapsedDays();
-    const avg = this.formatDuration(Math.round(this.totalMs / days));
-    return `日均 ${avg} · 有阅读 ${this.activeDays} 天`;
-  }
-
-  private elapsedDays(): number {
-    const range = this.currentRange();
-    const todayStart = new Date().setHours(0, 0, 0, 0);
-    if (range.endTs <= todayStart) {
-      return Math.round((range.endTs - range.startTs) / DAY_MS) + 1;
-    }
-    return Math.max(1, Math.round((todayStart - range.startTs) / DAY_MS) + 1);
-  }
-
-  private formatDuration(ms: number): string {
-    const totalMinutes = Math.floor(ms / 60000);
-    if (totalMinutes <= 0) {
-      return '0分钟';
-    }
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    if (hours <= 0) {
-      return `${minutes}分钟`;
-    }
-    if (minutes === 0) {
-      return `${hours}小时`;
-    }
-    return `${hours}小时${minutes}分钟`;
-  }
-
-  pageColor(): string {
-    return ThemeRuntime.pageColor(this.appDarkMode);
-  }
-
-  cardColor(): string {
-    return ThemeRuntime.cardColor(this.appDarkMode);
-  }
-
-  softColor(): string {
-    return ThemeRuntime.inputColor(this.appDarkMode);
-  }
-
-  primaryTextColor(): string {
-    return ThemeRuntime.primaryTextColor(this.appDarkMode);
-  }
-
-  subTextColor(): string {
-    return ThemeRuntime.subTextColor(this.appDarkMode);
-  }
-
-  accentColor(): string {
-    return ThemeRuntime.accentColor(this.appDarkMode);
-  }
-
-  dividerColor(): string {
-    return ThemeRuntime.hairlineColor(this.appDarkMode);
-  }
-
-  syncBars(): void {
-    syncSystemBars(getContext(this), this.appDarkMode, this.pageColor());
-  }
-
+  pageColor(): string { return ThemeRuntime.pageColor(this.appDarkMode); }
+  cardColor(): string { return ThemeRuntime.cardColor(this.appDarkMode); }
+  softColor(): string { return ThemeRuntime.inputColor(this.appDarkMode); }
+  primaryTextColor(): string { return ThemeRuntime.primaryTextColor(this.appDarkMode); }
+  subTextColor(): string { return ThemeRuntime.subTextColor(this.appDarkMode); }
+  accentColor(): string { return ThemeRuntime.accentColor(this.appDarkMode); }
+  syncBars(): void { syncSystemBars(getContext(this), this.appDarkMode, this.pageColor()); }
   @Builder
-  sectionTitle(title: string) {
-    Text(title)
-      .fontSize(AppFontSize.BODY)
-      .fontColor(this.subTextColor())
-      .width('100%')
-      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.XXL, bottom: AppSpacing.MD })
+  pageContent() {
+    List({ space: AppSpacing.SM }) {
+      LazyForEach(this.source, (item: ReadStatsRank) => {
+        if (!item.bookKey) {
+          ListItem() { this.headerContent() }
+        } else if (deviceInfo.sdkApiVersion >= 26) {
+          HdsListItem({ customItemBuilder: (): void => { this.bookRow(item) }, swipeActionOptions: this.itemSwipeActions(item) })
+        } else {
+          ListItem() { this.bookRow(item) }
+            .swipeAction({ end: { builder: (): void => { this.deleteSwipeButton(item) } }, edgeEffect: SwipeEdgeEffect.Spring })
+        }
+      }, (item: ReadStatsRank): string => item.bookKey ? `${item.bookKey}:${item.durationMs}:${item.percent}:${item.rank}:${item.name}:${item.onShelf}` : 'header')
+    }.width('100%').height('100%').cachedCount(4).scrollBar(BarState.Off)
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: this.navBarHeight + AppSpacing.XXL })
+      .constraintSize({ maxWidth: 760 }).align(Alignment.Top)
   }
-
+  build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      PageScaffold({ title: '阅读统计', scrollable: false, collapsible: false, content: (): void => { this.pageContent() } })
+      Column().width(1).height(1).position({ x: this.contextMenuX, y: this.contextMenuY }).hitTestBehavior(HitTestMode.None)
+        .bindPopup(this.showItemActionMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+          (): void => { this.itemActionMenu() }, Placement.BottomLeft, this.appDarkMode, this.accentColor(),
+          (): void => { this.showItemActionMenu = false; }))
+    }.width('100%').height('100%').backgroundColor(this.pageColor())
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
 }

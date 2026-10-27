@@ -1,5 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
+import { readStatsTracker } from '../core/stats/ReadStatsTracker';
 import {
   AccountSnapshot,
   HuaweiLoginResponse,
@@ -167,6 +168,7 @@ export class AccountSessionStore {
   }
 
   private static applyToStorage(): void {
+    readStatsTracker.setOwnerId(AccountSessionStore.isLoggedIn() ? AccountSessionStore.snapshot.userId : '');
     AccountSessionStore.initializeStorage();
     AppStorage.setOrCreate(AccountSessionStore.STORAGE_LOGGED_IN, AccountSessionStore.isLoggedIn());
     const membershipSku = AccountSessionStore.activeMembershipSku();
