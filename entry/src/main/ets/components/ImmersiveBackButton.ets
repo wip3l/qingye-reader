@@ -15,6 +15,8 @@ export struct ImmersiveBackButton {
   @Prop containerWidth: number = 52;
   @Prop containerHeight: number = 56;
   @Prop startInset: number = 16;
+  /** Mirror the material inset for a trailing toolbar action. */
+  @Prop alignToEnd: boolean = false;
   @Prop materialScale: number = 1;
   @Prop compactLayout: boolean = false;
   @Prop accessibilityLabel: string = '返回';
@@ -102,7 +104,9 @@ export struct ImmersiveBackButton {
     .borderRadius(this.materialButtonSize() / 2, RenderStrategy.OFFSCREEN)
     .border(ImmersiveMaterialRuntime.surfaceBorder(this.immersiveLightLevel, this.darkMode))
     .clip(true)
-    .translate({ x: this.startInset * this.normalizedMaterialScale() })
+    .translate({ x: this.alignToEnd ?
+      this.effectiveContainerWidth() - this.materialButtonSize() - this.startInset * this.normalizedMaterialScale() :
+      this.startInset * this.normalizedMaterialScale() })
   }
 
   @Builder

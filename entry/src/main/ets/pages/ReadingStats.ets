@@ -14,6 +14,7 @@ import { BookCover } from '../components/book/BookCover';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
+import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { ReadStatsPosterSnapshot, ReadStatsPosterSession } from '../core/stats/ReadStatsPosterModel';
@@ -460,11 +461,14 @@ struct ReadingStatsPage {
   }
   @Builder
   shareAction() {
-    Button() {
-      SymbolGlyph($r('sys.symbol.share')).fontSize(22).fontColor([this.primaryTextColor()])
-    }.width(44).height(44).backgroundColor(Color.Transparent).accessibilityText('分享阅读统计')
-      .enabled(!this.loading && !this.errorMessage)
-      .onClick((): void => { this.shareStatistics(); })
+    ImmersiveBackButton({
+      icon: $r('sys.symbol.share'), iconColor: this.primaryTextColor(), iconOffsetX: 0,
+      darkMode: this.appDarkMode, buttonSize: 40, containerWidth: 56,
+      materialScale: 0.83, compactLayout: true, alignToEnd: true,
+      accessibilityLabel: '分享阅读统计',
+      buttonEnabled: !this.loading && !this.errorMessage && !this.openingShare,
+      onBack: (): void => { this.shareStatistics(); }
+    })
   }
   cardColor(): string { return ThemeRuntime.cardColor(this.appDarkMode); }
   softColor(): string { return ThemeRuntime.inputColor(this.appDarkMode); }
