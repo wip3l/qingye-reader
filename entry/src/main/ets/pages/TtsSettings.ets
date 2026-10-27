@@ -23,7 +23,12 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
-import { SettingNavRow } from '../components/common/SettingRow';
+import { SettingNavRow, SettingRow } from '../components/common/SettingRow';
+
+interface TtsSettingsVoiceSelectOption extends SelectOption {
+  key: string;
+  selectVoice: () => void;
+}
 
 const TTS_CUSTOM_VOICE_IMPORT_LIMIT_BYTES: number = 2 * 1024 * 1024;
 
@@ -71,9 +76,7 @@ struct TtsSettingsPage {
   @State downloadingVoiceKey: string = '';
   @State downloadProgressText: string = '';
   @State customVoices: HttpTTS[] = [];
-  @State showVoiceDropdown: boolean = false;
   @State showTtsPackages: boolean = false;
-  @State voiceSelectorWidth: number = 320;
   @State customVoiceImportUrl: string = '';
   @State isImportingCustomVoices: boolean = false;
   private speedSaveTimerId: number = -1;
@@ -114,12 +117,12 @@ struct TtsSettingsPage {
   pageContent() {
     Column({ space: AppSpacing.LG }) {
       Column() {
-        this.cardTitle('朗读音色')
-        this.voiceDropdownSelector()
+        SettingRow({ title: '朗读音色' }) {
+          this.voiceDropdownSelector()
+        }
         SettingNavRow({ title: '音色管理', description: '系统音色 / 云端音色 / 自定义音色', showDivider: false,
           onTap: (): void => {
             this.stopPreview();
-            this.showVoiceDropdown = false;
             this.getUIContext().getRouter().pushUrl({ url: 'pages/CustomTtsVoiceManager' });
           } })
       }.width('100%').backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.cardRadius())
@@ -170,20 +173,12 @@ struct TtsSettingsPage {
     }.width('100%').constraintSize({ maxWidth: 760 }).padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG })
   }
 
-  @Builder
-  cardTitle(title: string) {
-    Text(title).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
-      .fontColor(this.primaryTextColor()).width('100%')
-      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.XL, bottom: AppSpacing.MD })
-  }
-
   private stopPreview(): void {
     if (this.isPreviewing) this.previewReader.stop();
     this.isPreviewing = false;
   }
 
   onPageHide(): void {
-    this.showVoiceDropdown = false;
     this.flushPendingSpeedSettings();
     this.stopPreview();
   }
@@ -261,171 +256,53 @@ struct TtsSettingsPage {
     return this.isLoadingVoices ? '正在加载音色...' : '默认音色';
   }
 
+  voiceSelectOptions(): TtsSettingsVoiceSelectOption[] {
+    const options: TtsSettingsVoiceSelectOption[] = [];
+    this.cloudVoices.forEach((voice: TtsVoiceInfo): void => {
+      options.push({ value: TtsVoiceCatalog.cloudVoiceTitle(voice),
+        key: TtsVoiceCatalog.cloudVoiceKey(voice),
+        selectVoice: (): void => { this.applyCloudVoice(voice); } });
+    });
+    this.enabledCustomVoices().forEach((voice: HttpTTS): void => {
+      options.push({ value: TtsVoiceCatalog.customVoiceTitle(voice),
+        key: TtsVoiceCatalog.customVoiceKey(voice),
+        selectVoice: (): void => { this.applyCustomVoice(voice); } });
+    });
+    this.voices.forEach((voice: TtsVoiceOption): void => {
+      options.push({ value: this.voiceTitle(voice), key: TtsVoiceCatalog.voiceKey(voice),
+        selectVoice: (): void => { this.selectVoice(voice); } });
+    });
+    return options;
+  }
+
   @Builder
   voiceDropdownSelector() {
-    Row() {
-      Text(this.selectedVoiceTitle())
-        .fontSize(AppFontSize.BODY_LARGE)
-        .fontColor(this.primaryTextColor())
-        .layoutWeight(1)
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      SymbolGlyph(this.showVoiceDropdown ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
-        .fontSize(18)
-        .fontColor([this.subTextColor()])
-        .width(18)
-    }
-    .width('100%')
-    .constraintSize({ minHeight: 56 })
-    .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-    .backgroundColor(this.cardColor())
-    .onClick(() => {
-      this.showVoiceDropdown = !this.showVoiceDropdown;
-    })
-    .onAreaChange((_oldValue: Area, newValue: Area) => {
-      const width = Number(newValue.width);
-      if (Number.isFinite(width) && width > 0) this.voiceSelectorWidth = width;
-    })
-    .bindPopup(this.showVoiceDropdown, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
-      this.voiceDropdownMenu()
-    }, Placement.Bottom, this.appDarkMode, this.accentColor(), () => {
-      this.showVoiceDropdown = false;
-    }))
-  }
-
-  /** 音色下拉：系统弹出层，API 26+ 挂沉浸光感材质。 */
-  @Builder
-  voiceDropdownMenu() {
-    Column() {
-      Scroll() {
-        Column() {
-          if (this.cloudVoices.length > 0) {
-            this.voiceDropdownSectionTitle('云端音色')
-            ForEach(this.cloudVoices, (voice: TtsVoiceInfo) => {
-              this.cloudVoiceDropdownOption(voice)
-            }, (voice: TtsVoiceInfo) => `cloud_${voice.id}`)
-          }
-          if (this.enabledCustomVoices().length > 0) {
-            this.voiceDropdownSectionTitle('自定义音色')
-            ForEach(this.enabledCustomVoices(), (voice: HttpTTS) => {
-              this.customVoiceDropdownOption(voice, false)
-            }, (voice: HttpTTS) => `${TtsVoiceCatalog.customVoiceKey(voice)}_enabled`)
-          }
-
-          this.voiceDropdownSectionTitle('系统音色')
-          ForEach(this.voices, (voice: TtsVoiceOption) => {
-            this.systemVoiceDropdownOption(voice)
-          }, (voice: TtsVoiceOption) => TtsVoiceCatalog.voiceKey(voice))
-
-        }
-        .width('100%')
-      }
-      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-      .width('100%')
-      .constraintSize({ maxHeight: 420 })
-    }
-    .width(this.voiceSelectorWidth)
-    .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
-  }
-
-  @Builder
-  voiceDropdownSectionTitle(title: string) {
-    Text(title)
-      .fontSize(AppFontSize.CAPTION)
+    Select(this.voiceSelectOptions())
+      .selected(this.voiceSelectOptions().findIndex((option: TtsSettingsVoiceSelectOption): boolean =>
+        option.key === this.selectedVoiceKey))
+      .value(this.selectedVoiceTitle())
+      .font({ size: AppFontSize.BODY })
       .fontColor(this.subTextColor())
-      .width('100%')
-      .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.XS })
-  }
-
-  @Builder
-  customVoiceDropdownOption(voice: HttpTTS, disabled: boolean) {
-    Row() {
-      Text(TtsVoiceCatalog.customVoiceTitle(voice))
-        .fontSize(AppFontSize.BODY_LARGE)
-        .fontColor(disabled ? this.subTextColor() : this.primaryTextColor())
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      if (!disabled && this.isCustomVoiceSelected(voice)) {
-        SymbolGlyph($r('sys.symbol.checkmark'))
-          .fontSize(18)
-          .fontColor([this.accentColor()])
-      }
-    }
-    .width('100%')
-    .height(46)
-    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .opacity(disabled ? 0.5 : 1)
-    .onClick(() => {
-      if (disabled) {
-        return;
-      }
-      this.showVoiceDropdown = false;
-      this.applyCustomVoice(voice);
-    })
-  }
-
-  @Builder
-  systemVoiceDropdownOption(voice: TtsVoiceOption) {
-    Row() {
-      Text(this.voiceTitle(voice))
-        .fontSize(AppFontSize.BODY_LARGE)
-        .fontColor((voice.available || voice.downloadable) ? this.primaryTextColor() : this.subTextColor())
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      if (this.isVoiceDownloading(voice)) {
-        Text(this.downloadProgressText || '下载中')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.accentColor())
-      } else if (this.isVoiceSelected(voice)) {
-        SymbolGlyph($r('sys.symbol.checkmark'))
-          .fontSize(18)
-          .fontColor([this.accentColor()])
-      } else if (!voice.available && voice.downloadable) {
-        Text('下载')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.accentColor())
-      }
-    }
-    .width('100%')
-    .height(46)
-    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .opacity((voice.available || voice.downloadable) ? 1 : 0.5)
-    .onClick(() => {
-      if (!voice.available && !voice.downloadable) {
-        return;
-      }
-      this.showVoiceDropdown = false;
-      this.selectVoice(voice);
-    })
-  }
-
-  @Builder
-  cloudVoiceDropdownOption(voice: TtsVoiceInfo) {
-    Row() {
-      Text(TtsVoiceCatalog.cloudVoiceTitle(voice))
-        .fontSize(AppFontSize.BODY_LARGE)
-        .fontColor(this.primaryTextColor())
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-      if (this.ttsCloudVoiceId === voice.id) {
-        SymbolGlyph($r('sys.symbol.checkmark'))
-          .fontSize(18)
-          .fontColor([this.accentColor()])
-      }
-    }
-    .width('100%')
-    .height(46)
-    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .onClick(() => {
-      this.showVoiceDropdown = false;
-      this.applyCloudVoice(voice);
-    })
+      .backgroundColor(Color.Transparent)
+      .arrowPosition(ArrowPosition.END)
+      .constraintSize({ maxWidth: '65%' })
+      .margin({ left: AppSpacing.MD })
+      .padding({ left: 0, right: 0 })
+      .borderRadius(16)
+      .border({ width: 0 })
+      .divider(null)
+      .optionBgColor(Color.Transparent)
+      .optionFontColor(this.primaryTextColor())
+      .selectedOptionFontColor(this.accentColor())
+      .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+      .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+      .menuBackgroundBlurStyle(BlurStyle.NONE)
+      .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+      .accessibilityText('朗读音色，' + this.selectedVoiceTitle())
+      .onSelect((index: number): void => {
+        const option = this.voiceSelectOptions()[index];
+        if (option) option.selectVoice();
+      })
   }
 
   normalizeDefaultOnlineVoice(): void {
