@@ -13,6 +13,7 @@ import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKey
 import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';
 import { ReaderKeyboardCaptureDialog } from '../components/reader/ReaderKeyboardCaptureDialog';
 import { avSession } from '@kit.AVSessionKit';
+import { motion } from '@kit.MultimodalAwarenessKit';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
@@ -242,6 +243,13 @@ struct ReadBookPage {
   @State readerDayNightLongPressHandled: boolean = false;
   // 展开屏上记住用户本次唤起菜单的手指侧：-1 左侧，1 右侧。
   @State readerMenuAnchorSide: number = 1;
+  // 0 表示尚未识别，继续使用原有位置；左右手分别为 -1 / 1。
+  @State readerHoldingHandSide: number = 0;
+  @State readerAutoScrollManuallyPositioned: boolean = false;
+  @State readerTtsManuallyPositioned: boolean = false;
+  private readerHoldingHandSubscribed: boolean = false;
+  private readerHoldingHandCallback: (status: motion.HoldingHandStatus) => void =
+    (status: motion.HoldingHandStatus): void => this.onReaderHoldingHandChanged(status);
   @State showReaderActionMenu: boolean = false;
   @State @Watch('syncLayoutElementSettingsDialog') showLayoutElementSettings: boolean = false;
   private txtCharsetDialogSession: SystemDialogSession = new SystemDialogSession();
@@ -901,6 +909,7 @@ struct ReadBookPage {
     this.onReaderAiAccessChanged();
     this.readerComicColor.setForeground(true);
     this.readerPageVisible = true;
+    this.startReaderHoldingHandTracking();
     this.readerKeyboard.reset();
     this.restoreReaderKeyboardFocus();
     this.syncReaderInfoBarClock();
@@ -1090,6 +1099,7 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    this.stopReaderHoldingHandTracking();
     this.releaseReaderKeyboard();
     this.stopReaderAutoScroll(false);
     this.readerComicColor.setForeground(false);
@@ -1200,6 +1210,7 @@ struct ReadBookPage {
   }
 
   onPageHide(): void {
+    this.stopReaderHoldingHandTracking();
     this.releaseReaderKeyboard();
     this.pauseReaderAutoScroll('已暂停');
     if (this.readerInlinePageMode) this.closeReaderCommentPanel();
@@ -1219,6 +1230,48 @@ struct ReadBookPage {
     });
     this.suspendReaderPaginationWork();
     this.releaseReaderScreenTimeout();
+  }
+
+  private startReaderHoldingHandTracking(): void {
+    if (this.readerHoldingHandSubscribed || deviceInfo.sdkApiVersion < 20 ||
+      !canIUse('SystemCapability.MultimodalAwareness.Motion')) return;
+    try {
+      this.readerHoldingHandSubscribed = true;
+      motion.on('holdingHandChanged', this.readerHoldingHandCallback);
+    } catch (error) {
+      this.readerHoldingHandSubscribed = false;
+      this.readerHoldingHandSide = 0;
+      console.warn('正文握姿感知不可用，保留原有按钮位置:', error);
+    }
+  }
+
+  private stopReaderHoldingHandTracking(): void {
+    if (!this.readerHoldingHandSubscribed) return;
+    this.readerHoldingHandSubscribed = false;
+    try {
+      // 只取消正文页的回调，保留其他页面和系统控件的订阅。
+      motion.off('holdingHandChanged', this.readerHoldingHandCallback);
+    } catch (error) {
+      console.warn('释放正文握姿监听失败:', error);
+    }
+  }
+
+  private onReaderHoldingHandChanged(status: motion.HoldingHandStatus): void {
+    if (!this.readerHoldingHandSubscribed || !this.readerPageVisible) return;
+    // 双手、未握持和未知状态均保留上次位置，避免放下手机时来回跳动。
+    if (status !== motion.HoldingHandStatus.LEFT_HAND_HELD &&
+      status !== motion.HoldingHandStatus.RIGHT_HAND_HELD) return;
+    const side = status === motion.HoldingHandStatus.LEFT_HAND_HELD ? -1 : 1;
+    if (side === this.readerHoldingHandSide) return;
+    this.getUIContext().animateTo({ duration: 280, curve: Curve.Friction }, (): void => {
+      this.readerHoldingHandSide = side;
+    });
+  }
+
+  private readerHoldingHandControlLeft(controlWidth: number): number {
+    const viewportWidth = this.pageViewWidth > 0 ? this.pageViewWidth : 360;
+    const inset = this.readerFloatingBarEdgeInset();
+    return this.readerHoldingHandSide < 0 ? inset : Math.max(inset, viewportWidth - inset - controlWidth);
   }
 
   async openPendingShortcut(): Promise<void> {
@@ -4657,7 +4710,7 @@ struct ReadBookPage {
     })
       .width(48).height(48)
       .position({ x: Math.max(12, this.readerTtsQuickActionLeft() +
-        (this.readerUsesSideAnchoredControls() && this.readerMenuAnchorSide < 0 ? 60 : -60)), y: '100%' })
+        (this.readerSessionQuickActionsOnLeft() ? 60 : -60)), y: '100%' })
       .translate({ y: -(this.readerBottomMenuOverlayHeight() + 62) })
   }
 
@@ -4674,6 +4727,9 @@ struct ReadBookPage {
       onCapsuleDragStart: (): void => {
         this.readerAutoScrollDragOriginX = this.readerAutoScrollCapsuleLeft();
         this.readerAutoScrollDragOriginY = this.readerAutoScrollCapsuleTop();
+        this.readerAutoScrollPositionX = this.readerAutoScrollDragOriginX;
+        this.readerAutoScrollPositionY = this.readerAutoScrollDragOriginY;
+        this.readerAutoScrollManuallyPositioned = true;
       },
       onCapsuleDragMove: (offsetX: number, offsetY: number): void => {
         this.readerAutoScrollPositionX = this.clampTtsMiniPlayerPositionX(this.readerAutoScrollDragOriginX + offsetX);
@@ -4697,6 +4753,9 @@ struct ReadBookPage {
   }
 
   readerAutoScrollCapsuleLeft(): number {
+    if (this.readerHoldingHandSide !== 0 && !this.readerAutoScrollManuallyPositioned) {
+      return this.clampTtsMiniPlayerPositionX(this.readerHoldingHandControlLeft(ReaderAutoScrollCapsule.WIDTH));
+    }
     return this.clampTtsMiniPlayerPositionX(this.readerAutoScrollPositionX < 0 ?
       this.readerFloatingBarRight() - ReaderAutoScrollCapsule.WIDTH : this.readerAutoScrollPositionX);
   }
@@ -5107,6 +5166,9 @@ struct ReadBookPage {
   }
 
   ttsMiniPlayerLeft(): number {
+    if (this.readerHoldingHandSide !== 0 && !this.readerTtsManuallyPositioned) {
+      return this.clampTtsMiniPlayerPositionX(this.readerHoldingHandControlLeft(ReaderTtsCapsule.WIDTH));
+    }
     return this.clampTtsMiniPlayerPositionX(this.ttsMiniPlayerPositionX);
   }
 
@@ -5219,6 +5281,9 @@ struct ReadBookPage {
   beginTtsMiniPlayerDrag(): void {
     this.ttsMiniPlayerDragOriginX = this.ttsMiniPlayerLeft();
     this.ttsMiniPlayerDragOriginY = this.ttsMiniPlayerTop();
+    this.ttsMiniPlayerPositionX = this.ttsMiniPlayerDragOriginX;
+    this.ttsMiniPlayerPositionY = this.ttsMiniPlayerDragOriginY;
+    this.readerTtsManuallyPositioned = true;
   }
 
   moveTtsMiniPlayer(offsetX: number, offsetY: number): void {
@@ -8150,7 +8215,13 @@ struct ReadBookPage {
     return (viewportWidth - this.readerChapterTooltipWidth()) / 2;
   }
 
+  readerSessionQuickActionsOnLeft(): boolean {
+    return this.readerHoldingHandSide !== 0 ? this.readerHoldingHandSide < 0 :
+      this.readerUsesSideAnchoredControls() && this.readerMenuAnchorSide < 0;
+  }
+
   readerTtsQuickActionLeft(): number {
+    if (this.readerHoldingHandSide !== 0) return this.readerHoldingHandControlLeft(48);
     if (this.readerUsesSideAnchoredControls() && this.readerMenuAnchorSide < 0) {
       return this.readerFloatingBarLeft();
     }
