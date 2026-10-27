@@ -113,7 +113,7 @@ export class ReaderCommentBubbleStyles {
     style.ornamentAltColor = colors[4];
     if (id === 'capsule') {
       // Keep the saved style ID, with a rounded rectangle rather than a full pill for default comments.
-      style.radiusRatio = 0.2;
+      style.radiusRatio = 0.35;
       // Alpha blends the reader's ink with any page colour or image.
       const ink = ReaderV2Color.parse(readerTextColor, dark ? 0xFFE1E1E1 : 0xFF262626);
       const alpha = Math.round(((ink >>> 24) & 0xFF) * (dark ? 0.55 : 0.45));
