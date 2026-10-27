@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { route, patchIndex } from './patch.mjs';
+
+const dir = resolve(process.argv[2] || '.');
+const source = readFileSync(resolve(dir, 'readingStats.js'), 'utf8');
+const importLine = "import { SyncApiError } from './sync.js';";
+assert(source.includes(importLine));
+assert.equal((source.match(/^import /gm) || []).length, 1);
+const stub = 'class SyncApiError extends Error { constructor(status, code, message) { super(message); this.status = status; this.code = code; } }';
+const module = await import(`data:text/javascript;base64,${Buffer.from(source.replace(importLine, stub)).toString('base64')}`);
+assert.equal(typeof module.exchangeReadingStats, 'function');
+const request = { protocolVersion: 1, deviceId: '11111111-1111-4111-8111-111111111111', cursor: 0, operations: [] };
+assert.equal(module.normalizeReadingStats(request).operations.length, 0);
+assert.throws(() => module.normalizeReadingStats({ ...request, cursor: -1 }));
+const index = readFileSync(resolve(dir, 'index.js'), 'utf8');
+assert(index.replace(/\r\n/g, '\n').includes(route));
+assert.equal(patchIndex(index), index);
+console.log('PASS: reading statistics module and authenticated route');
