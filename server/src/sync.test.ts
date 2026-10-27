@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { PGlite } from '@electric-sql/pglite';
+import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 
 process.env.DATABASE_URL ||= 'postgresql://test:test@127.0.0.1:5432/test';
 process.env.SESSION_SECRET ||= 'test-session-secret-that-is-long-enough';
@@ -17,11 +21,41 @@ const {
   calculateNextSyncQuota,
   ensureSyncQuota,
   normalizeOperation,
+  registerDevice,
   MAX_SUPER_BOOK_SOURCE_PAYLOAD_BYTES,
   SyncApiError
 } = await import('./sync.js');
 
 const OP_ID = '123e4567-e89b-42d3-a456-426614174000';
+
+test('app upgrades update the same device; identical model names do not collapse different devices', async t => {
+  const db = new PGlite(); t.after(() => db.close());
+  for (const migration of ['001_account_commerce.sql', '005_data_sync.sql',
+    '006_sync_device_metadata.sql', '007_sync_performance.sql']) {
+    await db.exec(await readFile(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
+  }
+  const userId = randomUUID(), otherUserId = randomUUID(), deviceId = randomUUID();
+  for (const id of [userId, otherUserId]) {
+    await db.query('INSERT INTO app_users(id,huawei_open_id) VALUES($1,$2)', [id, id]);
+  }
+  const register = (id: string, version: string, owner = userId) => db.transaction(client =>
+    registerDevice(client as unknown as PoolClient, owner, id, '同型号手机', 'HarmonyOS', version, 'phone', 0));
+  await register(deviceId, '4.4.932');
+  await db.query('UPDATE sync_devices SET device_name=$2,name_customized=TRUE WHERE id=$1', [deviceId, '我的手机']);
+  await register(deviceId, '4.4.934');
+  await register(deviceId, '5.0.0');
+  const rows = (await db.query<{ id: string; app_version: string; device_name: string }>(
+    'SELECT id,app_version,device_name FROM sync_devices WHERE user_id=$1', [userId])).rows;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.id, deviceId);
+  assert.equal(rows[0]!.app_version, '5.0.0');
+  assert.equal(rows[0]!.device_name, '我的手机');
+  await register(randomUUID(), '5.0.0');
+  assert.equal((await db.query('SELECT id FROM sync_devices WHERE user_id=$1', [userId])).rows.length, 2);
+  await assert.rejects(register(deviceId, '5.0.1', otherUserId), { code: 'SYNC_DEVICE_ACCOUNT_MISMATCH' });
+  await db.query('UPDATE sync_devices SET revoked_at=now() WHERE id=$1', [deviceId]);
+  await assert.rejects(register(deviceId, '5.0.1'), { code: 'SYNC_DEVICE_REVOKED' });
+});
 
 test('book source payloads may exceed the default 64KB limit', () => {
   const normalized = normalizeOperation({

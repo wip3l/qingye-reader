@@ -16,6 +16,8 @@ function load(file, globals, names) {
   return context.exports;
 }
 const { ReadStatsSummary: Summary } = load('core/stats/ReadStatsSummary.ts', {}, 'ReadStatsSummary');
+const syncModels = load('core/stats/ReadStatsSyncModels.ts', {},
+  'ReadStatsPendingUpload,ReadStatsSyncPayload,ReadStatsSyncOperation,ReadStatsSyncRequest,ReadStatsSyncResponse,ReadStatsSyncAck,ReadStatsSyncChange');
 const date = (y, m, d, h = 0, minute = 0) => new Date(y, m - 1, d, h, minute).getTime();
 const row = (dayKey, durationMs, deviceId = 'phone', bookKey = 'book') => ({
   dayKey, durationMs, deviceId, bookKey, bookUrl: bookKey, name: bookKey, author: '', coverUrl: '', onShelf: true
@@ -76,9 +78,10 @@ async function database(t) {
     customCoverUrl TEXT DEFAULT '', origin TEXT DEFAULT 'web', isPrivate INTEGER DEFAULT 0, pendingAddToShelf INTEGER DEFAULT 0);
     CREATE TABLE read_stats (dayKey TEXT, bookUrl TEXT, durationMs INTEGER, lastReadAt INTEGER, PRIMARY KEY(dayKey,bookUrl));`);
   const { appDb: db, ReadStatsEntry: Entry } = load('model/data/AppDatabase.ts', {
+    ...syncModels,
     relationalStore: { RdbPredicates: Predicates }, util: { generateRandomUUID: randomUUID },
     BookIdentity: { cloudIdentityValue: book => `identity:${book.bookUrl}` },
-    CloudSyncChangeTracker: { markDataChanged() {} }
+    CloudSyncChangeTracker: { markDataChanged() {}, markReadingProgressChanged() {} }
   }, 'appDb, ReadStatsEntry');
   db.store = {
     executeSql: async (query, args = []) => sql.prepare(query).run(...args),
@@ -87,6 +90,9 @@ async function database(t) {
     delete: async p => sql.prepare(`DELETE FROM ${p.table} WHERE ${p.clauses.join(' AND ')}`).run(...p.args).changes
   };
   db.getBook = async url => sql.prepare('SELECT * FROM books WHERE bookUrl=?').get(url) || null;
+  db.getAllBooks = async () => sql.prepare('SELECT * FROM books').all();
+  const migrate = db.migrateReadStats.bind(db);
+  db.migrateReadStats = async () => { await migrate(); await db.migrateReadStatsSync(); };
   db.recordBookMutation = async () => {};
   db.deleteBookChapters = db.deleteBookCachedContent = db.deleteBookBookmarks = async () => {};
   const book = (url, name, isPrivate = 0) => sql.prepare('INSERT OR REPLACE INTO books (bookUrl,name,isPrivate) VALUES(?,?,?)').run(url, name, isPrivate);
@@ -163,4 +169,141 @@ test('tracker splits midnight and account changes, retries preserve original IDs
   tracker.setOwnerId('bob');now+=60000;tracker.setTtsActive('book');now+=60000;await tracker.flushAndWait();
   assert.equal([...saved.values()].filter(e=>e.ownerId==='alice').reduce((s,e)=>s+e.durationMs,0),60000);
   assert.equal([...saved.values()].filter(e=>e.ownerId==='bob').reduce((s,e)=>s+e.durationMs,0),120000);
+});
+
+test('durable stats outbox excludes guests, private data and unportable local identities', async t => {
+  const h = await database(t); h.book('book', '公开书'); h.book('secret', '私密书', 1);
+  await h.db.migrateReadStats();
+  h.sql.prepare('UPDATE books SET customCoverUrl=? WHERE bookUrl=?').run('/data/private/cover.jpg', 'book');
+  await h.db.addReadStats([h.entry(), h.entry({ ownerId: '' }), h.entry({ ownerId: 'bob' }),
+    h.entry({ bookUrl: 'secret' }), h.entry({ deviceId: 'another-device' }), h.entry({ bookUrl: 'local:file-path' })]);
+  const boundary = await h.db.getReadStatsUploadBoundary();
+  const uploads = await h.db.getPendingReadStats('alice', 'phone', boundary);
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0].operation.payload.coverUrl, '');
+  assert.equal(uploads[0].operation.payload.name, '公开书');
+  assert.equal('bookUrl' in uploads[0].operation.payload, false);
+  assert.equal('ownerId' in uploads[0].operation.payload, false);
+  // New readings arriving during a long initial sync are left for the next run.
+  await h.db.addReadStats([h.entry()]);
+  await h.db.acknowledgeReadStats('alice', uploads, uploads.map(u => ({ recordId: u.operation.recordId, deleted: false })));
+  assert.equal((await h.db.getPendingReadStats('alice', 'phone', boundary)).length, 0);
+  assert.equal((await h.db.getPendingReadStats('alice', 'phone', await h.db.getReadStatsUploadBoundary())).length, 1);
+  await h.db.setBookPrivate('secret', false);
+  assert.equal((await h.db.getPendingReadStats('alice', 'phone', await h.db.getReadStatsUploadBoundary()))
+    .some(u => u.operation.payload?.name === '私密书'), false);
+});
+
+test('downloaded records preserve device/title, sum once, remain private and never become upload deltas', async t => {
+  const h = await database(t); await h.db.migrateReadStats();
+  const payload = Object.assign(new syncModels.ReadStatsSyncPayload(), { deviceId: 'tablet', deviceName: '平板',
+    bookKey: 'identity:book', name: '远端已删除的书名', dayKey: '2026-10-26', durationMs: 60000,
+    startedAt: date(2026,10,26), lastReadAt: date(2026,10,26)+60000 });
+  const change = { recordId: randomUUID(), sequenceId: 1, deleted: false, payload };
+  await h.db.applyReadStatsChanges('alice', [change, change]);
+  assert.equal((await h.query())[0].name, payload.name);
+  assert.equal((await h.query())[0].onShelf, false);
+  assert.equal((await h.query()).reduce((sum,r) => sum+r.durationMs,0), 60000);
+  assert.equal((await h.query('', 'bob')).length, 0);
+  assert.equal((await h.db.getPendingReadStats('alice', 'phone', 99999)).length, 0);
+  h.book('book', '本机同一本书');
+  await h.db.setBookPrivate('book', true);
+  assert.equal((await h.query()).length, 0);
+  const redactions = await h.db.getPendingReadStats('alice', 'phone', 99999);
+  assert.equal(redactions.length, 1); assert.equal(redactions[0].operation.payload, null);
+  // A replay received after making a matching local book private cannot disclose its remote snapshot.
+  await h.db.applyReadStatsChanges('alice', [change]);
+  assert.equal((await h.query()).length, 0);
+  // Deleting the local private book must not let a later page clear the retained privacy flag.
+  await h.db.deleteBook('book');
+  await h.db.applyReadStatsChanges('alice', [change]);
+  assert.equal((await h.query()).length, 0);
+});
+
+test('in-flight upsert acknowledgements cannot swallow newer deletion or privacy retraction', async t => {
+  const h = await database(t); h.book('book','书'); await h.db.migrateReadStats();
+  const entry = h.entry(); await h.db.addReadStats([entry]);
+  const sent = await h.db.getPendingReadStats('alice', 'phone', 99999);
+  await h.db.deleteReadStatsSelection('identity:book','2026-10-26','2026-10-26','','alice');
+  await h.db.applyReadStatsChanges('alice', [{ recordId: entry.recordId, sequenceId: 1, deleted: false,
+    payload: sent[0].operation.payload }]);
+  await h.db.acknowledgeReadStats('alice', sent, [{ recordId: entry.recordId, deleted: false }]);
+  assert.equal((await h.query()).length,0);
+  const deletion = await h.db.getPendingReadStats('alice','phone',99999);
+  assert.equal(deletion.length,1); assert.equal(deletion[0].operation.deleted,true);
+  await h.db.acknowledgeReadStats('alice',deletion,[{recordId:entry.recordId,deleted:true}]);
+  assert.equal((await h.db.getPendingReadStats('alice','phone',99999)).length,0);
+
+  const other=h.entry(); await h.db.addReadStats([other]);
+  const beforePrivate=await h.db.getPendingReadStats('alice','phone',99999);
+  await h.db.setBookPrivate('book',true);
+  await h.db.acknowledgeReadStats('alice',beforePrivate,[{recordId:other.recordId,deleted:false}]);
+  const privacy=await h.db.getPendingReadStats('alice','phone',99999);
+  assert.ok(privacy.every(u=>u.operation.deleted && u.operation.payload===null));
+  await h.db.applyReadStatsChanges('alice',[{recordId:other.recordId,sequenceId:2,deleted:true,payload:null}]);
+  await h.db.setBookPrivate('book',false);
+  assert.equal((await h.query()).reduce((sum,r)=>sum+r.durationMs,0),60000);
+  await h.db.applyReadStatsChanges('alice',[{recordId:other.recordId,sequenceId:1,deleted:false,
+    payload:beforePrivate[0].operation.payload}]);
+  assert.equal((await h.query()).reduce((sum,r)=>sum+r.durationMs,0),60000);
+});
+
+test('client coordinator resumes lost responses and partial pages; cursor advances only after successful apply', async t => {
+  const h=await database(t);h.book('book','书');await h.db.migrateReadStats();
+  const original=h.entry();await h.db.addReadStats([original]);
+  const cloud=new Map();let sequence=0, failAfterCommit=true, requested=0, session='alice';
+  const {ReadStatsCloudSync:sync}=load('account/ReadStatsCloudSync.ets',{
+    ...syncModels, AppStorage:{get(){return 0},setOrCreate(){}},
+    readStatsTracker:{flushAndWait:async()=>{}},AccountApiError:class extends Error{},
+    AccountSessionStore:{isLoggedIn:()=>true,account:()=>({userId:session}),token:()=>session},
+  AccountCommerceApi:{fetchSyncDevices:async()=>({devices:[]}),exchangeReadStats:async req=>{
+      requested++;
+      for(const op of req.operations){if(!cloud.has(op.recordId)||op.deleted) cloud.set(op.recordId,{...op,sequenceId:++sequence});}
+      if(failAfterCommit){failAfterCommit=false;throw new Error('response lost');}
+      const changes=[...cloud.values()].filter(c=>c.sequenceId>req.cursor).sort((a,b)=>a.sequenceId-b.sequenceId);
+      return {protocolVersion:1,acknowledgements:req.operations.map(op=>({recordId:op.recordId,deleted:cloud.get(op.recordId).deleted})),
+        changes,nextCursor:changes.at(-1)?.sequenceId??req.cursor,hasMore:false};
+    }}
+  },'ReadStatsCloudSync');
+  await assert.rejects(sync.run(h.db,'alice','phone','alice'),/response lost/);
+  assert.equal(await h.db.getReadStatsSyncCursor('alice'),0);
+  assert.equal((await h.db.getPendingReadStats('alice','phone',99999)).length,1);
+  const apply=h.db.applyReadStatsChanges.bind(h.db);let failApply=true;
+  h.db.applyReadStatsChanges=async(...args)=>{await apply(...args);if(failApply){failApply=false;throw new Error('disk failure');}};
+  await assert.rejects(sync.run(h.db,'alice','phone','alice'),/disk failure/);
+  assert.equal(await h.db.getReadStatsSyncCursor('alice'),0);
+  await sync.run(h.db,'alice','phone','alice');
+  assert.equal(cloud.size,1);assert.equal((await h.query()).reduce((sum,r)=>sum+r.durationMs,0),60000);
+  assert.equal(await h.db.getReadStatsSyncCursor('alice'),1);
+  assert.equal((await h.db.getPendingReadStats('alice','phone',99999)).length,0);
+  session='bob';const before=requested;
+  await assert.rejects(sync.run(h.db,'alice','phone','alice'),/账号已切换/);
+  assert.equal(requested,before);
+});
+
+test('malformed protocol pages do not pass validation or advance cursor', () => {
+  const {ReadStatsCloudSync:sync}=load('account/ReadStatsCloudSync.ets',{},'ReadStatsCloudSync');
+  const request={cursor:5,operations:[]};
+  for(const response of [
+    {protocolVersion:1,acknowledgements:[],changes:[],nextCursor:6,hasMore:false},
+    {protocolVersion:1,acknowledgements:[],changes:[],nextCursor:5,hasMore:true},
+    {protocolVersion:2,acknowledgements:[],changes:[],nextCursor:5,hasMore:false}
+  ]) assert.throws(()=>sync.validate(response,request));
+});
+
+test('switching accounts while a response is in flight stops application and cursor advancement', async () => {
+  let session='alice', applied=0;
+  const db={getReadStatsUploadBoundary:async()=>0,getReadStatsSyncCursor:async()=>0,
+    getPendingReadStats:async()=>[],applyReadStatsChanges:async()=>{applied++},
+    acknowledgeReadStats:async()=>{applied++},setReadStatsSyncCursor:async()=>{applied++}};
+  const {ReadStatsCloudSync:sync}=load('account/ReadStatsCloudSync.ets',{
+    ...syncModels,AccountApiError:class extends Error{},
+    AccountSessionStore:{isLoggedIn:()=>true,account:()=>({userId:session}),token:()=>session},
+    AccountCommerceApi:{exchangeReadStats:async(req,token)=>{
+      assert.equal(token,'alice');session='bob';
+      return {protocolVersion:1,acknowledgements:[],changes:[],nextCursor:0,hasMore:false};
+    }}
+  },'ReadStatsCloudSync');
+  await assert.rejects(sync.run(db,'alice','phone','alice'),/账号已切换/);
+  assert.equal(applied,0);
 });

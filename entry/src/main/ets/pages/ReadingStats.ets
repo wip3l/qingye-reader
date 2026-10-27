@@ -43,6 +43,8 @@ struct ReadingStatsPage {
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @StorageProp('readingStatsCloudRevision') @Watch('onCloudStatsChanged') cloudStatsRevision: number = 0;
+  @StorageProp('accountUserId') @Watch('onStatsAccountChanged') statsAccountId: string = '';
   @State mode: string = 'week';
   @State anchorTs: number = Date.now();
   @State loading: boolean = true;
@@ -61,10 +63,25 @@ struct ReadingStatsPage {
   private alive: boolean = true;
   private ownerId: string = '';
   private selectionWrite: Promise<void> = Promise.resolve();
+  private viewReady: boolean = false;
+  private initializationVersion: number = 0;
 
   aboutToAppear(): void { this.alive = true; this.initialize(); this.syncBars(); }
-  aboutToDisappear(): void { this.alive = false; this.requestVersion++; }
+  aboutToDisappear(): void { this.alive = false; this.requestVersion++; this.initializationVersion++; }
   onPageShow(): void { this.syncBars(); }
+  private onCloudStatsChanged(): void {
+    if (this.alive && this.viewReady) this.loadStats();
+  }
+  private onStatsAccountChanged(): void {
+    if (!this.alive || !this.viewReady || this.ownerId === this.statsAccountId) return;
+    this.requestVersion++;
+    this.ownerId = this.statsAccountId;
+    this.selectedDevice = '';
+    this.devices = [];
+    this.summary = new ReadStatsSummary();
+    this.source.update([]);
+    this.initialize();
+  }
   onBackPress(): boolean {
     if (!this.showItemActionMenu) return false;
     this.showItemActionMenu = false;
@@ -72,18 +89,23 @@ struct ReadingStatsPage {
   }
 
   private async initialize(): Promise<void> {
+    const initialization = ++this.initializationVersion;
     try {
       const context = getContext(this);
       await AccountSessionStore.load(context);
       this.ownerId = AccountSessionStore.isLoggedIn() ? AccountSessionStore.account().userId : '';
+      const ownerId = this.ownerId;
       const store = await preferences.getPreferences(context, 'reading_stats_view');
       const mode = await store.get('mode', 'week');
       const device = await store.get(`device:${this.ownerId}`, '');
       const localId = await ReadStatsDevice.id(context);
-      if (!this.alive) return;
+      if (!this.alive || initialization !== this.initializationVersion) return;
+      const currentOwner = AccountSessionStore.isLoggedIn() ? AccountSessionStore.account().userId : '';
+      if (currentOwner !== ownerId) { await this.initialize(); return; }
       this.localDeviceId = localId;
       this.mode = typeof mode === 'string' && STATS_MODES.includes(mode) ? mode : 'week';
       this.selectedDevice = typeof device === 'string' ? device : '';
+      this.viewReady = true;
       await this.loadStats();
     } catch (error) {
       if (!this.alive) return;
@@ -108,6 +130,7 @@ struct ReadingStatsPage {
     const version = ++this.requestVersion;
     const mode = this.mode;
     const anchor = this.anchorTs;
+    const ownerId = this.ownerId;
     let deviceId = this.selectedDevice;
     this.loading = true;
     this.errorMessage = '';
@@ -117,7 +140,7 @@ struct ReadingStatsPage {
     try {
       await appDb.init(getContext(this));
       await readStatsTracker.flushAndWait();
-      const devices = await appDb.getReadStatsDevices(this.ownerId);
+      const devices = await appDb.getReadStatsDevices(ownerId);
       if (!devices.some((item: ReadStatsDeviceOption): boolean => item.deviceId === this.localDeviceId)) {
         const local = new ReadStatsDeviceOption();
         local.deviceId = this.localDeviceId;
@@ -126,8 +149,8 @@ struct ReadingStatsPage {
       }
       if (deviceId && !devices.some((item: ReadStatsDeviceOption): boolean => item.deviceId === deviceId)) deviceId = '';
       const range = ReadStatsSummary.range(mode, anchor);
-      const rows = await appDb.getReadStatsByDayRange(range.startKey, range.endKey, deviceId, this.ownerId);
-      if (!this.alive || version !== this.requestVersion) return;
+      const rows = await appDb.getReadStatsByDayRange(range.startKey, range.endKey, deviceId, ownerId);
+      if (!this.alive || version !== this.requestVersion || ownerId !== this.ownerId) return;
       this.devices = devices;
       this.selectedDevice = deviceId;
       this.summary = ReadStatsSummary.calculate(rows, mode, anchor, Date.now());
@@ -150,7 +173,11 @@ struct ReadingStatsPage {
     return options;
   }
   private deviceLabel(item: ReadStatsDeviceOption): string {
-    return item.deviceId === this.localDeviceId ? '本机' : item.deviceName || '未命名设备';
+    if (item.deviceId === this.localDeviceId) return '本机';
+    const label = item.deviceName || '未命名设备';
+    const duplicates = this.devices.filter((device: ReadStatsDeviceOption): boolean =>
+      device.deviceId !== this.localDeviceId && (device.deviceName || '未命名设备') === label);
+    return duplicates.length > 1 ? `${label} · ${item.deviceId.slice(0, 4)}` : label;
   }
   private deviceIndex(): number {
     return this.selectedDevice ? this.devices.findIndex((item: ReadStatsDeviceOption): boolean => item.deviceId === this.selectedDevice) + 1 : 0;
@@ -290,7 +317,7 @@ struct ReadingStatsPage {
       this.periodSelector()
       this.summaryCard()
       if (!this.loading && !this.errorMessage && this.summary.totalMs > 0 && this.mode !== 'day') { this.trendCard() }
-      Text(this.selectedDevice === ReadStatsDevice.LEGACY_ID ? '历史导入 · 原设备来源未留存' : '本地统计 · 阅读与听书合并计时')
+      Text(this.selectedDevice === ReadStatsDevice.LEGACY_ID ? '历史导入 · 原设备来源未留存' : '阅读与听书合并计时')
         .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).margin({ top: AppSpacing.LG, bottom: AppSpacing.LG })
       Row() {
         Text('书籍排行').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
@@ -376,7 +403,7 @@ struct ReadingStatsPage {
     const ownerId = this.ownerId;
     try {
       const confirmation = await promptAction.showDialog({ title: '删除阅读记录',
-        message: `删除“${item.name}”在 ${this.periodTitle()}、${this.deviceTitle()} 范围内的阅读记录？不会删除书籍。`,
+        message: `删除“${item.name}”在 ${this.periodTitle()}、${this.deviceTitle()} 范围内已获取的阅读记录？开启同步后会同步删除，尚未上传的其他设备记录不受影响。不会删除书籍。`,
         buttons: [{ text: '取消', color: this.subTextColor() }, { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }] });
       if (confirmation.index !== 1) return;
       await readStatsTracker.flushAndWait();

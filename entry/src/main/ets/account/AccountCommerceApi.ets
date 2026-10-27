@@ -1,4 +1,5 @@
 import http from '@ohos.net.http';
+import { ReadStatsSyncRequest, ReadStatsSyncResponse } from '../core/stats/ReadStatsSyncModels';
 import { util } from '@kit.ArkTS';
 import { AccountCommerceConfig } from './AccountCommerceConfig';
 import { MembershipCatalog, MembershipQuote, MembershipSnapshot, MembershipOrderList } from './MembershipModels';
@@ -194,6 +195,13 @@ export class AccountCommerceApi {
       sessionToken
     );
     return JSON.parse(value) as CloudSyncExchangeResponse;
+  }
+
+  static async exchangeReadStats(request: ReadStatsSyncRequest,
+    sessionToken: string): Promise<ReadStatsSyncResponse> {
+    const value = await AccountCommerceApi.request('/v1/sync/reading-stats', 'POST',
+      JSON.stringify(request), sessionToken);
+    return JSON.parse(value) as ReadStatsSyncResponse;
   }
 
   static async fetchSyncDevices(sessionToken: string): Promise<CloudSyncDeviceListResponse> {

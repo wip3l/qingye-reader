@@ -45,6 +45,7 @@ import {
   SyncApiError,
   SyncExchangeBody
 } from './sync.js';
+import { exchangeReadingStats, ReadingStatsRequest } from './readingStats.js';
 import {
   ByteLimitedLruCache,
   decideTtsReplay,
@@ -351,6 +352,14 @@ app.post<{ Body: SyncExchangeBody }>(
     return exchangeSync(userId, request.body);
   }
 );
+
+app.post<{ Body: ReadingStatsRequest }>('/v1/sync/reading-stats', {
+  preHandler: authenticate, bodyLimit: 1024 * 1024
+}, async request => {
+  const userId = requiredUserId(request);
+  await enforceAccountRateLimit(userId, 'reading-stats-exchange', config.http.syncRateLimitPerMinute);
+  return inTransaction(client => exchangeReadingStats(client, userId, request.body));
+});
 
 app.post('/v1/auth/logout', { preHandler: authenticate }, async (request, reply) => {
   const sessionId = (request as AuthenticatedRequest).sessionId!;

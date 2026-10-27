@@ -405,7 +405,7 @@ export function normalizeOperation(source: SyncOperationBody,
   };
 }
 
-async function registerDevice(
+export async function registerDevice(
   client: PoolClient,
   userId: string,
   deviceId: string,

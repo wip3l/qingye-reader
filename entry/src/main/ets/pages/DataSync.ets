@@ -144,7 +144,7 @@ struct DataSyncPage {
         this.fileSyncRow('自定义字体', '同步导入的自定义字体文件', false)
         SettingSwitchRow({
           title: '阅读数据',
-          description: '在线书架、分组、排序、进度、书签；本地书仅同步进度',
+          description: '在线书架、分组、排序、进度、书签和阅读统计；本地书同步进度与统计',
           isOn: this.readingDataEnabled,
           onChange: (value: boolean) => {
             this.setScopeEnabled(true, value);

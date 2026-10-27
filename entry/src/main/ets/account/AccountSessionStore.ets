@@ -9,6 +9,7 @@ import {
 
 export class AccountSessionStore {
   static readonly STORAGE_LOGGED_IN: string = 'accountLoggedIn';
+  static readonly STORAGE_USER_ID: string = 'accountUserId';
   static readonly STORAGE_DISPLAY_NAME: string = 'accountDisplayName';
   static readonly STORAGE_AVATAR_URL: string = 'accountAvatarUrl';
   static readonly STORAGE_POINTS: string = 'accountPoints';
@@ -169,6 +170,8 @@ export class AccountSessionStore {
 
   private static applyToStorage(): void {
     readStatsTracker.setOwnerId(AccountSessionStore.isLoggedIn() ? AccountSessionStore.snapshot.userId : '');
+    AppStorage.setOrCreate(AccountSessionStore.STORAGE_USER_ID,
+      AccountSessionStore.isLoggedIn() ? AccountSessionStore.snapshot.userId : '');
     AccountSessionStore.initializeStorage();
     AppStorage.setOrCreate(AccountSessionStore.STORAGE_LOGGED_IN, AccountSessionStore.isLoggedIn());
     const membershipSku = AccountSessionStore.activeMembershipSku();

@@ -8,6 +8,8 @@ import display from '@ohos.display';
 import { AccountCommerceApi } from './AccountCommerceApi';
 import { AccountApiError } from './AccountCommerceModels';
 import { AccountSessionStore } from './AccountSessionStore';
+import { ReadStatsCloudSync } from './ReadStatsCloudSync';
+import { readStatsTracker } from '../core/stats/ReadStatsTracker';
 import {
   CloudSyncAcknowledgement,
   CloudSyncChange,
@@ -242,10 +244,7 @@ export class CloudSyncCoordinator {
     trigger: string = CloudSyncCoordinator.TRIGGER_FOREGROUND): Promise<void> {
     const localChangeTrigger = trigger === CloudSyncCoordinator.TRIGGER_CHANGE;
     const backgroundTrigger = trigger === CloudSyncCoordinator.TRIGGER_BACKGROUND;
-    const hasLocalChanges = CloudSyncChangeTracker.hasUnsyncedChanges();
-    if ((localChangeTrigger || backgroundTrigger) && !hasLocalChanges) {
-      return;
-    }
+    let hasLocalChanges = CloudSyncChangeTracker.hasUnsyncedChanges();
     if (CloudSyncCoordinator.running) {
       if (hasLocalChanges) {
         CloudSyncCoordinator.scheduleDeferredAutomaticSync(context, 2000);
@@ -262,6 +261,15 @@ export class CloudSyncCoordinator {
       (trigger === CloudSyncCoordinator.TRIGGER_FOREGROUND && !settings.foregroundSyncEnabled)) {
       return;
     }
+    if (settings.readingDataEnabled) {
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(context);
+      await readStatsTracker.flushAndWait();
+      const pending = await db.getPendingReadStats(userId,
+        await CloudSyncStateStore.deviceId(context), await db.getReadStatsUploadBoundary());
+      hasLocalChanges = hasLocalChanges || pending.length > 0;
+    }
+    if ((localChangeTrigger || backgroundTrigger) && !hasLocalChanges) return;
     const now = Date.now();
     if (trigger === CloudSyncCoordinator.TRIGGER_FOREGROUND && !hasLocalChanges &&
       settings.lastSuccessAt > 0 &&
@@ -305,10 +313,13 @@ export class CloudSyncCoordinator {
       throw new Error('请先登录华为账号');
     }
     const userId = AccountSessionStore.account().userId;
+    const sessionToken = AccountSessionStore.token();
     const settings = await CloudSyncSettingsStore.load(context, userId);
     if (!settings.enabled) {
       throw new Error('请先开启云同步');
     }
+    await readStatsTracker.flushAndWait();
+    ReadStatsCloudSync.assertSession(userId, sessionToken);
     const changeSnapshot: CloudSyncChangeSnapshot = CloudSyncChangeTracker.snapshot();
 
     const result = new CloudSyncRunResult();
@@ -341,6 +352,7 @@ export class CloudSyncCoordinator {
       let hasMore = true;
       let exchangePages = 0;
       while (remaining.length > 0 || hasMore) {
+        ReadStatsCloudSync.assertSession(userId, sessionToken);
         exchangePages++;
         if (exchangePages > CloudSyncCoordinator.MAX_EXCHANGE_PAGES) {
           throw new Error('同步分页次数异常，请稍后重试');
@@ -349,7 +361,8 @@ export class CloudSyncCoordinator {
         const cursorBeforeExchange = state.cursor;
         const request = await CloudSyncCoordinator.exchangeRequest(
           context, deviceId, state.cursor, batch, conflictPolicy);
-        const response = await CloudSyncCoordinator.exchangeSyncWithRetry(request);
+        const response = await CloudSyncCoordinator.exchangeSyncWithRetry(request, userId, sessionToken);
+        ReadStatsCloudSync.assertSession(userId, sessionToken);
         CloudSyncCoordinator.validateResponse(response);
         const operationMap = CloudSyncCoordinator.operationEntityMap(batch, localEntities);
         for (const ack of response.acknowledgements || []) {
@@ -394,6 +407,12 @@ export class CloudSyncCoordinator {
         }
       }
 
+      if (settings.readingDataEnabled) {
+        const stats = await ReadStatsCloudSync.run(db, userId, deviceId, sessionToken);
+        result.uploaded += stats.uploaded;
+        result.downloaded += stats.downloaded;
+      }
+      ReadStatsCloudSync.assertSession(userId, sessionToken);
       settings.status = result.skipped > 0 ? CloudSyncSettingsStore.STATUS_ERROR : CloudSyncSettingsStore.STATUS_SYNCED;
       settings.lastSuccessAt = Date.now();
       settings.pendingCount = result.skipped;
@@ -456,12 +475,13 @@ export class CloudSyncCoordinator {
    * rate-limit boundary and surfaced as a sync failure.
    */
   private static async exchangeSyncWithRetry(
-    request: CloudSyncExchangeRequest
+    request: CloudSyncExchangeRequest, userId: string, sessionToken: string
   ): Promise<CloudSyncExchangeResponse> {
     let retries = 0;
     while (true) {
+      ReadStatsCloudSync.assertSession(userId, sessionToken);
       try {
-        return await AccountCommerceApi.exchangeSync(request, AccountSessionStore.token());
+        return await AccountCommerceApi.exchangeSync(request, sessionToken);
       } catch (error) {
         if (!(error instanceof AccountApiError) || error.statusCode !== 429 ||
           error.errorCode !== 'RATE_LIMITED' ||

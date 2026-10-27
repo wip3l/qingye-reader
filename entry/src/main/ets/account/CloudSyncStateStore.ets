@@ -1,5 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import { ReadStatsDevice } from '../core/stats/ReadStatsDevice';
+import { appDb } from '../model/data/AppDatabase';
 import preferences from '@ohos.data.preferences';
 
 export class CloudSyncEntityState {
@@ -50,6 +51,8 @@ export class CloudSyncStateStore {
   }
 
   static async resetCursor(context: Context, userId: string): Promise<void> {
+    await appDb.init(context);
+    await appDb.setReadStatsSyncCursor(userId, 0);
     const state = await CloudSyncStateStore.load(context, userId);
     state.cursor = 0;
     await CloudSyncStateStore.save(context, userId, state);
