@@ -38,6 +38,7 @@
     "pages/MemberSettings",
     "pages/DataSync",
     "pages/ReadingStats",
+    "pages/ReadingStatsShare",
     "pages/SyncDevices",
     "pages/SyncIssues",
     "pages/FontSettings",

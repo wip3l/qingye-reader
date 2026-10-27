@@ -8,6 +8,8 @@ import { ReaderComicColorSession, ComicColorCandidate } from '@legado/aiengine';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ReaderImageMarker } from '../../core/book/ReaderImageMarker';
+import { ReaderComicProcessing } from '../../core/reader/ReaderComicProcessing';
+import { ReaderComicProcessingBadge } from './ReaderComicProcessingBadge';
 import {
   ReaderComicImageItem, ReaderComicImageSizes, ReaderComicInfoBadge, ReaderComicRetryRegistry, ReaderPendingImageHint
 } from './ReaderComicView';
@@ -29,6 +31,7 @@ export class ReaderComicPagedController {
  */
 @Component
 export struct ReaderComicPagedView {
+  private processing: ReaderComicProcessing = new ReaderComicProcessing();
   colorSession: ReaderComicColorSession | null = null;
   private colorTimer: number = -1;
   private colorSpread: string = '';
@@ -685,6 +688,7 @@ export struct ReaderComicPagedView {
         superResolution: this.superResolution,
         textConvert: this.textConvert,
         retryRegistry: this.retryRegistry,
+        processing: this.processing,
         onDenied: (): void => this.onImageDenied(chapterIndex)
       })
     } else {
@@ -863,6 +867,10 @@ export struct ReaderComicPagedView {
           .position({ right: 10, bottom: this.infoBottomInset })
           .hitTestBehavior(HitTestMode.None)
       }
+
+      ReaderComicProcessingBadge({ processing: this.processing, colorSession: this.colorSession })
+        .position({ right: 10, bottom: this.infoBottomInset + (this.infoVisible ? 30 : 0) })
+        .hitTestBehavior(HitTestMode.None)
 
       if (this.interactive) {
         this.interactionLayer(this.doubleTapZoom)

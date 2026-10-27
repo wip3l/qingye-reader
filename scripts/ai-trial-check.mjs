@@ -13,6 +13,7 @@ function fixture({ now = end - 10000, persisted = new Map() } = {}) {
   const values = new Map(), timers = new Map();
   let timerId = 0;
   const sandbox = vm.createContext({
+    readStatsTracker: { setOwnerId() {} },
     Date: class extends Date { static now() { return clock.now; } },
     systemDateTime: { TimeType: { STARTUP: 0 }, getUptime: () => clock.uptime },
     preferences: { getPreferences: async () => ({ put: async () => {}, delete: async () => {}, flush: async () => {} }) },

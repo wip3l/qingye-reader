@@ -27,11 +27,13 @@ export class ThemeTypographyDraft {
     const target = ThemeTypographyDraft.draft;
     if (!target) return;
     target.fontSize = source.fontSize || target.fontSize;
+    target.fontWeight = source.fontWeight;
     target.bodyFontMode = source.bodyFontMode;
     target.bodyFontFamily = source.bodyFontFamily || '';
     target.titleFontMode = source.titleFontMode;
     target.titleFontFamily = source.titleFontFamily || '';
     target.titleFontSize = source.titleFontSize;
+    target.titleFontWeight = source.titleFontWeight;
     target.regexFontEnabled = source.regexFontEnabled;
     target.regexFontPattern = source.regexFontPattern || '';
     target.regexFontMode = source.regexFontMode;

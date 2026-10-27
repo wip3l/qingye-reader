@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/tts.test.js dist/sync.test.js dist/ttsRuntime.test.js dist/security.test.js dist/profileRoutes.test.js dist/themeCatalog.test.js dist/superThemeService.test.js dist/sessionTokens.test.js dist/membershipPolicy.test.js dist/membershipService.test.js dist/membershipRoutes.test.js dist/cloudFileService.test.js dist/comicColorModelRoutes.test.js scripts/comic-color-model-publish.test.mjs scripts/source-quota.test.mjs scripts/cloud-quota.test.mjs scripts/maintenance.test.mjs scripts/super-theme-admin-migration.test.mjs",
+    "test": "npm run build && node --test dist/tts.test.js dist/sync.test.js dist/readingStats.test.js dist/ttsRuntime.test.js dist/security.test.js dist/profileRoutes.test.js dist/themeCatalog.test.js dist/superThemeService.test.js dist/sessionTokens.test.js dist/membershipPolicy.test.js dist/membershipService.test.js dist/membershipRoutes.test.js dist/cloudFileService.test.js dist/comicColorModelRoutes.test.js scripts/comic-color-model-publish.test.mjs scripts/source-quota.test.mjs scripts/cloud-quota.test.mjs scripts/maintenance.test.mjs scripts/super-theme-admin-migration.test.mjs",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts"
   },

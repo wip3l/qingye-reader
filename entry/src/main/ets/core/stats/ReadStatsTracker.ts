@@ -1,5 +1,7 @@
 import { Context } from '@kit.AbilityKit';
+import { util } from '@kit.ArkTS';
 import { appDb, ReadStatsEntry } from '../../model/data/AppDatabase';
+import { ReadStatsDevice } from './ReadStatsDevice';
 
 /**
  * 阅读时长计时器（进程级单例）。
@@ -24,6 +26,9 @@ export class ReadStatsTracker {
   private segmentStart: number = 0;
   private flushTimerId: number = -1;
   private dbReady: boolean = false;
+  private ownerId: string = '';
+  private pendingEntries: ReadStatsEntry[] = [];
+  private writeTask: Promise<void> = Promise.resolve();
 
   static getInstance(): ReadStatsTracker {
     if (!ReadStatsTracker.instance) {
@@ -34,6 +39,13 @@ export class ReadStatsTracker {
 
   init(context: Context): void {
     this.context = context;
+  }
+
+  /** 登录/退出时先结算原归属，游客记录不会自动转移给新账号。 */
+  setOwnerId(ownerId: string): void {
+    if (this.ownerId === ownerId) return;
+    this.settleCurrentSegment(Date.now());
+    this.ownerId = ownerId;
   }
 
   /** 阅读通道：reader 页可见时传入当前书，隐藏/销毁时传空串。 */
@@ -60,6 +72,12 @@ export class ReadStatsTracker {
   /** 立即结算当前段（进程退出前调用，尽量减少丢数）。 */
   flush(): void {
     this.settleCurrentSegment(Date.now());
+    this.scheduleWrite();
+  }
+
+  async flushAndWait(): Promise<void> {
+    this.flush();
+    await this.writeTask;
   }
 
   private effectiveBookUrl(): string {
@@ -87,6 +105,11 @@ export class ReadStatsTracker {
       const durationMs = segmentEnd - cursor;
       if (durationMs > 0) {
         const entry = new ReadStatsEntry();
+        entry.recordId = util.generateRandomUUID();
+        entry.ownerId = this.ownerId;
+        entry.deviceName = ReadStatsDevice.displayName();
+        entry.startedAt = cursor;
+        entry.timezoneOffset = new Date(cursor).getTimezoneOffset();
         entry.dayKey = ReadStatsTracker.dayKeyOf(cursor);
         entry.bookUrl = this.currentBookUrl;
         entry.durationMs = durationMs;
@@ -97,21 +120,27 @@ export class ReadStatsTracker {
     }
     this.segmentStart = this.currentBookUrl ? now : 0;
     if (entries.length > 0) {
-      this.writeEntries(entries);
+      this.pendingEntries.push(...entries);
+      this.scheduleWrite();
     }
   }
 
-  private async writeEntries(entries: ReadStatsEntry[]): Promise<void> {
-    try {
+  private scheduleWrite(): void {
+    this.writeTask = this.writeTask.catch(() => {}).then(async (): Promise<void> => {
+      if (!this.context || this.pendingEntries.length === 0) return;
       if (!this.dbReady) {
-        if (!this.context) return;
         await appDb.init(this.context);
         this.dbReady = true;
       }
+      const deviceId = await ReadStatsDevice.id(this.context);
+      const entries = this.pendingEntries.slice();
+      entries.forEach((entry: ReadStatsEntry): void => { entry.deviceId = deviceId; });
       await appDb.addReadStats(entries);
-    } catch (error) {
+      this.pendingEntries.splice(0, entries.length);
+    });
+    this.writeTask.catch((error: Error): void => {
       console.warn('[ReadStats] 阅读时长入库失败', error);
-    }
+    });
   }
 
   private updateFlushTimer(): void {

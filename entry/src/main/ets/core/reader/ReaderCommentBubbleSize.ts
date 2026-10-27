@@ -1,6 +1,6 @@
 /** Paragraph bubble size in percent; chapter comments retain their original size. */
 export class ReaderCommentBubbleSize {
-  static readonly DEFAULT: number = 100;
+  static readonly DEFAULT: number = 80;
   static readonly MIN: number = 10;
   static readonly MAX: number = 200;
 

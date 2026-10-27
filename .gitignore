@@ -36,6 +36,7 @@ tmp/
 # ohpm 为模块依赖生成的链接目录
 /entry/oh_modules/
 /entry/.test/
+/entry/src/ohosTest/resources/rawfile/reader-font-fixture.ttf
 /.hvigor
 /.appanalyzer
 server/node_modules/

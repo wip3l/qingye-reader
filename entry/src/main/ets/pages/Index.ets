@@ -1,4 +1,5 @@
 import { router, window } from '@kit.ArkUI';
+import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { webview } from '@kit.ArkWeb';
 import { WebRuntimeAvailability } from '../utils/WebRuntimeAvailability';
@@ -6,7 +7,7 @@ import { HdsAnimationMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { Book, BookChapter, BookSourceStageWebRuntime } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookFetchRuntimeHost } from '../components/WebBookFetchRuntimeHost';
-import { syncSystemSafeAreas } from '../utils/SystemBars';
+import { syncSystemSafeAreas, syncDesktopTitleBar } from '../utils/SystemBars';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { RecentReadShortcut } from '../utils/RecentReadShortcut';
@@ -772,7 +773,9 @@ struct Index {
     .barMode(BarMode.Fixed)
     .barHeight(this.bookshelfMultiSelectActive ? 0 : 56)
     .barOverlap(true)
-    .borderRadius(30)
+    // Desktop already clips the entire window to its native outline. A second 30vp
+    // content radius cuts away the header backdrop inside the smaller window corners.
+    .borderRadius(deviceInfo.deviceType === '2in1' ? 0 : 30)
     .clip(true)
     .barFloatingStyle({
       systemMaterialEffect: {
@@ -948,6 +951,7 @@ struct Index {
       mainWindow.setWindowBackgroundColor(bg);
       mainWindow.setWindowLayoutFullScreen(true);
       mainWindow.setWindowSystemBarEnable(['navigation', 'status']);
+      syncDesktopTitleBar(mainWindow, this.appDarkMode);
       syncSystemSafeAreas(mainWindow);
       mainWindow.setWindowSystemBarProperties({
         statusBarColor: '#00000000',

@@ -24,6 +24,7 @@ class BookSourceDebugExportReport {
   sourceUrl: string = '';
   sourceName: string = '';
   stage: string = '';
+  summary: string[] = [];
   session: BookSourceDebugSession = new BookSourceDebugSession();
 }
 
@@ -32,6 +33,7 @@ class BookSourceDebugClipboardReport {
   sourceUrl: string = '';
   stage: string = '';
   status: string = '';
+  summary: string[] = [];
   session: BookSourceDebugSession = new BookSourceDebugSession();
   content: string = '';
 }
@@ -45,6 +47,7 @@ struct BookSourceDebugPage {
   @State keyword: string = '';
   @State stage: string = 'full';
   @State running: boolean = false;
+  @State checkLargeToc: boolean = false;
   @State status: string = '准备就绪';
   @State session: BookSourceDebugSession = new BookSourceDebugSession();
   @State keyboardInset: number = 0;
@@ -171,6 +174,15 @@ struct BookSourceDebugPage {
       TextInput({ text: this.keyword, placeholder: this.stageInputPlaceholder() })
         .height(44).width('100%').fontColor(this.primaryTextColor())
         .backgroundColor(this.inputColor()).onChange((value: string) => this.keyword = value)
+      if (this.stage === 'full' || this.stage === SourceRuntimeStage.TOC) {
+        Row({ space: AppSpacing.MD }) {
+          Text(this.checkLargeToc ? '目录检查：最多 3000 章' : '目录检查：前 32 章')
+            .fontSize(AppFontSize.BODY).fontColor(this.subTextColor()).layoutWeight(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.checkLargeToc })
+            .enabled(!this.running).selectedColor(this.accentColor())
+            .onChange((value: boolean): void => { this.checkLargeToc = value; })
+        }.width('100%')
+      }
       Row({ space: AppSpacing.MD }) {
         Button(this.running ? '取消调试' : '开始调试', { type: ButtonType.Capsule })
           .layoutWeight(1).height(44).enabled(this.running || !!this.source.bookSourceUrl)
@@ -260,17 +272,20 @@ struct BookSourceDebugPage {
         .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
         .copyOption(CopyOptions.LocalDevice)
       ForEach(step.requests, (item: BookSourceDebugNetworkTrace) => {
-        Text(`${item.method} ${item.url}\nHTTP ${item.statusCode} · ${item.responseBytes} 字符 · ${item.elapsedMs}ms${item.error ? `\n${item.error}` : ''}`)
+        Text(`${item.requestId} ${item.method} ${item.url}\n${item.transport} · HTTP ${item.statusCode} · ${item.responseChars} 字符 · ${item.elapsedMs}ms${item.error ? `\n${item.error}` : ''}`)
           .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
           .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
           .copyOption(CopyOptions.LocalDevice)
+        Text(`尝试：${item.attempts || item.transport} · 策略重试 ${item.retryAttempt} 次${item.retryReason ? '\n' + item.retryReason : ''}\n传给传输层的请求头：${JSON.stringify(item.requestHeaders)}\n响应头：${item.headersAvailable ? JSON.stringify(item.responseHeaders) : '当前通道未取得'}\n网络字节数：${item.responseBytes >= 0 ? item.responseBytes : '未测量'}`)
+          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
+          .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE).copyOption(CopyOptions.LocalDevice)
         if (item.bodyPreview) {
           Text(`响应预览：${item.bodyPreview}`).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
             .width('100%').maxLines(8)
             .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
             .copyOption(CopyOptions.LocalDevice)
         }
-      }, (item: BookSourceDebugNetworkTrace) => `${item.method}_${item.url}_${item.elapsedMs}`)
+      }, (item: BookSourceDebugNetworkTrace) => `${item.requestId}_${item.method}_${item.url}_${item.elapsedMs}`)
       ForEach(step.rules, (item: BookSourceDebugRuleTrace) => {
         Text(`${item.field} [${item.ruleType}] 匹配 ${item.matchedCount}/${item.inputCount} · ${item.elapsedMs}ms\n规则：${item.rule}${item.error ? `\n${item.error}` : ''}${item.outputPreview ? `\n结果：${item.outputPreview}` : ''}`)
           .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
@@ -413,7 +428,9 @@ struct BookSourceDebugPage {
   private async runTocDebug(debug: BookSourceDebugContext): Promise<void> {
     const book = this.createDebugBook();
     debug.beginStep(SourceRuntimeStage.TOC, '书籍目录');
-    const chapters = await new WebBookService().getChapterList(this.source, book, 32, false, debug);
+    const chapterLimit = this.checkLargeToc ? 3000 : 32;
+    debug.setOutput('chapterLimit', String(chapterLimit));
+    const chapters = await new WebBookService().getChapterList(this.source, book, chapterLimit, false, debug);
     debug.setOutput('chapterCount', String(chapters.length));
     if (chapters.length > 0) {
       debug.setOutput('firstChapter', chapters[0].title);
@@ -473,7 +490,9 @@ struct BookSourceDebugPage {
     debug.finishStep(fullBook.name || fullBook.tocUrl ? 'passed' : 'failed',
       fullBook.name || fullBook.tocUrl ? '' : '详情未提取出书籍信息');
     debug.beginStep(SourceRuntimeStage.TOC, '书籍目录');
-    const chapters = await service.getChapterList(this.source, fullBook, 32, false, debug);
+    const chapterLimit = this.checkLargeToc ? 3000 : 32;
+    debug.setOutput('chapterLimit', String(chapterLimit));
+    const chapters = await service.getChapterList(this.source, fullBook, chapterLimit, false, debug);
     debug.setOutput('chapterCount', String(chapters.length));
     debug.finishStep(chapters.length > 0 ? 'passed' : 'failed', chapters.length > 0 ? '' : '目录为空');
     if (chapters.length === 0) return;
@@ -608,6 +627,7 @@ struct BookSourceDebugPage {
     report.sourceUrl = this.source.bookSourceUrl || this.sourceUrl;
     report.stage = this.stage;
     report.status = this.status;
+    report.summary = this.reportSummary();
     report.session = this.session;
     report.content = this.debugContent;
     const serialized = JSON.stringify(report, null, 2);
@@ -629,6 +649,21 @@ struct BookSourceDebugPage {
   }
   private publishSession(debug: BookSourceDebugContext): void {
     this.session = JSON.parse(JSON.stringify(debug.session)) as BookSourceDebugSession;
+  }
+
+  private reportSummary(): string[] {
+    const lines: string[] = [`${this.session.sessionId} · ${this.session.status} · 全链路 ${this.session.elapsedMs} ms`];
+    for (const step of this.session.steps.slice(0, 8)) {
+      const chapterCount = step.outputs['chapterCount'];
+      lines.push(`${step.stage} · ${step.status} · 阶段 ${step.elapsedMs} ms` +
+        (chapterCount ? ` · chapterCount=${chapterCount} · 检查上限=${step.outputs['chapterLimit'] || '未知'}` : ''));
+      const timings = step.rules.filter((rule: BookSourceDebugRuleTrace): boolean =>
+        rule.ruleType === 'script' && rule.rule === 'timing').slice(0, 2);
+      for (const timing of timings) {
+        lines.push(`${timing.field.substring(0, 80)} · ${timing.outputPreview.substring(0, 180)}`);
+      }
+    }
+    return lines;
   }
   private hasDebugReport(): boolean {
     return this.session.steps.length > 0 || this.session.logs.length > 0;
@@ -656,6 +691,7 @@ struct BookSourceDebugPage {
       report.sourceUrl = BookSourceDebugRedactor.url(this.source.bookSourceUrl || this.sourceUrl);
       report.sourceName = this.source.bookSourceName || BookSourceDebugRedactor.url(session.sourceName);
       report.stage = this.stage;
+      report.summary = this.reportSummary();
       report.session = session;
       const json = JSON.stringify(report, null, 2);
       const bytes = new util.TextEncoder().encodeInto(json);

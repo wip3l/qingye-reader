@@ -1,4 +1,6 @@
 import { router } from '@kit.ArkUI';
+import { ReaderFontWeightStepper } from '../components/reader/ReaderFontWeightStepper';
+import { ReaderWeightedText, ReaderWeightedTextSpan } from '../components/reader/ReaderWeightedText';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ReaderFontHelper, ReaderFontItem } from '../utils/ReaderFontHelper';
@@ -62,7 +64,7 @@ struct ReaderFontSettingsPage {
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('accountEntitlementsRevision') accountEntitlementsRevision: number = 0;
-  // 只用于预览；草稿模式下不能写回全局的字体粗细。
+  // 正文排版与阅读字体共用 fontWeight；主题草稿仍只提交到草稿。
   @State readerFontWeight: number = 400;
   @State readerFontSize: number = 20;
   @State readerBodyFontMode: string = 'global';
@@ -70,6 +72,7 @@ struct ReaderFontSettingsPage {
   @State readerTitleFontMode: string = 'global';
   @State readerTitleFontFamily: string = '';
   @State readerTitleFontSize: number = 22;
+  @State readerTitleFontWeight: number = 600;
   @State readerRegexFontEnabled: boolean = false;
   @State readerRegexFontPattern: string = '';
   @State readerRegexFontMode: string = 'global';
@@ -160,6 +163,7 @@ struct ReaderFontSettingsPage {
       this.readerTitleFontMode = settings.titleFontMode;
       this.readerTitleFontFamily = settings.titleFontFamily;
       this.readerTitleFontSize = settings.titleFontSize;
+      this.readerTitleFontWeight = settings.titleFontWeight;
       this.readerRegexFontEnabled = settings.regexFontEnabled;
       this.readerRegexFontPattern = settings.regexFontPattern;
       this.readerRegexFontMode = settings.regexFontMode;
@@ -201,6 +205,12 @@ struct ReaderFontSettingsPage {
         this.saveSettings();
       })
       this.bodyFontSizeStepper()
+      ReaderFontWeightStepper({ value: this.readerFontWeight, scope: '正文',
+        textColor: this.primaryTextColor(), disabledColor: this.subTextColor(), dividerColor: this.settingsDividerColor(),
+        onChange: (value: number) => {
+          this.readerFontWeight = value;
+          this.saveSettings();
+        } })
       this.bodyPreviewItem()
     }
     .width('calc(100% - 24vp)')
@@ -217,6 +227,12 @@ struct ReaderFontSettingsPage {
         this.saveSettings();
       })
       this.titleFontSizeStepper()
+      ReaderFontWeightStepper({ value: this.readerTitleFontWeight, scope: '标题',
+        textColor: this.primaryTextColor(), disabledColor: this.subTextColor(), dividerColor: this.settingsDividerColor(),
+        onChange: (value: number) => {
+          this.readerTitleFontWeight = value;
+          this.saveSettings();
+        } })
       this.titlePreviewItem()
     }
     .width('calc(100% - 24vp)')
@@ -251,11 +267,13 @@ struct ReaderFontSettingsPage {
     }
     const settings = new ReaderSettings();
     settings.fontSize = this.readerFontSize;
+    settings.fontWeight = this.readerFontWeight;
     settings.bodyFontMode = this.normalizeFontMode(this.readerBodyFontMode);
     settings.bodyFontFamily = this.readerBodyFontFamily;
     settings.titleFontMode = this.normalizeFontMode(this.readerTitleFontMode);
     settings.titleFontFamily = this.readerTitleFontFamily;
     settings.titleFontSize = this.readerTitleFontSize;
+    settings.titleFontWeight = this.readerTitleFontWeight;
     settings.regexFontEnabled = this.readerRegexFontEnabled;
     settings.regexFontPattern = this.readerRegexFontPattern;
     settings.regexFontMode = this.normalizeFontMode(this.readerRegexFontMode);
@@ -871,6 +889,11 @@ struct ReaderFontSettingsPage {
           });
         })
         this.regexFontSizeStepper(index)
+        ReaderFontWeightStepper({ value: this.regexRuleAt(index).fontWeight, scope: '规则', nested: true,
+          textColor: this.primaryTextColor(), disabledColor: this.subTextColor(), dividerColor: this.settingsDividerColor(),
+          onChange: (value: number) => {
+            this.updateRegexRule(index, (target: ReaderRegexFontRule) => { target.fontWeight = value; });
+          } })
 
         this.regexEmphasisSettings(index, refreshKey)
 
@@ -891,14 +914,10 @@ struct ReaderFontSettingsPage {
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .width('100%')
-      Text('这是一段阅读正文预览，文字会跟随当前正文字体设置显示。')
-        .fontSize(this.readerFontSize)
-        .fontWeight(this.readerFontWeight)
-        .fontFamily(this.bodyPreviewFontFamily())
-        .fontColor(this.primaryTextColor())
+      ReaderWeightedText({ spans: [ReaderWeightedTextSpan.create(this.getUIContext(),
+        '这是一段阅读正文预览，文字会跟随当前正文字体设置显示。', this.readerFontSize,
+        this.bodyPreviewFontFamily(), this.primaryTextColor())], weight: this.readerFontWeight, maxLines: 2 })
         .width('100%')
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('calc(100% - 32vp)')
     .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
@@ -914,13 +933,10 @@ struct ReaderFontSettingsPage {
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .width('100%')
-      Text('第一章 风起时')
-        .fontSize(this.readerTitleFontSize)
-        .fontFamily(this.titlePreviewFontFamily())
-        .fontColor(this.primaryTextColor())
+      ReaderWeightedText({ spans: [ReaderWeightedTextSpan.create(this.getUIContext(),
+        '第一章 风起时', this.readerTitleFontSize, this.titlePreviewFontFamily(), this.primaryTextColor())],
+        weight: this.readerTitleFontWeight, maxLines: 2 })
         .width('100%')
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('calc(100% - 32vp)')
     .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
@@ -956,14 +972,7 @@ struct ReaderFontSettingsPage {
   }
 
   normalizeColorInput(color: string, fallback: string): string {
-    const value = (color || '').trim();
-    if (/^#[0-9a-fA-F]{6}$/.test(value)) {
-      return value.toUpperCase();
-    }
-    if (/^[0-9a-fA-F]{6}$/.test(value)) {
-      return `#${value}`.toUpperCase();
-    }
-    return fallback;
+    return ReaderRegexBubbleStyleResolver.normalizeColor(color, fallback);
   }
 
   regexRuleAt(index: number): ReaderRegexFontRule {
@@ -1162,61 +1171,35 @@ struct ReaderFontSettingsPage {
   }
 
   @Builder
-  regexPreviewSliceItem(slice: ReaderRegexPreviewSlice, index: number) {
-    if (this.shouldUseRegexPreviewDecoration(slice, index)) {
-      ContainerSpan() {
-        ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.regexPreviewBubbleStyleId(index)))
-          .width(this.regexPreviewBubbleCapSize(index))
-          .height(this.regexPreviewBubbleCapSize(index))
-          .objectFit(ImageFit.Contain)
-          .verticalAlign(ImageSpanAlignment.CENTER)
-        Span(slice.text)
-          .fontSize(this.regexRuleAt(index).fontSize)
-          .fontWeight(this.readerFontWeight)
-          .fontFamily(this.previewFontFamily(this.regexRuleAt(index).fontMode, this.regexRuleAt(index).fontFamily))
-          .fontColor(this.regexPreviewTextColor(true, index))
-          .textShadow(this.regexPreviewTextShadow(true, index))
-          .decoration(this.regexPreviewDecoration(true, index))
-        ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.regexPreviewBubbleStyleId(index)))
-          .width(this.regexPreviewBubbleCapSize(index))
-          .height(this.regexPreviewBubbleCapSize(index))
-          .objectFit(ImageFit.Contain)
-          .verticalAlign(ImageSpanAlignment.CENTER)
-          .rotate({ angle: 180 })
-      }
-      .textBackgroundStyle(this.regexPreviewBackgroundStyle(true, index))
-    } else {
-      Span(slice.text)
-        .fontSize(slice.highlighted ? this.regexRuleAt(index).fontSize : this.readerFontSize)
-        .fontWeight(this.readerFontWeight)
-        .fontFamily(slice.highlighted ?
-          this.previewFontFamily(this.regexRuleAt(index).fontMode, this.regexRuleAt(index).fontFamily) :
-          this.previewFontFamily(this.readerBodyFontMode, this.readerBodyFontFamily))
-        .fontColor(this.regexPreviewTextColor(slice.highlighted, index))
-        .textBackgroundStyle(this.regexPreviewBackgroundStyle(slice.highlighted, index))
-        .textShadow(this.regexPreviewTextShadow(slice.highlighted, index))
-        .decoration(this.regexPreviewDecoration(slice.highlighted, index))
-    }
-  }
-
-  @Builder
   regexRulePreviewItem(index: number, refreshKey: number) {
     Column({ space: AppSpacing.SM }) {
       Text('规则预览')
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .width('100%')
-      Text() {
-        ForEach(this.regexPreviewSlices(index, refreshKey), (slice: ReaderRegexPreviewSlice) => {
-          this.regexPreviewSliceItem(slice, index)
-        }, (slice: ReaderRegexPreviewSlice) => slice.key)
-      }
+      ReaderWeightedText({ spans: this.weightedRegexPreviewSpans(index, refreshKey),
+        weight: this.readerFontWeight, maxLines: 3 })
       .width('100%')
-      .maxLines(3)
-      .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('100%')
     .padding({ top: AppSpacing.XS, bottom: AppSpacing.XXS })
+  }
+
+  weightedRegexPreviewSpans(index: number, refreshKey: number): ReaderWeightedTextSpan[] {
+    const rule = this.regexRuleAt(index);
+    return this.regexPreviewSlices(index, refreshKey).map((slice: ReaderRegexPreviewSlice): ReaderWeightedTextSpan => {
+      const span = ReaderWeightedTextSpan.create(this.getUIContext(), slice.text,
+        slice.highlighted ? rule.fontSize : this.readerFontSize,
+        slice.highlighted ? this.previewFontFamily(rule.fontMode, rule.fontFamily) : this.bodyPreviewFontFamily(),
+        this.regexPreviewTextColor(slice.highlighted, index), 0, 0,
+        slice.highlighted ? this.resolvedRegexEmphasis(index) : undefined);
+      span.weight = slice.highlighted ? rule.fontWeight : this.readerFontWeight;
+      if (this.shouldUseRegexPreviewDecoration(slice, index)) {
+        span.capStyleId = this.regexPreviewBubbleStyleId(index);
+        span.capSizePx = this.getUIContext().vp2px(this.regexPreviewBubbleCapSize(index));
+      }
+      return span;
+    });
   }
 
   emphasisModeOptions(): SelectOption[] {
@@ -1365,6 +1348,7 @@ struct ReaderFontSettingsPage {
         })
         if (this.regexRuleAt(index).customTextColorEnabled) {
           AdaptiveColorPicker({
+            allowAlpha: true,
             value: this.regexRuleAt(index).customTextColor,
             placeholder: this.accentColor(),
             appDarkMode: this.appDarkMode,
@@ -1390,6 +1374,7 @@ struct ReaderFontSettingsPage {
           })
         if (this.regexRuleAt(index).customHighlightEnabled) {
           AdaptiveColorPicker({
+            allowAlpha: true,
             value: this.regexRuleAt(index).customHighlightColor,
             placeholder: this.accentColor(),
             appDarkMode: this.appDarkMode,
@@ -1448,6 +1433,7 @@ struct ReaderFontSettingsPage {
           .width('100%')
           .alignItems(VerticalAlign.Center)
           AdaptiveColorPicker({
+            allowAlpha: true,
             value: this.regexRuleAt(index).customBubbleColor,
             placeholder: this.accentColor(),
             appDarkMode: this.appDarkMode,

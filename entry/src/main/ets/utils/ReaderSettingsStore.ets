@@ -73,6 +73,7 @@ export class ReaderSettings {
   titleFontMode: string = 'global';
   titleFontFamily: string = '';
   titleFontSize: number = 22;
+  titleFontWeight: number = 600;
   regexFontEnabled: boolean = false;
   regexFontPattern: string = '';
   regexFontMode: string = 'global';
@@ -162,6 +163,7 @@ export class ReaderSettingsStore {
   static readonly KEY_TITLE_FONT_MODE: string = 'readerTitleFontMode';
   static readonly KEY_TITLE_FONT_FAMILY: string = 'readerTitleFontFamily';
   static readonly KEY_TITLE_FONT_SIZE: string = 'readerTitleFontSize';
+  static readonly KEY_TITLE_FONT_WEIGHT: string = 'readerTitleFontWeight';
   static readonly KEY_REGEX_FONT_ENABLED: string = 'readerRegexFontEnabled';
   static readonly KEY_REGEX_FONT_PATTERN: string = 'readerRegexFontPattern';
   static readonly KEY_REGEX_FONT_MODE: string = 'readerRegexFontMode';
@@ -440,6 +442,7 @@ export class ReaderSettingsStore {
     settings.titleFontMode = ReaderSettingsStore.normalizeFontMode(await ReaderSettingsStore.getString(store, ReaderSettingsStore.KEY_TITLE_FONT_MODE, 'global'));
     settings.titleFontFamily = await ReaderSettingsStore.getString(store, ReaderSettingsStore.KEY_TITLE_FONT_FAMILY, '');
     settings.titleFontSize = await ReaderSettingsStore.getNumber(store, ReaderSettingsStore.KEY_TITLE_FONT_SIZE, 22, 'fontSize');
+    settings.titleFontWeight = await ReaderSettingsStore.getNumber(store, ReaderSettingsStore.KEY_TITLE_FONT_WEIGHT, 600, 'fontWeight');
     settings.regexFontEnabled = await ReaderSettingsStore.getBoolean(store, ReaderSettingsStore.KEY_REGEX_FONT_ENABLED, false);
     settings.regexFontPattern = await ReaderSettingsStore.getString(store, ReaderSettingsStore.KEY_REGEX_FONT_PATTERN, '');
     settings.regexFontMode = ReaderSettingsStore.normalizeFontMode(await ReaderSettingsStore.getString(store, ReaderSettingsStore.KEY_REGEX_FONT_MODE, 'global'));
@@ -768,11 +771,13 @@ export class ReaderSettingsStore {
     const current = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
     const previousRules = ReaderSettingsStore.fontRulesKey(current);
     current.fontSize = ReaderSettingsStore.normalizeFontSize(settings.fontSize || current.fontSize);
+    current.fontWeight = ReaderFontWeight.normalize(settings.fontWeight);
     current.bodyFontMode = ReaderSettingsStore.normalizeFontMode(settings.bodyFontMode);
     current.bodyFontFamily = settings.bodyFontFamily || '';
     current.titleFontMode = ReaderSettingsStore.normalizeFontMode(settings.titleFontMode);
     current.titleFontFamily = settings.titleFontFamily || '';
     current.titleFontSize = ReaderSettingsStore.normalizeFontSize(settings.titleFontSize);
+    current.titleFontWeight = ReaderFontWeight.normalize(settings.titleFontWeight ?? 600);
     ReaderSettingsStore.updateFontRules(current, settings);
     ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(current);
     ReaderSettingsStore.applyLayoutToStorage(current);
@@ -838,11 +843,13 @@ export class ReaderSettingsStore {
     const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
     if (!rulesOnly) {
       await store.put(ReaderSettingsStore.KEY_FONT_SIZE, current.fontSize);
+      await store.put(ReaderSettingsStore.KEY_FONT_WEIGHT, current.fontWeight);
       await store.put(ReaderSettingsStore.KEY_BODY_FONT_MODE, current.bodyFontMode);
       await store.put(ReaderSettingsStore.KEY_BODY_FONT_FAMILY, current.bodyFontFamily);
       await store.put(ReaderSettingsStore.KEY_TITLE_FONT_MODE, current.titleFontMode);
       await store.put(ReaderSettingsStore.KEY_TITLE_FONT_FAMILY, current.titleFontFamily);
       await store.put(ReaderSettingsStore.KEY_TITLE_FONT_SIZE, current.titleFontSize);
+      await store.put(ReaderSettingsStore.KEY_TITLE_FONT_WEIGHT, current.titleFontWeight);
     }
     await store.put(ReaderSettingsStore.KEY_REGEX_FONT_ENABLED, current.regexFontEnabled);
     await store.put(ReaderSettingsStore.KEY_REGEX_FONT_PATTERN, current.regexFontPattern);
@@ -1083,6 +1090,7 @@ export class ReaderSettingsStore {
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_TITLE_FONT_MODE, settings.titleFontMode);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_TITLE_FONT_FAMILY, settings.titleFontFamily);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_TITLE_FONT_SIZE, settings.titleFontSize);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_TITLE_FONT_WEIGHT, settings.titleFontWeight);
     ReaderSettingsStore.applyRegexFontToStorage(settings);
   }
 
@@ -1250,6 +1258,7 @@ export class ReaderSettingsStore {
     target.titleFontMode = source.titleFontMode;
     target.titleFontFamily = source.titleFontFamily;
     target.titleFontSize = source.titleFontSize;
+    target.titleFontWeight = source.titleFontWeight;
     ReaderSettingsStore.updateFontRules(target, source);
   }
 
@@ -1752,6 +1761,7 @@ export class ReaderSettingsStore {
     settings.titleFontMode = ReaderSettingsStore.normalizeFontMode(source.titleFontMode);
     settings.titleFontFamily = source.titleFontFamily || '';
     settings.titleFontSize = ReaderSettingsStore.normalizeFontSize(source.titleFontSize || 22);
+    settings.titleFontWeight = ReaderFontWeight.normalize(source.titleFontWeight ?? 600);
     settings.regexFontEnabled = source.regexFontEnabled;
     settings.regexFontPattern = source.regexFontPattern || '';
     settings.regexFontMode = ReaderSettingsStore.normalizeFontMode(source.regexFontMode);
@@ -1895,6 +1905,7 @@ export class ReaderSettingsStore {
     settings.titleFontMode = ReaderSettingsStore.normalizeFontMode(AppStorage.get<string>(ReaderSettingsStore.KEY_TITLE_FONT_MODE) || 'global');
     settings.titleFontFamily = AppStorage.get<string>(ReaderSettingsStore.KEY_TITLE_FONT_FAMILY) || '';
     settings.titleFontSize = ReaderSettingsStore.normalizeFontSize(AppStorage.get<number>(ReaderSettingsStore.KEY_TITLE_FONT_SIZE) ?? 22);
+    settings.titleFontWeight = ReaderFontWeight.normalize(AppStorage.get<number>(ReaderSettingsStore.KEY_TITLE_FONT_WEIGHT) ?? 600);
     settings.regexFontEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_REGEX_FONT_ENABLED) ?? false;
     settings.regexFontPattern = AppStorage.get<string>(ReaderSettingsStore.KEY_REGEX_FONT_PATTERN) || '';
     settings.regexFontMode = ReaderSettingsStore.normalizeFontMode(AppStorage.get<string>(ReaderSettingsStore.KEY_REGEX_FONT_MODE) || 'global');

@@ -8,6 +8,7 @@ function fixture() {
   const clock = { now: 1800000000000 };
   const values = new Map(), stores = new Map(), deletedProfiles = [];
   const sandbox = vm.createContext({
+    readStatsTracker: { setOwnerId() {} },
     Date: class extends Date { static now() { return clock.now; } },
     preferences: { getPreferences: async (_context, name) => {
       if (!stores.has(name)) stores.set(name, new Map());

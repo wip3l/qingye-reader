@@ -9,7 +9,7 @@ function fixture(api = 26) {
   const http = {
     HttpProtocol: { HTTP1_1: 1 }, HttpDataType: { ARRAY_BUFFER: 0 },
     RequestMethod: { GET: 'GET', HEAD: 'HEAD', POST: 'POST' },
-    InterceptorType: { FINAL_RESPONSE: 'final' },
+    InterceptorType: { FINAL_RESPONSE: 'final', REDIRECTION: 'redirect' },
     HttpInterceptorChain: class {
       addChain(chain) { this.chain = chain; return true; }
       apply(client) { if (!state.attach) return false; client.chain = this.chain; return true; }
@@ -19,7 +19,7 @@ function fixture(api = 26) {
         events: {}, on(name, fn) { this.events[name] = fn; }, off(name) { delete this.events[name]; },
         destroy() { state.destroyed++; this.abort?.(new Error('transport destroyed')); },
         async request(url, options) {
-          calls.push({ url, ...options });
+          calls.push({ url, at: Date.now(), ...options });
           const reply = replies.shift();
           assert.ok(reply, 'unexpected request');
           if (reply.hang || reply.delay) {
@@ -32,10 +32,19 @@ function fixture(api = 26) {
           }
           if (reply.error) throw reply.error;
           const response = { responseCode: reply.status || 200, header: reply.headers || {},
-            result: new TextEncoder().encode(reply.body || 'ok').buffer };
+            result: reply.emptyResult ? undefined : new TextEncoder().encode(reply.body || 'ok').buffer };
+          const requestContext = { url: reply.url || url, header: options.header };
           for (const interceptor of this.chain || []) {
-            assert.equal(await interceptor.interceptorHandle({ url: reply.url || url }, response), true);
+            if (interceptor.interceptorType === 'redirect') {
+              if (![301,302,303,307,308].includes(response.responseCode)) continue;
+              assert.equal(await interceptor.interceptorHandle(requestContext, response), false,
+                'protected requests must stop SDK redirects before the next network request');
+              state.stoppedRedirects=(state.stoppedRedirects || 0)+1;
+              break;
+            }
+            assert.equal(await interceptor.interceptorHandle(requestContext, response), true);
           }
+          state.lastInterceptedHeaders = requestContext.header;
           return response;
         },
         async requestInStream(url, options) {
@@ -50,10 +59,10 @@ function fixture(api = 26) {
     }
   };
   const context = vm.createContext({
-    console, ArrayBuffer, Uint8Array, setTimeout, clearTimeout, setInterval, clearInterval, http,
+    console, ArrayBuffer, Uint8Array, setTimeout, clearTimeout, setInterval, clearInterval, http, url:{URL},
     deviceInfo: { get sdkApiVersion() { return state.api; } },
     util: { TextDecoder: { create: encoding => ({ decodeWithStream: bytes => new TextDecoder(encoding).decode(bytes) }) } },
-    CookieStore: { forSource: () => ({ getCookie: () => '', setCookies: (url, value) => cookies.push({ url, value }), saveAsync() {} }) },
+    CookieStore: { forSource: () => ({ getCookie: () => state.cookie || '', setCookies: (url, value) => cookies.push({ url, value }), saveAsync() {} }) },
     TlsTrustStore: { isTrustedUrl: () => false, isCertificateError: () => false },
     SourceEngineHost: { withWeb: async (_, fn) => { if (state.webGate) await state.webGate; return fn(); }, id: () => 0,
       nativeScripts: () => undefined, nativeParsing: () => undefined, isCancelled: () => false },
@@ -70,7 +79,7 @@ function fixture(api = 26) {
       return 0;
     } }
   });
-  for (const file of ['http/HttpProtocolPolicy.ts', 'http/HttpFinalUrlObserver.ts', 'http/NetworkErrorText.ts',
+  for (const file of ['http/HttpHeaderValues.ts', 'http/HttpRetryPolicy.ts', 'http/HttpProtocolPolicy.ts', 'http/HttpFinalUrlObserver.ts', 'http/NetworkErrorText.ts',
     'http/HttpClient.ts', 'book/BookUrlResolver.ts', 'rule/AnalyzeUrl.ts', 'nativesource/NativeCommentPage.ts']) {
     vm.runInContext(stripTypeScriptTypes(readEtsModule('core/' + file)
       .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, ''), { mode: 'strip' }), context);
@@ -78,7 +87,7 @@ function fixture(api = 26) {
   const service = readEtsModule('core/nativesource/NativeSourceService.ts');
   vm.runInContext(stripTypeScriptTypes(service.slice(service.indexOf('class NativeHost '),
     service.indexOf('export class NativeSourceService')), {mode:'strip'}), context);
-  const classes = vm.runInContext('({HttpClient,HttpProtocolPolicy,NetworkErrorText,AnalyzeUrl,NativeHost})', context);
+  const classes = vm.runInContext('({HttpClient,HttpProtocolPolicy,NetworkErrorText,AnalyzeUrl,NativeHost,HttpRetryPolicy})', context);
   return { ...classes, calls, replies, cookies, traces, state };
 }
 const request = (url = 'https://source.example/chapter') => ({ url, method: 'GET', headers: {} });
@@ -254,4 +263,117 @@ for (const rateLimited of [false, true]) {
   for (let i=0;i<2;i++) await host.fetch({...request(),body:'',charset:'',retry:0,primary:false});
   await assert.rejects(host.fetch({...request(),body:'',charset:'',retry:0,primary:false}),/2 MiB/);
 }
-console.log('network-compatibility-check: policy, transports, native host deadlines/throttling/retries/redirects/browser, inline page budgets, limits and diagnostics passed');
+// Native scripts receive final response headers, even for failed HTTP status codes.
+{
+  const f = fixture();
+  const host = new f.NativeHost({bookSourceUrl:'https://source.example',enabledCookieJar:false},new f.HttpClient(),()=>false);
+  f.replies.push({status:429, body:'限流', headers:{'Retry-After':'1','Content-Type':'text/plain',
+    'Set-Cookie':['a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT','b=2']}});
+  const r = await host.fetch({...request(),headers:{'X-Test-Header':'value'},retry:0});
+  assert.equal(r.ok,false); assert.equal(r.headersAvailable,true);
+  assert.equal(r.headers['retry-after'],'1');
+  assert.equal(r.headers['set-cookie'],'a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT\nb=2');
+  assert.equal(f.calls[0].header['X-Test-Header'],'value');
+  assert.match(f.calls[0].header['User-Agent'],/Mozilla/);
+  const web = await host.fetch({...request(),retry:0,webView:true});
+  assert.equal(web.headersAvailable,false); assert.equal(Object.keys(web.headers).length,0);
+}
+// Managed retry owns replay, honors server delay, and never stacks protocol/browser fallback.
+for (const status of [429,503,403]) {
+  const f=fixture(), client=new f.HttpClient(), analyzer=new f.AnalyzeUrl(null,client);
+  analyzer.setRetryPolicy({times:2,base:20,maxDelay:100});
+  f.replies.push({status},{status:200});
+  const r=await analyzer.fetch('https://source.example/list');
+  assert.equal(f.calls.length,status===403?1:2);
+  assert.equal(r.statusCode,status===403?403:200);
+  if(status!==403) assert.ok(f.calls[1].at-f.calls[0].at>=15);
+}
+{
+  const f=fixture(), analyzer=new f.AnalyzeUrl(null,new f.HttpClient());
+  analyzer.setRetryPolicy({times:3,base:1,maxDelay:5});
+  f.replies.push({status:503,headers:{'Retry-After':'999'}});
+  assert.equal((await analyzer.fetch('https://source.example/list')).statusCode,503);
+  assert.equal(f.calls.length,1,'do not shorten Retry-After to the cap');
+  f.replies.push({error:internal});
+  assert.equal((await analyzer.fetch('https://source.example/list')).statusCode,0);
+  assert.equal(f.calls.length,2,'managed policy disables implicit HTTP1/WebView fallback');
+  assert.equal(f.state.webRequests||0,0);
+  f.replies.push({status:503});
+  await analyzer.fetch('https://source.example/update,{"method":"POST","body":"x"}');
+  assert.equal(f.calls.length,3,'non-idempotent requests are never replayed by object policy');
+}
+{
+  const f=fixture(), analyzer=new f.AnalyzeUrl(null,new f.HttpClient());
+  let cancelled=false;
+  analyzer.setCancelCheck(()=>cancelled).setRetryPolicy({times:3,base:100,maxDelay:100});
+  f.replies.push({status:503});
+  const pending=analyzer.fetch('https://source.example/list');
+  setTimeout(()=>cancelled=true,10);
+  assert.match((await pending).error,/取消/); assert.equal(f.calls.length,1);
+  cancelled=false; analyzer.setRequestTimeout(20);
+  f.replies.push({status:503});
+  assert.match((await analyzer.fetch('https://source.example/list')).error,/超时/);
+  assert.equal(f.calls.length,2);
+}
+{
+  const f=fixture(), analyzer=new f.AnalyzeUrl(null,new f.HttpClient());
+  analyzer.setRetryPolicy({times:2,base:1,maxDelay:10});
+  f.replies.push({status:503},{status:503},{status:503});
+  assert.equal((await analyzer.fetch('https://source.example/list')).statusCode,503);
+  assert.equal(f.calls.length,3);
+  const policy=f.HttpRetryPolicy.parse({times:3,base:10,maxDelay:3000});
+  const now=Date.parse('2026-10-26T00:00:00Z');
+  assert.equal(f.HttpRetryPolicy.delay(policy,0,{'Retry-After':'Mon, 26 Oct 2026 00:00:02 GMT'},now),2000);
+  assert.equal(f.HttpRetryPolicy.delay(policy,2,{'Retry-After':'invalid'},now),40);
+  assert.throws(()=>f.HttpRetryPolicy.parse({times:1,onStatus:[200]}),/onStatus/);
+  assert.throws(()=>f.HttpRetryPolicy.parse({times:1,base:0}),/base/);
+}
+// Model actual SDK redirect timing: no fictitious NETWORK_CONNECT callback on every hop.
+{
+  const f=fixture(); const client=new f.HttpClient();
+  const req={...request(),headers:{'X-Media-Token':'secret',Authorization:'bearer',Accept:'image/*'},protectedHeaderNames:['X-Media-Token']};
+  f.state.cookie='session=test';
+  f.replies.push({status:302,headers:{Location:'/same'},emptyResult:true},
+    {status:307,headers:{Location:'//other.example/image'},emptyResult:true},{});
+  const result=await client.executeBinary(req);
+  assert.equal(result.success,true);
+  assert.equal(result.finalUrl,'https://other.example/image');
+  assert.equal(f.state.stoppedRedirects,2);
+  assert.deepEqual(f.calls.map(c=>c.header['X-Media-Token']),['secret','secret',undefined]);
+  assert.equal(f.calls[2].header.Authorization,undefined);
+  assert.equal(f.calls[2].header.Cookie,undefined,'cross-origin hop must not re-inject source cookies');
+  assert.equal(f.calls[2].header.Accept,'image/*');
+  assert.equal(req.headers['X-Media-Token'],'secret','caller headers remain reusable');
+  const old=fixture(21);
+  assert.match((await new old.HttpClient().executeBinary(req)).error,/API 22/);
+  assert.equal(old.calls.length,0,'unsupported interception fails before transmitting custom credentials');
+  const unavailable=fixture();unavailable.state.attach=false;
+  assert.match((await new unavailable.HttpClient().executeBinary(req)).error,/API 22/);
+  assert.equal(unavailable.calls.length,0);
+}
+// Origin comparisons normalize default ports; returning to the original origin never restores removed credentials.
+{
+  const f=fixture(), req={...request(),headers:{'X-Key':'secret'},protectedHeaderNames:['X-Key']};
+  f.replies.push({status:302,headers:{Location:'https://SOURCE.example:443/same'}},
+    {status:302,headers:{Location:'http://source.example/other'}},
+    {status:302,headers:{Location:'https://source.example/back'}},{});
+  assert.equal((await new f.HttpClient().executeBinary(req)).success,true);
+  assert.deepEqual(f.calls.map(c=>c.header['X-Key']),['secret','secret',undefined,undefined]);
+}
+for (const location of ['https://source.example/chapter','file:///tmp/test','https://user:pass@other.example/image']) {
+  const f=fixture();f.replies.push({status:302,headers:{Location:location}});
+  const result=await new f.HttpClient().executeBinary({...request(),headers:{'X-Key':'secret'},protectedHeaderNames:['X-Key']});
+  assert.equal(result.success,false);assert.ok(result.error);assert.equal(f.calls.length,1);
+}
+{
+  const f=fixture();
+  for(let i=0;i<9;i++)f.replies.push({status:302,headers:{Location:'/hop'+i}});
+  const result=await new f.HttpClient().executeBinary({...request(),headers:{'X-Key':'secret'},protectedHeaderNames:['X-Key']});
+  assert.match(result.error,/8 次/);assert.equal(f.calls.length,9);
+}
+{
+  const f=fixture();f.replies.push({status:302,headers:{Location:'/next'},delay:25},{hang:true});
+  const result=await new f.HttpClient().executeBinary({...request(),headers:{'X-Key':'secret'},protectedHeaderNames:['X-Key'],deadlineAt:Date.now()+70});
+  assert.match(result.error,/超时/);assert.ok(f.calls.length<=2);
+}
+console.log('network-compatibility-check: transports, final headers, managed retry/backoff/cancellation/deadlines, protected media and legacy policies passed');

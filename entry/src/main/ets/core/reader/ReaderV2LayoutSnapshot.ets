@@ -45,6 +45,7 @@ export class ReaderV2LayoutInput {
   fontSizePx: number = 40;
   fontWeight: number = ReaderFontWeight.DEFAULT;
   titleFontSizePx: number = 44;
+  titleFontWeight: number = 600;
   lineSpacingPx: number = 0;
   paragraphSpacingPx: number = 0;
   letterSpacingPx: number = 0;
@@ -67,6 +68,8 @@ export class ReaderV2LayoutInput {
 }
 
 export class ReaderV2LayoutSnapshot {
+  /** Font-box centres relative to the baseline, scoped to this layout/font snapshot. */
+  commentTextCenters: Map<string, number> = new Map<string, number>();
   viewport: ReaderV2Rect = new ReaderV2Rect();
   contentRect: ReaderV2Rect = new ReaderV2Rect();
   columnRects: ReaderV2Rect[] = [];
@@ -74,6 +77,7 @@ export class ReaderV2LayoutSnapshot {
   fontSizePx: number = 40;
   fontWeight: number = ReaderFontWeight.DEFAULT;
   titleFontSizePx: number = 44;
+  titleFontWeight: number = 600;
   lineSpacingPx: number = 0;
   paragraphSpacingPx: number = 0;
   letterSpacingPx: number = 0;
@@ -120,6 +124,7 @@ export class ReaderV2LayoutSnapshot {
     snapshot.fontSizePx = Math.max(1, input.fontSizePx);
     snapshot.fontWeight = ReaderFontWeight.normalize(input.fontWeight);
     snapshot.titleFontSizePx = Math.max(1, input.titleFontSizePx);
+    snapshot.titleFontWeight = ReaderFontWeight.normalize(input.titleFontWeight ?? 600);
     snapshot.lineSpacingPx = Math.max(0, input.lineSpacingPx);
     snapshot.paragraphSpacingPx = Math.max(0, input.paragraphSpacingPx);
     snapshot.letterSpacingPx = input.letterSpacingPx;
@@ -144,7 +149,7 @@ export class ReaderV2LayoutSnapshot {
     const values = [
       snapshot.viewport.width(), snapshot.viewport.height(), snapshot.contentRect.left, snapshot.contentRect.top,
       snapshot.contentRect.right, snapshot.contentRect.bottom, snapshot.columnRects.length,
-      snapshot.fontSizePx, snapshot.fontWeight, snapshot.titleFontSizePx, snapshot.lineSpacingPx, snapshot.paragraphSpacingPx,
+      snapshot.fontSizePx, snapshot.fontWeight, snapshot.titleFontSizePx, snapshot.titleFontWeight, snapshot.lineSpacingPx, snapshot.paragraphSpacingPx,
       snapshot.letterSpacingPx, snapshot.textAlign, snapshot.commentFontSizePx, snapshot.commentBubbleSize, snapshot.commentBubble.identity(),
       snapshot.commentsEnabled ? 1 : 0, snapshot.regexEnabled ? 1 : 0
     ];

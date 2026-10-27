@@ -9,6 +9,7 @@ import { BookSourceInteractionPostProcessor } from './BookSourceInteractionPostP
 import { BookSourceAudioWebRuntime } from './BookSourceAudioWebRuntime';
 import { AudioRuleSupport } from './AudioRuleSupport';
 import { BookSourceMetadataSupport } from './BookSourceMetadataSupport';
+import { VideoPlaybackSource, VideoPlaybackSupport } from './VideoPlaybackSupport';
 
 class ContentPageData {
   content: string = '';
@@ -29,6 +30,27 @@ export class WebBookService {
     for (const ownerId of this.activeContentRuleOwners) {
       RuleExecutionService.get().cancelOwner(ownerId);
     }
+  }
+
+  async getVideoContent(source: BookSource, book: Book, chapter: BookChapter,
+    cancelled: () => boolean): Promise<VideoPlaybackSource> {
+    const video = new VideoPlaybackSource();
+    try {
+      if (NativeSourceService.isNative(source)) {
+        const result = await NativeSourceService.getVideoContent(source, this.http, book, chapter, cancelled);
+        if (cancelled()) return video;
+        video.url = VideoPlaybackSupport.httpUrl(result.text);
+        video.pageUrl = VideoPlaybackSupport.httpUrl(result.videoPage || '');
+        video.headers = result.mediaHeaders;
+        video.error = result.mediaError || '';
+      } else {
+        video.url = VideoPlaybackSupport.httpUrl(await this.getContent(source, book, chapter, cancelled));
+      }
+      if (!video.url && !video.error) video.error = '没有取到有效的视频地址';
+    } catch (error) {
+      if (!cancelled()) video.error = (error as Error).message || '视频地址解析失败';
+    }
+    return video;
   }
 
   private contentRequestCanceled(shouldCancel: (() => boolean) | null): boolean {

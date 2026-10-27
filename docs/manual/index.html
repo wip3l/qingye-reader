@@ -153,7 +153,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
 
 <div class="shell">
   <aside class="toc">
-    <div class="brand"><img src="apple-touch-icon.png" alt="" width="44" height="44"><div><strong>开源轻页</strong><span>使用说明书 · v4.4.933</span></div></div>
+    <div class="brand"><img src="apple-touch-icon.png" alt="" width="44" height="44"><div><strong>开源轻页</strong><span>使用说明书 · v4.4.936</span></div></div>
     <input id="q" type="search" placeholder="搜索说明，如：换源、备份" aria-label="搜索说明内容">
     <nav id="nav" aria-label="章节目录">
       <a href="#start">快速上手</a>
@@ -187,7 +187,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
     <section id="top">
       <h1>开源轻页使用说明书</h1>
       <p class="lead">一款 HarmonyOS 原生阅读应用：自己导入书源或本地文件，在手机、平板和电脑上看小说、看漫画、听书与观看书源提供的视频。</p>
-      <p class="meta"><span>当前版本 <b>4.4.933</b></span><span>文档更新 <b>2026-10-25</b></span><span>系统要求 <b>HarmonyOS 6.0.0 及以上</b></span><span>设备 <b>手机 / 平板 / 2in1 电脑</b></span></p>
+      <p class="meta"><span>当前版本 <b>4.4.936</b></span><span>文档更新 <b>2026-10-26</b></span><span>系统要求 <b>HarmonyOS 6.0.0 及以上</b></span><span>设备 <b>手机 / 平板 / 2in1 电脑</b></span></p>
       <div class="shots">
         <img src="shots/01-shelf.webp" alt="书架：小说、漫画、有声书与视频统一管理" width="1080" height="1920">
         <img src="shots/02-search.webp" alt="在线阅读：多书源搜索与同名结果聚合" width="1080" height="1920">
@@ -886,13 +886,13 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
         <h3>漫画</h3>
         <p>漫画设置在阅读菜单的设置入口中，可调整阅读方式和画面。预缓存统一在“阅读设置”中设置。图片逐张加载并显示，优先处理屏幕上的图片；单张失败时可长按重新加载，不必等待整章。</p>
         <ul>
-          <li><b>AI超分（会员专享）</b>：API 26 起且系统支持时，在设备本地提升漫画显示清晰度，长图分块处理；失败时继续显示原图。</li>
+          <li><b>AI超分（会员专享）</b>：API 26 起且系统支持时，在设备本地提升漫画显示清晰度，长图分块处理；每块结果都与原图逐块核对，个别对不上的小块改用普通放大，失败时继续显示原图。屏幕附近的相邻页会提前处理，翻到时多半已完成；处理较久时阅读页右下角显示“AI 超分处理中…”，AI 着色和 AI翻译处理时也有同样的提示。</li>
           <li><b>查看本页文字</b>：长按漫画图片，选择“查看本页文字”，可识别、复制原文、取消或重新识别。识别在本机进行，需要设备支持系统文字识别能力。</li>
           <li><b>AI翻译（会员专享）</b>：在漫画“画面设置”中下拉选择“关闭”或“繁→简”，按书保存，默认关闭；“日→中”和“韩→中”标记为即将推出，暂不可选。屏幕上的图片识别后，在纯色气泡中按原方向和颜色覆盖简体文字；复杂背景、艺术字和无法可靠识别的区域保留原样。关闭后恢复原图，也可与超分一起使用。</li>
           <li>文字页的“繁→简”预览同样需要会员。日文、英文、韩文目前仅支持文字识别，尚不提供中文翻译。识别与转换可能有误，可对照原图阅读。</li>
         </ul>
         <ul>
-          <li>漫画使用专用阅读界面，可选条漫或单页翻页；单页可从左往右或从右往左，宽屏自动双页。阅读方式按书保存。</li>
+          <li>漫画使用专用阅读界面，可选条漫或横向翻页（从左往右、从右往左），阅读方式按书保存。在阅读页「阅读方式」或「阅读设置 → 漫画」中开启「使用双翻页」后，阅读区域宽度大于高度时并排显示两页；关闭后每次显示一页。此开关仅影响漫画，条漫模式不生效。</li>
           <li>条漫可以连续滚过相邻章节。画面设置可调背景、页间距、适应宽度或屏幕、信息条；支持双击和双指缩放。</li>
           <li>应用自动识别漫画；识别不对时在“更多操作”里手动切换漫画阅读或普通阅读。</li>
           <li>长按图片可保存、分享或重新加载；图片地址过期时会尝试重新获取本话。持续失败时刷新本章或换源。</li>
@@ -1552,7 +1552,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
         <li>应用使用的权限：联网、读取网络状态、后台运行（用于朗读、听书和缓存），以及相机（仅在你开启眼动翻页时才会请求）。</li>
         <li>开源轻页以 GPL-3.0 许可证开源，源码在 <a href="https://github.com/wip3l/qingye-reader">github.com/wip3l/qingye-reader</a>。</li>
       </ul>
-      <footer>本说明书对应开源轻页 4.4.933。界面和设置项仍在迭代，个别名称或位置可能与你手上的版本略有出入。</footer>
+      <footer>本说明书对应开源轻页 4.4.936。界面和设置项仍在迭代，个别名称或位置可能与你手上的版本略有出入。</footer>
     </section>
   </main>
 </div>

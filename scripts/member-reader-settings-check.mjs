@@ -12,6 +12,7 @@ test('AI color and translation require active membership, including expiry, rest
   const clock = { now: 1800000000000 };
   const values = new Map();
   const sandbox = vm.createContext({
+    readStatsTracker: { setOwnerId() {} },
     Date: class extends Date { static now() { return clock.now; } },
     preferences: { getPreferences: async () => ({ put: async () => {}, delete: async () => {}, flush: async () => {} }) },
     AppStorage: { get: key => values.get(key), setOrCreate: (key, value) => values.set(key, value) },

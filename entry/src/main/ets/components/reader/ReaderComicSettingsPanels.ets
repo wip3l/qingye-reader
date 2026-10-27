@@ -170,15 +170,17 @@ export struct ReaderComicModeSettingsPanel {
           menuColor: this.colors.menuColor,
           onSelect: (index: number): void => this.onAnimationChange(index)
         })
-        ReaderSettingSwitchRow({
-          title: '横屏双页',
-          description: '横屏、折叠屏展开等宽屏下两页并排',
-          checked: this.dualPage,
-          textColor: this.colors.textColor,
-          subTextColor: this.colors.subTextColor,
-          onChange: (checked: boolean): void => this.onDualPageChange(checked)
-        })
       }
+
+      ReaderSettingSwitchRow({
+        title: '使用双翻页',
+        description: this.paged() ? '宽屏下并排显示两页，关闭后每次显示一页' :
+          '切换为从左往右或从右往左后，宽屏下并排显示两页；条漫不生效',
+        checked: this.dualPage,
+        textColor: this.colors.textColor,
+        subTextColor: this.colors.subTextColor,
+        onChange: (checked: boolean): void => this.onDualPageChange(checked)
+      })
 
       ReaderSettingSwitchRow({
         title: '点击翻页',

@@ -113,71 +113,81 @@ export struct ReaderTypographyStepper {
   }
 
   build() {
-    Row({ space: AppSpacing.MD }) {
-      Select(ReaderTypographyField.LABELS.map((label: string): SelectOption => ({ value: label })))
-        .id('reader_typography_selector')
-        .selected(this.field)
-        .value(ReaderTypographyField.LABELS[this.field])
-        .font({ size: AppFontSize.BODY_LARGE })
-        .fontColor(this.subTextColor)
-        .backgroundColor(Color.Transparent)
-        .arrowPosition(ArrowPosition.START)
-        .padding({ left: 0, right: 0 })
-        .borderRadius(16)
-        .border({ width: 0 })
-        .optionBgColor(Color.Transparent)
-        .divider(null)
-        .optionFontColor(this.textColor)
-        .selectedOptionFontColor(this.accentColor)
-        .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.dark))
-        .menuBackgroundColor(this.menuColor)
-        .menuBackgroundBlurStyle(BlurStyle.NONE)
-        .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel, this.dark, this.menuColor))
-        .onSelect((index: number) => {
-          this.inputVisible = false;
-          this.field = Math.max(0, Math.min(index, ReaderTypographyField.COUNT - 1));
-        })
-      Blank()
-        .layoutWeight(1)
-      this.stepButton($r('sys.symbol.minus'), '减小当前排版参数',
-        this.current() > ReaderTypographyField.min(this.field), () => this.apply(this.current() - ReaderTypographyField.step(this.field)))
-      if (this.inputVisible) {
-        TextInput({ text: this.inputDraft, placeholder: `${this.current()}` })
-          .type(InputType.Number)
-          .enterKeyType(EnterKeyType.Done)
-          .defaultFocus(true)
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.textColor)
-          .width(52)
-          .height(36)
-          .padding(0)
-          .textAlign(TextAlign.Center)
-          .backgroundColor(this.inputColor)
-          .borderRadius(ThemeRuntime.mediumRadius())
-          .onChange((value: string) => {
-            this.inputDraft = value.replace(/[^0-9]/g, '').substring(0, 3);
+    Column() {
+      Row({ space: AppSpacing.MD }) {
+        Select(ReaderTypographyField.LABELS.map((label: string): SelectOption => ({ value: label })))
+          .id('reader_typography_selector')
+          .selected(this.field)
+          .value(ReaderTypographyField.LABELS[this.field])
+          .font({ size: AppFontSize.BODY_LARGE })
+          .fontColor(this.subTextColor)
+          .backgroundColor(Color.Transparent)
+          .arrowPosition(ArrowPosition.START)
+          .padding({ left: 0, right: 0 })
+          .borderRadius(16)
+          .border({ width: 0 })
+          .optionBgColor(Color.Transparent)
+          .divider(null)
+          .optionFontColor(this.textColor)
+          .selectedOptionFontColor(this.accentColor)
+          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.dark))
+          .menuBackgroundColor(this.menuColor)
+          .menuBackgroundBlurStyle(BlurStyle.NONE)
+          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel, this.dark, this.menuColor))
+          .onSelect((index: number) => {
+            this.inputVisible = false;
+            this.field = Math.max(0, Math.min(index, ReaderTypographyField.COUNT - 1));
           })
-          .onSubmit(() => this.applyInput())
-          .onBlur(() => this.applyInput())
-      } else {
-        Text(`${Math.round(this.current())}`)
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.textColor)
-          .width(52)
-          .height(36)
-          .textAlign(TextAlign.Center)
-          .onClick(() => {
-            this.inputDraft = '';
-            this.inputVisible = true;
-          })
+        Blank()
+          .layoutWeight(1)
+        this.stepButton($r('sys.symbol.minus'), '减小当前排版参数',
+          this.current() > ReaderTypographyField.min(this.field), () => this.apply(this.current() - ReaderTypographyField.step(this.field)))
+        if (this.inputVisible) {
+          TextInput({ text: this.inputDraft, placeholder: `${this.current()}` })
+            .type(InputType.Number)
+            .enterKeyType(EnterKeyType.Done)
+            .defaultFocus(true)
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontColor(this.textColor)
+            .width(52)
+            .height(36)
+            .padding(0)
+            .textAlign(TextAlign.Center)
+            .backgroundColor(this.inputColor)
+            .borderRadius(ThemeRuntime.mediumRadius())
+            .onChange((value: string) => {
+              this.inputDraft = value.replace(/[^0-9]/g, '').substring(0, 3);
+            })
+            .onSubmit(() => this.applyInput())
+            .onBlur(() => this.applyInput())
+        } else {
+          Text(`${Math.round(this.current())}`)
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontColor(this.textColor)
+            .width(52)
+            .height(36)
+            .textAlign(TextAlign.Center)
+            .onClick(() => {
+              this.inputDraft = '';
+              this.inputVisible = true;
+            })
+        }
+        this.stepButton($r('sys.symbol.plus'), '增大当前排版参数',
+          this.current() < ReaderTypographyField.max(this.field), () => this.apply(this.current() + ReaderTypographyField.step(this.field)))
       }
-      this.stepButton($r('sys.symbol.plus'), '增大当前排版参数',
-        this.current() < ReaderTypographyField.max(this.field), () => this.apply(this.current() + ReaderTypographyField.step(this.field)))
+      .width('100%')
+      // Keep the selector on the same content baseline as the settings below.
+      .padding({ left: 0, right: 0, top: AppSpacing.LG, bottom: AppSpacing.LG })
+      .alignItems(VerticalAlign.Center)
+      if (this.field === ReaderTypographyField.FONT_WEIGHT) {
+        Text(ReaderFontWeight.HELP)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor)
+          .width('100%')
+          .padding({ bottom: AppSpacing.SM })
+      }
     }
     .width('100%')
-    // Keep the selector on the same content baseline as the settings below.
-    .padding({ left: 0, right: 0, top: AppSpacing.LG, bottom: AppSpacing.LG })
-    .alignItems(VerticalAlign.Center)
   }
 
   @Builder

@@ -1,6 +1,6 @@
 # 书源规则开发文档
 
-开源轻页和简听共用书源解析内核 [harmony-book-source-engine](https://github.com/wip3l/harmony-book-source-engine)。规则格式、字段、表达式、选择器及示例在内核仓库统一维护；本文说明当前轻页的接入情况、开发入口和操作流程。
+本项目使用公共书源解析内核 [harmony-book-source-engine](https://github.com/wip3l/harmony-book-source-engine)。规则格式、字段、表达式、选择器及示例在内核仓库统一维护；本文说明当前应用的接入情况、开发入口和操作流程。
 
 - [当前内核的公共书源规则开发文档](../harmony-book-source-engine/docs/book-source-development.md)：第一部分原生书源（推荐），第二部分兼容书源（已过时）
 - [开发流程](../harmony-book-source-engine/docs/book-source-development.md#开发流程)、[网页书站示例](../harmony-book-source-engine/docs/book-source-development.md#网页书站示例)、[综合示例](../harmony-book-source-engine/docs/book-source-development.md#综合示例)：从零写一个原生书源
@@ -9,10 +9,42 @@
 - [后台脚本阶段 `script`](../harmony-book-source-engine/docs/book-source-development.md#脚本阶段-script)：请求、状态、登录、网页交互、完整示例与排错
 - [封面解密 coverDecode](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md#加密封面-coverdecode)：含封面请求头 `coverHeaders`
 - [自定义图片字节脚本](../harmony-book-source-engine/docs/book-source-development.md#自定义图片字节脚本)：`content.imageDecode.script`，以及标准算法的 `ivPrefixBytes`、`keyEncoding`
+- [视频网页回退](../harmony-book-source-engine/docs/book-source-development.md#视频网页回退)：`content.videoPage`、声明式与脚本示例、错误处理及播放限制
 - [宿主图片加载接入](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/cover-decoding.md)
 - [内核 HAR 接入说明](https://github.com/wip3l/harmony-book-source-engine/blob/main/sourceengine/README.md)
 
-本仓库以子模块 `harmony-book-source-engine/` 引用内核，克隆后先执行 `git submodule update --init`。轻页使用子模块固定的内核提交，内核新增的规则能力要等子模块升级后才在轻页里生效；[在线主分支文档](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md)可能领先于当前应用。
+本仓库以子模块 `harmony-book-source-engine/` 引用内核，克隆后先执行 `git submodule update --init`。应用使用子模块固定的内核提交，内核新增的规则能力要等子模块升级后才在应用里生效；[在线主分支文档](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md)可能领先于当前应用。
+
+## 视频播放接入
+
+视频书源使用 `type: "video"`，`content.video` 返回媒体直链，新增的可选字段 `content.videoPage` 返回当前集的原站播放网页。字段规则和示例统一维护在公共文档的[视频网页回退](../harmony-book-source-engine/docs/book-source-development.md#视频网页回退)章节。
+
+在包含该功能的应用开发构建中，从「剧集详情 → 开始观看」或书架进入播放页后，优先原生播放；明确不支持视频规格且有网页地址时自动回退。网络或未知播放错误重新获取直链一次，仍失败时可手动选择「网页播放」。只提供网页地址时，也通过播放页按钮手动进入。未配置有效 `videoPage` 的书源不会自动打开章节接口。
+
+网页模式支持应用选集、上一集、下一集、刷新网页、重试原生和全屏返回。网站自己的进度、倍速、清晰度与连播由网站控制；应用仅保留进入网页前的原生进度，不把网页中的选集和播放秒数同步到书架。后台暂停网页媒体，回到前台后手动继续播放。
+
+开发时注意：
+
+- `videoPage` 是字段规则；固定地址写为 `"= 'https://example.com/watch/1'"`，接口字段可以写 `"$.webUrl"`。不能直接把不含模板的固定 URL 当选择器规则填写。
+- 媒体请求头不会注入回退网页，当前原生 `Video` 组件仍不发送 `mediaHeaders`；网页使用对应域的 ArkWeb Cookie。网页回退不保证解决编码、鉴权或站点限制。
+- 通用正文调试不启用视频专用回退，空直链仍可能报错；仅网页的视频源需要进入实际播放页验证。
+- 该能力已通过自动化检查和构建，MateBook Fold 已安装启动；真实不支持格式的视频、网站登录及网页全屏仍需实际书源验收，不代表此前发布的所有同版本安装包已支持。
+
+## 本轮新增与变更（2026-10-26）
+
+以下内容对应本工作区包含本轮改动的 4.4.934 开发构建，已经编译并安装到 API 26 设备验收；不表示此前发布的所有 4.4.934 安装包都包含这些功能。规则接口在公共文档维护，本页记录应用接入及操作变化。
+
+| 内容 | 增加或变更 | 开发文档入口 |
+| --- | --- | --- |
+| 响应头与请求编号 | 脚本 HTTP 结果新增 `headers`、`headersAvailable`、`requestId`，失败状态也保留可观测响应头；WebView DOM 不伪造头 | [响应头读取](../harmony-book-source-engine/docs/book-source-development.md#读取响应头与关联请求) |
+| 严格批量请求 | `http.all(..., { failOnPartial: true })` 整批完成后汇总失败数量、索引与请求信息；默认逐项返回保持不变 | [脚本阶段接口](../harmony-book-source-engine/docs/book-source-development.md#脚本阶段-script) |
+| 条件重试 | `retry` 增加状态码、固定/指数退避及 Retry-After 对象策略，重试受取消和总预算约束；数字形式兼容 | [条件重试](../harmony-book-source-engine/docs/book-source-development.md#条件重试) |
+| 数字变量 | 静态 `vars[].options/default` 接受字符串和有限数字，运行时按文本使用；已实测设置页选择、保存和后续请求取值 | [变量与书源设置](../harmony-book-source-engine/docs/book-source-development.md#书源变量-vars) |
+| 漫画自定义请求头 | 允许合法自定义头，缓存按头隔离；同 origin 跳转保留、跨 origin 移除自定义头及凭据。修复 SDK 自动跳转继续携带头，以及空 302 响应体报错 | [媒体头与重定向](../harmony-book-source-engine/docs/book-source-development.md#媒体请求头与重定向) |
+| 网络与脚本诊断 | 增加请求编号、传输/尝试信息、请求/响应头和脚本计算/总耗时；正文字符数与未测量的线路字节数分开显示 | [单书源调试](../harmony-book-source-engine/docs/book-source-development.md#单书源调试) |
+| 报告与大目录检查 | 复制/导出报告前置 `summary`；新增“目录检查：最多 3000 章”开关，报告同时显示实际章节数和检查上限 | 见下方操作说明与真机基准 |
+
+WebView、`browser.render`、默认 User-Agent、按钮上下文和详情 `keep` 原本已支持，本轮完善说明及验证。脚本计算预算仍为 **2 秒**；没有增加到 5 秒，也没有新增通用挑战页自动回退。漫画的逐跳策略不代表音频播放器内部重定向也已采用同样处理。
 
 ## 原生 JS 开发路线
 
@@ -28,12 +60,14 @@
 
 `js` 是 JSON 中的一段字符串，换行需要写成 `\n`，也可以先在编辑器里编写 JS 再用 `JSON.stringify` 转成 JSON 字符串。原生规则不使用兼容书源的 `@js:`、`<js>`、`jsLib` 或 `java.*` 写法。
 
+JS 中调用内置函数时使用 `native.split(text, ',')` 等写法。若报未定义错误，按提示核对 `native.` 前缀；导入校验通过并不保证未执行的函数体没有错误。详见公共文档的 [JS 函数库说明](../harmony-book-source-engine/docs/book-source-development.md#js-函数库-js)。
+
 脚本阶段返回的是供规则解析的页面或 JSON，不必手动构造应用的数据库对象。返回后仍可使用 `let`、`fail`、`list`、`fields` 和正文提取规则；返回数组且省略 `list` 时逐项解析。目录与正文的脚本要自行完成分页，`nextUrl` 不再生效。完整接口、状态作用域和可复制示例见公共文档，不在此维护第二套规范。
 
-## 在轻页中开发与验证
+## 在应用中开发与验证
 
 1. 在「我的 → 书源管理 → 新建原生书源」编辑完整 JSON，先“校验”再“保存”。校验检查定义和函数等约束，不代表网站链路已经可用。
-2. 打开“调试”，依次验证搜索、详情、目录、正文和发现；脚本请求、`log(...)` 与结果摘要出现在执行明细中，报错会带阶段和函数名。
+2. 打开“调试”，输入能匹配样本书名的关键词并开始。书源管理入口默认运行全链路，没有阶段切换按钮；脚本请求、`log(...)` 与结果摘要出现在执行明细中，报错会带阶段和函数名。若单源搜索无结果，先排除关键词相关性过滤。
 3. 打开“书源设置”，分别验证变量保存、动态选项、登录、验证码和动作按钮。先保存手动修改的变量，再执行依赖这些变量的按钮；按钮执行时显示忙碌状态，结束后刷新登录状态和动作列表。
 4. 实测需要验证的流程：搜索和发现提示“去验证”后，完成网页操作并重新发起请求；详情、目录、正文或设置页脚本调用 `browser.verify` 时，点网页右上角“完成”才会继续，返回或取消会报“网页操作已取消”。
 5. 从仓库根目录运行下面的规则回归；在真机上通过「其他设置 → 兼容与诊断 → 脚本引擎迁移 → 后台脚本线程验证」检查原生运行时，再验收真实页面交互。
@@ -46,7 +80,35 @@ node --experimental-strip-types harmony-book-source-engine/scripts/native-script
 
 Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实际站点登录。遇到“表达式里不能发请求或读写状态”时，将流程移到阶段 `script`；遇到请求次数或运行时间超限时，减少请求、使用缓存或拆分流程。更多原因见公共文档的原生脚本排错表。
 
-## 轻页的宿主差异
+### 大目录检查与报告读取
+
+调试页默认只检查前 **32 章**。需要验证 600、1000、3000 章时，打开开关，确认文字为“目录检查：最多 3000 章”，再运行调试；重新进入页面时需再次确认。该开关只改变调试取样数量，不是书源字段，不改变正常阅读的目录上限。
+
+“复制调试内容”和“导出报告”都在完整 `session` 前放置 `summary`，优先展示会话编号、阶段状态、阶段耗时、实际 `chapterCount`、检查上限及脚本 timing。长报告在聊天输入框被截断时，仍可先读到这些关键指标；需要完整网络轨迹时导出 JSON 文件。
+
+- **脚本计算**：QuickJS 实际计算耗时，用于核对默认 2 秒预算。
+- **脚本总耗时**：包括脚本调用宿主接口时的等待。
+- **目录阶段耗时**：还包含脚本结果返回后的字段解析和章节处理。
+- **实际章节数**：必须与样本规模一致；脚本读了 3000 条而 `chapterCount=32` 时，仅完成了取样，不能当作完整目录结果。
+
+网络明细中的头是传给传输层的参数，需通过服务端回显确认到达情况；`responseChars` 是字符数，`responseBytes=-1` 是未测量网络字节数。敏感头会脱敏，但分享报告前仍需检查规则和正文预览里的业务数据。
+
+### 本轮真机基准
+
+设备为 HPR-W72、API 26，测试使用 USB 反向映射的本地受控服务和简化 JSON。网络回显、响应头、503 重试、严格批量失败及 WebView 抓取已通过；漫画同 origin / 跨 origin 的 302 跳转由图片显示和服务端收到的头共同核验通过。
+
+| 完整目录样本 | 脚本计算 | 脚本总耗时 | 目录阶段 | 全链路 |
+| --- | ---: | ---: | ---: | ---: |
+| 600 章 | 5.99 ms | 101 ms | 202 ms | 214 ms |
+| 1000 章 | 9.01 ms | 37 ms | 186 ms | 198 ms |
+| 3000 章，重启后首轮 | 18.22 ms | 117 ms | 587 ms | 604 ms |
+| 3000 章，连续热运行 | 21.93 ms | 69 ms | 574 ms | 593 ms |
+
+各轮实际章节数均匹配配置，支持继续保留当前计算预算。完整阶段只有上表 4 次样本，不能用来推断 P95、冷/热性能差异、复杂 HTML 或公网表现，也不代表目录滚动帧率。交互式验证、取消/超时真机操作、旧系统与音频重定向仍需对应验收。
+
+完整证据、脚本与复现步骤见[本轮验证记录](native-source-capability-followup-validation.md)和[实施清单](native-source-capability-followup-plan.md)。临时测试服务及端口映射已停止；复测时按记录重新启动。
+
+## 宿主实现差异
 
 网络选项位于“其他设置 → 兼容与诊断”：HTTP/1.1 兼容模式与图片下载并发（4/8/12，默认 4）均在本机保存。图片并发与脚本 `http.all` 的并发是两套独立限制；提高图片并发不会取消前台保留名额。详见[图片并发真机验证方法](image-concurrency-validation.md)。脚本请求的 `timeout`、`http.all` 选项及 `finalUrl` 语义见公共文档的“脚本阶段”接口表。
 
@@ -54,10 +116,12 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 
 可导入[离线示例](../harmony-book-source-engine/docs/examples/native-inline-comments.json)验证交互；该示例无需网络，且仅面向支持 page/chapterPage 的宿主。完整验证命令和平台边界见[实施验证记录](source-capability-validation.md)。
 
-| 能力 | 轻页现状（4.4.933） |
+| 能力 | 当前应用现状（4.4.936） |
 | --- | --- |
 | 原生书源 | 支持编辑、书源设置（变量、音色、账号登录、动作按钮）、搜索、发现、详情、目录、正文、听书、视频播放与漫画图片解密；书源管理和发现页的长按菜单可进入书源设置 |
 | 原生 JS | `js` 函数库与 `script` 阶段已接入；`http`、变量、Cookie、缓存、凭据和详情书籍变量通过内核宿主接口处理，与兼容书源迁移开关独立 |
+| 原生 HTTP 与诊断 | 本轮开发构建支持响应头/可用性标记/请求编号、严格批量失败与对象式条件重试；复制/导出包含前置性能摘要，目录调试可选最多 3000 章 |
+| 漫画媒体自定义头 | 本轮开发构建允许合法自定义头；API 22+ 且拦截可用时逐跳下载，同 origin 保留、跨 origin 移除。已在 API 26 设备验证 HTTP 302；音频播放器内部跳转另验 |
 | 原生脚本界面交互 | 启动时通过 `NativeSourceInteraction.setHandler(new AppSourceInteraction(...))` 安装提示、发现缓存失效和网页处理器；`ui.toast` 显示书源名称与消息，`ui.refreshExplore` 清除该源发现缓存 |
 | 原生网页交互 | `browser.verify` 沿用内置验证页，点“完成”返回 HTML 并保存 Cookie；搜索和发现只提示“去验证”。`browser.open` 打开网页但不等待结果；`browser.render` 使用内核网页抓取宿主 |
 | 设置页脚本 | 动作按钮运行中显示状态并防止重复执行；动态选项获取失败时保留静态选项并显示原因；成功加载后若原值不在新列表中，会选中第一项并标记待保存 |
@@ -70,7 +134,11 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 | 书籍类型 | 以详情阶段的结果为准：搜索或发现列表里标为有声、漫画、视频的书，如果详情接口返回的是小说信息，进入详情后按小说处理；书源的有声版与小说版不要共用同一个书籍 ID。有声书在详情页点“开始听书”直接进入听书页 |
 | 可选宿主端口 `SourceEngineHost` | 不安装，按内核默认行为运行；这不影响独立安装的 `NativeSourceInteraction` 界面处理器与 `BookSourceRuntimeStore` 持久化 |
 
-修改规则格式与开发说明请到内核仓库提交。轻页只维护自己的页面、导入与调试操作和宿主接入说明。
+修改规则格式与开发说明请到内核仓库提交。应用只维护自己的页面、导入与调试操作和宿主接入说明。
+
+## 此前 4.4.934 的 AI 阅读体验验收
+
+- 此前这轮 AI 阅读体验改动没有新增书源字段或改变规则语义；本轮原生接口扩展见本文开头。漫画超分的核对与合成改在原生库完成、相邻页提前处理，处理中提示与条漫翻屏动画均为应用侧改动；4.4.931 起的书源均可直接使用。图片仍在下载、解密与重排之后才交给本机 AI 处理，书源不需要为 AI 处理做调整。
 
 ## 4.4.933 验收补充
 
@@ -113,3 +181,15 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 - 原生书源的 JS 函数库与后台脚本阶段均已接入。验证登录、验证码、动态变量选项和动作按钮时，同时检查执行状态、失败提示及发现缓存刷新。
 - 验证正文插图时，应确认下载缓存后的图片能够显示；多行 HTML 属性（例如 og:description）应完整提取。
 - 书架关键词、标签和书源筛选属于应用侧功能，不改变公共书源字段或脚本接口。
+
+## 4.4.935 发布核对
+
+本版本纳入上文记录的 4.4.934 开发构建能力，包括响应头与请求编号、严格批量请求、条件重试、数字变量、漫画自定义请求头及调试报告。此前的设备验收记录保留原日期；本次发布打包不代表重新执行了全部真机用例。
+
+书列表 JS 字段批处理已修复对象返回表达式，编写搜索与发现规则时应检查批处理结果与单字段求值一致，尤其注意对象字段、空值和数组结果。阅读统计同步、键盘翻页、持握手、分享海报和精细字重属于宿主功能，不新增书源格式字段。
+
+## 4.4.936 发布核对
+
+本版本纳入 `content.videoPage` 视频网页回退及原生 JS 错误提示改进。视频回退需明确声明当前集的 HTTP/HTTPS 原站网页，不从媒体直链或章节接口推测；实际播放页与通用正文调试的处理范围不同，详见上文。
+
+原生 JS 内调用规则内置函数应使用 `native.函数名(...)`；不可把规则表达式的内置名称直接当作 JS 全局函数。相关错误会提示 native 调用方式。朗读音色管理和统计页界面属于宿主功能，不新增书源字段。

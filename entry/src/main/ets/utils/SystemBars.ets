@@ -1,7 +1,75 @@
 import { window } from '@kit.ArkUI';
+import { ConfigurationConstant } from '@kit.AbilityKit';
+import { deviceInfo } from '@kit.BasicServicesKit';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 
-let safeAreaListenerRegistered = false;
+let safeAreaWindow: window.Window | undefined;
+let desktopWindow: window.Window | undefined;
+const safeAreaChanged = (_data: window.AvoidAreaOptions): void => {
+  if (safeAreaWindow) syncSystemSafeAreas(safeAreaWindow);
+};
+const desktopTitleRectChanged = (rect: window.TitleButtonRect): void => {
+  if (!desktopWindow) return;
+  updateDesktopTitleInset(desktopWindow, rect);
+  syncSystemSafeAreas(desktopWindow);
+};
+
+// These APIs require loaded UI content. Keep the native buttons and title drag/double-click hot zone.
+export function syncDesktopTitleBar(mainWindow: window.Window, darkMode: boolean): void {
+  if (deviceInfo.deviceType !== '2in1') return;
+  if (desktopWindow !== mainWindow) {
+    try {
+      mainWindow.on('windowTitleButtonRectChange', desktopTitleRectChanged);
+      mainWindow.setWindowTitleMoveEnabled(true);
+      mainWindow.setWindowDecorVisible(false);
+      desktopWindow = mainWindow;
+      updateDesktopTitleInset(mainWindow, mainWindow.getTitleButtonRect());
+    } catch (err) {
+      // Keep the standard title bar if this desktop runtime cannot provide safe button geometry.
+      try {
+        mainWindow.off('windowTitleButtonRectChange', desktopTitleRectChanged);
+        mainWindow.setWindowDecorVisible(true);
+      } catch (_) {}
+      desktopWindow = undefined;
+      AppStorage.setOrCreate('desktopTitleBarHeight', 0);
+      console.warn('启用桌面沉浸标题栏失败，保留系统标题栏:', err);
+      return;
+    }
+  }
+  try {
+    mainWindow.setDecorButtonStyle({
+      colorMode: darkMode ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK :
+        ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
+    });
+  } catch (err) {
+    console.warn('同步桌面窗口按钮颜色失败:', err);
+  }
+  syncSystemSafeAreas(mainWindow);
+}
+
+function updateDesktopTitleInset(mainWindow: window.Window, rect: window.TitleButtonRect): void {
+  // TitleButtonRect and decor height are already vp. A zero rectangle means hidden controls/full screen.
+  const buttonBottom = rect.width > 0 && rect.height > 0 ? Math.max(0, rect.top + rect.height) : 0;
+  let topInset = buttonBottom;
+  if (buttonBottom > 0) {
+    try {
+      topInset = Math.max(buttonBottom, mainWindow.getWindowDecorHeight());
+    } catch (_) {}
+  }
+  AppStorage.setOrCreate('desktopTitleBarHeight', topInset);
+}
+
+export function releaseSystemBarListeners(): void {
+  try {
+    safeAreaWindow?.off('avoidAreaChange', safeAreaChanged);
+  } catch (_) {}
+  try {
+    desktopWindow?.off('windowTitleButtonRectChange', desktopTitleRectChanged);
+  } catch (_) {}
+  safeAreaWindow = undefined;
+  desktopWindow = undefined;
+  AppStorage.setOrCreate('desktopTitleBarHeight', 0);
+}
 
 export function syncSystemBars(context: Context, darkMode: boolean, backgroundColor?: string): void {
   const bg = backgroundColor || ThemeRuntime.pageColor(darkMode);
@@ -9,6 +77,7 @@ export function syncSystemBars(context: Context, darkMode: boolean, backgroundCo
     mainWindow.setWindowBackgroundColor(bg);
     mainWindow.setWindowLayoutFullScreen(true);
     mainWindow.setWindowSystemBarEnable(['navigation', 'status']);
+    syncDesktopTitleBar(mainWindow, darkMode);
     syncSystemSafeAreas(mainWindow);
     mainWindow.setWindowSystemBarProperties({
       statusBarColor: '#00000000',
@@ -28,8 +97,10 @@ export function syncSystemSafeAreas(mainWindow: window.Window): void {
     const systemArea = mainWindow.getWindowAvoidAreaIgnoringVisibility(window.AvoidAreaType.TYPE_SYSTEM);
     const navigationArea = mainWindow.getWindowAvoidAreaIgnoringVisibility(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
     const gestureArea = mainWindow.getWindowAvoidAreaIgnoringVisibility(window.AvoidAreaType.TYPE_SYSTEM_GESTURE);
-    const topHeight = px2vp(Math.max(0, systemArea.topRect.height));
-    const bottomHeight = px2vp(Math.max(
+    const uiContext = mainWindow.getUIContext();
+    const topHeight = Math.max(uiContext.px2vp(Math.max(0, systemArea.topRect.height)),
+      AppStorage.get<number>('desktopTitleBarHeight') ?? 0);
+    const bottomHeight = uiContext.px2vp(Math.max(
       0,
       navigationArea.bottomRect.height,
       gestureArea.bottomRect.height
@@ -42,20 +113,20 @@ export function syncSystemSafeAreas(mainWindow: window.Window): void {
     registerSafeAreaListener(mainWindow);
   } catch (err) {
     console.error('同步系统安全区失败:', err);
-    AppStorage.setOrCreate('statusBarHeight', AppStorage.get<number>('statusBarHeight') ?? 0);
+    AppStorage.setOrCreate('statusBarHeight', Math.max(AppStorage.get<number>('statusBarHeight') ?? 0,
+      AppStorage.get<number>('desktopTitleBarHeight') ?? 0));
     AppStorage.setOrCreate('navBarHeight', AppStorage.get<number>('navBarHeight') ?? 0);
   }
 }
 
 function registerSafeAreaListener(mainWindow: window.Window): void {
-  if (safeAreaListenerRegistered) {
+  if (safeAreaWindow === mainWindow) {
     return;
   }
   try {
-    mainWindow.on('avoidAreaChange', (_data: window.AvoidAreaOptions) => {
-      syncSystemSafeAreas(mainWindow);
-    });
-    safeAreaListenerRegistered = true;
+    safeAreaWindow?.off('avoidAreaChange', safeAreaChanged);
+    mainWindow.on('avoidAreaChange', safeAreaChanged);
+    safeAreaWindow = mainWindow;
   } catch (err) {
     console.error('注册系统安全区监听失败:', err);
   }

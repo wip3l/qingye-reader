@@ -11,6 +11,8 @@ import { ComicChineseConverter } from '@legado/aiengine';
 import { ComicTextLayer, ComicTextPatch } from '@legado/aiengine';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
+import { ReaderComicProcessing } from '../../core/reader/ReaderComicProcessing';
+import { ReaderComicProcessingBadge } from './ReaderComicProcessingBadge';
 
 /** 图片宽高比缓存与本地文件尺寸探测，漫画视图和小说滚动模式里的整页插图共用。 */
 export class ReaderComicImageSizes {
@@ -158,6 +160,10 @@ export struct ReaderComicImageItem {
   /** 在屏幕上时识别图中文字，把繁体改写成简体叠在图上（调用方已判断系统能力）。 */
   @Prop @Watch('onTextConvertChanged') textConvert: boolean = false;
   retryRegistry: ReaderComicRetryRegistry | null = null;
+  processing: ReaderComicProcessing | null = null;
+  private processingOwner: number = ReaderComicProcessing.owner();
+  private enhancing: boolean = false;
+  private translating: boolean = false;
   colorSession: ReaderComicColorSession | null = null;
   @State private colorUri: string = '';
   @State private colorShown: boolean = false;
@@ -185,6 +191,8 @@ export struct ReaderComicImageItem {
   private textTicket: number = 0;
   private textAttempted: boolean = false;
   private visible: boolean = false;
+  /** 仍在列表里（屏幕上或列表预先挂载的相邻项）；超分在此期间都可以进行。 */
+  private mounted: boolean = false;
   /** 每次重置加一，旧任务的结果作废。 */
   private enhanceTicket: number = 0;
   private enhanceAttempted: boolean = false;
@@ -203,6 +211,7 @@ export struct ReaderComicImageItem {
   private registeredReloadKey: string = '';
 
   aboutToAppear(): void {
+    this.mounted = true;
     this.resetForMarker();
     this.unsubscribeColor = this.colorSession?.subscribe((): void => this.syncColor()) || null;
     this.syncColor();
@@ -215,7 +224,9 @@ export struct ReaderComicImageItem {
   aboutToDisappear(): void {
     this.unsubscribeColor?.();
     this.unsubscribeColor = null;
+    this.mounted = false;
     this.visible = false;
+    this.syncProcessing();
     this.releasePending();
     this.enhanceTicket++;
     this.textTicket++;
@@ -253,6 +264,8 @@ export struct ReaderComicImageItem {
   }
 
   private resetEnhancement(): void {
+    this.enhancing = false;
+    this.syncProcessing();
     this.enhanceTicket++;
     this.enhanceAttempted = false;
     this.enhancedUri = '';
@@ -266,6 +279,8 @@ export struct ReaderComicImageItem {
   }
 
   private resetTextLayer(): void {
+    this.translating = false;
+    this.syncProcessing();
     this.textTicket++;
     this.textAttempted = false;
     this.textPatches = [];
@@ -278,6 +293,8 @@ export struct ReaderComicImageItem {
     if (!this.textConvert || !this.visible || !this.loaded || this.broken || this.failure ||
       this.textAttempted || this.ratio <= 0 || !this.source) return;
     this.textAttempted = true;
+    this.translating = true;
+    this.syncProcessing();
     const ticket = ++this.textTicket;
     const active = (): boolean => this.visible && this.textConvert && ticket === this.textTicket;
     ComicChineseConverter.layer(getContext(this), this.source, active).then((layer: ComicTextLayer): void => {
@@ -287,6 +304,10 @@ export struct ReaderComicImageItem {
       this.textPatches = layer.patches;
     }).catch((error: Error): void => {
       if (ticket === this.textTicket && error?.message) console.warn(`[ComicText] 繁→简未完成: ${error.message}`);
+    }).finally((): void => {
+      if (ticket !== this.textTicket) return;
+      this.translating = false;
+      this.syncProcessing();
     });
   }
 
@@ -306,18 +327,33 @@ export struct ReaderComicImageItem {
     }, 1600);
   }
 
-  /** 原图显示出来、比例已知且在屏幕上时排队超分，每张图只试一次。 */
+  /**
+   * 原图显示出来、比例已知后排队超分，每张图只试一次。列表预先挂载的相邻图也提前处理（排在屏幕上的图之后），
+   * 翻到时多半已经好了；被列表回收才作废。
+   */
   private maybeEnhance(): void {
-    if (!this.superResolution || !this.visible || !this.loaded || this.broken || this.failure ||
+    if (!this.superResolution || !this.mounted || !this.loaded || this.broken || this.failure ||
       this.enhanceAttempted || this.ratio <= 0 || !this.source) return;
     this.enhanceAttempted = true;
+    this.enhancing = true;
+    this.syncProcessing();
     const ticket = ++this.enhanceTicket;
     const source = this.source;
-    const active = (): boolean => this.visible && this.superResolution && ticket === this.enhanceTicket;
-    ReaderComicSuperResolution.enhance(source, vp2px(this.displayWidth()), active).then((uri: string): void => {
+    const active = (): boolean => this.mounted && this.superResolution && ticket === this.enhanceTicket;
+    ReaderComicSuperResolution.enhance(source, vp2px(this.displayWidth()), active,
+      (): boolean => this.visible).then((uri: string): void => {
       if (uri && ticket === this.enhanceTicket && this.superResolution) this.enhancedUri = uri;
     }).catch((_: Error): void => {
+    }).finally((): void => {
+      if (ticket !== this.enhanceTicket) return;
+      this.enhancing = false;
+      this.syncProcessing();
     });
+  }
+
+  private syncProcessing(): void {
+    this.processing?.update(this.processingOwner,
+      this.visible && this.enhancing, this.visible && this.translating);
   }
 
   /** 图片实际显示宽度（vp）。 */
@@ -597,16 +633,14 @@ export struct ReaderComicImageItem {
         this.maybeEnhance();
         this.maybeConvertText();
       } else {
-        // 没等到结果就划走：作废排队的任务，下次出现再排。
-        if (!this.enhancedUri && this.enhanceAttempted) {
-          this.enhanceTicket++;
-          this.enhanceAttempted = false;
-        }
+        // 文字识别没等到结果就划走：作废排队的任务，下次出现再排。超分继续在后台做完。
         if (this.textImageWidth <= 0 && this.textAttempted) {
           this.textTicket++;
           this.textAttempted = false;
+          this.translating = false;
         }
       }
+      this.syncProcessing();
     })
   }
 
@@ -743,6 +777,7 @@ export struct ReaderComicInfoBadge {
  */
 @Component
 export struct ReaderComicView {
+  private processing: ReaderComicProcessing = new ReaderComicProcessing();
   colorSession: ReaderComicColorSession | null = null;
   private colorTimer: number = -1;
   private colorStart: number = 0;
@@ -1219,6 +1254,7 @@ export struct ReaderComicView {
                 superResolution: this.superResolution,
                 textConvert: this.textConvert,
                 retryRegistry: this.retryRegistry,
+                processing: this.processing,
                 onDenied: (): void => this.onImageDenied(item.chapterIndex)
               })
             } else {
@@ -1265,6 +1301,10 @@ export struct ReaderComicView {
           .position({ right: 10, bottom: this.infoBottomInset })
           .hitTestBehavior(HitTestMode.None)
       }
+
+      ReaderComicProcessingBadge({ processing: this.processing, colorSession: this.colorSession })
+        .position({ right: 10, bottom: this.infoBottomInset + (this.infoVisible ? 30 : 0) })
+        .hitTestBehavior(HitTestMode.None)
 
       if (this.interactive) {
         this.interactionLayer(this.doubleTapZoom)

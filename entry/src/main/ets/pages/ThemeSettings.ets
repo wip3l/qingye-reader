@@ -3017,7 +3017,8 @@ struct ThemeSettingsPage {
 
   /** The reader's comment bubble with its label baked in, cached per look, label and size. */
   commentBubbleImage(theme: ThemePack, label: string, fontSizeVp: number, dark: boolean): ReaderCommentBubbleImage | null {
-    const style = ReaderCommentBubbleStyles.resolve(this.themeCommentPreview(theme).bubbleStyleId, dark);
+    const style = ReaderCommentBubbleStyles.resolve(this.themeCommentPreview(theme).bubbleStyleId, dark,
+      (dark ? theme.dark : theme.light).reader.textColor);
     const pxPerVp = this.getUIContext().vp2px(1);
     const key = `${style.identity()}_${label}_${fontSizeVp}_${pxPerVp}`;
     const cached = this.commentBubbleImages.get(key);

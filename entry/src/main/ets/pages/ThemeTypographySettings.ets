@@ -1,4 +1,7 @@
 import { promptAction, router } from '@kit.ArkUI';
+import { text as graphicsText } from '@kit.ArkGraphics2D';
+import { ReaderWeightedText, ReaderWeightedTextSpan } from '../components/reader/ReaderWeightedText';
+import { ReaderFontWeight } from '../core/reader/ReaderFontWeight';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ThemeTypographyDraft } from '../utils/ThemeTypographyDraft';
@@ -394,14 +397,10 @@ struct ThemeTypographySettingsPage {
 
     Column() {
       if (this.fitFor(full).titleLines > 0) {
-        Text(PREVIEW_CHAPTER_TITLE)
-          .fontSize(this.draft.titleFontSize)
-          .fontWeight(600)
-          .fontFamily(this.titleFontFamily())
-          .fontColor(this.previewTheme().textColor)
-          .letterSpacing(this.draft.letterSpacing)
-          .lineHeight(`${this.titleLineBox()}vp`)
-          .maxLines(this.fitFor(full).titleLines)
+        ReaderWeightedText({ spans: [ReaderWeightedTextSpan.create(this.getUIContext(), PREVIEW_CHAPTER_TITLE,
+          this.draft.titleFontSize, this.titleFontFamily(), this.previewTheme().textColor,
+          this.titleLineBox(), this.draft.letterSpacing)], weight: this.draft.titleFontWeight,
+          maxLines: this.fitFor(full).titleLines })
           .width('100%')
           .margin({ bottom: this.draft.paragraphSpacing })
       }
@@ -443,32 +442,27 @@ struct ThemeTypographySettingsPage {
 
   @Builder
   previewParagraph(index: number, maxLines: number) {
-    Text() {
-      ForEach(this.paragraphSlices(index), (slice: TypographyPreviewSlice) => {
-        if (slice.rule < 0) {
-          Span(slice.text)
-        } else {
-          Span(slice.text)
-            .fontSize(this.ruleAt(slice.rule).fontSize)
-            .fontFamily(this.styledFontFamily(this.ruleAt(slice.rule).fontMode, this.ruleAt(slice.rule).fontFamily))
-            .fontColor(this.ruleEmphasis(slice.rule).textColor)
-            .textBackgroundStyle(this.ruleBackground(slice.rule))
-            .textShadow(this.ruleShadow(slice.rule))
-            .decoration(this.ruleDecoration(slice.rule))
-        }
-      }, (slice: TypographyPreviewSlice) => slice.key)
-    }
-    .fontSize(this.draft.fontSize)
-    .fontWeight(this.draft.fontWeight)
-    .fontFamily(this.bodyFontFamily())
-    .fontColor(this.previewTheme().textColor)
-    .letterSpacing(this.draft.letterSpacing)
-    .lineHeight(`${this.bodyLineBox()}vp`)
-    .textAlign(this.textAlignValue())
-    .maxLines(maxLines > 0 ? maxLines : 1000)
-    .textOverflow({ overflow: TextOverflow.Clip })
+    ReaderWeightedText({ spans: this.weightedParagraphSpans(index), weight: this.draft.fontWeight,
+      maxLines: maxLines > 0 ? maxLines : 1000,
+      alignment: this.draft.textAlign === 'start' ? graphicsText.TextAlign.LEFT :
+        (this.draft.textAlign === 'end' ? graphicsText.TextAlign.RIGHT : graphicsText.TextAlign.JUSTIFY) })
     .width('100%')
     .margin({ bottom: this.draft.paragraphSpacing })
+  }
+
+  weightedParagraphSpans(index: number): ReaderWeightedTextSpan[] {
+    return this.paragraphSlices(index).map((slice: TypographyPreviewSlice): ReaderWeightedTextSpan => {
+      if (slice.rule < 0) return ReaderWeightedTextSpan.create(this.getUIContext(), slice.text,
+        this.draft.fontSize, this.bodyFontFamily(), this.previewTheme().textColor,
+        this.bodyLineBox(), this.draft.letterSpacing);
+      const rule = this.ruleAt(slice.rule);
+      const emphasis = this.ruleEmphasis(slice.rule);
+      const span = ReaderWeightedTextSpan.create(this.getUIContext(), slice.text, rule.fontSize,
+        this.styledFontFamily(rule.fontMode, rule.fontFamily), emphasis.textColor,
+        this.bodyLineBox(), this.draft.letterSpacing, emphasis);
+      span.weight = rule.fontWeight;
+      return span;
+    });
   }
 
   @Builder
@@ -772,6 +766,8 @@ struct ThemeTypographySettingsPage {
       next.titleFontMode = fontDraft.titleFontMode;
       next.titleFontFamily = fontDraft.titleFontFamily;
       next.titleFontSize = fontDraft.titleFontSize;
+      next.titleFontWeight = fontDraft.titleFontWeight;
+      next.fontWeight = fontDraft.fontWeight;
       next.regexFontEnabled = fontDraft.regexFontEnabled;
       next.regexFontPattern = fontDraft.regexFontPattern;
       next.regexFontMode = fontDraft.regexFontMode;
@@ -817,6 +813,7 @@ struct ThemeTypographySettingsPage {
     next.commentBubbleSize = defaults.commentBubbleSize;
     next.extendToStatusBar = defaults.extendToStatusBar;
     next.titleFontSize = defaults.titleFontSize;
+    next.titleFontWeight = defaults.titleFontWeight;
     next.readerHeaderEnabled = defaults.readerHeaderEnabled;
     next.readerFooterEnabled = defaults.readerFooterEnabled;
     next.readerInfoBarConfig = new ReaderInfoBarConfig().serialize();
@@ -1014,7 +1011,7 @@ struct ThemeTypographySettingsPage {
         textContent: text,
         constraintWidth: width,
         fontSize: fontSize,
-        fontWeight: fontWeight,
+        fontWeight: ReaderFontWeight.layoutWeight(fontFamily, fontWeight),
         fontFamily: fontFamily,
         letterSpacing: this.draft.letterSpacing,
         lineHeight: `${lineBox}vp`
@@ -1034,7 +1031,7 @@ struct ThemeTypographySettingsPage {
     const width = this.contentWidth(full);
     if (available <= 0) return fit;
     const titleBox = this.titleLineBox();
-    const titleLines = this.measureLines(PREVIEW_CHAPTER_TITLE, this.draft.titleFontSize, 600,
+    const titleLines = this.measureLines(PREVIEW_CHAPTER_TITLE, this.draft.titleFontSize, this.draft.titleFontWeight,
       this.titleFontFamily(), titleBox, width);
     fit.titleLines = Math.min(titleLines, Math.floor(available / titleBox));
     if (fit.titleLines < titleLines) return fit;

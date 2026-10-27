@@ -9,6 +9,7 @@ import {
   Position
 } from '@ohos.arkui.node';
 import graphicsText from '@ohos.graphics.text';
+import { ReaderFontStroke } from './ReaderFontStroke';
 import { ReaderCommentBubblePainter } from './ReaderCommentBubble';
 import {
   ReaderV2PageFragment,
@@ -88,6 +89,7 @@ class ReaderV2PageFrameNode extends FrameNode {
       this.drawRange(canvas, fragment, this.selectionStart, this.selectionEnd, this.selectionColor);
       this.drawRange(canvas, fragment, this.highlightStart, this.highlightEnd, this.highlightColor);
       fragment.paragraph.paint(canvas, fragment.paragraphX, fragment.paragraphY);
+      ReaderFontStroke.paint(canvas, fragment.fontStrokes, fragment.paragraphX, fragment.paragraphY);
       canvas.restore();
     }
   }

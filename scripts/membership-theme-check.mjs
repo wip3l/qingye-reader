@@ -11,6 +11,7 @@ function fixture() {
   const state = { trial: false, fetch: async () => { throw new Error('offline'); },
     load: async () => ({ themeId: 'member-theme', customAccent: '#123456' }) };
   const sandbox = vm.createContext({
+    readStatsTracker: { setOwnerId() {} },
     Date: class extends Date { static now() { return now; } },
     preferences: { getPreferences: async () => ({ get: async (key, fallback) => persisted.get(key) ?? fallback,
       put: async (key, value) => { persisted.set(key, value); },

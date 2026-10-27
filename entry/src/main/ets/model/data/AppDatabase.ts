@@ -2,8 +2,11 @@ import relationalStore from '@ohos.data.relationalStore';
 import { Book, BookChapter, BookSource, BookGroup, Bookmark, SearchKeyword, ExploreRule, TocRule, ContentRule,
   BookSourceRuntimePersistence } from '@legado/sourceengine';
 import { Context } from '@kit.AbilityKit';
+import { util } from '@kit.ArkTS';
 import { CloudSyncChangeTracker } from '../../account/CloudSyncChangeTracker';
 import { BookIdentity } from '../../utils/BookIdentity';
+import { ReadStatsPendingUpload, ReadStatsSyncPayload, ReadStatsSyncChange,
+  ReadStatsSyncAck } from '../../core/stats/ReadStatsSyncModels';
 
 interface ColumnMigration {
   table: string;
@@ -56,6 +59,13 @@ class BookLifecycleMigrationRecord {
 }
 
 export class ReadStatsEntry {
+  /** 结算时生成，重试沿用同一 ID，不能重复累计。 */
+  recordId: string = '';
+  ownerId: string = '';
+  deviceId: string = '';
+  deviceName: string = '';
+  startedAt: number = 0;
+  timezoneOffset: number = 0;
   dayKey: string = '';
   bookUrl: string = '';
   durationMs: number = 0;
@@ -63,16 +73,21 @@ export class ReadStatsEntry {
 }
 
 export class ReadStatsRow {
+  bookKey: string = '';
+  deviceId: string = '';
+  deviceName: string = '';
+  name: string = '';
+  author: string = '';
+  coverUrl: string = '';
+  onShelf: boolean = false;
   dayKey: string = '';
   bookUrl: string = '';
   durationMs: number = 0;
 }
 
-export class ReadStatsBookMeta {
-  bookUrl: string = '';
-  name: string = '';
-  author: string = '';
-  coverUrl: string = '';
+export class ReadStatsDeviceOption {
+  deviceId: string = '';
+  deviceName: string = '';
 }
 
 // 原生书源把定义存在 jsLib 里，并以这个键开头（见 NativeSourceSpec.pack）。
@@ -92,7 +107,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   private latestBookProgressWriteTimes: Map<string, number> = new Map<string, number>();
   private readStatsWriteTask: Promise<void> = Promise.resolve();
   private readonly DATABASE_NAME = 'legado.db';
-  private readonly SCHEMA_VERSION = 21;
+  private readonly SCHEMA_VERSION = 23;
 
   private constructor() {}
 
@@ -345,6 +360,12 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       if (schemaVersion < 15) {
         await this.migrateBookLifecycleMetadata();
       }
+      if (schemaVersion < 22) {
+        await this.migrateReadStats();
+      }
+      if (schemaVersion < 23) {
+        await this.migrateReadStatsSync();
+      }
       await this.setSchemaVersion(this.SCHEMA_VERSION);
     }
     await this.createIndexes();
@@ -366,6 +387,60 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       'CREATE INDEX IF NOT EXISTS idx_book_sources_enabled_order ON book_sources(enabled, isPinned DESC, customOrder)');
     await this.store.executeSql(
       'CREATE INDEX IF NOT EXISTS idx_book_sources_explore_order ON book_sources(enabled, enabledExplore, isPinned DESC, customOrder)');
+  }
+
+  /** 旧日汇总只导入一次。保留原表用于升级恢复，不再向原表写入。 */
+  private async migrateReadStats(): Promise<void> {
+    if (!this.store) return;
+    await this.store.executeSql(`CREATE TABLE IF NOT EXISTS read_stats_books (
+      bookUrl TEXT PRIMARY KEY, bookKey TEXT NOT NULL, name TEXT DEFAULT '',
+      author TEXT DEFAULT '', coverUrl TEXT DEFAULT '', isPrivate INTEGER DEFAULT 0)`);
+    await this.store.executeSql(`CREATE TABLE IF NOT EXISTS read_stats_records (
+      recordId TEXT PRIMARY KEY, legacyKey TEXT UNIQUE, ownerId TEXT NOT NULL DEFAULT '',
+      deviceId TEXT NOT NULL, deviceName TEXT DEFAULT '', bookUrl TEXT NOT NULL,
+      bookKey TEXT NOT NULL, dayKey TEXT NOT NULL, durationMs INTEGER NOT NULL,
+      startedAt INTEGER DEFAULT 0, lastReadAt INTEGER DEFAULT 0,
+      timezoneOffset INTEGER DEFAULT 0, deletedAt INTEGER DEFAULT 0)`);
+    await this.store.executeSql('CREATE INDEX IF NOT EXISTS idx_read_stats_scope ON ' +
+      'read_stats_records(ownerId, deletedAt, dayKey, deviceId)');
+    await this.store.executeSql('CREATE INDEX IF NOT EXISTS idx_read_stats_book ON read_stats_records(bookUrl)');
+    const result = await this.store.querySql('SELECT DISTINCT bookUrl FROM read_stats');
+    const urls: string[] = [];
+    try {
+      while (result.goToNextRow()) urls.push(result.getString(0));
+    } finally { result.close(); }
+    for (const url of urls) {
+      const book = await this.getBook(url);
+      if (book) await this.saveReadStatsBookSnapshot(book);
+    }
+    await this.store.executeSql(`INSERT OR IGNORE INTO read_stats_records
+      (recordId, legacyKey, deviceId, deviceName, bookUrl, bookKey, dayKey, durationMs, lastReadAt)
+      SELECT lower(hex(randomblob(16))), r.dayKey || ':' || r.bookUrl,
+        'legacy-import', '历史导入', r.bookUrl, COALESCE(m.bookKey, r.bookUrl),
+        r.dayKey, r.durationMs, r.lastReadAt
+      FROM read_stats r LEFT JOIN read_stats_books m ON m.bookUrl = r.bookUrl
+      WHERE r.durationMs > 0`);
+  }
+
+  private async migrateReadStatsSync(): Promise<void> {
+    if (!this.store) return;
+    for (const column of ['syncVersion INTEGER NOT NULL DEFAULT 1',
+      'syncedVersion INTEGER NOT NULL DEFAULT 0', 'cloudSequence INTEGER NOT NULL DEFAULT 0',
+      'cloudSuppressed INTEGER NOT NULL DEFAULT 0']) {
+      await this.addColumnIfMissing({ table: 'read_stats_records', column: column.split(' ')[0], definition: column });
+    }
+    await this.store.executeSql(`CREATE TABLE IF NOT EXISTS read_stats_sync_cursor
+      (ownerId TEXT PRIMARY KEY, cursor INTEGER NOT NULL DEFAULT 0)`);
+    await this.store.executeSql(`CREATE INDEX IF NOT EXISTS idx_read_stats_pending
+      ON read_stats_records(ownerId) WHERE syncVersion>syncedVersion`);
+  }
+
+  private async saveReadStatsBookSnapshot(book: Book): Promise<void> {
+    if (!this.store) return;
+    await this.store.executeSql(`INSERT OR REPLACE INTO read_stats_books
+      (bookUrl, bookKey, name, author, coverUrl, isPrivate) VALUES (?, ?, ?, ?, ?, ?)`,
+      [book.bookUrl, BookIdentity.cloudIdentityValue(book), book.name || '', book.author || '',
+        book.customCoverUrl || book.coverUrl || '', book.isPrivate ? 1 : 0]);
   }
 
   private async getSchemaVersion(): Promise<number> {
@@ -907,6 +982,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   async deleteBook(bookUrl: string, reason: string = 'delete_book'): Promise<void> {
     if (!this.store) return;
     const existing = await this.getBook(bookUrl);
+    await this.readStatsWriteTask.catch(() => {});
+    if (existing) await this.saveReadStatsBookSnapshot(existing);
     const predicates = new relationalStore.RdbPredicates('books');
     predicates.equalTo('bookUrl', bookUrl);
     const affected = await this.store.delete(predicates);
@@ -1128,7 +1205,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     return books;
   }
 
-  /** 隐私标记只存在本机，不参与云同步，所以不更新 shelfModifiedTime，也不触发同步。 */
+  /** 隐私标记保留本机；统计撤回已分享片段，避免其他设备继续持有其书名。 */
   async setBookPrivate(bookUrl: string, isPrivate: boolean): Promise<void> {
     if (!this.store || !bookUrl) return;
     const predicates = new relationalStore.RdbPredicates('books');
@@ -1136,6 +1213,19 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     const affected = await this.store.update({ isPrivate: isPrivate ? 1 : 0 }, predicates);
     if (affected <= 0) {
       throw new Error(`标记隐私书籍未命中数据库记录: ${bookUrl}`);
+    }
+    const snapshot = new relationalStore.RdbPredicates('read_stats_books');
+    snapshot.equalTo('bookUrl', bookUrl);
+    await this.store.update({ isPrivate: isPrivate ? 1 : 0 }, snapshot);
+    const book = await this.getBook(bookUrl);
+    const bookKey = book ? BookIdentity.cloudIdentityValue(book) : '';
+    if (bookKey) {
+      await this.store.executeSql('UPDATE read_stats_books SET isPrivate=? WHERE bookKey=?', [isPrivate ? 1 : 0, bookKey]);
+    }
+    if (isPrivate) {
+      await this.store.executeSql(`UPDATE read_stats_records SET cloudSuppressed=1, syncVersion=syncVersion+1
+        WHERE (bookUrl=? OR (?<>'' AND bookKey=?)) AND cloudSuppressed=0`, [bookUrl, bookKey, bookKey]);
+      CloudSyncChangeTracker.markDataChanged();
     }
   }
 
@@ -2517,89 +2607,110 @@ export class AppDatabase implements BookSourceRuntimePersistence {
 
   async addReadStats(entries: ReadStatsEntry[]): Promise<void> {
     if (!this.store || entries.length === 0) return;
+    entries.forEach((entry: ReadStatsEntry): void => {
+      if (!entry.recordId) entry.recordId = util.generateRandomUUID();
+    });
     const task = this.readStatsWriteTask.catch(() => {
     }).then(async (): Promise<void> => {
       for (const entry of entries) {
         if (!entry.dayKey || !entry.bookUrl || entry.durationMs <= 0) continue;
         await this.performReadStatsUpsert(entry);
       }
+      // Statistics have their own durable outbox. Do not dirty the general sync
+      // revision: otherwise every saved minute forces a full data exchange.
     });
     this.readStatsWriteTask = task;
-    try {
-      await task;
-    } catch (error) {
-      console.warn('累计阅读时长入库失败', error);
-    }
-  }
-
-  private async getPrivateBookUrls(bookUrls: string[]): Promise<Set<string>> {
-    const urls = new Set<string>();
-    const candidates = bookUrls.filter((url) => !!url);
-    if (!this.store || candidates.length === 0) return urls;
-    const predicates = new relationalStore.RdbPredicates('books');
-    predicates.in('bookUrl', candidates);
-    predicates.and();
-    predicates.equalTo('isPrivate', 1);
-    const resultSet = await this.store.query(predicates, ['bookUrl']);
-    try {
-      while (resultSet.goToNextRow()) {
-        urls.add(resultSet.getString(resultSet.getColumnIndex('bookUrl')));
-      }
-    } finally {
-      resultSet.close();
-    }
-    return urls;
+    await task;
   }
 
   private async performReadStatsUpsert(entry: ReadStatsEntry): Promise<void> {
     if (!this.store) return;
-    const predicates = new relationalStore.RdbPredicates('read_stats');
-    predicates.equalTo('dayKey', entry.dayKey);
-    predicates.and();
-    predicates.equalTo('bookUrl', entry.bookUrl);
-    const resultSet = await this.store.query(predicates, ['durationMs']);
-    let existingMs = 0;
-    try {
-      if (resultSet.goToFirstRow()) {
-        existingMs = resultSet.getLong(resultSet.getColumnIndex('durationMs'));
-      }
-    } finally {
-      resultSet.close();
-    }
-    const bucket: relationalStore.ValuesBucket = {
-      durationMs: existingMs + entry.durationMs,
-      lastReadAt: entry.lastReadAt
-    };
-    if (existingMs > 0) {
-      await this.store.update(bucket, predicates);
-    } else {
-      bucket.dayKey = entry.dayKey;
-      bucket.bookUrl = entry.bookUrl;
-      await this.store.insert('read_stats', bucket);
-    }
+    const book = await this.getBook(entry.bookUrl);
+    if (book) await this.saveReadStatsBookSnapshot(book);
+    await this.store.executeSql(`INSERT OR IGNORE INTO read_stats_records
+      (recordId, ownerId, deviceId, deviceName, bookUrl, bookKey, dayKey, durationMs,
+       startedAt, lastReadAt, timezoneOffset, cloudSuppressed, syncedVersion) VALUES (?, ?, ?, ?, ?,
+       COALESCE((SELECT bookKey FROM read_stats_books WHERE bookUrl = ?), ?), ?, ?, ?, ?, ?,
+       COALESCE((SELECT isPrivate FROM read_stats_books WHERE bookUrl=?),0),
+       COALESCE((SELECT isPrivate FROM read_stats_books WHERE bookUrl=?),0))`,
+      [entry.recordId, entry.ownerId, entry.deviceId || 'legacy-import', entry.deviceName || '历史导入',
+        entry.bookUrl, entry.bookUrl, entry.bookUrl, entry.dayKey, entry.durationMs,
+        entry.startedAt, entry.lastReadAt, entry.timezoneOffset, entry.bookUrl, entry.bookUrl]);
   }
 
-  async getReadStatsByDayRange(startDayKey: string, endDayKey: string): Promise<ReadStatsRow[]> {
+  async getReadStatsByDayRange(startDayKey: string, endDayKey: string,
+    deviceId: string = '', ownerId: string = ''): Promise<ReadStatsRow[]> {
     const rows: ReadStatsRow[] = [];
     if (!this.store || !startDayKey || !endDayKey || startDayKey > endDayKey) return rows;
-    const predicates = new relationalStore.RdbPredicates('read_stats');
-    predicates.between('dayKey', startDayKey, endDayKey);
-    const resultSet = await this.store.query(predicates, ['dayKey', 'bookUrl', 'durationMs']);
+    await this.readStatsWriteTask;
+    // 游客历史继续在本机展示，但不改成当前账号所有，也不自动上传。
+    const resultSet = await this.store.querySql(`SELECT r.dayKey, r.bookUrl, r.bookKey,
+      r.deviceId, MAX(r.deviceName) AS deviceName, SUM(r.durationMs) AS durationMs,
+      COALESCE(NULLIF(b.name, ''), m.name, '') AS name,
+      COALESCE(b.author, m.author, '') AS author,
+      COALESCE(NULLIF(b.customCoverUrl, ''), b.coverUrl, m.coverUrl, '') AS coverUrl,
+      CASE WHEN b.bookUrl IS NOT NULL AND b.pendingAddToShelf = 0 THEN 1 ELSE 0 END AS onShelf
+      FROM read_stats_records r
+      LEFT JOIN books b ON b.bookUrl = r.bookUrl
+      LEFT JOIN read_stats_books m ON m.bookUrl = r.bookUrl
+      WHERE r.deletedAt = 0 AND r.dayKey BETWEEN ? AND ?
+      AND (r.ownerId = '' OR r.ownerId = ?) AND (? = '' OR r.deviceId = ?)
+      AND COALESCE(b.isPrivate, m.isPrivate, 0) = 0
+      GROUP BY r.dayKey, r.bookUrl, r.bookKey, r.deviceId`,
+      [startDayKey, endDayKey, ownerId, deviceId, deviceId]);
     try {
       while (resultSet.goToNextRow()) {
         const row = new ReadStatsRow();
         row.dayKey = resultSet.getString(resultSet.getColumnIndex('dayKey'));
         row.bookUrl = resultSet.getString(resultSet.getColumnIndex('bookUrl'));
         row.durationMs = resultSet.getLong(resultSet.getColumnIndex('durationMs'));
+        row.bookKey = this.getStringColumn(resultSet, 'bookKey');
+        row.deviceId = this.getStringColumn(resultSet, 'deviceId');
+        row.deviceName = this.getStringColumn(resultSet, 'deviceName');
+        row.name = this.getStringColumn(resultSet, 'name');
+        row.author = this.getStringColumn(resultSet, 'author');
+        row.coverUrl = this.getStringColumn(resultSet, 'coverUrl');
+        row.onShelf = this.getLongColumn(resultSet, 'onShelf') === 1;
         rows.push(row);
       }
     } finally {
       resultSet.close();
     }
-    // 隐私书籍的时长照常入库，只是不在统计里显示；取消隐私后恢复显示。
-    const privateUrls = await this.getPrivateBookUrls(Array.from(new Set(rows.map((row) => row.bookUrl))));
-    if (privateUrls.size === 0) return rows;
-    return rows.filter((row) => !privateUrls.has(row.bookUrl));
+    return rows;
+  }
+
+  async getReadStatsDevices(ownerId: string): Promise<ReadStatsDeviceOption[]> {
+    if (!this.store) return [];
+    await this.readStatsWriteTask;
+    const result = await this.store.querySql(`SELECT r.deviceId, MAX(r.deviceName) AS deviceName
+      FROM read_stats_records r LEFT JOIN books b ON b.bookUrl = r.bookUrl
+      LEFT JOIN read_stats_books m ON m.bookUrl = r.bookUrl
+      WHERE r.deletedAt = 0 AND (r.ownerId = '' OR r.ownerId = ?)
+      AND COALESCE(b.isPrivate, m.isPrivate, 0) = 0 GROUP BY r.deviceId ORDER BY r.deviceId`, [ownerId]);
+    const devices: ReadStatsDeviceOption[] = [];
+    try {
+      while (result.goToNextRow()) {
+        const device = new ReadStatsDeviceOption();
+        device.deviceId = this.getStringColumn(result, 'deviceId');
+        device.deviceName = this.getStringColumn(result, 'deviceName');
+        devices.push(device);
+      }
+    } finally { result.close(); }
+    return devices;
+  }
+
+  /** 统计页删除按逻辑书籍与当前设备范围操作，保留墓碑同步删除。 */
+  async deleteReadStatsSelection(bookKey: string, startKey: string, endKey: string,
+    deviceId: string, ownerId: string): Promise<void> {
+    if (!this.store || !bookKey || startKey > endKey) return;
+    await this.readStatsWriteTask;
+    await this.store.executeSql(`UPDATE read_stats_records SET deletedAt = ?, syncVersion = syncVersion + 1
+      WHERE bookKey = ? AND dayKey BETWEEN ? AND ? AND deletedAt = 0
+      AND (ownerId = '' OR ownerId = ?) AND (? = '' OR deviceId = ?)
+      AND COALESCE((SELECT isPrivate FROM books b WHERE b.bookUrl = read_stats_records.bookUrl),
+        (SELECT isPrivate FROM read_stats_books m WHERE m.bookUrl = read_stats_records.bookUrl), 0) = 0`,
+      [Date.now(), bookKey, startKey, endKey, ownerId, deviceId, deviceId]);
+    CloudSyncChangeTracker.markDataChanged();
   }
 
   /** 删除某本书在 [startDayKey, endDayKey] 内的阅读时长记录。 */
@@ -2608,33 +2719,138 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     // 等排队中的时长写入落库后再删，避免刚删掉又被旧的写入任务补回来。
     await this.readStatsWriteTask.catch(() => {
     });
-    const predicates = new relationalStore.RdbPredicates('read_stats');
-    predicates.equalTo('bookUrl', bookUrl);
-    predicates.and();
-    predicates.between('dayKey', startDayKey, endDayKey);
-    await this.store.delete(predicates);
+    await this.store.executeSql(`UPDATE read_stats_records SET deletedAt=?, syncVersion=syncVersion+1
+      WHERE bookUrl=? AND dayKey BETWEEN ? AND ? AND deletedAt=0`,
+      [Date.now(), bookUrl, startDayKey, endDayKey]);
+    CloudSyncChangeTracker.markDataChanged();
   }
 
-  async getReadStatsBookMeta(bookUrls: string[]): Promise<Map<string, ReadStatsBookMeta>> {
-    const metaMap = new Map<string, ReadStatsBookMeta>();
-    if (!this.store || bookUrls.length === 0) return metaMap;
-    const predicates = new relationalStore.RdbPredicates('books');
-    predicates.in('bookUrl', bookUrls);
-    const resultSet = await this.store.query(predicates, ['bookUrl', 'name', 'author', 'coverUrl']);
-    try {
-      while (resultSet.goToNextRow()) {
-        const meta = new ReadStatsBookMeta();
-        meta.bookUrl = resultSet.getString(resultSet.getColumnIndex('bookUrl'));
-        meta.name = resultSet.getString(resultSet.getColumnIndex('name'));
-        meta.author = resultSet.getString(resultSet.getColumnIndex('author'));
-        meta.coverUrl = resultSet.getString(resultSet.getColumnIndex('coverUrl'));
-        metaMap.set(meta.bookUrl, meta);
-      }
-    } finally {
-      resultSet.close();
-    }
-    return metaMap;
+  async getReadStatsSyncCursor(ownerId: string): Promise<number> {
+    if (!this.store) throw new Error('统计数据库尚未就绪');
+    const result = await this.store.querySql('SELECT cursor FROM read_stats_sync_cursor WHERE ownerId=?', [ownerId]);
+    try { return result.goToFirstRow() ? result.getLong(0) : 0; } finally { result.close(); }
   }
+
+  async setReadStatsSyncCursor(ownerId: string, cursor: number): Promise<void> {
+    if (!this.store) throw new Error('统计数据库尚未就绪');
+    await this.store.executeSql('INSERT OR REPLACE INTO read_stats_sync_cursor(ownerId,cursor) VALUES(?,?)', [ownerId, cursor]);
+  }
+
+  async getReadStatsUploadBoundary(): Promise<number> {
+    if (!this.store) throw new Error('统计数据库尚未就绪');
+    await this.readStatsWriteTask;
+    const result = await this.store.querySql('SELECT COALESCE(MAX(rowid),0) FROM read_stats_records');
+    try { return result.goToFirstRow() ? result.getLong(0) : 0; } finally { result.close(); }
+  }
+
+  async updateReadStatsDeviceNames(ownerId: string, devices: ReadStatsDeviceOption[]): Promise<void> {
+    if (!this.store) throw new Error('统计数据库尚未就绪');
+    for (const device of devices) {
+      if (device.deviceName) await this.store.executeSql(
+        'UPDATE read_stats_records SET deviceName=? WHERE ownerId=? AND deviceId=? AND deviceName<>?',
+        [device.deviceName, ownerId, device.deviceId, device.deviceName]);
+    }
+  }
+
+  /** Bounded durable outbox. Never infer deletions from an absent local book or downloaded row. */
+  async getPendingReadStats(ownerId: string, deviceId: string, boundary: number): Promise<ReadStatsPendingUpload[]> {
+    if (!this.store || !ownerId) return [];
+    await this.readStatsWriteTask;
+    const result = await this.store.querySql(`SELECT r.*,
+      COALESCE(NULLIF(b.name,''),m.name,'') AS name, COALESCE(b.author,m.author,'') AS author,
+      COALESCE(NULLIF(b.customCoverUrl,''),b.coverUrl,m.coverUrl,'') AS coverUrl,
+      COALESCE(b.isPrivate,m.isPrivate,0) AS isPrivate
+      FROM read_stats_records r LEFT JOIN books b ON b.bookUrl=r.bookUrl
+      LEFT JOIN read_stats_books m ON m.bookUrl=r.bookUrl
+      WHERE r.ownerId=? AND r.rowid<=? AND r.syncVersion>r.syncedVersion
+      AND (r.deletedAt>0 OR r.cloudSuppressed=1 OR
+        (r.deviceId=? AND COALESCE(b.isPrivate,m.isPrivate,0)=0
+        AND r.startedAt>0 AND r.bookKey NOT LIKE 'local' || char(10) || '%'
+        AND r.bookKey NOT LIKE 'local:%' AND r.bookKey NOT LIKE 'file:%' AND r.bookKey NOT LIKE '/%'))
+      ORDER BY r.rowid LIMIT 100`, [ownerId, boundary, deviceId]);
+    const uploads: ReadStatsPendingUpload[] = [];
+    try {
+      while (result.goToNextRow()) {
+        const upload = new ReadStatsPendingUpload();
+        upload.version = this.getLongColumn(result, 'syncVersion');
+        upload.operation.recordId = this.getStringColumn(result, 'recordId');
+        upload.operation.deleted = this.getLongColumn(result, 'deletedAt') > 0 ||
+          this.getLongColumn(result, 'cloudSuppressed') === 1;
+        if (!upload.operation.deleted) {
+          const payload = new ReadStatsSyncPayload();
+          payload.deviceId = this.getStringColumn(result, 'deviceId');
+          payload.deviceName = this.getStringColumn(result, 'deviceName').slice(0, 128);
+          payload.bookKey = this.getStringColumn(result, 'bookKey');
+          payload.name = this.getStringColumn(result, 'name').slice(0, 512);
+          payload.author = this.getStringColumn(result, 'author').slice(0, 512);
+          const cover = this.getStringColumn(result, 'coverUrl');
+          payload.coverUrl = /^https?:\/\//i.test(cover) && cover.length <= 2048 ? cover : '';
+          payload.dayKey = this.getStringColumn(result, 'dayKey');
+          payload.durationMs = this.getLongColumn(result, 'durationMs');
+          payload.startedAt = this.getLongColumn(result, 'startedAt');
+          payload.lastReadAt = this.getLongColumn(result, 'lastReadAt');
+          payload.timezoneOffset = this.getLongColumn(result, 'timezoneOffset');
+          upload.operation.payload = payload;
+        }
+        uploads.push(upload);
+      }
+    } finally { result.close(); }
+    return uploads;
+  }
+
+  async acknowledgeReadStats(ownerId: string, uploads: ReadStatsPendingUpload[], acks: ReadStatsSyncAck[]): Promise<void> {
+    if (!this.store) throw new Error('统计数据库尚未就绪');
+    for (const upload of uploads) {
+      const ack = acks.find((item: ReadStatsSyncAck): boolean => item.recordId === upload.operation.recordId);
+      if (!ack) throw new Error('统计同步回执不完整');
+      // A deletion/privacy change made while the request was in flight stays dirty.
+      await this.store.executeSql(`UPDATE read_stats_records SET syncedVersion=MAX(syncedVersion,?),
+        deletedAt=CASE WHEN ?=1 AND cloudSuppressed=0 THEN MAX(deletedAt,1) ELSE deletedAt END
+        WHERE ownerId=? AND recordId=?`, [upload.version, ack.deleted ? 1 : 0, ownerId, ack.recordId]);
+    }
+  }
+
+  async applyReadStatsChanges(ownerId: string, changes: ReadStatsSyncChange[]): Promise<void> {
+    if (!this.store || !ownerId) throw new Error('统计账号不可用');
+    const books = await this.getAllBooks();
+    const localUrls = new Map<string, string>();
+    books.forEach((book: Book): void => { localUrls.set(BookIdentity.cloudIdentityValue(book), book.bookUrl); });
+    for (const change of changes) {
+      if (change.deleted) {
+        // Persist unknown tombstones too: restored old backups cannot resurrect these identities.
+        await this.store.executeSql(`INSERT OR IGNORE INTO read_stats_records
+          (recordId,ownerId,deviceId,bookUrl,bookKey,dayKey,durationMs,deletedAt,syncedVersion,cloudSequence)
+          VALUES(?,?,'','','','',0,1,1,?)`, [change.recordId, ownerId, change.sequenceId]);
+        await this.store.executeSql(`UPDATE read_stats_records SET
+          deletedAt=CASE WHEN cloudSuppressed=0 THEN MAX(deletedAt,1) ELSE deletedAt END,
+          cloudSequence=MAX(cloudSequence,?) WHERE ownerId=? AND recordId=?`,
+          [change.sequenceId, ownerId, change.recordId]);
+        continue;
+      }
+      const payload = change.payload;
+      if (!payload) throw new Error('统计同步内容缺失');
+      // Remote snapshots live in an account-specific namespace, never overwrite local/private metadata.
+      const snapshotUrl = `stats-cloud:${ownerId}:${payload.bookKey}`;
+      const localBook = books.find((book: Book): boolean => BookIdentity.cloudIdentityValue(book) === payload.bookKey);
+      await this.store.executeSql(`INSERT OR REPLACE INTO read_stats_books
+        (bookUrl,bookKey,name,author,coverUrl,isPrivate) VALUES(?,?,?,?,?,
+          CASE WHEN ?<0 THEN COALESCE((SELECT isPrivate FROM read_stats_books WHERE bookUrl=?),0) ELSE ? END)`,
+        [snapshotUrl, payload.bookKey, payload.name, payload.author, payload.coverUrl,
+          localBook ? (localBook.isPrivate ? 1 : 0) : -1, snapshotUrl, localBook?.isPrivate ? 1 : 0]);
+      const localUrl = localUrls.get(payload.bookKey) || snapshotUrl;
+      await this.store.executeSql(`INSERT OR IGNORE INTO read_stats_records
+        (recordId,ownerId,deviceId,deviceName,bookUrl,bookKey,dayKey,durationMs,startedAt,lastReadAt,
+          timezoneOffset,syncedVersion,cloudSequence)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)`, [change.recordId, ownerId, payload.deviceId, payload.deviceName,
+        localUrl, payload.bookKey, payload.dayKey, payload.durationMs, payload.startedAt, payload.lastReadAt,
+        payload.timezoneOffset, change.sequenceId]);
+      // Content and pending tombstones are immutable; only the source display name may refresh.
+      await this.store.executeSql(`UPDATE read_stats_records SET deviceName=?, cloudSequence=?
+        WHERE ownerId=? AND recordId=? AND cloudSequence<=?`,
+        [payload.deviceName, change.sequenceId, ownerId, change.recordId, change.sequenceId]);
+    }
+  }
+
 }
 
 export const appDb = AppDatabase.getInstance();

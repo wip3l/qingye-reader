@@ -15,6 +15,8 @@ import { ReaderV2SpanStyleRange } from './ReaderV2Style';
 import { ReaderCommentBubbleSize } from './ReaderCommentBubbleSize';
 import { ReaderCommentBubblePainter } from './ReaderCommentBubble';
 import { ReaderMixedPageLayout } from './ReaderMixedPageLayout';
+import { ReaderFontWeight } from './ReaderFontWeight';
+import { ReaderFontStroke } from './ReaderFontStroke';
 
 class ReaderV2MeasuredBlock {
   block: ReaderV2Block;
@@ -357,7 +359,7 @@ export class ReaderV2Paginator {
 
   private static buildParagraph(document: ReaderV2Document, block: ReaderV2Block,
     snapshot: ReaderV2LayoutSnapshot, regexStyles: ReaderV2SpanStyleRange[], width: number,
-    sliceStart: number, sliceEnd: number): graphicsText.Paragraph {
+    sliceStart: number, sliceEnd: number, outlineOnly: boolean = false): graphicsText.Paragraph {
     const baseStyle = ReaderV2Paginator.baseTextStyle(block, snapshot);
     const paragraphStyle: graphicsText.ParagraphStyle = {
       textStyle: baseStyle,
@@ -384,7 +386,7 @@ export class ReaderV2Paginator {
       if (end <= start) continue;
       const absoluteStart = block.displayStart + start;
       const style = ReaderV2Paginator.styleAt(document, block, absoluteStart, snapshot, regexStyles);
-      builder.pushStyle(style);
+      builder.pushStyle(outlineOnly ? ReaderFontStroke.outlineStyle(style) : style);
       builder.addText(block.text.substring(start, end));
       builder.popStyle();
     }
@@ -412,6 +414,8 @@ export class ReaderV2Paginator {
 
   private static baseTextStyle(block: ReaderV2Block, snapshot: ReaderV2LayoutSnapshot): graphicsText.TextStyle {
     const heading = block.title || block.headingLevel > 0;
+    const weight = ReaderFontWeight.layoutWeight(heading ? snapshot.titleFontFamily : snapshot.bodyFontFamily,
+      heading ? snapshot.titleFontWeight : snapshot.fontWeight);
     // Chapter titles keep the user's title size. In-chapter headings sit between body and title size so a
     // deep heading never outweighs the chapter title; level 3+ only gains the title face and weight.
     const headingFontSizePx = block.headingLevel > 2 ? snapshot.fontSizePx :
@@ -420,8 +424,8 @@ export class ReaderV2Paginator {
       fontSize: block.title ? snapshot.titleFontSizePx : (heading ? headingFontSizePx : snapshot.fontSizePx),
       letterSpacing: snapshot.letterSpacingPx,
       fontFamilies: [heading ? snapshot.titleFontFamily : snapshot.bodyFontFamily],
-      fontWeight: heading ? graphicsText.FontWeight.W600 : ReaderV2Paginator.bodyFontWeight(snapshot.fontWeight),
-      fontVariations: [{ axis: 'wght', value: heading ? 600 : snapshot.fontWeight }],
+      fontWeight: ReaderV2Paginator.bodyFontWeight(weight),
+      fontVariations: [{ axis: 'wght', value: weight }],
       color: ReaderV2Paginator.graphicsColor(snapshot.textColor),
       halfLeading: false,
       heightOnly: true,
@@ -485,9 +489,16 @@ export class ReaderV2Paginator {
     if (actionIndex < document.actions.length) {
       const action = document.actions[actionIndex];
       if (absoluteOffset >= action.displayStart && absoluteOffset < action.displayEnd) {
+        const bodyCenter = ReaderV2Paginator.commentTextCenter(base, '国', snapshot);
         const scale = ReaderCommentBubbleSize.scale(action.label, snapshot.commentBubbleSize);
         base.fontSize = snapshot.commentFontSizePx * scale;
         base.letterSpacing = snapshot.letterSpacingPx * scale;
+        // Shift the native glyphs themselves: bubble bounds, hit testing and pagination then consume the
+        // same adjusted metrics. Centre the complete body + tail silhouette, keeping the label in the body.
+        const tailHeight = ReaderCommentBubblePainter.tailHeightFor(
+          ReaderCommentBubblePainter.heightFor(base.fontSize), snapshot.commentBubble);
+        base.baselineShift = bodyCenter - ReaderV2Paginator.commentTextCenter(base, action.label, snapshot) -
+          tailHeight / 2;
         // The bubble behind the label is painted by the page node, not as a text background.
         base.color = ReaderV2Paginator.graphicsColor(snapshot.commentBubble.text);
         return base;
@@ -497,7 +508,7 @@ export class ReaderV2Paginator {
       if (absoluteOffset < style.start || absoluteOffset >= style.end) continue;
       if (style.fontSizePx > 0) base.fontSize = style.fontSizePx;
       if (style.fontFamily) base.fontFamilies = [style.fontFamily];
-      if (style.color !== 0) base.color = ReaderV2Paginator.graphicsColor(style.color);
+      if (style.colorEnabled || style.color !== 0) base.color = ReaderV2Paginator.graphicsColor(style.color);
       if (style.backgroundEnabled && !style.decorationEnabled) {
         base.backgroundRect = {
           color: ReaderV2Paginator.graphicsColor(style.backgroundColor),
@@ -518,9 +529,31 @@ export class ReaderV2Paginator {
       // ReadBook, while this paragraph remains the single source of truth for glyph metrics and baselines.
       // Repainting the text in an ArkUI Text containing ImageSpans gives that copy a different line box and
       // makes decorated and ordinary text on the same line visibly drift vertically.
-      return base;
+      return ReaderV2Paginator.resolveWeight(base,
+        ReaderV2Paginator.requestedWeightAt(document, block, absoluteOffset, snapshot, regexStyles));
     }
-    return base;
+    return ReaderV2Paginator.resolveWeight(base,
+        ReaderV2Paginator.requestedWeightAt(document, block, absoluteOffset, snapshot, regexStyles));
+  }
+
+  private static resolveWeight(style: graphicsText.TextStyle, requestedWeight: number): graphicsText.TextStyle {
+    const family = style.fontFamilies && style.fontFamilies.length > 0 ? style.fontFamilies[0] : '';
+    const weight = ReaderFontWeight.layoutWeight(family, requestedWeight);
+    style.fontWeight = ReaderV2Paginator.bodyFontWeight(weight);
+    style.fontVariations = [{ axis: 'wght', value: weight }];
+    return style;
+  }
+
+  private static requestedWeightAt(document: ReaderV2Document, block: ReaderV2Block, offset: number,
+    snapshot: ReaderV2LayoutSnapshot, regexStyles: ReaderV2SpanStyleRange[]): number {
+    const fallback = block.title || block.headingLevel > 0 ? snapshot.titleFontWeight : snapshot.fontWeight;
+    const actionIndex = ReaderV2Paginator.firstActionWhoseEndExceeds(document.actions, offset);
+    if (actionIndex < document.actions.length && offset >= document.actions[actionIndex].displayStart &&
+      offset < document.actions[actionIndex].displayEnd) return fallback;
+    for (const style of regexStyles) {
+      if (offset >= style.start && offset < style.end) return style.fontWeight > 0 ? style.fontWeight : fallback;
+    }
+    return fallback;
   }
 
   private static decorationReservationAfter(absoluteOffset: number, block: ReaderV2Block,
@@ -565,6 +598,21 @@ export class ReaderV2Paginator {
         first.startIndex, last.endIndex);
     fragment.selectionRuns = ReaderV2Paginator.buildSelectionRuns(document, current.block, snapshot, regexStyles,
       first.startIndex, last.endIndex);
+    let runOffset = current.block.displayStart + first.startIndex;
+    const needsOutline = fragment.selectionRuns.some((run: ReaderV2SelectionRun): boolean => {
+      const requested = ReaderV2Paginator.requestedWeightAt(document, current.block, runOffset, snapshot, regexStyles);
+      runOffset += run.text.length;
+      return ReaderFontWeight.isStatic(run.fontFamily) && requested > ReaderFontWeight.DEFAULT;
+    });
+    if (needsOutline) {
+      const outline = ReaderV2Paginator.buildParagraph(document, current.block, snapshot, regexStyles, width,
+        first.startIndex, last.endIndex, true);
+      fragment.fontStrokes = ReaderFontStroke.build(outline, snapshot.fontWeight,
+        (offset: number): graphicsText.TextStyle => ReaderV2Paginator.styleAt(document, current.block,
+          current.block.displayStart + first.startIndex + offset, snapshot, regexStyles),
+        (offset: number): number => ReaderV2Paginator.requestedWeightAt(document, current.block,
+          current.block.displayStart + first.startIndex + offset, snapshot, regexStyles));
+    }
     fragment.paragraphX = x;
     fragment.paragraphY = y;
     fragment.paragraphHeight = paragraphLineBottom - paragraphLineTop;
@@ -572,8 +620,10 @@ export class ReaderV2Paginator {
     const topInkBleedPx = localLines.length > 0 ? ReaderV2Paginator.lineTopInkGuard(localLines[0]) : 1;
     const bottomInkBleedPx = localLines.length > 0 ?
       ReaderV2Paginator.lineBottomInkGuard(localLines[localLines.length - 1]) : 1;
-    fragment.clipRect = new ReaderV2Rect(x, y - topInkBleedPx, x + width,
-      y + paragraphLineBottom - paragraphLineTop + bottomInkBleedPx);
+    let strokeBleed = 0;
+    for (const stroke of fragment.fontStrokes) strokeBleed = Math.max(strokeBleed, stroke.pen.getWidth() / 2 + 1);
+    fragment.clipRect = new ReaderV2Rect(x - strokeBleed, y - topInkBleedPx - strokeBleed, x + width + strokeBleed,
+      y + paragraphLineBottom - paragraphLineTop + bottomInkBleedPx + strokeBleed);
     fragment.localStart = first.startIndex;
     fragment.localEnd = last.endIndex;
     fragment.displayStart = current.block.displayStart + fragment.localStart;
@@ -711,10 +761,41 @@ export class ReaderV2Paginator {
       const style = ReaderV2Paginator.styleAt(document, block, block.displayStart + start, snapshot, regexStyles);
       const families = style.fontFamilies;
       result.push(new ReaderV2SelectionRun(block.text.substring(start, end), Number(style.fontSize),
-        families && families.length > 0 ? families[0] : '', block.title || block.headingLevel > 0 ? 600 : snapshot.fontWeight,
+        families && families.length > 0 ? families[0] : '',
+        style.fontVariations && style.fontVariations.length > 0 ? style.fontVariations[0].value : snapshot.fontWeight,
         Number(style.letterSpacing || 0)));
     }
     return result;
+  }
+
+  /** Measure with the actual face/fallback and weight, without line spacing or an existing baseline shift. */
+  private static commentTextCenter(style: graphicsText.TextStyle, label: string,
+    snapshot: ReaderV2LayoutSnapshot): number {
+    const key = JSON.stringify([style.fontFamilies, style.fontSize, style.fontWeight, style.fontVariations, label]);
+    const cached = snapshot.commentTextCenters.get(key);
+    if (cached !== undefined) return cached;
+    const builder = new graphicsText.ParagraphBuilder({ textStyle: style, includeFontPadding: true },
+      graphicsText.FontCollection.getGlobalInstance());
+    builder.pushStyle(style);
+    builder.addText(label);
+    builder.popStyle();
+    const paragraph = builder.build();
+    paragraph.layoutSync(Math.max(1, (style.fontSize ?? 1) + Math.abs(style.letterSpacing ?? 0)) *
+      Math.max(4, label.length * 2));
+    const boxes = paragraph.getRectsForRange({ start: 0, end: label.length },
+      graphicsText.RectWidthStyle.TIGHT, graphicsText.RectHeightStyle.TIGHT);
+    let top = Number.POSITIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
+    for (const box of boxes) {
+      if (box.rect.right <= box.rect.left || box.rect.bottom <= box.rect.top) continue;
+      top = Math.min(top, box.rect.top);
+      bottom = Math.max(bottom, box.rect.bottom);
+    }
+    const center = Number.isFinite(top) ? (top + bottom) / 2 - paragraph.getAlphabeticBaseline() : 0;
+    // Source actions may contain arbitrary labels; keep the per-layout measurement cache bounded.
+    if (snapshot.commentTextCenters.size >= 128) snapshot.commentTextCenters.clear();
+    snapshot.commentTextCenters.set(key, center);
+    return center;
   }
 
   private static appendActionAreas(page: ReaderV2PageLayout, fragment: ReaderV2PageFragment,
