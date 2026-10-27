@@ -1,9 +1,7 @@
 import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
 import { http } from '@kit.NetworkKit';
-import { photoAccessHelper } from '@kit.MediaLibraryKit';
-import { systemShare } from '@kit.ShareKit';
-import { uniformTypeDescriptor } from '@kit.ArkData';
+import { ImageFileExport } from '../../utils/ImageFileExport';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import image from '@ohos.multimedia.image';
@@ -20,34 +18,14 @@ export class ReaderComicImageExport {
     snapshot: ReaderComicSnapshotProvider | null = null): Promise<boolean> {
     const path = await ReaderComicImageExport.materialize(context, source, snapshot);
     const extension = ReaderComicImageExport.sniffExtension(path);
-    const helper = photoAccessHelper.getPhotoAccessHelper(context);
-    const targets = await helper.showAssetsCreationDialog([fileUri.getUriFromPath(path)], [{
-      title: `legado_${Date.now()}`,
-      fileNameExtension: extension,
-      photoType: photoAccessHelper.PhotoType.IMAGE
-    }]);
-    if (!targets || targets.length === 0 || !targets[0]) return false;
-    const target = fs.openSync(targets[0], fs.OpenMode.WRITE_ONLY);
-    try {
-      fs.copyFileSync(path, target.fd);
-    } finally {
-      fs.closeSync(target);
-    }
-    return true;
+    return await ImageFileExport.save(context, [path], extension);
   }
 
   static async share(context: common.UIAbilityContext, source: string,
     snapshot: ReaderComicSnapshotProvider | null = null): Promise<void> {
     const path = await ReaderComicImageExport.materialize(context, source, snapshot);
     const extension = ReaderComicImageExport.sniffExtension(path);
-    const type = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(`.${extension}`,
-      uniformTypeDescriptor.UniformDataType.IMAGE);
-    const data = new systemShare.SharedData({ utd: type, uri: fileUri.getUriFromPath(path) });
-    const controller = new systemShare.ShareController(data);
-    await controller.show(context, {
-      previewMode: systemShare.SharePreviewMode.DETAIL,
-      selectionMode: systemShare.SelectionMode.SINGLE
-    });
+    await ImageFileExport.share(context, [path], extension);
   }
 
   /**

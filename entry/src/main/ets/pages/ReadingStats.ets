@@ -16,9 +16,15 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
+import { ReadStatsPosterSnapshot, ReadStatsPosterSession } from '../core/stats/ReadStatsPosterModel';
 
 const STATS_MODES: string[] = ['day', 'week', 'month', 'year', 'all'];
 const STATS_MODE_LABELS: string[] = ['日', '周', '月', '年', '全部'];
+
+interface ReadingStatsMetricDisplay {
+  label: string;
+  text: string;
+}
 
 /** 首项为页头，总览和排行共用一个惰性列表。 */
 class ReadStatsListDataSource implements IDataSource {
@@ -65,6 +71,7 @@ struct ReadingStatsPage {
   private selectionWrite: Promise<void> = Promise.resolve();
   private viewReady: boolean = false;
   private initializationVersion: number = 0;
+  private openingShare: boolean = false;
 
   aboutToAppear(): void { this.alive = true; this.initialize(); this.syncBars(); }
   aboutToDisappear(): void { this.alive = false; this.requestVersion++; this.initializationVersion++; }
@@ -247,10 +254,10 @@ struct ReadingStatsPage {
     }.width('100%').constraintSize({ minHeight: 44 }).margin({ bottom: AppSpacing.MD })
   }
   @Builder
-  metric(label: string, text: string) {
+  metric($$: ReadingStatsMetricDisplay) {
     Column({ space: AppSpacing.SM }) {
-      Text(text).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor()).maxLines(2)
-      Text(label).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+      Text($$.text).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor()).maxLines(2)
+      Text($$.label).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
     }.layoutWeight(1).alignItems(HorizontalAlign.Start)
   }
   @Builder
@@ -260,9 +267,9 @@ struct ReadingStatsPage {
       Text(this.loading || this.errorMessage ? '—' : ReadStatsSummary.duration(this.summary.totalMs))
         .fontSize(AppFontSize.DISPLAY).fontWeight(FontWeight.Bold).fontColor(this.primaryTextColor()).maxLines(2)
       Row({ space: AppSpacing.MD }) {
-        this.metric('阅读书籍', this.loading || this.errorMessage ? '—' : `${this.summary.items.length} 本`)
-        this.metric('阅读天数', this.loading || this.errorMessage ? '—' : `${this.summary.activeDays} 天`)
-        this.metric('日均时长', this.loading || this.errorMessage ? '—' : ReadStatsSummary.duration(this.summary.averageMs))
+        this.metric({ label: '阅读书籍', text: this.loading || this.errorMessage ? '—' : `${this.summary.items.length} 本` })
+        this.metric({ label: '阅读天数', text: this.loading || this.errorMessage ? '—' : `${this.summary.activeDays} 天` })
+        this.metric({ label: '日均时长', text: this.loading || this.errorMessage ? '—' : ReadStatsSummary.duration(this.summary.averageMs) })
       }.width('100%')
     }.width('100%').alignItems(HorizontalAlign.Start).padding(AppSpacing.XXL)
       .borderRadius(ThemeRuntime.cardRadius()).backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
@@ -434,6 +441,31 @@ struct ReadingStatsPage {
       `${start.getFullYear() !== end.getFullYear() ? `${end.getFullYear()}年` : ''}${end.getMonth() + 1}月${end.getDate()}日`;
   }
   pageColor(): string { return ThemeRuntime.pageColor(this.appDarkMode); }
+  private async shareStatistics(): Promise<void> {
+    if (this.loading || this.errorMessage || this.openingShare) return;
+    if (this.summary.totalMs <= 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '该时段暂无阅读记录' });
+      return;
+    }
+    if (this.ownerId !== (AccountSessionStore.isLoggedIn() ? AccountSessionStore.account().userId : '')) return;
+    const account = AccountSessionStore.account();
+    this.openingShare = true;
+    ReadStatsPosterSession.put(ReadStatsPosterSnapshot.capture(this.summary, this.ownerId, this.mode,
+      this.periodTitle(), this.deviceTitle(), this.ownerId ? account.displayName : '', this.ownerId ? account.avatarUrl : ''));
+    try { await this.getUIContext().getRouter().pushUrl({ url: 'pages/ReadingStatsShare' }); }
+    catch (_) {
+      ReadStatsPosterSession.take();
+      this.getUIContext().getPromptAction().showToast({ message: '打开分享页面失败，请重试' });
+    } finally { this.openingShare = false; }
+  }
+  @Builder
+  shareAction() {
+    Button() {
+      SymbolGlyph($r('sys.symbol.share')).fontSize(22).fontColor([this.primaryTextColor()])
+    }.width(44).height(44).backgroundColor(Color.Transparent).accessibilityText('分享阅读统计')
+      .enabled(!this.loading && !this.errorMessage)
+      .onClick((): void => { this.shareStatistics(); })
+  }
   cardColor(): string { return ThemeRuntime.cardColor(this.appDarkMode); }
   softColor(): string { return ThemeRuntime.inputColor(this.appDarkMode); }
   primaryTextColor(): string { return ThemeRuntime.primaryTextColor(this.appDarkMode); }
@@ -446,20 +478,26 @@ struct ReadingStatsPage {
       LazyForEach(this.source, (item: ReadStatsRank) => {
         if (!item.bookKey) {
           ListItem() { this.headerContent() }
+            .padding({ left: AppSpacing.XL, right: AppSpacing.XL }).clip(false)
         } else if (deviceInfo.sdkApiVersion >= 26) {
           HdsListItem({ customItemBuilder: (): void => { this.bookRow(item) }, swipeActionOptions: this.itemSwipeActions(item) })
+            .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
         } else {
           ListItem() { this.bookRow(item) }
+            .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
             .swipeAction({ end: { builder: (): void => { this.deleteSwipeButton(item) } }, edgeEffect: SwipeEdgeEffect.Spring })
         }
       }, (item: ReadStatsRank): string => item.bookKey ? `${item.bookKey}:${item.durationMs}:${item.percent}:${item.rank}:${item.name}:${item.onShelf}` : 'header')
     }.width('100%').height('100%').cachedCount(4).scrollBar(BarState.Off)
-      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: this.navBarHeight + AppSpacing.XXL })
+      // Keep horizontal gutters inside the items: List clips at its padded viewport,
+      // which otherwise cuts off the Select shadows at both content edges.
+      .padding({ bottom: this.navBarHeight + AppSpacing.XXL })
       .constraintSize({ maxWidth: 760 }).align(Alignment.Top)
   }
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      PageScaffold({ title: '阅读统计', scrollable: false, collapsible: false, content: (): void => { this.pageContent() } })
+      PageScaffold({ title: '阅读统计', scrollable: false, collapsible: false,
+        actions: (): void => { this.shareAction() }, content: (): void => { this.pageContent() } })
       Column().width(1).height(1).position({ x: this.contextMenuX, y: this.contextMenuY }).hitTestBehavior(HitTestMode.None)
         .bindPopup(this.showItemActionMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
           (): void => { this.itemActionMenu() }, Placement.BottomLeft, this.appDarkMode, this.accentColor(),
