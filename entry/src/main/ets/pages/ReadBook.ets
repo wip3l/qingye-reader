@@ -10053,7 +10053,7 @@ struct ReadBookPage {
         })
       }
       .width('100%')
-      .padding({ right: this.readerSettingsContentRightPadding() })
+      .padding({ left: AppSpacing.XXL, right: this.readerSettingsContentRightPadding() })
       .alignItems(VerticalAlign.Center)
 
       Scroll() {
@@ -10091,7 +10091,9 @@ struct ReadBookPage {
           }
         }
         .width('100%')
-        .padding({ right: this.readerSettingsContentRightPadding() })
+        // Keep the gutter inside the scroll viewport so the first Select's shadow
+        // can extend to the left without being cut at the control's own edge.
+        .padding({ left: AppSpacing.XXL, right: this.readerSettingsContentRightPadding() })
       }
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .width('100%')
@@ -10101,7 +10103,7 @@ struct ReadBookPage {
     }
     .width('100%')
     .height('100%')
-    .padding({ left: AppSpacing.XXL, right: this.readerSettingsScrollBarRightInset(), top: AppSpacing.XL, bottom: 0 })
+    .padding({ right: this.readerSettingsScrollBarRightInset(), top: AppSpacing.XL, bottom: 0 })
   }
 
   settingsPanelTitle(): string {
