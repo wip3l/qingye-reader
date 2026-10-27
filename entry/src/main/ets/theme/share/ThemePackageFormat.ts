@@ -99,7 +99,7 @@ export const LAYOUT_KEYS: string[] = [
   'marginLeft', 'marginRight', 'marginTop', 'marginBottom', 'commentBubbleSize', 'extendToStatusBar',
   'readerHeaderEnabled', 'readerHeaderContentMode', 'readerFooterEnabled', 'readerFooterLeftMode',
   'readerFooterProgressMode', 'readerFooterShowProgressBar', 'readerInfoBarConfig',
-  'bodyFontMode', 'bodyFontFamily', 'titleFontMode', 'titleFontFamily', 'titleFontSize'
+  'bodyFontMode', 'bodyFontFamily', 'titleFontMode', 'titleFontFamily', 'titleFontSize', 'titleFontWeight'
 ];
 
 /** 方案设置里可能指向本机图片文件的字段。 */

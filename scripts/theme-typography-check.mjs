@@ -73,6 +73,7 @@ function typography(h) {
   source.bodyFontFamily = 'theme-body';
   source.titleFontMode = 'system';
   source.titleFontSize = 30;
+  source.titleFontWeight = 650;
   source.regexFontEnabled = true;
   source.regexFontRulesRaw = '{"schemaVersion":3,"rules":[]}';
   // 不属于排版的字段不能被带进档案。
@@ -102,6 +103,7 @@ function assertTypography(actual) {
   assert.equal(actual.bodyFontFamily, 'theme-body');
   assert.equal(actual.titleFontMode, 'system');
   assert.equal(actual.titleFontSize, 30);
+  assert.equal(actual.titleFontWeight, 650);
   assert.equal(actual.regexFontEnabled, true);
 }
 
@@ -222,6 +224,8 @@ const tests = {
     fontPage.fontSize = 18;
     fontPage.bodyFontMode = 'global';
     fontPage.titleFontSize = 24;
+    fontPage.fontWeight = 350;
+    fontPage.titleFontWeight = 750;
     fontPage.regexFontEnabled = false;
     fontPage.marginLeft = 0;
     h.ThemeTypographyDraft.applyFontStyle(fontPage);
@@ -231,6 +235,8 @@ const tests = {
     assert.equal(current.bodyFontMode, 'global');
     assert.equal(current.bodyFontFamily, '');
     assert.equal(current.titleFontSize, 24);
+    assert.equal(current.fontWeight, 350);
+    assert.equal(current.titleFontWeight, 750);
     assert.equal(current.regexFontEnabled, false);
     assert.equal(current.marginLeft, 30, 'layout fields are not touched by the font page');
     h.ThemeTypographyDraft.end();

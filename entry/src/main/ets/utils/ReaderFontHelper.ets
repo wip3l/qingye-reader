@@ -2,6 +2,9 @@ import { font, UIContext } from '@kit.ArkUI';
 import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
 import graphicsText from '@ohos.graphics.text';
+import { drawing } from '@kit.ArkGraphics2D';
+import { ReaderFontMetadata } from '../core/reader/ReaderFontMetadata';
+import { ReaderFontWeight } from '../core/reader/ReaderFontWeight';
 
 export class ReaderFontItem {
   familyName: string = '';
@@ -161,9 +164,34 @@ export class ReaderFontHelper {
     record.filePath = filePath;
     next.push(record);
     ReaderFontHelper.registeredGraphicsFonts = next;
+    ReaderFontHelper.registerWeightSupport(familyName, filePath);
+  }
+
+  private static registerWeightSupport(familyName: string, filePath: string): void {
+    try {
+      const size = Number(fs.statSync(filePath).size);
+      const file = fs.openSync(filePath, fs.OpenMode.READ_ONLY);
+      let metadata: ReaderFontMetadata;
+      try {
+        metadata = ReaderFontMetadata.inspect(size, (offset: number, length: number): Uint8Array =>
+          ReaderFontHelper.readFontBytes(file.fd, offset, length));
+      } finally {
+        fs.closeSync(file);
+      }
+      if (!metadata.known) return;
+      if (metadata.variableWeight) {
+        ReaderFontWeight.registerVariable(familyName, metadata.minWeight, metadata.maxWeight);
+      } else {
+        const face = drawing.Typeface.makeFromFile(filePath);
+        if (face) ReaderFontWeight.registerStatic(familyName, face.getFamilyName());
+      }
+    } catch (error) {
+      console.warn(`读取字体字重能力失败: ${filePath}`, error);
+    }
   }
 
   static unloadGraphicsFamily(familyName: string): void {
+    ReaderFontWeight.unregister(familyName);
     try {
       graphicsText.FontCollection.getGlobalInstance().unloadFontSync(familyName);
     } catch (e) {

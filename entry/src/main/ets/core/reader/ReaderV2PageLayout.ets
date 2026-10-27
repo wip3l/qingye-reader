@@ -1,6 +1,7 @@
 import graphicsText from '@ohos.graphics.text';
 import { ReaderV2Rect } from './ReaderV2LayoutSnapshot';
 import { ReaderCommentBubbleStyle } from './ReaderCommentBubble';
+import { ReaderFontStrokeRun } from './ReaderFontStroke';
 
 /** Minimal native Text span metadata used by the transparent system-selection layer. */
 export class ReaderV2SelectionRun {
@@ -56,6 +57,7 @@ export class ReaderV2PageFragment {
   blockId: string = '';
   blockIndex: number = 0;
   paragraph: graphicsText.Paragraph | null = null;
+  fontStrokes: ReaderFontStrokeRun[] = [];
   paragraphX: number = 0;
   paragraphY: number = 0;
   clipRect: ReaderV2Rect = new ReaderV2Rect();

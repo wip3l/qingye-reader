@@ -3,6 +3,8 @@ export class ReaderV2SpanStyleRange {
   end: number = 0;
   fontSizePx: number = 0;
   fontFamily: string = '';
+  fontWeight: number = 0;
+  colorEnabled: boolean = false;
   color: number = 0;
   backgroundEnabled: boolean = false;
   backgroundColor: number = 0;

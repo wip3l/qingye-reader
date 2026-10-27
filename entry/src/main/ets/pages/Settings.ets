@@ -2316,6 +2316,13 @@ struct SettingsPage {
     .backgroundColor(this.cardColor())
     .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
     .alignItems(VerticalAlign.Center)
+    if (this.typographySettingIndex === ReaderTypographyField.FONT_WEIGHT) {
+      Text(ReaderFontWeight.HELP)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.SM })
+    }
   }
 
   @Builder

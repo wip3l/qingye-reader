@@ -743,6 +743,7 @@ struct ReadBookPage {
   @StorageLink('readerBodyFontFamily') @Watch('onReaderFontStyleChanged') readerBodyFontFamily: string = '';
   @StorageLink('readerTitleFontMode') @Watch('onReaderFontStyleChanged') readerTitleFontMode: string = 'global';
   @StorageLink('readerTitleFontFamily') @Watch('onReaderFontStyleChanged') readerTitleFontFamily: string = '';
+  @StorageLink('readerTitleFontWeight') @Watch('onReaderFontStyleChanged') readerTitleFontWeight: number = 600;
   @StorageLink('readerTitleFontSize') @Watch('onReaderFontStyleChanged') readerTitleFontSize: number = 22;
   @StorageLink('readerRegexFontEnabled') @Watch('onReaderFontStyleChanged') readerRegexFontEnabled: boolean = false;
   @StorageLink('readerRegexFontPattern') @Watch('onReaderFontStyleChanged') readerRegexFontPattern: string = '';
@@ -7255,6 +7256,7 @@ struct ReadBookPage {
     this.readerTitleFontMode = settings.titleFontMode || 'global';
     this.readerTitleFontFamily = settings.titleFontFamily || '';
     this.readerTitleFontSize = settings.titleFontSize || 22;
+    this.readerTitleFontWeight = settings.titleFontWeight ?? 600;
     this.readerRegexFontEnabled = settings.regexFontEnabled;
     this.readerRegexFontPattern = settings.regexFontPattern || '';
     this.readerRegexFontMode = settings.regexFontMode || 'global';
@@ -14685,6 +14687,7 @@ struct ReadBookPage {
     input.fontSizePx = this.toMeasureFontPx(this.readerFontSize);
     input.fontWeight = this.readerFontWeight;
     input.titleFontSizePx = this.toMeasureFontPx(this.readerTitleFontSize);
+    input.titleFontWeight = this.readerTitleFontWeight;
     input.lineSpacingPx = this.toMeasureNonNegativePx(this.readerLineHeight);
     input.paragraphSpacingPx = this.toMeasureNonNegativePx(this.readerParagraphSpacing);
     input.letterSpacingPx = this.toMeasureFontOffsetPx(this.getReaderAdaptiveLetterSpacing());
@@ -14732,6 +14735,8 @@ struct ReadBookPage {
       }
       const style = new ReaderV2SpanStyleRange(slice.start, slice.end);
       style.fontSizePx = template.fontSizePx;
+      style.fontWeight = template.fontWeight;
+      style.colorEnabled = template.colorEnabled;
       style.fontFamily = template.fontFamily;
       style.color = template.color;
       style.backgroundEnabled = template.backgroundEnabled;
@@ -14760,6 +14765,8 @@ struct ReadBookPage {
     const resolved = this.resolvedRegexEmphasis(this.getRegexRuleBySlice(slice));
     const style = new ReaderV2SpanStyleRange();
     style.fontSizePx = this.toMeasureFontPx(this.getRegexSliceFontSize(slice));
+    style.fontWeight = this.getRegexRuleBySlice(slice)?.fontWeight ?? 400;
+    style.colorEnabled = true;
     style.fontFamily = this.getRegexSliceFontFamily(slice);
     style.color = ReaderV2Color.parse(this.getStyledSliceFontColor(slice),
       ReaderV2Color.parse(this.getTextColor(), 0xFF202124));
@@ -16349,7 +16356,7 @@ struct ReadBookPage {
       `${this.readerParagraphIndent}_${this.readerCommentBubbleSize}_` +
       `${this.readerMarginLeft}_${this.readerMarginRight}_${this.readerMarginTop}_${this.readerMarginBottom}_` +
       `${this.readerBodyFontMode}_${this.readerBodyFontFamily}_${this.getBodyReaderFontFamily()}_` +
-      `${this.readerTitleFontSize}_${this.readerTitleFontMode}_${this.readerTitleFontFamily}_` +
+      `${this.readerTitleFontSize}_${this.readerTitleFontWeight}_${this.readerTitleFontMode}_${this.readerTitleFontFamily}_` +
       `${this.getTitleReaderFontFamily()}_${this.getReaderFontFamily()}_${this.systemFontRevision}_` +
       `${this.hashText(regexIdentity)}`;
   }

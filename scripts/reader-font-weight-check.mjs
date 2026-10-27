@@ -72,6 +72,24 @@ assert.equal(identities.size, 18, 'weight changes must invalidate layout/page/se
 assert.equal(original.fontWeight, 400, 'existing snapshots stay immutable when input changes');
 console.log('PASS: all eighteen weights reach body and regex styles, selection metadata and cache identities; headings stay at 600');
 
+Weight.registerStatic('fixture-static', 'Fixture');
+Weight.registerVariable('fixture-variable', 200, 700);
+input.bodyFontFamily = 'fixture-static';
+input.fontWeight = 650;
+const staticSnapshot = Snapshot.create(input);
+assert.equal(Paginator.baseTextStyle(block, staticSnapshot).fontWeight, 3, 'static face must not trigger native fake bold');
+assert.equal(Paginator.buildSelectionRuns(document, block, staticSnapshot, [], 0, block.text.length)[0].fontWeight, 400);
+rule.fontFamily = 'fixture-variable';
+assert.equal(Paginator.styleAt(document, block, 3, staticSnapshot, [rule]).fontVariations[0].value, 650,
+  'regex variable face inherits the requested weight, not the static body baseline');
+input.bodyFontFamily = 'fixture-variable';
+rule.fontFamily = 'fixture-static';
+assert.equal(Paginator.styleAt(document, block, 3, Snapshot.create(input), [rule]).fontWeight, 3,
+  'regex static face suppresses fake bold even inside variable-font body');
+Weight.unregister('fixture-static');
+Weight.unregister('fixture-variable');
+console.log('PASS: static and variable faces mix without double bold or selection metric drift');
+
 // Execute the settings page's real handlers so insertion cannot silently shift the other typography controls.
 const settingsPage = read('pages/Settings.ets');
 const methods = settingsPage.slice(settingsPage.indexOf('  typographySettingOptions():'), settingsPage.indexOf('  setCurrentThemeBackgroundColor('));
@@ -183,3 +201,26 @@ for (const label of ['123', ' 本章说 ']) {
   }
 }
 console.log('PASS: paragraph bubble geometry and action hit areas follow label scaling, including 10% and 200%');
+
+// Per-role and per-rule overrides take precedence, including selection and layout invalidation.
+input.bodyFontFamily = '';
+input.titleFontFamily = '';
+input.fontWeight = 850;
+input.titleFontWeight = 350;
+rule.fontFamily = '';
+rule.fontWeight = 550;
+const independent = Snapshot.create(input);
+const heading = { ...block, title: true };
+assert.equal(Paginator.styleAt(document, block, 0, independent, [rule]).fontVariations[0].value, 850);
+assert.equal(Paginator.styleAt(document, heading, 0, independent, [rule]).fontVariations[0].value, 350);
+for (const target of [block, heading]) {
+  assert.equal(Paginator.styleAt(document, target, 3, independent, [rule]).fontVariations[0].value, 550);
+  assert.equal(Paginator.buildSelectionRuns(document, target, independent, [rule], 0, block.text.length)[1].fontWeight, 550);
+}
+input.titleFontWeight = 700;
+assert.notEqual(Snapshot.create(input).identity, independent.identity);
+rule.colorEnabled = true;
+rule.color = 0;
+const transparent = Paginator.styleAt(document, block, 3, independent, [rule]);
+assert.equal(transparent.color.alpha, 0, 'transparent black must not mean inherit');
+console.log('PASS: independent title/regex weights override body, invalidate caches and preserve transparent black');

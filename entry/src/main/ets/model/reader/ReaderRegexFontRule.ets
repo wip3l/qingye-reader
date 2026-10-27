@@ -1,4 +1,5 @@
 import { ThemeAccessPolicy } from '../../account/ThemeAccessPolicy';
+import { ReaderFontWeight } from '../../core/reader/ReaderFontWeight';
 import { HexColor } from '../../utils/HexColor';
 
 export class ReaderRegexFontRule {
@@ -8,6 +9,7 @@ export class ReaderRegexFontRule {
   fontMode: string = 'global';
   fontFamily: string = '';
   fontSize: number = 20;
+  fontWeight: number = 400;
   emphasisMode: string = 'inherit';
   bubbleStyleId: string = 'inherit';
   emphasisColor: string = '';
@@ -33,6 +35,7 @@ export class ReaderRegexLegacySettings {
   fontMode: string = 'global';
   fontFamily: string = '';
   fontSize: number = 20;
+  fontWeight: number = 400;
   shadowColor: string = '';
 }
 
@@ -96,6 +99,7 @@ export class ReaderRegexFontCodec {
       rule.fontMode = ReaderRegexFontCodec.normalizeFontMode(item.fontMode);
       rule.fontFamily = item.fontFamily || '';
       rule.fontSize = ReaderRegexFontCodec.normalizeFontSize(item.fontSize);
+      rule.fontWeight = ReaderFontWeight.normalize(item.fontWeight);
       const legacyEmphasisMode = (item.emphasisMode || '').trim();
       rule.emphasisMode = ReaderRegexFontCodec.normalizeEmphasisMode(
         item.emphasisMode,
@@ -616,17 +620,17 @@ export class ReaderRegexBubbleStyleResolver {
   }
 
   static normalizeColor(value: string, fallback: string): string {
-    return HexColor.normalize(value, fallback, '#007DFF');
+    return HexColor.normalizeAlpha(value, fallback);
   }
 
   static withAlpha(color: string, alpha: number): string {
     const normalized = ReaderRegexBubbleStyleResolver.normalizeColor(color, '#007DFF');
-    return `#${ReaderRegexBubbleStyleResolver.componentToHex(alpha)}${normalized.substring(1)}`;
+    return HexColor.withOpacity(normalized, alpha / 255 * HexColor.alpha(normalized) / 255);
   }
 
   static mix(first: string, second: string, secondRatio: number): string {
-    const a = ReaderRegexBubbleStyleResolver.normalizeColor(first, '#FFFFFF');
-    const b = ReaderRegexBubbleStyleResolver.normalizeColor(second, '#007DFF');
+    const a = HexColor.rgb(ReaderRegexBubbleStyleResolver.normalizeColor(first, '#FFFFFF'));
+    const b = HexColor.rgb(ReaderRegexBubbleStyleResolver.normalizeColor(second, '#007DFF'));
     const ratio = Math.max(0, Math.min(secondRatio, 1));
     const red = ReaderRegexBubbleStyleResolver.channel(a, 1) * (1 - ratio) +
       ReaderRegexBubbleStyleResolver.channel(b, 1) * ratio;
@@ -634,13 +638,14 @@ export class ReaderRegexBubbleStyleResolver {
       ReaderRegexBubbleStyleResolver.channel(b, 3) * ratio;
     const blue = ReaderRegexBubbleStyleResolver.channel(a, 5) * (1 - ratio) +
       ReaderRegexBubbleStyleResolver.channel(b, 5) * ratio;
-    return `#${ReaderRegexBubbleStyleResolver.componentToHex(red)}` +
+    const rgb = `#${ReaderRegexBubbleStyleResolver.componentToHex(red)}` +
       `${ReaderRegexBubbleStyleResolver.componentToHex(green)}` +
       `${ReaderRegexBubbleStyleResolver.componentToHex(blue)}`;
+    return HexColor.alpha(second) < 255 ? HexColor.withOpacity(rgb, HexColor.alpha(second) / 255) : rgb;
   }
 
   static contrastTextColor(backgroundColor: string): string {
-    const color = ReaderRegexBubbleStyleResolver.normalizeColor(backgroundColor, '#007DFF');
+    const color = HexColor.rgb(ReaderRegexBubbleStyleResolver.normalizeColor(backgroundColor, '#007DFF'));
     const red = ReaderRegexBubbleStyleResolver.channel(color, 1) / 255;
     const green = ReaderRegexBubbleStyleResolver.channel(color, 3) / 255;
     const blue = ReaderRegexBubbleStyleResolver.channel(color, 5) / 255;

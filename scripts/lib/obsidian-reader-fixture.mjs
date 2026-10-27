@@ -47,7 +47,7 @@ export function loadObsidianReader(pathkit = null) {
   });
   const modules=['utils/HexColor.ts','theme/ThemeModels.ets','theme/BuiltinThemeRegistry.ets',
     'theme/ThemeRuntime.ets','theme/ThemeAssetRegistry.ets','account/ThemeAccessPolicy.ets',
-    'model/reader/ReaderRegexFontRule.ets','core/reader/ReaderV2Style.ets','core/reader/ReaderCommentBubble.ets'];
+    'core/reader/ReaderFontWeight.ts','model/reader/ReaderRegexFontRule.ets','core/reader/ReaderV2Style.ets','core/reader/ReaderCommentBubble.ets'];
   const reader=read('pages/ReadBook.ets');
   const contextMethods=reader.slice(reader.indexOf('  themeRegexEmphasisMode():'),reader.indexOf('  getRegexTextSlices('));
   const templateMethod=reader.slice(reader.indexOf('  buildReaderV2RegexStyleTemplate('),reader.indexOf('  createIncrementalReaderV2Pagination('));

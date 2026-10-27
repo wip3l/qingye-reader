@@ -1,5 +1,30 @@
 /** `#RRGGBB` 颜色文本的规范化，供设置读写与取色控件共用。 */
 export class HexColor {
+  /** ArkUI uses #AARRGGBB. Keep the existing RGB-only API for unrelated settings. */
+  static parseAlpha(value: string): string {
+    const color = (value || '').trim().replace(/^#/, '');
+    return /^(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(color) ? `#${color.toUpperCase()}` : '';
+  }
+
+  static normalizeAlpha(value: string, fallback: string): string {
+    return HexColor.parseAlpha(value) || HexColor.parseAlpha(fallback) || '#007DFF';
+  }
+
+  static rgb(value: string): string {
+    const color = HexColor.normalizeAlpha(value, '#007DFF');
+    return color.length === 9 ? `#${color.substring(3)}` : color;
+  }
+
+  static alpha(value: string): number {
+    const color = HexColor.parseAlpha(value);
+    return color.length === 9 ? parseInt(color.substring(1, 3), 16) : 255;
+  }
+
+  static withOpacity(value: string, opacity: number): string {
+    const alpha = Math.round(Math.max(0, Math.min(1, opacity)) * 255).toString(16).padStart(2, '0').toUpperCase();
+    return `#${alpha}${HexColor.rgb(value).substring(1)}`;
+  }
+
   private static readonly WITH_HASH: RegExp = /^#[0-9a-fA-F]{6}$/;
   private static readonly WITHOUT_HASH: RegExp = /^[0-9a-fA-F]{6}$/;
 

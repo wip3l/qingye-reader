@@ -269,6 +269,31 @@ const tests = {
     await h.settings.saveAll({}, style);
     assert.equal((await h.settings.reload({})).fontWeight, 300);
   },
+  async 'font page and typography share body weight while title persists independently'() {
+    const h = harness();
+    const style = await h.settings.load({});
+    assert.equal(style.titleFontWeight, 600);
+    style.fontWeight = 750;
+    style.titleFontWeight = 350;
+    await h.settings.saveReaderFontStyleSettings({}, style);
+    assert.equal(h.values.get('readerFontWeight'), 750);
+    assert.equal(h.values.get('readerTitleFontWeight'), 350);
+    assert.equal(h.disk.get('readerTitleFontWeight'), 350);
+    await h.settings.saveLayoutSettings({}, 20, 12, 0, 18, 18, 18, 18, 0, 'justify', 500);
+    let loaded = await h.settings.reload({});
+    assert.equal(loaded.fontWeight, 500);
+    assert.equal(loaded.titleFontWeight, 350);
+    const remote = h.sync.merge(loaded, { titleFontWeight: 900, fontWeight: 900 });
+    assert.equal(remote.titleFontWeight, 350);
+    assert.equal(remote.fontWeight, 500);
+    h.disk.set('readerThemeProfileV1_legacy', JSON.stringify({fontSize: 23}));
+    h.values.set('appThemeId', 'legacy');
+    assert.equal((await h.settings.switchThemeProfile({}, 'classic-blue', 'legacy')).titleFontWeight, 600);
+    h.values.set('appThemeId', 'classic-blue');
+    loaded = await h.settings.switchThemeProfile({}, 'legacy', 'classic-blue');
+    assert.equal(loaded.titleFontWeight, 350);
+    assert.equal(loaded.fontWeight, 500);
+  },
   async 'rapid font weight edits retain the latest value across theme switches'() {
     const h = harness();
     const release = h.pauseNextAccess();

@@ -55,3 +55,39 @@ for (const [theme, style, lightFill, darkFill] of [
 }
 
 console.log('PASS: custom bubble colors survive persistence and reach reader styles in both modes; theme defaults, text/highlight overrides and disabled bubbles are preserved.');
+
+const hex = vm.runInContext('HexColor', sandbox);
+const resolver = vm.runInContext('ReaderRegexBubbleStyleResolver', sandbox);
+for (const color of ['#00123456', '#80123456', '#FF123456', '#00000000']) {
+  assert.equal(hex.normalizeAlpha(color, '#FFFFFF'), color);
+  assert.equal(hex.rgb(color), `#${color.slice(3)}`);
+  const rule = new Rule();
+  rule.emphasisMode = 'custom';
+  rule.fontWeight = 650;
+  rule.customTextColorEnabled = true;
+  rule.customTextColor = color;
+  rule.customHighlightEnabled = true;
+  rule.customHighlightColor = color;
+  reader.rule = codec.decode(codec.encode([rule]))[0];
+  assert.equal(reader.rule.fontWeight, 650);
+  assert.equal(reader.rule.customTextColor, color);
+  const native = reader.buildReaderV2RegexStyleTemplate({});
+  assert.equal(native.fontWeight, 650);
+  assert.equal(native.colorEnabled, true);
+  assert.equal(native.color, parseInt(color.slice(1), 16));
+  assert.equal(native.backgroundColor, parseInt(color.slice(1), 16));
+  for (const bubble of ['qq-soft', 'gilded-orbit', 'neon-pulse']) {
+    reader.rule.customHighlightEnabled = false;
+    reader.rule.customBubbleEnabled = true;
+    reader.rule.bubbleStyleId = bubble;
+    reader.rule.customBubbleColor = color;
+    const resolved = reader.resolvedRegexEmphasis(reader.rule);
+    assert(hex.alpha(resolved.backgroundColor) <= hex.alpha(color));
+  }
+}
+assert.equal(hex.withOpacity('#1280FF', 0), '#001280FF');
+assert.equal(hex.withOpacity('#1280FF', .5), '#801280FF');
+assert.equal(hex.withOpacity('#1280FF', 1), '#FF1280FF');
+assert.equal(resolver.withAlpha('#80123456', 128), '#40123456');
+assert.equal(codec.decode(JSON.stringify([{id:'old',pattern:'x'}]))[0].fontWeight, 400);
+console.log('PASS: independent rule weights and ARGB colors survive codec, reader rendering and bubble effects');
