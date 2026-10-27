@@ -1,12 +1,27 @@
 import { HttpTTS } from '@legado/sourceengine';
 import { TtsVoiceInfo } from '../account/AccountCommerceModels';
 import { TtsVoiceOption } from './SystemTtsReader';
+import { TtsVoiceAvailability } from './TtsVoiceAvailability';
 
 /**
  * 朗读音色的比对、去重与展示文案（无状态）。系统返回的音色列表里同一个音色可能以在线、离线、
  * 不同风格等多个条目出现，这里决定哪些算同一个、保留哪一个、以及界面上怎么称呼。
  */
 export class TtsVoiceCatalog {
+  static isDefault(voice: TtsVoiceOption): boolean {
+    return TtsVoiceAvailability.systemKey(voice.id, voice.online, voice.language, voice.style) ===
+      TtsVoiceAvailability.DEFAULT_KEY;
+  }
+
+  static systemEnabled(voice: TtsVoiceOption, disabledKeys: string): boolean {
+    return TtsVoiceAvailability.isEnabled(disabledKeys,
+      TtsVoiceAvailability.systemKey(voice.id, voice.online, voice.language, voice.style));
+  }
+
+  static cloudEnabled(voice: TtsVoiceInfo, disabledKeys: string): boolean {
+    return TtsVoiceAvailability.isEnabled(disabledKeys, TtsVoiceAvailability.cloudKey(voice.id));
+  }
+
   static defaultVoice(): TtsVoiceOption {
     const option = new TtsVoiceOption();
     option.id = 0;
@@ -39,7 +54,8 @@ export class TtsVoiceCatalog {
     const options: TtsVoiceOption[] = [TtsVoiceCatalog.defaultVoice()];
     for (const voice of voices) {
       const existingIndex = options.findIndex((item: TtsVoiceOption) =>
-        TtsVoiceCatalog.isSameVoice(item, voice) || TtsVoiceCatalog.isSameDisplayVoice(item, voice));
+        TtsVoiceCatalog.isSameVoice(item, voice) || (!TtsVoiceCatalog.isDefault(item) &&
+          !TtsVoiceCatalog.isDefault(voice) && TtsVoiceCatalog.isSameDisplayVoice(item, voice)));
       if (existingIndex < 0) {
         options.push(voice);
       } else if (TtsVoiceCatalog.shouldPrefer(voice, options[existingIndex])) {

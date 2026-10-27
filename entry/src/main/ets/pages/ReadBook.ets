@@ -780,6 +780,7 @@ struct ReadBookPage {
   @StorageLink('ttsCustomVoiceId') ttsCustomVoiceId: string = '';
   @StorageLink('ttsCustomVoices') @Watch('onTtsCustomVoicesChanged') ttsCustomVoices: string = '';
   @StorageLink('ttsCloudVoiceId') ttsCloudVoiceId: string = '';
+  @StorageLink('ttsDisabledVoiceKeys') @Watch('onTtsAvailabilityChanged') ttsDisabledVoiceKeys: string = '';
   @StorageLink('launchShortcutNonce') @Watch('onLaunchShortcutChanged') launchShortcutNonce: number = 0;
   @StorageLink('fullTextCacheCancelNonce') @Watch('onFullTextCacheCancelNonceChanged') fullTextCacheCancelNonce: number = 0;
   @State ttsVoices: TtsVoiceOption[] = [TtsVoiceCatalog.defaultVoice()];
@@ -7543,7 +7544,18 @@ struct ReadBookPage {
     this.ttsCustomVoiceId = settings.customVoiceId;
     this.ttsCustomVoices = settings.customVoices;
     this.ttsCloudVoiceId = settings.cloudVoiceId;
+    this.ttsDisabledVoiceKeys = settings.disabledVoiceKeys;
     this.ttsCustomVoiceOptions = SystemTtsReader.parseCustomVoices(settings.customVoices);
+  }
+
+  onTtsAvailabilityChanged(): void {
+    this.ttsVoices = this.ttsVoices.filter((voice: TtsVoiceOption): boolean =>
+      TtsVoiceCatalog.systemEnabled(voice, this.ttsDisabledVoiceKeys));
+    this.ttsCloudVoices = this.ttsCloudVoices.filter((voice: TtsVoiceInfo): boolean =>
+      TtsVoiceCatalog.cloudEnabled(voice, this.ttsDisabledVoiceKeys));
+    this.ttsSelectedVoiceKey = this.currentTtsVoiceKey();
+    this.publishTtsFloatingVoices();
+    this.loadTtsVoices();
   }
 
   onTtsCustomVoicesChanged(): void {
@@ -7570,6 +7582,7 @@ struct ReadBookPage {
     settings.customVoiceId = this.ttsCustomVoiceId;
     settings.customVoices = this.ttsCustomVoices;
     settings.cloudVoiceId = this.ttsCloudVoiceId;
+    settings.disabledVoiceKeys = this.ttsDisabledVoiceKeys;
     return settings;
   }
 
@@ -7593,7 +7606,8 @@ struct ReadBookPage {
       ]);
       const voices = voiceResults[0] as TtsVoiceOption[];
       const catalog = voiceResults[1];
-      this.ttsCloudVoices = catalog ? catalog.voices : [];
+      this.ttsCloudVoices = catalog ? catalog.voices.filter((voice: TtsVoiceInfo): boolean =>
+        TtsVoiceCatalog.cloudEnabled(voice, this.ttsDisabledVoiceKeys)) : [];
       if (catalog && this.ttsCloudVoiceId && !this.findCurrentCloudTtsVoice()) {
         const previousVoiceId = this.ttsCloudVoiceId;
         const fallbackVoice = this.ttsCloudVoices.find((voice: TtsVoiceInfo) => voice.id === 'xiaoyan') ||
@@ -7609,7 +7623,8 @@ struct ReadBookPage {
         this.ttsCloudVoices = [fallbackCloudVoice];
       }
       this.ttsVoices = TtsVoiceCatalog.applyInstalledOverrides(TtsVoiceCatalog.mergeWithDefault(voices),
-        this.ttsInstalledVoiceKeys);
+        this.ttsInstalledVoiceKeys).filter((voice: TtsVoiceOption): boolean =>
+          TtsVoiceCatalog.systemEnabled(voice, this.ttsDisabledVoiceKeys));
       const currentCloudVoice = this.findCurrentCloudTtsVoice();
       if (currentCloudVoice) {
         this.ttsSelectedVoiceKey = TtsVoiceCatalog.cloudVoiceKey(currentCloudVoice);
@@ -7649,6 +7664,7 @@ struct ReadBookPage {
   }
 
   applyTtsVoice(voice: TtsVoiceOption, restartSpeaking: boolean): void {
+    if (!TtsVoiceCatalog.systemEnabled(voice, this.ttsDisabledVoiceKeys)) return;
     if (!voice.available) {
       HdsFeedback.showToast(voice.downloadable ? '请到朗读设置下载该音色' : '该系统音色当前不可用');
       return;
@@ -7815,6 +7831,7 @@ struct ReadBookPage {
   }
 
   applyCloudTtsVoice(voice: TtsVoiceInfo, restartSpeaking: boolean): void {
+    if (!TtsVoiceCatalog.cloudEnabled(voice, this.ttsDisabledVoiceKeys)) return;
     if (!AccountSessionStore.isLoggedIn()) {
       HdsFeedback.showToast('请先登录华为账号后使用在线音色');
       return;

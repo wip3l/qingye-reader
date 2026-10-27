@@ -4,11 +4,15 @@ import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { HttpTTS, HttpClient } from '@legado/sourceengine';
 import { syncSystemBars } from '../utils/SystemBars';
-import { SystemTtsReader } from '../utils/SystemTtsReader';
-import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { SystemTtsReader, TtsVoiceOption } from '../utils/SystemTtsReader';
 import { TtsSettings, TtsSettingsStore } from '../utils/TtsSettingsStore';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
-import { ResponsiveManagerListLayout } from '../utils/ResponsiveManagerListLayout';
+import { PageScaffold } from '../components/common/PageScaffold';
+import { TtsVoiceCatalog } from '../utils/TtsVoiceCatalog';
+import { TtsVoiceAvailability } from '../utils/TtsVoiceAvailability';
+import { AccountCommerceApi } from '../account/AccountCommerceApi';
+import { AccountSessionStore } from '../account/AccountSessionStore';
+import { TtsVoiceInfo } from '../account/AccountCommerceModels';
 import { FormDraftStore } from '../utils/FormDraftStore';
 import deviceInfo from '@ohos.deviceInfo';
 import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
@@ -22,6 +26,23 @@ import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
+
+class ManagedTtsVoiceEntry {
+  key: string = '';
+  title: string = '';
+  description: string = '';
+  cloud: boolean = false;
+  protectedVoice: boolean = false;
+  systemVoice: TtsVoiceOption = TtsVoiceCatalog.defaultVoice();
+  cloudVoice: TtsVoiceInfo = new TtsVoiceInfo();
+}
+
+class TtsBatchVoiceEntry {
+  key: string = '';
+  title: string = '';
+  kind: string = '';
+  protectedVoice: boolean = false;
+}
 
 class VoiceEditFormDraft {
   editingVoiceId: string = '';
@@ -54,6 +75,7 @@ struct CustomTtsVoiceManagerPage {
   @StorageLink('ttsSpeed') ttsSpeed: number = 1;
   @StorageLink('ttsInstalledVoiceKeys') ttsInstalledVoiceKeys: string = '';
   @StorageLink('ttsCloudVoiceId') ttsCloudVoiceId: string = '';
+  @StorageLink('ttsDisabledVoiceKeys') ttsDisabledVoiceKeys: string = '';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
@@ -64,6 +86,14 @@ struct CustomTtsVoiceManagerPage {
   @StorageProp('navBarHeight') navBarHeight: number = 0;
 
   @State voices: HttpTTS[] = [];
+  @State systemVoices: TtsVoiceOption[] = [TtsVoiceCatalog.defaultVoice()];
+  @State cloudVoices: TtsVoiceInfo[] = [];
+  @State loadingCatalog: boolean = false;
+  @State catalogError: string = '';
+  @State downloadingVoiceKey: string = '';
+  @State downloadProgress: string = '';
+  private catalogRevision: number = 0;
+  private pageAlive: boolean = false;
   @State searchText: string = '';
   @State selectionMode: boolean = false;
   @State selectedVoiceIds: string[] = [];
@@ -110,122 +140,32 @@ struct CustomTtsVoiceManagerPage {
 
   aboutToAppear(): void {
     this.syncBars();
-    this.loadSettings();
+    this.pageAlive = true;
     this.restorePersistentVoiceEditDraft();
   }
 
   onPageShow(): void {
     this.syncBars();
+    this.pageAlive = true;
     this.loadSettings();
+    this.loadVoiceCatalog();
   }
 
   onPageHide(): void {
+    this.pageAlive = false;
+    this.catalogRevision++;
+    this.loadingCatalog = false;
+    this.showAddDialog = false;
+    this.closeVoiceActions();
     this.stopVoiceSelectionAutoScroll();
     this.persistVoiceEditDraftNow();
   }
 
   build() {
     Stack({ alignContent: Alignment.BottomEnd }) {
-      Column() {
-        // 顶栏随列表上滑跟手收起、下滑展开，与其他二级页面一致。
-        Column() {
-          this.titleBar()
-        }
-        .width('100%')
-        .height(56 + this.statusBarHeight - this.headerCollapse)
-        .clip(true)
-        .opacity(CollapsingHeader.contentOpacity(this.headerCollapse))
-        .hitTestBehavior(CollapsingHeader.acceptsTouch(this.headerCollapse) ? HitTestMode.Default : HitTestMode.None)
-        this.searchBar()
-        if (this.selectionMode) {
-          this.selectionHeader()
-        }
-
-        if (this.filteredVoices().length === 0) {
-          Column() {
-            Text(this.searchText ? '未找到匹配音色' : '暂无自定义音色')
-              .fontSize(AppFontSize.BODY_LARGE)
-              .fontColor(this.subTextColor())
-            Text('点击右下角“+”导入原版 HttpTTS JSON')
-              .fontSize(AppFontSize.BODY)
-              .fontColor(this.subTextColor())
-              .margin({ top: AppSpacing.MD })
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-        } else {
-          List({ space: AppSpacing.MD, scroller: this.voiceListScroller }) {
-            ForEach(this.filteredVoices(), (voice: HttpTTS) => {
-              if (deviceInfo.sdkApiVersion >= 26) {
-                HdsListItem({
-                  customItemBuilder: () => {
-                    this.voiceListItem(voice)
-                  },
-                  swipeActionOptions: this.voiceSwipeActions(voice)
-                })
-              } else {
-                ListItem() {
-                  this.voiceListItem(voice)
-                }
-                .swipeAction({
-                  end: {
-                    builder: () => {
-                      this.voiceFallbackSwipeActions(voice)
-                    },
-                    actionAreaDistance: 128,
-                    onAction: () => this.deleteVoice(voice)
-                  },
-                  edgeEffect: SwipeEdgeEffect.Spring
-                })
-              }
-            }, (voice: HttpTTS) => this.voiceKey(voice))
-
-            // 底部避让 spacer 按 lanes 列数复制占满整行，否则多列时最后一行卡片没有底部避让。
-            ForEach(this.voiceListSpacerKeys(), (_spacerKey: string) => {
-              ListItem() {
-                Row()
-                  .height(this.voiceListBottomInset())
-                  .hitTestBehavior(HitTestMode.None)
-              }
-            }, (spacerKey: string) => spacerKey)
-          }
-          .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-          .width('100%')
-          .layoutWeight(1)
-          .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-          .clip(true)
-          .lanes(ResponsiveManagerListLayout.laneCount(this.contextViewportWidth),
-            ResponsiveManagerListLayout.gutter(this.contextViewportWidth))
-          .onScrollIndex((start: number, end: number) => {
-            this.voiceFirstVisibleIndex = start;
-            this.voiceLastVisibleIndex = end;
-          })
-          .onAreaChange((_oldValue: Area, area: Area) => {
-            this.voiceSelectionViewportTop = Number(area.globalPosition.y);
-            this.voiceSelectionViewportBottom = this.voiceSelectionViewportTop + Number(area.height);
-          })
-          .onDidScroll((yOffset: number) => {
-            this.headerCollapse = CollapsingHeader.next(this.headerCollapse, yOffset,
-              this.voiceListScroller.currentOffset().yOffset);
-          })
-          .onScrollStop(() => {
-            const target = CollapsingHeader.settle(this.headerCollapse, this.voiceListScroller.currentOffset().yOffset);
-            if (target !== this.headerCollapse) {
-              animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => {
-                this.headerCollapse = target;
-              });
-            }
-          })
-        }
-
-        if (this.selectionMode) {
-          this.batchBar()
-        }
-      }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(this.pageColor())
+      PageScaffold({ title: '音色管理', scrollable: false, edgeToEdge: true,
+        externalCollapse: this.headerCollapse, content: (): void => { this.managerContent(); },
+        actions: (): void => { this.managerActions(); } })
 
       if (!this.selectionMode && !this.isImporting && !this.isBatchOperating) {
         this.addVoiceFloatingButton()
@@ -253,6 +193,278 @@ struct CustomTtsVoiceManagerPage {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
+  @Builder
+  managerActions() {
+    Text(this.selectionMode ? '取消' : '批量').fontSize(AppFontSize.BODY).fontColor(this.accentColor())
+      .width(56).height(44).textAlign(TextAlign.Center)
+      .accessibilityText(this.selectionMode ? '退出音色批量管理' : '批量管理音色')
+      .onClick(() => { this.selectionMode ? this.exitSelectionMode() : this.enterSelectionMode(); })
+  }
+
+  @Builder
+  managerContent() {
+    Column() {
+      List({ space: AppSpacing.MD, scroller: this.voiceListScroller }) {
+        ListItem() {
+          Column() {
+            this.searchBar()
+            if (this.selectionMode) { this.selectionHeader() }
+          }.width('100%').padding({ top: PageScaffold.BAR_HEIGHT + this.statusBarHeight })
+        }
+        if (this.nativeVoices(false).length > 0) {
+          ListItem() { this.voiceSectionTitle('系统音色') }
+        }
+        ForEach(this.nativeVoices(false), (entry: ManagedTtsVoiceEntry) => {
+          if (entry.protectedVoice || this.selectionMode) {
+            ListItem() { this.nativeVoiceRow(entry) }
+          } else if (deviceInfo.sdkApiVersion >= 26) {
+            HdsListItem({ customItemBuilder: (): void => { this.nativeVoiceRow(entry); },
+              swipeActionOptions: this.nativeSwipeActions(entry) })
+          } else {
+            ListItem() { this.nativeVoiceRow(entry) }
+              .swipeAction({ end: { builder: (): void => { this.nativeSwipeButton(entry); } }, edgeEffect: SwipeEdgeEffect.Spring })
+          }
+        }, (entry: ManagedTtsVoiceEntry): string => `${entry.key}:${this.nativeEnabled(entry)}:${this.selectionMode}`)
+        if (this.nativeVoices(true).length > 0 || this.loadingCatalog || this.catalogError) {
+          ListItem() { this.voiceSectionTitle('云端音色') }
+        }
+        if (this.loadingCatalog || this.catalogError) {
+          ListItem() {
+            Row({ space: AppSpacing.MD }) {
+              if (this.loadingCatalog) { LoadingProgress().width(20).height(20).color(this.accentColor()) }
+              Text(this.loadingCatalog ? '正在加载音色' : this.catalogError).fontSize(AppFontSize.CAPTION)
+                .fontColor(this.subTextColor()).layoutWeight(1)
+              if (!this.loadingCatalog) {
+                Button('重试').fontSize(AppFontSize.CAPTION).onClick(() => { this.loadVoiceCatalog(); })
+              }
+            }.width('100%').padding(AppSpacing.XL)
+          }
+        }
+        ForEach(this.nativeVoices(true), (entry: ManagedTtsVoiceEntry) => {
+          if (this.selectionMode) {
+            ListItem() { this.nativeVoiceRow(entry) }
+          } else if (deviceInfo.sdkApiVersion >= 26) {
+            HdsListItem({ customItemBuilder: (): void => { this.nativeVoiceRow(entry); },
+              swipeActionOptions: this.nativeSwipeActions(entry) })
+          } else {
+            ListItem() { this.nativeVoiceRow(entry) }
+              .swipeAction({ end: { builder: (): void => { this.nativeSwipeButton(entry); } }, edgeEffect: SwipeEdgeEffect.Spring })
+          }
+        }, (entry: ManagedTtsVoiceEntry): string => `${entry.key}:${this.nativeEnabled(entry)}:${this.selectionMode}`)
+        ListItem() { this.voiceSectionTitle('自定义音色') }
+        ForEach(this.filteredVoices(), (voice: HttpTTS) => {
+          if (deviceInfo.sdkApiVersion >= 26 && !this.selectionMode) {
+            HdsListItem({ customItemBuilder: (): void => { this.voiceListItem(voice); },
+              swipeActionOptions: this.voiceSwipeActions(voice) })
+          } else if (!this.selectionMode) {
+            ListItem() { this.voiceListItem(voice) }
+              .swipeAction({ end: { builder: (): void => { this.voiceFallbackSwipeActions(voice); } }, edgeEffect: SwipeEdgeEffect.Spring })
+          } else {
+            ListItem() { this.voiceListItem(voice) }
+          }
+        }, (voice: HttpTTS): string => this.voiceKey(voice))
+        if (this.filteredVoices().length === 0) {
+          ListItem() {
+            Text(this.searchText ? '未找到匹配的自定义音色' : '点击右下角“+”添加自定义音色')
+              .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%').padding(AppSpacing.XL)
+          }
+        }
+        ListItem() {
+          Row().height(this.selectionMode ? AppSpacing.XL : this.voiceListBottomInset())
+            .hitTestBehavior(HitTestMode.None)
+        }
+      }.width('100%').layoutWeight(1).scrollBar(BarState.Off)
+        // HdsListItem 必须直接挂在 List 下；在自定义组件上设置 margin 会生成 __Common__ 包装并阻断侧滑。
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .onScrollIndex((start: number, end: number) => {
+          this.voiceFirstVisibleIndex = Math.max(0, start - 1);
+          this.voiceLastVisibleIndex = Math.max(0, end - 1);
+        })
+        .onAreaChange((_oldValue: Area, area: Area) => {
+          this.voiceSelectionViewportTop = Number(area.globalPosition.y);
+          this.voiceSelectionViewportBottom = this.voiceSelectionViewportTop + Number(area.height);
+        })
+        .onDidScroll((yOffset: number) => {
+          this.headerCollapse = CollapsingHeader.next(this.headerCollapse, yOffset,
+            this.voiceListScroller.currentOffset().yOffset);
+        })
+        .onScrollStop(() => {
+          const target = CollapsingHeader.settle(this.headerCollapse, this.voiceListScroller.currentOffset().yOffset);
+          if (target !== this.headerCollapse) {
+            this.getUIContext().animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => { this.headerCollapse = target; });
+          }
+        })
+      if (this.selectionMode) { this.batchBar() }
+    }.width('100%').height('100%').constraintSize({ maxWidth: 760 })
+  }
+
+  @Builder
+  voiceSectionTitle(title: string) {
+    Text(title).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
+      .width('100%').padding({ top: AppSpacing.MD })
+  }
+
+  nativeVoices(cloud: boolean, filtered: boolean = true): ManagedTtsVoiceEntry[] {
+    const entries: ManagedTtsVoiceEntry[] = [];
+    if (cloud) {
+      for (const voice of this.cloudVoices) {
+        const entry = new ManagedTtsVoiceEntry();
+        entry.cloud = true;
+        entry.cloudVoice = voice;
+        entry.key = TtsVoiceAvailability.cloudKey(voice.id);
+        entry.title = voice.name;
+        entry.description = `${voice.tier === 'PREMIUM' ? '精品' : '标准'}${voice.description ? ' · ' + voice.description : ''}`;
+        entries.push(entry);
+      }
+    } else {
+      for (const voice of this.systemVoices) {
+        const entry = new ManagedTtsVoiceEntry();
+        entry.systemVoice = voice;
+        entry.key = TtsVoiceAvailability.systemKey(voice.id, voice.online, voice.language, voice.style);
+        entry.protectedVoice = TtsVoiceCatalog.isDefault(voice);
+        entry.title = entry.protectedVoice ? '系统默认音色' : voice.name;
+        entry.description = entry.protectedVoice ? '始终启用' : TtsVoiceCatalog.voiceTitle(voice);
+        entries.push(entry);
+      }
+    }
+    const keyword = filtered ? this.searchText.trim().toLowerCase() : '';
+    return entries.filter((entry: ManagedTtsVoiceEntry): boolean => !keyword ||
+      `${entry.title} ${entry.description}`.toLowerCase().includes(keyword));
+  }
+
+  nativeEnabled(entry: ManagedTtsVoiceEntry): boolean {
+    return entry.protectedVoice || TtsVoiceAvailability.isEnabled(this.ttsDisabledVoiceKeys, entry.key);
+  }
+
+  nativeSelected(entry: ManagedTtsVoiceEntry): boolean {
+    if (entry.cloud) return this.ttsCloudVoiceId === entry.cloudVoice.id;
+    return !this.ttsCloudVoiceId && !this.ttsCustomVoiceId && entry.key ===
+      TtsVoiceAvailability.systemKey(this.ttsPerson, this.ttsOnline, this.ttsLanguage, this.ttsStyle);
+  }
+
+  @Builder
+  nativeVoiceRow(entry: ManagedTtsVoiceEntry) {
+    Row({ space: AppSpacing.MD }) {
+      if (this.selectionMode) { this.voiceSelectionSafeArea(entry.key) }
+      Column({ space: AppSpacing.XS }) {
+        Text(entry.title).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor()).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.downloadingVoiceKey === entry.key ? (this.downloadProgress || '下载中') :
+          `${entry.description}${entry.protectedVoice ? '' : (this.nativeEnabled(entry) ? ' · 已启用' : ' · 已禁用')}`)
+          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).maxLines(3)
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      if (entry.protectedVoice) {
+        Text('默认').fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+      }
+      if (!this.selectionMode && this.nativeSelected(entry)) {
+        SymbolGlyph($r('sys.symbol.checkmark')).fontSize(18).fontColor([this.accentColor()])
+      }
+    }.width('100%').constraintSize({ minHeight: 72 }).padding(AppSpacing.XL)
+      .backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.cardRadius())
+      .opacity(this.nativeEnabled(entry) ? 1 : 0.5)
+      .onAreaChange((_oldValue: Area, area: Area) => { this.rememberVoiceSelectionArea(entry.key, area); })
+      .onClick(() => {
+        if (this.selectionMode) {
+          if (Date.now() < this.voiceSelectionSuppressClickUntil || this.isBatchOperating) return;
+          this.setSelectionKey(entry.key, !this.selectedVoiceIds.includes(entry.key));
+        } else { this.selectNativeVoice(entry); }
+      })
+  }
+
+  private nativeSwipeActions(entry: ManagedTtsVoiceEntry): HdsSwipeActionOptions {
+    if (entry.protectedVoice) return { icons: [] };
+    return { icons: [{
+      icon: new SymbolGlyphModifier(this.nativeEnabled(entry) ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle')),
+      backgroundColor: this.buttonColor(),
+      iconOptions: { accessibilityText: this.nativeEnabled(entry) ? '禁用音色' : '启用音色' },
+      onAction: (): void => { this.toggleNativeVoice(entry); }
+    }] };
+  }
+
+  @Builder
+  nativeSwipeButton(entry: ManagedTtsVoiceEntry) {
+    Button(this.nativeEnabled(entry) ? '禁用' : '启用').height('100%').width(72)
+      .backgroundColor(this.buttonColor()).fontColor(ThemeRuntime.onAccentColor(this.buttonColor()))
+      .onClick(() => { this.toggleNativeVoice(entry); })
+  }
+
+  toggleNativeVoice(entry: ManagedTtsVoiceEntry): void {
+    if (entry.protectedVoice) return;
+    const enabled = !this.nativeEnabled(entry);
+    const selected = this.nativeSelected(entry);
+    this.ttsDisabledVoiceKeys = TtsVoiceAvailability.setEnabled(this.ttsDisabledVoiceKeys, entry.key, enabled);
+    if (!enabled && selected) this.clearCustomVoiceSelection();
+    this.saveSettings();
+    HdsFeedback.showToast(!enabled && selected ? '音色已禁用，已切换为系统默认音色' : (enabled ? '音色已启用' : '音色已禁用'));
+  }
+
+  async selectNativeVoice(entry: ManagedTtsVoiceEntry): Promise<void> {
+    if (!this.nativeEnabled(entry)) { HdsFeedback.showToast('请先左滑启用该音色'); return; }
+    if (this.downloadingVoiceKey) { HdsFeedback.showToast('正在下载音色，请稍候'); return; }
+    if (entry.cloud) {
+      if (!AccountSessionStore.isLoggedIn()) { HdsFeedback.showToast('请先登录华为账号后使用云端音色'); return; }
+      this.ttsCloudVoiceId = entry.cloudVoice.id;
+      this.ttsCustomVoiceId = '';
+    } else {
+      let voice = entry.systemVoice;
+      if (!voice.available) {
+        if (!voice.downloadable) { HdsFeedback.showToast('该系统音色当前不可用'); return; }
+        const selectionRevision = this.catalogRevision;
+        this.downloadingVoiceKey = entry.key;
+        this.downloadProgress = '准备中';
+        try {
+          await SystemTtsReader.downloadVoice(voice, {
+            onStart: (_message: string): void => {},
+            onProgress: (progress: string): void => { if (this.pageAlive) this.downloadProgress = progress; }
+          });
+          const installedKey = TtsVoiceCatalog.installedKey(voice);
+          const settings = TtsSettingsStore.fromStorage();
+          const keys = settings.installedVoiceKeys.split('\n').filter((key: string): boolean => !!key);
+          if (!keys.includes(installedKey)) keys.push(installedKey);
+          settings.installedVoiceKeys = keys.join('\n');
+          await TtsSettingsStore.save(getContext(this), settings);
+          this.systemVoices = TtsVoiceCatalog.applyInstalledOverrides(this.systemVoices, settings.installedVoiceKeys);
+          voice = TtsVoiceCatalog.markInstalled(voice);
+        } catch (error) {
+          if (this.pageAlive) HdsFeedback.showToast(`音色下载失败：${this.shortErrorMessage(error as Object)}`);
+          return;
+        } finally { this.downloadingVoiceKey = ''; this.downloadProgress = ''; }
+        if (!this.pageAlive || selectionRevision !== this.catalogRevision || !this.nativeEnabled(entry)) return;
+      }
+      this.ttsPerson = voice.id;
+      this.ttsOnline = voice.online;
+      this.ttsStyle = voice.style;
+      this.ttsLanguage = voice.language;
+      this.ttsCloudVoiceId = '';
+      this.ttsCustomVoiceId = '';
+    }
+    this.saveSettings();
+    HdsFeedback.showToast(`已选择 ${entry.title}`);
+  }
+
+  async loadVoiceCatalog(): Promise<void> {
+    if (this.loadingCatalog) return;
+    const revision = ++this.catalogRevision;
+    this.loadingCatalog = true;
+    this.catalogError = '';
+    // 两个来源独立加载，云端失败时系统与自定义音色仍然可管理。
+    let systemFailed = false;
+    let cloudFailed = false;
+    const results = await Promise.all([
+      SystemTtsReader.listAvailableVoices().catch((): TtsVoiceOption[] => { systemFailed = true; return []; }),
+      AccountCommerceApi.fetchTtsCatalog().catch(() => { cloudFailed = true; return null; })
+    ]);
+    if (!this.pageAlive || revision !== this.catalogRevision) return;
+    const systems = results[0] as TtsVoiceOption[];
+    this.systemVoices = TtsVoiceCatalog.applyInstalledOverrides(TtsVoiceCatalog.mergeWithDefault(systems), this.ttsInstalledVoiceKeys);
+    const catalog = results[1];
+    if (catalog) this.cloudVoices = catalog.voices;
+    this.catalogError = systemFailed && cloudFailed ? '系统与云端音色加载失败' :
+      (systemFailed ? '系统音色加载失败' : (cloudFailed ? '云端音色加载失败' : ''));
+    this.loadingCatalog = false;
+  }
+
   private voiceSwipeActions(voice: HttpTTS): HdsSwipeActionOptions {
     return { icons: [
       {
@@ -276,6 +488,7 @@ struct CustomTtsVoiceManagerPage {
 
   loadSettings(): void {
     TtsSettingsStore.load(getContext(this)).then((settings: TtsSettings) => {
+      if (!this.pageAlive) return;
       this.ttsCustomVoiceId = settings.customVoiceId;
       this.ttsCustomVoices = settings.customVoices;
       this.ttsPerson = settings.person;
@@ -285,10 +498,12 @@ struct CustomTtsVoiceManagerPage {
       this.ttsSpeed = settings.speed;
       this.ttsInstalledVoiceKeys = settings.installedVoiceKeys;
       this.ttsCloudVoiceId = settings.cloudVoiceId;
+      this.ttsDisabledVoiceKeys = settings.disabledVoiceKeys;
       this.voices = SystemTtsReader.parseCustomVoices(settings.customVoices);
       this.pruneSelectedVoices();
     }).catch((error: Error) => {
       console.warn('加载自定义音色失败:', error);
+      if (!this.pageAlive) return;
       this.voices = SystemTtsReader.parseCustomVoices(this.ttsCustomVoices);
     });
   }
@@ -305,9 +520,11 @@ struct CustomTtsVoiceManagerPage {
     settings.customVoiceId = this.ttsCustomVoiceId;
     settings.customVoices = this.ttsCustomVoices;
     settings.cloudVoiceId = this.ttsCloudVoiceId;
+    settings.disabledVoiceKeys = this.ttsDisabledVoiceKeys;
     TtsSettingsStore.applyToStorage(settings);
     TtsSettingsStore.save(getContext(this), settings).catch((error: Error) => {
-      console.warn('保存自定义音色失败:', error);
+      console.warn('保存音色设置失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
     });
   }
 
@@ -319,16 +536,6 @@ struct CustomTtsVoiceManagerPage {
     return this.voices.filter((voice: HttpTTS) =>
       (voice.name || '').toLowerCase().includes(keyword) ||
       (voice.url || '').toLowerCase().includes(keyword));
-  }
-
-  // List.lanes 的列数；底部避让 spacer 按列数复制，保证多列时占满一整行。
-  voiceListSpacerKeys(): string[] {
-    const laneCount = ResponsiveManagerListLayout.laneCount(this.contextViewportWidth);
-    const keys: string[] = [];
-    for (let i = 0; i < laneCount; i++) {
-      keys.push(`voice_list_spacer_${i}`);
-    }
-    return keys;
   }
 
   // 列表底部避让：右下角悬浮新增按钮（52 高，底边距 navBarHeight+22）必须完整让出，
@@ -357,17 +564,29 @@ struct CustomTtsVoiceManagerPage {
   }
 
   deleteVoice(voice: HttpTTS): void {
+    this.getUIContext().showAlertDialog({
+      title: '删除音色',
+      message: `确定删除自定义音色“${voice.name || '未命名音色'}”吗？删除后无法撤销。`,
+      primaryButton: { value: '取消', action: (): void => {} },
+      secondaryButton: { value: '删除', fontColor: ThemeRuntime.dangerColor(this.appDarkMode),
+        action: (): void => { if (this.pageAlive) this.confirmDeleteVoice(voice); } }
+    });
+  }
+
+  private confirmDeleteVoice(voice: HttpTTS): void {
+    if (!this.voices.some((item: HttpTTS): boolean => String(item.id) === String(voice.id))) return;
     const id = String(voice.id);
     if (this.isCurrentVoice(voice)) {
       this.clearCustomVoiceSelection();
     }
     this.voices = this.voices.filter((item: HttpTTS) => String(item.id) !== id);
-    this.selectedVoiceIds = this.selectedVoiceIds.filter((selectedId: string) => selectedId !== id);
+    this.selectedVoiceIds = this.selectedVoiceIds.filter((selectedId: string) => selectedId !== this.customSelectionKey(id));
     this.saveSettings();
     HdsFeedback.showToast('音色已删除');
   }
 
   clearCustomVoiceSelection(): void {
+    this.ttsCloudVoiceId = '';
     this.ttsCustomVoiceId = '';
     this.ttsPerson = 0;
     this.ttsOnline = 1;
@@ -378,96 +597,163 @@ struct CustomTtsVoiceManagerPage {
   enterSelectionMode(): void {
     this.showAddDialog = false;
     this.selectionMode = true;
+    this.headerCollapse = 0;
+    this.voiceListScroller.scrollTo({ xOffset: 0, yOffset: 0 });
     this.selectedVoiceIds = [];
   }
 
   exitSelectionMode(): void {
     this.stopVoiceSelectionAutoScroll();
     this.selectionMode = false;
+    this.headerCollapse = 0;
+    this.voiceListScroller.scrollTo({ xOffset: 0, yOffset: 0 });
     this.selectedVoiceIds = [];
   }
 
-  isVoiceSelected(voice: HttpTTS): boolean {
-    return this.selectedVoiceIds.includes(String(voice.id));
+  customSelectionKey(id: string): string {
+    return `custom:${id}`;
   }
 
-  setVoiceSelected(voice: HttpTTS, selected: boolean): void {
-    const id = String(voice.id);
+  batchVoices(filtered: boolean = false): TtsBatchVoiceEntry[] {
+    const entries: TtsBatchVoiceEntry[] = [];
+    for (const voice of this.nativeVoices(false, filtered).concat(this.nativeVoices(true, filtered))) {
+      const entry = new TtsBatchVoiceEntry();
+      entry.key = voice.key;
+      entry.title = voice.title;
+      entry.kind = voice.cloud ? '云端音色' : '系统音色';
+      entry.protectedVoice = voice.protectedVoice;
+      entries.push(entry);
+    }
+    for (const voice of filtered ? this.filteredVoices() : this.voices) {
+      const entry = new TtsBatchVoiceEntry();
+      entry.key = this.customSelectionKey(String(voice.id));
+      entry.title = voice.name || '未命名音色';
+      entry.kind = '自定义音色';
+      entries.push(entry);
+    }
+    return entries;
+  }
+
+  isVoiceSelected(voice: HttpTTS): boolean {
+    return this.selectedVoiceIds.includes(this.customSelectionKey(String(voice.id)));
+  }
+
+  setSelectionKey(key: string, selected: boolean): void {
+    if (this.isBatchOperating) return;
     if (selected) {
-      if (!this.selectedVoiceIds.includes(id)) {
-        this.selectedVoiceIds = this.selectedVoiceIds.concat([id]);
-      }
+      if (!this.selectedVoiceIds.includes(key)) this.selectedVoiceIds = this.selectedVoiceIds.concat([key]);
     } else {
-      this.selectedVoiceIds = this.selectedVoiceIds.filter((item: string) => item !== id);
+      this.selectedVoiceIds = this.selectedVoiceIds.filter((item: string): boolean => item !== key);
     }
   }
 
   toggleVoiceSelected(voice: HttpTTS): void {
-    this.setVoiceSelected(voice, !this.isVoiceSelected(voice));
+    this.setSelectionKey(this.customSelectionKey(String(voice.id)), !this.isVoiceSelected(voice));
   }
 
   isAllSelected(): boolean {
-    const visible = this.filteredVoices();
-    return visible.length > 0 && visible.every((voice: HttpTTS) => this.isVoiceSelected(voice));
+    const visible = this.batchVoices(true);
+    return visible.length > 0 && visible.every((voice: TtsBatchVoiceEntry): boolean => this.selectedVoiceIds.includes(voice.key));
   }
 
   toggleAllVoices(): void {
-    const visible = this.filteredVoices();
+    if (this.isBatchOperating) return;
+    const visibleIds = this.batchVoices(true).map((voice: TtsBatchVoiceEntry): string => voice.key);
     if (this.isAllSelected()) {
-      const visibleIds = visible.map((voice: HttpTTS) => String(voice.id));
-      this.selectedVoiceIds = this.selectedVoiceIds.filter((id: string) => !visibleIds.includes(id));
+      this.selectedVoiceIds = this.selectedVoiceIds.filter((id: string): boolean => !visibleIds.includes(id));
     } else {
-      const ids = this.selectedVoiceIds.slice();
-      for (const voice of visible) {
-        const id = String(voice.id);
-        if (!ids.includes(id)) {
-          ids.push(id);
-        }
-      }
-      this.selectedVoiceIds = ids;
+      this.selectedVoiceIds = this.selectedVoiceIds.concat(visibleIds.filter((id: string): boolean => !this.selectedVoiceIds.includes(id)));
     }
   }
 
   pruneSelectedVoices(): void {
-    const ids = this.voices.map((voice: HttpTTS) => String(voice.id));
-    this.selectedVoiceIds = this.selectedVoiceIds.filter((id: string) => ids.includes(id));
+    const ids = this.batchVoices().map((voice: TtsBatchVoiceEntry): string => voice.key);
+    this.selectedVoiceIds = this.selectedVoiceIds.filter((id: string): boolean => ids.includes(id));
+  }
+
+  showBatchResult(action: string, count: number, blocked: string[]): void {
+    const summary = `已${action} ${count} 个音色`;
+    if (blocked.length === 0) { HdsFeedback.showToast(summary); return; }
+    this.getUIContext().showAlertDialog({
+      title: `批量${action}结果`,
+      message: `${summary}\n\n以下音色无法${action}：\n${blocked.join('\n')}`,
+      confirm: { value: '知道了', action: (): void => {} }
+    });
   }
 
   batchSetEnabled(enabled: boolean): void {
-    if (this.selectedVoiceIds.length === 0) {
-      return;
-    }
+    if (this.selectedVoiceIds.length === 0 || this.isBatchOperating) return;
+    const selected = this.batchVoices().filter((voice: TtsBatchVoiceEntry): boolean => this.selectedVoiceIds.includes(voice.key));
+    const blocked: string[] = [];
+    let count = 0;
+    let resetCurrent = false;
     this.isBatchOperating = true;
     try {
-      this.voices = this.voices.map((voice: HttpTTS) => {
-        if (this.selectedVoiceIds.includes(String(voice.id))) {
+      for (const entry of selected) {
+        if (!enabled && entry.protectedVoice) {
+          blocked.push(`${entry.title}（默认音色始终启用）`);
+          continue;
+        }
+        if (entry.kind !== '自定义音色') {
+          const currentKey = this.ttsCloudVoiceId ? TtsVoiceAvailability.cloudKey(this.ttsCloudVoiceId) :
+            TtsVoiceAvailability.systemKey(this.ttsPerson, this.ttsOnline, this.ttsLanguage, this.ttsStyle);
+          if (!enabled && !this.ttsCustomVoiceId && entry.key === currentKey) resetCurrent = true;
+          this.ttsDisabledVoiceKeys = TtsVoiceAvailability.setEnabled(this.ttsDisabledVoiceKeys, entry.key, enabled);
+        }
+        count++;
+      }
+      this.voices = this.voices.map((voice: HttpTTS): HttpTTS => {
+        if (this.isVoiceSelected(voice)) {
           voice.enabled = enabled;
+          if (!enabled && this.isCurrentVoice(voice)) resetCurrent = true;
         }
         return voice;
       });
-      if (!enabled && this.selectedVoiceIds.includes(this.ttsCustomVoiceId)) {
-        this.clearCustomVoiceSelection();
-      }
-      this.saveSettings();
-      HdsFeedback.showToast(`已${enabled ? '启用' : '禁用'} ${this.selectedVoiceIds.length} 个音色`);
-    } finally {
-      this.isBatchOperating = false;
-    }
+      if (resetCurrent) this.clearCustomVoiceSelection();
+      if (count > 0) this.saveSettings();
+      this.showBatchResult(enabled ? '启用' : '禁用', count, blocked);
+    } finally { this.isBatchOperating = false; }
   }
 
   batchDelete(): void {
-    if (this.selectedVoiceIds.length === 0) {
+    if (this.selectedVoiceIds.length === 0 || this.isBatchOperating) return;
+    const selected = this.batchVoices().filter((voice: TtsBatchVoiceEntry): boolean => this.selectedVoiceIds.includes(voice.key));
+    const blocked = selected.filter((voice: TtsBatchVoiceEntry): boolean => voice.kind !== '自定义音色')
+      .map((voice: TtsBatchVoiceEntry): string => `${voice.title}（${voice.kind}，仅自定义音色可删除）`);
+    const customVoices = selected.filter((voice: TtsBatchVoiceEntry): boolean => voice.kind === '自定义音色');
+    if (customVoices.length === 0) {
+      this.getUIContext().showAlertDialog({
+        title: '无法删除所选音色',
+        message: `仅自定义音色可以删除，当前选择中没有自定义音色。未删除任何音色。\n\n${blocked.join('\n')}`,
+        confirm: { value: '知道了', action: (): void => {} }
+      });
       return;
     }
-    const count = this.selectedVoiceIds.length;
-    if (this.selectedVoiceIds.includes(this.ttsCustomVoiceId)) {
-      this.clearCustomVoiceSelection();
-    }
-    this.voices = this.voices.filter((voice: HttpTTS) => !this.selectedVoiceIds.includes(String(voice.id)));
-    this.selectedVoiceIds = [];
-    this.exitSelectionMode();
-    this.saveSettings();
-    HdsFeedback.showToast(`已删除 ${count} 个音色`);
+    // 固定确认弹窗中的删除范围，确认后不重新读取可能已经变化的勾选项。
+    const deletable = customVoices.map((voice: TtsBatchVoiceEntry): string => voice.key);
+    const names = customVoices.map((voice: TtsBatchVoiceEntry): string => voice.title).join('\n');
+    const restrictions = blocked.length > 0 ? `\n\n以下音色无法删除，将保留：\n${blocked.join('\n')}` : '';
+    this.getUIContext().showAlertDialog({
+      title: '批量删除音色',
+      message: `确定删除以下 ${deletable.length} 个自定义音色吗？删除后无法撤销。\n\n${names}${restrictions}`,
+      primaryButton: { value: '取消', action: (): void => {} },
+      secondaryButton: { value: `删除 ${deletable.length} 个`, fontColor: ThemeRuntime.dangerColor(this.appDarkMode),
+        action: (): void => { if (this.pageAlive) this.confirmBatchDelete(deletable); } }
+    });
+  }
+
+  private confirmBatchDelete(deletable: string[]): void {
+    if (this.isBatchOperating) return;
+    this.isBatchOperating = true;
+    try {
+      const count = this.voices.filter((voice: HttpTTS): boolean => deletable.includes(this.customSelectionKey(String(voice.id)))).length;
+      if (deletable.includes(this.customSelectionKey(this.ttsCustomVoiceId))) this.clearCustomVoiceSelection();
+      this.voices = this.voices.filter((voice: HttpTTS): boolean => !deletable.includes(this.customSelectionKey(String(voice.id))));
+      this.selectedVoiceIds = this.selectedVoiceIds.filter((key: string): boolean => !deletable.includes(key));
+      if (count > 0) this.saveSettings();
+      if (this.selectedVoiceIds.length === 0) this.exitSelectionMode();
+      HdsFeedback.showToast(`已删除 ${count} 个音色`);
+    } finally { this.isBatchOperating = false; }
   }
 
   openEditDialog(voice: HttpTTS): void {
@@ -758,16 +1044,16 @@ struct CustomTtsVoiceManagerPage {
     return `${voice.id}_${voice.name || ''}_${voice.enabled ? '1' : '0'}_${this.selectionMode ? 'select' : 'normal'}`;
   }
 
-  rememberVoiceSelectionArea(voice: HttpTTS, area: Area): void {
+  rememberVoiceSelectionArea(key: string, area: Area): void {
     const position = area.globalPosition;
-    this.voiceSelectionAreas.set(String(voice.id), [Number(position.x), Number(position.y),
+    this.voiceSelectionAreas.set(key, [Number(position.x), Number(position.y),
       Number(position.x) + Number(area.width), Number(position.y) + Number(area.height)]);
   }
 
   @Builder
-  voiceSelectionSafeArea(voice: HttpTTS) {
+  voiceSelectionSafeArea(key: string) {
     Stack({ alignContent: Alignment.Center }) {
-      Toggle({ type: ToggleType.Checkbox, isOn: this.isVoiceSelected(voice) })
+      Toggle({ type: ToggleType.Checkbox, isOn: this.selectedVoiceIds.includes(key) })
         .selectedColor(this.buttonColor())
         .hitTestBehavior(HitTestMode.None)
     }
@@ -784,7 +1070,7 @@ struct CustomTtsVoiceManagerPage {
         TapGesture().onAction(() => {
           if (!this.isBatchOperating) {
             this.voiceSelectionSuppressClickUntil = Date.now() + 240;
-            this.toggleVoiceSelected(voice);
+            this.setSelectionKey(key, !this.selectedVoiceIds.includes(key));
           }
         })
       ),
@@ -799,7 +1085,7 @@ struct CustomTtsVoiceManagerPage {
     if (!voice) return;
     this.voiceSelectionDragging = true;
     this.captureVoiceSelectionPoint(event);
-    this.voiceDragSelectValue = !this.isVoiceSelected(voice);
+    this.voiceDragSelectValue = !this.selectedVoiceIds.includes(voice);
     this.applyVoiceSlideSelection(voice);
     this.updateVoiceSelectionAutoScroll();
   }
@@ -818,27 +1104,27 @@ struct CustomTtsVoiceManagerPage {
     this.stopVoiceSelectionAutoScroll();
   }
 
-  voiceAtGesture(event: GestureEvent): HttpTTS | null {
+  voiceAtGesture(event: GestureEvent): string | null {
     const finger = event.fingerList.length > 0 ? event.fingerList[0] : undefined;
     if (!finger) return null;
     return this.voiceAtPoint(finger.globalX, finger.globalY);
   }
 
-  voiceAtPoint(globalX: number, globalY: number): HttpTTS | null {
-    for (const voice of this.filteredVoices()) {
-      const area = this.voiceSelectionAreas.get(String(voice.id));
+  voiceAtPoint(globalX: number, globalY: number): string | null {
+    for (const voice of this.batchVoices(true)) {
+      const area = this.voiceSelectionAreas.get(voice.key);
       if (area && globalX >= area[0] && globalX <= area[2] &&
-        globalY >= area[1] && globalY <= area[3]) return voice;
+        globalY >= area[1] && globalY <= area[3]) return voice.key;
     }
     return null;
   }
 
-  applyVoiceSlideSelection(voice: HttpTTS | null): void {
+  applyVoiceSlideSelection(voice: string | null): void {
     if (!voice) return;
-    const id = String(voice.id);
+    const id = voice;
     if (this.voiceDragVisited.has(id)) return;
     this.voiceDragVisited.add(id);
-    this.setVoiceSelected(voice, this.voiceDragSelectValue);
+    this.setSelectionKey(voice, this.voiceDragSelectValue);
   }
 
   captureVoiceSelectionPoint(event: GestureEvent): void {
@@ -877,7 +1163,8 @@ struct CustomTtsVoiceManagerPage {
 
   voiceSelectionReachedBoundary(direction: number): boolean {
     if (direction < 0) return this.voiceFirstVisibleIndex <= 0;
-    return this.voiceLastVisibleIndex >= this.filteredVoices().length - 1;
+    // 三个分组标题和首尾占位同样计入 List 索引；只在列表真正到底时停止。
+    return this.voiceListScroller.isAtEnd();
   }
 
   stopVoiceSelectionAutoScroll(): void {
@@ -933,8 +1220,8 @@ struct CustomTtsVoiceManagerPage {
     if (!id) return;
     this.closeVoiceActions();
     this.showAddDialog = false;
-    this.selectionMode = true;
-    this.selectedVoiceIds = [id];
+    this.enterSelectionMode();
+    this.selectedVoiceIds = [this.customSelectionKey(id)];
   }
 
   syncBars(): void {
@@ -970,36 +1257,6 @@ struct CustomTtsVoiceManagerPage {
   }
 
   @Builder
-  titleBar() {
-    Row() {
-      ImmersiveBackButton({ iconColor: this.primaryTextColor(), darkMode: this.appDarkMode,
-        buttonSize: 40, containerWidth: 56, materialScale: 0.83, compactLayout: true,
-        onBack: () => router.back() })
-
-      Text('自定义音色管理')
-        .fontSize(AppFontSize.TITLE)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.primaryTextColor())
-        .layoutWeight(1)
-
-      Text(this.selectionMode ? '取消' : '选择')
-        .fontSize(AppFontSize.BODY_LARGE)
-        .fontColor(this.primaryTextColor())
-        .width(52)
-        .height(56)
-        .textAlign(TextAlign.Center)
-        .onClick(() => {
-          this.selectionMode ? this.exitSelectionMode() : this.enterSelectionMode();
-        })
-
-    }
-    .width('100%')
-    .height(56 + this.statusBarHeight)
-    .padding({ right: AppSpacing.XL, top: this.statusBarHeight })
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
   addVoiceFloatingButton() {
     Stack() {
       ImmersiveMaterialSurface({
@@ -1032,7 +1289,7 @@ struct CustomTtsVoiceManagerPage {
   @Builder
   searchBar() {
     Row() {
-      TextInput({ placeholder: '搜索自定义音色', text: this.searchText })
+      TextInput({ placeholder: '搜索音色', text: this.searchText })
         .layoutWeight(1)
         .height(40)
         .borderRadius(20)
@@ -1046,7 +1303,7 @@ struct CustomTtsVoiceManagerPage {
         })
     }
     .width('100%')
-    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .padding({ top: AppSpacing.MD, bottom: AppSpacing.MD })
   }
 
   @Builder
@@ -1060,7 +1317,7 @@ struct CustomTtsVoiceManagerPage {
         .onClick(() => {
           this.toggleAllVoices();
         })
-      Text(`已选择 ${this.selectedVoiceIds.length}/${this.filteredVoices().length}`)
+      Text(`已选择 ${this.selectedVoiceIds.length} 个音色`)
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .margin({ left: AppSpacing.MD })
@@ -1081,23 +1338,23 @@ struct CustomTtsVoiceManagerPage {
   voiceListItem(voice: HttpTTS) {
     Row() {
       if (this.selectionMode) {
-        this.voiceSelectionSafeArea(voice)
+        this.voiceSelectionSafeArea(this.customSelectionKey(String(voice.id)))
       }
 
       Column() {
         Text(voice.name || '未命名音色')
           .fontSize(AppFontSize.BODY_LARGE)
-          .fontWeight(FontWeight.Bold)
+          .fontWeight(FontWeight.Medium)
           .fontColor(this.primaryTextColor())
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(voice.url || '')
+        Text('自定义音色')
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
           .margin({ top: AppSpacing.XS })
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(voice.enabled ? '已启用' : '已禁用')
+        Text(voice.enabled ? (this.isCurrentVoice(voice) ? '当前使用' : '已启用') : '已禁用')
           .fontSize(AppFontSize.CAPTION)
           .fontColor(voice.enabled ? ThemeRuntime.successColor(this.appDarkMode) : this.subTextColor())
           .margin({ top: AppSpacing.XS })
@@ -1110,6 +1367,7 @@ struct CustomTtsVoiceManagerPage {
     .backgroundColor(this.cardColor())
     .borderRadius(ThemeRuntime.cardRadius())
     .opacity(voice.enabled ? 1 : 0.45)
+    .onAreaChange((_oldValue: Area, area: Area) => { this.rememberVoiceSelectionArea(this.customSelectionKey(String(voice.id)), area); })
     .gesture(
       LongPressGesture({ repeat: false })
         .onAction((event: GestureEvent) => {
@@ -1122,6 +1380,13 @@ struct CustomTtsVoiceManagerPage {
       if (this.selectionMode) {
         if (Date.now() < this.voiceSelectionSuppressClickUntil) return;
         this.toggleVoiceSelected(voice);
+      } else if (voice.enabled === false) {
+        HdsFeedback.showToast('请先左滑启用该音色');
+      } else {
+        this.ttsCustomVoiceId = String(voice.id);
+        this.ttsCloudVoiceId = '';
+        this.saveSettings();
+        HdsFeedback.showToast(`已选择 ${voice.name || '自定义音色'}`);
       }
     })
   }
@@ -1227,7 +1492,7 @@ struct CustomTtsVoiceManagerPage {
         })
     }
     .width('100%')
-    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.LG })
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: this.navBarHeight + AppSpacing.LG })
     .backgroundColor(this.cardColor())
   }
 

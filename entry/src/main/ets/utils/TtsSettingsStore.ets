@@ -1,5 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
+import { TtsVoiceAvailability } from './TtsVoiceAvailability';
 
 export class TtsSettings {
   person: number = 0;
@@ -11,6 +12,7 @@ export class TtsSettings {
   customVoiceId: string = '';
   customVoices: string = '';
   cloudVoiceId: string = '';
+  disabledVoiceKeys: string = '';
 }
 
 export class TtsSettingsStore {
@@ -23,8 +25,10 @@ export class TtsSettingsStore {
   static readonly KEY_CUSTOM_VOICE_ID: string = 'ttsCustomVoiceId';
   static readonly KEY_CUSTOM_VOICES: string = 'ttsCustomVoices';
   static readonly KEY_CLOUD_VOICE_ID: string = 'ttsCloudVoiceId';
+  static readonly KEY_DISABLED_VOICE_KEYS: string = 'ttsDisabledVoiceKeys';
   private static readonly STORE_NAME: string = 'tts_settings';
   private static cachedSettings: TtsSettings | null = null;
+  private static writeQueue: Promise<void> = Promise.resolve();
 
   static async load(context: Context): Promise<TtsSettings> {
     if (TtsSettingsStore.cachedSettings) {
@@ -50,14 +54,22 @@ export class TtsSettingsStore {
       store, TtsSettingsStore.KEY_CUSTOM_VOICES, storageSettings.customVoices);
     settings.cloudVoiceId = await TtsSettingsStore.getString(
       store, TtsSettingsStore.KEY_CLOUD_VOICE_ID, storageSettings.cloudVoiceId);
+    settings.disabledVoiceKeys = await TtsSettingsStore.getString(
+      store, TtsSettingsStore.KEY_DISABLED_VOICE_KEYS, storageSettings.disabledVoiceKeys);
     TtsSettingsStore.cachedSettings = TtsSettingsStore.clone(settings);
-    return settings;
+    return TtsSettingsStore.clone(settings);
   }
 
   static async save(context: Context, settings: TtsSettings): Promise<void> {
     const normalized = TtsSettingsStore.clone(settings);
     TtsSettingsStore.cachedSettings = TtsSettingsStore.clone(normalized);
     TtsSettingsStore.applyToStorage(normalized);
+    TtsSettingsStore.writeQueue = TtsSettingsStore.writeQueue.catch(() => {}).then((): Promise<void> =>
+      TtsSettingsStore.persist(context, normalized));
+    return TtsSettingsStore.writeQueue;
+  }
+
+  private static async persist(context: Context, normalized: TtsSettings): Promise<void> {
     const store = await preferences.getPreferences(context, TtsSettingsStore.STORE_NAME);
     await store.put(TtsSettingsStore.KEY_PERSON, normalized.person);
     await store.put(TtsSettingsStore.KEY_ONLINE, normalized.online);
@@ -68,6 +80,7 @@ export class TtsSettingsStore {
     await store.put(TtsSettingsStore.KEY_CUSTOM_VOICE_ID, normalized.customVoiceId);
     await store.put(TtsSettingsStore.KEY_CUSTOM_VOICES, normalized.customVoices);
     await store.put(TtsSettingsStore.KEY_CLOUD_VOICE_ID, normalized.cloudVoiceId);
+    await store.put(TtsSettingsStore.KEY_DISABLED_VOICE_KEYS, normalized.disabledVoiceKeys);
     await store.flush();
   }
 
@@ -83,6 +96,7 @@ export class TtsSettingsStore {
     AppStorage.setOrCreate(TtsSettingsStore.KEY_CUSTOM_VOICE_ID, normalized.customVoiceId);
     AppStorage.setOrCreate(TtsSettingsStore.KEY_CUSTOM_VOICES, normalized.customVoices);
     AppStorage.setOrCreate(TtsSettingsStore.KEY_CLOUD_VOICE_ID, normalized.cloudVoiceId);
+    AppStorage.setOrCreate(TtsSettingsStore.KEY_DISABLED_VOICE_KEYS, normalized.disabledVoiceKeys);
   }
 
   static fromStorage(): TtsSettings {
@@ -96,6 +110,7 @@ export class TtsSettingsStore {
     settings.customVoiceId = AppStorage.get<string>(TtsSettingsStore.KEY_CUSTOM_VOICE_ID) || '';
     settings.customVoices = AppStorage.get<string>(TtsSettingsStore.KEY_CUSTOM_VOICES) || '';
     settings.cloudVoiceId = AppStorage.get<string>(TtsSettingsStore.KEY_CLOUD_VOICE_ID) || '';
+    settings.disabledVoiceKeys = AppStorage.get<string>(TtsSettingsStore.KEY_DISABLED_VOICE_KEYS) || '';
     return TtsSettingsStore.clone(settings);
   }
 
@@ -168,6 +183,16 @@ export class TtsSettingsStore {
     settings.customVoiceId = source.customVoiceId || '';
     settings.customVoices = source.customVoices || '';
     settings.cloudVoiceId = source.cloudVoiceId || '';
+    settings.disabledVoiceKeys = TtsVoiceAvailability.normalize(source.disabledVoiceKeys);
+    const selectedKey = settings.cloudVoiceId ? TtsVoiceAvailability.cloudKey(settings.cloudVoiceId) :
+      TtsVoiceAvailability.systemKey(settings.person, settings.online, settings.language, settings.style);
+    if (!settings.customVoiceId && !TtsVoiceAvailability.isEnabled(settings.disabledVoiceKeys, selectedKey)) {
+      settings.cloudVoiceId = '';
+      settings.person = 0;
+      settings.online = 1;
+      settings.style = '';
+      settings.language = 'zh-CN';
+    }
     return settings;
   }
 }

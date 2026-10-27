@@ -45,7 +45,8 @@ Object.assign(host, {
   updateTtsFloatingSession: () => shared.update('reader', 'Book', 'Chapter', host.isTtsPaused),
   startTtsReadingFromCurrentPosition: async () => { retries++; },
 });
-context.TtsVoiceCatalog = { customVoiceKey: voice => `custom_${voice.id}`, voiceKey: voice => voice.id };
+context.TtsVoiceCatalog = { customVoiceKey: voice => `custom_${voice.id}`, voiceKey: voice => voice.id,
+  systemEnabled: () => true };
 function attach(owner = 'reader') {
   shared.attach(owner, 'book', 'Book', 'Chapter', false,
     () => host.toggleTtsReading(), () => host.isTtsPaused, () => host.stopTtsReading());
