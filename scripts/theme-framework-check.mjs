@@ -445,9 +445,23 @@ assert(themePage.includes('AppIconManager.optionById(this.appIconId).preview') &
   'Current theme summary must display the actual desktop icon without the legacy description');
 assert(runtime.includes('static accentSurfaceColor(darkMode: boolean)'),
   'Theme runtime does not expose a themed selected-surface color');
-assert(ttsSettingsPage.includes('? this.accentColor() : this.inputColor()') &&
-  ttsSettingsPage.includes('.backgroundColor(this.inputColor())'),
-  'TTS voice or speed controls are not connected to theme surfaces');
+// Voice selection now uses a dropdown; speed presets use an accent surface
+// with accent text rather than a solid accent background.
+const ttsVoiceSelector = ttsSettingsPage.match(/  voiceDropdownSelector\(\)[\s\S]*?\n  \}/)?.[0] || '';
+assert(ttsVoiceSelector.includes('.optionFontColor(this.primaryTextColor())') &&
+  ttsVoiceSelector.includes('.selectedOptionFontColor(this.accentColor())') &&
+  ttsVoiceSelector.includes('.selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))') &&
+  ttsVoiceSelector.includes('.menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))'),
+  'TTS voice dropdown must use themed text, selected surfaces and menu background');
+const ttsSpeedChip = ttsSettingsPage.match(/  speedChip\(value: number\)[\s\S]*?\n  \}/)?.[0] || '';
+assert(ttsSpeedChip.includes('.fontColor(Math.abs(this.ttsSpeed - value) < 0.01 ? this.accentColor() : this.primaryTextColor())') &&
+  ttsSpeedChip.includes('.backgroundColor(Math.abs(this.ttsSpeed - value) < 0.01 ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) : this.inputColor())'),
+  'TTS speed presets must use themed selected and unselected text and surfaces');
+const ttsSpeedStepButton = ttsSettingsPage.match(/  speedStepButton\([^\n]*[\s\S]*?\n  \}/)?.[0] || '';
+assert(ttsSpeedStepButton.includes('fillColor: this.inputColor()') &&
+  ttsSpeedStepButton.includes('iconColor: this.primaryTextColor()') &&
+  ttsSpeedStepButton.includes('disabledIconColor: this.subTextColor()'),
+  'TTS speed step buttons must use themed surfaces and normal/disabled icons');
 assert(!readerSettingsPage.includes("this.appDarkMode ? '#24272D' : '#F0F2F5'"),
   'Reader settings still contains legacy fixed control backgrounds');
 for (const marginName of ['Left', 'Right', 'Top', 'Bottom']) {
