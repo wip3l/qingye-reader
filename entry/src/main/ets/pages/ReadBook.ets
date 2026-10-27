@@ -14403,7 +14403,7 @@ struct ReadBookPage {
    */
   readerCommentBubbleStyle(): ReaderCommentBubbleStyle {
     const style = ReaderCommentBubbleStyles.resolve(this.readerCommentBubbleTheme().bubbleStyleId,
-      this.isReaderThemeDark());
+      this.isReaderThemeDark(), this.getTextColor());
     const sourceTextColor = this.readerSourceColorSetting('段评字体颜色', '');
     const sourceFillColor = this.readerSourceColorSetting('段评填充颜色', '');
     if (sourceTextColor) style.text = ReaderV2Color.parse(sourceTextColor, style.text);
