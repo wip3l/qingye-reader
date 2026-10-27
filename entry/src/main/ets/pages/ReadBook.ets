@@ -1,4 +1,5 @@
 import { BookCoverResolver } from '../utils/BookCoverResolver';
+import { syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
 import { ReaderScreenScrollMotion } from '../core/reader/ReaderScreenScrollMotion';
 import displaySync from '@ohos.graphics.displaySync';
@@ -338,6 +339,7 @@ struct ReadBookPage {
   @State readerComicChapterTransitionOpacity: number = 1;
   private readerComicPaginationSource: string = '';
   @State statusBarSafeHeight: number = 0;
+  @StorageProp('desktopTitleBarHeight') desktopTitleBarHeight: number = 0;
   @StorageProp('statusBarHeight') @Watch('onStoredStatusBarHeightChanged') storedStatusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   /** 会员档位、账号快照和试用截止状态共同驱动三项 AI 权限刷新。 */
@@ -1239,6 +1241,7 @@ struct ReadBookPage {
       const bg = comicMode ? this.readerComicWindowColor() : this.getBackgroundColor();
       const useLightIcons = comicMode ? this.isReaderComicSurfaceDark() : this.isReaderThemeDark();
       const systemTextColor = useLightIcons ? '#D8D8D8' : '#2F261D';
+      syncDesktopTitleBar(mainWindow, useLightIcons);
       mainWindow.setWindowBackgroundColor(bg);
       mainWindow.setWindowLayoutFullScreen(true);
       // 漫画铺满全屏，时间与电量改由角落信息条显示。
@@ -1269,14 +1272,8 @@ struct ReadBookPage {
   }
 
   updateStatusBarSafeHeight(mainWindow: window.Window): void {
-    try {
-      const avoidArea = mainWindow.getWindowAvoidAreaIgnoringVisibility(window.AvoidAreaType.TYPE_SYSTEM);
-      const topHeight = px2vp(Math.max(0, avoidArea.topRect.height));
-      this.applyReaderStatusBarSafeHeight(topHeight);
-    } catch (err) {
-      console.error('获取状态栏安全区失败:', err);
-      this.applyReaderStatusBarSafeHeight(this.storedStatusBarHeight);
-    }
+    syncSystemSafeAreas(mainWindow);
+    this.applyReaderStatusBarSafeHeight(AppStorage.get<number>('statusBarHeight') ?? this.storedStatusBarHeight);
   }
 
   onStoredStatusBarHeightChanged(): void {
@@ -6452,13 +6449,14 @@ struct ReadBookPage {
   }
 
   getReaderHeaderOverlayTopInset(): number {
-    return this.getReaderInfoBarConfig().edgeInset(true,
-      ReaderInfoBarConfig.headerBaseInset(this.readerExtendToStatusBar, this.statusBarSafeHeight));
+    return Math.max(this.desktopTitleBarHeight, this.getReaderInfoBarConfig().edgeInset(true,
+      ReaderInfoBarConfig.headerBaseInset(this.readerExtendToStatusBar, this.statusBarSafeHeight)));
   }
 
   getReaderHeaderTopGap(): number {
     // 换算为正文安全区内的相对位置；负值可抵消页眉占位，正文仍遵守状态栏安全区。
-    return this.getReaderHeaderOverlayTopInset() - (this.readerExtendToStatusBar ? 0 : this.statusBarSafeHeight);
+    return this.getReaderHeaderOverlayTopInset() -
+      (this.readerExtendToStatusBar ? this.desktopTitleBarHeight : this.statusBarSafeHeight);
   }
 
   getReaderHeaderContentReserve(): number {
@@ -7943,11 +7941,12 @@ struct ReadBookPage {
 
   getReaderTopSafePadding(): number {
     if (this.isReaderComicModeActive()) {
-      return 0;
+      return this.desktopTitleBarHeight;
     }
     // 扩展模式会隐藏状态栏，正文直接从屏幕顶部起算，不为已隐藏的状态栏保留高度。
     if (this.readerExtendToStatusBar) {
-      return 0;
+      // Hiding a phone status bar must not place desktop content under the native window controls.
+      return this.desktopTitleBarHeight;
     }
     // 仿真与叠页纸张都需要贯穿整个屏幕，因此只由动画页内部补偿文字坐标。普通、滑动和淡入
     // 翻页则在正文容器上统一避让状态栏。

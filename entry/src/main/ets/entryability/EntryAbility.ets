@@ -44,6 +44,7 @@ import { readStatsTracker } from '../core/stats/ReadStatsTracker';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { ReaderCacheBudget } from '../core/book/ReaderCacheBudget';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
+import { syncDesktopTitleBar, releaseSystemBarListeners } from '../utils/SystemBars';
 
 export default class EntryAbility extends UIAbility {
   private appliedColorMode: number = -1;
@@ -373,6 +374,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageDestroy(): void {
+    releaseSystemBarListeners();
     this.mainWindowStage = null;
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onWindowStageDestroy');
   }
@@ -837,6 +839,7 @@ export default class EntryAbility extends UIAbility {
         mainWindow.setWindowBackgroundColor(bg);
         mainWindow.setWindowLayoutFullScreen(true);
         mainWindow.setWindowSystemBarEnable(['navigation', 'status']);
+        syncDesktopTitleBar(mainWindow, darkMode);
         mainWindow.setWindowSystemBarProperties({
           statusBarColor: '#00000000',
           isStatusBarLightIcon: darkMode,

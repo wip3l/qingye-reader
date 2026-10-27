@@ -202,6 +202,7 @@ const previewLayout = layoutMethods('ThemeTypographySettings.ets', ['headerTopIn
   'bodyTop', 'footerBottomInset']);
 const layoutConfig = new Config();
 Object.assign(readerLayout, {
+  desktopTitleBarHeight: 0,
   getReaderInfoBarConfig: () => layoutConfig, isReaderHeaderVisible: () => true,
   getReaderHeaderInfoBarHeight: () => layoutConfig.headerLineHeight(), readerVerticalGapWithinMargin: () => 4
 });
@@ -230,6 +231,20 @@ for (const extend of [false, true]) {
         equal(bottom, 0, '页脚可抵消手势条留白直到屏幕底部');
       }
     }
+  }
+}
+
+// 桌面三键区不可被“延伸至状态栏”或负页眉偏移覆盖。
+readerLayout.desktopTitleBarHeight = 40;
+readerLayout.statusBarSafeHeight = 40;
+for (const extend of [false, true]) {
+  readerLayout.readerExtendToStatusBar = extend;
+  for (const offset of [-350, 0, 20]) {
+    layoutConfig.headerOffset = offset;
+    const top = readerLayout.getReaderHeaderOverlayTopInset();
+    const bodyTop = 40 + 16 + readerLayout.getReaderHeaderContentReserve();
+    check(top >= 40, 'PC 页眉始终避让窗口按钮');
+    check(bodyTop >= top + layoutConfig.headerLineHeight() + 4, 'PC 正文与页眉保持间距');
   }
 }
 

@@ -6,7 +6,7 @@ import { HdsAnimationMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { Book, BookChapter, BookSourceStageWebRuntime } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookFetchRuntimeHost } from '../components/WebBookFetchRuntimeHost';
-import { syncSystemSafeAreas } from '../utils/SystemBars';
+import { syncSystemSafeAreas, syncDesktopTitleBar } from '../utils/SystemBars';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { RecentReadShortcut } from '../utils/RecentReadShortcut';
@@ -948,6 +948,7 @@ struct Index {
       mainWindow.setWindowBackgroundColor(bg);
       mainWindow.setWindowLayoutFullScreen(true);
       mainWindow.setWindowSystemBarEnable(['navigation', 'status']);
+      syncDesktopTitleBar(mainWindow, this.appDarkMode);
       syncSystemSafeAreas(mainWindow);
       mainWindow.setWindowSystemBarProperties({
         statusBarColor: '#00000000',
