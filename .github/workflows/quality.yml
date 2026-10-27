@@ -31,6 +31,7 @@ jobs:
           node-version: 22
       - run: node scripts/thread-blocking-check.mjs
       - run: node scripts/theme-framework-check.mjs
+      - run: node --experimental-strip-types scripts/select-font-check.mjs
       - run: node scripts/neutral-source-engine-check.mjs
       - run: node scripts/log-policy-check.mjs
       - run: npm --prefix harmony-book-ai-engine test

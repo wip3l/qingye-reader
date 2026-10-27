@@ -44,12 +44,15 @@ export class ReaderFontBootstrap {
     const family = ReaderFontBootstrap.applicationFontFamily();
     if (family === ReaderSystemFontHelper.FALLBACK_SYSTEM_FONT_FAMILY && !ReaderFontBootstrap.applicationFontSet) {
       // 用系统字体且本进程还没设过字体时保持不设，交给 ArkUI 跟随系统主题字体。
+      AppStorage.setOrCreate<string>('applicationFontFamily', family);
       return;
     }
     ReaderFontBootstrap.setApplicationFont(context, family, source);
   }
 
   private static setApplicationFont(context: Context, family: string, source: string): void {
+    // Select 的收起文本需要显式 font.family；发布可观察的字体供所有下拉控件同步更新。
+    AppStorage.setOrCreate<string>('applicationFontFamily', family);
     try {
       context.getApplicationContext().setFont(family);
       ReaderFontBootstrap.applicationFontSet = true;

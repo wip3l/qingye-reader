@@ -13,6 +13,7 @@ class HsvColor {
 
 @Component
 export struct ColorCodePicker {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @Prop value: string = '#007DFF';
   @Prop placeholder: string = '#007DFF';
@@ -289,7 +290,7 @@ export struct ColorCodePicker {
           ])
             .selected(this.colorModeIndex())
             .value(this.colorModeLabel())
-            .font({ size: AppFontSize.BODY })
+            .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
             .fontColor(this.subTextColor())
             .backgroundColor(Color.Transparent)
             .arrowPosition(ArrowPosition.END)

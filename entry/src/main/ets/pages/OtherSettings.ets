@@ -18,6 +18,7 @@ import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
 @Entry
 @Component
 struct OtherSettingsPage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageLink('networkForceHttp1') networkForceHttp1: boolean = false;
   @StorageLink('readerImageConcurrency') readerImageConcurrency: number = 4;
   @State savingNetwork: boolean = false;
@@ -168,7 +169,7 @@ struct OtherSettingsPage {
         Select([{ value: '4 张' }, { value: '8 张' }, { value: '12 张' }])
           .selected(Math.max(0, [4, 8, 12].indexOf(this.readerImageConcurrency)))
           .value(`${this.readerImageConcurrency} 张`)
-          .font({ size: AppFontSize.BODY })
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
           .fontColor(this.primaryTextColor())
           .backgroundColor(Color.Transparent)
           .enabled(!this.savingImageConcurrency)
@@ -474,7 +475,7 @@ struct OtherSettingsPage {
       .enabled(!this.savingImmersiveLight)
       .selected(this.savingImmersiveLight ? -1 : this.immersiveLightLevelSelectedIndex())
       .value(this.savingImmersiveLight ? '保存中…' : this.immersiveLightLevelOptions()[this.immersiveLightLevelSelectedIndex()].value)
-      .font({ size: AppFontSize.BODY })
+      .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
       .fontColor(this.subTextColor())
       .backgroundColor(Color.Transparent)
       .arrowPosition(ArrowPosition.END)

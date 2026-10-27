@@ -70,6 +70,7 @@ export struct ReaderSettingSwitchRow {
 
 @Component
 export struct ReaderSettingSelectRow {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @Prop title: string = '';
   @Prop minimumMembership: string = '';
@@ -106,7 +107,7 @@ export struct ReaderSettingSelectRow {
         .id(this.controlId)
         .selected(this.selected)
         .value(this.selectedValue())
-        .font({ size: AppFontSize.BODY })
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(this.textColor)
         .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel,
           this.dark, this.dark ? '#30343B' : '#ECEEF2', true))

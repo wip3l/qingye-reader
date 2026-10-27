@@ -25,6 +25,7 @@ import {
 @Entry
 @Component
 struct ComicSettingsPage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -235,7 +236,7 @@ struct ComicSettingsPage {
         .id(controlId)
         .selected(selected)
         .value(selected >= 0 && selected < options.length ? options[selected].value : '')
-        .font({ size: AppFontSize.BODY })
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)

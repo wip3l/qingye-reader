@@ -58,6 +58,7 @@ class ReaderBubbleStyleOption {
 @Entry
 @Component
 struct ReaderFontSettingsPage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
@@ -645,7 +646,7 @@ struct ReaderFontSettingsPage {
       Select(this.fontOptions())
         .selected(this.selectedFontIndex(mode, family))
         .value(this.selectedFontValue(mode, family))
-        .font({ size: AppFontSize.BODY })
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(this.subTextColor())
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)
@@ -1312,7 +1313,7 @@ struct ReaderFontSettingsPage {
         Select(this.emphasisModeOptions())
           .selected(this.emphasisModeIndex(this.regexRuleAt(index).emphasisMode))
           .value(this.emphasisModeLabel(this.regexRuleAt(index).emphasisMode))
-          .font({ size: AppFontSize.BODY })
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
           .fontColor(this.subTextColor())
           .backgroundColor(Color.Transparent)
           .arrowPosition(ArrowPosition.END)
@@ -1408,7 +1409,7 @@ struct ReaderFontSettingsPage {
             Select(this.bubbleStyleOptions())
               .selected(this.bubbleStyleIndex(this.regexRuleAt(index).bubbleStyleId))
               .value(this.bubbleStyleLabel(this.regexRuleAt(index).bubbleStyleId))
-              .font({ size: AppFontSize.BODY })
+              .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
               .fontColor(this.subTextColor())
               .backgroundColor(Color.Transparent)
               .arrowPosition(ArrowPosition.END)
@@ -1482,7 +1483,7 @@ struct ReaderFontSettingsPage {
       Select(this.fontOptions())
         .selected(this.selectedFontIndex(mode, family))
         .value(this.selectedFontValue(mode, family))
-        .font({ size: AppFontSize.BODY })
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(this.subTextColor())
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)

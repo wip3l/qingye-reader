@@ -17,6 +17,7 @@ const SECONDARY_STOP: string = 'stop';
 
 @Component
 export struct ReaderTtsPlayerPanel {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @Prop darkMode: boolean = false;
   @Prop accentColor: ResourceColor = '#5B8F86';
@@ -628,7 +629,7 @@ export struct ReaderTtsPlayerPanel {
       .id(`shared_tts_voice_${this.globalTtsVoiceRevision}_${ReaderTtsFloatingSession.ttsVoiceIndex()}`)
       .selected(ReaderTtsFloatingSession.ttsVoiceIndex())
       .value(this.globalTtsVoiceCode)
-      .font({ size: AppFontSize.BODY })
+      .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
       .fontColor(this.primaryTextColor)
       // The API 26 branch fills its Stack by width; inside the legacy Row the
       // layoutWeight owns the main axis and this width is ignored, so both
@@ -699,7 +700,7 @@ export struct ReaderTtsPlayerPanel {
       .id(`shared_audio_voice_${this.globalTtsVoiceRevision}_${this.audioVoiceMenuRevision}_${this.audioVoiceSelectedIndex()}`)
       .selected(this.audioVoiceSelectedIndex())
       .value(this.hostAudioPage ? (this.hostVoiceTitles[this.hostVoiceIndex] || '默认') : this.globalTtsVoiceCode)
-      .font({ size: AppFontSize.BODY })
+      .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
       .fontColor(this.primaryTextColor)
       // The API 26 branch fills its Stack by width; inside the legacy Row the
       // layoutWeight owns the main axis and this width is ignored, so both

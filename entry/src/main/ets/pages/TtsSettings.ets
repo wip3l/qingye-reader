@@ -35,6 +35,7 @@ const TTS_CUSTOM_VOICE_IMPORT_LIMIT_BYTES: number = 2 * 1024 * 1024;
 @Entry
 @Component
 struct TtsSettingsPage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('ttsPerson') ttsPerson: number = 0;
   @StorageLink('ttsOnline') ttsOnline: number = 1;
@@ -281,7 +282,7 @@ struct TtsSettingsPage {
       .selected(this.voiceSelectOptions().findIndex((option: TtsSettingsVoiceSelectOption): boolean =>
         option.key === this.selectedVoiceKey))
       .value(this.selectedVoiceTitle())
-      .font({ size: AppFontSize.BODY })
+      .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
       .fontColor(this.subTextColor())
       .backgroundColor(Color.Transparent)
       .arrowPosition(ArrowPosition.END)

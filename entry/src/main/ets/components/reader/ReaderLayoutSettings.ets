@@ -66,6 +66,7 @@ export class ReaderTypographyField {
  */
 @Component
 export struct ReaderTypographyStepper {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   /** 打开时的初始值，顺序见 ReaderTypographyField。 */
   initialValues: number[] = [];
@@ -119,7 +120,7 @@ export struct ReaderTypographyStepper {
           .id('reader_typography_selector')
           .selected(this.field)
           .value(ReaderTypographyField.LABELS[this.field])
-          .font({ size: AppFontSize.BODY_LARGE })
+          .font({ size: AppFontSize.BODY_LARGE, family: this.applicationFontFamily })
           .fontColor(this.subTextColor)
           .backgroundColor(Color.Transparent)
           .arrowPosition(ArrowPosition.START)
@@ -263,6 +264,7 @@ export struct ReaderHeaderFooterSettings {
  */
 @Component
 export struct ReaderHeaderFooterEditor {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @Prop headerBaseInset: number = 0;
   @Prop footerBaseInset: number = 6;
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
@@ -588,7 +590,7 @@ export struct ReaderHeaderFooterEditor {
         .id(controlId)
         .selected(selected)
         .value(selected >= 0 && selected < labels.length ? labels[selected] : (labels.length > 0 ? labels[0] : ''))
-        .font({ size: AppFontSize.BODY })
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(this.subTextColor)
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)

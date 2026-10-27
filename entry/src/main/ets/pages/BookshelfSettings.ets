@@ -25,6 +25,7 @@ import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/commo
 @Entry
 @Component
 struct BookshelfSettingsPage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('bookshelfShowTags') bookshelfShowTags: boolean = true;
   @StorageLink('bookshelfShowSource') bookshelfShowSource: boolean = true;
@@ -781,7 +782,7 @@ struct BookshelfSettingsPage {
       Select(options)
         .selected(selected)
         .value(this.optionValue(options, selected))
-        .font({ size: AppFontSize.BODY })
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(this.subTextColor())
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)
@@ -820,7 +821,7 @@ struct BookshelfSettingsPage {
       Select(this.albumOptions())
         .selected(this.albumSelectedIndex(dark))
         .value(this.optionValue(this.albumOptions(), this.albumSelectedIndex(dark)))
-        .font({ size: AppFontSize.BODY })
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(this.subTextColor())
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)

@@ -98,6 +98,7 @@ const PREVIEW_PARAGRAPHS: string[] = [
 @Entry
 @Component
 struct ThemeTypographySettingsPage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -641,7 +642,7 @@ struct ThemeTypographySettingsPage {
         .id(controlId)
         .selected(selected)
         .value(selected >= 0 && selected < options.length ? options[selected].value : '')
-        .font({ size: AppFontSize.BODY })
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(this.subTextColor())
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)

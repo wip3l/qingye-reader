@@ -19,6 +19,7 @@ interface NativeSourceSettingsParams {
 @Entry
 @Component
 struct NativeSourceSettingsPage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -353,7 +354,7 @@ struct NativeSourceSettingsPage {
                   Select(item.options.map((option: string): SelectOption => ({ value: option })))
                     .selected(Math.max(0, item.options.indexOf(item.value)))
                     .value(item.value)
-                    .font({ size: AppFontSize.BODY })
+                    .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
                     .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
                     .divider(null)
                     .optionBgColor(Color.Transparent)

@@ -41,6 +41,7 @@ class ReaderCustomFontData {
 @Entry
 @Component
 struct SettingsPage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -1951,7 +1952,7 @@ struct SettingsPage {
       Select(this.readerFontOptions())
         .selected(this.readerFontSelectedIndex())
         .value(this.readerFontValue())
-        .font({ size: AppFontSize.BODY })
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(this.subTextColor())
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)
@@ -2087,7 +2088,7 @@ struct SettingsPage {
             Select(this.customThemeOptions())
               .selected(this.currentCustomThemeSelectedIndex())
               .value(this.currentCustomThemeScheme().name)
-              .font({ size: AppFontSize.BODY })
+              .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
               .fontColor(this.subTextColor())
               .backgroundColor(Color.Transparent)
               .arrowPosition(ArrowPosition.START)
@@ -2148,7 +2149,7 @@ struct SettingsPage {
             Select([{ value: '背景色' }, { value: '背景图片' }])
               .selected(this.currentCustomThemeBackgroundTypeIndex())
               .value(this.currentCustomThemeBackgroundTypeIndex() === 1 ? '背景图片' : '背景色')
-              .font({ size: AppFontSize.BODY })
+              .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
               .fontColor(this.subTextColor())
               .backgroundColor(Color.Transparent)
               .arrowPosition(ArrowPosition.END)
@@ -2201,7 +2202,7 @@ struct SettingsPage {
                 Select([{ value: '裁剪填充' }, { value: '完整显示' }, { value: '拉伸铺满' }])
                   .selected(this.customThemeFitSelectedIndex())
                   .value(['裁剪填充', '完整显示', '拉伸铺满'][this.customThemeFitSelectedIndex()])
-                  .font({ size: AppFontSize.BODY })
+                  .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
                   .fontColor(this.subTextColor())
                   .backgroundColor(Color.Transparent)
                   .arrowPosition(ArrowPosition.END)
@@ -2249,7 +2250,7 @@ struct SettingsPage {
       Select(this.typographySettingOptions())
         .selected(this.typographySettingIndex)
         .value(this.typographySettingTitle())
-        .font({ size: AppFontSize.BODY_LARGE })
+        .font({ size: AppFontSize.BODY_LARGE, family: this.applicationFontFamily })
         .fontColor(this.subTextColor())
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.START)
@@ -2413,7 +2414,7 @@ struct SettingsPage {
         .id(controlId)
         .selected(selected)
         .value(this.optionValue(options, selected))
-        .font({ size: AppFontSize.BODY })
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(this.subTextColor())
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)

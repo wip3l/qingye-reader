@@ -18,6 +18,7 @@ import { AppSpacing } from '../../theme/AppSpacing';
  */
 @Component
 export struct ReaderCustomThemeEditor {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @Prop dark: boolean = false;
   @Prop textColor: string = '#202124';
@@ -191,7 +192,7 @@ export struct ReaderCustomThemeEditor {
         Select(this.schemes().map((item: ReaderCustomThemeScheme): SelectOption => ({ value: item.name })))
           .selected(this.selectedIndex())
           .value(this.scheme().name)
-          .font({ size: AppFontSize.BODY })
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
           .fontColor(this.textColor)
           .backgroundColor(this.fieldColor())
           .borderRadius(16)
@@ -242,7 +243,7 @@ export struct ReaderCustomThemeEditor {
         Select([{ value: '背景色' }, { value: '背景图片' }])
           .selected(this.backgroundTypeIndex())
           .value(this.backgroundTypeIndex() === 1 ? '背景图片' : '背景色')
-          .font({ size: AppFontSize.BODY })
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
           .fontColor(this.textColor)
           .backgroundColor(this.fieldColor())
           .borderRadius(16)
@@ -288,7 +289,7 @@ export struct ReaderCustomThemeEditor {
             Select([{ value: '裁剪填充' }, { value: '完整显示' }, { value: '拉伸铺满' }])
               .selected(this.fitIndex())
               .value(['裁剪填充', '完整显示', '拉伸铺满'][this.fitIndex()])
-              .font({ size: AppFontSize.BODY })
+              .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
               .fontColor(this.textColor)
               .backgroundColor(this.fieldColor())
               .borderRadius(16)

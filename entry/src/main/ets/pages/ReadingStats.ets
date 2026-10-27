@@ -47,6 +47,7 @@ class ReadStatsListDataSource implements IDataSource {
 @Entry
 @Component
 struct ReadingStatsPage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -206,7 +207,7 @@ struct ReadingStatsPage {
       Column() {
         Select(this.periodOptions())
           .selected(STATS_MODES.indexOf(this.mode)).value(STATS_MODE_LABELS[STATS_MODES.indexOf(this.mode)])
-          .font({ size: AppFontSize.BODY_LARGE, weight: FontWeight.Medium }).fontColor(this.primaryTextColor())
+          .font({ size: AppFontSize.BODY_LARGE, weight: FontWeight.Medium, family: this.applicationFontFamily }).fontColor(this.primaryTextColor())
           .backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.buttonRadius()).height(44)
           .optionFontColor(this.primaryTextColor()).selectedOptionFontColor(this.accentColor())
           .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
@@ -220,7 +221,7 @@ struct ReadingStatsPage {
       Column() {
         if (this.devices.length > 1) {
           Select(this.deviceOptions()).selected(this.deviceIndex()).value(this.deviceTitle())
-            .font({ size: AppFontSize.BODY, weight: FontWeight.Medium }).fontColor(this.primaryTextColor())
+            .font({ size: AppFontSize.BODY, weight: FontWeight.Medium, family: this.applicationFontFamily }).fontColor(this.primaryTextColor())
             .backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.buttonRadius()).height(44)
             .constraintSize({ maxWidth: 180 })
             .optionFontColor(this.primaryTextColor()).selectedOptionFontColor(this.accentColor())

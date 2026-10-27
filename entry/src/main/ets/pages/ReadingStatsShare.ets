@@ -24,6 +24,7 @@ interface ReadStatsPosterChoice {
 @Entry
 @Component
 struct ReadingStatsSharePage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
@@ -250,6 +251,7 @@ struct ReadingStatsSharePage {
           Text('书籍排行').fontSize(AppFontSize.BODY).fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
           Blank()
           Select(POSTER_RANK_LABELS.map((label: string): SelectOption => ({ value: label })))
+            .font({ family: this.applicationFontFamily })
             .selected(POSTER_RANK_LIMITS.indexOf(this.options.rankLimit))
             .value(POSTER_RANK_LABELS[POSTER_RANK_LIMITS.indexOf(this.options.rankLimit)])
             .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode)).backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
@@ -260,6 +262,7 @@ struct ReadingStatsSharePage {
             Text('导出范围').fontSize(AppFontSize.BODY).fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
             Blank()
             Select([{ value: '全部海报' }, { value: '当前页' }]).selected(this.onlyCurrent ? 1 : 0)
+              .font({ family: this.applicationFontFamily })
               .value(this.onlyCurrent ? '当前页' : '全部海报')
               .onSelect((index: number): void => { this.onlyCurrent = index === 1; })
           }.width('100%')

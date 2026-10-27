@@ -98,6 +98,7 @@ const SOURCE_SELECTION_ROW_HEIGHT: number = 42;
 @Entry
 @Component
 struct BookSourcePage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -1876,6 +1877,7 @@ struct BookSourcePage {
                   .layoutWeight(1)
                   .maxLines(2)
                 Select(this.sourceLoginSelectOptions(item))
+                  .font({ family: this.applicationFontFamily })
                   .selected(this.sourceLoginSelectIndex(item))
                   .value(this.sourceLoginChoiceValue(item))
                   .fontColor(this.primaryTextColor())

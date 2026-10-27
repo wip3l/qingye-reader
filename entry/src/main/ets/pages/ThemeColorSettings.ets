@@ -70,6 +70,7 @@ struct ThemeColorOption {
 @Entry
 @Component
 struct ThemeColorSettingsPage {
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -589,7 +590,7 @@ struct ThemeColorSettingsPage {
       Select(this.themeOptions())
         .selected(this.sourceSelectedIndex(category))
         .value(BuiltinThemeRegistry.findById(this.sourceThemeId(category)).name)
-        .font({ size: AppFontSize.BODY })
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(this.subTextColor())
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)
