@@ -44,6 +44,8 @@ WebView、`browser.render`、默认 User-Agent、按钮上下文和详情 `keep`
 
 `js` 是 JSON 中的一段字符串，换行需要写成 `\n`，也可以先在编辑器里编写 JS 再用 `JSON.stringify` 转成 JSON 字符串。原生规则不使用兼容书源的 `@js:`、`<js>`、`jsLib` 或 `java.*` 写法。
 
+JS 中调用内置函数时使用 `native.split(text, ',')` 等写法。若报未定义错误，按提示核对 `native.` 前缀；导入校验通过并不保证未执行的函数体没有错误。详见公共文档的 [JS 函数库说明](../harmony-book-source-engine/docs/book-source-development.md#js-函数库-js)。
+
 脚本阶段返回的是供规则解析的页面或 JSON，不必手动构造应用的数据库对象。返回后仍可使用 `let`、`fail`、`list`、`fields` 和正文提取规则；返回数组且省略 `list` 时逐项解析。目录与正文的脚本要自行完成分页，`nextUrl` 不再生效。完整接口、状态作用域和可复制示例见公共文档，不在此维护第二套规范。
 
 ## 在轻页中开发与验证
