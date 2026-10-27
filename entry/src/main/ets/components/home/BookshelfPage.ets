@@ -17,6 +17,7 @@ import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { BookDisplayHelper } from '../../utils/BookDisplayHelper';
+import { BookTileLayout } from '../../utils/BookTileLayout';
 import { BookCoverCache } from '../../utils/BookCoverCache';
 import { CoverGallerySettings } from '../../utils/CoverGallerySettings';
 import { BookshelfDisplaySettingsStore } from '../../utils/BookshelfDisplaySettingsStore';
@@ -3060,15 +3061,7 @@ export struct BookshelfPage {
   }
 
   shelfTileColumnCount(): number {
-    const horizontalPadding = 40;
-    const targetCoverWidth = 104;
-    const preferredColumnGap = 20;
-    const contentWidth = Math.max(1, this.shelfTileViewportWidth - horizontalPadding);
-    // 以当前手机端约 104vp 的封面宽度为视觉基准，展开屏增加列数而不是放大封面。
-    const fittedCount = Math.round(
-      (contentWidth + preferredColumnGap) / (targetCoverWidth + preferredColumnGap)
-    );
-    return Math.max(3, Math.min(24, fittedCount));
+    return BookTileLayout.columnCount(this.shelfTileViewportWidth);
   }
 
   shelfTileColumnsTemplate(): string {
@@ -3081,14 +3074,7 @@ export struct BookshelfPage {
   }
 
   shelfTileColumnGap(): number {
-    const horizontalPadding = 40;
-    const targetCoverWidth = 104;
-    const columnCount = this.shelfTileColumnCount();
-    const contentWidth = Math.max(1, this.shelfTileViewportWidth - horizontalPadding);
-    const fittedGap = columnCount > 1 ?
-      (contentWidth - targetCoverWidth * columnCount) / (columnCount - 1) : 20;
-    // 只在原 20vp 附近微调间距，避免宽屏上书籍过散或挤在一起。
-    return Math.max(16, Math.min(24, fittedGap));
+    return BookTileLayout.columnGap(this.shelfTileViewportWidth);
   }
 
   shelfTileRowGap(): number {
@@ -3097,9 +3083,8 @@ export struct BookshelfPage {
 
   shelfTileExpandedCoverAspectRatio(): number {
     const columnCount = this.shelfTileColumnCount();
-    const horizontalPadding = 40;
     const columnGap = this.shelfTileColumnGap();
-    const contentWidth = Math.max(1, this.shelfTileViewportWidth - horizontalPadding);
+    const contentWidth = BookTileLayout.contentWidth(this.shelfTileViewportWidth);
     const columnWidth = Math.max(1, (contentWidth - columnGap * (columnCount - 1)) / columnCount);
     const expandedWidth = columnWidth * 2 + columnGap;
     // 普通封面的宽高比为 0.735；跨两列后根据实际列宽换算，确保上下边缘完全对齐。
@@ -3169,7 +3154,7 @@ export struct BookshelfPage {
     .columnsTemplate(this.shelfTileColumnsTemplate())
     .columnsGap(this.shelfTileColumnGap())
     .rowsGap(this.shelfTileRowGap())
-    .padding({ left: AppSpacing.XXL, right: AppSpacing.XXL, top: 10 })
+    .padding({ left: BookTileLayout.SIDE_PADDING, right: BookTileLayout.SIDE_PADDING, top: 10 })
     .backgroundColor(this.pageColor())
     .scrollBar(BarState.Off)
     .cachedCount(4)
@@ -3395,10 +3380,9 @@ export struct BookshelfPage {
   }
 
   shelfTileLatestCardHeight(): number {
-    const horizontalPadding = 40;
     const columnCount = this.shelfTileColumnCount();
     const columnGap = this.shelfTileColumnGap();
-    const contentWidth = Math.max(1, this.shelfTileViewportWidth - horizontalPadding);
+    const contentWidth = BookTileLayout.contentWidth(this.shelfTileViewportWidth);
     const columnWidth = Math.max(1, (contentWidth - columnGap * (columnCount - 1)) / columnCount);
     // 封面约占一列宽度的七成，卡片高度随之换算，宽屏多列时也不会被拉得过高。
     return Math.round(columnWidth * 0.7 / 0.735) + AppSpacing.XL * 2;

@@ -1,6 +1,7 @@
 import { SearchBook, BookTypeSupport } from '@legado/sourceengine';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { BookDisplayHelper } from '../../utils/BookDisplayHelper';
+import { BookTileLayout } from '../../utils/BookTileLayout';
 import { BookCover } from './BookCover';
 import { SearchBookShelfHelper } from '../../utils/SearchBookShelfHelper';
 import deviceInfo from '@ohos.deviceInfo';
@@ -37,9 +38,7 @@ class SearchBookResultDataSource implements IDataSource {
 
 @Component
 export struct SearchBookResultList {
-  /** 平铺时每列封面的最小、最大宽度，列数由可用宽度按最小列宽算出。 */
-  static readonly GRID_MIN_ITEM_WIDTH: number = 100;
-  static readonly GRID_MAX_ITEM_WIDTH: number = 150;
+  @State gridViewportWidth: number = 360;
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
@@ -150,15 +149,19 @@ export struct SearchBookResultList {
         }, (book: SearchBook) => `grid_${this.listItemKey(book)}`)
       }
     }
-    // 按可用宽度自动算列数：竖屏手机约 3 列，横屏、平板、电脑宽窗口随宽度增加，窗口缩放时实时调整。
-    .lanes({ minLength: SearchBookResultList.GRID_MIN_ITEM_WIDTH, maxLength: SearchBookResultList.GRID_MAX_ITEM_WIDTH },
-      AppSpacing.MD)
+    .lanes(BookTileLayout.columnCount(this.gridViewportWidth), BookTileLayout.columnGap(this.gridViewportWidth))
     .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     .width('100%')
     .layoutWeight(1)
-    .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+    .padding({ left: BookTileLayout.SIDE_PADDING, right: BookTileLayout.SIDE_PADDING })
     .backgroundColor(this.pageColor)
     .scrollBar(BarState.Auto)
+    .onAreaChange((_oldValue: Area, newValue: Area) => {
+      const width = typeof newValue.width === 'number' ? newValue.width : Number.parseFloat(`${newValue.width}`);
+      if (Number.isFinite(width) && width > 0 && Math.abs(width - this.gridViewportWidth) >= 1) {
+        this.gridViewportWidth = width;
+      }
+    })
     .onAppear(() => this.onGridPageActiveChanged())
     .onReachEnd(() => {
       this.onReachEnd();
