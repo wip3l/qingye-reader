@@ -7,7 +7,10 @@ import { NativeSourceService, HttpClient, Book, BookChapter, Bookmark, BookSourc
 import { router, window, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
-import { inputConsumer, KeyCode, Action, KeyEvent } from '@kit.InputKit';
+import { inputConsumer, KeyCode, Action, KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKeyboard';
+import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';
+import { ReaderKeyboardCaptureDialog } from '../components/reader/ReaderKeyboardCaptureDialog';
 import { avSession } from '@kit.AVSessionKit';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
@@ -234,7 +237,7 @@ struct ReadBookPage {
   @State content: string = '';
   @State readerReplaceRules: ReaderReplaceRule[] = [];
   @State isLoading: boolean = true;
-  @State showMenu: boolean = false;
+  @State @Watch('restoreReaderKeyboardFocus') showMenu: boolean = false;
   @State readerDayNightLongPressHandled: boolean = false;
   // 展开屏上记住用户本次唤起菜单的手指侧：-1 左侧，1 右侧。
   @State readerMenuAnchorSide: number = 1;
@@ -249,7 +252,7 @@ struct ReadBookPage {
   @State @Watch('onSystemDialogFlagChanged') showTxtCharsetDialog: boolean = false;
   // Mirrors the charset dialog's "re-parsing" flag so the page does not dismiss it midway.
   private txtCharsetApplying: boolean = false;
-  @State showReaderCommentPanel: boolean = false;
+  @State @Watch('restoreReaderKeyboardFocus') showReaderCommentPanel: boolean = false;
   @State readerCommentPanelTitle: string = '段评';
   @State readerCommentPanelUrl: string = '';
   @State readerCommentPanelProgress: number = 0;
@@ -264,13 +267,19 @@ struct ReadBookPage {
   private readerCommentPanelHtmlLoaded: boolean = false;
   private readerCommentPanelLoadSerial: number = 0;
   private readerCommentPanelReadyTimerId: number = -1;
-  @State showToc: boolean = false;
+  @State @Watch('restoreReaderKeyboardFocus') showToc: boolean = false;
   @State bookmarks: Bookmark[] = [];
   @State showBookmarkActionMenu: boolean = false;
   @State pendingBookmarkAction: Bookmark | null = null;
   @State bookmarkActionMenuX: number = 16;
   @State bookmarkActionMenuY: number = 96;
-  @State showSettings: boolean = false;
+  @State @Watch('restoreReaderKeyboardFocus') showSettings: boolean = false;
+  @State private readerKeyboardSettings: ReaderKeyboardSettings = new ReaderKeyboardSettings();
+  private readerKeyboard: ReaderKeyboard = new ReaderKeyboard();
+  private keyboardDialogSession: SystemDialogSession = new SystemDialogSession();
+  private keyboardMappingDirection: number = 0;
+  private readerKeyboardFocusTimer: number = -1;
+  private readerKeyboardSettingsReady: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showTapZoneSettings: boolean = false;
   @State settingsPanelTab: number = 0;
   @State loadStatus: string = '正在加载...';
@@ -775,8 +784,8 @@ struct ReadBookPage {
   @State @Watch('onSystemDialogFlagChanged') showReaderCacheDialog: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showReaderChapterCacheDialog: boolean = false;
   private fullTextCache: ReaderFullTextCacheController | null = null;
-  private volumeUpCallback?: (event: KeyEvent) => void;
-  private volumeDownCallback?: (event: KeyEvent) => void;
+  private volumeUpCallback?: (event: InputKeyEvent) => void;
+  private volumeDownCallback?: (event: InputKeyEvent) => void;
   private lastLoggedReaderFontFamily: string = '';
   private readerFontChangeSerial: number = 0;
   private readerLayoutApplyTimerId: number = -1;
@@ -861,6 +870,7 @@ struct ReadBookPage {
       let initialReplaceRules: ReaderReplaceRule[] = [];
       await Promise.all([
         this.loadReaderSettings(),
+        this.loadReaderKeyboardSettings(),
         ReaderReplaceRuleStore.load(getContext(this)).then((rules: ReaderReplaceRule[]): void => {
           initialReplaceRules = rules;
         })
@@ -889,6 +899,8 @@ struct ReadBookPage {
     this.onReaderAiAccessChanged();
     this.readerComicColor.setForeground(true);
     this.readerPageVisible = true;
+    this.readerKeyboard.reset();
+    this.restoreReaderKeyboardFocus();
     this.syncReaderInfoBarClock();
     readStatsTracker.setReadingActive(this.bookUrl);
     const backgroundRevision = AppStorage.get<number>('appLifecycleBackgroundRevision') || 0;
@@ -962,6 +974,10 @@ struct ReadBookPage {
   }
 
   onBackPress(): boolean {
+    if (this.keyboardDialogSession.isOpen()) {
+      this.closeReaderKeyboardCapture();
+      return true;
+    }
     if (this.showReaderAutoScrollSpeed) {
       this.showReaderAutoScrollSpeed = false;
       return true;
@@ -1072,6 +1088,7 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    this.releaseReaderKeyboard();
     this.stopReaderAutoScroll(false);
     this.readerComicColor.setForeground(false);
     this.readerComicColorUnsubscribe?.();
@@ -1181,6 +1198,7 @@ struct ReadBookPage {
   }
 
   onPageHide(): void {
+    this.releaseReaderKeyboard();
     this.pauseReaderAutoScroll('已暂停');
     if (this.readerInlinePageMode) this.closeReaderCommentPanel();
     this.readerComicColor.setForeground(false);
@@ -3254,9 +3272,15 @@ struct ReadBookPage {
     .height('100%')
     .backgroundColor(this.readerContentLayerColor())
     .expandSafeArea([SafeAreaType.SYSTEM], this.getReaderSafeAreaEdges())
+    .id('reader_keyboard_surface')
+    .focusable(true)
+    .defaultFocus(true)
+    .onAppear((): void => this.restoreReaderKeyboardFocus())
+    .onKeyPreIme((event: KeyEvent): boolean => this.handleReaderKeyboardEvent(event))
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) {
         this.refreshReaderScreenTimeout();
+        this.restoreReaderKeyboardFocus();
       }
     })
     .bindSheet($$this.showReaderCommentPanel, this.readerCommentPanel(), this.readerCommentSheetOptions())
@@ -8577,6 +8601,121 @@ struct ReadBookPage {
     this.saveReadConfig();
   }
 
+  async loadReaderKeyboardSettings(): Promise<void> {
+    try {
+      this.readerKeyboardSettings = await ReaderKeyboardSettingsStore.load(getContext(this));
+      this.readerKeyboardSettingsReady = true;
+    } catch (error) {
+      console.warn('读取键盘翻页设置失败:', error);
+      HdsFeedback.showToast('键盘翻页设置读取失败，请重新进入阅读页');
+    }
+  }
+
+  async saveReaderKeyboardSettings(settings: ReaderKeyboardSettings): Promise<void> {
+    try {
+      if (!this.readerKeyboardSettingsReady) throw new Error('Keyboard settings not loaded');
+      await ReaderKeyboardSettingsStore.save(getContext(this), settings);
+      this.readerKeyboardSettings = ReaderKeyboard.normalize(settings);
+    } catch (error) {
+      HdsFeedback.showToast('键盘翻页设置保存失败，请重试');
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  readerKeyboardHasOverlay(): boolean {
+    return this.showMenu || this.shouldPauseReaderAutoScrollForPanel() || this.showReaderActionMenu ||
+      this.showBookmarkActionMenu || this.showTtsVoiceDropdown || this.eyeTurnState.showCalibration ||
+      this.keyboardDialogSession.isOpen() || this.hasReaderTextSelection();
+  }
+
+  restoreReaderKeyboardFocus(): void {
+    if (this.readerKeyboardFocusTimer >= 0) clearTimeout(this.readerKeyboardFocusTimer);
+    this.readerKeyboardFocusTimer = -1;
+    if (!this.readerPageVisible || this.readerKeyboardHasOverlay()) return;
+    // Run after ArkUI has removed the closing panel and mounted the reading surface.
+    this.readerKeyboardFocusTimer = setTimeout((): void => {
+      this.readerKeyboardFocusTimer = -1;
+      if (!this.readerPageVisible || this.readerKeyboardHasOverlay()) return;
+      try {
+        this.getUIContext().getFocusController().requestFocus('reader_keyboard_surface');
+      } catch (error) {
+        console.warn('恢复正文键盘焦点失败:', error);
+      }
+    }, 16);
+  }
+
+  releaseReaderKeyboard(): void {
+    if (this.readerKeyboardFocusTimer >= 0) clearTimeout(this.readerKeyboardFocusTimer);
+    this.readerKeyboardFocusTimer = -1;
+    this.readerKeyboard.reset();
+    this.keyboardDialogSession.close(this.getUIContext());
+  }
+
+  handleReaderKeyboardEvent(event: KeyEvent): boolean {
+    const settings = this.readerKeyboardSettings;
+    const direction = event.keyCode === settings.previous ? -1 : (event.keyCode === settings.next ? 1 : 0);
+    if (event.type === KeyType.Up) {
+      return this.readerKeyboard.release(event.keyCode, event.deviceId);
+    }
+    if (event.type !== KeyType.Down) return false;
+    const first = this.readerKeyboard.press(event.keyCode, event.deviceId);
+    if (!this.readerPageVisible || !this.readerKeyboardSettingsReady || !settings.enabled || direction === 0 ||
+      this.readerKeyboardHasOverlay() || ReaderKeyboard.hasModifiers(event)) return false;
+    // Consume repeats and loading-time keys, so Scroll cannot also perform a native page jump.
+    this.readerKeyboard.consume(event.keyCode, event.deviceId);
+    if (!first || this.shouldBlockReaderInteraction() || this.chapters.length === 0) return true;
+    this.refreshReaderScreenTimeout();
+    const turning = direction > 0 ? this.turnNext() : this.turnPrev();
+    turning.catch((error: Error): void => { console.warn('键盘翻页失败:', error); });
+    return true;
+  }
+
+  presentReaderKeyboardCapture(direction: number): void {
+    if (!this.readerKeyboardSettingsReady || this.keyboardDialogSession.isOpen()) return;
+    this.keyboardMappingDirection = direction;
+    this.keyboardDialogSession.open(this.getUIContext(), (): void => {
+      this.readerKeyboardCaptureContent();
+    }, {
+      autoCancel: false,
+      maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
+      warnTag: '显示键盘映射弹窗失败:'
+    });
+  }
+
+  closeReaderKeyboardCapture(): void {
+    this.keyboardDialogSession.close(this.getUIContext());
+    this.restoreReaderKeyboardFocus();
+  }
+
+  @Builder
+  readerKeyboardCaptureContent() {
+    ReaderKeyboardCaptureDialog({
+      actionLabel: this.keyboardMappingDirection < 0 ? '上一页' : '下一页',
+      otherCode: this.keyboardMappingDirection < 0 ? this.readerKeyboardSettings.next : this.readerKeyboardSettings.previous,
+      onSave: async (code: number): Promise<void> => {
+        const settings = ReaderKeyboard.normalize(this.readerKeyboardSettings);
+        if (this.keyboardMappingDirection < 0) settings.previous = code;
+        else settings.next = code;
+        await this.saveReaderKeyboardSettings(settings);
+      },
+      onClose: (): void => this.closeReaderKeyboardCapture()
+    })
+  }
+
+  @Builder
+  readerKeyboardMappingRow(direction: number) {
+    ReaderSettingActionRow({
+      title: direction < 0 ? '上一页按键' : '下一页按键',
+      description: ReaderKeyboard.label(direction < 0 ? this.readerKeyboardSettings.previous : this.readerKeyboardSettings.next),
+      actionText: '映射',
+      textColor: this.readerPanelTextColor(),
+      subTextColor: this.readerPanelSubTextColor(),
+      buttonColor: this.buttonColor(),
+      buttonTextColor: ThemeRuntime.onAccentColor(),
+      onAction: (): void => this.presentReaderKeyboardCapture(direction)
+    })
+  }
+
   onReaderPageTurnAnimationChanged(): void {
     this.resetSlidePageEffect();
     this.saveReadConfig();
@@ -8598,10 +8737,10 @@ struct ReadBookPage {
   }
 
   registerVolumeKeyTurn(): void {
-    this.volumeUpCallback = (_event: KeyEvent) => {
+    this.volumeUpCallback = (_event: InputKeyEvent) => {
       this.handleVolumeKeyTurn(-1);
     };
-    this.volumeDownCallback = (_event: KeyEvent) => {
+    this.volumeDownCallback = (_event: InputKeyEvent) => {
       this.handleVolumeKeyTurn(1);
     };
     try {
@@ -10140,6 +10279,31 @@ struct ReadBookPage {
         (checked: boolean) => {
           this.setReaderVolumeTurnPage(checked);
         })
+
+      this.readerSwitchSettingItem('键盘翻页', '外接键盘或翻页器，仅在正文阅读时生效',
+        this.readerKeyboardSettings.enabled, (checked: boolean): void => {
+          const settings = ReaderKeyboard.normalize(this.readerKeyboardSettings);
+          settings.enabled = checked;
+          this.saveReaderKeyboardSettings(settings).catch((): void => {});
+        })
+      if (this.readerKeyboardSettings.enabled) {
+        this.readerKeyboardMappingRow(-1)
+        this.readerKeyboardMappingRow(1)
+        ReaderSettingActionRow({
+          title: '恢复默认按键',
+          description: '上一页 PageUp，下一页 PageDown',
+          actionText: '恢复默认',
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          buttonColor: this.buttonColor(),
+          buttonTextColor: ThemeRuntime.onAccentColor(),
+          onAction: (): void => {
+            const settings = new ReaderKeyboardSettings();
+            settings.enabled = this.readerKeyboardSettings.enabled;
+            this.saveReaderKeyboardSettings(settings).catch((): void => {});
+          }
+        })
+      }
 
       this.readerSwitchSettingItem('快速添加书签', '下拉正文添加或删除当前页书签', this.readerQuickBookmarkEnabled,
         (checked: boolean) => {
