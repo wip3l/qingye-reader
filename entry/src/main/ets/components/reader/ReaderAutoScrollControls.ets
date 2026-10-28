@@ -9,6 +9,7 @@ import { ReaderTtsCapsule } from './ReaderTtsControls';
 @Component
 export struct ReaderAutoScrollCapsule {
   @Prop speed: number = 20;
+  @Prop comic: boolean = false;
   @Prop paused: boolean = false;
   @Prop status: string = '';
   @Prop textColor: string;
@@ -43,14 +44,14 @@ export struct ReaderAutoScrollCapsule {
                 Text(this.status || (this.paused ? '已暂停' : '自动滚动'))
                   .fontSize(AppFontSize.CAPTION).fontWeight(FontWeight.Medium).fontColor(this.textColor)
                   .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                Text(`${this.speed} 行/分钟`)
+                Text(this.comic ? `${this.speed / 20} 屏/分钟` : `${this.speed} 行/分钟`)
                   .fontSize(9).fontColor(this.subTextColor).maxLines(1)
               }.alignItems(HorizontalAlign.Start).layoutWeight(1)
             }.width('100%')
           }
           .layoutWeight(1).height(34).padding(0)
           .borderRadius(17).backgroundColor(Color.Transparent)
-          .accessibilityText(`自动滚动，${this.speed} 行每分钟，点击调整速度`)
+          .accessibilityText(`自动滚动，${this.comic ? `${this.speed / 20} 屏` : `${this.speed} 行`}每分钟，点击调整速度`)
           .onClick(() => this.onOpen())
           Button({ type: ButtonType.Normal }) {
             SymbolGlyph(this.paused ? $r('sys.symbol.play') : $r('sys.symbol.pause'))
@@ -81,6 +82,7 @@ export struct ReaderAutoScrollCapsule {
 @Component
 export struct ReaderAutoScrollSpeedPanel {
   @Prop speed: number = 20;
+  @Prop comic: boolean = false;
   @Prop paused: boolean = false;
   @Prop status: string = '';
   @Prop textColor: string;
@@ -119,12 +121,12 @@ export struct ReaderAutoScrollSpeedPanel {
         }.width('100%')
 
         Row({ space: 16 }) {
-          this.speedStep($r('sys.symbol.minus'), '每分钟减慢两行', -2, this.speed > 6)
+          this.speedStep($r('sys.symbol.minus'), this.comic ? '每分钟减慢零点一屏' : '每分钟减慢两行', -2, this.speed > 6)
           Row({ space: 8 }) {
-            Text(`${this.speed}`).fontSize(38).fontColor(this.textColor)
-            Text('行 / 分钟').fontSize(12).fontColor(this.subTextColor)
+            Text(`${this.comic ? this.speed / 20 : this.speed}`).fontSize(38).fontColor(this.textColor)
+            Text(this.comic ? '屏 / 分钟' : '行 / 分钟').fontSize(12).fontColor(this.subTextColor)
           }.layoutWeight(1).justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Bottom)
-          this.speedStep($r('sys.symbol.plus'), '每分钟加快两行', 2, this.speed < 60)
+          this.speedStep($r('sys.symbol.plus'), this.comic ? '每分钟加快零点一屏' : '每分钟加快两行', 2, this.speed < 60)
         }.width('100%').margin({ top: 4 })
 
         Column() {
@@ -133,24 +135,24 @@ export struct ReaderAutoScrollSpeedPanel {
             .trackColor(this.controlColor)
             .sliderInteractionMode(ImmersiveMaterialRuntime.supportsHds() ?
               SliderInteraction.SLIDE_AND_CLICK_UP : SliderInteraction.SLIDE_ONLY)
-            .accessibilityText('自动滚动速度，每分钟六至六十行')
+            .accessibilityText(this.comic ? '自动滚动速度，每分钟零点三至三屏' : '自动滚动速度，每分钟六至六十行')
             .onChange((speed: number) => this.onSpeed(speed))
           Row() {
-            Text('6 行/分钟').fontSize(11).fontColor(this.subTextColor)
+            Text(this.comic ? '0.3 屏/分钟' : '6 行/分钟').fontSize(11).fontColor(this.subTextColor)
             Blank()
-            Text('60 行/分钟').fontSize(11).fontColor(this.subTextColor)
+            Text(this.comic ? '3 屏/分钟' : '60 行/分钟').fontSize(11).fontColor(this.subTextColor)
           }.width('100%')
         }.width('100%')
 
         Row({ space: 8 }) {
           ForEach([12, 20, 32], (speed: number) => {
             Button({ type: ButtonType.Normal }) {
-              Text(`${speed === 12 ? '慢读' : speed === 20 ? '舒适' : '快速'} ${speed}`)
+              Text(`${speed === 12 ? '慢读' : speed === 20 ? '舒适' : '快速'} ${this.comic ? speed / 20 : speed}`)
                 .fontSize(13).fontColor(this.speed === speed ? this.accentColor : this.textColor)
             }
             .layoutWeight(1).height(44).borderRadius(16).padding({ left: 4, right: 4 })
             .backgroundColor(this.speed === speed ? this.accentSurfaceColor : this.controlColor)
-            .accessibilityText(`${speed} 行每分钟${this.speed === speed ? '，已选中' : ''}`)
+            .accessibilityText(`${this.comic ? `${speed / 20} 屏` : `${speed} 行`}每分钟${this.speed === speed ? '，已选中' : ''}`)
             .onClick(() => this.onSpeed(speed))
           }, (speed: number): string => `${speed}`)
         }.width('100%')

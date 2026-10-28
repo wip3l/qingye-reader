@@ -102,6 +102,21 @@ export class ReaderComicImageSizes {
 export class ReaderComicRetryRegistry {
   private readonly handlers: Map<string, () => void> = new Map<string, () => void>();
   private readonly reloaders: Map<string, () => void> = new Map<string, () => void>();
+  private readonly imageStates: Map<string, () => number> = new Map<string, () => number>();
+
+  registerState(key: string, state: () => number): void {
+    this.imageStates.set(key, state);
+  }
+
+  unregisterState(key: string, state: () => number): void {
+    if (this.imageStates.get(key) === state) this.imageStates.delete(key);
+  }
+
+  /** 0 等待解码或挂载，1 可读，-1 加载失败。 */
+  imageState(key: string): number {
+    const state = this.imageStates.get(key);
+    return state ? state() : 0;
+  }
 
   register(key: string, handler: () => void): void {
     this.handlers.set(key, handler);
@@ -208,6 +223,8 @@ export struct ReaderComicImageItem {
   private registeredRetryKey: string = '';
   private readonly retryHandler: () => void = (): void => this.retry();
   private readonly reloadHandler: () => void = (): void => this.reload();
+  private readonly imageStateHandler: () => number = (): number =>
+    this.broken || !!this.failure ? -1 : (this.loaded ? 1 : 0);
   private registeredReloadKey: string = '';
 
   aboutToAppear(): void {
@@ -218,6 +235,7 @@ export struct ReaderComicImageItem {
     if (this.retryKey && this.retryRegistry) {
       this.registeredReloadKey = this.retryKey;
       this.retryRegistry.registerReload(this.retryKey, this.reloadHandler);
+      this.retryRegistry.registerState(this.retryKey, this.imageStateHandler);
     }
   }
 
@@ -233,6 +251,7 @@ export struct ReaderComicImageItem {
     this.unregisterRetry();
     if (this.registeredReloadKey && this.retryRegistry) {
       this.retryRegistry.unregisterReload(this.registeredReloadKey, this.reloadHandler);
+      this.retryRegistry.unregisterState(this.registeredReloadKey, this.imageStateHandler);
     }
   }
 
@@ -850,6 +869,10 @@ export struct ReaderComicView {
   @Prop viewHeight: number = 0;
   /** 双击放大/还原。关闭后单击不必等待双击判定，响应更快；双指缩放始终可用。 */
   @Prop doubleTapZoom: boolean = true;
+  /** 自动滚动期间双击控制暂停/继续，结束后恢复双击缩放。 */
+  @Prop autoScrollActive: boolean = false;
+  onAutoScrollToggle: () => void = () => {};
+  onManualInteraction: () => void = () => {};
   /** 漫画超分（会员功能）。 */
   @Prop superResolution: boolean = false;
   @Prop textConvert: boolean = false;
@@ -883,7 +906,7 @@ export struct ReaderComicView {
   onPanCancel: () => void = () => {};
   /** 缩放倍数变化（1 为未缩放），阅读页据此把“翻一屏”换算成列表内的距离。 */
   onZoomChanged: (scale: number) => void = () => {};
-  private retryRegistry: ReaderComicRetryRegistry = new ReaderComicRetryRegistry();
+  retryRegistry: ReaderComicRetryRegistry = new ReaderComicRetryRegistry();
   static readonly MAX_ZOOM: number = 4;
   static readonly DOUBLE_TAP_ZOOM: number = 2;
   // 缩放以视图中心为基点作用在列表上，平移在缩放之后叠加：屏幕点 = 中心 + 倍数 × (列表点 − 中心) + 平移。
@@ -993,6 +1016,10 @@ export struct ReaderComicView {
 
   private handleDoubleTap(event: GestureEvent): void {
     if (this.touchDragged) return;
+    if (this.autoScrollActive) {
+      this.onAutoScrollToggle();
+      return;
+    }
     if (this.zoomed()) {
       this.resetZoom(true);
       return;
@@ -1005,6 +1032,7 @@ export struct ReaderComicView {
 
   private handleLongPress(event: GestureEvent): void {
     if (this.pinching) return;
+    this.onManualInteraction();
     this.touchDragged = true;
     const point = this.tapPoint(event);
     const listX = this.centerX() + (point[0] - this.centerX() - this.zoomX) / this.zoomScale;
@@ -1043,6 +1071,7 @@ export struct ReaderComicView {
   }
 
   private handlePinchStart(event: GestureEvent): void {
+    this.onManualInteraction();
     this.pinching = true;
     this.touchDragged = true;
     // 先落下的手指可能已经触发了阅读页的拖动；交给缩放之后不能再滚列表或拉动切章。
@@ -1072,6 +1101,7 @@ export struct ReaderComicView {
   }
 
   private handlePanStart(): void {
+    this.onManualInteraction();
     this.panInProgress = true;
     this.touchDragged = true;
     this.panLastX = 0;
@@ -1320,7 +1350,7 @@ export struct ReaderComicView {
         .hitTestBehavior(HitTestMode.None)
 
       if (this.interactive) {
-        this.interactionLayer(this.doubleTapZoom)
+        this.interactionLayer(this.doubleTapZoom || this.autoScrollActive)
       }
     }
     .width('100%')

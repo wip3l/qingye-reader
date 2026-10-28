@@ -16,6 +16,7 @@ function method(name) {
 const names = ['startReaderAutoScroll', 'toggleReaderAutoScroll', 'pauseReaderAutoScroll',
   'stopReaderAutoScroll', 'advanceReaderAutoScroll', 'shouldPauseReaderAutoScrollForPanel', 'waitReaderAutoScroll',
   'restoreReaderAutoScrollAnchor', 'onReaderAutoScrollBackground',
+  'readerComicEffectiveMode', 'isReaderComicPagedMode', 'readerComicAutoScrollImagesReady',
   'isReaderNovelContinuousScrollModeActive', 'readerEffectivePageTurnMode',
   'cancelReaderAutoScrollTap', 'handleReaderAutoScrollTap', 'rememberContinuousReaderPointer',
   'cancelContinuousReaderSelectionTimer', 'shouldShowReaderAutoScrollCapsule',
@@ -38,6 +39,7 @@ const sandbox = vm.createContext({
   TouchType: { Down: 0, Move: 1, Up: 2, Cancel: 3 },
   ReaderAutoScrollCapsule: { WIDTH: 184, HEIGHT: 46 },
   ReaderTtsCapsule: { WIDTH: 184, HEIGHT: 46 },
+  ReaderComicMode: { WEBTOON: 'webtoon', isPaged: mode => ['ltr', 'rtl'].includes(mode) },
   HdsFeedback: { showToast() {} },
   ReaderTtsFloatingSession: { pause: async () => {}, isOwner: () => false },
   preferences: { getPreferences: async () => ({
@@ -91,6 +93,9 @@ function fixture() {
     distance: 0, reflows: [], isLoading: false, loadRequests: 0,
     atEnd: false, lastChapter: 0, failed: false, nativeTts: false,
     isReaderComicModeActive: () => false, hasReaderTextSelection: () => false,
+    readerComicSettings: { defaultMode: 'webtoon' }, readerComicBookMode: '', readerComicZoomScale: 1,
+    readerComicScrollRestoreSerial: 0,
+    syncReaderComicPageDataSource() {}, scheduleReaderComicScrollRestore() {},
     getEffectiveReaderLineHeight: () => 30, getReaderStableReflowOffset: () => 480,
     readerContinuousV2FirstVisibleSourceOffset: () => 960,
     reflowReaderAutoScrollMode: value => p.reflows.push(value),
@@ -317,4 +322,120 @@ for (const paused of [false, true]) {
   }
 }
 assert.equal(timers.size, 0, 'gesture scenarios leave no pending timers');
-console.log('PASS reader auto-scroll: clock, persistence, lifecycle, TTS exclusion, chapter boundaries, position restore, double taps, gesture cancellation and capsule placement');
+
+// Comics use the same clock/session, but preserve image pages and the saved reading direction.
+function comicFixture(mode = 'webtoon') {
+  const p = fixture();
+  p.isReaderComicModeActive = () => true;
+  p.readerComicBookMode = mode;
+  p.readerAutoScrollActive = false;
+  p.currentPageIndex = 7;
+  p.imageState = 1;
+  p.readerComicRetryRegistry = { imageState: () => p.imageState };
+  p.isReaderImageOnlyPage = () => true;
+  p.readerComicPageDataSource.itemAt = () => ({ key: 'image', text: 'image', isPage: () => true });
+  p.restoreRequests = 0;
+  p.scheduleReaderComicScrollRestore = () => { p.restoreRequests++; };
+  p.getReaderStableReflowOffset = () => { throw new Error('comics must not use novel offsets'); };
+  p.readerContinuousV2FirstVisibleSourceOffset = p.getReaderStableReflowOffset;
+  return p;
+}
+for (const mode of ['webtoon', 'ltr', 'rtl']) {
+  p = comicFixture(mode);
+  assert.equal(p.shouldShowReaderSessionQuickActions(), true);
+  await p.startReaderAutoScroll();
+  assert.equal(p.readerComicEffectiveMode(), 'webtoon');
+  assert.equal(p.restoreRequests, mode === 'webtoon' ? 0 : 1);
+  assert.equal(p.currentPageIndex, 7, 'temporary surface keeps the image page');
+  frame(p); frame(p);
+  assert.equal(p.distance, 0.192, '20 means one viewport per minute, independent of novel typography');
+  p.readerComicZoomScale = 2;
+  frame(p);
+  assert.ok(Math.abs(p.distance - 0.288) < 1e-9, 'zoom keeps screen-space speed stable');
+  p.showMenu = true;
+  assert.equal(p.shouldShowReaderAutoScrollCapsule(), true);
+  p.pauseReaderAutoScroll('已暂停');
+  assert.equal(p.readerComicEffectiveMode(), 'webtoon', 'pause does not replace the surface');
+  await p.startReaderAutoScroll();
+  assert.equal(p.restoreRequests, mode === 'webtoon' ? 0 : 1, 'resume preserves intra-image position');
+  p.stopReaderAutoScroll();
+  assert.equal(p.readerComicEffectiveMode(), mode, 'close restores saved direction');
+  assert.equal(p.currentPageIndex, 7);
+  assert.deepEqual(p.reflows, [], 'comics never enter novel reflow');
+}
+p = comicFixture(); await p.startReaderAutoScroll();
+p.imageState = 0;
+frame(p); frame(p, 600);
+assert.equal(p.distance, 0, 'undecoded visible images hold the viewport');
+assert.equal(p.readerAutoScrollStatus, '等待图片');
+p.imageState = 1; frame(p);
+assert.equal(p.distance, 0.192, 'decoded image resumes without catching up');
+p.imageState = -1; frame(p);
+assert.equal(p.readerAutoScrollStatus, '图片加载失败，已暂停');
+p.stopReaderAutoScroll();
+p = comicFixture(); await p.startReaderAutoScroll();
+p.atEnd = true; p.lastChapter = 2; p.readerComicPaginationParsing = true;
+frame(p);
+assert.equal(p.readerAutoScrollPaused, false, 'partial final chapter is not book end');
+p.readerComicPaginationParsing = false; frame(p);
+assert.equal(p.readerAutoScrollStatus, '已到书末');
+p.stopReaderAutoScroll();
+p = comicFixture(); await p.startReaderAutoScroll(); p.atEnd = true;
+frame(p);
+assert.equal(p.loadRequests, 1, 'comic boundaries also request the next chapter');
+p.onReaderAutoScrollBackground();
+assert.equal(p.readerAutoScrollPaused, true);
+p.stopReaderAutoScroll();
+assert.equal(timers.size, 0, 'comic sessions release timers');
+
+// Exercise the comic view's actual gesture dispatch and mounted image status registry.
+const comicView = readEtsModule('components/reader/ReaderComicView.ets');
+const registryStart = comicView.indexOf('export class ReaderComicRetryRegistry');
+const registryEnd = comicView.indexOf('\n}', registryStart) + 2;
+const comicMethod = name => {
+  const start = comicView.search(new RegExp(`^  private ${name}\\(`, 'm'));
+  assert.notEqual(start, -1, name);
+  return comicView.slice(start, comicView.indexOf('\n  }', start) + 4);
+};
+vm.runInContext(compile(comicView.slice(registryStart, registryEnd)) + compile(`
+class ComicGestures {
+${['handleDoubleTap', 'handleLongPress', 'handlePinchStart', 'handlePanStart'].map(comicMethod).join('\n')}
+}
+globalThis.ComicGestures = ComicGestures;
+globalThis.ImageRegistry = ReaderComicRetryRegistry;`), sandbox);
+const registry = new sandbox.ImageRegistry();
+let decodedState = 0;
+const firstState = () => decodedState;
+registry.registerState('page', firstState);
+assert.equal(registry.imageState('page'), 0);
+decodedState = 1;
+assert.equal(registry.imageState('page'), 1, 'decode completion is observed without list reload');
+registry.registerState('page', () => -1);
+registry.unregisterState('page', firstState);
+assert.equal(registry.imageState('page'), -1, 'old unmount cannot erase a newly mounted image');
+registry.registerState('page', firstState);
+registry.unregisterState('page', firstState);
+assert.equal(registry.imageState('page'), 0, 'unmounted images cannot count as ready');
+const gestures = new sandbox.ComicGestures();
+let toggles = 0, pauses = 0, zoomResets = 0;
+Object.assign(gestures, {
+  autoScrollActive: true, touchDragged: false, pinching: false,
+  onAutoScrollToggle: () => toggles++, onManualInteraction: () => pauses++,
+  zoomed: () => true, resetZoom: () => zoomResets++, onPanStart() {},
+  tapPoint: () => [0, 0], centerX: () => 0, centerY: () => 0,
+  zoomScale: 1, zoomX: 0, zoomY: 0, scroller: { getItemIndex: () => -1 },
+  dataSource: { itemAt: () => null },
+});
+gestures.handleDoubleTap({});
+assert.equal(toggles, 1);
+assert.equal(zoomResets, 0, 'auto-scroll double tap never zooms');
+gestures.touchDragged = true; gestures.handleDoubleTap({});
+assert.equal(toggles, 1, 'drag cannot trigger resume');
+gestures.touchDragged = false; gestures.autoScrollActive = false; gestures.handleDoubleTap({});
+assert.equal(zoomResets, 1, 'normal zoom returns when the session ends');
+gestures.handleLongPress({}); gestures.handlePanStart();
+gestures.handlePinchStart({ pinchCenterX: 0, pinchCenterY: 0 });
+assert.equal(pauses, 3, 'long press, zoomed pan and pinch all pause');
+assert.match(comicView, /interactionLayer\(this.doubleTapZoom \|\| this.autoScrollActive\)/,
+  'auto-scroll double tap remains enabled when zoom preference is off');
+console.log('PASS reader auto-scroll: novel/comic sessions, screen speed, image readiness, mode restore, lifecycle, chapter boundaries and gestures');

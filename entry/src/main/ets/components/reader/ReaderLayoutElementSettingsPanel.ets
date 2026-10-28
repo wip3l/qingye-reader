@@ -72,12 +72,12 @@ export struct ReaderLayoutElementSettingsPanel {
             this.readerUseTtsQuickAction = enabled;
             this.save();
           })
-        this.toggleRow('使用快速滚动组件', '显示自动滚动快捷按钮', this.readerUseAutoScrollQuickAction,
-          (enabled: boolean) => {
-            this.readerUseAutoScrollQuickAction = enabled;
-            this.save();
-          })
       }
+      this.toggleRow('使用快速滚动组件', '显示自动滚动快捷按钮', this.readerUseAutoScrollQuickAction,
+        (enabled: boolean) => {
+          this.readerUseAutoScrollQuickAction = enabled;
+          this.save();
+        })
       this.toggleRow('使用章节快速跳转组件', '显示章节滑杆和上一章、下一章按钮', this.readerUseChapterQuickJump,
         (enabled: boolean) => {
           this.readerUseChapterQuickJump = enabled;
