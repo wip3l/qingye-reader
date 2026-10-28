@@ -1,3 +1,5 @@
+import { ReaderCacheCoordinator } from '../book/ReaderCacheCoordinator';
+import { ReaderImageCache } from '../book/ReaderImageCache';
 import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
 import image from '@ohos.multimedia.image';
@@ -113,6 +115,8 @@ export class ReaderImageBitmapCache {
 
   /** 按 Contain 的显示尺寸解码，不放大原图。 */
   private static async decode(path: string, widthPx: number, heightPx: number): Promise<image.PixelMap | null> {
+    const release = ReaderCacheCoordinator.retainFile(path);
+    ReaderImageCache.touch(path);
     let file: fs.File | null = null;
     let source: image.ImageSource | null = null;
     try {
@@ -134,6 +138,7 @@ export class ReaderImageBitmapCache {
       console.warn(`[ReaderImageBitmap] 解码插图失败 path=${path}:`, error);
       return null;
     } finally {
+      release();
       if (source) {
         try {
           await source.release();

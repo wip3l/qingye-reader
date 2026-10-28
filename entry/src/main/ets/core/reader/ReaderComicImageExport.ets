@@ -1,3 +1,4 @@
+import { ReaderCacheCoordinator } from '../book/ReaderCacheCoordinator';
 import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
 import { http } from '@kit.NetworkKit';
@@ -16,16 +17,22 @@ export class ReaderComicImageExport {
   /** 保存到相册；用户在系统弹窗里取消时返回 false。 */
   static async saveToAlbum(context: common.Context, source: string,
     snapshot: ReaderComicSnapshotProvider | null = null): Promise<boolean> {
-    const path = await ReaderComicImageExport.materialize(context, source, snapshot);
-    const extension = ReaderComicImageExport.sniffExtension(path);
-    return await ImageFileExport.save(context, [path], extension);
+    const release = ReaderCacheCoordinator.retainFile(source);
+    try {
+      const path = await ReaderComicImageExport.materialize(context, source, snapshot);
+      const extension = ReaderComicImageExport.sniffExtension(path);
+      return await ImageFileExport.save(context, [path], extension);
+    } finally { release(); }
   }
 
   static async share(context: common.UIAbilityContext, source: string,
     snapshot: ReaderComicSnapshotProvider | null = null): Promise<void> {
-    const path = await ReaderComicImageExport.materialize(context, source, snapshot);
-    const extension = ReaderComicImageExport.sniffExtension(path);
-    await ImageFileExport.share(context, [path], extension);
+    const release = ReaderCacheCoordinator.retainFile(source);
+    try {
+      const path = await ReaderComicImageExport.materialize(context, source, snapshot);
+      const extension = ReaderComicImageExport.sniffExtension(path);
+      await ImageFileExport.share(context, [path], extension);
+    } finally { release(); }
   }
 
   /**

@@ -22,8 +22,8 @@ export class ReaderCacheBudgetPolicy {
   static readonly TARGET_RATIO: number = 0.9;
 
   /**
-   * totalBytes 是这类缓存的总量（可以包含不在 items 里、本来就不参与清理的部分，例如手动缓存的章节），
-   * items 只放可以清理的条目。
+   * totalBytes 是调用方统计的自动缓存总量；手动离线内容应在统计前排除。
+   * items 只放可以清理的条目；候选不足时保留剩余用量，不扩大删除范围。
    */
   static planTrim(items: CacheBudgetItem[], totalBytes: number, limitBytes: number,
     isProtected: (item: CacheBudgetItem) => boolean): CacheBudgetPlan {

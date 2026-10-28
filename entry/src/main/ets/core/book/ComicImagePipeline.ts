@@ -1,3 +1,4 @@
+import { ReaderImageCache } from './ReaderImageCache';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
@@ -123,12 +124,12 @@ export class ComicImagePipeline {
     if (!embedded && !/^https?:\/\//i.test(spec.url)) return spec.url || raw;
     const decodeRule = source.contentRule?.imageDecode || '';
     if (!embedded && !forceLocal && !spec.hasOptions && !decodeRule) return spec.url;
-    const cacheDir = AppStorage.get<string>('appCacheDir') || '';
+    const cacheDir = AppStorage.get<string>('appFilesDir') || '';
     if (!cacheDir) {
       if (spec.decodeAlgorithm || spec.decodeScript) throw new Error('正文图片解密失败：图片缓存目录不可用');
       return spec.url;
     }
-    const dir = `${cacheDir}/comic_images`;
+    const dir = ReaderImageCache.directory();
     this.ensureDir(dir);
     // data: 地址可能很长，缓存标识里只放它的摘要。
     const urlIdentity = embedded ? `data:${digestHashHex('SHA256', spec.url)}` : spec.url;
@@ -138,12 +139,13 @@ export class ComicImagePipeline {
     const cacheKey = spec.decodeScript ? digestHashHex('SHA256', JSON.stringify({
       version: 1, identity: cacheIdentity, js: scriptCode, config: scriptConfig, fn: spec.decodeScript,
       params: spec.decodeParams, plain: spec.processPlainImages, index: imageIndex
-    })) : (Object.keys(spec.headers).length ? digestHashHex('SHA256', cacheIdentity) : this.hashText(cacheIdentity));
+    })) : digestHashHex('SHA256', cacheIdentity);
     const basePath = `${dir}/${cacheKey}`;
     const existing = this.findExisting(basePath);
     if (existing) {
       if (timing) timing.cacheHit = true;
       ReaderCacheBudget.touchComicFile(existing);
+      await ReaderImageCache.registerExisting(existing, source.bookSourceUrl, raw, imageIndex);
       return existing;
     }
 
@@ -215,12 +217,7 @@ export class ComicImagePipeline {
     if (!this.looksLikeImage(bytes)) return spec.url;
     if (cancelled()) throw new Error(HttpClient.CANCELLED_ERROR);
     const path = `${basePath}${this.imageExtension(bytes, spec.url)}`;
-    const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-    try {
-      fs.writeSync(file.fd, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
-    } finally {
-      fs.closeSync(file);
-    }
+    await ReaderImageCache.commit(path, bytes, source.bookSourceUrl, raw, imageIndex);
     ReaderCacheBudget.noteComicWrite(path);
     return path;
 
@@ -335,7 +332,7 @@ export class ComicImagePipeline {
     for (const ext of ['.jpg', '.png', '.gif', '.webp', '.bmp', '.avif', '.heic']) {
       const path = `${basePath}${ext}`;
       try {
-        if (fs.accessSync(path)) return path;
+        if (ReaderImageCache.exists(path)) return path;
       } catch (_) {
       }
     }

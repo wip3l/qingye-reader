@@ -1,3 +1,4 @@
+import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { worker } from '@kit.ArkTS';
 import { AiHost, AiRuntime } from '@legado/aiengine';
 import { digestHashHex } from '@legado/sourceengine';
@@ -19,6 +20,7 @@ export class AppAiHost implements AiHost {
     return ComicColorModelDownload.download(file, destination, bytes, active, progress);
   }
   digestHashHex(algorithm: string, value: string): string { return digestHashHex(algorithm, value); }
+  retainComicFile(path: string): () => void { return ReaderCacheCoordinator.retainFile(path); }
   touchComicFile(path: string): void { ReaderCacheBudget.touchComicFile(path); }
   noteComicWrite(path?: string): void { ReaderCacheBudget.noteComicWrite(path); }
   resolveImageSource(marker: string): string {

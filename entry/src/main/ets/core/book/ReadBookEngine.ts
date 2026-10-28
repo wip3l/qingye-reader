@@ -1,3 +1,6 @@
+import { ReaderImageReferences } from './ReaderImageReferences';
+import { ReaderCacheCoordinator } from './ReaderCacheCoordinator';
+import { ReaderImageCache } from './ReaderImageCache';
 import { Book, BookChapter, BookSource, SearchBook, ReaderActionMarker, BookUrlResolver } from '@legado/sourceengine';
 import { appDb } from '../../model/data/AppDatabase';
 import { WebBookService } from './WebBookService';
@@ -28,6 +31,7 @@ export class ReadBookEngine {
   curPos: number = 0;
   content: string = '';
   isLoading: boolean = false;
+  lastCacheError: string = '';
 
   private chapterCache: Map<number, string> = new Map();
   private chapterLoading: Map<number, Promise<string>> = new Map();
@@ -63,11 +67,7 @@ export class ReadBookEngine {
     if (!ReadBookEngine.inst) {
       ReadBookEngine.inst = new ReadBookEngine();
       ReadBookEngine.inst.foregroundReader = true;
-      // 正在阅读的书不参与正文缓存的容量清理。
-      ReaderCacheBudget.setProtectedBooksProvider((): string[] => {
-        const bookUrl = ReadBookEngine.inst?.book?.bookUrl || '';
-        return bookUrl ? [bookUrl] : [];
-      });
+      // Page visibility and background speech register their own lifetime in ReaderCacheCoordinator.
     }
     return ReadBookEngine.inst;
   }
@@ -543,7 +543,13 @@ export class ReadBookEngine {
     if (shouldCancel && shouldCancel()) return '';
 
     if (this.chapterCache.has(idx)) {
-      const memoryContent = this.chapterCache.get(idx)!;
+      const memoryContent = ReaderImageCache.normalize(this.chapterCache.get(idx)!);
+      if ((!ReaderImageMarker.hasPending(memoryContent) && !ReaderImageCache.complete(memoryContent)) ||
+        !ReaderImageResults.available(memoryContent)) {
+        this.chapterCache.delete(idx);
+        return await this.fetchContent(idx, shouldCancel, background);
+      }
+      ReaderImageCache.touchText(memoryContent);
       this.chapterCache.delete(idx);
       this.chapterCache.set(idx, memoryContent);
       ReaderOpenTrace.mark(this.book.bookUrl, 'content-memory-hit', `chapter=${idx}`);
@@ -560,12 +566,14 @@ export class ReadBookEngine {
       }
     }
 
+    const releaseBook = ReaderCacheCoordinator.retainBook(this.book.bookUrl);
     const task = this.fetchContentUncached(idx, shouldCancel, background);
     this.chapterLoading.set(idx, task);
     this.chapterLoadingCancel.set(idx, shouldCancel);
     try {
       return await task;
     } finally {
+      releaseBook();
       if (this.chapterLoading.get(idx) === task) {
         this.chapterLoading.delete(idx);
         this.chapterLoadingCancel.delete(idx);
@@ -581,10 +589,22 @@ export class ReadBookEngine {
     const sessionBook = this.book;
     const sessionBookUrl = sessionBook.bookUrl;
     const chapter = this.chapters[idx];
-    const cached = await appDb.getCachedChapterContent(sessionBookUrl, idx);
+    const saved = await appDb.getCachedChapterContent(sessionBookUrl, idx);
+    let cached = ReaderImageCache.normalize(saved);
+    const releaseImages = ReaderImageCache.retainText(cached);
+    try {
+      if (cached && this.source && !ReaderImageCache.complete(cached)) {
+        cached = await this.webBook.restoreCachedImages(this.source, cached,
+          (): boolean => !!shouldCancel?.() || !this.isCurrentBookSession(generation, sessionBookUrl));
+      }
+      if (cached !== saved && ReaderImageCache.complete(cached) && this.isCurrentBookSession(generation, sessionBookUrl)) {
+        await appDb.saveCachedChapterContent(sessionBookUrl, chapter, cached);
+      }
+    } finally { releaseImages(); }
     if (shouldCancel && shouldCancel()) return '';
     if (!this.isCurrentBookSession(generation, sessionBookUrl)) return '';
-    if (cached && !this.isInvalidChapterContent(cached)) {
+    if (cached && !this.isInvalidChapterContent(cached) && ReaderImageCache.complete(cached)) {
+      ReaderImageCache.touchText(cached);
       this.putChapterCache(idx, cached);
       chapter.cacheDate = chapter.cacheDate || Date.now();
       appDb.touchCachedChapterContent(sessionBookUrl, idx).catch((err: Error) => {
@@ -608,7 +628,7 @@ export class ReadBookEngine {
       return text;
     }
 
-    if (!this.source) return '';
+    if (!this.source) return cached || '';
 
     await this.refreshSourceForContent(generation, sessionBookUrl);
     if (shouldCancel && shouldCancel()) return '';
@@ -619,34 +639,44 @@ export class ReadBookEngine {
     imageRequest.priority = (): number => !background && this.foregroundReader && this.curIdx === idx &&
       this.book === sessionBook ? ReaderImageScheduler.FOREGROUND : ReaderImageScheduler.BACKGROUND;
     // 缓存全文、手动缓存要完整的本地内容，始终等整章图片处理完。
-    if (!background && this.foregroundReader && this.readerImagesDeferred) {
+    if (!cached && !background && this.foregroundReader && this.readerImagesDeferred) {
       const deferredGeneration = this.deferredImageGeneration;
       const preload = this.chapterPreloads.get(idx);
       imageRequest.deferred = true;
       imageRequest.deferredCancelled = (): boolean => deferredGeneration !== this.deferredImageGeneration ||
         !this.isCurrentBookSession(generation, sessionBookUrl) || (!!preload && preload.cancelled);
     }
-    const text = await this.webBook.getContent(sessionSource, sessionBook, chapter, shouldCancel, null,
-      imageRequest);
-    if (shouldCancel && shouldCancel()) return '';
-    if (!this.isCurrentBookSession(generation, sessionBookUrl)) return '';
-    if (text && !this.isInvalidChapterContent(text)) {
-      this.putChapterCache(idx, text);
-      ReaderOpenTrace.mark(sessionBookUrl, 'content-network-ready', `chapter=${idx} length=${text.length}`);
-      if (ReaderImageMarker.hasPending(text)) {
-        this.saveWhenImagesReady(idx, text, chapter, generation, sessionBookUrl, imageRequest.deferredCancelled);
-        return text;
-      }
-      // 有图片没下载/解密成功时只留在内存里：写进正文缓存的话，失败会一直留着，重新打开也不再重试。
-      if (ReaderImageMarker.hasFailure(text)) return text;
+    let deferred = false;
+    try {
+      let text = '';
       try {
-        await appDb.saveCachedChapterContent(sessionBookUrl, chapter, text);
-        ReaderCacheBudget.noteTextWrite();
-      } catch (err) {
-        console.error('[RE] save chapter cache failed:', idx, err);
+        text = await this.webBook.getContent(sessionSource, sessionBook, chapter, shouldCancel, null, imageRequest);
+      } catch (e) {
+        if (cached && this.isCurrentBookSession(generation, sessionBookUrl) && !shouldCancel?.()) return cached;
+        throw e;
       }
-    }
-    return text;
+      if (cached && (!text || !ReaderImageCache.complete(text, true))) return cached;
+      if (shouldCancel && shouldCancel()) return '';
+      if (!this.isCurrentBookSession(generation, sessionBookUrl)) return '';
+      if (text && !this.isInvalidChapterContent(text)) {
+        this.putChapterCache(idx, text);
+        ReaderOpenTrace.mark(sessionBookUrl, 'content-network-ready', `chapter=${idx} length=${text.length}`);
+        if (ReaderImageMarker.hasPending(text)) {
+          deferred = true;
+          this.saveWhenImagesReady(idx, text, chapter, generation, sessionBookUrl, imageRequest);
+          return text;
+        }
+        // 有图片没下载/解密成功时只留在内存里：写进正文缓存的话，失败会一直留着，重新打开也不再重试。
+        if (ReaderImageMarker.hasFailure(text)) return text;
+        try {
+          await appDb.saveCachedChapterContent(sessionBookUrl, chapter, text);
+          ReaderCacheBudget.noteTextWrite();
+        } catch (err) {
+          console.error('[RE] save chapter cache failed:', idx, err);
+        }
+      }
+      return text;
+    } finally { if (!deferred) imageRequest.release(); }
   }
 
   /**
@@ -654,13 +684,13 @@ export class ReadBookEngine {
    * 阅读页已显示的内容与之一致，图片项从 ReaderImageResults 取结果；处理被取消时从内存里去掉这一章，下次重新获取。
    */
   private saveWhenImagesReady(idx: number, text: string, chapter: BookChapter, generation: number,
-    bookUrl: string, cancelled: () => boolean): void {
+    bookUrl: string, request: ReaderImageRequest): void {
     const finalizing = ReaderImageResults.finalize(text);
     this.deferredChapterTexts.set(idx, finalizing);
     finalizing.then(async (finalText: string): Promise<void> => {
       const latest = this.deferredChapterTexts.get(idx) === finalizing;
       if (latest) this.deferredChapterTexts.delete(idx);
-      if (!finalText || cancelled()) {
+      if (!finalText || request.deferredCancelled()) {
         if (latest && this.chapterCache.get(idx) === text) this.chapterCache.delete(idx);
         return;
       }
@@ -670,7 +700,7 @@ export class ReadBookEngine {
       chapter.cacheDate = chapter.cacheDate || Date.now();
     }).catch((err: Error) => {
       console.error('[RE] save progressive chapter cache failed:', idx, err);
-    });
+    }).finally((): void => request.release());
   }
 
   /** 阅读页进入漫画模式时打开；离开阅读页或切到文字模式时关闭，并作废没处理完的后台图片。 */
@@ -723,28 +753,38 @@ export class ReadBookEngine {
 
   /** 手动缓存（缓存全文、指定章节）：写入的章节标为手动缓存，容量清理不会删它。 */
   async cacheChapter(idx: number, shouldCancel: (() => boolean) | null = null): Promise<boolean> {
-    if (shouldCancel && shouldCancel()) return false;
+    if (shouldCancel?.() || !this.book || !this.chapters[idx]) return false;
     const book = this.book;
-    let text = await this.fetchContent(idx, shouldCancel, true);
-    // 阅读时渐进加载的章节在内存里还是待加载版本，等图片都处理完再缓存。
-    if (ReaderImageMarker.hasPending(text)) {
-      text = await ReaderImageResults.finalize(text);
-      // 阅读页离开或切到文字模式后没补完的图片已作废：跳过内存，按整章重新获取。
-      if (!text && !(shouldCancel && shouldCancel())) text = await this.fetchContentUncached(idx, shouldCancel, true);
-    }
-    // 有图片失败的章节没有写入正文缓存，算作这一章没缓存成功。
-    const ok = !(shouldCancel && shouldCancel()) && !!text && !ReaderImageMarker.hasFailure(text);
-    if (ok && book && book.origin !== 'local' && this.book === book && idx < this.chapters.length) {
-      try {
-        // 内存命中时不会重新写盘；行不存在（例如刚被清理）时补写一次。
-        if (!await appDb.pinCachedChapterContent(book.bookUrl, idx)) {
-          await appDb.saveCachedChapterContent(book.bookUrl, this.chapters[idx], text, true);
-        }
-      } catch (err) {
-        console.warn('[RE] pin chapter cache failed:', idx, err);
+    const releaseBook = ReaderCacheCoordinator.retainBook(book.bookUrl);
+    const storageEpoch = ReaderImageCache.writeFailureEpoch;
+    this.lastCacheError = '';
+    try {
+      let text = await this.fetchContent(idx, shouldCancel, true);
+      if (ReaderImageMarker.hasPending(text)) text = await ReaderImageResults.finalize(text);
+      // A remote fallback is readable online but is not an offline download.
+      if (!ReaderImageCache.complete(text, true) && !shouldCancel?.()) {
+        this.chapterCache.delete(idx);
+        text = await this.fetchContentUncached(idx, shouldCancel, true);
       }
-    }
-    return ok;
+      if (ReaderImageCache.writeFailureEpoch !== storageEpoch) throw new Error('图片存储失败，请检查可用空间后重试');
+      if (shouldCancel?.() || !text || this.book !== book || !ReaderImageCache.complete(text, true)) return false;
+      const releaseImages = ReaderImageCache.retainText(text);
+      try {
+        // Migration is copy-before-switch; a pin never depends on a later best-effort UPDATE.
+        if (book.origin !== 'local') {
+          await appDb.saveCachedChapterContent(book.bookUrl, this.chapters[idx], text, true);
+          await ReaderImageCache.migrateLegacy(ReaderImageReferences.paths(text));
+          const persisted = await appDb.getCachedChapterContent(book.bookUrl, idx);
+          if (!ReaderImageCache.complete(persisted, true)) return false;
+          this.putChapterCache(idx, persisted);
+        }
+        return true;
+      } finally { releaseImages(); }
+    } catch (e) {
+      this.lastCacheError = (e as Error).message || '离线内容写入失败';
+      console.warn('[RE] offline chapter failed:', idx, e);
+      return false;
+    } finally { releaseBook(); }
   }
 
 

@@ -5351,7 +5351,7 @@ export struct BookshelfPage {
       // subset, so the notification percentage matches what the user asked for.
       const targets = this.shelfFullTextCacheTargetIndexes(task, total);
       task.total = targets.length;
-      task.done = this.countCachedChaptersIn(engine.chapters, targets);
+      task.done = 0;
       if (targets.length === 0) {
         this.setFullTextCacheStatus(task, '所选章节均已缓存');
         await this.publishShelfFullTextCacheNotification(task, '所选章节均已缓存',
@@ -5367,17 +5367,18 @@ export struct BookshelfPage {
           break;
         }
         const chapter = engine.chapters[i];
-        if (!chapter || chapter.cacheDate > 0) {
+        if (!chapter) {
           continue;
         }
         this.setFullTextCacheStatus(task, `正在缓存 ${position + 1}/${targets.length}`);
         try {
           if (await engine.cacheChapter(i, (): boolean => this.shouldCancelShelfFullTextCache(task))) {
-            task.done = this.countCachedChaptersIn(engine.chapters, targets);
+            task.done++;
           }
         } catch (e) {
           if (!this.shouldCancelShelfFullTextCache(task)) console.error('缓存章节失败:', i, e);
         }
+        if (engine.lastCacheError) throw new Error(engine.lastCacheError);
         this.syncCacheDialogChapterState(task, engine.chapters);
         if (this.shouldCancelShelfFullTextCache(task)) break;
         await this.publishShelfFullTextCacheProgress(task, false);
@@ -5389,14 +5390,13 @@ export struct BookshelfPage {
       }
       const canceled = this.shouldCancelShelfFullTextCache(task);
       await engine.syncChapterCacheDates();
-      task.done = this.countCachedChaptersIn(engine.chapters, targets);
-      this.setFullTextCacheStatus(task, canceled ? '缓存已取消' : `缓存完成：${task.done}/${task.total}`);
+      this.setFullTextCacheStatus(task, canceled ? '缓存已取消' : (task.done === task.total ? `缓存完成：${task.done}/${task.total}` : `缓存结束，${task.total - task.done} 章未完成`));
       this.syncCacheDialogChapterState(task, engine.chapters);
       this.finishCacheDialogSummary(task);
       if (canceled && task.stoppingNotificationTask) await task.stoppingNotificationTask;
       await this.publishShelfFullTextCacheNotification(
         task,
-        canceled ? '缓存已停止' : `${task.scopeLabel}缓存完成`,
+        canceled ? '缓存已停止' : (task.done === task.total ? `${task.scopeLabel}缓存完成` : '部分章节未完成'),
         this.shelfFullTextCacheProgressText(task),
         false
       );

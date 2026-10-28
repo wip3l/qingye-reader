@@ -19,6 +19,12 @@ try {
         if (!/^[A-Za-z0-9+/]*={0,2}$/.test(text)) throw new Error('bad base64');
         return new Uint8Array(Buffer.from(text, 'base64'));
       } } },
+    ReaderImageCache: {
+      directory: () => '/files/reader_images',
+      exists: path => !!files.get(path)?.length,
+      async registerExisting() {},
+      async commit(path, bytes) { files.set(path, Buffer.from(bytes)); }
+    },
     NativeSourceSpec: mods.NativeSourceSpec,
     NativeImageScriptRunner: scriptRuntime.runner,
     digestHashHex: (algorithm, text) => crypto.createHash(algorithm).update(text).digest('hex'),
@@ -133,7 +139,7 @@ try {
   const beforeData=downloads;
   const dataUrl=`data:image/png;base64,${png.toString('base64')}`;
   const dataPath=await pipeline.materialize(http,source,dataUrl,true);
-  assert(dataPath.startsWith('/cache/comic_images/') && dataPath.endsWith('.png'),dataPath);
+  assert(dataPath.startsWith('/files/reader_images/') && dataPath.endsWith('.png'),dataPath);
   assert.deepEqual(files.get(dataPath),png);
   assert.equal(await pipeline.materialize(http,source,dataUrl,true),dataPath,'data: cache hit');
   const urlSafe=`data:image/png;base64,${png.toString('base64url')}`;

@@ -1,3 +1,4 @@
+import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
 import { syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
@@ -934,6 +935,9 @@ struct ReadBookPage {
   }
 
   onPageShow(): void {
+    this.releaseReadingCache?.();
+    this.releaseReadingCache = ReaderCacheCoordinator.watchReader((): string => this.book?.bookUrl || this.bookUrl);
+
     this.onReaderAiAccessChanged();
     this.readerComicColor.setForeground(true);
     this.readerPageVisible = true;
@@ -1127,6 +1131,7 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    this.releaseReadingCache?.(); this.releaseReadingCache = null;
     this.stopReaderHoldingHandTracking();
     this.releaseReaderKeyboard();
     this.stopReaderAutoScroll(false);
@@ -1213,8 +1218,13 @@ struct ReadBookPage {
     return this.detachedReaderEngine || ReadBookEngine.get();
   }
 
+  private releaseTtsCache: (() => void) | null = null;
+  private releaseReadingCache: (() => void) | null = null;
+
   detachReaderEngineForBackgroundTts(): void {
-    if (this.detachedReaderEngine || !this.book) return;
+    if (!this.book) return;
+    if (!this.releaseTtsCache) this.releaseTtsCache = ReaderCacheCoordinator.retainBook(this.book.bookUrl);
+    if (this.detachedReaderEngine) return;
     // The shared engine follows whichever reader page is visible. Reading aloud behind the bookshelf must keep
     // loading its own chapters after another book is opened, so it continues on a private engine.
     const fork = ReadBookEngine.forkSession(this.book.bookUrl);
@@ -1238,6 +1248,10 @@ struct ReadBookPage {
   }
 
   onPageHide(): void {
+    if (!this.releaseTtsCache && this.book && (this.isTtsSpeaking || this.isTtsPaused || this.ttsReader.isSpeaking())) {
+      this.releaseTtsCache = ReaderCacheCoordinator.retainBook(this.book.bookUrl);
+    }
+    this.releaseReadingCache?.(); this.releaseReadingCache = null;
     this.stopReaderHoldingHandTracking();
     this.releaseReaderKeyboard();
     this.pauseReaderAutoScroll('已暂停');
@@ -11263,6 +11277,7 @@ struct ReadBookPage {
   }
 
   publishTtsFloatingSession(): void {
+    if (!this.releaseTtsCache) this.releaseTtsCache = ReaderCacheCoordinator.retainBook(this.book?.bookUrl || this.bookUrl);
     ReaderTtsFloatingSession.attach(
       this.ttsFloatingSessionOwnerId,
       this.bookUrl,
@@ -11559,6 +11574,8 @@ struct ReadBookPage {
   }
 
   stopTtsReading(userCancelled: boolean = true): void {
+    this.releaseTtsCache?.();
+    this.releaseTtsCache = null;
     this.cancelManualPageTurnTtsResume();
     this.flushTtsReadPosition();
     this.clearTtsSleepTimer();

@@ -1,3 +1,4 @@
+import { ReaderCacheCoordinator } from './ReaderCacheCoordinator';
 import { ReaderImageMarker } from './ReaderImageMarker';
 import { ReaderImageScheduler } from './ReaderImageScheduler';
 
@@ -17,6 +18,24 @@ class ReaderImageResultEntry {
 export class ReaderImageResults {
   private static readonly LIMIT: number = 8192;
   private static entries: Map<string, ReaderImageResultEntry> = new Map<string, ReaderImageResultEntry>();
+
+  static invalidatePath(path: string): void {
+    for (const [raw, entry] of ReaderImageResults.entries) {
+      if (!entry.inFlight && ReaderCacheCoordinator.path(entry.source) === path) {
+        entry.source = '';
+        if (!entry.listeners.length && !entry.visible && !entry.near) ReaderImageResults.entries.delete(raw);
+      }
+    }
+  }
+
+  static available(text: string): boolean {
+    const markers = text.match(/\[\[LEGADO_EPUB_IMAGE:[^\]]+\]\]/g) || [];
+    for (const marker of markers) {
+      const raw = ReaderImageMarker.pendingRaw(ReaderImageMarker.parse(marker).source);
+      if (raw && !ReaderImageResults.isAlive(raw)) return false;
+    }
+    return true;
+  }
 
   /** 已有的结果；没有结果时为空串。 */
   static current(raw: string): string {

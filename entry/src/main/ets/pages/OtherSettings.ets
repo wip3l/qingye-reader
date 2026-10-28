@@ -39,6 +39,7 @@ struct OtherSettingsPage {
   /** -1 表示还在统计。 */
   @State textCacheBytes: number = -1;
   @State comicCacheBytes: number = -1;
+  @State offlineBytes: number = -1;
   @State cacheClearing: boolean = false;
   @State savingImmersiveLight: boolean = false;
 
@@ -92,19 +93,28 @@ struct OtherSettingsPage {
     this.sectionTitle('缓存')
     Column() {
       SettingRow({
-        title: '小说正文缓存',
+        title: '小说自动缓存',
         description: this.cacheUsageText(this.textCacheBytes, ReaderCacheBudget.TEXT_LIMIT_BYTES,
-          '超出后自动清理阅读时顺带缓存的章节，手动缓存的章节和本地书不清理'),
+          '正文数据量；超限清理最久未用的章节，离线内容另计，使用中可暂时超限'),
         onTap: () => this.confirmClearCache(true)
       }) {
         this.cacheClearLabel()
       }
       SettingRow({
-        title: '漫画图片缓存',
+        title: '漫画自动缓存',
         description: this.cacheUsageText(this.comicCacheBytes, ReaderCacheBudget.COMIC_LIMIT_BYTES,
-          '超出后自动清理最久未看的图片'),
+          '原图和处理结果合计；离线原图另计，使用中可暂时超限'),
         showDivider: false,
         onTap: () => this.confirmClearCache(false)
+      }) {
+        this.cacheClearLabel()
+      }
+      SettingRow({
+        title: '离线内容',
+        description: (this.offlineBytes === -2 ? '统计失败，重新进入后重试' : this.offlineBytes < 0 ? '正在统计…' : ReaderCacheBudgetPolicy.formatBytes(this.offlineBytes)) +
+          '\n手动缓存的正文与漫画原图，不参与自动清理',
+        showDivider: false,
+        onTap: () => this.confirmClearOffline()
       }) {
         this.cacheClearLabel()
       }
@@ -290,7 +300,7 @@ struct OtherSettingsPage {
   }
 
   cacheUsageText(bytes: number, limit: number, note: string): string {
-    const usage = bytes < 0 ? '正在统计…' :
+    const usage = bytes === -2 ? '统计失败，重新进入后重试' : bytes < 0 ? '正在统计…' :
       `${ReaderCacheBudgetPolicy.formatBytes(bytes)} / ${ReaderCacheBudgetPolicy.formatBytes(limit)}`;
     return `${usage}\n${note}`;
   }
@@ -300,13 +310,15 @@ struct OtherSettingsPage {
       this.textCacheBytes = await ReaderCacheBudget.textUsageBytes();
     } catch (e) {
       console.warn('统计正文缓存失败:', e);
-      this.textCacheBytes = 0;
+      this.textCacheBytes = -2;
     }
     try {
       this.comicCacheBytes = await ReaderCacheBudget.comicUsageBytes();
+      this.offlineBytes = await ReaderCacheBudget.textUsageBytes(true) + await ReaderCacheBudget.comicUsageBytes(true);
     } catch (e) {
       console.warn('统计漫画缓存失败:', e);
-      this.comicCacheBytes = 0;
+      this.comicCacheBytes = -2;
+      this.offlineBytes = -2;
     }
   }
 
@@ -315,9 +327,9 @@ struct OtherSettingsPage {
     const dark = this.appDarkMode;
     try {
       const result = await promptAction.showDialog({
-        title: text ? '清理小说正文缓存？' : '清理漫画图片缓存？',
-        message: text ? '会删除在线书籍已缓存的正文，包括手动缓存的离线章节，之后阅读需要重新联网获取。本地导入的书不受影响，正在阅读的书会保留。' :
-          '会删除已下载的漫画图片，之后阅读需要重新下载。最近 10 分钟内看过的图片会保留。',
+        title: text ? '清理小说自动缓存？' : '清理漫画自动缓存？',
+        message: text ? '删除阅读时自动缓存的正文。手动离线内容、本地书和正在使用的书会保留。之后阅读可能需要联网。' :
+          '删除自动缓存的图片和可重新生成的处理结果，保留离线原图及正在使用、最近 10 分钟访问的图片。之后阅读可能需要联网补图。',
         buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(dark) },
           { text: '清理', color: ThemeRuntime.dangerColor(dark) }]
       });
@@ -338,8 +350,25 @@ struct OtherSettingsPage {
     await this.refreshCacheUsage();
   }
 
+  async confirmClearOffline(): Promise<void> {
+    if (this.cacheClearing) return;
+    try {
+      const answer = await promptAction.showDialog({
+        title: '删除离线内容？',
+        message: '删除手动缓存的在线小说正文与漫画原图，之后需要联网重新缓存。本地导入书和正在使用的内容会保留。',
+        buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.appDarkMode) },
+          { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }]
+      });
+      if (answer.index !== 1) return;
+      this.cacheClearing = true;
+      HdsFeedback.showToast(this.cleanupSummary(await ReaderCacheBudget.clearOffline()));
+    } catch (e) { HdsFeedback.showToast('删除离线内容失败'); }
+    finally { this.cacheClearing = false; }
+    await this.refreshCacheUsage();
+  }
+
   cleanupSummary(cleanup: ReaderCacheCleanup): string {
-    const parts: string[] = [`已释放 ${ReaderCacheBudgetPolicy.formatBytes(cleanup.releasedBytes)}`];
+    const parts: string[] = [`已清理 ${ReaderCacheBudgetPolicy.formatBytes(cleanup.releasedBytes)} 数据`];
     if (cleanup.protectedCount > 0) parts.push(`使用中保留 ${cleanup.protectedCount} 项`);
     if (cleanup.failed > 0) parts.push(`${cleanup.failed} 项删除失败`);
     return parts.join('，');

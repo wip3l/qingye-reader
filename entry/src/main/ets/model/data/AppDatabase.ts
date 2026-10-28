@@ -1,3 +1,5 @@
+import { ReaderCacheCoordinator } from '../../core/book/ReaderCacheCoordinator';
+import { ReaderImageReferences } from '../../core/book/ReaderImageReferences';
 import relationalStore from '@ohos.data.relationalStore';
 import { Book, BookChapter, BookSource, BookGroup, Bookmark, SearchKeyword, ExploreRule, TocRule, ContentRule,
   BookSourceRuntimePersistence } from '@legado/sourceengine';
@@ -23,9 +25,28 @@ export interface BookSourcePositionUpdate {
 
 export class CachedContentEntry {
   rowId: number = 0;
+  chapterIndex: number = 0;
+  revision: number = 0;
+  pinned: boolean = false;
+  content: string = '';
   bookUrl: string = '';
   bytes: number = 0;
   usedAt: number = 0;
+}
+
+export class CachedContentRemoval {
+  removed: number = 0;
+  releasedBytes: number = 0;
+}
+
+export class ReaderImageResource {
+  path: string = '';
+  sourceUrl: string = '';
+  raw: string = '';
+  imageIndex: number = 0;
+  bytes: number = 0;
+  usedAt: number = 0;
+  state: string = 'ready';
 }
 
 export class ReaderPaginationCacheRecord {
@@ -106,8 +127,12 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   private bookProgressWriteTasks: Map<string, Promise<void>> = new Map<string, Promise<void>>();
   private latestBookProgressWriteTimes: Map<string, number> = new Map<string, number>();
   private readStatsWriteTask: Promise<void> = Promise.resolve();
+  private databaseDirectory: string = '';
+  private openedDatabaseName: string = '';
+  cacheDatabaseName(): string { return this.openedDatabaseName; }
+  cacheDatabaseDirectory(): string { return this.databaseDirectory; }
   private readonly DATABASE_NAME = 'legado.db';
-  private readonly SCHEMA_VERSION = 23;
+  private readonly SCHEMA_VERSION = 24;
 
   private constructor() {}
 
@@ -118,7 +143,11 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     return AppDatabase.instance;
   }
 
-  async init(context: Context): Promise<void> {
+  async init(context: Context, databaseName: string = this.DATABASE_NAME): Promise<void> {
+    if (!/^[A-Za-z0-9_-]+\.db$/.test(databaseName)) throw new Error('Invalid database name');
+    if ((this.store || this.initPromise) && this.openedDatabaseName !== databaseName) {
+      throw new Error('A different database is already active');
+    }
     if (this.initialized && this.store) {
       return;
     }
@@ -127,7 +156,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       return;
     }
 
-    this.initPromise = this.initInternal(context);
+    this.openedDatabaseName = databaseName;
+    this.initPromise = this.initInternal(context, databaseName);
     try {
       await this.initPromise;
     } finally {
@@ -135,14 +165,21 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     }
   }
 
-  private async initInternal(context: Context): Promise<void> {
+  private async initInternal(context: Context, databaseName: string): Promise<void> {
     const config: relationalStore.StoreConfig = {
-      name: this.DATABASE_NAME,
+      name: databaseName,
       securityLevel: relationalStore.SecurityLevel.S1
     };
 
     this.store = await relationalStore.getRdbStore(context, config);
+    this.databaseDirectory = context.databaseDir;
     await this.createTables();
+    await this.store.executeSql(
+      'CREATE TABLE IF NOT EXISTS reader_image_resources (path TEXT PRIMARY KEY, sourceUrl TEXT DEFAULT \'\', ' +
+      'raw TEXT DEFAULT \'\', imageIndex INTEGER DEFAULT 0, bytes INTEGER DEFAULT 0, usedAt INTEGER DEFAULT 0, state TEXT DEFAULT \'ready\')');
+    await this.store.executeSql('CREATE TABLE IF NOT EXISTS reader_image_refs (bookUrl TEXT, chapterIndex INTEGER, ' +
+      'path TEXT, PRIMARY KEY(bookUrl, chapterIndex, path))');
+    await this.store.executeSql('CREATE INDEX IF NOT EXISTS reader_image_refs_path ON reader_image_refs(path)');
     await this.initDefaultData();
     this.initialized = true;
   }
@@ -533,7 +570,9 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       // 升级前的正文分不出是阅读时顺带缓存的还是手动缓存的，一律按手动缓存保留，不参与自动清理。
       { table: 'book_contents', column: 'pinned', definition: 'pinned INTEGER DEFAULT 1' },
       { table: 'book_contents', column: 'contentBytes', definition: 'contentBytes INTEGER DEFAULT -1' },
-      { table: 'book_contents', column: 'accessDate', definition: 'accessDate INTEGER DEFAULT 0' }
+      { table: 'book_contents', column: 'accessDate', definition: 'accessDate INTEGER DEFAULT 0' },
+      { table: 'book_contents', column: 'cacheRevision', definition: 'cacheRevision INTEGER DEFAULT 0' },
+      { table: 'book_contents', column: 'imagesIndexed', definition: 'imagesIndexed INTEGER DEFAULT 0' }
     ];
 
     for (const migration of migrations) {
@@ -2286,39 +2325,29 @@ export class AppDatabase implements BookSourceRuntimePersistence {
    */
   async saveCachedChapterContent(bookUrl: string, chapter: BookChapter, content: string,
     pinned: boolean = false): Promise<void> {
-    if (!this.store || !bookUrl || !content) return;
-    const cacheDate = Date.now();
-    const predicates = new relationalStore.RdbPredicates('book_contents');
-    predicates.equalTo('bookUrl', bookUrl);
-    predicates.equalTo('chapterIndex', chapter.index);
-    const resultSet = await this.store.query(predicates, ['pinned']);
-    let exists = false;
-    let wasPinned = false;
-    try {
-      if (resultSet.goToFirstRow()) {
-        exists = true;
-        wasPinned = resultSet.getLong(resultSet.getColumnIndex('pinned')) === 1;
-      }
-    } finally {
-      resultSet.close();
-    }
-    const bucket: relationalStore.ValuesBucket = {
-      bookUrl: bookUrl,
-      chapterIndex: chapter.index,
-      chapterUrl: chapter.url,
-      chapterName: chapter.title,
-      content: content,
-      cacheDate: cacheDate,
-      pinned: pinned || wasPinned ? 1 : 0,
-      contentBytes: AppDatabase.utf8ByteLength(content),
-      accessDate: cacheDate
-    };
-    if (exists) {
-      await this.store.update(bucket, predicates);
-    } else {
-      await this.store.insert('book_contents', bucket);
-    }
-    chapter.cacheDate = cacheDate;
+    if (!this.store || !bookUrl || !content) throw new Error('正文缓存不可写入');
+    await ReaderCacheCoordinator.run(async (): Promise<void> => {
+      if (!this.store) throw new Error('数据库未就绪');
+      const transaction = await this.store.createTransaction();
+      try {
+        const now = Date.now();
+        // Preserve pinning atomically; a concurrent reader must never downgrade an offline chapter.
+        await transaction.execute('INSERT INTO book_contents ' +
+          '(bookUrl,chapterIndex,chapterUrl,chapterName,content,cacheDate,pinned,contentBytes,accessDate,cacheRevision,imagesIndexed) ' +
+          'VALUES (?,?,?,?,?,?,?,?,?,1,1) ON CONFLICT(bookUrl,chapterIndex) DO UPDATE SET ' +
+          'chapterUrl=excluded.chapterUrl,chapterName=excluded.chapterName,content=excluded.content,' +
+          'cacheDate=excluded.cacheDate,pinned=MAX(book_contents.pinned,excluded.pinned),contentBytes=excluded.contentBytes,' +
+          'accessDate=excluded.accessDate,cacheRevision=book_contents.cacheRevision+1,imagesIndexed=1',
+          [bookUrl, chapter.index, chapter.url, chapter.title, content, now, pinned ? 1 : 0,
+            AppDatabase.utf8ByteLength(content), now]);
+        await transaction.execute('DELETE FROM reader_image_refs WHERE bookUrl=? AND chapterIndex=?', [bookUrl, chapter.index]);
+        for (const path of ReaderImageReferences.paths(content)) {
+          await transaction.execute('INSERT OR IGNORE INTO reader_image_refs VALUES (?,?,?)', [bookUrl, chapter.index, path]);
+        }
+        await transaction.commit();
+        chapter.cacheDate = now;
+      } catch (e) { await transaction.rollback(); throw e; }
+    });
   }
 
   /** 把已缓存的章节标为手动缓存；返回是否存在这一行。 */
@@ -2327,15 +2356,20 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     const predicates = new relationalStore.RdbPredicates('book_contents');
     predicates.equalTo('bookUrl', bookUrl);
     predicates.equalTo('chapterIndex', chapterIndex);
-    const changed = await this.store.update({ pinned: 1 } as relationalStore.ValuesBucket, predicates);
+    const changed = await ReaderCacheCoordinator.run(async (): Promise<number> => {
+      if (!this.store) return 0;
+      return await this.store.update({ pinned: 1, accessDate: Date.now() } as relationalStore.ValuesBucket, predicates);
+    });
     return changed > 0;
   }
 
   /** 读到磁盘缓存时记下使用时间，自动清理按最久未用的先删。 */
   async touchCachedChapterContent(bookUrl: string, chapterIndex: number): Promise<void> {
     if (!this.store || !bookUrl) return;
-    await this.store.executeSql('UPDATE book_contents SET accessDate = ? WHERE bookUrl = ? AND chapterIndex = ?',
-      [Date.now(), bookUrl, chapterIndex]);
+    await ReaderCacheCoordinator.run(async (): Promise<void> => {
+      await this.store?.executeSql('UPDATE book_contents SET accessDate = ? WHERE bookUrl = ? AND chapterIndex = ?',
+        [Date.now(), bookUrl, chapterIndex]);
+    });
   }
 
   /** 在线正文缓存的条件：本地导入书的正文只存在这张表里，任何清理都不能碰。 */
@@ -2362,10 +2396,10 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   }
 
   /** 在线正文缓存的总字节数（不含本地导入书）。 */
-  async getOnlineCachedContentBytes(): Promise<number> {
+  async getOnlineCachedContentBytes(pinned: boolean = false): Promise<number> {
     if (!this.store) return 0;
     const resultSet = await this.store.querySql(
-      `SELECT SUM(MAX(contentBytes, 0)) AS total FROM book_contents WHERE ${AppDatabase.ONLINE_CONTENT_WHERE}`);
+      `SELECT SUM(MAX(contentBytes, 0)) AS total FROM book_contents WHERE ${AppDatabase.ONLINE_CONTENT_WHERE} AND pinned = ${pinned ? 1 : 0}`);
     try {
       return resultSet.goToFirstRow() ? resultSet.getLong(resultSet.getColumnIndex('total')) : 0;
     } finally {
@@ -2378,7 +2412,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     const entries: CachedContentEntry[] = [];
     if (!this.store) return entries;
     const resultSet = await this.store.querySql(
-      'SELECT rowid AS rid, bookUrl, MAX(contentBytes, 0) AS bytes, MAX(accessDate, cacheDate) AS usedAt ' +
+      'SELECT rowid AS rid, bookUrl, chapterIndex, cacheRevision, pinned, MAX(contentBytes, 0) AS bytes, MAX(accessDate, cacheDate) AS usedAt ' +
         `FROM book_contents WHERE ${AppDatabase.ONLINE_CONTENT_WHERE}${onlyAuto ? ' AND pinned = 0' : ''} ` +
         'ORDER BY usedAt ASC');
     try {
@@ -2389,6 +2423,9 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       while (resultSet.goToNextRow()) {
         const entry = new CachedContentEntry();
         entry.rowId = resultSet.getLong(rid);
+        entry.chapterIndex = resultSet.getLong(resultSet.getColumnIndex('chapterIndex'));
+        entry.revision = resultSet.getLong(resultSet.getColumnIndex('cacheRevision'));
+        entry.pinned = resultSet.getLong(resultSet.getColumnIndex('pinned')) === 1;
         entry.bookUrl = resultSet.getString(book);
         entry.bytes = resultSet.getLong(bytes);
         entry.usedAt = resultSet.getLong(usedAt);
@@ -2401,15 +2438,156 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   }
 
   /** 按行号删除正文缓存，并清掉失去正文的分页缓存。 */
-  async deleteCachedContentRows(rowIds: number[]): Promise<void> {
-    if (!this.store || rowIds.length === 0) return;
-    for (let offset = 0; offset < rowIds.length; offset += 200) {
-      const chunk = rowIds.slice(offset, offset + 200);
-      const marks = chunk.map((): string => '?').join(',');
-      await this.store.executeSql(`DELETE FROM book_contents WHERE rowid IN (${marks})`, chunk);
-    }
-    await this.store.executeSql('DELETE FROM reader_pagination_cache WHERE NOT EXISTS (SELECT 1 FROM book_contents c ' +
-      'WHERE c.bookUrl = reader_pagination_cache.bookUrl AND c.chapterIndex = reader_pagination_cache.chapterIndex)');
+  async deleteCachedContentEntries(entries: CachedContentEntry[], includePinned: boolean = false,
+    recentCutoff: number = Date.now() - 600000): Promise<CachedContentRemoval> {
+    return await ReaderCacheCoordinator.run(async (): Promise<CachedContentRemoval> => {
+      const result = new CachedContentRemoval();
+      if (!this.store) return result;
+      const transaction = await this.store.createTransaction();
+      try {
+        for (const entry of entries) {
+          if (ReaderCacheCoordinator.protectedBooks().includes(entry.bookUrl)) continue;
+          await transaction.execute('DELETE FROM book_contents WHERE bookUrl=? AND chapterIndex=? AND cacheRevision=? ' +
+            'AND MAX(accessDate,cacheDate)=? AND MAX(accessDate,cacheDate)<=? AND ' + AppDatabase.ONLINE_CONTENT_WHERE +
+            (includePinned ? ' AND pinned=1' : ' AND pinned=0'),
+            [entry.bookUrl, entry.chapterIndex, entry.revision, entry.usedAt, recentCutoff]);
+          const changed = await transaction.querySql('SELECT changes() AS n');
+          let removed = false;
+          try { removed = changed.goToFirstRow() && changed.getLong(0) > 0; } finally { changed.close(); }
+          if (!removed) continue;
+          result.removed++;
+          result.releasedBytes += entry.bytes;
+          await transaction.execute('DELETE FROM reader_image_refs WHERE bookUrl=? AND chapterIndex=?',
+            [entry.bookUrl, entry.chapterIndex]);
+          await transaction.execute('DELETE FROM reader_pagination_cache WHERE bookUrl=? AND chapterIndex=?',
+            [entry.bookUrl, entry.chapterIndex]);
+        }
+        await transaction.commit();
+      } catch (e) { await transaction.rollback(); throw e; }
+      return result;
+    });
+  }
+
+  /** Upgrade indexing is resumable. Do not sweep legacy images until this returns zero. */
+  async backfillImageReferences(): Promise<number> {
+    return await ReaderCacheCoordinator.run(async (): Promise<number> => {
+      if (!this.store) throw new Error('数据库未就绪');
+      const transaction = await this.store.createTransaction();
+      let count = 0;
+      try {
+        const rs = await transaction.querySql('SELECT bookUrl,chapterIndex,content FROM book_contents WHERE imagesIndexed=0 LIMIT 100');
+        const rows: CachedContentEntry[] = [];
+        try {
+          while (rs.goToNextRow()) {
+            const row = new CachedContentEntry();
+            row.bookUrl = rs.getString(0); row.chapterIndex = rs.getLong(1); row.content = rs.getString(2);
+            rows.push(row);
+          }
+        } finally { rs.close(); }
+        for (const row of rows) {
+          await transaction.execute('DELETE FROM reader_image_refs WHERE bookUrl=? AND chapterIndex=?', [row.bookUrl, row.chapterIndex]);
+          for (const path of ReaderImageReferences.paths(row.content)) {
+            await transaction.execute('INSERT OR IGNORE INTO reader_image_refs VALUES (?,?,?)', [row.bookUrl, row.chapterIndex, path]);
+          }
+          await transaction.execute('UPDATE book_contents SET imagesIndexed=1 WHERE bookUrl=? AND chapterIndex=?', [row.bookUrl, row.chapterIndex]);
+          count++;
+        }
+        await transaction.commit();
+      } catch (e) { await transaction.rollback(); throw e; }
+      return count;
+    });
+  }
+
+  async imagePaths(offlineOnly: boolean = false, protectedBooks: string[] = []): Promise<string[]> {
+    if (!this.store) throw new Error('数据库未就绪');
+    const marks = protectedBooks.map((): string => '?').join(',');
+    const rs = await this.store.querySql('SELECT DISTINCT r.path FROM reader_image_refs r JOIN book_contents c ' +
+      'ON c.bookUrl=r.bookUrl AND c.chapterIndex=r.chapterIndex' + (offlineOnly ?
+      ' WHERE (c.pinned=1 OR c.bookUrl LIKE \'local://%\' OR c.bookUrl IN (SELECT bookUrl FROM books WHERE origin=\'local\')' +
+      (marks ? ` OR c.bookUrl IN (${marks})` : '') + ')' : ''), offlineOnly ? protectedBooks : []);
+    const paths: string[] = [];
+    try { while (rs.goToNextRow()) paths.push(rs.getString(0)); } finally { rs.close(); }
+    return paths;
+  }
+
+  async listImageResources(): Promise<ReaderImageResource[]> {
+    if (!this.store) throw new Error('数据库未就绪');
+    const rs = await this.store.querySql('SELECT path,bytes,usedAt,state FROM reader_image_resources');
+    const rows: ReaderImageResource[] = [];
+    try {
+      while (rs.goToNextRow()) {
+        const row = new ReaderImageResource(); row.path=rs.getString(0); row.bytes=rs.getLong(1);
+        row.usedAt=rs.getLong(2); row.state=rs.getString(3); rows.push(row);
+      }
+    } finally { rs.close(); }
+    return rows;
+  }
+
+  async imageResource(path: string): Promise<ReaderImageResource | null> {
+    if (!this.store) throw new Error('数据库未就绪');
+    const rs = await this.store.querySql('SELECT path,sourceUrl,raw,imageIndex,bytes,usedAt,state FROM reader_image_resources WHERE path=?', [path]);
+    try {
+      if (!rs.goToFirstRow()) return null;
+      const row = new ReaderImageResource();
+      row.path = rs.getString(0); row.sourceUrl = rs.getString(1); row.raw = rs.getString(2);
+      row.imageIndex = rs.getLong(3); row.bytes = rs.getLong(4); row.usedAt = rs.getLong(5); row.state = rs.getString(6);
+      return row;
+    } finally { rs.close(); }
+  }
+
+  /** Caller holds ReaderCacheCoordinator while committing/reconciling a file. */
+  async saveImageResource(row: ReaderImageResource): Promise<void> {
+    if (!this.store) throw new Error('数据库未就绪');
+    await this.store.executeSql('INSERT INTO reader_image_resources VALUES (?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET ' +
+      'sourceUrl=CASE WHEN excluded.sourceUrl<>\'\' THEN excluded.sourceUrl ELSE sourceUrl END,' +
+      'raw=CASE WHEN excluded.raw<>\'\' THEN excluded.raw ELSE raw END,imageIndex=excluded.imageIndex,' +
+      'bytes=excluded.bytes,usedAt=MAX(usedAt,excluded.usedAt),state=excluded.state',
+      [row.path, row.sourceUrl, row.raw, row.imageIndex, row.bytes, row.usedAt, row.state]);
+  }
+
+  async touchImageResource(path: string, usedAt: number): Promise<void> {
+    await this.store?.executeSql('UPDATE reader_image_resources SET usedAt=MAX(usedAt,?) WHERE path=?', [usedAt, path]);
+  }
+
+  /** Called in the cache coordinator; retain recovery metadata after eviction. */
+  async pruneImageRecords(before: number): Promise<void> {
+    await this.store?.executeSql('DELETE FROM reader_image_refs WHERE NOT EXISTS (SELECT 1 FROM book_contents c ' +
+      'WHERE c.bookUrl=reader_image_refs.bookUrl AND c.chapterIndex=reader_image_refs.chapterIndex)');
+    await this.store?.executeSql('DELETE FROM reader_image_resources WHERE state=\'missing\' AND usedAt<? ' +
+      'AND NOT EXISTS (SELECT 1 FROM reader_image_refs r WHERE r.path=reader_image_resources.path)', [before]);
+  }
+
+  async markImageMissing(path: string): Promise<void> {
+    await this.store?.executeSql('UPDATE reader_image_resources SET state=\'missing\',bytes=0 WHERE path=?', [path]);
+  }
+
+  async markImageDeleting(path: string): Promise<void> {
+    await this.store?.executeSql('UPDATE reader_image_resources SET state=\'deleting\' WHERE path=?', [path]);
+  }
+
+  /** File copy is already verified. Atomically switch all persisted references; keep the old file for live readers. */
+  async replaceImageReference(previous: string, next: string): Promise<void> {
+    if (!this.store) throw new Error('数据库未就绪');
+    const transaction = await this.store.createTransaction();
+    try {
+      const rs = await transaction.querySql('SELECT c.bookUrl,c.chapterIndex,c.content FROM book_contents c JOIN reader_image_refs r ' +
+        'ON c.bookUrl=r.bookUrl AND c.chapterIndex=r.chapterIndex WHERE r.path=?', [previous]);
+      const rows: CachedContentEntry[] = [];
+      try {
+        while (rs.goToNextRow()) {
+          const row = new CachedContentEntry();
+          row.bookUrl=rs.getString(0); row.chapterIndex=rs.getLong(1); row.content=rs.getString(2); rows.push(row);
+        }
+      } finally { rs.close(); }
+      for (const row of rows) {
+        await transaction.execute('UPDATE book_contents SET content=?,cacheRevision=cacheRevision+1,contentBytes=? WHERE bookUrl=? AND chapterIndex=?',
+          [ReaderImageReferences.replace(row.content, previous, next),
+            AppDatabase.utf8ByteLength(ReaderImageReferences.replace(row.content, previous, next)), row.bookUrl, row.chapterIndex]);
+        await transaction.execute('INSERT OR IGNORE INTO reader_image_refs VALUES (?,?,?)', [row.bookUrl, row.chapterIndex, next]);
+      }
+      await transaction.execute('DELETE FROM reader_image_refs WHERE path=?', [previous]);
+      await transaction.commit();
+    } catch (e) { await transaction.rollback(); throw e; }
   }
 
   private static utf8ByteLength(value: string): number {
@@ -2432,20 +2610,26 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   }
 
   async deleteBookCachedContent(bookUrl: string): Promise<void> {
-    if (!this.store) return;
-    const predicates = new relationalStore.RdbPredicates('book_contents');
-    predicates.equalTo('bookUrl', bookUrl);
-    await this.store.delete(predicates);
-    await this.deleteReaderPaginationCache(bookUrl);
+    await this.deleteContentScope(bookUrl);
   }
 
   async deleteCachedChapterContent(bookUrl: string, chapterIndex: number): Promise<void> {
-    if (!this.store) return;
-    const predicates = new relationalStore.RdbPredicates('book_contents');
-    predicates.equalTo('bookUrl', bookUrl);
-    predicates.equalTo('chapterIndex', chapterIndex);
-    await this.store.delete(predicates);
-    await this.deleteReaderPaginationCache(bookUrl, chapterIndex);
+    await this.deleteContentScope(bookUrl, chapterIndex);
+  }
+
+  private async deleteContentScope(bookUrl: string, chapterIndex?: number): Promise<void> {
+    await ReaderCacheCoordinator.run(async (): Promise<void> => {
+      if (!this.store) return;
+      const transaction = await this.store.createTransaction();
+      const where = chapterIndex === undefined ? 'bookUrl=?' : 'bookUrl=? AND chapterIndex=?';
+      const args: relationalStore.ValueType[] = chapterIndex === undefined ? [bookUrl] : [bookUrl, chapterIndex];
+      try {
+        for (const table of ['book_contents', 'reader_image_refs', 'reader_pagination_cache']) {
+          await transaction.execute('DELETE FROM ' + table + ' WHERE ' + where, args);
+        }
+        await transaction.commit();
+      } catch (e) { await transaction.rollback(); throw e; }
+    });
   }
 
   async getReaderPaginationCache(bookUrl: string, chapterIndex: number,
@@ -2524,7 +2708,9 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     if (!this.store) return cacheDates;
     const predicates = new relationalStore.RdbPredicates('book_contents');
     predicates.equalTo('bookUrl', bookUrl);
-    const resultSet = await this.store.query(predicates, ['chapterIndex', 'cacheDate']);
+    const resultSet = await this.store.querySql('SELECT c.chapterIndex,c.cacheDate FROM book_contents c WHERE c.bookUrl=? ' +
+      'AND NOT EXISTS (SELECT 1 FROM reader_image_refs r JOIN reader_image_resources i ON i.path=r.path ' +
+      'WHERE r.bookUrl=c.bookUrl AND r.chapterIndex=c.chapterIndex AND i.state=\'missing\')', [bookUrl]);
     try {
       while (resultSet.goToNextRow()) {
         cacheDates.set(

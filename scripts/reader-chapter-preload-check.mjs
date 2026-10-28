@@ -39,11 +39,13 @@ function harness() {
       async saveCachedChapterContent(_book, chapter, text) { disk.set(chapter.index, text); },
       async touchCachedChapterContent() {}
     },
+    fs: { statSync: () => ({ isFile: () => true, size: 1 }) },
+    AppStorage: { get: () => '/cache' },
     ReaderOpenTrace: { mark() {} },
     ReaderCacheBudget: { noteTextWrite() {} },
     ReaderActionMarker: { hasLegacy() { return false; } }
   });
-  for (const file of ['ReaderImageMarker', 'ReaderImageScheduler', 'ReaderImageResults', 'WebBookService', 'ReadBookEngine']) {
+  for (const file of ['ReaderCacheCoordinator', 'ReaderImageMarker', 'ReaderImageReferences', 'ReaderImageCache', 'ReaderImageScheduler', 'ReaderImageResults', 'WebBookService', 'ReadBookEngine']) {
     vm.runInContext(stripTypeScriptTypes(readEtsModule(`core/book/${file}.ts`)
       .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, ''), { mode: 'strip' }), context);
   }

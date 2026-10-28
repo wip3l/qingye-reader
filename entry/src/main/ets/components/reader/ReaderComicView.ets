@@ -1,3 +1,6 @@
+import { ReaderCacheCoordinator } from '../../core/book/ReaderCacheCoordinator';
+import { ReaderImageCache } from '../../core/book/ReaderImageCache';
+import { ReaderImageRecovery } from '../../core/book/ReaderImageRecovery';
 import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
 import image from '@ohos.multimedia.image';
@@ -215,6 +218,10 @@ export struct ReaderComicImageItem {
   @State private source: string = '';
   /** 渐进加载的图片的原始值，订阅 ReaderImageResults 等结果；不是渐进加载时为空串。 */
   private pendingRaw: string = '';
+  private releaseCacheFile: (() => void) | null = null;
+  private recovering: boolean = false;
+  private releaseColorCache: (() => void) | null = null;
+  private releaseEnhancedCache: (() => void) | null = null;
   private unsubscribePending: (() => void) | null = null;
   /** 已向 ReaderImageResults 登记为屏幕上正等着的图片。 */
   private pendingVisibleMarked: boolean = false;
@@ -243,6 +250,10 @@ export struct ReaderComicImageItem {
     this.unsubscribeColor?.();
     this.unsubscribeColor = null;
     this.mounted = false;
+    this.releaseCacheFile?.();
+    this.releaseCacheFile = null;
+    this.releaseColorCache?.(); this.releaseColorCache = null;
+    this.releaseEnhancedCache?.(); this.releaseEnhancedCache = null;
     this.visible = false;
     this.syncProcessing();
     this.releasePending();
@@ -278,11 +289,12 @@ export struct ReaderComicImageItem {
   private syncColor(): void {
     const uri = this.colorSession?.uri(this.source) || '';
     if (uri && this.colorSession?.moving()) return;
-    if (uri !== this.colorUri) { this.colorUri = uri; this.colorShown = false; this.colorDecoded = false; }
+    if (uri !== this.colorUri) { this.releaseColorCache?.(); this.releaseColorCache = ReaderCacheCoordinator.retainFile(uri); this.colorUri = uri; this.colorShown = false; this.colorDecoded = false; }
     else if (uri && this.colorDecoded) this.colorShown = true;
   }
 
   private resetEnhancement(): void {
+    this.releaseEnhancedCache?.(); this.releaseEnhancedCache = null;
     this.enhancing = false;
     this.syncProcessing();
     this.enhanceTicket++;
@@ -361,7 +373,10 @@ export struct ReaderComicImageItem {
     const active = (): boolean => this.mounted && this.superResolution && ticket === this.enhanceTicket;
     ReaderComicSuperResolution.enhance(source, vp2px(this.displayWidth()), active,
       (): boolean => this.visible).then((uri: string): void => {
-      if (uri && ticket === this.enhanceTicket && this.superResolution) this.enhancedUri = uri;
+      if (uri && ticket === this.enhanceTicket && this.superResolution) {
+        this.releaseEnhancedCache?.(); this.releaseEnhancedCache = ReaderCacheCoordinator.retainFile(uri);
+        this.enhancedUri = uri;
+      }
     }).catch((_: Error): void => {
     }).finally((): void => {
       if (ticket !== this.enhanceTicket) return;
@@ -432,6 +447,9 @@ export struct ReaderComicImageItem {
   }
 
   private applySource(source: string, width: number, height: number): void {
+    this.releaseCacheFile?.();
+    this.releaseCacheFile = ReaderCacheCoordinator.retainFile(source);
+    ReaderImageCache.touch(source);
     this.colorUri = '';
     this.colorShown = false;
     this.source = source;
@@ -463,6 +481,19 @@ export struct ReaderComicImageItem {
     this.broken = false;
     this.loaded = false;
     this.unregisterRetry();
+    const expected = this.source;
+    if (ReaderImageCache.managed(expected) && !ReaderImageCache.exists(expected)) {
+      if (this.recovering) return;
+      this.recovering = true;
+      ReaderImageRecovery.restore(expected).then((path: string): void => {
+        if (!this.mounted || this.source !== expected) return;
+        if (path) this.applySource(path, 0, 0);
+        else this.broken = true;
+        this.loadToken++;
+      }).catch((): void => { if (this.source === expected) this.broken = true; })
+        .finally((): void => { this.recovering = false; });
+      return;
+    }
     this.loadToken++;
   }
 
@@ -617,7 +648,7 @@ export struct ReaderComicImageItem {
             Text(this.denied ? '图片地址已失效，请点右上角刷新本章' :
               (ReaderComicImageSizes.isNetwork(this.source) ? '网络图片加载失败，点击重试' :
                 (ReaderComicImageSizes.isRemote(this.source) ? '内嵌图片数据无法解码，不是支持的图片格式' :
-                  '文件可能已被移动、删除或尚未重新导入')))
+                  '图片缓存缺失，点击重试；仍失败请刷新本章，离线时需联网补全')))
               .fontSize(AppFontSize.CAPTION)
               .fontColor(this.hintColor)
               .opacity(0.8)

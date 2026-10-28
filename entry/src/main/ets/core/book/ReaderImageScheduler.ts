@@ -1,3 +1,4 @@
+import { ReaderCacheCoordinator } from './ReaderCacheCoordinator';
 import { HttpClient } from '@legado/sourceengine';
 
 class ReaderImageTicket {
@@ -133,6 +134,16 @@ export class ReaderImageScheduler {
 export class ReaderImageRequest {
   static readonly DEFAULT: ReaderImageRequest = new ReaderImageRequest();
   priority: () => number = ReaderImageScheduler.foreground;
+  private releases: (() => void)[] = [];
+  private released: boolean = false;
+  hold(path: string): void {
+    if (this !== ReaderImageRequest.DEFAULT && !this.released) this.releases.push(ReaderCacheCoordinator.retainFile(path));
+  }
+  release(): void {
+    this.released = true;
+    for (const release of this.releases) release();
+    this.releases = [];
+  }
   /** 为 true 时正文先带着待加载标记返回，图片交给 ReaderImageResults 在后台逐张处理（阅读页的漫画模式）。 */
   deferred: boolean = false;
   /** 渐进模式下后台图片任务的取消条件。正文请求返回后图片仍要继续，所以与那次请求的取消分开。 */

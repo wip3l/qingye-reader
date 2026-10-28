@@ -1,3 +1,7 @@
+import { ReaderImageRecovery } from './ReaderImageRecovery';
+import { appDb } from '../../model/data/AppDatabase';
+import { ReaderImageCache } from './ReaderImageCache';
+import { ReaderImageReferences } from './ReaderImageReferences';
 import { SourceEngineHost, Book, BookChapter, BookSource, ContentRule, HttpClient, HttpResponse, AnalyzeUrl, AnalyzeRule, RuleContext, VerificationSupport, EncodedSourceUrl, BookUrlResolver, BookFieldSanitizer, AjaxRuleCompat, JavaRegexCompat, JsRuntime, ScriptEngine, ScriptEngineContext, BookSourceRuntimeRouter, SourceRuntimeStage, BookSourceStageWebRuntime, StageWebRuntimeRequest, ReaderActionMarker, CookieStore, RuleExecutionService, RuleBatchExecutionRequest, RuleFieldRequest, CooperativeScheduler, RuleExecutionTarget, RuleValue, BookSourceDebugContext, LogText, NativeSourceService, NetworkErrorText } from '@legado/sourceengine';
 import { util } from '@kit.ArkTS';
 import { BookSourceDataUrlSupport } from './BookSourceDataUrlSupport';
@@ -23,6 +27,22 @@ export class WebBookService {
 
   constructor() {
     this.http = new HttpClient(10000);
+  }
+
+  /** Repair known resources without refetching the chapter; legacy hash-only references fall back in the engine. */
+  async restoreCachedImages(source: BookSource, text: string, cancelled: () => boolean): Promise<string> {
+    text = ReaderImageCache.normalize(text);
+    for (const path of ReaderImageReferences.paths(text)) {
+      if (ReaderImageCache.exists(path)) continue;
+      const row = await appDb.imageResource(path);
+      if (!row?.raw || row.sourceUrl !== source.bookSourceUrl) continue;
+      if (cancelled()) return text;
+      try {
+        const next = await ReaderImageRecovery.restore(path, source);
+        if (ReaderImageCache.exists(next)) text = ReaderImageReferences.replace(text, path, next);
+      } catch (_) { /* One chapter refresh can renew expired URLs; never destroy the old chapter on failure. */ }
+    }
+    return text;
   }
 
   cancelPendingRequests(): void {
@@ -1579,6 +1599,7 @@ export class WebBookService {
         console.warn(`[ReaderImage] 第 ${index + 1} 张图片处理失败: ${message}`);
         result = ReaderImageMarker.failureSource(message);
       }
+      imageRequest.hold(result);
       if (firstDoneMs < 0) firstDoneMs = Date.now() - started;
       if (timing.cacheHit) cacheHits++;
       downloadMs += timing.downloadMs;

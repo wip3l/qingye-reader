@@ -206,7 +206,7 @@ export class ReaderFullTextCacheController {
     }
     this.chapters = [...engine.chapters];
     this.total = targets.length;
-    this.done = ReaderFullTextCacheController.countCachedIn(engine.chapters, targets);
+    this.done = 0;
     this.notifyStateChanged();
 
     if (!this.shouldCancel()) await this.publishProgress(true);
@@ -215,12 +215,13 @@ export class ReaderFullTextCacheController {
       if (taskId !== this.taskId || this.shouldCancel()) break;
       const index = targets[position];
       const chapter = engine.chapters[index];
-      if (!chapter || chapter.cacheDate > 0) continue;
+      if (!chapter) continue;
 
       const ok = await this.cacheChapter(engine, index, taskId);
+      if (engine.lastCacheError) throw new Error(engine.lastCacheError);
       if (taskId !== this.taskId) break;
       if (ok) {
-        this.done = ReaderFullTextCacheController.countCachedIn(engine.chapters, targets);
+        this.done++;
         this.chapters = [...engine.chapters];
         this.notifyStateChanged();
         await this.syncLiveEngine(bookUrl, false);
@@ -238,7 +239,6 @@ export class ReaderFullTextCacheController {
     const canceled = this.shouldCancel();
     await engine.syncChapterCacheDates();
     this.chapters = [...engine.chapters];
-    this.done = ReaderFullTextCacheController.countCachedIn(engine.chapters, targets);
     await this.syncLiveEngine(bookUrl, true);
     this.caching = false;
     const failedCount = Math.max(0, this.total - this.done);
@@ -317,6 +317,7 @@ export class ReaderFullTextCacheController {
           console.warn(`缓存第 ${chapterIndex + 1} 章失败（第 ${attempt + 1} 次）:`, error);
         }
       }
+      if (engine.lastCacheError) return false;
       if (attempt === 0) await sleepMs(300);
     }
     return false;

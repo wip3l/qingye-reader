@@ -53,11 +53,11 @@ try {
     equal(plan.protectedCount, 1, '记下保留数量');
   }
   {
-    // 手动缓存不在 items 里但计入总量：自动缓存删光也降不到目标，不能误删别的东西。
+    // 统计量大于已提供的候选：删光候选也降不到目标，不能误删别的东西。
     const items = [item('auto', 10, 1)];
     const plan = ReaderCacheBudgetPolicy.planTrim(items, 300, 100, never);
-    equal(plan.removeIds, ['auto'], '只删可清理条目，手动缓存超额时自动缓存全部删掉为止');
-    equal(plan.remainingBytes, 290, '剩余量仍包含手动缓存');
+    equal(plan.removeIds, ['auto'], '只删已提供的可清理条目，不扩大候选范围');
+    equal(plan.remainingBytes, 290, '剩余量保留没有删除候选的部分');
   }
   {
     const items = [item('a', 60, 1), item('b', 60, 2)];

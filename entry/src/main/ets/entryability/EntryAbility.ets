@@ -381,6 +381,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onForeground(): void {
+    ReaderCacheBudget.scheduleStartupTrim();
     ComicColorizer.setAppForeground(true);
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onForeground');
     readStatsTracker.setAppForeground(true);
