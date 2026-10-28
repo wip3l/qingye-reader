@@ -165,10 +165,12 @@ context.graphicsText.ParagraphBuilder = class {
     const size = this.style.fontSize;
     const ascent = (/\d/.test(this.label) ? 0.75 : 0.85) * size;
     const descent = 0.15 * size;
+    const width = [...this.label].reduce((total, char) =>
+      total + size * (/\s/.test(char) ? 0.25 : (char === '1' ? 0.4 : 0.6)), 0);
     return {
       layoutSync() {},
       getAlphabeticBaseline: () => ascent,
-      getRectsForRange: () => [{ rect: { left: 0, right: size * this.label.length, top: 0, bottom: ascent + descent } }]
+      getRectsForRange: () => [{ rect: { left: 0, right: width, top: 0, bottom: ascent + descent } }]
     };
   }
 };
@@ -182,10 +184,10 @@ for (const size of [10, 100, 200]) {
   bubbleIdentities.add(snapshot.identity);
   actionDocument.actions[0].label = '123';
   let style = Paginator.styleAt(actionDocument, block, 0, snapshot, []);
-  assert.equal(style.fontSize, input.commentFontSizePx * size / 100);
-  assert.equal(style.letterSpacing, 2 * size / 100);
+  assert.equal(style.fontSize, input.commentFontSizePx * size / 100 * 0.8);
+  assert.equal(style.letterSpacing, 0);
   const bodyCenter = -0.35 * input.fontSizePx;
-  assert(Math.abs(-0.3 * style.fontSize + style.baselineShift + style.fontSize * 1.32 * 0.3 / 2 - bodyCenter) < 1e-9,
+  assert(Math.abs(-0.3 * style.fontSize + style.baselineShift + input.commentFontSizePx * size / 100 * 1.32 * 0.3 / 2 - bodyCenter) < 1e-9,
     'numeric label and full bubble including tail align with body at every bubble size');
   const measured = commentMeasurements;
   Paginator.styleAt(actionDocument, block, 0, snapshot, []);
@@ -199,6 +201,32 @@ for (const size of [10, 100, 200]) {
 }
 assert.equal(bubbleIdentities.size, 3);
 console.log('PASS: bubble controls clamp to 10–200; paragraph labels scale and chapter labels stay unchanged');
+
+// Real padded count labels: the paragraph reserves equal space through its existing side pads, keeping
+// source offsets and selection text unchanged. Use proportional digit advances to catch font assumptions.
+for (const size of [10, 80, 100, 200]) {
+  input.commentBubbleSize = size;
+  const snapshot = Snapshot.create(input);
+  const bodySize = input.commentFontSizePx * size / 100;
+  for (const count of ['0', '1', '9', '11', '88', '99+']) {
+    const label = `\u2060\u00A0\u00A0\u00A0${count}\u00A0`;
+    const action = { displayStart: 0, bubbleStart: 3, displayEnd: label.length, label };
+    const doc = { actions: [action] }, countBlock = { ...block, text: label };
+    const runs = Paginator.buildSelectionRuns(doc, countBlock, snapshot, [], 0, label.length);
+    assert.equal(runs.map(run => run.text).join(''), label);
+    const leading = Paginator.styleAt(doc, countBlock, 3, snapshot, []);
+    const digits = Paginator.styleAt(doc, countBlock, 4, snapshot, []);
+    const trailing = Paginator.styleAt(doc, countBlock, label.length - 1, snapshot, []);
+    assert.equal(leading.letterSpacing, trailing.letterSpacing, 'counts have symmetric padding');
+    assert.equal(digits.letterSpacing, 0, 'digits retain natural spacing');
+    const glyphWidth = [...label.substring(3)].reduce((width, char) =>
+      width + digits.fontSize * (/\s/.test(char) ? 0.25 : (char === '1' ? 0.4 : 0.6)), 0);
+    assert(Math.abs(glyphWidth + leading.letterSpacing + trailing.letterSpacing + bodySize * 0.36 -
+      bodySize * 2.4) < 1e-9, `${count}: fixed bubble width at ${size}%`);
+    assert.equal(runs.length, 4, 'gap, left padding, digits and right padding keep separate native styles');
+  }
+}
+console.log('PASS: 0/1/9/11/88/99+ have equal widths, centred smaller digits and unchanged text offsets');
 vm.runInContext(compile(read('core/reader/ReaderFontStroke.ets')) + '\nglobalThis.stroke = ReaderFontStroke;', context);
 assert.equal(context.stroke.outlineStyle({ baselineShift: -4 }).baselineShift, -4,
   'synthetic bold outline must retain the label baseline shift');

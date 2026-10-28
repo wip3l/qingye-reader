@@ -70,6 +70,7 @@ export class ReaderV2LayoutInput {
 export class ReaderV2LayoutSnapshot {
   /** Font-box centres relative to the baseline, scoped to this layout/font snapshot. */
   commentTextCenters: Map<string, number> = new Map<string, number>();
+  commentTextWidths: Map<string, number> = new Map<string, number>();
   viewport: ReaderV2Rect = new ReaderV2Rect();
   contentRect: ReaderV2Rect = new ReaderV2Rect();
   columnRects: ReaderV2Rect[] = [];

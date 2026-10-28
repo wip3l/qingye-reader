@@ -449,6 +449,13 @@ export class ReaderV2Paginator {
       if (actionEnd <= sliceStart || actionStart >= sliceEnd) continue;
       boundaries.push(Math.max(sliceStart, actionStart));
       boundaries.push(Math.min(sliceEnd, actionEnd));
+      if (ReaderCommentBubbleSize.isCount(action.label)) {
+        // Isolate the existing non-breaking side pads; only these reserve the extra fixed-width space.
+        for (const offset of [action.bubbleStart, action.bubbleStart + 1, action.displayEnd - 1]) {
+          const localOffset = offset - block.displayStart;
+          if (localOffset > sliceStart && localOffset < sliceEnd) boundaries.push(localOffset);
+        }
+      }
     }
     for (const style of regexStyles) {
       const styleStart = style.start - block.displayStart;
@@ -491,14 +498,29 @@ export class ReaderV2Paginator {
       if (absoluteOffset >= action.displayStart && absoluteOffset < action.displayEnd) {
         const bodyCenter = ReaderV2Paginator.commentTextCenter(base, '国', snapshot);
         const scale = ReaderCommentBubbleSize.scale(action.label, snapshot.commentBubbleSize);
-        base.fontSize = snapshot.commentFontSizePx * scale;
-        base.letterSpacing = snapshot.letterSpacingPx * scale;
+        const bubbleFontSize = snapshot.commentFontSizePx * scale;
+        base.fontSize = ReaderCommentBubbleSize.labelFontSize(action.label, bubbleFontSize);
+        base.letterSpacing = ReaderCommentBubbleSize.isCount(action.label) ? 0 : snapshot.letterSpacingPx * scale;
+        let countPadding = 0;
+        if (ReaderCommentBubbleSize.isCount(action.label) && action.bubbleStart > action.displayStart) {
+          const paddedLabel = action.label.substring(action.bubbleStart - action.displayStart);
+          const innerWidth = ReaderCommentBubbleSize.countWidth(bubbleFontSize) - bubbleFontSize * 0.36;
+          let naturalWidth = ReaderV2Paginator.commentTextWidth(base, paddedLabel, snapshot);
+          if (naturalWidth > innerWidth) {
+            base.fontSize *= innerWidth / naturalWidth;
+            naturalWidth = ReaderV2Paginator.commentTextWidth(base, paddedLabel, snapshot);
+          }
+          countPadding = Math.max(0, (innerWidth - naturalWidth) / 2);
+        }
         // Shift the native glyphs themselves: bubble bounds, hit testing and pagination then consume the
         // same adjusted metrics. Centre the complete body + tail silhouette, keeping the label in the body.
         const tailHeight = ReaderCommentBubblePainter.tailHeightFor(
-          ReaderCommentBubblePainter.heightFor(base.fontSize), snapshot.commentBubble);
+          ReaderCommentBubblePainter.heightFor(bubbleFontSize), snapshot.commentBubble);
         base.baselineShift = bodyCenter - ReaderV2Paginator.commentTextCenter(base, action.label, snapshot) -
           tailHeight / 2;
+        if (absoluteOffset === action.bubbleStart || absoluteOffset === action.displayEnd - 1) {
+          base.letterSpacing += countPadding;
+        }
         // The bubble behind the label is painted by the page node, not as a text background.
         base.color = ReaderV2Paginator.graphicsColor(snapshot.commentBubble.text);
         return base;
@@ -766,6 +788,34 @@ export class ReaderV2Paginator {
         Number(style.letterSpacing || 0)));
     }
     return result;
+  }
+
+  /** Measure the padded label in the same face and weight used by the paragraph. */
+  private static commentTextWidth(style: graphicsText.TextStyle, label: string,
+    snapshot: ReaderV2LayoutSnapshot): number {
+    const key = JSON.stringify([style.fontFamilies, style.fontSize, style.fontWeight, style.fontVariations, label]);
+    const cached = snapshot.commentTextWidths.get(key);
+    if (cached !== undefined) return cached;
+    const builder = new graphicsText.ParagraphBuilder({ textStyle: style },
+      graphicsText.FontCollection.getGlobalInstance());
+    builder.pushStyle(style);
+    builder.addText(label);
+    builder.popStyle();
+    const paragraph = builder.build();
+    paragraph.layoutSync(Math.max(1, style.fontSize ?? 1) * Math.max(4, label.length * 2));
+    // Range bounds include both non-breaking pads, even when longest-line metrics trim trailing spaces.
+    const boxes = paragraph.getRectsForRange({ start: 0, end: label.length },
+      graphicsText.RectWidthStyle.TIGHT, graphicsText.RectHeightStyle.TIGHT);
+    let left = Number.POSITIVE_INFINITY;
+    let right = Number.NEGATIVE_INFINITY;
+    for (const box of boxes) {
+      left = Math.min(left, box.rect.left);
+      right = Math.max(right, box.rect.right);
+    }
+    const width = Number.isFinite(left) && Number.isFinite(right) ? Math.max(0, right - left) : 0;
+    if (snapshot.commentTextWidths.size >= 128) snapshot.commentTextWidths.clear();
+    snapshot.commentTextWidths.set(key, width);
+    return width;
   }
 
   /** Measure with the actual face/fallback and weight, without line spacing or an existing baseline shift. */

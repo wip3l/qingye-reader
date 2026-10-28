@@ -14489,11 +14489,14 @@ struct ReadBookPage {
 
   /**
    * Comment / 本章说 bubbles take their shape, colours and ornament from the theme's emphasis-bubble style. Colours
-   * and the corner style a source sets explicitly still win.
+   * and corners from a source apply to decorated themes; the default outline stays consistent across sources.
    */
   readerCommentBubbleStyle(): ReaderCommentBubbleStyle {
     const style = ReaderCommentBubbleStyles.resolve(this.readerCommentBubbleTheme().bubbleStyleId,
       this.isReaderThemeDark(), this.getTextColor());
+    // Compatibility sources often persist a solid fill and white label as their default settings.
+    // Keep the default theme's transparent outline and ink colour as one coherent style.
+    if (style.styleId === 'capsule') return style;
     const sourceTextColor = this.readerSourceColorSetting('段评字体颜色', '');
     const sourceFillColor = this.readerSourceColorSetting('段评填充颜色', '');
     if (sourceTextColor) style.text = ReaderV2Color.parse(sourceTextColor, style.text);

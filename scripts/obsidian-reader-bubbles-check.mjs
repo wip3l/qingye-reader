@@ -44,4 +44,17 @@ assert.notEqual(reader.buildReaderV2RegexStyleTemplate({}).decorationStyleId,'gi
 sandbox.granted=true;
 runtime.applyTheme('classic-blue');
 assert.equal(runtime.regexBubbleStyle(),'classic-glass');
+runtime.applyTheme('plain-default');
+for (const dark of [false, true]) {
+  reader.appDarkMode=dark;store.set('appDarkMode',dark);
+  reader.sourceSettings={};
+  const native=reader.readerCommentBubbleStyle();
+  reader.sourceSettings={'段评填充颜色':'#123456','段评字体颜色':'#FFFFFF','段评样式':'3'};
+  const compatible=reader.readerCommentBubbleStyle();
+  assert.equal(compatible.identity(),native.identity(),'source defaults must not override the default outline');
+  assert.equal(compatible.fill,0);
+  assert.equal(compatible.radiusRatio,0.5);
+  assert.equal(compatible.radiusPx,-1);
+  assert.equal(compatible.text,compatible.stroke);
+}
 console.log('PASS: theme application → reader context → native text/cap style; both modes, comment/chapter painter, source overrides and entitlement fallback.');

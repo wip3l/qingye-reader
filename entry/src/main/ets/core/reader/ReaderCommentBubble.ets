@@ -3,6 +3,7 @@ import common2D from '@ohos.graphics.common2D';
 import graphicsText from '@ohos.graphics.text';
 import image from '@ohos.multimedia.image';
 import { ReaderV2Color } from './ReaderV2Style';
+import { ReaderCommentBubbleSize } from './ReaderCommentBubbleSize';
 
 /**
  * Resolved look of a paragraph-comment / 本章说 bubble: a speech bubble with a tail whose shape, colours and small
@@ -112,8 +113,8 @@ export class ReaderCommentBubbleStyles {
     style.ornamentColor = colors[3];
     style.ornamentAltColor = colors[4];
     if (id === 'capsule') {
-      // Keep the saved style ID, with a rounded rectangle rather than a full pill for default comments.
-      style.radiusRatio = 0.35;
+      // Keep the saved style ID and use full pill corners for default comments.
+      style.radiusRatio = 0.5;
       // Alpha blends the reader's ink with any page colour or image.
       const ink = ReaderV2Color.parse(readerTextColor, dark ? 0xFFE1E1E1 : 0xFF262626);
       const alpha = Math.round(((ink >>> 24) & 0xFF) * (dark ? 0.55 : 0.45));
@@ -177,7 +178,7 @@ export class ReaderCommentBubblePainter {
   static renderLabel(style: ReaderCommentBubbleStyle, label: string, fontSizePx: number): ReaderCommentBubbleImage | null {
     try {
       const textStyle: graphicsText.TextStyle = {
-        fontSize: fontSizePx,
+        fontSize: ReaderCommentBubbleSize.labelFontSize(label, fontSizePx),
         fontWeight: graphicsText.FontWeight.W500,
         color: ReaderCommentBubblePainter.color(style.text),
         locale: 'zh-Hans'
@@ -193,7 +194,8 @@ export class ReaderCommentBubblePainter {
       const textHeight = paragraph.getHeight();
       const h = ReaderCommentBubblePainter.heightFor(fontSizePx);
       const padX = fontSizePx * 0.42;
-      const w = Math.max(h, textWidth + padX * 2);
+      const w = ReaderCommentBubbleSize.isCount(label) ? ReaderCommentBubbleSize.countWidth(fontSizePx) :
+        Math.max(h, textWidth + padX * 2);
       const margin = Math.ceil(h * ReaderCommentBubblePainter.OVERHANG_RATIO);
       const width = Math.ceil(w + margin * 2);
       // ImageSpan centres the whole bitmap: include the tail below the body so previews match the reader.
