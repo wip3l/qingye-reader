@@ -86,6 +86,7 @@ struct SettingsPage {
     ReaderSettingsStore.SCREEN_ORIENTATION_SYSTEM;
   @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
   @StorageLink('readerVolumeTurnPage') readerVolumeTurnPage: boolean = false;
+  @StorageLink('readerLongPressSelectText') readerLongPressSelectText: boolean = true;
   @StorageLink('readerScreenTimeoutMinutes') readerScreenTimeoutMinutes: number =
     ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON;
   @StorageLink('readerExtendToStatusBar') readerExtendToStatusBar: boolean = false;
@@ -271,6 +272,25 @@ struct SettingsPage {
     this.sectionTitle('阅读背景')
     Column() {
       this.readerThemePanel()
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+
+    this.sectionTitle('操作')
+    Column() {
+      SettingSwitchRow({
+        title: '长按选中文字',
+        description: '关闭后长按正文不选中文字，也不弹出操作选项',
+        isOn: this.readerLongPressSelectText,
+        showDivider: false,
+        onChange: (checked: boolean): void => {
+          this.readerLongPressSelectText = checked;
+          this.saveReaderInteractionSettings();
+        }
+      })
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -638,6 +658,7 @@ struct SettingsPage {
     this.readerScreenOrientation = settings.screenOrientation;
     this.readerTapZoneActions = settings.tapZoneActions;
     this.readerVolumeTurnPage = settings.volumeTurnPage;
+    this.readerLongPressSelectText = settings.longPressSelectText;
     this.readerScreenTimeoutMinutes = settings.screenTimeoutMinutes;
     this.readerExtendToStatusBar = settings.extendToStatusBar;
     this.readerHeaderEnabled = settings.readerHeaderEnabled;
@@ -1577,7 +1598,8 @@ struct SettingsPage {
       getContext(this),
       this.readerVolumeTurnPage,
       this.readerScreenTimeoutMinutes,
-      this.readerExtendToStatusBar
+      this.readerExtendToStatusBar,
+      this.readerLongPressSelectText
     ).catch((e: Error) => {
       console.error('保存阅读交互设置失败:', e);
     });
