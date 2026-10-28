@@ -721,6 +721,7 @@ struct ReadBookPage {
     ReaderSettingsStore.SCREEN_ORIENTATION_SYSTEM;
   @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
   @StorageLink('readerVolumeTurnPage') @Watch('onReaderVolumeTurnPageChanged') readerVolumeTurnPage: boolean = false;
+  @StorageLink('readerLongPressSelectText') @Watch('onReaderLongPressSelectTextChanged') readerLongPressSelectText: boolean = true;
   @StorageLink('readerEyeTurnEnabled') readerEyeTurnEnabled: boolean = false;
   @StorageLink('readerEyeTurnPortraitCalibration') readerEyeTurnPortraitCalibration: string = '';
   @StorageLink('readerEyeTurnLandscapeCalibration') readerEyeTurnLandscapeCalibration: string = '';
@@ -7287,6 +7288,7 @@ struct ReadBookPage {
     this.readerScreenOrientation = settings.screenOrientation;
     this.readerTapZoneActions = settings.tapZoneActions;
     this.readerVolumeTurnPage = settings.volumeTurnPage;
+    this.readerLongPressSelectText = settings.longPressSelectText;
     this.readerEyeTurnEnabled = settings.eyeTurnEnabled;
     this.readerEyeTurnPortraitCalibration = settings.eyeTurnPortraitCalibration || '';
     this.readerEyeTurnLandscapeCalibration = settings.eyeTurnLandscapeCalibration || '';
@@ -10434,6 +10436,12 @@ struct ReadBookPage {
           this.setReaderVolumeTurnPage(checked);
         })
 
+      this.readerSwitchSettingItem('长按选中文字', '关闭后长按正文不选中文字，也不弹出操作选项',
+        this.readerLongPressSelectText, (checked: boolean): void => {
+          this.readerLongPressSelectText = checked;
+          this.saveReaderInteractionSettings();
+        })
+
       this.readerSwitchSettingItem('键盘翻页', '外接键盘或翻页器，仅在正文阅读时生效',
         this.readerKeyboardSettings.enabled, (checked: boolean): void => {
           const settings = ReaderKeyboard.normalize(this.readerKeyboardSettings);
@@ -11071,7 +11079,8 @@ struct ReadBookPage {
       getContext(this),
       this.readerVolumeTurnPage,
       this.readerScreenTimeoutMinutes,
-      this.readerExtendToStatusBar
+      this.readerExtendToStatusBar,
+      this.readerLongPressSelectText
     ).catch((e: Error) => {
       console.error('保存阅读交互设置失败:', e);
     });
@@ -11082,6 +11091,13 @@ struct ReadBookPage {
     this.updateVolumeKeySubscription();
     this.saveReaderInteractionSettings();
     this.saveReadConfig();
+  }
+
+  onReaderLongPressSelectTextChanged(): void {
+    if (this.readerLongPressSelectText) return;
+    this.scheduleReaderTextSelectionClear();
+    this.clearReaderV2SelectionOverlay();
+    this.setReaderTextSelectionActive(false);
   }
 
   saveReaderEyeTurnSettings(): void {
@@ -14382,6 +14398,7 @@ struct ReadBookPage {
     this.suppressReaderTapClick = true;
     this.readerTouchActive = false;
     this.readerPanActive = false;
+    if (!this.readerLongPressSelectText) return;
     this.setReaderTextSelectionActive(this.isReaderNovelContinuousScrollModeActive());
     const serial = ++this.readerTextSelectionSerial;
     if (!this.isReaderNovelContinuousScrollModeActive() && this.shouldUseReaderLayoutV2(this.pagedContentText)) {
@@ -15943,7 +15960,7 @@ struct ReadBookPage {
   @Builder
   readerV2NativeSelectionPage(role: string, chapterIndex: number, pageIndex: number, source: string,
     offsetX: number, offsetY: number) {
-    if (chapterIndex === this.readerV2NativeSelectionChapterIndex &&
+    if (this.readerLongPressSelectText && chapterIndex === this.readerV2NativeSelectionChapterIndex &&
       pageIndex === this.readerV2NativeSelectionPageIndex && role === this.readerV2NativeSelectionRole &&
       this.readerV2Page(chapterIndex, pageIndex, source)) {
       if ((this.readerV2Page(chapterIndex, pageIndex, source) as ReaderV2PageLayout).selectionText &&
@@ -16158,6 +16175,7 @@ struct ReadBookPage {
   // under the point, and 2 when a fragment was hit but could not take a selection yet.
   beginReaderV2NativeSelection(page: ReaderV2PageLayout, pageIndex: number, role: string, xPx: number,
     yPx: number, serial: number): number {
+    if (!this.readerLongPressSelectText) return 0;
     let matchedFragment = false;
     const selectionSlop = this.toMeasurePx(8);
     for (let fragmentIndex = 0; fragmentIndex < page.fragments.length; fragmentIndex++) {

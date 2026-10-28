@@ -117,6 +117,28 @@ function openChromePanel(h) {
 }
 
 const tests = {
+  async 'long press selection defaults on and persists through reload, saveAll and legacy profiles'() {
+    const h = harness();
+    assert.equal((await h.settings.load({})).longPressSelectText, true);
+    await h.settings.saveReadingInteractionSettings({}, false, -1, false, false);
+    assert.equal(h.values.get('readerLongPressSelectText'), false);
+    assert.equal((await h.settings.reload({})).longPressSelectText, false);
+    // Other interaction and typography callers omit the new argument.
+    await h.settings.saveReadingInteractionSettings({}, true, 5, true);
+    assert.equal((await h.settings.reload({})).longPressSelectText, false);
+    const saved = await h.settings.load({});
+    await h.settings.saveAll({}, saved);
+    assert.equal((await h.settings.reload({})).longPressSelectText, false);
+    h.values.set('appDarkMode', true);
+    assert.equal((await h.settings.reload({})).longPressSelectText, false);
+    h.disk.set('readerThemeProfileV1_legacy', JSON.stringify({ fontSize: 23 }));
+    h.values.set('appThemeId', 'legacy');
+    assert.equal((await h.settings.switchThemeProfile({}, 'classic-blue', 'legacy')).longPressSelectText, true);
+    h.values.set('appThemeId', 'classic-blue');
+    assert.equal((await h.settings.switchThemeProfile({}, 'legacy', 'classic-blue')).longPressSelectText, false);
+    await h.settings.saveReadingInteractionSettings({}, false, -1, false, true);
+    assert.equal((await h.settings.reload({})).longPressSelectText, true);
+  },
   async 'paragraph bubble size defaults, clamps, persists and remains local across theme switches'() {
     const h = harness();
     assert.equal((await h.settings.reload({})).commentBubbleSize, 80);

@@ -156,3 +156,61 @@ reader.readerSelectionStartX = 795; reader.readerSelectionEndX = 800;
 reader.positionReaderSelectionMenu(800, 600);
 assert.equal(reader.readerSelectionMenuX, 508, 'menu stays within the right edge');
 console.log('Reader scrolling selection: independent chunks, highlights, copy, reversed endpoints and anchored menu passed.');
+
+// Exercise actual selection entry points and cleanup, including a queued layout retry.
+const timers = [];
+const toggleContext = vm.createContext({ Date, Set, setTimeout: callback => timers.push(callback),
+  MenuPolicy: { HIDE: 'hide' } });
+vm.runInContext(stripTypeScriptTypes(`class ReaderSelectionToggle {
+${['selectReaderTextAtPoint', 'beginReaderV2NativeSelection', 'onReaderLongPressSelectTextChanged',
+  'scheduleReaderTextSelectionClear', 'clearReaderV2SelectionOverlay', 'retryReaderTextSelection'].map(method).join('\n')}
+} globalThis.ReaderSelectionToggle = ReaderSelectionToggle;`), toggleContext);
+const toggle = new toggleContext.ReaderSelectionToggle();
+let pagedSelections = 0, scrollSelections = 0, continuous = false, closedMenus = 0;
+Object.assign(toggle, {
+  readerLongPressSelectText: false, readerPageVisible: true, readerTextSelectionSerial: 0,
+  readerV2NativeSelectionHostVersion: 0, readerV2SelectionPaintVersion: 0,
+  readerV2NativeSelectionFragmentIndex: -1, readerV2SelectionDisplayStart: -1,
+  readerV2SelectionDisplayEnd: -1,
+  isReaderNovelContinuousScrollModeActive: () => continuous,
+  shouldUseReaderLayoutV2: () => true, usesReaderContinuousV2: () => continuous,
+  setReaderTextSelectionActive: active => { toggle.readerTextSelectionActive = active; },
+  selectReaderV2TextAtGlobalPoint: () => pagedSelections++,
+  selectReaderContinuousV2TextAtPoint: () => scrollSelections++,
+  readerSelectableTextControllers: new Map([['text', {
+    closeSelectionMenu: () => closedMenus++,
+    setTextSelection: (start, end, options) => {
+      assert.equal(start, -1); assert.equal(end, -1); assert.equal(options.menuPolicy, 'hide');
+    }
+  }]]), readerInlineActionTextControllers: new Map()
+});
+for (const scrollMode of [false, true]) {
+  continuous = scrollMode;
+  toggle.selectReaderTextAtPoint(10, 20);
+  assert.equal(toggle.suppressReaderTapClick, true, 'disabled long press must not fall through to a tap');
+  assert.equal(toggle.readerTextSelectionSerial, 0);
+}
+assert.equal(pagedSelections + scrollSelections, 0);
+assert.equal(toggle.beginReaderV2NativeSelection(null, 0, '', 0, 0, 0), 0,
+  'late selection requests cannot mount a native host while disabled');
+toggle.readerLongPressSelectText = true;
+for (const scrollMode of [false, true]) {
+  continuous = scrollMode;
+  toggle.selectReaderTextAtPoint(10, 20);
+}
+assert.equal(pagedSelections, 1); assert.equal(scrollSelections, 1);
+toggle.readerDesktopSelectionMenuVisible = true;
+toggle.readerV2NativeSelectionFragmentIndex = 0;
+toggle.readerV2SelectionDisplayStart = 0; toggle.readerV2SelectionDisplayEnd = 1;
+let retried = false;
+toggle.retryReaderTextSelection(toggle.readerTextSelectionSerial, 0, () => { retried = true; });
+toggle.readerLongPressSelectText = false;
+toggle.onReaderLongPressSelectTextChanged();
+assert.equal(toggle.readerDesktopSelectionMenuVisible, false);
+assert.equal(toggle.readerV2NativeSelectionFragmentIndex, -1);
+assert.equal(toggle.readerTextSelectionActive, false);
+for (const callback of timers) callback();
+assert.equal(retried, false, 'disabling invalidates queued selection retries');
+assert.equal(closedMenus, 1);
+assert.equal(toggle.readerTextSelectionUntil, 0);
+console.log('Reader long press switch: disabled, re-enabled, paged/scroll modes and pending selection cleanup passed.');
