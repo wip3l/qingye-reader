@@ -11,6 +11,7 @@ export interface ExploreCategoryItem {
 }
 
 interface ExploreCategorySection {
+  key: string;
   title: string;
   items: ExploreCategoryItem[];
 }
@@ -85,7 +86,7 @@ export struct ExploreCategorySheet {
           }
           ForEach(this.sections(), (section: ExploreCategorySection) => {
             this.section(section.title, section.items)
-          }, (section: ExploreCategorySection): string => `${this.keyword}\u0001${section.title}`)
+          }, (section: ExploreCategorySection): string => `${this.keyword}\u0001${section.key}`)
 
           if (this.keyword && this.sections().length === 0) {
             Text('没有匹配的分类')
@@ -217,15 +218,17 @@ export struct ExploreCategorySheet {
       const groupTitle = item.groupTitle.trim();
       let section = result.find((candidate: ExploreCategorySection): boolean => candidate.title === groupTitle);
       if (!section) {
-        section = { title: groupTitle, items: [] };
+        section = { key: groupTitle, title: groupTitle, items: [] };
         result.push(section);
       }
       section.items.push(item);
     }
     const showTitles = result.length > 1 || this.recentVisible();
+    const ungroupedTitle = result.some((section: ExploreCategorySection): boolean => section.key === '其他') ?
+      '其他（未分组）' : '其他';
     return result.map((section: ExploreCategorySection): ExploreCategorySection => {
-      const title = !showTitles ? '' : (section.title || (result.length > 1 ? '其他' : '全部'));
-      const titled: ExploreCategorySection = { title: title, items: section.items };
+      const title = !showTitles ? '' : (section.title || (result.length > 1 ? ungroupedTitle : '全部'));
+      const titled: ExploreCategorySection = { key: section.key, title: title, items: section.items };
       return titled;
     });
   }

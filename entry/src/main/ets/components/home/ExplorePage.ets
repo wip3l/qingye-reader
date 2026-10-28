@@ -41,6 +41,8 @@ export struct ExplorePage {
   static readonly MENU_ITEM_HEIGHT: number = 44;
   /** 分类达到这个数量才在频道栏右端显示“全部分类”按钮，少量分类横滑就能看完。 */
   static readonly CATEGORY_SHEET_MIN_COUNT: number = 6;
+  /** 本地分组键与书源平台参数分开；空分组也有非空、稳定的身份。 */
+  static readonly ENTRY_GROUP_PREFIX: string = 'explore-group:';
   @Prop statusBarHeight: number = 0;
   @Prop navBarHeight: number = 0;
   @Prop @Watch('onActiveChanged') isActive: boolean = false;
@@ -50,6 +52,7 @@ export struct ExplorePage {
   @State exploreSourceGroups: string[] = [];
   @State activeExploreSourceGroup: string = '__all__';
   @State platformNames: string[] = [];
+  @State entryGroupMode: boolean = false;
   @State exploreFilters: ExploreFilterGroup[] = [];
   @State exploreFilterDrafts: ExploreFilterGroup[] = [];
   @State showExploreFilterPanel: boolean = false;
@@ -225,6 +228,7 @@ export struct ExplorePage {
         (this.sourceOptions.length > 0 ? this.sourceOptions[0] : null);
       this.selectedSourceName = restoredOption ? restoredOption.sourceName : '';
       this.selectedSourceUrl = restoredOption ? restoredOption.sourceUrl : '';
+      this.entryGroupMode = false;
       this.platformNames = this.getSelectedSourcePlatforms();
       if (platformOverride && this.platformNames.includes(platformOverride)) {
         this.selectedPlatform = platformOverride;
@@ -244,22 +248,24 @@ export struct ExplorePage {
         activeOption.platforms = dynamicPlatforms;
       } else if (activeOption && activeOption.platforms.length === 0 && inferredGroups.length > 1) {
         activeOption.platforms = inferredGroups;
+        this.entryGroupMode = true;
       }
       this.platformNames = this.getSelectedSourcePlatforms();
+      // 本地分组要等菜单解析后才存在，不能只在请求前处理显式切换。
+      if (platformOverride && this.platformNames.includes(platformOverride)) {
+        this.selectedPlatform = platformOverride;
+      }
       this.normalizeSelectedPlatform();
       if (this.entries.length > 0) {
         // Keep the group that was visible before refresh. Resetting to index 0 made a refresh
         // from (for example) “玄幻” reload the first group and leave the visible group stale.
-        const refreshedActiveEntries = this.getActiveEntries();
-        let restoredIndex = previousEntryKey ? refreshedActiveEntries.findIndex((entry: ExploreEntry): boolean =>
-          `${entry.title}\n${entry.url}` === previousEntryKey) : -1;
-        if (restoredIndex < 0 && !previousEntryKey) {
+        let restoredIndex = previousEntryKey ? this.restoreExploreCategory(previousEntryKey) : -1;
+        if (restoredIndex < 0 && !previousEntryKey && !platformOverride) {
           // 首次进入或刚切换到这个书源：回到上次在该书源停留的分类。
           await ExploreCategoryHistoryStore.load(getContext(this));
           if (!this.isCurrentExploreLoad(loadVersion)) return;
           const lastKey = ExploreCategoryHistoryStore.last(this.selectedSourceUrl);
-          restoredIndex = lastKey ? refreshedActiveEntries.findIndex((entry: ExploreEntry): boolean =>
-            ExploreCategoryHistoryStore.entryKey(entry.title, entry.url) === lastKey) : -1;
+          restoredIndex = lastKey ? this.restoreExploreCategory(lastKey) : -1;
         }
         this.selectedIndex = restoredIndex >= 0 ? restoredIndex : 0;
         if (this.selectedIndex > 0) {
@@ -977,7 +983,7 @@ export struct ExplorePage {
           Row() {
             if (this.showsExplorePlatformSelector()) {
               Row({ space: AppSpacing.XXS }) {
-                Text(this.selectedPlatform || this.platformNames[0])
+                Text(this.explorePlatformLabel(this.selectedPlatform || this.platformNames[0]))
                   .fontSize(AppFontSize.BODY)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(this.primaryTextColor())
@@ -992,7 +998,7 @@ export struct ExplorePage {
               .height('100%')
               .padding({ left: 16, right: 10 })
               .alignItems(VerticalAlign.Center)
-              .accessibilityText(`当前模式${this.selectedPlatform}，切换模式`)
+              .accessibilityText(`当前模式${this.explorePlatformLabel(this.selectedPlatform)}，切换模式`)
               .bindPopup(this.showExplorePlatformMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
                 this.explorePlatformMenuContent()
               }, Placement.BottomLeft, this.appDarkMode, this.accentColor(), () => {
@@ -1241,7 +1247,7 @@ export struct ExplorePage {
     Column({ space: AppSpacing.XXS }) {
       ForEach(this.platformNames, (name: string) => {
         Row() {
-          Text(name)
+          Text(this.explorePlatformLabel(name))
             .fontSize(AppFontSize.BODY_LARGE)
             .fontWeight(this.selectedPlatform === name ? FontWeight.Medium : FontWeight.Regular)
             .fontColor(this.selectedPlatform === name ? this.accentColor() : this.primaryTextColor())
@@ -1498,7 +1504,7 @@ export struct ExplorePage {
     this.selectedPlatform = platform;
     this.selectedIndex = 0;
     this.books = [];
-    this.status = `正在切换到 ${platform}...`;
+    this.status = `正在切换到 ${this.explorePlatformLabel(platform)}...`;
     AppStorage.setOrCreate('explorePlatform', platform);
     this.saveExploreSelection();
     this.loadEntries(platform);
@@ -1511,6 +1517,7 @@ export struct ExplorePage {
     this.selectedSourceName = option.sourceName;
     this.closeExploreFilterPanel();
     this.selectedSourceUrl = option.sourceUrl;
+    this.entryGroupMode = false;
     this.platformNames = this.getSelectedSourcePlatforms();
     this.normalizeSelectedPlatform();
     this.selectedIndex = 0;
@@ -1639,7 +1646,10 @@ export struct ExplorePage {
       return;
     }
     if (!this.platformNames.includes(this.selectedPlatform)) {
-      this.selectedPlatform = this.platformNames.length > 0 ? this.platformNames[0] : '';
+      // 兼容旧版保存的“男频/女频”等原始分组名称。
+      const legacyGroup = this.entryGroupKey(this.selectedPlatform);
+      this.selectedPlatform = this.entryGroupMode && this.platformNames.includes(legacyGroup) ?
+        legacyGroup : this.platformNames[0];
       AppStorage.setOrCreate('explorePlatform', this.selectedPlatform);
       this.saveExploreSelection();
     }
@@ -1782,7 +1792,7 @@ export struct ExplorePage {
   }
 
   getSelectedSiteLabel(): string {
-    return this.platformNames.length > 0 ? this.selectedPlatform : this.selectedSourceName;
+    return this.platformNames.length > 0 ? this.explorePlatformLabel(this.selectedPlatform) : this.selectedSourceName;
   }
 
   openVerification(): void {
@@ -1804,6 +1814,10 @@ export struct ExplorePage {
     const sourceEntries = !this.selectedSourceUrl ? this.entries :
       this.entries.filter(entry => entry.sourceUrl === this.selectedSourceUrl);
     if (!this.selectedPlatform) return sourceEntries;
+    if (this.entryGroupMode) {
+      return sourceEntries.filter((entry: ExploreEntry): boolean =>
+        this.entryGroupKey(entry.groupTitle || '') === this.selectedPlatform);
+    }
     const hasSelectedGroup = sourceEntries.some((entry: ExploreEntry): boolean =>
       (entry.groupTitle || '') === this.selectedPlatform);
     return hasSelectedGroup ? sourceEntries.filter((entry: ExploreEntry): boolean =>
@@ -1852,20 +1866,17 @@ export struct ExplorePage {
    * 面板里点选分类。分类属于另一个已加载的分组（左侧模式）时先切到该分组，分组内容已在内存里，不必重新加载。
    */
   selectExploreCategory(key: string): void {
-    this.showExploreCategorySheet = false;
     const matches = (entry: ExploreEntry): boolean =>
       ExploreCategoryHistoryStore.entryKey(entry.title, entry.url) === key;
     const entry = this.exploreCategoryEntries().find(matches);
-    if (!entry) return;
-    const group = (entry.groupTitle || '').trim();
-    let platformChanged = false;
-    if (group && group !== this.selectedPlatform && this.platformNames.includes(group)) {
-      this.selectedPlatform = group;
-      this.saveExploreSelection();
-      platformChanged = true;
+    const previousPlatform = this.selectedPlatform;
+    const index = entry ? this.restoreExploreCategory(key) : -1;
+    if (index < 0) {
+      HdsFeedback.showToast('分类已更新，请刷新后重试');
+      return;
     }
-    const index = this.getActiveEntries().findIndex(matches);
-    if (index < 0) return;
+    const platformChanged = previousPlatform !== this.selectedPlatform;
+    this.showExploreCategorySheet = false;
     if (!platformChanged && index === this.selectedIndex) {
       ExploreCategoryHistoryStore.record(getContext(this), this.selectedSourceUrl, key);
       return;
@@ -1888,10 +1899,36 @@ export struct ExplorePage {
   getEntryGroupNames(entries: ExploreEntry[]): string[] {
     const names: string[] = [];
     for (const entry of entries) {
-      const name = (entry.groupTitle || '').trim();
-      if (name && !names.includes(name)) names.push(name);
+      const name = this.entryGroupKey(entry.groupTitle || '');
+      if (!names.includes(name)) names.push(name);
     }
     return names;
+  }
+
+  entryGroupKey(title: string): string {
+    return ExplorePage.ENTRY_GROUP_PREFIX + title.trim();
+  }
+
+  explorePlatformLabel(platform: string): string {
+    if (!this.entryGroupMode) return platform;
+    const title = platform.substring(ExplorePage.ENTRY_GROUP_PREFIX.length);
+    if (title) return title;
+    return this.platformNames.includes(this.entryGroupKey('其他')) ? '其他（未分组）' : '其他';
+  }
+
+  /** 从全量菜单恢复分组，再在该分组中定位；点击和重新加载共用此路径。 */
+  restoreExploreCategory(key: string): number {
+    const matches = (entry: ExploreEntry): boolean =>
+      ExploreCategoryHistoryStore.entryKey(entry.title, entry.url) === key;
+    const entry = this.exploreCategoryEntries().find(matches);
+    if (!entry) return -1;
+    const group = this.entryGroupMode ? this.entryGroupKey(entry.groupTitle || '') :
+      (entry.groupTitle || '').trim();
+    if (group && group !== this.selectedPlatform && this.platformNames.includes(group)) {
+      this.selectedPlatform = group;
+      this.saveExploreSelection();
+    }
+    return this.getActiveEntries().findIndex(matches);
   }
 
   usesExploreCategoryPager(): boolean {
