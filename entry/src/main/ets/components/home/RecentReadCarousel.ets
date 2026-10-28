@@ -64,7 +64,7 @@ export struct RecentReadCarousel {
   }
 
   startDrag(): void {
-    if (this.settling) return;
+    if (this.settling || this.books.length <= 1) return;
     this.dragging = true;
     this.dragStartIndex = this.settledPosition;
   }
@@ -139,11 +139,6 @@ export struct RecentReadCarousel {
         .width('100%')
         .gesture(
           GestureGroup(GestureMode.Exclusive,
-            PanGesture({ direction: PanDirection.Horizontal, distance: 12 })
-              .onActionStart(() => this.startDrag())
-              .onActionUpdate((event: GestureEvent) => this.updateDrag(event))
-              .onActionEnd((event: GestureEvent) => this.finishDrag(event))
-              .onActionCancel(() => this.finishDrag()),
             LongPressGesture({ repeat: false }).onAction((event: GestureEvent) => this.handleBookGesture(event, true)),
             TapGesture().onAction((event: GestureEvent) => this.handleBookGesture(event, false))
           )
@@ -172,6 +167,13 @@ export struct RecentReadCarousel {
       }
     }
     .width('100%')
+    // 覆盖卡片、留白和指示点；单本及动画期间也保留手势，避免横滑切换外层分类。
+    .gesture(PanGesture({ direction: PanDirection.Horizontal, distance: 12 })
+      .tag('recentReadCarouselPan')
+      .onActionStart(() => this.startDrag())
+      .onActionUpdate((event: GestureEvent) => this.updateDrag(event))
+      .onActionEnd((event: GestureEvent) => this.finishDrag(event))
+      .onActionCancel(() => this.finishDrag()))
     .onAreaChange((_oldArea: Area, newArea: Area) => {
       const next = Number(newArea.width);
       if (next > 0 && next !== this.viewportWidth) this.viewportWidth = next;

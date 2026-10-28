@@ -29,6 +29,7 @@ export struct CategorySwipePager {
   @Prop @Watch('onPagesChanged') pageKeys: string[] = [];
   @Prop @Watch('onSelectedIndexChanged') selectedIndex: number = 0;
   @Prop swipeEnabled: boolean = true;
+  @Prop swipeExcludedGestureTag: string = '';
   @BuilderParam pageContent: (key: string) => void;
   onSelect: (key: string) => void = (_key: string) => {};
   canSelect: (key: string) => boolean = (_key: string): boolean => true;
@@ -64,6 +65,17 @@ export struct CategorySwipePager {
     this.dataSource.replace(this.pageKeys);
   }
 
+  judgeSwipe(current: GestureRecognizer, others: GestureRecognizer[]): GestureJudgeResult {
+    // 子区域独占横滑；按本次命中的手势链判断，不依赖拖动开始后的异步状态更新。
+    if (this.swipeExcludedGestureTag && current.isBuiltIn() &&
+      current.getType() === GestureControl.GestureType.PAN_GESTURE &&
+      others.some((recognizer: GestureRecognizer): boolean =>
+        recognizer.getTag() === this.swipeExcludedGestureTag)) {
+      return GestureJudgeResult.REJECT;
+    }
+    return GestureJudgeResult.CONTINUE;
+  }
+
   build() {
     Column() {
       Swiper(this.controller) {
@@ -80,6 +92,8 @@ export struct CategorySwipePager {
       .layoutWeight(1)
       .index(this.initialIndex)
       .disableSwipe(!this.swipeEnabled)
+      .onGestureRecognizerJudgeBegin((_event: BaseGestureEvent, current: GestureRecognizer,
+        others: GestureRecognizer[]): GestureJudgeResult => this.judgeSwipe(current, others))
       .loop(false)
       .indicator(false)
       .cachedCount(1)

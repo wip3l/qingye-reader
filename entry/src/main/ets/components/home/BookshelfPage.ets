@@ -1169,6 +1169,7 @@ export struct BookshelfPage {
             pageKeys: this.shelfPageOrder(),
             selectedIndex: Math.max(0, this.shelfPageOrder().indexOf(this.shelfPageKey())),
             swipeEnabled: !this.isBookMultiSelect && !this.isTileGroupPage(),
+            swipeExcludedGestureTag: 'recentReadCarouselPan',
             canSelect: (key: string): boolean => this.canSelectShelfPage(key),
             onSelect: (key: string): void => this.setShelfPage(key),
             onSettled: (): void => {

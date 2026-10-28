@@ -34,6 +34,22 @@ function methods(file, names, folder = 'home') {
 }
 
 const dataSourceCode = read('components/home/CategorySwipePager.ets').split('@Component')[0];
+context.GestureControl = { GestureType: { PAN_GESTURE: 'pan' } };
+context.GestureJudgeResult = { REJECT: 'reject', CONTINUE: 'continue' };
+const gesturePager = methods('CategorySwipePager', ['judgeSwipe']);
+const recognizer = (tag = '', builtIn = false, type = 'pan') => ({
+  getTag: () => tag, isBuiltIn: () => builtIn, getType: () => type
+});
+const carouselTag = 'recentReadCarouselPan';
+gesturePager.swipeExcludedGestureTag = carouselTag;
+assert.equal(gesturePager.judgeSwipe(recognizer('', true), [recognizer(carouselTag)]), 'reject',
+  'a gesture starting in the carousel cannot switch categories, regardless of recognition threshold or carousel boundary');
+assert.equal(gesturePager.judgeSwipe(recognizer('', true), []), 'continue', 'other shelf areas still switch categories');
+assert.equal(gesturePager.judgeSwipe(recognizer('', true), [recognizer('other')]), 'continue');
+assert.equal(gesturePager.judgeSwipe(recognizer(carouselTag), [recognizer(carouselTag)]), 'continue', 'carousel drag remains enabled');
+assert.equal(gesturePager.judgeSwipe(recognizer('', true, 'tap'), [recognizer(carouselTag)]), 'continue', 'non-pan gestures are unaffected');
+gesturePager.swipeExcludedGestureTag = '';
+assert.equal(gesturePager.judgeSwipe(recognizer('', true), [recognizer(carouselTag)]), 'continue', 'other category gesturePager consumers keep default behavior');
 const pages = vm.runInContext(stripTypeScriptTypes(`${dataSourceCode}\nnew CategoryPageDataSource()`), context);
 let reloads = 0;
 pages.registerDataChangeListener({ onDataReloaded: () => reloads++ });
