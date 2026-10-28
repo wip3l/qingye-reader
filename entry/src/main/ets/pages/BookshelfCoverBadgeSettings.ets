@@ -7,10 +7,12 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { syncSystemBars } from '../utils/SystemBars';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 
 @Entry
 @Component
 struct BookshelfCoverBadgeSettingsPage {
+  @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
@@ -200,7 +202,8 @@ struct BookshelfCoverBadgeSettingsPage {
         Text('选择已有内容，会移动到此角')
           .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
         Button() {
-          Text('确定').fontSize(AppFontSize.BODY).fontColor('#FFFFFF')
+          Text('确定').fontSize(AppFontSize.BODY)
+            .fontColor(ThemeRuntime.onAccentColor(ThemeRuntime.buttonColor(this.appDarkMode)))
         }
         .width('100%').height(44).backgroundColor(ThemeRuntime.buttonColor(this.appDarkMode))
         .onClick(() => {
@@ -220,6 +223,18 @@ struct BookshelfCoverBadgeSettingsPage {
     }.width('100%').height('100%')
   }
 
+  pickerSheetOptions(): SheetOptions {
+    // 与书架分组、发现分类面板共用材质参数，随光感档位和明暗主题切换。
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, {
+      height: '75%',
+      dragBar: true,
+      showClose: true,
+      onDisappear: () => {
+        this.showPicker = false;
+      }
+    }, this.appDarkMode, ThemeRuntime.accentColor(this.appDarkMode));
+  }
+
   build() {
     Stack() {
       PageScaffold({
@@ -231,9 +246,6 @@ struct BookshelfCoverBadgeSettingsPage {
     }
       .width('100%').height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-      .bindSheet($$this.showPicker, this.pickerContent(), {
-        height: '75%', dragBar: true, showClose: true,
-        backgroundColor: ThemeRuntime.cardColor(this.appDarkMode)
-      })
+      .bindSheet($$this.showPicker, this.pickerContent(), this.pickerSheetOptions())
   }
 }
