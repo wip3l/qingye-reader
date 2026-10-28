@@ -80,6 +80,7 @@ Object.assign(explore, {
   getUIContext: () => ({ animateTo: (_options, update) => update() }),
   selectedPlatform: '频道', selectedSourceUrl: 'source-a', selectedIndex: 0, isLoading: false,
   books: [{ name: '第一类的书' }], exploreSwipePreviews: new Map(),
+  resultArrivalTracker: { discardPending() {} },
   getActiveEntries() {
     return Array.from({ length: 6 }, (_, index) => ({ sourceUrl: this.selectedSourceUrl, title: `分类${index}`, url: `${index}` }));
   },

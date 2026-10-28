@@ -44,6 +44,7 @@ function makePage({ menu = entries, platforms = [], selected = '女频', filters
     selectedSourceName: 'LRTS', selectedPlatform: selected, selectedIndex: 0,
     entryGroupMode: false, hasRestoredExploreSelection: true,
     activeExploreSourceGroup: '__all__', exploreSwipePreviews: new Map(),
+    resultArrivalTracker: { reset() {} },
     loads: [], requests: [], saves: [],
     beginExploreLoad() { return 1; }, isCurrentExploreLoad: () => true, finishExploreLoad() {},
     rebuildExploreSourceDisplayNames() {}, buildExploreSourceGroups: () => [], refreshExploreSourceDataSource() {},

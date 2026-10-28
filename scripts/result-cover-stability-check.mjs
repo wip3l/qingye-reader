@@ -25,13 +25,15 @@ let reloads = 0;
 dataSource.registerDataChangeListener({ onDataReloaded() { reloads++; } });
 const list = methods(source, ['onBooksChanged', 'onShelfBookKeysChanged', 'resultBook', 'itemKey', 'listItemKey', 'safeText',
   'requestResultCovers', 'publishReadyResults', 'drainCoverQueue']);
+const readyBooks = [];
 Object.assign(list, { dataSource, layoutMode: 'grid', books: [], shelfBookKeys: [],
   coverMounted: false, pendingCovers: new Map(), preparedCovers: new Map(), preparedSignatures: new Map(),
-  resultBooks: new Map(), tagCache: new Map(), readyCoverUrls: new Map() });
+  resultBooks: new Map(), tagCache: new Map(), readyCoverUrls: new Map(), onResultReady(book) { readyBooks.push(book); } });
 const first = { origin: 'source-a', bookUrl: '/book', name: '同名书', author: '',
   aggregationKey: 'title:novel:同名书', aggregationCount: 1 };
 list.books = [first]; list.onBooksChanged();
 const identity = dataSource.getData(0);
+assert.equal(readyBooks.length, 1, 'cover-disabled results still announce their first admission for discovery motion');
 list.readyCoverUrls.set(identity, 'decoded-cover');
 for (const count of [2, 3, 12]) {
   list.books = [{ ...first, author: '补全作者', aggregationCount: count }]; list.onBooksChanged();
@@ -41,6 +43,7 @@ for (const count of [2, 3, 12]) {
   assert.equal(list.resultBook(identity).author, '补全作者');
   assert.equal(list.readyCoverUrls.get(identity), 'decoded-cover');
 }
+assert.equal(readyBooks.length, 1, 'metadata updates do not announce another cover-disabled arrival');
 const second = { origin: 'source-b', bookUrl: '/second', name: '另一本', aggregationCount: 1 };
 list.books = [second, { ...first, aggregationCount: 13 }]; list.onBooksChanged();
 assert.equal(dataSource.getData(1), identity, 'sorting/appending retains the existing identity');

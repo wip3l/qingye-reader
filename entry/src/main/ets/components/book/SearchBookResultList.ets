@@ -193,9 +193,11 @@ export struct SearchBookResultList {
       const signature = ResultCoverPreparation.signature(book, options);
       if (this.preparedSignatures.get(key) === signature) return;
       if (!options.showCover) {
+        const firstAdmission = !this.preparedCovers.has(key);
         this.preparedCovers.set(key, new PreparedResultCover());
         this.preparedSignatures.set(key, signature);
         this.pendingCovers.delete(key);
+        if (firstAdmission) this.onResultReady(book);
       } else {
         this.pendingCovers.set(key, signature);
       }

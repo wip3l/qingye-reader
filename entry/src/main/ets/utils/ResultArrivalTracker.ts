@@ -42,8 +42,10 @@ export class ResultArrivalTracker {
       this.windowStart = now;
       this.windowCount = 0;
     }
-    if (this.windowCount >= 6) return -1;
-    return this.windowCount++ * 25;
+    // 宽屏同批可见项也都渐入；只限制错峰时长，不让第七项起突然出现。
+    const delay = Math.min(this.windowCount, 5) * 20;
+    this.windowCount = Math.min(this.windowCount + 1, 5);
+    return delay;
   }
 
   discardPending(): void {

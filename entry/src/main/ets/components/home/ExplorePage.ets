@@ -10,6 +10,7 @@ import {
 } from '../../core/book/ExploreCoordinator';
 import { CategorySwipePager } from './CategorySwipePager';
 import { SearchBookResultList } from '../../components/book/SearchBookResultList';
+import { ResultArrivalTracker } from '../../utils/ResultArrivalTracker';
 import { ImmersiveMaterialSurface } from '../../components/ImmersiveMaterialSurface';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
@@ -80,6 +81,7 @@ export struct ExplorePage {
   /** 保留最近离开的页面，滑动期间旧页继续显示封面，不跳成加载占位。 */
   @State exploreSwipePreviews: Map<string, SearchBook[]> = new Map();
   private exploreBooksPageKey: string = '';
+  private resultArrivalTracker: ResultArrivalTracker = new ResultArrivalTracker();
   @State shelfBookKeys: string[] = [];
   @State addingShelfBookKeys: string[] = [];
   @State isLoading: boolean = false;
@@ -137,6 +139,7 @@ export struct ExplorePage {
     if (this.isActive) {
       this.ensureLoaded();
     } else {
+      this.resultArrivalTracker.discardPending();
       this.closeExploreFilterPanel();
       this.showExplorePlatformMenu = false;
       if (this.showExploreSourcePicker) {
@@ -188,6 +191,7 @@ export struct ExplorePage {
   }
 
   async loadEntries(platformOverride: string = '', forceRefresh: boolean = false) {
+    this.resultArrivalTracker.reset();
     this.exploreSwipePreviews.clear();
     const loadVersion = this.beginExploreLoad();
     const previousActiveEntries = this.getActiveEntries();
@@ -1112,6 +1116,21 @@ export struct ExplorePage {
       (this.exploreSwipePreviews.get(key) || []);
   }
 
+  exploreResultArrivalKey(pageKey: string, book: SearchBook): string {
+    const category = pageKey || this.exploreBooksPageKey;
+    return JSON.stringify([category, book.origin || '', book.bookUrl || '']);
+  }
+
+  claimExploreResultArrival(pageKey: string, book: SearchBook): number {
+    if (!this.isActive || !this.isCurrentExplorePage(pageKey)) return -1;
+    return this.resultArrivalTracker.claim(this.exploreResultArrivalKey(pageKey, book), Date.now());
+  }
+
+  onExploreResultReady(pageKey: string, book: SearchBook): void {
+    this.resultArrivalTracker.markReady(this.exploreResultArrivalKey(pageKey, book),
+      this.isActive && this.isCurrentExplorePage(pageKey), Date.now());
+  }
+
   @Builder
   exploreResultContent(key: string) {
     if (this.explorePageLoading(key)) {
@@ -1131,6 +1150,8 @@ export struct ExplorePage {
     } else if (this.explorePageBooks(key).length > 0) {
       SearchBookResultList({
         books: this.explorePageBooks(key),
+        claimArrival: (book: SearchBook): number => this.claimExploreResultArrival(key, book),
+        onResultReady: (book: SearchBook): void => this.onExploreResultReady(key, book),
         layoutMode: this.exploreResultLayout,
         gridViewportWidth: this.exploreViewportWidth,
         shelfBookKeys: this.shelfBookKeys,
@@ -1224,6 +1245,7 @@ export struct ExplorePage {
   selectExploreEntry(index: number): void {
     // 跨男频/女频分组时索引可能相同，但内容身份已经变化，仍需加载。
     if (index < 0 || index >= this.getActiveEntries().length) return;
+    this.resultArrivalTracker.discardPending();
     if (!this.isLoading) {
       const previousKey = this.explorePageKeys()[this.selectedIndex];
       if (previousKey && previousKey === this.exploreBooksPageKey) {
