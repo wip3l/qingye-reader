@@ -26,6 +26,7 @@ import { BookshelfDisplaySettingsStore } from '../../utils/BookshelfDisplaySetti
 import { BookshelfStateStore } from '../../utils/BookshelfStateStore';
 import { SearchExplorePendingBook } from '../../utils/SearchExplorePendingBook';
 import { BookshelfSortHelper } from '../../utils/BookshelfSortHelper';
+import { RecentReadCarousel } from './RecentReadCarousel';
 import { SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
 import { AppThemeSettingsStore } from '../../utils/AppThemeSettingsStore';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
@@ -270,9 +271,10 @@ export struct BookshelfPage {
   @StorageLink('bookshelfShowProgressBar') bookshelfShowProgressBar: boolean = false;
   @StorageLink('bookshelfShowLastReadTime') bookshelfShowLastReadTime: boolean = true;
   @StorageLink('bookshelfShowLastReadChapter') bookshelfShowLastReadChapter: boolean = false;
-  @StorageLink('bookshelfLayoutMode') bookshelfLayoutMode: string = 'compact';
+  @StorageLink('bookshelfLayoutMode') bookshelfLayoutMode: string = 'tile';
   @StorageLink('bookshelfLastReadLeafMode') bookshelfLastReadLeafMode: string = 'adaptive';
-  @StorageLink('bookshelfLastReadPinMode') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinMode: string = 'medium';
+  @StorageLink('bookshelfLastReadPinMode') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinMode: string = 'large';
+  @StorageLink('bookshelfLastReadPinCount') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinCount: number = 3;
   @StorageLink('bookshelfBookOpenAnimation') bookshelfBookOpenAnimation: boolean = true;
   @StorageLink('bookshelfCoverAlbums') @Watch('onShelfCoverSettingsChanged') bookshelfCoverAlbums: string = '';
   @StorageLink('bookshelfLightCoverAlbumId') @Watch('onShelfCoverSettingsChanged') bookshelfLightCoverAlbumId: string = '';
@@ -408,6 +410,7 @@ export struct BookshelfPage {
       this.bookshelfLayoutMode = settings.layoutMode;
       this.bookshelfLastReadLeafMode = settings.lastReadLeafMode;
       this.bookshelfLastReadPinMode = settings.lastReadPinMode;
+      this.bookshelfLastReadPinCount = settings.lastReadPinCount;
       this.bookshelfBookOpenAnimation = settings.bookOpenAnimation;
     } catch (e) {
       console.warn('恢复书架显示设置失败:', e);
@@ -1299,7 +1302,8 @@ export struct BookshelfPage {
           .translate({ x: this.shelfScopeTransitionX })
           .scale({ x: this.shelfScopeTransitionScale, y: this.shelfScopeTransitionScale })
           .opacity(this.shelfScopeTransitionOpacity)
-          .priorityGesture(
+          // 子卡片的横滑优先；其余区域仍可横滑切换书架分类。
+          .gesture(
             PanGesture({ direction: PanDirection.Horizontal, distance: 24 })
               .onActionStart(() => {
                 this.markShelfScopePanGesture(500);
@@ -2785,7 +2789,7 @@ export struct BookshelfPage {
     const comfortableGap = 12;
     // Grid 会在顶部占位项与首行之间继续添加 rowsGap，需要从占位高度中抵消。
     return Math.max(0, this.bookshelfTopOverlayHeight() + comfortableGap -
-      gridTopPadding - this.shelfTileRowGap());
+      gridTopPadding - this.shelfTileGridRowGap());
   }
 
   bookshelfListBottomInset(): number {
@@ -2903,21 +2907,13 @@ export struct BookshelfPage {
   }
 
   getLatestReadTileBook(books: Book[] = this.books): Book | null {
-    let latest: Book | null = null;
-    let latestReadTime = 0;
-    books.forEach((book: Book) => {
-      const readTime = this.getBookReadTime(book);
-      if (readTime > latestReadTime) {
-        latest = book;
-        latestReadTime = readTime;
-      }
-    });
-    return latest;
+    return BookshelfSortHelper.getPinnedRecentReadBooks(books, 1)[0] ?? null;
   }
 
   getLatestReadTileBooks(books: Book[] = this.books): Book[] {
-    const latest = this.getLatestReadTileBook(books);
-    return latest ? [latest] : [];
+    const count = this.isLatestTileCardLarge() ?
+      BookshelfDisplaySettingsStore.normalizeLastReadPinCount(this.bookshelfLastReadPinCount) : 1;
+    return BookshelfSortHelper.getPinnedRecentReadBooks(books, count);
   }
 
   shouldShowLatestExpandedTileBook(): boolean {
@@ -2929,7 +2925,7 @@ export struct BookshelfPage {
     return this.bookshelfLastReadPinMode === 'large';
   }
 
-  getTileBooksWithoutLatest(books: Book[], latest: Book | null = this.getLatestReadTileBook(books)): Book[] {
+  getTileBooksWithoutLatest(books: Book[], latest: Book[] = this.getLatestReadTileBooks(books)): Book[] {
     const uniqueBooks: Book[] = [];
     const seenBookUrls = new Set<string>();
     books.forEach((book: Book) => {
@@ -2941,9 +2937,8 @@ export struct BookshelfPage {
     if (!this.shouldShowLatestExpandedTileBook()) {
       return uniqueBooks;
     }
-    const latestBookUrl = (latest?.bookUrl || '').trim();
-    return latestBookUrl ?
-      uniqueBooks.filter((book: Book) => (book.bookUrl || '').trim() !== latestBookUrl) : uniqueBooks;
+    const latestUrls = new Set<string>(latest.map((book: Book): string => book.bookUrl.trim()));
+    return uniqueBooks.filter((book: Book) => !latestUrls.has((book.bookUrl || '').trim()));
   }
 
   getTileFolderGroups(books: Book[] = this.books): BookGroup[] {
@@ -2960,10 +2955,10 @@ export struct BookshelfPage {
     // The expanded recent-read card and the ordinary grid must be derived from the same snapshot.
     // Reading-page return updates allBooks/books in separate reactive assignments; consulting allBooks here used
     // to let the new expanded card coexist with the old ordinary entry for one retained data-source generation.
-    const latestBook = this.getLatestReadTileBook(books);
-    const latestBookUrl = (latestBook?.bookUrl || '').trim();
+    const latestBooks = this.getLatestReadTileBooks(books);
+    const latestBookUrls = latestBooks.map((book: Book): string => book.bookUrl).join('|');
     const cacheKey = `${mode}_${this.shelfViewKey()}_${this.activeShelfGroupId}_${this.isBookMultiSelect ? '1' : '0'}_` +
-      `${this.shouldShowLatestExpandedTileBook() ? latestBookUrl : ''}_` +
+      `${this.shouldShowLatestExpandedTileBook() ? latestBookUrls : ''}_` +
       `${books.map((book: Book) => `${book.bookUrl}:${book.name}:${this.getBookReadTime(book)}:${this.getBookAddTime(book)}:` +
         `${book.group}:${book.isPinned ? '1' : '0'}`).join('|')}_` +
       `${this.shelfGroups.map((group: BookGroup) => `${group.groupId}:${group.groupName}`).join('|')}`;
@@ -2973,7 +2968,7 @@ export struct BookshelfPage {
     const entries: ShelfTileSortEntry[] = [];
     // 置顶书籍在“全部”平铺页作为根级快捷项展示；它仍保留原分组归属，进入分组后也可找到。
     const ungroupedBooks = this.getTileBooksWithoutLatest(books.filter((book: Book) => book.isPinned ||
-      book.group <= 0 || !this.shelfGroups.some((group: BookGroup) => group.groupId === book.group)), latestBook);
+      book.group <= 0 || !this.shelfGroups.some((group: BookGroup) => group.groupId === book.group)), latestBooks);
     ungroupedBooks.forEach((book: Book, index: number) => {
       const entry = new ShelfTileSortEntry();
       entry.kind = 'book';
@@ -3083,6 +3078,13 @@ export struct BookshelfPage {
     return Math.max(24, Math.min(30, this.shelfTileColumnGap() + 8));
   }
 
+  shelfTileGridRowGap(): number {
+    // 轮播卡片在 deck 内上下各留 10vp；圆点行上下对称，下方也只需 10vp。
+    // 普通书籍项补回剩余行距，不改变后续书籍行之间的距离。
+    return this.shouldShowLatestExpandedTileBook() && this.isLatestTileCardLarge() &&
+      this.getLatestReadTileBooks(this.books).length > 1 ? 10 : this.shelfTileRowGap();
+  }
+
   shelfTileExpandedCoverAspectRatio(): number {
     const columnCount = this.shelfTileColumnCount();
     const columnGap = this.shelfTileColumnGap();
@@ -3105,14 +3107,30 @@ export struct BookshelfPage {
 
       if (this.shouldShowLatestExpandedTileBook()) {
         if (this.isLatestTileCardLarge()) {
-          ForEach(this.getLatestReadTileBooks(this.books), (book: Book) => {
+          if (this.getLatestReadTileBooks(this.books).length > 0) {
           GridItem() {
-            this.shelfTileLatestCard(book)
+            RecentReadCarousel({
+              books: this.getLatestReadTileBooks(this.books),
+              cardHeight: Math.max(146, this.shelfTileLatestCardHeight()),
+              accentColor: this.accentColor(),
+              secondaryColor: this.subTextColor(),
+              renderKey: (book: Book): string => this.shelfBookRenderKey(book, `latest_card_${this.shelfViewKey()}`),
+              cardContent: (book: Book) => {
+                this.shelfTileLatestCard(book)
+              },
+              onOpen: (book: Book, event: GestureEvent): void => {
+                if (this.consumeShelfSwipeClick()) return;
+                const finger = event.fingerList.length > 0 ? event.fingerList[0] : undefined;
+                this.openShelfBook(book, finger ? finger.globalX : this.contextViewportWidth / 2,
+                  finger ? finger.globalY : this.contextViewportHeight / 2);
+              },
+              onLongPress: (book: Book, event: GestureEvent): void => this.showBookActions(book, event)
+            })
           }
           // 占满整行：宽屏列数多于三列时，旁边若再排一本书，卡片与封面高度对不齐。
           .columnStart(0)
           .columnEnd(this.shelfTileColumnCount() - 1)
-          }, (book: Book) => this.shelfBookRenderKey(book, `latest_card_${this.shelfViewKey()}`))
+          }
         } else {
           ForEach(this.getLatestReadTileBooks(this.books), (book: Book) => {
           GridItem() {
@@ -3133,6 +3151,7 @@ export struct BookshelfPage {
               this.shelfTileBook(entry.book)
             }
           }
+          .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap() })
         }, (entry: ShelfTileSortEntry) => entry.book ?
           this.shelfBookRenderKey(entry.book, entry.key) : entry.key)
       } else {
@@ -3140,6 +3159,7 @@ export struct BookshelfPage {
           GridItem() {
             this.shelfTileBook(book)
           }
+          .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap() })
         }, (book: Book) => this.shelfBookRenderKey(book, `tile_${this.shelfViewKey()}`))
       }
 
@@ -3155,7 +3175,7 @@ export struct BookshelfPage {
     .height('100%')
     .columnsTemplate(this.shelfTileColumnsTemplate())
     .columnsGap(this.shelfTileColumnGap())
-    .rowsGap(this.shelfTileRowGap())
+    .rowsGap(this.shelfTileGridRowGap())
     .padding({ left: BookTileLayout.SIDE_PADDING, right: BookTileLayout.SIDE_PADDING, top: 10 })
     .backgroundColor(this.pageColor())
     .scrollBar(BarState.Off)
@@ -3297,7 +3317,7 @@ export struct BookshelfPage {
     )
   }
 
-  // “大”样式：占满一整行的继续阅读卡片，左侧书名与进度，右侧封面。
+  // “大”样式的中央卡片；外层轮播统一处理横滑、点击和长按。
   @Builder
   shelfTileLatestCard(book: Book) {
     Row({ space: AppSpacing.LG }) {
@@ -3340,7 +3360,7 @@ export struct BookshelfPage {
       .alignItems(HorizontalAlign.Start)
 
       Stack({ alignContent: Alignment.TopStart }) {
-        this.coverView(book, '100%', '100%', ImageFit.Cover)
+        this.coverView(book, '100%', '100%', ImageFit.Cover, false)
       }
       .height('100%')
       .aspectRatio(0.735)
@@ -3349,31 +3369,13 @@ export struct BookshelfPage {
       .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
     }
     .width('100%')
-    .height(this.shelfTileLatestCardHeight())
+    .height('100%')
     .padding(AppSpacing.XL)
     .backgroundColor(this.glassCardColor())
     .borderRadius(ThemeRuntime.cardRadius())
     .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
     .shadow({ radius: ThemeRuntime.glassShadowRadius(), color: this.glassShadowColor(),
       offsetX: ThemeRuntime.glassShadowOffsetX(), offsetY: ThemeRuntime.glassShadowOffsetY() })
-    .priorityGesture(
-      GestureGroup(GestureMode.Exclusive,
-        LongPressGesture({ repeat: false })
-          .onAction((event: GestureEvent) => {
-            this.showBookActions(book, event);
-          }),
-        TapGesture()
-          .onAction((event: GestureEvent) => {
-            if (this.consumeShelfSwipeClick()) {
-              return;
-            }
-            const finger = event.fingerList.length > 0 ? event.fingerList[0] : undefined;
-            this.openShelfBook(book, finger ? finger.globalX : this.contextViewportWidth / 2,
-              finger ? finger.globalY : this.contextViewportHeight / 2);
-          })
-      ),
-      GestureMask.IgnoreInternal
-    )
   }
 
   shelfTileLatestCardHeight(): number {
@@ -4092,14 +4094,14 @@ export struct BookshelfPage {
   }
 
   @Builder
-  coverView(book: Book, width: Length, height: Length, imageFit: ImageFit) {
+  coverView(book: Book, width: Length, height: Length, imageFit: ImageFit, animateCovers: boolean = true) {
     Stack() {
       if (this.shouldUseThemeBookCover()) {
-        if (this.activeThemeBookCovers(book).length === 1) {
+        if (this.activeThemeBookCovers(book).length === 1 || !animateCovers) {
           Image(this.activeThemeBookCovers(book)[0])
             .width(width)
             .height(height)
-            .objectFit(ImageFit.Fill)
+            .objectFit(animateCovers ? ImageFit.Fill : imageFit)
         } else {
           Swiper() {
             ForEach(this.activeThemeBookCovers(book), (cover: ResourceStr, index: number) => {
@@ -4130,8 +4132,8 @@ export struct BookshelfPage {
         .height(height)
         .backgroundColor(this.getBookColor(book.name))
         .justifyContent(FlexAlign.Center)
-      } else if (this.getShelfCoverList(book).length === 1) {
-        Image(this.imageCover(this.getShelfCover(book)))
+      } else if (this.getShelfCoverList(book).length === 1 || !animateCovers) {
+        Image(this.imageCover(this.getShelfCover(book, animateCovers)))
           .width(width)
           .height(height)
           .objectFit(imageFit)
@@ -4231,9 +4233,9 @@ export struct BookshelfPage {
     return this.sourceCoverRevision >= 0 ? BookCoverCache.displayCover(getContext(this), raw) : raw;
   }
 
-  getShelfCover(book: Book): string {
+  getShelfCover(book: Book, animateCovers: boolean = true): string {
     const covers = this.getShelfCoverList(book);
-    return covers.length > 0 ? BookDisplayHelper.pickCover(covers) : '';
+    return covers.length > 0 ? (animateCovers ? BookDisplayHelper.pickCover(covers) : covers[0]) : '';
   }
 
   getShelfCoverList(book: Book): string[] {

@@ -9,6 +9,25 @@ export class BookshelfSortHelper {
     return BookshelfSortHelper.sortByRecentRead(books).slice(0, Math.max(0, count));
   }
 
+  /** 只从当前可见快照选真实读过的书，未读书不补位；去重在截取之前。 */
+  static getPinnedRecentReadBooks(books: Book[], count: number): Book[] {
+    const sorted = [...books].filter((book: Book) => !!book.bookUrl.trim() &&
+      BookshelfSortHelper.getBookReadTime(book) > 0);
+    sorted.sort((a: Book, b: Book) => BookshelfSortHelper.compareRecentRead(a, b) ||
+      a.bookUrl.localeCompare(b.bookUrl));
+    const seen = new Set<string>();
+    const result: Book[] = [];
+    const limit = Number.isInteger(count) && count >= 1 && count <= 5 ? count : 3;
+    for (const book of sorted) {
+      const key = book.bookUrl.trim();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(book);
+      if (result.length === limit) break;
+    }
+    return result;
+  }
+
   static compareRecentRead(a: Book, b: Book): number {
     const readDiff = BookshelfSortHelper.getBookReadTime(b) - BookshelfSortHelper.getBookReadTime(a);
     if (readDiff !== 0) {
