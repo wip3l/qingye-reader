@@ -105,6 +105,9 @@ export struct ReaderComicPagedView {
   private emulationPainter: ReaderEmulationFlipPainter = new ReaderEmulationFlipPainter();
   private curlFront: image.PixelMap | null = null;
   private curlBack: image.PixelMap | null = null;
+  private curlStationary: image.PixelMap | null = null;
+  private curlDualPage: boolean = false;
+  private curlRegion: number = ReaderEmulationFlipRegion.BOTTOM;
   private captureSerial: number = 0;
   private animationSerial: number = 0;
   private turnAnimator: AnimatorResult | null = null;
@@ -282,13 +285,20 @@ export struct ReaderComicPagedView {
     return `reader_comic_spread_${this.slotKey(spread)}`;
   }
 
-  private clearCurl(): void {
+  private clearCurl(resetGesture: boolean = true): void {
     this.captureSerial++;
     this.captureTask = null;
     this.curlReady = false;
     this.curlDirection = 0;
     const front = this.curlFront;
     const back = this.curlBack;
+    const stationary = this.curlStationary;
+    this.curlStationary = null;
+    this.curlDualPage = false;
+    if (resetGesture) {
+      this.emulationPainter.clearCorner();
+      this.curlRegion = ReaderEmulationFlipRegion.BOTTOM;
+    }
     this.curlFront = null;
     this.curlBack = null;
     if (this.canvasReady) this.curlContext.clearRect(0, 0, this.viewW(), this.viewH());
@@ -296,22 +306,44 @@ export struct ReaderComicPagedView {
     setTimeout((): void => {
       if (front) front.release().catch(() => {});
       if (back) back.release().catch(() => {});
+      if (stationary) stationary.release().catch(() => {});
     }, 48);
   }
 
   private prepareCurl(direction: number): Promise<void> {
     if (!this.usesCurl() || direction === 0) return Promise.resolve();
     if (this.curlDirection === direction && this.captureTask) return this.captureTask;
-    this.clearCurl();
+    this.clearCurl(false);
     this.curlDirection = direction;
     const serial = this.captureSerial;
     this.captureTask = this.captureCurl(direction, serial);
     return this.captureTask;
   }
 
+  private usesDoublePageCurl(direction: number): boolean {
+    if (this.animationType !== ReaderPageTurnAnimation.THREE_D || !this.dualPage ||
+      this.spreadPages(this.spreadIndex).length !== 2) return false;
+    const target = this.spreadIndex + direction;
+    const pages = target >= 0 && target < this.spreadCount() ? this.spreadPages(target) :
+      (this.hasNeighbor(direction) ? this.neighborSpreadPages(direction) : []);
+    // 奇数尾页当前按整屏显示，不能将一张完整漫画截成两张纸。
+    return pages.length === 2;
+  }
+
+  private async cropCurlHalf(bitmap: image.PixelMap, right: boolean): Promise<void> {
+    const info = await bitmap.getImageInfo();
+    const split = Math.floor(info.size.width / 2);
+    if (split < 1) throw new Error('漫画双页快照宽度不足');
+    await bitmap.crop({ x: right ? split : 0, y: 0,
+      size: { width: right ? info.size.width - split : split, height: info.size.height } });
+  }
+
   private async captureCurl(direction: number, serial: number): Promise<void> {
     let front: image.PixelMap | null = null;
     let back: image.PixelMap | null = null;
+    let stationary: image.PixelMap | null = null;
+    const dual = this.usesDoublePageCurl(direction);
+    const physicalDirection = this.rightToLeft ? -direction : direction;
     try {
       // 等待相邻页和 Canvas 完成布局；截取未做位移/透明度变换的内层节点。
       await new Promise<void>((resolve) => setTimeout(resolve, 16));
@@ -321,8 +353,21 @@ export struct ReaderComicPagedView {
       if (serial !== this.captureSerial) return;
       back = await snapshot.get(this.snapshotId(this.spreadIndex + direction));
       if (serial !== this.captureSerial) return;
+      if (dual) {
+        stationary = await front.clone();
+        if (serial !== this.captureSerial) return;
+        await this.cropCurlHalf(stationary, physicalDirection < 0);
+        if (serial !== this.captureSerial) return;
+        await this.cropCurlHalf(front, physicalDirection > 0);
+        if (serial !== this.captureSerial) return;
+        await this.cropCurlHalf(back, physicalDirection < 0);
+        if (serial !== this.captureSerial) return;
+      }
       this.curlFront = front;
       this.curlBack = back;
+      this.curlStationary = stationary;
+      this.curlDualPage = dual;
+      stationary = null;
       front = null;
       back = null;
       this.curlReady = true;
@@ -333,6 +378,7 @@ export struct ReaderComicPagedView {
     } finally {
       if (front) front.release().catch(() => {});
       if (back) back.release().catch(() => {});
+      if (stationary) stationary.release().catch(() => {});
     }
   }
 
@@ -342,8 +388,16 @@ export struct ReaderComicPagedView {
     const direction = this.rightToLeft ? -this.curlDirection : this.curlDirection;
     if (this.animationType === ReaderPageTurnAnimation.THREE_D) {
       this.emulationPainter.draw(this.curlContext, this.curlFront, this.curlBack,
-        this.viewW(), this.viewH(), this.turnProgress(), direction, ReaderEmulationFlipRegion.BOTTOM,
-        false, 0, 0, 1 / this.getUIContext().vp2px(1), this.surfaceColor, this.darkMode);
+        this.viewW(), this.viewH(), this.turnProgress(), direction, this.curlRegion,
+        this.curlDualPage, this.viewW() / 2, this.viewW() / 2, 1 / this.getUIContext().vp2px(1), this.surfaceColor, this.darkMode);
+      if (this.curlDualPage && this.curlStationary) {
+        // 绘制器先清空画布并画折页，再把静止半页放到纸背下面，底层其余部分显示目标页。
+        this.curlContext.save();
+        this.curlContext.globalCompositeOperation = 'destination-over';
+        this.curlContext.drawImage(this.curlStationary, direction > 0 ? 0 : this.viewW() / 2,
+          0, this.viewW() / 2, this.viewH());
+        this.curlContext.restore();
+      }
     } else {
       this.curlPainter.draw(this.curlContext, this.curlFront, this.curlBack,
         this.viewW(), this.viewH(), this.turnProgress(), direction, false, this.darkMode);
@@ -376,10 +430,23 @@ export struct ReaderComicPagedView {
       finish();
       return;
     }
-    const duration = this.usesCurl() ? 320 : 240;
+    let duration = this.usesCurl() ? 320 : 240;
+    let easing = 'ease-out';
+    if (this.animationType === ReaderPageTurnAnimation.THREE_D) {
+      if (target === 0) {
+        duration = Math.max(80, Math.min(180, Math.round(180 * this.turnProgress())));
+        easing = 'cubic-bezier(0.65, 0, 0.35, 1)';
+      } else {
+        const released = this.emulationPainter.flatRemainingFraction(
+          this.curlDualPage ? this.viewW() / 2 : this.viewW(), this.curlDualPage ? this.viewW() / 2 : 0);
+        const fraction = released >= 0 ? released : 1 - this.turnProgress();
+        duration = Math.max(180, Math.round(400 * Math.pow(Math.max(0, fraction), 0.6)));
+        easing = 'cubic-bezier(0.3, 0.4, 0.7, 1)';
+      }
+    }
     try {
       const animator = this.getUIContext().createAnimator({
-        duration: duration, easing: 'ease-out', delay: 0, fill: 'forwards',
+        duration: duration, easing: easing, delay: 0, fill: 'forwards',
         direction: 'normal', iterations: 1, begin: this.dragOffset, end: target
       });
       this.turnAnimator = animator;
@@ -608,12 +675,25 @@ export struct ReaderComicPagedView {
     }
   }
 
-  private handlePanStart(): void {
+  private handlePanStart(event?: GestureEvent): void {
     this.touchDragged = true;
     this.panLastX = 0;
     this.panLastY = 0;
     this.panResync = false;
     this.zoomPanActive = this.zoomed() || this.pinching;
+    if (!this.animating && !this.zoomPanActive && this.animationType === ReaderPageTurnAnimation.THREE_D) {
+      this.emulationPainter.clearCorner();
+      const y = event ? this.tapPoint(event)[1] : this.viewH();
+      this.curlRegion = y < this.viewH() / 3 ? ReaderEmulationFlipRegion.TOP :
+        (y > this.viewH() * 2 / 3 ? ReaderEmulationFlipRegion.BOTTOM : ReaderEmulationFlipRegion.MIDDLE);
+      if (event) this.updateCurlFinger(event);
+    }
+  }
+
+  private updateCurlFinger(event: GestureEvent): void {
+    if (this.animationType !== ReaderPageTurnAnimation.THREE_D || !event.fingerList ||
+      event.fingerList.length === 0) return;
+    this.emulationPainter.dragCorner(event.fingerList[0].localX, event.fingerList[0].localY);
   }
 
   private handlePanUpdate(event: GestureEvent): void {
@@ -624,6 +704,7 @@ export struct ReaderComicPagedView {
       const target = this.spreadIndex + direction;
       const outside = target < 0 || target >= this.spreadCount();
       this.prepareCurl(direction);
+      this.updateCurlFinger(event);
       this.dragOffset = this.clamp(outside && !this.hasChapter(direction) ? event.offsetX * 0.3 : event.offsetX,
         -this.viewW(), this.viewW());
       return;
@@ -646,6 +727,7 @@ export struct ReaderComicPagedView {
     const zoomPan = this.zoomPanActive;
     this.zoomPanActive = false;
     if (zoomPan || this.animating) return;
+    this.emulationPainter.releaseCorner();
     const offset = this.dragOffset;
     const direction = this.dragDirection(offset);
     const flung = Math.abs(event.velocityX) > 500 && Math.sign(event.velocityX) === Math.sign(offset);
@@ -669,7 +751,10 @@ export struct ReaderComicPagedView {
   private handlePanCancel(): void {
     const zoomPan = this.zoomPanActive;
     this.zoomPanActive = false;
-    if (!zoomPan) this.settleBack();
+    if (!zoomPan && !this.animating) {
+      this.emulationPainter.releaseCorner();
+      this.settleBack();
+    }
   }
 
   @Builder
@@ -798,7 +883,7 @@ export struct ReaderComicPagedView {
               .onActionEnd(() => this.handlePinchEnd())
               .onActionCancel(() => this.handlePinchEnd()),
             PanGesture({ direction: PanDirection.All, distance: this.panDistance })
-              .onActionStart(() => this.handlePanStart())
+              .onActionStart((event: GestureEvent) => this.handlePanStart(event))
               .onActionUpdate((event: GestureEvent) => this.handlePanUpdate(event))
               .onActionEnd((event: GestureEvent) => this.handlePanEnd(event))
               .onActionCancel(() => this.handlePanCancel())
@@ -822,7 +907,7 @@ export struct ReaderComicPagedView {
               .onActionEnd(() => this.handlePinchEnd())
               .onActionCancel(() => this.handlePinchEnd()),
             PanGesture({ direction: PanDirection.All, distance: this.panDistance })
-              .onActionStart(() => this.handlePanStart())
+              .onActionStart((event: GestureEvent) => this.handlePanStart(event))
               .onActionUpdate((event: GestureEvent) => this.handlePanUpdate(event))
               .onActionEnd((event: GestureEvent) => this.handlePanEnd(event))
               .onActionCancel(() => this.handlePanCancel())

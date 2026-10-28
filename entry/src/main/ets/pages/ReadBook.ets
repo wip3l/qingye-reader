@@ -195,7 +195,7 @@ const READER_REPLACE_MENU_ITEM_ID: string = 'reader_replace_rule';
 // A 0.42 raster remains sharp while moving on high-density screens and reduces texture fill by another 29%
 // compared with the previous half-resolution capture. This matters most on dialogue-heavy pages.
 const READER_PAGE_CURL_SNAPSHOT_SCALE = 0.42;
-// 3D 仿真每帧只画两三次整页贴图，不像网格卷曲那样反复采样，可以用更高的快照分辨率换取清晰的文字。
+// 3D 仿真单双页共用平折绘制，每帧只画两次贴图，保留较高的快照分辨率让正文清晰。
 const READER_PAGE_3D_SNAPSHOT_SCALE = 0.75;
 const READER_CURL_REGION_UNSET = -1;
 // 一次拖动的意图：越过点击阈值时按方向判定一次，之后不再在翻页与下拉书签之间切换。
@@ -18515,10 +18515,10 @@ struct ReadBookPage {
     return color.length >= 9 && color.toUpperCase().endsWith('00') ? '#FFFFFF' : color;
   }
 
-  // 3D 仿真单页拖动时把手指位置交给绘制器，纸张抓取点跟随手指。手势层与卷曲画布都铺满阅读页，
+  // 3D 仿真单双页拖动时把手指位置交给绘制器，纸张抓取点跟随手指。手势层与卷曲画布都铺满阅读页，
   // 手指的组件内坐标可以直接当作画布坐标。上一页还在自动翻完时不接管，免得半途的折页跳到新手指处。
   updateReaderCurlFinger(event: GestureEvent): void {
-    if (!this.is3DPageTurnAnimation() || this.isLandscapeDoublePageActive() || this.isPageTurning || !event ||
+    if (!this.is3DPageTurnAnimation() || this.isPageTurning || !event ||
       !event.fingerList || event.fingerList.length === 0) {
       return;
     }
@@ -18779,10 +18779,13 @@ struct ReadBookPage {
     const distance = this.getPageTurnDistance();
     const targetOffset = direction > 0 ? -distance : distance;
     const remaining = Math.abs(targetOffset - this.getPageSlideAxisOffset());
-    if (this.is3DPageTurnAnimation() && !this.isLandscapeDoublePageActive()) {
-      // 单页平折：时长按折页还要走的可见行程算，整页约 400ms；曲线接近匀速、收尾略缓，
+    if (this.is3DPageTurnAnimation()) {
+      // 单双页平折：时长按折页还要走的可见行程算，整页约 400ms；曲线接近匀速、收尾略缓，
       // 折线在后半程保持稳定的速度扫出左边缘，而不是先冲过大半程再停住。
-      const releasedFraction = this.readerEmulationFlipPainter.flatRemainingFraction(this.getPageTurnWidth());
+      const doublePage = this.isLandscapeDoublePageActive();
+      const releasedFraction = this.readerEmulationFlipPainter.flatRemainingFraction(
+        doublePage ? this.getReaderPageColumnWidth() : this.getPageTurnWidth(),
+        doublePage ? this.getReaderDoublePageRightOrigin() : 0);
       const fraction = releasedFraction >= 0 ? releasedFraction : remaining / Math.max(1, distance);
       const flatDuration = Math.max(180, Math.round(400 * Math.pow(Math.max(0, fraction), 0.6)));
       await this.animateReaderPageCurlOffset(targetOffset, flatDuration, true, 'cubic-bezier(0.3, 0.4, 0.7, 1)');
