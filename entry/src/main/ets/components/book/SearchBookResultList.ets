@@ -15,6 +15,12 @@ import { PreparedResultCover, ResultCoverOptions, ResultCoverPreparation } from 
 
 export type SearchBookAction = (book: SearchBook) => void;
 
+/** 页面会话保留已准备好的封面 URI，不持有解码位图。 */
+export class ResultCoverCache {
+  covers: Map<string, PreparedResultCover> = new Map();
+  signatures: Map<string, string> = new Map();
+}
+
 class SearchBookResultDataSource implements IDataSource {
   private keys: string[] = [];
   private listeners: DataChangeListener[] = [];
@@ -66,6 +72,9 @@ export struct SearchBookResultList {
   private activeCoverTasks: number = 0;
   private coverGeneration: number = 0;
   private coverMounted: boolean = false;
+  coverCache: ResultCoverCache | null = null;
+  @Prop initialScrollOffset: number = 0;
+  private restoredScroll: boolean = false;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @Prop @Watch('onBooksChanged') books: SearchBook[] = [];
@@ -115,6 +124,10 @@ export struct SearchBookResultList {
 
   aboutToAppear(): void {
     this.coverMounted = true;
+    if (this.coverCache) {
+      this.preparedCovers = new Map(this.coverCache.covers);
+      this.preparedSignatures = new Map(this.coverCache.signatures);
+    }
     this.onBooksChanged();
   }
 
@@ -129,7 +142,7 @@ export struct SearchBookResultList {
     if (this.gridPageActive) this.drainCoverQueue();
     if (this.gridAlignTimer >= 0) clearTimeout(this.gridAlignTimer);
     this.gridAlignTimer = -1;
-    if (!this.userScrollOnly || !this.gridPageActive) return;
+    if (!this.gridPageActive) return;
     // 首次挂载需等 List 绑定 Scroller；重新进入已有分类时保留更深的阅读位置。
     this.gridAlignTimer = setTimeout(() => {
       this.gridAlignTimer = -1;
@@ -138,11 +151,14 @@ export struct SearchBookResultList {
   }
 
   alignGridToHeader(): void {
-    if (!this.userScrollOnly || !this.gridPageActive) return;
+    if (!this.gridPageActive) return;
     const offset = this.scroller.currentOffset().yOffset;
-    if (offset < this.gridHeaderCollapse) {
+    const target = Math.max(this.userScrollOnly ? this.gridHeaderCollapse : 0,
+      this.restoredScroll ? 0 : this.initialScrollOffset);
+    this.restoredScroll = true;
+    if (offset < target) {
       this.gridUserScrolled = false;
-      this.scroller.scrollTo({ xOffset: 0, yOffset: this.gridHeaderCollapse, animation: false });
+      this.scroller.scrollTo({ xOffset: 0, yOffset: target, animation: false });
     }
   }
 
@@ -207,6 +223,10 @@ export struct SearchBookResultList {
   }
 
   publishReadyResults(force: boolean = false): void {
+    if (this.coverCache) {
+      this.coverCache.covers = new Map(this.preparedCovers);
+      this.coverCache.signatures = new Map(this.preparedSignatures);
+    }
     const readyKeys = Array.from(this.resultBooks.keys()).filter((key: string): boolean => this.preparedCovers.has(key));
     this.visibleResultCount = readyKeys.length;
     this.preparingCoverCount = this.pendingCovers.size;

@@ -31,7 +31,7 @@ class RecentShelfHarness {
 ${['isTileLayout', 'isLatestTileCardLarge', 'shouldShowLatestExpandedTileBook', 'getLatestReadTileBook',
   'getLatestReadTileBooks', 'getTileBooksWithoutLatest', 'getSortedTileRootEntries', 'getTileFolderGroups',
   'latestTileGroupReadTime', 'latestTileGroupAddTime', 'compareTileRootEntry', 'getBookReadTime', 'getBookAddTime',
-  'normalizeBookName', 'compareBookName', 'getShelfCover'].map(name => method(shelfSource, name)).join('\n')}
+  'normalizeBookName', 'compareBookName', 'getShelfCover', 'shelfBookViewPrefix'].map(name => method(shelfSource, name)).join('\n')}
   shelfViewKey(): string { return 'normal'; }
 }
 globalThis.api = { Book, Store: BookshelfDisplaySettingsStore, Settings: BookshelfDisplaySettings,

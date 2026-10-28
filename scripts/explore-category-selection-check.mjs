@@ -32,7 +32,7 @@ function methods(code, names) {
 const names = ['loadEntries', 'getActiveEntries', 'exploreCategoryEntries', 'getEntryGroupNames',
   'entryGroupKey', 'explorePlatformLabel', 'normalizeSelectedPlatform', 'restoreExploreCategory',
   'selectExploreCategory', 'getSelectedSourcePlatforms', 'getSelectedSourceUrl', 'getSelectedSourceOption',
-  'currentExploreEntryKey', 'switchExplorePlatform'];
+  'currentExploreEntryKey', 'switchExplorePlatform', 'explorePageKeys'];
 const entry = (title, groupTitle = '') => ({ title, groupTitle, url: `/${title}`, sourceUrl: 'lrts' });
 const entries = [entry('热播周榜'), entry('新书热播'), entry('历史幻想', '男频'),
   entry('古代言情', '女频'), entry('现代言情', '女频')];
@@ -43,13 +43,15 @@ function makePage({ menu = entries, platforms = [], selected = '女频', filters
     entries: [], sourceOptions: [], platformNames: [], selectedSourceUrl: 'lrts',
     selectedSourceName: 'LRTS', selectedPlatform: selected, selectedIndex: 0,
     entryGroupMode: false, hasRestoredExploreSelection: true,
-    activeExploreSourceGroup: '__all__', exploreSwipePreviews: new Map(),
-    resultArrivalTracker: { reset() {} },
+    activeExploreSourceGroup: '__all__', explorePages: new Map(),
+    resultArrivalTracker: { reset() {}, discardPending() {} },
     loads: [], requests: [], saves: [],
     beginExploreLoad() { return 1; }, isCurrentExploreLoad: () => true, finishExploreLoad() {},
     rebuildExploreSourceDisplayNames() {}, buildExploreSourceGroups: () => [], refreshExploreSourceDataSource() {},
     scrollExploreChannelToSelected() {},
     saveExploreSelection() { this.saves.push(this.selectedPlatform); },
+    restoreExplorePage() { return false; },
+    retainCurrentExplorePage() {},
     async loadBooks() { this.loads.push(this.getActiveEntries()[this.selectedIndex]?.title); },
     selectExploreEntry(index) {
       this.selectedIndex = index;

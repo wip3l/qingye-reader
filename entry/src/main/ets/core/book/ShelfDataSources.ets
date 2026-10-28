@@ -26,6 +26,19 @@ export class ShelfTileEntryDataSource implements IDataSource {
     this.entries = [...entries]; for (const listener of this.listeners) listener.onDataReloaded();
   }
 }
+
+/** 各分类各自持有数据源和滚动器，横向翻页时旧页和新页可以同时存在。 */
+export class ShelfCategoryPage {
+  signature: string = '';
+  books: Book[] = [];
+  listSource: ShelfBookDataSource = new ShelfBookDataSource();
+  tileSource: ShelfBookDataSource = new ShelfBookDataSource();
+  entrySource: ShelfTileEntryDataSource = new ShelfTileEntryDataSource();
+  listScroller: ListScroller = new ListScroller();
+  tileScroller: Scroller = new Scroller();
+  listOffset: number = 0;
+  tileOffset: number = 0;
+}
 export class ExploreSourceOptionDataSource implements IDataSource {
   private options: ExploreSourceOption[] = []; private listeners: DataChangeListener[] = [];
   totalCount(): number { return this.options.length; } getData(index: number): ExploreSourceOption { return this.options[index]; }

@@ -27,13 +27,37 @@ class CategoryPageDataSource implements IDataSource {
 @Component
 export struct CategorySwipePager {
   @Prop @Watch('onPagesChanged') pageKeys: string[] = [];
-  @Prop selectedIndex: number = 0;
+  @Prop @Watch('onSelectedIndexChanged') selectedIndex: number = 0;
+  @Prop swipeEnabled: boolean = true;
   @BuilderParam pageContent: (key: string) => void;
   onSelect: (key: string) => void = (_key: string) => {};
+  canSelect: (key: string) => boolean = (_key: string): boolean => true;
+  onSettled: () => void = () => {};
+  onSwipe: () => void = () => {};
   private dataSource: CategoryPageDataSource = new CategoryPageDataSource();
+  private controller: SwiperController = new SwiperController();
+  private initialIndex: number = 0;
+  private nativeIndex: number = 0;
+  private mounted: boolean = false;
 
   aboutToAppear(): void {
+    this.initialIndex = this.selectedIndex;
+    this.nativeIndex = this.selectedIndex;
     this.onPagesChanged();
+  }
+
+  aboutToDisappear(): void { this.mounted = false; }
+
+  onSelectedIndexChanged(): void {
+    if (!this.mounted || this.selectedIndex === this.nativeIndex) return;
+    this.nativeIndex = this.selectedIndex;
+    this.controller.changeIndex(this.selectedIndex, true);
+  }
+
+  selectNativeIndex(index: number): void {
+    if (index < 0 || index >= this.pageKeys.length) return;
+    this.nativeIndex = index;
+    if (index !== this.selectedIndex) this.onSelect(this.pageKeys[index]);
   }
 
   onPagesChanged(): void {
@@ -42,7 +66,7 @@ export struct CategorySwipePager {
 
   build() {
     Column() {
-      Swiper() {
+      Swiper(this.controller) {
         LazyForEach(this.dataSource, (key: string) => {
           Column() {
             this.pageContent(key)
@@ -54,19 +78,25 @@ export struct CategorySwipePager {
       }
       .width('100%')
       .layoutWeight(1)
-      .index(this.selectedIndex)
+      .index(this.initialIndex)
+      .disableSwipe(!this.swipeEnabled)
       .loop(false)
       .indicator(false)
       .cachedCount(1)
       .duration(320)
-      .curve(Curve.EaseOut)
       .effectMode(EdgeEffect.Spring)
       .clip(true)
-      .onChange((index: number) => {
-        if (index >= 0 && index < this.pageKeys.length && index !== this.selectedIndex) {
-          this.onSelect(this.pageKeys[index]);
-        }
+      .onAppear(() => {
+        this.mounted = true;
+        this.onSelectedIndexChanged();
       })
+      .onContentWillScroll((result: SwiperContentWillScrollResult): boolean =>
+        result.comingIndex < 0 || result.comingIndex >= this.pageKeys.length ||
+          this.canSelect(this.pageKeys[result.comingIndex]))
+      .onGestureSwipe(() => this.onSwipe())
+      .onAnimationStart((_index: number, targetIndex: number) => this.selectNativeIndex(targetIndex))
+      .onChange((index: number) => this.selectNativeIndex(index))
+      .onAnimationEnd(() => this.onSettled())
     }
     .width('100%')
     .height('100%')

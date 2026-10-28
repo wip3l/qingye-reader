@@ -9,7 +9,7 @@ import {
   ExploreSourceOption
 } from '../../core/book/ExploreCoordinator';
 import { CategorySwipePager } from './CategorySwipePager';
-import { SearchBookResultList } from '../../components/book/SearchBookResultList';
+import { ResultCoverCache, SearchBookResultList } from '../../components/book/SearchBookResultList';
 import { ResultArrivalTracker } from '../../utils/ResultArrivalTracker';
 import { ImmersiveMaterialSurface } from '../../components/ImmersiveMaterialSurface';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
@@ -30,6 +30,19 @@ import { CoverUrlNormalizer } from '../../utils/CoverUrlNormalizer';
 import { ExploreSourceOptionDataSource, ExploreMetadataTask } from '../../core/book/ShelfDataSources';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
+
+class ExplorePageSnapshot {
+  books: SearchBook[] = [];
+  shelfKeys: string[] = [];
+  pageCount: number = 1;
+  hasMore: boolean = true;
+  updatedAt: number = 0;
+  status: string = '';
+  verificationUrl: string = '';
+  verificationTitle: string = '';
+  scrollOffset: number = 0;
+  covers: ResultCoverCache = new ResultCoverCache();
+}
 
 /** 首页"发现"页签：发现源、筛选条件与结果列表。 */
 @Component
@@ -78,8 +91,8 @@ export struct ExplorePage {
   @State exploreViewportWidth: number = 360;
   @State exploreViewportHeight: number = 720;
   @State books: SearchBook[] = [];
-  /** 保留最近离开的页面，滑动期间旧页继续显示封面，不跳成加载占位。 */
-  @State exploreSwipePreviews: Map<string, SearchBook[]> = new Map();
+  /** 分类会话同时保留结果、分页、封面和滚动位置；切回不重走加载流程。 */
+  @State explorePages: Map<string, ExplorePageSnapshot> = new Map();
   private exploreBooksPageKey: string = '';
   private resultArrivalTracker: ResultArrivalTracker = new ResultArrivalTracker();
   @State shelfBookKeys: string[] = [];
@@ -190,9 +203,11 @@ export struct ExplorePage {
     }
   }
 
-  async loadEntries(platformOverride: string = '', forceRefresh: boolean = false) {
-    this.resultArrivalTracker.reset();
-    this.exploreSwipePreviews.clear();
+  async loadEntries(platformOverride: string = '', forceRefresh: boolean = false, retainPages: boolean = false) {
+    if (!retainPages) {
+      this.resultArrivalTracker.reset();
+      this.explorePages.clear();
+    }
     const loadVersion = this.beginExploreLoad();
     const previousActiveEntries = this.getActiveEntries();
     const previousEntry = previousActiveEntries.length > 0 ?
@@ -275,7 +290,9 @@ export struct ExplorePage {
         if (this.selectedIndex > 0) {
           this.scrollExploreChannelToSelected();
         }
-        await this.loadBooks(loadVersion, forceRefresh);
+        if (forceRefresh || !this.restoreExplorePage(this.explorePageKeys()[this.selectedIndex] || '')) {
+          await this.loadBooks(loadVersion, forceRefresh);
+        }
       } else {
         this.books = [];
         this.status = this.coordinator.getNoticeMessage() ||
@@ -378,6 +395,7 @@ export struct ExplorePage {
         this.status = `${this.getSelectedSiteLabel()} · ${entry.sourceName} · ${entry.title} · ${this.books.length} 本`;
         await this.syncExploreShelfStatus(this.books);
       }
+      if (!this.isCurrentExploreLoad(loadVersion)) return;
       this.exploreContentLoadedAt = Date.now();
       await ExploreResultCache.save(getContext(this), entry.sourceUrl, this.selectedPlatform,
         entry.title, entry.url, this.books, this.explorePage, this.hasMoreExploreBooks);
@@ -387,7 +405,10 @@ export struct ExplorePage {
         this.status = '加载更多发现内容失败，可继续上滑重试';
       }
     } finally {
-      if (this.isCurrentExploreLoad(loadVersion)) this.isLoadingMore = false;
+      if (this.isCurrentExploreLoad(loadVersion)) {
+        this.isLoadingMore = false;
+        this.retainCurrentExplorePage();
+      }
     }
   }
 
@@ -1107,13 +1128,60 @@ export struct ExplorePage {
   }
 
   explorePageLoading(key: string): boolean {
-    return !this.exploreSwipePreviews.has(key) && (!this.isCurrentExplorePage(key) || this.isLoading);
+    return !this.explorePages.has(key) && (!this.isCurrentExplorePage(key) || this.isLoading);
   }
 
   explorePageBooks(key: string): SearchBook[] {
     // 返回最近访问的分类时，保留滑入的预览，直到缓存或网络结果准备好。
     return this.isCurrentExplorePage(key) && !this.isLoading ? this.books :
-      (this.exploreSwipePreviews.get(key) || []);
+      (this.explorePages.get(key)?.books || []);
+  }
+
+  explorePageSnapshot(key: string): ExplorePageSnapshot {
+    const pageKey = key || this.exploreBooksPageKey;
+    let snapshot = this.explorePages.get(pageKey);
+    if (!snapshot) {
+      snapshot = new ExplorePageSnapshot();
+      this.explorePages.set(pageKey, snapshot);
+    }
+    return snapshot;
+  }
+
+  retainCurrentExplorePage(): void {
+    const key = this.explorePageKeys()[this.selectedIndex] || '';
+    if (this.isLoading || !key || key !== this.exploreBooksPageKey) return;
+    const snapshot = this.explorePageSnapshot(key);
+    snapshot.books = this.books;
+    snapshot.shelfKeys = this.shelfBookKeys;
+    snapshot.pageCount = this.explorePage;
+    snapshot.hasMore = this.hasMoreExploreBooks;
+    snapshot.updatedAt = this.exploreContentLoadedAt || Date.now();
+    snapshot.status = this.status;
+    snapshot.verificationUrl = this.verificationUrl;
+    snapshot.verificationTitle = this.verificationTitle;
+    this.explorePages.delete(key);
+    this.explorePages.set(key, snapshot);
+    // 与持久缓存同样保留最多 80 个分类；每页仅保存结果对象和封面 URI。
+    while (this.explorePages.size > 80) this.explorePages.delete(Array.from(this.explorePages.keys())[0]);
+  }
+
+  restoreExplorePage(key: string): boolean {
+    const snapshot = this.explorePages.get(key);
+    if (!snapshot || !ExploreResultCache.isFresh(snapshot.updatedAt)) return false;
+    this.beginExploreLoad(); // 使刚离开分类尚未完成的网络/分页回调失效。
+    this.exploreBooksPageKey = key;
+    this.books = snapshot.books;
+    this.shelfBookKeys = snapshot.shelfKeys;
+    this.explorePage = snapshot.pageCount;
+    this.hasMoreExploreBooks = snapshot.hasMore;
+    this.exploreContentLoadedAt = snapshot.updatedAt;
+    this.status = snapshot.status;
+    this.verificationUrl = snapshot.verificationUrl;
+    this.verificationTitle = snapshot.verificationTitle;
+    this.isLoadingMore = false;
+    this.isLoading = false;
+    this.syncExploreShelfStatus(this.books);
+    return true;
   }
 
   exploreResultArrivalKey(pageKey: string, book: SearchBook): string {
@@ -1150,6 +1218,8 @@ export struct ExplorePage {
     } else if (this.explorePageBooks(key).length > 0) {
       SearchBookResultList({
         books: this.explorePageBooks(key),
+        coverCache: this.explorePageSnapshot(key).covers,
+        initialScrollOffset: this.explorePageSnapshot(key).scrollOffset,
         claimArrival: (book: SearchBook): number => this.claimExploreResultArrival(key, book),
         onResultReady: (book: SearchBook): void => this.onExploreResultReady(key, book),
         layoutMode: this.exploreResultLayout,
@@ -1192,10 +1262,16 @@ export struct ExplorePage {
           if (this.isCurrentExplorePage(key)) this.loadMoreExploreBooks();
         },
         onListScroll: (delta: number, offset: number) => {
-          if (this.isCurrentExplorePage(key)) this.onExploreListScroll(delta, offset);
+          if (this.isCurrentExplorePage(key)) {
+            this.explorePageSnapshot(key).scrollOffset = offset;
+            this.onExploreListScroll(delta, offset);
+          }
         },
         onListScrollStop: (offset: number) => {
-          if (this.isCurrentExplorePage(key)) this.onExploreListScrollStop(offset);
+          if (this.isCurrentExplorePage(key)) {
+            this.explorePageSnapshot(key).scrollOffset = offset;
+            this.onExploreListScrollStop(offset);
+          }
         }
       })
     } else {
@@ -1245,27 +1321,17 @@ export struct ExplorePage {
   selectExploreEntry(index: number): void {
     // 跨男频/女频分组时索引可能相同，但内容身份已经变化，仍需加载。
     if (index < 0 || index >= this.getActiveEntries().length) return;
+    const targetKey = this.explorePageKeys()[index];
+    if (index === this.selectedIndex && targetKey === this.exploreBooksPageKey && !this.isLoading) return;
     this.resultArrivalTracker.discardPending();
-    if (!this.isLoading) {
-      const previousKey = this.explorePageKeys()[this.selectedIndex];
-      if (previousKey && previousKey === this.exploreBooksPageKey) {
-        this.exploreSwipePreviews.delete(previousKey);
-        this.exploreSwipePreviews.set(previousKey, this.books);
-        // 最多保留三个最近访问的分类，避免在大量分类间滑动后占用持续增长。
-        while (this.exploreSwipePreviews.size > 3) {
-          this.exploreSwipePreviews.delete(Array.from(this.exploreSwipePreviews.keys())[0]);
-        }
-      }
-    }
-    this.getUIContext().animateTo({ duration: 320, curve: Curve.EaseOut }, (): void => {
-      this.selectedIndex = index;
-    });
+    this.retainCurrentExplorePage();
+    this.selectedIndex = index;
     const entry = this.getActiveEntries()[index];
     if (entry) {
       ExploreCategoryHistoryStore.record(getContext(this), this.selectedSourceUrl,
         ExploreCategoryHistoryStore.entryKey(entry.title, entry.url));
     }
-    this.loadBooks();
+    if (!this.restoreExplorePage(targetKey)) this.loadBooks();
     try {
       this.exploreChannelScroller.scrollToIndex(index, true, ScrollAlign.CENTER);
     } catch (error) {
@@ -1540,13 +1606,20 @@ export struct ExplorePage {
     if (this.selectedPlatform === platform) {
       return;
     }
+    this.resultArrivalTracker.discardPending();
+    this.retainCurrentExplorePage();
     this.selectedPlatform = platform;
     this.selectedIndex = 0;
     this.books = [];
     this.status = `正在切换到 ${this.explorePlatformLabel(platform)}...`;
     AppStorage.setOrCreate('explorePlatform', platform);
     this.saveExploreSelection();
-    this.loadEntries(platform);
+    if (this.entryGroupMode) {
+      if (!this.restoreExplorePage(this.explorePageKeys()[0] || '')) this.loadBooks();
+      this.scrollExploreChannelToSelected();
+    } else {
+      this.loadEntries(platform, false, true);
+    }
   }
 
   switchExploreSource(option: ExploreSourceOption): void {
@@ -1677,6 +1750,7 @@ export struct ExplorePage {
   finishExploreLoad(loadVersion: number): void {
     if (this.isCurrentExploreLoad(loadVersion)) {
       this.isLoading = false;
+      this.retainCurrentExplorePage();
     }
   }
 
@@ -1737,8 +1811,9 @@ export struct ExplorePage {
   async syncExploreShelfStatus(books: SearchBook[]): Promise<void> {
     try {
       const version = this.shelfStatusVersion;
+      const loadVersion = this.exploreLoadVersion;
       const keys = await this.loadExploreShelfKeys(books);
-      if (version === this.shelfStatusVersion) {
+      if (version === this.shelfStatusVersion && this.isCurrentExploreLoad(loadVersion)) {
         this.shelfBookKeys = keys;
       }
     } catch (e) {
@@ -1908,6 +1983,7 @@ export struct ExplorePage {
     const matches = (entry: ExploreEntry): boolean =>
       ExploreCategoryHistoryStore.entryKey(entry.title, entry.url) === key;
     const entry = this.exploreCategoryEntries().find(matches);
+    if (entry) this.retainCurrentExplorePage();
     const previousPlatform = this.selectedPlatform;
     const index = entry ? this.restoreExploreCategory(key) : -1;
     if (index < 0) {

@@ -1,6 +1,6 @@
 import { BookshelfCoverBadges } from '../BookshelfCoverBadges';
 import { BookshelfCoverBadgeSettings } from '../../utils/BookshelfCoverBadgeSettings';
-import { router } from '@kit.ArkUI';
+import { curves, router } from '@kit.ArkUI';
 import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { notificationManager } from '@kit.NotificationKit';
@@ -27,6 +27,7 @@ import { BookshelfStateStore } from '../../utils/BookshelfStateStore';
 import { SearchExplorePendingBook } from '../../utils/SearchExplorePendingBook';
 import { BookshelfSortHelper } from '../../utils/BookshelfSortHelper';
 import { RecentReadCarousel } from './RecentReadCarousel';
+import { CategorySwipePager } from './CategorySwipePager';
 import { SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
 import { AppThemeSettingsStore } from '../../utils/AppThemeSettingsStore';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
@@ -37,7 +38,7 @@ import { BookChangeSourceDialog } from '../../components/BookChangeSourceDialog'
 import { SystemDialogSession } from '../../utils/SystemDialogSession';
 import { ReaderOpenTrace } from '../../utils/ReaderOpenTrace';
 import { FullTextCacheCancelCoordinator, FullTextCacheCancelSignal } from '../../utils/FullTextCacheCancelCoordinator';
-import { ShelfTileSortEntry, ShelfBookDataSource, ShelfTileEntryDataSource } from '../../core/book/ShelfDataSources';
+import { ShelfCategoryPage, ShelfTileSortEntry, ShelfBookDataSource, ShelfTileEntryDataSource } from '../../core/book/ShelfDataSources';
 import { PrivateShelfStore } from '../../utils/PrivateShelfStore';
 import { RecentReadCardUpdater } from '../../utils/RecentReadCardUpdater';
 import { AppFontSize } from '../../theme/AppFontSize';
@@ -142,10 +143,11 @@ export struct BookshelfPage {
   private shelfTileEntriesSource: ShelfTileEntryDataSource = new ShelfTileEntryDataSource();
   private shelfTileEntriesCacheKey: string = '';
   private shelfTileEntriesCache: ShelfTileSortEntry[] = [];
+  @State shelfCategoryRevision: number = 0;
+  @State privateShelfRevealed: boolean = false;
+  private shelfCategoryPages: Map<string, ShelfCategoryPage> = new Map();
   /** 'all' 为普通书架，'private' 为隐私书架。 */
   @State shelfScope: string = 'all';
-  /** 分类栏上已经点中、书籍列表还在切换动画里的目标页（类型或 'private'）；空串表示跟随当前页。 */
-  @State shelfScopeTabSelection: string = '';
   /** 当前有书的类型，决定分类栏显示哪几项；“全部”总在第一位。 */
   @State shelfTypeTabIds: string[] = ['all'];
   /** 分类栏的实际宽度：沉浸材质底板需要具体数值。 */
@@ -427,6 +429,7 @@ export struct BookshelfPage {
   }
 
   onPrivateShelfEnabledChanged(): void {
+    if (!this.privateShelfEnabled) this.privateShelfRevealed = false;
     if (!this.privateShelfEnabled && this.shelfScope === 'private') {
       this.setShelfPage(this.shelfTypeTab);
     }
@@ -480,6 +483,7 @@ export struct BookshelfPage {
   }
 
   reloadShelfDataSources(force: boolean = false): void {
+    this.shelfCategoryRevision++;
     this.shelfTileEntriesCacheKey = '';
     this.shelfTileEntriesCache = [];
     this.shelfListBooksSource.replace(this.books, force);
@@ -1159,162 +1163,23 @@ export struct BookshelfPage {
           .height('100%')
           .padding({ top: this.bookshelfTopOverlayHeight() })
           .justifyContent(FlexAlign.Center)
-          .translate({ x: this.shelfScopeTransitionX })
-          .scale({ x: this.shelfScopeTransitionScale, y: this.shelfScopeTransitionScale })
-          .opacity(this.shelfScopeTransitionOpacity)
-          .priorityGesture(
-            PanGesture({ direction: PanDirection.Horizontal, distance: 24 })
-              .onActionStart(() => {
-                this.markShelfScopePanGesture(500);
-              })
-              .onActionUpdate(() => {
-                this.markShelfScopePanGesture(240);
-              })
-              .onActionEnd((event: GestureEvent) => {
-                this.switchShelfScopeBySwipe(event.offsetX);
-              })
-          )
-        } else if (this.books.length === 0) {
-          Column() {
-            SymbolGlyph($r('sys.symbol.bookshelf'))
-              .fontSize(56)
-              .fontColor([this.subTextColor()])
-              .opacity(0.5)
-              .margin({ bottom: AppSpacing.XL })
-            Text('暂无书籍')
-              .fontSize(AppFontSize.BODY_LARGE)
-              .fontColor(this.subTextColor())
-            Text(this.shelfScopeEmptyHint())
-              .fontSize(AppFontSize.BODY)
-              .fontColor(this.subTextColor())
-              .margin({ top: AppSpacing.MD })
-          }
-          .width('100%')
-          .height('100%')
-          .padding({ top: this.bookshelfTopOverlayHeight() })
-          .justifyContent(FlexAlign.Center)
-          .translate({ x: this.shelfScopeTransitionX })
-          .scale({ x: this.shelfScopeTransitionScale, y: this.shelfScopeTransitionScale })
-          .opacity(this.shelfScopeTransitionOpacity)
-          .priorityGesture(
-            PanGesture({ direction: PanDirection.Horizontal, distance: 24 })
-              .onActionStart(() => {
-                this.markShelfScopePanGesture(500);
-              })
-              .onActionUpdate(() => {
-                this.markShelfScopePanGesture(240);
-              })
-              .onActionEnd((event: GestureEvent) => {
-                this.switchShelfScopeBySwipe(event.offsetX);
-              })
-          )
+
         } else {
-          Refresh({ refreshing: $$this.isShelfRefreshing, builder: this.shelfRefreshBuilder }) {
-            if (this.isTileLayout()) {
-              this.shelfTileGrid()
-            } else {
-              List({ scroller: this.shelfListScroller, space: AppSpacing.MD }) {
-              ListItem() {
-                Row()
-                  .height(this.bookshelfTopOverlayHeight())
-              }
-
-              LazyForEach(this.shelfListBookDataSource(), (book: Book) => {
-                ListItem() {
-                  Row() {
-                    if (this.isBookMultiSelect) {
-                      Toggle({ type: ToggleType.Checkbox, isOn: this.isBookSelected(book.bookUrl) })
-                        .selectedColor(this.buttonColor())
-                        .margin({ right: AppSpacing.LG })
-                        .onChange((isOn: boolean) => {
-                          this.setBookSelected(book.bookUrl, isOn);
-                        })
-                    }
-                    Column() {
-                      if (this.isCompactLayout()) {
-                        this.compactBookContent(book)
-                      } else {
-                        this.looseBookContent(book)
-                      }
-                    }
-                    .layoutWeight(1)
-                    .alignItems(HorizontalAlign.Start)
-                    .backgroundColor(this.glassCardColor())
-                    .borderRadius(ThemeRuntime.mediumRadius())
-                    .clip(true)
-                    .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
-                    .shadow({ radius: ThemeRuntime.glassShadowRadius(), color: this.glassShadowColor(), offsetX: ThemeRuntime.glassShadowOffsetX(), offsetY: ThemeRuntime.glassShadowOffsetY() })
-                    .gesture(
-                      LongPressGesture({ repeat: false })
-                        .onAction((event: GestureEvent) => {
-                          if (!this.isBookMultiSelect) {
-                            this.showBookActions(book, event);
-                          }
-                        })
-                    )
-                    .onClick((event: ClickEvent) => {
-                      if (this.consumeShelfSwipeClick()) {
-                        return;
-                      }
-                      if (this.isBookMultiSelect) {
-                        this.toggleSelectedBook(book.bookUrl);
-                        return;
-                      }
-                      this.openShelfBook(book, event.windowX, event.windowY);
-                    })
-                  }
-                  .width('100%')
-                  .alignItems(VerticalAlign.Center)
-                }
-              }, (book: Book) => this.shelfBookRenderKey(book, `list_${this.shelfViewKey()}`))
-
-              ListItem() {
-                Column()
-                  .height(this.bookshelfListBottomInset())
-              }
-            }
-            .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-            .width('100%')
-            .height('100%')
-            .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-            .backgroundColor(this.pageColor())
-            .onDidScroll((delta: number) => {
-              this.onShelfListScroll(delta, this.shelfListScroller.currentOffset().yOffset);
-            })
-            .onScrollStop(() => {
-              this.onShelfListScrollStop(this.shelfListScroller.currentOffset().yOffset);
-            })
-              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-            }
-          }
-          .layoutWeight(1)
-          .backgroundColor(this.pageColor())
-          .refreshOffset(64)
-          .onStateChange((state: RefreshStatus) => {
-            this.updateShelfRefreshPrompt(state);
-          })
-          .onOffsetChange((offset: number) => {
-            this.trackShelfRefreshPullOffset(offset);
-          })
-          .onRefreshing(() => {
-            this.refreshBookshelfToc();
+          CategorySwipePager({
+            pageKeys: this.shelfPageOrder(),
+            selectedIndex: Math.max(0, this.shelfPageOrder().indexOf(this.shelfPageKey())),
+            swipeEnabled: !this.isBookMultiSelect && !this.isTileGroupPage(),
+            canSelect: (key: string): boolean => this.canSelectShelfPage(key),
+            onSelect: (key: string): void => this.setShelfPage(key),
+            onSettled: (): void => {
+              if (this.shelfScope !== 'private') this.privateShelfRevealed = false;
+            },
+            onSwipe: (): void => this.markShelfScopePanGesture(240),
+            pageContent: (key: string) => { this.shelfCategoryContent(key); }
           })
           .translate({ x: this.shelfScopeTransitionX })
           .scale({ x: this.shelfScopeTransitionScale, y: this.shelfScopeTransitionScale })
           .opacity(this.shelfScopeTransitionOpacity)
-          // 子卡片的横滑优先；其余区域仍可横滑切换书架分类。
-          .gesture(
-            PanGesture({ direction: PanDirection.Horizontal, distance: 24 })
-              .onActionStart(() => {
-                this.markShelfScopePanGesture(500);
-              })
-              .onActionUpdate(() => {
-                this.markShelfScopePanGesture(240);
-              })
-              .onActionEnd((event: GestureEvent) => {
-                this.switchShelfScopeBySwipe(event.offsetX);
-              })
-          )
         }
       }
       .width('100%')
@@ -1391,6 +1256,126 @@ export struct BookshelfPage {
   }
 
   /** 标题即分组切换：显示当前分组名，点开下拉选分组，旁边是当前视图的本数。 */
+  @Builder
+  shelfCategoryContent(pageKey: string) {
+    if (this.shelfBooksForPage(pageKey).length === 0) {
+          Column() {
+            SymbolGlyph($r('sys.symbol.bookshelf'))
+              .fontSize(56)
+              .fontColor([this.subTextColor()])
+              .opacity(0.5)
+              .margin({ bottom: AppSpacing.XL })
+            Text('暂无书籍')
+              .fontSize(AppFontSize.BODY_LARGE)
+              .fontColor(this.subTextColor())
+            Text(this.shelfScopeEmptyHint(pageKey))
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.subTextColor())
+              .margin({ top: AppSpacing.MD })
+          }
+          .width('100%')
+          .height('100%')
+          .padding({ top: this.bookshelfTopOverlayHeight() })
+          .justifyContent(FlexAlign.Center)
+        } else {
+          Refresh({ refreshing: $$this.isShelfRefreshing, builder: this.shelfRefreshBuilder }) {
+            if (this.isTileLayout()) {
+              this.shelfTileGrid(pageKey)
+            } else {
+              List({ scroller: this.shelfListScrollerForPage(pageKey), space: AppSpacing.MD }) {
+              ListItem() {
+                Row()
+                  .height(this.bookshelfTopOverlayHeight())
+              }
+
+              LazyForEach(this.shelfListBookDataSource(pageKey), (book: Book) => {
+                ListItem() {
+                  Row() {
+                    if (this.isBookMultiSelect) {
+                      Toggle({ type: ToggleType.Checkbox, isOn: this.isBookSelected(book.bookUrl) })
+                        .selectedColor(this.buttonColor())
+                        .margin({ right: AppSpacing.LG })
+                        .onChange((isOn: boolean) => {
+                          this.setBookSelected(book.bookUrl, isOn);
+                        })
+                    }
+                    Column() {
+                      if (this.isCompactLayout()) {
+                        this.compactBookContent(book)
+                      } else {
+                        this.looseBookContent(book)
+                      }
+                    }
+                    .layoutWeight(1)
+                    .alignItems(HorizontalAlign.Start)
+                    .backgroundColor(this.glassCardColor())
+                    .borderRadius(ThemeRuntime.mediumRadius())
+                    .clip(true)
+                    .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
+                    .shadow({ radius: ThemeRuntime.glassShadowRadius(), color: this.glassShadowColor(), offsetX: ThemeRuntime.glassShadowOffsetX(), offsetY: ThemeRuntime.glassShadowOffsetY() })
+                    .gesture(
+                      LongPressGesture({ repeat: false })
+                        .onAction((event: GestureEvent) => {
+                          if (!this.isBookMultiSelect) {
+                            this.showBookActions(book, event);
+                          }
+                        })
+                    )
+                    .onClick((event: ClickEvent) => {
+                      if (this.consumeShelfSwipeClick()) {
+                        return;
+                      }
+                      if (this.isBookMultiSelect) {
+                        this.toggleSelectedBook(book.bookUrl);
+                        return;
+                      }
+                      this.openShelfBook(book, event.windowX, event.windowY);
+                    })
+                  }
+                  .width('100%')
+                  .alignItems(VerticalAlign.Center)
+                }
+              }, (book: Book) => this.shelfBookRenderKey(book, `list_${pageKey}`))
+
+              ListItem() {
+                Column()
+                  .height(this.bookshelfListBottomInset())
+              }
+            }
+            .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+            .width('100%')
+            .height('100%')
+            .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+            .backgroundColor(this.pageColor())
+            .onAppear(() => this.restoreShelfPageScroll(pageKey, false))
+            .onDidScroll((delta: number) => {
+              if (pageKey === this.shelfPageKey()) {
+                const page = this.shelfCategoryPage(pageKey);
+                page.listOffset = page.listScroller.currentOffset().yOffset;
+                this.onShelfListScroll(delta, page.listOffset);
+              }
+            })
+            .onScrollStop(() => {
+              if (pageKey === this.shelfPageKey()) this.onShelfListScrollStop(this.shelfListScrollerForPage(pageKey).currentOffset().yOffset);
+            })
+              .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+            }
+          }
+          .layoutWeight(1)
+          .backgroundColor(this.pageColor())
+          .refreshOffset(64)
+          .onStateChange((state: RefreshStatus) => {
+            if (pageKey === this.shelfPageKey()) this.updateShelfRefreshPrompt(state);
+          })
+          .onOffsetChange((offset: number) => {
+            if (pageKey === this.shelfPageKey()) this.trackShelfRefreshPullOffset(offset);
+          })
+          .onRefreshing(() => {
+            if (pageKey === this.shelfPageKey()) this.refreshBookshelfToc();
+          })
+        }
+  }
+
   @Builder
   shelfGroupSwitcher() {
     Row({ space: AppSpacing.XS }) {
@@ -2784,12 +2769,12 @@ export struct BookshelfPage {
       (this.shelfSearchActive ? BookshelfPage.SEARCH_BAR_HEIGHT : 0);
   }
 
-  bookshelfTileTopSpacerHeight(): number {
+  bookshelfTileTopSpacerHeight(books: Book[] = this.books): number {
     const gridTopPadding = 10;
     const comfortableGap = 12;
     // Grid 会在顶部占位项与首行之间继续添加 rowsGap，需要从占位高度中抵消。
     return Math.max(0, this.bookshelfTopOverlayHeight() + comfortableGap -
-      gridTopPadding - this.shelfTileGridRowGap());
+      gridTopPadding - this.shelfTileGridRowGap(books));
   }
 
   bookshelfListBottomInset(): number {
@@ -2951,13 +2936,14 @@ export struct BookshelfPage {
     return this.shelfGroups.filter((group: BookGroup) => visibleGroupIds.has(group.groupId));
   }
 
-  getSortedTileRootEntries(books: Book[] = this.books, mode: string = this.sortMode): ShelfTileSortEntry[] {
+  getSortedTileRootEntries(books: Book[] = this.books, mode: string = this.sortMode,
+    viewKey: string = this.shelfViewKey()): ShelfTileSortEntry[] {
     // The expanded recent-read card and the ordinary grid must be derived from the same snapshot.
     // Reading-page return updates allBooks/books in separate reactive assignments; consulting allBooks here used
     // to let the new expanded card coexist with the old ordinary entry for one retained data-source generation.
     const latestBooks = this.getLatestReadTileBooks(books);
     const latestBookUrls = latestBooks.map((book: Book): string => book.bookUrl).join('|');
-    const cacheKey = `${mode}_${this.shelfViewKey()}_${this.activeShelfGroupId}_${this.isBookMultiSelect ? '1' : '0'}_` +
+    const cacheKey = `${mode}_${viewKey}_${this.activeShelfGroupId}_${this.isBookMultiSelect ? '1' : '0'}_` +
       `${this.shouldShowLatestExpandedTileBook() ? latestBookUrls : ''}_` +
       `${books.map((book: Book) => `${book.bookUrl}:${book.name}:${this.getBookReadTime(book)}:${this.getBookAddTime(book)}:` +
         `${book.group}:${book.isPinned ? '1' : '0'}`).join('|')}_` +
@@ -2972,7 +2958,7 @@ export struct BookshelfPage {
     ungroupedBooks.forEach((book: Book, index: number) => {
       const entry = new ShelfTileSortEntry();
       entry.kind = 'book';
-      entry.key = `book_${this.shelfViewKey()}_${book.bookUrl}`;
+      entry.key = `book_${viewKey}_${book.bookUrl}`;
       entry.book = book;
       entry.readTime = this.getBookReadTime(book);
       entry.addTime = this.getBookAddTime(book);
@@ -2987,7 +2973,7 @@ export struct BookshelfPage {
       const groupBooks = books.filter((book: Book) => book.group === group.groupId);
       const entry = new ShelfTileSortEntry();
       entry.kind = 'group';
-      entry.key = `group_${this.shelfViewKey()}_${group.groupId}`;
+      entry.key = `group_${viewKey}_${group.groupId}`;
       entry.group = group;
       entry.readTime = this.latestTileGroupReadTime(groupBooks);
       entry.addTime = this.latestTileGroupAddTime(groupBooks);
@@ -3002,19 +2988,16 @@ export struct BookshelfPage {
     return entries;
   }
 
-  shelfListBookDataSource(): ShelfBookDataSource {
-    this.shelfListBooksSource.replace(this.books);
-    return this.shelfListBooksSource;
+  shelfListBookDataSource(pageKey: string = this.shelfPageKey()): ShelfBookDataSource {
+    return this.shelfCategoryPage(pageKey).listSource;
   }
 
-  shelfTileBookDataSource(): ShelfBookDataSource {
-    this.shelfTileBooksSource.replace(this.getTileBooksWithoutLatest(this.books));
-    return this.shelfTileBooksSource;
+  shelfTileBookDataSource(pageKey: string = this.shelfPageKey()): ShelfBookDataSource {
+    return this.shelfCategoryPage(pageKey).tileSource;
   }
 
-  shelfTileEntryDataSource(): ShelfTileEntryDataSource {
-    this.shelfTileEntriesSource.replace(this.getSortedTileRootEntries());
-    return this.shelfTileEntriesSource;
+  shelfTileEntryDataSource(pageKey: string = this.shelfPageKey()): ShelfTileEntryDataSource {
+    return this.shelfCategoryPage(pageKey).entrySource;
   }
 
   latestTileGroupReadTime(books: Book[]): number {
@@ -3049,12 +3032,12 @@ export struct BookshelfPage {
     return nameDiff !== 0 ? nameDiff : a.originalOrder - b.originalOrder;
   }
 
-  getTileGroupBooks(groupId: number): Book[] {
-    return this.books.filter((book: Book) => book.group === groupId);
+  getTileGroupBooks(groupId: number, books: Book[] = this.books): Book[] {
+    return books.filter((book: Book) => book.group === groupId);
   }
 
-  getTileGroupPreviewBooks(groupId: number): Book[] {
-    return this.getTileGroupBooks(groupId).slice(0, 4);
+  getTileGroupPreviewBooks(groupId: number, books: Book[] = this.books): Book[] {
+    return this.getTileGroupBooks(groupId, books).slice(0, 4);
   }
 
   shelfTileColumnCount(): number {
@@ -3078,11 +3061,11 @@ export struct BookshelfPage {
     return Math.max(24, Math.min(30, this.shelfTileColumnGap() + 8));
   }
 
-  shelfTileGridRowGap(): number {
+  shelfTileGridRowGap(books: Book[] = this.books): number {
     // 轮播卡片在 deck 内上下各留 10vp；圆点行上下对称，下方也只需 10vp。
     // 普通书籍项补回剩余行距，不改变后续书籍行之间的距离。
     return this.shouldShowLatestExpandedTileBook() && this.isLatestTileCardLarge() &&
-      this.getLatestReadTileBooks(this.books).length > 1 ? 10 : this.shelfTileRowGap();
+      this.getLatestReadTileBooks(books).length > 1 ? 10 : this.shelfTileRowGap();
   }
 
   shelfTileExpandedCoverAspectRatio(): number {
@@ -3096,25 +3079,25 @@ export struct BookshelfPage {
   }
 
   @Builder
-  shelfTileGrid() {
-    Grid(this.shelfTileScroller) {
+  shelfTileGrid(pageKey: string) {
+    Grid(this.shelfTileScrollerForPage(pageKey)) {
       GridItem() {
         Row()
-          .height(this.bookshelfTileTopSpacerHeight())
+          .height(this.bookshelfTileTopSpacerHeight(this.shelfBooksForPage(pageKey)))
       }
       .columnStart(0)
       .columnEnd(this.shelfTileColumnCount() - 1)
 
       if (this.shouldShowLatestExpandedTileBook()) {
         if (this.isLatestTileCardLarge()) {
-          if (this.getLatestReadTileBooks(this.books).length > 0) {
+          if (this.getLatestReadTileBooks(this.shelfBooksForPage(pageKey)).length > 0) {
           GridItem() {
             RecentReadCarousel({
-              books: this.getLatestReadTileBooks(this.books),
+              books: this.getLatestReadTileBooks(this.shelfBooksForPage(pageKey)),
               cardHeight: Math.max(146, this.shelfTileLatestCardHeight()),
               accentColor: this.accentColor(),
               secondaryColor: this.subTextColor(),
-              renderKey: (book: Book): string => this.shelfBookRenderKey(book, `latest_card_${this.shelfViewKey()}`),
+              renderKey: (book: Book): string => this.shelfBookRenderKey(book, `latest_card_${pageKey}`),
               cardContent: (book: Book) => {
                 this.shelfTileLatestCard(book)
               },
@@ -3132,35 +3115,35 @@ export struct BookshelfPage {
           .columnEnd(this.shelfTileColumnCount() - 1)
           }
         } else {
-          ForEach(this.getLatestReadTileBooks(this.books), (book: Book) => {
+          ForEach(this.getLatestReadTileBooks(this.shelfBooksForPage(pageKey)), (book: Book) => {
           GridItem() {
             this.shelfTileExpandedBook(book)
           }
           .columnStart(0)
           .columnEnd(1)
-          }, (book: Book) => this.shelfBookRenderKey(book, `expanded_${this.shelfViewKey()}`))
+          }, (book: Book) => this.shelfBookRenderKey(book, `expanded_${pageKey}`))
         }
       }
 
       if (this.shouldUseTileGroupFolders()) {
-        LazyForEach(this.shelfTileEntryDataSource(), (entry: ShelfTileSortEntry) => {
+        LazyForEach(this.shelfTileEntryDataSource(pageKey), (entry: ShelfTileSortEntry) => {
           GridItem() {
             if (entry.kind === 'group' && entry.group) {
-              this.shelfTileGroupFolder(entry.group)
+              this.shelfTileGroupFolder(entry.group, pageKey)
             } else if (entry.book) {
               this.shelfTileBook(entry.book)
             }
           }
-          .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap() })
+          .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey)) })
         }, (entry: ShelfTileSortEntry) => entry.book ?
           this.shelfBookRenderKey(entry.book, entry.key) : entry.key)
       } else {
-        LazyForEach(this.shelfTileBookDataSource(), (book: Book) => {
+        LazyForEach(this.shelfTileBookDataSource(pageKey), (book: Book) => {
           GridItem() {
             this.shelfTileBook(book)
           }
-          .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap() })
-        }, (book: Book) => this.shelfBookRenderKey(book, `tile_${this.shelfViewKey()}`))
+          .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey)) })
+        }, (book: Book) => this.shelfBookRenderKey(book, `tile_${pageKey}`))
       }
 
       GridItem() {
@@ -3175,16 +3158,21 @@ export struct BookshelfPage {
     .height('100%')
     .columnsTemplate(this.shelfTileColumnsTemplate())
     .columnsGap(this.shelfTileColumnGap())
-    .rowsGap(this.shelfTileGridRowGap())
+    .rowsGap(this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey)))
     .padding({ left: BookTileLayout.SIDE_PADDING, right: BookTileLayout.SIDE_PADDING, top: 10 })
     .backgroundColor(this.pageColor())
     .scrollBar(BarState.Off)
     .cachedCount(4)
+    .onAppear(() => this.restoreShelfPageScroll(pageKey, true))
     .onDidScroll((delta: number) => {
-      this.onShelfListScroll(delta, this.shelfTileScroller.currentOffset().yOffset);
+      if (pageKey === this.shelfPageKey()) {
+        const page = this.shelfCategoryPage(pageKey);
+        page.tileOffset = page.tileScroller.currentOffset().yOffset;
+        this.onShelfListScroll(delta, page.tileOffset);
+      }
     })
     .onScrollStop(() => {
-      this.onShelfListScrollStop(this.shelfTileScroller.currentOffset().yOffset);
+      if (pageKey === this.shelfPageKey()) this.onShelfListScrollStop(this.shelfTileScrollerForPage(pageKey).currentOffset().yOffset);
     })
     .translate({ x: this.tileGroupTransitionX })
     .scale({ x: this.tileGroupTransitionScale, y: this.tileGroupTransitionScale })
@@ -3388,7 +3376,7 @@ export struct BookshelfPage {
   }
 
   @Builder
-  shelfTileGroupFolder(group: BookGroup) {
+  shelfTileGroupFolder(group: BookGroup, pageKey: string) {
     Column({ space: AppSpacing.XS }) {
       // Use one outer surface for both the themed folder artwork and the
       // four-cover preview so folders carry the same radius, border and shadow
@@ -3401,7 +3389,7 @@ export struct BookshelfPage {
             .objectFit(ImageFit.Fill)
         } else {
           Grid() {
-            ForEach(this.getTileGroupPreviewBooks(group.groupId), (book: Book) => {
+            ForEach(this.getTileGroupPreviewBooks(group.groupId, this.shelfBooksForPage(pageKey)), (book: Book) => {
               GridItem() {
                 this.coverView(book, '100%', '100%', ImageFit.Cover)
               }
@@ -3441,7 +3429,7 @@ export struct BookshelfPage {
         SymbolGlyph($r('sys.symbol.folder'))
           .fontSize(13)
           .fontColor([this.subTextColor()])
-        Text(`共 ${this.getTileGroupBooks(group.groupId).length} 本`)
+        Text(`共 ${this.getTileGroupBooks(group.groupId, this.shelfBooksForPage(pageKey)).length} 本`)
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
       }
@@ -4554,7 +4542,8 @@ export struct BookshelfPage {
     this.loadCacheChapters(book);
   }
 
-  applyShelfScope(): void {
+  applyShelfScope(invalidatePages: boolean = true): void {
+    if (invalidatePages) this.shelfCategoryRevision++;
     this.refreshShelfTypeTabs();
     this.books = this.sortBooks(this.booksForShelfScope(this.shelfScope));
     if (this.books.length === 0) {
@@ -4585,12 +4574,12 @@ export struct BookshelfPage {
     return this.shelfScope === 'private' ? `隐私 · ${count}` : count;
   }
 
-  shelfScopeEmptyHint(): string {
+  shelfScopeEmptyHint(pageKey: string = this.shelfPageKey()): string {
     if (this.shelfAppliedSearchKeyword) {
       const hint = `没有找到与“${this.shelfSearchKeyword.trim()}”相关的书籍`;
       return this.shelfFilterKeyList().length > 0 ? `${hint}，也可以清除筛选条件再试` : hint;
     }
-    if (this.shelfScope === 'private') {
+    if (pageKey === 'private') {
       return '长按书籍并选择“标记为隐私”，即可移入隐私书架';
     }
     if (this.shelfFilterKeyList().length > 0) {
@@ -4872,9 +4861,73 @@ export struct BookshelfPage {
     return this.shelfScope !== 'private' && keys.indexOf('local') >= 0 && keys.indexOf('network') < 0;
   }
 
-  /** 书架当前视图的标识，列表项和平铺缓存的键里带上它，切换后不会复用上一视图的条目。 */
+  /** 书架结果缓存按完整筛选条件区分；单本书的节点身份不跟着分类改变。 */
   shelfViewKey(): string {
     return `${this.shelfScope}-${this.shelfTypeTab}-${this.shelfFilterKeys}-${this.shelfAppliedSearchKeyword}`;
+  }
+
+  shelfBookViewPrefix(layout: string): string {
+    // 同一本书跨分类、筛选保留已解码封面；普通/隐私书架和不同布局仍隔离。
+    return `${layout}_${this.shelfScope}`;
+  }
+
+  shelfCategoryPage(key: string): ShelfCategoryPage {
+    let page = this.shelfCategoryPages.get(key);
+    if (!page) {
+      page = new ShelfCategoryPage();
+      this.shelfCategoryPages.set(key, page);
+    }
+    const privateAllowed = this.privateShelfEnabled &&
+      (!this.privateShelfHasPassword || this.privateShelfRevealed || this.shelfScope === 'private');
+    const signature = `${this.shelfCategoryRevision}:${this.activeShelfGroupId}:${this.sortMode}:` +
+      `${this.bookshelfLayoutMode}:${this.bookshelfLastReadPinMode}:${this.bookshelfLastReadPinCount}:` +
+      `${this.isBookMultiSelect}:${this.shelfFilterKeys}:${this.shelfAppliedSearchKeyword}:${privateAllowed}`;
+    if (signature !== page.signature) {
+      page.signature = signature;
+      page.books = key === 'private' && !privateAllowed ? [] : this.sortBooks(this.allBooks.filter((book: Book): boolean =>
+        book.isPrivate === (key === 'private') && this.matchesShelfGroup(book) &&
+        (key === 'all' || key === 'private' || this.shelfBookType(book) === key) &&
+        this.matchesShelfFilters(book) && this.matchesShelfSearch(book)));
+      if (!this.isTileLayout()) page.listSource.replace(page.books, true);
+      else if (this.shouldUseTileGroupFolders()) {
+        page.entrySource.replace(this.getSortedTileRootEntries(page.books, this.sortMode, key), true);
+      } else page.tileSource.replace(this.getTileBooksWithoutLatest(page.books), true);
+    }
+    if (key === this.shelfPageKey()) {
+      this.shelfListScroller = page.listScroller;
+      this.shelfTileScroller = page.tileScroller;
+    }
+    return page;
+  }
+
+  shelfBooksForPage(key: string): Book[] { return this.shelfCategoryPage(key).books; }
+
+  shelfListScrollerForPage(key: string): ListScroller { return this.shelfCategoryPage(key).listScroller; }
+
+  shelfTileScrollerForPage(key: string): Scroller { return this.shelfCategoryPage(key).tileScroller; }
+
+  restoreShelfPageScroll(key: string, tile: boolean): void {
+    const page = this.shelfCategoryPage(key);
+    const offset = tile ? page.tileOffset : page.listOffset;
+    if (offset <= 0) return;
+    setTimeout((): void => {
+      if (!this.shelfComponentActive) return;
+      try {
+        if (tile) page.tileScroller.scrollTo({ xOffset: 0, yOffset: offset, animation: false });
+        else page.listScroller.scrollTo({ xOffset: 0, yOffset: offset, animation: false });
+      } catch (_) {
+        // 页已被原生懒加载回收时保留记录，下一次挂载再恢复。
+      }
+    }, 0);
+  }
+
+  canSelectShelfPage(key: string): boolean {
+    if (this.isBookMultiSelect || this.isTileGroupPage() || !this.shelfPageOrder().includes(key)) return false;
+    if (key === 'private' && this.privateShelfHasPassword && !this.privateShelfRevealed && this.shelfScope !== 'private') {
+      if (!this.privateShelfUnlockDialogSession.isOpen()) this.openPrivateShelfUnlockDialog();
+      return false;
+    }
+    return true;
   }
 
   /** 当前所在页：分类栏里的类型，或隐私书架 'private'。 */
@@ -4895,37 +4948,20 @@ export struct BookshelfPage {
     const toPrivate = page === 'private' && this.privateShelfEnabled;
     const nextScope = toPrivate ? 'private' : 'all';
     const nextType = toPrivate ? this.shelfTypeTab : (this.shelfTypeTabIds.indexOf(page) >= 0 ? page : 'all');
-    this.shelfScopeTabSelection = '';
     if (this.shelfScope === nextScope && this.shelfTypeTab === nextType) return;
     this.shelfScope = nextScope;
     this.shelfTypeTab = nextType;
     this.showShelfSortMenu = false;
     this.showShelfLayoutMenu = false;
     this.showShelfFilterMenu = false;
-    this.applyShelfScope();
-    this.reloadShelfDataSources(true);
-    this.refreshShelfCoverCache(this.books);
+    this.applyShelfScope(false);
+    this.shelfCategoryPage(this.shelfPageKey());
+    // 保留仍在进行的封面任务，避免连续切分类反复失效并重新发起相同请求。
+    this.books.slice(0, SHELF_COVER_INITIAL_PREFETCH_COUNT)
+      .forEach((book: Book): void => this.ensureShelfBookCoverCache(book));
   }
 
-  switchShelfScopeBySwipe(offsetX: number): void {
-    this.markShelfScopePanGesture(160);
-    if (this.isBookMultiSelect || this.isTileGroupPage() || this.shelfScopeSwitchAnimating ||
-      Math.abs(offsetX) < 56) {
-      return;
-    }
-    const pages: string[] = this.shelfPageOrder();
-    const currentIndex = pages.indexOf(this.shelfPageKey());
-    const nextIndex = offsetX < 0 ? currentIndex + 1 : currentIndex - 1;
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= pages.length) {
-      return;
-    }
-    // 隐私书架不在顶部分类栏里，只能从最后一个分类继续左滑进入；设了密码先输密码。
-    if (pages[nextIndex] === 'private' && this.privateShelfHasPassword) {
-      this.openPrivateShelfUnlockDialog();
-      return;
-    }
-    this.animateShelfScopeSwitch(pages[nextIndex], offsetX < 0 ? -1 : 1);
-  }
+
 
   markShelfScopePanGesture(durationMs: number): void {
     this.suppressShelfBookClickUntil = Date.now() + durationMs;
@@ -4941,7 +4977,7 @@ export struct BookshelfPage {
   }
 
   switchShelfScopeBySelection(page: string): void {
-    if (this.shelfScopeSwitchAnimating) {
+    if (this.shelfScopeSwapTimer >= 0 || this.shelfScopeFinishTimer >= 0) {
       return;
     }
     const pages: string[] = this.shelfPageOrder();
@@ -4950,11 +4986,7 @@ export struct BookshelfPage {
     if (currentIndex < 0 || nextIndex < 0 || currentIndex === nextIndex) {
       return;
     }
-    if (page === 'private' && this.privateShelfHasPassword) {
-      this.openPrivateShelfUnlockDialog();
-      return;
-    }
-    this.animateShelfScopeSwitch(page, nextIndex > currentIndex ? -1 : 1);
+    if (this.canSelectShelfPage(page)) this.setShelfPage(page);
   }
 
   @Builder
@@ -5046,36 +5078,12 @@ export struct BookshelfPage {
     }
     this.closePrivateShelfUnlockDialog();
     if (this.privateShelfEnabled && this.shelfScope !== 'private' && !this.shelfScopeSwitchAnimating) {
-      this.animateShelfScopeSwitch('private', -1);
+      this.privateShelfRevealed = true;
+      this.setShelfPage('private');
     }
   }
 
-  animateShelfScopeSwitch(scope: string, outgoingDirection: number): void {
-    this.clearShelfScopeTransition(false);
-    this.shelfScopeSwitchAnimating = true;
-    this.shelfScopeTabSelection = scope;
-    animateTo({ duration: 130, curve: Curve.EaseIn }, () => {
-      this.shelfScopeTransitionX = outgoingDirection * 48;
-      this.shelfScopeTransitionScale = 0.985;
-      this.shelfScopeTransitionOpacity = 0.12;
-    });
-    this.shelfScopeSwapTimer = setTimeout(() => {
-      this.shelfScopeSwapTimer = -1;
-      this.setShelfPage(scope);
-      this.shelfScopeTransitionX = outgoingDirection * -48;
-      this.shelfScopeTransitionScale = 0.985;
-      this.shelfScopeTransitionOpacity = 0.12;
-      animateTo({ duration: 230, curve: Curve.Friction }, () => {
-        this.shelfScopeTransitionX = 0;
-        this.shelfScopeTransitionScale = 1;
-        this.shelfScopeTransitionOpacity = 1;
-      });
-      this.shelfScopeFinishTimer = setTimeout(() => {
-        this.shelfScopeFinishTimer = -1;
-        this.shelfScopeSwitchAnimating = false;
-      }, 250);
-    }, 135);
-  }
+
 
   animateShelfContentUpdate(update: () => void, outgoingX: number): void {
     this.clearShelfScopeTransition(false);
@@ -5113,7 +5121,6 @@ export struct BookshelfPage {
       this.shelfScopeFinishTimer = -1;
     }
     this.shelfScopeSwitchAnimating = false;
-    this.shelfScopeTabSelection = '';
     if (resetVisuals) {
       this.shelfScopeTransitionX = 0;
       this.shelfScopeTransitionScale = 1;
@@ -6458,7 +6465,7 @@ export struct BookshelfPage {
               .backgroundColor(this.accentColor())
               .opacity(this.shelfScopeTabHighlighted() ? 1 : 0)
               .translate({ x: this.shelfScopeTabIndicatorX(), y: -5 })
-              .animation({ duration: 280, curve: Curve.Friction })
+              .animation({ curve: curves.springMotion(0.3, 1) })
               .hitTestBehavior(HitTestMode.None)
           }
           .width('100%')
@@ -6477,14 +6484,14 @@ export struct BookshelfPage {
     })
   }
 
-  /** 切换动画进行中时先让分类栏跳到目标项，书籍列表的淡出淡入随后跟上。 */
+  /** 分类栏与结果同步切换，指示条由原生弹簧动画衔接。 */
   shelfScopeTabIndex(): number {
-    const index = this.shelfTypeTabIds.indexOf(this.shelfScopeTabSelection || this.shelfPageKey());
+    const index = this.shelfTypeTabIds.indexOf(this.shelfPageKey());
     return index >= 0 ? index : 0;
   }
 
   shelfScopeTabHighlighted(): boolean {
-    return this.shelfTypeTabIds.indexOf(this.shelfScopeTabSelection || this.shelfPageKey()) >= 0;
+    return this.shelfTypeTabIds.indexOf(this.shelfPageKey()) >= 0;
   }
 
   isShelfTypeTabSelected(id: string): boolean {
@@ -7066,6 +7073,7 @@ export struct BookshelfPage {
    * it must be applied synchronously to both rendered layouts (compact/loose list + tile grid).
    */
   private reorderShelfForSortMode(mode: string): void {
+    this.shelfCategoryRevision++;
     this.sortMode = mode;
     const source = this.booksForShelfScope(this.shelfScope);
     const sorted = this.sortBooks(source, mode);

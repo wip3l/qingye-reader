@@ -83,12 +83,12 @@ function methods(names) {
 prepare.options = () => ({ showCover: true });
 prepare.signature = b => `${b.bookUrl}:${b.coverUrl}`;
 const list = methods(['onBooksChanged', 'resultBook', 'itemKey', 'listItemKey', 'safeText', 'requestResultCovers',
-  'publishReadyResults', 'drainCoverQueue', 'aboutToDisappear']);
+  'publishReadyResults', 'drainCoverQueue', 'aboutToAppear', 'aboutToDisappear']);
 let visible = [], tasks = new Map(), admitted = [];
 Object.assign(list, { books: [], resultBooks: new Map(), readyCoverUrls: new Map(), tagCache: new Map(),
   preparedCovers: new Map(), preparedSignatures: new Map(), pendingCovers: new Map(), runningCovers: new Set(),
   activeCoverTasks: 0, coverGeneration: 0, coverMounted: true, gridPageActive: true, layoutMode: 'grid',
-  shelfBookKeys: [], gridAlignTimer: -1,
+  shelfBookKeys: [], gridAlignTimer: -1, coverCache: { covers: new Map(), signatures: new Map() },
   dataSource: { replace: keys => { visible = Array.from(keys); } },
   onResultReady: b => admitted.push(b.bookUrl),
   prepareResultCover: b => new Promise((resolve, reject) => tasks.set(b.bookUrl, { resolve, reject })) });
@@ -117,4 +117,13 @@ const snapshot = visible.slice();
 complete('3', 'late'); await flush();
 assert.deepEqual(visible, snapshot, 'unmounted page ignores late cover completion');
 assert.equal(list.pendingCovers.size, 0, 'unmount discards queued work');
+const remount = { ...list, books: list.books.filter(b => b.bookUrl === '2'),
+  resultBooks: new Map(), preparedCovers: new Map(), preparedSignatures: new Map(),
+  pendingCovers: new Map(), runningCovers: new Set(), activeCoverTasks: 0,
+  prepareResultCover() { assert.fail('warm remount must not prepare the same cover again'); }
+};
+remount.aboutToAppear();
+assert.equal(remount.preparedCovers.get('source:2').firstImage, 'decoded-updated');
+assert.equal(remount.pendingCovers.size, 0);
+assert.deepEqual(visible, ['source:2'], 'warm category immediately publishes its prepared result');
 console.log('PASS ready covers: theme/album priority, scope, detail fallback, decode validation/release, bounded concurrency, independent admission, failures, replacements and stale completions');

@@ -26,7 +26,7 @@ vm.runInContext(stripTypeScriptTypes(read('utils/CollapsingHeader.ets').replace(
 function methods(file, names, folder = 'home') {
   const source = read(`components/${folder}/${file}.ets`);
   const bodies = names.map(name => {
-    const start = source.indexOf(`  ${name}(`);
+    const start = new RegExp(`^  (?:async )?${name}\\(`, 'm').exec(source)?.index ?? -1;
     assert.ok(start >= 0, name);
     return source.slice(start, source.indexOf('\n  }', start) + 4);
   });
@@ -43,6 +43,21 @@ assert.equal(reloads, 1, 'new results with the same category order must not relo
 pages.replace(['all', 'novel', 'comic', 'audio']);
 assert.equal(reloads, 2);
 assert.equal(pages.getData(3), 'audio');
+
+const pager = methods('CategorySwipePager', ['onSelectedIndexChanged', 'selectNativeIndex']);
+const nativeChanges = [], selections = [];
+Object.assign(pager, { mounted: true, nativeIndex: 0, selectedIndex: 0, pageKeys: ['all', 'novel', 'audio'],
+  controller: { changeIndex: (...args) => nativeChanges.push(args) },
+  onSelect(key) { selections.push(key); this.selectedIndex = this.pageKeys.indexOf(key); this.onSelectedIndexChanged(); }
+});
+pager.selectedIndex = 2;
+pager.onSelectedIndexChanged();
+assert.deepEqual(nativeChanges, [[2, true]], 'tab clicks animate through the native controller');
+pager.selectNativeIndex(1);
+assert.deepEqual(selections, ['novel']);
+assert.equal(nativeChanges.length, 1, 'native drag callbacks must not start a second programmatic animation');
+pager.selectNativeIndex(2);
+assert.equal(pager.selectedIndex, 2, 'reversed/settled drag reflects the final native page');
 
 const storeSource = read('utils/SearchResultAggregationStore.ets')
   .replace(/^import .*;\r?\n/gm, '').replace(/export class /g, 'class ');
@@ -73,18 +88,24 @@ assert.deepEqual(Array.from(search.searchCategoryChips(), chip => chip.key), ['a
 assert.equal(search.searchBooksForCategory('comic').length, 1, 'neighbor pages read newly arrived results');
 assert.equal(search.searchBooksForCategory(''), search.displayedSearchResults, 'list mode reads the current filter dynamically');
 
+context.ResultCoverCache = class { covers = new Map(); signatures = new Map(); };
+context.ExploreResultCache = { isFresh: timestamp => timestamp > Date.now() - 3600000 };
+vm.runInContext(stripTypeScriptTypes(read('components/home/ExplorePage.ets').match(/class ExplorePageSnapshot[\s\S]*?\n}/)[0]), context);
 const explore = methods('ExplorePage', [
-  'explorePageKeys', 'isCurrentExplorePage', 'explorePageLoading', 'explorePageBooks', 'selectExploreEntry'
+  'explorePageKeys', 'isCurrentExplorePage', 'explorePageLoading', 'explorePageBooks', 'selectExploreEntry',
+  'explorePageSnapshot', 'retainCurrentExplorePage', 'restoreExplorePage', 'beginExploreLoad', 'isCurrentExploreLoad'
 ]);
 Object.assign(explore, {
   getUIContext: () => ({ animateTo: (_options, update) => update() }),
   selectedPlatform: '频道', selectedSourceUrl: 'source-a', selectedIndex: 0, isLoading: false,
-  books: [{ name: '第一类的书' }], exploreSwipePreviews: new Map(),
+  books: [{ name: '第一类的书' }], explorePages: new Map(), exploreLoadVersion: 0, exploreMetadataQueued: new Set(),
+  exploreMetadataUnavailable: new Set(), shelfBookKeys: [], explorePage: 3, hasMoreExploreBooks: false,
+  exploreContentLoadedAt: Date.now(), loadCount: 0, syncExploreShelfStatus() {},
   resultArrivalTracker: { discardPending() {} },
   getActiveEntries() {
     return Array.from({ length: 6 }, (_, index) => ({ sourceUrl: this.selectedSourceUrl, title: `分类${index}`, url: `${index}` }));
   },
-  loadBooks() { this.isLoading = true; this.books = []; },
+  loadBooks() { this.loadCount++; this.beginExploreLoad(); this.books = []; },
   exploreChannelScroller: { scrollToIndex() {} }
 });
 const keys = Array.from(explore.explorePageKeys());
@@ -114,7 +135,18 @@ assert.equal(explore.explorePageLoading(keys[1]), true);
 explore.isLoading = false;
 assert.equal(explore.explorePageBooks(keys[1]).length, 0, 'failed incoming request must not display outgoing books');
 explore.selectExploreEntry(0);
-assert.equal(explore.explorePageLoading(keys[0]), false, 'cached page stays visible while its result is loading');
+assert.equal(explore.isLoading, false, 'returning to a warm category must not enter loading');
+assert.equal(explore.loadCount, 1, 'warm return must not call loadBooks or read the network/disk cache');
+assert.equal(explore.explorePage, 3, 'pagination position is retained');
+assert.equal(explore.hasMoreExploreBooks, false, 'end-of-results state is retained');
+const oldVersion = explore.exploreLoadVersion;
+assert.equal(explore.restoreExplorePage('missing'), false);
+assert.equal(explore.exploreLoadVersion, oldVersion, 'cache miss does not mutate the active request');
+explore.explorePages.get(keys[0]).scrollOffset = 480;
+explore.selectExploreEntry(1);
+explore.selectExploreEntry(0);
+assert.equal(explore.explorePages.get(keys[0]).scrollOffset, 480, 'leaving and restoring retains scroll offset');
+assert.equal(explore.explorePageLoading(keys[0]), false);
 assert.equal(explore.explorePageBooks(keys[0])[0].name, '第一类的书');
 for (let index = 0; index < 5; index++) {
   explore.selectedIndex = index;
@@ -123,14 +155,35 @@ for (let index = 0; index < 5; index++) {
   explore.books = [{ name: `书${index}` }];
   explore.selectExploreEntry(index + 1);
 }
-assert.equal(explore.exploreSwipePreviews.size, 3, 'preview cache stays bounded');
+assert.equal(explore.explorePages.size, 5, 'visited categories retain content beyond adjacent pages');
 explore.isLoading = false;
 explore.selectedPlatform = '另一个频道';
 const newKey = explore.explorePageKeys()[explore.selectedIndex];
 explore.selectExploreEntry(0);
-assert.equal(explore.exploreSwipePreviews.has(newKey), false, 'changing platform must not relabel old books as new-category previews');
+assert.equal(explore.explorePages.has(newKey), false, 'changing platform must not relabel old books as new-category previews');
 explore.selectedSourceUrl = 'source-b';
 assert.notEqual(explore.explorePageKeys()[0], keys[0], 'source identity is part of each page key');
+
+// A late shelf-status lookup during pagination cannot save a new category under the old key.
+const saved = [];
+context.ExploreResultCache.save = (...args) => saved.push(args);
+const pagination = methods('ExplorePage', ['loadMoreExploreBooks', 'mergeExploreBooks', 'isCurrentExploreLoad']);
+let finishShelfLookup;
+Object.assign(pagination, { isLoading: false, isLoadingMore: false, hasMoreExploreBooks: true,
+  books: [{ origin: 'a', bookUrl: '1' }], explorePage: 1, exploreLoadVersion: 1, selectedIndex: 0,
+  selectedPlatform: 'group', getActiveEntries: () => [{ title: 'old', sourceUrl: 'a', url: '/old' }],
+  coordinator: { explore: async () => [{ origin: 'a', bookUrl: '2' }] }, getSelectedSiteLabel: () => 'site',
+  syncExploreShelfStatus: () => new Promise(resolve => { finishShelfLookup = resolve; }),
+  retainCurrentExplorePage() { assert.fail('stale pagination cannot save current page'); }
+});
+const pendingPage = pagination.loadMoreExploreBooks();
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(typeof finishShelfLookup, 'function');
+pagination.exploreLoadVersion++;
+pagination.books = [{ origin: 'b', bookUrl: 'new' }];
+finishShelfLookup();
+await pendingPage;
+assert.equal(saved.length, 0, 'late pagination cannot corrupt another category cache');
 
 // 分类各自从纵向位置 0 开始，但共享的顶栏收起量不能因此归零。
 for (const [file, prefix] of [['ExplorePage', 'explore'], ['SearchPage', 'search']]) {
@@ -205,7 +258,7 @@ let scrollCalls = 0;
 Object.assign(grid, {
   drainCoverQueue() {}, pendingCovers: new Map(), coverGeneration: 0,
   layoutMode: 'grid', userScrollOnly: true, gridPageActive: true, gridHeaderCollapse: 56,
-  gridAlignTimer: -1, gridUserScrolled: false,
+  gridAlignTimer: -1, gridUserScrolled: false, restoredScroll: false, initialScrollOffset: 0,
   scroller: {
     currentOffset: () => ({ yOffset: gridOffset }),
     scrollTo: options => { gridOffset = options.yOffset; scrollCalls++; assert.equal(options.animation, false); }
@@ -230,5 +283,9 @@ assert.equal(gridOffset, 0, 'leaving a category cancels pending alignment');
 grid.gridPageActive = true;
 grid.onGridPageActiveChanged(); grid.aboutToDisappear(); flush();
 assert.equal(gridOffset, 0, 'unmounting cancels pending scroller work');
+grid.restoredScroll = false;
+grid.initialScrollOffset = 480;
+grid.onGridPageActiveChanged(); flush();
+assert.equal(gridOffset, 480, 'a recycled category restores its saved scroll position');
 
 console.log('PASS category pager: page identity, aggregation, previews, bounded cache, shared header, stable scroll layout and category-entry alignment');
