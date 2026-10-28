@@ -1244,35 +1244,43 @@ export struct ExplorePage {
 
   @Builder
   explorePlatformMenuContent() {
-    Column({ space: AppSpacing.XXS }) {
-      ForEach(this.platformNames, (name: string) => {
-        Row() {
-          Text(this.explorePlatformLabel(name))
-            .fontSize(AppFontSize.BODY_LARGE)
-            .fontWeight(this.selectedPlatform === name ? FontWeight.Medium : FontWeight.Regular)
-            .fontColor(this.selectedPlatform === name ? this.accentColor() : this.primaryTextColor())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-          if (this.selectedPlatform === name) {
-            SymbolGlyph($r('sys.symbol.checkmark'))
-              .fontSize(14)
-              .fontColor([this.accentColor()])
+    Scroll() {
+      Column({ space: AppSpacing.XXS }) {
+        ForEach(this.platformNames, (name: string) => {
+          Row() {
+            Text(this.explorePlatformLabel(name))
+              .fontSize(AppFontSize.BODY_LARGE)
+              .fontWeight(this.selectedPlatform === name ? FontWeight.Medium : FontWeight.Regular)
+              .fontColor(this.selectedPlatform === name ? this.accentColor() : this.primaryTextColor())
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+            if (this.selectedPlatform === name) {
+              SymbolGlyph($r('sys.symbol.checkmark'))
+                .fontSize(14)
+                .fontColor([this.accentColor()])
+            }
           }
-        }
-        .width('100%')
-        .height(ExplorePage.MENU_ITEM_HEIGHT)
-        .padding({ left: 12, right: 12 })
-        .borderRadius(this.exploreMenuItemRadius())
-        .backgroundColor(this.selectedPlatform === name ? this.exploreSelectedBackgroundColor() : '#00000000')
-        .alignItems(VerticalAlign.Center)
-        .onClick(() => {
-          this.showExplorePlatformMenu = false;
-          this.switchExplorePlatform(name);
-        })
-      }, (name: string) => name)
+          .width('100%')
+          .height(ExplorePage.MENU_ITEM_HEIGHT)
+          .padding({ left: 12, right: 12 })
+          .borderRadius(this.exploreMenuItemRadius())
+          .backgroundColor(this.selectedPlatform === name ? this.exploreSelectedBackgroundColor() : '#00000000')
+          .alignItems(VerticalAlign.Center)
+          .onClick(() => {
+            this.showExplorePlatformMenu = false;
+            this.switchExplorePlatform(name);
+          })
+        }, (name: string) => name)
+      }
+      .width('100%')
     }
     .width(180)
+    // 长分类菜单限制可视高度，超出的选项由 Scroll 承接纵向滑动。
+    .constraintSize({ maxHeight: Math.min(420, Math.floor(this.exploreViewportHeight * 0.6)) })
+    .scrollable(ScrollDirection.Vertical)
+    .scrollBar(BarState.Auto)
+    .edgeEffect(EdgeEffect.Spring)
     .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
   }
 
