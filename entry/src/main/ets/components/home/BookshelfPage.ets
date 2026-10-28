@@ -1,3 +1,5 @@
+import { BookshelfCoverBadges } from '../BookshelfCoverBadges';
+import { BookshelfCoverBadgeSettings } from '../../utils/BookshelfCoverBadgeSettings';
 import { router } from '@kit.ArkUI';
 import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
@@ -262,13 +264,12 @@ export struct BookshelfPage {
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('bookshelfShowTags') bookshelfShowTags: boolean = true;
-  @StorageLink('bookshelfShowSource') bookshelfShowSource: boolean = true;
+  @StorageLink('bookshelfCoverBadges') bookshelfCoverBadges: string = BookshelfCoverBadgeSettings.DEFAULT;
   @StorageLink('bookshelfShowIntro') bookshelfShowIntro: boolean = true;
   @StorageLink('bookshelfShowFullIntro') bookshelfShowFullIntro: boolean = false;
   @StorageLink('bookshelfShowProgressBar') bookshelfShowProgressBar: boolean = false;
   @StorageLink('bookshelfShowLastReadTime') bookshelfShowLastReadTime: boolean = true;
   @StorageLink('bookshelfShowLastReadChapter') bookshelfShowLastReadChapter: boolean = false;
-  @StorageLink('bookshelfShowTypeBadge') bookshelfShowTypeBadge: boolean = true;
   @StorageLink('bookshelfLayoutMode') bookshelfLayoutMode: string = 'compact';
   @StorageLink('bookshelfLastReadLeafMode') bookshelfLastReadLeafMode: string = 'adaptive';
   @StorageLink('bookshelfLastReadPinMode') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinMode: string = 'medium';
@@ -398,13 +399,12 @@ export struct BookshelfPage {
     try {
       const settings = await BookshelfDisplaySettingsStore.load(getContext(this));
       this.bookshelfShowTags = settings.showTags;
-      this.bookshelfShowSource = settings.showSource;
+      this.bookshelfCoverBadges = settings.coverBadges;
       this.bookshelfShowIntro = settings.showIntro;
       this.bookshelfShowFullIntro = settings.showFullIntro;
       this.bookshelfShowProgressBar = settings.showProgressBar;
       this.bookshelfShowLastReadTime = settings.showLastReadTime;
       this.bookshelfShowLastReadChapter = settings.showLastReadChapter;
-      this.bookshelfShowTypeBadge = settings.showTypeBadge;
       this.bookshelfLayoutMode = settings.layoutMode;
       this.bookshelfLastReadLeafMode = settings.lastReadLeafMode;
       this.bookshelfLastReadPinMode = settings.lastReadPinMode;
@@ -810,6 +810,7 @@ export struct BookshelfPage {
     return `${prefix}_${book.bookUrl}_pin_${book.isPinned ? '1' : '0'}_` +
       `read_${book.durChapterTime}_${book.durChapterIndex}_${book.durChapterPos}_` +
       `${book.totalChapterNum}_${book.getVariable('readStarted')}_` +
+      `badges_${book.getVariable('shelfHasUpdate')}_${book.origin}_${book.originName}_` +
       `${progressChapterIndex}_${progressPageCount}_cover_${this.shelfCoverRenderVersions.get(book.bookUrl) || 0}`;
   }
 
@@ -2846,12 +2847,12 @@ export struct BookshelfPage {
     return 20;
   }
 
-  /** 作者名、更新时间行、宽松布局的「xx章未读」：字号 14。 */
+  /** 作者名、更新时间行、宽松布局的阅读进度：字号 14。 */
   shelfTextLineHeight(): number {
     return 19;
   }
 
-  /** 紧凑布局在关闭进度条时显示的「xx章未读」：字号 12。 */
+  /** 紧凑布局在关闭进度条时显示的阅读进度：字号 12。 */
   shelfSmallTextLineHeight(): number {
     return 16;
   }
@@ -2871,7 +2872,7 @@ export struct BookshelfPage {
       this.shelfInfoTailHeight() + this.shelfRowSpace() * 4;
   }
 
-  /** 宽松布局信息块高度，尾部是「xx章未读」那一行。 */
+  /** 宽松布局信息块高度，尾部是阅读进度行。 */
   shelfLooseInfoHeight(): number {
     return this.shelfTitleLineHeight() + this.shelfTextLineHeight() + this.shelfTextLineHeight() +
       this.shelfTextLineHeight() + this.shelfRowSpace() * 4;
@@ -3184,10 +3185,6 @@ export struct BookshelfPage {
         Row({ space: AppSpacing.XXS }) {
           Stack({ alignContent: Alignment.TopStart }) {
             this.coverView(book, '100%', '100%', ImageFit.Fill)
-            if (!this.isBookMultiSelect) {
-              this.bookPinnedCoverIndicator(book)
-            }
-            this.bookTypeCoverBadge(book)
           }
           .layoutWeight(1)
           .height('100%')
@@ -3344,7 +3341,6 @@ export struct BookshelfPage {
 
       Stack({ alignContent: Alignment.TopStart }) {
         this.coverView(book, '100%', '100%', ImageFit.Cover)
-        this.bookTypeCoverBadge(book)
       }
       .height('100%')
       .aspectRatio(0.735)
@@ -3476,11 +3472,6 @@ export struct BookshelfPage {
       Stack({ alignContent: Alignment.TopStart }) {
         this.coverView(book, '100%', '100%', ImageFit.Cover)
 
-        if (!this.isBookMultiSelect) {
-          this.bookPinnedCoverIndicator(book)
-        }
-        this.bookTypeCoverBadge(book)
-
         if (this.isBookMultiSelect) {
           Stack({ alignContent: Alignment.Center }) {
             if (this.isBookSelected(book.bookUrl)) {
@@ -3498,19 +3489,6 @@ export struct BookshelfPage {
             .margin({ left: AppSpacing.SM, top: AppSpacing.SM })
         }
 
-        if (this.shouldShowBookSource(book)) {
-          Text(this.getBookSourceText(book))
-            .fontSize(AppFontSize.MICRO)
-            .fontColor(this.sourceTagTextColor())
-            .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: 3, bottom: 3 })
-            .backgroundColor(ThemeRuntime.glassPanelColor(this.appDarkMode))
-            .borderRadius(ThemeRuntime.mediumRadius())
-            .position({ x: '100%', y: 0 })
-            .translate({ x: -58, y: 7 })
-            .constraintSize({ maxWidth: 52 })
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
       }
       .width('100%')
       .aspectRatio(0.735)
@@ -3947,7 +3925,6 @@ export struct BookshelfPage {
 
         Column({ space: this.shelfRowSpace() }) {
           Row({ space: AppSpacing.SM }) {
-            this.bookTypeNameBadge(book, true)
             Text(this.shelfTileBookDisplayName(book))
               .fontSize(AppFontSize.BODY_LARGE)
               .lineHeight(this.shelfTitleLineHeight())
@@ -3956,21 +3933,7 @@ export struct BookshelfPage {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
-            this.bookPinnedIndicator(book)
 
-            if (this.shouldShowBookSource(book)) {
-              Text(this.getBookSourceText(book))
-                .fontSize(AppFontSize.CAPTION)
-                .lineHeight(14)
-                .fontColor(this.sourceTagTextColor())
-                .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.XXS, bottom: AppSpacing.XXS })
-                .backgroundColor(this.sourceTagBackgroundColor())
-                .borderRadius(ThemeRuntime.smallRadius())
-                .margin({ left: AppSpacing.MD })
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .constraintSize({ maxWidth: 104 })
-            }
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
@@ -4026,13 +3989,12 @@ export struct BookshelfPage {
   looseBookContent(book: Book) {
     Column({ space: AppSpacing.MD }) {
       Row() {
-        // 封面高度 = 信息块高度，顶部对齐书名行、底部对齐「xx章未读」那一行。
+        // 封面高度 = 信息块高度，顶部对齐书名行、底部对齐阅读进度行。
         this.coverView(book, this.shelfCoverWidth(this.shelfLooseInfoHeight()),
           this.shelfLooseInfoHeight(), ImageFit.Cover)
 
         Column({ space: this.shelfRowSpace() }) {
           Row({ space: AppSpacing.SM }) {
-            this.bookTypeNameBadge(book, true)
             Text(this.shelfTileBookDisplayName(book))
               .fontSize(AppFontSize.BODY_LARGE)
               .lineHeight(this.shelfTitleLineHeight())
@@ -4041,7 +4003,6 @@ export struct BookshelfPage {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
-            this.bookPinnedIndicator(book)
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
@@ -4068,16 +4029,6 @@ export struct BookshelfPage {
           Blank()
 
           Row() {
-            if (this.shouldShowBookSource(book)) {
-              Text(this.getBookSourceText(book))
-                .fontSize(AppFontSize.CAPTION)
-                .lineHeight(14)
-                .fontColor(this.sourceTagTextColor())
-                .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XXS, bottom: AppSpacing.XXS })
-                .backgroundColor(this.sourceTagBackgroundColor())
-                .borderRadius(ThemeRuntime.smallRadius())
-                .margin({ right: AppSpacing.MD })
-            }
 
             // 与作者名保持一致的格式（字号 14 + 次级文字色）。
             Text(this.getShelfProgressText(book))
@@ -4127,14 +4078,6 @@ export struct BookshelfPage {
       }
       .width('100%')
     }
-  }
-
-  shouldShowBookSource(book: Book): boolean {
-    return this.bookshelfShowSource && book.origin !== 'local' && this.getBookSourceText(book).length > 0;
-  }
-
-  getBookSourceText(book: Book): string {
-    return (book.originName || book.origin || '').trim();
   }
 
   getBookIntroText(book: Book): string {
@@ -4230,22 +4173,14 @@ export struct BookshelfPage {
         .backgroundColor('#73000000')
         .accessibilityText(`${book.name}在云端，${this.cloudBookStatus(book)}`)
       }
-      if (this.hasShelfBookUpdate(book)) {
-        Text('新')
-          .fontSize(AppFontSize.MICRO)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#FFFFFF')
-          .textAlign(TextAlign.Center)
-          .width(21)
-          .height(21)
-          .borderRadius(11)
-          .backgroundColor('#F04B45')
-          .border({ width: 2, color: '#FFFFFF' })
-          .position({ x: '100%', y: '100%' })
-          .translate({ x: -24, y: -24 })
-          .shadow({ radius: 5, color: '#55000000', offsetX: 0, offsetY: 2 })
-          .accessibilityText(`${book.name}有更新`)
-      }
+      BookshelfCoverBadges({
+        configuration: this.bookshelfCoverBadges,
+        typeLabel: this.bookTypeBadgeText(book), typeColor: this.bookTypeBadgeColor(book),
+        sourceText: LocalBookService.isLocalBook(book) ? '本地' : (book.originName || book.origin || '').trim(),
+        unreadCount: book.totalChapterNum > 0 ? book.getUnreadChapterNum() : 0,
+        updated: this.hasShelfBookUpdate(book), pinned: book.isPinned,
+        selecting: this.isBookMultiSelect
+      })
     }
     .width(width)
     .height(height)
@@ -4255,76 +4190,6 @@ export struct BookshelfPage {
     .grayscale(CloudAutoSync.isPlaceholder(book) ? 1 : 0)
     .opacity(CloudAutoSync.isPlaceholder(book) ? 0.6 : 1)
     .onAppear(() => this.ensureShelfBookCoverCache(book))
-  }
-
-  @Builder
-  bookPinnedIndicator(book: Book, compact: boolean = false) {
-    if (book.isPinned) {
-      Stack({ alignContent: Alignment.Center }) {
-        SymbolGlyph($r('sys.symbol.pin'))
-          .fontSize(compact ? 12 : 14)
-          .fontColor([this.accentColor()])
-      }
-      .width(compact ? 18 : 22)
-      .height(compact ? 18 : 22)
-      .borderRadius(compact ? 9 : 11)
-      .backgroundColor(this.inputColor())
-      .accessibilityText(`${book.name}已置顶`)
-    }
-  }
-
-  @Builder
-  bookPinnedCoverIndicator(book: Book) {
-    if (book.isPinned) {
-      Stack({ alignContent: Alignment.Center }) {
-        SymbolGlyph($r('sys.symbol.pin'))
-          .fontSize(10)
-          .fontColor([this.accentColor()])
-      }
-      .width(16)
-      .height(16)
-      .borderRadius(8)
-      .backgroundColor(ThemeRuntime.glassPanelColor(this.appDarkMode, this.inputColor(), 'button'))
-      .margin({ left: 5, top: 5 })
-      .shadow({ radius: 3, color: '#55000000', offsetX: 0, offsetY: 1 })
-      .accessibilityText(`${book.name}已置顶`)
-    }
-  }
-
-  @Builder
-  bookTypeCoverBadge(book: Book) {
-    if (this.bookshelfShowTypeBadge) {
-      Text(this.bookTypeBadgeText(book))
-      .fontSize(9)
-      .fontWeight(FontWeight.Bold)
-      .fontColor('#FFFFFF')
-      .textAlign(TextAlign.Center)
-      .width(18)
-      .height(16)
-      .borderRadius(ThemeRuntime.smallRadius())
-      .backgroundColor(this.bookTypeBadgeColor(book))
-      .opacity(0.92)
-      .border({ width: 1, color: '#66FFFFFF' })
-      .position({ x: 5, y: '100%' })
-      .translate({ x: 0, y: -21 })
-      .shadow({ radius: 3, color: '#55000000', offsetX: 0, offsetY: 1 })
-        .accessibilityText(`${book.name}${this.bookTypeBadgeText(book)}类型`)
-    }
-  }
-
-  @Builder
-  bookTypeNameBadge(book: Book, compact: boolean = false) {
-    if (this.bookshelfShowTypeBadge) {
-      Text(this.bookTypeBadgeText(book))
-        .fontSize(compact ? 8 : 9)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#FFFFFF')
-        .textAlign(TextAlign.Center)
-        .width(compact ? 16 : 18)
-        .height(compact ? 14 : 16)
-        .borderRadius(compact ? 4 : 5)
-        .backgroundColor(this.bookTypeBadgeColor(book))
-    }
   }
 
   bookTypeBadgeText(book: Book): string {
@@ -7281,8 +7146,8 @@ export struct BookshelfPage {
       return '未读';
     }
     if (!this.hasKnownReadProgressTotal(book)) return '进度未知';
-    const unread = book.getUnreadChapterNum();
-    return unread > 0 ? `${unread}章未读` : (this.getReadProgressValue(book) >= 100 ? '已读完' : '阅读中');
+    return book.getUnreadChapterNum() > 0 ? this.getReadProgressPercentText(book) :
+      (this.getReadProgressValue(book) >= 100 ? '已读完' : '阅读中');
   }
 
   hasKnownReadProgressTotal(book: Book): boolean {

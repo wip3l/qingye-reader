@@ -1,6 +1,7 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
 import { CloudSyncChangeTracker } from '../account/CloudSyncChangeTracker';
+import { BookshelfCoverBadgeSettings } from './BookshelfCoverBadgeSettings';
 
 export class BookshelfDisplaySettings {
   showTags: boolean = true;
@@ -11,6 +12,8 @@ export class BookshelfDisplaySettings {
   showLastReadTime: boolean = true;
   showLastReadChapter: boolean = false;
   showTypeBadge: boolean = true;
+  // 空串代表旧版数据；必须等旧开关读完后再迁移，不能用默认布局覆盖用户偏好。
+  coverBadges: string = '';
   layoutMode: string = 'compact';
   lastReadLeafMode: string = 'adaptive';
   // 平铺布局里上次阅读的书是否置顶：off 不置顶，medium 跨两列的展开书本，large 占满一整行的继续阅读卡片。
@@ -28,6 +31,7 @@ export class BookshelfDisplaySettingsStore {
   private static readonly KEY_SHOW_LAST_READ_TIME: string = 'bookshelfShowLastReadTime';
   private static readonly KEY_SHOW_LAST_READ_CHAPTER: string = 'bookshelfShowLastReadChapter';
   private static readonly KEY_SHOW_TYPE_BADGE: string = 'bookshelfShowTypeBadge';
+  private static readonly KEY_COVER_BADGES: string = 'bookshelfCoverBadges';
   private static readonly KEY_LAYOUT_MODE: string = 'bookshelfLayoutMode';
   private static readonly KEY_LAST_READ_LEAF_MODE: string = 'bookshelfLastReadLeafMode';
   private static readonly KEY_LAST_READ_PIN_MODE: string = 'bookshelfLastReadPinMode';
@@ -56,6 +60,8 @@ export class BookshelfDisplaySettingsStore {
       store, BookshelfDisplaySettingsStore.KEY_SHOW_LAST_READ_CHAPTER, false);
     settings.showTypeBadge = await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_SHOW_TYPE_BADGE, true);
+    settings.coverBadges = BookshelfCoverBadgeSettings.normalize(await BookshelfDisplaySettingsStore.getString(
+      store, BookshelfDisplaySettingsStore.KEY_COVER_BADGES, ''), settings.showTypeBadge, settings.showSource);
     settings.layoutMode = BookshelfDisplaySettingsStore.normalizeLayoutMode(await BookshelfDisplaySettingsStore.getString(
       store, BookshelfDisplaySettingsStore.KEY_LAYOUT_MODE, 'compact'));
     settings.lastReadLeafMode = BookshelfDisplaySettingsStore.normalizeLastReadLeafMode(
@@ -71,7 +77,7 @@ export class BookshelfDisplaySettingsStore {
   }
 
   static async save(context: Context, settings: BookshelfDisplaySettings): Promise<void> {
-    BookshelfDisplaySettingsStore.cachedSettings = BookshelfDisplaySettingsStore.clone(settings);
+    settings = BookshelfDisplaySettingsStore.clone(settings);
     const store = await preferences.getPreferences(context, BookshelfDisplaySettingsStore.STORE_NAME);
     await store.put(BookshelfDisplaySettingsStore.KEY_SHOW_TAGS, settings.showTags);
     await store.put(BookshelfDisplaySettingsStore.KEY_SHOW_SOURCE, settings.showSource);
@@ -81,6 +87,7 @@ export class BookshelfDisplaySettingsStore {
     await store.put(BookshelfDisplaySettingsStore.KEY_SHOW_LAST_READ_TIME, settings.showLastReadTime);
     await store.put(BookshelfDisplaySettingsStore.KEY_SHOW_LAST_READ_CHAPTER, settings.showLastReadChapter);
     await store.put(BookshelfDisplaySettingsStore.KEY_SHOW_TYPE_BADGE, settings.showTypeBadge !== false);
+    await store.put(BookshelfDisplaySettingsStore.KEY_COVER_BADGES, settings.coverBadges);
     await store.put(BookshelfDisplaySettingsStore.KEY_LAYOUT_MODE,
       BookshelfDisplaySettingsStore.normalizeLayoutMode(settings.layoutMode));
     await store.put(BookshelfDisplaySettingsStore.KEY_LAST_READ_LEAF_MODE,
@@ -89,10 +96,12 @@ export class BookshelfDisplaySettingsStore {
       BookshelfDisplaySettingsStore.normalizeLastReadPinMode(settings.lastReadPinMode));
     await store.put(BookshelfDisplaySettingsStore.KEY_BOOK_OPEN_ANIMATION, settings.bookOpenAnimation !== false);
     await store.flush();
+    BookshelfDisplaySettingsStore.cachedSettings = BookshelfDisplaySettingsStore.clone(settings);
     CloudSyncChangeTracker.markApplicationPreferenceChanged();
   }
 
   static applyToStorage(settings: BookshelfDisplaySettings): void {
+    settings = BookshelfDisplaySettingsStore.clone(settings);
     BookshelfDisplaySettingsStore.cachedSettings = BookshelfDisplaySettingsStore.clone(settings);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_SHOW_TAGS, settings.showTags);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_SHOW_SOURCE, settings.showSource);
@@ -102,6 +111,7 @@ export class BookshelfDisplaySettingsStore {
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_SHOW_LAST_READ_TIME, settings.showLastReadTime);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_SHOW_LAST_READ_CHAPTER, settings.showLastReadChapter);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_SHOW_TYPE_BADGE, settings.showTypeBadge !== false);
+    AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_COVER_BADGES, settings.coverBadges);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_LAYOUT_MODE,
       BookshelfDisplaySettingsStore.normalizeLayoutMode(settings.layoutMode));
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_LAST_READ_LEAF_MODE,
@@ -122,6 +132,8 @@ export class BookshelfDisplaySettingsStore {
     settings.showLastReadTime = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_SHOW_LAST_READ_TIME) ?? true;
     settings.showLastReadChapter = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_SHOW_LAST_READ_CHAPTER) ?? false;
     settings.showTypeBadge = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_SHOW_TYPE_BADGE) ?? true;
+    settings.coverBadges = BookshelfCoverBadgeSettings.normalize(
+      AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_COVER_BADGES) ?? '', settings.showTypeBadge, settings.showSource);
     settings.layoutMode = BookshelfDisplaySettingsStore.normalizeLayoutMode(
       AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_LAYOUT_MODE) ?? 'compact');
     settings.lastReadLeafMode = BookshelfDisplaySettingsStore.normalizeLastReadLeafMode(
@@ -174,13 +186,15 @@ export class BookshelfDisplaySettingsStore {
   private static clone(source: BookshelfDisplaySettings): BookshelfDisplaySettings {
     const settings = new BookshelfDisplaySettings();
     settings.showTags = source.showTags;
-    settings.showSource = source.showSource;
+    settings.coverBadges = BookshelfCoverBadgeSettings.normalize(source.coverBadges,
+      source.showTypeBadge !== false, source.showSource !== false);
+    settings.showSource = BookshelfCoverBadgeSettings.location(settings.coverBadges, 'source') >= 0;
     settings.showIntro = source.showIntro;
     settings.showFullIntro = source.showFullIntro;
     settings.showProgressBar = source.showProgressBar;
     settings.showLastReadTime = source.showLastReadTime;
     settings.showLastReadChapter = source.showLastReadChapter;
-    settings.showTypeBadge = source.showTypeBadge !== false;
+    settings.showTypeBadge = BookshelfCoverBadgeSettings.location(settings.coverBadges, 'type') >= 0;
     settings.layoutMode = BookshelfDisplaySettingsStore.normalizeLayoutMode(source.layoutMode);
     settings.lastReadLeafMode = BookshelfDisplaySettingsStore.normalizeLastReadLeafMode(source.lastReadLeafMode);
     settings.lastReadPinMode = BookshelfDisplaySettingsStore.normalizeLastReadPinMode(source.lastReadPinMode);

@@ -21,6 +21,7 @@
     "pages/TtsSettings",
     "pages/CustomTtsVoiceManager",
     "pages/BookshelfSettings",
+    "pages/BookshelfCoverBadgeSettings",
     "pages/LocalBookSettings",
     "pages/SearchExploreSettings",
     "pages/ExploreSourceSort",

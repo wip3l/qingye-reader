@@ -6,7 +6,7 @@ import { Book } from '@legado/sourceengine';
 import { CoverAlbum, CoverGallerySettings } from '../utils/CoverGallerySettings';
 import { CoverGalleryStore, CoverGallerySnapshot } from '../utils/CoverGalleryStore';
 import { RecentReadCardUpdater } from '../utils/RecentReadCardUpdater';
-import { BookshelfDisplaySettings, BookshelfDisplaySettingsStore } from '../utils/BookshelfDisplaySettingsStore';
+import { BookshelfDisplaySettingsStore } from '../utils/BookshelfDisplaySettingsStore';
 import { SearchExplorePendingBook } from '../utils/SearchExplorePendingBook';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
@@ -118,34 +118,12 @@ struct BookshelfSettingsPage {
     })
     this.itemDivider()
     SettingSwitchRow({
-      title: '类型标识',
-      description: '书名前标注“书／漫／声”',
-      isOn: this.bookshelfShowTypeBadge,
-      showDivider: false,
-      onChange: (value: boolean) => {
-        this.bookshelfShowTypeBadge = value;
-        this.onDisplaySettingChanged();
-      }
-    })
-    this.itemDivider()
-    SettingSwitchRow({
       title: '书籍标签',
       description: '在书架卡片上显示标签',
       isOn: this.bookshelfShowTags,
       showDivider: false,
       onChange: (value: boolean) => {
         this.bookshelfShowTags = value;
-        this.onDisplaySettingChanged();
-      }
-    })
-    this.itemDivider()
-    SettingSwitchRow({
-      title: '书籍来源',
-      description: '在书架卡片上显示来源',
-      isOn: this.bookshelfShowSource,
-      showDivider: false,
-      onChange: (value: boolean) => {
-        this.bookshelfShowSource = value;
         this.onDisplaySettingChanged();
       }
     })
@@ -263,6 +241,8 @@ struct BookshelfSettingsPage {
 
     this.sectionTitle('封面设置')
     Column() {
+    this.navItem('封面标识', '配置四个角的类型、来源、更新、置顶和未读数', 'pages/BookshelfCoverBadgeSettings')
+    this.itemDivider()
     SettingSwitchRow({
       title: '忽略原始封面',
       description: '书架封面只用应用内的封面图集',
@@ -490,7 +470,7 @@ struct BookshelfSettingsPage {
 
   onDisplaySettingChanged(): void {
     AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-    const settings = new BookshelfDisplaySettings();
+    const settings = BookshelfDisplaySettingsStore.fromStorage();
     settings.showTags = this.bookshelfShowTags;
     settings.showSource = this.bookshelfShowSource;
     settings.showIntro = this.bookshelfShowIntro;
