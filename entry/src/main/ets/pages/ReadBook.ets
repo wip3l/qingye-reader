@@ -188,7 +188,7 @@ const READER_PAGINATION_BATCH_DELAY_MS = 64;
 const READER_INTERACTIVE_PAGINATION_BATCH_DELAY_MS = 56;
 const READER_PAGINATION_BUSY_RETRY_DELAY_MS = 48;
 const READER_DOUBLE_PAGE_DIVIDER_WIDTH = 1;
-// 正文选中菜单里的自定义“替换”项 ID，用于与系统菜单项（复制/全选/翻译等）区分。
+// 正文选中菜单里的自定义“替换”项 ID，用于与系统菜单项（复制/翻译等）区分。
 const READER_REPLACE_MENU_ITEM_ID: string = 'reader_replace_rule';
 // Page-curl textures are transient animation rasters, not the settled正文 surface. Capturing a full 2080x3120
 // page and sampling it through every mesh triangle can block the ArkUI thread for several seconds on tablets.
@@ -15080,18 +15080,21 @@ struct ReadBookPage {
   readerTextEditMenuOptions(textProvider: () => string): EditMenuOptions {
     return {
       onCreateMenu: (items: TextMenuItem[]): TextMenuItem[] => {
+        // 正文节点只覆盖当前页或文本块，“全选”的范围不符合阅读场景的预期。
+        const menuItems = items.filter((menuItem: TextMenuItem) =>
+          !menuItem.id.equals(TextMenuItemId.SELECT_ALL));
         const replaceItem: TextMenuItem = {
           id: TextMenuItemId.of(READER_REPLACE_MENU_ITEM_ID),
           content: '替换'
         };
-        const copyIndex = items.findIndex((menuItem: TextMenuItem) =>
+        const copyIndex = menuItems.findIndex((menuItem: TextMenuItem) =>
           menuItem.id.equals(TextMenuItemId.COPY));
         if (copyIndex >= 0) {
-          items.splice(copyIndex, 0, replaceItem);
+          menuItems.splice(copyIndex, 0, replaceItem);
         } else {
-          items.unshift(replaceItem);
+          menuItems.unshift(replaceItem);
         }
-        return items;
+        return menuItems;
       },
       onMenuItemClick: (item: TextMenuItem, range: TextRange): boolean => {
         if (item.id.equals(TextMenuItemId.of(READER_REPLACE_MENU_ITEM_ID))) {
@@ -15142,26 +15145,6 @@ struct ReadBookPage {
     } catch (error) {
       HdsFeedback.showToast('复制失败，请重试');
       console.warn('复制正文选区失败:', error);
-    }
-  }
-
-  selectAllReaderDesktopText(): void {
-    const page = this.readerDesktopSelectionPage;
-    if (!page) return;
-    if (this.readerSelectionStartChunk >= 0) {
-      this.readerSelectionStartChunk = this.readerV2NativeSelectionPageIndex;
-      this.readerSelectionEndChunk = this.readerV2NativeSelectionPageIndex;
-    }
-    this.onReaderV2NativeSelectionChanged(page, this.readerV2NativeSelectionChapterIndex,
-      this.readerV2NativeSelectionPageIndex, 0, page.selectionText.length);
-    if (this.isReaderDesktopSelection()) return;
-    const key = this.readerV2NativeSelectionKey(this.readerV2NativeSelectionRole,
-      this.readerV2NativeSelectionChapterIndex, this.readerV2NativeSelectionPageIndex, page);
-    try {
-      this.readerSelectableTextController(key).setTextSelection(0, page.selectionText.length,
-        { menuPolicy: MenuPolicy.HIDE });
-    } catch (error) {
-      console.warn('全选正文失败:', error);
     }
   }
 
@@ -15339,8 +15322,6 @@ struct ReadBookPage {
     Row({ space: 4 }) {
       Button('复制').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)
         .id('reader_selection_copy').onClick(() => { this.copyReaderDesktopSelection(); })
-      Button('全选').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)
-        .id('reader_selection_all').onClick(() => { this.selectAllReaderDesktopText(); })
       Button('替换').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)
         .id('reader_selection_replace').onClick(() => {
         const text = this.readerDesktopSelectedText();
