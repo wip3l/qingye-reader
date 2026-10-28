@@ -21,12 +21,13 @@ test('AI color and translation require active membership, including expiry, rest
     canIUse: () => true
   });
   for (const file of ['account/AccountCommerceModels.ets', 'account/AccountSessionStore.ets',
-    'account/AiAccessPolicy.ets', 'runtime/AiRuntime.ets', 'utils/AppAiHost.ets', 'core/reader/ReaderComicComputeQueue.ts',
+    'account/AiAccessPolicy.ets', 'runtime/AiRuntime.ets', 'core/book/ReaderCacheCoordinator.ts',
+    'utils/AppAiHost.ets', 'core/reader/ReaderComicComputeQueue.ts',
     'core/reader/ComicColorizer.ets', 'core/reader/ComicChineseConverter.ets']) {
     vm.runInContext(stripTypeScriptTypes(withoutImports(read(file))), sandbox);
   }
-  const { session, color, translation } = vm.runInContext(
-    '({ session: AccountSessionStore, color: ComicColorizer, translation: ComicChineseConverter })', sandbox);
+  const { session, color, translation, coordinator } = vm.runInContext(
+    '({ session: AccountSessionStore, color: ComicColorizer, translation: ComicChineseConverter, coordinator: ReaderCacheCoordinator })', sandbox);
   vm.runInContext('AppAiHost.install()', sandbox);
   async function login(sku, options = {}) {
     await session.saveLogin({}, { sessionToken: 'token', account: {
@@ -40,6 +41,7 @@ test('AI color and translation require active membership, including expiry, rest
     assert.equal(translation.access(), access.MEMBER_REQUIRED);
     // 无权限时不得读取图片、缓存或启动 Worker：无需提供这些依赖即可拒绝任务。
     await assert.rejects(color.colorize({}, 'image', () => true, () => {}), /会员专享/);
+    assert.equal(coordinator.fileInUse('image'), false, 'denied AI work releases its source-file lease');
   }
   await denied();
   for (const sku of ['MONTHLY', 'ANNUAL', 'LIFETIME', 'SUPER_LIFETIME']) {

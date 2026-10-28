@@ -31,12 +31,12 @@ function fixture({ now = end - 10000, persisted = new Map() } = {}) {
     ComicTextRecognizer: { supported: () => true }
   });
   for (const file of ['account/AccountCommerceModels.ets', 'account/AccountSessionStore.ets',
-    'account/AiAccessPolicy.ets', 'runtime/AiRuntime.ets', 'utils/AppAiHost.ets',
+    'account/AiAccessPolicy.ets', 'runtime/AiRuntime.ets', 'core/book/ReaderCacheCoordinator.ts', 'utils/AppAiHost.ets',
     'core/reader/ReaderComicComputeQueue.ts', 'core/reader/ReaderComicSuperResolution.ets',
     'core/reader/ComicColorizer.ets', 'core/reader/ComicChineseConverter.ets']) {
     vm.runInContext(stripTypeScriptTypes(withoutImports(read(file))), sandbox);
   }
-  const api = vm.runInContext(`({ policy: AiAccessPolicy, session: AccountSessionStore, runtime: AiRuntime,
+  const api = vm.runInContext(`({ policy: AiAccessPolicy, session: AccountSessionStore, runtime: AiRuntime, coordinator: ReaderCacheCoordinator,
     sr: ReaderComicSuperResolution, color: ComicColorizer, translation: ComicChineseConverter })`, sandbox);
   vm.runInContext('AppAiHost.install(); AiAccessPolicy.initialize();', sandbox);
   const login = async ({ member = false, serverNow = clock.now, ...extra } = {}) => api.session.saveLogin({}, {
@@ -70,6 +70,7 @@ test('only logged-in users get the three AI features before the Beijing trial de
   await f.session.clear({});
   for (const feature of features) assert.equal(f.runtime.isAllowed(feature), false);
   await assert.rejects(f.color.colorize({}, 'image', () => true, () => {}), /会员专享/);
+  assert.equal(f.coordinator.fileInUse('image'), false, 'logging out leaves no AI source-file lease');
   await f.login();
   for (const feature of features) assert.equal(f.runtime.isAllowed(feature), true);
 });
