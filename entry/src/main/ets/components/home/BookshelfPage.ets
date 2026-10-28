@@ -4838,18 +4838,30 @@ export struct BookshelfPage {
 
   openShelfSearch(): void {
     this.showShelfFilterMenu = false;
-    this.shelfSearchActive = true;
-    setTimeout(() => {
-      if (this.shelfComponentActive && this.shelfSearchActive) {
-        focusControl.requestFocus(SHELF_SEARCH_INPUT_KEY);
+    if (this.shelfSearchActive) {
+      this.getUIContext().getFocusController().requestFocus(SHELF_SEARCH_INPUT_KEY);
+      return;
+    }
+    this.getUIContext().animateTo({
+      duration: 240,
+      curve: Curve.EaseOut,
+      onFinish: (): void => {
+        // 等搜索栏展开后再唤起键盘，避免键盘挤压布局打断入场动画。
+        if (this.shelfComponentActive && this.shelfSearchActive) {
+          this.getUIContext().getFocusController().requestFocus(SHELF_SEARCH_INPUT_KEY);
+        }
       }
-    }, 120);
+    }, (): void => {
+      this.shelfSearchActive = true;
+    });
   }
 
   closeShelfSearch(): void {
     this.getUIContext().getFocusController().clearFocus();
     this.shelfSearchKeyword = '';
-    this.shelfSearchActive = false;
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseInOut }, (): void => {
+      this.shelfSearchActive = false;
+    });
   }
 
   /** 来源只筛了本地时，下拉刷新改为重新扫描本地书。 */
@@ -6396,6 +6408,9 @@ export struct BookshelfPage {
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
     .margin({ bottom: AppSpacing.MD })
     .alignItems(VerticalAlign.Center)
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ y: -12 }))
+      .combine(TransitionEffect.scale({ x: 0.96, y: 0.96, centerX: '50%', centerY: '0%' })))
   }
 
   showsShelfScopeTabs(): boolean {
