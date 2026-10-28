@@ -697,6 +697,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
 
   async insertBook(book: Book, reason: string = 'insert_book'): Promise<void> {
     if (!this.store) return;
+    // The catalog can be cached before a search result becomes a durable Book.
+    await this.restoreMissingChapterCounts([book], false);
     book.identityKey = BookIdentity.keyOfBook(book);
     if (!book.pendingAddToShelf && book.shelfModifiedTime <= 0) {
       book.shelfModifiedTime = Date.now();
@@ -1181,12 +1183,14 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     const predicates = new relationalStore.RdbPredicates('books');
     predicates.equalTo('bookUrl', bookUrl);
     const resultSet = await this.store.query(predicates, []);
+    let book: Book | null = null;
     try {
-      if (!resultSet.goToFirstRow()) return null;
-      return this.resultSetToBook(resultSet);
+      if (resultSet.goToFirstRow()) book = this.resultSetToBook(resultSet);
     } finally {
       resultSet.close();
     }
+    if (book) await this.restoreMissingChapterCounts([book]);
+    return book;
   }
 
   async getAllBooks(): Promise<Book[]> {
@@ -1202,7 +1206,42 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     } finally {
       resultSet.close();
     }
+    await this.restoreMissingChapterCounts(books);
     return books;
+  }
+
+  /** Repair legacy zero counts without rewriting a stale Book/progress snapshot. */
+  private async restoreMissingChapterCounts(books: Book[], persist: boolean = true): Promise<void> {
+    if (!this.store) return;
+    const missing = books.filter((book: Book): boolean => !!book.bookUrl && book.totalChapterNum <= 0);
+    // Batch the lookup: an imported shelf may contain hundreds of uncatalogued books.
+    for (let offset = 0; offset < missing.length; offset += 200) {
+      const batch = missing.slice(offset, offset + 200);
+      const urls = batch.map((book: Book): string => book.bookUrl);
+      const placeholders = urls.map((_url: string): string => '?').join(',');
+      const counts = new Map<string, number>();
+      const result = await this.store.querySql(
+        `SELECT bookUrl, COUNT(*) AS chapterCount FROM book_chapters WHERE bookUrl IN (${placeholders}) GROUP BY bookUrl`,
+        urls);
+      try {
+        while (result.goToNextRow()) {
+          counts.set(this.getStringColumn(result, 'bookUrl'), this.getLongColumn(result, 'chapterCount'));
+        }
+      } finally {
+        result.close();
+      }
+      for (const book of batch) {
+        const count = counts.get(book.bookUrl) || 0;
+        if (count <= 0) continue;
+        book.totalChapterNum = count;
+        if (!persist) continue;
+        const predicates = new relationalStore.RdbPredicates('books');
+        predicates.equalTo('bookUrl', book.bookUrl);
+        predicates.lessThanOrEqualTo('totalChapterNum', 0);
+        // A concurrent catalog refresh may already have supplied a newer positive count.
+        await this.store.update({ totalChapterNum: count }, predicates);
+      }
+    }
   }
 
   /** 隐私标记保留本机；统计撤回已分享片段，避免其他设备继续持有其书名。 */

@@ -204,6 +204,7 @@ export class ReadBookEngine {
     this.book.durChapterPos = book.durChapterPos;
     this.book.durChapterTitle = book.durChapterTitle;
     this.book.durChapterTime = book.durChapterTime;
+    if (book.totalChapterNum > 0) this.book.totalChapterNum = book.totalChapterNum;
     // Keeping a trial read updates a different Book instance on the detail page. The retained engine must
     // adopt that shelf state as well as progress before any reader/player uses it for a full-record save.
     this.book.pendingAddToShelf = book.pendingAddToShelf;
@@ -247,6 +248,9 @@ export class ReadBookEngine {
     const cachedChapters = await appDb.getBookChapters(book.bookUrl);
     if (!this.isCurrentBookSession(generation, book.bookUrl)) return;
     this.chapters = cachedChapters;
+    if (book.totalChapterNum <= 0 && cachedChapters.length > 0) {
+      book.totalChapterNum = cachedChapters.length;
+    }
     console.log('[RE] cached chapters:', this.chapters.length);
     ReaderOpenTrace.mark(book.bookUrl, 'chapters-ready', `count=${this.chapters.length}`);
 

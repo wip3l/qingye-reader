@@ -843,7 +843,7 @@ struct ReadBookPage {
   private readerProgressAnchorChapterIndex: number = -1;
   private readerProgressAnchorPageIndex: number = 0;
   private readerProgressAnchorOffset: number = -1;
-  private readerProgressAnchorPageCount: number = 1;
+  private readerProgressAnchorPageCount: number = 0;
   private readerProgressAnchorPageText: string = '';
   private readerProgressAnchorPageImage: string = '';
   // A freshly mounted reader can publish the first incremental pages before the saved offset/page is restored.
@@ -1492,8 +1492,9 @@ struct ReadBookPage {
         this.readerProgressAnchorPageIndex = savedPosition;
         this.readerProgressAnchorOffset = savedOffset;
         const storedPageCount = Number(this.book.getVariable('readProgressPageCount'));
-        this.readerProgressAnchorPageCount = Number.isFinite(storedPageCount) && storedPageCount > 0 ?
-          Math.round(storedPageCount) : Math.max(1, savedPosition + 1);
+        const storedProgressChapter = Number.parseInt(this.book.getVariable('readProgressChapterIndex'));
+        this.readerProgressAnchorPageCount = storedProgressChapter === this.currentChapterIndex &&
+          Number.isFinite(storedPageCount) && storedPageCount > 0 ? Math.round(storedPageCount) : 0;
         this.readerProgressAnchorPageText = this.book.getVariable('lastReadPageText') || '';
         this.readerProgressAnchorPageImage = this.book.getVariable('lastReadPageImage') || '';
       }
@@ -1660,7 +1661,7 @@ struct ReadBookPage {
     this.readerProgressAnchorChapterIndex = -1;
     this.readerProgressAnchorPageIndex = 0;
     this.readerProgressAnchorOffset = -1;
-    this.readerProgressAnchorPageCount = 1;
+    this.readerProgressAnchorPageCount = 0;
     this.readerProgressAnchorPageText = '';
     this.readerProgressAnchorPageImage = '';
     this.readerProgressRestoreConfirmed = false;
@@ -9128,7 +9129,7 @@ struct ReadBookPage {
       chapterIndex = this.clampChapterIndex(this.readerProgressAnchorChapterIndex);
       pageIndex = Math.max(0, this.readerProgressAnchorPageIndex);
       characterOffset = this.readerProgressAnchorOffset;
-      progressPageCount = Math.max(1, this.readerProgressAnchorPageCount);
+      progressPageCount = Math.max(0, this.readerProgressAnchorPageCount);
       lastReadPageText = this.readerProgressAnchorPageText;
       lastReadPageImage = this.readerProgressAnchorPageImage;
     } else {

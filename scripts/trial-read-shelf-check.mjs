@@ -50,6 +50,8 @@ function harness() {
   const { Book, appDb: db, ReadBookEngine: Engine, SearchExplorePendingBook: pending } = context.api;
   const clone = book => Object.assign(new Book(), JSON.parse(JSON.stringify(book)));
   db.store = {
+    // These fixtures open their catalog through the mocked engine below, not a persisted TOC.
+    async querySql() { return { goToNextRow: () => false, close() {} }; },
     async insert(table, bucket) { assert.equal(table, 'books'); rows.set(bucket.bookUrl, { ...bucket }); },
     async update(bucket, predicates) {
       writes.push({ ...bucket });

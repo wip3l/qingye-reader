@@ -809,6 +809,7 @@ export struct BookshelfPage {
     const progressPageCount = book.getVariable('readProgressPageCount');
     return `${prefix}_${book.bookUrl}_pin_${book.isPinned ? '1' : '0'}_` +
       `read_${book.durChapterTime}_${book.durChapterIndex}_${book.durChapterPos}_` +
+      `${book.totalChapterNum}_${book.getVariable('readStarted')}_` +
       `${progressChapterIndex}_${progressPageCount}_cover_${this.shelfCoverRenderVersions.get(book.bookUrl) || 0}`;
   }
 
@@ -4907,10 +4908,10 @@ export struct BookshelfPage {
 
   /** 与书籍卡片上的“未读 / N章未读 / 已读完”一致。 */
   shelfReadProgressKey(book: Book): string {
-    if (!book.totalChapterNum || book.totalChapterNum <= 0 || !Book.hasStartedReading(book)) {
+    if (!Book.hasStartedReading(book)) {
       return 'unread';
     }
-    return book.getUnreadChapterNum() > 0 ? 'reading' : 'readDone';
+    return this.getReadProgressValue(book) >= 100 ? 'readDone' : 'reading';
   }
 
   /** 转小写、去掉首尾空白、中间连续空白并成一个空格；空格分开的每个词都要命中。 */
@@ -7276,18 +7277,22 @@ export struct BookshelfPage {
   }
 
   getShelfProgressText(book: Book): string {
-    if (!book.totalChapterNum || book.totalChapterNum <= 0) {
-      return '未读';
-    }
     if (!Book.hasStartedReading(book)) {
       return '未读';
     }
+    if (!this.hasKnownReadProgressTotal(book)) return '进度未知';
     const unread = book.getUnreadChapterNum();
-    return unread > 0 ? `${unread}章未读` : '已读完';
+    return unread > 0 ? `${unread}章未读` : (this.getReadProgressValue(book) >= 100 ? '已读完' : '阅读中');
+  }
+
+  hasKnownReadProgressTotal(book: Book): boolean {
+    return Number.isFinite(book.totalChapterNum) && book.totalChapterNum > 0 &&
+      Number.isFinite(book.durChapterIndex) && book.durChapterIndex >= 0 &&
+      book.durChapterIndex < book.totalChapterNum;
   }
 
   getReadProgressValue(book: Book): number {
-    if (!book.totalChapterNum || book.totalChapterNum <= 0) {
+    if (!this.hasKnownReadProgressTotal(book)) {
       return 0;
     }
     if (!Book.hasStartedReading(book)) {
@@ -7296,8 +7301,10 @@ export struct BookshelfPage {
     const chapterIndex = Math.min(Math.max(book.durChapterIndex, 0), book.totalChapterNum - 1);
     const progressChapterIndex = Number.parseInt(book.getVariable('readProgressChapterIndex'));
     const currentChapterPageCount = Number.parseInt(book.getVariable('readProgressPageCount'));
-    let currentChapterProgress = 1;
-    if (progressChapterIndex === chapterIndex && currentChapterPageCount > 0) {
+    // Unknown/mismatched pagination only proves that earlier chapters were passed.
+    let currentChapterProgress = 0;
+    if (progressChapterIndex === chapterIndex && Number.isFinite(currentChapterPageCount) &&
+      currentChapterPageCount > 0 && Number.isFinite(book.durChapterPos)) {
       const currentPageNumber = Math.min(Math.max(book.durChapterPos + 1, 1), currentChapterPageCount);
       currentChapterProgress = currentPageNumber / currentChapterPageCount;
     }
@@ -7306,6 +7313,7 @@ export struct BookshelfPage {
   }
 
   getReadProgressPercentText(book: Book): string {
+    if (!this.hasKnownReadProgressTotal(book)) return '进度未知';
     const progress = this.getReadProgressValue(book);
     if (progress <= 0) {
       return '已读0%';
@@ -7364,6 +7372,7 @@ export struct BookshelfPage {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Progress({ value: this.getReadProgressValue(book), total: 100, type: ProgressType.Linear })
+        .visibility(this.hasKnownReadProgressTotal(book) ? Visibility.Visible : Visibility.Hidden)
         .width('100%')
         .height(3)
         .color(this.accentColor())
@@ -7376,6 +7385,7 @@ export struct BookshelfPage {
   looseReadProgressPanel(book: Book) {
     Column({ space: AppSpacing.XS }) {
       Progress({ value: this.getReadProgressValue(book), total: 100, type: ProgressType.Linear })
+        .visibility(this.hasKnownReadProgressTotal(book) ? Visibility.Visible : Visibility.Hidden)
         .width('100%')
         .height(3)
         .color(this.accentColor())
