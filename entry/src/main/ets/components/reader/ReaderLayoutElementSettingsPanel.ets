@@ -78,7 +78,8 @@ export struct ReaderLayoutElementSettingsPanel {
           this.readerUseAutoScrollQuickAction = enabled;
           this.save();
         })
-      this.toggleRow('使用章节快速跳转组件', '显示章节滑杆和上一章、下一章按钮', this.readerUseChapterQuickJump,
+      this.toggleRow('使用快速跳转组件', this.comicMode ? '在话数与全书百分比之间切换，保留上一话、下一话按钮' :
+        '在章节与全书百分比之间切换，保留上一章、下一章按钮', this.readerUseChapterQuickJump,
         (enabled: boolean) => {
           this.readerUseChapterQuickJump = enabled;
           this.onChapterQuickJumpChanged(enabled);

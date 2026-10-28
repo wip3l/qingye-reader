@@ -9,6 +9,8 @@ export class ReaderTtsFloatingSession {
   private static nextAction: (() => void) | null = null;
   private static positionAction: ((chapterIndex: number, pageIndex: number,
     sourceOffset: number) => Promise<void> | void) | null = null;
+  private static preparedPositionAction: ((chapterIndex: number, sourceOffset: number,
+    resume: boolean) => Promise<boolean>) | null = null;
   private static speedAction: ((value: number) => void) | null = null;
   private static timerAction: ((minutes: number) => void) | null = null;
   private static voiceAction: (() => void) | null = null;
@@ -78,6 +80,18 @@ export class ReaderTtsFloatingSession {
       return;
     }
     ReaderTtsFloatingSession.positionAction = positionAction;
+  }
+
+  static configurePreparedPositionControl(ownerId: string,
+    action: (chapterIndex: number, sourceOffset: number, resume: boolean) => Promise<boolean>): void {
+    if (ReaderTtsFloatingSession.isOwner(ownerId)) ReaderTtsFloatingSession.preparedPositionAction = action;
+  }
+
+  static async jumpToPreparedPosition(ownerId: string, chapterIndex: number, sourceOffset: number,
+    resume: boolean): Promise<boolean> {
+    if (!ReaderTtsFloatingSession.isOwner(ownerId)) return false;
+    const action = ReaderTtsFloatingSession.preparedPositionAction;
+    return action ? await action(chapterIndex, sourceOffset, resume) : false;
   }
 
   static configureTtsVoices(ownerId: string, labels: string[], selectedIndex: number,
@@ -413,6 +427,7 @@ export class ReaderTtsFloatingSession {
     ReaderTtsFloatingSession.previousAction = null;
     ReaderTtsFloatingSession.nextAction = null;
     ReaderTtsFloatingSession.positionAction = null;
+    ReaderTtsFloatingSession.preparedPositionAction = null;
     ReaderTtsFloatingSession.speedAction = null;
     ReaderTtsFloatingSession.timerAction = null;
     ReaderTtsFloatingSession.voiceAction = null;

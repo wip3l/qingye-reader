@@ -1,3 +1,5 @@
+import { ReaderQuickJumpModel } from '../core/reader/ReaderQuickJumpModel';
+import { ReaderQuickJumpContent } from '../components/reader/ReaderQuickJumpContent';
 import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
 import { syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
@@ -239,6 +241,12 @@ struct ReadBookPage {
   @State menuChapterSliderActive: boolean = false;
   @State menuChapterTooltipVisible: boolean = false;
   @State menuChapterConfirming: boolean = false;
+  @State menuPercentPreview: number = 0;
+  @State quickJumpBusy: boolean = false;
+  private quickJumpSerial: number = 0;
+  private quickJumpPausedSpeechOffset: number = -1;
+  private quickJumpPausedSpeechSource: string = '';
+  private quickJumpPausedSpeechChapter: number = -1;
   @State content: string = '';
   @State readerReplaceRules: ReaderReplaceRule[] = [];
   @State isLoading: boolean = true;
@@ -336,9 +344,6 @@ struct ReadBookPage {
   @State readerComicPagedNextPages: string[] = [];
   private readerComicPagedPrevChapter: number = -1;
   private readerComicPagedNextChapter: number = -1;
-  @State comicPageSliderActive: boolean = false;
-  @State comicPageSliderPreview: number = 0;
-  @State comicPageTooltipVisible: boolean = false;
   @State readerComicPaginationParsing: boolean = false;
   @State readerComicPaginationParsedPages: number = 0;
   @State readerComicPaginationTotalPages: number = 0;
@@ -739,6 +744,7 @@ struct ReadBookPage {
   @StorageLink('readerUseTtsQuickAction') readerUseTtsQuickAction: boolean = true;
   @StorageLink('readerUseAutoScrollQuickAction') readerUseAutoScrollQuickAction: boolean = true;
   @StorageLink('readerUseChapterQuickJump') readerUseChapterQuickJump: boolean = true;
+  @StorageLink('readerQuickJumpMode') readerQuickJumpMode: string = 'chapter';
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
   @StorageLink('readerHeaderEnabled') @Watch('onReaderChromeChanged') readerHeaderEnabled: boolean = false;
   @StorageLink('readerFooterEnabled') @Watch('onReaderChromeChanged') readerFooterEnabled: boolean = true;
@@ -1131,6 +1137,7 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    this.cancelReaderQuickJump();
     this.releaseReadingCache?.(); this.releaseReadingCache = null;
     this.stopReaderHoldingHandTracking();
     this.releaseReaderKeyboard();
@@ -1248,6 +1255,7 @@ struct ReadBookPage {
   }
 
   onPageHide(): void {
+    this.cancelReaderQuickJump();
     if (!this.releaseTtsCache && this.book && (this.isTtsSpeaking || this.isTtsPaused || this.ttsReader.isSpeaking())) {
       this.releaseTtsCache = ReaderCacheCoordinator.retainBook(this.book.bookUrl);
     }
@@ -2030,15 +2038,17 @@ struct ReadBookPage {
     if (this.isPageTurning) return false;
     return this.shouldRenderPrimaryReaderContent() &&
       !this.readerComicChapterSwitching &&
-      (this.isLoading || this.isPagedReaderAwaitingPagination() || !this.readerInitialPageReady);
+      (this.quickJumpBusy || this.isLoading || this.isPagedReaderAwaitingPagination() || !this.readerInitialPageReady);
   }
 
   shouldBlockReaderInteraction(): boolean {
-    return this.isLoading || this.isPagedReaderAwaitingPagination() || !this.readerInitialPageReady ||
+    return this.quickJumpBusy || this.readerComicChapterSwitching || this.readerContinuousCommitChapter >= 0 ||
+      this.isLoading || this.isPagedReaderAwaitingPagination() || !this.readerInitialPageReady ||
       this.readerComicPaginationParsing;
   }
 
   getReaderLoadingText(): string {
+    if (this.quickJumpBusy) return '正在定位…';
     if (this.readerInitialOpening) {
       return '正在打开书籍…';
     }
@@ -2447,7 +2457,7 @@ struct ReadBookPage {
   }
 
   onReaderComicPagedPageChanged(pageIndex: number): void {
-    if (!this.readerPageVisible || this.contentPages.length === 0) return;
+    if (this.quickJumpBusy || !this.readerPageVisible || this.contentPages.length === 0) return;
     const target = Math.max(0, Math.min(pageIndex, this.contentPages.length - 1));
     const lastShown = target + (this.isReaderComicDualPageActive() ? 1 : 0);
     this.readerContinuousReachedEnd = lastShown >= this.contentPages.length - 1;
@@ -2677,27 +2687,6 @@ struct ReadBookPage {
       return;
     }
     this.switchComicBoundaryChapter(direction);
-  }
-
-  comicMenuPageIndex(): number {
-    return this.comicPageSliderActive ? this.comicPageSliderPreview : this.currentPageIndex;
-  }
-
-  canStepReaderComicChapter(direction: number): boolean {
-    if (this.isLoading || this.readerComicChapterSwitching) return false;
-    return direction < 0 ? this.currentChapterIndex > 0 : this.currentChapterIndex < this.chapters.length - 1;
-  }
-
-  handleComicPageSliderChange(value: number, mode: SliderChangeMode): void {
-    const lastIndex = Math.max(0, this.readerComicTotalPageCount() - 1);
-    this.comicPageSliderPreview = Math.max(0, Math.min(Math.round(value), lastIndex));
-    this.comicPageSliderActive = true;
-    this.comicPageTooltipVisible = mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving;
-    if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-      this.comicPageTooltipVisible = false;
-      this.comicPageSliderActive = false;
-      this.jumpToReaderComicPage(this.comicPageSliderPreview);
-    }
   }
 
   jumpToReaderComicPage(index: number): void {
@@ -3598,7 +3587,7 @@ struct ReadBookPage {
   readerMaterialFloatingBottomMenu() {
     Column({ space: AppSpacing.XS }) {
       if (this.readerUseChapterQuickJump) {
-        this.readerMaterialChapterBar(this.isReaderComicModeActive())
+        this.readerMaterialChapterBar()
       }
       this.readerMaterialActionBar(false)
     }
@@ -3615,77 +3604,34 @@ struct ReadBookPage {
   }
 
   @Builder
-  readerMaterialChapterBar(comicPages: boolean = false) {
+  readerMaterialChapterBar() {
     Stack({ alignContent: Alignment.Center }) {
-      if (ImmersiveMaterialRuntime.supportsHds()) {
-        ReaderFloatingMaterialBar({
-          barWidth: this.readerFloatingBarWidth(),
-          fallbackColor: this.readerPanelColor(),
-          darkMode: this.isReaderThemeDark()
-        }) {
-          this.readerHdsProgressBarContent(comicPages)
-        }
-      } else {
-        this.readerHdsChapterTabBar(comicPages)
+      ReaderMaterialPanel({
+        panelWidth: this.readerFloatingBarWidth(),
+        panelHeight: this.readerQuickJumpHeight(),
+        cornerRadius: 28,
+        darkMode: this.isReaderThemeDark(),
+        fallbackColor: this.readerPanelColor()
+      }) {
+        this.readerHdsChapterBarContent()
       }
-
-      this.readerChapterTooltip(comicPages)
+      this.readerChapterTooltip()
     }
     .width('100%')
-    .height(56)
+    .height(this.readerQuickJumpHeight())
   }
 
   @Builder
-  readerHdsChapterTabBar(comicPages: boolean) {
-    HdsTabs({ barPosition: BarPosition.End, index: 0 }) {
-      TabContent() {
-        Column()
-      }
-      .height(56)
-      .tabBar(this.readerHdsProgressBarContent(comicPages))
-    }
-    .key(`reader_hds_chapter_bar_${comicPages ? 'comic' : 'chapter'}_${this.themeRevision}_` +
-      `${this.isReaderThemeDark() ? 'dark' : 'light'}`)
-    .barBackgroundColor(this.readerFloatingBarTintColor())
-    .barMode(BarMode.Fixed)
-    .barHeight(48)
-    .barOverlap(true)
-    .barFloatingStyle({
-      barWidth: {
-        smallWidth: this.readerFloatingBarWidth(),
-        mediumWidth: this.readerFloatingBarWidth(),
-        largeWidth: this.readerFloatingBarWidth()
-      },
-      systemMaterialEffect: {
-        materialType: ImmersiveMaterialRuntime.materialType(),
-        materialLevel: ImmersiveMaterialRuntime.materialLevel(this.immersiveLightLevel)
-      },
-      barSideMargin: 0,
-      barBottomMargin: 4,
-      gradientMask: {
-        maskColor: Color.Transparent,
-        maskHeight: 56
-      },
-      adaptToHandedness: false,
-      thermoCtrl: true,
-      barOpacity: 1
-    })
-    .scrollable(false)
-    .width('100%')
-    .height(56)
-  }
-
-  @Builder
-  readerChapterTooltip(comicPages: boolean) {
-    if (comicPages ? this.comicPageTooltipVisible : this.menuChapterTooltipVisible) {
+  readerChapterTooltip() {
+    if (this.menuChapterTooltipVisible) {
       Column({ space: AppSpacing.XXS }) {
-        Text(this.getChapterTitle(comicPages ? this.currentChapterIndex : this.getMenuChapterDisplayIndex()))
+        Text(this.getChapterTitle(this.getMenuChapterDisplayIndex()))
           .fontSize(AppFontSize.CAPTION)
           .fontColor('#FFFFFFFF')
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(comicPages ? `第 ${this.comicMenuPageIndex() + 1} / ${this.readerComicTotalPageCount()} 页` :
-          `${this.getMenuChapterDisplayIndex() + 1}/${this.chapters.length}`)
+        Text(this.readerQuickJumpMode === 'percent' ? `${this.getMenuPercentDisplay().toFixed(1)}% · 全书` :
+          `${this.getMenuChapterDisplayIndex() + 1}/${this.chapters.length} ${this.readerQuickJumpChapterUnit()}`)
           .fontSize(AppFontSize.CAPTION)
           .fontColor('#CCFFFFFF')
       }
@@ -3697,125 +3643,34 @@ struct ReadBookPage {
       .borderRadius(22)
       .backgroundColor(this.isReaderThemeDark() ? '#E63A3C40' : '#D94B4D52')
       .shadow({ radius: 10, color: '#50000000', offsetX: 0, offsetY: 3 })
-      .position({ x: this.readerChapterTooltipCenteredLeft(), y: -48 })
+      .position({ x: this.supportsReaderImmersiveMaterial() ? this.readerChapterTooltipCenteredLeft() :
+        (this.readerFloatingBarWidth() - this.readerChapterTooltipWidth()) / 2, y: -48 })
     }
-  }
-
-  @Builder
-  readerHdsProgressBarContent(comicPages: boolean) {
-    if (comicPages) {
-      this.readerHdsComicPageBarContent()
-    } else {
-      this.readerHdsChapterBarContent()
-    }
-  }
-
-  @Builder
-  readerHdsComicPageBarContent() {
-    Row() {
-      this.readerComicChapterStepButton(-1)
-      this.readerComicPageSlider(48, 30)
-      this.readerComicChapterStepButton(1)
-    }
-    .width('100%')
-    .height(48)
-    .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
-    .alignItems(VerticalAlign.Center)
-    .translate({ y: ImmersiveMaterialRuntime.supportsHds() ? 0 : -2 })
-  }
-
-  @Builder
-  readerComicChapterStepButton(direction: number) {
-    Stack({ alignContent: Alignment.Center }) {
-      SymbolGlyph(direction < 0 ? $r('sys.symbol.chevron_left') : $r('sys.symbol.chevron_right'))
-        .fontSize(25)
-        .fontColor([this.canStepReaderComicChapter(direction) ? this.readerPanelTextColor() : this.readerPanelSubTextColor()])
-    }
-    .width(46)
-    .height(48)
-    .enabled(this.canStepReaderComicChapter(direction))
-    .accessibilityText(direction < 0 ? '上一话' : '下一话')
-    .onClick(async () => {
-      await this.jumpToAdjacentChapterFromMenu(direction);
-    })
-  }
-
-  @Builder
-  readerComicPageSlider(height: number, thickness: number) {
-    Slider({
-      value: this.comicMenuPageIndex(),
-      min: 0,
-      max: Math.max(1, this.readerComicTotalPageCount() - 1),
-      step: 1,
-      style: SliderStyle.InSet
-    })
-      .layoutWeight(1)
-      .height(height)
-      .trackThickness(thickness)
-      .blockSize({ width: thickness, height: thickness })
-      .selectedColor(this.accentColor())
-      .trackColor(this.readerChapterTrackColor())
-      .blockColor(this.readerSolidPanelColor())
-      .showSteps(false)
-      .enabled(this.readerComicTotalPageCount() > 1)
-      .onChange((value: number, mode: SliderChangeMode) => {
-        this.handleComicPageSliderChange(value, mode);
-      })
   }
 
   @Builder
   readerHdsChapterBarContent() {
-    Row() {
-      Stack({ alignContent: Alignment.Center }) {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(25)
-          .fontColor([this.currentChapterIndex > 0 && !this.isLoading ?
-            this.readerPanelTextColor() : this.readerPanelSubTextColor()])
-      }
-        .width(46)
-        .height(48)
-        .enabled(this.currentChapterIndex > 0 && !this.isLoading)
-        .onClick(async () => {
-          await this.jumpToAdjacentChapterFromMenu(-1);
-        })
-
-      Slider({
-        value: this.getMenuChapterDisplayIndex(),
-        min: 0,
-        max: Math.max(0, this.chapters.length - 1),
-        step: 1,
-        style: SliderStyle.InSet
-      })
-        .layoutWeight(1)
-        .height(48)
-        .trackThickness(30)
-        .blockSize({ width: 30, height: 30 })
-        .selectedColor(this.accentColor())
-        .trackColor(this.readerChapterTrackColor())
-        .blockColor(this.readerSolidPanelColor())
-        .showSteps(false)
-        .onChange((value: number, mode: SliderChangeMode) => {
-          this.handleMenuChapterSliderChange(value, mode);
-        })
-
-      Stack({ alignContent: Alignment.Center }) {
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(25)
-          .fontColor([this.currentChapterIndex < this.chapters.length - 1 && !this.isLoading ?
-            this.readerPanelTextColor() : this.readerPanelSubTextColor()])
-      }
-        .width(46)
-        .height(48)
-        .enabled(this.currentChapterIndex < this.chapters.length - 1 && !this.isLoading)
-        .onClick(async () => {
-          await this.jumpToAdjacentChapterFromMenu(1);
-        })
-    }
-    .width('100%')
-    .height(48)
-    .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
-    .alignItems(VerticalAlign.Center)
-    .translate({ y: ImmersiveMaterialRuntime.supportsHds() ? 0 : -2 })
+    ReaderQuickJumpContent({
+      mode: this.readerQuickJumpMode,
+      chapterLabel: this.isReaderComicModeActive() ? '话数' : '章节',
+      chapterUnit: this.readerQuickJumpChapterUnit(),
+      value: this.readerQuickJumpMode === 'percent' ? this.getMenuPercentDisplay() : this.getMenuChapterDisplayIndex(),
+      chapterCount: this.chapters.length,
+      currentChapter: this.currentChapterIndex,
+      valueLabel: this.quickJumpBusy ? '正在定位…' : (this.chapters.length === 0 ? (this.isReaderComicModeActive() ? '暂无话数' : '暂无章节') :
+        (this.readerQuickJumpMode === 'percent' ? `${this.getMenuPercentDisplay().toFixed(1)}% · 全书` :
+          `${this.getMenuChapterDisplayIndex() + 1} / ${this.chapters.length} ${this.readerQuickJumpChapterUnit()}`)),
+      busy: this.quickJumpBusy || this.menuChapterConfirming || this.shouldBlockReaderInteraction(),
+      dark: this.isReaderThemeDark(),
+      textColor: this.readerPanelTextColor(),
+      subTextColor: this.readerPanelSubTextColor(),
+      accentColor: this.accentColor(),
+      trackColor: this.readerChapterTrackColor(),
+      thumbColor: this.readerSolidPanelColor(),
+      onModeChange: (mode: string): void => this.setReaderQuickJumpMode(mode),
+      onChange: (value: number, mode: SliderChangeMode): void => this.handleMenuChapterSliderChange(value, mode),
+      onStep: (direction: number): void => { this.jumpToAdjacentChapterFromMenu(direction); }
+    })
   }
 
   @Builder
@@ -4097,72 +3952,8 @@ struct ReadBookPage {
   @Builder
   readerFloatingBottomMenu() {
     Column({ space: 10 }) {
-      if (this.readerUseChapterQuickJump && this.isReaderComicModeActive()) {
-        this.readerFloatingComicPageRow()
-      } else if (this.readerUseChapterQuickJump) {
-        Row() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(24)
-          .fontColor([this.currentChapterIndex > 0 && !this.isLoading ? this.readerPanelTextColor() : this.readerPanelSubTextColor()])
-          .width(46)
-          .height(54)
-          .enabled(this.currentChapterIndex > 0 && !this.isLoading)
-          .onClick(async () => {
-            await this.jumpToAdjacentChapterFromMenu(-1);
-          })
-
-        Column({ space: 1 }) {
-          Row() {
-            Text(this.getChapterTitle(this.getMenuChapterDisplayIndex()))
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.readerPanelSubTextColor())
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-            Text(`${this.getMenuChapterDisplayIndex() + 1}/${this.chapters.length}`)
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.readerPanelSubTextColor())
-              .margin({ left: AppSpacing.MD })
-          }
-          .width('100%')
-
-          Slider({
-            value: this.getMenuChapterDisplayIndex(),
-            min: 0,
-            max: Math.max(0, this.chapters.length - 1),
-            step: 1,
-            style: SliderStyle.InSet
-          })
-            .width('100%')
-            .height(24)
-            .selectedColor(this.accentColor())
-            .trackColor(this.readerChapterTrackColor())
-            .blockColor(this.readerSolidPanelColor())
-            .showSteps(false)
-            .onChange((value: number, mode: SliderChangeMode) => {
-              this.handleMenuChapterSliderChange(value, mode);
-            })
-        }
-        .layoutWeight(1)
-
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(24)
-          .fontColor([this.currentChapterIndex < this.chapters.length - 1 && !this.isLoading ?
-            this.readerPanelTextColor() : this.readerPanelSubTextColor()])
-          .width(46)
-          .height(54)
-          .enabled(this.currentChapterIndex < this.chapters.length - 1 && !this.isLoading)
-          .onClick(async () => {
-            await this.jumpToAdjacentChapterFromMenu(1);
-          })
-        }
-        .width('100%')
-        .height(56)
-        .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
-        .borderRadius(28)
-        .backgroundColor(this.readerPanelColor())
-        .border({ width: 0.5, color: this.readerPanelBorderColor() })
-        .shadow(this.readerPanelShadow())
+      if (this.readerUseChapterQuickJump) {
+        this.readerMaterialChapterBar()
       }
 
       Row() {
@@ -4189,42 +3980,6 @@ struct ReadBookPage {
     .padding({ bottom: 14 })
     .position({ x: this.readerFloatingBarLeft(), y: '100%' })
     .translate({ y: '-100%' })
-  }
-
-  @Builder
-  readerFloatingComicPageRow() {
-    Row() {
-      this.readerComicChapterStepButton(-1)
-      Column({ space: 1 }) {
-        Row() {
-          Text(this.getChapterTitle())
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.readerPanelSubTextColor())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-          Text(`${this.comicMenuPageIndex() + 1}/${this.readerComicTotalPageCount()}`)
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.readerPanelSubTextColor())
-            .margin({ left: AppSpacing.MD })
-        }
-        .width('100%')
-
-        Row() {
-          this.readerComicPageSlider(24, 24)
-        }
-        .width('100%')
-      }
-      .layoutWeight(1)
-      this.readerComicChapterStepButton(1)
-    }
-    .width('100%')
-    .height(56)
-    .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
-    .borderRadius(28)
-    .backgroundColor(this.readerPanelColor())
-    .border({ width: 0.5, color: this.readerPanelBorderColor() })
-    .shadow(this.readerPanelShadow())
   }
 
   @Builder
@@ -4680,10 +4435,7 @@ struct ReadBookPage {
       },
       onChapterQuickJumpChanged: (enabled: boolean): void => {
         if (!enabled) {
-          this.resetMenuChapterPreview();
-          this.comicPageSliderActive = false;
-          this.comicPageTooltipVisible = false;
-          this.comicPageSliderPreview = this.currentPageIndex;
+          this.cancelReaderQuickJump();
         }
       }
     })
@@ -5747,7 +5499,7 @@ struct ReadBookPage {
     context.chapterIndex = this.clampChapterIndex(this.currentChapterIndex);
     context.chapterTitle = this.getChapterTitle(context.chapterIndex);
     context.pageIndex = this.currentPageIndex;
-    context.pageCount = this.contentPages.length;
+    context.pageCount = this.isReaderComicModeActive() ? this.readerComicTotalPageCount() : this.contentPages.length;
     context.doublePage = this.isLandscapeDoublePageActive();
     context.timeText = this.readerInfoTimeText;
     context.batteryPercent = this.readerInfoBatteryPercent;
@@ -6458,7 +6210,7 @@ struct ReadBookPage {
   onReaderComicScrollIndexChanged(start: number, end: number): void {
     // ArkUI can publish one final List index while the route is being detached. That callback describes the
     // shrinking/unmounted viewport, not a user scroll, and must not replace the page captured by exit/background.
-    if (!this.readerPageVisible) return;
+    if (this.quickJumpBusy || !this.readerPageVisible) return;
     const listStart = Math.max(0, Math.round(start));
     const listEnd = Math.max(listStart, Math.round(end));
     this.readerContinuousLastListStart = listStart;
@@ -6497,7 +6249,7 @@ struct ReadBookPage {
   }
 
   onReaderContinuousReachEnd(): void {
-    if (!this.readerPageVisible || !this.isReaderContinuousScrollSurfaceActive() ||
+    if (this.quickJumpBusy || !this.readerPageVisible || !this.isReaderContinuousScrollSurfaceActive() ||
       this.contentPages.length === 0) return;
     // 列表末尾属于后面的章节时，本章并没有读到底；那一章被提升为当前章时会再判断。
     if (this.readerComicPageDataSource.lastChapter() !== this.currentChapterIndex) return;
@@ -7368,6 +7120,7 @@ struct ReadBookPage {
     this.readerUseTtsQuickAction = settings.useTtsQuickAction;
     this.readerUseAutoScrollQuickAction = settings.useAutoScrollQuickAction;
     this.readerUseChapterQuickJump = settings.useChapterQuickJump;
+    this.readerQuickJumpMode = ReaderQuickJumpModel.normalizeMode(settings.quickJumpMode);
     this.readerQuickBookmarkEnabled = settings.quickBookmarkEnabled;
     this.readerHeaderEnabled = settings.readerHeaderEnabled;
     this.readerFooterEnabled = settings.readerFooterEnabled;
@@ -8376,8 +8129,13 @@ struct ReadBookPage {
     return this.readerFloatingBarRight() - 48;
   }
 
+  readerQuickJumpHeight(): number {
+    const scale = Math.max(1, Math.min(2, (getContext(this) as common.UIAbilityContext).config.fontSizeScale || 1));
+    return 104 + Math.max(0, scale - 1) * 28;
+  }
+
   readerBottomMenuOverlayHeight(): number {
-    return (this.readerUseChapterQuickJump ? 120 : 56) +
+    return (this.readerUseChapterQuickJump ? this.readerQuickJumpHeight() + 64 : 56) +
       this.readerFloatingBarBottomMargin();
   }
 
@@ -9016,80 +8774,290 @@ struct ReadBookPage {
     return Math.max(0, Math.min(index, this.chapters.length - 1));
   }
 
+  readerQuickJumpChapterUnit(): string {
+    return this.isReaderComicModeActive() ? '话' : '章';
+  }
+
+  normalizeReaderQuickJumpPageIndex(index: number): number {
+    return this.isReaderComicDualPageActive() ? Math.floor(Math.max(0, index) / 2) * 2 :
+      this.normalizeReaderSpreadPageIndex(index);
+  }
+
   getMenuChapterDisplayIndex(): number {
-    return this.menuChapterSliderActive ? this.menuChapterPreviewIndex : this.currentChapterIndex;
+    if (!this.menuChapterSliderActive) return this.currentChapterIndex;
+    return this.readerQuickJumpMode === 'percent' ?
+      ReaderQuickJumpModel.fromPercent(this.menuPercentPreview, this.chapters.length).chapterIndex :
+      this.menuChapterPreviewIndex;
+  }
+
+  getMenuPercentDisplay(): number {
+    return this.menuChapterSliderActive ? this.menuPercentPreview :
+      ReaderInfoBarText.bookPercent(this.getReaderInfoBarContext());
+  }
+
+  setReaderQuickJumpMode(mode: string): void {
+    if (this.quickJumpBusy || this.menuChapterConfirming || this.shouldBlockReaderInteraction()) return;
+    this.resetMenuChapterPreview();
+    animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+      this.readerQuickJumpMode = ReaderQuickJumpModel.normalizeMode(mode);
+    });
+    ReaderSettingsStore.saveLayoutElementSettings(getContext(this), this.readerUseTtsQuickAction,
+      this.readerUseChapterQuickJump, this.readerUseAutoScrollQuickAction, this.readerQuickJumpMode)
+      .catch((error: Error) => {
+        console.error('保存快速跳转模式失败:', error);
+        HdsFeedback.showToast('跳转模式保存失败');
+      });
   }
 
   handleMenuChapterSliderChange(value: number, mode: SliderChangeMode): void {
+    if (this.quickJumpBusy || this.menuChapterConfirming || this.shouldBlockReaderInteraction() ||
+      this.chapters.length === 0) return;
+    this.menuPercentPreview = ReaderQuickJumpModel.clampPercent(value);
     this.menuChapterPreviewIndex = this.clampChapterIndex(Math.round(value));
     this.menuChapterSliderActive = true;
     this.menuChapterTooltipVisible = mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving;
     if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
       this.menuChapterTooltipVisible = false;
-      this.confirmMenuChapterJump(this.menuChapterPreviewIndex);
+      this.confirmMenuChapterJump(this.getMenuChapterDisplayIndex());
     }
   }
 
   async confirmMenuChapterJump(targetIndex: number): Promise<void> {
-    if (this.menuChapterConfirming) {
-      return;
-    }
-    const normalizedIndex = this.clampChapterIndex(targetIndex);
-    if (normalizedIndex === this.currentChapterIndex) {
+    if (this.menuChapterConfirming || this.quickJumpBusy) return;
+    const chapterIndex = this.clampChapterIndex(targetIndex);
+    const percentMode = this.readerQuickJumpMode === 'percent';
+    const targetPercent = this.menuPercentPreview;
+    const ratio = percentMode ? ReaderQuickJumpModel.fromPercent(targetPercent, this.chapters.length).chapterRatio : -1;
+    const samePage = percentMode ? this.isCurrentReaderPaginationComplete() &&
+      this.normalizeReaderQuickJumpPageIndex(ReaderQuickJumpModel.pageIndex(ratio, this.contentPages.length)) ===
+      this.currentPageIndex : this.currentPageIndex === 0;
+    if (chapterIndex === this.currentChapterIndex && samePage) {
       this.resetMenuChapterPreview();
       return;
     }
+    const bookUrl = this.bookUrl;
+    const chapters = this.chapters;
+    const requestSerial = this.quickJumpSerial;
     this.menuChapterConfirming = true;
     try {
+      const title = this.getChapterTitle(chapterIndex);
       const result = await promptAction.showDialog({
-        title: '确认跳转章节',
-        message: `是否跳转到「${this.getChapterTitle(normalizedIndex)}」？`,
+        title: '确认跳转',
+        message: percentMode ? `跳转到全书 ${targetPercent.toFixed(1)}%？\n「${title}」· 约${this.readerQuickJumpChapterUnit()}内 ${Math.round(ratio * 100)}%` :
+          `跳转到「${title}」？\n从该${this.readerQuickJumpChapterUnit()}开头继续阅读`,
         buttons: [
-          { text: '取消', color: this.getSubTextColor() },
+          { text: '取消', color: this.readerPanelSubTextColor() },
           { text: '跳转', color: this.accentColor() }
         ]
       });
-      if (result.index === 1) {
-        await this.jumpToMenuChapter(normalizedIndex);
-      } else {
-        this.resetMenuChapterPreview();
+      if (result.index === 1 && bookUrl === this.bookUrl && chapters === this.chapters &&
+        requestSerial === this.quickJumpSerial && this.readerPageVisible && this.readerUseChapterQuickJump) {
+        const jumped = await this.performReaderQuickJump(chapterIndex, ratio);
+        if (jumped) HdsFeedback.showToast(percentMode ? (targetPercent === 0 ? '已到书首' :
+          `已跳转至 ${ReaderInfoBarText.bookPercent(this.getReaderInfoBarContext()).toFixed(1)}%`) :
+          `已跳转至第 ${chapterIndex + 1} ${this.readerQuickJumpChapterUnit()}`);
       }
     } catch (error) {
-      console.error('确认跳转章节失败:', error);
-      this.resetMenuChapterPreview();
+      console.error('确认快速跳转失败:', error);
     } finally {
       this.menuChapterConfirming = false;
+      this.resetMenuChapterPreview();
     }
   }
 
   resetMenuChapterPreview(): void {
     this.menuChapterPreviewIndex = this.currentChapterIndex;
+    this.menuPercentPreview = ReaderInfoBarText.bookPercent(this.getReaderInfoBarContext());
     this.menuChapterSliderActive = false;
     this.menuChapterTooltipVisible = false;
+  }
+
+  cancelReaderQuickJump(): void {
+    this.quickJumpSerial++;
+    this.quickJumpBusy = false;
+    this.resetMenuChapterPreview();
   }
 
   async jumpToMenuChapter(targetIndex: number): Promise<void> {
-    const normalizedIndex = this.clampChapterIndex(targetIndex);
-    if (normalizedIndex === this.currentChapterIndex) {
-      this.menuChapterPreviewIndex = this.currentChapterIndex;
-      this.menuChapterSliderActive = false;
-      this.menuChapterTooltipVisible = false;
-      return;
-    }
-    try {
-      await this.jumpToReaderPositionKeepingTts(normalizedIndex, 0);
-    } finally {
-      this.menuChapterPreviewIndex = this.currentChapterIndex;
-      this.menuChapterSliderActive = false;
-      this.menuChapterTooltipVisible = false;
-    }
+    await this.performReaderQuickJump(this.clampChapterIndex(targetIndex), -1);
+    this.resetMenuChapterPreview();
   }
 
   async jumpToAdjacentChapterFromMenu(direction: number): Promise<void> {
-    await this.jumpToAdjacentChapterFirstPage(direction);
-    this.menuChapterPreviewIndex = this.currentChapterIndex;
-    this.menuChapterSliderActive = false;
-    this.menuChapterTooltipVisible = false;
+    if (this.quickJumpBusy || this.menuChapterConfirming || this.shouldBlockReaderInteraction()) return;
+    const target = this.currentChapterIndex + (direction > 0 ? 1 : -1);
+    if (target >= 0 && target < this.chapters.length) await this.performReaderQuickJump(target, -1);
+    this.resetMenuChapterPreview();
+  }
+
+  /** Prepare off-screen, then commit once: failed fetch/pagination never replaces the readable chapter. */
+  async performReaderQuickJump(targetChapter: number, ratio: number, sourceOffset: number = -1,
+    hiddenOwner: boolean = false, resumeSpeech: boolean = false): Promise<boolean> {
+    if (this.quickJumpBusy || this.readerComicChapterSwitching || this.readerContinuousCommitChapter >= 0 ||
+      targetChapter < 0 || targetChapter >= this.chapters.length || !this.hasPagedReaderArea()) return false;
+    const comic = this.isReaderComicModeActive();
+    if (hiddenOwner && comic) return false;
+    const comicMode = this.readerComicEffectiveMode();
+    const comicDualPage = this.isReaderComicDualPageActive();
+    const serial = ++this.quickJumpSerial;
+    const bookUrl = this.bookUrl;
+    const sourceChapter = this.currentChapterIndex;
+    const loadSerial = this.contentLoadSerial;
+    const chapterCount = this.chapters.length;
+    const chapterUrl = this.chapters[targetChapter].url;
+    const engine = this.readerEngine();
+    const layout = this.readerPaginationViewportIdentity() + this.readerTypographyCacheIdentity() +
+      this.readerEffectivePageTurnMode();
+    const mirrored = !comic && !hiddenOwner && this.isMirroringActiveTtsForCurrentBook();
+    const owner = ReaderTtsFloatingSession.currentOwnerId();
+    const hadOwnSpeech = !comic && !mirrored && (this.isTtsSpeaking || this.ttsReader.isSpeaking() ||
+      ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId));
+    const resume = hiddenOwner ? resumeSpeech : (mirrored ? !this.globalTtsPaused :
+      hadOwnSpeech && !this.isTtsPaused && !this.ttsReader.isPaused());
+    const resumeScroll = this.readerAutoScrollActive && !this.readerAutoScrollPaused;
+    const valid = (): boolean => serial === this.quickJumpSerial && bookUrl === this.bookUrl &&
+      (hiddenOwner ? ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId) :
+        this.readerPageVisible && this.readerUseChapterQuickJump) &&
+      comic === this.isReaderComicModeActive() &&
+      (!comic || (comicMode === this.readerComicEffectiveMode() &&
+        comicDualPage === this.isReaderComicDualPageActive())) &&
+      engine === this.readerEngine() && engine.book?.bookUrl === bookUrl &&
+      this.contentLoadSerial === loadSerial && this.currentChapterIndex === sourceChapter &&
+      this.chapters.length === chapterCount && engine.chapters.length === chapterCount &&
+      this.chapters[targetChapter]?.url === chapterUrl && engine.chapters[targetChapter]?.url === chapterUrl &&
+      layout === this.readerPaginationViewportIdentity() + this.readerTypographyCacheIdentity() +
+        this.readerEffectivePageTurnMode() &&
+      (!mirrored || (ReaderTtsFloatingSession.currentOwnerId() === owner && this.isMirroringActiveTtsForCurrentBook()));
+    this.quickJumpBusy = true;
+    this.mirroredTtsFocusSyncSerial++;
+    this.pauseReaderAutoScroll('正在定位…');
+    if (comic) {
+      this.stopReaderComicScreenScroll();
+      this.cancelReaderComicPan();
+    }
+    let committed = false;
+    let fetchTimer = -1;
+    try {
+      if (mirrored) {
+        await ReaderTtsFloatingSession.pause();
+        if (!this.globalTtsPaused) throw new Error('无法暂停后台朗读');
+      } else if (hadOwnSpeech && !this.ttsReader.isPaused() && this.ttsReader.isSpeaking()) {
+        if (!await this.ttsReader.pause()) throw new Error('无法暂停朗读');
+        this.isTtsPaused = true;
+        this.updateTtsFloatingSession();
+      }
+      if (!valid()) return false;
+      // peekContent fills the cache without changing the engine's current chapter.
+      const timeout = new Promise<string>((resolve) => {
+        fetchTimer = setTimeout(() => resolve(''), 30000);
+      });
+      const body = await Promise.race([engine.peekContent(targetChapter), timeout]);
+      clearTimeout(fetchTimer);
+      fetchTimer = -1;
+      if (!valid()) return false;
+      if (!body.trim()) throw new Error('目标章节加载失败');
+      const content = await this.prepareReaderContentRules(body, targetChapter);
+      if (!valid()) return false;
+      if (!content.trim()) throw new Error('目标章节没有可读内容');
+      const source = this.buildPagedSourceText(targetChapter, content);
+      const key = this.buildReaderPaginationCacheKey(targetChapter, source);
+      const cached = this.getCachedReaderPagination(targetChapter, source);
+      // Never append to the active renderer's mutable result while preparing a jump.
+      const result = cached?.complete ? cached : this.createIncrementalReaderPagination(source, targetChapter, 1, false);
+      const deadline = Date.now() + 30000;
+      while (!result.complete && (ratio >= 0 || sourceOffset >= 0 || result.pages.length === 0)) {
+        if (!valid()) return false;
+        if (Date.now() > deadline) throw new Error('章节排版超时');
+        this.appendReaderPaginationBatch(result, targetChapter, 1);
+        await sleepMs(16);
+      }
+      if (!valid()) return false;
+      if (result.pages.length === 0) throw new Error('目标章节排版失败');
+      let page = ratio >= 0 ? ReaderQuickJumpModel.pageIndex(ratio, result.pages.length) : 0;
+      if (sourceOffset >= 0) {
+        page = result.ends.findIndex((end: number) => end > sourceOffset);
+        if (page < 0) page = result.pages.length - 1;
+      }
+      page = this.normalizeReaderQuickJumpPageIndex(page);
+      const offset = sourceOffset >= 0 ? Math.min(sourceOffset, source.length) : (result.starts[page] || 0);
+      if (mirrored) {
+        // The retained owner can use a different viewport: pass a source offset, never its page number.
+        const moved = await ReaderTtsFloatingSession.jumpToPreparedPosition(owner, targetChapter, offset, resume);
+        if (!valid()) return false;
+        if (!moved) throw new Error('后台朗读定位失败');
+      } else if (hadOwnSpeech) {
+        this.stopTtsReaderForChapterSwitch();
+      }
+      // No await between validation and commit. Every publication now belongs to the same complete target.
+      this.contentLoadSerial++;
+      this.readerPaginationWorkSerial++;
+      this.closeReaderCommentPanel();
+      this.clearQueuedReaderPageTurns();
+      this.content = content;
+      this.currentChapterIndex = targetChapter;
+      this.currentPageIndex = page;
+      this.pendingRestorePageIndex = -1;
+      this.readerTypographyRestoreOffset = -1;
+      this.readerContinuousReachedEnd = false;
+      this.readerPaginationCache.set(key, result);
+      while (this.readerPaginationCache.size > 3) {
+        const oldest = this.readerPaginationCache.keys().next().value as string | undefined;
+        if (!oldest) break;
+        if (oldest === key) {
+          this.readerPaginationCache.delete(key);
+          this.readerPaginationCache.set(key, result);
+        } else {
+          this.readerPaginationCache.delete(oldest);
+        }
+      }
+      if (result.v2Session) this.registerReaderV2PaginationSession(source, targetChapter, result.v2Session);
+      if (comic) this.updateReaderComicPaginationProgress(targetChapter, result);
+      this.applyReaderPaginationResult(result, content);
+      if (comic) this.comicImageActions().onChapterBecameCurrent(targetChapter);
+      this.readerProgressRestoreConfirmed = true;
+      engine.curIdx = targetChapter;
+      engine.curPos = page;
+      committed = true;
+      await this.saveReadingProgress(false, true);
+      if (serial !== this.quickJumpSerial || bookUrl !== this.bookUrl || this.currentChapterIndex !== targetChapter ||
+        this.contentLoadSerial !== loadSerial + 1 || (!hiddenOwner && !this.readerPageVisible)) return true;
+      if (!result.complete) this.scheduleReaderPaginationCompletion(targetChapter, key, result);
+      this.preloadReaderContentLater(720);
+      if (!mirrored && hadOwnSpeech) {
+        if (resume) {
+          await this.startTtsReadingFromCurrentPosition(false, false, -1, offset);
+        } else {
+          // Keep a paused player paused; its next Play starts from the new page.
+          this.isTtsPaused = true;
+          this.quickJumpPausedSpeechOffset = offset;
+          this.quickJumpPausedSpeechSource = source;
+          this.quickJumpPausedSpeechChapter = targetChapter;
+          this.updateTtsFloatingSession();
+          ReaderTtsFloatingSession.updatePosition(this.ttsFloatingSessionOwnerId, targetChapter, offset, offset);
+        }
+      }
+      return true;
+    } catch (error) {
+      console.warn('快速跳转失败:', error);
+      if (valid()) HdsFeedback.showToast('定位失败，已保留原阅读位置，请重试');
+      return committed;
+    } finally {
+      if (fetchTimer >= 0) clearTimeout(fetchTimer);
+      if (serial === this.quickJumpSerial) {
+        this.quickJumpBusy = false;
+        this.resetMenuChapterPreview();
+        // A cancellation caused by another navigation must not restart old speech or scrolling.
+        if (!committed && valid() && resume) {
+          if (mirrored && this.globalTtsPaused) await ReaderTtsFloatingSession.toggle();
+          else if (hadOwnSpeech && this.ttsReader.isPaused()) await this.toggleTtsReading();
+        }
+        if (((committed && this.currentChapterIndex === targetChapter && this.bookUrl === bookUrl &&
+          this.contentLoadSerial === loadSerial + 1) || valid()) && resumeScroll &&
+          this.readerPageVisible && this.readerAutoScrollActive) {
+          await this.startReaderAutoScroll();
+        }
+      }
+    }
   }
 
   restorePendingPageIndex(paginationComplete: boolean = true): void {
@@ -9160,7 +9128,8 @@ struct ReadBookPage {
     this.finishPageTurnAnimation(false);
   }
 
-  async saveReadingProgress(notifyShelf: boolean = false): Promise<void> {
+  async saveReadingProgress(notifyShelf: boolean = false, quickJumpCommit: boolean = false): Promise<void> {
+    if (this.quickJumpBusy && !quickJumpCommit) return;
     if (!this.book || this.chapters.length === 0) {
       return;
     }
@@ -11304,6 +11273,9 @@ struct ReadBookPage {
       (chapterIndex: number, pageIndex: number, sourceOffset: number): Promise<void> =>
         this.playPositionFromFloatingSession(chapterIndex, pageIndex, sourceOffset)
     );
+    ReaderTtsFloatingSession.configurePreparedPositionControl(this.ttsFloatingSessionOwnerId,
+      (chapterIndex: number, sourceOffset: number, resume: boolean): Promise<boolean> =>
+        this.performReaderQuickJump(chapterIndex, -1, sourceOffset, true, resume));
     ReaderTtsFloatingSession.configureCatalog(
       this.ttsFloatingSessionOwnerId,
       this.chapters.map((chapter: BookChapter) => chapter.title),
@@ -11404,7 +11376,10 @@ struct ReadBookPage {
       }
       return;
     }
-    await this.startTtsReadingFromCurrentPosition(true);
+    const pausedOffset = this.quickJumpPausedSpeechChapter === this.currentChapterIndex &&
+      this.quickJumpPausedSpeechSource === this.pagedContentText ? this.quickJumpPausedSpeechOffset : -1;
+    this.quickJumpPausedSpeechOffset = -1;
+    await this.startTtsReadingFromCurrentPosition(true, false, -1, pausedOffset);
   }
 
   async startTtsReadingFromCurrentPosition(showToast: boolean,
@@ -12682,7 +12657,7 @@ struct ReadBookPage {
   }
 
   async syncMirroredTtsFocus(): Promise<void> {
-    if (this.mirroredTtsManualTurnPending) return;
+    if (this.quickJumpBusy || this.mirroredTtsManualTurnPending) return;
     const serial = ++this.mirroredTtsFocusSyncSerial;
     const chapterIndex = this.activeMirroredTtsChapterIndex();
     if (chapterIndex < 0 || !this.book || this.contentPages.length === 0) {
@@ -14967,7 +14942,7 @@ struct ReadBookPage {
   }
 
   createIncrementalReaderV2Pagination(source: string, chapterIndex: number,
-    initialPageCount: number): ReaderPaginationResult {
+    initialPageCount: number, registerSession: boolean = true): ReaderPaginationResult {
     const snapshot = this.buildReaderV2Snapshot();
     const document = ReaderV2DocumentParser.parse(source, chapterIndex, this.getChapterTitle(chapterIndex),
       this.readerV2HeadingHints(chapterIndex));
@@ -14981,13 +14956,14 @@ struct ReadBookPage {
       complete: session.pageSet.complete,
       v2Session: session
     };
-    this.registerReaderV2PaginationSession(source, chapterIndex, session);
+    if (registerSession) this.registerReaderV2PaginationSession(source, chapterIndex, session);
     const visibleSpreadSize = this.isLandscapeDoublePageActive() ? 2 : 1;
     // Never rebuild synchronously from the chapter start to a deep saved position. A single V2 page can include
     // native paragraph measurement, so restoring hundreds of pages in this lifecycle call can trip the UI watchdog.
     // Publish only the first visible spread here; the retained session restores the saved position cooperatively.
     const requestedPageCount = Math.min(Math.max(1, initialPageCount), visibleSpreadSize);
-    const rawTargetOffset = chapterIndex === this.currentChapterIndex ? this.readerTypographyRestoreOffset : -1;
+    const rawTargetOffset = registerSession && chapterIndex === this.currentChapterIndex ?
+      this.readerTypographyRestoreOffset : -1;
     const targetOffset = rawTargetOffset < 0 ? -1 : Math.min(source.length, Math.max(0, rawTargetOffset));
     if (chapterIndex === this.currentChapterIndex && rawTargetOffset >= 0) {
       this.readerTypographyRestoreOffset = targetOffset;
@@ -16748,6 +16724,7 @@ struct ReadBookPage {
     if (this.readerExitProgressSaved) {
       return;
     }
+    this.cancelReaderQuickJump();
     // Freeze scroll-derived progress before awaiting the database write. During the route transition List can emit
     // a shorter visible range (notably 3..3 for a short final item that was pinned below 3..4), which otherwise
     // downgrades a saved 5/5 position to 4/5 immediately before the exit checkpoint is serialized.
@@ -16885,10 +16862,10 @@ struct ReadBookPage {
   }
 
   createIncrementalReaderPagination(source: string, chapterIndex: number,
-    initialPageCount: number): ReaderPaginationResult {
+    initialPageCount: number, registerSession: boolean = true): ReaderPaginationResult {
     const text = source || '';
     if (text && this.shouldUseReaderLayoutV2(text)) {
-      return this.createIncrementalReaderV2Pagination(text, chapterIndex, initialPageCount);
+      return this.createIncrementalReaderV2Pagination(text, chapterIndex, initialPageCount, registerSession);
     }
     return this.createChunkReaderPagination(text);
   }

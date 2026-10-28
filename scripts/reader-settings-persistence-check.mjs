@@ -39,6 +39,7 @@ function harness() {
     compile(read('core/reader/ReaderFontWeight.ts')) + '\n' +
     compile(read('core/reader/ReaderParagraphIndent.ts')) + '\n' +
     compile(read('core/reader/ReaderInfoBarModel.ts')) + '\n' +
+    compile(read('core/reader/ReaderQuickJumpModel.ts')) + '\n' +
     compile(read('utils/ReaderSettingsStore.ets')) +
     '\n' + compile(read('account/ReaderPreferencesSync.ets')) +
     '\nglobalThis.api = { ReaderSettingsStore, ReaderSettings, ReaderInfoBarConfig, ReaderPreferencesSync };', context);
@@ -117,6 +118,27 @@ function openChromePanel(h) {
 }
 
 const tests = {
+  async 'quick jump mode persists, survives theme changes, restores and validates legacy values'() {
+    const h = harness();
+    assert.equal((await h.settings.load({})).quickJumpMode, 'chapter');
+    await h.settings.saveLayoutElementSettings({}, true, false, true, 'percent');
+    assert.equal(h.values.get('readerQuickJumpMode'), 'percent');
+    assert.equal((await h.settings.reload({})).quickJumpMode, 'percent');
+    assert.equal((await h.settings.reload({})).useChapterQuickJump, false);
+    const changed = await h.settings.switchThemeProfile({}, 'classic-blue', 'test-dark');
+    assert.equal(changed.quickJumpMode, 'percent');
+    await h.settings.saveLayoutElementSettings({}, false, true);
+    assert.equal((await h.settings.reload({})).quickJumpMode, 'percent', 'old callers preserve mode');
+    const saved = await h.settings.load({});
+    await h.settings.saveAll({}, saved);
+    assert.equal(h.disk.get('readerQuickJumpMode'), 'percent');
+    saved.quickJumpMode = 'invalid';
+    await h.settings.saveAll({}, saved);
+    assert.equal((await h.settings.reload({})).quickJumpMode, 'chapter');
+    delete saved.quickJumpMode;
+    h.settings.applyToStorage(saved);
+    assert.equal(h.values.get('readerQuickJumpMode'), 'chapter');
+  },
   async 'long press selection defaults on and persists through reload, saveAll and legacy profiles'() {
     const h = harness();
     assert.equal((await h.settings.load({})).longPressSelectText, true);

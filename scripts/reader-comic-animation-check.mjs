@@ -200,9 +200,9 @@ assert.deepEqual(captureFailure.changes, [2]); captureFailure.view.aboutToDisapp
 
 // Both menu material branches obey the switch; shared catalog feeds novel and comic settings.
 const reader = readEtsModule('pages/ReadBook.ets');
-assert.match(reader, /if \(this.readerUseChapterQuickJump\) \{\s*this.readerMaterialChapterBar\(this.isReaderComicModeActive\(\)\)/);
-assert.match(reader, /if \(this.readerUseChapterQuickJump && this.isReaderComicModeActive\(\)\) \{\s*this.readerFloatingComicPageRow/);
-assert.match(reader, /return \(this.readerUseChapterQuickJump \? 120 : 56\)/);
+assert.equal((reader.match(/if \(this.readerUseChapterQuickJump\) \{\s*this.readerMaterialChapterBar\(\)/g)||[]).length,2);
+assert.match(reader, /chapterLabel: this.isReaderComicModeActive\(\) \? '话数' : '章节'/);
+assert.match(reader, /return \(this.readerUseChapterQuickJump \? this.readerQuickJumpHeight\(\) \+ 64 : 56\)/);
 assert.match(reader, /animationOptions: this.pageTurnAnimationOptions\(true\)/);
 assert.match(reader, /ReaderPageTurnAnimation.labels\(horizontal\)/);
 assert.match(reader, /animationType: this.readerComicSettings.pageTurnAnimation/);
