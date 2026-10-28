@@ -6,10 +6,12 @@ import { CoverGallerySettings } from '../../utils/CoverGallerySettings';
 import { CoverUrlNormalizer } from '../../utils/CoverUrlNormalizer';
 import { SearchBookShelfHelper } from '../../utils/SearchBookShelfHelper';
 import { ThemeBookCoverSettings } from '../../utils/ThemeBookCoverSettings';
+import { PreparedResultCover } from '../../utils/ResultCoverPreparation';
 
 /** 所有书籍展示入口共用书架的封面选择规则和多图轮播。 */
 @Component
 export struct BookCover {
+  @Prop @Watch('onPreparedSelectionChanged') preparedSelection: PreparedResultCover | null = null;
   @Prop @Watch('onBookChanged') bookUrl: string = '';
   @Prop @Watch('onBookChanged') origin: string = '';
   @Prop @Watch('refreshCovers') coverUrl: string = '';
@@ -62,6 +64,10 @@ export struct BookCover {
 
   onBookChanged(): void {
     const serial = ++this.requestSerial;
+    if (this.preparedSelection) {
+      this.onPreparedSelectionChanged();
+      return;
+    }
     this.shelfBook = null;
     this.refreshCovers();
     if (!this.mounted || !this.useBookshelfCover || !this.bookUrl) return;
@@ -106,6 +112,10 @@ export struct BookCover {
   }
 
   refreshCovers(): void {
+    if (this.preparedSelection) {
+      this.onPreparedSelectionChanged();
+      return;
+    }
     const themeCover = this.useBookshelfCover && ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeCoverEnabled);
     const covers: ResourceStr[] = themeCover ? ThemeBookCoverSettings.covers(this.coverBook(), this.appDarkMode) : this.rawCoverList();
     this.themeFrame = themeCover ? ThemeBookCoverSettings.frame(this.appDarkMode) : '';
@@ -113,6 +123,22 @@ export struct BookCover {
     if (JSON.stringify(covers) !== JSON.stringify(this.covers)) {
       this.covers = covers;
       this.activeIndex = 0;
+    }
+    this.resolveDisplayCovers();
+  }
+
+  onPreparedSelectionChanged(): void {
+    const prepared = this.preparedSelection;
+    if (!prepared) return;
+    this.themeFrame = prepared.frame;
+    this.interval = prepared.interval;
+    if (JSON.stringify(prepared.covers) !== JSON.stringify(this.covers)) {
+      this.covers = prepared.covers.slice();
+      this.activeIndex = 0;
+    }
+    if (prepared.firstImage) {
+      this.loadedUrls.add(JSON.stringify(prepared.firstImage));
+      this.loadedRevision++;
     }
     this.resolveDisplayCovers();
   }
@@ -207,6 +233,8 @@ export struct BookCover {
   @Builder
   coverImage(url: ResourceStr) {
     Image(url)
+      // Prepared result images are small, validated local files; first paint must contain the image.
+      .syncLoad(this.preparedSelection !== null)
       .width('100%')
       .height('100%')
       .objectFit(this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
@@ -218,7 +246,14 @@ export struct BookCover {
 
   build() {
     Stack() {
-      if (!this.isActiveCoverReady()) {
+      if (!this.isActiveCoverReady() && this.preparedSelection?.firstImage) {
+        Image(this.preparedSelection.firstImage)
+          .syncLoad(true)
+          .width('100%')
+          .height('100%')
+          .sourceSize({ width: this.decodeWidth, height: this.decodeHeight })
+          .objectFit(this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
+      } else if (!this.isActiveCoverReady()) {
         Column() {
           Text((this.name || '书').substring(0, 1))
             .fontSize(24)
@@ -263,6 +298,7 @@ export struct BookCover {
       }
       if (this.themeFrame) {
         Image(this.themeFrame)
+          .syncLoad(this.preparedSelection !== null)
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Fill)

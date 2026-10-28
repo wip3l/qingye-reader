@@ -58,7 +58,7 @@ export struct CategorySwipePager {
       .loop(false)
       .indicator(false)
       .cachedCount(1)
-      .duration(300)
+      .duration(320)
       .curve(Curve.EaseOut)
       .effectMode(EdgeEffect.Spring)
       .clip(true)

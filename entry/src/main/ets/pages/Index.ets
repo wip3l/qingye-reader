@@ -31,9 +31,8 @@ import { AppSpacing } from '../theme/AppSpacing';
 @Component
 struct Index {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
-  /** 底部页签切换时新页面滑入的距离和时长。 */
-  static readonly TAB_ENTER_DISTANCE: number = 32;
-  static readonly TAB_ENTER_DURATION: number = 260;
+  /** 方案 B：由原生页签容器统一执行连续横移，不再叠加页面入场动画。 */
+  static readonly TAB_SWITCH_DURATION: number = 320;
   private stageRuntimeController: webview.WebviewController = new webview.WebviewController();
   @State stageRuntimeMounted: boolean = true;
   private stageRuntimeResetScheduled: boolean = false;
@@ -44,8 +43,11 @@ struct Index {
   @State @Watch('onCurrentIndexChanged') currentIndex: number = 0;
   /** 发现页第一次打开后常驻，切走只停用不销毁，回来时直接显示已加载的分类和列表。 */
   @State exploreTabMounted: boolean = false;
-  /** 新页签从哪一侧滑入：往右边的页签切换时从右侧进入，反之从左侧。 */
-  @State homeTabEnterOffset: number = Index.TAB_ENTER_DISTANCE;
+  /** 原生切换完成前保留出入两页，避免离场内容提前变成空白。 */
+  @State homeTransitionFrom: number = -1;
+  @State homeTransitionTo: number = -1;
+  private homeTransitionTimer: number = -1;
+  private homeTransitionStartedAt: number = 0;
   @State hdsMaterialRenderBranch: boolean = false;
   @State bookshelfMultiSelectActive: boolean = false;
   @State bookshelfActiveGroupId: number = 0;
@@ -125,6 +127,7 @@ struct Index {
   }
 
   onAppDarkModeChanged(): void {
+    this.clearHomeTabSwitch();
     this.hdsMaterialRenderBranch = !this.hdsMaterialRenderBranch;
     this.syncHomeSystemBars();
   }
@@ -141,6 +144,7 @@ struct Index {
   }
 
   aboutToDisappear(): void {
+    this.clearHomeTabSwitch();
     this.stageRuntimeDisappearing = true;
     if (this.stageRuntimeAttachRetryId >= 0) clearTimeout(this.stageRuntimeAttachRetryId);
     this.stageRuntimeAttachRetryId = -1;
@@ -196,7 +200,7 @@ struct Index {
       return;
     }
     this.bookshelfMultiSelectActive = false;
-    this.currentIndex = 2;
+    this.selectHomeTab(2);
     this.syncHomeSystemBars();
   }
 
@@ -206,7 +210,7 @@ struct Index {
       return;
     }
     this.bookshelfMultiSelectActive = false;
-    this.currentIndex = 2;
+    this.selectHomeTab(2);
     this.syncHomeSystemBars();
   }
 
@@ -214,8 +218,8 @@ struct Index {
     if (this.currentIndex === 1) {
       this.exploreTabMounted = true;
     }
-    // 书架和“我的”在切走后销毁，重新进入时标题和底栏都从展开状态开始。
-    if (this.currentIndex === 0 || this.currentIndex === 3) {
+    // 书架保留列表与滚动位置，底栏沿用该页的收起进度；只有重建的“我的”重置。
+    if (this.currentIndex === 3) {
       this.tabHeaderCollapseProgress[this.currentIndex] = 0;
     }
     this.syncBottomBarCollapse(true);
@@ -255,11 +259,12 @@ struct Index {
   onBookSourceExploreRefreshRequested(): void {
     if (this.bookSourceExploreRefreshNonce <= 0) return;
     this.bookshelfMultiSelectActive = false;
-    this.currentIndex = 1;
+    this.selectHomeTab(1);
     this.syncHomeSystemBars();
   }
 
   onThemeRevisionChanged(): void {
+    this.clearHomeTabSwitch();
     this.hdsMaterialRenderBranch = !this.hdsMaterialRenderBranch;
     this.syncHomeSystemBars();
   }
@@ -300,7 +305,7 @@ struct Index {
     }
     if (this.currentIndex !== 0) {
       this.bookshelfMultiSelectActive = false;
-      this.currentIndex = 0;
+      this.selectHomeTab(0);
       this.syncHomeSystemBars();
       return true;
     }
@@ -674,14 +679,59 @@ struct Index {
     return ReaderTtsFloatingSession.catalogCachedFlag(this.globalTtsCatalogCanonicalIndex(displayIndex));
   }
 
-  /** 页签内容的进入转场：淡入并从切换方向一侧轻微滑入；离开时直接隐藏。 */
-  homeTabEnterTransition(): TransitionEffect {
-    return TransitionEffect.asymmetric(
-      TransitionEffect.opacity(0)
-        .combine(TransitionEffect.translate({ x: this.homeTabEnterOffset }))
-        .animation({ duration: Index.TAB_ENTER_DURATION, curve: Curve.Friction }),
-      TransitionEffect.IDENTITY
-    );
+  prepareHomeTabSwitch(from: number, to: number): boolean {
+    if (from === to || to < 0 || to > 3) return true;
+    if (this.homeTransitionTo !== to || this.homeTransitionFrom !== from) {
+      if (this.homeTransitionTimer >= 0) clearTimeout(this.homeTransitionTimer);
+      this.homeTransitionTimer = -1;
+      this.homeTransitionFrom = from;
+      this.homeTransitionTo = to;
+      this.homeTransitionStartedAt = Date.now();
+    }
+    if (to === 1) this.exploreTabMounted = true;
+    return true;
+  }
+
+  homeTabIsMounted(index: number): boolean {
+    // 书架从首页启动起常驻。销毁后在转场开始时重建，会先滑入空数据/加载占位，
+    // 再跳成书籍列表；只延长离场保留时间无法避免返回时的这一闪烁。
+    // 书籍与显示设置仍由 BookshelfPage 的 StorageLink/Watch 接收更新。
+    return index === 0 || index === this.currentIndex || index === this.homeTransitionFrom ||
+      index === this.homeTransitionTo;
+  }
+
+  homeTabIsActive(index: number): boolean {
+    return index === (this.homeTransitionTo >= 0 ? this.homeTransitionTo : this.currentIndex);
+  }
+
+  finishHomeTabSwitch(index: number): void {
+    // 快速连点时，前一次原生动画的结束通知不能覆盖最后一次选择。
+    if (this.homeTransitionTo >= 0 && index !== this.homeTransitionTo) return;
+    this.currentIndex = index;
+    this.syncHomeSystemBars();
+    if (this.homeTransitionTimer >= 0) clearTimeout(this.homeTransitionTimer);
+    const remaining = Math.max(0, Index.TAB_SWITCH_DURATION - (Date.now() - this.homeTransitionStartedAt));
+    this.homeTransitionTimer = setTimeout((): void => {
+      this.homeTransitionTimer = -1;
+      this.homeTransitionFrom = -1;
+      this.homeTransitionTo = -1;
+    }, remaining);
+  }
+
+  selectHomeTab(index: number): void {
+    const from = this.homeTransitionTo >= 0 ? this.homeTransitionTo : this.currentIndex;
+    if (index === from) return;
+    this.prepareHomeTabSwitch(from, index);
+    // 使用控制器保留原生切换动画；直接改 index 会跳过内容滑移。
+    if (this.supportsImmersiveTabs()) this.immersiveTabsController.changeIndex(index);
+    else this.compatTabsController.changeIndex(index);
+  }
+
+  clearHomeTabSwitch(): void {
+    if (this.homeTransitionTimer >= 0) clearTimeout(this.homeTransitionTimer);
+    this.homeTransitionTimer = -1;
+    this.homeTransitionFrom = -1;
+    this.homeTransitionTo = -1;
   }
 
   supportsImmersiveTabs(): boolean {
@@ -697,7 +747,7 @@ struct Index {
   immersiveTabs() {
     HdsTabs({ barPosition: BarPosition.End, index: this.currentIndex, controller: this.immersiveTabsController }) {
       TabContent() {
-        if (this.currentIndex === 0) {
+        if (this.homeTabIsMounted(0)) {
           BookshelfPage({
             statusBarHeight: this.statusBarHeight,
             navBarHeight: this.navBarHeight,
@@ -705,7 +755,6 @@ struct Index {
             activeShelfGroupId: $bookshelfActiveGroupId,
             onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(0, progress)
           })
-            .transition(this.homeTabEnterTransition())
         } else {
           BlankTabPage()
         }
@@ -719,14 +768,9 @@ struct Index {
           ExplorePage({
             statusBarHeight: this.statusBarHeight,
             navBarHeight: this.navBarHeight,
-            isActive: this.currentIndex === 1,
+            isActive: this.homeTabIsActive(1),
             onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(1, progress)
           })
-            .transition(this.homeTabEnterTransition())
-            // 常驻后切回来不会再触发出现转场，与搜索页一样用隐式动画做进入效果。
-            .opacity(this.currentIndex === 1 ? 1 : 0)
-            .translate({ x: this.currentIndex === 1 ? 0 : this.homeTabEnterOffset })
-            .animation({ duration: Index.TAB_ENTER_DURATION, curve: Curve.Friction })
         } else {
           BlankTabPage()
         }
@@ -739,26 +783,21 @@ struct Index {
         SearchPage({
           statusBarHeight: this.statusBarHeight,
           navBarHeight: this.navBarHeight,
-          isActive: this.currentIndex === 2,
+          isActive: this.homeTabIsActive(2),
           onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(2, progress)
         })
-          // 搜索页常驻不重建，没有出现转场，用透明度和位移的隐式动画做同样的进入效果。
-          .opacity(this.currentIndex === 2 ? 1 : 0)
-          .translate({ x: this.currentIndex === 2 ? 0 : this.homeTabEnterOffset })
-          .animation({ duration: Index.TAB_ENTER_DURATION, curve: Curve.Friction })
       }
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
       .tabBar(this.bottomTabBar(this.navigationIcon('search'), '搜索'))
 
       TabContent() {
-        if (this.currentIndex === 3) {
+        if (this.homeTabIsMounted(3)) {
           SettingsPage({
             statusBarHeight: this.statusBarHeight,
             navBarHeight: this.navBarHeight,
             onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(3, progress)
           })
-            .transition(this.homeTabEnterTransition())
         } else {
           BlankTabPage()
         }
@@ -794,11 +833,12 @@ struct Index {
     .scrollable(false)
     // 主题/深浅色切换会重建 HdsTabs，新实例需要重新应用显隐状态。
     .onAppear(() => this.syncBottomBarCollapse(true))
-    .onChange((index: number) => {
-      this.homeTabEnterOffset = index >= this.currentIndex ? Index.TAB_ENTER_DISTANCE : -Index.TAB_ENTER_DISTANCE;
-      this.currentIndex = index;
-      this.syncHomeSystemBars();
+    .animationDuration(Index.TAB_SWITCH_DURATION)
+    .onContentWillChange((from: number, to: number): boolean => this.prepareHomeTabSwitch(from, to))
+    .onAnimationStart((from: number, to: number): void => {
+      this.prepareHomeTabSwitch(from, to);
     })
+    .onChange((index: number): void => this.finishHomeTabSwitch(index))
     .width('100%')
     .height('100%')
     .backgroundColor(ThemeRuntime.pageColor(this.appDarkMode))
@@ -809,7 +849,7 @@ struct Index {
   compatTabs() {
     Tabs({ barPosition: BarPosition.End, index: this.currentIndex, controller: this.compatTabsController }) {
       TabContent() {
-        if (this.currentIndex === 0) {
+        if (this.homeTabIsMounted(0)) {
           BookshelfPage({
             statusBarHeight: this.statusBarHeight,
             navBarHeight: this.navBarHeight,
@@ -817,7 +857,6 @@ struct Index {
             activeShelfGroupId: $bookshelfActiveGroupId,
             onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(0, progress)
           })
-            .transition(this.homeTabEnterTransition())
         } else {
           BlankTabPage()
         }
@@ -831,14 +870,9 @@ struct Index {
           ExplorePage({
             statusBarHeight: this.statusBarHeight,
             navBarHeight: this.navBarHeight,
-            isActive: this.currentIndex === 1,
+            isActive: this.homeTabIsActive(1),
             onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(1, progress)
           })
-            .transition(this.homeTabEnterTransition())
-            // 常驻后切回来不会再触发出现转场，与搜索页一样用隐式动画做进入效果。
-            .opacity(this.currentIndex === 1 ? 1 : 0)
-            .translate({ x: this.currentIndex === 1 ? 0 : this.homeTabEnterOffset })
-            .animation({ duration: Index.TAB_ENTER_DURATION, curve: Curve.Friction })
         } else {
           BlankTabPage()
         }
@@ -851,26 +885,21 @@ struct Index {
         SearchPage({
           statusBarHeight: this.statusBarHeight,
           navBarHeight: this.navBarHeight,
-          isActive: this.currentIndex === 2,
+          isActive: this.homeTabIsActive(2),
           onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(2, progress)
         })
-          // 搜索页常驻不重建，没有出现转场，用透明度和位移的隐式动画做同样的进入效果。
-          .opacity(this.currentIndex === 2 ? 1 : 0)
-          .translate({ x: this.currentIndex === 2 ? 0 : this.homeTabEnterOffset })
-          .animation({ duration: Index.TAB_ENTER_DURATION, curve: Curve.Friction })
       }
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
       .tabBar(this.compatTabBar(this.navigationIcon('search'), '搜索', 2))
 
       TabContent() {
-        if (this.currentIndex === 3) {
+        if (this.homeTabIsMounted(3)) {
           SettingsPage({
             statusBarHeight: this.statusBarHeight,
             navBarHeight: this.navBarHeight,
             onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(3, progress)
           })
-            .transition(this.homeTabEnterTransition())
         } else {
           BlankTabPage()
         }
@@ -885,11 +914,12 @@ struct Index {
     .barBackgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
     .scrollable(false)
     .onAppear(() => this.syncBottomBarCollapse())
-    .onChange((index: number) => {
-      this.homeTabEnterOffset = index >= this.currentIndex ? Index.TAB_ENTER_DISTANCE : -Index.TAB_ENTER_DISTANCE;
-      this.currentIndex = index;
-      this.syncHomeSystemBars();
+    .animationDuration(Index.TAB_SWITCH_DURATION)
+    .onContentWillChange((from: number, to: number): boolean => this.prepareHomeTabSwitch(from, to))
+    .onAnimationStart((from: number, to: number): void => {
+      this.prepareHomeTabSwitch(from, to);
     })
+    .onChange((index: number): void => this.finishHomeTabSwitch(index))
     .width('100%')
     .height('100%')
     .backgroundColor(ThemeRuntime.pageColor(this.appDarkMode))

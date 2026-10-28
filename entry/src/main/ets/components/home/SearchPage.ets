@@ -5,6 +5,8 @@ import { AppDatabase } from '../../model/data/AppDatabase';
 import { SearchCoordinator, SearchCallback, SearchProgress } from '../../core/book/SearchCoordinator';
 import { CategorySwipePager } from './CategorySwipePager';
 import { SearchBookResultList } from '../../components/book/SearchBookResultList';
+import { SearchResultLoading } from '../book/SearchResultLoading';
+import { ResultArrivalTracker } from '../../utils/ResultArrivalTracker';
 import { SearchSourceSheet, SearchSourceSheetSession, confirmDiscardSearchSourceChanges } from './SearchSourceSheet';
 import { SourcePickerKit } from './SourcePickerKit';
 import { ImmersiveMaterialSurface } from '../../components/ImmersiveMaterialSurface';
@@ -107,6 +109,7 @@ export struct SearchPage {
   @State searchHeaderCollapse: number = 0;
   onHeaderCollapseChange: (progress: number) => void = () => {};
   private searchSessionId: number = 0;
+  private resultArrivalTracker: ResultArrivalTracker = new ResultArrivalTracker();
   private readonly NO_SOURCE_GROUPS_SELECTED: string = '__NO_SOURCE_GROUPS_SELECTED__';
   private readonly NO_SOURCES_SELECTED: string = '__NO_SOURCES_SELECTED__';
   private searchSourceList: BookSource[] = [];
@@ -129,6 +132,8 @@ export struct SearchPage {
       this.initPage();
       this.refreshSearchShelfStatus();
       this.consumePendingGlobalSearch();
+    } else {
+      this.resultArrivalTracker.discardPending();
     }
   }
 
@@ -180,6 +185,13 @@ export struct SearchPage {
   }
 
   applySearchResultsSnapshot(books: SearchBook[]): void {
+    // Record both identities so toggling aggregation never turns old books into new arrivals.
+    const arrivalKeys: string[] = [];
+    for (const book of books) {
+      arrivalKeys.push(`item:${JSON.stringify([book.origin || '', book.bookUrl || ''])}`);
+      arrivalKeys.push(`group:${SearchResultAggregationStore.keyOf(book)}`);
+    }
+    this.resultArrivalTracker.record(arrivalKeys, this.isActive, Date.now());
     this.searchResults = books;
     const counts = SearchResultAggregationStore.countByCategory(books);
     this.searchCategoryCounts = BookTypeSupport.MEDIA_CATEGORIES.map((category: string): number =>
@@ -192,6 +204,19 @@ export struct SearchPage {
   searchCategoryCount(category: string): number {
     const index = BookTypeSupport.MEDIA_CATEGORIES.indexOf(category);
     return index >= 0 ? (this.searchCategoryCounts[index] || 0) : this.searchResults.length;
+  }
+
+  claimSearchResultArrival(book: SearchBook): number {
+    if (!this.isActive) return -1;
+    const key = book.aggregationKey ? `group:${book.aggregationKey}` :
+      `item:${JSON.stringify([book.origin || '', book.bookUrl || ''])}`;
+    return this.resultArrivalTracker.claim(key, Date.now());
+  }
+
+  onSearchResultReady(book: SearchBook): void {
+    const key = book.aggregationKey ? `group:${book.aggregationKey}` :
+      `item:${JSON.stringify([book.origin || '', book.bookUrl || ''])}`;
+    this.resultArrivalTracker.markReady(key, this.isActive, Date.now());
   }
 
   // 记住的分段在本次搜索里没有结果时，搜索结束后按"全部"展示，但不改写用户的选择。
@@ -655,9 +680,8 @@ export struct SearchPage {
 
         if (this.usesSearchCategoryPager()) {
           CategorySwipePager({
-            pageKeys: this.searchCategoryChips().map((chip: SearchCategoryChip): string => chip.key),
-            selectedIndex: this.searchCategoryChips().findIndex((chip: SearchCategoryChip): boolean =>
-              chip.key === this.effectiveSearchCategory()),
+            pageKeys: this.searchCategoryPageKeys(),
+            selectedIndex: Math.max(0, this.searchCategoryPageKeys().indexOf(this.effectiveSearchCategory())),
             onSelect: (key: string): void => this.selectSearchCategory(key),
             pageContent: (key: string) => {
               this.searchResultContent(key)
@@ -709,8 +733,11 @@ export struct SearchPage {
     if (this.showResult && this.searchBooksForCategory(category).length > 0) {
       SearchBookResultList({
         books: this.searchBooksForCategory(category),
+        claimArrival: (book: SearchBook): number => this.claimSearchResultArrival(book),
+        onResultReady: (book: SearchBook): void => this.onSearchResultReady(book),
         scroller: category ? this.searchCategoryScroller(category) : this.searchResultScroller,
         layoutMode: this.searchResultLayout,
+        gridViewportWidth: this.searchViewportWidth,
         shelfBookKeys: this.shelfBookKeys,
         busyBookKeys: this.addingShelfBookKeys,
         showLoadingMore: this.isSearching,
@@ -728,7 +755,7 @@ export struct SearchPage {
         subTextColor: this.subTextColor(),
         topPadding: this.searchResultTopPadding(),
         userScrollOnly: this.usesSearchCategoryPager(),
-        gridPageActive: !category || category === this.effectiveSearchCategory(),
+        gridPageActive: this.isActive && (!category || category === this.effectiveSearchCategory()),
         gridHeaderCollapse: this.searchHeaderCollapseValue(),
         bottomPadding: this.resultListBottomInset(),
         onOpenBook: (book: SearchBook) => {
@@ -748,19 +775,10 @@ export struct SearchPage {
         }
       })
     } else if (this.isSearching) {
-      Column() {
-        LoadingProgress()
-          .width(40)
-          .height(40)
-        Text('搜索中...')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.subTextColor())
-          .margin({ top: AppSpacing.MD })
-      }
-      .width('100%')
+      SearchResultLoading({
+        topPadding: this.searchResultTopPadding()
+      })
       .layoutWeight(1)
-      .padding({ top: this.searchResultTopPadding() })
-      .justifyContent(FlexAlign.Center)
     } else if (this.showResult && this.searchBooksForCategory(category).length === 0) {
       Column() {
         Text(this.searchResults.length > 0 ? '该类型下没有结果' : '未找到相关书籍')
@@ -1238,6 +1256,7 @@ export struct SearchPage {
     this.coordinator?.cancel();
     this.coordinator = null;
     sessionId = ++this.searchSessionId;
+    this.resultArrivalTracker.reset();
     this.isSearching = true;
     this.showResult = true;
     this.searchResults = [];
@@ -1751,7 +1770,13 @@ export struct SearchPage {
   }
 
   usesSearchCategoryPager(): boolean {
-    return this.searchResultLayout === 'grid' && this.showSearchCategoryBar();
+    // 从等待结果起就保留同一个“全部”页；分类增加只追加页，不重建已显示的封面。
+    return this.searchResultLayout === 'grid';
+  }
+
+  searchCategoryPageKeys(): string[] {
+    const keys = this.searchCategoryChips().map((chip: SearchCategoryChip): string => chip.key);
+    return keys.length > 0 ? keys : [SEARCH_CATEGORY_ALL];
   }
 
   searchResultTopPadding(): number {

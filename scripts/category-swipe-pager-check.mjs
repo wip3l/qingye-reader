@@ -19,7 +19,7 @@ const context = vm.createContext({
 Object.assign(context, {
   SearchPage: { HEADER_CONTROL_SIZE: 40, TITLE_ROW_HEIGHT: 56, STATUS_ROW_HEIGHT: 32, CATEGORY_BAR_HEIGHT: 44 },
   ExplorePage: { CHANNEL_BAR_HEIGHT: 44 }, AppSpacing: { MD: 8 },
-  ScrollState: { Idle: 0, Scroll: 1, Fling: 2 }, Curve: { FastOutSlowIn: 0 },
+  ScrollState: { Idle: 0, Scroll: 1, Fling: 2 }, Curve: { FastOutSlowIn: 0, EaseOut: 1 },
   animateTo: (_options, update) => update()
 });
 vm.runInContext(stripTypeScriptTypes(read('utils/CollapsingHeader.ets').replace('export class', 'class')), context);
@@ -52,6 +52,7 @@ const search = methods('SearchPage', [
   'searchCategoryChips', 'searchBooksForCategory', 'searchCategoryScroller'
 ]);
 Object.assign(search, {
+  resultArrivalTracker: { record() {} },
   searchCategoryScrollers: new Map(), searchResultCategory: 'audio', isSearching: true,
   searchExploreAggregateResults: true
 });
@@ -76,6 +77,7 @@ const explore = methods('ExplorePage', [
   'explorePageKeys', 'isCurrentExplorePage', 'explorePageLoading', 'explorePageBooks', 'selectExploreEntry'
 ]);
 Object.assign(explore, {
+  getUIContext: () => ({ animateTo: (_options, update) => update() }),
   selectedPlatform: '频道', selectedSourceUrl: 'source-a', selectedIndex: 0, isLoading: false,
   books: [{ name: '第一类的书' }], exploreSwipePreviews: new Map(),
   getActiveEntries() {
@@ -185,7 +187,8 @@ for (const [file, prefix] of [['ExplorePage', 'explore'], ['SearchPage', 'search
   assert.equal(page[`${prefix}ResultTopPadding`](), expandedInset,
     `${file}: ordinary list mode retains its fixed expanded-header spacer`);
   page[`on${name}ListScroll`](0, 0);
-  assert.equal(value(), 0, `${file}: ordinary list mode keeps its existing offset-based behavior`);
+  assert.equal(value(), isSearch ? 0 : distance,
+    `${file}: discovery list paging also preserves the shared header when an idle page mounts`);
 }
 
 // 分类进入时补齐共享顶栏的滚动距离；滚动中只更新收起量，不能反过来调整列表位置或尺寸。
@@ -199,6 +202,7 @@ const grid = methods('SearchBookResultList', [
 let gridOffset = 0;
 let scrollCalls = 0;
 Object.assign(grid, {
+  drainCoverQueue() {}, pendingCovers: new Map(), coverGeneration: 0,
   layoutMode: 'grid', userScrollOnly: true, gridPageActive: true, gridHeaderCollapse: 56,
   gridAlignTimer: -1, gridUserScrolled: false,
   scroller: {

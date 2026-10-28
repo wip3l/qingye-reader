@@ -21,7 +21,7 @@ function method(name) {
   return source.slice(start, source.indexOf('\n  }', start) + 4).replace('private ', '');
 }
 const cover = vm.runInContext(stripTypeScriptTypes(`({${[
-  'coverBook', 'rawCoverList', 'refreshCovers', 'resolveDisplayCovers', 'clearCoverRetries', 'activeCover', 'isActiveCoverReady', 'notifyReadyCover', 'markLoaded', 'loadShelfBook'
+  'coverBook', 'rawCoverList', 'refreshCovers', 'resolveDisplayCovers', 'clearCoverRetries', 'activeCover', 'isActiveCoverReady', 'notifyReadyCover', 'markLoaded', 'loadShelfBook', 'onBookChanged', 'onPreparedSelectionChanged'
 ].map(method).join(',')}})`), context);
 Object.assign(cover, {
   bookUrl: 'book-1', origin: 'source', coverUrl: 'source.jpg', shelfBook: null,
@@ -167,8 +167,8 @@ assert.equal(closed, 4, 'close files even on failure; failed writes can retry');
 // The same resolver powers both result layouts and the detail page; saved preference key is preserved.
 const results = read('components/book/SearchBookResultList.ets');
 assert(results.includes('BookCover({'));
-assert(results.includes('this.resultCover(book, 8, 360, 480)'));
-assert(results.includes('this.resultCover(book, 6, 180, 240)'));
+assert(results.includes('this.resultCover(key, 8, 360, 480)'));
+assert(results.includes('this.resultCover(key, 6, 180, 240)'));
 assert(read('pages/SearchBookDetail.ets').includes('BookCover({'));
 assert(read('pages/SearchExploreSettings.ets').includes("title: '使用书架封面'"));
 assert(read('pages/SearchExploreSettings.ets').includes("@StorageLink('searchExploreUseBookshelfCoverGallery')"));
@@ -176,4 +176,14 @@ for (const path of ['components/reader/ReaderTocPanel.ets', 'components/TtsCatal
   'components/ReaderTtsPlayerPanel.ets', 'pages/ReadingStats.ets', 'pages/AudioBook.ets', 'pages/OpdsBrowse.ets']) {
   assert(read(path).includes('BookCover({'), `${path} uses the shared cover component`);
 }
-console.log('PASS shared covers: source/custom/theme/albums, scope, modes, backdrop, stale loads, shared lookup, static surfaces, resource file caching/retry');
+cover.preparedSelection = { firstImage: 'file:///prepared', covers: ['file:///prepared', 'album-next.jpg'], frame: 'file:///frame', interval: 4000 };
+cover.loadShelfBook = () => { throw Error('prepared results must not restart shelf lookup'); };
+cover.onBookChanged();
+assert.equal(cover.activeCover(), 'file:///prepared');
+assert.equal(cover.isActiveCoverReady(), true, 'prepared first image is ready before the result is painted');
+assert.equal(cover.themeFrame, 'file:///frame');
+assert.equal(cover.interval, 4000);
+cover.preparedSelection = { firstImage: '', covers: [], frame: '', interval: 3500 };
+cover.onPreparedSelectionChanged();
+assert.equal(cover.covers.length, 0, 'confirmed missing cover stays a final fallback instead of restarting network loading');
+console.log('PASS shared covers: source/custom/theme/albums, prepared first paint, scope, modes, backdrop, stale loads, shared lookup, static surfaces, resource file caching/retry');

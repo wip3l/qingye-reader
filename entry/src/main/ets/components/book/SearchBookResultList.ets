@@ -10,16 +10,18 @@ import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { CoverBackdropCard } from './CoverBackdropCard';
+import { SearchResultArrival } from './SearchResultArrival';
+import { PreparedResultCover, ResultCoverOptions, ResultCoverPreparation } from '../../utils/ResultCoverPreparation';
 
 export type SearchBookAction = (book: SearchBook) => void;
 
 class SearchBookResultDataSource implements IDataSource {
-  private books: SearchBook[] = [];
+  private keys: string[] = [];
   private listeners: DataChangeListener[] = [];
 
-  totalCount(): number { return this.books.length; }
+  totalCount(): number { return this.keys.length; }
 
-  getData(index: number): SearchBook { return this.books[index]; }
+  getData(index: number): string { return this.keys[index]; }
 
   registerDataChangeListener(listener: DataChangeListener): void {
     if (!this.listeners.includes(listener)) this.listeners.push(listener);
@@ -30,16 +32,40 @@ class SearchBookResultDataSource implements IDataSource {
     if (index >= 0) this.listeners.splice(index, 1);
   }
 
-  replace(books: SearchBook[]): void {
-    this.books = books.slice();
+  replace(keys: string[], force: boolean = false): void {
+    if (!force && keys.length === this.keys.length &&
+      keys.every((key: string, index: number): boolean => key === this.keys[index])) return;
+    this.keys = keys.slice();
     for (const listener of this.listeners) listener.onDataReloaded();
   }
 }
 
 @Component
 export struct SearchBookResultList {
-  @State gridViewportWidth: number = 360;
-  @StorageProp('appDarkMode') appDarkMode: boolean = false;
+  /** 父页面在结果到达前已测得宽度，避免先按 360vp 绘制再重新分列。 */
+  @Prop gridViewportWidth: number = 360;
+  /** 节点只绑定稳定身份，内容更新由状态表驱动，不销毁已解码的封面。 */
+  @State resultBooks: Map<string, SearchBook> = new Map<string, SearchBook>();
+  @StorageProp('appDarkMode') @Watch('onCoverSettingsChanged') appDarkMode: boolean = false;
+  @StorageProp('themeRevision') @Watch('onCoverSettingsChanged') themeRevision: number = 0;
+  @StorageProp('appThemeBookCoverEnabled') @Watch('onCoverSettingsChanged') themeCoverEnabled: boolean = false;
+  @StorageProp('bookshelfCoverAlbums') @Watch('onCoverSettingsChanged') coverAlbums: string = '';
+  @StorageProp('bookshelfLightCoverAlbumId') @Watch('onCoverSettingsChanged') lightCoverAlbum: string = '';
+  @StorageProp('bookshelfDarkCoverAlbumId') @Watch('onCoverSettingsChanged') darkCoverAlbum: string = '';
+  @StorageProp('bookshelfCoverApplyScope') @Watch('onCoverSettingsChanged') coverScope: string = '';
+  @StorageProp('bookshelfCoverTargetBooks') @Watch('onCoverSettingsChanged') coverTargets: string = '';
+  @StorageProp('bookshelfIgnoreSourceCover') @Watch('onCoverSettingsChanged') ignoreSourceCover: boolean = false;
+  @StorageProp('bookshelfCoverMode') @Watch('onCoverSettingsChanged') coverMode: string = '';
+  @StorageProp('shelfUpdateTime') @Watch('onCoverSettingsChanged') shelfRevision: number = 0;
+  @State preparedCovers: Map<string, PreparedResultCover> = new Map<string, PreparedResultCover>();
+  @State visibleResultCount: number = 0;
+  @State preparingCoverCount: number = 0;
+  private preparedSignatures: Map<string, string> = new Map<string, string>();
+  private pendingCovers: Map<string, string> = new Map<string, string>();
+  private runningCovers: Set<string> = new Set<string>();
+  private activeCoverTasks: number = 0;
+  private coverGeneration: number = 0;
+  private coverMounted: boolean = false;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @Prop @Watch('onBooksChanged') books: SearchBook[] = [];
@@ -47,9 +73,9 @@ export struct SearchBookResultList {
   @Prop busyBookKeys: string[] = [];
   @Prop showLoadingMore: boolean = false;
   @Prop showKind: boolean = false;
-  @Prop showResultCover: boolean = true;
+  @Prop @Watch('onCoverSettingsChanged') showResultCover: boolean = true;
   @Prop showResultCoverBackground: boolean = true;
-  @Prop useBookshelfCoverGallery: boolean = false;
+  @Prop @Watch('onCoverSettingsChanged') useBookshelfCoverGallery: boolean = false;
   @Prop showResultTags: boolean = true;
   @Prop showSourceLine: boolean = true;
   @Prop pageColor: string = '#F5F5F5';
@@ -80,23 +106,30 @@ export struct SearchBookResultList {
   onReadBook: SearchBookAction = (_book: SearchBook) => {};
   onToggleShelf: SearchBookAction = (_book: SearchBook) => {};
   onNeedMetadata: SearchBookAction = (_book: SearchBook) => {};
+  claimArrival: (book: SearchBook) => number = (_book: SearchBook): number => -1;
+  onResultReady: SearchBookAction = (_book: SearchBook): void => {};
   onReachEnd: () => void = () => {};
   /** 列表滚动：本次位移和当前滚动距离，首页据此收起或展开标题行。 */
   onListScroll: (delta: number, offset: number) => void = (_delta: number, _offset: number) => {};
   onListScrollStop: (offset: number) => void = (_offset: number) => {};
 
   aboutToAppear(): void {
+    this.coverMounted = true;
     this.onBooksChanged();
   }
 
   aboutToDisappear(): void {
+    this.coverMounted = false;
+    this.coverGeneration++;
+    this.pendingCovers.clear();
     if (this.gridAlignTimer >= 0) clearTimeout(this.gridAlignTimer);
   }
 
   onGridPageActiveChanged(): void {
+    if (this.gridPageActive) this.drainCoverQueue();
     if (this.gridAlignTimer >= 0) clearTimeout(this.gridAlignTimer);
     this.gridAlignTimer = -1;
-    if (this.layoutMode !== 'grid' || !this.userScrollOnly || !this.gridPageActive) return;
+    if (!this.userScrollOnly || !this.gridPageActive) return;
     // 首次挂载需等 List 绑定 Scroller；重新进入已有分类时保留更深的阅读位置。
     this.gridAlignTimer = setTimeout(() => {
       this.gridAlignTimer = -1;
@@ -105,7 +138,7 @@ export struct SearchBookResultList {
   }
 
   alignGridToHeader(): void {
-    if (this.layoutMode !== 'grid' || !this.userScrollOnly || !this.gridPageActive) return;
+    if (!this.userScrollOnly || !this.gridPageActive) return;
     const offset = this.scroller.currentOffset().yOffset;
     if (offset < this.gridHeaderCollapse) {
       this.gridUserScrolled = false;
@@ -114,7 +147,28 @@ export struct SearchBookResultList {
   }
 
   onBooksChanged(): void {
-    this.dataSource.replace(this.books);
+    const snapshot = new Map<string, SearchBook>();
+    let actionsChanged = false;
+    for (const book of this.books) {
+      const key = this.itemKey(book);
+      const previous = this.resultBooks.get(key);
+      if (this.layoutMode !== 'grid' && previous && this.listItemKey(previous) !== this.listItemKey(book)) {
+        actionsChanged = true;
+      }
+      snapshot.set(key, book);
+    }
+    this.resultBooks = snapshot;
+    this.preparedCovers.forEach((_cover: PreparedResultCover, key: string): void => {
+      if (!snapshot.has(key)) {
+        this.preparedCovers.delete(key);
+        this.preparedSignatures.delete(key);
+      }
+    });
+    this.pendingCovers.forEach((_signature: string, key: string): void => {
+      if (!snapshot.has(key)) this.pendingCovers.delete(key);
+    });
+    this.requestResultCovers();
+    this.publishReadyResults(actionsChanged);
     this.tagCache.clear();
     const keys = new Set(this.books.map((book: SearchBook): string => this.itemKey(book)));
     this.readyCoverUrls.forEach((_url: ResourceStr, key: string): void => {
@@ -126,15 +180,97 @@ export struct SearchBookResultList {
     // HdsListItem caches its swipe action options when the item is created.
     // Rebuild the data source when shelf membership changes so the action icon
     // and accessibility label are regenerated from the current state.
-    this.dataSource.replace(this.books);
+    this.publishReadyResults(true);
+  }
+
+  onCoverSettingsChanged(): void {
+    if (this.coverMounted) this.requestResultCovers();
+  }
+
+  requestResultCovers(): void {
+    const options = ResultCoverPreparation.options(this.showResultCover, this.useBookshelfCoverGallery, this.appDarkMode);
+    this.resultBooks.forEach((book: SearchBook, key: string): void => {
+      const signature = ResultCoverPreparation.signature(book, options);
+      if (this.preparedSignatures.get(key) === signature) return;
+      if (!options.showCover) {
+        this.preparedCovers.set(key, new PreparedResultCover());
+        this.preparedSignatures.set(key, signature);
+        this.pendingCovers.delete(key);
+      } else {
+        this.pendingCovers.set(key, signature);
+      }
+    });
+    this.publishReadyResults();
+    this.drainCoverQueue();
+  }
+
+  publishReadyResults(force: boolean = false): void {
+    const readyKeys = Array.from(this.resultBooks.keys()).filter((key: string): boolean => this.preparedCovers.has(key));
+    this.visibleResultCount = readyKeys.length;
+    this.preparingCoverCount = this.pendingCovers.size;
+    this.dataSource.replace(readyKeys, force);
+  }
+
+  drainCoverQueue(): void {
+    if (!this.coverMounted || !this.gridPageActive) return;
+    for (const key of this.pendingCovers.keys()) {
+      if (this.activeCoverTasks >= 6) break;
+      if (this.runningCovers.has(key)) continue;
+      const book = this.resultBooks.get(key);
+      const signature = this.pendingCovers.get(key);
+      if (!book || signature === undefined) continue;
+      const options = ResultCoverPreparation.options(this.showResultCover, this.useBookshelfCoverGallery, this.appDarkMode);
+      const generation = this.coverGeneration;
+      this.runningCovers.add(key);
+      this.activeCoverTasks++;
+      this.prepareResultCover(book, options).catch((): PreparedResultCover => new PreparedResultCover())
+        .then((cover: PreparedResultCover): void => {
+          if (!this.coverMounted || generation !== this.coverGeneration ||
+            this.pendingCovers.get(key) !== signature || !this.resultBooks.has(key)) return;
+          const firstAdmission = !this.preparedCovers.has(key);
+          this.preparedCovers.set(key, cover);
+          this.preparedSignatures.set(key, signature);
+          this.pendingCovers.delete(key);
+          if (firstAdmission) this.onResultReady(this.resultBook(key));
+          this.publishReadyResults();
+        }).finally((): void => {
+          this.runningCovers.delete(key);
+          this.activeCoverTasks--;
+          this.drainCoverQueue();
+        });
+    }
+  }
+
+  prepareResultCover(book: SearchBook, options: ResultCoverOptions): Promise<PreparedResultCover> {
+    return ResultCoverPreparation.prepare(getContext(this), book, options);
+  }
+
+  resultBook(key: string): SearchBook {
+    return this.resultBooks.get(key) || new SearchBook();
   }
 
   build() {
-    if (this.layoutMode === 'grid') {
-      this.resultGrid()
-    } else {
-      this.resultList()
+    Stack() {
+      if (this.layoutMode === 'grid') {
+        this.resultGrid()
+      } else {
+        this.resultList()
+      }
+      if (this.visibleResultCount === 0 && this.preparingCoverCount > 0) {
+        Column({ space: AppSpacing.MD }) {
+          LoadingProgress().width(28).height(28)
+          Text('正在准备封面').fontSize(AppFontSize.BODY).fontColor(this.subTextColor)
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ top: this.topPadding })
+        .justifyContent(FlexAlign.Center)
+        .hitTestBehavior(HitTestMode.None)
+      }
     }
+    .width('100%')
+    .height('100%')
+    .layoutWeight(1)
   }
 
   /** 封面平铺：多列 List 保留懒加载，列数随宽度自适应；顶部留白与底部加载提示放在分组页眉页脚里，不占格子。 */
@@ -142,11 +278,15 @@ export struct SearchBookResultList {
   resultGrid() {
     List({ scroller: this.scroller }) {
       ListItemGroup({ header: this.gridHeader(), footer: this.gridFooter(), space: AppSpacing.LG }) {
-        LazyForEach(this.dataSource, (book: SearchBook) => {
+        LazyForEach(this.dataSource, (key: string) => {
           ListItem() {
-            this.searchResultGridItem(book)
+            SearchResultArrival({
+              claimArrival: (): number => this.gridPageActive ? this.claimArrival(this.resultBook(key)) : -1
+            }) {
+              this.searchResultGridItem(key)
+            }
           }
-        }, (book: SearchBook) => `grid_${this.listItemKey(book)}`)
+        }, (key: string) => `grid_${key}`)
       }
     }
     .lanes(BookTileLayout.columnCount(this.gridViewportWidth), BookTileLayout.columnGap(this.gridViewportWidth))
@@ -154,17 +294,12 @@ export struct SearchBookResultList {
     .width('100%')
     .layoutWeight(1)
     .padding({ left: BookTileLayout.SIDE_PADDING, right: BookTileLayout.SIDE_PADDING })
+    .height('100%')
     .backgroundColor(this.pageColor)
     .scrollBar(BarState.Auto)
-    .onAreaChange((_oldValue: Area, newValue: Area) => {
-      const width = typeof newValue.width === 'number' ? newValue.width : Number.parseFloat(`${newValue.width}`);
-      if (Number.isFinite(width) && width > 0 && Math.abs(width - this.gridViewportWidth) >= 1) {
-        this.gridViewportWidth = width;
-      }
-    })
     .onAppear(() => this.onGridPageActiveChanged())
     .onReachEnd(() => {
-      this.onReachEnd();
+      if (this.preparingCoverCount === 0) this.onReachEnd();
     })
     .onDidScroll((delta: number, state: ScrollState) => {
       if (this.userScrollOnly && (state === ScrollState.Idle || delta === 0)) return;
@@ -189,7 +324,7 @@ export struct SearchBookResultList {
   @Builder
   gridFooter() {
     Column() {
-      if (this.showLoadingMore) {
+      if (this.visibleResultCount > 0 && (this.showLoadingMore || this.preparingCoverCount > 0)) {
         Row() {
           LoadingProgress()
             .width(20)
@@ -210,23 +345,24 @@ export struct SearchBookResultList {
   }
 
   @Builder
-  searchResultGridItem(book: SearchBook) {
+  searchResultGridItem(key: string) {
+    // Builder 只捕获稳定 key，UI 闭包从状态表读最新书籍；更新数量不重建 BookCover。
     Column({ space: AppSpacing.XS }) {
       Stack({ alignContent: Alignment.TopEnd }) {
         Stack() {
           Column() {
-            Text(this.safeText(book.name, '书').substring(0, 1))
+            Text(this.safeText(this.resultBook(key).name, '书').substring(0, 1))
               .fontSize(AppFontSize.HEADLINE)
-              .fontColor(this.showResultCover && this.backdropCover(book) ? this.secondaryTextColor : '#FFFFFF')
+              .fontColor(this.showResultCover ? this.secondaryTextColor : '#FFFFFF')
           }
           .width('100%')
           .height('100%')
           .justifyContent(FlexAlign.Center)
           // 有封面时使用中性底色，避免圆角抗锯齿边缘透出主题色。
-          .backgroundColor(this.showResultCover && this.backdropCover(book) ? this.cardColor : this.accentColor())
+          .backgroundColor(this.showResultCover ? this.cardColor : this.accentColor())
 
           if (this.showResultCover) {
-            this.resultCover(book, 8, 360, 480)
+            this.resultCover(key, 8, 360, 480)
           }
         }
         .width('100%')
@@ -234,16 +370,16 @@ export struct SearchBookResultList {
         .borderRadius(8)
         .clip(true)
 
-        if (book.aggregationCount > 1) {
-          Text(`${book.aggregationCount} 个结果`)
+        if (this.resultBook(key).aggregationCount > 1) {
+          Text(`${this.resultBook(key).aggregationCount} 个结果`)
             .fontSize(AppFontSize.MICRO)
             .fontColor('#FFFFFF')
             .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.XXS, bottom: AppSpacing.XXS })
             .backgroundColor('#99000000')
             .borderRadius(8)
             .margin({ top: AppSpacing.XS, right: AppSpacing.XS })
-        } else if (this.mediaBadge(book)) {
-          Text(this.mediaBadge(book))
+        } else if (this.mediaBadge(this.resultBook(key))) {
+          Text(this.mediaBadge(this.resultBook(key)))
             .fontSize(AppFontSize.MICRO)
             .fontColor('#FFFFFF')
             .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.XXS, bottom: AppSpacing.XXS })
@@ -258,7 +394,7 @@ export struct SearchBookResultList {
       .backgroundColor(this.cardColor)
       .shadow({ radius: 8, color: this.isDarkMode() ? '#55000000' : '#22000000', offsetX: 0, offsetY: 3 })
 
-      Text(this.safeText(book.name, '未知书名'))
+      Text(this.safeText(this.resultBook(key).name, '未知书名'))
         .fontSize(AppFontSize.BODY)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.primaryTextColor)
@@ -266,7 +402,7 @@ export struct SearchBookResultList {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
         .margin({ top: AppSpacing.XS })
-      Text(this.safeText(book.author, '作者未知'))
+      Text(this.safeText(this.resultBook(key).author, '作者未知'))
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor)
         .maxLines(1)
@@ -276,12 +412,12 @@ export struct SearchBookResultList {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .onClick(() => {
-      this.onOpenBook(book);
+      this.onOpenBook(this.resultBook(key));
     })
     .onAppear(() => {
-      if (book.aggregationCount <= 1 &&
-        (!this.safeText(book.author, '') || (this.showResultCover && !this.safeText(book.coverUrl, '')))) {
-        this.onNeedMetadata(book);
+      if (this.resultBook(key).aggregationCount <= 1 &&
+        !this.safeText(this.resultBook(key).author, '')) {
+        this.onNeedMetadata(this.resultBook(key));
       }
     })
   }
@@ -296,11 +432,11 @@ export struct SearchBookResultList {
         }
       }
 
-      LazyForEach(this.dataSource, (book: SearchBook) => {
-        this.searchResultItem(book)
-      }, (book: SearchBook) => this.listItemKey(book))
+      LazyForEach(this.dataSource, (key: string) => {
+        this.searchResultItem(key)
+      }, (key: string) => this.listItemKey(this.resultBook(key)))
 
-      if (this.showLoadingMore) {
+      if (this.visibleResultCount > 0 && (this.showLoadingMore || this.preparingCoverCount > 0)) {
         ListItem() {
           Row() {
             LoadingProgress()
@@ -326,15 +462,21 @@ export struct SearchBookResultList {
     .width('100%')
     .layoutWeight(1)
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+    .height('100%')
     .backgroundColor(this.pageColor)
     .scrollBar(BarState.Auto)
     .onReachEnd(() => {
-      this.onReachEnd();
+      if (this.preparingCoverCount === 0) this.onReachEnd();
     })
-    .onDidScroll((delta: number) => {
+    .onAppear(() => this.onGridPageActiveChanged())
+    .onDidScroll((delta: number, state: ScrollState) => {
+      if (this.userScrollOnly && (state === ScrollState.Idle || delta === 0)) return;
+      this.gridUserScrolled = true;
       this.onListScroll(delta, this.scroller.currentOffset().yOffset);
     })
     .onScrollStop(() => {
+      if (this.userScrollOnly && !this.gridUserScrolled) return;
+      this.gridUserScrolled = false;
       this.onListScrollStop(this.scroller.currentOffset().yOffset);
     })
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
@@ -345,27 +487,27 @@ export struct SearchBookResultList {
   }
 
   @Builder
-  searchResultItem(book: SearchBook) {
+  searchResultItem(key: string) {
     if (this.supportsHdsListItem()) {
       HdsListItem({
         customItemBuilder: () => {
-          this.searchResultCard(book)
+          this.animatedSearchResultCard(key)
         },
         // 聚合项只是进入同名结果页，不能直接执行某个来源书籍的操作。
-        swipeActionOptions: book.aggregationCount > 1 ? undefined : this.searchResultSwipeActions(book)
+        swipeActionOptions: this.resultBook(key).aggregationCount > 1 ? undefined : this.searchResultSwipeActions(this.resultBook(key))
       })
     } else {
       // API 25 及以下保留原生 ListItem，避免加载 HDS 滑动容器。
       ListItem() {
-        this.searchResultCard(book)
+        this.animatedSearchResultCard(key)
       }
-      .swipeAction(book.aggregationCount > 1 ? {} : {
+      .swipeAction(this.resultBook(key).aggregationCount > 1 ? {} : {
         end: {
           builder: () => {
-            this.searchResultFallbackSwipeActions(book)
+            this.searchResultFallbackSwipeActions(key)
           },
           actionAreaDistance: 128,
-          onAction: () => this.onReadBook(book)
+          onAction: () => this.onReadBook(this.resultBook(key))
         },
         edgeEffect: SwipeEdgeEffect.Spring
       })
@@ -373,11 +515,20 @@ export struct SearchBookResultList {
   }
 
   @Builder
-  searchResultCard(book: SearchBook) {
+  animatedSearchResultCard(key: string) {
+    SearchResultArrival({
+      claimArrival: (): number => this.gridPageActive ? this.claimArrival(this.resultBook(key)) : -1
+    }) {
+      this.searchResultCard(key)
+    }
+  }
+
+  @Builder
+  searchResultCard(key: string) {
     // 尾随闭包形式的自定义组件后面不能再接属性，圆角、边框、点击等挂在外层 Column 上。
     Column() {
       CoverBackdropCard({
-        cover: this.showResultCover && this.showResultCoverBackground ? this.backdropCover(book) : '',
+        cover: this.showResultCover && this.showResultCoverBackground ? this.backdropCover(this.resultBook(key)) : '',
         showBackdrop: this.showResultCoverBackground,
         accentColor: this.accentColor(),
         cardColor: this.cardColor,
@@ -385,12 +536,12 @@ export struct SearchBookResultList {
       }) {
         Row() {
           if (this.showResultCover) {
-            this.coverView(book)
+            this.coverView(key)
           }
 
           Column() {
             Row({ space: AppSpacing.SM }) {
-              Text(this.safeText(book.name, '未知书名'))
+              Text(this.safeText(this.resultBook(key).name, '未知书名'))
                 .fontSize(AppFontSize.BODY_LARGE)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(this.primaryTextColor)
@@ -398,8 +549,8 @@ export struct SearchBookResultList {
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .flexShrink(1)
 
-              if (this.mediaBadge(book)) {
-                Text(this.mediaBadge(book))
+              if (this.mediaBadge(this.resultBook(key))) {
+                Text(this.mediaBadge(this.resultBook(key)))
                   .fontSize(AppFontSize.CAPTION)
                   .fontColor(this.accentColor())
                   .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: 1, bottom: 1 })
@@ -410,14 +561,14 @@ export struct SearchBookResultList {
             .width('100%')
             .alignItems(VerticalAlign.Center)
 
-            Text(this.safeText(book.author, '作者未知'))
+            Text(this.safeText(this.resultBook(key).author, '作者未知'))
               .fontSize(AppFontSize.BODY)
               .fontColor(this.secondaryTextColor)
               .margin({ top: AppSpacing.XS })
 
-            if (this.showResultTags && this.getTags(book).length > 0) {
+            if (this.showResultTags && this.getTags(this.resultBook(key)).length > 0) {
               Flex({ wrap: FlexWrap.Wrap }) {
-                ForEach(this.getTags(book), (tag: string, index: number) => {
+                ForEach(this.getTags(this.resultBook(key)), (tag: string, index: number) => {
                   this.tagChip(tag, index)
                 })
               }
@@ -425,8 +576,8 @@ export struct SearchBookResultList {
               .margin({ top: AppSpacing.SM })
             }
 
-            if (this.metadataLine(book)) {
-              Text(this.metadataLine(book))
+            if (this.metadataLine(this.resultBook(key))) {
+              Text(this.metadataLine(this.resultBook(key)))
                 .fontSize(AppFontSize.CAPTION)
                 .fontColor(this.subTextColor)
                 .margin({ top: AppSpacing.XXS })
@@ -435,10 +586,10 @@ export struct SearchBookResultList {
             }
 
             if (this.showSourceLine) {
-              Text(this.sourceLine(book))
+              Text(this.sourceLine(this.resultBook(key)))
                 .fontSize(AppFontSize.CAPTION)
                 .fontColor(this.subTextColor)
-                .margin({ top: this.showResultTags && this.getTags(book).length > 0 ? 6 : 4 })
+                .margin({ top: this.showResultTags && this.getTags(this.resultBook(key)).length > 0 ? 6 : 4 })
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
             }
@@ -447,8 +598,8 @@ export struct SearchBookResultList {
           .margin({ left: this.showResultCover ? 12 : 0 })
           .alignItems(HorizontalAlign.Start)
 
-          if (book.aggregationCount > 1) {
-            this.aggregationIndicator(book)
+          if (this.resultBook(key).aggregationCount > 1) {
+            this.aggregationIndicator(key)
           }
         }
         .width('100%')
@@ -461,12 +612,12 @@ export struct SearchBookResultList {
     .border({ width: this.itemBorderWidth, color: this.itemBorderColor })
     .shadow({ radius: 10, color: this.shadowColor, offsetX: 0, offsetY: 4 })
     .onClick(() => {
-      this.onOpenBook(book);
+      this.onOpenBook(this.resultBook(key));
     })
     .onAppear(() => {
-      if (book.aggregationCount <= 1 &&
-        (!this.safeText(book.author, '') || (this.showResultCover && !this.safeText(book.coverUrl, '')))) {
-        this.onNeedMetadata(book);
+      if (this.resultBook(key).aggregationCount <= 1 &&
+        !this.safeText(this.resultBook(key).author, '')) {
+        this.onNeedMetadata(this.resultBook(key));
       }
     })
   }
@@ -513,13 +664,13 @@ export struct SearchBookResultList {
   }
 
   @Builder
-  searchResultFallbackSwipeActions(book: SearchBook) {
+  searchResultFallbackSwipeActions(key: string) {
     Row() {
       Column({ space: AppSpacing.XS }) {
-        SymbolGlyph(this.searchResultShelfActionIcon(book))
+        SymbolGlyph(this.searchResultShelfActionIcon(this.resultBook(key)))
           .fontSize(22)
           .fontColor(['#FFFFFF'])
-        Text(SearchBookShelfHelper.isInShelf(book, this.shelfBookKeys) ? '移出书架' : '加入书架')
+        Text(SearchBookShelfHelper.isInShelf(this.resultBook(key), this.shelfBookKeys) ? '移出书架' : '加入书架')
           .fontSize(AppFontSize.CAPTION)
           .fontColor('#FFFFFF')
       }
@@ -528,7 +679,7 @@ export struct SearchBookResultList {
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
       .backgroundColor(ThemeRuntime.buttonColor(this.isDarkMode()))
-      .onClick(() => this.toggleShelfFromSwipe(book))
+      .onClick(() => this.toggleShelfFromSwipe(this.resultBook(key)))
 
       Column({ space: AppSpacing.XS }) {
         SymbolGlyph($r('sys.symbol.book'))
@@ -543,15 +694,15 @@ export struct SearchBookResultList {
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
       .backgroundColor(ThemeRuntime.accentColor(this.isDarkMode()))
-      .onClick(() => this.onReadBook(book))
+      .onClick(() => this.onReadBook(this.resultBook(key)))
     }
     .height('100%')
   }
 
   @Builder
-  aggregationIndicator(book: SearchBook) {
+  aggregationIndicator(key: string) {
     Column({ space: AppSpacing.XXS }) {
-      Text(`${book.aggregationCount}`)
+      Text(`${this.resultBook(key).aggregationCount}`)
         .fontSize(AppFontSize.BODY_LARGE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.accentColor())
@@ -605,22 +756,23 @@ export struct SearchBookResultList {
   }
 
   @Builder
-  resultCover(book: SearchBook, radius: number, decodeWidth: number, decodeHeight: number) {
+  resultCover(key: string, radius: number, decodeWidth: number, decodeHeight: number) {
     BookCover({
-      bookUrl: book.bookUrl, origin: book.origin, coverUrl: book.coverUrl, name: book.name, author: book.author,
+      preparedSelection: this.preparedCovers.get(key) || null,
+      bookUrl: this.resultBook(key).bookUrl, origin: this.resultBook(key).origin,
+      coverUrl: this.resultBook(key).coverUrl, name: this.resultBook(key).name, author: this.resultBook(key).author,
       useBookshelfCover: this.useBookshelfCoverGallery,
-      placeholderColor: this.accentColor(), cornerRadius: radius, decodeWidth, decodeHeight,
+      placeholderColor: this.cardColor, cornerRadius: radius, decodeWidth, decodeHeight,
       onReadyCover: (url: ResourceStr): void => {
-        const key = this.itemKey(book);
         if (this.readyCoverUrls.get(key) !== url) this.readyCoverUrls.set(key, url);
       }
     })
   }
 
   @Builder
-  coverView(book: SearchBook) {
+  coverView(key: string) {
     Stack() {
-      this.resultCover(book, 6, 180, 240)
+      this.resultCover(key, 6, 180, 240)
     }
     .width(54)
     .height(72)
@@ -649,13 +801,11 @@ export struct SearchBookResultList {
   }
 
   itemKey(book: SearchBook): string {
-    if (book.aggregationCount > 1 && book.aggregationKey) {
-      // LazyForEach reuses a child when its key is unchanged. Search results arrive incrementally,
-      // so include the current member count to rebuild the card when a group grows.
-      return `aggregation:${book.aggregationKey}:${book.aggregationCount}`;
+    if (book.aggregationKey) {
+      return `aggregation:${book.aggregationKey}`;
     }
     const key = SearchBookShelfHelper.keyOf(book);
-    return `${key || this.safeText(book.bookUrl, '')}|${this.safeText(book.originName, '')}|${this.safeText(book.name, '')}`;
+    return key || JSON.stringify([book.origin, book.bookUrl, book.name]);
   }
 
   listItemKey(book: SearchBook): string {

@@ -559,7 +559,7 @@ export struct ExplorePage {
         })
         .layoutWeight(1)
       } else {
-        // 列表始终展示当前分类；Builder 按值参数不能保存首次挂载时的分类 key。
+        // 没有分类时，空 key 持续跟随当前内容。
         this.exploreResultContent('')
       }
       }
@@ -1026,14 +1026,18 @@ export struct ExplorePage {
                       .fontWeight(this.selectedIndex === index ? FontWeight.Medium : FontWeight.Regular)
                       .fontColor(this.selectedIndex === index ? this.accentColor() : this.secondaryTextColor())
                       .maxLines(1)
-                    Row()
-                      .width(16)
-                      .height(3)
-                      .borderRadius(1.5)
-                      .backgroundColor(this.accentColor())
-                      .opacity(this.selectedIndex === index ? 1 : 0)
-                      .scale({ x: this.selectedIndex === index ? 1 : 0.4, y: 1 })
-                      .animation({ duration: 220, curve: Curve.Friction })
+                    Stack() {
+                      if (this.selectedIndex === index) {
+                        Row()
+                          .width(16)
+                          .height(3)
+                          .borderRadius(1.5)
+                          .backgroundColor(this.accentColor())
+                          .geometryTransition('home_explore_channel_indicator')
+                      }
+                    }
+                    .width(16)
+                    .height(3)
                   }
                   .height('100%')
                   .padding({ left: 10, right: 10, top: 6 })
@@ -1128,6 +1132,7 @@ export struct ExplorePage {
       SearchBookResultList({
         books: this.explorePageBooks(key),
         layoutMode: this.exploreResultLayout,
+        gridViewportWidth: this.exploreViewportWidth,
         shelfBookKeys: this.shelfBookKeys,
         busyBookKeys: this.addingShelfBookKeys,
         showLoadingMore: this.isCurrentExplorePage(key) && this.isLoadingMore,
@@ -1147,7 +1152,7 @@ export struct ExplorePage {
         subTextColor: this.subTextColor(),
         topPadding: this.exploreResultTopPadding(),
         userScrollOnly: this.usesExploreCategoryPager(),
-        gridPageActive: this.isCurrentExplorePage(key),
+        gridPageActive: this.isActive && this.isCurrentExplorePage(key),
         gridHeaderCollapse: this.exploreHeaderCollapseValue(),
         bottomPadding: this.resultListBottomInset(),
         onOpenBook: (book: SearchBook) => {
@@ -1217,6 +1222,8 @@ export struct ExplorePage {
   }
 
   selectExploreEntry(index: number): void {
+    // 跨男频/女频分组时索引可能相同，但内容身份已经变化，仍需加载。
+    if (index < 0 || index >= this.getActiveEntries().length) return;
     if (!this.isLoading) {
       const previousKey = this.explorePageKeys()[this.selectedIndex];
       if (previousKey && previousKey === this.exploreBooksPageKey) {
@@ -1228,7 +1235,9 @@ export struct ExplorePage {
         }
       }
     }
-    this.selectedIndex = index;
+    this.getUIContext().animateTo({ duration: 320, curve: Curve.EaseOut }, (): void => {
+      this.selectedIndex = index;
+    });
     const entry = this.getActiveEntries()[index];
     if (entry) {
       ExploreCategoryHistoryStore.record(getContext(this), this.selectedSourceUrl,
@@ -1940,7 +1949,7 @@ export struct ExplorePage {
   }
 
   usesExploreCategoryPager(): boolean {
-    return this.exploreResultLayout === 'grid' && this.getActiveEntries().length > 0;
+    return this.getActiveEntries().length > 0;
   }
 
   exploreResultTopPadding(): number {
