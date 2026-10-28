@@ -1,5 +1,6 @@
 import { HdsTabs } from '@kit.UIDesignKit';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
+import { ThemeRuntime } from '../theme/ThemeRuntime';
 
 @Component
 export struct ImmersiveBackButton {
@@ -39,6 +40,7 @@ export struct ImmersiveBackButton {
         .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel, this.darkMode,
           this.darkMode ? '#191B1F' : '#FFFFFF', true))
         .border(ImmersiveMaterialRuntime.surfaceBorder(this.immersiveLightLevel, this.darkMode))
+        .shadow(ThemeRuntime.floatingControlShadow(this.darkMode))
         .accessibilityText(this.accessibilityLabel)
         .onClick(() => this.onBack())
       }
@@ -104,6 +106,7 @@ export struct ImmersiveBackButton {
     .borderRadius(this.materialButtonSize() / 2, RenderStrategy.OFFSCREEN)
     .border(ImmersiveMaterialRuntime.surfaceBorder(this.immersiveLightLevel, this.darkMode))
     .clip(true)
+    .shadow(ThemeRuntime.floatingControlShadow(this.darkMode))
     .translate({ x: this.alignToEnd ?
       this.effectiveContainerWidth() - this.materialButtonSize() - this.startInset * this.normalizedMaterialScale() :
       this.startInset * this.normalizedMaterialScale() })

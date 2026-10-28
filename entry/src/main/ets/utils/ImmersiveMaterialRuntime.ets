@@ -217,16 +217,16 @@ export class ImmersiveMaterialRuntime {
       new uiMaterial.ImmersiveMaterial(options);
   }
 
-  /** 面板浅/深色底色为 35%/50%，紧凑控件为 25%/40%；弱档沿用实色。 */
+  /** 面板浅/深色底色为 25%/50%，紧凑控件为 15%/40%；弱档沿用实色。 */
   static surfaceColor(level: string, darkMode: boolean, fallback: ResourceColor = '',
     compact: boolean = false): ResourceColor {
-    const alpha = compact ? (darkMode ? '66' : '40') : (darkMode ? '80' : '59');
+    const alpha = compact ? (darkMode ? '66' : '26') : (darkMode ? '80' : '40');
     return ImmersiveMaterialRuntime.tintedSurfaceColor(level, darkMode, fallback, alpha);
   }
 
-  /** 菜单浅/深色底色为 30%/45%，独立于大面板和触发控件。 */
+  /** 菜单浅/深色底色为 20%/45%，独立于大面板和触发控件。 */
   static menuSurfaceColor(level: string, darkMode: boolean, fallback: ResourceColor = ''): ResourceColor {
-    return ImmersiveMaterialRuntime.tintedSurfaceColor(level, darkMode, fallback, darkMode ? '73' : '4D');
+    return ImmersiveMaterialRuntime.tintedSurfaceColor(level, darkMode, fallback, darkMode ? '73' : '33');
   }
 
   private static tintedSurfaceColor(level: string, darkMode: boolean, fallback: ResourceColor,

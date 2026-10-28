@@ -1,5 +1,6 @@
 import { uiMaterial } from '@kit.ArkUI';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
+import { ThemeRuntime } from '../../theme/ThemeRuntime';
 
 /**
  * API 26 materials on layout containers only render inside supported system UI regions.
@@ -77,6 +78,8 @@ export struct ReaderFloatingMaterialBar {
     .height(this.barHeight)
     .borderRadius(this.radius(), RenderStrategy.OFFSCREEN)
     .clip(true)
+    .shadow(this.denseContent ? { radius: 0, color: Color.Transparent } :
+      ThemeRuntime.floatingControlShadow(this.darkMode))
   }
 }
 

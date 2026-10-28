@@ -1,5 +1,6 @@
 import { HdsTabs } from '@kit.UIDesignKit';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
+import { ThemeRuntime } from '../theme/ThemeRuntime';
 
 /** 圆角裁剪：带 HDS 材质时走离屏圆角，否则普通圆角。 */
 class ImmersiveSurfaceClip implements AttributeModifier<CommonAttribute> {
@@ -126,12 +127,7 @@ export struct ImmersiveMaterialSurface {
     .height(this.surfaceHeight)
     .attributeModifier(new ImmersiveSurfaceClip(this.surfaceHeight / 2))
     .border(ImmersiveMaterialRuntime.surfaceBorder(this.immersiveLightLevel, this.darkMode))
-    .shadow(ImmersiveMaterialRuntime.supportsHdsTabs() ? { radius: 0, color: Color.Transparent } : {
-      radius: this.darkMode ? 0 : 12,
-      color: this.darkMode ? Color.Transparent : '#14000000',
-      offsetX: 0,
-      offsetY: this.darkMode ? 0 : 2
-    })
+    .shadow(ThemeRuntime.floatingControlShadow(this.darkMode))
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
         this.touching = false;

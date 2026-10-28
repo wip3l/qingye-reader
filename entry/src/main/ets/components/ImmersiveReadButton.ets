@@ -69,7 +69,6 @@ export struct ImmersiveReadButton {
           .borderRadius(28)
           .backgroundColor(ThemeRuntime.cardColor(this.darkMode))
           .border({ width: 1, color: ThemeRuntime.glassBorderColor(this.darkMode, 'panel') })
-          .shadow(ThemeRuntime.floatingControlShadow(this.darkMode))
           .hitTestBehavior(HitTestMode.None)
       }
 
@@ -106,5 +105,6 @@ export struct ImmersiveReadButton {
     .height(56)
     .borderRadius(28)
     .border(ImmersiveMaterialRuntime.surfaceBorder(this.immersiveLightLevel, this.darkMode))
+    .shadow(ThemeRuntime.floatingControlShadow(this.darkMode))
   }
 }

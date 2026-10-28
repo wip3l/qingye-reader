@@ -27,7 +27,7 @@ function harness(api = 26, supported = true) {
       MaterialType: { IMMERSIVE: 'immersive', NONE: 'none', ADAPTIVE: 'adaptive' },
       MaterialLevel: { EXQUISITE: 'high', GENTLE: 'balanced', SMOOTH: 'weak', ADAPTIVE: 'adaptive' }
     },
-    ThemeRuntime: { glassPanelColor: () => '#59FFFFFF', cardColor: dark => dark ? '#222222' : '#FFFFFF' },
+    ThemeRuntime: { glassPanelColor: () => '#40FFFFFF', cardColor: dark => dark ? '#222222' : '#FFFFFF' },
     Color: { Transparent: 'transparent' },
     BlurStyle: { COMPONENT_THICK: 'blur', NONE: 'none' },
     DialogAlignment: { Center: 'center' }
@@ -55,11 +55,11 @@ test('manual weak/balanced disable native refraction across every popup, sheet, 
       menuBackgroundColor: value => { color = value; }, menuBackgroundBlurStyle: value => { blur = value; } });
     for (const material of [popup.systemMaterial, context.systemMaterial, sheet.systemMaterial, select,
       runtime.componentMaterial({ interactive: true }, level)]) assert.equal(material, empty);
-    const expectedMenuColor = level === 'weak' ? '#FFFFFF' : '#4DFFFFFF';
+    const expectedMenuColor = level === 'weak' ? '#FFFFFF' : '#33FFFFFF';
     for (const surface of [popup.popupColor, context.backgroundColor, color]) {
       assert.equal(surface, expectedMenuColor);
     }
-    assert.equal(sheet.backgroundColor, level === 'weak' ? '#FFFFFF' : '#59FFFFFF');
+    assert.equal(sheet.backgroundColor, level === 'weak' ? '#FFFFFF' : '#40FFFFFF');
     const expectedBlur = level === 'weak' ? 'none' : 'blur';
     assert.equal(blur, expectedBlur);
     assert.equal(popup.backgroundBlurStyle, expectedBlur);
@@ -79,7 +79,7 @@ test('follow-system and high restore native materials after leaving a manual red
       assert.notEqual(material, empty);
       assert.equal(material.style, 'regular');
       assert.equal(material.lightEffect.color, level === 'high' ? '#88123456' : '#55123456');
-      assert.equal(runtime.surfaceColor(level, false), '#59FFFFFF');
+      assert.equal(runtime.surfaceColor(level, false), '#40FFFFFF');
       assert.equal(runtime.surfaceBlur(level), 'none');
     }
   }
@@ -95,7 +95,7 @@ test('follow-system and high restore native materials after leaving a manual red
   for (const level of ['weak', 'balanced', 'adaptive']) runtime.selectMenuModifier(level).applyNormalAttribute(select);
   assert.notEqual(selectState.material, empty);
   assert.equal(selectState.color, 'transparent', 'native material owns the tint without a second background layer');
-  assert.equal(selectState.material.materialColor, '#4DFFFFFF');
+  assert.equal(selectState.material.materialColor, '#33FFFFFF');
   assert.equal(selectState.blur, 'none');
   assert.equal(runtime.lightEffect(true, 'weak'), null);
   assert.equal(runtime.touchGlowOpacity('weak'), 0);
@@ -108,8 +108,8 @@ test('older systems and unsupported devices keep non-material popup/sheet fallba
     const sheet = runtime.applySheetMaterial('adaptive', {}, false, '#123456');
     assert.equal(popup.systemMaterial, undefined);
     assert.equal(sheet.systemMaterial, undefined);
-    assert.equal(popup.popupColor, '#4DFFFFFF');
-    assert.equal(sheet.backgroundColor, '#59FFFFFF');
+    assert.equal(popup.popupColor, '#33FFFFFF');
+    assert.equal(sheet.backgroundColor, '#40FFFFFF');
     assert.equal(sheet.blurStyle, 'blur');
     if (api < 23) assert.equal(runtime.materialType(), 'none');
     else assert.equal(runtime.materialLevel('balanced'), 'balanced');
@@ -164,7 +164,7 @@ test('custom dialogs use the latest light level when opened and preserve dismiss
   const fallback = harness(25);
   new fallback.SystemDialogSession().open(fallback.uiContext, () => {}, options);
   assert.equal(fallback.state.opened[0].systemMaterial, undefined);
-  assert.equal(fallback.state.opened[0].backgroundColor, '#59FFFFFF');
+  assert.equal(fallback.state.opened[0].backgroundColor, '#40FFFFFF');
 });
 
 test('each UI material consumer subscribes directly and passes the reactive light level', () => {
@@ -206,9 +206,9 @@ test('panels, menus and compact controls retain their own light/dark opacity wit
       for (const level of ['weak', 'balanced', 'adaptive', 'high', 'balanced', 'adaptive']) {
         state.level = level;
         state.dark = dark;
-        const expected = level === 'weak' ? 1 : (dark ? 128 : 89) / 255;
-        const expectedMenu = level === 'weak' ? 1 : (dark ? 115 : 77) / 255;
-        const expectedCompact = level === 'weak' ? 1 : (dark ? 102 : 64) / 255;
+        const expected = level === 'weak' ? 1 : (dark ? 128 : 64) / 255;
+        const expectedMenu = level === 'weak' ? 1 : (dark ? 115 : 51) / 255;
+        const expectedCompact = level === 'weak' ? 1 : (dark ? 102 : 38) / 255;
         const popup = runtime.popupMenuOptions(level, () => {}, 'bottom', dark, '#123456', () => {});
         const sheet = runtime.applySheetMaterial(level, {}, dark, '#123456');
         const context = runtime.contextMenuOptions(level, '#123456', () => {});
