@@ -1,1 +1,6 @@
-{ "src": ["pages/ReaderFontWeightStepperTest"] }
+{
+  "src": [
+    "pages/ReaderFontWeightStepperTest",
+    "pages/WebVerificationTest"
+  ]
+}

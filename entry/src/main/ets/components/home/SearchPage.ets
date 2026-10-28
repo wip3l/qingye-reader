@@ -64,6 +64,7 @@ export struct SearchPage {
   @State showResult: boolean = false;
   @State statusMessage: string = '';
   @State verificationUrl: string = '';
+  private verificationContextToken: string = '';
   @State verificationTitle: string = '';
   @State showSearchSettingsDialog: boolean = false;
   @State showSearchSourcePicker: boolean = false;
@@ -1330,6 +1331,7 @@ export struct SearchPage {
         if (this.showSearchProgress) {
           this.statusMessage = p.status;
         }
+        this.verificationContextToken = p.verificationContextToken || '';
         this.verificationUrl = p.verificationUrl || AppStorage.get<string>('pendingVerificationUrl') || '';
         this.verificationTitle = p.verificationTitle || AppStorage.get<string>('pendingVerificationTitle') || '网页验证';
         if (p.finished) {
@@ -1715,7 +1717,8 @@ export struct SearchPage {
       url: 'pages/VerifyWeb',
       params: {
         url: url,
-        title: this.verificationTitle || '网页验证'
+        title: this.verificationTitle || '网页验证',
+        verificationContextToken: this.verificationContextToken
       }
     });
   }

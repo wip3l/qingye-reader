@@ -62,7 +62,7 @@ function fixture(api = 26) {
     console, ArrayBuffer, Uint8Array, setTimeout, clearTimeout, setInterval, clearInterval, http, url:{URL},
     deviceInfo: { get sdkApiVersion() { return state.api; } },
     util: { TextDecoder: { create: encoding => ({ decodeWithStream: bytes => new TextDecoder(encoding).decode(bytes) }) } },
-    CookieStore: { forSource: () => ({ getCookie: () => state.cookie || '', setCookies: (url, value) => cookies.push({ url, value }), saveAsync() {} }) },
+    CookieStore: { forSource: () => ({ getCookie: () => state.cookie || '', getRequestCookie: () => state.requestCookie ?? state.cookie ?? '', setCookies: (url, value) => cookies.push({ url, value }), saveAsync() {} }) },
     TlsTrustStore: { isTrustedUrl: () => false, isCertificateError: () => false },
     SourceEngineHost: { withWeb: async (_, fn) => { if (state.webGate) await state.webGate; return fn(); }, id: () => 0,
       nativeScripts: () => undefined, nativeParsing: () => undefined, isCancelled: () => false },
@@ -377,3 +377,20 @@ for (const location of ['https://source.example/chapter','file:///tmp/test','htt
   assert.match(result.error,/超时/);assert.ok(f.calls.length<=2);
 }
 console.log('network-compatibility-check: transports, final headers, managed retry/backoff/cancellation/deadlines, protected media and legacy policies passed');
+
+{
+  const f=fixture(); const client=new f.HttpClient();
+  f.state.requestCookie='session=new; cf_clearance=fixture; duplicate=a; duplicate=b';
+  f.replies.push({});
+  await client.execute({...request(),automaticCookieHeader:true,headers:{Cookie:'session=old; fallback=kept','user-agent':'custom-UA'}});
+  assert.equal(f.calls.at(-1).header.Cookie,'session=new; cf_clearance=fixture; duplicate=a; duplicate=b; fallback=kept');
+  assert.equal(f.calls.at(-1).header['User-Agent'],'custom-UA');
+  assert.equal(f.calls.at(-1).header['user-agent'],undefined);
+  f.replies.push({}); await client.execute({...request(),headers:{cookie:'explicit=only'}});
+  assert.equal(f.calls.at(-1).header.cookie,'explicit=only'); assert.equal(f.calls.at(-1).header.Cookie,undefined);
+  f.replies.push({}); await client.execute({...request(),useCookieJar:false});
+  assert.equal(f.calls.at(-1).header.Cookie,undefined);
+  const host=new f.NativeHost({bookSourceUrl:'https://source.example'},client,()=>false);
+  assert.equal(host.cookieGet(request().url,'cf_clearance'),'fixture');
+}
+console.log('Partition-aware request cookie / explicit-header / UA casing checks passed.');

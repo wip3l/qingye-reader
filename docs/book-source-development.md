@@ -7,6 +7,7 @@
 - [字段速查](../harmony-book-source-engine/docs/book-source-development.md#字段速查)、[导入校验与常见报错](../harmony-book-source-engine/docs/book-source-development.md#导入校验与常见报错)、[从兼容书源改写](../harmony-book-source-engine/docs/book-source-development.md#从兼容书源改写)
 - [JS 函数库 `js`](../harmony-book-source-engine/docs/book-source-development.md#js-函数库-js)：表达式调用、内置函数、参数与返回值、限制
 - [后台脚本阶段 `script`](../harmony-book-source-engine/docs/book-source-development.md#脚本阶段-script)：请求、状态、登录、网页交互、完整示例与排错
+- [网页验证与会话诊断](../harmony-book-source-engine/docs/book-source-development.md#网页验证与会话诊断)：阶段差异、UA 传递、分区 Cookie、验证后继续、错误码及验收边界
 - [封面解密 coverDecode](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md#加密封面-coverdecode)：含封面请求头 `coverHeaders`
 - [自定义图片字节脚本](../harmony-book-source-engine/docs/book-source-development.md#自定义图片字节脚本)：`content.imageDecode.script`，以及标准算法的 `ivPrefixBytes`、`keyEncoding`
 - [视频网页回退](../harmony-book-source-engine/docs/book-source-development.md#视频网页回退)：`content.videoPage`、声明式与脚本示例、错误处理及播放限制
@@ -14,6 +15,41 @@
 - [内核 HAR 接入说明](https://github.com/wip3l/harmony-book-source-engine/blob/main/sourceengine/README.md)
 
 本仓库以子模块 `harmony-book-source-engine/` 引用内核，克隆后先执行 `git submodule update --init`。应用使用子模块固定的内核提交，内核新增的规则能力要等子模块升级后才在应用里生效；[在线主分支文档](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md)可能领先于当前应用。
+
+## 网页验证更新与开发检查（2026-10-29）
+
+以下对应包含本轮引擎与应用修复的 **4.4.938 本地开发构建**，已编译、签名并安装到 HPR-W72（API 26），启动与进程检查通过。不代表此前发布的所有同版本安装包都具备这些改动。
+
+| 更新内容 | 对书源开发者的影响 |
+| --- | --- |
+| 设置页网页宿主 | 动作、动态选项等可直接发起显式网页抓取；修复首次加载时序，退出页面后取消所属任务；打开验证页等待用户操作不会被误当成取消 |
+| 独立网页验证入口 | 在书源设置中可主动打开验证页，无需为了显示入口添加假的 `login` 配置；搜索/发现仍需点“去验证”并重新发起 |
+| UA 对齐 | 原生请求、隐藏网页抓取、可见验证页使用相应 UA；请求单独覆盖 UA 时，调用 `browser.verify(url, hint, { userAgent: ua })` 传入同一值 |
+| 分区 Cookie 复用 | API 26 原生请求与脚本 `cookie.get` 纳入第一方分区 Cookie；无需新增 JSON 字段；显式 Cookie 头仍优先，避免旧手工头覆盖新会话 |
+| 真实状态与结构化错误 | HTTP 脚本结果增加 `statusCodeAvailable`、`errorCode`、`errorStage`；网页抓取的兼容 200 不代表原站返回 200 |
+| 会话状态与搜索诊断 | 设置页区分已保存会话与登录状态；搜索日志区分返回、过滤和展示条数；调试页展示宿主等待、排队、渲染耗时 |
+
+规则接口、错误码表及可复制函数片段统一维护在公共文档的[网页验证与会话诊断](../harmony-book-source-engine/docs/book-source-development.md#网页验证与会话诊断)。新增示例分别覆盖搜索提示用户验证，以及设置页 `browser.verify` 后继续抓取业务元素。不要把“完成”或存在 Cookie 当作已经通过人机验证。
+
+开发时按以下顺序检查：
+
+1. **先验证普通请求**：检查 `ok`、`statusCodeAvailable`、业务内容与请求编号；明确挑战特征后再调用 `browser.verify`，不要对所有 403 无条件打开网页。
+2. **区分阶段**：搜索/发现会结束当前阶段，用户完成验证后手动重试；允许交互的设置页动作可在点“完成”后继续。`browser.open` 不等待结果。
+3. **核对同一次操作的 UA 和 Cookie**：优先复用 `device.ua`；检查是否存在显式旧 Cookie 头。不要将 clearance 复制到其他域名。
+4. **检查等待条件与预算**：`waitFor` 选择业务元素；网页超时单位为秒，请求总预算为毫秒；队列和宿主迁移共享预算。`WEB_HOST_CHANGED` 下不要自动重放 POST。
+5. **对照实际展示**：搜索脚本条数、有效条数、去重/精确匹配/上限、相关性过滤、展示条数逐层检查；不能仅凭调试返回列表断言搜索 UI 丢数据。
+
+### 本地样本与回归入口
+
+完整受控样本由 [web-verification-device-fixture.cjs](../scripts/web-verification-device-fixture.cjs) 提供，包含 UA 校验页面、设置页“网页抓取诊断”“验证后继续抓取”动作、搜索和发现入口。它是诊断样本，不是真实站点书源，默认禁用。开发机启动服务并建立设备映射后，在设备导入 `http://127.0.0.1:18393/source.json`；搜索关键词为“网页验证验收”。启动、设备测试与清理步骤见[实施与验收记录](cf-challenge-repair-validation.md#可重复执行)。
+
+```powershell
+node scripts/web-verification-check.mjs
+node scripts/network-compatibility-check.mjs
+node harmony-book-source-engine/scripts/native-script-check.mjs
+```
+
+这些 Node 回归检查业务契约；设备运行时测试另行执行。已有 API 26 证据覆盖冷启动抓取、宿主恢复、取消、UA 比对、原始状态可用性，以及 SDK 分区 Cookie 读取与根路径清理。真实 CF 案例、可信 HTTPS Cookie 收发、重启持久化、不同 Domain/Path、完整页面交互矩阵及旧系统真机尚未全部验收。详见[完整实施与验收记录](cf-challenge-repair-validation.md)。
 
 ## 视频播放接入
 

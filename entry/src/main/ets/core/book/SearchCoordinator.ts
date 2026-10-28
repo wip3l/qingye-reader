@@ -16,6 +16,7 @@ export interface SearchProgress {
   needVerification?: boolean;
   verificationUrl?: string;
   verificationTitle?: string;
+  verificationContextToken?: string;
 }
 
 export type SearchCallback = (progress: SearchProgress) => void;
@@ -203,6 +204,7 @@ export class SearchCoordinator {
           `已搜索 ${done}/${sources.length}，当前：${currentSourceLabel || '准备中'}，找到 ${displayResultCount} 本`,
         needVerification: verifyUrl.length > 0,
         verificationUrl: verifyUrl,
+        verificationContextToken: AppStorage.get<string>('pendingVerificationContextToken') || '',
         verificationTitle: AppStorage.get<string>('pendingVerificationTitle') || '网页验证'
       });
     };
@@ -232,9 +234,12 @@ export class SearchCoordinator {
         }
         const remainingCapacity = Math.max(0, totalResultLimit - all.length);
         const matchedBooks = validationOnly ? [] : this.filterSearchResults(books, keyword, options);
+        if (options.debugContext && !validationOnly) options.debugContext.addLog('info',
+          `搜索展示过滤：有效记录 ${books.length}，相关性匹配 ${matchedBooks.length}`);
         const displayBooks = categoryLimit > 0 ?
           this.takeWithinCategoryLimit(matchedBooks, categoryLimit, categoryCounts) :
           matchedBooks.slice(0, remainingCapacity);
+        if (options.debugContext && !validationOnly) options.debugContext.addLog('info', `本书源纳入展示：${displayBooks.length}`);
 
         done++;
         if (!validationOnly) {
@@ -620,6 +625,7 @@ export class SearchCoordinator {
         BookSource.VALIDATION_TEMPORARY_ERROR : BookSource.VALIDATION_FAILED, reason || '搜索过程中发生异常');
     }
     if (stopped()) return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
+    if (options.debugContext) options.debugContext.addLog('info', `原生搜索有效记录：${found.length}`);
     const normalizedKeyword = this.normalizeSearchText(keyword);
     const books: SearchBook[] = [];
     const seen = new Set<string>();
@@ -636,6 +642,7 @@ export class SearchCoordinator {
       books.push(book);
       if (books.length >= resultLimit) break;
     }
+    if (options.debugContext) options.debugContext.addLog('info', `去重、精确匹配及上限后：${books.length}`);
     return books.length > 0 ? this.sourceResult(books, BookSource.VALIDATION_PASSED, '') :
       this.sourceResult([], BookSource.VALIDATION_NO_RESULTS, '未搜索到结果');
   }

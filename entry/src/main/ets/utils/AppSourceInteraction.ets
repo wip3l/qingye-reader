@@ -1,6 +1,6 @@
 import { router } from '@kit.ArkUI';
 import { Context } from '@kit.AbilityKit';
-import { NativeBrowserRequest, NativeBrowserResult, NativeSourceInteractionHandler } from '@legado/sourceengine';
+import { NativeBrowserRequest, NativeBrowserResult, NativeSourceInteractionHandler, VerificationSupport } from '@legado/sourceengine';
 import { HdsFeedback } from './HdsFeedback';
 import { ExploreResultCache } from './ExploreResultCache';
 
@@ -43,6 +43,7 @@ export class AppSourceInteraction implements NativeSourceInteractionHandler {
         url: 'pages/VerifyWeb',
         params: {
           url: request.url,
+          verificationContextToken: VerificationSupport.createContext(request.url, request.sourceUrl, request.userAgent || ''),
           title: request.title || request.sourceName || '网页',
           requireLoginCookie: 'false',
           readerCommentMode: 'false',

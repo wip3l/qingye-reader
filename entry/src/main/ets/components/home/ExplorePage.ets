@@ -39,6 +39,7 @@ class ExplorePageSnapshot {
   updatedAt: number = 0;
   status: string = '';
   verificationUrl: string = '';
+  verificationContextToken: string = '';
   verificationTitle: string = '';
   scrollOffset: number = 0;
   covers: ResultCoverCache = new ResultCoverCache();
@@ -102,6 +103,7 @@ export struct ExplorePage {
   @State hasMoreExploreBooks: boolean = true;
   @State status: string = '';
   @State verificationUrl: string = '';
+  private verificationContextToken: string = '';
   @State verificationTitle: string = '';
   @StorageLink('explorePlatform') selectedPlatform: string = '';
   /** 结果布局：'list' 卡片列表，'grid' 封面平铺（列数随宽度自适应）；持久保存。 */
@@ -460,6 +462,7 @@ export struct ExplorePage {
       this.verificationUrl = '';
       this.verificationTitle = '';
     } else {
+      this.verificationContextToken = AppStorage.get<string>('pendingVerificationContextToken') || '';
       this.verificationUrl = AppStorage.get<string>('pendingVerificationUrl') || '';
       this.verificationTitle = AppStorage.get<string>('pendingVerificationTitle') || '网页验证';
     }
@@ -1158,6 +1161,7 @@ export struct ExplorePage {
     snapshot.updatedAt = this.exploreContentLoadedAt || Date.now();
     snapshot.status = this.status;
     snapshot.verificationUrl = this.verificationUrl;
+    snapshot.verificationContextToken = this.verificationContextToken;
     snapshot.verificationTitle = this.verificationTitle;
     this.explorePages.delete(key);
     this.explorePages.set(key, snapshot);
@@ -1177,6 +1181,7 @@ export struct ExplorePage {
     this.exploreContentLoadedAt = snapshot.updatedAt;
     this.status = snapshot.status;
     this.verificationUrl = snapshot.verificationUrl;
+    this.verificationContextToken = snapshot.verificationContextToken;
     this.verificationTitle = snapshot.verificationTitle;
     this.isLoadingMore = false;
     this.isLoading = false;
@@ -1919,7 +1924,8 @@ export struct ExplorePage {
       url: 'pages/VerifyWeb',
       params: {
         url: url,
-        title: this.verificationTitle || '网页验证'
+        title: this.verificationTitle || '网页验证',
+        verificationContextToken: this.verificationContextToken
       }
     });
   }

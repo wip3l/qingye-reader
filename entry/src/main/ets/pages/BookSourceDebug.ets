@@ -272,11 +272,11 @@ struct BookSourceDebugPage {
         .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
         .copyOption(CopyOptions.LocalDevice)
       ForEach(step.requests, (item: BookSourceDebugNetworkTrace) => {
-        Text(`${item.requestId} ${item.method} ${item.url}\n${item.transport} · HTTP ${item.statusCode} · ${item.responseChars} 字符 · ${item.elapsedMs}ms${item.error ? `\n${item.error}` : ''}`)
+        Text(`${item.requestId} ${item.method} ${item.url}\n${item.transport} · ${item.statusCodeAvailable ? 'HTTP ' + item.statusCode : '原始 HTTP 状态未知（抓取状态 ' + item.statusCode + '）'} · ${item.responseChars} 字符 · ${item.elapsedMs}ms${item.error ? `\n${item.error}` : ''}`)
           .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
           .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
           .copyOption(CopyOptions.LocalDevice)
-        Text(`尝试：${item.attempts || item.transport} · 策略重试 ${item.retryAttempt} 次${item.retryReason ? '\n' + item.retryReason : ''}\n传给传输层的请求头：${JSON.stringify(item.requestHeaders)}\n响应头：${item.headersAvailable ? JSON.stringify(item.responseHeaders) : '当前通道未取得'}\n网络字节数：${item.responseBytes >= 0 ? item.responseBytes : '未测量'}`)
+        Text(`状态依据：${item.statusCodeAvailable ? '原始 HTTP 状态' : '原始 HTTP 状态未知'} · ${item.errorCode || ''} ${item.errorStage || ''}\n网页耗时：宿主 ${item.hostWaitMs || 0} / 排队 ${item.queueMs || 0} / 加载 ${item.renderMs || 0} ms\n尝试：${item.attempts || item.transport} · 策略重试 ${item.retryAttempt} 次${item.retryReason ? '\n' + item.retryReason : ''}\n传给传输层的请求头：${JSON.stringify(item.requestHeaders)}\n响应头：${item.headersAvailable ? JSON.stringify(item.responseHeaders) : '当前通道未取得'}\n网络字节数：${item.responseBytes >= 0 ? item.responseBytes : '未测量'}`)
           .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
           .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE).copyOption(CopyOptions.LocalDevice)
         if (item.bodyPreview) {
