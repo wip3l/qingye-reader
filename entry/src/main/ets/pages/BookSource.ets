@@ -90,10 +90,11 @@ class BookSourceImportParseResult {
 // 头部里类型分段和兼容书源提示条的高度，列表顶部避让按它们计算。
 const SOURCE_FORMAT_BAR_HEIGHT: number = 44;
 const SOURCE_FORMAT_BAR_PADDING: number = 6;
-const SOURCE_SORT_BUTTON_SIZE: number = 32;
 const SOURCE_FORMAT_INDICATOR_WIDTH: number = 18;
 const COMPAT_SOURCE_NOTICE_HEIGHT: number = 44;
 const SOURCE_SEARCH_ROW_HEIGHT: number = 40 + AppSpacing.MD * 2;
+const SOURCE_HEADER_CONTROL_SIZE: number = 40;
+const SOURCE_SEARCH_INPUT_KEY: string = 'book_source_search_input';
 const SOURCE_SELECTION_ROW_HEIGHT: number = 42;
 
 @Entry
@@ -127,7 +128,6 @@ struct BookSourcePage {
   @State isLoading: boolean = false;
   @State searchText: string = '';
   @State activeSourceGroup: string = '__all__';
-  private sourceFilterDialogSession: SystemDialogSession = new SystemDialogSession();
   private importUrlDialogSession: SystemDialogSession = new SystemDialogSession();
   private batchDeleteDialogSession: SystemDialogSession = new SystemDialogSession();
   private sourceGroupDialogSession: SystemDialogSession = new SystemDialogSession();
@@ -143,7 +143,7 @@ struct BookSourcePage {
   private addSourceGroupDialogSession: SystemDialogSession = new SystemDialogSession();
   private sourceGroupManagerDialogSession: SystemDialogSession = new SystemDialogSession();
   private deleteSelectedSourceGroupsDialogSession: SystemDialogSession = new SystemDialogSession();
-  @State @Watch('onSystemDialogFlagChanged') showSourceFilterDialog: boolean = false;
+  @State showSourceFilterMenu: boolean = false;
   @State sourceFormatFilter: string = 'all';
   @State sourceFormatBarWidth: number = 0;
   @StorageLink('compatSourceNoticeDismissed') compatSourceNoticeDismissed: boolean = false;
@@ -155,7 +155,11 @@ struct BookSourcePage {
   // 排序方式：custom 自定义拖动，added 加入时间，name 名称，updated 更新时间。
   @StorageLink('bookSourceSortMode') @Watch('applySourceFilters') sourceSortMode: string = 'custom';
   @StorageLink('bookSourceSortAscending') @Watch('applySourceFilters') sourceSortAscending: boolean = false;
-  @State showSourceSortMenu: boolean = false;
+  // 顶栏“更多”菜单：'' 为主菜单，'sort' 为排序子页。
+  @State showSourceMoreMenu: boolean = false;
+  @State sourceMoreMenuPage: string = '';
+  // 搜索条默认收起，点顶栏搜索按钮展开；有关键词时保持展开。
+  @State sourceSearchOpen: boolean = false;
   private sourceAddedTimes: Map<string, number> = new Map<string, number>();
   @State bottomSourceUrls: string[] = [];
   @State showAddDialog: boolean = false;
@@ -402,39 +406,48 @@ struct BookSourcePage {
       WebBookFetchRuntimeHost()
       Column() {
         Column() {
-          Row({ space: AppSpacing.MD }) {
-            Row() {
-              SymbolGlyph($r('sys.symbol.magnifyingglass'))
-                .fontSize(18)
-                .fontColor([this.secondaryTextColor()])
-                .margin({ left: AppSpacing.LG })
-                .hitTestBehavior(HitTestMode.None)
-              TextInput({ placeholder: '搜索书源', text: this.searchText })
-                .layoutWeight(1)
+          if (this.sourceSearchOpen) {
+            Row({ space: AppSpacing.MD }) {
+              Row() {
+                SymbolGlyph($r('sys.symbol.magnifyingglass'))
+                  .fontSize(18)
+                  .fontColor([this.secondaryTextColor()])
+                  .margin({ left: AppSpacing.LG })
+                  .hitTestBehavior(HitTestMode.None)
+                TextInput({ placeholder: '书源名称、地址或分组', text: this.searchText })
+                  .key(SOURCE_SEARCH_INPUT_KEY)
+                  .layoutWeight(1)
+                  .height(40)
+                  .fontSize(AppFontSize.BODY_LARGE)
+                  .backgroundColor(Color.Transparent)
+                  .fontColor(this.primaryTextColor())
+                  .placeholderColor(this.secondaryTextColor())
+                  .padding({ left: AppSpacing.MD, right: AppSpacing.LG })
+                  .onChange((value: string) => {
+                    this.searchText = value;
+                    this.searchSources();
+                  })
+              }
                 .height(40)
-                .fontSize(AppFontSize.BODY_LARGE)
-                .backgroundColor(Color.Transparent)
-                .fontColor(this.primaryTextColor())
-                .placeholderColor(this.secondaryTextColor())
-                .padding({ left: AppSpacing.MD, right: AppSpacing.LG })
-                .onChange((value: string) => {
-                  this.searchText = value;
-                  this.searchSources();
-                })
-            }
-              .height(40)
-              .borderRadius(20)
-              .backgroundColor(this.inputColor())
-              .layoutWeight(1)
+                .borderRadius(20)
+                .backgroundColor(this.inputColor())
+                .layoutWeight(1)
 
-            if (!this.selectionMode) {
-              this.sourceFilterButton()
+              Text('取消')
+                .fontSize(AppFontSize.BODY_LARGE)
+                .fontColor(this.primaryTextColor())
+                .height(40)
+                .accessibilityText('取消搜索书源')
+                .onClick(() => this.closeSourceSearch())
             }
+            .width('100%')
+            .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
+            .opacity(this.sourceHeaderRowOpacity(56, SOURCE_SEARCH_ROW_HEIGHT))
+            .hitTestBehavior(this.sourceHeaderRowHitTest(56, SOURCE_SEARCH_ROW_HEIGHT))
+            .transition(TransitionEffect.OPACITY
+              .combine(TransitionEffect.translate({ y: -12 }))
+              .combine(TransitionEffect.scale({ x: 0.96, y: 0.96, centerX: '50%', centerY: '0%' })))
           }
-          .width('100%')
-          .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
-          .opacity(this.sourceHeaderRowOpacity(56, SOURCE_SEARCH_ROW_HEIGHT))
-          .hitTestBehavior(this.sourceHeaderRowHitTest(56, SOURCE_SEARCH_ROW_HEIGHT))
 
           if (!this.selectionMode) {
             // 类型切换栏独立悬浮，这里仅保留展开时的占位，避免列表随收起跳动。
@@ -818,33 +831,25 @@ struct BookSourcePage {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
 
-      if (!this.selectionMode) {
-        Text('校验')
+      if (this.selectionMode) {
+        Text('取消')
           .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.isCheckingSources ? this.subTextColor() : this.primaryTextColor())
+          .fontColor(this.isBatchOperating ? this.subTextColor() : this.primaryTextColor())
           .width(44)
           .height(40)
           .textAlign(TextAlign.Center)
           .onClick(() => {
-            this.openCheckOptions();
-          })
-      }
-
-      Text(this.selectionMode ? '取消' : '选择')
-        .fontSize(AppFontSize.BODY_LARGE)
-        .fontColor(this.isBatchOperating ? this.subTextColor() : this.primaryTextColor())
-        .width(44)
-        .height(40)
-        .textAlign(TextAlign.Center)
-        .margin({ left: this.selectionMode ? 0 : 4 })
-        .onClick(() => {
-          if (this.isBatchOperating) return;
-          if (this.selectionMode) {
+            if (this.isBatchOperating) return;
             this.exitSelectionMode();
-          } else {
-            this.enterSelectionMode();
-          }
-        })
+          })
+      } else {
+        this.sourceHeaderCircleButton($r('sys.symbol.magnifyingglass'),
+          this.sourceSearchOpen || this.searchText.trim().length > 0, '搜索书源', '', false, () => {
+            this.toggleSourceSearch();
+          })
+        this.sourceFilterButton()
+        this.sourceMoreButton()
+      }
     }
     .width('100%')
     .height(56 + this.statusBarHeight)
@@ -854,44 +859,6 @@ struct BookSourcePage {
     .translate({ y: -Math.min(56, this.sourceHeaderCollapseValue()) })
     .opacity(this.sourceHeaderRowOpacity(0, 56))
     .hitTestBehavior(this.sourceHeaderRowHitTest(0, 56))
-  }
-
-  @Builder
-  sourceFilterButton() {
-    Row({ space: AppSpacing.SM }) {
-      Column({ space: AppSpacing.XXS }) {
-        Row()
-          .width(16)
-          .height(2)
-          .borderRadius(1)
-          .backgroundColor(this.hasActiveSourceFilters() ? this.accentColor() : this.secondaryTextColor())
-        Row()
-          .width(11)
-          .height(2)
-          .borderRadius(1)
-          .backgroundColor(this.hasActiveSourceFilters() ? this.accentColor() : this.secondaryTextColor())
-        Row()
-          .width(6)
-          .height(2)
-          .borderRadius(1)
-          .backgroundColor(this.hasActiveSourceFilters() ? this.accentColor() : this.secondaryTextColor())
-      }
-      .alignItems(HorizontalAlign.Center)
-      Text(this.hasActiveSourceFilters() ? `筛选 ${this.activeSourceFilterCount()}` : '筛选')
-        .fontSize(AppFontSize.BODY)
-        .fontWeight(this.hasActiveSourceFilters() ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(this.hasActiveSourceFilters() ? this.accentColor() : this.primaryTextColor())
-        .maxLines(1)
-    }
-    .height(40)
-    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .borderRadius(20)
-    .backgroundColor(this.hasActiveSourceFilters() ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) :
-      this.inputColor())
-    .accessibilityGroup(true)
-    .accessibilityText(this.hasActiveSourceFilters() ?
-      `筛选，已启用 ${this.activeSourceFilterCount()} 项` : '筛选书源')
-    .onClick(() => this.openSourceFilterDialog())
   }
 
   @Builder
@@ -1485,121 +1452,6 @@ struct BookSourcePage {
       maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
       warnTag: '显示登录与接口弹窗失败:'
     });
-  }
-
-  @Builder
-  sourceFilterDialogContent() {
-    Column({ space: AppSpacing.LG }) {
-      Row() {
-        Text('筛选书源')
-          .fontSize(AppFontSize.SUBTITLE)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.primaryTextColor())
-          .layoutWeight(1)
-        Text(`当前 ${this.sources.length}/${this.allSources.length}`)
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      this.sourceFilterRow('书源状态', 'enabled', '已启用', '未启用')
-      this.sourceValidationFilterRow()
-      this.sourceFilterRow('发现页面', 'explorePage', '有发现页', '无发现页')
-      this.sourceFilterRow('发现状态', 'exploreEnabled', '已启用', '未启用')
-      this.sourceFilterRow('登录要求', 'login', '需要登录', '无需登录')
-
-      Row({ space: AppSpacing.MD }) {
-        Button('重置', { type: ButtonType.Normal })
-          .layoutWeight(1)
-          .height(42)
-          .borderRadius(ThemeRuntime.buttonRadius())
-          .enabled(this.hasActiveSourceFilters())
-          .backgroundColor(this.inputColor())
-          .fontColor(this.primaryTextColor())
-          .onClick(() => this.resetSourceFilters())
-        Button('完成', { type: ButtonType.Normal })
-          .layoutWeight(1)
-          .height(42)
-          .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
-          .onClick(() => this.showSourceFilterDialog = false)
-      }
-      .width('100%')
-      .margin({ top: AppSpacing.XS })
-    }    .constraintSize({ maxWidth: 540 })
-    .padding(AppSpacing.XXL)
-  }
-
-
-  @Builder
-  sourceFilterRow(label: string, filterKey: string, yesLabel: string, noLabel: string) {
-    Row({ space: AppSpacing.MD }) {
-      Text(label)
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.primaryTextColor())
-        .width(66)
-      Row({ space: AppSpacing.SM }) {
-        this.sourceFilterChoice(filterKey, 'all', '不限')
-        this.sourceFilterChoice(filterKey, 'yes', yesLabel)
-        this.sourceFilterChoice(filterKey, 'no', noLabel)
-      }
-      .layoutWeight(1)
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  sourceValidationFilterRow() {
-    Row({ space: AppSpacing.MD }) {
-      Text('校验状态')
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.primaryTextColor())
-        .width(66)
-      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
-        this.sourceValidationFilterChoice('all', '不限')
-        this.sourceValidationFilterChoice('unchecked', '未校验')
-        this.sourceValidationFilterChoice('passed', '通过')
-        this.sourceValidationFilterChoice('failed', '失败')
-        this.sourceValidationFilterChoice('noResults', '无结果')
-        this.sourceValidationFilterChoice('needsVerification', '需要验证')
-        this.sourceValidationFilterChoice('temporaryError', '暂时异常')
-      }
-      .layoutWeight(1)
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  sourceValidationFilterChoice(value: string, label: string) {
-    Text(label)
-      .fontSize(AppFontSize.CAPTION)
-      .fontColor(this.sourceValidationFilter === value ? '#FFFFFF' : this.secondaryTextColor())
-      .width('32%')
-      .height(34)
-      .margin({ bottom: AppSpacing.SM })
-      .textAlign(TextAlign.Center)
-      .maxLines(1)
-      .backgroundColor(this.sourceValidationFilter === value ? this.accentColor() : this.inputColor())
-      .borderRadius(ThemeRuntime.mediumRadius())
-      .onClick(() => this.setSourceFilterValue('validation', value))
-  }
-
-  @Builder
-  sourceFilterChoice(filterKey: string, value: string, label: string) {
-    Text(label)
-      .fontSize(AppFontSize.CAPTION)
-      .fontColor(this.sourceFilterValue(filterKey) === value ? '#FFFFFF' : this.secondaryTextColor())
-      .layoutWeight(1)
-      .height(34)
-      .textAlign(TextAlign.Center)
-      .maxLines(1)
-      .backgroundColor(this.sourceFilterValue(filterKey) === value ? this.accentColor() : this.inputColor())
-      .borderRadius(ThemeRuntime.mediumRadius())
-      .onClick(() => this.setSourceFilterValue(filterKey, value))
   }
 
   @Builder
@@ -2345,7 +2197,11 @@ struct BookSourcePage {
       extra += SOURCE_FORMAT_BAR_HEIGHT + AppSpacing.MD;
       if (this.showCompatSourceNotice()) extra += COMPAT_SOURCE_NOTICE_HEIGHT + AppSpacing.MD;
     }
-    return 56 + this.statusBarHeight + SOURCE_SEARCH_ROW_HEIGHT + extra;
+    return 56 + this.statusBarHeight + this.sourceSearchRowHeight() + extra;
+  }
+
+  sourceSearchRowHeight(): number {
+    return this.sourceSearchOpen ? SOURCE_SEARCH_ROW_HEIGHT : 0;
   }
 
   sourceHeaderCollapsibleHeight(): number {
@@ -2359,11 +2215,11 @@ struct BookSourcePage {
     if (this.selectionMode) return this.sourceListTopInset();
     // 搜索行包含底部 MD 留白；遮罩精确停在输入框下沿，不能包含这段留白。
     return this.statusBarHeight + Math.max(0,
-      56 + SOURCE_SEARCH_ROW_HEIGHT - AppSpacing.MD - this.sourceHeaderCollapseValue());
+      56 + (this.sourceSearchOpen ? SOURCE_SEARCH_ROW_HEIGHT - AppSpacing.MD : 0) - this.sourceHeaderCollapseValue());
   }
 
   sourceFormatBarTop(): number {
-    return this.statusBarHeight + Math.max(0, 56 + SOURCE_SEARCH_ROW_HEIGHT - this.sourceHeaderCollapseValue());
+    return this.statusBarHeight + Math.max(0, 56 + this.sourceSearchRowHeight() - this.sourceHeaderCollapseValue());
   }
 
   sourceHeaderCollapseValue(): number {
@@ -2601,8 +2457,6 @@ struct BookSourcePage {
             .layoutWeight(1)
             .height('100%')
             .padding({ left: SOURCE_FORMAT_BAR_PADDING, right: SOURCE_FORMAT_BAR_PADDING })
-
-            this.sourceSortButton()
           }
           .width('100%')
           .height('100%')
@@ -2621,33 +2475,322 @@ struct BookSourcePage {
   }
 
   @Builder
-  sourceSortButton() {
-    Stack({ alignContent: Alignment.Center }) {
-      SymbolGlyph($r('sys.symbol.sort'))
-        .fontSize(18)
-        .fontColor([this.activeSourceSortMode() === 'custom' ? this.secondaryTextColor() : this.accentColor()])
+  sourceHeaderCircleButton(icon: Resource, active: boolean, label: string, badge: string, busy: boolean,
+    onTap: () => void) {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      ImmersiveMaterialSurface({
+        surfaceWidth: SOURCE_HEADER_CONTROL_SIZE,
+        surfaceHeight: SOURCE_HEADER_CONTROL_SIZE,
+        darkMode: this.appDarkMode,
+        fallbackColor: this.cardColor(),
+        glowColor: `#40${this.accentColor().substring(1)}`
+      }) {
+        Stack() {
+          SymbolGlyph(icon)
+            .fontSize(20)
+            .fontColor([active ? this.accentColor() : this.primaryTextColor()])
+        }
+        .width('100%')
+        .height('100%')
+      }
+      if (badge) {
+        Text(badge)
+          .fontSize(10)
+          .fontColor(ThemeRuntime.onAccentColor())
+          .constraintSize({ minWidth: 16 })
+          .height(16)
+          .padding({ left: 4, right: 4 })
+          .textAlign(TextAlign.Center)
+          .borderRadius(8)
+          .backgroundColor(this.accentColor())
+          .hitTestBehavior(HitTestMode.None)
+      } else if (busy) {
+        // 校验进行中的提示点。
+        Row()
+          .width(8)
+          .height(8)
+          .margin({ top: 4, right: 4 })
+          .borderRadius(4)
+          .backgroundColor(this.accentColor())
+          .hitTestBehavior(HitTestMode.None)
+      }
     }
-    .width(SOURCE_SORT_BUTTON_SIZE)
-    .height(SOURCE_SORT_BUTTON_SIZE)
-    .margin({ right: (SOURCE_FORMAT_BAR_HEIGHT - SOURCE_SORT_BUTTON_SIZE) / 2 })
-    .borderRadius(SOURCE_SORT_BUTTON_SIZE / 2)
-    .backgroundColor(this.activeSourceSortMode() === 'custom' ? Color.Transparent :
-      `#26${this.accentColor().substring(1)}`)
-    .accessibilityText(`排序：${this.sourceSortSummary()}`)
-    .bindPopup(this.showSourceSortMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
-      this.sourceSortMenu()
+    .width(SOURCE_HEADER_CONTROL_SIZE)
+    .height(SOURCE_HEADER_CONTROL_SIZE)
+    .margin({ left: AppSpacing.MD })
+    .accessibilityGroup(true)
+    .accessibilityText(label)
+    .onClick(() => onTap())
+  }
+
+  @Builder
+  sourceFilterButton() {
+    Row() {
+      this.sourceHeaderCircleButton($r('sys.symbol.funnel'), this.showSourceFilterMenu || this.hasActiveSourceFilters(),
+        this.hasActiveSourceFilters() ? `筛选，已启用 ${this.activeSourceFilterCount()} 项` : '筛选书源',
+        this.hasActiveSourceFilters() ? `${this.activeSourceFilterCount()}` : '', false, () => {
+          this.showSourceMoreMenu = false;
+          this.showSourceFilterMenu = !this.showSourceFilterMenu;
+        })
+    }
+    .bindPopup(this.showSourceFilterMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+      this.sourceFilterMenu()
     }, Placement.BottomRight, this.appDarkMode, this.accentColor(), () => {
-      this.showSourceSortMenu = false;
+      this.showSourceFilterMenu = false;
     }))
-    .onClick(() => {
-      this.showSourceGroupToolsMenu = false;
-      this.showSourceSortMenu = !this.showSourceSortMenu;
-    })
+  }
+
+  /** 与书架筛选菜单一致：分组标题加小块，点选切换，菜单保持打开。 */
+  @Builder
+  sourceFilterMenu() {
+    Column({ space: AppSpacing.XXS }) {
+      Scroll() {
+        Column({ space: AppSpacing.XXS }) {
+          this.sourceFilterSectionLabel('书源状态')
+          Flex({ wrap: FlexWrap.Wrap }) {
+            this.sourceFilterChip('enabled', 'yes', '已启用')
+            this.sourceFilterChip('enabled', 'no', '未启用')
+          }
+          .width('100%')
+          .padding({ left: 12, right: 4 })
+
+          this.sourceFilterSectionLabel('校验状态')
+          Flex({ wrap: FlexWrap.Wrap }) {
+            this.sourceFilterChip('validation', 'unchecked', '未校验')
+            this.sourceFilterChip('validation', 'passed', '通过')
+            this.sourceFilterChip('validation', 'failed', '失败')
+            this.sourceFilterChip('validation', 'noResults', '无结果')
+            this.sourceFilterChip('validation', 'needsVerification', '需要验证')
+            this.sourceFilterChip('validation', 'temporaryError', '暂时异常')
+          }
+          .width('100%')
+          .padding({ left: 12, right: 4 })
+
+          this.sourceFilterSectionLabel('发现页面')
+          Flex({ wrap: FlexWrap.Wrap }) {
+            this.sourceFilterChip('explorePage', 'yes', '有发现页')
+            this.sourceFilterChip('explorePage', 'no', '无发现页')
+          }
+          .width('100%')
+          .padding({ left: 12, right: 4 })
+
+          this.sourceFilterSectionLabel('发现状态')
+          Flex({ wrap: FlexWrap.Wrap }) {
+            this.sourceFilterChip('exploreEnabled', 'yes', '已启用')
+            this.sourceFilterChip('exploreEnabled', 'no', '未启用')
+          }
+          .width('100%')
+          .padding({ left: 12, right: 4 })
+
+          this.sourceFilterSectionLabel('登录要求')
+          Flex({ wrap: FlexWrap.Wrap }) {
+            this.sourceFilterChip('login', 'yes', '需要登录')
+            this.sourceFilterChip('login', 'no', '无需登录')
+          }
+          .width('100%')
+          .padding({ left: 12, right: 4 })
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .constraintSize({ maxHeight: Math.max(160, ImmersiveMaterialRuntime.popupMenuMaxHeight() - 96) })
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+      .align(Alignment.Top)
+
+      if (this.hasActiveSourceFilters()) {
+        Divider()
+          .strokeWidth(0.5)
+          .color(ThemeRuntime.hairlineColor(this.appDarkMode))
+          .margin({ top: AppSpacing.XS, bottom: AppSpacing.XS, left: 12, right: 12 })
+        Text(`清除筛选（当前 ${this.sources.length}/${this.allSources.length}）`)
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.secondaryTextColor())
+          .width('100%')
+          .height(44)
+          .textAlign(TextAlign.Center)
+          .borderRadius(ImmersiveMaterialRuntime.POPUP_MENU_RADIUS - ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+          .onClick(() => this.resetSourceFilters())
+      }
+    }
+    .width(248)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+
+  @Builder
+  sourceFilterSectionLabel(label: string) {
+    Text(label)
+      .fontSize(AppFontSize.CAPTION)
+      .fontColor(this.secondaryTextColor())
+      .width('100%')
+      .padding({ left: 12, top: AppSpacing.SM, bottom: AppSpacing.XXS })
+  }
+
+  /** 每组单选：点已选中的一项回到“不限”。 */
+  @Builder
+  sourceFilterChip(filterKey: string, value: string, label: string) {
+    Text(label)
+      .fontSize(AppFontSize.BODY)
+      .fontWeight(this.sourceFilterValue(filterKey) === value ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.sourceFilterValue(filterKey) === value ? this.accentColor() : this.primaryTextColor())
+      .maxLines(1)
+      .height(32)
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+      .borderRadius(16)
+      .backgroundColor(this.sourceFilterValue(filterKey) === value ? `#1A${this.accentColor().substring(1)}` :
+        ThemeRuntime.softFillColor(this.appDarkMode))
+      .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
+      .accessibilityText(label)
+      .accessibilitySelected(this.sourceFilterValue(filterKey) === value)
+      .onClick(() => this.setSourceFilterValue(filterKey,
+        this.sourceFilterValue(filterKey) === value ? 'all' : value))
+  }
+
+  @Builder
+  sourceMoreButton() {
+    Row() {
+      this.sourceHeaderCircleButton($r('sys.symbol.more'),
+        this.showSourceMoreMenu || this.activeSourceSortMode() !== 'custom',
+        `更多操作，${this.sourceSortSummary()}${this.isCheckingSources ? '，正在校验' : ''}`, '',
+        this.isCheckingSources, () => {
+          this.sourceMoreMenuPage = '';
+          this.showSourceFilterMenu = false;
+          this.showSourceMoreMenu = !this.showSourceMoreMenu;
+        })
+    }
+    .bindPopup(this.showSourceMoreMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+      this.sourceMoreMenu()
+    }, Placement.BottomRight, this.appDarkMode, this.accentColor(), () => {
+      this.showSourceMoreMenu = false;
+      this.sourceMoreMenuPage = '';
+    }))
+  }
+
+  @Builder
+  sourceMoreMenu() {
+    if (this.sourceMoreMenuPage === 'sort') {
+      this.sourceSortMenu()
+    } else {
+      Column() {
+        Row({ space: AppSpacing.MD }) {
+          SymbolGlyph($r('sys.symbol.sort'))
+            .fontSize(20)
+            .fontColor([this.primaryTextColor()])
+          Text('排序')
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontColor(this.primaryTextColor())
+          Text(this.activeSourceSortMode() === 'custom' ? '自定义' :
+            `${this.sourceSortModeLabel(this.activeSourceSortMode())} · ${this.sourceSortDirectionLabel(this.sourceSortAscending)}`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.activeSourceSortMode() === 'custom' ? this.subTextColor() : this.accentColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .textAlign(TextAlign.End)
+            .layoutWeight(1)
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(14)
+            .fontColor([this.subTextColor()])
+        }
+        .width('100%')
+        .height(48)
+        .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+        .borderRadius(ImmersiveMaterialRuntime.POPUP_MENU_RADIUS - ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+        .accessibilityGroup(true)
+        .accessibilityText(`排序，${this.sourceSortSummary()}`)
+        .stateStyles({
+          normal: { .backgroundColor(Color.Transparent) },
+          pressed: { .backgroundColor('#1A808080') }
+        })
+        .onClick(() => {
+          this.sourceMoreMenuPage = 'sort';
+        })
+
+        Divider()
+          .color(ThemeRuntime.hairlineColor(this.appDarkMode))
+          .margin({ top: AppSpacing.XS, bottom: AppSpacing.XS })
+
+        this.contextActionItem($r('sys.symbol.checkmark_shield'),
+          this.isCheckingSources ? `校验中 ${this.checkDone}/${this.checkTotal}` : '校验书源', this.primaryTextColor(), () => {
+            this.showSourceMoreMenu = false;
+            if (this.isCheckingSources) {
+              // 校验中再点打开进度，与通知栏入口一致。
+              this.showCheckDialog = true;
+            } else {
+              this.openCheckOptions();
+            }
+          })
+        this.contextActionItem($r('sys.symbol.checkmark_square_on_square'), '多选', this.primaryTextColor(), () => {
+          this.showSourceMoreMenu = false;
+          if (!this.isBatchOperating) this.enterSelectionMode();
+        })
+      }
+      .width(Math.min(272, Math.max(220, this.contextViewportWidth - AppSpacing.XL * 2)))
+      .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+    }
+  }
+
+  toggleSourceSearch(): void {
+    this.showSourceMoreMenu = false;
+    if (this.sourceSearchOpen) {
+      if (this.searchText.trim()) {
+        this.getUIContext().getFocusController().requestFocus(SOURCE_SEARCH_INPUT_KEY);
+      } else {
+        this.closeSourceSearch();
+      }
+      return;
+    }
+    // 与书架搜索栏一致：搜索行淡入下滑，头部留白、悬浮格式栏和遮罩随同一动画过渡。
+    this.getUIContext().animateTo({
+      duration: 240,
+      curve: Curve.EaseOut,
+      onFinish: (): void => {
+        // 等搜索栏展开后再唤起键盘，避免键盘挤压布局打断入场动画。
+        if (this.pageVisible && this.sourceSearchOpen) {
+          this.getUIContext().getFocusController().requestFocus(SOURCE_SEARCH_INPUT_KEY);
+        }
+      }
+    }, (): void => {
+      this.sourceSearchOpen = true;
+      this.sourceHeaderCollapse = 0;
+    });
+  }
+
+  closeSourceSearch(): void {
+    this.getUIContext().getFocusController().clearFocus();
+    // 先在动画外清空关键词，列表数据重载不进入收起动画。
+    if (this.searchText) {
+      this.searchText = '';
+      this.searchSources();
+    }
+    this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseInOut }, (): void => {
+      this.sourceSearchOpen = false;
+    });
   }
 
   @Builder
   sourceSortMenu() {
     Column() {
+      Row({ space: AppSpacing.MD }) {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(16)
+          .fontColor([this.primaryTextColor()])
+        Text('排序')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor())
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .height(44)
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+      .accessibilityGroup(true)
+      .accessibilityText('返回更多操作')
+      .onClick(() => {
+        this.sourceMoreMenuPage = '';
+      })
+      Divider()
+        .color(ThemeRuntime.hairlineColor(this.appDarkMode))
+        .margin({ bottom: AppSpacing.XS })
       this.sourceSortMenuCaption('排序方式')
       ForEach(['custom', 'added', 'name', 'updated'], (mode: string) => {
         this.sourceSortMenuChoice(this.sourceSortModeLabel(mode), this.activeSourceSortMode() === mode, () => {
@@ -2768,9 +2911,9 @@ struct BookSourcePage {
     .borderRadius(ThemeRuntime.smallRadius())
     .backgroundColor(this.inputColor())
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.MD })
-    .opacity(this.sourceHeaderRowOpacity(56 + SOURCE_SEARCH_ROW_HEIGHT,
+    .opacity(this.sourceHeaderRowOpacity(56 + this.sourceSearchRowHeight(),
       COMPAT_SOURCE_NOTICE_HEIGHT + AppSpacing.MD))
-    .hitTestBehavior(this.sourceHeaderRowHitTest(56 + SOURCE_SEARCH_ROW_HEIGHT,
+    .hitTestBehavior(this.sourceHeaderRowHitTest(56 + this.sourceSearchRowHeight(),
       COMPAT_SOURCE_NOTICE_HEIGHT + AppSpacing.MD))
   }
 
@@ -3144,7 +3287,6 @@ struct BookSourcePage {
 
 
   onSystemDialogFlagChanged(): void {
-    if (!this.showSourceFilterDialog) this.sourceFilterDialogSession.close(this.getUIContext());
     if (!this.showImportSourceSelectionDialog) this.importSourceSelectionDialogSession.close(this.getUIContext());
     if (!this.showSourceDeleteDialog) this.sourceDeleteDialogSession.close(this.getUIContext());
     if (!this.showRenameSourceGroupDialog) this.renameSourceGroupDialogSession.close(this.getUIContext());
@@ -3152,17 +3294,6 @@ struct BookSourcePage {
     if (!this.showAddSourceGroupDialog) this.addSourceGroupDialogSession.close(this.getUIContext());
     if (!this.showSourceGroupManagerDialog) this.sourceGroupManagerDialogSession.close(this.getUIContext());
     if (!this.showDeleteSelectedSourceGroupsDialog) this.deleteSelectedSourceGroupsDialogSession.close(this.getUIContext());
-  }
-
-  openSourceFilterDialog(): void {
-    this.showSourceFilterDialog = true;
-    this.sourceFilterDialogSession.open(this.getUIContext(), (): void => {
-      this.sourceFilterDialogContent();
-    }, {
-      autoCancel: true,
-      maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
-      warnTag: '显示筛选书源弹窗失败:'
-    });
   }
 
   openImportSourceSelectionDialog(): void {
@@ -3965,7 +4096,6 @@ struct BookSourcePage {
   }
 
   selectSourceSortMode(mode: string): void {
-    this.showSourceSortMenu = false;
     if (this.activeSourceSortMode() === mode) return;
     // 时间默认最新在前，名称默认 A→Z。
     this.sourceSortAscending = mode === 'name';
@@ -3973,7 +4103,6 @@ struct BookSourcePage {
   }
 
   selectSourceSortDirection(ascending: boolean): void {
-    this.showSourceSortMenu = false;
     this.sourceSortAscending = ascending;
   }
 
