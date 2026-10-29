@@ -536,7 +536,8 @@ export struct ReaderComicImageItem {
   private imageHeight(): number {
     // 尺寸未知时使用接近图片宽度的短占位，避免解码失败时每张图片都遗留整屏空白。
     if (this.ratio <= 0 || this.viewWidth <= 0) return Math.max(240, this.viewWidth);
-    const height = Math.max(120, Math.min(24000, this.imageWidth() * this.ratio));
+    // 条漫常把一页切成很短的图片，已知尺寸后不能再套用占位图的最小高度。
+    const height = Math.min(24000, this.imageWidth() * this.ratio);
     // ListItem 会分别把浮点 vp 高度转换为物理像素；先对齐到整数像素，避免相邻项反向取整后露底。
     return px2vp(Math.max(1, Math.round(vp2px(height))));
   }
@@ -576,6 +577,7 @@ export struct ReaderComicImageItem {
           Image(ReaderComicImageSizes.uri(this.source))
             .width(this.boxed() ? '100%' : this.imageWidth())
             .height(this.boxed() ? '100%' : this.imageHeight() + this.overlap())
+            .translate({ y: -this.overlap() / 2 })
             // 原图比例尚未返回时保持 Contain；比例已知后容器严格等比，Fill 只消除边缘 letterbox。
             .objectFit(this.boxed() || this.ratio <= 0 ? ImageFit.Contain : ImageFit.Fill)
             .draggable(false)
@@ -597,6 +599,7 @@ export struct ReaderComicImageItem {
           Image(this.enhancedUri)
             .width(this.boxed() ? '100%' : this.imageWidth())
             .height(this.boxed() ? '100%' : this.imageHeight() + this.overlap())
+            .translate({ y: -this.overlap() / 2 })
             .objectFit(this.boxed() ? ImageFit.Contain : ImageFit.Fill)
             .draggable(false)
             .opacity(this.enhancedShown ? 1 : 0)
@@ -628,6 +631,7 @@ export struct ReaderComicImageItem {
           Image(this.colorUri)
             .width(this.boxed() ? '100%' : this.imageWidth())
             .height(this.boxed() ? '100%' : this.imageHeight() + this.overlap())
+            .translate({ y: -this.overlap() / 2 })
             .objectFit(this.boxed() ? ImageFit.Contain : ImageFit.Fill)
             .draggable(false)
             .opacity(this.colorShown ? 1 : 0)
@@ -672,8 +676,9 @@ export struct ReaderComicImageItem {
       }
     }
     .width(this.boxed() ? this.boxWidth : '100%')
-    .height(this.boxed() ? this.boxHeight : this.imageHeight() + this.overlap())
-    .margin({ top: -this.overlap() })
+    // 列表占位始终等于图片高度；接缝补偿只作用于绘制，不用负 margin 参与 ListItem 测量。
+    .height(this.boxed() ? this.boxHeight : this.imageHeight())
+    .clip(false)
     .onVisibleAreaChange([0, 0.01], (isVisible: boolean, ratio: number) => {
       const visible = isVisible && ratio > 0;
       if (visible === this.visible) return;
@@ -878,7 +883,7 @@ export struct ReaderComicView {
         const info = ReaderImageMarker.parse(item.text);
         const source = ReaderComicColorSession.source(item.text);
         const ratio = info.width > 0 ? info.height / info.width : ReaderComicImageSizes.ratio(source) || 1.5;
-        const imageHeight = Math.max(120, Math.min(24000, this.viewWidth * ratio));
+        const imageHeight = Math.max(px2vp(1), Math.min(24000, this.viewWidth * ratio));
         ahead += (this.fitScreen ? Math.min(height, imageHeight) : imageHeight) * this.zoomScale + this.pageGap;
         candidates.push(new ComicColorCandidate(ReaderComicColorSession.source(item.text), false, ahead,
           `${item.pageIndex + 1}`));

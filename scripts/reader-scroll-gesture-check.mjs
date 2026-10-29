@@ -14,7 +14,7 @@ function method(source, name) {
 let now = 1000;
 const touch = { Down: 0, Move: 1, Up: 2, Cancel: 3 };
 const sandbox = vm.createContext({ Date: { now: () => now }, TouchType: touch, console });
-const readerMethods = ['beginReaderComicPan', 'updateReaderComicPan', 'finishReaderComicPan',
+const readerMethods = ['beginReaderContinuousPan', 'beginReaderComicPan', 'updateReaderComicPan', 'finishReaderComicPan',
   'cancelReaderComicPan', 'comicBoundaryChapterSwipeDirection'];
 vm.runInContext(stripTypeScriptTypes(`class Reader {
 ${readerMethods.map(name => method(reader, name)).join('\n')}
@@ -23,12 +23,14 @@ class Comic { ${method(comic, 'handleTouch')} }
 globalThis.Reader = Reader; globalThis.Comic = Comic;`), sandbox);
 
 function fixture() {
-  const moves = [], flings = [], chapters = [];
+  const moves = [], flings = [], chapters = [], pointerActions = [];
   let y = 400, atEnd = false, stopped = 0;
   const p = new sandbox.Reader();
   Object.assign(p, {
     readerComicChapterSwitching: false, currentChapterIndex: 1, chapters: [{}, {}, {}],
     isReaderContinuousScrollSurfaceActive: () => true,
+    cancelContinuousReaderSelectionTimer: () => pointerActions.push('cancel-selection'),
+    pauseReaderAutoScroll: () => pointerActions.push('pause-auto-scroll'),
     stopReaderComicScreenScroll: () => stopped++,
     resetReaderComicBoundaryFeedback: () => {
       p.readerComicBoundaryDirection = 0;
@@ -42,8 +44,22 @@ function fixture() {
       isAtEnd: () => atEnd,
     },
   });
-  return { p, moves, flings, chapters, position: () => y,
+  return { p, moves, flings, chapters, pointerActions, position: () => y,
     edge: () => { atEnd = true; }, stopped: () => stopped };
+}
+
+// The initial 1vp already moves the list. A tiny drag must not later become a tap or a long press.
+for (const sign of [-1, 1]) {
+  const h = fixture();
+  h.p.beginReaderContinuousPan({ offsetY: sign });
+  assert.equal(h.position(), 400 - sign);
+  assert.equal(h.p.readerContinuousSelectionMoved, true);
+  assert.deepEqual(h.pointerActions, ['cancel-selection', 'pause-auto-scroll']);
+  h.p.updateReaderComicPan({ offsetY: sign * 2 });
+  h.p.updateReaderComicPan({ offsetY: sign * 3 });
+  assert.deepEqual(h.moves, [-sign, -sign, -sign], 'recognition displacement is neither lost nor doubled');
+  h.p.finishReaderComicPan({ velocityY: 0 });
+  assert.deepEqual(h.flings, []);
 }
 
 for (const sign of [-1, 1]) {
@@ -121,6 +137,8 @@ assert.deepEqual(calls, [['touch', true], ['touch', false]], 'multi-touch/move/u
 
 // Guard the ownership wiring at the two distinct surfaces, not only the standalone method defaults.
 const novelSurface = reader.slice(reader.indexOf('  readerComicScrollSurface()'), reader.indexOf('  readerComicBoundaryHint()'));
+assert.match(novelSurface, /PanGesture\(\{ direction: PanDirection.Vertical, distance: 1 \}\)/);
+assert.match(novelSurface, /beginReaderContinuousPan\(event\)/);
 assert.match(novelSurface, /updateReaderComicPan\(event\)/);
 assert.match(novelSurface, /finishReaderComicPan\(event\)/);
 assert.match(novelSurface, /enableScrollInteraction\(false\)/);

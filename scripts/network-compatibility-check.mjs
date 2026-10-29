@@ -181,6 +181,19 @@ for (const api of [20, 26]) {
   assert.match(n.describe('2300056 connection reset', request().url), /重置/);
   assert.doesNotMatch(n.describe('2300052', request().url), /污染/);
 }
+// A deadline response is final even if timer rounding leaves the wall clock just before the deadline.
+for (const managed of [false, true]) {
+  const f = fixture(), analyzer = new f.AnalyzeUrl(null, new f.HttpClient());
+  analyzer.config.retry = 3;
+  if (managed) analyzer.setRetryPolicy({ times: 3, base: 1, maxDelay: 5 });
+  const req = { ...request(), deadlineAt: Date.now() + 60000 };
+  // Web timeouts may retain the last HTTP status, which would normally qualify for retry.
+  const response = { ...f.HttpClient.timeoutResponse(req), statusCode: 503 };
+  let attempts = 0;
+  analyzer.fetchFollowingRedirects = async () => { attempts++; return response; };
+  assert.equal(await analyzer.fetchPrepared(req), response);
+  assert.equal(attempts, 1, `${managed ? 'managed' : 'numeric'} retry must stop after the total deadline response`);
+}
 // A caller's deadline aborts the actual socket and cannot be extended by protocol fallback or redirects.
 for (const binary of [false, true]) {
   const f = fixture(); const client = new f.HttpClient();

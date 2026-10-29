@@ -171,7 +171,7 @@ import { ReaderChunkPagination, ReaderChunkResult } from '../core/reader/ReaderC
 import { ReaderPageOffsets } from '../core/reader/ReaderPageOffsets';
 import { ReaderPageTurnQueue } from '../core/reader/ReaderPageTurnQueue';
 import {
-  ReaderInfoBarConfig, ReaderInfoBarContext, ReaderInfoBarText, ReaderInfoProgressBar
+  ReaderInfoBarConfig, ReaderInfoBarContext, ReaderInfoBarText, ReaderInfoItem, ReaderInfoProgressBar
 } from '../core/reader/ReaderInfoBarModel';
 import { ReaderInfoBarClock } from '../core/reader/ReaderInfoBarClock';
 import { ReaderInfoBarRow } from '../components/reader/ReaderInfoBar';
@@ -463,6 +463,20 @@ struct ReadBookPage {
   private readerComicBoundaryPullOriginY: number = 0;
   private readerContinuousScrollOffsetMemoAt: number = 0;
   private readerContinuousScrollOffsetMemo: number = 0;
+  // Display pages use screen pagination; contentPages/currentPageIndex remain List chunks.
+  @State readerContinuousDisplayPageCount: number = 0;
+  @State readerContinuousDisplayPageIndex: number = 0;
+  @State readerContinuousDisplayProgress: number = 0;
+  private readerContinuousMetricsSource: string = '';
+  private readerContinuousMetricsChapter: number = -1;
+  private readerContinuousMetricsSnapshot: ReaderV2LayoutSnapshot | null = null;
+  private readerContinuousMetricsSession: ReaderV2PaginationSession | null = null;
+  private readerContinuousMetricsStarts: number[] = [];
+  private readerContinuousMetricsEnds: number[] = [];
+  private readerContinuousMetricsTimer: number = -1;
+  private readerContinuousPositionTimer: number = -1;
+  private readerContinuousPointerDown: boolean = false;
+  private readerContinuousLastScrollAt: number = 0;
   private readerComicSuppressClickUntil: number = 0;
   /** 条漫当前缩放倍数，按屏翻动时换算成列表内的滚动距离。 */
   private readerComicZoomScale: number = 1;
@@ -959,6 +973,7 @@ struct ReadBookPage {
     this.onReaderAiAccessChanged();
     this.readerComicColor.setForeground(true);
     this.readerPageVisible = true;
+    this.refreshReaderContinuousPageMetrics();
     this.startReaderHoldingHandTracking();
     this.readerKeyboard.reset();
     this.restoreReaderKeyboardFocus();
@@ -1149,6 +1164,9 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    this.cancelReaderContinuousMetricsTimers();
+    this.readerContinuousPointerDown = false;
+    this.readerContinuousMetricsSession = null;
     this.cancelReaderQuickJump();
     this.releaseReadingCache?.(); this.releaseReadingCache = null;
     this.stopReaderHoldingHandTracking();
@@ -1268,6 +1286,8 @@ struct ReadBookPage {
   }
 
   onPageHide(): void {
+    this.cancelReaderContinuousMetricsTimers();
+    this.readerContinuousPointerDown = false;
     this.cancelReaderQuickJump();
     if (!this.releaseTtsCache && this.book && (this.isTtsSpeaking || this.isTtsPaused || this.ttsReader.isSpeaking())) {
       this.releaseTtsCache = ReaderCacheCoordinator.retainBook(this.book.bookUrl);
@@ -2181,6 +2201,10 @@ struct ReadBookPage {
       .onScrollIndex((start: number, end: number) => {
         this.onReaderComicScrollIndexChanged(start, end);
       })
+      .onDidScroll(() => {
+        this.readerContinuousLastScrollAt = Date.now();
+        this.scheduleReaderContinuousPositionUpdate();
+      })
       .onReachEnd(() => {
         this.onReaderContinuousReachEnd();
       })
@@ -2219,10 +2243,11 @@ struct ReadBookPage {
     })
     .onTouch((event: TouchEvent) => this.rememberContinuousReaderPointer(event))
     .parallelGesture(
-      PanGesture({ direction: PanDirection.Vertical, distance: Math.max(18, this.readerTapSlop * 1.5) })
-          .onActionStart(() => {
+      // Continuous movement needs no page-turn dead zone; keep only 1vp to distinguish a stationary press.
+      PanGesture({ direction: PanDirection.Vertical, distance: 1 })
+          .onActionStart((event: GestureEvent) => {
             if (!this.isReaderNovelContinuousScrollModeActive() || this.readerTextSelectionActive) return;
-            this.beginReaderComicPan();
+            this.beginReaderContinuousPan(event);
           })
           .onActionUpdate((event: GestureEvent) => {
             if (!this.isReaderNovelContinuousScrollModeActive() || this.readerTextSelectionActive) return;
@@ -2646,7 +2671,7 @@ struct ReadBookPage {
   private advanceReaderComicScreenScroll(now: number): boolean {
     const motion = this.readerComicScreenScrollMotion;
     if (!motion.isRunning()) return false;
-    if (!this.readerPageVisible || !this.isReaderComicModeActive() || this.isReaderComicPagedMode()) {
+    if (!this.readerPageVisible || !this.isReaderContinuousScrollSurfaceActive() || this.isReaderComicPagedMode()) {
       motion.stop();
       return false;
     }
@@ -5335,10 +5360,7 @@ struct ReadBookPage {
   }
 
   ttsQuickProgress(): number {
-    const chapterCount = Math.max(1, this.chapters.length);
-    const pageCount = Math.max(1, this.contentPages.length);
-    return Math.max(0, Math.min(100,
-      ((this.currentChapterIndex + (this.currentPageIndex + 1) / pageCount) / chapterCount) * 100));
+    return ReaderInfoBarText.bookPercent(this.getReaderInfoBarContext());
   }
 
   showBookmarkActions(bookmark: Bookmark, globalX: number, globalY: number): void {
@@ -5501,10 +5523,8 @@ struct ReadBookPage {
     if (this.contentPages.length === 0) {
       return `${this.currentChapterIndex + 1}/${this.chapters.length}`;
     }
-    const pageText = this.isLandscapeDoublePageActive() ?
-      `${this.currentPageIndex + 1}-${Math.min(this.currentPageIndex + 2, this.contentPages.length)}` :
-      `${this.currentPageIndex + 1}`;
-    return `${this.currentChapterIndex + 1}/${this.chapters.length} · ${pageText}/${this.contentPages.length}`;
+    return `${this.currentChapterIndex + 1}/${this.chapters.length} · ` +
+      ReaderInfoBarText.of(ReaderInfoItem.PAGE, this.getReaderInfoBarContext());
   }
 
   getReaderInfoBarConfig(): ReaderInfoBarConfig {
@@ -5531,6 +5551,13 @@ struct ReadBookPage {
     context.pageIndex = this.currentPageIndex;
     context.pageCount = this.isReaderComicModeActive() ? this.readerComicTotalPageCount() : this.contentPages.length;
     context.doublePage = this.isLandscapeDoublePageActive();
+    if (this.isReaderNovelContinuousScrollModeActive()) {
+      context.pageCount = this.readerContinuousDisplayPageCount;
+      context.pageIndex = this.readerContinuousDisplayPageIndex;
+      context.pageCountPending = context.pageCount === 0;
+      context.chapterProgressRatio = this.readerContinuousDisplayProgress;
+      context.doublePage = false;
+    }
     context.timeText = this.readerInfoTimeText;
     context.batteryPercent = this.readerInfoBatteryPercent;
     return context;
@@ -5724,6 +5751,15 @@ struct ReadBookPage {
     return 0;
   }
 
+  beginReaderContinuousPan(event: GestureEvent): void {
+    // A small scroll must neither open the menu on Up nor become a long-press selection.
+    this.readerContinuousSelectionMoved = true;
+    this.cancelContinuousReaderSelectionTimer();
+    this.pauseReaderAutoScroll('已暂停');
+    this.beginReaderComicPan();
+    this.updateReaderComicPan(event);
+  }
+
   beginReaderComicPan(): void {
     this.stopReaderComicScreenScroll();
     if (this.readerComicChapterSwitching) return;
@@ -5898,6 +5934,7 @@ struct ReadBookPage {
    * 否则列表换成只含这一章，相邻章节在读者滚到本章首尾附近时再接上。
    */
   syncReaderComicPageDataSource(): void {
+    this.refreshReaderContinuousPageMetrics();
     const segment = new ReaderScrollSegment();
     segment.chapterIndex = this.currentChapterIndex;
     segment.pages = this.contentPages;
@@ -6223,6 +6260,7 @@ struct ReadBookPage {
         this.currentPageText = this.contentPages[pageIndex] || '';
         this.readerContinuousReachedEnd = pageIndex === this.contentPages.length - 1;
         this.readerComicScrollRestoring = false;
+        this.scheduleReaderContinuousPositionUpdate();
         if (visiblePageIndex !== pageIndex && !lastPagePinnedToBottom) {
           console.warn(`[ReaderProgress] continuous restore settled without index callback: ` +
             `chapter=${chapterIndex},target=${pageIndex},visible=${visiblePageIndex}`);
@@ -6245,6 +6283,7 @@ struct ReadBookPage {
     const listEnd = Math.max(listStart, Math.round(end));
     this.readerContinuousLastListStart = listStart;
     this.readerContinuousLastListEnd = listEnd;
+    this.scheduleReaderContinuousPositionUpdate();
     // 列表里还有相邻章节与分隔项；可见区换算成当前章内的序号，越出本章的部分夹到本章首尾。
     const offset = Math.max(0, this.readerComicPageDataSource.offsetOf(this.currentChapterIndex));
     const lastLocal = Math.max(0, this.contentPages.length - 1);
@@ -6284,6 +6323,7 @@ struct ReadBookPage {
     // 列表末尾属于后面的章节时，本章并没有读到底；那一章被提升为当前章时会再判断。
     if (this.readerComicPageDataSource.lastChapter() !== this.currentChapterIndex) return;
     this.readerContinuousReachedEnd = true;
+    this.scheduleReaderContinuousPositionUpdate();
     if (this.readerComicScrollRestoring || this.pendingRestorePageIndex >= 0) return;
     const lastPageIndex = this.contentPages.length - 1;
     if (this.currentPageIndex === lastPageIndex) return;
@@ -8230,8 +8270,10 @@ struct ReadBookPage {
     return this.readerFontSize + Math.max(0, this.readerLineHeight);
   }
 
-  getReaderPageColumnWidth(): number {
-    if (!this.isLandscapeDoublePageActive()) return Math.max(1, this.pageViewWidth);
+  getReaderPageColumnWidth(forPageMetrics: boolean = false): number {
+    const doublePage = forPageMetrics ? this.readerLandscapeDoublePage && this.pageViewWidth > this.pageViewHeight :
+      this.isLandscapeDoublePageActive();
+    if (!doublePage) return Math.max(1, this.pageViewWidth);
     // The divider participates in Row layout. Measuring each leaf as exactly half of the spread makes
     // pagination up to 0.5vp wider than the real Text node and can wrap one extra line at render time.
     return Math.max(1, (this.pageViewWidth - READER_DOUBLE_PAGE_DIVIDER_WIDTH) / 2);
@@ -8247,9 +8289,9 @@ struct ReadBookPage {
     return TextAlign.JUSTIFY;
   }
 
-  getReaderAdaptiveLetterSpacing(): number {
+  getReaderAdaptiveLetterSpacing(forPageMetrics: boolean = false): number {
     const availableWidth = Math.max(1,
-      this.getReaderPageColumnWidth() - this.getEffectiveReaderMarginLeft() - this.getEffectiveReaderMarginRight());
+      this.getReaderPageColumnWidth(forPageMetrics) - this.getEffectiveReaderMarginLeft() - this.getEffectiveReaderMarginRight());
     try {
       const widthPx = vp2px(availableWidth);
       // ArkUI ultimately lays a component out on physical pixels, while graphics.text accepts a floating
@@ -8408,6 +8450,7 @@ struct ReadBookPage {
   refreshReaderTextRender(): void {
     this.pageRenderVersion++;
     this.pageTurnIncomingRenderVersion++;
+    this.refreshReaderContinuousPageMetrics();
   }
 
   forceCurrentReaderPageRender(): void {
@@ -13950,6 +13993,8 @@ struct ReadBookPage {
   }
 
   rememberContinuousReaderPointer(event: TouchEvent): void {
+    if (event.type === TouchType.Down) this.readerContinuousPointerDown = true;
+    if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.readerContinuousPointerDown = false;
     const point = event.changedTouches && event.changedTouches.length > 0 ? event.changedTouches[0] :
       (event.touches && event.touches.length > 0 ? event.touches[0] : null);
     if (!point) return;
@@ -13979,6 +14024,7 @@ struct ReadBookPage {
     if (event.type === TouchType.Down) {
       this.readerSelectionDismissArmed = false;
       this.cancelContinuousReaderSelectionTimer();
+      this.stopReaderComicScreenScroll();
       // 列表的触摸滚动已交给外层手势；按下时显式停止上一轮惯性，不能等超过拖动阈值才停。
       try {
         const offset = this.readerComicScroller.currentOffset();
@@ -14916,9 +14962,9 @@ struct ReadBookPage {
 
   // continuous: one unbounded column for scrolling. The list supplies the vertical margins as padding, and
   // no footer guard applies, so the column starts at y=0.
-  buildReaderV2Snapshot(continuous: boolean = false): ReaderV2LayoutSnapshot {
+  buildReaderV2Snapshot(continuous: boolean = false, forPageMetrics: boolean = false): ReaderV2LayoutSnapshot {
     const input = new ReaderV2LayoutInput();
-    input.viewportWidthPx = this.toMeasurePx(this.getReaderPageColumnWidth());
+    input.viewportWidthPx = this.toMeasurePx(this.getReaderPageColumnWidth(forPageMetrics));
     input.viewportHeightPx = this.toMeasurePx(this.getReaderPaginationViewportHeight());
     // The measured reader viewport already begins below the status bar in normal mode. Immersive mode begins at
     // screen y=0. Therefore both modes use local y=0 and must not subtract the status inset a second time.
@@ -14940,7 +14986,7 @@ struct ReadBookPage {
     input.titleFontWeight = this.readerTitleFontWeight;
     input.lineSpacingPx = this.toMeasureNonNegativePx(this.readerLineHeight);
     input.paragraphSpacingPx = this.toMeasureNonNegativePx(this.readerParagraphSpacing);
-    input.letterSpacingPx = this.toMeasureFontOffsetPx(this.getReaderAdaptiveLetterSpacing());
+    input.letterSpacingPx = this.toMeasureFontOffsetPx(this.getReaderAdaptiveLetterSpacing(forPageMetrics));
     input.textAlign = this.readerTextAlign;
     input.bodyFontFamily = this.getBodyReaderFontFamily();
     input.titleFontFamily = this.getTitleReaderFontFamily();
@@ -16606,6 +16652,135 @@ struct ReadBookPage {
       document.displayOffsetForSource(Math.max(0, this.readerV2TtsSourceEnd - chunkStart)), 'tts');
   }
 
+  cancelReaderContinuousMetricsTimers(): void {
+    if (this.readerContinuousMetricsTimer >= 0) clearTimeout(this.readerContinuousMetricsTimer);
+    if (this.readerContinuousPositionTimer >= 0) clearTimeout(this.readerContinuousPositionTimer);
+    this.readerContinuousMetricsTimer = -1;
+    this.readerContinuousPositionTimer = -1;
+  }
+
+  /** A separate, cooperative screen pagination owns display page numbers, never List chunk boundaries. */
+  refreshReaderContinuousPageMetrics(): void {
+    if (!this.isReaderNovelContinuousScrollModeActive() || !this.pagedContentText || !this.hasPagedReaderArea()) {
+      this.cancelReaderContinuousMetricsTimers();
+      this.readerContinuousMetricsSource = '';
+      this.readerContinuousMetricsSnapshot = null;
+      this.readerContinuousMetricsSession = null;
+      this.readerContinuousMetricsStarts = [];
+      this.readerContinuousMetricsEnds = [];
+      this.readerContinuousDisplayPageCount = 0;
+      this.readerContinuousDisplayPageIndex = 0;
+      this.readerContinuousDisplayProgress = 0;
+      return;
+    }
+    // Includes the paged margins/footer guard and the configured landscape leaf width.
+    const snapshot = this.buildReaderV2Snapshot(false, true);
+    if (this.readerContinuousMetricsSource !== this.pagedContentText ||
+      this.readerContinuousMetricsChapter !== this.currentChapterIndex ||
+      this.readerContinuousMetricsSnapshot?.identity !== snapshot.identity) {
+      this.cancelReaderContinuousMetricsTimers();
+      this.readerContinuousMetricsSource = this.pagedContentText;
+      this.readerContinuousMetricsChapter = this.currentChapterIndex;
+      this.readerContinuousMetricsSnapshot = snapshot;
+      this.readerContinuousMetricsSession = null;
+      this.readerContinuousMetricsStarts = [];
+      this.readerContinuousMetricsEnds = [];
+      this.readerContinuousDisplayPageCount = 0;
+      this.readerContinuousDisplayPageIndex = 0;
+      this.readerContinuousDisplayProgress = 0;
+    }
+    if (!this.readerPageVisible) return;
+    if (this.readerContinuousDisplayPageCount === 0) this.scheduleReaderContinuousMetricsBatch();
+    this.scheduleReaderContinuousPositionUpdate();
+  }
+
+  scheduleReaderContinuousMetricsBatch(): void {
+    if (this.readerContinuousMetricsTimer >= 0) return;
+    this.readerContinuousMetricsTimer = setTimeout(() => {
+      this.readerContinuousMetricsTimer = -1;
+      this.runReaderContinuousMetricsBatch();
+    }, 32);
+  }
+
+  runReaderContinuousMetricsBatch(): void {
+    const snapshot = this.readerContinuousMetricsSnapshot;
+    if (!snapshot || !this.readerPageVisible || !this.isReaderNovelContinuousScrollModeActive() ||
+      this.readerContinuousMetricsChapter !== this.currentChapterIndex ||
+      this.readerContinuousMetricsSource !== this.pagedContentText) return;
+    // Touch and inertia have priority. Auto-scroll must still allow statistics to finish.
+    if (this.readerContinuousPointerDown ||
+      (!this.readerAutoScrollActive && Date.now() - this.readerContinuousLastScrollAt < 120)) {
+      this.scheduleReaderContinuousMetricsBatch();
+      return;
+    }
+    try {
+      let session = this.readerContinuousMetricsSession;
+      if (!session) {
+        const document = ReaderV2DocumentParser.parse(this.readerContinuousMetricsSource,
+          this.currentChapterIndex, this.getChapterTitle(), this.readerV2HeadingHints(this.currentChapterIndex));
+        session = ReaderV2Paginator.start(document, snapshot, this.buildReaderV2RegexStyles(document));
+        this.readerContinuousMetricsSession = session;
+      }
+      ReaderV2Paginator.appendPages(session, 1);
+      if (!session.pageSet.complete) {
+        this.scheduleReaderContinuousMetricsBatch();
+        return;
+      }
+      const starts = session.pageSet.pages.map((page: ReaderV2PageLayout, index: number): number =>
+        index === 0 ? 0 : page.sourceStart);
+      if (starts.length === 0) starts.push(0);
+      this.readerContinuousMetricsStarts = starts;
+      this.readerContinuousMetricsEnds = starts.map((_start: number, index: number): number =>
+        index + 1 < starts.length ? starts[index + 1] : this.readerContinuousMetricsSource.length);
+      this.readerContinuousDisplayPageCount = starts.length;
+      // Only source boundaries are needed after counting; release the extra native Paragraph objects.
+      this.readerContinuousMetricsSession = null;
+      this.updateReaderContinuousDisplayPosition();
+    } catch (error) {
+      this.readerContinuousMetricsSession = null;
+      console.warn('计算滚动阅读显示页码失败:', error);
+    }
+  }
+
+  scheduleReaderContinuousPositionUpdate(): void {
+    if (!this.readerPageVisible || !this.isReaderNovelContinuousScrollModeActive() ||
+      this.readerContinuousPositionTimer >= 0) return;
+    // Scroll within a single 1800-character chunk also advances the displayed page.
+    this.readerContinuousPositionTimer = setTimeout(() => {
+      this.readerContinuousPositionTimer = -1;
+      this.updateReaderContinuousDisplayPosition();
+    }, 80);
+  }
+
+  updateReaderContinuousDisplayPosition(): void {
+    if (!this.readerPageVisible || !this.isReaderNovelContinuousScrollModeActive() ||
+      this.readerContinuousMetricsChapter !== this.currentChapterIndex ||
+      this.readerContinuousMetricsSource !== this.pagedContentText || this.readerComicScrollRestoring ||
+      this.pendingRestorePageIndex >= 0) return;
+    const sourceLength = this.pagedContentText.length;
+    const visibleOffset = this.readerContinuousV2FirstVisibleSourceOffset();
+    // Merely entering/restoring the last chunk is not the chapter end: that chunk can span several screens.
+    const offset = this.readerContinuousV2ChapterEndVisible() ? sourceLength :
+      (visibleOffset >= 0 ? visibleOffset : this.getPageStartOffset(this.currentPageIndex));
+    this.readerContinuousDisplayProgress = sourceLength > 0 ? Math.max(0, Math.min(1, offset / sourceLength)) : 0;
+    this.readerContinuousDisplayPageIndex = Math.max(0, ReaderPageOffsets.pageIndexOf(
+      this.readerContinuousMetricsStarts, this.readerContinuousMetricsEnds, offset, sourceLength));
+  }
+
+  readerContinuousV2ChapterEndVisible(): boolean {
+    const last = this.contentPages.length - 1;
+    if (last < 0 || this.readerContinuousVisibleEnd < last) return false;
+    const viewport = this.readerContinuousV2ViewportPx();
+    if (viewport.length < 2) return false;
+    try {
+      const rect = this.getUIContext().getComponentUtils().getRectangleById(this.readerContinuousV2ItemId(last));
+      const bottom = rect.windowOffset.y + rect.size.height;
+      return rect.size.height > 0 && bottom >= viewport[0] && bottom <= viewport[1] + 1;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // Window rectangle [top, bottom] in pixels of the list's text area, or an empty array before it is laid out.
   readerContinuousV2ViewportPx(): number[] {
     try {
@@ -16636,6 +16811,9 @@ struct ReadBookPage {
         if (!document || chunkStart === undefined || chunkStart < 0) continue;
         const localTop = viewport[0] - rect.windowOffset.y;
         for (const fragment of layout.fragments) {
+          if (fragment.imageSource && fragment.imageRect.bottom > localTop) {
+            return chunkStart + document.sourceOffsetForDisplay(fragment.displayStart);
+          }
           if (!fragment.paragraph) continue;
           for (const line of fragment.paragraph.getLineMetrics()) {
             if (fragment.paragraphY + line.topHeight < localTop - 1) continue;
@@ -17475,6 +17653,7 @@ struct ReadBookPage {
       this.contentPages = [emptyPage];
       this.contentPageStarts = [0];
       this.contentPageEnds = [emptyPage.length];
+      this.refreshReaderContinuousPageMetrics();
       this.setCurrentPageText(emptyPage);
       this.restorePendingPageIndex(true);
       this.readerInitialPageReady = this.pendingRestorePageIndex < 0 && this.readerTypographyRestoreOffset < 0;
@@ -17486,6 +17665,7 @@ struct ReadBookPage {
       this.clearReaderComicPaginationProgress();
       this.contentPages = [];
       this.pagedContentText = '';
+      this.refreshReaderContinuousPageMetrics();
       this.contentPageStarts = [];
       this.contentPageEnds = [];
       this.setCurrentPageText(content);
@@ -17577,25 +17757,33 @@ struct ReadBookPage {
       this.scrollReaderComicByScreen(direction);
       return;
     }
-    if (!this.isReaderContinuousScrollSurfaceActive() || this.contentPages.length === 0) return;
-    let targetIndex = this.currentPageIndex + (direction > 0 ? 1 : -1);
-    if (direction > 0 && targetIndex >= this.contentPages.length) {
-      this.ensureCurrentReaderPaginationAhead(targetIndex + 1);
-      targetIndex = this.currentPageIndex + 1;
-    }
-    if (targetIndex >= 0 && targetIndex < this.contentPages.length) {
-      this.readerComicScroller.scrollToIndex(this.readerContinuousListIndex(targetIndex), true, ScrollAlign.START);
+    if (!this.isReaderContinuousScrollSurfaceActive() || this.contentPages.length === 0 ||
+      this.readerComicChapterSwitching || direction === 0) return;
+    let atBoundary = false;
+    try {
+      const offset = this.readerComicScroller.currentOffset();
+      atBoundary = direction > 0 ? this.readerComicScroller.isAtEnd() : offset.yOffset <= 1;
+      // Stop a manual fling before starting a key-driven scroll; repeated keys add to the existing motion.
+      if (!this.readerComicScreenScrollMotion.isRunning()) {
+        this.readerComicScroller.scrollTo({ xOffset: offset.xOffset, yOffset: offset.yOffset, animation: false });
+      }
+    } catch (error) {
+      console.warn('读取小说滚动位置失败:', error);
       return;
     }
-    // 相邻章节已经接在列表里：直接滚过去，滚进视口顶部后自动成为当前章。
-    const window = this.readerComicPageDataSource;
-    const neighbour = this.currentChapterIndex + (direction > 0 ? 1 : -1);
-    const neighbourSegment = window.segment(neighbour);
-    if (neighbourSegment && neighbourSegment.pages.length > 0) {
-      const neighbourIndex = window.offsetOf(neighbour) + (direction > 0 ? 0 : neighbourSegment.pages.length - 1);
-      this.readerComicScroller.scrollToIndex(neighbourIndex, true, ScrollAlign.START);
+    if (!atBoundary) {
+      // List chunks can span several screens. Keys move one visible正文 viewport from the current position,
+      // including across already-mounted chapter boundaries, without snapping to a chunk's start.
+      const viewport = this.readerContinuousV2ViewportPx();
+      const measuredHeight = viewport.length >= 2 ? px2vp(viewport[1] - viewport[0]) : 0;
+      const height = Number.isFinite(measuredHeight) && measuredHeight > 0 ? measuredHeight :
+        Math.max(1, this.pageViewHeight - this.getEffectiveReaderMarginTop() -
+          this.getReaderContinuousScrollBottomPadding());
+      this.startReaderComicScreenScroll(height * (direction > 0 ? 1 : -1));
       return;
     }
+    // Only the physical List edge needs chapter loading. Entering the last chunk is not the chapter end.
+    this.stopReaderComicScreenScroll();
     if (direction > 0) {
       // contentPages is an incremental snapshot. Its temporary tail is not the chapter tail until the retained
       // pagination session reports complete; crossing here can skip pages which are appended a moment later.

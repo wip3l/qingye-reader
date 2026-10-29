@@ -50,8 +50,12 @@ jobs:
       - run: node --experimental-strip-types scripts/epub-mixed-layout-check.mjs
       - run: node --experimental-strip-types scripts/reader-text-normalizer-check.mjs
       - run: node --experimental-strip-types scripts/reader-chunk-pagination-check.mjs
+      - run: node --experimental-strip-types scripts/reader-continuous-page-metrics-check.mjs
+      - run: node --experimental-strip-types scripts/reader-screen-scroll-check.mjs
+      - run: node --experimental-strip-types scripts/reader-scroll-gesture-check.mjs
       - run: node --experimental-strip-types scripts/reader-font-weight-check.mjs
       - run: node --experimental-strip-types scripts/comic-image-pipeline-check.mjs
       - run: node --experimental-strip-types scripts/image-script-check.mjs
+      - run: node --experimental-strip-types scripts/network-compatibility-check.mjs
       # 书源解析内核（子模块）自己的回归检查。
       - run: for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-strip-types "$f" || exit 1; done

@@ -333,6 +333,10 @@ export class ReaderInfoBarContext {
   chapterCount: number = 0;
   pageIndex: number = 0;
   pageCount: number = 0;
+  /** Screen pagination is still being measured; never present the render chunk count as a page count. */
+  pageCountPending: boolean = false;
+  /** Continuous reading progress from the visible source offset; -1 uses paged progress. */
+  chapterProgressRatio: number = -1;
   /** 横屏双页时一次显示两页。 */
   doublePage: boolean = false;
   timeText: string = '';
@@ -357,12 +361,14 @@ export class ReaderInfoBarText {
       return context.chapterTitle ? `${bookName} · ${context.chapterTitle}` : bookName;
     }
     if (item === ReaderInfoItem.PAGE) {
+      if (context.pageCountPending) return '…';
       if (context.doublePage) {
         return `${pageIndex + 1}-${Math.min(pageIndex + 2, pageCount)}/${pageCount}`;
       }
       return `${pageIndex + 1}/${pageCount}`;
     }
     if (item === ReaderInfoItem.PAGES_LEFT) {
+      if (context.pageCountPending) return '…';
       const shown = context.doublePage ? Math.min(pageIndex + 2, pageCount) : pageIndex + 1;
       return `剩余 ${Math.max(0, pageCount - shown)} 页`;
     }
@@ -400,6 +406,9 @@ export class ReaderInfoBarText {
   }
 
   static chapterPercent(context: ReaderInfoBarContext): number {
+    if (context.chapterProgressRatio >= 0) {
+      return Math.max(0, Math.min(100, context.chapterProgressRatio * 100));
+    }
     const pageCount = Math.max(1, context.pageCount);
     const pageIndex = Math.max(0, Math.min(context.pageIndex, pageCount - 1));
     return Math.max(0, Math.min(100, ((pageIndex + 1) / pageCount) * 100));
