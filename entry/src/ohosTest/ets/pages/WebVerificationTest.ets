@@ -53,13 +53,26 @@ struct WebVerificationTest {
       const restored = await http.execute({ url: root + '/page', method: 'GET', headers: headers, useWebView: true,
         deadlineAt: Date.now() + 15000 });
       this.require(restored.success && restored.body.includes('fixture-ready'), 'restored host fetch');
+      const early = await http.execute({ url: root + '/interactive', method: 'GET', headers: headers,
+        useWebView: true, webWaitFor: '#ready',
+        webJs: 'document.querySelector("#ready") ? document.documentElement.outerHTML : ""',
+        webJsAcceptPattern: '\\S', webJsMaxAttempts: 40, deadlineAt: Date.now() + 6000 });
+      this.require(early.success && early.body.includes('fixture-ready') && !early.bodyIsSnapshot,
+        'interactive DOM before slow image: ' + early.error + ' / ' + early.waitStage);
+      const snapshot = await http.execute({ url: root + '/interactive', method: 'GET', headers: headers,
+        useWebView: true, webWaitFor: '#missing',
+        webJs: 'document.querySelector("#missing") ? document.documentElement.outerHTML : ""',
+        webJsAcceptPattern: '\\S', webJsMaxAttempts: 40, deadlineAt: Date.now() + 3000 });
+      this.require(!snapshot.success && snapshot.errorCode === 'REQUEST_DEADLINE' &&
+        snapshot.waitStage === 'selector' && snapshot.bodyIsSnapshot === true && snapshot.body.includes('fixture-ready'),
+        'deadline snapshot: ' + snapshot.error + ' / ' + snapshot.waitStage + ' / ' + snapshot.body.length);
       let cancelled = false;
       const pending = http.execute({ url: root + '/slow', method: 'GET', headers: headers, useWebView: true,
         deadlineAt: Date.now() + 15000, cancelCheck: (): boolean => cancelled });
       setTimeout((): void => { cancelled = true; }, 200);
       const stopped = await pending;
       this.require(stopped.errorCode === 'CANCELLED', 'cancel metadata');
-      this.result = 'PASS WebVerification: hosts/restoration/cancel/status; ' + cookieReport;
+      this.result = 'PASS WebVerification: hosts/restoration/cancel/status/interactive-DOM/deadline-snapshot; ' + cookieReport;
     } catch (error) {
       this.result = 'FAIL WebVerification: ' + (error as Error).message + '; ' + cookieReport;
     }

@@ -55,6 +55,12 @@ export class ExploreCoordinator {
   // source + platform + variable state; the cache only skips the script, not content loading.
   private menuCache: Record<string, { entries: ExploreEntry[]; cachedAt: number }> = {};
   private menuCacheRevision: number = 0;
+  private loadGeneration: number = 0;
+
+  /** Invalidate only this coordinator's work; shared browser users remain unaffected. */
+  cancelPending(): void {
+    this.loadGeneration++;
+  }
 
   getNoticeMessage(): string {
     return this.noticeMessage;
@@ -127,14 +133,17 @@ export class ExploreCoordinator {
 
   async getEntries(platform: string = '', sourceUrl: string = '',
     debugContext: BookSourceDebugContext | null = null): Promise<ExploreEntry[]> {
+    const generation = this.loadGeneration;
+    const cancelled = (): boolean => generation !== this.loadGeneration;
     this.noticeMessage = '';
     const sources = await appDb.getEnabledBookSourcesForExplore();
     const entries: ExploreEntry[] = [];
     for (const source of sources) {
+      if (cancelled()) return [];
       if (!source.enabledExplore || !source.exploreUrl) continue;
       if (sourceUrl && source.bookSourceUrl !== sourceUrl) continue;
       if (NativeSourceService.isNative(source)) {
-        entries.push(...await this.nativeEntries(source, debugContext));
+        entries.push(...await this.nativeEntries(source, debugContext, cancelled));
         continue;
       }
       if (!source.variable && this.requiresSourceVariable(source)) {
@@ -156,16 +165,19 @@ export class ExploreCoordinator {
 
   async explore(entry: ExploreEntry, page: number = 1, maxItems: number = 0,
     debugContext: BookSourceDebugContext | null = null): Promise<SearchBook[]> {
+    const generation = this.loadGeneration;
+    const cancelled = (): boolean => generation !== this.loadGeneration;
     this.noticeMessage = '';
     const source = await appDb.getBookSource(entry.sourceUrl);
-    if (!source) return [];
+    if (!source || cancelled()) return [];
     if (NativeSourceService.isNative(source)) {
-      return await this.exploreNative(source, entry, page, maxItems, debugContext);
+      return await this.exploreNative(source, entry, page, maxItems, debugContext, cancelled);
     }
     try {
       VerificationSupport.clearVerification();
-      const au = new AnalyzeUrl(source, this.http);
+      const au = new AnalyzeUrl(source, this.http).setCancelCheck(cancelled);
       const reqUrl = await this.buildUrl(source, entry.url, page, debugContext);
+      if (cancelled()) return [];
       if (!reqUrl || /^\s*@?js:/i.test(reqUrl) ||
         (!/^https?:\/\//i.test(reqUrl) && !/^data:/i.test(reqUrl))) {
         console.warn('[ExploreCoordinator] invalid explore request:', source.bookSourceName,
@@ -176,6 +188,7 @@ export class ExploreCoordinator {
       console.info('[ExploreCoordinator] explore:', `${entry.sourceName}/${entry.title}`, LogText.url(reqUrl));
       let resp = EncodedSourceUrl.canHandle(reqUrl) ?
         await this.fetchEncodedDataUrl(reqUrl, source) : await au.fetch(reqUrl, undefined, debugContext);
+      if (cancelled()) return [];
       const bodyJs = au.getConfig().bodyJs || '';
       if (bodyJs) {
         const scriptedBody = await this.executeResponseBodyScript(source, bodyJs, resp.body || '',
@@ -358,6 +371,7 @@ export class ExploreCoordinator {
       }
       return books;
     } catch (e) {
+      if (cancelled()) return [];
       console.error('[ExploreCoordinator] explore failed:', e);
       const message = e instanceof Error ? e.message : String(e || '');
       this.noticeMessage = message ? `发现解析异常：${message}` : '发现解析异常';
@@ -559,7 +573,9 @@ export class ExploreCoordinator {
 
   /** 原生书源的发现分类：筛选项来自定义里的变量，分类列表不经过脚本引擎。 */
   private async nativeEntries(source: BookSource,
-    debugContext: BookSourceDebugContext | null = null): Promise<ExploreEntry[]> {
+    debugContext: BookSourceDebugContext | null = null,
+    cancelled: () => boolean = (): boolean => false): Promise<ExploreEntry[]> {
+    if (cancelled()) return [];
     this.filterSelectors[source.bookSourceUrl] = NativeSourceService.filters(source).map((group) => {
       const selector = new ExplorePlatformSelector();
       selector.parameter = group.title;
@@ -579,7 +595,8 @@ export class ExploreCoordinator {
     const entries: ExploreEntry[] = [];
     try {
       let groupTitle = '';
-      for (const menu of await NativeSourceService.exploreMenus(source, this.http, debugContext)) {
+      for (const menu of await NativeSourceService.exploreMenus(source, this.http, debugContext, cancelled)) {
+        if (cancelled()) return [];
         if (!menu.target) {
           groupTitle = menu.title;
           continue;
@@ -592,8 +609,9 @@ export class ExploreCoordinator {
           groupTitle: groupTitle
         });
       }
-      if (entries.length > 0) this.storeMenuCache(menuKey, entries);
+      if (!cancelled() && entries.length > 0) this.storeMenuCache(menuKey, entries);
     } catch (e) {
+      if (cancelled()) return [];
       this.noticeMessage = e instanceof Error ? e.message : '发现分类加载失败';
       console.warn('[ExploreCoordinator] native menus failed:', source.bookSourceName, this.noticeMessage);
     }
@@ -601,11 +619,14 @@ export class ExploreCoordinator {
   }
 
   private async exploreNative(source: BookSource, entry: ExploreEntry, page: number,
-    maxItems: number, debugContext: BookSourceDebugContext | null = null): Promise<SearchBook[]> {
+    maxItems: number, debugContext: BookSourceDebugContext | null = null,
+    cancelled: () => boolean = (): boolean => false): Promise<SearchBook[]> {
     try {
+      if (cancelled()) return [];
       // 清掉上一次遗留的待验证地址，发现页据此判断这次是否需要去验证。
       VerificationSupport.clearVerification();
-      const found = await NativeSourceService.explore(source, this.http, entry.url, page, debugContext);
+      const found = await NativeSourceService.explore(source, this.http, entry.url, page, debugContext, cancelled);
+      if (cancelled()) return [];
       const books: SearchBook[] = [];
       for (const book of maxItems > 0 ? found.slice(0, Math.max(1, maxItems)) : found) {
         this.sanitizeExploreBook(book);
@@ -614,6 +635,7 @@ export class ExploreCoordinator {
       if (books.length === 0) this.noticeMessage = '发现接口已有响应，但列表规则未匹配到内容';
       return books;
     } catch (e) {
+      if (cancelled()) return [];
       this.noticeMessage = e instanceof Error ? e.message : '发现解析异常';
       console.warn('[ExploreCoordinator] native explore failed:', source.bookSourceName, this.noticeMessage);
       return [];

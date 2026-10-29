@@ -71,11 +71,11 @@ export struct WebBookFetchRuntimeHost {
         .onVisibleAreaChange([0], (visible: boolean): void => {
           if (visible && !this.disappearing) this.scheduleAttachFallback(0);
         })
-        .onPageBegin((): void => { WebBookFetchRuntime.get().onPageBegin(this.controller); })
-        .onPageEnd((): void => {
+        .onPageBegin((event): void => { WebBookFetchRuntime.get().onPageBegin(this.controller, event?.url || ''); })
+        .onPageEnd((event): void => {
           this.initialPageReady = true;
           if (!this.registered) this.attachRuntime();
-          WebBookFetchRuntime.get().onPageEnd(this.controller);
+          WebBookFetchRuntime.get().onPageEnd(this.controller, event?.url || '');
         })
     }
   }

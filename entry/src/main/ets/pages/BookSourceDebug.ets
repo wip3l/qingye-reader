@@ -281,7 +281,15 @@ struct BookSourceDebugPage {
         Text(`状态依据：${item.statusCodeAvailable ? '原始 HTTP 状态' : '原始 HTTP 状态未知'} · ${item.errorCode || ''} ${item.errorStage || ''}\n网页耗时：宿主 ${item.hostWaitMs || 0} / 排队 ${item.queueMs || 0} / 加载 ${item.renderMs || 0} ms\n尝试：${item.attempts || item.transport} · 策略重试 ${item.retryAttempt} 次${item.retryReason ? '\n' + item.retryReason : ''}\n传给传输层的请求头：${JSON.stringify(item.requestHeaders)}\n响应头：${item.headersAvailable ? JSON.stringify(item.responseHeaders) : '当前通道未取得'}\n网络字节数：${item.responseBytes >= 0 ? item.responseBytes : '未测量'}`)
           .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
           .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE).copyOption(CopyOptions.LocalDevice)
+        if (item.waitStage) {
+          Text(`结束时等待阶段：${item.waitStage}`).fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor()).width('100%')
+        }
         if (item.bodyPreview) {
+          if (item.bodyIsSnapshot) {
+            Text(`失败页面快照${item.snapshotTruncated ? '（已截断）' : ''} · 等待阶段：${item.waitStage || '未知'}`)
+              .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
+          }
           Text(`响应预览：${item.bodyPreview}`).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
             .width('100%').maxLines(8)
             .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)

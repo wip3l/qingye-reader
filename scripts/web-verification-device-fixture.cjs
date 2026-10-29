@@ -37,6 +37,12 @@ if (require.main === module) {
     if (req.url === '/slow') { const timer = setTimeout(() => res.end('slow'), 15000); res.on('close', () => clearTimeout(timer)); return; }
     if (req.url === '/report') { res.end('{}'); return; }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    if (req.url === '/interactive') {
+      // DOM is usable but a slow image keeps readyState below complete. Changing text also
+      // prevents whole-page signature stability. No challenge solving or external traffic.
+      return res.end('<!doctype html><html><body><h1 id="ready">' + (uaMatches ? 'fixture-ready' : 'UA mismatch') +
+        '</h1><img src="/slow"><p id="changing"></p><script>setInterval(function(){document.getElementById("changing").textContent=String(Date.now())},30)</script></body></html>');
+    }
     res.end('<!doctype html><html><body><h1 id="ready">' + (uaMatches ? 'fixture-ready' : 'UA mismatch') + '</h1></body></html>');
   }).listen(18393, '127.0.0.1', () => console.log('Web verification fixture listening on 18393'));
 }

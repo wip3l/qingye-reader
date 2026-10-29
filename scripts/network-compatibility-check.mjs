@@ -66,7 +66,7 @@ function fixture(api = 26) {
     TlsTrustStore: { isTrustedUrl: () => false, isCertificateError: () => false },
     SourceEngineHost: { withWeb: async (_, fn) => { if (state.webGate) await state.webGate; return fn(); }, id: () => 0,
       nativeScripts: () => undefined, nativeParsing: () => undefined, isCancelled: () => false },
-    WebBookFetchRuntime: { get: () => ({ waitUntilAttached: async () => true,
+    WebBookFetchRuntime: { get: () => ({ timeoutRequest: () => null, waitUntilAttached: async () => true,
       fetch: async req => { state.webRequests = (state.webRequests || 0) + 1; state.webRequest = req;
         return { url: 'https://web.example/final', success: true, statusCode: 200, body: 'web', headers: {} }; } }) },
     BookSourceDebugNetworkTrace: class {},

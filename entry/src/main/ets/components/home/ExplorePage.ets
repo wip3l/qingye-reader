@@ -154,6 +154,7 @@ export struct ExplorePage {
     if (this.isActive) {
       this.ensureLoaded();
     } else {
+      this.cancelExploreLoad();
       this.resultArrivalTracker.discardPending();
       this.closeExploreFilterPanel();
       this.showExplorePlatformMenu = false;
@@ -170,6 +171,20 @@ export struct ExplorePage {
     if ((!this.hasLoaded || !ExploreResultCache.isFresh(this.exploreContentLoadedAt)) && !this.isLoading) {
       this.loadEntries();
     }
+  }
+
+  aboutToDisappear(): void {
+    this.cancelExploreLoad();
+  }
+
+  cancelExploreLoad(): void {
+    if (this.isLoading || this.isLoadingMore) this.exploreContentLoadedAt = 0;
+    this.coordinator.cancelPending();
+    this.exploreLoadVersion++;
+    this.exploreMetadataQueue = [];
+    this.exploreMetadataQueued.clear();
+    this.isLoading = false;
+    this.isLoadingMore = false;
   }
 
   onShelfChanged(): void {
@@ -1646,6 +1661,7 @@ export struct ExplorePage {
   }
 
   beginExploreLoad(): number {
+    this.coordinator.cancelPending();
     this.exploreLoadVersion++;
     this.exploreMetadataQueue = [];
     this.exploreMetadataQueued.clear();
