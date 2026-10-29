@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.4.939`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.4.940`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -75,6 +75,7 @@
 - 从 URL、剪贴板、本地 JSON/文本文件或系统“打开方式”导入；可一次选择多个文件，合并后统一勾选写入，读取失败的文件单独跳过并提示文件名。
 - 导入保留标准字段、原始 JSON 和未知字段，导出时合并，尽量保持与 Android 阅读的往返完整性。
 - 编辑、分组、锁定、导出、删除，以及批量启用/禁用搜索与发现；列表可按全部、原生、兼容筛选。原生书源有独立的编辑页和“书源设置”页（变量、音色、账号登录、动作按钮），书源管理和发现页的长按菜单都能进入。
+- 书源管理可按自定义（拖动）、加入时间、名称、更新时间排序并选择正序或倒序；新增或导入的书源排在置顶书源之后的最前面。顶栏为单行的搜索、筛选、更多，筛选为按钮下方的弹出菜单。
 - 原生书源支持 QuickJS 函数库与后台脚本阶段，可组合请求、保存变量和登录凭据、弹出提示、刷新发现缓存，以及打开网页验证。设置页支持脚本提供动态选项、按钮执行状态和多步登录。漫画与插图可按标准算法（含 `ivPrefixBytes`、`keyEncoding`）或后台运行的图片字节脚本解密，封面支持 `coverDecode` 与 `coverHeaders`。
 - 两种校验模式（搜索能力、发现/阅读链路），结果区分“通过、失败、无结果、需要验证、暂时异常”，只有明确失败项可批量禁用或删除。
 - 单书源调试页可按搜索、发现、详情、目录、正文或全链路运行，查看请求、规则匹配、输出和错误，并导出脱敏报告。
@@ -110,6 +111,7 @@
 - 系统 TTS 与自定义 HTTP TTS，支持语速、定时停止、章节切换、后台朗读和系统媒体控制；翻页和滚动阅读都显示当前句高亮，滚动模式自动跟随朗读位置。
 - 可导入原版 `HttpTTS` JSON，也可在应用内新建、编辑和排序自定义音色。朗读设置统一管理音色；自定义音色支持左滑启用、禁用和删除，禁用音色不参与选择。
 - 有声书使用独立远程播放器，支持进度、倍速、目录跳转、定时停止和音色代码；切章时按钮不锁定，获取音频地址超过 30 秒报超时，取不到地址时显示书源给出的原因。
+- 有声书离线下载：直链断点续传，m3u8 逐片下载（支持 AES-128）后拼成单个文件，有本地文件时直接播放；书架任务同时下两章，离开 Wi-Fi 或断网时暂停、恢复后续传，可设仅 Wi-Fi 下载和离线音频上限。Wi-Fi 下边听边下，听完的自动清理，手动下载的保留；目录和书架封面可显示“已下载”“离线”标记。
 - 朗读与听书可在返回书架或进入后台后继续，通过全局播放胶囊与 AVSession 控制；快速朗读与听书面板采用封面氛围背景、大播放键和底部功能栏。在书架上展开的朗读面板可“回到正文”，重新打开该书并接上正在进行的朗读。蓝牙或有线耳机断开时自动暂停朗读。
 - 视频类书籍（如短剧）使用独立播放页，详情页提供选集。书源配置 `content.videoPage` 时，不支持的规格可自动回退原站网页，其他失败可手动选择网页播放；网页模式的进度由站点管理。
 
@@ -125,7 +127,7 @@
 - 会员与账号：会员档位、点数充值与会员方案合在「会员与账号」页，「我的权益」页领取每月朗读字数礼包并查看权益；会员昵称按档位配色并显示档位图标；终身会员起可用动态头像，终身超级会员另有云空间（自定义字体与本地书籍自动上传，换设备后以占位书和置灰字体出现，点按即下载）和专属主题“曜金藏书”。服务端配置与部署见 [server/README.md](server/README.md) 和 [配置示例](server/.env.example)。
 - 华为账号登录后自动带入昵称和头像（不覆盖应用内改过的资料），点数与主题权益跨设备同步。
 - 浅色/深色模式、按钮色、强调色、自定义字体、阅读背景、封面图库和应用图标；全局字体默认“跟随系统”，在系统里换字体后回到应用即生效；主题页集中展示当前使用、默认与自定义方案、已购主题和更多主题，可在详情页预览、试用或获取。主题自带书籍封面、启动封面、书架文件夹插画、朗读/有声书面板背景和段评气泡样式。
-- 书架、发现、搜索的顶部控件、下拉菜单与目录弹层在 API 26 及以上使用系统沉浸光感材质，旧系统退回半透明磨砂；二级页面的顶栏随内容上滑收起、下滑展开。
+- 书架、发现、搜索的顶部控件、下拉菜单与目录弹层在 API 26 及以上使用系统沉浸光感材质，旧系统退回半透明磨砂；二级页面的顶栏随内容上滑收起、下滑展开，顶栏右侧的操作统一为沉浸光感按钮（文字操作为胶囊、图标操作为圆钮）。
 - 自定义主题分享 Beta（会员专享）：导出、分享或导入 `.qytheme`，包含配色、部件选择、阅读排版和用户素材；导入前预览内容，未获得的内置主题部件回退到默认样式。
 - 「我的」页右上角可切换显示模式；页眉与页脚分别设置字号、不透明度、颜色和左右收缩，段首缩进支持 0–4 字符。
 - 「我的 → 帮助」可离线查看随应用打包的使用说明书。
@@ -252,8 +254,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.4.939` |
-| `versionCode` / `buildVersion` | `4040939` |
+| `versionName` | `4.4.940` |
+| `versionCode` / `buildVersion` | `4040940` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`CAMERA`（仅在用户启用眼动翻页时请求） |
 
@@ -392,6 +394,17 @@ for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-
 | `book-source-return-viewport-check` / `reader-toc-search-check` | 编辑书源后返回保留列表位置；目录搜索、选择、倒序与分页。 |
 | `reader-auto-scroll-check` / `reader-comic-animation-check` / `reader-tts-panel-text-check` | 小说自动滚动的计时、保存、生命周期、与朗读互斥和跨章；漫画翻页动画与截图失败回退；朗读面板文本的引号、段落、空格与长段跟随。 |
 | `category-swipe-pager-check` | 搜索与发现分类左右滑动：页面标识、聚合、预览、有界缓存与共用的标题收起状态。 |
+| `audio-offline-policy-check` / `audio-url-resolver-check` | 有声书离线下载：m3u8 解析与码率选择、AES IV 等策略；播放与下载共用的音频地址解析。 |
+| `reader-cache-integration-check` / `reader-chapter-preload-check` / `comic-processing-check` | 离线缓存的迁移、保护与续传；章节预加载与图片标记落地；漫画并发处理、失败、可见性与过期结果。 |
+| `reader-quick-jump-check` / `reader-screen-scroll-check` / `reader-scroll-gesture-check` / `reader-double-flat-fold-check` | 快速跳转的预览与确认；条漫点击翻屏的滚动曲线；小说与漫画共用的拖动、甩动与章节边界；双页平面折页。 |
+| `reader-keyboard-check` / `reader-selection-copy-check` / `reader-color-picker-check` | 阅读页键盘快捷键；长按选字开关；取色器的透明度保留。 |
+| `reader-font-metadata-check` / `reader-font-weight-input-check` / `select-font-check` | 字体元数据与可变字体；字重数值输入；各处字体下拉框的冷启动、切换与回退。 |
+| `reader-tts-boundary-check` / `reader-tts-error-recovery-check` / `tts-voice-management-check` | 朗读的分段边界与播放提示；出错恢复与音色切换；音色管理的保护、持久化与搜索。 |
+| `video-playback-fallback-check` / `web-verification-check` / `source-followup-diagnostics-check` | 视频播放的地址校验、续播与重试；网页验证的宿主恢复、取消与时限；书源后续请求诊断的脱敏与耗时。 |
+| `reading-progress-check` / `reading-stats-check` / `reading-stats-poster-check` / `reading-stats-scheduling-check` | 阅读进度；阅读统计的汇总、迁移、海报与调度。 |
+| `home-motion-check` / `bookshelf-category-motion-check` / `bookshelf-recent-carousel-check` / `bookshelf-cover-badges-check` / `explore-category-selection-check` / `desktop-titlebar-check` | 首页页签与书架分类动效；最近阅读轮播；封面角标设置；发现分类选择；电脑窗口标题栏。 |
+| `result-cover-ready-check` / `result-cover-stability-check` | 搜索与发现结果封面的就绪判断与稳定显示。 |
+| `cloud-download-queue-check` / `custom-font-cloud-download-check` / `comic-color-model-download-check` / `sync-device-identity-check` | 云空间下载队列；云端字体下载；着色模型的下载与续传；同步设备标识。 |
 | `audio-rule-support-check` | 有声书规则辅助：`sourceRegex`（Java 方言、字面量、响应体捕获组）、地址携带的请求头、跨站请求头收敛、`@webjs:` 识别。 |
 
 这些脚本用于代码回归，不能替代授权审查、安全审计或法律意见。
