@@ -131,7 +131,8 @@ export class ImmersiveMaterialRuntime {
   static readonly POPUP_MENU_RADIUS: number = 18;
   static readonly POPUP_MENU_PADDING: number = 4;
   private static resolved: boolean = false;
-  private static resolvedType: hdsMaterial.MaterialType = hdsMaterial.MaterialType.ADAPTIVE;
+  // 旧系统可能没有 hdsMaterial，禁止在模块静态初始化时访问其枚举。
+  private static resolvedType: hdsMaterial.MaterialType | null = null;
   private static hdsMaterialSupported: boolean | null = null;
   private static immersiveSupported: boolean | null = null;
 
@@ -179,7 +180,9 @@ export class ImmersiveMaterialRuntime {
 
   static materialType(): hdsMaterial.MaterialType {
     if (!ImmersiveMaterialRuntime.supportsHdsMaterial()) return hdsMaterial.MaterialType.NONE;
-    if (ImmersiveMaterialRuntime.resolved) return ImmersiveMaterialRuntime.resolvedType;
+    if (ImmersiveMaterialRuntime.resolved && ImmersiveMaterialRuntime.resolvedType !== null) {
+      return ImmersiveMaterialRuntime.resolvedType;
+    }
     ImmersiveMaterialRuntime.resolved = true;
     try {
       const supportedTypes: Array<hdsMaterial.MaterialType> = hdsMaterial.getSystemMaterialTypes();

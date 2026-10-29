@@ -9,7 +9,7 @@ const read = file => fs.readFileSync(new URL(file, root), 'utf8');
 const compile = source => stripTypeScriptTypes(source.replace(/^import .*;\r?\n/gm, '')
   .replace(/^export /gm, ''), { mode: 'strip' });
 
-function harness(api = 26, supported = true) {
+function harness(api = 26, supported = true, missingHds = false) {
   const state = { level: 'adaptive', dark: false, opened: [], closed: [], nativeMaterials: 0 };
   const empty = Object.freeze({ empty: true });
   const sandbox = vm.createContext({
@@ -22,7 +22,7 @@ function harness(api = 26, supported = true) {
       ImmersiveStyle: { ULTRA_THIN: 'thin', REGULAR: 'regular', THICK: 'thick' },
       ImmersiveMaterial: class { constructor(options) { state.nativeMaterials++; Object.assign(this, options); } }
     },
-    hdsMaterial: {
+    hdsMaterial: missingHds ? undefined : {
       getSystemMaterialTypes: () => ['immersive'],
       MaterialType: { IMMERSIVE: 'immersive', NONE: 'none', ADAPTIVE: 'adaptive' },
       MaterialLevel: { EXQUISITE: 'high', GENTLE: 'balanced', SMOOTH: 'weak', ADAPTIVE: 'adaptive' }
@@ -258,4 +258,12 @@ test('select and dialog palettes can follow a dark reader inside a light app', (
  assert.equal(runtime.surfaceColor('adaptive', true, '#11191B1F'), '#80191B1F', 'old alpha cannot weaken a panel');
  assert.equal(runtime.menuSurfaceColor('adaptive', true, '#11191B1F'), '#73191B1F', 'menus replace old alpha');
  assert.equal(runtime.surfaceColor('weak', true, '#11191B1F'), '#191B1F');
+});
+
+
+test('API 20 can load material runtime without HDS namespace', () => {
+  const { ImmersiveMaterialRuntime: runtime } = harness(20, false, true);
+  assert.equal(runtime.supportsHdsTabs(), false);
+  assert.equal(runtime.supportsHdsMaterial(), false);
+  assert.equal(runtime.supportsHds(), false);
 });
