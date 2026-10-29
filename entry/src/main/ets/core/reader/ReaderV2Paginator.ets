@@ -504,7 +504,8 @@ export class ReaderV2Paginator {
         let countPadding = 0;
         if (ReaderCommentBubbleSize.isCount(action.label) && action.bubbleStart > action.displayStart) {
           const paddedLabel = action.label.substring(action.bubbleStart - action.displayStart);
-          const innerWidth = ReaderCommentBubbleSize.countWidth(bubbleFontSize) - bubbleFontSize * 0.36;
+          const innerWidth = ReaderCommentBubbleSize.countWidth(bubbleFontSize, snapshot.commentBubble.styleId) -
+            bubbleFontSize * 0.36;
           let naturalWidth = ReaderV2Paginator.commentTextWidth(base, paddedLabel, snapshot);
           if (naturalWidth > innerWidth) {
             base.fontSize *= innerWidth / naturalWidth;

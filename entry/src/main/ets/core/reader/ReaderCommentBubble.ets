@@ -113,8 +113,8 @@ export class ReaderCommentBubbleStyles {
     style.ornamentColor = colors[3];
     style.ornamentAltColor = colors[4];
     if (id === 'capsule') {
-      // Keep the saved style ID and use full pill corners for default comments.
-      style.radiusRatio = 0.5;
+      // A rounded rectangle with slightly flat sides rather than a full pill, like a hand-drawn speech bubble.
+      style.radiusRatio = 0.4;
       // Alpha blends the reader's ink with any page colour or image.
       const ink = ReaderV2Color.parse(readerTextColor, dark ? 0xFFE1E1E1 : 0xFF262626);
       const alpha = Math.round(((ink >>> 24) & 0xFF) * (dark ? 0.55 : 0.45));
@@ -148,7 +148,7 @@ export class ReaderCommentBubblePainter {
 
   /** Distance from the bubble body's bottom to the tail tip, shared by painting and alignment. */
   static tailHeightFor(bodyHeight: number, style: ReaderCommentBubbleStyle): number {
-    return bodyHeight * (style.ornament === 'folio' ? 0.26 : (style.styleId === 'capsule' ? 0.18 : 0.3));
+    return bodyHeight * (style.ornament === 'folio' ? 0.26 : (style.styleId === 'capsule' ? 0.13 : 0.3));
   }
 
   /** Room ornaments and the tail may use outside the bubble rect, as a fraction of its height. */
@@ -166,7 +166,7 @@ export class ReaderCommentBubblePainter {
 
     if (((style.stroke >>> 24) & 0xFF) > 0) {
       const pen = ReaderCommentBubblePainter.pen(style.stroke,
-        Math.max(1, h * (style.ornament === 'folio' ? 0.045 : (style.styleId === 'capsule' ? 0.055 : 0.07))));
+        Math.max(1, h * (style.ornament === 'folio' ? 0.045 : (style.styleId === 'capsule' ? 0.065 : 0.07))));
       canvas.attachPen(pen);
       canvas.drawPath(body);
       canvas.detachPen();
@@ -194,7 +194,7 @@ export class ReaderCommentBubblePainter {
       const textHeight = paragraph.getHeight();
       const h = ReaderCommentBubblePainter.heightFor(fontSizePx);
       const padX = fontSizePx * 0.42;
-      const w = ReaderCommentBubbleSize.isCount(label) ? ReaderCommentBubbleSize.countWidth(fontSizePx) :
+      const w = ReaderCommentBubbleSize.isCount(label) ? ReaderCommentBubbleSize.countWidth(fontSizePx, style.styleId) :
         Math.max(h, textWidth + padX * 2);
       const margin = Math.ceil(h * ReaderCommentBubblePainter.OVERHANG_RATIO);
       const width = Math.ceil(w + margin * 2);
@@ -250,9 +250,22 @@ export class ReaderCommentBubblePainter {
     } else {
       const wanted = style.radiusPx >= 0 ? style.radiusPx : h * style.radiusRatio;
       const r = Math.max(0, Math.min(wanted, h / 2, w / 2));
-      body.addRoundRect(new drawing.RoundRect({ left: left, top: top, right: right, bottom: bottom }, r, r));
+      // The default capsule's corners are taller than wide, so its sides keep curving like a speech bubble.
+      const ry = style.styleId === 'capsule' ? h / 2 : r;
+      body.addRoundRect(new drawing.RoundRect({ left: left, top: top, right: right, bottom: bottom }, r, ry));
     }
-    if (tail) {
+    if (tail && style.styleId === 'capsule') {
+      // The tail grows out of the bottom-left corner: a steep outer edge leaves the corner arc and a concave inner
+      // edge flattens back into the bottom line.
+      const tailBottom = bottom + ReaderCommentBubblePainter.tailHeightFor(h, style);
+      const tailPath = new drawing.Path();
+      tailPath.moveTo(left + h * 0.13, bottom - h * 0.16);
+      tailPath.lineTo(left + h * 0.25, tailBottom);
+      tailPath.quadTo(left + h * 0.34, bottom + h * 0.01, left + h * 0.54, bottom - h * 0.02);
+      tailPath.lineTo(left + h * 0.54, bottom - h * 0.3);
+      tailPath.close();
+      body.op(tailPath, drawing.PathOp.UNION);
+    } else if (tail) {
       // The tail's base sits inside the body and the two are merged, so the outline runs around both as one shape.
       const baseLeft = left + Math.min(w * 0.34, h * 0.42);
       const tailBottom = bottom + ReaderCommentBubblePainter.tailHeightFor(h, style);

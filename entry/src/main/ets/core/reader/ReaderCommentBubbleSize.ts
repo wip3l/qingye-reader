@@ -21,8 +21,11 @@ export class ReaderCommentBubbleSize {
     return baseFontSize * (ReaderCommentBubbleSize.isCount(label) ? 0.8 : 1);
   }
 
-  /** Counts are capped at 99+ by the document parser; reserve the same body width for every count. */
-  static countWidth(baseFontSize: number): number {
-    return baseFontSize * 2.4;
+  /**
+   * Counts are capped at 99+ by the document parser; reserve the same body width for every count. The default
+   * capsule is a squarer speech bubble (about 1.5:1 against heightFor's 1.32 em).
+   */
+  static countWidth(baseFontSize: number, styleId: string = ''): number {
+    return baseFontSize * (styleId === 'capsule' ? 2.0 : 2.4);
   }
 }

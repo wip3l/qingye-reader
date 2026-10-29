@@ -53,7 +53,7 @@ for (const dark of [false, true]) {
   const compatible=reader.readerCommentBubbleStyle();
   assert.equal(compatible.identity(),native.identity(),'source defaults must not override the default outline');
   assert.equal(compatible.fill,0);
-  assert.equal(compatible.radiusRatio,0.5);
+  assert.equal(compatible.radiusRatio,0.4);
   assert.equal(compatible.radiusPx,-1);
   assert.equal(compatible.text,compatible.stroke);
 }

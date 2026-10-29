@@ -234,7 +234,7 @@ assert.equal(context.stroke.outlineStyle({ baselineShift: -4 }).baselineShift, -
 // Use native glyph-box fixtures to verify bubble geometry and hit areas track the scaled label.
 context.graphicsText.RectWidthStyle = { TIGHT: 0 };
 context.graphicsText.RectHeightStyle = { TIGHT: 0, MAX: 1 };
-for (const [styleId, ornament, tailRatio] of [['capsule', '', 0.18], ['classic-glass', 'sparkle', 0.3],
+for (const [styleId, ornament, tailRatio] of [['capsule', '', 0.13], ['classic-glass', 'sparkle', 0.3],
   ['gilded-orbit', 'folio', 0.26]]) {
 for (const label of ['123', ' 本章说 ']) {
   for (const size of [10, 80, 100, 200]) {
