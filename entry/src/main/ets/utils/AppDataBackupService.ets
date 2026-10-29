@@ -42,6 +42,8 @@ export class AppDataBackupManifest {
   sourceFilesDir: string = '';
   categories: string[] = [];
   sources: BookSource[] = [];
+  /** 书源地址到加入时间；书源对象本身不带这个字段。 */
+  sourceAddedTimes: Record<string, number> = {};
   books: Book[] = [];
   bookGroups: BookGroup[] = [];
   progress: BookProgressBackup[] = [];
@@ -199,6 +201,10 @@ export class AppDataBackupService {
       manifest.categories.push(AppDataBackupService.CATEGORY_SOURCES);
       manifest.sources = (await db.getAllBookSources()).map((source: BookSource): BookSource =>
         AppDataBackupService.sanitizeBookSource(source));
+      const addedTimes = await db.getBookSourceAddedTimes();
+      addedTimes.forEach((time: number, url: string) => {
+        if (time > 0) manifest.sourceAddedTimes[url] = time;
+      });
       manifest.sourceGroupPreferences = await AppDataBackupService.readPreferenceStore(context, 'book_source_groups');
     }
 
@@ -470,6 +476,7 @@ export class AppDataBackupService {
         await db.restoreBookSource(raw);
         result.sources++;
       }
+      await db.restoreBookSourceAddedTimes(manifest.sourceAddedTimes || {});
       if (manifest.sourceGroupPreferences) {
         await AppDataBackupService.restorePreferenceStore(context, 'book_source_groups',
           manifest.sourceGroupPreferences, manifest.sourceFilesDir);

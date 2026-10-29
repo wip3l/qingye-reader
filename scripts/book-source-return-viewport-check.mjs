@@ -26,7 +26,8 @@ function harness({ initial = rows, updated = initial, lanes = 1, fail = false } 
       if (fail) throw new Error('read failure');
       return updated.map(row => ({ ...row }));
     },
-    async getBottomBookSourceUrls() { return []; }
+    async getBottomBookSourceUrls() { return []; },
+    async getBookSourceAddedTimes() { return new Map(); }
   };
   const context = vm.createContext({
     console: { error() {} }, getContext() { return {}; },
@@ -38,7 +39,7 @@ function harness({ initial = rows, updated = initial, lanes = 1, fail = false } 
   });
   vm.runInContext(stripTypeScriptTypes(`globalThis.page = {
     ${['onPageShow', 'onPageHide', 'refreshSources', 'loadSources', 'applySourceFilters',
-      'sortFilteredSources', 'openActionSourceEdit'].map(method).join(',\n')}
+      'sortFilteredSources', 'activeSourceSortMode', 'openActionSourceEdit'].map(method).join(',\n')}
   };`, { mode: 'strip' }), context);
   const p = context.page;
   Object.assign(p, {

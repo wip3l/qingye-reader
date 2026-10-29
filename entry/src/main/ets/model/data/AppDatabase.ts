@@ -132,7 +132,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   cacheDatabaseName(): string { return this.openedDatabaseName; }
   cacheDatabaseDirectory(): string { return this.databaseDirectory; }
   private readonly DATABASE_NAME = 'legado.db';
-  private readonly SCHEMA_VERSION = 24;
+  private readonly SCHEMA_VERSION = 25;
 
   private constructor() {}
 
@@ -267,6 +267,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         eventListener INTEGER DEFAULT 0,
         isPinned INTEGER DEFAULT 0,
         isBottom INTEGER DEFAULT 0,
+        addedTime INTEGER DEFAULT 0,
         enabled INTEGER DEFAULT 1,
         enabledExplore INTEGER DEFAULT 1,
         isLocked INTEGER DEFAULT 0,
@@ -402,6 +403,9 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       }
       if (schemaVersion < 23) {
         await this.migrateReadStatsSync();
+      }
+      if (schemaVersion < 25) {
+        await this.backfillBookSourceAddedTime();
       }
       await this.setSchemaVersion(this.SCHEMA_VERSION);
     }
@@ -565,6 +569,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       { table: 'book_sources', column: 'isLocked', definition: 'isLocked INTEGER DEFAULT 0' },
       { table: 'book_sources', column: 'isPinned', definition: 'isPinned INTEGER DEFAULT 0' },
       { table: 'book_sources', column: 'isBottom', definition: 'isBottom INTEGER DEFAULT 0' },
+      { table: 'book_sources', column: 'addedTime', definition: 'addedTime INTEGER DEFAULT 0' },
       { table: 'book_sources', column: 'validationStatus', definition: 'validationStatus INTEGER DEFAULT 0' },
       { table: 'book_chapters', column: 'variable', definition: "variable TEXT DEFAULT ''" },
       // 升级前的正文分不出是阅读时顺带缓存的还是手动缓存的，一律按手动缓存保留，不参与自动清理。
@@ -599,6 +604,16 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     } catch (e) {
       console.error(`数据库迁移失败: ${migration.table}.${migration.column}`, e);
       throw e;
+    }
+  }
+
+  /** 旧版新书源总是追加到末尾，用原排序号推出大致的加入先后；这些值都远小于真实时间戳，排在之后新加的书源后面。 */
+  private async backfillBookSourceAddedTime(): Promise<void> {
+    if (!this.store) return;
+    try {
+      await this.store.executeSql('UPDATE book_sources SET addedTime = customOrder + 1 WHERE addedTime <= 0');
+    } catch (e) {
+      console.warn('补齐书源加入时间失败:', e);
     }
   }
 
@@ -1537,7 +1552,11 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     return resultSet.getLong(index);
   }
 
-  async insertBookSource(source: BookSource): Promise<boolean> {
+  /**
+   * 新书源排在非置顶书源最前面。reservedOrder 由 reserveTopBookSourceOrders 预留，
+   * 批量导入时用它保持文件内顺序；不传时单独为这一个书源腾出最前的位置。
+   */
+  async insertBookSource(source: BookSource, reservedOrder: number = -1): Promise<boolean> {
     if (!this.store) return false;
     const bucket: relationalStore.ValuesBucket = {
       bookSourceUrl: source.bookSourceUrl,
@@ -1611,18 +1630,12 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       await this.store.update(bucket, predicates);
     } else {
       resultSet.close();
-      // 新书源追加到现有顺序末尾，避免默认值 0 把它插到列表顶部。
-      const maxOrderResult = await this.store.querySql('SELECT MAX(customOrder) AS maxOrder FROM book_sources');
-      let maxOrder = -1;
-      try {
-        if (maxOrderResult.goToFirstRow()) {
-          maxOrder = this.getLongColumn(maxOrderResult, 'maxOrder', -1);
-        }
-      } finally {
-        maxOrderResult.close();
+      if (reservedOrder < 0) {
+        await this.store.executeSql('UPDATE book_sources SET customOrder = customOrder + 1');
       }
-      source.customOrder = Math.max(0, maxOrder + 1);
+      source.customOrder = Math.max(0, reservedOrder);
       bucket['customOrder'] = source.customOrder;
+      bucket['addedTime'] = Date.now();
       await this.store.insert('book_sources', bucket);
     }
     CloudSyncChangeTracker.markBookSourceChanged();
@@ -1807,9 +1820,72 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     if (exists) {
       await this.store.update(bucket, predicates);
     } else {
+      bucket['addedTime'] = Date.now();
       await this.store.insert('book_sources', bucket);
     }
     CloudSyncChangeTracker.markBookSourceChanged();
+  }
+
+  /**
+   * 为一批即将导入的书源预留最前面的排序号：只给库里还没有的地址分配，
+   * 已有书源整体后移一次，返回地址到排序号的映射（按传入顺序从 0 开始）。
+   */
+  async reserveTopBookSourceOrders(bookSourceUrls: string[]): Promise<Map<string, number>> {
+    const orders = new Map<string, number>();
+    if (!this.store || bookSourceUrls.length === 0) return orders;
+    const existing = new Set<string>();
+    const resultSet = await this.store.querySql('SELECT bookSourceUrl FROM book_sources');
+    try {
+      while (resultSet.goToNextRow()) {
+        existing.add(resultSet.getString(resultSet.getColumnIndex('bookSourceUrl')));
+      }
+    } finally {
+      resultSet.close();
+    }
+    for (const url of bookSourceUrls) {
+      if (url && !existing.has(url) && !orders.has(url)) orders.set(url, orders.size);
+    }
+    if (orders.size > 0) {
+      await this.store.executeSql(`UPDATE book_sources SET customOrder = customOrder + ${orders.size}`);
+    }
+    return orders;
+  }
+
+  /** 加入时间只在主应用库里记录，不进入书源定义和云同步。 */
+  async getBookSourceAddedTimes(): Promise<Map<string, number>> {
+    const times = new Map<string, number>();
+    if (!this.store) return times;
+    const resultSet = await this.store.querySql('SELECT bookSourceUrl, addedTime FROM book_sources');
+    try {
+      while (resultSet.goToNextRow()) {
+        times.set(resultSet.getString(resultSet.getColumnIndex('bookSourceUrl')),
+          this.getLongColumn(resultSet, 'addedTime'));
+      }
+    } finally {
+      resultSet.close();
+    }
+    return times;
+  }
+
+  /** 恢复备份时写回原来的加入时间。 */
+  async restoreBookSourceAddedTimes(times: Record<string, number>): Promise<void> {
+    if (!this.store) return;
+    const urls = Object.keys(times);
+    if (urls.length === 0) return;
+    const transaction = await this.store.createTransaction();
+    try {
+      for (const url of urls) {
+        const time = Math.floor(Number(times[url]) || 0);
+        if (!url || time <= 0) continue;
+        const predicates = new relationalStore.RdbPredicates('book_sources');
+        predicates.equalTo('bookSourceUrl', url);
+        await transaction.update({ addedTime: time }, predicates);
+      }
+      await transaction.commit();
+    } catch (e) {
+      await transaction.rollback();
+      throw e;
+    }
   }
 
   /** 列表只读取轻量字段；规则详情在实际使用时再按主键加载。 */

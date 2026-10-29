@@ -44,6 +44,19 @@ function harness(initial) {
         async rollback() {}
       };
     },
+    async querySql() {
+      let index = -1;
+      return {
+        goToNextRow: () => ++index < rows.length,
+        getColumnIndex: name => name,
+        getString: key => rows[index][key],
+        close() {}
+      };
+    },
+    async executeSql(sql) {
+      const shift = /customOrder = customOrder \+ (\d+)/.exec(sql);
+      if (shift) for (const row of rows) row.customOrder += Number(shift[1]);
+    },
     async query(predicates) {
       const found = rows.filter(row => predicates.matches(row));
       let index = -1;
@@ -66,11 +79,13 @@ function harness(initial) {
   vm.runInContext(compile(`
     globalThis.db = {
       ${method(database, 'updateBookSourceOrders')},
-      ${method(database, 'getBottomBookSourceUrls')}
+      ${method(database, 'getBottomBookSourceUrls')},
+      ${method(database, 'reserveTopBookSourceOrders')}
     };
     globalThis.AppDatabase = { getInstance: () => db };
     globalThis.page = {
-      ${['isSourceAtBottom', 'actionSourceAtBottom', 'sortFilteredSources',
+      ${['isSourceAtBottom', 'actionSourceAtBottom', 'sortFilteredSources', 'activeSourceSortMode',
+        'sourceDragEnabled', 'selectSourceSortMode', 'selectSourceSortDirection',
         'toggleActionSourceBottom', 'toggleActionSourcePinned', 'moveVisibleSourceTo',
         'applyAndPersistSourceOrder', 'copyBookSourceRuntime'].map(name => method(page, name)).join(',\n')}
     };
@@ -78,7 +93,8 @@ function harness(initial) {
   const p = context.page;
   context.db.store = store;
   Object.assign(p, {
-    isBatchOperating: false, sourceOrderSaving: false, sourceSortMode: 'custom',
+    isBatchOperating: false, sourceOrderSaving: false, sourceSortMode: 'custom', sourceSortAscending: false,
+    sourceAddedTimes: new Map(), selectionMode: false, showSourceSortMenu: false,
     sourceFirstVisibleIndex: 0, sourceVisibleItemCount: 1, draggingSourceUrl: '',
     actionSource() { return this.allSources.find(source => source.bookSourceUrl === this.actionSourceUrl); },
     closeSourceActions() { this.actionSourceUrl = ''; },
@@ -94,7 +110,8 @@ function harness(initial) {
     p.applySourceFilters();
   }
   return {
-    p, reload, toasts,
+    p, reload, toasts, db: context.db,
+    addRow: row => { rows.push({ ...row }); },
     rows: () => JSON.parse(JSON.stringify(rows)),
     fail: () => { failWrite = true; },
     async action(url, name = 'toggleActionSourceBottom') {
@@ -111,6 +128,7 @@ for (const initial of [[seed('Only', 0)], [seed('Z', 0), seed('A', 1)]]) {
   await h.reload();
   assert(h.p.allSources.every(source => !h.p.isSourceAtBottom(source)));
   h.p.sourceSortMode = 'name';
+  h.p.sourceSortAscending = true;
   h.p.applySourceFilters();
   assert.deepEqual(h.urls(), initial.map(row => row.bookSourceUrl).sort());
 }
@@ -123,13 +141,16 @@ assert.equal(h.rows().find(row => row.bookSourceUrl === 'A').isBottom, 1);
 await h.reload(); // Reopening the page retains explicit state.
 h.p.actionSourceUrl = 'A';
 assert.equal(h.p.actionSourceAtBottom(), true);
-for (const mode of ['custom', 'name', 'oldest', 'latest']) {
+for (const [mode, ascending] of [['custom', false], ['name', true], ['name', false], ['added', true],
+  ['added', false], ['updated', true], ['updated', false]]) {
   h.p.sourceSortMode = mode;
+  h.p.sourceSortAscending = ascending;
   h.p.applySourceFilters();
   assert.equal(h.urls()[0], 'Pinned');
   assert.equal(h.urls().at(-1), 'A');
 }
 h.p.sourceSortMode = 'custom';
+h.p.applySourceFilters();
 await h.action('B');
 assert.deepEqual(h.urls(), ['Pinned', 'C', 'A', 'B']);
 await h.p.moveVisibleSourceTo(3, 2); // Reordering within the bottom group preserves both flags.
@@ -174,6 +195,40 @@ for (const bottom of [0, 1]) {
   assert.equal(broken.p.isSourceAtBottom(broken.p.allSources[0]), bottom === 1);
   assert.equal(broken.p.sourceOrderSaving, false);
   assert.equal(broken.toasts.at(-1), '保存排序失败');
+}
+
+// Sorting by date added uses the stored times both ways; ties keep the custom (import) order.
+{
+  const sorted = harness([seed('Old', 3), seed('BatchA', 0), seed('BatchB', 1), seed('Mid', 2)]);
+  await sorted.reload();
+  sorted.p.sourceAddedTimes = new Map([['Old', 1], ['BatchA', 500], ['BatchB', 500], ['Mid', 200]]);
+  sorted.p.selectSourceSortMode('added');
+  assert.equal(sorted.p.sourceSortAscending, false, 'date added defaults to newest first');
+  sorted.p.applySourceFilters();
+  assert.deepEqual(sorted.urls(), ['BatchA', 'BatchB', 'Mid', 'Old']);
+  sorted.p.selectSourceSortDirection(true);
+  sorted.p.applySourceFilters();
+  assert.deepEqual(sorted.urls(), ['Old', 'Mid', 'BatchA', 'BatchB']);
+  sorted.p.selectSourceSortMode('name');
+  assert.equal(sorted.p.sourceSortAscending, true, 'name defaults to A to Z');
+  assert.equal(sorted.p.sourceDragEnabled(), false);
+  sorted.p.sourceSortMode = 'latest'; // Unknown stored values fall back to custom order.
+  assert.equal(sorted.p.activeSourceSortMode(), 'custom');
+  assert.equal(sorted.p.sourceDragEnabled(), true);
+}
+
+// New sources take the first custom slots after pinned ones, in import order; existing ones keep theirs.
+{
+  const top = harness([seed('Pinned', 0, { isPinned: 1 }), seed('A', 1), seed('B', 2)]);
+  const reserved = await top.db.reserveTopBookSourceOrders(['New1', 'A', 'New2', 'New1']);
+  assert.equal(JSON.stringify([...reserved.entries()]), JSON.stringify([['New1', 0], ['New2', 1]]));
+  assert.deepEqual(top.rows().map(row => row.customOrder), [2, 3, 4]);
+  top.addRow(seed('New1', reserved.get('New1')));
+  top.addRow(seed('New2', reserved.get('New2')));
+  await top.reload();
+  assert.deepEqual(top.urls(), ['Pinned', 'New1', 'New2', 'A', 'B']);
+  assert.equal((await top.db.reserveTopBookSourceOrders(['A', 'B'])).size, 0);
+  assert.deepEqual(top.rows().map(row => row.customOrder), [2, 3, 4, 0, 1], 'updates only must not shift');
 }
 
 // The menu must expose the inverse action for persisted explicit state.

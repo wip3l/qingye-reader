@@ -27,7 +27,7 @@ function harness(t, nestedTarget = false) {
     fs.mkdirSync(filesDir, { recursive: true });
     fs.mkdirSync(tempDir, { recursive: true });
     const context = { filesDir, tempDir };
-    states.set(filesDir, { prefs: new Map(), books: new Map(), sources: [], groups: [], bookmarks: [], keywords: [] });
+    states.set(filesDir, { prefs: new Map(), books: new Map(), sources: [], addedTimes: new Map(), groups: [], bookmarks: [], keywords: [] });
     return context;
   };
   const source = makeDevice('source');
@@ -45,6 +45,10 @@ function harness(t, nestedTarget = false) {
     restoreBook: async book => active.books.set(book.bookUrl, book),
     updateBook: async book => active.books.set(book.bookUrl, book),
     restoreBookSource: async value => active.sources.push(plain(value)),
+    getBookSourceAddedTimes: async () => new Map(active.addedTimes),
+    restoreBookSourceAddedTimes: async times => {
+      for (const [url, time] of Object.entries(times)) active.addedTimes.set(url, time);
+    },
     restoreBookGroup: async value => active.groups.push(plain(value)),
     restoreBookmark: async value => active.bookmarks.push(plain(value)),
     restoreSearchKeyword: async value => active.keywords.push(plain(value))
@@ -185,6 +189,7 @@ test('full export/import preserves themes, OPDS, fonts, books and reports missin
   h.to.prefs.set('opds_secrets', { password: 'target-secret' });
   h.to.prefs.set('reader_settings', { readerFontMode: 'device', readerCustomFontsRaw: '' });
   h.from.sources = [{ bookSourceUrl: 'https://source.example', loginHeader: 'secret', loginInfo: 'secret' }];
+  h.from.addedTimes.set('https://source.example', 1700000000000);
   h.from.groups = [{ groupId: 1, groupName: '收藏' }];
   h.addBook('https://books.example/1', '网络书');
   const localPath = h.write(h.source, 'local_books/1.txt', '本地书正文');
@@ -207,6 +212,7 @@ test('full export/import preserves themes, OPDS, fonts, books and reports missin
   assert.equal(session.encrypted, true);
   const result = await h.service.importBackup(h.target, session, selected);
   assert.equal(result.localBooks, 1);
+  assert.equal(h.to.addedTimes.get('https://source.example'), 1700000000000);
   assert.equal(result.books, 1);
   assert.equal(result.bookmarks, 1);
   assert.equal(result.progress, 2);

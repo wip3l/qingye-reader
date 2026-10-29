@@ -90,6 +90,7 @@ class BookSourceImportParseResult {
 // 头部里类型分段和兼容书源提示条的高度，列表顶部避让按它们计算。
 const SOURCE_FORMAT_BAR_HEIGHT: number = 44;
 const SOURCE_FORMAT_BAR_PADDING: number = 6;
+const SOURCE_SORT_BUTTON_SIZE: number = 32;
 const SOURCE_FORMAT_INDICATOR_WIDTH: number = 18;
 const COMPAT_SOURCE_NOTICE_HEIGHT: number = 44;
 const SOURCE_SEARCH_ROW_HEIGHT: number = 40 + AppSpacing.MD * 2;
@@ -151,7 +152,11 @@ struct BookSourcePage {
   @State sourceExploreEnabledFilter: string = 'all';
   @State sourceLoginFilter: string = 'all';
   @State sourceValidationFilter: string = 'all';
-  @State sourceSortMode: string = 'custom';
+  // 排序方式：custom 自定义拖动，added 加入时间，name 名称，updated 更新时间。
+  @StorageLink('bookSourceSortMode') @Watch('applySourceFilters') sourceSortMode: string = 'custom';
+  @StorageLink('bookSourceSortAscending') @Watch('applySourceFilters') sourceSortAscending: boolean = false;
+  @State showSourceSortMenu: boolean = false;
+  private sourceAddedTimes: Map<string, number> = new Map<string, number>();
   @State bottomSourceUrls: string[] = [];
   @State showAddDialog: boolean = false;
   @State @Watch('syncImportUrlDialog') showImportUrlDialog: boolean = false;
@@ -365,6 +370,7 @@ struct BookSourcePage {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
       this.allSources = await db.getBookSourceSummaries();
+      this.sourceAddedTimes = await db.getBookSourceAddedTimes();
       this.bottomSourceUrls = await db.getBottomBookSourceUrls();
       this.sourceGroups = await BookSourceGroupStore.load(getContext(this), this.sourceGroupsFromSources());
       this.ensureActiveSourceGroup();
@@ -533,7 +539,7 @@ struct BookSourcePage {
                     this.sourceSelectionSafeArea(source)
                   }
 
-                  if (!this.selectionMode) {
+                  if (this.sourceDragEnabled()) {
                     Stack({ alignContent: Alignment.Center }) {
                       Text('☰')
                         .fontSize(AppFontSize.SUBTITLE)
@@ -615,6 +621,10 @@ struct BookSourcePage {
               this.sourceVisibleItemCount = Math.max(1, end - start + 1);
             })
             .onItemDragStart((_event: ItemDragInfo, itemIndex: number) => {
+              if (!this.sourceDragEnabled()) {
+                this.draggingSourceUrl = '';
+                return undefined;
+              }
               const sourceIndex = itemIndex - this.sourceListLaneCount();
               this.draggingSourceUrl = !this.selectionMode && sourceIndex >= 0 &&
                 sourceIndex < this.visibleSources.length ? this.visibleSources[sourceIndex].bookSourceUrl : '';
@@ -1493,7 +1503,6 @@ struct BookSourcePage {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      this.sourceSortFilterRow()
       this.sourceFilterRow('书源状态', 'enabled', '已启用', '未启用')
       this.sourceValidationFilterRow()
       this.sourceFilterRow('发现页面', 'explorePage', '有发现页', '无发现页')
@@ -1523,42 +1532,6 @@ struct BookSourcePage {
     .padding(AppSpacing.XXL)
   }
 
-
-  @Builder
-  sourceSortFilterRow() {
-    Row({ space: AppSpacing.MD }) {
-      Text('排序')
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.primaryTextColor())
-        .width(66)
-      Row({ space: AppSpacing.SM }) {
-        this.sourceSortChoice('custom', '默认')
-        this.sourceSortChoice('latest', '最新在前')
-        this.sourceSortChoice('oldest', '最旧在前')
-        this.sourceSortChoice('name', '名称排序')
-      }
-      .layoutWeight(1)
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  sourceSortChoice(value: string, label: string) {
-    Text(label)
-      .fontSize(AppFontSize.CAPTION)
-      .fontColor(this.sourceSortMode === value ? '#FFFFFF' : this.secondaryTextColor())
-      .layoutWeight(1)
-      .height(34)
-      .textAlign(TextAlign.Center)
-      .maxLines(1)
-      .backgroundColor(this.sourceSortMode === value ? this.accentColor() : this.inputColor())
-      .borderRadius(ThemeRuntime.mediumRadius())
-      .onClick(() => {
-        this.sourceSortMode = value;
-        this.applySourceFilters();
-      })
-  }
 
   @Builder
   sourceFilterRow(label: string, filterKey: string, yesLabel: string, noLabel: string) {
@@ -2094,7 +2067,7 @@ struct BookSourcePage {
       if (this.selectionMode) {
         this.sourceSelectionSafeArea(source)
       }
-      if (!this.selectionMode) {
+      if (this.sourceDragEnabled()) {
         Stack({ alignContent: Alignment.Center }) {
           Text('☰')
             .fontSize(AppFontSize.SUBTITLE)
@@ -2628,6 +2601,8 @@ struct BookSourcePage {
             .layoutWeight(1)
             .height('100%')
             .padding({ left: SOURCE_FORMAT_BAR_PADDING, right: SOURCE_FORMAT_BAR_PADDING })
+
+            this.sourceSortButton()
           }
           .width('100%')
           .height('100%')
@@ -2643,6 +2618,111 @@ struct BookSourcePage {
         this.sourceFormatBarWidth = width;
       }
     })
+  }
+
+  @Builder
+  sourceSortButton() {
+    Stack({ alignContent: Alignment.Center }) {
+      SymbolGlyph($r('sys.symbol.sort'))
+        .fontSize(18)
+        .fontColor([this.activeSourceSortMode() === 'custom' ? this.secondaryTextColor() : this.accentColor()])
+    }
+    .width(SOURCE_SORT_BUTTON_SIZE)
+    .height(SOURCE_SORT_BUTTON_SIZE)
+    .margin({ right: (SOURCE_FORMAT_BAR_HEIGHT - SOURCE_SORT_BUTTON_SIZE) / 2 })
+    .borderRadius(SOURCE_SORT_BUTTON_SIZE / 2)
+    .backgroundColor(this.activeSourceSortMode() === 'custom' ? Color.Transparent :
+      `#26${this.accentColor().substring(1)}`)
+    .accessibilityText(`排序：${this.sourceSortSummary()}`)
+    .bindPopup(this.showSourceSortMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+      this.sourceSortMenu()
+    }, Placement.BottomRight, this.appDarkMode, this.accentColor(), () => {
+      this.showSourceSortMenu = false;
+    }))
+    .onClick(() => {
+      this.showSourceGroupToolsMenu = false;
+      this.showSourceSortMenu = !this.showSourceSortMenu;
+    })
+  }
+
+  @Builder
+  sourceSortMenu() {
+    Column() {
+      this.sourceSortMenuCaption('排序方式')
+      ForEach(['custom', 'added', 'name', 'updated'], (mode: string) => {
+        this.sourceSortMenuChoice(this.sourceSortModeLabel(mode), this.activeSourceSortMode() === mode, () => {
+          this.selectSourceSortMode(mode);
+        })
+      }, (mode: string) => mode)
+
+      if (this.activeSourceSortMode() === 'custom') {
+        this.sourceSortMenuHint('长按左侧把手拖动调整顺序；新加入的书源排在置顶书源之后。')
+      } else {
+        Divider()
+          .color(ThemeRuntime.hairlineColor(this.appDarkMode))
+          .margin({ top: AppSpacing.XS, bottom: AppSpacing.XS })
+        this.sourceSortMenuCaption('顺序')
+        // 名称默认 A→Z 在上，时间默认最新在前在上。
+        this.sourceSortMenuChoice(this.sourceSortDirectionLabel(this.activeSourceSortMode() === 'name'),
+          this.sourceSortAscending === (this.activeSourceSortMode() === 'name'), () => {
+            this.selectSourceSortDirection(this.activeSourceSortMode() === 'name');
+          })
+        this.sourceSortMenuChoice(this.sourceSortDirectionLabel(this.activeSourceSortMode() !== 'name'),
+          this.sourceSortAscending === (this.activeSourceSortMode() !== 'name'), () => {
+            this.selectSourceSortDirection(this.activeSourceSortMode() !== 'name');
+          })
+        this.sourceSortMenuHint('置顶书源始终在最前，置底书源始终在最后；此排序下不能拖动。')
+      }
+    }
+    .width(Math.min(260, Math.max(200, this.contextViewportWidth - AppSpacing.XL * 2)))
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+
+  @Builder
+  sourceSortMenuCaption(label: string) {
+    Text(label)
+      .fontSize(AppFontSize.CAPTION)
+      .fontColor(this.subTextColor())
+      .width('100%')
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.XXS })
+  }
+
+  @Builder
+  sourceSortMenuHint(text: string) {
+    Text(text)
+      .fontSize(AppFontSize.CAPTION)
+      .fontColor(this.subTextColor())
+      .width('100%')
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.XS, bottom: AppSpacing.SM })
+  }
+
+  @Builder
+  sourceSortMenuChoice(label: string, selected: boolean, action: () => void) {
+    Row({ space: AppSpacing.MD }) {
+      Text(label)
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontWeight(selected ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(selected ? this.accentColor() : this.primaryTextColor())
+        .maxLines(1)
+        .layoutWeight(1)
+      if (selected) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(16)
+          .fontColor([this.accentColor()])
+      }
+    }
+    .width('100%')
+    .height(44)
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ImmersiveMaterialRuntime.POPUP_MENU_RADIUS - ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+    .accessibilityGroup(true)
+    .accessibilityText(label)
+    .accessibilitySelected(selected)
+    .stateStyles({
+      normal: { .backgroundColor(Color.Transparent) },
+      pressed: { .backgroundColor('#1A808080') }
+    })
+    .onClick(() => action())
   }
 
   sourceGroupLabel(): string {
@@ -3755,7 +3835,6 @@ struct BookSourcePage {
   }
 
   resetSourceFilters(): void {
-    this.sourceSortMode = 'custom';
     this.sourceEnabledFilter = 'all';
     this.sourceExplorePageFilter = 'all';
     this.sourceExploreEnabledFilter = 'all';
@@ -3766,7 +3845,6 @@ struct BookSourcePage {
 
   activeSourceFilterCount(): number {
     let count = 0;
-    if (this.sourceSortMode !== 'custom') count++;
     if (this.sourceEnabledFilter !== 'all') count++;
     if (this.sourceExplorePageFilter !== 'all') count++;
     if (this.sourceExploreEnabledFilter !== 'all') count++;
@@ -3841,14 +3919,62 @@ struct BookSourcePage {
       if (this.isSourceAtBottom(left) !== this.isSourceAtBottom(right)) {
         return this.isSourceAtBottom(left) ? 1 : -1;
       }
-      if (this.sourceSortMode === 'custom') return left.customOrder - right.customOrder;
-      if (this.sourceSortMode === 'name') {
-        return (left.bookSourceName || '').localeCompare(right.bookSourceName || '');
+      const mode = this.activeSourceSortMode();
+      if (mode === 'custom') return left.customOrder - right.customOrder;
+      let diff = 0;
+      if (mode === 'name') {
+        diff = (left.bookSourceName || '').localeCompare(right.bookSourceName || '');
+      } else if (mode === 'added') {
+        diff = (this.sourceAddedTimes.get(left.bookSourceUrl) || 0) -
+          (this.sourceAddedTimes.get(right.bookSourceUrl) || 0);
+      } else {
+        diff = (left.lastUpdateTime || 0) - (right.lastUpdateTime || 0);
       }
-      const timeDiff = (left.lastUpdateTime || 0) - (right.lastUpdateTime || 0);
-      if (timeDiff !== 0) return this.sourceSortMode === 'oldest' ? timeDiff : -timeDiff;
+      if (diff !== 0) return this.sourceSortAscending ? diff : -diff;
+      // 同一批导入的加入时间相同，按自定义顺序保持文件里的先后。
       return left.customOrder - right.customOrder;
     });
+  }
+
+  activeSourceSortMode(): string {
+    const mode = this.sourceSortMode;
+    return mode === 'added' || mode === 'name' || mode === 'updated' ? mode : 'custom';
+  }
+
+  /** 只有自定义排序下拖动结果才对应真实顺序，其他排序拖动会把临时顺序写成自定义顺序。 */
+  sourceDragEnabled(): boolean {
+    return !this.selectionMode && this.activeSourceSortMode() === 'custom';
+  }
+
+  sourceSortModeLabel(mode: string): string {
+    if (mode === 'added') return '加入时间';
+    if (mode === 'name') return '名称';
+    if (mode === 'updated') return '更新时间';
+    return '自定义（拖动）';
+  }
+
+  sourceSortDirectionLabel(ascending: boolean): string {
+    if (this.activeSourceSortMode() === 'name') return ascending ? 'A→Z' : 'Z→A';
+    return ascending ? '最早在前' : '最新在前';
+  }
+
+  sourceSortSummary(): string {
+    const mode = this.activeSourceSortMode();
+    if (mode === 'custom') return '自定义排序';
+    return `按${this.sourceSortModeLabel(mode)}排序，${this.sourceSortDirectionLabel(this.sourceSortAscending)}`;
+  }
+
+  selectSourceSortMode(mode: string): void {
+    this.showSourceSortMenu = false;
+    if (this.activeSourceSortMode() === mode) return;
+    // 时间默认最新在前，名称默认 A→Z。
+    this.sourceSortAscending = mode === 'name';
+    this.sourceSortMode = mode;
+  }
+
+  selectSourceSortDirection(ascending: boolean): void {
+    this.showSourceSortMenu = false;
+    this.sourceSortAscending = ascending;
   }
 
   sourceValidationStatusForFilter(value: string): number {
@@ -6909,10 +7035,15 @@ struct BookSourcePage {
     let lockedCount = 0;
     let lastInsertError = '';
     const storedUrls: string[] = [];
+    // 整批新书源排在置顶书源之后，并保持文件里的先后顺序。
+    const reservedOrders = await db.reserveTopBookSourceOrders(sources
+      .filter((source: BookSource) => !!source.bookSourceUrl && !!source.bookSourceName)
+      .map((source: BookSource) => source.bookSourceUrl));
     for (const source of sources) {
       if (source.bookSourceUrl && source.bookSourceName) {
         try {
-          const stored = await db.insertBookSource(source);
+          const reservedOrder = reservedOrders.get(source.bookSourceUrl);
+          const stored = await db.insertBookSource(source, reservedOrder === undefined ? -1 : reservedOrder);
           if (stored) {
             storedUrls.push(source.bookSourceUrl);
             if (!await this.verifyImportedBookSource(db, source)) {
