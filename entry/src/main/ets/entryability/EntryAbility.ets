@@ -44,6 +44,8 @@ import { readStatsTracker } from '../core/stats/ReadStatsTracker';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { ReaderCacheBudget } from '../core/book/ReaderCacheBudget';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
+import { AudioOfflineSettingsStore } from '../utils/AudioOfflineSettingsStore';
+import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { syncDesktopTitleBar, releaseSystemBarListeners } from '../utils/SystemBars';
 
 export default class EntryAbility extends UIAbility {
@@ -66,6 +68,9 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate('startupT0', Date.now());
     this.networkBootstrapPromise = NetworkSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复网络设置失败:', error);
+    });
+    AudioOfflineSettingsStore.load(this.context).catch((error: Error) => {
+      console.warn('恢复离线音频设置失败:', error);
     });
     AppStorage.setOrCreate('appCacheDir', this.context.cacheDir);
     AppStorage.setOrCreate('appFilesDir', this.context.filesDir);
@@ -350,6 +355,10 @@ export default class EntryAbility extends UIAbility {
     // Let the first frame commit before registering a potentially large custom font file.
     setTimeout(() => {
       ReaderCacheBudget.scheduleStartupTrim();
+      // 与缓存清理同一时机：删掉没有记录的离线音频、过了保留期的半截文件。
+      setTimeout(() => {
+        AudioOfflineStore.cleanupOrphans().catch((error: Error) => console.warn('清理离线音频残留失败:', error));
+      }, 20000);
       QuickJsDiagnostics.initialize(this.context).catch((error: Error) => {
 
         hilog.warn(0x0000, 'QuickJS', 'Migration initialization failed: %{public}s', error.message);

@@ -13,6 +13,8 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { ReaderCacheBudget, ReaderCacheCleanup } from '../core/book/ReaderCacheBudget';
 import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
+import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
+import { AudioOfflineSettingsStore } from '../utils/AudioOfflineSettingsStore';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
 
 @Entry
@@ -40,6 +42,12 @@ struct OtherSettingsPage {
   @State textCacheBytes: number = -1;
   @State comicCacheBytes: number = -1;
   @State offlineBytes: number = -1;
+  @State audioOfflineBytes: number = -1;
+  @State audioOfflineAutoBytes: number = 0;
+  @StorageLink('audioOfflineWifiOnly') audioOfflineWifiOnly: boolean = false;
+  @StorageLink('audioOfflineCapBytes') audioOfflineCapBytes: number = 0;
+  @State audioOfflineBooks: number = 0;
+  @State audioOfflineChapters: number = 0;
   @State cacheClearing: boolean = false;
   @State savingImmersiveLight: boolean = false;
 
@@ -113,11 +121,33 @@ struct OtherSettingsPage {
         title: '离线内容',
         description: (this.offlineBytes === -2 ? '统计失败，重新进入后重试' : this.offlineBytes < 0 ? '正在统计…' : ReaderCacheBudgetPolicy.formatBytes(this.offlineBytes)) +
           '\n手动缓存的正文与漫画原图，不参与自动清理',
-        showDivider: false,
         onTap: () => this.confirmClearOffline()
       }) {
         this.cacheClearLabel()
       }
+      SettingRow({
+        title: '有声书离线音频',
+        description: this.audioOfflineUsageText() + '\n手动下载的不参与自动清理；边听边下的听完自动删除',
+        onTap: () => this.confirmClearAudioOffline()
+      }) {
+        this.cacheClearLabel()
+      }
+      SettingSwitchRow({
+        title: '仅 Wi-Fi 下载有声书',
+        description: '移动网络下不下载，连上 Wi-Fi 后自动继续；关闭时用移动网络下载前会先确认',
+        isOn: this.audioOfflineWifiOnly,
+        onChange: (value: boolean) => {
+          AudioOfflineSettingsStore.saveWifiOnly(getContext(this), value)
+            .catch((error: Error) => console.warn('保存仅 Wi-Fi 下载失败:', error));
+        }
+      })
+      SettingNavRow({
+        title: '离线音频上限',
+        description: '超出后先删最早的边听边下章节，仍不够时停止下载',
+        value: AudioOfflineSettingsStore.capLabel(this.audioOfflineCapBytes),
+        showDivider: false,
+        onTap: () => this.pickAudioOfflineCap()
+      })
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -320,6 +350,63 @@ struct OtherSettingsPage {
       this.comicCacheBytes = -2;
       this.offlineBytes = -2;
     }
+    try {
+      const usage = await AudioOfflineStore.usage();
+      this.audioOfflineBooks = usage.books;
+      this.audioOfflineChapters = usage.chapters;
+      this.audioOfflineAutoBytes = usage.autoBytes;
+      this.audioOfflineBytes = usage.bytes;
+    } catch (e) {
+      console.warn('统计离线音频失败:', e);
+      this.audioOfflineBytes = -2;
+    }
+  }
+
+  audioOfflineUsageText(): string {
+    if (this.audioOfflineBytes === -2) return '统计失败，重新进入后重试';
+    if (this.audioOfflineBytes < 0) return '正在统计…';
+    if (this.audioOfflineChapters === 0) return '暂无';
+    const auto = this.audioOfflineAutoBytes > 0 ?
+      `（边听边下 ${ReaderCacheBudgetPolicy.formatBytes(this.audioOfflineAutoBytes)}）` : '';
+    return `${ReaderCacheBudgetPolicy.formatBytes(this.audioOfflineBytes)}${auto} · ${this.audioOfflineBooks} 本书 ${this.audioOfflineChapters} 章`;
+  }
+
+  async pickAudioOfflineCap(): Promise<void> {
+    const options = AudioOfflineSettingsStore.CAP_OPTIONS;
+    const buttons: promptAction.Button[] = options.map((bytes: number): promptAction.Button => ({
+      text: `${bytes === this.audioOfflineCapBytes ? '✓ ' : ''}${AudioOfflineSettingsStore.capLabel(bytes)}`,
+      color: bytes === this.audioOfflineCapBytes ? this.accentColor() : ThemeRuntime.primaryTextColor(this.appDarkMode)
+    }));
+    try {
+      const result = await promptAction.showActionMenu({
+        title: '离线音频上限',
+        buttons: [buttons[0], buttons[1], buttons[2], buttons[3], buttons[4]]
+      });
+      if (result.index >= 0 && result.index < options.length) {
+        await AudioOfflineSettingsStore.saveCap(getContext(this), options[result.index]);
+      }
+    } catch (_) {
+      // 点空白处取消。
+    }
+  }
+
+  async confirmClearAudioOffline(): Promise<void> {
+    if (this.cacheClearing) return;
+    try {
+      const answer = await promptAction.showDialog({
+        title: '删除离线音频？',
+        message: '删除所有手动下载的有声书音频，之后收听需要联网。正在播放的章节会继续播完。',
+        buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.appDarkMode) },
+          { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }]
+      });
+      if (answer.index !== 1) return;
+      this.cacheClearing = true;
+      const released = await AudioOfflineStore.clearAll();
+      HdsFeedback.showToast(`已清理 ${ReaderCacheBudgetPolicy.formatBytes(released)} 数据`);
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+    } catch (e) { HdsFeedback.showToast('删除离线音频失败'); }
+    finally { this.cacheClearing = false; }
+    await this.refreshCacheUsage();
   }
 
   async confirmClearCache(text: boolean): Promise<void> {

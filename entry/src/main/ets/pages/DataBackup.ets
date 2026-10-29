@@ -132,7 +132,8 @@ struct DataBackupPage {
       if (this.mode === 'export') {
         this.sectionTitle('选择导出内容')
         this.selectionCard(true)
-        Text('备份将使用密码和 AES-256-GCM 加密；Cookie、密码、Token、授权信息及登录 Header 不会写入备份。')
+        Text('备份将使用密码和 AES-256-GCM 加密；Cookie、密码、Token、授权信息及登录 Header 不会写入备份。' +
+          '离线缓存的正文、漫画原图和有声书音频也不会写入，恢复后需要重新缓存或下载。')
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
           .width('calc(100% - 32vp)')

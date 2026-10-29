@@ -1,6 +1,7 @@
 import { ReaderCacheCoordinator } from '../../core/book/ReaderCacheCoordinator';
 import { ReaderImageReferences } from '../../core/book/ReaderImageReferences';
 import relationalStore from '@ohos.data.relationalStore';
+import fs from '@ohos.file.fs';
 import { Book, BookChapter, BookSource, BookGroup, Bookmark, SearchKeyword, ExploreRule, TocRule, ContentRule,
   BookSourceRuntimePersistence } from '@legado/sourceengine';
 import { Context } from '@kit.AbilityKit';
@@ -47,6 +48,28 @@ export class ReaderImageResource {
   bytes: number = 0;
   usedAt: number = 0;
   state: string = 'ready';
+}
+
+/** 有声书离线下载的一章音频。path 是 filesDir 下的绝对路径。 */
+export class AudioOfflineFile {
+  bookUrl: string = '';
+  chapterIndex: number = 0;
+  chapterUrl: string = '';
+  chapterTitle: string = '';
+  path: string = '';
+  bytes: number = 0;
+  createdAt: number = 0;
+  /** 下载时书的音色（book 变量 custom），换音色后旧文件不再算数。 */
+  voice: string = '';
+  /** 边听边下自动下载的，听完可以自动删；手动下载的永远不自动删。 */
+  auto: boolean = false;
+}
+
+export class AudioOfflineUsage {
+  bytes: number = 0;
+  books: number = 0;
+  chapters: number = 0;
+  autoBytes: number = 0;
 }
 
 export class ReaderPaginationCacheRecord {
@@ -180,6 +203,14 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     await this.store.executeSql('CREATE TABLE IF NOT EXISTS reader_image_refs (bookUrl TEXT, chapterIndex INTEGER, ' +
       'path TEXT, PRIMARY KEY(bookUrl, chapterIndex, path))');
     await this.store.executeSql('CREATE INDEX IF NOT EXISTS reader_image_refs_path ON reader_image_refs(path)');
+    await this.store.executeSql('CREATE TABLE IF NOT EXISTS audio_offline_files (bookUrl TEXT, chapterIndex INTEGER, ' +
+      'chapterUrl TEXT DEFAULT \'\', path TEXT, bytes INTEGER DEFAULT 0, createdAt INTEGER DEFAULT 0, ' +
+      'voice TEXT DEFAULT \'\', auto INTEGER DEFAULT 0, chapterTitle TEXT DEFAULT \'\', ' +
+      'PRIMARY KEY(bookUrl, chapterIndex))');
+    // 一期建的表没有这几列；列迁移表在建表之前执行，所以单独补。
+    await this.addColumnIfMissing({ table: 'audio_offline_files', column: 'voice', definition: "voice TEXT DEFAULT ''" });
+    await this.addColumnIfMissing({ table: 'audio_offline_files', column: 'chapterTitle', definition: "chapterTitle TEXT DEFAULT ''" });
+    await this.addColumnIfMissing({ table: 'audio_offline_files', column: 'auto', definition: 'auto INTEGER DEFAULT 0' });
     await this.initDefaultData();
     this.initialized = true;
   }
@@ -1050,6 +1081,13 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     }
     await this.deleteBookChapters(bookUrl);
     await this.deleteBookCachedContent(bookUrl);
+    // 换源、书源交互设置变化也会清正文缓存，那时离线音频要留着；只有删书才连音频一起删。
+    // 删音频失败不能让删书失败，残留文件由启动清理兜底。
+    try {
+      AppDatabase.unlinkFiles(await this.deleteAudioOfflineFiles(bookUrl));
+    } catch (e) {
+      console.warn('删除书籍的离线音频失败:', e);
+    }
     await this.deleteBookBookmarks(bookUrl);
     if (existing?.origin && existing.origin !== 'local') {
       CloudSyncChangeTracker.markDataChanged();
@@ -2792,6 +2830,130 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     predicates.equalTo('bookUrl', bookUrl);
     if (chapterIndex >= 0) predicates.equalTo('chapterIndex', chapterIndex);
     await this.store.delete(predicates);
+  }
+
+  /** 写入一章的离线音频记录，返回被替换掉的旧文件路径（路径相同或没有旧记录时为空）。 */
+  async saveAudioOfflineFile(file: AudioOfflineFile): Promise<string> {
+    if (!this.store) throw new Error('数据库未就绪');
+    const previous = await this.getAudioOfflineFile(file.bookUrl, file.chapterIndex);
+    await this.store.executeSql('INSERT OR REPLACE INTO audio_offline_files ' +
+      '(bookUrl,chapterIndex,chapterUrl,chapterTitle,path,bytes,createdAt,voice,auto) VALUES (?,?,?,?,?,?,?,?,?)',
+      [file.bookUrl, file.chapterIndex, file.chapterUrl, file.chapterTitle, file.path, file.bytes, file.createdAt,
+        file.voice, file.auto ? 1 : 0]);
+    return previous && previous.path !== file.path ? previous.path : '';
+  }
+
+  async getAudioOfflineFile(bookUrl: string, chapterIndex: number): Promise<AudioOfflineFile | null> {
+    const rows = await this.queryAudioOfflineFiles(' WHERE bookUrl=? AND chapterIndex=?', [bookUrl, chapterIndex]);
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  /** bookUrl 为空时列出全部。 */
+  async listAudioOfflineFiles(bookUrl: string = ''): Promise<AudioOfflineFile[]> {
+    return bookUrl ? await this.queryAudioOfflineFiles(' WHERE bookUrl=?', [bookUrl]) :
+      await this.queryAudioOfflineFiles('', []);
+  }
+
+  private async queryAudioOfflineFiles(where: string, args: relationalStore.ValueType[]): Promise<AudioOfflineFile[]> {
+    if (!this.store) return [];
+    const rs = await this.store.querySql('SELECT bookUrl,chapterIndex,chapterUrl,chapterTitle,path,bytes,createdAt,voice,auto ' +
+      'FROM audio_offline_files' + where, args);
+    const rows: AudioOfflineFile[] = [];
+    try {
+      while (rs.goToNextRow()) {
+        const file = new AudioOfflineFile();
+        file.bookUrl = rs.getString(0); file.chapterIndex = rs.getLong(1); file.chapterUrl = rs.getString(2);
+        file.chapterTitle = rs.getString(3); file.path = rs.getString(4); file.bytes = rs.getLong(5);
+        file.createdAt = rs.getLong(6); file.voice = rs.getString(7); file.auto = rs.getLong(8) === 1;
+        rows.push(file);
+      }
+    } finally { rs.close(); }
+    return rows;
+  }
+
+  /** 手动下载覆盖了边听边下的同一章：改成手动，之后不再自动删。 */
+  async markAudioOfflineManual(bookUrl: string, chapterIndex: number): Promise<void> {
+    if (!this.store) return;
+    await this.store.executeSql('UPDATE audio_offline_files SET auto=0 WHERE bookUrl=? AND chapterIndex=?',
+      [bookUrl, chapterIndex]);
+  }
+
+  /**
+   * 目录刷新后把离线记录改到新序号。moves 是 旧序号 → 新序号；新序号被别的记录占着时，
+   * 占位的那条（已经对不上任何章节）删掉，返回它的文件路径由调用方删。
+   */
+  async moveAudioOfflineFiles(bookUrl: string, moves: Map<number, number>): Promise<string[]> {
+    if (!this.store || moves.size === 0) return [];
+    const rows = await this.listAudioOfflineFiles(bookUrl);
+    const moving = new Set<number>(Array.from(moves.keys()));
+    const targets = new Set<number>(Array.from(moves.values()));
+    const dropped = rows.filter((row: AudioOfflineFile): boolean =>
+      !moving.has(row.chapterIndex) && targets.has(row.chapterIndex));
+    const transaction = await this.store.createTransaction();
+    try {
+      for (const row of dropped) {
+        await transaction.execute('DELETE FROM audio_offline_files WHERE bookUrl=? AND chapterIndex=?',
+          [bookUrl, row.chapterIndex]);
+      }
+      // 先挪到负数序号再挪回，互换位置的两条不会撞主键。
+      for (const from of Array.from(moving)) {
+        await transaction.execute('UPDATE audio_offline_files SET chapterIndex=? WHERE bookUrl=? AND chapterIndex=?',
+          [-1 - from, bookUrl, from]);
+      }
+      for (const entry of Array.from(moves.entries())) {
+        await transaction.execute('UPDATE audio_offline_files SET chapterIndex=? WHERE bookUrl=? AND chapterIndex=?',
+          [entry[1], bookUrl, -1 - entry[0]]);
+      }
+      await transaction.commit();
+    } catch (e) {
+      await transaction.rollback();
+      throw e as Error;
+    }
+    return dropped.map((row: AudioOfflineFile): string => row.path);
+  }
+
+  async getAudioOfflineUsage(): Promise<AudioOfflineUsage> {
+    const usage = new AudioOfflineUsage();
+    if (!this.store) return usage;
+    const rs = await this.store.querySql('SELECT SUM(MAX(bytes,0)),COUNT(DISTINCT bookUrl),COUNT(*),' +
+      'SUM(CASE WHEN auto=1 THEN MAX(bytes,0) ELSE 0 END) FROM audio_offline_files');
+    try {
+      if (rs.goToFirstRow()) {
+        usage.bytes = rs.getLong(0); usage.books = rs.getLong(1); usage.chapters = rs.getLong(2);
+        usage.autoBytes = rs.getLong(3);
+      }
+    } finally { rs.close(); }
+    return usage;
+  }
+
+  /** 删除离线音频记录并返回对应文件路径，文件由调用方删。bookUrl 为空时删全部。 */
+  async deleteAudioOfflineFiles(bookUrl: string = '', chapterIndex: number = -1): Promise<string[]> {
+    if (!this.store) return [];
+    const where = !bookUrl ? '' : (chapterIndex >= 0 ? ' WHERE bookUrl=? AND chapterIndex=?' : ' WHERE bookUrl=?');
+    const args: relationalStore.ValueType[] = !bookUrl ? [] : (chapterIndex >= 0 ? [bookUrl, chapterIndex] : [bookUrl]);
+    const rs = await this.store.querySql('SELECT path FROM audio_offline_files' + where, args);
+    const paths: string[] = [];
+    try { while (rs.goToNextRow()) paths.push(rs.getString(0)); } finally { rs.close(); }
+    await this.store.executeSql('DELETE FROM audio_offline_files' + where, args);
+    return paths;
+  }
+
+  /** 有离线内容的在线书：下载过音频，或有手动缓存的正文/漫画。书架封面的"离线"标识用它。 */
+  async getOfflineBookUrls(): Promise<string[]> {
+    if (!this.store) return [];
+    const rs = await this.store.querySql('SELECT DISTINCT bookUrl FROM audio_offline_files UNION ' +
+      `SELECT DISTINCT bookUrl FROM book_contents WHERE pinned=1 AND ${AppDatabase.ONLINE_CONTENT_WHERE}`);
+    const urls: string[] = [];
+    try { while (rs.goToNextRow()) urls.push(rs.getString(0)); } finally { rs.close(); }
+    return urls;
+  }
+
+  static unlinkFiles(paths: string[]): void {
+    for (const path of paths) {
+      try { if (path && fs.accessSync(path)) fs.unlinkSync(path); } catch (e) {
+        console.warn('删除离线音频文件失败:', e);
+      }
+    }
   }
 
   async getBookChapterCacheDateMap(bookUrl: string): Promise<Map<number, number>> {

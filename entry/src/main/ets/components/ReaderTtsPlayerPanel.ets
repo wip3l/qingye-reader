@@ -14,6 +14,7 @@ const SECONDARY_TIMER: string = 'timer';
 const SECONDARY_SPEED: string = 'speed';
 const SECONDARY_CATALOG: string = 'catalog';
 const SECONDARY_STOP: string = 'stop';
+const SECONDARY_DOWNLOAD: string = 'download';
 
 @Component
 export struct ReaderTtsPlayerPanel {
@@ -36,6 +37,8 @@ export struct ReaderTtsPlayerPanel {
   @Prop showOpenReader: boolean = false;
   onOpenReader: () => void = () => {};
   onOpenVoice: () => void = () => ReaderTtsFloatingSession.openVoice();
+  /** 听书页的离线下载入口（下载、边听边下设置）。 */
+  onOpenDownload: () => void = () => {};
   onTogglePlayback: () => void = () => {
     ReaderTtsFloatingSession.toggle();
   };
@@ -52,6 +55,8 @@ export struct ReaderTtsPlayerPanel {
   @Prop hostBusy: boolean = false;
   @Prop hostVoiceTitles: string[] = [];
   @Prop hostVoiceIndex: number = 0;
+  /** 在线有声书显示"下载"：听书页自己，或书架胶囊打开的面板（听书页发布了离线信息时）。 */
+  @Prop hostDownloadAvailable: boolean = false;
   onSelectHostVoice: (index: number) => void = () => {};
 
   @StorageLink('globalTtsPaused') globalTtsPaused: boolean = false;
@@ -506,6 +511,9 @@ export struct ReaderTtsPlayerPanel {
       this.secondaryItem(SECONDARY_TIMER)
       this.secondaryItem(SECONDARY_SPEED)
       this.secondaryItem(SECONDARY_CATALOG)
+      if (this.hostDownloadAvailable && this.isAudio()) {
+        this.secondaryItem(SECONDARY_DOWNLOAD)
+      }
       this.secondaryItem(SECONDARY_STOP)
     }
     .width('100%')
@@ -824,6 +832,7 @@ export struct ReaderTtsPlayerPanel {
     if (kind === SECONDARY_TIMER) return $r('sys.symbol.timer');
     if (kind === SECONDARY_SPEED) return $r('sys.symbol.hourglass');
     if (kind === SECONDARY_CATALOG) return $r('sys.symbol.list_bullet');
+    if (kind === SECONDARY_DOWNLOAD) return $r('sys.symbol.download');
     return $r('sys.symbol.stop_circle');
   }
 
@@ -834,6 +843,7 @@ export struct ReaderTtsPlayerPanel {
     }
     if (kind === SECONDARY_SPEED) return `${this.globalTtsSpeed.toFixed(1)}x`;
     if (kind === SECONDARY_CATALOG) return '目录';
+    if (kind === SECONDARY_DOWNLOAD) return '下载';
     return '停止';
   }
 
@@ -856,6 +866,8 @@ export struct ReaderTtsPlayerPanel {
       this.optionsPanel = this.optionsPanel === 2 ? 0 : 2;
     } else if (kind === SECONDARY_CATALOG) {
       this.onOpenCatalog();
+    } else if (kind === SECONDARY_DOWNLOAD) {
+      this.onOpenDownload();
     } else {
       this.close();
       ReaderTtsFloatingSession.stop();

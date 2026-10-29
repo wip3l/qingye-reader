@@ -7,6 +7,7 @@ import { HdsAnimationMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { Book, BookChapter, BookSourceStageWebRuntime } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookFetchRuntimeHost } from '../components/WebBookFetchRuntimeHost';
+import { BookSourceAudioWebRuntimeHost } from '../components/BookSourceAudioWebRuntimeHost';
 import { syncSystemSafeAreas, syncDesktopTitleBar } from '../utils/SystemBars';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
@@ -15,7 +16,7 @@ import { ReaderOpenTrace } from '../utils/ReaderOpenTrace';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';
-import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
+import { AudioOfflineCatalogInfo, ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { ReaderTtsPlayerPanel } from '../components/ReaderTtsPlayerPanel';
 import { ReaderTtsCapsule } from '../components/reader/ReaderTtsControls';
 import { TtsCatalogSheet, CatalogTitleDataSource } from '../components/TtsCatalogSheet';
@@ -83,6 +84,7 @@ struct Index {
   @StorageLink('globalTtsCover') globalTtsCover: ResourceStr = '';
   @StorageLink('globalTtsChapterTitle') globalTtsChapterTitle: string = '';
   @StorageLink('globalTtsMode') globalTtsMode: string = '';
+  @StorageLink('globalTtsCatalogRevision') @Watch('onGlobalTtsCatalogRevisionChanged') globalTtsCatalogRevision: number = 0;
   @StorageLink('globalTtsChapterProgress') globalTtsChapterProgress: string = '';
   @StorageLink('globalTtsBusy') globalTtsBusy: boolean = false;
   @State showGlobalTtsPanel: boolean = false;
@@ -379,6 +381,13 @@ struct Index {
       this.presentGlobalTtsCatalog();
       return;
     }
+    // 有声书的"已下载"只看离线音频，正文缓存里的地址文本不算；由听书页重新读一次。
+    const audioOffline = this.globalAudioOffline();
+    if (audioOffline) {
+      audioOffline.refresh().catch((error: Error) => console.warn('刷新听书目录下载标记失败:', error))
+        .finally(() => this.presentGlobalTtsCatalog());
+      return;
+    }
     AppDatabase.getInstance().getBookChapters(bookUrl)
       .then((chapters: BookChapter[]): void => {
         ReaderTtsFloatingSession.updateCatalogCachedFlags(ownerId, this.chapterCachedFlagsOf(chapters));
@@ -414,6 +423,20 @@ struct Index {
       flags.push(chapters[index].cacheDate > 0);
     }
     return flags;
+  }
+
+  /** 听书会话发布的离线信息；朗读会话或没有发布时为 null。读修订号是为了让界面随它刷新。 */
+  globalAudioOffline(): AudioOfflineCatalogInfo | null {
+    return this.globalTtsCatalogRevision >= 0 && this.globalTtsMode === 'audio' ?
+      ReaderTtsFloatingSession.audioOfflineInfo() : null;
+  }
+
+  onGlobalTtsCatalogRevisionChanged(): void {
+    if (!this.showGlobalTtsCatalog) return;
+    const titles = ReaderTtsFloatingSession.catalogTitles();
+    if (titles.length === 0) return;
+    // 重载后键里带的标记变了的行才会重建，下载完成的章节马上显示"已下载"。
+    this.globalTtsCatalogSource.replace(this.globalTtsCatalogReverseOrder ? titles.slice().reverse() : titles);
   }
 
   closeGlobalTtsCatalog(): void {
@@ -525,6 +548,8 @@ struct Index {
           viewportHeight: this.globalTtsViewportHeight,
           onClose: () => this.closeGlobalTtsPanel(),
           onOpenCatalog: () => this.openGlobalTtsCatalog(),
+          hostDownloadAvailable: this.globalAudioOffline() !== null,
+          onOpenDownload: () => this.globalAudioOffline()?.openDownload(this.getUIContext()),
           showOpenReader: this.globalTtsMode !== 'audio',
           onOpenReader: () => this.openGlobalTtsReader()
         })
@@ -556,6 +581,8 @@ struct Index {
           })
       }
       WebBookFetchRuntimeHost()
+      // 书架后台下载有声书时，网页规则的音频地址要靠它解析；听书页打开时用听书页自己的。
+      BookSourceAudioWebRuntimeHost()
     }
     .width('100%')
     .height('100%')
@@ -639,9 +666,15 @@ struct Index {
       bookName: this.globalTtsBookName,
       bookInitial: this.globalTtsCatalogInitial(),
       cover: this.globalTtsCover,
-      // The shelf only receives the book name and cover with the TTS session, so the
-      // subtitle falls back to the chapter being played instead of the author.
-      bookSubtitle: this.globalTtsChapterTitle,
+      // 听书页发布了作者就显示作者，与听书页的目录一致；朗读会话只有书名和封面，退回正在读的章节。
+      bookSubtitle: this.globalAudioOffline()?.author || this.globalTtsChapterTitle,
+      cachedLabel: this.globalAudioOffline()?.cachedLabel || '已缓存',
+      noteText: this.globalAudioOffline()?.summary || '',
+      actionLabel: this.globalAudioOffline() !== null ? '下载' : '',
+      onAction: () => this.globalAudioOffline()?.openDownload(this.getUIContext()),
+      onLongPress: this.globalAudioOffline() !== null ? (displayIndex: number): void => {
+        this.globalAudioOffline()?.chapterAction(this.getUIContext(), this.globalTtsCatalogCanonicalIndex(displayIndex));
+      } : null,
       count: ReaderTtsFloatingSession.catalogCount(),
       currentDisplayIndex: this.globalTtsCatalogDisplayIndex(ReaderTtsFloatingSession.catalogIndex()),
       reverseOrder: this.globalTtsCatalogReverseOrder,

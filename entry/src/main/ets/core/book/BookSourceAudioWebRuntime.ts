@@ -20,6 +20,8 @@ export class BookSourceAudioWebRuntime {
   private controller: webview.WebviewController | null = null;
   private ready: boolean = false;
   private task: AudioWebResolveTask | null = null;
+  private controllers: webview.WebviewController[] = [];
+  private readyControllers: Set<webview.WebviewController> = new Set();
 
   static get(): BookSourceAudioWebRuntime {
     if (!BookSourceAudioWebRuntime.instance) {
@@ -28,18 +30,29 @@ export class BookSourceAudioWebRuntime {
     return BookSourceAudioWebRuntime.instance;
   }
 
+  /**
+   * 首页常驻一个宿主（书架后台下载用），听书页打开时再挂一个。后挂的优先；
+   * 它关闭后退回前一个，书架上的下载才不会因为关了听书页而失去解析环境。
+   */
   attach(controller: webview.WebviewController): void {
+    this.controllers = this.controllers.filter((item: webview.WebviewController): boolean => item !== controller);
+    this.controllers.push(controller);
     this.controller = controller;
+    this.ready = this.readyControllers.has(controller);
   }
 
   detach(controller: webview.WebviewController): void {
+    this.controllers = this.controllers.filter((item: webview.WebviewController): boolean => item !== controller);
+    this.readyControllers.delete(controller);
     if (this.controller !== controller) return;
     this.cancel('听书网页解析环境已关闭');
-    this.controller = null;
-    this.ready = false;
+    this.controller = this.controllers.length > 0 ? this.controllers[this.controllers.length - 1] : null;
+    this.ready = !!this.controller && this.readyControllers.has(this.controller);
   }
 
   setReady(ready: boolean, controller: webview.WebviewController): void {
+    if (ready) this.readyControllers.add(controller);
+    else this.readyControllers.delete(controller);
     if (this.controller !== controller) return;
     this.ready = ready;
     if (ready && this.task) this.inspectLoadedPage(controller);

@@ -12,6 +12,9 @@ import { Book, BookChapter, BookGroup, SearchBook, BookTypeSupport, sleepMs } fr
 import { AppDatabase } from '../../model/data/AppDatabase';
 import { SearchCoordinator, SearchProgress } from '../../core/book/SearchCoordinator';
 import { ReadBookEngine } from '../../core/book/ReadBookEngine';
+import { AudioOfflineStore } from '../../core/book/AudioOfflineStore';
+import { ReaderCacheBudgetPolicy } from '../../core/book/ReaderCacheBudgetPolicy';
+import { AudioOfflineDownloadPrompt } from '../../utils/AudioOfflineDownloadPrompt';
 import { ImmersiveBackButton } from '../../components/ImmersiveBackButton';
 import { ImmersiveMaterialSurface } from '../../components/ImmersiveMaterialSurface';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
@@ -48,6 +51,8 @@ import { CloudDownloadQueue } from '../../account/CloudDownloadQueue';
 import { PopupMenuAction } from '../common/PopupMenuAction';
 
 const SHELF_FULL_TEXT_CACHE_NOTIFICATION_INTERVAL_MS: number = 5000;
+/** 有声书同时下载的章数。 */
+const SHELF_AUDIO_DOWNLOAD_CONCURRENCY: number = 2;
 const SHELF_COVER_INITIAL_PREFETCH_COUNT: number = 16;
 const SHELF_COVER_UPDATE_BATCH_MS: number = 48;
 const SHELF_UPDATE_BADGE_VARIABLE: string = 'shelfHasUpdate';
@@ -90,6 +95,8 @@ interface ShelfFullTextCacheTask {
   chapterIndexes: number[];
   /** Shown in the notification title: 全文 or 章节. */
   scopeLabel: string;
+  /** 有声书下载：用户同意过用移动网络；为 false 时离开 Wi-Fi 就暂停等待。 */
+  allowCellular: boolean;
 }
 
 /** 首页"书架"页签：书架展示、分组与排序、封面加载、更新检查、全文缓存与书籍操作。 */
@@ -267,7 +274,12 @@ export struct BookshelfPage {
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('bookshelfShowTags') bookshelfShowTags: boolean = true;
-  @StorageLink('bookshelfCoverBadges') bookshelfCoverBadges: string = BookshelfCoverBadgeSettings.DEFAULT;
+  @StorageLink('bookshelfCoverBadges') @Watch('refreshOfflineBookUrls') bookshelfCoverBadges: string = BookshelfCoverBadgeSettings.DEFAULT;
+  /** 边听边下完成一章、删除离线音频后更新，封面"离线"标识据此刷新。 */
+  @StorageLink('audioOfflineRevision') @Watch('refreshOfflineBookUrls') audioOfflineRevision: number = 0;
+  /** 封面"离线"标识变化时加一；集合本身不是状态变量。 */
+  @State offlineBookRevision: number = 0;
+  private offlineBookUrls: Set<string> = new Set<string>();
   @StorageLink('bookshelfShowIntro') bookshelfShowIntro: boolean = true;
   @StorageLink('bookshelfShowFullIntro') bookshelfShowFullIntro: boolean = false;
   @StorageLink('bookshelfShowProgressBar') bookshelfShowProgressBar: boolean = false;
@@ -291,6 +303,7 @@ export struct BookshelfPage {
   @StorageLink('appDarkButtonColor') appDarkButtonColor: string = '#3F8CFF';
   @StorageLink('fullTextCacheCancelNonce') @Watch('onFullTextCacheCancelNonceChanged') fullTextCacheCancelNonce: number = 0;
   @StorageLink('fullTextCacheCancelSignal') @Watch('onFullTextCacheCancelSignalChanged') fullTextCacheCancelSignal: string = '';
+  @StorageLink('audioOfflineDownloadRequest') @Watch('onAudioOfflineDownloadRequest') audioOfflineDownloadRequest: string = '';
   @StorageLink('shelfBookCloseAnimationNonce') @Watch('onShelfBookCloseAnimationRequested')
   shelfBookCloseAnimationNonce: number = 0;
   @StorageLink('shelfBookCloseAnimationUrl') shelfBookCloseAnimationUrl: string = '';
@@ -423,6 +436,25 @@ export struct BookshelfPage {
     this.scheduleLoadBooks();
   }
 
+  /** 有离线内容的书：下载过音频，或有手动缓存的正文、漫画。只有封面标识里放了"离线"才查。 */
+  refreshOfflineBookUrls(): void {
+    if (BookshelfCoverBadgeSettings.location(this.bookshelfCoverBadges, 'offline') < 0) {
+      if (this.offlineBookUrls.size > 0) {
+        this.offlineBookUrls = new Set<string>();
+        this.offlineBookRevision++;
+      }
+      return;
+    }
+    AppDatabase.getInstance().getOfflineBookUrls().then((urls: string[]): void => {
+      this.offlineBookUrls = new Set<string>(urls);
+      this.offlineBookRevision++;
+    }).catch((error: Error) => console.warn('读取离线书籍失败:', error));
+  }
+
+  hasOfflineContent(book: Book): boolean {
+    return this.offlineBookRevision >= 0 && !!book.bookUrl && this.offlineBookUrls.has(book.bookUrl);
+  }
+
   // 置顶开关决定平铺数据源里是否剔除上次阅读的书，切换后立即重建，避免同一本书出现两次或消失。
   onLastReadPinModeChanged(): void {
     this.reloadShelfDataSources(true);
@@ -472,6 +504,7 @@ export struct BookshelfPage {
       }
       this.applyShelfScope();
       this.reloadShelfDataSources(forceDataSourceReload);
+      this.refreshOfflineBookUrls();
       this.refreshShelfCoverCache(this.books);
       this.scheduleLocalBookIntroMigration(loadedBooks);
       this.scheduleColdStartBookshelfRefresh(loadedBooks);
@@ -4169,7 +4202,7 @@ export struct BookshelfPage {
         typeLabel: this.bookTypeBadgeText(book), typeColor: this.bookTypeBadgeColor(book),
         sourceText: LocalBookService.isLocalBook(book) ? '本地' : (book.originName || book.origin || '').trim(),
         unreadCount: book.totalChapterNum > 0 ? book.getUnreadChapterNum() : 0,
-        updated: this.hasShelfBookUpdate(book), pinned: book.isPinned,
+        updated: this.hasShelfBookUpdate(book), pinned: book.isPinned, offline: this.hasOfflineContent(book),
         selecting: this.isBookMultiSelect
       })
     }
@@ -4285,7 +4318,7 @@ export struct BookshelfPage {
   @Builder
   cacheDialogContent() {
     Column() {
-      Text(`缓存《${this.cacheTargetBook?.name || '当前书籍'}》`)
+      Text(`${this.cacheTargetIsAudio() ? '下载' : '缓存'}《${this.cacheTargetBook?.name || '当前书籍'}》`)
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
@@ -4304,10 +4337,11 @@ export struct BookshelfPage {
           .margin({ bottom: AppSpacing.MD })
       }
 
-      this.actionItem(this.isCacheTargetBookCaching() ? '正在缓存...' : '缓存全文', this.primaryTextColor(), () => {
+      this.actionItem(this.isCacheTargetBookCaching() ? (this.cacheTargetIsAudio() ? '正在下载...' : '正在缓存...') :
+        (this.cacheTargetIsAudio() ? '下载全部音频' : '缓存全文'), this.primaryTextColor(), () => {
         this.cacheWholeBook();
       })
-      this.actionItem('缓存指定章节', this.primaryTextColor(), () => {
+      this.actionItem(this.cacheTargetIsAudio() ? '下载指定章节' : '缓存指定章节', this.primaryTextColor(), () => {
         this.showCacheDialog = false;
         this.showChapterCacheDialog = true;
         if (this.cacheTargetBook) {
@@ -4321,7 +4355,7 @@ export struct BookshelfPage {
           warnTag: '显示章节缓存弹窗失败:'
         });
       })
-      this.actionItem('清除已缓存章节', ThemeRuntime.dangerColor(this.appDarkMode), () => {
+      this.actionItem(this.cacheTargetIsAudio() ? '删除已下载音频' : '清除已缓存章节', ThemeRuntime.dangerColor(this.appDarkMode), () => {
         this.clearCachedChapters();
       })
 
@@ -4342,7 +4376,7 @@ export struct BookshelfPage {
   chapterCacheDialogContent() {
     Column() {
       Row() {
-        Text('选择章节缓存')
+        Text(this.cacheTargetIsAudio() ? '选择章节下载' : '选择章节缓存')
           .fontSize(AppFontSize.SUBTITLE)
           .fontWeight(FontWeight.Bold)
           .fontColor(this.primaryTextColor())
@@ -4389,7 +4423,7 @@ export struct BookshelfPage {
           .onChange((value: string) => {
             this.cacheRangeDraft = value;
           })
-        Button('缓存')
+        Button(this.cacheTargetIsAudio() ? '下载' : '缓存')
           .width(96)
           .height(42)
           .fontSize(AppFontSize.BODY)
@@ -4412,7 +4446,7 @@ export struct BookshelfPage {
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .layoutWeight(1)
               if (chapter.cacheDate > 0) {
-                Text('已缓存')
+                Text(this.cacheTargetIsAudio() ? '已下载' : '已缓存')
                   .fontSize(AppFontSize.CAPTION)
                   .fontColor(ThemeRuntime.successColor(this.appDarkMode))
                   .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.XXS, bottom: AppSpacing.XXS })
@@ -4518,6 +4552,18 @@ export struct BookshelfPage {
       console.error('保存本地书籍信息失败:', e);
       HdsFeedback.showToast('保存失败');
     }
+  }
+
+  /** 有声书的"缓存"是把音频下载到本地，界面文字跟着改成"下载"。 */
+  cacheTargetIsAudio(): boolean {
+    return !!this.cacheTargetBook && BookTypeSupport.isAudio(this.cacheTargetBook);
+  }
+
+  /** "N章已缓存 M章待缓存"；有声书说已下载。 */
+  cacheSummaryText(chapters: BookChapter[]): string {
+    const cachedCount = this.countCachedChapters(chapters);
+    const word = this.cacheTargetIsAudio() ? '下载' : '缓存';
+    return `${cachedCount}章已${word} ${chapters.length - cachedCount}章待${word}`;
   }
 
   private showCacheFeedback(message: string): void {
@@ -5257,8 +5303,7 @@ export struct BookshelfPage {
         return chapters.length > 0;
       }
       if (chapters.length > 0) {
-        const cachedCount = this.countCachedChapters(chapters);
-        this.cacheStatus = `${cachedCount}章已缓存 ${chapters.length - cachedCount}章待缓存`;
+        this.cacheStatus = this.cacheSummaryText(chapters);
       } else {
         this.cacheStatus = '暂未获取到目录';
       }
@@ -5284,6 +5329,14 @@ export struct BookshelfPage {
     const book = this.cacheTargetBook;
     if (!book.origin || book.origin === 'local') {
       HdsFeedback.showToast('本地书籍无需缓存');
+      return;
+    }
+    if (BookTypeSupport.isAudio(book)) {
+      const network = await AudioOfflineDownloadPrompt.prepare(this.getUIContext(), this.appDarkMode);
+      if (network === AudioOfflineDownloadPrompt.CANCEL) return;
+      this.closeCacheDialog();
+      this.showCacheFeedback('已转入后台下载，可在通知栏取消');
+      this.startShelfCacheTask(book, [], '音频', network === AudioOfflineDownloadPrompt.CELLULAR);
       return;
     }
     this.closeCacheDialog();
@@ -5361,28 +5414,46 @@ export struct BookshelfPage {
 
       await this.publishShelfFullTextCacheProgress(task, true);
 
-      for (let position = 0; position < targets.length; position++) {
-        const i = targets[position];
-        if (!this.isShelfFullTextCacheTaskActive(task) || this.shouldCancelShelfFullTextCache(task)) {
-          break;
-        }
-        const chapter = engine.chapters[i];
-        if (!chapter) {
-          continue;
-        }
-        this.setFullTextCacheStatus(task, `正在缓存 ${position + 1}/${targets.length}`);
-        try {
-          if (await engine.cacheChapter(i, (): boolean => this.shouldCancelShelfFullTextCache(task))) {
-            task.done++;
+      const audio = BookTypeSupport.isAudio(freshBook);
+      engine.audioAllowCellular = task.allowCellular;
+      // 有声书同时下两章：地址在引擎里排队取，下载本身并行。大文件一章要下很久，
+      // 所以每秒刷新状态（通知栏仍按间隔节流），显示已收到的数据量或正在等 Wi-Fi。
+      const concurrency = audio ? SHELF_AUDIO_DOWNLOAD_CONCURRENCY : 1;
+      const progressTimer = audio ? setInterval((): void => {
+        this.setFullTextCacheStatus(task, this.shelfAudioDownloadStatus(task, engine));
+        this.publishShelfFullTextCacheProgress(task, false).catch(() => {});
+      }, 1000) : -1;
+      try {
+        for (let position = 0; position < targets.length; position += concurrency) {
+          if (!this.isShelfFullTextCacheTaskActive(task) || this.shouldCancelShelfFullTextCache(task)) {
+            break;
           }
-        } catch (e) {
-          if (!this.shouldCancelShelfFullTextCache(task)) console.error('缓存章节失败:', i, e);
+          const batch = targets.slice(position, position + concurrency)
+            .filter((index: number): boolean => !!engine.chapters[index]);
+          if (batch.length === 0) {
+            continue;
+          }
+          this.setFullTextCacheStatus(task, audio ? this.shelfAudioDownloadStatus(task, engine) :
+            `正在缓存 ${position + 1}/${targets.length}`);
+          const results = await Promise.all(batch.map(async (i: number): Promise<boolean> => {
+            try {
+              return await engine.cacheChapter(i, (): boolean => this.shouldCancelShelfFullTextCache(task));
+            } catch (e) {
+              if (!this.shouldCancelShelfFullTextCache(task)) console.error('缓存章节失败:', i, e);
+              return false;
+            }
+          }));
+          for (const ok of results) {
+            if (ok) task.done++;
+          }
+          if (engine.lastCacheError) throw new Error(engine.lastCacheError);
+          this.syncCacheDialogChapterState(task, engine.chapters);
+          if (this.shouldCancelShelfFullTextCache(task)) break;
+          await this.publishShelfFullTextCacheProgress(task, false);
+          await sleepMs(0);
         }
-        if (engine.lastCacheError) throw new Error(engine.lastCacheError);
-        this.syncCacheDialogChapterState(task, engine.chapters);
-        if (this.shouldCancelShelfFullTextCache(task)) break;
-        await this.publishShelfFullTextCacheProgress(task, false);
-        await sleepMs(0);
+      } finally {
+        if (progressTimer >= 0) clearInterval(progressTimer);
       }
 
       if (!this.isShelfFullTextCacheTaskActive(task)) {
@@ -5390,7 +5461,10 @@ export struct BookshelfPage {
       }
       const canceled = this.shouldCancelShelfFullTextCache(task);
       await engine.syncChapterCacheDates();
-      this.setFullTextCacheStatus(task, canceled ? '缓存已取消' : (task.done === task.total ? `缓存完成：${task.done}/${task.total}` : `缓存结束，${task.total - task.done} 章未完成`));
+      // 受保护或直播流的章节不可能下载成功，单独说明，免得用户以为是网络问题反复重试。
+      const unsupportedNote = engine.audioUnsupportedCount > 0 ?
+        `，其中 ${engine.audioUnsupportedCount} 章为受保护音频或直播流，无法离线` : '';
+      this.setFullTextCacheStatus(task, canceled ? '缓存已取消' : (task.done === task.total ? `缓存完成：${task.done}/${task.total}` : `缓存结束，${task.total - task.done} 章未完成${unsupportedNote}`));
       this.syncCacheDialogChapterState(task, engine.chapters);
       this.finishCacheDialogSummary(task);
       if (canceled && task.stoppingNotificationTask) await task.stoppingNotificationTask;
@@ -5473,12 +5547,11 @@ export struct BookshelfPage {
       this.cacheChapters.length === 0) {
       return;
     }
-    const cachedCount = this.countCachedChapters(this.cacheChapters);
-    this.cacheStatus = `${cachedCount}章已缓存 ${this.cacheChapters.length - cachedCount}章待缓存`;
+    this.cacheStatus = this.cacheSummaryText(this.cacheChapters);
   }
 
   createShelfFullTextCacheTask(book: Book, taskId: number, chapterIndexes: number[] = [],
-    scopeLabel: string = '全文'): ShelfFullTextCacheTask {
+    scopeLabel: string = '全文', allowCellular: boolean = false): ShelfFullTextCacheTask {
     const bookUrl = book.bookUrl || '';
     return {
       taskId: taskId,
@@ -5498,7 +5571,8 @@ export struct BookshelfPage {
       engine: null,
       stoppingNotificationTask: null,
       chapterIndexes: chapterIndexes,
-      scopeLabel: scopeLabel
+      scopeLabel: scopeLabel,
+      allowCellular: allowCellular
     };
   }
 
@@ -5656,8 +5730,24 @@ export struct BookshelfPage {
       return;
     }
     task.notificationLastAt = now;
-    await this.publishShelfFullTextCacheNotification(task, '全文缓存后台进行中',
+    // 有声书的状态里有已下载数据量、是否在等 Wi-Fi，比固定文字有用。
+    await this.publishShelfFullTextCacheNotification(task,
+      task.scopeLabel.startsWith('音频') && task.status ? task.status : '全文缓存后台进行中',
       this.shelfFullTextCacheProgressText(task), true);
+  }
+
+  /** 有声书下载中的状态：等网络时说明在等什么，否则显示正在下第几章、本批已收到多少数据。 */
+  shelfAudioDownloadStatus(task: ShelfFullTextCacheTask, engine: ReadBookEngine): string {
+    if (engine.audioWaitingNetwork) {
+      return task.allowCellular ? '已暂停：等待网络恢复' : '已暂停：等待连接 Wi-Fi';
+    }
+    let received = 0;
+    engine.audioProgress.forEach((bytes: number): void => {
+      received += bytes;
+    });
+    const position = Math.min(task.total, task.done + 1);
+    return received > 0 ? `正在下载 ${position}/${task.total} · ${ReaderCacheBudgetPolicy.formatBytes(received)}` :
+      `正在下载 ${position}/${task.total}`;
   }
 
   async publishShelfFullTextCacheNotification(task: ShelfFullTextCacheTask, text: string, additionalText: string,
@@ -6050,15 +6140,54 @@ export struct BookshelfPage {
       HdsFeedback.showToast('本地书籍无需缓存');
       return;
     }
+    const audio = BookTypeSupport.isAudio(book);
+    const network = audio ? await AudioOfflineDownloadPrompt.prepare(this.getUIContext(), this.appDarkMode, indexes.length) :
+      AudioOfflineDownloadPrompt.WIFI;
+    if (network === AudioOfflineDownloadPrompt.CANCEL) return;
     // The panel stays open so progress and the "已缓存" marks stay visible; closing it is the
     // user's choice and never interrupts the task.
-    this.showCacheFeedback(`已转入后台缓存 ${indexes.length} 章，可在通知栏取消`);
-    const task = this.createShelfFullTextCacheTask(book, ++this.fullTextCacheTaskId, indexes, scopeLabel);
+    this.showCacheFeedback(`已转入后台${audio ? '下载' : '缓存'} ${indexes.length} 章，可在通知栏取消`);
+    this.startShelfCacheTask(book, indexes, audio ? '音频章节' : scopeLabel, network === AudioOfflineDownloadPrompt.CELLULAR);
+  }
+
+  /** 听书页的"下载"把请求交给这里，与书架菜单里的下载走同一个后台任务。 */
+  onAudioOfflineDownloadRequest(): void {
+    const request = AudioOfflineDownloadPrompt.parse(this.audioOfflineDownloadRequest);
+    if (!request) return;
+    AppStorage.setOrCreate(AudioOfflineDownloadPrompt.ACK_KEY, request.nonce);
+    this.startRequestedAudioDownload(request.bookUrl, request.chapterIndexes, request.allowCellular).catch((error: Error) => {
+      console.error('启动听书页下载任务失败:', error);
+      this.showCacheFeedback('下载失败');
+    });
+  }
+
+  async startRequestedAudioDownload(bookUrl: string, indexes: number[], allowCellular: boolean): Promise<void> {
+    const db = AppDatabase.getInstance();
+    await db.initWithContext(getContext(this));
+    const book = await db.getBook(bookUrl);
+    if (!book || !book.origin || book.origin === 'local') {
+      this.showCacheFeedback('书架里没有这本书，加入书架后再下载');
+      return;
+    }
+    if (this.isBookCaching(book)) {
+      this.showCacheFeedback('该书正在后台下载，请稍候');
+      return;
+    }
+    this.showCacheFeedback(indexes.length > 0 ? `已转入后台下载 ${indexes.length} 章，可在通知栏取消` :
+      '已转入后台下载，可在通知栏取消');
+    this.startShelfCacheTask(book, indexes, indexes.length > 0 ? '音频章节' : '音频', allowCellular);
+  }
+
+  startShelfCacheTask(book: Book, indexes: number[], scopeLabel: string, allowCellular: boolean = false): void {
+    const task = this.createShelfFullTextCacheTask(book, ++this.fullTextCacheTaskId, indexes, scopeLabel, allowCellular);
     this.runShelfFullTextCache(book, task).catch((error: Error) => {
       console.error('书架指定章节缓存任务失败:', error);
-      this.setFullTextCacheStatus(task, '缓存失败');
-      this.showCacheFeedback('缓存失败');
-      this.publishShelfFullTextCacheNotification(task, '缓存失败',
+      // 空间不足、达到离线音频上限要让用户知道原因，其他失败统一提示。
+      const reason = error?.message === AudioOfflineStore.STORAGE_FAILURE || error?.message === AudioOfflineStore.CAP_REACHED ?
+        error.message : '缓存失败';
+      this.setFullTextCacheStatus(task, reason);
+      this.showCacheFeedback(reason);
+      this.publishShelfFullTextCacheNotification(task, reason,
         this.shelfFullTextCacheProgressText(task), false).catch((e: Error) => {
         console.warn('更新书架缓存失败通知失败:', e);
       });
@@ -6086,6 +6215,8 @@ export struct BookshelfPage {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
       await db.deleteBookCachedContent(book.bookUrl);
+      const audio = BookTypeSupport.isAudio(book);
+      if (audio) await AudioOfflineStore.clearBook(book.bookUrl);
       const engine = ReadBookEngine.get();
       if (engine.book?.bookUrl === book.bookUrl) {
         engine.clearCurrentBookMemoryCache();
@@ -6097,8 +6228,8 @@ export struct BookshelfPage {
         }
         this.cacheChapters = [...this.cacheChapters];
       }
-      this.cacheStatus = '已清除缓存章节';
-      this.showCacheFeedback('已清除缓存章节');
+      this.cacheStatus = audio ? '已删除已下载音频' : '已清除缓存章节';
+      this.showCacheFeedback(this.cacheStatus);
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
     } catch (e) {
       console.error('清除缓存章节失败:', e);

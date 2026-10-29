@@ -1,7 +1,8 @@
 /** 四角顺序：左上、右上、左下、右下。空角保留分隔符，旧数据缺字段才迁移。 */
 export class BookshelfCoverBadgeSettings {
   static readonly DEFAULT: string = 'pin|update,unread|type|source';
-  static readonly ITEMS: string[] = ['type', 'source', 'update', 'pin', 'unread'];
+  /** offline 是后加的，默认不放到任何角，已有配置也不受影响。 */
+  static readonly ITEMS: string[] = ['type', 'source', 'update', 'pin', 'unread', 'offline'];
   static readonly CORNERS: number[] = [0, 1, 2, 3];
 
   static normalize(raw: string, showType: boolean = true, showSource: boolean = true): string {
@@ -50,6 +51,7 @@ export class BookshelfCoverBadgeSettings {
     if (item === 'update') return '书籍更新标识';
     if (item === 'pin') return '置顶标识';
     if (item === 'unread') return '未读章节数';
+    if (item === 'offline') return '离线标识';
     return '';
   }
 

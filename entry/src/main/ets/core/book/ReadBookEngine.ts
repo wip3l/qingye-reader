@@ -1,7 +1,10 @@
 import { ReaderImageReferences } from './ReaderImageReferences';
 import { ReaderCacheCoordinator } from './ReaderCacheCoordinator';
 import { ReaderImageCache } from './ReaderImageCache';
-import { Book, BookChapter, BookSource, SearchBook, ReaderActionMarker, BookUrlResolver } from '@legado/sourceengine';
+import { Book, BookChapter, BookSource, SearchBook, ReaderActionMarker, BookUrlResolver, BookTypeSupport } from '@legado/sourceengine';
+import { AudioDownloadTask, AudioOfflineStore } from './AudioOfflineStore';
+import { AudioOfflinePolicy } from './AudioOfflinePolicy';
+import { AudioUrlResolver } from './AudioUrlResolver';
 import { appDb } from '../../model/data/AppDatabase';
 import { WebBookService } from './WebBookService';
 import { SearchCoordinator } from './SearchCoordinator';
@@ -32,6 +35,18 @@ export class ReadBookEngine {
   content: string = '';
   isLoading: boolean = false;
   lastCacheError: string = '';
+  /** 有声书下载：用户同意过用移动网络。书架任务与边听边下各用自己的后台引擎，互不影响。 */
+  audioAllowCellular: boolean = false;
+  /** 有声书下载：边听边下发起，下载的章节听过后可自动删除。 */
+  audioAuto: boolean = false;
+  /** 下载中各章已收到的字节数，通知栏显示进度用。 */
+  audioProgress: Map<number, number> = new Map();
+  /** 正在等网络恢复（离开 Wi-Fi 或断网）。 */
+  audioWaitingNetwork: boolean = false;
+  /** 不支持离线的章数（受保护、直播流），缓存结束的提示里单独说明。 */
+  audioUnsupportedCount: number = 0;
+  /** 取音频地址排队进行：并发下载时书源请求仍一章一章发，网页解析宿主也只有一个。 */
+  private audioResolveChain: Promise<void> = Promise.resolve();
 
   private chapterCache: Map<number, string> = new Map();
   private chapterLoading: Map<number, Promise<string>> = new Map();
@@ -756,8 +771,9 @@ export class ReadBookEngine {
   async cacheChapter(idx: number, shouldCancel: (() => boolean) | null = null): Promise<boolean> {
     if (shouldCancel?.() || !this.book || !this.chapters[idx]) return false;
     const book = this.book;
-    const releaseBook = ReaderCacheCoordinator.retainBook(book.bookUrl);
     this.lastCacheError = '';
+    if (BookTypeSupport.isAudio(book)) return await this.cacheAudioChapter(book, idx, shouldCancel);
+    const releaseBook = ReaderCacheCoordinator.retainBook(book.bookUrl);
     try {
       // 已是离线内容且图片都在：不重读、不重写整章，只算作完成。
       if (await this.isOfflineChapterIntact(book.bookUrl, idx)) return true;
@@ -792,6 +808,115 @@ export class ReadBookEngine {
     } finally { releaseBook(); }
   }
 
+  /**
+   * 有声书的手动缓存是把音频文件下载下来；只存地址文本，离线时照样播不了。
+   * 签名地址会过期，所以每章都重新取一次地址，不用正文缓存里的旧地址；失败重试时也重新取。
+   */
+  private async cacheAudioChapter(book: Book, idx: number, shouldCancel: (() => boolean) | null): Promise<boolean> {
+    const chapter = this.chapters[idx];
+    const previousDate = chapter.cacheDate;
+    const voice = book.getVariable('custom') || '';
+    let downloaded = false;
+    try {
+      if (await AudioOfflineStore.localFile(book.bookUrl, idx, chapter.url, chapter.title, voice)) {
+        if (!this.audioAuto) await appDb.markAudioOfflineManual(book.bookUrl, idx);
+        downloaded = true;
+        return true;
+      }
+      for (let attempt = 0; ; attempt++) {
+        const address = await this.resolveAudioAddress(book, idx, shouldCancel);
+        if (!address) return false;
+        const task = new AudioDownloadTask();
+        task.bookUrl = book.bookUrl;
+        task.chapterIndex = idx;
+        task.chapterUrl = chapter.url;
+        task.chapterTitle = chapter.title;
+        task.voice = voice;
+        task.auto = this.audioAuto;
+        task.url = address.url;
+        task.headers = address.headers;
+        task.allowCellular = this.audioAllowCellular;
+        task.shouldCancel = shouldCancel;
+        task.onProgress = (received: number): void => {
+          this.audioProgress.set(idx, received);
+        };
+        try {
+          await AudioOfflineStore.download(task);
+          downloaded = true;
+          return true;
+        } catch (e) {
+          const message = (e as Error)?.message || '';
+          if (message === AudioOfflineStore.NETWORK_WAIT) {
+            if (!await this.waitForAudioNetwork(shouldCancel)) return false;
+            attempt = -1;
+            continue;
+          }
+          // 网络抖动、下载中断：半截文件已留着，稍等后续传。
+          if (attempt < 2 && !shouldCancel?.() && /^音频(?:分片)?下载(?:失败|不完整)/.test(message)) {
+            await new Promise<void>((resolve: () => void): number => setTimeout(resolve, 1500 * (attempt + 1)));
+            continue;
+          }
+          throw e as Error;
+        }
+      }
+    } catch (e) {
+      const message = (e as Error)?.message || '';
+      if (message === AudioOfflineStore.STORAGE_FAILURE || message === AudioOfflineStore.CAP_REACHED) {
+        this.lastCacheError = message;
+      } else if (message === AudioOfflinePolicy.PROTECTED || message === AudioOfflinePolicy.NOT_SEGMENTED_LIVE) {
+        this.audioUnsupportedCount++;
+      }
+      if (!shouldCancel?.()) console.warn('[RE] offline audio failed:', idx, e);
+      return false;
+    } finally {
+      this.audioProgress.delete(idx);
+      // 取地址时正文缓存会把本章标成已缓存；有声书的标记只看音频文件在不在。
+      chapter.cacheDate = downloaded ? (previousDate > 0 ? previousDate : Date.now()) : 0;
+    }
+  }
+
+  private async resolveAudioAddress(book: Book, idx: number,
+    shouldCancel: (() => boolean) | null): Promise<AudioAddress | null> {
+    const previous = this.audioResolveChain;
+    let release: () => void = (): void => {};
+    this.audioResolveChain = new Promise<void>((resolve: () => void): void => { release = resolve; });
+    try {
+      await previous;
+      if (shouldCancel?.() || this.book !== book) return null;
+      const chapter = this.chapters[idx];
+      this.chapterCache.delete(idx);
+      this.chapterLoading.delete(idx);
+      await appDb.deleteCachedChapterContent(book.bookUrl, idx);
+      const content = await this.fetchContentUncached(idx, shouldCancel, true);
+      if (shouldCancel?.() || !content || this.book !== book) return null;
+      const url = AudioUrlResolver.resolveAudioUrl(content, chapter.url || book.bookUrl || this.source?.bookSourceUrl || '');
+      if (!url) {
+        console.warn('[RE] offline audio has no address:', idx, AudioUrlResolver.invalidAudioAddressMessage(content));
+        return null;
+      }
+      const address = new AudioAddress();
+      address.url = url;
+      address.headers = AudioUrlResolver.audioHeaders(url, this.source, content);
+      return address;
+    } finally {
+      release();
+    }
+  }
+
+  /** 等到网络允许下载（回到 Wi-Fi，或同意过移动网络时恢复联网）；取消时返回 false。 */
+  private async waitForAudioNetwork(shouldCancel: (() => boolean) | null): Promise<boolean> {
+    this.audioWaitingNetwork = true;
+    try {
+      while (!AudioOfflineStore.networkAllows(this.audioAllowCellular)) {
+        if (shouldCancel?.()) return false;
+        await new Promise<void>((resolve: () => void): number => setTimeout(resolve, 2000));
+      }
+      return !shouldCancel?.();
+    } finally {
+      this.audioWaitingNetwork = false;
+    }
+  }
+
   private async isOfflineChapterIntact(bookUrl: string, idx: number): Promise<boolean> {
     try {
       const paths = await appDb.pinnedChapterImagePaths(bookUrl, idx);
@@ -812,7 +937,11 @@ export class ReadBookEngine {
     if (!this.book || this.chapters.length === 0) {
       return;
     }
-    const cacheDates = await appDb.getBookChapterCacheDateMap(expectedBookUrl);
+    // 有声书的"已缓存"表示音频已下载，与正文缓存里存的地址文本无关。
+    const cacheDates = BookTypeSupport.isAudio(this.book) ? await AudioOfflineStore.downloadedDates(expectedBookUrl,
+      this.chapters.map((chapter: BookChapter): string => chapter.url),
+      this.chapters.map((chapter: BookChapter): string => chapter.title), this.book.getVariable('custom') || '') :
+      await appDb.getBookChapterCacheDateMap(expectedBookUrl);
     if (!this.isCurrentBookSession(expectedGeneration, expectedBookUrl)) return;
     for (const chapter of this.chapters) {
       chapter.cacheDate = cacheDates.get(chapter.index) || 0;
@@ -1039,4 +1168,9 @@ export class ReadBookEngine {
     const c = this.chapters[this.curIdx];
     return c ? c.title : '';
   }
+}
+
+class AudioAddress {
+  url: string = '';
+  headers: Record<string, string> = {};
 }

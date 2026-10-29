@@ -2,8 +2,8 @@ import { BookCoverResolver } from '../utils/BookCoverResolver';
 import fileUri from '@ohos.file.fileuri';
 import { ThemeBookCoverSettings } from '../utils/ThemeBookCoverSettings';
 import { BookCover } from '../components/book/BookCover';
-import { NativeSourceService, NativeVoiceOption, Book, BookChapter, BookSource, BookTypeSupport, BookUrlResolver, VerificationSupport } from '@legado/sourceengine';
-import { router } from '@kit.ArkUI';
+import { NativeSourceService, NativeVoiceOption, Book, BookChapter, BookSource, BookTypeSupport } from '@legado/sourceengine';
+import { promptAction, router } from '@kit.ArkUI';
 import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { avSession } from '@kit.AVSessionKit';
@@ -11,7 +11,12 @@ import { AppDatabase } from '../model/data/AppDatabase';
 import { ReadBookEngine } from '../core/book/ReadBookEngine';
 import { WebBookService } from '../core/book/WebBookService';
 import { BookSourceDataUrlSupport } from '../core/book/BookSourceDataUrlSupport';
-import { AudioRuleSupport } from '../core/book/AudioRuleSupport';
+import { AudioUrlResolver } from '../core/book/AudioUrlResolver';
+import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
+import { AudioOfflineDownloadPrompt } from '../utils/AudioOfflineDownloadPrompt';
+import { AudioOfflineSettingsStore } from '../utils/AudioOfflineSettingsStore';
+import { AudioPrefetch } from '../utils/AudioPrefetch';
+import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
 import { AudioStartTiming, RemoteAudioPlayback, RemoteAudioPlaybackListener } from '../utils/RemoteAudioPlayback';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { BookCoverCache } from '../utils/BookCoverCache';
@@ -62,6 +67,21 @@ class AudioBookPlaybackListener implements RemoteAudioPlaybackListener {
  */
 class AudioBookAvSessionHolder {
   static session: avSession.AVSession | null = null;
+  /**
+   * 系统媒体控制（状态栏、锁屏）的命令交给当前接管播放器的页面。会话上的回调只注册一次并转发到这里；
+   * 以前回调绑在创建会话的那个页面上，重新打开听书页后命令还发给旧页面，切章标题和播放按钮都不再更新。
+   */
+  static commands: AudioBookMediaCommands | null = null;
+}
+
+interface AudioBookMediaCommands {
+  play: () => void;
+  pause: () => void;
+  stop: () => void;
+  next: () => void;
+  previous: () => void;
+  seek: (time: number) => void;
+  setSpeed: (speed: number) => void;
 }
 
 @Entry
@@ -80,6 +100,11 @@ struct AudioBookPage {
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @State book: Book | null = null;
   @State chapters: BookChapter[] = [];
+  /** 已下载音频的章节序号 → 下载时间。 */
+  @State offlineChapterDates: Map<number, number> = new Map();
+  @State offlineBookBytes: number = 0;
+  @StorageLink('shelfUpdateTime') @Watch('onShelfUpdateTimeChanged') shelfUpdateTime: number = 0;
+  @StorageLink('audioOfflineRevision') @Watch('onShelfUpdateTimeChanged') audioOfflineRevision: number = 0;
   @State chapterIndex: number = 0;
   @State positionMs: number = 0;
   @State durationMs: number = 0;
@@ -152,6 +177,7 @@ struct AudioBookPage {
     this.openedFromShortcut = params?.['shortcutEntry'] === 'true';
     this.shortcutReplacedPreviousPage = params?.['shortcutReplace'] === 'true';
     this.playback.attach(this.playbackListener);
+    this.claimMediaCommands();
     if (this.bookUrl && this.playback.bookUrl === this.bookUrl && this.playback.mediaUrl) {
       // 从书架胶囊回到正在播放的这本书：沿用播放器状态，不显示加载中。
       this.playbackState = this.playback.state;
@@ -164,6 +190,7 @@ struct AudioBookPage {
     this.pageVisible = true;
     this.syncBars();
     this.playback.attach(this.playbackListener);
+    this.claimMediaCommands();
     this.restoreSleepTimerUi();
     this.refreshVoiceSource();
   }
@@ -226,6 +253,10 @@ struct AudioBookPage {
         onClose: () => this.closePage(),
         onOpenVoice: () => this.openVoiceDialog(),
         onOpenCatalog: () => this.openChapterList(),
+        hostDownloadAvailable: !!this.book && this.book.origin !== 'local',
+        onOpenDownload: () => {
+          this.openOfflineMenu(this.getUIContext()).catch((error: Error) => console.warn('打开离线下载菜单失败:', error));
+        },
         onTogglePlayback: () => {
           this.togglePlayback();
         }
@@ -642,8 +673,18 @@ struct AudioBookPage {
       viewportHeight: this.viewportHeight,
       scroller: this.chapterScroller,
       source: this.chapterDataSource,
+      cachedLabel: '已下载',
+      actionLabel: this.book && this.book.origin !== 'local' ? '下载' : '',
+      noteText: this.offlineSummaryText(),
+      onLongPress: (displayIndex: number) => {
+        this.openChapterOfflineMenu(this.getUIContext(), this.chapterCanonicalIndex(displayIndex))
+          .catch((error: Error) => console.warn('打开本章离线菜单失败:', error));
+      },
       isCached: (displayIndex: number): boolean =>
         this.isChapterCached(this.chapterCanonicalIndex(displayIndex)),
+      onAction: () => {
+        this.openOfflineMenu(this.getUIContext()).catch((error: Error) => console.warn('打开离线下载菜单失败:', error));
+      },
       onToggleOrder: () => this.toggleChapterOrder(),
       onSelect: (displayIndex: number) => this.selectChapter(this.chapterCanonicalIndex(displayIndex)),
       onClose: () => this.closeChapterList()
@@ -706,6 +747,7 @@ struct AudioBookPage {
       }
       this.chapters = engine.chapters;
       this.refreshChapterDataSource();
+      this.refreshOfflineChapters();
       this.chapterIndex = this.clampChapterIndex(this.book.durChapterIndex);
       await db.updateBook(this.book, false);
       if (this.chapters.length === 0) {
@@ -783,21 +825,31 @@ struct AudioBookPage {
       await this.playback.abortPendingLoad();
       await ReaderTtsFloatingSession.stopOther(this.floatingSessionOwnerId);
       if (serial !== this.loadingSerial) return;
-      const engine = ReadBookEngine.get();
-      const content = await this.withAudioResolveTimeout(
-        forceRefresh ? engine.reloadContent(chapterIndex, cancelled) : engine.loadContent(chapterIndex, cancelled),
-        (): void => {
-          timedOut = true;
-        });
-      timing.mark('resolve-url');
+      // 已下载的章节直接播本地文件。本地播放出错时的自动重试带 forceRefresh，会改走在线地址。
+      const localPath = forceRefresh ? '' : await AudioOfflineStore.localFile(book.bookUrl, chapterIndex, chapter.url,
+        chapter.title, book.getVariable('custom') || '');
       if (serial !== this.loadingSerial) return;
-      const url = this.resolveAudioUrl(content, chapter.url || book.bookUrl || this.source?.bookSourceUrl || '');
-      if (!url) throw new Error(this.invalidAudioAddressMessage(content));
-      const headers = this.audioHeaders(url, this.source, content);
-      await this.playback.play(book.bookUrl, chapterIndex, url, headers, startPositionMs, this.speed, timing);
+      if (localPath) {
+        timing.mark('offline-file');
+        await this.playback.play(book.bookUrl, chapterIndex, localPath, {}, startPositionMs, this.speed, timing);
+      } else {
+        const engine = ReadBookEngine.get();
+        const content = await this.withAudioResolveTimeout(
+          forceRefresh ? engine.reloadContent(chapterIndex, cancelled) : engine.loadContent(chapterIndex, cancelled),
+          (): void => {
+            timedOut = true;
+          });
+        timing.mark('resolve-url');
+        if (serial !== this.loadingSerial) return;
+        const url = AudioUrlResolver.resolveAudioUrl(content, chapter.url || book.bookUrl || this.source?.bookSourceUrl || '');
+        if (!url) throw new Error(AudioUrlResolver.invalidAudioAddressMessage(content));
+        const headers = AudioUrlResolver.audioHeaders(url, this.source, content);
+        await this.playback.play(book.bookUrl, chapterIndex, url, headers, startPositionMs, this.speed, timing);
+      }
       if (serial !== this.loadingSerial) return;
       this.statusText = '正在播放';
       this.publishFloatingSession();
+      AudioPrefetch.get().schedule(book, chapterIndex);
       this.saveProgressNow();
     } catch (error) {
       if (serial !== this.loadingSerial) return;
@@ -849,6 +901,7 @@ struct AudioBookPage {
     // session has been running, instead of the state at session publish time.
     ReaderTtsFloatingSession.updateCatalogCachedFlags(
       this.floatingSessionOwnerId, this.chapterCachedFlags());
+    this.refreshOfflineChapters();
     animateTo({ duration: 280, curve: Curve.Friction }, () => {
       this.showChapterList = true;
     });
@@ -926,6 +979,7 @@ struct AudioBookPage {
     this.syncFloatingStatus();
     if (state === 'playing') {
       this.publishFloatingSession();
+      this.updateAudioAvSessionState(avSession.PlaybackState.PLAYBACK_STATE_PLAY).catch(() => {});
       this.startAudioBackground().catch((error: Error) => {
         console.warn('启动听书后台播放失败:', error);
       });
@@ -1072,7 +1126,13 @@ struct AudioBookPage {
   }
 
   private async performStopAudioPlayback(): Promise<void> {
+    // 停止后播放器的位置会清零，先把当前进度存下来，下次打开才能接着听。
+    if (this.playback.matches(this.book?.bookUrl || '', this.chapterIndex) && this.latestPositionMs > 0) {
+      await this.saveProgressNow(true);
+    }
+    this.clearProgressSaveTimer();
     this.loadingSerial++;
+    AudioPrefetch.get().cancel();
     await this.playback.stop();
     await this.stopAudioBackground();
     ReaderTtsFloatingSession.clear(this.floatingSessionOwnerId);
@@ -1210,6 +1270,7 @@ struct AudioBookPage {
       },
       this.chapterCachedFlags()
     );
+    this.publishAudioOffline();
     this.updateFloatingSession();
   }
 
@@ -1305,169 +1366,6 @@ struct AudioBookPage {
     });
     this.progressSaveQueue = next;
     return next;
-  }
-
-  resolveAudioUrl(raw: string, baseUrl: string = ''): string {
-    let value = String(raw || '').trim();
-    if (!value) return '';
-    if (value.startsWith('"') && value.endsWith('"')) {
-      try { value = String(JSON.parse(value)); } catch (_) {}
-    }
-    value = this.decodeAudioRuleValue(value);
-    try {
-      const parsed = JSON.parse(value) as Record<string, Object>;
-      const candidate = this.audioUrlFromObject(parsed, baseUrl);
-      if (candidate) return candidate;
-    } catch (_) {}
-
-    const tagMatch = value.match(/<(?:audio|source)\b[^>]*\b(?:src|data-src|data-url)\s*=\s*["']([^"']+)["'][^>]*>/i) ||
-      value.match(/<(?:audio|source)\b[^>]*\b(?:src|data-src|data-url)\s*=\s*([^\s>]+)[^>]*>/i);
-    if (tagMatch && tagMatch[1]) {
-      const taggedUrl = this.normalizeAudioCandidate(tagMatch[1], baseUrl, true);
-      if (taggedUrl) return taggedUrl;
-    }
-
-    const fieldMatch = value.match(/["']?(?:audio_url|audioUrl|play_url|playUrl|playurl|listenUrl|streamUrl|mediaUrl|src|file|path|url)["']?\s*[:=]\s*["']([^"']+)["']/i);
-    if (fieldMatch && fieldMatch[1]) {
-      const fieldUrl = this.normalizeAudioCandidate(fieldMatch[1], baseUrl, true);
-      if (fieldUrl) return fieldUrl;
-    }
-
-    // HTML/JS chapter pages often contain covers, analytics and API links before the player.
-    // Prefer a media-looking address so a generic first URL cannot mask the actual stream.
-    const mediaMatch = value.match(/(?:https?:)?\/\/[^\s"'<>\\]+?\.(?:aac|flac|m3u8|m4a|mp3|mp4|ogg|opus|wav)(?:\?[^\s"'<>\\]*)?/i);
-    if (mediaMatch) {
-      const mediaUrl = this.normalizeAudioCandidate(mediaMatch[0], baseUrl, true);
-      if (mediaUrl) return mediaUrl;
-    }
-
-    const absoluteMatch = value.match(/https?:\/\/[^\s"'<>]+/i);
-    if (absoluteMatch) {
-      const absoluteUrl = this.normalizeAudioCandidate(absoluteMatch[0], baseUrl, true);
-      if (absoluteUrl) return absoluteUrl;
-    }
-    const protocolRelativeMatch = value.match(/\/\/[A-Za-z0-9.-]+(?::\d+)?\/[^\s"'<>]*/);
-    if (protocolRelativeMatch) {
-      const protocolRelativeUrl = this.normalizeAudioCandidate(protocolRelativeMatch[0], baseUrl, true);
-      if (protocolRelativeUrl) return protocolRelativeUrl;
-    }
-    return this.normalizeAudioCandidate(value, baseUrl, false);
-  }
-
-  audioUrlFromObject(value: Record<string, Object>, baseUrl: string): string {
-    const keys = ['audio_url', 'audioUrl', 'play_url', 'playUrl', 'playurl', 'main_url', 'mainUrl',
-      'listenUrl', 'downloadUrl', 'streamUrl', 'mediaUrl', 'backup_url', 'backupUrl', 'src', 'file', 'path',
-      'url', 'url_list', 'urlList', 'backup_urls', 'backupUrls', 'audio_list', 'audioList', 'play_info',
-      'playInfo', 'decodedContent', 'content', 'data', 'result', 'payload', 'audio', 'media'];
-    for (const key of keys) {
-      const item = value[key];
-      if (typeof item === 'string') {
-        const candidate = this.resolveAudioUrl(item, baseUrl);
-        if (candidate) return candidate;
-      } else if (item && typeof item === 'object' && !Array.isArray(item)) {
-        const nested = this.audioUrlFromObject(item as Record<string, Object>, baseUrl);
-        if (nested) return nested;
-      } else if (Array.isArray(item)) {
-        for (const entry of item as Object[]) {
-          if (typeof entry === 'string') {
-            const candidate = this.resolveAudioUrl(entry, baseUrl);
-            if (candidate) return candidate;
-          }
-          if (entry && typeof entry === 'object') {
-            const nested = this.audioUrlFromObject(entry as Record<string, Object>, baseUrl);
-            if (nested) return nested;
-          }
-        }
-      }
-    }
-    return '';
-  }
-
-  invalidAudioAddressMessage(raw: string): string {
-    // 取正文失败时内容为空，原因记在书源阶段错误里（例如接口返回的 code/message、书源给的说明）。
-    if (!(raw || '').trim()) {
-      const stageError = (AppStorage.get<string>('bookSourceStageLastError') || '').trim();
-      if (stageError) return stageError;
-    }
-    try {
-      const root = JSON.parse(raw || '{}') as Record<string, Object>;
-      let data: Record<string, Object> = root;
-      if (root['data'] && typeof root['data'] === 'object' && !Array.isArray(root['data'])) {
-        data = root['data'] as Record<string, Object>;
-      }
-      const message = String(root['error'] || root['message'] || root['msg'] ||
-        data['error'] || data['message'] || data['msg'] || '').trim();
-      if (message) return `音频接口未返回可播放地址：${message}`;
-    } catch (_) {}
-    return '正文规则没有返回有效音频地址';
-  }
-
-  decodeAudioRuleValue(raw: string): string {
-    return String(raw || '').trim()
-      .replace(/&amp;/gi, '&')
-      .replace(/&quot;/gi, '"')
-      .replace(/&#39;|&apos;/gi, "'")
-      .replace(/\\u002[fF]|\\x2[fF]/g, '/')
-      .replace(/\\u003[aA]|\\x3[aA]/g, ':')
-      .replace(/\\u0026|\\x26/gi, '&')
-      .replace(/\\u003[dD]|\\x3[dD]/g, '=')
-      .replace(/\\\//g, '/');
-  }
-
-  normalizeAudioCandidate(raw: string, baseUrl: string, trustPlainValue: boolean): string {
-    let value = this.decodeAudioRuleValue(raw)
-      .replace(/^url\(\s*|\s*\)$/gi, '')
-      .replace(/^["']|["']$/g, '')
-      .trim();
-    value = value.replace(/,\s*\{[\s\S]*$/, '').replace(/[),.;\]}]+$/, '');
-    if (!value || /\s/.test(value) || /^(?:javascript:|data:|about:|#)/i.test(value)) return '';
-
-    const isExplicitUrl = /^(?:https?:)?\/\//i.test(value) || /^\.?\.?\//.test(value);
-    const isLikelyMediaPath = /\.(?:aac|flac|m3u8|m4a|mp3|mp4|ogg|opus|wav)(?:[?#].*)?$/i.test(value);
-    const isLikelyRelativeEndpoint = /^[A-Za-z0-9._~-]+(?:\/|\?)[^\s<>{}\[\]"']+$/.test(value);
-    if (!isExplicitUrl && !isLikelyMediaPath && !isLikelyRelativeEndpoint && !trustPlainValue) return '';
-    const resolved = BookUrlResolver.resolve(value, baseUrl);
-    return /^https?:\/\//i.test(resolved) ? resolved : '';
-  }
-
-  /**
-   * Source headers follow the stream only within the source's own site; headers the rule attached
-   * to the address itself (`url,{"headers":{...}}`) are the author's explicit choice and win.
-   */
-  audioHeaders(url: string, source: BookSource | null, ruleValue: string = ''): Record<string, string> {
-    const explicit = AudioRuleSupport.splitRequestOptions(this.decodeAudioRuleValue(ruleValue)).headers;
-    let headers = this.sourceAudioHeaders(source);
-    if (source) {
-      headers = AudioRuleSupport.scopeHeadersToMediaHost(headers, source.bookSourceUrl, url);
-      // The cookie jar is already scoped to the media address, so it applies on any host.
-      const cookie = VerificationSupport.sourceCookieHeader(source, url);
-      if (cookie) headers = AudioRuleSupport.mergeHeaders(headers, { 'Cookie': cookie });
-    }
-    return AudioRuleSupport.mergeHeaders(headers, explicit);
-  }
-
-  private sourceAudioHeaders(source: BookSource | null): Record<string, string> {
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36'
-    };
-    if (!source) return headers;
-    const rawHeader = source.header || '';
-    try {
-      const parsed = JSON.parse(rawHeader.replace(/'/g, '"')) as Record<string, string>;
-      for (const key of Object.keys(parsed)) {
-        const value = String(parsed[key] || '');
-        if (key && value && !value.includes('java.')) headers[key] = value;
-      }
-    } catch (_) {
-      const regex = /["']([A-Za-z0-9_-]+)["']\s*:\s*["']([^"']+)["']/g;
-      let match: RegExpExecArray | null;
-      while ((match = regex.exec(rawHeader)) !== null) {
-        const key = match[1] || '';
-        const value = match[2] || '';
-        if (key && value && !value.includes('java.')) headers[key] = value;
-      }
-    }
-    return headers;
   }
 
   currentChapter(): BookChapter | null {
@@ -1664,29 +1562,39 @@ struct AudioBookPage {
   }
 
   registerAudioAvSessionCommands(session: avSession.AVSession): void {
-    session.on('play', (): void => {
-      this.playback.resume().catch((error: Error) => {
-        this.onPlaybackError(this.errorMessage(error));
-      });
-    });
-    session.on('pause', (): void => {
-      this.playback.pause().catch(() => {});
-    });
-    session.on('stop', (): void => {
-      this.playback.stop().then(() => this.stopAudioBackground()).catch(() => {});
-    });
-    session.on('playNext', (): void => {
-      this.handleMediaChapterCommand(1);
-    });
-    session.on('playPrevious', (): void => {
-      this.handleMediaChapterCommand(-1);
-    });
-    session.on('seek', (time: number): void => {
-      this.playback.seek(time);
-    });
-    session.on('setSpeed', (speed: number): void => {
-      this.changeSpeed(speed);
-    });
+    this.claimMediaCommands();
+    session.on('play', (): void => AudioBookAvSessionHolder.commands?.play());
+    session.on('pause', (): void => AudioBookAvSessionHolder.commands?.pause());
+    session.on('stop', (): void => AudioBookAvSessionHolder.commands?.stop());
+    session.on('playNext', (): void => AudioBookAvSessionHolder.commands?.next());
+    session.on('playPrevious', (): void => AudioBookAvSessionHolder.commands?.previous());
+    session.on('seek', (time: number): void => AudioBookAvSessionHolder.commands?.seek(time));
+    session.on('setSpeed', (speed: number): void => AudioBookAvSessionHolder.commands?.setSpeed(speed));
+  }
+
+  /** 这个页面接管播放器时调用，之后系统媒体控制的命令都由它处理。 */
+  claimMediaCommands(): void {
+    AudioBookAvSessionHolder.commands = {
+      play: (): void => {
+        this.playback.resume().catch((error: Error) => {
+          this.onPlaybackError(this.errorMessage(error));
+        });
+      },
+      pause: (): void => {
+        this.playback.pause().catch(() => {});
+      },
+      stop: (): void => {
+        this.stopAudioPlayback().catch(() => {});
+      },
+      next: (): void => this.handleMediaChapterCommand(1),
+      previous: (): void => this.handleMediaChapterCommand(-1),
+      seek: (time: number): void => {
+        this.latestPositionMs = Math.max(0, time);
+        this.playback.seek(time);
+        this.scheduleProgressSave();
+      },
+      setSpeed: (speed: number): void => this.changeSpeed(speed)
+    };
   }
 
   unregisterAudioAvSessionCommands(session: avSession.AVSession): void {
@@ -1700,7 +1608,8 @@ struct AudioBookPage {
   }
 
   async updateAudioAvSessionState(state: avSession.PlaybackState): Promise<void> {
-    const session = this.audioAvSession;
+    // 会话可能是之前那个听书页建的；接管播放器的新页面也要能更新它的标题和播放状态。
+    const session = this.audioAvSession || AudioBookAvSessionHolder.session;
     if (!session) return;
     try {
       await session.setAVMetadata(await this.audioAvMetadata());
@@ -1791,11 +1700,195 @@ struct AudioBookPage {
     return name.length > 0 ? name.substring(0, 1) : '书';
   }
 
-  /** Mirrors the reader catalog's "已缓存" chip; local books have no remote cache state. */
+  /**
+   * 目录里的"已下载"标记。只看离线音频，不看 chapter.cacheDate：
+   * 播放时取到的地址文本也会进正文缓存并改写 cacheDate，但那样断网照样播不了。
+   */
   isChapterCached(canonicalIndex: number): boolean {
     if (!this.book || this.book.origin === 'local') return false;
-    if (canonicalIndex < 0 || canonicalIndex >= this.chapters.length) return false;
-    return this.chapters[canonicalIndex].cacheDate > 0;
+    return this.offlineChapterDates.has(canonicalIndex);
+  }
+
+  async refreshOfflineChapters(): Promise<void> {
+    const book = this.book;
+    const bookUrl = book?.bookUrl || '';
+    if (!book || !bookUrl || book.origin === 'local') return;
+    try {
+      const dates = await AudioOfflineStore.downloadedDates(bookUrl,
+        this.chapters.map((chapter: BookChapter): string => chapter.url),
+        this.chapters.map((chapter: BookChapter): string => chapter.title), book.getVariable('custom') || '');
+      const bytes = await AudioOfflineStore.bookBytes(bookUrl);
+      if (this.book?.bookUrl !== bookUrl) return;
+      this.offlineChapterDates = dates;
+      this.offlineBookBytes = bytes;
+      this.refreshChapterDataSource();
+      ReaderTtsFloatingSession.updateCatalogCachedFlags(this.floatingSessionOwnerId, this.chapterCachedFlags());
+      this.publishAudioOffline();
+    } catch (error) {
+      console.warn('读取已下载音频章节失败:', error);
+    }
+  }
+
+  /** 把离线信息交给浮动会话，书架胶囊打开的播放面板和目录才有同样的下载入口和标记。 */
+  publishAudioOffline(): void {
+    const book = this.book;
+    if (!book || book.origin === 'local') {
+      ReaderTtsFloatingSession.configureAudioOffline(this.floatingSessionOwnerId, null);
+      return;
+    }
+    ReaderTtsFloatingSession.configureAudioOffline(this.floatingSessionOwnerId, {
+      author: book.author || '',
+      cachedLabel: '已下载',
+      summary: this.offlineSummaryText(),
+      openDownload: (ui: UIContext): void => {
+        this.openOfflineMenu(ui).catch((error: Error) => console.warn('打开离线下载菜单失败:', error));
+      },
+      chapterAction: (ui: UIContext, canonicalIndex: number): void => {
+        this.openChapterOfflineMenu(ui, canonicalIndex)
+          .catch((error: Error) => console.warn('打开本章离线菜单失败:', error));
+      },
+      refresh: (): Promise<void> => this.refreshOfflineChapters()
+    });
+  }
+
+  onShelfUpdateTimeChanged(): void {
+    // 书架上的下载任务结束、删除已下载音频、边听边下完成一章后都会通知。
+    this.refreshOfflineChapters();
+  }
+
+  /** 目录摘要行的离线说明。 */
+  offlineSummaryText(): string {
+    if (this.offlineChapterDates.size === 0) return '';
+    return `已下载 ${this.offlineChapterDates.size} 章 · ${ReaderCacheBudgetPolicy.formatBytes(this.offlineBookBytes)}`;
+  }
+
+  /** 听书页的离线入口：批量下载、边听边下设置、删除。目录头和播放面板的"下载"都打开它。 */
+  async openOfflineMenu(ui: UIContext): Promise<void> {
+    const book = this.book;
+    if (!book || book.origin === 'local' || this.chapters.length === 0) return;
+    const nextCount = Math.min(20, this.chapters.length - this.chapterIndex);
+    const prefetch = AudioOfflineStore.prefetchCount();
+    const all: promptAction.Button = { text: '下载全部章节', color: this.accentColor() };
+    const next: promptAction.Button = { text: `从本章起下载 ${nextCount} 章`, color: this.accentColor() };
+    const auto: promptAction.Button = {
+      text: prefetch > 0 ? `边听边下：已开启（后 ${prefetch} 章）` : '边听边下：已关闭',
+      color: this.accentColor()
+    };
+    const remove: promptAction.Button = {
+      text: `删除已下载音频（${this.offlineChapterDates.size} 章）`,
+      color: ThemeRuntime.dangerColor(this.appDarkMode)
+    };
+    let index = -1;
+    try {
+      const result: promptAction.ActionMenuSuccessResponse = await ui.getPromptAction().showActionMenu({
+        title: this.offlineSummaryText() || '离线下载',
+        buttons: this.offlineChapterDates.size > 0 ? [all, next, auto, remove] : [all, next, auto]
+      });
+      index = result.index;
+    } catch (_) {
+      return;
+    }
+    if (index === 2) {
+      await this.openPrefetchMenu(ui);
+    } else if (index === 3) {
+      await this.deleteOfflineAudio(ui, book.bookUrl);
+    } else if (index === 0) {
+      await this.requestOfflineDownload(ui, []);
+    } else if (index === 1) {
+      const indexes: number[] = [];
+      for (let i = this.chapterIndex; i < this.chapterIndex + nextCount; i++) indexes.push(i);
+      await this.requestOfflineDownload(ui, indexes);
+    }
+  }
+
+  async openPrefetchMenu(ui: UIContext): Promise<void> {
+    const options = AudioOfflineSettingsStore.PREFETCH_OPTIONS;
+    const current = AudioOfflineStore.prefetchCount();
+    const buttons: promptAction.Button[] = options.map((count: number): promptAction.Button => ({
+      text: `${count === current ? '✓ ' : ''}${count > 0 ? `提前下载后 ${count} 章` : '关闭'}`,
+      color: count === current ? this.accentColor() : this.primaryTextColor()
+    }));
+    let index = -1;
+    try {
+      const result: promptAction.ActionMenuSuccessResponse = await ui.getPromptAction().showActionMenu({
+        title: '边听边下：仅在 Wi-Fi 下下载，听完的章节自动删除，手动下载的不受影响',
+        buttons: [buttons[0], buttons[1], buttons[2], buttons[3]]
+      });
+      index = result.index;
+    } catch (_) {
+      return;
+    }
+    if (index < 0 || index >= options.length) return;
+    await AudioOfflineSettingsStore.savePrefetch(ui.getHostContext() as common.Context, options[index]);
+    if (options[index] <= 0) {
+      AudioPrefetch.get().cancel();
+      HdsFeedback.showToast('已关闭边听边下');
+    } else {
+      HdsFeedback.showToast(`已开启边听边下：Wi-Fi 下提前下载后 ${options[index]} 章`);
+      if (this.book && this.playback.matches(this.book.bookUrl, this.chapterIndex)) {
+        AudioPrefetch.get().schedule(this.book, this.chapterIndex);
+      }
+    }
+  }
+
+  /** 目录里长按某一章：下载或删除这一章。 */
+  async openChapterOfflineMenu(ui: UIContext, canonicalIndex: number): Promise<void> {
+    const book = this.book;
+    const chapter = canonicalIndex >= 0 && canonicalIndex < this.chapters.length ? this.chapters[canonicalIndex] : null;
+    if (!book || !chapter || book.origin === 'local') return;
+    const downloaded = this.offlineChapterDates.has(canonicalIndex);
+    let index = -1;
+    try {
+      const result: promptAction.ActionMenuSuccessResponse = await ui.getPromptAction().showActionMenu({
+        title: chapter.title || `第${canonicalIndex + 1}章`,
+        buttons: [downloaded ? { text: '删除本章音频', color: ThemeRuntime.dangerColor(this.appDarkMode) } :
+          { text: '下载本章', color: this.accentColor() }]
+      });
+      index = result.index;
+    } catch (_) {
+      return;
+    }
+    if (index !== 0) return;
+    if (!downloaded) {
+      await this.requestOfflineDownload(ui, [canonicalIndex]);
+      return;
+    }
+    try {
+      await AudioOfflineStore.clearChapter(book.bookUrl, canonicalIndex);
+      HdsFeedback.showToast('已删除本章音频');
+      AudioPrefetch.notifyChanged();
+    } catch (error) {
+      console.warn('删除本章音频失败:', error);
+      HdsFeedback.showToast('删除本章音频失败');
+    }
+  }
+
+  async requestOfflineDownload(ui: UIContext, indexes: number[]): Promise<void> {
+    const book = this.book;
+    if (!book) return;
+    const network = await AudioOfflineDownloadPrompt.prepare(ui, this.appDarkMode, indexes.length);
+    if (network === AudioOfflineDownloadPrompt.CANCEL) return;
+    if (!await AudioOfflineDownloadPrompt.send(book.bookUrl, indexes, network === AudioOfflineDownloadPrompt.CELLULAR)) {
+      HdsFeedback.showToast('请回到书架，长按本书选择“缓存”下载');
+    }
+  }
+
+  async deleteOfflineAudio(ui: UIContext, bookUrl: string): Promise<void> {
+    try {
+      const result = await ui.getPromptAction().showDialog({
+        title: '删除已下载音频？',
+        message: '删除本书下载到本地的音频文件，之后收听需要联网。',
+        buttons: [{ text: '取消', color: this.subTextColor() },
+          { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }]
+      });
+      if (result.index !== 1) return;
+      const removed = await AudioOfflineStore.clearBook(bookUrl);
+      HdsFeedback.showToast(`已删除 ${removed} 章音频`);
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+    } catch (error) {
+      console.warn('删除已下载音频失败:', error);
+      HdsFeedback.showToast('删除已下载音频失败');
+    }
   }
 
   chapterCachedFlags(): boolean[] {

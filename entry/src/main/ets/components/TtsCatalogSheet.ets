@@ -75,6 +75,12 @@ export struct TtsCatalogSheet {
   @Prop progressText: string = '';
   @Prop bottomInset: number = 0;
   @Prop viewportHeight: number = 720;
+  /** 章节标记文字；有声书标的是音频已下载。 */
+  @Prop cachedLabel: string = '已缓存';
+  /** 目录摘要行右侧的操作入口，为空时不显示。 */
+  @Prop actionLabel: string = '';
+  /** 接在"共 N 章"后面的说明，比如已下载多少章。 */
+  @Prop noteText: string = '';
   @State listViewportHeight: number = 0;
   @State firstVisibleIndex: number = 0;
   @State visibleItemCount: number = 1;
@@ -86,6 +92,9 @@ export struct TtsCatalogSheet {
   onToggleOrder: () => void = () => {};
   onSelect: (displayIndex: number) => void = () => {};
   onClose: () => void = () => {};
+  onAction: () => void = () => {};
+  /** 长按某一章；不需要时保持空实现，长按就没有效果。 */
+  onLongPress: ((displayIndex: number) => void) | null = null;
   private pointerAnchor: number = 0;
   private lastScrollbarScrollAt: number = 0;
 
@@ -168,50 +177,70 @@ export struct TtsCatalogSheet {
     .alignItems(VerticalAlign.Center)
   }
 
+  /**
+   * 目录摘要行：左边章数（有声书再加一行已下载说明），右边进度和操作按钮。
+   * 按钮与右上角关闭按钮一样用沉浸光感按钮；听书页和书架胶囊打开的目录共用这一行，布局一致。
+   */
   @Builder
   catalogSummary() {
-    Column({ space: AppSpacing.MD }) {
-      Row() {
+    Row({ space: AppSpacing.SM }) {
+      Column({ space: AppSpacing.XXS }) {
         Text(`共 ${this.count} 章`)
           .fontSize(AppFontSize.BODY)
           .fontColor(this.subTextColor)
-          .margin({ left: AppSpacing.SM })
-          .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
-          .height(34)
-          .textAlign(TextAlign.Center)
-
-        Stack({ alignContent: Alignment.Center }) {
-          Column({ space: 0 }) {
-            SymbolGlyph($r('sys.symbol.chevron_up'))
-              .fontSize(11)
-              .fontColor([this.reverseOrder ? this.accentColor : this.primaryTextColor])
-            SymbolGlyph($r('sys.symbol.chevron_down'))
-              .fontSize(11)
-              .fontColor([this.reverseOrder ? this.accentColor : this.primaryTextColor])
-          }
-          .alignItems(HorizontalAlign.Center)
+        if (this.noteText) {
+          Text(this.noteText)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
-        .width(34)
-        .height(34)
-        .borderRadius(17)
-        .backgroundColor(this.orderToggleBackground())
-        .accessibilityText(this.reverseOrder ? '切换为正序目录' : '切换为倒序目录')
-        .onClick(() => this.onToggleOrder())
-        .margin({ left: AppSpacing.XS })
-
-        Blank()
-          .layoutWeight(1)
-
-        Text(this.progressText)
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor)
       }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      .padding({ left: AppSpacing.MD })
+
+      Text(this.progressText)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor)
+
+      ImmersiveBackButton({
+        icon: $r('sys.symbol.sort'),
+        iconOffsetX: 0,
+        iconSize: 18,
+        iconColor: this.reverseOrder ? this.accentColor : this.controlIconColor,
+        darkMode: this.darkMode,
+        buttonSize: 36,
+        containerWidth: 36,
+        containerHeight: 36,
+        startInset: 0,
+        materialScale: 0.75,
+        compactLayout: true,
+        accessibilityLabel: this.reverseOrder ? '切换为正序目录' : '切换为倒序目录',
+        onBack: () => this.onToggleOrder()
+      })
+
+      if (this.actionLabel) {
+        ImmersiveBackButton({
+          icon: $r('sys.symbol.download'),
+          iconOffsetX: 0,
+          iconSize: 18,
+          iconColor: this.controlIconColor,
+          darkMode: this.darkMode,
+          buttonSize: 36,
+          containerWidth: 36,
+          containerHeight: 36,
+          startInset: 0,
+          materialScale: 0.75,
+          compactLayout: true,
+          accessibilityLabel: this.actionLabel,
+          onBack: () => this.onAction()
+        })
+      }
     }
     .width('100%')
+    .alignItems(VerticalAlign.Center)
     .padding({ left: AppSpacing.XXL, right: AppSpacing.XL, top: AppSpacing.XL, bottom: AppSpacing.MD })
-    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
@@ -236,7 +265,7 @@ export struct TtsCatalogSheet {
                 .layoutWeight(1)
 
               if (this.isCached(index)) {
-                Text('已缓存')
+                Text(this.cachedLabel)
                   .fontSize(AppFontSize.MICRO)
                   .fontColor(ThemeRuntime.successColor(this.darkMode))
                   .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.XXS, bottom: AppSpacing.XXS })
@@ -251,8 +280,12 @@ export struct TtsCatalogSheet {
             .border({ width: { bottom: 0.5 },
               color: ThemeRuntime.softFillColor(this.darkMode) })
             .onClick(() => this.onSelect(index))
+            .gesture(LongPressGesture({ repeat: false }).onAction(() => {
+              if (this.onLongPress) this.onLongPress(index);
+            }))
           }
-        }, (title: string, index: number) => `${index}_${title}`)
+          // 标记变了键也跟着变，数据源重载时这一行才会重建；否则目录开着时下载完的章节不显示标记。
+        }, (title: string, index: number) => `${index}_${title}_${this.isCached(index) ? 1 : 0}`)
       }
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .width('100%')
@@ -328,11 +361,6 @@ export struct TtsCatalogSheet {
 
   selectedRowBackgroundColor(): string {
     return this.accentTint('11');
-  }
-
-  orderToggleBackground(): string {
-    if (!this.reverseOrder) return ThemeRuntime.softFillColor(this.darkMode);
-    return this.accentTint(this.darkMode ? '33' : '1F');
   }
 
   private accentTint(alpha: string): string {

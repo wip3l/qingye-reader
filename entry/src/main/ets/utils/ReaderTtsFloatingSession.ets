@@ -1,6 +1,23 @@
 import { readStatsTracker } from '../core/stats/ReadStatsTracker';
 
+/**
+ * 听书的离线下载信息，由听书页发布。书架胶囊打开的播放面板和目录靠它显示"下载"入口、
+ * "已下载"标记和摘要，与听书页自己的目录一致。朗读（TTS）不发布。
+ */
+export interface AudioOfflineCatalogInfo {
+  author: string;
+  cachedLabel: string;
+  summary: string;
+  openDownload: (ui: UIContext) => void;
+  chapterAction: (ui: UIContext, canonicalIndex: number) => void;
+  /** 打开目录前调用：重新读取已下载章节，更新标记和摘要。 */
+  refresh: () => Promise<void>;
+}
+
 export class ReaderTtsFloatingSession {
+  /** 目录标记或离线信息变化时更新，书架上的目录据此重绘。 */
+  static readonly CATALOG_REVISION_KEY: string = 'globalTtsCatalogRevision';
+  private static audioOffline: AudioOfflineCatalogInfo | null = null;
   private static ownerId: string = '';
   private static toggleAction: (() => Promise<void>) | null = null;
   private static pausedState: (() => boolean) | null = null;
@@ -28,6 +45,8 @@ export class ReaderTtsFloatingSession {
   static attach(ownerId: string, bookUrl: string, bookName: string, chapterTitle: string,
     paused: boolean, toggleAction: () => Promise<void>, pausedState: () => boolean,
     stopAction: () => Promise<void> | void): void {
+    // 换了会话主人（例如从听书换成朗读）时，上一位发布的离线信息不再适用。
+    if (ReaderTtsFloatingSession.ownerId !== ownerId) ReaderTtsFloatingSession.audioOffline = null;
     ReaderTtsFloatingSession.ownerId = ownerId;
     ReaderTtsFloatingSession.toggleAction = toggleAction;
     ReaderTtsFloatingSession.pausedState = pausedState;
@@ -217,6 +236,22 @@ export class ReaderTtsFloatingSession {
   static updateCatalogCachedFlags(ownerId: string, cachedFlags: boolean[]): void {
     if (!ReaderTtsFloatingSession.isOwner(ownerId)) return;
     ReaderTtsFloatingSession.catalogCachedFlags = cachedFlags.slice();
+    ReaderTtsFloatingSession.bumpCatalogRevision();
+  }
+
+  static configureAudioOffline(ownerId: string, info: AudioOfflineCatalogInfo | null): void {
+    if (!ReaderTtsFloatingSession.isOwner(ownerId)) return;
+    ReaderTtsFloatingSession.audioOffline = info;
+    ReaderTtsFloatingSession.bumpCatalogRevision();
+  }
+
+  static audioOfflineInfo(): AudioOfflineCatalogInfo | null {
+    return ReaderTtsFloatingSession.audioOffline;
+  }
+
+  private static bumpCatalogRevision(): void {
+    AppStorage.setOrCreate(ReaderTtsFloatingSession.CATALOG_REVISION_KEY,
+      (AppStorage.get<number>(ReaderTtsFloatingSession.CATALOG_REVISION_KEY) || 0) + 1);
   }
 
   /**
@@ -436,6 +471,7 @@ export class ReaderTtsFloatingSession {
     ReaderTtsFloatingSession.catalogCachedFlags = [];
     ReaderTtsFloatingSession.catalogCurrentIndex = 0;
     ReaderTtsFloatingSession.catalogSelectAction = null;
+    ReaderTtsFloatingSession.audioOffline = null;
     ReaderTtsFloatingSession.ttsVoiceLabels = [];
     ReaderTtsFloatingSession.ttsVoiceSelectedIndex = 0;
     ReaderTtsFloatingSession.ttsVoiceSelectAction = null;

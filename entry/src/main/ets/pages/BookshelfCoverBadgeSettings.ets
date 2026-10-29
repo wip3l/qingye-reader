@@ -109,6 +109,7 @@ struct BookshelfCoverBadgeSettingsPage {
     if (item === 'unread') return '0章或目录未知时隐藏，超过99显示99+';
     if (item === 'update') return '有更新时显示“新”';
     if (item === 'pin') return '仅已置顶的书籍显示';
+    if (item === 'offline') return '下载过音频，或手动缓存过正文、漫画的在线书显示';
     if (item === 'type') return '书／漫／声／视';
     return '显示书源名称，本地书籍显示“本地”';
   }
@@ -138,11 +139,11 @@ struct BookshelfCoverBadgeSettingsPage {
             .fontColor('#25282E').margin({ bottom: 64 })
           BookshelfCoverBadges({
             configuration: this.previewConfiguration(),
-            typeLabel: '书', sourceText: '起点', unreadCount: 12, updated: true, pinned: true
+            typeLabel: '书', sourceText: '起点', unreadCount: 12, updated: true, pinned: true, offline: true
           })
         }
         .width(160).height(218).borderRadius(8).clip(true)
-        Text('示例：已置顶 · 有更新 · 12章未读')
+        Text('示例：已置顶 · 有更新 · 12章未读 · 有离线内容')
           .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
       }
       .width('100%').padding(20)

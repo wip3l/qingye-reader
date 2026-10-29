@@ -11,10 +11,12 @@ struct BookshelfCoverBadgeCorner {
   @Prop unreadCount: number = 0;
   @Prop updated: boolean = false;
   @Prop pinned: boolean = false;
+  @Prop offline: boolean = false;
 
   visibleItems(): string[] {
     return this.itemList.filter((item: string): boolean => {
       if (item === 'pin') return this.pinned;
+      if (item === 'offline') return this.offline;
       if (item === 'update') return this.updated;
       if (item === 'source') return this.sourceText.length > 0;
       if (item === 'unread') return BookshelfCoverBadgeSettings.unreadText(this.unreadCount).length > 0;
@@ -26,6 +28,7 @@ struct BookshelfCoverBadgeCorner {
     if (item === 'type') return this.typeLabel;
     if (item === 'source') return this.sourceText;
     if (item === 'update') return '新';
+    if (item === 'offline') return '离线';
     return BookshelfCoverBadgeSettings.unreadText(this.unreadCount);
   }
 
@@ -52,10 +55,12 @@ struct BookshelfCoverBadgeCorner {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .constraintSize({ maxWidth: '100%' })
         .padding({ left: this.combined() ? 1 : 3, right: this.combined() ? 1 : 3, top: 2, bottom: 2 })
-        .backgroundColor(item === 'update' ? '#E33E38' : (item === 'type' ? this.typeColor : '#CC25282E'))
+        .backgroundColor(item === 'update' ? '#E33E38' : (item === 'type' ? this.typeColor :
+          (item === 'offline' ? '#2E8B57' : '#CC25282E')))
         .borderRadius(3)
         .accessibilityText(item === 'unread' ? `${this.unreadCount}章未读` :
-          (item === 'update' ? '有更新' : `${BookshelfCoverBadgeSettings.label(item)}：${this.badgeText(item)}`))
+          (item === 'update' ? '有更新' : (item === 'offline' ? '有离线内容' :
+            `${BookshelfCoverBadgeSettings.label(item)}：${this.badgeText(item)}`)))
     }
   }
 
@@ -89,6 +94,7 @@ export struct BookshelfCoverBadges {
   @Prop unreadCount: number = 0;
   @Prop updated: boolean = false;
   @Prop pinned: boolean = false;
+  @Prop offline: boolean = false;
   @Prop selecting: boolean = false;
 
   @Builder
@@ -98,7 +104,7 @@ export struct BookshelfCoverBadges {
         itemList: BookshelfCoverBadgeSettings.items(this.configuration, corner),
         rightAligned: corner === 1 || corner === 3,
         typeLabel: this.typeLabel, typeColor: this.typeColor, sourceText: this.sourceText,
-        unreadCount: this.unreadCount, updated: this.updated, pinned: this.pinned
+        unreadCount: this.unreadCount, updated: this.updated, pinned: this.pinned, offline: this.offline
       })
     }
     .layoutWeight(1)
