@@ -84,6 +84,7 @@ struct Index {
   @StorageLink('globalTtsCover') globalTtsCover: ResourceStr = '';
   @StorageLink('globalTtsChapterTitle') globalTtsChapterTitle: string = '';
   @StorageLink('globalTtsMode') globalTtsMode: string = '';
+  @StorageLink('globalTtsPanelRequest') @Watch('onGlobalTtsPanelRequest') globalTtsPanelRequest: number = 0;
   @StorageLink('globalTtsCatalogRevision') @Watch('onGlobalTtsCatalogRevisionChanged') globalTtsCatalogRevision: number = 0;
   @StorageLink('globalTtsChapterProgress') globalTtsChapterProgress: string = '';
   @StorageLink('globalTtsBusy') globalTtsBusy: boolean = false;
@@ -322,6 +323,13 @@ struct Index {
     animateTo({ duration: 280, curve: Curve.Friction }, () => {
       this.showGlobalTtsPanel = true;
     });
+  }
+
+  /** 通知栏媒体控件点进来、首页在最上层时，直接打开这里的听书面板，不再另开一个听书页叠在上面。 */
+  onGlobalTtsPanelRequest(): void {
+    if (this.globalTtsPanelRequest <= 0 || !this.globalTtsActive) return;
+    this.showGlobalTtsCatalog = false;
+    if (!this.showGlobalTtsPanel) this.openGlobalTtsPanel();
   }
 
   closeGlobalTtsPanel(): void {

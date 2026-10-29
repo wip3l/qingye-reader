@@ -440,6 +440,14 @@ export default class EntryAbility extends UIAbility {
         if (this.routeMatches(state.name, state.path, targetUrl)) {
           return Promise.resolve();
         }
+        // 首页在最上层且正是这本书在后台播放：打开首页自己的听书面板。再叠一个听书页的话，
+        // 关面板要关两次，新页面在加载完之前被关掉还会把播放和系统媒体控件一起停掉。
+        if (launchTarget === 'audioBook' && this.routeMatches(state.name, state.path, 'pages/Index') &&
+          AppStorage.get<boolean>('globalTtsActive') === true && AppStorage.get<string>('globalTtsMode') === 'audio' &&
+          AppStorage.get<string>('globalTtsBookUrl') === (AppStorage.get<string>('pendingAudioBookUrl') || '')) {
+          AppStorage.setOrCreate('globalTtsPanelRequest', Date.now());
+          return Promise.resolve();
+        }
         if (launchTarget === 'audioBook') {
           return appRouter.pushUrl({
             url: targetUrl,

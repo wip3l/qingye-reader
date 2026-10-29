@@ -59,6 +59,7 @@ export class ReaderTtsMediaSession {
   private lastLogAt: number = 0;
   private session: avSession.AVSession | null = null;
   private sessionRequesting: boolean = false;
+  private stopping: Promise<void> | null = null;
   private mediaImage: string = '';
   private mediaImageRaw: string = '';
   private mediaPixelMap: image.PixelMap | null = null;
@@ -144,7 +145,26 @@ export class ReaderTtsMediaSession {
     }
   }
 
-  async stopBackgroundRunning(): Promise<void> {
+  /**
+   * 停止时可能被同时调用多次（停止朗读本身一次，接管的一方再等一次）。合并成同一个任务，
+   * 等待的一方要等到会话真正销毁、后台许可真正释放才继续：一个 Ability 只能有一个媒体会话，
+   * 听书接着建会话时朗读的会话还在就会失败，晚到的释放还会停掉听书刚申请的后台许可。
+   */
+  stopBackgroundRunning(): Promise<void> {
+    if (this.stopping) {
+      // 停到一半又重新开始过（换音色、换速度会先停再开）：等这次停完再按当前状态停一次。
+      return this.stopping.then((): Promise<void> | undefined =>
+        this.backgroundDesired || this.session || this.backgroundRunning ? this.stopBackgroundRunning() : undefined);
+    }
+    const task = this.performStopBackgroundRunning();
+    this.stopping = task;
+    task.finally(() => {
+      if (this.stopping === task) this.stopping = null;
+    }).catch(() => {});
+    return task;
+  }
+
+  private async performStopBackgroundRunning(): Promise<void> {
     this.backgroundDesired = false;
     this.stopHeartbeat();
     await this.stopSession();

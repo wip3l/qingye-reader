@@ -16,6 +16,7 @@ import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { AudioOfflineDownloadPrompt } from '../utils/AudioOfflineDownloadPrompt';
 import { AudioOfflineSettingsStore } from '../utils/AudioOfflineSettingsStore';
 import { AudioPrefetch } from '../utils/AudioPrefetch';
+import { AudioBookAvSessionHolder } from '../utils/AudioBookMediaSession';
 import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
 import { AudioStartTiming, RemoteAudioPlayback, RemoteAudioPlaybackListener } from '../utils/RemoteAudioPlayback';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
@@ -57,31 +58,6 @@ class AudioBookPlaybackListener implements RemoteAudioPlaybackListener {
   }
   onPlaybackCompleted(): void { this.completedCallback(); }
   onPlaybackError(message: string): void { this.errorCallback(message); }
-}
-
-/**
- * RemoteAudioPlayback lives for the whole process, while AudioBookPage instances can be
- * replaced when the user reopens the floating player. Keep the AVSession at the same
- * lifetime as the player so a newly opened page can take over and, importantly, destroy
- * the session created by the previous page.
- */
-class AudioBookAvSessionHolder {
-  static session: avSession.AVSession | null = null;
-  /**
-   * 系统媒体控制（状态栏、锁屏）的命令交给当前接管播放器的页面。会话上的回调只注册一次并转发到这里；
-   * 以前回调绑在创建会话的那个页面上，重新打开听书页后命令还发给旧页面，切章标题和播放按钮都不再更新。
-   */
-  static commands: AudioBookMediaCommands | null = null;
-}
-
-interface AudioBookMediaCommands {
-  play: () => void;
-  pause: () => void;
-  stop: () => void;
-  next: () => void;
-  previous: () => void;
-  seek: (time: number) => void;
-  setSpeed: (speed: number) => void;
 }
 
 @Entry
@@ -133,7 +109,11 @@ struct AudioBookPage {
   private shortcutReplacedPreviousPage: boolean = false;
   private playback: RemoteAudioPlayback = RemoteAudioPlayback.get();
   private playbackListener: RemoteAudioPlaybackListener = new AudioBookPlaybackListener(
-    (state: string): void => this.onPlaybackStateChanged(state),
+    (state: string): void => {
+      // 刚打开、书还没加载完的页面不处理：挂上播放器时会立刻收到一次"正在播放"，
+      // 这时处理会拿空的书名和章节去改通知栏的媒体控件。加载完后由 loadBook 同步一次。
+      if (this.handlesPlaybackEvents()) this.onPlaybackStateChanged(state);
+    },
     // 切章后新章节地址就绪前，上一章仍在播放；它的进度、播完和报错不能记到新章节头上。
     (positionMs: number, durationMs: number): void => {
       if (this.isPlaybackOnCurrentChapter()) this.onPlaybackPositionChanged(positionMs, durationMs);
@@ -151,14 +131,8 @@ struct AudioBookPage {
   private chapterDataSource: CatalogTitleDataSource = new CatalogTitleDataSource();
   private chapterScroller: ListScroller = new ListScroller();
   private loadingSerial: number = 0;
-  private audioBackgroundRunning: boolean = false;
-  private audioBackgroundStarting: boolean = false;
-  private audioBackgroundDesired: boolean = false;
-  private audioAvSession: avSession.AVSession | null = null;
-  private audioAvSessionStarting: boolean = false;
   private lastAvSessionPositionUpdateAt: number = 0;
   private lastMediaChapterCommandAt: number = 0;
-  private audioBackgroundHeartbeatId: number = -1;
   private floatingSessionOwnerId: string = '';
   private pendingPanelAction: string = '';
   private lastFloatingPositionUpdateAt: number = 0;
@@ -177,7 +151,6 @@ struct AudioBookPage {
     this.openedFromShortcut = params?.['shortcutEntry'] === 'true';
     this.shortcutReplacedPreviousPage = params?.['shortcutReplace'] === 'true';
     this.playback.attach(this.playbackListener);
-    this.claimMediaCommands();
     if (this.bookUrl && this.playback.bookUrl === this.bookUrl && this.playback.mediaUrl) {
       // 从书架胶囊回到正在播放的这本书：沿用播放器状态，不显示加载中。
       this.playbackState = this.playback.state;
@@ -190,7 +163,8 @@ struct AudioBookPage {
     this.pageVisible = true;
     this.syncBars();
     this.playback.attach(this.playbackListener);
-    this.claimMediaCommands();
+    // 书还没加载完时不接管：这时的章节号还不对，切章命令会跳到错误的章节。加载完由 loadBook 接管。
+    if (this.book && this.playback.bookUrl === this.book.bookUrl) this.claimMediaCommands();
     this.restoreSleepTimerUi();
     this.refreshVoiceSource();
   }
@@ -749,6 +723,11 @@ struct AudioBookPage {
       this.refreshChapterDataSource();
       this.refreshOfflineChapters();
       this.chapterIndex = this.clampChapterIndex(this.book.durChapterIndex);
+      if (this.playback.bookUrl === this.book.bookUrl) {
+        // 播放器正在播这本书：跟着它的章节走，书架上切过章、进度还没落库时也不会错位。
+        this.chapterIndex = this.clampChapterIndex(this.playback.chapterIndex);
+      }
+      this.claimMediaCommands();
       await db.updateBook(this.book, false);
       if (this.chapters.length === 0) {
         this.playbackState = 'error';
@@ -764,6 +743,12 @@ struct AudioBookPage {
         this.speed = this.playback.speed;
         this.statusText = this.stateLabel(this.playback.state);
         this.publishFloatingSession();
+        // 接管正在播的会话：用加载好的书和章节刷新通知栏，后台许可已在，只同步状态和心跳。
+        if (this.isPlaying()) {
+          this.startAudioBackground().catch((error: Error) => console.warn('接管听书后台播放失败:', error));
+        } else {
+          this.updateAudioAvSessionState(avSession.PlaybackState.PLAYBACK_STATE_PAUSE).catch(() => {});
+        }
       } else {
         await this.playCurrentChapter(this.book.durChapterPos);
       }
@@ -876,6 +861,10 @@ struct AudioBookPage {
   }
 
   /** 播放器里装的是否就是页面当前选中的章节。切章后新地址就绪前，播放器里还是上一章。 */
+  private handlesPlaybackEvents(): boolean {
+    return !!this.book && (!this.playback.bookUrl || this.playback.bookUrl === this.book.bookUrl);
+  }
+
   private isPlaybackOnCurrentChapter(): boolean {
     return !!this.book && this.playback.bookUrl === this.book.bookUrl &&
       this.playback.chapterIndex === this.chapterIndex;
@@ -1089,7 +1078,9 @@ struct AudioBookPage {
 
   async closePage(): Promise<void> {
     await this.saveProgressNow(true);
-    const keepPlaying = this.playback.matches(this.bookUrl, this.chapterIndex) &&
+    // 只看是不是这本书在播。页面还没加载完就被关掉时章节号还是默认值，按章节比对会误判成没在播，
+    // 把播放和系统媒体控件一起停掉。
+    const keepPlaying = !!this.bookUrl && this.playback.bookUrl === this.bookUrl && !!this.playback.mediaUrl &&
       this.playback.state !== 'idle' && this.playback.state !== 'error' && this.playback.state !== 'completed';
     if (keepPlaying) {
       this.publishFloatingSession();
@@ -1431,21 +1422,24 @@ struct AudioBookPage {
     return String(error || '未知错误');
   }
 
+  // 后台播放许可、媒体会话和保活心跳都存在 AudioBookAvSessionHolder 里，整个进程只有一份。
+  // 以前每个听书页各记一份：重新打开听书页后，新页面以为还没申请，会重设共享会话（书还没加载完，
+  // 标题为空、没有上一章下一章）；旧页面的心跳还在用旧章节刷新会话，通知栏控件就乱了。
   async startAudioBackground(): Promise<void> {
-    this.audioBackgroundDesired = true;
-    if (this.audioBackgroundRunning) {
+    AudioBookAvSessionHolder.backgroundDesired = true;
+    if (AudioBookAvSessionHolder.backgroundRunning) {
       await this.updateAudioAvSessionState(avSession.PlaybackState.PLAYBACK_STATE_PLAY);
       this.startAudioBackgroundHeartbeat();
       return;
     }
-    if (this.audioBackgroundStarting) return;
-    this.audioBackgroundStarting = true;
+    if (AudioBookAvSessionHolder.backgroundStarting) return;
+    AudioBookAvSessionHolder.backgroundStarting = true;
     try {
       const agent = await this.createAudioWantAgent();
       await this.startAudioAvSession(agent);
       await backgroundTaskManager.startBackgroundRunning(getContext(this), ['audioPlayback'], agent);
-      if (this.audioBackgroundDesired) {
-        this.audioBackgroundRunning = true;
+      if (AudioBookAvSessionHolder.backgroundDesired) {
+        AudioBookAvSessionHolder.backgroundRunning = true;
         this.startAudioBackgroundHeartbeat();
       } else {
         await this.releaseAudioAvSession();
@@ -1454,16 +1448,16 @@ struct AudioBookPage {
     } catch (error) {
       console.warn('申请听书后台任务失败:', error);
     } finally {
-      this.audioBackgroundStarting = false;
+      AudioBookAvSessionHolder.backgroundStarting = false;
     }
   }
 
   async stopAudioBackground(): Promise<void> {
-    this.audioBackgroundDesired = false;
+    AudioBookAvSessionHolder.backgroundDesired = false;
     this.stopAudioBackgroundHeartbeat();
     await this.releaseAudioAvSession();
-    if (!this.audioBackgroundRunning && !this.audioBackgroundStarting) return;
-    this.audioBackgroundRunning = false;
+    if (!AudioBookAvSessionHolder.backgroundRunning && !AudioBookAvSessionHolder.backgroundStarting) return;
+    AudioBookAvSessionHolder.backgroundRunning = false;
     try {
       await backgroundTaskManager.stopBackgroundRunning(getContext(this));
     } catch (error) {
@@ -1471,32 +1465,35 @@ struct AudioBookPage {
     }
   }
 
+  /** 心跳只有一个，每次都交给当前接管播放器的页面处理，旧页面不会再用旧章节刷新会话。 */
   startAudioBackgroundHeartbeat(): void {
-    if (this.audioBackgroundHeartbeatId >= 0) return;
-    this.audioBackgroundHeartbeatId = setInterval((): void => {
-      this.keepAudioBackgroundAlive().catch((error: Error) => {
+    if (AudioBookAvSessionHolder.heartbeatId >= 0) return;
+    AudioBookAvSessionHolder.heartbeatId = setInterval((): void => {
+      const commands = AudioBookAvSessionHolder.commands;
+      if (!commands) return;
+      commands.keepAlive().catch((error: Error) => {
         console.warn('听书后台播放保活失败:', error);
       });
     }, 30000);
   }
 
   stopAudioBackgroundHeartbeat(): void {
-    if (this.audioBackgroundHeartbeatId < 0) return;
-    clearInterval(this.audioBackgroundHeartbeatId);
-    this.audioBackgroundHeartbeatId = -1;
+    if (AudioBookAvSessionHolder.heartbeatId < 0) return;
+    clearInterval(AudioBookAvSessionHolder.heartbeatId);
+    AudioBookAvSessionHolder.heartbeatId = -1;
   }
 
   async keepAudioBackgroundAlive(): Promise<void> {
     const state = this.playback.state;
-    if (!this.audioBackgroundDesired || !this.playback.mediaUrl || state === 'idle' || state === 'error') {
+    if (!AudioBookAvSessionHolder.backgroundDesired || !this.playback.mediaUrl || state === 'idle' || state === 'error') {
       this.stopAudioBackgroundHeartbeat();
       return;
     }
-    if (!this.audioBackgroundRunning && !this.audioBackgroundStarting) {
+    if (!AudioBookAvSessionHolder.backgroundRunning && !AudioBookAvSessionHolder.backgroundStarting) {
       await this.startAudioBackground();
       return;
     }
-    if (!this.audioAvSession) {
+    if (!AudioBookAvSessionHolder.session) {
       const agent = await this.createAudioWantAgent();
       await this.startAudioAvSession(agent);
     }
@@ -1505,11 +1502,8 @@ struct AudioBookPage {
   }
 
   async releaseAudioAvSession(): Promise<void> {
-    const session = this.audioAvSession || AudioBookAvSessionHolder.session;
-    this.audioAvSession = null;
-    if (AudioBookAvSessionHolder.session === session) {
-      AudioBookAvSessionHolder.session = null;
-    }
+    const session = AudioBookAvSessionHolder.session;
+    AudioBookAvSessionHolder.session = null;
     if (session) {
       this.unregisterAudioAvSessionCommands(session);
       try {
@@ -1531,33 +1525,43 @@ struct AudioBookPage {
   }
 
   async startAudioAvSession(agent: WantAgent): Promise<void> {
-    if (this.audioAvSessionStarting) return;
-    this.audioAvSessionStarting = true;
+    if (AudioBookAvSessionHolder.sessionStarting) return;
+    AudioBookAvSessionHolder.sessionStarting = true;
     try {
-      if (!this.audioAvSession && AudioBookAvSessionHolder.session) {
-        this.audioAvSession = AudioBookAvSessionHolder.session;
-        // The shared session may still hold callbacks closed over an older page.
-        // Remove them before registering the currently visible controller.
-        this.unregisterAudioAvSessionCommands(this.audioAvSession);
-        this.registerAudioAvSessionCommands(this.audioAvSession);
+      let session = AudioBookAvSessionHolder.session;
+      if (!session) {
+        session = await this.createAudioAvSession();
+        AudioBookAvSessionHolder.session = session;
+        // 回调转发给 AudioBookAvSessionHolder.commands，只在建会话时注册一次。
+        this.registerAudioAvSessionCommands(session);
       }
-      if (!this.audioAvSession) {
-        this.audioAvSession = await avSession.createAVSession(getContext(this), 'LegadoAudioBook', 'audio');
-        AudioBookAvSessionHolder.session = this.audioAvSession;
-        this.registerAudioAvSessionCommands(this.audioAvSession);
-      }
-      await this.audioAvSession.setLaunchAbility(agent);
-      await this.audioAvSession.setAVQueueTitle(this.book?.name || '听书');
-      await this.audioAvSession.setAVMetadata(await this.audioAvMetadata());
-      await this.audioAvSession.setExtras({
+      await session.setLaunchAbility(agent);
+      await session.setAVQueueTitle(this.book?.name || '听书');
+      await session.setAVMetadata(await this.audioAvMetadata());
+      await session.setExtras({
         bookUrl: this.bookUrl,
         chapterIndex: this.chapterIndex,
         chapterTitle: this.currentChapter()?.title || ''
       });
       await this.updateAudioAvSessionState(avSession.PlaybackState.PLAYBACK_STATE_PLAY);
-      await this.audioAvSession.activate();
+      await session.activate();
     } finally {
-      this.audioAvSessionStarting = false;
+      AudioBookAvSessionHolder.sessionStarting = false;
+    }
+  }
+
+  /**
+   * 一个 Ability 只能有一个媒体会话。刚从朗读切过来时，朗读的会话可能还没销毁完，
+   * 建会话会报"session is existed"，稍等再试几次。
+   */
+  private async createAudioAvSession(): Promise<avSession.AVSession> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await avSession.createAVSession(getContext(this), 'LegadoAudioBook', 'audio');
+      } catch (error) {
+        if (attempt >= 3 || !this.errorMessage(error as Object).includes('existed')) throw error as Error;
+        await new Promise<void>((resolve: () => void): number => setTimeout(resolve, 300 * (attempt + 1)));
+      }
     }
   }
 
@@ -1593,7 +1597,8 @@ struct AudioBookPage {
         this.playback.seek(time);
         this.scheduleProgressSave();
       },
-      setSpeed: (speed: number): void => this.changeSpeed(speed)
+      setSpeed: (speed: number): void => this.changeSpeed(speed),
+      keepAlive: (): Promise<void> => this.keepAudioBackgroundAlive()
     };
   }
 
@@ -1609,7 +1614,7 @@ struct AudioBookPage {
 
   async updateAudioAvSessionState(state: avSession.PlaybackState): Promise<void> {
     // 会话可能是之前那个听书页建的；接管播放器的新页面也要能更新它的标题和播放状态。
-    const session = this.audioAvSession || AudioBookAvSessionHolder.session;
+    const session = AudioBookAvSessionHolder.session;
     if (!session) return;
     try {
       await session.setAVMetadata(await this.audioAvMetadata());

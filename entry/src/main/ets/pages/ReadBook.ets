@@ -11354,11 +11354,16 @@ struct ReadBookPage {
     );
   }
 
-  stopTtsFloatingSession(): void {
+  /**
+   * 别的页面要接管时（ReaderTtsFloatingSession.stopOther）调用。要等媒体会话销毁、后台许可释放完再返回，
+   * 否则听书紧接着建会话会报"session is existed"，晚到的释放还会停掉它刚申请的后台许可。
+   */
+  async stopTtsFloatingSession(): Promise<void> {
     this.stopTtsReading();
     if (!this.readerPageVisible) {
       this.ttsReader.shutdown();
     }
+    await this.ttsMediaSession().stopBackgroundRunning();
   }
 
   async toggleTtsReading(): Promise<void> {
