@@ -6882,7 +6882,7 @@ export struct BookshelfPage {
     .height(32)
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
     .borderRadius(16)
-    .backgroundColor(this.isShelfFilterSelected(option.key) ? this.selectedSoftBackgroundColor() :
+    .backgroundColor(this.isShelfFilterSelected(option.key) ? ThemeRuntime.selectedFillColor(this.appDarkMode) :
       ThemeRuntime.softFillColor(this.appDarkMode))
     .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
     .accessibilityText(`${option.label}，${option.count}本`)
@@ -6919,7 +6919,7 @@ export struct BookshelfPage {
       .height(32)
       .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
       .borderRadius(16)
-      .backgroundColor(this.isShelfFilterSelected(key) ? this.selectedSoftBackgroundColor() :
+      .backgroundColor(this.isShelfFilterSelected(key) ? ThemeRuntime.selectedFillColor(this.appDarkMode) :
         ThemeRuntime.softFillColor(this.appDarkMode))
       .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
       .accessibilityText(this.shelfFilterLabel(key))

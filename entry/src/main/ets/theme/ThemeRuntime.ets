@@ -354,6 +354,14 @@ export class ThemeRuntime {
     return darkMode ? '#1FFFFFFF' : '#0D000000';
   }
 
+  /**
+   * 选中的筛选小块底色。浅色下 10% 的低饱和强调色与 softFillColor 的灰底几乎一样，提到 16%；
+   * 深色下未选中是白色叠加，10% 已能区分。
+   */
+  static selectedFillColor(darkMode: boolean): string {
+    return `#${darkMode ? '1A' : '29'}${ThemeRuntime.accentColor(darkMode).substring(1)}`;
+  }
+
   static fontFamily(): string {
     if (ThemeRuntime.currentThemeId() === ThemeIds.CUSTOM) {
       return ThemeRuntime.customSourceTheme('typography').typography.appFontFamily || 'sans-serif';

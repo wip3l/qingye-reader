@@ -152,13 +152,13 @@ export class BuiltinThemeRegistry {
     );
     theme.light = BuiltinThemeRegistry.variant(
       BuiltinThemeRegistry.colors('#F7F7F7', '#FFFFFF', '#F0F0F0', '#202124', '#73777F', '#E2E2E2',
-        '#5B6573', '#505967', '#C93F3F'),
+        '#4A5F7E', '#435673', '#C93F3F'),
       BuiltinThemeRegistry.reader('#FAFAFA', '', '#262626', '#777777', 'light'),
       BuiltinThemeRegistry.regex(ThemeBubbleStyles.CAPSULE, '#E7E9EC', '#34383D')
     );
     theme.dark = BuiltinThemeRegistry.variant(
       BuiltinThemeRegistry.colors('#111111', '#1B1B1B', '#262626', '#F0F0F0', '#A0A0A0', '#343434',
-        '#AAB2BD', '#737D8A', '#E86A6A'),
+        '#9DB1CF', '#62748F', '#E86A6A'),
       BuiltinThemeRegistry.reader('#161616', '', '#E1E1E1', '#9A9A9A', 'dark'),
       BuiltinThemeRegistry.regex(ThemeBubbleStyles.CAPSULE, '#34383D', '#E4E7EB')
     );

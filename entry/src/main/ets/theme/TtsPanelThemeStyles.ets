@@ -99,8 +99,8 @@ export class TtsPanelThemeStyles {
           new TtsPanelThemeStyle($r('app.media.tts_panel_starwish_magic_light'), '#EADDF8', '#F8F4FC', '#339A74D6');
       default:
         return darkMode ?
-          new TtsPanelThemeStyle($r('app.media.tts_panel_plain_default_dark'), '#1B1D20', '#111111', '#1FAAB2BD') :
-          new TtsPanelThemeStyle($r('app.media.tts_panel_plain_default_light'), '#E9ECEF', '#F7F7F7', '#1F5B6573');
+          new TtsPanelThemeStyle($r('app.media.tts_panel_plain_default_dark'), '#1B1D20', '#111111', '#1F9DB1CF') :
+          new TtsPanelThemeStyle($r('app.media.tts_panel_plain_default_light'), '#E9ECEF', '#F7F7F7', '#1F4A5F7E');
     }
   }
 }

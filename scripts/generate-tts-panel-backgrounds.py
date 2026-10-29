@@ -434,7 +434,7 @@ def letterpress_page(p):
 
 # Palette keys: a = main ink, b = second ink, c = third ink, d / e = small accents.
 THEMES = {
-    'plain_default': (plain_default, {'a': '#5B6573'}, {'a': '#AAB2BD'}),
+    'plain_default': (plain_default, {'a': '#4A5F7E'}, {'a': '#9DB1CF'}),
     'classic_blue': (classic_blue, {'a': '#007DFF', 'b': '#70B6F2'}, {'a': '#4E9BFF', 'b': '#2A6FD0'}),
     'warm_paper': (warm_paper, {'a': '#B66A3C', 'b': '#D9A679', 'c': '#8C5A3A'},
                    {'a': '#E49A69', 'b': '#8A5A3C', 'c': '#C77D50'}),

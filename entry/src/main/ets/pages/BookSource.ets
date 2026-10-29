@@ -2637,8 +2637,8 @@ struct BookSourcePage {
       .height(32)
       .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
       .borderRadius(16)
-      .backgroundColor(this.sourceFilterValue(filterKey) === value ? `#1A${this.accentColor().substring(1)}` :
-        ThemeRuntime.softFillColor(this.appDarkMode))
+      .backgroundColor(this.sourceFilterValue(filterKey) === value ?
+        ThemeRuntime.selectedFillColor(this.appDarkMode) : ThemeRuntime.softFillColor(this.appDarkMode))
       .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
       .accessibilityText(label)
       .accessibilitySelected(this.sourceFilterValue(filterKey) === value)

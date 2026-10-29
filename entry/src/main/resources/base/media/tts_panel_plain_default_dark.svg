@@ -1,21 +1,21 @@
 <svg width="720" height="520" viewBox="0 0 720 520" xmlns="http://www.w3.org/2000/svg">
-  <circle cx="610" cy="60" r="80" fill="none" stroke="#AAB2BD" stroke-opacity="0.24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="610" cy="60" r="140" fill="none" stroke="#AAB2BD" stroke-opacity="0.195" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="610" cy="60" r="200" fill="none" stroke="#AAB2BD" stroke-opacity="0.15" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="610" cy="60" r="260" fill="none" stroke="#AAB2BD" stroke-opacity="0.105" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="610" cy="60" r="320" fill="none" stroke="#AAB2BD" stroke-opacity="0.06" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <rect x="64" y="304" width="10" height="26" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="90" y="276" width="10" height="54" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="116" y="292" width="10" height="38" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="142" y="248" width="10" height="82" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="168" y="284" width="10" height="46" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="194" y="220" width="10" height="110" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="220" y="266" width="10" height="64" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="246" y="238" width="10" height="92" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="272" y="290" width="10" height="40" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="298" y="260" width="10" height="70" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="324" y="300" width="10" height="30" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="350" y="274" width="10" height="56" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <rect x="376" y="306" width="10" height="24" rx="5" fill="#AAB2BD" fill-opacity="0.13"/>
-  <circle cx="610" cy="60" r="14" fill="#AAB2BD" fill-opacity="0.22"/>
+  <circle cx="610" cy="60" r="80" fill="none" stroke="#9DB1CF" stroke-opacity="0.24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="610" cy="60" r="140" fill="none" stroke="#9DB1CF" stroke-opacity="0.195" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="610" cy="60" r="200" fill="none" stroke="#9DB1CF" stroke-opacity="0.15" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="610" cy="60" r="260" fill="none" stroke="#9DB1CF" stroke-opacity="0.105" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="610" cy="60" r="320" fill="none" stroke="#9DB1CF" stroke-opacity="0.06" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="64" y="304" width="10" height="26" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="90" y="276" width="10" height="54" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="116" y="292" width="10" height="38" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="142" y="248" width="10" height="82" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="168" y="284" width="10" height="46" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="194" y="220" width="10" height="110" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="220" y="266" width="10" height="64" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="246" y="238" width="10" height="92" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="272" y="290" width="10" height="40" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="298" y="260" width="10" height="70" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="324" y="300" width="10" height="30" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="350" y="274" width="10" height="56" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <rect x="376" y="306" width="10" height="24" rx="5" fill="#9DB1CF" fill-opacity="0.13"/>
+  <circle cx="610" cy="60" r="14" fill="#9DB1CF" fill-opacity="0.22"/>
 </svg>

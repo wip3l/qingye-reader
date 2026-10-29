@@ -131,6 +131,9 @@ export class AppThemeSettingsStore {
       store, AppThemeSettingsStore.KEY_DARK_BUTTON_COLOR,
       AppStorage.get<string>(AppThemeSettingsStore.KEY_DARK_BUTTON_COLOR) || defaults.darkButtonColor),
       defaults.darkButtonColor);
+    if (settings.themeId === ThemeIds.PLAIN_DEFAULT) {
+      AppThemeSettingsStore.upgradeLegacyPlainDefaultColors(settings, defaults);
+    }
     // The active color keys existed before custom themes. They are the migration fallback so an
     // existing user's four color choices become their initial custom theme without data loss.
     settings.customLightAccentColor = AppThemeSettingsStore.normalizeColor(await AppThemeSettingsStore.getString(
@@ -429,6 +432,26 @@ export class AppThemeSettingsStore {
       return;
     }
     AppThemeSettingsStore.applyToStorage(AppThemeSettingsStore.cachedSettings);
+  }
+
+  /**
+   * 默认主题早期的石板灰几乎不带色相，选中态与普通文字分不开；已保存的旧灰色换成新的冷调石板色，
+   * 其他用户自选的颜色保持不动。
+   */
+  private static upgradeLegacyPlainDefaultColors(settings: AppThemeSettings, defaults: AppThemeSettings): void {
+    // 第二组是开发中短暂用过的蓝色，测试机上可能已保存。
+    if (['#5B6573', '#3366CC'].includes(settings.lightAccentColor.toUpperCase())) {
+      settings.lightAccentColor = defaults.lightAccentColor;
+    }
+    if (['#AAB2BD', '#8FB5F0'].includes(settings.darkAccentColor.toUpperCase())) {
+      settings.darkAccentColor = defaults.darkAccentColor;
+    }
+    if (['#505967', '#2D5DB8'].includes(settings.lightButtonColor.toUpperCase())) {
+      settings.lightButtonColor = defaults.lightButtonColor;
+    }
+    if (['#737D8A', '#3F72C2'].includes(settings.darkButtonColor.toUpperCase())) {
+      settings.darkButtonColor = defaults.darkButtonColor;
+    }
   }
 
   private static defaultsForTheme(themeId: string): AppThemeSettings {
