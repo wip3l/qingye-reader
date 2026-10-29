@@ -5,7 +5,7 @@ import { ImmersiveLightSettingsStore } from '../utils/ImmersiveLightSettingsStor
 import { AbilityConstant, UIAbility, Want, Configuration, ConfigurationConstant } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { UIContext, window } from '@kit.ArkUI';
-import { RecentReadShortcut, RECENT_READ_SHORTCUT_ACTION, OPEN_BOOK_SHORTCUT_ACTION } from '../utils/RecentReadShortcut';
+import { RecentReadShortcut, OPEN_BOOK_SHORTCUT_ACTION } from '../utils/RecentReadShortcut';
 import { CoverGalleryStore } from '../utils/CoverGalleryStore';
 import { BookshelfDisplaySettingsStore } from '../utils/BookshelfDisplaySettingsStore';
 import { SearchExploreSettingsStore } from '../utils/SearchExploreSettingsStore';
@@ -599,10 +599,6 @@ export default class EntryAbility extends UIAbility {
       return '';
     }
     const action = params['shortcutAction'];
-    if (action === RECENT_READ_SHORTCUT_ACTION) {
-      RecentReadShortcut.request();
-      return '';
-    }
     if (action === OPEN_BOOK_SHORTCUT_ACTION) {
       const bookUrl = params['bookUrl'];
       if (bookUrl) {

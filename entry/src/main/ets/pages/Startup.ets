@@ -106,7 +106,7 @@ struct StartupPage {
       return;
     }
     try {
-      const opened = await RecentReadShortcut.openPending(getContext(this), true);
+      const opened = await RecentReadShortcut.openPending(true);
       if (!opened) {
         await this.replaceToIndex();
       }

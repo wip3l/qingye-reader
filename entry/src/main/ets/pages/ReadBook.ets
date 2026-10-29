@@ -1338,7 +1338,7 @@ struct ReadBookPage {
       console.warn('快捷入口切换前保存进度失败:', error);
     });
     try {
-      await RecentReadShortcut.openPending(getContext(this), true);
+      await RecentReadShortcut.openPending(true);
     } catch (e) {
       console.error('打开最近阅读快捷项失败:', e);
     }

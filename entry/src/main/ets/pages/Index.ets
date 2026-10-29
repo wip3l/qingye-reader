@@ -516,7 +516,7 @@ struct Index {
       return;
     }
     try {
-      await RecentReadShortcut.openPending(getContext(this));
+      await RecentReadShortcut.openPending();
     } catch (e) {
       console.error('打开最近阅读快捷项失败:', e);
     }
