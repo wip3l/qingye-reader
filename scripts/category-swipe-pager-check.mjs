@@ -111,7 +111,9 @@ const explore = methods('ExplorePage', [
   'explorePageKeys', 'isCurrentExplorePage', 'explorePageLoading', 'explorePageBooks', 'selectExploreEntry',
   'explorePageSnapshot', 'retainCurrentExplorePage', 'restoreExplorePage', 'beginExploreLoad', 'isCurrentExploreLoad'
 ]);
+let cancelledExploreLoads = 0;
 Object.assign(explore, {
+  coordinator: { cancelPending: () => cancelledExploreLoads++ },
   getUIContext: () => ({ animateTo: (_options, update) => update() }),
   selectedPlatform: '频道', selectedSourceUrl: 'source-a', selectedIndex: 0, isLoading: false,
   books: [{ name: '第一类的书' }], explorePages: new Map(), exploreLoadVersion: 0, exploreMetadataQueued: new Set(),
@@ -146,11 +148,13 @@ explore.selectedIndex = 0;
 explore.books = [{ name: '第一类的书' }];
 explore.exploreBooksPageKey = keys[0];
 explore.selectExploreEntry(1);
+assert.equal(cancelledExploreLoads, 1, 'a fresh category cancels the previous category request');
 assert.equal(explore.explorePageBooks(keys[0])[0].name, '第一类的书', 'outgoing page keeps its content during the animation');
 assert.equal(explore.explorePageLoading(keys[1]), true);
 explore.isLoading = false;
 assert.equal(explore.explorePageBooks(keys[1]).length, 0, 'failed incoming request must not display outgoing books');
 explore.selectExploreEntry(0);
+assert.equal(cancelledExploreLoads, 2, 'restoring a warm category also cancels outgoing work');
 assert.equal(explore.isLoading, false, 'returning to a warm category must not enter loading');
 assert.equal(explore.loadCount, 1, 'warm return must not call loadBooks or read the network/disk cache');
 assert.equal(explore.explorePage, 3, 'pagination position is retained');

@@ -31,6 +31,12 @@ jobs:
           node-version: 22
       - run: node scripts/thread-blocking-check.mjs
       - run: node scripts/theme-framework-check.mjs
+      - run: node --experimental-strip-types scripts/bookshelf-category-transition-check.mjs
+      - run: node --experimental-strip-types scripts/bookshelf-folder-check.mjs
+      - run: node --experimental-strip-types scripts/shared-element-book-check.mjs
+      - run: node --experimental-strip-types scripts/shared-element-motion-check.mjs
+      - run: node --experimental-strip-types scripts/category-swipe-pager-check.mjs
+      - run: node --experimental-strip-types scripts/trial-read-shelf-check.mjs
       - run: node --experimental-strip-types scripts/select-font-check.mjs
       - run: node scripts/neutral-source-engine-check.mjs
       - run: node scripts/log-policy-check.mjs

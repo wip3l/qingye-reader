@@ -23,6 +23,7 @@ function harness() {
   const rows = new Map();
   const writes = [];
   const storage = new Map();
+  const offlineLookups = [];
   const context = vm.createContext({
     console: { log() {}, info() {}, warn: console.warn, error: console.error },
     relationalStore: { RdbPredicates: class {
@@ -34,6 +35,10 @@ function harness() {
     BookSourceInteractionPostProcessor: { interactionCacheIdentity: () => 'source-settings' },
     ReaderOpenTrace: { mark() {} },
     ReaderCacheBudget: { setProtectedBooksProvider() {}, noteTextWrite() {} },
+    AudioOfflineStore: { downloadedDates: async (...args) => {
+      offlineLookups.push(args);
+      return new Map([[0, 123]]);
+    } },
     AppStorage: { setOrCreate: (key, value) => storage.set(key, value) },
     getContext: () => ({}), HdsFeedback: { showToast() {} }
   });
@@ -75,7 +80,7 @@ function harness() {
   const engine = Engine.get();
   // Content/network rendering is outside this lifecycle regression; opening/reusing the engine stays real.
   engine.peekContent = async () => 'content';
-  return { ...context.api, db, engine, context, rows, writes, clone, pending };
+  return { ...context.api, db, engine, context, rows, writes, clone, pending, offlineLookups };
 }
 
 async function trial(h, type = 0, media = 'novel') {
@@ -117,6 +122,9 @@ for (const media of ['novel', 'audio', 'comic', 'video']) {
     assert.equal(h.engine.chapters, chapters, 'reuse cached catalog');
     assert.equal(types.mediaCategoryOf(h.engine.book), media);
     if (media === 'audio') {
+      assert.ok(h.offlineLookups.length > 0, 'audio catalog markers come from downloaded audio');
+      assert.equal(h.offlineLookups.at(-1)[0], book.bookUrl);
+      assert.equal(h.engine.chapters[0].cacheDate, 123, 'download marker survives session reuse');
       const page = Object.assign(h.context.audio, { progressSaveQueue: Promise.resolve() });
       await page.queueBookStateSave(h.engine.book);
     } else if (media === 'video') {
