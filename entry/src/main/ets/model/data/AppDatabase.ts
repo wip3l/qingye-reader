@@ -2363,6 +2363,21 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     return changed > 0;
   }
 
+  /** 已手动缓存且图片引用已建索引的章节，返回它引用的本地图片；否则返回 null。 */
+  async pinnedChapterImagePaths(bookUrl: string, chapterIndex: number): Promise<string[] | null> {
+    if (!this.store || !bookUrl) return null;
+    const row = await this.store.querySql('SELECT pinned, imagesIndexed FROM book_contents WHERE bookUrl=? AND chapterIndex=?',
+      [bookUrl, chapterIndex]);
+    let indexed = false;
+    try { indexed = row.goToFirstRow() && row.getLong(0) === 1 && row.getLong(1) === 1; } finally { row.close(); }
+    if (!indexed) return null;
+    const refs = await this.store.querySql('SELECT path FROM reader_image_refs WHERE bookUrl=? AND chapterIndex=?',
+      [bookUrl, chapterIndex]);
+    const paths: string[] = [];
+    try { while (refs.goToNextRow()) paths.push(refs.getString(0)); } finally { refs.close(); }
+    return paths;
+  }
+
   /** 读到磁盘缓存时记下使用时间，自动清理按最久未用的先删。 */
   async touchCachedChapterContent(bookUrl: string, chapterIndex: number): Promise<void> {
     if (!this.store || !bookUrl) return;

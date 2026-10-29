@@ -130,9 +130,16 @@ function ok(message) { passed++; console.log(`ok ${passed} - ${message}`); }
   await h.db.saveCachedChapterContent('novel', engine.chapters[0], 'already cached');
   assert.equal(await engine.cacheChapter(0), true);
   assert.equal(h.sql.prepare('SELECT pinned FROM book_contents').get().pinned, 1);
+  const revision = () => h.sql.prepare('SELECT cacheRevision FROM book_contents WHERE chapterIndex=0').get().cacheRevision;
+  const pinnedRevision = revision();
+  assert.equal(await engine.cacheChapter(0), true);
+  assert.equal(revision(), pinnedRevision, 'an intact offline chapter is not rewritten by a repeated whole-book cache');
+  engine.chapters.push(h.chapter(1));
+  await h.db.saveCachedChapterContent('novel', engine.chapters[1], 'automatic');
   h.failSql('INSERT INTO book_contents');
-  assert.equal(await engine.cacheChapter(0), false);
-  ok('manual caching promotes an existing automatic chapter and reports persistence failure as failure');
+  assert.equal(await engine.cacheChapter(1), false);
+  assert.equal(engine.lastCacheError, '', 'an ordinary persistence failure fails only this chapter');
+  ok('manual caching promotes an existing automatic chapter, skips intact offline chapters and reports persistence failure as failure');
   h.close();
 }
 {
@@ -182,6 +189,51 @@ function ok(message) { passed++; console.log(`ok ${passed} - ${message}`); }
   stopSpeech(); await h.advance(1500);
   assert.equal(await h.db.getOnlineCachedContentBytes(), 0);
   ok('leaving a reader preserves background speech, then stopping speech triggers deferred cleanup without new writes');
+  h.close();
+}
+{
+  const h = harness(); const engine = h.Engine.createBackgroundWorker();
+  engine.book = { bookUrl: 'comic', origin: 'source' }; engine.chapters = [h.chapter(0)];
+  const failed = h.Marker.create(h.Marker.failureSource('HTTP 404'));
+  engine.putChapterCache(0, failed);
+  let fetches = 0; engine.fetchContentUncached = async () => { fetches++; return failed; };
+  assert.equal(await engine.fetchContent(0), failed);
+  assert.equal(await engine.fetchContent(0), failed);
+  assert.equal(fetches, 0, 'a permanently failed image must not refetch the chapter on every memory hit');
+  engine.putChapterCache(0, h.Marker.create('/files/reader_images/evicted.jpg'));
+  await engine.fetchContent(0);
+  assert.equal(fetches, 1, 'an evicted local image still refetches the chapter');
+  ok('memory hits keep chapters with failed images and only refetch when local files disappear');
+  h.close();
+}
+{
+  const h = harness(); const engine = h.Engine.createBackgroundWorker();
+  engine.book = { bookUrl: 'comic', origin: 'source' }; engine.chapters = [h.chapter(0)];
+  const storage = h.Marker.create(h.Marker.failureSource(h.Cache.STORAGE_FAILURE + '（ENOSPC）'));
+  engine.fetchContent = async () => storage; engine.fetchContentUncached = async () => storage;
+  assert.equal(await engine.cacheChapter(0), false);
+  assert.equal(engine.lastCacheError, h.Cache.STORAGE_FAILURE, 'the chapter own write failure stops the task');
+  const other = h.Marker.create(h.Marker.failureSource('HTTP 404'));
+  engine.fetchContent = async () => other; engine.fetchContentUncached = async () => other;
+  assert.equal(await engine.cacheChapter(0), false);
+  assert.equal(engine.lastCacheError, '', 'a download failure only fails this chapter');
+  const save = h.db.saveCachedChapterContent;
+  engine.fetchContent = async () => 'text';
+  h.db.saveCachedChapterContent = async () => { throw Object.assign(Error('database or disk is full'), { code: 14800029 }); };
+  assert.equal(await engine.cacheChapter(0), false);
+  assert.equal(engine.lastCacheError, h.Cache.STORAGE_FAILURE, 'a full database stops the task');
+  h.db.saveCachedChapterContent = save;
+  ok('only storage exhaustion caused by the chapter itself aborts offline caching');
+  h.close();
+}
+{
+  const h = harness(); const legacy = '/cache/comic_images/copy.jpg'; h.put(legacy);
+  h.sql.prepare('INSERT INTO book_contents(bookUrl,chapterIndex,content,pinned) VALUES(?,?,?,?)').run('legacy', 0, h.Marker.create(legacy), 1);
+  await h.db.backfillImageReferences();
+  h.failCopy(true);
+  assert.equal(await h.Cache.migrateLegacy([legacy]), false, 'a chapter-scoped migration skips an image it cannot copy');
+  await assert.rejects(h.Cache.migrateLegacy(), 'background migration still reports failure for retry');
+  ok('per-chapter legacy migration failures never fail the chapter');
   h.close();
 }
 console.log(`\n${passed} cache integration scenarios passed`);

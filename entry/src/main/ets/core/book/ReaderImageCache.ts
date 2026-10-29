@@ -7,7 +7,8 @@ import { ReaderImageMarker } from './ReaderImageMarker';
 /** Original images have durable, content-identity filenames. Derived AI files remain disposable. */
 export class ReaderImageCache {
   static fileRevision: number = 0;
-  static writeFailureEpoch: number = 0;
+  /** 图片落盘失败时写进失败标记的原因前缀；离线缓存据此只在本章自己写盘失败时中止整个任务。 */
+  static readonly STORAGE_FAILURE: string = '图片存储失败，请检查可用空间后重试';
   private static recent: Map<string, number> = new Map();
   private static flushTimer: number = -1;
   private static aliases: Map<string, string> = new Map();
@@ -67,6 +68,29 @@ export class ReaderImageCache {
     return text;
   }
 
+  /** 正文引用的本地图片文件都还在；不看失败或待加载标记。 */
+  static filesPresent(text: string): boolean {
+    for (const path of ReaderImageReferences.paths(text)) {
+      if (!ReaderImageCache.exists(path)) return false;
+    }
+    return true;
+  }
+
+  /** 正文里有图片因为写盘失败而显示失败原因。 */
+  static hasStorageFailure(text: string): boolean {
+    if (!ReaderImageMarker.hasFailure(text)) return false;
+    return ReaderImageReferences.markers(text).some((marker: string): boolean =>
+      ReaderImageMarker.failureReason(ReaderImageMarker.parse(marker).source).startsWith(ReaderImageCache.STORAGE_FAILURE));
+  }
+
+  /** 设备或数据库空间不足：继续缓存后面的章节也只会失败。 */
+  static isStorageFull(error: Object): boolean {
+    const code = Number((error as Record<string, Object>)?.['code'] || 0);
+    const message = (error as Error)?.message || String(error);
+    return code === 13900020 || code === 14800029 ||
+      /ENOSPC|No space left|database or disk is full|database is full/i.test(message);
+  }
+
   static complete(text: string, offline: boolean = false): boolean {
     if (ReaderImageMarker.hasFailure(text) || ReaderImageMarker.hasPending(text)) return false;
     for (const marker of ReaderImageReferences.markers(text)) {
@@ -121,8 +145,8 @@ export class ReaderImageCache {
         ReaderImageCache.touch(path);
       });
     } catch (e) {
-      ReaderImageCache.writeFailureEpoch++;
-      throw e;
+      const message = (e as Error)?.message || String(e);
+      throw new Error(`${ReaderImageCache.STORAGE_FAILURE}（${message}）`);
     } finally { release(); }
   }
 
@@ -141,22 +165,29 @@ export class ReaderImageCache {
       if (!ReaderImageCache.exists(previous)) continue;
       if (!onlyPaths && migrated >= 20) { pending = true; break; }
       // Pinning does not prevent copying; leave the original available to already decoded/live chapters.
-      await ReaderCacheCoordinator.run(async (): Promise<void> => {
-        const next = `${dir}/legacy_${previous.substring(legacy.length + 1)}`;
-        if (!fs.accessSync(dir)) fs.mkdirSync(dir, true);
-        const temp = `${next}.part`;
-        await fs.copyFile(previous, temp);
-        if (fs.statSync(previous).size !== fs.statSync(temp).size) throw new Error('旧图片迁移校验失败');
-        fs.renameSync(temp, next);
-        ReaderImageCache.fileRevision++;
-        const row = await appDb.imageResource(previous) || new ReaderImageResource();
-        row.path = next; row.bytes = fs.statSync(next).size; row.usedAt = Date.now(); row.state = 'ready';
-        await appDb.saveImageResource(row);
-        await appDb.replaceImageReference(previous, next);
-        ReaderImageCache.aliases.set(previous, next);
-        ReaderImageCache.touch(next);
-        if (active.has(previous)) ReaderImageCache.touch(previous);
-      });
+      try {
+        await ReaderCacheCoordinator.run(async (): Promise<void> => {
+          const next = `${dir}/legacy_${previous.substring(legacy.length + 1)}`;
+          if (!fs.accessSync(dir)) fs.mkdirSync(dir, true);
+          const temp = `${next}.part`;
+          await fs.copyFile(previous, temp);
+          if (fs.statSync(previous).size !== fs.statSync(temp).size) throw new Error('旧图片迁移校验失败');
+          fs.renameSync(temp, next);
+          ReaderImageCache.fileRevision++;
+          const row = await appDb.imageResource(previous) || new ReaderImageResource();
+          row.path = next; row.bytes = fs.statSync(next).size; row.usedAt = Date.now(); row.state = 'ready';
+          await appDb.saveImageResource(row);
+          await appDb.replaceImageReference(previous, next);
+          ReaderImageCache.aliases.set(previous, next);
+          ReaderImageCache.touch(next);
+          if (active.has(previous)) ReaderImageCache.touch(previous);
+        });
+      } catch (e) {
+        // 后台整理会重试；离线缓存单章时旧引用仍可用，跳过这一张，不让整章失败。
+        if (!onlyPaths) throw e as Error;
+        console.warn('[ImageCache] legacy migration skipped', e);
+        continue;
+      }
       migrated++;
     }
     return pending;

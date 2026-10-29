@@ -544,8 +544,9 @@ export class ReadBookEngine {
 
     if (this.chapterCache.has(idx)) {
       const memoryContent = ReaderImageCache.normalize(this.chapterCache.get(idx)!);
-      if ((!ReaderImageMarker.hasPending(memoryContent) && !ReaderImageCache.complete(memoryContent)) ||
-        !ReaderImageResults.available(memoryContent)) {
+      // 只在本地图片被清理、或待加载结果已作废时重取。带失败标记的章节照旧留在内存里，
+      // 否则一张永久失败的图会让这一章每次预加载、翻回都重新联网。
+      if (!ReaderImageCache.filesPresent(memoryContent) || !ReaderImageResults.available(memoryContent)) {
         this.chapterCache.delete(idx);
         return await this.fetchContent(idx, shouldCancel, background);
       }
@@ -756,9 +757,10 @@ export class ReadBookEngine {
     if (shouldCancel?.() || !this.book || !this.chapters[idx]) return false;
     const book = this.book;
     const releaseBook = ReaderCacheCoordinator.retainBook(book.bookUrl);
-    const storageEpoch = ReaderImageCache.writeFailureEpoch;
     this.lastCacheError = '';
     try {
+      // 已是离线内容且图片都在：不重读、不重写整章，只算作完成。
+      if (await this.isOfflineChapterIntact(book.bookUrl, idx)) return true;
       let text = await this.fetchContent(idx, shouldCancel, true);
       if (ReaderImageMarker.hasPending(text)) text = await ReaderImageResults.finalize(text);
       // A remote fallback is readable online but is not an offline download.
@@ -766,7 +768,7 @@ export class ReadBookEngine {
         this.chapterCache.delete(idx);
         text = await this.fetchContentUncached(idx, shouldCancel, true);
       }
-      if (ReaderImageCache.writeFailureEpoch !== storageEpoch) throw new Error('图片存储失败，请检查可用空间后重试');
+      if (ReaderImageCache.hasStorageFailure(text)) throw new Error(ReaderImageCache.STORAGE_FAILURE);
       if (shouldCancel?.() || !text || this.book !== book || !ReaderImageCache.complete(text, true)) return false;
       const releaseImages = ReaderImageCache.retainText(text);
       try {
@@ -781,10 +783,23 @@ export class ReadBookEngine {
         return true;
       } finally { releaseImages(); }
     } catch (e) {
-      this.lastCacheError = (e as Error).message || '离线内容写入失败';
+      // 只有空间不足才中止整个缓存任务；其余异常只算这一章失败，后面的章节继续缓存。
+      if ((e as Error)?.message === ReaderImageCache.STORAGE_FAILURE || ReaderImageCache.isStorageFull(e as Object)) {
+        this.lastCacheError = ReaderImageCache.STORAGE_FAILURE;
+      }
       console.warn('[RE] offline chapter failed:', idx, e);
       return false;
     } finally { releaseBook(); }
+  }
+
+  private async isOfflineChapterIntact(bookUrl: string, idx: number): Promise<boolean> {
+    try {
+      const paths = await appDb.pinnedChapterImagePaths(bookUrl, idx);
+      return paths !== null && paths.every((path: string): boolean => ReaderImageCache.exists(path));
+    } catch (e) {
+      console.warn('[RE] offline chapter state unavailable:', idx, e);
+      return false;
+    }
   }
 
 
