@@ -5,6 +5,7 @@ import { AppDatabase } from '../model/data/AppDatabase';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { FormDraftStore } from '../utils/FormDraftStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ExploreResultCache } from '../utils/ExploreResultCache';
@@ -199,25 +200,22 @@ struct BookSourceEditPage {
             .fontColor(this.primaryTextColor())
             .layoutWeight(1)
 
-          Text('保存')
-            .fontSize(AppFontSize.BODY_LARGE)
-            .fontColor(this.accentColor())
-            .width(60)
-            .height(56)
-            .textAlign(TextAlign.Center)
-            .onClick(() => {
+          ImmersiveHeaderAction({
+            label: '保存',
+            tint: this.accentColor(),
+            onTap: () => {
               this.saveSource();
-            })
+            }
+          })
 
-          Text('调试')
-            .fontSize(AppFontSize.BODY_LARGE)
-            .fontColor(this.accentColor())
-            .width(60)
-            .height(56)
-            .textAlign(TextAlign.Center)
-            .onClick(() => {
+          ImmersiveHeaderAction({
+            label: '调试',
+            tint: this.accentColor(),
+            onTap: () => {
               this.openDebugDraft();
-            })
+            }
+          })
+            .margin({ left: AppSpacing.SM, right: AppSpacing.XL })
         }
         .width('100%')
         .height(56 + this.statusBarHeight)

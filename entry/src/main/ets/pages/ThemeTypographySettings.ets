@@ -26,6 +26,7 @@ import {
 } from '../components/reader/ReaderLayoutSettings';
 import { ReaderInfoBarRow } from '../components/reader/ReaderInfoBar';
 import { PageScaffold } from '../components/common/PageScaffold';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
 import {
   ReaderInfoBarConfig,
@@ -188,16 +189,16 @@ struct ThemeTypographySettingsPage {
 
   @Builder
   titleActions() {
-    Text(this.saving ? '保存中' : '保存')
-      .fontSize(AppFontSize.BODY_LARGE)
-      .fontColor(this.loaded && !this.saving ? this.accentColor() : this.subTextColor())
-      .width(60)
-      .height(56)
-      .textAlign(TextAlign.Center)
-      .accessibilityText('保存主题排版')
-      .onClick(() => {
+    ImmersiveHeaderAction({
+      label: this.saving ? '保存中' : '保存',
+      tint: this.accentColor(),
+      actionEnabled: this.loaded && !this.saving,
+      accessibilityLabel: '保存主题排版',
+      onTap: () => {
         this.save();
-      })
+      }
+    })
+      .margin({ right: AppSpacing.XL })
   }
 
   @Builder

@@ -17,6 +17,7 @@ import { ReaderCacheBudgetPolicy } from '../../core/book/ReaderCacheBudgetPolicy
 import { AudioOfflineDownloadPrompt } from '../../utils/AudioOfflineDownloadPrompt';
 import { ImmersiveBackButton } from '../../components/ImmersiveBackButton';
 import { ImmersiveMaterialSurface } from '../../components/ImmersiveMaterialSurface';
+import { ImmersiveHeaderAction } from '../../components/ImmersiveHeaderAction';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../common/HeaderBackdrop';
@@ -1120,13 +1121,11 @@ export struct BookshelfPage {
 
               if (this.isBookMultiSelect) {
                 Blank()
-                Text('取消')
-                  .fontSize(AppFontSize.BODY_LARGE)
-                  .fontColor(this.primaryTextColor())
-                  .width(52)
-                  .height(56)
-                  .textAlign(TextAlign.Center)
-                  .onClick(() => this.exitBookMultiSelect())
+                ImmersiveHeaderAction({
+                  label: '取消',
+                  accessibilityLabel: '退出多选',
+                  onTap: () => this.exitBookMultiSelect()
+                })
               } else {
                 Blank()
 

@@ -6,6 +6,7 @@ import { ReadBookEngine } from '../core/book/ReadBookEngine';
 import { BookSourceRuntimeSnapshotStore } from '../core/book/BookSourceRuntimeSnapshot';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -259,15 +260,14 @@ struct VerifyWebPage {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
-        Text('完成')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.accentColor())
-          .width(56)
-          .height(56)
-          .textAlign(TextAlign.Center)
-          .onClick(() => {
+        ImmersiveHeaderAction({
+          label: '完成',
+          tint: this.accentColor(),
+          onTap: () => {
             this.finishVerify();
-          })
+          }
+        })
+          .margin({ left: AppSpacing.SM, right: AppSpacing.XL - AppSpacing.MD })
       }
       .width('100%')
       .height(56)

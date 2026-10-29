@@ -8,6 +8,7 @@ import { SystemTtsReader, TtsVoiceOption } from '../utils/SystemTtsReader';
 import { TtsSettings, TtsSettingsStore } from '../utils/TtsSettingsStore';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { PageScaffold } from '../components/common/PageScaffold';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { TtsVoiceCatalog } from '../utils/TtsVoiceCatalog';
 import { TtsVoiceAvailability } from '../utils/TtsVoiceAvailability';
 import { AccountCommerceApi } from '../account/AccountCommerceApi';
@@ -195,10 +196,12 @@ struct CustomTtsVoiceManagerPage {
 
   @Builder
   managerActions() {
-    Text(this.selectionMode ? '取消' : '批量').fontSize(AppFontSize.BODY).fontColor(this.accentColor())
-      .width(56).height(44).textAlign(TextAlign.Center)
-      .accessibilityText(this.selectionMode ? '退出音色批量管理' : '批量管理音色')
-      .onClick(() => { this.selectionMode ? this.exitSelectionMode() : this.enterSelectionMode(); })
+    ImmersiveHeaderAction({
+      label: this.selectionMode ? '取消' : '批量',
+      accessibilityLabel: this.selectionMode ? '退出音色批量管理' : '批量管理音色',
+      onTap: () => { this.selectionMode ? this.exitSelectionMode() : this.enterSelectionMode(); }
+    })
+      .margin({ right: AppSpacing.XL })
   }
 
   @Builder

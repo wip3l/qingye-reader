@@ -20,6 +20,7 @@ import { OpdsSettingsStore } from '../opds/OpdsSettingsStore';
 import { BookCoverCache } from '../utils/BookCoverCache';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
@@ -226,11 +227,13 @@ struct OpdsBrowsePage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
-        SymbolGlyph($r('sys.symbol.magnifyingglass'))
-          .fontSize(20)
-          .fontColor([this.searchAvailable ? this.accentColor() : this.subTextColor()])
-          .padding(AppSpacing.MD)
-          .onClick(() => this.toggleSearch())
+        ImmersiveHeaderAction({
+          icon: $r('sys.symbol.magnifyingglass'),
+          tint: this.searchAvailable ? this.accentColor() : this.subTextColor(),
+          accessibilityLabel: '搜索书库',
+          onTap: () => this.toggleSearch()
+        })
+          .margin({ right: AppSpacing.XL - AppSpacing.SM })
       }
     }
     .width('100%')

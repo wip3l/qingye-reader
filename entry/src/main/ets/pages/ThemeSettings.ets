@@ -13,6 +13,7 @@ import { ThemeTrialManager } from '../utils/ThemeTrialManager';
 import { CustomThemeScheme, CustomThemeSchemeStore } from '../utils/CustomThemeSchemeStore';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { ThemeStartupCover } from '../components/ThemeStartupCover';
@@ -1035,17 +1036,15 @@ struct ThemeSettingsPage {
   @Builder
   pointsBadge() {
     if (this.accountLoggedIn) {
-      Text(`${this.accountPoints} 点`)
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.accentColor())
-        .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
-        .borderRadius(ThemeRuntime.buttonRadius())
-        .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
-        .margin({ right: AppSpacing.LG })
-        .accessibilityText(`当前 ${this.accountPoints} 点，打开账号中心`)
-        .onClick(() => {
+      ImmersiveHeaderAction({
+        label: `${this.accountPoints} 点`,
+        tint: this.accentColor(),
+        accessibilityLabel: `当前 ${this.accountPoints} 点，打开账号中心`,
+        onTap: () => {
           router.pushUrl({ url: 'pages/AccountCenter' });
-        })
+        }
+      })
+        .margin({ right: AppSpacing.XL })
     }
   }
 
@@ -1150,12 +1149,14 @@ struct ThemeSettingsPage {
         .layoutWeight(1)
         .margin({ left: AppSpacing.XXS })
       if (this.accountLoggedIn) {
-        Text(`${this.accountPoints} 点`)
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.accentColor())
-          .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
-          .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+        ImmersiveHeaderAction({
+          label: `${this.accountPoints} 点`,
+          tint: this.accentColor(),
+          accessibilityLabel: `当前 ${this.accountPoints} 点，打开账号中心`,
+          onTap: () => {
+            router.pushUrl({ url: 'pages/AccountCenter' });
+          }
+        })
       }
     }
     .width('100%')

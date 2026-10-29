@@ -10,6 +10,7 @@ import { ExploreResultCache } from '../utils/ExploreResultCache';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 
 /** 问题记录里书源在本机的当前状态，决定能否打开或删除。 */
@@ -201,13 +202,13 @@ struct SyncIssuesPage {
   @Builder
   titleActions() {
     if (this.issues.length > 0) {
-      SymbolGlyph($r('sys.symbol.trash'))
-        .fontSize(20)
-        .fontColor([this.accentColor()])
-        .width(48)
-        .height(48)
-        .accessibilityText('清除全部记录')
-        .onClick(() => this.confirmClearAll())
+      ImmersiveHeaderAction({
+        icon: $r('sys.symbol.trash'),
+        tint: this.accentColor(),
+        accessibilityLabel: '清除全部记录',
+        onTap: () => this.confirmClearAll()
+      })
+        .margin({ right: AppSpacing.XL })
     }
   }
 

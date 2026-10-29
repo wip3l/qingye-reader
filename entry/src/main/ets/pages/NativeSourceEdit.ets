@@ -4,6 +4,7 @@ import { AppDatabase } from '../model/data/AppDatabase';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ExploreResultCache } from '../utils/ExploreResultCache';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -162,25 +163,22 @@ struct NativeSourceEditPage {
           .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
           .layoutWeight(1)
 
-        Text('校验')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
-          .width(60)
-          .height(56)
-          .textAlign(TextAlign.Center)
-          .onClick(() => {
+        ImmersiveHeaderAction({
+          label: '校验',
+          tint: ThemeRuntime.accentColor(this.appDarkMode),
+          onTap: () => {
             this.checkDefinition();
-          })
+          }
+        })
 
-        Text('保存')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
-          .width(60)
-          .height(56)
-          .textAlign(TextAlign.Center)
-          .onClick(() => {
+        ImmersiveHeaderAction({
+          label: '保存',
+          tint: ThemeRuntime.accentColor(this.appDarkMode),
+          onTap: () => {
             this.saveSource();
-          })
+          }
+        })
+          .margin({ left: AppSpacing.SM, right: AppSpacing.XL })
       }
       .width('100%')
       .height(56 + this.statusBarHeight)

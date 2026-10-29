@@ -1,5 +1,6 @@
 import { promptAction, router } from '@kit.ArkUI';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { Book, HttpClient, JavaRegexCompat, ReplaceRuleImport } from '@legado/sourceengine';
 import { ReaderReplaceRule, ReaderReplaceRuleCheck, ReaderReplaceRuleStore } from '../utils/ReaderReplaceRuleStore';
@@ -385,19 +386,16 @@ struct ReaderReplaceRulesPage {
         .fontColor(this.primaryTextColor())
         .layoutWeight(1)
       if (!this.editing) {
-        Text(this.selectionMode ? '取消' : '选择')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.primaryTextColor())
-          .width(52)
-          .height(56)
-          .textAlign(TextAlign.Center)
-          .onClick(() => {
+        ImmersiveHeaderAction({
+          label: this.selectionMode ? '取消' : '选择',
+          onTap: () => {
             if (this.selectionMode) {
               this.exitRuleSelectionMode();
             } else {
               this.enterEmptyRuleSelectionMode();
             }
-          })
+          }
+        })
       }
     }
     .width('100%')

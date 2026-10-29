@@ -1,10 +1,12 @@
 import { PageScaffold } from '../components/common/PageScaffold';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { SettingNavRow } from '../components/common/SettingRow';
 import { BookshelfCoverBadges } from '../components/BookshelfCoverBadges';
 import { BookshelfCoverBadgeSettings } from '../utils/BookshelfCoverBadgeSettings';
 import { BookshelfDisplaySettingsStore } from '../utils/BookshelfDisplaySettingsStore';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
+import { AppSpacing } from '../theme/AppSpacing';
 import { syncSystemBars } from '../utils/SystemBars';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
@@ -116,15 +118,13 @@ struct BookshelfCoverBadgeSettingsPage {
 
   @Builder
   pageActions() {
-    Button() {
-      Text(this.saving ? '保存中' : '完成')
-        .fontSize(AppFontSize.BODY)
-        .fontColor(ThemeRuntime.buttonColor(this.appDarkMode))
-    }
-    .backgroundColor(Color.Transparent)
-    .margin({ right: 12 })
-    .enabled(this.loaded && !this.saving)
-    .onClick(() => this.saveSettings())
+    ImmersiveHeaderAction({
+      label: this.saving ? '保存中' : '完成',
+      tint: ThemeRuntime.buttonColor(this.appDarkMode),
+      actionEnabled: this.loaded && !this.saving,
+      onTap: () => this.saveSettings()
+    })
+      .margin({ right: AppSpacing.XL })
   }
 
   @Builder

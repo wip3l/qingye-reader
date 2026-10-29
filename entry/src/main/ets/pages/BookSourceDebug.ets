@@ -15,6 +15,7 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { NativeSourceService, NativeCommentPage, HttpClient, ReaderActionMarker, ReaderActionData } from '@legado/sourceengine';
 import { NativeCommentPageView } from '../components/NativeCommentPageView';
 
@@ -141,13 +142,14 @@ struct BookSourceDebugPage {
 
   @Builder
   titleActions() {
-    Text('导出报告').fontSize(AppFontSize.BODY).fontColor(this.accentColor())
-      .width(88)
-      .height(56)
-      .textAlign(TextAlign.Center)
-      .margin({ right: AppSpacing.LG })
+    // 没有报告时仍可点，由导出流程给出提示。
+    ImmersiveHeaderAction({
+      label: '导出报告',
+      tint: this.accentColor(),
+      onTap: () => this.exportDebugReport()
+    })
+      .margin({ right: AppSpacing.XL })
       .opacity(this.hasDebugReport() ? 1 : 0.45)
-      .onClick(() => this.exportDebugReport())
   }
 
   @Builder

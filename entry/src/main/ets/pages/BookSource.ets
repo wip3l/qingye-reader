@@ -7,6 +7,7 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { SearchExploreSettingsStore } from '../utils/SearchExploreSettingsStore';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { BookSourceStageRuntimeHost } from '../components/BookSourceStageRuntimeHost';
 import { WebBookFetchRuntimeHost } from '../components/WebBookFetchRuntimeHost';
 import picker from '@ohos.file.picker';
@@ -832,16 +833,12 @@ struct BookSourcePage {
         .layoutWeight(1)
 
       if (this.selectionMode) {
-        Text('取消')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.isBatchOperating ? this.subTextColor() : this.primaryTextColor())
-          .width(44)
-          .height(40)
-          .textAlign(TextAlign.Center)
-          .onClick(() => {
-            if (this.isBatchOperating) return;
-            this.exitSelectionMode();
-          })
+        ImmersiveHeaderAction({
+          label: '取消',
+          actionEnabled: !this.isBatchOperating,
+          accessibilityLabel: '退出多选',
+          onTap: () => this.exitSelectionMode()
+        })
       } else {
         this.sourceHeaderCircleButton($r('sys.symbol.magnifyingglass'),
           this.sourceSearchOpen || this.searchText.trim().length > 0, '搜索书源', '', false, () => {

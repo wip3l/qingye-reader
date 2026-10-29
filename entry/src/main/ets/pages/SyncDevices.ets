@@ -12,6 +12,7 @@ import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 
 @Entry
@@ -206,12 +207,13 @@ struct SyncDevicesPage {
 
   @Builder
   titleActions() {
-    SymbolGlyph($r('sys.symbol.arrow_clockwise'))
-      .fontSize(20)
-      .fontColor([this.accentColor()])
-      .width(48)
-      .height(48)
-      .onClick(() => this.loadDevices())
+    ImmersiveHeaderAction({
+      icon: $r('sys.symbol.arrow_clockwise'),
+      tint: this.accentColor(),
+      accessibilityLabel: '刷新设备列表',
+      onTap: () => this.loadDevices()
+    })
+      .margin({ right: AppSpacing.XL })
   }
 
   @Builder

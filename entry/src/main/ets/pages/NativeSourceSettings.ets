@@ -5,6 +5,7 @@ import { AppDatabase } from '../model/data/AppDatabase';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ExploreResultCache } from '../utils/ExploreResultCache';
@@ -370,16 +371,14 @@ struct NativeSourceSettingsPage {
           .layoutWeight(1)
 
         if (this.items.length > 0) {
-          Text('保存')
-            .fontSize(AppFontSize.BODY_LARGE)
-            .fontColor(this.dirty ? ThemeRuntime.accentColor(this.appDarkMode) :
-              ThemeRuntime.subTextColor(this.appDarkMode))
-            .width(60)
-            .height(56)
-            .textAlign(TextAlign.Center)
-            .onClick(() => {
+          ImmersiveHeaderAction({
+            label: '保存',
+            tint: this.dirty ? ThemeRuntime.accentColor(this.appDarkMode) : ThemeRuntime.subTextColor(this.appDarkMode),
+            onTap: () => {
               this.save();
-            })
+            }
+          })
+            .margin({ right: AppSpacing.XL })
         }
       }
       .width('100%')
