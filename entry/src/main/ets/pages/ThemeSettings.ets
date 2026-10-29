@@ -222,7 +222,7 @@ struct ThemeSettingsPage {
   @State applyDialogHasCover: boolean = false;
   @State applyDialogApplyLayout: boolean = false;
   @State applyDialogApplyCover: boolean = false;
-  @State applyDialogApplyIcon: boolean = true;
+  @State applyDialogApplyIcon: boolean = false;
   private pendingApplyChoice: ((choice: ThemeApplyChoice | null) => void) | null = null;
   @State themeCatalog: ThemeCatalogItem[] = [];
   @State themeCatalogLoaded: boolean = false;
@@ -795,7 +795,8 @@ struct ThemeSettingsPage {
     }
     // 主题带封面时默认勾选“应用主题封面”，不再沿用上次的选择。
     this.applyDialogApplyCover = this.applyDialogHasCover;
-    this.applyDialogApplyIcon = true;
+    // 桌面图标默认不随主题更换，由用户主动打开。
+    this.applyDialogApplyIcon = false;
     this.showThemeApplyDialog = true;
     return new Promise<ThemeApplyChoice | null>(
       (resolve: (choice: ThemeApplyChoice | null) => void) => {
