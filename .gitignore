@@ -71,3 +71,5 @@ Thumbs.db
 !/.github/
 !/.github/**
 /_bridge_test/
+# 本地调试、真机验证产物
+/diagnosis/
