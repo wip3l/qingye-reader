@@ -88,6 +88,9 @@ export struct ReaderComicModeSettingsPanel {
   @Prop tapTurn: boolean = true;
   @Prop dualPage: boolean = true;
   @Prop volumeTurnPage: boolean = false;
+  @Prop smartKeyTurnPage: boolean = false;
+  /** 设备支持智控键滑动时才显示对应开关。 */
+  @Prop smartKeyTurnSupported: boolean = false;
   @Prop tapZoneSummary: string = '';
   @Prop orientationOptions: SelectOption[] = [];
   @Prop orientationSelected: number = 0;
@@ -98,6 +101,7 @@ export struct ReaderComicModeSettingsPanel {
   onTapTurnChange: (checked: boolean) => void = () => {};
   onConfigureTapZones: () => void = () => {};
   onVolumeTurnChange: (checked: boolean) => void = () => {};
+  onSmartKeyTurnChange: (checked: boolean) => void = () => {};
   onOrientationChange: (index: number) => void = () => {};
   onDualPageChange: (checked: boolean) => void = () => {};
 
@@ -213,6 +217,17 @@ export struct ReaderComicModeSettingsPanel {
         subTextColor: this.colors.subTextColor,
         onChange: (checked: boolean): void => this.onVolumeTurnChange(checked)
       })
+
+      if (this.smartKeyTurnSupported) {
+        ReaderSettingSwitchRow({
+          title: '智控键翻页',
+          description: this.paged() ? '智控键上滑/下滑翻到上一页/下一页' : '智控键上滑/下滑向上/向下翻一屏',
+          checked: this.smartKeyTurnPage,
+          textColor: this.colors.textColor,
+          subTextColor: this.colors.subTextColor,
+          onChange: (checked: boolean): void => this.onSmartKeyTurnChange(checked)
+        })
+      }
 
       ReaderSettingSelectRow({
         title: '屏幕方向',

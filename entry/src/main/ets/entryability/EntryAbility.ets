@@ -178,6 +178,7 @@ export default class EntryAbility extends UIAbility {
     PersistentStorage.persistProp('readerPageTurnAnimation', true);
     PersistentStorage.persistProp('readerPageTurnAnimationType', 1);
     PersistentStorage.persistProp('readerVolumeTurnPage', false);
+    PersistentStorage.persistProp('readerSmartKeyTurnPage', false);
     PersistentStorage.persistProp('readerKeepScreenOn', true);
     PersistentStorage.persistProp('readerExtendToStatusBar', false);
     PersistentStorage.persistProp('readerLastPageViewWidth', 0);

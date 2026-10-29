@@ -12,6 +12,7 @@ import { router, window, promptAction } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { inputConsumer, KeyCode, Action, KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { SmartControlKey } from '../utils/SmartControlKey';
 import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKeyboard';
 import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';
 import { ReaderKeyboardCaptureDialog } from '../components/reader/ReaderKeyboardCaptureDialog';
@@ -733,6 +734,8 @@ struct ReadBookPage {
     ReaderSettingsStore.SCREEN_ORIENTATION_SYSTEM;
   @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
   @StorageLink('readerVolumeTurnPage') @Watch('onReaderVolumeTurnPageChanged') readerVolumeTurnPage: boolean = false;
+  @StorageLink('readerSmartKeyTurnPage') @Watch('updateVolumeKeySubscription') readerSmartKeyTurnPage: boolean = false;
+  @StorageProp('readerSmartKeyTurnSupported') @Watch('updateVolumeKeySubscription') readerSmartKeyTurnSupported: boolean = false;
   @StorageLink('readerLongPressSelectText') @Watch('onReaderLongPressSelectTextChanged') readerLongPressSelectText: boolean = true;
   @StorageLink('readerEyeTurnEnabled') readerEyeTurnEnabled: boolean = false;
   @StorageLink('readerEyeTurnPortraitCalibration') readerEyeTurnPortraitCalibration: string = '';
@@ -836,6 +839,8 @@ struct ReadBookPage {
   private fullTextCache: ReaderFullTextCacheController | null = null;
   private volumeUpCallback?: (event: InputKeyEvent) => void;
   private volumeDownCallback?: (event: InputKeyEvent) => void;
+  private smartKeyUpCallback?: (event: InputKeyEvent) => void;
+  private smartKeyDownCallback?: (event: InputKeyEvent) => void;
   private lastLoggedReaderFontFamily: string = '';
   private readerFontChangeSerial: number = 0;
   private readerLayoutApplyTimerId: number = -1;
@@ -902,6 +907,7 @@ struct ReadBookPage {
     this.readerEntryInitializing = true;
     this.enterReaderImmersive();
     this.updateVolumeKeySubscription();
+    SmartControlKey.detect();
     const params = router.getParams() as Record<string, string>;
     this.openedWithShelfAnimation = !!params && params['shelfBookOpening'] === 'true';
     this.openedFromShortcut = !!params && params['shortcutEntry'] === 'true';
@@ -1224,6 +1230,7 @@ struct ReadBookPage {
       ReaderProgressCheckpoint.detach(this.ttsFloatingSessionOwnerId);
     });
     this.unregisterVolumeKeyTurn();
+    this.unregisterSmartKeyTurn();
     this.exitReaderImmersive();
   }
 
@@ -2969,6 +2976,8 @@ struct ReadBookPage {
       tapTurn: this.readerComicSettings.tapTurn,
       dualPage: this.readerComicSettings.dualPage,
       volumeTurnPage: this.readerVolumeTurnPage,
+      smartKeyTurnPage: this.readerSmartKeyTurnPage,
+      smartKeyTurnSupported: this.readerSmartKeyTurnSupported,
       tapZoneSummary: this.tapZoneSummaryText(),
       orientationOptions: this.screenOrientationOptions(),
       orientationSelected: this.screenOrientationSelectedIndex(),
@@ -2994,6 +3003,7 @@ struct ReadBookPage {
       },
       onConfigureTapZones: (): void => this.presentTapZoneSettings(),
       onVolumeTurnChange: (checked: boolean): void => this.setReaderVolumeTurnPage(checked),
+      onSmartKeyTurnChange: (checked: boolean): void => this.setReaderSmartKeyTurnPage(checked),
       onOrientationChange: (index: number): void => this.setReaderScreenOrientationByIndex(index),
       onDualPageChange: (checked: boolean): void => {
         this.updateReaderComicSettings((settings: ReaderComicSettings): void => {
@@ -7124,6 +7134,7 @@ struct ReadBookPage {
     this.readerScreenOrientation = settings.screenOrientation;
     this.readerTapZoneActions = settings.tapZoneActions;
     this.readerVolumeTurnPage = settings.volumeTurnPage;
+    this.readerSmartKeyTurnPage = settings.smartKeyTurnPage;
     this.readerLongPressSelectText = settings.longPressSelectText;
     this.readerEyeTurnEnabled = settings.eyeTurnEnabled;
     this.readerEyeTurnPortraitCalibration = settings.eyeTurnPortraitCalibration || '';
@@ -8723,21 +8734,24 @@ struct ReadBookPage {
     this.saveReadConfig();
   }
 
+  /** 音量键与智控键翻页共用订阅时机：阅读页可见且未在听书时才接管按键。 */
   updateVolumeKeySubscription(): void {
     this.unregisterVolumeKeyTurn();
-    if (!this.readerVolumeTurnPage || !this.readerPageVisible || this.isTtsSpeaking ||
+    this.unregisterSmartKeyTurn();
+    if (!this.readerPageVisible || this.isTtsSpeaking ||
       this.ttsReader.isSpeaking() || ReaderTtsFloatingSession.isActive()) {
       return;
     }
-    this.registerVolumeKeyTurn();
+    if (this.readerVolumeTurnPage) this.registerVolumeKeyTurn();
+    if (this.readerSmartKeyTurnPage && this.readerSmartKeyTurnSupported) this.registerSmartKeyTurn();
   }
 
   registerVolumeKeyTurn(): void {
     this.volumeUpCallback = (_event: InputKeyEvent) => {
-      this.handleVolumeKeyTurn(-1);
+      this.handleHardwareKeyTurn(-1, this.readerVolumeTurnPage);
     };
     this.volumeDownCallback = (_event: InputKeyEvent) => {
-      this.handleVolumeKeyTurn(1);
+      this.handleHardwareKeyTurn(1, this.readerVolumeTurnPage);
     };
     try {
       inputConsumer.on('keyPressed', {
@@ -8772,8 +8786,50 @@ struct ReadBookPage {
     this.volumeDownCallback = undefined;
   }
 
-  handleVolumeKeyTurn(direction: number): void {
-    if (!this.readerVolumeTurnPage || !this.readerPageVisible || this.isTtsSpeaking ||
+  /** 智控键上滑上一页、下滑下一页，与音量上/下键一致。 */
+  registerSmartKeyTurn(): void {
+    const keys: Array<KeyCode> = SmartControlKey.slideKeys();
+    if (keys.length < 2) return;
+    this.smartKeyUpCallback = (_event: InputKeyEvent) => {
+      this.handleHardwareKeyTurn(-1, this.readerSmartKeyTurnPage);
+    };
+    this.smartKeyDownCallback = (_event: InputKeyEvent) => {
+      this.handleHardwareKeyTurn(1, this.readerSmartKeyTurnPage);
+    };
+    try {
+      inputConsumer.on('keyPressed', {
+        key: keys[0],
+        action: Action.DOWN,
+        isRepeat: false
+      }, this.smartKeyUpCallback);
+      inputConsumer.on('keyPressed', {
+        key: keys[1],
+        action: Action.DOWN,
+        isRepeat: false
+      }, this.smartKeyDownCallback);
+    } catch (err) {
+      console.error('注册智控键翻页失败:', err);
+      this.unregisterSmartKeyTurn();
+    }
+  }
+
+  unregisterSmartKeyTurn(): void {
+    try {
+      if (this.smartKeyUpCallback) {
+        inputConsumer.off('keyPressed', this.smartKeyUpCallback);
+      }
+      if (this.smartKeyDownCallback) {
+        inputConsumer.off('keyPressed', this.smartKeyDownCallback);
+      }
+    } catch (err) {
+      console.error('取消智控键翻页失败:', err);
+    }
+    this.smartKeyUpCallback = undefined;
+    this.smartKeyDownCallback = undefined;
+  }
+
+  handleHardwareKeyTurn(direction: number, enabled: boolean): void {
+    if (!enabled || !this.readerPageVisible || this.isTtsSpeaking ||
       this.ttsReader.isSpeaking() || ReaderTtsFloatingSession.isActive() || this.showMenu || this.showToc ||
       this.showSettings || this.isLoading || this.chapters.length === 0) {
       return;
@@ -10489,6 +10545,13 @@ struct ReadBookPage {
           this.setReaderVolumeTurnPage(checked);
         })
 
+      if (this.readerSmartKeyTurnSupported) {
+        this.readerSwitchSettingItem('智控键翻页', '智控键上滑/下滑翻到上一页/下一页', this.readerSmartKeyTurnPage,
+          (checked: boolean) => {
+            this.setReaderSmartKeyTurnPage(checked);
+          })
+      }
+
       this.readerSwitchSettingItem('长按选中文字', '关闭后长按正文不选中文字，也不弹出操作选项',
         this.readerLongPressSelectText, (checked: boolean): void => {
           this.readerLongPressSelectText = checked;
@@ -11144,6 +11207,14 @@ struct ReadBookPage {
     this.updateVolumeKeySubscription();
     this.saveReaderInteractionSettings();
     this.saveReadConfig();
+  }
+
+  setReaderSmartKeyTurnPage(enabled: boolean): void {
+    this.readerSmartKeyTurnPage = enabled;
+    this.updateVolumeKeySubscription();
+    ReaderSettingsStore.saveSmartKeyTurnPage(getContext(this), enabled).catch((e: Error) => {
+      console.error('保存智控键翻页设置失败:', e);
+    });
   }
 
   onReaderLongPressSelectTextChanged(): void {

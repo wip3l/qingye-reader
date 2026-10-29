@@ -16,6 +16,7 @@ import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
 import { AdaptiveColorPicker } from '../components/AdaptiveColorPicker';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { EyeTurnController } from '../core/reader/EyeTurnController';
+import { SmartControlKey } from '../utils/SmartControlKey';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import fs from '@ohos.file.fs';
 import { HdsFeedback } from '../utils/HdsFeedback';
@@ -86,6 +87,8 @@ struct SettingsPage {
     ReaderSettingsStore.SCREEN_ORIENTATION_SYSTEM;
   @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
   @StorageLink('readerVolumeTurnPage') readerVolumeTurnPage: boolean = false;
+  @StorageLink('readerSmartKeyTurnPage') readerSmartKeyTurnPage: boolean = false;
+  @StorageProp('readerSmartKeyTurnSupported') readerSmartKeyTurnSupported: boolean = false;
   @StorageLink('readerLongPressSelectText') readerLongPressSelectText: boolean = true;
   @StorageLink('readerScreenTimeoutMinutes') readerScreenTimeoutMinutes: number =
     ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON;
@@ -123,6 +126,7 @@ struct SettingsPage {
   aboutToAppear() {
     const params = router.getParams() as Record<string, string> | undefined;
     this.section = params?.['section'] === SettingsPage.SECTION_NOVEL ? SettingsPage.SECTION_NOVEL : '';
+    SmartControlKey.detect();
   }
 
   isNovelSection(): boolean {
@@ -184,11 +188,22 @@ struct SettingsPage {
         title: '音量键翻页',
         description: '音量上/下键翻到上一页/下一页，条漫为翻一屏',
         isOn: this.readerVolumeTurnPage,
-        showDivider: false,
+        showDivider: this.readerSmartKeyTurnSupported,
         onChange: (value: boolean) => {
           this.setReaderVolumeTurnPage(value);
         }
       })
+      if (this.readerSmartKeyTurnSupported) {
+        SettingSwitchRow({
+          title: '智控键翻页',
+          description: '智控键上滑/下滑翻到上一页/下一页，条漫为翻一屏',
+          isOn: this.readerSmartKeyTurnPage,
+          showDivider: false,
+          onChange: (value: boolean) => {
+            this.setReaderSmartKeyTurnPage(value);
+          }
+        })
+      }
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -658,6 +673,7 @@ struct SettingsPage {
     this.readerScreenOrientation = settings.screenOrientation;
     this.readerTapZoneActions = settings.tapZoneActions;
     this.readerVolumeTurnPage = settings.volumeTurnPage;
+    this.readerSmartKeyTurnPage = settings.smartKeyTurnPage;
     this.readerLongPressSelectText = settings.longPressSelectText;
     this.readerScreenTimeoutMinutes = settings.screenTimeoutMinutes;
     this.readerExtendToStatusBar = settings.extendToStatusBar;
@@ -1608,6 +1624,13 @@ struct SettingsPage {
   setReaderVolumeTurnPage(enabled: boolean): void {
     this.readerVolumeTurnPage = enabled;
     this.saveReaderInteractionSettings();
+  }
+
+  setReaderSmartKeyTurnPage(enabled: boolean): void {
+    this.readerSmartKeyTurnPage = enabled;
+    ReaderSettingsStore.saveSmartKeyTurnPage(getContext(this), enabled).catch((e: Error) => {
+      console.error('保存智控键翻页设置失败:', e);
+    });
   }
 
   setReaderEyeTurnEnabled(enabled: boolean): void {
