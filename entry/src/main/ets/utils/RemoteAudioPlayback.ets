@@ -21,6 +21,9 @@ export class RemoteAudioPlayback {
   /** play() 已开始但还没出声的代次；切章时据此丢弃半途的播放器，避免旧章节随后响起。 */
   private loadingGeneration: number = -1;
   private interruptPaused: boolean = false;
+  private userPaused: boolean = false;
+  private interruptRevision: number = 0;
+  private interruptPausePromise: Promise<void> = Promise.resolve();
   private sleepTimerId: number = -1;
   private sleepEndAt: number = 0;
   /**
@@ -69,6 +72,8 @@ export class RemoteAudioPlayback {
     this.loadingGeneration = generation;
     const timing = startTiming || new AudioStartTiming(chapterIndex);
     this.interruptPaused = false;
+    this.userPaused = false;
+    this.interruptRevision++;
     this.resetSeek();
     await this.releasePlayer();
     this.bookUrl = bookUrl;
@@ -175,6 +180,11 @@ export class RemoteAudioPlayback {
       await player.play();
       timing.mark('play');
       if (generation === this.generation && player === this.player) {
+        if (this.userPaused || this.interruptPaused) {
+          if (player.state === 'playing') await player.pause();
+          this.syncPlayerState(player, generation);
+          return;
+        }
         this.setState('playing');
         timing.finish('playing');
       }
@@ -201,6 +211,10 @@ export class RemoteAudioPlayback {
   }
 
   async pause(): Promise<void> {
+    // Also cancel automatic resume when the system has already paused the player.
+    this.userPaused = true;
+    this.interruptPaused = false;
+    this.interruptRevision++;
     const player = this.player;
     if (!player || player.state !== 'playing') return;
     await player.pause();
@@ -208,6 +222,11 @@ export class RemoteAudioPlayback {
   }
 
   async resume(): Promise<void> {
+    this.userPaused = false;
+    this.interruptPaused = false;
+    const revision = ++this.interruptRevision;
+    await this.interruptPausePromise;
+    if (revision !== this.interruptRevision || this.userPaused) return;
     if (this.state === 'loading') return;
     const player = this.player;
     const playerState = player?.state || '';
@@ -219,17 +238,23 @@ export class RemoteAudioPlayback {
       try {
         if (playerState === 'completed') player.seek(0, media.SeekMode.SEEK_CLOSEST);
         await player.play();
+        if (player !== this.player) return;
+        if (this.userPaused || this.interruptPaused) {
+          if (player.state === 'playing') await player.pause();
+          return;
+        }
         if (player === this.player) this.setState('playing');
         return;
       } catch (error) {
-        if (player !== this.player) return;
+        if (player !== this.player || revision !== this.interruptRevision || this.userPaused ||
+          this.interruptPaused) return;
         console.warn('[AudioBook] resume failed, rebuilding player:', error);
       }
     }
     // Another app taking audio focus permanently (forced STOP interrupt) leaves AVPlayer in
     // stopped/error, where play() is illegal. Without a rebuild every play button, including
     // the system media capsule, stays dead until the process restarts.
-    if (!this.mediaUrl) return;
+    if (!this.mediaUrl || revision !== this.interruptRevision || this.userPaused || this.interruptPaused) return;
     await this.play(this.bookUrl, this.chapterIndex, this.mediaUrl, this.mediaHeaders, this.positionMs,
       this.speed);
   }
@@ -302,6 +327,8 @@ export class RemoteAudioPlayback {
 
   async stop(): Promise<void> {
     this.generation++;
+    this.interruptRevision++;
+    this.userPaused = false;
     this.interruptPaused = false;
     this.resetSeek();
     this.clearSleepTimer();
@@ -362,29 +389,44 @@ export class RemoteAudioPlayback {
       return;
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_PAUSE) {
-      this.interruptPaused = true;
+      this.interruptRevision++;
+      this.interruptPaused = !this.userPaused;
       if (event.forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
-        player.pause().catch(() => {});
+        this.interruptPausePromise = player.pause().catch((error: Error) => {
+          console.warn('[AudioBook] interrupt pause failed:', error);
+        });
       }
       this.syncStateAfterInterrupt(player, generation);
       return;
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_STOP) {
+      this.interruptRevision++;
       this.interruptPaused = false;
+      this.userPaused = true;
+      if (event.forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
+        this.interruptPausePromise = player.pause().catch(() => {});
+      }
       this.syncStateAfterInterrupt(player, generation);
       return;
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_RESUME) {
       try { player.setVolume(1); } catch (_) {}
-      if (this.interruptPaused && player.state !== 'playing') {
-        this.interruptPaused = false;
-        this.resume().catch((error: Error) => {
+      if (!this.interruptPaused || this.userPaused) return;
+      const revision = ++this.interruptRevision;
+      this.resumeAfterInterrupt(player, generation, revision).catch((error: Error) => {
+        if (generation === this.generation && player === this.player) {
           this.listener?.onPlaybackError(error.message || String(error));
-        });
-      } else {
-        this.interruptPaused = false;
-      }
+        }
+      });
     }
+  }
+
+  private async resumeAfterInterrupt(player: media.AVPlayer, generation: number,
+    revision: number): Promise<void> {
+    await this.interruptPausePromise;
+    if (generation !== this.generation || player !== this.player || revision !== this.interruptRevision ||
+      this.userPaused || !this.interruptPaused) return;
+    await this.resume();
   }
 
   /** A forced interrupt stops timeUpdate, so the stateChange fallback there never runs. */

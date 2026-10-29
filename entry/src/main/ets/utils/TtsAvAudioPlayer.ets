@@ -14,6 +14,8 @@ export class TtsAvAudioPlayer {
   private playerOwnerGeneration: number = 0;
   private paused: boolean = false;
   private interruptPaused: boolean = false;
+  private interruptRevision: number = 0;
+  private interruptPausePromise: Promise<void> = Promise.resolve();
   private resumeWaiters: Array<() => void> = [];
 
   /**
@@ -28,6 +30,7 @@ export class TtsAvAudioPlayer {
   async play(filePath: string, speed: number = 1,
     onPlaybackStart?: (durationMs: number) => void): Promise<void> {
     const generation = ++this.playGeneration;
+    this.interruptRevision++;
     this.interruptPaused = false;
     const sourceLength = this.getFileLength(filePath);
     const player = await this.acquirePlayer(generation);
@@ -97,7 +100,7 @@ export class TtsAvAudioPlayer {
       if (player.state !== 'playing') {
         await player.play();
       }
-      if (this.paused && player.state === 'playing') {
+      if ((this.paused || this.interruptPaused) && player.state === 'playing') {
         await player.pause();
       }
       if (onPlaybackStart) {
@@ -150,6 +153,7 @@ export class TtsAvAudioPlayer {
 
   stop(): void {
     this.playGeneration++;
+    this.interruptRevision++;
     this.paused = false;
     this.interruptPaused = false;
     this.resolveResumeWaiters();
@@ -174,6 +178,8 @@ export class TtsAvAudioPlayer {
   }
 
   async pause(): Promise<void> {
+    this.interruptRevision++;
+    this.interruptPaused = false;
     if (this.paused) {
       return;
     }
@@ -185,15 +191,21 @@ export class TtsAvAudioPlayer {
   }
 
   async resume(): Promise<void> {
-    if (!this.paused) {
+    if (!this.paused && !this.interruptPaused) {
       return;
     }
     this.paused = false;
+    this.interruptPaused = false;
+    const revision = ++this.interruptRevision;
+    await this.interruptPausePromise;
+    if (revision !== this.interruptRevision || this.paused) return;
     const player = this.player;
     if (player && player.state === 'paused') {
       await TtsAudioSession.acquire(this.activeAudioSessionOwner);
+      if (player !== this.player || revision !== this.interruptRevision || this.paused) return;
       player.setVolume(1);
       await player.play();
+      await this.pauseIfRequested(player);
     }
     this.resolveResumeWaiters();
   }
@@ -287,24 +299,50 @@ export class TtsAvAudioPlayer {
       return;
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_PAUSE) {
-      this.interruptPaused = true;
+      this.interruptRevision++;
+      this.interruptPaused = !this.paused;
       if (event.forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
-        player.pause().catch(() => {});
+        this.interruptPausePromise = player.pause().catch((error: Error) => {
+          console.warn('[TTS] av interrupt pause failed:', error);
+        });
       }
       return;
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_STOP) {
+      this.interruptRevision++;
       this.interruptPaused = false;
+      // Permanent focus loss has no guaranteed RESUME. Keep advisory STOP resumable by the user.
+      this.paused = true;
+      if (event.forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
+        this.interruptPausePromise = player.pause().catch(() => {});
+      }
       return;
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_RESUME) {
-      if (this.interruptPaused && !this.paused &&
-        (player.state === 'paused' || player.state === 'prepared')) {
-        this.interruptPaused = false;
-        player.play().catch(() => {});
-      } else {
-        this.interruptPaused = false;
-      }
+      if (!this.interruptPaused || this.paused) return;
+      const revision = ++this.interruptRevision;
+      this.resumeAfterInterrupt(player, generation, revision).catch((error: Error) => {
+        console.warn('[TTS] av interrupt resume failed:', error);
+      });
+    }
+  }
+
+  private async resumeAfterInterrupt(player: media.AVPlayer, generation: number,
+    revision: number): Promise<void> {
+    await this.interruptPausePromise;
+    if (generation !== this.playGeneration || player !== this.player || revision !== this.interruptRevision ||
+      this.paused || !this.interruptPaused) return;
+    this.interruptPaused = false;
+    if (player.state === 'paused' || player.state === 'prepared') {
+      await player.play();
+      await this.pauseIfRequested(player);
+    }
+  }
+
+  private async pauseIfRequested(player: media.AVPlayer): Promise<void> {
+    // Read state again after asynchronous play(); the pre-play state is no longer authoritative.
+    if (player === this.player && (this.paused || this.interruptPaused) && player.state === 'playing') {
+      await player.pause();
     }
   }
 
