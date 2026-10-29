@@ -212,18 +212,21 @@ const READER_CONTINUOUS_LIST_ID = 'reader_continuous_list';
 const READER_CONTINUOUS_TTS_FOLLOW_GRACE_MS = 2500;
 const READER_PROGRESS_OFFSET_CHAPTER_KEY = 'readProgressCharOffsetChapterV2';
 
-/** 评论网页只获得返回/关闭能力，不暴露书源运行时或其它宿主权限。 */
+/** 评论网页只获得返回/关闭和告知顶部底色的能力，不暴露书源运行时或其它宿主权限。 */
 class ReaderCommentNavigationBridge {
   private readonly navigateBack: () => void;
   private readonly dismiss: () => void;
+  private readonly surfaceChanged: (color: string) => void;
 
-  constructor(navigateBack: () => void, dismiss: () => void) {
+  constructor(navigateBack: () => void, dismiss: () => void, surfaceChanged: (color: string) => void) {
     this.navigateBack = navigateBack;
     this.dismiss = dismiss;
+    this.surfaceChanged = surfaceChanged;
   }
 
   back(): void { this.navigateBack(); }
   close(): void { this.dismiss(); }
+  surfaceColor(color: string): void { this.surfaceChanged(String(color)); }
 }
 
 @Entry
@@ -279,6 +282,8 @@ struct ReadBookPage {
   @State readerCommentPanelLoading: boolean = false;
   @State readerCommentPanelError: boolean = false;
   @State readerCommentPanelHeight: number = 0;
+  /** 评论网页顶部的实际底色（#RRGGBB），弹层与拖动条区域跟随它；为空时按 app 深浅色。 */
+  @State readerCommentPanelSurface: string = '';
   @State readerInlinePageMode: boolean = false;
   @State readerInlinePage: NativeCommentPage = new NativeCommentPage();
   private readerInlinePageSerial: number = 0;
@@ -880,7 +885,8 @@ struct ReadBookPage {
   private readerCommentPageAreaHeight: number = 0;
   private readerCommentPanelController: webview.WebviewController = new webview.WebviewController();
   private readerCommentNavigationBridge: ReaderCommentNavigationBridge = new ReaderCommentNavigationBridge(
-    () => this.backReaderCommentPanel(), () => this.closeReaderCommentPanel());
+    () => this.backReaderCommentPanel(), () => this.closeReaderCommentPanel(),
+    (color: string) => this.updateReaderCommentPanelSurface(color));
   @State eyeTurnState: ReaderEyeTurnViewState = new ReaderEyeTurnViewState();
   private eyeTurnCoordinator?: ReaderEyeTurnCoordinator;
   private readerEyeTurnSurfaceController: XComponentController = new XComponentController();
@@ -3410,7 +3416,21 @@ struct ReadBookPage {
 
   /** 评论页（含注入的反色样式）在深浅色下的大致底色，用作网页默认底色与弹层底色。 */
   readerCommentPanelWebBackground(): string {
+    if (this.readerCommentPanelSurface) return this.readerCommentPanelSurface;
     return this.appDarkMode ? '#131313' : '#FFFFFF';
+  }
+
+  isReaderCommentPanelDark(): boolean {
+    if (!this.readerCommentPanelSurface) return this.appDarkMode;
+    const value = parseInt(this.readerCommentPanelSurface.substring(1), 16);
+    return (0.2126 * (value >> 16) + 0.7152 * ((value >> 8) & 0xFF) + 0.0722 * (value & 0xFF)) / 255 < 0.5;
+  }
+
+  updateReaderCommentPanelSurface(color: string): void {
+    if (!this.showReaderCommentPanel || !/^#[0-9a-fA-F]{6}$/.test(color)) return;
+    if (this.readerCommentPanelSurface === color) return;
+    console.info(`评论面板顶部底色：${color}`);
+    this.readerCommentPanelSurface = color;
   }
 
   updateReaderCommentPanelHeight(height: number): void {
@@ -3442,7 +3462,7 @@ struct ReadBookPage {
         .javaScriptProxy({
           object: this.readerCommentNavigationBridge,
           name: 'LegadoCommentHost',
-          methodList: ['back', 'close'],
+          methodList: ['back', 'close', 'surfaceColor'],
           controller: this.readerCommentPanelController
         })
         .onWindowExit(() => this.closeReaderCommentPanel())
@@ -3486,7 +3506,7 @@ struct ReadBookPage {
           }
           Text(this.readerCommentPanelError ? '评论显示失败，请重试' : '评论加载中…')
             .fontSize(AppFontSize.BODY)
-            .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+            .fontColor(ThemeRuntime.subTextColor(this.isReaderCommentPanelDark()))
           if (this.readerCommentPanelError) {
             Button('重试')
               .onClick(() => this.retryReaderCommentPanelLoad())
@@ -14184,6 +14204,7 @@ struct ReadBookPage {
     this.readerCommentPanelMarker = marker;
     this.readerCommentPanelLoading = true;
     this.readerCommentPanelError = false;
+    this.readerCommentPanelSurface = '';
     this.showReaderCommentPanel = true;
     const cancelled = (): boolean => serial !== this.readerInlinePageSerial || !this.showReaderCommentPanel ||
       this.book !== book || this.chapters[this.currentChapterIndex]?.url !== chapter.url ||
@@ -14246,6 +14267,7 @@ struct ReadBookPage {
     const markerBottom = this.getReaderSourceActionAnchorBottom(marker);
     this.readerCommentPanelAnchorBottom = markerBottom > 0 ? markerBottom :
       (this.readerCommentPageAreaTop >= 0 ? (this.readerCommentPageAreaTop + this.readerCommentPageAreaHeight) : -1);
+    this.readerCommentPanelSurface = '';
     this.showReaderCommentPanel = true;
   }
 

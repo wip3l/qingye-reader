@@ -112,9 +112,56 @@ export class ReaderCommentWebTheme {
           (document.head||root).appendChild(fallback);
         }
       }
+      var canvasCss=function(isDark){
+        return 'html{background:'+(isDark?'#131313':'#FFFFFF')+'!important;min-height:100%;}body{min-height:100vh;box-sizing:border-box;}';
+      };
       canvas=document.createElement('style');canvas.id='legado-comment-canvas';
-      canvas.textContent='html{background:${dark ? '#131313' : '#FFFFFF'}!important;min-height:100%;}body{min-height:100vh;box-sizing:border-box;}';
+      canvas.textContent=canvasCss(dark);
       (document.head||root).appendChild(canvas);
+      // 宿主弹层的拖动条区域取网页顶部的实际底色。页面自带的深浅色按钮怎么实现都不要紧：
+      // 点击或根节点属性变化后重新取色，延迟复查以等过渡动画结束。反色兜底时取色是反色前的值，直接用深色。
+      var report=function(color){
+        var host=window.LegadoCommentHost;
+        if(host&&typeof host.surfaceColor==='function')host.surfaceColor(color);
+      };
+      if(fallback){
+        report('#131313');
+      } else {
+        var hex=function(value){
+          var match=/rgba?\\(([^)]+)\\)/.exec(value||'');if(!match)return '';
+          var p=match[1].split(',').map(function(v){return parseFloat(v);});
+          if(p.length>3&&p[3]<0.5)return '';
+          return '#'+[p[0],p[1],p[2]].map(function(v){
+            var s=Math.max(0,Math.min(255,Math.round(v))).toString(16);return s.length<2?'0'+s:s;
+          }).join('');
+        };
+        var surface=function(){
+          var node=document.elementFromPoint?document.elementFromPoint(Math.max(0,(window.innerWidth||0)/2),1):null;
+          for(;node&&node.nodeType===1;node=node.parentElement){
+            var color=hex(getComputedStyle(node).backgroundColor);if(color)return color;
+          }
+          return hex(getComputedStyle(body).backgroundColor);
+        };
+        var sync=function(){
+          var color=surface();
+          if(!color||color===window.__LEGADO_SURFACE_COLOR__)return;
+          window.__LEGADO_SURFACE_COLOR__=color;
+          var n=parseInt(color.substring(1),16);
+          var isDark=(0.2126*(n>>16)+0.7152*((n>>8)&255)+0.0722*(n&255))/255<0.5;
+          var current=document.getElementById('legado-comment-canvas');
+          if(current)current.textContent=canvasCss(isDark);
+          report(color);
+        };
+        window.__LEGADO_SURFACE_COLOR__='';
+        sync();
+        if(!window.__LEGADO_SURFACE_WATCH__){
+          window.__LEGADO_SURFACE_WATCH__=true;
+          var later=function(){sync();setTimeout(sync,120);setTimeout(sync,450);};
+          document.addEventListener('click',later,true);
+          new MutationObserver(later).observe(root,{attributes:true});
+          new MutationObserver(later).observe(body,{attributes:true});
+        }
+      }
       window.__LEGADO_THEME_PAINTED__='';window.__LEGADO_THEME_APPLIED__=scheme;
       requestAnimationFrame(function(){requestAnimationFrame(function(){
         if(window.__LEGADO_THEME_APPLIED__===scheme)window.__LEGADO_THEME_PAINTED__=scheme;

@@ -129,7 +129,67 @@ for (const dark of [false, true]) {
   assert(html.startsWith('<!doctype html>'), 'preserve standards mode');
   assert(html.indexOf('__LEGADO_COMMENT_INLINE__') < html.indexOf('pageInit()'), 'theme precedes page scripts');
 }
-console.log('PASS comment panel: live resize, painted-theme reveal, stale callbacks, bounded failure/retry, early HTML theme, Web back/close bridge');
+{
+  // Whatever the page's own theme button changes, the host sheet receives the page's real top colour.
+  const reports = [], styles = new Map(), timers = [], observers = [], clicks = [];
+  const classes = new Set();
+  let headerColor = 'rgb(255, 255, 255)';
+  const body = { nodeType: 1, parentElement: null, classList: {
+    contains: name => classes.has(name),
+    toggle: (name, on) => { if (on ?? !classes.has(name)) classes.add(name); else classes.delete(name); }
+  } };
+  const header = { nodeType: 1, parentElement: body };
+  const label = { nodeType: 1, parentElement: header };
+  const root = { style: {}, setAttribute() {}, appendChild(node) { styles.set(node.id, node); } };
+  const window = {
+    innerWidth: 400,
+    LegadoCommentHost: { surfaceColor: color => reports.push(color) },
+    toggleCmtTheme() { body.classList.toggle('dark'); },
+    dispatchEvent() {}
+  };
+  const document = { documentElement: root, body, head: root, readyState: 'complete',
+    getElementById: id => id === 'themeToggle' ? {} : (styles.get(id) ?? null),
+    createElement: () => ({ remove() { styles.delete(this.id); } }),
+    elementFromPoint: () => label,
+    addEventListener: (type, fn, capture) => { assert.equal(type, 'click'); assert.equal(capture, true); clicks.push(fn); } };
+  const context = vm.createContext({ window, document, localStorage: { setItem() {} }, location: { href: 'about:blank' },
+    CustomEvent: class {}, requestAnimationFrame: fn => fn(), setTimeout: fn => timers.push(fn),
+    getComputedStyle: node => ({ backgroundColor: node === header ? headerColor : 'rgba(0, 0, 0, 0)' }),
+    MutationObserver: class { constructor(fn) { this.fn = fn; } observe(target) { observers.push({ target, fn: this.fn }); } } });
+  vm.runInContext(`window.__LEGADO_COMMENT_INLINE__=true;`, context);
+  vm.runInContext(ReaderCommentWebTheme.apply(false, true), context);
+  assert.deepEqual(reports, ['#ffffff'], 'host learns the top colour once applied');
+  assert.deepEqual(observers.map(item => item.target), [root, body], 'root and body attributes are watched');
+  assert.equal(clicks.length, 1);
+  // A theme button that only swaps a stylesheet: nothing but the painted colour changes, after a transition.
+  clicks[0]();
+  headerColor = 'rgb(43, 43, 43)';
+  for (const fn of timers.splice(0)) fn();
+  assert.deepEqual(reports, ['#ffffff', '#2b2b2b'], 'delayed recheck catches transitions');
+  assert.match(styles.get('legado-comment-canvas').textContent, /#131313/, 'root canvas follows the page');
+  observers[1].fn();
+  for (const fn of timers.splice(0)) fn();
+  assert.deepEqual(reports, ['#ffffff', '#2b2b2b'], 'unchanged colour does not repeat reports');
+  vm.runInContext(ReaderCommentWebTheme.apply(false, true), context);
+  assert.equal(clicks.length, 1, 'repeated readiness polls do not stack listeners');
+}
+{
+  const context = vm.createContext({});
+  const page = vm.runInContext(stripTypeScriptTypes(
+    `({${['readerCommentPanelWebBackground', 'isReaderCommentPanelDark', 'updateReaderCommentPanelSurface']
+      .map(method).join(',')}})`, { mode: 'strip' }), context);
+  Object.assign(page, { showReaderCommentPanel: true, readerCommentPanelSurface: '', appDarkMode: false });
+  assert.equal(page.readerCommentPanelWebBackground(), '#FFFFFF');
+  page.updateReaderCommentPanelSurface('#2b2b2b');
+  assert.equal(page.readerCommentPanelWebBackground(), '#2b2b2b', 'sheet and drag-bar area follow the page');
+  assert.equal(page.isReaderCommentPanelDark(), true);
+  page.updateReaderCommentPanelSurface('red;');
+  assert.equal(page.readerCommentPanelSurface, '#2b2b2b', 'only plain hex colours are accepted from the page');
+  page.showReaderCommentPanel = false;
+  page.updateReaderCommentPanelSurface('#ffffff');
+  assert.equal(page.readerCommentPanelSurface, '#2b2b2b', 'closing sheet keeps its colour until reopened');
+}
+console.log('PASS comment panel: live resize, painted-theme reveal, stale callbacks, bounded failure/retry, early HTML theme, Web back/close bridge, page top colour reaches sheet');
 
 function inlineHarness() {
   const calls = [], toasts = [];
