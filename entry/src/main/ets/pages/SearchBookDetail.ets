@@ -56,6 +56,7 @@ struct SearchBookDetailPage {
   @State kind: string = '';
   @State status: string = '';
   @State coverUrl: string = '';
+  @State sharedCoverId: string = '';
   @State intro: string = '';
   @State latestChapterTitle: string = '';
   @State totalChapterNum: number = 0;
@@ -123,6 +124,7 @@ struct SearchBookDetailPage {
       this.kind = params['kind'] || '';
       this.status = params['status'] || '';
       this.coverUrl = params['coverUrl'] || '';
+      this.sharedCoverId = params['sharedCoverId'] || '';
       this.intro = BookFieldSanitizer.clean(params['intro'] || '');
       this.latestChapterTitle = params['latestChapterTitle'] || '';
       this.wordCount = params['wordCount'] || '';
@@ -503,6 +505,9 @@ struct SearchBookDetailPage {
       Stack() {
         this.coverView(104, 140)
       }
+      .width(104)
+      .height(140)
+      .sharedTransition(this.sharedCoverId, { duration: 360, curve: Curve.Friction, type: SharedTransitionEffectType.Exchange })
       // 投影按外层形状绘制，不给圆角会是直角矩形的影子，在封面四角露出来。
       .borderRadius(8)
       .shadow({ radius: 16, color: this.appDarkMode ? '#66000000' : '#33000000', offsetX: 0, offsetY: 6 })

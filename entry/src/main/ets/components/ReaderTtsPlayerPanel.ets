@@ -20,6 +20,7 @@ const SECONDARY_DOWNLOAD: string = 'download';
 export struct ReaderTtsPlayerPanel {
   @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @Prop sharedMotionId: string = '';
   @Prop darkMode: boolean = false;
   @Prop accentColor: ResourceColor = '#5B8F86';
   @Prop playButtonColor: ResourceColor = '#5B8F86';
@@ -159,12 +160,16 @@ export struct ReaderTtsPlayerPanel {
       .width('100%')
       .height('100%')
       .backgroundColor(this.backgroundThemeId ? Color.Transparent : ThemeRuntime.pageColor(this.darkMode))
-      .transition(TransitionEffect.translate({ y: 520 })
+      .transition(this.sharedMotionId ? TransitionEffect.IDENTITY : TransitionEffect.translate({ y: 520 })
         .combine(TransitionEffect.opacity(0))
         .animation({ duration: 280, curve: Curve.Friction }))
     }
     .width('100%')
     .height('100%')
+    .borderRadius(this.sharedMotionId ? 24 : 0)
+    .clip(!!this.sharedMotionId)
+    .geometryTransition(this.sharedMotionId)
+    .transition(this.sharedMotionId ? TransitionEffect.opacity(0.99) : TransitionEffect.IDENTITY)
   }
 
   /** 没有主题背景图时，用封面做模糊氛围背景，渐隐到页面底色（底色层与渐变层不透明，底部无硬边）。 */

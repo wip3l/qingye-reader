@@ -642,7 +642,6 @@ struct AudioBookPage {
       count: this.chapters.length,
       currentDisplayIndex: this.chapterDisplayIndex(this.chapterIndex),
       reverseOrder: this.chapterReverseOrder,
-      progressText: `${this.chapterIndex + 1} / ${this.chapters.length}`,
       bottomInset: this.navBarHeight,
       viewportHeight: this.viewportHeight,
       scroller: this.chapterScroller,

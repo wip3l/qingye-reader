@@ -50,7 +50,7 @@ const CATALOG_COVER_HEIGHT = 68;
  * (ReadBook.readerFloatingTocPanel / tocPanelSummary / tocChapterList):
  *   - shown by the host as a system half-modal sheet (immersive material on API 26+)
  *   - cover + book name (+ optional subtitle) header with a circular close button
- *   - summary row carrying "共 N 章", the order toggle and the chapter progress
+ *   - summary row carrying "共 N 章", the order toggle and optional actions
  *   - list rows with a `•` / `·` leader, hairline separators and a cache chip
  *
  * The caller keeps the data source in *display order*, so every index this
@@ -72,7 +72,6 @@ export struct TtsCatalogSheet {
   @Prop count: number = 0;
   @Prop currentDisplayIndex: number = 0;
   @Prop reverseOrder: boolean = false;
-  @Prop progressText: string = '';
   @Prop bottomInset: number = 0;
   @Prop viewportHeight: number = 720;
   /** 章节标记文字；有声书标的是音频已下载。 */
@@ -178,16 +177,36 @@ export struct TtsCatalogSheet {
   }
 
   /**
-   * 目录摘要行：左边章数（有声书再加一行已下载说明），右边进度和操作按钮。
+   * 目录摘要行：左边章数和排序按钮（有声书再加一行已下载说明），右边操作按钮。
    * 按钮与右上角关闭按钮一样用沉浸光感按钮；听书页和书架胶囊打开的目录共用这一行，布局一致。
    */
   @Builder
   catalogSummary() {
     Row({ space: AppSpacing.SM }) {
       Column({ space: AppSpacing.XXS }) {
-        Text(`共 ${this.count} 章`)
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.subTextColor)
+        Row() {
+          Text(`共 ${this.count} 章`)
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.subTextColor)
+            .height(34)
+            .textAlign(TextAlign.Center)
+          ImmersiveBackButton({
+            icon: $r('sys.symbol.text_arrow_up_and_down'),
+            iconOffsetX: 0,
+            iconColor: this.reverseOrder ? this.accentColor : this.controlIconColor,
+            darkMode: this.darkMode,
+            buttonSize: 34,
+            containerWidth: 34,
+            containerHeight: 34,
+            startInset: 0,
+            materialScale: 0.7,
+            compactLayout: true,
+            accessibilityLabel: this.reverseOrder ? '切换为正序目录' : '切换为倒序目录',
+            onBack: () => this.onToggleOrder()
+          })
+            .margin({ left: AppSpacing.XS })
+        }
+        .alignItems(VerticalAlign.Center)
         if (this.noteText) {
           Text(this.noteText)
             .fontSize(AppFontSize.CAPTION)
@@ -199,26 +218,6 @@ export struct TtsCatalogSheet {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
       .padding({ left: AppSpacing.MD })
-
-      Text(this.progressText)
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.subTextColor)
-
-      ImmersiveBackButton({
-        icon: $r('sys.symbol.sort'),
-        iconOffsetX: 0,
-        iconSize: 18,
-        iconColor: this.reverseOrder ? this.accentColor : this.controlIconColor,
-        darkMode: this.darkMode,
-        buttonSize: 36,
-        containerWidth: 36,
-        containerHeight: 36,
-        startInset: 0,
-        materialScale: 0.75,
-        compactLayout: true,
-        accessibilityLabel: this.reverseOrder ? '切换为正序目录' : '切换为倒序目录',
-        onBack: () => this.onToggleOrder()
-      })
 
       if (this.actionLabel) {
         ImmersiveBackButton({

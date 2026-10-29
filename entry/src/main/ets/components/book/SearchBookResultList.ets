@@ -1,3 +1,4 @@
+import { SharedElementMotion } from '../../utils/SharedElementMotion';
 import { SearchBook, BookTypeSupport } from '@legado/sourceengine';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { BookDisplayHelper } from '../../utils/BookDisplayHelper';
@@ -111,6 +112,7 @@ export struct SearchBookResultList {
   private tagCache: Map<string, string[]> = new Map<string, string[]>();
   /** 只对当前已加载的封面显示氛围背景，轮播切图时同步更新。 */
   @State readyCoverUrls: Map<string, ResourceStr> = new Map();
+  @Prop sharedCoverScope: string = '';
   onOpenBook: SearchBookAction = (_book: SearchBook) => {};
   onReadBook: SearchBookAction = (_book: SearchBook) => {};
   onToggleShelf: SearchBookAction = (_book: SearchBook) => {};
@@ -389,6 +391,7 @@ export struct SearchBookResultList {
         }
         .width('100%')
         .aspectRatio(0.75)
+        .sharedTransition(this.resultSharedCoverId(key), { duration: 360, curve: Curve.Friction, type: SharedTransitionEffectType.Exchange })
         .borderRadius(8)
         .clip(true)
 
@@ -796,10 +799,16 @@ export struct SearchBookResultList {
     Stack() {
       this.resultCover(key, 6, 180, 240)
     }
+    .sharedTransition(this.resultSharedCoverId(key), { duration: 360, curve: Curve.Friction, type: SharedTransitionEffectType.Exchange })
     .width(54)
     .height(72)
     .borderRadius(6)
     .clip(true)
+  }
+
+  resultSharedCoverId(key: string): string {
+    const book = this.resultBook(key);
+    return book.aggregationCount > 1 ? '' : SharedElementMotion.coverId(this.sharedCoverScope, book.origin, book.bookUrl);
   }
 
   isDarkMode(): boolean {

@@ -1,3 +1,4 @@
+import { SharedElementMotion } from '../../utils/SharedElementMotion';
 import { router } from '@kit.ArkUI';
 import deviceInfo from '@ohos.deviceInfo';
 import { Book, BookSource, SearchBook, BookFieldSanitizer } from '@legado/sourceengine';
@@ -673,6 +674,7 @@ export struct ExplorePage {
     router.pushUrl({
       url: 'pages/SearchBookDetail',
       params: {
+        sharedCoverId: autoStartRead ? '' : SharedElementMotion.coverId('explore', book.origin, book.bookUrl),
         bookUrl: book.bookUrl,
         tocUrl: book.tocUrl,
         origin: book.origin,
@@ -1237,6 +1239,7 @@ export struct ExplorePage {
       .justifyContent(FlexAlign.Center)
     } else if (this.explorePageBooks(key).length > 0) {
       SearchBookResultList({
+        sharedCoverScope: 'explore',
         books: this.explorePageBooks(key),
         coverCache: this.explorePageSnapshot(key).covers,
         initialScrollOffset: this.explorePageSnapshot(key).scrollOffset,

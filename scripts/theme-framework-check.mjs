@@ -338,11 +338,12 @@ assert(indexPage.includes('ThemeRuntime.iconPackId()'), 'Floating tab bar does n
 for (const tabId of ['bookshelf', 'explore', 'search', 'mine']) {
   assert(indexPage.includes(`this.navigationIcon('${tabId}')`), `Floating tab icon is not themed: ${tabId}`);
 }
-assert(indexPage.includes('this.shelfSortButton()') &&
-  indexPage.includes('shelfSortDropdown()') &&
+assert(indexPage.includes('this.shelfMoreButton()') &&
+  indexPage.includes('shelfMoreDropdown()') &&
   indexPage.includes("this.sortDropdownItem('新阅读', 'recentRead')") &&
+  !indexPage.includes('this.shelfSortButton()') &&
   !indexPage.includes("this.sortChip('新阅读', 'recentRead')"),
-  'Bookshelf sorting must use a compact dropdown selector');
+  'Bookshelf sorting must live in the more-actions dropdown');
 assert(indexPage.includes('this.shelfScopeTabs()') &&
   indexPage.includes('this.shelfScopeTabIndicatorX()') &&
   indexPage.includes("TYPE_TAB_IDS: string[] = ['all', 'text', 'image', 'audio', 'video']") &&

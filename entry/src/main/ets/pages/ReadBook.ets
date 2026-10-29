@@ -396,6 +396,7 @@ struct ReadBookPage {
 
   @State isTtsSpeaking: boolean = false;
   @State isTtsPaused: boolean = false;
+  @State ttsPanelSharedMotionId: string = '';
   @State showTtsQuickPlayer: boolean = false;
   @StorageLink('globalTtsCapsulePositionX') ttsMiniPlayerPositionX: number = 16;
   @StorageLink('globalTtsCapsulePositionY') ttsMiniPlayerPositionY: number = -1;
@@ -892,6 +893,7 @@ struct ReadBookPage {
   private readerEntryInitializing: boolean = true;
   private readerSettingsReloadSerial: number = 0;
   private returningFromReaderReplaceRules: boolean = false;
+  @State shelfSharedCoverId: string = '';
   private openedWithShelfAnimation: boolean = false;
   private readerScreenTimeoutTimerId: number = -1;
   private readerScreenTimeoutSerial: number = 0;
@@ -924,6 +926,7 @@ struct ReadBookPage {
     SmartControlKey.detect();
     const params = router.getParams() as Record<string, string>;
     this.openedWithShelfAnimation = !!params && params['shelfBookOpening'] === 'true';
+    this.shelfSharedCoverId = params?.['shelfSharedCoverId'] || '';
     this.openedFromShortcut = !!params && params['shortcutEntry'] === 'true';
     this.shortcutReplacedPreviousPage = !!params && params['shortcutReplace'] === 'true';
     if (params && params['bookUrl']) {
@@ -3113,6 +3116,7 @@ struct ReadBookPage {
   pageTransition() {
     if (this.openedWithShelfAnimation || AppStorage.get<boolean>('shelfReaderDirectTransition') === true) {
       PageTransitionEnter({ type: RouteType.Push, duration: 0 })
+      PageTransitionExit({ type: RouteType.Pop, duration: 0 })
     }
   }
 
@@ -3414,6 +3418,9 @@ struct ReadBookPage {
     .height('100%')
     .backgroundColor(this.readerContentLayerColor())
     .expandSafeArea([SafeAreaType.SYSTEM], this.getReaderSafeAreaEdges())
+    .sharedTransition(this.shelfSharedCoverId, {
+      duration: 400, curve: Curve.Friction, type: SharedTransitionEffectType.Exchange
+    })
     .id('reader_keyboard_surface')
     .focusable(true)
     .defaultFocus(true)
@@ -4952,6 +4959,7 @@ struct ReadBookPage {
 
   async openTtsQuickPlayer(): Promise<void> {
     if (this.isReaderComicModeActive()) return;
+    this.ttsPanelSharedMotionId = this.shouldShowTtsMiniPlayer() ? 'reader_tts_player' : '';
     // The quick-action tap is above the page-turn layer. Consume its trailing click and discard
     // page turns queued while the menu was animating, otherwise they can execute many seconds
     // later between TTS focus turns and move the reader to an older chapter.
@@ -4988,6 +4996,7 @@ struct ReadBookPage {
   }
 
   openGlobalTtsQuickPlayer(): void {
+    this.ttsPanelSharedMotionId = 'reader_tts_player';
     animateTo({ duration: 280, curve: Curve.Friction }, () => {
       this.showGlobalTtsQuickPlayer = true;
     });
@@ -5124,6 +5133,7 @@ struct ReadBookPage {
   @Builder
   ttsMiniPlayer() {
     ReaderTtsCapsule({
+      sharedMotionId: 'reader_tts_player',
       title: this.isTtsPaused ? '已暂停' : '朗读中',
       subtitle: `${this.currentChapterIndex + 1}/${Math.max(1, this.chapters.length)}章`,
       paused: this.isTtsPaused,
@@ -5152,12 +5162,13 @@ struct ReadBookPage {
         x: this.ttsMiniPlayerLeft(),
         y: this.ttsMiniPlayerTop()
       })
-      .transition(this.ttsMiniPlayerTransition())
+
   }
 
   @Builder
   globalTtsMiniPlayer() {
     ReaderTtsCapsule({
+      sharedMotionId: 'reader_tts_player',
       title: this.globalTtsPaused ? '已暂停' : (this.globalTtsMode === 'audio' ? '听书中' : '朗读中'),
       subtitle: this.globalTtsChapterProgress || (this.globalTtsMode === 'audio' ? '后台听书' : '后台朗读'),
       paused: this.globalTtsPaused,
@@ -5185,7 +5196,7 @@ struct ReadBookPage {
         x: this.ttsMiniPlayerLeft(),
         y: this.ttsMiniPlayerTop()
       })
-      .transition(this.ttsMiniPlayerTransition())
+
   }
 
   beginTtsMiniPlayerDrag(): void {
@@ -5211,6 +5222,7 @@ struct ReadBookPage {
   @Builder
   sharedTtsPlayerPanel(localOwner: boolean) {
     ReaderTtsPlayerPanel({
+      sharedMotionId: this.ttsPanelSharedMotionId,
       darkMode: this.isReaderThemeDark(),
       accentColor: this.accentColor(),
       playButtonColor: this.buttonColor(),
@@ -5243,8 +5255,6 @@ struct ReadBookPage {
       count: ReaderTtsFloatingSession.catalogCount(),
       currentDisplayIndex: this.globalTtsCatalogDisplayIndex(ReaderTtsFloatingSession.catalogIndex()),
       reverseOrder: this.globalTtsCatalogReverseOrder,
-      progressText: `${ReaderTtsFloatingSession.catalogIndex() + 1} / ` +
-        `${ReaderTtsFloatingSession.catalogCount()}`,
       bottomInset: this.navBarHeight,
       viewportHeight: this.pageViewHeight,
       scroller: this.globalTtsCatalogScroller,
@@ -17019,6 +17029,7 @@ struct ReadBookPage {
       console.error('返回阅读页时保存进度失败:', e);
     }
     if (this.openedWithShelfAnimation) {
+      AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', true);
       AppStorage.setOrCreate('shelfBookCloseAnimationUrl', this.bookUrl);
       AppStorage.setOrCreate('shelfBookCloseAnimationNonce', Date.now());
     }

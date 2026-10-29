@@ -1,3 +1,4 @@
+import { SharedElementMotion } from '../../utils/SharedElementMotion';
 import { router, uiMaterial } from '@kit.ArkUI';
 import deviceInfo from '@ohos.deviceInfo';
 import { BookSource, SearchBook, SearchKeyword, BookTypeSupport } from '@legado/sourceengine';
@@ -733,6 +734,7 @@ export struct SearchPage {
     // Builder 只接收稳定的页标识；动态结果在 UI 更新闭包内读取，持续搜索时相邻页也会刷新。
     if (this.showResult && this.searchBooksForCategory(category).length > 0) {
       SearchBookResultList({
+        sharedCoverScope: 'search',
         books: this.searchBooksForCategory(category),
         claimArrival: (book: SearchBook): number => this.claimSearchResultArrival(book),
         onResultReady: (book: SearchBook): void => this.onSearchResultReady(book),
@@ -1550,6 +1552,7 @@ export struct SearchPage {
     router.pushUrl({
       url: 'pages/SearchBookDetail',
       params: {
+        sharedCoverId: autoStartRead ? '' : SharedElementMotion.coverId('search', book.origin, book.bookUrl),
         bookUrl: book.bookUrl,
         tocUrl: book.tocUrl,
         origin: book.origin,

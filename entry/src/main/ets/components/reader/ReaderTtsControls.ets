@@ -9,6 +9,7 @@ import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
  */
 @Component
 export struct ReaderTtsCapsule {
+  @Prop sharedMotionId: string = '';
   @Prop title: string = '';
   @Prop subtitle: string = '';
   @Prop paused: boolean = false;
@@ -46,6 +47,11 @@ export struct ReaderTtsCapsule {
         this.capsuleBody()
       }
     }
+    .width(ReaderTtsCapsule.WIDTH)
+    .height(ReaderTtsCapsule.HEIGHT)
+    .borderRadius(ReaderTtsCapsule.HEIGHT / 2)
+    .geometryTransition(this.sharedMotionId)
+    .transition(TransitionEffect.opacity(0.99))
     .parallelGesture(
       PanGesture({ direction: PanDirection.All, distance: 4 })
         .onActionStart(() => this.onCapsuleDragStart())

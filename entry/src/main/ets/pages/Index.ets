@@ -525,6 +525,7 @@ struct Index {
   pageTransition() {
     if (AppStorage.get<boolean>('shelfReaderDirectTransition') === true) {
       PageTransitionExit({ type: RouteType.Push, duration: 0 })
+      PageTransitionEnter({ type: RouteType.Pop, duration: 0 })
     }
   }
 
@@ -544,6 +545,7 @@ struct Index {
       }
       if (this.globalTtsActive && this.showGlobalTtsPanel) {
         ReaderTtsPlayerPanel({
+          sharedMotionId: 'home_tts_player',
           darkMode: this.appDarkMode,
           accentColor: this.tabBarActiveColor(),
           playButtonColor: ThemeRuntime.buttonColor(this.appDarkMode),
@@ -605,6 +607,7 @@ struct Index {
   @Builder
   globalTtsMiniPlayer() {
     ReaderTtsCapsule({
+      sharedMotionId: 'home_tts_player',
       title: this.globalTtsBusy ? '加载中' :
         (this.globalTtsPaused ? '已暂停' : (this.globalTtsMode === 'audio' ? '听书中' : '朗读中')),
       subtitle: this.globalTtsChapterProgress || (this.globalTtsMode === 'audio' ? '后台听书' : '后台朗读'),
@@ -637,7 +640,7 @@ struct Index {
         x: this.globalTtsCapsuleLeft(),
         y: this.globalTtsCapsuleTop()
       })
-      .transition(this.globalTtsCapsuleTransition())
+
   }
 
   globalTtsCapsuleLeft(): number {
@@ -686,8 +689,6 @@ struct Index {
       count: ReaderTtsFloatingSession.catalogCount(),
       currentDisplayIndex: this.globalTtsCatalogDisplayIndex(ReaderTtsFloatingSession.catalogIndex()),
       reverseOrder: this.globalTtsCatalogReverseOrder,
-      progressText: `${ReaderTtsFloatingSession.catalogIndex() + 1} / ` +
-        `${ReaderTtsFloatingSession.catalogCount()}`,
       bottomInset: this.navBarHeight,
       viewportHeight: this.globalTtsViewportHeight,
       scroller: this.globalTtsCatalogScroller,
