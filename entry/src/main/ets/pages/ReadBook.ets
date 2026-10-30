@@ -3774,7 +3774,7 @@ struct ReadBookPage {
       chapterLabel: this.isReaderComicModeActive() ? '话数' : '章节',
       chapterUnit: this.readerQuickJumpChapterUnit(),
       value: this.readerQuickJumpMode === 'percent' ? this.getMenuPercentDisplay() :
-        (this.readerQuickJumpMode === 'page' ? this.getMenuPageDisplayIndex() : this.getMenuChapterDisplayIndex()),
+        (this.readerQuickJumpMode === 'page' ? this.readerQuickJumpPageSliderValue() : this.getMenuChapterDisplayIndex()),
       chapterCount: this.chapters.length,
       pageCount: this.readerQuickJumpPageCount(),
       currentChapter: this.currentChapterIndex,
@@ -9029,6 +9029,16 @@ struct ReadBookPage {
   getMenuPageDisplayIndex(): number {
     return this.menuChapterSliderActive && this.readerQuickJumpMode === 'page' ? this.menuPagePreviewIndex :
       this.readerQuickJumpCurrentPageIndex();
+  }
+
+  /**
+   * 页数模式的进度条取值。滚动阅读打开书或跨章后要约一秒才统计完页数，这期间按本章阅读比例
+   * 放在 0–1000 的刻度上，统计完换成页码时滑块基本不动，不会先停在开头再跳过去。
+   */
+  readerQuickJumpPageSliderValue(): number {
+    if (this.readerQuickJumpPageCount() > 0) return this.getMenuPageDisplayIndex();
+    const ratio = this.getReaderInfoBarContext().chapterProgressRatio;
+    return Number.isFinite(ratio) && ratio > 0 ? Math.min(1, ratio) * 1000 : 0;
   }
 
   readerQuickJumpPageLabel(): string {

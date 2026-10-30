@@ -103,6 +103,8 @@ export struct ReaderQuickJumpContent {
 
   sliderMax(): number {
     if (this.mode === 'percent') return 100;
+    // 页数还在统计时页面传来的是 0–1000 的本章阅读比例。
+    if (this.mode === 'page' && this.pageCount <= 0) return 1000;
     return Math.max(1, (this.mode === 'page' ? this.pageCount : this.chapterCount) - 1);
   }
 
