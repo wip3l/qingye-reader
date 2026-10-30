@@ -446,7 +446,7 @@ for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-
 ## 文档
 
 - [更新日志](CHANGELOG.md)：版本更新内容及可用于应用商店的更新说明。
-- [使用说明书](docs/manual/index.html)：面向用户的功能说明，纯静态页面，可直接部署；应用内「我的 → 帮助」加载的是同一份内容（`entry/src/main/resources/rawfile/manual`），修改时两处需同步。
+- [使用说明书](docs/manual/index.html)：面向用户的功能说明，纯静态页面，可直接部署；应用内「我的 → 帮助」是原生页面，正文由 `node scripts/build-help-data.mjs` 从这份说明书生成到 `entry/src/main/resources/rawfile/manual/help.json`，改完说明书后重新运行即可。
 - [书源开发入口](docs/book-source-development.md)：轻页的宿主接入、原生 JS 开发路线与排错；完整规范在子模块的[公共书源开发文档](harmony-book-source-engine/docs/book-source-development.md)统一维护。
 - [书源内核接入说明](https://github.com/wip3l/harmony-book-source-engine/blob/main/sourceengine/README.md)：HAR 入口、宿主必须接入的部分与可选宿主端口
 - [主题开发指南](docs/theme-development.md)

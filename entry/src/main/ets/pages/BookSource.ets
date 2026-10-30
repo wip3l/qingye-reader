@@ -2912,7 +2912,7 @@ struct BookSourcePage {
         .height(40)
         .textAlign(TextAlign.Center)
         .onClick(() => {
-          router.pushUrl({ url: 'pages/Help', params: { anchor: 'sourcekinds' } });
+          router.pushUrl({ url: 'pages/HelpTopic', params: { anchor: 'sourcekinds' } });
         })
       SymbolGlyph($r('sys.symbol.xmark'))
         .fontSize(16)

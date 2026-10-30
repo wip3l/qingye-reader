@@ -67,6 +67,7 @@ struct Index {
   @StorageLink('launchShortcutNonce') @Watch('onLaunchShortcutChanged') launchShortcutNonce: number = 0;
   @StorageLink('singleSourceSearchNonce') @Watch('onSingleSourceSearchRequested') singleSourceSearchNonce: number = 0;
   @StorageLink('globalSearchPendingNonce') @Watch('onGlobalSearchRequested') globalSearchPendingNonce: number = 0;
+  @StorageLink('homeTabRequestNonce') @Watch('onHomeTabRequested') homeTabRequestNonce: number = 0;
   @StorageLink('bookSourceExploreRefreshNonce') @Watch('onBookSourceExploreRefreshRequested')
   bookSourceExploreRefreshNonce: number = 0;
   @StorageLink('cloudSyncDataChangeRevision') @Watch('onCloudSyncDataChanged')
@@ -214,6 +215,17 @@ struct Index {
     }
     this.bookshelfMultiSelectActive = false;
     this.selectHomeTab(2);
+    this.syncHomeSystemBars();
+  }
+
+  /** 其他页面（如使用说明里的“去搜索”）退回首页时要求切到指定页签。 */
+  onHomeTabRequested(): void {
+    const index = AppStorage.get<number>('homeTabRequestIndex') ?? -1;
+    if (index < 0 || index > 3) {
+      return;
+    }
+    this.bookshelfMultiSelectActive = false;
+    this.selectHomeTab(index);
     this.syncHomeSystemBars();
   }
 
