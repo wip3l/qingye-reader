@@ -60,18 +60,28 @@ pages.replace(['all', 'novel', 'comic', 'audio']);
 assert.equal(reloads, 2);
 assert.equal(pages.getData(3), 'audio');
 
-const pager = methods('CategorySwipePager', ['onSelectedIndexChanged', 'selectNativeIndex']);
+const pagerSource = read('components/home/CategorySwipePager.ets');
+context.CategorySwipePager = {
+  GESTURE_SELECT_WINDOW_MS: Number(/GESTURE_SELECT_WINDOW_MS: number = (\d+)/.exec(pagerSource)[1])
+};
+const pager = methods('CategorySwipePager', ['onSelectedIndexChanged', 'selectNativeIndex', 'onGestureSwipe']);
 const nativeChanges = [], selections = [];
 Object.assign(pager, { mounted: true, nativeIndex: 0, selectedIndex: 0, pageKeys: ['all', 'novel', 'audio'],
+  lastGestureSwipeAt: 0, onSwipe() {},
   controller: { changeIndex: (...args) => nativeChanges.push(args) },
   onSelect(key) { selections.push(key); this.selectedIndex = this.pageKeys.indexOf(key); this.onSelectedIndexChanged(); }
 });
 pager.selectedIndex = 2;
 pager.onSelectedIndexChanged();
 assert.deepEqual(nativeChanges, [[2, true]], 'tab clicks animate through the native controller');
+pager.selectNativeIndex(0);
+assert.deepEqual(selections, [], 'page changes without a recent swipe (relayout, page transitions) keep the selection');
+assert.deepEqual(nativeChanges.at(-1), [2, false], 'the pager snaps back to the selected page');
+const changesBeforeDrag = nativeChanges.length;
+pager.onGestureSwipe();
 pager.selectNativeIndex(1);
 assert.deepEqual(selections, ['novel']);
-assert.equal(nativeChanges.length, 1, 'native drag callbacks must not start a second programmatic animation');
+assert.equal(nativeChanges.length, changesBeforeDrag, 'native drag callbacks must not start a second programmatic animation');
 pager.selectNativeIndex(2);
 assert.equal(pager.selectedIndex, 2, 'reversed/settled drag reflects the final native page');
 
