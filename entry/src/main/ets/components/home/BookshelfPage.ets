@@ -1,4 +1,5 @@
 import { SharedElementMotion } from '../../utils/SharedElementMotion';
+import { SHELF_OPENING_COVER_KEY, ShelfOpeningCover } from '../reader/ReaderShelfCoverOpening';
 import { SharedElementBounds } from '../../utils/SharedElementBounds';
 import { BookshelfCoverBadges } from '../BookshelfCoverBadges';
 import { BookshelfCoverBadgeSettings } from '../../utils/BookshelfCoverBadgeSettings';
@@ -3956,6 +3957,9 @@ export struct BookshelfPage {
     ReaderOpenTrace.begin(book.bookUrl);
     this.shelfBookRoutePending = true;
     AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', true);
+    if (this.bookshelfBookOpenAnimation) {
+      AppStorage.setOrCreate<ShelfOpeningCover>(SHELF_OPENING_COVER_KEY, this.shelfOpeningCover(book));
+    }
     ReaderOpenTrace.mark(book.bookUrl, 'route-requested');
     // Router owns the entire shared transition, including its reverse. No intermediate overlay or timer.
     router.pushUrl({
@@ -3973,6 +3977,24 @@ export struct BookshelfPage {
       ReaderOpenTrace.cancel(book.bookUrl, 'route-failed');
       this.cancelShelfBookOpening();
     });
+  }
+
+  /** 阅读页翻开的封面与书架上看到的一致：主题封面带书框，多图取第一张，没有封面时用首字色块。 */
+  shelfOpeningCover(book: Book): ShelfOpeningCover {
+    const opening: ShelfOpeningCover = {
+      bookUrl: book.bookUrl, cover: '', frame: '', color: this.getBookColor(book.name),
+      initial: book.name ? book.name.substring(0, 1) : '书'
+    };
+    if (this.shouldUseThemeBookCover()) {
+      const covers = this.activeThemeBookCovers(book);
+      opening.cover = covers.length > 0 ? covers[0] : '';
+      opening.frame = this.activeThemeShelfFrame();
+      opening.color = this.inputColor();
+    } else {
+      const covers = this.getShelfCoverList(book);
+      opening.cover = covers.length > 0 ? this.imageCover(covers[0]) : '';
+    }
+    return opening;
   }
 
   hasShelfBookUpdate(book: Book): boolean {

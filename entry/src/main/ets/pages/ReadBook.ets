@@ -1,5 +1,8 @@
 import { ReaderQuickJumpModel } from '../core/reader/ReaderQuickJumpModel';
 import { ReaderQuickJumpContent } from '../components/reader/ReaderQuickJumpContent';
+import {
+  ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_OPENING_COVER_KEY, ShelfOpeningCover
+} from '../components/reader/ReaderShelfCoverOpening';
 import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
 import { syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
@@ -895,6 +898,12 @@ struct ReadBookPage {
   private returningFromReaderReplaceRules: boolean = false;
   @State shelfSharedCoverId: string = '';
   private openedWithShelfAnimation: boolean = false;
+  /** 书架点开时叠在共享元素上的封面：先随转场放大再翻开，返回时合上后缩回书架。 */
+  private shelfOpeningCover: ShelfOpeningCover | null = null;
+  @State shelfCoverVisible: boolean = false;
+  @State shelfCoverAngle: number = 0;
+  @State shelfCoverShade: number = 0;
+  @State shelfCoverOpacity: number = 1;
   private readerScreenTimeoutTimerId: number = -1;
   private readerScreenTimeoutSerial: number = 0;
   private readerScreenOrientationSerial: number = 0;
@@ -927,6 +936,10 @@ struct ReadBookPage {
     const params = router.getParams() as Record<string, string>;
     this.openedWithShelfAnimation = !!params && params['shelfBookOpening'] === 'true';
     this.shelfSharedCoverId = params?.['shelfSharedCoverId'] || '';
+    const openingCover = AppStorage.get<ShelfOpeningCover>(SHELF_OPENING_COVER_KEY);
+    this.shelfOpeningCover = this.shelfSharedCoverId && openingCover && openingCover.bookUrl === params?.['bookUrl'] ?
+      openingCover : null;
+    this.shelfCoverVisible = this.shelfOpeningCover !== null;
     this.openedFromShortcut = !!params && params['shortcutEntry'] === 'true';
     this.shortcutReplacedPreviousPage = !!params && params['shortcutReplace'] === 'true';
     if (params && params['bookUrl']) {
@@ -3412,6 +3425,16 @@ struct ReadBookPage {
           this.readerSelectionHandle(true)
           this.readerSelectionHandle(false)
         }
+      }
+
+      if (this.shelfOpeningCover) {
+        // 翻开后只隐藏不移除：返回时要从翻开的角度合上，新建的节点没有起始帧可动画。
+        ReaderShelfCoverOpening({ angle: this.shelfCoverAngle, shade: this.shelfCoverShade, cover: this.shelfOpeningCover })
+          .width('100%')
+          .height('100%')
+          .opacity(this.shelfCoverOpacity)
+          .visibility(this.shelfCoverVisible ? Visibility.Visible : Visibility.Hidden)
+          .onAppear((): void => this.openShelfCover())
       }
     }
     .width('100%')
@@ -16987,6 +17010,37 @@ struct ReadBookPage {
     // RenderNode invalidation here: on affected devices it only becomes visible after turning a page.
   }
 
+  /** 共享转场把封面放大到大半时开始沿书脊翻开，转过侧面后淡出并隐藏。 */
+  openShelfCover(): void {
+    animateTo({ duration: 520, delay: 180, curve: Curve.EaseInOut }, () => {
+      this.shelfCoverAngle = SHELF_COVER_OPEN_ANGLE;
+      this.shelfCoverShade = 0.5;
+    });
+    animateTo({
+      duration: 200, delay: 500, curve: Curve.EaseOut, onFinish: () => {
+        if (this.shelfCoverAngle === SHELF_COVER_OPEN_ANGLE) this.shelfCoverVisible = false;
+      }
+    }, () => {
+      this.shelfCoverOpacity = 0;
+    });
+  }
+
+  /** 先把封面合上，合好后再交给返回转场缩回书架。 */
+  closeShelfCover(): Promise<void> {
+    if (!this.shelfOpeningCover) return Promise.resolve();
+    this.shelfCoverVisible = true;
+    animateTo({ duration: 100, curve: Curve.EaseOut }, () => {
+      this.shelfCoverOpacity = 1;
+    });
+    animateTo({ duration: 320, curve: Curve.Friction }, () => {
+      this.shelfCoverAngle = 0;
+      this.shelfCoverShade = 0;
+    });
+    return new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, 280);
+    });
+  }
+
   async exitReaderPage(): Promise<void> {
     if (this.readerExitProgressSaved) {
       return;
@@ -17018,6 +17072,8 @@ struct ReadBookPage {
       }
       return;
     }
+    // 合上封面与保存进度同时进行，不在两者之间多等一次。
+    const shelfCoverClosed = this.openedWithShelfAnimation ? this.closeShelfCover() : Promise.resolve();
     try {
       await this.saveReadingProgress(true);
       this.readerExitProgressSaved = true;
@@ -17033,6 +17089,7 @@ struct ReadBookPage {
       AppStorage.setOrCreate('shelfBookCloseAnimationUrl', this.bookUrl);
       AppStorage.setOrCreate('shelfBookCloseAnimationNonce', Date.now());
     }
+    await shelfCoverClosed;
     router.back();
   }
 

@@ -14,6 +14,7 @@ const context = vm.createContext({
   console: { error() {}, warn() {} },
   CloudAutoSync: { isPlaceholder: () => false },
   ReaderOpenTrace: { begin() {}, mark() {}, cancel() {} },
+  SHELF_OPENING_COVER_KEY: 'shelfOpeningCover',
   AppStorage: { setOrCreate: (key, value) => storage.set(key, value) },
   router: { pushUrl: route => { routes.push(route); return new Promise((resolve, reject) => { resolveRoute = resolve; rejectRoute = reject; }); } },
   setTimeout: callback => { timers.set(++sequence, callback); return sequence; },
@@ -24,6 +25,7 @@ const host = vm.runInContext(stripTypeScriptTypes(`({ ${methods} })`), context);
 Object.assign(host, {
   showTileFolder: false, shelfBookRoutePending: false, bookshelfBookOpenAnimation: true,
   cloudBookOpenRequest: 0, acknowledgeShelfBookUpdate() {},
+  shelfOpeningCover: target => ({ bookUrl: target.bookUrl, cover: 'cover.jpg', frame: '', color: '#007DFF', initial: 'b' }),
   loadBooks: () => { refreshes++; return Promise.resolve(); }, shelfBookReturnRefreshTimer: -1
 });
 const book = { bookUrl: 'book:1', origin: 'source', name: 'book' };
@@ -32,6 +34,7 @@ host.openShelfBook(book, 50, 100);
 assert.equal(routes.length, 1, 'repeated tap during route creation must not push twice');
 assert.equal(timers.size, 0, 'native page transition starts immediately, without an intermediate timer/overlay');
 assert.equal(routes[0].params.shelfSharedCoverId, 'cover:shelf:source:book%3A1');
+assert.equal(storage.get('shelfOpeningCover').bookUrl, book.bookUrl, 'the reader receives the cover it opens before the route starts');
 resolveRoute(); await Promise.resolve();
 assert.equal(host.shelfBookRoutePending, false);
 host.closeShelfBook(book.bookUrl);
@@ -41,10 +44,12 @@ assert.equal(refreshes, 1);
 host.closeShelfBook(book.bookUrl); host.cancelShelfBookOpening();
 assert.equal(timers.size, 0, 'leaving the shelf cancels pending refresh');
 host.bookshelfBookOpenAnimation = false;
+storage.delete('shelfOpeningCover');
 host.openShelfBook(book, 50, 100);
 assert.equal(routes[1].params.shelfSharedCoverId, '', 'animation preference disables the shared transition');
+assert.equal(storage.has('shelfOpeningCover'), false, 'animation preference also skips the cover opening');
 rejectRoute(new Error('test route failure')); await Promise.resolve(); await Promise.resolve();
 assert.equal(host.shelfBookRoutePending, false, 'a failed route unlocks the shelf');
 assert.equal(storage.get('shelfReaderDirectTransition'), false);
 assert.doesNotMatch(source, /openingBookCoverAngle|openingBookTurnTimer|shelfBookOpeningOverlay/);
-console.log('PASS native book route: immediate shared page transition, duplicate taps, return refresh, preferences and failure cleanup');
+console.log('PASS native book route: immediate shared page transition, cover handoff, duplicate taps, return refresh, preferences and failure cleanup');
