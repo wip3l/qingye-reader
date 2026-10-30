@@ -39,12 +39,26 @@ export struct ImmersiveMaterialSurface {
   /** 触摸光晕的颜色，一般传带透明度的强调色。 */
   @Prop glowColor: ResourceColor = '#33FFFFFF';
   @State touching: boolean = false;
+  /**
+   * 底板被上层控件盖住、收不到触摸时，由上层把触点转过来（坐标相对底板左上角）。
+   */
+  @Prop externalTouching: boolean = false;
+  @Prop externalTouchX: number = 0;
+  @Prop externalTouchY: number = 0;
   @State touchX: number = 0;
   @State touchY: number = 0;
   @BuilderParam content: () => void = this.emptyContent;
 
   @Builder
   emptyContent() {
+  }
+
+  glowX(): number {
+    return this.externalTouching ? Math.max(0, Math.min(this.surfaceWidth, this.externalTouchX)) : this.touchX;
+  }
+
+  glowY(): number {
+    return this.externalTouching ? Math.max(0, Math.min(this.surfaceHeight, this.externalTouchY)) : this.touchY;
   }
 
   @Builder
@@ -112,13 +126,14 @@ export struct ImmersiveMaterialSurface {
       Row()
         .width(this.surfaceHeight * 2)
         .height(this.surfaceHeight * 2)
-        .position({ x: this.touchX - this.surfaceHeight, y: this.touchY - this.surfaceHeight })
+        .position({ x: this.glowX() - this.surfaceHeight, y: this.glowY() - this.surfaceHeight })
         .radialGradient({
           center: [this.surfaceHeight, this.surfaceHeight],
           radius: this.surfaceHeight,
           colors: [[this.glowColor, 0], [Color.Transparent, 1]]
         })
-        .opacity(this.touching ? ImmersiveMaterialRuntime.touchGlowOpacity(this.immersiveLightLevel) : 0)
+        .opacity(this.touching || this.externalTouching ?
+          ImmersiveMaterialRuntime.touchGlowOpacity(this.immersiveLightLevel) : 0)
         .animation({ duration: 160, curve: Curve.Friction })
         .hitTestBehavior(HitTestMode.None)
         .accessibilityLevel('no')

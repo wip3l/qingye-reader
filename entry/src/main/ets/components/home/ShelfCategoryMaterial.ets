@@ -11,6 +11,10 @@ export struct ShelfCategoryMaterial {
   @Prop darkMode: boolean = false;
   @Prop surfaceColor: string = '#FFFFFF';
   @Prop accentColor: string = '#888888';
+  /** 分类文字在底板上层，触点由书架转过来点亮底板光晕。 */
+  @Prop touching: boolean = false;
+  @Prop touchX: number = 0;
+  @Prop touchY: number = 0;
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
@@ -18,7 +22,8 @@ export struct ShelfCategoryMaterial {
         Row() {
           ImmersiveMaterialSurface({
             surfaceWidth: Math.max(1, this.viewportWidth - this.side * 2), surfaceHeight: 44,
-            darkMode: this.darkMode, fallbackColor: this.surfaceColor, glowColor: this.accentColor
+            darkMode: this.darkMode, fallbackColor: this.surfaceColor, glowColor: this.accentColor,
+            externalTouching: this.touching, externalTouchX: this.touchX, externalTouchY: this.touchY
           }) { Row().width('100%').height('100%') }
         }
         .width(Math.max(1, this.viewportWidth - this.side * 2)).height(44)

@@ -163,6 +163,10 @@ export struct BookshelfPage {
   @State shelfTypeTabIds: string[] = ['all'];
   /** 分类栏的实际宽度：沉浸材质底板需要具体数值。 */
   @State shelfScopeTabsWidth: number = 0;
+  /** 分类栏上的触点，转给下层材质底板画跟手光晕。 */
+  @State shelfScopeTabsTouching: boolean = false;
+  @State shelfScopeTabsTouchX: number = 0;
+  @State shelfScopeTabsTouchY: number = 0;
   @StorageLink('bookshelfCategoryExpanded') shelfCategoryExpanded: boolean = true;
   @State shelfCategoryAnimating: boolean = false;
   private shelfCategoryAnimationSerial: number = 0;
@@ -1205,7 +1209,9 @@ export struct BookshelfPage {
             top: this.statusBarHeight + 56 +
               (this.shelfSearchActive ? BookshelfPage.SEARCH_BAR_HEIGHT + AppSpacing.MD : 0),
             buttonTop: this.statusBarHeight + 8,
-            darkMode: this.appDarkMode, surfaceColor: this.cardColor(), accentColor: this.accentColor()
+            darkMode: this.appDarkMode, surfaceColor: this.cardColor(), accentColor: this.accentGlowColor(),
+            touching: this.shelfScopeTabsTouching && this.shelfCategoryExpanded,
+            touchX: this.shelfScopeTabsTouchX, touchY: this.shelfScopeTabsTouchY
           }).position({ x: 0, y: 0 })
             .translate({ y: -this.shelfHeaderCollapseValue() })
             .opacity(this.shelfCategoryExpanded ? 1 : CollapsingHeader.contentOpacity(this.shelfHeaderCollapseValue()))
@@ -6752,6 +6758,15 @@ export struct BookshelfPage {
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.MD })
     .hitTestBehavior(this.shelfCategoryExpanded && !this.shelfCategoryAnimating ? HitTestMode.Default : HitTestMode.None)
     .accessibilityLevel(this.shelfCategoryExpanded && !this.shelfCategoryAnimating ? 'auto' : 'no-hide-descendants')
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.shelfScopeTabsTouching = false;
+      } else if (event.touches.length > 0) {
+        this.shelfScopeTabsTouchX = event.touches[0].x;
+        this.shelfScopeTabsTouchY = event.touches[0].y;
+        this.shelfScopeTabsTouching = true;
+      }
+    })
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       const width = Math.floor(Number(newValue.width));
       if (Number.isFinite(width) && width > 0 && width !== this.shelfScopeTabsWidth) {
