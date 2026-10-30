@@ -4689,7 +4689,10 @@ export struct BookshelfPage {
     }
   }
 
-  /** 按普通书架（当前分组）里实际有的类型重建分类栏；当前类型没书了就回到“全部”。 */
+  /**
+   * 按普通书架（当前分组）里实际有的类型重建分类栏。当前类型没书时只在显示上回到“全部”
+   * （见 activeShelfTypeTab），不改写用户选的类型：书架数据一时不全也不会把选择丢掉。
+   */
   refreshShelfTypeTabs(): void {
     const present: boolean[] = BookshelfPage.TYPE_TAB_IDS.map((): boolean => false);
     for (const book of this.allBooks) {
@@ -4701,9 +4704,11 @@ export struct BookshelfPage {
     if (ids.join(',') !== this.shelfTypeTabIds.join(',')) {
       this.shelfTypeTabIds = ids;
     }
-    if (ids.indexOf(this.shelfTypeTab) < 0) {
-      this.shelfTypeTab = 'all';
-    }
+  }
+
+  /** 实际显示的分类：选中的类型不在分类栏里时按“全部”显示。 */
+  activeShelfTypeTab(): string {
+    return this.shelfTypeTabIds.indexOf(this.shelfTypeTab) >= 0 ? this.shelfTypeTab : 'all';
   }
 
   /** 标题旁的书本数；隐私书架不在分类栏里，在这里标出当前位置。 */
@@ -4736,7 +4741,8 @@ export struct BookshelfPage {
     const privateScope = scope === 'private';
     // 隐私书籍只出现在隐私书架里；隐私书架关闭后它们继续隐藏。
     if (book.isPrivate !== privateScope || !this.matchesShelfGroup(book)) return false;
-    return privateScope || this.shelfTypeTab === 'all' || this.shelfBookType(book) === this.shelfTypeTab;
+    const typeTab = this.activeShelfTypeTab();
+    return privateScope || typeTab === 'all' || this.shelfBookType(book) === typeTab;
   }
 
   matchesShelfGroup(book: Book): boolean {
@@ -5001,7 +5007,7 @@ export struct BookshelfPage {
 
   /** 书架结果缓存按完整筛选条件区分；单本书的节点身份不跟着分类改变。 */
   shelfViewKey(): string {
-    return `${this.shelfScope}-${this.shelfTypeTab}-${this.shelfFilterKeys}-${this.shelfAppliedSearchKeyword}`;
+    return `${this.shelfScope}-${this.activeShelfTypeTab()}-${this.shelfFilterKeys}-${this.shelfAppliedSearchKeyword}`;
   }
 
   shelfBookViewPrefix(layout: string): string {
@@ -5070,7 +5076,7 @@ export struct BookshelfPage {
 
   /** 当前所在页：分类栏里的类型，或隐私书架 'private'。 */
   shelfPageKey(): string {
-    return this.shelfScope === 'private' ? 'private' : this.shelfTypeTab;
+    return this.shelfScope === 'private' ? 'private' : this.activeShelfTypeTab();
   }
 
   /** 左右滑动的页序：分类栏里显示的类型，隐私书架开启时接在最后。 */

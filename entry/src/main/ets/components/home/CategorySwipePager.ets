@@ -26,6 +26,8 @@ class CategoryPageDataSource implements IDataSource {
 /** 原生横向翻页：铺满顶栏背后的区域，顶部留白由各页滚动内容承载。 */
 @Component
 export struct CategorySwipePager {
+  /** 手势松手后到换页回调的最长间隔，覆盖 320ms 翻页动画与快速连滑。 */
+  private static readonly GESTURE_SELECT_WINDOW_MS: number = 1000;
   @Prop @Watch('onPagesChanged') pageKeys: string[] = [];
   @Prop @Watch('onSelectedIndexChanged') selectedIndex: number = 0;
   @Prop swipeEnabled: boolean = true;
@@ -37,12 +39,13 @@ export struct CategorySwipePager {
   onSwipe: () => void = () => {};
   private dataSource: CategoryPageDataSource = new CategoryPageDataSource();
   private controller: SwiperController = new SwiperController();
-  private initialIndex: number = 0;
+  /** Swiper 当前所在页；属性重放时 .index() 读它，不会跳回创建时的页。 */
   private nativeIndex: number = 0;
   private mounted: boolean = false;
+  /** 最近一次手势横滑的时间：只有手势引起的换页才算用户切换。 */
+  private lastGestureSwipeAt: number = 0;
 
   aboutToAppear(): void {
-    this.initialIndex = this.selectedIndex;
     this.nativeIndex = this.selectedIndex;
     this.onPagesChanged();
   }
@@ -57,8 +60,19 @@ export struct CategorySwipePager {
 
   selectNativeIndex(index: number): void {
     if (index < 0 || index >= this.pageKeys.length) return;
+    if (index !== this.selectedIndex && Date.now() - this.lastGestureSwipeAt > CategorySwipePager.GESTURE_SELECT_WINDOW_MS) {
+      // 非手势换页（属性重放、页面转场时重新布局等）不改选择，拉回当前页。
+      this.nativeIndex = this.selectedIndex;
+      this.controller.changeIndex(this.selectedIndex, false);
+      return;
+    }
     this.nativeIndex = index;
     if (index !== this.selectedIndex) this.onSelect(this.pageKeys[index]);
+  }
+
+  onGestureSwipe(): void {
+    this.lastGestureSwipeAt = Date.now();
+    this.onSwipe();
   }
 
   onPagesChanged(): void {
@@ -90,7 +104,7 @@ export struct CategorySwipePager {
       }
       .width('100%')
       .layoutWeight(1)
-      .index(this.initialIndex)
+      .index(this.nativeIndex)
       .disableSwipe(!this.swipeEnabled)
       .onGestureRecognizerJudgeBegin((_event: BaseGestureEvent, current: GestureRecognizer,
         others: GestureRecognizer[]): GestureJudgeResult => this.judgeSwipe(current, others))
@@ -107,7 +121,7 @@ export struct CategorySwipePager {
       .onContentWillScroll((result: SwiperContentWillScrollResult): boolean =>
         result.comingIndex < 0 || result.comingIndex >= this.pageKeys.length ||
           this.canSelect(this.pageKeys[result.comingIndex]))
-      .onGestureSwipe(() => this.onSwipe())
+      .onGestureSwipe(() => this.onGestureSwipe())
       .onAnimationStart((_index: number, targetIndex: number) => this.selectNativeIndex(targetIndex))
       .onChange((index: number) => this.selectNativeIndex(index))
       .onAnimationEnd(() => this.onSettled())
