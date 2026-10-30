@@ -757,15 +757,19 @@ export struct ReaderComicPagedView {
     }
   }
 
+  /**
+   * 按值 @Builder 的参数之后不会刷新，所以这里只收跨页页数，单页宽度在内部从 viewWidth 算：
+   * 否则书架共享转场途中测到的小尺寸会一直留在已建好的格子里，翻走再翻回来才恢复。
+   */
   @Builder
-  pageView(pages: string[], chapterIndex: number, pageIndex: number, boxWidth: number) {
+  pageView(pages: string[], chapterIndex: number, pageIndex: number, spreadPages: number) {
     if (LocalBookService.isEpubImageMarker((pages[pageIndex] || '').trim())) {
       ReaderComicImageItem({
         marker: (pages[pageIndex] || '').trim(),
         colorSession: this.colorSession,
-        viewWidth: boxWidth,
+        viewWidth: this.viewW() / spreadPages,
         viewHeight: this.viewH(),
-        boxWidth: boxWidth,
+        boxWidth: this.viewW() / spreadPages,
         boxHeight: this.viewH(),
         pageLabel: `${pageIndex + 1}`,
         hintColor: this.hintColor,
@@ -781,7 +785,7 @@ export struct ReaderComicPagedView {
         .fontSize(AppFontSize.BODY_LARGE)
         .lineHeight(AppFontSize.BODY_LARGE * 1.7)
         .fontColor(this.textColor)
-        .width(boxWidth)
+        .width(this.viewW() / spreadPages)
         .height(this.viewH())
         .padding({ left: AppSpacing.XXXL, right: AppSpacing.XXXL, top: 56, bottom: 56 })
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -824,7 +828,7 @@ export struct ReaderComicPagedView {
         if (spread >= 0 && spread < this.spreadCount()) {
           Row() {
             ForEach(this.spreadPages(spread), (pageIndex: number) => {
-              this.pageView(this.pages, this.chapterIndex, pageIndex, this.viewW() / this.spreadPages(spread).length)
+              this.pageView(this.pages, this.chapterIndex, pageIndex, this.spreadPages(spread).length)
             }, (pageIndex: number) => `${pageIndex}_${this.spreadPages(spread).length}`)
           }
           .width('100%')
@@ -835,7 +839,7 @@ export struct ReaderComicPagedView {
             ForEach(this.neighborSpreadPages(spread < 0 ? -1 : 1), (pageIndex: number) => {
               this.pageView(spread < 0 ? this.prevChapterPages : this.nextChapterPages,
                 this.chapterIndex + (spread < 0 ? -1 : 1), pageIndex,
-                this.viewW() / this.neighborSpreadPages(spread < 0 ? -1 : 1).length)
+                this.neighborSpreadPages(spread < 0 ? -1 : 1).length)
             }, (pageIndex: number) => `${pageIndex}_${this.neighborSpreadPages(spread < 0 ? -1 : 1).length}`)
           }
           .width('100%')
