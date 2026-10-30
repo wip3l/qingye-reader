@@ -87,6 +87,7 @@ import { CloudFileService } from './cloudFileService.js';
 import { registerCloudFileRoutes } from './cloudFileRoutes.js';
 import { createObsStore } from './cloudObjectStore.js';
 import { registerComicColorModelRoutes } from './comicColorModelRoutes.js';
+import { registerLotteryRoutes } from './lotteryRoutes.js';
 
 interface AuthenticatedRequest extends FastifyRequest {
   userId?: string;
@@ -228,9 +229,20 @@ const cloudMaintenance = setInterval(() => {
     SELECT q.id FROM membership_quotes q WHERE q.expires_at < now()-interval '1 day'
       AND NOT EXISTS(SELECT 1 FROM membership_orders o WHERE o.quote_id=q.id) LIMIT 1000
   )`).catch(error => app.log.error(error, 'membership quote cleanup failed'));
+  void pool.query(`DELETE FROM lottery_web_verifications WHERE id IN (
+    SELECT id FROM lottery_web_verifications WHERE expires_at < now()-interval '1 day' LIMIT 1000)`)
+    .then(() => pool.query(`DELETE FROM lottery_web_sessions WHERE token_hash IN (
+      SELECT token_hash FROM lottery_web_sessions WHERE expires_at < now() LIMIT 1000)`))
+    .catch(error => app.log.error(error, 'lottery session cleanup failed'));
 }, 60000);
 cloudMaintenance.unref();
 app.addHook('onClose', async () => { clearInterval(cloudMaintenance); });
+
+registerLotteryRoutes(app, {
+  campaignId: config.lottery.campaignId,
+  pageOrigin: config.lottery.pageOrigin,
+  transaction: inTransaction
+});
 
 registerProfileRoutes(app, {
   db: pool, membershipEnabled: config.membershipEnabled,

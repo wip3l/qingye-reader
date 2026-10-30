@@ -4,10 +4,50 @@ import { MembershipSalesPilot, pilotAllows } from './membershipSales.js';
 import {
   MEMBERSHIP_POLICY_VERSION, MEMBERSHIP_PRODUCTS, MembershipError, MembershipPrice, MembershipState, basePrice,
   MembershipPurchasePlan, MembershipSku, VoiceTier, membershipActive, membershipBenefits,
-  membershipCycle, membershipGiftCycle, membershipGiftChars, membershipProduct, planMembershipPurchase
+  membershipCouponPoints, membershipCycle, membershipGiftCycle, membershipGiftChars, membershipProduct,
+  planMembershipPurchase
 } from './membershipPolicy.js';
 
 export interface MembershipDb { query: PoolClient['query']; }
+
+/** Standard super-member cloud storage; a campaign bonus can raise an account above it. */
+export const CLOUD_BASE_QUOTA_BYTES = 1024 ** 3;
+
+export async function cloudQuotaBytes(db: MembershipDb, userId: string): Promise<number> {
+  const bonus = await db.query<{ quota_bytes: string }>(
+    'SELECT quota_bytes FROM cloud_quota_bonuses WHERE user_id = $1', [userId]);
+  return Math.max(CLOUD_BASE_QUOTA_BYTES, Number(bonus.rows[0]?.quota_bytes ?? 0));
+}
+
+interface CouponRow { id: string; discounts: unknown; expires_at: Date | null; }
+
+/** The available coupon taking the most off this quote; a super purchase skips coupons traded for cloud space. */
+async function bestCoupon(db: MembershipDb, userId: string, sku: MembershipSku, payablePoints: number, now: number) {
+  const coupons = await db.query<CouponRow>(`SELECT id, discounts, expires_at FROM membership_coupons
+    WHERE user_id = $1 AND status = 'AVAILABLE' AND (expires_at IS NULL OR expires_at > $2)
+      AND discounts ->> $3 IS NOT NULL AND NOT ($3 = 'SUPER_LIFETIME' AND super_choice = 'CLOUD')
+    ORDER BY created_at, id`, [userId, new Date(now), sku]);
+  let best: { id: string; points: number; expiresAt: number | null } | null = null;
+  for (const row of coupons.rows) {
+    const points = membershipCouponPoints(row.discounts, sku, payablePoints);
+    if (points > (best?.points ?? 0)) best = { id: row.id, points, expiresAt: row.expires_at?.getTime() ?? null };
+  }
+  return best;
+}
+
+/** A super membership paid without a coupon during an enabled campaign raises the account's cloud quota. */
+async function grantCampaignCloudQuota(db: MembershipDb, userId: string, orderId: string, now: number) {
+  const campaign = await db.query<{ id: string; quota: string }>(`SELECT id, super_no_coupon_quota_bytes AS quota
+    FROM lottery_campaigns WHERE enabled AND starts_at <= $1 AND ends_at > $1
+      AND super_no_coupon_quota_bytes IS NOT NULL
+    ORDER BY super_no_coupon_quota_bytes DESC, id LIMIT 1`, [new Date(now)]);
+  const row = campaign.rows[0];
+  if (!row) return;
+  await db.query(`INSERT INTO cloud_quota_bonuses(user_id, quota_bytes, campaign_id, order_id)
+    VALUES ($1, $2, $3, $4) ON CONFLICT (user_id) DO UPDATE SET
+      quota_bytes = EXCLUDED.quota_bytes, campaign_id = EXCLUDED.campaign_id, order_id = EXCLUDED.order_id
+    WHERE cloud_quota_bonuses.quota_bytes < EXCLUDED.quota_bytes`, [userId, row.quota, row.id, orderId]);
+}
 
 export async function readMembership(db: MembershipDb, userId: string): Promise<MembershipState | null> {
   const result = await db.query<{
@@ -149,9 +189,10 @@ export async function membershipSnapshot(db: MembershipDb, userId: string, now =
   const giftCycle = active ? membershipGiftCycle(state!, now) : null;
   const tierSku = active ? await membershipTierSku(db, state!, now) : null;
   const claim = giftCycle ? await readGiftClaim(db, userId, giftCycle) : null;
+  const benefits = membershipBenefits(active ? state : null, now, tierSku ?? undefined);
+  if (benefits.cloudStorageBytes > 0) benefits.cloudStorageBytes = await cloudQuotaBytes(db, userId);
   return {
-    state, active, restricted, cycle, giftCycle, tierSku, claim,
-    benefits: membershipBenefits(active ? state : null, now, tierSku ?? undefined),
+    state, active, restricted, cycle, giftCycle, tierSku, claim, benefits,
     serverNow: now
   };
 }
@@ -168,14 +209,19 @@ export async function quoteMembership(db: MembershipDb, userId: string, sku: Mem
   const terms = state ? await db.query<{ term_starts_at: Date; term_ends_at: Date; points_spent: string }>(
     `SELECT term_starts_at, term_ends_at, points_spent FROM membership_orders
      WHERE period_id = $1 AND term_ends_at > $2`, [state.periodId, new Date(now)]) : null;
-  const plan = planMembershipPurchase(state, (terms?.rows ?? []).map(row => ({
+  const priorTerms = (terms?.rows ?? []).map(row => ({
     startsAt: row.term_starts_at.getTime(), endsAt: row.term_ends_at.getTime(), points: Number(row.points_spent)
-  })), sku, now, randomUUID(), price);
+  }));
+  const periodId = randomUUID();
+  let plan = planMembershipPurchase(state, priorTerms, sku, now, periodId, price);
+  // Coupons apply automatically: the app shows the charged points in its confirmation and has no coupon picker.
+  const coupon = await bestCoupon(db, userId, sku, plan.payablePoints, now);
+  if (coupon) plan = planMembershipPurchase(state, priorTerms, sku, now, periodId, price, coupon);
   const quoteId = randomUUID();
-  // Do not let a renewal quote cross the old membership's expiry, nor a promotion price outlive it.
+  // Do not let a renewal quote cross the old membership's expiry, nor a promotion price or coupon outlive it.
   const expiresAt = Math.min(now + 15 * 60 * 1000,
     membershipActive(state, now) ? state!.expiresAt ?? Infinity : Infinity,
-    price.promotionEndsAt ?? Infinity);
+    price.promotionEndsAt ?? Infinity, coupon?.expiresAt ?? Infinity);
   await db.query(`INSERT INTO membership_quotes(id, user_id, policy_version, plan, expires_at)
     VALUES ($1,$2,$3,$4::jsonb,$5)`, [quoteId, userId, MEMBERSHIP_POLICY_VERSION, JSON.stringify(plan), new Date(expiresAt)]);
   return { quoteId, expiresAt, ...plan };
@@ -216,6 +262,18 @@ export async function purchaseMembership(
   if ((state?.revision ?? 0) !== plan.expectedRevision) {
     throw new MembershipError(409, 'MEMBERSHIP_OFFER_CHANGED', '会员状态已变化，请重新查看价格');
   }
+  const couponId = plan.couponId ?? null;
+  const couponPoints = plan.couponPoints ?? 0;
+  if (couponId) {
+    const coupon = await db.query<{ status: string; expires_at: Date | null; super_choice: string }>(
+      'SELECT status, expires_at, super_choice FROM membership_coupons WHERE id = $1 AND user_id = $2 FOR UPDATE',
+      [couponId, userId]);
+    const row = coupon.rows[0];
+    if (!row || row.status !== 'AVAILABLE' || (row.expires_at && row.expires_at.getTime() <= now) ||
+        (plan.sku === 'SUPER_LIFETIME' && row.super_choice !== 'COUPON')) {
+      throw new MembershipError(409, 'MEMBERSHIP_OFFER_CHANGED', '会员状态已变化，请重新查看价格');
+    }
+  }
   const wallets = await db.query<{ balance: string; paid_balance: string }>(
     'SELECT balance, paid_balance FROM point_wallets WHERE user_id = $1 FOR UPDATE', [userId]);
   await assertNoDebt(db, userId);
@@ -234,7 +292,7 @@ export async function purchaseMembership(
   const next = plan.newPeriod
     ? planMembershipPurchase(state, [], plan.sku, now, plan.next.periodId, {
       pricePoints: plan.listPoints, promotionId: plan.promotionId ?? null, promotionLabel: null, promotionEndsAt: null
-    }).next : plan.next;
+    }, couponId ? { id: couponId, points: couponPoints } : null).next : plan.next;
   await db.query(`INSERT INTO membership_periods
     (id,user_id,sku,anchor_at,paid_months,expires_at,permanent_credit_points)
     VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO UPDATE SET
@@ -254,12 +312,20 @@ export async function purchaseMembership(
     next.expiresAt === null ? 'infinity' : new Date(next.expiresAt).toISOString()]);
   const order = await db.query<{ id: string }>(`INSERT INTO membership_orders
     (user_id,period_id,sku,request_id,quote_id,list_points,credit_points,points_spent,
-     term_starts_at,term_ends_at,point_ledger_id,promotion_id)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+     term_starts_at,term_ends_at,point_ledger_id,promotion_id,coupon_id,coupon_points)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
     [userId,next.periodId,plan.sku,requestId,quoteId,plan.listPoints,plan.creditPoints,plan.payablePoints,
       plan.term ? new Date(plan.newPeriod ? now : plan.term.startsAt) : null,
-      plan.term ? new Date(next.expiresAt!) : null,ledger.rows[0]!.id,plan.promotionId ?? null]);
-  return { orderId: order.rows[0]!.id, duplicate: false };
+      plan.term ? new Date(next.expiresAt!) : null,ledger.rows[0]!.id,plan.promotionId ?? null,
+      couponId,couponPoints]);
+  const orderId = order.rows[0]!.id;
+  if (couponId) {
+    await db.query(`UPDATE membership_coupons SET status = 'USED', used_order_id = $2, used_at = $3
+      WHERE id = $1`, [couponId, orderId, new Date(now)]);
+  } else if (plan.sku === 'SUPER_LIFETIME') {
+    await grantCampaignCloudQuota(db, userId, orderId, now);
+  }
+  return { orderId, duplicate: false };
 }
 
 export async function claimMembershipGift(db: MembershipDb, userId: string, tier: VoiceTier, now = Date.now()) {

@@ -130,10 +130,25 @@ export interface MembershipPurchasePlan {
   promotionId: string | null;
   creditPoints: number;
   payablePoints: number;
+  /** Absent on quotes issued before coupons existed; treat as no coupon. */
+  couponId?: string | null;
+  couponPoints?: number;
   expectedRevision: number;
   newPeriod: boolean;
   next: MembershipState;
   term: MembershipTerm | null;
+}
+
+export interface MembershipCouponUse { id: string; points: number; }
+
+/**
+ * Points a coupon takes off a quote: its per-SKU amount, at most half of what is still payable after
+ * any upgrade credit, and never the whole order. Zero when the coupon does not cover the SKU.
+ */
+export function membershipCouponPoints(discounts: unknown, sku: MembershipSku, payablePoints: number): number {
+  const points = discounts && typeof discounts === 'object' ? (discounts as Record<string, unknown>)[sku] : undefined;
+  if (typeof points !== 'number' || !Number.isSafeInteger(points) || points <= 0) return 0;
+  return Math.max(0, Math.min(points, Math.floor(payablePoints / 2), payablePoints - 1));
 }
 
 export function planMembershipPurchase(
@@ -142,7 +157,8 @@ export function planMembershipPurchase(
   sku: MembershipSku,
   now: number,
   newPeriodId: string,
-  price: MembershipPrice = basePrice(sku)
+  price: MembershipPrice = basePrice(sku),
+  coupon: MembershipCouponUse | null = null
 ): MembershipPurchasePlan {
   const product = membershipProduct(sku);
   const pricePoints = price.pricePoints;
@@ -166,6 +182,10 @@ export function planMembershipPurchase(
     // Upgrade credits are not cash and cannot make an order negative.
     creditPoints = Math.min(pricePoints, Math.max(0, creditPoints));
   }
+  const couponPoints = coupon?.points ?? 0;
+  if (!Number.isSafeInteger(couponPoints) || couponPoints < 0 || couponPoints >= Math.max(1, pricePoints - creditPoints)) {
+    throw new Error('Invalid membership coupon');
+  }
   const anchorAt = active?.anchorAt ?? now;
   const paidMonths = product.months === null ? 0 : (active?.paidMonths ?? 0) + product.months;
   const expiresAt = product.months === null ? null : membershipAnniversary(anchorAt, paidMonths);
@@ -174,7 +194,9 @@ export function planMembershipPurchase(
     listPoints: pricePoints,
     promotionId: price.promotionId,
     creditPoints,
-    payablePoints: pricePoints - creditPoints,
+    payablePoints: pricePoints - creditPoints - couponPoints,
+    couponId: coupon?.id ?? null,
+    couponPoints,
     expectedRevision: current?.revision ?? 0,
     newPeriod: active === null,
     next: {
@@ -183,8 +205,8 @@ export function planMembershipPurchase(
       anchorAt,
       paidMonths,
       expiresAt,
-      // A later upgrade credits what this permanent product actually cost, promotion included.
-      permanentCreditPoints: product.months === null ? pricePoints : 0,
+      // A later upgrade credits what this permanent product actually cost, promotion and coupon included.
+      permanentCreditPoints: product.months === null ? pricePoints - couponPoints : 0,
       revision: (current?.revision ?? 0) + 1
     },
     term: expiresAt === null ? null : {

@@ -75,7 +75,8 @@ test('profile HTTP enforces permanent entitlement, stores GIF MIME, and falls ba
       paid_months: 1, permanent_credit_points: '1290', revision: 1 }] : [] };
     if (sql.includes('FROM account_debts')) return { rows: [{ iap_debt_points: String(debt) }] };
     if (sql.includes('FROM membership_orders')) return { rows: [{ sku }] };
-    if (sql.includes('FROM membership_gift_claims') || sql.includes('pg_advisory_xact_lock')) return { rows: [] };
+    if (sql.includes('FROM membership_gift_claims') || sql.includes('FROM cloud_quota_bonuses') ||
+      sql.includes('pg_advisory_xact_lock')) return { rows: [] };
     if (sql.includes('SELECT avatar_data')) return { rows: saved ? [saved] : [] };
     if (sql.startsWith('UPDATE app_users')) {
       writes++;

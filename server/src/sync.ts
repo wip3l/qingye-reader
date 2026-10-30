@@ -2,7 +2,7 @@ import { PoolClient } from 'pg';
 import { Buffer } from 'node:buffer';
 import { config } from './config.js';
 import { inTransaction, pool } from './db.js';
-import { membershipSnapshot } from './membershipService.js';
+import { cloudQuotaBytes, membershipSnapshot } from './membershipService.js';
 import { SourceQuota, sourceQuotaError } from './sourceQuota.js';
 
 export class SyncApiError extends Error {
@@ -148,8 +148,8 @@ export async function exchangeSync(userId: string, body: SyncExchangeBody) {
         COALESCE((SELECT sum(octet_length(payload::text)) FROM sync_entities
           WHERE user_id=$1 AND entity_type='book_source' AND deleted_at IS NULL),0) AS source_bytes`, [userId]);
       const sourceBytes = Number(used.rows[0].source_bytes);
-      quota.cloudRemaining = 1024 ** 3 - Number(used.rows[0].file_bytes) - sourceBytes;
-      // Sources may grow only into the shared 1 GiB space; other sync data keeps the member budget.
+      quota.cloudRemaining = await cloudQuotaBytes(client, userId) - Number(used.rows[0].file_bytes) - sourceBytes;
+      // Sources may grow only into the shared cloud space; other sync data keeps the member budget.
       quota.entityByteLimit = memberEntityBytes + sourceBytes + Math.max(0, quota.cloudRemaining);
     }
 
@@ -562,7 +562,7 @@ async function applyOperation(
         [existed ? JSON.stringify(current!.payload) : null, operation.payload === null ? null : JSON.stringify(operation.payload)]);
       const delta = Number(sizes.rows[0].after) - Number(sizes.rows[0].before);
       if (delta > 0 && delta > quota.cloudRemaining) return { opId: operation.opId, accepted: false,
-        revision: currentRevision, sequenceId: null, error: { code: 'SYNC_SOURCE_QUOTA_EXCEEDED', message: '书源与云文件共用的 1GB 空间已满' } };
+        revision: currentRevision, sequenceId: null, error: { code: 'SYNC_SOURCE_QUOTA_EXCEEDED', message: '书源与云文件共用的云空间已满' } };
       quota.cloudRemaining -= delta;
       nextQuota.cloudRemaining = quota.cloudRemaining;
     }

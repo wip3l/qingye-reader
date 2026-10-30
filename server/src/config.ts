@@ -32,6 +32,11 @@ export const config = {
   membershipSalesPilot: parseMembershipSalesPilot(process.env.MEMBERSHIP_PILOT_USER_IDS,
     process.env.MEMBERSHIP_PILOT_SKUS, process.env.MEMBERSHIP_PILOT_UNTIL),
   membershipSourceLimitsEnabled: process.env.MEMBERSHIP_SOURCE_LIMITS_ENABLED === 'true',
+  lottery: {
+    campaignId: process.env.LOTTERY_CAMPAIGN_ID?.trim() || 'double11-2026',
+    // e.g. https://huodong.example.com; the page and /lottery/api/ must share this origin.
+    pageOrigin: (process.env.LOTTERY_PAGE_ORIGIN?.trim() || '').replace(/\/+$/, '')
+  },
   cloudFiles: {
     enabled: process.env.CLOUD_FILES_ENABLED === 'true',
     endpoint: process.env.HUAWEICLOUD_OBS_ENDPOINT?.trim() || '',

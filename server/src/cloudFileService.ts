@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { MembershipDb, membershipSnapshot } from './membershipService.js';
+import { MembershipDb, cloudQuotaBytes, membershipSnapshot } from './membershipService.js';
 import { MembershipError, membershipCalendarCycle } from './membershipPolicy.js';
 import { CloudObjectStore } from './cloudObjectStore.js';
 
 export const CLOUD_CHUNK_BYTES = 1024 ** 2;
+/** Largest single file and the monthly download allowance; storage per account comes from cloudQuotaBytes. */
 export const CLOUD_QUOTA_BYTES = 1024 ** 3;
 type Transaction = <T>(fn: (db: MembershipDb) => Promise<T>) => Promise<T>;
 interface FileRow { id: string; user_id: string; kind: string; name: string; bytes: string; state: string; manifest_hash: string | null; expected_manifest_hash: string | null; meta: CloudFileMeta | null; }
@@ -82,7 +83,7 @@ export class CloudFileService {
       const usage = cycle ? await db.query(`SELECT bytes FROM cloud_download_monthly_usage
         WHERE user_id=$1 AND month_index=$2`, [userId, cycle.index]) : null;
       return { configured: true, eligible: member.active && member.state?.sku === 'SUPER_LIFETIME',
-        usedBytes: await this.used(db, userId), quotaBytes: CLOUD_QUOTA_BYTES,
+        usedBytes: await this.used(db, userId), quotaBytes: await cloudQuotaBytes(db, userId),
         downloadBytes: Number(usage?.rows[0]?.bytes ?? 0), downloadQuotaBytes: CLOUD_QUOTA_BYTES,
         chunkBytes: CLOUD_CHUNK_BYTES, cycleEndsAt: cycle?.endsAt ?? null };
     });
@@ -133,7 +134,7 @@ export class CloudFileService {
       }
       const pending = await db.query("SELECT count(*) FROM cloud_files WHERE user_id=$1 AND state='UPLOADING'", [userId]);
       if (Number(pending.rows[0].count) >= 10) fail(409, 'CLOUD_PENDING_LIMIT', '请先完成或取消已有上传任务');
-      if (await this.used(db, userId) + input.bytes > CLOUD_QUOTA_BYTES) fail(409, 'CLOUD_STORAGE_LIMIT', '云空间不足，请先删除不需要的文件');
+      if (await this.used(db, userId) + input.bytes > await cloudQuotaBytes(db, userId)) fail(409, 'CLOUD_STORAGE_LIMIT', '云空间不足，请先删除不需要的文件');
       const id = randomUUID();
       await db.query('INSERT INTO cloud_files(id,user_id,request_id,kind,name,bytes,expected_manifest_hash,meta) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
         [id, userId, input.requestId, input.kind, input.name, input.bytes, input.manifestHash ?? null, meta ? JSON.stringify(meta) : null]);

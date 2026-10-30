@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>永久会员抵扣券抽奖</title>
+<style>
+  :root {
+    --bg: #fbf6ef; --surface: #ffffff; --surface-2: #f6ede1; --text: #2b211a; --muted: #7a6a5c;
+    --line: #eadccb; --accent: #c2410c; --accent-strong: #9a3412; --on-accent: #ffffff;
+    --gold: #d4a017; --ok: #15803d; --warn: #b45309; --danger: #b91c1c;
+    --seg-a: #fde7d3; --seg-b: #fbd3b0; --shadow: 0 8px 28px rgba(80, 40, 10, .10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17120e; --surface: #221a14; --surface-2: #2c221a; --text: #f3e9df; --muted: #b5a291;
+      --line: #3a2e24; --accent: #f97316; --accent-strong: #fb923c; --on-accent: #1a0f07;
+      --gold: #eab308; --ok: #4ade80; --warn: #fbbf24; --danger: #f87171;
+      --seg-a: #3b2a1d; --seg-b: #4a3322; --shadow: 0 8px 28px rgba(0, 0, 0, .35);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 -apple-system, "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { text-align: center; padding: 12px 0 8px; }
+  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: .02em; }
+  .period { color: var(--muted); margin: 0; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; margin-top: 16px; box-shadow: var(--shadow); }
+  h2 { font-size: 17px; margin: 0 0 10px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  button {
+    font: inherit; border: 0; border-radius: 12px; padding: 12px 18px; cursor: pointer;
+    background: var(--accent); color: var(--on-accent); font-weight: 600; min-height: 44px;
+  }
+  button.secondary { background: var(--surface-2); color: var(--text); font-weight: 500; }
+  button.link { background: none; color: var(--accent-strong); padding: 0; min-height: 0; font-weight: 500; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .between { justify-content: space-between; }
+  .code {
+    font: 700 34px/1.2 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; letter-spacing: .18em;
+    text-align: center; background: var(--surface-2); border-radius: 12px; padding: 14px 8px; margin: 12px 0 6px;
+    user-select: all;
+  }
+  ol.steps { padding-left: 20px; margin: 10px 0; }
+  ol.steps li { margin: 4px 0; }
+  .status { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); margin-top: 10px; }
+  .status.ok { color: var(--ok); }
+  .status.warn { color: var(--warn); }
+  .wheel-wrap { position: relative; width: min(300px, 78vw); aspect-ratio: 1; margin: 8px auto 16px; }
+  .pointer {
+    position: absolute; left: 50%; top: -6px; transform: translateX(-50%); z-index: 2;
+    width: 0; height: 0; border-left: 13px solid transparent; border-right: 13px solid transparent;
+    border-top: 24px solid var(--accent);
+  }
+  .wheel {
+    position: absolute; inset: 0; border-radius: 50%; border: 6px solid var(--gold);
+    transition: transform 4.2s cubic-bezier(.17, .67, .16, 1);
+  }
+  /* Each label spans the wheel and is turned to its segment; the text sits near the rim, upright at the pointer. */
+  .wheel .label {
+    position: absolute; inset: 0; padding-top: 11%; text-align: center;
+    font-size: 14px; font-weight: 700; line-height: 1.3;
+  }
+  .wheel .label small { display: block; font-weight: 500; color: var(--muted); font-size: 11px; }
+  .hub {
+    position: absolute; left: 50%; top: 50%; width: 22%; aspect-ratio: 1; transform: translate(-50%, -50%);
+    border-radius: 50%; background: var(--surface); border: 4px solid var(--gold); z-index: 1;
+  }
+  @media (prefers-reduced-motion: reduce) { .wheel { transition-duration: .6s; } }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 8px 4px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .prize { text-align: center; }
+  .prize .name { font-size: 22px; font-weight: 700; color: var(--accent-strong); }
+  .amounts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+  .amount { background: var(--surface-2); border-radius: 12px; padding: 10px; text-align: center; }
+  .amount b { display: block; font-size: 20px; }
+  .choice { display: grid; gap: 8px; margin-top: 8px; }
+  .choice label {
+    display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px; cursor: pointer;
+  }
+  .choice input { margin-top: 4px; accent-color: var(--accent); }
+  .choice label.selected { border-color: var(--accent); background: var(--surface-2); }
+  ul.rules { padding-left: 18px; margin: 0; }
+  ul.rules li { margin: 6px 0; }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px);
+    background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px;
+    opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10;
+  }
+  .toast.show { opacity: .94; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="title">永久会员抵扣券抽奖</h1>
+    <p class="period" id="period">即日起至 11 月 11 日</p>
+  </header>
+
+  <section class="card" id="accountCard">
+    <div id="loading" class="muted">正在加载…</div>
+
+    <div id="verifyIntro" hidden>
+      <h2>先验证你的账号</h2>
+      <p class="muted small">无需登录密码。我们会给你一个验证码，在 App 里把它加到昵称后面即可完成验证。</p>
+      <button id="startVerify">获取验证码</button>
+    </div>
+
+    <div id="verifyPending" hidden>
+      <h2>把验证码加到昵称里</h2>
+      <div class="code" id="code"></div>
+      <div class="row between small muted">
+        <span id="countdown"></span>
+        <button class="link" id="copyCode">复制验证码</button>
+      </div>
+      <ol class="steps">
+        <li>打开 App，进入「会员与账号」页，点「编辑资料」。</li>
+        <li>在昵称后面加上上面的验证码，点「保存」。</li>
+        <li>回到本页，验证会自动完成；也可以点下面的按钮。</li>
+      </ol>
+      <p class="muted small">昵称太长放不下时，可以先把昵称整个换成验证码。验证成功后验证码会自动从昵称里删掉。</p>
+      <div class="row">
+        <button id="checkVerify">我已修改</button>
+        <button class="secondary" id="restartVerify">换一个验证码</button>
+      </div>
+      <div class="status" id="verifyStatus" hidden></div>
+    </div>
+
+    <div id="signedIn" hidden>
+      <div class="row between">
+        <div>当前账号：<b id="displayName"></b></div>
+        <button class="link" id="switchAccount">不是我的账号</button>
+      </div>
+      <div class="status warn" id="nameHint" hidden></div>
+    </div>
+  </section>
+
+  <section class="card" id="drawCard" hidden>
+    <div class="wheel-wrap" aria-hidden="true">
+      <div class="pointer"></div>
+      <div class="wheel" id="wheel"></div>
+      <div class="hub"></div>
+    </div>
+    <div class="row" style="justify-content:center">
+      <button id="drawButton" disabled>抽奖</button>
+    </div>
+    <div class="status" id="drawStatus" hidden></div>
+  </section>
+
+  <section class="card" id="resultCard" hidden>
+    <div class="prize">
+      <div class="muted small">你抽中了</div>
+      <div class="name" id="prizeName"></div>
+    </div>
+    <div class="amounts">
+      <div class="amount"><span class="muted small">终身会员</span><b id="lifetimeOff"></b></div>
+      <div class="amount"><span class="muted small">终身超级会员</span><b id="superOff"></b></div>
+    </div>
+    <p class="small muted" id="couponStatus"></p>
+    <div id="choiceBox" hidden>
+      <h2>购买终身超级会员时</h2>
+      <div class="choice">
+        <label id="choiceCouponLabel"><input type="radio" name="superChoice" value="COUPON">
+          <span><b id="choiceCouponText"></b><br><span class="small muted">与首发半价同享，购买时自动抵扣</span></span></label>
+        <label id="choiceCloudLabel"><input type="radio" name="superChoice" value="CLOUD">
+          <span><b>不用券，云空间升到 5GB</b><br><span class="small muted">这张券仍可用于终身会员</span></span></label>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="cloudCard">
+    <h2>不用券开通超级会员，云空间升到 5GB</h2>
+    <p class="muted small" id="cloudText">活动期间开通终身超级会员（含从终身会员升级）且不使用抵扣券，云空间从 1GB 提升到 5GB，永久有效。抽到券的用户可以在本页选择“不用券，云空间升到 5GB”。</p>
+    <div class="status ok" id="cloudGranted" hidden>你的云空间已提升到 5GB。</div>
+  </section>
+
+  <section class="card">
+    <h2>奖品与概率</h2>
+    <table>
+      <thead><tr><th>奖项</th><th class="num">终身会员</th><th class="num">超级会员</th><th class="num">概率</th></tr></thead>
+      <tbody id="prizeTable"></tbody>
+    </table>
+    <p class="small muted" id="stockNote"></p>
+  </section>
+
+  <section class="card">
+    <h2>活动规则</h2>
+    <ul class="rules small" id="rules">
+      <li id="ruleTime">活动时间：即日起至 2026 年 11 月 11 日 24:00（北京时间）。</li>
+      <li id="ruleEligible">2026 年 11 月 11 日 0:00 前注册的账号可参加，每个账号限抽一次，每次必中。</li>
+      <li>特等奖、一等奖数量有限，发完即止，之后抽中这两档的改发幸运奖。</li>
+      <li>抵扣券只能用于购买终身会员或终身超级会员，可与首发半价同享；一张券最多抵扣本次应付点数的一半。</li>
+      <li>抵扣券永久有效，一张券只能使用一次，不可转让、不可兑现。</li>
+      <li>使用方法：在 App「会员与账号」页购买时自动抵扣，确认框里的扣除点数就是券后价格。</li>
+      <li>活动期间开通终身超级会员（含升级）且不使用抵扣券，云空间从 1GB 提升到 5GB，永久有效。</li>
+      <li>App 内部分说明仍显示 1GB，以「我的云空间」页显示的总量为准。</li>
+      <li>1 元 = 10 充值点。</li>
+    </ul>
+  </section>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  const API = '/lottery/api';
+  const $ = id => document.getElementById(id);
+  const yuan = points => {
+    const value = points / 10;
+    return (Number.isInteger(value) ? value : value.toFixed(1)) + ' 元';
+  };
+  const percent = p => {
+    const value = p * 100;
+    return (Number.isInteger(value) ? value : value.toFixed(1)) + '%';
+  };
+  const beijing = ms => new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: 'long', day: 'numeric'
+  }).format(new Date(ms));
+
+  let state = null;
+  let verifyExpiresAt = 0;
+  let pollTimer = 0;
+  let countdownTimer = 0;
+  let wheelTurn = 0;
+  let drawing = false;
+
+  function toast(message) {
+    const el = $('toast');
+    el.textContent = message;
+    el.classList.add('show');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => el.classList.remove('show'), 2600);
+  }
+
+  async function api(path, body) {
+    const init = body === undefined
+      ? { credentials: 'same-origin' }
+      : { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+    const response = await fetch(API + path, init);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data.message || '网络异常，请稍后重试');
+      error.code = data.code;
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  }
+
+  function show(id, visible) { $(id).hidden = !visible; }
+
+  function buildWheel(prizes) {
+    const wheel = $('wheel');
+    const n = prizes.length;
+    const step = 360 / n;
+    const stops = prizes.map((_, i) => `var(${i % 2 ? '--seg-b' : '--seg-a'}) ${i * step}deg ${(i + 1) * step}deg`);
+    wheel.style.background = `conic-gradient(${stops.join(',')})`;
+    wheel.replaceChildren();
+    prizes.forEach((prize, i) => {
+      const label = document.createElement('div');
+      label.className = 'label';
+      // 0deg is the pointer at the top; the conic gradient starts there too.
+      label.style.transform = `rotate(${i * step + step / 2}deg)`;
+      label.textContent = prize.label;
+      const sub = document.createElement('small');
+      sub.textContent = `减 ${(prize.discounts.LIFETIME || 0) / 10}/${(prize.discounts.SUPER_LIFETIME || 0) / 10} 元`;
+      label.appendChild(sub);
+      wheel.appendChild(label);
+    });
+  }
+
+  function spinTo(index, count) {
+    const step = 360 / count;
+    const target = 360 - (index * step + step / 2);
+    const current = ((wheelTurn % 360) + 360) % 360;
+    wheelTurn += 360 * 6 + ((target - current + 360) % 360);
+    $('wheel').style.transform = `rotate(${wheelTurn}deg)`;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    return new Promise(resolve => setTimeout(resolve, reduced ? 700 : 4300));
+  }
+
+  function renderPrizes() {
+    const body = $('prizeTable');
+    body.replaceChildren();
+    for (const prize of state.prizes) {
+      const tr = document.createElement('tr');
+      const cells = [
+        prize.label + (prize.limited ? `（剩 ${prize.remaining} 张）` : ''),
+        yuan(prize.discounts.LIFETIME || 0),
+        yuan(prize.discounts.SUPER_LIFETIME || 0),
+        percent(prize.probability)
+      ];
+      cells.forEach((text, i) => {
+        const td = document.createElement('td');
+        td.textContent = text;
+        if (i > 0) td.className = 'num';
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    }
+    $('stockNote').textContent = '金额为抵扣的充值点折合人民币。限量奖品发完后，其概率并入幸运奖。';
+  }
+
+  function renderCampaign() {
+    const c = state.campaign;
+    $('title').textContent = c.title;
+    const end = beijing(c.endsAt - 1);
+    $('period').textContent = c.status === 'ENDED' ? `活动已于 ${end}结束` : `即日起至 ${end}`;
+    $('ruleTime').textContent = `活动时间：即日起至 ${end} 24:00（北京时间）。`;
+    $('ruleEligible').textContent = `${beijing(c.registeredBefore)} 0:00 前注册的账号可参加，每个账号限抽一次，每次必中。`;
+    show('cloudCard', c.superCloudQuotaBytes !== null);
+  }
+
+  function renderAccount() {
+    show('loading', false);
+    const account = state.account;
+    const pending = verifyExpiresAt > Date.now();
+    show('verifyIntro', !account && !pending);
+    show('verifyPending', !account && pending);
+    show('signedIn', !!account);
+    show('drawCard', !!account);
+    show('resultCard', !!(account && account.draw));
+    if (!account) return;
+    $('displayName').textContent = account.displayName;
+    show('cloudGranted', account.cloudBonus);
+
+    const draw = account.draw;
+    const status = state.campaign.status;
+    const button = $('drawButton');
+    let message = '';
+    if (draw) message = '你已经抽过了，结果见下方。';
+    else if (account.ineligibleReason === 'REGISTERED_TOO_LATE') message = '本活动仅限活动截止日期前注册的账号参加。';
+    else if (account.ineligibleReason === 'PAYMENT_RESTRICTED') message = '账号存在退款欠款，补齐后才能参加。';
+    else if (status === 'NOT_STARTED') message = '活动尚未开始。';
+    else if (status === 'ENDED') message = '活动已结束。';
+    else if (status !== 'OPEN') message = '活动暂未开放。';
+    button.disabled = drawing || !!message;
+    button.textContent = draw ? '已抽奖' : '抽奖';
+    $('drawStatus').textContent = message;
+    show('drawStatus', !!message && !drawing);
+    if (draw) renderResult(draw);
+  }
+
+  function renderResult(draw) {
+    const coupon = draw.coupon;
+    $('prizeName').textContent = draw.label;
+    $('lifetimeOff').textContent = '立减 ' + yuan(coupon.discounts.LIFETIME || 0);
+    $('superOff').textContent = '立减 ' + yuan(coupon.discounts.SUPER_LIFETIME || 0);
+    const used = coupon.status === 'USED';
+    $('couponStatus').textContent = used
+      ? '这张券已经使用。'
+      : coupon.status === 'REVOKED' ? '这张券已失效。'
+      : '永久有效。在 App「会员与账号」页购买终身会员或终身超级会员时自动抵扣，确认框里的扣除点数就是券后价格。';
+    const choosable = coupon.status === 'AVAILABLE' && state.campaign.superCloudQuotaBytes !== null && !state.account.cloudBonus;
+    show('choiceBox', choosable);
+    $('choiceCouponText').textContent = '使用抵扣券，立减 ' + yuan(coupon.discounts.SUPER_LIFETIME || 0);
+    for (const input of document.querySelectorAll('input[name="superChoice"]')) {
+      input.checked = input.value === coupon.superChoice;
+      input.closest('label').classList.toggle('selected', input.checked);
+    }
+  }
+
+  async function load() {
+    try {
+      state = await api('/state');
+      renderCampaign();
+      renderPrizes();
+      buildWheel(state.prizes);
+      renderAccount();
+    } catch (error) {
+      $('loading').textContent = error.message;
+    }
+  }
+
+  function stopVerifyTimers() {
+    clearInterval(pollTimer);
+    clearInterval(countdownTimer);
+  }
+
+  function tickCountdown() {
+    const left = Math.max(0, Math.round((verifyExpiresAt - Date.now()) / 1000));
+    $('countdown').textContent = left > 0 ? `${Math.floor(left / 60)} 分 ${String(left % 60).padStart(2, '0')} 秒后失效` : '验证码已失效';
+    if (left === 0) {
+      stopVerifyTimers();
+      verifyExpiresAt = 0;
+      renderAccount();
+      toast('验证码已失效，请重新获取');
+    }
+  }
+
+  async function startVerify() {
+    try {
+      const result = await api('/verify/start', {});
+      verifyExpiresAt = result.expiresAt;
+      $('code').textContent = result.code;
+      show('verifyStatus', false);
+      stopVerifyTimers();
+      tickCountdown();
+      countdownTimer = setInterval(tickCountdown, 1000);
+      pollTimer = setInterval(() => checkVerify(true), 5000);
+      renderAccount();
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+
+  async function checkVerify(silent) {
+    try {
+      const result = await api('/verify/check', {});
+      if (!result.verified) {
+        if (!silent) {
+          $('verifyStatus').textContent = '还没检测到验证码，请确认昵称已经保存。';
+          show('verifyStatus', true);
+        }
+        return;
+      }
+      stopVerifyTimers();
+      verifyExpiresAt = 0;
+      await load();
+      $('nameHint').textContent = result.displayName === '华为用户'
+        ? '验证码已从昵称里删掉，昵称暂时变成“华为用户”，可以回 App 改回原来的昵称。'
+        : '验证码已从昵称里自动删掉，App 里重新进入「会员与账号」页即可看到。';
+      show('nameHint', true);
+      toast('验证成功');
+    } catch (error) {
+      if (error.status === 410 || error.code === 'LOTTERY_VERIFY_AMBIGUOUS') {
+        stopVerifyTimers();
+        verifyExpiresAt = 0;
+        renderAccount();
+      }
+      if (!silent || error.status === 410) toast(error.message);
+    }
+  }
+
+  async function draw() {
+    if (drawing) return;
+    drawing = true;
+    $('drawButton').disabled = true;
+    show('drawStatus', false);
+    try {
+      const result = await api('/draw', {});
+      const index = state.prizes.findIndex(prize => prize.id === result.draw.prizeId);
+      if (!result.duplicate && index >= 0) await spinTo(index, state.prizes.length);
+      drawing = false;
+      await load();
+      $('resultCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (error) {
+      drawing = false;
+      toast(error.message);
+      await load();
+    }
+  }
+
+  async function chooseSuper(choice) {
+    try {
+      state = await api('/coupon/super-choice', { choice });
+      renderAccount();
+      toast(choice === 'CLOUD' ? '已选择不用券，购买超级会员后云空间升到 5GB' : '已选择购买超级会员时用券');
+    } catch (error) {
+      toast(error.message);
+      await load();
+    }
+  }
+
+  async function switchAccount() {
+    try { await api('/logout', {}); } catch (_) { /* the cookie is cleared server-side either way */ }
+    show('nameHint', false);
+    await load();
+  }
+
+  $('startVerify').addEventListener('click', startVerify);
+  $('restartVerify').addEventListener('click', startVerify);
+  $('checkVerify').addEventListener('click', () => checkVerify(false));
+  $('copyCode').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText($('code').textContent);
+      toast('已复制');
+    } catch (_) {
+      toast('复制失败，请手动输入');
+    }
+  });
+  $('drawButton').addEventListener('click', draw);
+  $('switchAccount').addEventListener('click', switchAccount);
+  for (const input of document.querySelectorAll('input[name="superChoice"]')) {
+    input.addEventListener('change', () => { if (input.checked) chooseSuper(input.value); });
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && verifyExpiresAt > Date.now()) checkVerify(true);
+  });
+  load();
+})();
+</script>
+</body>
+</html>
