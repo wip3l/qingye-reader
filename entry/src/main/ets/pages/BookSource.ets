@@ -177,6 +177,9 @@ struct BookSourcePage {
   @State @Watch('syncSourceLoginUiDialog') showSourceLoginUiDialog: boolean = false;
   @State sourceLoginItems: BookSourceLoginItem[] = [];
   @State isExecutingLoginAction: boolean = false;
+  /** 登录弹窗标题与底部按钮的实测高度（随字体缩放变化），用来给中间表单留出剩余高度。 */
+  @State sourceLoginTitleHeight: number = 30;
+  @State sourceLoginFooterHeight: number = 42;
   @State loginRuntimeActive: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showSourceDeleteDialog: boolean = false;
   @State showSourceGroupToolsMenu: boolean = false;
@@ -1622,7 +1625,12 @@ struct BookSourcePage {
         .fontColor(this.primaryTextColor())
         .width('100%')
         .textAlign(TextAlign.Center)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
         .margin({ bottom: AppSpacing.LG })
+        .onAreaChange((_oldValue: Area, newValue: Area) => {
+          this.sourceLoginTitleHeight = Number(newValue.height);
+        })
 
       Scroll() {
         Column({ space: AppSpacing.MD }) {
@@ -1739,39 +1747,52 @@ struct BookSourcePage {
       }
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .width('100%')
-      .constraintSize({ maxHeight: 430 })
-      .scrollBar(BarState.Auto)
+      // 系统对话框超高会直接裁掉底部，且自适应高度的 Column 里 flexShrink 不生效，
+      // 所以按窗口高度减去标题和按钮的实测高度给表单定上限，按钮始终留在对话框内。
+      .constraintSize({ maxHeight: this.sourceLoginScrollMaxHeight() })
+      .scrollBar(BarState.Off)
 
-      if (this.sourceLoginSupportsConfirmAction(this.actionSourceDetail)) {
-        Button(this.isExecutingLoginAction ? '登录中...' : '确认登录', { type: ButtonType.Normal })
-          .width('100%')
+      Row({ space: AppSpacing.MD }) {
+        Button('关闭')
+          .layoutWeight(1)
           .height(42)
-          .margin({ top: AppSpacing.MD })
-          .fontSize(AppFontSize.BODY)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .backgroundColor(this.accentColor())
-          .enabled(!this.isExecutingLoginAction)
+          .backgroundColor(this.inputColor())
+          .fontColor(this.primaryTextColor())
           .onClick(() => {
-            this.confirmSourceLoginInputs();
+            this.saveSourceLoginInputs();
+            this.showSourceLoginUiDialog = false;
+            this.sourceLoginItems = [];
+            this.actionSourceUrl = '';
+            this.actionSourceDetail = null;
           })
-      }
 
-      Button('关闭')
-        .width('100%')
-        .height(42)
-        .margin({ top: AppSpacing.MD })
-        .backgroundColor(this.buttonColor())
-        .fontColor(ThemeRuntime.onAccentColor())
-        .onClick(() => {
-          this.saveSourceLoginInputs();
-          this.showSourceLoginUiDialog = false;
-          this.sourceLoginItems = [];
-          this.actionSourceUrl = '';
-          this.actionSourceDetail = null;
-        })
+        if (this.sourceLoginSupportsConfirmAction(this.actionSourceDetail)) {
+          Button(this.isExecutingLoginAction ? '登录中...' : '确认登录')
+            .layoutWeight(1)
+            .height(42)
+            .fontSize(AppFontSize.BODY)
+            .fontColor(ThemeRuntime.onAccentColor())
+            .backgroundColor(this.accentColor())
+            .enabled(!this.isExecutingLoginAction)
+            .onClick(() => {
+              this.confirmSourceLoginInputs();
+            })
+        }
+      }
+      .width('100%')
+      .margin({ top: AppSpacing.LG })
+      .onAreaChange((_oldValue: Area, newValue: Area) => {
+        this.sourceLoginFooterHeight = Number(newValue.height);
+      })
     }
     .width('100%')
     .padding(AppSpacing.XXL)
+  }
+
+  sourceLoginScrollMaxHeight(): number {
+    const available = ImmersiveMaterialRuntime.dialogContentMaxHeight() - AppSpacing.XXL * 2 -
+      this.sourceLoginTitleHeight - AppSpacing.LG - this.sourceLoginFooterHeight - AppSpacing.LG;
+    return Math.max(96, Math.min(430, Math.floor(available)));
   }
 
   @Builder

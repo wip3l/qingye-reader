@@ -333,6 +333,18 @@ export class ImmersiveMaterialRuntime {
     }
   }
 
+  /** 居中对话框内容的高度上限：系统对话框超出可用高度会直接裁掉底部，内容需按窗口自行收缩。 */
+  static dialogContentMaxHeight(): number {
+    try {
+      const screen = display.getDefaultDisplaySync();
+      const density = screen.densityPixels > 0 ? screen.densityPixels : 1;
+      // 系统对话框约占扣除状态栏、导航条后高度的 90%，按整屏 75% 留出余量。
+      return Math.max(240, Math.floor(screen.height / density * 0.75));
+    } catch (error) {
+      return 520;
+    }
+  }
+
   /**
    * 下拉菜单统一用系统弹出层：API 26+ 背景是沉浸光感材质，旧系统退回半透明磨砂；
    * 点菜单外自动收起，收起时回调让调用方复位开关。builder 用箭头函数传入，保证其中的 this 指向页面。
