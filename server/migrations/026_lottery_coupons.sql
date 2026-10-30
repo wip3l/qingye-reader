@@ -112,4 +112,17 @@ CREATE TABLE IF NOT EXISTS cloud_quota_bonuses (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Also support migrations run by an administrator, matching the existing account service role.
+DO $$
+DECLARE application_role NAME;
+BEGIN
+  SELECT tableowner INTO application_role FROM pg_tables
+    WHERE schemaname='public' AND tablename='point_wallets';
+  IF application_role IS NOT NULL AND application_role <> current_user THEN
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE lottery_web_verifications, lottery_web_sessions,
+      lottery_campaigns, lottery_prizes, membership_coupons, lottery_draws, cloud_quota_bonuses TO %I', application_role);
+  END IF;
+END
+$$;
+
 COMMIT;

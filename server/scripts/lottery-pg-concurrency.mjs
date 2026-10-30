@@ -73,10 +73,12 @@ try {
   const files = (await readdir(resolve(root, 'migrations'))).filter(n => /^\d{3}_.+\.sql$/.test(n)).sort();
   assert.ok(files.includes('026_lottery_coupons.sql'));
   for (const file of files) {
+    step = 'migrate ' + file;
     const sql = (await readFile(resolve(root, 'migrations', file), 'utf8')).replace(/^VACUUM[^;]*;/gm, '');
     const c = await pool.connect();
     try { await c.query(sql); } finally { c.release(); }
   }
+  step = 'prepare test campaign';
   await pool.query('UPDATE membership_products SET sales_enabled=true, sales_starts_at=NULL');
   await pool.query(`INSERT INTO lottery_campaigns(id,title,starts_at,ends_at,registered_before,enabled,super_no_coupon_quota_bytes)
     VALUES ($1,'并发测试',$2,$3,$4,true,5368709120)`,
@@ -155,7 +157,9 @@ try {
   pass(step);
 } catch (e) {
   const code = String(e.code || 'CHECK_FAILED');
-  console.error('FAIL', step, /^[A-Z0-9_]+$/.test(code) ? code : 'CHECK_FAILED');
+  // PostgreSQL errors from the disposable database name the missing object; nothing secret is involved.
+  const detail = /^[0-9A-Z]{5}$/.test(code) ? ' ' + String(e.message).slice(0, 200) : '';
+  console.error('FAIL', step, (/^[A-Z0-9_]+$/.test(code) ? code : 'CHECK_FAILED') + detail);
   process.exitCode = 1;
 } finally {
   if (pool) await pool.end();
