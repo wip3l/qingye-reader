@@ -34,6 +34,11 @@ struct ComicSettingsPage {
   /** 会员档位变化（开通后返回本页）时刷新AI超分一行。 */
   @StorageProp('accountMembershipSku') membershipSku: string = '';
   @State settings: ReaderComicSettings = new ReaderComicSettings();
+  /**
+   * 读到已存设置后才建内容：selectItem 是按值传参的 @Builder，下拉框只认首次建出时的选中项，
+   * 先用默认值建出来再异步读取，就会一直显示默认值。
+   */
+  @State loaded: boolean = false;
 
   private static readonly MODES: string[] = [ReaderComicMode.WEBTOON, ReaderComicMode.LTR, ReaderComicMode.RTL];
   private static readonly BACKGROUNDS: string[] =
@@ -44,6 +49,7 @@ struct ComicSettingsPage {
     this.syncBars();
     ReaderComicSettingsStore.load(getContext(this)).then((settings: ReaderComicSettings): void => {
       this.settings = settings;
+      this.loaded = true;
     });
   }
 
@@ -60,6 +66,13 @@ struct ComicSettingsPage {
 
   @Builder
   pageContent() {
+    if (this.loaded) {
+      this.settingsContent()
+    }
+  }
+
+  @Builder
+  settingsContent() {
     this.sectionTitle('阅读方式')
     Column() {
       this.selectItem('默认阅读方式', '没单独设置过的漫画使用这里的方式',
