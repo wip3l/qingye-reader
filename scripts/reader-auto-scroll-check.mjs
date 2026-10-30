@@ -15,7 +15,7 @@ function method(name) {
 }
 const names = ['startReaderAutoScroll', 'toggleReaderAutoScroll', 'pauseReaderAutoScroll',
   'stopReaderAutoScroll', 'advanceReaderAutoScroll', 'shouldPauseReaderAutoScrollForPanel', 'waitReaderAutoScroll',
-  'restoreReaderAutoScrollAnchor', 'onReaderAutoScrollBackground',
+  'restoreReaderAutoScrollAnchor', 'scrollReaderContinuousToSourceOffset', 'onReaderAutoScrollBackground',
   'readerComicEffectiveMode', 'isReaderComicPagedMode', 'readerComicAutoScrollImagesReady',
   'isReaderNovelContinuousScrollModeActive', 'readerEffectivePageTurnMode',
   'cancelReaderAutoScrollTap', 'handleReaderAutoScrollTap', 'rememberContinuousReaderPointer',

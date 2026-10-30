@@ -249,6 +249,7 @@ struct ReadBookPage {
   @State menuChapterTooltipVisible: boolean = false;
   @State menuChapterConfirming: boolean = false;
   @State menuPercentPreview: number = 0;
+  @State menuPagePreviewIndex: number = 0;
   @State quickJumpBusy: boolean = false;
   private quickJumpSerial: number = 0;
   private quickJumpPausedSpeechOffset: number = -1;
@@ -771,6 +772,7 @@ struct ReadBookPage {
   @StorageLink('readerUseAutoScrollQuickAction') readerUseAutoScrollQuickAction: boolean = true;
   @StorageLink('readerUseChapterQuickJump') readerUseChapterQuickJump: boolean = true;
   @StorageLink('readerQuickJumpMode') readerQuickJumpMode: string = 'chapter';
+  @StorageLink('readerQuickJumpExpanded') readerQuickJumpExpanded: boolean = false;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
   @StorageLink('readerHeaderEnabled') @Watch('onReaderChromeChanged') readerHeaderEnabled: boolean = false;
   @StorageLink('readerFooterEnabled') @Watch('onReaderChromeChanged') readerFooterEnabled: boolean = true;
@@ -3670,11 +3672,12 @@ struct ReadBookPage {
 
   @Builder
   readerMaterialFloatingBottomMenu() {
-    Column({ space: AppSpacing.XS }) {
+    Column() {
       if (this.readerUseChapterQuickJump) {
-        this.readerMaterialChapterBar()
+        this.readerQuickJumpMenuPanel(true)
+      } else {
+        this.readerMaterialActionBar(false)
       }
-      this.readerMaterialActionBar(false)
     }
     .width('100%')
     .height(this.readerBottomMenuOverlayHeight())
@@ -3688,22 +3691,52 @@ struct ReadBookPage {
     })
   }
 
+  /**
+   * 快速跳转与底部操作按钮合成一块面板：上排进度条，下排按钮。按钮行贴底且高 56，
+   * 与目录、设置打开时单独显示的操作栏同一高度，切换时图标不跳动。
+   */
   @Builder
-  readerMaterialChapterBar() {
+  readerQuickJumpMenuPanel(materialActions: boolean) {
     Stack({ alignContent: Alignment.Center }) {
       ReaderMaterialPanel({
         panelWidth: this.readerFloatingBarWidth(),
-        panelHeight: this.readerQuickJumpHeight(),
+        panelHeight: this.readerBottomMenuPanelHeight(),
         cornerRadius: 28,
         darkMode: this.isReaderThemeDark(),
         fallbackColor: this.readerPanelColor()
       }) {
-        this.readerHdsChapterBarContent()
+        Column() {
+          Column() {
+            this.readerHdsChapterBarContent()
+          }
+          .width('100%')
+          .height(this.readerQuickJumpHeight())
+          Stack({ alignContent: Alignment.Top }) {
+            if (materialActions) {
+              Column() {
+                this.readerMaterialActionBarContent(false, false)
+              }
+              .width('100%')
+              .height(56)
+              .justifyContent(FlexAlign.Center)
+            } else {
+              this.readerFloatingActionRow()
+            }
+            Divider()
+              .strokeWidth(0.5)
+              .color(this.readerPanelBorderColor())
+              .margin({ left: 20, right: 20 })
+          }
+          .width('100%')
+          .height(56)
+        }
+        .width('100%')
+        .height('100%')
       }
       this.readerChapterTooltip()
     }
     .width('100%')
-    .height(this.readerQuickJumpHeight())
+    .height(this.readerBottomMenuPanelHeight())
   }
 
   @Builder
@@ -3716,7 +3749,8 @@ struct ReadBookPage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
         Text(this.readerQuickJumpMode === 'percent' ? `${this.getMenuPercentDisplay().toFixed(1)}% · 全书` :
-          `${this.getMenuChapterDisplayIndex() + 1}/${this.chapters.length} ${this.readerQuickJumpChapterUnit()}`)
+          (this.readerQuickJumpMode === 'page' ? `${this.getMenuPageDisplayIndex() + 1}/${this.readerQuickJumpPageCount()} 页` :
+          `${this.getMenuChapterDisplayIndex() + 1}/${this.chapters.length} ${this.readerQuickJumpChapterUnit()}`))
           .fontSize(AppFontSize.CAPTION)
           .fontColor('#CCFFFFFF')
       }
@@ -3739,12 +3773,15 @@ struct ReadBookPage {
       mode: this.readerQuickJumpMode,
       chapterLabel: this.isReaderComicModeActive() ? '话数' : '章节',
       chapterUnit: this.readerQuickJumpChapterUnit(),
-      value: this.readerQuickJumpMode === 'percent' ? this.getMenuPercentDisplay() : this.getMenuChapterDisplayIndex(),
+      value: this.readerQuickJumpMode === 'percent' ? this.getMenuPercentDisplay() :
+        (this.readerQuickJumpMode === 'page' ? this.getMenuPageDisplayIndex() : this.getMenuChapterDisplayIndex()),
       chapterCount: this.chapters.length,
+      pageCount: this.readerQuickJumpPageCount(),
       currentChapter: this.currentChapterIndex,
       valueLabel: this.quickJumpBusy ? '正在定位…' : (this.chapters.length === 0 ? (this.isReaderComicModeActive() ? '暂无话数' : '暂无章节') :
         (this.readerQuickJumpMode === 'percent' ? `${this.getMenuPercentDisplay().toFixed(1)}% · 全书` :
-          `${this.getMenuChapterDisplayIndex() + 1} / ${this.chapters.length} ${this.readerQuickJumpChapterUnit()}`)),
+          (this.readerQuickJumpMode === 'page' ? this.readerQuickJumpPageLabel() :
+          `${this.getMenuChapterDisplayIndex() + 1} / ${this.chapters.length} ${this.readerQuickJumpChapterUnit()}`))),
       busy: this.quickJumpBusy || this.menuChapterConfirming || this.shouldBlockReaderInteraction(),
       dark: this.isReaderThemeDark(),
       textColor: this.readerPanelTextColor(),
@@ -3752,9 +3789,15 @@ struct ReadBookPage {
       accentColor: this.accentColor(),
       trackColor: this.readerChapterTrackColor(),
       thumbColor: this.readerSolidPanelColor(),
+      expanded: this.readerQuickJumpExpanded,
+      headerHeight: this.readerQuickJumpHeaderHeight(),
       onModeChange: (mode: string): void => this.setReaderQuickJumpMode(mode),
       onChange: (value: number, mode: SliderChangeMode): void => this.handleMenuChapterSliderChange(value, mode),
-      onStep: (direction: number): void => { this.jumpToAdjacentChapterFromMenu(direction); }
+      onStep: (direction: number): void => { this.jumpToAdjacentChapterFromMenu(direction); },
+      onExpandedChange: (expanded: boolean): void => this.setReaderQuickJumpExpanded(expanded),
+      onSlideCancel: (): void => {
+        if (!this.menuChapterConfirming && !this.quickJumpBusy) this.resetMenuChapterPreview();
+      }
     })
   }
 
@@ -4036,35 +4079,44 @@ struct ReadBookPage {
 
   @Builder
   readerFloatingBottomMenu() {
-    Column({ space: 10 }) {
+    Column() {
       if (this.readerUseChapterQuickJump) {
-        this.readerMaterialChapterBar()
+        this.readerQuickJumpMenuPanel(false)
+      } else {
+        Row() {
+          this.readerFloatingActionRow()
+        }
+        .width('100%')
+        .height(56)
+        .borderRadius(28)
+        .backgroundColor(this.readerPanelColor())
+        .border({ width: 0.5, color: this.readerPanelBorderColor() })
+        .shadow(this.readerPanelShadow())
       }
-
-      Row() {
-        this.readerFloatingIconMenuItem($r('sys.symbol.list_bullet'), false, () => {
-          this.openTocPanel();
-        })
-        this.readerFloatingIconMenuItem(this.readerMenuActionIcon(1), false, () => {
-          this.openReaderSettingsTab(this.readerMenuActionSettingsTab(1));
-        })
-        this.readerFloatingIconMenuItem(this.readerMenuActionIcon(2), false, () => {
-          this.openReaderSettingsTab(this.readerMenuActionSettingsTab(2));
-        })
-        this.readerFloatingDayNightMenuItem()
-      }
-      .width('100%')
-      .height(56)
-      .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
-      .borderRadius(28)
-      .backgroundColor(this.readerPanelColor())
-      .border({ width: 0.5, color: this.readerPanelBorderColor() })
-      .shadow(this.readerPanelShadow())
     }
     .width(this.readerFloatingBarWidth())
     .padding({ bottom: 14 })
     .position({ x: this.readerFloatingBarLeft(), y: '100%' })
     .translate({ y: '-100%' })
+  }
+
+  @Builder
+  readerFloatingActionRow() {
+    Row() {
+      this.readerFloatingIconMenuItem($r('sys.symbol.list_bullet'), false, () => {
+        this.openTocPanel();
+      })
+      this.readerFloatingIconMenuItem(this.readerMenuActionIcon(1), false, () => {
+        this.openReaderSettingsTab(this.readerMenuActionSettingsTab(1));
+      })
+      this.readerFloatingIconMenuItem(this.readerMenuActionIcon(2), false, () => {
+        this.openReaderSettingsTab(this.readerMenuActionSettingsTab(2));
+      })
+      this.readerFloatingDayNightMenuItem()
+    }
+    .width('100%')
+    .height(56)
+    .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
   }
 
   @Builder
@@ -4920,13 +4972,21 @@ struct ReadBookPage {
   }
 
   restoreReaderAutoScrollAnchor(): boolean {
-    const index = this.findPageIndexByOffset(this.readerAutoScrollAnchor);
+    if (!this.scrollReaderContinuousToSourceOffset(this.readerAutoScrollAnchor)) return false;
+    this.readerAutoScrollAnchor = -1;
+    this.readerAutoScrollClock.reset();
+    return true;
+  }
+
+  /** 把本章某个字符位置所在的行滚到小说滚动列表顶部；正文块排版不可用时返回 false。 */
+  scrollReaderContinuousToSourceOffset(sourceOffset: number): boolean {
+    const index = this.findPageIndexByOffset(sourceOffset);
     const layout = this.readerContinuousV2Layout(index, this.contentPages[index] || '');
     if (!layout) return false;
     const document = this.readerContinuousV2Documents.get(layout.identity);
     const chunkStart = this.readerContinuousV2Sources.get(layout.identity);
     if (!document || chunkStart === undefined) return false;
-    const displayOffset = document.displayOffsetForSource(Math.max(0, this.readerAutoScrollAnchor - chunkStart));
+    const displayOffset = document.displayOffsetForSource(Math.max(0, sourceOffset - chunkStart));
     let top = 0;
     for (const fragment of layout.fragments) {
       if (!fragment.paragraph) continue;
@@ -4937,8 +4997,6 @@ struct ReadBookPage {
     }
     this.readerComicScroller.scrollToIndex(this.readerContinuousListIndex(index), false, ScrollAlign.START,
       { extraOffset: LengthMetrics.vp(px2vp(top)) });
-    this.readerAutoScrollAnchor = -1;
-    this.readerAutoScrollClock.reset();
     return true;
   }
 
@@ -8233,14 +8291,30 @@ struct ReadBookPage {
     return this.readerFloatingBarRight() - 48;
   }
 
-  readerQuickJumpHeight(): number {
+  readerQuickJumpHeaderHeight(): number {
     const scale = Math.max(1, Math.min(2, (getContext(this) as common.UIAbilityContext).config.fontSizeScale || 1));
-    return 104 + Math.max(0, scale - 1) * 28;
+    return 44 + Math.max(0, scale - 1) * 28;
+  }
+
+  /** 合并面板里进度区的高度：顶部小横条 14 + 进度条 40，展开时再加跳转方式一行。 */
+  readerQuickJumpHeight(): number {
+    return 54 + (this.readerQuickJumpExpanded ? this.readerQuickJumpHeaderHeight() : 0);
+  }
+
+  /** 进度区 + 按钮行 56，再加系统材质内容区让出的 2。 */
+  readerBottomMenuPanelHeight(): number {
+    return this.readerUseChapterQuickJump ? this.readerQuickJumpHeight() + 58 : 56;
+  }
+
+  setReaderQuickJumpExpanded(expanded: boolean): void {
+    if (this.readerQuickJumpExpanded === expanded) return;
+    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.readerQuickJumpExpanded = expanded;
+    });
   }
 
   readerBottomMenuOverlayHeight(): number {
-    return (this.readerUseChapterQuickJump ? this.readerQuickJumpHeight() + 64 : 56) +
-      this.readerFloatingBarBottomMargin();
+    return this.readerBottomMenuPanelHeight() + this.readerFloatingBarBottomMargin();
   }
 
   readerBottomActionOverlayHeight(): number {
@@ -8936,10 +9010,30 @@ struct ReadBookPage {
   }
 
   getMenuChapterDisplayIndex(): number {
-    if (!this.menuChapterSliderActive) return this.currentChapterIndex;
+    if (!this.menuChapterSliderActive || this.readerQuickJumpMode === 'page') return this.currentChapterIndex;
     return this.readerQuickJumpMode === 'percent' ?
       ReaderQuickJumpModel.fromPercent(this.menuPercentPreview, this.chapters.length).chapterIndex :
       this.menuChapterPreviewIndex;
+  }
+
+  /** 与页脚页码同一口径：分页取本章分页，漫画取图片总数，小说滚动取屏幕页统计（统计中为 0）。 */
+  readerQuickJumpPageCount(): number {
+    return Math.max(0, this.getReaderInfoBarContext().pageCount);
+  }
+
+  readerQuickJumpCurrentPageIndex(): number {
+    const context = this.getReaderInfoBarContext();
+    return Math.max(0, Math.min(context.pageIndex, Math.max(0, context.pageCount - 1)));
+  }
+
+  getMenuPageDisplayIndex(): number {
+    return this.menuChapterSliderActive && this.readerQuickJumpMode === 'page' ? this.menuPagePreviewIndex :
+      this.readerQuickJumpCurrentPageIndex();
+  }
+
+  readerQuickJumpPageLabel(): string {
+    const count = this.readerQuickJumpPageCount();
+    return count === 0 ? '正在统计页数…' : `${this.getMenuPageDisplayIndex() + 1} / ${count} 页`;
   }
 
   getMenuPercentDisplay(): number {
@@ -8966,11 +9060,13 @@ struct ReadBookPage {
       this.chapters.length === 0) return;
     this.menuPercentPreview = ReaderQuickJumpModel.clampPercent(value);
     this.menuChapterPreviewIndex = this.clampChapterIndex(Math.round(value));
+    this.menuPagePreviewIndex = Math.max(0, Math.min(Math.round(value), this.readerQuickJumpPageCount() - 1));
     this.menuChapterSliderActive = true;
     this.menuChapterTooltipVisible = mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving;
     if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
       this.menuChapterTooltipVisible = false;
-      this.confirmMenuChapterJump(this.getMenuChapterDisplayIndex());
+      if (this.readerQuickJumpMode === 'page') this.jumpToMenuPage(this.menuPagePreviewIndex);
+      else this.confirmMenuChapterJump(this.getMenuChapterDisplayIndex());
     }
   }
 
@@ -9013,6 +9109,69 @@ struct ReadBookPage {
       console.error('确认快速跳转失败:', error);
     } finally {
       this.menuChapterConfirming = false;
+      this.resetMenuChapterPreview();
+    }
+  }
+
+  /** 本章内跳页，与章节、百分比一样先弹确认；对话框期间预览停在目标页、进度条锁住。 */
+  async jumpToMenuPage(targetPage: number): Promise<void> {
+    if (this.menuChapterConfirming || this.quickJumpBusy) return;
+    const count = this.readerQuickJumpPageCount();
+    const page = Math.max(0, Math.min(Math.round(targetPage), count - 1));
+    if (count <= 0 || page === this.readerQuickJumpCurrentPageIndex()) {
+      this.resetMenuChapterPreview();
+      return;
+    }
+    const chapterIndex = this.currentChapterIndex;
+    const bookUrl = this.bookUrl;
+    this.menuChapterConfirming = true;
+    let confirmed = false;
+    try {
+      const unit = this.readerQuickJumpChapterUnit();
+      const result = await promptAction.showDialog({
+        title: '确认跳转',
+        message: `跳转到本${unit}第 ${page + 1} 页？\n「${this.getChapterTitle(chapterIndex)}」· 共 ${count} 页`,
+        buttons: [
+          { text: '取消', color: this.readerPanelSubTextColor() },
+          { text: '跳转', color: this.accentColor() }
+        ]
+      });
+      confirmed = result.index === 1 && bookUrl === this.bookUrl && chapterIndex === this.currentChapterIndex &&
+        count === this.readerQuickJumpPageCount() && this.readerPageVisible && this.readerUseChapterQuickJump;
+    } catch (error) {
+      console.error('确认本章跳页失败:', error);
+    } finally {
+      this.menuChapterConfirming = false;
+    }
+    if (!confirmed) {
+      this.resetMenuChapterPreview();
+      return;
+    }
+    let jumped = false;
+    try {
+      if (this.isReaderNovelContinuousScrollModeActive()) {
+        // 滚动阅读的显示页按屏幕排版统计，与列表正文块无关，只能按页首字符位置定位。
+        const offset = page < this.readerContinuousMetricsStarts.length ? this.readerContinuousMetricsStarts[page] : -1;
+        if (offset < 0) return;
+        const speechAttached = this.isMirroringActiveTtsForCurrentBook() || this.isTtsSpeaking ||
+          this.ttsReader.isSpeaking() || ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId);
+        // 朗读要从新位置接着读，走完整跳转；其余情况正文已在列表里，直接滚过去。
+        if (speechAttached || !this.scrollReaderContinuousToSourceOffset(offset)) {
+          jumped = await this.performReaderQuickJump(chapterIndex, -1, offset);
+        } else {
+          jumped = true;
+          this.scheduleReaderContinuousPositionUpdate();
+        }
+      } else if (page < this.contentPages.length) {
+        jumped = await this.performReaderQuickJump(chapterIndex, -1, this.getPageStartOffset(page));
+      } else {
+        // 漫画增量排版期间总页数来自图片计数，未排到的页按比例取，排完后落到同一序号。
+        jumped = await this.performReaderQuickJump(chapterIndex, (page + 0.5) / count);
+      }
+      if (jumped) HdsFeedback.showToast(`已跳转至第 ${page + 1} 页`);
+    } catch (error) {
+      console.error('本章跳页失败:', error);
+    } finally {
       this.resetMenuChapterPreview();
     }
   }

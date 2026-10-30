@@ -12,6 +12,7 @@ vm.runInContext(strip(read('core/reader/ReaderQuickJumpModel.ts')) + '\nglobalTh
 const M = modelContext.Model;
 for (const bad of [NaN, Infinity, -Infinity]) assert.equal(M.clampPercent(bad), 0);
 assert.equal(M.normalizeMode('percent'), 'percent');
+assert.equal(M.normalizeMode('page'), 'page');
 assert.equal(M.normalizeMode('bad'), 'chapter');
 for (const [p,n,c,r] of [[0,240,0,0],[100,240,239,1],[62.5,240,149,1],[62.6,240,150,.24],
   [50,1,0,.5],[-1,240,0,0],[110,240,239,1],[50,0,0,0]]) {
@@ -228,13 +229,15 @@ function pageMethod(name) {
   });
   vm.runInContext(strip(`class Controls { ${['getMenuChapterDisplayIndex','getMenuPercentDisplay',
     'setReaderQuickJumpMode','handleMenuChapterSliderChange','confirmMenuChapterJump',
-    'resetMenuChapterPreview'].map(pageMethod).join('\n')} }\nglobalThis.Controls=Controls;`),context);
+    'resetMenuChapterPreview','readerQuickJumpPageCount','readerQuickJumpCurrentPageIndex',
+    'getMenuPageDisplayIndex','jumpToMenuPage'].map(pageMethod).join('\n')} }\nglobalThis.Controls=Controls;`),context);
   const h=new context.Controls();
   Object.assign(h,{quickJumpBusy:false,menuChapterConfirming:false,quickJumpSerial:0,
     bookUrl:'book',chapters:Array(240).fill({}),currentChapterIndex:47,currentPageIndex:9,
     readerQuickJumpMode:'chapter',readerPageVisible:true,readerUseChapterQuickJump:true,
     contentPages:Array(20).fill(''),shouldBlockReaderInteraction:()=>false,
-    clampChapterIndex:i=>Math.max(0,Math.min(239,i)),getReaderInfoBarContext:()=>({}),
+    clampChapterIndex:i=>Math.max(0,Math.min(239,i)),getReaderInfoBarContext:()=>({pageIndex:9,pageCount:20}),
+    isReaderNovelContinuousScrollModeActive:()=>false,getPageStartOffset:i=>i*100,
     isCurrentReaderPaginationComplete:()=>true,normalizeReaderSpreadPageIndex:i=>i,
     normalizeReaderQuickJumpPageIndex:i=>i,readerQuickJumpChapterUnit:()=> '章',
     getChapterTitle:()=> 'Chapter',readerPanelSubTextColor:()=> 'gray',accentColor:()=> 'blue',
@@ -254,5 +257,22 @@ function pageMethod(name) {
   await h.confirmMenuChapterJump(h.getMenuChapterDisplayIndex());
   assert.equal(jumps.length,1);assert.equal(jumps[0][0],150);
   assert(Math.abs(jumps[0][1]-.24)<1e-8);
+  // Page mode: preview keeps the chapter; release asks first, Cancel leaves the page, Confirm jumps inside it.
+  button=0;h.setReaderQuickJumpMode('page');
+  assert.deepEqual(savedModes,['percent','page']);
+  h.handleMenuChapterSliderChange(14,1);
+  assert.equal(h.getMenuPageDisplayIndex(),14);assert.equal(h.getMenuChapterDisplayIndex(),47);
+  assert.equal(jumps.length,1);
+  h.handleMenuChapterSliderChange(14,2);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(jumps.length,1,'Cancel must not jump');
+  assert.equal(h.menuChapterSliderActive,false);assert.equal(h.menuChapterConfirming,false);
+  button=1;h.handleMenuChapterSliderChange(99,2);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(jumps.length,2);assert.deepEqual(jumps[1],[47,-1,1900]);
+  assert.equal(h.menuChapterSliderActive,false);
+  h.handleMenuChapterSliderChange(9,2);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(jumps.length,2,'current page is a no-op');
 }
-console.log('PASS: preview and mode switch leave position untouched; Cancel resets preview; Confirm commits the frozen target once');
+console.log('PASS: preview and mode switch leave position untouched; Cancel resets preview; Confirm commits the frozen target once; page mode jumps inside the chapter');

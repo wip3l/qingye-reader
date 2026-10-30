@@ -6,7 +6,7 @@ export class ReaderQuickJumpTarget {
 /** Inverse of ReaderInfoBarText.bookPercent: each chapter has equal weight. */
 export class ReaderQuickJumpModel {
   static normalizeMode(mode: string): string {
-    return mode === 'percent' ? 'percent' : 'chapter';
+    return mode === 'percent' || mode === 'page' ? mode : 'chapter';
   }
 
   static clampPercent(value: number): number {
