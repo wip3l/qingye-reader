@@ -231,6 +231,30 @@ ON CONFLICT (id) DO NOTHING;
 
 活动期间新注册的账号也能抽，开小号刷券的收益很低：券绑定账号、不能转让，只能用来抵扣这个账号自己用充值点购买会员。小号要用上券，得先往小号里充值。
 
+## 每人三次，取最高（2026-10-30 追加）
+
+由迁移 `028_lottery_multi_draw.sql` 和增量包 `qingye-lottery-multidraw-20261030` 实现：
+
+- **次数**：活动的 `draws_per_user` 决定每人可抽几次，`double11-2026` 设为 3。
+- **只保留最好的一张券**：每个账号只保留一张券。`sort_order` 更小的奖项算更高档，抽到更高档时，旧券标为 `REPLACED`，换发新券；否则这次只留记录（`lottery_draws.kept = false`）。
+- **换券而不是改面额**：用旧券生成的会员报价，付款时发现券已不可用，会按“会员状态已变化”拒绝，不会按旧面额扣点。会员购买代码不用改。
+- **限量名额只算当前持有人**：限量奖品的 `issued` 只计当前持有的人，换券时退回旧奖品的名额。限量奖品已发完时，抽中它按兜底奖处理。
+- **重试不多扣次数**：每次抽奖带 `drawNo`（第几次，从 1 开始），重复提交同一个 `drawNo` 返回那次的结果，乱序或超出次数的请求会被拒绝。
+- **券用掉就停止**：券用掉后不能再抽。
+
+按原权重估算每人最终拿到的档位（取 3 次中最高）：
+
+| 最终档位 | 1 次 | 3 次取最高 |
+|---|---|---|
+| 特等奖 | 1% | 约 3.0% |
+| 一等奖 | 5% | 约 14.0% |
+| 二等奖 | 20% | 约 42.6% |
+| 三等奖 | 34% | 约 34.1% |
+| 幸运奖 | 40% | 约 6.4% |
+
+- 平均每张券被用掉时，终身会员约少收 10.2 元（原来 6.5 元），终身超级会员约少收 20.4 元（原来 13 元）。
+- 特等奖 20 张约在 670 人参与后发完，一等奖 100 张约在 720 人后发完；限量部分的总成本上限不变。
+
 ## 抽奖接口
 
 新文件 `server/src/lotteryService.ts`、`server/src/lotteryRoutes.ts`，挂在 `/lottery/api/` 下，验证码接口也放在这里：
@@ -402,10 +426,11 @@ App 不做本地空间检查，上传是否超额完全由服务端判断，所�
 
    ```sql
    BEGIN;
-   UPDATE lottery_prizes p SET issued = issued - 1 FROM lottery_draws d
-     WHERE d.prize_id = p.id AND d.campaign_id = 'double11-2026' AND d.user_id = '<你的用户 id>';
-   DELETE FROM lottery_draws WHERE campaign_id = 'double11-2026' AND user_id = '<你的用户 id>' RETURNING coupon_id;
-   DELETE FROM membership_coupons WHERE campaign_id = 'double11-2026' AND user_id = '<你的用户 id>' AND status = 'AVAILABLE';
+   UPDATE lottery_prizes p SET issued = issued - 1 FROM membership_coupons c
+     WHERE c.prize_id = p.id AND c.campaign_id = 'double11-2026' AND c.user_id = '<你的用户 id>' AND c.status = 'AVAILABLE';
+   DELETE FROM lottery_draws WHERE campaign_id = 'double11-2026' AND user_id = '<你的用户 id>';
+   DELETE FROM membership_coupons WHERE campaign_id = 'double11-2026' AND user_id = '<你的用户 id>'
+     AND status IN ('AVAILABLE', 'REPLACED');
    COMMIT;
    ```
 
@@ -416,7 +441,7 @@ SELECT p.label, p.stock, p.issued,
   count(c.*) FILTER (WHERE c.status = 'USED') AS used,
   coalesce(sum(o.coupon_points), 0) AS discounted_points
 FROM lottery_prizes p
-LEFT JOIN membership_coupons c ON c.prize_id = p.id
+LEFT JOIN membership_coupons c ON c.prize_id = p.id AND c.status <> 'REPLACED'
 LEFT JOIN membership_orders o ON o.coupon_id = c.id
 WHERE p.campaign_id = 'double11-2026'
 GROUP BY p.id ORDER BY p.sort_order;

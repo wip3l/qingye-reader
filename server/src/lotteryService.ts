@@ -102,7 +102,7 @@ export async function endSession(db: MembershipDb, token: string): Promise<void>
 
 interface CampaignRow {
   id: string; title: string; starts_at: Date; ends_at: Date; registered_before: Date; enabled: boolean;
-  super_no_coupon_quota_bytes: string | null;
+  super_no_coupon_quota_bytes: string | null; draws_per_user: number;
 }
 interface PrizeRow {
   id: string; label: string; weight: number; stock: number | null; issued: number;
@@ -132,20 +132,31 @@ async function ineligibleReason(db: MembershipDb, row: CampaignRow, userId: stri
   return null;
 }
 
-async function drawResult(db: MembershipDb, campaignId: string, userId: string) {
-  const row = await db.query<{
-    prize_id: string; label: string; created_at: Date; coupon_id: string; discounts: Record<string, number>;
-    status: string; super_choice: SuperChoice; used_at: Date | null;
-  }>(`SELECT d.prize_id, p.label, d.created_at, c.id AS coupon_id, c.discounts, c.status, c.super_choice, c.used_at
-      FROM lottery_draws d JOIN lottery_prizes p ON p.id = d.prize_id
-      JOIN membership_coupons c ON c.id = d.coupon_id
-      WHERE d.campaign_id = $1 AND d.user_id = $2`, [campaignId, userId]);
-  const draw = row.rows[0];
-  return draw ? {
-    prizeId: draw.prize_id, label: draw.label, drawnAt: draw.created_at.getTime(),
-    coupon: { id: draw.coupon_id, discounts: draw.discounts, status: draw.status, superChoice: draw.super_choice,
-      usedAt: draw.used_at?.getTime() ?? null }
-  } : null;
+interface CouponRow {
+  id: string; prize_id: string; discounts: Record<string, number>; status: string; super_choice: SuperChoice;
+  used_at: Date | null;
+}
+
+/** The account's coupon for a campaign: the newest one not retired by an upgrade. */
+async function currentCoupon(db: MembershipDb, campaignId: string, userId: string): Promise<CouponRow | null> {
+  const row = await db.query<CouponRow>(`SELECT id, prize_id, discounts, status, super_choice, used_at
+    FROM membership_coupons WHERE campaign_id = $1 AND user_id = $2 AND status <> 'REPLACED'
+    ORDER BY created_at DESC, id DESC LIMIT 1`, [campaignId, userId]);
+  return row.rows[0] ?? null;
+}
+
+const couponView = (coupon: CouponRow | null) => coupon && {
+  id: coupon.id, prizeId: coupon.prize_id, discounts: coupon.discounts, status: coupon.status,
+  superChoice: coupon.super_choice, usedAt: coupon.used_at?.getTime() ?? null
+};
+
+async function drawHistory(db: MembershipDb, campaignId: string, userId: string) {
+  const rows = await db.query<{ draw_no: number; prize_id: string; label: string; kept: boolean; created_at: Date }>(
+    `SELECT d.draw_no, d.prize_id, p.label, d.kept, d.created_at FROM lottery_draws d
+     JOIN lottery_prizes p ON p.id = d.prize_id
+     WHERE d.campaign_id = $1 AND d.user_id = $2 ORDER BY d.draw_no`, [campaignId, userId]);
+  return rows.rows.map(row => ({ drawNo: row.draw_no, prizeId: row.prize_id, label: row.label, kept: row.kept,
+    drawnAt: row.created_at.getTime() }));
 }
 
 export async function lotteryState(db: MembershipDb, campaignId: string, userId: string | null, now = Date.now()) {
@@ -156,6 +167,7 @@ export async function lotteryState(db: MembershipDb, campaignId: string, userId:
     campaign: {
       id: row.id, title: row.title, status: campaignStatus(row, now), startsAt: row.starts_at.getTime(),
       endsAt: row.ends_at.getTime(), registeredBefore: row.registered_before.getTime(),
+      drawsPerUser: row.draws_per_user,
       superCloudQuotaBytes: row.super_no_coupon_quota_bytes === null ? null : Number(row.super_no_coupon_quota_bytes)
     },
     prizes: prizeRows.map(prize => ({
@@ -164,7 +176,8 @@ export async function lotteryState(db: MembershipDb, campaignId: string, userId:
       limited: prize.stock !== null, remaining: prize.stock === null ? null : Math.max(0, prize.stock - prize.issued)
     })),
     account: null as null | {
-      displayName: string; ineligibleReason: string | null; draw: Awaited<ReturnType<typeof drawResult>>;
+      displayName: string; ineligibleReason: string | null;
+      draws: Awaited<ReturnType<typeof drawHistory>>; drawsLeft: number; coupon: ReturnType<typeof couponView>;
       cloudQuotaBytes: number; cloudBonus: boolean;
     }
   };
@@ -173,10 +186,15 @@ export async function lotteryState(db: MembershipDb, campaignId: string, userId:
     if (user.rows[0]) {
       const bonus = await db.query('SELECT 1 FROM cloud_quota_bonuses WHERE user_id = $1 AND campaign_id = $2',
         [userId, campaignId]);
+      const draws = await drawHistory(db, campaignId, userId);
+      const coupon = await currentCoupon(db, campaignId, userId);
       result.account = {
         displayName: user.rows[0].display_name,
         ineligibleReason: await ineligibleReason(db, row, userId),
-        draw: await drawResult(db, campaignId, userId),
+        draws,
+        // A spent coupon ends the account's draws: there is nothing left to upgrade.
+        drawsLeft: coupon && coupon.status !== 'AVAILABLE' ? 0 : Math.max(0, row.draws_per_user - draws.length),
+        coupon: couponView(coupon),
         cloudQuotaBytes: await cloudQuotaBytes(db, userId),
         cloudBonus: !!bonus.rowCount
       };
@@ -196,13 +214,24 @@ function pickPrize(prizeRows: readonly PrizeRow[], random: RandomInt): number {
   return prizeRows.length - 1;
 }
 
-/** One draw per account and campaign. Repeats, retries and races return the first result. */
-export async function drawLottery(db: MembershipDb, campaignId: string, userId: string, clientIp: string,
-  now = Date.now(), random: RandomInt = randomInt) {
+const soldOut = (prize: PrizeRow) => prize.stock !== null && prize.issued >= prize.stock;
+
+/**
+ * Draw number `drawNo` (1-based) for an account. Each campaign allows draws_per_user draws; the account keeps
+ * one coupon, replaced whenever a draw beats it (lower sort_order is better). A limited prize's `issued`
+ * counts current holders, so an upgrade returns the old prize to stock. Repeating a draw number, as a retry
+ * does, returns that draw instead of drawing again.
+ */
+export async function drawLottery(db: MembershipDb, campaignId: string, userId: string, drawNo: number,
+  clientIp: string, now = Date.now(), random: RandomInt = randomInt) {
+  if (!Number.isSafeInteger(drawNo) || drawNo < 1) fail(400, 'LOTTERY_INVALID_DRAW', '抽奖次序无效，请刷新页面');
   await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`lottery:${campaignId}:${userId}`]);
-  const existing = await drawResult(db, campaignId, userId);
-  if (existing) return { duplicate: true, draw: existing };
+  const history = await drawHistory(db, campaignId, userId);
+  const repeated = history[drawNo - 1];
+  if (repeated) return { duplicate: true, draw: repeated, coupon: couponView(await currentCoupon(db, campaignId, userId)) };
   const row = await campaign(db, campaignId);
+  if (history.length >= row.draws_per_user) fail(409, 'LOTTERY_NO_DRAWS_LEFT', '抽奖次数已用完');
+  if (drawNo !== history.length + 1) fail(409, 'LOTTERY_DRAW_OUT_OF_ORDER', '抽奖状态已变化，请刷新页面');
   const status = campaignStatus(row, now);
   if (status === 'NOT_STARTED') fail(409, 'LOTTERY_NOT_STARTED', '活动尚未开始');
   if (status === 'ENDED') fail(409, 'LOTTERY_ENDED', '活动已结束');
@@ -210,23 +239,52 @@ export async function drawLottery(db: MembershipDb, campaignId: string, userId: 
   const reason = await ineligibleReason(db, row, userId);
   if (reason === 'REGISTERED_TOO_LATE') fail(403, 'LOTTERY_INELIGIBLE', '本活动仅限活动截止日期前注册的账号参加');
   if (reason) fail(403, 'ACCOUNT_PAYMENT_RESTRICTED', '账号存在退款欠款，请先补齐');
+  const coupon = await currentCoupon(db, campaignId, userId);
+  if (coupon && coupon.status !== 'AVAILABLE') fail(409, 'LOTTERY_COUPON_USED', '抵扣券已经使用，不能继续抽奖');
   const prizeRows = await prizes(db, campaignId);
   const fallback = prizeRows.find(prize => prize.is_fallback);
   if (!prizeRows.length || !fallback) return fail(503, 'LOTTERY_MISCONFIGURED', '活动奖品尚未配置');
+  const held = coupon ? prizeRows.find(prize => prize.id === coupon.prize_id) : undefined;
+  const beats = (prize: PrizeRow) => !coupon || !held || prize.sort_order < held.sort_order;
   const picked = prizeRows[pickPrize(prizeRows, random)]!;
-  // Conditional increment: a sold-out limited prize falls through to the unlimited fallback.
-  let prize = (await db.query<PrizeRow>(`UPDATE lottery_prizes SET issued = issued + 1
-    WHERE id = $1 AND (stock IS NULL OR issued < stock) RETURNING *`, [picked.id])).rows[0];
-  if (!prize) {
-    prize = (await db.query<PrizeRow>(`UPDATE lottery_prizes SET issued = issued + 1
-      WHERE id = $1 RETURNING *`, [fallback.id])).rows[0]!;
+  let result = soldOut(picked) ? fallback : picked;
+  let kept = false;
+  if (beats(result)) {
+    // Conditional increment: a limited prize sold out meanwhile falls through to the unlimited fallback.
+    const claimed = (await db.query<PrizeRow>(`UPDATE lottery_prizes SET issued = issued + 1
+      WHERE id = $1 AND (stock IS NULL OR issued < stock) RETURNING *`, [result.id])).rows[0];
+    if (claimed) {
+      result = claimed;
+      kept = true;
+    } else {
+      result = fallback;
+      if (beats(fallback)) {
+        result = (await db.query<PrizeRow>('UPDATE lottery_prizes SET issued = issued + 1 WHERE id = $1 RETURNING *',
+          [fallback.id])).rows[0]!;
+        kept = true;
+      }
+    }
   }
-  const coupon = await db.query<{ id: string }>(`INSERT INTO membership_coupons
-    (user_id, campaign_id, prize_id, discounts, created_at) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-  [userId, campaignId, prize.id, JSON.stringify(prize.discounts), new Date(now)]);
-  await db.query(`INSERT INTO lottery_draws(campaign_id, user_id, prize_id, coupon_id, client_ip, created_at)
-    VALUES ($1, $2, $3, $4, $5, $6)`, [campaignId, userId, prize.id, coupon.rows[0]!.id, clientIp, new Date(now)]);
-  return { duplicate: false, draw: (await drawResult(db, campaignId, userId))! };
+  let couponId = coupon?.id;
+  if (kept) {
+    if (coupon) {
+      const retired = await db.query(`UPDATE membership_coupons SET status = 'REPLACED'
+        WHERE id = $1 AND status = 'AVAILABLE'`, [coupon.id]);
+      // Spent by a purchase committed meanwhile; the whole draw rolls back.
+      if (!retired.rowCount) fail(409, 'LOTTERY_COUPON_USED', '抵扣券已经使用，不能继续抽奖');
+      await db.query('UPDATE lottery_prizes SET issued = issued - 1 WHERE id = $1 AND issued > 0', [coupon.prize_id]);
+    }
+    couponId = (await db.query<{ id: string }>(`INSERT INTO membership_coupons
+      (user_id, campaign_id, prize_id, discounts, created_at) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [userId, campaignId, result.id, JSON.stringify(result.discounts), new Date(now)])).rows[0]!.id;
+  }
+  await db.query(`INSERT INTO lottery_draws(campaign_id, user_id, draw_no, prize_id, coupon_id, kept, client_ip, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, [campaignId, userId, drawNo, result.id, couponId, kept, clientIp, new Date(now)]);
+  return {
+    duplicate: false,
+    draw: { drawNo, prizeId: result.id, label: result.label, kept, drawnAt: now },
+    coupon: couponView(await currentCoupon(db, campaignId, userId))
+  };
 }
 
 /**

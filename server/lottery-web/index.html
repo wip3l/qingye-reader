@@ -90,7 +90,7 @@
   /* 转盘：纸页扇区、香槟金外圈与灯珠，中间是轻页书本图标 */
   .wheel-wrap { position: relative; width: min(300px, 78vw); aspect-ratio: 1; margin: 6px auto 18px; }
   .rim { position: absolute; inset: -10px; border-radius: 50%;
-    background: linear-gradient(135deg, var(--gold), var(--gold-strong)); box-shadow: 0 8px 22px rgba(110, 80, 30, .25); }
+    background: radial-gradient(circle, transparent 62%, var(--gold) 63%, var(--gold-strong) 100%); }
   .bulb { position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px; border-radius: 50%;
     background: #fff7e2; box-shadow: 0 0 6px #ffe6a8; }
   .bulb.dim { background: #f3d9a0; box-shadow: none; }
@@ -132,6 +132,11 @@
   .amount b { font-size: 18px; white-space: nowrap; }
   .ticket .note { padding: 0 14px 14px; margin: 0; font-size: 13px; color: var(--muted); }
 
+  .draws { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+  .draw-slot { border: 1px dashed var(--line); border-radius: 12px; padding: 8px 4px; text-align: center; font-size: 12px; color: var(--muted); }
+  .draw-slot b { display: block; font: 700 15px/1.4 var(--serif); color: var(--ink); }
+  .draw-slot.kept { border: 1px solid var(--gold); background: var(--gold-soft); }
+  .draw-slot.kept b { color: var(--gold-strong); }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th, td { padding: 9px 4px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
   th { color: var(--muted); font-weight: 500; font-size: 12px; }
@@ -157,7 +162,7 @@
   <header class="hero">
     <span class="eyebrow">双 11 限时</span>
     <h1>抽<em>永久会员</em>抵扣券</h1>
-    <p class="period" id="period">即日起至 11 月 11 日 · 每人一次，必中</p>
+    <p class="period" id="period">即日起至 11 月 11 日 · 每人三次，取最高</p>
     <div class="tiers">
       <div class="tier life"><img src="data:image/webp;base64,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" alt=""><div class="name">终身会员</div>
         <div class="max">最高立减 <b id="maxLifetime">30</b> 元</div></div>
@@ -214,6 +219,7 @@
     <div class="row center">
       <button id="drawButton" disabled>抽奖</button>
     </div>
+    <div class="draws" id="draws"></div>
     <div class="status" id="drawStatus" hidden></div>
   </section>
 
@@ -221,7 +227,7 @@
     <div class="ticket">
       <div class="ribbon"></div>
       <div class="head">
-        <div class="muted">恭喜抽中</div>
+        <div class="muted">你的抵扣券</div>
         <div class="prize" id="prizeName"></div>
       </div>
       <div class="amounts">
@@ -245,7 +251,8 @@
     <h2>活动规则</h2>
     <ul class="rules small" id="rules">
       <li id="ruleTime">活动时间：即日起至 2026 年 11 月 11 日 24:00（北京时间）。</li>
-      <li id="ruleEligible">2026 年 11 月 11 日 0:00 前注册的账号可参加，每个账号限抽一次，每次必中。</li>
+      <li id="ruleEligible">2026 年 11 月 11 日 0:00 前注册的账号可参加，每个账号可抽 3 次，每次必中。</li>
+      <li id="ruleBest">每个账号只保留一张券：抽到更高档的奖项会替换原来的券，没有更高则保留原券。券使用后不能再抽。</li>
       <li>特等奖、一等奖数量有限，发完即止，之后抽中这两档的改发幸运奖。</li>
       <li>抵扣券只能用于购买终身会员或终身超级会员，可与首发半价同享；一张券最多抵扣本次应付点数的一半。</li>
       <li>抵扣券永久有效，一张券只能使用一次，不可转让、不可兑现。</li>
@@ -379,9 +386,11 @@
   function renderCampaign() {
     const c = state.campaign;
     const end = beijing(c.endsAt - 1);
-    $('period').textContent = c.status === 'ENDED' ? `活动已于 ${end}结束` : `即日起至 ${end} · 每人一次，必中`;
+    const times = c.drawsPerUser > 1 ? `每人 ${c.drawsPerUser} 次，取最高` : '每人一次，必中';
+    $('period').textContent = c.status === 'ENDED' ? `活动已于 ${end}结束` : `即日起至 ${end} · ${times}`;
     $('ruleTime').textContent = `活动时间：即日起至 ${end} 24:00（北京时间）。`;
-    $('ruleEligible').textContent = `${beijing(c.registeredBefore)} 0:00 前注册的账号可参加，每个账号限抽一次，每次必中。`;
+    $('ruleEligible').textContent = `${beijing(c.registeredBefore)} 0:00 前注册的账号可参加，每个账号可抽 ${c.drawsPerUser} 次，每次必中。`;
+    show('ruleBest', c.drawsPerUser > 1);
   }
 
   function renderAccount() {
@@ -392,30 +401,53 @@
     show('verifyPending', !account && pending);
     show('signedIn', !!account);
     show('drawCard', !!account);
-    show('resultCard', !!(account && account.draw));
+    show('resultCard', !!(account && account.coupon));
     if (!account) return;
     $('displayName').textContent = account.displayName;
 
-    const draw = account.draw;
     const status = state.campaign.status;
+    const used = account.draws.length;
     const button = $('drawButton');
     let message = '';
-    if (draw) message = '你已经抽过了，结果见下方。';
+    if (account.coupon && account.coupon.status !== 'AVAILABLE') message = '抵扣券已经使用，不能继续抽奖。';
+    else if (used > 0 && account.drawsLeft === 0) message = '抽奖次数已用完，最终的券见下方。';
     else if (account.ineligibleReason === 'REGISTERED_TOO_LATE') message = '本活动仅限活动截止日期前注册的账号参加。';
     else if (account.ineligibleReason === 'PAYMENT_RESTRICTED') message = '账号存在退款欠款，补齐后才能参加。';
     else if (status === 'NOT_STARTED') message = '活动尚未开始。';
     else if (status === 'ENDED') message = '活动已结束。';
     else if (status !== 'OPEN') message = '活动暂未开放。';
     button.disabled = drawing || !!message;
-    button.textContent = draw ? '已抽奖' : '抽奖';
+    button.textContent = account.drawsLeft === 0 && used > 0 ? '次数已用完'
+      : `${used ? '再抽一次' : '抽奖'}（剩 ${account.drawsLeft} 次）`;
     $('drawStatus').textContent = message;
     show('drawStatus', !!message && !drawing);
-    if (draw) renderResult(draw);
+    renderDraws(account);
+    if (account.coupon) renderResult(account.coupon);
   }
 
-  function renderResult(draw) {
-    const coupon = draw.coupon;
-    $('prizeName').textContent = draw.label;
+  function renderDraws(account) {
+    const box = $('draws');
+    box.replaceChildren();
+    const total = state.campaign.drawsPerUser;
+    show('draws', total > 1);
+    for (let no = 1; no <= total; no++) {
+      const record = account.draws.find(d => d.drawNo === no);
+      // Only the latest kept draw is the coupon in hand; earlier kept draws were replaced.
+      const current = record && record.kept && !account.draws.some(d => d.kept && d.drawNo > no);
+      const slot = document.createElement('div');
+      slot.className = 'draw-slot' + (current ? ' kept' : '');
+      slot.append(`第 ${no} 次`);
+      const name = document.createElement('b');
+      name.textContent = record ? record.label : '—';
+      slot.appendChild(name);
+      slot.append(record ? (current ? '当前的券' : record.kept ? '已被替换' : '未超过') : '未抽');
+      box.appendChild(slot);
+    }
+  }
+
+  function renderResult(coupon) {
+    const prize = state.prizes.find(p => p.id === coupon.prizeId);
+    $('prizeName').textContent = prize ? prize.label : '抵扣券';
     $('lifetimeOff').textContent = '立减 ' + yuan(coupon.discounts.LIFETIME || 0);
     $('superOff').textContent = '立减 ' + yuan(coupon.discounts.SUPER_LIFETIME || 0);
     $('couponStatus').textContent = coupon.status === 'USED'
@@ -502,11 +534,14 @@
     $('drawButton').disabled = true;
     show('drawStatus', false);
     try {
-      const result = await api('/draw', {});
+      const result = await api('/draw', { drawNo: state.account.draws.length + 1 });
       const index = state.prizes.findIndex(prize => prize.id === result.draw.prizeId);
       if (!result.duplicate && index >= 0) await spinTo(index, state.prizes.length);
       drawing = false;
       await load();
+      if (state.campaign.drawsPerUser > 1 && !result.duplicate) {
+        toast(result.draw.kept ? `抽中${result.draw.label}，已换成这张券` : `抽中${result.draw.label}，没有超过当前的券，原券保留`);
+      }
       $('resultCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
       drawing = false;

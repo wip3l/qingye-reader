@@ -90,9 +90,9 @@ try {
   step = `${CONTENDERS} simultaneous draws by one account issue one coupon`;
   const single = await user();
   const draws = await race(Array.from({ length: CONTENDERS }, () =>
-    c => drawLottery(c, campaign, single, '127.0.0.1', now, lucky)));
+    c => drawLottery(c, campaign, single, 1, '127.0.0.1', now, lucky)));
   assert.ok(draws.every(r => r.status === 'fulfilled'));
-  assert.equal(new Set(draws.map(r => r.value.draw.coupon.id)).size, 1);
+  assert.equal(new Set(draws.map(r => r.value.coupon.id)).size, 1);
   assert.equal(draws.filter(r => !r.value.duplicate).length, 1);
   assert.equal(await count('SELECT count(*) FROM lottery_draws WHERE user_id=$1', [single]), 1);
   assert.equal(await count('SELECT count(*) FROM membership_coupons WHERE user_id=$1', [single]), 1);
@@ -102,7 +102,7 @@ try {
   for (let round = 0; round < 3; round++) {
     const users = [];
     for (let i = 0; i < CONTENDERS; i++) users.push(await user());
-    const results = await race(users.map(id => c => drawLottery(c, campaign, id, '127.0.0.1', now, grand)));
+    const results = await race(users.map(id => c => drawLottery(c, campaign, id, 1, '127.0.0.1', now, grand)));
     assert.ok(results.every(r => r.status === 'fulfilled'));
   }
   const issued = (await pool.query("SELECT issued FROM lottery_prizes WHERE id='c-grand'")).rows[0];
@@ -111,9 +111,34 @@ try {
   assert.equal(await count("SELECT count(*) FROM membership_coupons WHERE prize_id='c-lucky'"), 48 - 5 + 1);
   pass(step);
 
+  step = 'three racing rounds of upgrades keep one coupon each and never over-issue';
+  const multi = 'concurrency-multi';
+  await pool.query(`INSERT INTO lottery_campaigns(id,title,starts_at,ends_at,registered_before,enabled,draws_per_user)
+    VALUES ($1,'三次并发',$2,$3,$4,true,3)`, [multi, new Date(now - 3600000), new Date(now + 3600000), new Date(now)]);
+  await pool.query(`INSERT INTO lottery_prizes(id,campaign_id,label,weight,stock,discounts,is_fallback,sort_order) VALUES
+    ('mc-grand',$1,'特等奖',1,5,'{"LIFETIME":300,"SUPER_LIFETIME":600}',false,1),
+    ('mc-second',$1,'二等奖',1,NULL,'{"LIFETIME":100,"SUPER_LIFETIME":200}',false,2),
+    ('mc-lucky',$1,'幸运奖',1,NULL,'{"LIFETIME":30,"SUPER_LIFETIME":60}',true,3)`, [multi]);
+  const racers = [];
+  for (let i = 0; i < CONTENDERS; i++) racers.push(await user());
+  // Round 1 holds lucky, round 2 upgrades to second, round 3 races for the five grand prizes.
+  for (const [drawNo, ticket] of [[1, 2], [2, 1], [3, 0]]) {
+    const round = await race(racers.map(id => c => drawLottery(c, multi, id, drawNo, '127.0.0.1', now, () => ticket)));
+    assert.ok(round.every(r => r.status === 'fulfilled'));
+  }
+  const held = (await pool.query(`SELECT prize_id, count(*) AS count FROM membership_coupons
+    WHERE campaign_id=$1 AND status='AVAILABLE' GROUP BY prize_id`, [multi])).rows;
+  const heldBy = Object.fromEntries(held.map(r => [r.prize_id, Number(r.count)]));
+  assert.deepEqual(heldBy, { 'mc-grand': 5, 'mc-second': CONTENDERS - 5 });
+  const counters = Object.fromEntries((await pool.query('SELECT id, issued FROM lottery_prizes WHERE campaign_id=$1', [multi]))
+    .rows.map(r => [r.id, Number(r.issued)]));
+  assert.deepEqual(counters, { 'mc-grand': 5, 'mc-second': CONTENDERS - 5, 'mc-lucky': 0 });
+  assert.equal(await count('SELECT count(*) FROM lottery_draws WHERE campaign_id=$1', [multi]), CONTENDERS * 3);
+  pass(step);
+
   step = 'two quotes holding the same coupon spend it once';
   const twice = await user();
-  await tx(c => drawLottery(c, campaign, twice, '127.0.0.1', now, lucky));
+  await tx(c => drawLottery(c, campaign, twice, 1, '127.0.0.1', now, lucky));
   const quotes = await Promise.all([0, 1].map(() => tx(c => quoteMembership(c, twice, 'LIFETIME', now))));
   assert.ok(quotes.every(q => q.couponPoints === 30));
   const purchases = await race(quotes.map((q, i) => c => purchaseMembership(c, twice, q.quoteId, 'twice-' + i, now)));
@@ -127,7 +152,7 @@ try {
   step = 'switching to cloud space while paying with the coupon resolves to exactly one';
   for (let attempt = 0; attempt < 4; attempt++) {
     const id = await user();
-    await tx(c => drawLottery(c, campaign, id, '127.0.0.1', now, lucky));
+    await tx(c => drawLottery(c, campaign, id, 1, '127.0.0.1', now, lucky));
     const q = await tx(c => quoteMembership(c, id, 'SUPER_LIFETIME', now));
     assert.equal(q.couponPoints, 60);
     const [purchase, choice] = await race([

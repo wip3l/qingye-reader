@@ -77,10 +77,10 @@ export function registerLotteryRoutes(app: FastifyInstance, deps: LotteryRouteDe
     return { verified: true, displayName: result.displayName };
   });
 
-  app.post('/lottery/api/draw', { preHandler: sameOrigin, config: limited(20) }, async request =>
-    deps.transaction(async db => {
+  app.post<{ Body: { drawNo?: unknown } }>('/lottery/api/draw', { preHandler: sameOrigin, config: limited(20) },
+    async request => deps.transaction(async db => {
       const userId = await requireUser(request, db);
-      return drawLottery(db, deps.campaignId, userId, request.ip);
+      return drawLottery(db, deps.campaignId, userId, Number(request.body?.drawNo), request.ip);
     }));
 
   app.post<{ Body: { choice?: unknown } }>('/lottery/api/coupon/super-choice',

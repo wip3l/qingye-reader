@@ -109,30 +109,94 @@ test('lottery, coupons and campaign cloud quota (embedded PostgreSQL)', async t 
   await t.test('one draw per account; a sold-out prize falls back; late registrants are refused', async () => {
     const a = await user();
     const b = await user();
-    const drawn = await tx(c => drawLottery(c, campaign, a, '1.1.1.1', now, first));
+    const drawn = await tx(c => drawLottery(c, campaign, a, 1, '1.1.1.1', now, first));
     assert.equal(drawn.duplicate, false);
     assert.equal(drawn.draw.prizeId, 't-grand');
-    const again = await tx(c => drawLottery(c, campaign, a, '1.1.1.1', now, last));
+    const again = await tx(c => drawLottery(c, campaign, a, 1, '1.1.1.1', now, last));
     assert.equal(again.duplicate, true);
-    assert.equal(again.draw.coupon.id, drawn.draw.coupon.id);
+    assert.equal(again.coupon!.id, drawn.coupon!.id);
+    await assert.rejects(tx(c => drawLottery(c, campaign, a, 2, '1.1.1.1', now, last)), rejectedCode('LOTTERY_NO_DRAWS_LEFT'));
     // The only grand prize is gone, so the same lucky ticket yields the fallback.
-    assert.equal((await tx(c => drawLottery(c, campaign, b, '1.1.1.1', now, first))).draw.prizeId, 't-lucky');
+    assert.equal((await tx(c => drawLottery(c, campaign, b, 1, '1.1.1.1', now, first))).draw.prizeId, 't-lucky');
     const issued = await db.query<{ id: string; issued: number }>(
       'SELECT id, issued FROM lottery_prizes WHERE campaign_id=$1 ORDER BY sort_order', [campaign]);
     assert.deepEqual(issued.rows.map(r => [r.id, Number(r.issued)]), [['t-grand', 1], ['t-lucky', 1]]);
     const late = await user(0, new Date(now));
-    await assert.rejects(tx(c => drawLottery(c, campaign, late, '1.1.1.1', now, first)), rejectedCode('LOTTERY_INELIGIBLE'));
+    await assert.rejects(tx(c => drawLottery(c, campaign, late, 1, '1.1.1.1', now, first)), rejectedCode('LOTTERY_INELIGIBLE'));
     const state = await tx(c => lotteryState(c, campaign, late, now));
     assert.equal(state.account!.ineligibleReason, 'REGISTERED_TOO_LATE');
     assert.equal(state.prizes[0]!.remaining, 0);
     const tooLate = await user();
-    await assert.rejects(tx(c => drawLottery(c, campaign, tooLate, '1.1.1.1', now + 86400000, first)),
+    await assert.rejects(tx(c => drawLottery(c, campaign, tooLate, 1, '1.1.1.1', now + 86400000, first)),
       rejectedCode('LOTTERY_ENDED'));
+  });
+
+  await t.test('three draws keep the best coupon, return replaced limited prizes and retry safely', async () => {
+    const multi = 'multi-2028';
+    await db.query(`INSERT INTO lottery_campaigns(id,title,starts_at,ends_at,registered_before,enabled,draws_per_user)
+      VALUES ($1,'三次抽奖',$2,$3,$4,true,3)`, [multi, new Date(now - 86400000), new Date(now + 86400000), new Date(now)]);
+    await db.query(`INSERT INTO lottery_prizes(id,campaign_id,label,weight,stock,discounts,is_fallback,sort_order) VALUES
+      ('m-grand',$1,'特等奖',1,1,'{"LIFETIME":300,"SUPER_LIFETIME":600}',false,1),
+      ('m-second',$1,'二等奖',1,NULL,'{"LIFETIME":100,"SUPER_LIFETIME":200}',false,2),
+      ('m-lucky',$1,'幸运奖',1,NULL,'{"LIFETIME":30,"SUPER_LIFETIME":60}',true,3)`, [multi]);
+    const ticket = (n: number) => () => n; // 0 grand, 1 second, 2 lucky
+    const draw = (id: string, no: number, n: number, at = now) =>
+      tx(c => drawLottery(c, multi, id, no, '1.1.1.1', at, ticket(n)));
+    const issued = async () => Object.fromEntries((await db.query<{ id: string; issued: number }>(
+      'SELECT id, issued FROM lottery_prizes WHERE campaign_id=$1', [multi])).rows.map(r => [r.id, Number(r.issued)]));
+
+    const a = await user();
+    await assert.rejects(draw(a, 2, 1), rejectedCode('LOTTERY_DRAW_OUT_OF_ORDER'));
+    assert.equal((await draw(a, 1, 2)).draw.kept, true);
+    const second = await draw(a, 2, 1);
+    assert.deepEqual([second.draw.label, second.draw.kept, second.coupon!.prizeId], ['二等奖', true, 'm-second']);
+    const third = await draw(a, 3, 2);
+    assert.deepEqual([third.draw.label, third.draw.kept, third.coupon!.prizeId], ['幸运奖', false, 'm-second']);
+    await assert.rejects(draw(a, 4, 0), rejectedCode('LOTTERY_NO_DRAWS_LEFT'));
+    const retry = await draw(a, 2, 0);
+    assert.deepEqual([retry.duplicate, retry.draw.label], [true, '二等奖']);
+    const state = await tx(c => lotteryState(c, multi, a, now));
+    assert.deepEqual(state.account!.draws.map(d => [d.drawNo, d.label, d.kept]),
+      [[1, '幸运奖', true], [2, '二等奖', true], [3, '幸运奖', false]]);
+    assert.equal(state.account!.drawsLeft, 0);
+    assert.equal(state.campaign.drawsPerUser, 3);
+    const coupons = await db.query<{ status: string }>(
+      'SELECT status FROM membership_coupons WHERE campaign_id=$1 AND user_id=$2 ORDER BY created_at', [multi, a]);
+    assert.deepEqual(coupons.rows.map(r => r.status), ['REPLACED', 'AVAILABLE']);
+    assert.deepEqual(await issued(), { 'm-grand': 0, 'm-second': 1, 'm-lucky': 0 });
+
+    // Upgrading to the single grand prize returns the second prize; a later grand ticket falls back.
+    const b = await user();
+    await draw(b, 1, 1);
+    assert.equal((await draw(b, 2, 0)).coupon!.prizeId, 'm-grand');
+    assert.deepEqual(await issued(), { 'm-grand': 1, 'm-second': 1, 'm-lucky': 0 });
+    const c2 = await user();
+    await draw(c2, 1, 1);
+    const blocked = await draw(c2, 2, 0);
+    assert.deepEqual([blocked.draw.label, blocked.draw.kept, blocked.coupon!.prizeId], ['幸运奖', false, 'm-second']);
+    assert.deepEqual(await issued(), { 'm-grand': 1, 'm-second': 2, 'm-lucky': 0 });
+
+    // A quote holding the old coupon cannot buy after an upgrade; a fresh quote uses the new one.
+    const g = await user();
+    await draw(g, 1, 2);
+    const stale = await tx(c => quoteMembership(c, g, 'LIFETIME', now));
+    assert.equal(stale.couponPoints, 30);
+    await draw(g, 2, 1);
+    await assert.rejects(tx(c => purchaseMembership(c, g, stale.quoteId, 'stale-coupon', now)),
+      rejectedCode('MEMBERSHIP_OFFER_CHANGED'));
+    assert.equal((await tx(c => quoteMembership(c, g, 'LIFETIME', now))).couponPoints, 100);
+
+    // Spending the coupon ends the account's draws.
+    const h = await user();
+    await draw(h, 1, 2);
+    await buy(h, 'LIFETIME');
+    await assert.rejects(draw(h, 2, 0), rejectedCode('LOTTERY_COUPON_USED'));
+    assert.equal((await tx(c => lotteryState(c, multi, h, now))).account!.drawsLeft, 0);
   });
 
   await t.test('the quote applies the coupon automatically and the purchase spends it', async () => {
     const id = await user();
-    await tx(c => drawLottery(c, campaign, id, '1.1.1.1', now, last)); // 30 / 60 points
+    await tx(c => drawLottery(c, campaign, id, 1, '1.1.1.1', now, last)); // 30 / 60 points
     const monthly = await tx(c => quoteMembership(c, id, 'MONTHLY', now));
     assert.equal(monthly.couponId, null);
     const { quote, order } = await buy(id, 'LIFETIME');
@@ -156,13 +220,13 @@ test('lottery, coupons and campaign cloud quota (embedded PostgreSQL)', async t 
 
   await t.test('super with a coupon gets no bonus; super traded for cloud space gets 5 GiB', async () => {
     const withCoupon = await user();
-    await tx(c => drawLottery(c, campaign, withCoupon, '1.1.1.1', now, last));
+    await tx(c => drawLottery(c, campaign, withCoupon, 1, '1.1.1.1', now, last));
     const used = await buy(withCoupon, 'SUPER_LIFETIME');
     assert.equal(used.quote.couponPoints, 60);
     assert.equal(await cloudQuotaBytes(query, withCoupon), CLOUD_BASE_QUOTA_BYTES);
 
     const cloud = await user();
-    await tx(c => drawLottery(c, campaign, cloud, '1.1.1.1', now, last));
+    await tx(c => drawLottery(c, campaign, cloud, 1, '1.1.1.1', now, last));
     await assert.rejects(tx(c => setSuperChoice(c, campaign, cloud, 'FREE')), rejectedCode('LOTTERY_INVALID_CHOICE'));
     await tx(c => setSuperChoice(c, campaign, cloud, 'CLOUD'));
     // Trading the coupon only affects the super membership.
@@ -196,7 +260,7 @@ test('lottery, coupons and campaign cloud quota (embedded PostgreSQL)', async t 
 
   await t.test('changing the choice after quoting refuses the stale quote', async () => {
     const id = await user();
-    await tx(c => drawLottery(c, campaign, id, '1.1.1.1', now, last));
+    await tx(c => drawLottery(c, campaign, id, 1, '1.1.1.1', now, last));
     const quote = await tx(c => quoteMembership(c, id, 'SUPER_LIFETIME', now));
     assert.equal(quote.couponPoints, 60);
     await tx(c => setSuperChoice(c, campaign, id, 'CLOUD'));
