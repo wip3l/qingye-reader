@@ -201,6 +201,10 @@ const READER_REPLACE_MENU_ITEM_ID: string = 'reader_replace_rule';
 const READER_PAGE_CURL_SNAPSHOT_SCALE = 0.42;
 // 3D 仿真单双页共用平折绘制，每帧只画两次贴图，保留较高的快照分辨率让正文清晰。
 const READER_PAGE_3D_SNAPSHOT_SCALE = 0.75;
+// 连续快翻时卷页动画的时长比例，以及动画中途被下一次翻页催促时走完整页的时长。
+const READER_PAGE_CURL_RAPID_DURATION_RATIO = 0.6;
+const READER_PAGE_CURL_HURRY_DURATION = 150;
+const READER_PAGE_3D_HURRY_DURATION = 180;
 const READER_CURL_REGION_UNSET = -1;
 // 一次拖动的意图：越过点击阈值时按方向判定一次，之后不再在翻页与下拉书签之间切换。
 const READER_PAN_INTENT_NONE = 0;
@@ -587,6 +591,12 @@ struct ReadBookPage {
   private readerPageCurlOffset: number = 0;
   private readerPageCurlAnimator: AnimatorResult | null = null;
   private readerPageCurlAnimationSerial: number = 0;
+  // 正在收尾的卷页动画登记的加速入口：动画中途又来一次翻页时，从当前位置用短时长走完剩余行程。
+  private readerPageCurlHurry: (() => void) | null = null;
+  // 当前这次翻页来自排队（用户在连续快翻），卷页动画用更短的时长。
+  private readerRapidPageTurn: boolean = false;
+  // 等待卷页快照结果的回调；截图一完成立即唤醒，不必等下一个 16ms 轮询。
+  private readerPageCurlCaptureWaiters: (() => void)[] = [];
   @State readerPageCurlSnapshotReady: boolean = false;
   @State pageTransitionX: number = 0;
   @State pageTransitionOpacity: number = 1;
@@ -18417,6 +18427,7 @@ struct ReadBookPage {
     // idle batch cannot slip between two queued curls and move the paragraph tree on their shared boundary.
     this.deferReaderPaginationForInteraction(700);
     this.isPageTurning = true;
+    this.readerRapidPageTurn = fromQueue;
     let turnCompleted = false;
     try {
       if (!this.isPageTurnAnimationEnabled()) {
@@ -18429,6 +18440,7 @@ struct ReadBookPage {
       turnCompleted = true;
     } finally {
       this.isPageTurning = false;
+      this.readerRapidPageTurn = false;
     }
     this.deferReaderPaginationForInteraction(220);
     if (resumeTtsAfterTurn) {
@@ -18503,6 +18515,9 @@ struct ReadBookPage {
 
   enqueueReaderPageTurn(direction: number, style: string, releaseVelocity: number): void {
     this.pageTurnQueue.enqueue(direction, style, releaseVelocity);
+    // 卷页还在自动走完时又来了翻页：让它立刻加速收尾，排队的下一页才能尽快接上。
+    const hurry = this.readerPageCurlHurry;
+    if (hurry) hurry();
   }
 
   runQueuedPageTurnLater(): void {
@@ -19143,10 +19158,33 @@ struct ReadBookPage {
       this.captureReaderPageCurlSnapshots(serial, key).catch((error: Error) => {
         if (serial === this.readerPageCurlCaptureSerial) {
           this.readerPageCurlCapturePending = false;
+          this.notifyReaderPageCurlCaptureWaiters();
         }
         console.warn('生成仿真翻页快照失败:', error);
       });
     }, 0);
+  }
+
+  // 等卷页快照的结果：截图完成或失败时立即唤醒，最多等 timeoutMs 再回去检查一次状态。
+  private waitReaderPageCurlCaptureSignal(timeoutMs: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let done = false;
+      const finish = (): void => {
+        if (done) return;
+        done = true;
+        const index = this.readerPageCurlCaptureWaiters.indexOf(finish);
+        if (index >= 0) this.readerPageCurlCaptureWaiters.splice(index, 1);
+        resolve();
+      };
+      this.readerPageCurlCaptureWaiters.push(finish);
+      setTimeout(finish, timeoutMs);
+    });
+  }
+
+  private notifyReaderPageCurlCaptureWaiters(): void {
+    if (this.readerPageCurlCaptureWaiters.length === 0) return;
+    const waiters = this.readerPageCurlCaptureWaiters.slice();
+    for (const waiter of waiters) waiter();
   }
 
   async captureReaderPageCurlSnapshots(serial: number, key: string): Promise<void> {
@@ -19169,40 +19207,56 @@ struct ReadBookPage {
     const needsBack = this.readerPageCurlNeedsBackSnapshot();
     let front: image.PixelMap | null = null;
     let back: image.PixelMap | null = null;
+    let lastError = '';
+    const capture = (id: string): Promise<image.PixelMap | null> => snapshot.get(id, {
+      scale: snapshotScale,
+      waitUntilRenderFinished: false
+    }).then((pixelMap: image.PixelMap): image.PixelMap | null => pixelMap)
+      .catch((error: Error): image.PixelMap | null => {
+        lastError = `${error}`;
+        return null;
+      });
     // A tap can request the snapshot in the same task that publishes the simulation subtree.
     // The component IDs become available on a following render frame, so retry transient 100001
     // failures instead of letting tap turns miss the curl while drag turns happen to work.
     for (let attempt = 0; attempt < 24; attempt++) {
-      try {
-        // The paper front must be the exact settled component already visible to the user. Rebuilding a second
-        // native Paragraph solely for capture can resolve to a neighbouring physical-pixel origin and produces
-        // a small but repeatable vertical jump at the start of every rapid turn.
-        front = await snapshot.get(this.currentReaderSnapshotComponentId(), {
-          scale: snapshotScale,
-          waitUntilRenderFinished: false
-        });
-        if (needsBack) {
-          back = await snapshot.get(`reader_page_curl_back_${suffix}`, {
-            scale: snapshotScale,
-            waitUntilRenderFinished: false
-          });
-        }
-        if (this.isLandscapeDoublePageActive()) {
-          await this.cropReaderPageCurlFrontToTurningLeaf(front);
-        }
-        break;
-      } catch (error) {
+      // The paper front must be the exact settled component already visible to the user. Rebuilding a second
+      // native Paragraph solely for capture can resolve to a neighbouring physical-pixel origin and produces
+      // a small but repeatable vertical jump at the start of every rapid turn.
+      // Front and back are independent components: request them together instead of paying two snapshot round
+      // trips before every curl, and keep a texture that already succeeded while only the missing one is retried.
+      const requests: Promise<image.PixelMap | null>[] = [
+        front ? Promise.resolve<image.PixelMap | null>(front) : capture(this.currentReaderSnapshotComponentId()),
+        !needsBack || back ? Promise.resolve<image.PixelMap | null>(back) :
+          capture(`reader_page_curl_back_${suffix}`)
+      ];
+      const results: (image.PixelMap | null)[] = await Promise.all(requests);
+      front = results[0];
+      back = results[1];
+      if (serial !== this.readerPageCurlCaptureSerial || key !== this.readerPageCurlCaptureKey ||
+        this.pageSlideDirection === 0) {
         if (front) front.release().catch(() => {});
         if (back) back.release().catch(() => {});
-        front = null;
-        back = null;
-        if (serial !== this.readerPageCurlCaptureSerial || key !== this.readerPageCurlCaptureKey ||
-          this.pageSlideDirection === 0) return;
-        if (attempt >= 23) throw new Error(`获取仿真翻页快照失败: ${error}`);
-        await sleepMs(16);
+        return;
       }
+      if (front && (!needsBack || back)) break;
+      if (attempt >= 23) {
+        if (front) front.release().catch(() => {});
+        if (back) back.release().catch(() => {});
+        throw new Error(`获取仿真翻页快照失败: ${lastError}`);
+      }
+      await sleepMs(16);
     }
     if (!front || (needsBack && !back)) return;
+    if (this.isLandscapeDoublePageActive()) {
+      try {
+        await this.cropReaderPageCurlFrontToTurningLeaf(front);
+      } catch (error) {
+        front.release().catch(() => {});
+        if (back) back.release().catch(() => {});
+        throw new Error(`裁剪仿真翻页快照失败: ${error}`);
+      }
+    }
     let snapshotHeight = this.getPageTurnHeight();
     try {
       const frontInfo = await front.getImageInfo();
@@ -19225,6 +19279,7 @@ struct ReadBookPage {
     this.readerPageCurlCapturePending = false;
     this.readerPageCurlSnapshotReady = true;
     this.drawReaderPageCurl();
+    this.notifyReaderPageCurlCaptureWaiters();
     // RenderService can still own the previous texture for the frame currently being submitted.
     // Releasing it in the same task intermittently invalidates that frame during rapid queued turns.
     setTimeout(() => {
@@ -19281,7 +19336,7 @@ struct ReadBookPage {
       // While an adjacent preview is still loading, a completed placeholder capture is not a terminal result:
       // applyPageTurnPreview will publish the real leaf and start the authoritative replacement capture.
       if (!this.readerPageCurlCapturePending && !crossChapterPreviewLoading) return false;
-      await sleepMs(16);
+      await this.waitReaderPageCurlCaptureSignal(16);
     }
     return false;
   }
@@ -19302,6 +19357,9 @@ struct ReadBookPage {
     const distance = this.getPageTurnDistance();
     const targetOffset = direction > 0 ? -distance : distance;
     const remaining = Math.abs(targetOffset - this.getPageSlideAxisOffset());
+    // 排队来的翻页，或等快照期间又点了一次，说明在连续快翻：整套动画按比例缩短，跟上手速。
+    const rapid = this.readerRapidPageTurn || this.pageTurnQueue.hasPending();
+    const durationRatio = rapid ? READER_PAGE_CURL_RAPID_DURATION_RATIO : 1;
     if (this.is3DPageTurnAnimation()) {
       // 单双页平折：时长按折页还要走的可见行程算，整页约 400ms；曲线接近匀速、收尾略缓，
       // 折线在后半程保持稳定的速度扫出左边缘，而不是先冲过大半程再停住。
@@ -19310,15 +19368,15 @@ struct ReadBookPage {
         doublePage ? this.getReaderPageColumnWidth() : this.getPageTurnWidth(),
         doublePage ? this.getReaderDoublePageRightOrigin() : 0);
       const fraction = releasedFraction >= 0 ? releasedFraction : remaining / Math.max(1, distance);
-      const flatDuration = Math.max(180, Math.round(400 * Math.pow(Math.max(0, fraction), 0.6)));
+      const flatDuration = Math.max(Math.round(180 * durationRatio),
+        Math.round(400 * durationRatio * Math.pow(Math.max(0, fraction), 0.6)));
       await this.animateReaderPageCurlOffset(targetOffset, flatDuration, true, 'cubic-bezier(0.3, 0.4, 0.7, 1)');
       return;
     }
     // A long symmetric EaseInOut made the last part of the sheet appear to stop before the
     // incoming page was committed. Finish with a shorter, momentum-preserving edge motion.
-    // 3D 仿真的纸角行程比位移长，同样的时长会显得一闪而过，给它更宽裕的补完时间。
-    const fullDuration = this.is3DPageTurnAnimation() ? 460 : 340;
-    const duration = Math.max(this.is3DPageTurnAnimation() ? 150 : 110,
+    const fullDuration = Math.round(340 * durationRatio);
+    const duration = Math.max(Math.round(110 * durationRatio),
       Math.min(fullDuration, Math.round(fullDuration * remaining / distance)));
     await this.animateReaderPageCurlOffset(targetOffset, duration, true);
   }
@@ -19351,69 +19409,105 @@ struct ReadBookPage {
     completingPageTurn: boolean = false, easing: string = ''): Promise<void> {
     const activeAnimator = this.readerPageCurlAnimator;
     this.readerPageCurlAnimator = null;
+    this.readerPageCurlHurry = null;
     if (activeAnimator) activeAnimator.cancel();
     const serial = ++this.readerPageCurlAnimationSerial;
     const startOffset = this.getPageSlideAxisOffset();
     return new Promise<void>((resolve) => {
       let settled = false;
+      let hurried = false;
       let watchdogId = -1;
+      // The animator currently driving this motion. A hurried restart replaces it; the replaced animator's
+      // cancel callback must not end the turn while its successor is still moving the sheet.
+      let current: AnimatorResult | null = null;
+      let currentStartedAt = 0;
+      let currentDuration = 0;
+      let hurry: (() => void) | null = null;
       const settle = (): void => {
         if (settled) return;
         settled = true;
         if (watchdogId >= 0) clearTimeout(watchdogId);
+        if (hurry && this.readerPageCurlHurry === hurry) this.readerPageCurlHurry = null;
         resolve();
       };
-      let pageCurlAnimator: AnimatorResult;
-      try {
-        pageCurlAnimator = Animator.create({
-          duration: Math.max(1, duration),
-          easing: easing ? easing : (completingPageTurn ? 'cubic-bezier(0.18, 0.68, 0.32, 0.98)' :
-            'cubic-bezier(0.65, 0, 0.35, 1)'),
-          delay: 0,
-          fill: 'forwards',
-          direction: 'normal',
-          iterations: 1,
-          begin: startOffset,
-          end: targetOffset
-        });
-      } catch (error) {
-        console.warn('创建仿真翻页动画失败，提交目标帧:', error);
-        this.setPageSlideAxisOffset(targetOffset);
-        settle();
-        return;
-      }
-      this.readerPageCurlAnimator = pageCurlAnimator;
-      pageCurlAnimator.onFrame = (value: number): void => {
-        if (serial !== this.readerPageCurlAnimationSerial) return;
-        this.setPageSlideAxisOffset(value);
-      };
-      pageCurlAnimator.onFinish = (): void => {
-        if (serial === this.readerPageCurlAnimationSerial) {
+      const play = (from: number, playDuration: number, playEasing: string): void => {
+        let pageCurlAnimator: AnimatorResult;
+        try {
+          pageCurlAnimator = Animator.create({
+            duration: Math.max(1, playDuration),
+            easing: playEasing,
+            delay: 0,
+            fill: 'forwards',
+            direction: 'normal',
+            iterations: 1,
+            begin: from,
+            end: targetOffset
+          });
+        } catch (error) {
+          console.warn('创建仿真翻页动画失败，提交目标帧:', error);
           this.setPageSlideAxisOffset(targetOffset);
-          this.readerPageCurlAnimator = null;
+          settle();
+          return;
         }
-        settle();
-      };
-      pageCurlAnimator.onCancel = (): void => {
-        if (this.readerPageCurlAnimator === pageCurlAnimator) this.readerPageCurlAnimator = null;
-        settle();
-      };
-      // A few platform versions can lose Animator.onFinish after the window is resumed. Do not leave page-turn
-      // input locked indefinitely; commit the exact target frame shortly after the declared duration.
-      watchdogId = setTimeout(() => {
-        if (serial === this.readerPageCurlAnimationSerial) {
-          this.setPageSlideAxisOffset(targetOffset);
+        current = pageCurlAnimator;
+        currentStartedAt = Date.now();
+        currentDuration = Math.max(1, playDuration);
+        this.readerPageCurlAnimator = pageCurlAnimator;
+        pageCurlAnimator.onFrame = (value: number): void => {
+          if (serial !== this.readerPageCurlAnimationSerial || current !== pageCurlAnimator) return;
+          this.setPageSlideAxisOffset(value);
+        };
+        pageCurlAnimator.onFinish = (): void => {
+          if (current !== pageCurlAnimator) return;
+          if (serial === this.readerPageCurlAnimationSerial) {
+            this.setPageSlideAxisOffset(targetOffset);
+            this.readerPageCurlAnimator = null;
+          }
+          settle();
+        };
+        pageCurlAnimator.onCancel = (): void => {
           if (this.readerPageCurlAnimator === pageCurlAnimator) this.readerPageCurlAnimator = null;
+          if (current !== pageCurlAnimator) return;
+          settle();
+        };
+        // A few platform versions can lose Animator.onFinish after the window is resumed. Do not leave page-turn
+        // input locked indefinitely; commit the exact target frame shortly after the declared duration.
+        if (watchdogId >= 0) clearTimeout(watchdogId);
+        watchdogId = setTimeout(() => {
+          if (current !== pageCurlAnimator) return;
+          if (serial === this.readerPageCurlAnimationSerial) {
+            this.setPageSlideAxisOffset(targetOffset);
+            if (this.readerPageCurlAnimator === pageCurlAnimator) this.readerPageCurlAnimator = null;
+          }
+          settle();
+        }, Math.max(1, playDuration) + 96);
+        try {
+          pageCurlAnimator.play();
+        } catch (error) {
+          console.warn('启动仿真翻页动画失败，提交目标帧:', error);
+          this.setPageSlideAxisOffset(targetOffset);
+          settle();
         }
-        settle();
-      }, Math.max(1, duration) + 96);
-      try {
-        pageCurlAnimator.play();
-      } catch (error) {
-        console.warn('启动仿真翻页动画失败，提交目标帧:', error);
-        this.setPageSlideAxisOffset(targetOffset);
-        settle();
-      }
+      };
+      hurry = (): void => {
+        const replaced = current;
+        if (settled || hurried || !replaced || serial !== this.readerPageCurlAnimationSerial) return;
+        hurried = true;
+        const from = this.getPageSlideAxisOffset();
+        const fullDuration = this.is3DPageTurnAnimation() ? READER_PAGE_3D_HURRY_DURATION :
+          READER_PAGE_CURL_HURRY_DURATION;
+        const ratio = Math.min(1, Math.abs(targetOffset - from) / Math.max(1, this.getPageTurnDistance()));
+        const hurriedDuration = Math.max(40, Math.round(fullDuration * ratio));
+        // Only ever speed the sheet up; a motion that is almost done keeps its own ending.
+        const remainingMs = currentDuration - (Date.now() - currentStartedAt);
+        if (hurriedDuration >= remainingMs - 16) return;
+        current = null;
+        replaced.cancel();
+        play(from, hurriedDuration, 'cubic-bezier(0.25, 0.6, 0.4, 1)');
+      };
+      if (completingPageTurn) this.readerPageCurlHurry = hurry;
+      play(startOffset, duration, easing ? easing : (completingPageTurn ? 'cubic-bezier(0.18, 0.68, 0.32, 0.98)' :
+        'cubic-bezier(0.65, 0, 0.35, 1)'));
     });
   }
 
