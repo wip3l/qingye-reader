@@ -7,7 +7,7 @@ import { readEtsModule } from './lib/ets-module-staging.mjs';
 const source = readEtsModule('components/home/BookshelfPage.ets');
 const compile = code => stripTypeScriptTypes(code.replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, ''));
 const names = ['setShelfPage', 'applyShelfScope', 'refreshShelfTypeTabs', 'booksForShelfScope', 'isInShelfView',
-  'matchesShelfGroup', 'shelfBookType', 'shelfPageKey', 'shelfPageOrder', 'isTileLayout',
+  'matchesShelfGroup', 'shelfBookType', 'activeShelfTypeTab', 'shelfPageKey', 'shelfPageOrder', 'isTileLayout',
   'switchShelfScopeBySelection', 'canSelectShelfPage', 'shelfCategoryPage', 'markShelfScopePanGesture', 'clearShelfScopeTransition', 'shelfBookViewPrefix', 'shelfBookRenderKey',
   'shelfScopeTabIndex', 'shelfScopeTabHighlighted', 'onPrivateShelfEnabledChanged'];
 const methods = names.map(name => {

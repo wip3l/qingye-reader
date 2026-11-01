@@ -23,7 +23,7 @@ const context = vm.createContext({
 vm.runInContext(stripTypeScriptTypes(fs.readFileSync(new URL('../entry/src/main/ets/utils/SharedElementMotion.ts', import.meta.url), 'utf8').replace('export class', 'class')), context);
 const host = vm.runInContext(stripTypeScriptTypes(`({ ${methods} })`), context);
 Object.assign(host, {
-  showTileFolder: false, shelfBookRoutePending: false, bookshelfBookOpenAnimation: true,
+  shelfBookRoutePending: false, bookshelfBookOpenAnimation: true,
   cloudBookOpenRequest: 0, acknowledgeShelfBookUpdate() {},
   shelfOpeningCover: target => ({ bookUrl: target.bookUrl, cover: 'cover.jpg', frame: '', color: '#007DFF', initial: 'b' }),
   loadBooks: () => { refreshes++; return Promise.resolve(); }, shelfBookReturnRefreshTimer: -1

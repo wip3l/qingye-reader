@@ -62,6 +62,8 @@ const SHELF_COVER_INITIAL_PREFETCH_COUNT: number = 16;
 const SHELF_COVER_UPDATE_BATCH_MS: number = 48;
 const SHELF_UPDATE_BADGE_VARIABLE: string = 'shelfHasUpdate';
 const SHELF_SEARCH_INPUT_KEY: string = 'bookshelf_search_input';
+const SHELF_GROUP_MOTION_ID: string = 'bookshelf_group_page';
+const SHELF_GROUP_MOTION_DURATION: number = 380;
 /** 下拉偏移回退超过这个距离（vp）才算往回推，避免手指抖动时提示闪烁。 */
 const SHELF_REFRESH_PULL_DIRECTION_SLOP: number = 2;
 /** 输入停顿这么久才按新关键词重新筛选，连续打字时不必每个字都重建列表。 */
@@ -200,26 +202,20 @@ export struct BookshelfPage {
   @State shelfScopeTransitionX: number = 0;
   @State shelfScopeTransitionScale: number = 1;
   @State shelfScopeTransitionOpacity: number = 1;
-  @State tileGroupTransitionX: number = 0;
-  @State tileGroupTransitionScale: number = 1;
-  @State tileGroupTransitionOpacity: number = 1;
-  @State showTileFolder: boolean = false;
-  @State tileFolderExpanded: boolean = false;
-  @State tileFolderContentVisible: boolean = false;
-  @State tileFolderBounds: SharedElementBounds = new SharedElementBounds();
-  private folderBounds: Map<string, SharedElementBounds> = new Map();
-  @State tileFolderGroupId: number = 0;
-  @State tileFolderPageKey: string = 'all';
-  @State tileFolderOpacity: number = 0;
-  @State tileFolderViewportWidth: number = 360;
-  @State tileFolderViewportHeight: number = 720;
-  private tileFolderClosing: boolean = false;
-  private tileFolderAnimationGeneration: number = 0;
-  private tileFolderOpenTimer: number = -1;
-  private tileFolderDialogId: number = -1;
-  private tileFolderDialogRequest: number = 0;
-  private tileFolderBooksSource: ShelfBookDataSource = new ShelfBookDataSource();
-  private tileFolderScroller: Scroller = new Scroller();
+  @StorageLink('bookshelfGroupBackRequest') @Watch('onTileGroupBackRequested') tileGroupBackRequest: number = 0;
+  @StorageLink('bookshelfGroupTransitionActive') tileGroupAnimating: boolean = false;
+  @State tileGroupOriginVisible: boolean = false;
+  @State tileGroupHasOrigin: boolean = false;
+  @State tileGroupOriginBounds: SharedElementBounds = new SharedElementBounds();
+  @State tileGroupOriginBooks: Book[] = [];
+  private tileGroupOriginGroupId: number = 0;
+  private tileGroupPendingOpen: number = 0;
+  private tileGroupPendingBack: boolean = false;
+  private tileGroupMotionGeneration: number = 0;
+  private tileGroupOpenTimer: number = -1;
+  private tileGroupMotionWatchdog: number = -1;
+  private tileGroupRootPages: Map<string, ShelfCategoryPage> | null = null;
+  private tileGroupRootHeaderCollapse: number = 0;
   @State selectedBookUrls: string[] = [];
   @State showMultiSelectMoreMenu: boolean = false;
   private batchExportDialogSession: SystemDialogSession = new SystemDialogSession();
@@ -266,10 +262,6 @@ export struct BookshelfPage {
   private shelfChangeSourceTarget: Book | null = null;
   @State contextMenuX: number = 16;
   @State contextMenuY: number = 96;
-  private contextViewportOriginX: number = 0;
-  private contextViewportOriginY: number = 0;
-  private tileFolderCoordinateOriginX: number = 0;
-  private tileFolderCoordinateOriginY: number = 0;
   @State contextViewportWidth: number = 360;
   @State contextViewportHeight: number = 720;
   @State shelfTileViewportWidth: number = 360;
@@ -380,8 +372,7 @@ export struct BookshelfPage {
 
   aboutToDisappear(): void {
     this.shelfComponentActive = false;
-    this.folderBounds.clear();
-    this.resetTileFolder();
+    this.cancelTileGroupMotion();
     this.stopShelfCategoryAnimation();
     this.cloudBookOpenRequest++;
     this.cancelShelfBookOpening();
@@ -419,17 +410,6 @@ export struct BookshelfPage {
         console.warn('保存书架分组状态失败:', e);
       });
     }
-    if (!this.isTileLayout()) {
-      return;
-    }
-    this.tileGroupTransitionX = this.activeShelfGroupId > 0 ? 34 : -34;
-    this.tileGroupTransitionScale = 0.965;
-    this.tileGroupTransitionOpacity = 0.2;
-    animateTo({ duration: 300, curve: Curve.Friction }, () => {
-      this.tileGroupTransitionX = 0;
-      this.tileGroupTransitionScale = 1;
-      this.tileGroupTransitionOpacity = 1;
-    });
   }
 
   onShelfBookCloseAnimationRequested(): void {
@@ -600,10 +580,6 @@ export struct BookshelfPage {
   }
 
   showBookActions(book: Book, event?: GestureEvent): void {
-    if (this.showTileFolder) {
-      this.closeTileFolder(() => this.showBookActions(book, event));
-      return;
-    }
     this.captureContextMenuAnchor(event);
     this.pendingActionBook = book;
     this.showActionDialog = true;
@@ -981,10 +957,13 @@ export struct BookshelfPage {
   }
 
   updateContextViewport(area: Area): void {
-    this.contextViewportOriginX = Number(area.globalPosition.x);
-    this.contextViewportOriginY = Number(area.globalPosition.y);
     const width = this.areaDimension(area.width);
     const height = this.areaDimension(area.height);
+    if ((width > 0 && Math.abs(width - this.contextViewportWidth) > 1) ||
+      (height > 0 && Math.abs(height - this.contextViewportHeight) > 1)) {
+      // 旋转或窗口缩放后原卡片坐标失效，安全退回整页淡出，不收向旧位置。
+      this.tileGroupHasOrigin = false;
+    }
     if (width > 0) {
       this.contextViewportWidth = width;
       this.shelfTileViewportWidth = width;
@@ -1113,158 +1092,22 @@ export struct BookshelfPage {
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
-      Column() {
+      if (this.isTileGroupPage()) {
         Column() {
-        // 列表上滑时标题行收起：外层按收起量变矮并裁剪，标题行贴底上移并淡出。
-        Stack({ alignContent: Alignment.Bottom }) {
-          Row() {
-            if (this.isTileGroupPage() && !this.isBookMultiSelect) {
-              ImmersiveBackButton({
-                iconColor: this.primaryTextColor(),
-                darkMode: this.appDarkMode,
-                buttonSize: 40,
-                containerWidth: 56,
-                materialScale: 0.83,
-                compactLayout: true,
-                onBack: () => this.exitTileGroupPage()
-              })
-              Text(this.activeShelfGroupName())
-                .fontSize(AppFontSize.TITLE)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(this.primaryTextColor())
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Blank()
-              Text(this.books.length > 0 ? `${this.books.length}本` : '')
-                .fontSize(AppFontSize.BODY)
-                .fontColor(this.subTextColor())
-                .margin({ right: AppSpacing.MD })
-              this.shelfMoreButton()
-            } else {
-              if (this.isBookMultiSelect) {
-                Text('书架')
-                  .fontSize(AppFontSize.DISPLAY)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(this.primaryTextColor())
-              } else {
-                this.shelfGroupSwitcher()
-              }
-
-              if (this.isBookMultiSelect) {
-                Blank()
-                ImmersiveHeaderAction({
-                  label: '取消',
-                  accessibilityLabel: '退出多选',
-                  onTap: () => this.exitBookMultiSelect()
-                })
-              } else {
-                Blank()
-
-                this.shelfCategoryButton()
-                this.shelfFilterButton()
-                this.shelfMoreButton()
-              }
-            }
-          }
-          .width('100%')
-          .height(56 + this.statusBarHeight)
-          .padding({
-            left: this.isTileGroupPage() && !this.isBookMultiSelect ? 0 : AppSpacing.XL,
-            right: AppSpacing.XL,
-            top: this.statusBarHeight
-          })
-          .alignItems(VerticalAlign.Center)
-          .opacity(CollapsingHeader.contentOpacity(this.shelfHeaderCollapseValue()))
-          .hitTestBehavior(CollapsingHeader.acceptsTouch(this.shelfHeaderCollapseValue()) ? HitTestMode.Default : HitTestMode.None)
+          this.shelfPageBody()
         }
-        .width('100%')
-        .height(56 + this.statusBarHeight - this.shelfHeaderCollapseValue())
-        .clip(!this.shelfCategoryAnimating)
-        .onAreaChange((_oldArea: Area, newArea: Area) => {
-          this.onHeaderCollapseChange((56 + this.statusBarHeight - Number(newArea.height)) /
-            CollapsingHeader.DISTANCE);
-        })
-
-        if (this.shelfSearchActive) {
-          this.shelfSearchBar()
-        }
-
-        if (this.showsShelfScopeTabs() && this.shelfCategoryExpanded) {
-          this.shelfScopeTabs()
-        }
-
-        if (this.isBookMultiSelect) {
-          this.bookSelectionStatusBar()
-        }
-
-        }
-        .width('100%')
-        .position({ x: 0, y: 0 })
-        .zIndex(5)
-
-        if (this.showsShelfScopeTabs()) {
-          ShelfCategoryMaterial({
-            expanded: this.shelfCategoryExpanded,
-            viewportWidth: this.contextViewportWidth,
-            side: AppSpacing.XL,
-            top: this.statusBarHeight + 56 +
-              (this.shelfSearchActive ? BookshelfPage.SEARCH_BAR_HEIGHT + AppSpacing.MD : 0),
-            buttonTop: this.statusBarHeight + 8,
-            darkMode: this.appDarkMode, surfaceColor: this.cardColor(), accentColor: this.accentGlowColor(),
-            touching: this.shelfScopeTabsTouching && this.shelfCategoryExpanded,
-            touchX: this.shelfScopeTabsTouchX, touchY: this.shelfScopeTabsTouchY
-          }).position({ x: 0, y: 0 })
-            .translate({ y: -this.shelfHeaderCollapseValue() })
-            .opacity(this.shelfCategoryExpanded ? 1 : CollapsingHeader.contentOpacity(this.shelfHeaderCollapseValue()))
-            .zIndex(4)
-        }
-
-        HeaderBackdrop({ backdropHeight: this.shelfHeaderBackdropHeight(),
-          statusBarHeight: this.statusBarHeight,
-          backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
-          .width('100%')
-          .position({ x: 0, y: 0 })
-          .zIndex(3)
-
-        if (this.isLoading) {
-          Column() {
-            LoadingProgress()
-              .width(40)
-              .height(40)
-            Text('加载中...')
-              .fontSize(AppFontSize.BODY)
-              .fontColor(this.subTextColor())
-              .margin({ top: AppSpacing.MD })
-          }
-          .width('100%')
-          .height('100%')
-          .padding({ top: this.bookshelfTopOverlayHeight() })
-          .justifyContent(FlexAlign.Center)
-
-        } else {
-          CategorySwipePager({
-            pageKeys: this.shelfPageOrder(),
-            selectedIndex: Math.max(0, this.shelfPageOrder().indexOf(this.shelfPageKey())),
-            swipeEnabled: !this.isBookMultiSelect && !this.isTileGroupPage(),
-            swipeExcludedGestureTag: 'recentReadCarouselPan',
-            canSelect: (key: string): boolean => this.canSelectShelfPage(key),
-            onSelect: (key: string): void => this.setShelfPage(key),
-            onSettled: (): void => {
-              if (this.shelfScope !== 'private') this.privateShelfRevealed = false;
-            },
-            onSwipe: (): void => this.markShelfScopePanGesture(240),
-            pageContent: (key: string) => { this.shelfCategoryContent(key); }
-          })
-          .translate({ x: this.shelfScopeTransitionX })
-          .scale({ x: this.shelfScopeTransitionScale, y: this.shelfScopeTransitionScale })
-          .opacity(this.shelfScopeTransitionOpacity)
+        .width('100%').height('100%')
+        .borderRadius(0).clip(true)
+        .backgroundColor(this.pageColor())
+        .geometryTransition(this.tileGroupHasOrigin ? SHELF_GROUP_MOTION_ID : '')
+        .transition(TransitionEffect.OPACITY)
+        .zIndex(1)
+      } else {
+        this.shelfPageBody()
+        if (this.tileGroupOriginVisible) {
+          this.tileGroupOrigin()
         }
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(this.pageColor())
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .bindSheet(this.showBookGroupPicker, this.bookGroupPickerDialog(), this.bookGroupPickerSheetOptions())
 
       if (this.books.length > 0 && this.shouldShowShelfRefreshStatus()) {
         this.shelfRefreshStatusOverlay()
@@ -1296,6 +1139,10 @@ export struct BookshelfPage {
       if (this.isBookMultiSelect) {
         this.bookMultiSelectBar()
       }
+      if (this.tileGroupAnimating) {
+        // 拦住动画中重复点书或长按，系统返回仍由请求回调排队处理。
+        Column().width('100%').height('100%').hitTestBehavior(HitTestMode.Block)
+      }
     }
     .width('100%')
     .height('100%')
@@ -1303,6 +1150,180 @@ export struct BookshelfPage {
     .onAreaChange((_oldValue: Area, newValue: Area) => this.updateContextViewport(newValue))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet(this.showNetworkCoverDialog, this.networkCoverSheet(), this.networkCoverSheetOptions())
+  }
+
+  @Builder
+  shelfPageBody() {
+    Column() {
+      Column() {
+      // 列表上滑时标题行收起：外层按收起量变矮并裁剪，标题行贴底上移并淡出。
+      Stack({ alignContent: Alignment.Bottom }) {
+        Row() {
+          if (this.isTileGroupPage() && !this.isBookMultiSelect) {
+            ImmersiveBackButton({
+              iconColor: this.primaryTextColor(),
+              darkMode: this.appDarkMode,
+              buttonSize: 40,
+              containerWidth: 56,
+              materialScale: 0.83,
+              compactLayout: true,
+              onBack: () => this.exitTileGroupPage()
+            })
+            Text(this.activeShelfGroupName())
+              .fontSize(AppFontSize.TITLE)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.primaryTextColor())
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Blank()
+            Text(this.books.length > 0 ? `${this.books.length}本` : '')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.subTextColor())
+              .margin({ right: AppSpacing.MD })
+            this.shelfMoreButton()
+          } else {
+            if (this.isBookMultiSelect) {
+              Text('书架')
+                .fontSize(AppFontSize.DISPLAY)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(this.primaryTextColor())
+            } else {
+              this.shelfGroupSwitcher()
+            }
+
+            if (this.isBookMultiSelect) {
+              Blank()
+              ImmersiveHeaderAction({
+                label: '取消',
+                accessibilityLabel: '退出多选',
+                onTap: () => this.exitBookMultiSelect()
+              })
+            } else {
+              Blank()
+
+              this.shelfCategoryButton()
+              this.shelfFilterButton()
+              this.shelfMoreButton()
+            }
+          }
+        }
+        .width('100%')
+        .height(56 + this.statusBarHeight)
+        .padding({
+          left: this.isTileGroupPage() && !this.isBookMultiSelect ? 0 : AppSpacing.XL,
+          right: AppSpacing.XL,
+          top: this.statusBarHeight
+        })
+        .alignItems(VerticalAlign.Center)
+        .opacity(CollapsingHeader.contentOpacity(this.shelfHeaderCollapseValue()))
+        .hitTestBehavior(CollapsingHeader.acceptsTouch(this.shelfHeaderCollapseValue()) ? HitTestMode.Default : HitTestMode.None)
+      }
+      .width('100%')
+      .height(56 + this.statusBarHeight - this.shelfHeaderCollapseValue())
+      .clip(!this.shelfCategoryAnimating)
+      .onAreaChange((_oldArea: Area, newArea: Area) => {
+        this.onHeaderCollapseChange((56 + this.statusBarHeight - Number(newArea.height)) /
+          CollapsingHeader.DISTANCE);
+      })
+
+      if (this.shelfSearchActive) {
+        this.shelfSearchBar()
+      }
+
+      if (this.showsShelfScopeTabs() && this.shelfCategoryExpanded) {
+        this.shelfScopeTabs()
+      }
+
+      if (this.isBookMultiSelect) {
+        this.bookSelectionStatusBar()
+      }
+
+      }
+      .width('100%')
+      .position({ x: 0, y: 0 })
+      .zIndex(5)
+
+      if (this.showsShelfScopeTabs()) {
+        ShelfCategoryMaterial({
+          expanded: this.shelfCategoryExpanded,
+          viewportWidth: this.contextViewportWidth,
+          side: AppSpacing.XL,
+          top: this.statusBarHeight + 56 +
+            (this.shelfSearchActive ? BookshelfPage.SEARCH_BAR_HEIGHT + AppSpacing.MD : 0),
+          buttonTop: this.statusBarHeight + 8,
+          darkMode: this.appDarkMode, surfaceColor: this.cardColor(), accentColor: this.accentGlowColor(),
+          touching: this.shelfScopeTabsTouching && this.shelfCategoryExpanded,
+          touchX: this.shelfScopeTabsTouchX, touchY: this.shelfScopeTabsTouchY
+        }).position({ x: 0, y: 0 })
+          .translate({ y: -this.shelfHeaderCollapseValue() })
+          .opacity(this.shelfCategoryExpanded ? 1 : CollapsingHeader.contentOpacity(this.shelfHeaderCollapseValue()))
+          .zIndex(4)
+      }
+
+      HeaderBackdrop({ backdropHeight: this.shelfHeaderBackdropHeight(),
+        statusBarHeight: this.statusBarHeight,
+        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
+        .width('100%')
+        .position({ x: 0, y: 0 })
+        .zIndex(3)
+
+      if (this.isLoading) {
+        Column() {
+          LoadingProgress()
+            .width(40)
+            .height(40)
+          Text('加载中...')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.subTextColor())
+            .margin({ top: AppSpacing.MD })
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ top: this.bookshelfTopOverlayHeight() })
+        .justifyContent(FlexAlign.Center)
+
+      } else {
+        CategorySwipePager({
+          pageKeys: this.shelfPageOrder(),
+          selectedIndex: Math.max(0, this.shelfPageOrder().indexOf(this.shelfPageKey())),
+          swipeEnabled: !this.isBookMultiSelect && !this.isTileGroupPage(),
+          swipeExcludedGestureTag: 'recentReadCarouselPan',
+          canSelect: (key: string): boolean => this.canSelectShelfPage(key),
+          onSelect: (key: string): void => this.setShelfPage(key),
+          onSettled: (): void => {
+            if (this.shelfScope !== 'private') this.privateShelfRevealed = false;
+          },
+          onSwipe: (): void => this.markShelfScopePanGesture(240),
+          pageContent: (key: string) => { this.shelfCategoryContent(key); }
+        })
+        .translate({ x: this.shelfScopeTransitionX })
+        .scale({ x: this.shelfScopeTransitionScale, y: this.shelfScopeTransitionScale })
+        .opacity(this.shelfScopeTransitionOpacity)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.pageColor())
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .bindSheet(this.showBookGroupPicker, this.bookGroupPickerDialog(), this.bookGroupPickerSheetOptions())
+    // 共享页展开/收回期间保留根书架，避免背景先消失再出现。
+    .transition(TransitionEffect.opacity(0.99))
+  }
+
+  @Builder
+  tileGroupOrigin() {
+    Column() {
+      this.shelfFolderPreview(this.tileGroupOriginBooks, '')
+    }
+    .width(this.tileGroupOriginBounds.width).height(this.tileGroupOriginBounds.height)
+    .borderRadius(7).clip(true)
+    .geometryTransition(SHELF_GROUP_MOTION_ID)
+    .transition(TransitionEffect.OPACITY)
+    .position({ x: this.tileGroupOriginBounds.x, y: this.tileGroupOriginBounds.y })
+    .zIndex(2)
+    .hitTestBehavior(HitTestMode.None)
+    .accessibilityLevel('no-hide-descendants')
+    .onAppear(() => this.beginTileGroupOpen())
   }
 
   /** 换源：系统对话框，API 26+ 是沉浸光感表面。 */
@@ -2557,7 +2578,7 @@ export struct BookshelfPage {
       return;
     }
     if (this.isTileLayout()) {
-      this.activeShelfGroupId = groupId;
+      if (!this.tileGroupAnimating) this.animateTileGroupChange(groupId);
       return;
     }
     const currentIndex = this.shelfGroupOrderIndex(this.activeShelfGroupId);
@@ -2608,238 +2629,118 @@ export struct BookshelfPage {
     return SharedElementBounds.resolve(measured, touchX, touchY, this.contextViewportWidth, this.contextViewportHeight);
   }
 
-  openTileFolder(groupId: number, pageKey: string, touchX: number, touchY: number): void {
-    if (this.showTileFolder || this.tileFolderClosing || this.consumeShelfSwipeClick()) return;
+  openTileGroupPage(groupId: number, pageKey: string, touchX: number, touchY: number): void {
+    if (this.tileGroupAnimating || this.consumeShelfSwipeClick()) return;
     this.showShelfGroupMenu = false;
     this.showShelfMoreMenu = false;
     this.showShelfFilterMenu = false;
-    this.tileFolderGroupId = groupId;
-    this.tileFolderPageKey = pageKey;
-    this.tileFolderViewportWidth = this.contextViewportWidth;
-    this.tileFolderViewportHeight = this.contextViewportHeight;
-    this.tileFolderExpanded = false;
-    this.tileFolderContentVisible = false;
-    this.tileFolderCoordinateOriginX = this.contextViewportOriginX;
-    this.tileFolderCoordinateOriginY = this.contextViewportOriginY;
-    this.tileFolderBounds = this.captureSharedElementBounds(`shelf_folder_${pageKey}_${groupId}`,
-      this.folderBounds.get(`${pageKey}:${groupId}`), touchX, touchY);
-    this.tileFolderOpacity = 0;
-    this.tileFolderClosing = false;
-    this.tileFolderScroller = new Scroller();
-    this.showTileFolder = true;
-    this.presentTileFolder();
+    this.tileGroupOriginBounds = this.captureSharedElementBounds(this.tileGroupElementId(groupId, pageKey),
+      undefined, touchX, touchY);
+    this.tileGroupOriginBooks = this.getTileGroupPreviewBooks(groupId, this.shelfBooksForPage(pageKey)).slice();
+    this.tileGroupOriginGroupId = groupId;
+    this.tileGroupHasOrigin = true;
+    this.tileGroupPendingOpen = groupId;
+    this.tileGroupAnimating = true;
+    this.tileGroupOriginVisible = true;
+    // 先在根层挂载原卡片的副本，避免 Grid/Swiper 裁剪放大的共享元素。
+    // onAppear 后再触发原生 geometryTransition；副本与整页始终只有一对绑定。
+    this.armTileGroupWatchdog(++this.tileGroupMotionGeneration);
   }
 
-  presentTileFolder(): void {
-    const request = ++this.tileFolderDialogRequest;
-    this.getUIContext().getPromptAction().openCustomDialog({
-      builder: () => { this.tileFolderOverlay(); },
-      width: '100%',
-      height: '100%',
-      alignment: DialogAlignment.Center,
-      backgroundColor: Color.Transparent,
-      backgroundBlurStyle: BlurStyle.NONE,
-      maskColor: Color.Transparent,
-      cornerRadius: 0,
-      shadow: { radius: 0, color: Color.Transparent },
-      transition: TransitionEffect.IDENTITY,
-      autoCancel: false,
-      onWillDismiss: () => this.closeTileFolder(),
-      onDidDisappear: () => {
-        if (request === this.tileFolderDialogRequest) this.resetTileFolder();
-      }
-    }).then((dialogId: number) => {
-      if (request !== this.tileFolderDialogRequest || !this.showTileFolder) {
-        this.getUIContext().getPromptAction().closeCustomDialog(dialogId);
-        return;
-      }
-      this.tileFolderDialogId = dialogId;
-    }).catch((error: Error) => {
-      if (request !== this.tileFolderDialogRequest) return;
-      this.resetTileFolder();
-      console.warn('打开书架文件夹失败:', error);
-      HdsFeedback.showToast('文件夹打开失败，请重试');
-    });
+  tileGroupElementId(groupId: number, pageKey: string): string {
+    return `shelf_group_${pageKey}_${groupId}`;
   }
 
-  animateTileFolderOpen(): void {
-    const generation = ++this.tileFolderAnimationGeneration;
-    this.tileFolderOpenTimer = setTimeout(() => {
-      this.tileFolderOpenTimer = -1;
-      if (!this.showTileFolder || this.tileFolderClosing || generation !== this.tileFolderAnimationGeneration) return;
-      animateTo({ duration: 360, curve: Curve.Friction, onFinish: () => {
-        if (!this.showTileFolder || this.tileFolderClosing || generation !== this.tileFolderAnimationGeneration) return;
-        // Reveal content only after the native shared material has reached its final rectangle.
-        animateTo({ duration: 140, curve: Curve.EaseOut }, () => {
-          this.tileFolderContentVisible = true;
-        });
-      } }, () => {
-        this.tileFolderExpanded = true;
-        this.tileFolderOpacity = 1;
-      });
+  beginTileGroupOpen(): void {
+    if (this.tileGroupPendingOpen <= 0 || this.tileGroupOpenTimer >= 0) return;
+    const generation = this.tileGroupMotionGeneration;
+    this.tileGroupOpenTimer = setTimeout((): void => {
+      this.tileGroupOpenTimer = -1;
+      if (generation !== this.tileGroupMotionGeneration || !this.shelfComponentActive) return;
+      const groupId = this.tileGroupPendingOpen;
+      this.tileGroupPendingOpen = 0;
+      this.animateTileGroupChange(groupId);
     }, 16);
   }
 
-  closeTileFolder(afterClose?: () => void): void {
-    if (!this.showTileFolder || this.tileFolderClosing) return;
-    this.tileFolderClosing = true;
-    if (this.tileFolderOpenTimer >= 0) clearTimeout(this.tileFolderOpenTimer);
-    this.tileFolderOpenTimer = -1;
-    const generation = ++this.tileFolderAnimationGeneration;
-    animateTo({ duration: 320, curve: Curve.EaseInOut, onFinish: () => {
-      if (generation !== this.tileFolderAnimationGeneration) return;
-      this.showTileFolder = false;
-      const dialogId = this.tileFolderDialogId;
-      this.tileFolderDialogId = -1;
-      if (dialogId >= 0) this.getUIContext().getPromptAction().closeCustomDialog(dialogId);
-      if (afterClose) afterClose();
-    } }, () => {
-      this.tileFolderExpanded = false;
-      this.tileFolderContentVisible = false;
-      this.tileFolderOpacity = 0;
+  animateTileGroupChange(groupId: number): void {
+    const enteringFromRoot = this.activeShelfGroupId === 0 && groupId > 0;
+    const returningToRoot = groupId === 0 && this.tileGroupRootPages !== null;
+    if (enteringFromRoot) {
+      this.tileGroupRootPages = this.shelfCategoryPages;
+      this.tileGroupRootHeaderCollapse = this.shelfHeaderCollapse;
+    }
+    const canReturnToOrigin = returningToRoot && this.tileGroupHasOrigin &&
+      this.activeShelfGroupId === this.tileGroupOriginGroupId &&
+      this.shelfGroups.some((group: BookGroup): boolean => group.groupId === this.tileGroupOriginGroupId);
+    const generation = ++this.tileGroupMotionGeneration;
+    this.tileGroupAnimating = true;
+    this.armTileGroupWatchdog(generation);
+    this.getUIContext().animateTo({ duration: SHELF_GROUP_MOTION_DURATION, curve: Curve.Friction,
+      onFinish: (): void => this.finishTileGroupMotion(generation) }, (): void => {
+      // 两页不共用 Scroller / LazyForEach 数据源，返回才能对准进入前的卡片位置。
+      if (returningToRoot && this.tileGroupRootPages) {
+        this.shelfCategoryPages = this.tileGroupRootPages;
+        this.tileGroupRootPages = null;
+        this.shelfHeaderCollapse = this.tileGroupRootHeaderCollapse;
+      } else {
+        this.shelfCategoryPages = new Map();
+        this.shelfHeaderCollapse = 0;
+      }
+      this.tileGroupOriginVisible = canReturnToOrigin;
+      this.activeShelfGroupId = groupId;
     });
   }
 
-  resetTileFolder(): void {
-    this.tileFolderDialogRequest++;
-    this.tileFolderAnimationGeneration++;
-    if (this.tileFolderOpenTimer >= 0) clearTimeout(this.tileFolderOpenTimer);
-    this.tileFolderOpenTimer = -1;
-    this.showTileFolder = false;
-    this.tileFolderExpanded = false;
-    this.tileFolderContentVisible = false;
-    this.tileFolderClosing = false;
-    this.tileFolderGroupId = 0;
-    this.tileFolderBooksSource.replace([]);
-    const dialogId = this.tileFolderDialogId;
-    this.tileFolderDialogId = -1;
-    if (dialogId >= 0) this.getUIContext().getPromptAction().closeCustomDialog(dialogId);
+  armTileGroupWatchdog(generation: number): void {
+    if (this.tileGroupMotionWatchdog >= 0) clearTimeout(this.tileGroupMotionWatchdog);
+    this.tileGroupMotionWatchdog = setTimeout((): void => this.finishTileGroupMotion(generation), 1200);
   }
 
-  alignTileFolderOrigin(area: Area): void {
-    const x = Number(area.globalPosition.x);
-    const y = Number(area.globalPosition.y);
-    this.tileFolderBounds = new SharedElementBounds(
-      this.tileFolderBounds.x + this.tileFolderCoordinateOriginX - x,
-      this.tileFolderBounds.y + this.tileFolderCoordinateOriginY - y,
-      this.tileFolderBounds.width, this.tileFolderBounds.height);
-    this.tileFolderCoordinateOriginX = x;
-    this.tileFolderCoordinateOriginY = y;
-  }
-
-  tileFolderWidth(): number {
-    return Math.min(560, Math.max(240, this.tileFolderViewportWidth - 40));
-  }
-
-  tileFolderHeight(): number {
-    return Math.min(660, Math.max(180, this.tileFolderViewportHeight - this.statusBarHeight - this.navBarHeight - 64));
-  }
-
-  tileFolderColumns(): string {
-    return this.tileFolderWidth() >= 480 ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr';
-  }
-
-  tileFolderName(): string {
-    return this.shelfGroups.find((group: BookGroup) => group.groupId === this.tileFolderGroupId)?.groupName || '书籍分组';
-  }
-
-  tileFolderDataSource(): ShelfBookDataSource {
-    // 沿用当前分类、筛选和隐私权限后的书籍快照；不改变根书架分组及滚动位置。
-    this.tileFolderBooksSource.replace(this.getTileGroupBooks(this.tileFolderGroupId,
-      this.shelfBooksForPage(this.tileFolderPageKey)));
-    return this.tileFolderBooksSource;
-  }
-
-  @Builder
-  tileFolderOverlay() {
-    Stack({ alignContent: Alignment.Center }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor(ThemeRuntime.scrimColor(this.appDarkMode))
-        .opacity(this.tileFolderOpacity)
-        .accessibilityText('关闭文件夹')
-        .onClick(() => this.closeTileFolder())
-      if (this.tileFolderExpanded) {
-        Column()
-          .width(this.tileFolderWidth()).height(this.tileFolderHeight())
-          .borderRadius(28)
-          .backgroundColor(ThemeRuntime.glassPanelColor(this.appDarkMode))
-          .backgroundBlurStyle(ImmersiveMaterialRuntime.surfaceBlur(this.immersiveLightLevel))
-          .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
-          .geometryTransition('bookshelf_folder_open')
-          .transition(TransitionEffect.opacity(0.99))
-      } else {
-        this.tileFolderOrigin()
-      }
-      if (this.tileFolderContentVisible) {
-      Column({ space: AppSpacing.XL }) {
-        Row({ space: AppSpacing.MD }) {
-          Column({ space: AppSpacing.XS }) {
-            Text(this.tileFolderName())
-              .fontSize(AppFontSize.TITLE)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(this.primaryTextColor())
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Text(`共 ${this.getTileGroupBooks(this.tileFolderGroupId, this.shelfBooksForPage(this.tileFolderPageKey)).length} 本`)
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.subTextColor())
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-          ImmersiveBackButton({
-            icon: $r('sys.symbol.xmark'),
-            iconOffsetX: 0,
-            iconColor: this.primaryTextColor(),
-            darkMode: this.appDarkMode,
-            buttonSize: 36,
-            containerWidth: 36,
-            containerHeight: 36,
-            startInset: 0,
-            materialScale: 0.75,
-            compactLayout: true,
-            accessibilityLabel: '关闭文件夹',
-            onBack: () => this.closeTileFolder()
-          })
-        }
-        .width('100%')
-        Grid(this.tileFolderScroller) {
-          LazyForEach(this.tileFolderDataSource(), (book: Book) => {
-            GridItem() {
-              this.shelfTileBook(book, BookshelfPage.SHELF_FOLDER_COVER_PAGE)
-            }
-          }, (book: Book) => this.shelfBookRenderKey(book, `folder_${this.tileFolderGroupId}`))
-        }
-        .columnsTemplate(this.tileFolderColumns())
-        .columnsGap(AppSpacing.LG)
-        .rowsGap(AppSpacing.XL)
-        .width('100%')
-        .layoutWeight(1)
-        .cachedCount(2)
-        .scrollBar(BarState.Auto)
-        .edgeEffect(EdgeEffect.Spring)
-      }
-      .width(this.tileFolderWidth())
-      .height(this.tileFolderHeight())
-      .padding(AppSpacing.XL)
-      .borderRadius(28)
-      .clip(true)
-      .transition(TransitionEffect.OPACITY.animation({ duration: 140, curve: Curve.EaseOut }))
-      }
+  finishTileGroupMotion(generation: number): void {
+    if (generation !== this.tileGroupMotionGeneration) return;
+    if (this.tileGroupMotionWatchdog >= 0) clearTimeout(this.tileGroupMotionWatchdog);
+    this.tileGroupMotionWatchdog = -1;
+    if (this.tileGroupOpenTimer >= 0) clearTimeout(this.tileGroupOpenTimer);
+    this.tileGroupOpenTimer = -1;
+    const pendingOpen = this.tileGroupPendingOpen;
+    this.tileGroupPendingOpen = 0;
+    this.tileGroupOriginVisible = false;
+    this.tileGroupAnimating = false;
+    // 节点尚未挂载即被中断时也要完成用户选择，不能一直锁住书架。
+    if (pendingOpen > 0) {
+      this.tileGroupHasOrigin = false;
+      this.animateTileGroupChange(pendingOpen);
+      return;
     }
-    .width('100%')
-    .height('100%')
-    .onAreaChange((_oldArea: Area, newArea: Area) => {
-      this.alignTileFolderOrigin(newArea);
-      this.tileFolderViewportWidth = Number(newArea.width);
-      this.tileFolderViewportHeight = Number(newArea.height);
-    })
-    .id('bookshelf_folder_motion_root')
-    .onAppear(() => this.animateTileFolderOpen())
+    if (this.activeShelfGroupId === 0) this.tileGroupHasOrigin = false;
+    if (this.tileGroupPendingBack) {
+      this.tileGroupPendingBack = false;
+      this.exitTileGroupPage();
+    }
+  }
+
+  cancelTileGroupMotion(): void {
+    this.tileGroupMotionGeneration++;
+    if (this.tileGroupOpenTimer >= 0) clearTimeout(this.tileGroupOpenTimer);
+    if (this.tileGroupMotionWatchdog >= 0) clearTimeout(this.tileGroupMotionWatchdog);
+    this.tileGroupOpenTimer = -1;
+    this.tileGroupMotionWatchdog = -1;
+    this.tileGroupPendingOpen = 0;
+    this.tileGroupPendingBack = false;
+    this.tileGroupOriginVisible = false;
+    this.tileGroupAnimating = false;
+  }
+
+  onTileGroupBackRequested(): void {
+    if (this.activeShelfGroupId > 0 || this.tileGroupPendingOpen > 0) this.exitTileGroupPage();
   }
 
   exitTileGroupPage(): void {
+    if (this.tileGroupAnimating) {
+      this.tileGroupPendingBack = true;
+      return;
+    }
     this.showShelfGroupMenu = false;
     this.showShelfMoreMenu = false;
     this.selectShelfGroup(0);
@@ -3484,18 +3385,17 @@ export struct BookshelfPage {
     .cachedCount(4)
     .onAppear(() => this.restoreShelfPageScroll(pageKey, true))
     .onDidScroll((delta: number) => {
-      if (pageKey === this.shelfPageKey()) {
+      if (!this.tileGroupAnimating && pageKey === this.shelfPageKey()) {
         const page = this.shelfCategoryPage(pageKey);
         page.tileOffset = page.tileScroller.currentOffset().yOffset;
         this.onShelfListScroll(delta, page.tileOffset);
       }
     })
     .onScrollStop(() => {
-      if (pageKey === this.shelfPageKey()) this.onShelfListScrollStop(this.shelfTileScrollerForPage(pageKey).currentOffset().yOffset);
+      if (!this.tileGroupAnimating && pageKey === this.shelfPageKey()) {
+        this.onShelfListScrollStop(this.shelfTileScrollerForPage(pageKey).currentOffset().yOffset);
+      }
     })
-    .translate({ x: this.tileGroupTransitionX })
-    .scale({ x: this.tileGroupTransitionScale, y: this.tileGroupTransitionScale })
-    .opacity(this.tileGroupTransitionOpacity)
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       const width = this.areaDimension(newValue.width);
       if (width > 0 && Math.abs(width - this.shelfTileViewportWidth) >= 1) {
@@ -3695,7 +3595,7 @@ export struct BookshelfPage {
   }
 
   @Builder
-  shelfFolderPreview(group: BookGroup, pageKey: string, measure: boolean) {
+  shelfFolderPreview(previewBooks: Book[], elementId: string) {
       Stack() {
         if (this.shouldUseThemeBookCover()) {
           Image(this.activeThemeShelfFolder())
@@ -3704,11 +3604,11 @@ export struct BookshelfPage {
             .objectFit(ImageFit.Fill)
         } else {
           Grid() {
-            ForEach(this.getTileGroupPreviewBooks(group.groupId, this.shelfBooksForPage(pageKey)), (book: Book) => {
+            ForEach(previewBooks, (book: Book) => {
               GridItem() {
                 this.coverView(book, '100%', '100%', ImageFit.Cover, true, false)
               }
-            }, (book: Book) => this.shelfBookRenderKey(book, `group_${group.groupId}`))
+            }, (book: Book) => this.shelfBookRenderKey(book, `group_${elementId}`))
           }
           .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
           .width('100%')
@@ -3722,7 +3622,7 @@ export struct BookshelfPage {
           .scrollBar(BarState.Off)
         }
       }
-      .id(measure ? `shelf_folder_${pageKey}_${group.groupId}` : '')
+      .id(elementId)
       .width('100%')
       .aspectRatio(0.735)
       .borderRadius(7)
@@ -3731,24 +3631,6 @@ export struct BookshelfPage {
       .shadow({ radius: ThemeRuntime.glassShadowRadius(), color: this.glassShadowColor(),
         offsetX: ThemeRuntime.glassShadowOffsetX(), offsetY: ThemeRuntime.glassShadowOffsetY() })
 
-      .onAreaChange((_old: Area, area: Area) => {
-        if (measure && !this.showTileFolder) this.folderBounds.set(`${pageKey}:${group.groupId}`,
-          new SharedElementBounds(Number(area.globalPosition.x), Number(area.globalPosition.y), Number(area.width), Number(area.height)));
-      })
-  }
-
-  @Builder
-  tileFolderOrigin() {
-    Column()
-      .width(this.tileFolderBounds.width).height(this.tileFolderBounds.height)
-      .backgroundColor(ThemeRuntime.glassPanelColor(this.appDarkMode))
-      .backgroundBlurStyle(ImmersiveMaterialRuntime.surfaceBlur(this.immersiveLightLevel))
-      .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
-      .borderRadius(7)
-      .geometryTransition('bookshelf_folder_open')
-      .transition(TransitionEffect.opacity(0.99))
-      .position({ x: this.tileFolderBounds.x, y: this.tileFolderBounds.y })
-      .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
@@ -3757,7 +3639,8 @@ export struct BookshelfPage {
       // Use one outer surface for both the themed folder artwork and the
       // four-cover preview so folders carry the same radius, border and shadow
       // weight as ordinary shelf cards.
-      this.shelfFolderPreview(group, pageKey, true)
+      this.shelfFolderPreview(this.getTileGroupPreviewBooks(group.groupId, this.shelfBooksForPage(pageKey)),
+        this.tileGroupElementId(group.groupId, pageKey))
 
       Text(group.groupName)
         .width('100%')
@@ -3791,9 +3674,7 @@ export struct BookshelfPage {
           this.showBookGroupActionMenu = true;
         })
     )
-    .onClick((event: ClickEvent) => {
-      this.openTileFolder(group.groupId, pageKey, event.windowX, event.windowY);
-    })
+    .onClick((event: ClickEvent) => this.openTileGroupPage(group.groupId, pageKey, event.windowX, event.windowY))
   }
 
   @Builder
@@ -3941,10 +3822,6 @@ export struct BookshelfPage {
   }
 
   openShelfBook(book: Book, touchX: number, touchY: number): void {
-    if (this.showTileFolder) {
-      this.closeTileFolder(() => this.openShelfBook(book, touchX, touchY));
-      return;
-    }
     if (this.shelfBookRoutePending) {
       return;
     }
@@ -4013,8 +3890,7 @@ export struct BookshelfPage {
       const touchPxY = touchY >= 0 ? ui.vp2px(touchY) : -1;
       let picked: componentUtils.ComponentInfo | undefined = undefined;
       const pageKey = this.shelfPageKey();
-      const scopes = [this.shelfCoverScope(pageKey, false), this.shelfCoverScope(pageKey, true),
-        this.shelfCoverScope(BookshelfPage.SHELF_FOLDER_COVER_PAGE, false)];
+      const scopes = [this.shelfCoverScope(pageKey, false), this.shelfCoverScope(pageKey, true)];
       for (const scope of scopes) {
         const rect = this.shelfCoverRect(ui, book, scope);
         if (!rect) continue;
@@ -4044,11 +3920,9 @@ export struct BookshelfPage {
 
   /**
    * 量位置用的元素 id 按分类页和位置区分：分类页是 Swiper 且缓存相邻页，同一本书会在“全部”和“小说”等页各有一份，
-   * 继续阅读卡片里也有一份；只查当前页的格子、卡片和分组浮层，避免查到相邻页那份而退回旧动画。
+   * 继续阅读卡片里也有一份；只查当前页的格子和卡片，避免查到相邻页那份而退回旧动画。
    * 共享转场 id 各处相同：读过的书回到书架时会移进继续阅读卡片、离开格子，返回转场靠卡片那一枚接住。
    */
-  private static readonly SHELF_FOLDER_COVER_PAGE: string = 'folder';
-
   shelfCoverScope(pageKey: string, latest: boolean): string {
     return `${latest ? 'latest_' : ''}${pageKey}_`;
   }

@@ -324,8 +324,10 @@ struct Index {
       this.syncHomeSystemBars();
       return true;
     }
-    if (this.currentIndex === 0 && this.bookshelfActiveGroupId > 0) {
-      this.bookshelfActiveGroupId = 0;
+    if (this.currentIndex === 0 &&
+      (this.bookshelfActiveGroupId > 0 || AppStorage.get<boolean>('bookshelfGroupTransitionActive'))) {
+      AppStorage.setOrCreate('bookshelfGroupBackRequest',
+        (AppStorage.get<number>('bookshelfGroupBackRequest') || 0) + 1);
       return true;
     }
     return false;
