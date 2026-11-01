@@ -45,6 +45,8 @@ node --experimental-strip-types harmony-book-source-engine/scripts/native-script
 
 内联评论页使用子模块的 `docs/examples/native-inline-comments.json` 离线样本。正文加载后点击段评和章评入口，分别检查“页面生成”与“页面显示”，并验证关闭、超时和重试。正文脚本保存变量后不应误报入口失效；真实变量或账号变更后，应刷新本章。针对性检查命令见[当前开发基线](../book-source-development.md#当前开发基线)。
 
+显示验收需包含中文、表情、`#`、`%` 和嵌套 HTML 等内容，确认加载遮罩消失、按钮可用，并在关闭后重新打开。生成成功而显示超时时，按[宿主显示故障记录](../native-comment-display-fix-20261101.md)检查加载时序及文档导航；桌面浏览器检查不能替代 ArkWeb 真机验证。
+
 ## 提交问题时
 
 - 用调试页的“导出报告”生成 JSON 诊断文件。导出时会对来源地址等字段脱敏，但规则内容和响应摘要仍可能包含站点或个人信息，提交前请人工检查并删除。

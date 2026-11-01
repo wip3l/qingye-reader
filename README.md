@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.4.945`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.4.946`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -176,6 +176,8 @@
 
 逐字遍历可用 `chars(text)`（JS 函数体内写 `native.chars(text)`）；导入会检查声明式规则中未定义的函数名，缓存失败可在调试记录中定位。原生内联段评、章评支持点击后取数和离线 HTML 显示，调试时分别检查页面生成与页面显示。完整流程见[当前开发基线](docs/book-source-development.md#当前开发基线)。
 
+内联评论页可显示注入的数据并执行本地按钮交互，页面不直接连接外网，也不访问宿主账号和文件。书源作者填写普通 HTML，由宿主处理编码及加载；遇到生成成功但预览持续加载时，先检查应用版本和[显示修复说明](docs/native-comment-display-fix-20261101.md)。
+
 书源规则由书源解析内核 [harmony-book-source-engine](https://github.com/wip3l/harmony-book-source-engine) 实现，开源轻页与简听共用同一份规则定义。
 
 两种格式的完整字段、请求格式、解析语法、调试方法和迁移建议见子模块中的[公共书源开发文档](harmony-book-source-engine/docs/book-source-development.md)：第一部分是原生书源，第二部分是兼容书源。轻页的接入情况与 JS 开发路线见[本项目书源开发入口](docs/book-source-development.md)；本地文档随当前内核提交固定，在线主分支可能更新得更快。
@@ -262,8 +264,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.4.945` |
-| `versionCode` / `buildVersion` | `4040945` |
+| `versionName` | `4.4.946` |
+| `versionCode` / `buildVersion` | `4040946` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`CAMERA`（仅在用户启用眼动翻页时请求） |
 

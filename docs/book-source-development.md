@@ -18,12 +18,13 @@
 
 ## 当前开发基线
 
-宿主版本以 `AppScope/app.json5` 为准，当前为 **4.4.945**。书源内核包含 `8709b3f` 的规则实现及后续文档提交；准确的子模块版本用 `git submodule status harmony-book-source-engine` 查看。逐版本变化与 4.4.943 之后的累计说明统一见[更新日志](../CHANGELOG.md)。
+宿主版本以 `AppScope/app.json5` 为准，当前为 **4.4.946**。书源内核包含 `8709b3f` 的规则实现及后续文档提交；准确的子模块版本用 `git submodule status harmony-book-source-engine` 查看。逐版本变化与 4.4.943 之后的累计说明统一见[更新日志](../CHANGELOG.md)。
 
 - 逐字遍历使用 `for ch in chars(text)`；`chars` 按 Unicode 码点拆分，在 JS 函数体内调用时写 `native.chars(text)`。导入时会检查声明式规则中未定义的函数名，JS 函数体仍需实际执行验证。
 - 声明式 `cache` 取值失败时继续返回 `null`，在调试记录中检查 `cache.名称.url` 或 `cache.名称.value`，并为依赖它的规则准备空值处理。
 - 内联评论入口按保存后的变量计算指纹；补齐默认值、数字转成文本及变量排列变化不应使入口失效。变量值、书源、账号或书籍／章节信息改变后应刷新本章，再验证评论入口。
 - 调试页的“页面生成”与“页面显示”分别记录结果。生成成功后仍需打开预览，检查显示成功、超时、错误和取消；只生成 HTML 不能视为界面验收通过。
+- 内联评论 HTML 由宿主以 UTF-8 / Base64 加载，等待初始空白页完成后再显示生成文档。书源仍填写普通 `html`，无需自行编码；页面保持离线，外部资源需在页面生成阶段取回并注入 `data`。排查“生成通过但显示超时”时先核对宿主版本与两阶段记录，不能只修改书源或放行所有 `data:` 导航。复现与已有 API 26 设备记录见[评论页显示修复](native-comment-display-fix-20261101.md)。
 - 兼容书源的 HTML 文本提取先统一 CRLF 换行；正文空行问题请同时检查原始响应、选择器输出和净化规则。
 
 针对上述能力，在仓库根目录运行：
@@ -35,6 +36,7 @@ node --experimental-strip-types harmony-book-source-engine/scripts/native-commen
 node --experimental-strip-types harmony-book-source-engine/scripts/analyze-rule-check.mjs
 node scripts/native-comment-page-service-check.mjs
 node scripts/native-comment-page-browser-check.mjs
+node --experimental-strip-types scripts/reader-comment-panel-check.mjs
 ```
 
 这些检查使用平台替身；真实书源、QuickJS 和评论页显示仍需在设备上验证。
@@ -177,7 +179,7 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 
 可导入[离线示例](../harmony-book-source-engine/docs/examples/native-inline-comments.json)验证交互；该示例无需网络，且仅面向支持 page/chapterPage 的宿主。完整验证命令和平台边界见[实施验证记录](source-capability-validation.md)。
 
-| 能力 | 当前应用现状（4.4.945） |
+| 能力 | 当前应用现状（4.4.946） |
 | --- | --- |
 | 原生书源 | 支持编辑、书源设置（变量、音色、账号登录、动作按钮）、搜索、发现、详情、目录、正文、听书、视频播放与漫画图片解密；书源管理和发现页的长按菜单可进入书源设置 |
 | 原生 JS | `js` 函数库与 `script` 阶段已接入；`http`、变量、Cookie、缓存、凭据和详情书籍变量通过内核宿主接口处理，与兼容书源迁移开关独立 |
