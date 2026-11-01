@@ -107,8 +107,65 @@ struct BookshelfSettingsPage {
 
   @Builder
   pageContent() {
-    this.sectionTitle('书籍信息')
+    this.sectionTitle('布局与分类')
     Column() {
+    this.selectItem('书架布局', '列表疏密或封面平铺',
+      this.bookshelfLayoutOptions(), this.bookshelfLayoutSelectedIndex(), (index: number) => {
+        this.bookshelfLayoutMode = index === 2 ? 'tile' : (index === 1 ? 'loose' : 'compact');
+        this.onDisplaySettingChanged();
+      })
+    if (this.bookshelfLayoutMode === 'tile') {
+      this.itemDivider()
+      this.selectItem('上次阅读置顶', '最近阅读的书排在最前的样式',
+        this.lastReadPinOptions(), this.lastReadPinSelectedIndex(), (index: number) => {
+          this.bookshelfLastReadPinMode = index === 0 ? 'off' : (index === 2 ? 'large' : 'medium');
+          this.onDisplaySettingChanged();
+        })
+    }
+    if (this.bookshelfLayoutMode === 'tile' && this.bookshelfLastReadPinMode === 'large') {
+      this.itemDivider()
+      this.selectItem('置顶数量', '按最近阅读排序，最多展示所选数量',
+        this.lastReadPinCountOptions(),
+        BookshelfDisplaySettingsStore.normalizeLastReadPinCount(this.bookshelfLastReadPinCount) - 1,
+        (index: number) => {
+          this.bookshelfLastReadPinCount = index + 1;
+          this.onDisplaySettingChanged();
+        })
+    }
+    if (this.bookshelfLayoutMode === 'tile' && this.bookshelfLastReadPinMode === 'medium') {
+      this.itemDivider()
+      this.selectItem('上次阅读扉页设置', '最近阅读书籍封面右侧的展示内容',
+        this.lastReadLeafOptions(), this.lastReadLeafSelectedIndex(), (index: number) => {
+          this.bookshelfLastReadLeafMode = index === 0 ? 'bookInfo' :
+            (index === 1 ? 'contentPreview' : 'adaptive');
+          this.onDisplaySettingChanged();
+        })
+    }
+    this.itemDivider()
+    SettingSwitchRow({
+      title: '书籍分类',
+      description: '书架顶部按小说、漫画、有声书等类型分页',
+      isOn: this.bookshelfTypeCategoryEnabled,
+      showDivider: false,
+      onChange: (value: boolean) => {
+        this.bookshelfTypeCategoryEnabled = value;
+        this.onDisplaySettingChanged();
+      }
+    })
+    if (this.bookshelfTypeCategoryEnabled) {
+      this.itemDivider()
+      SettingSwitchRow({
+        title: '显示全部分类',
+        description: '分类栏第一项为“全部”',
+        isOn: this.bookshelfShowAllTypeTab,
+        showDivider: false,
+        onChange: (value: boolean) => {
+          this.bookshelfShowAllTypeTab = value;
+          this.onDisplaySettingChanged();
+        }
+      })
+    }
+    this.itemDivider()
     SettingSwitchRow({
       title: '书籍打开动画',
       description: '点击书籍时播放封面展开动画',
@@ -119,7 +176,15 @@ struct BookshelfSettingsPage {
         this.onDisplaySettingChanged();
       }
     })
-    this.itemDivider()
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+
+    this.sectionTitle('卡片信息')
+    Column() {
     SettingSwitchRow({
       title: '书籍标签',
       description: '在书架卡片上显示标签',
@@ -190,63 +255,48 @@ struct BookshelfSettingsPage {
       })
     }
     this.itemDivider()
-    SettingSwitchRow({
-      title: '书籍分类',
-      description: '书架顶部按小说、漫画、有声书等类型分页',
-      isOn: this.bookshelfTypeCategoryEnabled,
-      showDivider: false,
-      onChange: (value: boolean) => {
-        this.bookshelfTypeCategoryEnabled = value;
-        this.onDisplaySettingChanged();
-      }
-    })
-    if (this.bookshelfTypeCategoryEnabled) {
-      this.itemDivider()
-      SettingSwitchRow({
-        title: '显示全部分类',
-        description: '分类栏第一项为“全部”',
-        isOn: this.bookshelfShowAllTypeTab,
-        showDivider: false,
-        onChange: (value: boolean) => {
-          this.bookshelfShowAllTypeTab = value;
-          this.onDisplaySettingChanged();
-        }
+    this.navItem('封面标识', '配置四个角的类型、来源、更新、置顶和未读数', 'pages/BookshelfCoverBadgeSettings')
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+
+    this.sectionTitle('封面')
+    Column() {
+    this.navItem('图集管理', '新建、导入图片、重命名、预览', 'pages/CoverGalleryManager')
+    this.itemDivider()
+    this.albumSelectItem('浅色配色图集', '浅色模式下使用的封面图集', false)
+    this.itemDivider()
+    this.albumSelectItem('深色配色图集', '深色模式下使用的封面图集', true)
+    this.itemDivider()
+    this.selectItem('图集应用范围', '作用于全部书籍或指定书籍',
+      this.scopeOptions(), this.scopeSelectedIndex(), (index: number) => {
+        this.setCoverApplyScope(index === 1 ? 'books' : 'all');
       })
+
+    if (this.showTargetBookList) {
+      this.itemDivider()
+      this.targetBooksPanel()
     }
     this.itemDivider()
-    this.selectItem('书架布局', '列表疏密或封面平铺',
-      this.bookshelfLayoutOptions(), this.bookshelfLayoutSelectedIndex(), (index: number) => {
-        this.bookshelfLayoutMode = index === 2 ? 'tile' : (index === 1 ? 'loose' : 'compact');
-        this.onDisplaySettingChanged();
+    this.selectItem('封面模式', '多张封面的展示顺序',
+      this.modeOptions(), this.modeSelectedIndex(), (index: number) => {
+        this.bookshelfCoverMode = index === 1 ? 'random' : 'sequence';
+        this.onCoverSettingChanged();
       })
-    if (this.bookshelfLayoutMode === 'tile') {
-      this.itemDivider()
-      this.selectItem('上次阅读置顶', '最近阅读的书排在最前的样式',
-        this.lastReadPinOptions(), this.lastReadPinSelectedIndex(), (index: number) => {
-          this.bookshelfLastReadPinMode = index === 0 ? 'off' : (index === 2 ? 'large' : 'medium');
-          this.onDisplaySettingChanged();
-        })
-    }
-    if (this.bookshelfLayoutMode === 'tile' && this.bookshelfLastReadPinMode === 'large') {
-      this.itemDivider()
-      this.selectItem('置顶数量', '按最近阅读排序，最多展示所选数量',
-        this.lastReadPinCountOptions(),
-        BookshelfDisplaySettingsStore.normalizeLastReadPinCount(this.bookshelfLastReadPinCount) - 1,
-        (index: number) => {
-          this.bookshelfLastReadPinCount = index + 1;
-          this.onDisplaySettingChanged();
-        })
-    }
-    if (this.bookshelfLayoutMode === 'tile' && this.bookshelfLastReadPinMode === 'medium') {
-      this.itemDivider()
-      this.selectItem('上次阅读扉页设置', '最近阅读书籍封面右侧的展示内容',
-        this.lastReadLeafOptions(), this.lastReadLeafSelectedIndex(), (index: number) => {
-          this.bookshelfLastReadLeafMode = index === 0 ? 'bookInfo' :
-            (index === 1 ? 'contentPreview' : 'adaptive');
-          this.onDisplaySettingChanged();
-        })
-    }
-
+    this.itemDivider()
+    SettingSwitchRow({
+      title: '忽略原始封面',
+      description: '书架封面只用应用内的封面图集',
+      isOn: this.bookshelfIgnoreSourceCover,
+      showDivider: false,
+      onChange: (value: boolean) => {
+        this.bookshelfIgnoreSourceCover = value;
+        this.onCoverSettingChanged();
+      }
+    })
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -269,57 +319,6 @@ struct BookshelfSettingsPage {
           this.confirmResetPrivateShelf();
         })
       }
-    }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-    .backgroundColor(this.cardColor())
-
-    this.sectionTitle('封面设置')
-    Column() {
-    this.navItem('封面标识', '配置四个角的类型、来源、更新、置顶和未读数', 'pages/BookshelfCoverBadgeSettings')
-    this.itemDivider()
-    SettingSwitchRow({
-      title: '忽略原始封面',
-      description: '书架封面只用应用内的封面图集',
-      isOn: this.bookshelfIgnoreSourceCover,
-      showDivider: false,
-      onChange: (value: boolean) => {
-        this.bookshelfIgnoreSourceCover = value;
-        this.onCoverSettingChanged();
-      }
-    })
-    this.itemDivider()
-    this.selectItem('封面模式', '多张封面的展示顺序',
-      this.modeOptions(), this.modeSelectedIndex(), (index: number) => {
-        this.bookshelfCoverMode = index === 1 ? 'random' : 'sequence';
-        this.onCoverSettingChanged();
-      })
-    this.itemDivider()
-    this.albumSelectItem('浅色配色图集', '浅色模式下使用的封面图集', false)
-    this.itemDivider()
-    this.albumSelectItem('深色配色图集', '深色模式下使用的封面图集', true)
-    this.itemDivider()
-    this.selectItem('图集应用范围', '作用于全部书籍或指定书籍',
-      this.scopeOptions(), this.scopeSelectedIndex(), (index: number) => {
-        this.setCoverApplyScope(index === 1 ? 'books' : 'all');
-      })
-
-    if (this.showTargetBookList) {
-      this.itemDivider()
-      this.targetBooksPanel()
-    }
-    }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-    .backgroundColor(this.cardColor())
-
-    this.sectionTitle('封面图集')
-    Column() {
-      this.navItem('图集管理', '新建、导入图片、重命名、预览', 'pages/CoverGalleryManager')
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
