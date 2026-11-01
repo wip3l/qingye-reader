@@ -41,6 +41,7 @@ struct DataBackupPage {
   @State importReady: boolean = false;
   @State importDescription: string = '请先选择备份文件';
   @State mode: string = 'export';
+  @State androidImport: boolean = false;
   @State @Watch('syncBusyDialog') busy: boolean = false;
   @State busyText: string = '';
   @State busyProgress: number = 0;
@@ -59,8 +60,13 @@ struct DataBackupPage {
 
   aboutToAppear(): void {
     this.syncBars();
-    const params = router.getParams() as Record<string, string>;
+    const params = this.getUIContext().getRouter().getParams() as Record<string, string>;
     this.mode = params?.['mode'] === 'import' ? 'import' : 'export';
+    this.androidImport = this.mode === 'import' &&
+      params?.['sourceFormat'] === AppDataBackupService.SOURCE_FORMAT_ANDROID;
+    if (this.androidImport) {
+      this.importDescription = '请选择安卓版阅读导出的 ZIP 备份文件，可恢复书源、书架、阅读进度和阅读时长记录。';
+    }
     this.tempCleanupTask = AppDataBackupService.cleanupStaleTempFiles(getContext(this)).catch((error: Error) => {
       console.warn('清理遗留备份临时文件失败:', error);
     });
@@ -82,7 +88,8 @@ struct DataBackupPage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      PageScaffold({ title: this.mode === 'import' ? '数据导入' : '数据导出', content: () => {
+      PageScaffold({ title: this.androidImport ? '导入安卓阅读备份' :
+        (this.mode === 'import' ? '数据导入' : '数据导出'), content: () => {
         this.pageContent()
       } })
 
@@ -168,7 +175,7 @@ struct DataBackupPage {
           .backgroundColor(this.cardColor())
         }
       } else {
-        this.sectionTitle('选择备份文件')
+        this.sectionTitle(this.androidImport ? '选择安卓阅读 ZIP 备份' : '选择备份文件')
         Column() {
           Button(this.importReady ? '重新选择备份文件' : '选择备份文件')
             .width('100%')
@@ -220,13 +227,19 @@ struct DataBackupPage {
         AppDataBackupService.CATEGORY_SOURCES)
       this.selectionRow('书架', '网络书籍、书架分组、标签和单书配置', exporting,
         AppDataBackupService.CATEGORY_BOOKSHELF)
-      this.selectionRow('阅读进度', '当前章节、页码、阅读时间及单书状态', exporting,
+      this.selectionRow(this.androidImport ? '阅读进度与记录' : '阅读进度',
+        this.androidImport ? '当前章节、章内位置、已读状态和阅读时长记录' :
+        (exporting ? '当前章节、页码、阅读时间及单书状态' :
+          '当前章节、页码、单书状态；Android 备份另含阅读时长记录'), exporting,
         AppDataBackupService.CATEGORY_PROGRESS)
-      this.selectionRow('书签', '章节位置和书签正文', exporting,
-        AppDataBackupService.CATEGORY_BOOKMARKS)
-      this.selectionRow('本地图书', 'TXT/EPUB/MOBI/PDF 原文件及本地书籍信息', exporting,
-        AppDataBackupService.CATEGORY_LOCAL_BOOKS)
-      this.selectionRow('自定义设置与资源', '阅读、主题方案、字体、封面、TTS、替换规则及 OPDS/WebDAV；不含凭据', exporting,
+      if (!this.androidImport) {
+        this.selectionRow('书签', '章节位置和书签正文', exporting,
+          AppDataBackupService.CATEGORY_BOOKMARKS)
+        this.selectionRow('本地图书', 'TXT/EPUB/MOBI/PDF 原文件及本地书籍信息', exporting,
+          AppDataBackupService.CATEGORY_LOCAL_BOOKS)
+      }
+      this.selectionRow(this.androidImport ? 'TTS 与替换规则' : '自定义设置与资源', this.androidImport ?
+        'HTTP TTS 配置和正文替换规则' : '阅读、主题方案、字体、封面、TTS、替换规则及 OPDS/WebDAV；不含凭据', exporting,
         AppDataBackupService.CATEGORY_SETTINGS)
       this.selectionRow('搜索历史', '搜索关键词和使用次数', exporting,
         AppDataBackupService.CATEGORY_SEARCH_HISTORY, false)
@@ -529,7 +542,8 @@ struct DataBackupPage {
       await this.awaitTempCleanup();
       const options = new picker.DocumentSelectOptions();
       options.maxSelectNumber = 1;
-      options.fileSuffixFilters = ['应用数据备份|.qingyebak', 'Android 阅读备份|.zip'];
+      options.fileSuffixFilters = this.androidImport ? ['安卓阅读备份|.zip'] :
+        ['应用数据备份|.qingyebak', 'Android 阅读备份|.zip'];
       const result = await new picker.DocumentViewPicker(getContext(this)).select(options);
       if (!result || result.length === 0) return;
       await AppDataBackupService.discardImport(this.importSession);
@@ -538,7 +552,7 @@ struct DataBackupPage {
       this.importReady = false;
       this.importPassword = '';
       this.passwordError = '';
-      await this.loadImportFile('', true);
+      await this.loadImportFile('', !this.androidImport);
     } catch (e) {
       console.error('选择应用备份失败:', e);
       HdsFeedback.showToast(`选择失败：${e instanceof Error ? e.message : String(e)}`);
@@ -551,12 +565,17 @@ struct DataBackupPage {
     this.busyText = password ? '正在解密备份文件...' : '正在读取备份文件...';
     this.busyProgress = 1;
     try {
-      this.importSession = await AppDataBackupService.prepareImport(
+      const session = await AppDataBackupService.prepareImport(
         getContext(this), this.pendingImportUri, password,
         (message: string, percent: number): void => {
           this.busyText = message;
           this.busyProgress = percent;
         });
+      if (this.androidImport && session.sourceFormat !== AppDataBackupService.SOURCE_FORMAT_ANDROID) {
+        await AppDataBackupService.discardImport(session);
+        throw new Error('请选择安卓版阅读导出的 ZIP 备份文件');
+      }
+      this.importSession = session;
       this.importReady = true;
       this.showImportPasswordDialog = false;
       this.importPassword = '';
@@ -571,7 +590,8 @@ struct DataBackupPage {
       this.importSearchHistory = AppDataBackupService.hasCategory(manifest, AppDataBackupService.CATEGORY_SEARCH_HISTORY);
       if (this.importSession.sourceFormat === AppDataBackupService.SOURCE_FORMAT_ANDROID) {
         this.importDescription = '已识别 Android 阅读 ZIP 备份；可转换导入书源、HTTP TTS、网络书架、' +
-          '阅读进度、自定义分组、替换规则和搜索历史。本地书及其他不兼容数据会跳过；' +
+          '阅读进度、阅读时长记录、自定义分组、替换规则和搜索历史。阅读记录会去重合并；' +
+          '仅有总时长的旧记录归入最后阅读日期。本地书及其他不兼容数据会跳过；' +
           '原备份未加密，可能包含敏感配置。';
       } else {
         const security = this.importSession.encrypted && manifest.version >= 2 && manifest.sensitiveDataExcluded ?
@@ -587,7 +607,9 @@ struct DataBackupPage {
       }
     } catch (e) {
       console.error('读取应用备份失败:', e);
-      const message = e instanceof Error ? e.message : String(e);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      const message = this.androidImport && errorMessage === AppDataBackupService.PASSWORD_REQUIRED_MESSAGE ?
+        '请选择安卓版阅读导出的 ZIP 备份文件' : errorMessage;
       this.importSession = null;
       this.importReady = false;
       if (allowPasswordPrompt && message === AppDataBackupService.PASSWORD_REQUIRED_MESSAGE) {

@@ -14,6 +14,8 @@ import { ReaderReplaceRule, ReaderReplaceRuleStore } from './ReaderReplaceRuleSt
 import { TtsSettingsStore } from './TtsSettingsStore';
 import { BookshelfStateStore } from './BookshelfStateStore';
 import { ReaderFontHelper } from './ReaderFontHelper';
+import { AndroidReadRecordImport } from '../core/stats/AndroidReadRecordImport';
+import { AndroidBackupJsonReader } from './AndroidBackupJsonReader';
 
 export class AppDataBackupSelection {
   sources: boolean = true;
@@ -90,6 +92,7 @@ export class AppDataBackupImportResult {
   bookGroups: number = 0;
   localBooks: number = 0;
   progress: number = 0;
+  readRecords: number = 0;
   bookmarks: number = 0;
   settings: number = 0;
   httpTts: number = 0;
@@ -104,6 +107,7 @@ export class AppDataBackupImportResult {
     if (this.bookGroups > 0) parts.push(`分组 ${this.bookGroups}`);
     if (this.localBooks > 0) parts.push(`本地图书 ${this.localBooks}`);
     if (this.progress > 0) parts.push(`进度 ${this.progress}`);
+    if (this.readRecords > 0) parts.push(`阅读记录 ${this.readRecords}`);
     if (this.bookmarks > 0) parts.push(`书签 ${this.bookmarks}`);
     if (this.settings > 0) parts.push(`设置 ${this.settings}`);
     if (this.httpTts > 0) parts.push(`HTTP TTS ${this.httpTts}`);
@@ -160,7 +164,9 @@ export class AppDataBackupService {
     'readStarted',
     'lastReadTime',
     'readProgressChapterIndex',
-    'readProgressPageCount'
+    'readProgressPageCount',
+    'readProgressCharOffsetV2',
+    'readProgressCharOffsetChapterV2'
   ];
 
   private static readonly ANDROID_SOURCE_FILE: string = 'bookSource.json';
@@ -169,6 +175,9 @@ export class AppDataBackupService {
   private static readonly ANDROID_HTTP_TTS_FILE: string = 'httpTTS.json';
   private static readonly ANDROID_REPLACE_RULE_FILE: string = 'replaceRule.json';
   private static readonly ANDROID_SEARCH_HISTORY_FILE: string = 'searchHistory.json';
+  private static readonly ANDROID_READ_RECORD_FILES: string[] = [
+    'readRecordDetail.json', 'readRecordSession.json', 'readRecord.json'
+  ];
   private static readonly ANDROID_MAX_SOURCE_BYTES: number = 128 * 1024 * 1024;
   private static readonly ANDROID_MAX_DATA_BYTES: number = 32 * 1024 * 1024;
 
@@ -580,7 +589,12 @@ export class AppDataBackupService {
     const replaceRulePath = await AppDataBackupService.findFile(root, AppDataBackupService.ANDROID_REPLACE_RULE_FILE);
     const searchHistoryPath = await AppDataBackupService.findFile(
       root, AppDataBackupService.ANDROID_SEARCH_HISTORY_FILE);
-    if (!sourcePath && !bookshelfPath && !groupPath && !httpTtsPath && !replaceRulePath && !searchHistoryPath) {
+    let hasReadRecords = false;
+    for (const file of AppDataBackupService.ANDROID_READ_RECORD_FILES) {
+      if (await AppDataBackupService.findFile(root, file)) hasReadRecords = true;
+    }
+    if (!sourcePath && !bookshelfPath && !groupPath && !httpTtsPath && !replaceRulePath && !searchHistoryPath &&
+      !hasReadRecords) {
       return null;
     }
     const manifest = new AppDataBackupManifest();
@@ -590,7 +604,7 @@ export class AppDataBackupService {
     manifest.sensitiveDataExcluded = false;
     if (sourcePath) manifest.categories.push(AppDataBackupService.CATEGORY_SOURCES);
     if (bookshelfPath || groupPath) manifest.categories.push(AppDataBackupService.CATEGORY_BOOKSHELF);
-    if (bookshelfPath) manifest.categories.push(AppDataBackupService.CATEGORY_PROGRESS);
+    if (bookshelfPath || hasReadRecords) manifest.categories.push(AppDataBackupService.CATEGORY_PROGRESS);
     if (httpTtsPath || replaceRulePath) manifest.categories.push(AppDataBackupService.CATEGORY_SETTINGS);
     if (searchHistoryPath) manifest.categories.push(AppDataBackupService.CATEGORY_SEARCH_HISTORY);
     return manifest;
@@ -670,6 +684,11 @@ export class AppDataBackupService {
         });
     }
 
+    if (selection.progress) {
+      AppDataBackupService.reportProgress(onProgress, '正在导入 Android 阅读记录...', 76);
+      result.readRecords = await AppDataBackupService.importAndroidReadRecords(db, session.rootPath);
+    }
+
     if (selection.settings &&
       AppDataBackupService.hasCategory(session.manifest, AppDataBackupService.CATEGORY_SETTINGS)) {
       AppDataBackupService.reportProgress(onProgress, '正在导入 HTTP TTS 和替换规则...', 78);
@@ -694,8 +713,44 @@ export class AppDataBackupService {
     }
 
     AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+    AppStorage.setOrCreate('readingStatsCloudRevision',
+      (AppStorage.get<number>('readingStatsCloudRevision') || 0) + 1);
     AppDataBackupService.reportProgress(onProgress, 'Android 阅读备份导入完成', 100);
     return result;
+  }
+
+  private static async importAndroidReadRecords(db: AppDatabase, root: string): Promise<number> {
+    const importer = new AndroidReadRecordImport();
+    for (const file of AppDataBackupService.ANDROID_READ_RECORD_FILES) {
+      await AppDataBackupService.forEachAndroidJsonArray(root, file, AppDataBackupService.ANDROID_MAX_DATA_BYTES,
+        async (raw: Record<string, Object>): Promise<void> => {
+          if (file === 'readRecordDetail.json') importer.addDetail(raw);
+          else if (file === 'readRecordSession.json') importer.addSession(raw);
+          else importer.addTotal(raw);
+        });
+    }
+    const records = importer.records();
+    if (records.length === 0) return 0;
+    const books = await db.getAllBooks();
+    const byName: Map<string, Book> = new Map<string, Book>();
+    for (const book of books) {
+      const key = JSON.stringify([book.name.trim(), book.author.trim()]);
+      if (!byName.has(key)) byName.set(key, book);
+    }
+    for (const record of records) {
+      const book = byName.get(JSON.stringify([record.name, record.author]));
+      record.bookUrl = book?.bookUrl ||
+        `android-history://${encodeURIComponent(record.name)}/${encodeURIComponent(record.author)}`;
+      await db.restoreAndroidReadStats(record, record.name, record.author);
+      if (book) {
+        const lastRead = Math.max(AppDataBackupService.numberValue(book.getVariable('lastReadTime'), 0),
+          record.lastReadAt);
+        book.putVariable('readStarted', 'true');
+        book.putVariable('lastReadTime', String(lastRead));
+        await db.updateBook(book);
+      }
+    }
+    return records.length;
   }
 
   private static async importAndroidBookGroups(db: AppDatabase, root: string,
@@ -959,7 +1014,8 @@ export class AppDataBackupService {
     book.intro = AppDataBackupService.limitedStringValue(raw['intro'], 65536);
     book.customIntro = AppDataBackupService.limitedStringValue(raw['customIntro'], 65536);
     book.charset = AppDataBackupService.limitedStringValue(raw['charset'], 128);
-    book.type = AppDataBackupService.numberValue(raw['type'], 0);
+    // Remote type bits match Legado; keep them, including TEXT=8 used by this backup.
+    book.type = Math.max(0, AppDataBackupService.numberValue(raw['type'], 0));
     book.group = AppDataBackupService.mapAndroidBookGroup(
       AppDataBackupService.numberValue(raw['group'], 0), mapping);
     book.isPinned = raw['isPinned'] === true;
@@ -968,20 +1024,45 @@ export class AppDataBackupService {
     book.latestChapterTime = AppDataBackupService.numberValue(raw['latestChapterTime'], 0);
     book.lastCheckTime = AppDataBackupService.numberValue(raw['lastCheckTime'], 0);
     book.lastCheckCount = AppDataBackupService.numberValue(raw['lastCheckCount'], 0);
-    book.totalChapterNum = AppDataBackupService.numberValue(raw['totalChapterNum'], 0);
+    book.totalChapterNum = Math.max(0, AppDataBackupService.numberValue(raw['totalChapterNum'], 0));
     book.durChapterTitle = AppDataBackupService.stringValue(raw['durChapterTitle']);
-    book.durChapterIndex = AppDataBackupService.numberValue(raw['durChapterIndex'], 0);
-    book.durChapterPos = AppDataBackupService.numberValue(raw['durChapterPos'], 0);
-    book.durChapterTime = AppDataBackupService.numberValue(raw['durChapterTime'], 0);
+    book.durChapterIndex = Math.max(0, AppDataBackupService.numberValue(raw['durChapterIndex'], 0));
+    book.durChapterPos = Math.max(0, AppDataBackupService.numberValue(raw['durChapterPos'], 0));
+    book.durChapterTime = Math.max(0, AppDataBackupService.numberValue(raw['durChapterTime'], 0));
     book.wordCount = AppDataBackupService.stringValue(raw['wordCount']);
     book.canUpdate = raw['canUpdate'] !== false;
     book.order = AppDataBackupService.numberValue(raw['order'], 0);
     book.originOrder = AppDataBackupService.numberValue(raw['originOrder'], 0);
     const androidVariable = AppDataBackupService.stringValue(raw['variable']);
-    book.replaceVariable(androidVariable.length <= 65536 ? (androidVariable || '{}') : '{}');
+    const variables: Record<string, string> = {};
+    if (androidVariable.length <= 65536) {
+      const rawVariables = AppDataBackupService.parseRecord(androidVariable || '{}');
+      if (rawVariables) {
+        for (const key of AppDataBackupService.PROGRESS_VARIABLE_KEYS) {
+          const value = rawVariables[key];
+          if (key === 'readStarted') {
+            if (value === true || value === 1 || value === 'true' || value === '1') variables[key] = 'true';
+          } else {
+            const numeric = AppDataBackupService.numberValue(value, -1);
+            if (numeric >= 0) variables[key] = String(numeric);
+          }
+        }
+      }
+    }
     // Android 备份中的 variable 是开放式运行时容器，可能夹带目录或正文缓存；Harmony
     // 只需要其中少量跨端阅读状态，避免把不兼容的大块缓存带进启动必读的 books 表。
-    book.replaceVariable(AppDataBackupService.progressVariables(book));
+    book.replaceVariable(JSON.stringify(variables));
+    if (book.durChapterIndex > 0 || book.durChapterPos > 0 || book.durChapterTitle) {
+      book.putVariable('readStarted', 'true');
+      if (book.durChapterTime > 0) book.putVariable('lastReadTime', String(book.durChapterTime));
+      // Android Book.durChapterPos is the first visible character, while Harmony stores a page
+      // index there. Restore text through the reader's character anchor after repagination.
+      if (book.type === 0 || ((book.type & 8) !== 0 && (book.type & (32 | 64)) === 0)) {
+        book.putVariable('readProgressCharOffsetV2', String(book.durChapterPos));
+        book.putVariable('readProgressCharOffsetChapterV2', String(book.durChapterIndex));
+        book.durChapterPos = 0;
+      }
+    }
     const readConfig = raw['readConfig'];
     if (readConfig && typeof readConfig === 'object' && !Array.isArray(readConfig)) {
       book.readConfig = AppDataBackupService.convertAndroidReadConfig(readConfig as Record<string, Object>);
@@ -1081,6 +1162,14 @@ export class AppDataBackupService {
     return rule;
   }
 
+  private static parseRecord(raw: string): Record<string, Object> | null {
+    try {
+      return AppDataBackupService.ruleRecord(JSON.parse(raw) as Object);
+    } catch (_) {
+      return null;
+    }
+  }
+
   private static ruleRecord(value: Object | undefined): Record<string, Object> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return value as Record<string, Object>;
@@ -1104,9 +1193,10 @@ export class AppDataBackupService {
   }
 
   private static numberValue(value: Object | undefined, fallback: number): number {
-    if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value) : fallback;
-    const parsed = Number(AppDataBackupService.stringValue(value));
-    return Number.isNaN(parsed) ? fallback : Math.round(parsed);
+    if (typeof value !== 'number' && typeof value !== 'string') return fallback;
+    if (typeof value === 'string' && !value.trim()) return fallback;
+    const parsed = Math.round(Number(value));
+    return Number.isSafeInteger(parsed) ? parsed : fallback;
   }
 
   private static async forEachAndroidJsonArray(root: string, fileName: string, maxBytes: number,
@@ -1117,67 +1207,31 @@ export class AppDataBackupService {
     const stat = await fs.stat(path);
     if (stat.size <= 0) return 0;
     if (stat.size > maxBytes) throw new Error(`${fileName} 过大，无法安全导入`);
-    const raw = await AppDataBackupService.readText(path);
-    let first = 0;
-    while (first < raw.length && (raw[first].trim() === '' || raw.charCodeAt(first) === 0xFEFF)) first++;
-    if (first >= raw.length) return 0;
-    if (raw[first] === '{') {
-      const parsed = JSON.parse(raw.substring(first)) as Object;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        await handler(parsed as Record<string, Object>, 0, raw.length, raw.length);
-        return 1;
-      }
-      return 0;
-    }
-    if (raw[first] !== '[') throw new Error(`${fileName} 不是有效的 JSON 数组`);
-    let itemStart = -1;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
+    const reader = new AndroidBackupJsonReader(fileName);
+    const decoder = util.TextDecoder.create('utf-8');
+    const file = await fs.open(path, fs.OpenMode.READ_ONLY);
+    let offset = 0;
     let count = 0;
-    for (let i = first + 1; i < raw.length; i++) {
-      const ch = raw[i];
-      if (itemStart < 0) {
-        if (ch === ']') return count;
-        if (ch === ',' || ch.trim() === '') continue;
-        itemStart = i;
-      }
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (ch === '\\') escaped = true;
-        else if (ch === '"') inString = false;
-        continue;
-      }
-      if (ch === '"') {
-        inString = true;
-        continue;
-      }
-      if (ch === '{' || ch === '[') {
-        depth++;
-        continue;
-      }
-      if (ch === '}' && depth > 0) {
-        depth--;
-        continue;
-      }
-      if (ch === ']' && depth > 0) {
-        depth--;
-        continue;
-      }
-      if ((ch === ',' || ch === ']') && depth === 0) {
-        const itemRaw = raw.substring(itemStart, i).trim();
-        if (itemRaw) {
-          const parsed = JSON.parse(itemRaw) as Object;
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            await handler(parsed as Record<string, Object>, count, i, raw.length);
-            count++;
-          }
+    try {
+      const buffer = new ArrayBuffer(64 * 1024);
+      while (offset < stat.size) {
+        const length = await fs.read(file.fd, buffer, {
+          offset, length: Math.min(buffer.byteLength, stat.size - offset)
+        });
+        if (length <= 0) throw new Error(`${fileName} 未完整读取`);
+        offset += length;
+        const chunk = decoder.decodeWithStream(new Uint8Array(buffer, 0, length), { stream: offset < stat.size });
+        for (const item of reader.append(chunk)) {
+          await handler(item, count++, offset, stat.size);
         }
-        itemStart = -1;
-        if (ch === ']') return count;
+        // Native async file IO does not guarantee that ArkUI gets a rendering turn.
+        await new Promise<void>((resolve): void => { setTimeout(resolve, 0); });
       }
+      reader.finish();
+      return count;
+    } finally {
+      await fs.close(file);
     }
-    throw new Error(`${fileName} JSON 数组未完整结束`);
   }
 
   private static async restoreBookWithoutUnexpectedProgress(db: AppDatabase, book: Book,

@@ -1,5 +1,6 @@
 {
   "src": [
+    "pages/AndroidBackupProbe",
     "pages/PdfNativeViewTest",
     "pages/ReaderFontWeightStepperTest",
     "pages/WebVerificationTest"

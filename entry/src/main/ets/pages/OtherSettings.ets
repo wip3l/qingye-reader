@@ -86,9 +86,19 @@ struct OtherSettingsPage {
       SettingNavRow({
         title: '数据导出',
         description: '将书源、书架、进度、本地图书和设置导出为备份',
-        showDivider: false,
         onTap: () => {
           router.pushUrl({ url: 'pages/DataBackup', params: { mode: 'export' } });
+        }
+      })
+      SettingNavRow({
+        title: '导入安卓阅读备份',
+        description: '导入安卓版阅读导出的 ZIP 备份，恢复书源、书架、阅读进度和记录',
+        showDivider: false,
+        onTap: () => {
+          this.getUIContext().getRouter().pushUrl({
+            url: 'pages/DataBackup',
+            params: { mode: 'import', sourceFormat: 'legado-android' }
+          });
         }
       })
     }

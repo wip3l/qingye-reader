@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { stripTypeScriptTypes } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { readEtsModule } from './lib/ets-module-staging.mjs';
 
 process.env.TZ = 'America/Denver';
 const root = new URL('../entry/src/main/ets/', import.meta.url);
@@ -16,6 +17,8 @@ function load(file, globals, names) {
   return context.exports;
 }
 const { ReadStatsSummary: Summary } = load('core/stats/ReadStatsSummary.ts', {}, 'ReadStatsSummary');
+const Book = vm.runInNewContext(stripTypeScriptTypes(readEtsModule('model/data/Book.ts')
+  .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, ''), { mode: 'strip' }) + '\nBook;');
 const syncModels = load('core/stats/ReadStatsSyncModels.ts', {},
   'ReadStatsPendingUpload,ReadStatsSyncPayload,ReadStatsSyncOperation,ReadStatsSyncRequest,ReadStatsSyncResponse,ReadStatsSyncAck,ReadStatsSyncChange');
 const date = (y, m, d, h = 0, minute = 0) => new Date(y, m - 1, d, h, minute).getTime();
@@ -79,7 +82,7 @@ async function database(t) {
     customCoverUrl TEXT DEFAULT '', origin TEXT DEFAULT 'web', isPrivate INTEGER DEFAULT 0, pendingAddToShelf INTEGER DEFAULT 0);
     CREATE TABLE read_stats (dayKey TEXT, bookUrl TEXT, durationMs INTEGER, lastReadAt INTEGER, PRIMARY KEY(dayKey,bookUrl));`);
   const { appDb: db, ReadStatsEntry: Entry } = load('model/data/AppDatabase.ts', {
-    ...syncModels,
+    ...syncModels, Book,
     relationalStore: { RdbPredicates: Predicates }, util: { generateRandomUUID: randomUUID },
     BookIdentity: { cloudIdentityValue: book => `identity:${book.bookUrl}` },
     CloudSyncChangeTracker: { markDataChanged() {}, markReadingProgressChanged() { progressMarks++; } }
@@ -130,6 +133,30 @@ test('record retries are idempotent, account/device scopes isolate and deletion 
   assert.equal((await h.query()).reduce((s,r)=>s+r.durationMs,0),60000);
   assert.equal((await h.query('','bob')).reduce((s,r)=>s+r.durationMs,0),60000);
   assert.equal((await h.db.getReadStatsDevices('alice')).length,1);
+});
+
+test('Android history import preserves off-shelf titles, merges larger totals and respects tombstones', async t => {
+  const h = await database(t);
+  await h.db.migrateReadStats();
+  const first = h.entry({ recordId: 'android-read:stable', ownerId: '', deviceId: 'legacy-import',
+    deviceName: 'Android 阅读导入', bookUrl: 'android-history://missing', durationMs: 49809 });
+  await h.db.restoreAndroidReadStats(first, '离架小说', '作者');
+  await h.db.restoreAndroidReadStats(first, '离架小说', '作者');
+  let rows = await h.query('', '');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, '离架小说');
+  assert.equal(rows[0].author, '作者');
+  assert.equal(rows[0].onShelf, false);
+  assert.equal(rows[0].durationMs, 49809);
+  await h.db.restoreAndroidReadStats({ ...first, durationMs: 60000 }, '离架小说', '作者');
+  await h.db.restoreAndroidReadStats(first, '离架小说', '作者');
+  rows = await h.query('', '');
+  assert.equal(rows[0].durationMs, 60000);
+  assert.equal(h.sql.prepare('SELECT COUNT(*) AS n FROM books').get().n, 0);
+  await h.db.deleteReadStatsForBook(first.bookUrl, '0000-00-00', '9999-99-99');
+  await h.db.restoreAndroidReadStats({ ...first, durationMs: 90000 }, '离架小说', '作者');
+  assert.equal((await h.query('', '')).length, 0);
+  assert.equal(h.sql.prepare('SELECT COUNT(*) AS n FROM read_stats_records').get().n, 1);
 });
 test('deleted books retain latest title and private books stay hidden after removal', async t => {
   const h = await database(t);h.book('book','旧名');await h.db.migrateReadStats();

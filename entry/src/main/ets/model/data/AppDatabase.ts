@@ -3087,6 +3087,30 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     await this.store.delete(predicates);
   }
 
+  /** Portable Android history stays local (ownerId=''); replay never resurrects deleted records. */
+  async restoreAndroidReadStats(entry: ReadStatsEntry, name: string, author: string): Promise<void> {
+    if (!this.store) throw new Error('阅读记录数据库未就绪');
+    const task = this.readStatsWriteTask.catch(() => {}).then(async (): Promise<void> => {
+      const book = await this.getBook(entry.bookUrl);
+      if (!book) {
+        const snapshot = new Book();
+        snapshot.bookUrl = entry.bookUrl;
+        snapshot.name = name;
+        snapshot.author = author;
+        await this.saveReadStatsBookSnapshot(snapshot);
+      }
+      await this.performReadStatsUpsert(entry);
+      if (!this.store) return;
+      // Newer backups may contain more time for an already imported calendar day.
+      await this.store.executeSql(`UPDATE read_stats_records SET
+        durationMs=MAX(durationMs,?), lastReadAt=MAX(lastReadAt,?), syncVersion=syncVersion+1
+        WHERE recordId=? AND ownerId='' AND deletedAt=0 AND durationMs<?`,
+        [entry.durationMs, entry.lastReadAt, entry.recordId, entry.durationMs]);
+    });
+    this.readStatsWriteTask = task;
+    await task;
+  }
+
   async addReadStats(entries: ReadStatsEntry[]): Promise<void> {
     if (!this.store || entries.length === 0) return;
     entries.forEach((entry: ReadStatsEntry): void => {
