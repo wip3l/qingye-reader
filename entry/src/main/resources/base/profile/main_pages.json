@@ -19,6 +19,8 @@
     "pages/ComicColor",
     "pages/CustomFontManager",
     "pages/TtsSettings",
+    "pages/MimoSettings",
+    "pages/MimoBookRoles",
     "pages/CustomTtsVoiceManager",
     "pages/BookshelfSettings",
     "pages/BookshelfCoverBadgeSettings",

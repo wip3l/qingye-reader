@@ -18,6 +18,7 @@ import { AppIconManager } from '../utils/AppIconManager';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
 import { ReaderSystemFontHelper } from '../utils/ReaderSystemFontHelper';
 import { TtsSettingsStore } from '../utils/TtsSettingsStore';
+import { MimoStore } from '../utils/mimo/MimoStore';
 import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ThemeIds } from '../theme/ThemeModels';
@@ -74,6 +75,7 @@ export default class EntryAbility extends UIAbility {
     });
     AppStorage.setOrCreate('appCacheDir', this.context.cacheDir);
     AppStorage.setOrCreate('appFilesDir', this.context.filesDir);
+    try { MimoStore.load(); } catch (_) {}
     AppStorage.setOrCreate('pendingBookSourceImportUri', '');
     AppStorage.setOrCreate('pendingBookSourceImportUrl', '');
     AppStorage.setOrCreate('pendingBookSourceImportNonce', 0);

@@ -15,10 +15,12 @@ function method(source, name) {
 }
 const storage = new Map();
 const toasts = [];
+let mimoEnabled = true;
 const context = vm.createContext({
   AppStorage: { get: key => storage.get(key), setOrCreate: (key, value) => storage.set(key, value) },
   readStatsTracker: { setTtsActive() {} },
   HdsFeedback: { showToast: message => toasts.push(message) },
+  MimoStore: { load: () => ({ enabled: mimoEnabled }), setEnabled: value => { mimoEnabled = value; } },
   console
 });
 vm.runInContext(stripTypeScriptTypes(session.replace(/^import .*;\r?\n/gm, '')
@@ -80,6 +82,7 @@ for (const index of [1, 2]) {
   assert.equal(shared.ttsVoiceIndex(), index);
 }
 assert.equal(host.ttsPerson, 'system');
+assert.equal(mimoEnabled, false, 'explicit voice selection must disable the MiMo provider');
 assert.equal(host.ttsCustomVoiceId, '');
 await shared.toggle();
 assert.equal(retries, 1, 'play must start a new request instead of resuming failed audio');

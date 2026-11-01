@@ -52,6 +52,7 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { RecentReadShortcut } from '../utils/RecentReadShortcut';
 import { RecentReadCardUpdater } from '../utils/RecentReadCardUpdater';
 import { SystemTtsReader, TtsChunk, TtsVoiceOption } from '../utils/SystemTtsReader';
+import { MimoStore } from '../utils/mimo/MimoStore';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
@@ -7743,6 +7744,7 @@ struct ReadBookPage {
       HdsFeedback.showToast(voice.downloadable ? '请到朗读设置下载该音色' : '该系统音色当前不可用');
       return;
     }
+    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);
     const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader.isSpeaking());
     if (shouldResume) {
       this.stopTtsReading();
@@ -7877,6 +7879,7 @@ struct ReadBookPage {
       HdsFeedback.showToast('该自定义音色已禁用');
       return;
     }
+    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);
     const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader.isSpeaking());
     if (shouldResume) {
       this.stopTtsReading();
@@ -7910,6 +7913,7 @@ struct ReadBookPage {
       HdsFeedback.showToast('请先登录华为账号后使用在线音色');
       return;
     }
+    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);
     const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader.isSpeaking());
     if (shouldResume) {
       this.stopTtsReading();
@@ -7944,6 +7948,7 @@ struct ReadBookPage {
   }
 
   selectedTtsVoiceTitle(): string {
+    if (MimoStore.load().enabled) return MimoStore.load().multi ? 'MiMo · 自动多角色' : 'MiMo · ' + MimoStore.load().voice;
     const cloudVoice = this.findCurrentCloudTtsVoice();
     if (cloudVoice) {
       return TtsVoiceCatalog.cloudVoiceTitle(cloudVoice);
@@ -11843,6 +11848,10 @@ struct ReadBookPage {
       this.publishTtsFloatingSession();
       const cloudVoice = this.findCurrentCloudTtsVoice();
       await this.ttsReader.start(text, {
+        mimo: MimoStore.load().enabled,
+        mimoBook: this.book?.bookUrl || '',
+        mimoChapter: String(this.currentChapterIndex),
+        mimoSourceOffset: this.ttsTextStartOffset,
         onFinished: () => {
           this.continueTtsReading(token).catch((e: Error) => {
             console.warn('连续朗读续播失败:', e);
@@ -11868,7 +11877,11 @@ struct ReadBookPage {
             return;
           }
           this.finishTtsReading(true);
-          HdsFeedback.showToast(message || '系统朗读失败');
+          if (message.startsWith('MIMO_ANALYSIS:')) {
+            this.showMimoAnalysisRecovery(message.slice('MIMO_ANALYSIS:'.length));
+          } else {
+            HdsFeedback.showToast(message || '朗读失败');
+          }
         },
         onChunkStart: (chunk: TtsChunk) => {
           if (!this.isCurrentTtsFocusSession(token, focusGeneration,
@@ -11917,6 +11930,21 @@ struct ReadBookPage {
    */
   ttsSpeechTextEnd(text: string): number {
     return this.ttsReader.speechTextEnd(text);
+  }
+
+  async showMimoAnalysisRecovery(message: string): Promise<void> {
+    if (!this.readerPageVisible) { HdsFeedback.showToast(message); return; }
+    const failedToken = this.ttsReadToken;
+    const result = await this.getUIContext().getPromptAction().showDialog({
+      title: '人物识别暂未完成', message: message + '\n已保留朗读位置，重试时可能重读当前片段。',
+      buttons: [{ text: '稍后再试', color: this.getSubTextColor() },
+        { text: '改用单音色', color: this.accentColor() }]
+    });
+    if (result.index === 1 && failedToken === this.ttsReadToken && this.readerPageVisible) {
+      MimoStore.load().multi = false;
+      MimoStore.saveSettings();
+      await this.startTtsReadingFromCurrentPosition(false);
+    }
   }
 
   stopTtsReading(userCancelled: boolean = true): void {

@@ -3,6 +3,7 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import deviceInfo from '@ohos.deviceInfo';
+import { router } from '@kit.ArkUI';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { TtsPanelThemeBackground } from './TtsPanelThemeBackground';
@@ -19,6 +20,10 @@ const SECONDARY_DOWNLOAD: string = 'download';
 @Component
 export struct ReaderTtsPlayerPanel {
   @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
+  @StorageProp('mimoEnabled') mimoEnabled: boolean = false;
+  @StorageProp('mimoMulti') mimoMulti: boolean = false;
+  @StorageProp('mimoCurrentRole') mimoCurrentRole: string = '';
+  @StorageProp('mimoReadingStatus') mimoReadingStatus: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @Prop sharedMotionId: string = '';
   @Prop darkMode: boolean = false;
@@ -363,7 +368,24 @@ export struct ReaderTtsPlayerPanel {
         this.scrollToCurrentSentence(false);
       })
 
-      if (this.hasTtsVoices()) {
+      if (this.mimoEnabled) {
+        Column({ space: 8 }) {
+          Row({ space: 12 }) {
+            Text(this.mimoReadingStatus || this.mimoCurrentRole || (this.mimoMulti ? 'MiMo · 自动多角色' : 'MiMo · 单音色'))
+              .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor).layoutWeight(1)
+            Button('本书角色').fontSize(AppFontSize.CAPTION)
+              .fontColor(this.primaryTextColor).backgroundColor(ThemeRuntime.softFillColor(this.darkMode))
+              .onClick(() => router.pushUrl({ url: 'pages/MimoBookRoles' }))
+          }.width('100%')
+          Row({ space: 12 }) {
+            Button('这句角色不对？').fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor).backgroundColor(Color.Transparent)
+              .onClick(() => router.pushUrl({ url: 'pages/MimoBookRoles' }))
+            Blank()
+            Button('MiMo 设置').fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor).backgroundColor(Color.Transparent)
+              .onClick(() => router.pushUrl({ url: 'pages/MimoSettings' }))
+          }.width('100%')
+        }.width('100%')
+      } else if (this.hasTtsVoices()) {
         Row() {
           this.ttsVoiceSelect()
         }

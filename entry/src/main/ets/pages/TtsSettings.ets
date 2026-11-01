@@ -17,6 +17,8 @@ import { SystemTtsReader, TtsVoiceOption } from '../utils/SystemTtsReader';
 import { TtsVoiceCatalog } from '../utils/TtsVoiceCatalog';
 import { AdaptiveIconButton } from '../components/AdaptiveIconButton';
 import { TtsSettings, TtsSettingsStore } from '../utils/TtsSettingsStore';
+import { MimoStore } from '../utils/mimo/MimoStore';
+import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
@@ -59,6 +61,9 @@ struct TtsSettingsPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
 
   @State voices: TtsVoiceOption[] = [TtsVoiceCatalog.defaultVoice()];
+  @StorageProp('mimoEnabled') mimoEnabled: boolean = false;
+  @StorageProp('mimoMulti') mimoMulti: boolean = false;
+  @StorageProp('mimoVoice') mimoVoice: string = '白桦';
   @State cloudVoices: TtsVoiceInfo[] = [];
   @State ttsCatalog: TtsCatalogResponse = new TtsCatalogResponse();
   @State ttsStandardChars: number = 0;
@@ -128,6 +133,13 @@ struct TtsSettingsPage {
           } })
       }.width('100%').backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.cardRadius())
 
+      Column() {
+        SettingNavRow({ title: 'MiMo 朗读', description: this.mimoEnabled ?
+          (this.mimoMulti ? '已启用 · 自动多角色 · 自带 API Key' : '已启用 · 单音色 · 自带 API Key') :
+          '使用自己的 API Key，自动识别人物与旁白', showDivider: false,
+          onTap: (): void => { this.stopPreview(); router.pushUrl({ url: 'pages/MimoSettings' }); } })
+      }.width('100%').backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.cardRadius())
+
       Column({ space: AppSpacing.MD }) {
         Row() {
           Text('朗读倍速').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
@@ -156,6 +168,11 @@ struct TtsSettingsPage {
         }.width('100%')
       }.width('100%').padding(AppSpacing.XL).backgroundColor(this.cardColor())
         .borderRadius(ThemeRuntime.cardRadius())
+
+      if (this.mimoEnabled) {
+        Text('MiMo 的倍速用于指导合成语速，实际节奏会随内容变化。用量计入你的小米账号，不消耗在线朗读字数包。')
+          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
+      }
 
       Column({ space: AppSpacing.LG }) {
         Text('试听').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
@@ -242,6 +259,7 @@ struct TtsSettingsPage {
   }
 
   selectedVoiceTitle(): string {
+    if (this.mimoEnabled) return this.mimoMulti ? 'MiMo · 自动多角色' : 'MiMo · ' + this.mimoVoice;
     const cloudVoice = this.findCurrentCloudVoice();
     if (cloudVoice) {
       return TtsVoiceCatalog.cloudVoiceTitle(cloudVoice);
@@ -259,6 +277,8 @@ struct TtsSettingsPage {
 
   voiceSelectOptions(): TtsSettingsVoiceSelectOption[] {
     const options: TtsSettingsVoiceSelectOption[] = [];
+    options.push({ value: 'MiMo 朗读设置', key: 'mimo',
+      selectVoice: (): void => { this.stopPreview(); router.pushUrl({ url: 'pages/MimoSettings' }); } });
     this.cloudVoices.forEach((voice: TtsVoiceInfo): void => {
       options.push({ value: TtsVoiceCatalog.cloudVoiceTitle(voice),
         key: TtsVoiceCatalog.cloudVoiceKey(voice),
@@ -533,6 +553,7 @@ struct TtsSettingsPage {
 
   applyVoice(voice: TtsVoiceOption, stopPreview: boolean): void {
     if (!TtsVoiceCatalog.systemEnabled(voice, this.ttsDisabledVoiceKeys)) return;
+    if (stopPreview && this.mimoEnabled) MimoStore.setEnabled(false);
     if (stopPreview && this.isPreviewing) {
       this.previewReader.stop();
       this.isPreviewing = false;
@@ -552,6 +573,7 @@ struct TtsSettingsPage {
       HdsFeedback.showToast('该自定义音色已禁用');
       return;
     }
+    if (this.mimoEnabled) MimoStore.setEnabled(false);
     if (this.isPreviewing) {
       this.previewReader.stop();
       this.isPreviewing = false;
@@ -569,6 +591,7 @@ struct TtsSettingsPage {
       HdsFeedback.showToast('请先登录华为账号后使用云端音色');
       return;
     }
+    if (this.mimoEnabled) MimoStore.setEnabled(false);
     if (this.isPreviewing) {
       this.previewReader.stop();
       this.isPreviewing = false;
@@ -1010,8 +1033,11 @@ struct TtsSettingsPage {
       return;
     }
     try {
+      if (this.mimoEnabled) ReaderTtsFloatingSession.stop();
       this.isPreviewing = true;
       await this.previewReader.start(this.getPreviewText(), {
+        mimo: this.mimoEnabled,
+        mimoBook: 'preview',
         cloudVoiceId: this.findCurrentCloudVoice()?.id || '',
         cloudVoiceName: this.findCurrentCloudVoice()?.name || '',
         cloudVoiceTier: this.findCurrentCloudVoice()?.tier || 'STANDARD',

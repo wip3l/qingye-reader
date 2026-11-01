@@ -5,6 +5,8 @@ import { HttpTTS } from '@legado/sourceengine';
 import { HttpTtsAudio, HttpTtsReader } from './HttpTtsReader';
 import { TtsAudioSession } from './TtsAudioSession';
 import { PcmPlaybackCue, TtsPcmAudioPlayer } from './TtsPcmAudioPlayer';
+import { MimoReadingSession } from './mimo/MimoReadingSession';
+import { MimoUnit } from '../core/mimo/MimoPolicy';
 
 export interface TtsChunk {
   text: string;
@@ -13,6 +15,10 @@ export interface TtsChunk {
 }
 
 export interface TtsReadOptions {
+  mimo?: boolean;
+  mimoBook?: string;
+  mimoChapter?: string;
+  mimoSourceOffset?: number;
   onFinished?: () => void;
   /**
    * Fired instead of synthesis when the requested text has no audible content
@@ -134,6 +140,7 @@ export class SystemTtsReader {
   private pcmPlayer: TtsPcmAudioPlayer = new TtsPcmAudioPlayer();
   private httpReader: HttpTtsReader = new HttpTtsReader();
   private cloudReader: CloudTtsClient = new CloudTtsClient();
+  private mimoReader: MimoReadingSession = new MimoReadingSession();
   private chunks: TtsChunk[] = [];
   // Normalized source text the current chunks were derived from. Used to tell a real
   // chunk boundary (keep the trailing comma so the engine hears "sentence continues")
@@ -467,6 +474,31 @@ export class SystemTtsReader {
     }
     this.chunkIndex = 0;
     this.active = true;
+    if (options?.mimo) {
+      this.mimoReader.read(cleanText, {
+        book: options.mimoBook || 'preview', chapter: options.mimoChapter || 'preview',
+        sourceOffset: options.mimoSourceOffset || 0, speed: options.speed || 1,
+        onFocus: (unit: MimoUnit, index: number): void => {
+          if (generation !== this.readGeneration || !this.active) return;
+          const chunk: TtsChunk = { text: unit.text, start: unit.start, end: unit.end };
+          this.currentFocusChunk = chunk;
+          this.currentFocusChunkIndex = index;
+          if (this.onChunkStart) this.onChunkStart(chunk, index);
+        },
+        onAudio: (): void => {
+          if (generation !== this.readGeneration || !this.active || this.audioStarted) return;
+          this.audioStarted = true;
+          if (this.onAudioStart) this.onAudioStart();
+        }
+      }).then((): void => {
+        if (generation === this.readGeneration && this.active) this.finish(true);
+      }).catch((error: Error): void => {
+        if (generation !== this.readGeneration || !this.active) return;
+        this.active = false;
+        if (this.onError) this.onError(error.message);
+      });
+      return;
+    }
     if (this.optionCloudVoiceId) {
       if (this.engine) {
         try {
@@ -611,6 +643,7 @@ export class SystemTtsReader {
       return this.active && this.paused;
     }
     this.paused = true;
+    await this.mimoReader.pause();
     await this.pcmPlayer.pause();
     await this.httpReader.pause();
     if (this.ttsPcmPlayType === 1 && this.engine) {
@@ -646,6 +679,7 @@ export class SystemTtsReader {
     }
     this.paused = false;
     await this.pcmPlayer.resume();
+    await this.mimoReader.resume();
     await this.httpReader.resume();
     if (this.ttsPcmPlayType === 1 && this.engine && !this.currentRequestId) {
       this.speakNext(this.readGeneration);
@@ -695,6 +729,7 @@ export class SystemTtsReader {
     this.clearSpeakWatchdog();
     this.httpReader.stop();
     this.cloudReader.stop();
+    this.mimoReader.stop();
     this.pcmPlayer.stop();
     this.releaseSystemAudioSession();
     try {
@@ -711,6 +746,7 @@ export class SystemTtsReader {
     }
     this.pcmPlayer.release();
     this.httpReader.release();
+    this.mimoReader.release();
     this.engine = null;
   }
 
