@@ -120,13 +120,14 @@ struct BookSourceDebugPage {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet($$this.inlinePreviewVisible, this.inlinePreviewContent(), {
       height: `${Math.round(this.inlinePreview.height * 100)}%`,
-      detents: [`${Math.round(this.inlinePreview.height * 100)}%`, SheetSize.LARGE], showClose: true
+      detents: [`${Math.round(this.inlinePreview.height * 100)}%`, SheetSize.LARGE], showClose: true,
+      backgroundColor: this.appDarkMode ? '#18191B' : '#FFFFFF'
     })
   }
 
   @Builder
   inlinePreviewContent() {
-    NativeCommentPageView({ page: this.inlinePreview,
+    NativeCommentPageView({ page: this.inlinePreview, darkMode: this.appDarkMode,
       onDisplay: (state: string, message: string): void => this.inlineDisplayChanged(state, message) })
   }
 

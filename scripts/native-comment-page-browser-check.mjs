@@ -67,6 +67,35 @@ try {
   assert.equal(await demoFrame.locator('#count').textContent(),'评论数：2');
   await demoFrame.getByRole('button',{name:'测试本地交互'}).click();
   assert.equal(await demoFrame.getByRole('button').textContent(),'已点击');
+  // A real data: document and opaque iframe must inherit the host's preference, including live changes.
+  const themed=new NativeCommentPage();
+  themed.html=`<style>body{background:#fff;color:#202124}.quote,.reply{background:#f5f6f8}
+    .name{color:#9a4228}@media(prefers-color-scheme:dark){body{background:#18191b;color:#ddd}
+    .quote,.reply{background:#242629}.name{color:#df9b7f}}</style>
+    <p class="name">书友</p><p class="quote">引用</p><p class="reply">回复</p>
+    <button onclick="this.textContent='保留交互状态'">本地交互</button>`;
+  await page.emulateMedia({colorScheme:'light'});
+  await page.goto('data:text/html;base64,'+Buffer.from(NativeCommentPage.document(themed,8),'utf8').toString('base64'));
+  const themeFrame=page.frameLocator('#native-comment-content');
+  await themeFrame.getByRole('button').click();
+  for(const scheme of ['light','dark','light']) {
+    await page.emulateMedia({colorScheme:scheme});
+    const dark=scheme==='dark';
+    await page.waitForFunction(expected=>getComputedStyle(document.body).backgroundColor===expected,
+      dark?'rgb(24, 25, 27)':'rgb(255, 255, 255)');
+    assert.deepEqual(await themeFrame.locator('body').evaluate(el=>({
+      background:getComputedStyle(el).backgroundColor, text:getComputedStyle(el).color,
+      quote:getComputedStyle(document.querySelector('.quote')).backgroundColor,
+      reply:getComputedStyle(document.querySelector('.reply')).backgroundColor,
+      name:getComputedStyle(document.querySelector('.name')).color,
+      scheme:matchMedia('(prefers-color-scheme:dark)').matches
+    })), { background:dark?'rgb(24, 25, 27)':'rgb(255, 255, 255)',
+      text:dark?'rgb(221, 221, 221)':'rgb(32, 33, 36)',
+      quote:dark?'rgb(36, 38, 41)':'rgb(245, 246, 248)', reply:dark?'rgb(36, 38, 41)':'rgb(245, 246, 248)',
+      name:dark?'rgb(223, 155, 127)':'rgb(154, 66, 40)', scheme:dark });
+    assert.equal(await themeFrame.getByRole('button').textContent(),'保留交互状态','theme changes do not reload source content');
+  }
+  assert.deepEqual(outbound,[],'theme propagation adds no bridge or network requests');
   fs.mkdirSync(new URL('../.codex_tmp/',import.meta.url),{recursive:true});
   await page.screenshot({path:new URL('../.codex_tmp/inline-comment-preview.png',import.meta.url).pathname.replace(/^\/([A-Z]:)/i,'$1')});
   console.log('native-comment-page-browser-check: actual Chromium CSP, no outbound resource requests, safe injection, opaque-origin storage isolation, local interaction and example preview passed');

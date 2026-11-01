@@ -3561,6 +3561,7 @@ struct ReadBookPage {
 
   /** 评论页（含注入的反色样式）在深浅色下的大致底色，用作网页默认底色与弹层底色。 */
   readerCommentPanelWebBackground(): string {
+    if (this.readerInlinePageMode) return this.appDarkMode ? '#18191B' : '#FFFFFF';
     if (this.readerCommentPanelSurface) return this.readerCommentPanelSurface;
     return this.appDarkMode ? '#131313' : '#FFFFFF';
   }
@@ -3588,7 +3589,9 @@ struct ReadBookPage {
   readerCommentPanel() {
     Stack({ alignContent: Alignment.Top }) {
       if (this.readerInlinePageMode) {
-        if (this.readerInlinePage.html) { NativeCommentPageView({ page: this.readerInlinePage }) }
+        if (this.readerInlinePage.html) {
+          NativeCommentPageView({ page: this.readerInlinePage, darkMode: this.appDarkMode })
+        }
       } else {
       // 与弹层同步合成，避免独立 Web surface 在连续扩容时底部露出未绘制的白条。
       Web({ src: this.readerCommentPanelUrl, controller: this.readerCommentPanelController,
@@ -8865,7 +8868,7 @@ struct ReadBookPage {
       this.paginateContent(this.content);
       this.scheduleReaderLayoutStabilization(readingOffset);
       this.saveReadingProgress();
-      if (this.showReaderCommentPanel) {
+      if (this.showReaderCommentPanel && !this.readerInlinePageMode) {
         this.readerCommentPanelLoadSerial++;
         this.readerCommentPanelLoading = true;
         this.readerCommentPanelError = false;

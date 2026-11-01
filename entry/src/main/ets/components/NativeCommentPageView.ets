@@ -2,11 +2,13 @@ import { webview } from '@kit.ArkWeb';
 import { util } from '@kit.ArkTS';
 import { NativeCommentPage } from '@legado/sourceengine';
 import { NativeCommentDocumentPolicy } from '../core/book/NativeCommentDocumentPolicy';
+import { ThemeRuntime } from '../theme/ThemeRuntime';
 
 /** Dedicated offline Web: never reuse the remote comment Web or its navigation bridge. */
 @Component
 export struct NativeCommentPageView {
   @Prop @Watch('pageChanged') page: NativeCommentPage = new NativeCommentPage();
+  @Prop darkMode: boolean = false;
   @State loading: boolean = true;
   @State error: string = '';
   /** 每次显示尝试先报 start，再报一次 ready / failed / cancelled，调试页据此单独记录显示结果。 */
@@ -21,6 +23,10 @@ export struct NativeCommentPageView {
   private documentBase64: string = '';
 
   private pageChanged(): void { this.load(); }
+
+  private surfaceColor(): string {
+    return this.darkMode ? '#18191B' : '#FFFFFF';
+  }
 
   aboutToDisappear(): void {
     this.attached = false;
@@ -125,11 +131,16 @@ export struct NativeCommentPageView {
   build() {
     Column() {
       Text(this.page.title).fontSize(18).maxLines(2).padding(12).width('100%')
+        .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
       Stack() {
         if (!this.error) {
         Web({ src: 'about:blank', controller: this.controller, incognitoMode: true,
           renderMode: RenderMode.SYNC_RENDER })
           .width('100%').height('100%')
+          .backgroundColor(this.surfaceColor())
+          // ArkWeb defaults to Off, even when the host app is dark. Let source CSS handle its own colours.
+          .darkMode(this.darkMode ? WebDarkMode.On : WebDarkMode.Off)
+          .forceDarkAccess(false)
           .javaScriptAccess(true)
           .blockNetwork(true)
           .fileAccess(false)
@@ -177,10 +188,11 @@ export struct NativeCommentPageView {
           Column({ space: 12 }) {
             if (!this.error) { LoadingProgress().width(32).height(32) }
             Text(this.error || '评论页面加载中…')
+              .fontColor(ThemeRuntime.subTextColor(this.darkMode))
             if (this.error) { Button('重试').onClick((): void => this.retry()) }
-          }.width('100%').height('100%').justifyContent(FlexAlign.Center).backgroundColor('#FFFFFF')
+          }.width('100%').height('100%').justifyContent(FlexAlign.Center).backgroundColor(this.surfaceColor())
         }
       }.layoutWeight(1).width('100%')
-    }.width('100%').height('100%').backgroundColor('#FFFFFF')
+    }.width('100%').height('100%').backgroundColor(this.surfaceColor())
   }
 }

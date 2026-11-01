@@ -10,9 +10,9 @@ import { NativeCommentDocumentPolicy } from '../entry/src/main/ets/core/book/Nat
 
 const source = fs.readFileSync(new URL('../entry/src/main/ets/pages/ReadBook.ets', import.meta.url), 'utf8');
 function method(name) {
-  const start = new RegExp(`^  (?:async )?${name}\\(`, 'm').exec(source)?.index;
+  const start = new RegExp(`^  (?:private )?(?:async )?${name}\\(`, 'm').exec(source)?.index;
   assert.notEqual(start, undefined, name);
-  return source.slice(start, source.indexOf('\n  }', start) + 4);
+  return source.slice(start, source.indexOf('\n  }', start) + 4).replace(/^  private /,'  ');
 }
 function harness() {
   let id = 0;
@@ -190,8 +190,28 @@ for (const dark of [false, true]) {
   page.showReaderCommentPanel = false;
   page.updateReaderCommentPanelSurface('#ffffff');
   assert.equal(page.readerCommentPanelSurface, '#2b2b2b', 'closing sheet keeps its colour until reopened');
+  page.readerInlinePageMode = true;
+  page.appDarkMode = true;
+  assert.equal(page.readerCommentPanelWebBackground(), '#18191B', 'inline sheet follows host dark mode');
+  page.appDarkMode = false;
+  assert.equal(page.readerCommentPanelWebBackground(), '#FFFFFF', 'inline sheet returns to light mode');
 }
 console.log('PASS comment panel: live resize, painted-theme reveal, stale callbacks, bounded failure/retry, early HTML theme, Web back/close bridge, page top colour reaches sheet');
+
+for (const inline of [true, false]) {
+  let refresh, remoteChecks=0;
+  const context=vm.createContext({setTimeout:fn=>{refresh=fn;return 1;},clearTimeout(){}});
+  const reader=vm.runInContext(stripTypeScriptTypes(`({${method('scheduleReaderThemeRefresh')}})`,{mode:'strip'}),context);
+  Object.assign(reader,{readerThemeRefreshOffset:-1,readerThemeRefreshTimerId:-1,readerPageVisible:true,content:'chapter',
+    getReaderStableReflowOffset:()=>10,enterReaderImmersive(){},invalidateReaderTypographyLayout(){},
+    refreshReaderTextRender(){},paginateContent(){},scheduleReaderLayoutStabilization(){},saveReadingProgress(){},
+    onTtsCoverSettingsChanged(){},showReaderCommentPanel:true,readerInlinePageMode:inline,
+    readerCommentPanelLoadSerial:1,readerCommentPanelLoading:false,readerCommentPanelError:false,
+    scheduleReaderCommentPanelHostReady(){remoteChecks++;}});
+  reader.scheduleReaderThemeRefresh(); refresh();
+  assert.equal(remoteChecks,inline?0:1,'offline theme changes must not invoke the remote Web readiness poll');
+  assert.equal(reader.readerCommentPanelLoading,!inline,'offline content stays visible during theme change');
+}
 
 function inlineHarness() {
   const calls = [], toasts = [];
@@ -262,6 +282,12 @@ for (const required of ['incognitoMode: true','.blockNetwork(true)','.fileAccess
   assert(inlineView.includes(required),required);
 }
 assert(!inlineView.includes('.javaScriptProxy('),'offline view has no native bridge');
+assert(inlineView.includes('.darkMode(this.darkMode ? WebDarkMode.On : WebDarkMode.Off)'));
+assert(inlineView.includes('.forceDarkAccess(false)'), 'source CSS handles dark colours without double inversion');
+assert(inlineView.includes('.backgroundColor(this.surfaceColor())'));
+assert(source.includes('page: this.readerInlinePage, darkMode: this.appDarkMode'));
+assert(fs.readFileSync(new URL('../entry/src/main/ets/pages/BookSourceDebug.ets',import.meta.url),'utf8')
+  .includes('page: this.inlinePreview, darkMode: this.appDarkMode'));
 function inlineWebHarness() {
   const timers=new Map(),loads=[],displays=[];let id=0,ready='false',stopped=0;
   const names=['load','pageEnded','clearTimer','scheduleReady','fail','aboutToDisappear','beginDisplay','endDisplay'];
