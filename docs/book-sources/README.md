@@ -2,7 +2,7 @@
 
 本仓库不提供、维护、推荐或分发任何指向真实第三方内容站点的书源，也不提供可直接导入的书源订阅地址。本目录不存放书源文件，只说明测试书源时的约定。
 
-书源的字段、请求格式和解析规则见 [书源开发文档](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md)。
+书源的字段、请求格式和解析规则见子模块固定的[公共书源开发文档](../../harmony-book-source-engine/docs/book-source-development.md)，应用接入与当前开发基线见[本项目书源开发入口](../book-source-development.md)。在线主分支文档可能领先于当前应用。
 
 ## 测试数据要求
 
@@ -19,7 +19,7 @@
 
 | 手段 | 入口 | 用途 |
 | --- | --- | --- |
-| 单书源调试 | 书源管理 → 操作菜单 → 调试，或书源编辑页 | 按搜索、发现、详情、目录、正文或全链路单独运行，查看每一步的请求、规则匹配数、输出预览和错误。 |
+| 单书源调试 | 书源管理 → 操作菜单 → 调试，或书源编辑页 | 管理入口默认检查全链路；有阶段选项的入口可单独运行。查看每一步的请求、规则匹配数、输出预览和错误。 |
 | 批量校验 | 书源管理 → 校验 | “搜索能力”模式快速检查搜索；“发现/阅读链路”模式走完发现、详情、目录和正文抽样。 |
 | 应用内验收 | 搜索、发现、阅读页 | 按书源开发文档的[应用内验收清单](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md#应用内验收清单)逐项确认。 |
 | 后台脚本线程验证 | 其他设置 → 兼容与诊断 → 脚本引擎迁移 | 检查原生 QuickJS 后台线程的响应、超时取消、并发及 JS 函数库用例；不验证实际网站链路。 |
@@ -42,6 +42,8 @@ node --experimental-strip-types harmony-book-source-engine/scripts/native-script
 ```
 
 这些检查在 Node 替身中运行，不连接真实内容站点，也不能代替真机 QuickJS 与界面操作验收。
+
+内联评论页使用子模块的 `docs/examples/native-inline-comments.json` 离线样本。正文加载后点击段评和章评入口，分别检查“页面生成”与“页面显示”，并验证关闭、超时和重试。正文脚本保存变量后不应误报入口失效；真实变量或账号变更后，应刷新本章。针对性检查命令见[当前开发基线](../book-source-development.md#当前开发基线)。
 
 ## 提交问题时
 

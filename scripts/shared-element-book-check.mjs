@@ -13,6 +13,7 @@ let sequence = 0, resolveRoute, rejectRoute, refreshes = 0;
 const context = vm.createContext({
   console: { error() {}, warn() {} },
   CloudAutoSync: { isPlaceholder: () => false },
+  LocalBookService: { isPdfBook: book => book.format === 'pdf' },
   ReaderOpenTrace: { begin() {}, mark() {}, cancel() {} },
   SHELF_OPENING_COVER_KEY: 'shelfOpeningCover',
   AppStorage: { setOrCreate: (key, value) => storage.set(key, value) },
@@ -32,6 +33,7 @@ const book = { bookUrl: 'book:1', origin: 'source', name: 'book' };
 host.openShelfBook(book, 50, 100);
 host.openShelfBook(book, 50, 100);
 assert.equal(routes.length, 1, 'repeated tap during route creation must not push twice');
+assert.equal(routes[0].url, 'pages/ReadBook', 'text books open the text reader directly');
 assert.equal(timers.size, 0, 'native page transition starts immediately, without an intermediate timer/overlay');
 assert.equal(routes[0].params.shelfSharedCoverId, 'cover:shelf:source:book%3A1');
 assert.equal(storage.get('shelfOpeningCover').bookUrl, book.bookUrl, 'the reader receives the cover it opens before the route starts');
@@ -51,5 +53,14 @@ assert.equal(storage.has('shelfOpeningCover'), false, 'animation preference also
 rejectRoute(new Error('test route failure')); await Promise.resolve(); await Promise.resolve();
 assert.equal(host.shelfBookRoutePending, false, 'a failed route unlocks the shelf');
 assert.equal(storage.get('shelfReaderDirectTransition'), false);
+host.bookshelfBookOpenAnimation = true;
+const pdfBook = { bookUrl: 'local:pdf:1', origin: 'local', name: 'PDF book', format: 'pdf' };
+host.openShelfBook(pdfBook, 50, 100);
+assert.equal(routes[2].url, 'pages/PdfReadBook', 'PDF books open their dedicated reader directly');
+assert.equal(routes[2].params.shelfBookOpening, 'true', 'PDF books retain the cover opening animation');
+assert.equal(routes[2].params.shelfSharedCoverId, 'cover:shelf:local:local%3Apdf%3A1');
+assert.equal(storage.get('shelfOpeningCover').bookUrl, pdfBook.bookUrl);
+resolveRoute(); await Promise.resolve();
+assert.equal(host.shelfBookRoutePending, false, 'a PDF route unlocks the shelf after creation');
 assert.doesNotMatch(source, /openingBookCoverAngle|openingBookTurnTimer|shelfBookOpeningOverlay/);
-console.log('PASS native book route: immediate shared page transition, cover handoff, duplicate taps, return refresh, preferences and failure cleanup');
+console.log('PASS native book route: text/PDF routing, shared page transition, cover handoff, duplicate taps, return refresh, preferences and failure cleanup');

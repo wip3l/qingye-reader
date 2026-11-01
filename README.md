@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.4.944`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.4.945`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -146,7 +146,7 @@
 2. 构建并安装 `entry` 模块。
 3. 进入「我的 → 书源管理」，导入自有或已获授权的书源 JSON，并先执行书源校验。
 4. 在「搜索」或「发现」中查找书籍，加入书架后开始阅读。
-5. 阅读本地文件时，进入「我的 → 书籍导入 → 本地导入」，选择一个或多个 TXT/EPUB/MOBI 文件；也可在同一页面从 OPDS 书库或 WebDAV 服务下载。
+5. 阅读本地文件时，进入「我的 → 书籍导入 → 本地导入」，选择一个或多个 TXT/EPUB/MOBI/PDF 文件；也可在同一页面从 OPDS 书库或 WebDAV 服务下载。
 6. 在阅读页呼出菜单，调整排版、翻页、主题、预缓存与朗读设置。
 7. 各项功能的用法见「我的 → 帮助」或[使用说明书](docs/manual/index.html)。
 
@@ -173,6 +173,8 @@
 | 设置与交互 | `login.script`、`login.sendCode.script`、`actions[].script` 和 `vars[].optionsScript` 使用同一后台脚本能力。轻页已接入 `ui.toast`、`ui.refreshExplore`、`browser.verify/open`；搜索和发现中的验证需由用户点“去验证”后重试。 |
 
 原生书源还支持视频播放页、听书音色列表、分卷、目录与正文的声明式列表分页并发抓取（正文最多 200 页）、附加请求、漫画图片解密和加密封面解密（`coverDecode`）。目录或正文启用 `script` 后，分页由脚本处理，不再跟随 `nextUrl`。原生 JS 与兼容书源的 QuickJS 影子/灰度迁移是两条独立路径，无需开启迁移模式才能使用。
+
+逐字遍历可用 `chars(text)`（JS 函数体内写 `native.chars(text)`）；导入会检查声明式规则中未定义的函数名，缓存失败可在调试记录中定位。原生内联段评、章评支持点击后取数和离线 HTML 显示，调试时分别检查页面生成与页面显示。完整流程见[当前开发基线](docs/book-source-development.md#当前开发基线)。
 
 书源规则由书源解析内核 [harmony-book-source-engine](https://github.com/wip3l/harmony-book-source-engine) 实现，开源轻页与简听共用同一份规则定义。
 
@@ -260,8 +262,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.4.944` |
-| `versionCode` / `buildVersion` | `4040944` |
+| `versionName` | `4.4.945` |
+| `versionCode` / `buildVersion` | `4040945` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`CAMERA`（仅在用户启用眼动翻页时请求） |
 
@@ -323,6 +325,8 @@ $env:DEVECO_SDK_HOME = "C:\Program Files\Huawei\DevEco Studio\sdk"
 - release APP：`build/outputs/release/<工程目录名>-release-signed.app`（本地目录为 `legado-harmony` 时，文件名是 `legado-harmony-release-signed.app`）
 
 release 构建依赖本机有效的签名证书、Profile 和 keystore。请使用本地签名配置，不要向仓库提交私钥、证书密码或个人绝对路径；`build`、`oh_modules` 等中间目录也不应提交。
+
+提交商店前确认使用 `product=release` 和 `buildMode=release`，并核对 signed APP 内的 `pack.info`：包名为 `io.legado.read`，版本与 `AppScope/app.json5` 一致。更新内容从根目录 [CHANGELOG.md](CHANGELOG.md) 复制；跨版本提交可使用其中对应的累计发布说明。
 
 ### 回归检查
 
