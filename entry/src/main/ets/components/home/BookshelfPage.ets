@@ -1356,8 +1356,8 @@ export struct BookshelfPage {
     .backgroundColor(this.pageColor())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     .bindSheet(this.showBookGroupPicker, this.bookGroupPickerDialog(), this.bookGroupPickerSheetOptions())
-    // 共享页展开/收回期间保留根书架，避免背景先消失再出现。
-    .transition(TransitionEffect.opacity(0.99))
+    // 不要给整页加消失转场：切到分组页时旧书架会多留一两帧，而且已经换成了分组的书，整屏闪一下。
+    // 展开/收回期间的背景由截图负责。
   }
 
   @Builder
