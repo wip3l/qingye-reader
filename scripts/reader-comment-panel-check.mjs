@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
 import { ReaderCommentWebTheme } from '../entry/src/main/ets/core/reader/ReaderCommentWebTheme.ts';
 import { NativeCommentPage } from '../harmony-book-source-engine/sourceengine/src/main/ets/core/nativesource/NativeCommentPage.ts';
+import { NativeCommentDocumentPolicy } from '../entry/src/main/ets/core/book/NativeCommentDocumentPolicy.ts';
 
 const source = fs.readFileSync(new URL('../entry/src/main/ets/pages/ReadBook.ets', import.meta.url), 'utf8');
 function method(name) {
@@ -240,15 +241,16 @@ for (const required of ['incognitoMode: true','.blockNetwork(true)','.fileAccess
 assert(!inlineView.includes('.javaScriptProxy('),'offline view has no native bridge');
 function inlineWebHarness() {
   const timers=new Map(),loads=[],displays=[];let id=0,ready='false',stopped=0;
-  const names=['load','clearTimer','scheduleReady','fail','aboutToDisappear','beginDisplay','endDisplay'];
+  const names=['load','pageEnded','clearTimer','scheduleReady','fail','aboutToDisappear','beginDisplay','endDisplay'];
   const methods=names.map(name=>{
     const start=new RegExp(`^  (?:private )?${name}\\(`,'m').exec(inlineView)?.index;
     assert.notEqual(start,undefined,name);
     return inlineView.slice(start,inlineView.indexOf('\n  }',start)+4).replace(/^  private /,'  ');
   });
-  const context=vm.createContext({NativeCommentPage,Error,setTimeout:(fn,ms)=>{timers.set(++id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id)});
+  const util={Base64Helper:class {encodeToStringSync(bytes){return Buffer.from(bytes).toString('base64');}},TextEncoder:class {encodeInto(text){return Buffer.from(text,'utf8');}}};
+  const context=vm.createContext({NativeCommentPage,util,Error,setTimeout:(fn,ms)=>{timers.set(++id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id)});
   const view=vm.runInContext(stripTypeScriptTypes(`({${methods.join(',')}})`,{mode:'strip'}),context);
-  Object.assign(view,{attached:true,serial:0,timer:-1,readyTimer:-1,page:Object.assign(new NativeCommentPage(),{html:'<p>test</p>'}),
+  Object.assign(view,{attached:true,initialPageReady:true,serial:0,timer:-1,readyTimer:-1,page:Object.assign(new NativeCommentPage(),{html:'<p>test</p>'}),
     error:'',displayOpen:false,onDisplay:(state,message)=>displays.push(state+(message?':'+message:'')),
     controller:{loadData:(...args)=>loads.push(args),runJavaScript:async()=>ready,stop:()=>stopped++}});
   return {view,timers,loads,displays,ready:value=>{ready=value;},stopped:()=>stopped,async tick(ms){
@@ -257,7 +259,29 @@ function inlineWebHarness() {
   }};
 }
 {
-  const h=inlineWebHarness();h.view.load();assert.equal(h.loads[0][3],'about:blank');assert(h.loads[0][0].includes('__NATIVE_PAGE_GENERATION__=1'));
+  const h=inlineWebHarness();h.view.initialPageReady=false;h.view.load();
+  assert.equal(h.loads.length,0,'loadData must not race the initial declarative about:blank navigation');
+  h.view.pageEnded('about:blank');assert.equal(h.loads.length,1);
+  h.view.pageEnded('data:text/html;base64,'+h.view.documentBase64);
+  assert.equal(h.loads.length,1,'generated page-end only probes readiness, never submits another document');
+  h.view.aboutToDisappear();assert.equal(h.view.initialPageReady,false);
+}
+{
+  const h=inlineWebHarness();h.view.page.html='<p style="color:#123">中文 # 100% 😀</p>';h.view.load();
+  assert.equal(h.loads[0][2],'base64');
+  const document=Buffer.from(h.loads[0][0],'base64').toString('utf8');
+  assert(document.includes('__NATIVE_PAGE_GENERATION__=1'));assert(document.includes('中文 # 100% 😀'));
+  for(const prefix of ['data:text/html;base64,','data:text/html;charset=utf-8;base64,']) {
+    assert(NativeCommentDocumentPolicy.allowsNavigation(prefix+h.view.documentBase64,true,h.view.documentBase64));
+    assert(!NativeCommentDocumentPolicy.allowsNavigation(prefix+h.view.documentBase64,false,h.view.documentBase64),'subframe data documents stay blocked');
+    assert(!NativeCommentDocumentPolicy.allowsNavigation(prefix+'PGgxPm90aGVyPC9oMT4=',true,h.view.documentBase64),'other HTML stays blocked');
+  }
+  for(const url of ['https://example.com','file:///etc/passwd','data:text/html,<p>other</p>','javascript:alert(1)']) {
+    assert(!NativeCommentDocumentPolicy.allowsNavigation(url,true,h.view.documentBase64),url);
+    assert(!NativeCommentDocumentPolicy.allowsResource(url,true,h.view.documentBase64),url);
+  }
+  assert(NativeCommentDocumentPolicy.allowsNavigation('about:srcdoc',false,h.view.documentBase64));
+  assert(NativeCommentDocumentPolicy.allowsResource('data:image/png;base64,AA==',false,h.view.documentBase64));
   await h.tick(100);assert.equal(h.view.loading,true,'no page-end event is needed for readiness polling');
   h.ready('true');await h.tick(100);assert.equal(h.view.loading,false);assert.equal(h.timers.size,0);
   h.view.aboutToDisappear();assert.deepEqual(h.displays,['start','ready'],'display result is reported once');
@@ -274,6 +298,11 @@ function inlineWebHarness() {
 {
   const h=inlineWebHarness();h.view.load();h.view.load();
   assert.deepEqual(h.displays,['start','cancelled:已重新加载','start'],'a reload closes the previous attempt first');
+}
+{
+  const h=inlineWebHarness();h.view.load();const stale=[...h.timers.values()].find(x=>x.ms===15000).fn;
+  h.view.load();stale();assert.equal(h.view.error,'','old timeout cannot fail the replacement document');
+  h.view.aboutToDisappear();assert.equal(h.view.documentBase64,'','destroyed documents lose their navigation grant');
 }
 console.log('PASS inline comment panel: click, close cancellation, stale results, chapter changes, fallback and error handling; Web policy wiring');
 

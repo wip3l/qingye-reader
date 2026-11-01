@@ -1,5 +1,7 @@
 import { webview } from '@kit.ArkWeb';
+import { util } from '@kit.ArkTS';
 import { NativeCommentPage } from '@legado/sourceengine';
+import { NativeCommentDocumentPolicy } from '../core/book/NativeCommentDocumentPolicy';
 
 /** Dedicated offline Web: never reuse the remote comment Web or its navigation bridge. */
 @Component
@@ -14,13 +16,17 @@ export struct NativeCommentPageView {
   private timer: number = -1;
   private readyTimer: number = -1;
   private attached: boolean = false;
+  private initialPageReady: boolean = false;
   private serial: number = 0;
+  private documentBase64: string = '';
 
   private pageChanged(): void { this.load(); }
 
   aboutToDisappear(): void {
     this.attached = false;
+    this.initialPageReady = false;
     this.serial++;
+    this.documentBase64 = '';
     this.clearTimer();
     try { this.controller.stop(); } catch (_) { }
     this.endDisplay('cancelled', '预览已关闭');
@@ -66,6 +72,7 @@ export struct NativeCommentPageView {
     this.clearTimer();
     this.serial++;
     this.attached = false;
+    this.documentBase64 = '';
     this.error = message;
     try { this.controller.stop(); } catch (_) { }
     // The error branch unmounts Web instead of leaving a failed document attached to the panel.
@@ -74,13 +81,15 @@ export struct NativeCommentPageView {
 
   private retry(): void {
     this.attached = false;
+    this.initialPageReady = false;
+    this.documentBase64 = '';
     this.controller = new webview.WebviewController();
     this.loading = true;
     this.error = '';
   }
 
   private load(): void {
-    if (!this.attached) return;
+    if (!this.attached || !this.initialPageReady) return;
     this.serial++;
     this.clearTimer();
     this.loading = true;
@@ -88,14 +97,29 @@ export struct NativeCommentPageView {
     this.beginDisplay();
     try {
       const document = NativeCommentPage.document(this.page, this.serial);
+      this.documentBase64 = new util.Base64Helper().encodeToStringSync(new util.TextEncoder().encodeInto(document));
+      const serial = this.serial;
       this.timer = setTimeout((): void => {
-        this.fail('评论页渲染超过 15 秒');
+        if (this.attached && serial === this.serial) this.fail('评论页渲染超过 15 秒');
       }, 15000);
-      this.controller.loadData(document, 'text/html', 'UTF-8', 'about:blank', 'about:blank');
+      // ArkWeb navigates loadData through data:text/html. Base64 preserves #, %, Unicode and srcdoc markup;
+      // the interceptors below accept only this exact host-generated document in the main frame.
+      this.controller.loadData(this.documentBase64, 'text/html', 'base64');
       this.scheduleReady();
     } catch (error) {
       this.fail(error instanceof Error ? error.message : '评论页渲染失败');
     }
+  }
+
+  private pageEnded(url: string): void {
+    if (!this.attached || this.error) return;
+    if (!this.initialPageReady) {
+      if (url !== 'about:blank') return;
+      this.initialPageReady = true;
+      this.load();
+      return;
+    }
+    this.scheduleReady();
   }
 
   build() {
@@ -124,22 +148,27 @@ export struct NativeCommentPageView {
           .onConfirm((event: OnConfirmEvent): boolean => { event.result.handleCancel(); return true; })
           .onPrompt((event: OnPromptEvent): boolean => { event.result.handleCancel(); return true; })
           .onOverrideUrlLoading((request: WebResourceRequest): boolean => {
-            return !['about:blank', 'about:srcdoc'].includes(request.getRequestUrl());
+            return !NativeCommentDocumentPolicy.allowsNavigation(request.getRequestUrl(), request.isMainFrame(),
+              this.documentBase64);
           })
           .onLoadIntercept((event?: OnLoadInterceptEvent): boolean => {
-            return !!event?.data && !['about:blank', 'about:srcdoc'].includes(event.data.getRequestUrl());
+            return !!event?.data && !NativeCommentDocumentPolicy.allowsNavigation(event.data.getRequestUrl(),
+              event.data.isMainFrame(), this.documentBase64);
           })
           .onInterceptRequest((event?: OnInterceptRequestEvent): WebResourceResponse | null => {
             const url = event?.request?.getRequestUrl() || '';
-            if (url === 'about:blank' || url === 'about:srcdoc' || /^data:image\//i.test(url)) return null;
+            if (NativeCommentDocumentPolicy.allowsResource(url, event?.request?.isMainFrame() === true,
+              this.documentBase64)) return null;
             const response = new WebResourceResponse();
             response.setResponseData('');
             response.setResponseCode(403);
             response.setReasonMessage('Offline page');
             return response;
           })
-          .onControllerAttached((): void => { this.attached = true; this.load(); })
-          .onPageEnd((): void => this.scheduleReady())
+          // The declarative src navigation follows controller attachment. Wait for that initial blank;
+          // otherwise it cancels loadData and silently replaces the generated document with an empty page.
+          .onControllerAttached((): void => { this.attached = true; })
+          .onPageEnd((event: OnPageEndEvent): void => this.pageEnded(event.url))
           .onErrorReceive((event: OnErrorReceiveEvent): void => {
             if (event.request.isMainFrame()) this.fail('评论页渲染失败');
           })

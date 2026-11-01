@@ -50,6 +50,15 @@ try {
   assert.deepEqual(outbound,[],'CSP rejects external resources before a network request');
   await frame.locator('#local').click();
   assert.equal(await frame.locator('#local').textContent(),'本地交互成功');
+  // ArkWeb loadData is a real data: main-frame navigation, unlike Playwright setContent.
+  // Exercise its opaque origin and inherited frame CSP with the same encoded transport.
+  await page.goto('data:text/html;base64,'+Buffer.from(NativeCommentPage.document(result,7),'utf8').toString('base64'));
+  await page.waitForFunction(()=>window.__NATIVE_PAGE_READY__===true && window.__NATIVE_PAGE_GENERATION__===7);
+  const encodedFrame=page.frameLocator('#native-comment-content');
+  assert.equal(await encodedFrame.locator('#data').textContent(),JSON.parse(result.dataJson).text);
+  await encodedFrame.locator('#local').click();
+  assert.equal(await encodedFrame.locator('#local').textContent(),'本地交互成功');
+  assert.deepEqual(outbound,[],'encoded main document does not grant outbound requests');
   const example=JSON.parse(fs.readFileSync(new URL('../harmony-book-source-engine/docs/examples/native-inline-comments.json',import.meta.url),'utf8'));
   const demo=new NativeCommentPage(); demo.html=example.content.comments.page.html;
   demo.dataJson=JSON.stringify({paragraph:'第一段：点击段尾气泡。',count:2});
