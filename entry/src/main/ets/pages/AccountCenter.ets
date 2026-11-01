@@ -213,7 +213,8 @@ struct AccountCenterPage {
   titleActions() {
     if (this.accountLoggedIn) {
       ImmersiveBackButton({
-        icon: $r('sys.symbol.arrow_clockwise'), iconColor: this.accentColor(),
+        // 与左侧返回键同用中性色，不跟主题色。
+        icon: $r('sys.symbol.arrow_clockwise'), iconColor: this.primaryTextColor(),
         iconSize: 21, iconOffsetX: 0, darkMode: this.appDarkMode,
         buttonSize: 40, containerWidth: 56, startInset: 8, materialScale: 0.83, compactLayout: true,
         accessibilityLabel: '刷新账号', buttonEnabled: !this.loading,
@@ -1738,6 +1739,12 @@ struct AccountCenterPage {
   @Builder
   serviceList() {
     Column() {
+      // 云空间是终身超级会员权益，有空间时在这里直达，不必再绕到我的权益页。
+      if (this.isSuperMember()) {
+        this.serviceRow($r('sys.symbol.folder'), '我的云空间', '书籍、字体与书源的云端存储', true, () => {
+          router.pushUrl({ url: 'pages/CloudFiles' });
+        })
+      }
       if (this.accountLoggedIn && this.membershipSku && AccountSessionStore.activeMembershipSku() !== '') {
         this.serviceRow($r('sys.symbol.doc_text'), '会员订单', this.ordersExpanded ? '收起' : '最近 50 笔会员订单',
           !this.ordersExpanded, () => {

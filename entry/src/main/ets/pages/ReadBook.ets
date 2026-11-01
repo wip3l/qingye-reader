@@ -1,7 +1,8 @@
 import { ReaderQuickJumpModel } from '../core/reader/ReaderQuickJumpModel';
 import { ReaderQuickJumpContent } from '../components/reader/ReaderQuickJumpContent';
 import {
-  ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_OPENING_COVER_KEY, ShelfOpeningCover
+  ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP,
+  SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
@@ -909,13 +910,26 @@ struct ReadBookPage {
   private readerSettingsReloadSerial: number = 0;
   private returningFromReaderReplaceRules: boolean = false;
   @State shelfSharedCoverId: string = '';
+  /** 打开动画期间先不挂共享转场 id，否则系统会接管成飞书架封面、把阅读页藏到最后；放大完成后再挂上供返回用。 */
+  private shelfPendingSharedCoverId: string = '';
   private openedWithShelfAnimation: boolean = false;
-  /** 书架点开时叠在共享元素上的封面：先随转场放大再翻开，返回时合上后缩回书架。 */
+  /** 书架点开时叠在阅读页上的封面：打开时随整页放大同时翻开，返回时合上后缩回书架。 */
   private shelfOpeningCover: ShelfOpeningCover | null = null;
   @State shelfCoverVisible: boolean = false;
-  @State shelfCoverAngle: number = 0;
-  @State shelfCoverShade: number = 0;
-  @State shelfCoverOpacity: number = 1;
+  @State shelfCoverAngle: number = SHELF_COVER_OPEN_ANGLE;
+  @State shelfCoverShade: number = 0.5;
+  @State shelfCoverScaleX: number = 0;
+  @State shelfCoverFillImage: boolean = false;
+  /** 打开时整页从书架封面处放大：以左上角为原点非等比缩放再平移，只改绘制不改排版，正文不会重排。 */
+  @State shelfOpenScaleX: number = 1;
+  @State shelfOpenScaleY: number = 1;
+  @State shelfOpenTranslateX: number = 0;
+  @State shelfOpenTranslateY: number = 0;
+  private shelfOpenAnimating: boolean = false;
+  private shelfOpenStarted: boolean = false;
+  private shelfOpenStartTimer: number = -1;
+  /** 打开动画预计结束的时刻：相邻章节预加载排到这之后，免得排版抢主线程让放大掉帧。 */
+  private shelfOpenEndsAt: number = 0;
   private readerScreenTimeoutTimerId: number = -1;
   private readerScreenTimeoutSerial: number = 0;
   private readerScreenOrientationSerial: number = 0;
@@ -951,7 +965,7 @@ struct ReadBookPage {
     const openingCover = AppStorage.get<ShelfOpeningCover>(SHELF_OPENING_COVER_KEY);
     this.shelfOpeningCover = this.shelfSharedCoverId && openingCover && openingCover.bookUrl === params?.['bookUrl'] ?
       openingCover : null;
-    this.shelfCoverVisible = this.shelfOpeningCover !== null;
+    this.prepareShelfOpening();
     this.openedFromShortcut = !!params && params['shortcutEntry'] === 'true';
     this.shortcutReplacedPreviousPage = !!params && params['shortcutReplace'] === 'true';
     if (params && params['bookUrl']) {
@@ -2082,7 +2096,9 @@ struct ReadBookPage {
 
   finishReaderInitialOpening(): void {
     this.readerInitialOpening = false;
-    AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', false);
+    // 书架的退出转场到阅读页首帧画出时才取这个标记，从书架打开时首页往往先排好；
+    // 打开动画结束前不清，否则书架会按默认转场整页滑出去。
+    if (!this.shelfOpenAnimating) AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', false);
   }
 
   shouldRenderPrimaryReaderContent(): boolean {
@@ -3441,25 +3457,29 @@ struct ReadBookPage {
 
       if (this.shelfOpeningCover) {
         // 翻开后只隐藏不移除：返回时要从翻开的角度合上，新建的节点没有起始帧可动画。
-        ReaderShelfCoverOpening({ angle: this.shelfCoverAngle, shade: this.shelfCoverShade, cover: this.shelfOpeningCover })
+        ReaderShelfCoverOpening({ angle: this.shelfCoverAngle, shade: this.shelfCoverShade,
+          scaleX: this.shelfCoverScaleX, fillImage: this.shelfCoverFillImage, cover: this.shelfOpeningCover })
           .width('100%')
           .height('100%')
-          .opacity(this.shelfCoverOpacity)
           .visibility(this.shelfCoverVisible ? Visibility.Visible : Visibility.Hidden)
-          .onAppear((): void => this.openShelfCover())
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(this.readerContentLayerColor())
     .expandSafeArea([SafeAreaType.SYSTEM], this.getReaderSafeAreaEdges())
+    .scale({ x: this.shelfOpenScaleX, y: this.shelfOpenScaleY, centerX: 0, centerY: 0 })
+    .translate({ x: this.shelfOpenTranslateX, y: this.shelfOpenTranslateY })
     .sharedTransition(this.shelfSharedCoverId, {
-      duration: 400, curve: Curve.Friction, type: SharedTransitionEffectType.Exchange
+      duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut, type: SharedTransitionEffectType.Exchange
     })
     .id('reader_keyboard_surface')
     .focusable(true)
     .defaultFocus(true)
-    .onAppear((): void => this.restoreReaderKeyboardFocus())
+    .onAppear((): void => {
+      this.startShelfOpening();
+      this.restoreReaderKeyboardFocus();
+    })
     .onKeyPreIme((event: KeyEvent): boolean => this.handleReaderKeyboardEvent(event))
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) {
@@ -17189,30 +17209,102 @@ struct ReadBookPage {
     // RenderNode invalidation here: on affected devices it only becomes visible after turning a page.
   }
 
-  /** 共享转场把封面放大到大半时开始沿书脊翻开，转过侧面后淡出并隐藏。 */
-  openShelfCover(): void {
-    animateTo({ duration: 520, delay: 180, curve: Curve.EaseInOut }, () => {
+  /**
+   * 量到书架封面位置时，首帧就把整页缩到封面那块、封面盖在上面，并暂不挂共享转场 id。
+   * 以左上角为原点缩放到封面宽高的比例，再平移到封面的位置；两者一起回到 1 和 0，整页从封面处线性展开到满屏。
+   */
+  prepareShelfOpening(): void {
+    const cover = this.shelfOpeningCover;
+    if (!cover || cover.boundsWidth <= 0 || cover.boundsHeight <= 0 ||
+      cover.windowWidth <= cover.boundsWidth || cover.windowHeight <= cover.boundsHeight) {
+      return;
+    }
+    this.shelfPendingSharedCoverId = this.shelfSharedCoverId;
+    this.shelfSharedCoverId = '';
+    this.shelfOpenScaleX = cover.boundsWidth / cover.windowWidth;
+    this.shelfOpenScaleY = cover.boundsHeight / cover.windowHeight;
+    this.shelfOpenTranslateX = cover.boundsX;
+    this.shelfOpenTranslateY = cover.boundsY;
+    this.shelfCoverAngle = 0;
+    this.shelfCoverScaleX = 1;
+    this.shelfCoverShade = 0;
+    this.shelfCoverFillImage = true;
+    this.shelfCoverVisible = true;
+    this.shelfOpenAnimating = true;
+    this.shelfOpenEndsAt = Date.now() + SHELF_COVER_OPEN_START_CAP + SHELF_COVER_OPEN_DURATION;
+  }
+
+  /**
+   * 根节点挂上时调用，但不马上开始：首帧要建整个阅读页，主线程会卡一两百毫秒，
+   * 动画若此时起步，第一帧出来就已经跳过一截。等首帧画完、主线程空闲（最多等 SHELF_COVER_OPEN_START_CAP）再放大。
+   */
+  startShelfOpening(): void {
+    if (!this.shelfOpenAnimating || this.shelfOpenStarted || this.shelfOpenStartTimer >= 0) return;
+    const begin = (): void => this.beginShelfOpening();
+    this.shelfOpenStartTimer = setTimeout(begin, SHELF_COVER_OPEN_START_CAP);
+    try {
+      this.getUIContext().postFrameCallback(new ShelfOpeningIdleStarter(begin));
+    } catch (error) {
+      begin();
+    }
+  }
+
+  /** 整页放大与封面翻开同时进行，和示例一样 500ms EaseInOut；结束后封面隐藏，挂上共享转场 id 供返回。 */
+  beginShelfOpening(): void {
+    if (this.shelfOpenStartTimer >= 0) {
+      clearTimeout(this.shelfOpenStartTimer);
+      this.shelfOpenStartTimer = -1;
+    }
+    if (!this.shelfOpenAnimating || this.shelfOpenStarted) return;
+    this.shelfOpenStarted = true;
+    this.shelfOpenEndsAt = Date.now() + SHELF_COVER_OPEN_DURATION;
+    animateTo({
+      duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut, onFinish: () => this.finishShelfOpening()
+    }, () => {
+      this.shelfOpenScaleX = 1;
+      this.shelfOpenScaleY = 1;
+      this.shelfOpenTranslateX = 0;
+      this.shelfOpenTranslateY = 0;
       this.shelfCoverAngle = SHELF_COVER_OPEN_ANGLE;
+      this.shelfCoverScaleX = 0;
       this.shelfCoverShade = 0.5;
     });
-    animateTo({
-      duration: 200, delay: 500, curve: Curve.EaseOut, onFinish: () => {
-        if (this.shelfCoverAngle === SHELF_COVER_OPEN_ANGLE) this.shelfCoverVisible = false;
-      }
-    }, () => {
-      this.shelfCoverOpacity = 0;
-    });
+  }
+
+  finishShelfOpening(): void {
+    if (!this.shelfOpenAnimating) return;
+    if (this.shelfOpenStartTimer >= 0) {
+      clearTimeout(this.shelfOpenStartTimer);
+      this.shelfOpenStartTimer = -1;
+    }
+    this.shelfOpenAnimating = false;
+    this.shelfOpenEndsAt = 0;
+    if (!this.readerInitialOpening) AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', false);
+    this.shelfOpenScaleX = 1;
+    this.shelfOpenScaleY = 1;
+    this.shelfOpenTranslateX = 0;
+    this.shelfOpenTranslateY = 0;
+    if (this.shelfCoverAngle === SHELF_COVER_OPEN_ANGLE) this.shelfCoverVisible = false;
+    this.shelfCoverFillImage = false;
+    if (this.shelfPendingSharedCoverId) {
+      this.shelfSharedCoverId = this.shelfPendingSharedCoverId;
+      this.shelfPendingSharedCoverId = '';
+    }
+  }
+
+  /** 打开动画进行中时，把预加载的延时拉到动画结束之后。 */
+  delayPastShelfOpening(delayMs: number): number {
+    const remaining = this.shelfOpenAnimating ? this.shelfOpenEndsAt - Date.now() + 60 : 0;
+    return Math.max(0, delayMs, remaining);
   }
 
   /** 先把封面合上，合好后再交给返回转场缩回书架。 */
   closeShelfCover(): Promise<void> {
     if (!this.shelfOpeningCover) return Promise.resolve();
     this.shelfCoverVisible = true;
-    animateTo({ duration: 100, curve: Curve.EaseOut }, () => {
-      this.shelfCoverOpacity = 1;
-    });
     animateTo({ duration: 320, curve: Curve.Friction }, () => {
       this.shelfCoverAngle = 0;
+      this.shelfCoverScaleX = 1;
       this.shelfCoverShade = 0;
     });
     return new Promise<void>((resolve: () => void): void => {
@@ -17251,6 +17343,8 @@ struct ReadBookPage {
       }
       return;
     }
+    // 打开动画还没走完就返回时，先收尾，返回转场才有共享 id 可用。
+    this.finishShelfOpening();
     // 合上封面与保存进度同时进行，不在两者之间多等一次。
     const shelfCoverClosed = this.openedWithShelfAnimation ? this.closeShelfCover() : Promise.resolve();
     try {
@@ -17704,7 +17798,7 @@ struct ReadBookPage {
           }
           console.error('预排版下一章失败:', err);
         });
-    }, Math.max(0, delayMs));
+    }, this.delayPastShelfOpening(delayMs));
   }
 
   scheduleNextChapterPaginationCompletion(sourceChapterIndex: number, targetChapterIndex: number, key: string,
@@ -17814,7 +17908,7 @@ struct ReadBookPage {
           }
           console.error('预排版上一章失败:', error);
         });
-    }, Math.max(0, delayMs));
+    }, this.delayPastShelfOpening(delayMs));
   }
 
   schedulePreviousChapterPaginationCompletion(sourceChapterIndex: number, targetChapterIndex: number, key: string,
@@ -18092,7 +18186,7 @@ struct ReadBookPage {
   preloadReaderContentLater(delayMs: number = 240): void {
     setTimeout(() => {
       this.preloadReaderContent();
-    }, Math.max(0, delayMs));
+    }, this.delayPastShelfOpening(delayMs));
   }
 
   canTurnPage(direction: number): boolean {

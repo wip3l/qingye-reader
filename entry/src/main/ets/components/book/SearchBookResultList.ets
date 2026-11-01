@@ -391,7 +391,6 @@ export struct SearchBookResultList {
         }
         .width('100%')
         .aspectRatio(0.75)
-        .sharedTransition(this.resultSharedCoverId(key), { duration: 360, curve: Curve.Friction, type: SharedTransitionEffectType.Exchange })
         .borderRadius(8)
         .clip(true)
 
@@ -414,6 +413,8 @@ export struct SearchBookResultList {
         }
       }
       .width('100%')
+      // 共享转场挂在带底色和阴影的外层：返回时目标元素在转场结束前是隐藏的，只挂内层会先露出空白卡片和阴影。
+      .sharedTransition(this.resultSharedCoverId(key), { duration: 360, curve: Curve.Friction, type: SharedTransitionEffectType.Exchange })
       // 阴影与内层裁切使用相同圆角；外层不裁切，以保留圆角外的柔和阴影。
       .borderRadius(8)
       .backgroundColor(this.cardColor)

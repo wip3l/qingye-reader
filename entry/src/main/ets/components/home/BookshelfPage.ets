@@ -1,9 +1,9 @@
 import { SharedElementMotion } from '../../utils/SharedElementMotion';
-import { SHELF_OPENING_COVER_KEY, ShelfOpeningCover } from '../reader/ReaderShelfCoverOpening';
+import { SHELF_COVER_OPEN_DURATION, SHELF_OPENING_COVER_KEY, ShelfOpeningCover } from '../reader/ReaderShelfCoverOpening';
 import { SharedElementBounds } from '../../utils/SharedElementBounds';
 import { BookshelfCoverBadges } from '../BookshelfCoverBadges';
 import { BookshelfCoverBadgeSettings } from '../../utils/BookshelfCoverBadgeSettings';
-import { curves, router } from '@kit.ArkUI';
+import { componentUtils, curves, router, window } from '@kit.ArkUI';
 import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { notificationManager } from '@kit.NotificationKit';
@@ -1377,9 +1377,9 @@ export struct BookshelfPage {
                     }
                     Column() {
                       if (this.isCompactLayout()) {
-                        this.compactBookContent(book)
+                        this.compactBookContent(book, pageKey)
                       } else {
-                        this.looseBookContent(book)
+                        this.looseBookContent(book, pageKey)
                       }
                     }
                     .layoutWeight(1)
@@ -2807,7 +2807,7 @@ export struct BookshelfPage {
         Grid(this.tileFolderScroller) {
           LazyForEach(this.tileFolderDataSource(), (book: Book) => {
             GridItem() {
-              this.shelfTileBook(book)
+              this.shelfTileBook(book, BookshelfPage.SHELF_FOLDER_COVER_PAGE)
             }
           }, (book: Book) => this.shelfBookRenderKey(book, `folder_${this.tileFolderGroupId}`))
         }
@@ -3418,7 +3418,7 @@ export struct BookshelfPage {
               secondaryColor: this.subTextColor(),
               renderKey: (book: Book): string => this.shelfBookRenderKey(book, `latest_card_${pageKey}`),
               cardContent: (book: Book) => {
-                this.shelfTileLatestCard(book)
+                this.shelfTileLatestCard(book, pageKey)
               },
               onOpen: (book: Book, event: GestureEvent): void => {
                 if (this.consumeShelfSwipeClick()) return;
@@ -3436,7 +3436,7 @@ export struct BookshelfPage {
         } else {
           ForEach(this.getLatestReadTileBooks(this.shelfBooksForPage(pageKey)), (book: Book) => {
           GridItem() {
-            this.shelfTileExpandedBook(book)
+            this.shelfTileExpandedBook(book, pageKey)
           }
           .columnStart(0)
           .columnEnd(1)
@@ -3450,7 +3450,7 @@ export struct BookshelfPage {
             if (entry.kind === 'group' && entry.group) {
               this.shelfTileGroupFolder(entry.group, pageKey)
             } else if (entry.book) {
-              this.shelfTileBook(entry.book)
+              this.shelfTileBook(entry.book, pageKey)
             }
           }
           .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey)) })
@@ -3459,7 +3459,7 @@ export struct BookshelfPage {
       } else {
         LazyForEach(this.shelfTileBookDataSource(pageKey), (book: Book) => {
           GridItem() {
-            this.shelfTileBook(book)
+            this.shelfTileBook(book, pageKey)
           }
           .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey)) })
         }, (book: Book) => this.shelfBookRenderKey(book, `tile_${pageKey}`))
@@ -3506,12 +3506,12 @@ export struct BookshelfPage {
   }
 
   @Builder
-  shelfTileExpandedBook(book: Book) {
+  shelfTileExpandedBook(book: Book, pageKey: string) {
     Column({ space: AppSpacing.XS }) {
       Stack({ alignContent: Alignment.TopStart }) {
         Row({ space: AppSpacing.XXS }) {
           Stack({ alignContent: Alignment.TopStart }) {
-            this.coverView(book, '100%', '100%', ImageFit.Fill)
+            this.coverView(book, '100%', '100%', ImageFit.Fill, true, true, this.shelfCoverScope(pageKey, false))
           }
           .layoutWeight(1)
           .height('100%')
@@ -3626,7 +3626,7 @@ export struct BookshelfPage {
 
   // “大”样式的中央卡片；外层轮播统一处理横滑、点击和长按。
   @Builder
-  shelfTileLatestCard(book: Book) {
+  shelfTileLatestCard(book: Book, pageKey: string) {
     Row({ space: AppSpacing.LG }) {
       Column() {
         Text('继续阅读')
@@ -3667,7 +3667,7 @@ export struct BookshelfPage {
       .alignItems(HorizontalAlign.Start)
 
       Stack({ alignContent: Alignment.TopStart }) {
-        this.coverView(book, '100%', '100%', ImageFit.Cover, false)
+        this.coverView(book, '100%', '100%', ImageFit.Cover, false, true, this.shelfCoverScope(pageKey, true))
       }
       .height('100%')
       .aspectRatio(0.735)
@@ -3797,10 +3797,10 @@ export struct BookshelfPage {
   }
 
   @Builder
-  shelfTileBook(book: Book) {
+  shelfTileBook(book: Book, pageKey: string) {
     Column({ space: AppSpacing.XS }) {
       Stack({ alignContent: Alignment.TopStart }) {
-        this.coverView(book, '100%', '100%', ImageFit.Cover)
+        this.coverView(book, '100%', '100%', ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false))
 
         if (this.isBookMultiSelect) {
           Stack({ alignContent: Alignment.Center }) {
@@ -3958,7 +3958,7 @@ export struct BookshelfPage {
     this.shelfBookRoutePending = true;
     AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', true);
     if (this.bookshelfBookOpenAnimation) {
-      AppStorage.setOrCreate<ShelfOpeningCover>(SHELF_OPENING_COVER_KEY, this.shelfOpeningCover(book));
+      AppStorage.setOrCreate<ShelfOpeningCover>(SHELF_OPENING_COVER_KEY, this.shelfOpeningCover(book, touchX, touchY));
     }
     ReaderOpenTrace.mark(book.bookUrl, 'route-requested');
     // Router owns the entire shared transition, including its reverse. No intermediate overlay or timer.
@@ -3980,11 +3980,13 @@ export struct BookshelfPage {
   }
 
   /** 阅读页翻开的封面与书架上看到的一致：主题封面带书框，多图取第一张，没有封面时用首字色块。 */
-  shelfOpeningCover(book: Book): ShelfOpeningCover {
+  shelfOpeningCover(book: Book, touchX: number = -1, touchY: number = -1): ShelfOpeningCover {
     const opening: ShelfOpeningCover = {
       bookUrl: book.bookUrl, cover: '', frame: '', color: this.getBookColor(book.name),
-      initial: book.name ? book.name.substring(0, 1) : '书'
+      initial: book.name ? book.name.substring(0, 1) : '书',
+      boundsX: 0, boundsY: 0, boundsWidth: 0, boundsHeight: 0, windowWidth: 0, windowHeight: 0
     };
+    this.measureShelfOpeningBounds(book, opening, touchX, touchY);
     if (this.shouldUseThemeBookCover()) {
       const covers = this.activeThemeBookCovers(book);
       opening.cover = covers.length > 0 ? covers[0] : '';
@@ -3995,6 +3997,73 @@ export struct BookshelfPage {
       opening.cover = covers.length > 0 ? this.imageCover(covers[0]) : '';
     }
     return opening;
+  }
+
+  /**
+   * 量出书架封面在窗口里的位置与窗口尺寸（vp），阅读页据此从封面处放大。
+   * 同一本书可能同时出现在书架格子和继续阅读卡片里，取包含点击位置的那一枚；
+   * 封面被滚出窗口或量不到时保持 0，阅读页退回到由共享转场飞封面的方式。
+   */
+  measureShelfOpeningBounds(book: Book, opening: ShelfOpeningCover, touchX: number, touchY: number): void {
+    try {
+      const ui = this.getUIContext();
+      const windowRect = window.findWindow(ui.getWindowName() || '').getWindowProperties().windowRect;
+      if (windowRect.width <= 0 || windowRect.height <= 0) return;
+      const touchPxX = touchX >= 0 ? ui.vp2px(touchX) : -1;
+      const touchPxY = touchY >= 0 ? ui.vp2px(touchY) : -1;
+      let picked: componentUtils.ComponentInfo | undefined = undefined;
+      const pageKey = this.shelfPageKey();
+      const scopes = [this.shelfCoverScope(pageKey, false), this.shelfCoverScope(pageKey, true),
+        this.shelfCoverScope(BookshelfPage.SHELF_FOLDER_COVER_PAGE, false)];
+      for (const scope of scopes) {
+        const rect = this.shelfCoverRect(ui, book, scope);
+        if (!rect) continue;
+        const x = rect.windowOffset.x;
+        const y = rect.windowOffset.y;
+        const width = rect.size.width;
+        const height = rect.size.height;
+        if (width <= 0 || height <= 0 || x < 0 || y < 0 || width >= windowRect.width || height >= windowRect.height ||
+          x + width > windowRect.width + 1 || y + height > windowRect.height + 1) {
+          continue;
+        }
+        const touched = touchPxX >= x && touchPxX <= x + width && touchPxY >= y && touchPxY <= y + height;
+        if (touched || !picked) picked = rect;
+        if (touched) break;
+      }
+      if (!picked) return;
+      opening.boundsX = ui.px2vp(picked.windowOffset.x);
+      opening.boundsY = ui.px2vp(picked.windowOffset.y);
+      opening.boundsWidth = ui.px2vp(picked.size.width);
+      opening.boundsHeight = ui.px2vp(picked.size.height);
+      opening.windowWidth = ui.px2vp(windowRect.width);
+      opening.windowHeight = ui.px2vp(windowRect.height);
+    } catch (error) {
+      // LazyForEach 已回收源节点等情况：没有位置就由共享转场飞封面。
+    }
+  }
+
+  /**
+   * 量位置用的元素 id 按分类页和位置区分：分类页是 Swiper 且缓存相邻页，同一本书会在“全部”和“小说”等页各有一份，
+   * 继续阅读卡片里也有一份；只查当前页的格子、卡片和分组浮层，避免查到相邻页那份而退回旧动画。
+   * 共享转场 id 各处相同：读过的书回到书架时会移进继续阅读卡片、离开格子，返回转场靠卡片那一枚接住。
+   */
+  private static readonly SHELF_FOLDER_COVER_PAGE: string = 'folder';
+
+  shelfCoverScope(pageKey: string, latest: boolean): string {
+    return `${latest ? 'latest_' : ''}${pageKey}_`;
+  }
+
+  /** 读过的书只在继续阅读卡片里、不在格子里，按 id 查不到时可能直接抛错；每处单独兜住，不影响另一处。 */
+  shelfCoverRect(ui: UIContext, book: Book, scope: string): componentUtils.ComponentInfo | undefined {
+    try {
+      return ui.getComponentUtils().getRectangleById(this.shelfCoverElementId(book, scope));
+    } catch (error) {
+      return undefined;
+    }
+  }
+
+  shelfCoverElementId(book: Book, scope: string): string {
+    return `shelf_book_cover_${scope}${encodeURIComponent(book.bookUrl)}`;
   }
 
   hasShelfBookUpdate(book: Book): boolean {
@@ -4049,12 +4118,12 @@ export struct BookshelfPage {
   }
 
   @Builder
-  compactBookContent(book: Book) {
+  compactBookContent(book: Book, pageKey: string) {
     Column({ space: AppSpacing.MD }) {
       Row() {
         // 封面高度 = 信息块高度，顶部对齐书名行、底部对齐进度条底部。
         this.coverView(book, this.shelfCoverWidth(this.shelfCompactInfoHeight()),
-          this.shelfCompactInfoHeight(), ImageFit.Cover)
+          this.shelfCompactInfoHeight(), ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false))
 
         Column({ space: this.shelfRowSpace() }) {
           Row({ space: AppSpacing.SM }) {
@@ -4119,12 +4188,12 @@ export struct BookshelfPage {
   }
 
   @Builder
-  looseBookContent(book: Book) {
+  looseBookContent(book: Book, pageKey: string) {
     Column({ space: AppSpacing.MD }) {
       Row() {
         // 封面高度 = 信息块高度，顶部对齐书名行、底部对齐阅读进度行。
         this.coverView(book, this.shelfCoverWidth(this.shelfLooseInfoHeight()),
-          this.shelfLooseInfoHeight(), ImageFit.Cover)
+          this.shelfLooseInfoHeight(), ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false))
 
         Column({ space: this.shelfRowSpace() }) {
           Row({ space: AppSpacing.SM }) {
@@ -4225,7 +4294,8 @@ export struct BookshelfPage {
   }
 
   @Builder
-  coverView(book: Book, width: Length, height: Length, imageFit: ImageFit, animateCovers: boolean = true, measure: boolean = true) {
+  coverView(book: Book, width: Length, height: Length, imageFit: ImageFit, animateCovers: boolean = true, measure: boolean = true,
+    idScope: string = '') {
     Stack() {
       if (this.shouldUseThemeBookCover()) {
         if (this.activeThemeBookCovers(book).length === 1 || !animateCovers) {
@@ -4315,9 +4385,9 @@ export struct BookshelfPage {
         selecting: this.isBookMultiSelect
       })
     }
-    .id(measure ? `shelf_book_cover_${encodeURIComponent(book.bookUrl)}` : '')
+    .id(measure ? this.shelfCoverElementId(book, idScope) : '')
     .sharedTransition(measure && this.bookshelfBookOpenAnimation ? SharedElementMotion.coverId('shelf', book.origin, book.bookUrl) : '', {
-      duration: 400, curve: Curve.Friction, type: SharedTransitionEffectType.Exchange
+      duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut, type: SharedTransitionEffectType.Exchange
     })
     .width(width)
     .height(height)

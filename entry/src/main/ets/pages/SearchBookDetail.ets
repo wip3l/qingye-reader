@@ -503,7 +503,7 @@ struct SearchBookDetailPage {
   detailHero() {
     Row({ space: AppSpacing.XL }) {
       Stack() {
-        this.coverView(104, 140)
+        this.coverView()
       }
       .width(104)
       .height(140)
@@ -1663,15 +1663,16 @@ struct SearchBookDetailPage {
   }
 
   @Builder
-  coverView(width: number, height: number) {
+  coverView() {
+    // 尺寸跟随外层共享元素：返回列表时飞回去的是这一层，写死宽高会以详情页大小飞到列表再突然缩小。
     BookCover({
       bookUrl: this.bookUrl, origin: this.origin, coverUrl: this.coverUrl, name: this.name, author: this.author,
       useBookshelfCover: this.searchExploreUseBookshelfCoverGallery,
       placeholderColor: this.accentColor(), cornerRadius: 8,
       onReadyCover: (url: ResourceStr): void => { this.readyCoverUrl = url; }
     })
-      .width(width)
-      .height(height)
+      .width('100%')
+      .height('100%')
   }
 
   pageColor(): string {
