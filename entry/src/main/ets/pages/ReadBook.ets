@@ -967,7 +967,9 @@ struct ReadBookPage {
     this.readerEntryAlive = true;
     // Fixed-layout documents must not acquire text/TTS sessions or warm chapter content.
     const formatParams = router.getParams() as Record<string, string>;
-    if (formatParams?.['bookUrl']) {
+    // The shelf routes PDFs itself and marks text books checked. Skipping the lookup keeps the entry setup
+    // synchronous before the first frame, which the shelf cover-open animation depends on.
+    if (formatParams?.['bookUrl'] && formatParams['formatChecked'] !== 'true') {
       try {
         const db = AppDatabase.getInstance();
         await db.initWithContext(getContext(this));

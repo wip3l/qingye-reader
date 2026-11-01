@@ -4165,6 +4165,14 @@ export struct BookshelfPage {
     }
     this.cloudBookOpenRequest++;
     this.acknowledgeShelfBookUpdate(book);
+    if (LocalBookService.isPdfBook(book)) {
+      // Straight to the PDF page: going through the text reader first costs a database lookup there.
+      this.shelfBookRoutePending = true;
+      router.pushUrl({ url: 'pages/PdfReadBook', params: { bookUrl: book.bookUrl } })
+        .catch((error: Error) => { console.error('打开 PDF 阅读页失败:', error); HdsFeedback.showToast('打开 PDF 阅读页失败'); })
+        .finally(() => { this.shelfBookRoutePending = false; });
+      return;
+    }
     ReaderOpenTrace.begin(book.bookUrl);
     this.shelfBookRoutePending = true;
     AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', true);
@@ -4177,6 +4185,7 @@ export struct BookshelfPage {
       url: 'pages/ReadBook',
       params: {
         bookUrl: book.bookUrl,
+        formatChecked: 'true',
         shelfBookOpening: this.bookshelfBookOpenAnimation ? 'true' : 'false',
         shelfSharedCoverId: this.bookshelfBookOpenAnimation ? SharedElementMotion.coverId('shelf', book.origin, book.bookUrl) : ''
       }
