@@ -235,6 +235,7 @@ struct ReaderFontSettingsPage {
 
     this.sectionTitle('标题字体设置')
     Column() {
+      this.titlePreviewItem()
       this.fontModeItem('字体类型', this.readerTitleFontMode, this.readerTitleFontFamily, (mode: string, family: string) => {
         this.readerTitleFontMode = mode;
         this.readerTitleFontFamily = family;
@@ -249,13 +250,7 @@ struct ReaderFontSettingsPage {
         } })
       this.titleLayoutSettings()
       this.titleSplitSettings()
-      Column() {
-        this.regexEmphasisSettings(-1, this.regexHighlightRefreshKey)
-      }
-      .width('calc(100% - 32vp)')
-      .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
-      .padding({ top: AppSpacing.MD, bottom: AppSpacing.MD })
-      this.titlePreviewItem()
+      this.titleEmphasisSettings()
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -958,53 +953,84 @@ struct ReaderFontSettingsPage {
     .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
   }
 
+  /** 子分组标题：布局、分段、强调各占一组，组内控件直接可见。 */
+  @Builder
+  titleGroupTitle(title: string, hint: string) {
+    Column({ space: AppSpacing.XXS }) {
+      Text(title).fontSize(AppFontSize.CAPTION).fontWeight(FontWeight.Medium).fontColor(this.subTextColor())
+      if (hint) {
+        Text(hint).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).opacity(0.8)
+      }
+    }.width('100%').alignItems(HorizontalAlign.Start)
+  }
+
+  titleSegmentOptions(kind: string): string[] {
+    return kind === 'alignment' ? ['左对齐', '居中', '右对齐'] : ['关闭', '按位置', '按标记', '按正则'];
+  }
+
+  titleSegmentSelected(kind: string): number {
+    return kind === 'alignment' ? this.titleAlignmentIndex() : this.titleSplitModeIndex();
+  }
+
+  selectTitleSegment(kind: string, index: number): void {
+    if (kind === 'alignment') this.updateTitleSplit('alignment', ['left', 'center', 'right'][index] || 'center');
+    else this.updateTitleSplit('mode', ['off', 'position', 'marker', 'regex'][index] || 'off');
+  }
+
+  // Reads the selection from state inside the builder: by-value builder arguments would not refresh.
+  @Builder
+  titleSegmented(kind: string, label: string) {
+    Row() {
+      ForEach(this.titleSegmentOptions(kind), (option: string, index: number) => {
+        Button(option, { type: ButtonType.Capsule, stateEffect: true })
+          .layoutWeight(1)
+          .height(32)
+          .padding({ left: 4, right: 4 })
+          .fontSize(AppFontSize.BODY)
+          .fontWeight(index === this.titleSegmentSelected(kind) ? FontWeight.Medium : FontWeight.Normal)
+          .fontColor(index === this.titleSegmentSelected(kind) ? this.primaryTextColor() : this.subTextColor())
+          .backgroundColor(index === this.titleSegmentSelected(kind) ? this.cardColor() : Color.Transparent)
+          .shadow(index === this.titleSegmentSelected(kind) ?
+            { radius: 4, color: '#1A000000', offsetX: 0, offsetY: 1 } : { radius: 0, color: Color.Transparent })
+          .accessibilityText(`${label}：${option}${index === this.titleSegmentSelected(kind) ? '，已选中' : ''}`)
+          .onClick(() => this.selectTitleSegment(kind, index))
+      }, (option: string) => `${kind}_${option}`)
+    }
+    .width('100%')
+    .height(40)
+    .padding(4)
+    .borderRadius(20)
+    .backgroundColor(this.inputColor())
+  }
+
   @Builder
   titleLayoutSettings() {
     Column({ space: AppSpacing.MD }) {
-      Text('标题布局')
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.subTextColor())
-        .width('100%')
-      Row() {
-        Text('标题位置')
+      this.titleGroupTitle('标题布局', '')
+      Row({ space: AppSpacing.LG }) {
+        Text('对齐方式')
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.primaryTextColor())
           .layoutWeight(1)
-        Select([{ value: '左对齐' }, { value: '居中' }, { value: '右对齐' }])
-          .selected(this.titleAlignmentIndex())
-          .value(['左对齐', '居中', '右对齐'][this.titleAlignmentIndex()])
-          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
-          .fontColor(this.subTextColor())
-          .backgroundColor(Color.Transparent)
-          .arrowPosition(ArrowPosition.END)
-          .padding({ left: 0, right: 0 })
-          .borderRadius(16)
-          .divider(null)
-          .optionBgColor(Color.Transparent)
-          .optionFontColor(this.primaryTextColor())
-          .selectedOptionFontColor(this.accentColor())
-          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
-          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
-          .menuBackgroundBlurStyle(BlurStyle.NONE)
-          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
-          .onSelect((index: number) => this.updateTitleSplit('alignment', ['left', 'center', 'right'][index] || 'center'))
-          .accessibilityText('标题位置')
+        Column() {
+          this.titleSegmented('alignment', '标题对齐方式')
+        }.width(216)
       }.width('100%').constraintSize({ minHeight: 48 })
       Row({ space: AppSpacing.LG }) {
         Column({ space: AppSpacing.XS }) {
           Text('标题单页').fontSize(AppFontSize.BODY_LARGE).fontColor(this.primaryTextColor())
-          Text('每章标题单独占据一页')
+          Text('每章标题单独成页，正文从下一页开始')
             .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
         }.layoutWeight(1).alignItems(HorizontalAlign.Start)
         AdaptiveSwitch({ isOn: this.titleStyle.singlePage,
           onChange: (checked: boolean) => this.updateTitleSplit('singlePage', `${checked}`) })
-      }.width('100%').constraintSize({ minHeight: 64 })
-      this.titleMarginSlider('标题上边距', true)
-      this.titleMarginSlider('标题下边距', false)
+      }.width('100%').constraintSize({ minHeight: 56 })
+      this.titleMarginSlider('上边距', true)
+      this.titleMarginSlider('下边距', false)
     }
     .width('calc(100% - 32vp)')
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
-    .padding({ top: AppSpacing.XL, bottom: AppSpacing.MD })
+    .padding({ top: AppSpacing.XL, bottom: AppSpacing.LG })
     .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
   }
 
@@ -1017,7 +1043,7 @@ struct ReaderFontSettingsPage {
           .fontSize(AppFontSize.BODY).fontColor(this.accentColor())
       }.width('100%')
       Row({ space: AppSpacing.MD }) {
-        this.fontSizeStepButton($r('sys.symbol.minus'), `减小${label}`,
+        this.fontSizeStepButton($r('sys.symbol.minus'), `减小标题${label}`,
           (top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) > 0,
           () => this.adjustTitleMargin(top, -1))
         Slider({ value: top ? this.titleStyle.marginTop : this.titleStyle.marginBottom, min: 0, max: 120, step: 1 })
@@ -1026,8 +1052,8 @@ struct ReaderFontSettingsPage {
           .blockColor(this.accentColor())
           .trackColor(this.inputColor())
           .onChange((current: number) => this.updateTitleSplit(top ? 'marginTop' : 'marginBottom', `${current}`))
-          .accessibilityText(label)
-        this.fontSizeStepButton($r('sys.symbol.plus'), `增大${label}`,
+          .accessibilityText(`标题${label}`)
+        this.fontSizeStepButton($r('sys.symbol.plus'), `增大标题${label}`,
           (top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) < 120,
           () => this.adjustTitleMargin(top, 1))
       }.width('100%')
@@ -1052,71 +1078,117 @@ struct ReaderFontSettingsPage {
   @Builder
   titleSplitSettings() {
     Column({ space: AppSpacing.MD }) {
-      Text('标题分段')
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.subTextColor())
-        .width('100%')
-      Row() {
-        Text('分段模式')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.primaryTextColor())
-          .layoutWeight(1)
-        Select([{ value: '关闭' }, { value: '按位置分段' }, { value: '按标记分段' }, { value: '按正则分段' }])
-          .selected(this.titleSplitModeIndex())
-          .value(this.titleSplitModeLabel())
-          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
-          .fontColor(this.subTextColor())
-          .backgroundColor(Color.Transparent)
-          .arrowPosition(ArrowPosition.END)
-          .padding({ left: 0, right: 0 })
-          .borderRadius(16)
-          .divider(null)
-          .optionBgColor(Color.Transparent)
-          .optionFontColor(this.primaryTextColor())
-          .selectedOptionFontColor(this.accentColor())
-          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
-          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
-          .menuBackgroundBlurStyle(BlurStyle.NONE)
-          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
-          .onSelect((index: number) => {
-            this.updateTitleSplit('mode', ['off', 'position', 'marker', 'regex'][index] || 'off');
-          })
-          .accessibilityText('标题分段模式')
-      }
-      .width('100%')
-      .constraintSize({ minHeight: 48 })
+      this.titleGroupTitle('标题分段', '把标题拆成两行，第二行可单独放大；只改排版，不改原文')
+      this.titleSegmented('splitMode', '标题分段方式')
       if (this.titleStyle.mode !== 'off') {
-        Text(this.titleSplitContentLabel())
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.primaryTextColor())
-          .width('100%')
-        TextInput({ text: this.titleSplitContent(), placeholder: this.titleSplitContentLabel() })
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.primaryTextColor())
-          .placeholderColor(this.subTextColor())
-          .backgroundColor(this.inputColor())
-          .borderRadius(ThemeRuntime.mediumRadius())
-          .maxLength(this.titleStyle.mode === 'position' ? 8 : 180)
-          .onChange((content: string) => this.updateTitleSplit(this.titleStyle.mode, content))
-          .accessibilityText(this.titleSplitContentLabel())
+        this.titleSplitInput()
         Text(this.titleSplitHelp())
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
           .width('100%')
-        if (ReaderTitleSplit.validationError(this.titleStyle)) {
-          Text(ReaderTitleSplit.validationError(this.titleStyle))
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(ThemeRuntime.dangerColor(this.appDarkMode))
-            .width('100%')
-        }
-        this.titleSplitSlider('次行字号', true)
+        this.titleSplitResult()
+        this.titleSplitSlider('第二段字号', true)
         this.titleSplitSlider('标题行距', false)
       }
     }
     .width('calc(100% - 32vp)')
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
-    .padding({ top: AppSpacing.XL, bottom: AppSpacing.MD })
+    .padding({ top: AppSpacing.XL, bottom: AppSpacing.LG })
     .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
+  }
+
+  @Builder
+  titleSplitInput() {
+    if (this.titleStyle.mode === 'position') {
+      Row({ space: AppSpacing.SM }) {
+        Text('在第').fontSize(AppFontSize.BODY_LARGE).fontColor(this.primaryTextColor())
+        TextInput({ text: this.titleStyle.position, placeholder: '6' })
+          .type(InputType.Number)
+          .maxLength(3)
+          .width(76)
+          .height(40)
+          .textAlign(TextAlign.Center)
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.primaryTextColor())
+          .placeholderColor(this.subTextColor())
+          .backgroundColor(this.inputColor())
+          .borderRadius(ThemeRuntime.mediumRadius())
+          .onChange((content: string) => this.updateTitleSplit('position', content))
+          .accessibilityText('分段位置，第几个字之后')
+        Text('个字后换行').fontSize(AppFontSize.BODY_LARGE).fontColor(this.primaryTextColor())
+      }.width('100%').constraintSize({ minHeight: 44 })
+    } else {
+      TextInput({ text: this.titleSplitContent(), placeholder: this.titleSplitContentLabel() })
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.primaryTextColor())
+        .placeholderColor(this.subTextColor())
+        .backgroundColor(this.inputColor())
+        .borderRadius(ThemeRuntime.mediumRadius())
+        .maxLength(180)
+        .onChange((content: string) => this.updateTitleSplit(this.titleStyle.mode, content))
+        .accessibilityText(this.titleSplitContentLabel())
+      Flex({ wrap: FlexWrap.Wrap }) {
+        ForEach(this.titleSplitPresets(), (preset: string[]) => {
+          Button(preset[0], { type: ButtonType.Capsule, stateEffect: true })
+            .height(30)
+            .padding({ left: 12, right: 12 })
+            .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.titleSplitContent() === preset[1] ? this.accentColor() : this.primaryTextColor())
+            .backgroundColor(this.titleSplitContent() === preset[1] ?
+              ThemeRuntime.accentSurfaceColor(this.appDarkMode) : this.inputColor())
+            .accessibilityText(`使用${preset[0]}分段`)
+            .onClick(() => this.updateTitleSplit(this.titleStyle.mode, preset[1]))
+        }, (preset: string[]) => `${this.titleStyle.mode}_${preset[0]}`)
+      }.width('100%')
+    }
+  }
+
+  /** 常用标记与正则，点一下即可套用；每项为 [显示文字, 实际值]。 */
+  titleSplitPresets(): string[][] {
+    if (this.titleStyle.mode === 'marker') {
+      return [['：', '：'], [':', ':'], ['空格', ' '], ['全角空格', String.fromCharCode(0x3000)], ['——', '——']];
+    }
+    return [['第N章', '^第[零一二三四五六七八九十百千万0-9]+章[：: ]*'],
+      ['第N回', '^第[零一二三四五六七八九十百千万0-9]+回[：: ]*'],
+      ['第N节', '^第[零一二三四五六七八九十百千万0-9]+节[：: ]*'],
+      ['Chapter N', '^Chapter *[0-9]+[:.：]? *']];
+  }
+
+  /** 用示例标题即时说明分段结果；输入有误时直接给出原因。 */
+  @Builder
+  titleSplitResult() {
+    if (ReaderTitleSplit.validationError(this.titleStyle)) {
+      Text(ReaderTitleSplit.validationError(this.titleStyle))
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(ThemeRuntime.dangerColor(this.appDarkMode))
+        .width('100%')
+    } else if (this.titlePreviewParts().length > 1) {
+      Column({ space: AppSpacing.XS }) {
+        ForEach(this.titlePreviewParts(), (part: string, index: number) => {
+          Row({ space: AppSpacing.MD }) {
+            Text(index === 0 ? '第一段' : '第二段')
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+            Text(part)
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.primaryTextColor())
+              .layoutWeight(1)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }.width('100%')
+        }, (part: string, index: number) => `${index}_${part}`)
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
+      .borderRadius(ThemeRuntime.mediumRadius())
+      .backgroundColor(this.inputColor())
+    } else {
+      Text('示例标题里没有找到分段位置，这类标题阅读时保持原样')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
+    }
   }
 
   @Builder
@@ -1146,15 +1218,11 @@ struct ReaderFontSettingsPage {
           secondary ? this.titleStyle.secondaryScale < 2 : this.titleStyle.lineGap < 40,
           () => this.adjustTitleSplit(secondary, 1))
       }.width('100%')
-    }.width('100%').padding({ top: AppSpacing.MD })
+    }.width('100%').padding({ top: AppSpacing.XS })
   }
 
   titleSplitModeIndex(): number {
     return Math.max(0, ['off', 'position', 'marker', 'regex'].indexOf(this.titleStyle.mode));
-  }
-
-  titleSplitModeLabel(): string {
-    return ['关闭', '按位置分段', '按标记分段', '按正则分段'][this.titleSplitModeIndex()];
   }
 
   titleSplitContentLabel(): string {
@@ -1168,9 +1236,9 @@ struct ReaderFontSettingsPage {
   }
 
   titleSplitHelp(): string {
-    if (this.titleStyle.mode === 'position') return '在第几个字后换行，汉字、标点与空格均计为一个字。';
-    return this.titleStyle.mode === 'regex' ? '在第一次匹配的末尾换行，保留匹配内容。' :
-      '在第一个标记后换行，保留标记。';
+    if (this.titleStyle.mode === 'position') return '汉字、标点和空格都算一个字。';
+    return this.titleStyle.mode === 'regex' ? '在第一次匹配的末尾换行，匹配内容留在第一段。' :
+      '在第一个标记后换行，标记留在第一段。';
   }
 
   updateTitleSplit(field: string, content: string): void {
@@ -1194,6 +1262,17 @@ struct ReaderFontSettingsPage {
       `${this.titleStyle.secondaryScale + direction * 0.1}` : `${this.titleStyle.lineGap + direction}`);
   }
 
+  @Builder
+  titleEmphasisSettings() {
+    Column({ space: AppSpacing.MD }) {
+      this.titleGroupTitle('标题强调', '不受“正则字体”开关影响；选“无强调”时标题沿用正则规则的效果')
+      this.regexEmphasisSettings(-1, this.regexHighlightRefreshKey)
+    }
+    .width('calc(100% - 32vp)')
+    .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
+    .padding({ top: AppSpacing.XL, bottom: AppSpacing.LG })
+  }
+
   titlePreviewParts(): string[] {
     return ReaderTitleSplit.parts(this.titlePreviewText, this.titleStyle);
   }
@@ -1215,12 +1294,14 @@ struct ReaderFontSettingsPage {
     return [span];
   }
 
+  // Unsplit titles wrap with the body line spacing in the reader, so the line gap only applies to split titles.
   @Builder
   titlePreviewContent() {
     Column({ space: this.titleStyle.lineGap }) {
       ForEach(this.titlePreviewParts(), (part: string, index: number) => {
         ReaderWeightedText({ spans: this.titlePreviewSpans(part, index), weight: this.readerTitleFontWeight,
-          alignment: this.titlePreviewAlignment(), extraLineSpacing: this.titleStyle.lineGap })
+          alignment: this.titlePreviewAlignment(),
+          extraLineSpacing: this.titleStyle.mode === 'off' ? 0 : this.titleStyle.lineGap })
           .width('100%')
       }, (part: string, index: number) => `${index}_${part}`)
     }.width('100%').padding({ top: this.titleStyle.marginTop, bottom: this.titleStyle.marginBottom })
@@ -1252,39 +1333,46 @@ struct ReaderFontSettingsPage {
     }.width('100%').height('100%')
   }
 
+  /** 预览放在标题设置的最前面，调整下面任一项都能直接看到效果。 */
   @Builder
   titlePreviewItem() {
     Column({ space: AppSpacing.MD }) {
-      Row({ space: AppSpacing.XL }) {
+      Row({ space: AppSpacing.XS }) {
         Text('标题预览').fontSize(AppFontSize.BODY).fontColor(this.subTextColor()).layoutWeight(1)
-        Button(this.titlePreviewEditing ? '收起示例' : '编辑示例')
+        Button(this.titlePreviewEditing ? '完成' : '换示例')
           .fontSize(AppFontSize.CAPTION).fontColor(this.accentColor()).backgroundColor(Color.Transparent)
+          .height(32).padding({ left: 8, right: 8 })
           .onClick(() => { this.titlePreviewEditing = !this.titlePreviewEditing; })
         Button('阅读预览')
           .fontSize(AppFontSize.CAPTION).fontColor(this.accentColor()).backgroundColor(Color.Transparent)
+          .height(32).padding({ left: 8, right: 8 })
           .onClick(() => { this.titleReadingPreviewBody = false; this.titleReadingPreview = true; })
       }.width('100%')
-      if (this.titlePreviewEditing) {
-        TextInput({ text: this.titlePreviewText, placeholder: '输入预览标题' })
-          .fontColor(this.primaryTextColor()).fontSize(AppFontSize.BODY)
-          .backgroundColor(this.inputColor()).maxLength(160)
-          .onChange((content: string) => { this.titlePreviewText = content; })
-        Button('长标题示例：天下承平，一世长安')
-          .fontSize(AppFontSize.CAPTION).fontColor(this.accentColor()).backgroundColor(Color.Transparent)
-          .onClick(() => { this.titlePreviewText = '第494章：天下承平，一世长安'; })
-      }
       Column() {
         this.titlePreviewContent()
-      }.width('100%').padding({ top: AppSpacing.XXXL, bottom: AppSpacing.XXXL,
+      }.width('100%').padding({ top: AppSpacing.XXL, bottom: AppSpacing.XXL,
         left: AppSpacing.LG, right: AppSpacing.LG })
         .backgroundColor(ThemeRuntime.readerBackgroundColor(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
-      Text(this.titleStyle.mode === 'off' ? '保持原始标题' :
-        (this.titlePreviewParts().length > 1 ? '已分为 2 段' : '未找到有效分段，保持原样'))
-        .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
+      if (this.titlePreviewEditing) {
+        TextInput({ text: this.titlePreviewText, placeholder: '输入示例标题' })
+          .fontColor(this.primaryTextColor()).fontSize(AppFontSize.BODY)
+          .backgroundColor(this.inputColor()).maxLength(160)
+          .onChange((content: string) => { this.titlePreviewText = content; })
+        Row({ space: AppSpacing.SM }) {
+          Button('短标题')
+            .fontSize(AppFontSize.CAPTION).fontColor(this.primaryTextColor()).backgroundColor(this.inputColor())
+            .height(30).padding({ left: 12, right: 12 })
+            .onClick(() => { this.titlePreviewText = '第七十四章：卖鸭蛋，卖粽子喽'; })
+          Button('长标题')
+            .fontSize(AppFontSize.CAPTION).fontColor(this.primaryTextColor()).backgroundColor(this.inputColor())
+            .height(30).padding({ left: 12, right: 12 })
+            .onClick(() => { this.titlePreviewText = '第494章：天下承平，一世长安，人间烟火寻常巷陌'; })
+        }.width('100%')
+      }
     }
     .width('calc(100% - 32vp)')
-    .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .padding({ left: 0, right: 0, top: AppSpacing.LG, bottom: AppSpacing.LG })
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
     .backgroundColor(Color.Transparent)
     .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })

@@ -45,6 +45,8 @@ export struct PdfReaderControls {
   @Prop searchIndex: number = -1;
   /** 有内嵌目录时为“目录”，否则按页列出。 */
   @Prop navigationTitle: string = '目录';
+  /** 目录行数，用来让短目录的面板不留大片空白；0 表示未知。 */
+  @Prop navigationCount: number = 0;
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 720;
   @State jumpText: string = '';
@@ -95,7 +97,7 @@ export struct PdfReaderControls {
   /** 按内容估算面板高度，避免短内容下方留出大片空白；目录和设置在矮窗口里改为滚动。 */
   private panelHeight(): number {
     let desired = PANEL_HEADER_HEIGHT;
-    if (this.activePanel === 'toc') desired = 520;
+    if (this.activePanel === 'toc') desired = this.navigationCount > 0 ? Math.min(520, desired + this.navigationCount * 56 + 12) : 520;
     else if (this.activePanel === 'settings') desired += 4 * 64 + 40 + (this.superResolution && this.superResolutionReady() ? 40 : 0) + 16;
     else if (this.activePanel === 'search') desired += 44 + 8 + 36 + 16;
     else desired += 44 + 10 + 20 + 20;
@@ -163,7 +165,13 @@ export struct PdfReaderControls {
           .onClick((): void => { if (this.ready) this.selectPanel('jump'); })
       }
       if (this.ready) {
-        this.roundButton($r('sys.symbol.magnifyingglass'), '搜索 PDF', (): void => this.selectPanel('search'))
+        // Inline so the icon tint follows the open panel (a by-value builder argument would not refresh).
+        ImmersiveBackButton({ icon: $r('sys.symbol.magnifyingglass'), iconOffsetX: 0,
+          iconColor: this.activePanel === 'search' ? ThemeRuntime.accentColor(this.darkMode) :
+            ThemeRuntime.primaryTextColor(this.darkMode), darkMode: this.darkMode,
+          buttonSize: 40, containerWidth: 40, containerHeight: 56, startInset: 0,
+          materialScale: 0.83, compactLayout: true, accessibilityLabel: '搜索 PDF',
+          onBack: (): void => this.selectPanel('search') })
       } else { Blank().width(40) }
     }.width('100%').padding({ left: 18, right: 18, top: this.statusBarHeight + 10 })
       .justifyContent(FlexAlign.SpaceBetween).alignItems(VerticalAlign.Center)

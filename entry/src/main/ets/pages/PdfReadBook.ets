@@ -13,6 +13,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
 import { RecentReadShortcut } from '../utils/RecentReadShortcut';
+import { ReaderOpenTrace } from '../utils/ReaderOpenTrace';
 import { window } from '@kit.ArkUI';
 import { syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { readStatsTracker } from '../core/stats/ReadStatsTracker';
@@ -23,6 +24,10 @@ import { ReaderComicSuperResolution, ReaderComicSuperResolutionAccess } from '@l
 import { AiAccessPolicy } from '../account/AiAccessPolicy';
 import { ReaderPdfSettings } from '../core/book/pdf/ReaderPdfSettings';
 import { ReaderPdfSettingsStore } from '../core/book/pdf/ReaderPdfSettingsStore';
+import {
+  ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP,
+  SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
+} from '../components/reader/ReaderShelfCoverOpening';
 
 @Entry
 @Component
@@ -63,6 +68,7 @@ struct PdfReadBookPage {
   private controller: pdfViewManager.PdfController = new pdfViewManager.PdfController();
   @State navigationIndex: number = 0;
   @State navigationTitle: string = '目录';
+  @State navigationCount: number = 0;
   private navigation: PdfNavigationDataSource = new PdfNavigationDataSource();
   private navigationScroller: Scroller = new Scroller();
   private book: Book | null = null;
@@ -76,6 +82,23 @@ struct PdfReadBookPage {
   private owner: string = `pdf-${Date.now()}-${Math.random()}`;
   private shortcutReplace: boolean = false;
   private closing: boolean = false;
+  // Shelf cover-open animation, the same motion as the text reader (see ReadBook.prepareShelfOpening).
+  @State shelfSharedCoverId: string = '';
+  @State shelfCoverVisible: boolean = false;
+  @State shelfCoverAngle: number = SHELF_COVER_OPEN_ANGLE;
+  @State shelfCoverShade: number = 0.5;
+  @State shelfCoverScaleX: number = 0;
+  @State shelfCoverFillImage: boolean = false;
+  @State shelfOpenScaleX: number = 1;
+  @State shelfOpenScaleY: number = 1;
+  @State shelfOpenTranslateX: number = 0;
+  @State shelfOpenTranslateY: number = 0;
+  private openedWithShelfAnimation: boolean = false;
+  private shelfOpeningCover: ShelfOpeningCover | null = null;
+  private shelfPendingSharedCoverId: string = '';
+  private shelfOpenAnimating: boolean = false;
+  private shelfOpenStarted: boolean = false;
+  private shelfOpenStartTimer: number = -1;
   private customizedPreferences: Set<string> = new Set<string>();
 
   aboutToAppear(): void {
@@ -83,7 +106,14 @@ struct PdfReadBookPage {
     const params = this.getUIContext().getRouter().getParams() as Record<string, string>;
     this.bookUrl = params?.['bookUrl'] || '';
     this.shortcutReplace = params?.['shortcutEntry'] === 'true' && params?.['shortcutReplace'] === 'true';
-    AppStorage.setOrCreate('shelfReaderDirectTransition', false);
+    // No await before this point: the first frame must already be scaled down onto the shelf cover.
+    this.openedWithShelfAnimation = params?.['shelfBookOpening'] === 'true';
+    this.shelfSharedCoverId = params?.['shelfSharedCoverId'] || '';
+    const openingCover = AppStorage.get<ShelfOpeningCover>(SHELF_OPENING_COVER_KEY);
+    this.shelfOpeningCover = this.shelfSharedCoverId && openingCover && openingCover.bookUrl === this.bookUrl ?
+      openingCover : null;
+    this.prepareShelfOpening();
+    if (!this.shelfOpenAnimating) AppStorage.setOrCreate('shelfReaderDirectTransition', false);
     ReaderProgressCheckpoint.attach(this.owner, (): Promise<void> => this.saveProgress(), (): string => this.bookUrl);
     this.refreshAiAccess();
     this.open();
@@ -162,6 +192,7 @@ struct PdfReadBookPage {
       if (!this.alive || token !== this.generation) return;
       this.navigation.reset(outline, this.pageCount);
       this.navigationTitle = this.navigation.hasOutline() ? '目录' : '页面';
+      this.navigationCount = this.navigation.totalCount();
       this.navigationIndex = this.navigation.indexForPage(this.pageIndex);
       this.sourcePath = book.getVariable('localFilePath');
     } catch (error) {
@@ -176,6 +207,7 @@ struct PdfReadBookPage {
     this.jumpInput = `${this.pageIndex + 1}`;
     this.navigationIndex = this.navigation.indexForPage(this.pageIndex);
     this.ready = true; this.statusText = '';
+    ReaderOpenTrace.finish(this.bookUrl, 'pdf-document-ready');
     this.applyViewSettings();
     if (this.visible) readStatsTracker.setReadingActive(this.bookUrl);
     this.scheduleSave();
@@ -386,11 +418,109 @@ struct PdfReadBookPage {
   private async close(): Promise<void> {
     if (this.closing) return;
     this.closing = true;
+    if (this.shortcutReplace) {
+      try { await this.saveProgress(); } catch (error) { console.warn('[PDF] exit save failed:', error); }
+      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' }).catch((): void => { this.getUIContext().getRouter().back(); });
+      return;
+    }
+    // Finish an unfinished opening first so the return transition has its shared id; close the cover while saving.
+    this.finishShelfOpening();
+    const coverClosed = this.openedWithShelfAnimation ? this.closeShelfCover() : Promise.resolve();
     try { await this.saveProgress(); }
     catch (error) { console.warn('[PDF] exit save failed:', error); }
-    if (this.shortcutReplace) {
-      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' }).catch((): void => { this.getUIContext().getRouter().back(); });
-    } else this.getUIContext().getRouter().back();
+    if (this.openedWithShelfAnimation) {
+      AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', true);
+      AppStorage.setOrCreate('shelfBookCloseAnimationUrl', this.bookUrl);
+      AppStorage.setOrCreate('shelfBookCloseAnimationNonce', Date.now());
+    }
+    await coverClosed;
+    this.getUIContext().getRouter().back();
+  }
+
+  pageTransition() {
+    if (this.openedWithShelfAnimation || AppStorage.get<boolean>('shelfReaderDirectTransition') === true) {
+      PageTransitionEnter({ type: RouteType.Push, duration: 0 })
+      PageTransitionExit({ type: RouteType.Pop, duration: 0 })
+    }
+  }
+
+  /** First frame: the whole page scaled onto the shelf cover, the cover drawn on top, no shared id yet. */
+  private prepareShelfOpening(): void {
+    const cover = this.shelfOpeningCover;
+    if (!this.openedWithShelfAnimation || !cover || cover.boundsWidth <= 0 || cover.boundsHeight <= 0 ||
+      cover.windowWidth <= cover.boundsWidth || cover.windowHeight <= cover.boundsHeight) {
+      return;
+    }
+    this.shelfPendingSharedCoverId = this.shelfSharedCoverId;
+    this.shelfSharedCoverId = '';
+    this.shelfOpenScaleX = cover.boundsWidth / cover.windowWidth;
+    this.shelfOpenScaleY = cover.boundsHeight / cover.windowHeight;
+    this.shelfOpenTranslateX = cover.boundsX;
+    this.shelfOpenTranslateY = cover.boundsY;
+    this.shelfCoverAngle = 0;
+    this.shelfCoverScaleX = 1;
+    this.shelfCoverShade = 0;
+    this.shelfCoverFillImage = true;
+    this.shelfCoverVisible = true;
+    this.shelfOpenAnimating = true;
+  }
+
+  /** Starts once the first frame is drawn and the UI thread is idle (at most SHELF_COVER_OPEN_START_CAP later). */
+  private startShelfOpening(): void {
+    if (!this.shelfOpenAnimating || this.shelfOpenStarted || this.shelfOpenStartTimer >= 0) return;
+    const begin = (): void => this.beginShelfOpening();
+    this.shelfOpenStartTimer = setTimeout(begin, SHELF_COVER_OPEN_START_CAP);
+    try {
+      this.getUIContext().postFrameCallback(new ShelfOpeningIdleStarter(begin));
+    } catch (error) {
+      begin();
+    }
+  }
+
+  private beginShelfOpening(): void {
+    if (this.shelfOpenStartTimer >= 0) { clearTimeout(this.shelfOpenStartTimer); this.shelfOpenStartTimer = -1; }
+    if (!this.shelfOpenAnimating || this.shelfOpenStarted) return;
+    this.shelfOpenStarted = true;
+    this.getUIContext().animateTo({
+      duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut, onFinish: (): void => this.finishShelfOpening()
+    }, (): void => {
+      this.shelfOpenScaleX = 1;
+      this.shelfOpenScaleY = 1;
+      this.shelfOpenTranslateX = 0;
+      this.shelfOpenTranslateY = 0;
+      this.shelfCoverAngle = SHELF_COVER_OPEN_ANGLE;
+      this.shelfCoverScaleX = 0;
+      this.shelfCoverShade = 0.5;
+    });
+  }
+
+  private finishShelfOpening(): void {
+    if (!this.shelfOpenAnimating) return;
+    if (this.shelfOpenStartTimer >= 0) { clearTimeout(this.shelfOpenStartTimer); this.shelfOpenStartTimer = -1; }
+    this.shelfOpenAnimating = false;
+    AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', false);
+    this.shelfOpenScaleX = 1;
+    this.shelfOpenScaleY = 1;
+    this.shelfOpenTranslateX = 0;
+    this.shelfOpenTranslateY = 0;
+    if (this.shelfCoverAngle === SHELF_COVER_OPEN_ANGLE) this.shelfCoverVisible = false;
+    this.shelfCoverFillImage = false;
+    if (this.shelfPendingSharedCoverId) {
+      this.shelfSharedCoverId = this.shelfPendingSharedCoverId;
+      this.shelfPendingSharedCoverId = '';
+    }
+  }
+
+  /** Close the cover, then let the return transition shrink the page back onto the shelf. */
+  private closeShelfCover(): Promise<void> {
+    if (!this.shelfOpeningCover) return Promise.resolve();
+    this.shelfCoverVisible = true;
+    this.getUIContext().animateTo({ duration: 320, curve: Curve.Friction }, (): void => {
+      this.shelfCoverAngle = 0;
+      this.shelfCoverScaleX = 1;
+      this.shelfCoverShade = 0;
+    });
+    return new Promise<void>((resolve: () => void): void => { setTimeout(resolve, 280); });
   }
 
   @Builder
@@ -455,6 +585,7 @@ struct PdfReadBookPage {
         onOpenMembership: (): void => { this.openAiAccount(); },
         searchInput: this.searchInput, searching: this.searching, searchCompleted: this.searchCompleted,
         searchCount: this.searchCount, searchIndex: this.searchIndex, navigationTitle: this.navigationTitle,
+        navigationCount: this.navigationCount,
         navigationContent: (): void => { this.navigationPanel(); },
         onClose: (): void => { this.close(); }, onPanelChange: (panel: string): void => { this.setPanel(panel); },
         onPageChange: (index: number): void => { this.goTo(index); },
@@ -466,8 +597,23 @@ struct PdfReadBookPage {
         onSearchInput: (text: string): void => { this.searchInput = text; this.invalidateSearch(); },
         onSearch: (): void => { this.search(); },
         onSearchStep: (direction: number): void => { this.searchNext(direction); } })
+      if (this.shelfOpeningCover) {
+        // Hidden rather than removed after opening: closing animates back from the open angle.
+        ReaderShelfCoverOpening({ angle: this.shelfCoverAngle, shade: this.shelfCoverShade,
+          scaleX: this.shelfCoverScaleX, fillImage: this.shelfCoverFillImage, cover: this.shelfOpeningCover })
+          .width('100%')
+          .height('100%')
+          .visibility(this.shelfCoverVisible ? Visibility.Visible : Visibility.Hidden)
+          .hitTestBehavior(HitTestMode.None)
+      }
     }.width('100%').height('100%').backgroundColor(ThemeRuntime.pageColor(this.darkMode))
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .scale({ x: this.shelfOpenScaleX, y: this.shelfOpenScaleY, centerX: 0, centerY: 0 })
+      .translate({ x: this.shelfOpenTranslateX, y: this.shelfOpenTranslateY })
+      .sharedTransition(this.shelfSharedCoverId, {
+        duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut, type: SharedTransitionEffectType.Exchange
+      })
+      .onAppear((): void => { this.startShelfOpening(); })
       .onSizeChange((_before: SizeOptions, after: SizeOptions): void => {
         const wide = Number(after.width) >= 840;
         if (wide !== this.wideWindow) { this.wideWindow = wide; this.applyViewSettings(); }

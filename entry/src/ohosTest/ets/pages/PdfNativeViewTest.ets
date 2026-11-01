@@ -98,6 +98,24 @@ struct PdfNativeViewTest {
       this.finish('PDF_NATIVE_VIEW_PASS');
     } catch (error) { this.finish(`PDF_NATIVE_VIEW_FAIL ${String(error)}`); }
   }
+  pageIndexes(): number[] {
+    const result: number[] = [];
+    for (let i = 0; i < this.pageCount; i++) result.push(i);
+    return result;
+  }
+
+  @Builder
+  navigationPreview() {
+    List() {
+      ForEach(this.pageIndexes(), (index: number) => {
+        ListItem() {
+          Text(`第 ${index + 1} 页`).width('100%').constraintSize({ minHeight: 48 }).padding({ left: 16, right: 16 })
+            .onClick((): void => { this.activePanel = ''; this.controller.goToPage(index); })
+        }
+      }, (index: number): string => `${index}`)
+    }.width('100%').height('100%').padding({ left: 8, right: 8, bottom: 12 })
+  }
+
   build() {
     Stack() {
       if (this.fixturePath) {
@@ -112,6 +130,8 @@ struct PdfNativeViewTest {
       }
       if (this.controlsPreview) {
         PdfReaderControls({ bookTitle: 'PDF 阅读设计预览', menuVisible: this.menuVisible, activePanel: this.activePanel,
+          navigationTitle: '页面', navigationCount: this.pageCount,
+          navigationContent: (): void => { this.navigationPreview(); },
           ready: this.pageCount > 0, pageCount: this.pageCount, pageIndex: this.pageIndex, previewIndex: this.previewIndex,
           continuous: this.continuous, fitPage: this.fitPage,
           superResolution: this.superResolution, showOriginal: this.showOriginal, enhancementStatus: this.enhancementStatus,
