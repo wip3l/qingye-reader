@@ -20,6 +20,10 @@ export class BookshelfDisplaySettings {
   lastReadPinMode: string = 'large';
   lastReadPinCount: number = 3;
   bookOpenAnimation: boolean = true;
+  // 书架顶部按类型（小说、漫画、有声书等）分页；关闭后所有书平铺在一页。
+  typeCategoryEnabled: boolean = true;
+  // 分类栏里是否有“全部”一项。
+  showAllTypeTab: boolean = true;
 }
 
 export class BookshelfDisplaySettingsStore {
@@ -38,6 +42,8 @@ export class BookshelfDisplaySettingsStore {
   private static readonly KEY_LAST_READ_PIN_MODE: string = 'bookshelfLastReadPinMode';
   private static readonly KEY_LAST_READ_PIN_COUNT: string = 'bookshelfLastReadPinCount';
   private static readonly KEY_BOOK_OPEN_ANIMATION: string = 'bookshelfBookOpenAnimation';
+  private static readonly KEY_TYPE_CATEGORY_ENABLED: string = 'bookshelfTypeCategoryEnabled';
+  private static readonly KEY_SHOW_ALL_TYPE_TAB: string = 'bookshelfShowAllTypeTab';
   private static cachedSettings: BookshelfDisplaySettings | null = null;
 
   static async load(context: Context): Promise<BookshelfDisplaySettings> {
@@ -77,6 +83,10 @@ export class BookshelfDisplaySettingsStore {
       typeof pinCount === 'number' ? pinCount : 3);
     settings.bookOpenAnimation = await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_BOOK_OPEN_ANIMATION, true);
+    settings.typeCategoryEnabled = await BookshelfDisplaySettingsStore.getBoolean(
+      store, BookshelfDisplaySettingsStore.KEY_TYPE_CATEGORY_ENABLED, true);
+    settings.showAllTypeTab = await BookshelfDisplaySettingsStore.getBoolean(
+      store, BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB, true);
     BookshelfDisplaySettingsStore.cachedSettings = BookshelfDisplaySettingsStore.clone(settings);
     return settings;
   }
@@ -101,6 +111,8 @@ export class BookshelfDisplaySettingsStore {
       BookshelfDisplaySettingsStore.normalizeLastReadPinMode(settings.lastReadPinMode));
     await store.put(BookshelfDisplaySettingsStore.KEY_LAST_READ_PIN_COUNT, settings.lastReadPinCount);
     await store.put(BookshelfDisplaySettingsStore.KEY_BOOK_OPEN_ANIMATION, settings.bookOpenAnimation !== false);
+    await store.put(BookshelfDisplaySettingsStore.KEY_TYPE_CATEGORY_ENABLED, settings.typeCategoryEnabled !== false);
+    await store.put(BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB, settings.showAllTypeTab !== false);
     await store.flush();
     BookshelfDisplaySettingsStore.cachedSettings = BookshelfDisplaySettingsStore.clone(settings);
     CloudSyncChangeTracker.markApplicationPreferenceChanged();
@@ -127,6 +139,9 @@ export class BookshelfDisplaySettingsStore {
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_LAST_READ_PIN_COUNT, settings.lastReadPinCount);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_BOOK_OPEN_ANIMATION,
       settings.bookOpenAnimation !== false);
+    AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_TYPE_CATEGORY_ENABLED,
+      settings.typeCategoryEnabled !== false);
+    AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB, settings.showAllTypeTab !== false);
   }
 
   static fromStorage(): BookshelfDisplaySettings {
@@ -150,6 +165,9 @@ export class BookshelfDisplaySettingsStore {
     settings.lastReadPinCount = BookshelfDisplaySettingsStore.normalizeLastReadPinCount(
       AppStorage.get<number>(BookshelfDisplaySettingsStore.KEY_LAST_READ_PIN_COUNT) ?? 3);
     settings.bookOpenAnimation = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_BOOK_OPEN_ANIMATION) ?? true;
+    settings.typeCategoryEnabled =
+      AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_TYPE_CATEGORY_ENABLED) ?? true;
+    settings.showAllTypeTab = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB) ?? true;
     return settings;
   }
 
@@ -213,6 +231,8 @@ export class BookshelfDisplaySettingsStore {
     settings.lastReadPinMode = BookshelfDisplaySettingsStore.normalizeLastReadPinMode(source.lastReadPinMode);
     settings.lastReadPinCount = BookshelfDisplaySettingsStore.normalizeLastReadPinCount(source.lastReadPinCount);
     settings.bookOpenAnimation = source.bookOpenAnimation !== false;
+    settings.typeCategoryEnabled = source.typeCategoryEnabled !== false;
+    settings.showAllTypeTab = source.showAllTypeTab !== false;
     return settings;
   }
 }

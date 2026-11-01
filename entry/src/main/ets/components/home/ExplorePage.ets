@@ -1245,6 +1245,7 @@ export struct ExplorePage {
         initialScrollOffset: this.explorePageSnapshot(key).scrollOffset,
         claimArrival: (book: SearchBook): number => this.claimExploreResultArrival(key, book),
         onResultReady: (book: SearchBook): void => this.onExploreResultReady(key, book),
+        orderedReveal: true,
         layoutMode: this.exploreResultLayout,
         gridViewportWidth: this.exploreViewportWidth,
         shelfBookKeys: this.shelfBookKeys,

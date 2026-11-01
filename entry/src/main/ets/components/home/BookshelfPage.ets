@@ -350,6 +350,12 @@ export struct BookshelfPage {
   @StorageLink('bookshelfLastReadPinMode') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinMode: string = 'large';
   @StorageLink('bookshelfLastReadPinCount') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinCount: number = 3;
   @StorageLink('bookshelfBookOpenAnimation') bookshelfBookOpenAnimation: boolean = true;
+  /** 书架设置“书籍分类”：关闭后没有分类栏和展开按钮，所有书按“全部”平铺。 */
+  @StorageLink('bookshelfTypeCategoryEnabled') @Watch('onShelfTypeCategorySettingChanged')
+  bookshelfTypeCategoryEnabled: boolean = true;
+  /** 书架设置“显示全部分类”：关闭后分类栏只列有书的类型。 */
+  @StorageLink('bookshelfShowAllTypeTab') @Watch('onShelfTypeCategorySettingChanged')
+  bookshelfShowAllTypeTab: boolean = true;
   @StorageLink('bookshelfCoverAlbums') @Watch('onShelfCoverSettingsChanged') bookshelfCoverAlbums: string = '';
   @StorageLink('bookshelfLightCoverAlbumId') @Watch('onShelfCoverSettingsChanged') bookshelfLightCoverAlbumId: string = '';
   @StorageLink('bookshelfDarkCoverAlbumId') @Watch('onShelfCoverSettingsChanged') bookshelfDarkCoverAlbumId: string = '';
@@ -475,6 +481,8 @@ export struct BookshelfPage {
       this.bookshelfLastReadPinMode = settings.lastReadPinMode;
       this.bookshelfLastReadPinCount = settings.lastReadPinCount;
       this.bookshelfBookOpenAnimation = settings.bookOpenAnimation;
+      this.bookshelfTypeCategoryEnabled = settings.typeCategoryEnabled;
+      this.bookshelfShowAllTypeTab = settings.showAllTypeTab;
     } catch (e) {
       console.warn('恢复书架显示设置失败:', e);
     }
@@ -505,6 +513,11 @@ export struct BookshelfPage {
 
   // 置顶开关决定平铺数据源里是否剔除上次阅读的书，切换后立即重建，避免同一本书出现两次或消失。
   onLastReadPinModeChanged(): void {
+    this.reloadShelfDataSources(true);
+  }
+
+  onShelfTypeCategorySettingChanged(): void {
+    this.applyShelfScope();
     this.reloadShelfDataSources(true);
   }
 
@@ -1251,7 +1264,9 @@ export struct BookshelfPage {
             } else {
               Blank()
 
-              this.shelfCategoryButton()
+              if (this.bookshelfTypeCategoryEnabled) {
+                this.shelfCategoryButton()
+              }
               this.shelfFilterButton()
               this.shelfMoreButton()
             }
@@ -4974,25 +4989,31 @@ export struct BookshelfPage {
   }
 
   /**
-   * 按普通书架（当前分组）里实际有的类型重建分类栏。当前类型没书时只在显示上回到“全部”
+   * 按普通书架（当前分组）里实际有的类型重建分类栏。当前类型没书时只在显示上回到第一项
    * （见 activeShelfTypeTab），不改写用户选的类型：书架数据一时不全也不会把选择丢掉。
+   * 关闭“书籍分类”时只有“全部”一页；关闭“显示全部分类”时去掉“全部”，一本书都没有时仍留着它当空页。
    */
   refreshShelfTypeTabs(): void {
-    const present: boolean[] = BookshelfPage.TYPE_TAB_IDS.map((): boolean => false);
-    for (const book of this.allBooks) {
-      if (!book.isPrivate && this.matchesShelfGroup(book)) {
-        present[BookshelfPage.TYPE_TAB_IDS.indexOf(this.shelfBookType(book))] = true;
+    let ids: string[] = ['all'];
+    if (this.bookshelfTypeCategoryEnabled) {
+      const present: boolean[] = BookshelfPage.TYPE_TAB_IDS.map((): boolean => false);
+      for (const book of this.allBooks) {
+        if (!book.isPrivate && this.matchesShelfGroup(book)) {
+          present[BookshelfPage.TYPE_TAB_IDS.indexOf(this.shelfBookType(book))] = true;
+        }
       }
+      const typeIds: string[] = BookshelfPage.TYPE_TAB_IDS.filter((_id: string, index: number) =>
+        index === 0 ? this.bookshelfShowAllTypeTab : present[index]);
+      if (typeIds.length > 0) ids = typeIds;
     }
-    const ids: string[] = BookshelfPage.TYPE_TAB_IDS.filter((_id: string, index: number) => index === 0 || present[index]);
     if (ids.join(',') !== this.shelfTypeTabIds.join(',')) {
       this.shelfTypeTabIds = ids;
     }
   }
 
-  /** 实际显示的分类：选中的类型不在分类栏里时按“全部”显示。 */
+  /** 实际显示的分类：选中的类型不在分类栏里时按第一项（通常是“全部”）显示。 */
   activeShelfTypeTab(): string {
-    return this.shelfTypeTabIds.indexOf(this.shelfTypeTab) >= 0 ? this.shelfTypeTab : 'all';
+    return this.shelfTypeTabIds.indexOf(this.shelfTypeTab) >= 0 ? this.shelfTypeTab : (this.shelfTypeTabIds[0] || 'all');
   }
 
   /** 标题旁的书本数；隐私书架不在分类栏里，在这里标出当前位置。 */
@@ -6999,7 +7020,7 @@ export struct BookshelfPage {
   }
 
   showsShelfScopeTabs(): boolean {
-    return !this.isBookMultiSelect && !this.isTileGroupPage();
+    return this.bookshelfTypeCategoryEnabled && !this.isBookMultiSelect && !this.isTileGroupPage();
   }
 
   @Builder

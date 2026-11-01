@@ -1,4 +1,4 @@
-import { Book, SearchBook, BookFieldSanitizer } from '@legado/sourceengine';
+import { Book, SearchBook, BookFieldSanitizer, BookTypeSupport } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { SearchCoordinator, SearchProgress } from '../core/book/SearchCoordinator';
 import { WebBookService } from '../core/book/WebBookService';
@@ -14,6 +14,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 /**
  * 换源面板（书架长按"换源"与书籍详情页"换源"共用）。
  * 打开后先读历史结果，再按书名全词匹配搜索其它书源；选中结果后拉取详情与目录并切换。
+ * 结果只保留与原书同类型的（小说换小说、漫画换漫画、有声换有声、视频换视频）。
  * 目标书在书库中已存在时提交换源并保留阅读进度与临时书标记；
  * 仅存在于搜索结果（未入库）时只把结果交给宿主页面，不落库。
  */
@@ -123,6 +124,7 @@ export struct BookChangeSourceDialog {
         exactMatch: true,
         leanResult: true,
         excludeSourceUrls: [target.origin],
+        mediaCategory: BookTypeSupport.mediaCategoryOf(target),
         maxResultsPerSource: 1,
         maxTotalResults: 60,
         stopAfterResults: 20,
@@ -224,9 +226,12 @@ export struct BookChangeSourceDialog {
   filterResults(results: SearchBook[], currentBookUrl: string, currentOrigin: string): SearchBook[] {
     const filtered: SearchBook[] = [];
     const seen = new Set<string>();
+    // 历史结果可能是旧版本不分类型时存下的，这里同样按原书类型过滤。
+    const category = BookTypeSupport.mediaCategoryOf(this.targetBook);
     for (const result of results) {
       if (!result.bookUrl || SearchBookShelfHelper.isNavigationResult(result) ||
-        (result.bookUrl === currentBookUrl && result.origin === currentOrigin)) continue;
+        (result.bookUrl === currentBookUrl && result.origin === currentOrigin) ||
+        BookTypeSupport.mediaCategoryOf(result) !== category) continue;
       const key = `${result.origin || ''}\n${result.bookUrl}`;
       if (seen.has(key)) continue;
       seen.add(key);

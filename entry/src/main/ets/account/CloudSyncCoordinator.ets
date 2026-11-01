@@ -175,6 +175,25 @@ class LocalSyncEntity {
   label: string = '';
 }
 
+/** One upsert left out of an exchange because the server refused the request as too large. */
+class OversizedSyncItem {
+  operation: CloudSyncOperation;
+  entity: LocalSyncEntity;
+  bytes: number;
+  message: string;
+  /** True when the limit is unknown and this is only the largest item of the batch. */
+  guessed: boolean;
+
+  constructor(operation: CloudSyncOperation, entity: LocalSyncEntity, bytes: number, message: string,
+    guessed: boolean) {
+    this.operation = operation;
+    this.entity = entity;
+    this.bytes = bytes;
+    this.message = message;
+    this.guessed = guessed;
+  }
+}
+
 export class CloudSyncRunResult {
   skipped: number = 0;
   warning: string = '';
@@ -350,7 +369,6 @@ export class CloudSyncCoordinator {
     await CloudSyncSettingsStore.saveRuntimeState(context, userId, settings.status,
       settings.lastSuccessAt, settings.pendingCount, settings.errorMessage);
 
-    // Kept outside the try so a whole-request rejection can name the items it was about.
     let localEntities: LocalSyncEntity[] = [];
     let batch: CloudSyncOperation[] = [];
     try {
@@ -385,9 +403,27 @@ export class CloudSyncCoordinator {
           }
           batch = CloudSyncCoordinator.takeOperationBatch(remaining);
           const cursorBeforeExchange = state.cursor;
-          const request = await CloudSyncCoordinator.exchangeRequest(
-            context, deviceId, state.cursor, batch, conflictPolicy);
-          const response = await CloudSyncCoordinator.exchangeSyncWithRetry(request, userId, sessionToken);
+          let response: CloudSyncExchangeResponse | null = null;
+          while (response === null) {
+            const request = await CloudSyncCoordinator.exchangeRequest(
+              context, deviceId, state.cursor, batch, conflictPolicy);
+            try {
+              response = await CloudSyncCoordinator.exchangeSyncWithRetry(request, userId, sessionToken);
+            } catch (error) {
+              // The server rejects the whole request for one oversized item. Leave that item out
+              // (it stays pending locally) and resend the rest instead of failing the whole sync.
+              const oversized = CloudSyncCoordinator.oversizedItemsOf(error as Object, batch, localEntities);
+              if (oversized.length === 0) throw error as Error;
+              for (const item of oversized) {
+                const issue = CloudSyncCoordinator.oversizedIssue(item.entity, item.bytes, item.message, item.guessed);
+                issues.push(issue);
+                result.skipped++;
+                result.warning = issue.title;
+              }
+              batch = batch.filter((operation: CloudSyncOperation) =>
+                !oversized.some((item: OversizedSyncItem) => item.operation === operation));
+            }
+          }
           ReadStatsCloudSync.assertSession(userId, sessionToken);
           CloudSyncCoordinator.validateResponse(response);
           const operationMap = CloudSyncCoordinator.operationEntityMap(batch, localEntities);
@@ -441,7 +477,8 @@ export class CloudSyncCoordinator {
         result.downloaded += stats.downloaded;
       }
       ReadStatsCloudSync.assertSession(userId, sessionToken);
-      settings.status = result.skipped > 0 ? CloudSyncSettingsStore.STATUS_ERROR : CloudSyncSettingsStore.STATUS_SYNCED;
+      // Skipped items (oversized or rejected) stay pending, but everything else did sync.
+      settings.status = result.skipped > 0 ? CloudSyncSettingsStore.STATUS_PARTIAL : CloudSyncSettingsStore.STATUS_SYNCED;
       settings.lastSuccessAt = Date.now();
       settings.pendingCount = result.skipped;
       settings.errorMessage = result.skipped > 1 ? `${result.skipped} 项未能上传，详见同步问题` : result.warning;
@@ -469,13 +506,6 @@ export class CloudSyncCoordinator {
       // Items rejected on earlier pages are still worth reporting alongside the failure itself.
       const message = settings.errorMessage || '同步失败';
       issues.push(CloudSyncIssueStore.create(CloudSyncIssueStore.KIND_SYNC, `sync:${message}`, '同步失败', message));
-      if (error instanceof AccountApiError && error.errorCode === 'SYNC_PAYLOAD_TOO_LARGE') {
-        issues.push(...CloudSyncCoordinator.oversizedIssues(message, batch, localEntities));
-      } else if (error instanceof AccountApiError && error.errorCode === 'REQUEST_TOO_LARGE') {
-        // The route's body limit fires before the per-item check, and its generic message
-        // speaks of files. Batches stay well under that limit unless a single item is oversized.
-        issues.push(...CloudSyncCoordinator.oversizedIssues('超过了同步请求的大小上限', batch, localEntities));
-      }
       await CloudSyncCoordinator.recordIssues(context, userId, issues);
       throw new Error(message);
     } finally {
@@ -1476,39 +1506,49 @@ export class CloudSyncCoordinator {
     return issue;
   }
 
+  /** The items to leave out when an exchange failed only because the request was too large. */
+  private static oversizedItemsOf(error: Object, batch: CloudSyncOperation[],
+    entities: LocalSyncEntity[]): OversizedSyncItem[] {
+    if (!(error instanceof AccountApiError)) return [];
+    if (error.errorCode === 'SYNC_PAYLOAD_TOO_LARGE') {
+      return CloudSyncCoordinator.oversizedItems(error.message || '单项同步数据过大', batch, entities);
+    }
+    if (error.errorCode === 'REQUEST_TOO_LARGE') {
+      // The route's body limit fires before the per-item check, and its generic message
+      // speaks of files. Batches stay well under that limit unless a single item is oversized.
+      return CloudSyncCoordinator.oversizedItems('超过了同步请求的大小上限', batch, entities);
+    }
+    return [];
+  }
+
   /**
    * The server rejects the whole request when one item exceeds its size limit, so no
    * acknowledgement names it. Measure the batch locally against the limit quoted in the message.
    */
-  private static oversizedIssues(message: string, batch: CloudSyncOperation[],
-    entities: LocalSyncEntity[]): CloudSyncIssue[] {
+  private static oversizedItems(message: string, batch: CloudSyncOperation[],
+    entities: LocalSyncEntity[]): OversizedSyncItem[] {
     const match = /不能超过\s*(\d+)\s*KB/i.exec(message);
     const limitBytes = match ? Number(match[1]) * 1024 : 0;
     const encoder = new util.TextEncoder();
-    const sized: LocalSyncEntity[] = [];
-    const sizes: number[] = [];
+    const sized: OversizedSyncItem[] = [];
     for (const operation of batch) {
       if (operation.operation !== 'upsert') continue;
       const entity = entities.find((item: LocalSyncEntity) =>
         item.entityType === operation.entityType && item.entityId === operation.entityId);
       if (!entity || !entity.payloadJson) continue;
-      sized.push(entity);
-      sizes.push(encoder.encodeInto(entity.payloadJson).byteLength);
+      sized.push(new OversizedSyncItem(operation, entity, encoder.encodeInto(entity.payloadJson).byteLength,
+        message, false));
     }
-    const result: CloudSyncIssue[] = [];
-    for (let i = 0; i < sized.length; i++) {
-      if (limitBytes > 0 && sizes[i] > limitBytes) {
-        result.push(CloudSyncCoordinator.oversizedIssue(sized[i], sizes[i], message, false));
-      }
-    }
+    const result = sized.filter((item: OversizedSyncItem) => limitBytes > 0 && item.bytes > limitBytes);
     if (result.length === 0 && sized.length > 0) {
       // Limit unknown or every item measured under it: the largest item is the cause, certainly
       // so when the batch holds only that one item.
-      let largest = 0;
-      for (let i = 1; i < sized.length; i++) {
-        if (sizes[i] > sizes[largest]) largest = i;
+      let largest = sized[0];
+      for (const item of sized) {
+        if (item.bytes > largest.bytes) largest = item;
       }
-      result.push(CloudSyncCoordinator.oversizedIssue(sized[largest], sizes[largest], message, sized.length > 1));
+      largest.guessed = sized.length > 1;
+      result.push(largest);
     }
     return result;
   }
@@ -1519,9 +1559,9 @@ export class CloudSyncCoordinator {
     const issue = CloudSyncIssueStore.create(
       entity.entityType === 'book_source' ? CloudSyncIssueStore.KIND_BOOK_SOURCE : CloudSyncIssueStore.KIND_REJECTED,
       `oversize:${entity.entityType}:${entity.entityId}`,
-      `${CloudSyncCoordinator.entityTypeLabel(entity.entityType)}${name}过大，导致整次同步失败`,
-      guessed ? `${message}。这是本次同步中最大的一项，可能是它超出了限额。` :
-        `${message}。在它被删除或变小之前，每次同步都会失败。`);
+      `${CloudSyncCoordinator.entityTypeLabel(entity.entityType)}${name}过大，已跳过`,
+      guessed ? `${message}。这是本次同步中最大的一项，可能是它超出了限额，已先跳过，其他数据照常同步。` :
+        `${message}。它不会上传到云端，其他数据照常同步；删除或精简后会在下次同步时上传。`);
     issue.bytes = bytes;
     if (entity.entityType === 'book_source') issue.sourceUrl = entity.localKey;
     return issue;

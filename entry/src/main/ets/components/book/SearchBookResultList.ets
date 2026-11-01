@@ -16,6 +16,9 @@ import { PreparedResultCover, ResultCoverOptions, ResultCoverPreparation } from 
 
 export type SearchBookAction = (book: SearchBook) => void;
 
+/** 按序显示时，前一项封面最多等这么久，超时就先用 BookCover 自己加载的封面显示出来。 */
+const ORDERED_REVEAL_WAIT_MS: number = 800;
+
 /** 页面会话保留已准备好的封面 URI，不持有解码位图。 */
 export class ResultCoverCache {
   covers: Map<string, PreparedResultCover> = new Map();
@@ -113,6 +116,14 @@ export struct SearchBookResultList {
   /** 只对当前已加载的封面显示氛围背景，轮播切图时同步更新。 */
   @State readyCoverUrls: Map<string, ResourceStr> = new Map();
   @Prop sharedCoverScope: string = '';
+  /**
+   * 结果顺序固定（发现页）时按原顺序逐项显示：前面的封面还没准备好，后面准备好的也先不显示，
+   * 否则先到的排在前面、慢的随后插到它们中间，列表看起来在不停插队。
+   */
+  @Prop orderedReveal: boolean = false;
+  private resultSeenAt: Map<string, number> = new Map<string, number>();
+  private revealedKeys: Set<string> = new Set<string>();
+  private revealTimer: number = -1;
   onOpenBook: SearchBookAction = (_book: SearchBook) => {};
   onReadBook: SearchBookAction = (_book: SearchBook) => {};
   onToggleShelf: SearchBookAction = (_book: SearchBook) => {};
@@ -129,6 +140,10 @@ export struct SearchBookResultList {
     if (this.coverCache) {
       this.preparedCovers = new Map(this.coverCache.covers);
       this.preparedSignatures = new Map(this.coverCache.signatures);
+      // 回到保留的分类时这些项早已显示过，不再当新到结果播入场。
+      this.preparedCovers.forEach((_cover: PreparedResultCover, key: string): void => {
+        this.revealedKeys.add(key);
+      });
     }
     this.onBooksChanged();
   }
@@ -138,6 +153,8 @@ export struct SearchBookResultList {
     this.coverGeneration++;
     this.pendingCovers.clear();
     if (this.gridAlignTimer >= 0) clearTimeout(this.gridAlignTimer);
+    if (this.revealTimer >= 0) clearTimeout(this.revealTimer);
+    this.revealTimer = -1;
   }
 
   onGridPageActiveChanged(): void {
@@ -167,8 +184,10 @@ export struct SearchBookResultList {
   onBooksChanged(): void {
     const snapshot = new Map<string, SearchBook>();
     let actionsChanged = false;
+    const now = Date.now();
     for (const book of this.books) {
       const key = this.itemKey(book);
+      if (!this.resultSeenAt.has(key)) this.resultSeenAt.set(key, now);
       const previous = this.resultBooks.get(key);
       if (this.layoutMode !== 'grid' && previous && this.listItemKey(previous) !== this.listItemKey(book)) {
         actionsChanged = true;
@@ -184,6 +203,12 @@ export struct SearchBookResultList {
     });
     this.pendingCovers.forEach((_signature: string, key: string): void => {
       if (!snapshot.has(key)) this.pendingCovers.delete(key);
+    });
+    this.resultSeenAt.forEach((_time: number, key: string): void => {
+      if (!snapshot.has(key)) this.resultSeenAt.delete(key);
+    });
+    this.revealedKeys.forEach((key: string): void => {
+      if (!snapshot.has(key)) this.revealedKeys.delete(key);
     });
     this.requestResultCovers();
     this.publishReadyResults(actionsChanged);
@@ -215,7 +240,7 @@ export struct SearchBookResultList {
         this.preparedCovers.set(key, new PreparedResultCover());
         this.preparedSignatures.set(key, signature);
         this.pendingCovers.delete(key);
-        if (firstAdmission) this.onResultReady(book);
+        if (firstAdmission && !this.orderedReveal) this.onResultReady(book);
       } else {
         this.pendingCovers.set(key, signature);
       }
@@ -229,10 +254,41 @@ export struct SearchBookResultList {
       this.coverCache.covers = new Map(this.preparedCovers);
       this.coverCache.signatures = new Map(this.preparedSignatures);
     }
-    const readyKeys = Array.from(this.resultBooks.keys()).filter((key: string): boolean => this.preparedCovers.has(key));
+    const readyKeys = this.orderedReveal ? this.orderedReadyKeys() :
+      Array.from(this.resultBooks.keys()).filter((key: string): boolean => this.preparedCovers.has(key));
     this.visibleResultCount = readyKeys.length;
     this.preparingCoverCount = this.pendingCovers.size;
     this.dataSource.replace(readyKeys, force);
+  }
+
+  /** 从头取连续可显示的项，遇到还在准备且没等够的封面就停下，等它好了或超时再继续。 */
+  orderedReadyKeys(): string[] {
+    const now = Date.now();
+    const keys: string[] = [];
+    let waitMs = -1;
+    for (const key of this.resultBooks.keys()) {
+      if (!this.preparedCovers.has(key) && !this.revealedKeys.has(key)) {
+        const waited = now - (this.resultSeenAt.get(key) ?? now);
+        if (waited < ORDERED_REVEAL_WAIT_MS) {
+          waitMs = ORDERED_REVEAL_WAIT_MS - waited;
+          break;
+        }
+      }
+      if (!this.revealedKeys.has(key)) {
+        this.revealedKeys.add(key);
+        this.onResultReady(this.resultBook(key));
+      }
+      keys.push(key);
+    }
+    if (this.revealTimer >= 0) clearTimeout(this.revealTimer);
+    this.revealTimer = -1;
+    if (waitMs >= 0 && this.coverMounted) {
+      this.revealTimer = setTimeout((): void => {
+        this.revealTimer = -1;
+        if (this.coverMounted) this.publishReadyResults();
+      }, waitMs + 16);
+    }
+    return keys;
   }
 
   drainCoverQueue(): void {
@@ -255,7 +311,7 @@ export struct SearchBookResultList {
           this.preparedCovers.set(key, cover);
           this.preparedSignatures.set(key, signature);
           this.pendingCovers.delete(key);
-          if (firstAdmission) this.onResultReady(this.resultBook(key));
+          if (firstAdmission && !this.orderedReveal) this.onResultReady(this.resultBook(key));
           this.publishReadyResults();
         }).finally((): void => {
           this.runningCovers.delete(key);

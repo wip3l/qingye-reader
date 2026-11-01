@@ -71,6 +71,8 @@ export interface SearchOptions {
    * stopAfterResults is ignored in this mode: the search ends early only once every type is full.
    */
   maxResultsPerCategory?: number;
+  /** Keeps only results of this media category (novel, comic, audio, video), e.g. when changing a book's source. */
+  mediaCategory?: string;
   stopAfterResults?: number;
   maxCandidatesPerSource?: number;
   debugContext?: BookSourceDebugContext;
@@ -566,6 +568,7 @@ export class SearchCoordinator {
         if (options.leanResult) this.stripLeanFieldValues(book);
         this.sanitizeSearchBook(book);
         book.mediaCategory = BookTypeSupport.mediaCategoryOf(book);
+        if (!this.matchesMediaCategory(book, options)) continue;
         const bookKey = `${book.origin || ''}::${book.bookUrl || ''}`;
         if (book.name && book.bookUrl && !seenBookKeys.has(bookKey)) {
           seenBookKeys.add(bookKey);
@@ -639,6 +642,7 @@ export class SearchCoordinator {
       if (options.leanResult) this.stripLeanFieldValues(book);
       this.sanitizeSearchBook(book);
       book.mediaCategory = BookTypeSupport.mediaCategoryOf(book);
+      if (!this.matchesMediaCategory(book, options)) continue;
       books.push(book);
       if (books.length >= resultLimit) break;
     }
@@ -1065,7 +1069,9 @@ export class SearchCoordinator {
     return sorted;
   }
 
-  private filterSearchResults(results: SearchBook[], keyword: string, options: SearchOptions): SearchBook[] {
+  private filterSearchResults(allResults: SearchBook[], keyword: string, options: SearchOptions): SearchBook[] {
+    const results = options.mediaCategory ?
+      allResults.filter((book: SearchBook): boolean => this.matchesMediaCategory(book, options)) : allResults;
     const normalizedKeyword = this.normalizeSearchText(keyword);
     if (!normalizedKeyword) return results;
     if (!options.exactMatch) {
@@ -1081,6 +1087,10 @@ export class SearchCoordinator {
       return options.exactMatchAuthor === true &&
         this.normalizeSearchText(book.author) === normalizedKeyword;
     });
+  }
+
+  private matchesMediaCategory(book: SearchBook, options: SearchOptions): boolean {
+    return !options.mediaCategory || BookTypeSupport.mediaCategoryOf(book) === options.mediaCategory;
   }
 
   private matchesExactSearch(normalizedName: string, normalizedAuthor: string, normalizedKeyword: string,

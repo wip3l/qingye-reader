@@ -485,6 +485,7 @@ struct DataSyncPage {
       if (result.uploaded > 0) details.push(`上传 ${result.uploaded} 项`);
       if (result.downloaded > 0) details.push(`下载 ${result.downloaded} 项`);
       if (result.conflicts > 0) details.push(`处理 ${result.conflicts} 个冲突`);
+      if (result.skipped > 0) details.push(`跳过 ${result.skipped} 项，详见同步问题`);
       HdsFeedback.showToast(details.length > 0 ? `同步完成：${details.join('，')}` : '所有数据已同步');
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

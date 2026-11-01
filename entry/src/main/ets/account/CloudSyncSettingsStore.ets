@@ -43,6 +43,8 @@ export class CloudSyncSettingsStore {
   static readonly STATUS_SYNCED: string = 'synced';
   static readonly STATUS_OFFLINE: string = 'offline';
   static readonly STATUS_ERROR: string = 'error';
+  /** 同步完成，但有条目（过大或被服务端拒收）被跳过；pendingCount 为跳过的条数。 */
+  static readonly STATUS_PARTIAL: string = 'partial';
 
   private static readonly STORE_NAME: string = 'account_cloud_sync_settings';
   private static readonly KEY_PREFIX: string = 'settings_';
@@ -228,6 +230,9 @@ export class CloudSyncSettingsStore {
     if (status === CloudSyncSettingsStore.STATUS_ERROR) {
       return '同步失败';
     }
+    if (status === CloudSyncSettingsStore.STATUS_PARTIAL && pendingCount > 0) {
+      return `已同步 · 跳过 ${pendingCount} 项`;
+    }
     if (pendingCount > 0) {
       return `待同步 ${pendingCount} 项`;
     }
@@ -315,7 +320,8 @@ export class CloudSyncSettingsStore {
       status === CloudSyncSettingsStore.STATUS_SYNCING ||
       status === CloudSyncSettingsStore.STATUS_SYNCED ||
       status === CloudSyncSettingsStore.STATUS_OFFLINE ||
-      status === CloudSyncSettingsStore.STATUS_ERROR) {
+      status === CloudSyncSettingsStore.STATUS_ERROR ||
+      status === CloudSyncSettingsStore.STATUS_PARTIAL) {
       return status;
     }
     return CloudSyncSettingsStore.STATUS_NOT_STARTED;

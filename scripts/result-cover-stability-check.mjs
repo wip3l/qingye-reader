@@ -28,7 +28,8 @@ const list = methods(source, ['onBooksChanged', 'onShelfBookKeysChanged', 'resul
 const readyBooks = [];
 Object.assign(list, { dataSource, layoutMode: 'grid', books: [], shelfBookKeys: [],
   coverMounted: false, pendingCovers: new Map(), preparedCovers: new Map(), preparedSignatures: new Map(),
-  resultBooks: new Map(), tagCache: new Map(), readyCoverUrls: new Map(), onResultReady(book) { readyBooks.push(book); } });
+  resultBooks: new Map(), tagCache: new Map(), readyCoverUrls: new Map(), onResultReady(book) { readyBooks.push(book); },
+  orderedReveal: false, resultSeenAt: new Map(), revealedKeys: new Set(), revealTimer: -1 });
 const first = { origin: 'source-a', bookUrl: '/book', name: '同名书', author: '',
   aggregationKey: 'title:novel:同名书', aggregationCount: 1 };
 list.books = [first]; list.onBooksChanged();

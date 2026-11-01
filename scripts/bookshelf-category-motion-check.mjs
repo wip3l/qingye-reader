@@ -9,7 +9,7 @@ const compile = code => stripTypeScriptTypes(code.replace(/^import .*;\r?\n/gm, 
 const names = ['setShelfPage', 'applyShelfScope', 'refreshShelfTypeTabs', 'booksForShelfScope', 'isInShelfView',
   'matchesShelfGroup', 'shelfBookType', 'activeShelfTypeTab', 'shelfPageKey', 'shelfPageOrder', 'isTileLayout',
   'switchShelfScopeBySelection', 'canSelectShelfPage', 'shelfCategoryPage', 'markShelfScopePanGesture', 'clearShelfScopeTransition', 'shelfBookViewPrefix', 'shelfBookRenderKey',
-  'shelfScopeTabIndex', 'shelfScopeTabHighlighted', 'onPrivateShelfEnabledChanged'];
+  'shelfScopeTabIndex', 'shelfScopeTabHighlighted', 'onPrivateShelfEnabledChanged', 'showsShelfScopeTabs'];
 const methods = names.map(name => {
   const start = source.indexOf(`  ${name}(`);
   assert.ok(start >= 0, name);
@@ -45,6 +45,7 @@ function makeShelf(layout, folders = false) {
   Object.assign(shelf, {
     allBooks: books, books, shelfScope: 'all', shelfTypeTab: 'all', activeShelfGroupId: 0,
     bookshelfLayoutMode: layout, shelfTypeTabIds: ['all', 'text', 'image', 'audio'],
+    bookshelfTypeCategoryEnabled: true, bookshelfShowAllTypeTab: true,
     shelfCategoryPages: new Map(), shelfCategoryRevision: 0, privateShelfRevealed: false,
     privateShelfUnlockDialogSession: { isOpen: () => false }, shelfScopeSwapTimer: -1, shelfScopeFinishTimer: -1, shelfScopeTransitionGeneration: 0,
     shelfScopeSwitchAnimating: false, privateShelfEnabled: true, privateShelfHasPassword: true,
@@ -102,6 +103,33 @@ for (const [layout, folders, active] of [['compact', false, 'list'], ['loose', f
   shelf.matchesShelfFilters = () => false;
   shelf.switchShelfScopeBySelection('all');
   assert.equal(shelf.books.length, 0, 'empty filtered categories do not retain old data');
+}
+
+{
+  // 书架设置：关闭“显示全部分类”时分类栏去掉“全部”，选中的“全部”落到第一个有书的类型。
+  const { shelf } = makeShelf('tile');
+  shelf.bookshelfShowAllTypeTab = false;
+  shelf.applyShelfScope(false);
+  assert.deepEqual(Array.from(shelf.shelfTypeTabIds), ['text', 'image', 'audio'], 'hiding "all" keeps only present types');
+  assert.equal(shelf.shelfPageKey(), 'text', 'the "all" selection falls back to the first type');
+  assert.deepEqual(Array.from(shelf.books, b => b.bookUrl), ['novel']);
+  shelf.allBooks = [];
+  shelf.applyShelfScope(false);
+  assert.deepEqual(Array.from(shelf.shelfTypeTabIds), ['all'], 'an empty shelf still has one page');
+  // 关闭“书籍分类”：只有“全部”一页、没有分类栏，所有类型平铺。
+  shelf.allBooks = books;
+  shelf.bookshelfShowAllTypeTab = true;
+  shelf.shelfTypeTab = 'audio';
+  shelf.bookshelfTypeCategoryEnabled = false;
+  shelf.applyShelfScope(false);
+  assert.deepEqual(Array.from(shelf.shelfTypeTabIds), ['all']);
+  assert.deepEqual(Array.from(shelf.shelfPageOrder()), ['all', 'private'], 'the private shelf stays reachable');
+  assert.equal(shelf.shelfPageKey(), 'all');
+  assert.equal(shelf.showsShelfScopeTabs(), false, 'no category bar without categories');
+  assert.deepEqual(Array.from(shelf.books, b => b.bookUrl), ['novel', 'comic', 'audio']);
+  shelf.bookshelfTypeCategoryEnabled = true;
+  shelf.applyShelfScope(false);
+  assert.equal(shelf.shelfPageKey(), 'audio', 'turning categories back on restores the chosen type');
 }
 
 const { shelf } = makeShelf('tile');

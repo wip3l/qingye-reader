@@ -89,6 +89,7 @@ Object.assign(list, { books: [], resultBooks: new Map(), readyCoverUrls: new Map
   preparedCovers: new Map(), preparedSignatures: new Map(), pendingCovers: new Map(), runningCovers: new Set(),
   activeCoverTasks: 0, coverGeneration: 0, coverMounted: true, gridPageActive: true, layoutMode: 'grid',
   shelfBookKeys: [], gridAlignTimer: -1, coverCache: { covers: new Map(), signatures: new Map() },
+  orderedReveal: false, resultSeenAt: new Map(), revealedKeys: new Set(), revealTimer: -1,
   dataSource: { replace: keys => { visible = Array.from(keys); } },
   onResultReady: b => admitted.push(b.bookUrl),
   prepareResultCover: b => new Promise((resolve, reject) => tasks.set(b.bookUrl, { resolve, reject })) });
@@ -126,4 +127,34 @@ remount.aboutToAppear();
 assert.equal(remount.preparedCovers.get('source:2').firstImage, 'decoded-updated');
 assert.equal(remount.pendingCovers.size, 0);
 assert.deepEqual(visible, ['source:2'], 'warm category immediately publishes its prepared result');
+
+// Fixed-order lists (explore) reveal in source order: a ready cover behind a pending one waits instead of cutting in.
+const timers = [];
+context.setTimeout = fn => { timers.push(fn); return timers.length; };
+context.ORDERED_REVEAL_WAIT_MS = 800;
+const ordered = methods(['onBooksChanged', 'resultBook', 'itemKey', 'listItemKey', 'safeText', 'requestResultCovers',
+  'publishReadyResults', 'orderedReadyKeys', 'drainCoverQueue']);
+visible = []; tasks = new Map(); admitted = [];
+Object.assign(ordered, { books: [], resultBooks: new Map(), readyCoverUrls: new Map(), tagCache: new Map(),
+  preparedCovers: new Map(), preparedSignatures: new Map(), pendingCovers: new Map(), runningCovers: new Set(),
+  activeCoverTasks: 0, coverGeneration: 0, coverMounted: true, gridPageActive: true, layoutMode: 'grid',
+  shelfBookKeys: [], coverCache: null,
+  orderedReveal: true, resultSeenAt: new Map(), revealedKeys: new Set(), revealTimer: -1,
+  dataSource: { replace: keys => { visible = Array.from(keys); } },
+  onResultReady: b => admitted.push(b.bookUrl),
+  prepareResultCover: b => new Promise((resolve, reject) => tasks.set(b.bookUrl, { resolve, reject })) });
+ordered.books = Array.from({ length: 4 }, (_, i) => ({ ...book, bookUrl: `o${i}`, coverUrl: `ou-${i}` }));
+ordered.onBooksChanged();
+complete('o1', 'd1'); complete('o2', 'd2'); await flush();
+assert.deepEqual(visible, [], 'later covers wait behind the first pending one');
+assert.ok(timers.length > 0, 'a wait deadline is scheduled for the blocking cover');
+complete('o0', 'd0'); await flush();
+assert.deepEqual(visible, ['source:o0', 'source:o1', 'source:o2'], 'results appear in source order');
+assert.deepEqual(admitted, ['o0', 'o1', 'o2'], 'arrival animation follows display order');
+ordered.resultSeenAt.set('source:o3', Date.now() - 1000);
+ordered.publishReadyResults();
+assert.deepEqual(visible, ['source:o0', 'source:o1', 'source:o2', 'source:o3'],
+  'a stalled cover is shown after the wait instead of blocking the rest');
+complete('o3', 'd3'); await flush();
+assert.equal(admitted.filter(id => id === 'o3').length, 1, 'a late cover does not replay admission');
 console.log('PASS ready covers: theme/album priority, scope, detail fallback, decode validation/release, bounded concurrency, independent admission, failures, replacements and stale completions');

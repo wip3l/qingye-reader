@@ -40,6 +40,8 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfLastReadPinMode') bookshelfLastReadPinMode: string = 'large';
   @StorageLink('bookshelfLastReadPinCount') bookshelfLastReadPinCount: number = 3;
   @StorageLink('bookshelfBookOpenAnimation') bookshelfBookOpenAnimation: boolean = true;
+  @StorageLink('bookshelfTypeCategoryEnabled') bookshelfTypeCategoryEnabled: boolean = true;
+  @StorageLink('bookshelfShowAllTypeTab') bookshelfShowAllTypeTab: boolean = true;
   @StorageLink('bookshelfCoverAlbums') @Watch('onCoverAlbumsChanged') bookshelfCoverAlbums: string = '';
   @StorageLink('bookshelfLightCoverAlbumId') bookshelfLightCoverAlbumId: string = '';
   @StorageLink('bookshelfDarkCoverAlbumId') bookshelfDarkCoverAlbumId: string = '';
@@ -183,6 +185,30 @@ struct BookshelfSettingsPage {
         showDivider: false,
         onChange: (value: boolean) => {
           this.bookshelfShowLastReadChapter = value;
+          this.onDisplaySettingChanged();
+        }
+      })
+    }
+    this.itemDivider()
+    SettingSwitchRow({
+      title: '书籍分类',
+      description: '书架顶部按小说、漫画、有声书等类型分页',
+      isOn: this.bookshelfTypeCategoryEnabled,
+      showDivider: false,
+      onChange: (value: boolean) => {
+        this.bookshelfTypeCategoryEnabled = value;
+        this.onDisplaySettingChanged();
+      }
+    })
+    if (this.bookshelfTypeCategoryEnabled) {
+      this.itemDivider()
+      SettingSwitchRow({
+        title: '显示全部分类',
+        description: '分类栏第一项为“全部”',
+        isOn: this.bookshelfShowAllTypeTab,
+        showDivider: false,
+        onChange: (value: boolean) => {
+          this.bookshelfShowAllTypeTab = value;
           this.onDisplaySettingChanged();
         }
       })
@@ -344,6 +370,8 @@ struct BookshelfSettingsPage {
       this.bookshelfLastReadPinMode = settings.lastReadPinMode;
       this.bookshelfLastReadPinCount = settings.lastReadPinCount;
       this.bookshelfBookOpenAnimation = settings.bookOpenAnimation;
+      this.bookshelfTypeCategoryEnabled = settings.typeCategoryEnabled;
+      this.bookshelfShowAllTypeTab = settings.showAllTypeTab;
     } catch (e) {
       console.warn('重新加载书架显示设置失败:', e);
     }
@@ -496,6 +524,8 @@ struct BookshelfSettingsPage {
     settings.lastReadPinMode = this.bookshelfLastReadPinMode;
     settings.lastReadPinCount = this.bookshelfLastReadPinCount;
     settings.bookOpenAnimation = this.bookshelfBookOpenAnimation;
+    settings.typeCategoryEnabled = this.bookshelfTypeCategoryEnabled;
+    settings.showAllTypeTab = this.bookshelfShowAllTypeTab;
     BookshelfDisplaySettingsStore.applyToStorage(settings);
     BookshelfDisplaySettingsStore.save(getContext(this), settings).catch((e: Error) => {
       console.warn('保存书架显示设置失败:', e);
