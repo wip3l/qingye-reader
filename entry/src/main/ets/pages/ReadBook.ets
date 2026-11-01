@@ -299,6 +299,7 @@ struct ReadBookPage {
   @State readerCommentPanelProgress: number = 0;
   @State readerCommentPanelLoading: boolean = false;
   @State readerCommentPanelError: boolean = false;
+  @State readerInlinePageError: string = '';
   @State readerCommentPanelHeight: number = 0;
   /** 评论网页顶部的实际底色（#RRGGBB），弹层与拖动条区域跟随它；为空时按 app 深浅色。 */
   @State readerCommentPanelSurface: string = '';
@@ -3648,11 +3649,14 @@ struct ReadBookPage {
               .height(38)
               .color(this.accentColor())
           }
-          Text(this.readerCommentPanelError ? '评论显示失败，请重试' : '评论加载中…')
+          Text(this.readerCommentPanelError ?
+            (this.readerInlinePageMode && this.readerInlinePageError ? this.readerInlinePageError : '评论显示失败，请重试') : '评论加载中…')
             .fontSize(AppFontSize.BODY)
             .fontColor(ThemeRuntime.subTextColor(this.isReaderCommentPanelDark()))
+            .textAlign(TextAlign.Center)
+            .padding({ left: 24, right: 24 })
           if (this.readerCommentPanelError) {
-            Button('重试')
+            Button(this.readerInlinePageNeedsRefresh() ? '刷新本章' : '重试')
               .onClick(() => this.retryReaderCommentPanelLoad())
           }
         }
@@ -14702,6 +14706,7 @@ struct ReadBookPage {
     this.readerSourceActionOpenedAt = Date.now();
     this.readerInlinePage = new NativeCommentPage();
     this.readerInlinePageMode = true;
+    this.readerInlinePageError = '';
     this.readerCommentPanelMarker = marker;
     this.readerCommentPanelLoading = true;
     this.readerCommentPanelError = false;
@@ -14722,7 +14727,8 @@ struct ReadBookPage {
       this.readerCommentPanelLoading = false;
     } catch (error) {
       if (cancelled()) return;
-      HdsFeedback.showToast(error instanceof Error ? error.message : '评论页面生成失败');
+      this.readerInlinePageError = error instanceof Error ? error.message : '评论页面生成失败';
+      HdsFeedback.showToast(this.readerInlinePageError);
       this.readerCommentPanelError = true;
     } finally {
       if (serial === this.readerInlinePageSerial && cancelled()) this.closeReaderCommentPanel();
@@ -14822,8 +14828,20 @@ struct ReadBookPage {
     this.readerCommentPanelError = true;
   }
 
+  readerInlinePageNeedsRefresh(): boolean {
+    return this.readerInlinePageMode && ['评论入口已失效，请刷新本章', '评论上下文不可用，请刷新本章',
+      '正文段落已变化，请刷新本章后打开评论'].indexOf(this.readerInlinePageError) >= 0;
+  }
+
   retryReaderCommentPanelLoad(): void {
     if (this.readerInlinePageMode) {
+      if (this.readerInlinePageNeedsRefresh()) {
+        this.closeReaderCommentPanel();
+        this.refreshCurrentChapter().catch((error: Error): void => {
+          console.warn('评论入口失效后刷新本章失败:', error);
+        });
+        return;
+      }
       const action = ReaderActionMarker.parse(this.readerCommentPanelMarker);
       const source = this.currentReaderSource();
       if (action && source) this.openReaderInlinePage(source, action, this.readerCommentPanelMarker);
@@ -14876,6 +14894,7 @@ struct ReadBookPage {
     this.readerInlinePageSerial++;
     this.readerInlinePageMode = false;
     this.readerInlinePage = new NativeCommentPage();
+    this.readerInlinePageError = '';
     this.readerCommentPanelLoadSerial++;
     if (this.readerCommentPanelReadyTimerId >= 0) {
       clearTimeout(this.readerCommentPanelReadyTimerId);

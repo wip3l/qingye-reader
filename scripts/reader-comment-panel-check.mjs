@@ -24,6 +24,7 @@ function harness() {
   });
   const methods = ['updateReaderCommentPanelHeight', 'scheduleReaderCommentPanelHostReady',
     'backReaderCommentPanel', 'closeReaderCommentPanel', 'failReaderCommentPanelLoad', 'retryReaderCommentPanelLoad',
+    'readerInlinePageNeedsRefresh',
     'syncReaderCommentPanelWebTheme', 'loadReaderCommentPanelHtmlIfNeeded'];
   const page = vm.runInContext(stripTypeScriptTypes(`({${methods.map(method).join(',')}})`, { mode: 'strip' }), context);
   Object.assign(page, {
@@ -195,10 +196,12 @@ console.log('PASS comment panel: live resize, painted-theme reveal, stale callba
 function inlineHarness() {
   const calls = [], toasts = [];
   const context = vm.createContext({ NativeCommentPage, Error, HttpClient: class {},
+    ReaderActionMarker: { parse: () => ({ url: 'action' }) },
     NativeSourceService: { getCommentPage(...args) {
       return new Promise((resolve,reject) => calls.push({ args, resolve, reject }));
     } }, HdsFeedback: { showToast: text => toasts.push(text) } });
-  const page = vm.runInContext(stripTypeScriptTypes(`({${method('openReaderInlinePage')}})`, {mode:'strip'}),context);
+  const page = vm.runInContext(stripTypeScriptTypes(`({${['openReaderInlinePage', 'readerInlinePageNeedsRefresh',
+    'retryReaderCommentPanelLoad'].map(method).join(',')}})`, {mode:'strip'}),context);
   Object.assign(page, { book:{bookUrl:'book'}, chapters:[{url:'chapter'}], currentChapterIndex:0,
     readerInlinePageSerial:0, currentReaderSource:()=>({bookSourceUrl:'source'}),
     closeReaderCommentPanel() { this.readerInlinePageSerial++; this.showReaderCommentPanel=false; },
@@ -232,6 +235,26 @@ function inlineHarness() {
 {
   const h=inlineHarness(); const pending=h.open(); h.calls[0].reject(Error('invalid context')); await pending;
   assert.equal(h.page.readerCommentPanelError,true); assert(h.toasts[0].includes('invalid context'));
+  assert.equal(h.page.readerInlinePageError,'invalid context');
+  let retried;
+  const openAgain=h.page.openReaderInlinePage.bind(h.page);
+  h.page.openReaderInlinePage=(...args)=>{ retried=openAgain(...args); return retried; };
+  h.page.retryReaderCommentPanelLoad();
+  assert.equal(h.calls.length,2,'transient failure can retry the action');
+  assert.equal(h.page.readerInlinePageError,'','new attempt clears the previous reason');
+  h.calls[1].resolve(Object.assign(new NativeCommentPage(),{html:'ok'}));
+  await retried;
+  assert.equal(h.page.readerInlinePage.html,'ok');
+}
+for (const message of ['评论入口已失效，请刷新本章', '评论上下文不可用，请刷新本章',
+  '正文段落已变化，请刷新本章后打开评论']) {
+  const h=inlineHarness(); const pending=h.open(); h.calls[0].reject(Error(message)); await pending;
+  let refreshes=0;
+  h.page.refreshCurrentChapter=async()=>{ refreshes++; };
+  assert.equal(h.page.readerInlinePageNeedsRefresh(),true);
+  h.page.retryReaderCommentPanelLoad();
+  assert.equal(refreshes,1); assert.equal(h.page.showReaderCommentPanel,false);
+  assert.equal(h.calls.length,1,'stale actions refresh the chapter instead of looping the same marker');
 }
 const inlineView=fs.readFileSync(new URL('../entry/src/main/ets/components/NativeCommentPageView.ets',import.meta.url),'utf8');
 for (const required of ['incognitoMode: true','.blockNetwork(true)','.fileAccess(false)', '.domStorageAccess(false)',
