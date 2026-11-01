@@ -130,8 +130,6 @@ export struct NativeCommentPageView {
 
   build() {
     Column() {
-      Text(this.page.title).fontSize(18).maxLines(2).padding(12).width('100%')
-        .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
       Stack() {
         if (!this.error) {
         Web({ src: 'about:blank', controller: this.controller, incognitoMode: true,
