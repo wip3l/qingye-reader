@@ -19,4 +19,17 @@ CREATE TABLE IF NOT EXISTS shared_provider_key_grants (
   PRIMARY KEY (provider, user_id)
 );
 
+-- Also support migrations run by an administrator, matching the existing account service role.
+DO $$
+DECLARE application_role NAME;
+BEGIN
+  SELECT tableowner INTO application_role FROM pg_tables
+    WHERE schemaname='public' AND tablename='point_wallets';
+  IF application_role IS NOT NULL AND application_role <> current_user THEN
+    EXECUTE format('GRANT SELECT ON TABLE shared_provider_keys TO %I', application_role);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE ON TABLE shared_provider_key_grants TO %I', application_role);
+  END IF;
+END
+$$;
+
 COMMIT;

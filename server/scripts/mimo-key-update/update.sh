@@ -54,6 +54,10 @@ if [ "$mode" = check ]; then echo 'PASS: preflight only; database and service un
 for file in "${migrations[@]}"; do "${psql[@]}" < "$stage/migrations/$file" > /dev/null; done
 test "$("${psql[@]}" -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN
   ('shared_provider_keys','shared_provider_key_grants');")" = 2
+# The service connects as the role owning the existing tables, not as postgres; it must reach the new ones.
+test "$("${psql[@]}" -c "SELECT has_table_privilege(o, 'shared_provider_keys', 'SELECT')
+  AND has_table_privilege(o, 'shared_provider_key_grants', 'SELECT,INSERT,UPDATE')
+  FROM (SELECT tableowner AS o FROM pg_tables WHERE schemaname='public' AND tablename='point_wallets') r")" = t
 if [ "$installed" -eq 1 ]; then echo 'Already installed; migration checked, no restart needed.'; exit 0; fi
 
 changed=0

@@ -48,6 +48,9 @@ struct MimoSettingsPage {
   @State multi: boolean = false;
   @State analysisAvailable: boolean = false;
   private testedKey: string = '';
+  /** The member shared key never enters the text box, whose eye icon would reveal it. */
+  private sharedKey: string = '';
+  @State usingShared: boolean = false;
   private serial: number = 0;
   private client: MimoClient = new MimoClient();
   private player: TtsPcmAudioPlayer = new TtsPcmAudioPlayer();
@@ -61,7 +64,9 @@ struct MimoSettingsPage {
   }
   // Leaving for the browser must not wipe a key the user just pasted.
   onPageHide(): void { this.stopTest(); }
-  aboutToDisappear(): void { this.stopTest(); this.keyInput = ''; this.testedKey = ''; this.player.release(); }
+  aboutToDisappear(): void { this.stopTest(); this.clearPendingKey(); this.testedKey = ''; this.player.release(); }
+  private pendingKey(): string { return this.usingShared ? this.sharedKey : this.keyInput.trim(); }
+  private clearPendingKey(): void { this.keyInput = ''; this.sharedKey = ''; this.usingShared = false; }
   private stopTest(): void {
     this.serial++; this.client.stop(); this.player.stop();
     if (this.busy) {
@@ -105,8 +110,11 @@ struct MimoSettingsPage {
     try {
       const key = await AccountCommerceApi.fetchMimoSharedKey(AccountSessionStore.token());
       if (serial !== this.serial) return;
-      if (!key || key.length > 4096 || /\s/.test(key)) throw new Error('暂未提供共享密钥，请稍后再试');
-      this.keyInput = key;
+      // Distinct from the server's "no key stored" message, so a malformed stored key is told apart.
+      if (!key || key.length > 4096 || /\s/.test(key)) throw new Error('服务端返回的共享密钥格式不正确，请联系开发者');
+      this.keyInput = '';
+      this.sharedKey = key;
+      this.usingShared = true;
       this.resetResults();
       HdsFeedback.showToast('已填入会员共享密钥，请勾选同意后测试');
     } catch (error) {
@@ -122,14 +130,14 @@ struct MimoSettingsPage {
   }
   private async test(saved: boolean = false): Promise<void> {
     if (this.busy) return;
-    if (!saved && (!this.consent || !this.keyInput.trim())) return;
+    if (!saved && (!this.consent || !this.pendingKey())) return;
     const serial = ++this.serial;
     this.resetResults();
     this.busy = true;
     this.ttsCheck = 'running'; this.ttsStatus = '正在合成试听…';
     await ReaderTtsFloatingSession.stop();
     try {
-      const key = saved ? await MimoStore.key() : this.keyInput.trim();
+      const key = saved ? await MimoStore.key() : this.pendingKey();
       if (serial !== this.serial) return;
       if (!key || key.length > 4096 || /\s/.test(key)) throw new Error('请输入完整的 MiMo API Key');
       let pending: Promise<void> = Promise.resolve();
@@ -177,17 +185,17 @@ struct MimoSettingsPage {
     this.busy = true;
     try {
       await MimoStore.saveKey(this.testedKey, this.analysisCheck === 'ok', this.voice);
-      this.keyInput = ''; this.consent = false; this.editing = false; this.hasKey = true;
+      this.clearPendingKey(); this.consent = false; this.editing = false; this.hasKey = true;
       this.resetResults(); this.syncSettings();
       HdsFeedback.showToast(this.multi ? '已开启 MiMo 多角色朗读' : '已开启 MiMo 单音色朗读');
     } catch (error) { this.notice = (error as Error).message; }
     finally { this.busy = false; }
   }
   private startReplacing(): void {
-    this.stopTest(); this.resetResults(); this.keyInput = ''; this.consent = false; this.editing = true;
+    this.stopTest(); this.resetResults(); this.clearPendingKey(); this.consent = false; this.editing = true;
   }
   private cancelReplacing(): void {
-    this.stopTest(); this.resetResults(); this.keyInput = ''; this.consent = false; this.editing = false;
+    this.stopTest(); this.resetResults(); this.clearPendingKey(); this.consent = false; this.editing = false;
     this.syncSettings();
   }
   private async removeKey(): Promise<void> {
@@ -201,7 +209,7 @@ struct MimoSettingsPage {
       await ReaderTtsFloatingSession.stop();
       await MimoStore.deleteKey();
       this.resetResults(); this.syncSettings();
-      this.hasKey = false; this.editing = true; this.keyInput = ''; this.consent = false;
+      this.hasKey = false; this.editing = true; this.clearPendingKey(); this.consent = false;
       HdsFeedback.showToast('本机密钥已删除');
     } catch (error) { this.notice = (error as Error).message; }
   }
@@ -261,20 +269,33 @@ struct MimoSettingsPage {
     Column({ space: AppSpacing.LG }) {
       Text('API Key').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
         .fontColor(ThemeRuntime.primaryTextColor(this.dark)).width('100%')
-      TextInput({ text: this.keyInput, placeholder: '按量付费 sk- 或 Token Plan tp-/ttp- 密钥' }).type(InputType.Password)
-        .showPasswordIcon(true).maxLength(4096).enabled(!this.busy).height(46)
-        .backgroundColor(ThemeRuntime.inputColor(this.dark)).fontColor(ThemeRuntime.primaryTextColor(this.dark))
-        .onChange((value: string) => { this.keyInput = value; this.resetResults(); })
-      Row({ space: AppSpacing.SM }) {
-        MembershipBadge({ sku: 'LIFETIME' })
-        Text(this.lifetimeMember() ? '终身会员可直接使用开发者提供的密钥' : '终身会员可一键填入开发者提供的密钥')
-          .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.dark)).layoutWeight(1)
-        Button(this.filling ? '填充中…' : '一键填充').height(32).fontSize(AppFontSize.CAPTION)
-          .enabled(!this.busy).opacity(this.lifetimeMember() && !this.busy ? 1 : 0.5)
-          .backgroundColor(ThemeRuntime.softFillColor(this.dark)).fontColor(ThemeRuntime.primaryTextColor(this.dark))
-          .onClick(() => this.fillSharedKey())
-      }.width('100%')
-      Text(MimoPolicy.isTokenPlan(this.keyInput.trim()) ?
+      if (this.usingShared) {
+        Row({ space: AppSpacing.MD }) {
+          SymbolGlyph($r('sys.symbol.checkmark_shield')).fontSize(20).fontColor([ThemeRuntime.accentColor(this.dark)])
+          Text('已填入会员共享密钥').fontSize(AppFontSize.BODY).fontColor(ThemeRuntime.primaryTextColor(this.dark))
+            .layoutWeight(1)
+          Button('改用自己的密钥').height(32).fontSize(AppFontSize.CAPTION).enabled(!this.busy)
+            .backgroundColor(Color.Transparent).fontColor(ThemeRuntime.subTextColor(this.dark))
+            .onClick(() => { this.clearPendingKey(); this.resetResults(); })
+        }.width('100%').height(46).padding({ left: AppSpacing.LG, right: AppSpacing.XS })
+        .borderRadius(ThemeRuntime.mediumRadius()).backgroundColor(ThemeRuntime.inputColor(this.dark))
+      } else {
+        TextInput({ text: this.keyInput, placeholder: '按量付费 sk- 或 Token Plan tp-/ttp- 密钥' }).type(InputType.Password)
+          .showPasswordIcon(true).maxLength(4096).enabled(!this.busy).height(46)
+          .backgroundColor(ThemeRuntime.inputColor(this.dark)).fontColor(ThemeRuntime.primaryTextColor(this.dark))
+          .onChange((value: string) => { this.keyInput = value; this.resetResults(); })
+        Row({ space: AppSpacing.SM }) {
+          MembershipBadge({ sku: 'LIFETIME' })
+          Text(this.lifetimeMember() ? '终身会员可直接使用开发者提供的密钥' : '终身会员可一键填入开发者提供的密钥')
+            .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.dark)).layoutWeight(1)
+          Button(this.filling ? '填充中…' : '一键填充').height(32).fontSize(AppFontSize.CAPTION)
+            .enabled(!this.busy).opacity(this.lifetimeMember() && !this.busy ? 1 : 0.5)
+            .backgroundColor(ThemeRuntime.softFillColor(this.dark)).fontColor(ThemeRuntime.primaryTextColor(this.dark))
+            .onClick(() => this.fillSharedKey())
+        }.width('100%')
+      }
+      Text(this.usingShared ? '共享密钥不会在界面中显示，只保存在本机安全存储中。' :
+        MimoPolicy.isTokenPlan(this.keyInput.trim()) ?
         'Token Plan 密钥将使用套餐专属地址；若套餐不含语音合成，请改用按量付费的 sk- 密钥。' :
         '只保存在本机安全存储中，不随备份、同步或分享导出。')
         .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.dark)).width('100%')
@@ -297,7 +318,7 @@ struct MimoSettingsPage {
       this.primaryButton(this.analysisCheck === 'ok' ? '保存并开启多角色朗读' : '保存并使用单音色朗读', () => this.save())
     } else {
       this.primaryButton(this.busy ? '正在测试…' : '测试连接与试听', () => this.test(),
-        !this.busy && this.consent && this.keyInput.trim().length > 0)
+        !this.busy && this.consent && this.pendingKey().length > 0)
     }
     if (this.hasKey) {
       Button('取消，继续使用现有密钥').fontSize(AppFontSize.BODY).fontColor(ThemeRuntime.subTextColor(this.dark))
