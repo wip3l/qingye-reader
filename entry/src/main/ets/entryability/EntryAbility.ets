@@ -157,6 +157,7 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate('navBarHeight', 0);
     }
     PersistentStorage.persistProp('bookshelfSortMode', 'recentRead');
+    PersistentStorage.persistProp('videoDisplayMode', 'contain');
     PersistentStorage.persistProp('ttsPerson', 0);
     PersistentStorage.persistProp('ttsOnline', 1);
     PersistentStorage.persistProp('ttsStyle', '');

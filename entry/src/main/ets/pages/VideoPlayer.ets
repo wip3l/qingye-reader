@@ -66,6 +66,7 @@ class EpisodeDataSource implements IDataSource {
 // Video 组件的 currentProgressRate 只接受 0.75、1、1.25、1.75、2 这几档，别的值不生效。
 const SPEEDS: number[] = [1, 1.25, 1.75, 2, 0.75];
 const CONTROLS_HIDE_DELAY_MS: number = 4000;
+const DISPLAY_MODES: string[] = ['contain', 'none', 'cover', 'fill'];
 
 // 操作栏按钮的统一外观。用 @Extend 而不是带参数的 @Builder：按值传参的 @Builder 不会随状态刷新，
 // 「连播 开/关」「播放/暂停」、倍速这些会变的文字就停在创建时的样子。
@@ -90,6 +91,7 @@ struct VideoPlayerPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
+  @StorageLink('videoDisplayMode') displayMode: string = 'contain';
   @State bookName: string = '';
   @State episodeTitle: string = '';
   @State episodeIndex: number = 0;
@@ -102,6 +104,10 @@ struct VideoPlayerPage {
   @State speed: number = 1;
   @State showControls: boolean = true;
   @State showEpisodes: boolean = false;
+  @State showDisplayModes: boolean = false;
+  @State viewportWidth: number = 360;
+  @State viewportHeight: number = 640;
+  @State bottomBarHeight: number = 140;
   @State autoNext: boolean = true;
   @State landscape: boolean = false;
   @State seeking: boolean = false;
@@ -137,6 +143,7 @@ struct VideoPlayerPage {
   private openedBookUrl: string = '';
 
   aboutToAppear(): void {
+    if (DISPLAY_MODES.indexOf(this.displayMode) < 0) this.displayMode = 'contain';
     const params = router.getParams() as VideoPlayerParams;
     const bookUrl = params && params.bookUrl ? params.bookUrl : '';
     const requestedIndex = params && params.chapterIndex !== undefined && params.chapterIndex !== '' ?
@@ -170,6 +177,7 @@ struct VideoPlayerPage {
   }
 
   onPageHide(): void {
+    this.showDisplayModes = false;
     this.playerPageVisible = false;
     this.orientationSerial++;
     try { this.controller.pause(); } catch (_) {}
@@ -180,6 +188,10 @@ struct VideoPlayerPage {
 
   onBackPress(): boolean {
     if (this.exitWebFullscreen()) return true;
+    if (this.showDisplayModes) {
+      this.closeDisplayModes();
+      return true;
+    }
     if (this.showEpisodes) {
       this.showEpisodes = false;
       return true;
@@ -391,6 +403,7 @@ struct VideoPlayerPage {
   }
 
   private stopPlayback(): void {
+    this.showDisplayModes = false;
     this.activeAttemptId++;
     this.clearHideTimer();
     this.exitWebFullscreen();
@@ -514,7 +527,7 @@ struct VideoPlayerPage {
     this.clearHideTimer();
     this.hideTimerId = setTimeout((): void => {
       this.hideTimerId = -1;
-      if (this.isPlaying && !this.showEpisodes && !this.seeking) this.showControls = false;
+      if (this.isPlaying && !this.showEpisodes && !this.showDisplayModes && !this.seeking) this.showControls = false;
     }, CONTROLS_HIDE_DELAY_MS);
   }
 
@@ -525,6 +538,7 @@ struct VideoPlayerPage {
   }
 
   private openEpisodes(): void {
+    this.showDisplayModes = false;
     this.showEpisodes = true;
     this.clearHideTimer();
     setTimeout((): void => {
@@ -537,6 +551,62 @@ struct VideoPlayerPage {
     const minute = Math.floor(total / 60);
     const second = total % 60;
     return `${minute < 10 ? '0' : ''}${minute}:${second < 10 ? '0' : ''}${second}`;
+  }
+
+  private videoObjectFit(): ImageFit {
+    switch (this.displayMode) {
+      case 'none': return ImageFit.None;
+      case 'cover': return ImageFit.Cover;
+      case 'fill': return ImageFit.Fill;
+      default: return ImageFit.Contain;
+    }
+  }
+
+  private displayModeTitle(mode: string): string {
+    switch (mode) {
+      case 'none': return '原始大小';
+      case 'cover': return '铺满屏幕';
+      case 'fill': return '拉伸铺满';
+      default: return '适应屏幕';
+    }
+  }
+
+  private displayModeHint(mode: string): string {
+    switch (mode) {
+      case 'none': return '不缩放，居中显示，超出部分裁切';
+      case 'cover': return '保持比例铺满，裁切部分边缘';
+      case 'fill': return '填满屏幕，画面可能变形';
+      default: return '保持比例，完整显示，允许黑边';
+    }
+  }
+
+  private displayModeButtonLabel(): string {
+    switch (this.displayMode) {
+      case 'none': return '画面 · 原始';
+      case 'cover': return '画面 · 铺满';
+      case 'fill': return '画面 · 拉伸';
+      default: return '画面 · 适应';
+    }
+  }
+
+  private openDisplayModes(): void {
+    if (this.webMode) return;
+    this.showEpisodes = false;
+    this.showControls = true;
+    this.showDisplayModes = true;
+    this.clearHideTimer();
+  }
+
+  private closeDisplayModes(): void {
+    this.showDisplayModes = false;
+    this.scheduleHideControls();
+  }
+
+  private selectDisplayMode(mode: string): void {
+    if (DISPLAY_MODES.indexOf(mode) < 0) return;
+    // 只更新绘制方式，保留 Video 实例、控制器和当前播放进度。
+    this.displayMode = mode;
+    this.closeDisplayModes();
   }
 
   @Builder
@@ -610,29 +680,37 @@ struct VideoPlayerPage {
       }
       .width('100%')
 
-      Row({ space: AppSpacing.MD }) {
-        Text('上一集')
-          .playerRoundButton()
-          .onClick(() => {
-            if (this.episodeIndex > 0) this.playEpisode(this.episodeIndex - 1);
-            else HdsFeedback.showToast('已经是第一集');
-          })
-        Text(this.isPlaying ? '暂停' : '播放')
-          .playerRoundButton()
-          .onClick(() => this.togglePlay())
-        Text('下一集')
-          .playerRoundButton()
-          .onClick(() => {
-            if (this.episodeIndex < this.chapters.length - 1) this.playEpisode(this.episodeIndex + 1);
-            else HdsFeedback.showToast('已经是最后一集');
-          })
-        Blank()
-        Text(`${this.speed}x`)
-          .playerRoundButton()
-          .onClick(() => this.nextSpeed())
-        Text(this.landscape ? '竖屏' : '横屏')
-          .playerRoundButton()
-          .onClick(() => this.setLandscape(!this.landscape))
+      Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap,
+        justifyContent: this.viewportWidth < 600 ? FlexAlign.Center : FlexAlign.SpaceBetween }) {
+        Row({ space: AppSpacing.MD }) {
+          Text('上一集')
+            .playerRoundButton()
+            .onClick(() => {
+              if (this.episodeIndex > 0) this.playEpisode(this.episodeIndex - 1);
+              else HdsFeedback.showToast('已经是第一集');
+            })
+          Text(this.isPlaying ? '暂停' : '播放')
+            .playerRoundButton()
+            .onClick(() => this.togglePlay())
+          Text('下一集')
+            .playerRoundButton()
+            .onClick(() => {
+              if (this.episodeIndex < this.chapters.length - 1) this.playEpisode(this.episodeIndex + 1);
+              else HdsFeedback.showToast('已经是最后一集');
+            })
+        }.margin({ top: AppSpacing.SM, right: AppSpacing.SM })
+        Row({ space: AppSpacing.MD }) {
+          Text(`${this.speed}x`)
+            .playerRoundButton()
+            .onClick(() => this.nextSpeed())
+          Text(this.displayModeButtonLabel())
+            .playerRoundButton()
+            .accessibilityText(`画面显示，当前${this.displayModeTitle(this.displayMode)}`)
+            .onClick(() => this.openDisplayModes())
+          Text(this.landscape ? '竖屏' : '横屏')
+            .playerRoundButton()
+            .onClick(() => this.setLandscape(!this.landscape))
+        }.margin({ top: AppSpacing.SM })
       }
       .width('100%')
     }
@@ -641,6 +719,74 @@ struct VideoPlayerPage {
       bottom: this.navBarHeight + AppSpacing.LG })
     .linearGradient({ direction: GradientDirection.Top, colors: [['#B3000000', 0], ['#00000000', 1]] })
     .position({ left: 0, bottom: 0 })
+    .onSizeChange((_oldValue: SizeOptions, newValue: SizeOptions) => {
+      this.bottomBarHeight = Number(newValue.height);
+    })
+  }
+
+  @Builder
+  displayModePanel() {
+    Stack() {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#33000000')
+        .onClick(() => this.closeDisplayModes())
+      Column({ space: AppSpacing.XS }) {
+        Row() {
+          Text('画面显示')
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+            .layoutWeight(1)
+          Button({ type: ButtonType.Normal }) {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(18)
+              .fontColor([ThemeRuntime.primaryTextColor(this.appDarkMode)])
+          }
+          .width(44).height(44)
+          .backgroundColor(Color.Transparent)
+          .accessibilityText('关闭画面显示')
+          .onClick(() => this.closeDisplayModes())
+        }.padding({ left: AppSpacing.LG })
+        Scroll() {
+          Column({ space: AppSpacing.XS }) {
+            ForEach(DISPLAY_MODES, (mode: string) => {
+              Button({ type: ButtonType.Normal }) {
+                Row({ space: AppSpacing.MD }) {
+                  Column({ space: AppSpacing.XS }) {
+                    Text(this.displayModeTitle(mode))
+                      .fontSize(AppFontSize.BODY)
+                      .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+                    Text(this.displayModeHint(mode))
+                      .fontSize(AppFontSize.CAPTION)
+                      .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+                  }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+                  SymbolGlyph($r('sys.symbol.checkmark'))
+                    .fontSize(18)
+                    .fontColor([ThemeRuntime.primaryTextColor(this.appDarkMode)])
+                    .visibility(this.displayMode === mode ? Visibility.Visible : Visibility.Hidden)
+                }.width('100%').padding(AppSpacing.LG)
+              }
+              .width('100%')
+              .borderRadius(12)
+              .backgroundColor(this.displayMode === mode ? ThemeRuntime.inputColor(this.appDarkMode) : Color.Transparent)
+              .accessibilityText(`${this.displayModeTitle(mode)}，${this.displayModeHint(mode)}${this.displayMode === mode ? '，已选中' : ''}`)
+              .onClick(() => this.selectDisplayMode(mode))
+            }, (mode: string): string => mode)
+          }.width('100%')
+        }
+        .width('100%')
+        .constraintSize({ maxHeight: Math.max(64,
+          this.viewportHeight - this.bottomBarHeight - this.statusBarHeight - 80) })
+        .scrollBar(BarState.Auto)
+      }
+      .width(Math.min(300, this.viewportWidth - AppSpacing.XL * 2))
+      .padding(AppSpacing.MD)
+      .borderRadius(18)
+      .backgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
+      .position({ right: AppSpacing.LG, bottom: this.bottomBarHeight + AppSpacing.SM })
+    }.width('100%').height('100%')
   }
 
   @Builder
@@ -793,7 +939,7 @@ struct VideoPlayerPage {
             .controls(false)
             .autoPlay(false)
             .loop(false)
-            .objectFit(ImageFit.Contain)
+            .objectFit(this.videoObjectFit())
             .backgroundColor(Color.Black)
             .onPrepared((event: PreparedInfo) => {
               if (!this.isCurrentNative(attempt)) return;
@@ -874,6 +1020,9 @@ struct VideoPlayerPage {
       if (this.showEpisodes) {
         this.episodePanel()
       }
+      if (this.showDisplayModes && !this.webMode) {
+        this.displayModePanel()
+      }
     }
     .width('100%')
     .height('100%')
@@ -882,7 +1031,11 @@ struct VideoPlayerPage {
     .onSizeChange((_oldValue: SizeOptions, newValue: SizeOptions) => {
       const width = Number(newValue.width);
       const height = Number(newValue.height);
-      if (width > 0 && height > 0) this.landscape = width > height;
+      if (width > 0 && height > 0) {
+        this.viewportWidth = width;
+        this.viewportHeight = height;
+        this.landscape = width > height;
+      }
     })
   }
 }

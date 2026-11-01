@@ -39,6 +39,8 @@ const context = vm.createContext({
   CookieStore: { saveSync() {} },
   setTimeout: (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; },
   clearTimeout: id => timers.delete(id), CONTROLS_HIDE_DELAY_MS: 4000, SPEEDS: [1, 2],
+  DISPLAY_MODES: ['contain', 'none', 'cover', 'fill'],
+  ImageFit: { Contain: 0, None: 1, Cover: 2, Fill: 3 },
 });
 vm.runInContext(stripTypeScriptTypes(support.replace(/^export /gm, '') + '\n' + attempts + '\n' + methods + '\n}', { mode: 'strip' }), context);
 const Page = vm.runInContext('VideoPlayerPage', context);
@@ -145,6 +147,56 @@ login.openWebPlayback();
 assert.equal(login.webMode, true);
 login.stopPlayback();
 
+resolveContent = async () => ({ url: 'https://cdn.example/v.mp4', pageUrl: 'https://site.example/watch/1', error: '' });
+const display = newPage();
+await display.playEpisode(0, 85);
+display.onVideoPrepared(300);
+display.resumeSeekPending = false;
+display.positionSec = 97;
+display.isPlaying = true;
+const displayAttempt = display.nativeAttempts[0];
+const controllerCalls = structuredClone(display.controller.calls);
+const requestCount = requests.length;
+display.openDisplayModes();
+assert.equal(display.hideTimerId, -1, 'the mode menu cancels auto-hide');
+display.scheduleHideControls();
+const displayTimerId = display.hideTimerId;
+timers.get(displayTimerId).fn();
+timers.delete(displayTimerId);
+assert.equal(display.showControls, true, 'playback callbacks cannot hide controls while selecting a mode');
+for (const mode of ['none', 'cover', 'fill', 'contain']) {
+  display.openDisplayModes();
+  display.selectDisplayMode(mode);
+  assert.equal(display.displayMode, mode);
+  assert.equal(display.showDisplayModes, false);
+  assert.equal(display.nativeAttempts[0], displayAttempt, 'display changes preserve the native player instance');
+  assert.deepEqual(display.controller.calls, controllerCalls, 'display changes must not pause, seek or restart playback');
+  assert.equal(display.positionSec, 97);
+  assert.equal(display.isPlaying, true);
+}
+assert.equal(requests.length, requestCount, 'display changes must not resolve the source again');
+display.selectDisplayMode('invalid');
+assert.equal(display.displayMode, 'contain');
+display.selectDisplayMode('cover');
+display.openDisplayModes();
+display.manualLandscapeRequested = true;
+assert.equal(display.onBackPress(), true);
+assert.equal(display.showDisplayModes, false);
+assert.equal(display.manualLandscapeRequested, true, 'Back closes the menu before leaving landscape');
+await display.playEpisode(1);
+assert.equal(display.displayMode, 'cover', 'switching episodes retains the selected display mode');
+display.openDisplayModes();
+display.openWebPlayback();
+assert.equal(display.showDisplayModes, false, 'web fallback cannot retain a native-only menu');
+display.openDisplayModes();
+assert.equal(display.showDisplayModes, false);
+await display.playEpisode(1);
+assert.equal(display.displayMode, 'cover', 'returning from web playback retains the selected mode');
+display.openDisplayModes();
+display.onPageHide();
+assert.equal(display.showDisplayModes, false);
+display.stopPlayback();
+
 const pending = [];
 resolveContent = (...args) => new Promise(resolve => pending.push({ resolve, cancelled: args[3] }));
 const racing = newPage();
@@ -173,4 +225,4 @@ assert.equal(timeout.book.durChapterPos, 85);
 assert.equal(timeout.playbackFailed, true);
 assert.equal(pending[pending.length - 1].cancelled(), true, 'timed-out resolver remains cancelled after returning');
 assert.equal(timers.size, 0, 'all lifecycle timers cleaned up');
-console.log('video-playback-fallback-check: URL validation, resume, error classification, retry bound, stale callbacks, fullscreen, background, cancellation and timeout passed');
+console.log('video-playback-fallback-check: playback fallback, resume, display-mode continuity, menu lifecycle, background, cancellation and timeout passed');
