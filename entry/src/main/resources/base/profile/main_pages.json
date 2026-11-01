@@ -21,6 +21,7 @@
     "pages/TtsSettings",
     "pages/MimoSettings",
     "pages/MimoBookRoles",
+    "pages/MimoBooks",
     "pages/CustomTtsVoiceManager",
     "pages/BookshelfSettings",
     "pages/BookshelfCoverBadgeSettings",

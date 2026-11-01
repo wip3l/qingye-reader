@@ -21,6 +21,19 @@ export class MimoBookCast {
   corrections: MimoCorrection[] = [];
   emotion: string = '自然';
   revision: number = 0;
+  /** Book URL and title, so the cast list can show which books were read with MiMo. */
+  book: string = '';
+  bookName: string = '';
+  updatedAt: number = 0;
+}
+export class MimoCastSummary {
+  /** Empty for casts saved before the book was recorded; see linkLegacyCasts. */
+  book: string = '';
+  bookName: string = '';
+  updatedAt: number = 0;
+  /** Characters besides the narrator. */
+  characters: number = 0;
+  file: string = '';
 }
 
 /** The secret never enters AppStorage, preferences, backup files, or logs. */
@@ -29,6 +42,8 @@ export class MimoStore {
   private static settings: MimoSettings = new MimoSettings();
   private static loaded: boolean = false;
   static credentialRevision: number = 0;
+  /** A key is saved on this device, even while MiMo is switched off; lets the reader offer MiMo as a voice. */
+  private static configured: boolean = false;
   static onCredentialsChanged: (() => void)[] = [];
 
   static load(): MimoSettings {
@@ -43,7 +58,10 @@ export class MimoStore {
         MimoStore.settings.namespace = typeof value.namespace === 'string' ? value.namespace : '';
       } catch (_) {}
       MimoStore.loaded = true;
+      MimoStore.configured = MimoStore.settings.enabled;
       MimoStore.publish();
+      MimoStore.key().then((key: string): void => { MimoStore.setConfigured(key.length > 0); })
+        .catch((): void => {});
     }
     return MimoStore.settings;
   }
@@ -57,7 +75,22 @@ export class MimoStore {
     if (wasEnabled && !enabled) MimoStore.invalidateCredentials();
     MimoStore.saveSettings();
   }
+  /** Records a re-test of the saved key; multi-role reading cannot stay on without working analysis. */
+  static setAnalysisAvailable(available: boolean): void {
+    const settings = MimoStore.load();
+    settings.analysisAvailable = available;
+    if (!available) settings.multi = false;
+    MimoStore.saveSettings();
+  }
+  static isConfigured(): boolean { MimoStore.load(); return MimoStore.configured; }
+  private static setConfigured(configured: boolean): void {
+    if (MimoStore.configured === configured) return;
+    MimoStore.configured = configured;
+    MimoStore.publish();
+  }
   private static publish(): void {
+    AppStorage.setOrCreate('mimoConfigured', MimoStore.configured);
+    AppStorage.setOrCreate('mimoAnalysisAvailable', MimoStore.settings.analysisAvailable);
     AppStorage.setOrCreate('mimoEnabled', MimoStore.settings.enabled);
     AppStorage.setOrCreate('mimoMulti', MimoStore.settings.multi);
     AppStorage.setOrCreate('mimoVoice', MimoStore.settings.voice);
@@ -96,6 +129,7 @@ export class MimoStore {
     settings.analysisAvailable = analysis;
     settings.voice = MIMO_VOICES.includes(voice) ? voice : '白桦';
     settings.namespace = util.generateRandomUUID();
+    MimoStore.configured = true;
     MimoStore.invalidateCredentials();
     MimoStore.saveSettings();
   }
@@ -106,6 +140,7 @@ export class MimoStore {
     MimoStore.load().enabled = false;
     MimoStore.settings.multi = false;
     MimoStore.settings.analysisAvailable = false;
+    MimoStore.configured = false;
     MimoStore.invalidateCredentials();
     MimoStore.saveSettings();
   }
@@ -134,9 +169,58 @@ export class MimoStore {
     cast.roles[0].voice = MimoStore.load().voice;
     return cast;
   }
-  static saveCast(book: string, cast: MimoBookCast): void {
+  static saveCast(book: string, cast: MimoBookCast, bookName: string = ''): void {
     cast.revision++;
+    cast.book = book;
+    if (bookName) cast.bookName = bookName;
+    cast.updatedAt = Date.now();
     MimoStore.write(MimoStore.root() + '/cast_' + MimoStore.hash(book) + '.json', JSON.stringify(cast));
+  }
+  static deleteCast(book: string): void {
+    try { fs.unlinkSync(MimoStore.root() + '/cast_' + MimoStore.hash(book) + '.json'); } catch (_) {}
+  }
+  /** Every saved cast, newest first. */
+  static castSummaries(): MimoCastSummary[] {
+    const root = MimoStore.root();
+    const summaries: MimoCastSummary[] = [];
+    for (const name of fs.listFileSync(root)) {
+      if (!/^cast_[a-f0-9]{64}\.json$/.test(name)) continue;
+      try {
+        const cast = JSON.parse(fs.readTextSync(root + '/' + name)) as MimoBookCast;
+        if (!Array.isArray(cast.roles)) continue;
+        const summary = new MimoCastSummary();
+        summary.book = typeof cast.book === 'string' ? cast.book : '';
+        summary.bookName = typeof cast.bookName === 'string' ? cast.bookName : '';
+        summary.updatedAt = typeof cast.updatedAt === 'number' ? cast.updatedAt : fs.statSync(root + '/' + name).mtime * 1000;
+        summary.characters = cast.roles.filter((role: MimoRole): boolean => role.id !== 'narrator').length;
+        summary.file = name;
+        summaries.push(summary);
+      } catch (_) {}
+    }
+    return summaries.sort((a: MimoCastSummary, b: MimoCastSummary): number => b.updatedAt - a.updatedAt);
+  }
+  /**
+   * Casts saved before the book was recorded are only named by a hash of the book URL; match them
+   * against known books and record the URL so they can be listed and opened.
+   */
+  static linkLegacyCasts(summaries: MimoCastSummary[], urls: string[], names: string[]): void {
+    const pending = summaries.filter((summary: MimoCastSummary): boolean => !summary.book);
+    if (pending.length === 0) return;
+    for (let index = 0; index < urls.length; index++) {
+      const file = 'cast_' + MimoStore.hash(urls[index]) + '.json';
+      const summary = pending.find((item: MimoCastSummary): boolean => item.file === file);
+      if (!summary) continue;
+      try {
+        const path = MimoStore.root() + '/' + file;
+        const cast = JSON.parse(fs.readTextSync(path)) as MimoBookCast;
+        cast.book = urls[index];
+        cast.bookName = names[index] || '';
+        if (typeof cast.updatedAt !== 'number') cast.updatedAt = summary.updatedAt;
+        MimoStore.write(path, JSON.stringify(cast));
+        summary.book = cast.book;
+        summary.bookName = cast.bookName;
+      } catch (_) {}
+    }
   }
   static write(path: string, text: string): void {
     const temporary = path + '.tmp';

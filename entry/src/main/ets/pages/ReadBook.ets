@@ -243,6 +243,12 @@ class ReaderCommentNavigationBridge {
 @Component
 struct ReadBookPage {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  // MiMo choices live in the floating voice list, so republish it whenever they change.
+  @StorageProp('mimoEnabled') @Watch('onMimoVoiceStateChanged') mimoEnabledState: boolean = false;
+  @StorageProp('mimoMulti') @Watch('onMimoVoiceStateChanged') mimoMultiState: boolean = false;
+  @StorageProp('mimoVoice') @Watch('onMimoVoiceStateChanged') mimoVoiceState: string = '';
+  @StorageProp('mimoConfigured') @Watch('onMimoVoiceStateChanged') mimoConfiguredState: boolean = false;
+  @StorageProp('mimoAnalysisAvailable') @Watch('onMimoVoiceStateChanged') mimoAnalysisState: boolean = false;
   @State bookUrl: string = '';
   @State book: Book | null = null;
   @State chapters: BookChapter[] = [];
@@ -936,6 +942,8 @@ struct ReadBookPage {
   private readerScreenOrientationSerial: number = 0;
   private readerObservedBackgroundRevision: number = 0;
   private readerPageVisible: boolean = false;
+  /** Whether the read in progress was started with MiMo, so its failures can offer the regular voice. */
+  private ttsReadUsesMimo: boolean = false;
   private readerCommentPanelMarker: string = '';
   private readerCommentPanelAnchorBottom: number = -1;
   private readerCommentPageAreaTop: number = -1;
@@ -7948,7 +7956,7 @@ struct ReadBookPage {
   }
 
   selectedTtsVoiceTitle(): string {
-    if (MimoStore.load().enabled) return MimoStore.load().multi ? 'MiMo · 自动多角色' : 'MiMo · ' + MimoStore.load().voice;
+    if (MimoStore.load().enabled) return MimoStore.load().multi ? 'MiMo · 自动多角色' : 'MiMo · 单音色 · ' + MimoStore.load().voice;
     const cloudVoice = this.findCurrentCloudTtsVoice();
     if (cloudVoice) {
       return TtsVoiceCatalog.cloudVoiceTitle(cloudVoice);
@@ -7972,8 +7980,43 @@ struct ReadBookPage {
     return systemVoices.length > 0 ? TtsVoiceCatalog.voiceTitle(systemVoices[0]) : '暂无可用音色';
   }
 
+  /** With a saved key, MiMo leads the quick voice list so the player can switch both ways. */
+  mimoQuickVoiceLabels(): string[] {
+    if (!MimoStore.isConfigured()) return [];
+    const settings = MimoStore.load();
+    const labels: string[] = [];
+    if (settings.analysisAvailable) labels.push('MiMo · 自动多角色');
+    labels.push('MiMo · 单音色 · ' + settings.voice);
+    return labels;
+  }
+
+  regularTtsVoiceCount(): number {
+    return this.ttsCloudVoices.length + this.selectableCustomTtsVoices().length + this.selectableSystemTtsVoices().length;
+  }
+
+  applyMimoVoice(multi: boolean): void {
+    const settings = MimoStore.load();
+    const nextMulti = multi && settings.analysisAvailable;
+    if (settings.enabled && settings.multi === nextMulti) return;
+    const shouldResume = this.isTtsSpeaking || this.ttsReader.isSpeaking();
+    if (shouldResume) {
+      this.stopTtsReading();
+    }
+    settings.multi = nextMulti;
+    MimoStore.setEnabled(true);
+    if (shouldResume) {
+      this.startTtsReadingFromCurrentPosition(false).catch((e: Error) => {
+        console.warn('切换到 MiMo 朗读后恢复失败:', e);
+      });
+    }
+  }
+
+  onMimoVoiceStateChanged(): void {
+    this.publishTtsFloatingVoices();
+  }
+
   ttsQuickVoiceOptions(): SelectOption[] {
-    const options: SelectOption[] = [];
+    const options: SelectOption[] = this.mimoQuickVoiceLabels().map((label: string): SelectOption => ({ value: label }));
     for (const voice of this.ttsCloudVoices) {
       options.push({ value: TtsVoiceCatalog.cloudVoiceTitle(voice) });
     }
@@ -7986,6 +8029,9 @@ struct ReadBookPage {
     if (options.length === 0) {
       options.push({ value: '暂无可用音色' });
     }
+    if (MimoStore.isConfigured()) {
+      options.push({ value: 'MiMo 朗读设置…' });
+    }
     return options;
   }
 
@@ -7994,20 +8040,35 @@ struct ReadBookPage {
   }
 
   ttsQuickVoiceSelectedIndex(): number {
+    const mimoLabels = this.mimoQuickVoiceLabels();
+    if (mimoLabels.length > 0 && MimoStore.load().enabled) {
+      return MimoStore.load().multi && mimoLabels.length > 1 ? 0 : mimoLabels.length - 1;
+    }
+    const offset = mimoLabels.length;
     const cloudIndex = this.ttsCloudVoices.findIndex((voice: TtsVoiceInfo) =>
       this.isCurrentCloudTtsVoice(voice));
-    if (cloudIndex >= 0) return cloudIndex;
+    if (cloudIndex >= 0) return offset + cloudIndex;
     const customVoices = this.selectableCustomTtsVoices();
     const customIndex = customVoices.findIndex((voice: HttpTTS) => this.isCurrentCustomTtsVoice(voice));
-    if (customIndex >= 0) return this.ttsCloudVoices.length + customIndex;
+    if (customIndex >= 0) return offset + this.ttsCloudVoices.length + customIndex;
     const systemVoices = this.selectableSystemTtsVoices();
     const systemIndex = systemVoices.findIndex((voice: TtsVoiceOption) => this.isCurrentTtsVoice(voice));
-    if (systemIndex >= 0) return this.ttsCloudVoices.length + customVoices.length + systemIndex;
-    return 0;
+    if (systemIndex >= 0) return offset + this.ttsCloudVoices.length + customVoices.length + systemIndex;
+    return offset;
   }
 
-  selectTtsQuickVoice(index: number): void {
-    if (index < 0) return;
+  selectTtsQuickVoice(selectedIndex: number): void {
+    if (selectedIndex < 0) return;
+    const mimoLabels = this.mimoQuickVoiceLabels();
+    if (selectedIndex < mimoLabels.length) {
+      this.applyMimoVoice(mimoLabels.length > 1 && selectedIndex === 0);
+      return;
+    }
+    const index = selectedIndex - mimoLabels.length;
+    if (mimoLabels.length > 0 && index === this.regularTtsVoiceCount()) {
+      this.getUIContext().getRouter().pushUrl({ url: 'pages/MimoSettings' });
+      return;
+    }
     if (index < this.ttsCloudVoices.length) {
       this.applyCloudTtsVoice(this.ttsCloudVoices[index], true);
       return;
@@ -11847,9 +11908,11 @@ struct ReadBookPage {
       }
       this.publishTtsFloatingSession();
       const cloudVoice = this.findCurrentCloudTtsVoice();
+      this.ttsReadUsesMimo = MimoStore.load().enabled;
       await this.ttsReader.start(text, {
-        mimo: MimoStore.load().enabled,
+        mimo: this.ttsReadUsesMimo,
         mimoBook: this.book?.bookUrl || '',
+        mimoBookName: this.book?.name || '',
         mimoChapter: String(this.currentChapterIndex),
         mimoSourceOffset: this.ttsTextStartOffset,
         onFinished: () => {
@@ -11879,6 +11942,8 @@ struct ReadBookPage {
           this.finishTtsReading(true);
           if (message.startsWith('MIMO_ANALYSIS:')) {
             this.showMimoAnalysisRecovery(message.slice('MIMO_ANALYSIS:'.length));
+          } else if (this.ttsReadUsesMimo) {
+            this.showMimoFailureRecovery(message || 'MiMo 朗读失败');
           } else {
             HdsFeedback.showToast(message || '朗读失败');
           }
@@ -11943,6 +12008,21 @@ struct ReadBookPage {
     if (result.index === 1 && failedToken === this.ttsReadToken && this.readerPageVisible) {
       MimoStore.load().multi = false;
       MimoStore.saveSettings();
+      await this.startTtsReadingFromCurrentPosition(false);
+    }
+  }
+
+  /** A MiMo failure (balance, rate limit, network) offers the regular voice instead of just stopping. */
+  async showMimoFailureRecovery(message: string): Promise<void> {
+    if (!this.readerPageVisible) { HdsFeedback.showToast(message); return; }
+    const failedToken = this.ttsReadToken;
+    const result = await this.getUIContext().getPromptAction().showDialog({
+      title: 'MiMo 朗读已暂停', message: message + '\n已保留朗读位置，可改用常规音色继续。',
+      buttons: [{ text: '稍后再试', color: this.getSubTextColor() },
+        { text: '改用常规朗读', color: this.accentColor() }]
+    });
+    if (result.index === 1 && failedToken === this.ttsReadToken && this.readerPageVisible) {
+      MimoStore.setEnabled(false);
       await this.startTtsReadingFromCurrentPosition(false);
     }
   }

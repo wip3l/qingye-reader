@@ -27,13 +27,13 @@ class MimoAnalysisInput { roles: MimoRole[] = []; units: MimoUnit[] = []; contex
 class MimoHttpError extends Error {
   status: number;
   retryAfter: number;
-  constructor(status: number, retryAfter: number = 0) {
-    super(MimoPolicy.error(status)); this.status = status; this.retryAfter = retryAfter;
+  constructor(status: number, retryAfter: number, key: string, body: string) {
+    super(MimoPolicy.error(status, MimoPolicy.errorDetail(body), MimoPolicy.isTokenPlan(key)));
+    this.status = status; this.retryAfter = retryAfter;
   }
 }
 
 export class MimoClient {
-  private static readonly ENDPOINT: string = 'https://api.xiaomimimo.com/v1/chat/completions';
   private generation: number = 0;
   private aborters: (() => void)[] = [];
 
@@ -118,10 +118,12 @@ export class MimoClient {
     this.aborters.push(abort);
     try {
       let response: http.HttpResponse;
-      try { response = await client.request(MimoClient.ENDPOINT, this.options(key, body)); }
+      try { response = await client.request(MimoPolicy.endpoint(key), this.options(key, body)); }
       catch (_) { throw new Error(generation !== this.generation ? 'MiMo 请求已停止' : MimoPolicy.error(0)); }
       if (generation !== this.generation) throw new Error('MiMo 请求已停止');
-      if (response.responseCode !== 200) throw new MimoHttpError(response.responseCode, this.retryDelay(response.header));
+      if (response.responseCode !== 200) {
+        throw new MimoHttpError(response.responseCode, this.retryDelay(response.header), key, String(response.result));
+      }
       let parsed: MimoResponse;
       try { parsed = JSON.parse(String(response.result)) as MimoResponse; }
       catch (_) { throw new Error('MiMo 响应格式无效'); }
@@ -167,6 +169,8 @@ export class MimoClient {
     const chunks: Uint8Array[] = [];
     let bytes = 0;
     let receivedBytes = 0;
+    // Error responses are plain JSON rather than SSE; keep the start of the body to explain them.
+    let head = '';
     let done = false;
     let retryAfter: number = 0;
     let failure: Error | null = null;
@@ -183,7 +187,10 @@ export class MimoClient {
         if (event === '[DONE]') { done = true; continue; }
         let packet: MimoResponse;
         try { packet = JSON.parse(event) as MimoResponse; } catch (_) { throw new Error('MiMo 流式响应格式无效'); }
-        if (packet.error) throw new Error('MiMo 合成未完成，请重试当前片段');
+        if (packet.error) {
+          const detail = MimoPolicy.errorDetail(JSON.stringify(packet));
+          throw new Error('MiMo 合成未完成' + (detail ? '：' + detail : '，请重试当前片段'));
+        }
         if (packet.choices?.[0]?.finish_reason === 'length') throw new Error('MiMo 音频被截断，请重试');
         const encoded = packet.choices?.[0]?.delta?.audio?.data;
         if (!encoded) continue;
@@ -204,9 +211,11 @@ export class MimoClient {
       try {
         receivedBytes += data.byteLength;
         if (receivedBytes > 8 * 1024 * 1024) throw new Error('MiMo 响应过大，已停止');
-        consume(parser.push(decoder.decodeWithStream(new Uint8Array(data), { stream: true })));
-      } catch (_) {
-        failure = new Error('MiMo 音频响应无效或过大，请重试当前片段');
+        const text = decoder.decodeWithStream(new Uint8Array(data), { stream: true });
+        if (head.length < 4096) head += text.slice(0, 4096 - head.length);
+        consume(parser.push(text));
+      } catch (error) {
+        failure = error instanceof Error ? error : new Error('MiMo 音频响应无效，请重试当前片段');
         rejectEnd(failure);
         client.destroy();
       }
@@ -220,9 +229,16 @@ export class MimoClient {
     }, 120000);
     try {
       let status: number;
-      try { status = await client.requestInStream(MimoClient.ENDPOINT, this.options(key, body)); }
+      try { status = await client.requestInStream(MimoPolicy.endpoint(key), this.options(key, body)); }
       catch (_) { throw failure || new Error(generation !== this.generation ? 'MiMo 请求已停止' : MimoPolicy.error(0)); }
-      if (status !== 200) throw new MimoHttpError(status, retryAfter);
+      if (status !== 200) {
+        // The status can resolve before the short error body arrives; wait briefly for it.
+        let wait: number = -1;
+        await Promise.race([ended.catch((): void => {}),
+          new Promise<void>((resolve) => { wait = setTimeout(resolve, 1500); })]);
+        clearTimeout(wait);
+        throw new MimoHttpError(status, retryAfter, key, head);
+      }
       await ended;
       await chain;
       if (generation !== this.generation) throw new Error('MiMo 请求已停止');

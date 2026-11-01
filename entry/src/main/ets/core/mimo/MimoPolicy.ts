@@ -106,18 +106,78 @@ export class MimoPolicy {
     }
   }
 
+  /** Analysis batches: a small first batch so the opening starts quickly, then larger ones. */
+  static batchStart(index: number): number {
+    return index < 5 ? 0 : 5 + Math.floor((index - 5) / 16) * 16;
+  }
+
+  static batchEnd(start: number, total: number): number {
+    return Math.min(total, start === 0 ? 5 : start + 16);
+  }
+
+  static letters(text: string): number {
+    const matches = text.match(/[\p{L}\p{N}]/gu);
+    return matches ? matches.length : 0;
+  }
+
+  /**
+   * Short pieces such as a speech tag ("林晚答：") get their own request only at the cost of a gap;
+   * merge them into a neighbour that shares the same voice and style instead.
+   */
+  static canMerge(group: string, next: string): boolean {
+    return group.length + next.length <= 120 && (MimoPolicy.letters(group) < 12 || MimoPolicy.letters(next) < 12);
+  }
+
   static emotion(value: string): string {
     return ['平静', '开心', '悲伤', '愤怒', '恐惧', '惊讶', '温柔', '紧张', '低语'].includes(value) ? value : '平静';
   }
 
-  static error(status: number): string {
-    if (status === 401) return 'MiMo API Key 无效，请检查或更换密钥';
-    if (status === 402) return 'MiMo 额度不足，请到小米控制台查看';
-    if (status === 403) return 'MiMo 拒绝访问，请检查账号和模型权限';
-    if (status === 429) return 'MiMo 请求限流或额度受限，请稍后重试并检查控制台';
-    if (status >= 500) return 'MiMo 服务暂时不可用，请稍后重试';
-    if (status === 0) return 'MiMo 网络连接失败，请检查网络后重试';
-    return `MiMo 请求未完成（HTTP ${status}），请检查账号的模型可用性`;
+  /** Token Plan keys (personal tp-, team ttp-) only work on their dedicated host; pay-as-you-go keys (sk-) use the public API. */
+  static isTokenPlan(key: string): boolean { return key.startsWith('tp-') || key.startsWith('ttp-'); }
+
+  static endpoint(key: string): string {
+    return MimoPolicy.isTokenPlan(key) ? 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions' :
+      'https://api.xiaomimimo.com/v1/chat/completions';
+  }
+
+  /** Pulls the human-readable reason out of an error body, for display only. */
+  static errorDetail(body: string): string {
+    let detail = '';
+    try {
+      const parsed = JSON.parse(body) as Record<string, Object>;
+      const error = parsed.error;
+      if (typeof error === 'string') detail = error;
+      else if (error && typeof (error as Record<string, Object>).message === 'string') {
+        detail = (error as Record<string, Object>).message as string;
+      } else if (typeof parsed.message === 'string') detail = parsed.message as string;
+    } catch (_) {}
+    detail = detail.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+    return detail.length > 120 ? detail.slice(0, 120) + '…' : detail;
+  }
+
+  static error(status: number, detail: string = '', tokenPlan: boolean = false): string {
+    let message: string;
+    if (status === 401) {
+      message = tokenPlan ? 'Token Plan 密钥无效，或该套餐不支持此功能，可改用按量付费的 sk- 密钥' :
+        'MiMo API Key 无效，请检查或更换密钥';
+    } else if (status === 402) {
+      message = '小米账户余额不足。即使模型限时免费，平台也可能要求账户有可用余额，请到控制台查看';
+    } else if (status === 403) {
+      message = 'MiMo 拒绝访问：当前地区不支持或密钥被风控，可新建密钥后重试';
+    } else if (status === 404) {
+      message = '当前密钥无法使用所需的 MiMo 模型，请检查账号的模型权限';
+    } else if (status === 421) {
+      message = '这段内容被小米审核拦截，无法合成';
+    } else if (status === 429) {
+      message = tokenPlan ? 'Token Plan 额度已用完或请求过快，请稍后重试' : 'MiMo 请求过快被限流，请稍后重试';
+    } else if (status >= 500) {
+      message = 'MiMo 服务暂时不可用，请稍后重试';
+    } else if (status === 0) {
+      message = 'MiMo 网络连接失败，请检查网络后重试';
+    } else {
+      message = `MiMo 请求未完成（HTTP ${status}），请检查账号的模型可用性`;
+    }
+    return detail ? `${message}（小米返回：${detail}）` : message;
   }
 }
 

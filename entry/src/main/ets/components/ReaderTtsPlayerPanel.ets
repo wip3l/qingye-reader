@@ -368,28 +368,27 @@ export struct ReaderTtsPlayerPanel {
         this.scrollToCurrentSentence(false);
       })
 
-      if (this.mimoEnabled) {
-        Column({ space: 8 }) {
-          Row({ space: 12 }) {
-            Text(this.mimoReadingStatus || this.mimoCurrentRole || (this.mimoMulti ? 'MiMo · 自动多角色' : 'MiMo · 单音色'))
-              .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor).layoutWeight(1)
-            Button('本书角色').fontSize(AppFontSize.CAPTION)
-              .fontColor(this.primaryTextColor).backgroundColor(ThemeRuntime.softFillColor(this.darkMode))
-              .onClick(() => router.pushUrl({ url: 'pages/MimoBookRoles' }))
-          }.width('100%')
-          Row({ space: 12 }) {
-            Button('这句角色不对？').fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor).backgroundColor(Color.Transparent)
-              .onClick(() => router.pushUrl({ url: 'pages/MimoBookRoles' }))
-            Blank()
-            Button('MiMo 设置').fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor).backgroundColor(Color.Transparent)
-              .onClick(() => router.pushUrl({ url: 'pages/MimoSettings' }))
-          }.width('100%')
-        }.width('100%')
-      } else if (this.hasTtsVoices()) {
+      // MiMo sits in the same voice list as regular voices, so switching works both ways here.
+      if (this.hasTtsVoices()) {
         Row() {
           this.ttsVoiceSelect()
         }
         .width('100%')
+      }
+      if (this.mimoEnabled) {
+        Row({ space: AppSpacing.SM }) {
+          Text(this.mimoReadingStatus || this.mimoCurrentRole || (this.mimoMulti ? '自动识别人物' : '单音色朗读'))
+            .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor).layoutWeight(1)
+            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (this.mimoMulti) {
+            Button('这句不对？').height(30).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor)
+              .backgroundColor(Color.Transparent)
+              .onClick(() => router.pushUrl({ url: 'pages/MimoBookRoles' }))
+            Button('本书角色').height(30).fontSize(AppFontSize.CAPTION)
+              .fontColor(this.primaryTextColor).backgroundColor(ThemeRuntime.softFillColor(this.darkMode))
+              .onClick(() => router.pushUrl({ url: 'pages/MimoBookRoles' }))
+          }
+        }.width('100%').padding({ left: AppSpacing.XS })
       }
     }
     .layoutWeight(1)

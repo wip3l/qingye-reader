@@ -17,6 +17,7 @@ export interface TtsChunk {
 export interface TtsReadOptions {
   mimo?: boolean;
   mimoBook?: string;
+  mimoBookName?: string;
   mimoChapter?: string;
   mimoSourceOffset?: number;
   onFinished?: () => void;
@@ -476,7 +477,8 @@ export class SystemTtsReader {
     this.active = true;
     if (options?.mimo) {
       this.mimoReader.read(cleanText, {
-        book: options.mimoBook || 'preview', chapter: options.mimoChapter || 'preview',
+        book: options.mimoBook || 'preview', bookName: options.mimoBookName || '',
+        chapter: options.mimoChapter || 'preview',
         sourceOffset: options.mimoSourceOffset || 0, speed: options.speed || 1,
         onFocus: (unit: MimoUnit, index: number): void => {
           if (generation !== this.readGeneration || !this.active) return;

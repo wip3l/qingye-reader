@@ -6,8 +6,8 @@ import { createHash } from 'node:crypto';
 
 const policySource = fs.readFileSync(new URL('../entry/src/main/ets/core/mimo/MimoPolicy.ts', import.meta.url), 'utf8');
 const policy = vm.runInNewContext(stripTypeScriptTypes(policySource.replaceAll('export ', '') +
-  '\n({MimoPolicy,MimoSseParser,MimoRole})'));
-const { MimoPolicy, MimoSseParser } = policy;
+  '\n({MimoPolicy,MimoSseParser,MimoRole,MimoUnit})'));
+const { MimoPolicy, MimoSseParser, MimoRole, MimoUnit } = policy;
 for (const text of [
   '沈砚说：“雨停了，我们走吧。”\n林晚拿起伞：“等等。”',
   '\n　“你是谁？”……\n',
@@ -53,17 +53,17 @@ const FakeClient=vm.runInNewContext(stripTypeScriptTypes(clientSource+'\nMimoCli
   util:{TextDecoder:{create:()=>{const d=new TextDecoder();return {decodeWithStream:(b,o)=>d.decode(b,o)}}},
     Base64Helper:class {decodeSync(s){return new Uint8Array(Buffer.from(s,'base64'));}}},
 });
-function fakeStream({status=200,complete=true,stall=false}={}){
+function fakeStream({status=200,complete=true,stall=false,errorBody='',url='https://api.xiaomimimo.com/v1/chat/completions'}={}){
   const events={};let reject;
   return {
     on:(name,fn)=>events[name]=fn,
     destroy:()=>reject?.(new Error('destroyed')),
-    requestInStream:async(url,options)=>{
-      assert.equal(url,'https://api.xiaomimimo.com/v1/chat/completions');assert.equal(options.usingProxy,false);
+    requestInStream:async(requestUrl,options)=>{
+      assert.equal(requestUrl,url);assert.equal(options.usingProxy,false);
       const body=JSON.parse(options.extraData);assert.equal(body.messages[1].role,'assistant');
       assert.equal(body.audio.format,'pcm16');
       if(stall)return new Promise((_,r)=>reject=r);
-      if(status!==200){events.dataEnd();return status;}
+      if(status!==200){if(errorBody)events.dataReceive(Uint8Array.from(Buffer.from(errorBody)).buffer);events.dataEnd();return status;}
       const content='data: '+JSON.stringify({choices:[{delta:{audio:{data:Buffer.from([1,2,3,4]).toString('base64')}}}]})+'\n\n'+
         (complete?'data: [DONE]\n\n':'');
       const data=Buffer.from(content);
@@ -86,6 +86,22 @@ assert.equal(retryRequests,3);assert.deepEqual(waits,[1000,2000]);
 retryRequests=0;transport=()=>{retryRequests++;return fakeStream({status:429});};
 await assert.rejects(client.synthesize('test','x','白桦','',async()=>{}),/限流/);
 assert.equal(retryRequests,3,'rate-limit retries are bounded');
+// Error bodies are surfaced (sanitized) and Token Plan keys go to their dedicated host.
+transport=fakeStream({status:402,errorBody:JSON.stringify({error:{message:'Insufficient\nbalance',code:'402'}})});
+await assert.rejects(client.synthesize('sk-a','x','白桦','',async()=>{}),/余额不足.*小米返回：Insufficient balance/);
+transport=fakeStream({status:401,url:'https://token-plan-cn.xiaomimimo.com/v1/chat/completions'});
+await assert.rejects(client.synthesize('tp-a','x','白桦','',async()=>{}),/Token Plan/);
+transport=fakeStream({status:401,url:'https://token-plan-cn.xiaomimimo.com/v1/chat/completions'});
+await assert.rejects(client.synthesize('ttp-a','x','白桦','',async()=>{}),/Token Plan/);
+const sseError='data: '+JSON.stringify({error:{message:'voice not found'}})+'\n\n';
+{
+  const events={};
+  transport={on:(n,f)=>events[n]=f,destroy:()=>{},requestInStream:async()=>{
+    events.dataReceive(Uint8Array.from(Buffer.from(sseError)).buffer);events.dataEnd();return 200;}};
+  await assert.rejects(client.synthesize('sk-a','x','白桦','',async()=>{}),/合成未完成：voice not found/);
+}
+assert.equal(MimoPolicy.errorDetail('<html>bad gateway</html>'),'');
+assert.equal(MimoPolicy.errorDetail(JSON.stringify({error:'x'.repeat(200)})).length,121);
 
 const store=fs.readFileSync(new URL('../entry/src/main/ets/utils/mimo/MimoStore.ets',import.meta.url),'utf8');
 assert.match(store,/asset\.Tag\.SYNC_TYPE, asset\.SyncType\.NEVER/);
@@ -97,6 +113,7 @@ const readingSource=fs.readFileSync(new URL('../entry/src/main/ets/utils/mimo/Mi
   .replace(/^import .*;\r?\n/gm,'').replaceAll('export ','');
 const files=new Map();const storage=new Map([['appCacheDir','/cache']]);
 let networkCount=0;let failAt=0;let held=null;let holdNext=false;let clientStops=0;
+let inFlight=0;let maxInFlight=0;let slowSynth=false;const events=[];
 const settings={multi:false,voice:'白桦',namespace:'test',enabled:true};
 const fakeStore={load:()=>settings,key:async()=>'test-key',onCredentialsChanged:[],
   cast:()=>({roles:[{id:'narrator',name:'旁白',voice:'白桦',aliases:[]}],corrections:[],emotion:'自然'}),
@@ -111,15 +128,22 @@ const fakeFiles={accessSync:p=>files.has(p),mkdirSync:()=>{},readTextSync:p=>{if
 class Player {write(){return Promise.resolve()} writeSegment(b,s,focus){focus();return this.write()} stop(){} release(){} pause(){return Promise.resolve()} resume(){return Promise.resolve()} drain(){return Promise.resolve()}}
 class Client {
   stop(){clientStops++;}
+  async analyze(key,units,roles,context){
+    events.push('analyze:'+units[0].id);
+    await new Promise(r=>setTimeout(r,1));
+    return {roles:[],assignments:units.map(u=>({unitId:u.id,roleId:'narrator',emotion:'平静',confidence:1}))};
+  }
   async synthesize(key,text,voice,style,receive){
-    networkCount++;
+    networkCount++;events.push('synth:'+text);
     if(networkCount===failAt)throw Error('offline');
+    inFlight++;maxInFlight=Math.max(maxInFlight,inFlight);
+    try{if(slowSynth)await new Promise(r=>setTimeout(r,2));}finally{inFlight--;}
     if(holdNext){holdNext=false;await new Promise((resolve,reject)=>held={resolve,reject});}
     const data=new Uint8Array([0,0,1,0]).buffer;await receive(data);return data;
   }
 }
 const Session=vm.runInNewContext(stripTypeScriptTypes(readingSource+'\nMimoReadingSession'),{
-  fs:fakeFiles,MimoStore:fakeStore,MimoClient:Client,TtsPcmAudioPlayer:Player,MimoPolicy,MIMO_VOICES:['白桦','苏打','茉莉','冰糖'],
+  fs:fakeFiles,MimoStore:fakeStore,MimoClient:Client,TtsPcmAudioPlayer:Player,MimoPolicy,MimoUnit,MimoRole,MIMO_VOICES:['白桦','苏打','茉莉','冰糖'],
   AppStorage:{get:k=>storage.get(k),setOrCreate:(k,v)=>storage.set(k,v)}});
 const session=new Session();const focus=[];
 const options={book:'book',chapter:'one',sourceOffset:0,speed:1,onAudio:()=>{},onFocus:u=>focus.push(u.text)};
@@ -128,9 +152,33 @@ assert.equal(focus.join(''),'甲说：“走吧。”乙说：“好。”');
 const calls=networkCount;focus.length=0;
 await session.read('甲说：“走吧。”乙说：“好。”',options);assert.equal(networkCount,calls,'replay hits audio cache');
 assert.equal(focus.join(''),'甲说：“走吧。”乙说：“好。”');
-files.clear();failAt=networkCount+1;
-await assert.rejects(session.read('失败。不能跳到这里。',options),/offline/);
-assert.equal(networkCount,failAt,'a failed segment never advances to another request');failAt=0;
+files.clear();failAt=networkCount+1;focus.length=0;
+await assert.rejects(session.read('第一句话足够长不会被合并到别处。第二句话也足够长不会被合并。',options),/offline/);
+assert.deepEqual(focus,[],'a failed segment is never skipped to play the next one');failAt=0;
+
+// Short speech tags merge into one request with their neighbour; long sentences stay separate.
+files.clear();focus.length=0;
+await session.read('他说：“好。”她把这封信又仔细读了一遍才放下。',options);
+assert.deepEqual(focus,['他说：“好。”她把这封信又仔细读了一遍才放下。']);
+assert.equal(storage.get('mimoCorrectionKey').split(',').length,3,'a correction covers every merged unit');
+
+// The next segment is synthesised while the current one plays, at most two requests at once.
+files.clear();focus.length=0;slowSynth=true;maxInFlight=0;
+const longText='第一句话足够长不会被合并到别处。第二句话也足够长不会被合并。第三句话同样足够长不会合并。第四句话同样足够长不会合并。';
+await session.read(longText,options);slowSynth=false;
+assert.equal(focus.join(''),longText,'prefetched audio plays in order');
+assert.equal(focus.length,4);
+assert.equal(maxInFlight,2,'one prefetch overlaps the current stream');
+
+// Multi-role: the next analysis batch is requested before the current batch finishes playing.
+files.clear();events.length=0;focus.length=0;settings.multi=true;
+const many=Array.from({length:9},(_,i)=>'这是第'+i+'句足够长的叙述内容不会被合并。').join('');
+await session.read(many,options);settings.multi=false;
+assert.equal(focus.join(''),many);
+const analyzeNext=events.indexOf('analyze:5');
+const lastOfFirstBatch=events.findIndex(e=>e.includes('这是第4句'));
+assert.ok(analyzeNext>=0&&analyzeNext<lastOfFirstBatch,'batch 2 analysis starts while batch 1 plays');
+assert.equal(MimoPolicy.batchStart(4),0);assert.equal(MimoPolicy.batchStart(5),5);assert.equal(MimoPolicy.batchStart(21),21);
 holdNext=true;
 const old=session.read('旧章节。',options);const oldError=old.catch(e=>e);
 while(!held)await Promise.resolve();
@@ -140,4 +188,4 @@ await replacement;const stopsBeforeOld=clientStops;
 oldHeld.reject(Error('old canceled'));await oldError;
 assert.equal(clientStops,stopsBeforeOld,'late old failure must not cancel newer client');
 assert.equal(fakeStore.onCredentialsChanged.length,0,'credential cancellation listeners are released');
-console.log('MiMo session checks passed: source focus, cached replay, failed segment retention and stale chapter cancellation.');
+console.log('MiMo session checks passed: source focus, cached replay, failed segment retention, short-unit merging, synthesis and analysis prefetch, stale chapter cancellation.');

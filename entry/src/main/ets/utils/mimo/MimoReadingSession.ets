@@ -6,11 +6,33 @@ import { TtsPcmAudioPlayer } from '../TtsPcmAudioPlayer';
 
 export interface MimoReadingOptions {
   book: string;
+  /** Book title recorded in the cast so the cast list can show it. */
+  bookName?: string;
   chapter: string;
   sourceOffset: number;
   speed: number;
   onFocus: (unit: MimoUnit, index: number) => void;
   onAudio: () => void;
+}
+
+class MimoCacheFile {
+  path: string;
+  size: number;
+  mtime: number;
+  constructor(path: string, size: number, mtime: number) { this.path = path; this.size = size; this.mtime = mtime; }
+}
+
+/** One synthesis request: a unit, or short neighbours with the same role, voice and style merged together. */
+class MimoSegment {
+  first: number = 0;
+  last: number = 0;
+  unit: MimoUnit = new MimoUnit();
+  /** Correction keys of every merged unit; a correction applies to all of them. */
+  keys: string[] = [];
+  role: MimoRole = new MimoRole();
+  voice: string = '';
+  style: string = '';
+  cachePath: string = '';
 }
 
 export class MimoReadingSession {
@@ -50,19 +72,43 @@ export class MimoReadingSession {
     return path;
   }
   private trimCache(path: string, limit: number): void {
-    const names = fs.listFileSync(path);
     let total = 0;
-    const files: string[] = names.filter((name: string): boolean => /^[a-f0-9]{64}\.(pcm|json)$/.test(name));
-    files.sort((a: string, b: string): number => fs.statSync(path + '/' + a).mtime - fs.statSync(path + '/' + b).mtime);
-    files.forEach((name: string): void => { total += fs.statSync(path + '/' + name).size; });
-    for (const name of files) {
+    // Stat each file once; sorting with statSync in the comparator costs O(n log n) disk calls.
+    const files: MimoCacheFile[] = [];
+    for (const name of fs.listFileSync(path)) {
+      if (!/^[a-f0-9]{64}\.(pcm|json)$/.test(name)) continue;
+      try {
+        const stat = fs.statSync(path + '/' + name);
+        files.push(new MimoCacheFile(path + '/' + name, stat.size, stat.mtime));
+        total += stat.size;
+      } catch (_) {}
+    }
+    if (total <= limit) return;
+    files.sort((a: MimoCacheFile, b: MimoCacheFile): number => a.mtime - b.mtime);
+    for (const file of files) {
       if (total <= limit) break;
-      const file = path + '/' + name;
-      total -= fs.statSync(file).size;
-      fs.unlinkSync(file);
+      try { fs.unlinkSync(file.path); total -= file.size; } catch (_) {}
     }
   }
-  private async analyze(key: string, batch: MimoUnit[], book: string, context: string,
+  private hasAudio(path: string): boolean {
+    try { return fs.statSync(path).size > 0; } catch (_) { return false; }
+  }
+  private readAudio(path: string): ArrayBuffer | null {
+    try {
+      const size = fs.statSync(path).size;
+      if (size <= 0 || size > 4 * 1024 * 1024 || size % 2 !== 0) return null;
+      const file = fs.openSync(path, fs.OpenMode.READ_ONLY);
+      try { const data = new ArrayBuffer(size); return fs.readSync(file.fd, data) === size ? data : null; }
+      finally { fs.closeSync(file); }
+    } catch (_) { return null; }
+  }
+  private writeAudio(path: string, pcm: ArrayBuffer, directory: string): void {
+    const file = fs.openSync(path + '.tmp', fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+    try { fs.writeSync(file.fd, pcm); } finally { fs.closeSync(file); }
+    fs.renameSync(path + '.tmp', path);
+    this.trimCache(directory, 64 * 1024 * 1024);
+  }
+  private async analyze(key: string, batch: MimoUnit[], book: string, bookName: string, context: string,
     generation: number): Promise<void> {
     const cast = MimoStore.cast(book);
     const directory = this.directory('mimo_analysis');
@@ -75,7 +121,6 @@ export class MimoReadingSession {
       MimoPolicy.validate(analysis, batch);
     } catch (_) { analysis = null; }
     if (!analysis) {
-      AppStorage.setOrCreate('mimoReadingStatus', '正在识别人物…');
       try { analysis = await this.client.analyze(key, batch, cast.roles.slice(-100), context); }
       catch (error) { throw new Error('MIMO_ANALYSIS:' + (error as Error).message); }
       await this.ready(generation);
@@ -106,7 +151,7 @@ export class MimoReadingSession {
       unit.roleId = unit.uncertain ? 'narrator' : item.roleId;
       unit.emotion = MimoPolicy.emotion(item.emotion);
     }
-    if (changed) MimoStore.saveCast(book, latest);
+    if (changed) MimoStore.saveCast(book, latest, bookName);
   }
 
   static correctionKey(chapter: string, start: number, text: string): string {
@@ -125,6 +170,49 @@ export class MimoReadingSession {
     }
   }
 
+  /** Builds the request starting at `index`, merging following units up to `limit` (exclusive). */
+  private segment(units: MimoUnit[], index: number, limit: number, options: MimoReadingOptions,
+    cast: MimoBookCast, multi: boolean, voiceDefault: string, namespace: string, audioDir: string): MimoSegment {
+    const roleOf = (unit: MimoUnit, key: string): MimoRole => {
+      const corrected = multi ? cast.corrections.find((item): boolean => item.key === key) : undefined;
+      const roleId = multi ? (corrected?.roleId || unit.roleId) : 'narrator';
+      return cast.roles.find((item: MimoRole): boolean => item.id === roleId) || cast.roles[0];
+    };
+    const styleOf = (unit: MimoUnit): string => {
+      const emotion = cast.emotion === '克制' ? '平静' : unit.emotion;
+      return `单一说话人，保持音色稳定。${emotion}，${cast.emotion === '生动' ? '情绪鲜明' : '自然克制'}。` +
+        `按通常朗读语速的 ${options.speed.toFixed(1)} 倍演绎`;
+    };
+    const keyOf = (unit: MimoUnit): string =>
+      MimoReadingSession.correctionKey(options.chapter, options.sourceOffset + unit.start, unit.text);
+    const head = units[index];
+    const segment = new MimoSegment();
+    segment.first = index;
+    segment.last = index;
+    segment.keys = [keyOf(head)];
+    segment.role = roleOf(head, segment.keys[0]);
+    segment.voice = multi ? segment.role.voice : voiceDefault;
+    segment.style = styleOf(head);
+    let text = head.text;
+    for (let next = index + 1; next < limit; next++) {
+      const unit = units[next];
+      const key = keyOf(unit);
+      if (roleOf(unit, key).id !== segment.role.id || styleOf(unit) !== segment.style ||
+        !MimoPolicy.canMerge(text, unit.text)) break;
+      text += unit.text;
+      segment.keys.push(key);
+      segment.last = next;
+    }
+    segment.unit.id = head.id;
+    segment.unit.start = head.start;
+    segment.unit.end = units[segment.last].end;
+    segment.unit.text = text;
+    segment.unit.roleId = segment.role.id;
+    segment.unit.emotion = head.emotion;
+    segment.cachePath = audioDir + '/' + MimoStore.hash('pcm24-v1:' + namespace + segment.voice + segment.style + text) + '.pcm';
+    return segment;
+  }
+
   async read(text: string, options: MimoReadingOptions): Promise<void> {
     this.stop();
     const generation = this.generation;
@@ -136,36 +224,86 @@ export class MimoReadingSession {
       await this.ready(generation);
       if (!key) throw new Error('请先在朗读设置中配置 MiMo API Key');
       const units = MimoPolicy.split(text);
-      let analyzed = 0;
       let firstAudio = true;
       const pendingPlayback: Promise<void>[] = [];
       const audioDir = this.directory('mimo_audio');
       const preview = options.book === 'preview';
       if (!preview) AppStorage.setOrCreate('mimoReadingBook', options.book);
       AppStorage.setOrCreate('mimoReadingActive', true);
-      for (let index = 0; index < units.length; index++) {
+
+      // Role analysis runs one batch ahead of playback, so only the opening batch is waited for.
+      const analyses: Map<number, Promise<void>> = new Map();
+      const analyzed: Set<number> = new Set();
+      const startAnalysis = (start: number): Promise<void> => {
+        let task = analyses.get(start);
+        if (!task) {
+          const batch = units.slice(start, MimoPolicy.batchEnd(start, units.length));
+          const context = text.slice(Math.max(0, units[start].start - 800), units[start].start);
+          task = this.analyze(key, batch, options.book, options.bookName || '', context, generation)
+            .then((): void => { analyzed.add(start); });
+          task.catch((): void => {});
+          analyses.set(start, task);
+        }
+        return task;
+      };
+      /** End of the contiguous analysed range that contains `index`. */
+      const analyzedEnd = (index: number): number => {
+        let end = MimoPolicy.batchEnd(MimoPolicy.batchStart(index), units.length);
+        while (end < units.length && analyzed.has(end)) end = MimoPolicy.batchEnd(end, units.length);
+        return end;
+      };
+
+      // Upcoming segments are synthesised into the audio cache one at a time while the current
+      // one plays, which hides the request latency that caused gaps between sentences.
+      const prefetches: Map<string, Promise<void>> = new Map();
+      let prefetchTail: Promise<void> = Promise.resolve();
+      const prefetch = (segment: MimoSegment): void => {
+        if (prefetches.has(segment.cachePath) || this.hasAudio(segment.cachePath)) return;
+        const task = prefetchTail.then(async (): Promise<void> => {
+          if (generation !== this.generation) return;
+          try {
+            const pcm = await this.client.synthesize(key, segment.unit.text, segment.voice, segment.style,
+              async (_pcm: ArrayBuffer): Promise<void> => {});
+            if (generation === this.generation) this.writeAudio(segment.cachePath, pcm, audioDir);
+          } catch (_) {
+            // The segment is requested again, streaming, when its turn comes.
+          }
+        });
+        prefetches.set(segment.cachePath, task);
+        prefetchTail = task;
+      };
+
+      let index = 0;
+      while (index < units.length) {
         await this.ready(generation);
         if (pendingPlayback.length >= 2) await pendingPlayback.shift();
         await this.ready(generation);
         const settings = MimoStore.load();
-        if (settings.multi && !preview && index >= analyzed) {
-          const end = Math.min(units.length, index + (index === 0 ? 5 : 16));
-          const batch = units.slice(index, end);
-          await this.analyze(key, batch, options.book, text.slice(Math.max(0, units[index].start - 800), units[index].start), generation);
-          analyzed = end;
+        const multi = settings.multi && !preview;
+        let limit = units.length;
+        if (multi) {
+          const start = MimoPolicy.batchStart(index);
+          if (!analyzed.has(start)) {
+            AppStorage.setOrCreate('mimoReadingStatus', '正在识别人物…');
+            await startAnalysis(start);
+            await this.ready(generation);
+          }
+          const next = MimoPolicy.batchEnd(start, units.length);
+          if (next < units.length) startAnalysis(next);
+          limit = analyzedEnd(index);
         }
-        const unit = units[index];
-        if (!/[\p{L}\p{N}]/u.test(unit.text)) continue;
+        if (!/[\p{L}\p{N}]/u.test(units[index].text)) { index++; continue; }
         const cast = MimoStore.cast(options.book);
-        const correctionKey = MimoReadingSession.correctionKey(options.chapter, options.sourceOffset + unit.start, unit.text);
-        const corrected = cast.corrections.find((item): boolean => item.key === correctionKey);
-        const roleId = settings.multi && !preview ? (corrected?.roleId || unit.roleId) : 'narrator';
-        const role = cast.roles.find((item: MimoRole): boolean => item.id === roleId) || cast.roles[0];
-        const voice = settings.multi ? role.voice : settings.voice;
-        const emotion = cast.emotion === '克制' ? '平静' : unit.emotion;
-        const style = `单一说话人，保持音色稳定。${emotion}，${cast.emotion === '生动' ? '情绪鲜明' : '自然克制'}。` +
-          `按通常朗读语速的 ${options.speed.toFixed(1)} 倍演绎`;
-        const cachePath = audioDir + '/' + MimoStore.hash('pcm24-v1:' + settings.namespace + voice + style + unit.text) + '.pcm';
+        const segment = this.segment(units, index, limit, options, cast, multi, settings.voice, settings.namespace, audioDir);
+        let ahead = segment.last + 1;
+        for (let count = 0; count < 2 && ahead < limit; count++) {
+          while (ahead < limit && !/[\p{L}\p{N}]/u.test(units[ahead].text)) ahead++;
+          if (ahead >= limit) break;
+          const upcoming = this.segment(units, ahead, limit, options, cast, multi, settings.voice, settings.namespace, audioDir);
+          prefetch(upcoming);
+          ahead = upcoming.last + 1;
+        }
+
         let focused = false;
         let playback: Promise<void> = Promise.resolve();
         let playbackError: Error | null = null;
@@ -173,14 +311,14 @@ export class MimoReadingSession {
         const focus = (): void => {
           if (generation !== this.generation) return;
           if (firstAudio) { firstAudio = false; options.onAudio(); }
-          AppStorage.setOrCreate('mimoCurrentRole', role.name + ' · ' + voice);
+          AppStorage.setOrCreate('mimoCurrentRole', segment.role.name + ' · ' + segment.voice);
           if (!preview) {
-            AppStorage.setOrCreate('mimoCurrentText', unit.text);
-            AppStorage.setOrCreate('mimoCorrectionKey', correctionKey);
-            AppStorage.setOrCreate('mimoCurrentRoleId', role.id);
+            AppStorage.setOrCreate('mimoCurrentText', segment.unit.text);
+            AppStorage.setOrCreate('mimoCorrectionKey', segment.keys.join(','));
+            AppStorage.setOrCreate('mimoCurrentRoleId', segment.role.id);
           }
           AppStorage.setOrCreate('mimoReadingStatus', '');
-          options.onFocus(unit, index);
+          options.onFocus(segment.unit, segment.first);
         };
         const receive = async (buffer: ArrayBuffer): Promise<void> => {
           if (generation !== this.generation) throw new Error('MiMo 朗读已停止');
@@ -200,27 +338,20 @@ export class MimoReadingSession {
           });
         };
         AppStorage.setOrCreate('mimoReadingStatus', firstAudio ? '正在生成语音…' : '');
-        let cached: ArrayBuffer | null = null;
-        try {
-          const size = fs.statSync(cachePath).size;
-          if (size > 0 && size <= 4 * 1024 * 1024 && size % 2 === 0) {
-            const file = fs.openSync(cachePath, fs.OpenMode.READ_ONLY);
-            try { const data = new ArrayBuffer(size); if (fs.readSync(file.fd, data) === size) cached = data; }
-            finally { fs.closeSync(file); }
-          }
-        } catch (_) {}
+        // A request already under way for this segment beats starting a second one.
+        const pending = prefetches.get(segment.cachePath);
+        if (pending) { await pending; await this.ready(generation); }
+        const cached = this.readAudio(segment.cachePath);
         if (cached) await receive(cached);
         else {
-          const pcm = await this.client.synthesize(key, unit.text, voice, style, receive);
+          const pcm = await this.client.synthesize(key, segment.unit.text, segment.voice, segment.style, receive);
           await this.ready(generation);
-          const file = fs.openSync(cachePath + '.tmp', fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-          try { fs.writeSync(file.fd, pcm); } finally { fs.closeSync(file); }
-          fs.renameSync(cachePath + '.tmp', cachePath);
-          this.trimCache(audioDir, 64 * 1024 * 1024);
+          this.writeAudio(segment.cachePath, pcm, audioDir);
         }
         if (carry.length) throw new Error('MiMo 音频采样不完整');
         if (playbackError) throw playbackError as Error;
         pendingPlayback.push(playback);
+        index = segment.last + 1;
       }
       await Promise.all(pendingPlayback);
       await this.player.drain();
