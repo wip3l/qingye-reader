@@ -98,6 +98,15 @@ const SOURCE_HEADER_CONTROL_SIZE: number = 40;
 const SOURCE_SEARCH_INPUT_KEY: string = 'book_source_search_input';
 const SOURCE_SELECTION_ROW_HEIGHT: number = 42;
 
+interface BookSourceHeaderButtonOptions {
+  icon: Resource;
+  active: boolean;
+  label: string;
+  badge: string;
+  busy: boolean;
+  onTap: () => void;
+}
+
 @Entry
 @Component
 struct BookSourcePage {
@@ -478,7 +487,7 @@ struct BookSourcePage {
                   this.toggleAllSources();
                 })
 
-              Text(`已选择 ${this.selectedSourceUrls.length}/${this.allSources.length}`)
+              Text(`已选择 ${this.selectedSourceUrls.length}/${this.sources.length}`)
                 .fontSize(AppFontSize.BODY)
                 .fontColor(this.secondaryTextColor())
                 .margin({ left: AppSpacing.MD })
@@ -843,10 +852,11 @@ struct BookSourcePage {
           onTap: () => this.exitSelectionMode()
         })
       } else {
-        this.sourceHeaderCircleButton($r('sys.symbol.magnifyingglass'),
-          this.sourceSearchOpen || this.searchText.trim().length > 0, '搜索书源', '', false, () => {
+        this.sourceHeaderCircleButton({ icon: $r('sys.symbol.magnifyingglass'),
+          active: this.sourceSearchOpen || this.searchText.trim().length > 0,
+          label: '搜索书源', badge: '', busy: false, onTap: () => {
             this.toggleSourceSearch();
-          })
+          } })
         this.sourceFilterButton()
         this.sourceMoreButton()
       }
@@ -2493,8 +2503,7 @@ struct BookSourcePage {
   }
 
   @Builder
-  sourceHeaderCircleButton(icon: Resource, active: boolean, label: string, badge: string, busy: boolean,
-    onTap: () => void) {
+  sourceHeaderCircleButton($$: BookSourceHeaderButtonOptions) {
     Stack({ alignContent: Alignment.TopEnd }) {
       ImmersiveMaterialSurface({
         surfaceWidth: SOURCE_HEADER_CONTROL_SIZE,
@@ -2504,15 +2513,15 @@ struct BookSourcePage {
         glowColor: `#40${this.accentColor().substring(1)}`
       }) {
         Stack() {
-          SymbolGlyph(icon)
+          SymbolGlyph($$.icon)
             .fontSize(20)
-            .fontColor([active ? this.accentColor() : this.primaryTextColor()])
+            .fontColor([$$.active ? this.accentColor() : this.primaryTextColor()])
         }
         .width('100%')
         .height('100%')
       }
-      if (badge) {
-        Text(badge)
+      if ($$.badge) {
+        Text($$.badge)
           .fontSize(10)
           .fontColor(ThemeRuntime.onAccentColor())
           .constraintSize({ minWidth: 16 })
@@ -2522,7 +2531,7 @@ struct BookSourcePage {
           .borderRadius(8)
           .backgroundColor(this.accentColor())
           .hitTestBehavior(HitTestMode.None)
-      } else if (busy) {
+      } else if ($$.busy) {
         // 校验进行中的提示点。
         Row()
           .width(8)
@@ -2537,19 +2546,20 @@ struct BookSourcePage {
     .height(SOURCE_HEADER_CONTROL_SIZE)
     .margin({ left: AppSpacing.MD })
     .accessibilityGroup(true)
-    .accessibilityText(label)
-    .onClick(() => onTap())
+    .accessibilityText($$.label)
+    .onClick(() => $$.onTap())
   }
 
   @Builder
   sourceFilterButton() {
     Row() {
-      this.sourceHeaderCircleButton($r('sys.symbol.funnel'), this.showSourceFilterMenu || this.hasActiveSourceFilters(),
-        this.hasActiveSourceFilters() ? `筛选，已启用 ${this.activeSourceFilterCount()} 项` : '筛选书源',
-        this.hasActiveSourceFilters() ? `${this.activeSourceFilterCount()}` : '', false, () => {
+      this.sourceHeaderCircleButton({ icon: $r('sys.symbol.funnel'),
+        active: this.showSourceFilterMenu || this.hasActiveSourceFilters(),
+        label: this.hasActiveSourceFilters() ? `筛选，已启用 ${this.activeSourceFilterCount()} 项` : '筛选书源',
+        badge: this.hasActiveSourceFilters() ? `${this.activeSourceFilterCount()}` : '', busy: false, onTap: () => {
           this.showSourceMoreMenu = false;
           this.showSourceFilterMenu = !this.showSourceFilterMenu;
-        })
+        } })
     }
     .bindPopup(this.showSourceFilterMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
       this.sourceFilterMenu()
@@ -2667,14 +2677,14 @@ struct BookSourcePage {
   @Builder
   sourceMoreButton() {
     Row() {
-      this.sourceHeaderCircleButton($r('sys.symbol.more'),
-        this.showSourceMoreMenu || this.activeSourceSortMode() !== 'custom',
-        `更多操作，${this.sourceSortSummary()}${this.isCheckingSources ? '，正在校验' : ''}`, '',
-        this.isCheckingSources, () => {
+      this.sourceHeaderCircleButton({ icon: $r('sys.symbol.more'),
+        active: this.showSourceMoreMenu || this.activeSourceSortMode() !== 'custom',
+        label: `更多操作，${this.sourceSortSummary()}${this.isCheckingSources ? '，正在校验' : ''}`, badge: '',
+        busy: this.isCheckingSources, onTap: () => {
           this.sourceMoreMenuPage = '';
           this.showSourceFilterMenu = false;
           this.showSourceMoreMenu = !this.showSourceMoreMenu;
-        })
+        } })
     }
     .bindPopup(this.showSourceMoreMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
       this.sourceMoreMenu()

@@ -218,14 +218,15 @@ struct CustomTtsVoiceManagerPage {
           ListItem() { this.voiceSectionTitle('系统音色') }
         }
         ForEach(this.nativeVoices(false), (entry: ManagedTtsVoiceEntry) => {
-          if (entry.protectedVoice || this.selectionMode) {
+          if (entry.protectedVoice) {
             ListItem() { this.nativeVoiceRow(entry) }
           } else if (deviceInfo.sdkApiVersion >= 26) {
             HdsListItem({ customItemBuilder: (): void => { this.nativeVoiceRow(entry); },
               swipeActionOptions: this.nativeSwipeActions(entry) })
           } else {
             ListItem() { this.nativeVoiceRow(entry) }
-              .swipeAction({ end: { builder: (): void => { this.nativeSwipeButton(entry); } }, edgeEffect: SwipeEdgeEffect.Spring })
+              .swipeAction(this.selectionMode ? {} : {
+                end: { builder: (): void => { this.nativeSwipeButton(entry); } }, edgeEffect: SwipeEdgeEffect.Spring })
           }
         }, (entry: ManagedTtsVoiceEntry): string => `${entry.key}:${this.nativeEnabled(entry)}:${this.selectionMode}`)
         if (this.nativeVoices(true).length > 0 || this.loadingCatalog || this.catalogError) {
@@ -244,26 +245,24 @@ struct CustomTtsVoiceManagerPage {
           }
         }
         ForEach(this.nativeVoices(true), (entry: ManagedTtsVoiceEntry) => {
-          if (this.selectionMode) {
-            ListItem() { this.nativeVoiceRow(entry) }
-          } else if (deviceInfo.sdkApiVersion >= 26) {
+          if (deviceInfo.sdkApiVersion >= 26) {
             HdsListItem({ customItemBuilder: (): void => { this.nativeVoiceRow(entry); },
               swipeActionOptions: this.nativeSwipeActions(entry) })
           } else {
             ListItem() { this.nativeVoiceRow(entry) }
-              .swipeAction({ end: { builder: (): void => { this.nativeSwipeButton(entry); } }, edgeEffect: SwipeEdgeEffect.Spring })
+              .swipeAction(this.selectionMode ? {} : {
+                end: { builder: (): void => { this.nativeSwipeButton(entry); } }, edgeEffect: SwipeEdgeEffect.Spring })
           }
         }, (entry: ManagedTtsVoiceEntry): string => `${entry.key}:${this.nativeEnabled(entry)}:${this.selectionMode}`)
         ListItem() { this.voiceSectionTitle('自定义音色') }
         ForEach(this.filteredVoices(), (voice: HttpTTS) => {
-          if (deviceInfo.sdkApiVersion >= 26 && !this.selectionMode) {
+          if (deviceInfo.sdkApiVersion >= 26) {
             HdsListItem({ customItemBuilder: (): void => { this.voiceListItem(voice); },
               swipeActionOptions: this.voiceSwipeActions(voice) })
-          } else if (!this.selectionMode) {
-            ListItem() { this.voiceListItem(voice) }
-              .swipeAction({ end: { builder: (): void => { this.voiceFallbackSwipeActions(voice); } }, edgeEffect: SwipeEdgeEffect.Spring })
           } else {
             ListItem() { this.voiceListItem(voice) }
+              .swipeAction(this.selectionMode ? {} : {
+                end: { builder: (): void => { this.voiceFallbackSwipeActions(voice); } }, edgeEffect: SwipeEdgeEffect.Spring })
           }
         }, (voice: HttpTTS): string => this.voiceKey(voice))
         if (this.filteredVoices().length === 0) {
@@ -376,7 +375,7 @@ struct CustomTtsVoiceManagerPage {
   }
 
   private nativeSwipeActions(entry: ManagedTtsVoiceEntry): HdsSwipeActionOptions {
-    if (entry.protectedVoice) return { icons: [] };
+    if (entry.protectedVoice || this.selectionMode) return { icons: [] };
     return { icons: [{
       icon: new SymbolGlyphModifier(this.nativeEnabled(entry) ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle')),
       backgroundColor: this.buttonColor(),
@@ -469,6 +468,7 @@ struct CustomTtsVoiceManagerPage {
   }
 
   private voiceSwipeActions(voice: HttpTTS): HdsSwipeActionOptions {
+    if (this.selectionMode) return { icons: [] };
     return { icons: [
       {
         icon: new SymbolGlyphModifier(voice.enabled ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle')),
@@ -1061,7 +1061,8 @@ struct CustomTtsVoiceManagerPage {
         .hitTestBehavior(HitTestMode.None)
     }
     .width(56)
-    .height(64)
+    // 勾选热区不高于常规音色内容，避免批量模式撑大整张卡片。
+    .height(40)
     .margin({ left: -10, right: AppSpacing.XXS })
     .priorityGesture(
       GestureGroup(GestureMode.Exclusive,
