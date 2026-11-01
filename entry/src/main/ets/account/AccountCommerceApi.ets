@@ -40,6 +40,10 @@ export class MembershipGiftResponse {
   ttsWallet: TtsWalletSnapshot = new TtsWalletSnapshot();
 }
 
+class MimoSharedKeyResponse {
+  apiKey: string = '';
+}
+
 export class AccountCommerceApi {
   static colorModelTicket(file: string, token: string): Promise<string> {
     return AccountCommerceApi.request(`/v1/ai/color-models/${encodeURIComponent(file)}/download-ticket`, 'POST', '{}', token);
@@ -81,6 +85,13 @@ export class AccountCommerceApi {
   static async claimMembershipGift(tier: string, token: string): Promise<MembershipGiftResponse> {
     return JSON.parse(await AccountCommerceApi.request('/v1/membership/gift', 'POST',
       JSON.stringify({ tier: tier }), token)) as MembershipGiftResponse;
+  }
+
+  /** The operator's MiMo key for lifetime members; the server refuses everyone else. */
+  static async fetchMimoSharedKey(token: string): Promise<string> {
+    const response = JSON.parse(await AccountCommerceApi.request('/v1/membership/mimo-key', 'POST', '{}', token)) as
+      MimoSharedKeyResponse;
+    return typeof response.apiKey === 'string' ? response.apiKey.trim() : '';
   }
   static async login(authorizationCode: string): Promise<HuaweiLoginResponse> {
     const value = await AccountCommerceApi.request('/v1/auth/huawei', 'POST',

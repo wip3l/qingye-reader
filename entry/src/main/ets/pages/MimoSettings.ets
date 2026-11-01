@@ -14,6 +14,9 @@ import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
+import { AccountSessionStore } from '../account/AccountSessionStore';
+import { AccountCommerceApi } from '../account/AccountCommerceApi';
+import { MembershipBadge } from '../components/common/MembershipBadge';
 
 /** Result of one capability check: idle (not run), running, ok, fail, skipped. */
 type MimoCheck = 'idle' | 'running' | 'ok' | 'fail' | 'skipped';
@@ -37,6 +40,9 @@ struct MimoSettingsPage {
   @State ttsStatus: string = '';
   @State analysisStatus: string = '';
   @State notice: string = '';
+  @State filling: boolean = false;
+  /** Read so the one-click fill button follows membership changes; the store stays authoritative. */
+  @StorageProp('accountMembershipSku') membershipSku: string = '';
   @State voice: string = '白桦';
   @State mimoEnabled: boolean = false;
   @State multi: boolean = false;
@@ -83,6 +89,32 @@ struct MimoSettingsPage {
       if (serial !== this.serial) return;
       this.hasKey = key.length > 0; this.editing = !this.hasKey;
     } catch (error) { if (serial === this.serial) this.notice = (error as Error).message; }
+  }
+  private lifetimeMember(): boolean {
+    if (this.membershipSku !== 'LIFETIME' && this.membershipSku !== 'SUPER_LIFETIME') return false;
+    const sku = AccountSessionStore.activeMembershipSku();
+    return sku === 'LIFETIME' || sku === 'SUPER_LIFETIME';
+  }
+  /** Fills the operator's key for lifetime members; consent and a passing test are still required to save. */
+  private async fillSharedKey(): Promise<void> {
+    if (this.busy) return;
+    if (!AccountSessionStore.isLoggedIn()) { HdsFeedback.showToast('请先在“会员与账号”中登录'); return; }
+    if (!this.lifetimeMember()) { HdsFeedback.showToast('一键填充仅限终身会员'); return; }
+    const serial = ++this.serial;
+    this.busy = true; this.filling = true;
+    try {
+      const key = await AccountCommerceApi.fetchMimoSharedKey(AccountSessionStore.token());
+      if (serial !== this.serial) return;
+      if (!key || key.length > 4096 || /\s/.test(key)) throw new Error('暂未提供共享密钥，请稍后再试');
+      this.keyInput = key;
+      this.resetResults();
+      HdsFeedback.showToast('已填入会员共享密钥，请勾选同意后测试');
+    } catch (error) {
+      if (serial === this.serial) HdsFeedback.showToast((error as Error).message || '填充失败，请稍后再试');
+    } finally {
+      if (serial === this.serial) this.busy = false;
+      this.filling = false;
+    }
   }
   private async openPlatform(): Promise<void> {
     try { await this.context.startAbility({ action: 'ohos.want.action.viewData', uri: 'https://platform.xiaomimimo.com/' }); }
@@ -233,6 +265,15 @@ struct MimoSettingsPage {
         .showPasswordIcon(true).maxLength(4096).enabled(!this.busy).height(46)
         .backgroundColor(ThemeRuntime.inputColor(this.dark)).fontColor(ThemeRuntime.primaryTextColor(this.dark))
         .onChange((value: string) => { this.keyInput = value; this.resetResults(); })
+      Row({ space: AppSpacing.SM }) {
+        MembershipBadge({ sku: 'LIFETIME' })
+        Text(this.lifetimeMember() ? '终身会员可直接使用开发者提供的密钥' : '终身会员可一键填入开发者提供的密钥')
+          .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.dark)).layoutWeight(1)
+        Button(this.filling ? '填充中…' : '一键填充').height(32).fontSize(AppFontSize.CAPTION)
+          .enabled(!this.busy).opacity(this.lifetimeMember() && !this.busy ? 1 : 0.5)
+          .backgroundColor(ThemeRuntime.softFillColor(this.dark)).fontColor(ThemeRuntime.primaryTextColor(this.dark))
+          .onClick(() => this.fillSharedKey())
+      }.width('100%')
       Text(MimoPolicy.isTokenPlan(this.keyInput.trim()) ?
         'Token Plan 密钥将使用套餐专属地址；若套餐不含语音合成，请改用按量付费的 sk- 密钥。' :
         '只保存在本机安全存储中，不随备份、同步或分享导出。')

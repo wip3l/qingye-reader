@@ -96,3 +96,24 @@ ORDER BY created_at;
 
 如果必须完全停用 SIS，移除运行环境中的 SIS AK/SK 并滚动重启；合成接口会返回
 `TTS_NOT_CONFIGURED`，账号、主题、充值和字数余额接口不受影响。
+
+## 终身会员共享 MiMo 密钥
+
+终身会员（`LIFETIME`、`SUPER_LIFETIME`，且没有退款欠款）可以在 App 的「MiMo 朗读」页一键填入运营方的
+MiMo API Key（`POST /v1/membership/mimo-key`，迁移 `029_shared_provider_keys.sql`）。密钥会原样下发到
+会员手机，调用直连小米、全部计入运营方的 MiMo 账户，服务端无法限额。
+
+设置或更换密钥（建议用按量付费的 `sk-` 密钥）：
+
+```sql
+INSERT INTO shared_provider_keys(provider, api_key) VALUES ('mimo', 'sk-...')
+ON CONFLICT (provider) DO UPDATE SET api_key = EXCLUDED.api_key, enabled = true, updated_at = now();
+```
+
+停止下发：`UPDATE shared_provider_keys SET enabled = false WHERE provider = 'mimo';`。已经填入的手机仍能继续使用旧密钥，
+怀疑泄露时要到小米控制台删除该密钥并换新的。查看领取记录：
+
+```sql
+SELECT user_id, first_granted_at, last_granted_at, grant_count
+FROM shared_provider_key_grants WHERE provider = 'mimo' ORDER BY last_granted_at DESC;
+```
