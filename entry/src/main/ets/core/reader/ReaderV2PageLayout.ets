@@ -54,6 +54,10 @@ export class ReaderV2CommentBubbleSegment {
 }
 
 export class ReaderV2PageFragment {
+  title: boolean = false;
+  titleContinuation: boolean = false;
+  titleEnd: boolean = false;
+  fixedGapBefore: boolean = false;
   blockId: string = '';
   blockIndex: number = 0;
   paragraph: graphicsText.Paragraph | null = null;

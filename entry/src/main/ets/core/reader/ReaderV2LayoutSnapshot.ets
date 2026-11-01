@@ -46,6 +46,12 @@ export class ReaderV2LayoutInput {
   fontWeight: number = ReaderFontWeight.DEFAULT;
   titleFontSizePx: number = 44;
   titleFontWeight: number = 600;
+  titleSecondaryScale: number = 1.4;
+  titleLineGapPx: number = 14;
+  titleAlignment: string = 'center';
+  titleMarginTopPx: number = 0;
+  titleMarginBottomPx: number = 0;
+  titleSinglePage: boolean = false;
   lineSpacingPx: number = 0;
   paragraphSpacingPx: number = 0;
   letterSpacingPx: number = 0;
@@ -79,6 +85,12 @@ export class ReaderV2LayoutSnapshot {
   fontWeight: number = ReaderFontWeight.DEFAULT;
   titleFontSizePx: number = 44;
   titleFontWeight: number = 600;
+  titleSecondaryScale: number = 1.4;
+  titleLineGapPx: number = 14;
+  titleAlignment: string = 'center';
+  titleMarginTopPx: number = 0;
+  titleMarginBottomPx: number = 0;
+  titleSinglePage: boolean = false;
   lineSpacingPx: number = 0;
   paragraphSpacingPx: number = 0;
   letterSpacingPx: number = 0;
@@ -126,6 +138,14 @@ export class ReaderV2LayoutSnapshot {
     snapshot.fontWeight = ReaderFontWeight.normalize(input.fontWeight);
     snapshot.titleFontSizePx = Math.max(1, input.titleFontSizePx);
     snapshot.titleFontWeight = ReaderFontWeight.normalize(input.titleFontWeight ?? 600);
+    snapshot.titleSecondaryScale = Number.isFinite(input.titleSecondaryScale) ?
+      Math.max(0.5, Math.min(2, input.titleSecondaryScale)) : 1.4;
+    snapshot.titleLineGapPx = Number.isFinite(input.titleLineGapPx) ? Math.max(0, input.titleLineGapPx) : 14;
+    snapshot.titleAlignment = input.titleAlignment === 'left' || input.titleAlignment === 'right' ?
+      input.titleAlignment : 'center';
+    snapshot.titleMarginTopPx = Number.isFinite(input.titleMarginTopPx) ? Math.max(0, input.titleMarginTopPx) : 0;
+    snapshot.titleMarginBottomPx = Number.isFinite(input.titleMarginBottomPx) ? Math.max(0, input.titleMarginBottomPx) : 0;
+    snapshot.titleSinglePage = input.titleSinglePage === true;
     snapshot.lineSpacingPx = Math.max(0, input.lineSpacingPx);
     snapshot.paragraphSpacingPx = Math.max(0, input.paragraphSpacingPx);
     snapshot.letterSpacingPx = input.letterSpacingPx;
@@ -151,6 +171,9 @@ export class ReaderV2LayoutSnapshot {
       snapshot.viewport.width(), snapshot.viewport.height(), snapshot.contentRect.left, snapshot.contentRect.top,
       snapshot.contentRect.right, snapshot.contentRect.bottom, snapshot.columnRects.length,
       snapshot.fontSizePx, snapshot.fontWeight, snapshot.titleFontSizePx, snapshot.titleFontWeight, snapshot.lineSpacingPx, snapshot.paragraphSpacingPx,
+      snapshot.titleSecondaryScale, snapshot.titleLineGapPx,
+      snapshot.titleAlignment, snapshot.titleMarginTopPx, snapshot.titleMarginBottomPx,
+      snapshot.titleSinglePage ? 1 : 0,
       snapshot.letterSpacingPx, snapshot.textAlign, snapshot.commentFontSizePx, snapshot.commentBubbleSize, snapshot.commentBubble.identity(),
       snapshot.commentsEnabled ? 1 : 0, snapshot.regexEnabled ? 1 : 0
     ];

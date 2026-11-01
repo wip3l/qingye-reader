@@ -185,6 +185,7 @@ import { EpubHeading } from '../core/book/EpubHtmlConverter';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { ReaderTitleStyleCodec, ReaderTitleStyleSettings } from '../model/reader/ReaderTitleStyle';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 
@@ -824,6 +825,7 @@ struct ReadBookPage {
   @StorageLink('readerTitleFontFamily') @Watch('onReaderFontStyleChanged') readerTitleFontFamily: string = '';
   @StorageLink('readerTitleFontWeight') @Watch('onReaderFontStyleChanged') readerTitleFontWeight: number = 600;
   @StorageLink('readerTitleFontSize') @Watch('onReaderFontStyleChanged') readerTitleFontSize: number = 22;
+  @StorageLink('readerTitleStyleRaw') @Watch('onReaderFontStyleChanged') readerTitleStyleRaw: string = '';
   @StorageLink('readerRegexFontEnabled') @Watch('onReaderFontStyleChanged') readerRegexFontEnabled: boolean = false;
   @StorageLink('readerRegexFontPattern') @Watch('onReaderFontStyleChanged') readerRegexFontPattern: string = '';
   @StorageLink('readerRegexFontMode') @Watch('onReaderFontStyleChanged') readerRegexFontMode: string = 'global';
@@ -7375,6 +7377,7 @@ struct ReadBookPage {
     this.readerTitleFontFamily = settings.titleFontFamily || '';
     this.readerTitleFontSize = settings.titleFontSize || 22;
     this.readerTitleFontWeight = settings.titleFontWeight ?? 600;
+    this.readerTitleStyleRaw = settings.titleStyleRaw || '';
     this.readerRegexFontEnabled = settings.regexFontEnabled;
     this.readerRegexFontPattern = settings.regexFontPattern || '';
     this.readerRegexFontMode = settings.regexFontMode || 'global';
@@ -15358,6 +15361,14 @@ struct ReadBookPage {
     input.fontWeight = this.readerFontWeight;
     input.titleFontSizePx = this.toMeasureFontPx(this.readerTitleFontSize);
     input.titleFontWeight = this.readerTitleFontWeight;
+    const titleStyle = ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw);
+    input.titleSecondaryScale = titleStyle.secondaryScale;
+    // The title line gap belongs to split titles. Unsplit titles keep wrapping with the body line spacing.
+    input.titleLineGapPx = this.toMeasureNonNegativePx(titleStyle.mode === 'off' ? this.readerLineHeight : titleStyle.lineGap);
+    input.titleAlignment = titleStyle.alignment;
+    input.titleMarginTopPx = this.toMeasureNonNegativePx(titleStyle.marginTop);
+    input.titleMarginBottomPx = this.toMeasureNonNegativePx(titleStyle.marginBottom);
+    input.titleSinglePage = titleStyle.singlePage;
     input.lineSpacingPx = this.toMeasureNonNegativePx(this.readerLineHeight);
     input.paragraphSpacingPx = this.toMeasureNonNegativePx(this.readerParagraphSpacing);
     input.letterSpacingPx = this.toMeasureFontOffsetPx(this.getReaderAdaptiveLetterSpacing(forPageMetrics));
@@ -15389,10 +15400,11 @@ struct ReadBookPage {
   }
 
   buildReaderV2RegexStyles(document: ReaderV2Document): ReaderV2SpanStyleRange[] {
-    if (!this.readerRegexFontEnabled || !document.displayText) return [];
+    if (!document.displayText) return [];
     const startedAt = Date.now();
-    const slices = this.getRegexTextSlices(document.displayText);
-    const result: ReaderV2SpanStyleRange[] = [];
+    const slices: ReadTextSlice[] = this.readerRegexFontEnabled ? this.getRegexTextSlices(document.displayText) : [];
+    const titleStyles = this.buildReaderV2TitleStyles(document);
+    const result: ReaderV2SpanStyleRange[] = titleStyles.slice();
     // Every hit of one rule shares the same resolved style. Resolving the theme emphasis per hit cost
     // about 1 ms each on the UI thread (300 ms for a dialogue-heavy chapter), so it is done once per rule.
     const templates: Map<number, ReaderV2SpanStyleRange> = new Map<number, ReaderV2SpanStyleRange>();
@@ -15403,27 +15415,31 @@ struct ReadBookPage {
         template = this.buildReaderV2RegexStyleTemplate(slice);
         templates.set(slice.ruleIndex, template);
       }
-      const style = new ReaderV2SpanStyleRange(slice.start, slice.end);
-      style.fontSizePx = template.fontSizePx;
-      style.fontWeight = template.fontWeight;
-      style.colorEnabled = template.colorEnabled;
-      style.fontFamily = template.fontFamily;
-      style.color = template.color;
-      style.backgroundEnabled = template.backgroundEnabled;
-      style.backgroundColor = template.backgroundColor;
-      style.radiusTopLeftPx = template.radiusTopLeftPx;
-      style.radiusTopRightPx = template.radiusTopRightPx;
-      style.radiusBottomRightPx = template.radiusBottomRightPx;
-      style.radiusBottomLeftPx = template.radiusBottomLeftPx;
-      style.shadowEnabled = template.shadowEnabled;
-      style.shadowColor = template.shadowColor;
-      style.shadowRadiusPx = template.shadowRadiusPx;
-      style.shadowOffsetXPx = template.shadowOffsetXPx;
-      style.shadowOffsetYPx = template.shadowOffsetYPx;
-      style.decorationEnabled = template.decorationEnabled;
-      style.decorationStyleId = template.decorationStyleId;
-      style.decorationSizePx = template.decorationSizePx;
-      result.push(style);
+      // Explicit title emphasis wins inside the title; regex rules continue on either side.
+      const ranges = this.readerV2RangesOutsideTitle(slice.start, slice.end, titleStyles);
+      for (const bounds of ranges) {
+        const style = new ReaderV2SpanStyleRange(bounds[0], bounds[1]);
+        style.fontSizePx = template.fontSizePx;
+        style.fontWeight = template.fontWeight;
+        style.colorEnabled = template.colorEnabled;
+        style.fontFamily = template.fontFamily;
+        style.color = template.color;
+        style.backgroundEnabled = template.backgroundEnabled;
+        style.backgroundColor = template.backgroundColor;
+        style.radiusTopLeftPx = template.radiusTopLeftPx;
+        style.radiusTopRightPx = template.radiusTopRightPx;
+        style.radiusBottomRightPx = template.radiusBottomRightPx;
+        style.radiusBottomLeftPx = template.radiusBottomLeftPx;
+        style.shadowEnabled = template.shadowEnabled;
+        style.shadowColor = template.shadowColor;
+        style.shadowRadiusPx = template.shadowRadiusPx;
+        style.shadowOffsetXPx = template.shadowOffsetXPx;
+        style.shadowOffsetYPx = template.shadowOffsetYPx;
+        style.decorationEnabled = template.decorationEnabled;
+        style.decorationStyleId = template.decorationStyleId;
+        style.decorationSizePx = template.decorationSizePx;
+        result.push(style);
+      }
     }
     CooperativeScheduler.reportSynchronousOperation('reader/v2-regex-styles', Date.now() - startedAt,
       `chapter=${document.chapterIndex},chars=${document.displayText.length},hits=${result.length}`);
@@ -15432,13 +15448,53 @@ struct ReadBookPage {
 
   // The style shared by every hit of the rule that produced `slice`; its range is left empty.
   buildReaderV2RegexStyleTemplate(slice: ReadTextSlice): ReaderV2SpanStyleRange {
-    const resolved = this.resolvedRegexEmphasis(this.getRegexRuleBySlice(slice));
+    return this.buildReaderV2EmphasisTemplate(this.getRegexRuleBySlice(slice),
+      this.getRegexSliceFontSize(slice), this.getRegexSliceFontFamily(slice),
+      this.getRegexRuleBySlice(slice)?.fontWeight ?? 400);
+  }
+
+  buildReaderV2TitleStyles(document: ReaderV2Document): ReaderV2SpanStyleRange[] {
+    const settings: ReaderTitleStyleSettings = ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw);
+    if (settings.emphasis.emphasisMode === 'none') return [];
+    const result: ReaderV2SpanStyleRange[] = [];
+    for (const block of document.blocks) {
+      if (!block.title) continue;
+      const size = this.readerTitleFontSize * (block.titleSegment > 0 ? settings.secondaryScale : 1);
+      const style = this.buildReaderV2EmphasisTemplate(settings.emphasis, size,
+        this.getTitleReaderFontFamily(), this.readerTitleFontWeight);
+      style.start = block.displayStart;
+      style.end = block.displayEnd;
+      style.repeatCaps = true;
+      result.push(style);
+    }
+    return result;
+  }
+
+  readerV2RangesOutsideTitle(start: number, end: number, titles: ReaderV2SpanStyleRange[]): number[][] {
+    let ranges: number[][] = [[start, end]];
+    for (const title of titles) {
+      const next: number[][] = [];
+      for (const range of ranges) {
+        if (range[1] <= title.start || range[0] >= title.end) next.push(range);
+        else {
+          if (range[0] < title.start) next.push([range[0], title.start]);
+          if (range[1] > title.end) next.push([title.end, range[1]]);
+        }
+      }
+      ranges = next;
+    }
+    return ranges;
+  }
+
+  buildReaderV2EmphasisTemplate(rule: ReaderRegexFontRule | null, fontSize: number,
+    family: string, weight: number): ReaderV2SpanStyleRange {
+    const resolved = this.resolvedRegexEmphasis(rule);
     const style = new ReaderV2SpanStyleRange();
-    style.fontSizePx = this.toMeasureFontPx(this.getRegexSliceFontSize(slice));
-    style.fontWeight = this.getRegexRuleBySlice(slice)?.fontWeight ?? 400;
+    style.fontSizePx = this.toMeasureFontPx(fontSize);
+    style.fontWeight = weight;
     style.colorEnabled = true;
-    style.fontFamily = this.getRegexSliceFontFamily(slice);
-    style.color = ReaderV2Color.parse(this.getStyledSliceFontColor(slice),
+    style.fontFamily = family;
+    style.color = ReaderV2Color.parse(resolved.textColor,
       ReaderV2Color.parse(this.getTextColor(), 0xFF202124));
     style.backgroundEnabled = resolved.backgroundEnabled;
     style.backgroundColor = ReaderV2Color.parse(resolved.backgroundColor, 0x00000000);
@@ -15455,7 +15511,7 @@ struct ReadBookPage {
       ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId);
     style.decorationStyleId = style.decorationEnabled ? resolved.bubbleStyleId : '';
     style.decorationSizePx = style.decorationEnabled ?
-      this.toMeasurePx(Math.max(15, Math.min(22, this.getRegexSliceFontSize(slice) * 0.72))) : 0;
+      this.toMeasurePx(Math.max(15, Math.min(22, fontSize * 0.72))) : 0;
     return style;
   }
 
@@ -15463,7 +15519,7 @@ struct ReadBookPage {
     initialPageCount: number, registerSession: boolean = true): ReaderPaginationResult {
     const snapshot = this.buildReaderV2Snapshot();
     const document = ReaderV2DocumentParser.parse(source, chapterIndex, this.getChapterTitle(chapterIndex),
-      this.readerV2HeadingHints(chapterIndex));
+      this.readerV2HeadingHints(chapterIndex), ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw));
     const session = ReaderV2Paginator.start(document, snapshot, this.buildReaderV2RegexStyles(document));
     const result: ReaderPaginationResult = {
       source: source,
@@ -16358,6 +16414,12 @@ struct ReadBookPage {
       `${this.readerV2NativeSelectionHostVersion}`;
   }
 
+  readerTitleTextAlignValue(alignment: string): TextAlign {
+    if (alignment === 'left') return TextAlign.Start;
+    if (alignment === 'right') return TextAlign.End;
+    return TextAlign.Center;
+  }
+
   // exactGaps: give every paragraph the gap the V2 layout actually left after it (plus extraGapPx) instead of
   // the nominal paragraph spacing. A native Text pads only its own first and last line, while every V2 block
   // is padded separately, so the nominal spacing lets the handles drift a little further with each paragraph.
@@ -16401,7 +16463,7 @@ struct ReadBookPage {
           length: paragraphLength,
           styledKey: StyledStringKey.PARAGRAPH_STYLE,
           styledValue: new ParagraphStyle({
-            textAlign: this.readerTextAlignValue(),
+            textAlign: fragment.title ? this.readerTitleTextAlignValue(snapshot.titleAlignment) : this.readerTextAlignValue(),
             wordBreak: WordBreak.BREAK_WORD,
             paragraphSpacing: LengthMetrics.px(exactGaps ?
               this.readerV2SelectionGapAfterPx(page, fragmentIndex, extraGapPx) : snapshot.paragraphSpacingPx)
@@ -16913,7 +16975,8 @@ struct ReadBookPage {
     let layout: ReaderV2PageLayout | null = null;
     try {
       const document = ReaderV2DocumentParser.parse(chunk, chapterIndex,
-        index === 0 ? this.getChapterTitle(chapterIndex) : '', this.readerV2HeadingHints(chapterIndex));
+        index === 0 ? this.getChapterTitle(chapterIndex) : '', this.readerV2HeadingHints(chapterIndex),
+        ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw));
       layout = ReaderV2Paginator.layoutContinuous(document, snapshot, this.buildReaderV2RegexStyles(document));
       if (layout) {
         this.readerContinuousV2Documents.set(layout.identity, document);
@@ -17091,7 +17154,8 @@ struct ReadBookPage {
       let session = this.readerContinuousMetricsSession;
       if (!session) {
         const document = ReaderV2DocumentParser.parse(this.readerContinuousMetricsSource,
-          this.currentChapterIndex, this.getChapterTitle(), this.readerV2HeadingHints(this.currentChapterIndex));
+          this.currentChapterIndex, this.getChapterTitle(), this.readerV2HeadingHints(this.currentChapterIndex),
+          ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw));
         session = ReaderV2Paginator.start(document, snapshot, this.buildReaderV2RegexStyles(document));
         this.readerContinuousMetricsSession = session;
       }
@@ -17547,6 +17611,7 @@ struct ReadBookPage {
       `${this.readerMarginLeft}_${this.readerMarginRight}_${this.readerMarginTop}_${this.readerMarginBottom}_` +
       `${this.readerBodyFontMode}_${this.readerBodyFontFamily}_${this.getBodyReaderFontFamily()}_` +
       `${this.readerTitleFontSize}_${this.readerTitleFontWeight}_${this.readerTitleFontMode}_${this.readerTitleFontFamily}_` +
+      `${this.readerTitleStyleRaw}_` +
       `${this.getTitleReaderFontFamily()}_${this.getReaderFontFamily()}_${this.systemFontRevision}_` +
       `${this.hashText(regexIdentity)}`;
   }

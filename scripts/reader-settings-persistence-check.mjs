@@ -40,6 +40,9 @@ function harness() {
     compile(read('core/reader/ReaderParagraphIndent.ts')) + '\n' +
     compile(read('core/reader/ReaderInfoBarModel.ts')) + '\n' +
     compile(read('core/reader/ReaderQuickJumpModel.ts')) + '\n' +
+    compile(read('core/reader/ReaderTitleSplit.ts')) + '\n' +
+    compile(read('model/reader/ReaderRegexFontRule.ets')) + '\n' +
+    compile(read('model/reader/ReaderTitleStyle.ets')) + '\n' +
     compile(read('utils/ReaderSettingsStore.ets')) +
     '\n' + compile(read('account/ReaderPreferencesSync.ets')) +
     '\nglobalThis.api = { ReaderSettingsStore, ReaderSettings, ReaderInfoBarConfig, ReaderPreferencesSync };', context);
@@ -118,6 +121,37 @@ function openChromePanel(h) {
 }
 
 const tests = {
+  async 'title split and emphasis persist, remain theme-scoped and ignore remote device-layout fields'() {
+    const h = harness();
+    const style = await h.settings.load({});
+    assert.equal(style.titleStyleRaw, '');
+    style.titleStyleRaw = JSON.stringify({ mode: 'marker', marker: '：', secondaryScale: 1.5, lineGap: 16,
+      alignment: 'right', marginTop: 24, marginBottom: 36, singlePage: true,
+      emphasis: { emphasisMode: 'custom', customBubbleEnabled: true, bubbleStyleId: 'capsule',
+        customBubbleColor: '#80123456' } });
+    await h.settings.saveReaderFontStyleSettings({}, style);
+    assert.equal(h.values.get('readerTitleStyleRaw'), h.disk.get('readerTitleStyleRaw'));
+    const loaded = await h.settings.reload({});
+    assert.equal(JSON.parse(loaded.titleStyleRaw).lineGap, 16);
+    assert.equal(JSON.parse(loaded.titleStyleRaw).alignment, 'right');
+    assert.equal(JSON.parse(loaded.titleStyleRaw).marginTop, 24);
+    assert.equal(JSON.parse(loaded.titleStyleRaw).marginBottom, 36);
+    assert.equal(JSON.parse(loaded.titleStyleRaw).singlePage, true);
+    assert.equal(JSON.parse(loaded.titleStyleRaw).emphasis.customBubbleColor, '#80123456');
+    const original = loaded.titleStyleRaw;
+    const late = { ...loaded, titleStyleRaw: '' };
+    await h.settings.saveLayoutSettings({}, 25, 14, 8);
+    await h.settings.saveReaderFontRuleSettings({}, late);
+    assert.equal((await h.settings.reload({})).titleStyleRaw, original);
+    const cloud = h.sync.merge(loaded, { titleStyleRaw: '' });
+    assert.equal(cloud.titleStyleRaw, original);
+    assert.equal('titleStyleRaw' in h.sync.toPayload(loaded), false);
+    h.disk.set('readerThemeProfileV1_legacy', JSON.stringify({fontSize:23}));
+    h.values.set('appThemeId', 'legacy');
+    assert.equal((await h.settings.switchThemeProfile({}, 'classic-blue', 'legacy')).titleStyleRaw, '');
+    h.values.set('appThemeId', 'classic-blue');
+    assert.equal((await h.settings.switchThemeProfile({}, 'legacy', 'classic-blue')).titleStyleRaw, original);
+  },
   async 'quick jump mode persists, survives theme changes, restores and validates legacy values'() {
     const h = harness();
     assert.equal((await h.settings.load({})).quickJumpMode, 'chapter');

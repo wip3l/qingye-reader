@@ -99,7 +99,7 @@ export const LAYOUT_KEYS: string[] = [
   'marginLeft', 'marginRight', 'marginTop', 'marginBottom', 'commentBubbleSize', 'extendToStatusBar',
   'readerHeaderEnabled', 'readerHeaderContentMode', 'readerFooterEnabled', 'readerFooterLeftMode',
   'readerFooterProgressMode', 'readerFooterShowProgressBar', 'readerInfoBarConfig',
-  'bodyFontMode', 'bodyFontFamily', 'titleFontMode', 'titleFontFamily', 'titleFontSize', 'titleFontWeight'
+  'bodyFontMode', 'bodyFontFamily', 'titleFontMode', 'titleFontFamily', 'titleFontSize', 'titleFontWeight', 'titleStyleRaw'
 ];
 
 /** 方案设置里可能指向本机图片文件的字段。 */
@@ -416,8 +416,11 @@ export function pickLayout(source: Record<string, Object>): Record<string, Objec
   const layout: Record<string, Object> = {};
   for (const key of LAYOUT_KEYS) {
     const value = source[key];
+    // Structured title settings must travel as complete JSON, never a truncated short label.
+    if (key === 'titleStyleRaw' && typeof value === 'string' && value.length > 8000) continue;
     if (typeof value === 'number' ? isFinite(value) : (typeof value === 'string' || typeof value === 'boolean')) {
-      layout[key] = typeof value === 'string' ? limitChars(value, key === 'readerInfoBarConfig' ? 8000 : 200) : value;
+      layout[key] = typeof value === 'string' ?
+        limitChars(value, key === 'readerInfoBarConfig' || key === 'titleStyleRaw' ? 8000 : 200) : value;
     }
   }
   return layout;

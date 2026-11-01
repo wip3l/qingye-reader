@@ -15,6 +15,7 @@ export class ReaderWeightedTextSpan {
   weight: number = 0;
   capStyleId: string = '';
   capSizePx: number = 0;
+  repeatCaps: boolean = false;
   constructor(content: string, style: text.TextStyle) {
     this.content = content;
     this.style = style;
@@ -71,17 +72,20 @@ class ReaderWeightedTextNode extends FrameNode {
   private weight: number;
   private maxLines: number;
   private alignment: text.TextAlign;
+  private extraLineSpacingPx: number;
+  private insetPx: number = 0;
   private paragraph: text.Paragraph | null = null;
   private strokes: ReaderFontStrokeRun[] = [];
 
   constructor(context: UIContext, spans: ReaderWeightedTextSpan[], weight: number, maxLines: number,
-    alignment: text.TextAlign) {
+    alignment: text.TextAlign, extraLineSpacingPx: number = 0) {
     super(context);
     this.context = context;
     this.spans = spans;
     this.weight = weight;
     this.maxLines = maxLines;
     this.alignment = alignment;
+    this.extraLineSpacingPx = Math.max(0, extraLineSpacingPx);
   }
 
   onMeasure(constraint: LayoutConstraint): void {
@@ -89,10 +93,12 @@ class ReaderWeightedTextNode extends FrameNode {
     const styles: text.TextStyle[] = [];
     const ends: number[] = [];
     let length = 0;
+    this.insetPx = 0;
     for (const span of this.spans) {
       const style = ReaderFontTextStyle.resolve(span.style, span.weight > 0 ? span.weight : this.weight);
       styles.push(style);
-      length += span.content.length + (span.capStyleId ? 2 : 0);
+      length += span.content.length + (span.capStyleId && !span.repeatCaps ? 2 : 0);
+      if (span.repeatCaps && span.capStyleId) this.insetPx = Math.max(this.insetPx, span.capSizePx);
       ends.push(length);
     }
     if (styles.length === 0) {
@@ -103,7 +109,7 @@ class ReaderWeightedTextNode extends FrameNode {
     }
     const paragraphStyle: text.ParagraphStyle = { textStyle: styles[0], align: this.alignment,
       maxLines: this.maxLines > 0 ? this.maxLines : 1000, wordBreak: text.WordBreak.BREAK_WORD,
-      breakStrategy: text.BreakStrategy.GREEDY, includeFontPadding: true };
+      breakStrategy: text.BreakStrategy.GREEDY, includeFontPadding: true, lineSpacing: this.extraLineSpacingPx };
     const paragraphBuilder = new text.ParagraphBuilder(paragraphStyle, text.FontCollection.getGlobalInstance());
     for (let index = 0; index < styles.length; index++) {
       paragraphBuilder.pushStyle(styles[index]);
@@ -111,7 +117,8 @@ class ReaderWeightedTextNode extends FrameNode {
       paragraphBuilder.popStyle();
     }
     this.paragraph = paragraphBuilder.build();
-    this.paragraph.layoutSync(width);
+    this.insetPx = Math.min(width / 6, this.insetPx);
+    this.paragraph.layoutSync(Math.max(1, width - this.insetPx * 2));
     this.strokes = [];
     if (this.spans.some((span: ReaderWeightedTextSpan): boolean => (span.weight || this.weight) > 400) &&
       styles.some((style: text.TextStyle): boolean =>
@@ -123,7 +130,7 @@ class ReaderWeightedTextNode extends FrameNode {
         outlineBuilder.popStyle();
       }
       const outline = outlineBuilder.build();
-      outline.layoutSync(width);
+      outline.layoutSync(Math.max(1, width - this.insetPx * 2));
       this.strokes = ReaderFontStroke.build(outline, this.weight, (offset: number): text.TextStyle => {
         for (let index = 0; index < ends.length; index++) {
           if (offset < ends[index]) return styles[index];
@@ -145,9 +152,9 @@ class ReaderWeightedTextNode extends FrameNode {
   private appendSpan(builder: text.ParagraphBuilder, span: ReaderWeightedTextSpan): void {
     const cap: text.PlaceholderSpan = { width: span.capSizePx, height: span.capSizePx,
       align: text.PlaceholderAlignment.CENTER_OF_ROW_BOX, baseline: text.TextBaseline.ALPHABETIC, baselineOffset: 0 };
-    if (span.capStyleId) builder.addPlaceholder(cap);
+    if (span.capStyleId && !span.repeatCaps) builder.addPlaceholder(cap);
     builder.addText(span.content);
-    if (span.capStyleId) builder.addPlaceholder(cap);
+    if (span.capStyleId && !span.repeatCaps) builder.addPlaceholder(cap);
   }
 
   private capImage(styleId: string): image.PixelMap | undefined {
@@ -169,12 +176,19 @@ class ReaderWeightedTextNode extends FrameNode {
 
   onDraw(context: DrawContext): void {
     if (!this.paragraph) return;
-    this.paragraph.paint(context.canvas, 0, 0);
-    ReaderFontStroke.paint(context.canvas, this.strokes, 0, 0);
+    this.paragraph.paint(context.canvas, this.insetPx, 0);
+    ReaderFontStroke.paint(context.canvas, this.strokes, this.insetPx, 0);
     const boxes = this.paragraph.getRectsForPlaceholders();
     let placeholder = 0;
+    let textOffset = 0;
     for (const span of this.spans) {
+      const start = textOffset;
+      textOffset += span.content.length + (span.capStyleId && !span.repeatCaps ? 2 : 0);
       if (!span.capStyleId) continue;
+      if (span.repeatCaps) {
+        this.paintRepeatedCaps(context, span, start);
+        continue;
+      }
       const bitmap = this.capImage(span.capStyleId);
       for (let side = 0; side < 2; side++) {
         const box = placeholder < boxes.length ? boxes[placeholder].rect : undefined;
@@ -187,6 +201,40 @@ class ReaderWeightedTextNode extends FrameNode {
       }
     }
   }
+
+  private paintRepeatedCaps(context: DrawContext, span: ReaderWeightedTextSpan, start: number): void {
+    if (!this.paragraph) return;
+    const bitmap = this.capImage(span.capStyleId);
+    if (!bitmap) return;
+    for (const line of this.paragraph.getLineMetrics()) {
+      const from = Math.max(start, line.startIndex);
+      const to = Math.min(start + span.content.length, line.endIndex);
+      if (to <= from) continue;
+      const boxes = this.paragraph.getRectsForRange({ start: from, end: to },
+        text.RectWidthStyle.TIGHT, text.RectHeightStyle.TIGHT);
+      if (boxes.length === 0) continue;
+      let left = boxes[0].rect.left;
+      let right = boxes[0].rect.right;
+      let top = boxes[0].rect.top;
+      let bottom = boxes[0].rect.bottom;
+      for (const box of boxes) {
+        left = Math.min(left, box.rect.left);
+        right = Math.max(right, box.rect.right);
+        top = Math.min(top, box.rect.top);
+        bottom = Math.max(bottom, box.rect.bottom);
+      }
+      const capTop = (top + bottom - span.capSizePx) / 2;
+      for (let side = 0; side < 2; side++) {
+        const capLeft = this.insetPx + (side === 0 ? left - span.capSizePx : right);
+        const rect: common2D.Rect = { left: capLeft, top: capTop,
+          right: capLeft + span.capSizePx, bottom: capTop + span.capSizePx };
+        context.canvas.save();
+        if (side === 1) context.canvas.rotate(180, (rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+        context.canvas.drawImageRect(bitmap, rect);
+        context.canvas.restore();
+      }
+    }
+  }
 }
 
 class ReaderWeightedTextController extends NodeController {
@@ -194,9 +242,11 @@ class ReaderWeightedTextController extends NodeController {
   weight: number = 400;
   maxLines: number = 1000;
   alignment: text.TextAlign = text.TextAlign.LEFT;
+  extraLineSpacing: number = 0;
 
   makeNode(context: UIContext): FrameNode {
-    return new ReaderWeightedTextNode(context, this.spans, this.weight, this.maxLines, this.alignment);
+    return new ReaderWeightedTextNode(context, this.spans, this.weight, this.maxLines, this.alignment,
+      context.vp2px(this.extraLineSpacing));
   }
 }
 
@@ -207,6 +257,7 @@ export struct ReaderWeightedText {
   @Prop @Watch('refresh') weight: number = 400;
   @Prop @Watch('refresh') maxLines: number = 1000;
   @Prop @Watch('refresh') alignment: text.TextAlign = text.TextAlign.LEFT;
+  @Prop @Watch('refresh') extraLineSpacing: number = 0;
   private controller: ReaderWeightedTextController = new ReaderWeightedTextController();
 
   aboutToAppear(): void { this.refresh(); }
@@ -216,6 +267,7 @@ export struct ReaderWeightedText {
     this.controller.weight = this.weight;
     this.controller.maxLines = this.maxLines;
     this.controller.alignment = this.alignment;
+    this.controller.extraLineSpacing = this.extraLineSpacing;
     this.controller.rebuild();
   }
 

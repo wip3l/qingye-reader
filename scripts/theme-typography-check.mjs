@@ -40,6 +40,10 @@ function harness() {
     compile(read('core/reader/ReaderFontWeight.ts')) + '\n' +
     compile(read('core/reader/ReaderParagraphIndent.ts')) + '\n' +
     compile(read('core/reader/ReaderInfoBarModel.ts')) + '\n' +
+    compile(read('core/reader/ReaderQuickJumpModel.ts')) + '\n' +
+    compile(read('core/reader/ReaderTitleSplit.ts')) + '\n' +
+    compile(read('model/reader/ReaderRegexFontRule.ets')) + '\n' +
+    compile(read('model/reader/ReaderTitleStyle.ets')) + '\n' +
     compile(read('utils/ReaderSettingsStore.ets')) + '\n' +
     compile(read('utils/ThemeTypographyDraft.ets')) +
     '\nglobalThis.api = { ReaderSettingsStore, ReaderSettings, ReaderInfoBarConfig, ThemeTypographyDraft };', context);
@@ -74,6 +78,9 @@ function typography(h) {
   source.titleFontMode = 'system';
   source.titleFontSize = 30;
   source.titleFontWeight = 650;
+  source.titleStyleRaw = JSON.stringify({ mode: 'marker', marker: '：', secondaryScale: 1.5, lineGap: 16,
+    alignment: 'right', marginTop: 24, marginBottom: 36, singlePage: true,
+    emphasis: { emphasisMode: 'custom', customTextColorEnabled: true, customTextColor: '#80123456' } });
   source.regexFontEnabled = true;
   source.regexFontRulesRaw = '{"schemaVersion":3,"rules":[]}';
   // 不属于排版的字段不能被带进档案。
@@ -104,6 +111,15 @@ function assertTypography(actual) {
   assert.equal(actual.titleFontMode, 'system');
   assert.equal(actual.titleFontSize, 30);
   assert.equal(actual.titleFontWeight, 650);
+  const title = JSON.parse(actual.titleStyleRaw);
+  assert.equal(title.mode, 'marker');
+  assert.equal(title.secondaryScale, 1.5);
+  assert.equal(title.lineGap, 16);
+  assert.equal(title.alignment, 'right');
+  assert.equal(title.marginTop, 24);
+  assert.equal(title.marginBottom, 36);
+  assert.equal(title.singlePage, true);
+  assert.equal(title.emphasis.customTextColor, '#80123456');
   assert.equal(actual.regexFontEnabled, true);
 }
 
@@ -226,6 +242,7 @@ const tests = {
     fontPage.titleFontSize = 24;
     fontPage.fontWeight = 350;
     fontPage.titleFontWeight = 750;
+    fontPage.titleStyleRaw = JSON.stringify({ mode: 'position', position: '8', secondaryScale: 1.8 });
     fontPage.regexFontEnabled = false;
     fontPage.marginLeft = 0;
     h.ThemeTypographyDraft.applyFontStyle(fontPage);
@@ -237,6 +254,7 @@ const tests = {
     assert.equal(current.titleFontSize, 24);
     assert.equal(current.fontWeight, 350);
     assert.equal(current.titleFontWeight, 750);
+    assert.equal(JSON.parse(current.titleStyleRaw).position, '8');
     assert.equal(current.regexFontEnabled, false);
     assert.equal(current.marginLeft, 30, 'layout fields are not touched by the font page');
     h.ThemeTypographyDraft.end();

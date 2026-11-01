@@ -11,6 +11,21 @@ const shareDir = path.join(projectRoot, 'entry', 'src', 'main', 'ets', 'theme', 
 const zip = await import(pathToFileURL(path.join(shareDir, 'ZipEntryInspector.ts')).href);
 const format = await import(pathToFileURL(path.join(shareDir, 'ThemePackageFormat.ts')).href);
 
+test('title layout JSON travels intact beyond the short-label limit', () => {
+  const settings = {alignment:'right',marginTop:24,marginBottom:36,singlePage:true,mode:'regex',
+    regex:'^第[零一二三四五六七八九十百千万0-9]+章[：: ]*',secondaryScale:1.5,lineGap:16,
+    emphasis:{emphasisMode:'custom',customBubbleEnabled:true,bubbleStyleId:'capsule',customBubbleColor:'#80123456'}};
+  const raw = JSON.stringify(settings);
+  assert(raw.length > 200);
+  const exported = format.pickLayout({titleStyleRaw:raw});
+  assert.equal(exported.titleStyleRaw, raw);
+  const target = {titleStyleRaw:''};
+  format.applyLayout(target, exported);
+  assert.deepEqual(JSON.parse(target.titleStyleRaw), settings);
+  assert.equal('titleStyleRaw' in format.pickLayout({titleStyleRaw:'x'.repeat(8001)}), false,
+    'oversized structured settings are skipped rather than truncated into invalid JSON');
+});
+
 /** 只写中央目录需要的字段，足够检查器使用；data 不压缩。 */
 function makeZip(entries, { flags = 0x800, zip64 = false } = {}) {
   const locals = [];

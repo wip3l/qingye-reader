@@ -489,7 +489,8 @@ assert(reader.includes('readerTextAlignValue(): TextAlign') &&
   reader.includes("if (this.readerTextAlign === 'end') return TextAlign.End") &&
   reader.includes('.textAlign(this.readerTextAlignValue())') &&
   reader.includes('input.textAlign = this.readerTextAlign') &&
-  readerPaginator.includes('align: ReaderV2Paginator.textAlign(snapshot.textAlign)') &&
+  readerPaginator.includes('align: block.title ? ReaderV2Paginator.titleTextAlign(snapshot.titleAlignment) :') &&
+  readerPaginator.includes('ReaderV2Paginator.textAlign(snapshot.textAlign)') &&
   readerPaginator.includes("if (value === 'start') return graphicsText.TextAlign.LEFT") &&
   readerPaginator.includes("if (value === 'end') return graphicsText.TextAlign.RIGHT"),
   'Reader body rendering and pagination measurement must use the shared text alignment setting');

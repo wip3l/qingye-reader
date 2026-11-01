@@ -34,6 +34,7 @@ export class ThemeTypographyDraft {
     target.titleFontFamily = source.titleFontFamily || '';
     target.titleFontSize = source.titleFontSize;
     target.titleFontWeight = source.titleFontWeight;
+    target.titleStyleRaw = source.titleStyleRaw || '';
     target.regexFontEnabled = source.regexFontEnabled;
     target.regexFontPattern = source.regexFontPattern || '';
     target.regexFontMode = source.regexFontMode;

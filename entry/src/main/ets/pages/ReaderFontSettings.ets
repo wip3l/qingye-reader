@@ -1,4 +1,7 @@
 import { router } from '@kit.ArkUI';
+import { text } from '@kit.ArkGraphics2D';
+import { ReaderTitleSplit } from '../core/reader/ReaderTitleSplit';
+import { ReaderTitleStyleCodec, ReaderTitleStyleSettings } from '../model/reader/ReaderTitleStyle';
 import { ReaderFontWeightStepper } from '../components/reader/ReaderFontWeightStepper';
 import { ReaderWeightedText, ReaderWeightedTextSpan } from '../components/reader/ReaderWeightedText';
 import { syncSystemBars } from '../utils/SystemBars';
@@ -74,6 +77,11 @@ struct ReaderFontSettingsPage {
   @State readerTitleFontFamily: string = '';
   @State readerTitleFontSize: number = 22;
   @State readerTitleFontWeight: number = 600;
+  @State titleStyle: ReaderTitleStyleSettings = new ReaderTitleStyleSettings();
+  @State titlePreviewText: string = '第七十四章：卖鸭蛋，卖粽子喽';
+  @State titlePreviewEditing: boolean = false;
+  @State titleReadingPreview: boolean = false;
+  @State titleReadingPreviewBody: boolean = false;
   @State readerRegexFontEnabled: boolean = false;
   @State readerRegexFontPattern: string = '';
   @State readerRegexFontMode: string = 'global';
@@ -165,6 +173,7 @@ struct ReaderFontSettingsPage {
       this.readerTitleFontFamily = settings.titleFontFamily;
       this.readerTitleFontSize = settings.titleFontSize;
       this.readerTitleFontWeight = settings.titleFontWeight;
+      this.titleStyle = ReaderTitleStyleCodec.decode(settings.titleStyleRaw);
       this.readerRegexFontEnabled = settings.regexFontEnabled;
       this.readerRegexFontPattern = settings.regexFontPattern;
       this.readerRegexFontMode = settings.regexFontMode;
@@ -192,6 +201,10 @@ struct ReaderFontSettingsPage {
     .height('100%')
     .backgroundColor(this.pageColor())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .bindSheet($$this.titleReadingPreview, this.titleReadingPreviewSheet, {
+      height: SheetSize.LARGE, dragBar: true, showClose: true,
+      backgroundColor: ThemeRuntime.readerBackgroundColor(this.appDarkMode)
+    })
   }
 
   @Builder
@@ -234,6 +247,14 @@ struct ReaderFontSettingsPage {
           this.readerTitleFontWeight = value;
           this.saveSettings();
         } })
+      this.titleLayoutSettings()
+      this.titleSplitSettings()
+      Column() {
+        this.regexEmphasisSettings(-1, this.regexHighlightRefreshKey)
+      }
+      .width('calc(100% - 32vp)')
+      .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
+      .padding({ top: AppSpacing.MD, bottom: AppSpacing.MD })
       this.titlePreviewItem()
     }
     .width('calc(100% - 24vp)')
@@ -275,6 +296,7 @@ struct ReaderFontSettingsPage {
     settings.titleFontFamily = this.readerTitleFontFamily;
     settings.titleFontSize = this.readerTitleFontSize;
     settings.titleFontWeight = this.readerTitleFontWeight;
+    settings.titleStyleRaw = ReaderTitleStyleCodec.encode(this.titleStyle);
     settings.regexFontEnabled = this.readerRegexFontEnabled;
     settings.regexFontPattern = this.readerRegexFontPattern;
     settings.regexFontMode = this.normalizeFontMode(this.readerRegexFontMode);
@@ -366,6 +388,15 @@ struct ReaderFontSettingsPage {
   }
 
   updateRegexRule(index: number, updater: (rule: ReaderRegexFontRule) => void): void {
+    // Title emphasis uses the same controls and resolver without joining the regex rule list.
+    if (index === -1) {
+      const title = ReaderTitleStyleCodec.decode(ReaderTitleStyleCodec.encode(this.titleStyle));
+      updater(title.emphasis);
+      this.titleStyle = title;
+      this.bumpRegexHighlightRefresh();
+      this.saveSettings();
+      return;
+    }
     const next = this.regexRules.slice();
     if (index < 0 || index >= next.length) {
       return;
@@ -928,16 +959,329 @@ struct ReaderFontSettingsPage {
   }
 
   @Builder
-  titlePreviewItem() {
+  titleLayoutSettings() {
     Column({ space: AppSpacing.MD }) {
-      Text('标题预览')
-        .fontSize(AppFontSize.BODY)
+      Text('标题布局')
+        .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .width('100%')
-      ReaderWeightedText({ spans: [ReaderWeightedTextSpan.create(this.getUIContext(),
-        '第一章 风起时', this.readerTitleFontSize, this.titlePreviewFontFamily(), this.primaryTextColor())],
-        weight: this.readerTitleFontWeight, maxLines: 2 })
+      Row() {
+        Text('标题位置')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.primaryTextColor())
+          .layoutWeight(1)
+        Select([{ value: '左对齐' }, { value: '居中' }, { value: '右对齐' }])
+          .selected(this.titleAlignmentIndex())
+          .value(['左对齐', '居中', '右对齐'][this.titleAlignmentIndex()])
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+          .fontColor(this.subTextColor())
+          .backgroundColor(Color.Transparent)
+          .arrowPosition(ArrowPosition.END)
+          .padding({ left: 0, right: 0 })
+          .borderRadius(16)
+          .divider(null)
+          .optionBgColor(Color.Transparent)
+          .optionFontColor(this.primaryTextColor())
+          .selectedOptionFontColor(this.accentColor())
+          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+          .menuBackgroundBlurStyle(BlurStyle.NONE)
+          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+          .onSelect((index: number) => this.updateTitleSplit('alignment', ['left', 'center', 'right'][index] || 'center'))
+          .accessibilityText('标题位置')
+      }.width('100%').constraintSize({ minHeight: 48 })
+      Row({ space: AppSpacing.LG }) {
+        Column({ space: AppSpacing.XS }) {
+          Text('标题单页').fontSize(AppFontSize.BODY_LARGE).fontColor(this.primaryTextColor())
+          Text('每章标题单独占据一页')
+            .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+        AdaptiveSwitch({ isOn: this.titleStyle.singlePage,
+          onChange: (checked: boolean) => this.updateTitleSplit('singlePage', `${checked}`) })
+      }.width('100%').constraintSize({ minHeight: 64 })
+      this.titleMarginSlider('标题上边距', true)
+      this.titleMarginSlider('标题下边距', false)
+    }
+    .width('calc(100% - 32vp)')
+    .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
+    .padding({ top: AppSpacing.XL, bottom: AppSpacing.MD })
+    .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
+  }
+
+  @Builder
+  titleMarginSlider(label: string, top: boolean) {
+    Column({ space: AppSpacing.XS }) {
+      Row() {
+        Text(label).fontSize(AppFontSize.BODY).fontColor(this.primaryTextColor()).layoutWeight(1)
+        Text(`${top ? this.titleStyle.marginTop : this.titleStyle.marginBottom} vp`)
+          .fontSize(AppFontSize.BODY).fontColor(this.accentColor())
+      }.width('100%')
+      Row({ space: AppSpacing.MD }) {
+        this.fontSizeStepButton($r('sys.symbol.minus'), `减小${label}`,
+          (top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) > 0,
+          () => this.adjustTitleMargin(top, -1))
+        Slider({ value: top ? this.titleStyle.marginTop : this.titleStyle.marginBottom, min: 0, max: 120, step: 1 })
+          .layoutWeight(1)
+          .selectedColor(this.accentColor())
+          .blockColor(this.accentColor())
+          .trackColor(this.inputColor())
+          .onChange((current: number) => this.updateTitleSplit(top ? 'marginTop' : 'marginBottom', `${current}`))
+          .accessibilityText(label)
+        this.fontSizeStepButton($r('sys.symbol.plus'), `增大${label}`,
+          (top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) < 120,
+          () => this.adjustTitleMargin(top, 1))
+      }.width('100%')
+    }.width('100%')
+  }
+
+  adjustTitleMargin(top: boolean, direction: number): void {
+    this.updateTitleSplit(top ? 'marginTop' : 'marginBottom',
+      `${(top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) + direction}`);
+  }
+
+  titleAlignmentIndex(): number {
+    return Math.max(0, ['left', 'center', 'right'].indexOf(this.titleStyle.alignment));
+  }
+
+  titlePreviewAlignment(): text.TextAlign {
+    if (this.titleStyle.alignment === 'left') return text.TextAlign.LEFT;
+    if (this.titleStyle.alignment === 'right') return text.TextAlign.RIGHT;
+    return text.TextAlign.CENTER;
+  }
+
+  @Builder
+  titleSplitSettings() {
+    Column({ space: AppSpacing.MD }) {
+      Text('标题分段')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
         .width('100%')
+      Row() {
+        Text('分段模式')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.primaryTextColor())
+          .layoutWeight(1)
+        Select([{ value: '关闭' }, { value: '按位置分段' }, { value: '按标记分段' }, { value: '按正则分段' }])
+          .selected(this.titleSplitModeIndex())
+          .value(this.titleSplitModeLabel())
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+          .fontColor(this.subTextColor())
+          .backgroundColor(Color.Transparent)
+          .arrowPosition(ArrowPosition.END)
+          .padding({ left: 0, right: 0 })
+          .borderRadius(16)
+          .divider(null)
+          .optionBgColor(Color.Transparent)
+          .optionFontColor(this.primaryTextColor())
+          .selectedOptionFontColor(this.accentColor())
+          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+          .menuBackgroundBlurStyle(BlurStyle.NONE)
+          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+          .onSelect((index: number) => {
+            this.updateTitleSplit('mode', ['off', 'position', 'marker', 'regex'][index] || 'off');
+          })
+          .accessibilityText('标题分段模式')
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 48 })
+      if (this.titleStyle.mode !== 'off') {
+        Text(this.titleSplitContentLabel())
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.primaryTextColor())
+          .width('100%')
+        TextInput({ text: this.titleSplitContent(), placeholder: this.titleSplitContentLabel() })
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.primaryTextColor())
+          .placeholderColor(this.subTextColor())
+          .backgroundColor(this.inputColor())
+          .borderRadius(ThemeRuntime.mediumRadius())
+          .maxLength(this.titleStyle.mode === 'position' ? 8 : 180)
+          .onChange((content: string) => this.updateTitleSplit(this.titleStyle.mode, content))
+          .accessibilityText(this.titleSplitContentLabel())
+        Text(this.titleSplitHelp())
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .width('100%')
+        if (ReaderTitleSplit.validationError(this.titleStyle)) {
+          Text(ReaderTitleSplit.validationError(this.titleStyle))
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(ThemeRuntime.dangerColor(this.appDarkMode))
+            .width('100%')
+        }
+        this.titleSplitSlider('次行字号', true)
+        this.titleSplitSlider('标题行距', false)
+      }
+    }
+    .width('calc(100% - 32vp)')
+    .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
+    .padding({ top: AppSpacing.XL, bottom: AppSpacing.MD })
+    .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
+  }
+
+  @Builder
+  titleSplitSlider(label: string, secondary: boolean) {
+    Column({ space: AppSpacing.XS }) {
+      Row() {
+        Text(label).fontSize(AppFontSize.BODY).fontColor(this.primaryTextColor()).layoutWeight(1)
+        Text(secondary ? `${this.titleStyle.secondaryScale.toFixed(1)} 倍` : `${this.titleStyle.lineGap} vp`)
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.accentColor())
+      }.width('100%')
+      Row({ space: AppSpacing.MD }) {
+        this.fontSizeStepButton($r('sys.symbol.minus'), `减小${label}`,
+          secondary ? this.titleStyle.secondaryScale > 0.5 : this.titleStyle.lineGap > 0,
+          () => this.adjustTitleSplit(secondary, -1))
+        Slider({ value: secondary ? this.titleStyle.secondaryScale : this.titleStyle.lineGap,
+          min: secondary ? 0.5 : 0, max: secondary ? 2 : 40, step: secondary ? 0.1 : 1 })
+          .layoutWeight(1)
+          .selectedColor(this.accentColor())
+          .blockColor(this.accentColor())
+          .trackColor(this.inputColor())
+          .onChange((current: number) => {
+            this.updateTitleSplit(secondary ? 'secondaryScale' : 'lineGap', `${current}`);
+          })
+          .accessibilityText(label)
+        this.fontSizeStepButton($r('sys.symbol.plus'), `增大${label}`,
+          secondary ? this.titleStyle.secondaryScale < 2 : this.titleStyle.lineGap < 40,
+          () => this.adjustTitleSplit(secondary, 1))
+      }.width('100%')
+    }.width('100%').padding({ top: AppSpacing.MD })
+  }
+
+  titleSplitModeIndex(): number {
+    return Math.max(0, ['off', 'position', 'marker', 'regex'].indexOf(this.titleStyle.mode));
+  }
+
+  titleSplitModeLabel(): string {
+    return ['关闭', '按位置分段', '按标记分段', '按正则分段'][this.titleSplitModeIndex()];
+  }
+
+  titleSplitContentLabel(): string {
+    if (this.titleStyle.mode === 'position') return '分段位置';
+    return this.titleStyle.mode === 'regex' ? '分段正则' : '分段标记';
+  }
+
+  titleSplitContent(): string {
+    if (this.titleStyle.mode === 'position') return this.titleStyle.position;
+    return this.titleStyle.mode === 'regex' ? this.titleStyle.regex : this.titleStyle.marker;
+  }
+
+  titleSplitHelp(): string {
+    if (this.titleStyle.mode === 'position') return '在第几个字后换行，汉字、标点与空格均计为一个字。';
+    return this.titleStyle.mode === 'regex' ? '在第一次匹配的末尾换行，保留匹配内容。' :
+      '在第一个标记后换行，保留标记。';
+  }
+
+  updateTitleSplit(field: string, content: string): void {
+    const next = ReaderTitleStyleCodec.decode(ReaderTitleStyleCodec.encode(this.titleStyle));
+    if (field === 'mode') next.mode = ReaderTitleSplit.normalizeMode(content);
+    else if (field === 'position') next.position = content;
+    else if (field === 'marker') next.marker = content;
+    else if (field === 'regex') next.regex = content;
+    else if (field === 'secondaryScale') next.secondaryScale = ReaderTitleSplit.normalizeScale(Number(content));
+    else if (field === 'lineGap') next.lineGap = ReaderTitleSplit.normalizeGap(Number(content));
+    else if (field === 'alignment') next.alignment = ReaderTitleSplit.normalizeAlignment(content);
+    else if (field === 'marginTop') next.marginTop = ReaderTitleSplit.normalizeMargin(Number(content));
+    else if (field === 'marginBottom') next.marginBottom = ReaderTitleSplit.normalizeMargin(Number(content));
+    else if (field === 'singlePage') next.singlePage = content === 'true';
+    this.titleStyle = next;
+    this.saveSettings();
+  }
+
+  adjustTitleSplit(secondary: boolean, direction: number): void {
+    this.updateTitleSplit(secondary ? 'secondaryScale' : 'lineGap', secondary ?
+      `${this.titleStyle.secondaryScale + direction * 0.1}` : `${this.titleStyle.lineGap + direction}`);
+  }
+
+  titlePreviewParts(): string[] {
+    return ReaderTitleSplit.parts(this.titlePreviewText, this.titleStyle);
+  }
+
+  titlePreviewSpans(part: string, index: number): ReaderWeightedTextSpan[] {
+    const context = this.regexEmphasisContext();
+    context.surfaceColor = ThemeRuntime.readerBackgroundColor(this.appDarkMode);
+    context.normalTextColor = ThemeRuntime.readerTextColor(this.appDarkMode);
+    const emphasis = ReaderRegexBubbleStyleResolver.resolve(this.titleStyle.emphasis, context);
+    const fontSize = this.readerTitleFontSize * (index > 0 ? this.titleStyle.secondaryScale : 1);
+    const span = ReaderWeightedTextSpan.create(this.getUIContext(), part, fontSize,
+      this.titlePreviewFontFamily(), emphasis.textColor, 0, 0, emphasis);
+    span.weight = this.readerTitleFontWeight;
+    if (emphasis.bubbleDecorationEnabled && ThemeAssetRegistry.hasRegexBubbleCap(emphasis.bubbleStyleId)) {
+      span.capStyleId = emphasis.bubbleStyleId;
+      span.repeatCaps = true;
+      span.capSizePx = this.getUIContext().vp2px(Math.max(15, Math.min(22, fontSize * 0.72)));
+    }
+    return [span];
+  }
+
+  @Builder
+  titlePreviewContent() {
+    Column({ space: this.titleStyle.lineGap }) {
+      ForEach(this.titlePreviewParts(), (part: string, index: number) => {
+        ReaderWeightedText({ spans: this.titlePreviewSpans(part, index), weight: this.readerTitleFontWeight,
+          alignment: this.titlePreviewAlignment(), extraLineSpacing: this.titleStyle.lineGap })
+          .width('100%')
+      }, (part: string, index: number) => `${index}_${part}`)
+    }.width('100%').padding({ top: this.titleStyle.marginTop, bottom: this.titleStyle.marginBottom })
+  }
+
+  @Builder
+  titleReadingPreviewSheet() {
+    Scroll() {
+      Column({ space: AppSpacing.XXXL }) {
+        Text('阅读预览').fontSize(AppFontSize.SUBTITLE).fontColor(ThemeRuntime.readerTextColor(this.appDarkMode))
+        if (!this.titleStyle.singlePage || !this.titleReadingPreviewBody) {
+          this.titlePreviewContent()
+        }
+        if (!this.titleStyle.singlePage || this.titleReadingPreviewBody) {
+          ReaderWeightedText({ spans: [ReaderWeightedTextSpan.create(this.getUIContext(),
+            '　　清晨的风穿过长街，带来一阵粽叶的清香。街角的小摊刚刚支起，竹篮里整整齐齐地码着新煮好的粽子。\n\n　　“卖鸭蛋，卖粽子喽——”一声吆喝，把沉睡的小城轻轻唤醒。',
+            this.readerFontSize, this.bodyPreviewFontFamily(), ThemeRuntime.readerTextColor(this.appDarkMode))],
+            weight: this.readerFontWeight })
+            .width('100%')
+        }
+        if (this.titleStyle.singlePage) {
+          Text(this.titleReadingPreviewBody ? '正文页' : '标题页 · 正文从下一页开始')
+            .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.readerSubTextColor(this.appDarkMode))
+          Button(this.titleReadingPreviewBody ? '返回标题页' : '查看正文页')
+            .fontSize(AppFontSize.BODY).fontColor(this.accentColor()).backgroundColor(this.inputColor())
+            .onClick(() => { this.titleReadingPreviewBody = !this.titleReadingPreviewBody; })
+        }
+      }.width('100%').padding({ left: AppSpacing.XXXL, right: AppSpacing.XXXL, top: 48, bottom: 48 })
+    }.width('100%').height('100%')
+  }
+
+  @Builder
+  titlePreviewItem() {
+    Column({ space: AppSpacing.MD }) {
+      Row({ space: AppSpacing.XL }) {
+        Text('标题预览').fontSize(AppFontSize.BODY).fontColor(this.subTextColor()).layoutWeight(1)
+        Button(this.titlePreviewEditing ? '收起示例' : '编辑示例')
+          .fontSize(AppFontSize.CAPTION).fontColor(this.accentColor()).backgroundColor(Color.Transparent)
+          .onClick(() => { this.titlePreviewEditing = !this.titlePreviewEditing; })
+        Button('阅读预览')
+          .fontSize(AppFontSize.CAPTION).fontColor(this.accentColor()).backgroundColor(Color.Transparent)
+          .onClick(() => { this.titleReadingPreviewBody = false; this.titleReadingPreview = true; })
+      }.width('100%')
+      if (this.titlePreviewEditing) {
+        TextInput({ text: this.titlePreviewText, placeholder: '输入预览标题' })
+          .fontColor(this.primaryTextColor()).fontSize(AppFontSize.BODY)
+          .backgroundColor(this.inputColor()).maxLength(160)
+          .onChange((content: string) => { this.titlePreviewText = content; })
+        Button('长标题示例：天下承平，一世长安')
+          .fontSize(AppFontSize.CAPTION).fontColor(this.accentColor()).backgroundColor(Color.Transparent)
+          .onClick(() => { this.titlePreviewText = '第494章：天下承平，一世长安'; })
+      }
+      Column() {
+        this.titlePreviewContent()
+      }.width('100%').padding({ top: AppSpacing.XXXL, bottom: AppSpacing.XXXL,
+        left: AppSpacing.LG, right: AppSpacing.LG })
+        .backgroundColor(ThemeRuntime.readerBackgroundColor(this.appDarkMode))
+        .borderRadius(ThemeRuntime.mediumRadius())
+      Text(this.titleStyle.mode === 'off' ? '保持原始标题' :
+        (this.titlePreviewParts().length > 1 ? '已分为 2 段' : '未找到有效分段，保持原样'))
+        .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
     }
     .width('calc(100% - 32vp)')
     .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
@@ -977,6 +1321,7 @@ struct ReaderFontSettingsPage {
   }
 
   regexRuleAt(index: number): ReaderRegexFontRule {
+    if (index === -1) return this.titleStyle.emphasis;
     if (index >= 0 && index < this.regexRules.length) {
       return this.regexRules[index];
     }

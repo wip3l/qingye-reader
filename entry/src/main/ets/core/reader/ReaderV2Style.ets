@@ -20,6 +20,8 @@ export class ReaderV2SpanStyleRange {
   decorationEnabled: boolean = false;
   decorationStyleId: string = '';
   decorationSizePx: number = 0;
+  /** Chapter-title decorations are enclosed independently on every visual line. */
+  repeatCaps: boolean = false;
 
   constructor(start: number = 0, end: number = 0) {
     this.start = start;

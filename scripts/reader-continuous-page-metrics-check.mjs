@@ -36,6 +36,9 @@ const names = ['cancelReaderContinuousMetricsTimers', 'refreshReaderContinuousPa
   'getReaderInfoBarContext', 'getProgressText', 'ttsQuickProgress',
   'getReaderPageColumnWidth'];
 vm.runInContext(stripTypeScriptTypes(
+  ['core/reader/ReaderFontWeight.ts', 'core/reader/ReaderTitleSplit.ts',
+    'model/reader/ReaderRegexFontRule.ets', 'model/reader/ReaderTitleStyle.ets']
+    .map(file => readEtsModule(file).replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')).join('\n') + '\n' +
   readEtsModule('core/reader/ReaderPageOffsets.ts').replace(/^export /gm, '') + '\n' +
   readEtsModule('core/reader/ReaderInfoBarModel.ts').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '') +
   `\nclass Reader { ${names.map(method).join('\n')} }\n` +

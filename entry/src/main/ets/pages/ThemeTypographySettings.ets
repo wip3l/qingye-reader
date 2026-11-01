@@ -2,6 +2,7 @@ import { promptAction, router } from '@kit.ArkUI';
 import { text as graphicsText } from '@kit.ArkGraphics2D';
 import { ReaderWeightedText, ReaderWeightedTextSpan } from '../components/reader/ReaderWeightedText';
 import { ReaderFontWeight } from '../core/reader/ReaderFontWeight';
+import { ReaderTitleStyleCodec, ReaderTitleStyleSettings } from '../model/reader/ReaderTitleStyle';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ThemeTypographyDraft } from '../utils/ThemeTypographyDraft';
@@ -402,9 +403,10 @@ struct ThemeTypographySettingsPage {
         ReaderWeightedText({ spans: [ReaderWeightedTextSpan.create(this.getUIContext(), PREVIEW_CHAPTER_TITLE,
           this.draft.titleFontSize, this.titleFontFamily(), this.previewTheme().textColor,
           this.titleLineBox(), this.draft.letterSpacing)], weight: this.draft.titleFontWeight,
-          maxLines: this.fitFor(full).titleLines })
+          maxLines: this.fitFor(full).titleLines, alignment: this.titlePreviewAlignment() })
           .width('100%')
-          .margin({ bottom: this.draft.paragraphSpacing })
+          .margin({ top: this.titleLayout().marginTop,
+            bottom: this.draft.paragraphSpacing + this.titleLayout().marginBottom })
       }
       ForEach(this.visibleParagraphIndexes(full), (index: number) => {
         this.previewParagraph(index, this.paragraphMaxLines(full, index))
@@ -769,6 +771,7 @@ struct ThemeTypographySettingsPage {
       next.titleFontFamily = fontDraft.titleFontFamily;
       next.titleFontSize = fontDraft.titleFontSize;
       next.titleFontWeight = fontDraft.titleFontWeight;
+      next.titleStyleRaw = fontDraft.titleStyleRaw || '';
       next.fontWeight = fontDraft.fontWeight;
       next.regexFontEnabled = fontDraft.regexFontEnabled;
       next.regexFontPattern = fontDraft.regexFontPattern;
@@ -816,6 +819,7 @@ struct ThemeTypographySettingsPage {
     next.extendToStatusBar = defaults.extendToStatusBar;
     next.titleFontSize = defaults.titleFontSize;
     next.titleFontWeight = defaults.titleFontWeight;
+    next.titleStyleRaw = defaults.titleStyleRaw;
     next.readerHeaderEnabled = defaults.readerHeaderEnabled;
     next.readerFooterEnabled = defaults.readerFooterEnabled;
     next.readerInfoBarConfig = new ReaderInfoBarConfig().serialize();
@@ -988,6 +992,17 @@ struct ThemeTypographySettingsPage {
     return this.fontLineBox(this.draft.fontSize);
   }
 
+  titleLayout(): ReaderTitleStyleSettings {
+    return ReaderTitleStyleCodec.decode(this.draft.titleStyleRaw);
+  }
+
+  titlePreviewAlignment(): graphicsText.TextAlign {
+    const alignment = this.titleLayout().alignment;
+    if (alignment === 'left') return graphicsText.TextAlign.LEFT;
+    if (alignment === 'right') return graphicsText.TextAlign.RIGHT;
+    return graphicsText.TextAlign.CENTER;
+  }
+
   titleLineBox(): number {
     return this.fontLineBox(this.draft.titleFontSize);
   }
@@ -1033,11 +1048,14 @@ struct ThemeTypographySettingsPage {
     const width = this.contentWidth(full);
     if (available <= 0) return fit;
     const titleBox = this.titleLineBox();
+    const titleLayout = this.titleLayout();
+    const titleMargins = titleLayout.marginTop + titleLayout.marginBottom;
     const titleLines = this.measureLines(PREVIEW_CHAPTER_TITLE, this.draft.titleFontSize, this.draft.titleFontWeight,
       this.titleFontFamily(), titleBox, width);
-    fit.titleLines = Math.min(titleLines, Math.floor(available / titleBox));
+    fit.titleLines = Math.min(titleLines, Math.floor(Math.max(0, available - titleMargins) / titleBox));
     if (fit.titleLines < titleLines) return fit;
-    let y = titleLines * titleBox + Math.max(0, this.draft.paragraphSpacing);
+    if (titleLayout.singlePage) return fit;
+    let y = titleMargins + titleLines * titleBox + Math.max(0, this.draft.paragraphSpacing);
     const lineBox = this.bodyLineBox();
     const family = this.bodyFontFamily();
     for (let index = 0; index < PREVIEW_PARAGRAPHS.length; index++) {
