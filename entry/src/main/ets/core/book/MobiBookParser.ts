@@ -27,6 +27,40 @@ export class MobiBook {
 
 export type MobiTextDecoder = (bytes: Uint8Array, encoding: string) => string;
 
+/** 正文里要整段替换的标签（a 的 filepos 链接、img），bytes 是替换后的内容。 */
+class MobiTagEdit {
+  start: number = 0;
+  end: number = 0;
+  bytes: Uint8Array = new Uint8Array(0);
+}
+
+class MobiTagScan {
+  targets: number[] = [];
+  tocPos: number = -1;
+  edits: MobiTagEdit[] = [];
+  breakStarts: number[] = [];
+  breakEnds: number[] = [];
+  headings: number[] = [];
+  bodyStart: number = 0;
+  bodyEnd: number = 0;
+}
+
+class MobiAnchor {
+  position: number = 0;
+  target: number = 0;
+}
+
+class MobiRanges {
+  starts: number[] = [];
+  ends: number[] = [];
+}
+
+class MobiBuiltParts {
+  parts: string[] = [];
+  /** filepos 目标 → 锚点所在段的下标。 */
+  anchorPart: Map<number, number> = new Map<number, number>();
+}
+
 /**
  * 未加密的 MOBI6（未压缩或 PalmDOC 压缩）解析：
  * PalmDB 记录表 → 第 0 条记录里的 PalmDOC 头、MOBI 头和 EXTH 元数据 → 解压正文记录并去掉尾部附加数据 →
@@ -232,64 +266,32 @@ export class MobiBookParser {
     }
   }
 
-  private static buildParts(textBytes: Uint8Array, encoding: string, decode: MobiTextDecoder, imageDir: string,
+  /**
+   * 正文全程在字节上处理：标签都是 ASCII，用原生 indexOf 在 '<' 之间跳着扫一遍，记下要改写的标签、
+   * 分页标记、标题和 body 范围；之后按段拼字节、逐段解码。
+   * 不把整本书转成一个大字符串再跑正则：几十 MB 的中文书那样做要好几秒，主线程会被系统判定卡死杀掉。
+   */
+  private static buildParts(bytes: Uint8Array, encoding: string, decode: MobiTextDecoder, imageDir: string,
     book: MobiBook): void {
-    let raw = MobiBookParser.latin1(textBytes);
-    // 目录页位置取自 <guide><reference type="toc" filepos=...>。
-    let tocPos = -1;
-    const guide = /<reference\b[^>]*>/gi;
-    let reference = guide.exec(raw);
-    while (reference) {
-      if (/\btype\s*=\s*["']?toc\b/i.test(reference[0])) {
-        const pos = /\bfilepos\s*=\s*["']?0*(\d+)/i.exec(reference[0]);
-        if (pos) tocPos = Number(pos[1]);
-        break;
-      }
-      reference = guide.exec(raw);
+    const scan = MobiBookParser.scanTags(bytes, imageDir, book.images);
+    const anchors = MobiBookParser.placeAnchors(bytes, scan.targets);
+    let ranges = MobiBookParser.splitRanges(scan.bodyStart, scan.bodyEnd, scan.breakStarts, scan.breakEnds);
+    let built = MobiBookParser.assembleParts(bytes, ranges, scan.edits, anchors, encoding, decode);
+    let parts = built.parts;
+    // 目录页从锚点开始到所在段结束（分页标记处）。
+    let toc: MobiTocItem[] = [];
+    if (scan.tocPos >= 0) {
+      const tocPart = built.anchorPart.get(scan.tocPos);
+      if (tocPart !== undefined) toc = MobiBookParser.readToc(parts[tocPart], scan.tocPos);
     }
-
-    // filepos 是解压后正文的字节偏移：先在原始字节上插好锚点，再按实际编码解码。
-    const targets = new Set<number>();
-    const filepos = /\bfilepos\s*=\s*["']?0*(\d+)/gi;
-    let match = filepos.exec(raw);
-    while (match) {
-      const value = Number(match[1]);
-      if (value >= 0 && value <= raw.length) targets.add(value);
-      match = filepos.exec(raw);
-    }
-    const sorted = Array.from(targets).sort((a: number, b: number) => b - a);
-    const pieces: string[] = [];
-    let end = raw.length;
-    for (const target of sorted) {
-      let position = Math.min(target, end);
-      // 落在标签内部时挪到标签开头，避免把锚点插进属性里。
-      const open = raw.lastIndexOf('<', position);
-      const close = position > 0 ? raw.lastIndexOf('>', position - 1) : -1;
-      if (open > close && open >= 0 && position > open) position = open;
-      pieces.push(raw.substring(position, end));
-      pieces.push(`<a id="filepos${target}"></a>`);
-      end = position;
-    }
-    pieces.push(raw.substring(0, end));
-    raw = pieces.reverse().join('');
-    raw = raw.replace(/(<a\b[^>]*?)\bfilepos\s*=\s*["']?0*(\d+)["']?/gi, '$1href="#filepos$2"');
-    const images = new Map<number, MobiImage>();
-    for (const image of book.images) images.set(image.recIndex, image);
-    raw = raw.replace(/<img\b[^>]*>/gi, (tag: string): string => {
-      const index = /\b(?:hi|lo)?recindex\s*=\s*["']?0*(\d+)/i.exec(tag);
-      const image = index ? images.get(Number(index[1])) : undefined;
-      if (!image) return '';
-      return `<img src="${imageDir}/${MobiBookParser.imageName(image)}"/>`;
-    });
-
-    const html = decode(MobiBookParser.fromLatin1(raw), encoding);
-    const body = EpubHtmlConverter.bodyOf(html);
-    let parts = body.split(/<mbp:pagebreak\b[^>]*\/?>(?:\s*<\/mbp:pagebreak>)?/i);
-    const toc = tocPos >= 0 ? MobiBookParser.readToc(body, tocPos) : [];
     if (toc.length < 2 && parts.length <= 1) {
       // 没有目录也没有分页标记：按 h1–h3 标题拆开，避免整本书只有一章。
-      const byHeading = body.split(/(?=<h[1-3]\b)/i);
-      if (byHeading.length >= 3) parts = byHeading;
+      const cuts = scan.headings.filter((at: number) => at > scan.bodyStart && at < scan.bodyEnd);
+      if (cuts.length + 1 >= 3) {
+        ranges = MobiBookParser.splitRanges(scan.bodyStart, scan.bodyEnd, cuts, cuts);
+        built = MobiBookParser.assembleParts(bytes, ranges, scan.edits, anchors, encoding, decode);
+        parts = built.parts;
+      }
     }
     const kept: string[] = [];
     const keptIndexForPart: number[] = [];
@@ -301,9 +303,8 @@ export class MobiBookParser {
     }
     book.parts = kept;
     for (const entry of toc) {
-      const marker = `id="${entry.fragment}"`;
-      const partIndex = parts.findIndex((part: string) => part.includes(marker));
-      if (partIndex < 0) continue;
+      const partIndex = built.anchorPart.get(Number(entry.fragment.substring('filepos'.length)));
+      if (partIndex === undefined) continue;
       const mapped = keptIndexForPart[partIndex];
       const item = new MobiTocItem();
       if (mapped >= 0) {
@@ -359,18 +360,222 @@ export class MobiBookParser {
     return '';
   }
 
-  private static latin1(bytes: Uint8Array): string {
-    const parts: string[] = [];
-    const step = 8192;
-    for (let start = 0; start < bytes.length; start += step) {
-      const end = Math.min(bytes.length, start + step);
-      let piece = '';
-      for (let i = start; i < end; i++) piece += String.fromCharCode(bytes[i]);
-      parts.push(piece);
+  /** 扫一遍正文里的标签；只有 a、reference、img 这几种标签会转成（很短的）字符串跑正则。 */
+  private static scanTags(bytes: Uint8Array, imageDir: string, imageList: MobiImage[]): MobiTagScan {
+    const scan = new MobiTagScan();
+    const images = new Map<number, MobiImage>();
+    for (const image of imageList) images.set(image.recIndex, image);
+    const targets = new Set<number>();
+    let tocFound = false;
+    let bodyStart = -1;
+    let bodyEnd = -1;
+    let headEnd = -1;
+    let at = bytes.indexOf(0x3C);
+    while (at >= 0) {
+      const name = MobiBookParser.tagName(bytes, at);
+      if (name === '' || name === 'h') {
+        if (name === 'h') scan.headings.push(at);
+        at = bytes.indexOf(0x3C, at + 1);
+        continue;
+      }
+      const close = bytes.indexOf(0x3E, at + 1);
+      if (close < 0) break;
+      let end = close + 1;
+      if (name === 'a' || name === 'reference') {
+        const tag = MobiBookParser.ascii(bytes, at, end - at);
+        // filepos 是解压后正文的字节偏移，锚点插在这些位置上。
+        const filepos = /\bfilepos\s*=\s*["']?0*(\d+)/gi;
+        let match = filepos.exec(tag);
+        while (match) {
+          const value = Number(match[1]);
+          if (value <= bytes.length) targets.add(value);
+          match = filepos.exec(tag);
+        }
+        // 目录页位置取自 <guide><reference type="toc" filepos=...>。
+        if (name === 'reference' && !tocFound && /\btype\s*=\s*["']?toc\b/i.test(tag)) {
+          tocFound = true;
+          const pos = /\bfilepos\s*=\s*["']?0*(\d+)/i.exec(tag);
+          if (pos) scan.tocPos = Number(pos[1]);
+        }
+        if (name === 'a') {
+          const rewritten = tag.replace(/(<a\b[^>]*?)\bfilepos\s*=\s*["']?0*(\d+)["']?/gi, '$1href="#filepos$2"');
+          if (rewritten !== tag) scan.edits.push(MobiBookParser.tagEdit(at, end, rewritten));
+        }
+      } else if (name === 'img') {
+        const tag = MobiBookParser.ascii(bytes, at, end - at);
+        const index = /\b(?:hi|lo)?recindex\s*=\s*["']?0*(\d+)/i.exec(tag);
+        const image = index ? images.get(Number(index[1])) : undefined;
+        scan.edits.push(MobiBookParser.tagEdit(at, end,
+          image ? `<img src="${imageDir}/${MobiBookParser.imageName(image)}"/>` : ''));
+      } else if (name === 'body') {
+        if (bodyStart < 0) bodyStart = end;
+      } else if (name === '/body') {
+        if (bodyStart >= 0 && bodyEnd < 0) bodyEnd = at;
+      } else if (name === '/head') {
+        if (headEnd < 0) headEnd = end;
+      } else if (name === 'pagebreak') {
+        end = MobiBookParser.skipClosingPagebreak(bytes, end);
+        scan.breakStarts.push(at);
+        scan.breakEnds.push(end);
+      }
+      at = bytes.indexOf(0x3C, end);
     }
-    return parts.join('');
+    scan.targets = Array.from(targets);
+    // 没有 <body> 时取 </head> 之后的全部内容。
+    scan.bodyStart = bodyStart >= 0 ? bodyStart : Math.max(0, headEnd);
+    scan.bodyEnd = bodyEnd >= scan.bodyStart ? bodyEnd : bytes.length;
+    return scan;
   }
 
+  /** 锚点位置：落在标签内部时挪到标签开头，避免把锚点插进属性里。结果按位置从小到大。 */
+  private static placeAnchors(bytes: Uint8Array, targets: number[]): MobiAnchor[] {
+    const sorted = targets.slice().sort((a: number, b: number) => b - a);
+    const anchors: MobiAnchor[] = [];
+    let end = bytes.length;
+    for (const target of sorted) {
+      let position = Math.min(target, end);
+      const open = bytes.lastIndexOf(0x3C, position);
+      const close = position > 0 ? bytes.lastIndexOf(0x3E, position - 1) : -1;
+      if (open > close && open >= 0 && position > open) position = open;
+      const anchor = new MobiAnchor();
+      anchor.position = position;
+      anchor.target = target;
+      anchors.push(anchor);
+      end = position;
+    }
+    return anchors.reverse();
+  }
+
+  /** body 内按切分点拆段；cutStarts/cutEnds 之间的字节（分页标记）丢掉，标题切分时两者相同。 */
+  private static splitRanges(bodyStart: number, bodyEnd: number, cutStarts: number[], cutEnds: number[]): MobiRanges {
+    const ranges = new MobiRanges();
+    let from = bodyStart;
+    for (let i = 0; i < cutStarts.length; i++) {
+      if (cutStarts[i] < from || cutEnds[i] > bodyEnd) continue;
+      ranges.starts.push(from);
+      ranges.ends.push(cutStarts[i]);
+      from = cutEnds[i];
+    }
+    ranges.starts.push(from);
+    ranges.ends.push(bodyEnd);
+    return ranges;
+  }
+
+  /**
+   * 逐段拼出插好锚点、改写过标签的字节再解码。段都在标签边界上切开，不会切断多字节字符。
+   * 恰好落在段尾（分页标记、标题前）的锚点留在前一段，与先插锚点再切分的结果一致。
+   */
+  private static assembleParts(bytes: Uint8Array, ranges: MobiRanges, edits: MobiTagEdit[], anchors: MobiAnchor[],
+    encoding: string, decode: MobiTextDecoder): MobiBuiltParts {
+    const built = new MobiBuiltParts();
+    let ei = 0;
+    let ai = 0;
+    const first = ranges.starts.length > 0 ? ranges.starts[0] : 0;
+    while (ai < anchors.length && anchors[ai].position < first) ai++;
+    for (let k = 0; k < ranges.starts.length; k++) {
+      const start = ranges.starts[k];
+      const end = ranges.ends[k];
+      const chunks: Uint8Array[] = [];
+      let length = 0;
+      const push = (chunk: Uint8Array): void => {
+        if (chunk.length === 0) return;
+        chunks.push(chunk);
+        length += chunk.length;
+      };
+      let cursor = start;
+      while (ei < edits.length && edits[ei].start < start) ei++;
+      for (;;) {
+        const anchor = ai < anchors.length && anchors[ai].position <= end ? anchors[ai] : undefined;
+        const edit = ei < edits.length && edits[ei].end <= end ? edits[ei] : undefined;
+        if (anchor && (!edit || anchor.position <= edit.start)) {
+          // 落在两段之间（分页标记内部）的锚点放到本段开头。
+          const at = Math.max(anchor.position, cursor);
+          push(bytes.subarray(cursor, at));
+          push(MobiBookParser.fromLatin1(`<a id="filepos${anchor.target}"></a>`));
+          if (!built.anchorPart.has(anchor.target)) built.anchorPart.set(anchor.target, k);
+          cursor = at;
+          ai++;
+        } else if (edit) {
+          push(bytes.subarray(cursor, edit.start));
+          push(edit.bytes);
+          cursor = edit.end;
+          ei++;
+        } else {
+          break;
+        }
+      }
+      push(bytes.subarray(cursor, end));
+      const joined = new Uint8Array(length);
+      let offset = 0;
+      for (const chunk of chunks) {
+        joined.set(chunk, offset);
+        offset += chunk.length;
+      }
+      built.parts.push(length > 0 ? decode(joined, encoding) : '');
+    }
+    return built;
+  }
+
+  /** 关心的标签名；h1–h3 统一返回 'h'，其它返回空串。大小写不敏感，名字后须是单词边界。 */
+  private static tagName(bytes: Uint8Array, at: number): string {
+    const first = MobiBookParser.lowerAt(bytes, at + 1);
+    if (first === 0x61) return MobiBookParser.nameEnds(bytes, at + 2) ? 'a' : '';
+    if (first === 0x69) return MobiBookParser.nameAt(bytes, at + 1, 'img') ? 'img' : '';
+    if (first === 0x72) return MobiBookParser.nameAt(bytes, at + 1, 'reference') ? 'reference' : '';
+    if (first === 0x62) return MobiBookParser.nameAt(bytes, at + 1, 'body') ? 'body' : '';
+    if (first === 0x6D) return MobiBookParser.nameAt(bytes, at + 1, 'mbp:pagebreak') ? 'pagebreak' : '';
+    if (first === 0x68) {
+      const level = at + 2 < bytes.length ? bytes[at + 2] : 0;
+      return level >= 0x31 && level <= 0x33 && MobiBookParser.nameEnds(bytes, at + 3) ? 'h' : '';
+    }
+    if (first === 0x2F) {
+      if (MobiBookParser.nameAt(bytes, at + 1, '/body')) return '/body';
+      if (MobiBookParser.nameAt(bytes, at + 1, '/head')) return '/head';
+    }
+    return '';
+  }
+
+  /** 分页标记后面紧跟的空白和 </mbp:pagebreak> 一并去掉。 */
+  private static skipClosingPagebreak(bytes: Uint8Array, end: number): number {
+    let at = end;
+    while (at < bytes.length && (bytes[at] === 0x20 || (bytes[at] >= 0x09 && bytes[at] <= 0x0D))) at++;
+    const closing = '/mbp:pagebreak';
+    if (at < bytes.length && bytes[at] === 0x3C && MobiBookParser.nameAt(bytes, at + 1, closing) &&
+      at + 1 + closing.length < bytes.length && bytes[at + 1 + closing.length] === 0x3E) {
+      return at + 2 + closing.length;
+    }
+    return end;
+  }
+
+  private static nameAt(bytes: Uint8Array, at: number, name: string): boolean {
+    if (at + name.length > bytes.length) return false;
+    for (let i = 0; i < name.length; i++) {
+      if (MobiBookParser.lowerAt(bytes, at + i) !== name.charCodeAt(i)) return false;
+    }
+    return MobiBookParser.nameEnds(bytes, at + name.length);
+  }
+
+  private static nameEnds(bytes: Uint8Array, at: number): boolean {
+    if (at >= bytes.length) return true;
+    const c = bytes[at];
+    return !((c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) || c === 0x5F);
+  }
+
+  private static lowerAt(bytes: Uint8Array, at: number): number {
+    if (at >= bytes.length) return -1;
+    const c = bytes[at];
+    return c >= 0x41 && c <= 0x5A ? c + 0x20 : c;
+  }
+
+  private static tagEdit(start: number, end: number, replacement: string): MobiTagEdit {
+    const edit = new MobiTagEdit();
+    edit.start = start;
+    edit.end = end;
+    edit.bytes = MobiBookParser.fromLatin1(replacement);
+    return edit;
+  }
+
+  /** 标签字符串由字节逐个转成字符，改写后按原字节写回；插入的内容都是 ASCII。 */
   private static fromLatin1(text: string): Uint8Array {
     const bytes = new Uint8Array(text.length);
     for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 0xFF;

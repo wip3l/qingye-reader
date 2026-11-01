@@ -12,7 +12,7 @@ import { ReaderImageMarker } from './ReaderImageMarker';
 import { LocalChapterContentLoader } from './LocalChapterContentLoader';
 import { EpubChapterPlanner, EpubPlannedChapter, EpubTocEntry } from './EpubChapterPlanner';
 import { EpubConvertResult, EpubHtmlConverter } from './EpubHtmlConverter';
-import { MobiBookParser } from './MobiBookParser';
+import { MobiImportTask } from '../concurrency/MobiImportTask';
 
 
 export class LocalBookExportResult {
@@ -1087,37 +1087,21 @@ export class LocalBookService {
 
   /**
    * MOBI 先拆成若干 HTML 文件和图片写进解压目录，之后与 EPUB 走同一套分章、转换和阅读时重建正文的流程。
-   * 目录锚点是 filepos 位置插入的 id="fileposN"。
+   * 目录锚点是 filepos 位置插入的 id="fileposN"。解析和写文件在 TaskPool 里做，主线程只等结果。
    */
   private static async parseMobi(context: Context, mobiPath: string, id: string): Promise<EpubPackageData> {
     const stat = await fs.stat(mobiPath);
     const extractRoot = `${context.filesDir}/local_books/${id}_${stat.mtime}`;
-    const bytes = await LocalBookService.readFileBytes(mobiPath);
-    const mobi = MobiBookParser.parse(bytes, (value: Uint8Array, encoding: string): string => {
-      try {
-        return util.TextDecoder.create(encoding).decodeWithStream(value, { stream: false });
-      } catch (_) {
-        return util.TextDecoder.create('utf-8').decodeWithStream(value, { stream: false });
-      }
-    }, '../images');
-    if (LocalBookService.exists(extractRoot)) fs.rmdirSync(extractRoot);
-    LocalBookService.ensureDir(`${extractRoot}/text`);
-    LocalBookService.ensureDir(`${extractRoot}/images`);
+    const mobi = await MobiImportTask.extract(mobiPath, extractRoot);
     const result = new EpubPackageData();
     result.extractRoot = extractRoot;
     result.title = mobi.title;
     result.author = mobi.author;
-    for (const image of mobi.images) {
-      const path = `${extractRoot}/images/${MobiBookParser.imageName(image)}`;
-      LocalBookService.writeFileBytes(path, image.bytes);
-      if (image.recIndex === mobi.coverRecIndex) result.coverPath = path;
-    }
+    result.coverPath = mobi.coverPath;
     const files: LocalSpineFile[] = [];
-    for (let i = 0; i < mobi.parts.length; i++) {
+    for (const path of mobi.partPaths) {
       const file = new LocalSpineFile();
-      file.path = `${extractRoot}/text/part${`${i + 1}`.padStart(5, '0')}.html`;
-      const html = `<html><head><meta charset="utf-8"/></head><body>${mobi.parts[i]}</body></html>`;
-      LocalBookService.writeFileBytes(file.path, new util.TextEncoder().encodeInto(html));
+      file.path = path;
       files.push(file);
     }
     const tocEntries: EpubTocEntry[] = [];
@@ -1216,39 +1200,6 @@ export class LocalBookService {
         chapter.imageOnly = planned.imageOnly;
         result.chapters.push(chapter);
       }
-    }
-  }
-
-  private static async readFileBytes(path: string): Promise<Uint8Array> {
-    const stat = await fs.stat(path);
-    const file = await fs.open(path, fs.OpenMode.READ_ONLY);
-    try {
-      const buffer = new ArrayBuffer(stat.size);
-      let offset = 0;
-      while (offset < stat.size) {
-        const read = await fs.read(file.fd, buffer, { offset: offset, length: stat.size - offset });
-        if (read <= 0) break;
-        offset += read;
-      }
-      return new Uint8Array(buffer, 0, offset);
-    } finally {
-      await fs.close(file);
-    }
-  }
-
-  private static writeFileBytes(path: string, bytes: Uint8Array): void {
-    const file = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-    try {
-      let offset = 0;
-      // writeSync 可能短写，按返回值续写。
-      while (offset < bytes.byteLength) {
-        const written = fs.writeSync(file.fd,
-          bytes.buffer.slice(bytes.byteOffset + offset, bytes.byteOffset + bytes.byteLength));
-        if (written <= 0) throw new Error(`写入失败：${path}`);
-        offset += written;
-      }
-    } finally {
-      fs.closeSync(file);
     }
   }
 
