@@ -7,6 +7,9 @@ export struct NativeCommentPageView {
   @Prop @Watch('pageChanged') page: NativeCommentPage = new NativeCommentPage();
   @State loading: boolean = true;
   @State error: string = '';
+  /** 每次显示尝试先报 start，再报一次 ready / failed / cancelled，调试页据此单独记录显示结果。 */
+  onDisplay: (state: string, message: string) => void = (): void => {};
+  private displayOpen: boolean = false;
   private controller: webview.WebviewController = new webview.WebviewController();
   private timer: number = -1;
   private readyTimer: number = -1;
@@ -20,6 +23,19 @@ export struct NativeCommentPageView {
     this.serial++;
     this.clearTimer();
     try { this.controller.stop(); } catch (_) { }
+    this.endDisplay('cancelled', '预览已关闭');
+  }
+
+  private beginDisplay(): void {
+    this.endDisplay('cancelled', '已重新加载');
+    this.displayOpen = true;
+    this.onDisplay('start', '');
+  }
+
+  private endDisplay(state: string, message: string): void {
+    if (!this.displayOpen) return;
+    this.displayOpen = false;
+    this.onDisplay(state, message);
   }
 
   private clearTimer(): void {
@@ -38,7 +54,7 @@ export struct NativeCommentPageView {
       this.controller.runJavaScript(`window.__NATIVE_PAGE_READY__ === true && window.__NATIVE_PAGE_GENERATION__ === ${serial}`)
         .then((ready: string): void => {
           if (!this.attached || serial !== this.serial || this.error) return;
-          if (ready === 'true') { this.clearTimer(); this.loading = false; }
+          if (ready === 'true') { this.clearTimer(); this.loading = false; this.endDisplay('ready', ''); }
           else this.scheduleReady();
         }).catch((): void => {
           if (this.attached && serial === this.serial && !this.error) this.scheduleReady();
@@ -53,6 +69,7 @@ export struct NativeCommentPageView {
     this.error = message;
     try { this.controller.stop(); } catch (_) { }
     // The error branch unmounts Web instead of leaving a failed document attached to the panel.
+    this.endDisplay('failed', message);
   }
 
   private retry(): void {
@@ -68,6 +85,7 @@ export struct NativeCommentPageView {
     this.clearTimer();
     this.loading = true;
     this.error = '';
+    this.beginDisplay();
     try {
       const document = NativeCommentPage.document(this.page, this.serial);
       this.timer = setTimeout((): void => {

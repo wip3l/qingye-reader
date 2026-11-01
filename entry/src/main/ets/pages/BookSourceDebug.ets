@@ -126,7 +126,8 @@ struct BookSourceDebugPage {
 
   @Builder
   inlinePreviewContent() {
-    NativeCommentPageView({ page: this.inlinePreview })
+    NativeCommentPageView({ page: this.inlinePreview,
+      onDisplay: (state: string, message: string): void => this.inlineDisplayChanged(state, message) })
   }
 
   @Builder
@@ -588,7 +589,7 @@ struct BookSourceDebugPage {
     const serial = ++this.inlineSerial;
     const debug = this.inlineDebug;
     this.inlineBusy = true;
-    debug?.beginStep(SourceRuntimeStage.CONTENT, '内联评论页预览');
+    debug?.beginStep(SourceRuntimeStage.CONTENT, '内联评论页生成');
     try {
       const page = await NativeSourceService.getCommentPage(this.source, new HttpClient(10000), this.inlineBook,
         this.inlineChapter, action.url, (): boolean => serial !== this.inlineSerial, debug);
@@ -657,6 +658,18 @@ struct BookSourceDebugPage {
       HdsFeedback.showToast('复制失败，请稍后重试');
     }
   }
+  /** 页面生成成功不等于显示成功：显示另记一步，超时、出错或中途关闭都写回调试记录。 */
+  private inlineDisplayChanged(state: string, message: string): void {
+    const debug = this.inlineDebug;
+    if (!debug) return;
+    if (state === 'start') {
+      debug.beginStep(SourceRuntimeStage.CONTENT, '内联评论页显示');
+      return;
+    }
+    debug.finishStep(state === 'ready' ? 'passed' : state, message);
+    this.publishSession(debug);
+  }
+
   private publishSession(debug: BookSourceDebugContext): void {
     this.session = JSON.parse(JSON.stringify(debug.session)) as BookSourceDebugSession;
   }

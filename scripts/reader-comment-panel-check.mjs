@@ -239,8 +239,8 @@ for (const required of ['incognitoMode: true','.blockNetwork(true)','.fileAccess
 }
 assert(!inlineView.includes('.javaScriptProxy('),'offline view has no native bridge');
 function inlineWebHarness() {
-  const timers=new Map(),loads=[];let id=0,ready='false',stopped=0;
-  const names=['load','clearTimer','scheduleReady','fail','aboutToDisappear'];
+  const timers=new Map(),loads=[],displays=[];let id=0,ready='false',stopped=0;
+  const names=['load','clearTimer','scheduleReady','fail','aboutToDisappear','beginDisplay','endDisplay'];
   const methods=names.map(name=>{
     const start=new RegExp(`^  (?:private )?${name}\\(`,'m').exec(inlineView)?.index;
     assert.notEqual(start,undefined,name);
@@ -249,8 +249,9 @@ function inlineWebHarness() {
   const context=vm.createContext({NativeCommentPage,Error,setTimeout:(fn,ms)=>{timers.set(++id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id)});
   const view=vm.runInContext(stripTypeScriptTypes(`({${methods.join(',')}})`,{mode:'strip'}),context);
   Object.assign(view,{attached:true,serial:0,timer:-1,readyTimer:-1,page:Object.assign(new NativeCommentPage(),{html:'<p>test</p>'}),
-    error:'',controller:{loadData:(...args)=>loads.push(args),runJavaScript:async()=>ready,stop:()=>stopped++}});
-  return {view,timers,loads,ready:value=>{ready=value;},stopped:()=>stopped,async tick(ms){
+    error:'',displayOpen:false,onDisplay:(state,message)=>displays.push(state+(message?':'+message:'')),
+    controller:{loadData:(...args)=>loads.push(args),runJavaScript:async()=>ready,stop:()=>stopped++}});
+  return {view,timers,loads,displays,ready:value=>{ready=value;},stopped:()=>stopped,async tick(ms){
     const [key,value]=[...timers].find(([,value])=>value.ms===ms)||[];assert(value,'expected timer');timers.delete(key);value.fn();
     for(let i=0;i<6;i++) await Promise.resolve();
   }};
@@ -259,13 +260,20 @@ function inlineWebHarness() {
   const h=inlineWebHarness();h.view.load();assert.equal(h.loads[0][3],'about:blank');assert(h.loads[0][0].includes('__NATIVE_PAGE_GENERATION__=1'));
   await h.tick(100);assert.equal(h.view.loading,true,'no page-end event is needed for readiness polling');
   h.ready('true');await h.tick(100);assert.equal(h.view.loading,false);assert.equal(h.timers.size,0);
+  h.view.aboutToDisappear();assert.deepEqual(h.displays,['start','ready'],'display result is reported once');
 }
 {
   const h=inlineWebHarness();h.view.load();await h.tick(15000);assert.match(h.view.error,/15 秒/);
   assert.equal(h.view.attached,false);assert.equal(h.timers.size,0);assert.equal(h.stopped(),1);
+  assert.deepEqual(h.displays,['start','failed:评论页渲染超过 15 秒'],'generation pass is not reported as display pass');
 }
 {
   const h=inlineWebHarness();h.view.load();h.view.aboutToDisappear();assert.equal(h.timers.size,0);assert.equal(h.view.attached,false);
+  assert.deepEqual(h.displays,['start','cancelled:预览已关闭']);
+}
+{
+  const h=inlineWebHarness();h.view.load();h.view.load();
+  assert.deepEqual(h.displays,['start','cancelled:已重新加载','start'],'a reload closes the previous attempt first');
 }
 console.log('PASS inline comment panel: click, close cancellation, stale results, chapter changes, fallback and error handling; Web policy wiring');
 
