@@ -20,12 +20,13 @@ export class OpdsBookService {
     const href = (link.href || '').split('?')[0].split('#')[0].toLowerCase();
     if (href.endsWith('.epub')) return 'epub';
     if (href.endsWith('.mobi')) return 'mobi';
+    if (href.endsWith('.pdf')) return 'pdf';
     if (href.endsWith('.txt')) return 'txt';
     return '';
   }
 
   static isDownloadableFormat(format: string): boolean {
-    return format === 'epub' || format === 'txt' || format === 'mobi';
+    return LocalBookService.isSupportedFormat(format);
   }
 
   static async isAlreadyImported(serverId: string, acquisitionUrl: string): Promise<boolean> {

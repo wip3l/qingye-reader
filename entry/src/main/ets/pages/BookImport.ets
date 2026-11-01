@@ -65,14 +65,14 @@ struct BookImportPage {
           router.pushUrl({ url: 'pages/OpdsServers' });
         })
       this.menuRow($r('sys.symbol.externaldrive'), 'WebDAV 服务',
-        '浏览远程 TXT / EPUB / MOBI 书库', true, () => {
+        '浏览远程 TXT / EPUB / MOBI / PDF 书库', true, () => {
           router.pushUrl({ url: 'pages/WebDav' });
         })
       this.menuRow($r('sys.symbol.book'), '本地导入',
-        '选择并导入 TXT / EPUB / MOBI 文件', false, () => {
+        '选择并导入 TXT / EPUB / MOBI / PDF 文件', false, () => {
           this.addBooks();
         })
-      Text('支持 TXT / EPUB / MOBI 格式，MOBI 需未加密且不是 KF8（AZW3）')
+      Text('支持 TXT / EPUB / MOBI / PDF 格式，MOBI 需未加密且不是 KF8（AZW3），PDF 暂不支持打开密码')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .width('100%')
@@ -106,9 +106,10 @@ struct BookImportPage {
 
   finishImport(result: LocalBookScanResult): void {
     const failed = result.failed > 0 ? `，${result.failed}本失败` : '';
-    this.statusText = `导入完成：成功${result.imported}本${failed}`;
+    const summary = `导入完成：成功${result.imported}本${failed}`;
+    this.statusText = summary + (result.failures.length ? `\n${result.failures.join('\n')}` : '');
     AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-    HdsFeedback.showToast(this.statusText);
+    HdsFeedback.showToast(summary);
   }
 
   pageColor(): string {

@@ -1,0 +1,476 @@
+import { pdfViewManager, pdfService } from '@kit.PDFKit';
+import { Book } from '@legado/sourceengine';
+import { appDb } from '../model/data/AppDatabase';
+import { LocalBookService } from '../core/book/LocalBookService';
+import { PdfBookService } from '../core/book/pdf/PdfBookService';
+import { PdfOutlineEntry, PdfPagePosition, PdfSearchHit, PdfSearchRect } from '../core/book/pdf/PdfModels';
+import { PdfSearchTask } from '../core/concurrency/PdfSearchTask';
+import { PdfNavigationDataSource } from '../core/book/pdf/PdfNavigationDataSource';
+import { PdfReaderView } from '../components/reader/PdfReaderView';
+import { PdfReaderControls } from '../components/reader/PdfReaderControls';
+import { ThemeRuntime } from '../theme/ThemeRuntime';
+import { AppFontSize } from '../theme/AppFontSize';
+import { HdsFeedback } from '../utils/HdsFeedback';
+import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
+import { RecentReadShortcut } from '../utils/RecentReadShortcut';
+import { window } from '@kit.ArkUI';
+import { syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
+import { readStatsTracker } from '../core/stats/ReadStatsTracker';
+import { CloudAutoSync } from '../account/CloudAutoSync';
+import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';
+import { WebDavBookService } from '../webdav/WebDavBookService';
+import { ReaderComicSuperResolution, ReaderComicSuperResolutionAccess } from '@legado/aiengine';
+import { AiAccessPolicy } from '../account/AiAccessPolicy';
+import { ReaderPdfSettings } from '../core/book/pdf/ReaderPdfSettings';
+import { ReaderPdfSettingsStore } from '../core/book/pdf/ReaderPdfSettingsStore';
+
+@Entry
+@Component
+struct PdfReadBookPage {
+  @StorageProp('appDarkMode') @Watch('applySystemBars') darkMode: boolean = false;
+  @StorageProp('themeRevision') themeRevision: number = 0;
+  @StorageProp('accountEntitlementsRevision') @Watch('refreshAiAccess') aiAccountRevision: number = 0;
+  @StorageProp('accountMembershipSku') @Watch('refreshAiAccess') membershipSku: string = '';
+  @StorageProp('aiTrialOpen') @Watch('refreshAiAccess') aiTrialOpen: boolean = false;
+  @StorageLink('launchShortcutNonce') @Watch('onShortcut') shortcutNonce: number = 0;
+  @State title: string = 'PDF 阅读';
+  @State sourcePath: string = '';
+  @State pageCount: number = 0;
+  @State pageIndex: number = 0;
+  @State previewIndex: number = -1;
+  @State initialPage: number = 0;
+  @State @Watch('applySystemBars') ready: boolean = false;
+  @State statusText: string = '正在打开 PDF…';
+  @State failed: boolean = false;
+  @State @Watch('applySystemBars') menuVisible: boolean = false;
+  @State activePanel: string = '';
+  @State jumpInput: string = '';
+  @State searchInput: string = '';
+  @State searchCount: number = 0;
+  @State searchIndex: number = -1;
+  @State searching: boolean = false;
+  @State searchCompleted: boolean = false;
+  @State continuous: boolean = true;
+  @State doublePage: boolean = false;
+  @State fitPage: boolean = false;
+  @State wideWindow: boolean = false;
+  @State superResolution: boolean = false;
+  @State superResolutionAccess: string = ReaderComicSuperResolutionAccess.UNSUPPORTED;
+  @State showOriginal: boolean = false;
+  @State enhancementStatus: string = '';
+  @State layoutRevision: number = 0;
+  @State visible: boolean = true;
+  private controller: pdfViewManager.PdfController = new pdfViewManager.PdfController();
+  @State navigationIndex: number = 0;
+  @State navigationTitle: string = '目录';
+  private navigation: PdfNavigationDataSource = new PdfNavigationDataSource();
+  private navigationScroller: Scroller = new Scroller();
+  private book: Book | null = null;
+  private bookUrl: string = '';
+  private alive: boolean = true;
+  private generation: number = 0;
+  private searchGeneration: number = 0;
+  private searchHits: PdfSearchHit[] = [];
+  private saveTimer: number = -1;
+  private saveTask: Promise<void> = Promise.resolve();
+  private owner: string = `pdf-${Date.now()}-${Math.random()}`;
+  private shortcutReplace: boolean = false;
+  private closing: boolean = false;
+  private customizedPreferences: Set<string> = new Set<string>();
+
+  aboutToAppear(): void {
+    this.alive = true;
+    const params = this.getUIContext().getRouter().getParams() as Record<string, string>;
+    this.bookUrl = params?.['bookUrl'] || '';
+    this.shortcutReplace = params?.['shortcutEntry'] === 'true' && params?.['shortcutReplace'] === 'true';
+    AppStorage.setOrCreate('shelfReaderDirectTransition', false);
+    ReaderProgressCheckpoint.attach(this.owner, (): Promise<void> => this.saveProgress(), (): string => this.bookUrl);
+    this.refreshAiAccess();
+    this.open();
+  }
+
+  onPageShow(): void {
+    this.visible = true;
+    AiAccessPolicy.refresh(); this.refreshAiAccess();
+    this.applySystemBars();
+    if (this.ready) readStatsTracker.setReadingActive(this.bookUrl);
+    this.onShortcut();
+  }
+
+  onPageHide(): void {
+    this.visible = false; this.previewIndex = -1;
+    this.applySystemBars();
+    readStatsTracker.setReadingActive('');
+    this.flushAndSyncProgress();
+  }
+
+  aboutToDisappear(): void {
+    this.flushAndSyncProgress();
+    this.alive = false; this.generation++; this.searchGeneration++;
+    this.applySystemBars();
+    ReaderProgressCheckpoint.detach(this.owner);
+    readStatsTracker.setReadingActive('');
+  }
+
+  onBackPress(): boolean {
+    if (this.activePanel) { this.setPanel(''); return true; }
+    if (this.menuVisible) { this.menuVisible = false; return true; }
+    this.close(); return true;
+  }
+
+  private async open(): Promise<void> {
+    const token = ++this.generation;
+    this.failed = false;
+    try {
+      if (!canIUse('SystemCapability.OfficeService.PDFService.Core')) throw new Error('此设备暂不支持 PDF 阅读');
+      const context = this.getUIContext().getHostContext();
+      if (!context) throw new Error('无法获取应用上下文');
+      await appDb.initWithContext(context);
+      let book = await appDb.getBook(this.bookUrl);
+      if (!book || !LocalBookService.isPdfBook(book)) throw new Error('未找到 PDF 书籍，请重新导入');
+      if (CloudAutoSync.isPlaceholder(book)) {
+        this.statusText = '正在从云端下载 PDF…';
+        book = await CloudAutoSync.ensureBookDownloaded(context, book);
+      }
+      if (LocalBookService.isWebDavBook(book)) {
+        book = await WebDavBookService.ensureCached(context, book, (message: string): void => {
+          if (this.alive && token === this.generation) this.statusText = message;
+        });
+      }
+      const path = book.getVariable('localFilePath');
+      if (!path || !LocalBookService.exists(path)) throw new Error('PDF 文件不存在，请重新导入或从书库重新下载');
+      await LocalBookService.ensureLocalParserCurrent(context, book);
+      book = await appDb.getBook(this.bookUrl);
+      if (!book || !this.alive || token !== this.generation) return;
+      const defaults = await ReaderPdfSettingsStore.load(context);
+      if (!this.alive || token !== this.generation) return;
+      const settings = defaults.withOverrides({
+        'pdfContinuous': book.getVariable(ReaderPdfSettings.CONTINUOUS),
+        'pdfDoublePage': book.getVariable(ReaderPdfSettings.DOUBLE_PAGE),
+        'pdfFitPage': book.getVariable(ReaderPdfSettings.FIT_PAGE),
+        'pdfSuperResolution': book.getVariable(ReaderPdfSettings.SUPER_RESOLUTION)
+      });
+      this.book = book; this.title = book.name || 'PDF 阅读';
+      this.pageCount = book.totalChapterNum;
+      this.initialPage = PdfPagePosition.clamp(book.durChapterIndex, this.pageCount);
+      this.pageIndex = this.initialPage; this.jumpInput = `${this.initialPage + 1}`;
+      this.continuous = settings.continuous;
+      this.doublePage = settings.doublePage;
+      this.fitPage = settings.fitPage;
+      this.superResolution = settings.superResolution;
+      const outline = await PdfBookService.outline(book);
+      if (!this.alive || token !== this.generation) return;
+      this.navigation.reset(outline, this.pageCount);
+      this.navigationTitle = this.navigation.hasOutline() ? '目录' : '页面';
+      this.navigationIndex = this.navigation.indexForPage(this.pageIndex);
+      this.sourcePath = book.getVariable('localFilePath');
+    } catch (error) {
+      if (this.alive && token === this.generation) this.fail(error instanceof Error ? error.message : '打开 PDF 失败');
+    }
+  }
+
+  private documentReady(count: number, index: number): void {
+    if (!this.alive || count <= 0) return;
+    this.pageCount = count;
+    this.pageIndex = PdfPagePosition.clamp(index, count);
+    this.jumpInput = `${this.pageIndex + 1}`;
+    this.navigationIndex = this.navigation.indexForPage(this.pageIndex);
+    this.ready = true; this.statusText = '';
+    this.applyViewSettings();
+    if (this.visible) readStatsTracker.setReadingActive(this.bookUrl);
+    this.scheduleSave();
+  }
+
+  /**
+   * Like the comic reader, the document runs under a hidden status bar and the bar returns with the menu.
+   * Layout stays full screen either way, and the safe-area heights ignore visibility, so nothing shifts.
+   */
+  applySystemBars(): void {
+    const context = this.getUIContext().getHostContext();
+    if (!context) return;
+    window.getLastWindow(context).then((mainWindow: window.Window): void => {
+      // Read the state at apply time so rapid menu toggles settle on the latest one.
+      const showStatus = !this.alive || !this.visible || this.menuVisible || !this.ready;
+      const dark = this.darkMode;
+      mainWindow.setWindowBackgroundColor(ThemeRuntime.pageColor(dark));
+      mainWindow.setWindowLayoutFullScreen(true);
+      mainWindow.setWindowSystemBarEnable(showStatus ? ['navigation', 'status'] : ['navigation']);
+      syncDesktopTitleBar(mainWindow, dark);
+      syncSystemSafeAreas(mainWindow);
+      mainWindow.setWindowSystemBarProperties({
+        statusBarColor: '#00000000',
+        isStatusBarLightIcon: dark,
+        statusBarContentColor: ThemeRuntime.primaryTextColor(dark),
+        navigationBarColor: '#00000000',
+        isNavigationBarLightIcon: dark,
+        navigationBarContentColor: ThemeRuntime.primaryTextColor(dark)
+      });
+    }).catch((error: Error): void => { console.warn('[PDF] system bars failed:', error); });
+  }
+
+  private fail(message: string): void {
+    this.ready = false; this.failed = true; this.statusText = message;
+    readStatsTracker.setReadingActive('');
+  }
+
+  private onPage(index: number): void {
+    if (!this.ready || !this.alive || !this.visible) return;
+    this.pageIndex = PdfPagePosition.clamp(index, this.pageCount);
+    this.jumpInput = `${this.pageIndex + 1}`;
+    this.navigationIndex = this.navigation.indexForPage(this.pageIndex);
+    this.scheduleSave();
+  }
+
+  private scheduleSave(): void {
+    if (this.saveTimer >= 0) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout((): void => { this.saveTimer = -1; this.flushProgress(); }, 500);
+  }
+
+  private flushProgress(): void {
+    this.saveProgress().catch((error: Error): void => { console.warn('[PDF] progress save failed:', error); });
+  }
+
+  private flushAndSyncProgress(): void {
+    const context = this.getUIContext().getHostContext();
+    this.saveProgress().then(async (): Promise<void> => {
+      if (context) await CloudSyncCoordinator.syncAutomatically(context, CloudSyncCoordinator.TRIGGER_CHANGE);
+    }).catch((error: Error): void => { console.warn('[PDF] progress sync failed:', error); });
+  }
+
+  private saveProgress(): Promise<void> {
+    if (this.saveTimer >= 0) { clearTimeout(this.saveTimer); this.saveTimer = -1; }
+    if (!this.ready || !this.book || !ReaderProgressCheckpoint.canWrite(this.owner)) return this.saveTask;
+    const page = this.pageIndex;
+    const settings = new ReaderPdfSettings();
+    settings.continuous = this.continuous; settings.doublePage = this.doublePage;
+    settings.fitPage = this.fitPage; settings.superResolution = this.superResolution;
+    const overrides = settings.bookVariables(Array.from(this.customizedPreferences));
+    const timestamp = Date.now();
+    const bookUrl = this.bookUrl;
+    const task = this.saveTask.catch((): void => {}).then(async (): Promise<void> => {
+      const latest = await appDb.getBook(bookUrl);
+      if (!latest || timestamp < latest.durChapterTime && latest.hasStartedReading()) return;
+      latest.putVariable('readStarted', '1');
+      for (const key of Object.keys(overrides)) latest.putVariable(key, overrides[key]);
+      latest.putVariable('readProgressChapterIndex', `${page}`);
+      latest.putVariable('readProgressPageCount', '1');
+      await appDb.updateBookReadingProgress(bookUrl, PdfPagePosition.title(page), page, 0, timestamp, latest.variable);
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+    });
+    this.saveTask = task;
+    return task;
+  }
+
+  private goTo(index: number): void {
+    if (!this.ready) return;
+    const target = PdfPagePosition.clamp(index, this.pageCount);
+    this.previewIndex = -1;
+    try { this.controller.goToPage(target); }
+    catch (error) { console.warn('[PDF] navigation failed:', error); HdsFeedback.showToast('页码跳转失败'); }
+  }
+
+  private jump(): void {
+    const page = Number(this.jumpInput);
+    if (!Number.isInteger(page) || page < 1 || page > this.pageCount) {
+      HdsFeedback.showToast(`请输入 1–${this.pageCount} 的页码`); return;
+    }
+    this.goTo(page - 1);
+    this.setPanel('');
+  }
+
+  private applyViewSettings(): void {
+    if (!this.ready) return;
+    try {
+      const page = this.pageIndex;
+      this.controller.setPageContinuous(this.continuous);
+      this.controller.setPageLayout(this.doublePage && this.wideWindow ?
+        pdfService.PageLayout.LAYOUT_DOUBLE : pdfService.PageLayout.LAYOUT_SINGLE);
+      this.controller.setPageFit(this.fitPage ? pdfService.PageFit.FIT_PAGE : pdfService.PageFit.FIT_WIDTH);
+      this.controller.goToPage(page);
+      this.layoutRevision++;
+      this.scheduleSave();
+    } catch (error) { console.warn('[PDF] view settings failed:', error); HdsFeedback.showToast('阅读布局调整失败'); }
+  }
+
+  private async search(): Promise<void> {
+    if (!this.ready || this.searching || !this.searchInput.trim()) return;
+    const token = ++this.searchGeneration;
+    this.searching = true; this.searchCount = 0; this.searchIndex = -1; this.searchCompleted = false;
+    try {
+      const result = await PdfSearchTask.search(this.sourcePath, this.searchInput.trim());
+      if (!this.alive || token !== this.searchGeneration) return;
+      this.searchHits = result.hits; this.searchCount = result.hits.length; this.searchCompleted = true;
+      if (this.searchCount > 0) { this.searchIndex = 0; this.showSearchHit(); }
+      if (result.truncated) HdsFeedback.showToast('匹配结果较多，仅显示前 5000 项');
+    } catch (error) { if (this.alive && token === this.searchGeneration) HdsFeedback.showToast('PDF 搜索失败'); }
+    finally { if (this.alive) this.searching = false; }
+  }
+
+  refreshAiAccess(): void {
+    this.superResolutionAccess = ReaderComicSuperResolution.access();
+  }
+
+  private setSuperResolution(checked: boolean): void {
+    this.refreshAiAccess();
+    if (checked && this.superResolutionAccess !== ReaderComicSuperResolutionAccess.READY) return;
+    if (this.superResolution === checked) return;
+    this.customizedPreferences.add(ReaderPdfSettings.SUPER_RESOLUTION);
+    this.superResolution = checked; this.showOriginal = false; this.enhancementStatus = '';
+    this.scheduleSave();
+  }
+
+  private setViewPreference(key: string, checked: boolean): void {
+    if (key === ReaderPdfSettings.CONTINUOUS && this.continuous !== checked) this.continuous = checked;
+    else if (key === ReaderPdfSettings.DOUBLE_PAGE && this.doublePage !== checked) this.doublePage = checked;
+    else if (key === ReaderPdfSettings.FIT_PAGE && this.fitPage !== checked) this.fitPage = checked;
+    else return;
+    this.customizedPreferences.add(key);
+    this.applyViewSettings();
+  }
+
+  private openAiAccount(): void {
+    this.setPanel('');
+    this.getUIContext().getRouter().pushUrl({ url: 'pages/AccountCenter' })
+      .catch((error: Error): void => { console.warn('[PDF] account page failed:', error); });
+  }
+
+  private searchNext(direction: number): void {
+    if (this.searchCount <= 0 || this.searching) return;
+    this.searchIndex = (this.searchIndex + direction + this.searchCount) % this.searchCount;
+    this.showSearchHit();
+  }
+
+  private showSearchHit(): void {
+    const hit = this.searchHits[this.searchIndex];
+    if (!hit || !this.ready) return;
+    try {
+      const boxes: pdfService.PdfRect[] = hit.rects.map((rect: PdfSearchRect): pdfService.PdfRect => {
+        const box = new pdfService.PdfRect();
+        box.left = rect.left; box.top = rect.top; box.right = rect.right; box.bottom = rect.bottom;
+        return box;
+      });
+      const rgb = Number.parseInt(ThemeRuntime.accentColor(this.darkMode).slice(-6), 16);
+      this.controller.setHighlightRects([new pdfViewManager.PageRects(hit.pageIndex, boxes)], 0x55000000 + rgb);
+      this.goTo(hit.pageIndex);
+    } catch (error) { console.warn('[PDF] search highlight failed:', error); }
+  }
+
+  private setPanel(panel: string): void {
+    if (this.activePanel === 'search' && panel !== 'search') this.invalidateSearch();
+    this.previewIndex = -1;
+    this.activePanel = panel;
+    this.menuVisible = true;
+  }
+
+  private toggleMenu(): void {
+    if (this.activePanel) { this.setPanel(''); return; }
+    this.previewIndex = -1;
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, (): void => {
+      this.menuVisible = !this.menuVisible;
+    });
+  }
+
+  private invalidateSearch(): void {
+    this.searchGeneration++; this.searchCount = 0; this.searchIndex = -1; this.searchCompleted = false;
+    this.searchHits = [];
+    try { if (this.ready) this.controller.setHighlightRects([]); } catch (_) {}
+  }
+
+  private onShortcut(): void {
+    if (this.alive && this.visible && RecentReadShortcut.isPending()) {
+      this.saveProgress().then((): Promise<boolean> => RecentReadShortcut.openPending(true))
+        .catch((error: Error): void => { console.warn('[PDF] shortcut failed:', error); });
+    }
+  }
+
+  private async close(): Promise<void> {
+    if (this.closing) return;
+    this.closing = true;
+    try { await this.saveProgress(); }
+    catch (error) { console.warn('[PDF] exit save failed:', error); }
+    if (this.shortcutReplace) {
+      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' }).catch((): void => { this.getUIContext().getRouter().back(); });
+    } else this.getUIContext().getRouter().back();
+  }
+
+  @Builder
+  navigationPanel() {
+    // Opens at the section containing the current page, which stays highlighted while reading.
+    List({ scroller: this.navigationScroller, initialIndex: Math.max(0, this.navigationIndex - 2) }) {
+      LazyForEach(this.navigation, (entry: PdfOutlineEntry, index: number) => {
+        ListItem() {
+          Row({ space: 12 }) {
+            Text(entry.title).layoutWeight(1).fontSize(AppFontSize.BODY)
+              .fontWeight(index === this.navigationIndex ? FontWeight.Medium : FontWeight.Normal)
+              .fontColor(index === this.navigationIndex ? ThemeRuntime.accentColor(this.darkMode) :
+                ThemeRuntime.primaryTextColor(this.darkMode)).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+            if (this.navigation.hasOutline()) {
+              Text(`${entry.pageIndex + 1}`).fontSize(AppFontSize.CAPTION)
+                .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+            }
+          }.width('100%').constraintSize({ minHeight: 48 })
+            .padding({ left: 16 + Math.min(entry.depth, 8) * 12, right: 16, top: 10, bottom: 10 })
+            .borderRadius(16).backgroundColor(index === this.navigationIndex ?
+              ThemeRuntime.accentSurfaceColor(this.darkMode) : Color.Transparent)
+            .onClick((): void => { this.setPanel(''); this.goTo(entry.pageIndex); })
+        }
+      }, (entry: PdfOutlineEntry): string => entry.id)
+    }.width('100%').height('100%').cachedCount(4).scrollBar(BarState.Auto)
+      .padding({ left: 8, right: 8, bottom: 12 })
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.sourcePath && !this.failed) {
+        PdfReaderView({ controller: this.controller, sourcePath: this.sourcePath, initialPage: this.initialPage,
+          superResolution: this.superResolution && this.superResolutionAccess === ReaderComicSuperResolutionAccess.READY,
+          showOriginal: this.showOriginal, enhancementSuspended: !this.visible || this.activePanel === 'search',
+          layoutRevision: this.layoutRevision,
+          onEnhancementStatus: (text: string): void => { this.enhancementStatus = text; this.refreshAiAccess(); },
+          onReady: (count: number, page: number): void => { this.documentReady(count, page); },
+          onPage: (index: number): void => { this.onPage(index); },
+          onFailure: (message: string): void => { this.fail(message); },
+          onTap: (): void => { this.toggleMenu(); } })
+      }
+      if (!this.ready) {
+        Column({ space: 16 }) {
+          if (!this.failed) { LoadingProgress().width(36).height(36).color(ThemeRuntime.accentColor(this.darkMode)) }
+          Text(this.statusText).fontSize(AppFontSize.BODY).fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
+            .textAlign(TextAlign.Center)
+          if (this.failed) {
+            Button('返回书架').backgroundColor(ThemeRuntime.accentColor(this.darkMode))
+              .fontColor(ThemeRuntime.onAccentColor()).onClick((): void => { this.close(); })
+          }
+        }.padding(24).width('100%').height('100%').justifyContent(FlexAlign.Center)
+          .backgroundColor(ThemeRuntime.pageColor(this.darkMode))
+      }
+      PdfReaderControls({ darkMode: this.darkMode, bookTitle: this.title,
+        menuVisible: this.menuVisible || !this.ready, activePanel: this.activePanel,
+        ready: this.ready, pageCount: this.pageCount, pageIndex: this.pageIndex, previewIndex: this.previewIndex,
+        continuous: this.continuous, doublePage: this.doublePage, fitPage: this.fitPage, wideWindow: this.wideWindow,
+        superResolution: this.superResolution, superResolutionAccess: this.superResolutionAccess,
+        showOriginal: this.showOriginal, enhancementStatus: this.enhancementStatus,
+        onSuperResolutionChange: (checked: boolean): void => { this.setSuperResolution(checked); },
+        onOriginalChange: (): void => { this.showOriginal = !this.showOriginal; },
+        onOpenMembership: (): void => { this.openAiAccount(); },
+        searchInput: this.searchInput, searching: this.searching, searchCompleted: this.searchCompleted,
+        searchCount: this.searchCount, searchIndex: this.searchIndex, navigationTitle: this.navigationTitle,
+        navigationContent: (): void => { this.navigationPanel(); },
+        onClose: (): void => { this.close(); }, onPanelChange: (panel: string): void => { this.setPanel(panel); },
+        onPageChange: (index: number): void => { this.goTo(index); },
+        onPreview: (index: number): void => { this.previewIndex = index; },
+        onJump: (text: string): void => { this.jumpInput = text; this.jump(); },
+        onContinuousChange: (checked: boolean): void => { this.setViewPreference(ReaderPdfSettings.CONTINUOUS, checked); },
+        onDoublePageChange: (checked: boolean): void => { this.setViewPreference(ReaderPdfSettings.DOUBLE_PAGE, checked); },
+        onFitPageChange: (checked: boolean): void => { this.setViewPreference(ReaderPdfSettings.FIT_PAGE, checked); },
+        onSearchInput: (text: string): void => { this.searchInput = text; this.invalidateSearch(); },
+        onSearch: (): void => { this.search(); },
+        onSearchStep: (direction: number): void => { this.searchNext(direction); } })
+    }.width('100%').height('100%').backgroundColor(ThemeRuntime.pageColor(this.darkMode))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .onSizeChange((_before: SizeOptions, after: SizeOptions): void => {
+        const wide = Number(after.width) >= 840;
+        if (wide !== this.wideWindow) { this.wideWindow = wide; this.applyViewSettings(); }
+      })
+  }
+}

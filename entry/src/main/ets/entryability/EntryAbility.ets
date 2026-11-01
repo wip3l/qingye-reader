@@ -585,7 +585,7 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate('pendingBookSourceImportNonce', nonce + 1);
       return 'bookSource';
     }
-    if (externalUri && (externalFormat === 'txt' || externalFormat === 'epub' || externalFormat === 'mobi')) {
+    if (externalUri && (externalFormat === 'txt' || externalFormat === 'epub' || externalFormat === 'mobi' || externalFormat === 'pdf')) {
       AppStorage.setOrCreate('pendingLocalBookImportUri', externalUri);
       AppStorage.setOrCreate('pendingLocalBookImportFormat', externalFormat);
       AppStorage.setOrCreate('pendingLocalBookImportName', externalName);
@@ -628,6 +628,7 @@ export default class EntryAbility extends UIAbility {
     if (type === 'general.epub' || type === 'application/epub+zip' ||
       type === 'application/x-epub+zip') return 'epub';
     if (type === 'com.amazon.mobi' || type === 'application/x-mobipocket-ebook') return 'mobi';
+    if (type === 'com.adobe.pdf' || type === 'application/pdf') return 'pdf';
     const sniffed = this.sniffExternalFileFormat(uri);
     if (sniffed) return sniffed;
     if (type === 'general.plain-text' || type === 'text/plain' || type === 'general.text') return 'txt';
@@ -731,6 +732,8 @@ export default class EntryAbility extends UIAbility {
       const readLength = fs.readSync(file.fd, buffer, { offset: 0, length: buffer.byteLength });
       if (readLength >= 4) {
         const bytes = new Uint8Array(buffer, 0, readLength);
+        if (readLength >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 &&
+          bytes[3] === 0x46 && bytes[4] === 0x2D) return 'pdf';
         if (bytes[0] === 0x50 && bytes[1] === 0x4B &&
           ((bytes[2] === 0x03 && bytes[3] === 0x04) || (bytes[2] === 0x05 && bytes[3] === 0x06))) {
           return 'epub';
@@ -759,7 +762,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   private isSupportedExternalExtension(extension: string): boolean {
-    return extension === 'json' || extension === 'txt' || extension === 'epub' || extension === 'mobi' ||
+    return extension === 'json' || extension === 'txt' || extension === 'epub' || extension === 'mobi' || extension === 'pdf' ||
       extension === 'qytheme';
   }
 

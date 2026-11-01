@@ -1,4 +1,5 @@
 import { SharedElementMotion } from '../../utils/SharedElementMotion';
+import { PdfPagePosition } from '../../core/book/pdf/PdfModels';
 import {
   SHELF_COVER_OPEN_DURATION, SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
 } from '../reader/ReaderShelfCoverOpening';
@@ -7776,6 +7777,9 @@ export struct BookshelfPage {
   }
 
   getReadProgressValue(book: Book): number {
+    if (LocalBookService.isPdfBook(book)) {
+      return Math.floor(PdfPagePosition.percent(book.durChapterIndex, book.totalChapterNum, book.hasStartedReading()) * 10) / 10;
+    }
     if (!this.hasKnownReadProgressTotal(book)) {
       return 0;
     }
@@ -7911,6 +7915,7 @@ export struct BookshelfPage {
   }
 
   getLastReadChapterText(book: Book): string {
+    if (LocalBookService.isPdfBook(book)) return book.hasStartedReading() ? `第 ${book.durChapterIndex + 1} 页` : '尚未阅读';
     if (!Book.hasStartedReading(book)) {
       return '尚未阅读';
     }
@@ -7926,6 +7931,7 @@ export struct BookshelfPage {
   }
 
   getLastReadChapterNumberText(book: Book): string {
+    if (LocalBookService.isPdfBook(book)) return book.hasStartedReading() ? `第 ${book.durChapterIndex + 1} 页` : '尚未阅读';
     if (!Book.hasStartedReading(book)) {
       return '尚未阅读';
     }
@@ -7962,6 +7968,7 @@ export struct BookshelfPage {
   }
 
   getLastReadPageNumberText(book: Book): string {
+    if (LocalBookService.isPdfBook(book)) return `${book.durChapterIndex + 1}/${book.totalChapterNum}`;
     const pageCount = Number.parseInt(book.getVariable('readProgressPageCount'));
     const pageNumber = Math.max(1, book.durChapterPos + 1);
     return pageCount > 0 ? `${Math.min(pageNumber, pageCount)}/${pageCount}` : `${pageNumber}`;
@@ -7972,7 +7979,7 @@ export struct BookshelfPage {
       return this.bookshelfLastReadLeafMode;
     }
     // 有声与视频没有可预览的正文。
-    if (BookTypeSupport.isAudio(book) || BookTypeSupport.isVideo(book)) {
+    if (BookTypeSupport.isAudio(book) || BookTypeSupport.isVideo(book) || LocalBookService.isPdfBook(book)) {
       return 'bookInfo';
     }
     if (this.isShelfComicBook(book) && this.getLastReadPageImage(book)) {

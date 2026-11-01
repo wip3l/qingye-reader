@@ -898,8 +898,10 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     }
   }
 
-  async commitBookSourceSwitch(oldBookUrl: string, book: Book, chapters: BookChapter[]): Promise<void> {
+  async commitBookSourceSwitch(oldBookUrl: string, book: Book, chapters: BookChapter[],
+    insertIfMissing: boolean = false): Promise<void> {
     if (!this.store || !oldBookUrl || !book.bookUrl) return;
+    const missing = insertIfMissing && !await this.getBook(book.bookUrl);
     book.identityKey = BookIdentity.keyOfBook(book);
     const bookBucket: relationalStore.ValuesBucket = {
       bookUrl: book.bookUrl,
@@ -987,7 +989,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         bookPredicates.equalTo('bookUrl', book.bookUrl);
         const updateBucket: relationalStore.ValuesBucket = { ...bookBucket };
         delete updateBucket.bookUrl;
-        await transaction.update(updateBucket, bookPredicates);
+        if (missing) await transaction.insert('books', bookBucket);
+        else await transaction.update(updateBucket, bookPredicates);
         for (const table of ['book_chapters', 'book_contents']) {
           const predicates = new relationalStore.RdbPredicates(table);
           predicates.equalTo('bookUrl', book.bookUrl);
@@ -995,8 +998,9 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         }
       }
       for (let offset = 0; offset < chapterBuckets.length; offset += AppDatabase.BATCH_INSERT_CHUNK_SIZE) {
-        await transaction.batchInsert('book_chapters',
-          chapterBuckets.slice(offset, offset + AppDatabase.BATCH_INSERT_CHUNK_SIZE));
+        const batch = chapterBuckets.slice(offset, offset + AppDatabase.BATCH_INSERT_CHUNK_SIZE);
+        const inserted = await transaction.batchInsert('book_chapters', batch);
+        if (inserted !== batch.length) throw new Error('书籍索引写入不完整');
       }
       await transaction.commit();
       CloudSyncChangeTracker.markDataChanged();

@@ -428,7 +428,7 @@ struct WebDavBrowsePage {
       return;
     }
     if (!entry.readableBook()) {
-      HdsFeedback.showToast('当前仅支持 TXT、EPUB 和 MOBI');
+      HdsFeedback.showToast('当前仅支持 TXT、EPUB、MOBI 和 PDF');
       return;
     }
     this.openFileDetail(entry);

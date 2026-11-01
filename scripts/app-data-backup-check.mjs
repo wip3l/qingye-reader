@@ -114,6 +114,7 @@ function harness(t, nestedTarget = false) {
     BookshelfStateStore: { normalizeSortMode: value => value, saveSortMode: async () => {} },
     LocalBookService: {
       TYPE_EPUB: 1,
+      formatOf: book => book.getVariable('localFormat') || (book.type === 1 ? 'epub' : book.type === 4 ? 'pdf' : 'txt'),
       isLocalBook: book => book.bookUrl.startsWith('local://'),
       isPhysicalLocalBook: book => book.bookUrl.startsWith('local://'),
       ensureLocalParserCurrent: async () => {}

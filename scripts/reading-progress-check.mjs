@@ -41,11 +41,12 @@ const context = vm.createContext({
   BookIdentity: { keyOfBook: book => book.bookUrl },
   CloudSyncChangeTracker: { markDataChanged() {} },
   ReaderProgressCheckpoint: { canWrite: () => true },
+  LocalBookService: { isPdfBook: book => book.origin === 'local' && book.getVariable('localFormat') === 'pdf' },
   AppStorage: { setOrCreate() {} },
   READER_PROGRESS_OFFSET_KEY: 'readProgressCharOffsetV2',
   READER_PROGRESS_OFFSET_CHAPTER_KEY: 'readProgressCharOffsetChapterV2'
 });
-vm.runInContext(compile(readEtsModule('model/data/Book.ts')) + compile(`
+vm.runInContext(compile(readEtsModule('core/book/pdf/PdfModels.ts')) + compile(readEtsModule('model/data/Book.ts')) + compile(`
   class ProgressDatabase {
     ${['insertBook', 'getBook', 'getAllBooks', 'restoreMissingChapterCounts', 'resultSetToBook',
       'getStringColumn', 'getLongColumn'].map(name => method(dbSource, name)).join('\n')}

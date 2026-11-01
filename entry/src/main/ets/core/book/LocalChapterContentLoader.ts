@@ -13,6 +13,7 @@ export class LocalChapterContentLoader {
   private static imageSizeCache: Map<string, number[]> = new Map<string, number[]>();
 
   static async load(book: Book, chapter: BookChapter): Promise<string> {
+    if (book.getVariable('localFormat') === 'pdf') return '';
     if (book.origin !== 'local' || book.type !== 2) return '';
     const extractRoot = EpubHtmlConverter.normalizePath(book.getVariable('localExtractRoot'));
     if (!extractRoot) return '';

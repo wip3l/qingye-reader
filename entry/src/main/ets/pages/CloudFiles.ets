@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { LocalBookService } from '../core/book/LocalBookService';
 import { router, promptAction } from '@kit.ArkUI';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
@@ -406,7 +407,7 @@ struct CloudFilesPage {
     if (kind !== 'BOOK' && kind !== 'FONT') return;
     try {
       const options = new picker.DocumentSelectOptions(); options.maxSelectNumber = 1;
-      options.fileSuffixFilters = kind === 'BOOK' ? ['书籍|.txt,.epub,.mobi'] : ['字体|.ttf,.otf,.ttc'];
+      options.fileSuffixFilters = kind === 'BOOK' ? ['书籍|.txt,.epub,.mobi,.pdf'] : ['字体|.ttf,.otf,.ttc'];
       const picked = await new picker.DocumentViewPicker(this.context).select(options);
       if (!picked.length) return;
       const name = decodeURIComponent(picked[0].split('/').pop() || '云文件').replace(/[\\/\x00-\x1f]/g, '_');
@@ -422,7 +423,7 @@ struct CloudFilesPage {
         const path = book.getVariable('localFilePath');
         if (!path || !fs.accessSync(path)) continue;
         const item = new LocalCloudFile(); item.path = path; item.kind = 'BOOK';
-        const format = (book.getVariable('localFormat') || (path.toLowerCase().endsWith('.epub') ? 'epub' : 'txt'))
+        const format = LocalBookService.formatOf(book)
           .toLowerCase();
         item.name = `${book.name}.${format}`; result.push(item);
       }

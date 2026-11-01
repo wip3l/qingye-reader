@@ -114,6 +114,9 @@ export class ReadBookEngine {
   }
 
   async openBook(book: Book, sourceHint: BookSource | null = null): Promise<void> {
+    if (book.origin === 'local' && (book.type === 4 || book.getVariable('localFormat') === 'pdf')) {
+      throw new Error('PDF 请使用 PDF 阅读器打开');
+    }
     if (this.openBookTask && this.openBookTaskUrl === book.bookUrl) {
       ReaderOpenTrace.mark(book.bookUrl, 'engine-open-await-existing');
       await this.openBookTask;
@@ -166,6 +169,8 @@ export class ReadBookEngine {
       const preparedBook = bookHint?.bookUrl === bookUrl ? bookHint :
         await appDb.getBook(bookUrl);
       if (!preparedBook) return;
+      if (preparedBook.origin === 'local' &&
+        (preparedBook.type === 4 || preparedBook.getVariable('localFormat') === 'pdf')) return;
       const preparedSource = preparedBook.origin && preparedBook.origin !== 'local' ?
         await appDb.getBookSource(preparedBook.origin) : null;
       await this.openBook(preparedBook, preparedSource);

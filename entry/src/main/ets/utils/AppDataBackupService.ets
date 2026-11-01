@@ -255,7 +255,7 @@ export class AppDataBackupService {
           manifest.skippedLocalBooks.push(book.name || '未命名本地书');
           continue;
         }
-        const format = book.getVariable('localFormat') || (book.type === LocalBookService.TYPE_EPUB ? 'epub' : 'txt');
+        const format = LocalBookService.formatOf(book);
         const archiveName = `${index}.${format}`;
         await AppDataBackupService.copyFile(sourcePath, `${localRoot}/${archiveName}`);
         manifest.localFiles[book.bookUrl] = archiveName;
@@ -507,7 +507,7 @@ export class AppDataBackupService {
         const book = AppDataBackupService.hydrateBook(raw, manifest.sourceFilesDir, context.filesDir);
         const id = book.bookUrl.startsWith('local://') ? book.bookUrl.substring('local://'.length) :
           `${Math.abs(AppDataBackupService.hashText(book.bookUrl))}`;
-        const format = book.getVariable('localFormat') || (book.type === LocalBookService.TYPE_EPUB ? 'epub' : 'txt');
+        const format = LocalBookService.formatOf(book);
         const targetPath = `${targetRoot}/${id}.${format}`;
         await AppDataBackupService.copyFile(archivePath, targetPath);
         book.putVariable('localFilePath', targetPath);

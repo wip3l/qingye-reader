@@ -169,7 +169,7 @@ struct WebDavPage {
           }, (connection: WebDavConnection) => connection.id)
 
           ListItem() {
-            Text('仅支持下载 TXT / EPUB / MOBI 格式')
+            Text('仅支持下载 TXT / EPUB / MOBI / PDF 格式')
               .fontSize(AppFontSize.CAPTION)
               .fontColor(this.subTextColor())
               .width('100%')

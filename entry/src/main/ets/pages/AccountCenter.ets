@@ -1388,7 +1388,7 @@ struct AccountCenterPage {
       new BenefitCompareRow('专属主题', '曜金藏书 · 手动领取一年', ['—', '—', '—', '—', '✓']),
       new BenefitCompareRow('每月朗读礼包', '标准 / 精品（字）', ['—', '—', '5000\n2500', '8000\n4000', '12000\n6000']),
       new BenefitCompareRow('在线朗读优先排队', '高峰期优先', ['—', '✓', '✓', '✓', '✓']),
-      new BenefitCompareRow('AI超分', '借助AI让低清漫画更清晰', ['—', '✓', '✓', '✓', '✓']),
+      new BenefitCompareRow('AI超分', '增强低清漫画与 PDF 扫描页', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('AI着色', '借助AI为黑白漫画着色', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('AI翻译', '繁→简；日→中、韩→中即将推出', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('功能尝鲜', '新功能优先试用', ['—', '✓', '✓', '✓', '✓']),

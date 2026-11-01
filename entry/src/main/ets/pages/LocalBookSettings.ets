@@ -63,7 +63,7 @@ struct LocalBookSettingsPage {
           Text('暂无已添加书籍')
             .fontSize(AppFontSize.BODY_LARGE)
             .fontColor(this.primaryTextColor())
-          Text('点击下方按钮选择 TXT 或 EPUB 文件')
+          Text('点击下方按钮选择 TXT / EPUB / MOBI / PDF 文件')
             .fontSize(AppFontSize.BODY)
             .fontColor(this.subTextColor())
         }
@@ -96,7 +96,7 @@ struct LocalBookSettingsPage {
         })
       }
 
-      Text('选择 TXT 或 EPUB 文件导入书架')
+      Text('选择 TXT / EPUB / MOBI / PDF 文件导入书架')
         .fontSize(AppFontSize.BODY_LARGE)
         .fontColor(this.primaryTextColor())
       Text('支持一次选择多个文件，导入后文件会复制到应用内部存储，不依赖原文件位置。')
@@ -133,7 +133,7 @@ struct LocalBookSettingsPage {
           .fontColor(this.primaryTextColor())
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(book.author ? `${book.author} · ${book.totalChapterNum}章` : `${book.totalChapterNum}章`)
+        Text(book.author ? `${book.author} · ${book.totalChapterNum}${LocalBookService.isPdfBook(book) ? '页' : '章'}` : `${book.totalChapterNum}${LocalBookService.isPdfBook(book) ? '页' : '章'}`)
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
           .maxLines(1)
@@ -185,9 +185,10 @@ struct LocalBookSettingsPage {
 
   finishImport(result: LocalBookScanResult): void {
     const failed = result.failed > 0 ? `，${result.failed}本失败` : '';
-    this.statusText = `导入完成：成功${result.imported}本${failed}`;
+    const summary = `导入完成：成功${result.imported}本${failed}`;
+    this.statusText = summary + (result.failures.length ? `\n${result.failures.join('\n')}` : '');
     AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-    HdsFeedback.showToast(this.statusText);
+    HdsFeedback.showToast(summary);
   }
 
   pageColor(): string {

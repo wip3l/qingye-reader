@@ -13,6 +13,13 @@
     "pages": "$profile:test_pages",
     "abilities": [
       {
+        "name": "PdfNativeViewTestAbility",
+        "srcEntry": "./ets/testability/PdfNativeViewTestAbility.ets",
+        "startWindowIcon": "$media:layered_image",
+        "startWindowBackground": "$color:start_window_background",
+        "exported": false
+      },
+      {
         "name": "ComicColorTestAbility",
         "srcEntry": "./ets/testability/ComicColorTestAbility.ets",
         "startWindowIcon": "$media:layered_image",

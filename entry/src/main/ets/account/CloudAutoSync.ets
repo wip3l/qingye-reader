@@ -430,8 +430,7 @@ export class CloudAutoSync {
       const path = book.getVariable('localFilePath');
       // Private-shelf books stay on the device.
       if (book.isPrivate || !path || !LocalBookService.exists(path)) continue;
-      const format = (book.getVariable('localFormat') ||
-        (book.type === LocalBookService.TYPE_EPUB ? 'epub' : 'txt')).toLowerCase();
+      const format = LocalBookService.formatOf(book);
       const job = new UploadJob();
       job.path = path;
       job.name = `${LocalBookService.sanitizeFileName(book.name).slice(0, 180)}.${format}`;

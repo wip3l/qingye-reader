@@ -632,7 +632,7 @@ struct SearchBookDetailPage {
 
       if (this.totalChapterNum > 0) {
         Text(`共 ${this.totalChapterNum} ${BookTypeSupport.isVideo(this.detailTypeProbe()) ||
-          BookTypeSupport.isAudio(this.detailTypeProbe()) ? '集' : '章'}`)
+          BookTypeSupport.isAudio(this.detailTypeProbe()) ? '集' : LocalBookService.isPdfBook(this.detailTypeProbe()) ? '页' : '章'}`)
           .fontSize(AppFontSize.BODY)
           .fontColor(this.subTextColor())
       }

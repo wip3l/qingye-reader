@@ -118,7 +118,7 @@ struct SettingsPage {
   private readerEyePermissionRequestSerial: number = 0;
   /** 本页已注册过的字体：文件路径 -> 注册得到的 fontFamily。 */
   private registeredFontFamilies: Map<string, string> = new Map();
-  /** 第一层（空串）放小说和漫画共用的设置；SECTION_NOVEL 为小说子页（同一页面按参数显示）。 */
+  /** 第一层（空串）放阅读通用设置及小说、漫画、PDF 分类入口；SECTION_NOVEL 为小说子页。 */
   private section: string = '';
   private static readonly SECTION_NOVEL: string = 'novel';
 
@@ -174,7 +174,7 @@ struct SettingsPage {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
-  /** 第一层：小说和漫画共用的设置，以及两类书各自的入口。 */
+  /** 第一层：阅读通用设置，以及小说、漫画、PDF 各自的入口。 */
   @Builder
   pageContent() {
     this.sectionTitle('操作')
@@ -237,9 +237,16 @@ struct SettingsPage {
       SettingNavRow({
         title: '漫画',
         description: '阅读方式、画面、AI超分',
-        showDivider: false,
         onTap: () => {
           router.pushUrl({ url: 'pages/ComicSettings' });
+        }
+      })
+      SettingNavRow({
+        title: 'PDF',
+        description: '连续滚动、单双页、页面适配、AI超分',
+        showDivider: false,
+        onTap: () => {
+          router.pushUrl({ url: 'pages/PdfSettings' });
         }
       })
     }

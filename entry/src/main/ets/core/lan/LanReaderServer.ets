@@ -9,6 +9,7 @@ import { util } from '@kit.ArkTS';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { appDb } from '../../model/data/AppDatabase';
 import { Book, BookChapter, BookSource, SearchBook, HttpClient, BookTypeSupport, SourceCoverUrl } from '@legado/sourceengine';
+import { LocalBookService } from '../book/LocalBookService';
 import { BookCoverCache } from '../../utils/BookCoverCache';
 import { ReadBookEngine } from '../book/ReadBookEngine';
 import { PrivateShelfStore } from '../../utils/PrivateShelfStore';
@@ -795,6 +796,7 @@ export class LanReaderServer {
   }
 
   private mediaInfo(book: Book): LanMediaInfo {
+    if (LocalBookService.isPdfBook(book)) return { type: 'pdf', label: 'PDF', supported: false };
     if (BookTypeSupport.isAudio(book)) return { type: 'audio', label: '\u6709\u58f0\u4e66', supported: false };
     if (BookTypeSupport.isImage(book)) return { type: 'comic', label: '\u6f2b\u753b', supported: false };
     return { type: 'novel', label: '\u5c0f\u8bf4', supported: true };
@@ -810,6 +812,7 @@ export class LanReaderServer {
       const chapterPos = Number(value['chapterPos'] || 0);
       const current = await appDb.getBook(bookUrl);
       if (!current) return { status: 404, contentType: 'text/plain; charset=utf-8', body: 'Book Not Found' };
+      if (LocalBookService.isPdfBook(current)) return { status: 415, contentType: 'text/plain; charset=utf-8', body: 'PDF browser progress is not supported' };
       if (!Number.isFinite(updatedAt) || updatedAt <= current.durChapterTime) {
         const stale = new LanProgressResult();
         stale.accepted = false;

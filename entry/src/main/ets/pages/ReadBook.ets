@@ -956,7 +956,31 @@ struct ReadBookPage {
   private eyeTurnCoordinator?: ReaderEyeTurnCoordinator;
   private readerEyeTurnSurfaceController: XComponentController = new XComponentController();
 
+  private readerFormatResolved: boolean = false;
+  private readerPdfDispatched: boolean = false;
+  private readerFormatShowPending: boolean = false;
+  private readerEntryAlive: boolean = false;
+
   async aboutToAppear() {
+    this.readerEntryAlive = true;
+    // Fixed-layout documents must not acquire text/TTS sessions or warm chapter content.
+    const formatParams = router.getParams() as Record<string, string>;
+    if (formatParams?.['bookUrl']) {
+      try {
+        const db = AppDatabase.getInstance();
+        await db.initWithContext(getContext(this));
+        const candidate = await db.getBook(formatParams['bookUrl']);
+        if (!this.readerEntryAlive) return;
+        if (LocalBookService.isPdfBook(candidate)) {
+          this.readerPdfDispatched = true;
+          try { await router.replaceUrl({ url: 'pages/PdfReadBook', params: formatParams }); }
+          catch (error) { console.error('[PDF] route failed:', error); HdsFeedback.showToast('打开 PDF 阅读页失败'); router.back(); }
+          return;
+        }
+      } catch (error) { console.warn('[ReaderOpen] early format lookup failed:', error); }
+    }
+    if (!this.readerEntryAlive) return;
+    this.readerFormatResolved = true;
     ReaderProgressCheckpoint.attach(this.ttsFloatingSessionOwnerId,
       (): Promise<void> => this.flushReadingProgressCheckpoint(), (): string => this.bookUrl);
     this.readerPageVisible = true;
@@ -988,6 +1012,9 @@ struct ReadBookPage {
         console.warn('[ReaderOpen] reader prewarm failed:', error);
       });
     }
+    // onPageShow arrived while the format lookup was pending. Run it where it used to run (before the first
+    // await of the entry setup), not after the whole book has loaded.
+    if (this.readerFormatShowPending) { this.readerFormatShowPending = false; this.onPageShow(); }
     try {
       let initialReplaceRules: ReaderReplaceRule[] = [];
       await Promise.all([
@@ -1018,6 +1045,8 @@ struct ReadBookPage {
   }
 
   onPageShow(): void {
+    if (this.readerPdfDispatched) return;
+    if (!this.readerFormatResolved) { this.readerFormatShowPending = true; return; }
     this.releaseReadingCache?.();
     this.releaseReadingCache = ReaderCacheCoordinator.watchReader((): string => this.book?.bookUrl || this.bookUrl);
 
@@ -1101,6 +1130,7 @@ struct ReadBookPage {
   }
 
   onBackPress(): boolean {
+    if (!this.readerFormatResolved || this.readerPdfDispatched) return false;
     if (this.keyboardDialogSession.isOpen()) {
       this.closeReaderKeyboardCapture();
       return true;
@@ -1215,6 +1245,8 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    this.readerEntryAlive = false;
+    if (!this.readerFormatResolved || this.readerPdfDispatched) return;
     this.cancelReaderContinuousMetricsTimers();
     this.readerContinuousPointerDown = false;
     this.readerContinuousMetricsSession = null;
@@ -1337,6 +1369,8 @@ struct ReadBookPage {
   }
 
   onPageHide(): void {
+    this.readerFormatShowPending = false;
+    if (!this.readerFormatResolved || this.readerPdfDispatched) return;
     this.cancelReaderContinuousMetricsTimers();
     this.readerContinuousPointerDown = false;
     this.cancelReaderQuickJump();

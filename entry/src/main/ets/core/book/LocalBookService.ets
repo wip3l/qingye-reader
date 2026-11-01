@@ -13,6 +13,7 @@ import { LocalChapterContentLoader } from './LocalChapterContentLoader';
 import { EpubChapterPlanner, EpubPlannedChapter, EpubTocEntry } from './EpubChapterPlanner';
 import { EpubConvertResult, EpubHtmlConverter } from './EpubHtmlConverter';
 import { MobiImportTask } from '../concurrency/MobiImportTask';
+import { PdfBookService } from './pdf/PdfBookService';
 
 
 export class LocalBookExportResult {
@@ -30,6 +31,7 @@ export class LocalBookScanResult {
   discovered: number = 0;
   imported: number = 0;
   failed: number = 0;
+  failures: string[] = [];
 }
 
 class LocalChapterData {
@@ -91,6 +93,7 @@ export class LocalBookService {
   static readonly ORIGIN: string = 'local';
   static readonly TYPE_TXT: number = 1;
   static readonly TYPE_EPUB: number = 2;
+  static readonly TYPE_PDF: number = 4;
   static readonly LOCAL_CONTENT_HASH_KEY: string = 'localContentHash';
   static readonly EPUB_IMAGE_MARKER_PREFIX: string = ReaderImageMarker.PREFIX;
   static readonly EPUB_IMAGE_MARKER_SUFFIX: string = ReaderImageMarker.SUFFIX;
@@ -104,8 +107,8 @@ export class LocalBookService {
   private static readonly IMPORT_SLICE_MS: number = 32;
 
   /** 可导入的本地书格式。MOBI 解析后与 EPUB 一样按解压目录阅读，书籍类型同为 TYPE_EPUB。 */
-  static readonly SUPPORTED_FORMATS: string[] = ['txt', 'epub', 'mobi'];
-  static readonly UNSUPPORTED_FORMAT_MESSAGE: string = '仅支持 TXT、EPUB 和 MOBI 文件';
+  static readonly SUPPORTED_FORMATS: string[] = ['txt', 'epub', 'mobi', 'pdf'];
+  static readonly UNSUPPORTED_FORMAT_MESSAGE: string = '仅支持 TXT、EPUB、MOBI 和 PDF 文件';
   private static readonly TXT_READ_CHUNK_BYTES: number = 256 * 1024;
   private static readonly TXT_MAX_CHAPTER_CHARS: number = 32 * 1024;
   private static readonly TXT_DB_BATCH_SIZE: number = 16;
@@ -134,16 +137,22 @@ export class LocalBookService {
 
   static bookTypeForFormat(format: string): number {
     const value = (format || '').toLowerCase();
+    if (value === 'pdf') return LocalBookService.TYPE_PDF;
     return value === 'epub' || value === 'mobi' ? LocalBookService.TYPE_EPUB : LocalBookService.TYPE_TXT;
   }
 
   /** 本地书的格式；早期导入没有记录 localFormat 时按书籍类型推断。 */
   static formatOf(book: Book): string {
     return (book.getVariable('localFormat') ||
-      (book.type === LocalBookService.TYPE_EPUB ? 'epub' : 'txt')).toLowerCase();
+      (book.type === LocalBookService.TYPE_PDF ? 'pdf' : book.type === LocalBookService.TYPE_EPUB ? 'epub' : 'txt')).toLowerCase();
+  }
+
+  static isPdfBook(book: Book | null): boolean {
+    return !!book && book.origin === LocalBookService.ORIGIN && LocalBookService.formatOf(book) === 'pdf';
   }
 
   private static parserVersionFor(format: string): string {
+    if (format === 'pdf') return PdfBookService.PARSER_VERSION;
     if (format === 'epub') return LocalBookService.EPUB_PARSER_VERSION;
     if (format === 'mobi') return LocalBookService.MOBI_PARSER_VERSION;
     return LocalBookService.TXT_PARSER_VERSION;
@@ -268,7 +277,7 @@ export class LocalBookService {
     const options = new picker.DocumentSelectOptions();
     options.selectMode = picker.DocumentSelectMode.FILE;
     options.maxSelectNumber = 500;
-    options.fileSuffixFilters = ['电子书|.txt,.epub,.mobi'];
+    options.fileSuffixFilters = ['电子书|.txt,.epub,.mobi,.pdf'];
     const result = await new picker.DocumentViewPicker(context).select(options);
     const paths: LocalBookFile[] = [];
     for (const uri of result) {
@@ -292,6 +301,7 @@ export class LocalBookService {
         result.imported++;
       } catch (e) {
         result.failed++;
+        result.failures.push(`${path.name || LocalBookService.displayName(path.uri)}：${e instanceof Error ? e.message : '文件读取失败'}`);
         console.error('[LocalBook] import failed:', path.uri, e);
       }
     }
@@ -446,6 +456,32 @@ export class LocalBookService {
     const id = bookUrlOverride ? LocalBookService.hashText(bookUrl) : sourceId;
     const sourceStat = await fs.stat(sourceUri);
     const oldBook = await appDb.getBook(bookUrl);
+    if (extension === 'pdf') {
+      if (oldBook && oldBook.getVariable('localParserVersion') === PdfBookService.PARSER_VERSION &&
+        oldBook.getVariable('localSourceMtime') === `${sourceStat.mtime}` &&
+        oldBook.getVariable('localSourceSize') === `${sourceStat.size}` &&
+        LocalBookService.exists(oldBook.getVariable('localFilePath')) && PdfBookService.hasIndex(oldBook) &&
+        await appDb.getBookChapterCount(bookUrl) === oldBook.totalChapterNum && oldBook.totalChapterNum > 0) return oldBook;
+      const book = oldBook || new Book();
+      book.bookUrl = bookUrl; book.tocUrl = bookUrl; book.origin = LocalBookService.ORIGIN;
+      book.originName = storageOriginName || (webDavConnectionId ? 'WebDAV' : 'PDF');
+      book.type = LocalBookService.TYPE_PDF; book.canUpdate = false;
+      book.putVariable('localFormat', 'pdf'); book.putVariable('localSourceUri', sourceUri);
+      book.putVariable('localSourceMtime', `${sourceStat.mtime}`); book.putVariable('localSourceSize', `${sourceStat.size}`);
+      book.putVariable('bookAddTime', book.getVariable('bookAddTime') || `${Date.now()}`);
+      if (webDavConnectionId) {
+        book.putVariable('storageKind', 'webdav'); book.putVariable('webdavConnectionId', webDavConnectionId);
+        book.putVariable('webdavRemotePath', webDavRemotePath); book.putVariable('webdavETag', webDavETag);
+        book.putVariable('webdavLastModified', `${Math.max(0, webDavLastModified)}`);
+        book.putVariable('webdavRemoteSize', `${Math.max(0, webDavRemoteSize)}`);
+        book.putVariable('webdavCachedAt', `${Date.now()}`);
+      }
+      if (storageVariables) for (const key of Object.keys(storageVariables)) book.putVariable(key, storageVariables[key]);
+      const fallback = LocalBookService.parseFileNameMetadata(sourceName || sourceUri);
+      return await PdfBookService.import(context, book, sourceUri, id,
+        fallback.title || LocalBookService.fileStem(sourceName || sourceUri), fallback.author,
+        (path: string): Promise<string> => LocalBookService.hashFile(path));
+    }
     const oldChapterCount = oldBook ? await appDb.getBookChapterCount(bookUrl) : 0;
     const root = `${context.filesDir}/local_books`;
     LocalBookService.ensureDir(root);
@@ -598,6 +634,15 @@ export class LocalBookService {
 
   static async ensureLocalParserCurrent(context: Context, book: Book): Promise<boolean> {
     if (!LocalBookService.isLocalBook(book)) return false;
+    if (LocalBookService.isPdfBook(book)) {
+      const path = book.getVariable('localFilePath');
+      if (!path || !LocalBookService.exists(path)) return false;
+      if (book.getVariable('localParserVersion') === PdfBookService.PARSER_VERSION && PdfBookService.hasIndex(book) &&
+        await appDb.getBookChapterCount(book.bookUrl) === book.totalChapterNum) return false;
+      await PdfBookService.import(context, book, path, LocalBookService.hashText(book.bookUrl), book.name, book.author,
+        (filePath: string): Promise<string> => LocalBookService.hashFile(filePath));
+      return true;
+    }
     if (book.type === LocalBookService.TYPE_TXT) {
       return await LocalBookService.ensureTxtParserCurrent(context, book);
     }
@@ -736,6 +781,7 @@ export class LocalBookService {
   }
 
   static async ensureContentIntro(book: Book): Promise<boolean> {
+    if (LocalBookService.isPdfBook(book)) return false;
     if (!LocalBookService.isLocalBook(book) ||
       (book.getVariable('localContentIntroVersion') === '6' && !!book.intro.trim())) {
       return false;
