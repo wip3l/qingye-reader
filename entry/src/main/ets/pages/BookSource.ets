@@ -1,3 +1,4 @@
+import { SourceGroupSortList } from '../components/book/SourceGroupSortList';
 import { BookSourceExport } from '../utils/BookSourceExport';
 import { NativeSourceService, NativeSourceSpec, BookSource, SearchBook, BookListRule, SearchRule, ExploreRule, BookInfoRule, TocRule, ContentRule, HttpClient, HttpResponse, RawHttpTextClient, VerificationSupport, CookieStore, TlsTrustStore, BookSourceLoginItem, BookSourceScriptRunner, BookSourceLoginCrypto, BookSourceExecutionJournal, BookSourceRuntimeRouter, SourceRuntimeDecision, SourceRuntimeStage, AnalyzeUrl } from '@legado/sourceengine';
 import { router, promptAction } from '@kit.ArkUI';
@@ -152,7 +153,6 @@ struct BookSourcePage {
   private deleteSourceGroupDialogSession: SystemDialogSession = new SystemDialogSession();
   private addSourceGroupDialogSession: SystemDialogSession = new SystemDialogSession();
   private sourceGroupManagerDialogSession: SystemDialogSession = new SystemDialogSession();
-  private deleteSelectedSourceGroupsDialogSession: SystemDialogSession = new SystemDialogSession();
   @State showSourceFilterMenu: boolean = false;
   @State sourceFormatFilter: string = 'all';
   @State sourceFormatBarWidth: number = 0;
@@ -197,8 +197,6 @@ struct BookSourcePage {
   @State @Watch('onSystemDialogFlagChanged') showDeleteSourceGroupDialog: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showAddSourceGroupDialog: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showSourceGroupManagerDialog: boolean = false;
-  @State @Watch('onSystemDialogFlagChanged') showDeleteSelectedSourceGroupsDialog: boolean = false;
-  @State selectedManagedSourceGroups: string[] = [];
   @State pendingSourceGroup: string = '';
   @State renameSourceGroupInput: string = '';
   @State newSourceGroupInput: string = '';
@@ -2970,7 +2968,6 @@ struct BookSourcePage {
 
       this.contextActionItem($r('sys.symbol.list_bullet'), '分组管理', this.primaryTextColor(), () => {
         this.showSourceGroupToolsMenu = false;
-        this.selectedManagedSourceGroups = [];
         this.openSourceGroupManagerDialog();
       })
       this.contextActionItem($r('sys.symbol.trash'), '清除空分组', this.primaryTextColor(), () => {
@@ -3021,72 +3018,18 @@ struct BookSourcePage {
         .height(150)
         .justifyContent(FlexAlign.Center)
       } else {
-        Row() {
-          Toggle({ type: ToggleType.Checkbox, isOn: this.areAllManagedSourceGroupsSelected() })
-            .selectedColor(this.buttonColor())
-            .onChange((isOn: boolean) => this.selectAllManagedSourceGroups(isOn))
-          Text(this.areAllManagedSourceGroupsSelected() ? '取消全选' : '全选')
-            .fontSize(AppFontSize.BODY)
-            .fontColor(this.secondaryTextColor())
-            .margin({ left: AppSpacing.MD })
-            .layoutWeight(1)
-          Text(`已选 ${this.selectedManagedSourceGroups.length} 项`)
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.subTextColor())
-        }
-        .width('100%')
-        .height(40)
-        .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
-
-        Scroll() {
-          Column({ space: AppSpacing.SM }) {
-            ForEach(this.getSourceGroups(), (group: string) => {
-              Row() {
-                Toggle({ type: ToggleType.Checkbox, isOn: this.isManagedSourceGroupSelected(group) })
-                  .selectedColor(this.buttonColor())
-                  .onChange((isOn: boolean) => this.setManagedSourceGroupSelected(group, isOn))
-                Column() {
-                  Text(group)
-                    .fontSize(AppFontSize.BODY_LARGE)
-                    .fontColor(this.primaryTextColor())
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  Text(`${this.sourceGroupCount(group)} 个书源`)
-                    .fontSize(AppFontSize.CAPTION)
-                    .fontColor(this.subTextColor())
-                    .margin({ top: AppSpacing.XXS })
-                }
-                .layoutWeight(1)
-                .margin({ left: AppSpacing.MD })
-                .alignItems(HorizontalAlign.Start)
-                Text('编辑')
-                  .fontSize(AppFontSize.BODY)
-                  .fontColor(this.accentColor())
-                  .height(36)
-                  .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
-                  .textAlign(TextAlign.Center)
-                  .onClick(() => this.openManagedSourceGroupRename(group))
-                Text('删除')
-                  .fontSize(AppFontSize.BODY)
-                  .fontColor(ThemeRuntime.dangerColor(this.appDarkMode))
-                  .height(36)
-                  .padding({ left: AppSpacing.MD, right: AppSpacing.XS })
-                  .textAlign(TextAlign.Center)
-                  .onClick(() => this.openManagedSourceGroupDelete(group))
-              }
-              .width('100%')
-              .height(56)
-              .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
-              .borderRadius(ThemeRuntime.mediumRadius())
-              .backgroundColor(this.inputColor())
-            }, (group: string) => group)
-          }
-          .width('100%')
-        }
-        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-        .width('100%')
-        .constraintSize({ maxHeight: 360 })
-        .scrollBar(BarState.Auto)
+        Text('拖动左侧手柄调整顺序，发现和搜索页同步生效')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .margin({ top: AppSpacing.XS, bottom: AppSpacing.MD })
+        SourceGroupSortList({
+          groups: this.sourceGroups,
+          groupCount: (group: string): number => this.sourceGroupCount(group),
+          onRename: (group: string): void => this.openManagedSourceGroupRename(group),
+          onDelete: (group: string): void => this.openManagedSourceGroupDelete(group),
+          onReorder: (groups: string[]): Promise<boolean> => this.saveSourceGroupOrder(groups)
+        })
+        .enabled(!this.isBatchOperating)
       }
 
       Row({ space: AppSpacing.MD }) {
@@ -3098,16 +3041,8 @@ struct BookSourcePage {
           .fontColor(this.primaryTextColor())
           .onClick(() => {
             this.showSourceGroupManagerDialog = false;
-            this.selectedManagedSourceGroups = [];
           })
-        Button('删除所选', { type: ButtonType.Normal })
-          .layoutWeight(1)
-          .height(42)
-          .borderRadius(ThemeRuntime.buttonRadius())
-          .enabled(this.selectedManagedSourceGroups.length > 0 && !this.isBatchOperating)
-          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
-          .fontColor(ThemeRuntime.onAccentColor())
-          .onClick(() => this.openDeleteSelectedSourceGroupsDialog())
+
       }
       .width('100%')
       .margin({ top: AppSpacing.XL })
@@ -3281,39 +3216,6 @@ struct BookSourcePage {
   }
 
 
-  @Builder
-  deleteSelectedSourceGroupsDialogContent() {
-    Column({ space: AppSpacing.XL }) {
-      Text('删除所选分组')
-        .fontSize(AppFontSize.SUBTITLE)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.primaryTextColor())
-      Text(`确定删除所选 ${this.selectedManagedSourceGroups.length} 个分组吗？分组内书源将移到未分组。`)
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.secondaryTextColor())
-        .textAlign(TextAlign.Center)
-      Row({ space: AppSpacing.LG }) {
-        Button('取消', { type: ButtonType.Normal })
-          .layoutWeight(1)
-          .height(42)
-          .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor())
-          .fontColor(this.primaryTextColor())
-          .onClick(() => this.showDeleteSelectedSourceGroupsDialog = false)
-        Button('删除', { type: ButtonType.Normal })
-          .layoutWeight(1)
-          .height(42)
-          .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
-          .fontColor(ThemeRuntime.onAccentColor())
-          .enabled(this.selectedManagedSourceGroups.length > 0 && !this.isBatchOperating)
-          .onClick(() => this.deleteSelectedSourceGroups())
-      }
-      .width('100%')
-    }    .padding(AppSpacing.XXL)
-  }
-
-
   onSystemDialogFlagChanged(): void {
     if (!this.showImportSourceSelectionDialog) this.importSourceSelectionDialogSession.close(this.getUIContext());
     if (!this.showSourceDeleteDialog) this.sourceDeleteDialogSession.close(this.getUIContext());
@@ -3321,7 +3223,6 @@ struct BookSourcePage {
     if (!this.showDeleteSourceGroupDialog) this.deleteSourceGroupDialogSession.close(this.getUIContext());
     if (!this.showAddSourceGroupDialog) this.addSourceGroupDialogSession.close(this.getUIContext());
     if (!this.showSourceGroupManagerDialog) this.sourceGroupManagerDialogSession.close(this.getUIContext());
-    if (!this.showDeleteSelectedSourceGroupsDialog) this.deleteSelectedSourceGroupsDialogSession.close(this.getUIContext());
   }
 
   openImportSourceSelectionDialog(): void {
@@ -3390,16 +3291,6 @@ struct BookSourcePage {
     });
   }
 
-  openDeleteSelectedSourceGroupsDialog(): void {
-    this.showDeleteSelectedSourceGroupsDialog = true;
-    this.deleteSelectedSourceGroupsDialogSession.open(this.getUIContext(), (): void => {
-      this.deleteSelectedSourceGroupsDialogContent();
-    }, {
-      autoCancel: true,
-      maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
-      warnTag: '显示删除所选分组弹窗失败:'
-    });
-  }
 
   syncBars(): void {
     syncSystemBars(getContext(this), this.appDarkMode, this.pageColor());
@@ -3634,27 +3525,16 @@ struct BookSourcePage {
       (source.bookSourceGroup || '').trim() === group).length;
   }
 
-  isManagedSourceGroupSelected(group: string): boolean {
-    return this.selectedManagedSourceGroups.includes(group);
-  }
 
-  setManagedSourceGroupSelected(group: string, selected: boolean): void {
-    if (selected) {
-      if (!this.isManagedSourceGroupSelected(group)) {
-        this.selectedManagedSourceGroups = this.selectedManagedSourceGroups.concat([group]);
-      }
-      return;
+  async saveSourceGroupOrder(groups: string[]): Promise<boolean> {
+    try {
+      this.sourceGroups = await BookSourceGroupStore.reorder(getContext(this), groups);
+      return true;
+    } catch (e) {
+      console.error('保存书源分组顺序失败:', e);
+      HdsFeedback.showToast('保存分组顺序失败');
+      return false;
     }
-    this.selectedManagedSourceGroups = this.selectedManagedSourceGroups.filter((item: string) => item !== group);
-  }
-
-  areAllManagedSourceGroupsSelected(): boolean {
-    const groups = this.getSourceGroups();
-    return groups.length > 0 && this.selectedManagedSourceGroups.length === groups.length;
-  }
-
-  selectAllManagedSourceGroups(selected: boolean): void {
-    this.selectedManagedSourceGroups = selected ? this.getSourceGroups() : [];
   }
 
   openManagedSourceGroupRename(group: string): void {
@@ -3692,39 +3572,6 @@ struct BookSourcePage {
     }
   }
 
-  async deleteSelectedSourceGroups(): Promise<void> {
-    const groupsToDelete = this.selectedManagedSourceGroups.filter((group: string) =>
-      this.getSourceGroups().includes(group));
-    if (groupsToDelete.length === 0 || this.isBatchOperating) return;
-    this.isBatchOperating = true;
-    this.batchOperationText = '正在删除书源分组...';
-    try {
-      const db = AppDatabase.getInstance();
-      for (const source of this.allSources) {
-        if (groupsToDelete.includes((source.bookSourceGroup || '').trim())) {
-          source.bookSourceGroup = '';
-          await db.updateBookSourceGroupMembership(source.bookSourceUrl, '');
-        }
-      }
-      let groups = this.sourceGroups;
-      for (const group of groupsToDelete) {
-        groups = await BookSourceGroupStore.remove(getContext(this), group, groups);
-      }
-      this.sourceGroups = groups;
-      if (groupsToDelete.includes(this.activeSourceGroup)) {
-        this.activeSourceGroup = '__ungrouped__';
-      }
-      this.selectedManagedSourceGroups = [];
-      this.showDeleteSelectedSourceGroupsDialog = false;
-      await this.loadSources();
-      HdsFeedback.showToast(`已删除 ${groupsToDelete.length} 个分组`);
-    } catch (e) {
-      console.error('批量删除书源分组失败:', e);
-      HdsFeedback.showToast('删除分组失败');
-    } finally {
-      this.isBatchOperating = false;
-    }
-  }
 
   async reconcileSourceGroups(): Promise<void> {
     try {
@@ -3803,8 +3650,6 @@ struct BookSourcePage {
       }
       this.sourceGroups = await BookSourceGroupStore.rename(
         getContext(this), oldName, newName, this.sourceGroups);
-      this.selectedManagedSourceGroups = this.selectedManagedSourceGroups.map((group: string) =>
-        group === oldName ? newName : group);
       if (this.activeSourceGroup === oldName) {
         this.activeSourceGroup = newName;
       }
@@ -3837,8 +3682,6 @@ struct BookSourcePage {
         await db.updateBookSourceGroupMembership(source.bookSourceUrl, '');
       }
       this.sourceGroups = await BookSourceGroupStore.remove(getContext(this), groupName, this.sourceGroups);
-      this.selectedManagedSourceGroups = this.selectedManagedSourceGroups.filter((group: string) =>
-        group !== groupName);
       if (this.activeSourceGroup === groupName) {
         this.activeSourceGroup = '__ungrouped__';
       }
@@ -5641,7 +5484,7 @@ struct BookSourcePage {
   }
 
   getSourceGroups(): string[] {
-    return [...this.sourceGroups].sort((a: string, b: string) => a.localeCompare(b));
+    return this.sourceGroups.slice();
   }
 
   sourceGroupsFromSources(): string[] {

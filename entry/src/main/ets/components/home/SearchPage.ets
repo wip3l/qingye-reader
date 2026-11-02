@@ -1,3 +1,4 @@
+import { BookSourceGroupStore } from '../../utils/BookSourceGroupStore';
 import { SharedElementMotion } from '../../utils/SharedElementMotion';
 import { router, uiMaterial } from '@kit.ArkUI';
 import deviceInfo from '@ohos.deviceInfo';
@@ -70,6 +71,7 @@ export struct SearchPage {
   @State showSearchSettingsDialog: boolean = false;
   @State showSearchSourcePicker: boolean = false;
   @State searchableSources: BookSource[] = [];
+  @StorageLink('bookSourceGroupOrder') @Watch('onSourceGroupOrderChanged') sourceGroupOrderRaw: string = '';
   @State sourceGroups: string[] = [];
   @State searchViewportWidth: number = 360;
   /** 结果分类栏的实际宽度：沉浸材质底板需要具体数值。 */
@@ -281,8 +283,14 @@ export struct SearchPage {
     });
   }
 
+  onSourceGroupOrderChanged(): void {
+    this.rebuildSearchSourceIndex(this.searchSourceList);
+    this.sourceGroups = this.searchSourceGroupOrder.slice();
+  }
+
   async loadSearchableSources(db: AppDatabase = AppDatabase.getInstance()): Promise<void> {
     try {
+      await BookSourceGroupStore.loadOrder(getContext(this));
       const sources = await db.getEnabledBookSourcesForSearch();
       const searchable = sources.filter((source: BookSource): boolean =>
         !!(source.bookSourceUrl && source.bookSourceName && source.searchUrl && source.searchRule?.bookList));

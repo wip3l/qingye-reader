@@ -1,6 +1,7 @@
 import { router } from '@kit.ArkUI';
 import { BookSource } from '@legado/sourceengine';
 import { AppDatabase } from '../../model/data/AppDatabase';
+import { BookSourceGroupStore } from '../../utils/BookSourceGroupStore';
 import { ExploreResultCache } from '../../utils/ExploreResultCache';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { SystemDialogSession } from '../../utils/SystemDialogSession';
@@ -24,12 +25,18 @@ export class SourcePickerKit {
     return normalized || SourcePickerKit.UNGROUPED;
   }
 
-  /** 分组按名称排序，“未分组”放在最后。 */
+  /** 遵循分组管理顺序；新分组按名称补在末尾，“未分组”始终最后。 */
   static sortGroups(groups: string[]): string[] {
+    const order = BookSourceGroupStore.currentOrder();
     return groups.slice().sort((left: string, right: string): number => {
       if (left === right) return 0;
       if (left === SourcePickerKit.UNGROUPED) return 1;
       if (right === SourcePickerKit.UNGROUPED) return -1;
+      const leftIndex = order.indexOf(left);
+      const rightIndex = order.indexOf(right);
+      if (leftIndex >= 0 || rightIndex >= 0) {
+        return (leftIndex < 0 ? order.length : leftIndex) - (rightIndex < 0 ? order.length : rightIndex);
+      }
       return left.localeCompare(right);
     });
   }

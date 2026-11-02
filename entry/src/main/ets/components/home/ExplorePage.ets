@@ -1,3 +1,4 @@
+import { BookSourceGroupStore } from '../../utils/BookSourceGroupStore';
 import { SharedElementMotion } from '../../utils/SharedElementMotion';
 import { router } from '@kit.ArkUI';
 import deviceInfo from '@ohos.deviceInfo';
@@ -65,6 +66,7 @@ export struct ExplorePage {
   @State entries: ExploreEntry[] = [];
   @State sourceOptions: ExploreSourceOption[] = [];
   private exploreSourceDataSource: ExploreSourceOptionDataSource = new ExploreSourceOptionDataSource();
+  @StorageLink('bookSourceGroupOrder') @Watch('onSourceGroupOrderChanged') sourceGroupOrderRaw: string = '';
   @State exploreSourceGroups: string[] = [];
   @State activeExploreSourceGroup: string = '__all__';
   @State platformNames: string[] = [];
@@ -201,6 +203,10 @@ export struct ExplorePage {
     }
   }
 
+  onSourceGroupOrderChanged(): void {
+    this.exploreSourceGroups = this.buildExploreSourceGroups();
+  }
+
   onExploreRefreshRequested(): void {
     if (this.bookSourceExploreRefreshNonce <= 0) return;
     const sourceUrl = AppStorage.get<string>('bookSourceExploreRefreshSourceUrl') || '';
@@ -251,6 +257,8 @@ export struct ExplorePage {
       if (!this.isCurrentExploreLoad(loadVersion)) return;
       // 数据库查询已经按书源管理中的 customOrder 排序，同时只会返回已启用的书源。
       this.sourceOptions = sourceOptions;
+      await BookSourceGroupStore.loadOrder(getContext(this));
+      if (!this.isCurrentExploreLoad(loadVersion)) return;
       this.rebuildExploreSourceDisplayNames(sourceOptions);
       this.exploreSourceGroups = this.buildExploreSourceGroups();
       if (this.activeExploreSourceGroup !== '__all__' &&
