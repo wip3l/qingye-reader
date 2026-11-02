@@ -404,7 +404,9 @@ export struct BookshelfPage {
   private networkCoverCoordinator: SearchCoordinator | null = null;
   private networkCoverSearchToken: number = 0;
   private shelfLoadSerial: number = 0;
-  private activeShelfGroupRestored: boolean = false;
+  /** 分组与分类栏类型已从偏好恢复；恢复前的变化不写回，避免覆盖上次的选择。 */
+  private shelfStateRestored: boolean = false;
+  private shelfCategoryExpandedRestored: boolean = false;
   private localBookIntroMigrationQueue: Book[] = [];
   private localBookIntroMigrationRunning: boolean = false;
   private localBookIntroMigrationGeneration: number = 0;
@@ -415,6 +417,7 @@ export struct BookshelfPage {
     this.shelfComponentActive = true;
     this.shelfAppliedSearchKeyword = BookshelfPage.normalizeShelfSearchText(this.shelfSearchKeyword);
     this.reloadDisplaySettings();
+    this.restoreShelfCategoryExpanded();
     this.restoreSortModeAndLoad();
   }
 
@@ -453,7 +456,7 @@ export struct BookshelfPage {
     // from continuing to render the books from the previous group, especially on the tile group
     // page where the source is shared across group transitions.
     this.reloadShelfDataSources(true);
-    if (this.activeShelfGroupRestored) {
+    if (this.shelfStateRestored) {
       BookshelfStateStore.saveActiveGroupId(getContext(this), this.activeShelfGroupId).catch((e: Error) => {
         console.warn('保存书架分组状态失败:', e);
       });
@@ -548,14 +551,21 @@ export struct BookshelfPage {
       const loadedBooks = SearchExplorePendingBook.filterShelfBooks(await db.getAllBooks());
       const loadedGroups = await db.getCustomBookGroups();
       if (loadSerial !== this.shelfLoadSerial) return;
-      if (!this.activeShelfGroupRestored) {
+      if (!this.shelfStateRestored) {
         try {
           this.activeShelfGroupId = await BookshelfStateStore.loadActiveGroupId(getContext(this));
         } catch (e) {
           console.warn('恢复书架分组状态失败:', e);
         }
+        try {
+          // 在首帧书架出现前恢复，分类页直接停在上次的类型；该类型暂时没书时由 activeShelfTypeTab 回退显示。
+          const typeTab = await BookshelfStateStore.loadTypeTab(getContext(this));
+          if (BookshelfPage.TYPE_TAB_IDS.indexOf(typeTab) >= 0) this.shelfTypeTab = typeTab;
+        } catch (e) {
+          console.warn('恢复书架分类状态失败:', e);
+        }
         if (loadSerial !== this.shelfLoadSerial) return;
-        this.activeShelfGroupRestored = true;
+        this.shelfStateRestored = true;
       }
       // Commit the complete snapshot together. In particular, never expose a new expanded card while the retained
       // LazyForEach data source still contains entries from the previous shelf generation.
@@ -685,6 +695,19 @@ export struct BookshelfPage {
     } catch (e) {
       console.error('更新书籍隐私状态失败:', e);
       HdsFeedback.showToast(nextPrivate ? '标记为隐私失败' : '取消隐私失败');
+    }
+  }
+
+  private async restoreShelfCategoryExpanded(): Promise<void> {
+    try {
+      // 当前值来自旧版 PersistentStorage，偏好里还没有时沿用它。
+      const expanded = await BookshelfStateStore.loadCategoryExpanded(getContext(this), this.shelfCategoryExpanded);
+      // 读偏好期间用户已经手动展开/收起过时，以手动操作为准。
+      if (this.shelfComponentActive && !this.shelfCategoryExpandedRestored) this.shelfCategoryExpanded = expanded;
+    } catch (e) {
+      console.warn('恢复书架分类栏展开状态失败:', e);
+    } finally {
+      this.shelfCategoryExpandedRestored = true;
     }
   }
 
@@ -5403,8 +5426,15 @@ export struct BookshelfPage {
     const nextScope = toPrivate ? 'private' : 'all';
     const nextType = toPrivate ? this.shelfTypeTab : (this.shelfTypeTabIds.indexOf(page) >= 0 ? page : 'all');
     if (this.shelfScope === nextScope && this.shelfTypeTab === nextType) return;
+    const typeChanged = this.shelfTypeTab !== nextType;
     this.shelfScope = nextScope;
     this.shelfTypeTab = nextType;
+    // 只记类型；隐私书架不记，下次打开回到普通书架。
+    if (typeChanged && this.shelfStateRestored) {
+      BookshelfStateStore.saveTypeTab(getContext(this), nextType).catch((e: Error) => {
+        console.warn('保存书架分类状态失败:', e);
+      });
+    }
     this.showShelfMoreMenu = false;
     this.showShelfFilterMenu = false;
     this.applyShelfScope(false);
@@ -6973,6 +7003,10 @@ export struct BookshelfPage {
     this.stopShelfCategoryAnimation();
     const serial = this.shelfCategoryAnimationSerial;
     const expanded = !this.shelfCategoryExpanded;
+    this.shelfCategoryExpandedRestored = true;
+    BookshelfStateStore.saveCategoryExpanded(getContext(this), expanded).catch((e: Error) => {
+      console.warn('保存书架分类栏展开状态失败:', e);
+    });
     // 冷启动为收起状态时，首次展开前也有确定的材质宽度。
     this.shelfScopeTabsWidth = Math.max(1, this.contextViewportWidth - AppSpacing.XL * 2);
     this.shelfCategoryAnimating = true;
