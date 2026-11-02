@@ -276,21 +276,23 @@ export class ReadBookEngine {
 
     // 检查缓存章节是否有未解析的变量（旧版本残留）
     const hasBrokenUrls = book.origin !== 'local' && this.chapters.some(c => this.isBrokenChapterUrl(c.url));
-    if (hasBrokenUrls ||
-      (this.chapters.length === 0 && this.source && book.origin !== 'local')) {
-      if (hasBrokenUrls) {
-        console.log('[RE] 检测到过期缓存，清除并重新获取');
-        await appDb.deleteBookChapters(book.bookUrl);
-        if (!this.isCurrentBookSession(generation, book.bookUrl)) return;
-        this.chapters = [];
+    if (hasBrokenUrls) {
+      // 旧目录先留着：refreshToc 只在取到新目录后才替换。断网时继续用旧目录，已缓存的正文按章节序号照常读出。
+      console.log('[RE] 检测到过期缓存，重新获取目录');
+      try {
+        await this.refreshToc(generation, true);
+      } catch (e) {
+        console.warn('[RE] refresh stale toc failed, keep cached chapters:', this.chapters.length, e);
       }
+    } else if (this.chapters.length === 0 && this.source && book.origin !== 'local') {
       console.log('[RE] no valid chapters, refreshing toc...');
       await this.refreshToc(generation);
     }
     ReaderOpenTrace.mark(book.bookUrl, 'engine-open-ready', `chapters=${this.chapters.length}`);
   }
 
-  async refreshToc(expectedGeneration: number = this.bookGeneration): Promise<void> {
+  /** staleCatalog：现有目录已知不可用（坏链接），和没有目录一样允许通用目录兜底。 */
+  async refreshToc(expectedGeneration: number = this.bookGeneration, staleCatalog: boolean = false): Promise<void> {
     if (!this.book || !this.source) return;
     const sessionBook = this.book;
     const sessionSource = this.source;
@@ -321,7 +323,7 @@ export class ReadBookEngine {
 
       const resolvedBook = this.book;
       if (!resolvedBook || !this.isCurrentBookSession(expectedGeneration, sessionBookUrl)) return;
-      const allowGenericFallback = this.chapters.length === 0;
+      const allowGenericFallback = staleCatalog || this.chapters.length === 0;
       let chapters = await this.webBook.getChapterList(sessionSource, resolvedBook, 0, allowGenericFallback);
       if (!this.isCurrentBookSession(expectedGeneration, sessionBookUrl)) return;
       if (chapters.length === 0) {
