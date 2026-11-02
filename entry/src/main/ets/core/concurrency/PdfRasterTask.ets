@@ -60,6 +60,7 @@ async function renderPdfRaster(path: string, pageIndex: number, displayWidth: nu
     result.eligible = true; result.imagePath = outputPath;
     if (fs.accessSync(outputPath) && fs.statSync(outputPath).size > 0) return JSON.stringify(result);
     const height = Math.max(1, Math.floor(width * result.pageHeight / result.pageWidth));
+    // The matrix must use the output raster size; page points here crop small canvases to the top-left corner.
     const matrix = new pdfService.PdfMatrix();
     matrix.x = 0; matrix.y = 0; matrix.width = width; matrix.height = height; matrix.rotate = 0;
     const bitmap = page.getAreaPixelMap(matrix, width, height, false, true);

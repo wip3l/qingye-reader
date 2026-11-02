@@ -113,6 +113,7 @@ export struct PdfSuperResolutionOverlay {
   }
 
   build() {
+    // BLOCK_DESCENDANTS: HitTestMode.None would still let the child Images catch touches and block PdfView dragging.
     Stack({ alignContent: Alignment.TopStart }) {
       ForEach(this.layers, (layer: PdfEnhancedLayer) => {
         Image(layer.uri).id(`pdf_sr_page_${layer.pageIndex}`).objectFit(ImageFit.Fill)

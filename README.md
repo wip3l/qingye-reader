@@ -103,7 +103,7 @@
 - 漫画专用阅读界面：条漫或横向翻页（从左往右、从右往左），阅读方式按书保存；「使用双翻页」可控制宽屏下是否并排显示两页，条漫模式不生效；画面设置可调背景、页间距、适应宽度/屏幕、信息条和预加载张数；双击与双指缩放；长按图片保存、分享或重新加载，图片地址过期时自动重新获取本话。支持携带书源请求头、Cookie 或解密规则的远程图片；单张图片下载或解密失败只在原位显示原因，不影响整章。 横向漫画翻页有独立的翻页动画设置，不影响小说的翻页偏好。
 - 漫画超分（会员专享，API 26 起）：用系统端侧图片超分把屏幕上的漫画放大到显示宽度的 2 倍，长条漫分块处理后拼接。系统超分偶尔会把局部画面放错位置，每块结果都缩回原尺寸与原图逐块核对，可疑时整块重算并按块取可信结果，仍对不上的小块改用普通放大；失败时继续显示原图。核对、取舍与合成缩放由 C++ 在后台线程完成，列表已加载的相邻页会提前处理。
 - 漫画文字识别：长按图片选择“查看本页文字”，在设备本地识别并复制原文；“繁→简”预览与漫画画面设置中的“AI翻译 → 繁→简”为会员功能，纯色气泡内的繁体对白会在原图上覆盖显示简体，复杂背景保留原样。需要设备支持系统 OCR；日文、英文、韩文目前仅识别；AI翻译下拉菜单中的日→中、韩→中标记“即将推出”，暂不可选。
-- 本地漫画着色（会员专享；北京时间 2026-11-11 00:00 前，AI 着色、AI 超分与 AI 翻译向所有登录用户免费开放）：阅读器“画面设置 → AI着色”，按书记忆开关。翻页模式优先当前跨页并预取后两跨页；条漫优先可见画面、沿滚动方向预取约两屏。关闭开关恢复原图；长按“本页着色”可单独处理一张。支持的设备和页面自动使用 NNRT 加速，不支持或校验失败时回退 CPU；原生像素合成已接入，麒麟 9030 Pro 的测试页连续着色约 2.1～2.2 秒，首次加载与校验较慢。内置一个 CPU、两个 NPU 专用 AlacGAN 模型，原始资源合计约 176.25 MiB，图片不上传，与漫画超分共用会员规则及串行计算队列。单张超过 4:1 的超长图仍保留原图。测量范围和设备边界见 [漫画着色](docs/comic-colorizer.md)，阅读行为见 [彩色阅读交互](docs/comic-color-interaction.md)。
+- 本地漫画着色（会员专享；北京时间 2026-11-11 00:00 前，AI 着色、AI 超分与 AI 翻译向所有登录用户免费开放）：阅读器“画面设置 → AI着色”，按书记忆开关。翻页模式优先当前跨页并预取后两跨页；条漫优先可见画面、沿滚动方向预取约两屏。关闭开关恢复原图；长按“本页着色”可单独处理一张。支持的设备和页面自动使用 NNRT 加速，不支持或校验失败时回退 CPU；原生像素合成已接入，首次加载与校验较慢。内置一个 CPU、两个 NPU 专用 AlacGAN 模型，原始资源合计约 176.25 MiB，图片不上传，与漫画超分共用会员规则及串行计算队列。单张超过 4:1 的超长图仍保留原图。实现与接入见 [AI 子模块](docs/ai-engine.md)。
 - 漫画图片逐张下载、解密并显示，优先处理屏幕上的图片；预加载与全文缓存共用有上限的调度队列，单图失败不阻塞其他图片。原生书源图片脚本支持 `image.reorderStrips` 条带重排。
 - 段评与本章说显示为跟随主题的数字气泡；深色模式下的评论网页自动反色。
 - 原生书源可声明内联段评、章评页面（`content.comments.page` / `chapterPage`）：点击气泡后才发请求，在隔离的离线网页里显示，不加载外部资源。
@@ -174,11 +174,7 @@
 
 原生书源还支持视频播放页、听书音色列表、分卷、目录与正文的声明式列表分页并发抓取（正文最多 200 页）、附加请求、漫画图片解密和加密封面解密（`coverDecode`）。目录或正文启用 `script` 后，分页由脚本处理，不再跟随 `nextUrl`。原生 JS 与兼容书源的 QuickJS 影子/灰度迁移是两条独立路径，无需开启迁移模式才能使用。
 
-逐字遍历可用 `chars(text)`（JS 函数体内写 `native.chars(text)`）；导入会检查声明式规则中未定义的函数名，缓存失败可在调试记录中定位。原生内联段评、章评支持点击后取数和离线 HTML 显示，调试时分别检查页面生成与页面显示。完整流程见[当前开发基线](docs/book-source-development.md#当前开发基线)。
-
-内联评论页可显示注入的数据并执行本地按钮交互，页面不直接连接外网，也不访问宿主账号和文件。书源作者填写普通 HTML，由宿主处理编码及加载；遇到生成成功但预览持续加载时，先检查应用版本和[显示修复说明](docs/native-comment-display-fix-20261101.md)。
-
-评论页随应用切换深浅色，书源可通过 CSS 媒体查询适配；页面标题和条数由书源 HTML 展示。正常翻页和朗读不使评论入口失效，业务状态或段落变化导致入口过期时，可在错误面板点“刷新本章”。
+原生内联段评、章评点击后才取数，在隔离的离线网页中显示并跟随应用深浅色；逐字遍历、评论入口失效与“刷新本章”等开发要点见[书源开发入口](docs/book-source-development.md#开发要点)。
 
 书源规则由书源解析内核 [harmony-book-source-engine](https://github.com/wip3l/harmony-book-source-engine) 实现，开源轻页与简听共用同一份规则定义。
 
@@ -334,103 +330,19 @@ release 构建依赖本机有效的签名证书、Profile 和 keystore。请使�
 
 ### 回归检查
 
-```powershell
-node scripts/neutral-source-engine-check.mjs
-node scripts/thread-blocking-check.mjs
-node scripts/theme-framework-check.mjs
-node scripts/log-policy-check.mjs
-node --experimental-strip-types scripts/opds-parser-check.mjs
-node --experimental-strip-types scripts/opds-kavita-check.mjs
-node --experimental-strip-types scripts/java-regex-compat-check.mjs
-node --experimental-strip-types scripts/budgeted-regex-replace-check.mjs
-node --experimental-strip-types scripts/replace-rule-import-check.mjs
-node --experimental-strip-types scripts/reader-text-normalizer-check.mjs
-node --experimental-strip-types scripts/reader-chunk-pagination-check.mjs
-node --experimental-strip-types scripts/epub-converter-check.mjs
-node --experimental-strip-types scripts/epub-mixed-layout-check.mjs
-node --experimental-strip-types scripts/reader-info-bar-check.mjs
-node --experimental-strip-types scripts/audio-rule-support-check.mjs
+应用侧的 Node 回归都在 `scripts/` 下，文件名以 `-check.mjs` 结尾，检查内容写在各脚本开头的注释里。全部运行：
+
+```bash
+for f in scripts/*-check.mjs; do node --experimental-strip-types "$f" || exit 1; done
 ```
 
-应用功能的其他检查同样用 `node --experimental-strip-types scripts/<脚本名>.mjs` 运行，见下表；`cloud-files-ui-check` 读取编译产物，需先执行一次 `assembleHap`。
-
-书源解析内核的回归检查在子模块里（HTTP 认证、页码候选、原生书源、请求支撑、脚本运行时、图片解密、宿主端口等），用法见 [harmony-book-source-engine/README.md](harmony-book-source-engine/README.md)。原生 JS 相关检查可从本仓库根目录运行：
-
-```powershell
-node --experimental-strip-types harmony-book-source-engine/scripts/native-source-check.mjs
-node --experimental-strip-types harmony-book-source-engine/scripts/native-js-check.mjs
-node --experimental-strip-types harmony-book-source-engine/scripts/native-script-check.mjs
-```
-
-这些脚本使用 Node 替身验证规则和宿主协议；真机 QuickJS、线程响应和网页交互还应在“其他设置 → 兼容与诊断 → 脚本引擎迁移 → 后台脚本线程验证”及实际书源链路中检查。
+`cloud-files-ui-check` 读取编译产物，需先执行一次 `assembleHap`；`native-comment-page-browser-check` 需要 Playwright 的 Chromium。书源解析内核的检查在子模块里，用法见 [harmony-book-source-engine/README.md](harmony-book-source-engine/README.md)：
 
 ```bash
 for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-strip-types "$f" || exit 1; done
 ```
 
-| 脚本 | 检查内容 |
-| --- | --- |
-| `neutral-source-engine-check` | 是否引入固定内容接口、默认凭据或站点专用后端。 |
-| `thread-blocking-check` | 协作式调度、分页和运行时隔离约束。 |
-| `theme-framework-check` | 主题注册、令牌和资源安全约束。 |
-| `log-policy-check` | 日志策略：不把凭据类变量和完整请求地址写进日志。 |
-| `opds-parser-check` | OPDS 目录、条目和 OpenSearch 描述的解析（基于 `scripts/opds-fixtures`）。 |
-| `opds-kavita-check` | Kavita 适配：OPDS 地址识别、登录响应取密钥、展示时遮住密钥。 |
-| `java-regex-compat-check` | Android/Java 正则方言到 JavaScript 的转换，含 `\w`、`\d`、`\b` 的 Unicode 语义。 |
-| `budgeted-regex-replace-check` | 净化替换的逐行执行、跨行判定和超时放弃。 |
-| `replace-rule-import-check` | 阅读/Legado/YueDu 替换净化规则的字段别名映射。 |
-| `reader-text-normalizer-check` | 正文归一化与字符偏移到页码的映射。 |
-| `reader-chunk-pagination-check` | 滚动阅读与漫画的分块规则，块边界不切开段评和图片标记。 |
-| `epub-converter-check` | EPUB XHTML 到阅读器正文的转换、目录切章与图片标记。 |
-| `epub-mixed-layout-check` | 图文混排的图片尺寸判定：随文排版还是整页插图。 |
-| `reader-info-bar-check` | 页眉页脚槽位配置：旧设置迁移、损坏配置回退、槽位文字与进度计算。 |
-| `reader-font-weight-check` / `reader-settings-persistence-check` | 正文字重档位与输入规范化；阅读设置排队保存后的持久化。 |
-| `reader-emulation-fold-check` | 仿真翻页折线：上下角折线衔接、近边拖动、不同宽高比与前后翻页纹理对齐。 |
-| `comic-image-pipeline-check` / `image-script-check` | 正文图片解密：逐图 IV、AES/3DES 各模式、明文与 HEIF 直通、缓存标识；图片字节脚本的隔离、限额、排队与取消。 |
-| `obsidian-reader-bubbles-check` / `neon-harbor-check` | 主题应用后阅读页气泡与首字样式的完整链路，含深浅色、评论与章节绘制、书源覆盖和主题权益；后者覆盖“霓港来信”主题的注册与素材路由。 |
-| `mobi-parser-check` | MOBI6 解析：PalmDOC 解压、正文尾部附加数据、filepos 目录、图片改写、封面与不支持格式的提示。 |
-| `reader-cache-budget-check` | 正文与漫画缓存的清理计划：超限才清、按最久未用删到 90%、手动缓存与使用中的项跳过。 |
-| `app-icon-check` | 备用桌面图标与主题图标：API 版本判断、失败重置、状态校正与并发切换。 |
-| `collapsing-header-check` | 各页面 List/Scroll 回调驱动的顶栏收起。 |
-| `book-source-position-check` | 书源置顶、置底、取消、拖动排序与事务回滚。 |
-| `trial-read-shelf-check` | 试读后加入书架的生命周期：小说、有声等类型在保留、重开与保存后仍在书架。 |
-| `cloud-auto-sync-check` / `cloud-transfer-check` / `cloud-font-import-check` / `custom-font-lifecycle-check` / `cloud-files-ui-check` | 云空间：字体与本地书籍自动上传、关联与两种删除、占位书和隐私书架排除；传输续传；云端字体命名与导入；自定义字体生命周期；云空间页的异步刷新。 |
-| `membership-gift-check` / `membership-purchase-check` / `membership-theme-check` / `animated-avatar-check` | 会员：礼包档位与历史领取；购买恢复、重试与账号切换；会员主题授予与回收；动态头像的原始字节、裁剪与权益。 |
-| `comic-colorizer-check` / `comic-color-reading-check` / `ai-host-runtime-check` / `ai-trial-check` / `member-reader-settings-check` | AI 漫画着色：几何适配、提示通道与输出校验；彩色阅读的可视优先、取消与原图对比；AI 宿主的路径转发与缓存记账；登录用户限时试用；会员阅读设置。 |
-| `comic-text-check` | 漫画 OCR 与繁→简：字典、几何、取色、文字层、缓存与取消。 |
-| `reader-image-scheduler-check` / `reader-image-results-check` | 正文图片全局名额（4/8/12）与优先级；渐进加载的图片结果登记、去重与重试。 |
-| `network-compatibility-check` / `network-settings-check` / `web-request-deadline-check` | HTTP/1.1 兼容模式与网络错误提示；网络设置的保存与读取；网页请求的排队超时与中止。 |
-| `native-comment-page-service-check` / `native-comment-page-browser-check` / `reader-comment-panel-check` | 原生内联评论页：生成时限、取消与响应上限；用 Chromium 实测 CSP、无外部请求与安全注入；阅读页评论面板的尺寸、配色与失败重试。 |
-| `theme-package-check` / `custom-theme-quota-check` / `theme-typography-check` / `regex-bubble-color-check` | 主题包 `.qytheme` 的 ZIP 与清单校验；自定义方案额度；主题绑定排版；自定义气泡颜色的保存与生效。 |
-| `immersive-light-level-check` / `immersive-light-persistence-check` | 沉浸光感档位与设置持久化。 |
-| `app-data-backup-check` | 数据备份：文件复制失败时导出报错，而不是提示备份完成。 |
-| `book-cover-loading-check` / `search-explore-cover-check` | 书籍封面加载与搜索、发现结果共用的封面规则。 |
-| `book-source-return-viewport-check` / `reader-toc-search-check` | 编辑书源后返回保留列表位置；目录搜索、选择、倒序与分页。 |
-| `reader-auto-scroll-check` / `reader-comic-animation-check` / `reader-tts-panel-text-check` | 小说自动滚动的计时、保存、生命周期、与朗读互斥和跨章；漫画翻页动画与截图失败回退；朗读面板文本的引号、段落、空格与长段跟随。 |
-| `category-swipe-pager-check` | 搜索与发现分类左右滑动：页面标识、聚合、预览、有界缓存与共用的标题收起状态。 |
-| `audio-offline-policy-check` / `audio-url-resolver-check` | 有声书离线下载：m3u8 解析与码率选择、AES IV 等策略；播放与下载共用的音频地址解析。 |
-| `reader-cache-integration-check` / `reader-chapter-preload-check` / `comic-processing-check` | 离线缓存的迁移、保护与续传；章节预加载与图片标记落地；漫画并发处理、失败、可见性与过期结果。 |
-| `reader-quick-jump-check` / `reader-screen-scroll-check` / `reader-scroll-gesture-check` / `reader-double-flat-fold-check` | 快速跳转的预览与确认；条漫点击翻屏的滚动曲线；小说与漫画共用的拖动、甩动与章节边界；双页平面折页。 |
-| `reader-keyboard-check` / `reader-selection-copy-check` / `reader-color-picker-check` | 阅读页键盘快捷键；长按选字开关；取色器的透明度保留。 |
-| `reader-font-metadata-check` / `reader-font-weight-input-check` / `select-font-check` | 字体元数据与可变字体；字重数值输入；各处字体下拉框的冷启动、切换与回退。 |
-| `reader-tts-boundary-check` / `reader-tts-error-recovery-check` / `tts-voice-management-check` | 朗读的分段边界与播放提示；出错恢复与音色切换；音色管理的保护、持久化与搜索。 |
-| `video-playback-fallback-check` / `web-verification-check` / `source-followup-diagnostics-check` | 视频播放的地址校验、续播与重试；网页验证的宿主恢复、取消与时限；书源后续请求诊断的脱敏与耗时。 |
-| `reading-progress-check` / `reading-stats-check` / `reading-stats-poster-check` / `reading-stats-scheduling-check` | 阅读进度；阅读统计的汇总、迁移、海报与调度。 |
-| `home-motion-check` / `bookshelf-category-motion-check` / `bookshelf-recent-carousel-check` / `bookshelf-cover-badges-check` / `explore-category-selection-check` / `desktop-titlebar-check` | 首页页签与书架分类动效；最近阅读轮播；封面角标设置；发现分类选择；电脑窗口标题栏。 |
-| `result-cover-ready-check` / `result-cover-stability-check` | 搜索与发现结果封面的就绪判断与稳定显示。 |
-| `cloud-download-queue-check` / `custom-font-cloud-download-check` / `comic-color-model-download-check` / `sync-device-identity-check` | 云空间下载队列；云端字体下载；着色模型的下载与续传；同步设备标识。 |
-| `shared-element-book-check` / `shared-element-motion-check` / `bookshelf-category-transition-check` / `bookshelf-folder-check` | 开书共享转场与封面交接；转场标识隔离与位置稳定；书架分类转场；分组文件夹的展开、关闭与系统返回。 |
-| `reader-continuous-page-metrics-check` | 滚动阅读的屏幕页数统计与可见位置，供快速跳转的页数模式使用。 |
-| `audio-interruption-check` | 听书被其他音频打断后的恢复、取消与异步竞争。 |
-| `explore-request-cancellation-check` / `web-fetch-resilience-check` | 发现页请求的取消与过期错误；搜索、发现与动作脚本的网页抓取诊断。 |
-| `pdf-support-check` / `pdf-settings-check` / `pdf-super-resolution-check` | PDF 的导航与导入（真实临时文件）、分类默认设置与单本设置、扫描页 AI 超分。 |
-| `mimo-reading-check` | MiMo 多角色朗读：人物识别、缓存重放、失败片段保留、短句合并与预合成。 |
-| `reader-title-style-check` | 标题分段、对齐、边距与标题单页的预览和排版。 |
-| `book-source-filter-selection-check` | 书源管理的分组、格式、搜索、状态筛选与多选计数。 |
-| `reader-stale-toc-offline-check` | 目录含旧链接需要刷新时，取到新目录才替换；断网时保留旧目录继续读已缓存正文。 |
-| `audio-rule-support-check` | 有声书规则辅助：`sourceRegex`（Java 方言、字面量、响应体捕获组）、地址携带的请求头、跨站请求头收敛、`@webjs:` 识别。 |
-
-这些脚本用于代码回归，不能替代授权审查、安全审计或法律意见。
+这些脚本使用 Node 替身验证规则和宿主协议；真机 QuickJS、线程响应和网页交互还应在“其他设置 → 兼容与诊断 → 脚本引擎迁移 → 后台脚本线程验证”及实际书源链路中检查。它们用于代码回归，不能替代授权审查、安全审计或法律意见。
 
 ## 调试
 

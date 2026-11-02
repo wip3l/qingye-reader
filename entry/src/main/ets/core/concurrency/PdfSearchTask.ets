@@ -3,7 +3,10 @@ import { deviceInfo } from '@kit.BasicServicesKit';
 import { pdfService } from '@kit.PDFKit';
 import { PdfSearchHit, PdfSearchRect, PdfSearchSummary } from '../book/pdf/PdfModels';
 
-/** Search a separate document, never the view's native search callbacks. Do not retain full-book text. */
+/**
+ * Search a separate document, never the view's native search callbacks. Do not retain full-book text.
+ * PdfController.searchKey() crashed in PDFView::ExecuteCB (SIGSEGV) on API 26 devices; don't switch back without a device check.
+ */
 @Concurrent
 async function searchPdfInTask(path: string, keyword: string): Promise<string> {
   const summary = new PdfSearchSummary();
