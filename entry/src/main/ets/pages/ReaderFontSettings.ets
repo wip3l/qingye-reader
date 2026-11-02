@@ -4,6 +4,10 @@ import { ReaderTitleSplit } from '../core/reader/ReaderTitleSplit';
 import { ReaderTitleStyleCodec, ReaderTitleStyleSettings } from '../model/reader/ReaderTitleStyle';
 import { ReaderFontWeightStepper } from '../components/reader/ReaderFontWeightStepper';
 import { ReaderWeightedText, ReaderWeightedTextSpan } from '../components/reader/ReaderWeightedText';
+import { ReaderTypographyPreview, ReaderTypographyPreviewConfig } from '../components/reader/ReaderTypographyPreview';
+import { ReaderV2DocumentParser } from '../core/reader/ReaderV2Document';
+import { ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2Style';
+import { ReaderParagraphIndent } from '../core/reader/ReaderParagraphIndent';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ReaderFontHelper, ReaderFontItem } from '../utils/ReaderFontHelper';
@@ -81,7 +85,8 @@ struct ReaderFontSettingsPage {
   @State titlePreviewText: string = '第七十四章：卖鸭蛋，卖粽子喽';
   @State titlePreviewEditing: boolean = false;
   @State titleReadingPreview: boolean = false;
-  @State titleReadingPreviewBody: boolean = false;
+  @State titleReadingPreviewHeight: number = 720;
+  @State previewLayoutSettings: ReaderSettings = new ReaderSettings();
   @State readerRegexFontEnabled: boolean = false;
   @State readerRegexFontPattern: string = '';
   @State readerRegexFontMode: string = 'global';
@@ -165,6 +170,7 @@ struct ReaderFontSettingsPage {
     try {
       const draft = this.draftMode ? ThemeTypographyDraft.current() : null;
       const settings = draft ? draft : await ReaderSettingsStore.load(getContext(this));
+      this.previewLayoutSettings = settings;
       this.readerFontSize = settings.fontSize;
       this.readerFontWeight = settings.fontWeight;
       this.readerBodyFontMode = settings.bodyFontMode;
@@ -1277,59 +1283,148 @@ struct ReaderFontSettingsPage {
     return ReaderTitleSplit.parts(this.titlePreviewText, this.titleStyle);
   }
 
-  titlePreviewSpans(part: string, index: number): ReaderWeightedTextSpan[] {
+  typographyPreviewConfig(withBody: boolean): ReaderTypographyPreviewConfig {
+    const config = new ReaderTypographyPreviewConfig();
+    const layout = this.previewLayoutSettings;
+    const context = this.getUIContext();
+    const input = config.input;
+    input.fontSizePx = context.fp2px(this.readerFontSize);
+    input.fontWeight = this.readerFontWeight;
+    input.titleFontSizePx = context.fp2px(this.readerTitleFontSize);
+    input.titleFontWeight = this.readerTitleFontWeight;
+    input.titleSecondaryScale = this.titleStyle.secondaryScale;
+    input.titleLineGapPx = context.vp2px(this.titleStyle.mode === 'off' ? layout.lineHeight : this.titleStyle.lineGap);
+    input.titleAlignment = this.titleStyle.alignment;
+    input.titleMarginTopPx = context.vp2px(this.titleStyle.marginTop);
+    input.titleMarginBottomPx = context.vp2px(this.titleStyle.marginBottom);
+    input.titleSinglePage = withBody && this.titleStyle.singlePage;
+    input.lineSpacingPx = context.vp2px(layout.lineHeight);
+    input.paragraphSpacingPx = context.vp2px(layout.paragraphSpacing);
+    input.letterSpacingPx = context.fp2px(layout.letterSpacing);
+    input.textAlign = layout.textAlign;
+    input.marginLeftPx = context.vp2px(layout.marginLeft);
+    input.marginRightPx = context.vp2px(layout.marginRight);
+    input.marginTopPx = context.vp2px(withBody ? layout.marginTop : 0);
+    input.marginBottomPx = context.vp2px(withBody ? layout.marginBottom : 0);
+    input.bodyFontFamily = this.bodyPreviewFontFamily();
+    input.titleFontFamily = this.titlePreviewFontFamily();
+    input.textColor = ReaderV2Color.parse(ThemeRuntime.readerTextColor(this.appDarkMode), 0xFF202124);
+    input.commentsEnabled = false;
+    config.fontSizeVp = this.readerFontSize;
+    config.viewportHeightVp = this.titleReadingPreviewHeight;
+    const indent = '　'.repeat(ReaderParagraphIndent.normalize(layout.paragraphIndent));
+    const body = withBody ? '\n' + indent +
+      '清晨的风穿过长街，带来一阵粽叶的清香。街角的小摊刚刚支起，竹篮里整整齐齐地码着新煮好的粽子。\n' +
+      indent + '“卖鸭蛋，卖粽子喽——”一声吆喝，把沉睡的小城轻轻唤醒。' : '';
+    config.document = ReaderV2DocumentParser.parse(this.titlePreviewText + body, 0, this.titlePreviewText, [], this.titleStyle);
+    if (this.titleStyle.emphasis.emphasisMode !== 'none') {
+      for (const block of config.document.blocks) {
+        if (!block.title) continue;
+        const size = this.readerTitleFontSize * (block.titleSegment > 0 ? this.titleStyle.secondaryScale : 1);
+        const style = this.typographyPreviewEmphasis(this.titleStyle.emphasis, size,
+          input.titleFontFamily, this.readerTitleFontWeight);
+        style.start = block.displayStart;
+        style.end = block.displayEnd;
+        style.repeatCaps = true;
+        config.styles.push(style);
+      }
+    }
+    this.typographyPreviewRegexStyles(config);
+    return config;
+  }
+
+  typographyPreviewRegexStyles(config: ReaderTypographyPreviewConfig): void {
+    if (!this.readerRegexFontEnabled) return;
+    const matches: ReaderV2SpanStyleRange[] = [];
+    const titleStyles = config.styles.slice();
+    const content = config.document.displayText;
+    for (const rule of this.regexRules) {
+      if (!rule.pattern.trim()) continue;
+      let regex: RegExp;
+      try { regex = new RegExp(rule.pattern, 'g'); } catch (_) { continue; }
+      let match = regex.exec(content);
+      while (match) {
+        const start = match.index;
+        const end = start + match[0].length;
+        if (end > start && !matches.some((item: ReaderV2SpanStyleRange): boolean => start < item.end && end > item.start)) {
+          matches.push(new ReaderV2SpanStyleRange(start, end));
+          // Explicit title emphasis takes precedence; regex fonts still apply outside its ranges.
+          let ranges: number[][] = [[start, end]];
+          for (const title of titleStyles) {
+            const next: number[][] = [];
+            for (const range of ranges) {
+              if (range[1] <= title.start || range[0] >= title.end) next.push(range);
+              else {
+                if (range[0] < title.start) next.push([range[0], title.start]);
+                if (range[1] > title.end) next.push([title.end, range[1]]);
+              }
+            }
+            ranges = next;
+          }
+          for (const range of ranges) {
+            const style = this.typographyPreviewEmphasis(rule, rule.fontSize,
+              this.previewFontFamily(rule.fontMode, rule.fontFamily), rule.fontWeight);
+            style.start = range[0];
+            style.end = range[1];
+            config.styles.push(style);
+          }
+        }
+        if (end <= start) {
+          if (start >= content.length) break;
+          regex.lastIndex = Math.max(regex.lastIndex + 1, start + 1);
+        }
+        match = regex.exec(content);
+      }
+    }
+  }
+
+  typographyPreviewEmphasis(rule: ReaderRegexFontRule, size: number, family: string,
+    weight: number): ReaderV2SpanStyleRange {
     const context = this.regexEmphasisContext();
     context.surfaceColor = ThemeRuntime.readerBackgroundColor(this.appDarkMode);
     context.normalTextColor = ThemeRuntime.readerTextColor(this.appDarkMode);
-    const emphasis = ReaderRegexBubbleStyleResolver.resolve(this.titleStyle.emphasis, context);
-    const fontSize = this.readerTitleFontSize * (index > 0 ? this.titleStyle.secondaryScale : 1);
-    const span = ReaderWeightedTextSpan.create(this.getUIContext(), part, fontSize,
-      this.titlePreviewFontFamily(), emphasis.textColor, 0, 0, emphasis);
-    span.weight = this.readerTitleFontWeight;
-    if (emphasis.bubbleDecorationEnabled && ThemeAssetRegistry.hasRegexBubbleCap(emphasis.bubbleStyleId)) {
-      span.capStyleId = emphasis.bubbleStyleId;
-      span.repeatCaps = true;
-      span.capSizePx = this.getUIContext().vp2px(Math.max(15, Math.min(22, fontSize * 0.72)));
-    }
-    return [span];
+    const resolved = ReaderRegexBubbleStyleResolver.resolve(rule, context);
+    const uiContext = this.getUIContext();
+    const style = new ReaderV2SpanStyleRange();
+    style.fontSizePx = uiContext.fp2px(size);
+    style.fontFamily = family;
+    style.fontWeight = weight;
+    style.colorEnabled = true;
+    style.color = ReaderV2Color.parse(resolved.textColor, 0xFF202124);
+    style.backgroundEnabled = resolved.backgroundEnabled;
+    style.backgroundColor = ReaderV2Color.parse(resolved.backgroundColor, 0x00000000);
+    style.radiusTopLeftPx = Math.max(1, uiContext.vp2px(resolved.radiusTopLeft));
+    style.radiusTopRightPx = Math.max(1, uiContext.vp2px(resolved.radiusTopRight));
+    style.radiusBottomLeftPx = Math.max(1, uiContext.vp2px(resolved.radiusBottomLeft));
+    style.radiusBottomRightPx = Math.max(1, uiContext.vp2px(resolved.radiusBottomRight));
+    style.shadowEnabled = resolved.textShadowRadius > 0;
+    style.shadowColor = ReaderV2Color.parse(resolved.textShadowColor, 0x00000000);
+    style.shadowRadiusPx = Math.max(1, uiContext.vp2px(Math.max(0, resolved.textShadowRadius)));
+    style.shadowOffsetXPx = Math.max(1, uiContext.vp2px(Math.max(0, resolved.textShadowOffsetX)));
+    style.shadowOffsetYPx = Math.max(1, uiContext.vp2px(Math.max(0, resolved.textShadowOffsetY)));
+    style.decorationEnabled = resolved.bubbleDecorationEnabled && ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId);
+    style.decorationStyleId = style.decorationEnabled ? resolved.bubbleStyleId : '';
+    style.decorationSizePx = style.decorationEnabled ? uiContext.vp2px(Math.max(15, Math.min(22, size * 0.72))) : 0;
+    return style;
   }
 
-  // Unsplit titles wrap with the body line spacing in the reader, so the line gap only applies to split titles.
   @Builder
   titlePreviewContent() {
-    Column({ space: this.titleStyle.lineGap }) {
-      ForEach(this.titlePreviewParts(), (part: string, index: number) => {
-        ReaderWeightedText({ spans: this.titlePreviewSpans(part, index), weight: this.readerTitleFontWeight,
-          alignment: this.titlePreviewAlignment(),
-          extraLineSpacing: this.titleStyle.mode === 'off' ? 0 : this.titleStyle.lineGap })
-          .width('100%')
-      }, (part: string, index: number) => `${index}_${part}`)
-    }.width('100%').padding({ top: this.titleStyle.marginTop, bottom: this.titleStyle.marginBottom })
+    ReaderTypographyPreview({ config: this.typographyPreviewConfig(false) })
   }
 
   @Builder
   titleReadingPreviewSheet() {
-    Scroll() {
-      Column({ space: AppSpacing.XXXL }) {
-        Text('阅读预览').fontSize(AppFontSize.SUBTITLE).fontColor(ThemeRuntime.readerTextColor(this.appDarkMode))
-        if (!this.titleStyle.singlePage || !this.titleReadingPreviewBody) {
-          this.titlePreviewContent()
-        }
-        if (!this.titleStyle.singlePage || this.titleReadingPreviewBody) {
-          ReaderWeightedText({ spans: [ReaderWeightedTextSpan.create(this.getUIContext(),
-            '　　清晨的风穿过长街，带来一阵粽叶的清香。街角的小摊刚刚支起，竹篮里整整齐齐地码着新煮好的粽子。\n\n　　“卖鸭蛋，卖粽子喽——”一声吆喝，把沉睡的小城轻轻唤醒。',
-            this.readerFontSize, this.bodyPreviewFontFamily(), ThemeRuntime.readerTextColor(this.appDarkMode))],
-            weight: this.readerFontWeight })
-            .width('100%')
-        }
-        if (this.titleStyle.singlePage) {
-          Text(this.titleReadingPreviewBody ? '正文页' : '标题页 · 正文从下一页开始')
-            .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.readerSubTextColor(this.appDarkMode))
-          Button(this.titleReadingPreviewBody ? '返回标题页' : '查看正文页')
-            .fontSize(AppFontSize.BODY).fontColor(this.accentColor()).backgroundColor(this.inputColor())
-            .onClick(() => { this.titleReadingPreviewBody = !this.titleReadingPreviewBody; })
-        }
-      }.width('100%').padding({ left: AppSpacing.XXXL, right: AppSpacing.XXXL, top: 48, bottom: 48 })
+    Column() {
+      Text('阅读预览').fontSize(AppFontSize.SUBTITLE).fontColor(ThemeRuntime.readerTextColor(this.appDarkMode))
+        .margin({ top: 48, bottom: AppSpacing.LG })
+      Scroll() {
+        ReaderTypographyPreview({ config: this.typographyPreviewConfig(true) })
+      }.width('100%').layoutWeight(1)
+        .onAreaChange((_oldArea: Area, area: Area) => {
+          const height = Number(area.height);
+          if (height > 0 && Math.abs(height - this.titleReadingPreviewHeight) > 0.5) this.titleReadingPreviewHeight = height;
+        })
     }.width('100%').height('100%')
   }
 
@@ -1346,12 +1441,11 @@ struct ReaderFontSettingsPage {
         Button('阅读预览')
           .fontSize(AppFontSize.CAPTION).fontColor(this.accentColor()).backgroundColor(Color.Transparent)
           .height(32).padding({ left: 8, right: 8 })
-          .onClick(() => { this.titleReadingPreviewBody = false; this.titleReadingPreview = true; })
+          .onClick(() => { this.titleReadingPreview = true; })
       }.width('100%')
       Column() {
         this.titlePreviewContent()
-      }.width('100%').padding({ top: AppSpacing.XXL, bottom: AppSpacing.XXL,
-        left: AppSpacing.LG, right: AppSpacing.LG })
+      }.width('100%').padding({ top: AppSpacing.XXL, bottom: AppSpacing.XXL })
         .backgroundColor(ThemeRuntime.readerBackgroundColor(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
       if (this.titlePreviewEditing) {

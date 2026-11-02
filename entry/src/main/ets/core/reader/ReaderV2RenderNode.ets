@@ -17,7 +17,7 @@ import {
   ReaderV2RegexBubbleSegment
 } from './ReaderV2PageLayout';
 
-class ReaderV2PageFrameNode extends FrameNode {
+export class ReaderV2PageFrameNode extends FrameNode {
   private page: ReaderV2PageLayout | null = null;
   private highlightStart: number = -1;
   private highlightEnd: number = -1;

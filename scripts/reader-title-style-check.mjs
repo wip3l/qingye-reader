@@ -427,6 +427,100 @@ try {
   assert.equal(longDocument.copyText(0,longTitle.length),longTitle);
   console.log('PASS: oversized decorated titles scale into a single page without clipping, changing text or shrinking body fonts');
 
+  // Exercise the settings page's real model and the preview's real measure/draw node with non-default typography.
+  sandbox.FrameNode = class {
+    getRenderNode() { return null; }
+    setMeasuredSize(size) { this.measuredSize = size; }
+    setLayoutPosition() {}
+  };
+  const renderSource = read('core/reader/ReaderV2RenderNode.ets');
+  const previewSource = read('components/reader/ReaderTypographyPreview.ets');
+  vm.runInContext(compile(read('core/reader/ReaderParagraphIndent.ts')) + '\n' +
+    compile(renderSource.slice(0, renderSource.indexOf('export class ReaderV2PageNodeController'))) + '\n' +
+    compile(previewSource.slice(0, previewSource.indexOf('class ReaderTypographyPreviewController'))) + '\n' +
+    compile(`class FontPreviewHarness extends ReaderHarness {
+      titleStyle = new ReaderTitleStyleSettings();
+      titlePreviewText = '第七十四章：卖鸭蛋，卖粽子喽';
+      readerFontSize = 30; readerTitleFontSize = 22;
+      readerFontWeight = 550; readerTitleFontWeight = 600;
+      readerRegexFontEnabled = false; regexRules = []; titleReadingPreviewHeight = 640;
+      previewLayoutSettings = { lineHeight: 24, paragraphSpacing: 17, paragraphIndent: 3,
+        letterSpacing: 2, textAlign: 'end', marginLeft: 23, marginRight: 31, marginTop: 19, marginBottom: 27 };
+      getUIContext() { return { vp2px: n => n * 3, fp2px: n => n * 3.6,
+        px2vp: n => n / 3, px2fp: n => n / 3.6 }; }
+      bodyPreviewFontFamily() { return ''; } titlePreviewFontFamily() { return ''; }
+      previewFontFamily() { return ''; }
+      regexEmphasisContext() { return this.readerRegexEmphasisContext(); }
+      ${['typographyPreviewConfig','typographyPreviewEmphasis','typographyPreviewRegexStyles'].map(fontMethod).join('\n')}
+    }
+    globalThis.previewApi = { FontPreviewHarness, ReaderTypographyPreviewNode, ReaderTypographyPreviewConfig,
+      ReaderV2PageFrameNode };
+  `), sandbox);
+  const previewHost = new sandbox.previewApi.FontPreviewHarness();
+  previewHost.titleStyle.alignment = 'left';
+  previewHost.titleStyle.marginTop = 11; previewHost.titleStyle.marginBottom = 29;
+  const previewConfig = previewHost.typographyPreviewConfig(true);
+  near(previewConfig.input.fontSizePx, 108, 'preview respects font scale separately from vp');
+  near(previewConfig.input.titleFontSizePx, 79.2, 'title retains its own configured size');
+  assert.equal(previewConfig.input.lineSpacingPx, 72);
+  assert.equal(previewConfig.input.titleLineGapPx, 72, 'unsplit wrapped title follows reader line spacing');
+  assert.equal(previewConfig.input.paragraphSpacingPx, 51);
+  assert.equal(previewConfig.input.letterSpacingPx, 7.2);
+  assert.equal(previewConfig.input.textAlign, 'end');
+  assert.equal(previewConfig.document.blocks[1].text.startsWith('　　　清晨'), true);
+  const PreviewNode = sandbox.previewApi.ReaderTypographyPreviewNode;
+  const previewNode = new PreviewNode(previewHost.getUIContext(), previewConfig);
+  const bounds = { maxSize: { width: 1320, height: 100000 }, minSize: { height: 0 } };
+  const frozenConfig = JSON.stringify(previewConfig.input);
+  previewNode.onMeasure(bounds);
+  assert.equal(JSON.stringify(previewConfig.input), frozenConfig, 'measuring never changes settings or draft data');
+  const actualInput = Object.assign(new Input(), previewConfig.input,
+    { viewportWidthPx: 1320, viewportHeightPx: 1920 });
+  const actualPage = Paginator.layoutContinuous(previewConfig.document, Snapshot.create(actualInput), previewConfig.styles);
+  const geometry = page => page.fragments.map(fragment => ({
+    title: fragment.title, x: fragment.paragraphX, y: fragment.paragraphY,
+    height: fragment.paragraphHeight, clip: { ...fragment.clipRect },
+    runs: fragment.selectionRuns.map(run => ({ text: run.text, fontSize: run.fontSizePx,
+      spacing: run.letterSpacingPx, weight: run.fontWeight }))
+  }));
+  assert.deepEqual(geometry(previewNode.page), geometry(actualPage), 'same-width preview matches real reader geometry');
+  assert.equal(previewNode.measuredSize.height, actualPage.contentBottomPx + 81);
+  assert.equal(previewNode.page.fragments[1].paragraph.alignment, 'right');
+  assert(previewNode.page.fragments[1].paragraph.getLineMetrics().length > 1);
+  const firstBody = previewNode.page.fragments[1];
+  near(firstBody.paragraph.getLineMetrics()[1].topHeight, 108 * 1.2 + 72,
+    'preview uses native reader line spacing rather than compact sample lines');
+  assert.equal(Object.getPrototypeOf(PreviewNode.prototype), sandbox.previewApi.ReaderV2PageFrameNode.prototype,
+    'preview inherits the actual glyph, outline and decoration painter');
+
+  previewHost.titleStyle.mode = 'marker'; previewHost.titleStyle.marker = '：';
+  previewHost.titleStyle.lineGap = 9; previewHost.titleStyle.secondaryScale = 1.6;
+  previewHost.titleStyle.singlePage = true;
+  previewHost.previewLayoutSettings.paragraphIndent = 0;
+  previewHost.previewLayoutSettings.letterSpacing = -1;
+  const singlePreview = previewHost.typographyPreviewConfig(true);
+  assert.equal(singlePreview.input.titleLineGapPx, 27);
+  assert.equal(singlePreview.document.blocks[2].text.startsWith('清晨'), true, 'zero indent is preserved');
+  const singleNode = new PreviewNode(previewHost.getUIContext(), singlePreview);
+  singleNode.onMeasure(bounds);
+  const prose = singleNode.page.fragments.find(fragment => !fragment.title);
+  assert(prose.paragraphY >= 1920 - 81, 'single-page title reserves a real screen before prose');
+  near(singleNode.page.fragments[1].selectionRuns[0].fontSizePx, 79.2 * 1.6);
+  const cardConfig = previewHost.typographyPreviewConfig(false);
+  assert.equal(cardConfig.input.titleSinglePage, false, 'compact card never creates a screen-sized blank page');
+  assert(cardConfig.document.blocks.every(block => block.title));
+  previewHost.titleStyle.emphasis.emphasisMode = 'custom';
+  const decoratedPreview = previewHost.typographyPreviewConfig(true);
+  assert.equal(decoratedPreview.styles.length, 2);
+  assert(decoratedPreview.styles.every(style => style.repeatCaps && style.fontWeight === 600));
+  previewHost.readerRegexFontEnabled = true;
+  previewHost.regexRules = [{ pattern: '[', fontSize: 40 }, { pattern: '^', fontSize: 40 },
+    { pattern: '清晨', fontSize: 40, fontMode: 'global', fontFamily: '', fontWeight: 400, emphasisMode: 'none' }];
+  const regexPreview = previewHost.typographyPreviewConfig(true);
+  assert.equal(regexPreview.styles.length, 3, 'invalid and empty matches are skipped while body regex styles survive');
+  assert.equal(regexPreview.styles[2].fontSizePx, 144);
+  console.log('PASS: settings preview matches reader geometry, scaled fonts, spacing, alignment, indents, title pages and emphasis');
+
   sandbox.FrameNode = class {
     setMeasuredSize(size) { this.measuredSize = size; }
     setLayoutPosition() {}
