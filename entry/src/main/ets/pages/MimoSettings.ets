@@ -21,6 +21,12 @@ import { MembershipBadge } from '../components/common/MembershipBadge';
 /** Result of one capability check: idle (not run), running, ok, fail, skipped. */
 type MimoCheck = 'idle' | 'running' | 'ok' | 'fail' | 'skipped';
 
+interface MimoCheckLineParams {
+  title: string;
+  check: MimoCheck;
+  status: string;
+}
+
 /** Passed as one object literal so @Builder takes it by reference and refreshes on state changes. */
 interface PrimaryButtonParams {
   label: string;
@@ -141,36 +147,17 @@ struct MimoSettingsPage {
     const serial = ++this.serial;
     this.resetResults();
     this.busy = true;
-    this.ttsCheck = 'running'; this.ttsStatus = '正在合成试听…';
-    await ReaderTtsFloatingSession.stop();
+    this.ttsCheck = 'running'; this.ttsStatus = '正在等待试听音频…';
+    this.analysisCheck = 'running'; this.analysisStatus = '正在识别示例人物…';
+    ReaderTtsFloatingSession.stop();
     try {
       const key = saved ? await MimoStore.key() : this.pendingKey();
       if (serial !== this.serial) return;
       if (!key || key.length > 4096 || /\s/.test(key)) throw new Error('请输入完整的 MiMo API Key');
-      let pending: Promise<void> = Promise.resolve();
-      let playbackError: Error | null = null;
-      await this.client.synthesize(key, '雨声渐渐小了，远处的山色清晰起来。', this.voice,
-        '自然平静的旁白', async (pcm: ArrayBuffer): Promise<void> => {
-          if (serial !== this.serial) throw new Error('测试已取消');
-          if (playbackError) throw playbackError;
-          const write = this.player.write(pcm, 24000);
-          pending = Promise.all([pending, write]).then((): void => {});
-          pending.catch((error: Error): void => { playbackError = error; });
-        });
-      await pending;
-      await this.player.drain();
-      if (serial !== this.serial) return;
-      this.ttsCheck = 'ok'; this.ttsStatus = '可用，已播放试听';
-      this.analysisCheck = 'running'; this.analysisStatus = '正在识别示例人物…';
-      try {
-        await this.client.analyze(key, MimoPolicy.split('小明说：“我们走吧。”'), [], '');
-        if (serial !== this.serial) return;
-        this.analysisCheck = 'ok'; this.analysisStatus = '可用';
-      } catch (error) {
-        if (serial !== this.serial) return;
-        this.analysisCheck = 'fail'; this.analysisStatus = (error as Error).message;
-      }
-      const analysis = this.analysisCheck === 'ok';
+      // Independent probes overlap network/model latency with the audible preview.
+      const results = await Promise.all([this.testSpeech(key, serial), this.testAnalysis(key, serial)]);
+      if (serial !== this.serial || !results[0]) return;
+      const analysis = results[1];
       if (saved) {
         const wasMulti = this.multi;
         MimoStore.setAnalysisAvailable(analysis);
@@ -184,8 +171,74 @@ struct MimoSettingsPage {
     } catch (error) {
       if (serial !== this.serial) return;
       this.ttsCheck = 'fail'; this.ttsStatus = (error as Error).message;
-      this.analysisCheck = 'skipped'; this.analysisStatus = '需先通过语音合成';
+      this.analysisCheck = 'skipped'; this.analysisStatus = '未完成测试';
     } finally { if (serial === this.serial) { this.busy = false; this.player.stop(); } }
+  }
+  private async testSpeech(key: string, serial: number): Promise<boolean> {
+    const startedAt = Date.now();
+    let firstChunk = true;
+    let pending: Promise<void> = Promise.resolve();
+    let playbackError: Error | null = null;
+    console.info('[MiMo test] speech request started');
+    try {
+      await this.client.synthesize(key, '雨声渐渐小了，远处的山色清晰起来。', this.voice,
+        '自然平静的旁白', async (pcm: ArrayBuffer): Promise<void> => {
+          if (serial !== this.serial) throw new Error('测试已取消');
+          if (playbackError) throw playbackError;
+          const first = firstChunk;
+          if (first) {
+            firstChunk = false;
+            console.info(`[MiMo test] first PCM: elapsedMs=${Date.now() - startedAt}`);
+            this.ttsStatus = '音频已返回，正在准备播放…';
+          }
+          const write = first ? this.player.writeSegment(pcm, 24000, (): void => {
+            if (serial !== this.serial) return;
+            this.ttsStatus = '正在播放试听…';
+            console.info(`[MiMo test] playback started: elapsedMs=${Date.now() - startedAt}`);
+          }) : this.player.write(pcm, 24000);
+          pending = Promise.all([pending, write]).then((): void => {});
+          pending.catch((error: Error): void => { playbackError = error; });
+        }, (delay: number): void => {
+          if (serial !== this.serial) return;
+          this.ttsStatus = `语音请求被限流，${Math.ceil(delay / 1000)} 秒后自动重试…`;
+          console.info(`[MiMo test] speech retry: delayMs=${delay}`);
+        });
+      if (serial !== this.serial) return false;
+      console.info(`[MiMo test] speech stream complete: elapsedMs=${Date.now() - startedAt}`);
+      await pending;
+      if (serial !== this.serial) return false;
+      await this.player.drain();
+      if (serial !== this.serial) return false;
+      this.ttsCheck = 'ok'; this.ttsStatus = '可用，已播放试听';
+      console.info(`[MiMo test] playback complete: elapsedMs=${Date.now() - startedAt}`);
+      return true;
+    } catch (error) {
+      if (serial !== this.serial) return false;
+      this.player.stop();
+      this.ttsCheck = 'fail'; this.ttsStatus = (error as Error).message;
+      console.info(`[MiMo test] speech failed: elapsedMs=${Date.now() - startedAt}`);
+      return false;
+    }
+  }
+  private async testAnalysis(key: string, serial: number): Promise<boolean> {
+    const startedAt = Date.now();
+    console.info('[MiMo test] analysis request started');
+    try {
+      await this.client.analyze(key, MimoPolicy.split('小明说：“我们走吧。”'), [], '', (delay: number): void => {
+        if (serial !== this.serial) return;
+        this.analysisStatus = `角色分析被限流，${Math.ceil(delay / 1000)} 秒后自动重试…`;
+        console.info(`[MiMo test] analysis retry: delayMs=${delay}`);
+      });
+      if (serial !== this.serial) return false;
+      this.analysisCheck = 'ok'; this.analysisStatus = '可用';
+      console.info(`[MiMo test] analysis complete: elapsedMs=${Date.now() - startedAt}`);
+      return true;
+    } catch (error) {
+      if (serial !== this.serial) return false;
+      this.analysisCheck = 'fail'; this.analysisStatus = (error as Error).message;
+      console.info(`[MiMo test] analysis failed: elapsedMs=${Date.now() - startedAt}`);
+      return false;
+    }
   }
   private async save(): Promise<void> {
     if (!this.tested || !this.testedKey || this.busy) return;
@@ -368,8 +421,8 @@ struct MimoSettingsPage {
   @Builder
   resultCard() {
     Column({ space: AppSpacing.LG }) {
-      this.checkLine('语音合成', this.ttsCheck, this.ttsStatus)
-      this.checkLine('角色分析', this.analysisCheck, this.analysisStatus)
+      this.checkLine({ title: '语音合成', check: this.ttsCheck, status: this.ttsStatus })
+      this.checkLine({ title: '角色分析', check: this.analysisCheck, status: this.analysisStatus })
       if (this.ttsCheck === 'fail') {
         Button('前往小米控制台查看').height(36).fontSize(AppFontSize.CAPTION)
           .backgroundColor(ThemeRuntime.softFillColor(this.dark)).fontColor(ThemeRuntime.primaryTextColor(this.dark))
@@ -380,22 +433,22 @@ struct MimoSettingsPage {
   }
 
   @Builder
-  checkLine(title: string, check: MimoCheck, status: string) {
+  checkLine($$: MimoCheckLineParams) {
     Row({ space: AppSpacing.MD }) {
-      if (check === 'running') {
+      if ($$.check === 'running') {
         LoadingProgress().width(20).height(20).color(ThemeRuntime.accentColor(this.dark))
       } else {
-        SymbolGlyph(check === 'ok' ? $r('sys.symbol.checkmark_circle_fill') :
-          check === 'fail' ? $r('sys.symbol.xmark_circle_fill') : $r('sys.symbol.exclamationmark_circle'))
+        SymbolGlyph($$.check === 'ok' ? $r('sys.symbol.checkmark_circle_fill') :
+          $$.check === 'fail' ? $r('sys.symbol.xmark_circle_fill') : $r('sys.symbol.exclamationmark_circle'))
           .fontSize(20)
-          .fontColor([check === 'ok' ? ThemeRuntime.successColor(this.dark) :
-            check === 'fail' ? ThemeRuntime.dangerColor(this.dark) : ThemeRuntime.subTextColor(this.dark)])
+          .fontColor([$$.check === 'ok' ? ThemeRuntime.successColor(this.dark) :
+            $$.check === 'fail' ? ThemeRuntime.dangerColor(this.dark) : ThemeRuntime.subTextColor(this.dark)])
       }
       Column({ space: AppSpacing.XXS }) {
-        Text(title).fontSize(AppFontSize.BODY_LARGE).fontColor(ThemeRuntime.primaryTextColor(this.dark))
-        if (status) {
-          Text(status).fontSize(AppFontSize.CAPTION).width('100%')
-            .fontColor(check === 'fail' ? ThemeRuntime.dangerColor(this.dark) : ThemeRuntime.subTextColor(this.dark))
+        Text($$.title).fontSize(AppFontSize.BODY_LARGE).fontColor(ThemeRuntime.primaryTextColor(this.dark))
+        if ($$.status) {
+          Text($$.status).fontSize(AppFontSize.CAPTION).width('100%')
+            .fontColor($$.check === 'fail' ? ThemeRuntime.dangerColor(this.dark) : ThemeRuntime.subTextColor(this.dark))
         }
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
     }.width('100%').alignItems(VerticalAlign.Top)
@@ -425,6 +478,7 @@ struct MimoSettingsPage {
       description: this.multi && !this.editing ? '新书旁白使用，人物音色在“人物档案”中调整' : '',
       showDivider: false }) {
       Select(MIMO_VOICES.map((voice: string): SelectOption => ({ value: voice })))
+        .enabled(!this.busy)
         .value(this.voice).selected(MIMO_VOICES.indexOf(this.voice))
         .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
         .fontColor(ThemeRuntime.subTextColor(this.dark))

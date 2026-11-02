@@ -75,7 +75,8 @@ export class MimoClient {
     } finally { this.aborters = this.aborters.filter((item: () => void): boolean => item !== abort); }
     if (generation !== this.generation) throw new Error('MiMo 请求已停止');
   }
-  async analyze(key: string, units: MimoUnit[], roles: MimoRole[], context: string): Promise<MimoAnalysis> {
+  async analyze(key: string, units: MimoUnit[], roles: MimoRole[], context: string,
+    onRetry?: (delay: number) => void): Promise<MimoAnalysis> {
     const body = new MimoRequest();
     body.model = 'mimo-v2.6-flash';
     body.thinking = new MimoThinking();
@@ -95,19 +96,21 @@ export class MimoClient {
         'roles 只列新增人物。情绪只能选平静、开心、悲伤、愤怒、恐惧、惊讶、温柔、紧张、低语。'),
       new MimoMessage('user', JSON.stringify(input))
     ];
-    const response = await this.json(key, body);
+    const response = await this.json(key, body, onRetry);
     const content = response.choices[0]?.message?.content || '';
     let result: MimoAnalysis;
     try { result = JSON.parse(content) as MimoAnalysis; } catch (_) { throw new Error('角色分析没有返回有效标注，请重试'); }
     MimoPolicy.validate(result, units);
     return result;
   }
-  private async json(key: string, body: MimoRequest): Promise<MimoResponse> {
+  private async json(key: string, body: MimoRequest, onRetry?: (delay: number) => void): Promise<MimoResponse> {
     const generation = this.generation;
     for (let attempt = 0; ; attempt++) {
       try { return await this.jsonOnce(key, body); } catch (error) {
         if (!(error instanceof MimoHttpError) || error.status !== 429 || error.retryAfter > 30000 || attempt >= 2) throw error as Error;
-        await this.backoff(Math.max(error.retryAfter, 1000 * Math.pow(2, attempt)), generation);
+        const delay = Math.max(error.retryAfter, 1000 * Math.pow(2, attempt));
+        if (onRetry) onRetry(delay);
+        await this.backoff(delay, generation);
       }
     }
   }
@@ -137,7 +140,7 @@ export class MimoClient {
   }
 
   async synthesize(key: string, text: string, voice: string, style: string,
-    receive: (pcm: ArrayBuffer) => Promise<void>): Promise<ArrayBuffer> {
+    receive: (pcm: ArrayBuffer) => Promise<void>, onRetry?: (delay: number) => void): Promise<ArrayBuffer> {
     const generation = this.generation;
     let delivered = false;
     for (let attempt = 0; ; attempt++) {
@@ -149,7 +152,9 @@ export class MimoClient {
         // Never replay a partly audible request or retry an ambiguous transport failure.
         if (delivered || !(error instanceof MimoHttpError) || error.status !== 429 ||
           error.retryAfter > 30000 || attempt >= 2) throw error as Error;
-        await this.backoff(Math.max(error.retryAfter, 1000 * Math.pow(2, attempt)), generation);
+        const delay = Math.max(error.retryAfter, 1000 * Math.pow(2, attempt));
+        if (onRetry) onRetry(delay);
+        await this.backoff(delay, generation);
       }
     }
   }

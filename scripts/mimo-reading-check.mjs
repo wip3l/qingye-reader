@@ -81,11 +81,23 @@ transport=fakeStream({stall:true});const pending=client.synthesize('test','x','�
 let retryRequests=0;const waits=[];
 client.backoff=async delay=>{waits.push(delay);};
 transport=()=>fakeStream({status:++retryRequests<3?429:200});
-await client.synthesize('test','x','白桦','',async()=>{});
+const retryNotices=[];
+await client.synthesize('test','x','白桦','',async()=>{},delay=>retryNotices.push(delay));
 assert.equal(retryRequests,3);assert.deepEqual(waits,[1000,2000]);
+assert.deepEqual(retryNotices,[1000,2000]);
 retryRequests=0;transport=()=>{retryRequests++;return fakeStream({status:429});};
 await assert.rejects(client.synthesize('test','x','白桦','',async()=>{}),/限流/);
 assert.equal(retryRequests,3,'rate-limit retries are bounded');
+let analysisRequests=0;
+const analysisNotices=[];
+transport=()=>({
+  destroy(){},
+  request:async()=>({responseCode:++analysisRequests<3?429:200,header:{},
+    result:JSON.stringify({choices:[{message:{content:JSON.stringify({roles:[],assignments:[]})}}]})}),
+});
+await client.analyze('test',[],[],'',delay=>analysisNotices.push(delay));
+assert.equal(analysisRequests,3);
+assert.deepEqual(analysisNotices,[1000,2000], 'analysis retries notify independently from speech');
 // Error bodies are surfaced (sanitized) and Token Plan keys go to their dedicated host.
 transport=fakeStream({status:402,errorBody:JSON.stringify({error:{message:'Insufficient\nbalance',code:'402'}})});
 await assert.rejects(client.synthesize('sk-a','x','白桦','',async()=>{}),/余额不足.*小米返回：Insufficient balance/);
