@@ -470,12 +470,18 @@ for (const marginName of ['Left', 'Right', 'Top', 'Bottom']) {
     reader.includes(`readerMargin${marginName}`),
     `Reader ${marginName.toLowerCase()} margin is not persisted or applied`);
 }
-assert(readerSettingsPage.includes('this.typographyStepper()') &&
-  readerSettingsPage.includes('Select(this.typographySettingOptions())') &&
-  readerSettingsPage.includes('return ReaderTypographyField.LABELS.map((label: string): SelectOption => ({ value: label }))') &&
+// The settings page renders each field as a slider; the in-reader panel keeps the shared stepper.
+const novelStyleContent = readerSettingsPage.match(/  novelStyleContent\(\)[\s\S]*?\n  \}/)?.[0] || '';
+const novelTypographySlider = readerSettingsPage.match(/  novelTypographySlider\([^\n]*[\s\S]*?\n  \}/)?.[0] || '';
+assert(readerSettingsPage.includes('this.novelStyleContent()') &&
+  novelStyleContent.includes('ForEach(ReaderTypographyField.LABELS, (label: string, field: number) => {') &&
+  novelStyleContent.includes('this.novelTypographySlider(label, field)') &&
   readerLayoutSettings.includes("'左边距', '右边距', '上边距', '下边距'") &&
-  readerSettingsPage.includes('adjustCurrentTypographySetting'),
-  'Reader typography dropdown/stepper does not expose all four margins');
+  novelTypographySlider.includes('Slider({ value: this.currentTypographySettingValue(field)') &&
+  novelTypographySlider.includes('min: ReaderTypographyField.min(field)') &&
+  novelTypographySlider.includes('max: ReaderTypographyField.max(field), step: ReaderTypographyField.step(field)') &&
+  novelTypographySlider.includes('this.setNovelTypography(field, currentValue, mode === SliderChangeMode.End || mode === SliderChangeMode.Click)'),
+  'Reader typography sliders must expose every field, including all four margins, with shared bounds and commit handling');
 assert(reader.includes('input.marginLeftPx = this.toMeasurePx(this.getEffectiveReaderMarginLeft())') &&
   reader.includes('input.marginRightPx = this.toMeasurePx(this.getEffectiveReaderMarginRight())') &&
   reader.includes('this.toMeasurePx(this.getEffectiveReaderMarginTop())') &&

@@ -58,7 +58,7 @@ Object.assign(shelf, {
   bookshelfLayoutMode: 'tile', bookshelfTypeCategoryEnabled: true, bookshelfShowAllTypeTab: true, shelfScope: 'all', shelfTypeTab: 'audio', shelfTypeTabIds: ['all', 'audio'],
   shelfGroups: [{ groupId: 7, groupName: '分组甲' }, { groupId: 8, groupName: '分组乙' }],
   allBooks: books, books: [], isBookMultiSelect: false, shelfAppliedSearchKeyword: '',
-  shelfCategoryRevision: 0, activeShelfGroupRestored: true, shelfScopeSwitchAnimating: false,
+  shelfCategoryRevision: 0, shelfStateRestored: false, shelfScopeSwitchAnimating: false,
   showShelfGroupMenu: true, showShelfMoreMenu: true, showShelfFilterMenu: true,
   shelfListBooksSource: dataSource(), shelfTileBooksSource: dataSource(), shelfTileEntriesSource: dataSource(),
   sortBooks: books => [...books], matchesShelfFilters: book => book.bookUrl !== 'filtered',
@@ -101,6 +101,9 @@ async function open(id) { shelf.openTileGroupPage(id, 'audio', 90, 220); await s
 async function back() { shelf.exitTileGroupPage(); await settle(); start(); }
 const rootPages = shelf.shelfCategoryPages;
 assert.equal(shelf.shouldUseTileGroupFolders(), true);
+shelf.onActiveShelfGroupChanged();
+assert.deepEqual(saved, [], 'initial state restoration must not overwrite the saved group');
+shelf.shelfStateRestored = true;
 
 // Opening: snapshots first, then the page switches while shrunk onto the card.
 shelf.openTileGroupPage(7, 'audio', 90, 220);

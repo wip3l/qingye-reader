@@ -11,8 +11,11 @@ const methods = ['toggleShelfCategory', 'stopShelfCategoryAnimation', 'bookshelf
 }).join('\n');
 let nextTimer = 0;
 const timers = new Map();
+const savedExpanded = [];
 const context = vm.createContext({
   AppSpacing: { XL: 24, MD: 12 }, Curve: { Friction: 'friction' },
+  getContext: () => ({}),
+  BookshelfStateStore: { saveCategoryExpanded: async (_context, expanded) => savedExpanded.push(expanded) },
   setTimeout: finish => { timers.set(++nextTimer, finish); return nextTimer; },
   clearTimeout: id => timers.delete(id)
 });
@@ -60,4 +63,6 @@ shelf.toggleShelfCategory();
 assert.equal(shelf.shelfCategoryExpanded, true);
 assert.equal(timers.size, 0);
 assert.equal(shelf.shelfCategoryAnimating, false);
+assert.equal(shelf.shelfCategoryExpandedRestored, true, 'manual toggles take precedence over pending restoration');
+assert.deepEqual(savedExpanded, [true, false, true, false, true], 'every toggle persists its requested state');
 console.log('PASS native category transition: cold start, rapid reversal, stale completion, disposal and fallback');
