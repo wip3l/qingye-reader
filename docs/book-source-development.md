@@ -18,7 +18,7 @@
 
 ## 当前开发基线
 
-宿主版本以 `AppScope/app.json5` 为准，当前为 **4.4.948**。书源内核包含 `867c3db` 的规则实现及后续文档提交；准确的子模块版本用 `git submodule status harmony-book-source-engine` 查看。逐版本变化与跨版本累计说明统一见[更新日志](../CHANGELOG.md)。
+宿主版本以 `AppScope/app.json5` 为准，当前为 **4.4.949**。书源内核包含 `867c3db` 的规则实现及后续文档提交；准确的子模块版本用 `git submodule status harmony-book-source-engine` 查看。逐版本变化与跨版本累计说明统一见[更新日志](../CHANGELOG.md)。
 
 - 逐字遍历使用 `for ch in chars(text)`；`chars` 按 Unicode 码点拆分，在 JS 函数体内调用时写 `native.chars(text)`。导入时会检查声明式规则中未定义的函数名，JS 函数体仍需实际执行验证。
 - 声明式 `cache` 取值失败时继续返回 `null`，在调试记录中检查 `cache.名称.url` 或 `cache.名称.value`，并为依赖它的规则准备空值处理。
@@ -181,7 +181,7 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 
 可导入[离线示例](../harmony-book-source-engine/docs/examples/native-inline-comments.json)验证交互；该示例无需网络，且仅面向支持 page/chapterPage 的宿主。完整验证命令和平台边界见[实施验证记录](source-capability-validation.md)。
 
-| 能力 | 当前应用现状（4.4.948） |
+| 能力 | 当前应用现状（4.4.949） |
 | --- | --- |
 | 原生书源 | 支持编辑、书源设置（变量、音色、账号登录、动作按钮）、搜索、发现、详情、目录、正文、听书、视频播放与漫画图片解密；书源管理和发现页的长按菜单可进入书源设置 |
 | 原生 JS | `js` 函数库与 `script` 阶段已接入；`http`、变量、Cookie、缓存、凭据和详情书籍变量通过内核宿主接口处理，与兼容书源迁移开关独立 |
