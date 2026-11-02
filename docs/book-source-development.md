@@ -16,6 +16,12 @@
 
 本仓库以子模块 `harmony-book-source-engine/` 引用内核，克隆后先执行 `git submodule update --init`。应用使用子模块固定的内核提交，内核新增的规则能力要等子模块升级后才在应用里生效；[在线主分支文档](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md)可能领先于当前应用。
 
+## 书源分组与显示顺序
+
+书源的分组名称来自导入定义和用户手动管理；分组的展示顺序由应用在本机保存，可在书源管理中拖动调整。发现和搜索范围读取同一顺序，重新打开应用继续沿用。拖动排序不修改书源规则，不需要为书源 JSON 添加排序字段，也不改变站内发现分类的 `dynamicMenus` 顺序。
+
+宿主若只持有部分书源（例如发现或搜索筛选结果），应只读取全局分组顺序，不能用局部列表清理未出现的分组。全量书源管理负责合并现有顺序、新分组与用户手动创建的分组。
+
 ## 开发要点
 
 宿主版本以 `AppScope/app.json5` 为准，准确的子模块版本用 `git submodule status harmony-book-source-engine` 查看；逐版本变化见[更新日志](../CHANGELOG.md)。

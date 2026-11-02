@@ -185,7 +185,7 @@ assert.equal(enabled, current);
 
 const page = read('entry/src/main/ets/pages/ThemeSettings.ets');
 assert(page.indexOf("this.themeApplyToggleRow('icon')") > page.indexOf("this.themeApplyToggleRow('cover')"));
-assert(page.includes('this.applyDialogApplyIcon = true;'));
+assert(page.includes('this.applyDialogApplyIcon = false;'), 'applying a theme keeps the desktop icon unless the user opts in');
 assert(page.includes('choice.applyIcon = this.applyDialogApplyIcon;'));
 assert(page.includes('if (choice.applyIcon)'));
 assert(page.includes('AppIconManager.optionById(this.appIconId).preview'));

@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.4.949`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.4.950`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -139,6 +139,10 @@
 - 「我的 → 帮助」是原生帮助页：首页有搜索、新手上手、常见问题和按功能分组的专题，专题页可一键跳到对应功能；正文由 `docs/manual` 说明书生成，离线可看。
 
 版本更新内容与发布说明见[更新日志](CHANGELOG.md)。
+
+小说样式设置提供全屏实时预览，通过悬浮面板调整排版、页眉页脚、字体和背景；标题单页可切换预览标题页和正文页。预览与正文共用自适应水平边距，跟随边距的页眉页脚同步调整。
+
+书源分组可拖动排序，书源管理、发现和搜索范围共用本机保存的分组顺序。默认应用图标可在图标库中切换，原版以“怀旧”保留；关于页集中提供贡献者致谢、反馈和开源许可入口。
 
 ## 快速开始
 
@@ -262,8 +266,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.4.949` |
-| `versionCode` / `buildVersion` | `4040949` |
+| `versionName` | `4.4.950` |
+| `versionCode` / `buildVersion` | `4040950` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`CAMERA`（仅在用户启用眼动翻页时请求） |
 
