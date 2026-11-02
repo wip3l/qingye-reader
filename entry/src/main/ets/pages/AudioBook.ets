@@ -1,5 +1,4 @@
 import { BookCoverResolver } from '../utils/BookCoverResolver';
-import fileUri from '@ohos.file.fileuri';
 import { ThemeBookCoverSettings } from '../utils/ThemeBookCoverSettings';
 import { BookCover } from '../components/book/BookCover';
 import { NativeSourceService, NativeVoiceOption, Book, BookChapter, BookSource, BookTypeSupport } from '@legado/sourceengine';
@@ -1503,6 +1502,7 @@ struct AudioBookPage {
   async releaseAudioAvSession(): Promise<void> {
     const session = AudioBookAvSessionHolder.session;
     AudioBookAvSessionHolder.session = null;
+    AudioBookAvSessionHolder.mediaCover.clear();
     if (session) {
       this.unregisterAudioAvSessionCommands(session);
       try {
@@ -1536,7 +1536,7 @@ struct AudioBookPage {
       }
       await session.setLaunchAbility(agent);
       await session.setAVQueueTitle(this.book?.name || '听书');
-      await session.setAVMetadata(await this.audioAvMetadata());
+      await session.setAVMetadata(this.audioAvMetadata());
       await session.setExtras({
         bookUrl: this.bookUrl,
         chapterIndex: this.chapterIndex,
@@ -1597,7 +1597,11 @@ struct AudioBookPage {
         this.scheduleProgressSave();
       },
       setSpeed: (speed: number): void => this.changeSpeed(speed),
-      keepAlive: (): Promise<void> => this.keepAudioBackgroundAlive()
+      keepAlive: (): Promise<void> => this.keepAudioBackgroundAlive(),
+      refreshMetadata: async (): Promise<void> => {
+        const session = AudioBookAvSessionHolder.session;
+        if (session && this.handlesPlaybackEvents()) await session.setAVMetadata(this.audioAvMetadata());
+      }
     };
   }
 
@@ -1616,7 +1620,7 @@ struct AudioBookPage {
     const session = AudioBookAvSessionHolder.session;
     if (!session) return;
     try {
-      await session.setAVMetadata(await this.audioAvMetadata());
+      await session.setAVMetadata(this.audioAvMetadata());
       await session.setAVPlaybackState({
         state: state,
         speed: this.speed,
@@ -1632,7 +1636,7 @@ struct AudioBookPage {
     }
   }
 
-  async audioAvMetadata(): Promise<avSession.AVMetadata> {
+  audioAvMetadata(): avSession.AVMetadata {
     const chapter = this.currentChapter();
     const metadata: avSession.AVMetadata = {
       assetId: `${this.bookUrl}_${this.chapterIndex}`,
@@ -1648,17 +1652,17 @@ struct AudioBookPage {
       avQueueId: this.bookUrl || 'audio_book'
     };
     const cover = BookCoverResolver.first(this.book, this.appDarkMode);
-    try {
-      // 网络封面沿用系统异步加载，不能让图片下载阻塞媒体会话激活。
-      const image = typeof cover === 'string' ? BookCoverCache.displayCover(getContext(this), cover) :
-        await BookCoverResolver.prepareFile(getContext(this), cover);
-      if (image) {
-        const uri = image.startsWith('/') ? fileUri.getUriFromPath(image) : image;
-        metadata.mediaImage = uri;
-        metadata.avQueueImage = uri;
-      }
-    } catch (error) {
-      console.warn('读取听书媒体封面失败:', error);
+    const session = AudioBookAvSessionHolder.session;
+    const image = AudioBookAvSessionHolder.mediaCover.getImage(getContext(this), this.bookUrl, cover, (): void => {
+      if (!session || session !== AudioBookAvSessionHolder.session) return;
+      // 始终从当前接管页面取最新章节和状态，不让旧页面的下载回调覆盖媒体信息。
+      AudioBookAvSessionHolder.commands?.refreshMetadata().catch((error: Error) => {
+        console.warn('更新听书媒体封面失败:', error);
+      });
+    });
+    if (image) {
+      metadata.mediaImage = image;
+      metadata.avQueueImage = image;
     }
     return metadata;
   }
