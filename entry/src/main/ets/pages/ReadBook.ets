@@ -930,6 +930,7 @@ struct ReadBookPage {
   @State shelfCoverShade: number = 0.5;
   @State shelfCoverScaleX: number = 0;
   @State shelfCoverFillImage: boolean = false;
+  @State shelfCoverFrameVisible: boolean = true;
   /** 打开时整页从书架封面处放大：以左上角为原点非等比缩放再平移，只改绘制不改排版，正文不会重排。 */
   @State shelfOpenScaleX: number = 1;
   @State shelfOpenScaleY: number = 1;
@@ -3506,7 +3507,8 @@ struct ReadBookPage {
       if (this.shelfOpeningCover) {
         // 翻开后只隐藏不移除：返回时要从翻开的角度合上，新建的节点没有起始帧可动画。
         ReaderShelfCoverOpening({ angle: this.shelfCoverAngle, shade: this.shelfCoverShade,
-          scaleX: this.shelfCoverScaleX, fillImage: this.shelfCoverFillImage, cover: this.shelfOpeningCover })
+          scaleX: this.shelfCoverScaleX, fillImage: this.shelfCoverFillImage, showFrame: this.shelfCoverFrameVisible,
+          cover: this.shelfOpeningCover })
           .width('100%')
           .height('100%')
           .visibility(this.shelfCoverVisible ? Visibility.Visible : Visibility.Hidden)
@@ -17593,6 +17595,7 @@ struct ReadBookPage {
       AppStorage.setOrCreate('shelfBookCloseAnimationNonce', Date.now());
     }
     await shelfCoverClosed;
+    this.shelfCoverFrameVisible = false;
     router.back();
   }
 

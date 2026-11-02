@@ -58,6 +58,11 @@ export struct ReaderShelfCoverOpening {
    * 返回时整页是满屏，改用裁切铺满，避免封面被拉长。
    */
   @Prop fillImage: boolean = false;
+  /**
+   * 书框是 SVG，返回的共享转场里不跟着整页缩放，而是按书架封面的目标尺寸画在左上角，飞行全程多出一个小框。
+   * 合上后、缩回书架前隐藏，到书架上由格子自己的书框接上。
+   */
+  @Prop showFrame: boolean = true;
   cover: ShelfOpeningCover = {
     bookUrl: '', cover: '', frame: '', color: '#007DFF', initial: '书',
     boundsX: 0, boundsY: 0, boundsWidth: 0, boundsHeight: 0, windowWidth: 0, windowHeight: 0
@@ -91,6 +96,7 @@ export struct ReaderShelfCoverOpening {
           .objectFit(ImageFit.Fill)
           .syncLoad(true)
           .draggable(false)
+          .visibility(this.showFrame ? Visibility.Visible : Visibility.Hidden)
       }
       // 书脊的折痕阴影。
       Column()

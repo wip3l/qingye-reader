@@ -89,6 +89,7 @@ struct PdfReadBookPage {
   @State shelfCoverShade: number = 0.5;
   @State shelfCoverScaleX: number = 0;
   @State shelfCoverFillImage: boolean = false;
+  @State shelfCoverFrameVisible: boolean = true;
   @State shelfOpenScaleX: number = 1;
   @State shelfOpenScaleY: number = 1;
   @State shelfOpenTranslateX: number = 0;
@@ -434,6 +435,8 @@ struct PdfReadBookPage {
       AppStorage.setOrCreate('shelfBookCloseAnimationNonce', Date.now());
     }
     await coverClosed;
+    // The SVG frame does not scale with the shared transition; see ReaderShelfCoverOpening.showFrame.
+    this.shelfCoverFrameVisible = false;
     this.getUIContext().getRouter().back();
   }
 
@@ -600,7 +603,8 @@ struct PdfReadBookPage {
       if (this.shelfOpeningCover) {
         // Hidden rather than removed after opening: closing animates back from the open angle.
         ReaderShelfCoverOpening({ angle: this.shelfCoverAngle, shade: this.shelfCoverShade,
-          scaleX: this.shelfCoverScaleX, fillImage: this.shelfCoverFillImage, cover: this.shelfOpeningCover })
+          scaleX: this.shelfCoverScaleX, fillImage: this.shelfCoverFillImage, showFrame: this.shelfCoverFrameVisible,
+          cover: this.shelfOpeningCover })
           .width('100%')
           .height('100%')
           .visibility(this.shelfCoverVisible ? Visibility.Visible : Visibility.Hidden)
