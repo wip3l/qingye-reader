@@ -179,7 +179,8 @@ try {
   const configEnd = typographySource.indexOf('\n}\n', configStart) + 3;
   const constants = previewSource.slice(previewSource.indexOf('const SETTINGS_PREVIEW_TITLE'),
     previewSource.indexOf('/** 全尺寸阅读底层'));
-  vm.runInContext(compile(read('core/reader/ReaderV2Document.ets')
+  vm.runInContext(compile(read('core/reader/ReaderHorizontalMargin.ts')) + '\n' +
+    compile(read('core/reader/ReaderV2Document.ets')
     .replace(/^import .*;\n/gm, '')) + '\n' +
     compile(read('core/reader/ReaderV2LayoutSnapshot.ets').replace(/^import .*;\n/gm, '')) + '\n' +
     compile(typographySource.slice(configStart, configEnd)) + '\n' + compile(constants) + '\n' + compile(`
@@ -191,18 +192,21 @@ class PreviewStyleHarness {
     regexFontRulesRaw: '', commentBubbleSize: 100 };
   readerTheme = { backgroundColor: '#FFF8E8', textColor: '#332211' };
   globalFamily = ''; systemFamily = 'device'; darkMode = false; appDarkMode = true;
-  previewHeight = 844; revision = 0; previewPageIndex = 0; pageChanges = [];
+  previewWidth = 360; previewHeight = 844; revision = 0; previewPageIndex = 0; pageChanges = [];
   previewPager = { changeIndex: (index, animated) => this.pageChanges.push([index, animated]) };
   resolveCustomFamily(family) { return 'registered_' + family; }
   getUIContext() { return { vp2px: n => n * 2, fp2px: n => n * 2.4 }; }
   bodyTop() { return 60; } bodyBottom() { return 50; }
   ${['titleSinglePage', 'onPreviewPageChanged', 'infoContext', 'emphasisContext', 'fontFamily',
-    'spanStyle', 'rangesOutsideTitle', 'config'].map(name => method(name, previewSource)).join('\n')}
+    'spanStyle', 'rangesOutsideTitle', 'effectiveHorizontalMargin', 'config'].map(name => method(name, previewSource)).join('\n')}
 }
 class ActualStyleHarness extends ReaderHarness {
   rules = []; readerRegexFontEnabled = true; readerRegexFontSize = 20;
   readerTitleFontSize = 25; readerTitleFontWeight = 700; readerTitleStyleRaw = '';
   paperDark = false;
+  columnWidth = 360;
+  getReaderPageColumnWidth() { return this.columnWidth; }
+  ${method('getEffectiveReaderHorizontalMargin', readerSource)}
   getTitleReaderFontFamily() { return ''; }
   getRegexRules() { return this.rules; }
   buildTextSliceKey(text) { return text; }
@@ -223,6 +227,32 @@ globalThis.styleAPI = { PreviewStyleHarness, ActualStyleHarness, ReaderRegexFont
     ReaderTitleStyleCodec: TitleCodec, ReaderTitleStyleSettings: TitleSettings,
     ReaderRegexFontRule: Rule } = sandbox.styleAPI;
   const preview = new PreviewStyleHarness(), actual = new ActualStyleHarness();
+  for (const width of [96, 200, 320, 360, 600]) {
+    for (const fontSize of [14, 20, 50]) {
+      for (const margins of [[0, 0], [18, 18], [80, 80], [80, 20]]) {
+        preview.previewWidth = actual.columnWidth = width;
+        preview.settings.fontSize = actual.readerFontSize = fontSize;
+        preview.settings.marginLeft = actual.readerMarginLeft = margins[0];
+        preview.settings.marginRight = actual.readerMarginRight = margins[1];
+        const settingsBefore = JSON.stringify(preview.settings);
+        const config = preview.config();
+        assert.equal(config.input.marginLeftPx / 2, actual.getEffectiveReaderHorizontalMargin(true),
+          `preview and reader left margins agree: width=${width}, font=${fontSize}, margins=${margins}`);
+        assert.equal(config.input.marginRightPx / 2, actual.getEffectiveReaderHorizontalMargin(false),
+          `preview and reader right margins agree: width=${width}, font=${fontSize}, margins=${margins}`);
+        assert.equal(JSON.stringify(preview.settings), settingsBefore, 'adaptive margins never rewrite settings');
+      }
+    }
+  }
+  preview.previewWidth = 360;
+  preview.settings.fontSize = 50;
+  preview.settings.marginLeft = preview.settings.marginRight = 80;
+  assert.equal(preview.config().input.marginLeftPx, 120, 'large fonts preserve 240 vp of text on a 360 vp page');
+  preview.previewWidth = 600;
+  assert.equal(preview.config().input.marginLeftPx, 160, 'widening the viewport restores the stored 80 vp margin');
+  preview.settings.fontSize = 20;
+  preview.settings.marginLeft = preview.settings.marginRight = 18;
+  console.log('PASS: preview and reader share adaptive margins across narrow windows, large fonts, asymmetric margins and resizing');
   const title = new TitleSettings();
   title.emphasis.emphasisMode = 'custom';
   title.emphasis.customTextColorEnabled = true;

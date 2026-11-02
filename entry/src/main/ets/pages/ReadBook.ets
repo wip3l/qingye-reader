@@ -171,6 +171,7 @@ import {
 } from '../core/reader/ReaderPageModels';
 import { ReaderTextNormalizer } from '../core/reader/ReaderTextNormalizer';
 import { ReaderParagraphIndent } from '../core/reader/ReaderParagraphIndent';
+import { ReaderHorizontalMargin } from '../core/reader/ReaderHorizontalMargin';
 import { ReaderImageSizeResolver } from '../core/reader/ReaderImageSizeResolver';
 import { ReaderImageBitmapCache } from '../core/reader/ReaderImageBitmapCache';
 import { ReaderChunkPagination, ReaderChunkResult } from '../core/reader/ReaderChunkPagination';
@@ -6621,17 +6622,8 @@ struct ReadBookPage {
   }
 
   getEffectiveReaderHorizontalMargin(left: boolean): number {
-    const rawLeft = Math.max(0, this.readerMarginLeft);
-    const rawRight = Math.max(0, this.readerMarginRight);
-    const total = rawLeft + rawRight;
-    if (total <= 0) return 0;
-    const columnWidth = this.getReaderPageColumnWidth();
-    // Keep enough room for a useful Chinese text line in compact split-screen and double-page
-    // layouts. Stored settings remain untouched and automatically recover on a wider viewport.
-    const minimumTextWidth = Math.min(columnWidth, Math.max(96, this.readerFontSize * 4.8));
-    const allowedTotal = Math.max(0, columnWidth - minimumTextWidth);
-    const scale = total > allowedTotal ? allowedTotal / total : 1;
-    return (left ? rawLeft : rawRight) * scale;
+    return ReaderHorizontalMargin.effective(this.readerMarginLeft, this.readerMarginRight,
+      this.getReaderPageColumnWidth(), this.readerFontSize, left);
   }
 
   getEffectiveReaderMarginTop(): number {

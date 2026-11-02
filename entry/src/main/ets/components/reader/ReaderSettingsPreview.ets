@@ -10,6 +10,7 @@ import { ReaderCommentBubbleStyles } from '../../core/reader/ReaderCommentBubble
 import { ReaderInfoBarRow } from './ReaderInfoBar';
 import { ReaderInfoBarConfig, ReaderInfoBarContext, ReaderInfoBarText, ReaderInfoProgressBar } from '../../core/reader/ReaderInfoBarModel';
 import { ReaderInfoBarClock } from '../../core/reader/ReaderInfoBarClock';
+import { ReaderHorizontalMargin } from '../../core/reader/ReaderHorizontalMargin';
 import { ReaderTitleStyleCodec } from '../../model/reader/ReaderTitleStyle';
 import { ReaderRegexBubbleStyleResolver, ReaderRegexEmphasisContext, ReaderRegexFontCodec,
   ReaderRegexFontRule, ReaderRegexLegacySettings } from '../../model/reader/ReaderRegexFontRule';
@@ -174,6 +175,11 @@ export struct ReaderSettingsPreview {
     return ranges;
   }
 
+  effectiveHorizontalMargin(left: boolean): number {
+    return ReaderHorizontalMargin.effective(this.settings.marginLeft, this.settings.marginRight,
+      this.previewWidth, this.settings.fontSize, left);
+  }
+
   config(pageIndex: number = 0): ReaderTypographyPreviewConfig {
     const config = new ReaderTypographyPreviewConfig();
     const ui = this.getUIContext();
@@ -184,8 +190,8 @@ export struct ReaderSettingsPreview {
     input.lineSpacingPx = ui.vp2px(this.settings.lineHeight);
     input.letterSpacingPx = ui.fp2px(this.settings.letterSpacing);
     input.paragraphSpacingPx = ui.vp2px(this.settings.paragraphSpacing);
-    input.marginLeftPx = ui.vp2px(this.settings.marginLeft);
-    input.marginRightPx = ui.vp2px(this.settings.marginRight);
+    input.marginLeftPx = ui.vp2px(this.effectiveHorizontalMargin(true));
+    input.marginRightPx = ui.vp2px(this.effectiveHorizontalMargin(false));
     input.marginTopPx = ui.vp2px(this.bodyTop());
     input.marginBottomPx = ui.vp2px(this.bodyBottom());
     input.textAlign = this.settings.textAlign;
@@ -316,8 +322,8 @@ export struct ReaderSettingsPreview {
           this.infoRule(true)
         }
         .width('100%')
-        .padding({ left: this.info().sidePadding(true, true, this.settings.marginLeft, this.settings.marginRight, this.previewWidth),
-          right: this.info().sidePadding(true, false, this.settings.marginLeft, this.settings.marginRight, this.previewWidth) })
+        .padding({ left: this.info().sidePadding(true, true, this.effectiveHorizontalMargin(true), this.effectiveHorizontalMargin(false), this.previewWidth),
+          right: this.info().sidePadding(true, false, this.effectiveHorizontalMargin(true), this.effectiveHorizontalMargin(false), this.previewWidth) })
         .position({ x: 0, y: this.headerTop() })
       }
       if (this.settings.readerFooterEnabled) {
@@ -326,8 +332,8 @@ export struct ReaderSettingsPreview {
           this.infoLine(false, pageIndex)
         }
         .width('100%')
-        .padding({ left: this.info().sidePadding(false, true, this.settings.marginLeft, this.settings.marginRight, this.previewWidth),
-          right: this.info().sidePadding(false, false, this.settings.marginLeft, this.settings.marginRight, this.previewWidth) })
+        .padding({ left: this.info().sidePadding(false, true, this.effectiveHorizontalMargin(true), this.effectiveHorizontalMargin(false), this.previewWidth),
+          right: this.info().sidePadding(false, false, this.effectiveHorizontalMargin(true), this.effectiveHorizontalMargin(false), this.previewWidth) })
         .position({ x: 0, y: this.footerTop() })
       }
     }
