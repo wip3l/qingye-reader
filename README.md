@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.4.947`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.4.948`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -266,8 +266,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.4.947` |
-| `versionCode` / `buildVersion` | `4040947` |
+| `versionName` | `4.4.948` |
+| `versionCode` / `buildVersion` | `4040948` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`CAMERA`（仅在用户启用眼动翻页时请求） |
 
@@ -427,6 +427,7 @@ for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-
 | `mimo-reading-check` | MiMo 多角色朗读：人物识别、缓存重放、失败片段保留、短句合并与预合成。 |
 | `reader-title-style-check` | 标题分段、对齐、边距与标题单页的预览和排版。 |
 | `book-source-filter-selection-check` | 书源管理的分组、格式、搜索、状态筛选与多选计数。 |
+| `reader-stale-toc-offline-check` | 目录含旧链接需要刷新时，取到新目录才替换；断网时保留旧目录继续读已缓存正文。 |
 | `audio-rule-support-check` | 有声书规则辅助：`sourceRegex`（Java 方言、字面量、响应体捕获组）、地址携带的请求头、跨站请求头收敛、`@webjs:` 识别。 |
 
 这些脚本用于代码回归，不能替代授权审查、安全审计或法律意见。
