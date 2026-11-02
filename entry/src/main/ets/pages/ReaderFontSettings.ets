@@ -62,9 +62,12 @@ class ReaderBubbleStyleOption {
   }
 }
 
-@Entry
 @Component
-struct ReaderFontSettingsPage {
+export struct ReaderFontSettingsEditor {
+  @Prop embedded: boolean = false;
+  onStylePreviewChanged: (settings: ReaderSettings) => void = (_settings: ReaderSettings): void => {};
+  onCloseReady: (close: () => void) => void = (_close: () => void): void => {};
+  onShownReady: (show: () => void) => void = (_show: () => void): void => {};
   @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
@@ -113,11 +116,17 @@ struct ReaderFontSettingsPage {
   private draftMode: boolean = false;
 
   aboutToAppear(): void {
+    this.onCloseReady(() => { this.closeReaderFontSettings(); });
+    this.onShownReady(() => { this.onPageShow(); });
     const params = router.getParams() as Record<string, Object> | undefined;
     this.draftMode = !!params && params[ThemeTypographyDraft.DRAFT_PARAM] === true &&
       ThemeTypographyDraft.current() !== null;
     this.loadSettings();
     this.syncBars();
+  }
+
+  aboutToDisappear(): void {
+    this.flushScheduledSettingsSave();
   }
 
   onPageShow(): void {
@@ -190,6 +199,7 @@ struct ReaderFontSettingsPage {
       this.regexRules = this.parseRegexRules(settings);
       this.bumpRegexHighlightRefresh();
       this.readerSettingsLoaded = true;
+      this.onStylePreviewChanged(settings);
     } catch (e) {
       console.warn('加载阅读字体设置失败:', e);
     } finally {
@@ -198,15 +208,19 @@ struct ReaderFontSettingsPage {
   }
 
   build() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      PageScaffold({ title: this.draftMode ? '主题阅读字体' : '阅读字体', onBack: () => this.closeReaderFontSettings(), content: () => {
+    Column() {
+      if (this.embedded) {
         this.pageContent()
-      } })
+      } else {
+        PageScaffold({ title: this.draftMode ? '主题阅读字体' : '阅读字体', onBack: () => this.closeReaderFontSettings(), content: () => {
+          this.pageContent()
+        } })
+      }
     }
     .width('100%')
-    .height('100%')
-    .backgroundColor(this.pageColor())
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .height(this.embedded ? 'auto' : '100%')
+    .backgroundColor(this.embedded ? Color.Transparent : this.pageColor())
+    .expandSafeArea(this.embedded ? [] : [SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet($$this.titleReadingPreview, this.titleReadingPreviewSheet, {
       height: SheetSize.LARGE, dragBar: true, showClose: true,
       backgroundColor: ThemeRuntime.readerBackgroundColor(this.appDarkMode)
@@ -231,17 +245,21 @@ struct ReaderFontSettingsPage {
           this.readerFontWeight = value;
           this.saveSettings();
         } })
-      this.bodyPreviewItem()
+      if (!this.embedded) {
+        this.bodyPreviewItem()
+      }
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
-    .backgroundColor(this.cardColor())
+    .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
 
     this.sectionTitle('标题字体设置')
     Column() {
-      this.titlePreviewItem()
+      if (!this.embedded) {
+        this.titlePreviewItem()
+      }
       this.fontModeItem('字体类型', this.readerTitleFontMode, this.readerTitleFontFamily, (mode: string, family: string) => {
         this.readerTitleFontMode = mode;
         this.readerTitleFontFamily = family;
@@ -262,7 +280,7 @@ struct ReaderFontSettingsPage {
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
-    .backgroundColor(this.cardColor())
+    .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
 
     this.sectionTitle('正则字体设置')
     Column() {
@@ -281,7 +299,7 @@ struct ReaderFontSettingsPage {
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
-    .backgroundColor(this.cardColor())
+    .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
   }
 
   saveSettings(regexRules: ReaderRegexFontRule[] = this.regexRules): void {
@@ -308,6 +326,7 @@ struct ReaderFontSettingsPage {
     this.readerRegexFontRulesRaw = rulesRaw;
     settings.regexFontRulesRaw = rulesRaw;
     this.latestReaderFontStyleSettings = settings;
+    this.onStylePreviewChanged(settings);
     this.scheduleSettingsSave();
   }
 
@@ -629,6 +648,7 @@ struct ReaderFontSettingsPage {
    * the top-level font rows and the nested regex rule rows.
    */
   syncBars(): void {
+    if (this.embedded) return;
     syncSystemBars(getContext(this), this.appDarkMode, this.pageColor());
   }
 
@@ -930,7 +950,9 @@ struct ReaderFontSettingsPage {
 
         this.regexEmphasisSettings(index, refreshKey)
 
-        this.regexRulePreviewItem(index, refreshKey)
+        if (!this.embedded) {
+          this.regexRulePreviewItem(index, refreshKey)
+        }
       }
     }
     .width('calc(100% - 32vp)')
@@ -986,21 +1008,34 @@ struct ReaderFontSettingsPage {
   // Reads the selection from state inside the builder: by-value builder arguments would not refresh.
   @Builder
   titleSegmented(kind: string, label: string) {
-    Row() {
-      ForEach(this.titleSegmentOptions(kind), (option: string, index: number) => {
-        Button(option, { type: ButtonType.Capsule, stateEffect: true })
-          .layoutWeight(1)
-          .height(32)
-          .padding({ left: 4, right: 4 })
-          .fontSize(AppFontSize.BODY)
-          .fontWeight(index === this.titleSegmentSelected(kind) ? FontWeight.Medium : FontWeight.Normal)
-          .fontColor(index === this.titleSegmentSelected(kind) ? this.primaryTextColor() : this.subTextColor())
-          .backgroundColor(index === this.titleSegmentSelected(kind) ? this.cardColor() : Color.Transparent)
-          .shadow(index === this.titleSegmentSelected(kind) ?
-            { radius: 4, color: '#1A000000', offsetX: 0, offsetY: 1 } : { radius: 0, color: Color.Transparent })
-          .accessibilityText(`${label}：${option}${index === this.titleSegmentSelected(kind) ? '，已选中' : ''}`)
-          .onClick(() => this.selectTitleSegment(kind, index))
-      }, (option: string) => `${kind}_${option}`)
+    Stack({ alignContent: Alignment.Start }) {
+      Row()
+        .id(`reader_title_${kind}_indicator`)
+        .width(`${100 / this.titleSegmentOptions(kind).length}%`)
+        .height(32)
+        .borderRadius(16)
+        .backgroundColor(this.cardColor())
+        .shadow({ radius: 4, color: '#1A000000', offsetX: 0, offsetY: 1 })
+        .translate({ x: `${this.titleSegmentSelected(kind) * 100}%` })
+        .animation({ duration: 180, curve: Curve.EaseOut })
+        .hitTestBehavior(HitTestMode.None)
+        .accessibilityLevel('no')
+      Row() {
+        ForEach(this.titleSegmentOptions(kind), (option: string, index: number) => {
+          Button(option, { type: ButtonType.Capsule, stateEffect: true })
+            .id(`reader_title_${kind}_${index}`)
+            .layoutWeight(1)
+            .height(32)
+            .padding({ left: 4, right: 4 })
+            .fontSize(AppFontSize.BODY)
+            .fontWeight(index === this.titleSegmentSelected(kind) ? FontWeight.Medium : FontWeight.Normal)
+            .fontColor(index === this.titleSegmentSelected(kind) ? this.primaryTextColor() : this.subTextColor())
+            .backgroundColor(Color.Transparent)
+            .accessibilitySelected(index === this.titleSegmentSelected(kind))
+            .accessibilityText(`${label}：${option}${index === this.titleSegmentSelected(kind) ? '，已选中' : ''}`)
+            .onClick(() => this.selectTitleSegment(kind, index))
+        }, (option: string) => `${kind}_${option}`)
+      }.width('100%')
     }
     .width('100%')
     .height(40)
@@ -2100,4 +2135,30 @@ struct ReaderFontSettingsPage {
     .alignItems(VerticalAlign.Center)
   }
 
+}
+
+/** 路由页面与样式悬浮框复用同一套字体控件和保存队列。 */
+@Entry
+@Component
+struct ReaderFontSettingsPage {
+  private closeEditor: () => void = () => { router.back(); };
+  private showEditor: () => void = () => {};
+
+  onPageShow(): void {
+    this.showEditor();
+  }
+
+  onBackPress(): boolean {
+    this.closeEditor();
+    return true;
+  }
+
+  build() {
+    Stack() {
+      ReaderFontSettingsEditor({ onCloseReady: (close: () => void) => { this.closeEditor = close; },
+        onShownReady: (show: () => void) => { this.showEditor = show; } })
+    }
+    .width('100%')
+    .height('100%')
+  }
 }

@@ -108,6 +108,7 @@ import { ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2St
 import { ReaderCommentBubbleStyle, ReaderCommentBubbleStyles } from '../core/reader/ReaderCommentBubble';
 import { ReaderCommentBubbleSize } from '../core/reader/ReaderCommentBubbleSize';
 import { ReaderV2PageNodeController } from '../core/reader/ReaderV2RenderNode';
+import { ReaderV2RegexBubbleCaps } from '../components/reader/ReaderV2RegexBubbleCaps';
 import { ReaderV2GestureRouter, ReaderV2TapResult } from '../core/reader/ReaderV2Interaction';
 import { ReaderOpenTrace } from '../utils/ReaderOpenTrace';
 import { ReaderEyeTurnCoordinator, ReaderEyeTurnViewState } from '../core/reader/ReaderEyeTurnCoordinator';
@@ -16144,29 +16145,7 @@ struct ReadBookPage {
 
   @Builder
   readerV2RegexBubbleCaps(segment: ReaderV2RegexBubbleSegment) {
-    if (segment.leading && segment.leadingCapWidthPx > 0.5) {
-      Image(ThemeAssetRegistry.regexBubbleCap(segment.styleId))
-        .width(px2vp(segment.capSizePx))
-        .height(px2vp(segment.capSizePx))
-        .objectFit(ImageFit.Contain)
-        .position({
-          x: px2vp(segment.rect.left),
-          y: px2vp(segment.rect.top + (segment.rect.height() - segment.capSizePx) / 2)
-        })
-        .hitTestBehavior(HitTestMode.None)
-    }
-    if (segment.trailing && segment.trailingCapWidthPx > 0.5) {
-      Image(ThemeAssetRegistry.regexBubbleCap(segment.styleId))
-        .width(px2vp(segment.capSizePx))
-        .height(px2vp(segment.capSizePx))
-        .objectFit(ImageFit.Contain)
-        .rotate({ angle: 180 })
-        .position({
-          x: px2vp(segment.rect.right - segment.capSizePx),
-          y: px2vp(segment.rect.top + (segment.rect.height() - segment.capSizePx) / 2)
-        })
-        .hitTestBehavior(HitTestMode.None)
-    }
+    ReaderV2RegexBubbleCaps({ segment: segment })
   }
 
   currentReaderV2TtsOverlayKeys(paintVersion: number): string[] {

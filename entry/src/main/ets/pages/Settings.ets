@@ -1,3 +1,9 @@
+import { ReaderFontSettingsEditor } from './ReaderFontSettings';
+import { ReaderMaterialPanel } from '../components/reader/ReaderFloatingMaterialBar';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
+import { ReaderSettingsPreview, ReaderSettingsPreviewNavigation } from '../components/reader/ReaderSettingsPreview';
+import { ReaderTitleStyleCodec } from '../model/reader/ReaderTitleStyle';
 import { ReaderTypographyField } from '../components/reader/ReaderLayoutSettings';
 import { ReaderFontWeight } from '../core/reader/ReaderFontWeight';
 import { ReaderCommentBubbleSize } from '../core/reader/ReaderCommentBubbleSize';
@@ -58,6 +64,20 @@ struct SettingsPage {
   @StorageLink('readerMarginTop') readerMarginTop: number = 18;
   @StorageLink('readerMarginBottom') readerMarginBottom: number = 18;
   @StorageLink('readerCommentBubbleSize') readerCommentBubbleSize: number = ReaderCommentBubbleSize.DEFAULT;
+  @StorageProp('statusBarHeight') statusBarHeight: number = 0;
+  @StorageProp('navBarHeight') navBarHeight: number = 0;
+  @State showNovelStyleEditor: boolean = false;
+  @State fontPreviewSettings: ReaderSettings = new ReaderSettings();
+  @State novelSettingsCollapsed: boolean = false;
+  @State novelSettingsGroup: number = 0;
+  @State novelDisplayedSettingsGroup: number = 0;
+  @State novelPreviewPageIndex: number = 0;
+  private novelStyleGroupSwitchTimer: number = -1;
+  private static readonly STYLE_GROUP_SWITCH_DURATION: number = 180;
+  @State novelViewportHeight: number = 0;
+  @State novelViewportWidth: number = 0;
+  private novelSettingsScroller: Scroller = new Scroller();
+  private readonly novelSettingsGroups: string[] = ['排版', '页眉页脚', '字体', '背景'];
   @State typographySettingIndex: number = 0;
   @State showTypographyValueInput: boolean = false;
   @State typographyValueDraft: string = '';
@@ -140,6 +160,23 @@ struct SettingsPage {
     this.syncBars();
   }
 
+  aboutToDisappear(): void {
+    this.cancelNovelStyleGroupSwitch();
+    if (this.isNovelSection()) this.saveReaderLayoutSettings();
+  }
+
+  onBackPress(): boolean {
+    if (this.showNovelStyleEditor) {
+      if (this.novelSettingsCollapsed) {
+        this.novelSettingsCollapsed = false;
+      } else {
+        this.closeNovelStyleEditor();
+      }
+      return true;
+    }
+    return false;
+  }
+
   refreshSystemFontFamily(): string {
     const family = ReaderSystemFontHelper.applyToStorage(this.getUIContext());
     this.readerSystemFontFamily = family;
@@ -151,7 +188,9 @@ struct SettingsPage {
       const settings = await ReaderSettingsStore.load(getContext(this));
       ReaderSettingsStore.applyToStorage(settings);
       this.applyLoadedReaderSettings(settings);
+      this.fontPreviewSettings = settings;
       this.registerSelectedReaderFont(settings);
+      this.syncBars();
     } catch (e) {
       console.warn('读取阅读设置失败:', e);
     }
@@ -159,19 +198,321 @@ struct SettingsPage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      PageScaffold({ title: this.isNovelSection() ? '小说设置' : '阅读设置', bottomInset: 0, content: () => {
-        if (this.isNovelSection()) {
-          this.novelContent()
-        } else {
-          this.pageContent()
-        }
-      } })
+      if (this.isNovelSection() && this.showNovelStyleEditor) {
+        this.novelPreviewScreen()
+      } else {
+        PageScaffold({ title: this.isNovelSection() ? '小说设置' : '阅读设置', bottomInset: 0, content: () => {
+          if (this.isNovelSection()) {
+            this.novelContent()
+          } else {
+            this.pageContent()
+          }
+        } })
+      }
 
     }
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .onAreaChange((_previous: Area, current: Area) => {
+      const nextWidth = Number(current.width);
+      if (nextWidth > 0 && Math.abs(nextWidth - this.novelViewportWidth) >= 1) {
+        this.novelViewportWidth = nextWidth;
+      }
+      const nextHeight = Number(current.height);
+      if (nextHeight > 0 && Math.abs(nextHeight - this.novelViewportHeight) >= 1) {
+        this.novelViewportHeight = nextHeight;
+      }
+    })
+  }
+
+  previewLayoutSettings(): ReaderSettings {
+    const settings = JSON.parse(JSON.stringify(this.fontPreviewSettings)) as ReaderSettings;
+    settings.fontSize = this.readerFontSize;
+    settings.fontWeight = this.readerFontWeight;
+    settings.letterSpacing = this.readerLetterSpacing;
+    settings.textAlign = this.readerTextAlign;
+    settings.lineHeight = this.readerLineHeight;
+    settings.paragraphSpacing = this.readerParagraphSpacing;
+    settings.paragraphIndent = this.readerParagraphIndent;
+    settings.marginLeft = this.readerMarginLeft;
+    settings.marginRight = this.readerMarginRight;
+    settings.marginTop = this.readerMarginTop;
+    settings.marginBottom = this.readerMarginBottom;
+    settings.commentBubbleSize = this.readerCommentBubbleSize;
+    settings.readerHeaderEnabled = this.readerHeaderEnabled;
+    settings.readerFooterEnabled = this.readerFooterEnabled;
+    settings.readerInfoBarConfig = this.readerInfoBarConfig;
+    settings.extendToStatusBar = this.readerExtendToStatusBar;
+    return settings;
+  }
+
+  novelPanelTop(): number {
+    const height = this.novelViewportHeight || 760;
+    return Math.max(0, (height - this.novelPanelHeight()) / 2);
+  }
+
+  novelPanelHeight(): number {
+    const height = this.novelViewportHeight || 760;
+    // 上下使用相同的安全留白，让面板在整张阅读页内居中，同时避开系统栏。
+    const edgeInset = Math.max(this.statusBarHeight, this.navBarHeight) + AppSpacing.LG;
+    const available = Math.max(0, height - edgeInset * 2);
+    return Math.min(640, Math.max(260, height * 0.68), available);
+  }
+
+  novelPanelWidth(): number {
+    return Math.max(1, (this.novelViewportWidth || 360) - AppSpacing.LG * 2);
+  }
+
+  selectNovelStyleGroup(index: number): void {
+    if (index < 0 || index >= this.novelSettingsGroups.length || index === this.novelSettingsGroup) return;
+    this.applyTypographyValueInput();
+    this.cancelNovelStyleGroupSwitch();
+    this.novelSettingsGroup = index;
+    // 先让同一块光感胶囊滑到目标位置，再挂载字体、正则等较重的控件。
+    this.novelStyleGroupSwitchTimer = setTimeout(() => {
+      this.novelStyleGroupSwitchTimer = -1;
+      if (this.novelDisplayedSettingsGroup === index) return;
+      this.novelDisplayedSettingsGroup = index;
+      this.novelSettingsScroller.scrollTo({ xOffset: 0, yOffset: 0 });
+    }, SettingsPage.STYLE_GROUP_SWITCH_DURATION);
+  }
+
+  cancelNovelStyleGroupSwitch(): void {
+    if (this.novelStyleGroupSwitchTimer >= 0) {
+      clearTimeout(this.novelStyleGroupSwitchTimer);
+      this.novelStyleGroupSwitchTimer = -1;
+    }
+  }
+
+  novelStyleSegmentWidth(): number {
+    return Math.max(1, (this.novelPanelWidth() - 32) / this.novelSettingsGroups.length);
+  }
+
+  @Builder
+  novelStyleSegmentContent() {
+    Stack({ alignContent: Alignment.Start }) {
+      Stack() {
+        ImmersiveMaterialSurface({ surfaceWidth: this.novelStyleSegmentWidth(), surfaceHeight: 36,
+          darkMode: this.appDarkMode, fallbackColor: ThemeRuntime.accentSurfaceColor(this.appDarkMode),
+          glowColor: `#40${this.accentColor().substring(1)}` }) {
+          Stack()
+        }
+      }
+      .id('novel_settings_indicator')
+      .width(this.novelStyleSegmentWidth())
+      .height(36)
+      .translate({ x: this.novelSettingsGroup * this.novelStyleSegmentWidth() })
+      .animation({ duration: SettingsPage.STYLE_GROUP_SWITCH_DURATION, curve: Curve.EaseOut })
+      .hitTestBehavior(HitTestMode.None)
+      .accessibilityLevel('no')
+      Row() {
+        ForEach(this.novelSettingsGroups, (group: string, index: number) => {
+          Button(group, { type: ButtonType.Capsule, stateEffect: true })
+            .id(`novel_settings_group_${index}`)
+            .height(36)
+            .layoutWeight(1)
+            .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
+            .fontSize(AppFontSize.BODY)
+            .fontWeight(this.novelSettingsGroup === index ? FontWeight.Medium : FontWeight.Normal)
+            .fontColor(this.novelSettingsGroup === index ? this.accentColor() : this.subTextColor())
+            .backgroundColor(Color.Transparent)
+            .accessibilitySelected(this.novelSettingsGroup === index)
+            .onClick(() => { this.selectNovelStyleGroup(index); })
+        }, (group: string) => group)
+      }
+      .width('100%')
+      .height(36)
+    }
+    .width(this.novelPanelWidth() - 32)
+    .height(36)
+  }
+
+  @Builder
+  novelStyleGroupSelector() {
+    ImmersiveMaterialSurface({ surfaceWidth: this.novelPanelWidth() - 24, surfaceHeight: 44,
+      darkMode: this.appDarkMode, fallbackColor: this.cardColor(),
+      glowColor: `#40${this.accentColor().substring(1)}` }) {
+      this.novelStyleSegmentContent()
+    }
+  }
+
+  @Builder
+  novelPreviewScreen() {
+    ReaderSettingsPreview({ settings: this.previewLayoutSettings(), readerTheme: this.currentReaderTheme(),
+      bodyFamily: this.getPreviewBodyFontFamily(), globalFamily: this.getPreviewFontFamily(),
+      systemFamily: this.readerSystemFontFamily, darkMode: this.isDarkHexColor(this.previewBackgroundColor()),
+      resolveCustomFamily: (family: string): string => this.resolvePreviewCustomFontFamily(family),
+      previewPageIndex: this.novelPreviewPageIndex,
+      allowPageSwipe: this.novelSettingsCollapsed,
+      onPageSelected: (index: number) => { this.novelPreviewPageIndex = index; },
+      revision: this.themeRevision + this.previewFontRenderVersion })
+
+    if (this.novelSettingsCollapsed) {
+      Row() {
+        if (ReaderTitleStyleCodec.decode(this.fontPreviewSettings.titleStyleRaw).singlePage) {
+          this.novelPreviewNavigation()
+        }
+        ImmersiveHeaderAction({ label: '调整样式 ↓', tint: this.accentColor(),
+          onTap: () => { this.novelSettingsCollapsed = false; } })
+          .id('novel_settings_restore')
+      }
+      .width('100%')
+      .justifyContent(ReaderTitleStyleCodec.decode(this.fontPreviewSettings.titleStyleRaw).singlePage ?
+        FlexAlign.SpaceBetween : FlexAlign.End)
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+      .margin({ top: this.novelPanelTop() })
+    }
+    Stack({ alignContent: Alignment.TopStart }) {
+      ReaderMaterialPanel({ panelWidth: this.novelPanelWidth(), panelHeight: this.novelPanelHeight(),
+      cornerRadius: ThemeRuntime.cardRadius(), darkMode: this.appDarkMode, fallbackColor: this.cardColor() }) {
+      Column() {
+        Row({ space: AppSpacing.SM }) {
+          ImmersiveBackButton({ darkMode: this.appDarkMode, iconColor: this.primaryTextColor(),
+            accessibilityLabel: '返回小说设置', buttonSize: 32, containerWidth: 36, containerHeight: 40,
+            startInset: 0, compactLayout: true, onBack: () => { this.closeNovelStyleEditor(); } })
+          Text('阅读样式')
+            .fontSize(AppFontSize.SUBTITLE)
+            .fontColor(this.primaryTextColor())
+            .layoutWeight(1)
+          ImmersiveHeaderAction({ label: '查看整页 ↑', tint: this.accentColor(), onTap: () => {
+            this.applyTypographyValueInput();
+            this.novelSettingsCollapsed = true;
+          } })
+            .id('novel_settings_collapse')
+        }
+        .width('100%')
+        .padding({ left: AppSpacing.SM, right: AppSpacing.MD, top: AppSpacing.SM })
+        Row() {
+          this.novelStyleGroupSelector()
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .padding({ top: AppSpacing.XS, bottom: AppSpacing.SM })
+        Scroll(this.novelSettingsScroller) {
+          Column() {
+            this.novelStyleContent()
+          }
+          .width('100%')
+          .padding({ bottom: AppSpacing.LG })
+        }
+        .id('novel_settings_scroll')
+        .width('100%')
+        .layoutWeight(1)
+        .align(Alignment.TopStart)
+        .scrollBar(BarState.Auto)
+        .edgeEffect(EdgeEffect.Spring)
+        .opacity(this.novelSettingsGroup === this.novelDisplayedSettingsGroup ? 1 : 0)
+        .translate({ y: this.novelSettingsGroup === this.novelDisplayedSettingsGroup ? 0 : 6 })
+        .animation({ duration: SettingsPage.STYLE_GROUP_SWITCH_DURATION, curve: Curve.EaseOut })
+        .enabled(this.novelSettingsGroup === this.novelDisplayedSettingsGroup)
+        Text('框内滑动调整 · 实时预览')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .width('100%')
+          .padding({ left: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+      }
+      .width('100%')
+      .height('100%')
+    }
+    }
+    .id('novel_settings_panel')
+    .width(this.novelPanelWidth())
+    .height(this.novelPanelHeight())
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG, top: this.novelPanelTop() })
+    .visibility(this.novelSettingsCollapsed ? Visibility.None : Visibility.Visible)
+  }
+
+  @Builder
+  novelPreviewNavigation() {
+    ReaderSettingsPreviewNavigation({ selectedIndex: this.novelPreviewPageIndex, darkMode: this.appDarkMode,
+      navigationWidth: Math.min(180, this.novelPanelWidth() - 140),
+      onSelect: (index: number) => { this.novelPreviewPageIndex = index; } })
+  }
+
+  setNovelTypography(field: number, currentValue: number, persist: boolean = true): void {
+    const next = ReaderTypographyField.clamp(field, currentValue);
+    switch (field) {
+      case ReaderTypographyField.FONT_WEIGHT: this.readerFontWeight = next; break;
+      case ReaderTypographyField.LETTER_SPACING: this.readerLetterSpacing = next; break;
+      case ReaderTypographyField.LINE_HEIGHT: this.readerLineHeight = next; break;
+      case ReaderTypographyField.PARAGRAPH_SPACING: this.readerParagraphSpacing = next; break;
+      case ReaderTypographyField.MARGIN_LEFT: this.readerMarginLeft = next; break;
+      case ReaderTypographyField.MARGIN_RIGHT: this.readerMarginRight = next; break;
+      case ReaderTypographyField.MARGIN_TOP: this.readerMarginTop = next; break;
+      case ReaderTypographyField.MARGIN_BOTTOM: this.readerMarginBottom = next; break;
+      case ReaderTypographyField.COMMENT_BUBBLE_SIZE: this.readerCommentBubbleSize = next; break;
+      default: this.readerFontSize = next;
+    }
+    if (persist) this.saveReaderLayoutSettings();
+  }
+
+  @Builder
+  novelTypographySlider(label: string, field: number) {
+    Column({ space: AppSpacing.XS }) {
+      Row() {
+        Text(label).fontSize(AppFontSize.BODY).fontColor(this.primaryTextColor()).layoutWeight(1)
+        if (this.showTypographyValueInput && this.typographySettingIndex === field) {
+          TextInput({ text: this.typographyValueDraft, placeholder: `${this.currentTypographySettingValue(field)}` })
+            .id(`novel_typography_input_${field}`)
+            .defaultFocus(true)
+            .type(InputType.Number)
+            .enterKeyType(EnterKeyType.Done)
+            .width(64)
+            .height(32)
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.primaryTextColor())
+            .backgroundColor(this.inputColor())
+            .onChange((text: string) => { this.typographyValueDraft = text.replace(/[^0-9]/g, '').substring(0, 3); })
+            .onSubmit(() => { this.applyTypographyValueInput(); })
+            .onBlur(() => { this.applyTypographyValueInput(); })
+        } else {
+          Button(`${this.currentTypographySettingValue(field)}`)
+            .height(32)
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.accentColor())
+            .backgroundColor(Color.Transparent)
+            .onClick(() => {
+              this.applyTypographyValueInput();
+              this.typographySettingIndex = field;
+              this.openTypographyValueInput();
+            })
+            .accessibilityText(`输入${label}`)
+        }
+      }
+      .width('100%')
+      Row({ space: AppSpacing.SM }) {
+        this.settingsSliderStepButton($r('sys.symbol.minus'), `减小${label}`,
+          this.currentTypographySettingValue(field) > ReaderTypographyField.min(field), () => {
+            this.applyTypographyValueInput();
+            this.setNovelTypography(field, this.currentTypographySettingValue(field) - ReaderTypographyField.step(field));
+          })
+        Slider({ value: this.currentTypographySettingValue(field), min: ReaderTypographyField.min(field),
+          max: ReaderTypographyField.max(field), step: ReaderTypographyField.step(field) })
+          .id(`novel_typography_slider_${field}`)
+          .layoutWeight(1)
+          .selectedColor(this.accentColor())
+          .blockColor(this.accentColor())
+          .showTips(true)
+          .accessibilityText(label)
+          .onChange((currentValue: number, mode: SliderChangeMode) => {
+            this.setNovelTypography(field, currentValue, mode === SliderChangeMode.End || mode === SliderChangeMode.Click);
+          })
+        this.settingsSliderStepButton($r('sys.symbol.plus'), `增加${label}`,
+          this.currentTypographySettingValue(field) < ReaderTypographyField.max(field), () => {
+            this.applyTypographyValueInput();
+            this.setNovelTypography(field, this.currentTypographySettingValue(field) + ReaderTypographyField.step(field));
+          })
+      }
+      .width('100%')
+      if (field === ReaderTypographyField.FONT_WEIGHT) {
+        Text(ReaderFontWeight.HELP).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
+      }
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
   }
 
   /** 第一层：阅读通用设置，以及小说、漫画、PDF 各自的入口。 */
@@ -257,50 +598,34 @@ struct SettingsPage {
     .backgroundColor(this.cardColor())
   }
 
-  /** 小说子页：只对文字书生效的排版、背景、翻页与预览。 */
+  /** 与阅读外观无关的设置仍使用原页面及原保存逻辑。 */
   @Builder
   novelContent() {
-    this.sectionTitle('排版')
+    this.sectionTitle('阅读样式')
     Column() {
-      this.typographyStepper()
-      this.selectItem('段首缩进', '正文每段首行的缩进字符数',
-        this.readerParagraphIndentOptions(), this.readerParagraphIndent, (index: number) => {
-          this.readerParagraphIndent = index;
-          this.saveReaderLayoutSettings();
-        }, 'settings_reader_paragraph_indent_select')
-      this.selectItem('正文对齐方式', '正文段落的水平对齐',
-        this.readerTextAlignOptions(), this.readerTextAlignSelectedIndex(), (index: number) => {
-          this.setReaderTextAlignByIndex(index);
-        }, 'settings_reader_text_align_select')
-      this.readerHeaderFooterSettingsPanel()
-      this.readerFontEntryItem()
+      SettingNavRow({ title: '排版', description: '字号、间距、边距、气泡大小',
+        onTap: () => { this.openNovelStyleEditor(0); } })
+      SettingNavRow({ title: '页眉页脚', description: '内容、颜色、位置与进度条',
+        onTap: () => { this.openNovelStyleEditor(1); } })
+      SettingNavRow({ title: '阅读字体', description: '正文、标题、正则样式',
+        onTap: () => { this.openNovelStyleEditor(2); } })
+      SettingNavRow({ title: '阅读背景', description: '主题、背景图片、文字颜色', showDivider: false,
+        onTap: () => { this.openNovelStyleEditor(3); } })
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+    this.sectionTitle('替换净化')
+    Column() {
       this.readerReplaceRulesEntryItem()
-      SettingSwitchRow({
-        title: '正文扩展至状态栏',
-        description: '隐藏状态栏，正文延伸到屏幕顶部',
-        isOn: this.readerExtendToStatusBar,
-        showDivider: false,
-        onChange: (value: boolean) => {
-          this.setReaderExtendToStatusBar(value);
-        }
-      })
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
     .backgroundColor(this.cardColor())
-
-    this.sectionTitle('阅读背景')
-    Column() {
-      this.readerThemePanel()
-    }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-    .backgroundColor(this.cardColor())
-
     this.sectionTitle('操作')
     Column() {
       SettingSwitchRow({
@@ -371,42 +696,78 @@ struct SettingsPage {
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
     .backgroundColor(this.cardColor())
+  }
 
-    this.sectionTitle('预览')
-    Column() {
-      Text('第一章 风起')
-        .fontSize(AppFontSize.BODY_LARGE)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.previewTitleColor())
-        .width('100%')
-        .margin({ bottom: AppSpacing.LG })
-
-      if (this.previewFontRenderVersion % 2 === 0) {
-        this.previewReaderText()
-      } else {
-        this.previewReaderText()
+  /** 样式控件共享同一个固定尺寸的阅读预览，滚动只发生在悬浮框内。 */
+  @Builder
+  novelStyleContent() {
+    if (this.novelDisplayedSettingsGroup === 0) {
+      this.sectionTitle('排版')
+      Column() {
+        ForEach(ReaderTypographyField.LABELS, (label: string, field: number) => {
+          this.novelTypographySlider(label, field)
+        }, (label: string) => label)
+        this.selectItem('段首缩进', '正文每段首行的缩进字符数',
+          this.readerParagraphIndentOptions(), this.readerParagraphIndent, (index: number) => {
+            this.readerParagraphIndent = index;
+            this.saveReaderLayoutSettings();
+          }, 'settings_reader_paragraph_indent_select')
+        this.selectItem('正文对齐方式', '正文段落的水平对齐',
+          this.readerTextAlignOptions(), this.readerTextAlignSelectedIndex(), (index: number) => {
+            this.setReaderTextAlignByIndex(index);
+          }, 'settings_reader_text_align_select')
+        SettingSwitchRow({
+          title: '正文扩展至状态栏',
+          description: '隐藏状态栏，正文延伸到屏幕顶部',
+          isOn: this.readerExtendToStatusBar,
+          showDivider: false,
+          onChange: (value: boolean) => {
+            this.setReaderExtendToStatusBar(value);
+          }
+        })
       }
-
-      Text(`当前字体：${this.previewBodyFontName()} · 当前翻页：${this.pageTurnModeText()}`)
-        .fontSize(AppFontSize.CAPTION)
-        .fontFamily(this.getPreviewBodyFontFamily())
-        .fontColor(this.previewSubTextColor())
-        .width('100%')
-        .margin({ top: AppSpacing.MD })
+      .width('calc(100% - 24vp)')
+      .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+      .borderRadius(ThemeRuntime.cardRadius())
+      .clip(true)
+      .backgroundColor(this.showNovelStyleEditor ? Color.Transparent : this.cardColor())
+    } else if (this.novelDisplayedSettingsGroup === 1) {
+      this.readerHeaderFooterSettingsPanel()
+    } else if (this.novelDisplayedSettingsGroup === 2) {
+      ReaderFontSettingsEditor({ embedded: true,
+        onStylePreviewChanged: (settings: ReaderSettings) => {
+          this.fontPreviewSettings = settings;
+          this.readerFontSize = settings.fontSize;
+          this.readerFontWeight = settings.fontWeight;
+        } })
+    } else {
+      this.sectionTitle('阅读背景')
+      Column() {
+        this.readerThemePanel()
+      }
+      .width('calc(100% - 24vp)')
+      .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+      .borderRadius(ThemeRuntime.cardRadius())
+      .clip(true)
+      .backgroundColor(this.showNovelStyleEditor ? Color.Transparent : this.cardColor())
     }
-    .width('calc(100% - 24vp)')
-    .padding({
-      left: this.readerMarginLeft,
-      right: this.readerMarginRight,
-      top: this.readerMarginTop,
-      bottom: this.readerMarginBottom
-    })
-    .backgroundColor(this.previewBackgroundColor())
-    .backgroundImage(this.previewBackgroundImage(), ImageRepeat.NoRepeat)
-    .backgroundImageSize(this.previewBackgroundImageSize())
-    .borderRadius(ThemeRuntime.buttonRadius())
-    .clip(true)
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: 32 })
+  }
+
+  openNovelStyleEditor(group: number): void {
+    this.cancelNovelStyleGroupSwitch();
+    this.novelSettingsGroup = group;
+    this.novelDisplayedSettingsGroup = group;
+    this.novelSettingsCollapsed = false;
+    this.showNovelStyleEditor = true;
+    this.syncBars();
+  }
+
+  closeNovelStyleEditor(): void {
+    this.cancelNovelStyleGroupSwitch();
+    this.applyTypographyValueInput();
+    this.saveReaderLayoutSettings();
+    this.showNovelStyleEditor = false;
+    this.syncBars();
   }
 
   async reloadCustomFonts(): Promise<void> {
@@ -1308,8 +1669,8 @@ struct SettingsPage {
     return ReaderTypographyField.max(this.typographySettingIndex);
   }
 
-  currentTypographySettingValue(): number {
-    switch (this.typographySettingIndex) {
+  currentTypographySettingValue(field: number = this.typographySettingIndex): number {
+    switch (field) {
       case ReaderTypographyField.COMMENT_BUBBLE_SIZE:
         return this.readerCommentBubbleSize;
       case ReaderTypographyField.FONT_WEIGHT:
@@ -1521,6 +1882,7 @@ struct SettingsPage {
   }
 
   saveReaderThemeSettings(): void {
+    this.syncBars();
     ReaderSettingsStore.saveThemeSettings(
       getContext(this),
       this.readerLightThemeIndex,
@@ -1772,6 +2134,7 @@ struct SettingsPage {
   setReaderExtendToStatusBar(enabled: boolean): void {
     this.readerExtendToStatusBar = enabled;
     this.saveReaderInteractionSettings();
+    this.syncBars();
   }
 
   setReaderPreloadEnabled(enabled: boolean): void {
@@ -1955,7 +2318,12 @@ struct SettingsPage {
   }
 
   syncBars(): void {
-    syncSystemBars(getContext(this), this.appDarkMode, this.pageColor());
+    if (this.isNovelSection() && this.showNovelStyleEditor) {
+      syncSystemBars(getContext(this), this.isDarkHexColor(this.previewBackgroundColor()),
+        this.previewBackgroundColor(), this.readerExtendToStatusBar);
+    } else {
+      syncSystemBars(getContext(this), this.appDarkMode, this.pageColor());
+    }
   }
 
   @Builder
@@ -2077,6 +2445,7 @@ struct SettingsPage {
     SettingNavRow({
       title: '替换净化',
       description: '正文与章节标题的替换规则',
+      showDivider: false,
       onTap: () => {
         router.pushUrl({ url: 'pages/ReaderReplaceRules' });
       }
@@ -2293,7 +2662,7 @@ struct SettingsPage {
     }
     .width('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.XL })
-    .backgroundColor(this.cardColor())
+    .backgroundColor(this.showNovelStyleEditor ? Color.Transparent : this.cardColor())
   }
 
   @Builder

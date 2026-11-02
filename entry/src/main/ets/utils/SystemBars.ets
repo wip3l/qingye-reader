@@ -71,12 +71,13 @@ export function releaseSystemBarListeners(): void {
   AppStorage.setOrCreate('desktopTitleBarHeight', 0);
 }
 
-export function syncSystemBars(context: Context, darkMode: boolean, backgroundColor?: string): void {
+export function syncSystemBars(context: Context, darkMode: boolean, backgroundColor?: string,
+  hideStatusBar: boolean = false): void {
   const bg = backgroundColor || ThemeRuntime.pageColor(darkMode);
   window.getLastWindow(context).then((mainWindow: window.Window) => {
     mainWindow.setWindowBackgroundColor(bg);
     mainWindow.setWindowLayoutFullScreen(true);
-    mainWindow.setWindowSystemBarEnable(['navigation', 'status']);
+    mainWindow.setWindowSystemBarEnable(hideStatusBar ? ['navigation'] : ['navigation', 'status']);
     syncDesktopTitleBar(mainWindow, darkMode);
     syncSystemSafeAreas(mainWindow);
     mainWindow.setWindowSystemBarProperties({
