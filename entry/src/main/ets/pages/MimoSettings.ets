@@ -481,6 +481,8 @@ struct MimoSettingsPage {
         .enabled(!this.busy)
         .value(this.voice).selected(MIMO_VOICES.indexOf(this.voice))
         .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+        .optionFont({ family: this.applicationFontFamily })
+        .selectedOptionFont({ family: this.applicationFontFamily })
         .fontColor(ThemeRuntime.subTextColor(this.dark))
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)
