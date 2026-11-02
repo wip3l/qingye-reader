@@ -21,6 +21,13 @@ import { MembershipBadge } from '../components/common/MembershipBadge';
 /** Result of one capability check: idle (not run), running, ok, fail, skipped. */
 type MimoCheck = 'idle' | 'running' | 'ok' | 'fail' | 'skipped';
 
+/** Passed as one object literal so @Builder takes it by reference and refreshes on state changes. */
+interface PrimaryButtonParams {
+  label: string;
+  enabled: boolean;
+  action: () => void;
+}
+
 @Entry
 @Component
 struct MimoSettingsPage {
@@ -116,7 +123,7 @@ struct MimoSettingsPage {
       this.sharedKey = key;
       this.usingShared = true;
       this.resetResults();
-      HdsFeedback.showToast('已填入会员共享密钥，请勾选同意后测试');
+      HdsFeedback.showToast(this.consent ? '已填入会员共享密钥，请点击测试' : '已填入会员共享密钥，请勾选同意后测试');
     } catch (error) {
       if (serial === this.serial) HdsFeedback.showToast((error as Error).message || '填充失败，请稍后再试');
     } finally {
@@ -314,11 +321,13 @@ struct MimoSettingsPage {
       this.voiceRow()
     }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
 
+    // Pass an object literal: by-value @Builder arguments freeze at first build, which kept this button disabled.
     if (this.tested) {
-      this.primaryButton(this.analysisCheck === 'ok' ? '保存并开启多角色朗读' : '保存并使用单音色朗读', () => this.save())
+      this.primaryButton({ label: this.analysisCheck === 'ok' ? '保存并开启多角色朗读' : '保存并使用单音色朗读',
+        enabled: !this.busy, action: () => this.save() })
     } else {
-      this.primaryButton(this.busy ? '正在测试…' : '测试连接与试听', () => this.test(),
-        !this.busy && this.consent && this.pendingKey().length > 0)
+      this.primaryButton({ label: this.busy ? '正在测试…' : '测试连接与试听',
+        enabled: !this.busy && this.consent && this.pendingKey().length > 0, action: () => this.test() })
     }
     if (this.hasKey) {
       Button('取消，继续使用现有密钥').fontSize(AppFontSize.BODY).fontColor(ThemeRuntime.subTextColor(this.dark))
@@ -403,11 +412,11 @@ struct MimoSettingsPage {
   }
 
   @Builder
-  primaryButton(label: string, action: () => void, enabled: boolean = true) {
-    Button(label).width('100%').height(46).enabled(enabled).opacity(enabled ? 1 : 0.5)
+  primaryButton(params: PrimaryButtonParams) {
+    Button(params.label).width('100%').height(46).enabled(params.enabled).opacity(params.enabled ? 1 : 0.5)
       .backgroundColor(ThemeRuntime.buttonColor(this.dark))
       .fontColor(ThemeRuntime.onAccentColor(ThemeRuntime.buttonColor(this.dark)))
-      .onClick(action)
+      .onClick(() => params.action())
   }
 
   @Builder
