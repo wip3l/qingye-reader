@@ -14,6 +14,10 @@
     "targetAPIVersion": 26,
     "alternateIcons": [
       {
+        "name": "nostalgic",
+        "icon": "$media:ic_app_nostalgic_layered"
+      },
+      {
         "name": "warm_book",
         "icon": "$media:ic_app_warm_book"
       },

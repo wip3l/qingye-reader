@@ -17,6 +17,7 @@ export class AppIconManager {
   static readonly UNSUPPORTED_MESSAGE: string = '该能力需要鸿蒙7及以上';
   static readonly OPTIONS: AppIconOption[] = [
     AppIconManager.option('default', '默认主题', '应用默认桌面图标', '', $r('app.media.icon')),
+    AppIconManager.option('nostalgic', '怀旧', '原版经典书本图标', 'nostalgic', $r('app.media.ic_app_nostalgic')),
     AppIconManager.option('warm_book', '纸书暖光', '温润纸页与书签', 'warm_book', $r('app.media.ic_app_warm_book')),
     AppIconManager.option('night_neon', '夜读霓虹', '深色发光书页', 'night_neon', $r('app.media.ic_app_night_neon')),
     AppIconManager.option('minimal_line', '极简线性', '清爽几何线条', 'minimal_line', $r('app.media.ic_app_minimal_line')),
