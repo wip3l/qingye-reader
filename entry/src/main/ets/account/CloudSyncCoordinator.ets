@@ -70,6 +70,7 @@ class BookshelfSyncPayload {
   latestChapterTitle: string = '';
   updateTime: string = '';
   latestChapterTime: number = 0;
+  confirmedChapterUpdateTime: number = 0;
   totalChapterNum: number = 0;
   wordCount: string = '';
   canUpdate: boolean = true;
@@ -616,6 +617,7 @@ export class CloudSyncCoordinator {
       shelf.latestChapterTitle = book.latestChapterTitle;
       shelf.updateTime = book.updateTime;
       shelf.latestChapterTime = book.latestChapterTime;
+      shelf.confirmedChapterUpdateTime = book.confirmedChapterUpdateTime;
       shelf.totalChapterNum = book.totalChapterNum;
       shelf.wordCount = book.wordCount;
       shelf.canUpdate = book.canUpdate;
@@ -1274,6 +1276,9 @@ export class CloudSyncCoordinator {
     book.latestChapterTitle = payload.latestChapterTitle || '';
     book.updateTime = payload.updateTime || '';
     book.latestChapterTime = Math.max(0, Math.floor(Number(payload.latestChapterTime) || 0));
+    const remoteUpdateTime = Number(payload.confirmedChapterUpdateTime);
+    book.confirmedChapterUpdateTime = Math.max(existing?.confirmedChapterUpdateTime || 0,
+      Number.isFinite(remoteUpdateTime) ? Math.max(0, Math.floor(remoteUpdateTime)) : 0);
     book.totalChapterNum = Math.max(0, Math.floor(Number(payload.totalChapterNum) || 0));
     book.wordCount = payload.wordCount || '';
     book.canUpdate = payload.canUpdate !== false;

@@ -104,6 +104,7 @@ function fixture(settings = {}) {
     LocalBookService: {
       ORIGIN: 'local', TYPE_EPUB: 2, TYPE_TXT: 1, LOCAL_CONTENT_HASH_KEY: 'localContentHash',
       isLocalBook: book => book.origin === 'local',
+      formatOf: book => (book.getVariable('localFormat') || (book.type === 2 ? 'epub' : 'txt')).toLowerCase(),
       isSupportedFormat: format => ['txt', 'epub', 'mobi'].includes((format || '').toLowerCase()),
       bookTypeForFormat: format => ['epub', 'mobi'].includes((format || '').toLowerCase()) ? 2 : 1,
       ensureContentHash: async book => book.getVariable('localContentHash'),

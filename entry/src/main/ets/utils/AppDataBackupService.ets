@@ -1297,6 +1297,8 @@ export class AppDataBackupService {
     book.latestChapterTitle = raw.latestChapterTitle || '';
     book.updateTime = raw.updateTime || '';
     book.latestChapterTime = raw.latestChapterTime || 0;
+    book.confirmedChapterUpdateTime = Number.isFinite(raw.confirmedChapterUpdateTime) ?
+      Math.max(0, raw.confirmedChapterUpdateTime) : 0;
     book.lastCheckTime = raw.lastCheckTime || 0;
     book.lastCheckCount = raw.lastCheckCount || 0;
     book.totalChapterNum = raw.totalChapterNum || 0;

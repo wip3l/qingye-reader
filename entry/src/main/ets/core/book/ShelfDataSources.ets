@@ -3,7 +3,8 @@ import { ExploreSourceOption } from './ExploreCoordinator';
 
 export class ShelfTileSortEntry {
   kind: string = 'book'; key: string = ''; book: Book | null = null; group: BookGroup | null = null;
-  readTime: number = 0; addTime: number = 0; name: string = ''; pinned: boolean = false; originalOrder: number = 0;
+  readTime: number = 0; addTime: number = 0; updateTime: number = 0;
+  name: string = ''; pinned: boolean = false; originalOrder: number = 0;
 }
 export class ShelfBookDataSource implements IDataSource {
   private books: Book[] = []; private listeners: DataChangeListener[] = [];

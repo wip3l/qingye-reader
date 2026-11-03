@@ -16,6 +16,7 @@ import { ReaderImageMarker } from './ReaderImageMarker';
 import { ReaderCacheBudget } from './ReaderCacheBudget';
 import { ReaderImageRequest, ReaderImageScheduler } from './ReaderImageScheduler';
 import { ReaderImageResults } from './ReaderImageResults';
+import { BookChapterUpdate } from './BookChapterUpdate';
 
 class ReaderChapterPreloadTask {
   cancelled: boolean = false;
@@ -34,6 +35,8 @@ export class ReadBookEngine {
   curPos: number = 0;
   content: string = '';
   isLoading: boolean = false;
+  /** Background shelf refresh assigns one timestamp to all books in the batch. */
+  chapterUpdateBatchTime: number = 0;
   lastCacheError: string = '';
   /** 有声书下载：用户同意过用移动网络。书架任务与边听边下各用自己的后台引擎，互不影响。 */
   audioAllowCellular: boolean = false;
@@ -229,6 +232,7 @@ export class ReadBookEngine {
     // adopt that shelf state as well as progress before any reader/player uses it for a full-record save.
     this.book.pendingAddToShelf = book.pendingAddToShelf;
     this.book.shelfModifiedTime = book.shelfModifiedTime;
+    this.book.confirmedChapterUpdateTime = book.confirmedChapterUpdateTime;
     this.book.isPrivate = book.isPrivate;
     // Page position alone is insufficient: V2 restores from the durable character offset stored in variable.
     // A retained engine session must not keep an older variable snapshot and reinterpret a saved last page as
@@ -303,6 +307,7 @@ export class ReadBookEngine {
       const oldBook = sessionBook;
       const oldTocUrl = oldBook.tocUrl;
       const oldLatestChapter = oldBook.latestChapterTitle;
+      const previousChapters = this.chapters.slice();
       const oldCoverUrl = oldBook.coverUrl;
       const canReuseResolvedInfo = !!oldBook.tocUrl && oldBook.lastCheckTime > 0 &&
         Date.now() - oldBook.lastCheckTime < 2 * 60 * 1000;
@@ -350,6 +355,12 @@ export class ReadBookEngine {
         if (temporaryFallback) {
           console.warn('[RE] using temporary generic catalog; skip persistent catalog replacement');
         } else {
+          if (!staleCatalog && BookChapterUpdate.hasNewChapters(previousChapters, chapters)) {
+            targetBook.confirmedChapterUpdateTime = Math.max(targetBook.confirmedChapterUpdateTime,
+              this.chapterUpdateBatchTime || Date.now());
+            await appDb.recordBookChapterUpdate(targetBook.bookUrl, targetBook.confirmedChapterUpdateTime);
+            if (!this.isCurrentBookSession(expectedGeneration, sessionBookUrl)) return;
+          }
           await appDb.updateBook(targetBook);
           if (!this.isCurrentBookSession(expectedGeneration, sessionBookUrl)) return;
           await appDb.deleteBookChapters(targetBook.bookUrl);
@@ -481,6 +492,7 @@ export class ReadBookEngine {
     target.pendingAddToShelf = source.pendingAddToShelf;
     target.isPrivate = source.isPrivate;
     target.shelfModifiedTime = source.shelfModifiedTime;
+    target.confirmedChapterUpdateTime = source.confirmedChapterUpdateTime;
     target.updateTime = source.updateTime || target.updateTime;
     target.order = source.order;
     target.originOrder = source.originOrder;

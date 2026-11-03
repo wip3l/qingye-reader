@@ -1462,7 +1462,10 @@ export struct ExplorePage {
     }
     this.exploreSourceFilterInput = '';
     this.exploreSourceFilterKeyword = '';
-    this.activeExploreSourceGroup = '__all__';
+    const selectedSource = this.sourceOptions.find((option: ExploreSourceOption): boolean =>
+      option.sourceUrl === this.selectedSourceUrl);
+    this.activeExploreSourceGroup = selectedSource ?
+      this.exploreSourceGroupLabel(selectedSource.sourceGroup) : '__all__';
     this.refreshExploreSourceDataSource();
     this.showExploreSourcePicker = true;
   }

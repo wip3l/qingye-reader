@@ -2345,7 +2345,7 @@ struct ReadBookPage {
             }
           }
           .width('100%')
-        }, (item: ReaderScrollItem) => item.key)
+        }, (item: ReaderScrollItem) => `${item.key}_layout_${this.readerContinuousLayoutGeneration}`)
       }
       .id(READER_CONTINUOUS_LIST_ID)
       // 上一章装到列表前面、远处的章节从前面移除时，正在读的内容保持不动。
@@ -6878,8 +6878,11 @@ struct ReadBookPage {
     // Pagination mutates a private native cache. Observe the publication version and remount only when a
     // pending plain-text leaf gains its first measured page; otherwise ArkUI can retain the loading branch.
     const measured = this.readerV2Page(this.currentChapterIndex, this.currentPageIndex, this.pagedContentText) !== null;
+    const secondaryMeasured = this.isLandscapeDoublePageActive() &&
+      this.readerV2Page(this.currentChapterIndex, this.currentPageIndex + 1, this.pagedContentText) !== null;
     return [`reader_v2_chapter_${this.currentChapterIndex}_${this.currentPageIndex}_` +
-      `${this.readerV2SurfaceGeneration}_${measured ? 'native' : 'pending'}`];
+      `${this.readerV2SurfaceGeneration}_${measured ? 'native' : 'pending'}_` +
+      `${secondaryMeasured ? 'spread' : 'single'}`];
   }
 
   readerIncomingPageSurfaceKeys(_renderVersion: number = this.pageRenderVersion): string[] {
@@ -7015,6 +7018,13 @@ struct ReadBookPage {
     }
     this.pageViewWidth = width;
     this.pageViewHeight = height;
+    if (this.usesReaderContinuousV2()) {
+      // Cached chunks own a native width snapshot. The first measured area (or a resized window) must
+      // invalidate both those snapshots and retained List hosts, even when chunk text is unchanged.
+      this.cancelReaderContinuousLayouts(true);
+      this.cancelReaderContinuousMetricsTimers();
+      this.readerComicPageDataSource.reset();
+    }
     // 旧视口下还在排的相邻章节会话作废，下面按新视口重新预排。
     this.adjacentPaginationPreloadSerial++;
     this.previousPaginationPreloadSerial++;
@@ -14107,8 +14117,11 @@ struct ReadBookPage {
     if (this.shouldUseReaderLayoutV2(this.pagedContentText)) {
       // Retain the native/text/cap compatibility remount, including pending-to-ready and theme reflows,
       // without rebuilding the unchanged paper artwork, full-screen sheet and its area observers.
-      ForEach(this.currentReaderV2ChapterSurfaceKeys(renderVersion), (_surfaceKey: string) => {
-        this.readerCurrentPageLayer(renderVersion, text, ttsRenderVersion, controllerRole)
+      // Observe publication at this host, rather than the value captured by the outer Builder at book open.
+      // Private native caches becoming ready do not themselves notify ArkUI.
+      ForEach(this.currentReaderV2ChapterSurfaceKeys(this.pageRenderVersion), (_surfaceKey: string) => {
+        this.readerCurrentPageLayer(this.pageRenderVersion, this.visibleCurrentPageText(),
+          this.ttsHighlightRenderVersion, controllerRole)
       }, (surfaceKey: string) => surfaceKey)
     } else {
       this.readerCurrentPageLayer(renderVersion, text, ttsRenderVersion, controllerRole)
@@ -18287,7 +18300,9 @@ struct ReadBookPage {
       // The loading overlay owns all input until the saved page/offset is restored. A stale shelf-touch idle
       // window must not throttle that mandatory pagination into one page every few seconds. Interaction-aware
       // yielding still applies after the first real reader page is visible.
-      if (!result.v2Session && this.readerInitialPageReady && this.isReaderPaginationInteractionBusy()) {
+      if (this.readerInitialPageReady && this.isReaderPaginationInteractionBusy() &&
+        (!result.v2Session || result.pages.length >= Math.max(this.readerPaginationRequiredPageCount,
+          this.currentPageIndex + this.getReaderPageTurnStep() + 1))) {
         setTimeout(runBatch, READER_PAGINATION_BUSY_RETRY_DELAY_MS);
         return;
       }
@@ -18668,7 +18683,9 @@ struct ReadBookPage {
         }
         return;
       }
-      if (!result.v2Session && this.isReaderPaginationInteractionBusy()) {
+      if (this.isReaderPaginationInteractionBusy() &&
+        (!result.v2Session || this.pageSlideDirection === 0 ||
+          this.pageTurnIncomingChapterIndex !== targetChapterIndex)) {
         setTimeout(runBatch, READER_PAGINATION_BUSY_RETRY_DELAY_MS);
         return;
       }
@@ -18784,7 +18801,9 @@ struct ReadBookPage {
         }
         return;
       }
-      if (!result.v2Session && this.isReaderPaginationInteractionBusy()) {
+      if (this.isReaderPaginationInteractionBusy() &&
+        (!result.v2Session || this.pageSlideDirection === 0 ||
+          this.pageTurnIncomingChapterIndex !== targetChapterIndex)) {
         setTimeout(runBatch, READER_PAGINATION_BUSY_RETRY_DELAY_MS);
         return;
       }

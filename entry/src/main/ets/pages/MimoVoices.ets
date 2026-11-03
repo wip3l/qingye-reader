@@ -170,6 +170,11 @@ struct MimoVoicesPage {
     this.editId = scheme?.id || ''; this.editName = scheme?.name || '';
     this.schemeIds = scheme?.presetIds.slice() || []; this.screen = 'schemeEdit'; this.dirty = false;
   }
+  private async removeScheme(scheme: MimoVoiceScheme): Promise<void> {
+    if (!await this.confirm('删除方案“' + scheme.name + '”？', '仅删除方案，保留音色预设和人物声音。', '删除', true)) return;
+    try { MimoStore.deleteScheme(scheme.id); this.refresh(); }
+    catch (error) { HdsFeedback.showToast((error as Error).message); }
+  }
   private async activate(scheme: MimoVoiceScheme): Promise<void> {
     if (!await this.confirm('启用“' + scheme.name + '”？',
       '仅影响新人物分配，已有绑定保留。需要更新时，可在本书人物中预览重新分配。', '启用')) return;
@@ -362,6 +367,8 @@ struct MimoVoicesPage {
           Button(this.activeScheme === scheme.id ? '正在使用' : '启用方案').fontSize(AppFontSize.BODY)
             .enabled(this.activeScheme !== scheme.id).backgroundColor(ThemeRuntime.buttonColor(this.dark))
             .fontColor(ThemeRuntime.onAccentColor(ThemeRuntime.buttonColor(this.dark))).onClick(() => this.activate(scheme))
+          Button('删除').fontSize(AppFontSize.CAPTION).backgroundColor(Color.Transparent)
+            .fontColor(ThemeRuntime.dangerColor(this.dark)).onClick(() => this.removeScheme(scheme))
         }
       }.width('100%').padding(AppSpacing.XL).backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
     }, (scheme: MimoVoiceScheme): string => scheme.id + scheme.presetIds.join(','))

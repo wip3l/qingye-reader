@@ -284,6 +284,7 @@ export struct BookChangeSourceDialog {
     target.coverUrl = CoverUrlNormalizer.prefer(source.coverUrl, target.coverUrl);
     target.group = oldBook.group;
     target.isPinned = oldBook.isPinned;
+    target.confirmedChapterUpdateTime = oldBook.confirmedChapterUpdateTime;
     target.order = oldBook.order;
     target.originOrder = oldBook.originOrder;
     target.customCoverUrl = oldBook.customCoverUrl;

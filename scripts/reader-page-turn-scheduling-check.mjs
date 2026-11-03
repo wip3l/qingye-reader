@@ -126,6 +126,19 @@ await timers.shift()();
 assert.equal(moving.reader.published, 1); assert.equal(moving.reader.persisted, 1);
 timers.length = 0;
 
+const buffered = harness();
+buffered.result.pages = ['a', 'b', 'c', 'd', 'e'];
+buffered.reader.isPageTurning = true;
+buffered.reader.scheduleReaderPaginationCompletion(0, 'key', buffered.result);
+await timers.shift()();
+assert.equal(buffered.reader.batches, 0, 'sufficiently buffered native pagination yields while a page is moving');
+buffered.reader.isReaderPaginationInteractionBusy = () => false;
+await timers.shift()();
+assert.equal(buffered.reader.batches, 1, 'speculative native work resumes when interaction ends');
+buffered.reader.readerPaginationWorkSerial++;
+await timers.shift()();
+assert.equal(timers.length, 0);
+
 const query = harness();
 query.reader.ensureCurrentReaderPaginationAhead = () => { throw new Error('readiness query performed work'); };
 assert.equal(query.reader.getLocalPageTurnTargetPageIndex(1), -1);

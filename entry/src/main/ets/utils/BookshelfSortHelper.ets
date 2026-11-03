@@ -1,6 +1,10 @@
 import { Book } from '@legado/sourceengine';
 
 export class BookshelfSortHelper {
+  static getBookUpdateTime(book: Book): number {
+    return Number.isFinite(book.confirmedChapterUpdateTime) ? Math.max(0, book.confirmedChapterUpdateTime) : 0;
+  }
+
   static sortByRecentRead(books: Book[]): Book[] {
     return [...books].sort((a: Book, b: Book) => BookshelfSortHelper.compareRecentRead(a, b));
   }

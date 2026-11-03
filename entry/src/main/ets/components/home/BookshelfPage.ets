@@ -3523,7 +3523,7 @@ export struct BookshelfPage {
     const cacheKey = `${mode}_${viewKey}_${this.activeShelfGroupId}_${this.isBookMultiSelect ? '1' : '0'}_` +
       `${this.shouldShowLatestExpandedTileBook() ? latestBookUrls : ''}_` +
       `${books.map((book: Book) => `${book.bookUrl}:${book.name}:${this.getBookReadTime(book)}:${this.getBookAddTime(book)}:` +
-        `${book.group}:${book.isPinned ? '1' : '0'}`).join('|')}_` +
+        `${BookshelfSortHelper.getBookUpdateTime(book)}:${book.group}:${book.isPinned ? '1' : '0'}`).join('|')}_` +
       `${this.shelfGroups.map((group: BookGroup) => `${group.groupId}:${group.groupName}`).join('|')}`;
     if (cacheKey === this.shelfTileEntriesCacheKey) {
       return this.shelfTileEntriesCache;
@@ -3539,6 +3539,7 @@ export struct BookshelfPage {
       entry.book = book;
       entry.readTime = this.getBookReadTime(book);
       entry.addTime = this.getBookAddTime(book);
+      entry.updateTime = BookshelfSortHelper.getBookUpdateTime(book);
       entry.name = this.normalizeBookName(book.name);
       entry.pinned = book.isPinned;
       entry.originalOrder = index;
@@ -3554,6 +3555,8 @@ export struct BookshelfPage {
       entry.group = group;
       entry.readTime = this.latestTileGroupReadTime(groupBooks);
       entry.addTime = this.latestTileGroupAddTime(groupBooks);
+      entry.updateTime = groupBooks.reduce((latest: number, book: Book): number =>
+        Math.max(latest, BookshelfSortHelper.getBookUpdateTime(book)), 0);
       entry.name = this.normalizeBookName(group.groupName);
       entry.originalOrder = bookOffset + index;
       entries.push(entry);
@@ -3601,7 +3604,8 @@ export struct BookshelfPage {
       const nameDiff = a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin');
       return nameDiff !== 0 ? nameDiff : a.originalOrder - b.originalOrder;
     }
-    const timeDiff = mode === 'recentAdd' ? b.addTime - a.addTime : b.readTime - a.readTime;
+    const timeDiff = mode === 'recentUpdate' ? b.updateTime - a.updateTime :
+      (mode === 'recentAdd' ? b.addTime - a.addTime : b.readTime - a.readTime);
     if (timeDiff !== 0) {
       return timeDiff;
     }
@@ -6706,6 +6710,7 @@ export struct BookshelfPage {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
       const engine = ReadBookEngine.createBackgroundWorker();
+      engine.chapterUpdateBatchTime = refreshStartedAt;
       for (const shelfBook of shelfBooks) {
         if (!shelfBook.bookUrl || LocalBookService.isLocalBook(shelfBook) || !shelfBook.canUpdate) {
           continue;
@@ -6717,8 +6722,7 @@ export struct BookshelfPage {
         attempted++;
         try {
           const freshBook = await db.getBook(shelfBook.bookUrl) || shelfBook;
-          const beforeCount = freshBook.totalChapterNum;
-          const beforeLatest = freshBook.latestChapterTitle;
+          const beforeUpdateTime = BookshelfSortHelper.getBookUpdateTime(freshBook);
           const hadPendingUpdate = this.hasShelfBookUpdate(freshBook);
           await engine.openBook(freshBook);
           await engine.refreshToc();
@@ -6730,8 +6734,7 @@ export struct BookshelfPage {
               refreshedBook.totalChapterNum = engine.chapters.length;
               refreshedBook.latestChapterTitle = engine.chapters[engine.chapters.length - 1].title;
             }
-            const hasNewUpdate = refreshedBook.totalChapterNum > beforeCount ||
-              refreshedBook.latestChapterTitle !== beforeLatest;
+            const hasNewUpdate = BookshelfSortHelper.getBookUpdateTime(refreshedBook) > beforeUpdateTime;
             const acknowledgedAt = this.shelfUpdateAcknowledgedAt.get(refreshedBook.bookUrl) || 0;
             const keepPendingUpdate = hadPendingUpdate && acknowledgedAt === 0;
             const keepNewUpdate = hasNewUpdate && acknowledgedAt < refreshStartedAt;
@@ -7520,6 +7523,7 @@ export struct BookshelfPage {
       } else if (this.shelfMoreMenuPage === 'sort') {
         this.sortDropdownItem('新阅读', 'recentRead')
         this.sortDropdownItem('新加入', 'recentAdd')
+        this.sortDropdownItem('最近更新', 'recentUpdate')
         this.sortDropdownItem('名称', 'name')
       } else {
         this.shelfMoreMenuItem('布局', this.bookshelfLayoutMode === 'tile' ? '平铺' :
@@ -7636,6 +7640,7 @@ export struct BookshelfPage {
   }
 
   sortModeLabel(): string {
+    if (this.sortMode === 'recentUpdate') return '最近更新';
     if (this.sortMode === 'recentAdd') {
       return '新加入';
     }
@@ -7651,7 +7656,7 @@ export struct BookshelfPage {
   }
 
   applyShelfSortMode(mode: string): void {
-    const next = mode === 'recentAdd' || mode === 'name' ? mode : 'recentRead';
+    const next = BookshelfStateStore.normalizeSortMode(mode);
     this.showShelfMoreMenu = false;
     if (this.sortMode === next) {
       // Migrate installations that previously kept this value only in AppStorage.
@@ -7738,6 +7743,10 @@ export struct BookshelfPage {
       }
       if (mode === 'name') {
         return this.compareBookName(a, b);
+      }
+      if (mode === 'recentUpdate') {
+        return BookshelfSortHelper.getBookUpdateTime(b) - BookshelfSortHelper.getBookUpdateTime(a) ||
+          this.compareBookName(a, b);
       }
       return this.getBookAddTime(b) - this.getBookAddTime(a);
     });

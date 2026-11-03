@@ -161,6 +161,20 @@ export class MimoStore {
   static schemeId(cast: MimoBookCast, library: MimoVoiceLibrary): string {
     return cast.schemeId || library.schemeId;
   }
+
+  static deleteScheme(id: string): void {
+    const library = MimoStore.library();
+    if (!library.schemes.some((scheme: MimoVoiceScheme): boolean => scheme.id === id)) return;
+    if (library.schemeId === id) throw new Error('方案正在作为默认方案使用，请先启用其他方案');
+    for (const summary of MimoStore.castSummaries()) {
+      if (!summary.book) throw new Error('存在未关联书籍的人物档案，请先打开人物档案列表后重试');
+      if (MimoStore.cast(summary.book).schemeId === id) {
+        throw new Error('方案正在被书籍使用，请先为该书更换方案或恢复跟随默认方案');
+      }
+    }
+    library.schemes = library.schemes.filter((scheme: MimoVoiceScheme): boolean => scheme.id !== id);
+    MimoStore.saveLibrary(library);
+  }
   static assign(role: MimoRole, cast: MimoBookCast, configured?: MimoVoiceLibrary): void {
     const library = configured || MimoStore.library();
     const match = MimoVoicePolicy.match(role, library, MimoStore.schemeId(cast, library),

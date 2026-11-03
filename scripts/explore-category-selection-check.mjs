@@ -13,6 +13,7 @@ const context = vm.createContext({
   console, getContext: () => ({}),
   AppDatabase: { getInstance: () => ({ async initWithContext() {} }) },
   AppStorage: { setOrCreate() {} },
+  BookSourceGroupStore: { async loadOrder() {} },
   HdsFeedback: { showToast: text => toasts.push(text) },
   ExploreCategoryHistoryStore: {
     async load() {}, last: source => history.get(source) || '',

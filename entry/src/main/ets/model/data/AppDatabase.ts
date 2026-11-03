@@ -155,7 +155,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   cacheDatabaseName(): string { return this.openedDatabaseName; }
   cacheDatabaseDirectory(): string { return this.databaseDirectory; }
   private readonly DATABASE_NAME = 'legado.db';
-  private readonly SCHEMA_VERSION = 25;
+  private readonly SCHEMA_VERSION = 26;
 
   private constructor() {}
 
@@ -244,6 +244,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         latestChapterTitle TEXT,
         updateTime TEXT DEFAULT '',
         latestChapterTime INTEGER DEFAULT 0,
+        confirmedChapterUpdateTime INTEGER DEFAULT 0,
         lastCheckTime INTEGER DEFAULT 0,
         lastCheckCount INTEGER DEFAULT 0,
         totalChapterNum INTEGER DEFAULT 0,
@@ -567,6 +568,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       { table: 'books', column: 'latestChapterTitle', definition: "latestChapterTitle TEXT DEFAULT ''" },
       { table: 'books', column: 'updateTime', definition: "updateTime TEXT DEFAULT ''" },
       { table: 'books', column: 'latestChapterTime', definition: 'latestChapterTime INTEGER DEFAULT 0' },
+      { table: 'books', column: 'confirmedChapterUpdateTime', definition: 'confirmedChapterUpdateTime INTEGER DEFAULT 0' },
       { table: 'books', column: 'lastCheckTime', definition: 'lastCheckTime INTEGER DEFAULT 0' },
       { table: 'books', column: 'lastCheckCount', definition: 'lastCheckCount INTEGER DEFAULT 0' },
       { table: 'books', column: 'totalChapterNum', definition: 'totalChapterNum INTEGER DEFAULT 0' },
@@ -809,6 +811,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       latestChapterTitle: book.latestChapterTitle,
       updateTime: book.updateTime,
       latestChapterTime: book.latestChapterTime,
+      confirmedChapterUpdateTime: book.confirmedChapterUpdateTime,
       lastCheckTime: book.lastCheckTime,
       lastCheckCount: book.lastCheckCount,
       totalChapterNum: book.totalChapterNum,
@@ -834,6 +837,14 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     if (book.origin && book.origin !== 'local') {
       CloudSyncChangeTracker.markDataChanged();
     }
+  }
+
+  /** Keep update evidence monotonic; stale reader/progress snapshots must not overwrite it. */
+  async recordBookChapterUpdate(bookUrl: string, detectedAt: number): Promise<void> {
+    if (!this.store || !Number.isFinite(detectedAt) || detectedAt <= 0) return;
+    await this.store.executeSql(
+      'UPDATE books SET confirmedChapterUpdateTime = ? WHERE bookUrl = ? AND confirmedChapterUpdateTime < ?',
+      [Math.floor(detectedAt), bookUrl, Math.floor(detectedAt)]);
   }
 
   async updateBook(book: Book, syncRelevant: boolean = true, reason: string = 'update_book'): Promise<void> {
@@ -924,6 +935,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       latestChapterTitle: book.latestChapterTitle,
       updateTime: book.updateTime,
       latestChapterTime: book.latestChapterTime,
+      confirmedChapterUpdateTime: book.confirmedChapterUpdateTime,
       lastCheckTime: book.lastCheckTime,
       lastCheckCount: book.lastCheckCount,
       totalChapterNum: book.totalChapterNum,
@@ -1417,6 +1429,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         book.bookUrl = existing.bookUrl;
       }
       await this.updateBook(book, true, 'cloud_restore_update');
+      await this.recordBookChapterUpdate(book.bookUrl, book.confirmedChapterUpdateTime);
     } else {
       await this.insertBook(book, 'cloud_restore_insert');
     }
@@ -1550,6 +1563,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     book.latestChapterTitle = this.getStringColumn(resultSet, 'latestChapterTitle');
     book.updateTime = this.getStringColumn(resultSet, 'updateTime');
     book.latestChapterTime = this.getLongColumn(resultSet, 'latestChapterTime');
+    book.confirmedChapterUpdateTime = this.getLongColumn(resultSet, 'confirmedChapterUpdateTime');
     book.lastCheckTime = this.getLongColumn(resultSet, 'lastCheckTime');
     book.lastCheckCount = this.getLongColumn(resultSet, 'lastCheckCount');
     book.totalChapterNum = this.getLongColumn(resultSet, 'totalChapterNum');

@@ -15,6 +15,7 @@ export class ReadStatsBar {
 
 export class ReadStatsRank {
   bookKey: string = '';
+  recordBookKeys: string[] = [];
   bookUrl: string = '';
   name: string = '';
   author: string = '';
@@ -90,13 +91,24 @@ export class ReadStatsSummary {
     const dates = new Set<string>();
     const buckets = new Map<string, ReadStatsBar>();
     const range = ReadStatsSummary.range(mode, anchor);
+    // Record/sync keys identify a source edition. Ranking identifies the work when both title and author
+    // are known, so changing sources does not split its duration. Keep original keys for scoped deletion.
+    const identities = new Map<string, string>();
+    rows.forEach((row: ReadStatsRow): void => {
+      const name = (row.name || '').trim().replace(/\s+/g, ' ');
+      const author = (row.author || '').trim().replace(/\s+/g, ' ');
+      if (name && author && name !== '书名未留存' && (!identities.has(row.bookKey) || row.onShelf)) {
+        identities.set(row.bookKey, `work:${JSON.stringify([name, author])}`);
+      }
+    });
     let firstKey = '';
     rows.forEach((row: ReadStatsRow): void => {
       if (row.durationMs <= 0 || row.dayKey < range.startKey || row.dayKey > range.endKey) return;
       result.totalMs += row.durationMs;
       dates.add(row.dayKey);
       if (!firstKey || row.dayKey < firstKey) firstKey = row.dayKey;
-      let item = books.get(row.bookKey);
+      const identity = identities.get(row.bookKey) || `record:${row.bookKey}`;
+      let item = books.get(identity);
       if (!item) {
         item = new ReadStatsRank();
         item.bookKey = row.bookKey;
@@ -104,8 +116,16 @@ export class ReadStatsSummary {
         item.name = row.name || '书名未留存';
         item.author = row.author;
         item.coverUrl = row.coverUrl;
-        books.set(row.bookKey, item);
+        books.set(identity, item);
       }
+      if (!item.recordBookKeys.includes(row.bookKey)) item.recordBookKeys.push(row.bookKey);
+      // Prefer the actionable local shelf edition, including its cover, regardless of query row order.
+      if (row.onShelf || !item.name || item.name === '书名未留存') {
+        if (row.name) item.name = row.name;
+        if (row.author) item.author = row.author;
+        if (row.bookUrl) item.bookUrl = row.bookUrl;
+      }
+      if (row.coverUrl && (row.onShelf || !item.coverUrl)) item.coverUrl = row.coverUrl;
       item.onShelf = item.onShelf || row.onShelf;
       item.durationMs += row.durationMs;
       const key = mode === 'all' ? row.dayKey.substring(0, 4) :

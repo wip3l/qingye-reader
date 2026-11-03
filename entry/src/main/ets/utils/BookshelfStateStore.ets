@@ -9,7 +9,7 @@ export class BookshelfStateStore {
   private static readonly KEY_CATEGORY_EXPANDED: string = 'bookshelfCategoryExpanded';
 
   static normalizeSortMode(value: string | undefined | null): string {
-    if (value === 'recentAdd' || value === 'name') {
+    if (value === 'recentAdd' || value === 'recentUpdate' || value === 'name') {
       return value;
     }
     return 'recentRead';

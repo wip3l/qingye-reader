@@ -395,6 +395,14 @@ export class ReaderTtsFloatingSession {
     ReaderTtsFloatingSession.clear();
   }
 
+  /** Await the owning player's full cleanup before deleting a declined trial book. */
+  static async stopForBook(bookUrl: string): Promise<void> {
+    if (!bookUrl || AppStorage.get<string>('globalTtsBookUrl') !== bookUrl) return;
+    const action = ReaderTtsFloatingSession.stopAction;
+    if (action) await Promise.resolve(action());
+    else ReaderTtsFloatingSession.clear();
+  }
+
   static previous(): void {
     const action = ReaderTtsFloatingSession.previousAction;
     if (action) action();

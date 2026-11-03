@@ -37,9 +37,9 @@ assert.equal(controller.node.page, third);
 const readerSource = fs.readFileSync(new URL('../entry/src/main/ets/pages/ReadBook.ets', import.meta.url), 'utf8');
 const bodyStart = readerSource.indexOf('  readerKeyedCurrentPageLayer(');
 const body = readerSource.slice(bodyStart, readerSource.indexOf('\n  }', bodyStart) + 4);
-assert.match(body, /ForEach\(this\.currentReaderV2ChapterSurfaceKeys\(renderVersion\)/,
+assert.match(body, /ForEach\(this\.currentReaderV2ChapterSurfaceKeys\(this\.pageRenderVersion\)/,
   'the native body keeps its page/pending/reflow key');
-assert.match(body, /readerCurrentPageLayer\(renderVersion, text, ttsRenderVersion, controllerRole\)/);
+assert.match(body, /readerCurrentPageLayer\(this\.pageRenderVersion, this\.visibleCurrentPageText\(\),\s*this\.ttsHighlightRenderVersion, controllerRole\)/);
 assert.doesNotMatch(body, /readerSimulationPaperBackground/, 'paper is outside the per-page remount');
 for (const surface of ['readerCurrentPageSurface', 'readerCurrentPageSurfaceAlternate']) {
   const start = readerSource.indexOf(`  ${surface}(`);
@@ -88,3 +88,19 @@ const simulation = readerSource.slice(simulationStart, readerSource.indexOf('\n 
 assert.match(simulation, /ForEach\(this\.readerIncomingPageSurfaceKeys\(this\.pageRenderVersion\)/,
   'double-page capture and its visible destination must advance together');
 console.log('PASS: native host fallback, queued destination identity, stable drag frames and pending/spread publication');
+
+const currentStart = readerSource.indexOf('  currentReaderV2ChapterSurfaceKeys(');
+const currentMethod = readerSource.slice(currentStart, readerSource.indexOf('\n  }', currentStart) + 4);
+const CurrentIdentity = vm.runInNewContext(stripTypeScriptTypes(`class CurrentIdentity { ${currentMethod} }`) + '\nCurrentIdentity');
+const current = new CurrentIdentity();
+Object.assign(current, { currentChapterIndex: 0, currentPageIndex: 0, readerV2SurfaceGeneration: 0,
+  pagedContentText: 'first chapter', isLandscapeDoublePageActive: () => true, readerV2Page: () => null });
+const pendingCurrent = current.currentReaderV2ChapterSurfaceKeys()[0];
+current.readerV2Page = (_chapter, page) => page === 0 ? {} : null;
+const firstReady = current.currentReaderV2ChapterSurfaceKeys()[0];
+assert.notEqual(firstReady, pendingCurrent, 'initial chapter publication replaces the loading host without a turn');
+current.readerV2Page = () => ({});
+assert.notEqual(current.currentReaderV2ChapterSurfaceKeys()[0], firstReady, 'late right leaf updates the settled spread');
+const stableCurrent = current.currentReaderV2ChapterSurfaceKeys()[0];
+current.pageRenderVersion++;
+assert.equal(current.currentReaderV2ChapterSurfaceKeys()[0], stableCurrent, 'background publication does not remount measured text');

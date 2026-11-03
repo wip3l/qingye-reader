@@ -4,6 +4,8 @@ import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
 
 const source = fs.readFileSync(new URL('../entry/src/main/ets/pages/ReadBook.ets', import.meta.url), 'utf8');
+assert.match(source, /\(item: ReaderScrollItem\) => `\$\{item\.key\}_layout_\$\{this\.readerContinuousLayoutGeneration\}`/,
+  'a layout reset must remount same-text List items even if empty and refill notifications share one UI frame');
 const requestSource = fs.readFileSync(new URL('../entry/src/main/ets/core/reader/ReaderContinuousLayoutRequest.ets', import.meta.url), 'utf8');
 function method(name) {
   const start = source.search(new RegExp(`^  (?:async )?${name}\\(`, 'm'));
@@ -31,7 +33,7 @@ sandbox.ReaderV2Paginator.layoutContinuousAsync = (document, snapshot, styles, v
 };
 const names = ['readerContinuousV2Request', 'readerContinuousV2State', 'readerContinuousV2Layout',
   'queueReaderContinuousLayout', 'scheduleReaderContinuousLayout', 'runReaderContinuousLayout',
-  'pruneReaderContinuousLayouts', 'warmReaderContinuousLayouts', 'cancelReaderContinuousLayouts'];
+  'pruneReaderContinuousLayouts', 'warmReaderContinuousLayouts', 'cancelReaderContinuousLayouts', 'updatePagedReaderArea'];
 vm.runInContext(stripTypeScriptTypes(requestSource.replace(/^import .*;\r?\n/gm, '')
   .replace(/^@Observed\r?\n/gm, '').replace(/^export /gm, '') +
   `\nclass Reader { ${names.map(method).join('\n')} }; globalThis.Reader = Reader;`), sandbox);
@@ -134,4 +136,33 @@ assert.notEqual(repeatedFirst.identity, repeatedSecond.identity, 'identical chun
 assert.equal(reader.readerContinuousV2Sources.get(repeatedFirst.identity), 0);
 assert.equal(reader.readerContinuousV2Sources.get(repeatedSecond.identity), 1800);
 assert(!method('readerContinuousV2Layout').includes('layoutContinuous('));
+
+// Book opening can seed a provisional viewport. The first actual area must not keep narrow cached chunks.
+sandbox.AppStorage = { setOrCreate() {} };
+const resized = fixture();
+Object.assign(resized, { pageViewWidth: 80, pageViewHeight: 800, readerFooterEnabled: true,
+  pendingRestorePageIndex: -1, readerProgressRestoreConfirmed: true, readerInitialPageReady: true,
+  readerTypographyRestoreOffset: -1, contentPages: ['first'], content: 'first',
+  parseAreaDimension: n => Number(n), getReaderPageContentTopPadding: () => 0,
+  getReaderNavigationBottomReserve: () => 0, measureReaderPageAreaBottomGap: () => 0,
+  getReaderStableReflowOffset: () => 380, cancelReaderContinuousMetricsTimers() {},
+  eyeTurn: () => ({ refreshForViewport() {} }), paginateContent() {}, syncCurrentPageText() {},
+  normalizeReaderSpreadPageIndex: n => n, findPageIndexByOffset: () => 0,
+  preloadNextChapterPaginationLater() {}, preloadPreviousChapterPaginationLater() {},
+  buildReaderV2Snapshot() { return { identity: `width-${this.pageViewWidth}` }; },
+});
+let reloads = 0;
+resized.readerComicPageDataSource.reset = () => { reloads++; };
+paused = true;
+const narrow = resized.readerContinuousV2State(0, 'first'); await tick();
+resized.updatePagedReaderArea({ width: 400, height: 800 });
+assert.equal(reloads, 1); assert.equal(resized.readerTypographyRestoreOffset, 380);
+const wide = resized.readerContinuousV2State(0, 'first'); await tick();
+assert.notEqual(wide, narrow, 'identical text at a corrected viewport gets a new layout and observed host');
+held.shift()(); await settle(); assert.equal(narrow.ready, false, 'old-width completion cannot publish after resize');
+held.shift()(); await settle(); assert.equal(wide.ready, true);
+assert.match(resized.readerContinuousV2Layout(0, 'first').identity, /width-400/);
+resized.updatePagedReaderArea({ width: 400.1, height: 800 });
+assert.equal(reloads, 1, 'subpixel area noise must not reset scrolling or rebuild text');
+paused = false;
 console.log('PASS: cache-only builders, async native layout, deduplication, bounded retention, lifecycle/source/typography cancellation and failure recovery');

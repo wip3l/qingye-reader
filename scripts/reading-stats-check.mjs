@@ -37,6 +37,31 @@ test('all devices sum duration; days and book identities are deduplicated', () =
   assert.equal(result.bars[0].durationMs, 3000000);
   assert.equal(result.bars[2].durationMs, 0);
 });
+
+test('ranking merges source editions with complete matching metadata and keeps deletion keys', () => {
+  const old = { ...row('2026-10-20', 60000, 'phone', 'old-source'),
+    name: '公路求生，神级宝箱开局', author: '静舟小妖', onShelf: false, bookUrl: 'old' };
+  const current = { ...old, bookKey: 'new-source', bookUrl: 'new', durationMs: 120000,
+    name: ' 公路求生，神级宝箱开局 ', author: ' 静舟小妖 ', coverUrl: 'cover', onShelf: true };
+  for (const rows of [[old, current], [current, old]]) {
+    const result = Summary.calculate(rows, 'all', date(2026, 10, 20), date(2026, 10, 21));
+    assert.equal(result.items.length, 1); assert.equal(result.totalMs, 180000);
+    const item = result.items[0];
+    assert.equal(item.durationMs, 180000); assert.equal(item.percent, 100);
+    assert.equal(item.bookUrl, 'new'); assert.equal(item.coverUrl, 'cover'); assert(item.onShelf);
+    assert.deepEqual(Array.from(item.recordBookKeys).sort(), ['new-source', 'old-source']);
+  }
+  const distinct = Summary.calculate([old, { ...current, author: '其他作者' },
+    { ...old, bookKey: 'unknown-a', author: '' }, { ...old, bookKey: 'unknown-b', author: '' }],
+  'all', date(2026, 10, 20), date(2026, 10, 21));
+  assert.equal(distinct.items.length, 4, 'different authors and incomplete metadata stay separate');
+  const spaced = Summary.calculate([
+    { ...old, name: ' A  B ', bookKey: 'spaced' },
+    { ...old, name: 'A B', bookKey: 'same-spaced' },
+    { ...old, name: 'AB', bookKey: 'unspaced' },
+  ], 'all', date(2026, 10, 20), date(2026, 10, 21));
+  assert.equal(spaced.items.length, 2, 'normalization preserves meaningful word boundaries');
+});
 test('calendar periods cover leap days, year crossings, and daylight saving days', () => {
   assert.equal(Summary.range('month', date(2024, 2, 29)).endKey, '2024-02-29');
   assert.equal(Summary.range('week', date(2026, 1, 1)).startKey, '2025-12-29');

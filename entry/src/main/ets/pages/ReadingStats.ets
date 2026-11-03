@@ -420,7 +420,9 @@ struct ReadingStatsPage {
         buttons: [{ text: '取消', color: this.subTextColor() }, { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }] });
       if (confirmation.index !== 1) return;
       await readStatsTracker.flushAndWait();
-      await appDb.deleteReadStatsSelection(item.bookKey, range.startKey, range.endKey, deviceId, ownerId);
+      for (const recordBookKey of item.recordBookKeys) {
+        await appDb.deleteReadStatsSelection(recordBookKey, range.startKey, range.endKey, deviceId, ownerId);
+      }
       if (this.alive) await this.loadStats();
       HdsFeedback.showToast('记录已删除');
     } catch (error) { console.warn('删除阅读记录失败:', error); HdsFeedback.showToast('删除失败，请重试'); }

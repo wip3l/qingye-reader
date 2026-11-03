@@ -15,6 +15,7 @@ import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { ImmersiveReadButton, IMMERSIVE_READ_BUTTON_WIDTH } from '../components/ImmersiveReadButton';
 import { BookCover } from '../components/book/BookCover';
 import { SearchExplorePendingBook } from '../utils/SearchExplorePendingBook';
+import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { SearchBookShelfHelper } from '../utils/SearchBookShelfHelper';
 import { BookSourceStageRuntimeHost } from '../components/BookSourceStageRuntimeHost';
@@ -1123,6 +1124,7 @@ struct SearchBookDetailPage {
       await db.initWithContext(getContext(this));
       const pendingBook = await db.getBook(this.pendingAddToShelfBookUrl);
       if (SearchExplorePendingBook.isPendingAddToShelf(pendingBook)) {
+        await ReaderTtsFloatingSession.stopForBook(this.pendingAddToShelfBookUrl);
         await db.deleteBook(this.pendingAddToShelfBookUrl, 'temporary_read_declined');
         AppStorage.setOrCreate('shelfUpdateTime', Date.now());
       }
