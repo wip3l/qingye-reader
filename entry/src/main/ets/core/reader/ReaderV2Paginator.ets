@@ -21,16 +21,48 @@ import { ReaderFontStroke } from './ReaderFontStroke';
 class ReaderV2MeasuredBlock {
   block: ReaderV2Block;
   paragraph: graphicsText.Paragraph;
-  lines: graphicsText.LineMetrics[];
+  lineCount: number;
+  private lines: Map<number, graphicsText.LineMetrics> = new Map<number, graphicsText.LineMetrics>();
 
-  constructor(block: ReaderV2Block, paragraph: graphicsText.Paragraph, lines: graphicsText.LineMetrics[]) {
+  constructor(block: ReaderV2Block, paragraph: graphicsText.Paragraph) {
     this.block = block;
     this.paragraph = paragraph;
-    this.lines = lines;
+    this.lineCount = paragraph.getLineCount();
+  }
+
+  line(index: number): graphicsText.LineMetrics {
+    const cached = this.lines.get(index);
+    if (cached) return cached;
+    const startedAt = Date.now();
+    const metric = this.paragraph.getLineMetrics(index);
+    ReaderV2Paginator.onWorkMeasured?.('line-metrics', Date.now() - startedAt);
+    if (!metric) throw new Error(`Missing native line metrics at ${index}`);
+    this.lines.set(index, metric);
+    return metric;
   }
 }
 
-/** Retains native paragraph measurements so pagination can continue in small UI-thread slices. */
+/** A page transaction suspends here until the system has laid out its next paragraph asynchronously. */
+class ReaderV2PendingLayout extends Error {
+  key: string;
+  paragraph: graphicsText.Paragraph;
+  width: number;
+
+  constructor(key: string, paragraph: graphicsText.Paragraph, width: number) {
+    super('Reader paragraph layout pending');
+    this.key = key;
+    this.paragraph = paragraph;
+    this.width = width;
+  }
+}
+
+class ReaderV2ParagraphCache {
+  ready: Map<string, graphicsText.Paragraph> = new Map<string, graphicsText.Paragraph>();
+  measurements: Map<graphicsText.Paragraph, ReaderV2MeasuredBlock> =
+    new Map<graphicsText.Paragraph, ReaderV2MeasuredBlock>();
+}
+
+/** Retains the page cursor and native paragraphs across asynchronous layout transactions. */
 export class ReaderV2PaginationSession {
   document: ReaderV2Document;
   snapshot: ReaderV2LayoutSnapshot;
@@ -41,6 +73,9 @@ export class ReaderV2PaginationSession {
   lineIndex: number = 0;
   pageIndex: number = 0;
   measuredBlock: ReaderV2MeasuredBlock | null = null;
+  paragraphCache: ReaderV2ParagraphCache | null = null;
+  inFlight: Promise<number> | null = null;
+  cancelled: boolean = false;
   /** 整章只有图片（封面页、插图页）：整页插图铺满页面，不留正文边距。 */
   imageOnly: boolean = false;
   /** 滚动阅读：整份文档排成一页，不受页高限制。 */
@@ -79,6 +114,8 @@ export class ReaderV2PaginationSession {
 }
 
 export class ReaderV2Paginator {
+  /** Optional benchmark probe; inactive during ordinary reading. Durations are synchronous CPU sections. */
+  static onWorkMeasured: ((stage: string, elapsedMs: number) => void) | null = null;
   /** Measures a plain selectable surface with the same native paragraph engine as pagination. */
   static glyphPositionForPlainText(text: string, snapshot: ReaderV2LayoutSnapshot,
     width: number, x: number, y: number): number {
@@ -107,9 +144,11 @@ export class ReaderV2Paginator {
    * list item from contentBottomPx; every other field has the same meaning as on a paged layout.
    */
   static layoutContinuous(document: ReaderV2Document, snapshot: ReaderV2LayoutSnapshot,
-    regexStyles: ReaderV2SpanStyleRange[] = []): ReaderV2PageLayout | null {
+    regexStyles: ReaderV2SpanStyleRange[] = [],
+    paragraphCache: ReaderV2ParagraphCache | null = null): ReaderV2PageLayout | null {
     const session = new ReaderV2PaginationSession(document, snapshot, regexStyles);
     session.continuous = true;
+    session.paragraphCache = paragraphCache;
     ReaderV2Paginator.appendPages(session, 1);
     return session.pageSet.pages.length > 0 ? session.pageSet.pages[0] : null;
   }
@@ -117,6 +156,72 @@ export class ReaderV2Paginator {
   static start(document: ReaderV2Document, snapshot: ReaderV2LayoutSnapshot,
     regexStyles: ReaderV2SpanStyleRange[] = []): ReaderV2PaginationSession {
     return new ReaderV2PaginationSession(document, snapshot, regexStyles);
+  }
+
+  static async layoutContinuousAsync(document: ReaderV2Document, snapshot: ReaderV2LayoutSnapshot,
+    regexStyles: ReaderV2SpanStyleRange[] = [],
+    isCurrent: () => boolean = (): boolean => true): Promise<ReaderV2PageLayout | null> {
+    const session = ReaderV2Paginator.start(document, snapshot, regexStyles);
+    session.continuous = true;
+    await ReaderV2Paginator.appendPageAsync(session, isCurrent);
+    return isCurrent() && session.pageSet.pages.length > 0 ? session.pageSet.pages[0] : null;
+  }
+
+  /**
+   * Reuse the exact synchronous page-breaking algorithm, but make native layout a suspension point.
+   * Nothing is published until a complete page exists. Retrying from the page checkpoint reuses every
+   * already-shaped paragraph, including page slices, outline runs and scaled standalone titles.
+   * The cache only lives for this page; published fragments own their native paragraph references.
+   */
+  static appendPageAsync(session: ReaderV2PaginationSession,
+    isCurrent: () => boolean = (): boolean => true): Promise<number> {
+    if (session.inFlight) return session.inFlight;
+    const work = ReaderV2Paginator.preparePageAsync(session, isCurrent);
+    session.inFlight = work;
+    return work.finally((): void => {
+      if (session.inFlight === work) session.inFlight = null;
+    });
+  }
+
+  private static async preparePageAsync(session: ReaderV2PaginationSession,
+    isCurrent: () => boolean): Promise<number> {
+    if (session.cancelled || session.pageSet.complete || !isCurrent()) return 0;
+    const blockIndex = session.blockIndex;
+    const lineIndex = session.lineIndex;
+    const pageIndex = session.pageIndex;
+    const measuredBlock = session.measuredBlock;
+    const cache = new ReaderV2ParagraphCache();
+    session.paragraphCache = cache;
+    const restore = (): void => {
+      session.blockIndex = blockIndex;
+      session.lineIndex = lineIndex;
+      session.pageIndex = pageIndex;
+      session.measuredBlock = measuredBlock;
+    };
+    try {
+      while (!session.cancelled && isCurrent()) {
+        restore();
+        const workStartedAt = Date.now();
+        try {
+          const appended = ReaderV2Paginator.appendPages(session, 1);
+          ReaderV2Paginator.onWorkMeasured?.('page', Date.now() - workStartedAt);
+          return appended;
+        } catch (error) {
+          ReaderV2Paginator.onWorkMeasured?.('page', Date.now() - workStartedAt);
+          restore();
+          if (!(error instanceof ReaderV2PendingLayout)) throw error as Error;
+          const pending = error as ReaderV2PendingLayout;
+          await pending.paragraph.layout(pending.width);
+          if (!session.cancelled && isCurrent()) cache.ready.set(pending.key, pending.paragraph);
+        }
+      }
+      restore();
+      return 0;
+    } finally {
+      session.paragraphCache = null;
+      cache.ready.clear();
+      cache.measurements.clear();
+    }
   }
 
   static appendPages(session: ReaderV2PaginationSession, maxPages: number): number {
@@ -249,10 +354,10 @@ export class ReaderV2Paginator {
         let current = session.measuredBlock;
         if (!current || current.block !== session.document.blocks[session.blockIndex]) {
           current = ReaderV2Paginator.measureBlock(session.document, session.document.blocks[session.blockIndex],
-            session.snapshot, session.currentBlockStyles(), session.width);
+            session.snapshot, session.currentBlockStyles(), session.width, session.paragraphCache);
           session.measuredBlock = current;
         }
-        if (current.lines.length === 0) {
+        if (current.lineCount === 0) {
           session.blockIndex++;
           session.lineIndex = 0;
           session.measuredBlock = null;
@@ -261,7 +366,7 @@ export class ReaderV2Paginator {
 
         const startsNewBlock = session.lineIndex === 0;
         let spacing = startsNewBlock ? ReaderV2Paginator.blockSpacingBefore(session, hasContent, previousWasImage) : 0;
-        const firstLine = current.lines[session.lineIndex];
+        const firstLine = current.line(session.lineIndex);
         if (!hasContent && !topInkGuardApplied) {
           // A zero user margin places the first logical line box on the page boundary. Some fonts (notably the
           // serif family used by several themes) paint one or two physical pixels above that logical box. The
@@ -283,11 +388,11 @@ export class ReaderV2Paginator {
         y += spacing;
 
         const fragmentFirstLine = session.lineIndex;
-        const paragraphLineTop = current.lines[fragmentFirstLine].topHeight;
+        const paragraphLineTop = current.line(fragmentFirstLine).topHeight;
         let fragmentLastLine = fragmentFirstLine - 1;
         let fragmentBottom = paragraphLineTop;
-        while (session.lineIndex < current.lines.length) {
-          const line = current.lines[session.lineIndex];
+        while (session.lineIndex < current.lineCount) {
+          const line = current.line(session.lineIndex);
           const relativeBottom = ReaderV2Paginator.lineBottom(line) - paragraphLineTop;
           if (y + relativeBottom > columnBottom + 0.01 && fragmentLastLine >= fragmentFirstLine) break;
           // A single oversized line still owns an otherwise empty page, preventing a pagination dead loop.
@@ -302,13 +407,13 @@ export class ReaderV2Paginator {
           mustEndPage = hasContent;
           if (mustEndPage) continue;
           fragmentLastLine = fragmentFirstLine;
-          fragmentBottom = ReaderV2Paginator.lineBottom(current.lines[fragmentFirstLine]);
+          fragmentBottom = ReaderV2Paginator.lineBottom(current.line(fragmentFirstLine));
           session.lineIndex = fragmentFirstLine + 1;
         }
 
         const fragment = ReaderV2Paginator.createFragment(session.document, current, session.blockIndex,
           fragmentFirstLine, fragmentLastLine, column.left, y, paragraphLineTop, fragmentBottom,
-          session.snapshot, session.currentBlockStyles(), session.width);
+          session.snapshot, session.currentBlockStyles(), session.width, session.paragraphCache);
         const previous = session.blockIndex > 0 ? session.document.blocks[session.blockIndex - 1] : null;
         fragment.fixedGapBefore = startsNewBlock && hasContent &&
           ((current.block.title && session.snapshot.titleMarginTopPx > 0) ||
@@ -322,7 +427,7 @@ export class ReaderV2Paginator {
         previousWasImage = false;
         y += fragmentBottom - paragraphLineTop;
 
-        if (session.lineIndex >= current.lines.length) {
+        if (session.lineIndex >= current.lineCount) {
           session.blockIndex++;
           session.lineIndex = 0;
           session.measuredBlock = null;
@@ -392,7 +497,7 @@ export class ReaderV2Paginator {
     const to = document.blocks[document.blocks.length - 1].displayEnd;
     const styles = session.regexStyles.filter((style: ReaderV2SpanStyleRange): boolean =>
       style.end > from && style.start < to);
-    let page = ReaderV2Paginator.measureTitlePage(document, session.snapshot, column, styles, 1);
+    let page = ReaderV2Paginator.measureTitlePage(document, session.snapshot, column, styles, 1, session.paragraphCache);
     if (!page) return null;
     if (page.contentBottomPx > column.bottom + 0.01) {
       // Find a fitting uniform scale, retaining the user's font size whenever the complete title fits.
@@ -400,11 +505,13 @@ export class ReaderV2Paginator {
       let high = 1;
       for (let pass = 0; pass < 8; pass++) {
         const scale = (low + high) / 2;
-        const candidate = ReaderV2Paginator.measureTitlePage(document, session.snapshot, column, styles, scale);
+        const candidate = ReaderV2Paginator.measureTitlePage(document, session.snapshot, column, styles, scale,
+          session.paragraphCache);
         if (candidate && candidate.contentBottomPx <= column.bottom + 0.01) low = scale;
         else high = scale;
       }
-      page = ReaderV2Paginator.measureTitlePage(document, session.snapshot, column, styles, Math.max(0.001, low));
+      page = ReaderV2Paginator.measureTitlePage(document, session.snapshot, column, styles, Math.max(0.001, low),
+        session.paragraphCache);
       if (!page) return null;
     }
     for (const fragment of page.fragments) fragment.blockIndex += firstBlock;
@@ -419,7 +526,8 @@ export class ReaderV2Paginator {
   }
 
   private static measureTitlePage(document: ReaderV2Document, source: ReaderV2LayoutSnapshot,
-    column: ReaderV2Rect, styles: ReaderV2SpanStyleRange[], scale: number): ReaderV2PageLayout | null {
+    column: ReaderV2Rect, styles: ReaderV2SpanStyleRange[], scale: number,
+    paragraphCache: ReaderV2ParagraphCache | null = null): ReaderV2PageLayout | null {
     const snapshot = new ReaderV2LayoutSnapshot();
     snapshot.viewport = source.viewport;
     snapshot.contentRect = column;
@@ -458,7 +566,7 @@ export class ReaderV2Paginator {
       copy.decorationSizePx *= scale;
       return copy;
     });
-    return ReaderV2Paginator.layoutContinuous(document, snapshot, scaledStyles);
+    return ReaderV2Paginator.layoutContinuous(document, snapshot, scaledStyles, paragraphCache);
   }
 
   private static shiftTitlePage(page: ReaderV2PageLayout, shift: number): void {
@@ -531,15 +639,27 @@ export class ReaderV2Paginator {
   }
 
   private static measureBlock(document: ReaderV2Document, block: ReaderV2Block,
-    snapshot: ReaderV2LayoutSnapshot, regexStyles: ReaderV2SpanStyleRange[], width: number): ReaderV2MeasuredBlock {
+    snapshot: ReaderV2LayoutSnapshot, regexStyles: ReaderV2SpanStyleRange[], width: number,
+    paragraphCache: ReaderV2ParagraphCache | null = null): ReaderV2MeasuredBlock {
     const paragraph = ReaderV2Paginator.buildParagraph(document, block, snapshot, regexStyles, width,
-      0, block.text.length);
-    return new ReaderV2MeasuredBlock(block, paragraph, paragraph.getLineMetrics());
+      0, block.text.length, false, paragraphCache);
+    const cached = paragraphCache?.measurements.get(paragraph);
+    if (cached) return cached;
+    const measured = new ReaderV2MeasuredBlock(block, paragraph);
+    paragraphCache?.measurements.set(paragraph, measured);
+    return measured;
   }
 
   private static buildParagraph(document: ReaderV2Document, block: ReaderV2Block,
     snapshot: ReaderV2LayoutSnapshot, regexStyles: ReaderV2SpanStyleRange[], width: number,
-    sliceStart: number, sliceEnd: number, outlineOnly: boolean = false): graphicsText.Paragraph {
+    sliceStart: number, sliceEnd: number, outlineOnly: boolean = false,
+    paragraphCache: ReaderV2ParagraphCache | null = null): graphicsText.Paragraph {
+    const cacheKey = `${snapshot.identity}_${block.id}_${sliceStart}_${sliceEnd}_${width}_${outlineOnly}`;
+    if (paragraphCache) {
+      const ready = paragraphCache.ready.get(cacheKey);
+      if (ready) return ready;
+    }
+    const startedAt = Date.now();
     const baseStyle = ReaderV2Paginator.baseTextStyle(block, snapshot);
     const paragraphStyle: graphicsText.ParagraphStyle = {
       textStyle: baseStyle,
@@ -572,7 +692,10 @@ export class ReaderV2Paginator {
       builder.popStyle();
     }
     const paragraph = builder.build();
-    paragraph.layoutSync(Math.max(1, width - ReaderV2Paginator.titleDecorationInset(block, regexStyles, width) * 2));
+    ReaderV2Paginator.onWorkMeasured?.('paragraph-build', Date.now() - startedAt);
+    const layoutWidth = Math.max(1, width - ReaderV2Paginator.titleDecorationInset(block, regexStyles, width) * 2);
+    if (paragraphCache) throw new ReaderV2PendingLayout(cacheKey, paragraph, layoutWidth);
+    paragraph.layoutSync(layoutWidth);
     return paragraph;
   }
 
@@ -802,12 +925,13 @@ export class ReaderV2Paginator {
     blockIndex: number, firstLine: number,
     lastLine: number, x: number, y: number, paragraphLineTop: number,
     paragraphLineBottom: number, snapshot: ReaderV2LayoutSnapshot,
-    regexStyles: ReaderV2SpanStyleRange[], width: number): ReaderV2PageFragment {
-    const first = current.lines[firstLine];
-    const last = current.lines[lastLine];
+    regexStyles: ReaderV2SpanStyleRange[], width: number,
+    paragraphCache: ReaderV2ParagraphCache | null = null): ReaderV2PageFragment {
+    const first = current.line(firstLine);
+    const last = current.line(lastLine);
     const fragment = new ReaderV2PageFragment();
     fragment.title = current.block.title;
-    fragment.titleEnd = current.block.title && lastLine === current.lines.length - 1 &&
+    fragment.titleEnd = current.block.title && lastLine === current.lineCount - 1 &&
       (blockIndex + 1 >= document.blocks.length || !document.blocks[blockIndex + 1].title);
     fragment.blockId = current.block.id;
     fragment.blockIndex = blockIndex;
@@ -816,11 +940,11 @@ export class ReaderV2Paginator {
     // A page-local paragraph contains no neighbouring lines, so a small ink bleed is safe and layout-neutral.
     // A block that fits on the page whole is the common case: its measured paragraph already is that
     // page-local paragraph, so laying the same text out a second time is skipped.
-    const wholeBlock = firstLine === 0 && lastLine === current.lines.length - 1 &&
+    const wholeBlock = firstLine === 0 && lastLine === current.lineCount - 1 &&
       first.startIndex === 0 && last.endIndex === current.block.text.length;
     fragment.paragraph = wholeBlock ? current.paragraph :
       ReaderV2Paginator.buildParagraph(document, current.block, snapshot, regexStyles, width,
-        first.startIndex, last.endIndex);
+        first.startIndex, last.endIndex, false, paragraphCache);
     fragment.selectionRuns = ReaderV2Paginator.buildSelectionRuns(document, current.block, snapshot, regexStyles,
       first.startIndex, last.endIndex);
     let runOffset = current.block.displayStart + first.startIndex;
@@ -831,7 +955,7 @@ export class ReaderV2Paginator {
     });
     if (needsOutline) {
       const outline = ReaderV2Paginator.buildParagraph(document, current.block, snapshot, regexStyles, width,
-        first.startIndex, last.endIndex, true);
+        first.startIndex, last.endIndex, true, paragraphCache);
       fragment.fontStrokes = ReaderFontStroke.build(outline, snapshot.fontWeight,
         (offset: number): graphicsText.TextStyle => ReaderV2Paginator.styleAt(document, current.block,
           current.block.displayStart + first.startIndex + offset, snapshot, regexStyles),
@@ -842,10 +966,12 @@ export class ReaderV2Paginator {
     fragment.paragraphX = x + ReaderV2Paginator.titleDecorationInset(current.block, regexStyles, width);
     fragment.paragraphY = y;
     fragment.paragraphHeight = paragraphLineBottom - paragraphLineTop;
-    const localLines = wholeBlock ? current.lines : fragment.paragraph.getLineMetrics();
-    const topInkBleedPx = localLines.length > 0 ? ReaderV2Paginator.lineTopInkGuard(localLines[0]) : 1;
-    const bottomInkBleedPx = localLines.length > 0 ?
-      ReaderV2Paginator.lineBottomInkGuard(localLines[localLines.length - 1]) : 1;
+    const localCount = fragment.paragraph.getLineCount();
+    const firstLocal = wholeBlock ? current.line(0) : fragment.paragraph.getLineMetrics(0);
+    const lastLocal = wholeBlock ? current.line(current.lineCount - 1) :
+      fragment.paragraph.getLineMetrics(Math.max(0, localCount - 1));
+    const topInkBleedPx = firstLocal ? ReaderV2Paginator.lineTopInkGuard(firstLocal) : 1;
+    const bottomInkBleedPx = lastLocal ? ReaderV2Paginator.lineBottomInkGuard(lastLocal) : 1;
     let strokeBleed = 0;
     for (const stroke of fragment.fontStrokes) strokeBleed = Math.max(strokeBleed, stroke.pen.getWidth() / 2 + 1);
     fragment.clipRect = new ReaderV2Rect(x - strokeBleed, y - topInkBleedPx - strokeBleed, x + width + strokeBleed,

@@ -1,4 +1,5 @@
 import { ReaderV2PaginationSession } from './ReaderV2Paginator';
+import { ReaderPaginationIndexState } from './ReaderPaginationIndex';
 
 export interface PageTurnPreview {
   text: string;
@@ -19,8 +20,9 @@ export interface ReaderMergedActionBoundsTask {
   paragraphs: ReaderTextParagraph[]; selectableKey: string; left: number; top: number; pageIdentity: string; attempts: number;
 }
 export interface ReadTextSlice { text: string; start: number; end: number; highlighted: boolean; ruleIndex: number; ttsHighlighted?: boolean; key: string; }
-export interface ReaderPaginationResult {
-  source: string; pages: string[]; starts: number[]; ends: number[]; cursor?: number; complete?: boolean; v2Session?: ReaderV2PaginationSession;
+export interface ReaderPaginationResult extends ReaderPaginationIndexState {
+  v2Session?: ReaderV2PaginationSession;
+  persistenceScheduled?: boolean;
 }
 export interface ReaderMixedPaginationMetrics { availableWidth: number; availableHeightPx: number; }
 export interface ReaderViewportSize { width: number; height: number; }

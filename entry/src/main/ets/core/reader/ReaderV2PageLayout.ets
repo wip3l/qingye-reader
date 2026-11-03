@@ -1,4 +1,5 @@
 import graphicsText from '@ohos.graphics.text';
+import { ReaderPaginationBoundary } from './ReaderPaginationIndex';
 import { ReaderV2Rect } from './ReaderV2LayoutSnapshot';
 import { ReaderCommentBubbleStyle } from './ReaderCommentBubble';
 import { ReaderFontStrokeRun } from './ReaderFontStroke';
@@ -88,7 +89,7 @@ export class ReaderV2ActionHitArea {
   rect: ReaderV2Rect = new ReaderV2Rect();
 }
 
-export class ReaderV2PageLayout {
+export class ReaderV2PageLayout implements ReaderPaginationBoundary {
   pageIndex: number = 0;
   columnIndex: number = 0;
   displayStart: number = 0;

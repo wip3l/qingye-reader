@@ -177,6 +177,12 @@ import { ReaderImageBitmapCache } from '../core/reader/ReaderImageBitmapCache';
 import { ReaderChunkPagination, ReaderChunkResult } from '../core/reader/ReaderChunkPagination';
 import { ReaderPageOffsets } from '../core/reader/ReaderPageOffsets';
 import { ReaderPageTurnQueue } from '../core/reader/ReaderPageTurnQueue';
+import { ReaderPaginationIndex } from '../core/reader/ReaderPaginationIndex';
+import { ReaderTurnTrace } from '../core/reader/ReaderTurnTrace';
+import { ReaderRenderFrame } from '../core/reader/ReaderRenderFrame';
+import { ReaderPageTextureCache, ReaderPageTextureLease } from '../core/reader/ReaderPageTextureCache';
+import { ReaderContinuousLayoutRequest, ReaderContinuousLayoutState } from '../core/reader/ReaderContinuousLayoutRequest';
+import { ReaderContinuousLayoutHost } from '../components/reader/ReaderContinuousLayoutHost';
 import {
   ReaderInfoBarConfig, ReaderInfoBarContext, ReaderInfoBarText, ReaderInfoItem, ReaderInfoProgressBar
 } from '../core/reader/ReaderInfoBarModel';
@@ -551,6 +557,14 @@ struct ReadBookPage {
   private readerV2PageSetCache: Map<string, ReaderV2PageSet> = new Map<string, ReaderV2PageSet>();
   private readerV2DocumentCache: Map<string, ReaderV2Document> = new Map<string, ReaderV2Document>();
   private readerContinuousV2Layouts: Map<string, ReaderV2PageLayout> = new Map<string, ReaderV2PageLayout>();
+  private readerContinuousLayoutRequests: Map<string, ReaderContinuousLayoutRequest> = new Map();
+  private readerContinuousLayoutQueue: ReaderContinuousLayoutRequest[] = [];
+  private readerContinuousLayoutSerial: number = 0;
+  private readerContinuousLayoutGeneration: number = 0;
+  private readerContinuousLayoutActiveSerial: number = -1;
+  private readerContinuousLayoutTimer: number = -1;
+  private readerContinuousMetricsWorkSerial: number = 0;
+  private readerContinuousMetricsActiveSerial: number = -1;
   // layout.identity -> [chunk start in the chapter source, parsed chunk document]
   private readerContinuousV2Sources: Map<string, number> = new Map<string, number>();
   private readerContinuousV2Documents: Map<string, ReaderV2Document> = new Map<string, ReaderV2Document>();
@@ -584,6 +598,12 @@ struct ReadBookPage {
   private previousPaginationPreloadActiveSerial: number = -1;
   private previousPaginationPreloadActiveKey: string = '';
   private readerPaginationWorkSerial: number = 0;
+  private readerPaginationScheduledResult: ReaderPaginationResult | null = null;
+  private readerPaginationScheduledSerial: number = -1;
+  private readerPaginationRequiredPageCount: number = 0;
+  private readerPaginationSourceHashes: Map<string, number> = new Map<string, number>();
+  private readerTurnTrace: ReaderTurnTrace = new ReaderTurnTrace();
+  private readerManualTurnSerial: number = 0;
   private readerPaginationInteractionIdleUntil: number = 0;
   private pageTurnPreviewKey: string = '';
   private pageTurnPreviewLoadingKey: string = '';
@@ -594,6 +614,9 @@ struct ReadBookPage {
   private readerPageCurlContext: CanvasRenderingContext2D =
     new CanvasRenderingContext2D(new RenderingContextSettings(true));
   private readerPageCurlFront: image.PixelMap | null = null;
+  private readerPageCurlFrontLease: ReaderPageTextureLease | null = null;
+  private readerPageTextureCache: ReaderPageTextureCache = new ReaderPageTextureCache();
+  private readerPageTextureWarmSerial: number = 0;
   private readerPageCurlBack: image.PixelMap | null = null;
   private readerPageCurlSnapshotHeight: number = 0;
   private readerPageCurlCaptureKey: string = '';
@@ -1062,6 +1085,7 @@ struct ReadBookPage {
     this.readerComicColor.setForeground(true);
     this.readerPageVisible = true;
     this.refreshReaderContinuousPageMetrics();
+    this.warmReaderContinuousLayouts();
     this.startReaderHoldingHandTracking();
     this.readerKeyboard.reset();
     this.restoreReaderKeyboardFocus();
@@ -1253,6 +1277,10 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    this.cancelReaderContinuousLayouts(false);
+    this.cancelManualReaderTurn();
+    this.readerPageTextureWarmSerial++;
+    this.readerPageTextureCache.clear();
     this.readerEntryAlive = false;
     if (!this.readerFormatResolved || this.readerPdfDispatched) return;
     this.cancelReaderContinuousMetricsTimers();
@@ -1377,6 +1405,10 @@ struct ReadBookPage {
   }
 
   onPageHide(): void {
+    this.cancelReaderContinuousLayouts(false);
+    this.cancelManualReaderTurn();
+    this.readerPageTextureWarmSerial++;
+    this.readerPageTextureCache.clear();
     this.readerFormatShowPending = false;
     if (!this.readerFormatResolved || this.readerPdfDispatched) return;
     this.cancelReaderContinuousMetricsTimers();
@@ -1895,8 +1927,8 @@ struct ReadBookPage {
         this.content = loadedContent;
       }
       this.detectReaderComicMode(loadedContent);
-      // 直接从预处理后的正文开始分页：同步首屏 + 恢复突发排版（见 scheduleReaderPaginationCompletion）
-      // 能在毫秒级完成落页。旧的持久分页缓存读取要 await 关系型数据库查询（部分 HarmonyOS 构建上
+      // 直接从预处理后的正文开始异步分页，优先生成恢复位置所需的页面（见 scheduleReaderPaginationCompletion）。
+      // 旧的持久分页缓存读取要 await 关系型数据库查询（部分 HarmonyOS 构建上
       // 带有数秒级同步前缀且无法超时），放在首屏前反而让每次跳章都“迟迟等待排版”，已不再使用。
       const restoredPagination = body ?
         this.applyPreparedReaderPagination(loadedContent, chapterIndex, preferImmediatePagination) : false;
@@ -2258,7 +2290,13 @@ struct ReadBookPage {
                 hintColor: this.getSubTextColor()
               })
             } else if (this.usesReaderContinuousV2()) {
-              this.readerContinuousV2Item(item.chapterIndex, item.pageIndex, item.text, this.pageRenderVersion)
+              ReaderContinuousLayoutHost({
+                layoutState: this.readerContinuousV2State(item.pageIndex, item.text, item.chapterIndex),
+                pendingHeight: this.pageViewHeight,
+                hintColor: this.getSubTextColor()
+              }) {
+                this.readerContinuousV2Item(item.chapterIndex, item.pageIndex, item.text, this.pageRenderVersion)
+              }
             } else {
               Column() {
                 this.readerPlainTextLeaf(item.text)
@@ -2287,8 +2325,7 @@ struct ReadBookPage {
       // 原生 Text 的长按选择仍可识别，选区激活时外层 Pan 会停止驱动列表。
       .enableScrollInteraction(false)
       .scrollBar(BarState.Off)
-      // 每个滚动块都是整屏正文（可见 Text + 透明选择 Text 两次排版）。默认只在进入视口时才构建，
-      // 快速滑动时会临时排版掉帧；预构建视口外 2 块把排版开销挪到滑动间隙的空闲帧。
+      // 视口外缓存 2 块；正文排版由异步队列提前准备，List 构建只读取完成的原生布局。
       // 漫画模式条目是带显式高度的图片，保持原有时序以隔离行为差异。
       .cachedCount(this.isReaderNovelContinuousScrollModeActive() ? 2 : 0)
       .translate({ y: this.readerComicChapterTransitionY })
@@ -3295,7 +3332,7 @@ struct ReadBookPage {
               // NodeController argument changes; the footer then advances while the canvas keeps painting the
               // previous chapter forever. A chapter-scoped key remounts only at the boundary, while the already
               // prepared incoming leaf remains on top for the short handoff.
-              ForEach(this.currentReaderV2ChapterSurfaceKeys(), (_surfaceKey: string) => {
+              ForEach(this.currentReaderV2ChapterSurfaceKeys(this.pageRenderVersion), (_surfaceKey: string) => {
                 this.readerActiveCurrentPageSurface(this.pageRenderVersion, this.visibleCurrentPageText(),
                   this.ttsHighlightRenderVersion)
               }, (surfaceKey: string) => surfaceKey)
@@ -6411,10 +6448,19 @@ struct ReadBookPage {
     this.readerComicScrollRestoring = true;
     let attempt = 0;
     const maxAttempts = 5;
+    let layoutWaits = 0;
     const restore = (): void => {
       if (serial !== this.readerComicScrollRestoreSerial || chapterIndex !== this.currentChapterIndex ||
         !this.isReaderContinuousScrollSurfaceActive()) {
         return;
+      }
+      if (this.usesReaderContinuousV2()) {
+        const state = this.readerContinuousV2State(pageIndex, this.contentPages[pageIndex] || '', chapterIndex);
+        // Align against the measured height, never against a cold row's provisional placeholder height.
+        if (!state.ready && !state.failed && layoutWaits++ < 156) {
+          setTimeout(restore, 32);
+          return;
+        }
       }
       try {
         this.readerComicScroller.scrollToIndex(this.readerContinuousListIndex(pageIndex), false, ScrollAlign.START);
@@ -6462,6 +6508,7 @@ struct ReadBookPage {
     const listEnd = Math.max(listStart, Math.round(end));
     this.readerContinuousLastListStart = listStart;
     this.readerContinuousLastListEnd = listEnd;
+    this.warmReaderContinuousLayouts();
     this.scheduleReaderContinuousPositionUpdate();
     // 列表里还有相邻章节与分隔项；可见区换算成当前章内的序号，越出本章的部分夹到本章首尾。
     const offset = Math.max(0, this.readerComicPageDataSource.offsetOf(this.currentChapterIndex));
@@ -6479,6 +6526,8 @@ struct ReadBookPage {
     }
     this.ensureReaderContinuousNeighbors(listStart, listEnd);
     const top = this.readerComicPageDataSource.itemAt(listStart);
+    if (top && top.isPage() && this.usesReaderContinuousV2() && !this.isReaderImageOnlyPage(top.text) &&
+      !this.readerContinuousV2Request(top.pageIndex, top.text, top.chapterIndex).state.ready) return;
     if (top && top.isPage() && top.chapterIndex !== this.currentChapterIndex) {
       this.commitReaderContinuousChapter(top.chapterIndex, top.pageIndex);
       return;
@@ -6713,12 +6762,15 @@ struct ReadBookPage {
     return [this.currentReaderPageRenderIdentity(this.pageRenderVersion, this.ttsHighlightRenderVersion)];
   }
 
-  currentReaderV2ChapterSurfaceKeys(): string[] {
+  currentReaderV2ChapterSurfaceKeys(_renderVersion: number = this.pageRenderVersion): string[] {
     // Keep the native canvas stable during an animation, but remount it after the settled page index changes.
     // ArkUI can retain a NodeContainer even after updatePage() receives a new page object; keying by the settled
     // page makes the declarative host and the retained FrameNode advance atomically instead of leaving old正文.
+    // Pagination mutates a private native cache. Observe the publication version and remount only when a
+    // pending plain-text leaf gains its first measured page; otherwise ArkUI can retain the loading branch.
+    const measured = this.readerV2Page(this.currentChapterIndex, this.currentPageIndex, this.pagedContentText) !== null;
     return [`reader_v2_chapter_${this.currentChapterIndex}_${this.currentPageIndex}_` +
-      `${this.readerV2SurfaceGeneration}`];
+      `${this.readerV2SurfaceGeneration}_${measured ? 'native' : 'pending'}`];
   }
 
   visibleCurrentPageText(): string {
@@ -6755,6 +6807,7 @@ struct ReadBookPage {
     this.displayPageRenderKey++;
     this.pageRenderVersion++;
     this.refreshCurrentReaderV2RetainedPages();
+    this.scheduleReaderPageTextureWarmup();
   }
 
   parseAreaDimension(value: Length): number {
@@ -8644,6 +8697,9 @@ struct ReadBookPage {
   }
 
   invalidateReaderTypographyLayout(): void {
+    this.cancelReaderContinuousLayouts(true);
+    this.cancelReaderContinuousMetricsTimers();
+    this.cancelManualReaderTurn();
     // A typography update changes both wrapping and component heights. Invalidate every derived layer and stop
     // cooperative batches created with the previous settings; otherwise an old background batch can publish its
     // page array after the live preview has already switched to the new geometry.
@@ -8703,6 +8759,13 @@ struct ReadBookPage {
   }
 
   private cancelReaderPaginationWork(releaseNativeCaches: boolean): void {
+    this.cancelReaderContinuousLayouts(releaseNativeCaches);
+    this.readerPageTextureWarmSerial++;
+    this.readerPageTextureCache.clear();
+    this.readerPaginationSourceHashes.clear();
+    for (const result of this.readerPaginationCache.values()) {
+      if (result.v2Session) result.v2Session.cancelled = true;
+    }
     this.readerPaginationWorkSerial++;
     this.adjacentPaginationPreloadSerial++;
     this.previousPaginationPreloadSerial++;
@@ -9426,7 +9489,7 @@ struct ReadBookPage {
       while (!result.complete && (ratio >= 0 || sourceOffset >= 0 || result.pages.length === 0)) {
         if (!valid()) return false;
         if (Date.now() > deadline) throw new Error('章节排版超时');
-        this.appendReaderPaginationBatch(result, targetChapter, 1);
+        await this.appendReaderPaginationBatch(result, targetChapter, 1, 8, valid);
         await sleepMs(16);
       }
       if (!valid()) return false;
@@ -15550,23 +15613,15 @@ struct ReadBookPage {
       v2Session: session
     };
     if (registerSession) this.registerReaderV2PaginationSession(source, chapterIndex, session);
-    const visibleSpreadSize = this.isLandscapeDoublePageActive() ? 2 : 1;
-    // Never rebuild synchronously from the chapter start to a deep saved position. A single V2 page can include
-    // native paragraph measurement, so restoring hundreds of pages in this lifecycle call can trip the UI watchdog.
-    // Publish only the first visible spread here; the retained session restores the saved position cooperatively.
-    const requestedPageCount = Math.min(Math.max(1, initialPageCount), visibleSpreadSize);
     const rawTargetOffset = registerSession && chapterIndex === this.currentChapterIndex ?
       this.readerTypographyRestoreOffset : -1;
     const targetOffset = rawTargetOffset < 0 ? -1 : Math.min(source.length, Math.max(0, rawTargetOffset));
     if (chapterIndex === this.currentChapterIndex && rawTargetOffset >= 0) {
       this.readerTypographyRestoreOffset = targetOffset;
     }
-    while (!result.complete && result.pages.length < requestedPageCount) {
-      const previousPageCount = result.pages.length;
-      this.appendReaderV2PaginationBatch(result, chapterIndex, 1);
-      if (result.pages.length <= previousPageCount) break;
-    }
-    ReaderOpenTrace.mark(this.bookUrl, 'v2-initial-window-ready',
+    // Initial layout is asynchronous too. The opening overlay remains until the first measured spread
+    // exists; a full-chapter fallback is never treated as an authoritative page boundary.
+    ReaderOpenTrace.mark(this.bookUrl, 'v2-session-ready',
       `pages=${result.pages.length} complete=${result.complete} offset=${targetOffset}`);
     return result;
   }
@@ -15588,45 +15643,22 @@ struct ReadBookPage {
     }
   }
 
-  appendReaderV2PaginationBatch(result: ReaderPaginationResult, chapterIndex: number, maxPages: number): void {
+  async appendReaderV2PaginationBatch(result: ReaderPaginationResult, chapterIndex: number, maxPages: number,
+    isCurrent: () => boolean = (): boolean => true): Promise<void> {
     const session = result.v2Session;
     if (!session || result.complete || maxPages <= 0) return;
+    await ReaderV2Paginator.appendPageAsync(session, isCurrent);
+    if (!isCurrent()) return;
     const startedAt = Date.now();
-    const appended = ReaderV2Paginator.appendPages(session, maxPages);
     this.syncReaderV2PaginationResult(result);
-    CooperativeScheduler.reportSynchronousOperation('reader/v2-pagination-batch', Date.now() - startedAt,
-      `chapter=${chapterIndex},pages=${appended},total=${result.pages.length}`);
+    CooperativeScheduler.reportSynchronousOperation('reader/v2-pagination-index', Date.now() - startedAt,
+      `chapter=${chapterIndex},total=${result.pages.length}`);
   }
 
   syncReaderV2PaginationResult(result: ReaderPaginationResult): void {
     const session = result.v2Session;
     if (!session) return;
-    const pageSet = session.pageSet;
-    const pages: string[] = [];
-    const starts: number[] = [];
-    const ends: number[] = [];
-    for (let index = 0; index < pageSet.pages.length; index++) {
-      const page = pageSet.pages[index];
-      const start = index === 0 ? 0 : Math.max(starts[index - 1], page.sourceStart);
-      const nextStart = index + 1 < pageSet.pages.length ? pageSet.pages[index + 1].sourceStart :
-        (pageSet.complete ? result.source.length : page.sourceEnd);
-      const end = Math.max(start, Math.min(result.source.length, nextStart > start ? nextStart : page.sourceEnd));
-      page.sourceStart = start;
-      page.sourceEnd = end;
-      starts.push(start);
-      ends.push(end);
-      pages.push(result.source.substring(start, end));
-    }
-    if (pages.length === 0 && result.source && pageSet.complete) {
-      pages.push(result.source);
-      starts.push(0);
-      ends.push(result.source.length);
-    }
-    result.pages = pages;
-    result.starts = starts;
-    result.ends = ends;
-    result.cursor = ends.length > 0 ? ends[ends.length - 1] : 0;
-    result.complete = pageSet.complete;
+    ReaderPaginationIndex.append(result, session.pageSet.pages, session.pageSet.complete);
   }
 
   readerV2PageSet(chapterIndex: number, source: string): ReaderV2PageSet | null {
@@ -16958,45 +16990,150 @@ struct ReadBookPage {
       indentStart;
   }
 
-  // One scrolling chunk laid out by the V2 paragraph engine. Called from list item builders, so the result
-  // is cached by content and layout identity; a typography or theme change simply misses the cache.
-  readerContinuousV2Layout(index: number, text: string, chapterIndexHint: number = -1): ReaderV2PageLayout | null {
-    if (!text || this.pageViewWidth <= 0) return null;
+  readerContinuousV2Request(index: number, text: string,
+    chapterIndexHint: number = -1): ReaderContinuousLayoutRequest {
     const snapshot = this.buildReaderV2Snapshot(true);
     const chapterIndex = this.readerContinuousChapterOf(chapterIndexHint);
     const chunk = this.readerContinuousV2ChunkText(index, text, chapterIndex);
-    const key = `${chapterIndex}_${index}_${chunk.length}_${this.hashText(chunk)}_${snapshot.identity}`;
-    const cached = this.readerContinuousV2Layouts.get(key);
-    if (cached) return cached;
-    const startedAt = Date.now();
-    let layout: ReaderV2PageLayout | null = null;
-    try {
-      const document = ReaderV2DocumentParser.parse(chunk, chapterIndex,
-        index === 0 ? this.getChapterTitle(chapterIndex) : '', this.readerV2HeadingHints(chapterIndex),
-        ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw));
-      layout = ReaderV2Paginator.layoutContinuous(document, snapshot, this.buildReaderV2RegexStyles(document));
-      if (layout) {
-        this.readerContinuousV2Documents.set(layout.identity, document);
-        this.readerContinuousV2Sources.set(layout.identity, this.readerContinuousV2ChunkStart(index, text, chapterIndex));
-      }
-    } catch (error) {
-      console.error(`[ReaderContinuous] 正文块排版失败 chapter=${chapterIndex} chunk=${index}:`, error);
+    const source = this.readerContinuousSourceOf(chapterIndex);
+    const key = `${chapterIndex}_${index}_${chunk.length}_${this.hashText(chunk)}_${snapshot.identity}_` +
+      `${this.readerContinuousLayoutGeneration}_${this.readerPaginationSourceHash(source)}`;
+    let request = this.readerContinuousLayoutRequests.get(key);
+    if (request) {
+      this.readerContinuousLayoutRequests.delete(key);
+      this.readerContinuousLayoutRequests.set(key, request);
+      return request;
     }
-    if (!layout) return null;
-    this.readerContinuousV2Layouts.set(key, layout);
-    while (this.readerContinuousV2Layouts.size > 24) {
-      const oldest = this.readerContinuousV2Layouts.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      const evicted = this.readerContinuousV2Layouts.get(oldest);
+    request = new ReaderContinuousLayoutRequest(key, chapterIndex, index, chunk,
+      source, this.readerContinuousV2ChunkStart(index, text, chapterIndex), snapshot);
+    this.readerContinuousLayoutRequests.set(key, request);
+    return request;
+  }
+
+  readerContinuousV2State(index: number, text: string, chapterIndex: number = -1): ReaderContinuousLayoutState {
+    const request = this.readerContinuousV2Request(index, text, chapterIndex);
+    this.queueReaderContinuousLayout(request);
+    return request.state;
+  }
+
+  // Selection/progress/build queries are cache-only: a cache miss must never synchronously shape a paragraph.
+  readerContinuousV2Layout(index: number, text: string, chapterIndex: number = -1): ReaderV2PageLayout | null {
+    if (!text || this.pageViewWidth <= 0) return null;
+    const request = this.readerContinuousV2Request(index, text, chapterIndex);
+    return this.readerContinuousV2Layouts.get(request.key) || null;
+  }
+
+  queueReaderContinuousLayout(request: ReaderContinuousLayoutRequest): void {
+    if (request.state.ready || request.state.failed || request.queued || !request.chunk ||
+      this.pageViewWidth <= 0 || !this.readerPageVisible || !this.usesReaderContinuousV2()) return;
+    request.queued = true;
+    request.queueSerial = this.readerContinuousLayoutSerial;
+    this.readerContinuousLayoutQueue.push(request);
+    this.scheduleReaderContinuousLayout();
+  }
+
+  scheduleReaderContinuousLayout(): void {
+    if (this.readerContinuousLayoutTimer >= 0 ||
+      this.readerContinuousLayoutActiveSerial === this.readerContinuousLayoutSerial ||
+      this.readerContinuousLayoutQueue.length === 0 || !this.readerPageVisible) return;
+    this.readerContinuousLayoutTimer = setTimeout((): void => {
+      this.readerContinuousLayoutTimer = -1;
+      this.runReaderContinuousLayout();
+    }, 0);
+  }
+
+  async runReaderContinuousLayout(): Promise<void> {
+    const serial = this.readerContinuousLayoutSerial;
+    if (this.readerContinuousLayoutActiveSerial === serial || !this.readerPageVisible) return;
+    // Restore/visible chunks outrank speculative neighbours. Only one chunk submits native work at a time.
+    this.readerContinuousLayoutQueue.sort((left: ReaderContinuousLayoutRequest,
+      right: ReaderContinuousLayoutRequest): number => {
+      const distance = (request: ReaderContinuousLayoutRequest): number =>
+        Math.abs(request.chapter - this.currentChapterIndex) * 100000 + Math.abs(request.index - this.currentPageIndex);
+      return distance(left) - distance(right);
+    });
+    const request = this.readerContinuousLayoutQueue.shift();
+    if (!request) return;
+    this.readerContinuousLayoutActiveSerial = serial;
+    const valid = (): boolean => serial === this.readerContinuousLayoutSerial && this.readerPageVisible &&
+      this.usesReaderContinuousV2() && this.readerContinuousLayoutRequests.get(request.key) === request &&
+      this.readerContinuousSourceOf(request.chapter) === request.source;
+    try {
+      if (!valid()) return;
+      const document = ReaderV2DocumentParser.parse(request.chunk, request.chapter,
+        request.index === 0 ? this.getChapterTitle(request.chapter) : '', this.readerV2HeadingHints(request.chapter),
+        ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw));
+      // Identical text can occur in different chunks. Their selection/progress maps still own different offsets.
+      document.identity = `continuous_${request.key}`;
+      const layout = await ReaderV2Paginator.layoutContinuousAsync(document, request.snapshot,
+        this.buildReaderV2RegexStyles(document), valid);
+      if (!layout || !valid()) return;
+      this.readerContinuousV2Layouts.set(request.key, layout);
+      this.readerContinuousV2Documents.set(layout.identity, document);
+      this.readerContinuousV2Sources.set(layout.identity, request.sourceStart);
+      const gapPx = request.index < this.readerContinuousEndsOf(request.chapter).length - 1 ?
+        this.toMeasureNonNegativePx(this.readerParagraphSpacing) : 0;
+      request.state.heightVp = Math.max(1, px2vp(Math.ceil(layout.contentBottomPx + gapPx)));
+      request.state.ready = true;
+      this.pruneReaderContinuousLayouts();
+    } catch (error) {
+      if (valid()) {
+        request.state.failed = true;
+        console.error(`[ReaderContinuous] 正文块排版失败 chapter=${request.chapter} chunk=${request.index}:`, error);
+      }
+    } finally {
+      if (request.queueSerial === serial) request.queued = false;
+      if (this.readerContinuousLayoutActiveSerial === serial) this.readerContinuousLayoutActiveSerial = -1;
+      if (serial === this.readerContinuousLayoutSerial) this.scheduleReaderContinuousLayout();
+    }
+  }
+
+  pruneReaderContinuousLayouts(): void {
+    const keep: Set<string> = new Set();
+    for (let index = Math.max(0, this.readerContinuousLastListStart - 2);
+      index <= this.readerContinuousLastListEnd + 2; index++) {
+      const item = this.readerComicPageDataSource.itemAt(index);
+      if (item && item.isPage()) keep.add(`${item.chapterIndex}_${item.pageIndex}`);
+    }
+    for (const request of this.readerContinuousLayoutRequests.values()) {
+      if (this.readerContinuousLayoutRequests.size <= 24) break;
+      if (request.queued || keep.has(`${request.chapter}_${request.index}`)) continue;
+      const evicted = this.readerContinuousV2Layouts.get(request.key);
       if (evicted) {
         this.readerContinuousV2Documents.delete(evicted.identity);
         this.readerContinuousV2Sources.delete(evicted.identity);
       }
-      this.readerContinuousV2Layouts.delete(oldest);
+      this.readerContinuousV2Layouts.delete(request.key);
+      this.readerContinuousLayoutRequests.delete(request.key);
     }
-    CooperativeScheduler.reportSynchronousOperation('reader/v2-continuous-chunk', Date.now() - startedAt,
-      `chapter=${chapterIndex},chunk=${index},chars=${chunk.length}`);
-    return layout;
+  }
+
+  warmReaderContinuousLayouts(): void {
+    if (!this.readerPageVisible || !this.usesReaderContinuousV2()) return;
+    // Prepare only the mounted window and its nearby List items, including after foregrounding.
+    for (let index = Math.max(0, this.readerContinuousLastListStart - 2);
+      index <= this.readerContinuousLastListEnd + 2; index++) {
+      const item = this.readerComicPageDataSource.itemAt(index);
+      if (item && item.isPage() && !this.isReaderImageOnlyPage(item.text)) {
+        this.readerContinuousV2State(item.pageIndex, item.text, item.chapterIndex);
+      }
+    }
+    this.pruneReaderContinuousLayouts();
+  }
+
+  cancelReaderContinuousLayouts(clear: boolean): void {
+    this.readerContinuousLayoutSerial++;
+    if (this.readerContinuousLayoutTimer >= 0) clearTimeout(this.readerContinuousLayoutTimer);
+    this.readerContinuousLayoutTimer = -1;
+    this.readerContinuousLayoutQueue = [];
+    for (const request of this.readerContinuousLayoutRequests.values()) request.queued = false;
+    if (!clear) return;
+    this.readerContinuousLayoutGeneration++;
+    this.readerContinuousLayoutRequests.clear();
+    this.readerContinuousV2Layouts.clear();
+    this.readerContinuousV2Documents.clear();
+    this.readerContinuousV2Sources.clear();
+    this.readerContinuousV2Controllers.clear();
   }
 
   readerContinuousV2ItemHeight(index: number, text: string, chapterIndex: number = -1): number {
@@ -17087,6 +17224,9 @@ struct ReadBookPage {
   }
 
   cancelReaderContinuousMetricsTimers(): void {
+    this.readerContinuousMetricsWorkSerial++;
+    if (this.readerContinuousMetricsSession) this.readerContinuousMetricsSession.cancelled = true;
+    this.readerContinuousMetricsSession = null;
     if (this.readerContinuousMetricsTimer >= 0) clearTimeout(this.readerContinuousMetricsTimer);
     if (this.readerContinuousPositionTimer >= 0) clearTimeout(this.readerContinuousPositionTimer);
     this.readerContinuousMetricsTimer = -1;
@@ -17129,24 +17269,34 @@ struct ReadBookPage {
   }
 
   scheduleReaderContinuousMetricsBatch(): void {
-    if (this.readerContinuousMetricsTimer >= 0) return;
+    if (this.readerContinuousMetricsTimer >= 0 ||
+      this.readerContinuousMetricsActiveSerial === this.readerContinuousMetricsWorkSerial) return;
     this.readerContinuousMetricsTimer = setTimeout(() => {
       this.readerContinuousMetricsTimer = -1;
       this.runReaderContinuousMetricsBatch();
     }, 32);
   }
 
-  runReaderContinuousMetricsBatch(): void {
+  async runReaderContinuousMetricsBatch(): Promise<void> {
+    const serial = this.readerContinuousMetricsWorkSerial;
+    if (this.readerContinuousMetricsActiveSerial === serial) return;
     const snapshot = this.readerContinuousMetricsSnapshot;
     if (!snapshot || !this.readerPageVisible || !this.isReaderNovelContinuousScrollModeActive() ||
       this.readerContinuousMetricsChapter !== this.currentChapterIndex ||
       this.readerContinuousMetricsSource !== this.pagedContentText) return;
     // Touch and inertia have priority. Auto-scroll must still allow statistics to finish.
-    if (this.readerContinuousPointerDown ||
+    if (this.readerContinuousLayoutQueue.length > 0 ||
+      this.readerContinuousLayoutActiveSerial === this.readerContinuousLayoutSerial || this.readerContinuousPointerDown ||
       (!this.readerAutoScrollActive && Date.now() - this.readerContinuousLastScrollAt < 120)) {
       this.scheduleReaderContinuousMetricsBatch();
       return;
     }
+    this.readerContinuousMetricsActiveSerial = serial;
+    let continueCounting = false;
+    const valid = (): boolean => serial === this.readerContinuousMetricsWorkSerial && this.readerPageVisible &&
+      this.isReaderNovelContinuousScrollModeActive() && this.readerContinuousMetricsSnapshot === snapshot &&
+      this.readerContinuousMetricsChapter === this.currentChapterIndex &&
+      this.readerContinuousMetricsSource === this.pagedContentText;
     try {
       let session = this.readerContinuousMetricsSession;
       if (!session) {
@@ -17156,9 +17306,10 @@ struct ReadBookPage {
         session = ReaderV2Paginator.start(document, snapshot, this.buildReaderV2RegexStyles(document));
         this.readerContinuousMetricsSession = session;
       }
-      ReaderV2Paginator.appendPages(session, 1);
+      await ReaderV2Paginator.appendPageAsync(session, valid);
+      if (!valid()) return;
       if (!session.pageSet.complete) {
-        this.scheduleReaderContinuousMetricsBatch();
+        continueCounting = true;
         return;
       }
       const starts = session.pageSet.pages.map((page: ReaderV2PageLayout, index: number): number =>
@@ -17172,8 +17323,13 @@ struct ReadBookPage {
       this.readerContinuousMetricsSession = null;
       this.updateReaderContinuousDisplayPosition();
     } catch (error) {
-      this.readerContinuousMetricsSession = null;
-      console.warn('计算滚动阅读显示页码失败:', error);
+      if (valid()) {
+        this.readerContinuousMetricsSession = null;
+        console.warn('计算滚动阅读显示页码失败:', error);
+      }
+    } finally {
+      if (this.readerContinuousMetricsActiveSerial === serial) this.readerContinuousMetricsActiveSerial = -1;
+      if (valid() && continueCounting) this.scheduleReaderContinuousMetricsBatch();
     }
   }
 
@@ -17250,9 +17406,20 @@ struct ReadBookPage {
             return chunkStart + document.sourceOffsetForDisplay(fragment.displayStart);
           }
           if (!fragment.paragraph) continue;
-          for (const line of fragment.paragraph.getLineMetrics()) {
-            if (fragment.paragraphY + line.topHeight < localTop - 1) continue;
-            return chunkStart + document.sourceOffsetForDisplay(fragment.displayStart + line.startIndex);
+          // Progress updates run while scrolling. Native line metrics are fetched only for a binary search,
+          // rather than converting every line of a long paragraph on each position tick.
+          let low = 0;
+          let high = fragment.paragraph.getLineCount();
+          while (low < high) {
+            const middle = Math.floor((low + high) / 2);
+            const line = fragment.paragraph.getLineMetrics(middle);
+            if (!line) break;
+            if (fragment.paragraphY + line.topHeight < localTop - 1) low = middle + 1;
+            else high = middle;
+          }
+          if (low < fragment.paragraph.getLineCount()) {
+            const line = fragment.paragraph.getLineMetrics(low);
+            if (line) return chunkStart + document.sourceOffsetForDisplay(fragment.displayStart + line.startIndex);
           }
         }
       } catch (_) {
@@ -17590,7 +17757,19 @@ struct ReadBookPage {
       `${this.readerHeaderEnabled}_${this.readerFooterEnabled}_` +
       `${this.readerExtendToStatusBar}_${this.isLandscapeDoublePageActive()}_${this.readerTypographyCacheIdentity()}_` +
       `${this.readerParagraphCommentPaginationIdentity()}_` +
-      `${source.length}_${this.hashText(source)}`;
+      `${source.length}_${this.readerPaginationSourceHash(source)}`;
+  }
+
+  readerPaginationSourceHash(source: string): number {
+    const cached = this.readerPaginationSourceHashes.get(source);
+    if (cached !== undefined) return cached;
+    const hash = this.hashText(source);
+    if (this.readerPaginationSourceHashes.size >= 4) {
+      const oldest = this.readerPaginationSourceHashes.keys().next().value as string | undefined;
+      if (oldest !== undefined) this.readerPaginationSourceHashes.delete(oldest);
+    }
+    this.readerPaginationSourceHashes.set(source, hash);
+    return hash;
   }
 
   // 预排版去重键用的视口部分。完成的预排版会一直占着去重标记，键里不带视口的话，进出小窗/分屏后
@@ -17646,14 +17825,10 @@ struct ReadBookPage {
         if (!evictableKey) break;
         this.readerPaginationCache.delete(evictableKey);
       }
-    } else if (!result.complete && result.pages.length < desiredPageCount) {
-      const missingPageCount = desiredPageCount - result.pages.length;
-      // A cached deep restore must remain cooperative too. Otherwise reopening while a partial session is cached
-      // reintroduces the same synchronous native-Paragraph burst avoided by the initial creation path.
-      const synchronousPageCount = result.v2Session ? Math.min(1, missingPageCount) : missingPageCount;
-      this.appendReaderPaginationBatch(result, chapterIndex, synchronousPageCount);
     }
     if (chapterIndex === this.currentChapterIndex) {
+      if (this.readerPaginationScheduledResult !== result) this.readerPaginationRequiredPageCount = desiredPageCount;
+      else this.readerPaginationRequiredPageCount = Math.max(this.readerPaginationRequiredPageCount, desiredPageCount);
       this.updateReaderComicPaginationProgress(chapterIndex, result);
     }
     if (chapterIndex === this.currentChapterIndex && !result.complete) {
@@ -17673,8 +17848,8 @@ struct ReadBookPage {
     return this.createChunkReaderPagination(text);
   }
 
-  appendReaderPaginationBatch(result: ReaderPaginationResult, chapterIndex: number, maxPages: number,
-    timeBudgetMs: number = 8): void {
+  async appendReaderPaginationBatch(result: ReaderPaginationResult, chapterIndex: number, maxPages: number,
+    timeBudgetMs: number = 8, isCurrent: () => boolean = (): boolean => true): Promise<void> {
     if (result.complete || maxPages <= 0) return;
     const batchStartedAt = Date.now();
     const text = result.source || '';
@@ -17687,7 +17862,7 @@ struct ReadBookPage {
       // One native Paragraph page can already consume most of a frame budget on a large tablet. In particular,
       // the previous-chapter preloader requests several pages at once; honouring that count in one callback was
       // enough to trigger THREAD_BLOCK_3S. Every V2 callback produces at most one page and yields before the next.
-      this.appendReaderV2PaginationBatch(result, chapterIndex, Math.min(1, maxPages));
+      await this.appendReaderV2PaginationBatch(result, chapterIndex, Math.min(1, maxPages), isCurrent);
       return;
     }
     // Chunked list results (comics, continuous scrolling) are produced whole.
@@ -17697,21 +17872,34 @@ struct ReadBookPage {
 
   scheduleReaderPaginationCompletion(chapterIndex: number, key: string,
     result: ReaderPaginationResult): void {
+    if (result.complete || (this.readerPaginationScheduledResult === result &&
+      this.readerPaginationScheduledSerial === this.readerPaginationWorkSerial)) return;
     const serial = ++this.readerPaginationWorkSerial;
+    this.readerPaginationScheduledResult = result;
+    this.readerPaginationScheduledSerial = serial;
+    const isCurrent = (): boolean => this.readerPageVisible && serial === this.readerPaginationWorkSerial &&
+      chapterIndex === this.currentChapterIndex && this.readerPaginationCache.get(key) === result;
+    const releaseOwner = (): void => {
+      if (this.readerPaginationScheduledSerial === serial) {
+        this.readerPaginationScheduledResult = null;
+        this.readerPaginationScheduledSerial = -1;
+      }
+    };
     const imageOnlyPagination = this.isReaderImageOnlySource(result.source);
     const batchDelay = ReaderActionMarker.has(result.source) ?
       READER_INTERACTIVE_PAGINATION_BATCH_DELAY_MS : READER_PAGINATION_BATCH_DELAY_MS;
     let failureCount = 0;
-    const runBatch = (): void => {
+    const runBatch = async (): Promise<void> => {
       if (!this.readerPageVisible || serial !== this.readerPaginationWorkSerial ||
         chapterIndex !== this.currentChapterIndex ||
         this.readerPaginationCache.get(key) !== result) {
+        releaseOwner();
         return;
       }
       // The loading overlay owns all input until the saved page/offset is restored. A stale shelf-touch idle
       // window must not throttle that mandatory pagination into one page every few seconds. Interaction-aware
       // yielding still applies after the first real reader page is visible.
-      if (this.readerInitialPageReady && this.isReaderPaginationInteractionBusy()) {
+      if (!result.v2Session && this.readerInitialPageReady && this.isReaderPaginationInteractionBusy()) {
         setTimeout(runBatch, READER_PAGINATION_BUSY_RETRY_DELAY_MS);
         return;
       }
@@ -17722,24 +17910,41 @@ struct ReadBookPage {
           // restores finish within a few frames instead of one page every 64 ms. The batch helper yields
           // through its time budget; stop as soon as the saved page exists (or the burst budget is spent).
           const burstBudgetMs = 160;
+          const spread = this.getReaderPageTurnStep();
+          const neededIndex = Math.max(this.currentPageIndex, this.pendingRestorePageIndex);
           while (!result.complete && Date.now() - batchStartedAt < burstBudgetMs &&
-            (this.pendingRestorePageIndex < 0 || result.pages.length <= this.pendingRestorePageIndex)) {
+            (result.pages.length < neededIndex + spread ||
+              (this.readerTypographyRestoreOffset >= 0 &&
+                (result.ends.length < spread ||
+                  this.readerTypographyRestoreOffset >= result.ends[result.ends.length - spread])))) {
             const beforePageCount = result.pages.length;
-            this.appendReaderPaginationBatch(result, chapterIndex, imageOnlyPagination ? 8 : 4, 24);
+            await this.appendReaderPaginationBatch(result, chapterIndex, imageOnlyPagination ? 8 : 4, 24, isCurrent);
+            if (!isCurrent()) { releaseOwner(); return; }
             if (result.pages.length <= beforePageCount) break;
           }
           // Publish cooperative snapshots only while a saved page/offset is waiting to become available.
           // Normal background pagination remains private and is published once at completion.
           this.publishCurrentReaderPagination(result);
         } else {
-          // Text measurement and paragraph layout both run on the UI thread. Keep each idle batch small and do not
-          // publish every intermediate array: repeated @State replacements rebuild the reader while a page is moving.
+          // Native layout is asynchronous; style/geometry assembly still runs here. Keep each transaction small
+          // and avoid replacing the visible @State collection while a page is moving.
           // A pure comic page is already delimited by an image marker and requires no text measurement. Parse a small
           // group per idle slice so large comics finish promptly without turning the whole chapter into one UI task.
-          this.appendReaderPaginationBatch(result, chapterIndex, imageOnlyPagination ? 8 : 1);
+          await this.appendReaderPaginationBatch(result, chapterIndex, imageOnlyPagination ? 8 : 1, 8, isCurrent);
+          if (!isCurrent()) { releaseOwner(); return; }
+          // Native layout may continue while the user is moving the current page, but publication cannot
+          // replace that page's state mid-gesture. A queued shortage is resumed as soon as its target exists.
+          const canPublish = !this.isPageTurning && !this.readerPanActive && !this.readerTouchActive &&
+            this.pageSlideDirection === 0;
+          if (!result.complete && canPublish && result.pages.length > this.contentPages.length &&
+            (this.pageTurnQueue.hasPendingForward() ||
+              this.currentPageIndex + this.getReaderPageTurnStep() + 1 >= this.contentPages.length)) {
+            this.publishCurrentReaderPagination(result);
+            this.runQueuedPageTurnLater();
+          }
           // 重新排版后不必等整章排完：阅读位置所在的页和它的下一页（双页时的右页）一排出来就发布，
           // 让正文尽快从纯文本兜底换回正式排版。其余页面照旧在后台排完后一次发布。
-          if (!result.complete && this.readerRelayoutRepaintPending && this.readerTypographyRestoreOffset >= 0 &&
+          if (canPublish && !result.complete && this.readerRelayoutRepaintPending && this.readerTypographyRestoreOffset >= 0 &&
             result.ends.length >= 2 &&
             this.readerTypographyRestoreOffset < result.ends[result.ends.length - 2]) {
             this.publishCurrentReaderPagination(result);
@@ -17747,7 +17952,13 @@ struct ReadBookPage {
         }
         const batchElapsedMs = Math.max(0, Date.now() - batchStartedAt);
         failureCount = 0;
+        if (result.complete && this.readerInitialPageReady && (this.isPageTurning || this.readerPanActive ||
+          this.readerTouchActive || this.pageSlideDirection !== 0 || this.pageTurnAnimating)) {
+          setTimeout(runBatch, 16);
+          return;
+        }
         if (result.complete) {
+          releaseOwner();
           this.publishCurrentReaderPagination(result);
           this.persistReaderPagination(chapterIndex, key, result);
           this.updateReaderComicPaginationProgress(chapterIndex, result);
@@ -17759,7 +17970,8 @@ struct ReadBookPage {
         }
         this.updateReaderComicPaginationProgress(chapterIndex, result);
         const stillRestoring = !this.readerInitialPageReady;
-        const adaptiveDelay = stillRestoring ? 16 :
+        const needsAhead = result.pages.length < this.readerPaginationRequiredPageCount;
+        const adaptiveDelay = stillRestoring || (result.v2Session && needsAhead) ? 0 :
           (batchElapsedMs >= CooperativeScheduler.SLOW_OPERATION_MS ?
             Math.min(240, Math.max(batchDelay, batchElapsedMs * 2)) : batchDelay);
         setTimeout(runBatch, adaptiveDelay);
@@ -17774,10 +17986,11 @@ struct ReadBookPage {
           setTimeout(runBatch, batchDelay * failureCount * 4);
           return;
         }
+        releaseOwner();
         this.recoverReaderPaginationStall(chapterIndex, key, result, serial);
       }
     };
-    setTimeout(runBatch, batchDelay);
+    setTimeout(runBatch, result.v2Session ? 0 : batchDelay);
     this.armReaderRestoreWatchdog();
   }
 
@@ -17890,7 +18103,13 @@ struct ReadBookPage {
     this.contentPageStarts = [...result.starts];
     this.contentPageEnds = [...result.ends];
     this.restorePendingPageIndex(result.complete === true);
-    if (pendingRestore >= 0 && this.pendingRestorePageIndex < 0) {
+    const measuredCurrentText = this.contentPages[this.currentPageIndex];
+    // A no-animation chapter handoff can commit its loading leaf before this private result is published.
+    // Readiness and counters alone do not guarantee that the retained visible leaf owns the measured text.
+    const visibleTextChanged = measuredCurrentText !== undefined &&
+      (this.currentPageText !== measuredCurrentText || this.displayPageText !== measuredCurrentText);
+    if ((!keepVisibleReaderReady && result.pages.length > 0) ||
+      (pendingRestore >= 0 && this.pendingRestorePageIndex < 0) || visibleTextChanged) {
       this.setCurrentPageText(this.contentPages[this.currentPageIndex] || '');
     } else if (shouldRefreshCompletedSpread) {
       // The current page surface is keyed by its render version. Merely replacing contentPages updates
@@ -17898,8 +18117,8 @@ struct ReadBookPage {
       this.refreshReaderTextRender();
     }
     const restoredTypographyPosition = this.restoreReaderTypographyOffsetIfAvailable(result.complete === true);
-    this.readerInitialPageReady = keepVisibleReaderReady ||
-      (this.pendingRestorePageIndex < 0 && this.readerTypographyRestoreOffset < 0);
+    this.readerInitialPageReady = keepVisibleReaderReady || (result.pages.length > 0 &&
+      this.pendingRestorePageIndex < 0 && this.readerTypographyRestoreOffset < 0);
     if (this.readerInitialPageReady) this.finishReaderInitialOpening();
     const restoredPendingPosition = pendingRestore >= 0 && this.pendingRestorePageIndex < 0;
     if (this.isReaderContinuousScrollSurfaceActive()) {
@@ -17930,12 +18149,14 @@ struct ReadBookPage {
   }
 
   persistReaderPagination(chapterIndex: number, key: string, result: ReaderPaginationResult): void {
-    if (!result.complete || !this.bookUrl || result.starts.length === 0 ||
+    if (result.persistenceScheduled || !result.complete || !this.bookUrl || result.starts.length === 0 ||
       result.starts.length !== result.ends.length) {
       return;
     }
+    result.persistenceScheduled = true;
     AppDatabase.getInstance().saveReaderPaginationCache(this.bookUrl, chapterIndex, key,
       result.starts, result.ends).catch((error: Error) => {
+      result.persistenceScheduled = false;
       console.warn('保存阅读分页缓存失败:', error);
     });
   }
@@ -18019,7 +18240,9 @@ struct ReadBookPage {
     // Interaction-busy checks below keep native Paragraph work away from an active drag/turn chain.
     const batchDelay = ReaderActionMarker.has(result.source) ?
       READER_INTERACTIVE_PAGINATION_BATCH_DELAY_MS : READER_PAGINATION_BATCH_DELAY_MS;
-    const runBatch = (): void => {
+    const isCurrent = (): boolean => this.readerPageVisible && serial === this.adjacentPaginationPreloadSerial &&
+      this.currentChapterIndex === sourceChapterIndex && this.readerPaginationCache.get(key) === result;
+    const runBatch = async (): Promise<void> => {
       if (!this.readerPageVisible || serial !== this.adjacentPaginationPreloadSerial ||
         this.currentChapterIndex !== sourceChapterIndex ||
         this.readerPaginationCache.get(key) !== result) {
@@ -18031,13 +18254,14 @@ struct ReadBookPage {
         }
         return;
       }
-      if (this.isReaderPaginationInteractionBusy()) {
+      if (!result.v2Session && this.isReaderPaginationInteractionBusy()) {
         setTimeout(runBatch, READER_PAGINATION_BUSY_RETRY_DELAY_MS);
         return;
       }
       try {
         const startedAt = Date.now();
-        this.appendReaderPaginationBatch(result, targetChapterIndex, 1);
+        await this.appendReaderPaginationBatch(result, targetChapterIndex, 1, 8, isCurrent);
+        if (!isCurrent()) return;
         if (result.complete) {
           this.persistReaderPagination(targetChapterIndex, key, result);
           console.info(`[ReaderPreload] next chapter=${targetChapterIndex} pages=${result.pages.length} ` +
@@ -18130,7 +18354,9 @@ struct ReadBookPage {
     // the UI responsive and makes the previous tail immediately available when the user turns back.
     const batchDelay = ReaderActionMarker.has(result.source) ?
       READER_INTERACTIVE_PAGINATION_BATCH_DELAY_MS : READER_PAGINATION_BATCH_DELAY_MS;
-    const runBatch = (): void => {
+    const isCurrent = (): boolean => this.readerPageVisible && serial === this.previousPaginationPreloadSerial &&
+      this.currentChapterIndex === sourceChapterIndex && this.readerPaginationCache.get(key) === result;
+    const runBatch = async (): Promise<void> => {
       if (!this.readerPageVisible || serial !== this.previousPaginationPreloadSerial ||
         this.currentChapterIndex !== sourceChapterIndex ||
         this.readerPaginationCache.get(key) !== result) {
@@ -18144,7 +18370,7 @@ struct ReadBookPage {
         }
         return;
       }
-      if (this.isReaderPaginationInteractionBusy()) {
+      if (!result.v2Session && this.isReaderPaginationInteractionBusy()) {
         setTimeout(runBatch, READER_PAGINATION_BUSY_RETRY_DELAY_MS);
         return;
       }
@@ -18152,7 +18378,8 @@ struct ReadBookPage {
         const startedAt = Date.now();
         // appendReaderPaginationBatch limits Reader V2 to one native Paragraph page per callback. The larger count
         // remains useful for the legacy text measurer, whose explicit time budget yields inside the loop.
-        this.appendReaderPaginationBatch(result, targetChapterIndex, 3, 10);
+        await this.appendReaderPaginationBatch(result, targetChapterIndex, 3, 10, isCurrent);
+        if (!isCurrent()) return;
         if (result.complete) {
           this.persistReaderPagination(targetChapterIndex, key, result);
           console.info(`[ReaderPreload] previous chapter=${targetChapterIndex} pages=${result.pages.length} ` +
@@ -18238,7 +18465,8 @@ struct ReadBookPage {
       this.readerRelayoutRepaintPending = true;
       return;
     }
-    const pages: string[] = result.pages.length > 0 ? result.pages : [fallbackContent];
+    const placeholder = this.getPageTurnLoadingText(this.currentChapterIndex);
+    const pages: string[] = result.pages.length > 0 ? result.pages : [placeholder];
     const hasAuthoritativePageBoundary = result.pages.length > 0 && result.starts.length > 0 &&
       result.ends.length > 0;
     if (!result.complete && this.pendingRestorePageIndex < 0 && this.currentPageIndex >= pages.length) {
@@ -18270,8 +18498,8 @@ struct ReadBookPage {
     }
     // Incremental pagination may initially contain only page one. Do not expose that temporary page while
     // the saved position is still waiting for enough page boundaries to be rebuilt.
-    this.readerInitialPageReady = keepVisibleReaderReady ||
-      (this.pendingRestorePageIndex < 0 && this.readerTypographyRestoreOffset < 0);
+    this.readerInitialPageReady = keepVisibleReaderReady || (hasAuthoritativePageBoundary &&
+      this.pendingRestorePageIndex < 0 && this.readerTypographyRestoreOffset < 0);
     if (this.readerInitialPageReady) this.finishReaderInitialOpening();
     if (!initialPageWasReady && this.readerInitialPageReady && this.bookUrl) {
       ReaderOpenTrace.finish(this.bookUrl);
@@ -18400,10 +18628,6 @@ struct ReadBookPage {
     }
     if (this.pendingRestorePageIndex >= 0) return false;
     if (direction > 0) {
-      const targetPageIndex = this.currentPageIndex + this.getReaderPageTurnStep();
-      if (targetPageIndex >= this.contentPages.length) {
-        this.ensureCurrentReaderPaginationAhead(targetPageIndex + 2);
-      }
       if (this.currentPageIndex + this.getReaderPageTurnStep() < this.contentPages.length) return true;
       // Only a completed pagination result owns an authoritative chapter tail. A fast queue can otherwise consume
       // the provisional last spread and enter the next chapter while V2 is still appending hidden pages.
@@ -18420,7 +18644,7 @@ struct ReadBookPage {
   // 只读状态，不像 canTurnPage 那样顺手补排。
   isForwardChapterTurnWaitingForPagination(): boolean {
     return this.currentPageIndex + this.getReaderPageTurnStep() >= this.contentPages.length &&
-      this.currentChapterIndex < this.chapters.length - 1 && !this.isCurrentReaderPaginationComplete();
+      !this.isCurrentReaderPaginationComplete();
   }
 
   isPreviousChapterTurnReady(): boolean {
@@ -18495,11 +18719,8 @@ struct ReadBookPage {
         `page=${this.currentPageIndex}/${this.contentPages.length}`);
       result = this.getOrCreateReaderPagination(this.currentChapterIndex, this.pagedContentText);
     }
-    if (!result.complete && result.pages.length < requiredPageCount) {
-      // Normally the idle worker stays well ahead. This is only a boundary fallback for exceptionally fast input.
-      this.appendReaderPaginationBatch(result, this.currentChapterIndex,
-        Math.max(1, requiredPageCount - result.pages.length));
-    }
+    this.readerPaginationRequiredPageCount = Math.max(this.readerPaginationRequiredPageCount, requiredPageCount);
+    if (!result.complete) this.resumeCurrentReaderPaginationCompletion();
     if (result.pages.length > this.contentPages.length) this.publishCurrentReaderPagination(result);
     if (result.complete) {
       const key = this.buildReaderPaginationCacheKey(this.currentChapterIndex, this.pagedContentText);
@@ -18685,12 +18906,19 @@ struct ReadBookPage {
       this.enqueueReaderPageTurn(direction, style, releaseVelocity);
       return;
     }
+    this.readerTurnTrace.enabled = AppStorage.get<boolean>('readerPerformanceTrace') === true;
+    this.readerTurnTrace.begin();
+    if (direction > 0) {
+      this.ensureCurrentReaderPaginationAhead(this.currentPageIndex + this.getReaderPageTurnStep() +
+        READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT);
+    }
     if (!this.canTurnPage(direction)) {
       if (direction > 0 && this.isForwardChapterTurnWaitingForPagination()) {
         // 章末向后翻页要等本章排完才知道是不是真的最后一页。先记下这次翻页，确保后台补排链在跑，
         // 排完时 scheduleReaderPaginationCompletion 会接着执行；以前这里直接丢弃，章末怎么点都没反应。
         this.resetSlidePageEffect();
         this.enqueueReaderPageTurn(direction, style, releaseVelocity);
+        this.readerTurnTrace.mark('waiting-for-page');
         this.resumeCurrentReaderPaginationCompletion();
         return;
       }
@@ -18722,24 +18950,33 @@ struct ReadBookPage {
       ttsPrepareElapsed = Math.max(0, Date.now() - turnRequestStartedAt);
     }
     const visualStartedAt = Date.now();
-    // Text pagination runs on the UI thread. Reserve the whole visual turn plus a short handoff window so an
-    // idle batch cannot slip between two queued curls and move the paragraph tree on their shared boundary.
+    // Keep legacy UI work outside the visual turn; asynchronous V2 preparation owns a private page collection
+    // and only publishes it after the moving surface has settled.
     this.deferReaderPaginationForInteraction(700);
     this.isPageTurning = true;
+    this.readerTurnTrace.mark('target-ready');
     this.readerRapidPageTurn = fromQueue;
+    const turnSerial = ++this.readerManualTurnSerial;
+    const turnBookUrl = this.bookUrl;
+    const isCurrent = (): boolean => this.readerPageVisible && this.bookUrl === turnBookUrl &&
+      turnSerial === this.readerManualTurnSerial;
     let turnCompleted = false;
     try {
       if (!this.isPageTurnAnimationEnabled()) {
-        await this.runNoAnimationPageTurn(direction);
+        await this.runNoAnimationPageTurn(direction, isCurrent);
       } else if (style === 'slide' || style === 'gesture') {
-        await this.runSlidePageTurn(direction, fromQueue && style === 'gesture', releaseVelocity);
+        await this.runSlidePageTurn(direction, fromQueue && style === 'gesture', releaseVelocity, isCurrent);
       } else {
-        await this.runTapPageTurn(direction);
+        await this.runTapPageTurn(direction, isCurrent);
       }
+      if (!isCurrent()) return;
       turnCompleted = true;
+      this.readerTurnTrace.mark('finished');
     } finally {
-      this.isPageTurning = false;
-      this.readerRapidPageTurn = false;
+      if (turnSerial === this.readerManualTurnSerial) {
+        this.isPageTurning = false;
+        this.readerRapidPageTurn = false;
+      }
     }
     this.deferReaderPaginationForInteraction(220);
     if (resumeTtsAfterTurn) {
@@ -18834,7 +19071,15 @@ struct ReadBookPage {
     this.pendingScrollPreviousChapterTurn = false;
   }
 
-  async runNoAnimationPageTurn(direction: number): Promise<void> {
+  cancelManualReaderTurn(): void {
+    this.readerManualTurnSerial++;
+    if (this.isPageTurning) this.finishPageTurnAnimation(false);
+    this.isPageTurning = false;
+    this.readerRapidPageTurn = false;
+    this.clearQueuedReaderPageTurns();
+  }
+
+  async runNoAnimationPageTurn(direction: number, isCurrent: () => boolean = (): boolean => true): Promise<void> {
     this.readerTouchActive = false;
     this.readerPanActive = false;
     this.resetSlidePageState();
@@ -18862,6 +19107,7 @@ struct ReadBookPage {
       await this.waitForReaderChapterTailSettled();
     }
     const targetText = this.getCurrentPageText();
+    if (!isCurrent()) return;
     this.finishPageTurnAnimation(false);
     this.commitVisibleCurrentPageText(targetText, true);
     this.commitCurrentPageTextLater(this.currentChapterIndex, this.currentPageIndex, targetText);
@@ -18889,6 +19135,8 @@ struct ReadBookPage {
     // that retained node painting the previous page until another frame happens to rebuild the surrounding tree,
     // which is especially visible at a cross-chapter handoff. Publish the exact settled page immediately.
     this.refreshCurrentReaderV2RetainedPages();
+    this.readerTurnTrace.mark('page-committed');
+    this.scheduleReaderPageTextureWarmup();
   }
 
   commitCurrentPageTextLater(chapterIndex: number, pageIndex: number, expectedText: string): void {
@@ -18905,7 +19153,7 @@ struct ReadBookPage {
     }, delayMs);
   }
 
-  async runTapPageTurn(direction: number): Promise<void> {
+  async runTapPageTurn(direction: number, isCurrent: () => boolean = (): boolean => true): Promise<void> {
     const distance = this.getPageTurnDistance();
     this.prepareSlidePageTurn(direction, 0);
     const targetPreview = this.capturePageTurnCommitTarget(direction);
@@ -18918,8 +19166,10 @@ struct ReadBookPage {
         this.pageTransitionOpacity = 1;
       });
     }
+    if (!isCurrent()) return;
     await this.applyPageTurn(direction, targetPreview, false);
-    await this.finishAnimatedPageTurn();
+    if (!isCurrent()) return;
+    await this.finishAnimatedPageTurn(isCurrent);
   }
 
   readerSlideCompletionDuration(remaining: number, distance: number, releaseVelocity: number,
@@ -18941,7 +19191,7 @@ struct ReadBookPage {
   }
 
   async runSlidePageTurn(direction: number, queuedGesture: boolean = false,
-    releaseVelocity: number = 0): Promise<void> {
+    releaseVelocity: number = 0, isCurrent: () => boolean = (): boolean => true): Promise<void> {
     const distance = this.getPageTurnDistance();
     this.prepareSlidePageTurn(direction, this.getPageSlideAxisOffset());
     const targetPreview = this.capturePageTurnCommitTarget(direction);
@@ -18956,11 +19206,13 @@ struct ReadBookPage {
         this.pageTransitionOpacity = 1;
       });
     }
+    if (!isCurrent()) return;
     await this.applyPageTurn(direction, targetPreview, false);
-    await this.finishAnimatedPageTurn();
+    if (!isCurrent()) return;
+    await this.finishAnimatedPageTurn(isCurrent);
   }
 
-  async finishAnimatedPageTurn(): Promise<void> {
+  async finishAnimatedPageTurn(isCurrent: () => boolean = (): boolean => true): Promise<void> {
     const chapterIndex = this.currentChapterIndex;
     const pageIndex = this.currentPageIndex;
     const targetText = this.getCurrentPageText();
@@ -18971,10 +19223,11 @@ struct ReadBookPage {
     if (keepIncomingVisible) {
       // Cross-chapter pages may contain many bubble ImageSpans. Keep the already-complete preview on top
       // for a few frames while the new current render group is rasterized behind it.
-      await sleepMs(this.pageTurnCrossChapterHandoff ? 48 : 16);
-      if (chapterIndex !== this.currentChapterIndex || pageIndex !== this.currentPageIndex) return;
+      await ReaderRenderFrame.wait(this.getUIContext());
+      if (!isCurrent() || chapterIndex !== this.currentChapterIndex || pageIndex !== this.currentPageIndex) return;
     }
     this.finishPageTurnAnimation(false);
+    this.scheduleReaderPageTextureWarmup();
     this.commitCurrentPageTextLater(chapterIndex, pageIndex, targetText);
   }
 
@@ -19050,9 +19303,6 @@ struct ReadBookPage {
 
   getLocalPageTurnTargetPageIndex(direction: number): number {
     const step = this.getReaderPageTurnStep();
-    if (direction > 0 && this.currentPageIndex + step >= this.contentPages.length) {
-      this.ensureCurrentReaderPaginationAhead(this.currentPageIndex + step + 2);
-    }
     if (direction > 0 && this.currentPageIndex + step < this.contentPages.length) {
       return this.currentPageIndex + step;
     }
@@ -19188,6 +19438,15 @@ struct ReadBookPage {
         const prepared = await this.prepareReaderContentRules(body, chapterIndex);
         if (!this.isCurrentReaderEngineBook(sessionBookUrl) || this.pageTurnPreviewKey !== key ||
           this.pageSlideDirection !== direction) return;
+        const valid = (): boolean => this.readerPageVisible && this.isCurrentReaderEngineBook(sessionBookUrl) &&
+          this.pageTurnPreviewKey === key && this.pageSlideDirection === direction;
+        const source = this.buildPagedSourceText(chapterIndex, prepared);
+        const result = this.getOrCreateReaderPagination(chapterIndex, source);
+        while (valid() && !result.complete &&
+          (direction < 0 || result.pages.length < this.getReaderPageTurnStep())) {
+          await this.appendReaderPaginationBatch(result, chapterIndex, 1, 8, valid);
+        }
+        if (!valid()) return;
         const preview = this.buildAdjacentPageTurnPreview(direction, chapterIndex, prepared);
         if (preview.text) {
           this.applyPageTurnPreview(preview);
@@ -19410,6 +19669,50 @@ struct ReadBookPage {
       `${this.getReaderPageContentTopPadding()}_${this.navBarHeight}_${this.readerExtendToStatusBar ? 1 : 0}`;
   }
 
+  readerSettledTextureKey(direction: number): string {
+    return `${this.currentChapterIndex}_${this.currentPageIndex}_${this.pageRenderVersion}_` +
+      `${this.ttsHighlightRenderVersion}_${this.themeRevision}_${this.getPageTurnWidth()}_` +
+      `${this.getPageTurnHeight()}_${this.readerPageCurlSnapshotScale()}_${this.readerV2ImageBitmapVersion}_` +
+      `${this.readerInfoTimeText}_${this.readerInfoBatteryPercent}_${this.currentReaderInfoBarLayoutIdentity()}_` +
+      `${this.getReaderPageContentTopPadding()}_${this.navBarHeight}_${this.readerExtendToStatusBar}_` +
+      `${this.isLandscapeDoublePageActive() ? direction : 0}`;
+  }
+
+  scheduleReaderPageTextureWarmup(): void {
+    const serial = ++this.readerPageTextureWarmSerial;
+    setTimeout((): void => {
+      this.warmReaderPageTexture(serial).catch((): void => {});
+    }, 0);
+  }
+
+  async warmReaderPageTexture(serial: number): Promise<void> {
+    if (!this.readerPageVisible || !this.readerInitialPageReady || !this.usesReaderPageCurlCanvas() ||
+      this.pageSlideDirection !== 0 || this.isPageTurning || this.isTtsSpeaking || this.hasReaderTextSelection()) return;
+    const directions: number[] = this.isLandscapeDoublePageActive() ? [1, -1] : [1];
+    for (const direction of directions) {
+      const key = this.readerSettledTextureKey(direction);
+      const existing = this.readerPageTextureCache.acquire(key);
+      if (existing) { existing.release(); continue; }
+      await ReaderRenderFrame.wait(this.getUIContext());
+      const valid = (): boolean => this.readerPageVisible && serial === this.readerPageTextureWarmSerial &&
+        key === this.readerSettledTextureKey(direction) && this.pageSlideDirection === 0 && !this.isPageTurning;
+      if (!valid()) return;
+      const bitmap = await this.getUIContext().getComponentSnapshot().get(this.currentReaderSnapshotComponentId(), {
+        scale: this.readerPageCurlSnapshotScale(), waitUntilRenderFinished: true
+      });
+      try {
+        if (!valid()) { bitmap.release().catch((): void => {}); return; }
+        if (this.isLandscapeDoublePageActive()) await this.cropReaderPageCurlFrontToTurningLeaf(bitmap, direction);
+        const info = await bitmap.getImageInfo();
+        if (!valid()) { bitmap.release().catch((): void => {}); return; }
+        this.readerPageTextureCache.put(key, bitmap, info.size.width * info.size.height * 4).release();
+      } catch (error) {
+        bitmap.release().catch((): void => {});
+        throw error as Error;
+      }
+    }
+  }
+
   drawReaderPageCurl(): void {
     if (!this.readerPageCurlCanvasReady || !this.readerPageCurlSnapshotReady ||
       !this.readerPageCurlFront || this.pageSlideDirection === 0) {
@@ -19491,20 +19794,17 @@ struct ReadBookPage {
       if (serial !== this.readerPageCurlCaptureSerial || key !== this.readerPageCurlCaptureKey) return;
       await sleepMs(20);
     }
-    // Let the incoming cross-chapter preview and its ImageSpans finish one layout pass before rasterizing.
-    await sleepMs(this.pageTurnCrossChapterHandoff ? 32 : 0);
-    // The retained V2 current component keeps a stable id across pages. Unlike the old temporary capture node,
-    // that id already exists in the same task that commits a queued turn, so snapshot.get() could succeed before
-    // its controller has painted the newly-settled page. Wait one render frame and capture the page the user
-    // actually sees, not the previous texture still owned by RenderService.
-    await sleepMs(16);
+    const textureKey = this.readerSettledTextureKey(this.pageSlideDirection);
+    const frontLease = this.readerPageTextureCache.acquire(textureKey);
+    const cachedFront = frontLease !== null;
+    if (!cachedFront || this.readerPageCurlNeedsBackSnapshot()) await ReaderRenderFrame.wait(this.getUIContext());
     if (serial !== this.readerPageCurlCaptureSerial || key !== this.readerPageCurlCaptureKey ||
-      this.pageSlideDirection === 0) return;
+      this.pageSlideDirection === 0) { if (frontLease) frontLease.release(); return; }
     const snapshot = this.getUIContext().getComponentSnapshot();
     const suffix = this.isLandscapeDoublePageActive() ? 'double' : 'single';
     const snapshotScale = this.readerPageCurlSnapshotScale();
     const needsBack = this.readerPageCurlNeedsBackSnapshot();
-    let front: image.PixelMap | null = null;
+    let front: image.PixelMap | null = frontLease ? frontLease.bitmap : null;
     let back: image.PixelMap | null = null;
     let lastError = '';
     const capture = (id: string): Promise<image.PixelMap | null> => snapshot.get(id, {
@@ -19534,20 +19834,20 @@ struct ReadBookPage {
       back = results[1];
       if (serial !== this.readerPageCurlCaptureSerial || key !== this.readerPageCurlCaptureKey ||
         this.pageSlideDirection === 0) {
-        if (front) front.release().catch(() => {});
+        if (frontLease) frontLease.release(); else if (front) front.release().catch(() => {});
         if (back) back.release().catch(() => {});
         return;
       }
       if (front && (!needsBack || back)) break;
       if (attempt >= 23) {
-        if (front) front.release().catch(() => {});
+        if (frontLease) frontLease.release(); else if (front) front.release().catch(() => {});
         if (back) back.release().catch(() => {});
         throw new Error(`获取仿真翻页快照失败: ${lastError}`);
       }
       await sleepMs(16);
     }
     if (!front || (needsBack && !back)) return;
-    if (this.isLandscapeDoublePageActive()) {
+    if (this.isLandscapeDoublePageActive() && !cachedFront) {
       try {
         await this.cropReaderPageCurlFrontToTurningLeaf(front);
       } catch (error) {
@@ -19566,34 +19866,38 @@ struct ReadBookPage {
     }
     if (serial !== this.readerPageCurlCaptureSerial || key !== this.readerPageCurlCaptureKey ||
       this.pageSlideDirection === 0) {
-      front.release().catch(() => {});
+      if (frontLease) frontLease.release(); else front.release().catch(() => {});
       if (back) back.release().catch(() => {});
       return;
     }
     const oldFront = this.readerPageCurlFront;
+    const oldFrontLease = this.readerPageCurlFrontLease;
     const oldBack = this.readerPageCurlBack;
     this.readerPageCurlFront = front;
+    this.readerPageCurlFrontLease = frontLease;
     this.readerPageCurlBack = back;
     this.readerPageCurlSnapshotHeight = snapshotHeight;
     this.readerPageCurlCapturePending = false;
     this.readerPageCurlSnapshotReady = true;
+    this.readerTurnTrace.mark('snapshot-ready');
     this.drawReaderPageCurl();
     this.notifyReaderPageCurlCaptureWaiters();
     // RenderService can still own the previous texture for the frame currently being submitted.
     // Releasing it in the same task intermittently invalidates that frame during rapid queued turns.
     setTimeout(() => {
-      if (oldFront) oldFront.release().catch(() => {});
+      if (oldFrontLease) oldFrontLease.release(); else if (oldFront) oldFront.release().catch(() => {});
       if (oldBack) oldBack.release().catch(() => {});
     }, 48);
   }
 
-  async cropReaderPageCurlFrontToTurningLeaf(front: image.PixelMap): Promise<void> {
+  async cropReaderPageCurlFrontToTurningLeaf(front: image.PixelMap,
+    direction: number = this.pageSlideDirection): Promise<void> {
     const info = await front.getImageInfo();
     const fullWidthPx = Math.max(1, info.size.width);
     const fullHeightPx = Math.max(1, info.size.height);
     const viewportWidth = Math.max(1, this.getPageTurnWidth());
     const leafWidth = Math.max(1, this.getReaderPageColumnWidth());
-    const origin = this.pageSlideDirection > 0 ? this.getReaderDoublePageRightOrigin() : 0;
+    const origin = direction > 0 ? this.getReaderDoublePageRightOrigin() : 0;
     const cropX = Math.max(0, Math.min(fullWidthPx - 1,
       Math.round(fullWidthPx * origin / viewportWidth)));
     const requestedWidth = Math.max(1, Math.round(fullWidthPx * leafWidth / viewportWidth));
@@ -19693,13 +19997,15 @@ struct ReadBookPage {
     this.readerPageCurlOffset = 0;
     this.readerPageCurlSnapshotHeight = 0;
     const front = this.readerPageCurlFront;
+    const frontLease = this.readerPageCurlFrontLease;
     const back = this.readerPageCurlBack;
     this.readerPageCurlFront = null;
+    this.readerPageCurlFrontLease = null;
     this.readerPageCurlBack = null;
     // Keep the last raster alive for a few frames after hiding the curl Canvas. The RS submission is
     // asynchronous; a zero-delay release races its final draw and can expose a transient unformatted page.
     setTimeout(() => {
-      if (front) front.release().catch(() => {});
+      if (frontLease) frontLease.release(); else if (front) front.release().catch(() => {});
       if (back) back.release().catch(() => {});
     }, 48);
   }

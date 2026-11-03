@@ -6,11 +6,12 @@ import { readEtsModule } from './lib/ets-module-staging.mjs';
 
 const reader = readEtsModule('pages/ReadBook.ets');
 function method(name) {
-  const start = reader.search(new RegExp(`^  ${name}\\(`, 'm'));
+  const start = reader.search(new RegExp(`^  (?:async )?${name}\\(`, 'm'));
   assert.notEqual(start, -1, name);
   return reader.slice(start, reader.indexOf('\n  }', start) + 4);
 }
-let now = 1000, timerId = 0, measurements = 0;
+let now = 1000, timerId = 0, measurements = 0, holdMetrics = false;
+const metricReleases = [];
 const timers = new Map();
 const sandbox = vm.createContext({
   console, Date: { now: () => now },
@@ -20,9 +21,10 @@ const sandbox = vm.createContext({
   ReaderV2DocumentParser: { parse: source => ({ source }) },
   ReaderV2Paginator: {
     start: (document, snapshot) => ({ document, snapshot, pageSet: { pages: [], complete: false } }),
-    appendPages: (session, count) => {
+    appendPageAsync: async (session, valid) => {
       measurements++;
-      assert.equal(count, 1, 'counting yields after one screen');
+      if (holdMetrics) await new Promise(resolve => metricReleases.push(resolve));
+      if (valid && !valid()) return 0;
       const pages = session.pageSet.pages;
       pages.push({ sourceStart: pages.length * session.snapshot.capacity });
       session.pageSet.complete = pages.length * session.snapshot.capacity >= session.document.source.length;
@@ -43,19 +45,22 @@ vm.runInContext(stripTypeScriptTypes(
   readEtsModule('core/reader/ReaderInfoBarModel.ts').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '') +
   `\nclass Reader { ${names.map(method).join('\n')} }\n` +
   'globalThis.Reader = Reader; globalThis.Text = ReaderInfoBarText; globalThis.Item = ReaderInfoItem;'), sandbox);
-function tick() {
+async function tick() {
   const jobs = [...timers.values()];
   timers.clear();
   now += 80;
   for (const job of jobs) job();
+  await Promise.resolve(); await Promise.resolve();
 }
-function settle() {
-  for (let i = 0; timers.size && i < 50; i++) tick();
+async function settle() {
+  for (let i = 0; timers.size && i < 50; i++) await tick();
   assert.equal(timers.size, 0, 'work terminates');
 }
 const p = new sandbox.Reader();
 Object.assign(p, {
   readerContinuousMetricsTimer: -1, readerContinuousPositionTimer: -1,
+  readerContinuousMetricsWorkSerial: 0, readerContinuousMetricsActiveSerial: -1,
+  readerContinuousLayoutQueue: [], readerContinuousLayoutSerial: 0, readerContinuousLayoutActiveSerial: -1,
   readerContinuousMetricsSource: '', readerContinuousMetricsChapter: -1,
   readerContinuousMetricsSnapshot: null, readerContinuousMetricsSession: null,
   readerContinuousMetricsStarts: [], readerContinuousMetricsEnds: [],
@@ -86,23 +91,23 @@ p.refreshReaderContinuousPageMetrics();
 assert.equal(measurements, 0, 'no native layout in publication/gesture callback');
 assert.equal(sandbox.Text.of(sandbox.Item.PAGE, p.getReaderInfoBarContext()), '…');
 assert.equal(sandbox.Text.of(sandbox.Item.PAGES_LEFT, p.getReaderInfoBarContext()), '…');
-tick();
+await tick();
 assert.equal(p.readerContinuousDisplayPageCount, 0, 'partial counts are not published as a total');
-settle();
+await settle();
 assert.equal(p.readerContinuousDisplayPageCount, 8, 'four chunks represent eight screen pages');
 assert.equal(p.getProgressText(), '1/2 · 1/8');
 assert.equal(p.contentPages.length, 4, 'counting never replaces the scroll chunks');
 assert.equal(p.readerContinuousMetricsSession, null, 'native page layouts released after completion');
 
 p.readerContinuousV2FirstVisibleSourceOffset = () => 1000;
-p.scheduleReaderContinuousPositionUpdate(); settle();
+p.scheduleReaderContinuousPositionUpdate(); await settle();
 assert.equal(p.currentPageIndex, 0, 'still in the same first chunk');
 assert.equal(p.readerContinuousDisplayPageIndex, 1, 'display page advances inside a chunk');
 assert.equal(p.getProgressText(), '1/2 · 2/8');
 assert.ok(Math.abs(p.ttsQuickProgress() - 1000 / 7200 * 50) < 1e-8);
 assert.equal(sandbox.Text.of(sandbox.Item.PAGES_LEFT, p.getReaderInfoBarContext()), '剩余 6 页');
 p.readerContinuousV2FirstVisibleSourceOffset = () => 0;
-p.scheduleReaderContinuousPositionUpdate(); settle();
+p.scheduleReaderContinuousPositionUpdate(); await settle();
 assert.equal(p.readerContinuousDisplayPageIndex, 0, 'reverse scrolling restores earlier display pages');
 
 // Last chunk starts before the last screen. Restoring it must not immediately report 100%.
@@ -122,28 +127,41 @@ p.buildReaderV2Snapshot = () => ({ identity: 'font-30', capacity: 600 });
 p.readerContinuousPointerDown = true;
 p.refreshReaderContinuousPageMetrics();
 const before = measurements;
-tick(); tick();
+await tick(); await tick();
 assert.equal(measurements, before);
 p.readerContinuousPointerDown = false;
 p.readerContinuousLastScrollAt = now;
-tick(); assert.equal(measurements, before, 'inertia gets priority too');
-settle();
+await tick(); assert.equal(measurements, before, 'inertia gets priority too');
+await settle();
 assert.equal(p.readerContinuousDisplayPageCount, 12);
 
 // A newly promoted chapter discards pending work from the old one; a hidden page does no layout.
 p.currentChapterIndex = 1; p.pagedContentText = '新'.repeat(1200);
-p.refreshReaderContinuousPageMetrics(); tick();
+p.refreshReaderContinuousPageMetrics(); await tick();
 assert.equal(p.readerContinuousDisplayPageCount, 0);
 p.readerPageVisible = false; p.cancelReaderContinuousMetricsTimers();
-const hiddenMeasurements = measurements; tick();
+const hiddenMeasurements = measurements; await tick();
 assert.equal(measurements, hiddenMeasurements);
-p.readerPageVisible = true; p.refreshReaderContinuousPageMetrics(); settle();
+p.readerPageVisible = true; p.refreshReaderContinuousPageMetrics(); await settle();
 assert.equal(p.readerContinuousDisplayPageCount, 2);
 p.currentChapterIndex = 0; p.pagedContentText = '换'.repeat(6000);
-p.refreshReaderContinuousPageMetrics(); tick();
+p.refreshReaderContinuousPageMetrics(); await tick();
 p.currentChapterIndex = 1; p.pagedContentText = '另'.repeat(600);
-p.refreshReaderContinuousPageMetrics(); settle();
+p.refreshReaderContinuousPageMetrics(); await settle();
 assert.equal(p.readerContinuousDisplayPageCount, 1, 'no stale chapter count can publish');
+
+// A native await may outlive a chapter/typography change. Its finally cannot release the replacement worker.
+holdMetrics = true;
+p.pagedContentText = '旧'.repeat(600); p.refreshReaderContinuousPageMetrics(); await tick();
+assert.equal(metricReleases.length, 1);
+p.pagedContentText = '新'.repeat(600); p.refreshReaderContinuousPageMetrics(); await tick();
+assert.equal(metricReleases.length, 2);
+metricReleases.shift()(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+assert.equal(p.readerContinuousMetricsActiveSerial, p.readerContinuousMetricsWorkSerial);
+assert.equal(p.readerContinuousDisplayPageCount, 0);
+metricReleases.shift()(); holdMetrics = false; await Promise.resolve(); await Promise.resolve();
+await settle();
+assert.equal(p.readerContinuousDisplayPageCount, 1);
 
 p.readerLandscapeDoublePage = true; p.pageViewWidth = 1200; p.pageViewHeight = 800;
 assert.equal(p.getReaderPageColumnWidth(), 1200, 'scroll surface remains a full-width column');
@@ -165,7 +183,7 @@ Object.assign(locator, {
     ({ size: { height: 1000 }, windowOffset: { y: 0 } }) }) }),
   readerContinuousV2Layout: () => ({ identity: 'layout', fragments: [
     { imageSource: '', imageRect: { bottom: 0 }, paragraphY: 0, displayStart: 0,
-      paragraph: { getLineMetrics: () => [{ topHeight: 0, startIndex: 5 }, { topHeight: 20, startIndex: 20 }] } },
+      paragraph: { getLineCount: () => 2, getLineMetrics: index => [{ topHeight: 0, startIndex: 5 }, { topHeight: 20, startIndex: 20 }][index] } },
     { imageSource: 'image.jpg', imageRect: { bottom: 300 }, displayStart: 40, paragraph: null },
   ] }),
   readerContinuousV2Documents: new Map([['layout', { sourceOffsetForDisplay: offset => offset }]]),
@@ -176,6 +194,18 @@ viewportTop = 10;
 assert.equal(locator.readerContinuousV2FirstVisibleSourceOffset(), 120, 'text advances by visible line');
 viewportTop = 100;
 assert.equal(locator.readerContinuousV2FirstVisibleSourceOffset(), 140, 'visible illustration maps to its source');
+
+let metricReads = 0;
+viewportTop = 40000;
+locator.getUIContext = () => ({ getComponentUtils: () => ({ getRectangleById: () =>
+  ({ size: { height: 100000 }, windowOffset: { y: 0 } }) }) });
+locator.readerContinuousV2Layout = () => ({ identity: 'layout', fragments: [{ imageSource: '',
+  paragraphY: 0, displayStart: 0, paragraph: { getLineCount: () => 4096, getLineMetrics: index => {
+    assert.equal(typeof index, 'number', 'never convert the full native metrics array'); metricReads++;
+    return { topHeight: index * 20, startIndex: index * 30 };
+  } } }] });
+assert.equal(locator.readerContinuousV2FirstVisibleSourceOffset(), 60100);
+assert(metricReads <= 14, 'visible-line lookup uses logarithmic native metric reads');
 
 assert.match(reader, /\.onDidScroll\(\(\) => \{[\s\S]*?scheduleReaderContinuousPositionUpdate\(\)/);
 console.log('Reader continuous page metrics: independent counts, visible offsets, end geometry, pending state, font/chapter changes, lifecycle and gesture priority passed.');

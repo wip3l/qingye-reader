@@ -19,6 +19,10 @@ function method(name) {
 }
 
 // Small deterministic native-text adapter: production parsing, styling, pagination and source mapping run unchanged.
+let asyncLayouts = 0;
+let holdLayout = false;
+let rejectLayout = false;
+const heldLayouts = [];
 class ParagraphBuilder {
   constructor(options) { this.options = options; this.runs = []; }
   pushStyle(style) { this.current = style; }
@@ -27,6 +31,16 @@ class ParagraphBuilder {
   build() {
     const options = this.options, runs = this.runs;
     const paragraph = { lines: [], chars: [], width: 0, alignment: options.align, text: runs.map(run => run.text).join(''),
+      layout(width) {
+        asyncLayouts++;
+        return new Promise((resolve, reject) => {
+          const finish = () => {
+            if (rejectLayout) { rejectLayout = false; reject(new Error('native layout failed')); return; }
+            this.layoutSync(width); resolve();
+          };
+          if (holdLayout) heldLayouts.push(finish); else setTimeout(finish, 0);
+        });
+      },
       layoutSync(width) {
         this.width = width;
         let offset = 0, start = 0, advance = 0, top = 0, fontSize = 0;
@@ -48,7 +62,8 @@ class ParagraphBuilder {
         }
         finish();
       },
-      getLineMetrics() { return this.lines; },
+      getLineCount() { return this.lines.length; },
+      getLineMetrics(index) { return index === undefined ? this.lines : this.lines[index]; },
       getRectsForPlaceholders() { return []; },
       paint() {},
       getHeight() { return this.lines.reduce((sum, line) => sum + line.height, 0); },
@@ -544,6 +559,69 @@ try {
   assert(caps.every(rect => rect.left >= 0 && rect.right <= 180));
   assert.equal(node.paragraph.text, title, 'repeated preview caps never add hidden selection characters');
   console.log('PASS: native settings preview repeats complete caps within narrow bounds without inserting placeholders');
+
+  // The asynchronous path must keep exactly the same page geometry and source offsets as the native sync path.
+  // This adapter tests transactions and cancellation, not device performance.
+  sandbox.ReaderFontStroke = { paint() {} };
+  const shape = set => JSON.parse(JSON.stringify(set.pages.map(page => ({
+    from: page.sourceStart, to: page.sourceEnd, selection: page.selectionText,
+    fragments: page.fragments.map(fragment => ({ start: fragment.displayStart, end: fragment.displayEnd,
+      x: fragment.paragraphX, y: fragment.paragraphY, height: fragment.paragraphHeight,
+      text: fragment.paragraph?.text, clip: fragment.clipRect }))
+  }))));
+  for (const columns of [1, 2]) for (const titleSinglePage of [false, true]) {
+    const asyncInput = new Input();
+    Object.assign(asyncInput, { viewportWidthPx: 360, viewportHeightPx: 240, fontSizePx: 20,
+      titleFontSizePx: titleSinglePage ? 240 : 26, titleSinglePage, columnCount: columns, columnGapPx: 12,
+      marginLeftPx: 8, marginRightPx: 8, marginTopPx: 8, marginBottomPx: 8 });
+    const asyncDocument = Parser.parse(`${title}\n${'甲乙😀丙丁，ABC。'.repeat(70)}\n` +
+      Array.from({ length: 12 }, (_, i) => `${i} 清晨${'文字'.repeat(i + 1)}`).join('\n'), 0, title);
+    const expected = Paginator.paginate(asyncDocument, Snapshot.create(asyncInput));
+    const session = Paginator.start(asyncDocument, Snapshot.create(asyncInput));
+    let turns = 0;
+    while (!session.pageSet.complete) {
+      assert(++turns < 200, 'async pagination makes progress');
+      const before = session.pageSet.pages.length;
+      const added = await Paginator.appendPageAsync(session);
+      assert.equal(added, session.pageSet.pages.length - before);
+      assert(added <= 1, 'each transaction publishes at most one complete page');
+    }
+    assert.deepEqual(shape(session.pageSet), shape(expected), `async parity columns=${columns} title=${titleSinglePage}`);
+    const continuousExpected = Paginator.layoutContinuous(asyncDocument, Snapshot.create(asyncInput));
+    const continuousActual = await Paginator.layoutContinuousAsync(asyncDocument, Snapshot.create(asyncInput));
+    assert.deepEqual(shape({ pages: [continuousActual] }), shape({ pages: [continuousExpected] }),
+      `continuous async geometry/selection parity columns=${columns} title=${titleSinglePage}`);
+    assert.equal(continuousActual.contentBottomPx, continuousExpected.contentBottomPx);
+  }
+  assert(asyncLayouts > 0, 'native asynchronous layout was exercised');
+  const cancellationInput = new Input();
+  Object.assign(cancellationInput, { viewportWidthPx: 240, viewportHeightPx: 240, fontSizePx: 20 });
+  const cancellationDoc = Parser.parse('正文😀，'.repeat(120), 0, '');
+  const cancelled = Paginator.start(cancellationDoc, Snapshot.create(cancellationInput));
+  holdLayout = true;
+  let valid = true;
+  const cancelledWork = Paginator.appendPageAsync(cancelled, () => valid);
+  const joinedWork = Paginator.appendPageAsync(cancelled, () => valid);
+  assert.equal(heldLayouts.length, 1, 'concurrent callers share native layout');
+  assert.equal(cancelled.pageSet.pages.length, 0, 'an unfinished page is private');
+  valid = false;
+  heldLayouts.shift()();
+  assert.deepEqual(await Promise.all([cancelledWork, joinedWork]), [0, 0]);
+  assert.equal(cancelled.blockIndex, 0); assert.equal(cancelled.lineIndex, 0);
+  assert.equal(cancelled.pageSet.pages.length, 0);
+  assert.equal(cancelled.paragraphCache, null); assert.equal(cancelled.inFlight, null);
+  holdLayout = false; valid = true;
+  rejectLayout = true;
+  await assert.rejects(Paginator.appendPageAsync(cancelled), /native layout failed/);
+  assert.equal(cancelled.blockIndex, 0); assert.equal(cancelled.lineIndex, 0);
+  assert.equal(cancelled.paragraphCache, null); assert.equal(cancelled.inFlight, null);
+  assert.equal(await Paginator.appendPageAsync(cancelled), 1, 'a failed or cancelled page can be retried');
+  holdLayout = true;
+  const staleContinuous = Paginator.layoutContinuousAsync(cancellationDoc, Snapshot.create(cancellationInput), [], () => valid);
+  valid = false; heldLayouts.shift()();
+  assert.equal(await staleContinuous, null, 'cancelled continuous layout does not publish a partial chunk');
+  holdLayout = false;
+  console.log('PASS: async/sync pagination parity, oversized titles, UTF-16 offsets, atomic pages, deduplication, cancellation and failure recovery');
 } finally {
   modules.cleanup();
 }

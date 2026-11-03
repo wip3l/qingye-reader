@@ -65,8 +65,11 @@ assert(preprocessor.includes('pattern.length > 4096') && preprocessor.includes('
   'Imported replacement rules must have basic regex abuse guards');
 assert(reader.includes('ReaderContentPreprocessor.apply'),
   'Reader content must pass through the asynchronous preprocessor');
-assert(reader.includes('this.appendReaderPaginationBatch(result, chapterIndex, imageOnlyPagination ? 8 : 1)'),
+assert(reader.includes('await this.appendReaderPaginationBatch(result, chapterIndex, imageOnlyPagination ? 8 : 1,'),
   'Background pagination must be bounded to one text page or a small pure-image batch');
+assert(reader.includes('await ReaderV2Paginator.appendPageAsync(session, isCurrent)') &&
+  paginator.includes('await pending.paragraph.layout(pending.width)'),
+  'Paged text must await native asynchronous layout and reject stale work');
 assert(paginator.includes('breakStrategy: graphicsText.BreakStrategy.GREEDY'),
   'Native paragraph measurement must use the bounded greedy line-break strategy');
 assert(reader.includes('batchElapsedMs') && reader.includes('adaptiveDelay'),
