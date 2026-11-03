@@ -15369,25 +15369,43 @@ struct ReadBookPage {
 
   @Builder
   menuDismissLayer() {
-    Blank()
-      .width('100%')
-      .height('100%')
-      .backgroundColor(Color.Transparent)
-      .gesture(
-        GestureGroup(GestureMode.Exclusive,
-          TapGesture({ count: 2 })
-            .onAction(() => {
-              if (this.readerAutoScrollActive) this.toggleReaderAutoScroll();
-              else this.hideReaderPanels();
-            }),
-          TapGesture({ count: 1 })
-            .onAction(() => this.hideReaderPanels()),
-          PanGesture({ direction: PanDirection.Horizontal })
-            .onActionStart(() => {
-              this.hideReaderPanels();
-            })
+    // 仅自动翻页需要区分单双击；普通阅读不注册双击，避免单击收起等待双击判定窗口。
+    if (this.readerAutoScrollActive) {
+      Blank()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .gesture(
+          GestureGroup(GestureMode.Exclusive,
+            TapGesture({ count: 2 })
+              .onAction(() => {
+                if (this.readerAutoScrollActive) this.toggleReaderAutoScroll();
+                else this.hideReaderPanels();
+              }),
+            TapGesture({ count: 1 })
+              .onAction(() => this.hideReaderPanels()),
+            PanGesture({ direction: PanDirection.Horizontal })
+              .onActionStart(() => {
+                this.hideReaderPanels();
+              })
+          )
         )
-      )
+    } else {
+      Blank()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(Color.Transparent)
+        .gesture(
+          GestureGroup(GestureMode.Exclusive,
+            TapGesture({ count: 1 })
+              .onAction(() => this.hideReaderPanels()),
+            PanGesture({ direction: PanDirection.Horizontal })
+              .onActionStart(() => {
+                this.hideReaderPanels();
+              })
+          )
+        )
+    }
   }
 
   @Builder
