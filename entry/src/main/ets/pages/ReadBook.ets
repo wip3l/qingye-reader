@@ -178,6 +178,7 @@ import { ReaderImageSizeResolver } from '../core/reader/ReaderImageSizeResolver'
 import { ReaderImageBitmapCache } from '../core/reader/ReaderImageBitmapCache';
 import { ReaderChunkPagination, ReaderChunkResult } from '../core/reader/ReaderChunkPagination';
 import { ReaderPageOffsets } from '../core/reader/ReaderPageOffsets';
+import { ReaderScrollAnchor } from '../core/reader/ReaderScrollAnchor';
 import { ReaderPageTurnQueue } from '../core/reader/ReaderPageTurnQueue';
 import { ReaderPaginationIndex } from '../core/reader/ReaderPaginationIndex';
 import { ReaderTurnTrace } from '../core/reader/ReaderTurnTrace';
@@ -944,6 +945,8 @@ struct ReadBookPage {
   private readerProgressAnchorChapterIndex: number = -1;
   private readerProgressAnchorPageIndex: number = 0;
   private readerProgressAnchorOffset: number = -1;
+  private readerContinuousAnchor: ReaderScrollAnchor | null = null;
+  private readerContinuousRestoreAnchor: ReaderScrollAnchor | null = null;
   private readerProgressAnchorPageCount: number = 0;
   private readerProgressAnchorPageText: string = '';
   private readerProgressAnchorPageImage: string = '';
@@ -1102,6 +1105,7 @@ struct ReadBookPage {
     this.readerPageVisible = true;
     this.refreshReaderContinuousPageMetrics();
     this.warmReaderContinuousLayouts();
+    if (this.readerComicScrollRestoring || this.readerContinuousRestoreAnchor) this.scheduleReaderComicScrollRestore();
     this.startReaderHoldingHandTracking();
     this.readerKeyboard.reset();
     this.restoreReaderKeyboardFocus();
@@ -1293,6 +1297,7 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    this.captureReaderContinuousAnchor();
     this.cancelReaderContinuousLayouts(false);
     this.cancelManualReaderTurn();
     this.readerPageTextureWarmSerial++;
@@ -1421,6 +1426,7 @@ struct ReadBookPage {
   }
 
   onPageHide(): void {
+    this.captureReaderContinuousAnchor();
     this.cancelReaderContinuousLayouts(false);
     this.cancelManualReaderTurn();
     this.readerPageTextureWarmSerial++;
@@ -1683,6 +1689,10 @@ struct ReadBookPage {
       const savedPosition = this.currentChapterIndex === savedChapterIndex ? Math.max(0, engine.curPos) : 0;
       const savedOffset = activeTtsChapterIndex < 0 ?
         this.savedReaderProgressOffset(this.book, this.currentChapterIndex) : -1;
+      this.readerContinuousRestoreAnchor = savedOffset >= 0 && this.usesReaderContinuousV2() ?
+        ReaderScrollAnchor.decode(this.book.getVariable(ReaderScrollAnchor.VARIABLE_KEY),
+          this.currentChapterIndex, savedOffset) : null;
+      this.readerContinuousAnchor = this.readerContinuousRestoreAnchor;
       if (savedOffset >= 0) {
         this.readerTypographyRestoreOffset = savedOffset;
         this.pendingRestorePageIndex = -1;
@@ -1870,6 +1880,8 @@ struct ReadBookPage {
     this.readerProgressAnchorChapterIndex = -1;
     this.readerProgressAnchorPageIndex = 0;
     this.readerProgressAnchorOffset = -1;
+    this.readerContinuousAnchor = null;
+    this.readerContinuousRestoreAnchor = null;
     this.readerProgressAnchorPageCount = 0;
     this.readerProgressAnchorPageText = '';
     this.readerProgressAnchorPageImage = '';
@@ -2363,6 +2375,13 @@ struct ReadBookPage {
       .onDidScroll(() => {
         this.readerContinuousLastScrollAt = Date.now();
         this.scheduleReaderContinuousPositionUpdate();
+        if (!this.readerComicScrollRestoring && this.pendingRestorePageIndex < 0 && this.readerPageVisible) {
+          this.scheduleReaderComicProgressSave();
+        }
+      })
+      .onScrollStop(() => {
+        this.captureReaderContinuousAnchor();
+        if (!this.readerComicScrollRestoring && this.readerPageVisible) this.scheduleReaderComicProgressSave();
       })
       .onReachEnd(() => {
         this.onReaderContinuousReachEnd();
@@ -6445,9 +6464,16 @@ struct ReadBookPage {
     const serial = ++this.readerComicReanchorSerial;
     const chapterIndex = this.currentChapterIndex;
     const targetIndex = Math.max(0, Math.min(this.currentPageIndex, this.contentPages.length - 1));
+    const anchor = this.readerContinuousAnchor;
     setTimeout(() => {
       if (serial !== this.readerComicReanchorSerial || chapterIndex !== this.currentChapterIndex ||
         !this.readerPageVisible || this.readerComicScrollRestoring || this.pendingRestorePageIndex >= 0) {
+        return;
+      }
+      if (anchor?.chapterIndex === chapterIndex && anchor.sourceIdentity === this.readerContinuousSourceIdentity()) {
+        this.readerContinuousRestoreAnchor = anchor;
+        this.currentPageIndex = this.findPageIndexByOffset(anchor.offset);
+        this.scheduleReaderComicScrollRestore();
         return;
       }
       try {
@@ -6458,6 +6484,10 @@ struct ReadBookPage {
   }
 
   scheduleReaderComicScrollRestore(): void {
+    if (!this.usesReaderContinuousV2() ||
+      this.readerContinuousRestoreAnchor?.chapterIndex !== this.currentChapterIndex) {
+      this.readerContinuousRestoreAnchor = null;
+    }
     if (this.isReaderComicPagedMode()) {
       this.readerComicScrollRestoreSerial++;
       this.readerComicScrollRestoring = false;
@@ -6470,19 +6500,22 @@ struct ReadBookPage {
       // 滚动越过章节边界提升当前章：列表本来就停在读者看的位置，不能再按页首对齐。
       this.readerComicScrollRestoreSerial++;
       this.readerComicScrollRestoring = false;
+      this.readerContinuousRestoreAnchor = null;
       return;
     }
     if (!this.isReaderContinuousScrollSurfaceActive() || this.contentPages.length === 0) return;
     const serial = ++this.readerComicScrollRestoreSerial;
     const chapterIndex = this.currentChapterIndex;
     const pageIndex = Math.max(0, Math.min(this.currentPageIndex, this.contentPages.length - 1));
+    const anchor = this.usesReaderContinuousV2() &&
+      this.readerContinuousRestoreAnchor?.chapterIndex === chapterIndex ? this.readerContinuousRestoreAnchor : null;
     this.readerComicScrollRestoring = true;
     let attempt = 0;
     const maxAttempts = 5;
     let layoutWaits = 0;
     const restore = (): void => {
       if (serial !== this.readerComicScrollRestoreSerial || chapterIndex !== this.currentChapterIndex ||
-        !this.isReaderContinuousScrollSurfaceActive()) {
+        !this.isReaderContinuousScrollSurfaceActive() || !this.readerPageVisible) {
         return;
       }
       if (this.usesReaderContinuousV2()) {
@@ -6493,18 +6526,42 @@ struct ReadBookPage {
           return;
         }
       }
+      let lineTopPx = -1;
+      let viewportOffsetVp = 0;
+      if (anchor) {
+        lineTopPx = this.readerContinuousAnchorLineTop(pageIndex, anchor.offset);
+        const request = this.readerContinuousV2Request(pageIndex, this.contentPages[pageIndex] || '', chapterIndex);
+        viewportOffsetVp = request.snapshot.identity === anchor.layoutIdentity ? anchor.viewportOffsetVp : 0;
+      }
       try {
-        this.readerComicScroller.scrollToIndex(this.readerContinuousListIndex(pageIndex), false, ScrollAlign.START);
+        this.readerComicScroller.scrollToIndex(this.readerContinuousListIndex(pageIndex), false, ScrollAlign.START,
+          { extraOffset: LengthMetrics.vp(lineTopPx >= 0 ? px2vp(lineTopPx) - viewportOffsetVp : 0) });
       } catch (error) {
         console.warn('恢复漫画滚动位置失败:', error);
       }
       setTimeout(() => {
-        if (serial !== this.readerComicScrollRestoreSerial || chapterIndex !== this.currentChapterIndex) return;
+        if (serial !== this.readerComicScrollRestoreSerial || chapterIndex !== this.currentChapterIndex ||
+          !this.readerPageVisible) return;
         const visiblePageIndex = Math.max(0,
           Math.min(this.readerContinuousVisibleStart, this.contentPages.length - 1));
         const lastPagePinnedToBottom = pageIndex === this.contentPages.length - 1 &&
           this.readerContinuousVisibleEnd >= pageIndex;
-        if (visiblePageIndex !== pageIndex && !lastPagePinnedToBottom && attempt < maxAttempts) {
+        let lineMisaligned = false;
+        if (anchor && lineTopPx >= 0) {
+          try {
+            const viewport = this.readerContinuousV2ViewportPx();
+            const rect = this.getUIContext().getComponentUtils().getRectangleById(this.readerContinuousV2ItemId(pageIndex));
+            const geometryReady = viewport.length === 2 && rect.size.height > 0;
+            const deltaVp = geometryReady ?
+              px2vp(rect.windowOffset.y + lineTopPx - viewport[0]) - viewportOffsetVp : 0;
+            // Near the book ends the scroll range can clamp the requested line. Bounded retries accept that
+            // actual position; no synthetic end-of-chapter character offset is persisted.
+            lineMisaligned = !geometryReady || Math.abs(deltaVp) > 1;
+          } catch (_) {
+            lineMisaligned = true;
+          }
+        }
+        if (((visiblePageIndex !== pageIndex && !lastPagePinnedToBottom) || lineMisaligned) && attempt < maxAttempts) {
           attempt++;
           setTimeout(restore, Math.min(160, 24 + attempt * 24));
           return;
@@ -6516,6 +6573,10 @@ struct ReadBookPage {
         this.currentPageText = this.contentPages[pageIndex] || '';
         this.readerContinuousReachedEnd = pageIndex === this.contentPages.length - 1;
         this.readerComicScrollRestoring = false;
+        if (anchor) this.readerContinuousAnchor = anchor;
+        if (this.readerContinuousRestoreAnchor === anchor) this.readerContinuousRestoreAnchor = null;
+        this.captureReaderContinuousAnchor();
+        if (this.usesReaderContinuousV2()) this.scheduleReaderComicProgressSave();
         this.scheduleReaderContinuousPositionUpdate();
         if (visiblePageIndex !== pageIndex && !lastPagePinnedToBottom) {
           console.warn(`[ReaderProgress] continuous restore settled without index callback: ` +
@@ -7058,6 +7119,16 @@ struct ReadBookPage {
         return this.readerProgressAnchorOffset;
       }
     }
+    if (this.usesReaderContinuousV2()) {
+      if (this.readerContinuousRestoreAnchor?.chapterIndex === this.currentChapterIndex) {
+        return this.readerContinuousRestoreAnchor.offset;
+      }
+      this.captureReaderContinuousAnchor();
+      if (this.readerContinuousAnchor?.chapterIndex === this.currentChapterIndex &&
+        this.readerContinuousAnchor.sourceIdentity === this.readerContinuousSourceIdentity()) {
+        return this.readerContinuousAnchor.offset;
+      }
+    }
     return this.getCurrentPageStartOffset();
   }
 
@@ -7079,9 +7150,32 @@ struct ReadBookPage {
 
   restoreReaderTypographyOffsetIfAvailable(paginationComplete: boolean): boolean {
     if (this.readerTypographyRestoreOffset < 0 || this.contentPageEnds.length === 0) return false;
-    const targetOffset = this.readerTypographyRestoreOffset;
+    let targetOffset = this.readerTypographyRestoreOffset;
     const lastEnd = this.contentPageEnds[this.contentPageEnds.length - 1];
     if (!paginationComplete && targetOffset >= lastEnd) return false;
+    if (this.usesReaderContinuousV2()) {
+      const pending = this.readerContinuousRestoreAnchor;
+      const chapterUrl = this.chapters[this.currentChapterIndex]?.url || '';
+      // A cold checkpoint belongs to the exact source edition. A replaced chapter uses its old block fallback.
+      if (pending && (pending.chapterIndex !== this.currentChapterIndex || pending.chapterUrl !== chapterUrl ||
+        pending.sourceIdentity !== this.readerContinuousSourceIdentity())) {
+        targetOffset = this.getPageStartOffset(Math.min(pending.pageIndex, this.contentPages.length - 1));
+        this.readerContinuousRestoreAnchor = null;
+        this.readerContinuousAnchor = null;
+      }
+      const previous = this.readerContinuousRestoreAnchor || this.readerContinuousAnchor;
+      const anchor = new ReaderScrollAnchor();
+      anchor.chapterIndex = this.currentChapterIndex;
+      anchor.chapterUrl = chapterUrl;
+      anchor.offset = Math.max(0, Math.min(targetOffset, this.pagedContentText.length));
+      anchor.pageIndex = this.findPageIndexByOffset(anchor.offset);
+      anchor.sourceIdentity = this.readerContinuousSourceIdentity();
+      if (previous?.chapterIndex === anchor.chapterIndex) {
+        anchor.viewportOffsetVp = previous.viewportOffsetVp;
+        anchor.layoutIdentity = previous.layoutIdentity;
+      }
+      this.readerContinuousRestoreAnchor = anchor;
+    }
     const pageIndex = this.normalizeReaderSpreadPageIndex(this.findPageIndexByOffset(targetOffset));
     this.currentPageIndex = Math.max(0, Math.min(pageIndex, Math.max(0, this.contentPages.length - 1)));
     this.pendingRestorePageIndex = -1;
@@ -9598,6 +9692,8 @@ struct ReadBookPage {
       this.pendingRestorePageIndex = -1;
       this.readerTypographyRestoreOffset = -1;
       this.readerContinuousReachedEnd = false;
+      this.readerContinuousRestoreAnchor = null;
+      this.readerContinuousAnchor = null;
       this.readerPaginationCache.set(key, result);
       while (this.readerPaginationCache.size > 3) {
         const oldest = this.readerPaginationCache.keys().next().value as string | undefined;
@@ -9739,10 +9835,18 @@ struct ReadBookPage {
       return;
     }
     const engine = this.readerEngine();
-    const stableVisibleProgress = this.canSaveReadingProgress();
+    this.captureReaderContinuousAnchor();
+    const continuous = this.usesReaderContinuousV2();
+    const stableVisibleProgress = this.canSaveReadingProgress() && (!continuous ||
+      (!this.readerComicScrollRestoring && !this.readerContinuousRestoreAnchor && this.readerTypographyRestoreOffset < 0));
     let chapterIndex = this.clampChapterIndex(this.currentChapterIndex);
     let pageIndex = Math.max(0, Math.min(this.currentPageIndex, Math.max(0, this.contentPages.length - 1)));
     let characterOffset = Math.max(0, this.getPageStartOffset(pageIndex));
+    if ((continuous || !this.readerPageVisible) && this.readerContinuousAnchor?.chapterIndex === chapterIndex &&
+      this.readerContinuousAnchor.sourceIdentity === this.readerContinuousSourceIdentity()) {
+      characterOffset = this.readerContinuousAnchor.offset;
+      pageIndex = this.readerContinuousAnchor.pageIndex;
+    }
     let progressPageCount = this.currentChapterProgressPageCount();
     let lastReadPageText = this.getShelfLastReadPageText(pageIndex);
     let lastReadPageImage = this.getShelfLastReadPageImage(pageIndex);
@@ -9769,7 +9873,10 @@ struct ReadBookPage {
     } else {
       return;
     }
-    if (!Book.hasStartedReading(this.book) && chapterIndex <= 0 && pageIndex <= 0) {
+    const clippedFirstLine = continuous && this.readerContinuousAnchor?.chapterIndex === chapterIndex &&
+      this.readerContinuousAnchor.viewportOffsetVp < 0;
+    if (!Book.hasStartedReading(this.book) && chapterIndex <= 0 && pageIndex <= 0 &&
+      (!continuous || (characterOffset <= 0 && !clippedFirstLine))) {
       if (engine.book?.bookUrl === this.book.bookUrl) {
         engine.curIdx = chapterIndex;
         engine.curPos = pageIndex;
@@ -9789,6 +9896,10 @@ struct ReadBookPage {
       this.book.putVariable(READER_PROGRESS_OFFSET_KEY, `${characterOffset}`);
       this.book.putVariable(READER_PROGRESS_OFFSET_CHAPTER_KEY, `${chapterIndex}`);
     }
+    const scrollAnchor = this.readerContinuousRestoreAnchor || this.readerContinuousAnchor;
+    this.book.putVariable(ReaderScrollAnchor.VARIABLE_KEY,
+      continuous && scrollAnchor?.chapterIndex === chapterIndex && scrollAnchor.offset === characterOffset ?
+        JSON.stringify(scrollAnchor) : '');
     this.book.putVariable('lastReadPageText', lastReadPageText);
     this.book.putVariable('lastReadPageImage', lastReadPageImage);
     // The old reader page can finish an asynchronous save after the next book has
@@ -10522,6 +10633,8 @@ struct ReadBookPage {
   }
 
   async jumpToReaderPositionKeepingTts(targetChapterIndex: number, targetPageIndex: number): Promise<void> {
+    this.readerContinuousRestoreAnchor = null;
+    this.readerContinuousAnchor = null;
     if (this.isMirroringActiveTtsForCurrentBook()) {
       await ReaderTtsFloatingSession.jumpToPosition(
         this.clampChapterIndex(targetChapterIndex), Math.max(0, Math.round(targetPageIndex)));
@@ -13261,6 +13374,7 @@ struct ReadBookPage {
   }
 
   async flushReadingProgressCheckpoint(): Promise<void> {
+    this.captureReaderContinuousAnchor();
     // Normal page turns are debounced. Cancel every delayed writer and persist the current chapter/page snapshot
     // immediately before Harmony freezes the UI in Home or lock-screen background transitions.
     this.settleCommittedLocalPageTurnForCheckpoint();
@@ -17491,6 +17605,7 @@ struct ReadBookPage {
     // Scroll within a single 1800-character chunk also advances the displayed page.
     this.readerContinuousPositionTimer = setTimeout(() => {
       this.readerContinuousPositionTimer = -1;
+      this.captureReaderContinuousAnchor();
       this.updateReaderContinuousDisplayPosition();
     }, 80);
   }
@@ -17535,6 +17650,118 @@ struct ReadBookPage {
     } catch (_) {
       return [];
     }
+  }
+
+  // Reuse the chapter hash cache rather than hashing a whole chapter on every position tick.
+  readerContinuousSourceIdentity(): string {
+    return `${this.pagedContentText.length}_${this.readerPaginationSourceHash(this.pagedContentText)}`;
+  }
+
+  /** Capture the first intersecting line, including a clipped line; native measurements stay cache-only. */
+  captureReaderContinuousAnchor(): void {
+    if (!this.usesReaderContinuousV2() || !this.readerPageVisible || !this.readerInitialPageReady ||
+      !this.readerProgressRestoreConfirmed || this.readerComicScrollRestoring || this.readerContinuousRestoreAnchor ||
+      this.pendingRestorePageIndex >= 0 || this.readerTypographyRestoreOffset >= 0 ||
+      this.readerContinuousCommitChapter >= 0 || this.isLoading) return;
+    const viewport = this.readerContinuousV2ViewportPx();
+    if (viewport.length < 2) return;
+    for (let index = Math.max(0, this.readerContinuousVisibleStart);
+      index <= Math.min(this.contentPages.length - 1, this.readerContinuousVisibleEnd); index++) {
+      try {
+        const rect = this.getUIContext().getComponentUtils().getRectangleById(this.readerContinuousV2ItemId(index));
+        if (rect.size.height <= 0 || rect.windowOffset.y + rect.size.height <= viewport[0] ||
+          rect.windowOffset.y >= viewport[1]) continue;
+        const layout = this.readerContinuousV2Layout(index, this.contentPages[index] || '');
+        if (!layout) return;
+        const document = this.readerContinuousV2Documents.get(layout.identity);
+        const chunkStart = this.readerContinuousV2Sources.get(layout.identity);
+        if (!document || chunkStart === undefined || chunkStart < 0) return;
+        const localTop = viewport[0] - rect.windowOffset.y;
+        for (const fragment of layout.fragments) {
+          let displayStart = -1;
+          let topPx = 0;
+          if (fragment.imageSource && fragment.imageRect.bottom > localTop) {
+            displayStart = fragment.displayStart;
+            topPx = fragment.imageRect.top;
+          } else if (fragment.paragraph) {
+            let low = 0;
+            let high = fragment.paragraph.getLineCount();
+            while (low < high) {
+              const middle = Math.floor((low + high) / 2);
+              const line = fragment.paragraph.getLineMetrics(middle);
+              if (!line) return;
+              if (fragment.paragraphY + line.topHeight + line.height <= localTop) low = middle + 1;
+              else high = middle;
+            }
+            if (low < fragment.paragraph.getLineCount()) {
+              const line = fragment.paragraph.getLineMetrics(low);
+              if (!line) return;
+              displayStart = fragment.displayStart + line.startIndex;
+              topPx = fragment.paragraphY + line.topHeight;
+            }
+          }
+          if (displayStart < 0 || rect.windowOffset.y + topPx >= viewport[1]) continue;
+          const anchor = new ReaderScrollAnchor();
+          anchor.chapterIndex = this.currentChapterIndex;
+          anchor.chapterUrl = this.chapters[this.currentChapterIndex]?.url || '';
+          anchor.pageIndex = index;
+          anchor.offset = chunkStart + document.sourceOffsetForDisplay(displayStart);
+          anchor.sourceIdentity = this.readerContinuousSourceIdentity();
+          anchor.viewportOffsetVp = px2vp(rect.windowOffset.y + topPx - viewport[0]);
+          anchor.layoutIdentity = this.readerContinuousV2Request(index, this.contentPages[index] || '').snapshot.identity;
+          this.readerContinuousAnchor = anchor;
+          if (this.readerProgressAnchorChapterIndex !== anchor.chapterIndex ||
+            this.readerProgressAnchorPageIndex !== index) {
+            this.readerProgressAnchorPageText = this.getShelfLastReadPageText(index);
+            this.readerProgressAnchorPageImage = this.getShelfLastReadPageImage(index);
+          }
+          this.readerProgressAnchorChapterIndex = anchor.chapterIndex;
+          this.readerProgressAnchorPageIndex = index;
+          this.readerProgressAnchorOffset = anchor.offset;
+          // Continuous chunks are published whole. Avoid resolving pagination/theme keys on every scroll tick.
+          this.readerProgressAnchorPageCount = this.contentPages.length;
+          return;
+        }
+      } catch (_) {
+        // A row may have been recycled. Keep the last complete checkpoint until a measured row is available.
+      }
+    }
+  }
+
+  /** Resolve a chapter character offset into the containing native line, using the new wrapping. */
+  readerContinuousAnchorLineTop(pageIndex: number, offset: number): number {
+    const layout = this.readerContinuousV2Layout(pageIndex, this.contentPages[pageIndex] || '');
+    if (!layout) return -1;
+    const document = this.readerContinuousV2Documents.get(layout.identity);
+    const chunkStart = this.readerContinuousV2Sources.get(layout.identity);
+    if (!document || chunkStart === undefined || chunkStart < 0) return -1;
+    const displayOffset = document.displayOffsetForSource(Math.max(0, offset - chunkStart));
+    for (const fragment of layout.fragments) {
+      if (displayOffset >= fragment.displayEnd) continue;
+      if (fragment.imageSource) return fragment.imageRect.top;
+      if (!fragment.paragraph) continue;
+      const target = Math.max(0, displayOffset - fragment.displayStart);
+      let low = 0;
+      let high = fragment.paragraph.getLineCount();
+      if (high === 0) continue;
+      while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        const line = fragment.paragraph.getLineMetrics(middle);
+        if (!line) return -1;
+        if (line.startIndex <= target) low = middle + 1;
+        else high = middle;
+      }
+      const line = fragment.paragraph.getLineMetrics(Math.max(0, low - 1));
+      return line ? fragment.paragraphY + line.topHeight : -1;
+    }
+    // The chapter end maps to the final line, not a nonexistent line after the document.
+    const last = layout.fragments[layout.fragments.length - 1];
+    if (last?.imageSource) return last.imageRect.top;
+    if (last?.paragraph && last.paragraph.getLineCount() > 0) {
+      const line = last.paragraph.getLineMetrics(last.paragraph.getLineCount() - 1);
+      return line ? last.paragraphY + line.topHeight : -1;
+    }
+    return -1;
   }
 
   // Chapter source offset of the first line that is fully on screen, or -1 when it cannot be resolved.
@@ -17839,6 +18066,7 @@ struct ReadBookPage {
       return;
     }
     this.cancelReaderQuickJump();
+    this.captureReaderContinuousAnchor();
     // Freeze scroll-derived progress before awaiting the database write. During the route transition List can emit
     // a shorter visible range (notably 3..3 for a short final item that was pinned below 3..4), which otherwise
     // downgrades a saved 5/5 position to 4/5 immediately before the exit checkpoint is serialized.
@@ -18640,6 +18868,10 @@ struct ReadBookPage {
   }
 
   applyReaderPaginationResult(result: ReaderPaginationResult, fallbackContent: string): void {
+    if (!this.usesReaderContinuousV2()) {
+      this.readerContinuousAnchor = null;
+      this.readerContinuousRestoreAnchor = null;
+    }
     const initialPageWasReady = this.readerInitialPageReady;
     const keepVisibleReaderReady = initialPageWasReady &&
       this.displayPageChapterIndex === this.currentChapterIndex && this.contentPages.length > 0;

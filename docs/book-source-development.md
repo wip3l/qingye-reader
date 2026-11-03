@@ -24,6 +24,8 @@
 
 ## 开发要点
 
+阅读器的分页、滚动位置和 MiMo 小说朗读属于宿主能力，不要求书源新增字段。正文保持原有内容与段落语义；`readProgressScrollAnchorV1` 是宿主保存的滚动位置，不是业务变量，不能用于评论上下文失效判断。它与阅读时间、分页及朗读位置一样不参与评论入口指纹，详情 `keep` 等业务变量仍参与校验。
+
 宿主版本以 `AppScope/app.json5` 为准，准确的子模块版本用 `git submodule status harmony-book-source-engine` 查看；逐版本变化见[更新日志](../CHANGELOG.md)。
 
 - 逐字遍历使用 `for ch in chars(text)`；`chars` 按 Unicode 码点拆分，在 JS 函数体内调用时写 `native.chars(text)`。导入时会检查声明式规则中未定义的函数名，JS 函数体仍需实际执行验证。

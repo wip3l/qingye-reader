@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.4.950`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.4.951`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -139,6 +139,10 @@
 - 「我的 → 帮助」是原生帮助页：首页有搜索、新手上手、常见问题和按功能分组的专题，专题页可一键跳到对应功能；正文由 `docs/manual` 说明书生成，离线可看。
 
 版本更新内容与发布说明见[更新日志](CHANGELOG.md)。
+
+MiMo 支持音色预设、试听及按书选择人物音色方案；方案切换保留已有绑定。智感握姿可在其他设置中统一开关，关闭自动适配后仍保留手动位置。自定义主题提供场景预览，并与阅读页共享排版设置。
+
+小说滚动阅读保存内容位置与视口偏移，重新打开或改变排版时恢复定位；移动网络下启用有声书边听边下可预下载后续章节。
 
 小说样式设置提供全屏实时预览，通过悬浮面板调整排版、页眉页脚、字体和背景；标题单页可切换预览标题页和正文页。预览与正文共用自适应水平边距，跟随边距的页眉页脚同步调整。
 
@@ -266,8 +270,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.4.950` |
-| `versionCode` / `buildVersion` | `4040950` |
+| `versionName` | `4.4.951` |
+| `versionCode` / `buildVersion` | `4040951` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`CAMERA`（仅在用户启用眼动翻页时请求） |
 

@@ -76,6 +76,7 @@ Object.assign(p, {
     assert.equal(continuous, false); assert.equal(metrics, true);
     return { identity: 'font-20', capacity: 900 };
   },
+  captureReaderContinuousAnchor() {},
   buildReaderV2RegexStyles: () => [], readerV2HeadingHints: () => [],
   getChapterTitle: () => '测试章', clampChapterIndex: index => index,
   isLandscapeDoublePageActive: () => false,

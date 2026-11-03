@@ -72,6 +72,7 @@ jobs:
       - run: node --experimental-strip-types scripts/reader-page-turn-scheduling-check.mjs
       - run: node --experimental-strip-types scripts/reader-continuous-page-metrics-check.mjs
       - run: node --experimental-strip-types scripts/reader-progress-sync-check.mjs
+      - run: node --experimental-strip-types scripts/reader-scroll-anchor-check.mjs
       - run: node --experimental-strip-types scripts/reader-continuous-layout-check.mjs
       - run: node --experimental-strip-types scripts/reader-screen-scroll-check.mjs
       - run: node --experimental-strip-types scripts/reader-scroll-gesture-check.mjs

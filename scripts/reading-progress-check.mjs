@@ -46,6 +46,7 @@ const context = vm.createContext({
   READER_PROGRESS_OFFSET_KEY: 'readProgressCharOffsetV2',
   READER_PROGRESS_OFFSET_CHAPTER_KEY: 'readProgressCharOffsetChapterV2'
 });
+vm.runInContext(compile(readEtsModule('core/reader/ReaderScrollAnchor.ts')), context);
 vm.runInContext(compile(readEtsModule('core/book/pdf/PdfModels.ts')) + compile(readEtsModule('model/data/Book.ts')) + compile(`
   class ProgressDatabase {
     ${['insertBook', 'getBook', 'getAllBooks', 'restoreMissingChapterCounts', 'resultSetToBook',
@@ -225,6 +226,7 @@ const tests = {
       readerProgressAnchorOffset: 100, readerProgressAnchorPageCount: 0,
       readerProgressAnchorPageText: 'saved', readerProgressAnchorPageImage: '', lastRecentReadCardChapterIndex: 0,
       readerEngine: () => ({ book: item }), canSaveReadingProgress: () => false,
+      captureReaderContinuousAnchor() {}, usesReaderContinuousV2: () => false,
       clampChapterIndex: index => index, getPageStartOffset: () => 0,
       hasPagedReaderArea: () => true, getCachedReaderPagination: () => ({ complete: false }),
       getShelfLastReadPageText: () => '', getShelfLastReadPageImage: () => ''
