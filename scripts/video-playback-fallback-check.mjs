@@ -28,7 +28,7 @@ let resolveContent = async () => ({ url: 'https://cdn.example/v.mp4', pageUrl: '
 const context = vm.createContext({
   console: { warn() {} },
   VideoController: MediaController, webview: { WebviewController: MediaController },
-  Scroller: class {}, EpisodeDataSource: class {}, SeekMode: { Accurate: 0 },
+  Scroller: class {}, EpisodeDataSource: class { replace() {} }, SeekMode: { Accurate: 0 },
   WebBookService: class {
     cancelled = false;
     getVideoContent(...args) { requests.push(args); return resolveContent(...args); }
@@ -38,7 +38,7 @@ const context = vm.createContext({
   HdsFeedback: { showToast: text => notices.push(text) }, ReaderTtsFloatingSession: { pause: async () => {} },
   CookieStore: { saveSync() {} },
   setTimeout: (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; },
-  clearTimeout: id => timers.delete(id), CONTROLS_HIDE_DELAY_MS: 4000, SPEEDS: [1, 2],
+  clearTimeout: id => timers.delete(id), CONTROLS_HIDE_DELAY_MS: 4000, SPEEDS: [1, 1.25, 1.75, 2, 0.75],
   DISPLAY_MODES: ['contain', 'none', 'cover', 'fill'],
   ImageFit: { Contain: 0, None: 1, Cover: 2, Fill: 3 },
 });
@@ -61,6 +61,159 @@ for (const invalid of ['javascript:alert(1)', 'file:///tmp/a', 'data:text/html,x
 assert.equal(Support.httpUrl(' https://a.example/watch?id=1 '), 'https://a.example/watch?id=1');
 assert.equal(Support.unsupported(103602), false, 'invalid source is not proof of an unsupported codec');
 assert.equal(Support.unsupported(5400106), true);
+
+const seeking = newPage();
+await seeking.playEpisode(0, 85);
+seeking.seekBy(15);
+assert.equal(seeking.positionSec, 85, 'unprepared media cannot seek');
+seeking.onVideoUpdated(0);
+assert.equal(seeking.positionSec, 85, 'preparation updates must retain the retry/resume target');
+seeking.onVideoPrepared(300);
+seeking.onVideoUpdated(0);
+assert.equal(seeking.book.durChapterPos, 85, 'initial media update cannot erase resume position');
+seeking.onVideoSeeked(85);
+assert.equal(seeking.resumeNotice, '已恢复到 01:25');
+assert.equal(seeking.canSeek(), true);
+seeking.isPlaying = false;
+const seekCalls = seeking.controller.calls.length;
+seeking.seekBy(15);
+seeking.seekBy(15);
+seeking.seekBy(15);
+assert.equal(seeking.positionSec, 130, 'rapid taps accumulate from the requested position');
+assert.equal(seeking.book.durChapterPos, 130, 'immediate exit can recover the selected target');
+assert.equal(seeking.controller.calls.length, seekCalls + 1, 'only one seek is submitted at a time');
+seeking.onVideoUpdated(86);
+assert.equal(seeking.positionSec, 130, 'updates before the seek callback cannot move the progress backwards');
+seeking.onVideoSeeked(100);
+assert.equal(seeking.controller.calls.at(-1)[1], 130, 'intermediate completion submits the latest queued target');
+assert.equal(seeking.positionSec, 130);
+seeking.onVideoSeeked(130);
+assert.equal(seeking.pendingSeekSec, -1);
+assert.equal(seeking.resumeNotice, '', 'manual seeking dismisses the resume prompt');
+assert.equal(seeking.isPlaying, false, 'seeking preserves pause state');
+seeking.seekBy(-1000);
+assert.equal(seeking.positionSec, 0);
+seeking.onVideoSeeked(0);
+seeking.seekBy(1000);
+assert.equal(seeking.positionSec, 300);
+seeking.onVideoSeeked(300);
+seeking.seeking = true;
+seeking.positionSec = 40;
+seeking.onVideoUpdated(299);
+seeking.saveProgress(true);
+assert.equal(seeking.book.durChapterPos, 300, 'slider preview must not be saved before release');
+seeking.seeking = false;
+seeking.seekTo(40);
+seeking.onVideoSeeked(40);
+seeking.positionSec = 43;
+seeking.isPlaying = true;
+seeking.togglePlay();
+assert.equal(seeking.book.durChapterPos, 43, 'pause immediately saves even within the ten-second interval');
+seeking.restartPlayback();
+assert.equal(seeking.book.durChapterPos, 0);
+assert.equal(seeking.controller.calls.at(-1), 'start');
+seeking.onVideoSeeked(0);
+seeking.openPlaybackSpeeds();
+assert.equal(seeking.playerOptionsMode, 'speed');
+const beforeSpeed = seeking.controller.calls.length;
+seeking.selectSpeed(1.25);
+assert.equal(seeking.speed, 1.25);
+assert.equal(seeking.showDisplayModes, false);
+assert.equal(seeking.controller.calls.length, beforeSpeed, 'speed selection preserves the player and position');
+seeking.selectSpeed(1.5);
+assert.equal(seeking.speed, 1.25, 'unsupported video rates are rejected');
+seeking.openDisplayModes();
+assert.equal(seeking.playerOptionsMode, 'display');
+seeking.autoNext = false;
+seeking.onVideoFinished();
+assert.equal(seeking.book.durChapterPos, 300, 'finishing saves the final position');
+seeking.stopPlayback();
+assert.equal(seeking.canSeek(), false);
+assert.equal(seeking.pendingSeekSec, -1);
+
+// Reopen through the actual loadBook path using the last persisted book snapshot.
+const stored = structuredClone(saves.findLast(book => book.durChapterPos === 43));
+const database = context.AppDatabase;
+context.getContext = () => ({});
+context.AppDatabase = { getInstance: () => ({
+  initWithContext: async () => {}, getBook: async () => stored, getBookSource: async () => ({}),
+  updateBook: async book => saves.push(structuredClone(book)),
+}) };
+stored.bookUrl = 'https://site.example/series';
+stored.origin = 'https://site.example';
+const reopened = newPage();
+const engine = { openBook: async () => {}, book: stored, chapters: reopened.chapters };
+context.ReadBookEngine = { get: () => engine };
+await reopened.loadBook(stored.bookUrl, -1);
+reopened.onVideoPrepared(300);
+assert.equal(reopened.controller.calls.find(call => Array.isArray(call) && call[0] === 'seek')[1], 43);
+reopened.onVideoSeeked(43);
+assert.equal(reopened.resumeNotice, '已恢复到 00:43');
+reopened.stopPlayback();
+context.AppDatabase = database;
+
+// Controller-driven seeks may only report onUpdate; onSeeked belongs to the native progress bar.
+const progressOnly = newPage();
+await progressOnly.playEpisode(0, 12);
+progressOnly.onVideoPrepared(150);
+progressOnly.onVideoUpdated(0);
+assert.equal(progressOnly.book.durChapterPos, 12, 'startup zero must not erase the saved position');
+progressOnly.onVideoUpdated(12);
+assert.equal(progressOnly.resumeSeekPending, false, 'onUpdate must confirm resume without onSeeked');
+assert.equal(progressOnly.canSeek(), true, 'resume completion must enable the seek controls');
+progressOnly.onVideoUpdated(13);
+assert.equal(progressOnly.positionSec, 13, 'the recorded frozen 00:12 must advance');
+progressOnly.seekBy(15);
+progressOnly.seekBy(15);
+progressOnly.onVideoUpdated(28);
+assert.equal(progressOnly.controller.calls.at(-1)[1], 43, 'progress confirmation releases the queued seek');
+progressOnly.onVideoSeeked(28);
+assert.equal(progressOnly.positionSec, 43, 'a delayed old completion cannot confirm the newer target');
+progressOnly.onVideoUpdated(43);
+progressOnly.onVideoUpdated(44);
+assert.equal(progressOnly.positionSec, 44);
+assert.equal(progressOnly.pendingSeekSec, -1);
+progressOnly.stopPlayback();
+
+const missingConfirmation = newPage();
+await missingConfirmation.playEpisode(0, 12);
+missingConfirmation.onVideoPrepared(150);
+missingConfirmation.onVideoUpdated(4);
+let seekWatchdog = timers.get(missingConfirmation.seekTimerId);
+assert.ok(seekWatchdog, 'seek confirmation must have a bounded wait');
+timers.delete(missingConfirmation.seekTimerId);
+seekWatchdog.fn();
+assert.equal(missingConfirmation.resumeSeekPending, false);
+assert.equal(missingConfirmation.canSeek(), true);
+assert.equal(missingConfirmation.resumeNotice, '', 'an unconfirmed resume must not announce success');
+missingConfirmation.onVideoUpdated(5);
+assert.equal(missingConfirmation.positionSec, 5, 'timeout returns to actual media updates');
+missingConfirmation.isPlaying = false;
+missingConfirmation.seekBy(15);
+missingConfirmation.seekBy(15);
+seekWatchdog = timers.get(missingConfirmation.seekTimerId);
+timers.delete(missingConfirmation.seekTimerId);
+seekWatchdog.fn();
+assert.equal(missingConfirmation.controller.calls.at(-1)[1], 35, 'timeout still submits the latest queued target');
+const staleWatchdog = timers.get(missingConfirmation.seekTimerId);
+missingConfirmation.stopPlayback();
+staleWatchdog.fn();
+assert.equal(missingConfirmation.pendingSeekSec, -1, 'a retired attempt cannot be changed by an old timer');
+
+const pausedSeek = newPage();
+await pausedSeek.playEpisode(0);
+pausedSeek.onVideoPrepared(150);
+pausedSeek.isPlaying = false;
+pausedSeek.seekTo(30);
+const pausedWatchdog = timers.get(pausedSeek.seekTimerId);
+timers.delete(pausedSeek.seekTimerId);
+pausedWatchdog.fn();
+assert.equal(pausedSeek.pendingSeekSec, -1, 'a paused player with no updates cannot permanently lock seeking');
+assert.equal(pausedSeek.canSeek(), true);
+pausedSeek.onVideoUpdated(31);
+assert.equal(pausedSeek.positionSec, 31);
+assert.equal(pausedSeek.isPlaying, false, 'recovery never starts a paused player');
+pausedSeek.stopPlayback();
 
 const page = newPage();
 await page.playEpisode(0, 85);
@@ -225,4 +378,4 @@ assert.equal(timeout.book.durChapterPos, 85);
 assert.equal(timeout.playbackFailed, true);
 assert.equal(pending[pending.length - 1].cancelled(), true, 'timed-out resolver remains cancelled after returning');
 assert.equal(timers.size, 0, 'all lifecycle timers cleaned up');
-console.log('video-playback-fallback-check: playback fallback, resume, display-mode continuity, menu lifecycle, background, cancellation and timeout passed');
+console.log('video-playback-fallback-check: fallback, persisted resume, missing seek callbacks, bounded seek recovery, queued 15-second seeking, pause/restart, menus and lifecycle passed');

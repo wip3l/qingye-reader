@@ -64,21 +64,18 @@ class EpisodeDataSource implements IDataSource {
 }
 
 // Video 组件的 currentProgressRate 只接受 0.75、1、1.25、1.75、2 这几档，别的值不生效。
-const SPEEDS: number[] = [1, 1.25, 1.75, 2, 0.75];
+const SPEEDS: number[] = [0.75, 1, 1.25, 1.75, 2];
 const CONTROLS_HIDE_DELAY_MS: number = 4000;
 const DISPLAY_MODES: string[] = ['contain', 'none', 'cover', 'fill'];
 
-// 操作栏按钮的统一外观。用 @Extend 而不是带参数的 @Builder：按值传参的 @Builder 不会随状态刷新，
-// 「连播 开/关」「播放/暂停」、倍速这些会变的文字就停在创建时的样子。
-@Extend(Text)
-function playerRoundButton() {
-  .fontSize(AppFontSize.BODY)
-  .fontColor('#FFFFFF')
-  .height(36)
-  .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-  .borderRadius(18)
-  .backgroundColor('#33FFFFFF')
-  .textAlign(TextAlign.Center)
+// 视频画面上的中性控件；图标保持高对比度，点击区域不少于 44vp。
+@Extend(Button)
+function playerIconButton() {
+  .width(44)
+  .height(44)
+  .padding(0)
+  .borderRadius(22)
+  .backgroundColor(Color.Transparent)
 }
 
 /**
@@ -105,6 +102,7 @@ struct VideoPlayerPage {
   @State showControls: boolean = true;
   @State showEpisodes: boolean = false;
   @State showDisplayModes: boolean = false;
+  @State playerOptionsMode: string = 'display';
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 640;
   @State bottomBarHeight: number = 140;
@@ -118,13 +116,19 @@ struct VideoPlayerPage {
   @State webStatus: string = '';
   @State videoPageUrl: string = '';
   @State playbackFailed: boolean = false;
+  @State playbackReady: boolean = false;
+  @State resumeNotice: string = '';
+  @State resumeSeekPending: boolean = false;
   private controller: VideoController = new VideoController();
   private fullScreenHandler: FullScreenExitHandler | null = null;
   private activeAttemptId: number = 0;
   private contentService: WebBookService | null = null;
   private resolveTimerId: number = -1;
-  private playbackReady: boolean = false;
-  private resumeSeekPending: boolean = false;
+  private seekTimerId: number = -1;
+  private lastNativePositionSec: number = -1;
+  // 合并连续点按的目标，同一时刻只向播放器提交一次 seek，避免旧回调覆盖新目标。
+  private pendingSeekSec: number = -1;
+  private issuedSeekSec: number = -1;
   private episodeScroller: Scroller = new Scroller();
   private episodeData: EpisodeDataSource = new EpisodeDataSource();
   private book: Book | null = null;
@@ -404,6 +408,13 @@ struct VideoPlayerPage {
 
   private stopPlayback(): void {
     this.showDisplayModes = false;
+    this.resumeNotice = '';
+    this.clearSeekTimer();
+    this.resumeSeekPending = false;
+    this.pendingSeekSec = -1;
+    this.issuedSeekSec = -1;
+    this.lastNativePositionSec = -1;
+    this.playbackReady = false;
     this.activeAttemptId++;
     this.clearHideTimer();
     this.exitWebFullscreen();
@@ -445,8 +456,8 @@ struct VideoPlayerPage {
 
   private saveProgress(force: boolean = false): void {
     const book = this.book;
-    if (!book) return;
-    const second = Math.floor(this.positionSec);
+    if (!book || this.seeking) return;
+    const second = Math.floor(this.pendingSeekSec >= 0 ? this.pendingSeekSec : this.positionSec);
     // 播放中每 10 秒落一次库，切集、离开页面时立即保存。
     if (!force && Math.abs(second - this.lastSavedSec) < 10) return;
     this.lastSavedSec = second;
@@ -463,7 +474,7 @@ struct VideoPlayerPage {
     this.statusText = '';
     if (this.resumeSec > 1 && (this.durationSec <= 0 || this.resumeSec < this.durationSec - 3)) {
       this.resumeSeekPending = true;
-      this.controller.setCurrentTime(this.resumeSec, SeekMode.Accurate);
+      this.issueSeek(this.resumeSec);
     } else {
       this.positionSec = 0;
     }
@@ -471,8 +482,107 @@ struct VideoPlayerPage {
     if (this.playerPageVisible) this.controller.start();
   }
 
+  private canSeek(): boolean {
+    return !this.webMode && this.playbackReady && !this.playbackFailed && !this.resumeSeekPending &&
+      this.durationSec > 0 && this.nativeAttempts.length > 0;
+  }
+
+  private clearSeekTimer(): void {
+    if (this.seekTimerId >= 0) clearTimeout(this.seekTimerId);
+    this.seekTimerId = -1;
+  }
+
+  private issueSeek(seconds: number): void {
+    this.clearSeekTimer();
+    this.issuedSeekSec = seconds;
+    this.lastNativePositionSec = -1;
+    const attemptId = this.activeAttemptId;
+    // onSeeked 是原生进度条的回调；控制器跳转以 onUpdate 到达目标为准，不能无限等待回调。
+    this.seekTimerId = setTimeout((): void => {
+      if (attemptId !== this.activeAttemptId) return;
+      this.seekTimerId = -1;
+      this.recoverUnconfirmedSeek();
+    }, 3000);
+    try {
+      this.controller.setCurrentTime(seconds, SeekMode.Accurate);
+    } catch (_) {
+      this.clearSeekTimer();
+      this.recoverUnconfirmedSeek();
+    }
+  }
+
+  private recoverUnconfirmedSeek(): void {
+    if (this.pendingSeekSec >= 0 && this.pendingSeekSec !== this.issuedSeekSec) {
+      this.issueSeek(this.pendingSeekSec);
+      return;
+    }
+    this.resumeSeekPending = false;
+    this.pendingSeekSec = -1;
+    this.issuedSeekSec = -1;
+    if (!this.seeking && this.lastNativePositionSec >= 0) this.positionSec = this.lastNativePositionSec;
+    // 没收到目标位置时不提示“已恢复”，也不把猜测值落库；后续 onUpdate 继续跟随实际播放。
+  }
+
+  private seekTo(seconds: number): void {
+    if (!this.canSeek()) return;
+    this.resumeNotice = '';
+    this.pendingSeekSec = Math.min(this.durationSec, VideoPlaybackSupport.position(seconds));
+    this.positionSec = this.pendingSeekSec;
+    if (this.issuedSeekSec < 0) {
+      this.issueSeek(this.pendingSeekSec);
+    }
+    // 即使跳转后立刻返回，也保存用户刚选择的位置；拖动预览不会落库。
+    this.saveProgress(true);
+    this.scheduleHideControls();
+  }
+
+  private seekBy(seconds: number): void {
+    this.seekTo((this.pendingSeekSec >= 0 ? this.pendingSeekSec : this.positionSec) + seconds);
+  }
+
+  private restartPlayback(): void {
+    if (!this.canSeek()) return;
+    this.seekTo(0);
+    this.controller.start();
+  }
+
+  private onVideoUpdated(seconds: number): void {
+    if (!this.playbackReady || !Number.isFinite(seconds)) return;
+    this.lastNativePositionSec = VideoPlaybackSupport.position(seconds);
+    if (this.issuedSeekSec >= 0) {
+      if (Math.abs(this.lastNativePositionSec - this.issuedSeekSec) <= 2) this.onVideoSeeked(seconds);
+      return;
+    }
+    if (this.seeking) return;
+    this.positionSec = VideoPlaybackSupport.position(seconds);
+    this.saveProgress();
+  }
+
+  private onVideoSeeked(seconds: number): void {
+    // 原生进度条的旧回调可能晚于新的控制器跳转，只接受当前目标附近的实际进度。
+    if (!Number.isFinite(seconds) || this.issuedSeekSec < 0 || Math.abs(seconds - this.issuedSeekSec) > 2) return;
+    if (this.pendingSeekSec >= 0 && this.pendingSeekSec !== this.issuedSeekSec) {
+      this.issueSeek(this.pendingSeekSec);
+      return;
+    }
+    this.clearSeekTimer();
+    const resumed = this.resumeSeekPending;
+    this.resumeSeekPending = false;
+    this.pendingSeekSec = -1;
+    this.issuedSeekSec = -1;
+    if (!this.seeking) this.positionSec = VideoPlaybackSupport.position(seconds);
+    if (resumed) {
+      this.resumeNotice = `已恢复到 ${this.formatTime(seconds)}`;
+      this.showControls = true;
+      this.scheduleHideControls();
+    }
+    this.saveProgress(true);
+  }
+
   private onVideoFinished(): void {
     this.isPlaying = false;
+    this.positionSec = this.durationSec;
+    this.saveProgress(true);
     if (this.autoNext && this.episodeIndex < this.chapters.length - 1) {
       this.playEpisode(this.episodeIndex + 1);
       return;
@@ -505,7 +615,10 @@ struct VideoPlayerPage {
       this.playEpisode(this.episodeIndex, this.positionSec);
       return;
     }
-    if (this.isPlaying) this.controller.pause();
+    if (this.isPlaying) {
+      this.saveProgress(true);
+      this.controller.pause();
+    }
     else this.controller.start();
     this.scheduleHideControls();
   }
@@ -527,14 +640,22 @@ struct VideoPlayerPage {
     this.clearHideTimer();
     this.hideTimerId = setTimeout((): void => {
       this.hideTimerId = -1;
-      if (this.isPlaying && !this.showEpisodes && !this.showDisplayModes && !this.seeking) this.showControls = false;
+      if (this.isPlaying && !this.showEpisodes && !this.showDisplayModes && !this.seeking) {
+        this.showControls = false;
+        this.resumeNotice = '';
+      }
     }, CONTROLS_HIDE_DELAY_MS);
   }
 
-  private nextSpeed(): void {
-    const index = SPEEDS.indexOf(this.speed);
-    this.speed = SPEEDS[(index + 1) % SPEEDS.length];
-    this.scheduleHideControls();
+  private openPlaybackSpeeds(): void {
+    this.openDisplayModes();
+    this.playerOptionsMode = 'speed';
+  }
+
+  private selectSpeed(speed: number): void {
+    if (SPEEDS.indexOf(speed) < 0) return;
+    this.speed = speed;
+    this.closeDisplayModes();
   }
 
   private openEpisodes(): void {
@@ -580,17 +701,9 @@ struct VideoPlayerPage {
     }
   }
 
-  private displayModeButtonLabel(): string {
-    switch (this.displayMode) {
-      case 'none': return '画面 · 原始';
-      case 'cover': return '画面 · 铺满';
-      case 'fill': return '画面 · 拉伸';
-      default: return '画面 · 适应';
-    }
-  }
-
   private openDisplayModes(): void {
     if (this.webMode) return;
+    this.playerOptionsMode = 'display';
     this.showEpisodes = false;
     this.showControls = true;
     this.showDisplayModes = true;
@@ -610,40 +723,85 @@ struct VideoPlayerPage {
   }
 
   @Builder
+  playerIcon(icon: Resource, label: string, action: () => void) {
+    Button({ type: ButtonType.Normal }) {
+      SymbolGlyph(icon).fontSize(22).fontColor([Color.White])
+    }
+    .playerIconButton()
+    .accessibilityText(label)
+    .onClick(action)
+  }
+
+  @Builder
+  seekButton(forward: boolean) {
+    Button({ type: ButtonType.Normal }) {
+      // 数字轮廓与圆弧共用坐标，避免符号字体和正文字体的基线、字面框不同。
+      Image(forward ? $r('app.media.ic_video_forward_15') : $r('app.media.ic_video_rewind_15'))
+        .width(36).height(36).objectFit(ImageFit.Contain)
+    }
+    .playerIconButton()
+    .enabled(this.canSeek())
+    .opacity(this.canSeek() ? 1 : 0.4)
+    .accessibilityText(forward ? '快进15秒' : '后退15秒')
+    .onClick(() => this.seekBy(forward ? 15 : -15))
+  }
+
+  @Builder
   topBar() {
-    Row({ space: AppSpacing.MD }) {
-      SymbolGlyph($r('sys.symbol.chevron_left'))
-        .fontSize(24)
-        .fontColor(['#FFFFFF'])
-        .width(40)
-        .height(40)
-        .onClick(() => this.backFromPlayer())
-      Column() {
-        Text(this.bookName)
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#FFFFFF')
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(`${this.episodeTitle}${this.episodeCount > 0 ? ` · 共 ${this.episodeCount} 集` : ''}`)
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor('#CCFFFFFF')
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+    Column({ space: AppSpacing.SM }) {
+      Row({ space: AppSpacing.SM }) {
+        this.playerIcon($r('sys.symbol.chevron_left'), '返回', () => this.backFromPlayer())
+        Column() {
+          Text(this.bookName)
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#FFFFFF')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(`${this.episodeTitle}${this.episodeCount > 0 ? ` · 共 ${this.episodeCount} 集` : ''}`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor('#CCFFFFFF')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        Button({ type: ButtonType.Normal }) {
+          Text(this.autoNext ? '连播 开' : '连播 关').fontSize(AppFontSize.BODY).fontColor(Color.White)
+        }
+          .playerIconButton()
+          .width(76)
+          .accessibilityText(this.autoNext ? '自动连播，已开启' : '自动连播，已关闭')
+          .onClick(() => {
+            this.autoNext = !this.autoNext;
+            HdsFeedback.showToast(this.autoNext ? '已开启连播：本集结束后自动播放下一集' :
+              '已关闭连播：本集结束后停止播放');
+            this.scheduleHideControls();
+          })
+        Button({ type: ButtonType.Normal }) {
+          Text('选集').fontSize(AppFontSize.BODY).fontColor(Color.White)
+        }
+          .playerIconButton().width(52).accessibilityText('选集')
+          .onClick(() => this.openEpisodes())
+      }.width('100%')
+      if (this.resumeNotice) {
+        Row({ space: AppSpacing.SM }) {
+          SymbolGlyph($r('sys.symbol.clock')).fontSize(16).fontColor([Color.White])
+          Text(this.resumeNotice).fontSize(AppFontSize.CAPTION).fontColor(Color.White)
+            .layoutWeight(1).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+          Button('从头播放', { type: ButtonType.Normal })
+            .fontSize(AppFontSize.CAPTION).fontColor(Color.White)
+            .height(44).padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+            .backgroundColor(Color.Transparent)
+            .onClick(() => this.restartPlayback())
+        }
+        .width(Math.min(300, this.viewportWidth - AppSpacing.LG * 2))
+        .padding({ left: AppSpacing.LG, right: AppSpacing.XS })
+        .borderRadius(12).backgroundColor('#CC252B30')
       }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-      Text(this.autoNext ? '连播 开' : '连播 关')
-        .playerRoundButton()
-        .onClick(() => {
-          this.autoNext = !this.autoNext;
-          this.scheduleHideControls();
-        })
-      Text('选集')
-        .playerRoundButton()
-        .onClick(() => this.openEpisodes())
     }
     .width('100%')
+    .alignItems(HorizontalAlign.Start)
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: this.statusBarHeight + AppSpacing.MD,
       bottom: AppSpacing.XL })
     .linearGradient({ direction: GradientDirection.Bottom, colors: [['#B3000000', 0], ['#00000000', 1]] })
@@ -658,7 +816,8 @@ struct VideoPlayerPage {
           .fontSize(AppFontSize.CAPTION)
           .fontColor('#FFFFFF')
         Slider({ value: this.positionSec, min: 0, max: Math.max(1, this.durationSec), step: 1 })
-          .enabled(this.playbackReady && !this.playbackFailed && this.nativeAttempts.length > 0)
+          .enabled(this.canSeek())
+          .accessibilityText('播放进度')
           .layoutWeight(1)
           .trackColor('#55FFFFFF')
           .selectedColor('#FFFFFF')
@@ -667,12 +826,12 @@ struct VideoPlayerPage {
             if (mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving) {
               this.seeking = true;
               this.positionSec = value;
+              this.resumeNotice = '';
+              this.clearHideTimer();
               return;
             }
             this.seeking = false;
-            this.positionSec = value;
-            this.controller.setCurrentTime(value, SeekMode.Accurate);
-            this.scheduleHideControls();
+            this.seekTo(value);
           })
         Text(this.formatTime(this.durationSec))
           .fontSize(AppFontSize.CAPTION)
@@ -680,39 +839,19 @@ struct VideoPlayerPage {
       }
       .width('100%')
 
-      Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap,
-        justifyContent: this.viewportWidth < 600 ? FlexAlign.Center : FlexAlign.SpaceBetween }) {
-        Row({ space: AppSpacing.MD }) {
-          Text('上一集')
-            .playerRoundButton()
-            .onClick(() => {
-              if (this.episodeIndex > 0) this.playEpisode(this.episodeIndex - 1);
-              else HdsFeedback.showToast('已经是第一集');
-            })
-          Text(this.isPlaying ? '暂停' : '播放')
-            .playerRoundButton()
-            .onClick(() => this.togglePlay())
-          Text('下一集')
-            .playerRoundButton()
-            .onClick(() => {
-              if (this.episodeIndex < this.chapters.length - 1) this.playEpisode(this.episodeIndex + 1);
-              else HdsFeedback.showToast('已经是最后一集');
-            })
-        }.margin({ top: AppSpacing.SM, right: AppSpacing.SM })
-        Row({ space: AppSpacing.MD }) {
-          Text(`${this.speed}x`)
-            .playerRoundButton()
-            .onClick(() => this.nextSpeed())
-          Text(this.displayModeButtonLabel())
-            .playerRoundButton()
-            .accessibilityText(`画面显示，当前${this.displayModeTitle(this.displayMode)}`)
-            .onClick(() => this.openDisplayModes())
-          Text(this.landscape ? '竖屏' : '横屏')
-            .playerRoundButton()
-            .onClick(() => this.setLandscape(!this.landscape))
-        }.margin({ top: AppSpacing.SM })
+      // Flex 的纵向默认测量会吃满可用高度，导致整个底栏撑到标题区。
+      // 两种布局都采用按内容测量的 Row / Column，按钮行有明确高度。
+      if (this.viewportWidth < 600) {
+        Column({ space: AppSpacing.MD }) {
+          this.transportControls()
+          this.playbackTools()
+        }.width('100%').alignItems(HorizontalAlign.Center)
+      } else {
+        Row() {
+          this.transportControls()
+          this.playbackTools()
+        }.width('100%').height(54).justifyContent(FlexAlign.SpaceBetween)
       }
-      .width('100%')
     }
     .width('100%')
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.XL,
@@ -725,6 +864,58 @@ struct VideoPlayerPage {
   }
 
   @Builder
+  transportControls() {
+    Row({ space: AppSpacing.LG }) {
+      Button({ type: ButtonType.Normal }) {
+        SymbolGlyph($r('sys.symbol.backward_end_fill')).fontSize(22).fontColor([Color.White])
+      }
+        .playerIconButton().enabled(this.episodeIndex > 0)
+        .opacity(this.episodeIndex > 0 ? 1 : 0.4).accessibilityText('上一集')
+        .onClick(() => this.playEpisode(this.episodeIndex - 1))
+      this.seekButton(false)
+      Button({ type: ButtonType.Normal }) {
+        SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+          .fontSize(26).fontColor([Color.White])
+      }
+        .playerIconButton().width(54).height(54).borderRadius(27).backgroundColor('#33FFFFFF')
+        .accessibilityText(this.isPlaying ? '暂停' : '播放')
+        .onClick(() => this.togglePlay())
+      this.seekButton(true)
+      Button({ type: ButtonType.Normal }) {
+        SymbolGlyph($r('sys.symbol.forward_end_fill')).fontSize(22).fontColor([Color.White])
+      }
+        .playerIconButton().enabled(this.episodeIndex < this.episodeCount - 1)
+        .opacity(this.episodeIndex < this.episodeCount - 1 ? 1 : 0.4).accessibilityText('下一集')
+        .onClick(() => this.playEpisode(this.episodeIndex + 1))
+    }.height(54)
+  }
+
+  @Builder
+  playbackTools() {
+    Row({ space: AppSpacing.MD }) {
+      Button({ type: ButtonType.Normal }) {
+        Text(`${this.speed}×`).fontSize(AppFontSize.BODY).fontColor(Color.White)
+      }
+        .playerIconButton().width(54)
+        .accessibilityText(`播放速度，当前${this.speed}倍`)
+        .onClick(() => this.openPlaybackSpeeds())
+      Button({ type: ButtonType.Normal }) {
+        SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right'))
+          .fontSize(22).fontColor([Color.White])
+      }
+        .playerIconButton()
+        .accessibilityText(`画面显示，当前${this.displayModeTitle(this.displayMode)}`)
+        .onClick(() => this.openDisplayModes())
+      Button({ type: ButtonType.Normal }) {
+        Text(this.landscape ? '竖屏' : '横屏').fontSize(AppFontSize.BODY).fontColor(Color.White)
+      }
+        .playerIconButton().width(52)
+        .accessibilityText(this.landscape ? '切换竖屏' : '切换横屏')
+        .onClick(() => this.setLandscape(!this.landscape))
+    }.height(44)
+  }
+
+  @Builder
   displayModePanel() {
     Stack() {
       Column()
@@ -734,7 +925,7 @@ struct VideoPlayerPage {
         .onClick(() => this.closeDisplayModes())
       Column({ space: AppSpacing.XS }) {
         Row() {
-          Text('画面显示')
+          Text(this.playerOptionsMode === 'speed' ? '播放速度' : '画面显示')
             .fontSize(AppFontSize.BODY_LARGE)
             .fontWeight(FontWeight.Medium)
             .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
@@ -746,34 +937,52 @@ struct VideoPlayerPage {
           }
           .width(44).height(44)
           .backgroundColor(Color.Transparent)
-          .accessibilityText('关闭画面显示')
+          .accessibilityText('关闭播放器设置')
           .onClick(() => this.closeDisplayModes())
         }.padding({ left: AppSpacing.LG })
         Scroll() {
           Column({ space: AppSpacing.XS }) {
-            ForEach(DISPLAY_MODES, (mode: string) => {
-              Button({ type: ButtonType.Normal }) {
-                Row({ space: AppSpacing.MD }) {
-                  Column({ space: AppSpacing.XS }) {
-                    Text(this.displayModeTitle(mode))
-                      .fontSize(AppFontSize.BODY)
-                      .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
-                    Text(this.displayModeHint(mode))
-                      .fontSize(AppFontSize.CAPTION)
-                      .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
-                  }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-                  SymbolGlyph($r('sys.symbol.checkmark'))
-                    .fontSize(18)
-                    .fontColor([ThemeRuntime.primaryTextColor(this.appDarkMode)])
-                    .visibility(this.displayMode === mode ? Visibility.Visible : Visibility.Hidden)
-                }.width('100%').padding(AppSpacing.LG)
-              }
-              .width('100%')
-              .borderRadius(12)
-              .backgroundColor(this.displayMode === mode ? ThemeRuntime.inputColor(this.appDarkMode) : Color.Transparent)
-              .accessibilityText(`${this.displayModeTitle(mode)}，${this.displayModeHint(mode)}${this.displayMode === mode ? '，已选中' : ''}`)
-              .onClick(() => this.selectDisplayMode(mode))
-            }, (mode: string): string => mode)
+            if (this.playerOptionsMode === 'speed') {
+              ForEach(SPEEDS, (speed: number) => {
+                Button({ type: ButtonType.Normal }) {
+                  Row({ space: AppSpacing.MD }) {
+                    Text(`${speed}×`).fontSize(AppFontSize.BODY)
+                      .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode)).layoutWeight(1)
+                    SymbolGlyph($r('sys.symbol.checkmark')).fontSize(18)
+                      .fontColor([ThemeRuntime.primaryTextColor(this.appDarkMode)])
+                      .visibility(this.speed === speed ? Visibility.Visible : Visibility.Hidden)
+                  }.width('100%').padding(AppSpacing.LG)
+                }
+                .width('100%').constraintSize({ minHeight: 44 }).borderRadius(12)
+                .backgroundColor(this.speed === speed ? ThemeRuntime.inputColor(this.appDarkMode) : Color.Transparent)
+                .accessibilityText(`${speed}倍${this.speed === speed ? '，已选中' : ''}`)
+                .onClick(() => this.selectSpeed(speed))
+              }, (speed: number): string => `${speed}`)
+            } else {
+              ForEach(DISPLAY_MODES, (mode: string) => {
+                Button({ type: ButtonType.Normal }) {
+                  Row({ space: AppSpacing.MD }) {
+                    Column({ space: AppSpacing.XS }) {
+                      Text(this.displayModeTitle(mode))
+                        .fontSize(AppFontSize.BODY)
+                        .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+                      Text(this.displayModeHint(mode))
+                        .fontSize(AppFontSize.CAPTION)
+                        .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+                    }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+                    SymbolGlyph($r('sys.symbol.checkmark'))
+                      .fontSize(18)
+                      .fontColor([ThemeRuntime.primaryTextColor(this.appDarkMode)])
+                      .visibility(this.displayMode === mode ? Visibility.Visible : Visibility.Hidden)
+                  }.width('100%').padding(AppSpacing.LG)
+                }
+                .width('100%')
+                .borderRadius(12)
+                .backgroundColor(this.displayMode === mode ? ThemeRuntime.inputColor(this.appDarkMode) : Color.Transparent)
+                .accessibilityText(`${this.displayModeTitle(mode)}，${this.displayModeHint(mode)}${this.displayMode === mode ? '，已选中' : ''}`)
+                .onClick(() => this.selectDisplayMode(mode))
+              }, (mode: string): string => mode)
+            }
           }.width('100%')
         }
         .width('100%')
@@ -804,7 +1013,7 @@ struct VideoPlayerPage {
         Text(`选集 · 共 ${this.episodeCount} 集`)
           .fontSize(AppFontSize.BODY_LARGE)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#FFFFFF')
+          .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
           .width('100%')
           .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.XL, bottom: AppSpacing.LG })
         List({ space: AppSpacing.MD, scroller: this.episodeScroller }) {
@@ -812,14 +1021,16 @@ struct VideoPlayerPage {
             ListItem() {
               Text(title || `第${index + 1}集`)
                 .fontSize(AppFontSize.BODY)
-                .fontColor('#FFFFFF')
+                .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .textAlign(TextAlign.Center)
                 .width('100%')
                 .height(40)
                 .borderRadius(10)
-                .backgroundColor(index === this.episodeIndex ? '#7A5AF8' : '#26FFFFFF')
+                .backgroundColor(index === this.episodeIndex ? ThemeRuntime.inputColor(this.appDarkMode) : Color.Transparent)
+                .fontWeight(index === this.episodeIndex ? FontWeight.Medium : FontWeight.Normal)
+                .accessibilityText(`${title || `第${index + 1}集`}${index === this.episodeIndex ? '，正在播放' : ''}`)
                 .onClick(() => {
                   this.showEpisodes = false;
                   if (index !== this.episodeIndex) this.playEpisode(index);
@@ -837,7 +1048,7 @@ struct VideoPlayerPage {
       .width('100%')
       .height('55%')
       .padding({ bottom: this.navBarHeight + AppSpacing.LG })
-      .backgroundColor('#F01C1C1E')
+      .backgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
       .borderRadius({ topLeft: 18, topRight: 18 })
     }
     .width('100%')
@@ -849,24 +1060,31 @@ struct VideoPlayerPage {
     Column() {
       if (!this.webFullscreen) {
         Row({ space: AppSpacing.SM }) {
-          Button('返回').onClick(() => this.backFromPlayer())
+          this.playerIcon($r('sys.symbol.chevron_left'), '返回', () => this.backFromPlayer())
           Text(`${this.bookName} · ${this.episodeTitle}`)
             .fontColor(Color.White).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
-          Button('选集').onClick(() => this.openEpisodes())
+          Button({ type: ButtonType.Normal }) {
+            Text('选集').fontSize(AppFontSize.BODY).fontColor(Color.White)
+          }
+            .playerIconButton().width(52).accessibilityText('选集')
+            .onClick(() => this.openEpisodes())
         }.padding(AppSpacing.MD).width('100%')
         Text('网页播放 · 进度与连播由网站控制')
           .fontSize(AppFontSize.CAPTION).fontColor(Color.White)
         Row({ space: AppSpacing.SM }) {
-          Button('上一集').enabled(this.episodeIndex > 0)
-            .layoutWeight(1).fontSize(AppFontSize.CAPTION)
+          Button({ type: ButtonType.Normal }) {
+            SymbolGlyph($r('sys.symbol.backward_end_fill')).fontSize(22).fontColor([Color.White])
+          }
+            .playerIconButton().enabled(this.episodeIndex > 0).accessibilityText('上一集')
             .onClick(() => this.playEpisode(this.episodeIndex - 1))
-          Button('下一集').enabled(this.episodeIndex < this.chapters.length - 1)
-            .layoutWeight(1).fontSize(AppFontSize.CAPTION)
+          Button({ type: ButtonType.Normal }) {
+            SymbolGlyph($r('sys.symbol.forward_end_fill')).fontSize(22).fontColor([Color.White])
+          }
+            .playerIconButton().enabled(this.episodeIndex < this.episodeCount - 1).accessibilityText('下一集')
             .onClick(() => this.playEpisode(this.episodeIndex + 1))
-          Button('重试原生').layoutWeight(1).fontSize(AppFontSize.CAPTION)
-            .onClick(() => this.playEpisode(this.episodeIndex, this.positionSec))
-          Button('刷新网页').layoutWeight(1).fontSize(AppFontSize.CAPTION)
-            .onClick(() => this.retryWebPlayback())
+          this.playerIcon($r('sys.symbol.play_fill'), '重试原生播放',
+            () => this.playEpisode(this.episodeIndex, this.positionSec))
+          this.playerIcon($r('sys.symbol.arrow_clockwise'), '刷新网页', () => this.retryWebPlayback())
         }.padding(AppSpacing.SM).width('100%').justifyContent(FlexAlign.SpaceAround)
         if (this.webStatus) {
           Text(this.webStatus).fontSize(AppFontSize.CAPTION).fontColor(Color.White).padding(AppSpacing.SM)
@@ -962,16 +1180,15 @@ struct VideoPlayerPage {
               if (!this.isCurrentNative(attempt)) return;
               this.isPlaying = false;
               this.showControls = true;
+              this.saveProgress(true);
             })
             .onUpdate((event: PlaybackInfo) => {
-              if (!this.isCurrentNative(attempt) || this.resumeSeekPending) return;
-              if (!this.seeking) this.positionSec = VideoPlaybackSupport.position(event.time);
-              this.saveProgress();
+              if (!this.isCurrentNative(attempt)) return;
+              this.onVideoUpdated(event.time);
             })
             .onSeeked((event: PlaybackInfo) => {
               if (!this.isCurrentNative(attempt)) return;
-              this.resumeSeekPending = false;
-              this.positionSec = VideoPlaybackSupport.position(event.time);
+              this.onVideoSeeked(event.time);
             })
             .onFinish(() => {
               if (!this.isCurrentNative(attempt) || !this.playerPageVisible) return;
