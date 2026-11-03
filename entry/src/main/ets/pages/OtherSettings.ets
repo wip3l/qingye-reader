@@ -28,6 +28,7 @@ struct OtherSettingsPage {
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageLink('smartGripEnabled') smartGripEnabled: boolean = true;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @StorageLink('lanReaderEnabled') lanReaderEnabled: boolean = false;
@@ -179,6 +180,22 @@ struct OtherSettingsPage {
         this.lanReaderAddressRow()
         this.lanReaderPasswordRow()
       }
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+
+    this.sectionTitle('交互')
+    Column() {
+      SettingSwitchRow({
+        title: '智感握姿',
+        description: '根据左右手握持，自动调整导航栏和部分操作按钮的位置；需设备支持',
+        isOn: this.smartGripEnabled,
+        showDivider: false,
+        onChange: (value: boolean) => { this.smartGripEnabled = value; }
+      })
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })

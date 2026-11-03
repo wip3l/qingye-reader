@@ -32,6 +32,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 @Component
 struct Index {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('smartGripEnabled') smartGripEnabled: boolean = true;
   /** 方案 B：由原生页签容器统一执行连续横移，不再叠加页面入场动画。 */
   static readonly TAB_SWITCH_DURATION: number = 320;
   private stageRuntimeController: webview.WebviewController = new webview.WebviewController();
@@ -882,7 +883,7 @@ struct Index {
         maskColor: Color.Transparent,
         maskHeight: 96
       },
-      adaptToHandedness: true,
+      adaptToHandedness: this.smartGripEnabled,
       thermoCtrl: true,
       barOpacity: this.bookshelfMultiSelectActive ? 0 : 1
     })

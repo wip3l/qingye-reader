@@ -32,6 +32,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 @Component
 struct SearchBookDetailPage {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('smartGripEnabled') @Watch('onSmartGripEnabledChanged') smartGripEnabled: boolean = true;
   /** 顶栏底色与书名渐显所需的滚动距离。 */
   static readonly TITLE_FADE_DISTANCE: number = 120;
   /** 封面氛围背景的高度。 */
@@ -71,6 +72,7 @@ struct SearchBookDetailPage {
   @State readButtonOnLeft: boolean = false;
   @State readButtonBarWidth: number = 0;
   private holdingHandSubscribed: boolean = false;
+  private holdingHandPageVisible: boolean = false;
   private holdingHandCallback: (status: motion.HoldingHandStatus) => void =
     (status: motion.HoldingHandStatus): void => this.onHoldingHandChanged(status);
   @State isInShelf: boolean = false;
@@ -147,6 +149,7 @@ struct SearchBookDetailPage {
   }
 
   onPageShow(): void {
+    this.holdingHandPageVisible = true;
     this.startHoldingHandTracking();
     this.syncBars();
     this.checkShelf().then(() => {
@@ -163,6 +166,7 @@ struct SearchBookDetailPage {
   }
 
   aboutToDisappear(): void {
+    this.holdingHandPageVisible = false;
     this.stopHoldingHandTracking();
     if (this.bookInfoRetryTimerId >= 0) {
       clearTimeout(this.bookInfoRetryTimerId);
@@ -171,11 +175,22 @@ struct SearchBookDetailPage {
   }
 
   onPageHide(): void {
+    this.holdingHandPageVisible = false;
     this.stopHoldingHandTracking();
   }
 
+  private onSmartGripEnabledChanged(): void {
+    if (!this.smartGripEnabled) {
+      this.stopHoldingHandTracking();
+      this.readButtonOnLeft = false;
+    } else {
+      this.startHoldingHandTracking();
+    }
+  }
+
   private startHoldingHandTracking(): void {
-    if (this.holdingHandSubscribed || deviceInfo.sdkApiVersion < 20 ||
+    if (!this.smartGripEnabled || !this.holdingHandPageVisible ||
+      this.holdingHandSubscribed || deviceInfo.sdkApiVersion < 20 ||
       !canIUse('SystemCapability.MultimodalAwareness.Motion')) return;
     try {
       this.holdingHandSubscribed = true;
@@ -200,7 +215,7 @@ struct SearchBookDetailPage {
   }
 
   private onHoldingHandChanged(status: motion.HoldingHandStatus): void {
-    if (!this.holdingHandSubscribed) return;
+    if (!this.smartGripEnabled || !this.holdingHandPageVisible || !this.holdingHandSubscribed) return;
     // 双手、未握持、未知状态沿用上次位置，不让按钮在放下手机时突然跳回。
     if (status !== motion.HoldingHandStatus.LEFT_HAND_HELD &&
       status !== motion.HoldingHandStatus.RIGHT_HAND_HELD) return;

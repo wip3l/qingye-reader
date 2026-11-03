@@ -234,6 +234,7 @@ export default class EntryAbility extends UIAbility {
     PersistentStorage.persistProp('appDarkButtonColor', '#3F8CFF');
     // Immersive light strength: adaptive follows the system by default.
     PersistentStorage.persistProp('immersiveLightLevel', 'adaptive');
+    PersistentStorage.persistProp('smartGripEnabled', true);
     this.immersiveLightBootstrapPromise = ImmersiveLightSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复沉浸光感设置失败:', error);
     });

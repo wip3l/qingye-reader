@@ -285,6 +285,7 @@ struct ReadBookPage {
   @State readerMenuAnchorSide: number = 1;
   // 0 表示尚未识别，继续使用原有位置；左右手分别为 -1 / 1。
   @State readerHoldingHandSide: number = 0;
+  @StorageProp('smartGripEnabled') @Watch('onSmartGripEnabledChanged') smartGripEnabled: boolean = true;
   @State readerAutoScrollManuallyPositioned: boolean = false;
   @State readerTtsManuallyPositioned: boolean = false;
   private readerHoldingHandSubscribed: boolean = false;
@@ -1440,8 +1441,19 @@ struct ReadBookPage {
     this.releaseReaderScreenTimeout();
   }
 
+  private onSmartGripEnabledChanged(): void {
+    if (!this.smartGripEnabled) {
+      this.stopReaderHoldingHandTracking();
+      // 清除自动握姿侧，不覆盖用户手动拖动的悬浮控件位置。
+      this.readerHoldingHandSide = 0;
+    } else {
+      this.startReaderHoldingHandTracking();
+    }
+  }
+
   private startReaderHoldingHandTracking(): void {
-    if (this.readerHoldingHandSubscribed || deviceInfo.sdkApiVersion < 20 ||
+    if (!this.smartGripEnabled || !this.readerPageVisible || !this.readerFormatResolved ||
+      this.readerPdfDispatched || this.readerHoldingHandSubscribed || deviceInfo.sdkApiVersion < 20 ||
       !canIUse('SystemCapability.MultimodalAwareness.Motion')) return;
     try {
       this.readerHoldingHandSubscribed = true;
@@ -1465,7 +1477,7 @@ struct ReadBookPage {
   }
 
   private onReaderHoldingHandChanged(status: motion.HoldingHandStatus): void {
-    if (!this.readerHoldingHandSubscribed || !this.readerPageVisible) return;
+    if (!this.smartGripEnabled || !this.readerHoldingHandSubscribed || !this.readerPageVisible) return;
     // 双手、未握持和未知状态均保留上次位置，避免放下手机时来回跳动。
     if (status !== motion.HoldingHandStatus.LEFT_HAND_HELD &&
       status !== motion.HoldingHandStatus.RIGHT_HAND_HELD) return;
