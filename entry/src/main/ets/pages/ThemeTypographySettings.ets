@@ -669,6 +669,9 @@ struct ThemeTypographySettingsPage {
   async loadDraft(): Promise<void> {
     try {
       const params = router.getParams() as Record<string, Object> | undefined;
+      if (params && typeof params['previewDark'] === 'boolean') {
+        this.previewDark = params['previewDark'] as boolean;
+      }
       this.schemeId = params && typeof params['schemeId'] === 'string' ? (params['schemeId'] as string).trim() : '';
       const themeSettings = await AppThemeSettingsStore.load(getContext(this));
       const schemes = await CustomThemeSchemeStore.load(getContext(this), themeSettings);
