@@ -173,6 +173,24 @@ const tests = {
     h.settings.applyToStorage(saved);
     assert.equal(h.values.get('readerQuickJumpMode'), 'chapter');
   },
+  async 'brightness shortcut persists independently and older layout callers preserve it'() {
+    const h = harness();
+    assert.equal((await h.settings.load({})).useBrightnessQuickAction, true);
+    await h.settings.saveLayoutElementSettings({}, true, true, true, 'chapter', false);
+    assert.equal(h.values.get('readerUseBrightnessQuickAction'), false);
+    assert.equal((await h.settings.reload({})).useBrightnessQuickAction, false);
+    await h.settings.saveLayoutElementSettings({}, false, false, false, 'percent');
+    assert.equal((await h.settings.reload({})).useBrightnessQuickAction, false);
+    const saved = await h.settings.load({});
+    await h.settings.saveAll({}, saved);
+    assert.equal((await h.settings.reload({})).useBrightnessQuickAction, false);
+    saved.useBrightnessQuickAction = true;
+    await h.settings.saveAll({}, saved);
+    assert.equal((await h.settings.reload({})).useBrightnessQuickAction, true);
+    delete saved.useBrightnessQuickAction;
+    h.settings.applyToStorage(saved);
+    assert.equal(h.values.get('readerUseBrightnessQuickAction'), true);
+  },
   async 'long press selection defaults on and persists through reload, saveAll and legacy profiles'() {
     const h = harness();
     assert.equal((await h.settings.load({})).longPressSelectText, true);

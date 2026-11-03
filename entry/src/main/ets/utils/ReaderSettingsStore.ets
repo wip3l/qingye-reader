@@ -56,6 +56,7 @@ export class ReaderSettings {
   useTtsQuickAction: boolean = true;
   useAutoScrollQuickAction: boolean = true;
   useChapterQuickJump: boolean = true;
+  useBrightnessQuickAction: boolean = true;
   quickJumpMode: string = 'chapter';
   quickBookmarkEnabled: boolean = true;
   // 阅读页眉页脚配置。默认页眉关闭、页脚保持现有章节/页码信息。
@@ -147,6 +148,7 @@ export class ReaderSettingsStore {
   static readonly KEY_USE_TTS_QUICK_ACTION: string = 'readerUseTtsQuickAction';
   static readonly KEY_USE_AUTO_SCROLL_QUICK_ACTION: string = 'readerUseAutoScrollQuickAction';
   static readonly KEY_USE_CHAPTER_QUICK_JUMP: string = 'readerUseChapterQuickJump';
+  static readonly KEY_USE_BRIGHTNESS_QUICK_ACTION: string = 'readerUseBrightnessQuickAction';
   static readonly KEY_QUICK_JUMP_MODE: string = 'readerQuickJumpMode';
   static readonly KEY_QUICK_BOOKMARK_ENABLED: string = 'readerQuickBookmarkEnabled';
   static readonly KEY_HEADER_ENABLED: string = 'readerHeaderEnabled';
@@ -433,6 +435,8 @@ export class ReaderSettingsStore {
     );
     settings.quickJumpMode = ReaderQuickJumpModel.normalizeMode(await ReaderSettingsStore.getString(
       store, ReaderSettingsStore.KEY_QUICK_JUMP_MODE, 'chapter'));
+    settings.useBrightnessQuickAction = await ReaderSettingsStore.getBoolean(
+      store, ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION, true);
     settings.quickBookmarkEnabled = await ReaderSettingsStore.getBoolean(
       store,
       ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED,
@@ -905,16 +909,19 @@ export class ReaderSettingsStore {
   static saveLayoutElementSettings(context: Context, useTtsQuickAction: boolean,
     useChapterQuickJump: boolean,
     useAutoScrollQuickAction: boolean = AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION) ?? true,
-    quickJumpMode: string = AppStorage.get<string>(ReaderSettingsStore.KEY_QUICK_JUMP_MODE) || 'chapter'): Promise<void> {
+    quickJumpMode: string = AppStorage.get<string>(ReaderSettingsStore.KEY_QUICK_JUMP_MODE) || 'chapter',
+    useBrightnessQuickAction: boolean = AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION) ?? true): Promise<void> {
     const settings = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
     settings.useTtsQuickAction = useTtsQuickAction;
     settings.useAutoScrollQuickAction = useAutoScrollQuickAction;
     settings.useChapterQuickJump = useChapterQuickJump;
+    settings.useBrightnessQuickAction = useBrightnessQuickAction;
     settings.quickJumpMode = ReaderQuickJumpModel.normalizeMode(quickJumpMode);
     ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(settings);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION, useTtsQuickAction);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION, useAutoScrollQuickAction);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP, useChapterQuickJump);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION, useBrightnessQuickAction);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_QUICK_JUMP_MODE, settings.quickJumpMode);
     const snapshot = ReaderSettingsStore.clone(settings);
     const themeId = ReaderSettingsStore.activeThemeId();
@@ -925,6 +932,7 @@ export class ReaderSettingsStore {
       await store.put(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION, snapshot.useTtsQuickAction);
       await store.put(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION, snapshot.useAutoScrollQuickAction);
       await store.put(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP, snapshot.useChapterQuickJump);
+      await store.put(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION, snapshot.useBrightnessQuickAction);
       await store.put(ReaderSettingsStore.KEY_QUICK_JUMP_MODE, snapshot.quickJumpMode);
       await ReaderSettingsStore.persistThemeProfile(store, themeId, snapshot);
       await store.flush();
@@ -1087,7 +1095,8 @@ export class ReaderSettingsStore {
       settings.useTtsQuickAction,
       settings.useChapterQuickJump,
       settings.useAutoScrollQuickAction,
-      settings.quickJumpMode
+      settings.quickJumpMode,
+      settings.useBrightnessQuickAction
     );
     await ReaderSettingsStore.saveReaderChromeSettings(
       context,
@@ -1120,6 +1129,7 @@ export class ReaderSettingsStore {
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION, normalized.useTtsQuickAction);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION, normalized.useAutoScrollQuickAction);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP, normalized.useChapterQuickJump);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION, normalized.useBrightnessQuickAction);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_QUICK_JUMP_MODE, normalized.quickJumpMode);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED, normalized.quickBookmarkEnabled);
     ReaderSettingsStore.applyReaderChromeToStorage(normalized);
@@ -1802,6 +1812,8 @@ export class ReaderSettingsStore {
     settings.useChapterQuickJump = typeof source.useChapterQuickJump === 'boolean' ? source.useChapterQuickJump :
       (AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP) ?? true);
     settings.quickJumpMode = ReaderQuickJumpModel.normalizeMode(source.quickJumpMode);
+    settings.useBrightnessQuickAction = typeof source.useBrightnessQuickAction === 'boolean' ? source.useBrightnessQuickAction :
+      (AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION) ?? true);
     settings.quickBookmarkEnabled = typeof source.quickBookmarkEnabled === 'boolean' ? source.quickBookmarkEnabled :
       (AppStorage.get<boolean>(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED) ?? true);
     settings.readerHeaderEnabled = source.readerHeaderEnabled === true;
@@ -1946,6 +1958,7 @@ export class ReaderSettingsStore {
     settings.useTtsQuickAction = AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION) ?? true;
     settings.useAutoScrollQuickAction = AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION) ?? true;
     settings.useChapterQuickJump = AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP) ?? true;
+    settings.useBrightnessQuickAction = AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION) ?? true;
     settings.quickJumpMode = ReaderQuickJumpModel.normalizeMode(
       AppStorage.get<string>(ReaderSettingsStore.KEY_QUICK_JUMP_MODE) || 'chapter');
     settings.quickBookmarkEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED) ?? true;

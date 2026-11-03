@@ -26,6 +26,7 @@ export struct ReaderLayoutElementSettingsPanel {
   @StorageLink('readerUseTtsQuickAction') readerUseTtsQuickAction: boolean = true;
   @StorageLink('readerUseAutoScrollQuickAction') readerUseAutoScrollQuickAction: boolean = true;
   @StorageLink('readerUseChapterQuickJump') readerUseChapterQuickJump: boolean = true;
+  @StorageLink('readerUseBrightnessQuickAction') readerUseBrightnessQuickAction: boolean = true;
 
   private save(): void {
     ReaderSettingsStore.saveLayoutElementSettings(getContext(this), this.readerUseTtsQuickAction,
@@ -83,6 +84,11 @@ export struct ReaderLayoutElementSettingsPanel {
         (enabled: boolean) => {
           this.readerUseChapterQuickJump = enabled;
           this.onChapterQuickJumpChanged(enabled);
+          this.save();
+        })
+      this.toggleRow('使用快速亮度组件', '唤出阅读菜单时，在右侧显示亮度条', this.readerUseBrightnessQuickAction,
+        (enabled: boolean) => {
+          this.readerUseBrightnessQuickAction = enabled;
           this.save();
         })
     }

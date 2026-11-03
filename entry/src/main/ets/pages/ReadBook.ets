@@ -1,4 +1,6 @@
 import { ReaderQuickJumpModel } from '../core/reader/ReaderQuickJumpModel';
+import { ReaderBrightnessControl } from '../components/reader/ReaderBrightnessControl';
+import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
 import { ReaderQuickJumpContent } from '../components/reader/ReaderQuickJumpContent';
 import {
   ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP,
@@ -828,6 +830,11 @@ struct ReadBookPage {
   @StorageLink('readerUseTtsQuickAction') readerUseTtsQuickAction: boolean = true;
   @StorageLink('readerUseAutoScrollQuickAction') readerUseAutoScrollQuickAction: boolean = true;
   @StorageLink('readerUseChapterQuickJump') readerUseChapterQuickJump: boolean = true;
+  @StorageLink('readerUseBrightnessQuickAction') readerUseBrightnessQuickAction: boolean = true;
+  @State readerBrightness: number = -1;
+  @State readerLastManualBrightness: number = 50;
+  @State readerBrightnessReady: boolean = false;
+  private readerBrightnessSession: ReaderBrightnessSession = new ReaderBrightnessSession();
   @StorageLink('readerQuickJumpMode') readerQuickJumpMode: string = 'chapter';
   @StorageLink('readerQuickJumpExpanded') readerQuickJumpExpanded: boolean = false;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
@@ -1105,6 +1112,12 @@ struct ReadBookPage {
     this.onReaderAiAccessChanged();
     this.readerComicColor.setForeground(true);
     this.readerPageVisible = true;
+    this.readerBrightnessReady = false;
+    this.readerBrightnessSession.activate(getContext(this), (value: number): void => {
+      this.readerBrightness = value;
+      if (value >= 0) this.readerLastManualBrightness = value;
+      this.readerBrightnessReady = true;
+    }, (): void => HdsFeedback.showToast('阅读亮度设置失败，请稍后重试'));
     this.refreshReaderContinuousPageMetrics();
     this.warmReaderContinuousLayouts();
     if (this.readerComicScrollRestoring || this.readerContinuousRestoreAnchor) this.scheduleReaderComicScrollRestore();
@@ -1299,6 +1312,7 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    this.readerBrightnessSession.deactivate();
     this.captureReaderContinuousAnchor();
     this.cancelReaderContinuousLayouts(false);
     this.cancelManualReaderTurn();
@@ -1428,6 +1442,7 @@ struct ReadBookPage {
   }
 
   onPageHide(): void {
+    this.readerBrightnessSession.deactivate();
     this.captureReaderContinuousAnchor();
     this.cancelReaderContinuousLayouts(false);
     this.cancelManualReaderTurn();
@@ -3515,6 +3530,12 @@ struct ReadBookPage {
         }
       }
 
+      if (this.showMenu && !this.showToc && !this.showSettings && this.chapters.length > 0 &&
+        this.readerUseBrightnessQuickAction && !this.showLayoutElementSettings &&
+        !this.showReaderActionMenu && this.readerBrightnessControlHeight() >= 132) {
+        this.readerBrightnessQuickControl()
+      }
+
       if (this.showToc) {
         this.readerFloatingTocPanel()
         if (this.supportsReaderImmersiveMaterial()) {
@@ -4823,6 +4844,41 @@ struct ReadBookPage {
     } else {
       this.loadContent();
     }
+  }
+
+  readerBrightnessControlHeight(): number {
+    const viewportHeight = this.pageViewHeight > 0 ? this.pageViewHeight : 720;
+    const top = this.getTopControlSafePadding() + 68;
+    // Keep clear of both the bottom panel and the quick-action row, including landscape/split-screen.
+    const bottom = viewportHeight - this.readerBottomMenuOverlayHeight() - 74;
+    return Math.max(0, Math.min(280, bottom - top));
+  }
+
+  readerBrightnessControlTop(): number {
+    const viewportHeight = this.pageViewHeight > 0 ? this.pageViewHeight : 720;
+    const top = this.getTopControlSafePadding() + 68;
+    const bottom = viewportHeight - this.readerBottomMenuOverlayHeight() - 74;
+    return top + Math.max(0, (bottom - top - this.readerBrightnessControlHeight()) / 2);
+  }
+
+  @Builder
+  readerBrightnessQuickControl() {
+    ReaderBrightnessControl({
+      value: this.readerBrightness, lastManualValue: this.readerLastManualBrightness,
+      panelHeight: this.readerBrightnessControlHeight(), ready: this.readerBrightnessReady,
+      dark: this.isReaderThemeDark(), panelColor: this.readerPanelColor(),
+      textColor: this.readerPanelTextColor(), subTextColor: this.readerPanelSubTextColor(),
+      accentColor: this.accentColor(), trackColor: this.readerChapterTrackColor(),
+      thumbColor: this.readerSolidPanelColor(),
+      onChange: (value: number, persist: boolean): void => {
+        this.readerBrightness = value;
+        if (value >= 0) this.readerLastManualBrightness = value;
+        this.readerBrightnessSession.set(value, persist);
+      }
+    })
+      .position({ x: Math.max(0, (this.pageViewWidth > 0 ? this.pageViewWidth : 360) -
+        ReaderBrightnessControl.WIDTH - 12),
+        y: this.readerBrightnessControlTop() })
   }
 
   @Builder
@@ -7590,6 +7646,7 @@ struct ReadBookPage {
     this.readerUseTtsQuickAction = settings.useTtsQuickAction;
     this.readerUseAutoScrollQuickAction = settings.useAutoScrollQuickAction;
     this.readerUseChapterQuickJump = settings.useChapterQuickJump;
+    this.readerUseBrightnessQuickAction = settings.useBrightnessQuickAction;
     this.readerQuickJumpMode = ReaderQuickJumpModel.normalizeMode(settings.quickJumpMode);
     this.readerQuickBookmarkEnabled = settings.quickBookmarkEnabled;
     this.readerHeaderEnabled = settings.readerHeaderEnabled;
