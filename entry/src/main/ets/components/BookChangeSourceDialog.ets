@@ -1,11 +1,10 @@
-import { Book, SearchBook, BookFieldSanitizer, BookTypeSupport } from '@legado/sourceengine';
+import { Book, SearchBook, BookTypeSupport } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { SearchCoordinator, SearchProgress } from '../core/book/SearchCoordinator';
-import { WebBookService } from '../core/book/WebBookService';
+import { BookSourceSwitchTask } from '../core/book/BookSourceSwitchTask';
 import { ChangeSourceResultCache } from '../utils/ChangeSourceResultCache';
 import { SearchExploreSettingsStore } from '../utils/SearchExploreSettingsStore';
 import { SearchBookShelfHelper } from '../utils/SearchBookShelfHelper';
-import { CoverUrlNormalizer } from '../utils/CoverUrlNormalizer';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -13,7 +12,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 
 /**
  * 换源面板（书架长按"换源"与书籍详情页"换源"共用）。
- * 打开后先读历史结果，再按书名全词匹配搜索其它书源；选中结果后拉取详情与目录并切换。
+ * 优先复用候选历史；首次打开或主动刷新时搜索。加载可取消，事务由独立任务完成。
  * 结果只保留与原书同类型的（小说换小说、漫画换漫画、有声换有声、视频换视频）。
  * 目标书在书库中已存在时提交换源并保留阅读进度与临时书标记；
  * 仅存在于搜索结果（未入库）时只把结果交给宿主页面，不落库。
@@ -25,7 +24,7 @@ export struct BookChangeSourceDialog {
   @StorageLink('appLightButtonColor') appLightButtonColor: string = '#007DFF';
   @StorageLink('appDarkButtonColor') appDarkButtonColor: string = '#3F8CFF';
   targetBook: Book | null = null;
-  onSwitched: (book: Book) => void = (_book: Book): void => {
+  onSwitched: (book: Book, previousUrl: string) => void = (_book: Book): void => {
   };
   onClosed: () => void = (): void => {
   };
@@ -38,6 +37,12 @@ export struct BookChangeSourceDialog {
   @State status: string = '';
   @State searching: boolean = false;
   @State switching: boolean = false;
+  @State selectedResultKey: string = '';
+  private cacheKey: string = '';
+  private bookRevision: number = 0;
+  private cacheContext: Context | null = null;
+  private activeSwitch: BookSourceSwitchTask | null = null;
+  private closed: boolean = false;
   private sessionId: number = 0;
   private activeCoordinator: SearchCoordinator | null = null;
 
@@ -50,13 +55,15 @@ export struct BookChangeSourceDialog {
   }
 
   aboutToDisappear(): void {
-    this.sessionId++;
-    this.cancelActiveSearch();
+    this.closeWork();
   }
 
   startSession(): void {
     if (!this.targetBook) return;
     this.cancelActiveSearch();
+    this.closed = false;
+    this.cacheContext = getContext(this);
+    this.bookRevision = BookSourceSwitchTask.revisionOf(this.targetBook);
     this.results = [];
     this.status = '正在读取历史换源结果...';
     this.searching = true;
@@ -69,12 +76,20 @@ export struct BookChangeSourceDialog {
     const book = this.targetBook;
     if (!book) return;
     try {
-      const cached = await ChangeSourceResultCache.load(getContext(this), book.name, book.author);
+      const cached = await ChangeSourceResultCache.load(getContext(this), book);
       if (!this.isSessionActive(sessionId)) return;
-      this.results = this.filterResults(cached, book.bookUrl, book.origin);
-      if (this.results.length > 0) {
+      this.cacheKey = cached.key;
+      const db = AppDatabase.getInstance();
+      const available = await Promise.all(cached.results.map(async (item: SearchBook): Promise<boolean> => {
+        const source = await db.getBookSource(item.origin);
+        return !!source && source.enabled;
+      }));
+      if (!this.isSessionActive(sessionId)) return;
+      this.results = this.filterResults(cached.results.filter((_item: SearchBook, index: number): boolean => available[index]), book.bookUrl, book.origin);
+      if (this.results.length > 0 || cached.searched) {
         this.searching = false;
-        this.status = `已显示历史结果，共 ${this.results.length} 个；点击刷新可重新搜索`;
+        const age = cached.updatedAt > 0 ? new Date(cached.updatedAt).toLocaleString() : '此前';
+        this.status = `历史结果 ${this.results.length} 个 · ${age}；点击刷新可重新搜索`;
         return;
       }
     } catch (e) {
@@ -94,17 +109,24 @@ export struct BookChangeSourceDialog {
     this.search(sessionId);
   }
 
-  requestClose(): void {
-    if (this.switching) return;
+  private closeWork(): void {
+    if (this.closed) return;
+    this.closed = true;
     this.sessionId++;
     this.cancelActiveSearch();
+    this.activeSwitch?.cancel();
+    if (this.cacheContext) ChangeSourceResultCache.flush(this.cacheContext);
+  }
+
+  requestClose(): void {
+    this.closeWork();
     this.onClosed();
   }
 
   async search(sessionId: number): Promise<void> {
     const target = this.targetBook;
     if (!target) return;
-    const cacheBookName = target.name;
+    const context = this.cacheContext || getContext(this);
     const coordinator = new SearchCoordinator(SearchExploreSettingsStore.getSearchConcurrency());
     this.activeCoordinator = coordinator;
     this.searching = true;
@@ -112,11 +134,13 @@ export struct BookChangeSourceDialog {
     try {
       const results = await coordinator.search(target.name, (progress: SearchProgress) => {
         if (!this.isSessionActive(sessionId)) return;
+        const found = progress.finished ? progress.results : (progress.deltaResults || []);
+        if (found.length > 0 || progress.finished) ChangeSourceResultCache.merge(context, this.cacheKey, found);
         if (progress.finished) {
-          this.results = this.filterResults(progress.results, target.bookUrl, target.origin);
+          this.results = this.filterResults(progress.results.concat(this.results), target.bookUrl, target.origin);
         } else if (progress.deltaResults && progress.deltaResults.length > 0) {
           this.results = this.filterResults(
-            this.results.concat(progress.deltaResults), target.bookUrl, target.origin);
+            progress.deltaResults.concat(this.results), target.bookUrl, target.origin);
         }
         this.status = progress.status;
         if (progress.finished) this.searching = false;
@@ -131,14 +155,11 @@ export struct BookChangeSourceDialog {
         maxCandidatesPerSource: 32
       });
       if (!this.isSessionActive(sessionId)) return;
-      this.results = this.filterResults(results, target.bookUrl, target.origin);
+      this.results = this.filterResults(results.concat(this.results), target.bookUrl, target.origin);
       this.status = this.results.length > 0 ?
         `搜索完成，找到 ${this.results.length} 个可切换书源` : '搜索完成，未找到可切换书源';
-      try {
-        await ChangeSourceResultCache.save(getContext(this), cacheBookName, results, target.author);
-      } catch (e) {
-        console.warn('保存换源结果失败:', e);
-      }
+      ChangeSourceResultCache.merge(context, this.cacheKey, results);
+      ChangeSourceResultCache.flush(context);
     } catch (e) {
       if (!this.isSessionActive(sessionId)) return;
       console.error('搜索换源失败:', e);
@@ -155,59 +176,35 @@ export struct BookChangeSourceDialog {
 
   async switchSource(searchBook: SearchBook): Promise<void> {
     const target = this.targetBook;
-    if (!target || this.switching) return;
+    if (!target || this.switching || this.closed) return;
     this.cancelActiveSearch();
     this.searching = false;
     const sessionId = ++this.sessionId;
     this.switching = true;
-    this.status = '正在切换书源...';
-    if (this.onBeforeSwitch) {
-      await this.onBeforeSwitch();
-    }
-    const oldBookUrl = target.bookUrl;
+    this.selectedResultKey = searchBook.origin + '|' + searchBook.bookUrl;
+    const context = this.cacheContext || getContext(this);
+    ChangeSourceResultCache.merge(context, this.cacheKey, this.results, false);
+    ChangeSourceResultCache.flush(context);
+    const task = new BookSourceSwitchTask(this.markReadOnSwitch);
+    this.activeSwitch = task;
+    const deliver = this.onSwitched;
     try {
-      const db = AppDatabase.getInstance();
-      await db.initWithContext(getContext(this));
-      const oldBook = await db.getBook(oldBookUrl);
-      const source = searchBook.origin ? await db.getBookSource(searchBook.origin) : null;
-      if (!source) {
-        HdsFeedback.showToast('书源不存在或已删除');
+      const fullBook = await task.run(context, this.cacheKey, target, searchBook, this.onBeforeSwitch,
+        (label: string): void => { if (this.isSessionActive(sessionId)) this.status = label; }, deliver, this.bookRevision);
+      HdsFeedback.showToast('已切换至 ' + (fullBook.originName || searchBook.originName));
+      if (this.isSessionActive(sessionId)) this.requestClose();
+    } catch (error) {
+      if (!this.isSessionActive(sessionId)) {
+        if (task.isCommitting()) HdsFeedback.showToast('换源保存失败，已保留原书源');
         return;
       }
-      if (!this.isSessionActive(sessionId)) return;
-
-      const nextBook = this.buildSourceBook(searchBook, oldBook || target);
-      const service = new WebBookService();
-      const fullBook = await service.getBookInfo(source, nextBook);
-      if (!this.isSessionActive(sessionId)) return;
-      this.preserveSourceBookState(fullBook, nextBook, oldBook || target);
-      const chapters = await service.getChapterList(source, fullBook, 0, false);
-      if (!this.isSessionActive(sessionId)) return;
-      if (chapters.length === 0) throw new Error('新书源目录为空，已保留原书源');
-      fullBook.totalChapterNum = chapters.length;
-      const safeIndex = Math.max(0, Math.min((oldBook || target).durChapterIndex, chapters.length - 1));
-      fullBook.durChapterIndex = safeIndex;
-      fullBook.durChapterTitle = chapters[safeIndex].title;
-      fullBook.latestChapterTitle = chapters[chapters.length - 1].title;
-
-      // 只有书库中已存在该书的持久化行时才提交换源；纯搜索结果只把新源书籍交还宿主展示。
-      if (oldBook) {
-        await db.commitBookSourceSwitch(oldBookUrl, fullBook, chapters);
-        AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-      }
-
-      HdsFeedback.showToast(`已切换至 ${fullBook.originName || searchBook.originName}`);
-      this.sessionId++;
-      this.cancelActiveSearch();
-      this.onSwitched(fullBook);
-      this.onClosed();
-    } catch (e) {
-      if (!this.isSessionActive(sessionId)) return;
-      console.error('切换书源失败:', e);
-      HdsFeedback.showToast('切换书源失败');
+      this.status = (error as Error).message || '切换书源失败，已保留原书源';
+      HdsFeedback.showToast(this.status);
     } finally {
-      if (sessionId === this.sessionId) {
+      if (this.activeSwitch === task) this.activeSwitch = null;
+      if (this.isSessionActive(sessionId)) {
         this.switching = false;
+        this.selectedResultKey = '';
       }
     }
   }
@@ -230,7 +227,7 @@ export struct BookChangeSourceDialog {
     const category = BookTypeSupport.mediaCategoryOf(this.targetBook);
     for (const result of results) {
       if (!result.bookUrl || SearchBookShelfHelper.isNavigationResult(result) ||
-        (result.bookUrl === currentBookUrl && result.origin === currentOrigin) ||
+        (result.origin === currentOrigin) ||
         BookTypeSupport.mediaCategoryOf(result) !== category) continue;
       const key = `${result.origin || ''}\n${result.bookUrl}`;
       if (seen.has(key)) continue;
@@ -238,70 +235,6 @@ export struct BookChangeSourceDialog {
       filtered.push(result);
     }
     return filtered;
-  }
-
-  buildSourceBook(searchBook: SearchBook, oldBook: Book): Book {
-    const book = new Book();
-    book.bookUrl = searchBook.bookUrl;
-    book.tocUrl = searchBook.tocUrl;
-    book.origin = searchBook.origin;
-    book.originName = searchBook.originName;
-    book.name = searchBook.name || oldBook.name;
-    book.author = searchBook.author || oldBook.author;
-    book.kind = BookFieldSanitizer.prefer(searchBook.kind, oldBook.kind);
-    book.status = BookFieldSanitizer.prefer(searchBook.status, oldBook.status);
-    book.coverUrl = CoverUrlNormalizer.prefer(searchBook.coverUrl, oldBook.coverUrl);
-    book.customCoverUrl = oldBook.customCoverUrl;
-    book.intro = BookFieldSanitizer.prefer(searchBook.intro, oldBook.intro);
-    book.customIntro = oldBook.customIntro;
-    book.latestChapterTitle = BookFieldSanitizer.prefer(searchBook.latestChapterTitle, oldBook.latestChapterTitle);
-    book.updateTime = BookFieldSanitizer.prefer(searchBook.updateTime, oldBook.updateTime);
-    book.wordCount = BookFieldSanitizer.prefer(searchBook.wordCount, oldBook.wordCount);
-    book.variable = searchBook.variable || '';
-    book.group = oldBook.group;
-    book.isPinned = oldBook.isPinned;
-    book.order = oldBook.order;
-    book.originOrder = oldBook.originOrder;
-    book.readConfig = oldBook.readConfig;
-    book.canUpdate = oldBook.canUpdate;
-    book.type = oldBook.type;
-    book.durChapterIndex = oldBook.durChapterIndex;
-    book.durChapterPos = oldBook.durChapterPos;
-    book.durChapterTitle = oldBook.durChapterTitle;
-    book.durChapterTime = oldBook.durChapterTime;
-    book.pendingAddToShelf = oldBook.pendingAddToShelf;
-    book.isPrivate = oldBook.isPrivate;
-    if (this.markReadOnSwitch) {
-      book.putVariable('readStarted', '1');
-      book.putVariable('lastReadTime', `${Date.now()}`);
-    }
-    return book;
-  }
-
-  preserveSourceBookState(target: Book, source: Book, oldBook: Book): void {
-    target.origin = source.origin;
-    target.originName = source.originName;
-    target.coverUrl = CoverUrlNormalizer.prefer(source.coverUrl, target.coverUrl);
-    target.group = oldBook.group;
-    target.isPinned = oldBook.isPinned;
-    target.confirmedChapterUpdateTime = oldBook.confirmedChapterUpdateTime;
-    target.order = oldBook.order;
-    target.originOrder = oldBook.originOrder;
-    target.customCoverUrl = oldBook.customCoverUrl;
-    target.customIntro = oldBook.customIntro;
-    target.readConfig = oldBook.readConfig;
-    target.canUpdate = oldBook.canUpdate;
-    target.durChapterIndex = oldBook.durChapterIndex;
-    target.durChapterPos = oldBook.durChapterPos;
-    target.durChapterTitle = oldBook.durChapterTitle;
-    target.durChapterTime = oldBook.durChapterTime;
-    target.syncTime = oldBook.syncTime;
-    target.pendingAddToShelf = oldBook.pendingAddToShelf;
-    target.isPrivate = oldBook.isPrivate;
-    if (this.markReadOnSwitch) {
-      target.putVariable('readStarted', '1');
-      target.putVariable('lastReadTime', `${Date.now()}`);
-    }
   }
 
   build() {
@@ -321,12 +254,7 @@ export struct BookChangeSourceDialog {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
-        if (this.searching) {
-          LoadingProgress()
-            .width(26)
-            .height(26)
-            .margin({ right: AppSpacing.LG })
-        } else {
+        if (!this.searching) {
           SymbolGlyph($r('sys.symbol.arrow_clockwise'))
             .fontSize(21)
             .fontColor([this.primaryTextColor()])
@@ -396,7 +324,7 @@ export struct BookChangeSourceDialog {
                 .layoutWeight(1)
                 .alignItems(HorizontalAlign.Start)
 
-                Button(this.switching ? '切换中' : '切换')
+                Button(this.selectedResultKey === (book.origin + '|' + book.bookUrl) ? '切换中' : '切换')
                   .width(68)
                   .height(32)
                   .fontSize(AppFontSize.BODY)

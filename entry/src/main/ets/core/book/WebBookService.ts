@@ -23,10 +23,23 @@ class ContentPageData {
 export class WebBookService {
   static readonly GENERIC_TOC_FALLBACK_KEY: string = '__genericTocFallback';
   private http: HttpClient;
-  private activeContentRuleOwners: Set<string> = new Set();
+  private activeRuleOwners: Set<string> = new Set();
 
-  constructor() {
+  private preparationCancelled: (() => boolean) | null;
+  private requireCompleteCatalog: boolean;
+
+  constructor(preparationCancelled: (() => boolean) | null = null, requireCompleteCatalog: boolean = false) {
     this.http = new HttpClient(10000);
+    this.preparationCancelled = preparationCancelled;
+    this.requireCompleteCatalog = requireCompleteCatalog;
+  }
+
+  private checkPreparation(): void {
+    if (this.preparationCancelled && this.preparationCancelled()) throw new Error('已取消换源');
+  }
+
+  private isPreparationCancelled(): boolean {
+    return this.preparationCancelled ? this.preparationCancelled() : false;
   }
 
   /** Repair known resources without refetching the chapter; legacy hash-only references fall back in the engine. */
@@ -47,7 +60,7 @@ export class WebBookService {
 
   cancelPendingRequests(): void {
     this.http.cancelAll();
-    for (const ownerId of this.activeContentRuleOwners) {
+    for (const ownerId of this.activeRuleOwners) {
       RuleExecutionService.get().cancelOwner(ownerId);
     }
   }
@@ -79,10 +92,11 @@ export class WebBookService {
 
   async getBookInfo(source: BookSource, book: Book,
     debugContext: BookSourceDebugContext | null = null): Promise<Book> {
+    this.checkPreparation();
     if (NativeSourceService.isNative(source)) {
       // 原生书源不经过脚本引擎，也不套用兼容书源的各类兜底修补。
       try {
-        return await NativeSourceService.getBookInfo(source, this.http, book, debugContext);
+        return await NativeSourceService.getBookInfo(source, this.http, book, debugContext, (): boolean => this.isPreparationCancelled());
       } catch (e) {
         console.warn('[WS] native book info failed:', source.bookSourceName, (e as Error).message);
         SourceEngineHost.setError(source, (e as Error).message || '详情解析失败');
@@ -97,9 +111,10 @@ export class WebBookService {
       return await BookSourceDataUrlSupport.getBookInfo(this.http, source, book);
     }
     console.log('[WS] getBookInfo');
-    const au = new AnalyzeUrl(source, this.http);
+    const au = new AnalyzeUrl(source, this.http).setCancelCheck((): boolean => this.isPreparationCancelled());
     const resp = EncodedSourceUrl.canHandle(book.bookUrl) ?
       await this.fetchEncodedDataUrl(book.bookUrl, source) : await au.fetch(book.bookUrl, undefined, debugContext);
+    this.checkPreparation();
     console.log('[WS] getBookInfo resp:', resp.success, 'len:', resp.body.length);
     if (this.requestVerificationIfNeeded(source, book.bookUrl, resp.body, resp.statusCode, source.bookInfoRule.init,
       resp.error || '')) {
@@ -159,13 +174,17 @@ export class WebBookService {
     fieldRequest.debugContext = debugContext;
     let fieldValues: Record<string, string> = {};
     try {
+      this.checkPreparation();
+      this.activeRuleOwners.add(fieldRequest.ownerId);
       const batch = await RuleExecutionService.get().executeBatch(fieldRequest);
+      this.checkPreparation();
       if (batch.errors.length > 0) {
         console.warn('[WS] book info field errors:', source.bookSourceName, batch.errors.join('; '));
       }
       if (batch.values.length > 0) fieldValues = batch.values[0];
       if (batch.contextValues.length > 0) ctx.loadFromJson(batch.contextValues[0]);
     } finally {
+      this.activeRuleOwners.delete(fieldRequest.ownerId);
       RuleExecutionService.get().clearOwner(fieldRequest.ownerId);
     }
     book.name = BookFieldSanitizer.prefer(fieldValues['name'] || '', book.name);
@@ -311,11 +330,12 @@ export class WebBookService {
   async getChapterList(source: BookSource, book: Book, maxChapters: number = 0,
     allowGenericFallback: boolean = true,
     debugContext: BookSourceDebugContext | null = null): Promise<BookChapter[]> {
+    this.checkPreparation();
     SourceEngineHost.setError(source, '');
     if (NativeSourceService.isNative(source)) {
       try {
         const nativeChapters = await NativeSourceService.getChapterList(source, this.http, book,
-          maxChapters > 0 ? Math.max(1, Math.round(maxChapters)) : 0, debugContext);
+          maxChapters > 0 ? Math.max(1, Math.round(maxChapters)) : 0, debugContext, (): boolean => this.isPreparationCancelled(), this.requireCompleteCatalog);
         if (nativeChapters.length === 0) {
           SourceEngineHost.setError(source, '目录规则没有匹配到章节');
         }
@@ -334,7 +354,7 @@ export class WebBookService {
     }
     console.log('[WS] getChapterList');
     const tocUrl = this.resolveTocUrl(source, book);
-    const au = new AnalyzeUrl(source, this.http);
+    const au = new AnalyzeUrl(source, this.http).setCancelCheck((): boolean => this.isPreparationCancelled());
     let resp = EncodedSourceUrl.canHandle(tocUrl) ?
       await this.fetchEncodedDataUrl(tocUrl, source) : await au.fetch(tocUrl, undefined, debugContext);
     if (!resp.success || !resp.body) {
@@ -419,13 +439,24 @@ export class WebBookService {
       await this.fetchEncodedDataUrl(pageUrl, source) : await au.fetch(pageUrl, undefined, debugContext);
 
     for (let page = 0; page < 1000; page++) {
-      if (!currentResp.success || !currentResp.body) break;
+      this.checkPreparation();
+      if (!currentResp.success || !currentResp.body) {
+        if (this.requireCompleteCatalog) throw new Error('目录分页加载失败，已保留原书源');
+        break;
+      }
       const pageKey = this.urlWithoutFragment(currentResp.url || currentUrl);
-      if (seenPageUrls.has(pageKey)) break;
+      if (seenPageUrls.has(pageKey)) {
+        if (this.requireCompleteCatalog) throw new Error('目录分页循环，已保留原书源');
+        break;
+      }
       seenPageUrls.add(pageKey);
       if (chapterLimit > 0 && chapters.length >= chapterLimit) break;
       const pageChapters = await parsePage(currentResp, currentUrl, page === 0);
-      if (pageChapters === null) break;
+      this.checkPreparation();
+      if (pageChapters === null) {
+        if (this.requireCompleteCatalog) throw new Error('目录需要网页验证，已保留原书源');
+        break;
+      }
       if (page === 0 && !tocRule.nextTocUrl && hasStageRule && pageChapters.length > 0) {
         // A script-built single-page catalog is returned exactly as the script produced it.
         const lastError = SourceEngineHost.getError(source) || '';
@@ -445,7 +476,11 @@ export class WebBookService {
         if (!nextKey || seenPageUrls.has(nextKey) || pendingUrls.indexOf(nextUrl) >= 0) continue;
         pendingUrls.push(nextUrl);
       }
+      this.checkPreparation();
       if (pendingUrls.length === 0) break;
+      if (this.requireCompleteCatalog && (page === 999 || pendingUrls.length > 1000 - seenPageUrls.size)) {
+        throw new Error('目录分页超过限制，已保留原书源');
+      }
       if (pendingUrls.length === 1) {
         currentUrl = pendingUrls[0];
         currentResp = await fetchPage(currentUrl);
@@ -456,6 +491,7 @@ export class WebBookService {
       const remainingPages = pendingUrls.slice(0, Math.max(0, 1000 - seenPageUrls.size));
       let stopped = false;
       for (let offset = 0; offset < remainingPages.length && !stopped; offset += WebBookService.TOC_PAGE_FETCH_BATCH) {
+        this.checkPreparation();
         const batchUrls = remainingPages.slice(offset, offset + WebBookService.TOC_PAGE_FETCH_BATCH);
         const batchResponses = await Promise.all(batchUrls.map((url: string): Promise<HttpResponse | null> =>
           fetchPage(url).catch((error: Error): null => {
@@ -465,9 +501,15 @@ export class WebBookService {
         for (let index = 0; index < batchUrls.length; index++) {
           const listedResp = batchResponses[index];
           seenPageUrls.add(this.urlWithoutFragment(batchUrls[index]));
-          if (!listedResp || !listedResp.success || !listedResp.body) continue;
+          this.checkPreparation();
+          if (!listedResp || !listedResp.success || !listedResp.body) {
+            if (this.requireCompleteCatalog) throw new Error('目录分页加载失败，已保留原书源');
+            continue;
+          }
           const listedChapters = await parsePage(listedResp, batchUrls[index], false);
+          this.checkPreparation();
           if (listedChapters === null) {
+            if (this.requireCompleteCatalog) throw new Error('目录需要网页验证，已保留原书源');
             stopped = true;
             break;
           }
@@ -577,7 +619,10 @@ export class WebBookService {
     let fieldValues: Record<string, string>[] = [];
     let contextValues: string[] = [];
     try {
+      this.checkPreparation();
+      this.activeRuleOwners.add(fieldRequest.ownerId);
       const batch = await RuleExecutionService.get().executeBatch(fieldRequest);
+      this.checkPreparation();
       fieldValues = batch.values;
       contextValues = batch.contextValues;
       console.info(`[WS] toc fields items=${items.length} elapsed=${batch.elapsedMs}ms yields=${batch.yieldedCount}`);
@@ -586,13 +631,16 @@ export class WebBookService {
         // A failed chapterUrl rule silently empties every chapter; surface the cause on the
         // catalog page instead of a generic 暂无目录.
         SourceEngineHost.setError(source, `目录字段解析失败：${batch.errors[0]}`);
+        if (this.requireCompleteCatalog) throw new Error('目录字段解析失败：' + batch.errors[0]);
       }
     } finally {
+      this.activeRuleOwners.delete(fieldRequest.ownerId);
       RuleExecutionService.get().clearOwner(fieldRequest.ownerId);
     }
     const parsingSlice = CooperativeScheduler.createTimeSlice();
     for (let i = 0; i < items.length; i++) {
       if (i > 0) await parsingSlice.checkpoint();
+      this.checkPreparation();
       const values = i < fieldValues.length ? fieldValues[i] : {};
       const chap = new BookChapter();
       chap.title = this.cleanChapterTitle(values['chapterName'] || `第${startIndex + i + 1}章`);
@@ -760,7 +808,7 @@ export class WebBookService {
     }
     console.log('[WS] getContent');
     if (this.contentRequestCanceled(shouldCancel)) return '';
-    const au = new AnalyzeUrl(source, this.http);
+    const au = new AnalyzeUrl(source, this.http).setCancelCheck((): boolean => this.isPreparationCancelled());
     let resp = EncodedSourceUrl.canHandle(chapter.url) ?
       await this.fetchEncodedDataUrl(chapter.url, source) : await au.fetch(chapter.url, undefined, debugContext);
     if (this.contentRequestCanceled(shouldCancel)) return '';
@@ -862,9 +910,11 @@ export class WebBookService {
     fieldRequest.timeoutMs = 20000;
     fieldRequest.debugContext = debugContext;
     let values: Record<string, string> = {};
-    this.activeContentRuleOwners.add(fieldRequest.ownerId);
     try {
+      this.checkPreparation();
+      this.activeRuleOwners.add(fieldRequest.ownerId);
       const batch = await RuleExecutionService.get().executeBatch(fieldRequest);
+      this.checkPreparation();
       if (this.contentRequestCanceled(shouldCancel)) return data;
       if (batch.values.length > 0) values = batch.values[0];
       if (batch.contextValues.length > 0) ctx.loadFromJson(batch.contextValues[0]);
@@ -872,7 +922,7 @@ export class WebBookService {
         console.warn('[WS] content field errors:', source.bookSourceName, batch.errors.join('; '));
       }
     } finally {
-      this.activeContentRuleOwners.delete(fieldRequest.ownerId);
+      this.activeRuleOwners.delete(fieldRequest.ownerId);
       RuleExecutionService.get().clearOwner(fieldRequest.ownerId);
     }
     data.nextUrl = values['nextContentUrl'] || '';
@@ -941,7 +991,7 @@ export class WebBookService {
     const requestUrl = urlAnalyze.getString(plan.urlRule, true);
     if (!requestUrl || !/^https?:\/\//.test(requestUrl)) return '';
 
-    const response = await new AnalyzeUrl(source, this.http).fetch(requestUrl);
+    const response = await new AnalyzeUrl(source, this.http).setCancelCheck((): boolean => this.isPreparationCancelled()).fetch(requestUrl);
     if (!response.success || !response.body) return '';
 
     return AjaxRuleCompat.applyReplaceChain(response.body, plan.jsCode);
@@ -1816,6 +1866,7 @@ export class WebBookService {
   private async runStageRule(source: BookSource, book: Book, rawRule: string, content: string,
     baseUrl: string, stage: string, chapter: BookChapter | null = null,
     variables: Record<string, string> = {}, debugContext: BookSourceDebugContext | null = null): Promise<string> {
+    this.checkPreparation();
     const code = this.stageRuleCode(rawRule);
     if (!code) return '';
     const decision = BookSourceRuntimeRouter.decide(stage, `${source.jsLib || ''}\n${code}`);
@@ -1828,7 +1879,9 @@ export class WebBookService {
       SourceEngineHost.setError(source, `${stage} 阶段脚本运行环境未就绪`);
       return '';
     }
+    this.checkPreparation();
     const request = new StageWebRuntimeRequest();
+    request.ownerId = stage + '_switch_stage_' + Date.now() + '_' + book.bookUrl;
     request.applyStageBudget(stage);
     request.source = source;
     request.book = book;
@@ -1841,7 +1894,9 @@ export class WebBookService {
     request.variables = { ...variables, ...(chapter ? EncodedSourceUrl.scalarVariables(chapter.url) : {}) };
     request.debugContext = debugContext;
     try {
+      this.activeRuleOwners.add(request.ownerId);
       const result = await runtime.execute(request);
+      this.checkPreparation();
       let value = result.value || '';
       const trailingRule = this.stageTrailingRule(rawRule);
       if (value && trailingRule) {
@@ -1855,7 +1910,12 @@ export class WebBookService {
       console.warn('[WS] stage runtime failed:', source.bookSourceName, stage, error);
       const message = error instanceof Error ? error.message : String(error || '');
       SourceEngineHost.setError(source, `${stage} 阶段：${message || '脚本执行失败'}`);
+      this.checkPreparation();
+      if (this.requireCompleteCatalog) throw error;
       return '';
+    } finally {
+      this.activeRuleOwners.delete(request.ownerId);
+      RuleExecutionService.get().clearOwner(request.ownerId);
     }
   }
 
@@ -1878,13 +1938,17 @@ export class WebBookService {
     request.timeoutMs = 15000;
     request.debugContext = debugContext;
     try {
+      this.checkPreparation();
+      this.activeRuleOwners.add(request.ownerId);
       const batch = await RuleExecutionService.get().executeBatch(request);
+      this.checkPreparation();
       if (batch.contextValues.length > 0) ctx.loadFromJson(batch.contextValues[0]);
       if (batch.errors.length > 0) {
         console.warn('[WS] single field error:', source.bookSourceName, stage, batch.errors.join('; '));
       }
       return batch.values.length > 0 ? batch.values[0]['value'] || '' : '';
     } finally {
+      this.activeRuleOwners.delete(request.ownerId);
       RuleExecutionService.get().clearOwner(request.ownerId);
     }
   }
@@ -1913,10 +1977,14 @@ export class WebBookService {
     request.debugContext = debugContext;
     const urls: string[] = [];
     try {
+      this.checkPreparation();
+      this.activeRuleOwners.add(request.ownerId);
       const batch = await RuleExecutionService.get().executeBatch(request);
+      this.checkPreparation();
       if (batch.contextValues.length > 0) ctx.loadFromJson(batch.contextValues[0]);
       if (batch.errors.length > 0) {
         console.warn('[WS] toc next urls error:', source.bookSourceName, batch.errors.join('; '));
+        if (this.requireCompleteCatalog) throw new Error('目录分页规则失败：' + batch.errors[0]);
       }
       const raw = batch.values.length > 0 ? batch.values[0]['value'] || '' : '';
       const listedValues = this.parseStringListValue(raw);
@@ -1931,7 +1999,10 @@ export class WebBookService {
       }
     } catch (error) {
       console.warn('[WS] toc next urls failed:', source.bookSourceName, (error as Error).message);
+      this.checkPreparation();
+      if (this.requireCompleteCatalog) throw error;
     } finally {
+      this.activeRuleOwners.delete(request.ownerId);
       RuleExecutionService.get().clearOwner(request.ownerId);
     }
     if (urls.length > 0) return urls;
@@ -2041,18 +2112,24 @@ export class WebBookService {
     fieldRequest.debugContext = debugContext;
     let parsedFields: Record<string, string>[] = [];
     try {
+      this.checkPreparation();
+      this.activeRuleOwners.add(fieldRequest.ownerId);
       const batch = await RuleExecutionService.get().executeBatch(fieldRequest);
+      this.checkPreparation();
       parsedFields = batch.values;
       if (batch.contextValues.length > 0) ctx.loadFromJson(batch.contextValues[batch.contextValues.length - 1]);
       if (batch.errors.length > 0) {
         console.warn('[WS] stage toc field errors:', source.bookSourceName, batch.errors.join('; '));
+        if (this.requireCompleteCatalog) throw new Error('目录字段解析失败：' + batch.errors[0]);
       }
     } finally {
+      this.activeRuleOwners.delete(fieldRequest.ownerId);
       RuleExecutionService.get().clearOwner(fieldRequest.ownerId);
     }
     const parsingSlice = CooperativeScheduler.createTimeSlice();
     for (let index = 0; index < records.length; index++) {
       if (index > 0) await parsingSlice.checkpoint();
+      this.checkPreparation();
       const record = records[index];
       const fields = index < parsedFields.length ? parsedFields[index] : {};
       const isVolume = record['isVolume'] === true || String(record['isVolume'] || '') === 'true';
@@ -2108,7 +2185,7 @@ export class WebBookService {
       // this value to the content script as bytes; mirror that contract without interpreting it.
       content = this.textToHex(virtualChapterPayload);
     } else {
-      const response = await new AnalyzeUrl(source, this.http).fetch(chapter.url, undefined, debugContext);
+      const response = await new AnalyzeUrl(source, this.http).setCancelCheck((): boolean => this.isPreparationCancelled()).fetch(chapter.url, undefined, debugContext);
       if (!response.success || !response.body) return '';
       content = response.body;
       baseUrl = BookUrlResolver.effectiveBase(response, chapter.url, book.bookUrl || source.bookSourceUrl);
@@ -2123,7 +2200,7 @@ export class WebBookService {
   }
 
   private resolvedAudioChapterUrl(source: BookSource, book: Book, chapter: BookChapter): string {
-    const analyzer = new AnalyzeUrl(source, this.http);
+    const analyzer = new AnalyzeUrl(source, this.http).setCancelCheck((): boolean => this.isPreparationCancelled());
     const config = analyzer.parse(chapter.url || '');
     const value = config.url || chapter.url || '';
     // Headers the catalog rule attached to the address (`url,{"headers":{...}}`) belong to the
@@ -2147,7 +2224,7 @@ export class WebBookService {
    * address. The page is loaded by the same isolated WebView transport as `webView: true` requests.
    */
   private async resolveAudioWebJsUrl(source: BookSource, chapter: BookChapter, webJs: string): Promise<string> {
-    const analyzer = new AnalyzeUrl(source, this.http);
+    const analyzer = new AnalyzeUrl(source, this.http).setCancelCheck((): boolean => this.isPreparationCancelled());
     analyzer.parse(chapter.url || '');
     const request = analyzer.buildRequest();
     if (!/^https?:\/\//i.test(request.url || '')) {

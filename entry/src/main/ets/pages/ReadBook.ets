@@ -348,7 +348,6 @@ struct ReadBookPage {
   @State verificationUrl: string = '';
   @State verificationTitle: string = '网页验证';
   @State @Watch('syncChangeSourceDialog') showChangeSourceDialog: boolean = false;
-  @State pendingSwitchedBook: Book | null = null;
   @State contentPages: string[] = [];
   @State currentPageIndex: number = 0;
   @State currentPageText: string = '';
@@ -8563,19 +8562,15 @@ struct ReadBookPage {
       onBeforeSwitch: (): Promise<void> => {
         return this.saveReadingProgress();
       },
-      onSwitched: (fullBook: Book): void => {
-        this.pendingSwitchedBook = fullBook;
+      onSwitched: (fullBook: Book, previousUrl: string): void => {
+        if (this.bookUrl !== previousUrl) return;
+        this.bookUrl = fullBook.bookUrl;
+        this.book = fullBook;
+        this.loadBook();
+        this.loadBookmarks();
       },
       onClosed: (): void => {
         this.showChangeSourceDialog = false;
-        if (this.pendingSwitchedBook) {
-          const fullBook = this.pendingSwitchedBook;
-          this.pendingSwitchedBook = null;
-          this.bookUrl = fullBook.bookUrl;
-          this.book = fullBook;
-          this.loadBook();
-          this.loadBookmarks();
-        }
       }
     })
   }
@@ -8584,7 +8579,8 @@ struct ReadBookPage {
     this.changeSourceDialogSession.sync(this.getUIContext(), this.showChangeSourceDialog, (): void => {
       this.changeSourceDialogContent();
     }, {
-      autoCancel: false,
+      autoCancel: true,
+      onDismiss: (): void => { this.showChangeSourceDialog = false; },
       maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
       warnTag: '显示换源弹窗失败:'
     });

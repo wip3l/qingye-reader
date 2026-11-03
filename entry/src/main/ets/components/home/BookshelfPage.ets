@@ -1505,7 +1505,8 @@ export struct BookshelfPage {
     this.changeSourceDialogSession.sync(this.getUIContext(), this.showShelfChangeSourceDialog, (): void => {
       this.changeSourceDialogContent();
     }, {
-      autoCancel: false,
+      autoCancel: true,
+      onDismiss: (): void => { this.showShelfChangeSourceDialog = false; },
       maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
       warnTag: '显示换源弹窗失败:'
     });

@@ -1,104 +1,161 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
-import { SearchBook } from '@legado/sourceengine';
+import { Book, SearchBook, BookTypeSupport } from '@legado/sourceengine';
 
-class ChangeSourceCacheEntry {
-  schemaVersion: number = 0;
+export class ChangeSourceCacheSnapshot {
   key: string = '';
   updatedAt: number = 0;
+  searched: boolean = false;
   results: SearchBook[] = [];
 }
 
-class ChangeSourceCacheIndexEntry {
-  key: string = '';
-  updatedAt: number = 0;
+class ChangeSourceCacheEntry extends ChangeSourceCacheSnapshot {
+  aliases: string[] = [];
 }
 
+/** Local history independent of source metadata, source variables and sync identity. */
 export class ChangeSourceResultCache {
   private static readonly STORE_NAME: string = 'change_source_result_cache';
-  private static readonly SCHEMA_VERSION: number = 2;
-  private static readonly INDEX_KEY: string = 'entry_index_v2';
-  private static readonly ENTRY_PREFIX: string = 'entry_v2_';
-  private static readonly MAX_BOOKS: number = 30;
-  private static readonly MAX_RESULTS_PER_BOOK: number = 50;
-  private static readonly MAX_AGE_MS: number = 24 * 60 * 60 * 1000;
+  private static entries: ChangeSourceCacheEntry[] = [];
+  private static ready: Promise<void> | null = null;
+  private static loaded: boolean = false;
+  private static writeQueue: Promise<void> = Promise.resolve();
+  private static timer: number = -1;
 
-  static async load(context: Context, bookName: string, bookAuthor: string = ''): Promise<SearchBook[]> {
-    const store = await preferences.getPreferences(context, ChangeSourceResultCache.STORE_NAME);
-    const key = ChangeSourceResultCache.buildBookKey(bookName, bookAuthor);
-    const raw = await store.get(ChangeSourceResultCache.entryPreferenceKey(key), '');
-    const entry = ChangeSourceResultCache.parseEntry(typeof raw === 'string' ? raw : '');
-    if (entry && Date.now() - entry.updatedAt <= ChangeSourceResultCache.MAX_AGE_MS) {
-      return entry.results.map((item: SearchBook) => ChangeSourceResultCache.cloneSearchBook(item));
-    }
-    return [];
+  private static async initialize(context: Context): Promise<void> {
+    if (!ChangeSourceResultCache.ready) ChangeSourceResultCache.ready = ChangeSourceResultCache.read(context);
+    await ChangeSourceResultCache.ready;
   }
 
-  static async save(context: Context, bookName: string, results: SearchBook[], bookAuthor: string = ''): Promise<void> {
-    const key = ChangeSourceResultCache.buildBookKey(bookName, bookAuthor);
-    if (!key) {
-      return;
-    }
-    const entry = new ChangeSourceCacheEntry();
-    entry.schemaVersion = ChangeSourceResultCache.SCHEMA_VERSION;
-    entry.key = key;
-    entry.updatedAt = Date.now();
-    entry.results = results.slice(0, ChangeSourceResultCache.MAX_RESULTS_PER_BOOK)
-      .map((item: SearchBook) => ChangeSourceResultCache.cloneSearchBook(item));
-
+  private static async read(context: Context): Promise<void> {
     const store = await preferences.getPreferences(context, ChangeSourceResultCache.STORE_NAME);
-    await store.put(ChangeSourceResultCache.entryPreferenceKey(key), JSON.stringify(entry));
-    const index = await ChangeSourceResultCache.loadIndex(context);
-    const next = new ChangeSourceCacheIndexEntry();
-    next.key = key;
-    next.updatedAt = entry.updatedAt;
-    const merged = [next].concat(index.filter((item: ChangeSourceCacheIndexEntry): boolean => item.key !== key));
-    const kept = merged.slice(0, ChangeSourceResultCache.MAX_BOOKS);
-    for (const removed of merged.slice(ChangeSourceResultCache.MAX_BOOKS)) {
-      await store.delete(ChangeSourceResultCache.entryPreferenceKey(removed.key));
-    }
-    await store.put(ChangeSourceResultCache.INDEX_KEY, JSON.stringify(kept));
-    await store.flush();
-  }
-
-  private static async loadIndex(context: Context): Promise<ChangeSourceCacheIndexEntry[]> {
-    const store = await preferences.getPreferences(context, ChangeSourceResultCache.STORE_NAME);
-    const raw = await store.get(ChangeSourceResultCache.INDEX_KEY, '');
-    if (typeof raw !== 'string' || !raw) return [];
+    const raw = await store.get('history_v3', '');
     try {
-      const parsed = JSON.parse(raw) as Object;
-      if (!Array.isArray(parsed)) return [];
-      const result: ChangeSourceCacheIndexEntry[] = [];
-      const items: Object[] = parsed as Object[];
-      for (const item of items) {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-        const record = item as Record<string, Object>;
-        const entry = new ChangeSourceCacheIndexEntry();
-        entry.key = String(record['key'] || '');
-        entry.updatedAt = Number(record['updatedAt'] || 0);
-        if (entry.key) result.push(entry);
+      const parsed = JSON.parse(typeof raw === 'string' && raw ? raw : '[]') as ChangeSourceCacheEntry[];
+      if (Array.isArray(parsed)) {
+        ChangeSourceResultCache.entries = parsed.filter((entry: ChangeSourceCacheEntry): boolean => !!entry &&
+          typeof entry.key === 'string' && Array.isArray(entry.aliases) && Array.isArray(entry.results)).slice(0, 30);
       }
-      return result;
-    } catch (_) {
-      return [];
-    }
+    } catch (_) { /* Malformed history must not prevent a new search. */ }
+    ChangeSourceResultCache.loaded = true;
   }
 
-  private static parseEntry(raw: string): ChangeSourceCacheEntry | null {
-    if (!raw) return null;
-    try {
-      const parsed = JSON.parse(raw) as ChangeSourceCacheEntry;
-      if (!parsed || parsed.schemaVersion !== ChangeSourceResultCache.SCHEMA_VERSION ||
-        !Array.isArray(parsed.results)) return null;
-      return parsed;
-    } catch (_) {
-      return null;
+  static async load(context: Context, book: Book): Promise<ChangeSourceCacheSnapshot> {
+    try { await ChangeSourceResultCache.initialize(context); } catch (error) {
+      ChangeSourceResultCache.ready = Promise.resolve();
+      ChangeSourceResultCache.loaded = true;
+      console.warn('读取换源缓存失败:', error);
     }
+    const alias = ChangeSourceResultCache.bookAlias(book);
+    const key = BookTypeSupport.mediaCategoryOf(book) + '\n' + ChangeSourceResultCache.normalize(book.name) + '\n' + ChangeSourceResultCache.normalize(book.author);
+    let entry = ChangeSourceResultCache.entries.find((item: ChangeSourceCacheEntry): boolean => item.aliases.includes(alias));
+    if (!entry) entry = ChangeSourceResultCache.entries.find((item: ChangeSourceCacheEntry): boolean => item.key === key);
+    if (!entry) {
+      entry = new ChangeSourceCacheEntry();
+      entry.key = key;
+      // Migrate v2, including expired candidates. Refreshing v3 is explicit.
+      try {
+        const store = await preferences.getPreferences(context, ChangeSourceResultCache.STORE_NAME);
+        const legacyKey = ChangeSourceResultCache.hashKey(ChangeSourceResultCache.normalize(book.name) + '\n' + ChangeSourceResultCache.normalize(book.author));
+        const raw = await store.get('entry_v2_' + legacyKey, '');
+        const legacy = JSON.parse(typeof raw === 'string' && raw ? raw : '{}') as ChangeSourceCacheSnapshot;
+        if (Array.isArray(legacy.results)) {
+          entry.results = legacy.results;
+          entry.updatedAt = legacy.updatedAt || 0;
+          entry.searched = true;
+        }
+      } catch (_) { /* No usable legacy entry. */ }
+      const existing = ChangeSourceResultCache.entries.find((item: ChangeSourceCacheEntry): boolean => item.key === key || item.aliases.includes(alias));
+      if (existing) entry = existing;
+      else ChangeSourceResultCache.entries.unshift(entry);
+    }
+    ChangeSourceResultCache.bind(entry, book);
+    ChangeSourceResultCache.mergeEntries(entry, [ChangeSourceResultCache.fromBook(book)]);
+    ChangeSourceResultCache.touch(entry);
+    ChangeSourceResultCache.schedule(context);
+    const snapshot = new ChangeSourceCacheSnapshot();
+    snapshot.key = entry.key;
+    snapshot.updatedAt = entry.updatedAt;
+    snapshot.searched = entry.searched;
+    snapshot.results = entry.results.map((item: SearchBook): SearchBook => ChangeSourceResultCache.cloneSearchBook(item));
+    return snapshot;
   }
 
-  private static buildBookKey(bookName: string, bookAuthor: string): string {
-    const normalized = `${ChangeSourceResultCache.normalize(bookName)}\n${ChangeSourceResultCache.normalize(bookAuthor)}`;
-    return normalized.trim() ? ChangeSourceResultCache.hashKey(normalized) : '';
+  static merge(context: Context, key: string, results: SearchBook[], searched: boolean = true): void {
+    const entry = ChangeSourceResultCache.entries.find((item: ChangeSourceCacheEntry): boolean => item.key === key);
+    if (!entry) return;
+    ChangeSourceResultCache.mergeEntries(entry, results);
+    entry.searched = entry.searched || searched;
+    if (searched) entry.updatedAt = Date.now();
+    ChangeSourceResultCache.touch(entry);
+    ChangeSourceResultCache.schedule(context);
+  }
+
+  static rememberSwitch(context: Context, key: string, book: Book): void {
+    const entry = ChangeSourceResultCache.entries.find((item: ChangeSourceCacheEntry): boolean => item.key === key);
+    if (!entry) return;
+    ChangeSourceResultCache.bind(entry, book);
+    ChangeSourceResultCache.merge(context, key, [ChangeSourceResultCache.fromBook(book)], false);
+  }
+
+  private static bind(entry: ChangeSourceCacheEntry, book: Book): void {
+    const alias = ChangeSourceResultCache.bookAlias(book);
+    entry.aliases = [alias].concat(entry.aliases.filter((value: string): boolean => value !== alias)).slice(0, 100);
+  }
+
+  private static bookAlias(book: Book): string {
+    return BookTypeSupport.mediaCategoryOf(book) + '\n' + book.origin + '\n' + book.bookUrl;
+  }
+
+  private static mergeEntries(entry: ChangeSourceCacheEntry, results: SearchBook[]): void {
+    const seen = new Set<string>();
+    const merged: SearchBook[] = [];
+    for (const item of results.concat(entry.results)) {
+      const key = item.origin + '\n' + item.bookUrl;
+      if (!item.bookUrl || !item.origin || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(ChangeSourceResultCache.cloneSearchBook(item));
+    }
+    entry.results = merged.slice(0, 50);
+  }
+
+  private static touch(entry: ChangeSourceCacheEntry): void {
+    ChangeSourceResultCache.entries = [entry].concat(ChangeSourceResultCache.entries.filter((item: ChangeSourceCacheEntry): boolean => item !== entry)).slice(0, 30);
+  }
+
+  private static schedule(context: Context): void {
+    if (ChangeSourceResultCache.timer >= 0) return;
+    ChangeSourceResultCache.timer = setTimeout((): void => { ChangeSourceResultCache.flush(context); }, 500);
+  }
+
+  static flush(context: Context): Promise<void> {
+    // Closing while the initial disk read is pending must not overwrite history with an empty snapshot.
+    if (!ChangeSourceResultCache.loaded) return Promise.resolve();
+    if (ChangeSourceResultCache.timer >= 0) clearTimeout(ChangeSourceResultCache.timer);
+    ChangeSourceResultCache.timer = -1;
+    const raw = JSON.stringify(ChangeSourceResultCache.entries);
+    // Serialized snapshots prevent a slow old write from overwriting newer candidates/aliases.
+    ChangeSourceResultCache.writeQueue = ChangeSourceResultCache.writeQueue.then(async (): Promise<void> => {
+      const store = await preferences.getPreferences(context, ChangeSourceResultCache.STORE_NAME);
+      await store.put('history_v3', raw);
+      await store.flush();
+    }).catch((error: Error): void => { console.warn('保存换源缓存失败:', error); });
+    return ChangeSourceResultCache.writeQueue;
+  }
+
+  static fromBook(book: Book): SearchBook {
+    const item = new SearchBook();
+    item.bookUrl = book.bookUrl;
+    item.origin = book.origin;
+    item.originName = book.originName;
+    item.type = book.type;
+    item.name = book.name;
+    item.author = book.author;
+    item.tocUrl = book.tocUrl;
+    item.variable = book.variable;
+    item.latestChapterTitle = book.latestChapterTitle;
+    item.updateTime = book.updateTime;
+    return item;
   }
 
   private static normalize(value: string): string {
@@ -112,10 +169,6 @@ export class ChangeSourceResultCache {
       hash = Math.imul(hash, 16777619);
     }
     return (hash >>> 0).toString(16).padStart(8, '0');
-  }
-
-  private static entryPreferenceKey(key: string): string {
-    return `${ChangeSourceResultCache.ENTRY_PREFIX}${key}`;
   }
 
   private static cloneSearchBook(source: SearchBook): SearchBook {

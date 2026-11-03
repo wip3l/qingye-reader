@@ -390,7 +390,8 @@ struct SearchBookDetailPage {
     this.changeSourceDialogSession.sync(this.getUIContext(), this.showChangeSourcePanel, (): void => {
       this.changeSourceDialogContent();
     }, {
-      autoCancel: false,
+      autoCancel: true,
+      onDismiss: (): void => { this.showChangeSourcePanel = false; },
       maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
       warnTag: '显示换源弹窗失败:'
     });
