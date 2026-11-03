@@ -16,6 +16,8 @@ const context = vm.createContext({
   LocalBookService: { isPdfBook: book => book.format === 'pdf' },
   ReaderOpenTrace: { begin() {}, mark() {}, cancel() {} },
   SHELF_OPENING_COVER_KEY: 'shelfOpeningCover',
+  SHELF_BOOK_MOTION_UNTIL_KEY: 'shelfBookMotionUntil',
+  SHELF_COVER_OPEN_DURATION: 500, SHELF_COVER_OPEN_START_CAP: 250, SHELF_BOOK_MOTION_SETTLE: 60,
   AppStorage: { setOrCreate: (key, value) => storage.set(key, value) },
   router: { pushUrl: route => { routes.push(route); return new Promise((resolve, reject) => { resolveRoute = resolve; rejectRoute = reject; }); } },
   setTimeout: callback => { timers.set(++sequence, callback); return sequence; },

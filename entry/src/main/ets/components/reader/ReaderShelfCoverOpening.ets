@@ -26,6 +26,12 @@ export const SHELF_COVER_OPEN_ANGLE: number = -90;
 /** 打开动画与返回共享转场的时长。 */
 export const SHELF_COVER_OPEN_DURATION: number = 500;
 
+export const SHELF_COVER_CLOSE_DURATION: number = 320;
+export const SHELF_COVER_FRAME_RATE: ExpectedFrameRateRange = { min: 60, max: 120, expected: 120 };
+/** 仅延后书架刷新，不拦截进度落库；时间戳自动过期，异常退出也不会锁住书架。 */
+export const SHELF_BOOK_MOTION_UNTIL_KEY: string = 'shelfBookMotionUntil';
+export const SHELF_BOOK_MOTION_SETTLE: number = 60;
+
 /** 阅读页首帧画好、主线程空下来才开始放大；一直忙也最多等这么久。 */
 export const SHELF_COVER_OPEN_START_CAP: number = 250;
 

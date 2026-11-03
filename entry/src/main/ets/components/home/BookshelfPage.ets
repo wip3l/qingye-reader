@@ -1,7 +1,8 @@
 import { SharedElementMotion } from '../../utils/SharedElementMotion';
 import { PdfPagePosition } from '../../core/book/pdf/PdfModels';
 import {
-  SHELF_COVER_OPEN_DURATION, SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
+  SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
+  SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
 } from '../reader/ReaderShelfCoverOpening';
 import { SharedElementBounds } from '../../utils/SharedElementBounds';
 import { BookshelfCoverBadges } from '../BookshelfCoverBadges';
@@ -567,6 +568,11 @@ export struct BookshelfPage {
         if (loadSerial !== this.shelfLoadSerial) return;
         this.shelfStateRestored = true;
       }
+      // A query started before the click can finish during the flight. Keep the shared cover's node stable.
+      if (this.shelfBookMotionDelay() > 0) {
+        this.scheduleLoadBooks();
+        return;
+      }
       // Commit the complete snapshot together. In particular, never expose a new expanded card while the retained
       // LazyForEach data source still contains entries from the previous shelf generation.
       this.allBooks = loadedBooks;
@@ -596,14 +602,25 @@ export struct BookshelfPage {
     this.shelfTileEntriesSource.replace(this.getSortedTileRootEntries(this.books), force);
   }
 
+  shelfBookMotionDelay(): number {
+    return Math.max(0, (AppStorage.get<number>(SHELF_BOOK_MOTION_UNTIL_KEY) || 0) - Date.now());
+  }
+
   scheduleLoadBooks(): void {
     if (this.loadTimer >= 0) {
       clearTimeout(this.loadTimer);
+      this.loadTimer = -1;
     }
+    // The return timer already reloads the latest database snapshot, including saves made during the flight.
+    if (this.shelfBookReturnRefreshTimer >= 0) return;
     this.loadTimer = setTimeout(() => {
       this.loadTimer = -1;
+      if (this.shelfBookMotionDelay() > 0 || this.shelfBookReturnRefreshTimer >= 0) {
+        if (this.shelfBookReturnRefreshTimer < 0) this.scheduleLoadBooks();
+        return;
+      }
       this.loadBooks();
-    }, 80);
+    }, Math.max(80, this.shelfBookMotionDelay()));
   }
 
   scheduleColdStartBookshelfRefresh(loadedBooks: Book[]): void {
@@ -4191,6 +4208,10 @@ export struct BookshelfPage {
       return;
     }
     this.cloudBookOpenRequest++;
+    if (this.bookshelfBookOpenAnimation) {
+      AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
+        Date.now() + SHELF_COVER_OPEN_START_CAP + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
+    }
     this.acknowledgeShelfBookUpdate(book);
     // PDFs go straight to their own page (the text reader would first spend a database lookup on the format),
     // with the same cover-open animation parameters as other books.
@@ -4341,11 +4362,18 @@ export struct BookshelfPage {
 
   closeShelfBook(_bookUrl: string): void {
     this.cancelShelfBookOpening();
+    if (this.loadTimer >= 0) {
+      clearTimeout(this.loadTimer);
+      this.loadTimer = -1;
+    }
+    AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
+      Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
+    // This notification arrives after the cover has closed, immediately before router.back().
     // Keep the shared source stable until the native return transition is finished.
     this.shelfBookReturnRefreshTimer = setTimeout(() => {
       this.shelfBookReturnRefreshTimer = -1;
       this.loadBooks(true).catch((error: Error) => console.warn('返回书架时刷新进度失败:', error));
-    }, 420);
+    }, SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
   }
 
   cancelShelfBookOpening(): void {

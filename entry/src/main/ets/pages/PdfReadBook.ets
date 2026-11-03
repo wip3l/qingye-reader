@@ -26,6 +26,7 @@ import { ReaderPdfSettings } from '../core/book/pdf/ReaderPdfSettings';
 import { ReaderPdfSettingsStore } from '../core/book/pdf/ReaderPdfSettingsStore';
 import {
   ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP,
+  SHELF_COVER_CLOSE_DURATION, SHELF_COVER_FRAME_RATE, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
   SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
 } from '../components/reader/ReaderShelfCoverOpening';
 
@@ -429,12 +430,12 @@ struct PdfReadBookPage {
     const coverClosed = this.openedWithShelfAnimation ? this.closeShelfCover() : Promise.resolve();
     try { await this.saveProgress(); }
     catch (error) { console.warn('[PDF] exit save failed:', error); }
+    await coverClosed;
     if (this.openedWithShelfAnimation) {
       AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', true);
       AppStorage.setOrCreate('shelfBookCloseAnimationUrl', this.bookUrl);
       AppStorage.setOrCreate('shelfBookCloseAnimationNonce', Date.now());
     }
-    await coverClosed;
     // The SVG frame does not scale with the shared transition; see ReaderShelfCoverOpening.showFrame.
     this.shelfCoverFrameVisible = false;
     this.getUIContext().getRouter().back();
@@ -484,8 +485,11 @@ struct PdfReadBookPage {
     if (this.shelfOpenStartTimer >= 0) { clearTimeout(this.shelfOpenStartTimer); this.shelfOpenStartTimer = -1; }
     if (!this.shelfOpenAnimating || this.shelfOpenStarted) return;
     this.shelfOpenStarted = true;
+    AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
+      Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
     this.getUIContext().animateTo({
-      duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut, onFinish: (): void => this.finishShelfOpening()
+      duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut,
+      expectedFrameRateRange: SHELF_COVER_FRAME_RATE, onFinish: (): void => this.finishShelfOpening()
     }, (): void => {
       this.shelfOpenScaleX = 1;
       this.shelfOpenScaleY = 1;
@@ -518,12 +522,18 @@ struct PdfReadBookPage {
   private closeShelfCover(): Promise<void> {
     if (!this.shelfOpeningCover) return Promise.resolve();
     this.shelfCoverVisible = true;
-    this.getUIContext().animateTo({ duration: 320, curve: Curve.Friction }, (): void => {
-      this.shelfCoverAngle = 0;
-      this.shelfCoverScaleX = 1;
-      this.shelfCoverShade = 0;
+    AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
+      Date.now() + SHELF_COVER_CLOSE_DURATION + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
+    return new Promise<void>((resolve: () => void): void => {
+      this.getUIContext().animateTo({
+        duration: SHELF_COVER_CLOSE_DURATION, curve: Curve.Friction,
+        expectedFrameRateRange: SHELF_COVER_FRAME_RATE, onFinish: resolve
+      }, (): void => {
+        this.shelfCoverAngle = 0;
+        this.shelfCoverScaleX = 1;
+        this.shelfCoverShade = 0;
+      });
     });
-    return new Promise<void>((resolve: () => void): void => { setTimeout(resolve, 280); });
   }
 
   @Builder

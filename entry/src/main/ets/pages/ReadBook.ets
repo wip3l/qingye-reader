@@ -2,6 +2,7 @@ import { ReaderQuickJumpModel } from '../core/reader/ReaderQuickJumpModel';
 import { ReaderQuickJumpContent } from '../components/reader/ReaderQuickJumpContent';
 import {
   ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP,
+  SHELF_COVER_CLOSE_DURATION, SHELF_COVER_FRAME_RATE, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
   SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
@@ -954,6 +955,7 @@ struct ReadBookPage {
   // Until that restore is confirmed, lifecycle saves must keep using the immutable database snapshot below.
   private readerProgressRestoreConfirmed: boolean = false;
   private readerExitProgressSaved: boolean = false;
+  private readerExiting: boolean = false;
   private readerPageDetachedFromRoute: boolean = false;
   private detachedReaderEngine: ReadBookEngine | null = null;
   private detachedReaderEngineReady: Promise<void> | null = null;
@@ -18019,9 +18021,12 @@ struct ReadBookPage {
     }
     if (!this.shelfOpenAnimating || this.shelfOpenStarted) return;
     this.shelfOpenStarted = true;
+    AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
+      Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
     this.shelfOpenEndsAt = Date.now() + SHELF_COVER_OPEN_DURATION;
-    animateTo({
-      duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut, onFinish: () => this.finishShelfOpening()
+    this.getUIContext().animateTo({
+      duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut,
+      expectedFrameRateRange: SHELF_COVER_FRAME_RATE, onFinish: () => this.finishShelfOpening()
     }, () => {
       this.shelfOpenScaleX = 1;
       this.shelfOpenScaleY = 1;
@@ -18064,20 +18069,25 @@ struct ReadBookPage {
   closeShelfCover(): Promise<void> {
     if (!this.shelfOpeningCover) return Promise.resolve();
     this.shelfCoverVisible = true;
-    animateTo({ duration: 320, curve: Curve.Friction }, () => {
-      this.shelfCoverAngle = 0;
-      this.shelfCoverScaleX = 1;
-      this.shelfCoverShade = 0;
-    });
+    AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
+      Date.now() + SHELF_COVER_CLOSE_DURATION + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
     return new Promise<void>((resolve: () => void): void => {
-      setTimeout(resolve, 280);
+      this.getUIContext().animateTo({
+        duration: SHELF_COVER_CLOSE_DURATION, curve: Curve.Friction,
+        expectedFrameRateRange: SHELF_COVER_FRAME_RATE, onFinish: resolve
+      }, (): void => {
+        this.shelfCoverAngle = 0;
+        this.shelfCoverScaleX = 1;
+        this.shelfCoverShade = 0;
+      });
     });
   }
 
   async exitReaderPage(): Promise<void> {
-    if (this.readerExitProgressSaved) {
+    if (this.readerExitProgressSaved || this.readerExiting) {
       return;
     }
+    this.readerExiting = true;
     this.cancelReaderQuickJump();
     this.captureReaderContinuousAnchor();
     // Freeze scroll-derived progress before awaiting the database write. During the route transition List can emit
@@ -18120,12 +18130,12 @@ struct ReadBookPage {
     } catch (e) {
       console.error('返回阅读页时保存进度失败:', e);
     }
+    await shelfCoverClosed;
     if (this.openedWithShelfAnimation) {
       AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', true);
       AppStorage.setOrCreate('shelfBookCloseAnimationUrl', this.bookUrl);
       AppStorage.setOrCreate('shelfBookCloseAnimationNonce', Date.now());
     }
-    await shelfCoverClosed;
     this.shelfCoverFrameVisible = false;
     router.back();
   }
@@ -18483,7 +18493,8 @@ struct ReadBookPage {
     const deferredNextTurn = this.pageTurnQueue.hasPendingForward() && this.isForwardChapterTurnWaitingForPagination();
     const queuedTurnBusy = !deferredPreviousTurn && !deferredNextTurn && this.pendingRestorePageIndex < 0 &&
       this.pageTurnQueue.hasPending();
-    return this.showReaderCommentPanel || this.isPageTurning || this.readerPanActive || this.readerTouchActive ||
+    return (this.shelfOpenAnimating && this.readerInitialPageReady) || this.readerExiting ||
+      this.showReaderCommentPanel || this.isPageTurning || this.readerPanActive || this.readerTouchActive ||
       this.readerComicPanMoved || this.readerComicBoundaryDirection !== 0 || this.readerComicChapterSwitching ||
       this.pageSlideDirection !== 0 || this.pageTurnAnimating || queuedTurnBusy ||
       Date.now() < this.readerPaginationInteractionIdleUntil;
@@ -18495,7 +18506,8 @@ struct ReadBookPage {
   }
 
   isReaderPageMotionActive(): boolean {
-    return this.isPageTurning || this.pageTurnAnimating || this.pageSlideDirection !== 0;
+    return this.shelfOpenAnimating || this.readerExiting ||
+      this.isPageTurning || this.pageTurnAnimating || this.pageSlideDirection !== 0;
   }
 
   // Database and chapter-body callbacks resolve on the UI thread. Started just before or during a turn, they land
