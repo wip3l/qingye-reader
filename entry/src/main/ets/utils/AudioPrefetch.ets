@@ -5,7 +5,7 @@ import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { AudioOfflinePolicy } from '../core/book/AudioOfflinePolicy';
 
 /**
- * 边听边下：每章开始播放后，在 Wi-Fi 下悄悄下载后面几章，并删掉已经听过的自动下载章节。
+ * 边听边下：每章开始播放后，使用当前网络下载后面几章，并删掉已经听过的自动下载章节。
  * 进程内单例——播放器在听书页关闭后仍在播，预下载也跟着播放走，而不是跟着页面走。
  * 不发通知、不申请后台任务（听书本身持有后台播放许可）；切章、停止播放时作废正在进行的这一轮。
  */
@@ -60,9 +60,8 @@ export class AudioPrefetch {
   private async run(bookUrl: string, currentIndex: number, generation: number): Promise<void> {
     const cancelled = (): boolean => generation !== this.generation;
     if (await AudioOfflineStore.evictListened(bookUrl, currentIndex) > 0) AudioPrefetch.notifyChanged();
-    // 只在 Wi-Fi（或有线）下预下载；移动网络上一律不自动用流量。
-    const network = AudioOfflineStore.network();
-    if (network !== 'wifi' && network !== 'other') return;
+    // 开启边听边下后，移动网络也自动下载；仅 Wi-Fi 设置用于手动批量下载。
+    if (!AudioOfflineStore.networkAllows(true)) return;
     const count = AudioOfflineStore.prefetchCount();
     if (count <= 0 || cancelled()) return;
     const engine = await this.engineFor(bookUrl);
@@ -93,7 +92,7 @@ export class AudioPrefetch {
     this.engine = engine;
     await engine.openBook(book);
     engine.audioAuto = true;
-    engine.audioAllowCellular = false;
+    engine.audioAllowCellular = true;
     return engine;
   }
 }

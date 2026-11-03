@@ -1819,7 +1819,7 @@ struct AudioBookPage {
     let index = -1;
     try {
       const result: promptAction.ActionMenuSuccessResponse = await ui.getPromptAction().showActionMenu({
-        title: '边听边下：仅在 Wi-Fi 下下载，听完的章节自动删除，手动下载的不受影响',
+        title: '边听边下：支持移动网络，会消耗流量；听完自动删除，手动下载的不受影响',
         buttons: [buttons[0], buttons[1], buttons[2], buttons[3]]
       });
       index = result.index;
@@ -1832,7 +1832,7 @@ struct AudioBookPage {
       AudioPrefetch.get().cancel();
       HdsFeedback.showToast('已关闭边听边下');
     } else {
-      HdsFeedback.showToast(`已开启边听边下：Wi-Fi 下提前下载后 ${options[index]} 章`);
+      HdsFeedback.showToast(`已开启边听边下：提前下载后 ${options[index]} 章，移动网络也会下载`);
       if (this.book && this.playback.matches(this.book.bookUrl, this.chapterIndex)) {
         AudioPrefetch.get().schedule(this.book, this.chapterIndex);
       }

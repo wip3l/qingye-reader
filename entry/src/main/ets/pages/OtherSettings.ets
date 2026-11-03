@@ -143,8 +143,8 @@ struct OtherSettingsPage {
         this.cacheClearLabel()
       }
       SettingSwitchRow({
-        title: '仅 Wi-Fi 下载有声书',
-        description: '移动网络下不下载，连上 Wi-Fi 后自动继续；关闭时用移动网络下载前会先确认',
+        title: '手动下载有声书仅用 Wi-Fi',
+        description: '手动下载在移动网络下等待 Wi-Fi；关闭后用流量下载前会先确认。边听边下不受此限制',
         isOn: this.audioOfflineWifiOnly,
         onChange: (value: boolean) => {
           AudioOfflineSettingsStore.saveWifiOnly(getContext(this), value)
