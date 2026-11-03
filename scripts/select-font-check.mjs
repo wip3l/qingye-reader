@@ -80,7 +80,7 @@ for (const file of files(root).filter(file => file.endsWith('.ets'))) {
     const chain = text.slice(select.index, end);
     assert.match(chain, /\.font\(\{[^{}]*family: this\.applicationFontFamily[^{}]*\}\)/,
       `${file}: collapsed Select text must use the global font`);
-    if (['MimoSettings.ets', 'MimoBookRoles.ets'].includes(path.basename(file))) {
+    if (['MimoSettings.ets', 'MimoBookRoles.ets', 'MimoVoiceSelectRow.ets'].includes(path.basename(file))) {
       // ArkUI resets an option's font when it becomes selected or returns to normal.
       // The collapsed label's font does not cover either menu state.
       for (const attribute of ['optionFont', 'selectedOptionFont']) {
@@ -93,5 +93,5 @@ for (const file of files(root).filter(file => file.endsWith('.ets'))) {
   }
 }
 assert.ok(controls >= 34, 'all existing dropdowns are covered');
-assert.equal(mimoMenus, 4, 'MiMo narration, character voice, emotion and speaker menus are covered');
+assert.equal(mimoMenus, 4, 'MiMo narration, emotion, speaker and shared voice editor menus are covered');
 console.log(`Select font checks passed: ${controls} dropdowns, ${mimoMenus} MiMo menus in both option states; cold start, font changes, theme and system fallback.`);

@@ -57,6 +57,7 @@ struct MimoSettingsPage {
   /** Read so the one-click fill button follows membership changes; the store stays authoritative. */
   @StorageProp('accountMembershipSku') membershipSku: string = '';
   @State voice: string = '白桦';
+  @State voiceName: string = '白桦';
   @State mimoEnabled: boolean = false;
   @State multi: boolean = false;
   @State analysisAvailable: boolean = false;
@@ -96,6 +97,7 @@ struct MimoSettingsPage {
   private syncSettings(includeVoice: boolean = true): void {
     const settings = MimoStore.load();
     if (includeVoice) this.voice = settings.voice;
+    try { this.voiceName = MimoStore.library().defaultPreset.name; } catch (_) { this.voiceName = settings.voice; }
     this.mimoEnabled = settings.enabled;
     this.multi = settings.multi; this.analysisAvailable = settings.analysisAvailable;
   }
@@ -291,6 +293,7 @@ struct MimoSettingsPage {
   content() {
     Column({ space: AppSpacing.LG }) {
       if (this.editing) {
+        this.voiceManagementSection()
         this.setupSection()
       } else {
         this.configuredSection()
@@ -398,8 +401,9 @@ struct MimoSettingsPage {
       SettingSwitchRow({ title: '自动多角色', isOn: this.multi, switchEnabled: this.analysisAvailable,
         description: this.analysisAvailable ? '识别旁白与人物，分别使用不同音色' : '角色分析未通过测试，暂不可用',
         onChange: (value: boolean) => this.setMode(value) })
-      this.voiceRow()
     }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
+
+    this.voiceManagementSection()
 
     Column() {
       SettingNavRow({ title: '人物档案', description: '多角色朗读过的书，调整人物音色与对白归属',
@@ -415,6 +419,18 @@ struct MimoSettingsPage {
       SettingNavRow({ title: '更换 API Key', description: '现有密钥不会在界面中显示', onTap: () => this.startReplacing() })
       SettingNavRow({ title: '删除本机密钥', titleColor: ThemeRuntime.dangerColor(this.dark), showDivider: false,
         onTap: () => this.removeKey() })
+    }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
+  }
+
+  @Builder
+  voiceManagementSection() {
+    Column() {
+      SettingNavRow({ title: '默认声音', description: '单音色朗读及未匹配人物使用，已有绑定保留', value: this.voiceName,
+        onTap: () => router.pushUrl({ url: 'pages/MimoVoices', params: { screen: 'default' } }) })
+      SettingNavRow({ title: '音色与提示词', description: '新增、编辑和试听自定义声音',
+        onTap: () => router.pushUrl({ url: 'pages/MimoVoices', params: { screen: 'library' } }) })
+      SettingNavRow({ title: '默认音色方案', description: '只在方案候选内为新人物分配声音', showDivider: false,
+        onTap: () => router.pushUrl({ url: 'pages/MimoVoices', params: { screen: 'schemes' } }) })
     }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
   }
 

@@ -22,6 +22,7 @@
     "pages/CustomFontManager",
     "pages/TtsSettings",
     "pages/MimoSettings",
+    "pages/MimoVoices",
     "pages/MimoBookRoles",
     "pages/MimoBooks",
     "pages/CustomTtsVoiceManager",

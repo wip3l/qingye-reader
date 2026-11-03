@@ -6,8 +6,12 @@ import { createHash } from 'node:crypto';
 
 const policySource = fs.readFileSync(new URL('../entry/src/main/ets/core/mimo/MimoPolicy.ts', import.meta.url), 'utf8');
 const policy = vm.runInNewContext(stripTypeScriptTypes(policySource.replaceAll('export ', '') +
-  '\n({MimoPolicy,MimoSseParser,MimoRole,MimoUnit})'));
+  '\n({MimoPolicy,MimoSseParser,MimoRole,MimoUnit,MimoVoicePreset})'));
 const { MimoPolicy, MimoSseParser, MimoRole, MimoUnit } = policy;
+const voiceSource=fs.readFileSync(new URL('../entry/src/main/ets/core/mimo/MimoVoicePolicy.ts',import.meta.url),'utf8')
+  .replace(/^import .*;\r?\n/gm,'').replace(/^export \{.*;\r?\n/gm,'').replaceAll('export ','');
+const voicePolicy=vm.runInNewContext(stripTypeScriptTypes(voiceSource+'\n({MimoVoicePolicy,MIMO_AGES,MIMO_GENDERS})'),
+  {MimoRole,MimoVoicePreset:policy.MimoVoicePreset,MIMO_VOICES:['白桦','苏打','茉莉','冰糖']});
 for (const text of [
   '沈砚说：“雨停了，我们走吧。”\n林晚拿起伞：“等等。”',
   '\n　“你是谁？”……\n',
@@ -126,10 +130,13 @@ const readingSource=fs.readFileSync(new URL('../entry/src/main/ets/utils/mimo/Mi
 const files=new Map();const storage=new Map([['appCacheDir','/cache']]);
 let networkCount=0;let failAt=0;let held=null;let holdNext=false;let clientStops=0;
 let inFlight=0;let maxInFlight=0;let slowSynth=false;const events=[];
+let savedCast=null;let proposals=[];let beforeReceive=null;const speechVoices=[];
 const settings={multi:false,voice:'白桦',namespace:'test',enabled:true};
 const fakeStore={load:()=>settings,key:async()=>'test-key',onCredentialsChanged:[],
-  cast:()=>({roles:[{id:'narrator',name:'旁白',voice:'白桦',aliases:[]}],corrections:[],emotion:'自然'}),
-  hash:t=>createHash('sha256').update(t).digest('hex'),write:(p,t)=>files.set(p,Buffer.from(t)),saveCast:()=>{}};
+  library:()=>voicePolicy.MimoVoicePolicy.defaults(settings.voice),voiceRevision:0,
+  cast:()=>savedCast?JSON.parse(JSON.stringify(savedCast)):({roles:[{id:'narrator',name:'旁白',voice:'白桦',aliases:[]}],corrections:[],emotion:'自然'}),
+  assign:(role)=>voicePolicy.MimoVoicePolicy.bind(role,voicePolicy.MimoVoicePolicy.match(role,voicePolicy.MimoVoicePolicy.defaults(settings.voice),'general',true).preset),
+  hash:t=>createHash('sha256').update(t).digest('hex'),write:(p,t)=>files.set(p,Buffer.from(t)),saveCast:(_book,cast)=>{savedCast=JSON.parse(JSON.stringify(cast))}};
 const fakeFiles={accessSync:p=>files.has(p),mkdirSync:()=>{},readTextSync:p=>{if(!files.has(p))throw Error('missing');return files.get(p).toString()},
   listFileSync:p=>[...files.keys()].filter(k=>k.startsWith(p+'/')).map(k=>k.slice(p.length+1)),
   statSync:p=>{if(!files.has(p))throw Error('missing');return {size:files.get(p).length,mtime:0}},
@@ -137,25 +144,28 @@ const fakeFiles={accessSync:p=>files.has(p),mkdirSync:()=>{},readTextSync:p=>{if
   writeSync:(p,b)=>{files.set(p,Buffer.from(b));return files.get(p).length},closeSync:()=>{},
   readSync:(p,b)=>{new Uint8Array(b).set(files.get(p));return files.get(p).length},
   renameSync:(a,b)=>{files.set(b,files.get(a));files.delete(a)},unlinkSync:p=>files.delete(p)};
-class Player {write(){return Promise.resolve()} writeSegment(b,s,focus){focus();return this.write()} stop(){} release(){} pause(){return Promise.resolve()} resume(){return Promise.resolve()} drain(){return Promise.resolve()}}
+class Player {write(){return Promise.resolve()} writeSegment(b,s,focus){focus();return this.write()} stop(){} release(){} pause(){return Promise.resolve()} resume(){return Promise.resolve()} waitForSegmentEnd(){return Promise.resolve()} drain(){return Promise.resolve()}}
 class Client {
   stop(){clientStops++;}
   async analyze(key,units,roles,context){
     events.push('analyze:'+units[0].id);
     await new Promise(r=>setTimeout(r,1));
-    return {roles:[],assignments:units.map(u=>({unitId:u.id,roleId:'narrator',emotion:'平静',confidence:1}))};
+    return {roles:proposals,assignments:units.map(u=>({unitId:u.id,roleId:'narrator',emotion:'平静',confidence:1}))};
   }
   async synthesize(key,text,voice,style,receive){
+    speechVoices.push(voice);
     networkCount++;events.push('synth:'+text);
     if(networkCount===failAt)throw Error('offline');
     inFlight++;maxInFlight=Math.max(maxInFlight,inFlight);
     try{if(slowSynth)await new Promise(r=>setTimeout(r,2));}finally{inFlight--;}
     if(holdNext){holdNext=false;await new Promise((resolve,reject)=>held={resolve,reject});}
+    if(beforeReceive){const update=beforeReceive;beforeReceive=null;update();}
     const data=new Uint8Array([0,0,1,0]).buffer;await receive(data);return data;
   }
 }
 const Session=vm.runInNewContext(stripTypeScriptTypes(readingSource+'\nMimoReadingSession'),{
-  fs:fakeFiles,MimoStore:fakeStore,MimoClient:Client,TtsPcmAudioPlayer:Player,MimoPolicy,MimoUnit,MimoRole,MIMO_VOICES:['白桦','苏打','茉莉','冰糖'],
+  fs:fakeFiles,MimoStore:fakeStore,MimoClient:Client,TtsPcmAudioPlayer:Player,MimoPolicy,MimoUnit,MimoRole,
+  MimoVoicePolicy:voicePolicy.MimoVoicePolicy,MIMO_AGES:voicePolicy.MIMO_AGES,MIMO_GENDERS:voicePolicy.MIMO_GENDERS,MIMO_VOICES:['白桦','苏打','茉莉','冰糖'],
   AppStorage:{get:k=>storage.get(k),setOrCreate:(k,v)=>storage.set(k,v)}});
 const session=new Session();const focus=[];
 const options={book:'book',chapter:'one',sourceOffset:0,speed:1,onAudio:()=>{},onFocus:u=>focus.push(u.text)};
@@ -200,4 +210,43 @@ await replacement;const stopsBeforeOld=clientStops;
 oldHeld.reject(Error('old canceled'));await oldError;
 assert.equal(clientStops,stopsBeforeOld,'late old failure must not cancel newer client');
 assert.equal(fakeStore.onCredentialsChanged.length,0,'credential cancellation listeners are released');
+
+// Age needs confidence AND an exact source excerpt. Missing or fabricated evidence falls back safely.
+for(const [age,evidence,confidence,expected] of [
+  ['child','小禾今年八岁',0.95,'child'],['child','原文没有的证据',0.95,'unknown'],
+  ['child','小禾今年八岁',0.4,'unknown'],['adult','',1,'unknown'],
+]){
+  files.clear();savedCast=null;settings.multi=true;
+  proposals=[{id:'he',name:'小禾',aliases:[],gender:'male',age,ageEvidence:evidence,ageConfidence:confidence}];
+  await session.read('小禾今年八岁，他开心地跑进屋里。',options);
+  const role=savedCast.roles.find(r=>r.id==='he');assert.equal(role.age,expected);
+  if(expected==='child')assert.equal(role.preset.age,'child');else assert.equal(role.preset.id,'');
+}
+settings.multi=false;proposals=[];savedCast=null;
+
+// A voice edit while the first network request is pending retries the same text without audible duplication.
+files.clear();focus.length=0;speechVoices.length=0;settings.voice='白桦';
+beforeReceive=()=>{settings.voice='苏打';fakeStore.voiceRevision++};
+await session.read('修改配置前还没开口。',options);
+assert.equal(focus.join(''),'修改配置前还没开口。');assert.deepEqual(speechVoices,['白桦','苏打']);
+
+// A save during the current segment must affect the next audible segment, including cached prefetches.
+files.clear();settings.voice='白桦';const audible=[];
+await session.read(longText,{...options,onFocus:u=>{
+  audible.push(storage.get('mimoCurrentRole'));
+  if(audible.length===1){settings.voice='苏打';fakeStore.voiceRevision++;}
+}});
+assert.match(audible[0],/白桦/);assert.equal(audible.length,4);assert.ok(audible.slice(1).every(v=>v.includes('苏打')));
+// The player identifies the saved prompt preset actually spoken, including a book-specific narrator snapshot.
+files.clear();savedCast=null;
+const originalLibrary=fakeStore.library;
+const customPreset=voicePolicy.MimoVoicePolicy.preset('custom','我的儿童声音','冰糖','清亮自然','child');
+fakeStore.library=()=>({...originalLibrary(),defaultPreset:customPreset});
+await session.read('这是预设名称显示检查。',options);
+assert.equal(storage.get('mimoCurrentRole'),'旁白 · 我的儿童声音');
+savedCast=fakeStore.cast();savedCast.roles[0].manual=true;
+savedCast.roles[0].preset={...customPreset,name:'本书保存的声音'};
+await session.read('这是本书保存版本显示检查。',options);
+assert.equal(storage.get('mimoCurrentRole'),'旁白 · 本书保存的声音');
+fakeStore.library=originalLibrary;
 console.log('MiMo session checks passed: source focus, cached replay, failed segment retention, short-unit merging, synthesis and analysis prefetch, stale chapter cancellation.');

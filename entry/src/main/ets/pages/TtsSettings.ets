@@ -18,6 +18,7 @@ import { TtsVoiceCatalog } from '../utils/TtsVoiceCatalog';
 import { AdaptiveIconButton } from '../components/AdaptiveIconButton';
 import { TtsSettings, TtsSettingsStore } from '../utils/TtsSettingsStore';
 import { MimoStore } from '../utils/mimo/MimoStore';
+import { MimoVoiceChoice } from '../core/mimo/MimoVoicePolicy';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
@@ -64,6 +65,8 @@ struct TtsSettingsPage {
   @StorageProp('mimoEnabled') mimoEnabled: boolean = false;
   @StorageProp('mimoMulti') mimoMulti: boolean = false;
   @StorageProp('mimoVoice') mimoVoice: string = '白桦';
+  @StorageProp('mimoVoicesRevision') @Watch('refreshMimoChoices') mimoVoicesRevision: number = 0;
+  @State mimoChoices: MimoVoiceChoice[] = [];
   @State cloudVoices: TtsVoiceInfo[] = [];
   @State ttsCatalog: TtsCatalogResponse = new TtsCatalogResponse();
   @State ttsStandardChars: number = 0;
@@ -96,6 +99,7 @@ struct TtsSettingsPage {
 
   onPageShow(): void {
     this.syncBars();
+    this.refreshMimoChoices();
     this.loadSettingsAndVoices();
     this.loadTtsCommerce();
   }
@@ -259,7 +263,7 @@ struct TtsSettingsPage {
   }
 
   selectedVoiceTitle(): string {
-    if (this.mimoEnabled) return this.mimoMulti ? 'MiMo · 自动多角色' : 'MiMo · ' + this.mimoVoice;
+    if (this.mimoEnabled) return MimoStore.selectedVoiceTitle();
     const cloudVoice = this.findCurrentCloudVoice();
     if (cloudVoice) {
       return TtsVoiceCatalog.cloudVoiceTitle(cloudVoice);
@@ -277,6 +281,9 @@ struct TtsSettingsPage {
 
   voiceSelectOptions(): TtsSettingsVoiceSelectOption[] {
     const options: TtsSettingsVoiceSelectOption[] = [];
+    this.mimoChoices.forEach((choice: MimoVoiceChoice): void => {
+      options.push({ value: choice.label, key: choice.key, selectVoice: (): void => this.selectMimoVoice(choice) });
+    });
     options.push({ value: 'MiMo 朗读设置', key: 'mimo',
       selectVoice: (): void => { this.stopPreview(); router.pushUrl({ url: 'pages/MimoSettings' }); } });
     this.cloudVoices.forEach((voice: TtsVoiceInfo): void => {
@@ -294,6 +301,22 @@ struct TtsSettingsPage {
         selectVoice: (): void => { this.selectVoice(voice); } });
     });
     return options;
+  }
+
+  refreshMimoChoices(): void {
+    try { this.mimoChoices = MimoStore.voiceChoices().slice(); this.selectedVoiceKey = this.currentVoiceKey(); }
+    catch (error) { HdsFeedback.showToast((error as Error).message); }
+  }
+
+  selectMimoVoice(choice: MimoVoiceChoice): void {
+    if (!MimoStore.isConfigured()) { router.pushUrl({ url: 'pages/MimoSettings' }); return; }
+    const activeBook = ReaderTtsFloatingSession.isActive() ? (AppStorage.get<string>('globalTtsBookUrl') || '') : '';
+    this.stopPreview();
+    ReaderTtsFloatingSession.stop();
+    try {
+      if (MimoStore.selectVoice(choice, activeBook)) this.refreshMimoChoices();
+      else router.pushUrl({ url: 'pages/MimoSettings' });
+    } catch (error) { HdsFeedback.showToast((error as Error).message); }
   }
 
   @Builder
@@ -687,6 +710,7 @@ struct TtsSettingsPage {
   }
 
   currentVoiceKey(): string {
+    if (MimoStore.load().enabled) return MimoStore.selectedVoiceKey();
     if (this.ttsCloudVoiceId) {
       return `cloud_${this.ttsCloudVoiceId}`;
     }

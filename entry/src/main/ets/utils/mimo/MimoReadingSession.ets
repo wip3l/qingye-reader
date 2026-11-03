@@ -2,6 +2,7 @@ import fs from '@ohos.file.fs';
 import { MimoAnalysis, MimoRole, MimoUnit, MimoPolicy, MIMO_VOICES } from '../../core/mimo/MimoPolicy';
 import { MimoClient } from './MimoClient';
 import { MimoBookCast, MimoStore } from './MimoStore';
+import { MimoVoicePolicy, MimoVoicePreset, MIMO_AGES, MIMO_GENDERS } from '../../core/mimo/MimoVoicePolicy';
 import { TtsPcmAudioPlayer } from '../TtsPcmAudioPlayer';
 
 export interface MimoReadingOptions {
@@ -31,6 +32,7 @@ class MimoSegment {
   keys: string[] = [];
   role: MimoRole = new MimoRole();
   voice: string = '';
+  presetName: string = '';
   style: string = '';
   cachePath: string = '';
 }
@@ -113,7 +115,7 @@ export class MimoReadingSession {
     const cast = MimoStore.cast(book);
     const directory = this.directory('mimo_analysis');
     const identity = cast.roles.map((role: MimoRole): string => role.id + ':' + role.name + ':' + role.aliases.join(',')).join('|');
-    const cachePath = directory + '/' + MimoStore.hash('v1:mimo-v2.6-flash:' + MimoStore.load().namespace +
+    const cachePath = directory + '/' + MimoStore.hash('age-v2:mimo-v2.6-flash:' + MimoStore.load().namespace +
       identity + context + JSON.stringify(batch)) + '.json';
     let analysis: MimoAnalysis | null = null;
     try {
@@ -130,6 +132,7 @@ export class MimoReadingSession {
     await this.ready(generation);
     // Reload after the network await so user voice changes are not overwritten.
     const latest = MimoStore.cast(book);
+    const library = MimoStore.library();
     let changed = false;
     for (const proposal of analysis.roles) {
       if (proposal.id === 'narrator' || latest.roles.some((role: MimoRole): boolean => role.id === proposal.id)) continue;
@@ -138,8 +141,15 @@ export class MimoReadingSession {
       role.id = proposal.id;
       role.name = proposal.name;
       role.aliases = proposal.aliases;
-      const voices = proposal.gender === 'female' ? ['茉莉', '冰糖'] : proposal.gender === 'male' ? ['苏打', '白桦'] : MIMO_VOICES;
-      role.voice = voices[latest.roles.length % voices.length];
+      role.gender = MIMO_GENDERS.includes(proposal.gender) ? proposal.gender : 'unknown';
+      const evidence = typeof proposal.ageEvidence === 'string' ? proposal.ageEvidence.trim() : '';
+      const source = context + batch.map((unit: MimoUnit): string => unit.text).join('');
+      if (MIMO_AGES.includes(proposal.age) && proposal.age !== 'unknown' &&
+        Number.isFinite(proposal.ageConfidence) && proposal.ageConfidence >= 0.8 && proposal.ageConfidence <= 1 &&
+        evidence.length > 0 && evidence.length <= 120 && source.includes(evidence)) {
+        role.age = proposal.age; role.ageEvidence = evidence;
+      }
+      MimoStore.assign(role, latest, library);
       latest.roles.push(role);
       changed = true;
     }
@@ -159,7 +169,7 @@ export class MimoReadingSession {
   }
   static clearCache(): void {
     const base = AppStorage.get<string>('appCacheDir') || '';
-    for (const name of ['mimo_audio', 'mimo_analysis']) {
+    for (const name of ['mimo_audio', 'mimo_analysis', 'mimo_preview']) {
       const directory = base + '/' + name;
       if (!fs.accessSync(directory)) continue;
       for (const entry of fs.listFileSync(directory)) {
@@ -172,7 +182,9 @@ export class MimoReadingSession {
 
   /** Builds the request starting at `index`, merging following units up to `limit` (exclusive). */
   private segment(units: MimoUnit[], index: number, limit: number, options: MimoReadingOptions,
-    cast: MimoBookCast, multi: boolean, voiceDefault: string, namespace: string, audioDir: string): MimoSegment {
+    cast: MimoBookCast, multi: boolean, configuredPreset: MimoVoicePreset, namespace: string, audioDir: string): MimoSegment {
+    const defaultPreset = multi || cast.roles[0].manual === true ?
+      MimoVoicePolicy.rolePreset(cast.roles[0]) : configuredPreset;
     const roleOf = (unit: MimoUnit, key: string): MimoRole => {
       const corrected = multi ? cast.corrections.find((item): boolean => item.key === key) : undefined;
       const roleId = multi ? (corrected?.roleId || unit.roleId) : 'narrator';
@@ -180,8 +192,9 @@ export class MimoReadingSession {
     };
     const styleOf = (unit: MimoUnit): string => {
       const emotion = cast.emotion === '克制' ? '平静' : unit.emotion;
-      return `单一说话人，保持音色稳定。${emotion}，${cast.emotion === '生动' ? '情绪鲜明' : '自然克制'}。` +
-        `按通常朗读语速的 ${options.speed.toFixed(1)} 倍演绎`;
+      const role = roleOf(unit, MimoReadingSession.correctionKey(options.chapter, options.sourceOffset + unit.start, unit.text));
+      const preset = multi ? MimoVoicePolicy.rolePreset(role) : defaultPreset;
+      return MimoVoicePolicy.prompt(preset, multi ? emotion : '平静', cast.emotion, options.speed);
     };
     const keyOf = (unit: MimoUnit): string =>
       MimoReadingSession.correctionKey(options.chapter, options.sourceOffset + unit.start, unit.text);
@@ -191,7 +204,9 @@ export class MimoReadingSession {
     segment.last = index;
     segment.keys = [keyOf(head)];
     segment.role = roleOf(head, segment.keys[0]);
-    segment.voice = multi ? segment.role.voice : voiceDefault;
+    segment.voice = multi ? segment.role.voice : defaultPreset.voice;
+    const spokenPreset = multi ? MimoVoicePolicy.rolePreset(segment.role) : defaultPreset;
+    segment.presetName = spokenPreset.id ? spokenPreset.name : '';
     segment.style = styleOf(head);
     let text = head.text;
     for (let next = index + 1; next < limit; next++) {
@@ -209,7 +224,7 @@ export class MimoReadingSession {
     segment.unit.text = text;
     segment.unit.roleId = segment.role.id;
     segment.unit.emotion = head.emotion;
-    segment.cachePath = audioDir + '/' + MimoStore.hash('pcm24-v1:' + namespace + segment.voice + segment.style + text) + '.pcm';
+    segment.cachePath = audioDir + '/' + MimoStore.hash('pcm24-voice-v2:mimo-v2.5-tts:' + namespace + segment.voice + segment.style + text) + '.pcm';
     return segment;
   }
 
@@ -227,6 +242,9 @@ export class MimoReadingSession {
       let firstAudio = true;
       const pendingPlayback: Promise<void>[] = [];
       const audioDir = this.directory('mimo_audio');
+      // Read the library once per settings revision, rather than synchronously per sentence.
+      let voiceLibrary = MimoStore.library();
+      let voiceRevision = MimoStore.voiceRevision;
       const preview = options.book === 'preview';
       if (!preview) AppStorage.setOrCreate('mimoReadingBook', options.book);
       AppStorage.setOrCreate('mimoReadingActive', true);
@@ -259,12 +277,13 @@ export class MimoReadingSession {
       let prefetchTail: Promise<void> = Promise.resolve();
       const prefetch = (segment: MimoSegment): void => {
         if (prefetches.has(segment.cachePath) || this.hasAudio(segment.cachePath)) return;
+        const revision = MimoStore.voiceRevision;
         const task = prefetchTail.then(async (): Promise<void> => {
-          if (generation !== this.generation) return;
+          if (generation !== this.generation || revision !== MimoStore.voiceRevision) return;
           try {
             const pcm = await this.client.synthesize(key, segment.unit.text, segment.voice, segment.style,
               async (_pcm: ArrayBuffer): Promise<void> => {});
-            if (generation === this.generation) this.writeAudio(segment.cachePath, pcm, audioDir);
+            if (generation === this.generation && revision === MimoStore.voiceRevision) this.writeAudio(segment.cachePath, pcm, audioDir);
           } catch (_) {
             // The segment is requested again, streaming, when its turn comes.
           }
@@ -276,7 +295,8 @@ export class MimoReadingSession {
       let index = 0;
       while (index < units.length) {
         await this.ready(generation);
-        if (pendingPlayback.length >= 2) await pendingPlayback.shift();
+        // Never queue a future segment in the renderer. Voice edits take effect at the next boundary.
+        if (pendingPlayback.length > 0) { await Promise.all(pendingPlayback.splice(0)); await this.player.waitForSegmentEnd(); }
         await this.ready(generation);
         const settings = MimoStore.load();
         const multi = settings.multi && !preview;
@@ -293,13 +313,17 @@ export class MimoReadingSession {
           limit = analyzedEnd(index);
         }
         if (!/[\p{L}\p{N}]/u.test(units[index].text)) { index++; continue; }
+        if (voiceRevision !== MimoStore.voiceRevision) {
+          voiceLibrary = MimoStore.library(); voiceRevision = MimoStore.voiceRevision;
+        }
         const cast = MimoStore.cast(options.book);
-        const segment = this.segment(units, index, limit, options, cast, multi, settings.voice, settings.namespace, audioDir);
+        const revision = MimoStore.voiceRevision;
+        const segment = this.segment(units, index, limit, options, cast, multi, voiceLibrary.defaultPreset, settings.namespace, audioDir);
         let ahead = segment.last + 1;
         for (let count = 0; count < 2 && ahead < limit; count++) {
           while (ahead < limit && !/[\p{L}\p{N}]/u.test(units[ahead].text)) ahead++;
           if (ahead >= limit) break;
-          const upcoming = this.segment(units, ahead, limit, options, cast, multi, settings.voice, settings.namespace, audioDir);
+          const upcoming = this.segment(units, ahead, limit, options, cast, multi, voiceLibrary.defaultPreset, settings.namespace, audioDir);
           prefetch(upcoming);
           ahead = upcoming.last + 1;
         }
@@ -311,7 +335,7 @@ export class MimoReadingSession {
         const focus = (): void => {
           if (generation !== this.generation) return;
           if (firstAudio) { firstAudio = false; options.onAudio(); }
-          AppStorage.setOrCreate('mimoCurrentRole', segment.role.name + ' · ' + segment.voice);
+          AppStorage.setOrCreate('mimoCurrentRole', segment.role.name + ' · ' + (segment.presetName || segment.voice));
           if (!preview) {
             AppStorage.setOrCreate('mimoCurrentText', segment.unit.text);
             AppStorage.setOrCreate('mimoCorrectionKey', segment.keys.join(','));
@@ -322,6 +346,7 @@ export class MimoReadingSession {
         };
         const receive = async (buffer: ArrayBuffer): Promise<void> => {
           if (generation !== this.generation) throw new Error('MiMo 朗读已停止');
+          if (!focused && revision !== MimoStore.voiceRevision) throw new Error('MiMo 声音配置已更新');
           if (playbackError) throw playbackError;
           const merged = new Uint8Array(carry.length + buffer.byteLength);
           merged.set(carry); merged.set(new Uint8Array(buffer), carry.length);
@@ -341,12 +366,19 @@ export class MimoReadingSession {
         // A request already under way for this segment beats starting a second one.
         const pending = prefetches.get(segment.cachePath);
         if (pending) { await pending; await this.ready(generation); }
+        if (revision !== MimoStore.voiceRevision) continue;
         const cached = this.readAudio(segment.cachePath);
         if (cached) await receive(cached);
         else {
-          const pcm = await this.client.synthesize(key, segment.unit.text, segment.voice, segment.style, receive);
-          await this.ready(generation);
-          this.writeAudio(segment.cachePath, pcm, audioDir);
+          try {
+            const pcm = await this.client.synthesize(key, segment.unit.text, segment.voice, segment.style, receive);
+            await this.ready(generation);
+            this.writeAudio(segment.cachePath, pcm, audioDir);
+          } catch (error) {
+            // A settings edit before the first audible buffer must not play a stale request or skip text.
+            if (!focused && generation === this.generation && revision !== MimoStore.voiceRevision) continue;
+            throw error as Error;
+          }
         }
         if (carry.length) throw new Error('MiMo 音频采样不完整');
         if (playbackError) throw playbackError as Error;

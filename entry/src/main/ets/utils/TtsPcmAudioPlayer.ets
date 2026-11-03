@@ -153,6 +153,16 @@ export class TtsPcmAudioPlayer {
     this.playbackMarks.push({ frame, callback });
   }
 
+  /** Wait for the audible boundary without draining/restarting the renderer between TTS segments. */
+  async waitForSegmentEnd(): Promise<void> {
+    const generation = this.playGeneration;
+    await this.writeChain;
+    await this.waitUntilResumed();
+    const renderer = this.renderer;
+    if (!renderer || generation !== this.playGeneration) return;
+    await this.waitUntilPlaybackFrameReached(this.queuedContentEndFrame, renderer, generation);
+  }
+
   async drain(): Promise<void> {
     await this.writeChain;
     await this.waitUntilResumed();

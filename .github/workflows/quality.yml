@@ -38,6 +38,12 @@ jobs:
       - run: node --experimental-strip-types scripts/category-swipe-pager-check.mjs
       - run: node --experimental-strip-types scripts/trial-read-shelf-check.mjs
       - run: node --experimental-strip-types scripts/select-font-check.mjs
+      - run: node scripts/mimo-reading-check.mjs
+      - run: node scripts/mimo-settings-check.mjs
+      - run: node scripts/mimo-voices-check.mjs
+      - run: node scripts/mimo-selector-check.mjs
+      - run: node scripts/app-data-backup-check.mjs
+      - run: node scripts/mimo-preview-check.mjs
       - run: node scripts/neutral-source-engine-check.mjs
       - run: node scripts/log-policy-check.mjs
       - run: node scripts/build-help-data.mjs --check

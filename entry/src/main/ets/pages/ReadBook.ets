@@ -53,6 +53,7 @@ import { RecentReadShortcut } from '../utils/RecentReadShortcut';
 import { RecentReadCardUpdater } from '../utils/RecentReadCardUpdater';
 import { SystemTtsReader, TtsChunk, TtsVoiceOption } from '../utils/SystemTtsReader';
 import { MimoStore } from '../utils/mimo/MimoStore';
+import { MimoVoiceChoice } from '../core/mimo/MimoVoicePolicy';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
@@ -257,6 +258,7 @@ struct ReadBookPage {
   @StorageProp('mimoMulti') @Watch('onMimoVoiceStateChanged') mimoMultiState: boolean = false;
   @StorageProp('mimoVoice') @Watch('onMimoVoiceStateChanged') mimoVoiceState: string = '';
   @StorageProp('mimoConfigured') @Watch('onMimoVoiceStateChanged') mimoConfiguredState: boolean = false;
+  @StorageProp('mimoVoicesRevision') @Watch('onMimoVoiceStateChanged') mimoVoicesRevision: number = 0;
   @StorageProp('mimoAnalysisAvailable') @Watch('onMimoVoiceStateChanged') mimoAnalysisState: boolean = false;
   @State bookUrl: string = '';
   @State book: Book | null = null;
@@ -8076,7 +8078,7 @@ struct ReadBookPage {
   }
 
   selectedTtsVoiceTitle(): string {
-    if (MimoStore.load().enabled) return MimoStore.load().multi ? 'MiMo · 自动多角色' : 'MiMo · 单音色 · ' + MimoStore.load().voice;
+    if (MimoStore.load().enabled) return MimoStore.selectedVoiceTitle(this.bookUrl);
     const cloudVoice = this.findCurrentCloudTtsVoice();
     if (cloudVoice) {
       return TtsVoiceCatalog.cloudVoiceTitle(cloudVoice);
@@ -8102,12 +8104,19 @@ struct ReadBookPage {
 
   /** With a saved key, MiMo leads the quick voice list so the player can switch both ways. */
   mimoQuickVoiceLabels(): string[] {
-    if (!MimoStore.isConfigured()) return [];
-    const settings = MimoStore.load();
-    const labels: string[] = [];
-    if (settings.analysisAvailable) labels.push('MiMo · 自动多角色');
-    labels.push('MiMo · 单音色 · ' + settings.voice);
-    return labels;
+    try { return MimoStore.voiceChoices(this.bookUrl).map((choice: MimoVoiceChoice): string => choice.label); }
+    catch (_) { return []; }
+  }
+
+  applyMimoPresetChoice(choice: MimoVoiceChoice): void {
+    if (!MimoStore.isConfigured()) { this.getUIContext().getRouter().pushUrl({ url: 'pages/MimoSettings' }); return; }
+    const shouldResume = this.isTtsSpeaking || this.ttsReader.isSpeaking();
+    if (shouldResume) this.stopTtsReading();
+    try {
+      if (!MimoStore.selectVoice(choice, this.bookUrl)) { this.getUIContext().getRouter().pushUrl({ url: 'pages/MimoSettings' }); return; }
+      this.publishTtsFloatingVoices();
+      if (shouldResume) this.startTtsReadingFromCurrentPosition(false).catch((error: Error) => HdsFeedback.showToast(error.message));
+    } catch (error) { HdsFeedback.showToast((error as Error).message); }
   }
 
   regularTtsVoiceCount(): number {
@@ -8162,7 +8171,7 @@ struct ReadBookPage {
   ttsQuickVoiceSelectedIndex(): number {
     const mimoLabels = this.mimoQuickVoiceLabels();
     if (mimoLabels.length > 0 && MimoStore.load().enabled) {
-      return MimoStore.load().multi && mimoLabels.length > 1 ? 0 : mimoLabels.length - 1;
+      return MimoStore.voiceChoices(this.bookUrl).findIndex((choice: MimoVoiceChoice): boolean => choice.key === MimoStore.selectedVoiceKey(this.bookUrl));
     }
     const offset = mimoLabels.length;
     const cloudIndex = this.ttsCloudVoices.findIndex((voice: TtsVoiceInfo) =>
@@ -8181,7 +8190,8 @@ struct ReadBookPage {
     if (selectedIndex < 0) return;
     const mimoLabels = this.mimoQuickVoiceLabels();
     if (selectedIndex < mimoLabels.length) {
-      this.applyMimoVoice(mimoLabels.length > 1 && selectedIndex === 0);
+      const choice = MimoStore.voiceChoices(this.bookUrl)[selectedIndex];
+      if (choice) this.applyMimoPresetChoice(choice);
       return;
     }
     const index = selectedIndex - mimoLabels.length;

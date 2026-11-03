@@ -131,6 +131,7 @@ function harness(t, nestedTarget = false) {
     BookSourceGroupStore: { load: async () => {} },
     ReaderReplaceRuleStore: { load: async () => [], save: async () => {} },
     TtsSettingsStore: { load: async () => ({ customVoices: '' }), save: async () => {} },
+    MimoStore: { reloadVoices() {} },
     BookshelfStateStore: { normalizeSortMode: value => value, saveSortMode: async () => {} },
     LocalBookService: {
       TYPE_EPUB: 1,
@@ -157,11 +158,13 @@ function harness(t, nestedTarget = false) {
   });
   const statsEntry = readEtsModule('model/data/AppDatabase.ts').match(/export class ReadStatsEntry \{[\s\S]*?\n\}/)[0];
   vm.runInContext(compile(readEtsModule('model/data/Book.ts')) + '\n' + compile(statsEntry) + '\n' +
+    compile(readEtsModule('core/mimo/MimoPolicy.ts')) + '\n' +
+    compile(readEtsModule('core/mimo/MimoVoicePolicy.ts').replace(/^export \{.*$/gm, '')) + '\n' +
     compile(readEtsModule('core/stats/AndroidReadRecordImport.ts')) + '\n' +
     compile(readEtsModule('utils/AndroidBackupJsonReader.ts')) + '\n' +
     compile(readEtsModule('utils/ReaderFontHelper.ets')) + '\n' +
     compile(readEtsModule('utils/AppDataBackupService.ets')) +
-    '\nglobalThis.api = { AppDataBackupService, AppDataBackupSelection, Book, ReaderFontHelper, AndroidReadRecordImport, AndroidBackupJsonReader };', sandbox);
+    '\nglobalThis.api = { AppDataBackupService, AppDataBackupSelection, Book, ReaderFontHelper, AndroidReadRecordImport, AndroidBackupJsonReader, MimoVoicePolicy };', sandbox);
   const { AppDataBackupService: service, AppDataBackupSelection: Selection, Book, ReaderFontHelper: fonts } = sandbox.api;
   const write = (context, relative, contents) => {
     const file = `${context.filesDir}/${relative}`;
@@ -267,6 +270,37 @@ test('full export/import preserves themes, OPDS, fonts, books and reports missin
   await h.service.discardImport(session);
   await h.service.discardExport(backup.archivePath);
   assert.equal(fs.existsSync(backup.archivePath), false);
+});
+
+test('MiMo presets and schemes round-trip without credentials, namespaces or cast files', async t => {
+  const h = harness(t);
+  const voices = plain(h.api.MimoVoicePolicy.defaults('冰糖'));
+  voices.presets.push(plain(h.api.MimoVoicePolicy.preset('custom','自定义童声','冰糖','清亮好奇','child')));
+  voices.apiKey = 'must-not-export';
+  h.write(h.source,'mimo_private/voices.json',JSON.stringify(voices));
+  h.write(h.source,'mimo_private/settings.json','{"namespace":"must-not-export"}');
+  h.write(h.source,'mimo_private/cast_test.json','{"book":"must-not-export"}');
+  const existingSettings = h.write(h.target,'mimo_private/settings.json','{"namespace":"local-account"}');
+  const backup=await h.service.createBackup(h.source,h.selection('settings'),'');
+  const archive=JSON.parse(fs.readFileSync(backup.archivePath,'utf8'));
+  assert.ok(archive['assets/mimo_voices.json']);
+  assert.ok(!Object.keys(archive).some(p=>p.includes('mimo_private')));
+  assert.ok(!Buffer.from(archive['assets/mimo_voices.json'],'base64').toString().includes('must-not-export'));
+  const session=await h.service.prepareImport(h.target,backup.archivePath);
+  await h.service.importBackup(h.target,session,h.selection('settings'));
+  const restored=JSON.parse(fs.readFileSync(h.target.filesDir+'/mimo_private/voices.json','utf8'));
+  assert.equal(restored.presets.at(-1).prompt,'清亮好奇');
+  assert.deepEqual(restored.schemes,voices.schemes);
+  assert.equal(fs.readFileSync(existingSettings,'utf8'),'{"namespace":"local-account"}');
+  const withoutSettings=await h.service.createBackup(h.source,h.selection('bookshelf'),'');
+  assert.ok(!JSON.parse(fs.readFileSync(withoutSettings.archivePath,'utf8'))['assets/mimo_voices.json']);
+  const voicePath=h.target.filesDir+'/mimo_private/voices.json', original=fs.readFileSync(voicePath,'utf8');
+  const damaged=plain(voices);damaged.presets[0].voice='invalid';
+  archive['assets/mimo_voices.json']=Buffer.from(JSON.stringify(damaged)).toString('base64');
+  fs.writeFileSync(backup.archivePath,JSON.stringify(archive));
+  const invalidSession=await h.service.prepareImport(h.target,backup.archivePath);
+  await assert.rejects(h.service.importBackup(h.target,invalidSession,h.selection('settings')),/格式无效/);
+  assert.equal(fs.readFileSync(voicePath,'utf8'),original,'invalid incoming presets never replace local voices');
 });
 
 test('deselected settings are neither exported nor restored', async t => {

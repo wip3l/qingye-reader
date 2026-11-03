@@ -6,6 +6,11 @@ export class MimoRole {
   aliases: string[] = [];
   voice: string = '白桦';
   locked: boolean = false;
+  manual: boolean = false;
+  age: string = 'unknown';
+  gender: string = 'unknown';
+  ageEvidence: string = '';
+  preset?: MimoVoicePreset;
 }
 
 export class MimoUnit {
@@ -23,6 +28,9 @@ export class MimoRoleProposal {
   name: string = '';
   aliases: string[] = [];
   gender: string = '';
+  age: string = 'unknown';
+  ageEvidence: string = '';
+  ageConfidence: number = 0;
 }
 
 export class MimoAssignment {
@@ -204,4 +212,14 @@ export class MimoSseParser {
     return events;
   }
   finish(): string[] { return this.push('\n\n'); }
+}
+/** Immutable-by-convention snapshot stored with each character. */
+export class MimoVoicePreset {
+  id: string = '';
+  name: string = '';
+  voice: string = '白桦';
+  prompt: string = '';
+  age: string = 'unknown';
+  gender: string = 'unknown';
+  revision: number = 1;
 }

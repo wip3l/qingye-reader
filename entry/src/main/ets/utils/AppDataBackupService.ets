@@ -16,6 +16,8 @@ import { BookshelfStateStore } from './BookshelfStateStore';
 import { ReaderFontHelper } from './ReaderFontHelper';
 import { AndroidReadRecordImport } from '../core/stats/AndroidReadRecordImport';
 import { AndroidBackupJsonReader } from './AndroidBackupJsonReader';
+import { MimoVoiceLibrary, MimoVoicePolicy } from '../core/mimo/MimoVoicePolicy';
+import { MimoStore } from './mimo/MimoStore';
 
 export class AppDataBackupSelection {
   sources: boolean = true;
@@ -282,6 +284,14 @@ export class AppDataBackupService {
           await AppDataBackupService.readPreferenceStore(context, storeName));
       }
       const assetsRoot = `${payloadRoot}/assets`;
+      const voicesPath = `${context.filesDir}/mimo_private/voices.json`;
+      if (AppDataBackupService.exists(voicesPath)) {
+        if ((await fs.stat(voicesPath)).size > 2 * 1024 * 1024) throw new Error('MiMo 音色库过大，无法备份');
+        // Export a validated whitelist, never the private directory, credentials, caches or namespaces.
+        const voices = MimoVoicePolicy.normalize(JSON.parse(await AppDataBackupService.readText(voicesPath)) as MimoVoiceLibrary, '白桦');
+        await AppDataBackupService.ensureDir(assetsRoot);
+        await AppDataBackupService.writeText(`${assetsRoot}/mimo_voices.json`, JSON.stringify(voices));
+      }
       for (let index = 0; index < AppDataBackupService.ASSET_DIRS.length; index++) {
         const dirName = AppDataBackupService.ASSET_DIRS[index];
         const source = `${context.filesDir}/${dirName}`;
@@ -553,6 +563,15 @@ export class AppDataBackupService {
 
     if (selection.settings && AppDataBackupService.hasCategory(manifest, AppDataBackupService.CATEGORY_SETTINGS)) {
       const assetsRoot = `${session.rootPath}/assets`;
+      const voicesPath = `${assetsRoot}/mimo_voices.json`;
+      if (AppDataBackupService.exists(voicesPath)) {
+        if ((await fs.stat(voicesPath)).size > 2 * 1024 * 1024) throw new Error('备份中的 MiMo 音色库过大');
+        const voices = MimoVoicePolicy.normalize(JSON.parse(await AppDataBackupService.readText(voicesPath)) as MimoVoiceLibrary, '白桦');
+        await AppDataBackupService.ensureDir(`${context.filesDir}/mimo_private`);
+        await AppDataBackupService.writeText(`${context.filesDir}/mimo_private/voices.json`, JSON.stringify(voices));
+        MimoStore.reloadVoices();
+        result.settings++;
+      }
       for (const dirName of AppDataBackupService.ASSET_DIRS) {
         const source = `${assetsRoot}/${dirName}`;
         if (AppDataBackupService.exists(source)) {

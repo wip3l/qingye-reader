@@ -1,6 +1,7 @@
 import { router } from '@kit.ArkUI';
 import { PageScaffold } from '../components/common/PageScaffold';
-import { SettingRow } from '../components/common/SettingRow';
+import { SettingRow, SettingNavRow } from '../components/common/SettingRow';
+import { MimoVoicePolicy } from '../core/mimo/MimoVoicePolicy';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -49,7 +50,10 @@ struct MimoBookRolesPage {
       this.correctionRole = AppStorage.get<string>('mimoCurrentRoleId') || 'narrator';
     }
   }
-  onPageShow(): void { syncSystemBars(getContext(this), this.dark, ThemeRuntime.pageColor(this.dark)); }
+  onPageShow(): void {
+    syncSystemBars(getContext(this), this.dark, ThemeRuntime.pageColor(this.dark));
+    if (this.book) this.refresh();
+  }
   onPageHide(): void { this.stopPreview(); }
   aboutToDisappear(): void { this.stopPreview(); this.player.release(); }
   private async loadBookName(): Promise<void> {
@@ -64,7 +68,7 @@ struct MimoBookRolesPage {
     const cast = MimoStore.cast(this.book);
     const role = cast.roles.find((item: MimoRole): boolean => item.id === id);
     if (!role || role.voice === voice) return;
-    role.voice = voice; role.locked = true;
+    role.voice = voice; role.locked = true; role.manual = true; role.preset = undefined;
     MimoStore.saveCast(this.book, cast, this.bookName); this.refresh();
     HdsFeedback.showToast('已保存，之后新生成的片段使用此音色');
   }
@@ -110,7 +114,8 @@ struct MimoBookRolesPage {
       if (!key) throw new Error('请先配置 MiMo API Key');
       let write: Promise<void> = Promise.resolve();
       let failure: Error | null = null;
-      await this.client.synthesize(key, '雨停了，我们一起出发吧。', role.voice, '单一说话人，自然平静',
+      await this.client.synthesize(key, '雨停了，我们一起出发吧。', role.voice,
+        MimoVoicePolicy.prompt(MimoVoicePolicy.rolePreset(role), '平静', '自然', 1),
         async (pcm: ArrayBuffer): Promise<void> => {
           if (serial !== this.serial) throw new Error('试听已停止');
           if (failure) throw failure;
@@ -144,13 +149,20 @@ struct MimoBookRolesPage {
           Text(this.bookName ? '《' + this.bookName + '》' : '当前书籍').fontSize(AppFontSize.BODY_LARGE)
             .fontWeight(FontWeight.Medium).fontColor(ThemeRuntime.primaryTextColor(this.dark))
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
-          Text('同一人物跨章节保持同一音色，修改只影响本书；四款音色可由多个人物共用。')
+          Text('人物声音跨章节固定，修改只影响本书；年龄不确定时由旁白朗读。')
             .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.dark)).width('100%')
         }.width('100%').padding({ top: AppSpacing.SM })
 
         if (this.currentText && this.correctionKey) {
           this.correctionCard()
         }
+
+        Column() {
+          SettingNavRow({ title: '本书音色方案', description: '切换只影响新人物，已有绑定保留',
+            onTap: () => router.pushUrl({ url: 'pages/MimoVoices', params: { screen: 'schemes', book: this.book } }) })
+          SettingNavRow({ title: '预览重新分配', description: '跳过锁定和手动指定的人物', showDivider: false,
+            onTap: () => router.pushUrl({ url: 'pages/MimoVoices', params: { screen: 'changes', book: this.book } }) })
+        }.width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
 
         Column() {
           ForEach(this.roles, (role: MimoRole, index: number) => {
@@ -194,7 +206,8 @@ struct MimoBookRolesPage {
 
   @Builder
   roleRow(role: MimoRole, last: boolean) {
-    SettingRow({ title: role.name, description: role.aliases.length > 0 ? '别名：' + role.aliases.join('、') : '',
+    SettingRow({ title: role.name, description: MimoVoicePolicy.ageLabel(role.age || 'unknown') + ' · ' +
+      MimoVoicePolicy.rolePreset(role).name + (role.locked ? ' · 已锁定' : ''),
       showDivider: !last }) {
       Row({ space: AppSpacing.MD }) {
         Button({ type: ButtonType.Circle }) {
@@ -203,27 +216,9 @@ struct MimoBookRolesPage {
         }.width(36).height(36).backgroundColor(ThemeRuntime.softFillColor(this.dark))
         .accessibilityText(this.previewing === role.id ? '停止试听' : '试听 ' + role.name)
         .onClick(() => this.togglePreview(role))
-        Select(MIMO_VOICES.map((voice: string): SelectOption => ({ value: voice })))
-          .selected(MIMO_VOICES.indexOf(role.voice)).value(role.voice)
-          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
-          .optionFont({ family: this.applicationFontFamily })
-          .selectedOptionFont({ family: this.applicationFontFamily })
-          .fontColor(ThemeRuntime.subTextColor(this.dark))
-          .backgroundColor(Color.Transparent)
-          .arrowPosition(ArrowPosition.END)
-          .padding({ left: 0, right: 0 })
-          .borderRadius(16)
-          .border({ width: 0 })
-          .divider(null)
-          .optionBgColor(Color.Transparent)
-          .optionFontColor(ThemeRuntime.primaryTextColor(this.dark))
-          .selectedOptionFontColor(ThemeRuntime.accentColor(this.dark))
-          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.dark))
-          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.dark))
-          .menuBackgroundBlurStyle(BlurStyle.NONE)
-          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
-          .accessibilityText(role.name + '的音色，' + role.voice)
-          .onSelect((index: number) => this.setVoice(role.id, MIMO_VOICES[index]))
+        Button('调整').fontSize(AppFontSize.BODY).backgroundColor(Color.Transparent)
+          .fontColor(ThemeRuntime.accentColor(this.dark)).onClick(() => router.pushUrl({ url: 'pages/MimoVoices',
+            params: { screen: 'role', book: this.book, roleId: role.id } }))
       }.margin({ left: AppSpacing.MD })
     }
   }
