@@ -22,6 +22,14 @@
         "icon": "$media:ic_app_warm_book"
       },
       {
+        "name": "flowing_pages",
+        "icon": "$media:ic_app_flowing_pages"
+      },
+      {
+        "name": "azure_book",
+        "icon": "$media:ic_app_azure_book"
+      },
+      {
         "name": "night_neon",
         "icon": "$media:ic_app_night_neon"
       },

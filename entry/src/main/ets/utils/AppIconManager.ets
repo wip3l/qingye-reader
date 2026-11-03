@@ -18,6 +18,8 @@ export class AppIconManager {
   static readonly OPTIONS: AppIconOption[] = [
     AppIconManager.option('default', '默认主题', '应用默认桌面图标', '', $r('app.media.icon')),
     AppIconManager.option('nostalgic', '怀旧', '原版经典书本图标', 'nostalgic', $r('app.media.ic_app_nostalgic')),
+    AppIconManager.option('flowing_pages', '流光翻页', '蓝紫流光与轻盈翻页', 'flowing_pages', $r('app.media.ic_app_flowing_pages')),
+    AppIconManager.option('azure_book', '蓝曜书卷', '蓝白书页与柔和辉光', 'azure_book', $r('app.media.ic_app_azure_book')),
     AppIconManager.option('warm_book', '纸书暖光', '温润纸页与书签', 'warm_book', $r('app.media.ic_app_warm_book')),
     AppIconManager.option('night_neon', '夜读霓虹', '深色发光书页', 'night_neon', $r('app.media.ic_app_night_neon')),
     AppIconManager.option('minimal_line', '极简线性', '清爽几何线条', 'minimal_line', $r('app.media.ic_app_minimal_line')),
