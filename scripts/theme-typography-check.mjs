@@ -126,6 +126,57 @@ function assertTypography(actual) {
 const SCHEME_PROFILE = 'custom__custom_1';
 
 const tests = {
+  async 'reader layout edits are visible to the active custom scheme without a separate theme save'() {
+    const h = harness();
+    h.values.set('appThemeId', 'custom');
+    h.values.set('activeCustomThemeSchemeId', 'custom_1');
+    await h.settings.reload({});
+    // 阅读页连续调整后立即打开主题页，此时不要求主题排版页曾经保存过。
+    const pending = h.settings.saveLayoutSettings({}, 30, 16, 8, 24, 25);
+    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), true);
+    const profile = await h.settings.loadProfile({}, SCHEME_PROFILE);
+    assert.equal(profile.fontSize, 30);
+    assert.equal(profile.lineHeight, 16);
+    assert.equal(profile.paragraphSpacing, 8);
+    assert.equal(profile.marginLeft, 24);
+    assert.equal(profile.marginRight, 25);
+    await pending;
+    assert.equal((await h.settings.reload({})).fontSize, 30);
+  },
+
+  async 'existing unmarked custom profiles keep their saved typography across scheme switches'() {
+    const h = harness();
+    const saved = typography(h);
+    saved.fontSize = 30;
+    h.disk.set(`readerThemeProfileV1_${SCHEME_PROFILE}`, JSON.stringify(saved));
+    assert.equal(h.disk.has(`readerThemeTypographyBoundV1_${SCHEME_PROFILE}`), false);
+    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), true);
+    assert.equal((await h.settings.loadProfile({}, SCHEME_PROFILE)).fontSize, 30);
+    assert.equal((await h.settings.load({})).fontSize, 20, 'inactive profile does not change live settings');
+
+    h.values.set('appThemeId', 'custom');
+    h.values.set('activeCustomThemeSchemeId', 'custom_1');
+    const active = await h.settings.switchThemeProfile({}, 'classic-blue', SCHEME_PROFILE);
+    assert.equal(active.fontSize, 30);
+    h.values.set('activeCustomThemeSchemeId', 'custom_2');
+    const secondId = 'custom__custom_2';
+    await h.settings.switchThemeProfile({}, SCHEME_PROFILE, secondId);
+    await h.settings.saveLayoutSettings({}, 22, 10, 0);
+    assert.equal((await h.settings.loadProfile({}, SCHEME_PROFILE)).fontSize, 30);
+    assert.equal((await h.settings.loadProfile({}, secondId)).fontSize, 22);
+  },
+
+  async 'missing or corrupt inactive profiles and builtin profiles do not imply typography binding'() {
+    const h = harness();
+    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), false);
+    h.disk.set(`readerThemeProfileV1_${SCHEME_PROFILE}`, '{broken');
+    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), false);
+    await h.settings.load({});
+    assert.equal(await h.settings.isTypographyBound({}, 'classic-blue'), false);
+    h.disk.set('readerThemeProfileV1_custom', JSON.stringify(new h.ReaderSettings()));
+    assert.equal(await h.settings.isTypographyBound({}, 'custom'), false);
+  },
+
   async 'saving an inactive scheme writes only its profile and marks it bound'() {
     const h = harness();
     await h.settings.saveLayoutSettings({}, 20, 12, 0);
@@ -133,7 +184,8 @@ const tests = {
     existing.pageTurnMode = 0;
     existing.lightThemeIndex = 2;
     h.disk.set(`readerThemeProfileV1_${SCHEME_PROFILE}`, JSON.stringify(existing));
-    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), false);
+    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), true,
+      'an existing custom scheme profile already owns its typography');
 
     await h.settings.saveTypographyToProfile({}, SCHEME_PROFILE, typography(h));
 

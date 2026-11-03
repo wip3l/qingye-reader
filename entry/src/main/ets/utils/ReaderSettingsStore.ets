@@ -1314,10 +1314,16 @@ export class ReaderSettingsStore {
     ReaderSettingsStore.updateFontRules(target, source);
   }
 
-  /** 用户在主题排版页为这套主题保存过排版。应用主题时据此默认沿用它，而不是重置成预设排版。 */
+  /** 方案已有自己的排版时，主题摘要和应用选项都沿用它，阅读页与主题排版页的修改同等生效。 */
   static async isTypographyBound(context: Context, profileId: string): Promise<boolean> {
+    const id = ReaderSettingsStore.normalizeThemeProfileId(profileId);
     const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
-    return await store.get(ReaderSettingsStore.typographyBoundKey(profileId), false) === true;
+    if (await store.get(ReaderSettingsStore.typographyBoundKey(id), false) === true) return true;
+    // 阅读页一直会保存方案档案，但旧数据只有从主题排版页保存才带绑定标记。
+    // 当前方案直接读实时设置；其他方案有有效档案即可复用，避免把已调好的排版显示或应用成预设值。
+    if (!id.startsWith(`${ReaderSettingsStore.LEGACY_CUSTOM_PROFILE_ID}__`)) return false;
+    if (id === ReaderSettingsStore.activeThemeId()) return true;
+    return await ReaderSettingsStore.loadThemeProfile(store, id) !== null;
   }
 
   /**
