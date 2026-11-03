@@ -18260,10 +18260,12 @@ struct ReadBookPage {
   // frames. Start such background work only once the reader is idle; the cap keeps continuous turning from
   // starving it.
   runWhenReaderIdle(task: () => void, maxWaitMs: number,
-    busy: () => boolean = (): boolean => this.isReaderPaginationInteractionBusy()): void {
+    busy?: () => boolean): void {
+    // Create the default closure in the method body: ArkTS can lose the component receiver in a parameter initializer.
+    const isBusy = busy ?? ((): boolean => this.isReaderPaginationInteractionBusy());
     const deadline = Date.now() + Math.max(0, maxWaitMs);
     const attempt = (): void => {
-      if (busy() && Date.now() < deadline) {
+      if (isBusy() && Date.now() < deadline) {
         setTimeout(attempt, READER_IDLE_WORK_RETRY_MS);
         return;
       }

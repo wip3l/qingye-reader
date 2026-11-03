@@ -10,16 +10,71 @@ function method(name) {
   return source.slice(match.index, source.indexOf('\n  }', match.index) + 4);
 }
 const timers = [];
-const context = vm.createContext({ console, Date, setTimeout: fn => { timers.push(fn); return timers.length; },
+let now = 0;
+const context = vm.createContext({ console, Date: { now: () => now },
+  setTimeout: fn => { timers.push(fn); return timers.length; },
+  READER_IDLE_WORK_RETRY_MS: 48,
   READER_INTERACTIVE_PAGINATION_BATCH_DELAY_MS: 56, READER_PAGINATION_BATCH_DELAY_MS: 64,
   READER_PAGINATION_BUSY_RETRY_DELAY_MS: 48, ReaderActionMarker: { has: () => false },
   CooperativeScheduler: { SLOW_OPERATION_MS: 16 } });
 const names = ['scheduleReaderPaginationCompletion', 'getLocalPageTurnTargetPageIndex',
   'canTurnPage', 'isForwardChapterTurnWaitingForPagination', 'runTapPageTurn', 'runSlidePageTurn',
   'runNoAnimationPageTurn', 'cancelManualReaderTurn', 'publishCurrentReaderPagination',
-  'currentReaderV2ChapterSurfaceKeys'];
+  'currentReaderV2ChapterSurfaceKeys', 'runWhenReaderIdle', 'persistReaderPagination'];
+// Node preserves `this` in default parameters, while the device crash came from ArkTS's generated default closure.
+// Keep receiver-dependent defaults in the body as well as checking the scheduler's runtime behavior below.
+assert.doesNotMatch(method('runWhenReaderIdle').split('{')[0], /\bthis\./,
+  'the idle predicate must capture the component receiver in the method body');
 const Reader = vm.runInContext(stripTypeScriptTypes(`class Reader { ${names.map(method).join('\n')} }; Reader`,
   { mode: 'strip' }), context);
+
+const idle = new Reader();
+let busy = false, runs = 0, busyChecks = 0;
+idle.isReaderPaginationInteractionBusy = function () { assert.equal(this, idle); busyChecks++; return busy; };
+idle.runWhenReaderIdle(() => { runs++; }, 100);
+assert.equal(runs, 1, 'the omitted predicate can use the reader receiver immediately');
+busy = true;
+idle.runWhenReaderIdle(() => { runs++; }, 100);
+assert.equal(runs, 1, 'background work waits during reader interaction');
+assert.equal(timers.length, 1);
+await timers.shift()();
+assert.equal(runs, 1, 'the default predicate retains its receiver across retries');
+busy = false;
+await timers.shift()();
+assert.equal(runs, 2, 'background work runs once after interaction settles');
+busy = true;
+idle.runWhenReaderIdle(() => { runs++; }, 100);
+now = 100;
+await timers.shift()();
+assert.equal(runs, 3, 'the deadline prevents continuous interaction from starving work');
+const checksBeforeOverride = busyChecks;
+idle.runWhenReaderIdle(() => { runs++; }, 100, () => false);
+assert.equal(runs, 4, 'an explicit motion predicate can bypass other interaction state');
+assert.equal(busyChecks, checksBeforeOverride, 'an explicit predicate replaces the default');
+let customBusy = true;
+idle.runWhenReaderIdle(() => { runs++; }, 100, () => customBusy);
+assert.equal(runs, 4);
+customBusy = false;
+await timers.shift()();
+assert.equal(runs, 5, 'the explicit predicate is also rechecked on retries');
+assert.equal(timers.length, 0);
+
+const cacheWrites = [];
+context.AppDatabase = { getInstance: () => ({ saveReaderPaginationCache: (...args) => {
+  cacheWrites.push(args); return Promise.resolve();
+} }) };
+idle.bookUrl = 'book';
+const cachedPagination = { complete: true, starts: [0], ends: [2] };
+idle.persistReaderPagination(0, 'cache-key', cachedPagination);
+idle.persistReaderPagination(0, 'cache-key', cachedPagination);
+assert.equal(cacheWrites.length, 0, 'the crash path defers cache persistence while busy');
+assert.equal(timers.length, 1, 'repeated persistence requests share one scheduled write');
+busy = false;
+await timers.shift()();
+assert.deepEqual(cacheWrites, [['book', 0, 'cache-key', [0], [2]]],
+  'the two-argument idle call persists the completed pagination after interaction settles');
+assert.equal(timers.length, 0);
+
 function harness() {
   const result = { source: '正文', pages: ['first'], ends: [1], complete: false, v2Session: {} };
   const reader = new Reader();
