@@ -333,6 +333,20 @@ equal(T.of(Item.PAGE, context), '5-6/20', '双页页码');
 equal(T.of(Item.PAGES_LEFT, context), '剩余 14 页', '双页剩余页数');
 context.doublePage = false;
 
+context.pageCountPending = true;
+for (const item of [Item.PAGE, Item.PAGES_LEFT, Item.CHAPTER_PERCENT, Item.BOOK_PERCENT]) {
+  equal(T.of(item, context), '…', '分页未完成时不展示临时总页数或百分比');
+}
+equal(T.of(Item.CHAPTER_PROGRESS, context), '3/10 章', '等待分页不影响章节进度');
+equal(T.chapterPercent(context), 0, '临时页数不能让本章进度条填满');
+equal(T.bookPercent(context), 20, '未知章内进度只计入已完成的章节');
+context.chapterProgressRatio = 0.4;
+equal(T.of(Item.CHAPTER_PERCENT, context), '40%', '滚动模式有可见字符位置时可展示百分比');
+equal(T.of(Item.BOOK_PERCENT, context), '24.0%', '滚动百分比不依赖待计算的屏幕总页数');
+equal(T.of(Item.PAGE, context), '…', '字符进度不能代替待计算的总页数');
+context.chapterProgressRatio = -1;
+context.pageCountPending = false;
+
 context.chapterIndex = 9;
 context.pageIndex = 19;
 equal(T.bookPercent(context), 100, '最后一章最后一页为 100%');

@@ -5785,6 +5785,9 @@ struct ReadBookPage {
       context.pageCountPending = context.pageCount === 0;
       context.chapterProgressRatio = this.readerContinuousDisplayProgress;
       context.doublePage = false;
+    } else if (!this.isReaderComicModeActive()) {
+      // Published pages may be only the first window of an incremental chapter layout.
+      context.pageCountPending = !this.isCurrentReaderPaginationComplete();
     }
     context.timeText = this.readerInfoTimeText;
     context.batteryPercent = this.readerInfoBatteryPercent;
@@ -6354,13 +6357,13 @@ struct ReadBookPage {
     }
     if (!this.readerPageVisible || this.currentChapterIndex !== chapterIndex) return;
     console.info(`[ReaderContinuous] chapter ${sourceChapterIndex} -> ${chapterIndex} switched=${switched}`);
-    this.scheduleReaderComicProgressSave();
     this.comicImageActions().onChapterBecameCurrent(chapterIndex);
-    const top = this.readerComicPageDataSource.itemAt(this.readerContinuousLastListStart);
-    if (top && top.isPage() && top.chapterIndex !== chapterIndex) {
-      // 提交期间读者又滚进了另一章，按最新可见区继续切换。
-      this.onReaderComicScrollIndexChanged(this.readerContinuousLastListStart, this.readerContinuousLastListEnd);
-    } else {
+    // Loading can finish after the reader has moved within this chapter as well as into another one.
+    // Recompute the local visible range before saving or resolving the first visible source offset.
+    this.onReaderComicScrollIndexChanged(this.readerContinuousLastListStart, this.readerContinuousLastListEnd);
+    this.scheduleReaderComicProgressSave();
+    const top = this.readerContinuousFirstVisiblePage();
+    if (!top || top.chapterIndex === chapterIndex) {
       this.readerComicPageDataSource.trim(chapterIndex - 1, chapterIndex + 1);
       // 继续往同一方向读时下一个相邻章节马上就要用到，趁读者还在这一章就接上。
       this.ensureReaderContinuousNeighbors(this.readerContinuousLastListStart, this.readerContinuousLastListEnd, true);
@@ -6512,6 +6515,16 @@ struct ReadBookPage {
     setTimeout(restore, 16);
   }
 
+  /** A chapter separator has no reading position; use the first actual page inside the visible range. */
+  readerContinuousFirstVisiblePage(): ReaderScrollItem | null {
+    const last = Math.min(this.readerContinuousLastListEnd, this.readerComicPageDataSource.totalCount() - 1);
+    for (let index = Math.max(0, this.readerContinuousLastListStart); index <= last; index++) {
+      const item = this.readerComicPageDataSource.itemAt(index);
+      if (item && item.isPage()) return item;
+    }
+    return null;
+  }
+
   onReaderComicScrollIndexChanged(start: number, end: number): void {
     // ArkUI can publish one final List index while the route is being detached. That callback describes the
     // shrinking/unmounted viewport, not a user scroll, and must not replace the page captured by exit/background.
@@ -6537,10 +6550,11 @@ struct ReadBookPage {
       return;
     }
     this.ensureReaderContinuousNeighbors(listStart, listEnd);
-    const top = this.readerComicPageDataSource.itemAt(listStart);
-    if (top && top.isPage() && this.usesReaderContinuousV2() && !this.isReaderImageOnlyPage(top.text) &&
+    const top = this.readerContinuousFirstVisiblePage();
+    if (!top) return;
+    if (this.usesReaderContinuousV2() && !this.isReaderImageOnlyPage(top.text) &&
       !this.readerContinuousV2Request(top.pageIndex, top.text, top.chapterIndex).state.ready) return;
-    if (top && top.isPage() && top.chapterIndex !== this.currentChapterIndex) {
+    if (top.chapterIndex !== this.currentChapterIndex) {
       this.commitReaderContinuousChapter(top.chapterIndex, top.pageIndex);
       return;
     }
@@ -17087,6 +17101,15 @@ struct ReadBookPage {
         this.toMeasureNonNegativePx(this.readerParagraphSpacing) : 0;
       request.state.heightVp = Math.max(1, px2vp(Math.ceil(layout.contentBottomPx + gapPx)));
       request.state.ready = true;
+      const top = this.readerContinuousFirstVisiblePage();
+      if (top && top.chapterIndex === request.chapter && top.pageIndex === request.index) {
+        // The index callback may have deferred promotion while this chunk was still a loading placeholder.
+        setTimeout(() => {
+          if (valid()) {
+            this.onReaderComicScrollIndexChanged(this.readerContinuousLastListStart, this.readerContinuousLastListEnd);
+          }
+        }, 16);
+      }
       this.pruneReaderContinuousLayouts();
     } catch (error) {
       if (valid()) {

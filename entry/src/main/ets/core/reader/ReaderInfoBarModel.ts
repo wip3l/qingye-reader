@@ -333,7 +333,7 @@ export class ReaderInfoBarContext {
   chapterCount: number = 0;
   pageIndex: number = 0;
   pageCount: number = 0;
-  /** Screen pagination is still being measured; never present the render chunk count as a page count. */
+  /** The chapter page total is still being measured; partial pages/chunks are not a final total. */
   pageCountPending: boolean = false;
   /** Continuous reading progress from the visible source offset; -1 uses paged progress. */
   chapterProgressRatio: number = -1;
@@ -373,10 +373,12 @@ export class ReaderInfoBarText {
       return `剩余 ${Math.max(0, pageCount - shown)} 页`;
     }
     if (item === ReaderInfoItem.CHAPTER_PERCENT) {
+      if (context.pageCountPending && context.chapterProgressRatio < 0) return '…';
       return `${Math.round(ReaderInfoBarText.chapterPercent(context))}%`;
     }
     if (item === ReaderInfoItem.CHAPTER_PROGRESS) return `${chapterIndex + 1}/${chapterCount} 章`;
     if (item === ReaderInfoItem.BOOK_PERCENT) {
+      if (context.pageCountPending && context.chapterProgressRatio < 0) return '…';
       return `${ReaderInfoBarText.bookPercent(context).toFixed(1)}%`;
     }
     if (item === ReaderInfoItem.TIME) return context.timeText;
@@ -409,6 +411,8 @@ export class ReaderInfoBarText {
     if (context.chapterProgressRatio >= 0) {
       return Math.max(0, Math.min(100, context.chapterProgressRatio * 100));
     }
+    // Until the denominator is final, only completed chapters contribute to numeric progress bars.
+    if (context.pageCountPending) return 0;
     const pageCount = Math.max(1, context.pageCount);
     const pageIndex = Math.max(0, Math.min(context.pageIndex, pageCount - 1));
     return Math.max(0, Math.min(100, ((pageIndex + 1) / pageCount) * 100));

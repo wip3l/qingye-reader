@@ -54,6 +54,8 @@ function fixture() {
     readerComicPageDataSource: { itemAt: n => n === 0 ?
       { chapterIndex: 0, pageIndex: 0, text: 'first', isPage: () => true } : null },
     isReaderImageOnlyPage: () => false,
+    readerContinuousFirstVisiblePage: () => ({ chapterIndex: 0, pageIndex: 0 }),
+    positionRefreshes: 0, onReaderComicScrollIndexChanged() { this.positionRefreshes++; },
   });
   return reader;
 }
@@ -77,6 +79,7 @@ assert.equal(timers.size, 1); assert.equal(nativeCalls, 0, 'List builder only sc
 await settle();
 assert.equal(nativeCalls, 1); assert.equal(state.ready, true); assert.equal(state.heightVp, 210);
 assert(reader.readerContinuousV2Layout(0, 'first'));
+assert.equal(reader.positionRefreshes, 1, 'visible layout completion retries the position deferred by its placeholder');
 reader.readerContinuousV2State(0, 'first'); await settle(); assert.equal(nativeCalls, 1);
 
 paused = true;
