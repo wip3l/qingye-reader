@@ -47,6 +47,7 @@ export function loadObsidianReader(pathkit = null) {
   });
   const modules=['utils/HexColor.ts','theme/ThemeModels.ets','theme/BuiltinThemeRegistry.ets',
     'theme/ThemeRuntime.ets','theme/ThemeAssetRegistry.ets','account/ThemeAccessPolicy.ets',
+    'utils/ReaderThemeHelper.ets','utils/ReaderCustomThemeHelper.ets','utils/ReaderThemeRenderCache.ets',
     'core/reader/ReaderFontWeight.ts','core/reader/ReaderCommentBubbleSize.ts','model/reader/ReaderRegexFontRule.ets',
     'core/reader/ReaderTitleSplit.ts','model/reader/ReaderTitleStyle.ets',
     'core/reader/ReaderV2Style.ets','core/reader/ReaderCommentBubble.ets'];
@@ -55,6 +56,8 @@ export function loadObsidianReader(pathkit = null) {
   const templateMethod=reader.slice(reader.indexOf('  buildReaderV2RegexStyleTemplate('),reader.indexOf('  createIncrementalReaderV2Pagination('));
   vm.runInContext(modules.map(file=>compile(read(file))).join('\n')+'\n'+compile(`class ReaderHarness {
     appDarkMode=false;
+    readerThemeRenderCache=new ReaderThemeRenderCache();
+    get themeRevision(){return ThemeRuntime.themeRevision();}
     sourceSettings={};
     isReaderThemeDark(){return this.appDarkMode;}
     accentColor(){return ThemeRuntime.accentColor(this.appDarkMode);}

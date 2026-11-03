@@ -123,6 +123,9 @@ export class ReaderEmulationFlipPainter {
     this.paletteKey = key;
     this.darkPaper = dark;
     const rgb = this.parseColor(paperColor);
+    // A page is opaque even when its snapshot/artwork has alpha. Otherwise the live destination below
+    // bleeds through the unturned paper. Keep alpha only in the shadows and the paper-back ink wash.
+    this.activePaperColor = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
     const shift = dark ? 22 : -16;
     const tintR = Math.max(0, Math.min(255, rgb[0] + shift));
     const tintG = Math.max(0, Math.min(255, rgb[1] + shift));
@@ -221,8 +224,7 @@ export class ReaderEmulationFlipPainter {
     paperColor: string, dark: boolean): void {
     this.vpPerPx = vpPerPx > 0 ? vpPerPx : 1;
     // 折页背面必须用当前主题的纸张底色，否则会和页面底色不一致，看起来像另一块纸贴在上面。
-    this.activePaperColor = paperColor && paperColor.length > 0 ? paperColor : this.paperColor;
-    this.applyPalette(this.activePaperColor, dark);
+    this.applyPalette(paperColor && paperColor.length > 0 ? paperColor : this.paperColor, dark);
     const width = Math.max(1, canvasWidth);
     const height = Math.max(1, canvasHeight);
     const curl = Math.max(0, Math.min(1, progress));
@@ -236,7 +238,11 @@ export class ReaderEmulationFlipPainter {
       if (curl <= 0 || curl >= 1) {
         const texture = curl <= 0 ? page : backPage;
         const origin = (curl <= 0 ? direction > 0 : direction < 0) ? rightOrigin : 0;
-        if (texture) context.drawImage(texture, origin, 0, leafWidth, height);
+        if (texture) {
+          context.fillStyle = this.activePaperColor;
+          context.fillRect(origin, 0, leafWidth, height);
+          context.drawImage(texture, origin, 0, leafWidth, height);
+        }
         return;
       }
       this.drawFlatFold(context, page, leafWidth, height, curl, direction, region, backPage, width, rightOrigin);
@@ -245,6 +251,8 @@ export class ReaderEmulationFlipPainter {
     if (curl <= 0.004 || curl >= this.finishedProgress) {
       // 平铺与翻出到底都不再需要卷曲层：前者直接铺满当前页，后者由底层目标页接管。
       if (curl <= 0.004) {
+        context.fillStyle = this.activePaperColor;
+        context.fillRect(0, 0, width, height);
         context.drawImage(page, 0, 0, width, height);
       }
       return;
@@ -265,7 +273,10 @@ export class ReaderEmulationFlipPainter {
     const target = this.flatFoldTarget(width, height, curl, region, grab, mirrored, spreadWidth, leafOrigin);
     const span = Math.hypot(grab.x - target.x, grab.y - target.y);
     if (span < 0.5) {
-      context.drawImage(page, mirrored ? spreadWidth - leafOrigin - width : leafOrigin, 0, width, height);
+      const origin = mirrored ? spreadWidth - leafOrigin - width : leafOrigin;
+      context.fillStyle = this.activePaperColor;
+      context.fillRect(origin, 0, width, height);
+      context.drawImage(page, origin, 0, width, height);
       return;
     }
     const normal: FoldPoint = { x: (grab.x - target.x) / span, y: (grab.y - target.y) / span };
@@ -291,6 +302,8 @@ export class ReaderEmulationFlipPainter {
     if (flat.length >= 3) {
       context.save();
       context.clip(flatPath);
+      context.fillStyle = this.activePaperColor;
+      context.fill(flatPath);
       if (mirrored) {
         context.translate(width, 0);
         context.scale(-1, 1);

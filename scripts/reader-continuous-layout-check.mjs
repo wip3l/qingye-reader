@@ -10,7 +10,7 @@ function method(name) {
   assert(start >= 0, name);
   return source.slice(start, source.indexOf('\n  }', start) + 4);
 }
-const timers = new Map(); let timerId = 0, nativeCalls = 0, paused = false, rejectNext = false;
+const timers = new Map(); let timerId = 0, nativeCalls = 0, snapshotCalls = 0, paused = false, rejectNext = false;
 const held = [];
 const reportedErrors = [];
 const sandbox = vm.createContext({ console: { ...console, error: (...args) => reportedErrors.push(args) }, px2vp: n => n / 2,
@@ -49,7 +49,7 @@ function fixture() {
     readerContinuousChapterOf: n => n < 0 ? 0 : n, readerContinuousV2ChunkText: (_index, text) => text,
     readerContinuousV2ChunkStart: index => index * 1800, readerContinuousSourceOf() { return this.sourceText; },
     readerContinuousEndsOf: () => new Array(100), hashText: s => s, readerPaginationSourceHash: s => s,
-    buildReaderV2Snapshot: () => snapshot, readerV2HeadingHints: () => [], getChapterTitle: () => '',
+    buildReaderV2Snapshot: () => { snapshotCalls++; return snapshot; }, readerV2HeadingHints: () => [], getChapterTitle: () => '',
     buildReaderV2RegexStyles: () => [], toMeasureNonNegativePx: n => n * 2,
     readerComicPageDataSource: { itemAt: n => n === 0 ?
       { chapterIndex: 0, pageIndex: 0, text: 'first', isPage: () => true } : null },
@@ -81,6 +81,14 @@ assert.equal(nativeCalls, 1); assert.equal(state.ready, true); assert.equal(stat
 assert(reader.readerContinuousV2Layout(0, 'first'));
 assert.equal(reader.positionRefreshes, 1, 'visible layout completion retries the position deferred by its placeholder');
 reader.readerContinuousV2State(0, 'first'); await settle(); assert.equal(nativeCalls, 1);
+const snapshotsBeforeScroll = snapshotCalls;
+for (let frame = 0; frame < 240; frame++) {
+  reader.readerContinuousV2State(0, 'first');
+  reader.readerContinuousV2Layout(0, 'first');
+  reader.warmReaderContinuousLayouts();
+}
+assert.equal(snapshotCalls, snapshotsBeforeScroll, 'warm scrolling must not resolve themes/fonts or rebuild snapshots');
+assert.equal(nativeCalls, 1, 'warm scrolling never reshapes the chunk');
 
 paused = true;
 const staleState = reader.readerContinuousV2State(1, 'second'); await tick();
@@ -93,7 +101,9 @@ held.shift()(); await settle(); assert.equal(staleState.ready, true, 'a retained
 
 const beforeFontChange = reader.readerContinuousV2State(2, 'third'); await tick();
 reader.cancelReaderContinuousLayouts(true); reader.readerV2SurfaceGeneration++;
+const snapshotsBeforeTypography = snapshotCalls;
 const afterFontChange = reader.readerContinuousV2State(2, 'third'); await tick();
+assert.equal(snapshotCalls, snapshotsBeforeTypography + 1, 'typography invalidation resolves a fresh snapshot');
 held.shift()(); await settle();
 assert.equal(beforeFontChange.ready, false); assert.equal(afterFontChange.ready, false);
 assert.equal(reader.readerContinuousLayoutActiveSerial, reader.readerContinuousLayoutSerial,

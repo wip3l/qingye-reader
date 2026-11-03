@@ -65,6 +65,10 @@ jobs:
       - run: node --experimental-strip-types scripts/reader-chunk-pagination-check.mjs
       - run: node --experimental-strip-types scripts/reader-pagination-index-check.mjs
       - run: node --experimental-strip-types scripts/reader-page-texture-cache-check.mjs
+      - run: node --experimental-strip-types scripts/reader-page-texture-pair-check.mjs
+      - run: node --experimental-strip-types scripts/reader-page-curl-palette-check.mjs
+      - run: node --experimental-strip-types scripts/reader-theme-render-cache-check.mjs
+      - run: node --experimental-strip-types scripts/reader-page-host-binding-check.mjs
       - run: node --experimental-strip-types scripts/reader-page-turn-scheduling-check.mjs
       - run: node --experimental-strip-types scripts/reader-continuous-page-metrics-check.mjs
       - run: node --experimental-strip-types scripts/reader-progress-sync-check.mjs

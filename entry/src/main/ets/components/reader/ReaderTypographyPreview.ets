@@ -5,7 +5,7 @@ import { ReaderV2Paginator } from '../../core/reader/ReaderV2Paginator';
 import { ReaderV2PageFrameNode } from '../../core/reader/ReaderV2RenderNode';
 import { ReaderV2SpanStyleRange } from '../../core/reader/ReaderV2Style';
 import { ReaderV2PageLayout, ReaderV2RegexBubbleSegment } from '../../core/reader/ReaderV2PageLayout';
-import { ReaderV2RegexBubbleCaps } from './ReaderV2RegexBubbleCaps';
+import { ReaderV2RegexBubbleCapImages } from './ReaderV2RegexBubbleCaps';
 
 export class ReaderTypographyPreviewConfig {
   input: ReaderV2LayoutInput = new ReaderV2LayoutInput();
@@ -139,7 +139,7 @@ export struct ReaderTypographyPreview {
         .accessibilityText(this.config.document.displayText)
       Stack({ alignContent: Alignment.TopStart }) {
         ForEach(this.capSegments, (segment: ReaderV2RegexBubbleSegment) => {
-          ReaderV2RegexBubbleCaps({ segment: segment })
+          ReaderV2RegexBubbleCapImages(segment, this.getUIContext())
         }, (segment: ReaderV2RegexBubbleSegment) => `${segment.styleId}_${segment.rect.left}_${segment.rect.top}_` +
           `${segment.rect.right}_${segment.rect.bottom}_${segment.capSizePx}_${segment.leadingCapWidthPx}_` +
           `${segment.trailingCapWidthPx}_${segment.leading}_${segment.trailing}`)

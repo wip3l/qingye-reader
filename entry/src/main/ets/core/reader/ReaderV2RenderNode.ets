@@ -10,6 +10,7 @@ import {
 } from '@ohos.arkui.node';
 import graphicsText from '@ohos.graphics.text';
 import { ReaderFontStroke } from './ReaderFontStroke';
+import { ReaderRenderFrame } from './ReaderRenderFrame';
 import { ReaderCommentBubblePainter } from './ReaderCommentBubble';
 import {
   ReaderV2PageFragment,
@@ -164,17 +165,41 @@ export class ReaderV2PageFrameNode extends FrameNode {
 }
 
 export class ReaderV2PageNodeController extends NodeController {
+  /** Optional creation probe for device benchmarks; inactive in ordinary reading. */
+  static onNodeCreated: (() => void) | null = null;
   private node: ReaderV2PageFrameNode | null = null;
   private page: ReaderV2PageLayout | null = null;
+  private uiContext: UIContext | null = null;
+  private requestedHost: string = '';
+  private mountedHost: string = '';
+  private bindingSerial: number = 0;
   private highlightStart: number = -1;
   private highlightEnd: number = -1;
   private selectionStart: number = -1;
   private selectionEnd: number = -1;
 
   makeNode(uiContext: UIContext): FrameNode | null {
+    this.uiContext = uiContext;
+    this.mountedHost = this.requestedHost;
+    ReaderV2PageNodeController.onNodeCreated?.();
     this.node = new ReaderV2PageFrameNode(uiContext);
     this.node.update(this.page, this.highlightStart, this.highlightEnd, this.selectionStart, this.selectionEnd);
     return this.node;
+  }
+
+  /** A page-keyed NodeContainer will create its own node; do not rebuild the outgoing node as well. */
+  bindPageToHost(page: ReaderV2PageLayout | null, host: string): void {
+    if (this.requestedHost === host) { this.updatePage(page); return; }
+    this.requestedHost = host;
+    this.page = page;
+    const serial = ++this.bindingSerial;
+    const uiContext = this.uiContext;
+    if (!this.node || !uiContext) return;
+    ReaderRenderFrame.wait(uiContext).then((): void => {
+      if (serial !== this.bindingSerial || this.requestedHost !== host || this.mountedHost === host) return;
+      // Preserve the compatibility repair if an ArkUI version retains the old container despite its new key.
+      this.rebuild();
+    });
   }
 
   updatePage(page: ReaderV2PageLayout | null, forceRebuild: boolean = false): void {
@@ -182,6 +207,7 @@ export class ReaderV2PageNodeController extends NodeController {
     // change during those frames, so invalidating its native RenderNode each time only resubmits identical glyphs
     // and can expose a one-frame baseline/layout fluctuation during rapid turns.
     if (!forceRebuild && this.page === page) return;
+    this.bindingSerial++;
     this.page = page;
     if (this.node) {
       // RenderNode.invalidate() is not sufficient on every HarmonyOS build when a NodeContainer keeps the same

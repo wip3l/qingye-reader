@@ -59,6 +59,7 @@ import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ReaderReplaceRule, ReaderReplaceRuleStore } from '../utils/ReaderReplaceRuleStore';
 import { ReaderThemeHelper, ReaderThemeItem } from '../utils/ReaderThemeHelper';
+import { ReaderThemeRenderCache } from '../utils/ReaderThemeRenderCache';
 import { ReaderCustomThemeData, ReaderCustomThemeHelper, ReaderCustomThemeScheme } from '../utils/ReaderCustomThemeHelper';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
@@ -109,7 +110,7 @@ import { ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2St
 import { ReaderCommentBubbleStyle, ReaderCommentBubbleStyles } from '../core/reader/ReaderCommentBubble';
 import { ReaderCommentBubbleSize } from '../core/reader/ReaderCommentBubbleSize';
 import { ReaderV2PageNodeController } from '../core/reader/ReaderV2RenderNode';
-import { ReaderV2RegexBubbleCaps } from '../components/reader/ReaderV2RegexBubbleCaps';
+import { ReaderV2RegexBubbleCapImages } from '../components/reader/ReaderV2RegexBubbleCaps';
 import { ReaderV2GestureRouter, ReaderV2TapResult } from '../core/reader/ReaderV2Interaction';
 import { ReaderOpenTrace } from '../utils/ReaderOpenTrace';
 import { ReaderEyeTurnCoordinator, ReaderEyeTurnViewState } from '../core/reader/ReaderEyeTurnCoordinator';
@@ -182,6 +183,7 @@ import { ReaderPaginationIndex } from '../core/reader/ReaderPaginationIndex';
 import { ReaderTurnTrace } from '../core/reader/ReaderTurnTrace';
 import { ReaderRenderFrame } from '../core/reader/ReaderRenderFrame';
 import { ReaderPageTextureCache, ReaderPageTextureLease } from '../core/reader/ReaderPageTextureCache';
+import { ReaderPageTexturePair } from '../core/reader/ReaderPageTexturePair';
 import { ReaderContinuousLayoutRequest, ReaderContinuousLayoutState } from '../core/reader/ReaderContinuousLayoutRequest';
 import { ReaderContinuousLayoutHost } from '../components/reader/ReaderContinuousLayoutHost';
 import {
@@ -213,6 +215,7 @@ const READER_REPLACE_MENU_ITEM_ID: string = 'reader_replace_rule';
 const READER_PAGE_CURL_SNAPSHOT_SCALE = 0.42;
 // 3D 仿真单双页共用平折绘制，每帧只画两次贴图，保留较高的快照分辨率让正文清晰。
 const READER_PAGE_3D_SNAPSHOT_SCALE = 0.75;
+const READER_IDLE_WORK_RETRY_MS = 120;
 // 连续快翻时卷页动画的时长比例，以及动画中途被下一次翻页催促时走完整页的时长。
 const READER_PAGE_CURL_RAPID_DURATION_RATIO = 0.6;
 const READER_PAGE_CURL_HURRY_DURATION = 150;
@@ -611,6 +614,7 @@ struct ReadBookPage {
   private pageTurnPreviewKey: string = '';
   private pageTurnPreviewLoadingKey: string = '';
   private readerPageCurlPainter: ReaderPageCurlPainter = new ReaderPageCurlPainter();
+  private readonly readerThemeRenderCache: ReaderThemeRenderCache = new ReaderThemeRenderCache();
   private readerEmulationFlipPainter: ReaderEmulationFlipPainter = new ReaderEmulationFlipPainter();
   // 拖动翻页时记录手指落点所在的区域；READER_CURL_REGION_UNSET 表示本次翻页不是由拖动发起的。
   private readerCurlStartRegion: number = READER_CURL_REGION_UNSET;
@@ -622,6 +626,9 @@ struct ReadBookPage {
   private readerPageTextureWarmSerial: number = 0;
   private readerPageCurlBack: image.PixelMap | null = null;
   private readerPageCurlSnapshotHeight: number = 0;
+  // Published with the captured textures; animation frames must not resolve or clone theme data.
+  private readerPageCurlPaperColor: string = '#FFFFFF';
+  private readerPageCurlDark: boolean = false;
   private readerPageCurlCaptureKey: string = '';
   private readerPageCurlCaptureSerial: number = 0;
   private readerPageCurlCapturePending: boolean = false;
@@ -830,6 +837,12 @@ struct ReadBookPage {
   @State readerInfoBatteryPercent: number = -1;
   private readerInfoBarConfigCache: ReaderInfoBarConfig = new ReaderInfoBarConfig();
   private readerInfoBarConfigCacheRaw: string = '';
+  // The pagination key is rebuilt dozens of times per page turn. Hashing the regex rules and parsing the custom
+  // font list on every call cost several milliseconds of the turn's first and last frames.
+  private readerRegexIdentityCacheSource: string = '';
+  private readerRegexIdentityCacheHash: number = 0;
+  private readerCustomFontResolveRaw: string = '';
+  private readerCustomFontResolveCache: Map<string, string> = new Map();
   private readerInfoBarLayoutIdentity: string = '';
   private readerInfoBarClock: ReaderInfoBarClock | null = null;
   // 分页区域下缘到窗口下缘的实测距离（vp）。窗口为全屏布局时分页区域本身就铺到窗口底部，该值为 0；
@@ -3341,15 +3354,9 @@ struct ReadBookPage {
         } else {
           Stack() {
             if (this.shouldUseReaderLayoutV2(this.pagedContentText)) {
-              // Keep the native paragraph node mounted across sequential turns inside one chapter, but give every
-              // chapter its own keyed host. Some ArkUI versions retain the old NodeContainer when only its
-              // NodeController argument changes; the footer then advances while the canvas keeps painting the
-              // previous chapter forever. A chapter-scoped key remounts only at the boundary, while the already
-              // prepared incoming leaf remains on top for the short handoff.
-              ForEach(this.currentReaderV2ChapterSurfaceKeys(this.pageRenderVersion), (_surfaceKey: string) => {
-                this.readerActiveCurrentPageSurface(this.pageRenderVersion, this.visibleCurrentPageText(),
-                  this.ttsHighlightRenderVersion)
-              }, (surfaceKey: string) => surfaceKey)
+              // The body owns the page-keyed native host. Keep its paper/background container stable at handoff.
+              this.readerActiveCurrentPageSurface(this.pageRenderVersion, this.visibleCurrentPageText(),
+                this.ttsHighlightRenderVersion)
             } else {
               ForEach(this.currentReaderSurfaceKeys(), (_surfaceKey: string) => {
                 this.readerActiveCurrentPageSurface(this.pageRenderVersion, this.visibleCurrentPageText(),
@@ -3379,11 +3386,18 @@ struct ReadBookPage {
             }, (selectionKey: string) => selectionKey)
             // Legacy rich text is keyed by page; V2 updates its retained node in place. Keep the simulation
             // overlay outside both paths so the destination can settle behind the captured leaf without
-            // destroying the active Canvas.
-            if (this.isPageTurnAnimationEnabled() && this.usesReaderPageCurlCanvas() &&
-              this.shouldRenderSlidingPageTurn()) {
-              this.readerSimulationPageTurnSurface(this.pageRenderVersion, this.visibleCurrentPageText(),
-                this.ttsHighlightRenderVersion, 'overlay')
+            // destroying the active Canvas. The host and its paper stay mounted for the selected curl mode and are
+            // only hidden while idle: mounting them at every turn start and destroying them in the frame after the
+            // handoff cost several milliseconds of a 120 Hz frame. Destination正文 is still keyed per turn inside.
+            if (this.isPageTurnAnimationEnabled() && this.usesReaderPageCurlCanvas()) {
+              Stack() {
+                this.readerSimulationPageTurnSurface(this.pageRenderVersion, this.visibleCurrentPageText(),
+                  this.ttsHighlightRenderVersion, 'overlay')
+              }
+              .width('100%')
+              .height('100%')
+              .visibility(this.shouldRenderSlidingPageTurn() ? Visibility.Visible : Visibility.None)
+              .hitTestBehavior(HitTestMode.None)
             }
             // Keep the simulation Canvas mounted for the lifetime of the selected turn mode. Destroying and
             // recreating it at every completed curl races the RenderService submission of the last textured
@@ -6625,10 +6639,16 @@ struct ReadBookPage {
 
   scheduleReaderPagedProgressSave(): void {
     this.clearReaderPagedProgressSaveTimer();
-    this.readerPagedProgressSaveTimerId = setTimeout(() => {
+    const deadline = Date.now() + 2400;
+    const save = (): void => {
+      if (this.isReaderPaginationInteractionBusy() && Date.now() < deadline) {
+        this.readerPagedProgressSaveTimerId = setTimeout(save, READER_IDLE_WORK_RETRY_MS);
+        return;
+      }
       this.readerPagedProgressSaveTimerId = -1;
       this.saveReadingProgress();
-    }, 300);
+    };
+    this.readerPagedProgressSaveTimerId = setTimeout(save, 300);
   }
 
   clearReaderPagedProgressSaveTimer(): void {
@@ -6799,6 +6819,19 @@ struct ReadBookPage {
     const measured = this.readerV2Page(this.currentChapterIndex, this.currentPageIndex, this.pagedContentText) !== null;
     return [`reader_v2_chapter_${this.currentChapterIndex}_${this.currentPageIndex}_` +
       `${this.readerV2SurfaceGeneration}_${measured ? 'native' : 'pending'}`];
+  }
+
+  readerIncomingPageSurfaceKeys(_renderVersion: number = this.pageRenderVersion): string[] {
+    const measured = this.readerV2Page(this.pageTurnIncomingChapterIndex, this.pageTurnIncomingPageIndex,
+      this.pageTurnIncomingDocumentSource) !== null;
+    const secondaryMeasured = this.isLandscapeDoublePageActive() &&
+      this.readerV2Page(this.pageTurnIncomingChapterIndex, this.pageTurnIncomingPageIndex + 1,
+        this.pageTurnIncomingDocumentSource) !== null;
+    // Consecutive turns may share one mounted animation branch. A changing .id() does not remount its
+    // NodeContainer; key the destination independently from the settled page, including pending-to-ready.
+    return [`reader_incoming_${this.pageTurnIncomingChapterIndex}_${this.pageTurnIncomingPageIndex}_` +
+      `${this.pageTurnIncomingRenderVersion}_${this.readerV2SurfaceGeneration}_` +
+      `${measured ? 'native' : 'pending'}_${secondaryMeasured ? 'spread' : 'single'}`];
   }
 
   visibleCurrentPageText(): string {
@@ -7109,14 +7142,9 @@ struct ReadBookPage {
   }
 
   currentReaderTheme(): ReaderThemeItem {
-    return ReaderThemeHelper.themeAt(
-      this.appDarkMode,
-      this.currentReaderThemeIndex(),
-      this.currentCustomThemeBackgroundColor(),
-      this.currentCustomThemeTextColor(),
-      this.currentCustomThemeBackgroundImageUri(),
-      this.currentCustomThemeScheme().backgroundImageFit
-    );
+    return this.readerThemeRenderCache.theme(this.appDarkMode, this.currentReaderThemeIndex(), this.themeRevision,
+      this.readerCustomThemesRaw, this.readerLightCustomThemeBackgroundColor, this.readerLightCustomThemeTextColor,
+      this.readerDarkCustomThemeBackgroundColor, this.readerDarkCustomThemeTextColor);
   }
 
   currentCustomThemeBackgroundColor(): string {
@@ -7207,6 +7235,20 @@ struct ReadBookPage {
     if (!raw.trim()) {
       return family;
     }
+    if (raw !== this.readerCustomFontResolveRaw) {
+      this.readerCustomFontResolveRaw = raw;
+      this.readerCustomFontResolveCache.clear();
+    }
+    const cached = this.readerCustomFontResolveCache.get(family);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const resolved = this.parseCustomReaderFontFamily(raw, family);
+    this.readerCustomFontResolveCache.set(family, resolved);
+    return resolved;
+  }
+
+  parseCustomReaderFontFamily(raw: string, family: string): string {
     try {
       const parsed = JSON.parse(raw) as ReaderCustomFontData | ReaderCustomFontItem[];
       const source = Array.isArray(parsed) ? parsed as ReaderCustomFontItem[] : ((parsed as ReaderCustomFontData).fonts || []);
@@ -13662,7 +13704,9 @@ struct ReadBookPage {
   readerSimulationPageTurnSurface(currentRenderVersion: number, currentText: string, ttsRenderVersion: number,
     surfaceRole: string) {
     if (this.isLandscapeDoublePageActive()) {
-      this.readerSimulationDoublePageTurnSurface(currentRenderVersion, currentText, ttsRenderVersion, surfaceRole)
+      ForEach(this.readerIncomingPageSurfaceKeys(this.pageRenderVersion), (_incomingKey: string) => {
+        this.readerSimulationDoublePageTurnSurface(currentRenderVersion, currentText, ttsRenderVersion, surfaceRole)
+      }, (incomingKey: string) => incomingKey)
     } else {
       this.readerSimulationSinglePageTurnSurface(currentRenderVersion, currentText, ttsRenderVersion, surfaceRole)
     }
@@ -13672,26 +13716,31 @@ struct ReadBookPage {
   readerSimulationSinglePageTurnSurface(currentRenderVersion: number, currentText: string,
     ttsRenderVersion: number, surfaceRole: string) {
     Stack() {
-      Stack() {
-        this.readerSimulationPaperBackground()
-        Column() {
-          this.readerIncomingPageLayer(this.pageTurnIncomingRenderVersion,
-            this.getVisiblePageTurnIncomingText(), `${surfaceRole}_simulation_back`)
+      // 3D single-page folds paint the reverse from the front texture. Building an unused off-screen
+      // duplicate still creates backgrounds, native nodes and cap Images, then destroys them at handoff.
+      if (this.readerPageCurlNeedsBackSnapshot()) {
+        Stack() {
+          this.readerSimulationPaperBackground()
+          Column() {
+            this.readerIncomingPageLayer(`${surfaceRole}_simulation_back`)
+          }
+          .width('100%')
+          .height('100%')
+          .padding({ top: this.getReaderPageContentTopPadding() })
         }
         .width('100%')
         .height('100%')
-        .padding({ top: this.getReaderPageContentTopPadding() })
+        // Capture the duplicate outside the viewport so the visible Paragraph tree stays stable.
+        .position({ x: -this.getPageTurnWidth() * 2, y: 0 })
+        .id('reader_page_curl_back_single')
+        .renderGroup(true)
       }
-      .width('100%')
-      .height('100%')
-      // Snapshot can capture an off-screen component by id. Keeping this duplicate out of the viewport avoids
-      // replacing the already-visible Paragraph tree for the one or two frames before capture completes.
-      .position({ x: -this.getPageTurnWidth() * 2, y: 0 })
-      .id('reader_page_curl_back_single')
-      .renderGroup(true)
 
       Stack() {
-        this.readerSimulationPaperBackground()
+        // 3D 的目标页面层自己铺纸张背景，再叠一层只会在每次翻页多建、多销毁一个背景组件。
+        if (!this.is3DPageTurnAnimation()) {
+          this.readerSimulationPaperBackground()
+        }
         this.readerIncomingPageSurface(this.pageTurnIncomingRenderVersion,
           this.getVisiblePageTurnIncomingText(), `${surfaceRole}_simulation_base`)
       }
@@ -13864,7 +13913,7 @@ struct ReadBookPage {
         this.readerSimulationPaperBackground()
       }
       Column() {
-        this.readerCurrentPageLayer(renderVersion, text, ttsRenderVersion, 'current_primary')
+        this.readerKeyedCurrentPageLayer(renderVersion, text, ttsRenderVersion, 'current_primary')
       }
       .width('100%')
       .height('100%')
@@ -13886,7 +13935,7 @@ struct ReadBookPage {
         this.readerSimulationPaperBackground()
       }
       Column() {
-        this.readerCurrentPageLayer(renderVersion, text, ttsRenderVersion, 'current_alternate')
+        this.readerKeyedCurrentPageLayer(renderVersion, text, ttsRenderVersion, 'current_alternate')
       }
       .width('100%')
       .height('100%')
@@ -13907,7 +13956,7 @@ struct ReadBookPage {
         this.readerIncomingPageBackground()
       }
       Column() {
-        this.readerIncomingPageLayer(renderVersion, text, controllerRole)
+        this.readerIncomingPageLayer(controllerRole)
       }
       .width('100%')
       .height('100%')
@@ -13936,6 +13985,20 @@ struct ReadBookPage {
     })
       .id('reader_incoming_theme_background')
       .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  readerKeyedCurrentPageLayer(renderVersion: number, text: string, ttsRenderVersion: number,
+    controllerRole: string) {
+    if (this.shouldUseReaderLayoutV2(this.pagedContentText)) {
+      // Retain the native/text/cap compatibility remount, including pending-to-ready and theme reflows,
+      // without rebuilding the unchanged paper artwork, full-screen sheet and its area observers.
+      ForEach(this.currentReaderV2ChapterSurfaceKeys(renderVersion), (_surfaceKey: string) => {
+        this.readerCurrentPageLayer(renderVersion, text, ttsRenderVersion, controllerRole)
+      }, (surfaceKey: string) => surfaceKey)
+    } else {
+      this.readerCurrentPageLayer(renderVersion, text, ttsRenderVersion, controllerRole)
+    }
   }
 
   @Builder
@@ -13968,7 +14031,15 @@ struct ReadBookPage {
   }
 
   @Builder
-  readerIncomingPageLayer(renderVersion: number, text: string, controllerRole: string = 'incoming') {
+  readerIncomingPageLayer(controllerRole: string = 'incoming') {
+    ForEach(this.readerIncomingPageSurfaceKeys(this.pageRenderVersion), (_incomingKey: string) => {
+      // Read the live destination inside the new item; Builder value arguments can retain an older preview.
+      this.readerIncomingPageContent(controllerRole)
+    }, (incomingKey: string) => incomingKey)
+  }
+
+  @Builder
+  readerIncomingPageContent(controllerRole: string) {
     if (this.shouldUseReaderLayoutV2(this.pageTurnIncomingDocumentSource) &&
       this.readerV2Page(this.pageTurnIncomingChapterIndex, this.pageTurnIncomingPageIndex,
         this.pageTurnIncomingDocumentSource)) {
@@ -13992,7 +14063,7 @@ struct ReadBookPage {
           this.pageTurnIncomingPageIndex, this.pageTurnIncomingDocumentSource)
       }
     } else {
-      this.readerPlainTextLeaf(text)
+      this.readerPlainTextLeaf(this.getVisiblePageTurnIncomingText())
     }
   }
 
@@ -15150,11 +15221,11 @@ struct ReadBookPage {
   }
 
   themeRegexEmphasisMode(): string {
-    return ThemeRuntime.regexEmphasisMode();
+    return this.readerThemeRenderCache.emphasisMode(this.appDarkMode, this.themeRevision);
   }
 
   themeRegexBubbleStyleId(): string {
-    return ThemeRuntime.regexBubbleStyle();
+    return this.readerThemeRenderCache.bubbleStyle(this.appDarkMode, this.themeRevision);
   }
 
   themeRegexEmphasisColor(): string {
@@ -15749,7 +15820,11 @@ struct ReadBookPage {
       this.readerV2Controllers.set(role, controller);
     }
     const page = this.readerV2Page(chapterIndex, pageIndex, source);
-    controller.updatePage(page);
+    if (page && role.startsWith('current_')) {
+      controller.bindPageToHost(page, `${this.currentReaderV2ChapterSurfaceKeys()[0]}_${role}`);
+    } else {
+      controller.updatePage(page);
+    }
     // TTS focus is a declarative overlay below. Keeping it outside the retained FrameNode avoids
     // HarmonyOS builds that defer RenderNode.invalidate() until the next page transition.
     controller.updateHighlight(-1, -1);
@@ -16058,12 +16133,16 @@ struct ReadBookPage {
       [`${primaryRole}_left`, `${primaryRole}_right`] : [`${primaryRole}_single`];
     const pageIndexes: number[] = this.isLandscapeDoublePageActive() ?
       [this.currentPageIndex, this.currentPageIndex + 1] : [this.currentPageIndex];
+    const host = this.currentReaderV2ChapterSurfaceKeys()[0];
     for (let index = 0; index < roles.length; index++) {
       const role = roles[index];
       const pageIndex = pageIndexes[index];
       const page = this.readerV2Page(this.currentChapterIndex, pageIndex, this.pagedContentText);
       const controller = this.readerV2Controllers.get(role);
-      if (controller) controller.updatePage(page, forceRebuild);
+      if (controller) {
+        if (page && !forceRebuild) controller.bindPageToHost(page, `${host}_${role}`);
+        else controller.updatePage(page, forceRebuild);
+      }
     }
   }
 
@@ -16223,7 +16302,7 @@ struct ReadBookPage {
 
   @Builder
   readerV2RegexBubbleCaps(segment: ReaderV2RegexBubbleSegment) {
-    ReaderV2RegexBubbleCaps({ segment: segment })
+    ReaderV2RegexBubbleCapImages(segment, this.getUIContext())
   }
 
   currentReaderV2TtsOverlayKeys(paintVersion: number): string[] {
@@ -17046,10 +17125,20 @@ struct ReadBookPage {
 
   readerContinuousV2Request(index: number, text: string,
     chapterIndexHint: number = -1): ReaderContinuousLayoutRequest {
-    const snapshot = this.buildReaderV2Snapshot(true);
     const chapterIndex = this.readerContinuousChapterOf(chapterIndexHint);
     const chunk = this.readerContinuousV2ChunkText(index, text, chapterIndex);
     const source = this.readerContinuousSourceOf(chapterIndex);
+    // The bounded window already owns its immutable layout snapshot. List index/build/progress callbacks
+    // must hit that window before resolving themes and font styles again. Typography/viewport/theme changes
+    // clear these requests in invalidateReaderTypographyLayout(); source/chunk changes are checked here.
+    for (const retained of this.readerContinuousLayoutRequests.values()) {
+      if (retained.chapter !== chapterIndex || retained.index !== index ||
+        retained.source !== source || retained.chunk !== chunk) continue;
+      this.readerContinuousLayoutRequests.delete(retained.key);
+      this.readerContinuousLayoutRequests.set(retained.key, retained);
+      return retained;
+    }
+    const snapshot = this.buildReaderV2Snapshot(true);
     const key = `${chapterIndex}_${index}_${chunk.length}_${this.hashText(chunk)}_${snapshot.identity}_` +
       `${this.readerContinuousLayoutGeneration}_${this.readerPaginationSourceHash(source)}`;
     let request = this.readerContinuousLayoutRequests.get(key);
@@ -17853,7 +17942,15 @@ struct ReadBookPage {
       `${this.readerTitleFontSize}_${this.readerTitleFontWeight}_${this.readerTitleFontMode}_${this.readerTitleFontFamily}_` +
       `${this.readerTitleStyleRaw}_` +
       `${this.getTitleReaderFontFamily()}_${this.getReaderFontFamily()}_${this.systemFontRevision}_` +
-      `${this.hashText(regexIdentity)}`;
+      `${this.readerRegexIdentityHash(regexIdentity)}`;
+  }
+
+  readerRegexIdentityHash(regexIdentity: string): number {
+    if (regexIdentity !== this.readerRegexIdentityCacheSource) {
+      this.readerRegexIdentityCacheSource = regexIdentity;
+      this.readerRegexIdentityCacheHash = this.hashText(regexIdentity);
+    }
+    return this.readerRegexIdentityCacheHash;
   }
 
   getCachedReaderPagination(chapterIndex: number, source: string): ReaderPaginationResult | null {
@@ -18154,6 +18251,27 @@ struct ReadBookPage {
       Date.now() + Math.max(0, idleDelayMs));
   }
 
+  isReaderPageMotionActive(): boolean {
+    return this.isPageTurning || this.pageTurnAnimating || this.pageSlideDirection !== 0;
+  }
+
+  // Database and chapter-body callbacks resolve on the UI thread. Started just before or during a turn, they land
+  // inside the animation (one chapter-body query measured 17-25 ms, a pagination-cache write 4 x 7-10 ms) and drop
+  // frames. Start such background work only once the reader is idle; the cap keeps continuous turning from
+  // starving it.
+  runWhenReaderIdle(task: () => void, maxWaitMs: number,
+    busy: () => boolean = (): boolean => this.isReaderPaginationInteractionBusy()): void {
+    const deadline = Date.now() + Math.max(0, maxWaitMs);
+    const attempt = (): void => {
+      if (busy() && Date.now() < deadline) {
+        setTimeout(attempt, READER_IDLE_WORK_RETRY_MS);
+        return;
+      }
+      task();
+    };
+    attempt();
+  }
+
   publishCurrentReaderPagination(result: ReaderPaginationResult): void {
     if (this.currentChapterIndex < 0 || this.pagedContentText !== result.source) return;
     const keepVisibleReaderReady = this.readerInitialPageReady &&
@@ -18217,11 +18335,14 @@ struct ReadBookPage {
       return;
     }
     result.persistenceScheduled = true;
-    AppDatabase.getInstance().saveReaderPaginationCache(this.bookUrl, chapterIndex, key,
-      result.starts, result.ends).catch((error: Error) => {
-      result.persistenceScheduled = false;
-      console.warn('保存阅读分页缓存失败:', error);
-    });
+    const bookUrl = this.bookUrl;
+    this.runWhenReaderIdle((): void => {
+      AppDatabase.getInstance().saveReaderPaginationCache(bookUrl, chapterIndex, key,
+        result.starts, result.ends).catch((error: Error) => {
+        result.persistenceScheduled = false;
+        console.warn('保存阅读分页缓存失败:', error);
+      });
+    }, 10000);
   }
 
   applyPreparedReaderPagination(content: string, chapterIndex: number, createIfMissing: boolean): boolean {
@@ -18253,7 +18374,7 @@ struct ReadBookPage {
     const serial = ++this.adjacentPaginationPreloadSerial;
     this.adjacentPaginationPreloadActiveSerial = serial;
     this.adjacentPaginationPreloadActiveKey = activeKey;
-    setTimeout(() => {
+    setTimeout(() => this.runWhenReaderIdle(() => {
       if (!this.readerPageVisible || serial !== this.adjacentPaginationPreloadSerial ||
         !this.isCurrentReaderEngineBook(sessionBookUrl) ||
         (this.currentChapterIndex !== sourceChapterIndex && this.currentChapterIndex !== targetChapterIndex)) {
@@ -18287,7 +18408,7 @@ struct ReadBookPage {
           }
           console.error('预排版下一章失败:', err);
         });
-    }, this.delayPastShelfOpening(delayMs));
+    }, 800, (): boolean => this.isReaderPageMotionActive()), this.delayPastShelfOpening(delayMs));
   }
 
   scheduleNextChapterPaginationCompletion(sourceChapterIndex: number, targetChapterIndex: number, key: string,
@@ -18367,7 +18488,7 @@ struct ReadBookPage {
     const serial = ++this.previousPaginationPreloadSerial;
     this.previousPaginationPreloadActiveSerial = serial;
     this.previousPaginationPreloadActiveKey = activeKey;
-    setTimeout(() => {
+    setTimeout(() => this.runWhenReaderIdle(() => {
       if (!this.readerPageVisible || serial !== this.previousPaginationPreloadSerial ||
         !this.isCurrentReaderEngineBook(sessionBookUrl) ||
         this.currentChapterIndex !== sourceChapterIndex) return;
@@ -18400,7 +18521,7 @@ struct ReadBookPage {
           }
           console.error('预排版上一章失败:', error);
         });
-    }, this.delayPastShelfOpening(delayMs));
+    }, 800, (): boolean => this.isReaderPageMotionActive()), this.delayPastShelfOpening(delayMs));
   }
 
   schedulePreviousChapterPaginationCompletion(sourceChapterIndex: number, targetChapterIndex: number, key: string,
@@ -18681,7 +18802,8 @@ struct ReadBookPage {
 
   preloadReaderContentLater(delayMs: number = 240): void {
     setTimeout(() => {
-      this.preloadReaderContent();
+      this.runWhenReaderIdle((): void => this.preloadReaderContent(), 1200,
+        (): boolean => this.isReaderPageMotionActive());
     }, this.delayPastShelfOpening(delayMs));
   }
 
@@ -19666,12 +19788,18 @@ struct ReadBookPage {
 
   // 对应官方示例 initPanPositionX：按手指落点决定卷曲从上角/下角/中部开始。
   // 折页背面的纸张底色：取主题背景色；背景图主题的背景色常为全透明，此时退回白纸避免透出下层。
-  readerFlapPaperColor(): string {
-    const color = this.getBackgroundColor();
+  readerFlapPaperColor(color: string): string {
     if (!color) {
       return '#FFFFFF';
     }
     return color.length >= 9 && color.toUpperCase().endsWith('00') ? '#FFFFFF' : color;
+  }
+
+  prepareReaderPageCurlPalette(): void {
+    const theme = this.currentReaderTheme();
+    this.readerPageCurlPaperColor = this.readerFlapPaperColor(theme.backgroundColor);
+    this.readerPageCurlDark = theme.contentTone === 'dark' || theme.contentTone === 'light' ?
+      theme.contentTone === 'dark' : this.isDarkHexColor(theme.backgroundColor);
   }
 
   // 3D 仿真单双页拖动时把手指位置交给绘制器，纸张抓取点跟随手指。手势层与卷曲画布都铺满阅读页，
@@ -19752,6 +19880,41 @@ struct ReadBookPage {
     if (!this.readerPageVisible || !this.readerInitialPageReady || !this.usesReaderPageCurlCanvas() ||
       this.pageSlideDirection !== 0 || this.isPageTurning || this.isTtsSpeaking || this.hasReaderTextSelection()) return;
     const directions: number[] = this.isLandscapeDoublePageActive() ? [1, -1] : [1];
+    if (directions.length === 2) {
+      const rightKey = this.readerSettledTextureKey(1);
+      const leftKey = this.readerSettledTextureKey(-1);
+      const right = this.readerPageTextureCache.acquire(rightKey);
+      const left = this.readerPageTextureCache.acquire(leftKey);
+      const bothMissing = !right && !left;
+      right?.release(); left?.release();
+      if (bothMissing) {
+        await ReaderRenderFrame.wait(this.getUIContext());
+        const valid = (): boolean => this.readerPageVisible && serial === this.readerPageTextureWarmSerial &&
+          rightKey === this.readerSettledTextureKey(1) && leftKey === this.readerSettledTextureKey(-1) &&
+          this.pageSlideDirection === 0 && !this.isPageTurning && !this.isTtsSpeaking && !this.hasReaderTextSelection();
+        if (!valid()) return;
+        let pair: ReaderPageTexturePair | null = null;
+        try {
+          pair = await ReaderPageTexturePair.capture((): Promise<image.PixelMap> =>
+            this.getUIContext().getComponentSnapshot().get(this.currentReaderSnapshotComponentId(), {
+              scale: this.readerPageCurlSnapshotScale(), waitUntilRenderFinished: true
+            }), (bitmap: image.PixelMap, direction: number): Promise<void> =>
+            this.cropReaderPageCurlFrontToTurningLeaf(bitmap, direction));
+          const rightInfo = await pair.right.getImageInfo();
+          const leftInfo = await pair.left.getImageInfo();
+          if (!valid()) { pair.release(); return; }
+          this.readerPageTextureCache.put(rightKey, pair.right,
+            rightInfo.size.width * rightInfo.size.height * 4).release();
+          this.readerPageTextureCache.put(leftKey, pair.left,
+            leftInfo.size.width * leftInfo.size.height * 4).release();
+          return;
+        } catch (_) {
+          pair?.release();
+          // Snapshot cloning is optional. Keep the original independent-capture path if the platform rejects it.
+          if (!valid()) return;
+        }
+      }
+    }
     for (const direction of directions) {
       const key = this.readerSettledTextureKey(direction);
       const existing = this.readerPageTextureCache.acquire(key);
@@ -19791,7 +19954,7 @@ struct ReadBookPage {
         this.getPageTurnProgress(), this.pageSlideDirection, region,
         this.isLandscapeDoublePageActive(), this.getReaderPageColumnWidth(),
         this.getReaderDoublePageRightOrigin(), 1 / this.getUIContext().vp2px(1),
-        this.readerFlapPaperColor(), this.isReaderThemeDark());
+        this.readerPageCurlPaperColor, this.readerPageCurlDark);
       return;
     }
     if (!this.readerPageCurlBack) {
@@ -19800,7 +19963,7 @@ struct ReadBookPage {
     this.readerPageCurlPainter.draw(this.readerPageCurlContext, this.readerPageCurlFront,
       this.readerPageCurlBack, this.getPageTurnWidth(), this.getReaderPageCurlCanvasHeight(),
       this.getPageTurnProgress(), this.pageSlideDirection, this.isLandscapeDoublePageActive(),
-      this.isReaderThemeDark(), this.getReaderPageColumnWidth(), this.getReaderDoublePageRightOrigin());
+      this.readerPageCurlDark, this.getReaderPageColumnWidth(), this.getReaderDoublePageRightOrigin());
   }
 
   requestReaderPageCurlCapture(): void {
@@ -19936,6 +20099,7 @@ struct ReadBookPage {
     const oldFront = this.readerPageCurlFront;
     const oldFrontLease = this.readerPageCurlFrontLease;
     const oldBack = this.readerPageCurlBack;
+    this.prepareReaderPageCurlPalette();
     this.readerPageCurlFront = front;
     this.readerPageCurlFrontLease = frontLease;
     this.readerPageCurlBack = back;
@@ -20053,6 +20217,8 @@ struct ReadBookPage {
     this.readerPageCurlCapturePending = false;
     this.readerPageCurlCaptureKey = '';
     this.readerPageCurlSnapshotReady = false;
+    this.readerPageCurlPaperColor = '#FFFFFF';
+    this.readerPageCurlDark = false;
     this.readerPageCurlAnimationSerial++;
     const activeAnimator = this.readerPageCurlAnimator;
     this.readerPageCurlAnimator = null;

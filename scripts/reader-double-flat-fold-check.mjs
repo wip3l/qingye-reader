@@ -29,7 +29,9 @@ function context() {
     createLinearGradient(...coords) { assert.ok(coords.every(Number.isFinite)); return {addColorStop(t) {
       assert.ok(t >= 0 && t <= 1); }}; },
     clip(p) { assert.ok(p.points.flat().every(Number.isFinite)); },
-    fill() { assert.ok(Number.isFinite(this.globalAlpha)); }, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+    fill() { assert.ok(Number.isFinite(this.globalAlpha)); },
+    fillRect(...rect) { assert.ok(rect.every(Number.isFinite)); assert.match(this.fillStyle, /^rgb\(/, 'paper underlay is opaque'); },
+    clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
     balanced() { assert.equal(stack.length, 0); near(this.globalAlpha, 1, 'Canvas alpha restored'); }
   };
 }
