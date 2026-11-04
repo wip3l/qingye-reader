@@ -16,6 +16,7 @@ class TtsRequestRule {
   bodyJs: string = '';
   retry: number = 0;
   type: string = '';
+  timeout: number = 0;
 }
 
 class TtsRequestResult {
@@ -25,6 +26,7 @@ class TtsRequestResult {
   body: string = '';
   charset: string = 'utf-8';
   retry: number = 0;
+  timeout: number = 0;
 }
 
 class TtsRateBucket {
@@ -58,6 +60,11 @@ export class HttpTtsReader {
   private static readonly MAX_RETRY: number = 5;
   private static readonly CACHE_DIR_NAME: string = 'http_tts';
   private static readonly MAX_CACHE_FILES: number = 600;
+  // A hung upstream (half-open DNS, stalled TLS, a rate limiter that never answers) used to block
+  // one sentence for five minutes. The read timeout is what the "timeout" URL option raises for
+  // slow synthesizers; the connect timeout never exceeds its default.
+  private static readonly DEFAULT_CONNECT_TIMEOUT_MS: number = 15000;
+  private static readonly DEFAULT_READ_TIMEOUT_MS: number = 60000;
   private static rateBuckets: Record<string, TtsRateBucket> = {};
   private static sharedRuntimes: Record<string, JsRuntime> = {};
 
@@ -234,8 +241,8 @@ export class HttpTtsReader {
         method: rule.method,
         header: headers,
         extraData: rule.body || undefined,
-        connectTimeout: 300000,
-        readTimeout: 300000,
+        connectTimeout: Math.min(HttpTtsReader.DEFAULT_CONNECT_TIMEOUT_MS, this.readTimeoutFor(rule)),
+        readTimeout: this.readTimeoutFor(rule),
         expectDataType: http.HttpDataType.ARRAY_BUFFER
       });
       this.assertGeneration(generation);
@@ -287,19 +294,30 @@ export class HttpTtsReader {
       throw new Error('自定义音色 URL 为空');
     }
     const runtime = this.runtimeForVoice(voice, text, speed);
-    rawRule.url = runtime.evalTemplate(rawRule.url).trim();
-    rawRule.body = this.renderBody(runtime, rawRule.body, text);
-    if (rawRule.bodyJs) {
-      const bodyFromJs = runtime.evaluate(rawRule.bodyJs, rawRule.body);
-      if (bodyFromJs) {
-        rawRule.body = bodyFromJs;
+    const charset = rawRule.charset || 'utf-8';
+    rawRule.url = this.renderUrl(runtime, rawRule.url, charset);
+    // A form body is rendered field by field (see renderParams) and is final here. A JSON body,
+    // or one post-processed by bodyJs, keeps the whole-string path: bodyJs expects the substituted
+    // but still unencoded body as its input, and buildBody encodes its output afterwards.
+    let bodyEncoded = false;
+    if (rawRule.bodyJs || this.looksLikeStructuredBody(rawRule.body)) {
+      rawRule.body = this.renderBody(runtime, rawRule.body, text);
+      if (rawRule.bodyJs) {
+        const bodyFromJs = runtime.evaluate(rawRule.bodyJs, rawRule.body);
+        if (bodyFromJs) {
+          rawRule.body = bodyFromJs;
+        }
       }
+    } else {
+      rawRule.body = this.renderParams(runtime, rawRule.body, charset, false);
+      bodyEncoded = true;
     }
     const result = new TtsRequestResult();
-    result.url = this.encodeUrl(rawRule.url, rawRule.charset);
+    result.url = rawRule.url;
     result.method = this.toRequestMethod(rawRule.method);
-    result.charset = rawRule.charset || 'utf-8';
+    result.charset = charset;
     result.retry = rawRule.retry;
+    result.timeout = rawRule.timeout;
     const headers: Record<string, string> = {};
     headers['User-Agent'] = 'Mozilla/5.0 (Linux; HarmonyOS; Mobile) LegadoHarmony';
     headers['Accept'] = '*/*';
@@ -308,16 +326,20 @@ export class HttpTtsReader {
     this.mergeHeaders(headers, rawRule.headers);
     result.headers = headers;
     if (result.method === http.RequestMethod.POST || result.method === http.RequestMethod.PUT) {
-      result.body = this.buildBody(rawRule.body, result.headers, result.charset);
+      result.body = this.buildBody(rawRule.body, result.headers, result.charset, bodyEncoded);
     }
     return result;
+  }
+
+  private readTimeoutFor(rule: TtsRequestResult): number {
+    return rule.timeout > 0 ? rule.timeout : HttpTtsReader.DEFAULT_READ_TIMEOUT_MS;
   }
 
   // Renders the request body. When the body is a JSON object/array, every text variable is
   // JSON-string-escaped before substitution: JsRuntime.evalTemplate is a plain textual replace, so
   // a half-width quote, backslash or line break in the paragraph would otherwise produce an
   // invalid payload that the server answers with 400 instead of audio. The variables are restored
-  // afterwards so the URL template (encoded later by encodeUrl) and bodyJs still see the raw text.
+  // afterwards so the URL template (rendered later by renderUrl) and bodyJs still see the raw text.
   private renderBody(runtime: JsRuntime, body: string, text: string): string {
     const template = body || '';
     if (!this.looksLikeStructuredBody(template)) {
@@ -387,6 +409,7 @@ export class HttpTtsReader {
       }
       if (option['bodyJs']) rule.bodyJs = String(option['bodyJs']);
       if (option['retry'] !== undefined) rule.retry = Math.max(0, Number(option['retry']) || 0);
+      if (option['timeout'] !== undefined) rule.timeout = this.parseTimeout(String(option['timeout']));
       if (option['type']) rule.type = String(option['type']);
     } catch (_) {
       const method = optionText.match(/['"]?method['"]?\s*:\s*['"]?(\w+)['"]?/i);
@@ -397,7 +420,18 @@ export class HttpTtsReader {
       if (charset) rule.charset = charset[2];
       const bodyJs = optionText.match(/['"]?bodyJs['"]?\s*:\s*(['"])([\s\S]*?)\1/i);
       if (bodyJs) rule.bodyJs = bodyJs[2];
+      const retry = optionText.match(/['"]?retry['"]?\s*:\s*['"]?(\d+)/i);
+      if (retry) rule.retry = Number(retry[1]);
+      const timeout = optionText.match(/['"]?timeout['"]?\s*:\s*['"]?(\d+)/i);
+      if (timeout) rule.timeout = this.parseTimeout(timeout[1]);
     }
+  }
+
+  // The "timeout" URL option is in milliseconds; anything that is not a positive number keeps the
+  // default read timeout.
+  private parseTimeout(value: string): number {
+    const parsed = Math.round(Number(value));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
   }
 
   // Splits "url,{options}" by scanning forward and returning the comma that sits outside every
@@ -448,39 +482,113 @@ export class HttpTtsReader {
     return runtime;
   }
 
-  private buildBody(body: string, headers: Record<string, string>, charset: string): string {
+  private buildBody(body: string, headers: Record<string, string>, charset: string, encoded: boolean): string {
     const value = body || '';
+    const structured = this.looksLikeStructuredBody(value);
     if (!this.hasHeader(headers, 'Content-Type')) {
-      headers['Content-Type'] = this.looksLikeStructuredBody(value) ?
+      headers['Content-Type'] = structured ?
         `application/json; charset=${charset || 'utf-8'}` :
         `application/x-www-form-urlencoded; charset=${charset || 'utf-8'}`;
     }
-    if (this.looksLikeStructuredBody(value)) {
+    if (structured || encoded) {
       return value;
     }
     return this.encodeParams(value, charset, false);
   }
 
-  private encodeUrl(url: string, charset: string): string {
-    const trimmed = (url || '').trim();
-    const queryIndex = trimmed.indexOf('?');
-    if (queryIndex < 0) return trimmed;
-    return trimmed.substring(0, queryIndex) + '?' +
-      this.encodeParams(trimmed.substring(queryIndex + 1), charset, true);
+  // Renders the URL template. The path is a plain substitution; the query string is rendered
+  // field by field (see renderParams) so a paragraph substituted into a parameter can neither
+  // split the query on '&' nor skip encoding.
+  private renderUrl(runtime: JsRuntime, template: string, charset: string): string {
+    const trimmed = (template || '').trim();
+    const queryIndex = this.indexOutsideTemplate(trimmed, '?', 0);
+    if (queryIndex < 0) return runtime.evalTemplate(trimmed).trim();
+    return runtime.evalTemplate(trimmed.substring(0, queryIndex)).trim() + '?' +
+      this.renderParams(runtime, trimmed.substring(queryIndex + 1), charset, true);
+  }
+
+  // Renders a form body or query-string template. Fields are split on the template text, before
+  // {{...}} substitution, so a paragraph containing '&' or '=' can no longer tear the form apart:
+  // "text={{speakText}}" with the paragraph "甲&乙=丙" used to reach the server as text=甲 plus a
+  // stray "乙=丙" field, silently dropping half the sentence. Literal template text keeps the
+  // "already percent-encoded stays as-is" protection for hand-written encoded values, while every
+  // substituted value is encoded unconditionally: a paragraph that happens to contain "%2F" or
+  // "50%25" is text, not an encoded string.
+  private renderParams(runtime: JsRuntime, template: string, charset: string, isQuery: boolean): string {
+    if (!template) return '';
+    return this.splitOutsideTemplate(template, '&').map((field: string) => {
+      const index = this.indexOutsideTemplate(field, '=', 0);
+      if (index < 0) return this.renderComponent(runtime, field, charset, isQuery);
+      return this.renderComponent(runtime, field.substring(0, index), charset, isQuery) + '=' +
+        this.renderComponent(runtime, field.substring(index + 1), charset, isQuery);
+    }).join('&');
+  }
+
+  private renderComponent(runtime: JsRuntime, template: string, charset: string, isQuery: boolean): string {
+    if (!template.includes('{{')) return this.encodeComponent(template, charset, isQuery, false);
+    let output = '';
+    let cursor = 0;
+    while (cursor < template.length) {
+      const open = template.indexOf('{{', cursor);
+      if (open < 0) break;
+      const close = template.indexOf('}}', open + 2);
+      if (close < 0) break;
+      output += this.encodeComponent(template.substring(cursor, open), charset, isQuery, false);
+      output += this.encodeComponent(runtime.evalTemplate(template.substring(open, close + 2)), charset, isQuery, true);
+      cursor = close + 2;
+    }
+    return output + this.encodeComponent(template.substring(cursor), charset, isQuery, false);
+  }
+
+  // Splits on a separator that sits outside every {{...}} expression, so "&&" or "=" inside a
+  // template expression never counts as a field boundary. Expressions close at the first "}}",
+  // matching JsRuntime.evalTemplate.
+  private splitOutsideTemplate(text: string, separator: string): string[] {
+    const parts: string[] = [];
+    let cursor = 0;
+    while (true) {
+      const index = this.indexOutsideTemplate(text, separator, cursor);
+      if (index < 0) break;
+      parts.push(text.substring(cursor, index));
+      cursor = index + separator.length;
+    }
+    parts.push(text.substring(cursor));
+    return parts;
+  }
+
+  private indexOutsideTemplate(text: string, target: string, from: number): number {
+    let inside = false;
+    for (let i = from; i < text.length; i++) {
+      if (!inside && text.startsWith('{{', i)) {
+        inside = true;
+        i++;
+        continue;
+      }
+      if (inside && text.startsWith('}}', i)) {
+        inside = false;
+        i++;
+        continue;
+      }
+      if (!inside && text.startsWith(target, i)) return i;
+    }
+    return -1;
   }
 
   private encodeParams(params: string, charset: string, isQuery: boolean): string {
     if (!params) return '';
     return params.split('&').map((field: string) => {
       const index = field.indexOf('=');
-      if (index < 0) return this.encodeComponent(field, charset, isQuery);
-      return this.encodeComponent(field.substring(0, index), charset, isQuery) + '=' +
-        this.encodeComponent(field.substring(index + 1), charset, isQuery);
+      if (index < 0) return this.encodeComponent(field, charset, isQuery, false);
+      return this.encodeComponent(field.substring(0, index), charset, isQuery, false) + '=' +
+        this.encodeComponent(field.substring(index + 1), charset, isQuery, false);
     }).join('&');
   }
 
-  private encodeComponent(value: string, charset: string, isQuery: boolean): string {
-    if (!value || this.looksEncoded(value)) return value;
+  // `force` encodes a value that came out of a {{...}} substitution even when it looks percent-
+  // encoded; only literal template text may skip encoding.
+  private encodeComponent(value: string, charset: string, isQuery: boolean, force: boolean): string {
+    if (!value) return value;
+    if (!force && this.looksEncoded(value)) return value;
     const normalized = this.normalizeCharset(charset);
     if (normalized === 'escape') return this.escapeComponent(value);
     try {
