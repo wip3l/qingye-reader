@@ -73,10 +73,19 @@ export class EpubHtmlConverter {
   private static readonly NOTE_SEMANTICS: RegExp = /\b(?:doc-)?(?:foot|end|rear)?notes?\b/;
   private static readonly NOTE_BLOCK_TAGS: string =
     'p|li|div|aside|section|article|dd|dt|td|blockquote|figure|ol|ul|dl|table|h[1-6]';
+  /**
+   * 一个 <a ...>...</a>。链接内容不跨过下一个 <a：书里常有成千上万个没有结束标签的 <a id="x"/>，
+   * 内容可以跨过 <a 时，每个这样的锚点都要往后扫到下一个 </a>（没有就扫到文件末尾），整个文件按平方变慢。
+   */
+  private static readonly ANCHOR_ELEMENT: string = '<a\\b([^>]*)>((?:(?!<a\\b)[\\s\\S])*?)<\\/a\\s*>';
   private static namedEntities: Record<string, string> | null = null;
   /** 最近一次统计过“本文件内被注释链接引用的锚点”的 body，同一个文件切成多章时只统计一次。 */
   private static noteIdsBody: string = '';
   private static noteIds: Set<string> = new Set<string>();
+  /** 最近一次统计过 aside 范围的 body；每个注释链接都要查锚点在不在 aside 里，不能每次从头扫。 */
+  private static asideRangesBody: string = '';
+  /** 最外层 aside 的 [起点, 终点) 依次排开，按起点升序。 */
+  private static asideRanges: number[] = [];
   /** 最近一次建过锚点索引的 body。同一个文件按目录切成多章时，每切一章都要查两次锚点。 */
   private static anchorIndexBody: string = '';
   private static anchorIndex: Map<string, number> = new Map<string, number>();
@@ -127,6 +136,8 @@ export class EpubHtmlConverter {
     EpubHtmlConverter.anchorIndex = new Map<string, number>();
     EpubHtmlConverter.noteIdsBody = '';
     EpubHtmlConverter.noteIds = new Set<string>();
+    EpubHtmlConverter.asideRangesBody = '';
+    EpubHtmlConverter.asideRanges = [];
   }
 
   /** body 中每个 id/name 第一次出现的元素起始标签偏移。 */
@@ -335,7 +346,7 @@ export class EpubHtmlConverter {
   /** 注释编号换成动作标记；标记的显示文字就是编号原来的文字，正文看起来和以前一样。 */
   private static replaceNoteLinks(source: string, body: string, resolveLink: EpubLinkResolver): string {
     if (source.search(/<a\b/i) < 0) return source;
-    return source.replace(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi,
+    return source.replace(new RegExp(EpubHtmlConverter.ANCHOR_ELEMENT, 'gi'),
       (all: string, attributes: string, inner: string, offset: number, whole: string): string => {
         const before = whole.substring(Math.max(0, offset - 240), offset);
         const href = EpubHtmlConverter.noteHref(attributes, inner, before, body);
@@ -403,8 +414,38 @@ export class EpubHtmlConverter {
       /duokan-footnote/i.test(EpubHtmlConverter.findHtmlAttribute(tag, ['class']))) {
       return true;
     }
-    const aside = body.lastIndexOf('<aside', offset);
-    return aside >= 0 && EpubHtmlConverter.elementEnd(body, aside, 'aside') > offset;
+    const ranges = EpubHtmlConverter.asideRangesOf(body);
+    let low = 0;
+    let high = ranges.length / 2 - 1;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      if (ranges[middle * 2] > offset) {
+        high = middle - 1;
+      } else if (ranges[middle * 2 + 1] <= offset) {
+        low = middle + 1;
+      } else {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** body 里最外层 aside 的范围；同一个 body 只扫一遍。 */
+  private static asideRangesOf(body: string): number[] {
+    if (body === EpubHtmlConverter.asideRangesBody) return EpubHtmlConverter.asideRanges;
+    const ranges: number[] = [];
+    const open = /<aside\b/gi;
+    let match = open.exec(body);
+    while (match) {
+      const end = EpubHtmlConverter.elementEnd(body, match.index, 'aside');
+      ranges.push(match.index, end);
+      // 嵌套在里面的 aside 已经被这一段包住。
+      open.lastIndex = Math.max(end, match.index + 1);
+      match = open.exec(body);
+    }
+    EpubHtmlConverter.asideRangesBody = body;
+    EpubHtmlConverter.asideRanges = ranges;
+    return ranges;
   }
 
   /** body 里被注释编号引用、且就在本文件内的锚点。 */
@@ -412,7 +453,7 @@ export class EpubHtmlConverter {
     const source = body || '';
     if (source === EpubHtmlConverter.noteIdsBody) return EpubHtmlConverter.noteIds;
     const ids = new Set<string>();
-    const anchor = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
+    const anchor = new RegExp(EpubHtmlConverter.ANCHOR_ELEMENT, 'gi');
     let match = anchor.exec(source);
     while (match) {
       const href = EpubHtmlConverter.noteHref(match[1], match[2],
@@ -543,7 +584,8 @@ export class EpubHtmlConverter {
   }
 
   private static stripBacklinks(html: string): string {
-    return html.replace(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi, (all: string, attributes: string, inner: string): string => {
+    return html.replace(new RegExp(EpubHtmlConverter.ANCHOR_ELEMENT, 'gi'), (all: string, attributes: string,
+      inner: string): string => {
       const tag = `<a ${attributes}>`;
       if (!EpubHtmlConverter.findHtmlAttribute(tag, ['href', 'xlink:href'])) return all;
       if (/\b(?:doc-)?backlink\b|\breferrer\b/.test(EpubHtmlConverter.semanticsOf(tag))) return '';

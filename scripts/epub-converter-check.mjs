@@ -299,6 +299,23 @@ try {
       '被去掉的脚注块之后的偏移对齐到新正文');
     equal(EpubTextOffsetMap.map(oldText, newText, oldText.indexOf('注释一') + 1), newText.indexOf('下一段'),
       '落在被去掉的脚注块里的偏移归到它后面');
+    equal(readable(withNotes('<p>页<a id="pg1"/>码<a href="#n1">1</a>。</p><p id="n1">注</p>')),
+      '页码{1→Text/ch1.xhtml#n1}。\n\n注', '没有结束标签的 <a id/> 不吞掉后面的注释链接');
+
+    // 单文件几千条注释：每个注释链接都查锚点是否在 aside 里，不能每次从头扫文件。
+    const count = 8000;
+    const parts = [];
+    for (let n = 0; n < count; n++) parts.push(`<p>正文${n}<a href="#n${n}" id="r${n}">[${n}]</a>继续。</p><a id="p${n}"></a>`);
+    parts.push('<aside>');
+    for (let n = 0; n < count; n++) parts.push(`<p id="n${n}"><a href="#r${n}">[${n}]</a>注释${n}</p>`);
+    parts.push('</aside>');
+    EpubHtmlConverter.clearAnchorIndex();
+    const started = performance.now();
+    const big = withNotes(parts.join(''));
+    const elapsed = performance.now() - started;
+    equal((big.match(/\[\[LEGADO_READER_ACTION_V3:/g) || []).length, count, `${count} 个注释编号都换成注释标记`);
+    // 改前同一用例约 15 秒（主线程卡死被系统杀掉），改后约 200ms。
+    check(elapsed < 1500, `单文件 ${count} 条注释转换耗时 ${elapsed.toFixed(0)}ms`);
   }
 
   console.log('original layout');
