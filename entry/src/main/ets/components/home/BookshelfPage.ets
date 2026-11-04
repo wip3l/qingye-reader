@@ -4216,7 +4216,7 @@ export struct BookshelfPage {
       AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
         Date.now() + SHELF_COVER_OPEN_START_CAP + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
     }
-    this.acknowledgeShelfBookUpdate(book);
+    this.acknowledgeShelfBookUpdate(book, true);
     // PDFs go straight to their own page (the text reader would first spend a database lookup on the format),
     // with the same cover-open animation parameters as other books.
     const pdf = LocalBookService.isPdfBook(book);
@@ -4334,7 +4334,7 @@ export struct BookshelfPage {
     return book.getVariable(SHELF_UPDATE_BADGE_VARIABLE) === '1';
   }
 
-  acknowledgeShelfBookUpdate(book: Book): void {
+  acknowledgeShelfBookUpdate(book: Book, deferVisual: boolean = false): void {
     if (!book.bookUrl) {
       return;
     }
@@ -4344,13 +4344,28 @@ export struct BookshelfPage {
     if (!this.hasShelfBookUpdate(book)) {
       return;
     }
-    book.putVariable(SHELF_UPDATE_BADGE_VARIABLE, '');
-    this.allBooks = this.allBooks.map((item: Book) => item.bookUrl === book.bookUrl ? book : item);
-    this.applyShelfScope();
-    this.reloadShelfDataSources(true);
     this.persistShelfBookUpdateAcknowledgement(book.bookUrl).catch((e: Error) => {
       console.error('清除书架更新标记失败:', book.name, e);
     });
+    if (!deferVisual) {
+      this.applyShelfBookUpdateAcknowledgement(book.bookUrl);
+      return;
+    }
+    // 点开书时立刻改内存里的书列表，路由会在建阅读页之前先把整个书架同步重建、重排（点击事件里约 20ms）。
+    // 封面马上就被阅读页盖住，角标晚些去掉看不出来；若动作窗口内已从库里重载过（角标已清），这里什么都不做。
+    setTimeout((): void => {
+      if (!this.shelfComponentActive) return;
+      this.applyShelfBookUpdateAcknowledgement(book.bookUrl);
+    }, this.shelfBookMotionDelay() + 120);
+  }
+
+  private applyShelfBookUpdateAcknowledgement(bookUrl: string): void {
+    const book = this.allBooks.find((item: Book): boolean => item.bookUrl === bookUrl);
+    if (!book || !this.hasShelfBookUpdate(book)) return;
+    book.putVariable(SHELF_UPDATE_BADGE_VARIABLE, '');
+    this.allBooks = this.allBooks.map((item: Book) => item.bookUrl === bookUrl ? book : item);
+    this.applyShelfScope();
+    this.reloadShelfDataSources(true);
   }
 
   async persistShelfBookUpdateAcknowledgement(bookUrl: string): Promise<void> {

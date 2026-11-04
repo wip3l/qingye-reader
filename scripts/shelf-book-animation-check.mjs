@@ -17,6 +17,7 @@ const context = vm.createContext({
   Date: { now: () => now }, console,
   AppStorage: { get: key => storage.get(key), setOrCreate: (key, value) => storage.set(key, value) },
   Curve: { Friction: 'friction' },
+  ReaderTtsFloatingSession: { isActive: () => false }, SHELF_UPDATE_BADGE_VARIABLE: 'shelfUpdateBadge',
   setTimeout: (callback, delay) => { timers.set(++sequence, { callback, at: now + delay }); return sequence; },
   clearTimeout: id => timers.delete(id)
 });
@@ -113,6 +114,59 @@ motion.finishShelfOpening();
 assert.equal(motion.shelfMotionRasterized, false, 'ordinary reading draws the body directly again');
 motion.prepareShelfOpening(); motion.readerExiting = true; motion.finishShelfOpening();
 assert.equal(motion.shelfMotionRasterized, true, 'leaving during the opening keeps the layer for the return flight');
+
+// Opening a book with an update badge must not rebuild the shelf inside the tap: the in-memory acknowledgement waits
+// for the open motion, and a reload that already cleared the badge makes it a no-op.
+const shelfSource = read('components/home/BookshelfPage.ets');
+const badge = hostFor(shelfSource, ['acknowledgeShelfBookUpdate', 'applyShelfBookUpdateAcknowledgement',
+  'shelfBookMotionDelay', 'hasShelfBookUpdate']);
+let shelfRebuilds = 0, persisted = 0;
+const makeBook = (flag) => ({ bookUrl: 'u', name: 'n', flag, getVariable: function () { return this.flag; },
+  putVariable: function (_k, v) { this.flag = v; } });
+const taggedBook = makeBook('1');
+Object.assign(badge, {
+  shelfUpdateAcknowledgedAt: new Map(), shelfComponentActive: true, allBooks: [taggedBook],
+  applyShelfScope() {}, reloadShelfDataSources() { shelfRebuilds++; },
+  persistShelfBookUpdateAcknowledgement() { persisted++; return Promise.resolve(); }
+});
+storage.set('shelfBookMotionUntil', now + 800);
+badge.acknowledgeShelfBookUpdate(taggedBook, true);
+assert.equal(shelfRebuilds, 0, 'no synchronous shelf rebuild inside the tap');
+assert.equal(persisted, 1, 'the badge is cleared in the database at once');
+assert.equal(taggedBook.flag, '1', 'the visible badge is untouched until the motion ends');
+advance(700); assert.equal(shelfRebuilds, 0);
+advance(300); assert.equal(shelfRebuilds, 1, 'one shelf rebuild after the open motion');
+assert.equal(taggedBook.flag, '');
+const reloadedBook = makeBook('1');
+badge.allBooks = [reloadedBook];
+badge.acknowledgeShelfBookUpdate(reloadedBook, true);
+badge.allBooks = [makeBook('')];
+advance(2000); assert.equal(shelfRebuilds, 1, 'a reload that already cleared the badge needs no second rebuild');
+badge.acknowledgeShelfBookUpdate(makeBook('1'), false);
+assert.equal(shelfRebuilds, 1, 'immediate acknowledgement outside the open path still works through the list lookup');
+badge.allBooks = [makeBook('1')]; badge.acknowledgeShelfBookUpdate(badge.allBooks[0]);
+assert.equal(shelfRebuilds, 2);
+
+// Hardware-key subscription waits for the open motion instead of running inside the tap.
+const keys = hostFor(readerSource, ['updateVolumeKeySubscription', 'delayPastShelfOpening']);
+let registered = 0;
+Object.assign(keys, {
+  readerVolumeKeySubscribeTimerId: -1, readerEntryAlive: true, shelfOpenAnimating: true, shelfOpenEndsAt: now + 500,
+  readerPageVisible: true, isTtsSpeaking: false, ttsReader: { isSpeaking: () => false }, readerVolumeTurnPage: true,
+  readerSmartKeyTurnPage: false, readerSmartKeyTurnSupported: false,
+  unregisterVolumeKeyTurn() {}, unregisterSmartKeyTurn() {}, registerVolumeKeyTurn() { registered++; },
+  registerSmartKeyTurn() {}
+});
+keys.updateVolumeKeySubscription();
+assert.equal(registered, 0, 'no key subscription inside the opening tap');
+keys.updateVolumeKeySubscription();
+advance(400); assert.equal(registered, 0);
+keys.shelfOpenAnimating = false; advance(200);
+assert.equal(registered, 1, 'one coalesced subscription right after the motion');
+assert.equal(keys.readerVolumeKeySubscribeTimerId, -1);
+assert.match(readerSource.slice(readerSource.indexOf('  build() {'), readerSource.indexOf('  build() {') + 400),
+  /if \(this\.readerStageRuntimeHostMounted\) \{\s*BookSourceStageRuntimeHost\(\)/,
+  'the hidden source runtime host is mounted only once the reader has settled');
 
 // A status-bar avoid-area change during the opening animation repaginates only after the motion has finished.
 const safeArea = hostFor(readerSource,

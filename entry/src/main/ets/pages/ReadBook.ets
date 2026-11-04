@@ -367,6 +367,13 @@ struct ReadBookPage {
   @State readerInitialPageReady: boolean = false;
   @State readerInitialOpening: boolean = true;
   @State readerWebFetchRuntimeNeeded: boolean = false;
+  /**
+   * 隐藏的全量 JS 书源运行时宿主要建一个 Web 表面，放在首帧会落在点开书的点击事件里。书架页的宿主在下面仍然就绪、
+   * 任务按任一就绪控制器派发，有原生脚本执行器时更用不到 Web，所以本页的宿主等打开动画过去再挂。
+   */
+  @State readerStageRuntimeHostMounted: boolean = false;
+  private readerStageRuntimeHostTimerId: number = -1;
+  private readerVolumeKeySubscribeTimerId: number = -1;
   @State readerComicMode: boolean = false;
   @State readerComicSettings: ReaderComicSettings = new ReaderComicSettings();
   @State readerComicTitleCapsuleWidth: number = 0;
@@ -1060,7 +1067,6 @@ struct ReadBookPage {
     this.shortcutRoutingActive = true;
     this.readerEntryInitializing = true;
     this.enterReaderImmersive();
-    this.updateVolumeKeySubscription();
     SmartControlKey.detect();
     const params = router.getParams() as Record<string, string>;
     this.openedWithShelfAnimation = !!params && params['shelfBookOpening'] === 'true';
@@ -1069,6 +1075,12 @@ struct ReadBookPage {
     this.shelfOpeningCover = this.shelfSharedCoverId && openingCover && openingCover.bookUrl === params?.['bookUrl'] ?
       openingCover : null;
     this.prepareShelfOpening();
+    // 下面两项都在打开动画之后再做；没有动画时分别是立即与 300ms 后。
+    this.updateVolumeKeySubscription();
+    this.readerStageRuntimeHostTimerId = setTimeout((): void => {
+      this.readerStageRuntimeHostTimerId = -1;
+      if (this.readerEntryAlive) this.readerStageRuntimeHostMounted = true;
+    }, this.delayPastShelfOpening(300));
     this.openedFromShortcut = !!params && params['shortcutEntry'] === 'true';
     this.shortcutReplacedPreviousPage = !!params && params['shortcutReplace'] === 'true';
     if (params && params['bookUrl']) {
@@ -1326,6 +1338,14 @@ struct ReadBookPage {
     if (this.readerSafeAreaRepaginateTimerId >= 0) {
       clearTimeout(this.readerSafeAreaRepaginateTimerId);
       this.readerSafeAreaRepaginateTimerId = -1;
+    }
+    if (this.readerStageRuntimeHostTimerId >= 0) {
+      clearTimeout(this.readerStageRuntimeHostTimerId);
+      this.readerStageRuntimeHostTimerId = -1;
+    }
+    if (this.readerVolumeKeySubscribeTimerId >= 0) {
+      clearTimeout(this.readerVolumeKeySubscribeTimerId);
+      this.readerVolumeKeySubscribeTimerId = -1;
     }
     this.readerBrightnessSession.deactivate();
     this.captureReaderContinuousAnchor();
@@ -3351,7 +3371,9 @@ struct ReadBookPage {
 
   build() {
     Stack() {
-      BookSourceStageRuntimeHost()
+      if (this.readerStageRuntimeHostMounted) {
+        BookSourceStageRuntimeHost()
+      }
       if (this.readerWebFetchRuntimeNeeded) {
         WebBookFetchRuntimeHost()
       }
@@ -9362,6 +9384,18 @@ struct ReadBookPage {
 
   /** 音量键与智控键翻页共用订阅时机：阅读页可见且未在听书时才接管按键。 */
   updateVolumeKeySubscription(): void {
+    if (this.readerVolumeKeySubscribeTimerId >= 0) {
+      clearTimeout(this.readerVolumeKeySubscribeTimerId);
+      this.readerVolumeKeySubscribeTimerId = -1;
+    }
+    if (this.shelfOpenAnimating) {
+      // 注册硬件按键监听要几毫秒，放在点开书的点击事件里；翻开封面的半秒内没人用音量键翻页，动画结束再订阅。
+      this.readerVolumeKeySubscribeTimerId = setTimeout((): void => {
+        this.readerVolumeKeySubscribeTimerId = -1;
+        if (this.readerEntryAlive) this.updateVolumeKeySubscription();
+      }, this.delayPastShelfOpening(0));
+      return;
+    }
     this.unregisterVolumeKeyTurn();
     this.unregisterSmartKeyTurn();
     if (!this.readerPageVisible || this.isTtsSpeaking ||
