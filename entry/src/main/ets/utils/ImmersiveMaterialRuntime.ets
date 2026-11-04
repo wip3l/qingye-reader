@@ -135,6 +135,7 @@ export class ImmersiveMaterialRuntime {
   private static resolvedType: hdsMaterial.MaterialType | null = null;
   private static hdsMaterialSupported: boolean | null = null;
   private static immersiveSupported: boolean | null = null;
+  private static deviceLevelWeak: boolean | null = null;
 
   static supportsHds(): boolean {
     // ArkUI uiMaterial.ImmersiveMaterial is an API 26 feature. Keep this
@@ -197,7 +198,34 @@ export class ImmersiveMaterialRuntime {
     return ImmersiveMaterialRuntime.resolvedType;
   }
 
+  /**
+   * 设备的全局材质档位是否为弱（低算力机型）。该档位由设备决定、用户改不了；
+   * 系统在这类设备上会削减甚至不画沉浸材质。API 26 以下没有这个接口，按非弱处理。
+   */
+  static deviceMaterialWeak(): boolean {
+    if (deviceInfo.sdkApiVersion < 26) return false;
+    if (ImmersiveMaterialRuntime.deviceLevelWeak !== null) return ImmersiveMaterialRuntime.deviceLevelWeak;
+    try {
+      ImmersiveMaterialRuntime.deviceLevelWeak =
+        uiMaterial.getGlobalMaterialLevel() === uiMaterial.MaterialLevel.SMOOTH;
+    } catch (error) {
+      console.warn('读取设备材质档位失败，按非弱档处理:', error);
+      ImmersiveMaterialRuntime.deviceLevelWeak = false;
+    }
+    return ImmersiveMaterialRuntime.deviceLevelWeak;
+  }
+
+  /**
+   * 实际渲染用的档位：跟随系统且设备材质档位为弱时按“均衡”渲染。跟随系统的面板底色全透明、
+   * 只靠系统沉浸材质着色，弱档设备削减材质后面板会直接露出背景；均衡档关掉原生材质、
+   * 用带透明度的实色底加组件模糊，各机型都能画出来。设置页仍显示用户选的“跟随系统”。
+   */
+  static effectiveLevel(level: string): string {
+    return level === 'adaptive' && ImmersiveMaterialRuntime.deviceMaterialWeak() ? 'balanced' : level;
+  }
+
   static materialLevel(configured: string = ImmersiveMaterialRuntime.configuredLightLevel()): hdsMaterial.MaterialLevel {
+    configured = ImmersiveMaterialRuntime.effectiveLevel(configured);
     if (configured === 'high') return hdsMaterial.MaterialLevel.EXQUISITE;
     if (configured === 'balanced') return hdsMaterial.MaterialLevel.GENTLE;
     if (configured === 'weak') return hdsMaterial.MaterialLevel.SMOOTH;
@@ -212,6 +240,7 @@ export class ImmersiveMaterialRuntime {
 
   /** ArkUI 的材质等级由系统决定，厚度/触摸光效不能代替等级。手动降档时显式关闭原材质。 */
   static reducedMaterial(level: string): boolean {
+    level = ImmersiveMaterialRuntime.effectiveLevel(level);
     return level === 'weak' || level === 'balanced';
   }
 
@@ -238,7 +267,7 @@ export class ImmersiveMaterialRuntime {
     if (typeof base !== 'string' || !/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(base)) return base;
     const rgb = base.substring(base.length - 6);
     // 统一替换旧 alpha，避免沿用上次过厚的底色。
-    return level === 'weak' ? `#${rgb}` : `#${alpha}${rgb}`;
+    return ImmersiveMaterialRuntime.effectiveLevel(level) === 'weak' ? `#${rgb}` : `#${alpha}${rgb}`;
   }
 
   /** 原生材质已通过 materialColor 着色，背景不再重复叠色。 */
@@ -250,13 +279,14 @@ export class ImmersiveMaterialRuntime {
   }
 
   static surfaceBlur(level: string): BlurStyle {
-    return level === 'balanced' ? BlurStyle.COMPONENT_THICK : BlurStyle.NONE;
+    return ImmersiveMaterialRuntime.effectiveLevel(level) === 'balanced' ? BlurStyle.COMPONENT_THICK : BlurStyle.NONE;
   }
 
   /** 弱档没有原生材质光边，统一补一圈内描边；其它档位保留调用方原有边框。 */
   static surfaceBorder(level: string, darkMode: boolean,
     fallbackWidth: number = 0, fallbackColor: ResourceColor = Color.Transparent): ImmersiveSurfaceBorder {
-    return level === 'weak' ? { width: 0.75, color: darkMode ? '#40FFFFFF' : '#26000000' } :
+    return ImmersiveMaterialRuntime.effectiveLevel(level) === 'weak' ?
+      { width: 0.75, color: darkMode ? '#40FFFFFF' : '#26000000' } :
       { width: fallbackWidth, color: fallbackColor };
   }
 
@@ -275,6 +305,7 @@ export class ImmersiveMaterialRuntime {
   static lightEffect(forceAdaptive: boolean = false,
     configured: string = ImmersiveMaterialRuntime.configuredLightLevel(),
     color: string = '#FFFFFF'): uiMaterial.LightEffectOptions | null | undefined {
+    configured = ImmersiveMaterialRuntime.effectiveLevel(configured);
     if (configured === 'weak') return null;
     const rgb = /^#[0-9a-fA-F]{6}$/.test(color) ? color.substring(1) :
       (/^#[0-9a-fA-F]{8}$/.test(color) ? color.substring(3) : 'FFFFFF');
@@ -289,6 +320,7 @@ export class ImmersiveMaterialRuntime {
 
   /** The manually drawn touch glow follows the same strength as system material feedback. */
   static touchGlowOpacity(configured: string): number {
+    configured = ImmersiveMaterialRuntime.effectiveLevel(configured);
     if (configured === 'weak') return 0;
     return configured === 'high' ? 1 : 0.625;
   }

@@ -205,7 +205,7 @@ struct OtherSettingsPage {
 
     this.sectionTitle('外观')
     Column() {
-      SettingRow({ title: '沉浸光感', description: '沉浸材质的光感强度' }) {
+      SettingRow({ title: '沉浸光感', description: this.immersiveLightLevelDescription() }) {
         this.immersiveLightLevelSelect()
       }
       SettingNavRow({
@@ -310,6 +310,12 @@ struct OtherSettingsPage {
 
   accentColor(): string {
     return ThemeRuntime.accentColor(this.appDarkMode);
+  }
+
+  /** 弱档设备上跟随系统会按均衡渲染，在说明里告诉用户。 */
+  immersiveLightLevelDescription(): string {
+    return this.immersiveLightLevel === 'adaptive' && ImmersiveMaterialRuntime.deviceMaterialWeak() ?
+      '本机材质档位为弱，跟随系统时按均衡显示' : '沉浸材质的光感强度';
   }
 
   immersiveLightLevelOptions(): SelectOption[] {
