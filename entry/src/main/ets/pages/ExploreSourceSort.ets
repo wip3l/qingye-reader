@@ -22,7 +22,6 @@ struct ExploreSourceSortPage {
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @State sources: BookSource[] = [];
   @State isLoading: boolean = false;
-  @State draggingIndex: number = -1;
 
   aboutToAppear(): void {
     this.syncBars();
@@ -188,6 +187,12 @@ struct ExploreSourceSortPage {
             .borderRadius(ThemeRuntime.cardRadius())
           }
         }, (source: BookSource) => source.bookSourceUrl)
+          // onMove 由 List 原地抬起条目、挤压让位并在边缘自动滚动；拖动中只改顺序，松手再保存。
+          .onMove((from: number, to: number) => {
+            this.moveSourceTo(from, to, false);
+          }, {
+            onDrop: (_index: number) => this.saveOrder(false)
+          })
 
         ListItem() {
           Row()
@@ -198,16 +203,6 @@ struct ExploreSourceSortPage {
       .width('100%')
       .layoutWeight(1)
       .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.XL })
-      .onItemDragStart((event: ItemDragInfo, itemIndex: number) => {
-        this.draggingIndex = itemIndex;
-        return this.sourceDragPreview;
-      })
-      .onItemDrop((event: ItemDragInfo, itemIndex: number, insertIndex: number, isSuccess: boolean) => {
-        if (isSuccess) {
-          this.moveSourceTo(itemIndex, insertIndex);
-        }
-        this.draggingIndex = -1;
-      })
       .onDidScroll((yOffset: number) => {
         this.headerCollapse = CollapsingHeader.next(this.headerCollapse, yOffset,
           this.headerScroller.currentOffset().yOffset);
@@ -236,7 +231,7 @@ struct ExploreSourceSortPage {
     this.saveOrder(true);
   }
 
-  moveSourceTo(from: number, to: number): boolean {
+  moveSourceTo(from: number, to: number, save: boolean = true): boolean {
     if (from < 0 || from >= this.sources.length || to < 0 || to >= this.sources.length || from === to) {
       return false;
     }
@@ -244,7 +239,7 @@ struct ExploreSourceSortPage {
     const moved = next.splice(from, 1)[0];
     next.splice(to, 0, moved);
     this.sources = next;
-    this.saveOrder(false);
+    if (save) this.saveOrder(false);
     return true;
   }
 
@@ -303,53 +298,6 @@ struct ExploreSourceSortPage {
 
   syncBars(): void {
     syncSystemBars(getContext(this), this.appDarkMode, this.pageColor());
-  }
-
-  @Builder
-  sourceDragPreview() {
-    Row() {
-      Text('☰')
-        .fontSize(AppFontSize.SUBTITLE)
-        .fontColor(this.subTextColor())
-        .width(24)
-        .textAlign(TextAlign.Center)
-        .margin({ right: AppSpacing.MD })
-      Column() {
-        Text(this.draggingTitle())
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.primaryTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(this.draggingUrl())
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
-          .margin({ top: AppSpacing.XS })
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-    }
-    .width(280)
-    .padding(AppSpacing.LG)
-    .backgroundColor(this.cardColor())
-    .borderRadius(ThemeRuntime.cardRadius())
-    .shadow({ radius: 12, color: this.appDarkMode ? '#66000000' : '#22000000', offsetX: 0, offsetY: 4 })
-  }
-
-  draggingTitle(): string {
-    if (this.draggingIndex < 0 || this.draggingIndex >= this.sources.length) {
-      return '';
-    }
-    return this.sources[this.draggingIndex].bookSourceName || '未命名书源';
-  }
-
-  draggingUrl(): string {
-    if (this.draggingIndex < 0 || this.draggingIndex >= this.sources.length) {
-      return '';
-    }
-    return this.sources[this.draggingIndex].bookSourceUrl;
   }
 
 }

@@ -76,6 +76,23 @@ class BookSourceListDataSource implements IDataSource {
     this.sources = [...sources];
     for (const listener of this.listeners) listener.onDataReloaded();
   }
+
+  /** 拖动排序过程中的单步移动，走 onDataMove 让 List 保留挤压动画而不整表重载。 */
+  move(from: number, to: number): void {
+    if (from === to || from < 0 || to < 0 || from >= this.sources.length || to >= this.sources.length) return;
+    const moved = this.sources.splice(from, 1)[0];
+    this.sources.splice(to, 0, moved);
+    for (const listener of this.listeners) listener.onDataMove(from, to);
+  }
+
+  orderedUrls(): string[] {
+    return this.sources.map((source: BookSource) => source.bookSourceUrl);
+  }
+
+  hasSameOrder(urls: string[]): boolean {
+    return urls.length === this.sources.length &&
+      urls.every((url: string, index: number) => url === this.sources[index].bookSourceUrl);
+  }
 }
 
 class BookSourceCheckUiUpdate {
@@ -209,6 +226,7 @@ struct BookSourcePage {
   @State groupNameInput: string = '';
   @State groupActionSourceUrl: string = '';
   @State draggingSourceUrl: string = '';
+  private sourceReorderStartIndex: number = -1;
   @State importUrl: string = '';
   @State @Watch('syncIsImporting') isImporting: boolean = false;
   @State @Watch('syncIsBatchOperating') isBatchOperating: boolean = false;
@@ -555,8 +573,8 @@ struct BookSourcePage {
                   },
                   swipeActionOptions: this.sourceSwipeActions(source)
                 })
-              }
-              if (deviceInfo.sdkApiVersion < 26) {
+              } else {
+              // 两个并列 if 会让每个条目下挂两个分支节点，onMove 拖动排序要求条目只有一个子节点，所以用 else。
               ListItem() {
                 Row() {
                   if (this.selectionMode) {
@@ -615,6 +633,15 @@ struct BookSourcePage {
               })
               }
             }, (source: BookSource) => this.sourceListItemKey(source))
+              // List 自带的 onItemDragStart 只给一张悬浮预览，其他条目不让位、拖到边缘也不滚动；
+              // LazyForEach.onMove 由 List 原地抬起条目、挤压让位并在边缘自动滚动，和分组排序的手感一致。
+              .onMove(this.sourceDragEnabled() ?
+                (from: number, to: number) => this.moveSourceDuringDrag(from, to) : undefined, {
+                onDragStart: (index: number) => this.beginSourceReorderDrag(index),
+                onDrop: (index: number) => {
+                  this.finishSourceReorderDrag(index);
+                }
+              })
 
             ForEach(this.sourceListSpacerKeys(), (_spacerKey: string) => {
               ListItem() {
@@ -643,23 +670,6 @@ struct BookSourcePage {
               // 顶部 spacer 按列数占满一整行，源条目索引 = ListItem 索引 - 列数（单列时退化为 -1）。
               this.sourceFirstVisibleIndex = Math.max(0, start - this.sourceListLaneCount());
               this.sourceVisibleItemCount = Math.max(1, end - start + 1);
-            })
-            .onItemDragStart((_event: ItemDragInfo, itemIndex: number) => {
-              if (!this.sourceDragEnabled()) {
-                this.draggingSourceUrl = '';
-                return undefined;
-              }
-              const sourceIndex = itemIndex - this.sourceListLaneCount();
-              this.draggingSourceUrl = !this.selectionMode && sourceIndex >= 0 &&
-                sourceIndex < this.visibleSources.length ? this.visibleSources[sourceIndex].bookSourceUrl : '';
-              return this.sourceDragPreview;
-            })
-            .onItemDrop((_event: ItemDragInfo, itemIndex: number, insertIndex: number, isSuccess: boolean) => {
-              if (isSuccess && this.draggingSourceUrl) {
-                const laneCount = this.sourceListLaneCount();
-                this.moveVisibleSourceTo(itemIndex - laneCount, Math.max(0, insertIndex - laneCount));
-              }
-              this.draggingSourceUrl = '';
             })
 
             // 展开时止于搜索框底边；收起后由同一层过渡为状态栏渐变。
@@ -2052,39 +2062,6 @@ struct BookSourcePage {
     }    .padding(AppSpacing.XXL)
   }
 
-
-  @Builder
-  sourceDragPreview() {
-    Row() {
-      Text('☰')
-        .fontSize(AppFontSize.SUBTITLE)
-        .fontColor(this.subTextColor())
-        .width(28)
-        .textAlign(TextAlign.Center)
-        .margin({ right: AppSpacing.MD })
-      Column() {
-        Text(this.draggingSourceName())
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.primaryTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(this.draggingSourceUrl)
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
-          .margin({ top: AppSpacing.XS })
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-    }
-    .width(280)
-    .padding(AppSpacing.LG)
-    .borderRadius(ThemeRuntime.cardRadius())
-    .backgroundColor(this.cardColor())
-    .shadow({ radius: 12, color: this.appDarkMode ? '#66000000' : '#22000000', offsetX: 0, offsetY: 4 })
-  }
 
   @Builder
   sourceVirtualScrollbar() {
@@ -3697,21 +3674,56 @@ struct BookSourcePage {
     }
   }
 
-  draggingSourceName(): string {
-    const source = this.allSources.find((item: BookSource) => item.bookSourceUrl === this.draggingSourceUrl);
-    return source ? (source.bookSourceName || '未命名书源') : '';
+  /** 拖动抬起：记住被拖书源和起点，拖动过程只改列表顺序，松手后再按起点和终点写库。 */
+  beginSourceReorderDrag(index: number): void {
+    if (!this.sourceDragEnabled() || this.isBatchOperating || this.sourceOrderSaving ||
+      index < 0 || index >= this.visibleSources.length) {
+      this.draggingSourceUrl = '';
+      this.sourceReorderStartIndex = -1;
+      return;
+    }
+    this.draggingSourceUrl = this.visibleSources[index].bookSourceUrl;
+    this.sourceReorderStartIndex = index;
   }
 
-  async moveVisibleSourceTo(from: number, to: number): Promise<void> {
+  moveSourceDuringDrag(from: number, to: number): void {
+    if (from === to || from < 0 || to < 0 ||
+      from >= this.visibleSources.length || to >= this.visibleSources.length) return;
+    if (!this.draggingSourceUrl) this.beginSourceReorderDrag(from);
+    if (!this.draggingSourceUrl) return;
+    const next = this.visibleSources.slice();
+    const moved = next.splice(from, 1)[0];
+    next.splice(to, 0, moved);
+    this.visibleSources = next;
+    this.sourceListDataSource.move(from, to);
+  }
+
+  async finishSourceReorderDrag(_index: number): Promise<void> {
+    const startIndex = this.sourceReorderStartIndex;
+    const draggedUrl = this.draggingSourceUrl;
+    this.sourceReorderStartIndex = -1;
+    if (startIndex < 0 || !draggedUrl) return;
+    const endIndex = this.visibleSources.findIndex((source: BookSource) => source.bookSourceUrl === draggedUrl);
+    let handled = endIndex < 0 || endIndex === startIndex;
+    if (!handled) handled = await this.moveVisibleSourceTo(startIndex, endIndex);
+    this.draggingSourceUrl = '';
+    if (!handled) {
+      // 没能保存（正在批量操作或上一次保存未完成），把拖动中的临时顺序退回真实顺序。
+      this.visibleSources = this.sources;
+      this.sourceListDataSource.replace(this.visibleSources, true);
+    }
+  }
+
+  async moveVisibleSourceTo(from: number, to: number): Promise<boolean> {
     if (this.isBatchOperating || this.sourceOrderSaving || from < 0 ||
       from >= this.visibleSources.length || this.sources.length < 2) {
-      return;
+      return false;
     }
     const draggedUrl = this.draggingSourceUrl || this.visibleSources[from].bookSourceUrl;
     const sourceIndex = this.sources.findIndex((source: BookSource) => source.bookSourceUrl === draggedUrl);
-    if (sourceIndex < 0) return;
+    if (sourceIndex < 0) return false;
     const targetIndex = Math.max(0, Math.min(to, this.sources.length - 1));
-    if (sourceIndex === targetIndex) return;
+    if (sourceIndex === targetIndex) return true;
 
     const reordered = this.sources.slice();
     const moved = reordered.splice(sourceIndex, 1)[0];
@@ -3728,14 +3740,14 @@ struct BookSourcePage {
     // 手动拖离底部组时解除置底，避免拖动成功后又被排序规则拉回。
     const leavesBottomGroup = this.isSourceAtBottom(moved) &&
       targetIndex < this.sources.filter((source: BookSource) => !this.isSourceAtBottom(source)).length;
-    await this.applyAndPersistSourceOrder(nextAllSources, '排序已保存', leavesBottomGroup ? {
+    return this.applyAndPersistSourceOrder(nextAllSources, '排序已保存', leavesBottomGroup ? {
       bookSourceUrl: moved.bookSourceUrl, isPinned: false, isBottom: false
     } : undefined);
   }
 
   async applyAndPersistSourceOrder(nextSources: BookSource[], successMessage: string = '',
-    position?: BookSourcePositionUpdate): Promise<void> {
-    if (this.isBatchOperating || this.sourceOrderSaving || nextSources.length === 0) return;
+    position?: BookSourcePositionUpdate): Promise<boolean> {
+    if (this.isBatchOperating || this.sourceOrderSaving || nextSources.length === 0) return false;
     const previousSources = this.allSources.slice();
     const previousOrders = previousSources.map((source: BookSource) => source.customOrder);
     const previousBottomUrls = this.bottomSourceUrls;
@@ -3757,6 +3769,7 @@ struct BookSourcePage {
       .concat(nextSources.filter((source: BookSource) => this.isSourceAtBottom(source)));
     const restoreFirstIndex = this.sourceFirstVisibleIndex;
     const restoreVisibleCount = this.sourceVisibleItemCount;
+    const previousVisibleUrls = this.sourceListDataSource.orderedUrls();
     for (let index = 0; index < orderedSources.length; index++) {
       orderedSources[index].customOrder = index;
     }
@@ -3764,7 +3777,9 @@ struct BookSourcePage {
     // its old order and makes a successful drag look as if it was ignored.
     this.allSources = [...orderedSources];
     this.applySourceFilters();
-    this.restoreSourceListViewport(restoreFirstIndex, restoreVisibleCount);
+    // 拖动排序松手时列表已经是最终顺序，这时不再按索引回滚视口，避免松手后列表跳动一下。
+    this.restoreSourceListViewport(restoreFirstIndex, restoreVisibleCount,
+      !this.sourceListDataSource.hasSameOrder(previousVisibleUrls));
     this.sourceOrderSaving = true;
     try {
       await AppDatabase.getInstance().updateBookSourceOrders(
@@ -3785,14 +3800,16 @@ struct BookSourcePage {
     } finally {
       this.sourceOrderSaving = false;
     }
+    return true;
   }
 
-  restoreSourceListViewport(firstIndex: number, visibleCount: number): void {
+  restoreSourceListViewport(firstIndex: number, visibleCount: number, scroll: boolean = true): void {
     if (this.sources.length === 0) return;
     const targetIndex = Math.max(0, Math.min(firstIndex, this.sources.length - 1));
     this.visibleSources = this.sources;
     this.sourceFirstVisibleIndex = targetIndex;
     this.sourceVisibleItemCount = Math.max(1, visibleCount);
+    if (!scroll) return;
     setTimeout(() => {
       if (targetIndex < this.visibleSources.length) {
         this.sourceListScroller.scrollToIndex(targetIndex + this.sourceListLaneCount(), false, ScrollAlign.START);
