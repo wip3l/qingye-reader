@@ -12,6 +12,7 @@ import { ReaderImageMarker } from './ReaderImageMarker';
 import { LocalChapterContentLoader } from './LocalChapterContentLoader';
 import { EpubChapterPlanner, EpubPlannedChapter, EpubTocEntry } from './EpubChapterPlanner';
 import { EpubConvertResult, EpubHtmlConverter } from './EpubHtmlConverter';
+import { EpubTextOffsetMap } from './EpubTextOffsetMap';
 import { MobiImportTask } from '../concurrency/MobiImportTask';
 import { PdfBookService } from './pdf/PdfBookService';
 
@@ -99,8 +100,9 @@ export class LocalBookService {
   static readonly EPUB_IMAGE_MARKER_SUFFIX: string = ReaderImageMarker.SUFFIX;
 
   private static readonly TXT_PARSER_VERSION: string = '10';
-  private static readonly EPUB_PARSER_VERSION: string = '9';
-  private static readonly MOBI_PARSER_VERSION: string = '1';
+  // 10 / 2：注释编号换成可点的注释标记。
+  private static readonly EPUB_PARSER_VERSION: string = '10';
+  private static readonly MOBI_PARSER_VERSION: string = '2';
   /** 导入时同时预读的正文文件数。 */
   private static readonly IMPORT_READ_AHEAD: number = 4;
   /** 导入转换连续占用主线程的时长上限，超过后让出一次。 */
@@ -580,6 +582,7 @@ export class LocalBookService {
     const epub = extension === 'mobi' ? await LocalBookService.parseMobi(context, localPath, id) :
       await LocalBookService.parseEpub(context, localPath, id);
     const oldChapterPath = oldBook ? await LocalBookService.currentEpubChapterPath(book) : '';
+    const oldChapterContent = oldBook ? await LocalBookService.currentEpubChapterContent(book) : '';
     book.name = hasCustomMetadata ? book.getVariable('localCustomName') :
       (epub.title || fileMetadata.title || LocalBookService.fileStem(metadataSource));
     book.author = hasCustomMetadata ? book.getVariable('localCustomAuthor') : (epub.author || fileMetadata.author);
@@ -605,7 +608,7 @@ export class LocalBookService {
     book.latestChapterTime = Date.now();
     book.intro = '';
     book.putVariable('localContentIntroVersion', '6');
-    LocalBookService.migrateEpubProgress(book, oldChapterPath, epub);
+    LocalBookService.migrateEpubProgress(book, oldChapterPath, oldChapterContent, epub);
 
     if (oldBook) {
       await appDb.updateBook(book);
@@ -683,6 +686,7 @@ export class LocalBookService {
     const epub = format === 'mobi' ? await LocalBookService.parseMobi(context, localPath, id) :
       await LocalBookService.parseEpub(context, localPath, id);
     const oldChapterPath = await LocalBookService.currentEpubChapterPath(book);
+    const oldChapterContent = await LocalBookService.currentEpubChapterContent(book);
     if (book.getVariable('localMetadataCustomized') === '1') {
       book.name = book.getVariable('localCustomName');
       book.author = book.getVariable('localCustomAuthor');
@@ -711,7 +715,7 @@ export class LocalBookService {
     book.totalChapterNum = chapters.length;
     book.latestChapterTitle = chapters[chapters.length - 1].title;
     book.latestChapterTime = Date.now();
-    LocalBookService.migrateEpubProgress(book, oldChapterPath, epub);
+    LocalBookService.migrateEpubProgress(book, oldChapterPath, oldChapterContent, epub);
     await appDb.updateBook(book);
     await LocalBookService.persistEpubChapters(book.bookUrl, chapters);
   }
@@ -750,8 +754,20 @@ export class LocalBookService {
     }
   }
 
+  /** 重新解析前，当前阅读章节缓存的旧正文；用来把章内字符偏移换算到新正文上。 */
+  private static async currentEpubChapterContent(book: Book): Promise<string> {
+    if (book.getVariable('readProgressCharOffsetChapterV2') !== `${book.durChapterIndex}`) return '';
+    try {
+      return await appDb.getCachedChapterContent(book.bookUrl, book.durChapterIndex);
+    } catch (e) {
+      console.warn('[LocalBook] 读取旧章节正文失败:', e);
+      return '';
+    }
+  }
+
   // 章节划分方式变化后旧的章节序号不再对应原来的内容，按所在文件重新定位阅读进度。
-  private static migrateEpubProgress(book: Book, oldChapterPath: string, epub: EpubPackageData): void {
+  private static migrateEpubProgress(book: Book, oldChapterPath: string, oldChapterContent: string,
+    epub: EpubPackageData): void {
     const count = epub.chapters.length;
     const index = !epub.isComic && oldChapterPath ?
       EpubChapterPlanner.chapterIndexForPath(epub.planned, oldChapterPath) : -1;
@@ -762,6 +778,13 @@ export class LocalBookService {
       if (!offsetStillValid) {
         book.durChapterPos = 0;
         book.putVariable('readProgressCharOffsetV2', '');
+      } else if (oldChapterContent) {
+        // 正文里多了注释标记、少了脚注块，同一位置的偏移跟着变。
+        const offset = Number(book.getVariable('readProgressCharOffsetV2'));
+        if (Number.isFinite(offset) && offset > 0) {
+          book.putVariable('readProgressCharOffsetV2',
+            `${EpubTextOffsetMap.map(oldChapterContent, epub.chapters[index].content || '', offset)}`);
+        }
       }
       if (index !== book.durChapterIndex) {
         book.durChapterTitle = epub.chapters[index].title;
@@ -1209,8 +1232,8 @@ export class LocalBookService {
           const documentTitle = EpubHtmlConverter.titleOf(chapterHtml);
           const fallbackTitle = documentTitle && documentTitle !== result.title ? documentTitle : '';
           for (const cut of EpubChapterPlanner.planFileCuts(body, entries)) {
-            const converted = await LocalChapterContentLoader.convertBody(body,
-              LocalBookService.parentPath(chapterPath), extractRoot, cut.startId, cut.endId);
+            const converted = await LocalChapterContentLoader.convertBody(body, chapterPath, extractRoot,
+              cut.startId, cut.endId);
             planner.addPiece(chapterPath, cut.startId, cut.endId, cut.title, converted, fallbackTitle);
             await yieldIfBusy();
           }

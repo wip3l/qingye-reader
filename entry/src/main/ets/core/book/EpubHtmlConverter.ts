@@ -1,3 +1,5 @@
+import { ReaderActionMarker } from '@legado/sourceengine';
+import { EpubNoteLink } from './EpubNoteLink';
 import { ReaderImageMarker } from './ReaderImageMarker';
 
 /** 已解析到磁盘上的 EPUB 图片；宽高未知时为 0。 */
@@ -25,6 +27,9 @@ export class EpubConvertResult {
 }
 
 export type EpubImageResolver = (source: string) => EpubImageRef | null;
+
+/** 把正文里的注释链接（href 原样，相对当前文件）解析成 EpubNoteLink 地址；目标不在书内时返回空串。 */
+export type EpubLinkResolver = (href: string) => string;
 
 class EpubPendingImage {
   ref: EpubImageRef;
@@ -56,7 +61,22 @@ export class EpubHtmlConverter {
   private static readonly BLOCK_TAGS: string =
     'p|div|section|article|aside|header|footer|nav|main|figure|figcaption|h[1-6]|li|ul|ol|dl|dt|dd|' +
     'blockquote|table|thead|tbody|tfoot|tr|caption|pre|address|form|fieldset|center|details|summary';
+  /** 链接文字超过这个长度就不当注释编号：显示文字整个放进动作标记，太长会被截断。 */
+  private static readonly MAX_NOTE_LABEL_LENGTH: number = 40;
+  private static readonly MAX_NOTE_HTML_LENGTH: number = 24000;
+  private static readonly NOTE_CORE: string = '(?:\\d{1,4}|[０-９]{1,4}|[一二三四五六七八九十]{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,4}|' +
+    '[\\u2460-\\u24FF\\u2776-\\u2793\\u3251-\\u325F\\u32B1-\\u32BF]|[*＊†‡§]{1,3})';
+  /** 像注释编号的链接文字：1、[1]、［注1］、①、¹、*、注。 */
+  private static readonly NOTE_LABEL: RegExp = new RegExp('^[\\[［(（【〔〈]?\\s*(?:(?:注|註|note)\\s*' +
+    `${EpubHtmlConverter.NOTE_CORE}?|${EpubHtmlConverter.NOTE_CORE})\\s*[\\]］)）】〕〉]?$`, 'i');
+  private static readonly NOTE_CLASS: RegExp = /footnote|endnote|noteref|note-ref|notelink/i;
+  private static readonly NOTE_SEMANTICS: RegExp = /\b(?:doc-)?(?:foot|end|rear)?notes?\b/;
+  private static readonly NOTE_BLOCK_TAGS: string =
+    'p|li|div|aside|section|article|dd|dt|td|blockquote|figure|ol|ul|dl|table|h[1-6]';
   private static namedEntities: Record<string, string> | null = null;
+  /** 最近一次统计过“本文件内被注释链接引用的锚点”的 body，同一个文件切成多章时只统计一次。 */
+  private static noteIdsBody: string = '';
+  private static noteIds: Set<string> = new Set<string>();
   /** 最近一次建过锚点索引的 body。同一个文件按目录切成多章时，每切一章都要查两次锚点。 */
   private static anchorIndexBody: string = '';
   private static anchorIndex: Map<string, number> = new Map<string, number>();
@@ -105,6 +125,8 @@ export class EpubHtmlConverter {
   static clearAnchorIndex(): void {
     EpubHtmlConverter.anchorIndexBody = '';
     EpubHtmlConverter.anchorIndex = new Map<string, number>();
+    EpubHtmlConverter.noteIdsBody = '';
+    EpubHtmlConverter.noteIds = new Set<string>();
   }
 
   /** body 中每个 id/name 第一次出现的元素起始标签偏移。 */
@@ -152,8 +174,12 @@ export class EpubHtmlConverter {
     return EpubHtmlConverter.convertBody(EpubHtmlConverter.bodyOf(html), resolveImage, startId, endId);
   }
 
+  /**
+   * resolveLink 为空时链接按普通文字处理（注释弹窗里的注释正文就是这样转换的）；
+   * 给出时注释编号换成可点的动作标记，本文件里被这些编号引用的脚注块不再留在正文里。
+   */
   static convertBody(body: string, resolveImage: EpubImageResolver, startId: string = '',
-    endId: string = ''): EpubConvertResult {
+    endId: string = '', resolveLink: EpubLinkResolver | null = null): EpubConvertResult {
     const result = new EpubConvertResult();
     const images: EpubPendingImage[] = [];
     let source = EpubHtmlConverter.sliceBody(body, startId, endId)
@@ -162,6 +188,9 @@ export class EpubHtmlConverter {
       .replace(/<(script|style|template|head|title)\b[\s\S]*?<\/\1\s*>/gi, '')
       // 注音只保留被注的正文：<rt> 的读音与 <rp> 的括号都不属于正文。
       .replace(/<r[tp]\b[^>]*>[\s\S]*?<\/r[tp]\s*>/gi, '');
+    if (resolveLink) {
+      source = EpubHtmlConverter.removeReferencedNotes(source, EpubHtmlConverter.referencedNoteIds(body));
+    }
 
     const headingPattern = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1\s*>/gi;
     let headingMatch = headingPattern.exec(source);
@@ -177,18 +206,8 @@ export class EpubHtmlConverter {
     }
     if (result.headings.length > 0) result.headingText = result.headings[0].text;
 
-    // 纯数字的上标/下标（脚注编号、指数、化学式）换成对应的 Unicode 字符，
-    // 否则去掉标签后 "正文<sup>1</sup>" 会变成 "正文1"。
-    source = source.replace(/<su([pb])\b[^>]*>([\s\S]*?)<\/su\1\s*>/gi,
-      (all: string, kind: string, inner: string): string => {
-        const digits = inner.replace(/<[^>]+>/g, '').trim();
-        if (!/^\d{1,4}$/.test(digits)) return all;
-        const table = kind.toLowerCase() === 'p' ? EpubHtmlConverter.SUPERSCRIPT_DIGITS :
-          EpubHtmlConverter.SUBSCRIPT_DIGITS;
-        let mapped = '';
-        for (let index = 0; index < digits.length; index++) mapped += table.charAt(digits.charCodeAt(index) - 48);
-        return mapped;
-      });
+    if (resolveLink) source = EpubHtmlConverter.replaceNoteLinks(source, body, resolveLink);
+    source = EpubHtmlConverter.mapScriptDigits(source);
 
     // <pre> 内的换行是内容，其它位置的换行只是 HTML 空白。
     source = source.replace(/<pre\b[^>]*>[\s\S]*?<\/pre\s*>/gi, (block: string): string =>
@@ -291,6 +310,246 @@ export class EpubHtmlConverter {
     }
     result.content = content;
     return result;
+  }
+
+  /**
+   * 纯数字的上标/下标（脚注编号、指数、化学式）换成对应的 Unicode 字符，
+   * 否则去掉标签后 "正文<sup>1</sup>" 会变成 "正文1"。
+   */
+  private static mapScriptDigits(html: string): string {
+    return html.replace(/<su([pb])\b[^>]*>([\s\S]*?)<\/su\1\s*>/gi,
+      (all: string, kind: string, inner: string): string => {
+        const digits = inner.replace(/<[^>]+>/g, '').trim();
+        if (!/^\d{1,4}$/.test(digits)) return all;
+        return EpubHtmlConverter.scriptDigits(digits, kind.toLowerCase() === 'p');
+      });
+  }
+
+  private static scriptDigits(digits: string, superscript: boolean): string {
+    const table = superscript ? EpubHtmlConverter.SUPERSCRIPT_DIGITS : EpubHtmlConverter.SUBSCRIPT_DIGITS;
+    let mapped = '';
+    for (let index = 0; index < digits.length; index++) mapped += table.charAt(digits.charCodeAt(index) - 48);
+    return mapped;
+  }
+
+  /** 注释编号换成动作标记；标记的显示文字就是编号原来的文字，正文看起来和以前一样。 */
+  private static replaceNoteLinks(source: string, body: string, resolveLink: EpubLinkResolver): string {
+    if (source.search(/<a\b/i) < 0) return source;
+    return source.replace(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi,
+      (all: string, attributes: string, inner: string, offset: number, whole: string): string => {
+        const before = whole.substring(Math.max(0, offset - 240), offset);
+        const href = EpubHtmlConverter.noteHref(attributes, inner, before, body);
+        if (!href) return all;
+        const label = EpubHtmlConverter.noteLabel(inner, before);
+        if (label.length > EpubHtmlConverter.MAX_NOTE_LABEL_LENGTH) return all;
+        const url = resolveLink(href);
+        const marker = url ? ReaderActionMarker.create(label, url) : '';
+        return marker || all;
+      });
+  }
+
+  /** 是注释编号时返回链接的 href，否则返回空串。before 是链接前面的一小段 HTML。 */
+  private static noteHref(attributes: string, inner: string, before: string, body: string): string {
+    const tag = `<a ${attributes}>`;
+    const href = EpubHtmlConverter.decodeEntities(EpubHtmlConverter.findHtmlAttribute(tag, ['href', 'xlink:href']))
+      .trim();
+    if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || !EpubHtmlConverter.fragmentOf(href)) return '';
+    const semantics = EpubHtmlConverter.semanticsOf(tag);
+    if (/\b(?:doc-)?backlink\b|\breferrer\b/.test(semantics)) return '';
+    if (/\b(?:doc-)?noteref\b/.test(semantics) ||
+      EpubHtmlConverter.NOTE_CLASS.test(EpubHtmlConverter.findHtmlAttribute(tag, ['class']))) {
+      return href;
+    }
+    // 尾注列表里每条注释开头的编号是返回正文的链接，不是注释。
+    if (EpubHtmlConverter.atBlockStart(before)) return '';
+    if (href.startsWith('#') && EpubHtmlConverter.isNoteElement(body, EpubHtmlConverter.fragmentOf(href))) return href;
+    const text = EpubHtmlConverter.inlineText(inner);
+    if (!text) return /<(?:img|image)\b/i.test(inner) ? href : '';
+    return EpubHtmlConverter.NOTE_LABEL.test(text) ? href : '';
+  }
+
+  private static noteLabel(inner: string, before: string): string {
+    const text = EpubHtmlConverter.inlineText(EpubHtmlConverter.mapScriptDigits(inner));
+    if (!text) return EpubNoteLink.ICON_LABEL;
+    // <sup><a>1</a></sup>：上标包在链接外面。
+    if (/^\d{1,4}$/.test(text) && /<sup\b[^>]*>\s*$/i.test(before)) return EpubHtmlConverter.scriptDigits(text, true);
+    return text;
+  }
+
+  private static semanticsOf(tag: string): string {
+    return `${EpubHtmlConverter.findHtmlAttribute(tag, ['epub:type'])} ` +
+      `${EpubHtmlConverter.findHtmlAttribute(tag, ['role'])}`.toLowerCase();
+  }
+
+  /** before 的末尾是不是一个块的开头（中间只有标签和空白）。 */
+  private static atBlockStart(before: string): boolean {
+    const block = new RegExp(`</?(?:${EpubHtmlConverter.BLOCK_TAGS}|br)\\b[^>]*>`, 'gi');
+    let last = -1;
+    let match = block.exec(before);
+    while (match) {
+      last = match.index + match[0].length;
+      match = block.exec(before);
+    }
+    return !EpubHtmlConverter.inlineText(last >= 0 ? before.substring(last) : before);
+  }
+
+  /** 锚点所在元素是不是脚注/尾注（本身是 aside 或注释语义的元素，或者在 aside 里）。 */
+  private static isNoteElement(body: string, fragment: string): boolean {
+    const offset = EpubHtmlConverter.findAnchorOffset(body, fragment);
+    if (offset < 0) return false;
+    const close = body.indexOf('>', offset);
+    const tag = close > offset ? body.substring(offset, close + 1) : '';
+    if (/^<aside\b/i.test(tag) || EpubHtmlConverter.NOTE_SEMANTICS.test(EpubHtmlConverter.semanticsOf(tag)) ||
+      /duokan-footnote/i.test(EpubHtmlConverter.findHtmlAttribute(tag, ['class']))) {
+      return true;
+    }
+    const aside = body.lastIndexOf('<aside', offset);
+    return aside >= 0 && EpubHtmlConverter.elementEnd(body, aside, 'aside') > offset;
+  }
+
+  /** body 里被注释编号引用、且就在本文件内的锚点。 */
+  private static referencedNoteIds(body: string): Set<string> {
+    const source = body || '';
+    if (source === EpubHtmlConverter.noteIdsBody) return EpubHtmlConverter.noteIds;
+    const ids = new Set<string>();
+    const anchor = /<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi;
+    let match = anchor.exec(source);
+    while (match) {
+      const href = EpubHtmlConverter.noteHref(match[1], match[2],
+        source.substring(Math.max(0, match.index - 240), match.index), source);
+      if (href.startsWith('#')) ids.add(EpubHtmlConverter.fragmentOf(href));
+      match = anchor.exec(source);
+    }
+    EpubHtmlConverter.noteIdsBody = source;
+    EpubHtmlConverter.noteIds = ids;
+    return ids;
+  }
+
+  /** 去掉含有被引用锚点的脚注块：aside、多看注释列表、带脚注语义的列表或区块。 */
+  private static removeReferencedNotes(source: string, ids: Set<string>): string {
+    if (ids.size === 0) return source;
+    const open = /<(aside|ol|ul|div|section)\b[^>]*>/gi;
+    let result = '';
+    let cursor = 0;
+    let match = open.exec(source);
+    while (match) {
+      const name = match[1].toLowerCase();
+      const container = name === 'aside' ||
+        /duokan-footnote-content/i.test(EpubHtmlConverter.findHtmlAttribute(match[0], ['class'])) ||
+        EpubHtmlConverter.NOTE_SEMANTICS.test(EpubHtmlConverter.semanticsOf(match[0]));
+      if (container) {
+        const end = EpubHtmlConverter.elementEnd(source, match.index, name);
+        if (EpubHtmlConverter.containsId(source.substring(match.index, end), ids)) {
+          result += source.substring(cursor, match.index);
+          cursor = end;
+          open.lastIndex = end;
+        }
+      }
+      match = open.exec(source);
+    }
+    return cursor === 0 ? source : result + source.substring(cursor);
+  }
+
+  private static containsId(html: string, ids: Set<string>): boolean {
+    const attribute = /\s(?:xml:)?(?:id|name)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+    let found = attribute.exec(html);
+    while (found) {
+      if (ids.has(found[1] !== undefined ? found[1] : (found[2] || ''))) return true;
+      found = attribute.exec(html);
+    }
+    return false;
+  }
+
+  /** 从 start 处的 <name ...> 起，找到与它配对的结束标签之后的偏移；没有配对时到末尾。 */
+  private static elementEnd(source: string, start: number, name: string): number {
+    const pattern = new RegExp(`<(/?)${name}\\b[^>]*?(/?)>`, 'gi');
+    pattern.lastIndex = start;
+    let depth = 0;
+    let match = pattern.exec(source);
+    while (match) {
+      if (match[1]) {
+        depth--;
+        if (depth <= 0) return match.index + match[0].length;
+      } else if (!match[2]) {
+        depth++;
+      } else if (depth === 0) {
+        return match.index + match[0].length;
+      }
+      match = pattern.exec(source);
+    }
+    return source.length;
+  }
+
+  /**
+   * 注释锚点处的注释 HTML。锚点在块元素上时取整个块；在行内元素（如 <a id>）上时取包着它的块里、
+   * 从锚点到下一个锚点之间的部分（一个段落里用 <br> 排着好几条注释的书）；取到的内容没有文字时取后面一个块。
+   */
+  static noteHtml(body: string, fragment: string): string {
+    const source = body || '';
+    const offset = EpubHtmlConverter.findAnchorOffset(source, fragment);
+    if (offset < 0) return '';
+    const nameMatch = /^<([a-zA-Z][\w:-]*)/.exec(source.substring(offset, offset + 64));
+    const name = nameMatch ? nameMatch[1].toLowerCase() : '';
+    const blockName = new RegExp(`^(?:${EpubHtmlConverter.NOTE_BLOCK_TAGS})$`, 'i');
+    let html = '';
+    let end = offset;
+    if (blockName.test(name)) {
+      end = EpubHtmlConverter.elementEnd(source, offset, name);
+      html = source.substring(offset, end);
+    } else {
+      const block = new RegExp(`<(${EpubHtmlConverter.NOTE_BLOCK_TAGS})\\b[^>]*>`, 'gi');
+      const lookStart = Math.max(0, offset - 4000);
+      const lookBehind = source.substring(lookStart, offset);
+      const starts: number[] = [];
+      const names: string[] = [];
+      let match = block.exec(lookBehind);
+      while (match) {
+        starts.push(lookStart + match.index);
+        names.push(match[1].toLowerCase());
+        match = block.exec(lookBehind);
+      }
+      end = source.length;
+      for (let index = starts.length - 1; index >= 0 && index >= starts.length - 12; index--) {
+        const blockEnd = EpubHtmlConverter.elementEnd(source, starts[index], names[index]);
+        if (blockEnd > offset) {
+          end = blockEnd;
+          break;
+        }
+      }
+      const nextAnchor = /<a\b[^>]*\s(?:id|name)\s*=/gi;
+      nextAnchor.lastIndex = source.indexOf('>', offset) + 1;
+      const next = nextAnchor.exec(source);
+      if (next && next.index < end) end = next.index;
+      html = source.substring(offset, end);
+    }
+    if (!EpubHtmlConverter.inlineText(EpubHtmlConverter.stripBacklinks(html))) {
+      const following = new RegExp(`<(${EpubHtmlConverter.NOTE_BLOCK_TAGS})\\b[^>]*>`, 'gi');
+      following.lastIndex = end;
+      const next = following.exec(source);
+      if (next) html += source.substring(next.index, EpubHtmlConverter.elementEnd(source, next.index,
+        next[1].toLowerCase()));
+    }
+    return html.length > EpubHtmlConverter.MAX_NOTE_HTML_LENGTH ?
+      html.substring(0, EpubHtmlConverter.MAX_NOTE_HTML_LENGTH) : html;
+  }
+
+  /** 注释正文：去掉返回正文的编号链接后按普通正文转换。 */
+  static convertNote(body: string, fragment: string, resolveImage: EpubImageResolver): EpubConvertResult {
+    const html = EpubHtmlConverter.stripBacklinks(EpubHtmlConverter.noteHtml(body, fragment));
+    const result = EpubHtmlConverter.convertBody(html, resolveImage);
+    // 编号链接去掉后，"1. 注释" 只剩下开头的标点。
+    result.content = result.content.replace(/^[\s.．、,，:：]+/, '');
+    return result;
+  }
+
+  private static stripBacklinks(html: string): string {
+    return html.replace(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi, (all: string, attributes: string, inner: string): string => {
+      const tag = `<a ${attributes}>`;
+      if (!EpubHtmlConverter.findHtmlAttribute(tag, ['href', 'xlink:href'])) return all;
+      if (/\b(?:doc-)?backlink\b|\breferrer\b/.test(EpubHtmlConverter.semanticsOf(tag))) return '';
+      const text = EpubHtmlConverter.inlineText(EpubHtmlConverter.mapScriptDigits(inner));
+      return !text || EpubHtmlConverter.NOTE_LABEL.test(text) || /^[↩↑⇧⤴^]|^返回|^back$/i.test(text) ? '' : all;
+    });
   }
 
   private static trimAsciiSpace(value: string): string {

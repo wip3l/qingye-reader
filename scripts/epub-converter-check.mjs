@@ -6,8 +6,8 @@
 
 import { loadReaderModules } from './lib/load-reader-modules.mjs';
 
-const { EpubHtmlConverter, EpubImageRef, EpubChapterPlanner, EpubTocEntry, ReaderImageMarker, cleanup } =
-  await loadReaderModules();
+const { EpubHtmlConverter, EpubImageRef, EpubChapterPlanner, EpubTocEntry, ReaderImageMarker, ReaderActionMarker,
+  EpubNoteLink, EpubTextOffsetMap, cleanup } = await loadReaderModules();
 
 let failures = 0;
 const check = (condition, message, detail = '') => {
@@ -241,6 +241,63 @@ try {
     equal(EpubHtmlConverter.findAnchorOffset(body, ''), 0, '空 id 表示文件开头');
     equal(EpubHtmlConverter.findAnchorOffset('<p id="z">另一个文件</p>', 'a1'), -1, '换了 body 重新建索引');
     equal(EpubHtmlConverter.findAnchorOffset(body, 'x1'), body.indexOf('<span'), '切回原 body 仍正确');
+  }
+
+  console.log('note links');
+  {
+    // 链接解析桩：同文件锚点记到 ch1.xhtml，其它文件按 href 原样。
+    const resolveLink = (href) => EpubNoteLink.create(href.startsWith('#') ? 'Text/ch1.xhtml' :
+      `Text/${EpubHtmlConverter.withoutFragment(href)}`, EpubHtmlConverter.fragmentOf(href));
+    const withNotes = (body) => EpubHtmlConverter.convertBody(body, resolve, '', '', resolveLink).content;
+    // 标记显示成 {文字→文件#锚点}，便于断言。
+    const readable = (text) => text.replace(/\[\[LEGADO_READER_ACTION_V3:[^\]]+\]\]/g, (raw) => {
+      const data = ReaderActionMarker.parse(raw);
+      const target = data ? EpubNoteLink.parse(data.url) : null;
+      return target ? `{${data.label}→${target.path}#${target.fragment}}` : raw;
+    });
+    const plainOf = (text) => text.replace(/\[\[LEGADO_READER_ACTION_V3:[^\]]+\]\]/g,
+      (raw) => ReaderActionMarker.parse(raw).label);
+
+    const epub3 = '<p>正文<a epub:type="noteref" href="#fn1">1</a>继续。</p>' +
+      '<aside epub:type="footnote" id="fn1"><p>注释一</p></aside><p>下一段</p>';
+    equal(readable(withNotes(epub3)), '正文{1→Text/ch1.xhtml#fn1}继续。\n\n下一段',
+      'EPUB3 noteref 变成注释标记，被引用的 aside 脚注不再留在正文里');
+    equal(readable(withNotes('<p>正文<sup><a href="#n2">2</a></sup>，<a href="notes.xhtml#n3">[3]</a>，' +
+      '见<a href="ch2.xhtml#s1">第二章</a>。</p>')),
+      '正文{²→Text/ch1.xhtml#n2}，{[3]→Text/notes.xhtml#n3}，见第二章。',
+      '上标编号与跨文件尾注识别为注释，普通章节链接仍是文字');
+    equal(readable(withNotes('<p>多看<a class="duokan-footnote" href="#df-1"><img src="gaiji.png"/></a>文字</p>' +
+      '<ol class="duokan-footnote-content"><li id="df-1"><p><a href="#dfref-1">◎</a>多看注释</p></li></ol>')),
+      '多看{注→Text/ch1.xhtml#df-1}文字', '只有图标的注释显示成“注”，多看注释列表不留在正文里');
+    equal(readable(withNotes('<p id="r1"><a href="text.xhtml#ref1">[1]</a>尾注条目</p><p>正文<a href="#x">①</a>。</p>')),
+      '[1]尾注条目\n\n正文{①→Text/ch1.xhtml#x}。', '尾注列表开头返回正文的编号不当注释');
+    equal(readable(withNotes('<p>见<a href="#fn9" epub:type="noteref">1</a></p><aside epub:type="footnote" id="other">' +
+      '<p>无人引用</p></aside>')), '见{1→Text/ch1.xhtml#fn9}\n\n无人引用', '没被引用的 aside 照常显示');
+    equal(EpubHtmlConverter.convertBody(epub3, resolve).content, '正文1继续。\n\n注释一\n\n下一段',
+      '不传链接解析时与以前的转换结果一致');
+
+    const notes = '<aside epub:type="footnote" id="fn1"><p><a epub:type="backlink" href="#r">1</a>. 注释一内容</p></aside>' +
+      '<p class="note"><a id="n5" href="#r5">[5]</a>第五条注释</p>' +
+      '<p><a id="n6"></a>第六条<br/><a id="n7"></a>第七条</p>' +
+      '<div><a id="n8"></a></div><p>第八条在后面一段</p>';
+    const note = (id) => EpubHtmlConverter.convertNote(notes, id, resolve).content;
+    equal(note('fn1'), '注释一内容', 'aside 注释去掉返回链接与开头标点');
+    equal(note('n5'), '第五条注释', '锚点在段内链接上时取整段并去掉编号');
+    equal(note('n6'), '第六条', '同一段里排着多条注释时只取到下一个锚点');
+    equal(note('n7'), '第七条', '同一段里的最后一条注释');
+    equal(note('n8'), '第八条在后面一段', '锚点所在块没有文字时取后面一段');
+    equal(note('missing'), '', '找不到锚点时返回空');
+
+    const oldText = EpubHtmlConverter.convertBody(epub3, resolve).content;
+    const newText = withNotes(epub3);
+    equal(plainOf(newText), '正文1继续。\n\n下一段', '标记换回显示文字后只少了脚注块');
+    equal(EpubTextOffsetMap.map(oldText, newText, 2), 2, '注释编号之前的偏移不变');
+    const afterNote = newText.indexOf('继续');
+    equal(EpubTextOffsetMap.map(oldText, newText, oldText.indexOf('继续')), afterNote, '注释编号之后的偏移跳过标记');
+    equal(EpubTextOffsetMap.map(oldText, newText, oldText.indexOf('下一段')), newText.indexOf('下一段'),
+      '被去掉的脚注块之后的偏移对齐到新正文');
+    equal(EpubTextOffsetMap.map(oldText, newText, oldText.indexOf('注释一') + 1), newText.indexOf('下一段'),
+      '落在被去掉的脚注块里的偏移归到它后面');
   }
 
   // 单文件上千章：按锚点切章不再随章数平方增长

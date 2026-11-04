@@ -4,6 +4,7 @@ import { image } from '@kit.ImageKit';
 import { Book, BookChapter } from '@legado/sourceengine';
 import { EpubChapterPlanner, EpubChapterSegment } from './EpubChapterPlanner';
 import { EpubConvertResult, EpubHtmlConverter, EpubImageRef } from './EpubHtmlConverter';
+import { EpubNoteLink } from './EpubNoteLink';
 import { ReaderImageMarker } from './ReaderImageMarker';
 
 export class LocalChapterContentLoader {
@@ -39,8 +40,7 @@ export class LocalChapterContentLoader {
           cachedBody = EpubHtmlConverter.bodyOf(await this.readHtmlFile(path));
           cachedPath = path;
         }
-        piece = (await this.convertBody(cachedBody, EpubHtmlConverter.parentPath(path), extractRoot,
-          segment.startId, segment.endId)).content;
+        piece = (await this.convertBody(cachedBody, path, extractRoot, segment.startId, segment.endId)).content;
       }
       if (!piece) continue;
       // 与 EpubChapterPlanner.addPiece 的拼接方式保持一致，缓存被清理后重建的正文偏移才不会变化。
@@ -81,10 +81,17 @@ export class LocalChapterContentLoader {
    * 转换一个文件片段。图文混排的片段会先读取图片原始尺寸再转换一次：
    * 尺寸写入图片标记供分页使用，同时用来识别行内小图。
    */
-  static async convertBody(body: string, baseDir: string, extractRoot: string, startId: string,
+  static async convertBody(body: string, filePath: string, extractRoot: string, startId: string,
     endId: string): Promise<EpubConvertResult> {
     const root = EpubHtmlConverter.normalizePath(extractRoot);
+    const file = EpubHtmlConverter.normalizePath(filePath);
+    const baseDir = EpubHtmlConverter.parentPath(file);
     const sizes = new Map<string, number[]>();
+    const resolveLink = (href: string): string => {
+      const target = href.startsWith('#') ? file : EpubHtmlConverter.resolvePath(baseDir, href, root);
+      if (!target || !target.startsWith(`${root}/`)) return '';
+      return EpubNoteLink.create(target.substring(root.length + 1), EpubHtmlConverter.fragmentOf(href));
+    };
     const resolve = (source: string): EpubImageRef | null => {
       const path = EpubHtmlConverter.resolvePath(baseDir, source, root);
       if (!path || !path.startsWith(`${root}/`) || !this.exists(path)) return null;
@@ -97,7 +104,7 @@ export class LocalChapterContentLoader {
       }
       return ref;
     };
-    const first = EpubHtmlConverter.convertBody(body, resolve, startId, endId);
+    const first = EpubHtmlConverter.convertBody(body, resolve, startId, endId, resolveLink);
     if (first.imagePaths.length === 0 ||
       (!first.hasText && first.imagePaths.length > LocalChapterContentLoader.MAX_SIZED_IMAGES_WITHOUT_TEXT)) {
       return first;
@@ -105,7 +112,26 @@ export class LocalChapterContentLoader {
     for (const path of first.imagePaths) {
       sizes.set(path, await this.imageSize(path));
     }
-    return EpubHtmlConverter.convertBody(body, resolve, startId, endId);
+    return EpubHtmlConverter.convertBody(body, resolve, startId, endId, resolveLink);
+  }
+
+  /** 读出注释链接指向的注释正文；找不到时返回 null。 */
+  static async loadNote(book: Book, url: string): Promise<EpubConvertResult | null> {
+    const target = EpubNoteLink.parse(url);
+    const root = EpubHtmlConverter.normalizePath(book.getVariable('localExtractRoot'));
+    if (!target || !root) return null;
+    const path = EpubHtmlConverter.normalizePath(`${root}/${target.path}`);
+    if (!path.startsWith(`${root}/`) || !this.exists(path)) return null;
+    const body = EpubHtmlConverter.bodyOf(await this.readHtmlFile(path));
+    const baseDir = EpubHtmlConverter.parentPath(path);
+    const note = EpubHtmlConverter.convertNote(body, target.fragment, (source: string): EpubImageRef | null => {
+      const image = EpubHtmlConverter.resolvePath(baseDir, source, root);
+      if (!image || !image.startsWith(`${root}/`) || !this.exists(image)) return null;
+      const ref = new EpubImageRef();
+      ref.path = image;
+      return ref;
+    });
+    return note.content ? note : null;
   }
 
   /** 只解码图片头部，返回 [宽, 高]；无法识别（如 SVG）时返回 [0, 0]。 */

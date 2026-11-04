@@ -17,6 +17,7 @@ import { ReaderCommentBubblePainter } from './ReaderCommentBubble';
 import { ReaderMixedPageLayout } from './ReaderMixedPageLayout';
 import { ReaderFontWeight } from './ReaderFontWeight';
 import { ReaderFontStroke } from './ReaderFontStroke';
+import { EpubNoteLink } from '../book/EpubNoteLink';
 
 class ReaderV2MeasuredBlock {
   block: ReaderV2Block;
@@ -556,6 +557,7 @@ export class ReaderV2Paginator {
     snapshot.bodyFontFamily = source.bodyFontFamily;
     snapshot.titleFontFamily = source.titleFontFamily;
     snapshot.textColor = source.textColor;
+    snapshot.noteColor = source.noteColor;
     snapshot.commentBubble = source.commentBubble;
     snapshot.commentFontSizePx = source.commentFontSizePx * scale;
     snapshot.commentBubbleSize = source.commentBubbleSize;
@@ -827,6 +829,9 @@ export class ReaderV2Paginator {
     const actionIndex = ReaderV2Paginator.firstActionWhoseEndExceeds(document.actions, absoluteOffset);
     if (actionIndex < document.actions.length) {
       const action = document.actions[actionIndex];
+      if (absoluteOffset >= action.displayStart && absoluteOffset < action.displayEnd && action.note) {
+        return ReaderV2Paginator.noteTextStyle(base, action.label, snapshot);
+      }
       if (absoluteOffset >= action.displayStart && absoluteOffset < action.displayEnd) {
         const bodyCenter = ReaderV2Paginator.commentTextCenter(base, '国', snapshot);
         const scale = ReaderCommentBubbleSize.scale(action.label, snapshot.commentBubbleSize);
@@ -889,6 +894,32 @@ export class ReaderV2Paginator {
     }
     return ReaderV2Paginator.resolveWeight(base,
         ReaderV2Paginator.requestedWeightAt(document, block, absoluteOffset, snapshot, regexStyles));
+  }
+
+  /**
+   * 注释编号：本来就是上标字符（¹²³）的只换颜色；其它编号（1、[1]、①、注）缩小并抬到上标位置。
+   * 只有图标的注释显示成"注"，再垫一块浅色圆底，和普通文字区分开。
+   */
+  private static noteTextStyle(base: graphicsText.TextStyle, label: string,
+    snapshot: ReaderV2LayoutSnapshot): graphicsText.TextStyle {
+    base.color = ReaderV2Paginator.graphicsColor(snapshot.noteColor);
+    if (/^[⁰¹²³⁴-⁹]+$/.test(label)) return base;
+    const bodySize = base.fontSize ?? snapshot.fontSizePx;
+    base.fontSize = bodySize * 0.62;
+    base.letterSpacing = 0;
+    // 与段评标签同一套符号约定：负值把字形往上移。
+    base.baselineShift = -bodySize * 0.32;
+    if (label === EpubNoteLink.ICON_LABEL) {
+      const radius = bodySize * 0.4;
+      base.backgroundRect = {
+        color: ReaderV2Paginator.graphicsColor(((snapshot.noteColor & 0x00FFFFFF) | 0x2E000000) >>> 0),
+        leftTopRadius: radius,
+        rightTopRadius: radius,
+        rightBottomRadius: radius,
+        leftBottomRadius: radius
+      };
+    }
+    return base;
   }
 
   private static resolveWeight(style: graphicsText.TextStyle, requestedWeight: number): graphicsText.TextStyle {
@@ -1213,7 +1244,7 @@ export class ReaderV2Paginator {
         hit.rect = new ReaderV2Rect(left, top, right, bottom);
         page.actions.push(hit);
       }
-      ReaderV2Paginator.appendCommentBubble(fragment, action, snapshot);
+      if (!action.note) ReaderV2Paginator.appendCommentBubble(fragment, action, snapshot);
     }
   }
 

@@ -59,6 +59,8 @@ export class ReaderV2LayoutInput {
   bodyFontFamily: string = '';
   titleFontFamily: string = '';
   textColor: number = 0xFF202124;
+  /** EPUB 注释编号的颜色。 */
+  noteColor: number = 0xFF3A7BD5;
   commentBubble: ReaderCommentBubbleStyle = new ReaderCommentBubbleStyle();
   commentFontSizePx: number = 30;
   commentBubbleSize: number = ReaderCommentBubbleSize.DEFAULT;
@@ -98,6 +100,8 @@ export class ReaderV2LayoutSnapshot {
   bodyFontFamily: string = '';
   titleFontFamily: string = '';
   textColor: number = 0xFF202124;
+  /** EPUB 注释编号的颜色。 */
+  noteColor: number = 0xFF3A7BD5;
   commentBubble: ReaderCommentBubbleStyle = new ReaderCommentBubbleStyle();
   commentFontSizePx: number = 30;
   commentBubbleSize: number = ReaderCommentBubbleSize.DEFAULT;
@@ -153,6 +157,7 @@ export class ReaderV2LayoutSnapshot {
     snapshot.bodyFontFamily = input.bodyFontFamily;
     snapshot.titleFontFamily = input.titleFontFamily || input.bodyFontFamily;
     snapshot.textColor = input.textColor;
+    snapshot.noteColor = input.noteColor;
     snapshot.commentBubble = input.commentBubble;
     snapshot.commentBubbleSize = ReaderCommentBubbleSize.normalize(input.commentBubbleSize);
     snapshot.commentFontSizePx = Math.max(1, input.commentFontSizePx);
@@ -174,7 +179,7 @@ export class ReaderV2LayoutSnapshot {
       snapshot.titleSecondaryScale, snapshot.titleLineGapPx,
       snapshot.titleAlignment, snapshot.titleMarginTopPx, snapshot.titleMarginBottomPx,
       snapshot.titleSinglePage ? 1 : 0,
-      snapshot.letterSpacingPx, snapshot.textAlign, snapshot.commentFontSizePx, snapshot.commentBubbleSize, snapshot.commentBubble.identity(),
+      snapshot.letterSpacingPx, snapshot.textAlign, snapshot.noteColor, snapshot.commentFontSizePx, snapshot.commentBubbleSize, snapshot.commentBubble.identity(),
       snapshot.commentsEnabled ? 1 : 0, snapshot.regexEnabled ? 1 : 0
     ];
     const rounded = values.map((value: string | number): string =>

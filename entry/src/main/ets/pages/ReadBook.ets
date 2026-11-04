@@ -201,7 +201,9 @@ import {
 import { ReaderInfoBarClock } from '../core/reader/ReaderInfoBarClock';
 import { ReaderInfoBarRow } from '../components/reader/ReaderInfoBar';
 import { EpubChapterPlanner } from '../core/book/EpubChapterPlanner';
-import { EpubHeading } from '../core/book/EpubHtmlConverter';
+import { EpubConvertResult, EpubHeading } from '../core/book/EpubHtmlConverter';
+import { EpubNoteLink } from '../core/book/EpubNoteLink';
+import { LocalChapterContentLoader } from '../core/book/LocalChapterContentLoader';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -241,6 +243,9 @@ const READER_PAN_INTENT_NONE = 0;
 const READER_PAN_INTENT_TURN = 1;
 const READER_PAN_INTENT_BOOKMARK = 2;
 const READER_PROGRESS_OFFSET_KEY = 'readProgressCharOffsetV2';
+/** 注释超过这么多字或带图片就用半模态展示，不在点击处弹出。 */
+const READER_NOTE_POPUP_MAX_CHARS = 320;
+const READER_NOTE_MAX_BLOCKS = 80;
 const READER_V2_NO_FRAGMENTS: ReaderV2PageFragment[] = [];
 const READER_V2_IMAGE_LOADING_SIZE = 32;
 // 当前页前后各提前解码几页的插图。
@@ -343,6 +348,15 @@ struct ReadBookPage {
   @State @Watch('restoreReaderKeyboardFocus') showToc: boolean = false;
   @State bookmarks: Bookmark[] = [];
   @State showBookmarkActionMenu: boolean = false;
+  /** EPUB 注释：短的在点击处弹出，长的（或带图）改用半模态。 */
+  @State showReaderNotePopup: boolean = false;
+  @State showReaderNoteSheet: boolean = false;
+  @State readerNoteX: number = 0;
+  @State readerNoteY: number = 0;
+  @State readerNotePlacement: Placement = Placement.Bottom;
+  @State readerNoteLabel: string = '';
+  @State readerNoteBlocks: string[] = [];
+  readerNoteSerial: number = 0;
   @State pendingBookmarkAction: Bookmark | null = null;
   @State bookmarkActionMenuX: number = 16;
   @State bookmarkActionMenuY: number = 96;
@@ -3667,6 +3681,25 @@ struct ReadBookPage {
           if (this.showBookmarkActionMenu) this.closeBookmarkActionMenu();
         }))
 
+      Column()
+        .width(1)
+        .height(1)
+        .position({ x: this.readerNoteX, y: this.readerNoteY })
+        .hitTestBehavior(HitTestMode.None)
+        .bindPopup(this.showReaderNotePopup, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+          (): void => {
+            this.readerNoteContent(false)
+          }, this.readerNotePlacement, this.appDarkMode, this.accentColor(), () => {
+            this.showReaderNotePopup = false;
+          }))
+
+      Column()
+        .width(1)
+        .height(1)
+        .position({ x: 0, y: 0 })
+        .hitTestBehavior(HitTestMode.None)
+        .bindSheet($$this.showReaderNoteSheet, this.readerNoteContent(true), this.readerNoteSheetOptions())
+
       if (this.readerEyeTurnEnabled && this.readerInitialPageReady && !this.eyeTurnState.showCalibration &&
         !this.showMenu && !this.showToc && !this.showReaderCommentPanel) {
         this.readerEyeTurnPrompt()
@@ -5765,6 +5798,84 @@ struct ReadBookPage {
   closeBookmarkActionMenu(): void {
     this.showBookmarkActionMenu = false;
     this.pendingBookmarkAction = null;
+  }
+
+  /** 点开 EPUB 注释编号：到解压目录里读出注释正文再弹出来。tapX/tapY 是点击处的窗口坐标，小于 0 表示不知道。 */
+  openReaderEpubNote(action: ReaderActionData, tapX: number, tapY: number): void {
+    const book = this.book;
+    if (!book) return;
+    const serial = ++this.readerNoteSerial;
+    LocalChapterContentLoader.loadNote(book, action.url).then((note: EpubConvertResult | null): void => {
+      if (serial !== this.readerNoteSerial || this.book !== book) return;
+      const blocks = note ? note.content.split(/\n+/)
+        .map((line: string): string => line.trim())
+        .filter((line: string): boolean => line.length > 0)
+        .slice(0, READER_NOTE_MAX_BLOCKS) : [];
+      if (blocks.length === 0) {
+        HdsFeedback.showToast('没有找到这条注释');
+        return;
+      }
+      this.readerNoteLabel = action.label === EpubNoteLink.ICON_LABEL ? '' : action.label;
+      this.readerNoteBlocks = blocks;
+      const long = (note?.content.length ?? 0) > READER_NOTE_POPUP_MAX_CHARS ||
+        blocks.some((block: string): boolean => ReaderImageMarker.isMarker(block));
+      if (long) {
+        this.showReaderNoteSheet = true;
+        return;
+      }
+      const width = this.pageViewWidth > 0 ? this.pageViewWidth : 360;
+      const height = this.pageViewHeight > 0 ? this.pageViewHeight : 720;
+      this.readerNoteX = tapX >= 0 ? tapX : width / 2;
+      this.readerNoteY = tapY >= 0 ? tapY : height / 2;
+      this.readerNotePlacement = this.readerNoteY > height / 2 ? Placement.Top : Placement.Bottom;
+      this.showReaderNotePopup = true;
+    }).catch((error: Error): void => {
+      console.warn('读取 EPUB 注释失败:', error);
+      if (serial === this.readerNoteSerial) HdsFeedback.showToast('注释读取失败');
+    });
+  }
+
+  readerNoteSheetOptions(): SheetOptions {
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, {
+      detents: [SheetSize.MEDIUM, SheetSize.LARGE],
+      dragBar: true,
+      showClose: false,
+      onDisappear: (): void => { this.showReaderNoteSheet = false; }
+    }, this.isReaderThemeDark(), this.accentColor());
+  }
+
+  /** 注释正文：弹出层跟随应用日夜模式，半模态跟随阅读主题（与其它阅读页半模态一致）。 */
+  @Builder
+  readerNoteContent(sheet: boolean) {
+    Scroll() {
+      Column({ space: 10 }) {
+        Text(this.readerNoteLabel ? `注释 ${this.readerNoteLabel}` : '注释')
+          .fontSize(13)
+          .fontColor(ThemeRuntime.subTextColor(sheet ? this.isReaderThemeDark() : this.appDarkMode))
+        ForEach(this.readerNoteBlocks, (block: string): void => {
+          if (ReaderImageMarker.isMarker(block)) {
+            Image(fileUri.getUriFromPath(ReaderImageMarker.parse(block).source))
+              .width('100%')
+              .objectFit(ImageFit.Contain)
+              .borderRadius(8)
+          } else {
+            Text(block)
+              .width('100%')
+              .fontSize(16)
+              .lineHeight(26)
+              .fontColor(ThemeRuntime.primaryTextColor(sheet ? this.isReaderThemeDark() : this.appDarkMode))
+              .copyOption(CopyOptions.LocalDevice)
+          }
+        }, (block: string, index: number): string => `${index}_${block.length}_${block.substring(0, 24)}`)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .padding(sheet ? { left: 20, right: 20, top: 8, bottom: 24 } : 16)
+    }
+    .width(sheet ? '100%' : Math.min(320, Math.max(200, (this.pageViewWidth > 0 ? this.pageViewWidth : 360) - 48)))
+    .constraintSize(sheet ? {} : { maxHeight: Math.floor(ImmersiveMaterialRuntime.popupMenuMaxHeight() * 0.7) })
+    .scrollBar(BarState.Auto)
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: false })
   }
 
   @Builder
@@ -10764,7 +10875,7 @@ struct ReadBookPage {
         // The action already claimed this pointer on Down. Move handling above clears that claim once the
         // gesture exceeds the page tap slop, so requiring a second exact hit on Up only makes small comment
         // pills intermittently fail when a real finger drifts by a few pixels. Commit the surviving owner.
-        this.openReaderSourceAction(marker);
+        this.openReaderSourceAction(marker, Number(point.windowX), Number(point.windowY));
       } else if (event.type === TouchType.Cancel) {
         this.readerTouchActionMarker = '';
       }
@@ -14955,7 +15066,7 @@ struct ReadBookPage {
     const marker = this.readerSourceActionAtPoint(globalX, globalY);
     if (marker) {
       this.beginReaderInteractiveAction();
-      this.openReaderSourceAction(marker);
+      this.openReaderSourceAction(marker, globalX, globalY);
       return;
     }
     if (this.consumeSuppressedReaderTapClick()) return;
@@ -14990,10 +15101,16 @@ struct ReadBookPage {
     return this.usesReaderContinuousV2() ? this.readerContinuousV2ActionAtPoint(globalX, globalY) : '';
   }
 
-  openReaderSourceAction(marker: string): void {
+  openReaderSourceAction(marker: string, tapX: number = -1, tapY: number = -1): void {
     const now = Date.now();
     if (now - this.readerSourceActionOpenedAt < 500) return;
     const action: ReaderActionData | null = ReaderActionMarker.parse(marker);
+    if (action && EpubNoteLink.isNote(action.url)) {
+      // 本地 EPUB 没有书源，注释在书源判断之前处理。
+      this.readerSourceActionOpenedAt = now;
+      this.openReaderEpubNote(action, tapX, tapY);
+      return;
+    }
     const source = this.currentReaderSource();
     if (action && source) {
       action.url = ReaderInteractionProviderRegistry.expandAction(source, action.url);
@@ -15869,6 +15986,7 @@ struct ReadBookPage {
     input.bodyFontFamily = this.getBodyReaderFontFamily();
     input.titleFontFamily = this.getTitleReaderFontFamily();
     input.textColor = ReaderV2Color.parse(this.getTextColor(), 0xFF202124);
+    input.noteColor = ReaderV2Color.parse(this.accentColor(), 0xFF3A7BD5);
     input.commentBubble = this.readerCommentBubbleStyle();
     input.commentBubbleSize = this.readerCommentBubbleSize;
     const commentLarge = this.readerSourceSettingEnabled('气泡增大');

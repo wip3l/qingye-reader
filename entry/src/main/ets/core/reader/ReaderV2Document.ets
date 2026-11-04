@@ -1,4 +1,5 @@
 import { ReaderActionData, ReaderActionMarker, ReaderActionMatch } from '@legado/sourceengine';
+import { EpubNoteLink } from '../book/EpubNoteLink';
 import { ReaderImageMarker } from '../book/ReaderImageMarker';
 import { ReaderTitleSplit, ReaderTitleSplitSettings } from './ReaderTitleSplit';
 
@@ -36,6 +37,8 @@ export class ReaderV2InlineAction {
   sourceEnd: number = 0;
   /** Display offset where the drawn bubble starts, after the leading gap. */
   bubbleStart: number = 0;
+  /** EPUB 注释编号：显示原来的编号文字（不画气泡），点开弹出注释正文。 */
+  note: boolean = false;
 
   constructor(id: string, marker: string, label: string, data: ReaderActionData,
     displayStart: number, displayEnd: number, sourceStart: number, sourceEnd: number) {
@@ -46,6 +49,7 @@ export class ReaderV2InlineAction {
       displayStart + ReaderV2InlineAction.LABEL_GAP.length : displayStart;
     this.title = data.title || '';
     this.url = data.url || '';
+    this.note = EpubNoteLink.isNote(this.url);
     this.displayStart = displayStart;
     this.displayEnd = displayEnd;
     this.sourceStart = sourceStart;
@@ -401,6 +405,8 @@ export class ReaderV2DocumentParser {
   }
 
   private static actionLabel(match: ReaderActionMatch): string {
+    // 注释编号就是正文原来的文字，原样显示，正文与加入注释链接以前逐字一致。
+    if (EpubNoteLink.isNote(match.data.url)) return match.data.label || EpubNoteLink.ICON_LABEL;
     const configured = (match.data.label || '').trim();
     const count = configured.match(/(99\+|\d+)\s*$/);
     if (count && count[1]) {
