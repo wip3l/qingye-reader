@@ -667,7 +667,9 @@ export class LanReaderServer {
       if (!book.bookUrl || !this.context) return { status: 400, contentType: 'text/plain; charset=utf-8', body: 'Invalid book' };
       const change = await SearchBookShelfHelper.addToShelf(this.context, book);
       const result = new LanAddResultDto(); result.ok = !!change.shelfKey; result.id = this.bookId(book.bookUrl);
-      result.message = result.ok ? 'added' : 'unable to add';
+      result.message = result.ok ? 'added' : (change.sameWorkBook ?
+        `书架已有《${change.sameWorkBook.name}》（来源：${change.sameWorkBook.originName || '其他书源'}），如需更换请在 App 内换源` :
+        'unable to add');
       return this.jsonResponse(result);
     } catch (_) {
       return { status: 400, contentType: 'text/plain; charset=utf-8', body: 'Invalid book' };

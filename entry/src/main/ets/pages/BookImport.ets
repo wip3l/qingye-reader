@@ -106,8 +106,10 @@ struct BookImportPage {
 
   finishImport(result: LocalBookScanResult): void {
     const failed = result.failed > 0 ? `，${result.failed}本失败` : '';
-    const summary = `导入完成：成功${result.imported}本${failed}`;
-    this.statusText = summary + (result.failures.length ? `\n${result.failures.join('\n')}` : '');
+    const duplicated = result.duplicates.length > 0 ? `，${result.duplicates.length}本已在书架` : '';
+    const summary = `导入完成：成功${result.imported}本${duplicated}${failed}`;
+    const details = result.duplicates.map((name: string): string => `已在书架：${name}`).concat(result.failures);
+    this.statusText = summary + (details.length ? `\n${details.join('\n')}` : '');
     AppStorage.setOrCreate('shelfUpdateTime', Date.now());
     HdsFeedback.showToast(summary);
   }

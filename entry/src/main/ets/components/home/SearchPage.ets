@@ -1516,8 +1516,12 @@ export struct SearchPage {
     this.markSearchBookJoining(searchKey);
 
     try {
-      const change = await SearchBookShelfHelper.addToShelf(getContext(this), searchBook);
-      this.markSearchBookInShelf(change.shelfKey || change.requestKey);
+      const change = await SearchBookShelfHelper.addToShelf(getContext(this), searchBook, this.getUIContext());
+      if (change.replacedKey && change.replacedKey !== change.shelfKey) {
+        this.shelfStatusVersion++;
+        this.shelfBookKeys = SearchBookShelfHelper.withoutKey(this.shelfBookKeys, change.replacedKey);
+      }
+      this.markSearchBookInShelf(change.shelfKey);
     } catch (e) {
       console.error('加入书架失败:', e);
       HdsFeedback.showToast('加入书架失败');

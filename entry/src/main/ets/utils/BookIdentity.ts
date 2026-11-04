@@ -1,6 +1,8 @@
-import { Book, SearchBook, EncodedSourceUrl } from '@legado/sourceengine';
+import { Book, SearchBook, EncodedSourceUrl, BookTypeSupport } from '@legado/sourceengine';
 
 export class BookIdentity {
+  private static readonly UNKNOWN_AUTHORS: string[] = ['未知', '佚名', '未知作者', '匿名', '无', '暂无', 'unknown', 'none', 'null'];
+
   private static queryValue(url: string, names: string[]): string {
     const queryIndex = (url || '').indexOf('?');
     if (queryIndex < 0) return '';
@@ -74,6 +76,45 @@ export class BookIdentity {
 
   static keyOfSearchBook(book: SearchBook): string {
     return BookIdentity.keyOfUrl(book.bookUrl, book.origin);
+  }
+
+  /**
+   * Same-work identity used to keep one online copy per work on the shelf: media category plus
+   * normalised title and author. Empty when the work cannot be identified reliably (missing or
+   * placeholder author) and for local/WebDAV/OPDS books, whose titles come from file names.
+   */
+  static workKeyOf(book: Book | SearchBook | null): string {
+    if (!book) return '';
+    const origin = (book.origin || '').trim();
+    if (!origin || origin === 'local' || origin === 'loc_book') return '';
+    const name = BookIdentity.normalizeWorkName(book.name);
+    const author = BookIdentity.normalizeWorkAuthor(book.author);
+    if (!name || !author) return '';
+    return `${BookTypeSupport.mediaCategoryOf(book)}\n${name}\n${author}`;
+  }
+
+  static normalizeWorkName(name: string): string {
+    return BookIdentity.normalizeWorkText(name)
+      .replace(/^[《「『"“'‘<]+/, '')
+      .replace(/[》」』"”'’>]+$/, '');
+  }
+
+  static normalizeWorkAuthor(author: string): string {
+    const value = BookIdentity.normalizeWorkText(author)
+      .replace(/^(?:作者|著者|作)[:]/, '')
+      .replace(/[\/|·\-]*(?:编著|著作|著)$/, '')
+      .replace(/^[\/|·\-]+|[\/|·\-]+$/g, '');
+    return BookIdentity.UNKNOWN_AUTHORS.includes(value) ? '' : value;
+  }
+
+  /** NFKC folds full-width letters, digits and punctuation into their half-width forms. */
+  private static normalizeWorkText(value: string): string {
+    let text = (value || '').trim();
+    try {
+      text = text.normalize('NFKC');
+    } catch (_) {
+    }
+    return text.replace(/[\s\u200B-\u200D\uFEFF]+/g, '').toLowerCase();
   }
 
   /** Keeps legacy cloud IDs for ordinary sources and switches only host-volatile logical URLs to v2. */

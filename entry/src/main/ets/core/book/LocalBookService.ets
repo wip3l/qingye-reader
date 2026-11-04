@@ -33,6 +33,18 @@ export class LocalBookScanResult {
   imported: number = 0;
   failed: number = 0;
   failures: string[] = [];
+  /** Files whose content is already on the shelf; nothing was imported for them. */
+  duplicates: string[] = [];
+}
+
+class LocalImportOutcome {
+  book: Book;
+  duplicate: boolean;
+
+  constructor(book: Book, duplicate: boolean) {
+    this.book = book;
+    this.duplicate = duplicate;
+  }
 }
 
 class LocalChapterData {
@@ -313,8 +325,12 @@ export class LocalBookService {
     result.discovered = selected.length;
     for (const path of selected) {
       try {
-        await LocalBookService.importBook(context, path.uri);
-        result.imported++;
+        const outcome = await LocalBookService.importLocalFile(context, path.uri);
+        if (outcome.duplicate) {
+          result.duplicates.push(`${path.name || LocalBookService.displayName(path.uri)}（书架中为《${outcome.book.name}》）`);
+        } else {
+          result.imported++;
+        }
       } catch (e) {
         result.failed++;
         result.failures.push(`${path.name || LocalBookService.displayName(path.uri)}：${e instanceof Error ? e.message : '文件读取失败'}`);
@@ -332,7 +348,44 @@ export class LocalBookService {
     if (!LocalBookService.isSupportedFormat(format)) {
       throw new Error(LocalBookService.UNSUPPORTED_FORMAT_MESSAGE);
     }
-    return await LocalBookService.importBook(context, sourceUri, format, sourceName);
+    return (await LocalBookService.importLocalFile(context, sourceUri, format, sourceName)).book;
+  }
+
+  /**
+   * Importing the same file again through another path or as a copy reuses the shelf book with
+   * identical content instead of adding a second one. Re-importing the same URI still refreshes it.
+   */
+  private static async importLocalFile(context: Context, sourceUri: string,
+    formatHint: string = '', sourceName: string = ''): Promise<LocalImportOutcome> {
+    const extension = (formatHint || LocalBookService.extensionOf(sourceUri)).toLowerCase();
+    if (!LocalBookService.isSupportedFormat(extension)) throw new Error(LocalBookService.UNSUPPORTED_FORMAT_MESSAGE);
+    let contentHash = '';
+    if (!await appDb.getBook(`local://${LocalBookService.hashText(sourceUri)}`)) {
+      try {
+        contentHash = await LocalBookService.hashFile(sourceUri);
+      } catch (e) {
+        console.warn('[LocalBookService] Unable to fingerprint import source:', e);
+      }
+      const existing = await LocalBookService.findImportedBookByContentHash(contentHash);
+      if (existing) return new LocalImportOutcome(existing, true);
+    }
+    const book = await LocalBookService.importBook(context, sourceUri, extension, sourceName,
+      '', '', '', '', 0, 0, null, '', contentHash);
+    return new LocalImportOutcome(book, false);
+  }
+
+  /** Only device-local imports count; WebDAV/OPDS copies are managed by their own libraries. */
+  private static async findImportedBookByContentHash(contentHash: string): Promise<Book | null> {
+    if (!contentHash) return null;
+    const books = await appDb.getAllBooks();
+    for (const book of books) {
+      if (LocalBookService.isLocalBook(book) && !book.getVariable('storageKind') &&
+        book.getVariable(LocalBookService.LOCAL_CONTENT_HASH_KEY) === contentHash &&
+        LocalBookService.exists(book.getVariable('localFilePath'))) {
+        return book;
+      }
+    }
+    return null;
   }
 
   /**
@@ -464,7 +517,7 @@ export class LocalBookService {
     webDavConnectionId: string = '', webDavRemotePath: string = '', webDavETag: string = '',
     webDavLastModified: number = 0, webDavRemoteSize: number = 0,
     storageVariables: Record<string, string> | null = null,
-    storageOriginName: string = ''): Promise<Book> {
+    storageOriginName: string = '', knownContentHash: string = ''): Promise<Book> {
     const extension = (formatHint || LocalBookService.extensionOf(sourceUri)).toLowerCase();
     if (!LocalBookService.isSupportedFormat(extension)) throw new Error(LocalBookService.UNSUPPORTED_FORMAT_MESSAGE);
     const sourceId = LocalBookService.hashText(sourceUri);
@@ -496,7 +549,8 @@ export class LocalBookService {
       const fallback = LocalBookService.parseFileNameMetadata(sourceName || sourceUri);
       return await PdfBookService.import(context, book, sourceUri, id,
         fallback.title || LocalBookService.fileStem(sourceName || sourceUri), fallback.author,
-        (path: string): Promise<string> => LocalBookService.hashFile(path));
+        (path: string): Promise<string> => knownContentHash ? Promise.resolve(knownContentHash) :
+          LocalBookService.hashFile(path));
     }
     const oldChapterCount = oldBook ? await appDb.getBookChapterCount(bookUrl) : 0;
     const root = `${context.filesDir}/local_books`;
@@ -542,9 +596,9 @@ export class LocalBookService {
     book.putVariable('localParserVersion', 'importing');
     book.putVariable('localSourceMtime', `${sourceStat.mtime}`);
     book.putVariable('localSourceSize', `${sourceStat.size}`);
-    let contentHash = '';
+    let contentHash = knownContentHash;
     try {
-      contentHash = await LocalBookService.hashFile(localPath);
+      if (!contentHash) contentHash = await LocalBookService.hashFile(localPath);
     } catch (e) {
       // Fingerprinting is an enhancement for cross-device progress sync; a
       // crypto capability issue must not make the local import fail.

@@ -1,4 +1,5 @@
 import { Context } from '@kit.AbilityKit';
+import { UIContext } from '@kit.ArkUI';
 import { Book, SearchBook, BookFieldSanitizer, BookTypeSupport } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { BookCoverCache } from './BookCoverCache';
@@ -8,10 +9,16 @@ import { CoverUrlNormalizer } from './CoverUrlNormalizer';
 import { SearchExplorePendingBook } from './SearchExplorePendingBook';
 import { AppThemeSettingsStore } from './AppThemeSettingsStore';
 import { HdsFeedback } from './HdsFeedback';
+import { ShelfWorkDuplicatePrompt } from './ShelfWorkDuplicatePrompt';
 
 export class SearchBookShelfChange {
   requestKey: string = '';
+  /** Key of the shelf book now representing the request; empty when nothing was added. */
   shelfKey: string = '';
+  /** Set when the shelf already holds the same work from another entry and the request was not added. */
+  sameWorkBook: Book | null = null;
+  /** Key the switched shelf book had before it moved to this request's entry. */
+  replacedKey: string = '';
 
   constructor(requestKey: string = '', shelfKey: string = '') {
     this.requestKey = requestKey;
@@ -23,6 +30,7 @@ export class SearchBookShelfHelper {
   private static shelfLookupVersion: number = -1;
   private static shelfLookupLoaded: boolean = false;
   private static shelfLookup: Map<string, Book[]> = new Map();
+  private static workLookup: Map<string, Book[]> = new Map();
   private static shelfLookupRequest: Promise<Map<string, Book[]>> | null = null;
   private static shelfLookupRequestVersion: number = -1;
 
@@ -97,7 +105,12 @@ export class SearchBookShelfHelper {
     return keys;
   }
 
-  static async addToShelf(context: Context, searchBook: SearchBook): Promise<SearchBookShelfChange> {
+  /**
+   * Without `uiContext` (e.g. LAN requests) a same-work conflict is reported through
+   * `sameWorkBook` instead of offering to switch the shelf copy to this result.
+   */
+  static async addToShelf(context: Context, searchBook: SearchBook,
+    uiContext: UIContext | null = null): Promise<SearchBookShelfChange> {
     if (!searchBook.bookUrl) {
       HdsFeedback.showToast('书籍地址为空');
       return new SearchBookShelfChange();
@@ -107,6 +120,22 @@ export class SearchBookShelfHelper {
     await db.initWithContext(context);
     const searchKey = SearchBookShelfHelper.keyOf(searchBook);
     const existing = await SearchBookShelfHelper.findShelfBookByKey(searchKey, true);
+    if (!existing || SearchExplorePendingBook.isPendingAddToShelf(existing)) {
+      const sameWork = await SearchBookShelfHelper.findSameWorkShelfBook(searchBook,
+        existing ? existing.bookUrl : searchBook.bookUrl);
+      if (sameWork) {
+        const change = new SearchBookShelfChange(searchKey, '');
+        change.sameWorkBook = sameWork;
+        if (!uiContext) return change;
+        const switched = await ShelfWorkDuplicatePrompt.offerSwitch(context, uiContext, sameWork, searchBook);
+        if (switched) {
+          SearchBookShelfHelper.markShelfChanged();
+          change.shelfKey = BookIdentity.keyOfBook(switched);
+          change.replacedKey = BookIdentity.keyOfBook(sameWork);
+        }
+        return change;
+      }
+    }
     if (existing) {
       const nextCoverUrl = CoverUrlNormalizer.prefer(searchBook.coverUrl, existing.coverUrl);
       if (nextCoverUrl && existing.coverUrl !== nextCoverUrl) {
@@ -195,6 +224,20 @@ export class SearchBookShelfHelper {
     return null;
   }
 
+  /** A shelf book (not a temporary read) of the same work, other than `excludeBookUrl`. */
+  static async findSameWorkShelfBook(book: Book | SearchBook, excludeBookUrl: string = ''): Promise<Book | null> {
+    const workKey = BookIdentity.workKeyOf(book);
+    if (!workKey) return null;
+    await SearchBookShelfHelper.getShelfLookup();
+    const books = SearchBookShelfHelper.workLookup.get(workKey) || [];
+    for (const item of books) {
+      if (item.bookUrl !== excludeBookUrl && !SearchExplorePendingBook.isPendingAddToShelf(item)) {
+        return item;
+      }
+    }
+    return null;
+  }
+
   private static async getShelfLookup(): Promise<Map<string, Book[]>> {
     const version = AppStorage.get<number>('shelfUpdateTime') || 0;
     if (SearchBookShelfHelper.shelfLookupLoaded && version === SearchBookShelfHelper.shelfLookupVersion) {
@@ -225,14 +268,23 @@ export class SearchBookShelfHelper {
 
   private static cacheShelfBooks(books: Book[], version: number = AppStorage.get<number>('shelfUpdateTime') || 0): void {
     const lookup: Map<string, Book[]> = new Map();
+    const workLookup: Map<string, Book[]> = new Map();
     for (const book of books) {
       const key = BookIdentity.keyOfBook(book);
-      if (!key) continue;
-      const matches = lookup.get(key) || [];
-      matches.push(book);
-      lookup.set(key, matches);
+      if (key) {
+        const matches = lookup.get(key) || [];
+        matches.push(book);
+        lookup.set(key, matches);
+      }
+      const workKey = BookIdentity.workKeyOf(book);
+      if (workKey) {
+        const works = workLookup.get(workKey) || [];
+        works.push(book);
+        workLookup.set(workKey, works);
+      }
     }
     SearchBookShelfHelper.shelfLookup = lookup;
+    SearchBookShelfHelper.workLookup = workLookup;
     SearchBookShelfHelper.shelfLookupVersion = version;
     SearchBookShelfHelper.shelfLookupLoaded = true;
   }

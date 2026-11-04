@@ -89,7 +89,7 @@ let resolveShelf;
 Object.assign(context, {
   getContext: () => ({}),
   AppDatabase: { getInstance: () => ({ initWithContext: async () => {} }) },
-  BookIdentity: { keyOfUrl: url => url, keyOfBook: book => book.bookUrl },
+  BookIdentity: { keyOfUrl: url => url, keyOfBook: book => book.bookUrl, workKeyOf: () => '' },
   SearchBookShelfHelper: { findShelfBookByKey: () => new Promise(resolve => { resolveShelf = resolve; }) }
 });
 cover.requestSerial = 1;

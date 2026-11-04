@@ -98,7 +98,8 @@ async function trial(h, type = 0, media = 'novel') {
 async function keep(h, book) {
   const page = Object.assign(h.context.keepTrial, {
     pendingAddToShelfBookUrl: book.bookUrl,
-    syncStateFromBook() {}, addToShelf() { throw new Error('unexpected fallback'); }
+    syncStateFromBook() {}, addToShelf() { throw new Error('unexpected fallback'); },
+    resolveSameWorkBeforeShelf: async () => null
   });
   assert.equal(await page.keepPendingReadBookInShelf(), true);
   const stored = await h.db.getBook(book.bookUrl);

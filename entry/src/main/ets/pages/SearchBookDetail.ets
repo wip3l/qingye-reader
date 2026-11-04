@@ -18,6 +18,7 @@ import { SearchExplorePendingBook } from '../utils/SearchExplorePendingBook';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { SearchBookShelfHelper } from '../utils/SearchBookShelfHelper';
+import { ShelfWorkDuplicatePrompt } from '../utils/ShelfWorkDuplicatePrompt';
 import { BookSourceStageRuntimeHost } from '../components/BookSourceStageRuntimeHost';
 import { BookChangeSourceDialog } from '../components/BookChangeSourceDialog';
 import { BookCatalogSheet } from '../components/BookCatalogSheet';
@@ -802,6 +803,10 @@ struct SearchBookDetailPage {
       const requestKey = BookIdentity.keyOfUrl(this.bookUrl, this.origin);
       const existing = await db.getBook(this.bookUrl) || await this.findShelfBookByKey(requestKey);
       if (existing) {
+        if (SearchExplorePendingBook.isPendingAddToShelf(existing)) {
+          const resolved = await this.resolveSameWorkBeforeShelf(existing);
+          if (resolved !== null) return resolved;
+        }
         const nextCoverUrl = CoverUrlNormalizer.prefer(this.coverUrl, existing.coverUrl);
         if (nextCoverUrl && existing.coverUrl !== nextCoverUrl) {
           existing.coverUrl = nextCoverUrl;
@@ -863,6 +868,10 @@ struct SearchBookDetailPage {
 
       const resolvedExisting = await this.findShelfBookByKey(BookIdentity.keyOfBook(book));
       if (resolvedExisting) {
+        if (SearchExplorePendingBook.isPendingAddToShelf(resolvedExisting)) {
+          const resolved = await this.resolveSameWorkBeforeShelf(resolvedExisting);
+          if (resolved !== null) return resolved;
+        }
         const nextCoverUrl = CoverUrlNormalizer.prefer(book.coverUrl, resolvedExisting.coverUrl);
         if (nextCoverUrl && resolvedExisting.coverUrl !== nextCoverUrl) {
           resolvedExisting.coverUrl = nextCoverUrl;
@@ -883,6 +892,8 @@ struct SearchBookDetailPage {
         return true;
       }
 
+      const resolved = await this.resolveSameWorkBeforeShelf(book);
+      if (resolved !== null) return resolved;
       SearchExplorePendingBook.clearPendingAddToShelf(book);
       await db.insertBook(book, 'explicit_add_from_detail');
       this.syncStateFromBook(book);
@@ -1146,6 +1157,10 @@ struct SearchBookDetailPage {
       await db.initWithContext(getContext(this));
       const pendingBook = await db.getBook(this.pendingAddToShelfBookUrl);
       if (pendingBook) {
+        if (SearchExplorePendingBook.isPendingAddToShelf(pendingBook)) {
+          const resolved = await this.resolveSameWorkBeforeShelf(pendingBook);
+          if (resolved !== null) return resolved;
+        }
         SearchExplorePendingBook.clearPendingAddToShelf(pendingBook);
         await db.updateBook(pendingBook, true, 'temporary_read_kept');
         this.syncStateFromBook(pendingBook);
@@ -1501,6 +1516,29 @@ struct SearchBookDetailPage {
 
   async findShelfBookByKey(bookKey: string, includePending: boolean = false): Promise<Book | null> {
     return SearchBookShelfHelper.findShelfBookByKey(bookKey, includePending);
+  }
+
+  /**
+   * The shelf keeps one online copy per work. When another entry of this work is already there,
+   * offer to switch it to this source instead of adding a second copy. Returns null when there is
+   * no such book, otherwise whether this book is now on the shelf.
+   */
+  private async resolveSameWorkBeforeShelf(book: Book): Promise<boolean | null> {
+    const sameWork = await SearchBookShelfHelper.findSameWorkShelfBook(book, book.bookUrl);
+    if (!sameWork) return null;
+    const switched = await ShelfWorkDuplicatePrompt.offerSwitch(getContext(this), this.getUIContext(), sameWork,
+      ShelfWorkDuplicatePrompt.candidateOf(book));
+    if (!switched) return false;
+    this.resolvedBookInfo = null;
+    this.bookInfoPromise = null;
+    this.hasLoadedBookInfo = false;
+    this.syncStateFromBook(switched);
+    this.isInShelf = true;
+    this.promptAddToShelfAfterRead = false;
+    this.pendingAddToShelfBookUrl = '';
+    this.shelfCheckKey = '';
+    this.shelfCheckVersion = -1;
+    return true;
   }
 
   syncStateFromBook(book: Book): void {
