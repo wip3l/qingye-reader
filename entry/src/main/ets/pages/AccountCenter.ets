@@ -1066,6 +1066,8 @@ struct AccountCenterPage {
                 .flexShrink(0)
             }
           }
+          // 不限宽时 Row 按昵称全长排开，会越过右侧“编辑资料”；限宽后昵称先省略，徽章始终完整。
+          .width('100%')
           .alignItems(VerticalAlign.Center)
           Text(this.membershipSku ? MembershipIcons.label(this.membershipSku) :
             (this.accountLoggedIn ? '普通用户' : '登录后新用户免费获得 300 点'))
@@ -1081,6 +1083,7 @@ struct AccountCenterPage {
             .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
             .borderRadius(14)
             .backgroundColor(this.appDarkMode ? '#26FFFFFF' : '#66FFFFFF')
+            .flexShrink(0)
             .onClick(() => {
               this.beginEditProfile();
             })
