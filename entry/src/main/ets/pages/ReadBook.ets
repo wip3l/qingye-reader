@@ -487,6 +487,7 @@ struct ReadBookPage {
   private readerComicReanchorSerial: number = 0;
   private readerComicProgressSaveTimerId: number = -1;
   private readerPagedProgressSaveTimerId: number = -1;
+  private readerSafeAreaRepaginateTimerId: number = -1;
   private readerComicPanLastOffsetY: number = 0;
   private readerComicPanMoved: boolean = false;
   /** 点击翻屏的逐帧滚动：曲线、跟屏幕刷新同步的帧回调（不可用时退回定时器）。 */
@@ -1320,6 +1321,10 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    if (this.readerSafeAreaRepaginateTimerId >= 0) {
+      clearTimeout(this.readerSafeAreaRepaginateTimerId);
+      this.readerSafeAreaRepaginateTimerId = -1;
+    }
     this.readerBrightnessSession.deactivate();
     this.captureReaderContinuousAnchor();
     this.cancelReaderContinuousLayouts(false);
@@ -1605,10 +1610,32 @@ struct ReadBookPage {
     if (Math.abs(previousHeight - this.statusBarSafeHeight) >= 0.5 && this.hasPagedReaderArea() && this.content) {
       // The status-bar avoid area arrives asynchronously. In extended mode the reader area's
       // layout size itself does not change, so onAreaChange cannot trigger the required repagination.
+      this.repaginateForSafeAreaChange();
+    }
+  }
+
+  /**
+   * 安全区变化要清分页缓存整章重排。书架打开动画进行中时推到动画结束之后：整章重排落在放大的那几百毫秒里会掉帧，
+   * 期间先按旧分页显示，页面高度只差一个状态栏，视觉上几乎看不出。
+   */
+  private repaginateForSafeAreaChange(): void {
+    if (this.readerSafeAreaRepaginateTimerId >= 0) {
+      clearTimeout(this.readerSafeAreaRepaginateTimerId);
+      this.readerSafeAreaRepaginateTimerId = -1;
+    }
+    const run = (): void => {
+      this.readerSafeAreaRepaginateTimerId = -1;
+      if (!this.readerEntryAlive || !this.content || !this.hasPagedReaderArea()) return;
       this.readerPaginationCache.clear();
       this.pageTurnPreviewKey = '';
       this.paginateContent(this.content);
+    };
+    const delay = this.delayPastShelfOpening(0);
+    if (delay <= 0) {
+      run();
+      return;
     }
+    this.readerSafeAreaRepaginateTimerId = setTimeout(run, delay);
   }
 
   async loadBook() {

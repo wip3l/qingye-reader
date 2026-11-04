@@ -113,4 +113,26 @@ motion.finishShelfOpening();
 assert.equal(motion.shelfMotionRasterized, false, 'ordinary reading draws the body directly again');
 motion.prepareShelfOpening(); motion.readerExiting = true; motion.finishShelfOpening();
 assert.equal(motion.shelfMotionRasterized, true, 'leaving during the opening keeps the layer for the return flight');
+
+// A status-bar avoid-area change during the opening animation repaginates only after the motion has finished.
+const safeArea = hostFor(readerSource,
+  ['applyReaderStatusBarSafeHeight', 'repaginateForSafeAreaChange', 'delayPastShelfOpening']);
+let paginations = 0;
+Object.assign(safeArea, {
+  statusBarSafeHeight: 0, content: 'body', readerEntryAlive: true, hasPagedReaderArea: () => true,
+  readerPaginationCache: { clear() {} }, pageTurnPreviewKey: 'preview', readerSafeAreaRepaginateTimerId: -1,
+  shelfOpenAnimating: true, shelfOpenEndsAt: now + 500, paginateContent: () => { paginations++; }
+});
+safeArea.applyReaderStatusBarSafeHeight(36);
+assert.equal(paginations, 0, 'no whole-chapter repagination inside the opening animation');
+safeArea.applyReaderStatusBarSafeHeight(40);
+advance(400); assert.equal(paginations, 0);
+advance(200); assert.equal(paginations, 1, 'one coalesced repagination right after the motion');
+assert.equal(safeArea.readerSafeAreaRepaginateTimerId, -1);
+safeArea.shelfOpenAnimating = false;
+safeArea.applyReaderStatusBarSafeHeight(0);
+assert.equal(paginations, 2, 'outside the animation the repagination stays immediate');
+safeArea.shelfOpenAnimating = true; safeArea.shelfOpenEndsAt = now + 500;
+safeArea.applyReaderStatusBarSafeHeight(36); safeArea.readerEntryAlive = false; advance(600);
+assert.equal(paginations, 2, 'a page that is already gone does not repaginate');
 console.log('PASS shelf animation: real finish callback, high-refresh request, stable return target and deferred/coalesced refresh');
