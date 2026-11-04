@@ -4,7 +4,7 @@ import { PopupMenuAction } from '../common/PopupMenuAction';
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { ReaderQuickJumpContent } from './ReaderQuickJumpContent';
 import { ReaderBrightnessControl } from './ReaderBrightnessControl';
-import { ReaderSettingActionRow, ReaderSettingLabel, ReaderSettingSelectRow } from './ReaderSettingRows';
+import { ReaderSettingActionRow, ReaderSettingLabel, ReaderSettingSelectRow, ReaderSettingSwitchRow } from './ReaderSettingRows';
 import { ReaderQuickJumpModel } from '../../core/reader/ReaderQuickJumpModel';
 import { ReaderSettingsStore } from '../../utils/ReaderSettingsStore';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
@@ -17,7 +17,7 @@ const ACTION_ROW_HEIGHT: number = 56;
 
 /**
  * EPUB 文件排版页的菜单，与普通阅读页的布局和逻辑一致：
- * - 顶栏：返回、书名与进度胶囊、“更多操作”（使用应用排版、布局元素设置）；
+ * - 顶栏：返回、书名与进度胶囊、“更多操作”（添加书签、使用应用排版、布局元素设置）；
  * - 底栏：快速跳转（章节 / 全书百分比 / 本章页数三种模式，可收起，松手确认后跳转，模式与收起状态和普通阅读页共用）
  *   加目录、阅读设置、日夜三个按钮；关掉快速跳转组件时只剩按钮行；
  * - 右侧亮度条随菜单出现，受“使用快速亮度组件”控制。
@@ -54,6 +54,9 @@ export struct EpubOriginalControls {
   @Prop brightnessValue: number = -1;
   @Prop lastManualBrightness: number = 50;
   @Prop brightnessReady: boolean = false;
+  @Prop volumeTurnPage: boolean = false;
+  @Prop smartKeyTurnPage: boolean = false;
+  @Prop smartKeySupported: boolean = false;
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 720;
   @State showMore: boolean = false;
@@ -75,6 +78,9 @@ export struct EpubOriginalControls {
   onAutoMode: () => void = (): void => {};
   onBrightnessChange: (value: number, persist: boolean) => void = (_value: number, _persist: boolean): void => {};
   onLayoutElements: () => void = (): void => {};
+  onAddBookmark: () => void = (): void => {};
+  onVolumeTurnChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
+  onSmartKeyTurnChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
   onAppLayout: () => void = (): void => {};
 
   @Builder
@@ -86,8 +92,7 @@ export struct EpubOriginalControls {
   }
 
   private panelWidth(): number {
-    const available = Math.max(1, this.viewportWidth - 36);
-    return this.viewportWidth >= 600 ? Math.min(available, Math.min(520, Math.max(320, this.viewportWidth * 0.52))) : available;
+    return EpubOriginalControls.panelWidthFor(this.viewportWidth);
   }
 
   private panelLeft(): number {
@@ -123,9 +128,24 @@ export struct EpubOriginalControls {
   private panelHeight(): number {
     const desired = this.activePanel === 'toc' ?
       (this.chapterCount > 0 ? Math.min(520, PANEL_HEADER_HEIGHT + this.chapterCount * 56 + 12) : 520) :
-      PANEL_HEADER_HEIGHT + 3 * 64 + 56 + 16;
+      PANEL_HEADER_HEIGHT + (this.smartKeySupported ? 5 : 4) * 64 + 56 + 16;
     const available = this.viewportHeight - this.statusBarHeight - this.bottomInset() - ACTION_ROW_HEIGHT - 96;
     return Math.max(PANEL_HEADER_HEIGHT, Math.min(desired, available));
+  }
+
+  /** 与普通阅读页 readerTocPanelHeight 相同：屏高的 81%，矮窗口里不低于 280。页面按同样的算法给面板定尺寸。 */
+  private tocPanelHeight(): number {
+    return EpubOriginalControls.tocPanelHeight(this.viewportHeight, this.bottomInset());
+  }
+
+  static tocPanelHeight(viewportHeight: number, bottomInset: number): number {
+    const available = Math.max(1, viewportHeight - bottomInset - ACTION_ROW_HEIGHT - 4 - 12);
+    return Math.min(available, Math.max(Math.min(280, available), viewportHeight * 0.81));
+  }
+
+  static panelWidthFor(viewportWidth: number): number {
+    const available = Math.max(1, viewportWidth - 36);
+    return viewportWidth >= 600 ? Math.min(available, Math.min(520, Math.max(320, viewportWidth * 0.52))) : available;
   }
 
   private titleCapsuleWidth(): number {
@@ -241,6 +261,10 @@ export struct EpubOriginalControls {
   @Builder
   moreMenu() {
     Column() {
+      PopupMenuAction($r('sys.symbol.bookmark'), '添加书签', ThemeRuntime.primaryTextColor(this.darkMode), () => {
+        this.showMore = false;
+        this.onAddBookmark();
+      })
       PopupMenuAction($r('sys.symbol.book'), '使用应用排版', ThemeRuntime.primaryTextColor(this.darkMode), () => {
         this.showMore = false;
         this.onAppLayout();
@@ -458,6 +482,15 @@ export struct EpubOriginalControls {
         .width('100%')
         .constraintSize({ minHeight: 56 })
         .alignItems(VerticalAlign.Center)
+        // 与普通阅读页的阅读设置同一个开关：在这里改了，回到普通阅读页也是这个设置。
+        ReaderSettingSwitchRow({ title: '音量键翻页', description: '音量上/下键翻到上一页/下一页',
+          checked: this.volumeTurnPage, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onVolumeTurnChange })
+        if (this.smartKeySupported) {
+          ReaderSettingSwitchRow({ title: '智控键翻页', description: '智控键上滑/下滑翻到上一页/下一页',
+            checked: this.smartKeyTurnPage, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+            subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onSmartKeyTurnChange })
+        }
         ReaderSettingActionRow({ title: '使用应用排版', description: '改回阅读主题、字体与仿真翻页排版这本书',
           actionText: '切换', textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode), buttonColor: ThemeRuntime.accentColor(this.darkMode),
@@ -500,7 +533,16 @@ export struct EpubOriginalControls {
         if (this.ready) {
           this.bottomMenu()
           if (!this.activePanel && this.tooltipVisible) this.previewTooltip()
-          if (this.activePanel) { this.floatingPanel() }
+          if (this.activePanel === 'toc') {
+            // 目录 / 书签面板是页面传进来的阅读页通用面板（ReaderTocPanel），自带材质与标题，这里只负责摆放。
+            Column() { this.tocContent() }
+              .position({ x: this.panelLeft(), y: '100%' })
+              .translate({ y: -(this.bottomInset() + ACTION_ROW_HEIGHT + 4 + this.tocPanelHeight()) })
+              .transition(this.panelTransition())
+              .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
+          } else if (this.activePanel) {
+            this.floatingPanel()
+          }
           if (!this.activePanel && this.readerUseBrightnessQuickAction && this.brightnessHeight() >= 132) {
             this.brightnessControl()
           }

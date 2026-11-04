@@ -3,7 +3,11 @@ import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import image from '@ohos.multimedia.image';
 import { window } from '@kit.ArkUI';
-import { Book, BookChapter } from '@legado/sourceengine';
+import { Book, BookChapter, Bookmark } from '@legado/sourceengine';
+import { inputConsumer, KeyCode, Action, KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKeyboard';
+import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';
+import { SmartControlKey } from '../utils/SmartControlKey';
 import { appDb } from '../model/data/AppDatabase';
 import { LocalBookService } from '../core/book/LocalBookService';
 import { LocalChapterContentLoader } from '../core/book/LocalChapterContentLoader';
@@ -18,6 +22,8 @@ import {
 import { ReaderImageMarker } from '../core/book/ReaderImageMarker';
 import { ReaderNoteContent } from '../components/reader/ReaderNoteContent';
 import { EpubOriginalControls } from '../components/reader/EpubOriginalControls';
+import { ReaderTocPanel, ReaderTocPanelController } from '../components/reader/ReaderTocPanel';
+import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { ReaderLayoutElementSettingsPanel } from '../components/reader/ReaderLayoutElementSettingsPanel';
 import { ReaderQuickJumpModel } from '../core/reader/ReaderQuickJumpModel';
 import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
@@ -149,33 +155,6 @@ class EpubWebSlot {
   }
 }
 
-class EpubChapterTitleSource implements IDataSource {
-  private titles: string[] = [];
-  private listeners: DataChangeListener[] = [];
-
-  reset(titles: string[]): void {
-    this.titles = titles;
-    for (const listener of this.listeners) listener.onDataReloaded();
-  }
-
-  totalCount(): number {
-    return this.titles.length;
-  }
-
-  getData(index: number): string {
-    return this.titles[index];
-  }
-
-  registerDataChangeListener(listener: DataChangeListener): void {
-    if (this.listeners.indexOf(listener) < 0) this.listeners.push(listener);
-  }
-
-  unregisterDataChangeListener(listener: DataChangeListener): void {
-    const index = this.listeners.indexOf(listener);
-    if (index >= 0) this.listeners.splice(index, 1);
-  }
-}
-
 /**
  * EPUB“文件排版”阅读页：解压目录里的原始 XHTML、CSS、字体、图片原样交给网页组件，按书本身的样式渲染。
  * 章节划分、目录、阅读进度与普通阅读器共用；两边切换时用 EpubOriginalPosition 换算章内位置。
@@ -191,6 +170,7 @@ struct EpubOriginalReadBookPage {
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('launchShortcutNonce') @Watch('onShortcut') shortcutNonce: number = 0;
+  @StorageProp('readerSmartKeyTurnSupported') @Watch('updateKeySubscription') smartKeySupported: boolean = false;
   @State title: string = '文件排版';
   @State chapterTitle: string = '';
   @State chapterIndex: number = 0;
@@ -212,6 +192,15 @@ struct EpubOriginalReadBookPage {
   @State failed: boolean = false;
   @State @Watch('applySystemBars') menuVisible: boolean = false;
   @State activePanel: string = '';
+  /** 目录 / 书签面板（阅读页通用的 ReaderTocPanel）用的数据。 */
+  @State tocChapters: BookChapter[] = [];
+  @State bookmarks: Bookmark[] = [];
+  @State tocReverseOrder: boolean = false;
+  @State showBookmarkActions: boolean = false;
+  @State bookmarkActionX: number = 0;
+  @State bookmarkActionY: number = 0;
+  @State volumeTurnPage: boolean = false;
+  @State smartKeyTurnPage: boolean = false;
   @State @Watch('syncLayoutElementDialog') showLayoutElements: boolean = false;
   /** 快速跳转在等确认或正在载入目标章节。 */
   @State jumpBusy: boolean = false;
@@ -238,7 +227,10 @@ struct EpubOriginalReadBookPage {
   private transitioning: boolean = false;
   private preloadTimer: number = -1;
   private spinnerTimer: number = -1;
-  private titleSource: EpubChapterTitleSource = new EpubChapterTitleSource();
+  private tocController: ReaderTocPanelController = new ReaderTocPanelController();
+  private pendingBookmark: Bookmark | null = null;
+  /** 改按键翻页开关时要连同这些一起存（saveReadingInteractionSettings 一次写一组）。 */
+  private readerSettings: ReaderSettings | null = null;
   private book: Book | null = null;
   private bookUrl: string = '';
   private extractRoot: string = '';
@@ -255,6 +247,13 @@ struct EpubOriginalReadBookPage {
   private screenTimeoutMinutes: number = ReaderSettingsStore.SCREEN_TIMEOUT_FOLLOW_SYSTEM;
   private screenTimeoutTimer: number = -1;
   private screenTimeoutSerial: number = 0;
+  // 翻页按键与普通阅读页共用设置：音量键、智控键（API 26）、键盘按键映射。
+  private keyboardSettings: ReaderKeyboardSettings = new ReaderKeyboardSettings();
+  private keyboard: ReaderKeyboard = new ReaderKeyboard();
+  private volumeUpCallback?: (event: InputKeyEvent) => void;
+  private volumeDownCallback?: (event: InputKeyEvent) => void;
+  private smartUpCallback?: (event: InputKeyEvent) => void;
+  private smartDownCallback?: (event: InputKeyEvent) => void;
   private loadSerial: number = 0;
   private noteSerial: number = 0;
   private alive: boolean = true;
@@ -308,6 +307,7 @@ struct EpubOriginalReadBookPage {
     this.visible = true;
     this.activateBrightness();
     this.applyScreenTimeout();
+    this.updateKeySubscription();
     this.applySystemBars();
     if (this.ready) readStatsTracker.setReadingActive(this.bookUrl);
     this.onShortcut();
@@ -315,6 +315,8 @@ struct EpubOriginalReadBookPage {
 
   onPageHide(): void {
     this.visible = false;
+    this.unregisterHardwareKeys();
+    this.keyboard.reset();
     this.showLayoutElements = false;
     this.brightnessSession.deactivate();
     this.releaseScreenTimeout();
@@ -330,6 +332,7 @@ struct EpubOriginalReadBookPage {
     if (this.readyTimer >= 0) clearTimeout(this.readyTimer);
     if (this.preloadTimer >= 0) clearTimeout(this.preloadTimer);
     if (this.spinnerTimer >= 0) clearTimeout(this.spinnerTimer);
+    this.unregisterHardwareKeys();
     this.showLayoutElements = false;
     this.brightnessSession.deactivate();
     this.releaseScreenTimeout();
@@ -344,6 +347,10 @@ struct EpubOriginalReadBookPage {
   onBackPress(): boolean {
     if (this.showLayoutElements) {
       this.showLayoutElements = false;
+      return true;
+    }
+    if (this.showBookmarkActions) {
+      this.closeBookmarkActions();
       return true;
     }
     if (this.showNotePopup || this.showNoteSheet) {
@@ -400,9 +407,9 @@ struct EpubOriginalReadBookPage {
       this.book = book;
       this.title = book.name || '文件排版';
       this.chapterCount = this.chapters.length;
-      this.titleSource.reset(this.chapters.map((chapter: BookChapter, index: number): string =>
-        chapter.title || `第${index + 1}章`));
+      this.tocChapters = this.chapters;
       await this.loadReaderSettings(context);
+      await this.loadBookmarks();
       this.paged = book.getVariable(SCROLL_KEY) !== '1';
       const zoom = Number(book.getVariable(ZOOM_KEY));
       this.zoom = Number.isFinite(zoom) && zoom >= 50 && zoom <= 250 ? Math.round(zoom) : 100;
@@ -460,15 +467,273 @@ struct EpubOriginalReadBookPage {
   private async loadReaderSettings(context: Context): Promise<void> {
     try {
       const settings: ReaderSettings = await ReaderSettingsStore.load(context);
+      this.readerSettings = settings;
       AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP, settings.useChapterQuickJump);
       AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION, settings.useBrightnessQuickAction);
       AppStorage.setOrCreate(ReaderSettingsStore.KEY_QUICK_JUMP_MODE,
         ReaderQuickJumpModel.normalizeMode(settings.quickJumpMode));
       this.screenTimeoutMinutes = ReaderSettingsStore.normalizeScreenTimeoutMinutes(settings.screenTimeoutMinutes);
       this.applyScreenTimeout();
+      this.volumeTurnPage = settings.volumeTurnPage;
+      this.smartKeyTurnPage = settings.smartKeyTurnPage;
+      this.keyboardSettings = await ReaderKeyboardSettingsStore.load(context);
     } catch (error) {
       console.warn('[EpubOriginal] reader settings failed:', error);
     }
+    SmartControlKey.detect().catch((): void => {});
+    this.updateKeySubscription();
+  }
+
+  // ---- 按键翻页：音量键、智控键与键盘，与普通阅读页同样的设置和时机 ----
+
+  /** 页面可见时才接管音量键、智控键；离开页面立即交还给系统。 */
+  updateKeySubscription(): void {
+    this.unregisterHardwareKeys();
+    if (!this.alive || !this.visible) return;
+    if (this.volumeTurnPage) {
+      this.volumeUpCallback = (_event: InputKeyEvent): void => this.hardwareTurn(-1);
+      this.volumeDownCallback = (_event: InputKeyEvent): void => this.hardwareTurn(1);
+      this.subscribeKeys(KeyCode.KEYCODE_VOLUME_UP, KeyCode.KEYCODE_VOLUME_DOWN,
+        this.volumeUpCallback, this.volumeDownCallback, '音量键');
+    }
+    const slideKeys: Array<KeyCode> = SmartControlKey.slideKeys();
+    if (this.smartKeyTurnPage && this.smartKeySupported && slideKeys.length >= 2) {
+      this.smartUpCallback = (_event: InputKeyEvent): void => this.hardwareTurn(-1);
+      this.smartDownCallback = (_event: InputKeyEvent): void => this.hardwareTurn(1);
+      this.subscribeKeys(slideKeys[0], slideKeys[1], this.smartUpCallback, this.smartDownCallback, '智控键');
+    }
+  }
+
+  private subscribeKeys(up: KeyCode, down: KeyCode, onUp: (event: InputKeyEvent) => void,
+    onDown: (event: InputKeyEvent) => void, label: string): void {
+    try {
+      inputConsumer.on('keyPressed', { key: up, action: Action.DOWN, isRepeat: false }, onUp);
+      inputConsumer.on('keyPressed', { key: down, action: Action.DOWN, isRepeat: false }, onDown);
+    } catch (error) {
+      console.error(`[EpubOriginal] 注册${label}翻页失败:`, error);
+    }
+  }
+
+  private unregisterHardwareKeys(): void {
+    const callbacks: Array<((event: InputKeyEvent) => void) | undefined> =
+      [this.volumeUpCallback, this.volumeDownCallback, this.smartUpCallback, this.smartDownCallback];
+    for (const callback of callbacks) {
+      if (!callback) continue;
+      try {
+        inputConsumer.off('keyPressed', callback);
+      } catch (error) {
+        console.warn('[EpubOriginal] 取消按键翻页失败:', error);
+      }
+    }
+    this.volumeUpCallback = undefined;
+    this.volumeDownCallback = undefined;
+    this.smartUpCallback = undefined;
+    this.smartDownCallback = undefined;
+  }
+
+  /** 菜单、面板、弹窗开着或正在切换章节时按键不翻页，与普通阅读页一致。 */
+  private canTurnByKey(): boolean {
+    return this.ready && this.visible && !this.menuVisible && !this.activePanel && !this.showNotePopup &&
+      !this.showNoteSheet && !this.showLayoutElements && !this.transitioning && !this.jumpBusy;
+  }
+
+  private hardwareTurn(direction: number): void {
+    if (!this.canTurnByKey()) return;
+    this.turnByKey(direction);
+  }
+
+  private turnByKey(direction: number): void {
+    this.refreshScreenTimeout();
+    if (this.paged) this.run(direction > 0 ? '__legado.next(true)' : '__legado.prev(true)');
+    else this.run(`__legado.screen(${direction > 0 ? 1 : -1})`);
+  }
+
+  /** 键盘翻页：按键映射与开关在普通阅读页的阅读设置里配置。 */
+  private handleKeyboardEvent(event: KeyEvent): boolean {
+    const settings = this.keyboardSettings;
+    const direction = event.keyCode === settings.previous ? -1 : (event.keyCode === settings.next ? 1 : 0);
+    if (event.type === KeyType.Up) return this.keyboard.release(event.keyCode, event.deviceId);
+    if (event.type !== KeyType.Down) return false;
+    const first = this.keyboard.press(event.keyCode, event.deviceId);
+    if (!settings.enabled || direction === 0 || ReaderKeyboard.hasModifiers(event)) return false;
+    // 连按与面板打开时的按键也吃掉，免得网页自己再滚一次。
+    this.keyboard.consume(event.keyCode, event.deviceId);
+    if (first && this.canTurnByKey()) this.turnByKey(direction);
+    return true;
+  }
+
+  // ---- 书签：与普通阅读页同一张表；位置记成普通阅读器正文里的偏移，两种排版都能定位 ----
+
+  private async loadBookmarks(): Promise<void> {
+    try {
+      this.bookmarks = await appDb.getBookmarks(this.bookUrl);
+    } catch (error) {
+      console.warn('[EpubOriginal] load bookmarks failed:', error);
+    }
+  }
+
+  private async addBookmark(): Promise<void> {
+    if (!this.book || !this.ready) {
+      HdsFeedback.showToast('当前没有可添加的阅读位置');
+      return;
+    }
+    const chapter = this.chapterIndex;
+    const page = this.pageIndex;
+    const spot = this.spot;
+    try {
+      const offset = spot.snippet ? EpubOriginalPosition.offsetFor(await this.nativeText(chapter), spot) : 0;
+      const duplicate = this.bookmarks.some((item: Bookmark): boolean =>
+        item.chapterIndex === chapter && Math.abs(item.startPos - offset) < 24);
+      if (duplicate) {
+        HdsFeedback.showToast('当前阅读位置已添加书签');
+        return;
+      }
+      const bookmark = new Bookmark();
+      bookmark.bookUrl = this.book.bookUrl;
+      bookmark.bookName = this.book.name;
+      bookmark.bookAuthor = this.book.author;
+      bookmark.chapterIndex = chapter;
+      bookmark.chapterName = this.chapterTitleAt(chapter);
+      bookmark.pageIndex = page;
+      bookmark.startPos = offset;
+      bookmark.endPos = offset;
+      bookmark.content = await this.visiblePreview();
+      bookmark.createTime = Date.now();
+      bookmark.id = await appDb.insertBookmark(bookmark);
+      await this.loadBookmarks();
+      HdsFeedback.showToast('书签已添加');
+    } catch (error) {
+      console.error('[EpubOriginal] add bookmark failed:', error);
+      HdsFeedback.showToast('添加书签失败');
+    }
+  }
+
+  private async visiblePreview(): Promise<string> {
+    const slot = this.front();
+    if (!slot.attached) return '';
+    try {
+      const result = await slot.controller.runJavaScript('window.__legado ? __legado.preview() : ""');
+      const text = JSON.parse(result) as string;
+      return typeof text === 'string' ? text : '';
+    } catch (error) {
+      console.warn('[EpubOriginal] bookmark preview failed:', error);
+      return '';
+    }
+  }
+
+  /** 按书签里的正文偏移定位（普通阅读页加的书签也一样）；没有偏移的旧书签从章首开始。 */
+  private async openBookmark(bookmark: Bookmark): Promise<void> {
+    this.activePanel = '';
+    this.menuVisible = false;
+    const chapter = Math.max(0, Math.min(this.chapters.length - 1, bookmark.chapterIndex));
+    const target = new EpubOriginalTarget();
+    if (bookmark.startPos > 0) {
+      const spot = EpubOriginalPosition.spotAt(await this.nativeText(chapter), bookmark.startPos);
+      if (spot.snippet) {
+        target.kind = 'spot';
+        target.snippet = spot.snippet;
+        target.fraction = spot.fraction;
+      }
+    }
+    if (!this.alive) return;
+    if (chapter === this.chapterIndex) {
+      if (target.kind === 'spot') this.run(`__legado.goSpot(${JSON.stringify(target.snippet)}, ${target.fraction})`);
+      else this.run('__legado.goPage(0, false)');
+      return;
+    }
+    this.showChapter(chapter, target, 'fade');
+  }
+
+  /** 书签长按菜单（多选、删除）画在整页上，动作回到面板里执行，与普通阅读页相同。 */
+  private openBookmarkActions(bookmark: Bookmark, globalX: number, globalY: number): void {
+    this.bookmarkActionX = globalX;
+    this.bookmarkActionY = globalY;
+    this.pendingBookmark = bookmark;
+    this.showBookmarkActions = true;
+  }
+
+  private closeBookmarkActions(): void {
+    this.showBookmarkActions = false;
+    this.pendingBookmark = null;
+  }
+
+  @Builder
+  bookmarkActionMenu() {
+    Column() {
+      PopupMenuAction($r('sys.symbol.checkmark_circle'), '多选', ThemeRuntime.primaryTextColor(this.darkMode), () => {
+        const bookmark = this.pendingBookmark;
+        this.closeBookmarkActions();
+        if (bookmark) this.tocController.enterBookmarkMultiSelect(bookmark.id);
+      })
+      PopupMenuAction($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.darkMode), () => {
+        const bookmark = this.pendingBookmark;
+        this.closeBookmarkActions();
+        if (bookmark) this.tocController.deleteBookmark(bookmark);
+      })
+    }
+    .width(220)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+
+  /** 与普通阅读页 openCurrentBookDetail 相同的参数，从目录面板顶部的书名进入。 */
+  private async openBookDetail(): Promise<void> {
+    const book = this.book;
+    if (!book) return;
+    try {
+      await this.saveProgress();
+      this.activePanel = '';
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/SearchBookDetail',
+        params: {
+          bookUrl: book.bookUrl,
+          tocUrl: book.tocUrl,
+          origin: book.origin,
+          originName: book.originName,
+          name: book.name,
+          author: book.author,
+          kind: book.kind,
+          status: book.status,
+          coverUrl: book.customCoverUrl || book.coverUrl,
+          intro: book.customIntro || book.intro,
+          latestChapterTitle: book.latestChapterTitle,
+          updateTime: book.updateTime,
+          wordCount: book.wordCount,
+          type: `${book.type}`,
+          variable: book.variable,
+          readerBookUrl: book.bookUrl,
+          promptAddToShelfOnBack: 'false'
+        }
+      });
+    } catch (error) {
+      console.error('[EpubOriginal] open book detail failed:', error);
+      HdsFeedback.showToast('打开书籍详情失败');
+    }
+  }
+
+  /** 与普通阅读页阅读设置里的“音量键翻页”同一个设置。 */
+  private setVolumeTurnPage(enabled: boolean): void {
+    this.volumeTurnPage = enabled;
+    this.updateKeySubscription();
+    const context = this.getUIContext().getHostContext();
+    const settings = this.readerSettings;
+    if (!context) return;
+    ReaderSettingsStore.saveReadingInteractionSettings(context, enabled,
+      settings ? settings.screenTimeoutMinutes : this.screenTimeoutMinutes,
+      settings ? settings.extendToStatusBar : false).catch((error: Error): void => {
+      console.error('[EpubOriginal] save volume turn failed:', error);
+    });
+    if (settings) settings.volumeTurnPage = enabled;
+  }
+
+  private setSmartKeyTurnPage(enabled: boolean): void {
+    this.smartKeyTurnPage = enabled;
+    this.updateKeySubscription();
+    const context = this.getUIContext().getHostContext();
+    if (!context) return;
+    ReaderSettingsStore.saveSmartKeyTurnPage(context, enabled).catch((error: Error): void => {
+      console.error('[EpubOriginal] save smart key turn failed:', error);
+    });
+    if (this.readerSettings) this.readerSettings.smartKeyTurnPage = enabled;
   }
 
   private activateBrightness(): void {
@@ -1573,30 +1838,54 @@ struct EpubOriginalReadBookPage {
     }, this.darkMode, ThemeRuntime.accentColor(this.darkMode));
   }
 
+  /** 浮层面板配色与普通阅读页相同的取法（这一页的面板跟随应用日夜模式）。 */
+  private solidPanelColor(): string {
+    return this.darkMode ? '#191B1F' : '#FFFFFF';
+  }
+
+  private tocSelectedColor(): string {
+    const color = ThemeRuntime.accentColor(this.darkMode);
+    if (/^#[0-9A-Fa-f]{6}$/.test(color)) return `#${this.darkMode ? '40' : '29'}${color.substring(1)}`;
+    return ThemeRuntime.accentSurfaceColor(this.darkMode);
+  }
+
+  /** 目录 / 书签面板：与普通阅读页同一个 ReaderTocPanel，搜索、倒序、跳章、书签多选都一样。 */
   @Builder
   tocPanel() {
-    List({ initialIndex: Math.max(0, this.chapterIndex - 2) }) {
-      LazyForEach(this.titleSource, (title: string, index: number) => {
-        ListItem() {
-          Text(title).width('100%').fontSize(AppFontSize.BODY)
-            .fontWeight(index === this.chapterIndex ? FontWeight.Medium : FontWeight.Normal)
-            .fontColor(index === this.chapterIndex ? ThemeRuntime.accentColor(this.darkMode) :
-              ThemeRuntime.primaryTextColor(this.darkMode))
-            .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
-            .constraintSize({ minHeight: 48 })
-            .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-            .borderRadius(16)
-            .backgroundColor(index === this.chapterIndex ? ThemeRuntime.accentSurfaceColor(this.darkMode) :
-              Color.Transparent)
-            .onClick((): void => { this.goChapter(index); })
-        }
-      }, (title: string, index: number): string => `${index}_${title}`)
-    }
-    .width('100%')
-    .height('100%')
-    .cachedCount(6)
-    .scrollBar(BarState.Auto)
-    .padding({ left: 8, right: 8, bottom: 12 })
+    ReaderTocPanel({
+      chapters: $tocChapters,
+      bookmarks: $bookmarks,
+      reverseOrder: $tocReverseOrder,
+      currentChapterIndex: this.chapterIndex,
+      dark: this.darkMode,
+      textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+      subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+      accentColor: ThemeRuntime.accentColor(this.darkMode),
+      swipeButtonColor: ThemeRuntime.buttonColor(this.darkMode),
+      panelColor: this.solidPanelColor(),
+      solidPanelColor: this.solidPanelColor(),
+      panelBorderColor: this.darkMode ? '#26FFFFFF' : '#14000000',
+      panelShadowColor: this.darkMode ? '#66000000' : '#1F000000',
+      selectedColor: this.tocSelectedColor(),
+      panelWidth: EpubOriginalControls.panelWidthFor(this.viewWidth),
+      panelHeight: EpubOriginalControls.tocPanelHeight(this.viewHeight, this.navBarHeight > 0 ? this.navBarHeight : 8),
+      book: this.book,
+      controller: this.tocController,
+      chapterTitle: (index: number): string => this.chapterTitleAt(index),
+      onClose: (): void => { this.activePanel = ''; },
+      onOpenBookDetail: (): void => { this.openBookDetail(); },
+      onJumpToChapter: (index: number): void => {
+        this.activePanel = '';
+        this.menuVisible = false;
+        this.goChapter(index);
+      },
+      onJumpToBookmark: (bookmark: Bookmark): void => { this.openBookmark(bookmark); },
+      // 本地书的目录来自书里的导航文件，没有可刷新的远端。
+      onRefreshToc: (): Promise<void> => Promise.resolve(),
+      onLoadBookmarks: (): void => { this.loadBookmarks(); },
+      onShowBookmarkActions: (bookmark: Bookmark, globalX: number, globalY: number): void =>
+        this.openBookmarkActions(bookmark, globalX, globalY)
+    })
   }
 
   @Builder
@@ -1641,6 +1930,7 @@ struct EpubOriginalReadBookPage {
         methodList: EpubOriginalScript.HOST_METHODS,
         controller: this.slots[slotId].controller
       })
+      .onKeyPreIme((event: KeyEvent): boolean => this.handleKeyboardEvent(event))
       .onPermissionRequest((event: OnPermissionRequestEvent): void => event.request.deny())
       .onAlert((event: OnAlertEvent): boolean => { event.result.handleCancel(); return true; })
       .onConfirm((event: OnConfirmEvent): boolean => { event.result.handleCancel(); return true; })
@@ -1732,7 +2022,24 @@ struct EpubOriginalReadBookPage {
         onAutoMode: (): void => { this.applyThemeMode('system'); },
         onBrightnessChange: (value: number, persist: boolean): void => { this.setBrightness(value, persist); },
         onLayoutElements: (): void => { this.openLayoutElements(); },
+        onAddBookmark: (): void => { this.addBookmark(); },
+        volumeTurnPage: this.volumeTurnPage, smartKeyTurnPage: this.smartKeyTurnPage,
+        smartKeySupported: this.smartKeySupported,
+        onVolumeTurnChange: (enabled: boolean): void => { this.setVolumeTurnPage(enabled); },
+        onSmartKeyTurnChange: (enabled: boolean): void => { this.setSmartKeyTurnPage(enabled); },
         onAppLayout: (): void => { this.switchToAppLayout(); } })
+
+      Column()
+        .width(1)
+        .height(1)
+        .position({ x: this.bookmarkActionX, y: this.bookmarkActionY })
+        .hitTestBehavior(HitTestMode.None)
+        .bindPopup(this.showBookmarkActions, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+          (): void => {
+            this.bookmarkActionMenu()
+          }, Placement.BottomLeft, this.darkMode, ThemeRuntime.accentColor(this.darkMode), () => {
+            if (this.showBookmarkActions) this.closeBookmarkActions();
+          }))
 
       Column()
         .width(1)

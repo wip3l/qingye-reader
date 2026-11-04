@@ -213,17 +213,31 @@ export class EpubOriginalScript {
     else { scrollToY(r.top + window.scrollY - cfg.top, false); report(); }
     return true;
   }
-  function spot() {
-    var c = compact(), total = c.text.length;
-    if (!total) return { snippet: '', fraction: 0 };
-    var lo = 0, hi = total - 1;
+  // 当前屏第一个可见字在紧凑文字里的下标。
+  function firstVisible(c) {
+    var lo = 0, hi = c.text.length - 1;
     while (lo < hi) {
       var mid = (lo + hi) >> 1, r = rectAt(c, mid);
       // 滚动模式以上边距那条线为准，和 goSpot 把目标放到的位置一致，保存再恢复不会一次次往上挪。
       var before = paged ? r.right <= 1 : (r.top + r.bottom) / 2 < cfg.top;
       if (before) lo = mid + 1; else hi = mid;
     }
+    return lo;
+  }
+  function spot() {
+    var c = compact(), total = c.text.length;
+    if (!total) return { snippet: '', fraction: 0 };
+    var lo = firstVisible(c);
     return { snippet: c.text.substr(lo, 32), fraction: lo / total };
+  }
+  // 书签用的预览：从当前屏第一个可见字起取一段原文（空白合并），不超过 90 字。
+  function preview() {
+    var c = compact();
+    if (!c.text.length) return '';
+    var i = firstVisible(c), nodeIndex = c.nodeOf[i], text = c.nodes[nodeIndex].nodeValue.substring(c.offOf[i]);
+    while (text.replace(/\s+/g, '').length < 90 && ++nodeIndex < c.nodes.length) text += c.nodes[nodeIndex].nodeValue;
+    text = text.replace(/\s+/g, ' ').trim();
+    return text.length > 90 ? text.substring(0, 90) + '…' : text;
   }
   function report() {
     if (!started) return;
@@ -352,7 +366,8 @@ export class EpubOriginalScript {
     layout();
     goSpot(s.snippet, s.fraction);
   });
-  window.__legado = { next: next, prev: prev, goSpot: goSpot, goAnchor: goAnchor, goPage: goPage, screen: screen };
+  window.__legado = { next: next, prev: prev, goSpot: goSpot, goAnchor: goAnchor, goPage: goPage, screen: screen,
+    preview: preview };
   var begin = function () {
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(start, start); else start();
   };
