@@ -16716,7 +16716,9 @@ struct ReadBookPage {
     }
     .width(px2vp(rect.widthPx))
     .height(px2vp(rect.heightPx))
-    .backgroundColor(0x55FFE58A)
+    // 跟随主题强调色；比选区（0.4）淡一些，选中朗读中的句子时两层仍能分清。
+    .backgroundColor(this.accentColor())
+    .opacity(0.3)
     .position({ x: px2vp(rect.leftPx), y: px2vp(rect.topPx) })
     .zIndex(1)
     .hitTestBehavior(HitTestMode.None)
