@@ -204,6 +204,7 @@ export struct BookshelfPage {
   private shelfCategoryAnimationWatchdog: number = -1;
   @StorageLink('privateShelfEnabled') @Watch('onPrivateShelfEnabledChanged') privateShelfEnabled: boolean = false;
   @StorageLink('privateShelfHasPassword') privateShelfHasPassword: boolean = false;
+  @StorageLink('privateShelfHeaderDoubleTap') privateShelfHeaderDoubleTap: boolean = false;
   @State privateShelfPasswordInput: string = '';
   @State privateShelfPasswordError: string = '';
   private privateShelfUnlockDialogSession: SystemDialogSession = new SystemDialogSession();
@@ -1323,6 +1324,8 @@ export struct BookshelfPage {
         .alignItems(VerticalAlign.Center)
         .opacity(CollapsingHeader.contentOpacity(this.shelfHeaderCollapseValue()))
         .hitTestBehavior(CollapsingHeader.acceptsTouch(this.shelfHeaderCollapseValue()) ? HitTestMode.Default : HitTestMode.None)
+        // 标题栏里的按钮各自响应单击，双击只在空白处和标题文字上生效。
+        .gesture(TapGesture({ count: 2 }).onAction(() => this.toggleShelfPrivateByHeaderDoubleTap()))
       }
       .width('100%')
       .height(56 + this.statusBarHeight - this.shelfHeaderCollapseValue())
@@ -5490,6 +5493,12 @@ export struct BookshelfPage {
     }
     this.suppressShelfBookClickUntil = 0;
     return true;
+  }
+
+  /** 设置里打开后，双击顶部标题栏进入隐私书架（有密码先验证），在隐私书架里双击回到原来的分类。 */
+  toggleShelfPrivateByHeaderDoubleTap(): void {
+    if (!this.privateShelfEnabled || !this.privateShelfHeaderDoubleTap) return;
+    this.switchShelfScopeBySelection(this.shelfScope === 'private' ? this.activeShelfTypeTab() : 'private');
   }
 
   switchShelfScopeBySelection(page: string): void {

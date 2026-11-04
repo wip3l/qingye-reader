@@ -10,6 +10,8 @@ import { HuksSecretStore } from './HuksSecretStore';
 export class PrivateShelfStore {
   static readonly KEY_ENABLED: string = 'privateShelfEnabled';
   static readonly KEY_HAS_PASSWORD: string = 'privateShelfHasPassword';
+  /** 双击书架顶部标题栏进出隐私书架，默认关闭。 */
+  static readonly KEY_HEADER_DOUBLE_TAP: string = 'privateShelfHeaderDoubleTap';
   private static readonly STORE_NAME: string = 'private_shelf_settings';
   private static readonly SECRET_NAME: string = 'password';
   private static readonly secrets: HuksSecretStore =
@@ -22,8 +24,10 @@ export class PrivateShelfStore {
     const store = await preferences.getPreferences(context, PrivateShelfStore.STORE_NAME);
     const enabled = await store.get(PrivateShelfStore.KEY_ENABLED, false);
     const hasPassword = await store.get(PrivateShelfStore.KEY_HAS_PASSWORD, false);
+    const headerDoubleTap = await store.get(PrivateShelfStore.KEY_HEADER_DOUBLE_TAP, false);
     AppStorage.setOrCreate(PrivateShelfStore.KEY_ENABLED, enabled === true);
     AppStorage.setOrCreate(PrivateShelfStore.KEY_HAS_PASSWORD, hasPassword === true);
+    AppStorage.setOrCreate(PrivateShelfStore.KEY_HEADER_DOUBLE_TAP, headerDoubleTap === true);
     PrivateShelfStore.loaded = true;
   }
 
@@ -32,6 +36,13 @@ export class PrivateShelfStore {
     await store.put(PrivateShelfStore.KEY_ENABLED, enabled);
     await store.flush();
     AppStorage.setOrCreate(PrivateShelfStore.KEY_ENABLED, enabled);
+  }
+
+  static async setHeaderDoubleTap(context: Context, enabled: boolean): Promise<void> {
+    const store = await preferences.getPreferences(context, PrivateShelfStore.STORE_NAME);
+    await store.put(PrivateShelfStore.KEY_HEADER_DOUBLE_TAP, enabled);
+    await store.flush();
+    AppStorage.setOrCreate(PrivateShelfStore.KEY_HEADER_DOUBLE_TAP, enabled);
   }
 
   /** 传空串即清除密码。 */

@@ -64,6 +64,7 @@ struct BookshelfSettingsPage {
   @State settingsRenderTick: number = 0;
   @StorageLink('privateShelfEnabled') @Watch('onPrivateShelfEnabledChanged') privateShelfEnabled: boolean = false;
   @StorageLink('privateShelfHasPassword') privateShelfHasPassword: boolean = false;
+  @StorageLink('privateShelfHeaderDoubleTap') privateShelfHeaderDoubleTap: boolean = false;
   // 开关的显示值。关闭需要先验证密码，验证期间它与真实状态可以暂时不一致。
   @State privateShelfSwitchOn: boolean = false;
   // 'disable'：关闭隐私书架前验证密码；'password'：设置、修改或清除密码。
@@ -309,6 +310,8 @@ struct BookshelfSettingsPage {
       this.privateShelfSwitchItem()
       if (this.privateShelfEnabled) {
         this.itemDivider()
+        this.privateShelfDoubleTapItem()
+        this.itemDivider()
         this.actionItem('隐私书架密码',
           this.privateShelfHasPassword ? '已设置，进入时需输入' : '未设置',
           this.primaryTextColor(), () => {
@@ -407,6 +410,16 @@ struct BookshelfSettingsPage {
       HdsFeedback.showToast('保存失败');
     }
     this.privateShelfSwitchOn = this.privateShelfEnabled;
+  }
+
+  async applyPrivateShelfHeaderDoubleTap(enabled: boolean): Promise<void> {
+    if (enabled === this.privateShelfHeaderDoubleTap) return;
+    try {
+      await PrivateShelfStore.setHeaderDoubleTap(getContext(this), enabled);
+    } catch (e) {
+      console.warn('保存隐私书架双击设置失败:', e);
+      HdsFeedback.showToast('保存失败');
+    }
   }
 
   openPrivatePasswordDialog(mode: string): void {
@@ -939,6 +952,19 @@ struct BookshelfSettingsPage {
       showDivider: false,
       onChange: (checked: boolean) => {
         this.onPrivateShelfSwitchChanged(checked);
+      }
+    })
+  }
+
+  @Builder
+  privateShelfDoubleTapItem() {
+    SettingSwitchRow({
+      title: '双击顶部进入',
+      description: '双击书架顶部空白处进入隐私书架，在隐私书架里双击返回',
+      isOn: this.privateShelfHeaderDoubleTap,
+      showDivider: false,
+      onChange: (checked: boolean) => {
+        this.applyPrivateShelfHeaderDoubleTap(checked);
       }
     })
   }
