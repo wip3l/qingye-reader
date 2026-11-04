@@ -169,7 +169,7 @@ const fixture = loadObsidianReader();
 const modules = await loadReaderModules();
 try {
   const sandbox = fixture.sandbox;
-  Object.assign(sandbox, { ReaderActionMarker: modules.ReaderActionMarker,
+  Object.assign(sandbox, { ReaderActionMarker: modules.ReaderActionMarker, EpubNoteLink: modules.EpubNoteLink,
     ReaderImageMarker: modules.ReaderImageMarker, ReaderInfoBarContext: modules.ReaderInfoBarContext,
     ReaderInfoBarClock: { timeText: () => '10:30', batteryPercent: () => 80 },
     CooperativeScheduler: { reportSynchronousOperation() {} } });

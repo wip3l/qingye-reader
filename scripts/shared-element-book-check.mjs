@@ -13,7 +13,10 @@ let sequence = 0, resolveRoute, rejectRoute, refreshes = 0;
 const context = vm.createContext({
   console: { error() {}, warn() {} },
   CloudAutoSync: { isPlaceholder: () => false },
-  LocalBookService: { isPdfBook: book => book.format === 'pdf' },
+  LocalBookService: {
+    isPdfBook: book => book.format === 'pdf',
+    usesEpubOriginalLayout: book => book.originalLayout === true
+  },
   ReaderOpenTrace: { begin() {}, mark() {}, cancel() {} },
   SHELF_OPENING_COVER_KEY: 'shelfOpeningCover',
   SHELF_BOOK_MOTION_UNTIL_KEY: 'shelfBookMotionUntil',
@@ -64,5 +67,18 @@ assert.equal(routes[2].params.shelfSharedCoverId, 'cover:shelf:local:local%3Apdf
 assert.equal(storage.get('shelfOpeningCover').bookUrl, pdfBook.bookUrl);
 resolveRoute(); await Promise.resolve();
 assert.equal(host.shelfBookRoutePending, false, 'a PDF route unlocks the shelf after creation');
+for (const originalLayout of [false, true]) {
+  const epubBook = { bookUrl: `local:epub:${originalLayout}`, origin: 'local', name: 'EPUB book', format: 'epub', originalLayout };
+  host.openShelfBook(epubBook, 50, 100);
+  const route = routes.at(-1);
+  assert.equal(route.url, originalLayout ? 'pages/EpubOriginalReadBook' : 'pages/ReadBook',
+    'EPUB routing follows the saved original-layout preference');
+  assert.equal(route.params.bookUrl, epubBook.bookUrl);
+  assert.equal(route.params.shelfBookOpening, 'true', 'EPUB books retain the cover opening animation');
+  assert.equal(route.params.shelfSharedCoverId, `cover:shelf:local:${encodeURIComponent(epubBook.bookUrl)}`);
+  assert.equal(storage.get('shelfOpeningCover').bookUrl, epubBook.bookUrl);
+  resolveRoute(); await Promise.resolve();
+  assert.equal(host.shelfBookRoutePending, false, 'an EPUB route unlocks the shelf after creation');
+}
 assert.doesNotMatch(source, /openingBookCoverAngle|openingBookTurnTimer|shelfBookOpeningOverlay/);
-console.log('PASS native book route: text/PDF routing, shared page transition, cover handoff, duplicate taps, return refresh, preferences and failure cleanup');
+console.log('PASS native book route: text/PDF/EPUB routing, shared page transition, cover handoff, duplicate taps, return refresh, preferences and failure cleanup');

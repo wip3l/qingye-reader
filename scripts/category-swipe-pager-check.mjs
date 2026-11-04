@@ -243,11 +243,13 @@ for (const [file, prefix] of [['ExplorePage', 'explore'], ['SearchPage', 'search
   }
 
   const name = isSearch ? 'Search' : 'Explore';
-  const list = { userScrollOnly: true, gridUserScrolled: false,
-    scroller: { currentOffset: () => ({ yOffset: 0 }) },
+  let atEnd = false;
+  const list = methods('SearchBookResultList', ['isEndOverscrollRebound'], 'book');
+  Object.assign(list, { userScrollOnly: true, gridUserScrolled: false,
+    scroller: { currentOffset: () => ({ yOffset: 0 }), isAtEnd: () => atEnd },
     onListScroll: (delta, offset) => page[`on${name}ListScroll`](delta, offset),
     onListScrollStop: offset => page[`on${name}ListScrollStop`](offset)
-  };
+  });
   const listSource = read('components/book/SearchBookResultList.ets');
   for (const event of ['onDidScroll', 'onScrollStop']) {
     const callback = listSource.match(new RegExp(`\\.${event}\\((\\([^\\n]*\\) => \\{[\\s\\S]*?\\n\\s*\\})\\)`))[1];
@@ -257,6 +259,12 @@ for (const [file, prefix] of [['ExplorePage', 'explore'], ['SearchPage', 'search
   list.onDidScroll(-200, 0);
   list.onScrollStop();
   assert.equal(value(), distance, `${file}: mounting/resetting the new list cannot expand the header`);
+  atEnd = true;
+  list.onDidScroll(-12, 1);
+  list.onScrollStop();
+  assert.equal(list.gridUserScrolled, false, `${file}: end rebound does not start a user scroll`);
+  assert.equal(value(), distance, `${file}: end rebound cannot expand the header`);
+  atEnd = false;
   list.onDidScroll(-12, 1);
   assert.equal(value(), distance - 12, `${file}: real downward dragging still reveals the header`);
   page[`on${name}ListScroll`](12, 0);
