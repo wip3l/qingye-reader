@@ -9624,10 +9624,12 @@ struct ReadBookPage {
     }
     if (this.shelfOpenAnimating) {
       // 注册硬件按键监听要几毫秒，放在点开书的点击事件里；翻开封面的半秒内没人用音量键翻页，动画结束再订阅。
+      // 至少隔 50ms 再查：开书时主线程忙（如大 EPUB），动画结束回调会晚于预计时间，延迟算出 0；0ms 定时器
+      // 在同一轮里反复到期，主线程出不来，结束回调也就永远等不到，6 秒后被系统判定卡死。
       this.readerVolumeKeySubscribeTimerId = setTimeout((): void => {
         this.readerVolumeKeySubscribeTimerId = -1;
         if (this.readerEntryAlive) this.updateVolumeKeySubscription();
-      }, this.delayPastShelfOpening(0));
+      }, Math.max(50, this.delayPastShelfOpening(0)));
       return;
     }
     this.unregisterVolumeKeyTurn();
