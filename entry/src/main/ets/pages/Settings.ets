@@ -202,7 +202,7 @@ struct SettingsPage {
       if (this.isNovelSection() && this.showNovelStyleEditor) {
         this.novelPreviewScreen()
       } else {
-        PageScaffold({ title: this.isNovelSection() ? '小说设置' : '阅读设置', bottomInset: 0, content: () => {
+        PageScaffold({ title: this.isNovelSection() ? '小说设置' : '阅读与收听', bottomInset: 0, content: () => {
           if (this.isNovelSection()) {
             this.novelContent()
           } else {
@@ -516,10 +516,55 @@ struct SettingsPage {
     .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
   }
 
-  /** 第一层：阅读通用设置，以及小说、漫画、PDF 各自的入口。 */
+  /** 第一层「阅读与收听」：小说、漫画、PDF、有声书、朗读各自的入口，以及阅读器通用的操作和其他设置。 */
   @Builder
   pageContent() {
-    this.sectionTitle('操作')
+    this.sectionTitle('分类设置')
+    Column() {
+      SettingNavRow({
+        title: '小说',
+        description: '排版、背景、翻页',
+        onTap: () => {
+          router.pushUrl({ url: 'pages/Settings', params: { section: SettingsPage.SECTION_NOVEL } });
+        }
+      })
+      SettingNavRow({
+        title: '漫画',
+        description: '阅读方式、画面、AI超分',
+        onTap: () => {
+          router.pushUrl({ url: 'pages/ComicSettings' });
+        }
+      })
+      SettingNavRow({
+        title: 'PDF',
+        description: '连续滚动、单双页、页面适配、AI超分',
+        onTap: () => {
+          router.pushUrl({ url: 'pages/PdfSettings' });
+        }
+      })
+      SettingNavRow({
+        title: '有声书',
+        description: '自动播放、边听边下、离线下载',
+        onTap: () => {
+          router.pushUrl({ url: 'pages/AudioBookSettings' });
+        }
+      })
+      SettingNavRow({
+        title: '朗读',
+        description: '音色、倍速、MiMo 朗读、在线朗读字数',
+        showDivider: false,
+        onTap: () => {
+          router.pushUrl({ url: 'pages/TtsSettings' });
+        }
+      })
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+
+    this.sectionTitle('阅读操作')
     Column() {
       this.tapZoneSettingItem()
       this.selectItem('屏幕方向', '阅读时的屏幕方向',
@@ -553,7 +598,7 @@ struct SettingsPage {
     .clip(true)
     .backgroundColor(this.cardColor())
 
-    this.sectionTitle('其他')
+    this.sectionTitle('阅读其他')
     Column() {
       this.selectItem('亮屏时间设置', '无操作达到所选时长后恢复系统息屏',
         this.screenTimeoutOptions(), this.screenTimeoutSelectedIndex(), (index: number) => {
@@ -566,37 +611,6 @@ struct SettingsPage {
         onChange: (enabled: boolean): void => this.setReaderAiProcessingIndicatorEnabled(enabled)
       })
       this.preloadSettingPanel()
-    }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-    .backgroundColor(this.cardColor())
-
-    this.sectionTitle('分类设置')
-    Column() {
-      SettingNavRow({
-        title: '小说',
-        description: '排版、背景、翻页',
-        onTap: () => {
-          router.pushUrl({ url: 'pages/Settings', params: { section: SettingsPage.SECTION_NOVEL } });
-        }
-      })
-      SettingNavRow({
-        title: '漫画',
-        description: '阅读方式、画面、AI超分',
-        onTap: () => {
-          router.pushUrl({ url: 'pages/ComicSettings' });
-        }
-      })
-      SettingNavRow({
-        title: 'PDF',
-        description: '连续滚动、单双页、页面适配、AI超分',
-        showDivider: false,
-        onTap: () => {
-          router.pushUrl({ url: 'pages/PdfSettings' });
-        }
-      })
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: AppSpacing.XXL })

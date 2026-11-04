@@ -789,10 +789,12 @@ export struct ReaderTtsPlayerPanel {
   @Builder
   audioProgress() {
     Column({ space: AppSpacing.XXS }) {
-      Slider({ value: this.globalTtsAudioPositionMs, min: 0,
+      // 还不知道总时长（缓冲中，或关了自动播放、还没点播放）时进度条留空、不能拖，左边照样显示已听到的位置。
+      Slider({ value: this.globalTtsAudioDurationMs > 0 ? this.globalTtsAudioPositionMs : 0, min: 0,
         max: Math.max(1, this.globalTtsAudioDurationMs), step: 1000 })
         .width('100%')
         .showTips(true)
+        .enabled(this.globalTtsAudioDurationMs > 0)
         .selectedColor(this.accentColor)
         .trackColor(ThemeRuntime.inputColor(this.darkMode))
         .onChange((value: number, mode: SliderChangeMode) => {
@@ -804,7 +806,8 @@ export struct ReaderTtsPlayerPanel {
       Row() {
         Text(this.formatAudioDuration(this.globalTtsAudioPositionMs)).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor)
         Blank()
-        Text(this.formatAudioDuration(this.globalTtsAudioDurationMs)).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor)
+        Text(this.globalTtsAudioDurationMs > 0 ? this.formatAudioDuration(this.globalTtsAudioDurationMs) : '--:--')
+          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor)
       }
       .width('100%')
     }

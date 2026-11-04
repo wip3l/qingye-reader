@@ -14,7 +14,6 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { ReaderCacheBudget, ReaderCacheCleanup } from '../core/book/ReaderCacheBudget';
 import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
-import { AudioOfflineSettingsStore } from '../utils/AudioOfflineSettingsStore';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
 
 @Entry
@@ -45,8 +44,6 @@ struct OtherSettingsPage {
   @State offlineBytes: number = -1;
   @State audioOfflineBytes: number = -1;
   @State audioOfflineAutoBytes: number = 0;
-  @StorageLink('audioOfflineWifiOnly') audioOfflineWifiOnly: boolean = false;
-  @StorageLink('audioOfflineCapBytes') audioOfflineCapBytes: number = 0;
   @State audioOfflineBooks: number = 0;
   @State audioOfflineChapters: number = 0;
   @State cacheClearing: boolean = false;
@@ -138,27 +135,13 @@ struct OtherSettingsPage {
       }
       SettingRow({
         title: '有声书离线音频',
-        description: this.audioOfflineUsageText() + '\n手动下载的不参与自动清理；边听边下的听完自动删除',
+        description: this.audioOfflineUsageText() +
+          '\n手动下载的不参与自动清理；边听边下的听完自动删除。下载选项在“阅读与收听 › 有声书”',
+        showDivider: false,
         onTap: () => this.confirmClearAudioOffline()
       }) {
         this.cacheClearLabel()
       }
-      SettingSwitchRow({
-        title: '手动下载有声书仅用 Wi-Fi',
-        description: '手动下载在移动网络下等待 Wi-Fi；关闭后用流量下载前会先确认。边听边下不受此限制',
-        isOn: this.audioOfflineWifiOnly,
-        onChange: (value: boolean) => {
-          AudioOfflineSettingsStore.saveWifiOnly(getContext(this), value)
-            .catch((error: Error) => console.warn('保存仅 Wi-Fi 下载失败:', error));
-        }
-      })
-      SettingNavRow({
-        title: '离线音频上限',
-        description: '超出后先删最早的边听边下章节，仍不够时停止下载',
-        value: AudioOfflineSettingsStore.capLabel(this.audioOfflineCapBytes),
-        showDivider: false,
-        onTap: () => this.pickAudioOfflineCap()
-      })
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -402,25 +385,6 @@ struct OtherSettingsPage {
     const auto = this.audioOfflineAutoBytes > 0 ?
       `（边听边下 ${ReaderCacheBudgetPolicy.formatBytes(this.audioOfflineAutoBytes)}）` : '';
     return `${ReaderCacheBudgetPolicy.formatBytes(this.audioOfflineBytes)}${auto} · ${this.audioOfflineBooks} 本书 ${this.audioOfflineChapters} 章`;
-  }
-
-  async pickAudioOfflineCap(): Promise<void> {
-    const options = AudioOfflineSettingsStore.CAP_OPTIONS;
-    const buttons: promptAction.Button[] = options.map((bytes: number): promptAction.Button => ({
-      text: `${bytes === this.audioOfflineCapBytes ? '✓ ' : ''}${AudioOfflineSettingsStore.capLabel(bytes)}`,
-      color: bytes === this.audioOfflineCapBytes ? this.accentColor() : ThemeRuntime.primaryTextColor(this.appDarkMode)
-    }));
-    try {
-      const result = await promptAction.showActionMenu({
-        title: '离线音频上限',
-        buttons: [buttons[0], buttons[1], buttons[2], buttons[3], buttons[4]]
-      });
-      if (result.index >= 0 && result.index < options.length) {
-        await AudioOfflineSettingsStore.saveCap(getContext(this), options[result.index]);
-      }
-    } catch (_) {
-      // 点空白处取消。
-    }
   }
 
   async confirmClearAudioOffline(): Promise<void> {

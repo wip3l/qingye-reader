@@ -83,11 +83,8 @@ export struct SettingsPage {
           .backgroundColor(this.glassCardColor())
 
           Column() {
-            this.menuItem($r('sys.symbol.book'), '阅读设置', true, () => {
+            this.menuItem($r('sys.symbol.book'), '阅读与收听', true, () => {
               router.pushUrl({ url: 'pages/Settings' });
-            })
-            this.menuItem($r('sys.symbol.speaker_wave_3'), '朗读设置', true, () => {
-              router.pushUrl({ url: 'pages/TtsSettings' });
             })
             this.menuItem($r('sys.symbol.bookshelf'), '书架设置', true, () => {
               router.pushUrl({ url: 'pages/BookshelfSettings' });

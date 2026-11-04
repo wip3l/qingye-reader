@@ -14,6 +14,7 @@ import { AudioUrlResolver } from '../core/book/AudioUrlResolver';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { AudioOfflineDownloadPrompt } from '../utils/AudioOfflineDownloadPrompt';
 import { AudioOfflineSettingsStore } from '../utils/AudioOfflineSettingsStore';
+import { AudioBookSettingsStore } from '../utils/AudioBookSettingsStore';
 import { AudioPrefetch } from '../utils/AudioPrefetch';
 import { AudioBookAvSessionHolder } from '../utils/AudioBookMediaSession';
 import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
@@ -139,6 +140,8 @@ struct AudioBookPage {
   private pageVisible: boolean = true;
   private latestPositionMs: number = 0;
   private latestDurationMs: number = 0;
+  /** 关了自动播放时，打开后停在上次位置、还没点过播放。这时没有播放器，进度也没变，不用存。 */
+  private awaitingFirstPlay: boolean = false;
 
   aboutToAppear(): void {
     this.syncBars();
@@ -747,8 +750,10 @@ struct AudioBookPage {
         } else {
           this.updateAudioAvSessionState(avSession.PlaybackState.PLAYBACK_STATE_PAUSE).catch(() => {});
         }
-      } else {
+      } else if (AudioBookSettingsStore.autoPlay()) {
         await this.playCurrentChapter(this.book.durChapterPos);
+      } else {
+        await this.stageWithoutPlaying(this.book.durChapterPos);
       }
       this.applyPendingPanelAction();
     } catch (error) {
@@ -783,10 +788,28 @@ struct AudioBookPage {
     await this.playCurrentChapter(0, true);
   }
 
+  /**
+   * 关了自动播放时打开有声书：停在上次的位置等用户点播放，不取音频地址也不建播放器。
+   * 播放面板的切章、倍速、定时都走共享会话，所以照样以暂停状态发布；别的书或朗读还在播时先停掉，
+   * 否则面板上的按钮会去控制那一本。
+   */
+  private async stageWithoutPlaying(startPositionMs: number): Promise<void> {
+    await ReaderTtsFloatingSession.stopOther(this.floatingSessionOwnerId);
+    this.awaitingFirstPlay = true;
+    this.latestPositionMs = Math.max(0, startPositionMs);
+    this.latestDurationMs = 0;
+    this.positionMs = this.latestPositionMs;
+    this.durationMs = 0;
+    this.playbackState = 'idle';
+    this.statusText = this.stateLabel('idle');
+    this.publishFloatingSession();
+  }
+
   async playCurrentChapter(startPositionMs: number = 0, forceRefresh: boolean = false): Promise<void> {
     const book = this.book;
     const chapter = this.currentChapter();
     if (!book || !chapter) return;
+    this.awaitingFirstPlay = false;
     const serial = ++this.loadingSerial;
     const chapterIndex = this.chapterIndex;
     const timing = new AudioStartTiming(chapterIndex);
@@ -872,7 +895,7 @@ struct AudioBookPage {
     try {
       if (this.isPlaying()) await this.playback.pause();
       else if (this.playback.matches(this.book?.bookUrl || '', this.chapterIndex)) await this.playback.resume();
-      else await this.playCurrentChapter(this.positionMs);
+      else await this.playCurrentChapter(this.latestPositionMs);
     } catch (error) {
       this.onPlaybackError(this.errorMessage(error));
     }
@@ -1219,7 +1242,7 @@ struct AudioBookPage {
 
   publishFloatingSession(): void {
     const book = this.book;
-    if (!book || !this.floatingSessionOwnerId || !this.playback.mediaUrl) return;
+    if (!book || !this.floatingSessionOwnerId || (!this.playback.mediaUrl && !this.awaitingFirstPlay)) return;
     ReaderTtsFloatingSession.attach(
       this.floatingSessionOwnerId,
       book.bookUrl,
@@ -1319,7 +1342,8 @@ struct AudioBookPage {
   async saveProgressNow(notifyShelf: boolean = false): Promise<void> {
     const book = this.book;
     const chapter = this.currentChapter();
-    if (!book || !chapter) return;
+    // 没点过播放就关掉不算听过，不刷新最近阅读时间，免得书架按最近阅读排序时被顶上去。
+    if (!book || !chapter || this.awaitingFirstPlay) return;
     const chapterIndex = this.chapterIndex;
     const chapterPosition = Math.max(0, Math.floor(this.latestPositionMs || this.positionMs));
     const chapterTitle = chapter.title;

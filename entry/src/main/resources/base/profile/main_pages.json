@@ -17,6 +17,7 @@
     "pages/Settings",
     "pages/ComicSettings",
     "pages/PdfSettings",
+    "pages/AudioBookSettings",
     "pages/ComicText",
     "pages/ComicColor",
     "pages/CustomFontManager",

@@ -236,8 +236,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
           <tr><td>阅读统计</td><td>按日、周、月查看阅读时长和书籍排行。</td></tr>
           <tr><td>书源管理</td><td>导入、校验、分组、编辑、调试书源。</td></tr>
           <tr><td>书籍导入</td><td>本地导入、OPDS 书库、WebDAV 服务。</td></tr>
-          <tr><td>阅读设置</td><td>排版、字体、背景、翻页、点击区域、预缓存、替换净化、眼动翻页。</td></tr>
-          <tr><td>朗读设置</td><td>音色、倍速、自定义音色管理、在线朗读字数。</td></tr>
+          <tr><td>阅读与收听</td><td>小说、漫画、PDF、有声书、朗读各自的设置，以及点击区域、预缓存等阅读通用设置。</td></tr>
           <tr><td>书架设置</td><td>布局与分类、卡片信息、封面图集、隐私书架。</td></tr>
           <tr><td>搜索/发现配置</td><td>结果展示、精准搜索、聚合、并发数。</td></tr>
           <tr><td>主题</td><td>当前使用的主题、默认与自定义方案、已购主题和更多主题。</td></tr>
@@ -865,7 +864,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
       </div>
       <div class="sub">
         <h3>翻页与操作</h3>
-        <p>这些设置在阅读菜单的排版设置里，也在 <span class="p">我的 › 阅读设置</span>。</p>
+        <p>这些设置在阅读菜单的排版设置里，也在 <span class="p">我的 › 阅读与收听 › 小说</span>。</p>
         <div class="tw"><table>
           <tr><th>设置</th><th>说明</th></tr>
           <tr><td>翻页方式</td><td>上下滑动（上下滑一下翻一页）、横向滑动（左右翻页）、滚动阅读（像网页一样连续滚动）。</td></tr>
@@ -958,7 +957,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
     <!-- ───────────── 排版、字体与配色 ───────────── -->
     <section id="typo">
       <h2>排版、字体与配色</h2>
-      <p>在阅读菜单点“Aa”，或到 <span class="p">我的 › 阅读设置</span>。阅读设置页顶部有一段预览文字，改动会立刻反映在上面。</p>
+      <p>在阅读菜单点“Aa”，或到 <span class="p">我的 › 阅读与收听 › 小说</span>。阅读设置页顶部有一段预览文字，改动会立刻反映在上面。</p>
       <div class="sub">
         <h3>排版参数</h3>
         <p>选中一项后用“−”“＋”调整：字号、字距、行距、段落间距、左边距、右边距、上边距、下边距。</p>
@@ -1115,7 +1114,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
       </div>
       <div class="sub">
         <h3>朗读设置</h3>
-        <p><span class="p">我的 › 朗读设置</span>：选择默认的朗读音色、调整朗读倍速，点“试听”用一段示例文字听效果。</p>
+        <p><span class="p">我的 › 阅读与收听 › 朗读</span>：选择默认的朗读音色、调整朗读倍速，点“试听”用一段示例文字听效果。</p>
       </div>
       <div class="sub">
         <h3>系统音色</h3>
@@ -1166,6 +1165,15 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
           <li><b>兼容书源</b>：填入书源详情里列出的数字代码，点“保存并重新加载”；留空则使用书源默认音色。</li>
         </ul>
         <p>切换后从当前这一章的开头重新播放，选择按书保存。音色通常只对合成朗读的内容有效，真人录制的有声书切换后听不出区别。</p>
+      </div>
+      <div class="sub">
+        <h3>有声书设置</h3>
+        <p><span class="p">我的 › 阅读与收听 › 有声书</span>：</p>
+        <ul>
+          <li><b>打开时自动播放</b>：默认开启。关闭后打开有声书只停在上次听到的位置，点播放才开始；这本书本来就在播时照常继续。</li>
+          <li><b>边听边下</b>：提前下载正在听的书后面几章，支持移动网络，听完自动删除。播放页的“下载”菜单里也能设置。</li>
+          <li><b>手动下载仅用 Wi-Fi</b>、<b>离线音频上限</b>：控制手动下载用什么网络、离线音频最多占多少空间。占用的空间在 <span class="p">我的 › 其他设置 › 缓存</span> 里查看和清理。</li>
+        </ul>
       </div>
       <div class="sub">
         <h3>后台播放</h3>
