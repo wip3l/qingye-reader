@@ -35,7 +35,7 @@ function fixture(threeD, theme) {
     isReaderThemeDark: () => { throw Error('theme lookup in animation frame'); },
     is3DPageTurnAnimation: () => threeD, isLandscapeDoublePageActive: () => false,
     readerSettledTextureKey: () => 'front', readerPageTextureCache: { acquire: () => null },
-    readerPageTextureWarmInflight: new Map(),
+    readerPageTextureWarmInflight: new Map(), rasterSettledPageTexture: () => null,
     currentReaderSnapshotComponentId: () => 'front', readerPageCurlSnapshotScale: () => 0.75,
     getPageTurnWidth: () => 600, getPageTurnHeight: () => 900, getReaderPageCurlCanvasHeight: () => 900,
     getPageTurnProgress: () => progress, getReaderPageColumnWidth: () => 600,

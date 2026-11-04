@@ -63,7 +63,7 @@ function readerFixture() {
     usesReaderPageCurlCanvas: () => true, pageSlideDirection: 0, isPageTurning: false, isTtsSpeaking: false,
     hasReaderTextSelection: () => false, isLandscapeDoublePageActive: () => true,
     readerSettledTextureKey: direction => `leaf-${direction}`, readerPageTextureWarmSerial: 1,
-    readerPageTextureWarmInflight: new Map(),
+    readerPageTextureWarmInflight: new Map(), rasterSettledPageTexture: () => null,
     readerPageTextureCache: new Cache(), readerPageCurlSnapshotScale: () => 0.75,
     currentReaderSnapshotComponentId: () => 'current', cropReaderPageCurlFrontToTurningLeaf: crop,
     getUIContext: () => ({ getComponentSnapshot: () => ({ get: async () => {

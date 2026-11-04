@@ -1,4 +1,5 @@
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
+import { ReaderThemeDecorationLayout } from '../core/reader/ReaderThemeDecorationLayout';
 
 /**
  * Responsive reader background for builtin themes.
@@ -94,20 +95,15 @@ export struct ReaderThemeBackground {
     }
   }
 
+  // The placement math lives in ReaderThemeDecorationLayout, shared with the self-drawn page raster.
   decorationSize(): number {
-    const fallback = this.compact ? 42 : 156;
-    const width = this.effectiveViewportWidth();
-    const height = this.effectiveViewportHeight();
-    if (width <= 0 || height <= 0) return fallback;
-    const shortEdge = Math.min(width, height);
-    if (this.compact) return Math.max(30, Math.min(54, shortEdge * 0.72));
-    // Size follows the short edge, so portrait, landscape, tablet and split
-    // window layouts preserve the ornament's proportions without device rules.
-    return Math.max(112, Math.min(260, shortEdge * 0.36));
+    return ReaderThemeDecorationLayout.size(this.effectiveViewportWidth(), this.effectiveViewportHeight(),
+      this.compact);
   }
 
   decorationInset(): Padding {
-    const inset = this.compact ? 2 : Math.max(8, Math.min(22, this.shortEdge() * 0.025));
+    const inset = ReaderThemeDecorationLayout.inset(this.effectiveViewportWidth(), this.effectiveViewportHeight(),
+      this.compact);
     return { left: inset, right: inset, top: inset, bottom: inset };
   }
 
