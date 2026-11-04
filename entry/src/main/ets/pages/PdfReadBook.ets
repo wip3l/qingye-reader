@@ -1,4 +1,5 @@
 import { pdfViewManager, pdfService } from '@kit.PDFKit';
+import { common } from '@kit.AbilityKit';
 import { Book } from '@legado/sourceengine';
 import { appDb } from '../model/data/AppDatabase';
 import { LocalBookService } from '../core/book/LocalBookService';
@@ -24,6 +25,7 @@ import { syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { readStatsTracker } from '../core/stats/ReadStatsTracker';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';
+import { RecentReadCardUpdater } from '../utils/RecentReadCardUpdater';
 import { WebDavBookService } from '../webdav/WebDavBookService';
 import { ReaderComicSuperResolution, ReaderComicSuperResolutionAccess } from '@legado/aiengine';
 import { AiAccessPolicy } from '../account/AiAccessPolicy';
@@ -99,6 +101,7 @@ struct PdfReadBookPage {
   private owner: string = `pdf-${Date.now()}-${Math.random()}`;
   private shortcutReplace: boolean = false;
   private closing: boolean = false;
+  private recentReadCardReloadAt: number = 0;
   // Shelf cover-open animation, the same motion as the text reader (see ReadBook.prepareShelfOpening).
   @State shelfSharedCoverId: string = '';
   /** Home-page snapshot shown behind the page while it shrinks back onto the shelf (see ReadBook). */
@@ -216,6 +219,7 @@ struct PdfReadBookPage {
         'pdfSuperResolution': book.getVariable(ReaderPdfSettings.SUPER_RESOLUTION)
       });
       this.book = book; this.title = book.name || 'PDF 阅读';
+      this.markRecentlyRead();
       this.pageCount = book.totalChapterNum;
       this.initialPage = PdfPagePosition.clamp(book.durChapterIndex, this.pageCount);
       this.pageIndex = this.initialPage; this.jumpInput = `${this.initialPage + 1}`;
@@ -378,14 +382,49 @@ struct PdfReadBookPage {
       const latest = await appDb.getBook(bookUrl);
       if (!latest || timestamp < latest.durChapterTime && latest.hasStartedReading()) return;
       latest.putVariable('readStarted', '1');
+      // 书架“最近阅读”排序和置顶优先按这个时间，和普通阅读页保存进度时写的一样。
+      latest.putVariable('lastReadTime', `${timestamp}`);
       for (const key of Object.keys(overrides)) latest.putVariable(key, overrides[key]);
       latest.putVariable('readProgressChapterIndex', `${page}`);
       latest.putVariable('readProgressPageCount', '1');
       await appDb.updateBookReadingProgress(bookUrl, PdfPagePosition.title(page), page, 0, timestamp, latest.variable);
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      this.reloadRecentReadCard(this.closing);
     });
     this.saveTask = task;
     return task;
+  }
+
+
+  /**
+   * 与普通阅读页开书时一样，先把这本书记成最近阅读：书架在阅读期间（开书动画结束后）悄悄重排，
+   * 关书时封面已经在置顶卡片里，缩回动画才落在正确位置；若等到关书保存时才挪位，落地后会跳一下。
+   * 排进 saveTask，和进度保存串行，不会互相覆盖变量。
+   */
+  private markRecentlyRead(): void {
+    const bookUrl = this.bookUrl;
+    this.saveTask = this.saveTask.catch((): void => {}).then(async (): Promise<void> => {
+      const latest = await appDb.getBook(bookUrl);
+      if (!latest) return;
+      const now = Date.now();
+      latest.durChapterTime = now;
+      latest.putVariable('readStarted', '1');
+      latest.putVariable('lastReadTime', `${now}`);
+      await appDb.updateBook(latest, false);
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      this.reloadRecentReadCard(true);
+    }).catch((error: Error): void => { console.warn('[PDF] mark recent failed:', error); });
+  }
+
+  /** 桌面“最近阅读”卡片跟着进度走；翻页保存很频繁，不在退出时每 30 秒最多刷一次。 */
+  private reloadRecentReadCard(force: boolean): void {
+    const now = Date.now();
+    if (!force && now - this.recentReadCardReloadAt < 30000) return;
+    this.recentReadCardReloadAt = now;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext | undefined;
+    if (!context) return;
+    RecentReadCardUpdater.reload(context)
+      .catch((error: Error): void => { console.warn('[PDF] recent card reload failed:', error); });
   }
 
   private jumpConfirming: boolean = false;
