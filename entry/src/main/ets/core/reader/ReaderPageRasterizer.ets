@@ -84,8 +84,10 @@ export class ReaderPageRasterizer {
         alphaType: image.AlphaType.PREMUL,
         editable: true
       };
-      const pixelMap = image.createPixelMapSync(new ArrayBuffer(width * height * 4), options);
+      const pixelMap = ReaderPageRasterizer.createTexturePixelMap(width, height, options);
       const canvas = new drawing.Canvas(pixelMap);
+      // A DMA buffer is not zero-filled; a translucent paper colour would otherwise show stale pixels.
+      canvas.clear({ alpha: 0, red: 0, green: 0, blue: 0 });
       canvas.scale(spec.scale, spec.scale);
       const paper = new drawing.Brush();
       paper.setColor(ReaderPageRasterizer.parseColor(spec.paperColor));
@@ -108,6 +110,23 @@ export class ReaderPageRasterizer {
       console.warn('[ReaderRaster] page raster failed:', error);
       return null;
     }
+  }
+
+  /**
+   * The curl Canvas hands every texture to RenderService. A heap PixelMap is copied into an RS GPU texture that
+   * outlives PixelMap.release(): each turn left about five full-screen copies behind until RS killed the app at
+   * 2 GB (RENDER_MEMORY_OVER_ERROR, "Gpu_rs Leak") within a few minutes of reading. A DMA PixelMap is shared
+   * with RS by buffer, like the componentSnapshot results these rasters replaced, and is freed with the buffer.
+   */
+  private static createTexturePixelMap(width: number, height: number,
+    options: image.InitializationOptions): image.PixelMap {
+    try {
+      const pixelMap = image.createPixelMapUsingAllocatorSync(options, image.AllocatorType.DMA);
+      if (pixelMap) return pixelMap;
+    } catch (error) {
+      console.warn('[ReaderRaster] DMA texture unavailable, using heap memory:', error);
+    }
+    return image.createPixelMapSync(new ArrayBuffer(width * height * 4), options);
   }
 
   private static drawImage(canvas: drawing.Canvas, item: ReaderRasterImage, sampling: drawing.SamplingOptions): void {
