@@ -2702,6 +2702,7 @@ struct ReadBookPage {
         superResolution: this.isReaderComicSuperResolutionActive(),
         textConvert: this.isReaderComicTextConvertActive(),
         surfaceColor: this.readerComicSurfaceColor(),
+        paperColor: this.readerComicWindowColor(),
         textColor: this.readerComicSurfaceTextColor(),
         hintColor: this.readerComicSurfaceHintColor(),
         interactive: this.isReaderComicInteractionEnabled(),

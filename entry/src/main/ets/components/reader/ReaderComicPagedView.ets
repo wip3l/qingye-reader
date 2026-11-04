@@ -68,6 +68,8 @@ export struct ReaderComicPagedView {
   /** 本书繁→简。 */
   @Prop textConvert: boolean = false;
   @Prop surfaceColor: string = '#000000';
+  /** 翻页动画里纸张的底色，必须不透明：背景跟随主题时 surfaceColor 是透明色，绘制器会把它当成黑色。 */
+  @Prop paperColor: string = '#000000';
   @Prop textColor: string = '#E6E6E6';
   @Prop hintColor: string = '#99FFFFFF';
   @Prop interactive: boolean = true;
@@ -418,18 +420,20 @@ export struct ReaderComicPagedView {
     if (this.animationType === ReaderPageTurnAnimation.THREE_D) {
       this.emulationPainter.draw(this.curlContext, this.curlFront, this.curlBack,
         this.viewW(), this.viewH(), this.turnProgress(), direction, this.curlRegion,
-        this.curlDualPage, this.viewW() / 2, this.viewW() / 2, 1 / this.getUIContext().vp2px(1), this.surfaceColor, this.darkMode);
+        this.curlDualPage, this.viewW() / 2, this.viewW() / 2, 1 / this.getUIContext().vp2px(1), this.paperColor, this.darkMode);
       if (this.curlDualPage && this.curlStationary) {
         // 绘制器先清空画布并画折页，再把静止半页放到纸背下面，底层其余部分显示目标页。
+        const stationaryX = direction > 0 ? 0 : this.viewW() / 2;
         this.curlContext.save();
         this.curlContext.globalCompositeOperation = 'destination-over';
-        this.curlContext.drawImage(this.curlStationary, direction > 0 ? 0 : this.viewW() / 2,
-          0, this.viewW() / 2, this.viewH());
+        this.curlContext.drawImage(this.curlStationary, stationaryX, 0, this.viewW() / 2, this.viewH());
+        this.curlContext.fillStyle = this.paperColor;
+        this.curlContext.fillRect(stationaryX, 0, this.viewW() / 2, this.viewH());
         this.curlContext.restore();
       }
     } else {
       this.curlPainter.draw(this.curlContext, this.curlFront, this.curlBack,
-        this.viewW(), this.viewH(), this.turnProgress(), direction, false, this.darkMode);
+        this.viewW(), this.viewH(), this.turnProgress(), direction, false, this.darkMode, 0, 0, this.paperColor);
     }
   }
 

@@ -10,7 +10,7 @@ const draws = [];
 const stationaryDraws = [];
 const sandbox = vm.createContext({ console, setTimeout, clearTimeout, setInterval, clearInterval,
   CanvasRenderingContext2D: class {
-    clearRect() {} save() {} restore() {}
+    clearRect() {} fillRect() {} save() {} restore() {}
     drawImage(...args) { stationaryDraws.push({args, operation: this.globalCompositeOperation}); }
   }, RenderingContextSettings: class {},
   ReaderPageCurlPainter: class { draw(...args) { draws.push(['simulation', ...args]); } },

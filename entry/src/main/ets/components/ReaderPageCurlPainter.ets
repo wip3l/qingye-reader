@@ -43,7 +43,7 @@ export class ReaderPageCurlPainter {
   draw(context: CanvasRenderingContext2D, front: image.PixelMap, back: image.PixelMap,
     canvasWidth: number, canvasHeight: number, progress: number, direction: number,
     doublePage: boolean, darkMode: boolean, doubleLeafWidth: number = 0,
-    doubleRightOrigin: number = 0): void {
+    doubleRightOrigin: number = 0, paperColor: string = ''): void {
     const width = Math.max(1, canvasWidth);
     const height = Math.max(1, canvasHeight);
     const leafWidth = doublePage && doubleLeafWidth > 0 ? Math.min(width, doubleLeafWidth) :
@@ -56,6 +56,10 @@ export class ReaderPageCurlPainter {
     context.save();
     if (safeProgress <= 0.001) {
       const startX = doublePage && direction > 0 ? rightOrigin : 0;
+      if (paperColor) {
+        context.fillStyle = paperColor;
+        context.fillRect(startX, 0, leafWidth, height);
+      }
       context.drawImage(front, startX, 0, leafWidth, height);
       context.restore();
       return;
@@ -65,11 +69,11 @@ export class ReaderPageCurlPainter {
       darkMode);
     const triangles = this.buildTriangles(width, height, leafWidth, rightOrigin, safeProgress, direction,
       doublePage);
-    this.drawFace(context, triangles, front, leafWidth, height, 1, darkMode, false);
+    this.drawFace(context, triangles, front, leafWidth, height, 1, darkMode, false, paperColor);
     // The landed double-page mesh reverses its horizontal axis when the right leaf moves onto
     // the left side (and vice versa). Pre-mirror only the paper-back texture so the composed
     // preview keeps its normal reading orientation throughout the turn.
-    this.drawFace(context, triangles, back, leafWidth, height, -1, darkMode, doublePage);
+    this.drawFace(context, triangles, back, leafWidth, height, -1, darkMode, doublePage, paperColor);
     context.restore();
   }
 
@@ -189,13 +193,14 @@ export class ReaderPageCurlPainter {
   }
 
   private drawFace(context: CanvasRenderingContext2D, triangles: CurlTriangle[], texture: image.PixelMap,
-    leafWidth: number, leafHeight: number, face: number, darkMode: boolean, flipTextureX: boolean): void {
+    leafWidth: number, leafHeight: number, face: number, darkMode: boolean, flipTextureX: boolean,
+    paperColor: string): void {
     for (const triangle of triangles) {
       if (triangle.face !== face) continue;
       const settle = Math.max(0, Math.min(1, -triangle.shade));
       const physicalShade = Math.max(0, triangle.shade);
       this.drawTexturedTriangle(context, triangle, texture, leafWidth, leafHeight,
-        face < 0 ? 0.83 + settle * 0.17 : 1, flipTextureX);
+        face < 0 ? 0.83 + settle * 0.17 : 1, flipTextureX, paperColor);
       const alpha = face < 0 ? (0.13 + physicalShade * 0.26) * (1 - settle) : physicalShade * 0.12;
       if (alpha > 0.01) {
         this.fillTriangle(context, triangle, darkMode ? '#05080B' : (face < 0 ? '#D8D2C6' : '#5D554A'),
@@ -206,7 +211,7 @@ export class ReaderPageCurlPainter {
 
   private drawTexturedTriangle(context: CanvasRenderingContext2D, triangle: CurlTriangle,
     texture: image.PixelMap, leafWidth: number, leafHeight: number, alpha: number,
-    flipTextureX: boolean): void {
+    flipTextureX: boolean, paperColor: string): void {
     const sourceX0 = flipTextureX ? leafWidth - triangle.sx0 : triangle.sx0;
     const sourceX1 = flipTextureX ? leafWidth - triangle.sx1 : triangle.sx1;
     const sourceX2 = flipTextureX ? leafWidth - triangle.sx2 : triangle.sx2;
@@ -229,6 +234,12 @@ export class ReaderPageCurlPainter {
     context.save();
     this.trianglePath(context, triangle);
     context.clip();
+    if (paperColor) {
+      // 带透明区域的贴图（漫画跟随主题时的留白）先垫纸色，否则卷起的纸露出下面的目标页。
+      context.globalAlpha = alpha;
+      context.fillStyle = paperColor;
+      context.fill();
+    }
     context.transform(a, b, c, d, e, f);
     context.globalAlpha = alpha;
     context.drawImage(texture, 0, 0, leafWidth, leafHeight);
