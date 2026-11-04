@@ -627,6 +627,9 @@ struct ReadBookPage {
   private readerPageCurlFrontLease: ReaderPageTextureLease | null = null;
   private readerPageTextureCache: ReaderPageTextureCache = new ReaderPageTextureCache();
   private readerPageTextureWarmSerial: number = 0;
+  // Settled-page snapshots RenderService is currently producing, by texture key. A turn that starts meanwhile
+  // waits for the one in flight instead of asking for a second full offscreen render of the same page.
+  private readerPageTextureWarmInflight: Map<string, Promise<void>> = new Map<string, Promise<void>>();
   private readerPageCurlBack: image.PixelMap | null = null;
   private readerPageCurlSnapshotHeight: number = 0;
   // Published with the captured textures; animation frames must not resolve or clone theme data.
@@ -18176,10 +18179,16 @@ struct ReadBookPage {
     try {
       await this.saveReadingProgress(true);
       this.readerExitProgressSaved = true;
-      CloudSyncCoordinator.syncAutomatically(
-        getContext(this), CloudSyncCoordinator.TRIGGER_CHANGE).catch((error: Error) => {
-        console.warn('离开阅读页同步进度失败:', error);
-      });
+      // The sync's database and network callbacks land on the UI thread. Started here they fall into the cover
+      // close and the return transition; the shelf motion deadline already covers both.
+      const syncContext = getContext(this);
+      const syncDelay = Math.max(0, (AppStorage.get<number>(SHELF_BOOK_MOTION_UNTIL_KEY) || 0) - Date.now());
+      setTimeout((): void => {
+        CloudSyncCoordinator.syncAutomatically(syncContext, CloudSyncCoordinator.TRIGGER_CHANGE)
+          .catch((error: Error) => {
+            console.warn('离开阅读页同步进度失败:', error);
+          });
+      }, syncDelay);
     } catch (e) {
       console.error('返回阅读页时保存进度失败:', e);
     }
@@ -20206,30 +20215,30 @@ struct ReadBookPage {
       const bothMissing = !right && !left;
       right?.release(); left?.release();
       if (bothMissing) {
-        await ReaderRenderFrame.wait(this.getUIContext());
-        const valid = (): boolean => this.readerPageVisible && serial === this.readerPageTextureWarmSerial &&
-          rightKey === this.readerSettledTextureKey(1) && leftKey === this.readerSettledTextureKey(-1) &&
-          this.pageSlideDirection === 0 && !this.isPageTurning && !this.isTtsSpeaking && !this.hasReaderTextSelection();
-        if (!valid()) return;
-        let pair: ReaderPageTexturePair | null = null;
-        try {
-          pair = await ReaderPageTexturePair.capture((): Promise<image.PixelMap> =>
-            this.getUIContext().getComponentSnapshot().get(this.currentReaderSnapshotComponentId(), {
-              scale: this.readerPageCurlSnapshotScale(), waitUntilRenderFinished: true
-            }), (bitmap: image.PixelMap, direction: number): Promise<void> =>
-            this.cropReaderPageCurlFrontToTurningLeaf(bitmap, direction));
-          const rightInfo = await pair.right.getImageInfo();
-          const leftInfo = await pair.left.getImageInfo();
-          if (!valid()) { pair.release(); return; }
-          this.readerPageTextureCache.put(rightKey, pair.right,
-            rightInfo.size.width * rightInfo.size.height * 4).release();
-          this.readerPageTextureCache.put(leftKey, pair.left,
-            leftInfo.size.width * leftInfo.size.height * 4).release();
-          return;
-        } catch (_) {
-          pair?.release();
-          // Snapshot cloning is optional. Keep the original independent-capture path if the platform rejects it.
+        const inflight = this.readerPageTextureWarmInflight.get(rightKey) ||
+          this.readerPageTextureWarmInflight.get(leftKey);
+        if (inflight) {
+          await inflight;
+        } else {
+          await ReaderRenderFrame.wait(this.getUIContext());
+          const valid = (): boolean => this.readerPageVisible && serial === this.readerPageTextureWarmSerial &&
+            rightKey === this.readerSettledTextureKey(1) && leftKey === this.readerSettledTextureKey(-1) &&
+            this.pageSlideDirection === 0 && !this.isPageTurning && !this.isTtsSpeaking && !this.hasReaderTextSelection();
           if (!valid()) return;
+          const task = this.captureSettledPageTexturePair(rightKey, leftKey, this.readerPageTextureCache.generation);
+          this.readerPageTextureWarmInflight.set(rightKey, task);
+          this.readerPageTextureWarmInflight.set(leftKey, task);
+          let cloned = false;
+          try {
+            await task;
+            cloned = true;
+          } catch (_) {
+            // Snapshot cloning is optional. Keep the original independent-capture path if the platform rejects it.
+          } finally {
+            if (this.readerPageTextureWarmInflight.get(rightKey) === task) this.readerPageTextureWarmInflight.delete(rightKey);
+            if (this.readerPageTextureWarmInflight.get(leftKey) === task) this.readerPageTextureWarmInflight.delete(leftKey);
+          }
+          if (cloned || !valid()) return;
         }
       }
     }
@@ -20237,23 +20246,76 @@ struct ReadBookPage {
       const key = this.readerSettledTextureKey(direction);
       const existing = this.readerPageTextureCache.acquire(key);
       if (existing) { existing.release(); continue; }
+      const inflight = this.readerPageTextureWarmInflight.get(key);
+      if (inflight) { await inflight; continue; }
       await ReaderRenderFrame.wait(this.getUIContext());
       const valid = (): boolean => this.readerPageVisible && serial === this.readerPageTextureWarmSerial &&
         key === this.readerSettledTextureKey(direction) && this.pageSlideDirection === 0 && !this.isPageTurning;
       if (!valid()) return;
-      const bitmap = await this.getUIContext().getComponentSnapshot().get(this.currentReaderSnapshotComponentId(), {
-        scale: this.readerPageCurlSnapshotScale(), waitUntilRenderFinished: true
-      });
+      const task = this.captureSettledPageTexture(key, direction, this.readerPageTextureCache.generation);
+      this.readerPageTextureWarmInflight.set(key, task);
       try {
-        if (!valid()) { bitmap.release().catch((): void => {}); return; }
-        if (this.isLandscapeDoublePageActive()) await this.cropReaderPageCurlFrontToTurningLeaf(bitmap, direction);
-        const info = await bitmap.getImageInfo();
-        if (!valid()) { bitmap.release().catch((): void => {}); return; }
-        this.readerPageTextureCache.put(key, bitmap, info.size.width * info.size.height * 4).release();
-      } catch (error) {
-        bitmap.release().catch((): void => {});
-        throw error as Error;
+        await task;
+      } finally {
+        if (this.readerPageTextureWarmInflight.get(key) === task) this.readerPageTextureWarmInflight.delete(key);
       }
+    }
+  }
+
+  /**
+   * A warm snapshot stays valid as long as the settled page it shows is still the settled page: a turn that began
+   * while RenderService was rendering it does not change that page, and discarding the result there only made the
+   * turn request the very same snapshot again.
+   */
+  private settledPageTextureStillWanted(key: string, direction: number, generation: number): boolean {
+    return this.readerPageVisible && this.readerPageTextureCache.generation === generation &&
+      key === this.readerSettledTextureKey(direction);
+  }
+
+  private async captureSettledPageTexture(key: string, direction: number, generation: number): Promise<void> {
+    const bitmap = await this.getUIContext().getComponentSnapshot().get(this.currentReaderSnapshotComponentId(), {
+      scale: this.readerPageCurlSnapshotScale(), waitUntilRenderFinished: true
+    });
+    try {
+      if (!this.settledPageTextureStillWanted(key, direction, generation)) {
+        bitmap.release().catch((): void => {});
+        return;
+      }
+      if (this.isLandscapeDoublePageActive()) await this.cropReaderPageCurlFrontToTurningLeaf(bitmap, direction);
+      const info = await bitmap.getImageInfo();
+      if (!this.settledPageTextureStillWanted(key, direction, generation)) {
+        bitmap.release().catch((): void => {});
+        return;
+      }
+      this.readerPageTextureCache.put(key, bitmap, info.size.width * info.size.height * 4).release();
+    } catch (error) {
+      bitmap.release().catch((): void => {});
+      throw error as Error;
+    }
+  }
+
+  /** Double page: one snapshot cloned and cropped into both leaves. Rejects when the platform refuses to clone. */
+  private async captureSettledPageTexturePair(rightKey: string, leftKey: string, generation: number): Promise<void> {
+    const pair = await ReaderPageTexturePair.capture((): Promise<image.PixelMap> =>
+      this.getUIContext().getComponentSnapshot().get(this.currentReaderSnapshotComponentId(), {
+        scale: this.readerPageCurlSnapshotScale(), waitUntilRenderFinished: true
+      }), (bitmap: image.PixelMap, direction: number): Promise<void> =>
+      this.cropReaderPageCurlFrontToTurningLeaf(bitmap, direction));
+    try {
+      const rightInfo = await pair.right.getImageInfo();
+      const leftInfo = await pair.left.getImageInfo();
+      if (!this.settledPageTextureStillWanted(rightKey, 1, generation) ||
+        !this.settledPageTextureStillWanted(leftKey, -1, generation)) {
+        pair.release();
+        return;
+      }
+      this.readerPageTextureCache.put(rightKey, pair.right,
+        rightInfo.size.width * rightInfo.size.height * 4).release();
+      this.readerPageTextureCache.put(leftKey, pair.left,
+        leftInfo.size.width * leftInfo.size.height * 4).release();
+    } catch (error) {
+      pair.release();
+      throw error as Error;
     }
   }
 
@@ -20339,7 +20401,18 @@ struct ReadBookPage {
       await sleepMs(20);
     }
     const textureKey = this.readerSettledTextureKey(this.pageSlideDirection);
-    const frontLease = this.readerPageTextureCache.acquire(textureKey);
+    let frontLease = this.readerPageTextureCache.acquire(textureKey);
+    if (!frontLease) {
+      // The warm-up may already have this page's snapshot in RenderService. Wait for it instead of adding a second
+      // full offscreen render to the start of a rapid turn.
+      const inflight = this.readerPageTextureWarmInflight.get(textureKey);
+      if (inflight) {
+        await inflight.catch((): void => {});
+        if (serial !== this.readerPageCurlCaptureSerial || key !== this.readerPageCurlCaptureKey ||
+          this.pageSlideDirection === 0) return;
+        frontLease = this.readerPageTextureCache.acquire(textureKey);
+      }
+    }
     const cachedFront = frontLease !== null;
     if (!cachedFront || this.readerPageCurlNeedsBackSnapshot()) await ReaderRenderFrame.wait(this.getUIContext());
     if (serial !== this.readerPageCurlCaptureSerial || key !== this.readerPageCurlCaptureKey ||

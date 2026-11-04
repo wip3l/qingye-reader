@@ -43,6 +43,8 @@ export class ReaderPageTextureCache {
   private entries: Map<string, ReaderPageTextureEntry> = new Map<string, ReaderPageTextureEntry>();
   private bytes: number = 0;
   private readonly maxBytes: number = 24 * 1024 * 1024;
+  /** Bumped by clear(). A capture started before an invalidation must not store its result afterwards. */
+  generation: number = 0;
 
   acquire(key: string): ReaderPageTextureLease | null {
     const entry = this.entries.get(key);
@@ -70,6 +72,7 @@ export class ReaderPageTextureCache {
   }
 
   clear(): void {
+    this.generation++;
     for (const entry of this.entries.values()) { entry.retired = true; entry.releaseIfUnused(); }
     this.entries.clear();
   }

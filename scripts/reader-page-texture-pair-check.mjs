@@ -41,8 +41,14 @@ console.log('PASS: one capture for both leaves, independent crops and complete f
 
 // Execute the real reader warm-up transaction: cancellation must release maps instead of caching stale leaves.
 const readerSource = fs.readFileSync(new URL('../entry/src/main/ets/pages/ReadBook.ets', import.meta.url), 'utf8');
-const methodStart = readerSource.indexOf('  async warmReaderPageTexture(');
-const warmMethod = readerSource.slice(methodStart, readerSource.indexOf('\n  }', methodStart) + 4);
+function readerMethod(signature) {
+  const start = readerSource.indexOf(signature);
+  assert(start >= 0, `ReadBook.ets no longer defines ${signature.trim()}`);
+  return readerSource.slice(start, readerSource.indexOf('\n  }', start) + 4);
+}
+const warmMethod = ['  async warmReaderPageTexture(', '  private settledPageTextureStillWanted(',
+  '  private async captureSettledPageTexture(', '  private async captureSettledPageTexturePair(']
+  .map(readerMethod).join('\n');
 const Cache = vm.runInNewContext(stripTypeScriptTypes(fs.readFileSync(
   new URL('../entry/src/main/ets/core/reader/ReaderPageTextureCache.ets', import.meta.url), 'utf8')
   .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')) + '\nReaderPageTextureCache');
@@ -55,6 +61,7 @@ function readerFixture() {
     usesReaderPageCurlCanvas: () => true, pageSlideDirection: 0, isPageTurning: false, isTtsSpeaking: false,
     hasReaderTextSelection: () => false, isLandscapeDoublePageActive: () => true,
     readerSettledTextureKey: direction => `leaf-${direction}`, readerPageTextureWarmSerial: 1,
+    readerPageTextureWarmInflight: new Map(),
     readerPageTextureCache: new Cache(), readerPageCurlSnapshotScale: () => 0.75,
     currentReaderSnapshotComponentId: () => 'current', cropReaderPageCurlFrontToTurningLeaf: crop,
     getUIContext: () => ({ getComponentSnapshot: () => ({ get: async () => {
@@ -78,9 +85,41 @@ preparedRight.release(); preparedLeft.release(); warm.readerPageTextureCache.cle
 assert(bitmaps.slice(warmStart).every(target => target.releases === 1));
 const stale = readerFixture(); const staleStart = bitmaps.length;
 stale.getUIContext = () => ({ getComponentSnapshot: () => ({ get: async () => {
-  const map = nativeBitmap(); stale.readerPageTextureWarmSerial++; return map;
+  const map = nativeBitmap(); stale.readerPageTextureCache.clear(); return map;
 } }) });
 await stale.warmReaderPageTexture(1);
 assert.equal(stale.readerPageTextureCache.acquire('leaf-1'), null);
 assert(bitmaps.slice(staleStart).every(target => target.releases === 1), 'late captures cannot leak or replace live leaves');
-console.log('PASS: paired reader warm-up, stale capture cleanup and cache ownership transfer');
+assert.equal(stale.readerPageTextureWarmInflight.size, 0, 'finished captures leave the in-flight table');
+
+// A turn that starts while RenderService is still rendering the warm snapshot does not change the settled page:
+// the result is kept for that turn instead of being thrown away and captured a second time.
+const turning = readerFixture(); const turningStart = bitmaps.length;
+turning.getUIContext = () => ({ getComponentSnapshot: () => ({ get: async () => {
+  const map = nativeBitmap(); turning.pageSlideDirection = 1; turning.isPageTurning = true; return map;
+} }) });
+await turning.warmReaderPageTexture(1);
+const keptRight = turning.readerPageTextureCache.acquire('leaf-1');
+const keptLeft = turning.readerPageTextureCache.acquire('leaf--1');
+assert(keptRight && keptLeft, 'a turn starting during the warm snapshot keeps both leaves');
+keptRight.release(); keptLeft.release(); turning.readerPageTextureCache.clear();
+assert(bitmaps.slice(turningStart).every(target => target.releases === 1));
+
+// A second warm-up (or a turn) for the same page waits for the snapshot already in flight.
+const shared = readerFixture(); let pendingGets = 0; let resolveGet = null;
+shared.getUIContext = () => ({ getComponentSnapshot: () => ({ get: () => {
+  pendingGets++; return new Promise(resolve => { resolveGet = () => resolve(nativeBitmap()); });
+} }) });
+const firstWarm = shared.warmReaderPageTexture(1);
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(shared.readerPageTextureWarmInflight.size, 2, 'both leaf keys point at the one in-flight snapshot');
+shared.readerPageTextureWarmSerial = 2;
+const secondWarm = shared.warmReaderPageTexture(2);
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(pendingGets, 1, 'no second RenderService snapshot while one is in flight');
+resolveGet(); await Promise.all([firstWarm, secondWarm]);
+assert.equal(pendingGets, 1);
+assert.equal(shared.readerPageTextureWarmInflight.size, 0);
+const sharedRight = shared.readerPageTextureCache.acquire('leaf-1');
+assert(sharedRight, 'the shared snapshot lands in the cache once'); sharedRight.release();
+console.log('PASS: paired reader warm-up, invalidated capture cleanup, kept mid-turn result and in-flight sharing');
