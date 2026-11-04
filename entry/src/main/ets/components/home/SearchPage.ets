@@ -608,10 +608,7 @@ export struct SearchPage {
                 }
 
                 Row() {
-                  this.searchHeaderCircleButton(this.isSearching ? $r('sys.symbol.xmark') : $r('sys.symbol.magnifyingglass'),
-                    false, this.isSearching ? '停止搜索' : '搜索', () => {
-                      this.onSearchButtonTap();
-                    })
+                  this.searchActionButton()
                 }
                 .margin({ left: 10 })
               }
@@ -877,6 +874,29 @@ export struct SearchPage {
   }
 
   @Builder
+  searchActionButton() {
+    ImmersiveMaterialSurface({
+      surfaceWidth: SearchPage.HEADER_CONTROL_SIZE,
+      surfaceHeight: SearchPage.HEADER_CONTROL_SIZE,
+      darkMode: this.appDarkMode,
+      fallbackColor: this.cardColor(),
+      glowColor: this.accentGlowColor()
+    }) {
+      Stack() {
+        // 直接在 UI 更新闭包中读取状态，避免多参数 Builder 捕获初始图标与按钮含义。
+        SymbolGlyph(this.isSearching ? $r('sys.symbol.square_fill') : $r('sys.symbol.magnifyingglass'))
+          .fontSize(this.isSearching ? 16 : 20)
+          .fontColor([this.primaryTextColor()])
+          .symbolEffect(new ReplaceSymbolEffect(EffectScope.WHOLE), this.isSearching ? 1 : 0)
+      }
+      .width('100%')
+      .height('100%')
+      .accessibilityText(this.isSearching ? '停止搜索' : '搜索')
+      .onClick(() => this.onSearchButtonTap())
+    }
+  }
+
+  @Builder
   searchHeaderCircleButton(icon: Resource, active: boolean, label: string, onTap: () => void) {
     ImmersiveMaterialSurface({
       surfaceWidth: SearchPage.HEADER_CONTROL_SIZE,
@@ -888,8 +908,7 @@ export struct SearchPage {
       Stack() {
         SymbolGlyph(icon)
           .fontSize(20)
-          .fontColor([this.isSearching && label === '停止搜索' ? ThemeRuntime.dangerColor(this.appDarkMode) :
-            (active ? this.accentColor() : this.primaryTextColor())])
+          .fontColor([active ? this.accentColor() : this.primaryTextColor()])
       }
       .width('100%')
       .height('100%')
