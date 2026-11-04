@@ -1,6 +1,6 @@
 import { HttpTTS } from '@legado/sourceengine';
 import { TtsVoiceInfo } from '../../account/AccountCommerceModels';
-import { TtsVoiceOption } from '../../utils/SystemTtsReader';
+import { TtsVoiceOption } from '../../utils/TtsVoiceModels';
 import { TtsVoiceCatalog } from '../../utils/TtsVoiceCatalog';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { ImmersiveBackButton } from '../ImmersiveBackButton';

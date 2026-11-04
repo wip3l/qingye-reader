@@ -24,8 +24,8 @@ import { SmartControlKey } from '../utils/SmartControlKey';
 import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKeyboard';
 import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';
 import { ReaderKeyboardCaptureDialog } from '../components/reader/ReaderKeyboardCaptureDialog';
-import { avSession } from '@kit.AVSessionKit';
-import { motion } from '@kit.MultimodalAwarenessKit';
+import lazy { avSession } from '@kit.AVSessionKit';
+import lazy { motion } from '@kit.MultimodalAwarenessKit';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import pasteboard from '@ohos.pasteboard';
@@ -36,7 +36,6 @@ import deviceInfo from '@ohos.deviceInfo';
 import display from '@ohos.display';
 import Animator, { AnimatorResult } from '@ohos.animator';
 import { HdsTabs } from '@kit.UIDesignKit';
-import { ARView } from '@kit.AREngine';
 import { AccountCommerceApi } from '../account/AccountCommerceApi';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';
@@ -46,7 +45,7 @@ import { ReadBookEngine } from '../core/book/ReadBookEngine';
 import { ReaderImageMarker } from '../core/book/ReaderImageMarker';
 import { readStatsTracker } from '../core/stats/ReadStatsTracker';
 import { LocalBookService } from '../core/book/LocalBookService';
-import { WebDavBookService } from '../webdav/WebDavBookService';
+import lazy { WebDavBookService } from '../webdav/WebDavBookService';
 import { BookSourceRuntimeSnapshotStore, BookSourceSettingValue } from '../core/book/BookSourceRuntimeSnapshot';
 import { ReaderInteractionProviderRegistry } from '../core/book/ReaderInteractionProvider';
 import { ReaderCommentWebTheme } from '../core/reader/ReaderCommentWebTheme';
@@ -55,7 +54,10 @@ import { NativeCommentPageView } from '../components/NativeCommentPageView';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { RecentReadShortcut } from '../utils/RecentReadShortcut';
 import { RecentReadCardUpdater } from '../utils/RecentReadCardUpdater';
-import { SystemTtsReader, TtsChunk, TtsVoiceOption } from '../utils/SystemTtsReader';
+// 本文件 lazy 导入的模块开书时用不到（朗读、眼动翻页、WebDAV、媒体会话、握姿感知），第一次用到时才同步加载，
+// 免得每次进程内第一次开书都替它们付冷执行。打开、翻页路径上要用的模块不要改成 lazy。
+import lazy { SystemTtsReader, TtsChunk } from '../utils/SystemTtsReader';
+import { TtsCustomVoices, TtsVoiceOption } from '../utils/TtsVoiceModels';
 import { MimoStore } from '../utils/mimo/MimoStore';
 import { MimoVoiceChoice } from '../core/mimo/MimoVoicePolicy';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
@@ -118,10 +120,11 @@ import { ReaderV2RegexBubbleCapImages } from '../components/reader/ReaderV2Regex
 import { ReaderV2GestureRouter, ReaderV2TapResult } from '../core/reader/ReaderV2Interaction';
 import { ReaderOpenTrace } from '../utils/ReaderOpenTrace';
 import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
-import { ReaderEyeTurnCoordinator, ReaderEyeTurnViewState } from '../core/reader/ReaderEyeTurnCoordinator';
+import lazy { ReaderEyeTurnCoordinator } from '../core/reader/ReaderEyeTurnCoordinator';
+import { ReaderEyeTurnViewState } from '../core/reader/ReaderEyeTurnViewState';
 import { ReaderEyeCalibrationPanel, ReaderEyeTurnCalibrationSettingItem } from '../components/reader/ReaderEyeTurnViews';
 import { ReaderFullTextCacheController } from '../core/reader/ReaderFullTextCacheController';
-import { ReaderTtsMediaInfo, ReaderTtsMediaSession } from '../core/reader/ReaderTtsMediaSession';
+import lazy { ReaderTtsMediaInfo, ReaderTtsMediaSession } from '../core/reader/ReaderTtsMediaSession';
 import { TtsVoiceCatalog } from '../utils/TtsVoiceCatalog';
 import { ReaderTtsQuickSettingsPanel, ReaderTtsVoicePickerPanel } from '../components/reader/ReaderTtsSettingsPanels';
 import { ReaderCustomThemeEditor } from '../components/reader/ReaderCustomThemeEditor';
@@ -556,7 +559,8 @@ struct ReadBookPage {
   /** 条漫当前缩放倍数，按屏翻动时换算成列表内的滚动距离。 */
   private readerComicZoomScale: number = 1;
   private readerComicPagedController: ReaderComicPagedController = new ReaderComicPagedController();
-  private ttsReader: SystemTtsReader = new SystemTtsReader();
+  // 第一次朗读时才由 ttsEngine() 创建；没创建过就不可能在读，所以“是否在读/暂停”都写成 this.ttsReader?.。
+  private ttsReader: SystemTtsReader | null = null;
   private ttsAutoContinue: boolean = false;
   private ttsReadToken: number = 0;
   private ttsChapterSwitching: boolean = false;
@@ -962,6 +966,7 @@ struct ReadBookPage {
   @State ttsCloudVoices: TtsVoiceInfo[] = [];
   @State ttsSelectedVoiceKey: string = '';
   @State ttsVoicesLoading: boolean = false;
+  private ttsVoicesListed: boolean = false;
   @State showTtsVoiceDropdown: boolean = false;
   @State fullTextCaching: boolean = false;
   @State fullTextCacheDone: number = 0;
@@ -1153,7 +1158,9 @@ struct ReadBookPage {
       ]);
       this.readerReplaceRules = initialReplaceRules;
       ReaderOpenTrace.mark(this.bookUrl, 'reader-settings-ready', `replaceRules=${initialReplaceRules.length}`);
-      this.loadTtsSettingsAndVoices();
+      // 开书只读朗读设置。音色列表要枚举系统音色、拉云端目录，还会加载整个朗读引擎，留到打开朗读面板、
+      // 设置面板或开始朗读时再取。
+      this.loadTtsSettingsAndVoices(false);
       if (this.bookUrl) {
         await this.loadBook();
         this.loadBookmarks().catch((error: Error) => {
@@ -1243,7 +1250,7 @@ struct ReadBookPage {
     }
     this.syncTtsFocusAfterResumeLater(0);
     this.syncTtsFocusAfterResumeLater(180);
-    this.eyeTurn().startIfReady();
+    this.eyeTurnCoordinator?.startIfReady();
   }
 
   onGlobalTtsActiveChanged(): void {
@@ -1424,7 +1431,7 @@ struct ReadBookPage {
     this.readerComicModelRequest++;
     this.syncReaderInfoBarClock();
     readStatsTracker.setReadingActive('');
-    this.eyeTurn().release('reader disappear release');
+    this.eyeTurnCoordinator?.release('reader disappear release');
     this.setReaderTextSelectionActive(false);
     this.cancelReaderPaginationWork(true);
     this.resetReaderPageCurl();
@@ -1468,7 +1475,7 @@ struct ReadBookPage {
     this.readerPageDetachedFromRoute = true;
     if (!ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId)) {
       this.stopTtsReading();
-      this.ttsReader.shutdown();
+      this.ttsReader?.shutdown();
     } else {
       // This page keeps reading aloud after it leaves the route stack. Without a retained write permission every
       // later sentence/chapter save was dropped and reopening the book returned to the exit position.
@@ -1539,7 +1546,7 @@ struct ReadBookPage {
     this.cancelReaderContinuousMetricsTimers();
     this.readerContinuousPointerDown = false;
     this.cancelReaderQuickJump();
-    if (!this.releaseTtsCache && this.book && (this.isTtsSpeaking || this.isTtsPaused || this.ttsReader.isSpeaking())) {
+    if (!this.releaseTtsCache && this.book && (this.isTtsSpeaking || this.isTtsPaused || this.ttsReader?.isSpeaking())) {
       this.releaseTtsCache = ReaderCacheCoordinator.retainBook(this.book.bookUrl);
     }
     this.releaseReadingCache?.(); this.releaseReadingCache = null;
@@ -1553,7 +1560,7 @@ struct ReadBookPage {
     this.readerComicModelRequest++;
     this.syncReaderInfoBarClock();
     readStatsTracker.setReadingActive('');
-    this.eyeTurn().release('reader background release');
+    this.eyeTurnCoordinator?.release('reader background release');
     this.setReaderTextSelectionActive(false);
     // Capture the authoritative visible page before pausing background workers. Clearing the retained V2
     // document here made canSaveReadingProgress() reject the checkpoint, then forced a full repagination on
@@ -5118,7 +5125,7 @@ struct ReadBookPage {
 
   shouldShowReaderSessionQuickActions(): boolean {
     return !this.readerAutoScrollActive && (this.isReaderComicModeActive() ||
-      (!this.isTtsSpeaking && !this.ttsReader.isSpeaking() && !this.globalTtsActive));
+      (!this.isTtsSpeaking && !this.ttsReader?.isSpeaking() && !this.globalTtsActive));
   }
 
   shouldShowReaderAutoScrollCapsule(): boolean {
@@ -5187,14 +5194,14 @@ struct ReadBookPage {
         }
       }
       await ReaderTtsFloatingSession.pause();
-      if (this.ttsReader.isSpeaking() && !this.ttsReader.isPaused()) {
-        await this.ttsReader.pause();
-        this.isTtsPaused = this.ttsReader.isPaused();
+      if (this.ttsReader?.isSpeaking() && !this.ttsReader?.isPaused()) {
+        await this.ttsReader?.pause();
+        this.isTtsPaused = this.ttsReader?.isPaused() === true;
         this.updateTtsFloatingSession();
       }
       if (request !== this.readerAutoScrollRequest || !this.readerPageVisible) return;
       if ((this.globalTtsActive && !this.globalTtsPaused) ||
-        (this.ttsReader.isSpeaking() && !this.ttsReader.isPaused())) {
+        (this.ttsReader?.isSpeaking() && !this.ttsReader?.isPaused())) {
         HdsFeedback.showToast('请先暂停朗读后再启动自动滚动');
         return;
       }
@@ -5442,7 +5449,7 @@ struct ReadBookPage {
         }
       })
 
-      if (this.isTtsSpeaking || this.ttsReader.isSpeaking()) {
+      if (this.isTtsSpeaking || this.ttsReader?.isSpeaking()) {
         Circle()
           .width(9)
           .height(9)
@@ -5477,14 +5484,14 @@ struct ReadBookPage {
       this.showTtsQuickPlayer = true;
     });
     this.loadTtsSettingsAndVoices();
-    if (!this.isTtsSpeaking && !this.ttsReader.isSpeaking()) {
+    if (!this.isTtsSpeaking && !this.ttsReader?.isSpeaking()) {
       await this.startTtsReadingFromCurrentPosition(true);
     }
   }
 
   shouldShowTtsMiniPlayer(): boolean {
     return !this.readerAutoScrollActive && this.showMenu && !this.showTtsQuickPlayer && !this.isReaderComicModeActive() &&
-      (this.isTtsSpeaking || this.ttsReader.isSpeaking()) && !this.shouldBlockReaderInteraction();
+      (this.isTtsSpeaking || this.ttsReader?.isSpeaking() === true) && !this.shouldBlockReaderInteraction();
   }
 
   shouldShowGlobalTtsMiniPlayer(): boolean {
@@ -6472,7 +6479,7 @@ struct ReadBookPage {
     // read on from wherever the reader lands; a paused session simply ends. A session mirrored from the
     // floating player is moved instead of restarted.
     const mirroredTts = this.isMirroringActiveTtsForCurrentBook();
-    const ownTtsActive = !mirroredTts && (this.isTtsSpeaking || this.ttsReader.isSpeaking());
+    const ownTtsActive = !mirroredTts && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
     const resumeTtsAfterSwitch = ownTtsActive && !this.isTtsPaused;
     if (resumeTtsAfterSwitch) {
       this.stopTtsReaderForChapterSwitch();
@@ -6711,7 +6718,7 @@ struct ReadBookPage {
     const sourceChapterIndex = this.currentChapterIndex;
     // 手动越过章节时朗读改从新位置继续，与上下拉切章一致；后台浮窗朗读则移到新位置。
     const mirroredTts = this.isMirroringActiveTtsForCurrentBook();
-    const ownTtsActive = !mirroredTts && (this.isTtsSpeaking || this.ttsReader.isSpeaking());
+    const ownTtsActive = !mirroredTts && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
     const resumeTtsAfterSwitch = ownTtsActive && !this.isTtsPaused;
     if (resumeTtsAfterSwitch) {
       this.stopTtsReaderForChapterSwitch();
@@ -7371,7 +7378,7 @@ struct ReadBookPage {
     // 旧视口下还在排的相邻章节会话作废，下面按新视口重新预排。
     this.adjacentPaginationPreloadSerial++;
     this.previousPaginationPreloadSerial++;
-    this.eyeTurn().refreshForViewport();
+    this.eyeTurnCoordinator?.refreshForViewport();
     AppStorage.setOrCreate<number>('readerLastPageViewWidth', width);
     AppStorage.setOrCreate<number>('readerLastPageViewHeight', height);
     this.paginateContent(this.content);
@@ -8218,7 +8225,7 @@ struct ReadBookPage {
     this.showMenu = true;
   }
 
-  async loadTtsSettingsAndVoices(): Promise<void> {
+  async loadTtsSettingsAndVoices(loadVoices: boolean = true): Promise<void> {
     try {
       const settings = await TtsSettingsStore.load(getContext(this));
       this.applyLoadedTtsSettings(settings);
@@ -8227,7 +8234,7 @@ struct ReadBookPage {
     }
     this.normalizeDefaultTtsVoice();
     this.ttsSelectedVoiceKey = this.currentTtsVoiceKey();
-    this.loadTtsVoices();
+    if (loadVoices) this.loadTtsVoices();
   }
 
   applyLoadedTtsSettings(settings: TtsSettings): void {
@@ -8241,7 +8248,7 @@ struct ReadBookPage {
     this.ttsCustomVoices = settings.customVoices;
     this.ttsCloudVoiceId = settings.cloudVoiceId;
     this.ttsDisabledVoiceKeys = settings.disabledVoiceKeys;
-    this.ttsCustomVoiceOptions = SystemTtsReader.parseCustomVoices(settings.customVoices);
+    this.ttsCustomVoiceOptions = TtsCustomVoices.parse(settings.customVoices);
   }
 
   onTtsAvailabilityChanged(): void {
@@ -8255,7 +8262,7 @@ struct ReadBookPage {
   }
 
   onTtsCustomVoicesChanged(): void {
-    this.ttsCustomVoiceOptions = SystemTtsReader.parseCustomVoices(this.ttsCustomVoices);
+    this.ttsCustomVoiceOptions = TtsCustomVoices.parse(this.ttsCustomVoices);
     this.ttsSelectedVoiceKey = this.currentTtsVoiceKey();
   }
 
@@ -8295,6 +8302,7 @@ struct ReadBookPage {
       return;
     }
     this.ttsVoicesLoading = true;
+    this.ttsVoicesListed = true;
     try {
       const voiceResults = await Promise.all([
         SystemTtsReader.listAvailableVoices(),
@@ -8366,7 +8374,7 @@ struct ReadBookPage {
       return;
     }
     if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);
-    const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader.isSpeaking());
+    const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
     if (shouldResume) {
       this.stopTtsReading();
     }
@@ -8396,7 +8404,7 @@ struct ReadBookPage {
     AppStorage.setOrCreate('globalTtsSpeed', nextSpeed);
     this.scheduleTtsSpeedSettingsSave();
     this.updateTtsFloatingSession();
-    if (this.isTtsSpeaking || this.ttsReader.isSpeaking()) {
+    if (this.isTtsSpeaking || this.ttsReader?.isSpeaking()) {
       this.scheduleTtsSpeedAvSessionUpdate();
       this.scheduleActiveTtsSpeedRestart();
     }
@@ -8409,8 +8417,8 @@ struct ReadBookPage {
     const serial = ++this.ttsSpeedRestartSerial;
     this.ttsSpeedRestartTimerId = setTimeout(() => {
       this.ttsSpeedRestartTimerId = -1;
-      if (serial !== this.ttsSpeedRestartSerial || this.isTtsPaused || this.ttsReader.isPaused() ||
-        (!this.isTtsSpeaking && !this.ttsReader.isSpeaking())) {
+      if (serial !== this.ttsSpeedRestartSerial || this.isTtsPaused || this.ttsReader?.isPaused() ||
+        (!this.isTtsSpeaking && !this.ttsReader?.isSpeaking())) {
         return;
       }
       const focusStart = this.readerV2TtsSourceStart >= 0 ? this.readerV2TtsSourceStart :
@@ -8418,7 +8426,7 @@ struct ReadBookPage {
           this.getCurrentPageStartOffset());
       this.ttsAutoContinue = false;
       this.ttsReadToken++;
-      this.ttsReader.stop();
+      this.ttsReader?.stop();
       this.startTtsReadingFromCurrentPosition(false, false, -1, focusStart, true).catch((error: Error) => {
         if (serial !== this.ttsSpeedRestartSerial) return;
         console.warn('实时应用朗读倍速失败:', error);
@@ -8443,7 +8451,7 @@ struct ReadBookPage {
     }
     this.ttsSpeedAvSessionTimerId = setTimeout(() => {
       this.ttsSpeedAvSessionTimerId = -1;
-      if (this.isTtsSpeaking || this.ttsReader.isSpeaking()) {
+      if (this.isTtsSpeaking || this.ttsReader?.isSpeaking()) {
         this.ttsMediaSession().updatePlaybackState(this.ttsMediaSession().playbackState()).catch((e: Error) => {
           console.warn('更新朗读倍速媒体状态失败:', e);
         });
@@ -8501,7 +8509,7 @@ struct ReadBookPage {
       return;
     }
     if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);
-    const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader.isSpeaking());
+    const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
     if (shouldResume) {
       this.stopTtsReading();
     }
@@ -8535,7 +8543,7 @@ struct ReadBookPage {
       return;
     }
     if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);
-    const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader.isSpeaking());
+    const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
     if (shouldResume) {
       this.stopTtsReading();
     }
@@ -8601,7 +8609,7 @@ struct ReadBookPage {
 
   applyMimoPresetChoice(choice: MimoVoiceChoice): void {
     if (!MimoStore.isConfigured()) { this.getUIContext().getRouter().pushUrl({ url: 'pages/MimoSettings' }); return; }
-    const shouldResume = this.isTtsSpeaking || this.ttsReader.isSpeaking();
+    const shouldResume = this.isTtsSpeaking || this.ttsReader?.isSpeaking();
     if (shouldResume) this.stopTtsReading();
     try {
       if (!MimoStore.selectVoice(choice, this.bookUrl)) { this.getUIContext().getRouter().pushUrl({ url: 'pages/MimoSettings' }); return; }
@@ -8618,7 +8626,7 @@ struct ReadBookPage {
     const settings = MimoStore.load();
     const nextMulti = multi && settings.analysisAvailable;
     if (settings.enabled && settings.multi === nextMulti) return;
-    const shouldResume = this.isTtsSpeaking || this.ttsReader.isSpeaking();
+    const shouldResume = this.isTtsSpeaking || this.ttsReader?.isSpeaking();
     if (shouldResume) {
       this.stopTtsReading();
     }
@@ -9461,7 +9469,7 @@ struct ReadBookPage {
   }
 
   onTtsCoverSettingsChanged(): void {
-    if (!this.isTtsSpeaking && !this.ttsReader.isSpeaking() && !this.ttsMediaSession().hasSession()) {
+    if (!this.isTtsSpeaking && !this.ttsReader?.isSpeaking() && !this.ttsMediaSession().hasSession()) {
       this.ttsMediaSession().refreshMediaImage().catch((e: Error) => {
         console.warn('刷新朗读媒体封面失败:', e);
       });
@@ -9469,7 +9477,7 @@ struct ReadBookPage {
     }
     this.ttsMediaSession().refreshMediaImage().then(() => {
       return this.ttsMediaSession().updatePlaybackState(
-        this.isTtsSpeaking || this.ttsReader.isSpeaking() ?
+        this.isTtsSpeaking || this.ttsReader?.isSpeaking() ?
           this.ttsMediaSession().playbackState() : avSession.PlaybackState.PLAYBACK_STATE_STOP
       );
     }).catch((e: Error) => {
@@ -9625,7 +9633,7 @@ struct ReadBookPage {
     this.unregisterVolumeKeyTurn();
     this.unregisterSmartKeyTurn();
     if (!this.readerPageVisible || this.isTtsSpeaking ||
-      this.ttsReader.isSpeaking() || ReaderTtsFloatingSession.isActive()) {
+      this.ttsReader?.isSpeaking() || ReaderTtsFloatingSession.isActive()) {
       return;
     }
     if (this.readerVolumeTurnPage) this.registerVolumeKeyTurn();
@@ -9716,7 +9724,7 @@ struct ReadBookPage {
 
   handleHardwareKeyTurn(direction: number, enabled: boolean): void {
     if (!enabled || !this.readerPageVisible || this.isTtsSpeaking ||
-      this.ttsReader.isSpeaking() || ReaderTtsFloatingSession.isActive() || this.showMenu || this.showToc ||
+      this.ttsReader?.isSpeaking() || ReaderTtsFloatingSession.isActive() || this.showMenu || this.showToc ||
       this.showSettings || this.isLoading || this.chapters.length === 0) {
       return;
     }
@@ -9900,7 +9908,7 @@ struct ReadBookPage {
         const offset = page < this.readerContinuousMetricsStarts.length ? this.readerContinuousMetricsStarts[page] : -1;
         if (offset < 0) return;
         const speechAttached = this.isMirroringActiveTtsForCurrentBook() || this.isTtsSpeaking ||
-          this.ttsReader.isSpeaking() || ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId);
+          this.ttsReader?.isSpeaking() || ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId);
         // 朗读要从新位置接着读，走完整跳转；其余情况正文已在列表里，直接滚过去。
         if (speechAttached || !this.scrollReaderContinuousToSourceOffset(offset)) {
           jumped = await this.performReaderQuickJump(chapterIndex, -1, offset);
@@ -9967,10 +9975,10 @@ struct ReadBookPage {
       this.readerEffectivePageTurnMode();
     const mirrored = !comic && !hiddenOwner && this.isMirroringActiveTtsForCurrentBook();
     const owner = ReaderTtsFloatingSession.currentOwnerId();
-    const hadOwnSpeech = !comic && !mirrored && (this.isTtsSpeaking || this.ttsReader.isSpeaking() ||
+    const hadOwnSpeech = !comic && !mirrored && (this.isTtsSpeaking || this.ttsReader?.isSpeaking() ||
       ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId));
     const resume = hiddenOwner ? resumeSpeech : (mirrored ? !this.globalTtsPaused :
-      hadOwnSpeech && !this.isTtsPaused && !this.ttsReader.isPaused());
+      hadOwnSpeech && !this.isTtsPaused && !this.ttsReader?.isPaused());
     const resumeScroll = this.readerAutoScrollActive && !this.readerAutoScrollPaused;
     const valid = (): boolean => serial === this.quickJumpSerial && bookUrl === this.bookUrl &&
       (hiddenOwner ? ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId) :
@@ -9998,8 +10006,8 @@ struct ReadBookPage {
       if (mirrored) {
         await ReaderTtsFloatingSession.pause();
         if (!this.globalTtsPaused) throw new Error('无法暂停后台朗读');
-      } else if (hadOwnSpeech && !this.ttsReader.isPaused() && this.ttsReader.isSpeaking()) {
-        if (!await this.ttsReader.pause()) throw new Error('无法暂停朗读');
+      } else if (hadOwnSpeech && !this.ttsReader?.isPaused() && this.ttsReader?.isSpeaking()) {
+        if (!await this.ttsReader?.pause()) throw new Error('无法暂停朗读');
         this.isTtsPaused = true;
         this.updateTtsFloatingSession();
       }
@@ -10108,7 +10116,7 @@ struct ReadBookPage {
         // A cancellation caused by another navigation must not restart old speech or scrolling.
         if (!committed && valid() && resume) {
           if (mirrored && this.globalTtsPaused) await ReaderTtsFloatingSession.toggle();
-          else if (hadOwnSpeech && this.ttsReader.isPaused()) await this.toggleTtsReading();
+          else if (hadOwnSpeech && this.ttsReader?.isPaused()) await this.toggleTtsReading();
         }
         if (((committed && this.currentChapterIndex === targetChapter && this.bookUrl === bookUrl &&
           this.contentLoadSerial === loadSerial + 1) || valid()) && resumeScroll &&
@@ -11004,7 +11012,7 @@ struct ReadBookPage {
         this.clampChapterIndex(targetChapterIndex), Math.max(0, Math.round(targetPageIndex)));
       return;
     }
-    const shouldResume = this.isTtsSpeaking || this.ttsReader.isSpeaking();
+    const shouldResume = this.isTtsSpeaking || this.ttsReader?.isSpeaking();
     if (shouldResume) {
       this.stopTtsReaderForChapterSwitch();
       await this.ttsMediaSession().updatePlaybackState(avSession.PlaybackState.PLAYBACK_STATE_BUFFERING);
@@ -11724,7 +11732,7 @@ struct ReadBookPage {
       },
       onSleepTimerChange: (minutes: number): void => this.setTtsSleepTimer(minutes),
       onToggleReading: (): void => {
-        if (this.isTtsSpeaking || this.ttsReader.isSpeaking()) {
+        if (this.isTtsSpeaking || this.ttsReader?.isSpeaking()) {
           this.stopTtsReading();
         } else {
           this.toggleTtsReading();
@@ -12352,7 +12360,7 @@ struct ReadBookPage {
       this.getChapterTitle(),
       this.isTtsPaused,
       () => this.toggleTtsReading(),
-      () => this.isTtsPaused || this.ttsReader.isPaused(),
+      () => this.isTtsPaused || this.ttsReader?.isPaused() === true,
       () => this.stopTtsFloatingSession()
     );
     // A voice/speed change restarts reading through stop + start; the stop released the background permission.
@@ -12439,21 +12447,26 @@ struct ReadBookPage {
   async stopTtsFloatingSession(): Promise<void> {
     this.stopTtsReading();
     if (!this.readerPageVisible) {
-      this.ttsReader.shutdown();
+      this.ttsReader?.shutdown();
     }
     await this.ttsMediaSession().stopBackgroundRunning();
   }
 
+  ttsEngine(): SystemTtsReader {
+    if (!this.ttsReader) this.ttsReader = new SystemTtsReader();
+    return this.ttsReader;
+  }
+
   async toggleTtsReading(): Promise<void> {
-    if (!this.isTtsSpeaking || this.isTtsPaused || this.ttsReader.isPaused()) {
+    if (!this.isTtsSpeaking || this.isTtsPaused || this.ttsReader?.isPaused()) {
       this.pauseReaderAutoScroll('朗读中，已暂停');
     }
     if (this.isReaderComicModeActive()) return;
-    if (this.isTtsSpeaking || this.ttsReader.isSpeaking()) {
+    if (this.isTtsSpeaking || this.ttsReader?.isSpeaking()) {
       try {
-        if (this.isTtsPaused || this.ttsReader.isPaused()) {
+        if (this.isTtsPaused || this.ttsReader?.isPaused()) {
           this.isTtsPaused = false;
-          if (await this.ttsReader.resume()) {
+          if (await this.ttsEngine().resume()) {
             this.isTtsSpeaking = true;
             this.updateTtsFloatingSession();
             await this.ttsMediaSession().updatePlaybackState(avSession.PlaybackState.PLAYBACK_STATE_PLAY);
@@ -12463,7 +12476,7 @@ struct ReadBookPage {
           }
         } else {
           this.isTtsPaused = true;
-          if (await this.ttsReader.pause()) {
+          if (await this.ttsReader?.pause()) {
             this.updateTtsFloatingSession();
             await this.ttsMediaSession().updatePlaybackState(avSession.PlaybackState.PLAYBACK_STATE_PAUSE);
             HdsFeedback.showToast('已暂停朗读');
@@ -12472,7 +12485,7 @@ struct ReadBookPage {
           }
         }
       } catch (error) {
-        this.isTtsPaused = this.ttsReader.isPaused();
+        this.isTtsPaused = this.ttsReader?.isPaused() === true;
         this.updateTtsFloatingSession();
         console.warn('切换朗读暂停状态失败:', error);
         HdsFeedback.showToast('切换朗读状态失败');
@@ -12499,6 +12512,8 @@ struct ReadBookPage {
       this.finishTtsReading();
       return;
     }
+    // 从按钮、按键或媒体控件直接开读时还没取过音色列表，悬浮朗读要用它列出可换的音色。
+    if (!this.ttsVoicesListed) this.loadTtsVoices();
     // A scrolling chunk spans several screens, so its start can be far above what is on screen. Begin with
     // the first visible line instead.
     const visibleOffset = readingStartOffset < 0 && this.usesReaderContinuousV2() ?
@@ -12575,7 +12590,7 @@ struct ReadBookPage {
       this.publishTtsFloatingSession();
       const cloudVoice = this.findCurrentCloudTtsVoice();
       this.ttsReadUsesMimo = MimoStore.load().enabled;
-      await this.ttsReader.start(text, {
+      await this.ttsEngine().start(text, {
         mimo: this.ttsReadUsesMimo,
         mimoBook: this.book?.bookUrl || '',
         mimoBookName: this.book?.name || '',
@@ -12660,7 +12675,7 @@ struct ReadBookPage {
    * in one would otherwise leave a tail the completion guard waits for but nothing ever speaks.
    */
   ttsSpeechTextEnd(text: string): number {
-    return this.ttsReader.speechTextEnd(text);
+    return this.ttsEngine().speechTextEnd(text);
   }
 
   async showMimoAnalysisRecovery(message: string): Promise<void> {
@@ -12716,13 +12731,13 @@ struct ReadBookPage {
     this.ttsChapterCompletionRetryCount = 0;
     this.ttsPageTurnSerial++;
     this.ttsMediaSession().stopBackgroundRunning();
-    if (!this.isTtsSpeaking && !this.ttsReader.isSpeaking()) {
+    if (!this.isTtsSpeaking && !this.ttsReader?.isSpeaking()) {
       this.isTtsSpeaking = false;
       this.updateVolumeKeySubscription();
       this.clearTtsHighlight();
       return;
     }
-    this.ttsReader.stop();
+    this.ttsReader?.stop();
     this.isTtsSpeaking = false;
     this.updateVolumeKeySubscription();
     this.ttsPageTurnSerial++;
@@ -12746,7 +12761,7 @@ struct ReadBookPage {
     this.ttsReadingExpectedSourceEnd = -1;
     this.ttsChapterCompletionRetryCount = 0;
     this.ttsPageTurnSerial++;
-    this.ttsReader.stop();
+    this.ttsReader?.stop();
     this.isTtsSpeaking = false;
     this.clearTtsHighlight();
   }
@@ -12796,7 +12811,7 @@ struct ReadBookPage {
     this.ttsPageTurnSerial++;
     // Preserve the visible speaking/highlight state while the outgoing page animates. Clearing it
     // here used to rebuild the whole reader subtree immediately before the page-turn animation.
-    this.ttsReader.stop();
+    this.ttsReader?.stop();
   }
 
   scheduleTtsResumeAfterManualPageTurn(): void {
@@ -12999,7 +13014,7 @@ struct ReadBookPage {
     }
     this.releaseBackgroundProgressWriterAfterTtsStop();
     this.updateVolumeKeySubscription();
-    this.ttsReader.stop();
+    this.ttsReader?.stop();
     this.invalidateTtsFocusSession();
     this.ttsMediaSession().stopBackgroundRunning();
     this.ttsPageTurnSerial++;
@@ -13009,7 +13024,7 @@ struct ReadBookPage {
     this.ttsReadingExpectedSourceEnd = -1;
     this.ttsChapterCompletionRetryCount = 0;
     if (!this.readerPageVisible) {
-      this.ttsReader.shutdown();
+      this.ttsReader?.shutdown();
     }
   }
 
@@ -13039,9 +13054,9 @@ struct ReadBookPage {
     if (!this.ttsMedia) {
       this.ttsMedia = new ReaderTtsMediaSession({
         abilityContext: (): common.UIAbilityContext => getContext(this) as common.UIAbilityContext,
-        isSpeaking: (): boolean => this.isTtsSpeaking || this.ttsReader.isSpeaking(),
-        isPaused: (): boolean => this.isTtsPaused || this.ttsReader.isPaused(),
-        audioDebugState: (): string => this.ttsReader.audioDebugState(),
+        isSpeaking: (): boolean => this.isTtsSpeaking || this.ttsReader?.isSpeaking() === true,
+        isPaused: (): boolean => this.isTtsPaused || this.ttsReader?.isPaused() === true,
+        audioDebugState: (): string => this.ttsEngine().audioDebugState(),
         mediaInfo: (): ReaderTtsMediaInfo => {
           const info: ReaderTtsMediaInfo = {
             bookUrl: this.bookUrl || '',
@@ -13060,14 +13075,14 @@ struct ReadBookPage {
         },
         coverRaw: (): ResourceStr => this.getBookshelfDisplayCoverRaw(),
         onPlay: (): void => {
-          if (this.isTtsPaused || this.ttsReader.isPaused()) {
+          if (this.isTtsPaused || this.ttsReader?.isPaused()) {
             this.toggleTtsReading();
-          } else if (!this.isTtsSpeaking && !this.ttsReader.isSpeaking()) {
+          } else if (!this.isTtsSpeaking && !this.ttsReader?.isSpeaking()) {
             this.startTtsReadingFromCurrentPosition(false);
           }
         },
         onPause: (): void => {
-          if (!this.isTtsPaused && (this.isTtsSpeaking || this.ttsReader.isSpeaking())) {
+          if (!this.isTtsPaused && (this.isTtsSpeaking || this.ttsReader?.isSpeaking())) {
             this.toggleTtsReading();
           }
         },
@@ -13103,7 +13118,7 @@ struct ReadBookPage {
     this.ttsLastMediaChapterCommandAt = now;
     this.ttsChapterSwitching = true;
     try {
-      const shouldResume = this.isTtsSpeaking || this.ttsReader.isSpeaking() ||
+      const shouldResume = this.isTtsSpeaking || this.ttsReader?.isSpeaking() ||
         ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId);
       console.info(`[TTS] media next chapter: source=${sourceChapterIndex},target=${targetChapterIndex},` +
         `resume=${shouldResume}`);
@@ -13155,7 +13170,7 @@ struct ReadBookPage {
     this.ttsLastMediaChapterCommandAt = now;
     this.ttsChapterSwitching = true;
     try {
-      const shouldResume = this.isTtsSpeaking || this.ttsReader.isSpeaking() ||
+      const shouldResume = this.isTtsSpeaking || this.ttsReader?.isSpeaking() ||
         ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId);
       console.info(`[TTS] media previous chapter: source=${sourceChapterIndex},target=${targetChapterIndex},` +
         `resume=${shouldResume}`);
@@ -13209,7 +13224,7 @@ struct ReadBookPage {
     this.ttsLastMediaChapterCommandAt = now;
     this.ttsChapterSwitching = true;
     try {
-      const shouldResume = this.isTtsSpeaking || this.ttsReader.isSpeaking() ||
+      const shouldResume = this.isTtsSpeaking || this.ttsReader?.isSpeaking() ||
         ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId);
       console.info(`[TTS] floating position: source=${sourceChapterIndex}/${sourcePageIndex},` +
         `target=${normalizedChapterIndex}/${normalizedPageIndex},resume=${shouldResume}`);
@@ -19824,7 +19839,7 @@ struct ReadBookPage {
     const turnRequestStartedAt = Date.now();
     const resumeMirroredTtsAfterTurn = this.isMirroringActiveTtsForCurrentBook();
     const resumeTtsAfterTurn = this.ttsManualPageTurnResumePending ||
-      this.isTtsSpeaking || this.ttsReader.isSpeaking();
+      this.isTtsSpeaking || this.ttsReader?.isSpeaking();
     let ttsPrepareElapsed = 0;
     if (resumeMirroredTtsAfterTurn) {
       this.prepareMirroredTtsManualPageTurn();
@@ -21497,7 +21512,7 @@ struct ReadBookPage {
       return;
     }
 
-    const shouldResumeTts = this.isTtsSpeaking || this.ttsReader.isSpeaking();
+    const shouldResumeTts = this.isTtsSpeaking || this.ttsReader?.isSpeaking();
     if (shouldResumeTts) {
       this.stopTtsReaderForChapterSwitch();
       await this.ttsMediaSession().updatePlaybackState(avSession.PlaybackState.PLAYBACK_STATE_BUFFERING);

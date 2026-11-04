@@ -1,6 +1,6 @@
 import { HttpTTS } from '@legado/sourceengine';
 import { TtsVoiceInfo } from '../account/AccountCommerceModels';
-import { TtsVoiceOption } from './SystemTtsReader';
+import { TtsVoiceOption } from './TtsVoiceModels';
 import { TtsVoiceAvailability } from './TtsVoiceAvailability';
 
 /**

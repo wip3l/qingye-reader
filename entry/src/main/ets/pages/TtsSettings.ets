@@ -13,7 +13,8 @@ import {
 } from '../account/AccountCommerceModels';
 import { HttpTTS, HttpClient } from '@legado/sourceengine';
 import { syncSystemBars } from '../utils/SystemBars';
-import { SystemTtsReader, TtsVoiceOption } from '../utils/SystemTtsReader';
+import { SystemTtsReader } from '../utils/SystemTtsReader';
+import { TtsVoiceOption } from '../utils/TtsVoiceModels';
 import { TtsVoiceCatalog } from '../utils/TtsVoiceCatalog';
 import { AdaptiveIconButton } from '../components/AdaptiveIconButton';
 import { TtsSettings, TtsSettingsStore } from '../utils/TtsSettingsStore';

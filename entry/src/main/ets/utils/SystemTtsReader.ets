@@ -7,6 +7,7 @@ import { TtsAudioSession } from './TtsAudioSession';
 import { PcmPlaybackCue, TtsPcmAudioPlayer } from './TtsPcmAudioPlayer';
 import { MimoReadingSession } from './mimo/MimoReadingSession';
 import { MimoUnit } from '../core/mimo/MimoPolicy';
+import { TtsCustomVoices, TtsVoiceOption } from './TtsVoiceModels';
 
 export interface TtsChunk {
   text: string;
@@ -83,20 +84,6 @@ interface SystemPcmSegment {
   chunk: TtsChunk;
   pcm: ArrayBuffer;
   sampleRate: number;
-}
-
-export class TtsVoiceOption {
-  id: number = 0;
-  name: string = '默认音色';
-  online: number = 1;
-  status: string = '';
-  systemStatus: string = '';
-  style: string = '';
-  language: string = 'zh-CN';
-  downloadLanguage: string = '';
-  gender: string = '';
-  available: boolean = true;
-  downloadable: boolean = false;
 }
 
 export class SystemTtsReader {
@@ -2313,62 +2300,11 @@ export class SystemTtsReader {
   }
 
   static parseCustomVoices(raw: string): HttpTTS[] {
-    const value = (raw || '').trim();
-    if (!value) {
-      return [];
-    }
-    try {
-      const parsed = JSON.parse(value) as Object;
-      const items = Array.isArray(parsed) ? parsed as Object[] : [parsed];
-      const result: HttpTTS[] = [];
-      for (const item of items) {
-        const voice = SystemTtsReader.parseCustomVoice(item as Record<string, Object>);
-        if (voice.name && voice.url) {
-          result.push(voice);
-        }
-      }
-      return result;
-    } catch (_) {
-      return [];
-    }
+    return TtsCustomVoices.parse(raw);
   }
 
   static serializeCustomVoices(voices: HttpTTS[]): string {
     return JSON.stringify(voices);
-  }
-
-  private static parseCustomVoice(item: Record<string, Object>): HttpTTS {
-    const voice = new HttpTTS();
-    voice.id = SystemTtsReader.parseCustomVoiceNumber(item['id'], Date.now());
-    voice.name = SystemTtsReader.parseCustomVoiceString(item['name']);
-    voice.url = SystemTtsReader.parseCustomVoiceString(item['url']);
-    voice.contentType = SystemTtsReader.parseCustomVoiceString(item['contentType']);
-    voice.concurrentRate = SystemTtsReader.parseCustomVoiceString(item['concurrentRate']);
-    voice.loginUrl = SystemTtsReader.parseCustomVoiceString(item['loginUrl']);
-    voice.loginUi = SystemTtsReader.parseCustomVoiceString(item['loginUi']);
-    voice.loginCheckJs = SystemTtsReader.parseCustomVoiceString(item['loginCheckJs']);
-    voice.header = SystemTtsReader.parseCustomVoiceString(item['header']);
-    voice.jsLib = SystemTtsReader.parseCustomVoiceString(item['jsLib']);
-    voice.jsEngine = SystemTtsReader.parseCustomVoiceString(item['jsEngine']) || voice.jsLib;
-    const enabledCookieJar = item['enabledCookieJar'];
-    voice.enabledCookieJar = enabledCookieJar === true || String(enabledCookieJar) === 'true';
-    voice.customOrder = SystemTtsReader.parseCustomVoiceNumber(item['customOrder'], 0);
-    voice.lastUpdateTime = SystemTtsReader.parseCustomVoiceNumber(item['lastUpdateTime'], 0);
-    const enabled = item['enabled'];
-    voice.enabled = enabled === undefined || enabled === null ? true : enabled !== false && String(enabled) !== 'false';
-    return voice;
-  }
-
-  private static parseCustomVoiceString(value: Object | undefined): string {
-    return value === undefined || value === null ? '' : String(value);
-  }
-
-  private static parseCustomVoiceNumber(value: Object | undefined, fallback: number): number {
-    if (typeof value === 'number') {
-      return Math.round(value);
-    }
-    const parsed = Number(value === undefined || value === null ? '' : String(value));
-    return Number.isNaN(parsed) ? fallback : Math.round(parsed);
   }
 
   private static alternateOnlineMode(online: number): number {
