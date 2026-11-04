@@ -1,9 +1,11 @@
 import { common } from '@kit.AbilityKit';
 import { ImmersiveBackButton } from '../ImmersiveBackButton';
 import { PopupMenuAction } from '../common/PopupMenuAction';
-import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
+import { ReaderFloatingMaterialBar, ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
+import { ReaderTitleCapsule } from './ReaderTitleCapsule';
 import { ReaderQuickJumpContent } from './ReaderQuickJumpContent';
 import { ReaderBrightnessControl } from './ReaderBrightnessControl';
+import { ReaderChromeMotion } from './ReaderChromeMotion';
 import { ReaderSettingActionRow, ReaderSettingLabel, ReaderSettingSelectRow, ReaderSettingSwitchRow } from './ReaderSettingRows';
 import { ReaderQuickJumpModel } from '../../core/reader/ReaderQuickJumpModel';
 import { ReaderSettingsStore } from '../../utils/ReaderSettingsStore';
@@ -234,6 +236,11 @@ export struct EpubOriginalControls {
       .animation({ duration: 240, curve: Curve.EaseOut });
   }
 
+  /** 浮层底色与普通阅读页 readerSolidPanelColor 相同，不随应用主题的卡片色变。 */
+  private solidPanelColor(): string {
+    return this.darkMode ? '#191B1F' : '#FFFFFF';
+  }
+
   private scrimColor(): string {
     return this.darkMode ? '#47000000' : '#1F000000';
   }
@@ -283,8 +290,7 @@ export struct EpubOriginalControls {
   topMenu() {
     Row() {
       this.roundButton($r('sys.symbol.chevron_left'), '返回书架', (): void => this.onClose())
-      ReaderMaterialPanel({ panelWidth: this.titleCapsuleWidth(), panelHeight: 40,
-        cornerRadius: 20, darkMode: this.darkMode, fallbackColor: ThemeRuntime.cardColor(this.darkMode) }) {
+      ReaderTitleCapsule({ capsuleWidth: this.titleCapsuleWidth(), darkMode: this.darkMode }) {
         Column({ space: 1 }) {
           Text(this.bookTitle).fontSize(AppFontSize.BODY).fontWeight(FontWeight.Medium)
             .fontColor(ThemeRuntime.primaryTextColor(this.darkMode)).maxLines(1)
@@ -307,7 +313,8 @@ export struct EpubOriginalControls {
       }))
     }.width('100%').padding({ left: 18, right: 18, top: this.statusBarHeight + 10 })
       .justifyContent(FlexAlign.SpaceBetween).alignItems(VerticalAlign.Center)
-      .position({ x: 0, y: 0 }).transition(TransitionEffect.OPACITY).hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
+      .position({ x: 0, y: 0 }).transition(ReaderChromeMotion.top(this.topBarBottom()))
+      .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
   /** 与普通阅读页底栏的 readerHdsMenuItem 相同：只有图标，点按没有胶囊底色。 */
@@ -348,12 +355,12 @@ export struct EpubOriginalControls {
   }
 
   @Builder
-  actionRow() {
+  actionRow(rowHeight: number = ACTION_ROW_HEIGHT) {
     Row() {
       this.actionIcon($r('sys.symbol.list_bullet'), '目录', (): void => this.selectPanel('toc'))
       this.actionIcon($r('sys.symbol.gearshape'), '阅读设置', (): void => this.selectPanel('settings'))
       this.dayNightButton()
-    }.width('100%').height(ACTION_ROW_HEIGHT).padding({ left: 12, right: 12 })
+    }.width('100%').height(rowHeight).padding({ left: 12, right: 12 })
   }
 
   @Builder
@@ -373,7 +380,7 @@ export struct EpubOriginalControls {
       subTextColor: ThemeRuntime.subTextColor(this.darkMode),
       accentColor: ThemeRuntime.accentColor(this.darkMode),
       trackColor: ThemeRuntime.dividerColor(this.darkMode),
-      thumbColor: ThemeRuntime.cardColor(this.darkMode),
+      thumbColor: this.solidPanelColor(),
       expanded: this.readerQuickJumpExpanded,
       headerHeight: this.headerHeight(),
       onModeChange: (mode: string): void => this.setMode(mode),
@@ -390,18 +397,31 @@ export struct EpubOriginalControls {
   @Builder
   bottomMenu() {
     Column() {
-      ReaderMaterialPanel({ panelWidth: this.panelWidth(), panelHeight: this.bottomBarHeight(),
-        cornerRadius: 28, darkMode: this.darkMode, fallbackColor: ThemeRuntime.cardColor(this.darkMode) }) {
-        Column() {
-          if (this.readerUseChapterQuickJump && !this.activePanel) {
+      if (this.readerUseChapterQuickJump && !this.activePanel) {
+        ReaderMaterialPanel({ panelWidth: this.panelWidth(), panelHeight: this.bottomBarHeight(),
+          cornerRadius: 28, darkMode: this.darkMode, fallbackColor: this.solidPanelColor() }) {
+          Column() {
             Column() { this.quickJump() }.width('100%').height(this.quickJumpHeight())
             Divider().strokeWidth(0.5).color(ThemeRuntime.dividerColor(this.darkMode)).margin({ left: 20, right: 20 })
-          }
+            this.actionRow()
+          }.width('100%').height('100%').justifyContent(FlexAlign.End)
+        }
+      } else if (ImmersiveMaterialRuntime.supportsHds()) {
+        // 只剩操作按钮时与普通阅读页单独的操作栏相同：48vp 高的薄底色悬浮胶囊，带投影。
+        ReaderFloatingMaterialBar({ barWidth: this.panelWidth(), fallbackColor: this.solidPanelColor(),
+          darkMode: this.darkMode }) {
+          this.actionRow(48)
+        }
+      } else {
+        ReaderMaterialPanel({ panelWidth: this.panelWidth(), panelHeight: this.bottomBarHeight(),
+          cornerRadius: 28, darkMode: this.darkMode, fallbackColor: this.solidPanelColor() }) {
           this.actionRow()
-        }.width('100%').height('100%').justifyContent(FlexAlign.End)
+        }
       }
-    }.position({ x: this.panelLeft(), y: '100%' })
-      .translate({ y: -(this.bottomInset() + this.bottomBarHeight()) }).transition(this.panelTransition())
+    }.width(this.panelWidth()).height(this.bottomBarHeight()).justifyContent(FlexAlign.Center)
+      .position({ x: this.panelLeft(), y: '100%' })
+      .translate({ y: -(this.bottomInset() + this.bottomBarHeight()) })
+      .transition(ReaderChromeMotion.bottom(this.bottomInset() + this.bottomBarHeight()))
       .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
@@ -429,14 +449,14 @@ export struct EpubOriginalControls {
     ReaderBrightnessControl({
       value: this.brightnessValue, lastManualValue: this.lastManualBrightness,
       panelHeight: this.brightnessHeight(), ready: this.brightnessReady,
-      dark: this.darkMode, panelColor: ThemeRuntime.cardColor(this.darkMode),
+      dark: this.darkMode, panelColor: this.solidPanelColor(),
       textColor: ThemeRuntime.primaryTextColor(this.darkMode),
       accentColor: ThemeRuntime.accentColor(this.darkMode), trackColor: ThemeRuntime.dividerColor(this.darkMode),
-      thumbColor: ThemeRuntime.cardColor(this.darkMode),
+      thumbColor: this.solidPanelColor(),
       onChange: (value: number, persist: boolean): void => this.onBrightnessChange(value, persist)
     })
       .position({ x: Math.max(0, this.viewportWidth - ReaderBrightnessControl.WIDTH - 12), y: this.brightnessTop() })
-      .transition(TransitionEffect.OPACITY)
+      .transition(ReaderChromeMotion.side(ReaderBrightnessControl.WIDTH + 12))
   }
 
   @Builder
@@ -457,7 +477,7 @@ export struct EpubOriginalControls {
           options: [{ value: '左右翻页' }, { value: '上下滚动' }], selected: this.paged ? 0 : 1,
           textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
           accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode,
-          menuColor: ThemeRuntime.cardColor(this.darkMode),
+          menuColor: this.solidPanelColor(),
           onSelect: (index: number): void => this.onPagedChange(index === 0) })
         // 与排版设置里的步进项（如“页脚不透明度”）同一种写法：一行，左边标题，右边减、数值、加。
         Row({ space: 12 }) {
@@ -505,7 +525,7 @@ export struct EpubOriginalControls {
   floatingPanel() {
     Column() {
       ReaderMaterialPanel({ panelWidth: this.panelWidth(), panelHeight: this.panelHeight(), cornerRadius: 28,
-        darkMode: this.darkMode, fallbackColor: ThemeRuntime.cardColor(this.darkMode) }) {
+        darkMode: this.darkMode, fallbackColor: this.solidPanelColor() }) {
         Column() {
           this.panelHeader()
           if (this.activePanel === 'toc') {

@@ -1,10 +1,13 @@
 import { ImmersiveBackButton } from '../ImmersiveBackButton';
-import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
+import { ReaderFloatingMaterialBar, ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
+import { ReaderTitleCapsule } from './ReaderTitleCapsule';
 import { ReaderQuickJumpContent } from './ReaderQuickJumpContent';
 import { ReaderBrightnessControl } from './ReaderBrightnessControl';
+import { ReaderChromeMotion } from './ReaderChromeMotion';
 import { common } from '@kit.AbilityKit';
 import { ReaderQuickJumpModel } from '../../core/reader/ReaderQuickJumpModel';
 import { ReaderSettingSwitchRow, ReaderSettingActionRow } from './ReaderSettingRows';
+import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { PdfPagePosition } from '../../core/book/pdf/PdfModels';
@@ -217,6 +220,11 @@ export struct PdfReaderControls {
       .animation({ duration: 240, curve: Curve.EaseOut });
   }
 
+  /** 浮层底色与普通阅读页 readerSolidPanelColor 相同，不随应用主题的卡片色变。 */
+  private solidPanelColor(): string {
+    return this.darkMode ? '#191B1F' : '#FFFFFF';
+  }
+
   private scrimColor(): string {
     return this.darkMode ? '#47000000' : '#1F000000';
   }
@@ -239,14 +247,14 @@ export struct PdfReaderControls {
     ReaderBrightnessControl({
       value: this.brightnessValue, lastManualValue: this.lastManualBrightness,
       panelHeight: this.brightnessHeight(), ready: this.brightnessReady,
-      dark: this.darkMode, panelColor: ThemeRuntime.cardColor(this.darkMode),
+      dark: this.darkMode, panelColor: this.solidPanelColor(),
       textColor: ThemeRuntime.primaryTextColor(this.darkMode),
       accentColor: ThemeRuntime.accentColor(this.darkMode), trackColor: ThemeRuntime.dividerColor(this.darkMode),
-      thumbColor: ThemeRuntime.cardColor(this.darkMode),
+      thumbColor: this.solidPanelColor(),
       onChange: (value: number, persist: boolean): void => this.onBrightnessChange(value, persist)
     })
       .position({ x: Math.max(0, this.viewportWidth - ReaderBrightnessControl.WIDTH - 12), y: this.brightnessTop() })
-      .transition(TransitionEffect.OPACITY)
+      .transition(ReaderChromeMotion.side(ReaderBrightnessControl.WIDTH + 12))
   }
 
   @Builder
@@ -261,8 +269,7 @@ export struct PdfReaderControls {
   topMenu() {
     Row() {
       this.roundButton($r('sys.symbol.chevron_left'), '返回书架', (): void => this.onClose())
-      ReaderMaterialPanel({ panelWidth: this.titleCapsuleWidth(), panelHeight: 40,
-        cornerRadius: 20, darkMode: this.darkMode, fallbackColor: ThemeRuntime.cardColor(this.darkMode) }) {
+      ReaderTitleCapsule({ capsuleWidth: this.titleCapsuleWidth(), darkMode: this.darkMode }) {
         Column({ space: 1 }) {
           Text(this.bookTitle).fontSize(AppFontSize.BODY).fontWeight(FontWeight.Medium)
             .fontColor(ThemeRuntime.primaryTextColor(this.darkMode)).maxLines(1)
@@ -285,7 +292,8 @@ export struct PdfReaderControls {
       } else { Blank().width(40) }
     }.width('100%').padding({ left: 18, right: 18, top: this.statusBarHeight + 10 })
       .justifyContent(FlexAlign.SpaceBetween).alignItems(VerticalAlign.Center)
-      .position({ x: 0, y: 0 }).transition(TransitionEffect.OPACITY).hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
+      .position({ x: 0, y: 0 }).transition(ReaderChromeMotion.top(this.topBarBottom()))
+      .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
   /** 与小说、漫画阅读页底栏的 readerHdsMenuItem 相同：只有图标，点按没有胶囊底色。 */
@@ -300,45 +308,55 @@ export struct PdfReaderControls {
   }
 
   @Builder
-  actionBar() {
+  actionBar(rowHeight: number = BOTTOM_BAR_ACTIONS_HEIGHT) {
     Row() {
       this.actionButton($r('sys.symbol.list_bullet'), this.navigationTitle, 'toc')
       this.actionButton($r('sys.symbol.gearshape'), '阅读设置', 'settings')
-    }.width('100%').height(BOTTOM_BAR_ACTIONS_HEIGHT).padding({ left: 12, right: 12 })
+    }.width('100%').height(rowHeight).padding({ left: 12, right: 12 })
   }
 
   @Builder
   bottomMenu() {
     Column() {
-      ReaderMaterialPanel({ panelWidth: this.panelWidth(), panelHeight: this.bottomBarHeight(),
-        cornerRadius: 28, darkMode: this.darkMode, fallbackColor: ThemeRuntime.cardColor(this.darkMode) }) {
-        Column() {
-          if (!this.activePanel) {
-            Column() {
-              ReaderQuickJumpContent({ modes: PDF_QUICK_JUMP_MODES, mode: this.jumpMode(),
-                chapterLabel: '页码', chapterUnit: '页',
-                value: this.jumpMode() === 'percent' ? this.percentValue() : this.displayIndex(),
-                chapterCount: this.pageCount, pageCount: this.pageCount, currentChapter: this.pageIndex,
-                valueLabel: this.jumpMode() === 'percent' ?
-                  `${this.percentValue().toFixed(1)}% · 第 ${this.displayIndex() + 1} 页` :
-                  `${this.displayIndex() + 1} / ${this.pageCount} 页`,
-                busy: !this.ready, dark: this.darkMode, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
-                subTextColor: ThemeRuntime.subTextColor(this.darkMode), accentColor: ThemeRuntime.accentColor(this.darkMode),
-                trackColor: ThemeRuntime.dividerColor(this.darkMode), thumbColor: ThemeRuntime.cardColor(this.darkMode),
-                expanded: this.readerQuickJumpExpanded, headerHeight: this.headerHeight(),
-                onModeChange: (mode: string): void => this.setJumpMode(mode),
-                onChange: (value: number, mode: SliderChangeMode): void => this.onJumpSlider(value, mode),
-                onStep: (direction: number): void => this.onPageChange(this.pageIndex + direction),
-                onExpandedChange: (expanded: boolean): void => this.setJumpExpanded(expanded),
-                onSlideCancel: (): void => { this.previewPercent = -1; this.onPreview(-1); } })
-            }.width('100%').height(this.quickJumpHeight())
-            Divider().strokeWidth(0.5).color(ThemeRuntime.dividerColor(this.darkMode)).margin({ left: 20, right: 20 })
-          }
-          this.actionBar()
-        }.width('100%').height('100%')
+      if (this.activePanel && ImmersiveMaterialRuntime.supportsHds()) {
+        // 面板打开、只剩操作按钮时与普通阅读页单独的操作栏相同：48vp 高的薄底色悬浮胶囊，带投影。
+        ReaderFloatingMaterialBar({ barWidth: this.panelWidth(), fallbackColor: this.solidPanelColor(),
+          darkMode: this.darkMode }) {
+          this.actionBar(48)
+        }
+      } else {
+        ReaderMaterialPanel({ panelWidth: this.panelWidth(), panelHeight: this.bottomBarHeight(),
+          cornerRadius: 28, darkMode: this.darkMode, fallbackColor: this.solidPanelColor() }) {
+          Column() {
+            if (!this.activePanel) {
+              Column() {
+                ReaderQuickJumpContent({ modes: PDF_QUICK_JUMP_MODES, mode: this.jumpMode(),
+                  chapterLabel: '页码', chapterUnit: '页',
+                  value: this.jumpMode() === 'percent' ? this.percentValue() : this.displayIndex(),
+                  chapterCount: this.pageCount, pageCount: this.pageCount, currentChapter: this.pageIndex,
+                  valueLabel: this.jumpMode() === 'percent' ?
+                    `${this.percentValue().toFixed(1)}% · 第 ${this.displayIndex() + 1} 页` :
+                    `${this.displayIndex() + 1} / ${this.pageCount} 页`,
+                  busy: !this.ready, dark: this.darkMode, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+                  subTextColor: ThemeRuntime.subTextColor(this.darkMode), accentColor: ThemeRuntime.accentColor(this.darkMode),
+                  trackColor: ThemeRuntime.dividerColor(this.darkMode), thumbColor: this.solidPanelColor(),
+                  expanded: this.readerQuickJumpExpanded, headerHeight: this.headerHeight(),
+                  onModeChange: (mode: string): void => this.setJumpMode(mode),
+                  onChange: (value: number, mode: SliderChangeMode): void => this.onJumpSlider(value, mode),
+                  onStep: (direction: number): void => this.onPageChange(this.pageIndex + direction),
+                  onExpandedChange: (expanded: boolean): void => this.setJumpExpanded(expanded),
+                  onSlideCancel: (): void => { this.previewPercent = -1; this.onPreview(-1); } })
+              }.width('100%').height(this.quickJumpHeight())
+              Divider().strokeWidth(0.5).color(ThemeRuntime.dividerColor(this.darkMode)).margin({ left: 20, right: 20 })
+            }
+            this.actionBar()
+          }.width('100%').height('100%')
+        }
       }
-    }.position({ x: this.panelLeft(), y: '100%' })
-      .translate({ y: -(this.bottomInset() + this.bottomBarHeight()) }).transition(this.panelTransition())
+    }.width(this.panelWidth()).height(this.bottomBarHeight()).justifyContent(FlexAlign.Center)
+      .position({ x: this.panelLeft(), y: '100%' })
+      .translate({ y: -(this.bottomInset() + this.bottomBarHeight()) })
+      .transition(ReaderChromeMotion.bottom(this.bottomInset() + this.bottomBarHeight()))
       .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
@@ -386,7 +404,7 @@ export struct PdfReaderControls {
   compareBar() {
     Column() {
       ReaderMaterialPanel({ panelWidth: Math.min(this.panelWidth(), 296), panelHeight: 40, cornerRadius: 20,
-        darkMode: this.darkMode, fallbackColor: ThemeRuntime.cardColor(this.darkMode) }) {
+        darkMode: this.darkMode, fallbackColor: this.solidPanelColor() }) {
         Row({ space: 8 }) {
           Text(this.enhancementStatusLabel())
             .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.darkMode)).layoutWeight(1)
@@ -397,7 +415,8 @@ export struct PdfReaderControls {
         }.width('100%').height('100%').padding({ left: 16, right: 6 })
       }
     }.position({ x: this.panelLeft() + this.panelWidth() - Math.min(this.panelWidth(), 296), y: '100%' })
-      .translate({ y: -(this.bottomInset() + this.bottomBarHeight() + 12 + 40) }).transition(this.panelTransition())
+      .translate({ y: -(this.bottomInset() + this.bottomBarHeight() + 12 + 40) })
+      .transition(ReaderChromeMotion.bottom(this.bottomInset() + this.bottomBarHeight()))
       .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
@@ -483,7 +502,7 @@ export struct PdfReaderControls {
   floatingPanel() {
     Column() {
       ReaderMaterialPanel({ panelWidth: this.panelWidth(), panelHeight: this.panelHeight(), cornerRadius: 28,
-        darkMode: this.darkMode, fallbackColor: ThemeRuntime.cardColor(this.darkMode) }) {
+        darkMode: this.darkMode, fallbackColor: this.solidPanelColor() }) {
         Column() {
           this.panelHeader()
           if (this.activePanel === 'toc') {

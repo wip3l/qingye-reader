@@ -135,6 +135,7 @@ import { ReaderTxtCharsetDialogContent, ReaderTxtCharsets } from '../components/
 import { ReaderLayoutElementSettingsPanel } from '../components/reader/ReaderLayoutElementSettingsPanel';
 import { ReaderTocPanel, ReaderTocPanelController } from '../components/reader/ReaderTocPanel';
 import { ReaderFloatingMaterialBar, ReaderMaterialPanel } from '../components/reader/ReaderFloatingMaterialBar';
+import { ReaderChromeMotion } from '../components/reader/ReaderChromeMotion';
 import { ReaderContinuousDataSource, ReaderScrollItem, ReaderScrollSegment } from '../core/reader/ReaderDataSources';
 import { ReaderComicImageItem, ReaderComicRetryRegistry, ReaderComicView } from '../components/reader/ReaderComicView';
 import { ReaderComicPagedController, ReaderComicPagedView } from '../components/reader/ReaderComicPagedView';
@@ -3631,11 +3632,6 @@ struct ReadBookPage {
       }
 
       if (this.showMenu && !this.showToc && !this.showSettings && this.chapters.length > 0) {
-        if (this.supportsReaderImmersiveMaterial()) {
-          this.readerMaterialFloatingBottomMenu()
-        } else {
-          this.readerFloatingBottomMenu()
-        }
         if (this.shouldShowReaderSessionQuickActions()) {
           if (this.readerUseTtsQuickAction && !this.isReaderComicModeActive()) {
             this.readerTtsQuickActionButton()
@@ -3654,9 +3650,6 @@ struct ReadBookPage {
 
       if (this.showToc) {
         this.readerFloatingTocPanel()
-        if (this.supportsReaderImmersiveMaterial()) {
-          this.readerMaterialFloatingActionBar(true)
-        }
       }
 
       if (this.showSettings) {
@@ -3664,9 +3657,10 @@ struct ReadBookPage {
         if (this.showTtsVoiceDropdown) {
           this.ttsVoiceDropdownPanel()
         }
-        if (this.supportsReaderImmersiveMaterial()) {
-          this.readerMaterialFloatingActionBar(false, true)
-        }
+      }
+
+      if (this.readerBottomChromeMode()) {
+        this.readerBottomChrome()
       }
 
       if (this.shouldShowReaderAutoScrollCapsule()) {
@@ -3983,6 +3977,7 @@ struct ReadBookPage {
     .padding({ left: 18, right: 18, top: this.getTopControlSafePadding() + 10 })
     .position({ x: 0, y: 0 })
     .alignItems(VerticalAlign.Center)
+    .transition(ReaderChromeMotion.top(this.getTopControlSafePadding() + 66))
   }
 
   @Builder
@@ -4005,6 +4000,46 @@ struct ReadBookPage {
 
   supportsReaderImmersiveMaterial(): boolean {
     return ImmersiveMaterialRuntime.supportsHds() || ImmersiveMaterialRuntime.supportsHdsMaterial();
+  }
+
+  /**
+   * 底部悬浮区当前显示什么：菜单的快速跳转与操作栏（menu），或目录、设置打开时单独的操作栏（toc / settings）。
+   * 三者共用一层外壳，进出场只在整块显隐时播放；在菜单与面板之间切换时原地换内容，按钮不跳动。
+   */
+  readerBottomChromeMode(): string {
+    if (this.chapters.length > 0 && this.showMenu && !this.showToc && !this.showSettings) return 'menu';
+    if (!this.supportsReaderImmersiveMaterial()) return '';
+    if (this.showToc) return 'toc';
+    return this.showSettings ? 'settings' : '';
+  }
+
+  @Builder
+  readerBottomChrome() {
+    Stack() {
+      if (this.readerBottomChromeMode() === 'menu') {
+        if (this.supportsReaderImmersiveMaterial()) {
+          this.readerMaterialFloatingBottomMenu()
+        } else {
+          this.readerFloatingBottomMenu()
+        }
+      } else {
+        this.readerMaterialFloatingActionBar(this.readerBottomChromeMode() === 'toc',
+          this.readerBottomChromeMode() === 'settings')
+      }
+    }
+    // 外壳与原先的底部容器同高、贴底，触摸范围不变；里面的子项仍按“贴在父容器底边”摆放。
+    .width('100%')
+    .height(this.readerBottomChromeHeight())
+    .position({ x: 0, y: '100%' })
+    .translate({ y: -this.readerBottomChromeHeight() })
+    .transition(ReaderChromeMotion.bottom(this.readerBottomChromeHeight()))
+  }
+
+  readerBottomChromeHeight(): number {
+    if (this.readerBottomChromeMode() !== 'menu') return this.readerBottomActionOverlayHeight();
+    // 旧系统的实色底栏自带 14vp 底边距，外壳至少要容得下整条栏，否则顶边一截点不到。
+    return this.supportsReaderImmersiveMaterial() ? this.readerBottomMenuOverlayHeight() :
+      Math.max(this.readerBottomMenuOverlayHeight(), this.readerBottomMenuPanelHeight() + 14);
   }
 
   @Builder
@@ -5028,6 +5063,7 @@ struct ReadBookPage {
       .position({ x: Math.max(0, (this.pageViewWidth > 0 ? this.pageViewWidth : 360) -
         ReaderBrightnessControl.WIDTH - 12),
         y: this.readerBrightnessControlTop() })
+      .transition(ReaderChromeMotion.side(ReaderBrightnessControl.WIDTH + 12))
   }
 
   @Builder
@@ -5042,6 +5078,7 @@ struct ReadBookPage {
       .position({ x: Math.max(12, this.readerTtsQuickActionLeft() +
         (this.isReaderComicModeActive() ? 0 : (this.readerSessionQuickActionsOnLeft() ? 60 : -60))), y: '100%' })
       .translate({ y: -(this.readerBottomMenuOverlayHeight() + 62) })
+      .transition(ReaderChromeMotion.bottom(this.readerBottomMenuOverlayHeight()))
   }
 
   @Builder
@@ -5415,6 +5452,7 @@ struct ReadBookPage {
     .translate({
       y: -(this.readerBottomMenuOverlayHeight() + 62)
     })
+    .transition(ReaderChromeMotion.bottom(this.readerBottomMenuOverlayHeight()))
   }
 
   async openTtsQuickPlayer(): Promise<void> {
