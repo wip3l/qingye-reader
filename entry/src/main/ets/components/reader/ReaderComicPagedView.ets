@@ -188,9 +188,21 @@ export struct ReaderComicPagedView {
 
   /** 跨页内的页码，按屏幕从左到右排列。 */
   private spreadPages(spread: number): number[] {
+    return this.chapterSpreadPages(this.chapterIndex, spread);
+  }
+
+  private chapterPages(chapterIndex: number): string[] {
+    if (chapterIndex === this.chapterIndex) return this.pages;
+    if (chapterIndex === this.chapterIndex - 1) return this.prevChapterPages;
+    if (chapterIndex === this.chapterIndex + 1) return this.nextChapterPages;
+    return [];
+  }
+
+  private chapterSpreadPages(chapterIndex: number, spread: number): number[] {
     const result: number[] = [];
     const first = spread * this.spreadSize();
-    for (let page = first; page < Math.min(this.pages.length, first + this.spreadSize()); page++) {
+    const count = this.chapterPages(chapterIndex).length;
+    for (let page = first; page < Math.min(count, first + this.spreadSize()); page++) {
       result.push(page);
     }
     return this.rightToLeft ? result.reverse() : result;
@@ -209,11 +221,28 @@ export struct ReaderComicPagedView {
   }
 
   private neighborSpreadPages(direction: number): number[] {
-    const pages = direction > 0 ? this.nextChapterPages : this.prevChapterPages;
-    const result: number[] = [];
-    const first = this.neighborSpread(direction) * this.spreadSize();
-    for (let page = first; page < Math.min(pages.length, first + this.spreadSize()); page++) result.push(page);
-    return this.rightToLeft ? result.reverse() : result;
+    return this.chapterSpreadPages(this.chapterIndex + direction, this.neighborSpread(direction));
+  }
+
+  private slotChapter(spread: number): number {
+    if (spread < 0) return this.chapterIndex - 1;
+    if (spread >= this.spreadCount()) return this.chapterIndex + 1;
+    return this.chapterIndex;
+  }
+
+  private slotSpreadIndex(spread: number): number {
+    if (spread >= 0 && spread < this.spreadCount()) return spread;
+    return this.neighborSpread(spread < 0 ? -1 : 1);
+  }
+
+  /**
+   * ForEach 同键复用时不会重跑 @Builder，形参也不会重传。格子必须捕获固定的章节/跨页身份，
+   * 再按当前章换算位置；捕获 -1 或 spreadCount 会在跨章接管后把已显示的图片移到屏外。
+   */
+  private relativeSpread(chapterIndex: number, spread: number): number {
+    if (chapterIndex < this.chapterIndex) return -1;
+    if (chapterIndex > this.chapterIndex) return this.spreadCount();
+    return spread;
   }
 
   /** 格子的键：相邻章节格与它成为当前章后的格子同键，切换时组件得以保留。 */
@@ -758,14 +787,14 @@ export struct ReaderComicPagedView {
   }
 
   /**
-   * 按值 @Builder 的参数之后不会刷新，所以这里只收跨页页数，单页宽度在内部从 viewWidth 算：
-   * 否则书架共享转场途中测到的小尺寸会一直留在已建好的格子里，翻走再翻回来才恢复。
+   * 按值 @Builder 只接收固定的章节、页号和跨页页数；图片来源和尺寸从当前状态读取。
+   * 避免跨章后仍引用旧分页，也避免书架共享转场的小尺寸一直留在已建好的格子里。
    */
   @Builder
-  pageView(pages: string[], chapterIndex: number, pageIndex: number, spreadPages: number) {
-    if (LocalBookService.isEpubImageMarker((pages[pageIndex] || '').trim())) {
+  pageView(chapterIndex: number, pageIndex: number, spreadPages: number) {
+    if (LocalBookService.isEpubImageMarker((this.chapterPages(chapterIndex)[pageIndex] || '').trim())) {
       ReaderComicImageItem({
-        marker: (pages[pageIndex] || '').trim(),
+        marker: (this.chapterPages(chapterIndex)[pageIndex] || '').trim(),
         colorSession: this.colorSession,
         viewWidth: this.viewW() / spreadPages,
         viewHeight: this.viewH(),
@@ -781,7 +810,7 @@ export struct ReaderComicPagedView {
         onDenied: (): void => this.onImageDenied(chapterIndex)
       })
     } else {
-      Text(LocalBookService.stripEpubImageMarkers(pages[pageIndex] || '').trim())
+      Text(LocalBookService.stripEpubImageMarkers(this.chapterPages(chapterIndex)[pageIndex] || '').trim())
         .fontSize(AppFontSize.BODY_LARGE)
         .lineHeight(AppFontSize.BODY_LARGE * 1.7)
         .fontColor(this.textColor)
@@ -822,45 +851,36 @@ export struct ReaderComicPagedView {
   }
 
   @Builder
-  slot(spread: number) {
+  slot(chapterIndex: number, spread: number) {
     Stack() {
       Stack() {
-        if (spread >= 0 && spread < this.spreadCount()) {
+        if (this.chapterPages(chapterIndex).length > 0) {
           Row() {
-            ForEach(this.spreadPages(spread), (pageIndex: number) => {
-              this.pageView(this.pages, this.chapterIndex, pageIndex, this.spreadPages(spread).length)
-            }, (pageIndex: number) => `${pageIndex}_${this.spreadPages(spread).length}`)
-          }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-        } else if (this.hasNeighbor(spread < 0 ? -1 : 1)) {
-          Row() {
-            ForEach(this.neighborSpreadPages(spread < 0 ? -1 : 1), (pageIndex: number) => {
-              this.pageView(spread < 0 ? this.prevChapterPages : this.nextChapterPages,
-                this.chapterIndex + (spread < 0 ? -1 : 1), pageIndex,
-                this.neighborSpreadPages(spread < 0 ? -1 : 1).length)
-            }, (pageIndex: number) => `${pageIndex}_${this.neighborSpreadPages(spread < 0 ? -1 : 1).length}`)
+            ForEach(this.chapterSpreadPages(chapterIndex, spread), (pageIndex: number) => {
+              this.pageView(chapterIndex, pageIndex, this.chapterSpreadPages(chapterIndex, spread).length)
+            }, (pageIndex: number) => `${pageIndex}_${this.chapterSpreadPages(chapterIndex, spread).length}`)
           }
           .width('100%')
           .height('100%')
           .justifyContent(FlexAlign.Center)
         } else {
-          this.boundaryCard(spread < 0 ? -1 : 1)
+          this.boundaryCard(chapterIndex < this.chapterIndex ? -1 : 1)
         }
       }
       .width(this.viewW())
       .height(this.viewH())
       .backgroundColor(this.surfaceColor)
-      .id(this.snapshotId(spread))
+      .id(this.snapshotId(this.relativeSpread(chapterIndex, spread)))
     }
     .width(this.viewW())
     .height(this.viewH())
-    .position({ x: this.slotX(spread), y: 0 })
-    .opacity(this.slotOpacity(spread))
-    .zIndex(this.slotZIndex(spread))
-    .scale(spread === this.spreadIndex ? { x: this.zoomScale, y: this.zoomScale } : { x: 1, y: 1 })
-    .translate(spread === this.spreadIndex ? { x: this.zoomX, y: this.zoomY } : { x: 0, y: 0 })
+    .position({ x: this.slotX(this.relativeSpread(chapterIndex, spread)), y: 0 })
+    .opacity(this.slotOpacity(this.relativeSpread(chapterIndex, spread)))
+    .zIndex(this.slotZIndex(this.relativeSpread(chapterIndex, spread)))
+    .scale(chapterIndex === this.chapterIndex && spread === this.spreadIndex ?
+      { x: this.zoomScale, y: this.zoomScale } : { x: 1, y: 1 })
+    .translate(chapterIndex === this.chapterIndex && spread === this.spreadIndex ?
+      { x: this.zoomX, y: this.zoomY } : { x: 0, y: 0 })
   }
 
   @Builder
@@ -924,7 +944,7 @@ export struct ReaderComicPagedView {
     Stack() {
       Stack() {
         ForEach([this.spreadIndex - 1, this.spreadIndex, this.spreadIndex + 1], (spread: number) => {
-          this.slot(spread)
+          this.slot(this.slotChapter(spread), this.slotSpreadIndex(spread))
         }, (spread: number) => this.slotKey(spread))
         Canvas(this.curlContext)
           .width(this.viewW())
