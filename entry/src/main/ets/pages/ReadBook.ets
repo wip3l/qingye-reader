@@ -217,8 +217,9 @@ const READER_REPLACE_MENU_ITEM_ID: string = 'reader_replace_rule';
 // A 0.42 raster remains sharp while moving on high-density screens and reduces texture fill by another 29%
 // compared with the previous half-resolution capture. This matters most on dialogue-heavy pages.
 const READER_PAGE_CURL_SNAPSHOT_SCALE = 0.42;
-// 3D 仿真单双页共用平折绘制，每帧只画两次贴图，保留较高的快照分辨率让正文清晰。
-const READER_PAGE_3D_SNAPSHOT_SCALE = 0.75;
+// 3D 仿真单双页共用平折绘制，每帧只画两次贴图，快照分辨率取正文清晰与截图回读开销的折中：
+// 0.75 时单页位图约 8 MB，渲染服务的离屏渲染与回读落在翻页起始帧；0.6 少三成多像素，正文仍可读。
+const READER_PAGE_3D_SNAPSHOT_SCALE = 0.6;
 const READER_IDLE_WORK_RETRY_MS = 120;
 // 连续快翻时卷页动画的时长比例，以及动画中途被下一次翻页催促时走完整页的时长。
 const READER_PAGE_CURL_RAPID_DURATION_RATIO = 0.6;
