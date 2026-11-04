@@ -10,10 +10,13 @@ function method(name) {
   return source.slice(start, source.indexOf('\n  }', start) + 4);
 }
 const jobs = [];
+let clock = 0;
 const Reader = vm.runInNewContext(stripTypeScriptTypes(`class Reader {
   ${['readerFlapPaperColor', 'prepareReaderPageCurlPalette', 'readerPageCurlNeedsBackSnapshot', 'isDarkHexColor', 'drawReaderPageCurl',
-    'captureReaderPageCurlSnapshots', 'resetReaderPageCurl'].map(method).join('\n')}
-}; Reader`), { console, px2vp: n => n, setTimeout: fn => jobs.push(fn), sleepMs: async () => {},
+    'captureReaderPageCurlSnapshots', 'resetReaderPageCurl', 'isCrossChapterPreviewWithinGrace',
+    'ensureReaderPageCurlReady', 'requestReaderPageCurlCapture'].map(method).join('\n')}
+}; Reader`), { console, px2vp: n => n, setTimeout: fn => jobs.push(fn), sleepMs: async () => { clock += 16; },
+  Date: { now: () => clock }, READER_CROSS_CHAPTER_PREVIEW_GRACE_MS: 160,
   ReaderRenderFrame: { wait: async () => {} }, READER_CURL_REGION_UNSET: -1,
   ReaderEmulationFlipRegion: { BOTTOM: 2 } });
 
@@ -117,4 +120,45 @@ await stale.p.captureReaderPageCurlSnapshots(1, 'turn');
 assert.equal(stale.reads(), 0, 'stale capture cannot publish its palette');
 assert.equal(stale.paints.length, 0);
 assert.equal(stale.bitmaps[0].releases, 1);
+// A slow adjacent chapter waits only the short grace, then the loading leaf is turned instead of freezing the sheet.
+function curlWaitFixture(previewStartedAt) {
+  const p = new Reader();
+  Object.assign(p, {
+    pageSlideDirection: 1, readerPageCurlCaptureKey: 'loading-leaf', readerPageCurlSnapshotReady: true,
+    readerPageCurlCapturePending: false, readerPageCurlMotionLocked: false,
+    pageTurnCrossChapterHandoff: true, pageTurnPreviewLoadingKey: 'next', pageTurnPreviewLoadingStartedAt: previewStartedAt,
+    usesReaderPageCurlCanvas: () => true, requestReaderPageCurlCapture() {},
+    waitReaderPageCurlCaptureSignal: async ms => { clock += ms; },
+  });
+  return p;
+}
+clock = 1000;
+const slow = curlWaitFixture(clock);
+assert.equal(await slow.ensureReaderPageCurlReady(), true, 'loading leaf turns once the grace has passed');
+assert(clock - 1000 >= 160 && clock - 1000 < 200, `bounded wait for a slow next chapter, waited ${clock - 1000}ms`);
+clock = 5000;
+const dragged = curlWaitFixture(clock - 400);
+assert.equal(await dragged.ensureReaderPageCurlReady(), true);
+assert.equal(clock, 5000, 'a preview already loading since the drag began adds no wait on release');
+clock = 9000;
+const fast = curlWaitFixture(clock);
+fast.waitReaderPageCurlCaptureSignal = async ms => {
+  clock += ms;
+  if (clock - 9000 >= 48 && fast.readerPageCurlCaptureKey === 'loading-leaf') {
+    fast.pageTurnPreviewLoadingKey = ''; fast.readerPageCurlCaptureKey = 'real-leaf';
+    fast.pageTurnIncomingDocumentSource = 'chapter';
+  }
+};
+assert.equal(await fast.ensureReaderPageCurlReady(), true);
+assert.equal(fast.readerPageCurlCaptureKey, 'real-leaf', 'a cached chapter inside the grace still turns its real first page');
+assert(clock - 9000 < 160);
+// Once the sheet is moving, a late preview must not recapture: that hides the canvas and flashes the old page.
+const moving = new Reader();
+Object.assign(moving, { readerPageCurlMotionLocked: true, readerPageCurlSnapshotReady: true,
+  readerPageCurlCaptureKey: 'loading-leaf', readerPageCurlCaptureSerial: 3,
+  pageSlideDirection: 1, usesReaderPageCurlCanvas: () => true, shouldRenderSlidingPageTurn: () => true,
+  readerPageCurlKey: () => { throw Error('locked curl reached capture'); } });
+moving.requestReaderPageCurlCapture();
+assert.equal(moving.readerPageCurlSnapshotReady, true);
+assert.equal(moving.readerPageCurlCaptureSerial, 3);
 console.log('PASS: zero theme lookups during ordinary/3D frames, atomic snapshot/palette publication, theme reset and paper/tone parity');

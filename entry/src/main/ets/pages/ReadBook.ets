@@ -227,6 +227,9 @@ const READER_PAGINATION_MOTION_IDLE_MS = 5;
 const READER_PAGE_CURL_RAPID_DURATION_RATIO = 0.6;
 const READER_PAGE_CURL_HURRY_DURATION = 150;
 const READER_PAGE_3D_HURRY_DURATION = 180;
+// 跨章卷页等相邻章首页预览的最长时间（从开始加载预览算起）。本地已缓存的章节通常在这之内排出首页，
+// 卷页直接带真实正文；没赶上（网络慢、加载失败）就用“正在加载”提示页照常卷过去，不把纸停在半空。
+const READER_CROSS_CHAPTER_PREVIEW_GRACE_MS = 160;
 const READER_CURL_REGION_UNSET = -1;
 // 一次拖动的意图：越过点击阈值时按方向判定一次，之后不再在翻页与下拉书签之间切换。
 const READER_PAN_INTENT_NONE = 0;
@@ -627,6 +630,9 @@ struct ReadBookPage {
   private readerPaginationInteractionIdleUntil: number = 0;
   private pageTurnPreviewKey: string = '';
   private pageTurnPreviewLoadingKey: string = '';
+  private pageTurnPreviewLoadingStartedAt: number = 0;
+  // 卷页已带着快照开始走完：中途到的相邻章预览只更新底下的目标页，不再重截（重截会先隐藏画布，闪回当前页）。
+  private readerPageCurlMotionLocked: boolean = false;
   private readerPageCurlPainter: ReaderPageCurlPainter = new ReaderPageCurlPainter();
   private readonly readerThemeRenderCache: ReaderThemeRenderCache = new ReaderThemeRenderCache();
   private readerEmulationFlipPainter: ReaderEmulationFlipPainter = new ReaderEmulationFlipPainter();
@@ -20024,6 +20030,7 @@ struct ReadBookPage {
     const sessionBookUrl = this.book?.bookUrl || this.bookUrl;
     if (!this.isCurrentReaderEngineBook(sessionBookUrl)) return;
     this.pageTurnPreviewLoadingKey = key;
+    this.pageTurnPreviewLoadingStartedAt = Date.now();
     this.readerEngine().peekContent(chapterIndex)
       .then(async (body: string): Promise<void> => {
         if (!this.isCurrentReaderEngineBook(sessionBookUrl) || this.pageTurnPreviewKey !== key ||
@@ -20455,6 +20462,7 @@ struct ReadBookPage {
       !this.shouldRenderSlidingPageTurn()) {
       return;
     }
+    if (this.readerPageCurlMotionLocked && this.readerPageCurlSnapshotReady) return;
     const key = this.readerPageCurlKey();
     if (key === this.readerPageCurlCaptureKey &&
       (this.readerPageCurlSnapshotReady || this.readerPageCurlCapturePending)) {
@@ -20500,9 +20508,9 @@ struct ReadBookPage {
   }
 
   async captureReaderPageCurlSnapshots(serial: number, key: string): Promise<void> {
-    for (let attempt = 0; attempt < 30 && this.pageTurnPreviewLoadingKey; attempt++) {
+    while (this.isCrossChapterPreviewWithinGrace()) {
       if (serial !== this.readerPageCurlCaptureSerial || key !== this.readerPageCurlCaptureKey) return;
-      await sleepMs(20);
+      await sleepMs(16);
     }
     const textureKey = this.readerSettledTextureKey(this.pageSlideDirection);
     let frontLease = this.readerPageTextureCache.acquire(textureKey);
@@ -20651,23 +20659,30 @@ struct ReadBookPage {
         if (keyChangeCount > 4) return false;
         attempt = 0;
       }
-      const crossChapterPreviewLoading = this.pageTurnCrossChapterHandoff && !!this.pageTurnPreviewLoadingKey;
-      const crossChapterPreviewReady = !this.pageTurnCrossChapterHandoff ||
-        !!this.pageTurnIncomingDocumentSource;
+      // A slow or failed adjacent chapter must not hold the sheet mid-air. Wait only a short grace for a locally
+      // cached chapter to publish its real first page; after that the loading leaf is turned like any page and the
+      // commit keeps it on screen until loadContent lands the chapter.
+      const crossChapterPreviewWaiting = this.isCrossChapterPreviewWithinGrace();
       if (this.readerPageCurlSnapshotReady && key === this.readerPageCurlCaptureKey &&
-        crossChapterPreviewReady) return true;
+        !crossChapterPreviewWaiting) return true;
       // captureReaderPageCurlSnapshots clears the pending flag when the platform snapshot request fails.
       // Do not keep the turn locked for the remainder of the old 1.9s polling window after a terminal failure.
-      // While an adjacent preview is still loading, a completed placeholder capture is not a terminal result:
-      // applyPageTurnPreview will publish the real leaf and start the authoritative replacement capture.
-      if (!this.readerPageCurlCapturePending && !crossChapterPreviewLoading) return false;
+      // Within the grace a completed placeholder capture is not a terminal result: applyPageTurnPreview may still
+      // publish the real leaf and start the authoritative replacement capture.
+      if (!this.readerPageCurlCapturePending && !crossChapterPreviewWaiting) return false;
       await this.waitReaderPageCurlCaptureSignal(16);
     }
     return false;
   }
 
+  isCrossChapterPreviewWithinGrace(): boolean {
+    return this.pageTurnCrossChapterHandoff && !!this.pageTurnPreviewLoadingKey &&
+      Date.now() - this.pageTurnPreviewLoadingStartedAt < READER_CROSS_CHAPTER_PREVIEW_GRACE_MS;
+  }
+
   async completeSimulationPageTurnMotion(direction: number): Promise<void> {
     const ready = await this.ensureReaderPageCurlReady();
+    if (ready) this.readerPageCurlMotionLocked = true;
     if (!ready) {
       // Snapshot services can be temporarily unavailable after foregrounding or during a rapid turn chain.
       // Preserve a visible, bounded transition instead of committing an apparently animation-less page.
@@ -20708,6 +20723,7 @@ struct ReadBookPage {
 
   resetReaderPageCurl(): void {
     this.readerEmulationFlipPainter.clearCorner();
+    this.readerPageCurlMotionLocked = false;
     this.readerPageCurlCaptureSerial++;
     this.readerPageCurlCapturePending = false;
     this.readerPageCurlCaptureKey = '';
