@@ -387,7 +387,7 @@ struct ReadBookPage {
   @State readerComicTitleCapsuleWidth: number = 0;
   /** 本书单独选的漫画阅读方式（书籍变量 readerComicReadingMode）；空串跟随全局默认。 */
   @State readerComicBookMode: string = '';
-  /** 本书漫画图片繁→简（书籍变量 readerComicTextConvert = t2s）。 */
+  /** 本书漫画图片繁→简（书籍变量 readerComicTextConvert，没单独设置过时跟随漫画设置的默认值）。 */
   @State readerComicTextConvert: boolean = false;
   @State readerComicColorEnabled: boolean = false;
   @State readerComicModelStatus: string = '';
@@ -3151,6 +3151,8 @@ struct ReadBookPage {
     // 读取状态让权限变化时界面重算；实际授权由宿主统一策略判断。
     const sku = this.readerMembershipSku;
     return this.readerComicColorRevision >= 0 && sku !== undefined ?
+      // 设置可能晚于书籍读出，或刚在漫画设置页改了着色、繁→简的默认值，没单独设置过的书要跟着变。
+      if (this.book) this.applyReaderComicAiChoices();
       ReaderComicSuperResolution.access() : ReaderComicSuperResolutionAccess.MEMBER_REQUIRED;
   }
 
@@ -3176,7 +3178,8 @@ struct ReadBookPage {
     if (enabled && this.readerComicTextConvertAccess() !== ReaderComicSuperResolutionAccess.READY) return;
     if (!this.book || enabled === this.readerComicTextConvert) return;
     this.readerComicTextConvert = enabled;
-    this.book.putVariable('readerComicTextConvert', enabled ? 't2s' : '');
+    // 手动关闭也记下来，和“没单独设置过、跟随默认值”区分开。
+    this.book.putVariable('readerComicTextConvert', enabled ? 't2s' : 'off');
     AppDatabase.getInstance().updateBook(this.book, false).catch((error: Error) => {
       console.warn('保存漫画繁→简设置失败:', error);
     });
@@ -3212,7 +3215,7 @@ struct ReadBookPage {
     }
     this.readerComicColorEnabled = enabled;
     this.readerComicColor.setEnabled(enabled);
-    this.book.putVariable('readerComicColorEnabled', enabled ? '1' : '');
+    this.book.putVariable('readerComicColorEnabled', enabled ? '1' : '0');
     AppDatabase.getInstance().updateBook(this.book, false).catch((error: Error): void => {
       console.warn('保存彩色阅读设置失败:', error);
     });
@@ -6025,9 +6028,8 @@ struct ReadBookPage {
     this.syncReaderImageDeferral();
     const bookMode = this.book?.getVariable('readerComicReadingMode') || '';
     this.readerComicBookMode = bookMode ? ReaderComicMode.normalize(bookMode) : '';
-    this.readerComicTextConvert = this.book?.getVariable('readerComicTextConvert') === 't2s';
-    this.readerComicColorEnabled = this.book?.getVariable('readerComicColorEnabled') === '1' &&
-      ComicColorModels.missingBytes(getContext(this)) === 0;
+    this.readerComicTextConvert = this.readerComicBookTextConvert();
+    this.readerComicColorEnabled = this.readerComicBookColorEnabled();
     if (!this.readerComicColorUnsubscribe) {
       this.readerComicColorUnsubscribe = this.readerComicColor.subscribe((): void => { this.readerComicColorRevision++; });
     }
@@ -6154,6 +6156,27 @@ struct ReadBookPage {
 
   beginReaderComicPan(): void {
     this.stopReaderComicScreenScroll();
+  readerComicBookTextConvert(): boolean {
+    return ReaderComicSettings.bookTextConvert(this.book?.getVariable('readerComicTextConvert') || '',
+      this.readerComicSettings);
+  }
+
+  /** 着色模型没下全时不开：阅读页里不弹下载，等用户在漫画面板或漫画设置里开启时再下。 */
+  readerComicBookColorEnabled(): boolean {
+    return ReaderComicSettings.bookColorEnabled(this.book?.getVariable('readerComicColorEnabled') || '',
+      this.readerComicSettings) && ComicColorModels.missingBytes(getContext(this)) === 0;
+  }
+
+  /** 重新按本书设置与默认值决定着色、繁→简，只在结果变了时才动着色引擎。 */
+  applyReaderComicAiChoices(): void {
+    this.readerComicTextConvert = this.readerComicBookTextConvert();
+    const color = this.readerComicBookColorEnabled();
+    if (color === this.readerComicColorEnabled) return;
+    this.readerComicColorEnabled = color;
+    // 还没进过漫画模式时着色引擎没配置，等 initializeReaderComicMode 按同一结果配置。
+    if (this.readerComicColorUnsubscribe) this.readerComicColor.setEnabled(color);
+  }
+
     if (this.readerComicChapterSwitching) return;
     this.readerComicPanLastOffsetY = 0;
     this.readerComicPanMoved = false;

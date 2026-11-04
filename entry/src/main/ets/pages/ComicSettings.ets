@@ -14,13 +14,18 @@ import {
   ReaderComicSettingsStore
 } from '../core/reader/ReaderComicSettings';
 import {
+  ComicChineseConverter,
+  ComicColorizer,
   ReaderComicSuperResolution,
   ReaderComicSuperResolutionAccess
 } from '@legado/aiengine';
+import { ComicColorDownloadPrompt } from '../utils/ComicColorDownloadPrompt';
+import { ComicColorDownloadProgress } from '../components/reader/ComicColorDownloadProgress';
+import { HdsFeedback } from '../utils/HdsFeedback';
 
 /**
- * 阅读设置 → 漫画：漫画的全局设置。与阅读页「阅读方式」「画面设置」面板读写同一份设置；
- * 按书单独设置的阅读方式只在阅读页里改。
+ * 阅读与收听 → 漫画：漫画的全局设置。与阅读页「阅读方式」「画面设置」面板读写同一份设置；
+ * 按书单独设置的阅读方式只在阅读页里改。AI 着色、翻译按书保存，这里改的是没单独设置过的书用的默认值。
  */
 @Entry
 @Component
@@ -39,6 +44,11 @@ struct ComicSettingsPage {
    * 先用默认值建出来再异步读取，就会一直显示默认值。
    */
   @State loaded: boolean = false;
+  @State modelStatus: string = '';
+  @State modelReceivedBytes: number = 0;
+  @State modelTotalBytes: number = 0;
+  private modelRequest: number = 0;
+  private pageVisible: boolean = false;
 
   private static readonly MODES: string[] = [ReaderComicMode.WEBTOON, ReaderComicMode.LTR, ReaderComicMode.RTL];
   private static readonly BACKGROUNDS: string[] =
@@ -46,11 +56,22 @@ struct ComicSettingsPage {
   private static readonly FITS: string[] = [ReaderComicFit.WIDTH, ReaderComicFit.SCREEN];
 
   onPageShow(): void {
+    this.pageVisible = true;
     this.syncBars();
     ReaderComicSettingsStore.load(getContext(this)).then((settings: ReaderComicSettings): void => {
       this.settings = settings;
       this.loaded = true;
     });
+  }
+
+  onPageHide(): void {
+    this.pageVisible = false;
+  }
+
+  aboutToDisappear(): void {
+    // 离开页面就取消还在下的着色模型，和阅读页面板的行为一致。
+    this.pageVisible = false;
+    this.modelRequest++;
   }
 
   build() {
@@ -161,9 +182,11 @@ struct ComicSettingsPage {
     .clip(true)
     .backgroundColor(this.cardColor())
 
-    this.sectionTitle('AI超分')
+    this.sectionTitle('AI 功能')
     Column() {
       this.superResolutionRow()
+      this.colorDefaultRow()
+      this.textConvertDefaultRow()
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -171,7 +194,7 @@ struct ComicSettingsPage {
     .clip(true)
     .backgroundColor(this.cardColor())
 
-    Text('点击区域动作、屏幕方向、音量键翻页与小说共用，在上一页「操作」中调整；单本漫画的阅读方式在阅读页里设置。')
+    Text('点击区域动作、屏幕方向、音量键翻页与小说共用，在上一页「阅读通用」中调整。AI 着色和翻译是默认值，在阅读页里给某本书单独开关过的以那本书为准；单本漫画的阅读方式也在阅读页里设置。')
       .fontSize(AppFontSize.CAPTION)
       .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
       .width('100%')
@@ -186,7 +209,6 @@ struct ComicSettingsPage {
         minimumMembership: 'MONTHLY',
         description: '借助AI把低清图片放大变清晰，处理好后自动替换；只处理正在看的图，会多耗一些电',
         isOn: this.settings.superResolution,
-        showDivider: false,
         onChange: (value: boolean) => {
           this.update((next: ReaderComicSettings): void => {
             next.superResolution = value;
@@ -200,7 +222,6 @@ struct ComicSettingsPage {
         description: this.settings.superResolution ? '会员已到期，续费后自动恢复' :
           '借助AI把低清图片放大变清晰',
         value: '开通会员',
-        showDivider: false,
         onTap: () => {
           router.pushUrl({ url: 'pages/AccountCenter' });
         }
@@ -211,7 +232,130 @@ struct ComicSettingsPage {
         minimumMembership: 'MONTHLY',
         description: '当前系统不支持，需要 API 26 及以上且支持图片超分的设备',
         isOn: false,
-        switchEnabled: false,
+        switchEnabled: false
+      })
+    }
+  }
+
+  colorAccess(): string {
+    const sku = this.membershipSku;
+    if (!ComicColorizer.supported()) return ReaderComicSuperResolutionAccess.UNSUPPORTED;
+    return sku !== undefined && ComicColorizer.memberAllowed() ?
+      ReaderComicSuperResolutionAccess.READY : ReaderComicSuperResolutionAccess.MEMBER_REQUIRED;
+  }
+
+  textConvertAccess(): string {
+    const sku = this.membershipSku;
+    return sku !== undefined ? ComicChineseConverter.access() : ReaderComicSuperResolutionAccess.MEMBER_REQUIRED;
+  }
+
+  @Builder
+  colorDefaultRow() {
+    if (this.colorAccess() === ReaderComicSuperResolutionAccess.READY) {
+      SettingSwitchRow({
+        title: 'AI着色',
+        minimumMembership: 'MONTHLY',
+        description: '新打开的黑白漫画默认着色，当前画面优先；单张超长图暂不支持。首次开启需下载着色模型，开启后暂停AI超分',
+        isOn: this.settings.colorDefault,
+        switchEnabled: !this.modelStatus,
+        onChange: (value: boolean) => {
+          this.setColorDefault(value).catch((error: Error) => console.warn('保存默认着色失败:', error));
+        }
+      })
+    } else if (this.colorAccess() === ReaderComicSuperResolutionAccess.MEMBER_REQUIRED) {
+      SettingNavRow({
+        title: 'AI着色',
+        minimumMembership: 'MONTHLY',
+        description: this.settings.colorDefault ? '会员已到期，续费后自动恢复' : '借助AI为黑白漫画着色',
+        value: '开通会员',
+        onTap: () => {
+          router.pushUrl({ url: 'pages/AccountCenter' });
+        }
+      })
+    } else {
+      SettingSwitchRow({
+        title: 'AI着色',
+        minimumMembership: 'MONTHLY',
+        description: '当前设备不支持本地着色引擎',
+        isOn: false,
+        switchEnabled: false
+      })
+    }
+    if (this.modelStatus) {
+      Column({ space: AppSpacing.MD }) {
+        Text(this.modelStatus).fontSize(AppFontSize.CAPTION).fontColor(this.primaryTextColor()).width('100%')
+        if (this.modelTotalBytes > 0) {
+          ComicColorDownloadProgress({ receivedBytes: this.modelReceivedBytes, totalBytes: this.modelTotalBytes,
+            accent: this.accentColor(), labelColor: ThemeRuntime.subTextColor(this.appDarkMode) })
+        } else {
+          LoadingProgress().width(24).height(24).color(this.accentColor())
+        }
+        Button('取消模型下载').onClick(() => { this.modelRequest++; })
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.MD })
+    }
+  }
+
+  /** 打开默认着色前先确保模型已下好；没下好时阅读页不会着色，开关打开也没用。 */
+  async setColorDefault(value: boolean): Promise<void> {
+    if (!value) {
+      this.modelRequest++;
+      this.update((next: ReaderComicSettings): void => { next.colorDefault = false; });
+      return;
+    }
+    if (this.modelStatus) return;
+    const ticket = ++this.modelRequest;
+    const active = (): boolean => ticket === this.modelRequest && this.pageVisible && ComicColorizer.isAppForeground();
+    let ready = false;
+    try {
+      ready = await ComicColorDownloadPrompt.ensure(getContext(this), this.getUIContext(), active,
+        (status: string): void => { if (active()) this.modelStatus = status; },
+        (received: number, total: number): void => {
+          if (!active()) return;
+          this.modelReceivedBytes = received;
+          this.modelTotalBytes = total;
+        });
+    } catch (error) {
+      if (active()) HdsFeedback.showToast((error as Error).message || '模型下载失败，请重试');
+    } finally {
+      this.modelStatus = '';
+      this.modelReceivedBytes = 0;
+      this.modelTotalBytes = 0;
+    }
+    if (ready && ticket === this.modelRequest) {
+      this.update((next: ReaderComicSettings): void => { next.colorDefault = true; });
+    } else {
+      // 没开成时把开关拨回去：开关显示的是 settings 里的值，换一份新对象让它刷新。
+      this.settings = this.settings.copy();
+    }
+  }
+
+  @Builder
+  textConvertDefaultRow() {
+    if (this.textConvertAccess() === ReaderComicSuperResolutionAccess.READY) {
+      this.selectItem('AI翻译', '新打开的漫画默认转换对白；日→中、韩→中即将推出',
+        [{ value: '关闭' }, { value: '繁→简' }], this.settings.textConvertDefault ? 1 : 0,
+        (index: number) => {
+          this.update((next: ReaderComicSettings): void => { next.textConvertDefault = index === 1; });
+        }, 'comic_settings_text_convert_default_select', false, 'MONTHLY')
+    } else if (this.textConvertAccess() === ReaderComicSuperResolutionAccess.MEMBER_REQUIRED) {
+      SettingNavRow({
+        title: 'AI翻译',
+        minimumMembership: 'MONTHLY',
+        description: this.settings.textConvertDefault ? '会员已到期，续费后自动恢复' : '借助AI识别并转换漫画对白',
+        value: '开通会员',
+        showDivider: false,
+        onTap: () => {
+          router.pushUrl({ url: 'pages/AccountCenter' });
+        }
+      })
+    } else {
+      SettingNavRow({
+        title: 'AI翻译',
+        minimumMembership: 'MONTHLY',
+        description: '当前设备不支持系统文字识别',
+        value: '',
         showDivider: false
       })
     }
@@ -243,8 +387,8 @@ struct ComicSettingsPage {
 
   @Builder
   selectItem(title: string, desc: string, options: SelectOption[], selected: number,
-    onSelect: (index: number) => void, controlId: string, showDivider: boolean = true) {
-    SettingRow({ title: title, description: desc, showDivider: showDivider }) {
+    onSelect: (index: number) => void, controlId: string, showDivider: boolean = true, minimumMembership: string = '') {
+    SettingRow({ title: title, description: desc, showDivider: showDivider, minimumMembership: minimumMembership }) {
       Select(options)
         .id(controlId)
         .selected(selected)
@@ -272,6 +416,14 @@ struct ComicSettingsPage {
 
   cardColor(): string {
     return ThemeRuntime.cardColor(this.appDarkMode);
+  }
+
+  primaryTextColor(): string {
+    return ThemeRuntime.primaryTextColor(this.appDarkMode);
+  }
+
+  accentColor(): string {
+    return ThemeRuntime.accentColor(this.appDarkMode);
   }
 
   syncBars(): void {

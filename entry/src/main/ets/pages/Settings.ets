@@ -109,6 +109,8 @@ struct SettingsPage {
   @StorageLink('readerVolumeTurnPage') readerVolumeTurnPage: boolean = false;
   @StorageLink('readerSmartKeyTurnPage') readerSmartKeyTurnPage: boolean = false;
   @StorageProp('readerSmartKeyTurnSupported') readerSmartKeyTurnSupported: boolean = false;
+  @StorageProp('audioBookAutoPlay') audioBookAutoPlay: boolean = true;
+  @StorageProp('ttsSpeed') ttsSpeed: number = 1;
   @StorageLink('readerLongPressSelectText') readerLongPressSelectText: boolean = true;
   @StorageLink('readerScreenTimeoutMinutes') readerScreenTimeoutMinutes: number =
     ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON;
@@ -519,25 +521,28 @@ struct SettingsPage {
   /** 第一层「阅读与收听」：小说、漫画、PDF、有声书、朗读各自的入口，以及阅读器通用的操作和其他设置。 */
   @Builder
   pageContent() {
-    this.sectionTitle('分类设置')
+    this.sectionTitle('内容')
     Column() {
       SettingNavRow({
         title: '小说',
         description: '排版、背景、翻页',
+        icon: $r('sys.symbol.book_pages'),
         onTap: () => {
           router.pushUrl({ url: 'pages/Settings', params: { section: SettingsPage.SECTION_NOVEL } });
         }
       })
       SettingNavRow({
         title: '漫画',
-        description: '阅读方式、画面、AI超分',
+        description: '阅读方式、画面、AI 超分/着色/翻译',
+        icon: $r('sys.symbol.picture'),
         onTap: () => {
           router.pushUrl({ url: 'pages/ComicSettings' });
         }
       })
       SettingNavRow({
         title: 'PDF',
-        description: '连续滚动、单双页、页面适配、AI超分',
+        description: '连续滚动、单双页、页面适配、AI 超分',
+        icon: $r('sys.symbol.doc_text'),
         onTap: () => {
           router.pushUrl({ url: 'pages/PdfSettings' });
         }
@@ -545,6 +550,8 @@ struct SettingsPage {
       SettingNavRow({
         title: '有声书',
         description: '自动播放、边听边下、离线下载',
+        value: this.audioBookAutoPlay ? '自动播放' : '手动播放',
+        icon: $r('sys.symbol.earphone'),
         onTap: () => {
           router.pushUrl({ url: 'pages/AudioBookSettings' });
         }
@@ -552,6 +559,8 @@ struct SettingsPage {
       SettingNavRow({
         title: '朗读',
         description: '音色、倍速、MiMo 朗读、在线朗读字数',
+        value: `${this.ttsSpeed.toFixed(1)}×`,
+        icon: $r('sys.symbol.speaker_wave_3'),
         showDivider: false,
         onTap: () => {
           router.pushUrl({ url: 'pages/TtsSettings' });
@@ -564,13 +573,17 @@ struct SettingsPage {
     .clip(true)
     .backgroundColor(this.cardColor())
 
-    this.sectionTitle('阅读操作')
+    this.sectionTitle('阅读通用（小说、漫画共用）')
     Column() {
       this.tapZoneSettingItem()
       this.selectItem('屏幕方向', '阅读时的屏幕方向',
         this.screenOrientationOptions(), this.screenOrientationSelectedIndex(), (index: number) => {
           this.setReaderScreenOrientationByIndex(index);
         }, 'settings_screen_orientation_select')
+      this.selectItem('亮屏时间设置', '无操作达到所选时长后恢复系统息屏',
+        this.screenTimeoutOptions(), this.screenTimeoutSelectedIndex(), (index: number) => {
+          this.setReaderScreenTimeoutByIndex(index);
+        }, 'settings_screen_timeout_select')
       SettingSwitchRow({
         title: '音量键翻页',
         description: '音量上/下键翻到上一页/下一页，条漫为翻一屏',
@@ -598,12 +611,8 @@ struct SettingsPage {
     .clip(true)
     .backgroundColor(this.cardColor())
 
-    this.sectionTitle('阅读其他')
+    this.sectionTitle('缓存与提示')
     Column() {
-      this.selectItem('亮屏时间设置', '无操作达到所选时长后恢复系统息屏',
-        this.screenTimeoutOptions(), this.screenTimeoutSelectedIndex(), (index: number) => {
-          this.setReaderScreenTimeoutByIndex(index);
-        }, 'settings_screen_timeout_select')
       SettingSwitchRow({
         title: 'AI处理标识',
         description: '显示 EPUB 插图、漫画和 PDF 的 AI 处理及超分提示',

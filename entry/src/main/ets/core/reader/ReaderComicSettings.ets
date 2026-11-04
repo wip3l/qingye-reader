@@ -79,6 +79,19 @@ export class ReaderComicSettings {
   dualPage: boolean = true;
   /** 端侧 AI 超分（会员功能）；会员到期后保留开关值，续费后自动恢复。 */
   superResolution: boolean = false;
+  /** AI 着色与繁→简按书保存；这两项是没单独设置过的书用的默认值。 */
+  colorDefault: boolean = false;
+  textConvertDefault: boolean = false;
+
+  /** 书籍变量 readerComicColorEnabled：'1' 开、'0' 关，空表示没单独设置过、跟随默认值。 */
+  static bookColorEnabled(value: string, settings: ReaderComicSettings): boolean {
+    return value === '1' || (value !== '0' && settings.colorDefault);
+  }
+
+  /** 书籍变量 readerComicTextConvert：'t2s' 开、'off' 关，空表示没单独设置过、跟随默认值。 */
+  static bookTextConvert(value: string, settings: ReaderComicSettings): boolean {
+    return value === 't2s' || (value !== 'off' && settings.textConvertDefault);
+  }
 
   copy(): ReaderComicSettings {
     const next = new ReaderComicSettings();
@@ -92,6 +105,8 @@ export class ReaderComicSettings {
     next.doubleTapZoom = this.doubleTapZoom;
     next.dualPage = this.dualPage;
     next.superResolution = this.superResolution;
+    next.colorDefault = this.colorDefault;
+    next.textConvertDefault = this.textConvertDefault;
     return next;
   }
 
@@ -106,7 +121,9 @@ export class ReaderComicSettings {
       'infoBar': this.infoBar,
       'doubleTapZoom': this.doubleTapZoom,
       'dualPage': this.dualPage,
-      'superResolution': this.superResolution
+      'superResolution': this.superResolution,
+      'colorDefault': this.colorDefault,
+      'textConvertDefault': this.textConvertDefault
     };
     return JSON.stringify(record);
   }
@@ -127,6 +144,8 @@ export class ReaderComicSettings {
       settings.doubleTapZoom = record['doubleTapZoom'] !== false;
       settings.dualPage = record['dualPage'] !== false;
       settings.superResolution = record['superResolution'] === true;
+      settings.colorDefault = record['colorDefault'] === true;
+      settings.textConvertDefault = record['textConvertDefault'] === true;
     } catch (_) {
     }
     return settings;
