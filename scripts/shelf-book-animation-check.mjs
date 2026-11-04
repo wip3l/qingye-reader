@@ -92,4 +92,25 @@ reader.shelfOpenAnimating = false;
 assert.equal(reader.isReaderPaginationInteractionBusy(), false, 'pagination resumes after opening');
 reader.readerExiting = true;
 assert.equal(reader.isReaderPageMotionActive(), true, 'background warmup also yields while closing');
+
+// The body column is rasterized as one layer while the page scales from and back to the shelf cover; the rotating
+// cover layer lives outside it so the cached layer survives every frame of the motion.
+const readerSource = read('pages/ReadBook.ets');
+const bodyStart = readerSource.search(/^      Column\(\) \{\r?\n        if \(!this\.shouldRenderPrimaryReaderContent\(\)\) \{/m);
+assert.ok(bodyStart >= 0, 'body column');
+const bodyColumn = readerSource.slice(bodyStart, readerSource.indexOf('// 页眉放在全屏层', bodyStart));
+assert.match(bodyColumn, /\.renderGroup\(this\.shelfMotionRasterized\)/, 'the body column rasterizes during shelf motion');
+assert.doesNotMatch(bodyColumn, /ReaderShelfCoverOpening\(/, 'the cover layer stays outside the rasterized body');
+const motion = hostFor(readerSource, ['prepareShelfOpening', 'finishShelfOpening']);
+Object.assign(motion, {
+  shelfOpeningCover: { boundsX: 10, boundsY: 20, boundsWidth: 90, boundsHeight: 120, windowWidth: 400, windowHeight: 800 },
+  shelfSharedCoverId: 'cover', shelfMotionRasterized: false, shelfOpenStartTimer: -1, readerInitialOpening: true,
+  readerExiting: false, shelfCoverAngle: 0, shelfPendingSharedCoverId: ''
+});
+motion.prepareShelfOpening();
+assert.equal(motion.shelfMotionRasterized, true, 'rasterized from the first scaled frame');
+motion.finishShelfOpening();
+assert.equal(motion.shelfMotionRasterized, false, 'ordinary reading draws the body directly again');
+motion.prepareShelfOpening(); motion.readerExiting = true; motion.finishShelfOpening();
+assert.equal(motion.shelfMotionRasterized, true, 'leaving during the opening keeps the layer for the return flight');
 console.log('PASS shelf animation: real finish callback, high-refresh request, stable return target and deferred/coalesced refresh');

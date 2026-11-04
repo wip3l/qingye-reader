@@ -988,6 +988,11 @@ struct ReadBookPage {
   @State shelfCoverFrameVisible: boolean = true;
   /** 打开时整页从书架封面处放大：以左上角为原点非等比缩放再平移，只改绘制不改排版，正文不会重排。 */
   @State shelfOpenScaleX: number = 1;
+  /**
+   * 打开放大与返回缩回期间把正文列整组栅格化：整页文字否则每帧按新尺寸重新光栅化，放大后半段偶有单帧超预算。
+   * 只挂在正文列上，不挂根节点：封面层也在根节点里，每帧旋转会让整组缓存失效。
+   */
+  @State shelfMotionRasterized: boolean = false;
   @State shelfOpenScaleY: number = 1;
   @State shelfOpenTranslateX: number = 0;
   @State shelfOpenTranslateY: number = 0;
@@ -3473,6 +3478,7 @@ struct ReadBookPage {
       .backgroundColor(this.shouldRenderPrimaryReaderContent() ? this.readerContentLayerColor() :
         this.getBackgroundColor())
       .hitTestBehavior(HitTestMode.Default)
+      .renderGroup(this.shelfMotionRasterized)
 
       // 页眉放在全屏层，负位置可以越过正文安全区，且不会被正文容器裁掉。
       if (this.shouldRenderPrimaryReaderContent() && this.isReaderHeaderVisible()) {
@@ -18051,6 +18057,7 @@ struct ReadBookPage {
     this.shelfCoverFillImage = true;
     this.shelfCoverVisible = true;
     this.shelfOpenAnimating = true;
+    this.shelfMotionRasterized = true;
     this.shelfOpenEndsAt = Date.now() + SHELF_COVER_OPEN_START_CAP + SHELF_COVER_OPEN_DURATION;
   }
 
@@ -18102,6 +18109,7 @@ struct ReadBookPage {
     }
     this.shelfOpenAnimating = false;
     this.shelfOpenEndsAt = 0;
+    if (!this.readerExiting) this.shelfMotionRasterized = false;
     if (!this.readerInitialOpening) AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', false);
     this.shelfOpenScaleX = 1;
     this.shelfOpenScaleY = 1;
@@ -18174,6 +18182,8 @@ struct ReadBookPage {
     }
     // 打开动画还没走完就返回时，先收尾，返回转场才有共享 id 可用。
     this.finishShelfOpening();
+    // 返回转场把整页缩回书架封面，正文列同样整组栅格化到页面销毁。
+    if (this.openedWithShelfAnimation) this.shelfMotionRasterized = true;
     // 合上封面与保存进度同时进行，不在两者之间多等一次。
     const shelfCoverClosed = this.openedWithShelfAnimation ? this.closeShelfCover() : Promise.resolve();
     try {
