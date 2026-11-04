@@ -6,6 +6,8 @@ import { ReaderFontHelper, ReaderFontItem } from './ReaderFontHelper';
 import { ReaderSettings, ReaderSettingsStore } from './ReaderSettingsStore';
 import { ReaderSystemFontHelper } from './ReaderSystemFontHelper';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
+import { ReaderRegexFontCodec, ReaderRegexLegacySettings } from '../model/reader/ReaderRegexFontRule';
+import { ReaderCustomFontData, ReaderCustomFontItem } from '../core/reader/ReaderSettingsModels';
 
 export class ReaderFontBootstrap {
   /**
@@ -112,6 +114,52 @@ export class ReaderFontBootstrap {
         source, JSON.stringify(err));
       return false;
     }
+  }
+
+  /**
+   * 正文、标题、正则规则单独选的自定义字体，阅读页要到开书时才注册（registerStyledCustomReaderFonts），
+   * 冷启动时这一步在主线程约 47ms。启动后先把它们预载好，开书时就只剩登记。挑字体的规则须与阅读页一致。
+   */
+  static async preloadStyledFonts(context: Context): Promise<void> {
+    const settings = await ReaderSettingsStore.load(context);
+    const families: string[] = [];
+    if (settings.bodyFontMode === 'custom') families.push(settings.bodyFontFamily);
+    if (settings.titleFontMode === 'custom') families.push(settings.titleFontFamily);
+    if (settings.regexFontMode === 'custom') families.push(settings.regexFontFamily);
+    const legacy = new ReaderRegexLegacySettings();
+    legacy.pattern = settings.regexFontPattern;
+    legacy.fontMode = settings.regexFontMode || 'global';
+    legacy.fontFamily = settings.regexFontFamily;
+    legacy.fontSize = settings.regexFontSize || 20;
+    legacy.shadowColor = settings.regexShadowColor;
+    for (const rule of ReaderRegexFontCodec.decode(settings.regexFontRulesRaw, legacy)) {
+      if (rule.fontMode === 'custom') families.push(rule.fontFamily);
+    }
+    const paths = ReaderFontBootstrap.customFontPaths(settings.customFontsRaw, families);
+    for (const path of paths) {
+      await ReaderFontHelper.preloadGraphicsTextFont(path);
+    }
+  }
+
+  private static customFontPaths(raw: string, families: string[]): string[] {
+    const wanted = families.filter((family: string): boolean => !!family);
+    if (wanted.length === 0 || !(raw || '').trim()) {
+      return [];
+    }
+    const paths: string[] = [];
+    try {
+      const parsed = JSON.parse(raw) as ReaderCustomFontData | ReaderCustomFontItem[];
+      const items = Array.isArray(parsed) ? parsed as ReaderCustomFontItem[] :
+        ((parsed as ReaderCustomFontData).fonts || []);
+      for (const family of wanted) {
+        const item = items.find((candidate: ReaderCustomFontItem): boolean => !!candidate && !!candidate.filePath &&
+          (candidate.familyName === family || ReaderFontHelper.normalizeFontFamily(candidate.filePath) === family));
+        if (item && paths.indexOf(item.filePath) < 0) paths.push(item.filePath);
+      }
+    } catch (err) {
+      hilog.warn(0x0000, 'testTag', 'Reader styled font preload parse failed err=%{public}s', JSON.stringify(err));
+    }
+    return paths;
   }
 
   private static registerSettings(

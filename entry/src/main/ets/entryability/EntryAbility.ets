@@ -393,6 +393,14 @@ export default class EntryAbility extends UIAbility {
       this.readerBootstrapPromise
         .then(() => ReaderFontBootstrap.registerFromSettings(
           this.context, this.mainUIContext(), 'ability-after-first-content'))
+        .then(() => {
+          // 阅读页单独选的自定义字体等书架首屏忙完再预载，进程内第一次开书就不用在主线程现解析字体文件。
+          setTimeout(() => {
+            ReaderFontBootstrap.preloadStyledFonts(this.context).catch((e: Error) => {
+              hilog.warn(0x0000, 'testTag', 'Reader styled font preload failed: %{public}s', JSON.stringify(e));
+            });
+          }, 1000);
+        })
         .catch((e: Error) => {
           hilog.warn(0x0000, 'testTag', 'Deferred reader bootstrap failed: %{public}s', JSON.stringify(e));
         });

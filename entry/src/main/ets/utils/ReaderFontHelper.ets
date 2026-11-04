@@ -143,6 +143,44 @@ export class ReaderFontHelper {
     return false;
   }
 
+  /**
+   * 书架空闲时预载阅读页要用的字体。graphics.text 同步解析一个字体文件冷启动要 30ms 左右，这里用异步接口
+   * 放到后台线程；登记时的字重识别（静态字体要 makeFromFile，十几毫秒）没有异步版，仍在主线程做掉。
+   * 开书时 registerGraphicsTextFont 看到已登记就跳过；预载没赶上时照旧同步加载，排版不会用错字体。
+   */
+  static async preloadGraphicsTextFont(filePath: string): Promise<boolean> {
+    if (!filePath || !ReaderFontHelper.fontFileExists(filePath)) {
+      return false;
+    }
+    const preparedPath = ReaderFontHelper.ensureAsciiFontPath(filePath);
+    const familyName = ReaderFontHelper.runtimeFontFamily(preparedPath);
+    if (ReaderFontHelper.hasRegisteredGraphicsFamily(familyName, preparedPath)) {
+      return true;
+    }
+    const collection = graphicsText.FontCollection.getGlobalInstance();
+    for (const familySrc of ReaderFontHelper.fontSources(preparedPath)) {
+      if (!familySrc.startsWith('file://')) {
+        continue;
+      }
+      try {
+        try {
+          await collection.loadFontWithCheck(familyName, familySrc);
+        } catch (e) {
+          await collection.loadFont(familyName, familySrc);
+        }
+      } catch (err) {
+        console.warn(`graphics.text 预载阅读字体失败: ${familySrc}`, err);
+        continue;
+      }
+      // 等待期间阅读页可能已经同步加载并登记过同一字体，不再重复识别字重。
+      if (!ReaderFontHelper.hasRegisteredGraphicsFamily(familyName, preparedPath)) {
+        ReaderFontHelper.rememberGraphicsFamily(familyName, preparedPath);
+      }
+      return true;
+    }
+    return false;
+  }
+
   static hasRegisteredGraphicsFamily(familyName: string, filePath: string): boolean {
     for (const item of ReaderFontHelper.registeredGraphicsFonts) {
       if (item.familyName === familyName && item.filePath === filePath) {
