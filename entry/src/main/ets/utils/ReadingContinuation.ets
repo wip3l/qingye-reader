@@ -1,4 +1,4 @@
-import { common, Want } from '@kit.AbilityKit';
+import { abilityAccessCtrl, common, Permissions, Want } from '@kit.AbilityKit';
 import { Book } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { LocalBookService } from '../core/book/LocalBookService';
@@ -16,6 +16,10 @@ const PROGRESS_VARIABLE_KEYS: string[] = ['readStarted', 'lastReadTime', 'readPr
 const CHECKPOINT_WAIT_MS: number = 600;
 // 接续参数整体上限约 100KB；书源运行时变量偶尔很大，超出时只带书籍基本信息。
 const PAYLOAD_SOFT_LIMIT: number = 60 * 1024;
+// 没有这项权限系统不会把本应用列进接续入口。
+const CONTINUATION_PERMISSION: Permissions = 'ohos.permission.DISTRIBUTED_DATASYNC';
+const TOAST_RETRY_MS: number = 800;
+const TOAST_RETRY_LIMIT: number = 6;
 
 class ContinuationBook {
   bookUrl: string = '';
@@ -52,6 +56,18 @@ class ContinuationPayload {
  * 不迁移页面栈，对端照常启动后按书籍地址打开阅读页；没有在读的书时只把应用接续过去。
  */
 export class ReadingContinuation {
+  /** 申请多设备协同权限；已允许或已拒绝过时系统不再弹框，直接返回结果。 */
+  static async requestPermission(context: common.UIAbilityContext): Promise<boolean> {
+    try {
+      const result = await abilityAccessCtrl.createAtManager().requestPermissionsFromUser(context,
+        [CONTINUATION_PERMISSION]);
+      return result.authResults.length > 0 && result.authResults[0] === 0;
+    } catch (error) {
+      console.warn('[ReadingContinuation] request permission failed:', error);
+      return false;
+    }
+  }
+
   static async collect(context: common.Context, wantParam: Record<string, Object>): Promise<void> {
     wantParam['ohos.extra.param.key.supportContinuePageStack'] = false;
     // 接续后本机不退出，正在听书的不会被打断。
@@ -76,14 +92,14 @@ export class ReadingContinuation {
     if (!book.name) return '';
     const payload = new ContinuationPayload();
     payload.localContentHash = LocalBookService.isLocalBook(book) ?
-      book.getVariable(LocalBookService.LOCAL_CONTENT_HASH_KEY).trim() : '';
+      ReadingContinuation.text(book.getVariable(LocalBookService.LOCAL_CONTENT_HASH_KEY)).trim() : '';
     if (LocalBookService.isLocalBook(book) && !payload.localContentHash) return '';
     payload.chapterTitle = book.durChapterTitle;
     payload.chapterIndex = book.durChapterIndex;
     payload.chapterPos = book.durChapterPos;
     payload.updatedAt = book.durChapterTime;
     for (const key of PROGRESS_VARIABLE_KEYS) {
-      const value = book.getVariable(key);
+      const value = ReadingContinuation.text(book.getVariable(key));
       if (value) payload.progressVariables[key] = value;
     }
     if (!LocalBookService.isLocalBook(book)) payload.book = ReadingContinuation.describe(book);
@@ -110,13 +126,13 @@ export class ReadingContinuation {
   static acceptRaw(context: common.Context, raw: string): void {
     ReadingContinuation.apply(context, raw).catch((error: Error): void => {
       console.warn('[ReadingContinuation] apply failed:', error);
-      HdsFeedback.showToast('打开书籍失败，请在书架中打开');
+      ReadingContinuation.toast('打开书籍失败，请在书架中打开');
     });
   }
 
   private static async apply(context: common.Context, raw: string): Promise<void> {
-    const payload = JSON.parse(raw) as ContinuationPayload;
-    if (!payload || payload.version !== PAYLOAD_VERSION || !payload.book) return;
+    const payload = ReadingContinuation.parse(raw);
+    if (!payload) return;
     const db = AppDatabase.getInstance();
     await db.initWithContext(context);
     let book = payload.localContentHash ? await db.getBookByLocalContentHash(payload.localContentHash) :
@@ -134,11 +150,79 @@ export class ReadingContinuation {
     }
     if (!book) {
       const name = payload.book.name ? `《${payload.book.name}》` : '这本书';
-      HdsFeedback.showToast(payload.localContentHash ? `这台设备上没有${name}的本地文件` :
+      ReadingContinuation.toast(payload.localContentHash ? `这台设备上没有${name}的本地文件` :
         `这台设备上没有${name}的书源，请先导入书源`);
       return;
     }
     RecentReadShortcut.requestBook(book.bookUrl);
+  }
+
+  /**
+   * 文件来自别的设备，字段逐个收敛成本地期望的类型，坏掉或伪造的文件不会把字符串页码之类写进数据库；
+   * 版本不符或没有书籍信息时返回 null。
+   */
+  private static parse(raw: string): ContinuationPayload | null {
+    const source = JSON.parse(raw) as Record<string, Object>;
+    if (!source || typeof source !== 'object') return null;
+    if (ReadingContinuation.integer(source['version'], 0) !== PAYLOAD_VERSION) return null;
+    const bookSource = source['book'];
+    if (!bookSource || typeof bookSource !== 'object') return null;
+    const payload = new ContinuationPayload();
+    payload.localContentHash = ReadingContinuation.text(source['localContentHash']).trim();
+    payload.chapterTitle = ReadingContinuation.text(source['chapterTitle']);
+    payload.chapterIndex = Math.max(0, ReadingContinuation.integer(source['chapterIndex'], 0));
+    payload.chapterPos = Math.max(0, ReadingContinuation.integer(source['chapterPos'], 0));
+    payload.updatedAt = Math.max(0, ReadingContinuation.integer(source['updatedAt'], 0));
+    const variables = source['progressVariables'];
+    if (variables && typeof variables === 'object') {
+      const map = variables as Record<string, Object>;
+      for (const key of PROGRESS_VARIABLE_KEYS) {
+        const value = ReadingContinuation.text(map[key]);
+        if (value) payload.progressVariables[key] = value;
+      }
+    }
+    const book = bookSource as Record<string, Object>;
+    payload.book.bookUrl = ReadingContinuation.text(book['bookUrl']);
+    payload.book.tocUrl = ReadingContinuation.text(book['tocUrl']);
+    payload.book.origin = ReadingContinuation.text(book['origin']);
+    payload.book.originName = ReadingContinuation.text(book['originName']);
+    payload.book.name = ReadingContinuation.text(book['name']);
+    payload.book.author = ReadingContinuation.text(book['author']);
+    payload.book.kind = ReadingContinuation.text(book['kind']);
+    payload.book.status = ReadingContinuation.text(book['status']);
+    payload.book.coverUrl = ReadingContinuation.text(book['coverUrl']);
+    payload.book.intro = ReadingContinuation.text(book['intro']);
+    payload.book.type = ReadingContinuation.integer(book['type'], 0);
+    payload.book.latestChapterTitle = ReadingContinuation.text(book['latestChapterTitle']);
+    payload.book.totalChapterNum = Math.max(0, ReadingContinuation.integer(book['totalChapterNum'], 0));
+    payload.book.wordCount = ReadingContinuation.text(book['wordCount']);
+    payload.book.variable = ReadingContinuation.text(book['variable']);
+    payload.book.pendingAddToShelf = book['pendingAddToShelf'] === true;
+    return payload;
+  }
+
+  private static text(value: Object | undefined): string {
+    if (value === undefined || value === null) return '';
+    return typeof value === 'string' ? value : (typeof value === 'number' || typeof value === 'boolean' ?
+      String(value) : '');
+  }
+
+  private static integer(value: Object | undefined, fallback: number): number {
+    const parsed = typeof value === 'number' ? value : Number(ReadingContinuation.text(value) || 'NaN');
+    return Number.isFinite(parsed) ? Math.round(parsed) : fallback;
+  }
+
+  /** 冷启动接续时窗口可能还没加载，Toast 没有 UI 实例会抛错；等首页起来再试几次。 */
+  private static toast(message: string, attempt: number = 0): void {
+    try {
+      HdsFeedback.showToast(message);
+    } catch (error) {
+      if (attempt >= TOAST_RETRY_LIMIT) {
+        console.warn('[ReadingContinuation] toast dropped:', message, error);
+        return;
+      }
+      setTimeout((): void => ReadingContinuation.toast(message, attempt + 1), TOAST_RETRY_MS);
+    }
   }
 
   private static progressKeys(payload: ContinuationPayload): string[] {
@@ -182,7 +266,7 @@ export class ReadingContinuation {
     book.totalChapterNum = source.totalChapterNum;
     book.wordCount = source.wordCount;
     book.variable = source.variable || '';
-    book.pendingAddToShelf = source.pendingAddToShelf === true;
+    book.pendingAddToShelf = source.pendingAddToShelf;
     book.durChapterTitle = payload.chapterTitle;
     book.durChapterIndex = payload.chapterIndex;
     book.durChapterPos = payload.chapterPos;

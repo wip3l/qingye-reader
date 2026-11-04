@@ -59,11 +59,11 @@ export class KnockShare {
   static async bookData(context: common.Context, book: Book | null): Promise<systemShare.SharedData | null> {
     if (!book || !book.name) return null;
     if (LocalBookService.isPhysicalLocalBook(book)) {
-      const file = KnockShare.localBookFile(context, book);
+      const file = await KnockShare.localBookFile(context, book);
       if (file) return file;
     }
     if (LocalBookService.isLocalBook(book)) return null;
-    const bookFile = KnockShare.onlineBookFile(context, book);
+    const bookFile = await KnockShare.onlineBookFile(context, book);
     if (bookFile) return bookFile;
     const lines: string[] = [book.author ? `《${book.name}》 ${book.author}` : `《${book.name}》`];
     if (book.originName) lines.push(`来源：${book.originName}`);
@@ -90,16 +90,17 @@ export class KnockShare {
     return new systemShare.SharedData({ utd: utd, uri: fileUri.getUriFromPath(path), title: title });
   }
 
-  private static localBookFile(context: common.Context, book: Book): systemShare.SharedData | null {
+  private static async localBookFile(context: common.Context, book: Book): Promise<systemShare.SharedData | null> {
     const localPath = book.getVariable('localFilePath') || '';
     if (!KnockShare.exists(localPath)) return null;
     const format = (book.getVariable('localFormat') || 'txt').toLowerCase();
     const author = book.author ? ` - ${book.author}` : '';
     const fileName = `${LocalBookService.sanitizeFileName(book.name + author)}.${format}`;
     // 接收方看到的就是这个文件名；书库里的源文件名不可读，复制一份到缓存里再发。
+    // 碰一碰回调在主线程，几百 MB 的 EPUB/PDF 必须异步复制，同步复制会卡到被系统判无响应。
     try {
-      const sharePath = `${KnockShare.freshDir(context)}/${fileName}`;
-      fileIo.copyFileSync(localPath, sharePath);
+      const sharePath = `${await KnockShare.freshDir(context)}/${fileName}`;
+      await fileIo.copyFile(localPath, sharePath);
       return KnockShare.fileData(sharePath, book.name);
     } catch (error) {
       console.warn('[KnockShare] copy local book failed:', error);
@@ -107,12 +108,13 @@ export class KnockShare {
     }
   }
 
-  private static onlineBookFile(context: common.Context, book: Book): systemShare.SharedData | null {
+  private static async onlineBookFile(context: common.Context, book: Book): Promise<systemShare.SharedData | null> {
     const raw = ReadingContinuation.payloadFor(book);
     if (!raw) return null;
     const author = book.author ? ` - ${book.author}` : '';
     try {
-      const sharePath = `${KnockShare.freshDir(context)}/${LocalBookService.sanitizeFileName(book.name + author)}${QYBOOK_EXTENSION}`;
+      const sharePath =
+        `${await KnockShare.freshDir(context)}/${LocalBookService.sanitizeFileName(book.name + author)}${QYBOOK_EXTENSION}`;
       const file = fileIo.openSync(sharePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       try {
         fileIo.writeSync(file.fd, raw);
@@ -127,10 +129,10 @@ export class KnockShare {
   }
 
   /** 每次分享前清空，缓存里只留最近发出的一个文件。 */
-  private static freshDir(context: common.Context): string {
+  private static async freshDir(context: common.Context): Promise<string> {
     const dir = `${context.cacheDir}/knock-share`;
-    if (KnockShare.exists(dir)) fileIo.rmdirSync(dir);
-    fileIo.mkdirSync(dir);
+    if (KnockShare.exists(dir)) await fileIo.rmdir(dir);
+    await fileIo.mkdir(dir);
     return dir;
   }
 

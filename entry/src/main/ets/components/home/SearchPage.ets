@@ -128,6 +128,8 @@ export struct SearchPage {
   aboutToAppear() {
     if (this.isActive) {
       this.initPage();
+      // 冷启动直接落在搜索页签时（小艺搜索），搜索词已先写好，没有页签切换事件来触发。
+      this.consumePendingGlobalSearch();
     }
   }
 

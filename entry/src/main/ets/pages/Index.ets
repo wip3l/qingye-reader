@@ -113,8 +113,9 @@ struct Index {
     hilog.info(0x0000, 'testTag', 'StartupTrace Index aboutToAppear %{public}d', Date.now());
     this.syncHomeSystemBars();
     this.openPendingShortcut();
-    // 冷启动时小艺等入口先写好搜索词，首页挂载后再切到搜索页签。
-    this.onGlobalSearchRequested();
+    // 冷启动时小艺等入口先写好搜索词。Tabs 还没建，控制器切页签会被忽略，直接以搜索页签为初始页，
+    // 搜索页首次挂载时自己取走搜索词。
+    if ((AppStorage.get<string>('globalSearchPendingKeyword') || '').trim()) this.currentIndex = 2;
   }
 
   onPageShow(): void {

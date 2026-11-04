@@ -383,6 +383,11 @@ export default class EntryAbility extends UIAbility {
 
         hilog.warn(0x0000, 'QuickJS', 'Migration initialization failed: %{public}s', error.message);
       });
+      // 接续要有多设备协同权限才会被系统列进接续入口；只在首次安装弹一次，之后系统直接返回结果。
+      // 放到首屏之后几秒，免得权限框压在启动画面上。
+      setTimeout(() => {
+        ReadingContinuation.requestPermission(this.context).catch(() => {});
+      }, 3000);
       // ReaderFontHelper only counts a font as registered when the UIContext registration succeeds, so a null
       // context here always fell back to the theme font when Index (not Startup) was the first page.
       this.readerBootstrapPromise
