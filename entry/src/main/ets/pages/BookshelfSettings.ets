@@ -39,7 +39,7 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfLayoutMode') bookshelfLayoutMode: string = 'tile';
   @StorageLink('bookshelfLastReadLeafMode') bookshelfLastReadLeafMode: string = 'adaptive';
   @StorageLink('bookshelfLastReadPinMode') bookshelfLastReadPinMode: string = 'large';
-  @StorageLink('bookshelfLastReadPinCount') bookshelfLastReadPinCount: number = 3;
+  @StorageLink('bookshelfLastReadPinCount') bookshelfLastReadPinCount: number = 1;
   @StorageLink('bookshelfBookOpenAnimation') bookshelfBookOpenAnimation: boolean = true;
   @StorageLink('bookshelfTypeCategoryEnabled') bookshelfTypeCategoryEnabled: boolean = true;
   @StorageLink('bookshelfShowAllTypeTab') bookshelfShowAllTypeTab: boolean = true;

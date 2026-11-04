@@ -21,7 +21,7 @@ export class BookshelfSortHelper {
       a.bookUrl.localeCompare(b.bookUrl));
     const seen = new Set<string>();
     const result: Book[] = [];
-    const limit = Number.isInteger(count) && count >= 1 && count <= 5 ? count : 3;
+    const limit = Number.isInteger(count) && count >= 1 && count <= 5 ? count : 1;
     for (const book of sorted) {
       const key = book.bookUrl.trim();
       if (seen.has(key)) continue;

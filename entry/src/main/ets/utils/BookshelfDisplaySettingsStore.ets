@@ -18,7 +18,7 @@ export class BookshelfDisplaySettings {
   lastReadLeafMode: string = 'adaptive';
   // 平铺布局里上次阅读的书是否置顶：off 不置顶，medium 跨两列的展开书本，large 占满一整行的继续阅读卡片。
   lastReadPinMode: string = 'large';
-  lastReadPinCount: number = 3;
+  lastReadPinCount: number = 1;
   bookOpenAnimation: boolean = true;
   // 书架顶部按类型（小说、漫画、有声书等）分页；关闭后所有书平铺在一页。
   typeCategoryEnabled: boolean = true;
@@ -78,9 +78,9 @@ export class BookshelfDisplaySettingsStore {
     settings.lastReadPinMode = BookshelfDisplaySettingsStore.normalizeLastReadPinMode(
       await BookshelfDisplaySettingsStore.getString(
         store, BookshelfDisplaySettingsStore.KEY_LAST_READ_PIN_MODE, 'large'));
-    const pinCount = await store.get(BookshelfDisplaySettingsStore.KEY_LAST_READ_PIN_COUNT, 3);
+    const pinCount = await store.get(BookshelfDisplaySettingsStore.KEY_LAST_READ_PIN_COUNT, 1);
     settings.lastReadPinCount = BookshelfDisplaySettingsStore.normalizeLastReadPinCount(
-      typeof pinCount === 'number' ? pinCount : 3);
+      typeof pinCount === 'number' ? pinCount : 1);
     settings.bookOpenAnimation = await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_BOOK_OPEN_ANIMATION, true);
     settings.typeCategoryEnabled = await BookshelfDisplaySettingsStore.getBoolean(
@@ -163,7 +163,7 @@ export class BookshelfDisplaySettingsStore {
     settings.lastReadPinMode = BookshelfDisplaySettingsStore.normalizeLastReadPinMode(
       AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_LAST_READ_PIN_MODE) ?? 'large');
     settings.lastReadPinCount = BookshelfDisplaySettingsStore.normalizeLastReadPinCount(
-      AppStorage.get<number>(BookshelfDisplaySettingsStore.KEY_LAST_READ_PIN_COUNT) ?? 3);
+      AppStorage.get<number>(BookshelfDisplaySettingsStore.KEY_LAST_READ_PIN_COUNT) ?? 1);
     settings.bookOpenAnimation = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_BOOK_OPEN_ANIMATION) ?? true;
     settings.typeCategoryEnabled =
       AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_TYPE_CATEGORY_ENABLED) ?? true;
@@ -211,7 +211,7 @@ export class BookshelfDisplaySettingsStore {
   }
 
   static normalizeLastReadPinCount(value: number): number {
-    return Number.isInteger(value) && value >= 1 && value <= 5 ? value : 3;
+    return Number.isInteger(value) && value >= 1 && value <= 5 ? value : 1;
   }
 
   private static clone(source: BookshelfDisplaySettings): BookshelfDisplaySettings {

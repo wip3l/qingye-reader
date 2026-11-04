@@ -415,7 +415,7 @@ export struct BookshelfPage {
   @StorageLink('bookshelfLayoutMode') bookshelfLayoutMode: string = 'tile';
   @StorageLink('bookshelfLastReadLeafMode') bookshelfLastReadLeafMode: string = 'adaptive';
   @StorageLink('bookshelfLastReadPinMode') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinMode: string = 'large';
-  @StorageLink('bookshelfLastReadPinCount') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinCount: number = 3;
+  @StorageLink('bookshelfLastReadPinCount') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinCount: number = 1;
   @StorageLink('bookshelfBookOpenAnimation') bookshelfBookOpenAnimation: boolean = true;
   /** 书架设置“书籍分类”：关闭后没有分类栏和展开按钮，所有书按“全部”平铺。 */
   @StorageLink('bookshelfTypeCategoryEnabled') @Watch('onShelfTypeCategorySettingChanged')
