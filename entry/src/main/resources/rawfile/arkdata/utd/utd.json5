@@ -2,10 +2,18 @@
   "UniformDataTypeDeclarations": [
     {
       "TypeId": "io.legado.read.qytheme",
-      "BelongingToTypes": ["general.zip"],
+      "BelongingToTypes": ["general.zip-archive"],
       "FilenameExtensions": [".qytheme"],
       "MIMETypes": ["application/vnd.legado.qytheme"],
       "Description": "Custom theme package",
+      "ReferenceURL": ""
+    },
+    {
+      "TypeId": "io.legado.read.qybook",
+      "BelongingToTypes": ["general.file"],
+      "FilenameExtensions": [".qybook"],
+      "MIMETypes": ["application/vnd.legado.qybook"],
+      "Description": "Shared book with reading progress",
       "ReferenceURL": ""
     }
   ]

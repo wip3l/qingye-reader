@@ -50,6 +50,7 @@ import {
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
 import { ReaderRenderFrame } from '../core/reader/ReaderRenderFrame';
+import { KnockShare } from '../utils/KnockShare';
 
 /** 本书的文件排版设置与位置（书籍变量）。 */
 const SCROLL_KEY = 'epubOriginalScroll';
@@ -305,6 +306,7 @@ struct EpubOriginalReadBookPage {
 
   onPageShow(): void {
     this.visible = true;
+    KnockShare.attachBook(this.owner, getContext(this), (): Book | null => this.book);
     this.activateBrightness();
     this.applyScreenTimeout();
     this.updateKeySubscription();
@@ -314,6 +316,7 @@ struct EpubOriginalReadBookPage {
   }
 
   onPageHide(): void {
+    KnockShare.detach(this.owner);
     this.visible = false;
     this.unregisterHardwareKeys();
     this.keyboard.reset();
@@ -326,6 +329,7 @@ struct EpubOriginalReadBookPage {
   }
 
   aboutToDisappear(): void {
+    KnockShare.detach(this.owner);
     this.flushAndSyncProgress();
     this.alive = false;
     this.loadSerial++;

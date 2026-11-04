@@ -214,6 +214,8 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { ReaderTitleStyleCodec, ReaderTitleStyleSettings } from '../model/reader/ReaderTitleStyle';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
+import { KnockShare } from '../utils/KnockShare';
+import { ReaderHaptics } from '../utils/ReaderHaptics';
 
 const READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT = 4;
 const READER_ADJACENT_PAGINATION_PREVIEW_PAGE_COUNT = 2;
@@ -877,6 +879,7 @@ struct ReadBookPage {
   @StorageLink('readerQuickJumpMode') readerQuickJumpMode: string = 'chapter';
   @StorageLink('readerQuickJumpExpanded') readerQuickJumpExpanded: boolean = false;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
+  @StorageLink('readerPageTurnHaptics') readerPageTurnHaptics: boolean = false;
   @StorageLink('readerHeaderEnabled') @Watch('onReaderChromeChanged') readerHeaderEnabled: boolean = false;
   @StorageLink('readerFooterEnabled') @Watch('onReaderChromeChanged') readerFooterEnabled: boolean = true;
   // 页眉页脚的槽位与外观，ReaderInfoBarConfig 的 JSON；解析结果缓存在 readerInfoBarConfigCache。
@@ -1067,6 +1070,7 @@ struct ReadBookPage {
   private readerEntryAlive: boolean = false;
 
   async aboutToAppear() {
+    ReaderHaptics.load(getContext(this));
     this.readerEntryAlive = true;
     // Fixed-layout documents must not acquire text/TTS sessions or warm chapter content.
     const formatParams = router.getParams() as Record<string, string>;
@@ -1168,6 +1172,7 @@ struct ReadBookPage {
   }
 
   onPageShow(): void {
+    KnockShare.attachBook(this.ttsFloatingSessionOwnerId, getContext(this), (): Book | null => this.book);
     if (this.readerPdfDispatched) return;
     if (!this.readerFormatResolved) { this.readerFormatShowPending = true; return; }
     this.releaseReadingCache?.();
@@ -1376,6 +1381,7 @@ struct ReadBookPage {
   }
 
   aboutToDisappear() {
+    KnockShare.detach(this.ttsFloatingSessionOwnerId);
     if (this.readerSafeAreaRepaginateTimerId >= 0) {
       clearTimeout(this.readerSafeAreaRepaginateTimerId);
       this.readerSafeAreaRepaginateTimerId = -1;
@@ -1521,6 +1527,7 @@ struct ReadBookPage {
   }
 
   onPageHide(): void {
+    KnockShare.detach(this.ttsFloatingSessionOwnerId);
     this.readerBrightnessSession.deactivate();
     this.captureReaderContinuousAnchor();
     this.cancelReaderContinuousLayouts(false);
@@ -11581,6 +11588,13 @@ struct ReadBookPage {
           this.setReaderQuickBookmarkEnabled(checked);
         })
 
+      this.readerSwitchSettingItem('翻页震感', '手动翻页时轻震一下，翻到新章节时稍重', this.readerPageTurnHaptics,
+        (checked: boolean) => {
+          ReaderHaptics.setEnabled(getContext(this), checked).catch((e: Error) => {
+            console.error('保存翻页震感设置失败:', e);
+          });
+        })
+
       this.readerSwitchSettingItem('眼动翻页（beta）', '看到页底后向上看即翻页；摄像头图像仅在本机处理',
         this.readerEyeTurnEnabled, (checked: boolean) => {
           this.eyeTurn().setEnabled(checked);
@@ -19802,6 +19816,7 @@ struct ReadBookPage {
       }
       return;
     }
+    ReaderHaptics.pageTurned(this.getLocalPageTurnTargetPageIndex(direction) < 0);
     if (direction < 0 && this.pageTurnQueue.hasPendingForward()) {
       // 用户已经往回翻了，章末那次等排版的向后翻页作废，免得排完后突然自己翻一页。
       this.pageTurnQueue.reset();

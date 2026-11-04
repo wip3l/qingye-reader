@@ -20,6 +20,8 @@ import { ReaderSystemFontHelper } from '../utils/ReaderSystemFontHelper';
 import { TtsSettingsStore } from '../utils/TtsSettingsStore';
 import { MimoStore } from '../utils/mimo/MimoStore';
 import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
+import { ReadingContinuation, QYBOOK_UTD } from '../utils/ReadingContinuation';
+import { AppIntentActions } from '../utils/AppIntentActions';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ThemeIds } from '../theme/ThemeModels';
 import { ThemeTrialManager } from '../utils/ThemeTrialManager';
@@ -79,6 +81,7 @@ export default class EntryAbility extends UIAbility {
     });
     AppStorage.setOrCreate('appCacheDir', this.context.cacheDir);
     AppStorage.setOrCreate('appFilesDir', this.context.filesDir);
+    AppIntentActions.install(this.context);
     try { MimoStore.load(); } catch (_) {}
     AppStorage.setOrCreate('pendingBookSourceImportUri', '');
     AppStorage.setOrCreate('pendingBookSourceImportUrl', '');
@@ -316,6 +319,9 @@ export default class EntryAbility extends UIAbility {
     }).catch((e: Error) => {
       hilog.warn(0x0000, 'testTag', 'Sync app icon settings failed: %{public}s', JSON.stringify(e));
     });
+    if (launchParam.launchReason === AbilityConstant.LaunchReason.CONTINUATION) {
+      ReadingContinuation.accept(this.context, want);
+    }
     this.handleLaunchWant(want);
   }
 
@@ -400,6 +406,14 @@ export default class EntryAbility extends UIAbility {
     }
   }
 
+  // 接续拉起时系统调这里而不调 onWindowStageCreate；不迁移页面栈，冷启动按普通启动加载首页，
+  // 热启动窗口里已有页面就保持原样（书由 onNewWant 里的接续数据打开）。
+  onWindowStageRestore(windowStage: window.WindowStage): void {
+    hilog.info(0x0000, 'testTag', 'Ability onWindowStageRestore loaded=%{public}s', String(!!this.mainWindowStage));
+    if (this.mainWindowStage) return;
+    this.onWindowStageCreate(windowStage);
+  }
+
   onWindowStageDestroy(): void {
     releaseSystemBarListeners();
     this.mainWindowStage = null;
@@ -443,6 +457,9 @@ export default class EntryAbility extends UIAbility {
 
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(0x0000, 'testTag', 'Ability onNewWant %{public}s', JSON.stringify(launchParam));
+    if (launchParam.launchReason === AbilityConstant.LaunchReason.CONTINUATION) {
+      ReadingContinuation.accept(this.context, want);
+    }
     const launchTarget = this.handleLaunchWant(want);
     if (launchTarget && this.mainWindowStage) {
       const targetUrl = launchTarget === 'bookSource' ? 'pages/BookSource' :
@@ -476,6 +493,13 @@ export default class EntryAbility extends UIAbility {
         hilog.warn(0x0000, 'testTag', 'Open external file failed: %{public}s', JSON.stringify(e));
       });
     }
+  }
+
+  // 跨设备接续：带上在读的书和进度，对端打开到同一位置。
+  onContinue(wantParam: Record<string, Object>): Promise<AbilityConstant.OnContinueResult> {
+    return ReadingContinuation.collect(this.context, wantParam).catch((e: Error) => {
+      hilog.warn(0x0000, 'testTag', 'Collect continuation failed: %{public}s', JSON.stringify(e));
+    }).then((): AbilityConstant.OnContinueResult => AbilityConstant.OnContinueResult.AGREE);
   }
 
   onBackground(): void {
@@ -585,6 +609,12 @@ export default class EntryAbility extends UIAbility {
       AppStorage.setOrCreate('pendingThemeImportNonce', nonce + 1);
       return 'themeImport';
     }
+    if (externalUri && externalFormat === 'qybook') {
+      // 碰一碰收到的在线书：加入书架（需本机有该书源）并打开到对方的阅读位置。
+      const raw = this.readExternalText(externalUri);
+      if (raw) ReadingContinuation.acceptRaw(this.context, raw);
+      return '';
+    }
     if (externalUri && externalFormat === 'json') {
       AppStorage.setOrCreate('pendingBookSourceImportUri', externalUri);
       const nonce = AppStorage.get<number>('pendingBookSourceImportNonce') || 0;
@@ -629,6 +659,7 @@ export default class EntryAbility extends UIAbility {
     if (this.isSupportedExternalExtension(extension)) return extension;
     const type = (want.type || '').toLowerCase();
     if (type === 'io.legado.read.qytheme') return 'qytheme';
+    if (type === QYBOOK_UTD) return 'qybook';
     if (type === 'application/json' || type === 'text/json' || type === 'application/x-json' ||
       type === 'general.json') return 'json';
     if (type === 'general.epub' || type === 'application/epub+zip' ||
@@ -769,7 +800,28 @@ export default class EntryAbility extends UIAbility {
 
   private isSupportedExternalExtension(extension: string): boolean {
     return extension === 'json' || extension === 'txt' || extension === 'epub' || extension === 'mobi' || extension === 'pdf' ||
-      extension === 'qytheme';
+      extension === 'qytheme' || extension === 'qybook';
+  }
+
+  private readExternalText(uri: string): string {
+    let file: fs.File | null = null;
+    try {
+      file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
+      const buffer = new ArrayBuffer(256 * 1024);
+      const readLength = fs.readSync(file.fd, buffer, { offset: 0, length: buffer.byteLength });
+      return util.TextDecoder.create('utf-8').decodeWithStream(new Uint8Array(buffer, 0, readLength),
+        { stream: false });
+    } catch (e) {
+      hilog.warn(0x0000, 'testTag', 'Read external text failed: %{public}s', JSON.stringify(e));
+      return '';
+    } finally {
+      if (file) {
+        try {
+          fs.closeSync(file);
+        } catch (_) {
+        }
+      }
+    }
   }
 
   private externalFileName(uriOrName: string): string {

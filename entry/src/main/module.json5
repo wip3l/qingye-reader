@@ -36,6 +36,9 @@
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
       },
       {
+        "name": "ohos.permission.VIBRATE"
+      },
+      {
         "name": "ohos.permission.ACCESS_BIOMETRIC"
       },
       {
@@ -60,6 +63,7 @@
         "startWindowBackground": "$color:start_window_background",
         "orientation": "auto_rotation_restricted",
         "launchType": "singleton",
+        "continuable": true,
         "backgroundModes": [
           "audioPlayback",
           "dataTransfer"
@@ -142,6 +146,11 @@
               {
                 "scheme": "file",
                 "type": "io.legado.read.qytheme",
+                "linkFeature": "FileOpen"
+              },
+              {
+                "scheme": "file",
+                "type": "io.legado.read.qybook",
                 "linkFeature": "FileOpen"
               }
             ]

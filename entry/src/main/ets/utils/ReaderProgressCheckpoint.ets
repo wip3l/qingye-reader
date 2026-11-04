@@ -53,6 +53,11 @@ export class ReaderProgressCheckpoint {
     return !!visibleBookUrl && !!backgroundBookUrl && visibleBookUrl !== backgroundBookUrl;
   }
 
+  /** 当前挂着的阅读页正在读的书；没有阅读页时为空串。 */
+  static activeBookUrl(): string {
+    return ReaderProgressCheckpoint.bookUrlState ? ReaderProgressCheckpoint.bookUrlState() : '';
+  }
+
   static request(reason: string): Promise<void> {
     const action = ReaderProgressCheckpoint.saveAction;
     if (!action) return Promise.resolve();

@@ -1,0 +1,10 @@
+{
+  "insightIntentsSrcEntry": [
+    {
+      "srcEntry": "./ets/insightintents/ContinueReadingIntent.ets"
+    },
+    {
+      "srcEntry": "./ets/insightintents/SearchBookIntent.ets"
+    }
+  ]
+}

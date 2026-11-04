@@ -11,6 +11,7 @@ import { ImageFileExport } from '../utils/ImageFileExport';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { syncSystemBars } from '../utils/SystemBars';
+import { KnockShare } from '../utils/KnockShare';
 
 const POSTER_RANK_LIMITS: number[] = [3, 5, 10, -1, 0];
 const POSTER_RANK_LABELS: string[] = ['前3本', '前5本', '前10本', '全部书籍', '隐藏排行'];
@@ -53,14 +54,18 @@ struct ReadingStatsSharePage {
   private settingsQueue: Promise<void> = Promise.resolve();
   private previewPath: string = '';
   private cachedPages: Map<number, string> = new Map<number, string>();
+  private knockShareOwner: string = `stats-share-${Date.now()}-${Math.random()}`;
 
   aboutToAppear(): void { this.alive = true; this.initialize(); }
   aboutToDisappear(): void {
     this.alive = false; this.revision++;
     if (this.debounce !== -1) clearTimeout(this.debounce);
     this.cachedPages.clear();
+    KnockShare.detach(this.knockShareOwner);
   }
   onPageShow(): void {
+    KnockShare.attachFile(this.knockShareOwner, (): string => this.valid() && !this.rendering ? this.previewPath : '',
+      '阅读统计海报');
     syncSystemBars(this.context(), this.appDarkMode, ThemeRuntime.pageColor(this.appDarkMode));
     if (this.ready) this.accountChanged();
   }

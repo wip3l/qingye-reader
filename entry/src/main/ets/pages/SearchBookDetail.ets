@@ -30,6 +30,7 @@ import { VideoBookPlayer } from '../utils/VideoBookPlayer';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { KnockShare } from '../utils/KnockShare';
 
 @Entry
 @Component
@@ -106,6 +107,7 @@ struct SearchBookDetailPage {
   /** 头部封面已加载完成的地址；氛围背景只对它显示，读系统缓存而不再发第二次网络请求。 */
   @State readyCoverUrl: ResourceStr = '';
   private detailScroller: Scroller = new Scroller();
+  private knockShareOwner: string = `book-detail-${Date.now()}-${Math.random()}`;
   private openingCatalogChapter: boolean = false;
   private authorSearchDialogBuilder: CustomBuilder | undefined = undefined;
   private authorSearchDialogId: number = -1;
@@ -153,6 +155,8 @@ struct SearchBookDetailPage {
 
   onPageShow(): void {
     this.holdingHandPageVisible = true;
+    KnockShare.attachBook(this.knockShareOwner, getContext(this),
+      (): Book | null => this.name ? this.buildCurrentBook() : null);
     this.startHoldingHandTracking();
     this.syncBars();
     this.checkShelf().then(() => {
@@ -169,6 +173,7 @@ struct SearchBookDetailPage {
   }
 
   aboutToDisappear(): void {
+    KnockShare.detach(this.knockShareOwner);
     this.holdingHandPageVisible = false;
     this.stopHoldingHandTracking();
     if (this.bookInfoRetryTimerId >= 0) {
@@ -178,6 +183,7 @@ struct SearchBookDetailPage {
   }
 
   onPageHide(): void {
+    KnockShare.detach(this.knockShareOwner);
     this.holdingHandPageVisible = false;
     this.stopHoldingHandTracking();
   }

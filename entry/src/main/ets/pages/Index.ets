@@ -113,6 +113,8 @@ struct Index {
     hilog.info(0x0000, 'testTag', 'StartupTrace Index aboutToAppear %{public}d', Date.now());
     this.syncHomeSystemBars();
     this.openPendingShortcut();
+    // 冷启动时小艺等入口先写好搜索词，首页挂载后再切到搜索页签。
+    this.onGlobalSearchRequested();
   }
 
   onPageShow(): void {

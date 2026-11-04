@@ -304,9 +304,9 @@ export class ThemePackageService {
     if (!ThemePackageService.exists(sharePath)) {
       fs.copyFileSync(result.zipPath, sharePath);
     }
-    let utd = 'general.zip';
+    let utd = 'general.zip-archive';
     try {
-      utd = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(QYTHEME_EXTENSION, 'general.zip');
+      utd = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(QYTHEME_EXTENSION, 'general.zip-archive');
     } catch (_) {
     }
     const data = new systemShare.SharedData({

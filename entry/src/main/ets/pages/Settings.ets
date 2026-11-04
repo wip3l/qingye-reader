@@ -35,6 +35,7 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
 import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 import { CloudFontMenu } from '../account/CloudFontMenu';
+import { ReaderHaptics } from '../utils/ReaderHaptics';
 class ReaderCustomFontItem {
   familyName: string = '';
   filePath: string = '';
@@ -129,6 +130,7 @@ struct SettingsPage {
   @StorageLink('readerAiProcessingIndicatorEnabled') readerAiProcessingIndicatorEnabled: boolean = true;
   @StorageLink('readerPreloadChapterCount') readerPreloadChapterCount: number = 1;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
+  @StorageLink('readerPageTurnHaptics') readerPageTurnHaptics: boolean = false;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @StorageLink('appLightButtonColor') appLightButtonColor: string = '#007DFF';
@@ -147,6 +149,7 @@ struct SettingsPage {
 
   // 设置和字体只在 onPageShow 里读：首次进入时它紧跟 aboutToAppear 执行，两处都读会把同样的活做两遍。
   aboutToAppear() {
+    ReaderHaptics.load(getContext(this));
     const params = router.getParams() as Record<string, string> | undefined;
     this.section = params?.['section'] === SettingsPage.SECTION_NOVEL ? SettingsPage.SECTION_NOVEL : '';
     SmartControlKey.detect();
@@ -706,6 +709,16 @@ struct SettingsPage {
         isOn: this.readerQuickBookmarkEnabled,
         onChange: (value: boolean) => {
           this.setReaderQuickBookmarkEnabled(value);
+        }
+      })
+      SettingSwitchRow({
+        title: '翻页震感',
+        description: '手动翻页时轻震一下，翻到新章节时稍重',
+        isOn: this.readerPageTurnHaptics,
+        onChange: (value: boolean) => {
+          ReaderHaptics.setEnabled(getContext(this), value).catch((e: Error) => {
+            console.error('保存翻页震感设置失败:', e);
+          });
         }
       })
       SettingSwitchRow({

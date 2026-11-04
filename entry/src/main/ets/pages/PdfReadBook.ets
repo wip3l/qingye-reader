@@ -37,6 +37,7 @@ import {
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
 import { ReaderRenderFrame } from '../core/reader/ReaderRenderFrame';
+import { KnockShare } from '../utils/KnockShare';
 
 @Entry
 @Component
@@ -142,6 +143,7 @@ struct PdfReadBookPage {
 
   onPageShow(): void {
     this.visible = true;
+    KnockShare.attachBook(this.owner, getContext(this), (): Book | null => this.book);
     this.activateBrightness();
     AiAccessPolicy.refresh(); this.refreshAiAccess();
     this.applySystemBars();
@@ -150,6 +152,7 @@ struct PdfReadBookPage {
   }
 
   onPageHide(): void {
+    KnockShare.detach(this.owner);
     this.visible = false; this.previewIndex = -1;
     this.showLayoutElements = false;
     this.brightnessSession.deactivate();
@@ -159,6 +162,7 @@ struct PdfReadBookPage {
   }
 
   aboutToDisappear(): void {
+    KnockShare.detach(this.owner);
     this.flushAndSyncProgress();
     this.alive = false; this.generation++; this.searchGeneration++;
     this.showLayoutElements = false;
