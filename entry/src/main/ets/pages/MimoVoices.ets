@@ -1,4 +1,6 @@
-import { router } from '@kit.ArkUI';
+import { router, SymbolGlyphModifier } from '@kit.ArkUI';
+import deviceInfo from '@ohos.deviceInfo';
+import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingSwitchRow } from '../components/common/SettingRow';
 import { MimoVoiceSelectRow } from '../components/MimoVoiceSelectRow';
@@ -6,6 +8,10 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
+import { PopupMenuAction } from '../components/common/PopupMenuAction';
+import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { syncSystemBars } from '../utils/SystemBars';
 import { MimoStore } from '../utils/mimo/MimoStore';
 import { MimoPreviewSession } from '../utils/mimo/MimoPreviewSession';
@@ -38,6 +44,8 @@ const MIMO_PREVIEW_TEXTS: string[] = [
 struct MimoVoicesPage {
   @StorageProp('appDarkMode') dark: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
+  @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('navBarHeight') navBarHeight: number = 0;
   @State screen: string = 'library';
   @State presets: MimoVoicePreset[] = [];
   @State schemes: MimoVoiceScheme[] = [];
@@ -62,6 +70,17 @@ struct MimoVoicesPage {
   @State sampleName: string = MIMO_PREVIEW_NAMES[0];
   @State previewBusy: boolean = false;
   @State changes: MimoVoiceChange[] = [];
+  @State disabledIds: string[] = [];
+  @State defaultPresetId: string = '';
+  @State showPresetMenu: boolean = false;
+  @State actionPresetId: string = '';
+  @State disabledSchemeIds: string[] = [];
+  @State showSchemeMenu: boolean = false;
+  @State actionSchemeId: string = '';
+  @State menuX: number = 16;
+  @State menuY: number = 0;
+  private pageX: number = 0;
+  private pageY: number = 0;
   private source: MimoPresetDataSource = new MimoPresetDataSource();
   private book: string = '';
   private roleId: string = '';
@@ -91,11 +110,16 @@ struct MimoVoicesPage {
   private refresh(): void {
     try {
       const library = MimoStore.library(); this.presets = library.presets; this.schemes = library.schemes;
+      this.disabledIds = library.disabledPresetIds; this.defaultPresetId = library.defaultPreset.id;
+      this.disabledSchemeIds = library.disabledSchemeIds;
       const cast = this.book ? MimoStore.cast(this.book) : null;
       this.activeScheme = cast ? MimoStore.schemeId(cast, library) : library.schemeId;
       this.assignmentEnabled = cast ? (cast.assignmentEnabled ?? library.assignmentEnabled) : library.assignmentEnabled;
       this.inherited = !!cast && !cast.schemeId;
-      this.source.reload(this.presets); this.error = '';
+      // Disabled presets leave the default-voice chooser but stay manageable in the library and schemes.
+      this.source.reload(this.screen === 'default' ?
+        this.presets.filter((p: MimoVoicePreset): boolean => this.presetEnabled(p)) : this.presets);
+      this.error = '';
     } catch (error) { this.error = (error as Error).message; }
   }
   private title(): string {
@@ -162,6 +186,28 @@ struct MimoVoicesPage {
       this.dirty = false; this.refresh(); HdsFeedback.showToast('已保存，已有绑定保持原版本，声音修改从下一段生效');
     } catch (error) { HdsFeedback.showToast((error as Error).message); }
   }
+  private presetEnabled(preset: MimoVoicePreset): boolean { return !this.disabledIds.includes(preset.id); }
+  private togglePreset(preset: MimoVoicePreset): void {
+    const enabled = !this.presetEnabled(preset);
+    try {
+      MimoStore.setPresetEnabled(preset.id, enabled); this.refresh();
+      HdsFeedback.showToast(enabled ? '已启用“' + preset.name + '”' : '已禁用，不再出现在选择列表和自动分配中，已有绑定保留');
+    } catch (error) { HdsFeedback.showToast((error as Error).message); }
+  }
+  private openPresetMenu(preset: MimoVoicePreset, event?: GestureEvent): void {
+    const finger = event && event.fingerList.length > 0 ? event.fingerList[0] : undefined;
+    if (finger) { this.menuX = finger.globalX - this.pageX; this.menuY = finger.globalY - this.pageY; }
+    this.actionPresetId = preset.id; this.showPresetMenu = true;
+  }
+  /** Menu actions close the popup first and act on the preset that was long-pressed. */
+  private presetAction(action: (preset: MimoVoicePreset) => void): void {
+    const preset = this.presets.find((p: MimoVoicePreset): boolean => p.id === this.actionPresetId);
+    this.showPresetMenu = false;
+    if (preset) action(preset);
+  }
+  private rolePresets(): MimoVoicePreset[] {
+    return this.presets.filter((p: MimoVoicePreset): boolean => this.presetEnabled(p) || p.id === this.rolePresetId);
+  }
   private async remove(preset: MimoVoicePreset): Promise<void> {
     if (!await this.confirm('删除“' + preset.name + '”？', '', '删除', true)) return;
     try { MimoStore.deletePreset(preset.id); this.refresh(); } catch (error) { HdsFeedback.showToast((error as Error).message); }
@@ -174,6 +220,28 @@ struct MimoVoicesPage {
     if (!await this.confirm('删除方案“' + scheme.name + '”？', '仅删除方案，保留音色预设和人物声音。', '删除', true)) return;
     try { MimoStore.deleteScheme(scheme.id); this.refresh(); }
     catch (error) { HdsFeedback.showToast((error as Error).message); }
+  }
+  private schemeEnabled(scheme: MimoVoiceScheme): boolean { return !this.disabledSchemeIds.includes(scheme.id); }
+  private toggleScheme(scheme: MimoVoiceScheme): void {
+    const enabled = !this.schemeEnabled(scheme);
+    try {
+      MimoStore.setSchemeEnabled(scheme.id, enabled); this.refresh();
+      HdsFeedback.showToast(enabled ? '已启用“' + scheme.name + '”' : '已禁用，暂时不能设为使用中的方案');
+    } catch (error) { HdsFeedback.showToast((error as Error).message); }
+  }
+  private openSchemeMenu(scheme: MimoVoiceScheme, event?: GestureEvent): void {
+    const finger = event && event.fingerList.length > 0 ? event.fingerList[0] : undefined;
+    if (finger) { this.menuX = finger.globalX - this.pageX; this.menuY = finger.globalY - this.pageY; }
+    this.actionSchemeId = scheme.id; this.showSchemeMenu = true;
+  }
+  private schemeAction(action: (scheme: MimoVoiceScheme) => void): void {
+    const scheme = this.schemes.find((item: MimoVoiceScheme): boolean => item.id === this.actionSchemeId);
+    this.showSchemeMenu = false;
+    if (scheme) action(scheme);
+  }
+  private schemeCandidates(scheme: MimoVoiceScheme): string {
+    return scheme.presetIds.map((id: string): string => this.presets.find((p: MimoVoicePreset): boolean => p.id === id)?.name || '')
+      .filter((name: string): boolean => !!name).join(' · ');
   }
   private async activate(scheme: MimoVoiceScheme): Promise<void> {
     if (!await this.confirm('启用“' + scheme.name + '”？',
@@ -241,20 +309,45 @@ struct MimoVoicesPage {
     } catch (error) { HdsFeedback.showToast((error as Error).message); }
   }
   build() {
-    Stack() {
-      PageScaffold({ title: this.title(), scrollable: !['library', 'default', 'schemeEdit'].includes(this.screen),
+    Stack({ alignContent: Alignment.BottomEnd }) {
+      PageScaffold({ title: this.title(), scrollable: !['library', 'default', 'schemeEdit', 'schemes'].includes(this.screen),
         onBack: () => { this.back(); }, actions: () => { this.actions(); }, content: () => { this.content(); } })
+      if (this.screen === 'library') { this.addButton('新增提示词', () => this.editPreset()) }
+      else if (this.screen === 'schemes') { this.addButton('新建音色方案', () => this.editScheme()) }
+      Column().width(1).height(1).position({ x: this.menuX, y: this.menuY }).hitTestBehavior(HitTestMode.None)
+        .bindPopup(this.showPresetMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+          this.presetMenu()
+        }, Placement.BottomLeft, this.dark, ThemeRuntime.accentColor(this.dark), () => { this.showPresetMenu = false; }))
+      Column().width(1).height(1).position({ x: this.menuX, y: this.menuY }).hitTestBehavior(HitTestMode.None)
+        .bindPopup(this.showSchemeMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+          this.schemeMenu()
+        }, Placement.BottomLeft, this.dark, ThemeRuntime.accentColor(this.dark), () => { this.showSchemeMenu = false; }))
     }.width('100%').height('100%')
+    .onAreaChange((_old: Area, area: Area) => {
+      this.pageX = Number(area.globalPosition.x) || 0; this.pageY = Number(area.globalPosition.y) || 0;
+    })
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
   @Builder
   actions() {
-    if (this.screen === 'library' || this.screen === 'schemes') {
-      Button('新增').fontSize(AppFontSize.BODY).fontColor(ThemeRuntime.accentColor(this.dark)).backgroundColor(Color.Transparent)
-        .onClick(() => { if (this.screen === 'library') this.editPreset(); else this.editScheme(); })
-    } else if (['edit', 'schemeEdit', 'role'].includes(this.screen)) {
-      Button('保存').fontSize(AppFontSize.BODY).fontColor(ThemeRuntime.accentColor(this.dark)).backgroundColor(Color.Transparent)
-        .onClick(() => this.save())
+    if (['edit', 'schemeEdit', 'role'].includes(this.screen)) {
+      ImmersiveHeaderAction({ label: '保存', tint: ThemeRuntime.accentColor(this.dark), onTap: () => this.save() })
+        .margin({ right: AppSpacing.XL })
     }
+  }
+  /** Same floating add button as the custom voice manager. */
+  @Builder
+  addButton(label: string, action: () => void) {
+    Stack() {
+      ImmersiveMaterialSurface({ surfaceWidth: 52, surfaceHeight: 52, darkMode: this.dark,
+        fallbackColor: ThemeRuntime.cardColor(this.dark), glowColor: `#40${ThemeRuntime.accentColor(this.dark).substring(1)}` }) {
+        SymbolGlyph($r('sys.symbol.plus')).fontSize(25).fontColor([ThemeRuntime.accentColor(this.dark)])
+      }
+    }
+    .width(52).height(52)
+    .margin({ right: AppSpacing.XXL, bottom: this.navBarHeight + 22 })
+    .accessibilityText(label).accessibilityRole(AccessibilityRoleType.BUTTON)
+    .onClick(action)
   }
   @Builder
   hint(text: string) {
@@ -264,11 +357,12 @@ struct MimoVoicesPage {
   content() {
     if (['library', 'default', 'schemeEdit'].includes(this.screen)) {
       this.presetList()
+    } else if (this.screen === 'schemes') {
+      this.schemeList()
     } else {
       Column({ space: AppSpacing.LG }) {
         if (this.error) { this.hint(this.error) }
         if (this.screen === 'edit') { this.presetForm() }
-        else if (this.screen === 'schemes') { this.schemeList() }
         else if (this.screen === 'role') { this.roleForm() }
         else if (this.screen === 'preview') { this.previewForm() }
         else if (this.screen === 'changes') { this.changesForm() }
@@ -285,49 +379,127 @@ struct MimoVoicesPage {
           .backgroundColor(ThemeRuntime.inputColor(this.dark)).fontColor(ThemeRuntime.primaryTextColor(this.dark))
           .onChange((text: string) => { if (text !== this.editName) { this.editName = text; this.dirty = true; } })
       }
-      this.hint(this.screen === 'library' ? '预设保存到本地，加入方案后才参与自动分配。' :
+      this.hint(this.screen === 'library' ? '加入方案后才参与自动分配。左滑可禁用或删除，长按查看全部操作。' :
         this.screen === 'default' ? '单音色朗读和未匹配人物使用，已有角色绑定保留。' : '只勾选少量候选，多个人物可以共享同一声音。')
       List({ space: AppSpacing.MD }) {
         LazyForEach(this.source, (preset: MimoVoicePreset) => {
-          ListItem() {
-            if (this.screen === 'schemeEdit') {
-              Column() {
-                SettingSwitchRow({ title: preset.name, description: MimoVoicePolicy.ageLabel(preset.age) + ' · ' + preset.voice,
-                  isOn: this.schemeIds.includes(preset.id), showDivider: false,
-                  onChange: (flag: boolean) => {
-                    this.schemeIds = flag ? this.schemeIds.concat([preset.id]) : this.schemeIds.filter((id: string): boolean => id !== preset.id);
-                    this.dirty = true;
-                  } })
-              }.backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
-            } else if (this.screen === 'default') {
-              Column() { SettingNavRow({ title: preset.name, value: preset.voice, showDivider: false, onTap: () => this.useDefault(preset) }) }
-                .backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
-            } else { this.presetCard(preset) }
+          // HdsListItem 必须直接挂在 List 下，侧滑才不被包装节点阻断。
+          if (this.screen === 'library' && deviceInfo.sdkApiVersion >= 26) {
+            HdsListItem({ customItemBuilder: (): void => { this.presetCard(preset); },
+              swipeActionOptions: this.presetSwipeActions(preset) })
+          } else {
+            ListItem() {
+              if (this.screen === 'schemeEdit') {
+                Column() {
+                  SettingSwitchRow({ title: preset.name, description: MimoVoicePolicy.ageLabel(preset.age) + ' · ' + preset.voice +
+                    (this.presetEnabled(preset) ? '' : ' · 已禁用，不参与分配'),
+                    isOn: this.schemeIds.includes(preset.id), showDivider: false,
+                    onChange: (flag: boolean) => {
+                      this.schemeIds = flag ? this.schemeIds.concat([preset.id]) : this.schemeIds.filter((id: string): boolean => id !== preset.id);
+                      this.dirty = true;
+                    } })
+                }.backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
+              } else if (this.screen === 'default') {
+                Column() { SettingNavRow({ title: preset.name, value: preset.voice, showDivider: false, onTap: () => this.useDefault(preset) }) }
+                  .backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
+              } else { this.presetCard(preset) }
+            }
+            .borderRadius(ThemeRuntime.mediumRadius()).clip(true)
+            .swipeAction(this.screen === 'library' ? {
+              end: { builder: (): void => { this.presetFallbackSwipeActions(preset); } }, edgeEffect: SwipeEdgeEffect.Spring
+            } : {})
           }
-        }, (preset: MimoVoicePreset): string => preset.id + ':' + preset.revision)
+        }, (preset: MimoVoicePreset): string => preset.id + ':' + preset.revision + ':' + this.presetEnabled(preset) +
+          ':' + (this.defaultPresetId === preset.id) + ':' + this.presetSchemeCount(preset))
+        // 右下角悬浮新增按钮（52 高，底边距 navBarHeight+22）要完整让出最后一张卡片。
+        if (this.screen === 'library') {
+          ListItem() { Row().height(this.navBarHeight + 88).hitTestBehavior(HitTestMode.None) }
+        }
       }.width('100%').layoutWeight(1).cachedCount(3)
     }.height('100%').width('100%').constraintSize({ maxWidth: 760 })
-    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.XL })
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG,
+      bottom: this.screen === 'library' ? 0 : AppSpacing.XL })
   }
+  /** Same layout as the book source list: bold name line, wrapping metadata, one-line detail. */
   @Builder
   presetCard(preset: MimoVoicePreset) {
-    Column({ space: AppSpacing.MD }) {
-      Text(preset.name).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
-        .fontColor(ThemeRuntime.primaryTextColor(this.dark)).width('100%')
-      this.hint(preset.voice + ' · ' + MimoVoicePolicy.ageLabel(preset.age) + ' / ' + MimoVoicePolicy.genderLabel(preset.gender))
-      Text(preset.prompt || '无额外提示词').fontSize(AppFontSize.BODY).fontColor(ThemeRuntime.subTextColor(this.dark))
-        .maxLines(3).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
-      Row({ space: AppSpacing.SM }) {
-        Button('试听').fontSize(AppFontSize.CAPTION).onClick(() => this.openPreview(preset))
-          .backgroundColor(ThemeRuntime.softFillColor(this.dark)).fontColor(ThemeRuntime.primaryTextColor(this.dark))
-        Button('编辑').fontSize(AppFontSize.CAPTION).onClick(() => this.editPreset(preset))
-          .backgroundColor(ThemeRuntime.softFillColor(this.dark)).fontColor(ThemeRuntime.primaryTextColor(this.dark))
-        Button('复制').fontSize(AppFontSize.CAPTION).onClick(() => this.editPreset(preset, true))
-          .backgroundColor(ThemeRuntime.softFillColor(this.dark)).fontColor(ThemeRuntime.primaryTextColor(this.dark))
-        Button('删除').fontSize(AppFontSize.CAPTION).onClick(() => this.remove(preset))
-          .backgroundColor(Color.Transparent).fontColor(ThemeRuntime.dangerColor(this.dark))
+    Column({ space: AppSpacing.XS }) {
+      Text(preset.name).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Bold)
+        .fontColor(ThemeRuntime.primaryTextColor(this.dark)).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+      Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+        this.presetMeta(preset.voice, ThemeRuntime.subTextColor(this.dark))
+        this.presetMeta(MimoVoicePolicy.ageLabel(preset.age) + ' / ' + MimoVoicePolicy.genderLabel(preset.gender),
+          ThemeRuntime.subTextColor(this.dark))
+        if (this.defaultPresetId === preset.id) { this.presetMeta('默认声音', ThemeRuntime.accentColor(this.dark)) }
+        if (this.presetSchemeCount(preset) > 0) {
+          this.presetMeta(this.presetSchemeCount(preset) + ' 个方案', ThemeRuntime.subTextColor(this.dark))
+        }
+        if (!this.presetEnabled(preset)) { this.presetMeta('已禁用', ThemeRuntime.dangerColor(this.dark)) }
       }.width('100%')
-    }.padding(AppSpacing.XL).width('100%').backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
+      Text(preset.prompt || '无额外提示词').fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.dark))
+        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
+    }
+    .alignItems(HorizontalAlign.Start).width('100%').padding(AppSpacing.LG)
+    .backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.mediumRadius())
+    .opacity(this.presetEnabled(preset) ? 1 : 0.45)
+    .gesture(LongPressGesture({ repeat: false }).onAction((event: GestureEvent) => this.openPresetMenu(preset, event)))
+    .onClick(() => this.editPreset(preset))
+  }
+  @Builder
+  presetMeta(label: string, color: string) {
+    Text(label).fontSize(AppFontSize.CAPTION).fontColor(color).maxLines(1).margin({ right: AppSpacing.MD, bottom: AppSpacing.XXS })
+  }
+  private presetSchemeCount(preset: MimoVoicePreset): number {
+    return this.schemes.filter((s: MimoVoiceScheme): boolean => s.presetIds.includes(preset.id)).length;
+  }
+  private presetSwipeActions(preset: MimoVoicePreset): HdsSwipeActionOptions {
+    const enabled = this.presetEnabled(preset);
+    return { icons: [
+      { icon: new SymbolGlyphModifier(enabled ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle')),
+        backgroundColor: ThemeRuntime.buttonColor(this.dark), iconOptions: { accessibilityText: enabled ? '禁用音色' : '启用音色' },
+        onAction: () => this.togglePreset(preset) },
+      { icon: new SymbolGlyphModifier($r('sys.symbol.trash')), backgroundColor: ThemeRuntime.dangerColor(this.dark),
+        iconOptions: { accessibilityText: '删除音色' }, onAction: () => { this.remove(preset); } }
+    ] };
+  }
+  @Builder
+  presetFallbackSwipeActions(preset: MimoVoicePreset) {
+    Row() {
+      this.swipeButton(this.presetEnabled(preset) ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle'),
+        this.presetEnabled(preset) ? '禁用' : '启用', ThemeRuntime.buttonColor(this.dark), () => this.togglePreset(preset))
+      this.swipeButton($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.dark), () => { this.remove(preset); })
+    }.height('100%')
+  }
+  @Builder
+  swipeButton(icon: Resource, label: string, color: string, action: () => void) {
+    Column({ space: AppSpacing.XS }) {
+      SymbolGlyph(icon).fontSize(22).fontColor(['#FFFFFF'])
+      Text(label).fontSize(AppFontSize.CAPTION).fontColor('#FFFFFF')
+    }.width(64).height('100%').justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
+    .backgroundColor(color).onClick(action)
+  }
+  @Builder
+  presetMenu() {
+    Scroll() {
+      Column() {
+        PopupMenuAction($r('sys.symbol.speaker_wave_2'), '试听', ThemeRuntime.primaryTextColor(this.dark),
+          () => this.presetAction((p: MimoVoicePreset) => this.openPreview(p)))
+        PopupMenuAction($r('sys.symbol.square_and_pencil'), '编辑', ThemeRuntime.primaryTextColor(this.dark),
+          () => this.presetAction((p: MimoVoicePreset) => this.editPreset(p)))
+        PopupMenuAction($r('sys.symbol.plus_square_on_square'), '复制', ThemeRuntime.primaryTextColor(this.dark),
+          () => this.presetAction((p: MimoVoicePreset) => this.editPreset(p, true)))
+        PopupMenuAction(this.disabledIds.includes(this.actionPresetId) ? $r('sys.symbol.checkmark_circle') :
+          $r('sys.symbol.minus_circle'), this.disabledIds.includes(this.actionPresetId) ? '启用' : '禁用',
+          ThemeRuntime.primaryTextColor(this.dark), () => this.presetAction((p: MimoVoicePreset) => this.togglePreset(p)))
+        PopupMenuAction($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.dark),
+          () => this.presetAction((p: MimoVoicePreset) => { this.remove(p); }))
+      }.width('100%')
+    }
+    .width(176)
+    .constraintSize({ maxHeight: ImmersiveMaterialRuntime.popupMenuMaxHeight() })
+    .scrollBar(BarState.Off)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
   }
   @Builder
   presetForm() {
@@ -351,34 +523,105 @@ struct MimoVoicesPage {
   }
   @Builder
   schemeList() {
-    Column() {
-      SettingSwitchRow({ title: '使用方案自动分配', description: '关闭后新人物使用旁白，已有绑定保留',
-        isOn: this.assignmentEnabled, showDivider: false, onChange: (flag: boolean) => this.toggleAssignment(flag) })
-    }.backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
-    this.hint(this.book ? (this.inherited ? '本书当前继承默认方案。' : '本书使用独立方案。') : '默认方案供未单独设置的书籍使用。')
-    ForEach(this.schemes, (scheme: MimoVoiceScheme) => {
-      Column({ space: AppSpacing.MD }) {
-        Text(scheme.name + (this.activeScheme === scheme.id ? ' · 当前启用' : '')).fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(ThemeRuntime.primaryTextColor(this.dark)).width('100%')
-        this.hint(scheme.presetIds.map((id: string): string => this.presets.find((p: MimoVoicePreset): boolean => p.id === id)?.name || '').join(' · ') || '没有候选，新人物使用旁白')
-        Row({ space: AppSpacing.MD }) {
-          Button('编辑候选').fontSize(AppFontSize.BODY).backgroundColor(ThemeRuntime.softFillColor(this.dark))
-            .fontColor(ThemeRuntime.primaryTextColor(this.dark)).onClick(() => this.editScheme(scheme))
-          Button(this.activeScheme === scheme.id ? '正在使用' : '启用方案').fontSize(AppFontSize.BODY)
-            .enabled(this.activeScheme !== scheme.id).backgroundColor(ThemeRuntime.buttonColor(this.dark))
-            .fontColor(ThemeRuntime.onAccentColor(ThemeRuntime.buttonColor(this.dark))).onClick(() => this.activate(scheme))
-          Button('删除').fontSize(AppFontSize.CAPTION).backgroundColor(Color.Transparent)
-            .fontColor(ThemeRuntime.dangerColor(this.dark)).onClick(() => this.removeScheme(scheme))
+    List({ space: AppSpacing.MD }) {
+      ListItem() {
+        Column({ space: AppSpacing.MD }) {
+          if (this.error) { this.hint(this.error) }
+          Column() {
+            SettingSwitchRow({ title: '使用方案自动分配', description: '关闭后新人物使用旁白，已有绑定保留',
+              isOn: this.assignmentEnabled, showDivider: false, onChange: (flag: boolean) => this.toggleAssignment(flag) })
+          }.backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
+          this.hint((this.book ? (this.inherited ? '本书当前继承默认方案。' : '本书使用独立方案。') : '默认方案供未单独设置的书籍使用。') +
+            '左滑可禁用或删除，长按查看全部操作。')
         }
-      }.width('100%').padding(AppSpacing.XL).backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())
-    }, (scheme: MimoVoiceScheme): string => scheme.id + scheme.presetIds.join(','))
-    if (this.book && !this.inherited) {
-      Button('恢复跟随默认方案').fontSize(AppFontSize.BODY).backgroundColor(Color.Transparent)
-        .fontColor(ThemeRuntime.accentColor(this.dark)).onClick(() => {
-          const cast = MimoStore.cast(this.book); cast.schemeId = ''; cast.assignmentEnabled = undefined;
-          MimoStore.saveCast(this.book, cast); this.refresh();
-        })
+      }
+      ForEach(this.schemes, (scheme: MimoVoiceScheme) => {
+        // HdsListItem 必须直接挂在 List 下，侧滑才不被包装节点阻断。
+        if (deviceInfo.sdkApiVersion >= 26) {
+          HdsListItem({ customItemBuilder: (): void => { this.schemeCard(scheme); },
+            swipeActionOptions: this.schemeSwipeActions(scheme) })
+        } else {
+          ListItem() { this.schemeCard(scheme) }
+            .borderRadius(ThemeRuntime.mediumRadius()).clip(true)
+            .swipeAction({ end: { builder: (): void => { this.schemeFallbackSwipeActions(scheme); } }, edgeEffect: SwipeEdgeEffect.Spring })
+        }
+      }, (scheme: MimoVoiceScheme): string => scheme.id + ':' + this.schemeCandidates(scheme) + ':' + this.schemeEnabled(scheme) +
+        ':' + (this.activeScheme === scheme.id))
+      if (this.book && !this.inherited) {
+        ListItem() {
+          Button('恢复跟随默认方案').fontSize(AppFontSize.BODY).backgroundColor(Color.Transparent)
+            .fontColor(ThemeRuntime.accentColor(this.dark)).onClick(() => {
+              const cast = MimoStore.cast(this.book); cast.schemeId = ''; cast.assignmentEnabled = undefined;
+              MimoStore.saveCast(this.book, cast); this.refresh();
+            })
+        }
+      }
+      // 右下角悬浮新增按钮（52 高，底边距 navBarHeight+22）要完整让出最后一张卡片。
+      ListItem() { Row().height(this.navBarHeight + 88).hitTestBehavior(HitTestMode.None) }
     }
+    .width('100%').height('100%').constraintSize({ maxWidth: 760 }).scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG })
+  }
+  @Builder
+  schemeCard(scheme: MimoVoiceScheme) {
+    Column({ space: AppSpacing.XS }) {
+      Text(scheme.name).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Bold)
+        .fontColor(ThemeRuntime.primaryTextColor(this.dark)).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+      Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+        if (this.activeScheme === scheme.id) { this.presetMeta('正在使用', ThemeRuntime.accentColor(this.dark)) }
+        this.presetMeta(scheme.presetIds.length + ' 个候选', ThemeRuntime.subTextColor(this.dark))
+        if (!this.schemeEnabled(scheme)) { this.presetMeta('已禁用', ThemeRuntime.dangerColor(this.dark)) }
+      }.width('100%')
+      Text(this.schemeCandidates(scheme) || '没有候选，新人物使用旁白').fontSize(AppFontSize.CAPTION)
+        .fontColor(ThemeRuntime.subTextColor(this.dark)).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width('100%')
+    }
+    .alignItems(HorizontalAlign.Start).width('100%').padding(AppSpacing.LG)
+    .backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.mediumRadius())
+    .opacity(this.schemeEnabled(scheme) ? 1 : 0.45)
+    .gesture(LongPressGesture({ repeat: false }).onAction((event: GestureEvent) => this.openSchemeMenu(scheme, event)))
+    .onClick(() => this.editScheme(scheme))
+  }
+  private schemeSwipeActions(scheme: MimoVoiceScheme): HdsSwipeActionOptions {
+    const enabled = this.schemeEnabled(scheme);
+    return { icons: [
+      { icon: new SymbolGlyphModifier(enabled ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle')),
+        backgroundColor: ThemeRuntime.buttonColor(this.dark), iconOptions: { accessibilityText: enabled ? '禁用方案' : '启用方案' },
+        onAction: () => this.toggleScheme(scheme) },
+      { icon: new SymbolGlyphModifier($r('sys.symbol.trash')), backgroundColor: ThemeRuntime.dangerColor(this.dark),
+        iconOptions: { accessibilityText: '删除方案' }, onAction: () => { this.removeScheme(scheme); } }
+    ] };
+  }
+  @Builder
+  schemeFallbackSwipeActions(scheme: MimoVoiceScheme) {
+    Row() {
+      this.swipeButton(this.schemeEnabled(scheme) ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle'),
+        this.schemeEnabled(scheme) ? '禁用' : '启用', ThemeRuntime.buttonColor(this.dark), () => this.toggleScheme(scheme))
+      this.swipeButton($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.dark), () => { this.removeScheme(scheme); })
+    }.height('100%')
+  }
+  @Builder
+  schemeMenu() {
+    Scroll() {
+      Column() {
+        if (this.actionSchemeId !== this.activeScheme && !this.disabledSchemeIds.includes(this.actionSchemeId)) {
+          PopupMenuAction($r('sys.symbol.checkmark'), '使用此方案', ThemeRuntime.primaryTextColor(this.dark),
+            () => this.schemeAction((scheme: MimoVoiceScheme) => { this.activate(scheme); }))
+        }
+        PopupMenuAction($r('sys.symbol.square_and_pencil'), '编辑候选', ThemeRuntime.primaryTextColor(this.dark),
+          () => this.schemeAction((scheme: MimoVoiceScheme) => this.editScheme(scheme)))
+        PopupMenuAction(this.disabledSchemeIds.includes(this.actionSchemeId) ? $r('sys.symbol.checkmark_circle') :
+          $r('sys.symbol.minus_circle'), this.disabledSchemeIds.includes(this.actionSchemeId) ? '启用' : '禁用',
+          ThemeRuntime.primaryTextColor(this.dark), () => this.schemeAction((scheme: MimoVoiceScheme) => this.toggleScheme(scheme)))
+        PopupMenuAction($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.dark),
+          () => this.schemeAction((scheme: MimoVoiceScheme) => { this.removeScheme(scheme); }))
+      }.width('100%')
+    }
+    .width(176)
+    .constraintSize({ maxHeight: ImmersiveMaterialRuntime.popupMenuMaxHeight() })
+    .scrollBar(BarState.Off)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
   }
   @Builder
   roleForm() {
@@ -387,8 +630,8 @@ struct MimoVoicesPage {
         onSelect: (i: number) => { this.editAge = MIMO_AGES[i]; this.dirty = true; } })
       MimoVoiceSelectRow({ title: '性别', choices: MIMO_GENDER_LABELS, selection: MimoVoicePolicy.genderLabel(this.editGender),
         onSelect: (i: number) => { this.editGender = MIMO_GENDERS[i]; this.dirty = true; } })
-      MimoVoiceSelectRow({ title: '人物音色', choices: this.presets.map((p: MimoVoicePreset): string => p.name), selection: this.rolePresetName,
-        onSelect: (i: number) => this.chooseRolePreset(this.presets[i]) })
+      MimoVoiceSelectRow({ title: '人物音色', choices: this.rolePresets().map((p: MimoVoicePreset): string => p.name),
+        selection: this.rolePresetName, onSelect: (i: number) => this.chooseRolePreset(this.rolePresets()[i]) })
       SettingSwitchRow({ title: '锁定人物声音', description: '重新分配时跳过，手动设置始终保留',
         isOn: this.roleLocked, showDivider: false, onChange: (flag: boolean) => { this.roleLocked = flag; this.dirty = true; } })
     }.backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.cardRadius())

@@ -158,13 +158,18 @@ export class MimoStore {
     library.presets = library.presets.filter((p: MimoVoicePreset): boolean => p.id !== id);
     MimoStore.saveLibrary(library);
   }
+  static setPresetEnabled(id: string, enabled: boolean): void {
+    const library = MimoStore.library();
+    if (!library.presets.some((p: MimoVoicePreset): boolean => p.id === id)) throw new Error('音色预设已移除');
+    library.disabledPresetIds = library.disabledPresetIds.filter((item: string): boolean => item !== id);
+    if (!enabled) library.disabledPresetIds.push(id);
+    MimoStore.saveLibrary(library);
+  }
   static schemeId(cast: MimoBookCast, library: MimoVoiceLibrary): string {
     return cast.schemeId || library.schemeId;
   }
 
-  static deleteScheme(id: string): void {
-    const library = MimoStore.library();
-    if (!library.schemes.some((scheme: MimoVoiceScheme): boolean => scheme.id === id)) return;
+  private static assertSchemeUnused(library: MimoVoiceLibrary, id: string): void {
     if (library.schemeId === id) throw new Error('方案正在作为默认方案使用，请先启用其他方案');
     for (const summary of MimoStore.castSummaries()) {
       if (!summary.book) throw new Error('存在未关联书籍的人物档案，请先打开人物档案列表后重试');
@@ -172,7 +177,20 @@ export class MimoStore {
         throw new Error('方案正在被书籍使用，请先为该书更换方案或恢复跟随默认方案');
       }
     }
+  }
+  static deleteScheme(id: string): void {
+    const library = MimoStore.library();
+    if (!library.schemes.some((scheme: MimoVoiceScheme): boolean => scheme.id === id)) return;
+    MimoStore.assertSchemeUnused(library, id);
     library.schemes = library.schemes.filter((scheme: MimoVoiceScheme): boolean => scheme.id !== id);
+    MimoStore.saveLibrary(library);
+  }
+  static setSchemeEnabled(id: string, enabled: boolean): void {
+    const library = MimoStore.library();
+    if (!library.schemes.some((scheme: MimoVoiceScheme): boolean => scheme.id === id)) throw new Error('音色方案已移除');
+    if (!enabled) MimoStore.assertSchemeUnused(library, id);
+    library.disabledSchemeIds = library.disabledSchemeIds.filter((item: string): boolean => item !== id);
+    if (!enabled) library.disabledSchemeIds.push(id);
     MimoStore.saveLibrary(library);
   }
   static assign(role: MimoRole, cast: MimoBookCast, configured?: MimoVoiceLibrary): void {

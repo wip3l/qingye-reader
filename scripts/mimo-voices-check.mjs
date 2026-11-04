@@ -39,6 +39,12 @@ assert.equal(choices.filter(c=>c.multi).length,1);
 assert.ok(choices.some(c=>c.presetId==='extra-child'), 'manual selection includes presets outside the automatic scheme');
 assert.ok(!policy.choices(library,false).some(c=>c.multi), 'analysis capability gates only the multi-role choice');
 assert.equal(choices.filter(c=>c.current).length,1, 'exactly one single-voice option reflects the current snapshot');
+const disabledLibrary=policy.normalize({...library,disabledPresetIds:['ghost','male','male','child']},'白桦');
+assert.equal(JSON.stringify(disabledLibrary.disabledPresetIds),'["male","child"]','unknown or repeated disabled ids are dropped');
+assert.ok(!policy.choices(disabledLibrary,true).some(c=>c.presetId==='male'),'disabled presets leave manual selectors');
+child.id='disabled-child';assert.match(policy.match(child,disabledLibrary,'general',true).reason,/没有匹配年龄/,'disabled presets never enter automatic assignment');
+disabledLibrary.defaultPreset=policy.clone(disabledLibrary.presets.find(p=>p.id==='male'));
+assert.ok(policy.choices(disabledLibrary,true).some(c=>c.presetId==='male'&&c.current),'the current selection stays visible after disabling it');
 
 // Run the actual store with a private in-memory filesystem, without looking up a credential or device.
 const files = new Map();
@@ -81,6 +87,11 @@ assert.equal(store.cast('test-book').roles.find(r=>r.id==='he').preset.prompt,sn
 assert.throws(()=>store.deletePreset('child'), /方案|人物/);
 store.deletePreset(extra.id);assert.equal(store.library().presets.length,7);
 assert.ok(!store.voiceChoices().some(c=>c.presetId===extra.id),'deleting removes stale selector choices');
+store.setPresetEnabled('child',false);
+assert.ok(!store.voiceChoices().some(c=>c.presetId==='child'),'disabling refreshes the shared selector catalog');
+assert.equal(store.cast('test-book').roles.find(r=>r.id==='he').preset.id,'child','disabling keeps existing role bindings');
+store.setPresetEnabled('child',true);assert.equal(store.library().disabledPresetIds.length,0);
+assert.throws(()=>store.setPresetEnabled('ghost',false),/已移除/);
 const changes = store.changes('test-book');
 assert.equal(changes.find(c=>c.roleId==='locked').skip,true);
 assert.equal(changes.find(c=>c.roleId==='manual').skip,true);
@@ -111,8 +122,16 @@ assert(!store.library().schemes.some(s => s.id === 'new-plan'), 'new unused sche
 assert.equal(JSON.stringify(store.library().presets), presetsBeforeDelete, 'scheme deletion preserves voices');
 assert.equal(JSON.stringify(store.cast('test-book').roles), castBeforeDelete, 'scheme deletion preserves assigned roles');
 assert.throws(() => store.deleteScheme(store.library().schemeId), /默认方案/);
+assert.throws(() => store.setSchemeEnabled(store.library().schemeId, false), /默认方案/, 'the default scheme cannot be disabled');
+const offLibrary = store.library(); offLibrary.schemes.push({ id: 'off-plan', name: '停用方案', presetIds: ['child'] }); store.saveLibrary(offLibrary);
+store.setSchemeEnabled('off-plan', false);
+assert.equal(JSON.stringify(store.library().disabledSchemeIds), '["off-plan"]');
+store.setSchemeEnabled('off-plan', true); assert.equal(store.library().disabledSchemeIds.length, 0);
+store.deleteScheme('off-plan');
+assert.throws(() => store.setSchemeEnabled('ghost', false), /已移除/);
 const referenced = store.cast('test-book'); referenced.schemeId = 'classic'; store.saveCast('test-book', referenced);
 assert.throws(() => store.deleteScheme('classic'), /书籍使用/);
+assert.throws(() => store.setSchemeEnabled('classic', false), /书籍使用/, 'a scheme a book uses cannot be disabled');
 referenced.schemeId = ''; store.saveCast('test-book', referenced);
 store.deleteScheme('classic'); assert(!store.library().schemes.some(s => s.id === 'classic'));
 store.deleteCast('test-book');

@@ -18,6 +18,10 @@ export class MimoVoiceLibrary {
   schemeId: string = 'general';
   assignmentEnabled: boolean = true;
   defaultPreset: MimoVoicePreset = new MimoVoicePreset();
+  /** Disabled presets stay in the library but leave selectors and automatic assignment; bindings keep their snapshot. */
+  disabledPresetIds: string[] = [];
+  /** Disabled schemes are kept for later but cannot be the default or a book's scheme. */
+  disabledSchemeIds: string[] = [];
   revision: number = 0;
 }
 export class MimoVoiceMatch {
@@ -59,6 +63,7 @@ export class MimoVoicePolicy {
       current.current = true; choices.push(current);
     }
     for (const preset of library.presets) {
+      if (!MimoVoicePolicy.presetEnabled(library, preset.id) && !matches(preset)) continue;
       const choice = new MimoVoiceChoice(); choice.key = 'mimo_preset:' + preset.id;
       choice.label = 'MiMo · ' + preset.name; choice.presetId = preset.id; choice.current = matches(preset);
       choices.push(choice);
@@ -128,8 +133,19 @@ export class MimoVoicePolicy {
     result.assignmentEnabled = value.assignmentEnabled !== false;
     result.defaultPreset = MimoVoicePolicy.validPreset(value.defaultPreset) ? MimoVoicePolicy.clone(value.defaultPreset) :
       MimoVoicePolicy.preset('', '原声 · ' + voice, voice);
+    result.disabledPresetIds = Array.isArray(value.disabledPresetIds) ?
+      Array.from(new Set<string>(value.disabledPresetIds.filter((id: string): boolean => ids.has(id)))) : [];
+    result.disabledSchemeIds = Array.isArray(value.disabledSchemeIds) ?
+      Array.from(new Set<string>(value.disabledSchemeIds.filter((id: string): boolean =>
+        schemeIds.has(id) && id !== result.schemeId))) : [];
     result.revision = Number.isInteger(value.revision) ? Math.max(0, value.revision) : 0;
     return result;
+  }
+  static presetEnabled(library: MimoVoiceLibrary, id: string): boolean {
+    return !library.disabledPresetIds.includes(id);
+  }
+  static schemeEnabled(library: MimoVoiceLibrary, id: string): boolean {
+    return !library.disabledSchemeIds.includes(id);
   }
   static rolePreset(role: MimoRole): MimoVoicePreset {
     if (role.preset && MimoVoicePolicy.validPreset(role.preset)) return MimoVoicePolicy.clone(role.preset);
@@ -144,7 +160,7 @@ export class MimoVoicePolicy {
     if (!role.age || role.age === 'unknown') { result.reason = '年龄证据不足，使用旁白'; return result; }
     const scheme = library.schemes.find((s: MimoVoiceScheme): boolean => s.id === schemeId);
     const candidates = library.presets.filter((p: MimoVoicePreset): boolean =>
-      !!scheme?.presetIds.includes(p.id) && p.age === role.age &&
+      !!scheme?.presetIds.includes(p.id) && MimoVoicePolicy.presetEnabled(library, p.id) && p.age === role.age &&
       (p.gender === 'unknown' || !role.gender || role.gender === 'unknown' || p.gender === role.gender));
     if (!candidates.length) { result.reason = '方案内没有匹配年龄的声音，使用旁白'; return result; }
     // A stable role id chooses from a small allowed pool. Never spread roles across the whole library.
