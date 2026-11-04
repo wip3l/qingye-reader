@@ -18,6 +18,10 @@ export type SearchBookAction = (book: SearchBook) => void;
 
 /** 按序显示时，前一项封面最多等这么久，超时就先用 BookCover 自己加载的封面显示出来。 */
 const ORDERED_REVEAL_WAIT_MS: number = 800;
+/** 列表模式离末尾还剩这么多项时就请求下一页，滑到底之前内容已经接上。 */
+const PREFETCH_LIST_ITEMS: number = 8;
+/** 平铺模式按行预取，离末尾还剩这么多行就请求。 */
+const PREFETCH_GRID_ROWS: number = 3;
 
 /** 页面会话保留已准备好的封面 URI，不持有解码位图。 */
 export class ResultCoverCache {
@@ -43,10 +47,21 @@ class SearchBookResultDataSource implements IDataSource {
   }
 
   replace(keys: string[], force: boolean = false): void {
-    if (!force && keys.length === this.keys.length &&
-      keys.every((key: string, index: number): boolean => key === this.keys[index])) return;
+    const previous = this.keys;
+    const extendsPrevious = keys.length >= previous.length &&
+      previous.every((key: string, index: number): boolean => key === keys[index]);
+    if (!force && extendsPrevious && keys.length === previous.length) return;
     this.keys = keys.slice();
-    for (const listener of this.listeners) listener.onDataReloaded();
+    if (!force && extendsPrevious && previous.length > 0) {
+      // 加载更多、按序显示只在末尾追加：按追加通知，已显示的项原地不动，不整表重载重新布局。
+      const operation: DataAddOperation = { type: DataOperationType.ADD, index: previous.length,
+        count: keys.length - previous.length };
+      for (const listener of this.listeners) listener.onDatasetChange([operation]);
+      return;
+    }
+    // 同一个数据源只能用 onDatasetChange 一套接口：上面追加已经用了它，整表重载也必须走 RELOAD，
+    // 再调 onDataReloaded 会在下一次通知时抛 401（书架状态变化等强制重载时崩溃）。
+    for (const listener of this.listeners) listener.onDatasetChange([{ type: DataOperationType.RELOAD }]);
   }
 }
 
@@ -84,7 +99,14 @@ export struct SearchBookResultList {
   @Prop @Watch('onBooksChanged') books: SearchBook[] = [];
   @Prop @Watch('onShelfBookKeysChanged') shelfBookKeys: string[] = [];
   @Prop busyBookKeys: string[] = [];
-  @Prop showLoadingMore: boolean = false;
+  @Prop @Watch('onLoadingMoreChanged') showLoadingMore: boolean = false;
+  /**
+   * 分页列表（发现页）一直保留同样高度的底部提示行，只换文字：提示行随加载出现又消失时，
+   * 停在底部的列表会被撑高再缩回，看起来底部在来回跳。
+   */
+  @Prop keepLoadingFooter: boolean = false;
+  /** 配合 keepLoadingFooter：还有下一页时提示“继续加载中”，到底了提示“没有更多了”。 */
+  @Prop hasMoreResults: boolean = false;
   @Prop showKind: boolean = false;
   @Prop @Watch('onCoverSettingsChanged') showResultCover: boolean = true;
   @Prop showResultCoverBackground: boolean = true;
@@ -124,6 +146,8 @@ export struct SearchBookResultList {
   private resultSeenAt: Map<string, number> = new Map<string, number>();
   private revealedKeys: Set<string> = new Set<string>();
   private revealTimer: number = -1;
+  /** 最近一次可见的最后一个结果序号，加载结束后据此判断是否还要接着预取。 */
+  private lastVisibleResultIndex: number = -1;
   onOpenBook: SearchBookAction = (_book: SearchBook) => {};
   onReadBook: SearchBookAction = (_book: SearchBook) => {};
   onToggleShelf: SearchBookAction = (_book: SearchBook) => {};
@@ -329,6 +353,53 @@ export struct SearchBookResultList {
     return this.resultBooks.get(key) || new SearchBook();
   }
 
+  onLoadingMoreChanged(): void {
+    // 新一页很短时停在原处也看得到末尾，滚动回调不会再来，加载结束后补一次判断。
+    if (!this.showLoadingMore) this.prefetchNearEnd(this.lastVisibleResultIndex);
+  }
+
+  /** 末尾按已拿到的全部结果算（含还在等封面的），等封面的项够多时不会提前再要一页。 */
+  prefetchNearEnd(lastVisibleIndex: number): void {
+    if (lastVisibleIndex < 0) return;
+    this.lastVisibleResultIndex = lastVisibleIndex;
+    if (!this.gridPageActive || this.showLoadingMore) return;
+    const threshold = this.layoutMode === 'grid' ?
+      BookTileLayout.columnCount(this.gridViewportWidth) * PREFETCH_GRID_ROWS : PREFETCH_LIST_ITEMS;
+    if (this.resultBooks.size - 1 - lastVisibleIndex <= threshold) this.onReachEnd();
+  }
+
+  /** 弹性回弹（越过末尾后弹回）也会报滚动位移，不能拿来展开或收起顶栏。 */
+  isEndOverscrollRebound(delta: number): boolean {
+    return delta < 0 && this.scroller.isAtEnd();
+  }
+
+  showsLoadingFooter(): boolean {
+    if (this.visibleResultCount === 0) return false;
+    return this.keepLoadingFooter || this.showLoadingMore || this.preparingCoverCount > 0;
+  }
+
+  @Builder
+  loadingFooter() {
+    Row() {
+      if (this.showLoadingMore || this.preparingCoverCount > 0 || (this.keepLoadingFooter && this.hasMoreResults)) {
+        LoadingProgress()
+          .width(20)
+          .height(20)
+        Text('继续加载中...')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.subTextColor)
+          .margin({ left: AppSpacing.MD })
+      } else {
+        Text('没有更多了')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.subTextColor)
+      }
+    }
+    .width('100%')
+    .height(44)
+    .justifyContent(FlexAlign.Center)
+  }
+
   build() {
     Stack() {
       if (this.layoutMode === 'grid') {
@@ -381,8 +452,14 @@ export struct SearchBookResultList {
     .onReachEnd(() => {
       if (this.preparingCoverCount === 0) this.onReachEnd();
     })
+    .onScrollVisibleContentChange((_start: VisibleListContentInfo, end: VisibleListContentInfo) => {
+      const index = end.itemIndexInGroup ??
+        (end.itemGroupArea === ListItemGroupArea.IN_FOOTER_AREA ? this.visibleResultCount - 1 : -1);
+      this.prefetchNearEnd(index);
+    })
     .onDidScroll((delta: number, state: ScrollState) => {
       if (this.userScrollOnly && (state === ScrollState.Idle || delta === 0)) return;
+      if (this.isEndOverscrollRebound(delta)) return;
       this.gridUserScrolled = true;
       this.onListScroll(delta, this.scroller.currentOffset().yOffset);
     })
@@ -404,19 +481,8 @@ export struct SearchBookResultList {
   @Builder
   gridFooter() {
     Column() {
-      if (this.visibleResultCount > 0 && (this.showLoadingMore || this.preparingCoverCount > 0)) {
-        Row() {
-          LoadingProgress()
-            .width(20)
-            .height(20)
-          Text('继续加载中...')
-            .fontSize(AppFontSize.BODY)
-            .fontColor(this.subTextColor)
-            .margin({ left: AppSpacing.MD })
-        }
-        .width('100%')
-        .height(44)
-        .justifyContent(FlexAlign.Center)
+      if (this.showsLoadingFooter()) {
+        this.loadingFooter()
       }
       Column()
         .height(this.bottomPadding)
@@ -518,20 +584,9 @@ export struct SearchBookResultList {
         this.searchResultItem(key)
       }, (key: string) => this.listItemKey(this.resultBook(key)))
 
-      if (this.visibleResultCount > 0 && (this.showLoadingMore || this.preparingCoverCount > 0)) {
+      if (this.showsLoadingFooter()) {
         ListItem() {
-          Row() {
-            LoadingProgress()
-              .width(20)
-              .height(20)
-            Text('继续加载中...')
-              .fontSize(AppFontSize.BODY)
-              .fontColor(this.subTextColor)
-              .margin({ left: AppSpacing.MD })
-          }
-          .width('100%')
-          .height(44)
-          .justifyContent(FlexAlign.Center)
+          this.loadingFooter()
         }
       }
 
@@ -550,9 +605,15 @@ export struct SearchBookResultList {
     .onReachEnd(() => {
       if (this.preparingCoverCount === 0) this.onReachEnd();
     })
+    .onScrollIndex((_start: number, end: number) => {
+      // 顶部留白占一项，末尾的提示行和底部留白按最后一个结果算。
+      const index = end - (this.topPadding > 0 ? 1 : 0);
+      this.prefetchNearEnd(Math.min(index, this.visibleResultCount - 1));
+    })
     .onAppear(() => this.onGridPageActiveChanged())
     .onDidScroll((delta: number, state: ScrollState) => {
       if (this.userScrollOnly && (state === ScrollState.Idle || delta === 0)) return;
+      if (this.isEndOverscrollRebound(delta)) return;
       this.gridUserScrolled = true;
       this.onListScroll(delta, this.scroller.currentOffset().yOffset);
     })

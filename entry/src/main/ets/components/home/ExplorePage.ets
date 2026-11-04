@@ -1259,6 +1259,9 @@ export struct ExplorePage {
         shelfBookKeys: this.shelfBookKeys,
         busyBookKeys: this.addingShelfBookKeys,
         showLoadingMore: this.isCurrentExplorePage(key) && this.isLoadingMore,
+        keepLoadingFooter: true,
+        hasMoreResults: this.isCurrentExplorePage(key) ? this.hasMoreExploreBooks :
+          this.explorePageSnapshot(key).hasMore,
         showKind: true,
         showResultCover: this.searchExploreShowResultCover,
         showResultCoverBackground: this.searchExploreShowResultCoverBackground,

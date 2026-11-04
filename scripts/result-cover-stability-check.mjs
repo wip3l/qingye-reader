@@ -6,7 +6,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { projectRoot } from './lib/ets-module-staging.mjs';
 
 const read = file => fs.readFileSync(`${projectRoot}/entry/src/main/ets/${file}`, 'utf8');
-const context = vm.createContext({ SearchBook: class {}, SearchBookShelfHelper: {
+const context = vm.createContext({ SearchBook: class {}, DataOperationType: { ADD: 'add', RELOAD: 'reload' }, SearchBookShelfHelper: {
   keyOf: book => `${book.origin}:${book.bookUrl}`, isInShelf: (book, keys) => keys.includes(`${book.origin}:${book.bookUrl}`)
 }, SEARCH_CATEGORY_ALL: 'all', PreparedResultCover: class {},
   ResultCoverPreparation: { options: () => ({ showCover: false }), signature: book => JSON.stringify(book) } });
@@ -22,7 +22,11 @@ const source = read('components/book/SearchBookResultList.ets');
 const dataSourceCode = source.slice(source.indexOf('class SearchBookResultDataSource'), source.indexOf('@Component'));
 const dataSource = vm.runInContext(stripTypeScriptTypes(`${dataSourceCode}\nnew SearchBookResultDataSource()`), context);
 let reloads = 0;
-dataSource.registerDataChangeListener({ onDataReloaded() { reloads++; } });
+// LazyForEach 不允许同一数据源混用 onDatasetChange 与 onDataReloaded 等旧接口，旧接口一律视为错误。
+dataSource.registerDataChangeListener({
+  onDatasetChange(operations) { if (operations.some(operation => operation.type === 'reload')) reloads++; },
+  onDataReloaded() { throw new Error('onDataReloaded mixed with onDatasetChange'); }
+});
 const list = methods(source, ['onBooksChanged', 'onShelfBookKeysChanged', 'resultBook', 'itemKey', 'listItemKey', 'safeText',
   'requestResultCovers', 'publishReadyResults', 'drainCoverQueue']);
 const readyBooks = [];
