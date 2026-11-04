@@ -26,7 +26,8 @@ import { ExploreCacheHit, ExploreResultCache } from '../../utils/ExploreResultCa
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { WebBookService } from '../../core/book/WebBookService';
 import { SourceActionKind, SourceActionMenu, SourceActionRunner, SourceDeleteConfirm, SourceDeleteDialogParams,
-  SourceGroupTag, SourcePickerKit, SourcePickerSearchField, SourceVariableDialogParams, SourceVariableEditor
+  SourceGroupDialogParams, SourceGroupEditor, SourceGroupTag, SourcePickerKit, SourcePickerSearchField,
+  SourceVariableDialogParams, SourceVariableEditor
 } from './SourcePickerKit';
 import { CoverUrlNormalizer } from '../../utils/CoverUrlNormalizer';
 import { ExploreSourceOptionDataSource, ExploreMetadataTask } from '../../core/book/ShelfDataSources';
@@ -1546,6 +1547,24 @@ export struct ExplorePage {
     SourceDeleteConfirm({ params: params })
   }
 
+  @Builder
+  sourceGroupDialog(params: SourceGroupDialogParams) {
+    SourceGroupEditor({ params: params })
+  }
+
+  /** 改了分组只动书源下拉：就地改这个书源的分组，重算分组小标签，不重新加载发现内容。 */
+  applyExploreSourceGroupChange(sourceUrl: string, group: string): void {
+    const option = this.sourceOptions.find((item: ExploreSourceOption): boolean => item.sourceUrl === sourceUrl);
+    if (!option) return;
+    option.sourceGroup = group;
+    this.exploreSourceGroups = this.buildExploreSourceGroups();
+    if (this.activeExploreSourceGroup !== '__all__' &&
+      !this.exploreSourceGroups.includes(this.activeExploreSourceGroup)) {
+      this.activeExploreSourceGroup = '__all__';
+    }
+    this.refreshExploreSourceDataSource();
+  }
+
   /** 长按菜单的执行与搜索范围面板共用；这里只管发现页自己的刷新。 */
   runExploreSourceAction(kind: string): void {
     const sourceUrl = this.actionExploreSourceUrl;
@@ -1562,6 +1581,13 @@ export struct ExplorePage {
         if (this.isActive && !this.isLoading && this.selectedSourceUrl === sourceUrl) {
           this.loadEntries('', true);
         }
+      });
+    } else if (kind === SourceActionKind.GROUP) {
+      SourceActionRunner.openGroupEditor(this.getUIContext(), sourceUrl,
+        (dialogParams: SourceGroupDialogParams): CustomBuilder => (): void => {
+          this.sourceGroupDialog(dialogParams);
+        }, (group: string): void => {
+        this.applyExploreSourceGroupChange(sourceUrl, group);
       });
     } else if (kind === SourceActionKind.DELETE) {
       SourceActionRunner.confirmDelete(this.getUIContext(), sourceUrl,

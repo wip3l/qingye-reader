@@ -7,7 +7,8 @@ import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ImmersiveBackButton } from '../ImmersiveBackButton';
 import { SourceActionKind, SourceActionMenu, SourceActionRunner, SourceDeleteConfirm, SourceDeleteDialogParams,
-  SourceGroupTag, SourcePickerKit, SourcePickerSearchField, SourceVariableDialogParams, SourceVariableEditor
+  SourceGroupDialogParams, SourceGroupEditor, SourceGroupTag, SourcePickerKit, SourcePickerSearchField,
+  SourceVariableDialogParams, SourceVariableEditor
 } from './SourcePickerKit';
 
 /** 搜索页与面板共享的会话：下滑、点遮罩或返回收起时，搜索页靠它判断有没有没保存的勾选。 */
@@ -631,6 +632,11 @@ export struct SearchSourceSheet {
     SourceDeleteConfirm({ params: params })
   }
 
+  @Builder
+  sourceGroupDialog(params: SourceGroupDialogParams) {
+    SourceGroupEditor({ params: params })
+  }
+
   runSourceAction(index: number, kind: string): void {
     const source = this.sources[index];
     if (!source || !source.bookSourceUrl) return;
@@ -645,6 +651,14 @@ export struct SearchSourceSheet {
           this.sourceVariableDialog(dialogParams);
         }, (): void => {
       });
+    } else if (kind === SourceActionKind.GROUP) {
+      SourceActionRunner.openGroupEditor(this.getUIContext(), sourceUrl,
+        (dialogParams: SourceGroupDialogParams): CustomBuilder => (): void => {
+          this.sourceGroupDialog(dialogParams);
+        }, (group: string): void => {
+        this.updateSourceGroup(sourceUrl, group);
+        this.onSourcesChanged();
+      });
     } else if (kind === SourceActionKind.DELETE) {
       SourceActionRunner.confirmDelete(this.getUIContext(), sourceUrl,
         (dialogParams: SourceDeleteDialogParams): CustomBuilder => (): void => {
@@ -654,6 +668,23 @@ export struct SearchSourceSheet {
         this.onSourcesChanged();
       });
     }
+  }
+
+  /** 改了分组的书源就地换到新分组：左栏分组、计数与可见行跟着重算，原分组空了就回到“全部”。 */
+  updateSourceGroup(url: string, group: string): void {
+    const index = this.sources.findIndex((source: BookSource): boolean => source.bookSourceUrl === url);
+    if (index < 0) return;
+    this.sources[index].bookSourceGroup = group;
+    this.sourceGroupOf[index] = SourcePickerKit.groupLabel(group);
+    this.groupList = SourcePickerKit.sortGroups(Array.from(new Set<string>(this.sourceGroupOf)));
+    if (this.activeKey !== SearchSourceSheet.ALL_KEY && this.activeKey !== SearchSourceSheet.SELECTED_KEY &&
+      !this.groupList.includes(this.activeKey)) {
+      this.activeKey = SearchSourceSheet.ALL_KEY;
+    }
+    this.rebuildSourceTexts();
+    this.computeMatches();
+    this.recount();
+    this.refreshVisible();
   }
 
   /** 删掉的书源从面板里移除：重建下标对应的各数组，分组没了就回到“全部”。 */

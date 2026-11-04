@@ -124,6 +124,7 @@ export struct SourceGroupTag {
 export class SourceActionKind {
   static readonly LOGIN: string = 'login';
   static readonly VARIABLE: string = 'variable';
+  static readonly GROUP: string = 'group';
   static readonly SETTINGS: string = 'settings';
   static readonly EDIT: string = 'edit';
   static readonly DELETE: string = 'delete';
@@ -143,7 +144,8 @@ export class SourceActionMenuList {
   static items(isNative: boolean): SourceActionItem[] {
     const result: SourceActionItem[] = [
       { kind: SourceActionKind.LOGIN, label: '登录', icon: $r('sys.symbol.arrow_right_up_and_square'), danger: false },
-      { kind: SourceActionKind.VARIABLE, label: '源变量', icon: $r('sys.symbol.list_bullet'), danger: false }
+      { kind: SourceActionKind.VARIABLE, label: '源变量', icon: $r('sys.symbol.list_bullet'), danger: false },
+      { kind: SourceActionKind.GROUP, label: '设置分组', icon: $r('sys.symbol.folder'), danger: false }
     ];
     if (isNative) {
       result.push({ kind: SourceActionKind.SETTINGS, label: '书源设置', icon: $r('sys.symbol.gearshape'), danger: false });
@@ -181,6 +183,18 @@ export class SourceVariableDialogParams {
   onClose: () => void = (): void => {
   };
   onSaved: () => void = (): void => {
+  };
+}
+
+export class SourceGroupDialogParams {
+  url: string = '';
+  name: string = '';
+  group: string = '';
+  /** 全部已有分组（分组管理顺序），用作快捷选项。 */
+  groups: string[] = [];
+  onClose: () => void = (): void => {
+  };
+  onSaved: (group: string) => void = (_group: string): void => {
   };
 }
 
@@ -288,6 +302,129 @@ export struct SourceVariableEditor {
   }
 }
 
+/** 设置书源分组框的内容：输入新分组或点选已有分组，留空为未分组。由调用方组件里的 @Builder 创建。 */
+@Component
+export struct SourceGroupEditor {
+  @StorageLink('appDarkMode') appDarkMode: boolean = false;
+  params: SourceGroupDialogParams = new SourceGroupDialogParams();
+  @State value: string = '';
+  @State saving: boolean = false;
+
+  aboutToAppear(): void {
+    this.value = this.params.group;
+  }
+
+  build() {
+    Column({ space: AppSpacing.LG }) {
+      Text('设置分组')
+        .fontSize(AppFontSize.TITLE)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+        .width('100%')
+        .textAlign(TextAlign.Center)
+
+      Text(this.params.name || this.params.url)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+        .width('100%')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .textAlign(TextAlign.Center)
+
+      TextInput({ placeholder: '输入新分组名称，留空为未分组', text: this.value })
+        .width('100%')
+        .height(44)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+        .placeholderColor(ThemeRuntime.subTextColor(this.appDarkMode))
+        .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+        .borderRadius(ThemeRuntime.mediumRadius())
+        .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+        .enabled(!this.saving)
+        .onChange((value: string) => {
+          this.value = value;
+        })
+
+      Scroll() {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          this.groupChip(SourcePickerKit.UNGROUPED, '')
+          ForEach(this.params.groups, (group: string) => {
+            this.groupChip(group, group)
+          }, (group: string): string => group)
+        }
+        .width('100%')
+      }
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .width('100%')
+      .constraintSize({ maxHeight: 200 })
+      .scrollBar(BarState.Auto)
+
+      Row({ space: AppSpacing.MD }) {
+        Button('取消')
+          .layoutWeight(1)
+          .height(40)
+          .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+          .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+          .enabled(!this.saving)
+          .onClick(() => this.params.onClose())
+        Button(this.saving ? '保存中…' : '保存')
+          .layoutWeight(1)
+          .height(40)
+          .fontColor(ThemeRuntime.onAccentColor())
+          .backgroundColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .enabled(!this.saving)
+          .onClick(() => this.save())
+      }
+      .width('100%')
+    }
+    .padding(AppSpacing.XL)
+  }
+
+  @Builder
+  groupChip(label: string, group: string) {
+    Text(label)
+      .fontSize(AppFontSize.BODY)
+      .fontColor(this.value.trim() === group ? ThemeRuntime.accentColor(this.appDarkMode) :
+        ThemeRuntime.subTextColor(this.appDarkMode))
+      .fontWeight(this.value.trim() === group ? FontWeight.Medium : FontWeight.Regular)
+      .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
+      .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+      .borderRadius(ThemeRuntime.buttonRadius())
+      .margin({ right: AppSpacing.MD, bottom: AppSpacing.MD })
+      .onClick(() => {
+        if (!this.saving) this.value = group;
+      })
+  }
+
+  async save(): Promise<void> {
+    if (!this.params.url || this.saving) return;
+    const group = this.value.trim();
+    if (group === this.params.group) {
+      this.params.onClose();
+      return;
+    }
+    this.saving = true;
+    try {
+      const context = getContext(this);
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(context);
+      await db.updateBookSourceListFields(this.params.url, { bookSourceGroup: group });
+      if (group) {
+        // 与书源管理一致：输入的新名字记为用户创建的分组，点选已有分组只补进顺序。
+        await BookSourceGroupStore.add(context, group, this.params.groups, !this.params.groups.includes(group));
+      }
+      this.saving = false;
+      this.params.onClose();
+      HdsFeedback.showToast(group ? `已加入分组：${group}` : '已移出分组');
+      this.params.onSaved(group);
+    } catch (error) {
+      this.saving = false;
+      console.error('设置书源分组失败:', error);
+      HdsFeedback.showToast('设置分组失败');
+    }
+  }
+}
+
 /** 删除书源确认框的内容，由调用方组件里的 @Builder 创建，放进系统对话框。 */
 @Component
 export struct SourceDeleteConfirm {
@@ -334,16 +471,19 @@ export struct SourceDeleteConfirm {
 /** 调用方组件把对话框参数包成自己的 @Builder；内容组件要在组件里创建才有父节点，放到静态方法里建会闪退。 */
 export type SourceVariableDialogBuilder = (params: SourceVariableDialogParams) => CustomBuilder;
 export type SourceDeleteDialogBuilder = (params: SourceDeleteDialogParams) => CustomBuilder;
+export type SourceGroupDialogBuilder = (params: SourceGroupDialogParams) => CustomBuilder;
 
 /** 长按菜单各项的执行：跳页面的直接跳，源变量和删除弹系统对话框，完成后回调调用方刷新。 */
 export class SourceActionRunner {
   // 系统自定义对话框（builder 形式）由系统画沉浸光感表面，和其他弹窗一致。
   private static variableSession: SystemDialogSession = new SystemDialogSession();
   private static deleteSession: SystemDialogSession = new SystemDialogSession();
+  private static groupSession: SystemDialogSession = new SystemDialogSession();
 
-  /** 离开所在页面（如切走发现页标签）时收起源变量编辑框；已开始的保存仍会在后台完成。 */
+  /** 离开所在页面（如切走发现页标签）时收起源变量与分组编辑框；已开始的保存仍会在后台完成。 */
   static closeVariableEditor(uiContext: UIContext): void {
     SourceActionRunner.variableSession.close(uiContext);
+    SourceActionRunner.groupSession.close(uiContext);
   }
 
   /** 登录、书源设置、编辑是跳页面的操作。 */
@@ -382,6 +522,35 @@ export class SourceActionRunner {
       autoCancel: false,
       maskColor: ThemeRuntime.scrimColor(AppStorage.get<boolean>('appDarkMode') === true),
       warnTag: '显示编辑源变量弹窗失败:'
+    });
+  }
+
+  static async openGroupEditor(uiContext: UIContext, sourceUrl: string, buildDialog: SourceGroupDialogBuilder,
+    onSaved: (group: string) => void): Promise<void> {
+    if (!sourceUrl) return;
+    const source = await SourceActionRunner.loadSource(uiContext, sourceUrl, '读取书源失败');
+    if (!source) return;
+    if (source.isLocked) {
+      HdsFeedback.showToast('锁定的书源不能修改分组');
+      return;
+    }
+    let groups: string[] = [];
+    try {
+      groups = await BookSourceGroupStore.loadOrder(uiContext.getHostContext() as Context);
+    } catch (error) {
+      console.warn('读取书源分组失败:', error);
+    }
+    const params = new SourceGroupDialogParams();
+    params.url = source.bookSourceUrl;
+    params.name = source.bookSourceName || source.bookSourceUrl;
+    params.group = (source.bookSourceGroup || '').trim();
+    params.groups = params.group && !groups.includes(params.group) ? groups.concat([params.group]) : groups;
+    params.onClose = (): void => SourceActionRunner.groupSession.close(uiContext);
+    params.onSaved = onSaved;
+    SourceActionRunner.groupSession.open(uiContext, buildDialog(params), {
+      autoCancel: false,
+      maskColor: ThemeRuntime.scrimColor(AppStorage.get<boolean>('appDarkMode') === true),
+      warnTag: '显示设置分组弹窗失败:'
     });
   }
 
