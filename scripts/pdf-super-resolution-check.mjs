@@ -105,6 +105,27 @@ test('native rendering errors release sources and allow later jobs to run', asyn
   assert.equal(h.pins.size, 0); assert.equal(h.calls(), 0);
 });
 
+test('AI indicator preference hides PDF processing and completion text while preserving original-page comparison', () => {
+  const controls = readEtsModule('components/reader/PdfReaderControls.ets');
+  const method = controls.match(/  private enhancementStatusLabel\(\): string \{[\s\S]*?\n  \}/);
+  assert.ok(method);
+  const label = vm.runInNewContext(compile(`({${method[0].replace('private ', '')}})`)).enhancementStatusLabel;
+  const state = { readerAiProcessingIndicatorEnabled: true, enhancementStatus: '正在增强当前页…', showOriginal: false };
+  assert.equal(label.call(state), '正在增强当前页…');
+  state.readerAiProcessingIndicatorEnabled = false;
+  assert.equal(label.call(state), '');
+  state.showOriginal = true;
+  assert.equal(label.call(state), '原页');
+  state.showOriginal = false;
+  for (const status of ['AI 超分', '增强未完成，显示原页', '增强图读取失败，显示原页']) {
+    state.enhancementStatus = status;
+    assert.equal(label.call(state), '');
+    state.readerAiProcessingIndicatorEnabled = true;
+    assert.equal(label.call(state), status);
+    state.readerAiProcessingIndicatorEnabled = false;
+  }
+});
+
 test('missing CropBox uses MediaBox; raster writes atomically, reuses cache and releases native resources', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pdf-sr-raster-'));
   t.after(() => { assert.match(path.basename(root), /^pdf-sr-raster-/); fs.rmSync(root, { recursive: true, force: true }); });

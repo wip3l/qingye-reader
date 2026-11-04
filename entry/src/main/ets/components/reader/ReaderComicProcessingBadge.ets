@@ -7,6 +7,7 @@ import { ThemeRuntime } from '../../theme/ThemeRuntime';
 /** 固定在阅读视口内，长条图滚动和缩放时仍然可见，不拦截手势。 */
 @Component
 export struct ReaderComicProcessingBadge {
+  @StorageProp('readerAiProcessingIndicatorEnabled') readerAiProcessingIndicatorEnabled: boolean = true;
   /** 缓存命中或直接跳过的图片很快结束，处理超过这么久才显示，避免一闪而过。 */
   private static readonly SHOW_DELAY_MS: number = 400;
   processing: ReaderComicProcessing = new ReaderComicProcessing();
@@ -76,6 +77,7 @@ export struct ReaderComicProcessingBadge {
     .backgroundColor(this.message ? ThemeRuntime.scrimColor(true) : Color.Transparent)
     .constraintSize({ maxWidth: '90%' })
     .opacity(this.shown ? 1 : 0)
+    .visibility(this.readerAiProcessingIndicatorEnabled ? Visibility.Visible : Visibility.None)
     .animation({ duration: 200, curve: Curve.EaseOut })
     .hitTestBehavior(HitTestMode.None)
   }

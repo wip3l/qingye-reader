@@ -158,6 +158,7 @@ export class ReaderComicRetryRegistry {
  */
 @Component
 export struct ReaderComicImageItem {
+  @StorageProp('readerAiProcessingIndicatorEnabled') readerAiProcessingIndicatorEnabled: boolean = true;
   @Prop @Watch('onMarkerChanged') marker: string = '';
   @Prop viewWidth: number = 0;
   @Prop viewHeight: number = 0;
@@ -351,6 +352,7 @@ export struct ReaderComicImageItem {
   private showEnhancedBadge(): void {
     if (this.enhancedShown) return;
     this.enhancedShown = true;
+    if (!this.readerAiProcessingIndicatorEnabled) return;
     this.enhancedBadge = true;
     const ticket = this.enhanceTicket;
     setTimeout(() => {
@@ -623,6 +625,7 @@ export struct ReaderComicImageItem {
             .markAnchor({ x: '100%', y: 0 })
             .translate({ x: -AppSpacing.SM, y: AppSpacing.SM })
             .opacity(this.enhancedBadge ? 1 : 0)
+            .visibility(this.readerAiProcessingIndicatorEnabled ? Visibility.Visible : Visibility.None)
             .animation({ duration: 300, curve: Curve.EaseOut })
             .hitTestBehavior(HitTestMode.None)
         }

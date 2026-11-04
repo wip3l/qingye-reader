@@ -53,6 +53,7 @@ export class ReaderSettings {
   extendToStatusBar: boolean = false;
   preloadEnabled: boolean = true;
   preloadChapterCount: number = 1;
+  aiProcessingIndicatorEnabled: boolean = true;
   useTtsQuickAction: boolean = true;
   useAutoScrollQuickAction: boolean = true;
   useChapterQuickJump: boolean = true;
@@ -144,6 +145,7 @@ export class ReaderSettingsStore {
   static readonly KEY_KEEP_SCREEN_ON: string = 'readerKeepScreenOn';
   static readonly KEY_EXTEND_TO_STATUS_BAR: string = 'readerExtendToStatusBar';
   static readonly KEY_PRELOAD_ENABLED: string = 'readerPreloadEnabled';
+  static readonly KEY_AI_PROCESSING_INDICATOR_ENABLED: string = 'readerAiProcessingIndicatorEnabled';
   static readonly KEY_PRELOAD_CHAPTER_COUNT: string = 'readerPreloadChapterCount';
   static readonly KEY_USE_TTS_QUICK_ACTION: string = 'readerUseTtsQuickAction';
   static readonly KEY_USE_AUTO_SCROLL_QUICK_ACTION: string = 'readerUseAutoScrollQuickAction';
@@ -202,6 +204,9 @@ export class ReaderSettingsStore {
     const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
     const profile = await ReaderSettingsStore.loadThemeProfile(store, activeThemeId);
     if (profile) {
+      // AI 处理标识是阅读通用设置，不随主题档案切换。
+      profile.aiProcessingIndicatorEnabled = await ReaderSettingsStore.getBoolean(
+        store, ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED, true);
       profile.quickJumpMode = ReaderQuickJumpModel.normalizeMode(await ReaderSettingsStore.getString(
         store, ReaderSettingsStore.KEY_QUICK_JUMP_MODE, 'chapter'));
       await ReaderSettingsStore.readGlobalFontSettings(store, profile);
@@ -412,6 +417,8 @@ export class ReaderSettingsStore {
       ReaderSettingsStore.KEY_PRELOAD_ENABLED,
       true
     );
+    settings.aiProcessingIndicatorEnabled = await ReaderSettingsStore.getBoolean(
+      store, ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED, true);
     settings.preloadChapterCount = await ReaderSettingsStore.getNumber(
       store,
       ReaderSettingsStore.KEY_PRELOAD_CHAPTER_COUNT,
@@ -518,6 +525,7 @@ export class ReaderSettingsStore {
       next.themeIndex = ReaderThemeHelper.APP_THEME_INDEX;
     }
     next.quickJumpMode = current.quickJumpMode;
+    next.aiProcessingIndicatorEnabled = current.aiProcessingIndicatorEnabled;
     ReaderSettingsStore.copyGlobalFontSettings(current, next);
     await ReaderSettingsStore.applyThemePageTurnDefault(store, nextId, next);
     await ReaderSettingsStore.persistThemeProfile(store, nextId, next);
@@ -775,6 +783,17 @@ export class ReaderSettingsStore {
     const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
     await store.put(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED, enabled);
     await ReaderSettingsStore.persistActiveThemeProfile(store, settings);
+    await store.flush();
+  }
+
+  static async saveAiProcessingIndicatorEnabled(context: Context,
+    enabled: boolean = AppStorage.get<boolean>(ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED) ?? true): Promise<void> {
+    const settings = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
+    settings.aiProcessingIndicatorEnabled = enabled;
+    ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(settings);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED, enabled);
+    const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
+    await store.put(ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED, enabled);
     await store.flush();
   }
 
@@ -1079,6 +1098,7 @@ export class ReaderSettingsStore {
     await ReaderSettingsStore.saveTapZoneActions(context, settings.tapZoneActions);
     await ReaderSettingsStore.savePreloadEnabled(context, settings.preloadEnabled);
     await ReaderSettingsStore.savePreloadChapterCount(context, settings.preloadChapterCount);
+    await ReaderSettingsStore.saveAiProcessingIndicatorEnabled(context, settings.aiProcessingIndicatorEnabled);
     await ReaderSettingsStore.saveQuickBookmarkEnabled(context, settings.quickBookmarkEnabled);
     await ReaderSettingsStore.saveFontSettings(
       context,
@@ -1125,6 +1145,8 @@ export class ReaderSettingsStore {
     ReaderSettingsStore.applyInteractionToStorage(normalized);
     ReaderSettingsStore.applyEyeTurnToStorage(normalized);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_PRELOAD_ENABLED, normalized.preloadEnabled);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED,
+      normalized.aiProcessingIndicatorEnabled);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_PRELOAD_CHAPTER_COUNT, normalized.preloadChapterCount);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION, normalized.useTtsQuickAction);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_AUTO_SCROLL_QUICK_ACTION, normalized.useAutoScrollQuickAction);
@@ -1265,6 +1287,8 @@ export class ReaderSettingsStore {
     const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
     const profile = await ReaderSettingsStore.loadThemeProfile(store, id);
     if (profile) {
+      profile.aiProcessingIndicatorEnabled = await ReaderSettingsStore.getBoolean(
+        store, ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED, true);
       await ReaderSettingsStore.readGlobalFontSettings(store, profile);
       ReaderSettingsStore.normalizeGlobalFontMode(profile);
       return profile;
@@ -1804,6 +1828,9 @@ export class ReaderSettingsStore {
       settings.screenTimeoutMinutes !== ReaderSettingsStore.SCREEN_TIMEOUT_FOLLOW_SYSTEM;
     settings.extendToStatusBar = source.extendToStatusBar;
     settings.preloadEnabled = source.preloadEnabled;
+    settings.aiProcessingIndicatorEnabled = typeof source.aiProcessingIndicatorEnabled === 'boolean' ?
+      source.aiProcessingIndicatorEnabled :
+      (AppStorage.get<boolean>(ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED) ?? true);
     settings.preloadChapterCount = ReaderSettingsStore.normalizePreloadChapterCount(source.preloadChapterCount);
     settings.useTtsQuickAction = typeof source.useTtsQuickAction === 'boolean' ? source.useTtsQuickAction :
       (AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_TTS_QUICK_ACTION) ?? true);
@@ -1950,6 +1977,8 @@ export class ReaderSettingsStore {
       settings.screenTimeoutMinutes !== ReaderSettingsStore.SCREEN_TIMEOUT_FOLLOW_SYSTEM;
     settings.extendToStatusBar = AppStorage.get<boolean>(ReaderSettingsStore.KEY_EXTEND_TO_STATUS_BAR) ?? false;
     settings.preloadEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_PRELOAD_ENABLED) ?? true;
+    settings.aiProcessingIndicatorEnabled =
+      AppStorage.get<boolean>(ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED) ?? true;
     settings.paragraphIndent = ReaderParagraphIndent.normalize(
       AppStorage.get<number>(ReaderSettingsStore.KEY_PARAGRAPH_INDENT) ?? ReaderParagraphIndent.DEFAULT);
     settings.preloadChapterCount = ReaderSettingsStore.normalizePreloadChapterCount(

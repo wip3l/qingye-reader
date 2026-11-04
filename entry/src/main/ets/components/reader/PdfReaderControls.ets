@@ -22,6 +22,7 @@ export struct PdfReaderControls {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @StorageProp('themeRevision') themeRevision: number = 0;
+  @StorageProp('readerAiProcessingIndicatorEnabled') readerAiProcessingIndicatorEnabled: boolean = true;
   @Prop darkMode: boolean = false;
   @Prop bookTitle: string = '';
   @Prop menuVisible: boolean = false;
@@ -92,6 +93,12 @@ export struct PdfReaderControls {
 
   private superResolutionReady(): boolean {
     return this.superResolutionAccess === ReaderComicSuperResolutionAccess.READY;
+  }
+
+  private enhancementStatusLabel(): string {
+    if (this.showOriginal) return '原页';
+    if (!this.readerAiProcessingIndicatorEnabled) return '';
+    return this.enhancementStatus || 'AI 超分';
   }
 
   /** 按内容估算面板高度，避免短内容下方留出大片空白；目录和设置在矮窗口里改为滚动。 */
@@ -274,7 +281,7 @@ export struct PdfReaderControls {
       ReaderMaterialPanel({ panelWidth: Math.min(this.panelWidth(), 296), panelHeight: 40, cornerRadius: 20,
         darkMode: this.darkMode, fallbackColor: ThemeRuntime.cardColor(this.darkMode) }) {
         Row({ space: 8 }) {
-          Text(this.showOriginal ? '原页' : this.enhancementStatus || 'AI 超分')
+          Text(this.enhancementStatusLabel())
             .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.darkMode)).layoutWeight(1)
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
           Button(this.showOriginal ? '查看超分' : '查看原页').id('pdf_compare_original')

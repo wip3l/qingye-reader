@@ -5,14 +5,14 @@ import { readEtsModule } from './lib/ets-module-staging.mjs';
 
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const enhanceJobs = [], translateJobs = [];
-const context = vm.createContext({ console, getContext: () => ({}), vp2px: x => x,
+const context = vm.createContext({ console, getContext: () => ({}), vp2px: x => x, setTimeout: () => 0,
   ReaderComicSuperResolution: { enhance: () => { const job = deferred(); enhanceJobs.push(job); return job.promise; } },
   ComicChineseConverter: { layer: () => { const job = deferred(); translateJobs.push(job); return job.promise; } }
 });
 vm.runInContext(stripTypeScriptTypes(readEtsModule('core/reader/ReaderComicProcessing.ts').replace(/^export /gm, '')), context);
 // Keep production lifecycle/business methods; omit only ArkUI's declarative build methods.
 let item = readEtsModule('components/reader/ReaderComicView.ets').split('export struct ReaderComicImageItem {')[1].split('\n  build() {')[0];
-item = item.replace(/@(Prop|State|Watch)(\([^)]*\))?\s*/g, '');
+item = item.replace(/@(StorageProp|Prop|State|Watch)(\([^)]*\))?\s*/g, '');
 vm.runInContext(stripTypeScriptTypes(`class ComicItem {${item}\n}`), context);
 const { Registry, Item } = vm.runInContext('({Registry: ReaderComicProcessing, Item: ComicItem})', context);
 const registry = new Registry();
@@ -26,6 +26,15 @@ const fresh = () => {
 };
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 const itemA = fresh(), itemB = fresh();
+const silent = fresh();
+silent.readerAiProcessingIndicatorEnabled = false;
+silent.showEnhancedBadge();
+assert.equal(silent.enhancedShown, true, 'hiding the badge must not prevent the enhanced image from appearing');
+assert.equal(silent.enhancedBadge, false, 'the same preference suppresses EPUB and comic image completion badges');
+const badged = fresh();
+badged.showEnhancedBadge();
+assert.equal(badged.enhancedShown, true);
+assert.equal(badged.enhancedBadge, true, 'completion badges remain enabled by default');
 itemA.maybeEnhance(); itemA.maybeConvertText(); itemB.maybeEnhance();
 assert.equal(registry.message(true), 'AI 超分 / AI 着色 / AI 翻译处理中…');
 enhanceJobs[0].resolve('file://a.jpg'); await flush();

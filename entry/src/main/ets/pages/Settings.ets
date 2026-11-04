@@ -124,6 +124,7 @@ struct SettingsPage {
   @StorageLink('readerEyeTurnPreviousDwellMs') readerEyeTurnPreviousDwellMs: number = 850;
   @StorageLink('readerEyeTurnNextDwellMs') readerEyeTurnNextDwellMs: number = 650;
   @StorageLink('readerPreloadEnabled') readerPreloadEnabled: boolean = true;
+  @StorageLink('readerAiProcessingIndicatorEnabled') readerAiProcessingIndicatorEnabled: boolean = true;
   @StorageLink('readerPreloadChapterCount') readerPreloadChapterCount: number = 1;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
@@ -558,6 +559,12 @@ struct SettingsPage {
         this.screenTimeoutOptions(), this.screenTimeoutSelectedIndex(), (index: number) => {
           this.setReaderScreenTimeoutByIndex(index);
         }, 'settings_screen_timeout_select')
+      SettingSwitchRow({
+        title: 'AI处理标识',
+        description: '显示 EPUB 插图、漫画和 PDF 的 AI 处理及超分提示',
+        isOn: this.readerAiProcessingIndicatorEnabled,
+        onChange: (enabled: boolean): void => this.setReaderAiProcessingIndicatorEnabled(enabled)
+      })
       this.preloadSettingPanel()
     }
     .width('calc(100% - 24vp)')
@@ -1056,6 +1063,7 @@ struct SettingsPage {
     this.readerEyeTurnPreviousDwellMs = settings.eyeTurnPreviousDwellMs;
     this.readerEyeTurnNextDwellMs = settings.eyeTurnNextDwellMs;
     this.readerPreloadEnabled = settings.preloadEnabled;
+    this.readerAiProcessingIndicatorEnabled = settings.aiProcessingIndicatorEnabled;
     this.readerPreloadChapterCount = settings.preloadChapterCount;
     this.readerQuickBookmarkEnabled = settings.quickBookmarkEnabled;
     this.readerFontFamily = settings.fontFamily || '';
@@ -2149,6 +2157,14 @@ struct SettingsPage {
     this.readerPreloadChapterCount = value;
     ReaderSettingsStore.savePreloadChapterCount(getContext(this), value).catch((e: Error) => {
       console.error('保存预缓存章节数失败:', e);
+    });
+  }
+
+  setReaderAiProcessingIndicatorEnabled(enabled: boolean): void {
+    this.readerAiProcessingIndicatorEnabled = enabled;
+    ReaderSettingsStore.saveAiProcessingIndicatorEnabled(getContext(this), enabled).catch((error: Error): void => {
+      console.error('保存 AI 处理标识设置失败:', error);
+      HdsFeedback.showToast('AI处理标识设置保存失败');
     });
   }
 

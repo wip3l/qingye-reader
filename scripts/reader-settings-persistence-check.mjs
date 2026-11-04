@@ -121,6 +121,38 @@ function openChromePanel(h) {
 }
 
 const tests = {
+  async 'AI processing indicator defaults on, persists globally and survives old theme profiles'() {
+    const h = harness();
+    const key = 'readerAiProcessingIndicatorEnabled';
+    assert.equal((await h.settings.load({})).aiProcessingIndicatorEnabled, true);
+    assert.equal(h.values.get(key), true);
+    await h.settings.saveAiProcessingIndicatorEnabled({}, false);
+    assert.equal(h.values.get(key), false, 'the reader sees changes immediately');
+    assert.equal(h.disk.get(key), false);
+    assert.equal((await h.settings.reload({})).aiProcessingIndicatorEnabled, false);
+
+    h.disk.set('readerThemeProfileV1_other-theme', JSON.stringify({ fontSize: 24 }));
+    h.values.set('appThemeId', 'other-theme');
+    const switched = await h.settings.switchThemeProfile({}, 'classic-blue', 'other-theme');
+    assert.equal(switched.aiProcessingIndicatorEnabled, false);
+    assert.equal((await h.settings.reload({})).aiProcessingIndicatorEnabled, false);
+    assert.equal((await h.settings.loadProfile({}, 'classic-blue')).aiProcessingIndicatorEnabled, false);
+    await h.settings.saveAll({}, switched);
+    assert.equal((await h.settings.reload({})).aiProcessingIndicatorEnabled, false);
+
+    const legacy = { ...switched };
+    delete legacy.aiProcessingIndicatorEnabled;
+    h.settings.applyToStorage(legacy);
+    assert.equal(h.values.get(key), false, 'old settings snapshots preserve the current preference');
+    await h.settings.saveAll({}, legacy);
+    assert.equal((await h.settings.reload({})).aiProcessingIndicatorEnabled, false,
+      'restoring an older settings backup does not reset the indicator preference');
+    await h.settings.saveAiProcessingIndicatorEnabled({}, true);
+    assert.equal((await h.settings.reload({})).aiProcessingIndicatorEnabled, true);
+    h.values.set('appThemeId', 'classic-blue');
+    assert.equal((await h.settings.switchThemeProfile({}, 'other-theme', 'classic-blue'))
+      .aiProcessingIndicatorEnabled, true, 'a theme with the old disabled snapshot cannot turn it off again');
+  },
   async 'title split and emphasis persist, remain theme-scoped and ignore remote device-layout fields'() {
     const h = harness();
     const style = await h.settings.load({});
