@@ -382,6 +382,46 @@ struct PdfReadBookPage {
     return task;
   }
 
+  private jumpConfirming: boolean = false;
+
+  /** 快速跳转松手后确认，文案与小说阅读页的“确认跳转”一致；确认后提示跳到第几页。 */
+  private async confirmQuickJump(index: number, percent: number): Promise<void> {
+    if (!this.ready || this.jumpConfirming) return;
+    const target = PdfPagePosition.clamp(index, this.pageCount);
+    if (target === this.pageIndex) {
+      this.previewIndex = -1;
+      return;
+    }
+    const count = this.pageCount;
+    const token = this.generation;
+    this.jumpConfirming = true;
+    let confirmed = false;
+    try {
+      const result = await this.getUIContext().getPromptAction().showDialog({
+        title: '确认跳转',
+        message: percent >= 0 ? `跳转到全书 ${percent.toFixed(1)}%？
+第 ${target + 1} 页 · 共 ${count} 页` :
+          `跳转到第 ${target + 1} 页？
+共 ${count} 页`,
+        buttons: [
+          { text: '取消', color: ThemeRuntime.subTextColor(this.darkMode) },
+          { text: '跳转', color: ThemeRuntime.accentColor(this.darkMode) }
+        ]
+      });
+      confirmed = result.index === 1 && this.alive && token === this.generation && count === this.pageCount;
+    } catch (error) {
+      console.warn('[PDF] quick jump dialog failed:', error);
+    } finally {
+      this.jumpConfirming = false;
+    }
+    if (!confirmed) {
+      this.previewIndex = -1;
+      return;
+    }
+    this.goTo(target);
+    HdsFeedback.showToast(`已跳转至第 ${target + 1} 页`);
+  }
+
   private goTo(index: number): void {
     if (!this.ready) return;
     const target = PdfPagePosition.clamp(index, this.pageCount);
@@ -738,6 +778,7 @@ struct PdfReadBookPage {
         navigationContent: (): void => { this.navigationPanel(); },
         onClose: (): void => { this.close(); }, onPanelChange: (panel: string): void => { this.setPanel(panel); },
         onPageChange: (index: number): void => { this.goTo(index); },
+        onQuickJump: (index: number, percent: number): void => { this.confirmQuickJump(index, percent); },
         onPreview: (index: number): void => { this.previewIndex = index; },
         onJump: (text: string): void => { this.jumpInput = text; this.jump(); },
         onContinuousChange: (checked: boolean): void => { this.setViewPreference(ReaderPdfSettings.CONTINUOUS, checked); },

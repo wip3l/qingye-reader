@@ -71,9 +71,10 @@ export class EpubOriginalScript {
       'html{margin:0!important;padding:0!important;}' +
         `body{box-sizing:border-box!important;margin:0!important;padding:${padding}!important;max-width:none!important;}` +
         'img,svg,video{max-width:100%!important;box-sizing:border-box;}img,video{object-fit:contain;}';
-    css += 'html{-webkit-text-size-adjust:none;-webkit-tap-highlight-color:transparent;}';
+    // 不能写 text-size-adjust:none：它会连网页组件的文字缩放（textZoomRatio）一起关掉，字号缩放就失效了。
+    css += 'html{-webkit-tap-highlight-color:transparent;}';
     if (options.forceDark) {
-      // 与段评网页的夜间处理相同：整体反色，图片再反回来；翻页模式下 body 之外的栏露出的是 html 的底色。
+      // 应用处于深色模式时，与段评网页的夜间处理相同：整体反色，图片再反回来；翻页模式下 body 之外的栏露出的是 html 的底色。
       css += 'html{background:#141414!important;}body{filter:invert(.92) hue-rotate(180deg)!important;}' +
         'img,video,picture,canvas,svg image,[style*="background-image"]{filter:invert(1) hue-rotate(180deg)!important;}';
     }

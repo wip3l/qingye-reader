@@ -1,4 +1,5 @@
 import { webview } from '@kit.ArkWeb';
+import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import { window } from '@kit.ArkUI';
 import { Book, BookChapter } from '@legado/sourceengine';
@@ -22,6 +23,7 @@ import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
+import { AppThemeModeStore } from '../utils/AppThemeModeStore';
 import { AppFontSize } from '../theme/AppFontSize';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
@@ -42,7 +44,6 @@ import {
 /** 本书的文件排版设置与位置（书籍变量）。 */
 const SCROLL_KEY = 'epubOriginalScroll';
 const ZOOM_KEY = 'epubOriginalZoom';
-const FORCE_DARK_KEY = 'epubOriginalForceDark';
 const POSITION_KEY = 'epubOriginalPosition';
 /** 与普通阅读器共用的章内字符偏移（见 ReadBook 的 READER_PROGRESS_OFFSET_KEY）。 */
 const NATIVE_OFFSET_KEY = 'readProgressCharOffsetV2';
@@ -143,7 +144,9 @@ class EpubChapterTitleSource implements IDataSource {
 @Entry
 @Component
 struct EpubOriginalReadBookPage {
-  @StorageProp('appDarkMode') @Watch('applySystemBars') darkMode: boolean = false;
+  /** 深色跟随应用全局的日夜模式：深色时页面整体反色，图片保持原样。 */
+  @StorageLink('appDarkMode') @Watch('onAppDarkChanged') darkMode: boolean = false;
+  @StorageLink('appThemeMode') appThemeMode: string = 'system';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
@@ -168,7 +171,6 @@ struct EpubOriginalReadBookPage {
   @State brightnessReady: boolean = false;
   @State paged: boolean = true;
   @State zoom: number = 100;
-  @State forceDark: boolean = false;
   @State showNotePopup: boolean = false;
   @State showNoteSheet: boolean = false;
   @State noteX: number = 0;
@@ -354,7 +356,6 @@ struct EpubOriginalReadBookPage {
       this.paged = book.getVariable(SCROLL_KEY) !== '1';
       const zoom = Number(book.getVariable(ZOOM_KEY));
       this.zoom = Number.isFinite(zoom) && zoom >= 50 && zoom <= 250 ? Math.round(zoom) : 100;
-      this.forceDark = book.getVariable(FORCE_DARK_KEY) === '1';
       const index = Math.max(0, Math.min(this.chapters.length - 1, book.durChapterIndex));
       await this.loadChapter(index, await this.initialTarget(book, index));
     } catch (error) {
@@ -645,7 +646,7 @@ struct EpubOriginalReadBookPage {
     if (serial !== this.loadSerial || !this.alive) return;
     const options = new EpubOriginalLayoutOptions();
     options.paged = this.paged;
-    options.forceDark = this.forceDark;
+    options.forceDark = this.darkMode;
     options.margins = this.margins();
     options.target = target;
     const html = EpubOriginalDocument.build(pieces, relative, EpubOriginalScript.injection(options),
@@ -989,7 +990,6 @@ struct EpubOriginalReadBookPage {
     const spot = this.spot;
     const paged = this.paged;
     const zoom = this.zoom;
-    const forceDark = this.forceDark;
     const timestamp = Date.now();
     const bookUrl = this.bookUrl;
     const task = this.saveTask.catch((): void => {}).then(async (): Promise<void> => {
@@ -1009,7 +1009,6 @@ struct EpubOriginalReadBookPage {
       latest.putVariable(POSITION_KEY, JSON.stringify(saved));
       latest.putVariable(SCROLL_KEY, paged ? '' : '1');
       latest.putVariable(ZOOM_KEY, zoom === 100 ? '' : `${zoom}`);
-      latest.putVariable(FORCE_DARK_KEY, forceDark ? '1' : '');
       await appDb.updateBookReadingProgress(bookUrl, title, index, page, timestamp, latest.variable);
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
     });
@@ -1035,11 +1034,35 @@ struct EpubOriginalReadBookPage {
     this.scheduleSave();
   }
 
-  private setForceDark(enabled: boolean): void {
-    if (this.forceDark === enabled) return;
-    this.forceDark = enabled;
-    this.reloadAtCurrentSpot();
-    this.scheduleSave();
+  /** 应用日夜模式变了：页面跟着换深浅（重新载入本章并停回原处）。 */
+  onAppDarkChanged(): void {
+    this.applySystemBars();
+    if (this.ready && this.alive) this.reloadAtCurrentSpot();
+  }
+
+  /** 与普通阅读页 applyReaderThemeMode 相同：改的是应用全局的日间 / 夜间 / 跟随系统。 */
+  private applyThemeMode(nextMode: string): void {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const systemDark = context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+    const nextDark = nextMode === 'dark' || (nextMode === 'system' && systemDark);
+    const colorMode = nextMode === 'dark' ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK :
+      (nextMode === 'light' ? ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT :
+        ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+    // 先同步模式来源，避免 setColorMode 引起的配置更新读到旧值。
+    AppThemeModeStore.applyToStorage(nextMode);
+    if (this.darkMode !== nextDark) this.darkMode = nextDark;
+    context.getApplicationContext().setColorMode(colorMode);
+    AppThemeModeStore.save(context, nextMode).catch((error: Error): void => {
+      console.warn('[EpubOriginal] save theme mode failed:', error);
+    });
+    HdsFeedback.showToast(nextMode === 'light' ? '已切换至日间模式' :
+      (nextMode === 'dark' ? '已切换至夜间模式' : '已切换至自动模式'));
+  }
+
+  private toggleDayNight(): void {
+    const mode = AppThemeModeStore.normalizeMode(this.appThemeMode);
+    const dark = mode === 'dark' || (mode === 'system' && this.darkMode);
+    this.applyThemeMode(dark ? 'light' : 'dark');
   }
 
   /** 关掉文件排版，回到普通阅读器，停在同一处。 */
@@ -1304,8 +1327,8 @@ struct EpubOriginalReadBookPage {
       Web({ src: 'about:blank', controller: this.controller, incognitoMode: true })
         .width('100%')
         .height('100%')
-        .backgroundColor(this.forceDark ? '#141414' : '#FFFFFF')
-        // 书的颜色由它自己的样式决定；需要深色时用上面的“夜间强制深色”。
+        .backgroundColor(this.darkMode ? '#141414' : '#FFFFFF')
+        // 浅色时书的颜色由它自己的样式决定；应用夜间模式时由注入的反色样式转成深色。
         .darkMode(WebDarkMode.Off)
         .forceDarkAccess(false)
         .javaScriptAccess(true)
@@ -1380,7 +1403,7 @@ struct EpubOriginalReadBookPage {
         busy: this.jumpBusy || this.loading,
         chapterIndex: this.chapterIndex, chapterCount: this.chapterCount,
         pageIndex: this.pageIndex, pageCount: this.pageCount,
-        paged: this.paged, zoom: this.zoom, forceDark: this.forceDark,
+        paged: this.paged, zoom: this.zoom,
         brightnessValue: this.brightnessValue, lastManualBrightness: this.lastManualBrightness,
         brightnessReady: this.brightnessReady,
         tocContent: (): void => { this.tocPanel(); },
@@ -1391,7 +1414,8 @@ struct EpubOriginalReadBookPage {
         onStep: (direction: number): void => { this.goChapter(this.chapterIndex + direction); },
         onPagedChange: (paged: boolean): void => { this.setPaged(paged); },
         onZoomChange: (zoom: number): void => { this.setZoom(zoom); },
-        onForceDarkChange: (enabled: boolean): void => { this.setForceDark(enabled); },
+        onDayNight: (): void => { this.toggleDayNight(); },
+        onAutoMode: (): void => { this.applyThemeMode('system'); },
         onBrightnessChange: (value: number, persist: boolean): void => { this.setBrightness(value, persist); },
         onLayoutElements: (): void => { this.openLayoutElements(); },
         onAppLayout: (): void => { this.switchToAppLayout(); } })
@@ -1428,7 +1452,7 @@ struct EpubOriginalReadBookPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.forceDark ? '#141414' : '#FFFFFF')
+    .backgroundColor(this.darkMode ? '#141414' : '#FFFFFF')
     .id('epub_original_root')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .scale({ x: this.shelfOpenScaleX, y: this.shelfOpenScaleY, centerX: 0, centerY: 0 })

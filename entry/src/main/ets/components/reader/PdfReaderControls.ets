@@ -2,6 +2,8 @@ import { ImmersiveBackButton } from '../ImmersiveBackButton';
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { ReaderQuickJumpContent } from './ReaderQuickJumpContent';
 import { ReaderBrightnessControl } from './ReaderBrightnessControl';
+import { common } from '@kit.AbilityKit';
+import { ReaderQuickJumpModel } from '../../core/reader/ReaderQuickJumpModel';
 import { ReaderSettingSwitchRow, ReaderSettingActionRow } from './ReaderSettingRows';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
@@ -11,7 +13,8 @@ import { AiAccessPolicy } from '../../account/AiAccessPolicy';
 
 const PANEL_HEADER_HEIGHT: number = 56;
 const BOTTOM_BAR_ACTIONS_HEIGHT: number = 56;
-const BOTTOM_BAR_FULL_HEIGHT: number = 112;
+/** PDF 快速跳转可选的方式：没有章节，只在全书百分比与页数之间切换。 */
+const PDF_QUICK_JUMP_MODES: string[] = ['percent', 'page'];
 
 /**
  * PDF 与小说阅读共用材质、进度条、圆形按钮及设置行。正文与浮层独立布局。
@@ -25,6 +28,11 @@ export struct PdfReaderControls {
   @StorageProp('themeRevision') themeRevision: number = 0;
   @StorageProp('readerAiProcessingIndicatorEnabled') readerAiProcessingIndicatorEnabled: boolean = true;
   @StorageProp('readerUseBrightnessQuickAction') readerUseBrightnessQuickAction: boolean = true;
+  @StorageLink('pdfQuickJumpMode') pdfQuickJumpMode: string = 'page';
+  /** 收起 / 展开跳转方式与小说阅读页共用一个状态。 */
+  @StorageLink('readerQuickJumpExpanded') readerQuickJumpExpanded: boolean = false;
+  /** 百分比模式拖动中的读数；页码预览仍走 previewIndex。 */
+  @State previewPercent: number = -1;
   @Prop darkMode: boolean = false;
   @Prop bookTitle: string = '';
   @Prop menuVisible: boolean = false;
@@ -32,7 +40,8 @@ export struct PdfReaderControls {
   @Prop ready: boolean = false;
   @Prop pageCount: number = 0;
   @Prop pageIndex: number = 0;
-  @Prop previewIndex: number = -1;
+  /** 页面撤掉预览（跳转完成或取消）时，百分比模式的拖动读数也一起撤掉。 */
+  @Prop @Watch('onPreviewIndexChanged') previewIndex: number = -1;
   @Prop continuous: boolean = true;
   @Prop doublePage: boolean = false;
   @Prop fitPage: boolean = false;
@@ -60,6 +69,8 @@ export struct PdfReaderControls {
   onClose: () => void = (): void => {};
   onPanelChange: (panel: string) => void = (_panel: string): void => {};
   onPageChange: (index: number) => void = (_index: number): void => {};
+  /** 快速跳转进度条松手：由页面弹“确认跳转”再跳；percent 是百分比模式松手时的读数，页数模式为 -1。 */
+  onQuickJump: (index: number, percent: number) => void = (_index: number, _percent: number): void => {};
   onPreview: (index: number) => void = (_index: number): void => {};
   onJump: (text: string) => void = (_text: string): void => {};
   onContinuousChange: (checked: boolean) => void = (_checked: boolean): void => {};
@@ -94,8 +105,65 @@ export struct PdfReaderControls {
     return this.statusBarHeight + 10 + 56;
   }
 
+  private headerHeight(): number {
+    let scale = 1;
+    try {
+      scale = Math.max(1, Math.min(2, (getContext(this) as common.UIAbilityContext).config.fontSizeScale || 1));
+    } catch (_) {
+    }
+    return 44 + Math.max(0, scale - 1) * 28;
+  }
+
+  private quickJumpHeight(): number {
+    return 54 + (this.readerQuickJumpExpanded ? this.headerHeight() : 0);
+  }
+
   private bottomBarHeight(): number {
-    return this.activePanel ? BOTTOM_BAR_ACTIONS_HEIGHT : BOTTOM_BAR_FULL_HEIGHT;
+    return this.activePanel ? BOTTOM_BAR_ACTIONS_HEIGHT : this.quickJumpHeight() + 58;
+  }
+
+  private jumpMode(): string {
+    return this.pdfQuickJumpMode === 'percent' ? 'percent' : 'page';
+  }
+
+  onPreviewIndexChanged(): void {
+    if (this.previewIndex < 0) this.previewPercent = -1;
+  }
+
+  private percentValue(): number {
+    if (this.previewPercent >= 0) return this.previewPercent;
+    return PdfPagePosition.percent(this.displayIndex(), this.pageCount, true);
+  }
+
+  private setJumpMode(mode: string): void {
+    this.previewPercent = -1;
+    this.onPreview(-1);
+    animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+      this.pdfQuickJumpMode = mode === 'percent' ? 'percent' : 'page';
+    });
+  }
+
+  private setJumpExpanded(expanded: boolean): void {
+    if (this.readerQuickJumpExpanded === expanded) return;
+    animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+      this.readerQuickJumpExpanded = expanded;
+    });
+  }
+
+  /** 百分比按每页等权换算成页码；左右箭头直接翻页，不用确认。 */
+  private onJumpSlider(value: number, mode: SliderChangeMode): void {
+    const percent = this.jumpMode() === 'percent';
+    const page = percent ? PdfPagePosition.fromPercent(value, this.pageCount) :
+      PdfPagePosition.clamp(Math.round(value), this.pageCount);
+    if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+      // 与小说阅读页一致：松手后先确认再跳；确认期间保留预览，结果出来后由页面撤掉。
+      if (percent) this.previewPercent = ReaderQuickJumpModel.clampPercent(value);
+      this.onPreview(page);
+      this.onQuickJump(page, percent ? ReaderQuickJumpModel.clampPercent(value) : -1);
+      return;
+    }
+    if (percent) this.previewPercent = ReaderQuickJumpModel.clampPercent(value);
+    this.onPreview(page);
   }
 
   private superResolutionReady(): boolean {
@@ -233,7 +301,6 @@ export struct PdfReaderControls {
   actionBar() {
     Row() {
       this.actionButton($r('sys.symbol.list_bullet'), this.navigationTitle, 'toc')
-      this.actionButton($r('sys.symbol.book_pages'), '跳转页码', 'jump')
       this.actionButton($r('sys.symbol.gearshape'), '阅读设置', 'settings')
     }.width('100%').height(BOTTOM_BAR_ACTIONS_HEIGHT).padding({ left: 12, right: 12 })
   }
@@ -246,20 +313,23 @@ export struct PdfReaderControls {
         Column() {
           if (!this.activePanel) {
             Column() {
-              ReaderQuickJumpContent({ chapterLabel: '页码', chapterUnit: '页',
-                value: this.displayIndex(), chapterCount: this.pageCount, pageCount: this.pageCount,
-                currentChapter: this.pageIndex, valueLabel: `${this.displayIndex() + 1} / ${this.pageCount} 页`,
+              ReaderQuickJumpContent({ modes: PDF_QUICK_JUMP_MODES, mode: this.jumpMode(),
+                chapterLabel: '页码', chapterUnit: '页',
+                value: this.jumpMode() === 'percent' ? this.percentValue() : this.displayIndex(),
+                chapterCount: this.pageCount, pageCount: this.pageCount, currentChapter: this.pageIndex,
+                valueLabel: this.jumpMode() === 'percent' ?
+                  `${this.percentValue().toFixed(1)}% · 第 ${this.displayIndex() + 1} 页` :
+                  `${this.displayIndex() + 1} / ${this.pageCount} 页`,
                 busy: !this.ready, dark: this.darkMode, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
                 subTextColor: ThemeRuntime.subTextColor(this.darkMode), accentColor: ThemeRuntime.accentColor(this.darkMode),
                 trackColor: ThemeRuntime.dividerColor(this.darkMode), thumbColor: ThemeRuntime.cardColor(this.darkMode),
-                onChange: (index: number, mode: SliderChangeMode): void => {
-                  if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) this.onPageChange(index);
-                  else this.onPreview(PdfPagePosition.clamp(index, this.pageCount));
-                },
+                expanded: this.readerQuickJumpExpanded, headerHeight: this.headerHeight(),
+                onModeChange: (mode: string): void => this.setJumpMode(mode),
+                onChange: (value: number, mode: SliderChangeMode): void => this.onJumpSlider(value, mode),
                 onStep: (direction: number): void => this.onPageChange(this.pageIndex + direction),
-                onExpandedChange: (_expanded: boolean): void => this.selectPanel('jump'),
-                onSlideCancel: (): void => this.onPreview(-1) })
-            }.width('100%').height(BOTTOM_BAR_FULL_HEIGHT - BOTTOM_BAR_ACTIONS_HEIGHT - 1)
+                onExpandedChange: (expanded: boolean): void => this.setJumpExpanded(expanded),
+                onSlideCancel: (): void => { this.previewPercent = -1; this.onPreview(-1); } })
+            }.width('100%').height(this.quickJumpHeight())
             Divider().strokeWidth(0.5).color(ThemeRuntime.dividerColor(this.darkMode)).margin({ left: 20, right: 20 })
           }
           this.actionBar()
@@ -278,7 +348,7 @@ export struct PdfReaderControls {
       .borderRadius(18).backgroundColor(this.darkMode ? '#E63A3C40' : '#D94B4D52')
       .shadow({ radius: 10, color: '#50000000', offsetX: 0, offsetY: 3 })
       .position({ x: this.panelLeft() + this.panelWidth() / 2, y: '100%' })
-      .translate({ x: '-50%', y: -(this.bottomInset() + BOTTOM_BAR_FULL_HEIGHT + 48) })
+      .translate({ x: '-50%', y: -(this.bottomInset() + this.bottomBarHeight() + 48) })
       .hitTestBehavior(HitTestMode.None)
   }
 
@@ -325,7 +395,7 @@ export struct PdfReaderControls {
         }.width('100%').height('100%').padding({ left: 16, right: 6 })
       }
     }.position({ x: this.panelLeft() + this.panelWidth() - Math.min(this.panelWidth(), 296), y: '100%' })
-      .translate({ y: -(this.bottomInset() + BOTTOM_BAR_FULL_HEIGHT + 12 + 40) }).transition(this.panelTransition())
+      .translate({ y: -(this.bottomInset() + this.bottomBarHeight() + 12 + 40) }).transition(this.panelTransition())
       .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 

@@ -4,7 +4,7 @@ import { PopupMenuAction } from '../common/PopupMenuAction';
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { ReaderQuickJumpContent } from './ReaderQuickJumpContent';
 import { ReaderBrightnessControl } from './ReaderBrightnessControl';
-import { ReaderSettingActionRow, ReaderSettingLabel, ReaderSettingSelectRow, ReaderSettingSwitchRow } from './ReaderSettingRows';
+import { ReaderSettingActionRow, ReaderSettingLabel, ReaderSettingSelectRow } from './ReaderSettingRows';
 import { ReaderQuickJumpModel } from '../../core/reader/ReaderQuickJumpModel';
 import { ReaderSettingsStore } from '../../utils/ReaderSettingsStore';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
@@ -19,12 +19,15 @@ const ACTION_ROW_HEIGHT: number = 56;
  * EPUB 文件排版页的菜单，与普通阅读页的布局和逻辑一致：
  * - 顶栏：返回、书名与进度胶囊、“更多操作”（使用应用排版、布局元素设置）；
  * - 底栏：快速跳转（章节 / 全书百分比 / 本章页数三种模式，可收起，松手确认后跳转，模式与收起状态和普通阅读页共用）
- *   加目录、阅读设置、布局元素、夜间四个按钮；关掉快速跳转组件时只剩按钮行；
+ *   加目录、阅读设置、日夜三个按钮；关掉快速跳转组件时只剩按钮行；
  * - 右侧亮度条随菜单出现，受“使用快速亮度组件”控制。
  * 材质、圆形按钮、进度条、设置行都是阅读页共用组件（沉浸光感）。真正的跳转由页面执行。
  */
 @Component
 export struct EpubOriginalControls {
+  static readonly MIN_ZOOM: number = 50;
+  static readonly MAX_ZOOM: number = 250;
+  static readonly ZOOM_STEP: number = 10;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @StorageProp('themeRevision') themeRevision: number = 0;
@@ -33,6 +36,7 @@ export struct EpubOriginalControls {
   @StorageLink('readerUseBrightnessQuickAction') readerUseBrightnessQuickAction: boolean = true;
   @StorageLink('readerQuickJumpMode') readerQuickJumpMode: string = 'chapter';
   @StorageLink('readerQuickJumpExpanded') readerQuickJumpExpanded: boolean = false;
+  @StorageProp('appThemeMode') appThemeMode: string = 'system';
   @Prop darkMode: boolean = false;
   @Prop bookTitle: string = '';
   @Prop progressLabel: string = '';
@@ -47,7 +51,6 @@ export struct EpubOriginalControls {
   @Prop pageCount: number = 1;
   @Prop paged: boolean = true;
   @Prop zoom: number = 100;
-  @Prop forceDark: boolean = false;
   @Prop brightnessValue: number = -1;
   @Prop lastManualBrightness: number = 50;
   @Prop brightnessReady: boolean = false;
@@ -57,6 +60,7 @@ export struct EpubOriginalControls {
   @State sliderActive: boolean = false;
   @State previewValue: number = 0;
   @State tooltipVisible: boolean = false;
+  private dayNightLongPressed: boolean = false;
   @BuilderParam tocContent: () => void = this.emptyContent;
   titleOf: (index: number) => string = (index: number): string => `第${index + 1}章`;
   onClose: () => void = (): void => {};
@@ -66,7 +70,9 @@ export struct EpubOriginalControls {
   onStep: (direction: number) => void = (_direction: number): void => {};
   onPagedChange: (paged: boolean) => void = (_paged: boolean): void => {};
   onZoomChange: (zoom: number) => void = (_zoom: number): void => {};
-  onForceDarkChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
+  /** 与普通阅读页的日夜按钮相同：点按在日间、夜间之间切换（应用全局），长按改为跟随系统。 */
+  onDayNight: () => void = (): void => {};
+  onAutoMode: () => void = (): void => {};
   onBrightnessChange: (value: number, persist: boolean) => void = (_value: number, _persist: boolean): void => {};
   onLayoutElements: () => void = (): void => {};
   onAppLayout: () => void = (): void => {};
@@ -117,7 +123,7 @@ export struct EpubOriginalControls {
   private panelHeight(): number {
     const desired = this.activePanel === 'toc' ?
       (this.chapterCount > 0 ? Math.min(520, PANEL_HEADER_HEIGHT + this.chapterCount * 56 + 12) : 520) :
-      PANEL_HEADER_HEIGHT + 3 * 64 + 72 + 64 + 40 + 16;
+      PANEL_HEADER_HEIGHT + 3 * 64 + 56 + 16;
     const available = this.viewportHeight - this.statusBarHeight - this.bottomInset() - ACTION_ROW_HEIGHT - 96;
     return Math.max(PANEL_HEADER_HEIGHT, Math.min(desired, available));
   }
@@ -289,6 +295,30 @@ export struct EpubOriginalControls {
       .accessibilityText(label).onClick(action)
   }
 
+  private dayNightIcon(): Resource {
+    if (this.appThemeMode === 'system') return $r('sys.symbol.circle_lefthalf_inset_filled');
+    return this.appThemeMode === 'dark' ? $r('sys.symbol.moon') : $r('sys.symbol.sun_max');
+  }
+
+  @Builder
+  dayNightButton() {
+    Button({ type: ButtonType.Capsule, stateEffect: true }) {
+      SymbolGlyph(this.dayNightIcon()).fontSize(24).fontColor([ThemeRuntime.primaryTextColor(this.darkMode)])
+    }.layoutWeight(1).height(48).backgroundColor(Color.Transparent).enabled(this.ready)
+      .accessibilityText('切换日间或夜间模式，长按跟随系统')
+      .onClick((): void => {
+        if (this.dayNightLongPressed) {
+          this.dayNightLongPressed = false;
+          return;
+        }
+        this.onDayNight();
+      })
+      .gesture(LongPressGesture({ duration: 600, repeat: false }).onAction((): void => {
+        this.dayNightLongPressed = true;
+        this.onAutoMode();
+      }))
+  }
+
   @Builder
   actionRow() {
     Row() {
@@ -296,10 +326,7 @@ export struct EpubOriginalControls {
         (): void => this.selectPanel('toc'))
       this.actionIcon($r('sys.symbol.gearshape'), '阅读设置', this.activePanel === 'settings',
         (): void => this.selectPanel('settings'))
-      this.actionIcon($r('sys.symbol.square_grid_2x2'), '布局元素设置', false, (): void => this.onLayoutElements())
-      this.actionIcon(this.forceDark ? $r('sys.symbol.moon') : $r('sys.symbol.sun_max'),
-        this.forceDark ? '夜间强制深色，已开启' : '夜间强制深色', this.forceDark,
-        (): void => this.onForceDarkChange(!this.forceDark))
+      this.dayNightButton()
     }.width('100%').height(ACTION_ROW_HEIGHT).padding({ left: 12, right: 12 })
   }
 
@@ -406,25 +433,34 @@ export struct EpubOriginalControls {
           accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode,
           menuColor: ThemeRuntime.cardColor(this.darkMode),
           onSelect: (index: number): void => this.onPagedChange(index === 0) })
-        Column({ space: 4 }) {
-          ReaderSettingLabel({ title: `字号缩放 ${this.zoom}%`, description: '按比例放大或缩小书里的文字',
+        // 与排版设置里的步进项（如“页脚不透明度”）同一种写法：一行，左边标题，右边减、数值、加。
+        Row({ space: 12 }) {
+          ReaderSettingLabel({ title: '字号缩放', description: '按比例放大或缩小书里的文字',
             textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode) })
-          Slider({ value: this.zoom, min: 50, max: 250, step: 10, style: SliderStyle.OutSet })
-            .width('100%')
-            .selectedColor(ThemeRuntime.accentColor(this.darkMode))
-            .trackColor(ThemeRuntime.dividerColor(this.darkMode))
-            .onChange((value: number, mode: SliderChangeMode): void => {
-              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) this.onZoomChange(value);
-            })
-        }.width('100%').alignItems(HorizontalAlign.Start)
-        ReaderSettingSwitchRow({ title: '夜间强制深色', description: '把书里的浅色页面反转成深色，图片保持原样',
-          checked: this.forceDark, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
-          subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onForceDarkChange })
+          ImmersiveBackButton({ icon: $r('sys.symbol.minus'), accessibilityLabel: '减小字号缩放',
+            iconColor: ThemeRuntime.primaryTextColor(this.darkMode), disabledIconColor: ThemeRuntime.subTextColor(this.darkMode),
+            darkMode: this.darkMode, buttonEnabled: this.zoom > EpubOriginalControls.MIN_ZOOM,
+            buttonSize: 34, containerWidth: 34, containerHeight: 34, startInset: 0, compactLayout: true,
+            onBack: (): void => this.onZoomChange(this.zoom - EpubOriginalControls.ZOOM_STEP) })
+          Text(`${this.zoom}%`)
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
+            .width(52)
+            .textAlign(TextAlign.Center)
+          ImmersiveBackButton({ icon: $r('sys.symbol.plus'), accessibilityLabel: '增大字号缩放',
+            iconColor: ThemeRuntime.primaryTextColor(this.darkMode), disabledIconColor: ThemeRuntime.subTextColor(this.darkMode),
+            darkMode: this.darkMode, buttonEnabled: this.zoom < EpubOriginalControls.MAX_ZOOM,
+            buttonSize: 34, containerWidth: 34, containerHeight: 34, startInset: 0, compactLayout: true,
+            onBack: (): void => this.onZoomChange(this.zoom + EpubOriginalControls.ZOOM_STEP) })
+        }
+        .width('100%')
+        .constraintSize({ minHeight: 56 })
+        .alignItems(VerticalAlign.Center)
         ReaderSettingActionRow({ title: '使用应用排版', description: '改回阅读主题、字体与仿真翻页排版这本书',
           actionText: '切换', textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode), buttonColor: ThemeRuntime.accentColor(this.darkMode),
           buttonTextColor: ThemeRuntime.onAccentColor(), onAction: this.onAppLayout })
-        Text('文件排版按书本身的样式显示，阅读主题、字体、行距和仿真翻页在这里不生效。').fontSize(AppFontSize.CAPTION)
+        Text('文件排版按书本身的样式显示，阅读主题、字体、行距和仿真翻页在这里不生效；应用处于夜间模式时，页面整体转成深色，图片保持原样。').fontSize(AppFontSize.CAPTION)
           .fontColor(ThemeRuntime.subTextColor(this.darkMode)).width('100%').margin({ top: 4 })
       }.width('100%').padding({ left: 24, right: 24, bottom: 16 }).alignItems(HorizontalAlign.Start)
     }.layoutWeight(1).width('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring, { alwaysEnabled: false })

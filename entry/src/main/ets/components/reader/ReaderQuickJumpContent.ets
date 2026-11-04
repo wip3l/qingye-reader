@@ -5,6 +5,8 @@ import { ThemeRuntime } from '../../theme/ThemeRuntime';
 @Component
 export struct ReaderQuickJumpContent {
   @Prop mode: string = 'chapter';
+  /** 可选的跳转方式及顺序；PDF 没有章节，只给百分比和页数。 */
+  @Prop modes: string[] = ['chapter', 'percent', 'page'];
   @Prop chapterLabel: string = '章节';
   @Prop chapterUnit: string = '章';
   @Prop value: number = 0;
@@ -98,7 +100,12 @@ export struct ReaderQuickJumpContent {
   }
 
   modeIndex(): number {
-    return this.mode === 'percent' ? 1 : (this.mode === 'page' ? 2 : 0);
+    return Math.max(0, this.modes.indexOf(this.mode));
+  }
+
+  modeLabel(mode: string): string {
+    if (mode === 'percent') return '百分比';
+    return mode === 'page' ? '页数' : this.chapterLabel;
   }
 
   sliderMax(): number {
@@ -162,16 +169,16 @@ export struct ReaderQuickJumpContent {
       Row({ space: 8 }) {
         Stack({ alignContent: Alignment.Start }) {
           Row()
-            .width(`${100 / 3}%`)
+            .width(`${100 / Math.max(1, this.modes.length)}%`)
             .height(36)
             .borderRadius(18)
             .backgroundColor(this.thumbColor)
             .translate({ x: `${this.modeIndex() * 100}%` })
             .animation({ duration: 180, curve: Curve.EaseOut })
           Row() {
-            this.modeButton('chapter', this.chapterLabel)
-            this.modeButton('percent', '百分比')
-            this.modeButton('page', '页数')
+            ForEach(this.modes, (mode: string) => {
+              this.modeButton(mode, this.modeLabel(mode))
+            }, (mode: string) => mode)
           }
           .width('100%')
         }
