@@ -11,6 +11,7 @@ import { SearchExplorePendingBook } from '../utils/SearchExplorePendingBook';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { PrivateShelfStore } from '../utils/PrivateShelfStore';
+import { BiometricAuth, BiometricAuthOutcome } from '../utils/BiometricAuth';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { LocalBookService } from '../core/book/LocalBookService';
@@ -65,6 +66,9 @@ struct BookshelfSettingsPage {
   @StorageLink('privateShelfEnabled') @Watch('onPrivateShelfEnabledChanged') privateShelfEnabled: boolean = false;
   @StorageLink('privateShelfHasPassword') privateShelfHasPassword: boolean = false;
   @StorageLink('privateShelfHeaderDoubleTap') privateShelfHeaderDoubleTap: boolean = false;
+  @StorageLink('privateShelfBiometric') @Watch('onPrivateShelfBiometricChanged') privateShelfBiometric: boolean = false;
+  // 打开需要先通过一次系统验证，验证期间显示值与真实状态可以暂时不一致。
+  @State privateShelfBiometricSwitchOn: boolean = false;
   // 开关的显示值。关闭需要先验证密码，验证期间它与真实状态可以暂时不一致。
   @State privateShelfSwitchOn: boolean = false;
   // 'disable'：关闭隐私书架前验证密码；'password'：设置、修改或清除密码。
@@ -317,6 +321,10 @@ struct BookshelfSettingsPage {
           this.primaryTextColor(), () => {
             this.openPrivatePasswordDialog('password');
           })
+        if (this.privateShelfHasPassword) {
+          this.itemDivider()
+          this.privateShelfBiometricItem()
+        }
         this.itemDivider()
         this.actionItem('重置隐私书架', '删除全部隐私书籍并关闭，忘记密码时使用', ThemeRuntime.dangerColor(this.appDarkMode), () => {
           this.confirmResetPrivateShelf();
@@ -386,10 +394,40 @@ struct BookshelfSettingsPage {
       console.warn('加载隐私书架设置失败:', e);
     }
     this.privateShelfSwitchOn = this.privateShelfEnabled;
+    this.privateShelfBiometricSwitchOn = this.privateShelfBiometric;
   }
 
   onPrivateShelfEnabledChanged(): void {
     this.privateShelfSwitchOn = this.privateShelfEnabled;
+  }
+
+  onPrivateShelfBiometricChanged(): void {
+    this.privateShelfBiometricSwitchOn = this.privateShelfBiometric;
+  }
+
+  async onPrivateShelfBiometricSwitchChanged(value: boolean): Promise<void> {
+    if (value === this.privateShelfBiometric || this.privateShelfBusy) return;
+    this.privateShelfBiometricSwitchOn = value;
+    this.privateShelfBusy = true;
+    try {
+      if (value) {
+        if (!BiometricAuth.isAvailable()) {
+          HdsFeedback.showToast('请先在系统设置里录入指纹或人脸');
+          return;
+        }
+        // 先确认本机认证能走通，免得打开后每次进入都要绕回密码。
+        const outcome = await BiometricAuth.authenticate('开启指纹或人脸解锁');
+        if (outcome === BiometricAuthOutcome.FAILED) HdsFeedback.showToast('未通过验证，没有开启');
+        if (outcome !== BiometricAuthOutcome.SUCCESS) return;
+      }
+      await PrivateShelfStore.setBiometric(getContext(this), value);
+    } catch (e) {
+      console.warn('保存隐私书架指纹/人脸设置失败:', e);
+      HdsFeedback.showToast('保存失败');
+    } finally {
+      this.privateShelfBusy = false;
+      this.privateShelfBiometricSwitchOn = this.privateShelfBiometric;
+    }
   }
 
   onPrivateShelfSwitchChanged(value: boolean): void {
@@ -965,6 +1003,19 @@ struct BookshelfSettingsPage {
       showDivider: false,
       onChange: (checked: boolean) => {
         this.applyPrivateShelfHeaderDoubleTap(checked);
+      }
+    })
+  }
+
+  @Builder
+  privateShelfBiometricItem() {
+    SettingSwitchRow({
+      title: '指纹或人脸解锁',
+      description: '进入隐私书架时先用系统指纹或人脸验证，未通过可改输密码',
+      isOn: this.privateShelfBiometricSwitchOn,
+      showDivider: false,
+      onChange: (checked: boolean) => {
+        this.onPrivateShelfBiometricSwitchChanged(checked);
       }
     })
   }

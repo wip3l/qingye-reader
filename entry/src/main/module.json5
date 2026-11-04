@@ -36,6 +36,9 @@
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
       },
       {
+        "name": "ohos.permission.ACCESS_BIOMETRIC"
+      },
+      {
         "name": "ohos.permission.CAMERA",
         "reason": "$string:reader_eye_turn_camera_permission",
         "usedScene": {

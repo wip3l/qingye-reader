@@ -53,6 +53,7 @@ import { ReaderOpenTrace } from '../../utils/ReaderOpenTrace';
 import { FullTextCacheCancelCoordinator, FullTextCacheCancelSignal } from '../../utils/FullTextCacheCancelCoordinator';
 import { ShelfCategoryPage, ShelfTileSortEntry, ShelfBookDataSource, ShelfTileEntryDataSource } from '../../core/book/ShelfDataSources';
 import { PrivateShelfStore } from '../../utils/PrivateShelfStore';
+import { BiometricAuth, BiometricAuthOutcome } from '../../utils/BiometricAuth';
 import { RecentReadCardUpdater } from '../../utils/RecentReadCardUpdater';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
@@ -245,6 +246,12 @@ export struct BookshelfPage {
   @StorageLink('privateShelfEnabled') @Watch('onPrivateShelfEnabledChanged') privateShelfEnabled: boolean = false;
   @StorageLink('privateShelfHasPassword') privateShelfHasPassword: boolean = false;
   @StorageLink('privateShelfHeaderDoubleTap') privateShelfHeaderDoubleTap: boolean = false;
+  @StorageLink('privateShelfBiometric') privateShelfBiometric: boolean = false;
+  @State privateShelfBiometricUsable: boolean = false;
+  private privateShelfBiometricPending: boolean = false;
+  /** 横滑到隐私书架时手指还在屏幕上，这时拉起系统认证框会被立即取消，等抬手再拉起。 */
+  private privateShelfBiometricQueued: boolean = false;
+  private shelfContentTouching: boolean = false;
   @State privateShelfPasswordInput: string = '';
   @State privateShelfPasswordError: string = '';
   private privateShelfUnlockDialogSession: SystemDialogSession = new SystemDialogSession();
@@ -1490,6 +1497,17 @@ export struct BookshelfPage {
     .height('100%')
     .backgroundColor(this.pageColor())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.shelfContentTouching = true;
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.shelfContentTouching = false;
+        if (this.privateShelfBiometricQueued) {
+          this.privateShelfBiometricQueued = false;
+          this.startPrivateShelfBiometricUnlock(false);
+        }
+      }
+    })
     .bindSheet(this.showBookGroupPicker, this.bookGroupPickerDialog(), this.bookGroupPickerSheetOptions())
     // 不要给整页加消失转场：切到分组页时旧书架会多留一两帧，而且已经换成了分组的书，整屏闪一下。
     // 展开/收回期间的背景由截图负责。
@@ -5836,7 +5854,11 @@ export struct BookshelfPage {
   canSelectShelfPage(key: string): boolean {
     if (this.isBookMultiSelect || this.isTileGroupPage() || !this.shelfPageOrder().includes(key)) return false;
     if (key === 'private' && this.privateShelfHasPassword && !this.privateShelfRevealed && this.shelfScope !== 'private') {
-      if (!this.privateShelfUnlockDialogSession.isOpen()) this.openPrivateShelfUnlockDialog();
+      if (this.privateShelfUnlockDialogSession.isOpen() || this.privateShelfBiometricPending ||
+        this.privateShelfBiometricQueued) return false;
+      if (!this.privateShelfBiometric || !BiometricAuth.isAvailable()) this.openPrivateShelfUnlockDialog();
+      else if (this.shelfContentTouching) this.privateShelfBiometricQueued = true;
+      else this.startPrivateShelfBiometricUnlock(false);
       return false;
     }
     return true;
@@ -5946,6 +5968,15 @@ export struct BookshelfPage {
           .margin({ top: AppSpacing.MD })
       }
 
+      if (this.privateShelfBiometricUsable) {
+        Text('使用指纹或人脸')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.buttonColor())
+          .padding({ top: AppSpacing.MD, bottom: AppSpacing.SM })
+          .margin({ top: AppSpacing.SM })
+          .onClick(() => this.startPrivateShelfBiometricUnlock(true))
+      }
+
       Row({ space: 10 }) {
         Button('取消')
           .layoutWeight(1)
@@ -5969,9 +6000,10 @@ export struct BookshelfPage {
     .padding(AppSpacing.XXL)
   }
 
-  openPrivateShelfUnlockDialog(): void {
+  openPrivateShelfUnlockDialog(error: string = ''): void {
     this.privateShelfPasswordInput = '';
-    this.privateShelfPasswordError = '';
+    this.privateShelfPasswordError = error;
+    this.privateShelfBiometricUsable = this.privateShelfBiometric && BiometricAuth.isAvailable();
     this.privateShelfUnlockDialogSession.open(this.getUIContext(), (): void => {
       this.privateShelfUnlockDialogContent();
     }, {
@@ -6001,6 +6033,33 @@ export struct BookshelfPage {
       return;
     }
     this.closePrivateShelfUnlockDialog();
+    this.revealPrivateShelfAfterUnlock();
+  }
+
+  /** 系统认证框盖在最上层；从密码框里发起时密码框保留，没通过还能接着输密码。 */
+  async startPrivateShelfBiometricUnlock(fromPasswordDialog: boolean): Promise<void> {
+    if (this.privateShelfBiometricPending) return;
+    this.privateShelfBiometricPending = true;
+    let outcome = BiometricAuthOutcome.FAILED;
+    try {
+      outcome = await BiometricAuth.authenticate('进入隐私书架', fromPasswordDialog ? undefined : '使用密码');
+    } finally {
+      this.privateShelfBiometricPending = false;
+    }
+    if (outcome === BiometricAuthOutcome.SUCCESS) {
+      this.closePrivateShelfUnlockDialog();
+      this.revealPrivateShelfAfterUnlock();
+      return;
+    }
+    if (fromPasswordDialog) {
+      if (outcome === BiometricAuthOutcome.FAILED) this.privateShelfPasswordError = '未通过验证，请输入密码';
+      return;
+    }
+    // 关掉认证框也给密码框：带锁屏密码的认证框没有“使用密码”按钮，关掉就是改用密码的唯一途径。
+    this.openPrivateShelfUnlockDialog(outcome === BiometricAuthOutcome.FAILED ? '未通过验证，请输入密码' : '');
+  }
+
+  revealPrivateShelfAfterUnlock(): void {
     if (this.privateShelfEnabled && this.shelfScope !== 'private' && !this.shelfScopeSwitchAnimating) {
       this.privateShelfRevealed = true;
       this.setShelfPage('private');
