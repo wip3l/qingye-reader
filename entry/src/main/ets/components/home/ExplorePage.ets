@@ -288,11 +288,12 @@ export struct ExplorePage {
       const inferredGroups = this.getEntryGroupNames(entries);
       const activeOption = this.getSelectedSourceOption();
       this.exploreFilters = this.coordinator.getDiscoveredFilters(this.selectedSourceUrl);
-      if (activeOption && this.exploreFilters.length > 0) {
-        activeOption.platforms = [];
-      } else if (activeOption && dynamicPlatforms.length > 0) {
-        activeOption.platforms = dynamicPlatforms;
+      if (activeOption && dynamicPlatforms.length > 0) {
+        // 兼容书源脚本给出的“平台/来源”选择器本身就是一种筛选，有筛选按钮时不再重复显示。
+        activeOption.platforms = this.exploreFilters.length > 0 ? [] : dynamicPlatforms;
       } else if (activeOption && activeOption.platforms.length === 0 && inferredGroups.length > 1) {
+        // 菜单自带的分组与筛选互不相干：原生书源的分组来自 menus 里无 url 的条目，筛选来自 vars，
+        // 两者并存；以前有筛选就清掉分组，各组分类会被合并平铺成一行。
         activeOption.platforms = inferredGroups;
         this.entryGroupMode = true;
       }
@@ -1017,9 +1018,9 @@ export struct ExplorePage {
     return this.getActiveEntries().length > 0 || this.showsExplorePlatformSelector();
   }
 
-  /** 书源有多个模式（站点）时，频道栏左侧固定显示当前模式；有筛选条件的书源不走模式。 */
+  /** 书源有多个模式（站点）或菜单分组时，频道栏左侧固定显示当前模式；筛选按钮在标题栏，两者可以并存。 */
   showsExplorePlatformSelector(): boolean {
-    return this.exploreFilters.length === 0 && this.platformNames.length > 1;
+    return this.platformNames.length > 1;
   }
 
   /** 标题下方唯一的一行：左侧可选的模式，右侧横滑频道，选中项强调色加下划线。 */
