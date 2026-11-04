@@ -286,12 +286,14 @@ export struct EpubOriginalControls {
       .position({ x: 0, y: 0 }).transition(TransitionEffect.OPACITY).hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
+  /** 与普通阅读页底栏的 readerHdsMenuItem 相同：只有图标，点按没有胶囊底色。 */
   @Builder
-  actionIcon(icon: Resource, label: string, selected: boolean, action: () => void) {
-    Button({ type: ButtonType.Capsule, stateEffect: true }) {
-      SymbolGlyph(icon).fontSize(24).fontColor([selected ?
-        ThemeRuntime.accentColor(this.darkMode) : ThemeRuntime.primaryTextColor(this.darkMode)])
-    }.layoutWeight(1).height(48).backgroundColor(Color.Transparent).enabled(this.ready)
+  actionIcon(icon: Resource, label: string, action: () => void) {
+    Stack({ alignContent: Alignment.Center }) {
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph(icon).fontSize(24).fontColor([ThemeRuntime.primaryTextColor(this.darkMode)])
+      }.width(32).height(32)
+    }.layoutWeight(1).height(48).enabled(this.ready).opacity(this.ready ? 1 : 0.32)
       .accessibilityText(label).onClick(action)
   }
 
@@ -302,9 +304,11 @@ export struct EpubOriginalControls {
 
   @Builder
   dayNightButton() {
-    Button({ type: ButtonType.Capsule, stateEffect: true }) {
-      SymbolGlyph(this.dayNightIcon()).fontSize(24).fontColor([ThemeRuntime.primaryTextColor(this.darkMode)])
-    }.layoutWeight(1).height(48).backgroundColor(Color.Transparent).enabled(this.ready)
+    Stack({ alignContent: Alignment.Center }) {
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph(this.dayNightIcon()).fontSize(24).fontColor([ThemeRuntime.primaryTextColor(this.darkMode)])
+      }.width(32).height(32)
+    }.layoutWeight(1).height(48).enabled(this.ready).opacity(this.ready ? 1 : 0.32)
       .accessibilityText('切换日间或夜间模式，长按跟随系统')
       .onClick((): void => {
         if (this.dayNightLongPressed) {
@@ -322,10 +326,8 @@ export struct EpubOriginalControls {
   @Builder
   actionRow() {
     Row() {
-      this.actionIcon($r('sys.symbol.list_bullet'), '目录', this.activePanel === 'toc',
-        (): void => this.selectPanel('toc'))
-      this.actionIcon($r('sys.symbol.gearshape'), '阅读设置', this.activePanel === 'settings',
-        (): void => this.selectPanel('settings'))
+      this.actionIcon($r('sys.symbol.list_bullet'), '目录', (): void => this.selectPanel('toc'))
+      this.actionIcon($r('sys.symbol.gearshape'), '阅读设置', (): void => this.selectPanel('settings'))
       this.dayNightButton()
     }.width('100%').height(ACTION_ROW_HEIGHT).padding({ left: 12, right: 12 })
   }

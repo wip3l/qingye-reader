@@ -288,12 +288,14 @@ export struct PdfReaderControls {
       .position({ x: 0, y: 0 }).transition(TransitionEffect.OPACITY).hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
+  /** 与小说、漫画阅读页底栏的 readerHdsMenuItem 相同：只有图标，点按没有胶囊底色。 */
   @Builder
   actionButton(icon: Resource, label: string, panel: string) {
-    Button({ type: ButtonType.Capsule, stateEffect: true }) {
-      SymbolGlyph(icon).fontSize(24).fontColor([this.activePanel === panel ?
-        ThemeRuntime.accentColor(this.darkMode) : ThemeRuntime.primaryTextColor(this.darkMode)])
-    }.layoutWeight(1).height(48).backgroundColor(Color.Transparent).enabled(this.ready)
+    Stack({ alignContent: Alignment.Center }) {
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph(icon).fontSize(24).fontColor([ThemeRuntime.primaryTextColor(this.darkMode)])
+      }.width(32).height(32)
+    }.layoutWeight(1).height(48).enabled(this.ready).opacity(this.ready ? 1 : 0.32)
       .accessibilityText(label).id(`pdf_action_${panel}`).onClick((): void => this.selectPanel(panel))
   }
 
