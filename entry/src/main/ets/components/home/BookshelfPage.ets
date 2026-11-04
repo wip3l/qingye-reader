@@ -1,4 +1,5 @@
 import { SharedElementMotion } from '../../utils/SharedElementMotion';
+import { ShelfCoverLocator } from '../../utils/ShelfCoverLocator';
 import { PdfPagePosition } from '../../core/book/pdf/PdfModels';
 import {
   SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
@@ -415,8 +416,14 @@ export struct BookshelfPage {
   private shelfComponentActive: boolean = false;
   private shelfUpdateAcknowledgedAt: Map<string, number> = new Map();
 
+  private readonly shelfCoverLocate = (bookUrl: string): ShelfOpeningCover | null => this.locateShelfCover(bookUrl);
+  /** 首页根节点整张截图（含标签栏），阅读页缩回时垫在后面；被盖住的页面照样能离屏截图。 */
+  private readonly shelfBackdropSnapshot = (): Promise<image.PixelMap> =>
+    this.getUIContext().getComponentSnapshot().get('home_root', { scale: 1, waitUntilRenderFinished: true });
+
   aboutToAppear() {
     this.shelfComponentActive = true;
+    ShelfCoverLocator.register(this.shelfCoverLocate, this.shelfBackdropSnapshot);
     this.shelfAppliedSearchKeyword = BookshelfPage.normalizeShelfSearchText(this.shelfSearchKeyword);
     this.reloadDisplaySettings();
     this.restoreShelfCategoryExpanded();
@@ -425,6 +432,7 @@ export struct BookshelfPage {
 
   aboutToDisappear(): void {
     this.shelfComponentActive = false;
+    ShelfCoverLocator.unregister(this.shelfCoverLocate);
     this.cancelTileGroupMotion();
     this.stopShelfCategoryAnimation();
     this.cloudBookOpenRequest++;
@@ -4229,7 +4237,8 @@ export struct BookshelfPage {
     ReaderOpenTrace.mark(book.bookUrl, 'route-requested');
     // Router owns the entire shared transition, including its reverse. No intermediate overlay or timer.
     router.pushUrl({
-      url: pdf ? 'pages/PdfReadBook' : 'pages/ReadBook',
+      url: pdf ? 'pages/PdfReadBook' :
+        (LocalBookService.usesEpubOriginalLayout(book) ? 'pages/EpubOriginalReadBook' : 'pages/ReadBook'),
       params: {
         bookUrl: book.bookUrl,
         formatChecked: 'true',
@@ -4244,6 +4253,18 @@ export struct BookshelfPage {
       ReaderOpenTrace.cancel(book.bookUrl, 'route-failed');
       this.cancelShelfBookOpening();
     });
+  }
+
+  /**
+   * 阅读页返回前问书架：这本书的封面现在在哪（读过的书会从格子移进继续阅读卡片）。量不到或不在屏幕内返回空，
+   * 阅读页就退回“合上再由共享转场缩回”的老路。
+   */
+  locateShelfCover(bookUrl: string): ShelfOpeningCover | null {
+    if (!this.shelfComponentActive || !bookUrl) return null;
+    const book = this.allBooks.find((item: Book): boolean => item.bookUrl === bookUrl);
+    if (!book) return null;
+    const cover = this.shelfOpeningCover(book, -1, -1);
+    return cover.boundsWidth > 0 && cover.boundsHeight > 0 ? cover : null;
   }
 
   /** 阅读页翻开的封面与书架上看到的一致：主题封面带书框，多图取第一张，没有封面时用首字色块。 */
@@ -4391,7 +4412,12 @@ export struct BookshelfPage {
     // Keep the shared source stable until the native return transition is finished.
     this.shelfBookReturnRefreshTimer = setTimeout(() => {
       this.shelfBookReturnRefreshTimer = -1;
-      this.loadBooks(true).catch((error: Error) => console.warn('返回书架时刷新进度失败:', error));
+      this.loadBooks(true)
+        .catch((error: Error) => console.warn('返回书架时刷新进度失败:', error))
+        .finally((): void => {
+          // 首页盖着阅读页留下的书架截图，等这次重建画出来再揭开。
+          AppStorage.setOrCreate<number>('shelfReturnRefreshNonce', Date.now());
+        });
     }, SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
   }
 
@@ -4589,6 +4615,8 @@ export struct BookshelfPage {
             .width(width)
             .height(height)
             .objectFit(animateCovers ? ImageFit.Fill : imageFit)
+            // 返回书架后进度变了的卡片会整体重建，封面异步加载会先空一帧；本地封面同步解码，让关书动画落地后无缝。
+            .syncLoad(true)
         } else {
           Swiper() {
             ForEach(this.activeThemeBookCovers(book), (cover: ResourceStr, index: number) => {
@@ -4596,6 +4624,8 @@ export struct BookshelfPage {
                 .width(width)
                 .height(height)
                 .objectFit(ImageFit.Fill)
+                // 返回书架后进度变了的卡片会整体重建，封面异步加载会先空一帧；本地封面同步解码，让关书动画落地后无缝。
+                .syncLoad(true)
             }, (_cover: ResourceStr, index: number) => `${book.bookUrl}_theme_${index}`)
           }
           .width(width)
@@ -4631,6 +4661,8 @@ export struct BookshelfPage {
               .width(width)
               .height(height)
               .objectFit(imageFit)
+              // 返回书架后进度变了的卡片会整体重建，封面异步加载会先空一帧；本地封面同步解码，让关书动画落地后无缝。
+              .syncLoad(true)
           }, (cover: string) => cover)
         }
         .width(width)

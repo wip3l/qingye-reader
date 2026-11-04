@@ -9,6 +9,7 @@ import { PdfNavigationDataSource } from '../core/book/pdf/PdfNavigationDataSourc
 import { PdfReaderView } from '../components/reader/PdfReaderView';
 import { PdfReaderControls } from '../components/reader/PdfReaderControls';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
+import image from '@ohos.multimedia.image';
 import { AppFontSize } from '../theme/AppFontSize';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
@@ -29,6 +30,8 @@ import {
   SHELF_COVER_CLOSE_DURATION, SHELF_COVER_FRAME_RATE, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
   SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
 } from '../components/reader/ReaderShelfCoverOpening';
+import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
+import { ReaderRenderFrame } from '../core/reader/ReaderRenderFrame';
 
 @Entry
 @Component
@@ -85,6 +88,9 @@ struct PdfReadBookPage {
   private closing: boolean = false;
   // Shelf cover-open animation, the same motion as the text reader (see ReadBook.prepareShelfOpening).
   @State shelfSharedCoverId: string = '';
+  /** Home-page snapshot shown behind the page while it shrinks back onto the shelf (see ReadBook). */
+  @State shelfCloseBackdrop: image.PixelMap | null = null;
+  private shelfCloseBackdropHandedOff: boolean = false;
   @State shelfCoverVisible: boolean = false;
   @State shelfCoverAngle: number = SHELF_COVER_OPEN_ANGLE;
   @State shelfCoverShade: number = 0.5;
@@ -139,6 +145,9 @@ struct PdfReadBookPage {
   aboutToDisappear(): void {
     this.flushAndSyncProgress();
     this.alive = false; this.generation++; this.searchGeneration++;
+    const closeBackdrop = this.shelfCloseBackdrop;
+    this.shelfCloseBackdrop = null;
+    if (closeBackdrop && !this.shelfCloseBackdropHandedOff) closeBackdrop.release().catch((): void => {});
     this.applySystemBars();
     ReaderProgressCheckpoint.detach(this.owner);
     readStatsTracker.setReadingActive('');
@@ -427,7 +436,20 @@ struct PdfReadBookPage {
     }
     // Finish an unfinished opening first so the return transition has its shared id; close the cover while saving.
     this.finishShelfOpening();
-    const coverClosed = this.openedWithShelfAnimation ? this.closeShelfCover() : Promise.resolve();
+    // With the cover's current shelf position and a home-page snapshot to show behind the page (a covered router
+    // page is not rendered), shrink onto the cover in one motion, the mirror of opening; otherwise close first and
+    // let the shared transition shrink the page.
+    const closeTarget = this.openedWithShelfAnimation && this.shelfOpeningCover ?
+      ShelfCoverLocator.locate(this.bookUrl) : null;
+    const backdrop = closeTarget ? await ShelfCoverLocator.backdrop() : null;
+    const selfClose = !!closeTarget && !!backdrop;
+    if (selfClose) {
+      this.shelfSharedCoverId = '';
+      this.shelfCloseBackdrop = backdrop;
+      await ReaderRenderFrame.wait(this.getUIContext());
+    }
+    const coverClosed = selfClose && closeTarget ? this.closeIntoShelfCover(closeTarget) :
+      this.openedWithShelfAnimation ? this.closeShelfCover() : Promise.resolve();
     try { await this.saveProgress(); }
     catch (error) { console.warn('[PDF] exit save failed:', error); }
     await coverClosed;
@@ -436,8 +458,14 @@ struct PdfReadBookPage {
       AppStorage.setOrCreate('shelfBookCloseAnimationUrl', this.bookUrl);
       AppStorage.setOrCreate('shelfBookCloseAnimationNonce', Date.now());
     }
-    // The SVG frame does not scale with the shared transition; see ReaderShelfCoverOpening.showFrame.
-    this.shelfCoverFrameVisible = false;
+    if (selfClose) {
+      // The home page shows this same snapshot on top until its own covers and progress refresh have drawn.
+      this.shelfCloseBackdropHandedOff = true;
+      AppStorage.setOrCreate<image.PixelMap | null>('shelfReturnBackdrop', this.shelfCloseBackdrop);
+    } else {
+      // The SVG frame does not scale with the shared transition; see ReaderShelfCoverOpening.showFrame.
+      this.shelfCoverFrameVisible = false;
+    }
     this.getUIContext().getRouter().back();
   }
 
@@ -518,6 +546,28 @@ struct PdfReadBookPage {
     }
   }
 
+  /** Shrink the page onto the cover's current shelf position while the cover closes: one 500 ms motion. */
+  private closeIntoShelfCover(target: ShelfOpeningCover): Promise<void> {
+    this.shelfCoverVisible = true;
+    this.shelfCoverFillImage = true;
+    AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
+      Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
+    return new Promise<void>((resolve: () => void): void => {
+      this.getUIContext().animateTo({
+        duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut,
+        expectedFrameRateRange: SHELF_COVER_FRAME_RATE, onFinish: resolve
+      }, (): void => {
+        this.shelfOpenScaleX = target.boundsWidth / target.windowWidth;
+        this.shelfOpenScaleY = target.boundsHeight / target.windowHeight;
+        this.shelfOpenTranslateX = target.boundsX;
+        this.shelfOpenTranslateY = target.boundsY;
+        this.shelfCoverAngle = 0;
+        this.shelfCoverScaleX = 1;
+        this.shelfCoverShade = 0;
+      });
+    });
+  }
+
   /** Close the cover, then let the return transition shrink the page back onto the shelf. */
   private closeShelfCover(): Promise<void> {
     if (!this.shelfOpeningCover) return Promise.resolve();
@@ -563,6 +613,14 @@ struct PdfReadBookPage {
   }
 
   build() {
+    Stack() {
+      if (this.shelfCloseBackdrop) {
+        Image(this.shelfCloseBackdrop)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Fill)
+          .draggable(false)
+      }
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.sourcePath && !this.failed) {
         PdfReaderView({ controller: this.controller, sourcePath: this.sourcePath, initialPage: this.initialPage,
@@ -621,6 +679,7 @@ struct PdfReadBookPage {
           .hitTestBehavior(HitTestMode.None)
       }
     }.width('100%').height('100%').backgroundColor(ThemeRuntime.pageColor(this.darkMode))
+      .id('pdf_reader_root')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .scale({ x: this.shelfOpenScaleX, y: this.shelfOpenScaleY, centerX: 0, centerY: 0 })
       .translate({ x: this.shelfOpenTranslateX, y: this.shelfOpenTranslateY })
@@ -632,5 +691,10 @@ struct PdfReadBookPage {
         const wide = Number(after.width) >= 840;
         if (wide !== this.wideWindow) { this.wideWindow = wide; this.applyViewSettings(); }
       })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.shelfCloseBackdrop ? ThemeRuntime.pageColor(this.darkMode) : Color.Transparent)
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

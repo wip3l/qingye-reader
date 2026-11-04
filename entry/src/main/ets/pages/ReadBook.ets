@@ -116,6 +116,7 @@ import { ReaderV2PageNodeController } from '../core/reader/ReaderV2RenderNode';
 import { ReaderV2RegexBubbleCapImages } from '../components/reader/ReaderV2RegexBubbleCaps';
 import { ReaderV2GestureRouter, ReaderV2TapResult } from '../core/reader/ReaderV2Interaction';
 import { ReaderOpenTrace } from '../utils/ReaderOpenTrace';
+import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
 import { ReaderEyeTurnCoordinator, ReaderEyeTurnViewState } from '../core/reader/ReaderEyeTurnCoordinator';
 import { ReaderEyeCalibrationPanel, ReaderEyeTurnCalibrationSettingItem } from '../components/reader/ReaderEyeTurnViews';
 import { ReaderFullTextCacheController } from '../core/reader/ReaderFullTextCacheController';
@@ -204,6 +205,7 @@ import { EpubChapterPlanner } from '../core/book/EpubChapterPlanner';
 import { EpubConvertResult, EpubHeading } from '../core/book/EpubHtmlConverter';
 import { EpubNoteLink } from '../core/book/EpubNoteLink';
 import { LocalChapterContentLoader } from '../core/book/LocalChapterContentLoader';
+import { ReaderNoteContent } from '../components/reader/ReaderNoteContent';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -1026,6 +1028,9 @@ struct ReadBookPage {
    * 只挂在正文列上，不挂根节点：封面层也在根节点里，每帧旋转会让整组缓存失效。
    */
   @State shelfMotionRasterized: boolean = false;
+  /** 关闭时垫在整页后面的书架截图：被盖住的书架不渲染，缩回露出的区域要靠它；落地后弹出，真实书架与它像素一致。 */
+  @State shelfCloseBackdrop: image.PixelMap | null = null;
+  private shelfCloseBackdropHandedOff: boolean = false;
   @State shelfOpenScaleY: number = 1;
   @State shelfOpenTranslateX: number = 0;
   @State shelfOpenTranslateY: number = 0;
@@ -1074,6 +1079,17 @@ struct ReadBookPage {
           this.readerPdfDispatched = true;
           try { await router.replaceUrl({ url: 'pages/PdfReadBook', params: formatParams }); }
           catch (error) { console.error('[PDF] route failed:', error); HdsFeedback.showToast('打开 PDF 阅读页失败'); router.back(); }
+          return;
+        }
+        if (LocalBookService.usesEpubOriginalLayout(candidate)) {
+          // 选了“文件排版”的 EPUB 由原版排版页打开，与 PDF 一样不在这里建阅读会话。
+          this.readerPdfDispatched = true;
+          try { await router.replaceUrl({ url: 'pages/EpubOriginalReadBook', params: formatParams }); }
+          catch (error) {
+            console.error('[EpubOriginal] route failed:', error);
+            HdsFeedback.showToast('打开文件排版失败');
+            router.back();
+          }
           return;
         }
       } catch (error) { console.warn('[ReaderOpen] early format lookup failed:', error); }
@@ -1361,6 +1377,9 @@ struct ReadBookPage {
       clearTimeout(this.readerSafeAreaRepaginateTimerId);
       this.readerSafeAreaRepaginateTimerId = -1;
     }
+    const closeBackdrop = this.shelfCloseBackdrop;
+    this.shelfCloseBackdrop = null;
+    if (closeBackdrop && !this.shelfCloseBackdropHandedOff) closeBackdrop.release().catch((): void => {});
     if (this.readerStageRuntimeHostTimerId >= 0) {
       clearTimeout(this.readerStageRuntimeHostTimerId);
       this.readerStageRuntimeHostTimerId = -1;
@@ -3151,6 +3170,8 @@ struct ReadBookPage {
     ReaderComicSettingsStore.load(getContext(this)).then((settings: ReaderComicSettings): void => {
       this.readerComicSettings = settings;
       this.syncReaderInfoBarClock();
+      // 设置可能晚于书籍读出，或刚在漫画设置页改了着色、繁→简的默认值，没单独设置过的书要跟着变。
+      if (this.book) this.applyReaderComicAiChoices();
       if (this.isReaderComicModeActive() && this.readerPageVisible) this.enterReaderImmersive();
     }).catch((error: Error) => {
       console.warn('读取漫画设置失败:', error);
@@ -3166,8 +3187,6 @@ struct ReadBookPage {
     // 读取状态让权限变化时界面重算；实际授权由宿主统一策略判断。
     const sku = this.readerMembershipSku;
     return this.readerComicColorRevision >= 0 && sku !== undefined ?
-      // 设置可能晚于书籍读出，或刚在漫画设置页改了着色、繁→简的默认值，没单独设置过的书要跟着变。
-      if (this.book) this.applyReaderComicAiChoices();
       ReaderComicSuperResolution.access() : ReaderComicSuperResolutionAccess.MEMBER_REQUIRED;
   }
 
@@ -3397,6 +3416,14 @@ struct ReadBookPage {
 
   build() {
     Stack() {
+      if (this.shelfCloseBackdrop) {
+        Image(this.shelfCloseBackdrop)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Fill)
+          .draggable(false)
+      }
+    Stack() {
       if (this.readerStageRuntimeHostMounted) {
         BookSourceStageRuntimeHost()
       }
@@ -3540,6 +3567,7 @@ struct ReadBookPage {
           }
           .width('100%')
           .height('100%')
+          .id('reader_paged_area')
           .clip(true)
           .opacity(this.readerInitialPageReady ? 1 : 0)
           .onAreaChange((oldValue: Area, newValue: Area) => {
@@ -3752,6 +3780,12 @@ struct ReadBookPage {
       }
     })
     .bindSheet($$this.showReaderCommentPanel, this.readerCommentPanel(), this.readerCommentSheetOptions())
+    }
+    // 外层只在关闭时有内容：书架截图不随整页缩放，铺满整个窗口（含状态栏区域，用书架页底色补齐）。
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.shelfCloseBackdrop ? ThemeRuntime.pageColor(this.appDarkMode) : Color.Transparent)
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   /**
@@ -4628,6 +4662,13 @@ struct ReadBookPage {
           this.isReaderComicModeActive() ? '切换为普通阅读' : '切换为漫画阅读',
           () => this.toggleReaderComicReadingMode()
         )
+        if (!this.isReaderComicModeActive() && LocalBookService.canUseEpubOriginalLayout(this.book)) {
+          this.readerActionMenuItem(
+            $r('sys.symbol.doc_text'),
+            '使用文件排版',
+            () => this.switchToEpubOriginalLayout()
+          )
+        }
         this.readerActionMenuItem(
           $r('sys.symbol.square_grid_2x2'),
           '布局元素设置',
@@ -5808,10 +5849,7 @@ struct ReadBookPage {
     const serial = ++this.readerNoteSerial;
     LocalChapterContentLoader.loadNote(book, action.url).then((note: EpubConvertResult | null): void => {
       if (serial !== this.readerNoteSerial || this.book !== book) return;
-      const blocks = note ? note.content.split(/\n+/)
-        .map((line: string): string => line.trim())
-        .filter((line: string): boolean => line.length > 0)
-        .slice(0, READER_NOTE_MAX_BLOCKS) : [];
+      const blocks = note ? EpubNoteLink.blocks(note.content, READER_NOTE_MAX_BLOCKS) : [];
       if (blocks.length === 0) {
         HdsFeedback.showToast('没有找到这条注释');
         return;
@@ -5848,35 +5886,9 @@ struct ReadBookPage {
   /** 注释正文：弹出层跟随应用日夜模式，半模态跟随阅读主题（与其它阅读页半模态一致）。 */
   @Builder
   readerNoteContent(sheet: boolean) {
-    Scroll() {
-      Column({ space: 10 }) {
-        Text(this.readerNoteLabel ? `注释 ${this.readerNoteLabel}` : '注释')
-          .fontSize(13)
-          .fontColor(ThemeRuntime.subTextColor(sheet ? this.isReaderThemeDark() : this.appDarkMode))
-        ForEach(this.readerNoteBlocks, (block: string): void => {
-          if (ReaderImageMarker.isMarker(block)) {
-            Image(fileUri.getUriFromPath(ReaderImageMarker.parse(block).source))
-              .width('100%')
-              .objectFit(ImageFit.Contain)
-              .borderRadius(8)
-          } else {
-            Text(block)
-              .width('100%')
-              .fontSize(16)
-              .lineHeight(26)
-              .fontColor(ThemeRuntime.primaryTextColor(sheet ? this.isReaderThemeDark() : this.appDarkMode))
-              .copyOption(CopyOptions.LocalDevice)
-          }
-        }, (block: string, index: number): string => `${index}_${block.length}_${block.substring(0, 24)}`)
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
-      .padding(sheet ? { left: 20, right: 20, top: 8, bottom: 24 } : 16)
-    }
-    .width(sheet ? '100%' : Math.min(320, Math.max(200, (this.pageViewWidth > 0 ? this.pageViewWidth : 360) - 48)))
-    .constraintSize(sheet ? {} : { maxHeight: Math.floor(ImmersiveMaterialRuntime.popupMenuMaxHeight() * 0.7) })
-    .scrollBar(BarState.Auto)
-    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: false })
+    ReaderNoteContent({ label: this.readerNoteLabel, blocks: this.readerNoteBlocks,
+      dark: sheet ? this.isReaderThemeDark() : this.appDarkMode, sheet: sheet,
+      popupWidth: Math.min(320, Math.max(200, (this.pageViewWidth > 0 ? this.pageViewWidth : 360) - 48)) })
   }
 
   @Builder
@@ -6156,6 +6168,27 @@ struct ReadBookPage {
     this.syncReaderInfoBarClock();
   }
 
+  readerComicBookTextConvert(): boolean {
+    return ReaderComicSettings.bookTextConvert(this.book?.getVariable('readerComicTextConvert') || '',
+      this.readerComicSettings);
+  }
+
+  /** 着色模型没下全时不开：阅读页里不弹下载，等用户在漫画面板或漫画设置里开启时再下。 */
+  readerComicBookColorEnabled(): boolean {
+    return ReaderComicSettings.bookColorEnabled(this.book?.getVariable('readerComicColorEnabled') || '',
+      this.readerComicSettings) && ComicColorModels.missingBytes(getContext(this)) === 0;
+  }
+
+  /** 重新按本书设置与默认值决定着色、繁→简，只在结果变了时才动着色引擎。 */
+  applyReaderComicAiChoices(): void {
+    this.readerComicTextConvert = this.readerComicBookTextConvert();
+    const color = this.readerComicBookColorEnabled();
+    if (color === this.readerComicColorEnabled) return;
+    this.readerComicColorEnabled = color;
+    // 还没进过漫画模式时着色引擎没配置，等 initializeReaderComicMode 按同一结果配置。
+    if (this.readerComicColorUnsubscribe) this.readerComicColor.setEnabled(color);
+  }
+
   readerSourceIndicatesComic(): boolean {
     const source = this.currentReaderSource();
     if (BookTypeSupport.isImage(this.book)) {
@@ -6183,6 +6216,25 @@ struct ReadBookPage {
     this.stopTtsReading();
     this.enterReaderImmersive();
     this.syncReaderInfoBarClock();
+  }
+
+  /** 本书改用“文件排版”：先存好进度（章内偏移由原版排版页换算），再换到原版排版页。 */
+  async switchToEpubOriginalLayout(): Promise<void> {
+    const book = this.book;
+    if (!book || !LocalBookService.canUseEpubOriginalLayout(book)) return;
+    this.showReaderActionMenu = false;
+    try {
+      // 先记下开关再存进度：进度保存会通知书架刷新，书架据此选阅读页。
+      book.putVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY, '1');
+      await this.saveReadingProgress(true);
+      await AppDatabase.getInstance().updateBook(book, false);
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      await router.replaceUrl({ url: 'pages/EpubOriginalReadBook', params: { bookUrl: book.bookUrl } });
+    } catch (error) {
+      book.putVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY, '');
+      console.warn('[EpubOriginal] switch failed:', error);
+      HdsFeedback.showToast('切换文件排版失败');
+    }
   }
 
   toggleReaderComicReadingMode(): void {
@@ -6268,27 +6320,6 @@ struct ReadBookPage {
 
   beginReaderComicPan(): void {
     this.stopReaderComicScreenScroll();
-  readerComicBookTextConvert(): boolean {
-    return ReaderComicSettings.bookTextConvert(this.book?.getVariable('readerComicTextConvert') || '',
-      this.readerComicSettings);
-  }
-
-  /** 着色模型没下全时不开：阅读页里不弹下载，等用户在漫画面板或漫画设置里开启时再下。 */
-  readerComicBookColorEnabled(): boolean {
-    return ReaderComicSettings.bookColorEnabled(this.book?.getVariable('readerComicColorEnabled') || '',
-      this.readerComicSettings) && ComicColorModels.missingBytes(getContext(this)) === 0;
-  }
-
-  /** 重新按本书设置与默认值决定着色、繁→简，只在结果变了时才动着色引擎。 */
-  applyReaderComicAiChoices(): void {
-    this.readerComicTextConvert = this.readerComicBookTextConvert();
-    const color = this.readerComicBookColorEnabled();
-    if (color === this.readerComicColorEnabled) return;
-    this.readerComicColorEnabled = color;
-    // 还没进过漫画模式时着色引擎没配置，等 initializeReaderComicMode 按同一结果配置。
-    if (this.readerComicColorUnsubscribe) this.readerComicColor.setEnabled(color);
-  }
-
     if (this.readerComicChapterSwitching) return;
     this.readerComicPanLastOffsetY = 0;
     this.readerComicPanMoved = false;
@@ -7246,6 +7277,9 @@ struct ReadBookPage {
   }
 
   updatePagedReaderArea(area: Area): void {
+    // 退出时对整页截图会让子树按别的约束再测一次，这里收到的尺寸不是用户看到的；此时重新分页只会把正在截图的页面
+    // 排成窄列。页面马上就要销毁，忽略即可。
+    if (this.readerExiting) return;
     const width = this.parseAreaDimension(area.width);
     const contentTopPadding = this.getReaderPageContentTopPadding();
     const height = this.parseAreaDimension(area.height) - contentTopPadding;
@@ -7302,6 +7336,7 @@ struct ReadBookPage {
   }
 
   rememberReaderBottomInfoBarHeight(area: Area): void {
+    if (this.readerExiting) return;
     const measuredHeight = this.normalizeReaderBottomInfoBarHeight(this.parseAreaDimension(area.height));
     if (measuredHeight <= 0 ||
       Math.abs(measuredHeight - this.getReaderBottomInfoBarHeight()) < 0.25) {
@@ -18365,6 +18400,31 @@ struct ReadBookPage {
     });
   }
 
+  /**
+   * 与打开镜像的关闭：整页缩回书架上封面现在的位置，封面同帧合上，一段 500ms；书架截图垫在后面，完成后由 0 时长
+   * 转场直接返回。不走共享转场，书框全程可见。
+   */
+  closeIntoShelfCover(target: ShelfOpeningCover): Promise<void> {
+    this.shelfCoverVisible = true;
+    this.shelfCoverFillImage = true;
+    AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
+      Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
+    return new Promise<void>((resolve: () => void): void => {
+      this.getUIContext().animateTo({
+        duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut,
+        expectedFrameRateRange: SHELF_COVER_FRAME_RATE, onFinish: resolve
+      }, (): void => {
+        this.shelfOpenScaleX = target.boundsWidth / target.windowWidth;
+        this.shelfOpenScaleY = target.boundsHeight / target.windowHeight;
+        this.shelfOpenTranslateX = target.boundsX;
+        this.shelfOpenTranslateY = target.boundsY;
+        this.shelfCoverAngle = 0;
+        this.shelfCoverScaleX = 1;
+        this.shelfCoverShade = 0;
+      });
+    });
+  }
+
   async exitReaderPage(): Promise<void> {
     if (this.readerExitProgressSaved || this.readerExiting) {
       return;
@@ -18400,10 +18460,23 @@ struct ReadBookPage {
     }
     // 打开动画还没走完就返回时，先收尾，返回转场才有共享 id 可用。
     this.finishShelfOpening();
-    // 返回转场把整页缩回书架封面，正文列同样整组栅格化到页面销毁。
+    // 能量到封面现在的位置并截到书架图，就自己一段动画缩回封面格、封面同帧合上（与打开镜像），书架图垫在后面；
+    // 否则退回“合上再由共享转场缩回”。
+    const closeTarget = this.openedWithShelfAnimation && this.shelfOpeningCover ?
+      ShelfCoverLocator.locate(this.bookUrl) : null;
+    const backdrop = closeTarget ? await ShelfCoverLocator.backdrop() : null;
+    const selfClose = !!closeTarget && !!backdrop;
+    // 缩回期间正文列整组栅格化到页面销毁。
     if (this.openedWithShelfAnimation) this.shelfMotionRasterized = true;
+    if (selfClose) {
+      this.shelfSharedCoverId = '';
+      this.shelfCloseBackdrop = backdrop;
+      // 背景图先画出一帧，缩小露出的边缘才不会闪一下底色。
+      await ReaderRenderFrame.wait(this.getUIContext());
+    }
     // 合上封面与保存进度同时进行，不在两者之间多等一次。
-    const shelfCoverClosed = this.openedWithShelfAnimation ? this.closeShelfCover() : Promise.resolve();
+    const shelfCoverClosed = selfClose && closeTarget ? this.closeIntoShelfCover(closeTarget) :
+      this.openedWithShelfAnimation ? this.closeShelfCover() : Promise.resolve();
     try {
       await this.saveReadingProgress(true);
       this.readerExitProgressSaved = true;
@@ -18426,7 +18499,15 @@ struct ReadBookPage {
       AppStorage.setOrCreate('shelfBookCloseAnimationUrl', this.bookUrl);
       AppStorage.setOrCreate('shelfBookCloseAnimationNonce', Date.now());
     }
-    this.shelfCoverFrameVisible = false;
+    if (selfClose) {
+      // 回到书架的头几帧书架自己还画不出封面（被盖住的页面重新显示时图片要再加载，随后还有一次进度刷新重建卡片），
+      // 把这张背景图交给首页盖住那段时间；首页刷新完成后释放它。
+      this.shelfCloseBackdropHandedOff = true;
+      AppStorage.setOrCreate<image.PixelMap | null>('shelfReturnBackdrop', this.shelfCloseBackdrop);
+    } else {
+      // 书框是 SVG，不跟共享转场缩放，起飞前藏起来。
+      this.shelfCoverFrameVisible = false;
+    }
     router.back();
   }
 

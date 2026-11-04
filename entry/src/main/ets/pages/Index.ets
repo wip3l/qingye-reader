@@ -7,6 +7,7 @@ import { HdsAnimationMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { Book, BookChapter, BookSourceStageWebRuntime } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookFetchRuntimeHost } from '../components/WebBookFetchRuntimeHost';
+import image from '@ohos.multimedia.image';
 import { BookSourceAudioWebRuntimeHost } from '../components/BookSourceAudioWebRuntimeHost';
 import { syncSystemSafeAreas, syncDesktopTitleBar } from '../utils/SystemBars';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
@@ -537,6 +538,38 @@ struct Index {
     }
   }
 
+  // 阅读页关闭动画结束时交来的书架截图：重新显示的首页头几帧封面图还没加载，随后进度刷新又会重建卡片，
+  // 这段时间把截图盖在最上层，刷新画出来后揭开；兜底最多盖 1.5 秒。
+  @StorageLink('shelfReturnBackdrop') @Watch('onShelfReturnBackdropChanged') shelfReturnBackdrop: image.PixelMap | null = null;
+  @StorageLink('shelfReturnRefreshNonce') @Watch('onShelfReturnRefreshed') shelfReturnRefreshNonce: number = 0;
+  @State shelfReturnBackdropShown: boolean = false;
+  private shelfReturnBackdropTimer: number = -1;
+
+  onShelfReturnBackdropChanged(): void {
+    if (!this.shelfReturnBackdrop) {
+      this.shelfReturnBackdropShown = false;
+      return;
+    }
+    this.shelfReturnBackdropShown = true;
+    this.armShelfReturnBackdropDrop(1500);
+  }
+
+  onShelfReturnRefreshed(): void {
+    // 刷新后的书架再给两帧把封面画出来。
+    if (this.shelfReturnBackdropShown) this.armShelfReturnBackdropDrop(120);
+  }
+
+  private armShelfReturnBackdropDrop(delayMs: number): void {
+    if (this.shelfReturnBackdropTimer >= 0) clearTimeout(this.shelfReturnBackdropTimer);
+    this.shelfReturnBackdropTimer = setTimeout((): void => {
+      this.shelfReturnBackdropTimer = -1;
+      const backdrop = this.shelfReturnBackdrop;
+      this.shelfReturnBackdropShown = false;
+      this.shelfReturnBackdrop = null;
+      if (backdrop) backdrop.release().catch((): void => {});
+    }, delayMs);
+  }
+
   pageTransition() {
     if (AppStorage.get<boolean>('shelfReaderDirectTransition') === true) {
       PageTransitionExit({ type: RouteType.Push, duration: 0 })
@@ -608,7 +641,18 @@ struct Index {
       WebBookFetchRuntimeHost()
       // 书架后台下载有声书时，网页规则的音频地址要靠它解析；听书页打开时用听书页自己的。
       BookSourceAudioWebRuntimeHost()
+      if (this.shelfReturnBackdropShown && this.shelfReturnBackdrop) {
+        Image(this.shelfReturnBackdrop)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Fill)
+          .draggable(false)
+          .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+          .hitTestBehavior(HitTestMode.None)
+      }
     }
+    // 阅读页关闭动画会对首页整张离屏截图垫在自己后面（见 ShelfCoverLocator）。
+    .id('home_root')
     .width('100%')
     .height('100%')
     .onAreaChange((_oldValue: Area, newValue: Area) => {

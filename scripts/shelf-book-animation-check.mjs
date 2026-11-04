@@ -16,7 +16,7 @@ const timers = new Map(), storage = new Map();
 const context = vm.createContext({
   Date: { now: () => now }, console,
   AppStorage: { get: key => storage.get(key), setOrCreate: (key, value) => storage.set(key, value) },
-  Curve: { Friction: 'friction' },
+  Curve: { Friction: 'friction', EaseInOut: 'easeInOut' },
   ReaderTtsFloatingSession: { isActive: () => false }, SHELF_UPDATE_BADGE_VARIABLE: 'shelfUpdateBadge',
   setTimeout: (callback, delay) => { timers.set(++sequence, { callback, at: now + delay }); return sequence; },
   clearTimeout: id => timers.delete(id)
@@ -54,7 +54,75 @@ for (const page of ['ReadBook', 'PdfReadBook']) {
   const wait = exit.indexOf(page === 'ReadBook' ? 'await shelfCoverClosed' : 'await coverClosed');
   assert.ok(wait >= 0 && wait < exit.indexOf("'shelfBookCloseAnimationNonce'"),
     `${page}: shelf return countdown starts after the cover finishes`);
+
+  // Closing onto the cover's current shelf position: the page shrinks itself while the cover closes, over a snapshot
+  // of the home page (a covered router page is not rendered); no shared transition and the frame stays visible.
+  // Without a position or a snapshot the old close-then-fly path remains.
+  assert.match(exit, /ShelfCoverLocator\.locate\(this\.bookUrl\)/, `${page}: asks the shelf where the cover is now`);
+  assert.match(exit, /const backdrop = closeTarget \? await ShelfCoverLocator\.backdrop\(\) : null;/, `${page}: snapshots the shelf only with a target`);
+  assert.match(exit, /this\.shelfSharedCoverId = '';\s*this\.shelfCloseBackdrop = backdrop;/, `${page}: backdrop replaces the shared transition`);
+  assert.match(exit, /this\.shelfCloseBackdrop = backdrop;[\s\S]*?await ReaderRenderFrame\.wait\(this\.getUIContext\(\)\);/,
+    `${page}: the backdrop gets a frame before the page starts shrinking`);
+  assert.match(exit, /if \(selfClose\) \{[\s\S]*?this\.shelfCloseBackdropHandedOff = true;\s*AppStorage\.setOrCreate<image\.PixelMap \| null>\('shelfReturnBackdrop', this\.shelfCloseBackdrop\);[\s\S]*?\} else \{[\s\S]*?this\.shelfCoverFrameVisible = false;/,
+    `${page}: the backdrop is handed to the home page on landing, the frame hidden only for the shared transition`);
+  const closer = hostFor(source, ['closeIntoShelfCover']);
+  let closeAnimation;
+  Object.assign(closer, { getUIContext: () => ({ animateTo: (options, change) => { closeAnimation = options; change(); } }) });
+  const target = { boundsX: 40, boundsY: 300, boundsWidth: 90, boundsHeight: 120, windowWidth: 360, windowHeight: 800 };
+  let landed = false;
+  const landing = closer.closeIntoShelfCover(target).then(() => { landed = true; });
+  assert.equal(closeAnimation.duration, 500, `${page}: closing takes as long as opening`);
+  assert.equal(closer.shelfOpenScaleX, 0.25); assert.equal(closer.shelfOpenScaleY, 0.15);
+  assert.equal(closer.shelfOpenTranslateX, 40); assert.equal(closer.shelfOpenTranslateY, 300);
+  assert.equal(closer.shelfCoverAngle, 0); assert.equal(closer.shelfCoverScaleX, 1); assert.equal(closer.shelfCoverFillImage, true);
+  assert.equal(closer.shelfCoverVisible, true);
+  assert.ok(storage.get('shelfBookMotionUntil') >= now + 500, `${page}: shelf refresh waits for the landing`);
+  advance(1000); await Promise.resolve();
+  assert.equal(landed, false); closeAnimation.onFinish(); await landing; assert.equal(landed, true);
+  const build = source.slice(source.indexOf('  build() {'), source.indexOf('  build() {') + 400);
+  assert.match(build, /if \(this\.shelfCloseBackdrop\) \{\s*Image\(this\.shelfCloseBackdrop\)/, `${page}: the backdrop sits outside the scaled page root`);
 }
+
+// The home page keeps the handed-over backdrop on top until the return refresh has drawn, at most 1.5 s.
+const home = hostFor(read('pages/Index.ets'),
+  ['onShelfReturnBackdropChanged', 'onShelfReturnRefreshed', 'armShelfReturnBackdropDrop']);
+let backdropReleases = 0;
+const handedBackdrop = { release() { backdropReleases++; return Promise.resolve(); } };
+Object.assign(home, { shelfReturnBackdrop: handedBackdrop, shelfReturnBackdropShown: false, shelfReturnBackdropTimer: -1 });
+home.onShelfReturnBackdropChanged();
+assert.equal(home.shelfReturnBackdropShown, true, 'the backdrop covers the home page as soon as it arrives');
+advance(1000); assert.equal(home.shelfReturnBackdropShown, true, 'still covering while the refresh is pending');
+home.onShelfReturnRefreshed();
+advance(100); assert.equal(home.shelfReturnBackdropShown, true, 'two frames for the refreshed shelf to draw');
+advance(50); assert.equal(home.shelfReturnBackdropShown, false, 'uncovered after the refresh has drawn');
+assert.equal(home.shelfReturnBackdrop, null); assert.equal(backdropReleases, 1, 'the backdrop is released once');
+Object.assign(home, { shelfReturnBackdrop: handedBackdrop, shelfReturnBackdropShown: false });
+home.onShelfReturnBackdropChanged(); advance(1500);
+assert.equal(home.shelfReturnBackdropShown, false, 'a refresh that never reports still uncovers after 1.5 s');
+assert.match(read('components/home/BookshelfPage.ets'), /\.finally\(\(\): void => \{\s*\/\/[^\n]*\n\s*AppStorage\.setOrCreate<number>\('shelfReturnRefreshNonce', Date\.now\(\)\);/,
+  'the shelf reports the return refresh whether it succeeded or failed');
+
+// The shelf registers a locator while mounted; readers get null when nothing is mounted or the bounds are unusable.
+const locatorSource = read('utils/ShelfCoverLocator.ets').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
+const Locator = vm.runInContext(stripTypeScriptTypes(locatorSource) + '\nShelfCoverLocator', context);
+assert.equal(Locator.locate('u'), null, 'no shelf mounted');
+const good = { boundsX: 1, boundsY: 2, boundsWidth: 90, boundsHeight: 120, windowWidth: 360, windowHeight: 800 };
+const measure = (url) => url === 'u' ? good : { boundsX: 0, boundsY: 0, boundsWidth: 0, boundsHeight: 0, windowWidth: 360, windowHeight: 800 };
+Locator.register(measure);
+assert.equal(Locator.locate('u'), good);
+assert.equal(Locator.locate('other'), null, 'unmeasured covers are not usable');
+Locator.unregister(() => null); assert.equal(Locator.locate('u'), good, 'another function cannot unregister the shelf');
+Locator.unregister(measure); assert.equal(Locator.locate('u'), null);
+const shelfPicture = {};
+Locator.register(measure, async () => shelfPicture);
+assert.equal(await Locator.backdrop(), shelfPicture, 'the home-page snapshot comes through the locator');
+Locator.register(measure, async () => { throw new Error('offscreen capture refused'); });
+assert.equal(await Locator.backdrop(), null, 'a refused snapshot yields null instead of throwing');
+Locator.unregister(measure); assert.equal(await Locator.backdrop(), null, 'no snapshot once the shelf is gone');
+const shelfPageSource = read('components/home/BookshelfPage.ets');
+assert.match(shelfPageSource, /ShelfCoverLocator\.register\(this\.shelfCoverLocate, this\.shelfBackdropSnapshot\)/,
+  'the shelf registers its locator and home-page snapshot on appear');
+assert.match(shelfPageSource, /ShelfCoverLocator\.unregister\(this\.shelfCoverLocate\)/, 'the shelf unregisters on disappear');
 
 const shelf = hostFor(read('components/home/BookshelfPage.ets'),
   ['shelfBookMotionDelay', 'scheduleLoadBooks', 'closeShelfBook', 'cancelShelfBookOpening']);
