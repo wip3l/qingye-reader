@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.4.952`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.4.953`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -139,6 +139,8 @@
 - 「我的 → 帮助」是原生帮助页：首页有搜索、新手上手、常见问题和按功能分组的专题，专题页可一键跳到对应功能；正文由 `docs/manual` 说明书生成，离线可看。
 
 版本更新内容与发布说明见[更新日志](CHANGELOG.md)。
+
+阅读设置中的“AI处理标识”可单独控制 EPUB 插图、漫画和 PDF 的处理提示及完成标识，保留处理与原页对照功能。透明插图在超分流程中保留原图，避免透明底变为黑框。搜索按钮在请求运行时显示停止图标，可直接停止搜索。
 
 MiMo 支持音色预设、试听及按书选择人物音色方案；方案切换保留已有绑定。智感握姿可在其他设置中统一开关，关闭自动适配后仍保留手动位置。自定义主题提供场景预览，并与阅读页共享排版设置。
 
@@ -270,8 +272,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.4.952` |
-| `versionCode` / `buildVersion` | `4040952` |
+| `versionName` | `4.4.953` |
+| `versionCode` / `buildVersion` | `4040953` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`CAMERA`（仅在用户启用眼动翻页时请求） |
 
