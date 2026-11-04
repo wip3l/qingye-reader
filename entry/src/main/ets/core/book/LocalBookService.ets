@@ -153,6 +153,20 @@ export class LocalBookService {
     return !!book && book.origin === LocalBookService.ORIGIN && LocalBookService.formatOf(book) === 'pdf';
   }
 
+  /** 书籍变量：'1' 表示这本 EPUB 用“文件排版”（原版 CSS，网页组件渲染）打开。 */
+  static readonly EPUB_ORIGINAL_LAYOUT_KEY: string = 'epubOriginalLayout';
+
+  /** 能用文件排版的书：本地 EPUB 的文字书（漫画仍走漫画阅读）。 */
+  static canUseEpubOriginalLayout(book: Book | null): boolean {
+    return !!book && book.origin === LocalBookService.ORIGIN && book.type === LocalBookService.TYPE_EPUB &&
+      LocalBookService.formatOf(book) === 'epub' && book.getVariable('readerComicMode') !== '1';
+  }
+
+  static usesEpubOriginalLayout(book: Book | null): boolean {
+    return LocalBookService.canUseEpubOriginalLayout(book) &&
+      book?.getVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY) === '1';
+  }
+
   private static parserVersionFor(format: string): string {
     if (format === 'pdf') return PdfBookService.PARSER_VERSION;
     if (format === 'epub') return LocalBookService.EPUB_PARSER_VERSION;

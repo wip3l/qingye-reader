@@ -8,6 +8,10 @@ import { PdfSearchTask } from '../core/concurrency/PdfSearchTask';
 import { PdfNavigationDataSource } from '../core/book/pdf/PdfNavigationDataSource';
 import { PdfReaderView } from '../components/reader/PdfReaderView';
 import { PdfReaderControls } from '../components/reader/PdfReaderControls';
+import { ReaderLayoutElementSettingsPanel } from '../components/reader/ReaderLayoutElementSettingsPanel';
+import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
+import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
+import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import image from '@ohos.multimedia.image';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -69,6 +73,13 @@ struct PdfReadBookPage {
   @State enhancementStatus: string = '';
   @State layoutRevision: number = 0;
   @State visible: boolean = true;
+  // 亮度条与布局元素设置与其它阅读页共用（ReaderBrightnessSession、“使用快速亮度组件”）。
+  @State brightnessValue: number = -1;
+  @State lastManualBrightness: number = 50;
+  @State brightnessReady: boolean = false;
+  @State @Watch('syncLayoutElementDialog') showLayoutElements: boolean = false;
+  private brightnessSession: ReaderBrightnessSession = new ReaderBrightnessSession();
+  private layoutElementDialog: SystemDialogSession = new SystemDialogSession();
   private controller: pdfViewManager.PdfController = new pdfViewManager.PdfController();
   @State navigationIndex: number = 0;
   @State navigationTitle: string = '目录';
@@ -129,6 +140,7 @@ struct PdfReadBookPage {
 
   onPageShow(): void {
     this.visible = true;
+    this.activateBrightness();
     AiAccessPolicy.refresh(); this.refreshAiAccess();
     this.applySystemBars();
     if (this.ready) readStatsTracker.setReadingActive(this.bookUrl);
@@ -137,6 +149,8 @@ struct PdfReadBookPage {
 
   onPageHide(): void {
     this.visible = false; this.previewIndex = -1;
+    this.showLayoutElements = false;
+    this.brightnessSession.deactivate();
     this.applySystemBars();
     readStatsTracker.setReadingActive('');
     this.flushAndSyncProgress();
@@ -145,6 +159,8 @@ struct PdfReadBookPage {
   aboutToDisappear(): void {
     this.flushAndSyncProgress();
     this.alive = false; this.generation++; this.searchGeneration++;
+    this.showLayoutElements = false;
+    this.brightnessSession.deactivate();
     const closeBackdrop = this.shelfCloseBackdrop;
     this.shelfCloseBackdrop = null;
     if (closeBackdrop && !this.shelfCloseBackdropHandedOff) closeBackdrop.release().catch((): void => {});
@@ -154,6 +170,7 @@ struct PdfReadBookPage {
   }
 
   onBackPress(): boolean {
+    if (this.showLayoutElements) { this.showLayoutElements = false; return true; }
     if (this.activePanel) { this.setPanel(''); return true; }
     if (this.menuVisible) { this.menuVisible = false; return true; }
     this.close(); return true;
@@ -184,6 +201,7 @@ struct PdfReadBookPage {
       book = await appDb.getBook(this.bookUrl);
       if (!book || !this.alive || token !== this.generation) return;
       const defaults = await ReaderPdfSettingsStore.load(context);
+      await this.loadReaderSettings(context);
       if (!this.alive || token !== this.generation) return;
       const settings = defaults.withOverrides({
         'pdfContinuous': book.getVariable(ReaderPdfSettings.CONTINUOUS),
@@ -209,6 +227,66 @@ struct PdfReadBookPage {
     } catch (error) {
       if (this.alive && token === this.generation) this.fail(error instanceof Error ? error.message : '打开 PDF 失败');
     }
+  }
+
+  /** 直接从书架打开 PDF 时普通阅读页还没读过“使用快速亮度组件”。 */
+  private async loadReaderSettings(context: Context): Promise<void> {
+    try {
+      const settings: ReaderSettings = await ReaderSettingsStore.load(context);
+      AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION, settings.useBrightnessQuickAction);
+    } catch (error) {
+      console.warn('[PDF] reader settings failed:', error);
+    }
+  }
+
+  private activateBrightness(): void {
+    const context = this.getUIContext().getHostContext();
+    if (!context) return;
+    this.brightnessReady = false;
+    this.brightnessSession.activate(context, (value: number): void => {
+      this.brightnessValue = value;
+      if (value >= 0) this.lastManualBrightness = value;
+      this.brightnessReady = true;
+    }, (): void => HdsFeedback.showToast('阅读亮度设置失败，请稍后重试'));
+  }
+
+  private setBrightness(value: number, persist: boolean): void {
+    this.brightnessValue = value;
+    if (value >= 0) this.lastManualBrightness = value;
+    this.brightnessSession.set(value, persist);
+  }
+
+  private appDark(): boolean {
+    return this.darkMode;
+  }
+
+  @Builder
+  layoutElementDialogContent() {
+    ReaderLayoutElementSettingsPanel({
+      comicMode: false,
+      showReadingActions: false,
+      showQuickJump: false,
+      dark: this.appDark(),
+      textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+      subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+      accentColor: ThemeRuntime.accentColor(this.darkMode),
+      onClose: (): void => {
+        this.showLayoutElements = false;
+      }
+    })
+  }
+
+  syncLayoutElementDialog(): void {
+    this.layoutElementDialog.sync(this.getUIContext(), this.showLayoutElements, (): void => {
+      this.layoutElementDialogContent();
+    }, {
+      autoCancel: true,
+      maskColor: ThemeRuntime.scrimColor(this.darkMode),
+      warnTag: '显示布局元素设置失败:',
+      onDismiss: (): void => {
+        this.showLayoutElements = false;
+      }
+    });
   }
 
   private documentReady(count: number, index: number): void {
@@ -667,7 +745,11 @@ struct PdfReadBookPage {
         onFitPageChange: (checked: boolean): void => { this.setViewPreference(ReaderPdfSettings.FIT_PAGE, checked); },
         onSearchInput: (text: string): void => { this.searchInput = text; this.invalidateSearch(); },
         onSearch: (): void => { this.search(); },
-        onSearchStep: (direction: number): void => { this.searchNext(direction); } })
+        onSearchStep: (direction: number): void => { this.searchNext(direction); },
+        brightnessValue: this.brightnessValue, lastManualBrightness: this.lastManualBrightness,
+        brightnessReady: this.brightnessReady,
+        onBrightnessChange: (value: number, persist: boolean): void => { this.setBrightness(value, persist); },
+        onLayoutElements: (): void => { this.setPanel(''); this.showLayoutElements = true; } })
       if (this.shelfOpeningCover) {
         // Hidden rather than removed after opening: closing animates back from the open angle.
         ReaderShelfCoverOpening({ angle: this.shelfCoverAngle, shade: this.shelfCoverShade,

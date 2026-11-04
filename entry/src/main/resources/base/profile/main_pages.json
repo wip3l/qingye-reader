@@ -4,6 +4,7 @@
     "pages/Index",
     "pages/ReadBook",
     "pages/PdfReadBook",
+    "pages/EpubOriginalReadBook",
     "pages/AudioBook",
     "pages/VideoPlayer",
     "pages/SearchBookDetail",

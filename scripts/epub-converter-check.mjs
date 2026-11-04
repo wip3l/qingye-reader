@@ -6,8 +6,9 @@
 
 import { loadReaderModules } from './lib/load-reader-modules.mjs';
 
-const { EpubHtmlConverter, EpubImageRef, EpubChapterPlanner, EpubTocEntry, ReaderImageMarker, ReaderActionMarker,
-  EpubNoteLink, EpubTextOffsetMap, cleanup } = await loadReaderModules();
+const { EpubHtmlConverter, EpubImageRef, EpubChapterPlanner, EpubChapterSegment, EpubTocEntry, ReaderImageMarker,
+  ReaderActionMarker, EpubNoteLink, EpubTextOffsetMap, EpubOriginalDocument, EpubOriginalPiece, EpubOriginalPosition,
+  EpubOriginalSpot, EpubOriginalScript, EpubOriginalLayoutOptions, cleanup } = await loadReaderModules();
 
 let failures = 0;
 const check = (condition, message, detail = '') => {
@@ -298,6 +299,66 @@ try {
       '被去掉的脚注块之后的偏移对齐到新正文');
     equal(EpubTextOffsetMap.map(oldText, newText, oldText.indexOf('注释一') + 1), newText.indexOf('下一段'),
       '落在被去掉的脚注块里的偏移归到它后面');
+  }
+
+  console.log('original layout');
+  {
+    const piece = new EpubOriginalPiece();
+    piece.path = 'OEBPS/Text/ch1.xhtml';
+    piece.html = '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><title>x</title>' +
+      '<link rel="stylesheet" href="../Styles/main.css"/><link rel="alternate stylesheet" href="../Styles/alt.css"/>' +
+      '<style>p{background:url(../Images/bg.png)}</style><script src="a.js"></script></head>' +
+      '<body class="c1"><h1 id="t">标题</h1><p>正文<a href="#fn1">1</a><a id="p2"/>后文<img src="../Images/a.jpg"/></p>' +
+      '<div style="background-image:url(\'../Images/b.png\')" onclick="x()">x</div><a href="http://e.com">外</a>' +
+      '<a href="/OEBPS/x.xhtml">根</a><script>alert(1)</script><p id="end">尾</p></body></html>';
+    const segment = new EpubChapterSegment();
+    segment.path = piece.path;
+    segment.endId = 'end';
+    const html = EpubOriginalDocument.build([piece], [segment], EpubOriginalScript.injection(new EpubOriginalLayoutOptions()),
+      '第一章');
+    const origin = EpubOriginalDocument.ORIGIN;
+    check(html.includes(`<link rel="stylesheet" href="${origin}/OEBPS/Styles/main.css">`), '样式表地址改成虚拟站点的绝对地址');
+    check(!html.includes('alt.css'), '备用样式表不引入');
+    check(html.includes(`url(${origin}/OEBPS/Images/bg.png)`) && html.includes(`url('${origin}/OEBPS/Images/b.png')`),
+      '<style> 与内联样式里的 url() 都改写');
+    check(html.includes(`href="${origin}/OEBPS/Text/ch1.xhtml#fn1"`), '本文件锚点链接带上文件路径，点开时能找到目标');
+    check(html.includes(`href="${origin}/OEBPS/x.xhtml"`) && html.includes('href="http://e.com"'), '根路径改写，外部链接不动');
+    check(html.includes('<a id="p2"></a>后文'), '非空元素的自闭合写法改成成对标签');
+    check(!/alert\(1\)|a\.js|onclick/.test(html), '书里的脚本与事件属性都去掉');
+    check(html.includes('<body class="c1">') && html.includes('lang="zh"') && !html.includes('id="end"'),
+      '保留 html/body 属性，按锚点只取本章片段');
+    equal(EpubOriginalDocument.pathOf(`${origin}/OEBPS/Text/ch%201.xhtml#fn1`), 'OEBPS/Text/ch 1.xhtml', '虚拟地址还原路径');
+    equal(EpubOriginalDocument.pathOf(`${origin}/../secret`), '', '越出解压目录的地址不放行');
+    equal(EpubOriginalDocument.pathOf('https://example.com/a.css'), '', '其它站点不放行');
+    check(EpubOriginalDocument.isChapterUrl(EpubOriginalDocument.chapterUrl(3, 7)), '章节文档地址可识别');
+    check(EpubOriginalDocument.isScript('OEBPS/js/a.js'), '脚本文件识别为不放行');
+    let scriptOk = true;
+    try {
+      new Function(EpubOriginalScript.injection(new EpubOriginalLayoutOptions()).script);
+    } catch (error) {
+      scriptOk = false;
+      console.error(error);
+    }
+    check(scriptOk, '注入脚本语法正确');
+    const tricky = new EpubOriginalLayoutOptions();
+    tricky.target.kind = 'spot';
+    tricky.target.snippet = '$&</script>';
+    const trickyScript = EpubOriginalScript.injection(tricky).script;
+    check(!trickyScript.includes('</script>') && trickyScript.includes('$&'), '定位文字里的 </script> 与 $& 不破坏脚本');
+
+    const content = `标题\n\n正文${ReaderActionMarker.create('1', 'legado-epub-note:a#b')}后文¹ 很长的一段内容在这里继续写下去，` +
+      '一直写到足够长的位置。';
+    const spot = EpubOriginalPosition.spotAt(content, content.indexOf('后文'));
+    check(spot.snippet.startsWith('后文1很长'), '普通阅读器偏移换成紧凑文字片段（上标统一成数字、去掉空白）');
+    equal(EpubOriginalPosition.offsetFor(content, spot), content.indexOf('后文'), '片段换回同一个偏移');
+    const webSpot = new EpubOriginalSpot();
+    webSpot.snippet = '很长的一段内容在这里继续写下去';
+    webSpot.fraction = 0.5;
+    equal(EpubOriginalPosition.offsetFor(content, webSpot), content.indexOf('很长'), '网页回报的片段找到普通正文里的位置');
+    const missing = new EpubOriginalSpot();
+    missing.snippet = '完全不存在的文字片段';
+    missing.fraction = 1;
+    check(EpubOriginalPosition.offsetFor(content, missing) > content.indexOf('很长'), '找不到片段时按比例定位');
   }
 
   // 单文件上千章：按锚点切章不再随章数平方增长

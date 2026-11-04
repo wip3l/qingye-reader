@@ -13,6 +13,10 @@ import { AppSpacing } from '../../theme/AppSpacing';
 @Component
 export struct ReaderLayoutElementSettingsPanel {
   @Prop comicMode: boolean = false;
+  /** 文件排版、PDF 没有朗读与自动滚动，不显示这两项。 */
+  @Prop showReadingActions: boolean = true;
+  /** PDF 的页码进度条固定显示，不显示快速跳转开关。 */
+  @Prop showQuickJump: boolean = true;
   dark: boolean = false;
   textColor: string = '#202124';
   subTextColor: string = '#80868B';
@@ -67,25 +71,29 @@ export struct ReaderLayoutElementSettingsPanel {
         .width('100%')
         .margin({ bottom: AppSpacing.MD })
 
-      if (!this.comicMode) {
+      if (!this.comicMode && this.showReadingActions) {
         this.toggleRow('使用快速朗读组件', '显示朗读快捷按钮和悬浮胶囊', this.readerUseTtsQuickAction,
           (enabled: boolean) => {
             this.readerUseTtsQuickAction = enabled;
             this.save();
           })
       }
-      this.toggleRow('使用快速滚动组件', '显示自动滚动快捷按钮', this.readerUseAutoScrollQuickAction,
-        (enabled: boolean) => {
-          this.readerUseAutoScrollQuickAction = enabled;
-          this.save();
-        })
-      this.toggleRow('使用快速跳转组件', this.comicMode ? '在话数、全书百分比与本话页数之间切换，保留上一话、下一话按钮' :
+      if (this.showReadingActions) {
+        this.toggleRow('使用快速滚动组件', '显示自动滚动快捷按钮', this.readerUseAutoScrollQuickAction,
+          (enabled: boolean) => {
+            this.readerUseAutoScrollQuickAction = enabled;
+            this.save();
+          })
+      }
+      if (this.showQuickJump) {
+        this.toggleRow('使用快速跳转组件', this.comicMode ? '在话数、全书百分比与本话页数之间切换，保留上一话、下一话按钮' :
         '在章节、全书百分比与本章页数之间切换，保留上一章、下一章按钮', this.readerUseChapterQuickJump,
         (enabled: boolean) => {
           this.readerUseChapterQuickJump = enabled;
           this.onChapterQuickJumpChanged(enabled);
           this.save();
         })
+      }
       this.toggleRow('使用快速亮度组件', '唤出阅读菜单时，在右侧显示亮度条', this.readerUseBrightnessQuickAction,
         (enabled: boolean) => {
           this.readerUseBrightnessQuickAction = enabled;

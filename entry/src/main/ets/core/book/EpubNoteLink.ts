@@ -21,6 +21,14 @@ export class EpubNoteLink {
     return `${EpubNoteLink.SCHEME}${encodeURIComponent(file)}#${encodeURIComponent(anchor)}`;
   }
 
+  /** 注释正文拆成弹窗里一段一段显示的块（文字段落或图片标记）。 */
+  static blocks(content: string, maxBlocks: number = 80): string[] {
+    return (content || '').split(/\n+/)
+      .map((line: string): string => line.trim())
+      .filter((line: string): boolean => line.length > 0)
+      .slice(0, maxBlocks);
+  }
+
   static isNote(url: string): boolean {
     return (url || '').startsWith(EpubNoteLink.SCHEME);
   }

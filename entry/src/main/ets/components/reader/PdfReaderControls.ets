@@ -1,6 +1,7 @@
 import { ImmersiveBackButton } from '../ImmersiveBackButton';
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { ReaderQuickJumpContent } from './ReaderQuickJumpContent';
+import { ReaderBrightnessControl } from './ReaderBrightnessControl';
 import { ReaderSettingSwitchRow, ReaderSettingActionRow } from './ReaderSettingRows';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
@@ -23,6 +24,7 @@ export struct PdfReaderControls {
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @StorageProp('themeRevision') themeRevision: number = 0;
   @StorageProp('readerAiProcessingIndicatorEnabled') readerAiProcessingIndicatorEnabled: boolean = true;
+  @StorageProp('readerUseBrightnessQuickAction') readerUseBrightnessQuickAction: boolean = true;
   @Prop darkMode: boolean = false;
   @Prop bookTitle: string = '';
   @Prop menuVisible: boolean = false;
@@ -48,6 +50,9 @@ export struct PdfReaderControls {
   @Prop navigationTitle: string = '目录';
   /** 目录行数，用来让短目录的面板不留大片空白；0 表示未知。 */
   @Prop navigationCount: number = 0;
+  @Prop brightnessValue: number = -1;
+  @Prop lastManualBrightness: number = 50;
+  @Prop brightnessReady: boolean = false;
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 720;
   @State jumpText: string = '';
@@ -66,6 +71,8 @@ export struct PdfReaderControls {
   onSearchInput: (text: string) => void = (_text: string): void => {};
   onSearch: () => void = (): void => {};
   onSearchStep: (direction: number) => void = (_direction: number): void => {};
+  onBrightnessChange: (value: number, persist: boolean) => void = (_value: number, _persist: boolean): void => {};
+  onLayoutElements: () => void = (): void => {};
 
   @Builder
   emptyContent() {}
@@ -105,7 +112,7 @@ export struct PdfReaderControls {
   private panelHeight(): number {
     let desired = PANEL_HEADER_HEIGHT;
     if (this.activePanel === 'toc') desired = this.navigationCount > 0 ? Math.min(520, desired + this.navigationCount * 56 + 12) : 520;
-    else if (this.activePanel === 'settings') desired += 4 * 64 + 40 + (this.superResolution && this.superResolutionReady() ? 40 : 0) + 16;
+    else if (this.activePanel === 'settings') desired += 5 * 64 + 40 + (this.superResolution && this.superResolutionReady() ? 40 : 0) + 16;
     else if (this.activePanel === 'search') desired += 44 + 8 + 36 + 16;
     else desired += 44 + 10 + 20 + 20;
     const available = this.activePanel === 'search' ?
@@ -144,6 +151,34 @@ export struct PdfReaderControls {
 
   private scrimColor(): string {
     return this.darkMode ? '#47000000' : '#1F000000';
+  }
+
+  /** 亮度条放在顶栏与底栏之间，和其它阅读页一样随菜单出现。 */
+  private brightnessHeight(): number {
+    const top = this.topBarBottom() + 12;
+    const bottom = this.viewportHeight - this.bottomInset() - this.bottomBarHeight() - 74;
+    return Math.max(0, Math.min(280, bottom - top));
+  }
+
+  private brightnessTop(): number {
+    const top = this.topBarBottom() + 12;
+    const bottom = this.viewportHeight - this.bottomInset() - this.bottomBarHeight() - 74;
+    return top + Math.max(0, (bottom - top - this.brightnessHeight()) / 2);
+  }
+
+  @Builder
+  brightnessControl() {
+    ReaderBrightnessControl({
+      value: this.brightnessValue, lastManualValue: this.lastManualBrightness,
+      panelHeight: this.brightnessHeight(), ready: this.brightnessReady,
+      dark: this.darkMode, panelColor: ThemeRuntime.cardColor(this.darkMode),
+      textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+      accentColor: ThemeRuntime.accentColor(this.darkMode), trackColor: ThemeRuntime.dividerColor(this.darkMode),
+      thumbColor: ThemeRuntime.cardColor(this.darkMode),
+      onChange: (value: number, persist: boolean): void => this.onBrightnessChange(value, persist)
+    })
+      .position({ x: Math.max(0, this.viewportWidth - ReaderBrightnessControl.WIDTH - 12), y: this.brightnessTop() })
+      .transition(TransitionEffect.OPACITY)
   }
 
   @Builder
@@ -309,6 +344,10 @@ export struct PdfReaderControls {
           textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
           onChange: this.onFitPageChange })
         this.aiSettingsRow()
+        ReaderSettingActionRow({ title: '布局元素设置', description: '控制唤出菜单时显示的快捷组件，如亮度条',
+          actionText: '设置', textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode), buttonColor: ThemeRuntime.accentColor(this.darkMode),
+          buttonTextColor: ThemeRuntime.onAccentColor(), onAction: this.onLayoutElements })
         if (this.superResolution && this.superResolutionReady()) {
           Text('AI 可能改变细小文字和数字，可通过“查看原页”对照。').fontSize(AppFontSize.CAPTION)
             .fontColor(ThemeRuntime.subTextColor(this.darkMode)).width('100%')
@@ -410,6 +449,10 @@ export struct PdfReaderControls {
             this.compareBar()
           }
           if (this.activePanel) { this.floatingPanel() }
+          if (!this.activePanel && this.previewIndex < 0 && this.readerUseBrightnessQuickAction &&
+            this.brightnessHeight() >= 132) {
+            this.brightnessControl()
+          }
         }
       }
     }.width('100%').height('100%').hitTestBehavior(HitTestMode.Transparent)
