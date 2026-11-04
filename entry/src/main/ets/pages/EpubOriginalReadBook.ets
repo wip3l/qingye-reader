@@ -39,6 +39,7 @@ import { WebDavBookService } from '../webdav/WebDavBookService';
 import {
   ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP,
   SHELF_COVER_CLOSE_DURATION, SHELF_COVER_FRAME_RATE, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
+  detachedShelfSharedCoverId, shelfCoverCropAspect,
   SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
@@ -270,6 +271,7 @@ struct EpubOriginalReadBookPage {
   @State shelfCoverShade: number = 0.5;
   @State shelfCoverScaleX: number = 0;
   @State shelfCoverFillImage: boolean = false;
+  @State shelfCoverCropAspect: number = 0;
   @State shelfCoverFrameVisible: boolean = true;
   @State shelfOpenScaleX: number = 1;
   @State shelfOpenScaleY: number = 1;
@@ -1414,7 +1416,7 @@ struct EpubOriginalReadBookPage {
     const backdrop = closeTarget ? await ShelfCoverLocator.backdrop() : null;
     const selfClose = !!closeTarget && !!backdrop;
     if (selfClose) {
-      this.shelfSharedCoverId = '';
+      this.shelfSharedCoverId = detachedShelfSharedCoverId(this.shelfSharedCoverId);
       this.shelfCloseBackdrop = backdrop;
       await ReaderRenderFrame.wait(this.getUIContext());
     }
@@ -1442,6 +1444,7 @@ struct EpubOriginalReadBookPage {
   private closeIntoShelfCover(target: ShelfOpeningCover): Promise<void> {
     this.shelfCoverVisible = true;
     this.shelfCoverFillImage = true;
+    this.shelfCoverCropAspect = shelfCoverCropAspect(target);
     AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
       Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
     return new Promise<void>((resolve: () => void): void => {
@@ -1483,6 +1486,7 @@ struct EpubOriginalReadBookPage {
     this.shelfCoverScaleX = 1;
     this.shelfCoverShade = 0;
     this.shelfCoverFillImage = true;
+    this.shelfCoverCropAspect = shelfCoverCropAspect(cover);
     this.shelfCoverVisible = true;
     this.shelfOpenAnimating = true;
   }
@@ -1752,7 +1756,8 @@ struct EpubOriginalReadBookPage {
 
       if (this.shelfOpeningCover) {
         ReaderShelfCoverOpening({ angle: this.shelfCoverAngle, shade: this.shelfCoverShade,
-          scaleX: this.shelfCoverScaleX, fillImage: this.shelfCoverFillImage, showFrame: this.shelfCoverFrameVisible,
+          scaleX: this.shelfCoverScaleX, fillImage: this.shelfCoverFillImage,
+          cropAspect: this.shelfCoverCropAspect, showFrame: this.shelfCoverFrameVisible,
           cover: this.shelfOpeningCover })
           .width('100%')
           .height('100%')

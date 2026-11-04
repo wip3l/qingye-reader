@@ -9,10 +9,14 @@ const names = ['openTileGroupPage', 'selectShelfGroup', 'onActiveShelfGroupChang
   'activeShelfTypeTab', 'booksForShelfScope', 'isInShelfView', 'matchesShelfGroup', 'shelfBookType',
   'shouldUseTileGroupFolders', 'reloadShelfDataSources', 'tileGroupElementId', 'changeTileGroup',
   'beginTileGroupMotion', 'enterTileGroup', 'animateTileGroupIn', 'leaveTileGroupPage', 'animateTileGroupOut',
-  'afterTileGroupFrames', 'placeTileGroupMotion',
+  'afterTileGroupFrames', 'placeTileGroupMotion', 'leadTileGroupIn', 'interpolateTileGroupBounds',
+  'collapseTileGroupToCard', 'landTileGroupOnCard', 'tileGroupShelfShotKeyNow', 'dropTileGroupShelfShot',
   'resetTileGroupMotionTransform', 'applyTileGroupTarget', 'scheduleTileGroupStart', 'snapshotTileGroupElement',
   'releaseTileGroupShot', 'finishTileGroupMotion', 'clearTileGroupMotionLayers', 'cancelTileGroupMotion',
-  'onTileGroupBackRequested', 'getTileGroupBooks', 'getTileGroupPreviewBooks', 'updateContextViewport', 'areaDimension'];
+  'onTileGroupBackRequested', 'getTileGroupBooks', 'getTileGroupPreviewBooks', 'updateContextViewport', 'areaDimension',
+  'tileGroupPreviewCoverId', 'tileGroupFlyValue', 'measureTileGroupRect', 'captureTileGroupPreviewSources',
+  'measureTileGroupPageCover', 'makeTileGroupFlyer', 'mountTileGroupFlyers', 'openTileGroupFlyers',
+  'closeTileGroupFlyers', 'shelfCoverScope', 'shelfCoverElementId'];
 const methods = names.map(name => {
   const plain = source.indexOf(`  ${name}(`);
   const at = plain >= 0 ? plain : source.indexOf(`  async ${name}(`);
@@ -26,6 +30,8 @@ let snapshotMode = 'ok';
 const pending = [];
 const context = vm.createContext({
   SHELF_GROUP_MOTION_DURATION: 420, SHELF_GROUP_MOTION_START_CAP: 220, SHELF_GROUP_MOTION_WATCHDOG: 1600,
+  SHELF_GROUP_LEAD_DURATION: 220, SHELF_GROUP_LEAD_PROGRESS: 0.3, SHELF_GROUP_EXPAND_DURATION: 300,
+  SharedElementBounds: class { constructor(x, y, width, height) { Object.assign(this, { x, y, width, height }); } },
   SHELF_GROUP_CARD_RADIUS: 7, SHELF_GROUP_FRAME_RATE: { min: 60, max: 120, expected: 120 },
   setTimeout(fn, delay) { timers.set(++nextTimer, { fn, delay }); return nextTimer; },
   clearTimeout(id) { timers.delete(id); },
@@ -36,7 +42,15 @@ const context = vm.createContext({
   SHELF_GROUP_PREMOUNT_FRAMES: 2,
   BookTypeSupport: { isVideo: b => b.type === 'video', isAudio: b => b.type === 'audio', isImage: b => b.type === 'image' },
   BookshelfStateStore: { saveActiveGroupId: async (_context, groupId) => saved.push(groupId) },
+  TileGroupFlyer: class {},
+  TileGroupPreviewSource: class { constructor(book, bounds) { this.book = book; this.bounds = bounds; } },
 });
+// Layout rects (window px == vp here). getRectangleById reports layout positions, not transformed ones.
+const rects = {
+  bookshelf_motion_root: { x: 0, y: 0, width: 800, height: 1200 },
+  [`shelf_group_audio_7_cover_${encodeURIComponent('group-a-audio')}`]: { x: 50, y: 190, width: 40, height: 60 },
+  [`shelf_book_cover_audio_${encodeURIComponent('group-a-audio')}`]: { x: 20, y: 110, width: 100, height: 140 }
+};
 vm.runInContext(stripTypeScriptTypes(`class BookshelfPage {
   static TYPE_TAB_IDS = ['all', 'text', 'image', 'audio', 'video'];
   ${methods}
@@ -67,6 +81,11 @@ Object.assign(shelf, {
   shelfComponentActive: true, tileGroupAnimating: false, tileGroupHasOrigin: false,
   tileGroupOriginBounds: { x: 0, y: 0, width: 0, height: 0 }, tileGroupOriginGroupId: 0,
   tileGroupBackdrop: undefined, tileGroupCurtain: undefined, tileGroupCardShot: undefined,
+  tileGroupShelfShot: undefined, tileGroupShelfShotKey: '', tileGroupCover: undefined, appDarkMode: false,
+  tileGroupFlyers: [], tileGroupFlyProgress: 0, tileGroupHiddenCovers: [], tileGroupPreviewSources: [],
+  tileGroupLeadBounds: { x: 0, y: 0, width: 0, height: 0 },
+  shouldUseThemeBookCover: () => false, getShelfCoverList: () => ['cover.jpg'], getShelfCover: () => 'cover.jpg',
+  imageCover: raw => raw, getBookColor: () => '#000000',
   tileGroupMotionScaleX: 1, tileGroupMotionScaleY: 1, tileGroupMotionTranslateX: 0, tileGroupMotionTranslateY: 0,
   tileGroupMotionRadius: 0, tileGroupCardOpacity: 0, tileGroupScrimOpacity: 0, tileGroupPageOpacity: 1,
   tileGroupPendingBack: false, tileGroupPendingTarget: -1, tileGroupMotionGeneration: 0,
@@ -79,6 +98,12 @@ Object.assign(shelf, {
     animateTo(options, update) { animations.push(options); update(); if (options.onFinish) finishes.push(options.onFinish); },
     // Frame callbacks fire at once; idle callbacks never do, so motion starts from the cap timer.
     postFrameCallback(callback) { if (callback.next) callback.next(); },
+    px2vp: value => value,
+    getComponentUtils: () => ({ getRectangleById: id => {
+      const rect = rects[id];
+      if (!rect) throw new Error(`no component ${id}`);
+      return { size: { width: rect.width, height: rect.height }, windowOffset: { x: rect.x, y: rect.y } };
+    } }),
     getComponentSnapshot: () => ({ get: id => {
       if (snapshotMode === 'fail') return Promise.reject(new Error('snapshot failed'));
       if (snapshotMode === 'hang') return new Promise(resolve => pending.push(() => resolve(shot(id))));
@@ -97,7 +122,8 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 function runTimer(id) { const timer = timers.get(id); assert.ok(timer, `timer ${id}`); timers.delete(id); timer.fn(); }
 function start() { runTimer(shelf.tileGroupStartTimer); }
 function finish() { assert.ok(finishes.length, 'a finishing animation'); finishes.shift()(); }
-async function open(id) { shelf.openTileGroupPage(id, 'audio', 90, 220); await settle(); start(); }
+// Opens from the card and completes the lead phase; the expansion is left running for the caller to finish.
+async function open(id) { shelf.openTileGroupPage(id, 'audio', 90, 220); await settle(); start(); finish(); }
 async function back() { shelf.exitTileGroupPage(); await settle(); start(); }
 const rootPages = shelf.shelfCategoryPages;
 assert.equal(shelf.shouldUseTileGroupFolders(), true);
@@ -105,54 +131,92 @@ shelf.onActiveShelfGroupChanged();
 assert.deepEqual(saved, [], 'initial state restoration must not overwrite the saved group');
 shelf.shelfStateRestored = true;
 
-// Opening: snapshots first, then the page switches while shrunk onto the card.
+// Opening: snapshots first; the card snapshot starts growing at once and the page is built beneath it.
 shelf.openTileGroupPage(7, 'audio', 90, 220);
 assert.equal(shelf.tileGroupAnimating, true);
 assert.equal(shelf.activeShelfGroupId, 0, 'the shelf stays put until its snapshot is taken');
 shelf.openTileGroupPage(8, 'audio', 90, 220);
 assert.equal(shelf.tileGroupPendingTarget, 7, 'repeated taps cannot replace a running transition');
 await settle();
+assert.equal(animations[0].duration, 220, 'the lead motion starts before the page is built');
 assert.equal(shelf.isTileGroupPage(), true);
 assert.equal(shelf.activeShelfGroupName(), '分组甲');
 assert.deepEqual(visible(), ['group-a-audio'], 'group page preserves category, privacy and filters');
 assert.equal(shelf.shouldUseTileGroupFolders(), false);
 assert.ok(shelf.tileGroupBackdrop && shelf.tileGroupCardShot, 'frozen shelf below, card snapshot on top');
-assert.equal(shelf.tileGroupMotionScaleX, 100 / 800);
-assert.equal(shelf.tileGroupMotionScaleY, 150 / 1200);
-assert.equal(shelf.tileGroupMotionTranslateX, 40);
-assert.equal(shelf.tileGroupMotionTranslateY, 180);
-assert.equal(shelf.tileGroupCardOpacity, 1);
+// The page is created at the lead's end pose: 30% of the way from the card to full screen.
+assert.equal(shelf.tileGroupMotionScaleX, (100 + 700 * 0.3) / 800);
+assert.equal(shelf.tileGroupMotionScaleY, (150 + 1050 * 0.3) / 1200);
+assert.equal(shelf.tileGroupMotionTranslateX, 40 * 0.7);
+assert.equal(shelf.tileGroupMotionTranslateY, 180 * 0.7);
+assert.equal(shelf.tileGroupCardOpacity, 1, 'the card snapshot covers the page while it is built');
 assert.notEqual(shelf.shelfCategoryPages, rootPages, 'group and root keep separate scroll controllers');
 assert.equal(shelf.shelfHeaderCollapse, 0);
 assert.equal(shelf.showShelfGroupMenu || shelf.showShelfMoreMenu || shelf.showShelfFilterMenu, false);
 assert.deepEqual(saved, [7]);
 assert.ok(reloads.every(Boolean));
-assert.equal(animations.length, 0, 'motion waits for the page to be built');
+assert.deepEqual([...shelf.tileGroupPreviewSources].map(source => source.book.bookUrl), ['group-a-audio'],
+  'the 2x2 preview positions are measured at the tap');
 start();
-assert.equal(animations[0].duration, 420);
+assert.equal(animations.length, 1, 'expansion waits for the lead to arrive');
+assert.equal(shelf.tileGroupFlyers.length, 0);
+finish();
+assert.equal(animations[1].duration, 300);
+// The preview cover flies from its 2x2 slot (as scaled at the end of the lead) to its spot in the 4-across page.
+const [opener] = shelf.tileGroupFlyers;
+assert.ok(opener, 'a preview cover flies on its own');
+assert.ok(Math.abs(opener.fromX - (28 + 10 * 3.1)) < 1e-9 && Math.abs(opener.fromY - (126 + 10 * 3.1)) < 1e-9);
+assert.ok(Math.abs(opener.fromScaleX * opener.width - 40 * 3.1) < 1e-9);
+assert.equal(opener.toX, 20);
+assert.equal(opener.toY, 110);
+assert.ok(Math.abs(opener.toScaleX * opener.width - 100) < 1e-9);
+assert.equal(shelf.tileGroupFlyProgress, 1, 'flies with the page expansion');
+assert.deepEqual([...shelf.tileGroupHiddenCovers], ['group-a-audio'], 'the page hides its own copy meanwhile');
 assert.equal(shelf.tileGroupMotionScaleX, 1);
 assert.equal(shelf.tileGroupMotionTranslateY, 0);
 assert.equal(shelf.tileGroupCardOpacity, 0, 'the blurry enlarged card fades out early');
 finish();
 assert.equal(shelf.tileGroupAnimating, false);
-assert.equal(shelf.tileGroupBackdrop, undefined, 'the frozen shelf is dropped after opening');
+assert.deepEqual([...shelf.tileGroupFlyers], [], 'flying covers hand over to the page when it lands');
+assert.deepEqual([...shelf.tileGroupHiddenCovers], []);
+assert.equal(shelf.tileGroupBackdrop, undefined, 'the frozen shelf leaves the screen after opening');
+assert.ok(shelf.tileGroupShelfShot, '...but is kept for the way back');
 assert.ok(shelf.tileGroupCardShot, 'the card snapshot is kept for the way back');
 
-// Return: frozen group page covers the rebuilt shelf, then shrinks onto the card.
+// Return: the live group page shrinks onto the card over the kept shelf snapshot; the shelf is rebuilt after.
+const keptShelf = shelf.tileGroupShelfShot;
+const animationsBeforeBack = animations.length;
 shelf.exitTileGroupPage();
-await settle();
-assert.ok(shelf.tileGroupCurtain);
+assert.equal(shelf.tileGroupCurtain, undefined, 'no snapshot of the group page is needed');
+assert.equal(shelf.tileGroupBackdrop, keptShelf);
+assert.equal(animations.length, animationsBeforeBack + 2, 'collapse starts right away');
+assert.equal(shelf.activeShelfGroupId, 7, 'the shelf is not rebuilt during the motion');
+assert.equal(shelf.tileGroupMotionScaleX, 100 / 800, 'the page lands on the card');
+assert.equal(shelf.tileGroupMotionTranslateY, 180);
+assert.equal(shelf.tileGroupCardOpacity, 1);
+const [closer] = shelf.tileGroupFlyers;
+assert.ok(closer, 'the preview cover flies back into its 2x2 slot');
+assert.equal(closer.fromX, 20);
+assert.equal(closer.toX, 50);
+assert.equal(closer.toY, 190);
+assert.ok(Math.abs(closer.toScaleX * closer.width - 40) < 1e-9);
+assert.equal(animations[animations.length - 1].delay, 210, 'the card snapshot fades in late while covers fly');
+finish();
+assert.equal(shelf.tileGroupCover, keptShelf, 'the landed frame covers the shelf rebuild');
 assert.equal(shelf.activeShelfGroupId, 0);
 assert.equal(shelf.shelfCategoryPages, rootPages);
 assert.equal(rootPages.get('audio').tileOffset, 420);
 assert.equal(shelf.shelfHeaderCollapse, 20);
 assert.deepEqual(visible(), ['group-a-audio', 'group-b-audio', 'ungrouped']);
-assert.equal(shelf.tileGroupMotionScaleX, 1, 'curtain starts full screen');
+assert.equal(shelf.tileGroupAnimating, true);
 start();
-assert.equal(shelf.tileGroupMotionScaleX, 100 / 800, 'curtain lands on the card');
-assert.equal(shelf.tileGroupCardOpacity, 1);
-finish();
-assert.equal(shelf.tileGroupCurtain, undefined);
+assert.equal(shelf.tileGroupAnimating, false);
+assert.equal(shelf.tileGroupCover, undefined);
+assert.equal(shelf.tileGroupBackdrop, undefined);
+assert.equal(shelf.tileGroupShelfShot, undefined);
+for (const [id, timer] of [...timers]) if (timer.delay === 300) runTimer(id);
+assert.ok(released.includes(keptShelf.id), 'the kept shelf snapshot is released once');
+assert.equal(released.filter(id => id === keptShelf.id).length, 1);
 assert.equal(shelf.tileGroupCardShot, undefined);
 assert.equal(shelf.tileGroupHasOrigin, false);
 assert.equal(shelf.shouldUseTileGroupFolders(), true);
@@ -169,10 +233,11 @@ assert.deepEqual(visible(), ['group-b-audio']);
 shelf.onTileGroupBackRequested();
 assert.equal(shelf.tileGroupPendingBack, true, 'system Back during opening is queued');
 finish();
-await settle();
+assert.equal(shelf.tileGroupAnimating, true, 'the queued Back collapses onto the card');
+finish();
 assert.equal(shelf.activeShelfGroupId, 0);
-assert.equal(shelf.tileGroupAnimating, true);
-start(); finish();
+start();
+assert.equal(shelf.tileGroupAnimating, false);
 assert.deepEqual(saved, [7, 0, 8, 0]);
 
 // Disposed callbacks cannot unlock a newer transition.
@@ -202,10 +267,11 @@ await back(); finish();
 
 // Snapshots failing still opens the group, just without the card motion.
 snapshotMode = 'fail';
-await open(7);
+shelf.openTileGroupPage(7, 'audio', 90, 220);
+await settle();
 assert.equal(shelf.activeShelfGroupId, 7);
 assert.equal(shelf.tileGroupBackdrop, undefined);
-finish();
+start(); finish();
 shelf.exitTileGroupPage();
 await settle();
 assert.equal(shelf.activeShelfGroupId, 0, 'no curtain snapshot: switch back immediately');

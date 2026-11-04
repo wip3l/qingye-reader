@@ -5,6 +5,7 @@ import { ReaderQuickJumpContent } from '../components/reader/ReaderQuickJumpCont
 import {
   ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP,
   SHELF_COVER_CLOSE_DURATION, SHELF_COVER_FRAME_RATE, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
+  detachedShelfSharedCoverId, shelfCoverCropAspect,
   SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
@@ -1020,6 +1021,7 @@ struct ReadBookPage {
   @State shelfCoverShade: number = 0.5;
   @State shelfCoverScaleX: number = 0;
   @State shelfCoverFillImage: boolean = false;
+  @State shelfCoverCropAspect: number = 0;
   @State shelfCoverFrameVisible: boolean = true;
   /** 打开时整页从书架封面处放大：以左上角为原点非等比缩放再平移，只改绘制不改排版，正文不会重排。 */
   @State shelfOpenScaleX: number = 1;
@@ -3749,7 +3751,8 @@ struct ReadBookPage {
       if (this.shelfOpeningCover) {
         // 翻开后只隐藏不移除：返回时要从翻开的角度合上，新建的节点没有起始帧可动画。
         ReaderShelfCoverOpening({ angle: this.shelfCoverAngle, shade: this.shelfCoverShade,
-          scaleX: this.shelfCoverScaleX, fillImage: this.shelfCoverFillImage, showFrame: this.shelfCoverFrameVisible,
+          scaleX: this.shelfCoverScaleX, fillImage: this.shelfCoverFillImage,
+          cropAspect: this.shelfCoverCropAspect, showFrame: this.shelfCoverFrameVisible,
           cover: this.shelfOpeningCover })
           .width('100%')
           .height('100%')
@@ -18308,6 +18311,7 @@ struct ReadBookPage {
     this.shelfCoverScaleX = 1;
     this.shelfCoverShade = 0;
     this.shelfCoverFillImage = true;
+    this.shelfCoverCropAspect = shelfCoverCropAspect(cover);
     this.shelfCoverVisible = true;
     this.shelfOpenAnimating = true;
     this.shelfMotionRasterized = true;
@@ -18407,6 +18411,7 @@ struct ReadBookPage {
   closeIntoShelfCover(target: ShelfOpeningCover): Promise<void> {
     this.shelfCoverVisible = true;
     this.shelfCoverFillImage = true;
+    this.shelfCoverCropAspect = shelfCoverCropAspect(target);
     AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
       Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
     return new Promise<void>((resolve: () => void): void => {
@@ -18469,7 +18474,7 @@ struct ReadBookPage {
     // 缩回期间正文列整组栅格化到页面销毁。
     if (this.openedWithShelfAnimation) this.shelfMotionRasterized = true;
     if (selfClose) {
-      this.shelfSharedCoverId = '';
+      this.shelfSharedCoverId = detachedShelfSharedCoverId(this.shelfSharedCoverId);
       this.shelfCloseBackdrop = backdrop;
       // 背景图先画出一帧，缩小露出的边缘才不会闪一下底色。
       await ReaderRenderFrame.wait(this.getUIContext());

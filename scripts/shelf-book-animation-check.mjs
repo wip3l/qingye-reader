@@ -9,8 +9,11 @@ function method(source, name) {
   assert.ok(start >= 0, name);
   return source.slice(start, source.indexOf('\n  }', start) + 4).replace('private ', '');
 }
-const constants = read('components/reader/ReaderShelfCoverOpening.ets')
-  .split('\n').filter(line => line.startsWith('export const ')).join('\n').replaceAll('export ', '');
+const coverOpeningSource = read('components/reader/ReaderShelfCoverOpening.ets');
+const constants = [
+  ...coverOpeningSource.split('\n').filter(line => line.startsWith('export const ')),
+  ...[...coverOpeningSource.matchAll(/^export function [\s\S]*?\n}/gm)].map(match => match[0])
+].join('\n').replaceAll('export ', '');
 let now = 1000, sequence = 0;
 const timers = new Map(), storage = new Map();
 const context = vm.createContext({
@@ -22,6 +25,10 @@ const context = vm.createContext({
   clearTimeout: id => timers.delete(id)
 });
 vm.runInContext(stripTypeScriptTypes(constants), context);
+assert.equal(context.shelfCoverCropAspect({ cropImage: true, boundsWidth: 100, boundsHeight: 140 }), 100 / 140,
+  'cropped shelf covers keep their aspect while the page shrinks onto them');
+assert.equal(context.shelfCoverCropAspect({ cropImage: false, boundsWidth: 100, boundsHeight: 140 }), 0,
+  'stretched shelf covers stay stretched');
 function hostFor(source, names) {
   return vm.runInContext(stripTypeScriptTypes(`({${names.map(name => method(source, name)).join(',')}})`), context);
 }
@@ -60,7 +67,7 @@ for (const page of ['ReadBook', 'PdfReadBook']) {
   // Without a position or a snapshot the old close-then-fly path remains.
   assert.match(exit, /ShelfCoverLocator\.locate\(this\.bookUrl\)/, `${page}: asks the shelf where the cover is now`);
   assert.match(exit, /const backdrop = closeTarget \? await ShelfCoverLocator\.backdrop\(\) : null;/, `${page}: snapshots the shelf only with a target`);
-  assert.match(exit, /this\.shelfSharedCoverId = '';\s*this\.shelfCloseBackdrop = backdrop;/, `${page}: backdrop replaces the shared transition`);
+  assert.match(exit, /this\.shelfSharedCoverId = detachedShelfSharedCoverId\(this\.shelfSharedCoverId\);\s*this\.shelfCloseBackdrop = backdrop;/, `${page}: backdrop replaces the shared transition`);
   assert.match(exit, /this\.shelfCloseBackdrop = backdrop;[\s\S]*?await ReaderRenderFrame\.wait\(this\.getUIContext\(\)\);/,
     `${page}: the backdrop gets a frame before the page starts shrinking`);
   assert.match(exit, /if \(selfClose\) \{[\s\S]*?this\.shelfCloseBackdropHandedOff = true;\s*AppStorage\.setOrCreate<image\.PixelMap \| null>\('shelfReturnBackdrop', this\.shelfCloseBackdrop\);[\s\S]*?\} else \{[\s\S]*?this\.shelfCoverFrameVisible = false;/,
