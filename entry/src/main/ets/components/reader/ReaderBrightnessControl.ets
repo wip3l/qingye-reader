@@ -11,7 +11,6 @@ export struct ReaderBrightnessControl {
   @Prop dark: boolean = false;
   @Prop panelColor: string = '';
   @Prop textColor: string = '';
-  @Prop subTextColor: string = '';
   @Prop accentColor: string = '';
   @Prop trackColor: string = '';
   @Prop thumbColor: string = '';
@@ -25,13 +24,13 @@ export struct ReaderBrightnessControl {
         darkMode: this.dark, fallbackColor: this.panelColor
       }) {
         Column({ space: 4 }) {
-          if (this.panelHeight >= 220) {
-            Text('亮度')
-              .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor).height(18)
+          // 面板身份由太阳图标表示，不再放“亮度”标题；跟随系统时也没有数值可显示，
+          // 数值格不占位，让滑块向上延长，状态由底部自动按钮高亮表示。
+          if (this.value >= 0) {
+            Text(`${this.value}%`)
+              .fontSize(AppFontSize.CAPTION).fontColor(this.textColor).height(22)
+              .maxLines(1).minFontSize(AppFontSize.MICRO).maxFontSize(AppFontSize.CAPTION)
           }
-          Text(this.value < 0 ? '' : `${this.value}%`)
-            .fontSize(AppFontSize.CAPTION).fontColor(this.textColor).height(22)
-            .maxLines(1).minFontSize(AppFontSize.MICRO).maxFontSize(AppFontSize.CAPTION)
           if (this.panelHeight >= 220) {
             SymbolGlyph($r('sys.symbol.sun_max'))
               .fontSize(18).fontColor([this.textColor]).height(20)

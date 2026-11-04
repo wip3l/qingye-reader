@@ -4903,7 +4903,7 @@ struct ReadBookPage {
       value: this.readerBrightness, lastManualValue: this.readerLastManualBrightness,
       panelHeight: this.readerBrightnessControlHeight(), ready: this.readerBrightnessReady,
       dark: this.isReaderThemeDark(), panelColor: this.readerPanelColor(),
-      textColor: this.readerPanelTextColor(), subTextColor: this.readerPanelSubTextColor(),
+      textColor: this.readerPanelTextColor(),
       accentColor: this.accentColor(), trackColor: this.readerChapterTrackColor(),
       thumbColor: this.readerSolidPanelColor(),
       onChange: (value: number, persist: boolean): void => {
