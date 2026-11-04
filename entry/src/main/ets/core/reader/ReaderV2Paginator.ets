@@ -173,10 +173,16 @@ export class ReaderV2Paginator {
    * already-shaped paragraph, including page slices, outline runs and scaled standalone titles.
    * The cache only lives for this page; published fragments own their native paragraph references.
    */
+  /**
+   * beforeWork runs before every synchronous page-breaking attempt (each attempt follows one native layout and
+   * can take several milliseconds). The host uses it to park that work in a frame's idle slot while a page turn
+   * is animating; a call already in flight keeps the yield policy it started with.
+   */
   static appendPageAsync(session: ReaderV2PaginationSession,
-    isCurrent: () => boolean = (): boolean => true): Promise<number> {
+    isCurrent: () => boolean = (): boolean => true,
+    beforeWork: (() => Promise<void>) | null = null): Promise<number> {
     if (session.inFlight) return session.inFlight;
-    const work = ReaderV2Paginator.preparePageAsync(session, isCurrent);
+    const work = ReaderV2Paginator.preparePageAsync(session, isCurrent, beforeWork);
     session.inFlight = work;
     return work.finally((): void => {
       if (session.inFlight === work) session.inFlight = null;
@@ -184,7 +190,7 @@ export class ReaderV2Paginator {
   }
 
   private static async preparePageAsync(session: ReaderV2PaginationSession,
-    isCurrent: () => boolean): Promise<number> {
+    isCurrent: () => boolean, beforeWork: (() => Promise<void>) | null): Promise<number> {
     if (session.cancelled || session.pageSet.complete || !isCurrent()) return 0;
     const blockIndex = session.blockIndex;
     const lineIndex = session.lineIndex;
@@ -200,6 +206,10 @@ export class ReaderV2Paginator {
     };
     try {
       while (!session.cancelled && isCurrent()) {
+        if (beforeWork) {
+          await beforeWork();
+          if (session.cancelled || !isCurrent()) break;
+        }
         restore();
         const workStartedAt = Date.now();
         try {

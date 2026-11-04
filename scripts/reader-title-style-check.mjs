@@ -616,6 +616,18 @@ try {
   assert.equal(cancelled.blockIndex, 0); assert.equal(cancelled.lineIndex, 0);
   assert.equal(cancelled.paragraphCache, null); assert.equal(cancelled.inFlight, null);
   assert.equal(await Paginator.appendPageAsync(cancelled), 1, 'a failed or cancelled page can be retried');
+  // The host's yield point runs before every synchronous page-breaking attempt and honours cancellation there.
+  const yielded = Paginator.start(cancellationDoc, Snapshot.create(cancellationInput));
+  let yields = 0;
+  const layoutsBefore = asyncLayouts;
+  assert.equal(await Paginator.appendPageAsync(yielded, () => true, async () => { yields++; }), 1);
+  assert.equal(yields, asyncLayouts - layoutsBefore + 1, 'one yield per attempt: each native layout plus the final page');
+  const yieldCancelled = Paginator.start(cancellationDoc, Snapshot.create(cancellationInput));
+  let yieldValid = true;
+  assert.equal(await Paginator.appendPageAsync(yieldCancelled, () => yieldValid, async () => { yieldValid = false; }), 0);
+  assert.equal(yieldCancelled.pageSet.pages.length, 0, 'cancellation at the yield point publishes nothing');
+  assert.equal(yieldCancelled.blockIndex, 0); assert.equal(yieldCancelled.lineIndex, 0);
+  assert.equal(yieldCancelled.paragraphCache, null); assert.equal(yieldCancelled.inFlight, null);
   holdLayout = true;
   const staleContinuous = Paginator.layoutContinuousAsync(cancellationDoc, Snapshot.create(cancellationInput), [], () => valid);
   valid = false; heldLayouts.shift()();

@@ -67,9 +67,12 @@ assert(reader.includes('ReaderContentPreprocessor.apply'),
   'Reader content must pass through the asynchronous preprocessor');
 assert(reader.includes('await this.appendReaderPaginationBatch(result, chapterIndex, imageOnlyPagination ? 8 : 1,'),
   'Background pagination must be bounded to one text page or a small pure-image batch');
-assert(reader.includes('await ReaderV2Paginator.appendPageAsync(session, isCurrent)') &&
+assert(reader.includes('await ReaderV2Paginator.appendPageAsync(session, isCurrent, (): Promise<void> =>') &&
   paginator.includes('await pending.paragraph.layout(pending.width)'),
   'Paged text must await native asynchronous layout and reject stale work');
+assert(reader.includes('ReaderRenderFrame.waitIdle(this.getUIContext(), READER_PAGINATION_MOTION_IDLE_MS)') &&
+  paginator.includes('await beforeWork();'),
+  'Background page-breaking must yield into frame idle slots while a page turn is animating');
 assert(paginator.includes('breakStrategy: graphicsText.BreakStrategy.GREEDY'),
   'Native paragraph measurement must use the bounded greedy line-break strategy');
 assert(reader.includes('batchElapsedMs') && reader.includes('adaptiveDelay'),

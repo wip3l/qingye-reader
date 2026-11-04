@@ -83,7 +83,7 @@ await warm.warmReaderPageTexture(1);
 const preparedRight = warm.readerPageTextureCache.acquire('leaf-1');
 const preparedLeft = warm.readerPageTextureCache.acquire('leaf--1');
 assert(preparedRight && preparedLeft); assert.equal(bitmaps.length - warmStart, 2);
-assert.equal(frameWaits, 0, 'the warm-up asks RenderService at once instead of waiting for an idle frame first');
+assert.equal(frameWaits, 1, 'one completed frame flushes the settled surface (opacity 0 during the turn) before the snapshot');
 preparedRight.release(); preparedLeft.release(); warm.readerPageTextureCache.clear();
 assert(bitmaps.slice(warmStart).every(target => target.releases === 1));
 const stale = readerFixture(); const staleStart = bitmaps.length;
@@ -116,7 +116,7 @@ late.getUIContext = () => ({ getComponentSnapshot: () => ({ get: async () => {
 } }) });
 frameWaits = 0;
 await late.warmReaderPageTexture(1);
-assert.equal(lateGets, 2); assert.equal(frameWaits, 1, 'one frame wait per missing-node failure');
+assert.equal(lateGets, 2); assert.equal(frameWaits, 2, 'the flush frame plus one frame wait per missing-node failure');
 const lateRight = late.readerPageTextureCache.acquire('leaf-1');
 assert(lateRight, 'the retried snapshot is cached'); lateRight.release(); late.readerPageTextureCache.clear();
 assert(bitmaps.slice(lateStart).every(target => target.releases === 1));

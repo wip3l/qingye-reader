@@ -221,6 +221,8 @@ const READER_PAGE_CURL_SNAPSHOT_SCALE = 0.42;
 // 0.75 时单页位图约 8 MB，渲染服务的离屏渲染与回读落在翻页起始帧；0.6 少三成多像素，正文仍可读。
 const READER_PAGE_3D_SNAPSHOT_SCALE = 0.6;
 const READER_IDLE_WORK_RETRY_MS = 120;
+// 翻页动画进行中，后台分页的每次同步排版（2–7ms）只在帧内还剩这么多空闲时才开始；一直没有就最多等 32ms。
+const READER_PAGINATION_MOTION_IDLE_MS = 5;
 // 连续快翻时卷页动画的时长比例，以及动画中途被下一次翻页催促时走完整页的时长。
 const READER_PAGE_CURL_RAPID_DURATION_RATIO = 0.6;
 const READER_PAGE_CURL_HURRY_DURATION = 150;
@@ -15991,7 +15993,11 @@ struct ReadBookPage {
     isCurrent: () => boolean = (): boolean => true): Promise<void> {
     const session = result.v2Session;
     if (!session || result.complete || maxPages <= 0) return;
-    await ReaderV2Paginator.appendPageAsync(session, isCurrent);
+    // 跨章翻页时目标章的分页有意不停（落地前要排完），同章快翻时排队的翻页也可能等着某一页：
+    // 这些批次不再在定时器到点时直接抢主线程，而是在动画帧的空闲段里做每次同步排版。
+    await ReaderV2Paginator.appendPageAsync(session, isCurrent, (): Promise<void> =>
+      this.isReaderPageTurnMotionActive() ?
+        ReaderRenderFrame.waitIdle(this.getUIContext(), READER_PAGINATION_MOTION_IDLE_MS) : Promise.resolve());
     if (!isCurrent()) return;
     const startedAt = Date.now();
     this.syncReaderV2PaginationResult(result);
@@ -18610,6 +18616,11 @@ struct ReadBookPage {
       this.isPageTurning || this.pageTurnAnimating || this.pageSlideDirection !== 0;
   }
 
+  /** 只看翻页本身的动画：书架打开期间首页的分页不能被挤到帧空闲段去，否则翻开封面时正文还没排好。 */
+  isReaderPageTurnMotionActive(): boolean {
+    return this.isPageTurning || this.pageTurnAnimating || this.pageSlideDirection !== 0;
+  }
+
   // Database and chapter-body callbacks resolve on the UI thread. Started just before or during a turn, they land
   // inside the animation (one chapter-body query measured 17-25 ms, a pagination-cache write 4 x 7-10 ms) and drop
   // frames. Start such background work only once the reader is idle; the cap keeps continuous turning from
@@ -20309,11 +20320,14 @@ struct ReadBookPage {
   }
 
   /**
-   * The settled page is published and its warm-up scheduled in the same task, so the page-keyed node may reach the
-   * tree only on a following frame. Ask RenderService at once and wait a frame only when the id is not there yet:
-   * always waiting for an idle frame first (up to its 80 ms timeout) left rapid turns without a cached texture.
+   * The warm-up is scheduled in the task that ends a turn. In that task the settled surface is still published at
+   * opacity 0 (it hides under the curl Canvas while a turn runs) and its page-keyed node may not be in the tree yet.
+   * A snapshot requested before the next frame flushes that state renders a blank sheet, which the following turn
+   * then curls. Wait for one completed frame first; afterwards retry only when the id is still missing.
    */
   private async snapshotSettledPage(stillWanted: () => boolean): Promise<image.PixelMap> {
+    await ReaderRenderFrame.wait(this.getUIContext());
+    if (!stillWanted()) throw new Error('settled page changed before its snapshot');
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
@@ -20322,7 +20336,7 @@ struct ReadBookPage {
         });
       } catch (error) {
         lastError = error as Error;
-        if (!stillWanted()) break;
+        if (attempt >= 3 || !stillWanted()) break;
         await ReaderRenderFrame.wait(this.getUIContext());
       }
     }
