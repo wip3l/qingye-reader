@@ -29,7 +29,7 @@ export struct ReaderBrightnessControl {
             Text('亮度')
               .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor).height(18)
           }
-          Text(this.value < 0 ? '系统' : `${this.value}%`)
+          Text(this.value < 0 ? '' : `${this.value}%`)
             .fontSize(AppFontSize.CAPTION).fontColor(this.textColor).height(22)
             .maxLines(1).minFontSize(AppFontSize.MICRO).maxFontSize(AppFontSize.CAPTION)
           if (this.panelHeight >= 220) {
