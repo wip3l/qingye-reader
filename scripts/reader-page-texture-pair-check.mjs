@@ -47,13 +47,15 @@ function readerMethod(signature) {
   return readerSource.slice(start, readerSource.indexOf('\n  }', start) + 4);
 }
 const warmMethod = ['  async warmReaderPageTexture(', '  private settledPageTextureStillWanted(',
-  '  private async captureSettledPageTexture(', '  private async captureSettledPageTexturePair(']
+  '  private async snapshotSettledPage(', '  private async captureSettledPageTexture(',
+  '  private async captureSettledPageTexturePair(']
   .map(readerMethod).join('\n');
 const Cache = vm.runInNewContext(stripTypeScriptTypes(fs.readFileSync(
   new URL('../entry/src/main/ets/core/reader/ReaderPageTextureCache.ets', import.meta.url), 'utf8')
   .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')) + '\nReaderPageTextureCache');
+let frameWaits = 0;
 const Reader = vm.runInNewContext(stripTypeScriptTypes(`class Reader { ${warmMethod} }; Reader`), {
-  ReaderPageTexturePair: Pair, ReaderRenderFrame: { wait: async () => {} },
+  ReaderPageTexturePair: Pair, ReaderRenderFrame: { wait: async () => { frameWaits++; } },
 });
 function readerFixture() {
   const reader = new Reader();
@@ -81,6 +83,7 @@ await warm.warmReaderPageTexture(1);
 const preparedRight = warm.readerPageTextureCache.acquire('leaf-1');
 const preparedLeft = warm.readerPageTextureCache.acquire('leaf--1');
 assert(preparedRight && preparedLeft); assert.equal(bitmaps.length - warmStart, 2);
+assert.equal(frameWaits, 0, 'the warm-up asks RenderService at once instead of waiting for an idle frame first');
 preparedRight.release(); preparedLeft.release(); warm.readerPageTextureCache.clear();
 assert(bitmaps.slice(warmStart).every(target => target.releases === 1));
 const stale = readerFixture(); const staleStart = bitmaps.length;
@@ -104,6 +107,27 @@ const keptLeft = turning.readerPageTextureCache.acquire('leaf--1');
 assert(keptRight && keptLeft, 'a turn starting during the warm snapshot keeps both leaves');
 keptRight.release(); keptLeft.release(); turning.readerPageTextureCache.clear();
 assert(bitmaps.slice(turningStart).every(target => target.releases === 1));
+
+// The page-keyed node may reach the tree a frame later than the warm-up request: retry after one frame.
+const late = readerFixture(); const lateStart = bitmaps.length; let lateGets = 0;
+late.getUIContext = () => ({ getComponentSnapshot: () => ({ get: async () => {
+  if (++lateGets === 1) throw new Error('100001: node not found');
+  return nativeBitmap();
+} }) });
+frameWaits = 0;
+await late.warmReaderPageTexture(1);
+assert.equal(lateGets, 2); assert.equal(frameWaits, 1, 'one frame wait per missing-node failure');
+const lateRight = late.readerPageTextureCache.acquire('leaf-1');
+assert(lateRight, 'the retried snapshot is cached'); lateRight.release(); late.readerPageTextureCache.clear();
+assert(bitmaps.slice(lateStart).every(target => target.releases === 1));
+const gone = readerFixture(); let goneGets = 0;
+gone.getUIContext = () => ({ getComponentSnapshot: () => ({ get: async () => {
+  goneGets++; throw new Error('100001: node not found');
+} }) });
+frameWaits = 0;
+await gone.warmReaderPageTexture(1).catch(() => {});
+assert(goneGets <= 4 * 2 && frameWaits <= 4 * 2, 'a node that never appears is given up on after a few frames');
+assert.equal(gone.readerPageTextureWarmInflight.size, 0);
 
 // A second warm-up (or a turn) for the same page waits for the snapshot already in flight.
 const shared = readerFixture(); let pendingGets = 0; let resolveGet = null;

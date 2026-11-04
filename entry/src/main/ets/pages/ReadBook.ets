@@ -20220,7 +20220,6 @@ struct ReadBookPage {
         if (inflight) {
           await inflight;
         } else {
-          await ReaderRenderFrame.wait(this.getUIContext());
           const valid = (): boolean => this.readerPageVisible && serial === this.readerPageTextureWarmSerial &&
             rightKey === this.readerSettledTextureKey(1) && leftKey === this.readerSettledTextureKey(-1) &&
             this.pageSlideDirection === 0 && !this.isPageTurning && !this.isTtsSpeaking && !this.hasReaderTextSelection();
@@ -20248,7 +20247,6 @@ struct ReadBookPage {
       if (existing) { existing.release(); continue; }
       const inflight = this.readerPageTextureWarmInflight.get(key);
       if (inflight) { await inflight; continue; }
-      await ReaderRenderFrame.wait(this.getUIContext());
       const valid = (): boolean => this.readerPageVisible && serial === this.readerPageTextureWarmSerial &&
         key === this.readerSettledTextureKey(direction) && this.pageSlideDirection === 0 && !this.isPageTurning;
       if (!valid()) return;
@@ -20272,10 +20270,30 @@ struct ReadBookPage {
       key === this.readerSettledTextureKey(direction);
   }
 
+  /**
+   * The settled page is published and its warm-up scheduled in the same task, so the page-keyed node may reach the
+   * tree only on a following frame. Ask RenderService at once and wait a frame only when the id is not there yet:
+   * always waiting for an idle frame first (up to its 80 ms timeout) left rapid turns without a cached texture.
+   */
+  private async snapshotSettledPage(stillWanted: () => boolean): Promise<image.PixelMap> {
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        return await this.getUIContext().getComponentSnapshot().get(this.currentReaderSnapshotComponentId(), {
+          scale: this.readerPageCurlSnapshotScale(), waitUntilRenderFinished: true
+        });
+      } catch (error) {
+        lastError = error as Error;
+        if (!stillWanted()) break;
+        await ReaderRenderFrame.wait(this.getUIContext());
+      }
+    }
+    throw lastError ? lastError : new Error('settled page snapshot unavailable');
+  }
+
   private async captureSettledPageTexture(key: string, direction: number, generation: number): Promise<void> {
-    const bitmap = await this.getUIContext().getComponentSnapshot().get(this.currentReaderSnapshotComponentId(), {
-      scale: this.readerPageCurlSnapshotScale(), waitUntilRenderFinished: true
-    });
+    const bitmap = await this.snapshotSettledPage((): boolean =>
+      this.settledPageTextureStillWanted(key, direction, generation));
     try {
       if (!this.settledPageTextureStillWanted(key, direction, generation)) {
         bitmap.release().catch((): void => {});
@@ -20297,9 +20315,9 @@ struct ReadBookPage {
   /** Double page: one snapshot cloned and cropped into both leaves. Rejects when the platform refuses to clone. */
   private async captureSettledPageTexturePair(rightKey: string, leftKey: string, generation: number): Promise<void> {
     const pair = await ReaderPageTexturePair.capture((): Promise<image.PixelMap> =>
-      this.getUIContext().getComponentSnapshot().get(this.currentReaderSnapshotComponentId(), {
-        scale: this.readerPageCurlSnapshotScale(), waitUntilRenderFinished: true
-      }), (bitmap: image.PixelMap, direction: number): Promise<void> =>
+      this.snapshotSettledPage((): boolean => this.settledPageTextureStillWanted(rightKey, 1, generation) &&
+        this.settledPageTextureStillWanted(leftKey, -1, generation)),
+      (bitmap: image.PixelMap, direction: number): Promise<void> =>
       this.cropReaderPageCurlFrontToTurningLeaf(bitmap, direction));
     try {
       const rightInfo = await pair.right.getImageInfo();
