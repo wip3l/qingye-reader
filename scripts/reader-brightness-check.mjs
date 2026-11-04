@@ -51,7 +51,8 @@ function harness(initial = -1) {
   assert.equal(h.disk.get('value'), 68);
   assert(!h.writes.includes(0.22), 'superseded drag must not reach native API');
   s.deactivate(); await h.drain();
-  assert.equal(h.value, 0.73, 'restore original window brightness');
+  assert.equal(h.value, -1, 'leaving the reader hands the window back to system brightness');
+  assert(!h.writes.includes(0.73), 'a level read back from window properties must never be restored');
   await s.activate({}, v => shown = v, () => assert.fail()); await h.drain();
   assert.equal(shown, 68);
   s.set(-1, true); await h.drain();
@@ -85,11 +86,12 @@ function harness(initial = -1) {
   for (let i = 0; i < 8; ++i) await Promise.resolve();
   s.deactivate();
   release(); await h.drain();
-  assert.equal(h.value, 0.6, 'in-flight native write finishes before restoration');
+  assert.equal(h.value, -1, 'in-flight native write finishes before restoration');
+  assert(h.writes.includes(0.25), 'in-flight native write is not dropped');
   assert.equal(h.disk.get('value'), 25, 'leaving during drag saves latest value');
   const pending = s.activate({}, () => assert.fail('hidden reader published ready'), () => assert.fail());
   s.deactivate(); await pending; await h.drain();
-  assert.equal(h.value, 0.6, 'late preference load cannot change a hidden window');
+  assert.equal(h.value, -1, 'late preference load cannot change a hidden window');
 }
 
 {
@@ -118,6 +120,6 @@ function harness(initial = -1) {
   const returned = new h.Session();
   await returned.activate({}, () => {}, () => assert.fail()); await h.drain();
   returned.deactivate(); await h.drain();
-  assert.equal(h.value, 0.72, 'failed restore must retain original brightness for the next release');
+  assert.equal(h.value, -1, 'the next release still hands the window back to the system after a failed restore');
 }
 console.log('Reader brightness: persistence, ownership, drag coalescing, restoration and error recovery passed.');

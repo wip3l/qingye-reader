@@ -1,11 +1,16 @@
 import { window } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 
-/** Device-local brightness, shared by reader instances, never written into a theme or synced to another device. */
+/**
+ * Device-local brightness, shared by reader instances, never written into a theme or synced to another device.
+ * The reader is the only window-brightness writer in the app, so leaving it always hands the window back to the
+ * system (-1). The brightness read from window properties is not a reliable "original": it may report a concrete
+ * level while the window is in fact following the system, and restoring that level would pin the whole app window.
+ */
 export class ReaderBrightnessSession {
+  private static readonly FOLLOW_SYSTEM: number = -1;
   private static owner: ReaderBrightnessSession | null = null;
   private static mainWindow: window.Window | null = null;
-  private static originalBrightness: number = -1;
   private static windowQueue: Promise<void> = Promise.resolve();
   private static saveQueue: Promise<void> = Promise.resolve();
   private active: boolean = false;
@@ -69,12 +74,9 @@ export class ReaderBrightnessSession {
       if (!this.active || revision !== this.revision) return;
       const mainWindow = await window.getLastWindow(context);
       if (!this.active || revision !== this.revision) return;
-      if (!ReaderBrightnessSession.owner) {
-        ReaderBrightnessSession.originalBrightness = mainWindow.getWindowProperties().brightness;
-        ReaderBrightnessSession.mainWindow = mainWindow;
-      }
+      ReaderBrightnessSession.mainWindow = mainWindow;
       ReaderBrightnessSession.owner = this;
-      await mainWindow.setWindowBrightness(this.value < 0 ? -1 : this.value / 100);
+      await mainWindow.setWindowBrightness(this.value < 0 ? ReaderBrightnessSession.FOLLOW_SYSTEM : this.value / 100);
     }).catch((error: Error) => {
       console.warn('设置阅读亮度失败:', error);
       if (this.active && revision === this.revision) this.reportError();
@@ -91,8 +93,7 @@ export class ReaderBrightnessSession {
       // A retained page must not restore brightness over the reader that replaced it.
       if (this.active || ReaderBrightnessSession.owner !== this) return;
       const mainWindow = ReaderBrightnessSession.mainWindow;
-      const original = ReaderBrightnessSession.originalBrightness;
-      if (mainWindow) await mainWindow.setWindowBrightness(original);
+      if (mainWindow) await mainWindow.setWindowBrightness(ReaderBrightnessSession.FOLLOW_SYSTEM);
       ReaderBrightnessSession.owner = null;
       ReaderBrightnessSession.mainWindow = null;
     }).catch((error: Error) => console.warn('恢复窗口亮度失败:', error));
