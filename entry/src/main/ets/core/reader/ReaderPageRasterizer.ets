@@ -41,12 +41,27 @@ export class ReaderRasterPage {
   }
 }
 
+/** A page the host wants drawn: its layout, the controller role whose live node gives the exact position, and the layout-math offset (px) used before that node exists. */
+export class ReaderRasterPageRequest {
+  layout: ReaderV2PageLayout;
+  role: string;
+  fallbackOffsetX: number;
+
+  constructor(layout: ReaderV2PageLayout, role: string, fallbackOffsetX: number) {
+    this.layout = layout;
+    this.role = role;
+    this.fallbackOffsetX = fallbackOffsetX;
+  }
+}
+
 export class ReaderPageRasterSpec {
   /** Unscaled surface size in pixels; the bitmap is this size times scale. */
   widthPx: number = 0;
   heightPx: number = 0;
   scale: number = 1;
   paperColor: string = '#FFFFFF';
+  /** A custom theme background image already decoded at raster resolution, drawn exactly into its rect. */
+  background: ReaderRasterImage | null = null;
   decorations: ReaderRasterImage[] = [];
   pages: ReaderRasterPage[] = [];
   images: ReaderRasterImage[] = [];
@@ -78,6 +93,7 @@ export class ReaderPageRasterizer {
       canvas.drawRect(0, 0, spec.widthPx, spec.heightPx);
       canvas.detachBrush();
       const sampling = new drawing.SamplingOptions(drawing.FilterMode.FILTER_MODE_LINEAR);
+      if (spec.background) ReaderPageRasterizer.drawImage(canvas, spec.background, sampling);
       for (const decoration of spec.decorations) ReaderPageRasterizer.drawImage(canvas, decoration, sampling);
       for (const page of spec.pages) {
         canvas.save();

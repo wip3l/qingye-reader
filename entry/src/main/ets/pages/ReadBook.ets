@@ -189,7 +189,7 @@ import { ReaderRenderFrame } from '../core/reader/ReaderRenderFrame';
 import { ReaderPageTextureCache, ReaderPageTextureLease } from '../core/reader/ReaderPageTextureCache';
 import { ReaderPageTexturePair } from '../core/reader/ReaderPageTexturePair';
 import {
-  ReaderPageRasterizer, ReaderPageRasterSpec, ReaderRasterImage, ReaderRasterPage
+  ReaderPageRasterizer, ReaderPageRasterSpec, ReaderRasterImage, ReaderRasterPage, ReaderRasterPageRequest
 } from '../core/reader/ReaderPageRasterizer';
 import { ReaderRasterAssets } from '../core/reader/ReaderRasterAssets';
 import { ReaderThemeDecorationLayout } from '../core/reader/ReaderThemeDecorationLayout';
@@ -20366,22 +20366,21 @@ struct ReadBookPage {
   }
 
   /**
-   * Everything the simulation texture of the settled page must show, gathered from the live page: paper colour,
-   * built-in decorations, the laid-out V2 page(s) at the exact position of their native node, decoded content
-   * illustrations and bubble cap ornaments. Null when the page uses something the raster does not draw yet
-   * (custom background image, legacy layout, an illustration still decoding); the caller then falls back to
-   * componentSnapshot.
+   * Everything a simulation texture must show, gathered from the live page: paper colour, the custom background
+   * image or the built-in decorations, the laid-out V2 page(s) at the exact position of their native node, decoded
+   * content illustrations and bubble cap ornaments. `surfaceId` is the sheet being drawn (the settled surface or an
+   * off-screen back duplicate); `paperOriginX` shifts the spread-sized paper artwork for a half-width sheet that
+   * shows the right half of a spread. Null when something is not drawable yet (legacy layout, an illustration or
+   * artwork still decoding); the caller then falls back to componentSnapshot.
    */
-  buildSettledPageRasterSpec(): ReaderPageRasterSpec | null {
-    if (!this.shouldUseReaderLayoutV2(this.pagedContentText) || !!this.currentReaderTheme().backgroundImageUri) {
-      return null;
-    }
+  buildPageRasterSpec(surfaceId: string, entries: ReaderRasterPageRequest[],
+    paperOriginX: number): ReaderPageRasterSpec | null {
     const ui = this.getUIContext();
     let surfaceLeft = 0;
     let surfaceTop = 0;
     const spec = new ReaderPageRasterSpec();
     try {
-      const rect = ui.getComponentUtils().getRectangleById(this.currentReaderSnapshotComponentId());
+      const rect = ui.getComponentUtils().getRectangleById(surfaceId);
       if (rect.size.width <= 0 || rect.size.height <= 0) return null;
       surfaceLeft = rect.windowOffset.x;
       surfaceTop = rect.windowOffset.y;
@@ -20393,8 +20392,15 @@ struct ReadBookPage {
     spec.scale = this.readerPageCurlSnapshotScale();
     spec.paperColor = this.getBackgroundColor();
     const host = getContext(this);
+    const theme = this.currentReaderTheme();
+    const spreadWidthPx = vp2px(this.getPageTurnWidth());
     const assetId = this.getBackgroundAssetId();
-    if (assetId && ThemeAssetRegistry.readerBackgroundDecoration(assetId)) {
+    if (theme.backgroundImageUri) {
+      const background = this.rasterBackgroundImage(theme.backgroundImageUri, theme.backgroundImageFit,
+        spreadWidthPx, spec.heightPx, spec.scale, paperOriginX);
+      if (!background) return null;
+      spec.background = background;
+    } else if (assetId && ThemeAssetRegistry.readerBackgroundDecoration(assetId)) {
       const viewportWidth = this.getPageTurnWidth();
       const viewportHeight = this.getReaderBackgroundViewportHeight();
       const sizePx = vp2px(ReaderThemeDecorationLayout.size(viewportWidth, viewportHeight, false));
@@ -20402,24 +20408,18 @@ struct ReadBookPage {
       const leading = ReaderRasterAssets.backgroundDecoration(host, assetId, sizePx);
       const trailing = ReaderRasterAssets.backgroundTrailingDecoration(host, assetId, sizePx);
       if (!leading || !trailing) return null;
-      spec.decorations.push(new ReaderRasterImage(leading, insetPx, insetPx, insetPx + sizePx, insetPx + sizePx,
-        0, true));
-      spec.decorations.push(new ReaderRasterImage(trailing, spec.widthPx - insetPx - sizePx,
-        spec.heightPx - insetPx - sizePx, spec.widthPx - insetPx, spec.heightPx - insetPx,
+      spec.decorations.push(new ReaderRasterImage(leading, paperOriginX + insetPx, insetPx,
+        paperOriginX + insetPx + sizePx, insetPx + sizePx, 0, true));
+      spec.decorations.push(new ReaderRasterImage(trailing, paperOriginX + spreadWidthPx - insetPx - sizePx,
+        spec.heightPx - insetPx - sizePx, paperOriginX + spreadWidthPx - insetPx, spec.heightPx - insetPx,
         ThemeAssetRegistry.readerBackgroundTrailingRotation(assetId), true));
     }
-    const doublePage = this.isLandscapeDoublePageActive();
-    const pageIndexes: number[] = doublePage ? [this.currentPageIndex, this.currentPageIndex + 1] :
-      [this.currentPageIndex];
-    const controllerPrefix = this.currentReaderSurfaceIndex() === 0 ? 'current_primary' : 'current_alternate';
-    for (let index = 0; index < pageIndexes.length; index++) {
-      const page = this.readerV2Page(this.currentChapterIndex, pageIndexes[index], this.pagedContentText);
-      if (!page) return null;
-      const role = `${controllerPrefix}_${doublePage ? (index === 0 ? 'left' : 'right') : 'single'}`;
+    for (const entry of entries) {
+      const page = entry.layout;
       // Prefer the live node's own position; the layout math is only the fallback before it is mounted.
-      let offsetX = doublePage && index === 1 ? vp2px(this.getReaderDoublePageRightOrigin()) : 0;
+      let offsetX = entry.fallbackOffsetX;
       let offsetY = vp2px(this.getReaderPageContentTopPadding());
-      const position = this.readerV2Controllers.get(role)?.nodePositionToWindow();
+      const position = this.readerV2Controllers.get(entry.role)?.nodePositionToWindow();
       if (position) {
         offsetX = vp2px(position.x) - surfaceLeft;
         offsetY = vp2px(position.y) - surfaceTop;
@@ -20454,13 +20454,83 @@ struct ReadBookPage {
     return spec;
   }
 
+  /** The custom theme background placed like ReaderThemeBackground's Image (cover/contain/fill, centred). */
+  rasterBackgroundImage(uri: string, fit: string, spreadWidthPx: number, spreadHeightPx: number, scale: number,
+    originX: number): ReaderRasterImage | null {
+    const size = ReaderRasterAssets.fileImageSize(uri);
+    if (!size) return null;
+    let width = spreadWidthPx;
+    let height = spreadHeightPx;
+    if (fit === 'contain' || fit !== 'fill') {
+      const ratio = fit === 'contain' ? Math.min(spreadWidthPx / size.width, spreadHeightPx / size.height) :
+        Math.max(spreadWidthPx / size.width, spreadHeightPx / size.height);
+      width = size.width * ratio;
+      height = size.height * ratio;
+    }
+    const left = originX + (spreadWidthPx - width) / 2;
+    const top = (spreadHeightPx - height) / 2;
+    const bitmap = ReaderRasterAssets.fileImage(uri, width * scale, height * scale);
+    if (!bitmap) return null;
+    return new ReaderRasterImage(bitmap, left, top, left + width, top + height, 0, false);
+  }
+
+  buildSettledPageRasterSpec(): ReaderPageRasterSpec | null {
+    if (!this.shouldUseReaderLayoutV2(this.pagedContentText)) return null;
+    const doublePage = this.isLandscapeDoublePageActive();
+    const pageIndexes: number[] = doublePage ? [this.currentPageIndex, this.currentPageIndex + 1] :
+      [this.currentPageIndex];
+    const controllerPrefix = this.currentReaderSurfaceIndex() === 0 ? 'current_primary' : 'current_alternate';
+    const entries: ReaderRasterPageRequest[] = [];
+    for (let index = 0; index < pageIndexes.length; index++) {
+      const page = this.readerV2Page(this.currentChapterIndex, pageIndexes[index], this.pagedContentText);
+      if (!page) return null;
+      entries.push(new ReaderRasterPageRequest(page,
+        `${controllerPrefix}_${doublePage ? (index === 0 ? 'left' : 'right') : 'single'}`,
+        doublePage && index === 1 ? vp2px(this.getReaderDoublePageRightOrigin()) : 0));
+    }
+    return this.buildPageRasterSpec(this.currentReaderSnapshotComponentId(), entries, 0);
+  }
+
+  /**
+   * The destination leaf shown on the back of a turning sheet (2D simulation, and 3D double page), drawn from the
+   * same off-screen duplicate the snapshot path captures: full width for a single page, the opposite half of the
+   * target spread for a double page.
+   */
+  buildIncomingPageRasterSpec(): ReaderPageRasterSpec | null {
+    if (this.pageSlideDirection === 0 || !this.shouldUseReaderLayoutV2(this.pageTurnIncomingDocumentSource)) {
+      return null;
+    }
+    if (this.isLandscapeDoublePageActive()) {
+      const pageIndex = this.pageSlideDirection > 0 ? this.pageTurnIncomingPageIndex :
+        this.pageTurnIncomingPageIndex + 1;
+      const page = this.readerV2Page(this.pageTurnIncomingChapterIndex, pageIndex, this.pageTurnIncomingDocumentSource);
+      if (!page) return null;
+      return this.buildPageRasterSpec('reader_page_curl_back_double',
+        [new ReaderRasterPageRequest(page, 'simulation_incoming_overlay_leaf_back_capture', 0)],
+        this.pageSlideDirection < 0 ? -vp2px(this.getReaderDoublePageRightOrigin()) : 0);
+    }
+    const page = this.readerV2Page(this.pageTurnIncomingChapterIndex, this.pageTurnIncomingPageIndex,
+      this.pageTurnIncomingDocumentSource);
+    if (!page) return null;
+    return this.buildPageRasterSpec('reader_page_curl_back_single',
+      [new ReaderRasterPageRequest(page, 'overlay_simulation_back_single', 0)], 0);
+  }
+
   /** The settled page drawn by the app itself, or null when componentSnapshot must be used. */
   rasterSettledPageTexture(): image.PixelMap | null {
-    const spec = this.buildSettledPageRasterSpec();
+    return this.renderPageRaster(this.buildSettledPageRasterSpec(), 'reader/page-raster');
+  }
+
+  /** The turning sheet's back (destination leaf) drawn by the app itself, or null for componentSnapshot. */
+  rasterIncomingPageTexture(): image.PixelMap | null {
+    return this.renderPageRaster(this.buildIncomingPageRasterSpec(), 'reader/page-raster-back');
+  }
+
+  private renderPageRaster(spec: ReaderPageRasterSpec | null, label: string): image.PixelMap | null {
     if (!spec) return null;
     const startedAt = Date.now();
     const bitmap = ReaderPageRasterizer.render(spec);
-    CooperativeScheduler.reportSynchronousOperation('reader/page-raster', Date.now() - startedAt,
+    CooperativeScheduler.reportSynchronousOperation(label, Date.now() - startedAt,
       `pages=${spec.pages.length},scale=${spec.scale}`);
     return bitmap;
   }
@@ -20662,6 +20732,7 @@ struct ReadBookPage {
       // Front and back are independent components: request them together instead of paying two snapshot round
       // trips before every curl, and keep a texture that already succeeded while only the missing one is retried.
       if (!front) front = this.rasterSettledPageTexture();
+      if (needsBack && !back) back = this.rasterIncomingPageTexture();
       const requests: Promise<image.PixelMap | null>[] = [
         front ? Promise.resolve<image.PixelMap | null>(front) : capture(this.currentReaderSnapshotComponentId()),
         !needsBack || back ? Promise.resolve<image.PixelMap | null>(back) :

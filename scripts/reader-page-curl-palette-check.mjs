@@ -36,6 +36,7 @@ function fixture(threeD, theme) {
     is3DPageTurnAnimation: () => threeD, isLandscapeDoublePageActive: () => false,
     readerSettledTextureKey: () => 'front', readerPageTextureCache: { acquire: () => null },
     readerPageTextureWarmInflight: new Map(), rasterSettledPageTexture: () => null,
+    rasterIncomingPageTexture: () => null,
     currentReaderSnapshotComponentId: () => 'front', readerPageCurlSnapshotScale: () => 0.75,
     getPageTurnWidth: () => 600, getPageTurnHeight: () => 900, getReaderPageCurlCanvasHeight: () => 900,
     getPageTurnProgress: () => progress, getReaderPageColumnWidth: () => 600,
