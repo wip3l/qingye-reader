@@ -649,9 +649,6 @@ struct ReadBookPage {
   private readerPageCurlFrontLease: ReaderPageTextureLease | null = null;
   private readerPageTextureCache: ReaderPageTextureCache = new ReaderPageTextureCache();
   private readerPageTextureWarmSerial: number = 0;
-  // Settled-page snapshots RenderService is currently producing, by texture key. A turn that starts meanwhile
-  // waits for the one in flight instead of asking for a second full offscreen render of the same page.
-  private readerPageTextureWarmInflight: Map<string, Promise<void>> = new Map<string, Promise<void>>();
   private readerPageCurlBack: image.PixelMap | null = null;
   private readerPageCurlSnapshotHeight: number = 0;
   // Published with the captured textures; animation frames must not resolve or clone theme data.
@@ -20298,60 +20295,48 @@ struct ReadBookPage {
     }, 0);
   }
 
+  /**
+   * After a page settles, draw its turn texture while the reader is idle so the next turn starts with it cached.
+   * The page is drawn by the app itself in a few milliseconds; a turn that arrives first simply draws it again,
+   * so nothing here has to be shared with or awaited by the turn.
+   */
   async warmReaderPageTexture(serial: number): Promise<void> {
     if (!this.readerPageVisible || !this.readerInitialPageReady || !this.usesReaderPageCurlCanvas() ||
       this.pageSlideDirection !== 0 || this.isPageTurning || this.isTtsSpeaking || this.hasReaderTextSelection()) return;
     const directions: number[] = this.isLandscapeDoublePageActive() ? [1, -1] : [1];
-    if (directions.length === 2) {
-      const rightKey = this.readerSettledTextureKey(1);
-      const leftKey = this.readerSettledTextureKey(-1);
-      const right = this.readerPageTextureCache.acquire(rightKey);
-      const left = this.readerPageTextureCache.acquire(leftKey);
-      const bothMissing = !right && !left;
-      right?.release(); left?.release();
-      if (bothMissing) {
-        const inflight = this.readerPageTextureWarmInflight.get(rightKey) ||
-          this.readerPageTextureWarmInflight.get(leftKey);
-        if (inflight) {
-          await inflight;
-        } else {
-          const valid = (): boolean => this.readerPageVisible && serial === this.readerPageTextureWarmSerial &&
-            rightKey === this.readerSettledTextureKey(1) && leftKey === this.readerSettledTextureKey(-1) &&
-            this.pageSlideDirection === 0 && !this.isPageTurning && !this.isTtsSpeaking && !this.hasReaderTextSelection();
-          if (!valid()) return;
-          const task = this.captureSettledPageTexturePair(rightKey, leftKey, this.readerPageTextureCache.generation);
-          this.readerPageTextureWarmInflight.set(rightKey, task);
-          this.readerPageTextureWarmInflight.set(leftKey, task);
-          let cloned = false;
-          try {
-            await task;
-            cloned = true;
-          } catch (_) {
-            // Snapshot cloning is optional. Keep the original independent-capture path if the platform rejects it.
-          } finally {
-            if (this.readerPageTextureWarmInflight.get(rightKey) === task) this.readerPageTextureWarmInflight.delete(rightKey);
-            if (this.readerPageTextureWarmInflight.get(leftKey) === task) this.readerPageTextureWarmInflight.delete(leftKey);
-          }
-          if (cloned || !valid()) return;
-        }
-      }
-    }
+    const keys: string[] = [];
+    let missing = 0;
     for (const direction of directions) {
       const key = this.readerSettledTextureKey(direction);
+      keys.push(key);
       const existing = this.readerPageTextureCache.acquire(key);
-      if (existing) { existing.release(); continue; }
-      const inflight = this.readerPageTextureWarmInflight.get(key);
-      if (inflight) { await inflight; continue; }
-      const valid = (): boolean => this.readerPageVisible && serial === this.readerPageTextureWarmSerial &&
-        key === this.readerSettledTextureKey(direction) && this.pageSlideDirection === 0 && !this.isPageTurning;
-      if (!valid()) return;
-      const task = this.captureSettledPageTexture(key, direction, this.readerPageTextureCache.generation);
-      this.readerPageTextureWarmInflight.set(key, task);
-      try {
-        await task;
-      } finally {
-        if (this.readerPageTextureWarmInflight.get(key) === task) this.readerPageTextureWarmInflight.delete(key);
+      if (existing) existing.release(); else missing++;
+    }
+    if (missing === 0) return;
+    const valid = (): boolean => {
+      if (!this.readerPageVisible || serial !== this.readerPageTextureWarmSerial || this.pageSlideDirection !== 0 ||
+        this.isPageTurning || this.isTtsSpeaking || this.hasReaderTextSelection()) return false;
+      for (let index = 0; index < directions.length; index++) {
+        if (keys[index] !== this.readerSettledTextureKey(directions[index])) return false;
       }
+      return true;
+    };
+    if (!valid()) return;
+    const generation = this.readerPageTextureCache.generation;
+    if (directions.length === 2 && missing === 2) {
+      // One spread drawing cloned and cropped into both leaves. Cloning is optional: fall back to one per leaf.
+      try {
+        await this.captureSettledPageTexturePair(keys[0], keys[1], generation);
+        return;
+      } catch (_) {
+        if (!valid()) return;
+      }
+    }
+    for (let index = 0; index < directions.length; index++) {
+      const existing = this.readerPageTextureCache.acquire(keys[index]);
+      if (existing) { existing.release(); continue; }
+      if (!valid()) return;
+      await this.captureSettledPageTexture(keys[index], directions[index], generation);
     }
   }
 
@@ -20691,18 +20676,7 @@ struct ReadBookPage {
       await sleepMs(16);
     }
     const textureKey = this.readerSettledTextureKey(this.pageSlideDirection);
-    let frontLease = this.readerPageTextureCache.acquire(textureKey);
-    if (!frontLease) {
-      // The warm-up may already have this page's snapshot in RenderService. Wait for it instead of adding a second
-      // full offscreen render to the start of a rapid turn.
-      const inflight = this.readerPageTextureWarmInflight.get(textureKey);
-      if (inflight) {
-        await inflight.catch((): void => {});
-        if (serial !== this.readerPageCurlCaptureSerial || key !== this.readerPageCurlCaptureKey ||
-          this.pageSlideDirection === 0) return;
-        frontLease = this.readerPageTextureCache.acquire(textureKey);
-      }
-    }
+    const frontLease = this.readerPageTextureCache.acquire(textureKey);
     const cachedFront = frontLease !== null;
     if (!cachedFront || this.readerPageCurlNeedsBackSnapshot()) await ReaderRenderFrame.wait(this.getUIContext());
     if (serial !== this.readerPageCurlCaptureSerial || key !== this.readerPageCurlCaptureKey ||
@@ -20722,15 +20696,11 @@ struct ReadBookPage {
         lastError = `${error}`;
         return null;
       });
-    // A tap can request the snapshot in the same task that publishes the simulation subtree.
-    // The component IDs become available on a following render frame, so retry transient 100001
-    // failures instead of letting tap turns miss the curl while drag turns happen to work.
+    // Both sheets are normally drawn by the app from the live page layouts. componentSnapshot is only the fallback
+    // for what the raster cannot draw yet (legacy layout, artwork still decoding). A tap can request that snapshot
+    // in the same task that publishes the simulation subtree, and the component IDs become available on a following
+    // render frame, so transient 100001 failures are retried; a texture that already succeeded is kept meanwhile.
     for (let attempt = 0; attempt < 24; attempt++) {
-      // The paper front must be the exact settled component already visible to the user. Rebuilding a second
-      // native Paragraph solely for capture can resolve to a neighbouring physical-pixel origin and produces
-      // a small but repeatable vertical jump at the start of every rapid turn.
-      // Front and back are independent components: request them together instead of paying two snapshot round
-      // trips before every curl, and keep a texture that already succeeded while only the missing one is retried.
       if (!front) front = this.rasterSettledPageTexture();
       if (needsBack && !back) back = this.rasterIncomingPageTexture();
       const requests: Promise<image.PixelMap | null>[] = [

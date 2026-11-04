@@ -63,7 +63,7 @@ function readerFixture() {
     usesReaderPageCurlCanvas: () => true, pageSlideDirection: 0, isPageTurning: false, isTtsSpeaking: false,
     hasReaderTextSelection: () => false, isLandscapeDoublePageActive: () => true,
     readerSettledTextureKey: direction => `leaf-${direction}`, readerPageTextureWarmSerial: 1,
-    readerPageTextureWarmInflight: new Map(), rasterSettledPageTexture: () => null,
+    rasterSettledPageTexture: () => null,
     readerPageTextureCache: new Cache(), readerPageCurlSnapshotScale: () => 0.75,
     currentReaderSnapshotComponentId: () => 'current', cropReaderPageCurlFrontToTurningLeaf: crop,
     getUIContext: () => ({ getComponentSnapshot: () => ({ get: async () => {
@@ -93,7 +93,6 @@ stale.getUIContext = () => ({ getComponentSnapshot: () => ({ get: async () => {
 await stale.warmReaderPageTexture(1);
 assert.equal(stale.readerPageTextureCache.acquire('leaf-1'), null);
 assert(bitmaps.slice(staleStart).every(target => target.releases === 1), 'late captures cannot leak or replace live leaves');
-assert.equal(stale.readerPageTextureWarmInflight.size, 0, 'finished captures leave the in-flight table');
 
 // A turn that starts while RenderService is still rendering the warm snapshot does not change the settled page:
 // the result is kept for that turn instead of being thrown away and captured a second time.
@@ -127,23 +126,20 @@ gone.getUIContext = () => ({ getComponentSnapshot: () => ({ get: async () => {
 frameWaits = 0;
 await gone.warmReaderPageTexture(1).catch(() => {});
 assert(goneGets <= 4 * 2 && frameWaits <= 4 * 2, 'a node that never appears is given up on after a few frames');
-assert.equal(gone.readerPageTextureWarmInflight.size, 0);
 
-// A second warm-up (or a turn) for the same page waits for the snapshot already in flight.
-const shared = readerFixture(); let pendingGets = 0; let resolveGet = null;
-shared.getUIContext = () => ({ getComponentSnapshot: () => ({ get: () => {
-  pendingGets++; return new Promise(resolve => { resolveGet = () => resolve(nativeBitmap()); });
-} }) });
-const firstWarm = shared.warmReaderPageTexture(1);
-await new Promise(resolve => setTimeout(resolve, 0));
-assert.equal(shared.readerPageTextureWarmInflight.size, 2, 'both leaf keys point at the one in-flight snapshot');
-shared.readerPageTextureWarmSerial = 2;
-const secondWarm = shared.warmReaderPageTexture(2);
-await new Promise(resolve => setTimeout(resolve, 0));
-assert.equal(pendingGets, 1, 'no second RenderService snapshot while one is in flight');
-resolveGet(); await Promise.all([firstWarm, secondWarm]);
-assert.equal(pendingGets, 1);
-assert.equal(shared.readerPageTextureWarmInflight.size, 0);
-const sharedRight = shared.readerPageTextureCache.acquire('leaf-1');
-assert(sharedRight, 'the shared snapshot lands in the cache once'); sharedRight.release();
-console.log('PASS: paired reader warm-up, invalidated capture cleanup, kept mid-turn result and in-flight sharing');
+// A page the app can draw itself never asks RenderService for a snapshot.
+const drawn = readerFixture(); let drawnGets = 0;
+drawn.getUIContext = () => ({ getComponentSnapshot: () => ({ get: async () => { drawnGets++; return nativeBitmap(); } }) });
+drawn.rasterSettledPageTexture = () => nativeBitmap();
+await drawn.warmReaderPageTexture(1);
+assert.equal(drawnGets, 0, 'a drawable page is rasterized, not snapshotted');
+const drawnRight = drawn.readerPageTextureCache.acquire('leaf-1');
+const drawnLeft = drawn.readerPageTextureCache.acquire('leaf--1');
+assert(drawnRight && drawnLeft, 'the raster is cloned into both leaves'); drawnRight.release(); drawnLeft.release();
+const cachedAgain = readerFixture(); let againGets = 0;
+cachedAgain.getUIContext = () => ({ getComponentSnapshot: () => ({ get: async () => { againGets++; return nativeBitmap(); } }) });
+cachedAgain.readerPageTextureCache.put('leaf-1', nativeBitmap(), 4).release();
+cachedAgain.readerPageTextureCache.put('leaf--1', nativeBitmap(), 4).release();
+await cachedAgain.warmReaderPageTexture(1);
+assert.equal(againGets, 0, 'leaves already cached are not produced again');
+console.log('PASS: paired reader warm-up, invalidated capture cleanup, kept mid-turn result and raster-first warm-up');

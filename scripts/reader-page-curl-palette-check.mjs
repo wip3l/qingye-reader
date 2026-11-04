@@ -35,8 +35,7 @@ function fixture(threeD, theme) {
     isReaderThemeDark: () => { throw Error('theme lookup in animation frame'); },
     is3DPageTurnAnimation: () => threeD, isLandscapeDoublePageActive: () => false,
     readerSettledTextureKey: () => 'front', readerPageTextureCache: { acquire: () => null },
-    readerPageTextureWarmInflight: new Map(), rasterSettledPageTexture: () => null,
-    rasterIncomingPageTexture: () => null,
+    rasterSettledPageTexture: () => null, rasterIncomingPageTexture: () => null,
     currentReaderSnapshotComponentId: () => 'front', readerPageCurlSnapshotScale: () => 0.75,
     getPageTurnWidth: () => 600, getPageTurnHeight: () => 900, getReaderPageCurlCanvasHeight: () => 900,
     getPageTurnProgress: () => progress, getReaderPageColumnWidth: () => 600,
@@ -101,19 +100,15 @@ for (const [color, tone, systemDark, paper, dark] of [
   assert.equal(h.paints.at(-1)[12], paper, 'transparent/missing paper fallback is preserved');
   assert.equal(h.paints.at(-1)[13], dark, 'explicit tone and color-mode fallback are preserved');
 }
-// A warm snapshot still in RenderService when the turn starts is awaited and reused, not captured again.
-const shared = fixture(true, { backgroundColor: '#FFFFFF', contentTone: 'light' });
-const warmBitmap = { releases: 0, getImageInfo: async () => ({ size: { width: 450, height: 675 } }),
+// A page the app can draw itself starts its turn without any RenderService capture.
+const drawn = fixture(true, { backgroundColor: '#FFFFFF', contentTone: 'light' });
+const drawnBitmap = { releases: 0, getImageInfo: async () => ({ size: { width: 450, height: 675 } }),
   release() { this.releases++; return Promise.resolve(); } };
-let warmLease = null;
-shared.p.readerPageTextureCache = { acquire: () => warmLease };
-shared.p.readerPageTextureWarmInflight.set('front', new Promise(resolve => setTimeout(() => {
-  warmLease = { bitmap: warmBitmap, release() {} }; resolve();
-}, 0)));
-await shared.p.captureReaderPageCurlSnapshots(1, 'turn');
-assert.equal(shared.p.readerPageCurlSnapshotReady, true);
-assert.equal(shared.bitmaps.length, 0, 'the in-flight warm snapshot replaces a second RenderService capture');
-assert.equal(shared.p.readerPageCurlFront, warmBitmap);
+drawn.p.rasterSettledPageTexture = () => drawnBitmap;
+await drawn.p.captureReaderPageCurlSnapshots(1, 'turn');
+assert.equal(drawn.p.readerPageCurlSnapshotReady, true);
+assert.equal(drawn.bitmaps.length, 0, 'the self-drawn page replaces the RenderService capture');
+assert.equal(drawn.p.readerPageCurlFront, drawnBitmap);
 
 const stale = fixture(true, { backgroundColor: '#FFFFFF', contentTone: 'light' });
 stale.interrupt(() => { stale.p.readerPageCurlCaptureSerial++; });
