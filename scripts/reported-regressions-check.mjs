@@ -135,29 +135,40 @@ for (const [url, group] of [['a', '漫画'], ['b', '未分组'], ['removed', '__
   assert.equal(explore.showExploreSourcePicker, true);
 }
 
-let playingBook = 'trial', stopped = 0, deleted = 0;
-let releaseStop;
-// The production static method refers to its class by name.
-const context = vm.createContext({ AppStorage: { get: () => playingBook } });
-vm.runInContext(stripTypeScriptTypes(`class ReaderTtsFloatingSession { ${method('utils/ReaderTtsFloatingSession.ets', 'stopForBook')} };
-  globalThis.Floating = ReaderTtsFloatingSession;`), context);
-const floating = context.Floating;
-floating.stopAction = () => { stopped++; return new Promise(resolve => { releaseStop = resolve; }); };
-floating.clear = () => { stopped++; };
-await floating.stopForBook('another'); assert.equal(stopped, 0, 'declining another book must not stop current playback');
+let playingBook = 'trial', deleted = 0, released = null;
+const deferred = [];
+const floating = {
+  isPlayingBook: url => !!url && url === playingBook,
+  setReleaseListener: listener => { released = listener; },
+};
 const db = { initWithContext: async () => {}, getBook: async () => ({ pendingAddToShelf: true }),
   deleteBook: async () => { deleted++; } };
+const cleanupGlobals = { AppDatabase: { getInstance: () => db }, ReaderTtsFloatingSession: floating, console,
+  SearchExplorePendingBook: { isPendingAddToShelf: b => !!b?.pendingAddToShelf }, AppStorage: { setOrCreate() {} },
+  setTimeout: fn => { deferred.push(fn); } };
+const Cleanup = compile(clean('utils/PendingTrialBookCleanup.ets') + '\nPendingTrialBookCleanup', cleanupGlobals);
 const Detail = compile(`class Detail { ${method('pages/SearchBookDetail.ets', 'removePendingReadBook')} }; Detail`, {
   AppDatabase: { getInstance: () => db }, getContext: () => ({}), console,
-  AppStorage: { setOrCreate() {} }, ReaderTtsFloatingSession: floating,
+  AppStorage: { setOrCreate() {} }, ReaderTtsFloatingSession: floating, PendingTrialBookCleanup: Cleanup,
   SearchExplorePendingBook: { isPendingAddToShelf: b => b?.pendingAddToShelf },
 });
+const flush = async () => { while (deferred.length) deferred.shift()(); for (let i = 0; i < 8; i++) await Promise.resolve(); };
 const detail = new Detail(); detail.pendingAddToShelfBookUrl = 'trial';
-const removing = detail.removePendingReadBook();
-for (let i = 0; i < 8; i++) await Promise.resolve();
-assert.equal(stopped, 1); assert.equal(deleted, 0, 'deletion waits for playback, media session and progress cleanup');
-releaseStop(); await removing; assert.equal(deleted, 1); assert.equal(detail.pendingAddToShelfBookUrl, '');
+await detail.removePendingReadBook();
+assert.equal(deleted, 0, 'declining a trial that is still playing keeps playback and its hidden record');
+assert.equal(detail.pendingAddToShelfBookUrl, '');
+released('trial'); await flush();
+assert.equal(deleted, 0, 'a session cleared and republished for the same book is not treated as stopped');
+playingBook = 'another'; released('trial'); await flush();
+assert.equal(deleted, 1, 'the declined trial is deleted once its playback ends');
+released('trial'); await flush(); assert.equal(deleted, 1, 'deferred deletion runs once');
+detail.pendingAddToShelfBookUrl = 'trial'; await detail.removePendingReadBook();
+assert.equal(deleted, 2, 'a trial that is not playing is deleted right away');
 db.getBook = async () => ({ pendingAddToShelf: false });
 detail.pendingAddToShelfBookUrl = 'trial'; await detail.removePendingReadBook();
-assert.equal(stopped, 1); assert.equal(deleted, 1, 'a concurrently added shelf book is retained');
-console.log('PASS: recent-update ordering and persistence, current discovery group, scoped and awaited trial playback cleanup');
+assert.equal(deleted, 2, 'a concurrently added shelf book is retained');
+playingBook = 'trial'; db.getBook = async () => ({ pendingAddToShelf: true });
+detail.pendingAddToShelfBookUrl = 'trial'; await detail.removePendingReadBook();
+Cleanup.cancel('trial'); playingBook = ''; released('trial'); await flush();
+assert.equal(deleted, 2, 'reopening the trial from its detail page hands deletion back to the detail page');
+console.log('PASS: recent-update ordering and persistence, current discovery group, declined trials keep playing and are removed after playback');

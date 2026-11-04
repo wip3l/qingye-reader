@@ -19,6 +19,7 @@ export class ReaderTtsFloatingSession {
   static readonly CATALOG_REVISION_KEY: string = 'globalTtsCatalogRevision';
   private static audioOffline: AudioOfflineCatalogInfo | null = null;
   private static ownerId: string = '';
+  private static releaseListener: ((bookUrl: string) => void) | null = null;
   private static toggleAction: (() => Promise<void>) | null = null;
   private static pausedState: (() => boolean) | null = null;
   private static stopAction: (() => Promise<void> | void) | null = null;
@@ -47,6 +48,7 @@ export class ReaderTtsFloatingSession {
     stopAction: () => Promise<void> | void): void {
     // 换了会话主人（例如从听书换成朗读）时，上一位发布的离线信息不再适用。
     if (ReaderTtsFloatingSession.ownerId !== ownerId) ReaderTtsFloatingSession.audioOffline = null;
+    const previousBookUrl = ReaderTtsFloatingSession.isActive() ? AppStorage.get<string>('globalTtsBookUrl') || '' : '';
     ReaderTtsFloatingSession.ownerId = ownerId;
     ReaderTtsFloatingSession.toggleAction = toggleAction;
     ReaderTtsFloatingSession.pausedState = pausedState;
@@ -62,6 +64,9 @@ export class ReaderTtsFloatingSession {
     AppStorage.setOrCreate('globalTtsStatusText', '');
     AppStorage.setOrCreate('globalTtsBusy', false);
     ReaderTtsFloatingSession.notifyChanged();
+    // 没经过 clear 直接换成另一本书时，上一本也算播完了。
+    const listener = ReaderTtsFloatingSession.releaseListener;
+    if (listener && previousBookUrl && previousBookUrl !== bookUrl) listener(previousBookUrl);
   }
 
   static update(ownerId: string, bookName: string, chapterTitle: string, paused: boolean): void {
@@ -395,12 +400,15 @@ export class ReaderTtsFloatingSession {
     ReaderTtsFloatingSession.clear();
   }
 
-  /** Await the owning player's full cleanup before deleting a declined trial book. */
-  static async stopForBook(bookUrl: string): Promise<void> {
-    if (!bookUrl || AppStorage.get<string>('globalTtsBookUrl') !== bookUrl) return;
-    const action = ReaderTtsFloatingSession.stopAction;
-    if (action) await Promise.resolve(action());
-    else ReaderTtsFloatingSession.clear();
+  /** 这本书正在朗读或听书（暂停也算），书架胶囊和系统媒体控件还挂着它。 */
+  static isPlayingBook(bookUrl: string): boolean {
+    return !!bookUrl && ReaderTtsFloatingSession.isActive() &&
+      AppStorage.get<string>('globalTtsBookUrl') === bookUrl;
+  }
+
+  /** 会话结束时收到结束的是哪本书，试听后不加入书架的临时书靠它在停播后再删。 */
+  static setReleaseListener(listener: ((bookUrl: string) => void) | null): void {
+    ReaderTtsFloatingSession.releaseListener = listener;
   }
 
   static previous(): void {
@@ -463,6 +471,7 @@ export class ReaderTtsFloatingSession {
     if (ownerId && ReaderTtsFloatingSession.ownerId !== ownerId) {
       return;
     }
+    const releasedBookUrl = AppStorage.get<string>('globalTtsBookUrl') || '';
     ReaderTtsFloatingSession.ownerId = '';
     ReaderTtsFloatingSession.toggleAction = null;
     ReaderTtsFloatingSession.pausedState = null;
@@ -514,6 +523,8 @@ export class ReaderTtsFloatingSession {
     AppStorage.setOrCreate('globalTtsVoiceRevision', 0);
     AppStorage.setOrCreate('globalTtsAudioCatalogReverseOrder', false);
     ReaderTtsFloatingSession.notifyChanged();
+    const listener = ReaderTtsFloatingSession.releaseListener;
+    if (listener && releasedBookUrl) listener(releasedBookUrl);
   }
 
   private static notifyChanged(): void {

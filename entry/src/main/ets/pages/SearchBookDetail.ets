@@ -16,6 +16,7 @@ import { ImmersiveReadButton, IMMERSIVE_READ_BUTTON_WIDTH } from '../components/
 import { BookCover } from '../components/book/BookCover';
 import { SearchExplorePendingBook } from '../utils/SearchExplorePendingBook';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
+import { PendingTrialBookCleanup } from '../utils/PendingTrialBookCleanup';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { SearchBookShelfHelper } from '../utils/SearchBookShelfHelper';
 import { ShelfWorkDuplicatePrompt } from '../utils/ShelfWorkDuplicatePrompt';
@@ -1135,8 +1136,10 @@ struct SearchBookDetailPage {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
       const pendingBook = await db.getBook(this.pendingAddToShelfBookUrl);
-      if (SearchExplorePendingBook.isPendingAddToShelf(pendingBook)) {
-        await ReaderTtsFloatingSession.stopForBook(this.pendingAddToShelfBookUrl);
+      if (ReaderTtsFloatingSession.isPlayingBook(this.pendingAddToShelfBookUrl)) {
+        // 不加入书架也接着放；临时书等停播后再删，播放面板和系统媒体控件才取得到封面。
+        PendingTrialBookCleanup.deleteAfterPlayback(getContext(this), this.pendingAddToShelfBookUrl);
+      } else if (SearchExplorePendingBook.isPendingAddToShelf(pendingBook)) {
         await db.deleteBook(this.pendingAddToShelfBookUrl, 'temporary_read_declined');
         AppStorage.setOrCreate('shelfUpdateTime', Date.now());
       }
@@ -1227,6 +1230,7 @@ struct SearchBookDetailPage {
         }
         this.syncStateFromBook(existing);
         if (SearchExplorePendingBook.isPendingAddToShelf(existing)) {
+          PendingTrialBookCleanup.cancel(existing.bookUrl);
           this.isInShelf = false;
           this.promptAddToShelfAfterRead = this.promptAddToShelfOnBackFromResult;
           this.pendingAddToShelfBookUrl = existing.bookUrl;
@@ -1252,6 +1256,7 @@ struct SearchBookDetailPage {
         }
         this.syncStateFromBook(resolvedExisting);
         if (SearchExplorePendingBook.isPendingAddToShelf(resolvedExisting)) {
+          PendingTrialBookCleanup.cancel(resolvedExisting.bookUrl);
           this.isInShelf = false;
           this.promptAddToShelfAfterRead = this.promptAddToShelfOnBackFromResult;
           this.pendingAddToShelfBookUrl = resolvedExisting.bookUrl;
