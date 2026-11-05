@@ -37,6 +37,61 @@ const SEARCH_SOURCE_TIMEOUT_MS = 60000;
 /** Tells an abandoned source run that its result is no longer wanted. */
 class SearchSourceAbort {
   timedOut: boolean = false;
+  /** Last time the source handed something over; a source still producing batches is slow, not dead. */
+  activityAt: number = Date.now();
+}
+
+interface PartialSearchBody {
+  body: string;
+  baseUrl: string;
+  variables: Record<string, string>;
+}
+
+interface ParsedSearchBooks {
+  books: SearchBook[];
+  itemCount: number;
+  cancelled: boolean;
+}
+
+/**
+ * Books a search script hands over while it is still running (java.emitSearch / ui.emitSearch). Batches are parsed
+ * one after another and given to the listener as they settle; the final result is merged behind them.
+ */
+class PartialSearchSink {
+  readonly listener: ((books: SearchBook[]) => void) | null;
+  readonly seenBookKeys: Set<string> = new Set<string>();
+  readonly emitted: SearchBook[] = [];
+  private chain: Promise<void> = Promise.resolve();
+
+  constructor(listener: ((books: SearchBook[]) => void) | null) {
+    this.listener = listener;
+  }
+
+  enqueue(parse: () => Promise<SearchBook[]>, sourceName: string, debugContext: BookSourceDebugContext | null): void {
+    const listener = this.listener;
+    if (!listener) return;
+    this.chain = this.chain.then(async (): Promise<void> => {
+      const books = await parse();
+      if (books.length === 0) return;
+      this.emitted.push(...books);
+      if (debugContext) debugContext.addLog('info', `脚本分批返回：本批 ${books.length} 本`);
+      listener(books);
+    }).catch((e: Error): void => {
+      console.warn('[SC] partial search batch failed:', sourceName, e);
+    });
+  }
+
+  /** Waits for the queued batches to be parsed. */
+  async settle(): Promise<void> {
+    await this.chain;
+  }
+
+  /** The source's complete result: the batches already handed over, then what the final result adds. */
+  async merge(result: SearchSourceResult): Promise<SearchSourceResult> {
+    await this.chain;
+    if (this.emitted.length === 0) return result;
+    return { books: this.emitted.concat(result.books), validationStatus: BookSource.VALIDATION_PASSED, reason: '' };
+  }
 }
 const MAX_VALIDATION_CONCURRENCY = 1;
 // Batch source results so background searching does not continuously interrupt list gestures.
@@ -221,11 +276,26 @@ export class SearchCoordinator {
         currentSourceLabel = sources[sourceIndex].bookSourceName || `书源 ${sourceIndex + 1}`;
         AppStorage.setOrCreate('searchLastSource', currentSourceLabel);
         AppStorage.setOrCreate('searchLastSourceIndex', sourceIndex + 1);
-        const sourceResult = await this.searchOneWithDeadline(sources[sourceIndex], keyword, options);
+        // Books the source hands over while its script is still running go to the page right away; the final
+        // result leaves them out below so the page never sees a book twice.
+        const emittedKeys = new Set<string>();
+        const onPartial = validationOnly ? null : (books: SearchBook[]): void => {
+          if (this.cancelled || resultBudgetSpent()) return;
+          const fresh = books.filter((book: SearchBook): boolean => !emittedKeys.has(this.searchBookKey(book)));
+          const displayBooks = this.booksForDisplay(this.filterSearchResults(fresh, keyword, options), categoryLimit,
+            categoryCounts, Math.max(0, totalResultLimit - all.length));
+          if (displayBooks.length === 0) return;
+          for (const book of displayBooks) emittedKeys.add(this.searchBookKey(book));
+          pendingDeltaResults.push(...displayBooks);
+          all.push(...displayBooks);
+          emitProgress();
+        };
+        const sourceResult = await this.searchOneWithDeadline(sources[sourceIndex], keyword, options, onPartial);
         if (sourceResult.books.length === 0 && sourceResult.reason && sourceResult.reason !== '未搜索到结果') {
           this.lastFailureReason = `${sources[sourceIndex].bookSourceName || '书源'}：${sourceResult.reason}`;
         }
-        const books = sourceResult.books;
+        const books = emittedKeys.size === 0 ? sourceResult.books :
+          sourceResult.books.filter((book: SearchBook): boolean => !emittedKeys.has(this.searchBookKey(book)));
         if (this.cancelled) break;
         if (options.onSourceComplete) {
           try {
@@ -234,14 +304,14 @@ export class SearchCoordinator {
             console.error('[SC] source completion callback failed:', e);
           }
         }
-        const remainingCapacity = Math.max(0, totalResultLimit - all.length);
         const matchedBooks = validationOnly ? [] : this.filterSearchResults(books, keyword, options);
         if (options.debugContext && !validationOnly) options.debugContext.addLog('info',
-          `搜索展示过滤：有效记录 ${books.length}，相关性匹配 ${matchedBooks.length}`);
-        const displayBooks = categoryLimit > 0 ?
-          this.takeWithinCategoryLimit(matchedBooks, categoryLimit, categoryCounts) :
-          matchedBooks.slice(0, remainingCapacity);
-        if (options.debugContext && !validationOnly) options.debugContext.addLog('info', `本书源纳入展示：${displayBooks.length}`);
+          `搜索展示过滤：有效记录 ${sourceResult.books.length}，相关性匹配 ${matchedBooks.length + emittedKeys.size}`);
+        const displayBooks = this.booksForDisplay(matchedBooks, categoryLimit, categoryCounts,
+          Math.max(0, totalResultLimit - all.length));
+        if (options.debugContext && !validationOnly) {
+          options.debugContext.addLog('info', `本书源纳入展示：${displayBooks.length + emittedKeys.size}`);
+        }
 
         done++;
         if (!validationOnly) {
@@ -273,30 +343,43 @@ export class SearchCoordinator {
    * On timeout the worker moves on and the abandoned run stops at its next checkpoint; a request already on the
    * wire ends through the HTTP client's own timeout.
    */
-  private async searchOneWithDeadline(source: BookSource, keyword: string,
-    options: SearchOptions): Promise<SearchSourceResult> {
+  private async searchOneWithDeadline(source: BookSource, keyword: string, options: SearchOptions,
+    onPartial: ((books: SearchBook[]) => void) | null = null): Promise<SearchSourceResult> {
     const abort = new SearchSourceAbort();
     // Time spent queueing behind the source's own rate limit is capped separately and comes on top.
     const deadlineMs = SEARCH_SOURCE_TIMEOUT_MS + (source.concurrentRate ? SEARCH_RATE_LIMIT_MAX_WAIT_MS : 0);
     let timerId = -1;
     const timeout = new Promise<SearchSourceResult>((resolve: (result: SearchSourceResult) => void): void => {
-      timerId = setTimeout((): void => {
+      // The budget restarts whenever the source hands over a batch: an aggregating script that is still producing
+      // results is slow, not dead, and the books it has shown so far must not be thrown away with a timeout.
+      const check = (): void => {
+        const remaining = abort.activityAt + deadlineMs - Date.now();
+        if (remaining > 0) {
+          timerId = setTimeout(check, Math.max(50, remaining));
+          return;
+        }
         timerId = -1;
         abort.timedOut = true;
-        console.warn(`[SC] source timed out after ${deadlineMs}ms:`, source.bookSourceName);
+        console.warn(`[SC] source timed out after ${deadlineMs}ms of silence:`, source.bookSourceName);
         resolve(this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR,
           `书源响应超时（超过 ${Math.round(deadlineMs / 1000)} 秒）`));
-      }, deadlineMs);
+      };
+      timerId = setTimeout(check, deadlineMs);
     });
+    const partial = onPartial ? (books: SearchBook[]): void => {
+      if (abort.timedOut) return;
+      abort.activityAt = Date.now();
+      onPartial(books);
+    } : null;
     try {
-      return await Promise.race([this.searchOne(source, keyword, options, abort), timeout]);
+      return await Promise.race([this.searchOne(source, keyword, options, abort, partial), timeout]);
     } finally {
       if (timerId >= 0) clearTimeout(timerId);
     }
   }
 
   private async searchOne(source: BookSource, keyword: string, options: SearchOptions,
-    abort: SearchSourceAbort): Promise<SearchSourceResult> {
+    abort: SearchSourceAbort, onPartial: ((books: SearchBook[]) => void) | null = null): Promise<SearchSourceResult> {
     const stopped = (): boolean => this.cancelled || abort.timedOut;
     const debugContext = options.debugContext;
     if (debugContext) debugContext.beginStep(SourceRuntimeStage.SEARCH, `搜索：${keyword}`);
@@ -323,280 +406,18 @@ export class SearchCoordinator {
         return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
       }
       if (NativeSourceService.isNative(source)) {
-        const nativeResult = await this.searchNative(source, keyword, options, responseLimit, resultLimit, stopped);
+        const nativeResult = await this.searchNative(source, keyword, options, responseLimit, resultLimit, stopped,
+          onPartial);
         debugPassed = nativeResult.books.length > 0;
         debugError = debugPassed ? '' : nativeResult.reason;
         return nativeResult;
       }
-      if (!source.searchUrl || !source.searchRule?.bookList || !source.searchRule?.name || !source.searchRule?.bookUrl) {
-        if (ENABLE_SEARCH_DEBUG_LOG) {
-          console.warn('[SC] skip source without search rules:', source.bookSourceName);
-        }
-        return this.sourceResult([], BookSource.VALIDATION_FAILED, '缺少搜索地址或必要搜索规则');
-      }
-      const js = new JsRuntime();
-      const urlObservation = new QuickJsObservationContext();
-      urlObservation.sourceUrl = source.bookSourceUrl || '';
-      urlObservation.sourceName = source.bookSourceName || urlObservation.sourceUrl;
-      urlObservation.stage = SourceRuntimeStage.SEARCH;
-      urlObservation.field = 'searchUrl';
-      js.setQuickJsObservation(urlObservation);
-      js.setVar('key', encodeURIComponent(keyword));
-      js.setVar('searchKey', encodeURIComponent(keyword));
-      js.setVar('keyword', encodeURIComponent(keyword));
-      js.setVar('searchKeyRaw', keyword);
-      js.setVar('page', String(this.currentPage));
-
-      const searchSerial = this.searchSerial;
-      const au = new AnalyzeUrl(source, this.http)
-        .setCancelCheck((): boolean => stopped() || searchSerial !== this.searchSerial,
-          SEARCH_RATE_LIMIT_MAX_WAIT_MS);
-      let urlTemplate = await this.evalAndBuild(js, source, keyword, responseLimit,
-        options.validationOnly === true, debugContext || null);
-      if (!urlTemplate) {
-        return this.sourceResult([], BookSource.VALIDATION_FAILED, '搜索地址无法解析');
-      }
-      // Search requests the first page, so `<first,following>` resolves to its first candidate.
-      urlTemplate = PageCandidateUrl.apply(urlTemplate, this.currentPage);
-      if (ENABLE_SEARCH_DEBUG_LOG) {
-        console.log('[SC] search source:', source.bookSourceName);
-      }
-      const resp = EncodedSourceUrl.canHandle(urlTemplate) ?
-        await this.fetchEncodedDataUrl(urlTemplate, source, responseLimit) :
-          await au.fetch(urlTemplate, responseLimit, debugContext || null);
-      if (debugContext) debugContext.setOutput('searchUrl', urlTemplate);
-      if (stopped()) {
-        return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
-      }
-
-      if (ENABLE_SEARCH_DEBUG_LOG) {
-        console.log('[SC] response:', source.bookSourceName, resp.statusCode, 'len:', resp.body?.length || 0);
-      }
-      if (VerificationSupport.shouldRequestBrowserVerification(source, resp.body, resp.statusCode, source.searchUrl,
-        resp.error)) {
-        const verifyUrl = VerificationSupport.pickVerificationUrl(source, urlTemplate, source.searchUrl);
-        VerificationSupport.requestVerification(verifyUrl, `${source.bookSourceName} 验证`, source);
-        if (ENABLE_SEARCH_DEBUG_LOG) {
-          console.warn('[SC] source needs browser verification:', source.bookSourceName, LogText.url(verifyUrl));
-        }
-        return this.sourceResult([], BookSource.VALIDATION_NEEDS_VERIFICATION, '需要登录或网页验证');
-      }
-      if (!resp.success) {
-        return this.validationHttpFailure(resp);
-      }
-      if (!resp.body) {
-        return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '服务器返回空响应');
-      }
-
-      const baseUrl = BookUrlResolver.effectiveBase(resp, urlTemplate, source.bookSourceUrl);
-      const rule = new AnalyzeRule(resp.body, baseUrl);
-      this.seedSourceVariables(rule.getContext(), source);
-      const encodedVariables = EncodedSourceUrl.scalarVariables(urlTemplate);
-      for (const key in encodedVariables) rule.getContext().put(key, encodedVariables[key]);
-      rule.setJsVar('key', encodeURIComponent(keyword));
-      rule.setJsVar('searchKey', encodeURIComponent(keyword));
-      rule.setJsVar('keyword', encodeURIComponent(keyword));
-      rule.setJsVar('page', String(this.currentPage));
-      const searchRule = source.searchRule;
-      const stageItems = await BookSourceStageRuleSupport.getElements(source, resp.body, baseUrl,
-        searchRule.bookList || '', SourceRuntimeStage.SEARCH, this.stageRuntimeOwnerId,
-        options.validationOnly === true ? MAX_VALIDATION_STAGE_RESPONSE_BYTES : 8 * 1024 * 1024,
-        options.validationOnly === true ? MAX_VALIDATION_STAGE_TOTAL_RESPONSE_BYTES : 16 * 1024 * 1024,
-        encodedVariables);
-      if (stopped()) {
-        return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
-      }
-      const allTypedItems = stageItems === null ?
-        rule.execute(searchRule.bookList || '', RuleExecutionTarget.ELEMENTS) :
-        stageItems.map((item: string): RuleValue => RuleValue.fromExternal(item));
-      const candidateLimit = this.normalizedLimit(options.maxCandidatesPerSource,
-        options.leanResult === true ? 60 : 120, 1, 200);
-      const typedItems = allTypedItems.length > candidateLimit ?
-        allTypedItems.slice(0, candidateLimit) : allTypedItems;
-      const items = typedItems.map((item: RuleValue): string => item.asString());
-      if (stopped()) {
-        return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
-      }
-      if (ENABLE_SEARCH_DEBUG_LOG) {
-        console.log('[SC] parsed list:', source.bookSourceName, 'rule:', searchRule.bookList, 'count:', items.length);
-      }
-
-      const books: SearchBook[] = [];
-      const seenBookKeys = new Set<string>();
-      const normalizedKeyword = this.normalizeSearchText(keyword);
-      const sourceBackendHost = BookSourceDataUrlSupport.sourceBackendHost(source);
-      const fieldRequest = new RuleBatchExecutionRequest();
-      fieldRequest.source = source;
-      fieldRequest.stage = SourceRuntimeStage.SEARCH;
-      fieldRequest.ownerId = this.stageRuntimeOwnerId;
-      fieldRequest.typedContents = typedItems;
-      fieldRequest.contents = items;
-      fieldRequest.baseUrl = baseUrl || source.bookSourceUrl;
-      fieldRequest.fields = [
-        new RuleFieldRequest('name', searchRule.name || ''),
-        new RuleFieldRequest('author', searchRule.author || ''),
-        new RuleFieldRequest('bookUrl',
-          this.applySimpleSourceUrlConstants(searchRule.bookUrl || '', source.jsLib || ''), true),
-        // 换源搜索同样需要展示各书源当前提供的最新章节。该字段通常与书名、作者
-        // 位于同一搜索结果节点中，保留它不会引入额外网络请求。
-        new RuleFieldRequest('lastChapter', searchRule.lastChapter || ''),
-        new RuleFieldRequest('status', searchRule.status || ''),
-        new RuleFieldRequest('updateTime', searchRule.updateTime || '')
-      ];
-      if (!options.leanResult) {
-        fieldRequest.fields.push(new RuleFieldRequest('coverUrl',
-          this.applySimpleSourceUrlConstants(searchRule.coverUrl || '', source.jsLib || '')));
-        fieldRequest.fields.push(new RuleFieldRequest('intro', searchRule.intro || ''));
-        fieldRequest.fields.push(new RuleFieldRequest('kind', searchRule.kind || ''));
-        fieldRequest.fields.push(new RuleFieldRequest('wordCount', searchRule.wordCount || ''));
-      }
-      if (sourceBackendHost) {
-        fieldRequest.contextValues['host'] = sourceBackendHost;
-        fieldRequest.contextValues['backend'] = sourceBackendHost;
-      }
-      for (const key in encodedVariables) fieldRequest.contextValues[key] = encodedVariables[key];
-      fieldRequest.timeoutMs = options.validationOnly === true ? 15000 : 30000;
-      fieldRequest.debugContext = debugContext || null;
-      const fieldBatch = await RuleExecutionService.get().executeBatch(fieldRequest);
-      if (fieldBatch.cancelled || stopped()) {
-        return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
-      }
-      if (fieldBatch.errors.length > 0) {
-        console.warn('[SC] unified field errors:', source.bookSourceName, fieldBatch.errors.join('; '));
-      }
-      const parsingSlice = CooperativeScheduler.createTimeSlice();
-      for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
-        // Parsing a large response used to keep every result-field rule in one native callback. Even individually
-        // fast selectors could then accumulate past HarmonyOS' 3-second foreground freeze threshold.
-        if (itemIndex > 0) await parsingSlice.checkpoint();
-        const item = items[itemIndex];
-        if (stopped()) {
-          return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
-        }
-        const ir = new AnalyzeRule(item, baseUrl);
-        this.seedSourceVariables(ir.getContext(), source);
-        if (sourceBackendHost) {
-          ir.getContext().put('host', sourceBackendHost);
-          ir.getContext().put('backend', sourceBackendHost);
-        }
-        const book = new SearchBook();
-        const fieldValues = itemIndex < fieldBatch.values.length ? fieldBatch.values[itemIndex] : {};
-        book.name = BookFieldSanitizer.clean(fieldValues['name'] || '');
-        book.author = BookFieldSanitizer.clean(fieldValues['author'] || '');
-        const sourceApiRecord = this.parseJsonRecord(item);
-        if (sourceApiRecord) {
-          if (!book.name) book.name = String(sourceApiRecord['name'] || sourceApiRecord['bookName'] ||
-            sourceApiRecord['title'] || '');
-          if (!book.author) book.author = String(sourceApiRecord['author'] || sourceApiRecord['writer'] || '');
-        }
-        book.bookUrl = BookUrlResolver.resolveScalar(fieldValues['bookUrl'] || '', baseUrl);
-        this.fillSearchFallbackFields(source, ir, book, baseUrl, item);
-        if (options.exactMatch) {
-          if (!this.matchesExactSearch(this.normalizeSearchText(book.name), this.normalizeSearchText(book.author),
-            normalizedKeyword, options)) {
-            continue;
-          }
-        }
-
-        book.coverUrl = BookSourceDataUrlSupport.normalizeCoverUrlFromItem(source,
-          fieldValues['coverUrl'] || '', item, baseUrl);
-        book.intro = BookFieldSanitizer.clean(fieldValues['intro'] || '');
-        book.kind = BookFieldSanitizer.clean(fieldValues['kind'] || '');
-        book.status = BookFieldSanitizer.clean(fieldValues['status'] || '');
-        book.latestChapterTitle = BookFieldSanitizer.clean(fieldValues['lastChapter'] || '');
-        book.updateTime = BookFieldSanitizer.clean(fieldValues['updateTime'] || '');
-        book.wordCount = BookFieldSanitizer.clean(fieldValues['wordCount'] || '');
-        if (sourceApiRecord) {
-          if (!book.coverUrl) book.coverUrl = String(sourceApiRecord['cover'] || sourceApiRecord['coverUrl'] || '');
-          if (!book.intro) book.intro = String(sourceApiRecord['desc'] || sourceApiRecord['intro'] ||
-            sourceApiRecord['description'] || '');
-          if (!book.latestChapterTitle) book.latestChapterTitle = String(sourceApiRecord['lastChapter'] ||
-            sourceApiRecord['latestChapterTitle'] || '');
-          if (!book.wordCount) book.wordCount = String(sourceApiRecord['wordsCount'] ||
-            sourceApiRecord['wordCount'] || '');
-          if (!book.kind) {
-            book.kind = [sourceApiRecord['category'], sourceApiRecord['subCategory']]
-              .map((value: Object): string => String(value || '').trim()).filter((value: string): boolean => !!value)
-              .join(' ');
-          }
-          if (!book.status) book.status = BookFieldSanitizer.clean(String(sourceApiRecord['status'] || ''));
-          if (!book.updateTime) book.updateTime = BookFieldSanitizer.clean(String(sourceApiRecord['updateTime'] ||
-            sourceApiRecord['updatedAt'] || ''));
-        }
-        book.variable = itemIndex < fieldBatch.contextValues.length ? fieldBatch.contextValues[itemIndex] :
-          ir.getContext().toPersistentJson();
-        // 如果解析后仍含 JSONPath 表达式，直接从 item 提取
-        if (!book.bookUrl || book.bookUrl.startsWith('$') || book.bookUrl.includes('$._id') || book.bookUrl.includes('$..')) {
-          // 尝试常见字段
-          book.bookUrl = ir.analyzeFirst('bookUrl') || ir.analyzeFirst('url') || ir.analyzeFirst('link') ||
-            ir.analyzeFirst('_id') || ir.analyzeFirst('id') || ir.analyzeFirst('nid') || ir.analyzeFirst('enid') || '';
-          // 如果还是路径表达式，直接从原始 JSON 提取
-          if (book.bookUrl && (book.bookUrl.startsWith('$') || book.bookUrl.includes('$..'))) {
-            try {
-              const raw = JSON.parse(item) as Record<string, Object>;
-              book.bookUrl = String(raw['url'] || raw['bookUrl'] || raw['link'] || raw['href'] || raw['nid'] || '');
-            } catch (_) {}
-          }
-          book.bookUrl = BookUrlResolver.resolveScalar(book.bookUrl, baseUrl);
-        }
-        if (!book.bookUrl || /["']\s*\+\s*result|\bresult\s*\+\s*["']|@js:/.test(book.bookUrl) ||
-          (/result/.test(searchRule.bookUrl || '') && /\+/.test(searchRule.bookUrl || ''))) {
-          const repaired = this.repairResultConcatUrl(searchRule.bookUrl || '', ir, baseUrl);
-          if (repaired) book.bookUrl = repaired;
-        }
-        const searchBookId = this.extractBookId(ir, item, book.bookUrl);
-        const responseCoverUrl = BookSourceDataUrlSupport.normalizeCoverUrlFromResponse(source, resp.body, searchBookId,
-          baseUrl);
-        if (responseCoverUrl && this.shouldReplaceCover(book.coverUrl)) {
-          book.coverUrl = responseCoverUrl;
-          if (ENABLE_SEARCH_DEBUG_LOG) {
-            console.log('[SC] cover from response:', source.bookSourceName, book.name, searchBookId);
-          }
-        }
-        book.origin = source.bookSourceUrl;
-        BookSourceMetadataSupport.applySearchBook(source, book, [book.bookUrl]);
-        // The searchUrl script declares the media type it searched for (source.put('type',…)).
-        // Honor it so an audio-tab search opens as audio instead of defaulting to text.
-        if (!Number(book.type)) {
-          const searchedType = this.readSourceRuntimeMediaType(source);
-          if (searchedType) book.type = searchedType;
-        }
-        book.bookSourceComment = source.bookSourceComment;
-        book.customOrder = source.customOrder;
-        book.weight = source.weight;
-
-        if (options.leanResult) this.stripLeanFieldValues(book);
-        this.sanitizeSearchBook(book);
-        book.mediaCategory = BookTypeSupport.mediaCategoryOf(book);
-        if (!this.matchesMediaCategory(book, options)) continue;
-        const bookKey = `${book.origin || ''}::${book.bookUrl || ''}`;
-        if (book.name && book.bookUrl && !seenBookKeys.has(bookKey)) {
-          seenBookKeys.add(bookKey);
-          if (ENABLE_SEARCH_DEBUG_LOG && books.length === 0) {
-            console.log('[SC] 第一条结果:', book.name, 'from:', source.bookSourceName);
-          }
-          books.push(book);
-          if (books.length >= resultLimit) {
-            break;
-          }
-        }
-      }
-      if (books.length === 0 && items.length > 0) {
-        if (ENABLE_SEARCH_DEBUG_LOG) {
-          console.warn('[SC] list matched but no valid book:', source.bookSourceName,
-            'nameRule:', searchRule.name, 'urlRule:', searchRule.bookUrl,
-            'firstItem:', items[0].substring(0, Math.min(items[0].length, 240)));
-        }
-      }
-      if (books.length > 0) {
-        debugPassed = true;
-        if (debugContext) debugContext.setOutput('resultCount', String(books.length));
-        return this.sourceResult(books, BookSource.VALIDATION_PASSED, '');
-      }
-      if (items.length > 0) {
-        return this.sourceResult([], BookSource.VALIDATION_FAILED, '搜索规则未能解析出有效书名和详情地址');
-      }
-      return this.sourceResult([], BookSource.VALIDATION_NO_RESULTS, '未搜索到结果');
+      const partial = new PartialSearchSink(options.validationOnly === true ? null : onPartial);
+      const merged = await partial.merge(await this.searchCompat(source, keyword, options, stopped, responseLimit,
+        resultLimit, debugContext || null, partial));
+      debugPassed = merged.books.length > 0;
+      debugError = debugPassed ? '' : merged.reason;
+      return merged;
     } catch (e) {
       if (ENABLE_SEARCH_DEBUG_LOG) {
         console.error('[SC] search failed:', source.bookSourceName, e);
@@ -611,16 +432,386 @@ export class SearchCoordinator {
     }
   }
 
+  /**
+   * Legado-format source: searchUrl (template or script) → response → bookList and field rules. Batches the script
+   * hands over through java.emitSearch() are parsed by the sink while the script keeps running; the result returned
+   * here holds only the books the final response adds beyond them. Rule errors propagate to the caller.
+   */
+  private async searchCompat(source: BookSource, keyword: string, options: SearchOptions, stopped: () => boolean,
+    responseLimit: number, resultLimit: number, debugContext: BookSourceDebugContext | null,
+    partial: PartialSearchSink): Promise<SearchSourceResult> {
+    if (!source.searchUrl || !source.searchRule?.bookList || !source.searchRule?.name || !source.searchRule?.bookUrl) {
+      if (ENABLE_SEARCH_DEBUG_LOG) {
+        console.warn('[SC] skip source without search rules:', source.bookSourceName);
+      }
+      return this.sourceResult([], BookSource.VALIDATION_FAILED, '缺少搜索地址或必要搜索规则');
+    }
+    const js = new JsRuntime();
+    const urlObservation = new QuickJsObservationContext();
+    urlObservation.sourceUrl = source.bookSourceUrl || '';
+    urlObservation.sourceName = source.bookSourceName || urlObservation.sourceUrl;
+    urlObservation.stage = SourceRuntimeStage.SEARCH;
+    urlObservation.field = 'searchUrl';
+    js.setQuickJsObservation(urlObservation);
+    js.setVar('key', encodeURIComponent(keyword));
+    js.setVar('searchKey', encodeURIComponent(keyword));
+    js.setVar('keyword', encodeURIComponent(keyword));
+    js.setVar('searchKeyRaw', keyword);
+    js.setVar('page', String(this.currentPage));
+
+    const searchSerial = this.searchSerial;
+    const au = new AnalyzeUrl(source, this.http)
+      .setCancelCheck((): boolean => stopped() || searchSerial !== this.searchSerial,
+        SEARCH_RATE_LIMIT_MAX_WAIT_MS);
+    const onPartialBody = partial.listener ? (text: string): void => {
+      partial.enqueue(async (): Promise<SearchBook[]> => {
+        if (stopped() || partial.emitted.length >= resultLimit) return [];
+        const batch = await this.resolvePartialSearchBody(text, source, au, responseLimit);
+        if (!batch.body || stopped()) return [];
+        const parsed = await this.parseSearchBooks(source, keyword, options, stopped, batch.body, batch.baseUrl,
+          batch.variables, resultLimit - partial.emitted.length, debugContext, partial.seenBookKeys);
+        return parsed.cancelled ? [] : parsed.books;
+      }, source.bookSourceName || '', debugContext);
+    } : null;
+    let urlTemplate = await this.evalAndBuild(js, source, keyword, responseLimit,
+      options.validationOnly === true, debugContext || null, onPartialBody);
+    if (!urlTemplate) {
+      return this.sourceResult([], BookSource.VALIDATION_FAILED, '搜索地址无法解析');
+    }
+    // Search requests the first page, so `<first,following>` resolves to its first candidate.
+    urlTemplate = PageCandidateUrl.apply(urlTemplate, this.currentPage);
+    if (ENABLE_SEARCH_DEBUG_LOG) {
+      console.log('[SC] search source:', source.bookSourceName);
+    }
+    const resp = EncodedSourceUrl.canHandle(urlTemplate) ?
+      await this.fetchEncodedDataUrl(urlTemplate, source, responseLimit) :
+        await au.fetch(urlTemplate, responseLimit, debugContext || null);
+    if (debugContext) debugContext.setOutput('searchUrl', urlTemplate);
+    if (stopped()) {
+      return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
+    }
+
+    if (ENABLE_SEARCH_DEBUG_LOG) {
+      console.log('[SC] response:', source.bookSourceName, resp.statusCode, 'len:', resp.body?.length || 0);
+    }
+    if (VerificationSupport.shouldRequestBrowserVerification(source, resp.body, resp.statusCode, source.searchUrl,
+      resp.error)) {
+      const verifyUrl = VerificationSupport.pickVerificationUrl(source, urlTemplate, source.searchUrl);
+      VerificationSupport.requestVerification(verifyUrl, `${source.bookSourceName} 验证`, source);
+      if (ENABLE_SEARCH_DEBUG_LOG) {
+        console.warn('[SC] source needs browser verification:', source.bookSourceName, LogText.url(verifyUrl));
+      }
+      return this.sourceResult([], BookSource.VALIDATION_NEEDS_VERIFICATION, '需要登录或网页验证');
+    }
+    if (!resp.success) {
+      return this.validationHttpFailure(resp);
+    }
+    if (!resp.body) {
+      return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '服务器返回空响应');
+    }
+
+    const baseUrl = BookUrlResolver.effectiveBase(resp, urlTemplate, source.bookSourceUrl);
+    // Batches still being parsed share the duplicate set with the final response: let them land first.
+    await partial.settle();
+    if (stopped()) {
+      return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
+    }
+    const remaining = resultLimit - partial.emitted.length;
+    if (remaining <= 0) {
+      return this.sourceResult([], BookSource.VALIDATION_PASSED, '');
+    }
+    const parsed = await this.parseSearchBooks(source, keyword, options, stopped, resp.body, baseUrl,
+      EncodedSourceUrl.scalarVariables(urlTemplate), remaining, debugContext, partial.seenBookKeys);
+    if (parsed.cancelled) {
+      return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
+    }
+    if (parsed.books.length > 0 || partial.emitted.length > 0) {
+      if (debugContext) {
+        debugContext.setOutput('resultCount', String(partial.emitted.length + parsed.books.length));
+      }
+      return this.sourceResult(parsed.books, BookSource.VALIDATION_PASSED, '');
+    }
+    if (parsed.itemCount > 0) {
+      return this.sourceResult([], BookSource.VALIDATION_FAILED, '搜索规则未能解析出有效书名和详情地址');
+    }
+    return this.sourceResult([], BookSource.VALIDATION_NO_RESULTS, '未搜索到结果');
+  }
+
+  /**
+   * A batch a search script handed over: the same text the script would return as its final value, so a data: URL
+   * is decoded exactly like the final response, and anything else is the response body itself.
+   */
+  private async resolvePartialSearchBody(text: string, source: BookSource, au: AnalyzeUrl,
+    responseLimit: number): Promise<PartialSearchBody> {
+    const value = (text || '').trim();
+    if (!value) return { body: '', baseUrl: source.bookSourceUrl, variables: {} };
+    if (!value.startsWith('data:')) return { body: value, baseUrl: source.bookSourceUrl, variables: {} };
+    const resp = await au.fetch(value, responseLimit, null);
+    if (!resp.success || !resp.body) return { body: '', baseUrl: source.bookSourceUrl, variables: {} };
+    return {
+      body: resp.body,
+      baseUrl: BookUrlResolver.effectiveBase(resp, value, source.bookSourceUrl),
+      variables: EncodedSourceUrl.scalarVariables(value)
+    };
+  }
+
+  /** Runs the source's bookList and field rules over one response body; seenBookKeys carries across batches. */
+  private async parseSearchBooks(source: BookSource, keyword: string, options: SearchOptions, stopped: () => boolean,
+    body: string, baseUrl: string, encodedVariables: Record<string, string>, resultLimit: number,
+    debugContext: BookSourceDebugContext | null, seenBookKeys: Set<string>): Promise<ParsedSearchBooks> {
+    const parsed: ParsedSearchBooks = { books: [], itemCount: 0, cancelled: false };
+    const searchRule = source.searchRule;
+    const rule = new AnalyzeRule(body, baseUrl);
+    this.seedSourceVariables(rule.getContext(), source);
+    for (const key in encodedVariables) rule.getContext().put(key, encodedVariables[key]);
+    rule.setJsVar('key', encodeURIComponent(keyword));
+    rule.setJsVar('searchKey', encodeURIComponent(keyword));
+    rule.setJsVar('keyword', encodeURIComponent(keyword));
+    rule.setJsVar('page', String(this.currentPage));
+    const stageItems = await BookSourceStageRuleSupport.getElements(source, body, baseUrl,
+      searchRule.bookList || '', SourceRuntimeStage.SEARCH, this.stageRuntimeOwnerId,
+      options.validationOnly === true ? MAX_VALIDATION_STAGE_RESPONSE_BYTES : 8 * 1024 * 1024,
+      options.validationOnly === true ? MAX_VALIDATION_STAGE_TOTAL_RESPONSE_BYTES : 16 * 1024 * 1024,
+      encodedVariables);
+    if (stopped()) {
+      parsed.cancelled = true;
+      return parsed;
+    }
+    const allTypedItems = stageItems === null ?
+      rule.execute(searchRule.bookList || '', RuleExecutionTarget.ELEMENTS) :
+      stageItems.map((item: string): RuleValue => RuleValue.fromExternal(item));
+    const candidateLimit = this.normalizedLimit(options.maxCandidatesPerSource,
+      options.leanResult === true ? 60 : 120, 1, 200);
+    const typedItems = allTypedItems.length > candidateLimit ?
+      allTypedItems.slice(0, candidateLimit) : allTypedItems;
+    const items = typedItems.map((item: RuleValue): string => item.asString());
+    parsed.itemCount = items.length;
+    if (stopped()) {
+      parsed.cancelled = true;
+      return parsed;
+    }
+    if (ENABLE_SEARCH_DEBUG_LOG) {
+      console.log('[SC] parsed list:', source.bookSourceName, 'rule:', searchRule.bookList, 'count:', items.length);
+    }
+
+    const books = parsed.books;
+    const normalizedKeyword = this.normalizeSearchText(keyword);
+    const sourceBackendHost = BookSourceDataUrlSupport.sourceBackendHost(source);
+    const fieldRequest = new RuleBatchExecutionRequest();
+    fieldRequest.source = source;
+    fieldRequest.stage = SourceRuntimeStage.SEARCH;
+    fieldRequest.ownerId = this.stageRuntimeOwnerId;
+    fieldRequest.typedContents = typedItems;
+    fieldRequest.contents = items;
+    fieldRequest.baseUrl = baseUrl || source.bookSourceUrl;
+    fieldRequest.fields = [
+      new RuleFieldRequest('name', searchRule.name || ''),
+      new RuleFieldRequest('author', searchRule.author || ''),
+      new RuleFieldRequest('bookUrl',
+        this.applySimpleSourceUrlConstants(searchRule.bookUrl || '', source.jsLib || ''), true),
+      // 换源搜索同样需要展示各书源当前提供的最新章节。该字段通常与书名、作者
+      // 位于同一搜索结果节点中，保留它不会引入额外网络请求。
+      new RuleFieldRequest('lastChapter', searchRule.lastChapter || ''),
+      new RuleFieldRequest('status', searchRule.status || ''),
+      new RuleFieldRequest('updateTime', searchRule.updateTime || '')
+    ];
+    if (!options.leanResult) {
+      fieldRequest.fields.push(new RuleFieldRequest('coverUrl',
+        this.applySimpleSourceUrlConstants(searchRule.coverUrl || '', source.jsLib || '')));
+      fieldRequest.fields.push(new RuleFieldRequest('intro', searchRule.intro || ''));
+      fieldRequest.fields.push(new RuleFieldRequest('kind', searchRule.kind || ''));
+      fieldRequest.fields.push(new RuleFieldRequest('wordCount', searchRule.wordCount || ''));
+    }
+    if (sourceBackendHost) {
+      fieldRequest.contextValues['host'] = sourceBackendHost;
+      fieldRequest.contextValues['backend'] = sourceBackendHost;
+    }
+    for (const key in encodedVariables) fieldRequest.contextValues[key] = encodedVariables[key];
+    fieldRequest.timeoutMs = options.validationOnly === true ? 15000 : 30000;
+    fieldRequest.debugContext = debugContext || null;
+    const fieldBatch = await RuleExecutionService.get().executeBatch(fieldRequest);
+    if (fieldBatch.cancelled || stopped()) {
+      parsed.cancelled = true;
+      return parsed;
+    }
+    if (fieldBatch.errors.length > 0) {
+      console.warn('[SC] unified field errors:', source.bookSourceName, fieldBatch.errors.join('; '));
+    }
+    const parsingSlice = CooperativeScheduler.createTimeSlice();
+    for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+      // Parsing a large response used to keep every result-field rule in one native callback. Even individually
+      // fast selectors could then accumulate past HarmonyOS' 3-second foreground freeze threshold.
+      if (itemIndex > 0) await parsingSlice.checkpoint();
+      const item = items[itemIndex];
+      if (stopped()) {
+        parsed.cancelled = true;
+      return parsed;
+      }
+      const ir = new AnalyzeRule(item, baseUrl);
+      this.seedSourceVariables(ir.getContext(), source);
+      if (sourceBackendHost) {
+        ir.getContext().put('host', sourceBackendHost);
+        ir.getContext().put('backend', sourceBackendHost);
+      }
+      const book = new SearchBook();
+      const fieldValues = itemIndex < fieldBatch.values.length ? fieldBatch.values[itemIndex] : {};
+      book.name = BookFieldSanitizer.clean(fieldValues['name'] || '');
+      book.author = BookFieldSanitizer.clean(fieldValues['author'] || '');
+      const sourceApiRecord = this.parseJsonRecord(item);
+      if (sourceApiRecord) {
+        if (!book.name) book.name = String(sourceApiRecord['name'] || sourceApiRecord['bookName'] ||
+          sourceApiRecord['title'] || '');
+        if (!book.author) book.author = String(sourceApiRecord['author'] || sourceApiRecord['writer'] || '');
+      }
+      book.bookUrl = BookUrlResolver.resolveScalar(fieldValues['bookUrl'] || '', baseUrl);
+      this.fillSearchFallbackFields(source, ir, book, baseUrl, item);
+      if (options.exactMatch) {
+        if (!this.matchesExactSearch(this.normalizeSearchText(book.name), this.normalizeSearchText(book.author),
+          normalizedKeyword, options)) {
+          continue;
+        }
+      }
+
+      book.coverUrl = BookSourceDataUrlSupport.normalizeCoverUrlFromItem(source,
+        fieldValues['coverUrl'] || '', item, baseUrl);
+      book.intro = BookFieldSanitizer.clean(fieldValues['intro'] || '');
+      book.kind = BookFieldSanitizer.clean(fieldValues['kind'] || '');
+      book.status = BookFieldSanitizer.clean(fieldValues['status'] || '');
+      book.latestChapterTitle = BookFieldSanitizer.clean(fieldValues['lastChapter'] || '');
+      book.updateTime = BookFieldSanitizer.clean(fieldValues['updateTime'] || '');
+      book.wordCount = BookFieldSanitizer.clean(fieldValues['wordCount'] || '');
+      if (sourceApiRecord) {
+        if (!book.coverUrl) book.coverUrl = String(sourceApiRecord['cover'] || sourceApiRecord['coverUrl'] || '');
+        if (!book.intro) book.intro = String(sourceApiRecord['desc'] || sourceApiRecord['intro'] ||
+          sourceApiRecord['description'] || '');
+        if (!book.latestChapterTitle) book.latestChapterTitle = String(sourceApiRecord['lastChapter'] ||
+          sourceApiRecord['latestChapterTitle'] || '');
+        if (!book.wordCount) book.wordCount = String(sourceApiRecord['wordsCount'] ||
+          sourceApiRecord['wordCount'] || '');
+        if (!book.kind) {
+          book.kind = [sourceApiRecord['category'], sourceApiRecord['subCategory']]
+            .map((value: Object): string => String(value || '').trim()).filter((value: string): boolean => !!value)
+            .join(' ');
+        }
+        if (!book.status) book.status = BookFieldSanitizer.clean(String(sourceApiRecord['status'] || ''));
+        if (!book.updateTime) book.updateTime = BookFieldSanitizer.clean(String(sourceApiRecord['updateTime'] ||
+          sourceApiRecord['updatedAt'] || ''));
+      }
+      book.variable = itemIndex < fieldBatch.contextValues.length ? fieldBatch.contextValues[itemIndex] :
+        ir.getContext().toPersistentJson();
+      // 如果解析后仍含 JSONPath 表达式，直接从 item 提取
+      if (!book.bookUrl || book.bookUrl.startsWith('$') || book.bookUrl.includes('$._id') || book.bookUrl.includes('$..')) {
+        // 尝试常见字段
+        book.bookUrl = ir.analyzeFirst('bookUrl') || ir.analyzeFirst('url') || ir.analyzeFirst('link') ||
+          ir.analyzeFirst('_id') || ir.analyzeFirst('id') || ir.analyzeFirst('nid') || ir.analyzeFirst('enid') || '';
+        // 如果还是路径表达式，直接从原始 JSON 提取
+        if (book.bookUrl && (book.bookUrl.startsWith('$') || book.bookUrl.includes('$..'))) {
+          try {
+            const raw = JSON.parse(item) as Record<string, Object>;
+            book.bookUrl = String(raw['url'] || raw['bookUrl'] || raw['link'] || raw['href'] || raw['nid'] || '');
+          } catch (_) {}
+        }
+        book.bookUrl = BookUrlResolver.resolveScalar(book.bookUrl, baseUrl);
+      }
+      if (!book.bookUrl || /["']\s*\+\s*result|\bresult\s*\+\s*["']|@js:/.test(book.bookUrl) ||
+        (/result/.test(searchRule.bookUrl || '') && /\+/.test(searchRule.bookUrl || ''))) {
+        const repaired = this.repairResultConcatUrl(searchRule.bookUrl || '', ir, baseUrl);
+        if (repaired) book.bookUrl = repaired;
+      }
+      const searchBookId = this.extractBookId(ir, item, book.bookUrl);
+      const responseCoverUrl = BookSourceDataUrlSupport.normalizeCoverUrlFromResponse(source, body, searchBookId,
+        baseUrl);
+      if (responseCoverUrl && this.shouldReplaceCover(book.coverUrl)) {
+        book.coverUrl = responseCoverUrl;
+        if (ENABLE_SEARCH_DEBUG_LOG) {
+          console.log('[SC] cover from response:', source.bookSourceName, book.name, searchBookId);
+        }
+      }
+      book.origin = source.bookSourceUrl;
+      BookSourceMetadataSupport.applySearchBook(source, book, [book.bookUrl]);
+      // The searchUrl script declares the media type it searched for (source.put('type',…)).
+      // Honor it so an audio-tab search opens as audio instead of defaulting to text.
+      if (!Number(book.type)) {
+        const searchedType = this.readSourceRuntimeMediaType(source);
+        if (searchedType) book.type = searchedType;
+      }
+      book.bookSourceComment = source.bookSourceComment;
+      book.customOrder = source.customOrder;
+      book.weight = source.weight;
+
+      if (options.leanResult) this.stripLeanFieldValues(book);
+      this.sanitizeSearchBook(book);
+      book.mediaCategory = BookTypeSupport.mediaCategoryOf(book);
+      if (!this.matchesMediaCategory(book, options)) continue;
+      const bookKey = `${book.origin || ''}::${book.bookUrl || ''}`;
+      if (book.name && book.bookUrl && !seenBookKeys.has(bookKey)) {
+        seenBookKeys.add(bookKey);
+        if (ENABLE_SEARCH_DEBUG_LOG && books.length === 0) {
+          console.log('[SC] 第一条结果:', book.name, 'from:', source.bookSourceName);
+        }
+        books.push(book);
+        if (books.length >= resultLimit) {
+          break;
+        }
+      }
+    }
+    if (books.length === 0 && items.length > 0) {
+      if (ENABLE_SEARCH_DEBUG_LOG) {
+        console.warn('[SC] list matched but no valid book:', source.bookSourceName,
+          'nameRule:', searchRule.name, 'urlRule:', searchRule.bookUrl,
+          'firstItem:', items[0].substring(0, Math.min(items[0].length, 240)));
+      }
+    }
+    return parsed;
+  }
+
   /** 原生书源的搜索：不经过脚本引擎，结果仍走统一的精确匹配、去重与字段清洗。 */
   private async searchNative(source: BookSource, keyword: string, options: SearchOptions,
-    responseLimit: number, resultLimit: number, stopped: () => boolean): Promise<SearchSourceResult> {
+    responseLimit: number, resultLimit: number, stopped: () => boolean,
+    onPartial: ((books: SearchBook[]) => void) | null = null): Promise<SearchSourceResult> {
     if (!source.searchUrl) return this.sourceResult([], BookSource.VALIDATION_FAILED, '该书源没有配置搜索');
+    const normalizedKeyword = this.normalizeSearchText(keyword);
+    const seen = new Set<string>();
+    const accept = (candidates: SearchBook[], limit: number): SearchBook[] => {
+      const books: SearchBook[] = [];
+      if (limit <= 0) return books;
+      for (const book of candidates) {
+        if (options.exactMatch && !this.matchesExactSearch(this.normalizeSearchText(book.name),
+          this.normalizeSearchText(book.author), normalizedKeyword, options)) {
+          continue;
+        }
+        if (seen.has(book.bookUrl)) continue;
+        seen.add(book.bookUrl);
+        if (options.leanResult) this.stripLeanFieldValues(book);
+        this.sanitizeSearchBook(book);
+        book.mediaCategory = BookTypeSupport.mediaCategoryOf(book);
+        if (!this.matchesMediaCategory(book, options)) continue;
+        books.push(book);
+        if (books.length >= limit) break;
+      }
+      return books;
+    };
+    // Batches the script hands over through ui.emitSearch() reach the page at once, under the same rules.
+    const emitted: SearchBook[] = [];
+    const partial = onPartial && options.validationOnly !== true ? (batch: SearchBook[]): void => {
+      if (stopped()) return;
+      const books = accept(batch, resultLimit - emitted.length);
+      if (books.length === 0) return;
+      emitted.push(...books);
+      if (options.debugContext) options.debugContext.addLog('info', `脚本分批返回：本批 ${books.length} 本`);
+      onPartial(books);
+    } : null;
     let found: SearchBook[] = [];
     try {
       found = await NativeSourceService.search(source, this.http, keyword, stopped, responseLimit,
-        options.debugContext || null, this.currentPage);
+        options.debugContext || null, this.currentPage, partial);
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
+      if (emitted.length > 0 && !stopped()) {
+        // The script failed after handing books over; those stay, the failure goes to the debug log.
+        if (options.debugContext) options.debugContext.addLog('warn', `分批返回后脚本出错：${reason}`);
+        return this.sourceResult(emitted, BookSource.VALIDATION_PASSED, '');
+      }
       if (reason.indexOf(NativeSourceService.VERIFICATION_REASON) >= 0) {
         return this.sourceResult([], BookSource.VALIDATION_NEEDS_VERIFICATION, NativeSourceService.VERIFICATION_REASON);
       }
@@ -629,23 +820,7 @@ export class SearchCoordinator {
     }
     if (stopped()) return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
     if (options.debugContext) options.debugContext.addLog('info', `原生搜索有效记录：${found.length}`);
-    const normalizedKeyword = this.normalizeSearchText(keyword);
-    const books: SearchBook[] = [];
-    const seen = new Set<string>();
-    for (const book of found) {
-      if (options.exactMatch && !this.matchesExactSearch(this.normalizeSearchText(book.name),
-        this.normalizeSearchText(book.author), normalizedKeyword, options)) {
-        continue;
-      }
-      if (seen.has(book.bookUrl)) continue;
-      seen.add(book.bookUrl);
-      if (options.leanResult) this.stripLeanFieldValues(book);
-      this.sanitizeSearchBook(book);
-      book.mediaCategory = BookTypeSupport.mediaCategoryOf(book);
-      if (!this.matchesMediaCategory(book, options)) continue;
-      books.push(book);
-      if (books.length >= resultLimit) break;
-    }
+    const books = emitted.concat(accept(found, resultLimit - emitted.length));
     if (options.debugContext) options.debugContext.addLog('info', `去重、精确匹配及上限后：${books.length}`);
     return books.length > 0 ? this.sourceResult(books, BookSource.VALIDATION_PASSED, '') :
       this.sourceResult([], BookSource.VALIDATION_NO_RESULTS, '未搜索到结果');
@@ -792,6 +967,17 @@ export class SearchCoordinator {
   }
 
   /** Keeps the books whose media type still has room and counts them against that type. */
+  /** Applies the per-category or the overall display budget to a source's relevance-matched books. */
+  private booksForDisplay(matchedBooks: SearchBook[], categoryLimit: number, categoryCounts: Map<string, number>,
+    remainingCapacity: number): SearchBook[] {
+    return categoryLimit > 0 ? this.takeWithinCategoryLimit(matchedBooks, categoryLimit, categoryCounts) :
+      matchedBooks.slice(0, remainingCapacity);
+  }
+
+  private searchBookKey(book: SearchBook): string {
+    return `${book.origin || ''}::${book.bookUrl || ''}`;
+  }
+
   private takeWithinCategoryLimit(books: SearchBook[], limit: number, counts: Map<string, number>): SearchBook[] {
     const kept: SearchBook[] = [];
     for (const book of books) {
@@ -1148,7 +1334,8 @@ export class SearchCoordinator {
 
   private async evalAndBuild(js: JsRuntime, source: BookSource, keyword: string,
     maxResponseBytes: number, validationOnly: boolean,
-    debugContext: BookSourceDebugContext | null = null): Promise<string> {
+    debugContext: BookSourceDebugContext | null = null,
+    onPartialBody: ((text: string) => void) | null = null): Promise<string> {
     const searchUrl = source.searchUrl;
     const baseUrl = source.bookSourceUrl;
     if (!searchUrl) return `${baseUrl}/search?q={{key}}`;
@@ -1166,7 +1353,8 @@ export class SearchCoordinator {
       `${source.jsLib || ''}\n${searchUrl}`);
     const requiresStageRuntime = isFullJsSearchUrl ||
       (searchUrl.includes('{{') && searchRuntimeDecision.runtime === 'arkweb');
-    const stageUrl = await this.tryBuildStageRuntimeSearchUrl(source, keyword, validationOnly, debugContext);
+    const stageUrl = await this.tryBuildStageRuntimeSearchUrl(source, keyword, validationOnly, debugContext,
+      onPartialBody);
     if (stageUrl) return stageUrl;
     const scriptedFormUrl = await this.tryBuildScriptedFormSearchUrl(source, keyword, maxResponseBytes);
     if (scriptedFormUrl) return scriptedFormUrl;
@@ -1203,7 +1391,8 @@ export class SearchCoordinator {
   }
 
   private async tryBuildStageRuntimeSearchUrl(source: BookSource, keyword: string,
-    validationOnly: boolean, debugContext: BookSourceDebugContext | null = null): Promise<string> {
+    validationOnly: boolean, debugContext: BookSourceDebugContext | null = null,
+    onPartialBody: ((text: string) => void) | null = null): Promise<string> {
     const rawSearchUrl = source.searchUrl || '';
     const isFullJsUrl = this.isFullJsUrl(rawSearchUrl);
     const hostCode = `${source.jsLib || ''}\n${source.searchUrl || ''}`;
@@ -1220,6 +1409,7 @@ export class SearchCoordinator {
     request.baseUrl = source.bookSourceUrl;
     request.ownerId = this.stageRuntimeOwnerId;
     request.debugContext = debugContext;
+    request.onPartialResult = onPartialBody;
     if (validationOnly) {
       request.maxResponseBytes = MAX_VALIDATION_STAGE_RESPONSE_BYTES;
       request.maxTotalResponseBytes = MAX_VALIDATION_STAGE_TOTAL_RESPONSE_BYTES;
