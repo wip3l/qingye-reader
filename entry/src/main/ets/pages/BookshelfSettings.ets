@@ -114,9 +114,9 @@ struct BookshelfSettingsPage {
   pageContent() {
     this.sectionTitle('布局与分类')
     Column() {
-    this.selectItem('书架布局', '列表疏密或封面平铺',
+    this.selectItem('书架布局', '列表疏密、封面平铺，或带问候与阅读小记的陪伴首页',
       this.bookshelfLayoutOptions(), this.bookshelfLayoutSelectedIndex(), (index: number) => {
-        this.bookshelfLayoutMode = index === 2 ? 'tile' : (index === 1 ? 'loose' : 'compact');
+        this.bookshelfLayoutMode = index === 3 ? 'companion' : (index === 2 ? 'tile' : (index === 1 ? 'loose' : 'compact'));
         this.onDisplaySettingChanged();
       })
     if (this.bookshelfLayoutMode === 'tile') {
@@ -127,7 +127,8 @@ struct BookshelfSettingsPage {
           this.onDisplaySettingChanged();
         })
     }
-    if (this.bookshelfLayoutMode === 'tile' && this.bookshelfLastReadPinMode === 'large') {
+    if ((this.bookshelfLayoutMode === 'tile' && this.bookshelfLastReadPinMode === 'large') ||
+      this.bookshelfLayoutMode === 'companion') {
       this.itemDivider()
       this.selectItem('置顶数量', '按最近阅读排序，最多展示所选数量',
         this.lastReadPinCountOptions(),
@@ -768,10 +769,11 @@ struct BookshelfSettingsPage {
   }
 
   bookshelfLayoutOptions(): SelectOption[] {
-    return [{ value: '紧凑' }, { value: '宽松' }, { value: '平铺' }];
+    return [{ value: '紧凑' }, { value: '宽松' }, { value: '平铺' }, { value: '陪伴' }];
   }
 
   bookshelfLayoutSelectedIndex(): number {
+    if (this.bookshelfLayoutMode === 'companion') return 3;
     return this.bookshelfLayoutMode === 'tile' ? 2 : (this.bookshelfLayoutMode === 'loose' ? 1 : 0);
   }
 

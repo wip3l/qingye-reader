@@ -190,7 +190,7 @@ export class BookshelfDisplaySettingsStore {
   }
 
   private static normalizeLayoutMode(value: string): string {
-    if (value === 'loose' || value === 'compact') {
+    if (value === 'loose' || value === 'compact' || value === 'companion') {
       return value;
     }
     return 'tile';

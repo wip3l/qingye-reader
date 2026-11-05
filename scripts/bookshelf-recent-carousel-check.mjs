@@ -28,7 +28,7 @@ vm.runInContext([
   'utils/BookshelfSortHelper.ets', 'utils/RecentReadCarouselGeometry.ts', 'core/book/ShelfDataSources.ets'
 ].map(file => compile(readEtsModule(file))).join('\n') + compile(`
 class RecentShelfHarness {
-${['isTileLayout', 'isLatestTileCardLarge', 'shouldShowLatestExpandedTileBook', 'getLatestReadTileBook',
+${['isTileLayout', 'isCompanionLayout', 'isLatestTileCardLarge', 'shouldShowLatestExpandedTileBook', 'getLatestReadTileBook',
   'getLatestReadTileBooks', 'getTileBooksWithoutLatest', 'getSortedTileRootEntries', 'getTileFolderGroups',
   'latestTileGroupReadTime', 'latestTileGroupAddTime', 'compareTileRootEntry', 'getBookReadTime', 'getBookAddTime',
   'normalizeBookName', 'compareBookName', 'getShelfCover', 'shelfBookViewPrefix'].map(name => method(shelfSource, name)).join('\n')}

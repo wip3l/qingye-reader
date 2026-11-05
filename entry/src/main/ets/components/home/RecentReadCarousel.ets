@@ -11,6 +11,8 @@ export struct RecentReadCarousel {
   @Prop cardHeight: number = 150;
   @Prop accentColor: string = '';
   @Prop secondaryColor: string = '';
+  /** 多本时每张卡占视口宽度的比例；小于 1 时两侧露出相邻卡片，等于 1 时整卡切换。 */
+  @Prop itemWidthRatio: number = 0.74;
   @BuilderParam cardContent: (book: Book) => void;
   renderKey: (book: Book) => string = (book: Book): string => book.bookUrl;
   onOpen: (book: Book, event: GestureEvent) => void = (_book: Book, _event: GestureEvent): void => {};
@@ -48,7 +50,7 @@ export struct RecentReadCarousel {
 
   itemWidth(): number {
     return this.books.length <= 1 ? this.viewportWidth :
-      Math.min(this.viewportWidth, Math.max(200, this.viewportWidth * 0.74));
+      Math.min(this.viewportWidth, Math.max(200, this.viewportWidth * this.itemWidthRatio));
   }
 
   itemStride(): number {
