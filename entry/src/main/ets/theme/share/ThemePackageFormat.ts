@@ -1197,6 +1197,31 @@ export function restrictSources(settings: Record<string, Object>, canUse: (theme
   return result;
 }
 
+/**
+ * 主题包里没写的部件取自 baseTheme，导入后整套基底资源都会随包生效。导入方没有这套主题时，与部件来源同一规则换成
+ * fallback，否则只写一个 baseTheme 就能拿到付费主题的封面、角饰和图标。主题包 ID 作基底、或本机不认得的主题也换成
+ * fallback（后者记进 unknown）。会直接改写 manifest.baseTheme。
+ */
+export function restrictBaseTheme(manifest: ThemePackageManifest, canUse: (themeId: string) => boolean,
+  known: (themeId: string) => boolean, themeName: (themeId: string) => string, fallback: string): SourceRestriction {
+  const result = new SourceRestriction();
+  const base = (manifest.baseTheme || '').trim();
+  if (!base || base === fallback) {
+    manifest.baseTheme = fallback;
+    return result;
+  }
+  if (isPackThemeId(base)) {
+    manifest.baseTheme = fallback;
+  } else if (!known(base)) {
+    manifest.baseTheme = fallback;
+    result.unknown.push('包里没设计的部件（基底主题）');
+  } else if (!canUse(base)) {
+    manifest.baseTheme = fallback;
+    result.replaced.push(`包里没设计的部件（基底主题：${themeName(base)}）`);
+  }
+  return result;
+}
+
 export class RuleMergeResult {
   rulesJson: string = '[]';
   added: number = 0;

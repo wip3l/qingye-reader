@@ -1,5 +1,5 @@
 // 左侧部件与检查器字段的定义，与 theme.json 的 parts 一一对应（见 docs/theme-package-format.md）。
-import { BUBBLES, THEMES } from './tokens.ts';
+import { BUBBLES, baseThemeOptions } from './tokens.ts';
 import { getPath, type Mode } from './state.ts';
 
 export interface Field {
@@ -52,8 +52,8 @@ export const SECTIONS: Section[] = [
       { k: 'm.version', label: '版本', type: 'text', max: 32 },
       { k: 'm.description', label: '说明', type: 'textarea', max: 120 },
       { g: '回退' },
-      { k: 'm.baseTheme', label: '基底主题', type: 'select', options: THEMES.map((t) => [t.id, t.name] as [string, string]),
-        hint: '包里没写的部件沿用它。预览只显示它的配色，它的图片是应用内素材，这里画成占位' },
+      { k: 'm.baseTheme', label: '基底主题', type: 'select', options: baseThemeOptions(),
+        hint: '包里没写的部件沿用它。选付费主题时，导入的人没有这套主题，这些部件会按默认主题显示。预览只显示基底的配色，它的图片在应用里才看得到' },
       { g: '随包保留的方案内容' },
       { type: 'preserved' }
     ]

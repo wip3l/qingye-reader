@@ -9,7 +9,7 @@ import { SECTIONS, SCREENS, section, assetFields, type Field } from './sections.
 import { renderScreen, PHONE_H, PHONE_W } from './preview.ts';
 import { editorIssues, sizeWarning, strictIssue, type Issue } from './checks.ts';
 import { alphaOf, contrast, darkDraft, isColor, withAlpha } from './colors.ts';
-import { baseValue, effective, THEMES, themeName } from './tokens.ts';
+import { baseThemeOptions, baseValue, effective, themeName } from './tokens.ts';
 import { browserApi } from './browserApi.ts';
 
 interface Result<T> { ok: boolean; value?: T; error?: string }
@@ -347,8 +347,11 @@ function renderField(f: Field): HTMLElement {
     input.value = value || '';
     row.append(input);
   } else if (f.type === 'select') {
+    const options = [...(f.options || [])];
+    // 打开的包里是下拉不提供的值（例如不能作基底的主题）时照样显示出来，问题条会说明。
+    if (value && !options.some(([v]) => v === value)) options.unshift([value, `${themeName(value)}（不可选）`]);
     row.append(h('select', { id, onchange: (event: Event) => setField(key, (event.target as HTMLSelectElement).value) },
-      ...(f.options || []).map(([v, label]) => h('option', { value: v, selected: (value || '') === v }, label))));
+      ...options.map(([v, label]) => h('option', { value: v, selected: (value || '') === v }, label))));
   } else if (f.type === 'color') {
     row.append(renderColor(f, path, value || '', id));
   } else if (f.type === 'range') {
@@ -824,7 +827,7 @@ async function exportFolder(prepared?: FileMap): Promise<void> {
 
 async function newDocument(): Promise<void> {
   if (!(await confirmDiscard())) return;
-  const select = h('select', { id: 'new-base' }, ...THEMES.map((t) => h('option', { value: t.id }, t.name))) as HTMLSelectElement;
+  const select = h('select', { id: 'new-base' }, ...baseThemeOptions().map(([id, label]) => h('option', { value: id }, label))) as HTMLSelectElement;
   const name = h('input', { id: 'new-name', type: 'text', maxlength: 24, placeholder: '例如：夜花园' }) as HTMLInputElement;
   const create = (): void => {
     close();

@@ -3,7 +3,7 @@ import { buildFiles, formatSize, usedAssetPaths, verifyFiles } from '../core/pac
 import { getPath, mp, project, type Mode } from './state.ts';
 import { assetFields, SECTIONS, sectionOfPath, type Field } from './sections.ts';
 import { contrast, isColor } from './colors.ts';
-import { effective, THEMES, ttsComplete } from './tokens.ts';
+import { BASE_EXCLUDED, effective, themeName, THEMES, ttsComplete } from './tokens.ts';
 
 export interface Issue {
   level: 'error' | 'warn';
@@ -44,6 +44,7 @@ export function editorIssues(): Issue[] {
   if (!m.name.trim()) add('error', 'm.name', '还没有主题名称');
   if (!PACKAGE_ID.test(m.packageId) || m.packageId.includes('..')) add('error', 'm.packageId', 'packageId 只能用字母、数字、点、连字符和下划线，且以字母或数字开头');
   if (!THEMES.some((t) => t.id === m.baseTheme)) add('warn', 'm.baseTheme', `基底主题 ${m.baseTheme} 不是内置主题，预览按默认主题显示`);
+  else if (BASE_EXCLUDED.includes(m.baseTheme)) add('warn', 'm.baseTheme', `「${themeName(m.baseTheme)}」不能作基底，没拥有它的人导入时会换成默认主题，请改选别的基底`);
 
   for (const s of SECTIONS) {
     for (const f of s.fields) {

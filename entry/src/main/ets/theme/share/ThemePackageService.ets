@@ -51,6 +51,7 @@ import {
   QYTHEME_EXTENSION,
   remapFonts,
   replaceOwnPackIdWithSelf,
+  restrictBaseTheme,
   restrictSources,
   sanitizeAuthor,
   sanitizeThemeName,
@@ -515,6 +516,13 @@ export class ThemePackageService {
       preview.hasLayout = !!theme.layoutJson;
       const ownThemeId = theme.parts ? packThemeId(manifest.packageId) : '';
       if (theme.parts) {
+        const baseRestriction: SourceRestriction = restrictBaseTheme(manifest,
+          (themeId: string): boolean => ThemePackageService.canUseTheme(themeId),
+          (themeId: string): boolean => BuiltinThemeRegistry.has(themeId) && themeId !== ThemeIds.CUSTOM,
+          (themeId: string): string => BuiltinThemeRegistry.findById(themeId).name,
+          BuiltinThemeRegistry.DEFAULT_THEME_ID);
+        preview.replaced.push(...baseRestriction.replaced);
+        preview.unknown.push(...baseRestriction.unknown);
         preview.packageId = manifest.packageId;
         preview.parts = describeParts(theme.parts);
         if (theme.parts.appFont) {
@@ -542,8 +550,8 @@ export class ThemePackageService {
             (BuiltinThemeRegistry.has(themeId) && themeId !== ThemeIds.CUSTOM),
           (themeId: string): string => BuiltinThemeRegistry.findById(themeId).name,
           BuiltinThemeRegistry.DEFAULT_THEME_ID);
-        preview.replaced = restriction.replaced;
-        preview.unknown = restriction.unknown;
+        preview.replaced.push(...restriction.replaced);
+        preview.unknown.push(...restriction.unknown);
         ThemePackageService.restrictBackgroundAssets(settings, preview.replaced, ownThemeId);
         ThemePackageService.restrictEmphasisOverrides(settings, preview.lockedBubbles, ownThemeId);
         preview.settingsJson = JSON.stringify(settings);

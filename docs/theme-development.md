@@ -254,7 +254,7 @@ BuiltinThemeRegistry.register(theme);
 
 用户导入带素材的 `.qytheme`（格式 2，作者按 [主题包开发指南](theme-package-format.md) 制作）时，包里的部件在本机注册为一个主题，ID 为 `pack:<packageId>`；导入得到的自定义方案各部件来源都指向它，与内置主题一样参与 `ThemeComponentSourceIds` 的混搭。
 
-- `ThemePackStore.loadInstalled()` 在 `EntryAbility` 读取主题设置之前把 `files/theme_packs/<packageId>/pack.json` 全部读入并注册到 `ThemePackRegistry`。记录里只存 parts 和素材的相对路径，每次启动按当前 `baseTheme` 重新拼出 `ThemePack`，基底主题改了也能跟上。
+- `ThemePackStore.loadInstalled()` 在 `EntryAbility` 读取主题设置之前把 `files/theme_packs/<packageId>/pack.json` 全部读入并注册到 `ThemePackRegistry`。记录里只存 parts 和素材的相对路径，每次启动按当前 `baseTheme` 重新拼出 `ThemePack`，基底主题改了也能跟上。基底主题的资源会整套随包生效，所以导入时 `restrictBaseTheme()` 与部件来源同一规则检查权益：导入方用不了的基底换成 `plain-default` 并列入预览的“已替换”。
 - `BuiltinThemeRegistry.findById()` 对 `pack:` ID 到注册表取主题；`normalizeBuiltinId()` 对 `pack:` ID 原样保留，缺包时只回退显示、不改写方案里的来源（同步到没装包的设备时方案不会被破坏）。`all()` 只返回内置主题，主题商店列表不会出现包。
 - `ThemeAssetRegistry` 的各个解析函数遇到 `pack:` ID 返回包目录里文件的 `file://` URI；阅读背景用 `pack:<packageId>:light` / `:dark` 作素材键，角饰模式与内置主题走同一条装饰路径，整图模式由 `ReaderThemeHelper` 转成用户图片的那条路径。`navigationIcon()`、`themeLogo()` 和 `TtsPanelThemeStyle.artwork` 因此是 `ResourceStr`。自绘翻页纹理的 `ReaderRasterAssets.media()` 对字符串来源改从文件解码。
 - 包内气泡的样式 ID 就是 `pack:<packageId>`：`ReaderRegexFontCodec.normalizeBubbleStyleId()` 原样保留，`ReaderRegexBubbleStyleResolver` 用统一的圆角预设配端饰，`ThemeAccessPolicy` 以“包已安装”为可用条件。

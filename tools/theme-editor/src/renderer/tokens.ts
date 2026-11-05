@@ -21,6 +21,15 @@ export interface BaseTheme {
 export const THEMES: BaseTheme[] = (data as any).themes;
 export const BUBBLES: { id: string; label: string }[] = (data as any).bubbles;
 export const GENERIC_BUBBLES = ['qq-soft', 'qq-solid', 'capsule', 'paper', 'neon'];
+export const FREE_THEME_ID = 'plain-default';
+/** 不能作基底的主题：曜金藏书是终身超级会员领取型，不面向主题作者。 */
+export const BASE_EXCLUDED = ['obsidian-archive'];
+
+/** 基底主题下拉：默认主题在前；其余付费主题导入者没有时，应用把基底换回默认主题。 */
+export function baseThemeOptions(): [string, string][] {
+  return THEMES.filter((t) => !BASE_EXCLUDED.includes(t.id))
+    .map((t) => [t.id, t.id === FREE_THEME_ID ? `${t.name}（免费，所有人都能用）` : `${t.name}（导入者需拥有）`] as [string, string]);
+}
 
 export function baseTheme(): BaseTheme {
   const id = S.project ? S.project.manifest.baseTheme : '';

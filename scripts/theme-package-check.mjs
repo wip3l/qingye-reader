@@ -215,6 +215,24 @@ test('sources from themes the importer cannot use are replaced and reported', ()
   assert.deepEqual(result.unknown, ['浅色 · 阅读背景']);
 });
 
+test('a base theme the importer does not own falls back instead of lending its assets', () => {
+  const owned = new Set(['plain-default', 'cat-pipi']);
+  const known = new Set(['plain-default', 'cat-pipi', 'obsidian-archive']);
+  const restrict = (baseTheme) => {
+    const manifest = new format.ThemePackageManifest();
+    manifest.baseTheme = baseTheme;
+    const result = format.restrictBaseTheme(manifest, id => owned.has(id), id => known.has(id),
+      id => ({ 'obsidian-archive': '曜金藏书' })[id] || id, 'plain-default');
+    return { base: manifest.baseTheme, replaced: result.replaced, unknown: result.unknown };
+  };
+  assert.deepEqual(restrict('obsidian-archive'),
+    { base: 'plain-default', replaced: ['包里没设计的部件（基底主题：曜金藏书）'], unknown: [] });
+  assert.deepEqual(restrict('cat-pipi'), { base: 'cat-pipi', replaced: [], unknown: [] });
+  assert.deepEqual(restrict('future-theme'), { base: 'plain-default', replaced: [], unknown: ['包里没设计的部件（基底主题）'] });
+  assert.deepEqual(restrict('pack:someone-else'), { base: 'plain-default', replaced: [], unknown: [] });
+  assert.deepEqual(restrict(''), { base: 'plain-default', replaced: [], unknown: [] });
+});
+
 test('incoming emphasis rules are appended after existing ones, same patterns skipped', () => {
   const existing = JSON.stringify({ schemaVersion: 3, rules: [{ id: 'mine', pattern: '「[^」]+」', name: '我的' }] });
   const incoming = JSON.stringify([
