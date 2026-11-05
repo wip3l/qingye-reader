@@ -632,13 +632,25 @@ export class ExploreCoordinator {
         this.sanitizeExploreBook(book);
         if (!books.some((item: SearchBook): boolean => item.bookUrl === book.bookUrl)) books.push(book);
       }
-      if (books.length === 0) this.noticeMessage = '发现接口已有响应，但列表规则未匹配到内容';
+      // 写了 explore.script 时没有“接口响应”，空结果来自脚本自己的返回值。
+      if (books.length === 0) this.noticeMessage = this.nativeExploreScripted(source) ?
+        '发现脚本已运行，但没有返回书籍（返回为空，或条目缺少 name、bookUrl）' :
+        '发现接口已有响应，但列表规则未匹配到内容';
       return books;
     } catch (e) {
       if (cancelled()) return [];
       this.noticeMessage = e instanceof Error ? e.message : '发现解析异常';
       console.warn('[ExploreCoordinator] native explore failed:', source.bookSourceName, this.noticeMessage);
       return [];
+    }
+  }
+
+  private nativeExploreScripted(source: BookSource): boolean {
+    try {
+      const explore = NativeSourceService.definitionOf(source).explore;
+      return !!explore && !!(explore.script || '').trim();
+    } catch (e) {
+      return false;
     }
   }
 
