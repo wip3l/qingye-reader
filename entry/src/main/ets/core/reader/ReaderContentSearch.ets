@@ -1,4 +1,6 @@
 import { Book, CooperativeScheduler } from '@legado/sourceengine';
+import { appDb } from '../../model/data/AppDatabase';
+import { LocalBookService } from '../book/LocalBookService';
 import { ReadBookEngine } from '../book/ReadBookEngine';
 import { ReaderContentPreprocessor } from '../concurrency/ReaderContentPreprocessor';
 import { ReaderReplaceRule } from '../../utils/ReaderReplaceRuleStore';
@@ -24,6 +26,10 @@ export class ReaderContentSearchProgress {
   scanned: number = 0;
   total: number = 0;
   found: number = 0;
+  /** 网络书没有缓存、跳过不查的章数（已计入 scanned）。 */
+  skipped: number = 0;
+  /** 网络书一章缓存都没有，什么也查不了。 */
+  nothingCached: boolean = false;
   running: boolean = false;
   /** 结果达到上限后提前停止。 */
   truncated: boolean = false;
@@ -40,10 +46,11 @@ export interface ReaderContentSearchHost {
 }
 
 /**
- * 本地书全文查找：从第一章起逐章取正文、做与显示一致的替换净化后匹配，结果边查边回传。
- * 用阅读页会话的副本（或独立的后台引擎）取正文，不挤占阅读页引擎的章节缓存，也不改变它的当前章。
- * 本地书正文来自章节缓存或书籍文件，不联网。匹配本身只是字符串查找，在主线程分批做并按时让出；
- * 替换净化规则仍在 TaskPool 里执行。
+ * 全文查找：从第一章起逐章取正文、做与显示一致的替换净化后匹配，结果边查边回传。全程不联网：
+ * - 本地书用阅读页会话的副本（或独立的后台引擎）取正文，来自章节缓存或书籍文件，不挤占阅读页引擎的缓存；
+ * - 网络书只查阅读页内存里和章节缓存库里已有的正文，没缓存的章节跳过并计数。不走引擎的取正文路径，
+ *   因为它在缓存缺失或缓存图片不全时会联网补取。
+ * 匹配本身只是字符串查找，在主线程分批做并按时让出；替换净化规则仍在 TaskPool 里执行。
  */
 export class ReaderContentSearch {
   static readonly MAX_HITS: number = 1000;
@@ -98,6 +105,8 @@ export class ReaderContentSearch {
       next.scanned = progress.scanned;
       next.total = total;
       next.found = found;
+      next.skipped = progress.skipped;
+      next.nothingCached = progress.nothingCached;
       next.running = running;
       next.truncated = progress.truncated;
       next.failed = progress.failed;
@@ -106,18 +115,40 @@ export class ReaderContentSearch {
       this.host.onProgress(next);
     };
     try {
-      const engine = await this.engineFor(book);
+      const local = LocalBookService.isLocalBook(book);
+      // 网络书：阅读页内存里的章节（复制会话得到）加上缓存库里有正文的章节，其余都算没缓存。
+      const engine = local ? await this.engineFor(book) : ReadBookEngine.forkSession(book.bookUrl);
+      const cachedIndexes: Set<number> = local ? new Set<number>() :
+        new Set<number>(await appDb.getBookCachedChapterIndices(book.bookUrl));
       if (cancelled()) return;
-      const reads: Map<number, Promise<string>> = new Map<number, Promise<string>>();
-      const count = Math.min(total, engine.chapters.length);
+      const count = engine && local ? Math.min(total, engine.chapters.length) : total;
       progress.total = count;
+      if (!local) {
+        let readable = cachedIndexes.size;
+        for (let index = 0; engine && readable === 0 && index < count; index++) {
+          if (engine.getCachedContent(index)) readable++;
+        }
+        if (readable === 0) {
+          progress.nothingCached = true;
+          progress.scanned = count;
+          progress.skipped = count;
+          report(false);
+          return;
+        }
+      }
+      // null 表示网络书这一章没缓存，跳过。
+      const reads: Map<number, Promise<string | null>> = new Map<number, Promise<string | null>>();
       for (let index = 0; index < count; index++) {
         for (let ahead = index; ahead < Math.min(count, index + ReaderContentSearch.READ_AHEAD); ahead++) {
-          if (!reads.has(ahead)) reads.set(ahead, this.readChapter(engine, ahead, cancelled));
+          if (reads.has(ahead)) continue;
+          reads.set(ahead, local && engine ? this.readChapter(engine, ahead, cancelled) :
+            this.readCachedChapter(book.bookUrl, engine, cachedIndexes, ahead, cancelled));
         }
-        let text = await (reads.get(index) as Promise<string>);
+        const loaded = await (reads.get(index) as Promise<string | null>);
         reads.delete(index);
         if (cancelled()) return;
+        if (loaded === null) progress.skipped++;
+        let text = loaded || '';
         if (text && applyRules) {
           text = await ReaderContentPreprocessor.apply(text, rules, book);
           if (cancelled()) return;
@@ -164,6 +195,21 @@ export class ReaderContentSearch {
       return await engine.peekContent(index);
     } catch (error) {
       console.warn(`[ReaderContentSearch] 读取第 ${index} 章失败:`, error);
+      return '';
+    }
+  }
+
+  /** 网络书的一章：先看阅读页内存，再看缓存库；都没有返回 null。不联网。 */
+  private async readCachedChapter(bookUrl: string, engine: ReadBookEngine | null, cachedIndexes: Set<number>,
+    index: number, cancelled: () => boolean): Promise<string | null> {
+    if (cancelled()) return '';
+    const memory = engine ? engine.getCachedContent(index) : '';
+    if (memory) return memory;
+    if (!cachedIndexes.has(index)) return null;
+    try {
+      return await appDb.getCachedChapterContent(bookUrl, index);
+    } catch (error) {
+      console.warn(`[ReaderContentSearch] 读取第 ${index} 章缓存失败:`, error);
       return '';
     }
   }

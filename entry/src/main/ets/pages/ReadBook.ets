@@ -466,7 +466,10 @@ struct ReadBookPage {
   @State readerSearchStatus: string = '在全书正文里查找文字，点结果跳到原文';
   @State readerSearchRunning: boolean = false;
   @State readerSearchCount: number = 0;
+  @State readerSearchScanned: number = 0;
+  @State readerSearchTotal: number = 0;
   @State readerSearchEmpty: boolean = false;
+  @State readerSearchNothingCached: boolean = false;
   @State readerSearchCurrentIndex: number = -1;
   @State readerSearchBarVisible: boolean = false;
   @State readerSearchReturnChapter: number = -1;
@@ -5214,10 +5217,9 @@ struct ReadBookPage {
       defaultTop : this.readerAutoScrollPositionY);
   }
 
-  /** 正文查找只开放给本地书的普通阅读；PDF 与文件排版页各有自己的阅读页。 */
+  /** 正文查找只用于普通阅读（网络书只查已缓存的章节）；PDF 与文件排版页各有自己的阅读页。 */
   canUseReaderContentSearch(): boolean {
-    return !!this.book && LocalBookService.isLocalBook(this.book) && !this.isReaderComicModeActive() &&
-      this.chapters.length > 0;
+    return !!this.book && !this.isReaderComicModeActive() && this.chapters.length > 0;
   }
 
   readerContentSearchController(): ReaderContentSearch {
@@ -5249,9 +5251,15 @@ struct ReadBookPage {
     this.readerSearchCount = 0;
     this.readerSearchCurrentIndex = -1;
     this.readerSearchEmpty = false;
+    this.readerSearchNothingCached = false;
     this.readerContentSearchController().start(query).catch((error: Error) => {
       console.warn('正文查找失败:', error);
     });
+  }
+
+  readerContentSearchEmptyHint(): string {
+    return this.book && !LocalBookService.isLocalBook(this.book) ?
+      '只查已缓存的章节；试试更短的关键字，或先缓存更多章节' : '试试更短的关键字，或检查替换净化规则是否改动了正文';
   }
 
   stopReaderContentSearch(): void {
@@ -5265,19 +5273,29 @@ struct ReadBookPage {
     if (progress.query !== this.readerSearchResultQuery) return;
     this.readerSearchSource.append(progress.hits);
     this.readerSearchCount = progress.found;
+    this.readerSearchScanned = progress.scanned;
+    this.readerSearchTotal = progress.total;
     this.readerSearchRunning = progress.running;
     this.readerSearchEmpty = !progress.running && !progress.failed && progress.found === 0;
+    this.readerSearchNothingCached = progress.nothingCached;
     this.readerSearchStatus = this.readerContentSearchStatusText(progress);
   }
 
   readerContentSearchStatusText(progress: ReaderContentSearchProgress): string {
+    if (progress.nothingCached) return '这本书还没有缓存章节，可先在“更多操作 › 缓存”里缓存';
+    // 网络书只查已缓存的章节，跳过的章数要写明，免得以为查的是全书。
+    const skipped = progress.skipped > 0 ? ` · ${progress.skipped} 章未缓存已跳过` : '';
     if (progress.running) {
-      return `正在查找 · 已查 ${progress.scanned}/${progress.total} 章 · 找到 ${progress.found} 处`;
+      return `正在查找 · 已查 ${progress.scanned}/${progress.total} 章${skipped} · 找到 ${progress.found} 处`;
     }
     if (progress.failed) {
       return progress.found > 0 ? `查找中断 · 已找到 ${progress.found} 处，可重新查找` : '查找中断，请重新查找';
     }
     if (progress.truncated) return `结果过多，只列出前 ${progress.found} 处，可换更精确的关键字`;
+    if (progress.skipped > 0) {
+      return progress.found > 0 ? `已缓存章节中找到 ${progress.found} 处${skipped}` :
+        `已缓存章节中没有找到“${progress.query}”${skipped}`;
+    }
     return progress.found > 0 ? `全书共找到 ${progress.found} 处` : `全书没有找到“${progress.query}”`;
   }
 
@@ -5385,16 +5403,26 @@ struct ReadBookPage {
     ReaderContentSearchSheet({
       query: this.readerSearchQuery, status: this.readerSearchStatus, running: this.readerSearchRunning,
       resultCount: this.readerSearchCount, currentIndex: this.readerSearchCurrentIndex, empty: this.readerSearchEmpty,
+      emptyTitle: this.readerSearchNothingCached ? '还没有可查找的章节' : '没有找到这段文字',
+      emptyHint: this.readerSearchNothingCached ? '这本书还没有缓存章节，先在“更多操作 › 缓存”里缓存后再查找' :
+        this.readerContentSearchEmptyHint(),
+      scanned: this.readerSearchScanned, total: this.readerSearchTotal,
+      canReturn: this.readerSearchReturnChapter >= 0,
       textColor: this.readerPanelTextColor(), subTextColor: this.readerPanelSubTextColor(),
-      accentColor: this.accentColor(),
-      accentSurfaceColor: ThemeRuntime.accentSurfaceColor(this.appDarkMode),
       controlColor: ThemeRuntime.inputColor(this.isReaderThemeDark()),
+      dividerColor: ThemeRuntime.softFillColor(this.isReaderThemeDark()),
+      highlightColor: this.readerSearchHighlightColor(),
       source: this.readerSearchSource,
       onQueryChange: (value: string) => { this.readerSearchQuery = value; },
       onSearch: () => { this.startReaderContentSearch(); },
       onStop: () => { this.stopReaderContentSearch(); },
-      onSelect: (hit: ReaderContentSearchHit) => { this.selectReaderContentSearchHit(hit); },
-      onClose: () => { this.showReaderContentSearch = false; }
+      onReturn: () => {
+        this.showReaderContentSearch = false;
+        this.returnFromReaderContentSearch().catch((error: Error) => {
+          console.warn('回到查找前的位置失败:', error);
+        });
+      },
+      onSelect: (hit: ReaderContentSearchHit) => { this.selectReaderContentSearchHit(hit); }
     })
   }
 
@@ -5413,37 +5441,31 @@ struct ReadBookPage {
       !this.isReaderComicModeActive() && !this.shouldBlockReaderInteraction();
   }
 
-  readerContentSearchCapsuleWidth(): number {
-    const viewportWidth = this.pageViewWidth > 0 ? this.pageViewWidth : 360;
-    return Math.min(ReaderContentSearchCapsule.WIDTH, viewportWidth - 32);
-  }
-
   @Builder
   readerContentSearchCapsule() {
     ReaderContentSearchCapsule({
       index: this.readerSearchCurrentIndex, count: this.readerSearchCount, running: this.readerSearchRunning,
       chapterTitle: this.readerSearchSource.hitAt(this.readerSearchCurrentIndex)?.chapterTitle || '',
-      canReturn: this.readerSearchReturnChapter >= 0,
       textColor: this.readerPanelTextColor(), subTextColor: this.readerPanelSubTextColor(),
-      accentColor: this.accentColor(), panelColor: this.readerPanelColor(), dark: this.isReaderThemeDark(),
-      capsuleWidth: this.readerContentSearchCapsuleWidth(),
+      dividerColor: ThemeRuntime.hairlineColor(this.isReaderThemeDark()),
+      panelColor: this.readerPanelColor(), dark: this.isReaderThemeDark(),
       onOpen: () => { this.showReaderContentSearch = true; },
       onStep: (direction: number) => { this.stepReaderContentSearch(direction); },
-      onReturn: () => {
-        this.returnFromReaderContentSearch().catch((error: Error) => {
-          console.warn('回到查找前的位置失败:', error);
-        });
-      },
       onClose: () => { this.closeReaderContentSearchCapsule(); }
     })
       .position({ x: 0, y: 0 })
       // 停在页脚上方，正文最后一行之下；朗读、自动滚动胶囊只在菜单打开时出现，与它不同时显示。
       .translate({
-        x: ((this.pageViewWidth > 0 ? this.pageViewWidth : 360) - this.readerContentSearchCapsuleWidth()) / 2,
+        x: ((this.pageViewWidth > 0 ? this.pageViewWidth : 360) - ReaderContentSearchCapsule.WIDTH) / 2,
         y: (this.pageViewHeight > 0 ? this.pageViewHeight : 720) - this.navBarHeight -
           ReaderContentSearchCapsule.HEIGHT - 36
       })
       .transition(this.ttsMiniPlayerTransition())
+  }
+
+  /** 查找命中的底色：暖黄色，和跟随强调色的朗读焦点、选区分得开；结果列表里的关键字用同一种颜色。 */
+  readerSearchHighlightColor(): string {
+    return this.isReaderThemeDark() ? '#73FFB300' : '#73FFC53D';
   }
 
   readerSearchHighlightActive(): boolean {
@@ -5525,9 +5547,7 @@ struct ReadBookPage {
     }
     .width(px2vp(rect.widthPx))
     .height(px2vp(rect.heightPx))
-    // 查找命中用暖黄色，和跟随强调色的朗读焦点、选区分得开。
-    .backgroundColor(this.isReaderThemeDark() ? '#FFB300' : '#FFC53D')
-    .opacity(0.45)
+    .backgroundColor(this.readerSearchHighlightColor())
     .position({ x: px2vp(rect.leftPx), y: px2vp(rect.topPx) })
     .zIndex(1)
     .hitTestBehavior(HitTestMode.None)
