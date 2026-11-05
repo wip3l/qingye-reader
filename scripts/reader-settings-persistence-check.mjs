@@ -35,6 +35,7 @@ function harness() {
     },
   });
   vm.runInContext(compile(read('utils/HexColor.ts')) + '\n' +
+    compile(read('theme/share/ThemePackageFormat.ts')) + '\n' +
     compile(read('core/reader/ReaderCommentBubbleSize.ts')) + '\n' +
     compile(read('core/reader/ReaderFontWeight.ts')) + '\n' +
     compile(read('core/reader/ReaderParagraphIndent.ts')) + '\n' +

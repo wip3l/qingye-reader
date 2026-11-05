@@ -45,7 +45,8 @@ export function loadObsidianReader(pathkit = null) {
       RoundRect:class {constructor(rect,radius){this.rect=rect;this.radius=radius;}},
       JoinStyle:{ROUND_JOIN:0},CapStyle:{ROUND_CAP:0}},granted:true
   });
-  const modules=['utils/HexColor.ts','theme/ThemeModels.ets','theme/BuiltinThemeRegistry.ets',
+  const modules=['utils/HexColor.ts','theme/ThemeModels.ets',
+    'theme/share/ThemePackageFormat.ts','theme/ThemePackRegistry.ets','theme/BuiltinThemeRegistry.ets',
     'theme/ThemeRuntime.ets','theme/ThemeAssetRegistry.ets','account/ThemeAccessPolicy.ets',
     'utils/ReaderThemeHelper.ets','utils/ReaderCustomThemeHelper.ets','utils/ReaderThemeRenderCache.ets',
     'core/reader/ReaderFontWeight.ts','core/reader/ReaderCommentBubbleSize.ts','model/reader/ReaderRegexFontRule.ets',

@@ -96,6 +96,36 @@ function fixture() {
   return { r, book, layout, paragraphs, variable };
 }
 
+// Opening an unread first page does not create reading progress in either reader mode.
+for (const continuous of [false, true]) {
+  const { r, book } = fixture();
+  r.itemTop = 0;
+  r.usesReaderContinuousV2 = () => continuous;
+  const before = writes.length;
+  await r.saveReadingProgress();
+  assert.equal(book.getVariable('readStarted'), '');
+  assert.equal(book.getVariable('lastReadTime'), '');
+  assert.equal(writes.length, before, 'first-open position stays unread in the database');
+}
+
+// Saving the same visible position preserves its reading time, even after repagination.
+{
+  const { r, book } = fixture();
+  r.itemTop = -54;
+  await r.saveReadingProgress();
+  book.durChapterTime = 123;
+  book.putVariable('lastReadTime', '123');
+  book.durChapterPos = 1; // The saved character may have belonged to a different page before reflow.
+  await r.saveReadingProgress();
+  assert.equal(book.durChapterTime, 123);
+  assert.equal(book.getVariable('lastReadTime'), '123');
+  assert.equal(book.durChapterPos, 0, 'page metadata follows the current layout');
+  r.itemTop = -94;
+  await r.saveReadingProgress();
+  assert.notEqual(book.durChapterTime, 123, 'actual movement refreshes the reading time');
+  assert.equal(book.getVariable('lastReadTime'), String(book.durChapterTime));
+}
+
 // A clipped first line retains the exact screen displacement, even without crossing a chunk boundary.
 {
   const { r, book, paragraphs } = fixture();

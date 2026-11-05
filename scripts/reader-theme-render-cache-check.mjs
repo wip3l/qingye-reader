@@ -18,7 +18,8 @@ const runtime = { readerBackgroundColor: dark => { themeCalls++; return dark ? '
   readerBackgroundImageFit: () => 'cover',
   regexEmphasisModeFor: dark => { modeCalls++; return dark ? 'bubble' : 'color'; },
   regexBubbleStyleFor: dark => { bubbleCalls++; return dark ? 'ink-brush' : 'warm-scroll'; } };
-const context = vm.createContext({ console, ThemeRuntime: runtime });
+const context = vm.createContext({ console, ThemeRuntime: runtime,
+  ThemeAssetRegistry: { readerBackgroundImage: () => '' } });
 const modules = ['utils/HexColor.ts', 'utils/ReaderThemeHelper.ets', 'utils/ReaderCustomThemeHelper.ets',
   'utils/ReaderThemeRenderCache.ets'].map(name => read(name).replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, ''));
 const methods = ['currentReaderTheme', 'currentReaderThemeIndex', 'currentCustomThemeScheme', 'customThemeData',

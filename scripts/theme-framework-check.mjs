@@ -516,8 +516,7 @@ assert(bookModel.includes('static hasStartedReading(book: Book | null)') &&
   bookModel.includes("book.getVariable('readStarted')"),
   'Book model must provide a shared started-reading check');
 assert(reader.includes("this.book.putVariable('readStarted', '1')") &&
-  reader.includes('!Book.hasStartedReading(this.book) && chapterIndex <= 0 && pageIndex <= 0') &&
-  reader.includes('if (Book.hasStartedReading(this.book))'),
+  reader.includes('!Book.hasStartedReading(this.book) && chapterIndex <= 0 && pageIndex <= 0'),
   'Reader must not persist first-open progress before the reader turns forward');
 assert(indexPage.includes('Book.hasStartedReading(book)') &&
   bookshelfSortHelper.includes('!Book.hasStartedReading(book)') &&

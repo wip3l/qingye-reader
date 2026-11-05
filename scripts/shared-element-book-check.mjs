@@ -15,6 +15,7 @@ const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve();
 const context = vm.createContext({
   console: { error() {}, warn() {} },
   CloudAutoSync: { isPlaceholder: () => false },
+  BookshelfSortHelper: { holdReadTime() {}, releaseReadTimes() {} },
   LocalBookService: {
     isPdfBook: book => book.format === 'pdf',
     usesEpubOriginalLayout: book => book.originalLayout === true
@@ -56,7 +57,7 @@ Object.assign(host, {
   appDarkMode: false, themeRevision: 7,
   takeShelfOpeningBackdrop: () => { backdropTaken++; return Promise.resolve(backdropShot); },
   discardShelfOpeningBackdrop: () => { backdropDiscarded++; },
-  loadBooks: () => { refreshes++; return Promise.resolve(); }, shelfBookReturnRefreshTimer: -1
+  playShelfReorder: async () => { refreshes++; }, shelfBookReturnRefreshTimer: -1
 });
 const book = { bookUrl: 'book:1', origin: 'source', name: 'book' };
 host.openShelfBook(book, 50, 100);
