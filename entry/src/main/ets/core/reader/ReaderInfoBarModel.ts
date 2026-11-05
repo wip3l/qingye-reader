@@ -13,6 +13,7 @@ export class ReaderInfoItem {
   static readonly CHAPTER_PERCENT: string = 'chapter_percent';
   static readonly CHAPTER_PROGRESS: string = 'chapter_progress';
   static readonly BOOK_PERCENT: string = 'book_percent';
+  static readonly PAGE_BOOK_PERCENT: string = 'page_book_percent';
   static readonly TIME: string = 'time';
   static readonly BATTERY: string = 'battery';
   static readonly TIME_BATTERY: string = 'time_battery';
@@ -29,6 +30,7 @@ export class ReaderInfoItem {
     ReaderInfoItem.CHAPTER_PERCENT,
     ReaderInfoItem.CHAPTER_PROGRESS,
     ReaderInfoItem.BOOK_PERCENT,
+    ReaderInfoItem.PAGE_BOOK_PERCENT,
     ReaderInfoItem.TIME,
     ReaderInfoItem.BATTERY,
     ReaderInfoItem.TIME_BATTERY
@@ -46,6 +48,7 @@ export class ReaderInfoItem {
     '本章百分比',
     '章节进度',
     '全书百分比',
+    '当前页 / 总页数 + 全书百分比',
     '时间',
     '电量',
     '时间 + 电量'
@@ -380,6 +383,10 @@ export class ReaderInfoBarText {
     if (item === ReaderInfoItem.BOOK_PERCENT) {
       if (context.pageCountPending && context.chapterProgressRatio < 0) return '…';
       return `${ReaderInfoBarText.bookPercent(context).toFixed(1)}%`;
+    }
+    if (item === ReaderInfoItem.PAGE_BOOK_PERCENT) {
+      return `${ReaderInfoBarText.of(ReaderInfoItem.PAGE, context)}  ` +
+        ReaderInfoBarText.of(ReaderInfoItem.BOOK_PERCENT, context);
     }
     if (item === ReaderInfoItem.TIME) return context.timeText;
     if (item === ReaderInfoItem.BATTERY) return ReaderInfoBarText.batteryText(context);
