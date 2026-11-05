@@ -27,6 +27,8 @@ assert.doesNotMatch(method('runWhenReaderIdle').split('{')[0], /\bthis\./,
   'the idle predicate must capture the component receiver in the method body');
 const Reader = vm.runInContext(stripTypeScriptTypes(`class Reader { ${names.map(method).join('\n')} }; Reader`,
   { mode: 'strip' }), context);
+// Opening-animation hook called once a chapter is published; the shelf motion is covered by shelf-book-animation-check.
+Reader.prototype.startShelfOpeningAfterContent = () => {};
 
 const idle = new Reader();
 let busy = false, runs = 0, busyChecks = 0;

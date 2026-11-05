@@ -29,6 +29,8 @@ const names = ['captureReaderContinuousAnchor', 'readerContinuousSourceIdentity'
 vm.runInContext(stripTypeScriptTypes(readEtsModule('core/reader/ReaderScrollAnchor.ts').replace(/^export /gm, '') +
   `\nclass Reader { ${names.map(method).join('\n')} }\nglobalThis.Reader = Reader; globalThis.Anchor = ReaderScrollAnchor;`), sandbox);
 const { Reader, Anchor } = sandbox;
+// Opening-animation hook called once the restored offset is applied; the shelf motion is covered by shelf-book-animation-check.
+Reader.prototype.startShelfOpeningAfterContent = () => {};
 async function tick() {
   const jobs = [...timers.values()]; timers.clear();
   for (const fn of jobs) fn();

@@ -67,10 +67,10 @@ for (const page of ['ReadBook', 'PdfReadBook']) {
   // Without a position or a snapshot the old close-then-fly path remains.
   assert.match(exit, /ShelfCoverLocator\.locate\(this\.bookUrl\)/, `${page}: asks the shelf where the cover is now`);
   assert.match(exit, /const backdrop = closeTarget \? await ShelfCoverLocator\.backdrop\(\) : null;/, `${page}: snapshots the shelf only with a target`);
-  assert.match(exit, /this\.shelfSharedCoverId = detachedShelfSharedCoverId\(this\.shelfSharedCoverId\);\s*this\.shelfCloseBackdrop = backdrop;/, `${page}: backdrop replaces the shared transition`);
-  assert.match(exit, /this\.shelfCloseBackdrop = backdrop;[\s\S]*?await ReaderRenderFrame\.wait\(this\.getUIContext\(\)\);/,
+  assert.match(exit, /this\.shelfSharedCoverId = detachedShelfSharedCoverId\(this\.shelfSharedCoverId\);\s*this\.shelfMotionBackdrop = backdrop;/, `${page}: backdrop replaces the shared transition`);
+  assert.match(exit, /this\.shelfMotionBackdrop = backdrop;[\s\S]*?await ReaderRenderFrame\.wait\(this\.getUIContext\(\)\);/,
     `${page}: the backdrop gets a frame before the page starts shrinking`);
-  assert.match(exit, /if \(selfClose\) \{[\s\S]*?this\.shelfCloseBackdropHandedOff = true;\s*AppStorage\.setOrCreate<image\.PixelMap \| null>\('shelfReturnBackdrop', this\.shelfCloseBackdrop\);[\s\S]*?\} else \{[\s\S]*?this\.shelfCoverFrameVisible = false;/,
+  assert.match(exit, /if \(selfClose\) \{[\s\S]*?this\.shelfMotionBackdropHandedOff = true;\s*AppStorage\.setOrCreate<image\.PixelMap \| null>\('shelfReturnBackdrop', this\.shelfMotionBackdrop\);[\s\S]*?\} else \{[\s\S]*?this\.shelfCoverFrameVisible = false;/,
     `${page}: the backdrop is handed to the home page on landing, the frame hidden only for the shared transition`);
   const closer = hostFor(source, ['closeIntoShelfCover']);
   let closeAnimation;
@@ -87,12 +87,12 @@ for (const page of ['ReadBook', 'PdfReadBook']) {
   advance(1000); await Promise.resolve();
   assert.equal(landed, false); closeAnimation.onFinish(); await landing; assert.equal(landed, true);
   const build = source.slice(source.indexOf('  build() {'), source.indexOf('  build() {') + 400);
-  assert.match(build, /if \(this\.shelfCloseBackdrop\) \{\s*Image\(this\.shelfCloseBackdrop\)/, `${page}: the backdrop sits outside the scaled page root`);
+  assert.match(build, /if \(this\.shelfMotionBackdrop\) \{\s*Image\(this\.shelfMotionBackdrop\)/, `${page}: the backdrop sits outside the scaled page root`);
 }
 
 // The home page keeps the handed-over backdrop on top until the return refresh has drawn, at most 1.5 s.
 const home = hostFor(read('pages/Index.ets'),
-  ['onShelfReturnBackdropChanged', 'onShelfReturnRefreshed', 'armShelfReturnBackdropDrop']);
+  ['onShelfReturnBackdropChanged', 'onShelfReturnRefreshed', 'armShelfReturnBackdropDrop', 'dropShelfReturnBackdropNow']);
 let backdropReleases = 0;
 const handedBackdrop = { release() { backdropReleases++; return Promise.resolve(); } };
 Object.assign(home, { shelfReturnBackdrop: handedBackdrop, shelfReturnBackdropShown: false, shelfReturnBackdropTimer: -1 });
@@ -102,10 +102,20 @@ advance(1000); assert.equal(home.shelfReturnBackdropShown, true, 'still covering
 home.onShelfReturnRefreshed();
 advance(100); assert.equal(home.shelfReturnBackdropShown, true, 'two frames for the refreshed shelf to draw');
 advance(50); assert.equal(home.shelfReturnBackdropShown, false, 'uncovered after the refresh has drawn');
-assert.equal(home.shelfReturnBackdrop, null); assert.equal(backdropReleases, 1, 'the backdrop is released once');
+assert.equal(home.shelfReturnBackdrop, null); assert.equal(backdropReleases, 0, 'the frame that may still draw it gets to finish first');
+advance(200); assert.equal(backdropReleases, 1, 'the backdrop is released once');
 Object.assign(home, { shelfReturnBackdrop: handedBackdrop, shelfReturnBackdropShown: false });
 home.onShelfReturnBackdropChanged(); advance(1500);
 assert.equal(home.shelfReturnBackdropShown, false, 'a refresh that never reports still uncovers after 1.5 s');
+// A finger on the home page uncovers it at once, so a category swipe is not performed under a still picture.
+Object.assign(home, { shelfReturnBackdrop: handedBackdrop, shelfReturnBackdropShown: false });
+home.onShelfReturnBackdropChanged(); home.dropShelfReturnBackdropNow();
+assert.equal(home.shelfReturnBackdropShown, false, 'touch-down uncovers the home page immediately');
+assert.equal(home.shelfReturnBackdropTimer, -1, 'touch-down cancels the fallback timer');
+home.dropShelfReturnBackdropNow();
+advance(200); assert.equal(backdropReleases, 3, 'each hand-over releases its backdrop exactly once');
+assert.match(read('pages/Index.ets'), /TouchType\.Down && this\.shelfReturnBackdropShown\) this\.dropShelfReturnBackdropNow\(\)/,
+  'the home root uncovers on touch-down');
 assert.match(read('components/home/BookshelfPage.ets'), /\.finally\(\(\): void => \{\s*\/\/[^\n]*\n\s*AppStorage\.setOrCreate<number>\('shelfReturnRefreshNonce', Date\.now\(\)\);/,
   'the shelf reports the return refresh whether it succeeded or failed');
 
@@ -177,16 +187,22 @@ assert.ok(bodyStart >= 0, 'body column');
 const bodyColumn = readerSource.slice(bodyStart, readerSource.indexOf('// 页眉放在全屏层', bodyStart));
 assert.match(bodyColumn, /\.renderGroup\(this\.shelfMotionRasterized\)/, 'the body column rasterizes during shelf motion');
 assert.doesNotMatch(bodyColumn, /ReaderShelfCoverOpening\(/, 'the cover layer stays outside the rasterized body');
-const motion = hostFor(readerSource, ['prepareShelfOpening', 'finishShelfOpening']);
+const motion = hostFor(readerSource, ['prepareShelfOpening', 'finishShelfOpening', 'dropShelfOpeningBackdrop']);
+let openingBackdropReleases = 0;
+const openingBackdrop = { release() { openingBackdropReleases++; return Promise.resolve(); } };
 Object.assign(motion, {
   shelfOpeningCover: { boundsX: 10, boundsY: 20, boundsWidth: 90, boundsHeight: 120, windowWidth: 400, windowHeight: 800 },
   shelfSharedCoverId: 'cover', shelfMotionRasterized: false, shelfOpenStartTimer: -1, readerInitialOpening: true,
-  readerExiting: false, shelfCoverAngle: 0, shelfPendingSharedCoverId: ''
+  readerExiting: false, shelfCoverAngle: 0, shelfPendingSharedCoverId: '',
+  shelfMotionBackdrop: openingBackdrop, shelfMotionBackdropHandedOff: false
 });
 motion.prepareShelfOpening();
 assert.equal(motion.shelfMotionRasterized, true, 'rasterized from the first scaled frame');
 motion.finishShelfOpening();
 assert.equal(motion.shelfMotionRasterized, false, 'ordinary reading draws the body directly again');
+assert.equal(motion.shelfMotionBackdrop, null, 'the home snapshot behind the opening page goes once the motion ends');
+assert.equal(openingBackdropReleases, 0, 'the frame that may still draw it gets to finish first');
+advance(120); assert.equal(openingBackdropReleases, 1, 'the opening backdrop is released once');
 motion.prepareShelfOpening(); motion.readerExiting = true; motion.finishShelfOpening();
 assert.equal(motion.shelfMotionRasterized, true, 'leaving during the opening keeps the layer for the return flight');
 
