@@ -424,7 +424,6 @@ struct EpubOriginalReadBookPage {
       if (this.chapters.length === 0) throw new Error('这本书没有可阅读的章节');
       this.book = book;
       this.title = book.name || '文件排版';
-      this.markRecentlyRead();
       this.chapterCount = this.chapters.length;
       this.tocChapters = this.chapters;
       await this.loadReaderSettings(context);
@@ -1532,9 +1531,13 @@ struct EpubOriginalReadBookPage {
       saved.offset = offset;
       saved.snippet = spot.snippet;
       saved.fraction = spot.fraction;
+      // 书架“最近阅读”排序和置顶优先按 lastReadTime（只更新 durChapterTime 的话，之前在普通阅读器读过的书会停在老位置）。
+      // 和普通阅读页一样只在位置变了时刷新：打开看一眼就关的书不挪位，关书缩回时封面还在原处。
+      const positionChanged = !latest.hasStartedReading() || latest.durChapterIndex !== index ||
+        latest.getVariable(NATIVE_OFFSET_CHAPTER_KEY) !== `${index}` || latest.getVariable(NATIVE_OFFSET_KEY) !== `${offset}`;
+      const readTime = positionChanged || !latest.durChapterTime ? timestamp : latest.durChapterTime;
       latest.putVariable('readStarted', '1');
-      // 书架“最近阅读”排序和置顶优先按这个时间；只更新 durChapterTime 的话，之前在普通阅读器读过的书会停在老位置。
-      latest.putVariable('lastReadTime', `${timestamp}`);
+      if (positionChanged) latest.putVariable('lastReadTime', `${readTime}`);
       latest.putVariable('readProgressChapterIndex', `${index}`);
       latest.putVariable('readProgressPageCount', `${count}`);
       latest.putVariable(NATIVE_OFFSET_KEY, `${offset}`);
@@ -1542,7 +1545,7 @@ struct EpubOriginalReadBookPage {
       latest.putVariable(POSITION_KEY, JSON.stringify(saved));
       latest.putVariable(SCROLL_KEY, paged ? '' : '1');
       latest.putVariable(ZOOM_KEY, zoom === 100 ? '' : `${zoom}`);
-      await appDb.updateBookReadingProgress(bookUrl, title, index, page, timestamp, latest.variable);
+      await appDb.updateBookReadingProgress(bookUrl, title, index, page, readTime, latest.variable, positionChanged);
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
       this.reloadRecentReadCard(this.closing);
     });
@@ -1550,26 +1553,6 @@ struct EpubOriginalReadBookPage {
     return task;
   }
 
-
-  /**
-   * 与普通阅读页开书时一样，先把这本书记成最近阅读：书架在阅读期间（开书动画结束后）悄悄重排，
-   * 关书时封面已经在置顶卡片里，缩回动画才落在正确位置；若等到关书保存时才挪位，落地后会跳一下。
-   * 排进 saveTask，和进度保存串行，不会互相覆盖变量。
-   */
-  private markRecentlyRead(): void {
-    const bookUrl = this.bookUrl;
-    this.saveTask = this.saveTask.catch((): void => {}).then(async (): Promise<void> => {
-      const latest = await appDb.getBook(bookUrl);
-      if (!latest) return;
-      const now = Date.now();
-      latest.durChapterTime = now;
-      latest.putVariable('readStarted', '1');
-      latest.putVariable('lastReadTime', `${now}`);
-      await appDb.updateBook(latest, false);
-      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-      this.reloadRecentReadCard(true);
-    }).catch((error: Error): void => { console.warn('[EpubOriginal] mark recent failed:', error); });
-  }
 
   /** 桌面“最近阅读”卡片跟着进度走；翻页保存很频繁，不在退出时每 30 秒最多刷一次。 */
   private reloadRecentReadCard(force: boolean): void {

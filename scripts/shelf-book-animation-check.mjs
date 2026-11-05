@@ -144,8 +144,12 @@ assert.match(shelfPageSource, /ShelfCoverLocator\.unregister\(this\.shelfCoverLo
 const shelf = hostFor(read('components/home/BookshelfPage.ets'),
   ['shelfBookMotionDelay', 'scheduleLoadBooks', 'closeShelfBook', 'cancelShelfBookOpening']);
 let refreshes = 0;
+let heldReleases = 0;
+context.BookshelfSortHelper = { releaseReadTimes: () => { heldReleases++; } };
+context.BookshelfPage = { SHELF_RETURN_QUICK_REFRESH: 120 };
 Object.assign(shelf, { loadTimer: -1, shelfBookReturnRefreshTimer: -1,
-  loadBooks: () => { refreshes++; return Promise.resolve(); } });
+  loadBooks: () => { refreshes++; return Promise.resolve(); },
+  playShelfReorder: () => { refreshes++; return Promise.resolve(); }, clearShelfReorderLayers() {} });
 storage.set('shelfBookMotionUntil', now + 500);
 shelf.scheduleLoadBooks();
 advance(80); assert.equal(refreshes, 0, 'saving progress cannot rebuild the shelf during opening');
@@ -162,6 +166,16 @@ advance(60); assert.equal(refreshes, 2, 'coalesce progress notifications into on
 assert.equal(timers.size, 0);
 shelf.closeShelfBook('book'); shelf.cancelShelfBookOpening();
 advance(1000); assert.equal(refreshes, 2, 'leaving the shelf cancels the return refresh');
+// A reader that shrank onto the cover itself hands over the shelf picture in the same turn; the return transition
+// is instant then, so the refresh (and the move of a book whose place changed) follows soon after landing.
+storage.set('shelfReturnBackdrop', {});
+shelf.closeShelfBook('book');
+advance(100); assert.equal(refreshes, 2, 'the handed-over picture still covers the first frames');
+advance(30); assert.equal(refreshes, 3, 'refresh 120 ms after a self-drawn landing');
+await Promise.resolve(); await Promise.resolve();
+assert.equal(heldReleases > 0, true, 'the held reading time is released after the return refresh');
+assert.equal(storage.get('shelfReturnRefreshNonce') > 0, true, 'the return refresh is always reported');
+storage.delete('shelfReturnBackdrop');
 
 const reader = hostFor(read('pages/ReadBook.ets'),
   ['isReaderPaginationInteractionBusy', 'isReaderPageMotionActive']);

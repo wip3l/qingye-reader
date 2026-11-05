@@ -1818,12 +1818,6 @@ struct ReadBookPage {
       if (loadSerial !== this.bookLoadSerial) {
         return;
       }
-      if (Book.hasStartedReading(this.book)) {
-        this.markBookRecentlyRead().catch((error: Error) => {
-          console.warn('更新最近阅读时间失败:', error);
-        });
-      }
-
       const requestedBookUrl = this.book.bookUrl;
       await engine.openBook(this.book, sourceForType);
       ReaderOpenTrace.mark(this.bookUrl, 'reader-engine-ready', `chapters=${engine.chapters.length}`);
@@ -10281,13 +10275,20 @@ struct ReadBookPage {
       }
       return;
     }
+    // 位置没变（打开看一眼就关、只改了排版）不刷新阅读时间：书架“最近阅读”排序靠它，刷新了书就会挪位，
+    // 关书缩回时封面已不在原处。也不算一次需要同步的进度变化。
+    const savedOffset = this.book.getVariable(READER_PROGRESS_OFFSET_CHAPTER_KEY) === `${chapterIndex}` ?
+      Number(this.book.getVariable(READER_PROGRESS_OFFSET_KEY) || '-1') : -1;
+    const positionChanged = !Book.hasStartedReading(this.book) || this.book.durChapterIndex !== chapterIndex ||
+      (characterOffset >= 0 && savedOffset >= 0 ? characterOffset !== savedOffset :
+        this.book.durChapterPos !== pageIndex);
     this.book.durChapterIndex = chapterIndex;
     this.book.durChapterPos = pageIndex;
-    const now = Date.now();
+    const now = positionChanged || !this.book.durChapterTime ? Date.now() : this.book.durChapterTime;
     this.book.durChapterTitle = this.chapters[chapterIndex]?.title || this.book.durChapterTitle;
     this.book.durChapterTime = now;
     this.book.putVariable('readStarted', '1');
-    this.book.putVariable('lastReadTime', `${now}`);
+    if (positionChanged) this.book.putVariable('lastReadTime', `${now}`);
     this.book.putVariable('readProgressChapterIndex', `${chapterIndex}`);
     this.book.putVariable('readProgressPageCount', `${progressPageCount}`);
     if (characterOffset >= 0) {
@@ -10310,7 +10311,7 @@ struct ReadBookPage {
     const bookUrl = this.book.bookUrl;
     const chapterTitle = this.book.durChapterTitle;
     const variable = this.book.variable;
-    const syncRelevant = !!this.book.origin && this.book.origin !== 'local';
+    const syncRelevant = positionChanged && !!this.book.origin && this.book.origin !== 'local';
     const shouldRefreshRecentCard = chapterIndex !== this.lastRecentReadCardChapterIndex;
     this.lastRecentReadCardChapterIndex = chapterIndex;
     const previous = this.readingProgressSaveQueue.catch(() => {
@@ -10336,25 +10337,6 @@ struct ReadBookPage {
       await next;
     } catch (e) {
       console.error('保存阅读进度失败:', e);
-    }
-  }
-
-  async markBookRecentlyRead() {
-    if (!this.book) {
-      return;
-    }
-    const now = Date.now();
-    this.book.durChapterTime = now;
-    this.book.putVariable('readStarted', '1');
-    this.book.putVariable('lastReadTime', `${now}`);
-    try {
-      const db = AppDatabase.getInstance();
-      await db.updateBook(this.book, false);
-      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-      this.lastRecentReadCardChapterIndex = this.currentChapterIndex;
-      this.reloadRecentReadCardLater(true);
-    } catch (e) {
-      console.error('更新最近阅读时间失败:', e);
     }
   }
 

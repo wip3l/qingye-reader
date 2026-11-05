@@ -107,7 +107,9 @@ class TileGroupPreviewSource {
  */
 class TileGroupFlyer {
   key: string = '';
-  cover: string = '';
+  cover: ResourceStr = '';
+  /** 主题封面在书架上是拉伸铺满的，飞行时一样。 */
+  fill: boolean = false;
   color: string = '';
   initial: string = '';
   width: number = 0;
@@ -307,6 +309,10 @@ export struct BookshelfPage {
   @State tileGroupFlyers: TileGroupFlyer[] = [];
   @State tileGroupFlyProgress: number = 0;
   @State tileGroupHiddenCovers: string[] = [];
+  @State shelfReorderCurtain: image.PixelMap | undefined = undefined;
+  @State shelfReorderCurtainOpacity: number = 1;
+  /** 关书回到书架到挪位动画结束；期间不在 loadBooks 里放掉按住的阅读时间。 */
+  private shelfReturnMotionActive: boolean = false;
   private tileGroupPreviewSources: TileGroupPreviewSource[] = [];
   private tileGroupLeadBounds: SharedElementBounds = new SharedElementBounds();
   /** 展开或收回中的页面：以左上角为原点非等比缩放再平移到卡片处，只改绘制不改排版。 */
@@ -495,6 +501,12 @@ export struct BookshelfPage {
   private static readonly SHELF_OPENING_BACKDROP_FRESH: number = 400;
   /** 点开时截图还没回来，最多再等这么久；超时就不垫背景（和以前一样纯色），不让截图拖慢打开。 */
   private static readonly SHELF_OPENING_BACKDROP_WAIT: number = 100;
+  /** 阅读页自己缩回后多久刷新书架（首页盖图挡着）。 */
+  private static readonly SHELF_RETURN_QUICK_REFRESH: number = 120;
+  /** 刷新通知发出后首页 120ms 揭开盖图，再稍等一点开始挪位。 */
+  private static readonly SHELF_REORDER_START_DELAY: number = 150;
+  private static readonly SHELF_REORDER_DURATION: number = 450;
+  private static readonly SHELF_REORDER_CURTAIN_FADE: number = 220;
 
   aboutToAppear() {
     this.shelfComponentActive = true;
@@ -627,6 +639,8 @@ export struct BookshelfPage {
 
   async loadBooks(forceDataSourceReload: boolean = false): Promise<void> {
     const loadSerial = ++this.shelfLoadSerial;
+    // 没经过关书动画回到书架（打开失败、阅读页被换成别的页再返回）时，按住的阅读时间在这里放掉。
+    if (!this.shelfReturnMotionActive && Number(router.getLength()) <= 1) BookshelfSortHelper.releaseReadTimes();
     // Returning from the reader refreshes shelf metadata. Do not cover an already-rendered shelf
     // with the initial loading placeholder; that one-frame replacement is perceived as a flash.
     const needsInitialPlaceholder = this.allBooks.length === 0;
@@ -1295,6 +1309,17 @@ export struct BookshelfPage {
       if (this.tileGroupBackdrop && this.tileGroupCardShot) {
         this.tileGroupCardLayer()
       }
+      if (this.shelfReorderCurtain) {
+        // 关书回来挪位时盖着的旧书架截图，在飞行封面下面淡出。
+        Image(this.shelfReorderCurtain)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Fill)
+          .syncLoad(true)
+          .opacity(this.shelfReorderCurtainOpacity)
+          .hitTestBehavior(HitTestMode.None)
+          .accessibilityLevel('no-hide-descendants')
+      }
       if (this.tileGroupFlyers.length > 0) {
         this.tileGroupFlyerLayer()
       }
@@ -1577,7 +1602,7 @@ export struct BookshelfPage {
             Image(flyer.cover)
               .width('100%')
               .height('100%')
-              .objectFit(ImageFit.Cover)
+              .objectFit(flyer.fill ? ImageFit.Fill : ImageFit.Cover)
               .syncLoad(true)
               .draggable(false)
           } else {
@@ -4588,6 +4613,8 @@ export struct BookshelfPage {
     if (this.bookshelfBookOpenAnimation) {
       AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
         Date.now() + SHELF_COVER_OPEN_START_CAP + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
+      // 读完回来才挪位（playShelfReorder），阅读期间书架怎么刷新这本书都留在点开的那一格。
+      BookshelfSortHelper.holdReadTime(book);
     }
     this.acknowledgeShelfBookUpdate(book, true);
     // PDFs go straight to their own page (the text reader would first spend a database lookup on the format),
@@ -4888,7 +4915,7 @@ export struct BookshelfPage {
     await db.updateBook(current, false, 'shelf_update_badge_acknowledged');
   }
 
-  closeShelfBook(_bookUrl: string): void {
+  closeShelfBook(bookUrl: string): void {
     this.cancelShelfBookOpening();
     if (this.loadTimer >= 0) {
       clearTimeout(this.loadTimer);
@@ -4896,17 +4923,177 @@ export struct BookshelfPage {
     }
     AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
       Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
-    // This notification arrives after the cover has closed, immediately before router.back().
-    // Keep the shared source stable until the native return transition is finished.
-    this.shelfBookReturnRefreshTimer = setTimeout(() => {
+    this.shelfReturnMotionActive = true;
+    const refresh = (): void => {
       this.shelfBookReturnRefreshTimer = -1;
-      this.loadBooks(true)
-        .catch((error: Error) => console.warn('返回书架时刷新进度失败:', error))
+      this.playShelfReorder(bookUrl)
+        .catch((error: Error) => {
+          console.warn('返回书架时刷新进度失败:', error);
+          this.clearShelfReorderLayers();
+        })
         .finally((): void => {
-          // 首页盖着阅读页留下的书架截图，等这次重建画出来再揭开。
+          // 首页盖着阅读页留下的书架截图，等这次重建画出来再揭开；挪位中途出错也照样报（已报过的再报一次无妨）。
           AppStorage.setOrCreate<number>('shelfReturnRefreshNonce', Date.now());
+          BookshelfSortHelper.releaseReadTimes();
+          this.shelfReturnMotionActive = false;
         });
-    }, SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
+    };
+    // This notification arrives after the cover has closed, immediately before router.back().
+    // 阅读页自己缩回时（随后交来首页盖图）返回转场是 0 时长，很快就能刷新；否则等共享转场飞完，保持源节点不动。
+    // 盖图在同一轮里紧接着交来，下一轮才看得到；期限仍从此刻算。
+    const closedAt = Date.now();
+    this.shelfBookReturnRefreshTimer = setTimeout((): void => {
+      const selfClosed = !!AppStorage.get<image.PixelMap | null>('shelfReturnBackdrop');
+      const refreshAt = closedAt + (selfClosed ? BookshelfPage.SHELF_RETURN_QUICK_REFRESH :
+        SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
+      AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY, refreshAt);
+      this.shelfBookReturnRefreshTimer = setTimeout(refresh, Math.max(0, refreshAt - Date.now()));
+    }, 0);
+  }
+
+  /**
+   * 关书落地后把读过的书挪到新位置：先用当前书架的截图盖住，在它下面放开按住的阅读时间、按新顺序重建
+   * （新位置在屏幕外就先滚回顶部），再让一枚封面从原来那一格飞到新位置，截图同时淡出。
+   * 位置没变、量不到、截不到图时直接刷新。首页的盖图在这之后才揭开，下面的重排与滚动都看不见。
+   */
+  async playShelfReorder(bookUrl: string): Promise<void> {
+    const held = BookshelfSortHelper.heldReadTime(bookUrl);
+    const book = this.allBooks.find((item: Book): boolean => item.bookUrl === bookUrl);
+    const from = held !== undefined && book ? this.measureShelfReorderCover(book, false) : undefined;
+    let fresh: Book | undefined = undefined;
+    if (from && book) {
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(getContext(this));
+      fresh = await db.getBook(bookUrl) || undefined;
+    }
+    BookshelfSortHelper.releaseReadTimes();
+    const moved = !!fresh && held !== undefined && BookshelfSortHelper.getBookReadTime(fresh) > held;
+    const curtain = moved ? await this.snapshotTileGroupElement('bookshelf_motion_root') : undefined;
+    if (!moved || !curtain || !book || !from || !this.shelfComponentActive) {
+      this.releaseTileGroupShot(curtain);
+      await this.loadBooks(true);
+      // 首页盖着阅读页留下的书架截图，等这次重建画出来再揭开。
+      AppStorage.setOrCreate<number>('shelfReturnRefreshNonce', Date.now());
+      return;
+    }
+    this.shelfReorderCurtain = curtain;
+    this.shelfReorderCurtainOpacity = 1;
+    this.tileGroupHiddenCovers = [bookUrl];
+    await this.waitShelfFrames(1);
+    await this.loadBooks(true);
+    await this.waitShelfFrames(2);
+    let to = this.measureShelfReorderCover(book, true);
+    if (!to) {
+      // 新位置滚出了屏幕（多半是列表往下翻过，书挪到了最前面）：截图挡着时滚回顶部再量。
+      try {
+        if (this.isTileLayout()) this.shelfTileScroller.scrollEdge(Edge.Top);
+        else this.shelfListScroller.scrollEdge(Edge.Top);
+      } catch (_) {
+      }
+      await this.waitShelfFrames(2);
+      to = this.measureShelfReorderCover(book, true);
+    }
+    const current = this.allBooks.find((item: Book): boolean => item.bookUrl === bookUrl) || book;
+    const travels = !!to && (Math.abs(to.x - from.x) > 1 || Math.abs(to.y - from.y) > 1);
+    if (to && travels) {
+      this.tileGroupFlyProgress = 0;
+      this.tileGroupFlyers = [this.makeShelfReorderFlyer(current, from, to)];
+    }
+    AppStorage.setOrCreate<number>('shelfReturnRefreshNonce', Date.now());
+    // 首页盖图在刷新通知后 120ms 揭开，揭开时下面就是这张一模一样的截图，再开始飞。
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, BookshelfPage.SHELF_REORDER_START_DELAY);
+    });
+    if (travels) {
+      // 截图比封面早一点淡完：飞到一半时下面已经是新顺序的书架，只有这一本还在路上。
+      this.getUIContext().animateTo({ duration: BookshelfPage.SHELF_REORDER_CURTAIN_FADE, curve: Curve.EaseOut },
+        (): void => {
+          this.shelfReorderCurtainOpacity = 0;
+        });
+      await new Promise<void>((resolve: () => void): void => {
+        this.getUIContext().animateTo({ duration: BookshelfPage.SHELF_REORDER_DURATION,
+          curve: curves.cubicBezierCurve(0.2, 0, 0, 1), expectedFrameRateRange: SHELF_GROUP_FRAME_RATE,
+          onFinish: (): void => resolve() }, (): void => {
+          this.tileGroupFlyProgress = 1;
+        });
+      });
+    } else {
+      await new Promise<void>((resolve: () => void): void => {
+        this.getUIContext().animateTo({ duration: BookshelfPage.SHELF_REORDER_CURTAIN_FADE, curve: Curve.EaseOut,
+          onFinish: (): void => resolve() }, (): void => {
+          this.shelfReorderCurtainOpacity = 0;
+        });
+      });
+    }
+    // 封面先在新位置露出来，下一帧再撤飞行封面，中间不空一帧。
+    this.tileGroupHiddenCovers = [];
+    await this.waitShelfFrames(1);
+    this.clearShelfReorderLayers();
+  }
+
+  clearShelfReorderLayers(): void {
+    this.tileGroupHiddenCovers = [];
+    this.tileGroupFlyers = [];
+    this.tileGroupFlyProgress = 0;
+    const shot = this.shelfReorderCurtain;
+    this.shelfReorderCurtain = undefined;
+    setTimeout((): void => this.releaseTileGroupShot(shot), 200);
+  }
+
+  /**
+   * 这本书在当前分类页上看得见的那枚封面（相对书架根节点，vp）。同一本书可能同时在格子和继续阅读卡片里：
+   * 挪位前优先取格子（点开的那一格），挪位后优先取卡片（新位置）。
+   */
+  measureShelfReorderCover(book: Book, preferLatest: boolean): SharedElementBounds | undefined {
+    const pageKey = this.shelfPageKey();
+    const order: boolean[] = preferLatest ? [true, false] : [false, true];
+    for (const latest of order) {
+      const rect = this.measureTileGroupRect(this.shelfCoverElementId(book, this.shelfCoverScope(pageKey, latest)));
+      if (rect && rect.x >= 0 && rect.y >= 0 && rect.x + rect.width <= this.contextViewportWidth + 1 &&
+        rect.y + rect.height <= this.contextViewportHeight + 1) {
+        return rect;
+      }
+    }
+    return undefined;
+  }
+
+  makeShelfReorderFlyer(book: Book, from: SharedElementBounds, to: SharedElementBounds): TileGroupFlyer {
+    const flyer = this.makeTileGroupFlyer(book, from, to);
+    if (this.shouldUseThemeBookCover()) {
+      const covers = this.activeThemeBookCovers(book);
+      if (covers.length > 0) {
+        flyer.cover = covers[0];
+        flyer.fill = true;
+      }
+    }
+    return flyer;
+  }
+
+  waitShelfFrames(frames: number): Promise<void> {
+    return new Promise<void>((resolve: () => void): void => {
+      let remaining = Math.max(1, frames);
+      let done = false;
+      const finish = (): void => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      const tick = (): void => {
+        remaining--;
+        if (remaining > 0) post();
+        else finish();
+      };
+      const post = (): void => {
+        try {
+          this.getUIContext().postFrameCallback(new ShelfGroupNextFrame(tick));
+        } catch (error) {
+          finish();
+        }
+      };
+      // 页面不在前台时帧回调不来，兜底不卡住。
+      setTimeout(finish, 60 * Math.max(1, frames));
+      post();
+    });
   }
 
   cancelShelfBookOpening(): void {

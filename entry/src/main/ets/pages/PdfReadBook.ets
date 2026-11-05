@@ -231,7 +231,6 @@ struct PdfReadBookPage {
         'pdfSuperResolution': book.getVariable(ReaderPdfSettings.SUPER_RESOLUTION)
       });
       this.book = book; this.title = book.name || 'PDF 阅读';
-      this.markRecentlyRead();
       this.pageCount = book.totalChapterNum;
       this.initialPage = PdfPagePosition.clamp(book.durChapterIndex, this.pageCount);
       this.pageIndex = this.initialPage; this.jumpInput = `${this.initialPage + 1}`;
@@ -394,13 +393,17 @@ struct PdfReadBookPage {
     const task = this.saveTask.catch((): void => {}).then(async (): Promise<void> => {
       const latest = await appDb.getBook(bookUrl);
       if (!latest || timestamp < latest.durChapterTime && latest.hasStartedReading()) return;
+      // 书架“最近阅读”排序和置顶优先按 lastReadTime，和普通阅读页一样只在页码变了时刷新，
+      // 打开看一眼就关的书不挪位，关书缩回时封面还在原处。
+      const pageChanged = !latest.hasStartedReading() || latest.durChapterIndex !== page;
+      const readTime = pageChanged || !latest.durChapterTime ? timestamp : latest.durChapterTime;
       latest.putVariable('readStarted', '1');
-      // 书架“最近阅读”排序和置顶优先按这个时间，和普通阅读页保存进度时写的一样。
-      latest.putVariable('lastReadTime', `${timestamp}`);
+      if (pageChanged) latest.putVariable('lastReadTime', `${readTime}`);
       for (const key of Object.keys(overrides)) latest.putVariable(key, overrides[key]);
       latest.putVariable('readProgressChapterIndex', `${page}`);
       latest.putVariable('readProgressPageCount', '1');
-      await appDb.updateBookReadingProgress(bookUrl, PdfPagePosition.title(page), page, 0, timestamp, latest.variable);
+      await appDb.updateBookReadingProgress(bookUrl, PdfPagePosition.title(page), page, 0, readTime, latest.variable,
+        pageChanged);
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
       this.reloadRecentReadCard(this.closing);
     });
@@ -408,26 +411,6 @@ struct PdfReadBookPage {
     return task;
   }
 
-
-  /**
-   * 与普通阅读页开书时一样，先把这本书记成最近阅读：书架在阅读期间（开书动画结束后）悄悄重排，
-   * 关书时封面已经在置顶卡片里，缩回动画才落在正确位置；若等到关书保存时才挪位，落地后会跳一下。
-   * 排进 saveTask，和进度保存串行，不会互相覆盖变量。
-   */
-  private markRecentlyRead(): void {
-    const bookUrl = this.bookUrl;
-    this.saveTask = this.saveTask.catch((): void => {}).then(async (): Promise<void> => {
-      const latest = await appDb.getBook(bookUrl);
-      if (!latest) return;
-      const now = Date.now();
-      latest.durChapterTime = now;
-      latest.putVariable('readStarted', '1');
-      latest.putVariable('lastReadTime', `${now}`);
-      await appDb.updateBook(latest, false);
-      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-      this.reloadRecentReadCard(true);
-    }).catch((error: Error): void => { console.warn('[PDF] mark recent failed:', error); });
-  }
 
   /** 桌面“最近阅读”卡片跟着进度走；翻页保存很频繁，不在退出时每 30 秒最多刷一次。 */
   private reloadRecentReadCard(force: boolean): void {
