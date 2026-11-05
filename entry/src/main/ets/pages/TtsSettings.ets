@@ -285,8 +285,10 @@ struct TtsSettingsPage {
     this.mimoChoices.forEach((choice: MimoVoiceChoice): void => {
       options.push({ value: choice.label, key: choice.key, selectVoice: (): void => this.selectMimoVoice(choice) });
     });
-    options.push({ value: 'MiMo 朗读设置', key: 'mimo',
-      selectVoice: (): void => { this.stopPreview(); router.pushUrl({ url: 'pages/MimoSettings' }); } });
+    if (this.mimoEnabled) {
+      options.push({ value: 'MiMo 朗读设置', key: 'mimo',
+        selectVoice: (): void => { this.stopPreview(); router.pushUrl({ url: 'pages/MimoSettings' }); } });
+    }
     this.cloudVoices.forEach((voice: TtsVoiceInfo): void => {
       options.push({ value: TtsVoiceCatalog.cloudVoiceTitle(voice),
         key: TtsVoiceCatalog.cloudVoiceKey(voice),
@@ -305,7 +307,8 @@ struct TtsSettingsPage {
   }
 
   refreshMimoChoices(): void {
-    try { this.mimoChoices = MimoStore.voiceChoices().slice(); this.selectedVoiceKey = this.currentVoiceKey(); }
+    // Built-in MiMo presets exist before MiMo is set up; list them only while MiMo reading is switched on.
+    try { this.mimoChoices = MimoStore.load().enabled ? MimoStore.voiceChoices().slice() : []; this.selectedVoiceKey = this.currentVoiceKey(); }
     catch (error) { HdsFeedback.showToast((error as Error).message); }
   }
 

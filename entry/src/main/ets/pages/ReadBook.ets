@@ -8981,8 +8981,12 @@ struct ReadBookPage {
     return systemVoices.length > 0 ? TtsVoiceCatalog.voiceTitle(systemVoices[0]) : '暂无可用音色';
   }
 
-  /** With a saved key, MiMo leads the quick voice list so the player can switch both ways. */
+  /**
+   * While MiMo reading is switched on, MiMo leads the quick voice list. The built-in presets exist even
+   * before MiMo is set up, so switching it off hides them and the settings entry.
+   */
   mimoQuickVoiceLabels(): string[] {
+    if (!MimoStore.load().enabled) return [];
     try { return MimoStore.voiceChoices(this.bookUrl).map((choice: MimoVoiceChoice): string => choice.label); }
     catch (_) { return []; }
   }
@@ -9037,7 +9041,7 @@ struct ReadBookPage {
     if (options.length === 0) {
       options.push({ value: '暂无可用音色' });
     }
-    if (MimoStore.isConfigured()) {
+    if (MimoStore.load().enabled) {
       options.push({ value: 'MiMo 朗读设置…' });
     }
     return options;
@@ -9074,7 +9078,7 @@ struct ReadBookPage {
       return;
     }
     const index = selectedIndex - mimoLabels.length;
-    if (mimoLabels.length > 0 && index === this.regularTtsVoiceCount()) {
+    if (MimoStore.load().enabled && index === this.regularTtsVoiceCount()) {
       this.getUIContext().getRouter().pushUrl({ url: 'pages/MimoSettings' });
       return;
     }
