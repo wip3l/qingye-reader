@@ -17,9 +17,11 @@ export class ReaderFontBootstrap {
   static readonly FONT_MODE_DEVICE: string = ReaderSettingsStore.FONT_MODE_DEVICE;
   static readonly FONT_MODE_THEME: string = ReaderSettingsStore.FONT_MODE_THEME;
 
-  // 本进程是否调过 setFont。ArkUI 只在应用没设过自定义字体时，才会在系统换主题字体后重新加载它；
-  // setFont 没法撤销，所以能不设就不设。
-  private static applicationFontSet: boolean = false;
+  // 本进程上一次 setFont 设下的族名，空表示还没设过。ArkUI 只在应用没设过自定义字体时，才会在系统换主题字体后
+  // 重新加载它；setFont 没法撤销，所以能不设就不设。另外每次 setFont 都被系统当成一次配置更新，ArkUI 会把整棵
+  // 组件树（连同栈里的书架页）强制重建一遍，主线程约 100ms；开书路径上会按设置注册、onPageShow 又补两次，族名
+  // 相同时再设只是白白重建三次，还会把翻开动画的首帧往后推，所以族名没变就不再调。
+  private static appliedFontFamily: string = '';
 
   /** 没选自定义字体时的默认字体：只有明确选了跟随主题才用主题字体，其余都用系统字体。 */
   static defaultFontFamily(fontMode: string, systemFontFamily: string): string {
@@ -44,7 +46,7 @@ export class ReaderFontBootstrap {
   /** 所有设置应用全局字体的地方都走这里，按 applicationFontFamily() 的同一套优先级取字体。 */
   static applyApplicationFont(context: Context, source: string): void {
     const family = ReaderFontBootstrap.applicationFontFamily();
-    if (family === ReaderSystemFontHelper.FALLBACK_SYSTEM_FONT_FAMILY && !ReaderFontBootstrap.applicationFontSet) {
+    if (family === ReaderSystemFontHelper.FALLBACK_SYSTEM_FONT_FAMILY && !ReaderFontBootstrap.appliedFontFamily) {
       // 用系统字体且本进程还没设过字体时保持不设，交给 ArkUI 跟随系统主题字体。
       AppStorage.setOrCreate<string>('applicationFontFamily', family);
       return;
@@ -55,9 +57,12 @@ export class ReaderFontBootstrap {
   private static setApplicationFont(context: Context, family: string, source: string): void {
     // Select 的收起文本需要显式 font.family；发布可观察的字体供所有下拉控件同步更新。
     AppStorage.setOrCreate<string>('applicationFontFamily', family);
+    if (family === ReaderFontBootstrap.appliedFontFamily) {
+      return;
+    }
     try {
       context.getApplicationContext().setFont(family);
-      ReaderFontBootstrap.applicationFontSet = true;
+      ReaderFontBootstrap.appliedFontFamily = family;
     } catch (err) {
       hilog.warn(0x0000, 'testTag', 'Apply application font failed source=%{public}s family=%{public}s err=%{public}s',
         source, family, JSON.stringify(err));
@@ -85,7 +90,7 @@ export class ReaderFontBootstrap {
     AppStorage.setOrCreate<number>('systemFontRevision', (AppStorage.get<number>('systemFontRevision') || 0) + 1);
     hilog.info(0x0000, 'testTag',
       'System font changed source=%{public}s family=%{public}s custom=%{public}s appFontSet=%{public}s',
-      source, systemFontFamily, String(customFontActive), String(ReaderFontBootstrap.applicationFontSet));
+      source, systemFontFamily, String(customFontActive), String(!!ReaderFontBootstrap.appliedFontFamily));
     ReaderSettingsStore.load(context).then((settings: ReaderSettings) => {
       if (settings.systemFontFamily === systemFontFamily) {
         return;
