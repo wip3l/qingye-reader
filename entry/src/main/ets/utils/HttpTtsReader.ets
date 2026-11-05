@@ -511,9 +511,11 @@ export class HttpTtsReader {
   // {{...}} substitution, so a paragraph containing '&' or '=' can no longer tear the form apart:
   // "text={{speakText}}" with the paragraph "甲&乙=丙" used to reach the server as text=甲 plus a
   // stray "乙=丙" field, silently dropping half the sentence. Literal template text keeps the
-  // "already percent-encoded stays as-is" protection for hand-written encoded values, while every
-  // substituted value is encoded unconditionally: a paragraph that happens to contain "%2F" or
-  // "50%25" is text, not an encoded string.
+  // "already percent-encoded stays as-is" protection for hand-written encoded values. A bare
+  // variable such as {{speakText}} is encoded unconditionally: a paragraph that happens to contain
+  // "%2F" or "50%25" is text, not an encoded string. Any other expression, e.g.
+  // {{java.encodeURI(speakText)}}, may already encode its result, so it keeps the as-is protection;
+  // forcing it too sent "%25E4%25BD..." and the server read the percent signs aloud.
   private renderParams(runtime: JsRuntime, template: string, charset: string, isQuery: boolean): string {
     if (!template) return '';
     return this.splitOutsideTemplate(template, '&').map((field: string) => {
@@ -534,7 +536,9 @@ export class HttpTtsReader {
       const close = template.indexOf('}}', open + 2);
       if (close < 0) break;
       output += this.encodeComponent(template.substring(cursor, open), charset, isQuery, false);
-      output += this.encodeComponent(runtime.evalTemplate(template.substring(open, close + 2)), charset, isQuery, true);
+      const bareVariable = /^\s*[A-Za-z_$][\w$]*\s*$/.test(template.substring(open + 2, close));
+      output += this.encodeComponent(runtime.evalTemplate(template.substring(open, close + 2)), charset, isQuery,
+        bareVariable);
       cursor = close + 2;
     }
     return output + this.encodeComponent(template.substring(cursor), charset, isQuery, false);

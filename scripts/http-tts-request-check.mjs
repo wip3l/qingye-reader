@@ -84,6 +84,24 @@ const build = (url, text, extra = {}) => reader.buildRequest({ url, header: '', 
   const query = build('https://h/tts?pre=%E4%BD%A0&text={{speakText}}', 'a%2Fb');
   assert.equal(query.url, 'https://h/tts?pre=%E4%BD%A0&text=a%252Fb');
 }
+// An expression that encodes the text itself is not encoded a second time; plain text it returns
+// still is.
+{
+  const runtime = reader.runtimeForVoice;
+  reader.runtimeForVoice = (voice, text, speed) => {
+    const r = runtime(voice, text, speed);
+    r.setVar('java.encodeURI(speakText)', encodeURIComponent(text));
+    r.setVar('speakText.trim()', text.trim());
+    return r;
+  };
+  const query = build('https://h/tts?input={{java.encodeURI(speakText)}}&v=1', '你好世界');
+  assert.equal(query.url, 'https://h/tts?input=%E4%BD%A0%E5%A5%BD%E4%B8%96%E7%95%8C&v=1');
+  const form = build('@https://h/tts?input={{java.encodeURI(speakText)}}', '甲&乙');
+  assert.equal(form.body, 'input=%E7%94%B2%26%E4%B9%99');
+  const plain = build('https://h/tts?input={{speakText.trim()}}', ' 一&二 ');
+  assert.equal(plain.url, 'https://h/tts?input=%E4%B8%80%26%E4%BA%8C');
+  reader.runtimeForVoice = runtime;
+}
 // Template expressions containing '&' or '=' are not field boundaries.
 {
   assert.deepEqual([...reader.splitOutsideTemplate('a={{x && y}}&b={{c = 1}}', '&')], ['a={{x && y}}', 'b={{c = 1}}']);
