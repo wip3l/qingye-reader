@@ -566,11 +566,25 @@ struct Index {
     if (this.shelfReturnBackdropTimer >= 0) clearTimeout(this.shelfReturnBackdropTimer);
     this.shelfReturnBackdropTimer = setTimeout((): void => {
       this.shelfReturnBackdropTimer = -1;
-      const backdrop = this.shelfReturnBackdrop;
-      this.shelfReturnBackdropShown = false;
-      this.shelfReturnBackdrop = null;
-      if (backdrop) backdrop.release().catch((): void => {});
+      this.dropShelfReturnBackdropNow();
     }, delayMs);
+  }
+
+  /**
+   * 手指一按下就揭开：截图不拦触摸，底下的分类 Swiper 会照常响应滑动，但画面还是静止的截图，
+   * 揭开时已经切完，用户看到的就是"切换动画丢了"。按下即揭开，宁可偶尔看到一两帧封面重载。
+   */
+  private dropShelfReturnBackdropNow(): void {
+    if (this.shelfReturnBackdropTimer >= 0) {
+      clearTimeout(this.shelfReturnBackdropTimer);
+      this.shelfReturnBackdropTimer = -1;
+    }
+    const backdrop = this.shelfReturnBackdrop;
+    if (!this.shelfReturnBackdropShown && !backdrop) return;
+    this.shelfReturnBackdropShown = false;
+    this.shelfReturnBackdrop = null;
+    // 这一帧可能还在画它，晚一点再释放。
+    if (backdrop) setTimeout((): void => { backdrop.release().catch((): void => {}); }, 200);
   }
 
   pageTransition() {
@@ -658,6 +672,9 @@ struct Index {
     .id('home_root')
     .width('100%')
     .height('100%')
+    .onTouch((event: TouchEvent): void => {
+      if (event.type === TouchType.Down && this.shelfReturnBackdropShown) this.dropShelfReturnBackdropNow();
+    })
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       const width = typeof newValue.width === 'number' ? newValue.width : Number.parseFloat(`${newValue.width}`);
       const height = typeof newValue.height === 'number' ? newValue.height : Number.parseFloat(`${newValue.height}`);

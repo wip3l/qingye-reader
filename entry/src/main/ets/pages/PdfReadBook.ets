@@ -35,9 +35,11 @@ import {
   ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP,
   SHELF_COVER_CLOSE_DURATION, SHELF_COVER_FRAME_RATE, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
   detachedShelfSharedCoverId, shelfCoverCropAspect,
-  SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
+  SHELF_OPENING_BACKDROP_KEY, SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningFrameStarter,
+  SHELF_COVER_MOTION_CURVE, SHELF_OPENING_PAGE_SNAPSHOT_KEY
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
+import { ReaderOpenSnapshotMeta, ReaderOpenSnapshotStore } from '../core/reader/ReaderOpenSnapshotStore';
 import { ReaderRenderFrame } from '../core/reader/ReaderRenderFrame';
 import { KnockShare } from '../utils/KnockShare';
 
@@ -104,9 +106,9 @@ struct PdfReadBookPage {
   private recentReadCardReloadAt: number = 0;
   // Shelf cover-open animation, the same motion as the text reader (see ReadBook.prepareShelfOpening).
   @State shelfSharedCoverId: string = '';
-  /** Home-page snapshot shown behind the page while it shrinks back onto the shelf (see ReadBook). */
-  @State shelfCloseBackdrop: image.PixelMap | null = null;
-  private shelfCloseBackdropHandedOff: boolean = false;
+  /** Home-page snapshot shown behind the page while it grows out of, or shrinks back onto, the shelf cover (see ReadBook). */
+  @State shelfMotionBackdrop: image.PixelMap | null = null;
+  private shelfMotionBackdropHandedOff: boolean = false;
   @State shelfCoverVisible: boolean = false;
   @State shelfCoverAngle: number = SHELF_COVER_OPEN_ANGLE;
   @State shelfCoverShade: number = 0.5;
@@ -124,6 +126,13 @@ struct PdfReadBookPage {
   private shelfOpenAnimating: boolean = false;
   private shelfOpenStarted: boolean = false;
   private shelfOpenStartTimer: number = -1;
+  /**
+   * 上次关书那一页的图（归 ReaderOpenSnapshotStore 所有，这里不释放）：第一帧盖在正文位置、立刻开始翻开，
+   * 正文就绪时比对渲染身份，相同就在下一帧撤掉（像素一致，看不出换），不同立即撤掉；最多盖 4 秒。
+   */
+  @State shelfOpeningPageSnapshot: image.PixelMap | null = null;
+  private shelfOpeningPageSnapshotIdentity: string = '';
+  private shelfOpeningPageSnapshotTimer: number = -1;
   private customizedPreferences: Set<string> = new Set<string>();
 
   aboutToAppear(): void {
@@ -138,6 +147,8 @@ struct PdfReadBookPage {
     this.shelfOpeningCover = this.shelfSharedCoverId && openingCover && openingCover.bookUrl === this.bookUrl ?
       openingCover : null;
     this.prepareShelfOpening();
+    this.takeShelfOpeningBackdrop();
+    this.takeShelfOpeningPageSnapshot();
     if (!this.shelfOpenAnimating) AppStorage.setOrCreate('shelfReaderDirectTransition', false);
     ReaderProgressCheckpoint.attach(this.owner, (): Promise<void> => this.saveProgress(), (): string => this.bookUrl);
     this.refreshAiAccess();
@@ -170,9 +181,10 @@ struct PdfReadBookPage {
     this.alive = false; this.generation++; this.searchGeneration++;
     this.showLayoutElements = false;
     this.brightnessSession.deactivate();
-    const closeBackdrop = this.shelfCloseBackdrop;
-    this.shelfCloseBackdrop = null;
-    if (closeBackdrop && !this.shelfCloseBackdropHandedOff) closeBackdrop.release().catch((): void => {});
+    this.dropShelfOpeningPageSnapshot();
+    const closeBackdrop = this.shelfMotionBackdrop;
+    this.shelfMotionBackdrop = null;
+    if (closeBackdrop && !this.shelfMotionBackdropHandedOff) closeBackdrop.release().catch((): void => {});
     this.applySystemBars();
     ReaderProgressCheckpoint.detach(this.owner);
     readStatsTracker.setReadingActive('');
@@ -306,6 +318,7 @@ struct PdfReadBookPage {
     this.jumpInput = `${this.pageIndex + 1}`;
     this.navigationIndex = this.navigation.indexForPage(this.pageIndex);
     this.ready = true; this.statusText = '';
+    this.settleShelfOpeningPageSnapshot();
     ReaderOpenTrace.finish(this.bookUrl, 'pdf-document-ready');
     this.applyViewSettings();
     if (this.visible) readStatsTracker.setReadingActive(this.bookUrl);
@@ -602,19 +615,22 @@ struct PdfReadBookPage {
     // With the cover's current shelf position and a home-page snapshot to show behind the page (a covered router
     // page is not rendered), shrink onto the cover in one motion, the mirror of opening; otherwise close first and
     // let the shared transition shrink the page.
+    const openSnapshot = this.captureReaderOpenSnapshot();
+    const openSnapshotIdentity = this.readerOpenSnapshotIdentity();
     const closeTarget = this.openedWithShelfAnimation && this.shelfOpeningCover ?
       ShelfCoverLocator.locate(this.bookUrl) : null;
     const backdrop = closeTarget ? await ShelfCoverLocator.backdrop() : null;
     const selfClose = !!closeTarget && !!backdrop;
     if (selfClose) {
       this.shelfSharedCoverId = detachedShelfSharedCoverId(this.shelfSharedCoverId);
-      this.shelfCloseBackdrop = backdrop;
+      this.shelfMotionBackdrop = backdrop;
       await ReaderRenderFrame.wait(this.getUIContext());
     }
     const coverClosed = selfClose && closeTarget ? this.closeIntoShelfCover(closeTarget) :
       this.openedWithShelfAnimation ? this.closeShelfCover() : Promise.resolve();
     try { await this.saveProgress(); }
     catch (error) { console.warn('[PDF] exit save failed:', error); }
+    this.storeReaderOpenSnapshot(openSnapshot, 0, openSnapshotIdentity);
     await coverClosed;
     if (this.openedWithShelfAnimation) {
       AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', true);
@@ -623,8 +639,8 @@ struct PdfReadBookPage {
     }
     if (selfClose) {
       // The home page shows this same snapshot on top until its own covers and progress refresh have drawn.
-      this.shelfCloseBackdropHandedOff = true;
-      AppStorage.setOrCreate<image.PixelMap | null>('shelfReturnBackdrop', this.shelfCloseBackdrop);
+      this.shelfMotionBackdropHandedOff = true;
+      AppStorage.setOrCreate<image.PixelMap | null>('shelfReturnBackdrop', this.shelfMotionBackdrop);
     } else {
       // The SVG frame does not scale with the shared transition; see ReaderShelfCoverOpening.showFrame.
       this.shelfCoverFrameVisible = false;
@@ -661,13 +677,13 @@ struct PdfReadBookPage {
     this.shelfOpenAnimating = true;
   }
 
-  /** Starts once the first frame is drawn and the UI thread is idle (at most SHELF_COVER_OPEN_START_CAP later). */
+  /** Starts on the first vsync after the first frame is drawn (at most SHELF_COVER_OPEN_START_CAP later). */
   private startShelfOpening(): void {
     if (!this.shelfOpenAnimating || this.shelfOpenStarted || this.shelfOpenStartTimer >= 0) return;
     const begin = (): void => this.beginShelfOpening();
     this.shelfOpenStartTimer = setTimeout(begin, SHELF_COVER_OPEN_START_CAP);
     try {
-      this.getUIContext().postFrameCallback(new ShelfOpeningIdleStarter(begin));
+      this.getUIContext().postFrameCallback(new ShelfOpeningFrameStarter(begin));
     } catch (error) {
       begin();
     }
@@ -680,7 +696,7 @@ struct PdfReadBookPage {
     AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
       Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
     this.getUIContext().animateTo({
-      duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut,
+      duration: SHELF_COVER_OPEN_DURATION, curve: SHELF_COVER_MOTION_CURVE,
       expectedFrameRateRange: SHELF_COVER_FRAME_RATE, onFinish: (): void => this.finishShelfOpening()
     }, (): void => {
       this.shelfOpenScaleX = 1;
@@ -697,6 +713,7 @@ struct PdfReadBookPage {
     if (!this.shelfOpenAnimating) return;
     if (this.shelfOpenStartTimer >= 0) { clearTimeout(this.shelfOpenStartTimer); this.shelfOpenStartTimer = -1; }
     this.shelfOpenAnimating = false;
+    this.dropShelfOpeningBackdrop();
     AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', false);
     this.shelfOpenScaleX = 1;
     this.shelfOpenScaleY = 1;
@@ -710,6 +727,100 @@ struct PdfReadBookPage {
     }
   }
 
+  /**
+   * 取走书架点开时截的首页图，放大期间垫在整页后面（关书缩回时也用同一个位置）；
+   * 没在放大（量不到封面位置、动画关闭）就直接释放。
+   */
+  private takeShelfOpeningBackdrop(): void {
+    const backdrop = AppStorage.get<image.PixelMap | null>(SHELF_OPENING_BACKDROP_KEY) || null;
+    if (!backdrop) return;
+    AppStorage.setOrCreate<image.PixelMap | null>(SHELF_OPENING_BACKDROP_KEY, null);
+    if (this.shelfOpenAnimating && !this.shelfMotionBackdrop) {
+      this.shelfMotionBackdrop = backdrop;
+    } else {
+      backdrop.release().catch((): void => {});
+    }
+  }
+
+  /** 放大结束后整页已盖满窗口，撤下书架图；隔一会儿再释放，免得当前帧还在画它。 */
+  private dropShelfOpeningBackdrop(): void {
+    const backdrop = this.shelfMotionBackdrop;
+    if (!backdrop || this.shelfMotionBackdropHandedOff) return;
+    this.shelfMotionBackdrop = null;
+    setTimeout((): void => { backdrop.release().catch((): void => {}); }, 120);
+  }
+
+  /** 取书架交来的上一页的图：是这本书、且确实在做翻开动画才用。 */
+  private takeShelfOpeningPageSnapshot(): void {
+    const pixelMap = AppStorage.get<image.PixelMap | null>(SHELF_OPENING_PAGE_SNAPSHOT_KEY) || null;
+    const meta = AppStorage.get<string>(`${SHELF_OPENING_PAGE_SNAPSHOT_KEY}Meta`) || '';
+    AppStorage.setOrCreate<image.PixelMap | null>(SHELF_OPENING_PAGE_SNAPSHOT_KEY, null);
+    AppStorage.setOrCreate<string>(`${SHELF_OPENING_PAGE_SNAPSHOT_KEY}Meta`, '');
+    if (!pixelMap || !this.shelfOpenAnimating) return;
+    const separator = meta.indexOf('\n');
+    if (separator < 0 || meta.substring(0, separator) !== this.bookUrl) return;
+    this.shelfOpeningPageSnapshotIdentity = meta.substring(separator + 1);
+    this.shelfOpeningPageSnapshot = pixelMap;
+    this.shelfOpeningPageSnapshotTimer = setTimeout((): void => {
+      this.shelfOpeningPageSnapshotTimer = -1;
+      this.dropShelfOpeningPageSnapshot();
+    }, 4000);
+  }
+
+  /** 正文就绪：图与现在要画的一致就等这一帧画出来再撤，不一致立即撤。 */
+  private settleShelfOpeningPageSnapshot(): void {
+    if (!this.shelfOpeningPageSnapshot) return;
+    const same = this.readerOpenSnapshotIdentity() === this.shelfOpeningPageSnapshotIdentity;
+    ReaderOpenTrace.mark(this.bookUrl, 'page-snapshot-settled', same ? 'same' : 'different');
+    if (!same) {
+      this.dropShelfOpeningPageSnapshot();
+      return;
+    }
+    try {
+      this.getUIContext().postFrameCallback(new ShelfOpeningFrameStarter((): void => this.dropShelfOpeningPageSnapshot()));
+    } catch (_) {
+      this.dropShelfOpeningPageSnapshot();
+    }
+  }
+
+  private dropShelfOpeningPageSnapshot(): void {
+    if (this.shelfOpeningPageSnapshotTimer >= 0) {
+      clearTimeout(this.shelfOpeningPageSnapshotTimer);
+      this.shelfOpeningPageSnapshotTimer = -1;
+    }
+    this.shelfOpeningPageSnapshot = null;
+    this.shelfOpeningPageSnapshotIdentity = '';
+  }
+
+  /** 这一页此刻的渲染身份：关书时随图存下，下次打开正文就绪时比对。 */
+  private readerOpenSnapshotIdentity(): string {
+    return `${this.pageIndex}|${this.continuous}|${this.doublePage}|${this.fitPage}|${this.wideWindow}|${this.darkMode}`;
+  }
+
+  /** 关书时把当前页整张离屏截下来（与首页截图并行），下次从书架打开先盖它。 */
+  private captureReaderOpenSnapshot(): Promise<image.PixelMap | null> {
+    if (!this.ready || this.failed || this.shelfOpenAnimating) return Promise.resolve(null);
+    return this.getUIContext().getComponentSnapshot().get('pdf_reader_root', { scale: 1, waitUntilRenderFinished: true })
+      .catch((error: Error): image.PixelMap | null => {
+        console.warn('[OpenSnapshot] capture failed:', error);
+        return null;
+      });
+  }
+
+  /** 进度已保存后登记这张图；chapterIndex 要与保存的进度一致，书架按它判断图是否还成立。 */
+  private storeReaderOpenSnapshot(capture: Promise<image.PixelMap | null>, chapterIndex: number, identity: string): void {
+    const meta = new ReaderOpenSnapshotMeta();
+    meta.bookUrl = this.bookUrl;
+    meta.chapterIndex = chapterIndex;
+    meta.identity = identity;
+    meta.dark = this.darkMode;
+    meta.themeRevision = AppStorage.get<number>('themeRevision') || 0;
+    const context = getContext(this);
+    capture.then((pixelMap: image.PixelMap | null): void => {
+      if (pixelMap) ReaderOpenSnapshotStore.save(context, meta, pixelMap);
+    });
+  }
+
   /** Shrink the page onto the cover's current shelf position while the cover closes: one 500 ms motion. */
   private closeIntoShelfCover(target: ShelfOpeningCover): Promise<void> {
     this.shelfCoverVisible = true;
@@ -719,7 +830,7 @@ struct PdfReadBookPage {
       Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
     return new Promise<void>((resolve: () => void): void => {
       this.getUIContext().animateTo({
-        duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut,
+        duration: SHELF_COVER_OPEN_DURATION, curve: SHELF_COVER_MOTION_CURVE,
         expectedFrameRateRange: SHELF_COVER_FRAME_RATE, onFinish: resolve
       }, (): void => {
         this.shelfOpenScaleX = target.boundsWidth / target.windowWidth;
@@ -779,8 +890,8 @@ struct PdfReadBookPage {
 
   build() {
     Stack() {
-      if (this.shelfCloseBackdrop) {
-        Image(this.shelfCloseBackdrop)
+      if (this.shelfMotionBackdrop) {
+        Image(this.shelfMotionBackdrop)
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Fill)
@@ -838,6 +949,14 @@ struct PdfReadBookPage {
         brightnessReady: this.brightnessReady,
         onBrightnessChange: (value: number, persist: boolean): void => { this.setBrightness(value, persist); },
         onLayoutElements: (): void => { this.setPanel(''); this.showLayoutElements = true; } })
+      if (this.shelfOpeningPageSnapshot) {
+        Image(this.shelfOpeningPageSnapshot)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Fill)
+          .draggable(false)
+          .hitTestBehavior(HitTestMode.None)
+      }
       if (this.shelfOpeningCover) {
         // Hidden rather than removed after opening: closing animates back from the open angle.
         ReaderShelfCoverOpening({ angle: this.shelfCoverAngle, shade: this.shelfCoverShade,
@@ -865,7 +984,7 @@ struct PdfReadBookPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.shelfCloseBackdrop ? ThemeRuntime.pageColor(this.darkMode) : Color.Transparent)
+    .backgroundColor(this.shelfMotionBackdrop ? ThemeRuntime.pageColor(this.darkMode) : Color.Transparent)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

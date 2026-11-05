@@ -6,7 +6,8 @@ import {
   ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP,
   SHELF_COVER_CLOSE_DURATION, SHELF_COVER_FRAME_RATE, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
   detachedShelfSharedCoverId, shelfCoverCropAspect,
-  SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
+  SHELF_OPENING_BACKDROP_KEY, SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningFrameStarter,
+  SHELF_COVER_MOTION_CURVE, SHELF_OPENING_PAGE_SNAPSHOT_KEY
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
@@ -120,6 +121,8 @@ import { ReaderV2RegexBubbleCapImages } from '../components/reader/ReaderV2Regex
 import { ReaderV2GestureRouter, ReaderV2TapResult } from '../core/reader/ReaderV2Interaction';
 import { ReaderOpenTrace } from '../utils/ReaderOpenTrace';
 import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
+import { ReaderPreparedContentCache } from '../core/reader/ReaderPreparedContentCache';
+import { ReaderOpenSnapshotMeta, ReaderOpenSnapshotStore } from '../core/reader/ReaderOpenSnapshotStore';
 import lazy { ReaderEyeTurnCoordinator } from '../core/reader/ReaderEyeTurnCoordinator';
 import { ReaderEyeTurnViewState } from '../core/reader/ReaderEyeTurnViewState';
 import { ReaderEyeCalibrationPanel, ReaderEyeTurnCalibrationSettingItem } from '../components/reader/ReaderEyeTurnViews';
@@ -236,6 +239,8 @@ const READER_PAGE_CURL_SNAPSHOT_SCALE = 0.42;
 // 3D 仿真单双页共用平折绘制，每帧只画两次贴图，快照分辨率取正文清晰与截图回读开销的折中：
 // 0.75 时单页位图约 8 MB，渲染服务的离屏渲染与回读落在翻页起始帧；0.6 少三成多像素，正文仍可读。
 const READER_PAGE_3D_SNAPSHOT_SCALE = 0.6;
+// 3D 仿真按通用比例要拖得太远才翻页，拖动与快甩的提交距离都按这个比例缩短。
+const READER_PAGE_3D_COMMIT_SCALE = 0.5;
 const READER_IDLE_WORK_RETRY_MS = 120;
 // 翻页动画进行中，后台分页的每次同步排版（2–7ms）只在帧内还剩这么多空闲时才开始；一直没有就最多等 32ms。
 const READER_PAGINATION_MOTION_IDLE_MS = 5;
@@ -634,7 +639,6 @@ struct ReadBookPage {
   private readerV2ActiveSpeechText: ReaderV2SpeechText | null = null;
   private readerV2TtsSourceStart: number = -1;
   private readerV2TtsSourceEnd: number = -1;
-  private readerPreparedContentCache: Map<string, string> = new Map();
   private readerParagraphMetricsCache: Map<string, ReaderParagraphMetrics> = new Map();
   private readerAdaptiveLineHeightCache: Map<string, number> = new Map();
   // 滚动模式下每个分块的正文解析在选择层、渲染层、测量层被反复调用；按块文本缓存切分结果，
@@ -1039,15 +1043,24 @@ struct ReadBookPage {
    * 只挂在正文列上，不挂根节点：封面层也在根节点里，每帧旋转会让整组缓存失效。
    */
   @State shelfMotionRasterized: boolean = false;
-  /** 关闭时垫在整页后面的书架截图：被盖住的书架不渲染，缩回露出的区域要靠它；落地后弹出，真实书架与它像素一致。 */
-  @State shelfCloseBackdrop: image.PixelMap | null = null;
-  private shelfCloseBackdropHandedOff: boolean = false;
+  /** 开书放大、关书缩回时垫在整页后面的书架截图：被盖住的书架不渲染，整页外的区域要靠它；关书落地后交给首页盖住头几帧。 */
+  @State shelfMotionBackdrop: image.PixelMap | null = null;
+  private shelfMotionBackdropHandedOff: boolean = false;
   @State shelfOpenScaleY: number = 1;
   @State shelfOpenTranslateX: number = 0;
   @State shelfOpenTranslateY: number = 0;
   private shelfOpenAnimating: boolean = false;
   private shelfOpenStarted: boolean = false;
   private shelfOpenStartTimer: number = -1;
+  /** 首帧已画出但首页正文还没排好：排好后再起步，翻开时正文已经在页上。 */
+  private shelfOpenAwaitingContent: boolean = false;
+  /**
+   * 上次关书那一页的图（归 ReaderOpenSnapshotStore 所有，这里不释放）：第一帧盖在正文位置、立刻开始翻开，
+   * 正文就绪时比对渲染身份，相同就在下一帧撤掉（像素一致，看不出换），不同立即撤掉；最多盖 4 秒。
+   */
+  @State shelfOpeningPageSnapshot: image.PixelMap | null = null;
+  private shelfOpeningPageSnapshotIdentity: string = '';
+  private shelfOpeningPageSnapshotTimer: number = -1;
   /** 打开动画预计结束的时刻：相邻章节预加载排到这之后，免得排版抢主线程让放大掉帧。 */
   private shelfOpenEndsAt: number = 0;
   private readerScreenTimeoutTimerId: number = -1;
@@ -1125,6 +1138,7 @@ struct ReadBookPage {
     this.shelfOpeningCover = this.shelfSharedCoverId && openingCover && openingCover.bookUrl === params?.['bookUrl'] ?
       openingCover : null;
     this.prepareShelfOpening();
+    this.takeShelfOpeningBackdrop();
     // 下面两项都在打开动画之后再做；没有动画时分别是立即与 300ms 后。
     this.updateVolumeKeySubscription();
     this.readerStageRuntimeHostTimerId = setTimeout((): void => {
@@ -1135,6 +1149,8 @@ struct ReadBookPage {
     this.shortcutReplacedPreviousPage = !!params && params['shortcutReplace'] === 'true';
     if (params && params['bookUrl']) {
       this.bookUrl = params['bookUrl'];
+      // 要先有 bookUrl 才能核对是不是这本书的图。
+      this.takeShelfOpeningPageSnapshot();
       ReaderOpenTrace.beginIfNeeded(this.bookUrl);
       ReaderOpenTrace.mark(this.bookUrl, 'reader-page-appear');
       this.isLoading = true;
@@ -1371,7 +1387,7 @@ struct ReadBookPage {
     this.chapters = [...engine.chapters];
     this.pendingRestorePageIndex = this.currentPageIndex;
     this.readerPaginationCache.clear();
-    this.readerPreparedContentCache.clear();
+    ReaderPreparedContentCache.forgetBook(this.bookUrl);
     this.readerPaginationWorkSerial++;
     this.adjacentPaginationPreloadSerial++;
     this.previousPaginationPreloadSerial++;
@@ -1393,9 +1409,10 @@ struct ReadBookPage {
       clearTimeout(this.readerSafeAreaRepaginateTimerId);
       this.readerSafeAreaRepaginateTimerId = -1;
     }
-    const closeBackdrop = this.shelfCloseBackdrop;
-    this.shelfCloseBackdrop = null;
-    if (closeBackdrop && !this.shelfCloseBackdropHandedOff) closeBackdrop.release().catch((): void => {});
+    this.dropShelfOpeningPageSnapshot();
+    const closeBackdrop = this.shelfMotionBackdrop;
+    this.shelfMotionBackdrop = null;
+    if (closeBackdrop && !this.shelfMotionBackdropHandedOff) closeBackdrop.release().catch((): void => {});
     if (this.readerStageRuntimeHostTimerId >= 0) {
       clearTimeout(this.readerStageRuntimeHostTimerId);
       this.readerStageRuntimeHostTimerId = -1;
@@ -2146,7 +2163,7 @@ struct ReadBookPage {
     // Mark the refresh busy before stopping TTS so its delayed sentence checkpoint cannot race the explicit
     // restored-page progress written after the replacement pagination has been published.
     this.stopTtsReading();
-    this.readerPreparedContentCache.clear();
+    ReaderPreparedContentCache.forgetBook(this.bookUrl);
     try {
       const body = await engine.reloadContent(chapterIndex);
       if (refreshSerial !== this.contentLoadSerial || chapterIndex !== this.currentChapterIndex) return;
@@ -3433,8 +3450,8 @@ struct ReadBookPage {
 
   build() {
     Stack() {
-      if (this.shelfCloseBackdrop) {
-        Image(this.shelfCloseBackdrop)
+      if (this.shelfMotionBackdrop) {
+        Image(this.shelfMotionBackdrop)
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Fill)
@@ -3756,6 +3773,14 @@ struct ReadBookPage {
         }
       }
 
+      if (this.shelfOpeningPageSnapshot) {
+        Image(this.shelfOpeningPageSnapshot)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Fill)
+          .draggable(false)
+          .hitTestBehavior(HitTestMode.None)
+      }
       if (this.shelfOpeningCover) {
         // 翻开后只隐藏不移除：返回时要从翻开的角度合上，新建的节点没有起始帧可动画。
         ReaderShelfCoverOpening({ angle: this.shelfCoverAngle, shade: this.shelfCoverShade,
@@ -3792,10 +3817,10 @@ struct ReadBookPage {
     })
     .bindSheet($$this.showReaderCommentPanel, this.readerCommentPanel(), this.readerCommentSheetOptions())
     }
-    // 外层只在关闭时有内容：书架截图不随整页缩放，铺满整个窗口（含状态栏区域，用书架页底色补齐）。
+    // 外层只在开书放大、关书缩回时有内容：书架截图不随整页缩放，铺满整个窗口（含状态栏区域，用书架页底色补齐）。
     .width('100%')
     .height('100%')
-    .backgroundColor(this.shelfCloseBackdrop ? ThemeRuntime.pageColor(this.appDarkMode) : Color.Transparent)
+    .backgroundColor(this.shelfMotionBackdrop ? ThemeRuntime.pageColor(this.appDarkMode) : Color.Transparent)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
@@ -5998,12 +6023,12 @@ struct ReadBookPage {
   }
 
   readerPreparedContentKey(content: string, chapterIndex: number): string {
-    return `${chapterIndex}_${content.length}_${this.hashText(content)}_${this.readerReplaceRules.length}_` +
-      `${this.readerReplaceRulesUpdateTime}`;
+    return ReaderPreparedContentCache.key(this.bookUrl, chapterIndex, content, this.hashText(content),
+      this.readerReplaceRules.length, this.readerReplaceRulesUpdateTime);
   }
 
   getPreparedReaderContent(content: string, chapterIndex: number): string {
-    return this.readerPreparedContentCache.get(this.readerPreparedContentKey(content, chapterIndex)) || '';
+    return ReaderPreparedContentCache.get(this.readerPreparedContentKey(content, chapterIndex)) || '';
   }
 
   // Whether the raw chapter body differs from what pagination consumes. Synchronous callers must not
@@ -6016,7 +6041,7 @@ struct ReadBookPage {
   async prepareReaderContentRules(content: string, chapterIndex: number): Promise<string> {
     if (!content) return '';
     const key = this.readerPreparedContentKey(content, chapterIndex);
-    const cached = this.readerPreparedContentCache.get(key);
+    const cached = ReaderPreparedContentCache.get(key);
     if (cached !== undefined) return cached;
     const startedAt = Date.now();
     const replaced = ReaderActionMarker.limit(
@@ -6027,12 +6052,7 @@ struct ReadBookPage {
     if (elapsedMs >= CooperativeScheduler.DANGEROUS_OPERATION_MS) {
       console.info(`[ReaderPreprocessor] worker elapsed=${elapsedMs}ms input=${content.length}`);
     }
-    this.readerPreparedContentCache.set(key, processed);
-    while (this.readerPreparedContentCache.size > 8) {
-      const oldestKey = this.readerPreparedContentCache.keys().next().value as string | undefined;
-      if (!oldestKey) break;
-      this.readerPreparedContentCache.delete(oldestKey);
-    }
+    ReaderPreparedContentCache.set(key, processed);
     // Do not begin native paragraph measurement in the same event-loop turn that publishes a
     // potentially large TaskPool result.
     await CooperativeScheduler.yieldToEventLoop();
@@ -6056,7 +6076,7 @@ struct ReadBookPage {
       return;
     }
     this.readerPaginationCache.clear();
-    this.readerPreparedContentCache.clear();
+    ReaderPreparedContentCache.forgetBook(this.bookUrl);
     this.adjacentPaginationPreloadSerial++;
     this.pageTurnPreviewKey = '';
     this.pageTurnPreviewLoadingKey = '';
@@ -7545,6 +7565,7 @@ struct ReadBookPage {
     // checkpoints may follow the visible page instead of the immutable database anchor captured at open time.
     this.readerProgressRestoreConfirmed = true;
     this.readerInitialPageReady = true;
+    this.startShelfOpeningAfterContent();
     this.finishReaderInitialOpening();
     this.setCurrentPageText(this.contentPages[this.currentPageIndex] || '');
     return true;
@@ -11215,12 +11236,15 @@ struct ReadBookPage {
   // 拖动达到页面尺寸的一定比例才提交；快速甩动允许用更短的距离提交，但仍需明确位移。
   isPageTurnCommitOffset(axisOffset: number, axisVelocity: number): boolean {
     const dimension = this.isVerticalPageTurnAnimation() ? this.getPageTurnHeight() : this.getPageTurnWidth();
-    const commitDistance = Math.max(this.readerPageTurnCommitDistance, dimension * this.readerPageTurnCommitRatio);
+    const scale = this.is3DPageTurnAnimation() ? READER_PAGE_3D_COMMIT_SCALE : 1;
+    const commitDistance = Math.max(this.readerPageTurnCommitDistance,
+      dimension * this.readerPageTurnCommitRatio * scale);
     const total = Math.abs(axisOffset);
     if (total >= commitDistance) {
       return true;
     }
-    const flickDistance = Math.max(this.readerPageTurnCommitDistance, dimension * this.readerPageTurnFlickRatio);
+    const flickDistance = Math.max(this.readerPageTurnCommitDistance,
+      dimension * this.readerPageTurnFlickRatio * scale);
     return Math.abs(axisVelocity) >= this.readerPageTurnFlickVelocity && total >= flickDistance;
   }
 
@@ -18390,15 +18414,105 @@ struct ReadBookPage {
   }
 
   /**
-   * 根节点挂上时调用，但不马上开始：首帧要建整个阅读页，主线程会卡一两百毫秒，
-   * 动画若此时起步，第一帧出来就已经跳过一截。等首帧画完、主线程空闲（最多等 SHELF_COVER_OPEN_START_CAP）再放大。
+   * 根节点挂上时调用，但不马上开始：这时首帧还在建，动画若此时起步，第一帧出来就已经跳过一截。
+   * 首页正文排好（readerInitialPageReady）后的下一个 vsync 起步，翻开时正文已经在页上；正文迟迟没好也最多等
+   * SHELF_COVER_OPEN_START_CAP。再次打开同一本书时正文预处理有进程内缓存（ReaderPreparedContentCache），
+   * 通常几十毫秒就绪。书架截图垫在后面，起步前画面与书架一样，中间没有纯色空档。
    */
   startShelfOpening(): void {
     if (!this.shelfOpenAnimating || this.shelfOpenStarted || this.shelfOpenStartTimer >= 0) return;
-    const begin = (): void => this.beginShelfOpening();
-    this.shelfOpenStartTimer = setTimeout(begin, SHELF_COVER_OPEN_START_CAP);
+    this.shelfOpenStartTimer = setTimeout((): void => this.beginShelfOpening(), SHELF_COVER_OPEN_START_CAP);
+    // 有上一页的图盖着就不等正文，下一帧起步。
+    if (this.readerInitialPageReady || this.shelfOpeningPageSnapshot) this.beginShelfOpeningNextFrame();
+    else this.shelfOpenAwaitingContent = true;
+  }
+
+  /** 首页正文发布时调用：等这一帧把文字画出来再放大。 */
+  startShelfOpeningAfterContent(): void {
+    this.settleShelfOpeningPageSnapshot();
+    if (!this.shelfOpenAwaitingContent) return;
+    this.shelfOpenAwaitingContent = false;
+    if (!this.shelfOpenAnimating || this.shelfOpenStarted) return;
+    this.beginShelfOpeningNextFrame();
+  }
+
+  /** 取书架交来的上一页的图：是这本书、且确实在做翻开动画才用。 */
+  takeShelfOpeningPageSnapshot(): void {
+    const pixelMap = AppStorage.get<image.PixelMap | null>(SHELF_OPENING_PAGE_SNAPSHOT_KEY) || null;
+    const meta = AppStorage.get<string>(`${SHELF_OPENING_PAGE_SNAPSHOT_KEY}Meta`) || '';
+    AppStorage.setOrCreate<image.PixelMap | null>(SHELF_OPENING_PAGE_SNAPSHOT_KEY, null);
+    AppStorage.setOrCreate<string>(`${SHELF_OPENING_PAGE_SNAPSHOT_KEY}Meta`, '');
+    if (!pixelMap || !this.shelfOpenAnimating) return;
+    const separator = meta.indexOf('\n');
+    if (separator < 0 || meta.substring(0, separator) !== this.bookUrl) return;
+    this.shelfOpeningPageSnapshotIdentity = meta.substring(separator + 1);
+    this.shelfOpeningPageSnapshot = pixelMap;
+    this.shelfOpeningPageSnapshotTimer = setTimeout((): void => {
+      this.shelfOpeningPageSnapshotTimer = -1;
+      this.dropShelfOpeningPageSnapshot();
+    }, 4000);
+  }
+
+  /** 正文就绪：图与现在要画的一致就等这一帧画出来再撤，不一致立即撤。 */
+  settleShelfOpeningPageSnapshot(): void {
+    if (!this.shelfOpeningPageSnapshot) return;
+    const same = this.readerOpenSnapshotIdentity() === this.shelfOpeningPageSnapshotIdentity;
+    ReaderOpenTrace.mark(this.bookUrl, 'page-snapshot-settled', same ? 'same' : 'different');
+    if (!same) {
+      this.dropShelfOpeningPageSnapshot();
+      return;
+    }
     try {
-      this.getUIContext().postFrameCallback(new ShelfOpeningIdleStarter(begin));
+      this.getUIContext().postFrameCallback(new ShelfOpeningFrameStarter((): void => this.dropShelfOpeningPageSnapshot()));
+    } catch (_) {
+      this.dropShelfOpeningPageSnapshot();
+    }
+  }
+
+  dropShelfOpeningPageSnapshot(): void {
+    if (this.shelfOpeningPageSnapshotTimer >= 0) {
+      clearTimeout(this.shelfOpeningPageSnapshotTimer);
+      this.shelfOpeningPageSnapshotTimer = -1;
+    }
+    this.shelfOpeningPageSnapshot = null;
+    this.shelfOpeningPageSnapshotIdentity = '';
+  }
+
+  /** 这一页此刻的渲染身份：关书时随图存下，下次打开正文就绪时比对。 */
+  readerOpenSnapshotIdentity(): string {
+    return `${this.buildReaderPaginationCacheKey(this.currentChapterIndex, this.pagedContentText)}|` +
+      `${this.currentPageIndex}|${this.appDarkMode}|${this.currentReaderThemeIndex()}|` +
+      `${this.readerHeaderEnabled}|${this.readerFooterEnabled}`;
+  }
+
+  /** 关书时把当前页整张离屏截下来（与首页截图并行），下次从书架打开先盖它。 */
+  captureReaderOpenSnapshot(): Promise<image.PixelMap | null> {
+    if (!this.readerInitialPageReady || this.isLoading || this.shelfOpenAnimating || this.readerPageCurlSnapshotReady) return Promise.resolve(null);
+    return this.getUIContext().getComponentSnapshot().get('reader_keyboard_surface', { scale: 1, waitUntilRenderFinished: true })
+      .catch((error: Error): image.PixelMap | null => {
+        console.warn('[OpenSnapshot] capture failed:', error);
+        return null;
+      });
+  }
+
+  /** 进度已保存后登记这张图；chapterIndex 要与保存的进度一致，书架按它判断图是否还成立。 */
+  storeReaderOpenSnapshot(capture: Promise<image.PixelMap | null>, chapterIndex: number, identity: string): void {
+    const meta = new ReaderOpenSnapshotMeta();
+    meta.bookUrl = this.bookUrl;
+    meta.chapterIndex = chapterIndex;
+    meta.identity = identity;
+    meta.dark = this.appDarkMode;
+    meta.themeRevision = AppStorage.get<number>('themeRevision') || 0;
+    const context = getContext(this);
+    capture.then((pixelMap: image.PixelMap | null): void => {
+      if (pixelMap) ReaderOpenSnapshotStore.save(context, meta, pixelMap);
+    });
+  }
+
+  beginShelfOpeningNextFrame(): void {
+    const begin = (): void => this.beginShelfOpening();
+    try {
+      this.getUIContext().postFrameCallback(new ShelfOpeningFrameStarter(begin));
     } catch (error) {
       begin();
     }
@@ -18412,11 +18526,12 @@ struct ReadBookPage {
     }
     if (!this.shelfOpenAnimating || this.shelfOpenStarted) return;
     this.shelfOpenStarted = true;
+    this.shelfOpenAwaitingContent = false;
     AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
       Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
     this.shelfOpenEndsAt = Date.now() + SHELF_COVER_OPEN_DURATION;
     this.getUIContext().animateTo({
-      duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut,
+      duration: SHELF_COVER_OPEN_DURATION, curve: SHELF_COVER_MOTION_CURVE,
       expectedFrameRateRange: SHELF_COVER_FRAME_RATE, onFinish: () => this.finishShelfOpening()
     }, () => {
       this.shelfOpenScaleX = 1;
@@ -18437,6 +18552,7 @@ struct ReadBookPage {
     }
     this.shelfOpenAnimating = false;
     this.shelfOpenEndsAt = 0;
+    this.dropShelfOpeningBackdrop();
     if (!this.readerExiting) this.shelfMotionRasterized = false;
     if (!this.readerInitialOpening) AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', false);
     this.shelfOpenScaleX = 1;
@@ -18449,6 +18565,29 @@ struct ReadBookPage {
       this.shelfSharedCoverId = this.shelfPendingSharedCoverId;
       this.shelfPendingSharedCoverId = '';
     }
+  }
+
+  /**
+   * 取走书架点开时截的首页图，放大期间垫在整页后面（关书缩回时也用同一个位置）；
+   * 没在放大（量不到封面位置、动画关闭）就直接释放。
+   */
+  takeShelfOpeningBackdrop(): void {
+    const backdrop = AppStorage.get<image.PixelMap | null>(SHELF_OPENING_BACKDROP_KEY) || null;
+    if (!backdrop) return;
+    AppStorage.setOrCreate<image.PixelMap | null>(SHELF_OPENING_BACKDROP_KEY, null);
+    if (this.shelfOpenAnimating && !this.shelfMotionBackdrop) {
+      this.shelfMotionBackdrop = backdrop;
+    } else {
+      backdrop.release().catch((): void => {});
+    }
+  }
+
+  /** 放大结束后整页已盖满窗口，撤下书架图；隔一会儿再释放，免得当前帧还在画它。 */
+  dropShelfOpeningBackdrop(): void {
+    const backdrop = this.shelfMotionBackdrop;
+    if (!backdrop || this.shelfMotionBackdropHandedOff) return;
+    this.shelfMotionBackdrop = null;
+    setTimeout((): void => { backdrop.release().catch((): void => {}); }, 120);
   }
 
   /** 打开动画进行中时，把预加载的延时拉到动画结束之后。 */
@@ -18487,7 +18626,7 @@ struct ReadBookPage {
       Date.now() + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
     return new Promise<void>((resolve: () => void): void => {
       this.getUIContext().animateTo({
-        duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut,
+        duration: SHELF_COVER_OPEN_DURATION, curve: SHELF_COVER_MOTION_CURVE,
         expectedFrameRateRange: SHELF_COVER_FRAME_RATE, onFinish: resolve
       }, (): void => {
         this.shelfOpenScaleX = target.boundsWidth / target.windowWidth;
@@ -18538,6 +18677,10 @@ struct ReadBookPage {
     this.finishShelfOpening();
     // 能量到封面现在的位置并截到书架图，就自己一段动画缩回封面格、封面同帧合上（与打开镜像），书架图垫在后面；
     // 否则退回“合上再由共享转场缩回”。
+    // 当前页的图先截着（与首页截图并行），进度保存后登记，下次从书架打开先盖它。
+    const openSnapshot = this.captureReaderOpenSnapshot();
+    const openSnapshotChapter = this.currentChapterIndex;
+    const openSnapshotIdentity = this.readerOpenSnapshotIdentity();
     const closeTarget = this.openedWithShelfAnimation && this.shelfOpeningCover ?
       ShelfCoverLocator.locate(this.bookUrl) : null;
     const backdrop = closeTarget ? await ShelfCoverLocator.backdrop() : null;
@@ -18546,7 +18689,7 @@ struct ReadBookPage {
     if (this.openedWithShelfAnimation) this.shelfMotionRasterized = true;
     if (selfClose) {
       this.shelfSharedCoverId = detachedShelfSharedCoverId(this.shelfSharedCoverId);
-      this.shelfCloseBackdrop = backdrop;
+      this.shelfMotionBackdrop = backdrop;
       // 背景图先画出一帧，缩小露出的边缘才不会闪一下底色。
       await ReaderRenderFrame.wait(this.getUIContext());
     }
@@ -18569,6 +18712,7 @@ struct ReadBookPage {
     } catch (e) {
       console.error('返回阅读页时保存进度失败:', e);
     }
+    this.storeReaderOpenSnapshot(openSnapshot, openSnapshotChapter, openSnapshotIdentity);
     await shelfCoverClosed;
     if (this.openedWithShelfAnimation) {
       AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', true);
@@ -18578,8 +18722,8 @@ struct ReadBookPage {
     if (selfClose) {
       // 回到书架的头几帧书架自己还画不出封面（被盖住的页面重新显示时图片要再加载，随后还有一次进度刷新重建卡片），
       // 把这张背景图交给首页盖住那段时间；首页刷新完成后释放它。
-      this.shelfCloseBackdropHandedOff = true;
-      AppStorage.setOrCreate<image.PixelMap | null>('shelfReturnBackdrop', this.shelfCloseBackdrop);
+      this.shelfMotionBackdropHandedOff = true;
+      AppStorage.setOrCreate<image.PixelMap | null>('shelfReturnBackdrop', this.shelfMotionBackdrop);
     } else {
       // 书框是 SVG，不跟共享转场缩放，起飞前藏起来。
       this.shelfCoverFrameVisible = false;
@@ -18905,6 +19049,7 @@ struct ReadBookPage {
     this.pendingRestorePageIndex = -1;
     this.readerTypographyRestoreOffset = -1;
     this.readerInitialPageReady = true;
+    this.startShelfOpeningAfterContent();
     this.finishReaderInitialOpening();
   }
 
@@ -18930,6 +19075,7 @@ struct ReadBookPage {
       this.readerTypographyRestoreOffset = -1;
     }
     this.readerInitialPageReady = true;
+    this.startShelfOpeningAfterContent();
     this.finishReaderInitialOpening();
   }
 
@@ -19009,7 +19155,11 @@ struct ReadBookPage {
     const restoredTypographyPosition = this.restoreReaderTypographyOffsetIfAvailable(result.complete === true);
     this.readerInitialPageReady = keepVisibleReaderReady || (result.pages.length > 0 &&
       this.pendingRestorePageIndex < 0 && this.readerTypographyRestoreOffset < 0);
-    if (this.readerInitialPageReady) this.finishReaderInitialOpening();
+    if (this.readerInitialPageReady) {
+      this.finishReaderInitialOpening();
+      // 首页就绪也可能只经这里（按页码恢复），翻开动画与上一页的图都等着这一刻。
+      this.startShelfOpeningAfterContent();
+    }
     const restoredPendingPosition = pendingRestore >= 0 && this.pendingRestorePageIndex < 0;
     if (this.isReaderContinuousScrollSurfaceActive()) {
       if (restoredPendingPosition || restoredTypographyPosition) this.readerComicScrollRestoring = true;
@@ -19594,6 +19744,7 @@ struct ReadBookPage {
     this.pendingRestorePageIndex = -1;
     this.readerTypographyRestoreOffset = -1;
     this.readerInitialPageReady = true;
+    this.startShelfOpeningAfterContent();
     this.finishReaderInitialOpening();
   }
 
@@ -19694,6 +19845,7 @@ struct ReadBookPage {
         this.pendingRestorePageIndex = -1;
         this.readerTypographyRestoreOffset = -1;
         this.readerInitialPageReady = true;
+        this.startShelfOpeningAfterContent();
         this.finishReaderInitialOpening();
       }
       localPageIndex = capturedPageIndex;

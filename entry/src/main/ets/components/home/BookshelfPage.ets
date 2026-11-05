@@ -3,8 +3,10 @@ import { ShelfCoverLocator } from '../../utils/ShelfCoverLocator';
 import { PdfPagePosition } from '../../core/book/pdf/PdfModels';
 import {
   SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
-  SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningIdleStarter
+  SHELF_OPENING_BACKDROP_KEY, SHELF_OPENING_COVER_KEY, SHELF_OPENING_PAGE_SNAPSHOT_KEY, ShelfOpeningCover,
+  ShelfOpeningIdleStarter
 } from '../reader/ReaderShelfCoverOpening';
+import { ReaderOpenSnapshot, ReaderOpenSnapshotStore } from '../../core/reader/ReaderOpenSnapshotStore';
 import { SharedElementBounds } from '../../utils/SharedElementBounds';
 import { BookshelfCoverBadges } from '../BookshelfCoverBadges';
 import { BookshelfCoverBadgeSettings } from '../../utils/BookshelfCoverBadgeSettings';
@@ -480,13 +482,24 @@ export struct BookshelfPage {
   private shelfUpdateAcknowledgedAt: Map<string, number> = new Map();
 
   private readonly shelfCoverLocate = (bookUrl: string): ShelfOpeningCover | null => this.locateShelfCover(bookUrl);
-  /** 首页根节点整张截图（含标签栏），阅读页缩回时垫在后面；被盖住的页面照样能离屏截图。 */
+  /** 首页根节点整张截图（含标签栏），阅读页放大、缩回时垫在后面；被盖住的页面照样能离屏截图。 */
   private readonly shelfBackdropSnapshot = (): Promise<image.PixelMap> =>
     this.getUIContext().getComponentSnapshot().get('home_root', { scale: 1, waitUntilRenderFinished: true });
+  /**
+   * 手指按下时提前截的首页图：点开书时多半已经截好，推阅读页前不必再等一次截图。
+   * 没点开的（滚动、长按）在松手后不久释放；按下超过 SHELF_OPENING_BACKDROP_FRESH 的也不再用，避免画面已变。
+   */
+  private shelfOpeningBackdropPending: Promise<image.PixelMap | null> | null = null;
+  private shelfOpeningBackdropRequestedAt: number = 0;
+  private shelfOpeningBackdropDiscardTimer: number = -1;
+  private static readonly SHELF_OPENING_BACKDROP_FRESH: number = 400;
+  /** 点开时截图还没回来，最多再等这么久；超时就不垫背景（和以前一样纯色），不让截图拖慢打开。 */
+  private static readonly SHELF_OPENING_BACKDROP_WAIT: number = 100;
 
   aboutToAppear() {
     this.shelfComponentActive = true;
     ShelfCoverLocator.register(this.shelfCoverLocate, this.shelfBackdropSnapshot);
+    ReaderOpenSnapshotStore.prepare(getContext(this)).catch((): void => {});
     this.shelfAppliedSearchKeyword = BookshelfPage.normalizeShelfSearchText(this.shelfSearchKeyword);
     this.reloadDisplaySettings();
     this.restoreShelfCategoryExpanded();
@@ -496,6 +509,7 @@ export struct BookshelfPage {
   aboutToDisappear(): void {
     this.shelfComponentActive = false;
     ShelfCoverLocator.unregister(this.shelfCoverLocate);
+    this.discardShelfOpeningBackdrop();
     this.cancelTileGroupMotion();
     this.stopShelfCategoryAnimation();
     this.cloudBookOpenRequest++;
@@ -1500,6 +1514,7 @@ export struct BookshelfPage {
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) {
         this.shelfContentTouching = true;
+        this.prewarmShelfOpeningBackdrop();
       } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
         this.shelfContentTouching = false;
         if (this.privateShelfBiometricQueued) {
@@ -4581,27 +4596,131 @@ export struct BookshelfPage {
     ReaderOpenTrace.begin(book.bookUrl);
     this.shelfBookRoutePending = true;
     AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', true);
+    let backdropWanted = false;
+    let windowWidthPx = 0;
+    let windowHeightPx = 0;
     if (this.bookshelfBookOpenAnimation) {
-      AppStorage.setOrCreate<ShelfOpeningCover>(SHELF_OPENING_COVER_KEY, this.shelfOpeningCover(book, touchX, touchY));
+      // 位置要在点击的这一刻量，截图可以慢一步。
+      const opening = this.shelfOpeningCover(book, touchX, touchY);
+      AppStorage.setOrCreate<ShelfOpeningCover>(SHELF_OPENING_COVER_KEY, opening);
+      backdropWanted = ShelfCoverLocator.usable(opening);
+      windowWidthPx = Math.round(this.getUIContext().vp2px(opening.windowWidth));
+      windowHeightPx = Math.round(this.getUIContext().vp2px(opening.windowHeight));
     }
-    ReaderOpenTrace.mark(book.bookUrl, 'route-requested');
-    // Router owns the entire shared transition, including its reverse. No intermediate overlay or timer.
-    router.pushUrl({
-      url: pdf ? 'pages/PdfReadBook' :
-        (LocalBookService.usesEpubOriginalLayout(book) ? 'pages/EpubOriginalReadBook' : 'pages/ReadBook'),
-      params: {
-        bookUrl: book.bookUrl,
-        formatChecked: 'true',
-        shelfBookOpening: this.bookshelfBookOpenAnimation ? 'true' : 'false',
-        shelfSharedCoverId: this.bookshelfBookOpenAnimation ? SharedElementMotion.coverId('shelf', book.origin, book.bookUrl) : ''
-      }
-    }).then(() => {
-      this.shelfBookRoutePending = false;
-    }).catch((error: Error) => {
-      AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', false);
-      console.error('打开阅读页失败:', error);
-      ReaderOpenTrace.cancel(book.bookUrl, 'route-failed');
-      this.cancelShelfBookOpening();
+    const url = pdf ? 'pages/PdfReadBook' :
+      (LocalBookService.usesEpubOriginalLayout(book) ? 'pages/EpubOriginalReadBook' : 'pages/ReadBook');
+    const push = (backdrop: image.PixelMap | null, pageShot: ReaderOpenSnapshot | null): void => {
+      // 阅读页放大期间把这张首页图垫在整页后面，书架看起来是被翻开的书慢慢盖住，而不是一点就变成纯色。
+      AppStorage.setOrCreate<image.PixelMap | null>(SHELF_OPENING_BACKDROP_KEY, backdrop);
+      // 上次关书那一页的图：阅读页第一帧就盖在正文位置，不等正文排好就开始翻开。
+      AppStorage.setOrCreate<image.PixelMap | null>(SHELF_OPENING_PAGE_SNAPSHOT_KEY, pageShot ? pageShot.pixelMap : null);
+      AppStorage.setOrCreate<string>(`${SHELF_OPENING_PAGE_SNAPSHOT_KEY}Meta`,
+        pageShot ? `${pageShot.meta.bookUrl}\n${pageShot.meta.identity}` : '');
+      ReaderOpenTrace.mark(book.bookUrl, 'route-requested',
+        `${backdrop ? 'backdrop' : 'no-backdrop'} ${pageShot ? 'page-snapshot' : 'no-page-snapshot'}`);
+      // Router owns the entire shared transition, including its reverse. No intermediate overlay or timer.
+      router.pushUrl({
+        url: url,
+        params: {
+          bookUrl: book.bookUrl,
+          formatChecked: 'true',
+          shelfBookOpening: this.bookshelfBookOpenAnimation ? 'true' : 'false',
+          shelfSharedCoverId: this.bookshelfBookOpenAnimation ? SharedElementMotion.coverId('shelf', book.origin, book.bookUrl) : ''
+        }
+      }).then(() => {
+        this.shelfBookRoutePending = false;
+      }).catch((error: Error) => {
+        AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', false);
+        const stale = AppStorage.get<image.PixelMap | null>(SHELF_OPENING_BACKDROP_KEY) || null;
+        AppStorage.setOrCreate<image.PixelMap | null>(SHELF_OPENING_BACKDROP_KEY, null);
+        if (stale) stale.release().catch((): void => {});
+        AppStorage.setOrCreate<image.PixelMap | null>(SHELF_OPENING_PAGE_SNAPSHOT_KEY, null);
+        console.error('打开阅读页失败:', error);
+        ReaderOpenTrace.cancel(book.bookUrl, 'route-failed');
+        this.cancelShelfBookOpening();
+      });
+    };
+    if (!backdropWanted) {
+      this.discardShelfOpeningBackdrop();
+      push(null, null);
+      return;
+    }
+    // 两张图并行取：首页截图多半按下时已截好；上一页的图同一进程再开直接在内存里，否则解码一张 JPEG。
+    const pageShot = ReaderOpenSnapshotStore.open(getContext(this), book.bookUrl, book.durChapterIndex,
+      windowWidthPx, windowHeightPx, this.appDarkMode, this.themeRevision, BookshelfPage.SHELF_OPENING_BACKDROP_WAIT);
+    this.takeShelfOpeningBackdrop().then((backdrop: image.PixelMap | null): void => {
+      pageShot.then((shot: ReaderOpenSnapshot | null): void => push(backdrop, shot));
+    }).catch((): void => push(null, null));
+  }
+
+  /** 手指按下时先截一张首页；正在截或刚截过的沿用。 */
+  prewarmShelfOpeningBackdrop(): void {
+    if (!this.bookshelfBookOpenAnimation || this.shelfBookRoutePending || this.isBookMultiSelect) return;
+    if (this.shelfOpeningBackdropPending &&
+      Date.now() - this.shelfOpeningBackdropRequestedAt < BookshelfPage.SHELF_OPENING_BACKDROP_FRESH) {
+      return;
+    }
+    this.discardShelfOpeningBackdrop();
+    this.shelfOpeningBackdropRequestedAt = Date.now();
+    this.shelfOpeningBackdropPending = this.shelfBackdropSnapshot().catch((error: Error): image.PixelMap | null => {
+      console.warn('书架背景截图失败:', error);
+      return null;
+    });
+    this.shelfOpeningBackdropDiscardTimer = setTimeout((): void => {
+      this.shelfOpeningBackdropDiscardTimer = -1;
+      this.discardShelfOpeningBackdrop();
+    }, BookshelfPage.SHELF_OPENING_BACKDROP_FRESH + 600);
+  }
+
+  /** 丢掉提前截的图（还在截的等它回来再释放）。 */
+  discardShelfOpeningBackdrop(): void {
+    if (this.shelfOpeningBackdropDiscardTimer >= 0) {
+      clearTimeout(this.shelfOpeningBackdropDiscardTimer);
+      this.shelfOpeningBackdropDiscardTimer = -1;
+    }
+    const pending = this.shelfOpeningBackdropPending;
+    this.shelfOpeningBackdropPending = null;
+    if (pending) {
+      pending.then((shot: image.PixelMap | null): void => {
+        if (shot) shot.release().catch((): void => {});
+      });
+    }
+  }
+
+  /**
+   * 点开书时拿首页截图：按下时截的还新鲜就用它，否则现截；最多等 SHELF_OPENING_BACKDROP_WAIT，
+   * 超时返回 null 先推阅读页，迟到的截图直接释放。
+   */
+  takeShelfOpeningBackdrop(): Promise<image.PixelMap | null> {
+    if (!this.shelfOpeningBackdropPending ||
+      Date.now() - this.shelfOpeningBackdropRequestedAt >= BookshelfPage.SHELF_OPENING_BACKDROP_FRESH) {
+      this.discardShelfOpeningBackdrop();
+      this.shelfOpeningBackdropRequestedAt = Date.now();
+      this.shelfOpeningBackdropPending = this.shelfBackdropSnapshot().catch((): image.PixelMap | null => null);
+    }
+    if (this.shelfOpeningBackdropDiscardTimer >= 0) {
+      clearTimeout(this.shelfOpeningBackdropDiscardTimer);
+      this.shelfOpeningBackdropDiscardTimer = -1;
+    }
+    const pending = this.shelfOpeningBackdropPending;
+    this.shelfOpeningBackdropPending = null;
+    if (!pending) return Promise.resolve(null);
+    return new Promise<image.PixelMap | null>((resolve: (value: image.PixelMap | null) => void): void => {
+      let settled = false;
+      const timer = setTimeout((): void => {
+        if (settled) return;
+        settled = true;
+        resolve(null);
+        pending.then((shot: image.PixelMap | null): void => {
+          if (shot) shot.release().catch((): void => {});
+        });
+      }, BookshelfPage.SHELF_OPENING_BACKDROP_WAIT);
+      pending.then((shot: image.PixelMap | null): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(shot);
+      });
     });
   }
 

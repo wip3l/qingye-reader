@@ -34,6 +34,12 @@ export const SHELF_COVER_OPEN_ANGLE: number = -90;
 /** 打开动画与返回共享转场的时长。 */
 export const SHELF_COVER_OPEN_DURATION: number = 500;
 
+/**
+ * 放大与缩回用减速曲线：一起步就有明显位移，手指抬起后马上看到书在动。
+ * 之前的 EaseInOut 头 100ms 几乎不动，叠加建页面的几十毫秒，看起来像点了没反应。
+ */
+export const SHELF_COVER_MOTION_CURVE: Curve = Curve.LinearOutSlowIn;
+
 export const SHELF_COVER_CLOSE_DURATION: number = 320;
 export const SHELF_COVER_FRAME_RATE: ExpectedFrameRateRange = { min: 60, max: 120, expected: 120 };
 /** 仅延后书架刷新，不拦截进度落库；时间戳自动过期，异常退出也不会锁住书架。 */
@@ -48,10 +54,22 @@ export function detachedShelfSharedCoverId(sharedCoverId: string): string {
   return sharedCoverId ? `${sharedCoverId}#detached` : '';
 }
 
-/** 阅读页首帧画好、主线程空下来才开始放大；一直忙也最多等这么久。 */
+/**
+ * 普通阅读页等首页正文排好、画出后的下一个 vsync 才开始放大（见 ReadBook.startShelfOpening）：排版的重活若落在动画中间
+ * 会顿一下、文字也是中途才出现。正文迟迟没好（进程内第一次开书、预处理还没缓存）最多等这么久。再开同一本书通常 60ms 左右就绪。
+ */
 export const SHELF_COVER_OPEN_START_CAP: number = 250;
 
-/** 下一帧渲染完且有空闲时回调，用来在阅读页首帧的重活过去之后再开始打开动画。 */
+/** 书架点开书时交给阅读页的首页整张截图（image.PixelMap），阅读页放大期间垫在整页后面，由阅读页取走并释放。 */
+export const SHELF_OPENING_BACKDROP_KEY: string = 'shelfOpeningBackdrop';
+
+/**
+ * 书架点开书时交给阅读页的"上次关书那一页"的图（image.PixelMap，归 ReaderOpenSnapshotStore 所有，页面不释放），
+ * 另以 `${KEY}Meta` 存 "bookUrl\nidentity"。阅读页第一帧就把它盖在正文位置、立刻开始翻开，正文排好后撤掉。
+ */
+export const SHELF_OPENING_PAGE_SNAPSHOT_KEY: string = 'shelfOpeningPageSnapshot';
+
+/** 下一帧渲染完且有空闲时回调。 */
 export class ShelfOpeningIdleStarter extends FrameCallback {
   private start: () => void;
 
@@ -61,6 +79,23 @@ export class ShelfOpeningIdleStarter extends FrameCallback {
   }
 
   onIdle(_timeLeftInNano: number): void {
+    this.start();
+  }
+}
+
+/**
+ * 下一个 vsync 一到就回调，不等主线程空闲。阅读页根节点 onAppear 时首帧还在建，这时登记，回调到来时首帧已经交给
+ * 渲染线程，动画从第二帧起步，既不会被首帧的重活吃掉一截，也不用等章节排版让出主线程。
+ */
+export class ShelfOpeningFrameStarter extends FrameCallback {
+  private start: () => void;
+
+  constructor(start: () => void) {
+    super();
+    this.start = start;
+  }
+
+  onFrame(_frameTimeInNano: number): void {
     this.start();
   }
 }
