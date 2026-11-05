@@ -135,6 +135,10 @@ import { ReaderTtsCapsule } from '../components/reader/ReaderTtsControls';
 import { ReaderAutoScrollCapsule, ReaderAutoScrollSpeedPanel } from '../components/reader/ReaderAutoScrollControls';
 import { ReaderAutoScrollClock } from '../core/reader/ReaderAutoScrollClock';
 import { ReaderAutoScrollSettingsStore } from '../utils/ReaderAutoScrollSettingsStore';
+import { ReaderContentSearch, ReaderContentSearchHit, ReaderContentSearchProgress } from '../core/reader/ReaderContentSearch';
+import { ReaderContentSearchMatch, ReaderContentSearchMatcher } from '../core/reader/ReaderContentSearchMatcher';
+import { ReaderContentSearchCapsule, ReaderContentSearchDataSource, ReaderContentSearchSheet } from
+  '../components/reader/ReaderContentSearchViews';
 import { ReaderHeaderFooterSettings, ReaderTypographyField, ReaderTypographyStepper } from '../components/reader/ReaderLayoutSettings';
 import { ReaderCacheDialogContent } from '../components/reader/ReaderCacheDialogContent';
 import { ReaderTxtCharsetDialogContent, ReaderTxtCharsets } from '../components/reader/ReaderTxtCharsetDialogContent';
@@ -456,6 +460,25 @@ struct ReadBookPage {
   @State readerAutoScrollSpeed: number = 20;
   @State readerAutoScrollStatus: string = '';
   @State showReaderAutoScrollSpeed: boolean = false;
+  // 正文查找：半模态里的关键字与结果、跳到结果后页底的胶囊，以及当前那一处的高亮（章内源文本位置）。
+  @State showReaderContentSearch: boolean = false;
+  @State readerSearchQuery: string = '';
+  @State readerSearchStatus: string = '在全书正文里查找文字，点结果跳到原文';
+  @State readerSearchRunning: boolean = false;
+  @State readerSearchCount: number = 0;
+  @State readerSearchEmpty: boolean = false;
+  @State readerSearchCurrentIndex: number = -1;
+  @State readerSearchBarVisible: boolean = false;
+  @State readerSearchReturnChapter: number = -1;
+  @State readerSearchPaintVersion: number = 0;
+  private readerSearchReturnOffset: number = -1;
+  private readerSearchResultQuery: string = '';
+  private readerSearchHighlightChapter: number = -1;
+  private readerSearchHighlightStart: number = -1;
+  private readerSearchHighlightEnd: number = -1;
+  private readerSearchHighlightSourceLength: number = -1;
+  private readerSearchSource: ReaderContentSearchDataSource = new ReaderContentSearchDataSource();
+  private readerContentSearch: ReaderContentSearch | null = null;
   @StorageLink('appLifecycleBackgroundRevision') @Watch('onReaderAutoScrollBackground')
   readerAutoScrollBackgroundRevision: number = 0;
   private readerAutoScrollClock: ReaderAutoScrollClock = new ReaderAutoScrollClock();
@@ -1429,6 +1452,7 @@ struct ReadBookPage {
     this.readerPageTextureWarmSerial++;
     this.readerPageTextureCache.clear();
     this.readerEntryAlive = false;
+    this.readerContentSearch?.dispose();
     if (!this.readerFormatResolved || this.readerPdfDispatched) return;
     this.cancelReaderContinuousMetricsTimers();
     this.readerContinuousPointerDown = false;
@@ -3547,6 +3571,10 @@ struct ReadBookPage {
             ForEach(this.currentReaderV2TtsOverlayKeys(this.readerV2TtsPaintVersion), (_focusKey: string) => {
               this.readerCurrentV2TtsOverlay(this.readerV2TtsPaintVersion)
             }, (focusKey: string) => focusKey)
+            // 正文查找的命中高亮与朗读焦点同样放在正文宿主外面，单独按页和版本重建。
+            ForEach(this.currentReaderV2SearchOverlayKeys(this.readerSearchPaintVersion), (_searchKey: string) => {
+              this.readerCurrentV2SearchOverlay(this.readerSearchPaintVersion)
+            }, (searchKey: string) => searchKey)
             // Native Text supplies selection handles and the system menu, but its line boxes do not exactly match
             // the Paragraph glyph boxes used to paint正文. Paint the range from Paragraph geometry so text stays
             // vertically centered in the blue selection in every page-turn mode.
@@ -3697,6 +3725,14 @@ struct ReadBookPage {
       } else if (this.readerUseTtsQuickAction && this.shouldShowGlobalTtsMiniPlayer()) {
         this.globalTtsMiniPlayer()
       }
+
+      if (this.shouldShowReaderContentSearchCapsule()) {
+        this.readerContentSearchCapsule()
+      }
+
+      Column().width(1).height(1).position({ x: 0, y: 0 }).hitTestBehavior(HitTestMode.None)
+        .bindSheet($$this.showReaderContentSearch, this.readerContentSearchPanel(),
+          this.readerContentSearchSheetOptions())
 
       Column().width(1).height(1).position({ x: 0, y: 0 }).hitTestBehavior(HitTestMode.None)
         .bindSheet($$this.showReaderAutoScrollSpeed, this.readerAutoScrollSpeedPanel(),
@@ -4696,6 +4732,13 @@ struct ReadBookPage {
             }
           }
         )
+        if (this.canUseReaderContentSearch()) {
+          this.readerActionMenuItem(
+            $r('sys.symbol.magnifyingglass'),
+            '正文查找',
+            () => this.openReaderContentSearch()
+          )
+        }
         if (this.readerSourceNeedsLogin()) {
           this.readerActionMenuItem(
             $r('sys.symbol.checkmark_shield'),
@@ -5169,6 +5212,325 @@ struct ReadBookPage {
     const defaultTop = viewportHeight - this.readerBottomMenuOverlayHeight() - ReaderAutoScrollCapsule.HEIGHT - 8;
     return this.clampTtsMiniPlayerPositionY(this.readerAutoScrollPositionY < 0 ?
       defaultTop : this.readerAutoScrollPositionY);
+  }
+
+  /** 正文查找只开放给本地书的普通阅读；PDF 与文件排版页各有自己的阅读页。 */
+  canUseReaderContentSearch(): boolean {
+    return !!this.book && LocalBookService.isLocalBook(this.book) && !this.isReaderComicModeActive() &&
+      this.chapters.length > 0;
+  }
+
+  readerContentSearchController(): ReaderContentSearch {
+    if (!this.readerContentSearch) {
+      this.readerContentSearch = new ReaderContentSearch({
+        book: (): Book | null => this.book,
+        chapterCount: (): number => this.chapters.length,
+        chapterTitle: (index: number): string => this.getChapterTitle(index),
+        replaceRules: (): ReaderReplaceRule[] => this.readerReplaceRules,
+        onProgress: (progress: ReaderContentSearchProgress): void => this.onReaderContentSearchProgress(progress)
+      });
+    }
+    return this.readerContentSearch;
+  }
+
+  openReaderContentSearch(): void {
+    if (!this.canUseReaderContentSearch()) return;
+    this.hideReaderPanels();
+    this.showReaderContentSearch = true;
+  }
+
+  startReaderContentSearch(): void {
+    const query = ReaderContentSearchMatcher.normalizeQuery(this.readerSearchQuery);
+    if (!query || !this.canUseReaderContentSearch()) return;
+    // 新的一次查找换掉全部结果：上一次的胶囊与高亮对应的是旧结果，一并收起。
+    this.closeReaderContentSearchCapsule();
+    this.readerSearchSource.clear();
+    this.readerSearchResultQuery = query;
+    this.readerSearchCount = 0;
+    this.readerSearchCurrentIndex = -1;
+    this.readerSearchEmpty = false;
+    this.readerContentSearchController().start(query).catch((error: Error) => {
+      console.warn('正文查找失败:', error);
+    });
+  }
+
+  stopReaderContentSearch(): void {
+    if (!this.readerSearchRunning) return;
+    this.readerContentSearch?.cancel();
+    this.readerSearchRunning = false;
+    this.readerSearchStatus = `已停止 · 找到 ${this.readerSearchCount} 处`;
+  }
+
+  onReaderContentSearchProgress(progress: ReaderContentSearchProgress): void {
+    if (progress.query !== this.readerSearchResultQuery) return;
+    this.readerSearchSource.append(progress.hits);
+    this.readerSearchCount = progress.found;
+    this.readerSearchRunning = progress.running;
+    this.readerSearchEmpty = !progress.running && !progress.failed && progress.found === 0;
+    this.readerSearchStatus = this.readerContentSearchStatusText(progress);
+  }
+
+  readerContentSearchStatusText(progress: ReaderContentSearchProgress): string {
+    if (progress.running) {
+      return `正在查找 · 已查 ${progress.scanned}/${progress.total} 章 · 找到 ${progress.found} 处`;
+    }
+    if (progress.failed) {
+      return progress.found > 0 ? `查找中断 · 已找到 ${progress.found} 处，可重新查找` : '查找中断，请重新查找';
+    }
+    if (progress.truncated) return `结果过多，只列出前 ${progress.found} 处，可换更精确的关键字`;
+    return progress.found > 0 ? `全书共找到 ${progress.found} 处` : `全书没有找到“${progress.query}”`;
+  }
+
+  selectReaderContentSearchHit(hit: ReaderContentSearchHit): void {
+    this.showReaderContentSearch = false;
+    // 只记第一次跳走前的位置：在结果之间来回切换后，“返回”仍回到开始查找时读到的地方。
+    if (this.readerSearchReturnChapter < 0) {
+      this.readerSearchReturnChapter = this.currentChapterIndex;
+      this.readerSearchReturnOffset = this.getReaderStableReflowOffset();
+    }
+    this.jumpToReaderContentSearchHit(hit).catch((error: Error) => {
+      console.warn('跳到查找结果失败:', error);
+    });
+  }
+
+  stepReaderContentSearch(direction: number): void {
+    const hit = this.readerSearchSource.hitAt(this.readerSearchCurrentIndex + direction);
+    if (!hit) return;
+    this.jumpToReaderContentSearchHit(hit).catch((error: Error) => {
+      console.warn('跳到查找结果失败:', error);
+    });
+  }
+
+  /**
+   * 结果里记的是“某章第几处”和前后文。阅读页排版的源文本可能多出标题行、缩进等，
+   * 所以在快速跳转准备好目标章的源文本后再按上下文找回那一处，跳到它所在的页并高亮。
+   */
+  async jumpToReaderContentSearchHit(hit: ReaderContentSearchHit): Promise<void> {
+    if (hit.chapterIndex < 0 || hit.chapterIndex >= this.chapters.length) return;
+    const query = this.readerSearchResultQuery;
+    const previousIndex = this.readerSearchCurrentIndex;
+    this.readerSearchCurrentIndex = hit.index;
+    this.readerSearchBarVisible = true;
+    const located: ReaderContentSearchMatch[] = [];
+    let sourceLength = -1;
+    const jumped = await this.performReaderQuickJump(hit.chapterIndex, -1, -1, false, false, (source: string): number => {
+      const match = ReaderContentSearchMatcher.locate(source, query, hit.ordinal, hit.before, hit.after);
+      sourceLength = source.length;
+      if (match) located.push(match);
+      return match ? match.start : 0;
+    });
+    if (hit.index !== this.readerSearchCurrentIndex || !this.readerSearchBarVisible) return;
+    if (!jumped) {
+      // 上一次定位还没结束等原因没跳成：序号退回去，胶囊仍指着正文里高亮的那一处。
+      this.readerSearchCurrentIndex = previousIndex;
+      return;
+    }
+    if (located.length === 0) {
+      this.clearReaderContentSearchHighlight();
+      HdsFeedback.showToast('这一处已不在正文里，请重新查找');
+      return;
+    }
+    const match = located[located.length - 1];
+    this.readerSearchHighlightChapter = hit.chapterIndex;
+    this.readerSearchHighlightStart = match.start;
+    this.readerSearchHighlightEnd = match.end;
+    this.readerSearchHighlightSourceLength = sourceLength;
+    this.readerSearchPaintVersion++;
+    if (this.isReaderNovelContinuousScrollModeActive()) {
+      // 快速跳转把列表停在命中所在正文块的开头；块排好后再滚到命中那一行。
+      this.scrollReaderContinuousToSearchHit(hit.index, match.start, 0);
+    }
+  }
+
+  scrollReaderContinuousToSearchHit(hitIndex: number, sourceOffset: number, attempt: number): void {
+    setTimeout((): void => {
+      if (hitIndex !== this.readerSearchCurrentIndex || !this.readerSearchBarVisible ||
+        !this.isReaderNovelContinuousScrollModeActive()) return;
+      if (this.scrollReaderContinuousToSourceOffset(sourceOffset)) {
+        this.scheduleReaderContinuousPositionUpdate();
+      } else if (attempt < 4) {
+        this.scrollReaderContinuousToSearchHit(hitIndex, sourceOffset, attempt + 1);
+      }
+    }, 80);
+  }
+
+  async returnFromReaderContentSearch(): Promise<void> {
+    const chapter = this.readerSearchReturnChapter;
+    const offset = this.readerSearchReturnOffset;
+    this.closeReaderContentSearchCapsule();
+    if (chapter < 0 || chapter >= this.chapters.length) return;
+    await this.performReaderQuickJump(chapter, -1, -1, false, false,
+      (source: string): number => Math.max(0, Math.min(offset, source.length)));
+  }
+
+  /** 收起页底胶囊并清掉高亮；结果仍保留，从“更多操作”再打开正文查找还能接着看。 */
+  closeReaderContentSearchCapsule(): void {
+    this.readerSearchBarVisible = false;
+    this.readerSearchReturnChapter = -1;
+    this.readerSearchReturnOffset = -1;
+    this.clearReaderContentSearchHighlight();
+  }
+
+  clearReaderContentSearchHighlight(): void {
+    if (this.readerSearchHighlightChapter < 0) return;
+    this.readerSearchHighlightChapter = -1;
+    this.readerSearchHighlightStart = -1;
+    this.readerSearchHighlightEnd = -1;
+    this.readerSearchHighlightSourceLength = -1;
+    this.readerSearchPaintVersion++;
+  }
+
+  @Builder
+  readerContentSearchPanel() {
+    ReaderContentSearchSheet({
+      query: this.readerSearchQuery, status: this.readerSearchStatus, running: this.readerSearchRunning,
+      resultCount: this.readerSearchCount, currentIndex: this.readerSearchCurrentIndex, empty: this.readerSearchEmpty,
+      textColor: this.readerPanelTextColor(), subTextColor: this.readerPanelSubTextColor(),
+      accentColor: this.accentColor(),
+      accentSurfaceColor: ThemeRuntime.accentSurfaceColor(this.appDarkMode),
+      controlColor: ThemeRuntime.inputColor(this.isReaderThemeDark()),
+      source: this.readerSearchSource,
+      onQueryChange: (value: string) => { this.readerSearchQuery = value; },
+      onSearch: () => { this.startReaderContentSearch(); },
+      onStop: () => { this.stopReaderContentSearch(); },
+      onSelect: (hit: ReaderContentSearchHit) => { this.selectReaderContentSearchHit(hit); },
+      onClose: () => { this.showReaderContentSearch = false; }
+    })
+  }
+
+  readerContentSearchSheetOptions(): SheetOptions {
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, {
+      detents: [SheetSize.MEDIUM, SheetSize.LARGE],
+      dragBar: true,
+      showClose: false,
+      onDisappear: (): void => { this.showReaderContentSearch = false; }
+    }, this.isReaderThemeDark(), this.accentColor());
+  }
+
+  shouldShowReaderContentSearchCapsule(): boolean {
+    return this.readerSearchBarVisible && this.readerSearchCount > 0 && !this.showMenu && !this.showToc &&
+      !this.showSettings && !this.showReaderContentSearch && this.readerInitialPageReady &&
+      !this.isReaderComicModeActive() && !this.shouldBlockReaderInteraction();
+  }
+
+  readerContentSearchCapsuleWidth(): number {
+    const viewportWidth = this.pageViewWidth > 0 ? this.pageViewWidth : 360;
+    return Math.min(ReaderContentSearchCapsule.WIDTH, viewportWidth - 32);
+  }
+
+  @Builder
+  readerContentSearchCapsule() {
+    ReaderContentSearchCapsule({
+      index: this.readerSearchCurrentIndex, count: this.readerSearchCount, running: this.readerSearchRunning,
+      chapterTitle: this.readerSearchSource.hitAt(this.readerSearchCurrentIndex)?.chapterTitle || '',
+      canReturn: this.readerSearchReturnChapter >= 0,
+      textColor: this.readerPanelTextColor(), subTextColor: this.readerPanelSubTextColor(),
+      accentColor: this.accentColor(), panelColor: this.readerPanelColor(), dark: this.isReaderThemeDark(),
+      capsuleWidth: this.readerContentSearchCapsuleWidth(),
+      onOpen: () => { this.showReaderContentSearch = true; },
+      onStep: (direction: number) => { this.stepReaderContentSearch(direction); },
+      onReturn: () => {
+        this.returnFromReaderContentSearch().catch((error: Error) => {
+          console.warn('回到查找前的位置失败:', error);
+        });
+      },
+      onClose: () => { this.closeReaderContentSearchCapsule(); }
+    })
+      .position({ x: 0, y: 0 })
+      // 停在页脚上方，正文最后一行之下；朗读、自动滚动胶囊只在菜单打开时出现，与它不同时显示。
+      .translate({
+        x: ((this.pageViewWidth > 0 ? this.pageViewWidth : 360) - this.readerContentSearchCapsuleWidth()) / 2,
+        y: (this.pageViewHeight > 0 ? this.pageViewHeight : 720) - this.navBarHeight -
+          ReaderContentSearchCapsule.HEIGHT - 36
+      })
+      .transition(this.ttsMiniPlayerTransition())
+  }
+
+  readerSearchHighlightActive(): boolean {
+    return this.readerSearchHighlightChapter === this.currentChapterIndex && this.readerSearchHighlightStart >= 0 &&
+      this.readerSearchHighlightEnd > this.readerSearchHighlightStart &&
+      this.pagedContentText.length === this.readerSearchHighlightSourceLength;
+  }
+
+  currentReaderV2SearchOverlayKeys(paintVersion: number): string[] {
+    if (!this.shouldUseReaderLayoutV2(this.pagedContentText) || !this.readerSearchHighlightActive()) return [];
+    return [`reader_v2_search_${this.currentChapterIndex}_${this.currentPageIndex}_${paintVersion}`];
+  }
+
+  readerV2SearchHighlightRects(pageIndex: number, _paintVersion: number): ReaderV2HighlightRect[] {
+    if (!this.readerSearchHighlightActive()) return [];
+    const page = this.readerV2Page(this.currentChapterIndex, pageIndex, this.pagedContentText);
+    const document = this.readerV2Document(this.currentChapterIndex, this.pagedContentText);
+    if (!page || !document) return [];
+    return this.readerV2DisplayHighlightRects(page,
+      document.displayOffsetForSource(this.readerSearchHighlightStart),
+      document.displayOffsetForSource(this.readerSearchHighlightEnd), 'search');
+  }
+
+  readerContinuousV2SearchRects(index: number, text: string, _paintVersion: number): ReaderV2HighlightRect[] {
+    if (!this.readerSearchHighlightActive() || index >= this.contentPageEnds.length ||
+      this.readerSearchHighlightStart >= this.contentPageEnds[index] ||
+      this.readerSearchHighlightEnd <= this.contentPageStarts[index]) return [];
+    const layout = this.readerContinuousV2Layout(index, text);
+    if (!layout) return [];
+    const document = this.readerContinuousV2Documents.get(layout.identity);
+    const chunkStart = this.readerContinuousV2Sources.get(layout.identity);
+    if (!document || chunkStart === undefined || chunkStart < 0) return [];
+    return this.readerV2DisplayHighlightRects(layout,
+      document.displayOffsetForSource(Math.max(0, this.readerSearchHighlightStart - chunkStart)),
+      document.displayOffsetForSource(Math.max(0, this.readerSearchHighlightEnd - chunkStart)), 'search');
+  }
+
+  @Builder
+  readerCurrentV2SearchOverlay(paintVersion: number) {
+    Column() {
+      if (this.isLandscapeDoublePageActive()) {
+        Row() {
+          this.readerCurrentV2SearchOverlayPage(this.currentPageIndex, paintVersion, true)
+          Blank()
+            .width(READER_DOUBLE_PAGE_DIVIDER_WIDTH)
+            .height('100%')
+          this.readerCurrentV2SearchOverlayPage(this.currentPageIndex + 1, paintVersion, true)
+        }
+        .width('100%')
+        .height('100%')
+        .alignItems(VerticalAlign.Center)
+      } else {
+        this.readerCurrentV2SearchOverlayPage(this.currentPageIndex, paintVersion)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ top: this.getReaderPageContentTopPadding() })
+    .translate({ x: this.getCurrentPageTurnX(), y: this.getCurrentPageTurnY() + this.bookmarkPullOffsetY })
+    .opacity(this.getCurrentPageTurnOpacity())
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  readerCurrentV2SearchOverlayPage(pageIndex: number, paintVersion: number, halfWidth: boolean = false) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      ForEach(this.readerV2SearchHighlightRects(pageIndex, paintVersion), (rect: ReaderV2HighlightRect) => {
+        this.readerV2SearchHighlightRect(rect)
+      }, (rect: ReaderV2HighlightRect) => rect.key)
+    }
+    .width(halfWidth ? this.getReaderPageColumnWidth() : '100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  readerV2SearchHighlightRect(rect: ReaderV2HighlightRect) {
+    Row() {
+    }
+    .width(px2vp(rect.widthPx))
+    .height(px2vp(rect.heightPx))
+    // 查找命中用暖黄色，和跟随强调色的朗读焦点、选区分得开。
+    .backgroundColor(this.isReaderThemeDark() ? '#FFB300' : '#FFC53D')
+    .opacity(0.45)
+    .position({ x: px2vp(rect.leftPx), y: px2vp(rect.topPx) })
+    .zIndex(1)
+    .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
@@ -9977,7 +10339,8 @@ struct ReadBookPage {
 
   /** Prepare off-screen, then commit once: failed fetch/pagination never replaces the readable chapter. */
   async performReaderQuickJump(targetChapter: number, ratio: number, sourceOffset: number = -1,
-    hiddenOwner: boolean = false, resumeSpeech: boolean = false): Promise<boolean> {
+    hiddenOwner: boolean = false, resumeSpeech: boolean = false,
+    offsetOf: ((source: string) => number) | null = null): Promise<boolean> {
     if (this.quickJumpBusy || this.readerComicChapterSwitching || this.readerContinuousCommitChapter >= 0 ||
       targetChapter < 0 || targetChapter >= this.chapters.length || !this.hasPagedReaderArea()) return false;
     const comic = this.isReaderComicModeActive();
@@ -10002,7 +10365,8 @@ struct ReadBookPage {
     const resumeScroll = this.readerAutoScrollActive && !this.readerAutoScrollPaused;
     const valid = (): boolean => serial === this.quickJumpSerial && bookUrl === this.bookUrl &&
       (hiddenOwner ? ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId) :
-        this.readerPageVisible && this.readerUseChapterQuickJump) &&
+        // 正文查找借用这条定位路径，不受“快速跳转”开关影响。
+        this.readerPageVisible && (this.readerUseChapterQuickJump || offsetOf !== null)) &&
       comic === this.isReaderComicModeActive() &&
       (!comic || (comicMode === this.readerComicEffectiveMode() &&
         comicDualPage === this.isReaderComicDualPageActive())) &&
@@ -10045,6 +10409,8 @@ struct ReadBookPage {
       if (!valid()) return false;
       if (!content.trim()) throw new Error('目标章节没有可读内容');
       const source = this.buildPagedSourceText(targetChapter, content);
+      // 目标位置要在实际排版的源文本里才算得出（正文查找按上下文找回命中处）。
+      if (offsetOf) sourceOffset = offsetOf(source);
       const key = this.buildReaderPaginationCacheKey(targetChapter, source);
       const cached = this.getCachedReaderPagination(targetChapter, source);
       // Never append to the active renderer's mutable result while preparing a jump.
@@ -18293,6 +18659,10 @@ struct ReadBookPage {
         ForEach(this.readerContinuousV2TtsRects(index, text, this.readerV2TtsPaintVersion),
           (rect: ReaderV2HighlightRect) => {
           this.readerV2TtsHighlightRect(rect)
+        }, (rect: ReaderV2HighlightRect) => rect.key)
+        ForEach(this.readerContinuousV2SearchRects(index, text, this.readerSearchPaintVersion),
+          (rect: ReaderV2HighlightRect) => {
+          this.readerV2SearchHighlightRect(rect)
         }, (rect: ReaderV2HighlightRect) => rect.key)
         ForEach(this.readerContinuousV2SelectionRects(index, text, this.readerV2SelectionPaintVersion),
           (rect: ReaderV2HighlightRect) => {

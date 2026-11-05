@@ -67,6 +67,7 @@ jobs:
       - run: node --experimental-strip-types scripts/epub-mixed-layout-check.mjs
       - run: node --experimental-strip-types scripts/reader-text-normalizer-check.mjs
       - run: node --experimental-strip-types scripts/reader-chunk-pagination-check.mjs
+      - run: node --experimental-strip-types scripts/reader-content-search-check.mjs
       - run: node --experimental-strip-types scripts/reader-pagination-index-check.mjs
       - run: node --experimental-strip-types scripts/reader-page-texture-cache-check.mjs
       - run: node --experimental-strip-types scripts/reader-page-texture-pair-check.mjs
