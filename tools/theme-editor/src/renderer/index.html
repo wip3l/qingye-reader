@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; font-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>轻页主题编辑器</title>
+</head>
+<body>
+  <main id="welcome" class="welcome" hidden></main>
+  <div id="editor" class="window" hidden>
+    <div class="titlebar">
+      <button class="tb" id="btn-new" title="Ctrl+N">新建</button>
+      <button class="tb" id="btn-open" title="Ctrl+O">打开主题包</button>
+      <button class="tb" id="btn-open-folder" title="Ctrl+Shift+O">打开文件夹</button>
+      <span class="sep"></span>
+      <button class="tb" id="btn-undo" title="Ctrl+Z">撤销</button>
+      <button class="tb" id="btn-redo" title="Ctrl+Y">重做</button>
+      <div class="file" id="file-label"></div>
+      <div class="spacer"></div>
+      <button class="tb" id="btn-save" title="Ctrl+S，写回当前主题包；Ctrl+Shift+S 另存为">保存</button>
+      <button class="tb" id="btn-folder">导出为文件夹</button>
+      <button class="tb primary" id="btn-export" title="Ctrl+E">导出 .qytheme</button>
+    </div>
+    <div class="body">
+      <nav class="nav" id="nav" aria-label="主题部件"></nav>
+      <div class="stage">
+        <div class="stagebar">
+          <div class="seg" id="screens"></div>
+          <div class="spacer"></div>
+          <div class="seg" id="layout-seg">
+            <button data-l="both" aria-pressed="true">浅深并排</button>
+            <button data-l="one" aria-pressed="false">只看当前</button>
+          </div>
+        </div>
+        <div class="phones" id="phones"></div>
+      </div>
+      <aside class="insp" id="insp"></aside>
+    </div>
+    <div class="issues" id="issues"></div>
+  </div>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

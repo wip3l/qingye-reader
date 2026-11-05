@@ -228,7 +228,8 @@ qingye-reader/
 │   └── scripts/                      # 内核自己的回归检查
 ├── harmony-book-ai-engine/           # 子模块：AI 引擎（着色、OCR、翻译、超分与模型）；会员权益，私有仓库，不在本仓库开源
 ├── docs/                             # 开发文档与使用说明书网站（docs/manual）
-└── scripts/                          # 构建前与架构回归检查
+├── scripts/                          # 构建前与架构回归检查
+└── tools/theme-editor/               # 轻页主题编辑器：制作 .qytheme 主题包的 Windows 桌面程序（Electron）
 ```
 
 主要模块：
@@ -400,6 +401,7 @@ for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-
 - [书源内核接入说明](https://github.com/wip3l/harmony-book-source-engine/blob/main/sourceengine/README.md)：HAR 入口、宿主必须接入的部分与可选宿主端口
 - [主题开发指南](docs/theme-development.md)
 - [主题包开发指南](docs/theme-package-format.md)
+- [轻页主题编辑器](tools/theme-editor/README.md)：可视化制作、预览和导出主题包的桌面程序，开发与打包方式
 
 ## 合规与免责声明
 

@@ -1,0 +1,4 @@
+node_modules/
+dist/
+release/
+src/core/builtinThemes.json

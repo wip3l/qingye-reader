@@ -1,0 +1,52 @@
+{
+  "name": "qingye-theme-editor",
+  "productName": "轻页主题编辑器",
+  "version": "0.1.0",
+  "description": "制作与编辑开源轻页 .qytheme 主题包的桌面程序",
+  "private": true,
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "tokens": "node scripts/extract-builtin-themes.mjs",
+    "dev": "npm run tokens && vite build && electron .",
+    "build": "npm run tokens && tsc --noEmit && vite build",
+    "test": "npm run tokens && node --experimental-strip-types --no-warnings --test test/package-io.test.mjs",
+    "dist": "npm run build && electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8",
+    "typescript": "5.6.3",
+    "vite": "5.4.11"
+  },
+  "dependencies": {
+    "fflate": "0.8.2"
+  },
+  "build": {
+    "appId": "io.github.qingye.themeeditor",
+    "productName": "轻页主题编辑器",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**",
+      "dist/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": "../../AppScope/resources/base/media/ic_app_theme_custom.png"
+    },
+    "portable": {
+      "artifactName": "QingyeThemeEditor-${version}.exe"
+    },
+    "extraResources": [
+      {
+        "from": "../../AppScope/resources/base/media/ic_app_theme_custom.png",
+        "to": "icon.png"
+      }
+    ]
+  }
+}
