@@ -895,6 +895,7 @@ struct PdfReadBookPage {
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Fill)
+          .syncLoad(true)
           .draggable(false)
       }
     Stack({ alignContent: Alignment.TopStart }) {
@@ -954,6 +955,7 @@ struct PdfReadBookPage {
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Fill)
+          .syncLoad(true)
           .draggable(false)
           .hitTestBehavior(HitTestMode.None)
       }

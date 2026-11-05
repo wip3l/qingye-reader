@@ -1044,6 +1044,7 @@ struct ReadBookPage {
    */
   @State shelfMotionRasterized: boolean = false;
   /** 开书放大、关书缩回时垫在整页后面的书架截图：被盖住的书架不渲染，整页外的区域要靠它；关书落地后交给首页盖住头几帧。 */
+  // 显示它的 Image 要 syncLoad：PixelMap 默认也异步上屏，开书第一帧只剩外层底色和封面，像闪了一下。
   @State shelfMotionBackdrop: image.PixelMap | null = null;
   private shelfMotionBackdropHandedOff: boolean = false;
   @State shelfOpenScaleY: number = 1;
@@ -3455,6 +3456,7 @@ struct ReadBookPage {
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Fill)
+          .syncLoad(true)
           .draggable(false)
       }
     Stack() {
@@ -3778,6 +3780,7 @@ struct ReadBookPage {
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Fill)
+          .syncLoad(true)
           .draggable(false)
           .hitTestBehavior(HitTestMode.None)
       }

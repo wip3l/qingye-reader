@@ -298,7 +298,16 @@ export class EpubOriginalScript {
     } else if (!(t.kind === 'anchor' && goAnchor(t.anchor))) {
       if (paged) goPage(0, false); else { scrollToY(0, false); report(); }
     }
-    if (host) host.ready(count, page);
+    // 定位完要等网页按新位置画过一帧再报就绪：立即报的话，原生层撤掉加载遮罩、上页截图时
+    // 网页表面还是载入时画的章首，会闪一下章首再跳到进度处。后面的槽位可能不出帧，留个兜底。
+    var announced = false;
+    var announce = function () {
+      if (announced) return;
+      announced = true;
+      if (host) host.ready(count, page);
+    };
+    requestAnimationFrame(function () { requestAnimationFrame(announce); });
+    setTimeout(announce, 150);
   }
   var sx = 0, sy = 0, st = 0, base = 0, dragging = false, moved = false;
   // 滚动模式：已经在章末继续上拉、在章首继续下拉超过这个距离，就接着读下一章、上一章。

@@ -663,6 +663,7 @@ struct Index {
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Fill)
+          .syncLoad(true)
           .draggable(false)
           .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
           .hitTestBehavior(HitTestMode.None)
