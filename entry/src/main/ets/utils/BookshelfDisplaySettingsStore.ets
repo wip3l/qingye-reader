@@ -14,7 +14,7 @@ export class BookshelfDisplaySettings {
   showTypeBadge: boolean = true;
   // 空串代表旧版数据；必须等旧开关读完后再迁移，不能用默认布局覆盖用户偏好。
   coverBadges: string = '';
-  layoutMode: string = 'tile';
+  layoutMode: string = 'companion';
   lastReadLeafMode: string = 'adaptive';
   // 平铺布局里上次阅读的书是否置顶：off 不置顶，medium 跨两列的展开书本，large 占满一整行的继续阅读卡片。
   lastReadPinMode: string = 'large';
@@ -44,6 +44,8 @@ export class BookshelfDisplaySettingsStore {
   private static readonly KEY_BOOK_OPEN_ANIMATION: string = 'bookshelfBookOpenAnimation';
   private static readonly KEY_TYPE_CATEGORY_ENABLED: string = 'bookshelfTypeCategoryEnabled';
   private static readonly KEY_SHOW_ALL_TYPE_TAB: string = 'bookshelfShowAllTypeTab';
+  // 4.4.956 起书架默认使用“陪伴”布局：升级后把已有设置统一改一次，之后用户自己改的布局不再动。
+  private static readonly KEY_COMPANION_LAYOUT_MIGRATED: string = 'bookshelfCompanionLayoutMigrated';
   private static cachedSettings: BookshelfDisplaySettings | null = null;
 
   static async load(context: Context): Promise<BookshelfDisplaySettings> {
@@ -71,7 +73,7 @@ export class BookshelfDisplaySettingsStore {
     settings.coverBadges = BookshelfCoverBadgeSettings.normalize(await BookshelfDisplaySettingsStore.getString(
       store, BookshelfDisplaySettingsStore.KEY_COVER_BADGES, ''), settings.showTypeBadge, settings.showSource);
     settings.layoutMode = BookshelfDisplaySettingsStore.normalizeLayoutMode(await BookshelfDisplaySettingsStore.getString(
-      store, BookshelfDisplaySettingsStore.KEY_LAYOUT_MODE, 'tile'));
+      store, BookshelfDisplaySettingsStore.KEY_LAYOUT_MODE, 'companion'));
     settings.lastReadLeafMode = BookshelfDisplaySettingsStore.normalizeLastReadLeafMode(
       await BookshelfDisplaySettingsStore.getString(
         store, BookshelfDisplaySettingsStore.KEY_LAST_READ_LEAF_MODE, 'adaptive'));
@@ -87,6 +89,15 @@ export class BookshelfDisplaySettingsStore {
       store, BookshelfDisplaySettingsStore.KEY_TYPE_CATEGORY_ENABLED, true);
     settings.showAllTypeTab = await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB, true);
+    if (!(await BookshelfDisplaySettingsStore.getBoolean(
+      store, BookshelfDisplaySettingsStore.KEY_COMPANION_LAYOUT_MIGRATED, false))) {
+      settings.layoutMode = 'companion';
+      await store.put(BookshelfDisplaySettingsStore.KEY_LAYOUT_MODE, 'companion');
+      await store.put(BookshelfDisplaySettingsStore.KEY_COMPANION_LAYOUT_MIGRATED, true);
+      await store.flush();
+      // 记为本机偏好变更，下次云同步把新布局带给其他设备，而不是被云端旧值改回。
+      CloudSyncChangeTracker.markApplicationPreferenceChanged();
+    }
     BookshelfDisplaySettingsStore.cachedSettings = BookshelfDisplaySettingsStore.clone(settings);
     return settings;
   }
@@ -157,7 +168,7 @@ export class BookshelfDisplaySettingsStore {
     settings.coverBadges = BookshelfCoverBadgeSettings.normalize(
       AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_COVER_BADGES) ?? '', settings.showTypeBadge, settings.showSource);
     settings.layoutMode = BookshelfDisplaySettingsStore.normalizeLayoutMode(
-      AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_LAYOUT_MODE) ?? 'tile');
+      AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_LAYOUT_MODE) ?? 'companion');
     settings.lastReadLeafMode = BookshelfDisplaySettingsStore.normalizeLastReadLeafMode(
       AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_LAST_READ_LEAF_MODE) ?? 'adaptive');
     settings.lastReadPinMode = BookshelfDisplaySettingsStore.normalizeLastReadPinMode(

@@ -36,7 +36,7 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfShowLastReadTime') bookshelfShowLastReadTime: boolean = true;
   @StorageLink('bookshelfShowLastReadChapter') bookshelfShowLastReadChapter: boolean = false;
   @StorageLink('bookshelfShowTypeBadge') bookshelfShowTypeBadge: boolean = true;
-  @StorageLink('bookshelfLayoutMode') bookshelfLayoutMode: string = 'tile';
+  @StorageLink('bookshelfLayoutMode') bookshelfLayoutMode: string = 'companion';
   @StorageLink('bookshelfLastReadLeafMode') bookshelfLastReadLeafMode: string = 'adaptive';
   @StorageLink('bookshelfLastReadPinMode') bookshelfLastReadPinMode: string = 'large';
   @StorageLink('bookshelfLastReadPinCount') bookshelfLastReadPinCount: number = 1;

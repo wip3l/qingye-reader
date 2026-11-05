@@ -41,14 +41,25 @@ const urls = books => Array.from(books, b => b.bookUrl);
 const reset = () => { preferencesData.clear(); storage.clear(); Store.cachedSettings = null; };
 
 reset();
-assert.deepEqual([new Settings().layoutMode, new Settings().lastReadPinMode, new Settings().lastReadPinCount], ['tile', 'large', 3]);
+assert.deepEqual([new Settings().layoutMode, new Settings().lastReadPinMode, new Settings().lastReadPinCount], ['companion', 'large', 1]);
 const defaults = await Store.load({});
-assert.deepEqual([defaults.layoutMode, defaults.lastReadPinMode, defaults.lastReadPinCount], ['tile', 'large', 3]);
-assert.equal(Store.fromStorage().lastReadPinCount, 3);
+assert.deepEqual([defaults.layoutMode, defaults.lastReadPinMode, defaults.lastReadPinCount], ['companion', 'large', 1]);
+assert.equal(Store.fromStorage().lastReadPinCount, 1);
+// Upgrade: an existing layout is switched to companion exactly once, then the user's later choice sticks.
+for (const layout of ['compact', 'loose', 'tile']) {
+  reset(); preferencesData.set('bookshelfLayoutMode', layout);
+  assert.equal((await Store.load({})).layoutMode, 'companion');
+  assert.equal(preferencesData.get('bookshelfLayoutMode'), 'companion');
+  assert.equal(preferencesData.get('bookshelfCompanionLayoutMigrated'), true);
+  const chosen = await Store.load({}); chosen.layoutMode = layout;
+  await Store.save({}, chosen); Store.cachedSettings = null;
+  assert.equal((await Store.load({})).layoutMode, layout);
+}
 for (const layout of ['compact', 'loose', 'tile']) for (const pin of ['off', 'medium', 'large']) {
-  reset(); preferencesData.set('bookshelfLayoutMode', layout); preferencesData.set('bookshelfLastReadPinMode', pin);
+  reset(); preferencesData.set('bookshelfCompanionLayoutMigrated', true);
+  preferencesData.set('bookshelfLayoutMode', layout); preferencesData.set('bookshelfLastReadPinMode', pin);
   const saved = await Store.load({});
-  assert.deepEqual([saved.layoutMode, saved.lastReadPinMode, saved.lastReadPinCount], [layout, pin, 3]);
+  assert.deepEqual([saved.layoutMode, saved.lastReadPinMode, saved.lastReadPinCount], [layout, pin, 1]);
   for (let n = 1; n <= 5; n++) {
     saved.lastReadPinCount = n;
     await Store.save({}, saved); Store.applyToStorage(saved); Store.cachedSettings = null;
@@ -64,7 +75,7 @@ for (const invalid of [undefined, null, NaN, Infinity, 0, -1, 6, 2.5, '4']) {
   const oldBackup = new Settings(); oldBackup.layoutMode = 'compact'; oldBackup.lastReadPinMode = 'medium';
   oldBackup.lastReadPinCount = invalid;
   await Store.save({}, oldBackup); Store.applyToStorage(oldBackup);
-  assert.equal(Store.fromStorage().lastReadPinCount, 3);
+  assert.equal(Store.fromStorage().lastReadPinCount, 1);
   assert.equal(Store.fromStorage().layoutMode, 'compact');
 }
 
