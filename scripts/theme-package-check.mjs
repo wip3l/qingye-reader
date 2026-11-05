@@ -121,7 +121,7 @@ test('manifest validation: format, newer version, unknown features, asset rules'
   assert.equal(ok.name, '夜读');
   assert.equal(ok.assets.length, 1);
   assert.throws(() => format.decodeManifest(JSON.stringify(manifest({ format: 'zip' }))), /不是轻页主题包/);
-  assert.throws(() => format.decodeManifest(JSON.stringify(manifest({ formatVersion: 2 }))), /更新应用/);
+  assert.throws(() => format.decodeManifest(JSON.stringify(manifest({ formatVersion: 3 }))), /更新应用/);
   assert.throws(() => format.decodeManifest(JSON.stringify(manifest({ requires: ['custom-scheme-v1', 'tts-svg-v2'] }))),
     /不支持的功能/);
   assert.throws(() => format.decodeManifest(JSON.stringify(manifest({ requires: ['reader-layout-v1'] }))), /损坏/);
@@ -256,6 +256,217 @@ test('asset sniffing recognises supported images and fonts only', () => {
   assert.equal(format.sniffAssetExtension(bytes(0x00, 0x01, 0x00, 0x00)), 'ttf');
   assert.equal(format.sniffAssetExtension(new Uint8Array(Buffer.from('OTTO'))), 'otf');
   assert.equal(format.sniffAssetExtension(new Uint8Array(Buffer.from('ttcf'))), 'ttc');
-  assert.equal(format.sniffAssetExtension(new Uint8Array(Buffer.from('<svg xmlns='))), '');
-  assert.equal(format.kindForExtension('svg'), '');
+  assert.equal(format.sniffAssetExtension(new Uint8Array(Buffer.from('<svg xmlns='))), 'svg');
+  assert.equal(format.sniffAssetExtension(new Uint8Array(Buffer.from('﻿<?xml version'))), 'svg');
+  assert.equal(format.sniffAssetExtension(new Uint8Array(Buffer.from('plain text here'))), '');
+  assert.equal(format.kindForExtension('svg'), 'vector');
+});
+
+// ---- 格式 2：手写主题包与包内部件 ----
+
+const manifestV1 = manifest;
+
+function manifestV2(overrides = {}) {
+  return {
+    format: 'qytheme', formatVersion: 2, packageId: 'night-garden', name: '夜花园', author: '小明',
+    version: '1.0', description: '深蓝夜色', baseTheme: 'plain-default',
+    requires: ['custom-scheme-v1', 'reader-layout-v1', 'theme-parts-v1'],
+    ...overrides
+  };
+}
+
+/** 模拟导入方枚举 assets/ 后补全的清单：路径、类型和内容 ID 都已就位。 */
+function withAssets(manifest, files) {
+  const result = format.decodeManifest(JSON.stringify(manifest));
+  for (const [path, kind] of files) {
+    const asset = new format.ThemePackageAsset();
+    asset.path = path;
+    asset.kind = kind;
+    asset.sha256 = sha(path);
+    asset.id = asset.sha256.substring(0, 24);
+    asset.size = 10;
+    result.assets.push(asset);
+  }
+  return result;
+}
+
+test('v2 manifest: assets optional, packageId charset, credits and description kept', () => {
+  const m = format.decodeManifest(JSON.stringify(manifestV2()));
+  assert.equal(m.formatVersion, 2);
+  assert.equal(m.assetsDeclared, false);
+  assert.equal(m.version, '1.0');
+  assert.equal(m.baseTheme, 'plain-default');
+  assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ packageId: '../x' }))), /packageId/);
+  assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ packageId: 'a b' }))), /packageId/);
+  const credits = format.decodeManifest(JSON.stringify(manifestV2({
+    credits: { packageId: 'orig', name: '原主题', author: '原作者\n' } })));
+  assert.deepEqual({ ...credits.credits }, { packageId: 'orig', name: '原主题', author: '原作者' });
+  // 声明了素材时按路径登记，大小与摘要可省略，ID 由导入方生成。
+  const declared = format.decodeManifest(JSON.stringify(manifestV2({ assets: [{ path: 'assets/cover_01.jpg' }] })));
+  assert.equal(declared.assetsDeclared, true);
+  assert.equal(declared.assets[0].kind, 'image');
+  assert.equal(declared.assets[0].id, '');
+  assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ assets: [{ path: 'assets/../x.png' }] }))), /不合法/);
+  assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ assets: [{ path: 'assets/a.exe' }] }))), /不合法/);
+  assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ assets: [{ path: 'assets/a.png', kind: 'font' }] }))), /损坏/);
+  assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ assets: [{ path: 'assets/f.ttf' }] }))), /损坏/,
+    'fonts need the fonts-v1 feature');
+  assert.equal(format.assetPathExtension('assets/Cover_01.jpeg'), 'jpg');
+  assert.equal(format.assetPathExtension('assets/sub/a.png'), '');
+});
+
+test('pack theme ids: prefix, suffix and reader background keys', () => {
+  assert.equal(format.packThemeId('night-garden'), 'pack:night-garden');
+  assert.equal(format.isPackThemeId('pack:night-garden'), true);
+  assert.equal(format.isPackThemeId('pack:night-garden:dark'), true);
+  assert.equal(format.isPackThemeId('pack:'), false);
+  assert.equal(format.isPackThemeId('pack:../x'), false);
+  assert.equal(format.isPackThemeId('plain-default'), false);
+  assert.equal(format.packageIdOfThemeId('pack:night-garden:light'), 'night-garden');
+  assert.equal(format.packageIdOfThemeId('classic-blue'), '');
+  assert.equal(format.packReaderBackgroundId('night-garden', true), 'pack:night-garden:dark');
+});
+
+test('svg safety: self-contained files only', () => {
+  assert.equal(format.checkSvgSource('<svg viewBox="0 0 24 24"><path d="M0 0h24v24z"/></svg>'), '');
+  assert.match(format.checkSvgSource('<svg><script>alert(1)</script></svg>'), /script/);
+  assert.match(format.checkSvgSource('<svg><image href="http://x/y.png"/></svg>'), /image/);
+  assert.match(format.checkSvgSource('<svg style="background:url(http://x)"/>'), /url\(/);
+  assert.match(format.checkSvgSource('<svg><use xlink:href="#a"/></svg>'), /use/);
+  assert.match(format.checkSvgSource('just text'), /不是 SVG/);
+});
+
+const PARTS_FILES = [
+  ['assets/nav_bookshelf.svg', 'vector'], ['assets/nav_explore.svg', 'vector'], ['assets/nav_search.svg', 'vector'],
+  ['assets/nav_mine.svg', 'vector'], ['assets/cover_01.jpg', 'image'], ['assets/cover_02.jpg', 'image'],
+  ['assets/frame.svg', 'vector'], ['assets/folder.jpg', 'image'], ['assets/startup.jpg', 'image'],
+  ['assets/tts_light.svg', 'vector'], ['assets/reader_tl.svg', 'vector'], ['assets/reader_br.svg', 'vector'],
+  ['assets/reader_dark.jpg', 'image'], ['assets/cap.svg', 'vector'], ['assets/logo.svg', 'vector']
+];
+
+function partsJson() {
+  return {
+    light: {
+      colors: { pageColor: '#f5f5f5', accentColor: '#3366CC' },
+      reader: { backgroundColor: '#FFF8EE', textColor: '#30261D', contentTone: 'light',
+        backgroundMode: 'ornaments', leading: 'assets/reader_tl.svg', trailing: 'assets/reader_br.svg' },
+      emphasis: { mode: 'bubble', color: '#80336699', textColor: '#102030' }
+    },
+    dark: {
+      colors: { pageColor: '#101418' },
+      reader: { backgroundColor: '#101418', textColor: '#D0D4D8', contentTone: 'dark',
+        backgroundMode: 'image', image: 'assets/reader_dark.jpg', imageFit: 'contain' }
+    },
+    ttsPanel: { light: { artwork: 'assets/tts_light.svg', skyColor: '#DCEBFF', surfaceColor: '#F5F7FA', glowColor: '#26007DFF' } },
+    navigation: { bookshelf: 'assets/nav_bookshelf.svg', explore: 'assets/nav_explore.svg',
+      search: 'assets/nav_search.svg', mine: 'assets/nav_mine.svg' },
+    book: { covers: ['assets/cover_01.jpg', 'assets/cover_02.jpg'], shelfFrame: 'assets/frame.svg', shelfFolder: 'assets/folder.jpg' },
+    startup: { light: { image: 'assets/startup.jpg', title: '夜花园', subtitle: '月下翻页' } },
+    bubble: { cap: 'assets/cap.svg' },
+    logo: 'assets/logo.svg',
+    radius: { card: 14, button: 22 },
+    // 磨砂参数不再是部件；多出来的键被忽略。
+    glass: { enabled: true, lightTintOpacity: 80 }
+  };
+}
+
+test('v2 theme: parts resolve by path, settings optional, kinds and required fields enforced', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const theme = format.decodeTheme(JSON.stringify({ parts: partsJson() }), manifest);
+  assert.equal(theme.settingsJson, '');
+  const parts = theme.parts;
+  assert.equal(parts.light.colors.pageColor, '#F5F5F5');
+  assert.equal(parts.light.reader.backgroundMode, 'ornaments');
+  assert.match(parts.light.reader.leading, /^qytheme-asset:[0-9a-f]{24}$/);
+  assert.equal(parts.dark.reader.backgroundMode, 'image');
+  assert.equal(parts.dark.reader.imageFit, 'contain');
+  assert.equal(parts.book.covers.length, 2);
+  assert.equal(parts.startupLight.title, '夜花园');
+  assert.equal(parts.startupDark, null);
+  assert.equal(parts.ttsPanelDark, null);
+  assert.deepEqual(parts.radius, { card: 14, button: 22 });
+  assert.equal(format.partsAssetRefs(parts).length, PARTS_FILES.length);
+  assert.deepEqual(format.describeParts(parts), ['浅色与深色配色', '阅读背景（角饰、整图）', '朗读/有声书面板插画',
+    '导航图标', '封面 2 张、书架边框、文件夹插画', '启动封面', '强调气泡端饰', '主题标识', '圆角']);
+
+  const broken = (mutate, pattern) => {
+    const json = partsJson();
+    mutate(json);
+    assert.throws(() => format.decodeTheme(JSON.stringify({ parts: json }), manifest), pattern);
+  };
+  broken(j => { j.navigation.mine = 'assets/cover_01.jpg'; }, /SVG/);
+  broken(j => { delete j.navigation.mine; }, /四个 SVG/);
+  broken(j => { j.light.colors.pageColor = 'red'; }, /颜色/);
+  broken(j => { j.light.reader.trailing = ''; }, /leading 和 trailing/);
+  broken(j => { j.ttsPanel.light.glowColor = ''; }, /artwork、skyColor/);
+  broken(j => { j.radius.card = 99; }, /0 到 48/);
+  broken(j => { j.book.covers = Array(9).fill('assets/cover_01.jpg'); }, /最多 8 张/);
+  broken(j => { j.logo = 'assets/missing.svg'; }, /不存在/);
+  broken(j => { j.bubble = { frame: 'assets/frame.svg' }; }, /需要 cap/);
+  // 没有 parts 也没有 settings 不行；parts 需要清单声明 theme-parts-v1。
+  assert.throws(() => format.decodeTheme(JSON.stringify({}), manifest), /主题设置已损坏/);
+  const noFeature = withAssets(manifestV2({ requires: ['custom-scheme-v1', 'reader-layout-v1'] }), PARTS_FILES);
+  assert.throws(() => format.decodeTheme(JSON.stringify({ parts: partsJson() }), noFeature), /清单已损坏/);
+});
+
+test('v2 theme: pack:self in settings becomes the installed pack id; export reverses it', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const settings = {
+    customBaseThemeId: 'pack:self',
+    customLightSources: { paletteThemeId: 'pack:self', bookThemeId: 'classic-blue' },
+    customDarkSources: { readerThemeId: 'pack:self' },
+    customLightReaderBackgroundAssetId: 'pack:self:light',
+    customDarkReaderBackgroundAssetId: 'paper-dark'
+  };
+  const theme = format.decodeTheme(JSON.stringify({ parts: partsJson(), settings }), manifest);
+  const decoded = JSON.parse(theme.settingsJson);
+  assert.equal(decoded.customBaseThemeId, 'pack:night-garden');
+  assert.equal(decoded.customLightSources.paletteThemeId, 'pack:night-garden');
+  assert.equal(decoded.customLightSources.bookThemeId, 'classic-blue');
+  assert.equal(decoded.customDarkSources.readerThemeId, 'pack:night-garden');
+  assert.equal(decoded.customLightReaderBackgroundAssetId, 'pack:night-garden:light');
+  assert.equal(decoded.customDarkReaderBackgroundAssetId, 'paper-dark');
+  format.replaceOwnPackIdWithSelf(decoded, 'pack:night-garden');
+  assert.equal(decoded.customBaseThemeId, 'pack:self');
+  assert.equal(decoded.customLightReaderBackgroundAssetId, 'pack:self:light');
+  // 方案的强调覆盖指向包内气泡时同样走 pack:self。
+  const withBubble = { customDarkEmphasis: { bubbleStyle: 'pack:self' } };
+  const bubbleTheme = format.decodeTheme(JSON.stringify({ parts: partsJson(), settings: withBubble }), manifest);
+  const bubbleDecoded = JSON.parse(bubbleTheme.settingsJson);
+  assert.equal(bubbleDecoded.customDarkEmphasis.bubbleStyle, 'pack:night-garden');
+  format.replaceOwnPackIdWithSelf(bubbleDecoded, 'pack:night-garden');
+  assert.equal(bubbleDecoded.customDarkEmphasis.bubbleStyle, 'pack:self');
+  // 没有 parts 的包里 pack:self 不替换，交给来源限制当作未知主题处理。
+  const plain = format.decodeTheme(JSON.stringify({ settings: { customBaseThemeId: 'pack:self' } }), manifest);
+  assert.equal(JSON.parse(plain.settingsJson).customBaseThemeId, 'pack:self');
+  const restricted = JSON.parse(plain.settingsJson);
+  const result = format.restrictSources(restricted, () => true, id => id !== 'pack:self', () => '', 'plain-default');
+  assert.equal(restricted.customBaseThemeId, 'plain-default');
+  assert.deepEqual(result.unknown, []);
+});
+
+test('v2 theme: parts survive an encode/decode round trip and ref mapping', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const theme = format.decodeTheme(JSON.stringify({ parts: partsJson() }), manifest);
+  const byPath = format.mapPartsAssetRefs(theme.parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+  assert.equal(byPath.navigation.mine, 'assets/nav_mine.svg');
+  assert.equal(byPath.book.covers[1], 'assets/cover_02.jpg');
+  assert.equal(theme.parts.navigation.mine.startsWith('qytheme-asset:'), true, 'mapping returns a copy');
+  const exported = new format.ThemePackageTheme();
+  exported.parts = byPath;
+  const again = format.decodeTheme(format.encodeTheme(exported), manifest);
+  assert.deepEqual(again.parts, theme.parts);
+  // 格式 1 的包不认路径引用。
+  const v1 = format.decodeManifest(JSON.stringify(manifestV1()));
+  assert.equal(format.resolveAssetRef(v1, 'assets/x.png'), null);
+});
+
+test('scheme overrides travel in settings and are gated by scheme-overrides-v1', () => {
+  assert.equal(format.ThemePackageFeatures.KNOWN.includes('scheme-overrides-v1'), true);
+  const m = format.decodeManifest(JSON.stringify(manifestV1({ requires: ['custom-scheme-v1', 'scheme-overrides-v1'] })));
+  const settings = { customLightPalette: { pageColor: '#F1F7F3' }, customDarkEmphasis: { mode: 'bubble', bubbleStyle: 'moon-halo' } };
+  const theme = format.decodeTheme(JSON.stringify({ settings }), m);
+  const decoded = JSON.parse(theme.settingsJson);
+  assert.equal(decoded.customLightPalette.pageColor, '#F1F7F3');
+  assert.equal(decoded.customDarkEmphasis.bubbleStyle, 'moon-halo');
 });

@@ -1,6 +1,7 @@
 import { ThemeAccessPolicy } from '../../account/ThemeAccessPolicy';
 import { ReaderFontWeight } from '../../core/reader/ReaderFontWeight';
 import { HexColor } from '../../utils/HexColor';
+import { isPackThemeId } from '../../theme/share/ThemePackageFormat';
 
 export class ReaderRegexFontRule {
   id: string = '';
@@ -154,6 +155,10 @@ export class ReaderRegexFontCodec {
 
   static normalizeBubbleStyleId(styleId: string): string {
     const value = (styleId || '').trim();
+    // 主题包自带的气泡：pack:<packageId>。包没装时由 ThemeAccessPolicy.accessibleBubbleStyle 换成可用样式。
+    if (isPackThemeId(value)) {
+      return value;
+    }
     if (value === 'inherit' || value === 'qq-soft' || value === 'qq-solid' || value === 'capsule' ||
       value === 'paper' || value === 'neon' || value === 'classic-glass' || value === 'warm-scroll' ||
       value === 'forest-dew' || value === 'ink-brush' || value === 'neon-pulse' || value === 'strawberry-ribbon' ||
@@ -352,6 +357,15 @@ export class ReaderRegexBubbleStyleResolver {
       context.surfaceColor,
       context.darkMode ? '#111318' : '#FFFFFF'
     );
+    if (isPackThemeId(result.bubbleStyleId)) {
+      // 主题包的气泡只带端饰和边框，底色与文字色跟主题强调色走，形状固定为圆角。
+      result.backgroundColor = result.mode === 'custom' ? base :
+        ReaderRegexBubbleStyleResolver.mix(surface, base, context.darkMode ? 0.30 : 0.18);
+      result.textColor = ReaderRegexBubbleStyleResolver.contrastTextColor(
+        ReaderRegexBubbleStyleResolver.mix(surface, base, context.darkMode ? 0.30 : 0.18));
+      ReaderRegexBubbleStyleResolver.setUniformRadius(result, 8);
+      return;
+    }
     if (result.bubbleStyleId === 'classic-glass') {
       result.backgroundColor = ReaderRegexBubbleStyleResolver.mix(surface, base, context.darkMode ? 0.28 : 0.16);
       result.textColor = context.darkMode ? '#DCEBFF' : '#234D72';

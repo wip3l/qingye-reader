@@ -27,7 +27,7 @@ export class StartupCoverImageStore {
   static remove(context: Context, uri: string): void {
     if (!uri) return;
     try {
-      const path = uri.startsWith('file://') ? decodeURIComponent(uri.substring(7)) : uri;
+      const path = uri.startsWith('file://') ? new fileUri.FileUri(uri).path : uri;
       if (path.startsWith(`${context.filesDir}/theme_startups/`) && fs.accessSync(path)) {
         fs.unlinkSync(path);
       }

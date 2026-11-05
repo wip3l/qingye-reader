@@ -35,6 +35,15 @@ export struct ReaderThemeBackground {
           .syncLoad(true)
           .draggable(false)
           .hitTestBehavior(HitTestMode.None)
+      } else if (ThemeAssetRegistry.readerBackgroundImage(this.backgroundAssetId)) {
+        // 主题包（含方案自己上传）的整图背景；阅读页走 ReaderThemeHelper 转成 customImage，预览面板直接到这里。
+        Image(ThemeAssetRegistry.readerBackgroundImage(this.backgroundAssetId))
+          .width('100%')
+          .height('100%')
+          .objectFit(this.packImageFit())
+          .syncLoad(true)
+          .draggable(false)
+          .hitTestBehavior(HitTestMode.None)
       } else if (this.backgroundAssetId) {
         this.builtinThemeDecoration()
       }
@@ -93,6 +102,13 @@ export struct ReaderThemeBackground {
       .padding(this.decorationInset())
       .hitTestBehavior(HitTestMode.None)
     }
+  }
+
+  packImageFit(): ImageFit {
+    const fit = ThemeAssetRegistry.readerBackgroundImageFit(this.backgroundAssetId);
+    if (fit === 'contain') return ImageFit.Contain;
+    if (fit === 'fill') return ImageFit.Fill;
+    return ImageFit.Cover;
   }
 
   // The placement math lives in ReaderThemeDecorationLayout, shared with the self-drawn page raster.

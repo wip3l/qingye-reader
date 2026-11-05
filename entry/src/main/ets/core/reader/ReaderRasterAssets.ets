@@ -83,9 +83,10 @@ export class ReaderRasterAssets {
     ReaderRasterAssets.cache.set(key, bitmap);
   }
 
-  /** Decodes a media resource at the given pixel size; null for string sources or on any failure. */
+  /** Decodes a media resource at the given pixel size; string sources are theme-pack files, decoded from disk. */
   static media(host: Context, resource: ResourceStr, widthPx: number, heightPx: number): image.PixelMap | null {
-    if (typeof resource === 'string' || !resource || !host) return null;
+    if (typeof resource === 'string') return resource ? ReaderRasterAssets.fileImage(resource, widthPx, heightPx) : null;
+    if (!resource || !host) return null;
     const width = Math.max(1, Math.round(widthPx));
     const height = Math.max(1, Math.round(heightPx));
     const key = `${resource.id}_${width}x${height}`;

@@ -13,6 +13,11 @@ export struct ThemeStartupCover {
   @Prop titleOverride: string = '';
   @Prop subtitleOverride: string = '';
   @Prop explicitText: boolean = false;
+  // 方案的文案样式覆盖；空 / 0 用默认。
+  @Prop titleColor: string = '';
+  @Prop subtitleColor: string = '';
+  @Prop titleSize: number = 0;
+  @Prop subtitleSize: number = 0;
   @Prop showTextEditButton: boolean = false;
   onEditText: () => void = (): void => {};
   @StorageLink('startupCoverTextsRevision') startupCoverTextsRevision: number = 0;
@@ -55,7 +60,7 @@ export struct ThemeStartupCover {
         }
       } else {
         // 使用参考主题封面视觉语言重新绘制的独立启动插画，不复用书籍封面本身。
-        Image(this.customImagePath || ThemeAssetRegistry.startupBackground(this.resolvedThemeId()))
+        Image(this.customImagePath || ThemeAssetRegistry.startupBackground(this.resolvedThemeId(), this.darkMode))
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
@@ -98,19 +103,19 @@ export struct ThemeStartupCover {
             Column() {
               if (this.coverTitle()) {
                 Text(this.coverTitle())
-                  .fontSize(this.compact ? 11 : 21)
+                  .fontSize(this.scaledSize(this.titleSize, 21, 11))
                   .fontWeight(FontWeight.Medium)
                   .fontFamily(this.theme().typography.appFontFamily)
-                  .fontColor(this.isObsidianArtwork() ? '#E4CCA0' : '#FFFFFF')
+                  .fontColor(this.titleColor || (this.isObsidianArtwork() ? '#E4CCA0' : '#FFFFFF'))
                   .letterSpacing(this.compact ? 1.2 : 4)
                   .textAlign(TextAlign.Center)
                   .opacity(this.contentOpacity * 0.94)
               }
               if (this.coverSubtitle()) {
                 Text(this.coverSubtitle())
-                  .fontSize(this.compact ? 7 : 12)
+                  .fontSize(this.scaledSize(this.subtitleSize, 12, 7))
                   .fontFamily(this.theme().typography.appFontFamily)
-                  .fontColor(this.isObsidianArtwork() ? '#C8BAA1' : '#D9FFFFFF')
+                  .fontColor(this.subtitleColor || (this.isObsidianArtwork() ? '#C8BAA1' : '#D9FFFFFF'))
                   .letterSpacing(this.compact ? 0.3 : 1.2)
                   .textAlign(TextAlign.Center)
                   .margin({ top: this.compact ? 2 : 8 })
@@ -166,6 +171,12 @@ export struct ThemeStartupCover {
     if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
     const parsed = Number.parseFloat(`${value}`);
     return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  /** 预览卡按默认字号的比例缩小自定义字号。 */
+  scaledSize(custom: number, normal: number, compact: number): number {
+    if (custom <= 0) return this.compact ? compact : normal;
+    return this.compact ? Math.max(6, Math.round(custom * compact / normal)) : custom;
   }
 
   isDefaultTheme(): boolean {

@@ -1,4 +1,5 @@
 import { BuiltinThemeRegistry } from './BuiltinThemeRegistry';
+import { ThemePackRegistry } from './ThemePackRegistry';
 import {
   ThemeBubbleStyles,
   ThemeBookTokens,
@@ -622,7 +623,8 @@ export class ThemeRuntime {
     else if (category === 'typography') themeId = sources.typographyThemeId;
     else if (category === 'layout') themeId = sources.layoutThemeId;
     else if (category === 'radius') themeId = sources.radiusThemeId;
-    else if (category === 'glass') themeId = sources.glassThemeId;
+    // 磨砂参数不再单独选来源：面板着色、边框和阴影跟随完整配色所属的主题。
+    else if (category === 'glass') themeId = sources.paletteThemeId;
     return BuiltinThemeRegistry.findById(themeId);
   }
 
@@ -679,6 +681,11 @@ export class ThemeRuntime {
 
   private static normalizeBubbleStyle(value: string, fallback: string): string {
     const style = (value || '').trim();
+    if (ThemePackRegistry.isPackId(style)) {
+      const pack = ThemePackRegistry.get(style);
+      if (pack && pack.hasBubble()) return style;
+      return ThemeRuntime.normalizeBubbleStyle(fallback, ThemeBubbleStyles.QQ_SOFT);
+    }
     if (style === ThemeBubbleStyles.QQ_SOFT || style === ThemeBubbleStyles.QQ_SOLID ||
       style === ThemeBubbleStyles.CAPSULE || style === ThemeBubbleStyles.PAPER ||
       style === ThemeBubbleStyles.NEON || style === ThemeBubbleStyles.CLASSIC_GLASS ||

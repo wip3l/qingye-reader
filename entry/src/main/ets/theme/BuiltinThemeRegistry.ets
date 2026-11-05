@@ -11,6 +11,7 @@ import {
   ThemeRegexEmphasisTokens,
   ThemeVariant
 } from './ThemeModels';
+import { ThemePackRegistry } from './ThemePackRegistry';
 
 export class BuiltinThemeRegistry {
   static readonly DEFAULT_THEME_ID: string = ThemeIds.PLAIN_DEFAULT;
@@ -28,6 +29,11 @@ export class BuiltinThemeRegistry {
     const normalized = (themeId || '').trim();
     if (normalized === ThemeIds.CUSTOM) {
       return BuiltinThemeRegistry.customTheme();
+    }
+    if (ThemePackRegistry.isPackId(normalized)) {
+      // 已安装的主题包按主题使用；包被删掉或还没同步到这台设备时按默认主题显示，ID 不改写。
+      const installed = ThemePackRegistry.get(normalized);
+      if (installed) return BuiltinThemeRegistry.cloneTheme(installed.pack);
     }
     for (const theme of BuiltinThemeRegistry.THEMES) {
       if (theme.id === normalized) {
@@ -47,6 +53,9 @@ export class BuiltinThemeRegistry {
     if (normalized === ThemeIds.CUSTOM) {
       return ThemeIds.CUSTOM;
     }
+    if (ThemePackRegistry.isPackId(normalized)) {
+      return normalized;
+    }
     for (const theme of BuiltinThemeRegistry.THEMES) {
       if (theme.id === normalized) {
         return normalized;
@@ -59,6 +68,9 @@ export class BuiltinThemeRegistry {
     const normalized = (themeId || '').trim();
     if (normalized === ThemeIds.CUSTOM) {
       return true;
+    }
+    if (ThemePackRegistry.isPackId(normalized)) {
+      return ThemePackRegistry.has(normalized);
     }
     for (const theme of BuiltinThemeRegistry.THEMES) {
       if (theme.id === normalized) {
@@ -73,8 +85,12 @@ export class BuiltinThemeRegistry {
     return normalized === ThemeIds.PLAIN_DEFAULT || normalized === BuiltinThemeRegistry.DEFAULT_THEME_ID;
   }
 
+  /** 主题包 ID（pack:<packageId>）原样保留：缺包时由 findById 回退，不把方案里的来源改写掉。 */
   static normalizeBuiltinId(themeId: string): string {
     const normalized = (themeId || '').trim();
+    if (ThemePackRegistry.isPackId(normalized)) {
+      return normalized;
+    }
     for (const theme of BuiltinThemeRegistry.THEMES) {
       if (theme.id === normalized) {
         return normalized;
@@ -734,7 +750,7 @@ export class BuiltinThemeRegistry {
     return glass;
   }
 
-  private static cloneTheme(source: ThemePack): ThemePack {
+  static cloneTheme(source: ThemePack): ThemePack {
     const theme = new ThemePack();
     theme.schemaVersion = source.schemaVersion;
     theme.id = source.id;
@@ -788,7 +804,7 @@ export class BuiltinThemeRegistry {
   }
 
   private static cloneVariant(source: ThemeVariant): ThemeVariant {
-    return BuiltinThemeRegistry.variant(
+    const variant = BuiltinThemeRegistry.variant(
       BuiltinThemeRegistry.colors(source.colors.pageColor, source.colors.cardColor, source.colors.inputColor,
         source.colors.primaryTextColor, source.colors.subTextColor, source.colors.dividerColor,
         source.colors.accentColor, source.colors.buttonColor, source.colors.dangerColor),
@@ -797,5 +813,8 @@ export class BuiltinThemeRegistry {
       BuiltinThemeRegistry.regex(source.regexEmphasis.bubbleStyle, source.regexEmphasis.emphasisColor,
         source.regexEmphasis.emphasisTextColor)
     );
+    variant.reader.backgroundImageFit = source.reader.backgroundImageFit || 'cover';
+    variant.regexEmphasis.emphasisMode = source.regexEmphasis.emphasisMode || ThemeRegexEmphasisModes.BUBBLE;
+    return variant;
   }
 }

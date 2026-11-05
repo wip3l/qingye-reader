@@ -1,6 +1,7 @@
 import { AccountSessionStore } from './AccountSessionStore';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ThemeIds } from '../theme/ThemeModels';
+import { ThemePackRegistry } from '../theme/ThemePackRegistry';
 
 export class ThemeAccessPolicy {
   static hasThemeAccess(themeId: string): boolean {
@@ -10,6 +11,10 @@ export class ThemeAccessPolicy {
     }
     if (BuiltinThemeRegistry.isFree(normalized)) {
       return true;
+    }
+    // 已安装的主题包随方案走，不另设权益；缺包时按默认主题显示。
+    if (ThemePackRegistry.isPackId(normalized)) {
+      return ThemePackRegistry.has(normalized);
     }
     if (normalized === ThemeIds.OBSIDIAN_ARCHIVE) return AccountSessionStore.hasOwnedEntitlement(normalized);
     const activeThemeId = AppStorage.get<string>('appThemeId') || '';
@@ -22,6 +27,7 @@ export class ThemeAccessPolicy {
 
   static requiredThemeForBubbleStyle(styleId: string): string {
     const normalized = (styleId || '').trim();
+    if (ThemePackRegistry.isPackId(normalized)) return '';
     if (normalized === 'classic-glass') return ThemeIds.CLASSIC_BLUE;
     if (normalized === 'warm-scroll') return ThemeIds.WARM_PAPER;
     if (normalized === 'forest-dew') return ThemeIds.FOREST_MIST;
@@ -44,6 +50,11 @@ export class ThemeAccessPolicy {
   }
 
   static canUseBubbleStyle(styleId: string): boolean {
+    const normalized = (styleId || '').trim();
+    if (ThemePackRegistry.isPackId(normalized)) {
+      const pack = ThemePackRegistry.get(normalized);
+      return !!pack && pack.hasBubble();
+    }
     const requiredThemeId = ThemeAccessPolicy.requiredThemeForBubbleStyle(styleId);
     return !requiredThemeId || ThemeAccessPolicy.hasThemeAccess(requiredThemeId);
   }

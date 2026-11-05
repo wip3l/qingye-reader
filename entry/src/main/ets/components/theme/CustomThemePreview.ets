@@ -9,6 +9,11 @@ import { ReaderThemeBackground } from '../ReaderThemeBackground';
 import { ThemeStartupCover } from '../ThemeStartupCover';
 import { TtsPanelThemeBackground } from '../TtsPanelThemeBackground';
 import { BookCover } from '../book/BookCover';
+import {
+  ReaderRegexBubbleStyleResolver,
+  ReaderRegexEmphasisContext,
+  ReaderResolvedRegexEmphasis
+} from '../../model/reader/ReaderRegexFontRule';
 
 /** 只读的方案预览；始终使用传入的草稿，不发布全局主题令牌。 */
 @Component
@@ -20,6 +25,10 @@ export struct CustomThemePreview {
   @Prop startupImagePath: string = '';
   @Prop startupTitle: string = '';
   @Prop startupSubtitle: string = '';
+  @Prop startupTitleColor: string = '';
+  @Prop startupSubtitleColor: string = '';
+  @Prop startupTitleSize: number = 0;
+  @Prop startupSubtitleSize: number = 0;
   @Prop ttsThemeId: string = '';
   @Prop readerSettings: ReaderSettings = new ReaderSettings();
   @Prop useReaderProfile: boolean = false;
@@ -35,7 +44,11 @@ export struct CustomThemePreview {
           customImagePath: this.startupImagePath,
           titleOverride: this.startupTitle,
           subtitleOverride: this.startupSubtitle,
-          explicitText: true
+          explicitText: true,
+          titleColor: this.startupTitleColor,
+          subtitleColor: this.startupSubtitleColor,
+          titleSize: this.startupTitleSize,
+          subtitleSize: this.startupSubtitleSize
         })
       } else if (this.scene === 'reader') {
         this.readerPreview()
@@ -171,12 +184,7 @@ export struct CustomThemePreview {
           .width('100%')
           .maxLines(this.expanded ? 12 : 3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text('把时光，留给阅读')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.variant().regexEmphasis.emphasisTextColor)
-          .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
-          .borderRadius(this.themePack.radius.bubble)
-          .backgroundColor(this.variant().regexEmphasis.emphasisColor)
+        this.emphasisSample()
       }
       .width('100%')
       .padding({
@@ -189,6 +197,93 @@ export struct CustomThemePreview {
     }
     .width('100%')
     .height('100%')
+  }
+
+  /** 强调示例按方案实际的强调方式、气泡样式与端饰绘制，和主题详情页的阅读页预览同一套解析。 */
+  @Builder
+  emphasisSample() {
+    Text() {
+      Span('她在扉页写下：')
+        .fontColor(this.variant().reader.textColor)
+      if (this.emphasisStyle().mode === 'none') {
+        Span('把时光，留给阅读')
+          .fontColor(this.variant().reader.textColor)
+      } else if (this.emphasisStyle().bubbleDecorationEnabled && this.hasBubbleCap()) {
+        ContainerSpan() {
+          ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle))
+            .width(this.readerFontSize())
+            .height(this.readerFontSize())
+            .objectFit(ImageFit.Contain)
+            .verticalAlign(ImageSpanAlignment.CENTER)
+          Span('把时光，留给阅读')
+            .fontColor(this.emphasisStyle().textColor)
+            .textShadow(this.emphasisShadow())
+          ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle))
+            .width(this.readerFontSize())
+            .height(this.readerFontSize())
+            .objectFit(ImageFit.Contain)
+            .verticalAlign(ImageSpanAlignment.CENTER)
+            .rotate({ angle: 180 })
+        }
+        .textBackgroundStyle(this.emphasisBackground())
+      } else {
+        ContainerSpan() {
+          Span('把时光，留给阅读')
+            .fontColor(this.emphasisStyle().textColor)
+            .textShadow(this.emphasisShadow())
+        }
+        .textBackgroundStyle(this.emphasisBackground())
+      }
+    }
+    .fontSize(this.readerFontSize())
+    .lineHeight(this.readerFontSize() * 1.8)
+    .fontFamily(this.themePack.typography.appFontFamily)
+    .width('100%')
+    .maxLines(2)
+  }
+
+  emphasisStyle(): ReaderResolvedRegexEmphasis {
+    const variant = this.variant();
+    const context = new ReaderRegexEmphasisContext();
+    context.inheritedMode = variant.regexEmphasis.emphasisMode;
+    context.inheritedBubbleStyleId = variant.regexEmphasis.bubbleStyle;
+    context.inheritedColor = variant.regexEmphasis.emphasisColor;
+    context.inheritedTextColor = variant.regexEmphasis.emphasisTextColor;
+    context.accentColor = variant.colors.accentColor;
+    context.surfaceColor = variant.reader.backgroundColor;
+    context.normalTextColor = variant.reader.textColor;
+    context.darkMode = variant.reader.contentTone === 'dark';
+    // 预览画的是方案自己选的气泡，权益检查留给阅读页。
+    return ReaderRegexBubbleStyleResolver.resolve(null, context, false);
+  }
+
+  hasBubbleCap(): boolean {
+    return ThemeAssetRegistry.hasRegexBubbleCap(this.variant().regexEmphasis.bubbleStyle);
+  }
+
+  emphasisBackground(): TextBackgroundStyle {
+    const style = this.emphasisStyle();
+    if (!style.backgroundEnabled) return {};
+    return {
+      color: style.backgroundColor,
+      radius: {
+        topLeft: style.radiusTopLeft,
+        topRight: style.radiusTopRight,
+        bottomLeft: style.radiusBottomLeft,
+        bottomRight: style.radiusBottomRight
+      }
+    };
+  }
+
+  emphasisShadow(): ShadowOptions | ShadowOptions[] {
+    const style = this.emphasisStyle();
+    if (style.textShadows.length > 0) return style.textShadows;
+    return {
+      radius: style.textShadowRadius,
+      color: style.textShadowColor,
+      offsetX: style.textShadowOffsetX,
+      offsetY: style.textShadowOffsetY
+    };
   }
 
   @Builder

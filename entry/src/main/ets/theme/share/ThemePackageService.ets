@@ -20,36 +20,52 @@ import { ReaderSettings, ReaderSettingsStore } from '../../utils/ReaderSettingsS
 import { ReaderThemeHelper } from '../../utils/ReaderThemeHelper';
 import { BuiltinThemeRegistry } from '../BuiltinThemeRegistry';
 import { ThemeIds, ThemePack } from '../ThemeModels';
+import { InstalledThemePack, ThemePackRecord, ThemePackRegistry } from '../ThemePackRegistry';
+import { ThemePackStore } from '../../utils/ThemePackStore';
 import {
   applyLayout,
   assetIdFromRef,
   assetPath,
+  assetPathExtension,
   assetRef,
+  checkSvgSource,
   decodeManifest,
   decodeTheme,
+  describeParts,
   encodeManifest,
   encodeTheme,
   findAsset,
+  findAssetByPath,
   IMAGE_SETTING_KEYS,
   isLocalFileReference,
+  isPackThemeId,
   kindForExtension,
+  mapPartsAssetRefs,
+  maxBytesForKind,
   mergeRules,
   packageFileName,
+  packageIdOfThemeId,
+  packThemeId,
+  partsAssetRefs,
   pickLayout,
   QYTHEME_EXTENSION,
   remapFonts,
+  replaceOwnPackIdWithSelf,
   restrictSources,
   sanitizeAuthor,
   sanitizeThemeName,
   sniffAssetExtension,
   SourceRestriction,
+  THEME_SOURCE_FIELDS,
   ThemePackageAsset,
   ThemePackageAssetKinds,
+  ThemePackageCredits,
   ThemePackageEmphasis,
   ThemePackageFeatures,
   ThemePackageFont,
   ThemePackageLimits,
   ThemePackageManifest,
+  ThemePackageParts,
   ThemePackageTheme
 } from './ThemePackageFormat';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from './ZipEntryInspector';
@@ -86,6 +102,12 @@ export class ThemeExportPlan {
   missingImages: string[] = [];
   ruleCount: number = 0;
   fonts: ThemeExportFontInfo[] = [];
+  // 随包打出去的主题包素材（方案由主题包安装而来，或部件里选了某个主题包）。
+  packName: string = '';
+  packAssetCount: number = 0;
+  packAssetBytes: number = 0;
+  // 方案不是这个主题包自己的方案：导出为新包，原作者记在 credits。
+  packRemix: boolean = false;
 }
 
 export class ThemeExportOptions {
@@ -117,6 +139,11 @@ export class ThemeImportPreview {
   bundledFontCount: number = 0;
   imageCount: number = 0;
   hasLayout: boolean = false;
+  // 包内部件（格式 2）：描述列表、包 ID，以及本机已有同一个包时要更新的方案。
+  parts: string[] = [];
+  packageId: string = '';
+  updateSchemeId: string = '';
+  updateSchemeName: string = '';
 }
 
 export class ThemeImportResult {
@@ -124,11 +151,14 @@ export class ThemeImportResult {
   addedRules: number = 0;
   skippedRules: number = 0;
   missingFonts: string[] = [];
+  // 更新了正在使用的方案：调用方需要重新应用主题。
+  replacedActive: boolean = false;
 }
 
 const IMAGE_KEY_LABELS: Map<string, string> = new Map<string, string>([
   ['customLightStartupImagePath', '浅色启动封面图片'],
   ['customDarkStartupImagePath', '深色启动封面图片'],
+  ['customPreviewImagePath', '方案预览图'],
   ['customLightReaderBackgroundAssetId', '浅色阅读背景图片'],
   ['customDarkReaderBackgroundAssetId', '深色阅读背景图片']
 ]);
@@ -167,8 +197,76 @@ export class ThemePackageService {
     }
     const profile = await ThemePackageService.schemeProfile(context, scheme);
     plan.ruleCount = ThemePackageService.profileRules(profile).length;
-    plan.fonts = ThemePackageService.effectiveFonts(profile, true);
+    plan.fonts = ThemePackageService.effectiveFonts(profile, true, scheme.settings.customAppFontFamily);
+    const bundled = ThemePackageService.bundledPack(scheme);
+    if (bundled) {
+      plan.packName = bundled.name;
+      plan.packRemix = scheme.packageId !== bundled.packageId;
+      for (const relativePath of partsAssetRefs(bundled.record.parts)) {
+        const path = `${bundled.dir}/${relativePath}`;
+        if (!ThemePackageService.exists(path)) continue;
+        plan.packAssetCount++;
+        plan.packAssetBytes += fs.statSync(path).size;
+      }
+    }
     return plan;
+  }
+
+  /** 方案引用到的、要随包打出去的主题包：方案本身由包安装而来，或者部件里选了某个已安装的包。 */
+  static bundledPack(scheme: CustomThemeScheme): InstalledThemePack | null {
+    if (scheme.packageId) {
+      const own = ThemePackRegistry.getByPackageId(scheme.packageId);
+      if (own) return own;
+    }
+    for (const id of ThemePackageService.referencedPackageIds(ThemePackageService.settingsRecord(scheme.settings))) {
+      const pack = ThemePackRegistry.getByPackageId(id);
+      if (pack) return pack;
+    }
+    return null;
+  }
+
+  /** 方案设置里出现的全部主题包 ID（基底、各部件来源、阅读背景键）。 */
+  static referencedPackageIds(settings: Record<string, Object>): string[] {
+    const ids: string[] = [];
+    const add = (value: Object | undefined): void => {
+      const id = typeof value === 'string' ? packageIdOfThemeId(value) : '';
+      if (id && !ids.includes(id)) ids.push(id);
+    };
+    add(settings['customBaseThemeId']);
+    for (const modeKey of ['customLightSources', 'customDarkSources']) {
+      const sources = settings[modeKey];
+      if (!sources || typeof sources !== 'object') continue;
+      const record = sources as Record<string, Object>;
+      for (const field of THEME_SOURCE_FIELDS) add(record[field.key]);
+    }
+    add(settings['customLightReaderBackgroundAssetId']);
+    add(settings['customDarkReaderBackgroundAssetId']);
+    return ids;
+  }
+
+  /** 导出时：指向其他主题包（不随包打出去的）的来源换成默认主题，导入方没有那些素材。 */
+  private static detachOtherPacks(settings: Record<string, Object>, keepPackageId: string): void {
+    const fallback = BuiltinThemeRegistry.DEFAULT_THEME_ID;
+    const other = (value: Object | undefined): boolean => {
+      const id = typeof value === 'string' ? packageIdOfThemeId(value) : '';
+      return !!id && id !== keepPackageId;
+    };
+    if (other(settings['customBaseThemeId'])) settings['customBaseThemeId'] = fallback;
+    for (const modeKey of ['customLightSources', 'customDarkSources']) {
+      const sources = settings[modeKey];
+      if (!sources || typeof sources !== 'object') continue;
+      const record = sources as Record<string, Object>;
+      for (const field of THEME_SOURCE_FIELDS) {
+        if (other(record[field.key])) record[field.key] = fallback;
+      }
+    }
+    const defaults = BuiltinThemeRegistry.findById(fallback);
+    if (other(settings['customLightReaderBackgroundAssetId'])) {
+      settings['customLightReaderBackgroundAssetId'] = defaults.light.reader.backgroundAssetId;
+    }
+    if (other(settings['customDarkReaderBackgroundAssetId'])) {
+      settings['customDarkReaderBackgroundAssetId'] = defaults.dark.reader.backgroundAssetId;
+    }
   }
 
   /** 在临时目录生成主题包（ZIP），之后由用户选择保存到文件或分享。 */
@@ -179,8 +277,12 @@ export class ThemePackageService {
     const assetsDir = `${pkgDir}/assets`;
     fs.mkdirSync(assetsDir, true);
     try {
+      const bundled = ThemePackageService.bundledPack(scheme);
       const manifest = new ThemePackageManifest();
-      manifest.packageId = ThemePackageService.randomHex(16);
+      // 没带主题包素材的方案仍按格式 1 导出，老版本应用也能导入。
+      manifest.formatVersion = bundled ? 2 : 1;
+      manifest.packageId = bundled && scheme.packageId === bundled.packageId ? bundled.packageId :
+        ThemePackageService.randomHex(16);
       manifest.name = sanitizeThemeName(scheme.name) || '自定义主题';
       manifest.author = options.includeAuthor ? sanitizeAuthor(options.authorName) : '';
       if (options.includeAuthor && !manifest.author) {
@@ -189,11 +291,33 @@ export class ThemePackageService {
       manifest.exportedAt = Date.now();
       manifest.appVersion = ThemePackageService.appVersion();
       manifest.requires = [ThemePackageFeatures.CUSTOM_SCHEME, ThemePackageFeatures.READER_LAYOUT];
+      if (bundled) {
+        manifest.requires.push(ThemePackageFeatures.THEME_PARTS);
+        manifest.version = bundled.version;
+        manifest.description = bundled.description;
+        manifest.baseTheme = bundled.baseTheme;
+        if (scheme.packageId === bundled.packageId) {
+          manifest.credits = bundled.credits;
+        } else {
+          // 混搭了别人的主题包素材：按新包导出，原包和原作者记在 credits 里。
+          const credits = new ThemePackageCredits();
+          credits.packageId = bundled.packageId;
+          credits.name = bundled.name;
+          credits.author = bundled.author;
+          manifest.credits = credits;
+        }
+      }
 
       const settingsRecord = ThemePackageService.settingsRecord(scheme.settings);
       // 是否使用主题封面、应用时是否带排版是本机偏好，不随主题走。
       settingsRecord['themeBookCoverEnabled'] = false;
       settingsRecord['themeApplyLayoutEnabled'] = false;
+      if (AppThemeSettingsStore.hasOverrides(scheme.settings)) {
+        manifest.requires.push(ThemePackageFeatures.SCHEME_OVERRIDES);
+      }
+      // 指向随包打出去的主题包的来源写成 pack:self，导入时换成导入方安装后的 ID。
+      ThemePackageService.detachOtherPacks(settingsRecord, bundled ? bundled.packageId : '');
+      if (bundled) replaceOwnPackIdWithSelf(settingsRecord, bundled.themeId);
       const copied = new Map<string, string>();
       for (const key of IMAGE_SETTING_KEYS) {
         const value = settingsRecord[key];
@@ -238,8 +362,9 @@ export class ThemePackageService {
 
       // 只打包这套方案实际生效的字体：正文、标题，以及开着强调规则时规则用的字体。
       // 规则开关关着时，规则字体只记名字，导入方看得到用的是哪款。
-      const effective = ThemePackageService.effectiveFonts(profile, options.includeRules);
-      for (const family of ThemePackageService.boundFamilies(profileRecord, rules)) {
+      const effective = ThemePackageService.effectiveFonts(profile, options.includeRules,
+        scheme.settings.customAppFontFamily);
+      for (const family of ThemePackageService.boundFamilies(profileRecord, rules, scheme.settings.customAppFontFamily)) {
         const info = effective.find((item: ThemeExportFontInfo): boolean => item.family === family);
         const font = new ThemePackageFont();
         font.family = family;
@@ -258,6 +383,9 @@ export class ThemePackageService {
           }
         }
         theme.fonts.push(font);
+      }
+      if (bundled) {
+        theme.parts = await ThemePackageService.packParts(bundled, assetsDir, manifest);
       }
       if (manifest.assets.some((item: ThemePackageAsset): boolean => item.kind === ThemePackageAssetKinds.FONT)) {
         manifest.requires.push(ThemePackageFeatures.FONTS);
@@ -338,27 +466,46 @@ export class ThemePackageService {
   static async prepareImport(context: Context, uri: string): Promise<ThemeImportPreview> {
     const workDir = `${context.tempDir}/qytheme_import_${Date.now()}`;
     fs.mkdirSync(workDir, true);
+    // 出错时把走到的步骤带进提示，用户反馈“无法读取”时能分清是文件、解压还是校验的问题。
+    let stage = '读取文件';
     try {
       const zipPath = `${workDir}/source.zip`;
-      const copySource = uri.startsWith('/') ? fileUri.getUriFromPath(uri) : uri;
-      await fs.copy(copySource, fileUri.getUriFromPath(zipPath));
+      const sourcePath = ThemePackageService.pathFromUri(uri);
+      console.info(`[qytheme] import source uri=${uri} path=${sourcePath} exists=${ThemePackageService.exists(sourcePath)}`);
+      if (ThemePackageService.exists(sourcePath)) {
+        // 应用自己沙箱里的文件（例如分享收到后已落盘的包）直接拷贝；fs.copy 对这类 URI 会报 EINVAL。
+        fs.copyFileSync(sourcePath, zipPath);
+      } else {
+        const copySource = uri.startsWith('/') ? fileUri.getUriFromPath(uri) : uri;
+        await fs.copy(copySource, fileUri.getUriFromPath(zipPath));
+      }
       const size = fs.statSync(zipPath).size;
       if (size > ThemePackageLimits.MAX_PACKAGE_BYTES) {
         throw new Error('主题包超过 80 MB，无法导入');
       }
+      stage = '检查压缩包';
       const entries = ThemePackageService.inspectZip(zipPath, size);
       const root = ZipEntryInspector.commonRoot(entries);
       const outDir = `${workDir}/out`;
       fs.mkdirSync(outDir, true);
+      stage = '解压';
       await zlib.decompressFile(zipPath, outDir);
       fs.unlinkSync(zipPath);
       const baseDir = root ? `${outDir}/${root.substring(0, root.length - 1)}` : outDir;
+      stage = '读取清单';
       const manifest = decodeManifest(ThemePackageService.readSmallText(`${baseDir}/manifest.json`));
-      ThemePackageService.checkEntries(entries, root, manifest);
-      const theme = decodeTheme(ThemePackageService.readSmallText(`${baseDir}/theme.json`), manifest);
-      for (const asset of manifest.assets) {
-        await ThemePackageService.verifyAsset(baseDir, asset);
+      stage = '核对素材';
+      if (manifest.formatVersion >= 2) {
+        await ThemePackageService.collectAssets(entries, root, baseDir, manifest);
+      } else {
+        ThemePackageService.checkEntries(entries, root, manifest);
+        for (const asset of manifest.assets) {
+          await ThemePackageService.verifyAsset(baseDir, asset);
+        }
       }
+      stage = '读取主题设置';
+      const theme = decodeTheme(ThemePackageService.readSmallText(`${baseDir}/theme.json`), manifest);
+      stage = '整理预览';
 
       const preview = new ThemeImportPreview();
       preview.workDir = workDir;
@@ -366,26 +513,52 @@ export class ThemePackageService {
       preview.manifest = manifest;
       preview.theme = theme;
       preview.hasLayout = !!theme.layoutJson;
-      const settings = JSON.parse(theme.settingsJson) as Record<string, Object>;
-      const restriction: SourceRestriction = restrictSources(settings,
-        (themeId: string): boolean => ThemePackageService.canUseTheme(themeId),
-        (themeId: string): boolean => BuiltinThemeRegistry.has(themeId) && themeId !== ThemeIds.CUSTOM,
-        (themeId: string): string => BuiltinThemeRegistry.findById(themeId).name,
-        BuiltinThemeRegistry.DEFAULT_THEME_ID);
-      preview.replaced = restriction.replaced;
-      preview.unknown = restriction.unknown;
-      ThemePackageService.restrictBackgroundAssets(settings, preview.replaced);
-      preview.settingsJson = JSON.stringify(settings);
-      for (const key of IMAGE_SETTING_KEYS) {
-        const value = settings[key];
-        if (typeof value === 'string' && assetIdFromRef(value)) preview.imageCount++;
+      const ownThemeId = theme.parts ? packThemeId(manifest.packageId) : '';
+      if (theme.parts) {
+        preview.packageId = manifest.packageId;
+        preview.parts = describeParts(theme.parts);
+        if (theme.parts.appFont) {
+          // 界面字体和阅读字体走同一条安装路径：记成一个字体绑定，安装后换成本机字体名。
+          const asset = findAsset(manifest, assetIdFromRef(theme.parts.appFont));
+          const font = new ThemePackageFont();
+          font.family = ThemePackageService.appFontFamilyKey(manifest.packageId);
+          font.name = asset && asset.name ? asset.name : `${manifest.name} 界面字体`;
+          font.assetId = asset ? asset.id : '';
+          if (font.assetId) theme.fonts.push(font);
+        }
+        const appSettings = await AppThemeSettingsStore.load(context);
+        const schemes = await CustomThemeSchemeStore.load(context, appSettings);
+        const existing = CustomThemeSchemeStore.findByPackageId(schemes, manifest.packageId);
+        if (existing) {
+          preview.updateSchemeId = existing.id;
+          preview.updateSchemeName = existing.name;
+        }
+      }
+      if (theme.settingsJson) {
+        const settings = JSON.parse(theme.settingsJson) as Record<string, Object>;
+        const restriction: SourceRestriction = restrictSources(settings,
+          (themeId: string): boolean => themeId === ownThemeId || ThemePackageService.canUseTheme(themeId),
+          (themeId: string): boolean => themeId === ownThemeId ||
+            (BuiltinThemeRegistry.has(themeId) && themeId !== ThemeIds.CUSTOM),
+          (themeId: string): string => BuiltinThemeRegistry.findById(themeId).name,
+          BuiltinThemeRegistry.DEFAULT_THEME_ID);
+        preview.replaced = restriction.replaced;
+        preview.unknown = restriction.unknown;
+        ThemePackageService.restrictBackgroundAssets(settings, preview.replaced, ownThemeId);
+        ThemePackageService.restrictEmphasisOverrides(settings, preview.lockedBubbles, ownThemeId);
+        preview.settingsJson = JSON.stringify(settings);
+        for (const key of IMAGE_SETTING_KEYS) {
+          const value = settings[key];
+          if (typeof value === 'string' && assetIdFromRef(value)) preview.imageCount++;
+        }
       }
       if (theme.emphasis) {
         const rules = ReaderRegexFontCodec.decode(theme.emphasis.rulesJson);
         preview.ruleCount = rules.length;
         for (const rule of rules) {
+          if (rule.bubbleStyleId === ownThemeId) continue;
           if (!ThemeAccessPolicy.canUseBubbleStyle(rule.bubbleStyleId)) {
-            const label = `${rule.name}（${ThemeAccessPolicy.requiredThemeNameForBubbleStyle(rule.bubbleStyleId)}）`;
+            const label = `${rule.name}（${ThemeAccessPolicy.requiredThemeNameForBubbleStyle(rule.bubbleStyleId) || '主题包'}）`;
             if (!preview.lockedBubbles.includes(label)) preview.lockedBubbles.push(label);
           }
         }
@@ -401,8 +574,14 @@ export class ThemePackageService {
       return preview;
     } catch (e) {
       ThemePackageService.removeDir(workDir);
-      throw e as Error;
+      const message = (e as Error).message || String(e);
+      console.error(`读取主题包失败（${stage}）:`, message);
+      throw new Error(message.startsWith('主题包') || message.startsWith('这') ? message : `${message}（${stage}）`);
     }
+  }
+
+  private static appFontFamilyKey(packageId: string): string {
+    return `qytheme-app-font:${packageId}`;
   }
 
   static discardImport(preview: ThemeImportPreview | null): void {
@@ -410,35 +589,43 @@ export class ThemePackageService {
   }
 
   /**
-   * 写入导入结果：安装图片和字体、新建（或替换）方案，并给这套方案建一份阅读设置——
+   * 写入导入结果：安装图片、字体和主题包素材，新建（或替换）方案，并给这套方案建一份阅读设置——
    * 以当前（或被替换方案）的设置为底，换上包内排版，包内强调规则追加在原有规则之后。
    */
   static async commitImport(context: Context, uiContext: UIContext | null, preview: ThemeImportPreview,
     replaceSchemeId: string): Promise<ThemeImportResult> {
+    let installedPackageId = '';
     try {
       const appSettings = await AppThemeSettingsStore.load(context);
       const schemes = await CustomThemeSchemeStore.load(context, appSettings);
+      const activeSchemeId = AppStorage.get<string>(CustomThemeSchemeStore.STORAGE_ACTIVE_SCHEME_ID) || '';
+      const replacesActive = !!replaceSchemeId && appSettings.themeId === ThemeIds.CUSTOM &&
+        activeSchemeId === replaceSchemeId;
       if (replaceSchemeId) {
-        if (appSettings.themeId === ThemeIds.CUSTOM &&
-          (AppStorage.get<string>(CustomThemeSchemeStore.STORAGE_ACTIVE_SCHEME_ID) || '') === replaceSchemeId) {
+        // 同一个主题包的新版本可以原位更新正在使用的方案，调用方随后重新应用；其他替换仍不允许。
+        if (replacesActive && replaceSchemeId !== preview.updateSchemeId) {
           throw new Error('正在使用的方案不能被替换，请先换用其他主题');
         }
       } else if (schemes.length >= CustomThemeQuota.current()) {
         throw new Error(`已达到 ${CustomThemeQuota.current()} 套方案上限，请选择替换一套已有方案`);
       }
       const manifest = preview.manifest;
-      const settings = JSON.parse(preview.settingsJson) as Record<string, Object>;
-      for (const key of IMAGE_SETTING_KEYS) {
-        const value = settings[key];
-        const id = typeof value === 'string' ? assetIdFromRef(value) : '';
-        if (!id) continue;
-        const asset = findAsset(manifest, id);
-        if (!asset) {
-          settings[key] = '';
-          continue;
+      const settings: Record<string, Object> | null = preview.settingsJson ?
+        JSON.parse(preview.settingsJson) as Record<string, Object> : null;
+      if (settings) {
+        for (const key of IMAGE_SETTING_KEYS) {
+          const value = settings[key];
+          const id = typeof value === 'string' ? assetIdFromRef(value) : '';
+          if (!id) continue;
+          const asset = findAsset(manifest, id);
+          if (!asset) {
+            settings[key] = '';
+            continue;
+          }
+          const dir = key === 'customPreviewImagePath' ? 'theme_previews' :
+            (key.endsWith('ImagePath') ? 'theme_startups' : 'reader_backgrounds');
+          settings[key] = fileUri.getUriFromPath(ThemePackageService.installAsset(context, preview.baseDir, asset, dir));
         }
-        const dir = key.endsWith('ImagePath') ? 'theme_startups' : 'reader_backgrounds';
-        settings[key] = fileUri.getUriFromPath(ThemePackageService.installAsset(context, preview.baseDir, asset, dir));
       }
 
       const baseProfile = replaceSchemeId ?
@@ -456,6 +643,16 @@ export class ThemePackageService {
           ReaderRegexFontCodec.decode(preview.theme.emphasis.rulesJson)))) as Record<string, Object>[] : [];
       const result = new ThemeImportResult();
       result.missingFonts = remapFonts(layout, incomingRules, installed, displayNames);
+      if (settings && typeof settings['customAppFontFamily'] === 'string' && settings['customAppFontFamily']) {
+        // 界面字体绑定也换成本机安装后的字体名；没带文件就退回跟随来源主题。
+        const family = settings['customAppFontFamily'] as string;
+        const mapped = installed.get(family) || '';
+        settings['customAppFontFamily'] = mapped;
+        if (!mapped) {
+          const name = displayNames.get(family) || family;
+          if (!result.missingFonts.includes(name)) result.missingFonts.push(name);
+        }
+      }
       if (layout) {
         applyLayout(profileRecord, layout);
       }
@@ -475,13 +672,43 @@ export class ThemePackageService {
         result.skippedRules = merged.skipped;
       }
 
-      const schemeSettings = AppThemeSettingsStore.cloneSettings(
-        JSON.parse(JSON.stringify(settings)) as AppThemeSettings);
+      // 包内部件：素材进 theme_packs/<packageId>/，注册为主题 pack:<packageId>。
+      const parts = preview.theme.parts;
+      if (parts) {
+        if (parts.appFont) {
+          const family = installed.get(ThemePackageService.appFontFamilyKey(manifest.packageId)) || '';
+          if (family) parts.appFontFamily = family;
+        }
+        ThemePackageService.installPack(context, preview, parts);
+        installedPackageId = manifest.packageId;
+      }
+
+      let schemeSettings: AppThemeSettings;
+      if (settings) {
+        schemeSettings = AppThemeSettingsStore.cloneSettings(
+          JSON.parse(JSON.stringify(settings)) as AppThemeSettings);
+      } else if (parts) {
+        // 手写的主题包没有方案设置：所有部件都指向这个包，颜色与阅读背景取包里的令牌。
+        const base = AppThemeSettingsStore.createForTheme(packThemeId(manifest.packageId));
+        schemeSettings = AppThemeSettingsStore.activateTheme(ThemeIds.CUSTOM, base);
+        schemeSettings.customLightStartupTitle = parts.startupLight ? parts.startupLight.title :
+          (parts.startupDark ? parts.startupDark.title : '开源轻页');
+        schemeSettings.customLightStartupSubtitle = parts.startupLight ? parts.startupLight.subtitle :
+          (parts.startupDark ? parts.startupDark.subtitle : '');
+        schemeSettings.customDarkStartupTitle = parts.startupDark ? parts.startupDark.title :
+          schemeSettings.customLightStartupTitle;
+        schemeSettings.customDarkStartupSubtitle = parts.startupDark ? parts.startupDark.subtitle :
+          schemeSettings.customLightStartupSubtitle;
+        const installedPack = ThemePackRegistry.getByPackageId(manifest.packageId);
+        if (installedPack && installedPack.preview) schemeSettings.customPreviewImagePath = installedPack.preview;
+      } else {
+        throw new Error('主题包的主题设置已损坏');
+      }
       schemeSettings.themeId = ThemeIds.CUSTOM;
       schemeSettings.themeBookCoverEnabled = false;
       schemeSettings.themeApplyLayoutEnabled = false;
       const scheme = await CustomThemeSchemeStore.addImported(context, appSettings, manifest.name, schemeSettings,
-        manifest.author, replaceSchemeId);
+        manifest.author, replaceSchemeId, parts ? manifest.packageId : '');
       if (!scheme) {
         throw new Error(replaceSchemeId ? '要替换的方案已不存在' :
           `已达到 ${CustomThemeQuota.current()} 套方案上限`);
@@ -494,13 +721,80 @@ export class ThemePackageService {
           ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, scheme.id));
       }
       result.scheme = scheme;
+      result.replacedActive = replacesActive;
+      installedPackageId = '';
       if (replaceSchemeId) {
         await ThemePackageService.cleanupImportedFiles(context);
       }
       return result;
+    } catch (e) {
+      // 新装的包没有方案引用就是垃圾；更新失败时旧版本已被覆盖，留给清理按引用处理。
+      if (installedPackageId && !preview.updateSchemeId) ThemePackStore.uninstall(context, installedPackageId);
+      throw e as Error;
     } finally {
       ThemePackageService.discardImport(preview);
     }
+  }
+
+  /** 素材按内容命名复制进包目录，记录写成相对路径，然后注册。 */
+  private static installPack(context: Context, preview: ThemeImportPreview, parts: ThemePackageParts): void {
+    const manifest = preview.manifest;
+    const dir = ThemePackStore.prepareDir(context, manifest.packageId);
+    const paths = new Map<string, string>();
+    for (const ref of partsAssetRefs(parts)) {
+      const asset = findAsset(manifest, assetIdFromRef(ref));
+      if (!asset) {
+        throw new Error('主题包缺少素材文件');
+      }
+      const extension = asset.path.substring(asset.path.lastIndexOf('.') + 1);
+      const relativePath = assetPath(asset.id, extension);
+      const target = `${dir}/${relativePath}`;
+      if (!ThemePackageService.exists(target)) {
+        fs.copyFileSync(`${preview.baseDir}/${asset.path}`, target);
+      }
+      paths.set(ref, relativePath);
+    }
+    const record = new ThemePackRecord();
+    record.packageId = manifest.packageId;
+    record.name = manifest.name;
+    record.author = manifest.author;
+    record.version = manifest.version;
+    record.description = manifest.description;
+    record.baseTheme = isPackThemeId(manifest.baseTheme) ? BuiltinThemeRegistry.DEFAULT_THEME_ID :
+      BuiltinThemeRegistry.normalizeBuiltinId(manifest.baseTheme);
+    record.installedAt = Date.now();
+    record.credits = manifest.credits;
+    record.parts = mapPartsAssetRefs(parts, (ref: string): string => paths.get(ref) || '');
+    ThemePackStore.install(context, record);
+  }
+
+  /** 导出时把已安装主题包的素材复制进包，按格式 2 登记到清单；parts 里的引用就是包内路径。 */
+  private static async packParts(bundled: InstalledThemePack, assetsDir: string,
+    manifest: ThemePackageManifest): Promise<ThemePackageParts> {
+    const record = bundled.record.parts;
+    for (const relativePath of partsAssetRefs(record)) {
+      const source = `${bundled.dir}/${relativePath}`;
+      if (!ThemePackageService.exists(source)) {
+        throw new Error('主题包的素材已丢失，请重新导入这个主题包后再导出');
+      }
+      if (findAssetByPath(manifest, relativePath)) continue;
+      const extension = assetPathExtension(relativePath);
+      const kind = kindForExtension(extension);
+      const size = fs.statSync(source).size;
+      if (!kind || size <= 0 || size > maxBytesForKind(kind)) {
+        throw new Error('主题包素材超出大小上限');
+      }
+      const sha256 = (await hash.hash(source, 'sha256')).toLowerCase();
+      const asset = new ThemePackageAsset();
+      asset.id = sha256.substring(0, 24);
+      asset.kind = kind;
+      asset.size = size;
+      asset.sha256 = sha256;
+      asset.path = relativePath;
+      manifest.assets.push(asset);
+      fs.copyFileSync(source, `${assetsDir}/${relativePath.substring('assets/'.length)}`);
+    }
+    return JSON.parse(JSON.stringify(record)) as ThemePackageParts;
   }
 
   /** 删除或替换方案后，清掉没有任何方案再引用的导入图片（只清本功能写入的 qytheme_ 文件）。 */
@@ -519,10 +813,20 @@ export class ThemePackageService {
         }
       };
       collect(appSettings);
+      const referencedPacks = new Set<string>();
+      const collectPacks = (settings: AppThemeSettings): void => {
+        for (const id of ThemePackageService.referencedPackageIds(ThemePackageService.settingsRecord(settings))) {
+          referencedPacks.add(id);
+        }
+      };
+      collectPacks(appSettings);
       for (const scheme of schemes) {
         collect(scheme.settings);
+        collectPacks(scheme.settings);
+        if (scheme.packageId) referencedPacks.add(scheme.packageId);
       }
-      for (const dir of ['theme_startups', 'reader_backgrounds']) {
+      ThemePackStore.uninstallUnreferenced(context, referencedPacks);
+      for (const dir of ['theme_startups', 'theme_previews', 'reader_backgrounds']) {
         const fullDir = `${context.filesDir}/${dir}`;
         let names: string[] = [];
         try {
@@ -544,6 +848,7 @@ export class ThemePackageService {
 
   /** 导入方能否使用某个内置主题的部件：免费、已获得或会员主题库内；试用中的主题不算。 */
   static canUseTheme(themeId: string): boolean {
+    if (ThemePackRegistry.isPackId(themeId)) return ThemePackRegistry.has(themeId);
     if (themeId === ThemeIds.OBSIDIAN_ARCHIVE) return AccountSessionStore.hasOwnedEntitlement(themeId);
     return BuiltinThemeRegistry.isFree(themeId) || AccountSessionStore.hasValidEntitlement(themeId);
   }
@@ -565,13 +870,15 @@ export class ThemePackageService {
   }
 
   /** 排版和规则实际绑定的自定义字体名（去重）。 */
-  private static boundFamilies(profileRecord: Record<string, Object>, rules: ReaderRegexFontRule[]): string[] {
+  private static boundFamilies(profileRecord: Record<string, Object>, rules: ReaderRegexFontRule[],
+    appFontFamily: string = ''): string[] {
     const families: string[] = [];
     const add = (mode: Object, family: Object): void => {
       if (mode === 'custom' && typeof family === 'string' && family && !families.includes(family)) {
         families.push(family);
       }
     };
+    add('custom', appFontFamily);
     add(profileRecord['bodyFontMode'], profileRecord['bodyFontFamily']);
     add(profileRecord['titleFontMode'], profileRecord['titleFontFamily']);
     for (const rule of rules) {
@@ -584,7 +891,8 @@ export class ThemePackageService {
    * 这套方案实际生效的自定义字体：正文、标题（跟随全局字体且全局用的是自定义字体时算全局这款），
    * withRules 时再加上强调规则用的字体（规则总开关关着时不算）。字体库里其他字体不在其列。
    */
-  private static effectiveFonts(profile: ReaderSettings, withRules: boolean): ThemeExportFontInfo[] {
+  private static effectiveFonts(profile: ReaderSettings, withRules: boolean,
+    appFontFamily: string = ''): ThemeExportFontInfo[] {
     const library = ThemePackageService.fontLibrary(profile.customFontsRaw);
     const globalCustom = profile.fontMode === ReaderSettingsStore.FONT_MODE_CUSTOM ? profile.fontFamily : '';
     const result: ThemeExportFontInfo[] = [];
@@ -614,6 +922,7 @@ export class ThemePackageService {
     };
     add(profile.bodyFontMode, profile.bodyFontFamily, '正文', false);
     add(profile.titleFontMode, profile.titleFontFamily, '标题', false);
+    if (appFontFamily) add('custom', appFontFamily, '界面', false);
     if (withRules && profile.regexFontEnabled) {
       for (const rule of ThemePackageService.profileRules(profile)) {
         add(rule.fontMode, rule.fontFamily, '强调规则', true);
@@ -704,6 +1013,83 @@ export class ThemePackageService {
     }
   }
 
+  /**
+   * 格式 2：assets/ 下的文件就是素材，清单里写没写都算；清单写了大小或摘要就核对。
+   * 每个素材嗅探类型、算摘要并生成 ID；SVG 另做自包含检查。
+   */
+  private static async collectAssets(entries: ZipEntryInfo[], root: string, baseDir: string,
+    manifest: ThemePackageManifest): Promise<void> {
+    const found = new Set<string>();
+    for (const entry of entries) {
+      const name = entry.name.substring(root.length);
+      if (entry.directory) {
+        if (name === '' || name === 'assets/') continue;
+        throw new Error('主题包内含有无法识别的内容');
+      }
+      if (name === 'manifest.json' || name === 'theme.json') {
+        if (entry.uncompressedSize > ThemePackageLimits.MAX_JSON_BYTES) {
+          throw new Error('主题包的设置文件过大');
+        }
+        found.add(name);
+        continue;
+      }
+      const extension = assetPathExtension(name);
+      if (!extension) {
+        throw new Error(`主题包内有无法识别的文件：${sanitizeThemeName(name.replace(/[\/]/g, ' / '))}`);
+      }
+      const kind = kindForExtension(extension);
+      if (entry.uncompressedSize <= 0 || entry.uncompressedSize > maxBytesForKind(kind)) {
+        throw new Error('主题包素材超出大小上限');
+      }
+      let asset = findAssetByPath(manifest, name);
+      if (!asset) {
+        if (manifest.assets.length >= ThemePackageLimits.MAX_ASSETS) {
+          throw new Error('主题包素材数量超出上限');
+        }
+        asset = new ThemePackageAsset();
+        asset.path = name;
+        asset.kind = kind;
+        manifest.assets.push(asset);
+      } else if (asset.size > 0 && asset.size !== entry.uncompressedSize) {
+        throw new Error('主题包清单登记的素材大小与文件不符');
+      }
+      if (kind === ThemePackageAssetKinds.FONT && !manifest.requires.includes(ThemePackageFeatures.FONTS)) {
+        throw new Error('主题包带了字体文件，清单的 requires 需要加上 fonts-v1');
+      }
+      found.add(name);
+    }
+    if (!found.has('manifest.json') || !found.has('theme.json')) {
+      throw new Error('主题包不完整');
+    }
+    for (const asset of manifest.assets) {
+      if (!found.has(asset.path)) {
+        throw new Error(`主题包缺少素材文件：${asset.path}`);
+      }
+      const path = `${baseDir}/${asset.path}`;
+      if (!ThemePackageService.exists(path)) {
+        throw new Error(`主题包缺少素材文件：${asset.path}`);
+      }
+      const extension = assetPathExtension(asset.path);
+      const sniffed = sniffAssetExtension(ThemePackageService.readHead(path));
+      if (sniffed !== extension) {
+        throw new Error(`主题包素材 ${asset.path} 的内容与扩展名不符`);
+      }
+      const digest = (await hash.hash(path, 'sha256')).toLowerCase();
+      if (asset.sha256 && asset.sha256 !== digest) {
+        throw new Error('主题包已损坏（素材校验失败）');
+      }
+      asset.sha256 = digest;
+      asset.id = digest.substring(0, 24);
+      asset.size = fs.statSync(path).size;
+      if (asset.kind === ThemePackageAssetKinds.VECTOR) {
+        const problem = checkSvgSource(fs.readTextSync(path));
+        if (problem) {
+          throw new Error(`主题包素材 ${asset.path}：${problem}`);
+        }
+      }
+    }
+  }
+
   private static async verifyAsset(baseDir: string, asset: ThemePackageAsset): Promise<void> {
     const path = `${baseDir}/${asset.path}`;
     if (!ThemePackageService.exists(path) || fs.statSync(path).size !== asset.size) {
@@ -719,8 +1105,25 @@ export class ThemePackageService {
     }
   }
 
+  /** 方案覆盖的气泡样式若导入方用不了（未获得的主题、没装的包），改回跟随来源主题。 */
+  private static restrictEmphasisOverrides(settings: Record<string, Object>, locked: string[],
+    ownThemeId: string): void {
+    for (const key of ['customLightEmphasis', 'customDarkEmphasis']) {
+      const override = settings[key];
+      if (!override || typeof override !== 'object') continue;
+      const record = override as Record<string, Object>;
+      const style = typeof record['bubbleStyle'] === 'string' ? record['bubbleStyle'] as string : '';
+      if (!style || style === ownThemeId || ThemeAccessPolicy.canUseBubbleStyle(style)) continue;
+      record['bubbleStyle'] = '';
+      const label = `${key === 'customLightEmphasis' ? '浅色' : '深色'} · 方案气泡样式（${
+        ThemeAccessPolicy.requiredThemeNameForBubbleStyle(style) || '主题包'}）`;
+      if (!locked.includes(label)) locked.push(label);
+    }
+  }
+
   /** 包内阅读背景若是内置素材键，导入方得能使用拥有它的某个主题，否则换成替代主题的背景。 */
-  private static restrictBackgroundAssets(settings: Record<string, Object>, replaced: string[]): void {
+  private static restrictBackgroundAssets(settings: Record<string, Object>, replaced: string[],
+    ownThemeId: string = ''): void {
     const themes: ThemePack[] = BuiltinThemeRegistry.all();
     const fallback = BuiltinThemeRegistry.findById(BuiltinThemeRegistry.DEFAULT_THEME_ID);
     const modes: string[][] = [['customLightReaderBackgroundAssetId', 'light', '浅色'],
@@ -728,6 +1131,14 @@ export class ThemePackageService {
     for (const mode of modes) {
       const value = settings[mode[0]];
       if (typeof value !== 'string' || !value || assetIdFromRef(value)) continue;
+      if (isPackThemeId(value)) {
+        const packageId = packageIdOfThemeId(value);
+        if ((ownThemeId && packageIdOfThemeId(ownThemeId) === packageId) || ThemePackRegistry.has(value)) continue;
+        settings[mode[0]] = mode[1] === 'light' ? fallback.light.reader.backgroundAssetId :
+          fallback.dark.reader.backgroundAssetId;
+        replaced.push(`${mode[2]} · 阅读背景素材`);
+        continue;
+      }
       const allowed = themes.some((theme: ThemePack): boolean => ThemePackageService.canUseTheme(theme.id) &&
         (theme.light.reader.backgroundAssetId === value || theme.dark.reader.backgroundAssetId === value));
       if (!allowed) {

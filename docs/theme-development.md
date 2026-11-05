@@ -31,6 +31,10 @@ entry/src/main/ets/theme/
 ├── ThemeAssetRegistry.ets      # assetId / iconPackId / styleId 到 Resource 的映射
 └── TtsPanelThemeStyles.ets     # 各主题朗读/有声书面板背景的插画与配色
 
+├── ThemePackRegistry.ets       # 已安装主题包（pack:<packageId>）的进程内注册表与令牌拼装
+└── share/                      # .qytheme 主题包的格式、校验、导入导出
+
+entry/src/main/ets/utils/ThemePackStore.ets           # 主题包素材落盘与冷启动加载
 entry/src/main/ets/utils/AppThemeSettingsStore.ets   # 主题选择与颜色覆盖的持久化
 entry/src/main/ets/account/ThemeAccessPolicy.ets     # 主题与专属气泡样式的归属关系
 entry/src/main/ets/components/ReaderThemeBackground.ets  # 阅读页主题背景组件
@@ -78,7 +82,7 @@ entry/src/main/resources/base/media/
 | `navigation` | `ThemeNavigationTokens` | 悬浮底栏的 `iconPackId`。 |
 | `startup` | `ThemeStartupTokens` | 启动封面的 `styleId`。 |
 | `radius` | `ThemeRadiusTokens` | `small`、`medium`、`large`、`card`、`button`、`bubble` 圆角。 |
-| `glass` | `ThemeGlassTokens` | 玻璃材质：`panel`、`popover`、`button`、`overlay`、`menu` 五种表面各自的模糊半径和圆角，以及浅深色的着色透明度、边框和阴影。 |
+| `glass` | `ThemeGlassTokens` | 面板着色透明度、边框和阴影；内部令牌，不开放给自定义方案和主题包，自定义方案跟随完整配色的来源主题（`glassThemeId` 只为兼容旧数据保留）。 |
 
 `ThemeVariant` 的三组令牌：
 
@@ -94,7 +98,7 @@ entry/src/main/resources/base/media/
 正则规则级设置 > 用户颜色/字体覆盖 > 当前主题浅深变体 > plain-default 回退
 ```
 
-`ThemeRuntime.applyPack()` 发布令牌时，主题中缺失或非法的值会逐项回退到 `plain-default`，并递增 `KEY_THEME_REVISION` 通知组件刷新。组件应通过 `ThemeRuntime.pageColor(darkMode)`、`ThemeRuntime.glassBlur(surface)` 这类访问器读取令牌，不要直接读取 `ThemePack`。
+`ThemeRuntime.applyPack()` 发布令牌时，主题中缺失或非法的值会逐项回退到 `plain-default`，并递增 `KEY_THEME_REVISION` 通知组件刷新。组件应通过 `ThemeRuntime.pageColor(darkMode)`、`ThemeRuntime.glassPanelColor(darkMode)` 这类访问器读取令牌，不要直接读取 `ThemePack`。
 
 阅读页保留原有的米黄、素白、青绿和自定义配色，“应用主题”对应稳定索引 `ReaderThemeHelper.APP_THEME_INDEX`。只有选中该项时，主题的阅读背景和阅读文字色才生效。
 
@@ -237,6 +241,26 @@ BuiltinThemeRegistry.register(theme);
 当前可用的图标包 ID：`classic`、`rounded`、`ink`、`strawberry`、`crimson`、`plum`、`rose`、`crane`、`sword-frost`、`qingluan-water`、`cat-pipi`、`azure-mecha`、`starwish-magic`、`letterpress-page`。
 
 桌面应用图标由 `AppIconManager` 独立管理，不随主题切换。
+
+## 方案级覆盖
+
+自定义方案除了按部件选来源主题，还能逐项覆盖两组令牌，字段在 `AppThemeSettings` 里：`customLightPalette` / `customDarkPalette`（`ThemeColorOverrides`，页面、卡片、输入框、正副文字、分割线、危险色七项）和 `customLightEmphasis` / `customDarkEmphasis`（`ThemeEmphasisOverrides`，强调方式、气泡样式、强调底色与文字色）。空值表示跟随来源主题；`AppThemeSettingsStore.customTheme()` 在取完来源令牌后由 `applyOverrides()` 盖上去，强调色与按钮色仍是独立字段。同一套机制还有：`customAppFontFamily`（界面字体，取字体库里某款字体的 family，`applyOverrides()` 写进 `ThemePack.fontFamily`，`ReaderFontBootstrap.registerThemeFont()` 在应用方案时把它注册进字体表）、`customRadius`（`ThemeRadiusOverrides`，六档圆角逐项覆盖，-1 表示跟随）、`customLightStartupText` / `customDarkStartupText`（`ThemeStartupTextStyle`，启动封面主副标题的颜色与字号，空值与 0 表示默认）和 `customPreviewImagePath`（方案卡片预览图，本机文件，与启动封面图一样不同步、随包导出，存在 `files/theme_previews/`）。这些字段以 JSON 字符串持久化，随方案同步；导出时若有任何覆盖，清单 `requires` 加 `scheme-overrides-v1`，老版本应用会提示更新而不是丢掉颜色。导入时方案覆盖里用不了的气泡样式改回跟随，并列入预览提示。
+
+## 方案自有素材包
+
+编辑器里上传的封面、书架边框、文件夹插画、导航图标、朗读面板插画、气泡端饰与边框、阅读角饰或整图背景由 `utils/SchemeAssetService.ets` 收进方案自己的素材包：`theme_packs/custom-<随机>/`，与导入的主题包同一套存储（`ThemePackStore.importAsset()` 负责嗅探类型、限大小、SVG 自包含检查并按内容哈希命名），同样注册为 `pack:<packageId>`，方案的 `packageId` 指向它。上传后编辑器把对应部件来源（封面与图标两种模式一起，面板插画按当前模式）指向这个包；包内气泡通过方案的强调覆盖 `bubbleStyle` 生效；阅读背景素材写进 `parts.light/dark.reader`，方案只把 `customLight/DarkReaderBackgroundAssetId` 指向 `pack:<id>:light/dark`，阅读来源主题与文字色不变。第一次上传时该部件原来所选的主题记为包的 `baseTheme`，没上传的那部分素材继续取自它；移除后来源退回 `baseTheme`，所有部件都移掉时整个包卸载、方案解绑。方案本身由主题包安装而来时直接写进那个包。导出时按格式 2 随包打出去（`packageId` 就是这个包的 ID，不算混搭），删除方案时由 `cleanupImportedFiles()` 一并清理。
+
+## 导入的主题包
+
+用户导入带素材的 `.qytheme`（格式 2，作者按 [主题包开发指南](theme-package-format.md) 制作）时，包里的部件在本机注册为一个主题，ID 为 `pack:<packageId>`；导入得到的自定义方案各部件来源都指向它，与内置主题一样参与 `ThemeComponentSourceIds` 的混搭。
+
+- `ThemePackStore.loadInstalled()` 在 `EntryAbility` 读取主题设置之前把 `files/theme_packs/<packageId>/pack.json` 全部读入并注册到 `ThemePackRegistry`。记录里只存 parts 和素材的相对路径，每次启动按当前 `baseTheme` 重新拼出 `ThemePack`，基底主题改了也能跟上。
+- `BuiltinThemeRegistry.findById()` 对 `pack:` ID 到注册表取主题；`normalizeBuiltinId()` 对 `pack:` ID 原样保留，缺包时只回退显示、不改写方案里的来源（同步到没装包的设备时方案不会被破坏）。`all()` 只返回内置主题，主题商店列表不会出现包。
+- `ThemeAssetRegistry` 的各个解析函数遇到 `pack:` ID 返回包目录里文件的 `file://` URI；阅读背景用 `pack:<packageId>:light` / `:dark` 作素材键，角饰模式与内置主题走同一条装饰路径，整图模式由 `ReaderThemeHelper` 转成用户图片的那条路径。`navigationIcon()`、`themeLogo()` 和 `TtsPanelThemeStyle.artwork` 因此是 `ResourceStr`。自绘翻页纹理的 `ReaderRasterAssets.media()` 对字符串来源改从文件解码。
+- 包内气泡的样式 ID 就是 `pack:<packageId>`：`ReaderRegexFontCodec.normalizeBubbleStyleId()` 原样保留，`ReaderRegexBubbleStyleResolver` 用统一的圆角预设配端饰，`ThemeAccessPolicy` 以“包已安装”为可用条件。
+- 访问策略：已安装的包随方案走，不另设权益，会员过期后已导入的方案照常使用；导出和导入主题包本身仍要求有效会员。
+- `CustomThemeScheme.packageId` 记录方案来自哪个包：同一个 `packageId` 再次导入时原位更新（可以更新正在使用的方案，导入后重新应用），删除或替换方案后 `ThemePackageService.cleanupImportedFiles()` 清掉没有方案再引用的包目录。
+- 导出：方案由包安装而来、或部件里选了某个已安装的包时按格式 2 导出，包内素材复制进包，方案里指向它的来源写成 `pack:self`；混搭别人的包时换新 `packageId` 并把原包记进 `credits`。不带包内素材的方案仍按格式 1 导出，老版本应用可以导入。
 
 ## 正则气泡
 

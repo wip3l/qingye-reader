@@ -13,6 +13,8 @@ export class CustomThemeScheme {
   settings: AppThemeSettings = new AppThemeSettings();
   // 从主题包导入且作者选择署名时才有值，只用于展示，不代表认证身份。
   author: string = '';
+  // 从带素材的主题包安装而来时记下包 ID：同一个包再次导入时原位更新，删除方案时连素材一起清理。
+  packageId: string = '';
 }
 
 export class CustomThemeSchemeStore {
@@ -76,7 +78,8 @@ export class CustomThemeSchemeStore {
           scheme.name || schemes[index].name,
           scheme.settings,
           schemes[index].revision + 1,
-          schemes[index].author
+          schemes[index].author,
+          schemes[index].packageId
         );
         replaced = true;
         break;
@@ -121,6 +124,34 @@ export class CustomThemeSchemeStore {
     return CustomThemeSchemeStore.cloneScheme(scheme);
   }
 
+  /** 方案绑定（或解绑）自己的素材包；由编辑器上传素材时调用。 */
+  static async setPackageId(
+    context: Context,
+    legacySettings: AppThemeSettings,
+    schemeId: string,
+    packageId: string
+  ): Promise<boolean> {
+    const schemes = await CustomThemeSchemeStore.load(context, legacySettings);
+    let changed = false;
+    for (let index = 0; index < schemes.length; index++) {
+      if (schemes[index].id !== schemeId) continue;
+      if (schemes[index].packageId === packageId) return true;
+      schemes[index] = CustomThemeSchemeStore.createScheme(
+        schemes[index].id,
+        schemes[index].name,
+        schemes[index].settings,
+        schemes[index].revision,
+        schemes[index].author,
+        packageId
+      );
+      changed = true;
+      break;
+    }
+    if (!changed) return false;
+    await CustomThemeSchemeStore.persistSchemes(context, schemes);
+    return true;
+  }
+
   static async rename(
     context: Context,
     legacySettings: AppThemeSettings,
@@ -145,7 +176,8 @@ export class CustomThemeSchemeStore {
           normalizedName,
           schemes[index].settings,
           schemes[index].revision,
-          schemes[index].author
+          schemes[index].author,
+          schemes[index].packageId
         );
         renamed = true;
         break;
@@ -202,7 +234,8 @@ export class CustomThemeSchemeStore {
     name: string,
     settings: AppThemeSettings,
     author: string,
-    replaceSchemeId: string
+    replaceSchemeId: string,
+    packageId: string = ''
   ): Promise<CustomThemeScheme | null> {
     const schemes = await CustomThemeSchemeStore.load(context, legacySettings);
     const replaceIndex = replaceSchemeId ?
@@ -220,7 +253,8 @@ export class CustomThemeSchemeStore {
       uniqueName,
       settings,
       replaceIndex >= 0 ? schemes[replaceIndex].revision + 1 : 1,
-      author
+      author,
+      packageId
     );
     if (replaceIndex >= 0) {
       schemes[replaceIndex] = scheme;
@@ -229,6 +263,15 @@ export class CustomThemeSchemeStore {
     }
     await CustomThemeSchemeStore.persistSchemes(context, schemes);
     return CustomThemeSchemeStore.cloneScheme(scheme);
+  }
+
+  /** 由带素材的主题包安装而来的方案；同一个包只对应一套。 */
+  static findByPackageId(schemes: CustomThemeScheme[], packageId: string): CustomThemeScheme | null {
+    if (!packageId) return null;
+    for (const scheme of schemes) {
+      if (scheme.packageId === packageId) return scheme;
+    }
+    return null;
   }
 
   /** 冷启动时先恢复正在使用的方案 ID，阅读设置才能读到这套方案自己的排版。 */
@@ -288,12 +331,23 @@ export class CustomThemeSchemeStore {
         localScheme.settings.customLightStartupImagePath : '';
       incomingSettings.customDarkStartupImagePath = localScheme ?
         localScheme.settings.customDarkStartupImagePath : '';
+      incomingSettings.customPreviewImagePath = localScheme ? localScheme.settings.customPreviewImagePath : '';
+      // 主题包的阅读背景键（pack:<id>:light）不是设备路径，云端带得回来；旧客户端会把它清空，这时沿用本机的。
+      if (localScheme && !incomingSettings.customLightReaderBackgroundAssetId &&
+        localScheme.settings.customLightReaderBackgroundAssetId.startsWith('pack:')) {
+        incomingSettings.customLightReaderBackgroundAssetId = localScheme.settings.customLightReaderBackgroundAssetId;
+      }
+      if (localScheme && !incomingSettings.customDarkReaderBackgroundAssetId &&
+        localScheme.settings.customDarkReaderBackgroundAssetId.startsWith('pack:')) {
+        incomingSettings.customDarkReaderBackgroundAssetId = localScheme.settings.customDarkReaderBackgroundAssetId;
+      }
       schemes.push(CustomThemeSchemeStore.createScheme(
         item.id,
         item.name || `自定义主题 ${schemes.length + 1}`,
         incomingSettings,
         item.revision || 1,
-        item.author || ''
+        item.author || '',
+        item.packageId || (localScheme ? localScheme.packageId : '')
       ));
     }
     if (schemes.length === 0) {
@@ -321,7 +375,8 @@ export class CustomThemeSchemeStore {
     name: string,
     settings: AppThemeSettings,
     revision: number,
-    author: string = ''
+    author: string = '',
+    packageId: string = ''
   ): CustomThemeScheme {
     const scheme = new CustomThemeScheme();
     scheme.id = id;
@@ -329,6 +384,7 @@ export class CustomThemeSchemeStore {
     scheme.revision = Math.max(1, Math.floor(revision || 1));
     scheme.settings = CustomThemeSchemeStore.normalizeSettings(settings);
     scheme.author = typeof author === 'string' ? author : '';
+    scheme.packageId = typeof packageId === 'string' ? packageId : '';
     return scheme;
   }
 
@@ -365,7 +421,8 @@ export class CustomThemeSchemeStore {
           item.name || `自定义主题 ${schemes.length + 1}`,
           item.settings || new AppThemeSettings(),
           item.revision || 1,
-          item.author || ''
+          item.author || '',
+          item.packageId || ''
         ));
       }
       return schemes;
@@ -384,6 +441,6 @@ export class CustomThemeSchemeStore {
 
   private static cloneScheme(source: CustomThemeScheme): CustomThemeScheme {
     return CustomThemeSchemeStore.createScheme(source.id, source.name, source.settings, source.revision,
-      source.author);
+      source.author, source.packageId);
   }
 }

@@ -113,11 +113,40 @@ export class ReaderFontBootstrap {
   static async registerFromSettings(context: Context, uiContext: UIContext | null, source: string): Promise<boolean> {
     try {
       const settings = await ReaderSettingsStore.load(context);
+      ReaderFontBootstrap.registerThemeFont(uiContext, settings);
       return ReaderFontBootstrap.registerSettings(context, uiContext, settings, source);
     } catch (err) {
       hilog.warn(0x0000, 'testTag', 'Reader font bootstrap load failed source=%{public}s err=%{public}s',
         source, JSON.stringify(err));
       return false;
+    }
+  }
+
+  /**
+   * 主题（自定义方案绑定的字体库字体）作为界面字体时需要先注册；内置主题的字体族名是系统字体，直接跳过。
+   * 换主题后也要调一次：方案的字体可能还没注册过。
+   */
+  static registerThemeFont(uiContext: UIContext | null, settings: ReaderSettings): void {
+    const family = ThemeRuntime.fontFamily();
+    if (!family) return;
+    const paths = ReaderFontBootstrap.customFontPaths(settings.customFontsRaw, [family]);
+    if (paths.length === 0) return;
+    const item = new ReaderFontItem();
+    item.familyName = family;
+    item.filePath = paths[0];
+    item.sourceName = ReaderFontHelper.resolveDisplayName('', paths[0]);
+    const result = ReaderFontHelper.registerFont(uiContext, item);
+    if (!result.registered) {
+      hilog.warn(0x0000, 'testTag', 'Theme font register failed family=%{public}s errors=%{public}s',
+        family, result.errorSummary);
+    }
+  }
+
+  static async registerThemeFontFromSettings(context: Context, uiContext: UIContext | null): Promise<void> {
+    try {
+      ReaderFontBootstrap.registerThemeFont(uiContext, await ReaderSettingsStore.load(context));
+    } catch (err) {
+      hilog.warn(0x0000, 'testTag', 'Theme font load failed err=%{public}s', JSON.stringify(err));
     }
   }
 

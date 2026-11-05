@@ -1,4 +1,5 @@
 import { ThemeIds } from './ThemeModels';
+import { InstalledThemePack, ThemePackRegistry } from './ThemePackRegistry';
 
 export class ThemeAssetRegistry {
   static readonly BACKGROUND_PAPER_LIGHT: string = 'paper-light';
@@ -58,7 +59,32 @@ export class ThemeAssetRegistry {
   static readonly TAB_SEARCH: string = 'search';
   static readonly TAB_MINE: string = 'mine';
 
+  /** 主题包阅读背景（pack:<id>:light / :dark）对应的已安装包；不是主题包素材或缺包时返回 null。 */
+  private static packReader(assetId: string): InstalledThemePack | null {
+    return ThemePackRegistry.isPackId(assetId) ? ThemePackRegistry.get(assetId) : null;
+  }
+
+  private static packReaderDark(assetId: string): boolean {
+    return (assetId || '').endsWith(':dark');
+  }
+
+  /** 主题包整图模式的背景图 URI；角饰模式、内置素材和缺包时为空串。 */
+  static readerBackgroundImage(assetId: string): string {
+    const pack = ThemeAssetRegistry.packReader(assetId);
+    if (!pack) return '';
+    const reader = pack.reader(ThemeAssetRegistry.packReaderDark(assetId));
+    return reader.mode === 'image' ? reader.image : '';
+  }
+
+  static readerBackgroundImageFit(assetId: string): string {
+    const pack = ThemeAssetRegistry.packReader(assetId);
+    if (!pack) return 'cover';
+    return pack.reader(ThemeAssetRegistry.packReaderDark(assetId)).imageFit || 'cover';
+  }
+
   static readerBackground(assetId: string): ResourceStr {
+    const packImage = ThemeAssetRegistry.readerBackgroundImage(assetId);
+    if (packImage) return packImage;
     switch (ThemeAssetRegistry.normalizeBackgroundAssetId(assetId)) {
       case ThemeAssetRegistry.BACKGROUND_PAPER_LIGHT:
         return $r('app.media.reader_bg_paper_light');
@@ -134,6 +160,11 @@ export class ThemeAssetRegistry {
   }
 
   static readerBackgroundDecoration(assetId: string): ResourceStr {
+    const pack = ThemeAssetRegistry.packReader(assetId);
+    if (pack) {
+      const reader = pack.reader(ThemeAssetRegistry.packReaderDark(assetId));
+      return reader.mode === 'ornaments' ? reader.leading : '';
+    }
     switch (ThemeAssetRegistry.normalizeBackgroundAssetId(assetId)) {
       case ThemeAssetRegistry.BACKGROUND_PAPER_LIGHT:
         return $r('app.media.reader_decor_paper_light');
@@ -212,6 +243,11 @@ export class ThemeAssetRegistry {
   // scripts/generate-reader-trailing-ornaments.py); the mirrored fallback is
   // only for assets registered without one.
   static readerBackgroundTrailingDecoration(assetId: string): ResourceStr {
+    const pack = ThemeAssetRegistry.packReader(assetId);
+    if (pack) {
+      const reader = pack.reader(ThemeAssetRegistry.packReaderDark(assetId));
+      return reader.mode === 'ornaments' ? (reader.trailing || reader.leading) : '';
+    }
     switch (ThemeAssetRegistry.normalizeBackgroundAssetId(assetId)) {
       case ThemeAssetRegistry.BACKGROUND_PAPER_LIGHT:
         return $r('app.media.reader_decor_paper_trailing_light');
@@ -291,9 +327,19 @@ export class ThemeAssetRegistry {
     return trailing === ThemeAssetRegistry.readerBackgroundDecoration(assetId) ? 180 : 0;
   }
 
-  static navigationIcon(iconPackId: string, tabId: string): Resource {
+  static navigationIcon(iconPackId: string, tabId: string): ResourceStr {
     const normalizedPackId = ThemeAssetRegistry.normalizeIconPackId(iconPackId);
     const normalizedTabId = ThemeAssetRegistry.normalizeTabId(tabId);
+    if (ThemePackRegistry.isPackId(normalizedPackId)) {
+      const pack = ThemePackRegistry.get(normalizedPackId);
+      if (pack && pack.hasNavigation()) {
+        if (normalizedTabId === ThemeAssetRegistry.TAB_EXPLORE) return pack.navExplore;
+        if (normalizedTabId === ThemeAssetRegistry.TAB_SEARCH) return pack.navSearch;
+        if (normalizedTabId === ThemeAssetRegistry.TAB_MINE) return pack.navMine;
+        return pack.navBookshelf;
+      }
+      return ThemeAssetRegistry.classicNavigationIcon(normalizedTabId);
+    }
     if (normalizedPackId === ThemeAssetRegistry.ICON_PACK_ROUNDED) {
       return ThemeAssetRegistry.roundedNavigationIcon(normalizedTabId);
     }
@@ -318,7 +364,12 @@ export class ThemeAssetRegistry {
     return ThemeAssetRegistry.classicNavigationIcon(normalizedTabId);
   }
 
-  static themeLogo(themeId: string): Resource {
+  static themeLogo(themeId: string): ResourceStr {
+    if (ThemePackRegistry.isPackId(themeId)) {
+      const pack = ThemePackRegistry.get(themeId);
+      if (pack && pack.logo) return pack.logo;
+      return $r('app.media.theme_logo_classic_blue');
+    }
     switch ((themeId || '').trim().toLowerCase()) {
       case ThemeIds.CUSTOM:
         return $r('app.media.theme_logo_custom');
@@ -363,7 +414,13 @@ export class ThemeAssetRegistry {
     }
   }
 
-  static startupBackground(themeId: string): ResourceStr {
+  static startupBackground(themeId: string, darkMode: boolean = false): ResourceStr {
+    if (ThemePackRegistry.isPackId(themeId)) {
+      const pack = ThemePackRegistry.get(themeId);
+      const startup = pack ? pack.startup(darkMode) : null;
+      if (startup && startup.image) return startup.image;
+      return $r('app.media.theme_startup_classic_blue');
+    }
     switch ((themeId || '').trim().toLowerCase()) {
       case ThemeIds.WARM_PAPER: return $r('app.media.theme_startup_warm_paper');
       case ThemeIds.FOREST_MIST: return $r('app.media.theme_startup_forest_mist');
@@ -392,6 +449,14 @@ export class ThemeAssetRegistry {
   }
 
   static themeBookCovers(assetId: string): ResourceStr[] {
+    if (ThemePackRegistry.isPackId(assetId)) {
+      const pack = ThemePackRegistry.get(assetId);
+      const covers: ResourceStr[] = [];
+      if (pack) {
+        for (const cover of pack.covers) covers.push(cover);
+      }
+      return covers;
+    }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return [];
       case ThemeIds.WARM_PAPER: return [
@@ -483,6 +548,10 @@ export class ThemeAssetRegistry {
   }
 
   static themeShelfFrame(assetId: string): ResourceStr {
+    if (ThemePackRegistry.isPackId(assetId)) {
+      const pack = ThemePackRegistry.get(assetId);
+      return pack ? pack.shelfFrame : '';
+    }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return '';
       case ThemeIds.WARM_PAPER: return $r('app.media.theme_frame_warm_paper');
@@ -507,6 +576,10 @@ export class ThemeAssetRegistry {
   }
 
   static themeShelfFolder(assetId: string): ResourceStr {
+    if (ThemePackRegistry.isPackId(assetId)) {
+      const pack = ThemePackRegistry.get(assetId);
+      return pack ? pack.shelfFolder : '';
+    }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return '';
       case ThemeIds.WARM_PAPER: return $r('app.media.theme_folder_art_warm_paper');
@@ -531,6 +604,10 @@ export class ThemeAssetRegistry {
   }
 
   static regexBubbleFrame(styleId: string): ResourceStr {
+    if (ThemePackRegistry.isPackId(styleId)) {
+      const pack = ThemePackRegistry.get(styleId);
+      return pack ? pack.bubbleFrame : '';
+    }
     switch ((styleId || '').trim().toLowerCase()) {
       case 'classic-glass': return $r('app.media.regex_frame_classic_glass');
       case 'warm-scroll': return $r('app.media.regex_frame_warm_scroll');
@@ -559,6 +636,10 @@ export class ThemeAssetRegistry {
   }
 
   static regexBubbleCap(styleId: string): ResourceStr {
+    if (ThemePackRegistry.isPackId(styleId)) {
+      const pack = ThemePackRegistry.get(styleId);
+      return pack ? pack.bubbleCap : '';
+    }
     switch ((styleId || '').trim().toLowerCase()) {
       case 'classic-glass': return $r('app.media.regex_cap_classic_glass');
       case 'warm-scroll': return $r('app.media.regex_cap_warm_scroll');
@@ -587,6 +668,9 @@ export class ThemeAssetRegistry {
   }
 
   static normalizeBackgroundAssetId(assetId: string): string {
+    if (ThemePackRegistry.isPackId(assetId)) {
+      return ThemePackRegistry.has(assetId) ? assetId.trim() : '';
+    }
     const normalized = (assetId || '').trim().toLowerCase();
     switch (normalized) {
       case ThemeAssetRegistry.BACKGROUND_PAPER_LIGHT:
@@ -630,6 +714,9 @@ export class ThemeAssetRegistry {
   }
 
   static normalizeIconPackId(iconPackId: string): string {
+    if (ThemePackRegistry.isPackId(iconPackId)) {
+      return ThemePackRegistry.has(iconPackId) ? iconPackId.trim() : ThemeAssetRegistry.ICON_PACK_CLASSIC;
+    }
     const normalized = (iconPackId || '').trim().toLowerCase();
     if (normalized === ThemeAssetRegistry.ICON_PACK_ROUNDED ||
       normalized === ThemeAssetRegistry.ICON_PACK_INK ||

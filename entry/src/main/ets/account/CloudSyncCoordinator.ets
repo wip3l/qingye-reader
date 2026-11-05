@@ -718,10 +718,13 @@ export class CloudSyncCoordinator {
     const themeSettings = await AppThemeSettingsStore.load(context);
     const safeThemeSettings = JSON.parse(JSON.stringify(themeSettings)) as AppThemeSettings;
     safeThemeSettings.themeApplyLayoutEnabled = false;
-    safeThemeSettings.customLightReaderBackgroundAssetId = '';
-    safeThemeSettings.customDarkReaderBackgroundAssetId = '';
+    safeThemeSettings.customLightReaderBackgroundAssetId =
+      CloudSyncCoordinator.syncableBackgroundAssetId(safeThemeSettings.customLightReaderBackgroundAssetId);
+    safeThemeSettings.customDarkReaderBackgroundAssetId =
+      CloudSyncCoordinator.syncableBackgroundAssetId(safeThemeSettings.customDarkReaderBackgroundAssetId);
     safeThemeSettings.customLightStartupImagePath = '';
     safeThemeSettings.customDarkStartupImagePath = '';
+    safeThemeSettings.customPreviewImagePath = '';
     result.push(CloudSyncCoordinator.entity(
       'theme_settings', 'global', safeThemeSettings, 'global'));
 
@@ -753,15 +756,24 @@ export class CloudSyncCoordinator {
     schemesPayload.schemes = themeSchemes.map((scheme: CustomThemeScheme) => {
       const safeScheme = JSON.parse(JSON.stringify(scheme)) as CustomThemeScheme;
       safeScheme.settings.themeApplyLayoutEnabled = false;
-      safeScheme.settings.customLightReaderBackgroundAssetId = '';
-      safeScheme.settings.customDarkReaderBackgroundAssetId = '';
+      safeScheme.settings.customLightReaderBackgroundAssetId =
+        CloudSyncCoordinator.syncableBackgroundAssetId(safeScheme.settings.customLightReaderBackgroundAssetId);
+      safeScheme.settings.customDarkReaderBackgroundAssetId =
+        CloudSyncCoordinator.syncableBackgroundAssetId(safeScheme.settings.customDarkReaderBackgroundAssetId);
       safeScheme.settings.customLightStartupImagePath = '';
       safeScheme.settings.customDarkStartupImagePath = '';
+      safeScheme.settings.customPreviewImagePath = '';
       return safeScheme;
     });
     result.push(CloudSyncCoordinator.entity(
       'custom_theme_schemes', 'global', schemesPayload, 'global'));
     return result;
+  }
+
+  /** 阅读背景只同步主题包素材键（pack:<id>:light）；内置键和设备上的图片路径与此前一样不同步。 */
+  private static syncableBackgroundAssetId(value: string): string {
+    const id = (value || '').trim();
+    return id.startsWith('pack:') ? id : '';
   }
 
   private static buildOperations(
@@ -1093,6 +1105,7 @@ export class CloudSyncCoordinator {
       themeSettings.themeApplyLayoutEnabled = localThemeSettings.themeApplyLayoutEnabled;
       themeSettings.customLightStartupImagePath = localThemeSettings.customLightStartupImagePath;
       themeSettings.customDarkStartupImagePath = localThemeSettings.customDarkStartupImagePath;
+      themeSettings.customPreviewImagePath = localThemeSettings.customPreviewImagePath;
       await AppThemeSettingsStore.save(context, themeSettings);
       AppThemeSettingsStore.applyToStorage(themeSettings);
       entityState.localKey = 'global';

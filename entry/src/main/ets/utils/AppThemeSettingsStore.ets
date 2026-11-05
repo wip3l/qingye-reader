@@ -1,7 +1,17 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
-import { ThemeComponentSourceIds, ThemeIds, ThemePack } from '../theme/ThemeModels';
+import {
+  ThemeColorOverrides,
+  ThemeColorTokens,
+  ThemeComponentSourceIds,
+  ThemeEmphasisOverrides,
+  ThemeIds,
+  ThemePack,
+  ThemeRadiusOverrides,
+  ThemeRegexEmphasisTokens,
+  ThemeStartupTextStyle
+} from '../theme/ThemeModels';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ReaderSettings, ReaderSettingsStore } from './ReaderSettingsStore';
 import { ReaderThemeHelper, ReaderThemeItem } from './ReaderThemeHelper';
@@ -43,6 +53,20 @@ export class AppThemeSettings {
   customDarkStartupTitle: string = '开源轻页';
   customLightStartupSubtitle: string = '';
   customDarkStartupSubtitle: string = '';
+  // 对“完整配色”“强调气泡”来源的逐项覆盖；空值跟随所选主题。
+  customLightPalette: ThemeColorOverrides = new ThemeColorOverrides();
+  customDarkPalette: ThemeColorOverrides = new ThemeColorOverrides();
+  customLightEmphasis: ThemeEmphasisOverrides = new ThemeEmphasisOverrides();
+  customDarkEmphasis: ThemeEmphasisOverrides = new ThemeEmphasisOverrides();
+  // 界面字体绑定到字体库里的某款自定义字体（family）；空跟随“应用字体”来源主题。只在阅读字体选“跟随主题”时生效。
+  customAppFontFamily: string = '';
+  // 圆角逐项覆盖，浅深共用。
+  customRadius: ThemeRadiusOverrides = new ThemeRadiusOverrides();
+  // 启动封面文案样式，按模式。
+  customLightStartupText: ThemeStartupTextStyle = new ThemeStartupTextStyle();
+  customDarkStartupText: ThemeStartupTextStyle = new ThemeStartupTextStyle();
+  // 方案卡片的预览图（本机文件，不同步）；空用启动封面。
+  customPreviewImagePath: string = '';
 }
 
 export class AppThemeSettingsStore {
@@ -78,6 +102,15 @@ export class AppThemeSettingsStore {
   static readonly KEY_CUSTOM_DARK_STARTUP_TITLE: string = 'appCustomDarkStartupTitle';
   static readonly KEY_CUSTOM_LIGHT_STARTUP_SUBTITLE: string = 'appCustomLightStartupSubtitle';
   static readonly KEY_CUSTOM_DARK_STARTUP_SUBTITLE: string = 'appCustomDarkStartupSubtitle';
+  static readonly KEY_CUSTOM_LIGHT_PALETTE: string = 'appCustomLightPalette';
+  static readonly KEY_CUSTOM_DARK_PALETTE: string = 'appCustomDarkPalette';
+  static readonly KEY_CUSTOM_LIGHT_EMPHASIS: string = 'appCustomLightEmphasis';
+  static readonly KEY_CUSTOM_DARK_EMPHASIS: string = 'appCustomDarkEmphasis';
+  static readonly KEY_CUSTOM_APP_FONT_FAMILY: string = 'appCustomAppFontFamily';
+  static readonly KEY_CUSTOM_RADIUS: string = 'appCustomRadius';
+  static readonly KEY_CUSTOM_LIGHT_STARTUP_TEXT: string = 'appCustomLightStartupText';
+  static readonly KEY_CUSTOM_DARK_STARTUP_TEXT: string = 'appCustomDarkStartupText';
+  static readonly KEY_CUSTOM_PREVIEW_IMAGE_PATH: string = 'appCustomPreviewImagePath';
   static readonly DEFAULT_THEME_ID: string = BuiltinThemeRegistry.DEFAULT_THEME_ID;
   static readonly DEFAULT_LIGHT_ACCENT_COLOR: string = '#007DFF';
   static readonly DEFAULT_DARK_ACCENT_COLOR: string = '#4E9BFF';
@@ -170,6 +203,33 @@ export class AppThemeSettingsStore {
     settings.customDarkStartupSubtitle = await AppThemeSettingsStore.getString(
       store, AppThemeSettingsStore.KEY_CUSTOM_DARK_STARTUP_SUBTITLE,
       AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_DARK_STARTUP_SUBTITLE) || '');
+    settings.customLightPalette = AppThemeSettingsStore.parsePalette(await AppThemeSettingsStore.getString(
+      store, AppThemeSettingsStore.KEY_CUSTOM_LIGHT_PALETTE,
+      AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_PALETTE) || ''));
+    settings.customDarkPalette = AppThemeSettingsStore.parsePalette(await AppThemeSettingsStore.getString(
+      store, AppThemeSettingsStore.KEY_CUSTOM_DARK_PALETTE,
+      AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_DARK_PALETTE) || ''));
+    settings.customLightEmphasis = AppThemeSettingsStore.parseEmphasis(await AppThemeSettingsStore.getString(
+      store, AppThemeSettingsStore.KEY_CUSTOM_LIGHT_EMPHASIS,
+      AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_EMPHASIS) || ''));
+    settings.customDarkEmphasis = AppThemeSettingsStore.parseEmphasis(await AppThemeSettingsStore.getString(
+      store, AppThemeSettingsStore.KEY_CUSTOM_DARK_EMPHASIS,
+      AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_DARK_EMPHASIS) || ''));
+    settings.customAppFontFamily = await AppThemeSettingsStore.getString(
+      store, AppThemeSettingsStore.KEY_CUSTOM_APP_FONT_FAMILY,
+      AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_APP_FONT_FAMILY) || '');
+    settings.customRadius = AppThemeSettingsStore.parseRadius(await AppThemeSettingsStore.getString(
+      store, AppThemeSettingsStore.KEY_CUSTOM_RADIUS,
+      AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_RADIUS) || ''));
+    settings.customLightStartupText = AppThemeSettingsStore.parseStartupText(await AppThemeSettingsStore.getString(
+      store, AppThemeSettingsStore.KEY_CUSTOM_LIGHT_STARTUP_TEXT,
+      AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_STARTUP_TEXT) || ''));
+    settings.customDarkStartupText = AppThemeSettingsStore.parseStartupText(await AppThemeSettingsStore.getString(
+      store, AppThemeSettingsStore.KEY_CUSTOM_DARK_STARTUP_TEXT,
+      AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_DARK_STARTUP_TEXT) || ''));
+    settings.customPreviewImagePath = await AppThemeSettingsStore.getString(
+      store, AppThemeSettingsStore.KEY_CUSTOM_PREVIEW_IMAGE_PATH,
+      AppStorage.get<string>(AppThemeSettingsStore.KEY_CUSTOM_PREVIEW_IMAGE_PATH) || '');
     const needsAppearanceMigration = !(await store.has(
       AppThemeSettingsStore.KEY_CUSTOM_LIGHT_READER_BACKGROUND_COLOR));
     await AppThemeSettingsStore.loadMigratedReaderAppearance(context, store, settings, defaults);
@@ -237,6 +297,7 @@ export class AppThemeSettingsStore {
       normalized.customLightStartupSubtitle);
     await store.put(AppThemeSettingsStore.KEY_CUSTOM_DARK_STARTUP_SUBTITLE,
       normalized.customDarkStartupSubtitle);
+    await AppThemeSettingsStore.putOverrides(store, normalized);
     await store.flush();
     CloudSyncChangeTracker.markPreferenceChanged();
   }
@@ -314,6 +375,21 @@ export class AppThemeSettingsStore {
       normalized.customLightStartupSubtitle);
     AppStorage.setOrCreate(AppThemeSettingsStore.KEY_CUSTOM_DARK_STARTUP_SUBTITLE,
       normalized.customDarkStartupSubtitle);
+    AppStorage.setOrCreate(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_PALETTE,
+      JSON.stringify(normalized.customLightPalette));
+    AppStorage.setOrCreate(AppThemeSettingsStore.KEY_CUSTOM_DARK_PALETTE,
+      JSON.stringify(normalized.customDarkPalette));
+    AppStorage.setOrCreate(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_EMPHASIS,
+      JSON.stringify(normalized.customLightEmphasis));
+    AppStorage.setOrCreate(AppThemeSettingsStore.KEY_CUSTOM_DARK_EMPHASIS,
+      JSON.stringify(normalized.customDarkEmphasis));
+    AppStorage.setOrCreate(AppThemeSettingsStore.KEY_CUSTOM_APP_FONT_FAMILY, normalized.customAppFontFamily);
+    AppStorage.setOrCreate(AppThemeSettingsStore.KEY_CUSTOM_RADIUS, JSON.stringify(normalized.customRadius));
+    AppStorage.setOrCreate(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_STARTUP_TEXT,
+      JSON.stringify(normalized.customLightStartupText));
+    AppStorage.setOrCreate(AppThemeSettingsStore.KEY_CUSTOM_DARK_STARTUP_TEXT,
+      JSON.stringify(normalized.customDarkStartupText));
+    AppStorage.setOrCreate(AppThemeSettingsStore.KEY_CUSTOM_PREVIEW_IMAGE_PATH, normalized.customPreviewImagePath);
   }
 
   static accentColor(darkMode: boolean): string {
@@ -396,7 +472,8 @@ export class AppThemeSettingsStore {
     // canonical persisted source for backward-compatible custom-theme data.
     const layoutTheme = BuiltinThemeRegistry.findById(light.layoutThemeId);
     const radiusTheme = BuiltinThemeRegistry.findById(active.radiusThemeId);
-    const glassTheme = BuiltinThemeRegistry.findById(active.glassThemeId);
+    // 磨砂参数跟随完整配色的来源主题；glassThemeId 只为兼容旧数据保留。
+    const glassTheme = BuiltinThemeRegistry.findById(active.paletteThemeId);
     theme.typography = typographyTheme.typography;
     theme.startup = startupTheme.startup;
     theme.navigation = navigationTheme.navigation;
@@ -405,11 +482,173 @@ export class AppThemeSettingsStore {
     theme.radius = radiusTheme.radius;
     theme.glass = glassTheme.glass;
     AppThemeSettingsStore.applyCustomAppearance(theme, normalized);
+    AppThemeSettingsStore.applyOverrides(theme, normalized);
     theme.light.colors.accentColor = normalized.customLightAccentColor;
     theme.light.colors.buttonColor = normalized.customLightButtonColor;
     theme.dark.colors.accentColor = normalized.customDarkAccentColor;
     theme.dark.colors.buttonColor = normalized.customDarkButtonColor;
     return theme;
+  }
+
+  /** 方案自己覆盖的配色与强调气泡，盖在部件来源主题的令牌之上。 */
+  static applyOverrides(theme: ThemePack, settings: AppThemeSettings): void {
+    AppThemeSettingsStore.applyPaletteOverride(theme.light.colors, settings.customLightPalette);
+    AppThemeSettingsStore.applyPaletteOverride(theme.dark.colors, settings.customDarkPalette);
+    AppThemeSettingsStore.applyEmphasisOverride(theme.light.regexEmphasis, settings.customLightEmphasis);
+    AppThemeSettingsStore.applyEmphasisOverride(theme.dark.regexEmphasis, settings.customDarkEmphasis);
+    if (settings.customAppFontFamily) theme.typography.appFontFamily = settings.customAppFontFamily;
+    const radius = settings.customRadius;
+    if (radius.small >= 0) theme.radius.small = radius.small;
+    if (radius.medium >= 0) theme.radius.medium = radius.medium;
+    if (radius.large >= 0) theme.radius.large = radius.large;
+    if (radius.card >= 0) theme.radius.card = radius.card;
+    if (radius.button >= 0) theme.radius.button = radius.button;
+    if (radius.bubble >= 0) theme.radius.bubble = radius.bubble;
+  }
+
+  private static applyPaletteOverride(colors: ThemeColorTokens, override: ThemeColorOverrides): void {
+    if (override.pageColor) colors.pageColor = override.pageColor;
+    if (override.cardColor) colors.cardColor = override.cardColor;
+    if (override.inputColor) colors.inputColor = override.inputColor;
+    if (override.primaryTextColor) colors.primaryTextColor = override.primaryTextColor;
+    if (override.subTextColor) colors.subTextColor = override.subTextColor;
+    if (override.dividerColor) colors.dividerColor = override.dividerColor;
+    if (override.dangerColor) colors.dangerColor = override.dangerColor;
+  }
+
+  private static applyEmphasisOverride(tokens: ThemeRegexEmphasisTokens, override: ThemeEmphasisOverrides): void {
+    if (override.mode) tokens.emphasisMode = override.mode;
+    if (override.bubbleStyle) tokens.bubbleStyle = override.bubbleStyle;
+    if (override.color) tokens.emphasisColor = override.color;
+    if (override.textColor) tokens.emphasisTextColor = override.textColor;
+  }
+
+  static hasOverrides(settings: AppThemeSettings): boolean {
+    return !!settings.customAppFontFamily || AppThemeSettingsStore.hasRadiusOverride(settings.customRadius) ||
+      AppThemeSettingsStore.hasStartupTextStyle(settings.customLightStartupText) ||
+      AppThemeSettingsStore.hasStartupTextStyle(settings.customDarkStartupText) ||
+      AppThemeSettingsStore.hasPaletteOverride(settings.customLightPalette) ||
+      AppThemeSettingsStore.hasPaletteOverride(settings.customDarkPalette) ||
+      AppThemeSettingsStore.hasEmphasisOverride(settings.customLightEmphasis) ||
+      AppThemeSettingsStore.hasEmphasisOverride(settings.customDarkEmphasis);
+  }
+
+  static hasPaletteOverride(override: ThemeColorOverrides): boolean {
+    return !!(override.pageColor || override.cardColor || override.inputColor || override.primaryTextColor ||
+      override.subTextColor || override.dividerColor || override.dangerColor);
+  }
+
+  static hasEmphasisOverride(override: ThemeEmphasisOverrides): boolean {
+    return !!(override.mode || override.bubbleStyle || override.color || override.textColor);
+  }
+
+  static hasRadiusOverride(radius: ThemeRadiusOverrides): boolean {
+    return radius.small >= 0 || radius.medium >= 0 || radius.large >= 0 || radius.card >= 0 ||
+      radius.button >= 0 || radius.bubble >= 0;
+  }
+
+  static hasStartupTextStyle(style: ThemeStartupTextStyle): boolean {
+    return !!(style.titleColor || style.subtitleColor || style.titleSize > 0 || style.subtitleSize > 0);
+  }
+
+  static parseRadius(raw: string): ThemeRadiusOverrides {
+    if (!raw) return new ThemeRadiusOverrides();
+    try {
+      return AppThemeSettingsStore.normalizeRadius(JSON.parse(raw) as ThemeRadiusOverrides);
+    } catch (_) {
+      return new ThemeRadiusOverrides();
+    }
+  }
+
+  /** 0 到 48 的整数保留，其余当作跟随（-1）。 */
+  static normalizeRadius(source: ThemeRadiusOverrides | null | undefined): ThemeRadiusOverrides {
+    const result = new ThemeRadiusOverrides();
+    if (!source) return result;
+    const pick = (value: number | undefined): number =>
+      typeof value === 'number' && isFinite(value) && value >= 0 ? Math.min(48, Math.round(value)) : -1;
+    result.small = pick(source.small);
+    result.medium = pick(source.medium);
+    result.large = pick(source.large);
+    result.card = pick(source.card);
+    result.button = pick(source.button);
+    result.bubble = pick(source.bubble);
+    return result;
+  }
+
+  static parseStartupText(raw: string): ThemeStartupTextStyle {
+    if (!raw) return new ThemeStartupTextStyle();
+    try {
+      return AppThemeSettingsStore.normalizeStartupText(JSON.parse(raw) as ThemeStartupTextStyle);
+    } catch (_) {
+      return new ThemeStartupTextStyle();
+    }
+  }
+
+  static normalizeStartupText(source: ThemeStartupTextStyle | null | undefined): ThemeStartupTextStyle {
+    const result = new ThemeStartupTextStyle();
+    if (!source) return result;
+    result.titleColor = HexColor.parse(source.titleColor || '');
+    result.subtitleColor = HexColor.parse(source.subtitleColor || '');
+    const size = (value: number | undefined, min: number, max: number): number =>
+      typeof value === 'number' && isFinite(value) && value > 0 ? Math.max(min, Math.min(max, Math.round(value))) : 0;
+    result.titleSize = size(source.titleSize, 12, 48);
+    result.subtitleSize = size(source.subtitleSize, 8, 28);
+    return result;
+  }
+
+  static parsePalette(raw: string): ThemeColorOverrides {
+    if (!raw) return new ThemeColorOverrides();
+    try {
+      return AppThemeSettingsStore.normalizePalette(JSON.parse(raw) as ThemeColorOverrides);
+    } catch (_) {
+      return new ThemeColorOverrides();
+    }
+  }
+
+  static parseEmphasis(raw: string): ThemeEmphasisOverrides {
+    if (!raw) return new ThemeEmphasisOverrides();
+    try {
+      return AppThemeSettingsStore.normalizeEmphasis(JSON.parse(raw) as ThemeEmphasisOverrides);
+    } catch (_) {
+      return new ThemeEmphasisOverrides();
+    }
+  }
+
+  /** 只保留合法的 #RRGGBB；其余项清空（跟随主题）。 */
+  static normalizePalette(source: ThemeColorOverrides | null | undefined): ThemeColorOverrides {
+    const result = new ThemeColorOverrides();
+    if (!source) return result;
+    result.pageColor = HexColor.parse(source.pageColor || '');
+    result.cardColor = HexColor.parse(source.cardColor || '');
+    result.inputColor = HexColor.parse(source.inputColor || '');
+    result.primaryTextColor = HexColor.parse(source.primaryTextColor || '');
+    result.subTextColor = HexColor.parse(source.subTextColor || '');
+    result.dividerColor = HexColor.parse(source.dividerColor || '');
+    result.dangerColor = HexColor.parse(source.dangerColor || '');
+    return result;
+  }
+
+  static normalizeEmphasis(source: ThemeEmphasisOverrides | null | undefined): ThemeEmphasisOverrides {
+    const result = new ThemeEmphasisOverrides();
+    if (!source) return result;
+    const mode = (source.mode || '').trim();
+    result.mode = mode === 'none' || mode === 'text' || mode === 'highlight' || mode === 'bubble' ? mode : '';
+    result.bubbleStyle = (source.bubbleStyle || '').trim().substring(0, 80);
+    result.color = HexColor.parseAlpha(source.color || '');
+    result.textColor = HexColor.parseAlpha(source.textColor || '');
+    return result;
+  }
+
+  private static async putOverrides(store: preferences.Preferences, settings: AppThemeSettings): Promise<void> {
+    await store.put(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_PALETTE, JSON.stringify(settings.customLightPalette));
+    await store.put(AppThemeSettingsStore.KEY_CUSTOM_DARK_PALETTE, JSON.stringify(settings.customDarkPalette));
+    await store.put(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_EMPHASIS, JSON.stringify(settings.customLightEmphasis));
+    await store.put(AppThemeSettingsStore.KEY_CUSTOM_DARK_EMPHASIS, JSON.stringify(settings.customDarkEmphasis));
+    await store.put(AppThemeSettingsStore.KEY_CUSTOM_APP_FONT_FAMILY, settings.customAppFontFamily);
+    await store.put(AppThemeSettingsStore.KEY_CUSTOM_RADIUS, JSON.stringify(settings.customRadius));
+    await store.put(AppThemeSettingsStore.KEY_CUSTOM_LIGHT_STARTUP_TEXT, JSON.stringify(settings.customLightStartupText));
+    await store.put(AppThemeSettingsStore.KEY_CUSTOM_DARK_STARTUP_TEXT, JSON.stringify(settings.customDarkStartupText));
+    await store.put(AppThemeSettingsStore.KEY_CUSTOM_PREVIEW_IMAGE_PATH, settings.customPreviewImagePath);
   }
 
   static currentCustomTheme(darkMode: boolean): ThemePack {
@@ -621,6 +860,15 @@ export class AppThemeSettingsStore {
       '开源轻页' : source.customDarkStartupTitle;
     settings.customLightStartupSubtitle = source.customLightStartupSubtitle || '';
     settings.customDarkStartupSubtitle = source.customDarkStartupSubtitle || '';
+    settings.customLightPalette = AppThemeSettingsStore.normalizePalette(source.customLightPalette);
+    settings.customDarkPalette = AppThemeSettingsStore.normalizePalette(source.customDarkPalette);
+    settings.customLightEmphasis = AppThemeSettingsStore.normalizeEmphasis(source.customLightEmphasis);
+    settings.customDarkEmphasis = AppThemeSettingsStore.normalizeEmphasis(source.customDarkEmphasis);
+    settings.customAppFontFamily = (source.customAppFontFamily || '').substring(0, 120);
+    settings.customRadius = AppThemeSettingsStore.normalizeRadius(source.customRadius);
+    settings.customLightStartupText = AppThemeSettingsStore.normalizeStartupText(source.customLightStartupText);
+    settings.customDarkStartupText = AppThemeSettingsStore.normalizeStartupText(source.customDarkStartupText);
+    settings.customPreviewImagePath = source.customPreviewImagePath || '';
     if (settings.themeId === ThemeIds.CUSTOM) {
       AppThemeSettingsStore.useCustomColors(settings);
     }
@@ -656,6 +904,15 @@ export class AppThemeSettingsStore {
     target.customDarkStartupTitle = source.customDarkStartupTitle;
     target.customLightStartupSubtitle = source.customLightStartupSubtitle;
     target.customDarkStartupSubtitle = source.customDarkStartupSubtitle;
+    target.customLightPalette = AppThemeSettingsStore.normalizePalette(source.customLightPalette);
+    target.customDarkPalette = AppThemeSettingsStore.normalizePalette(source.customDarkPalette);
+    target.customLightEmphasis = AppThemeSettingsStore.normalizeEmphasis(source.customLightEmphasis);
+    target.customDarkEmphasis = AppThemeSettingsStore.normalizeEmphasis(source.customDarkEmphasis);
+    target.customAppFontFamily = source.customAppFontFamily || '';
+    target.customRadius = AppThemeSettingsStore.normalizeRadius(source.customRadius);
+    target.customLightStartupText = AppThemeSettingsStore.normalizeStartupText(source.customLightStartupText);
+    target.customDarkStartupText = AppThemeSettingsStore.normalizeStartupText(source.customDarkStartupText);
+    target.customPreviewImagePath = source.customPreviewImagePath || '';
   }
 
   private static async loadMigratedReaderAppearance(
@@ -777,6 +1034,7 @@ export class AppThemeSettingsStore {
       settings.customLightStartupSubtitle);
     await store.put(AppThemeSettingsStore.KEY_CUSTOM_DARK_STARTUP_SUBTITLE,
       settings.customDarkStartupSubtitle);
+    await AppThemeSettingsStore.putOverrides(store, settings);
     await store.flush();
   }
 

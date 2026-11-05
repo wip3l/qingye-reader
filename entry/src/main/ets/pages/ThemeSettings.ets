@@ -20,8 +20,9 @@ import { ThemeStartupCover } from '../components/ThemeStartupCover';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
 import { TtsPanelThemeBackground } from '../components/TtsPanelThemeBackground';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
-import { ThemeIds, ThemePack, ThemeRegexEmphasisModes, ThemeVariant } from '../theme/ThemeModels';
+import { ThemeIds, ThemePack, ThemeRegexEmphasisModes, ThemeStartupTextStyle, ThemeVariant } from '../theme/ThemeModels';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
+import { ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { AccountCommerceConfig } from '../account/AccountCommerceConfig';
 import { AccountApiError, ThemeCatalogItem, ThemeCatalogResponse,
   ThemeEntitlement } from '../account/AccountCommerceModels';
@@ -284,6 +285,13 @@ struct ThemeSettingsPage {
     return scheme ? scheme.author : '';
   }
 
+  /** 方案由主题包安装而来，但本机没有这个包的素材（换设备同步过来、或目录被清掉）。 */
+  customSchemePackMissing(customSchemeId: string): boolean {
+    if (!customSchemeId) return false;
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, customSchemeId);
+    return !!scheme && !!scheme.packageId && !ThemePackRegistry.getByPackageId(scheme.packageId);
+  }
+
   /** 主题分享 Beta 导出和导入都只对会员开放。 */
   async ensureThemeShareAccess(): Promise<boolean> {
     // 从外部打开主题包冷启动时，账号可能还没读完。
@@ -379,7 +387,12 @@ struct ThemeSettingsPage {
       this.importPreview = new ThemeImportPreview();
       this.showThemeImportDialog = false;
       await this.refreshCustomSchemes();
-      let notice = `已导入「${result.scheme.name}」`;
+      if (result.replacedActive) {
+        // 更新了正在使用的主题包方案：重新应用，新素材才会铺到各页面。
+        await this.selectTheme(ThemeIds.CUSTOM, result.scheme.id, false);
+      }
+      let notice = replaceSchemeId && result.scheme.packageId ? `已更新「${result.scheme.name}」` :
+        `已导入「${result.scheme.name}」`;
       if (result.addedRules > 0) notice += `，追加 ${result.addedRules} 条强调规则`;
       if (result.missingFonts.length > 0) notice += `，${result.missingFonts.length} 款字体改用全局字体`;
       HdsFeedback.showToast(notice);
@@ -745,6 +758,7 @@ struct ThemeSettingsPage {
       this.readerLightThemeIndex = ReaderThemeHelper.APP_THEME_INDEX;
       this.readerDarkThemeIndex = ReaderThemeHelper.APP_THEME_INDEX;
       this.focusedThemeId = '';
+      await ReaderFontBootstrap.registerThemeFontFromSettings(getContext(this), this.getUIContext());
       ReaderFontBootstrap.applyApplicationFont(getContext(this), 'theme-settings');
       this.refreshRecentReadCard();
       this.syncBars();
@@ -1224,7 +1238,7 @@ struct ThemeSettingsPage {
       this.themePreviewPanes(theme, customSchemeId, true)
 
       Row({ space: AppSpacing.MD }) {
-        Image(AppIconManager.optionForTheme(theme.id).preview)
+        Image(this.customSchemeLogo(customSchemeId) || AppIconManager.optionForTheme(theme.id).preview)
           .width(52)
           .height(52)
           .borderRadius(13)
@@ -1269,6 +1283,12 @@ struct ThemeSettingsPage {
 
       this.storeNavInfoRow(theme, customSchemeId)
       this.storeThemeActions(theme, customSchemeId)
+      if (this.customSchemePackMissing(customSchemeId)) {
+        Text('这套方案的主题包素材不在这台设备上，正按默认样式显示；重新导入同一个主题包即可恢复。')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.activeVariant(theme).colors.dangerColor)
+          .width('100%')
+      }
       if (this.customSchemeAuthor(customSchemeId)) {
         Text(themeAuthorLine(this.customSchemeAuthor(customSchemeId)))
           .fontSize(AppFontSize.CAPTION)
@@ -1314,7 +1334,11 @@ struct ThemeSettingsPage {
             customImagePath: this.customPreviewStartupImage(customSchemeId),
             titleOverride: this.customPreviewStartupTitle(customSchemeId),
             subtitleOverride: this.customPreviewStartupSubtitle(customSchemeId),
-            explicitText: !!customSchemeId
+            explicitText: !!customSchemeId,
+            titleColor: this.customPreviewStartupStyle(customSchemeId).titleColor,
+            subtitleColor: this.customPreviewStartupStyle(customSchemeId).subtitleColor,
+            titleSize: this.customPreviewStartupStyle(customSchemeId).titleSize,
+            subtitleSize: this.customPreviewStartupStyle(customSchemeId).subtitleSize
           })
           this.storePaneLabel('启动封面')
           if (!inPager && theme.id !== ThemeIds.PLAIN_DEFAULT && theme.id !== ThemeIds.CUSTOM) {
@@ -1857,16 +1881,28 @@ struct ThemeSettingsPage {
   myThemeThumb(theme: ThemePack, customSchemeId: string, index: number) {
     Column({ space: AppSpacing.SM }) {
       Stack() {
-        ThemeStartupCover({
-          themeId: theme.startup.styleId,
-          darkMode: this.appDarkMode,
-          compact: true,
-          animated: false,
-          customImagePath: this.customPreviewStartupImage(customSchemeId),
-          titleOverride: this.customPreviewStartupTitle(customSchemeId),
-          subtitleOverride: this.customPreviewStartupSubtitle(customSchemeId),
-          explicitText: !!customSchemeId
-        })
+        if (this.customPreviewImage(customSchemeId)) {
+          Image(this.customPreviewImage(customSchemeId))
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+            .draggable(false)
+        } else {
+          ThemeStartupCover({
+            themeId: theme.startup.styleId,
+            darkMode: this.appDarkMode,
+            compact: true,
+            animated: false,
+            customImagePath: this.customPreviewStartupImage(customSchemeId),
+            titleOverride: this.customPreviewStartupTitle(customSchemeId),
+            subtitleOverride: this.customPreviewStartupSubtitle(customSchemeId),
+            explicitText: !!customSchemeId,
+            titleColor: this.customPreviewStartupStyle(customSchemeId).titleColor,
+            subtitleColor: this.customPreviewStartupStyle(customSchemeId).subtitleColor,
+            titleSize: this.customPreviewStartupStyle(customSchemeId).titleSize,
+            subtitleSize: this.customPreviewStartupStyle(customSchemeId).subtitleSize
+          })
+        }
       }
       .width('100%')
       .height(MY_THEME_THUMB_COVER_HEIGHT)
@@ -2678,6 +2714,7 @@ struct ThemeSettingsPage {
 
   hasThemeAccess(themeId: string): boolean {
     if (themeId === ThemeIds.OBSIDIAN_ARCHIVE) return AccountSessionStore.hasOwnedEntitlement(themeId);
+    if (ThemePackRegistry.isPackId(themeId)) return ThemePackRegistry.has(themeId);
     return BuiltinThemeRegistry.isFree(themeId) ||
       (themeId === this.appThemeId && !this.isTrialTheme(themeId)) ||
       AccountSessionStore.hasValidEntitlement(themeId);
@@ -2690,13 +2727,14 @@ struct ThemeSettingsPage {
     if (usesExclusive && !AccountSessionStore.hasOwnedEntitlement(ThemeIds.OBSIDIAN_ARCHIVE)) {
       return BuiltinThemeRegistry.findById(ThemeIds.OBSIDIAN_ARCHIVE).name;
     }
+    // 已安装的主题包不需要权益；缺包时按默认主题显示，不拦截应用。
     const lightThemeId = settings.customLightSources.startupThemeId;
-    if (!BuiltinThemeRegistry.isFree(lightThemeId) &&
+    if (!BuiltinThemeRegistry.isFree(lightThemeId) && !ThemePackRegistry.isPackId(lightThemeId) &&
       !AccountSessionStore.hasValidEntitlement(lightThemeId)) {
       return BuiltinThemeRegistry.findById(lightThemeId).name;
     }
     const darkThemeId = settings.customDarkSources.startupThemeId;
-    if (!BuiltinThemeRegistry.isFree(darkThemeId) &&
+    if (!BuiltinThemeRegistry.isFree(darkThemeId) && !ThemePackRegistry.isPackId(darkThemeId) &&
       !AccountSessionStore.hasValidEntitlement(darkThemeId)) {
       return BuiltinThemeRegistry.findById(darkThemeId).name;
     }
@@ -2988,6 +3026,26 @@ struct ThemeSettingsPage {
   themeVisualPreview(theme: ThemePack, customSchemeId: string = '') {
     this.themePreviewPanes(theme, customSchemeId, false)
     this.storeNavInfoRow(theme, customSchemeId)
+  }
+
+  /** 方案指定的预览图，或主题包自带的；空则用启动封面。 */
+  customPreviewImage(customSchemeId: string): string {
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, customSchemeId);
+    return scheme ? scheme.settings.customPreviewImagePath : '';
+  }
+
+  /** 主题包自带的标识，替代自定义主题的桌面图标预览。 */
+  customSchemeLogo(customSchemeId: string): string {
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, customSchemeId);
+    if (!scheme || !scheme.packageId) return '';
+    const pack = ThemePackRegistry.getByPackageId(scheme.packageId);
+    return pack ? pack.logo : '';
+  }
+
+  customPreviewStartupStyle(customSchemeId: string): ThemeStartupTextStyle {
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, customSchemeId);
+    if (!scheme) return new ThemeStartupTextStyle();
+    return this.appDarkMode ? scheme.settings.customDarkStartupText : scheme.settings.customLightStartupText;
   }
 
   customPreviewStartupImage(customSchemeId: string): string {

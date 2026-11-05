@@ -30,7 +30,7 @@ export class ReaderBackgroundImageStore {
       return;
     }
     try {
-      const path: string = uri.startsWith('file://') ? decodeURIComponent(uri.substring(7)) : uri;
+      const path: string = uri.startsWith('file://') ? new fileUri.FileUri(uri).path : uri;
       if (path.startsWith(`${context.filesDir}/reader_backgrounds/`) && fs.accessSync(path)) {
         fs.unlinkSync(path);
       }

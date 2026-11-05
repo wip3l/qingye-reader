@@ -2,6 +2,7 @@ import { UIContext, FrameNode, NodeController, DrawContext, LayoutConstraint, Po
 import { text, common2D } from '@kit.ArkGraphics2D';
 import { image } from '@kit.ImageKit';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
+import { ReaderRasterAssets } from '../../core/reader/ReaderRasterAssets';
 import { ReaderResolvedRegexEmphasis } from '../../model/reader/ReaderRegexFontRule';
 import { ReaderV2Color } from '../../core/reader/ReaderV2Style';
 import { ReaderFontTextStyle } from '../../core/reader/ReaderFontTextStyle';
@@ -162,7 +163,13 @@ class ReaderWeightedTextNode extends FrameNode {
     if (cached) return cached;
     const resource = ThemeAssetRegistry.regexBubbleCap(styleId);
     const host = this.context.getHostContext();
-    if (typeof resource === 'string' || !host) return undefined;
+    if (typeof resource === 'string') {
+      // 主题包的端饰是包目录里的 SVG 文件。
+      const fromFile = resource ? ReaderRasterAssets.fileImage(resource, 96, 96) : null;
+      if (fromFile) ReaderWeightedTextNode.capImages.set(styleId, fromFile);
+      return fromFile || undefined;
+    }
+    if (!host) return undefined;
     try {
       const bytes = host.resourceManager.getMediaContentSync(resource.id);
       const source = image.createImageSource(bytes.buffer as ArrayBuffer);

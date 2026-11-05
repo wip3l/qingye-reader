@@ -164,7 +164,14 @@ export struct ThemeExportDialog {
   }
 
   estimatedBytes(): number {
-    return this.plan.imageBytes + (this.includeFonts ? this.fontBytes() : 0) + 8 * 1024;
+    return this.plan.imageBytes + this.plan.packAssetBytes + (this.includeFonts ? this.fontBytes() : 0) + 8 * 1024;
+  }
+
+  packDetail(): string {
+    const count = `${this.plan.packAssetCount} 个素材文件 · ${formatBytes(this.plan.packAssetBytes)}`;
+    return this.plan.packRemix ?
+      `这套方案用到了主题包「${this.plan.packName}」的部件，会一并打包，并保留原作者信息。${count}` :
+      `这套方案来自主题包「${this.plan.packName}」，素材会随包导出。${count}`;
   }
 
   canExport(): boolean {
@@ -208,6 +215,13 @@ export struct ThemeExportDialog {
             title: '以下图片已丢失，请在编辑主题里重新上传后再导出',
             items: this.plan.missingImages,
             danger: true,
+            darkMode: this.darkMode
+          })
+        }
+        if (this.plan.packName) {
+          ThemeShareNotice({
+            title: '附带主题包素材',
+            items: [this.packDetail(), '带素材的主题包需要较新版本的应用才能导入'],
             darkMode: this.darkMode
           })
         }
@@ -321,8 +335,13 @@ export struct ThemeImportDialog {
   @State replaceSchemeId: string = '';
   @State busy: boolean = false;
 
+  /** 本机已有同一个主题包时原位更新那套方案，不占新额度。 */
+  isUpdate(): boolean {
+    return !!this.preview.updateSchemeId;
+  }
+
   isFull(): boolean {
-    return this.schemes.length >= this.limit;
+    return !this.isUpdate() && this.schemes.length >= this.limit;
   }
 
   replaceable(): CustomThemeScheme[] {
@@ -331,6 +350,7 @@ export struct ThemeImportDialog {
 
   contentSummary(): string[] {
     const items: string[] = [];
+    if (this.preview.parts.length > 0) items.push(`主题包素材：${this.preview.parts.join('、')}`);
     if (this.preview.hasLayout) items.push('方案排版（正文、标题、缩进、页眉页脚）');
     if (this.preview.imageCount > 0) items.push(`图片 ${this.preview.imageCount} 张`);
     if (this.preview.ruleCount > 0) items.push(`强调规则 ${this.preview.ruleCount} 条，追加在你原有规则之后`);
@@ -342,10 +362,21 @@ export struct ThemeImportDialog {
     if (this.busy || (this.isFull() && !this.replaceSchemeId)) return;
     this.busy = true;
     try {
-      await this.onImport(this.isFull() ? this.replaceSchemeId : '');
+      await this.onImport(this.isUpdate() ? this.preview.updateSchemeId : (this.isFull() ? this.replaceSchemeId : ''));
     } finally {
       this.busy = false;
     }
+  }
+
+  noticeTitle(): string {
+    if (this.isUpdate()) return `将更新已安装的方案「${this.preview.updateSchemeName}」，包含`;
+    return this.preview.parts.length > 0 ? '将安装为一套新的自定义方案，包含' : '将导入为一套新的自定义方案，包含';
+  }
+
+  importLabel(): string {
+    if (this.busy) return this.isUpdate() ? '更新中' : '导入中';
+    if (this.isUpdate()) return '更新';
+    return this.isFull() ? '替换并导入' : '导入';
   }
 
   build() {
@@ -377,10 +408,17 @@ export struct ThemeImportDialog {
         .width('100%')
         .alignItems(HorizontalAlign.Start)
         ThemeShareNotice({
-          title: '将导入为一套新的自定义方案，包含',
+          title: this.noticeTitle(),
           items: ['配色与各部件选择', ...this.contentSummary()],
           darkMode: this.darkMode
         })
+        if (this.preview.manifest.credits && this.preview.manifest.credits.name) {
+          Text(`素材来自主题包「${this.preview.manifest.credits.name}」` +
+            (this.preview.manifest.credits.author ? `，作者 ${this.preview.manifest.credits.author}` : ''))
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+            .width('100%')
+        }
         if (this.preview.replaced.length > 0) {
           ThemeShareNotice({
             title: '以下部件来自你尚未获得的主题，已换成默认主题的样式',
@@ -437,6 +475,11 @@ export struct ThemeImportDialog {
             .fontSize(AppFontSize.CAPTION)
             .fontColor(ThemeRuntime.subTextColor(this.darkMode))
             .width('100%')
+        } else if (this.isUpdate()) {
+          Text('同一个主题包只保留一套方案：更新会换掉它的素材和设置，这套方案的阅读排版与强调规则保留并合并。')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+            .width('100%')
         } else {
           Text(`导入后共 ${this.schemes.length + 1}/${this.limit} 套方案`)
             .fontSize(AppFontSize.CAPTION)
@@ -452,7 +495,7 @@ export struct ThemeImportDialog {
             .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
             .enabled(!this.busy)
             .onClick(() => this.onClose())
-          Button(this.busy ? '导入中' : (this.isFull() ? '替换并导入' : '导入'), { type: ButtonType.Normal })
+          Button(this.importLabel(), { type: ButtonType.Normal })
             .layoutWeight(1)
             .height(42)
             .borderRadius(ThemeRuntime.buttonRadius())

@@ -1,4 +1,5 @@
 import { ThemeRuntime } from '../theme/ThemeRuntime';
+import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 
 export class ReaderThemeItem {
   name: string = '';
@@ -69,14 +70,18 @@ export class ReaderThemeHelper {
   }
 
   private static applicationTheme(darkMode: boolean): ReaderThemeItem {
+    const assetId = ThemeRuntime.readerBackgroundAssetId(darkMode);
+    // 主题包的整图背景走用户图片的那条路（铺满、按填充方式裁切），角饰模式仍按素材键绘制。
+    const packImage = ThemeAssetRegistry.readerBackgroundImage(assetId);
     return ReaderThemeHelper.theme(
       '应用主题',
       ThemeRuntime.readerBackgroundColor(darkMode),
       ThemeRuntime.readerTextColor(darkMode),
       ThemeRuntime.readerSubTextColor(darkMode),
-      ThemeRuntime.readerBackgroundAssetId(darkMode),
+      packImage ? '' : assetId,
       ThemeRuntime.readerContentTone(darkMode),
-      ThemeRuntime.readerBackgroundImageFit(darkMode)
+      packImage ? ThemeAssetRegistry.readerBackgroundImageFit(assetId) : ThemeRuntime.readerBackgroundImageFit(darkMode),
+      packImage
     );
   }
 

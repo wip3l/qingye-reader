@@ -12,6 +12,7 @@ import { SearchExploreSettingsStore } from '../utils/SearchExploreSettingsStore'
 import { ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { AppThemeSettingsStore } from '../utils/AppThemeSettingsStore';
 import { CustomThemeSchemeStore } from '../utils/CustomThemeSchemeStore';
+import { ThemePackStore } from '../utils/ThemePackStore';
 import { AppThemeModeStore } from '../utils/AppThemeModeStore';
 import { AppIconSettingsStore } from '../utils/AppIconSettingsStore';
 import { AppIconManager } from '../utils/AppIconManager';
@@ -277,7 +278,13 @@ export default class EntryAbility extends UIAbility {
     }).catch((e: Error) => {
       hilog.warn(0x0000, 'testTag', 'Load account session failed: %{public}s', JSON.stringify(e));
     });
-    const appThemePromise = AppThemeSettingsStore.load(this.context).then((settings) => {
+    // 已安装的主题包要先注册，方案里指向 pack: 的部件来源才能解析，所以排在主题设置之前。
+    const appThemePromise = ThemePackStore.loadInstalled(this.context).catch((e: Error) => {
+      hilog.warn(0x0000, 'testTag', 'Load installed theme packs failed: %{public}s', JSON.stringify(e));
+      return 0;
+    }).then(() => {
+      return AppThemeSettingsStore.load(this.context);
+    }).then((settings) => {
       AppThemeSettingsStore.applyToStorage(settings);
       return StartupCoverTextStore.load(this.context);
     }).catch((e: Error) => {

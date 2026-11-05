@@ -1048,7 +1048,7 @@ struct Index {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
   }
 
-  bottomTabBar(icon: Resource, title: string): BottomTabBarStyle {
+  bottomTabBar(icon: ResourceStr, title: string): BottomTabBarStyle {
     return BottomTabBarStyle.of(icon, title)
       .labelStyle({
         font: { size: 11 },
@@ -1065,7 +1065,7 @@ struct Index {
   }
 
   @Builder
-  compatTabBar(icon: Resource, title: string, index: number) {
+  compatTabBar(icon: ResourceStr, title: string, index: number) {
     Column() {
       Column({ space: AppSpacing.XXS }) {
         Column() {
@@ -1126,7 +1126,7 @@ struct Index {
     return ThemeRuntime.subTextColor(this.appDarkMode);
   }
 
-  navigationIcon(tabId: string): Resource {
+  navigationIcon(tabId: string): ResourceStr {
     return ThemeAssetRegistry.navigationIcon(ThemeRuntime.iconPackId(), tabId);
   }
 
