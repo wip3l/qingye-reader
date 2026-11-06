@@ -4521,6 +4521,12 @@ export struct BookshelfPage {
     return `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`;
   }
 
+  /** 章节名多半自带“第N章”，这里只放章节名；没有章节名（PDF、未开始读）时才用带章节序号的说法。 */
+  shelfCompanionChapterText(book: Book): string {
+    return LocalBookService.isPdfBook(book) ? this.getLastReadChapterText(book) :
+      (this.getReadChapterText(book) || this.getLastReadChapterText(book));
+  }
+
   shelfCompanionNoteRefreshKey(books: Book[]): string {
     return this.getLatestReadTileBooks(books)
       .map((book: Book): string => `${book.bookUrl}:${this.getBookReadTime(book)}`).join('|');
@@ -4864,7 +4870,7 @@ export struct BookshelfPage {
           .fontColor(this.subTextColor())
           .maxLines(1)
 
-        Text(this.getLastReadChapterText(book))
+        Text(this.shelfCompanionChapterText(book))
           .width('100%')
           .fontSize(AppFontSize.BODY_LARGE)
           .lineHeight(22)
