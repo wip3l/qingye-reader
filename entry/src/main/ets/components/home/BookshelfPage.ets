@@ -4608,10 +4608,11 @@ export struct BookshelfPage {
           colors: [['#38FFFFFF', 0], ['#00FFFFFF', 0.3], ['#00000000', 0.75], ['#38000000', 1]]
         })
 
-      // 封面压在书页上的一道窄投影。
+      // 封面压在书页上的一道窄投影。四边各缩进 1vp 藏在封面面板下面，圆角处的抗锯齿不会透出深色细边。
       Column()
-        .width(coverWidth)
-        .height(coverHeight)
+        .width(coverWidth - 2)
+        .height(coverHeight - 2)
+        .position({ x: 1, y: 1 })
         .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 4, bottomRight: 4 })
         .backgroundColor(this.shelfHardcoverBoardColor())
         .shadow({ radius: 3, color: '#59000000', offsetX: 2, offsetY: 0 })
@@ -4674,7 +4675,8 @@ export struct BookshelfPage {
       this.shelfHardcoverBack(coverWidth, coverHeight)
 
       Stack({ alignContent: Alignment.TopStart }) {
-        this.coverView(book, '100%', '100%', ImageFit.Cover, animateCovers, true, idScope)
+        // 圆角交给外面的封面面板裁，封面图自己不再裁 8vp，否则四角会露出下面的深色底板。
+        this.coverView(book, '100%', '100%', ImageFit.Cover, animateCovers, true, idScope, 0)
         this.shelfHardcoverCoverLight(coverWidth)
       }
       .width(coverWidth)
@@ -4716,7 +4718,7 @@ export struct BookshelfPage {
       this.shelfHardcoverBack(this.shelfFolderBookWidth(), this.shelfFolderBookHeight())
 
       Stack({ alignContent: Alignment.TopStart }) {
-        this.coverView(book, '100%', '100%', ImageFit.Cover, true, false)
+        this.coverView(book, '100%', '100%', ImageFit.Cover, true, false, '', 0)
         this.shelfHardcoverCoverLight(this.shelfFolderBookWidth())
         if (slot > 0) {
           // 后面两本压暗一点，叠出前后层次。
@@ -5861,7 +5863,7 @@ export struct BookshelfPage {
 
   @Builder
   coverView(book: Book, width: Length, height: Length, imageFit: ImageFit, animateCovers: boolean = true, measure: boolean = true,
-    idScope: string = '') {
+    idScope: string = '', radius: number = 8) {
     Stack() {
       if (this.shouldUseThemeBookCover()) {
         if (this.activeThemeBookCovers(book).length === 1 || !animateCovers) {
@@ -5963,7 +5965,7 @@ export struct BookshelfPage {
     })
     .width(width)
     .height(height)
-    .borderRadius(8)
+    .borderRadius(radius)
     .clip(true)
     .backgroundColor(this.inputColor())
     .grayscale(CloudAutoSync.isPlaceholder(book) ? 1 : 0)
