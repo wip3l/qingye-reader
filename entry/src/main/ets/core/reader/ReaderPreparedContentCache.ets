@@ -11,8 +11,8 @@ export class ReaderPreparedContentCache {
   private static readonly MAX_CHARS: number = 3000000;
 
   static key(bookUrl: string, chapterIndex: number, content: string, contentHash: number,
-    rulesCount: number, rulesUpdateTime: number): string {
-    return `${bookUrl}|${chapterIndex}_${content.length}_${contentHash}_${rulesCount}_${rulesUpdateTime}`;
+    rulesCount: number, rulesUpdateTime: number, textConvert: string = ''): string {
+    return `${bookUrl}|${chapterIndex}_${content.length}_${contentHash}_${rulesCount}_${rulesUpdateTime}_${textConvert}`;
   }
 
   /** 命中时移到最新，淘汰从最旧开始。 */

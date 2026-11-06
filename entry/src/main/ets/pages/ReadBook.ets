@@ -99,6 +99,8 @@ import { ThemeRegexEmphasisModes } from '../theme/ThemeModels';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { ReaderContentPreprocessor } from '../core/concurrency/ReaderContentPreprocessor';
+import { ReaderTextConvert } from '../core/reader/ReaderTextConvert';
+import { ReaderTextConvertRuntime } from '../core/reader/ReaderTextConvertRuntime';
 import {
   ReaderV2Document,
   ReaderV2DocumentParser,
@@ -174,7 +176,7 @@ import {
   ReaderComicSuperResolution,
   ReaderComicSuperResolutionAccess
 } from '@legado/aiengine';
-import { ComicChineseConverter } from '@legado/aiengine';
+import { ComicChineseConverter, ComicChineseDictionary } from '@legado/aiengine';
 import { ReaderCustomFontItem, ReaderCustomFontData } from '../core/reader/ReaderSettingsModels';
 import {
   PageTurnPreview,
@@ -421,6 +423,15 @@ struct ReadBookPage {
   @State readerComicBookMode: string = '';
   /** 本书漫画图片繁→简（书籍变量 readerComicTextConvert，没单独设置过时跟随漫画设置的默认值）。 */
   @State readerComicTextConvert: boolean = false;
+  /** 本书正文繁→简（书籍变量 readerTextConvert），漫画模式下不生效。 */
+  @State readerTextConvert: boolean = false;
+  /** 简繁字典加载完成后递增：章节标题等同步显示处据此重算。 */
+  @State readerTextConvertRevision: number = 0;
+  /** 开书检测到繁体、本书又没选过时显示的询问卡片。 */
+  @State showReaderTextConvertPrompt: boolean = false;
+  /** 本次打开已检测过繁体（每次开书最多检测一次）。 */
+  private readerTextConvertChecked: boolean = false;
+  private readerTextConvertPromptTimer: number = -1;
   @State readerComicColorEnabled: boolean = false;
   @State readerComicModelStatus: string = '';
   @State readerComicModelReceivedBytes: number = 0;
@@ -1432,6 +1443,7 @@ struct ReadBookPage {
 
   aboutToDisappear() {
     KnockShare.detach(this.ttsFloatingSessionOwnerId);
+    this.hideReaderTextConvertPrompt();
     if (this.readerSafeAreaRepaginateTimerId >= 0) {
       clearTimeout(this.readerSafeAreaRepaginateTimerId);
       this.readerSafeAreaRepaginateTimerId = -1;
@@ -1854,6 +1866,10 @@ struct ReadBookPage {
       this.book = engine.book || this.book;
       this.chapters = engine.chapters;
       this.initializeReaderComicMode();
+      await this.initializeReaderTextConvert();
+      if (loadSerial !== this.bookLoadSerial) {
+        return;
+      }
       const activeTtsChapterIndex = this.activeMirroredTtsChapterIndex();
       const savedChapterIndex = activeTtsChapterIndex >= 0 ? activeTtsChapterIndex : engine.curIdx;
       this.currentChapterIndex = this.clampChapterIndex(savedChapterIndex);
@@ -3796,6 +3812,11 @@ struct ReadBookPage {
         this.readerEyeTurnPrompt()
       }
 
+      if (this.showReaderTextConvertPrompt && this.readerInitialPageReady && !this.showMenu && !this.showToc &&
+        !this.isReaderComicModeActive()) {
+        this.readerTextConvertPrompt()
+      }
+
       if (this.eyeTurnState.showCalibration) {
         this.readerEyeCalibrationPanel()
       }
@@ -5229,6 +5250,8 @@ struct ReadBookPage {
         chapterCount: (): number => this.chapters.length,
         chapterTitle: (index: number): string => this.getChapterTitle(index),
         replaceRules: (): ReaderReplaceRule[] => this.readerReplaceRules,
+        transformText: async (text: string): Promise<string> => this.isReaderTextConvertActive() ?
+          await ReaderTextConvertRuntime.convert(getContext(this), text) : text,
         onProgress: (progress: ReaderContentSearchProgress): void => this.onReaderContentSearchProgress(progress)
       });
     }
@@ -5242,7 +5265,9 @@ struct ReadBookPage {
   }
 
   startReaderContentSearch(): void {
-    const query = ReaderContentSearchMatcher.normalizeQuery(this.readerSearchQuery);
+    let query = ReaderContentSearchMatcher.normalizeQuery(this.readerSearchQuery);
+    // 正文转成了简体时，繁体输入也要能查到：查找词做同样的转换（结果比对与高亮都用转换后的词）。
+    if (query && this.isReaderTextConvertActive()) query = ReaderTextConvertRuntime.convertNow(query);
     if (!query || !this.canUseReaderContentSearch()) return;
     // 新的一次查找换掉全部结果：上一次的胶囊与高亮对应的是旧结果，一并收起。
     this.closeReaderContentSearchCapsule();
@@ -6398,12 +6423,16 @@ struct ReadBookPage {
     if (this.chapters.length === 0) return '暂无目录';
     const chapter = this.chapters[this.clampChapterIndex(chapterIndex)];
     const title = chapter ? this.cleanChapterTitle(chapter.title) : '';
-    return ReaderReplaceRuleStore.applyTitle(title, this.readerReplaceRules, this.book);
+    const replaced = ReaderReplaceRuleStore.applyTitle(title, this.readerReplaceRules, this.book);
+    // 读一次 revision，字典加载完成后标题跟着重算。
+    return this.readerTextConvertRevision >= 0 && this.isReaderTextConvertActive() ?
+      ReaderTextConvertRuntime.convertNow(replaced) : replaced;
   }
 
   readerPreparedContentKey(content: string, chapterIndex: number): string {
     return ReaderPreparedContentCache.key(this.bookUrl, chapterIndex, content, this.hashText(content),
-      this.readerReplaceRules.length, this.readerReplaceRulesUpdateTime);
+      this.readerReplaceRules.length, this.readerReplaceRulesUpdateTime,
+      this.isReaderTextConvertActive() ? ReaderTextConvert.T2S : '');
   }
 
   getPreparedReaderContent(content: string, chapterIndex: number): string {
@@ -6414,6 +6443,7 @@ struct ReadBookPage {
   // paginate the raw body in that case: its cache key would never match the prepared chapter.
   readerContentNeedsPreparation(content: string): boolean {
     return ReaderContentPreprocessor.hasActiveContentRules(this.readerReplaceRules) ||
+      this.isReaderTextConvertActive() ||
       (!this.isReaderComicModeActive() && ReaderImageSizeResolver.needsSizes(content));
   }
 
@@ -6423,8 +6453,18 @@ struct ReadBookPage {
     const cached = ReaderPreparedContentCache.get(key);
     if (cached !== undefined) return cached;
     const startedAt = Date.now();
-    const replaced = ReaderActionMarker.limit(
+    let replaced = ReaderActionMarker.limit(
       await ReaderContentPreprocessor.apply(content, this.readerReplaceRules, this.book));
+    // 繁→简在替换净化之后：规则是按原文写的。转换前后等长，按原文记下的进度偏移照常可用。
+    if (this.isReaderTextConvertActive()) {
+      try {
+        replaced = await ReaderTextConvertRuntime.convert(getContext(this), replaced);
+      } catch (error) {
+        console.warn('[ReaderTextConvert] 繁→简失败，显示原文:', error);
+      }
+    } else {
+      this.offerReaderTextConvertLater(replaced, chapterIndex);
+    }
     // Comic chapters size their images from the decoded bitmap; probing every file up front only delays opening.
     const processed = this.isReaderComicModeActive() ? replaced : await ReaderImageSizeResolver.annotate(replaced);
     const elapsedMs = Math.max(0, Date.now() - startedAt);
@@ -6471,6 +6511,125 @@ struct ReadBookPage {
     this.content = processed;
     this.paginateContent(processed, this.currentChapterIndex);
     this.refreshReaderTextRender();
+  }
+
+  isReaderTextConvertActive(): boolean {
+    return this.readerTextConvert && !this.isReaderComicModeActive();
+  }
+
+  /** 开书时读本书的繁→简设置；开着就先加载字典，首屏的标题和正文一起转换。 */
+  async initializeReaderTextConvert(): Promise<void> {
+    this.readerTextConvertChecked = false;
+    this.hideReaderTextConvertPrompt();
+    this.readerTextConvert = ReaderTextConvert.enabled(this.book?.getVariable(ReaderTextConvert.VARIABLE) || '');
+    if (!this.readerTextConvert || ReaderTextConvertRuntime.ready()) return;
+    try {
+      await ReaderTextConvertRuntime.load(getContext(this));
+      this.readerTextConvertRevision++;
+    } catch (error) {
+      // 只影响这次打开，保存的选择不动，下次开书再试。
+      console.warn('[ReaderTextConvert] 简繁字典加载失败:', error);
+      this.readerTextConvert = false;
+    }
+  }
+
+  /** 本书没选过繁→简时，拿开书看到的章节检测一次；像繁体就弹询问卡片。 */
+  offerReaderTextConvertLater(content: string, chapterIndex: number): void {
+    if (this.readerTextConvertChecked || !this.book || this.isReaderComicModeActive() ||
+      chapterIndex !== this.currentChapterIndex ||
+      !ReaderTextConvert.undecided(this.book.getVariable(ReaderTextConvert.VARIABLE) || '')) return;
+    this.readerTextConvertChecked = true;
+    const bookUrl = this.bookUrl;
+    ReaderTextConvertRuntime.load(getContext(this)).then((dictionary: ComicChineseDictionary): void => {
+      if (bookUrl !== this.bookUrl || this.readerTextConvert) return;
+      const sample = ReaderTextConvert.sample(dictionary, content);
+      // 字太少（封面、简介页）判断不了，留给下一章。
+      if (sample.cjk < 100) {
+        this.readerTextConvertChecked = false;
+        return;
+      }
+      if (ReaderTextConvert.looksTraditional(sample)) this.presentReaderTextConvertPrompt();
+    }).catch((error: Error): void => {
+      console.warn('[ReaderTextConvert] 繁体检测失败:', error);
+    });
+  }
+
+  presentReaderTextConvertPrompt(): void {
+    this.showReaderTextConvertPrompt = true;
+    if (this.readerTextConvertPromptTimer >= 0) clearTimeout(this.readerTextConvertPromptTimer);
+    // 不理会就收起，不记作“不用”，下次开书再问。
+    this.readerTextConvertPromptTimer = setTimeout((): void => {
+      this.readerTextConvertPromptTimer = -1;
+      this.showReaderTextConvertPrompt = false;
+    }, 12000);
+  }
+
+  hideReaderTextConvertPrompt(): void {
+    if (this.readerTextConvertPromptTimer >= 0) clearTimeout(this.readerTextConvertPromptTimer);
+    this.readerTextConvertPromptTimer = -1;
+    this.showReaderTextConvertPrompt = false;
+  }
+
+  /** 询问卡片选“不用”：记下 off，这本书不再询问。 */
+  declineReaderTextConvert(): void {
+    this.hideReaderTextConvertPrompt();
+    if (!this.book) return;
+    this.book.putVariable(ReaderTextConvert.VARIABLE, ReaderTextConvert.OFF);
+    AppDatabase.getInstance().updateBook(this.book, false).catch((error: Error) => {
+      console.warn('保存繁→简设置失败:', error);
+    });
+  }
+
+  async setReaderTextConvert(enabled: boolean): Promise<void> {
+    this.hideReaderTextConvertPrompt();
+    if (!this.book) return;
+    if (enabled) {
+      try {
+        await ReaderTextConvertRuntime.load(getContext(this));
+      } catch (error) {
+        console.warn('[ReaderTextConvert] 简繁字典加载失败:', error);
+        HdsFeedback.showToast('简繁字典加载失败，请重试');
+        return;
+      }
+    }
+    // 手动关闭也记下来，和“没选过”区分开，关掉后不再询问。
+    this.book.putVariable(ReaderTextConvert.VARIABLE, enabled ? ReaderTextConvert.T2S : ReaderTextConvert.OFF);
+    AppDatabase.getInstance().updateBook(this.book, false).catch((error: Error) => {
+      console.warn('保存繁→简设置失败:', error);
+    });
+    if (enabled === this.readerTextConvert) return;
+    this.readerTextConvert = enabled;
+    this.readerTextConvertRevision++;
+    await this.reloadReaderTextConvert();
+  }
+
+  /** 转换前后正文等长，按切换前的阅读偏移重新分页即可停在原处。 */
+  async reloadReaderTextConvert(): Promise<void> {
+    this.readerPaginationCache.clear();
+    ReaderPreparedContentCache.forgetBook(this.bookUrl);
+    this.adjacentPaginationPreloadSerial++;
+    this.pageTurnPreviewKey = '';
+    this.pageTurnPreviewLoadingKey = '';
+    if (!this.book || this.chapters.length === 0 || this.isReaderComicModeActive()) return;
+    const chapterIndex = this.currentChapterIndex;
+    const raw = this.readerEngine().getCachedContent(chapterIndex);
+    if (!raw) return;
+    const readingOffset = this.getReaderStableReflowOffset();
+    const processed = await this.prepareReaderContentRules(raw, chapterIndex);
+    if (chapterIndex !== this.currentChapterIndex) return;
+    this.readerTypographyRestoreOffset = readingOffset;
+    this.invalidateReaderTypographyLayout();
+    this.content = processed;
+    this.refreshReaderTextRender();
+    this.paginateContent(processed, chapterIndex);
+    if (this.hasPagedReaderArea() && this.pagedContentText) {
+      this.currentPageIndex = this.normalizeReaderSpreadPageIndex(this.findPageIndexByOffset(readingOffset));
+      this.syncCurrentPageText();
+      this.forceCurrentReaderPageRender();
+      this.refreshCurrentReaderV2RetainedPages(true);
+    }
+    this.preloadNextChapterPaginationLater();
+    this.preloadPreviousChapterPaginationLater();
   }
 
   cleanChapterTitle(title: string): string {
@@ -11918,6 +12077,27 @@ struct ReadBookPage {
     Column({ space: 14 }) {
       this.readerReplaceRulesEntryItem()
 
+      if (!this.isReaderComicModeActive()) {
+        // 直接建组件而不经按值 @Builder：选择后状态异步才定，下拉要跟着刷新。
+        ReaderSettingSelectRow({
+          title: 'AI翻译',
+          description: '繁→简用本地字典转换本书正文与章节名，离线可用',
+          options: [{ value: '关闭' }, { value: '繁→简' }],
+          selected: this.readerTextConvert ? 1 : 0,
+          controlId: 'reader_text_convert_select',
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          accentColor: this.accentColor(),
+          dark: this.isReaderThemeDark(),
+          menuColor: this.readerSolidPanelColor(),
+          onSelect: (index: number): void => {
+            this.setReaderTextConvert(index === 1).catch((error: Error) => {
+              console.warn('切换繁→简失败:', error);
+            });
+          }
+        })
+      }
+
       this.readerSelectSettingItem('翻页方式', '上下滑动、横向滑动或滚动阅读',
         this.pageTurnModeOptions(), this.pageTurnModeSelectedIndex(), (index: number) => {
           this.switchPageTurnMode(this.pageTurnModeByIndex(index));
@@ -12381,6 +12561,51 @@ struct ReadBookPage {
       .zIndex(95)
       .hitTestBehavior(HitTestMode.None)
     }
+  }
+
+  /** 开书检测到繁体时的询问卡片，贴在正文顶部；选择结果按书保存。 */
+  @Builder
+  readerTextConvertPrompt() {
+    Row() {
+      this.readerTextConvertPromptCard()
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+    .position({ x: 0, y: this.getTopControlSafePadding() + AppSpacing.SM })
+    .zIndex(95)
+    .hitTestBehavior(HitTestMode.Transparent)
+    .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+  }
+
+  @Builder
+  readerTextConvertPromptCard() {
+    Row({ space: AppSpacing.MD }) {
+      Text('本书是繁体中文，要转成简体阅读吗？')
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.readerPanelTextColor())
+        .layoutWeight(1)
+      Text('不用')
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.readerPanelSubTextColor())
+        .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.XS, bottom: AppSpacing.XS })
+        .onClick((): void => this.declineReaderTextConvert())
+      Text('转为简体')
+        .fontSize(AppFontSize.BODY)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.accentColor())
+        .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.XS, bottom: AppSpacing.XS })
+        .onClick((): void => {
+          this.setReaderTextConvert(true).catch((error: Error) => {
+            console.warn('切换繁→简失败:', error);
+          });
+        })
+    }
+    .width('92%')
+    .constraintSize({ maxWidth: 480 })
+    .padding({ left: AppSpacing.LG, right: AppSpacing.SM, top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .borderRadius(ThemeRuntime.buttonRadius())
+    .backgroundColor(this.readerSolidPanelColor())
+    .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
   }
 
   @Builder

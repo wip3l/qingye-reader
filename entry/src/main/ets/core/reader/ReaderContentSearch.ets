@@ -42,6 +42,8 @@ export interface ReaderContentSearchHost {
   chapterTitle: (index: number) => string;
   /** 与正文显示一致的替换净化规则。 */
   replaceRules: () => ReaderReplaceRule[];
+  /** 替换净化之后、匹配之前的显示转换（如本书繁→简）；转换必须保持长度不变。 */
+  transformText?: (text: string) => Promise<string>;
   onProgress: (progress: ReaderContentSearchProgress) => void;
 }
 
@@ -151,6 +153,10 @@ export class ReaderContentSearch {
         let text = loaded || '';
         if (text && applyRules) {
           text = await ReaderContentPreprocessor.apply(text, rules, book);
+          if (cancelled()) return;
+        }
+        if (text && this.host.transformText) {
+          text = await this.host.transformText(text);
           if (cancelled()) return;
         }
         const matches = ReaderContentSearchMatcher.find(text, query, ReaderContentSearch.MAX_HITS - found);
