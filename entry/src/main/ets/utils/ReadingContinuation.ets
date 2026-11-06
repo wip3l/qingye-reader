@@ -57,8 +57,6 @@ class ContinuationPayload {
 export class ReadingContinuation {
   static async collect(context: common.Context, wantParam: Record<string, Object>): Promise<void> {
     wantParam['ohos.extra.param.key.supportContinuePageStack'] = false;
-    // 接续后本机不退出，正在听书的不会被打断。
-    wantParam['ohos.extra.param.key.supportContinueSourceExit'] = false;
     const bookUrl = ReaderProgressCheckpoint.activeBookUrl();
     if (!bookUrl) return;
     await Promise.race([
