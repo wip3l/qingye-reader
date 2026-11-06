@@ -184,8 +184,9 @@ for (const themeName of ttsPanelThemeNames) {
 }
 assert(read('entry/src/main/ets/components/ReaderTtsPlayerPanel.ets').includes('TtsPanelThemeBackground('),
   'TTS player panel must draw the themed panel background');
-assert(themePage.includes('this.storeTtsPane(theme, customSchemeId, inPager)'),
-  'Theme previews must include the TTS panel pane');
+assert(themePage.includes('this.detailListenCard(entry)') &&
+  themePage.includes('TtsPanelThemeBackground({'),
+  'Theme previews must include the TTS panel card');
 
 const themedIconFiles = fs.readdirSync(mediaRoot).filter(fileName => /^ic_theme_.*\.svg$/.test(fileName));
 assert(themedIconFiles.length >= 8, 'Rounded and ink icon packs must each contain four icons');
@@ -403,17 +404,18 @@ assert(themeStore.includes('loadMigratedReaderAppearance') &&
   themeStore.includes('ReaderThemeHelper.themeAt') &&
   themeStore.includes('persistCustomSnapshot'),
   'Existing reader backgrounds are not migrated into the initial custom theme snapshot');
-assert(themePage.includes('AppThemeSettingsStore.customTheme(scheme.settings, this.appDarkMode)') &&
+assert(themePage.includes('AppThemeSettingsStore.customTheme(scheme.settings, darkMode)') &&
   themePage.includes('this.activeVariant(theme).reader.backgroundColor'),
   'Custom theme preview does not use the persisted reader background');
 assert(!themeColorPage.includes("'pages/AppIconSettings'") &&
   !themeColorPage.includes("'pages/FontSettings'") &&
   !themeStore.includes('updateCustomFont') && !themeStore.includes('updateCustomDesktopIcon'),
   'Theme and appearance must remain independent from fonts and desktop icons');
-// 主题页重做后“默认与自定义”区块由 myThemesSectionTitle() 起头，排在“已购主题”“更多主题”之前。
-assert(themePage.includes('this.myThemesSectionTitle()') &&
-  themePage.indexOf('this.myThemesSectionTitle()') < themePage.indexOf("this.sectionTitle('已购主题')") &&
-  themePage.indexOf('this.myThemesSectionTitle()') < themePage.indexOf("this.sectionTitle('更多主题')") &&
+// 主题页“我的”只露几套已拥有主题，自定义方案紧跟其后，不会被大量已拥有主题挤到下面。
+const mineContent = themePage.match(/  mineContent\(\) \{[\s\S]*?\n  \}\n/)?.[0] || '';
+assert(mineContent.indexOf('this.ownedPreviewEntries()') >= 0 &&
+  mineContent.indexOf('this.ownedPreviewEntries()') < mineContent.indexOf('this.schemeEntries()') &&
+  themePage.includes('.slice(0, OWNED_PREVIEW_COUNT)') &&
   themePage.includes("url: 'pages/ThemeColorSettings'"),
   'Theme page does not expose the custom theme before builtin themes');
 assert(themeColorPage.includes('settings.themeId = ThemeIds.CUSTOM') &&
