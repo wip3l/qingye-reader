@@ -1,7 +1,7 @@
 {
   "name": "qingye-theme-editor",
   "productName": "轻页主题编辑器",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "制作与编辑开源轻页 .qytheme 主题包的桌面程序",
   "private": true,
   "main": "electron/main.cjs",
