@@ -11,7 +11,8 @@ import { AppFontSize } from '../theme/AppFontSize';
  */
 @Component
 export struct ImmersiveHeaderAction {
-  static readonly SIZE: number = 40;
+  // 与顶栏返回按钮同高：ImmersiveBackButton 按 buttonSize 40 × materialScale 0.83 缩放后取下限 36。
+  static readonly SIZE: number = 36;
   private static readonly LABEL_PADDING: number = 16;
 
   @StorageProp('appDarkMode') appDarkMode: boolean = false;

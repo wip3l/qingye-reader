@@ -1,5 +1,7 @@
 import { MembershipBadge } from '../components/common/MembershipBadge';
-import { promptAction, router } from '@kit.ArkUI';
+import { promptAction, router, SymbolGlyphModifier } from '@kit.ArkUI';
+import deviceInfo from '@ohos.deviceInfo';
+import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
 import { common } from '@kit.AbilityKit';
 import { AppIconManager } from '../utils/AppIconManager';
 import { AppIconSettingsStore } from '../utils/AppIconSettingsStore';
@@ -13,6 +15,7 @@ import { ThemeTrialManager } from '../utils/ThemeTrialManager';
 import { CustomThemeScheme, CustomThemeSchemeStore } from '../utils/CustomThemeSchemeStore';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { ThemeRecentStore } from '../utils/ThemeRecentStore';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
 import { TtsPanelThemeBackground } from '../components/TtsPanelThemeBackground';
@@ -245,6 +248,10 @@ struct ThemeSettingsPage {
   private deleteCustomThemeDialogSession: SystemDialogSession = new SystemDialogSession();
   @State @Watch('syncShowDeleteCustomThemeDialog') showDeleteCustomThemeDialog: boolean = false;
   @State actionCustomSchemeId: string = '';
+  // 列表行长按菜单对应的主题（entrySelectKey），以及“查看详情”要带的列表上下文。
+  @State actionThemeKey: string = '';
+  private actionThemeContext: string = '';
+  private actionThemeLabel: string = '';
   @State renameCustomThemeName: string = '';
   @State contextMenuX: number = 24;
   @State contextMenuY: number = 120;
@@ -774,15 +781,12 @@ struct ThemeSettingsPage {
       .width('100%')
       .padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
       if (this.ownedPreviewEntries().length > 0) {
-        Column() {
+        List() {
           ForEach(this.ownedPreviewEntries(), (entry: ThemeListEntry, index: number) => {
-            this.themeRow(entry, 'owned', '已拥有', index > 0)
-          }, (entry: ThemeListEntry) => `owned_preview_${this.themeEntryKey(entry)}`)
+            this.swipeThemeItem(entry, 'owned', '已拥有', index > 0)
+          }, (entry: ThemeListEntry) => `owned_preview_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
         }
-        .width('100%')
-        .borderRadius(ThemeRuntime.cardRadius())
-        .backgroundColor(this.cardColor())
-        .clip(true)
+        .themeCardList(this.cardColor())
       }
 
       Row({ space: AppSpacing.SM }) {
@@ -804,17 +808,14 @@ struct ThemeSettingsPage {
       .width('100%')
       .padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
       if (this.customSchemes.length > 0) {
-        Column() {
+        List() {
           ForEach(this.schemeEntries(), (entry: ThemeListEntry, index: number) => {
-            this.themeRow(entry, 'schemes', '我的方案', index > 0)
-          }, (entry: ThemeListEntry) => `scheme_row_${this.themeEntryKey(entry)}`)
+            this.swipeThemeItem(entry, 'schemes', '我的方案', index > 0)
+          }, (entry: ThemeListEntry) => `scheme_row_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
         }
-        .width('100%')
-        .borderRadius(ThemeRuntime.cardRadius())
-        .backgroundColor(this.cardColor())
-        .clip(true)
+        .themeCardList(this.cardColor())
       }
-      Text('长按方案可设置排版、重命名、分享或删除')
+      Text('左滑可应用或删除，长按还可设置排版、重命名或分享')
         .fontSize(AppFontSize.MICRO)
         .fontColor(this.subTextColor())
         .padding({ left: AppSpacing.XXS })
@@ -980,7 +981,7 @@ struct ThemeSettingsPage {
     .onClick(action)
   }
 
-  /** 一行主题或方案：点左边进竖向详情，右边直接应用；长按方案出操作菜单。 */
+  /** 一行主题或方案：点进竖向详情，右边只显示使用状态；左滑或长按快速应用。 */
   @Builder
   themeRow(entry: ThemeListEntry, context: string, label: string, showDivider: boolean) {
     Column() {
@@ -1028,9 +1029,7 @@ struct ThemeSettingsPage {
         .gesture(
           LongPressGesture({ repeat: false })
             .onAction((event: GestureEvent) => {
-              if (entry.customSchemeId) {
-                this.openCustomThemeActions(entry.customSchemeId, event);
-              }
+              this.openThemeRowActions(entry, context, label, event);
             })
         )
         .onClick(() => this.openDetailFor(entry, context, label))
@@ -1059,21 +1058,86 @@ struct ThemeSettingsPage {
         .fontSize(AppFontSize.CAPTION)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.accentColor())
+    }
+  }
+
+  /** 卡片里的一行主题：左滑露出“应用”，方案另有“删除”（走二次确认）；没有可做的就不给侧滑。 */
+  @Builder
+  swipeThemeItem(entry: ThemeListEntry, context: string, label: string, showDivider: boolean) {
+    if (!this.themeRowCanApply(entry) && !entry.customSchemeId) {
+      ListItem() {
+        this.themeRow(entry, context, label, showDivider)
+      }
+    } else if (deviceInfo.sdkApiVersion >= 26) {
+      // HdsListItem 必须直接挂在 List 下，侧滑才不被包装节点阻断。
+      HdsListItem({ customItemBuilder: (): void => {
+        this.themeRow(entry, context, label, showDivider);
+      }, swipeActionOptions: this.themeRowSwipeActions(entry) })
     } else {
-      Text(this.isCustomSchemePending(entry.theme, entry.customSchemeId) ? '重新应用' : '应用')
-        .fontSize(AppFontSize.CAPTION)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.accentColor())
-        .height(32)
-        .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
-        .borderRadius(16)
-        .border({ width: 1, color: this.accentColor() })
-        .accessibilityText(`应用「${entry.theme.name}」`)
-        .accessibilityRole(AccessibilityRoleType.BUTTON)
-        .onClick(() => {
+      ListItem() {
+        this.themeRow(entry, context, label, showDivider)
+      }
+      .swipeAction({ end: { builder: (): void => {
+        this.themeRowFallbackSwipeActions(entry);
+      } }, edgeEffect: SwipeEdgeEffect.Spring })
+    }
+  }
+
+  themeRowSwipeActions(entry: ThemeListEntry): HdsSwipeActionOptions {
+    const options: HdsSwipeActionOptions = { icons: [] };
+    if (this.themeRowCanApply(entry)) {
+      options.icons?.push({ icon: new SymbolGlyphModifier($r('sys.symbol.checkmark')),
+        backgroundColor: this.accentColor(), iconOptions: { accessibilityText: `应用「${entry.theme.name}」` },
+        onAction: () => {
+          this.selectTheme(entry.theme.id, entry.customSchemeId);
+        } });
+    }
+    if (entry.customSchemeId) {
+      options.icons?.push({ icon: new SymbolGlyphModifier($r('sys.symbol.trash')),
+        backgroundColor: ThemeRuntime.dangerColor(this.appDarkMode),
+        iconOptions: { accessibilityText: `删除「${entry.theme.name}」` },
+        onAction: () => {
+          this.requestDeleteCustomTheme(entry.customSchemeId);
+        } });
+    }
+    return options;
+  }
+
+  @Builder
+  themeRowFallbackSwipeActions(entry: ThemeListEntry) {
+    Row() {
+      if (this.themeRowCanApply(entry)) {
+        this.swipeButton($r('sys.symbol.checkmark'), '应用', this.accentColor(), () => {
           this.selectTheme(entry.theme.id, entry.customSchemeId);
         })
+      }
+      if (entry.customSchemeId) {
+        this.swipeButton($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => {
+          this.requestDeleteCustomTheme(entry.customSchemeId);
+        })
+      }
     }
+    .height('100%')
+  }
+
+  @Builder
+  swipeButton(icon: Resource, label: string, color: string, action: () => void) {
+    Column({ space: AppSpacing.XS }) {
+      SymbolGlyph(icon)
+        .fontSize(22)
+        .fontColor([ThemeRuntime.onAccentColor(color)])
+      Text(label)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(ThemeRuntime.onAccentColor(color))
+    }
+    .width(64)
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor(color)
+    .accessibilityText(label)
+    .accessibilityRole(AccessibilityRoleType.BUTTON)
+    .onClick(action)
   }
 
   /** 主题库：推荐横幅加按风格分组的横排货架，点任一主题进竖向详情。 */
@@ -1191,10 +1255,9 @@ struct ThemeSettingsPage {
   ownedListOverlay() {
     Column() {
       Row({ space: AppSpacing.SM }) {
-        this.circleButton($r('sys.symbol.chevron_left'), '返回主题', ThemeRuntime.inputColor(this.appDarkMode),
-          this.primaryTextColor(), () => {
-            this.ownedListOpen = false;
-          })
+        this.immersiveBack(() => {
+          this.ownedListOpen = false;
+        })
         Text('已拥有的主题')
           .fontSize(AppFontSize.TITLE)
           .fontWeight(FontWeight.Bold)
@@ -1206,7 +1269,7 @@ struct ThemeSettingsPage {
       }
       .width('100%')
       .height(56)
-      .padding({ left: AppSpacing.LG, right: AppSpacing.XL })
+      .padding({ right: AppSpacing.XL })
       Row({ space: AppSpacing.SM }) {
         ForEach(['recent', 'name'], (sort: string) => {
           Text(sort === 'name' ? '按名称' : '最近用过')
@@ -1227,15 +1290,13 @@ struct ThemeSettingsPage {
       .padding({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: AppSpacing.MD })
       Scroll() {
         Column() {
-          Column() {
+          List() {
             ForEach(this.sortedOwnedEntries(this.ownedSort), (entry: ThemeListEntry, index: number) => {
-              this.themeRow(entry, 'owned-list', '已拥有', index > 0)
-            }, (entry: ThemeListEntry) => `owned_list_${this.ownedSort}_${this.themeEntryKey(entry)}`)
+              this.swipeThemeItem(entry, 'owned-list', '已拥有', index > 0)
+            }, (entry: ThemeListEntry) =>
+              `owned_list_${this.ownedSort}_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
           }
-          .width('100%')
-          .borderRadius(ThemeRuntime.cardRadius())
-          .backgroundColor(this.cardColor())
-          .clip(true)
+          .themeCardList(this.cardColor())
         }
         .width('100%')
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: Math.max(AppSpacing.XXL, this.navBarHeight + AppSpacing.LG) })
@@ -1253,22 +1314,6 @@ struct ThemeSettingsPage {
     .transition(TransitionEffect.translate({ x: 48 })
       .combine(TransitionEffect.opacity(0))
       .animation({ duration: 240, curve: Curve.Friction }))
-  }
-
-  @Builder
-  circleButton(icon: Resource, label: string, background: string, foreground: string, action: () => void) {
-    Stack() {
-      SymbolGlyph(icon)
-        .fontSize(20)
-        .fontColor([foreground])
-    }
-    .width(40)
-    .height(40)
-    .borderRadius(20)
-    .backgroundColor(background)
-    .accessibilityText(label)
-    .accessibilityRole(AccessibilityRoleType.BUTTON)
-    .onClick(action)
   }
 
   /** 竖向详情：同一列表里左右滑动切换，每页整页用这套主题（深浅色可单独切换预览）的配色。 */
@@ -1309,9 +1354,11 @@ struct ThemeSettingsPage {
   }
 
   @Builder
+  /** 详情顶栏：返回和“更多”用二级页顶栏同款的沉浸光感按钮，位置也和 PageScaffold 对齐。 */
+  @Builder
   detailTopBar() {
     Row({ space: AppSpacing.SM }) {
-      this.circleButton($r('sys.symbol.chevron_left'), '返回主题', DETAIL_SCRIM, '#FFFFFF', () => {
+      this.immersiveBack(() => {
         this.closeDetail();
       })
       Blank()
@@ -1323,13 +1370,26 @@ struct ThemeSettingsPage {
         .borderRadius(14)
         .backgroundColor(DETAIL_SCRIM)
       if (this.currentDetailSchemeId()) {
-        this.circleButton($r('sys.symbol.more'), '更多操作', DETAIL_SCRIM, '#FFFFFF', () => {
-          this.openDetailSchemeActions();
+        ImmersiveHeaderAction({
+          icon: $r('sys.symbol.more'),
+          accessibilityLabel: '更多操作',
+          onTap: () => {
+            this.openDetailSchemeActions();
+          }
         })
       }
     }
     .width('100%')
-    .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: this.statusBarHeight + AppSpacing.SM })
+    .height(PageScaffold.BAR_HEIGHT + this.statusBarHeight)
+    .padding({ right: AppSpacing.XL, top: this.statusBarHeight })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  immersiveBack(action: () => void) {
+    ImmersiveBackButton({ iconColor: this.primaryTextColor(), darkMode: this.appDarkMode,
+      buttonSize: 40, containerWidth: 56, materialScale: 0.83, compactLayout: true,
+      accessibilityLabel: '返回主题', onBack: action })
   }
 
   @Builder
@@ -2457,8 +2517,8 @@ struct ThemeSettingsPage {
   openDetailSchemeActions(): void {
     const schemeId = this.currentDetailSchemeId();
     if (!schemeId) return;
-    this.contextMenuX = Math.max(AppSpacing.LG, this.contextViewportWidth - AppSpacing.LG - 176);
-    this.contextMenuY = this.statusBarHeight + AppSpacing.SM + 44;
+    this.contextMenuX = Math.max(AppSpacing.LG, this.contextViewportWidth - AppSpacing.XL - 176);
+    this.contextMenuY = this.statusBarHeight + PageScaffold.BAR_HEIGHT;
     this.openCustomThemeActions(schemeId);
   }
 
@@ -2534,39 +2594,25 @@ struct ThemeSettingsPage {
   customThemeActionMenu() {
     Scroll() {
       Column() {
-        this.contextActionItem($r('sys.symbol.paintpalette'), '编辑', this.primaryTextColor(), () => {
-          const schemeId = this.actionCustomSchemeId;
-          this.closeCustomThemeActions();
-          router.pushUrl({
-            url: 'pages/ThemeColorSettings',
-            params: { schemeId: schemeId }
-          });
-        })
-        this.contextActionItem($r('sys.symbol.textformat'), '设置排版', this.primaryTextColor(), () => {
-          const schemeId = this.actionCustomSchemeId;
-          this.closeCustomThemeActions();
-          router.pushUrl({
-            url: 'pages/ThemeTypographySettings',
-            params: { schemeId: schemeId }
-          });
-        })
-        this.contextActionItem($r('sys.symbol.square_and_pencil'), '重命名', this.primaryTextColor(), () => {
-          const scheme = this.actionCustomScheme();
-          if (!scheme) return;
-          this.renameCustomThemeName = scheme.name;
-          this.showCustomThemeActionMenu = false;
-          this.showRenameCustomThemeDialog = true;
-        })
-        this.contextActionItem($r('sys.symbol.share'), '分享主题包', this.primaryTextColor(), () => {
-          const schemeId = this.actionCustomSchemeId;
-          this.closeCustomThemeActions();
-          this.requestThemeExport(schemeId);
-        })
-        this.contextActionItem($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => {
-          this.showCustomThemeActionMenu = false;
-          this.requestDeleteCustomTheme(this.actionCustomSchemeId);
-        })
-
+        if (this.actionThemeKey) {
+          if (this.themeRowCanApply(this.resolveEntry(this.actionThemeKey))) {
+            this.contextActionItem($r('sys.symbol.checkmark'), '应用', this.primaryTextColor(), () => {
+              const entry = this.resolveEntry(this.actionThemeKey);
+              this.closeCustomThemeActions();
+              this.selectTheme(entry.theme.id, entry.customSchemeId);
+            })
+          }
+          this.contextActionItem($r('sys.symbol.info_circle'), '查看详情', this.primaryTextColor(), () => {
+            const entry = this.resolveEntry(this.actionThemeKey);
+            const context = this.actionThemeContext;
+            const label = this.actionThemeLabel;
+            this.closeCustomThemeActions();
+            this.openDetailFor(entry, context, label);
+          })
+        }
+        if (this.actionCustomSchemeId) {
+          this.customSchemeActionItems()
+        }
       }
       .width('100%')
     }
@@ -2574,6 +2620,45 @@ struct ThemeSettingsPage {
     .constraintSize({ maxHeight: ImmersiveMaterialRuntime.popupMenuMaxHeight() })
     .scrollBar(BarState.Off)
     .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+
+  @Builder
+  customSchemeActionItems() {
+    Column() {
+      this.contextActionItem($r('sys.symbol.paintpalette'), '编辑', this.primaryTextColor(), () => {
+        const schemeId = this.actionCustomSchemeId;
+        this.closeCustomThemeActions();
+        router.pushUrl({
+          url: 'pages/ThemeColorSettings',
+          params: { schemeId: schemeId }
+        });
+      })
+      this.contextActionItem($r('sys.symbol.textformat'), '设置排版', this.primaryTextColor(), () => {
+        const schemeId = this.actionCustomSchemeId;
+        this.closeCustomThemeActions();
+        router.pushUrl({
+          url: 'pages/ThemeTypographySettings',
+          params: { schemeId: schemeId }
+        });
+      })
+      this.contextActionItem($r('sys.symbol.square_and_pencil'), '重命名', this.primaryTextColor(), () => {
+        const scheme = this.actionCustomScheme();
+        if (!scheme) return;
+        this.renameCustomThemeName = scheme.name;
+        this.showCustomThemeActionMenu = false;
+        this.showRenameCustomThemeDialog = true;
+      })
+      this.contextActionItem($r('sys.symbol.share'), '分享主题包', this.primaryTextColor(), () => {
+        const schemeId = this.actionCustomSchemeId;
+        this.closeCustomThemeActions();
+        this.requestThemeExport(schemeId);
+      })
+      this.contextActionItem($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => {
+        this.showCustomThemeActionMenu = false;
+        this.requestDeleteCustomTheme(this.actionCustomSchemeId);
+      })
+    }
+    .width('100%')
   }
 
   @Builder
@@ -2892,13 +2977,23 @@ struct ThemeSettingsPage {
       this.contextMenuX = finger.globalX;
       this.contextMenuY = finger.globalY;
     }
+    this.actionThemeKey = '';
     this.actionCustomSchemeId = schemeId;
     this.showCustomThemeActionMenu = true;
+  }
+
+  /** 列表行长按：菜单顶上是应用和查看详情，方案再接编辑、排版、重命名、分享、删除。 */
+  openThemeRowActions(entry: ThemeListEntry, context: string, label: string, event: GestureEvent): void {
+    this.openCustomThemeActions(entry.customSchemeId, event);
+    this.actionThemeKey = this.entrySelectKey(entry);
+    this.actionThemeContext = context;
+    this.actionThemeLabel = label;
   }
 
   closeCustomThemeActions(): void {
     this.showCustomThemeActionMenu = false;
     this.actionCustomSchemeId = '';
+    this.actionThemeKey = '';
   }
 
   actionCustomScheme(): CustomThemeScheme | null {
@@ -3019,6 +3114,21 @@ struct ThemeSettingsPage {
       return BuiltinThemeRegistry.findById(darkThemeId).name;
     }
     return '';
+  }
+
+  /** 和行尾按钮同一套判断：试用中、正在用、正在应用的都不能再点应用。 */
+  themeRowCanApply(entry: ThemeListEntry): boolean {
+    const state = this.themeRowState(entry);
+    return state === 'idle' || state === 'pending';
+  }
+
+  /** 行尾状态；也拼进列表键里，状态一变就重建这一行，侧滑跟着收起、按钮跟着变。 */
+  themeRowState(entry: ThemeListEntry): string {
+    if (this.applyingThemeId === (entry.customSchemeId || entry.theme.id) &&
+      !this.isSelected(entry.theme, entry.customSchemeId)) return 'applying';
+    if (!entry.customSchemeId && this.isTrialTheme(entry.theme.id)) return 'trial';
+    if (this.isSelected(entry.theme, entry.customSchemeId)) return 'selected';
+    return this.isCustomSchemePending(entry.theme, entry.customSchemeId) ? 'pending' : 'idle';
   }
 
   isTrialTheme(themeId: string): boolean {
@@ -3321,4 +3431,16 @@ struct ThemeSettingsPage {
     return TextDecorationStyle.SOLID;
   }
 
+}
+
+/** 主题页的卡片列表：铺在外层滚动里不自己滚，只为了让行能左滑。 */
+@Extend(List)
+function themeCardList(background: ResourceColor) {
+  .width('100%')
+  .borderRadius(ThemeRuntime.cardRadius())
+  .backgroundColor(background)
+  .clip(true)
+  .scrollBar(BarState.Off)
+  .edgeEffect(EdgeEffect.None)
+  .enableScrollInteraction(false)
 }
