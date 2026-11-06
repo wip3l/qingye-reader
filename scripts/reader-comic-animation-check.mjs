@@ -38,8 +38,8 @@ const logic = src.slice(start, src.indexOf('  @Builder', start))
 vm.runInContext(compile(controller) + '\n' + stripTypeScriptTypes(logic) +
   '\nglobalThis.View = ReaderComicPagedView;', sandbox);
 const A = sandbox.Animation;
-assert.deepEqual(Array.from(A.types()), [0, 1, 3, 4, 6, 7]);
-assert.deepEqual(Array.from(A.labels()), ['无动画', '平移', '淡入', '叠页', '仿真', '3D仿真']);
+assert.deepEqual(Array.from(A.types()), [0, 1, 8, 3, 4, 6, 7]);
+assert.deepEqual(Array.from(A.labels()), ['无动画', '平移', '推页', '淡入', '叠页', '仿真', '3D仿真']);
 assert.equal(sandbox.Settings.parse('{}').pageTurnAnimation, A.SLIDE);
 for (const type of A.types()) {
   const settings = new sandbox.Settings();
@@ -308,7 +308,7 @@ assert.match(reader, /animationOptions: this.pageTurnAnimationOptions\(true\)/);
 assert.match(reader, /ReaderPageTurnAnimation.labels\(horizontal\)/);
 assert.match(reader, /animationType: this.readerComicSettings.pageTurnAnimation/);
 assert.match(readEtsModule('components/reader/ReaderLayoutElementSettingsPanel.ets'),
-  /if \(!this.comicMode\) \{\s*this.toggleRow\('使用快速朗读组件'/);
+  /if \(!this.comicMode[^)]*\) \{\s*this.toggleRow\('使用快速朗读组件'/);
 assert.match(readEtsModule('components/reader/ReaderComicSettingsPanels.ets'),
   /if \(this.paged\(\)\) \{\s*ReaderSettingSelectRow\(\{\s*title: '翻页动画'/);
 console.log('Comic animation checks passed: settings, six effects, LTR/RTL, single/dual, cancel, cross-chapter, disposal and layout gates.');

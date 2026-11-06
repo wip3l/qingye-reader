@@ -6,15 +6,17 @@ export class ReaderPageTurnAnimation {
   static readonly STACK: number = 4;
   static readonly SIMULATION: number = 6;
   static readonly THREE_D: number = 7;
+  /** 两页贴着一起平移，接缝处有阴影、被压住的一页逐渐变淡。 */
+  static readonly PUSH: number = 8;
 
   static types(horizontal: boolean = true): number[] {
-    const result = [this.NONE, this.SLIDE, this.FADE, this.STACK];
+    const result = [this.NONE, this.SLIDE, this.PUSH, this.FADE, this.STACK];
     if (horizontal) result.push(this.SIMULATION, this.THREE_D);
     return result;
   }
 
   static labels(horizontal: boolean = true): string[] {
-    const result = ['无动画', '平移', '淡入', '叠页'];
+    const result = ['无动画', '平移', '推页', '淡入', '叠页'];
     if (horizontal) result.push('仿真', '3D仿真');
     return result;
   }

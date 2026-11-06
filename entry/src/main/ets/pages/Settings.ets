@@ -1540,6 +1540,7 @@ struct SettingsPage {
     const options: SelectOption[] = [
       { value: '无动画' },
       { value: '平移' },
+      { value: '推页' },
       { value: '淡入' },
       { value: '叠页' }
     ];
@@ -1554,6 +1555,7 @@ struct SettingsPage {
     const types: number[] = [
       ReaderSettingsStore.PAGE_TURN_ANIMATION_NONE,
       ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE,
+      ReaderSettingsStore.PAGE_TURN_ANIMATION_PUSH,
       ReaderSettingsStore.PAGE_TURN_ANIMATION_FADE,
       ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK
     ];
@@ -2013,6 +2015,7 @@ struct SettingsPage {
     }
     if (value === ReaderSettingsStore.PAGE_TURN_ANIMATION_NONE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE ||
+      value === ReaderSettingsStore.PAGE_TURN_ANIMATION_PUSH ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_FADE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_SIMULATION ||

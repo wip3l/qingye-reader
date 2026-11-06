@@ -235,6 +235,9 @@ const READER_PAGINATION_BATCH_DELAY_MS = 64;
 const READER_INTERACTIVE_PAGINATION_BATCH_DELAY_MS = 56;
 const READER_PAGINATION_BUSY_RETRY_DELAY_MS = 48;
 const READER_DOUBLE_PAGE_DIVIDER_WIDTH = 1;
+// 推页接缝阴影的宽度（vp），以及被压住那页在完全盖住时浅纱的不透明度。
+const PUSH_PAGE_TURN_SHADOW_SIZE = 18;
+const PUSH_PAGE_TURN_SHADE_MAX_OPACITY = 0.45;
 // 正文选中菜单里的自定义“替换”项 ID，用于与系统菜单项（复制/翻译等）区分。
 const READER_REPLACE_MENU_ITEM_ID: string = 'reader_replace_rule';
 // Page-curl textures are transient animation rasters, not the settled正文 surface. Capturing a full 2080x3120
@@ -8645,7 +8648,7 @@ struct ReadBookPage {
 
   readerBookmarkMarkerTopOffset(): number {
     if (this.readerExtendToStatusBar) return 0;
-    return this.hasBackgroundImage() || this.isStackPageTurnAnimation() ||
+    return this.hasBackgroundImage() || this.pageTurnSheetsOwnPaper() ||
       this.is3DPageTurnAnimation() ? this.statusBarSafeHeight : 0;
   }
 
@@ -9349,7 +9352,7 @@ struct ReadBookPage {
   getReaderPageTurnSurfaceSafeAreaEdges(): SafeAreaEdge[] {
     // Simulation and stack paper always animate in the full-screen coordinate system. Their text layer owns
     // the status-bar inset separately, so expanding the paper never changes正文 pagination.
-    return (this.isStackPageTurnAnimation() || this.isSimulationPageTurnAnimation() ||
+    return (this.pageTurnSheetsOwnPaper() || this.isSimulationPageTurnAnimation() ||
       this.is3DPageTurnAnimation()) &&
       !this.readerExtendToStatusBar ?
       [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM] : [SafeAreaEdge.BOTTOM];
@@ -9364,10 +9367,10 @@ struct ReadBookPage {
       // Hiding a phone status bar must not place desktop content under the native window controls.
       return this.desktopTitleBarHeight;
     }
-    // 仿真与叠页纸张都需要贯穿整个屏幕，因此只由动画页内部补偿文字坐标。普通、滑动和淡入
+    // 仿真、叠页与推页纸张都需要贯穿整个屏幕，因此只由动画页内部补偿文字坐标。普通、滑动和淡入
     // 翻页则在正文容器上统一避让状态栏。
     if (!this.isReaderContinuousScrollSurfaceActive() &&
-      (this.isStackPageTurnAnimation() || this.isSimulationPageTurnAnimation() ||
+      (this.pageTurnSheetsOwnPaper() || this.isSimulationPageTurnAnimation() ||
         this.is3DPageTurnAnimation())) {
       return 0;
     }
@@ -9376,7 +9379,7 @@ struct ReadBookPage {
 
   getReaderPageContentTopPadding(): number {
     return !this.isReaderContinuousScrollSurfaceActive() && !this.readerExtendToStatusBar &&
-      (this.isStackPageTurnAnimation() || this.isSimulationPageTurnAnimation() ||
+      (this.pageTurnSheetsOwnPaper() || this.isSimulationPageTurnAnimation() ||
         this.is3DPageTurnAnimation()) ?
       this.statusBarSafeHeight : 0;
   }
@@ -12751,6 +12754,7 @@ struct ReadBookPage {
     }
     if (value === ReaderSettingsStore.PAGE_TURN_ANIMATION_NONE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE ||
+      value === ReaderSettingsStore.PAGE_TURN_ANIMATION_PUSH ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_FADE ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK ||
       value === ReaderSettingsStore.PAGE_TURN_ANIMATION_SIMULATION ||
@@ -14788,6 +14792,9 @@ struct ReadBookPage {
           this.readerIncomingPageSurface(this.pageTurnIncomingRenderVersion,
             this.getVisiblePageTurnIncomingText(), 'incoming_primary')
           this.readerCurrentPageSurface(currentRenderVersion, currentText, ttsRenderVersion)
+          if (this.isPushPageTurnAnimation()) {
+            this.readerPushPageTurnShade()
+          }
         }
       } else {
         this.readerCurrentPageSurface(currentRenderVersion, currentText, ttsRenderVersion)
@@ -14814,6 +14821,9 @@ struct ReadBookPage {
           this.readerIncomingPageSurface(this.pageTurnIncomingRenderVersion,
             this.getVisiblePageTurnIncomingText(), 'incoming_alternate')
           this.readerCurrentPageSurfaceAlternate(currentRenderVersion, currentText, ttsRenderVersion)
+          if (this.isPushPageTurnAnimation()) {
+            this.readerPushPageTurnShade()
+          }
         }
       } else {
         this.readerCurrentPageSurfaceAlternate(currentRenderVersion, currentText, ttsRenderVersion)
@@ -14824,6 +14834,36 @@ struct ReadBookPage {
     .backgroundColor(this.readerContentLayerColor())
     .clip(true)
     .expandSafeArea([SafeAreaType.SYSTEM], this.getReaderPageTurnSurfaceSafeAreaEdges())
+  }
+
+  /**
+   * 推页：两页贴着平移，右（下）侧那页像压在上面，接缝处向左（上）投一道阴影；被压住的那页随覆盖比例蒙上
+   * 一层浅纱（深色主题为暗纱）。只叠在两页之上画，不改两页本身的位置和层级。
+   */
+  @Builder
+  readerPushPageTurnShade() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width(this.isVerticalPageTurnAnimation() ? '100%' : this.getPushPageTurnSeam())
+        .height(this.isVerticalPageTurnAnimation() ? this.getPushPageTurnSeam() : '100%')
+        .backgroundColor(this.isReaderThemeDark() ? Color.Black : Color.White)
+        .opacity(PUSH_PAGE_TURN_SHADE_MAX_OPACITY * this.getPushPageTurnCoverage())
+      Column()
+        .width(this.isVerticalPageTurnAnimation() ? '100%' : PUSH_PAGE_TURN_SHADOW_SIZE)
+        .height(this.isVerticalPageTurnAnimation() ? PUSH_PAGE_TURN_SHADOW_SIZE : '100%')
+        .position(this.isVerticalPageTurnAnimation() ?
+          { x: 0, y: this.getPushPageTurnSeam() - PUSH_PAGE_TURN_SHADOW_SIZE } :
+          { x: this.getPushPageTurnSeam() - PUSH_PAGE_TURN_SHADOW_SIZE, y: 0 })
+        .linearGradient({
+          direction: this.isVerticalPageTurnAnimation() ? GradientDirection.Bottom : GradientDirection.Right,
+          colors: [['#00000000', 0], [this.isReaderThemeDark() ? '#66000000' : '#2E000000', 1]]
+        })
+        // 刚起步时接缝贴着屏幕边，阴影随露出的宽度渐显，免得边缘突然出现一道黑线。
+        .opacity(Math.min(1, this.getPushPageTurnSeamTravel() / PUSH_PAGE_TURN_SHADOW_SIZE))
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
@@ -15031,9 +15071,9 @@ struct ReadBookPage {
   @Builder
   readerCurrentPageSurface(renderVersion: number, text: string, ttsRenderVersion: number) {
     Stack() {
-      if (this.isStackPageTurnAnimation() || this.isSimulationPageTurnAnimation() ||
+      if (this.pageTurnSheetsOwnPaper() || this.isSimulationPageTurnAnimation() ||
         this.is3DPageTurnAnimation()) {
-        // Stack and simulation animate/snapshot a full-screen sheet, so their page must own the paper artwork.
+        // Stack, push and simulation animate/snapshot a full-screen sheet, so their page must own the paper artwork.
         // Slide and fade live below the status-bar inset: painting the same Cover image here would restart its
         // crop at the content origin and create a visible seam against the full-screen root background.
         this.readerSimulationPaperBackground()
@@ -15056,7 +15096,7 @@ struct ReadBookPage {
   @Builder
   readerCurrentPageSurfaceAlternate(renderVersion: number, text: string, ttsRenderVersion: number) {
     Stack() {
-      if (this.isStackPageTurnAnimation() || this.isSimulationPageTurnAnimation() ||
+      if (this.pageTurnSheetsOwnPaper() || this.isSimulationPageTurnAnimation() ||
         this.is3DPageTurnAnimation()) {
         this.readerSimulationPaperBackground()
       }
@@ -15078,7 +15118,7 @@ struct ReadBookPage {
   @Builder
   readerIncomingPageSurface(renderVersion: number, text: string, controllerRole: string = 'incoming') {
     Stack() {
-      if (this.isStackPageTurnAnimation() || this.is3DPageTurnAnimation()) {
+      if (this.pageTurnSheetsOwnPaper() || this.is3DPageTurnAnimation()) {
         this.readerIncomingPageBackground()
       }
       Column() {
@@ -21246,6 +21286,34 @@ struct ReadBookPage {
 
   isStackPageTurnAnimation(): boolean {
     return this.effectivePageTurnAnimationType() === ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK;
+  }
+
+  isPushPageTurnAnimation(): boolean {
+    return this.effectivePageTurnAnimationType() === ReaderSettingsStore.PAGE_TURN_ANIMATION_PUSH;
+  }
+
+  // 叠页与推页移动的是整张纸，纸张背景要跟着页面走，不能留在根背景上不动。
+  pageTurnSheetsOwnPaper(): boolean {
+    return this.isStackPageTurnAnimation() || this.isPushPageTurnAnimation();
+  }
+
+  /** 推页接缝：右（下）侧那页的左（上）边缘，两页贴着平移，取两者中靠后的位置即可。 */
+  getPushPageTurnSeam(): number {
+    const vertical = this.isVerticalPageTurnAnimation();
+    const extent = vertical ? this.getPageTurnHeight() : this.getPageTurnWidth();
+    const seam = vertical ? Math.max(this.getCurrentPageTurnY(), this.getIncomingSlideY()) :
+      Math.max(this.getCurrentPageTurnX(), this.getIncomingSlideX());
+    return Math.max(0, Math.min(extent, seam));
+  }
+
+  getPushPageTurnSeamTravel(): number {
+    const extent = this.isVerticalPageTurnAnimation() ? this.getPageTurnHeight() : this.getPageTurnWidth();
+    return extent - this.getPushPageTurnSeam();
+  }
+
+  getPushPageTurnCoverage(): number {
+    const extent = this.isVerticalPageTurnAnimation() ? this.getPageTurnHeight() : this.getPageTurnWidth();
+    return Math.max(0, Math.min(1, this.getPushPageTurnSeamTravel() / extent));
   }
 
   isSimulationPageTurnAnimation(): boolean {

@@ -14,6 +14,10 @@ import {
   ReaderComicImageItem, ReaderComicImageSizes, ReaderComicInfoBadge, ReaderComicRetryRegistry, ReaderPendingImageHint
 } from './ReaderComicView';
 
+// 推页接缝阴影的宽度（vp），以及被压住那页在完全盖住时浅纱的不透明度；与正文阅读页一致。
+const PUSH_SHADOW_SIZE = 18;
+const PUSH_SHADE_MAX_OPACITY = 0.45;
+
 /** 阅读页向翻页视图发出的指令（点击翻页、音量键）；视图挂载时填入实现。 */
 export class ReaderComicPagedController {
   turn: (direction: number) => void = () => {};
@@ -304,6 +308,10 @@ export struct ReaderComicPagedView {
   private slotZIndex(spread: number): number {
     const k = spread - this.spreadIndex;
     if (this.animationType === ReaderPageTurnAnimation.FADE) return k === 0 ? 0 : 1;
+    // 推页时屏幕右侧那格压在上面，它的阴影才能落到左侧那格上；右→左模式下右侧是序号小的一格。
+    if (this.animationType === ReaderPageTurnAnimation.PUSH && this.rightToLeft) {
+      return k < 0 ? 2 : (k === 0 ? 1 : 0);
+    }
     return k > 0 ? 2 : (k === 0 ? 1 : 0);
   }
 
@@ -854,6 +862,30 @@ export struct ReaderComicPagedView {
     .justifyContent(FlexAlign.Center)
   }
 
+  /** 推页：左侧那格随被盖住的比例蒙一层纱，右侧那格在左边缘向外投阴影。 */
+  @Builder
+  pushShade(spread: number) {
+    if (this.slotX(spread) < 0) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.darkMode ? Color.Black : Color.White)
+        .opacity(PUSH_SHADE_MAX_OPACITY * Math.min(1, -this.slotX(spread) / this.viewW()))
+        .hitTestBehavior(HitTestMode.None)
+    } else if (this.slotX(spread) > 0) {
+      Column()
+        .width(PUSH_SHADOW_SIZE)
+        .height('100%')
+        .position({ x: -PUSH_SHADOW_SIZE, y: 0 })
+        .linearGradient({
+          direction: GradientDirection.Right,
+          colors: [['#00000000', 0], [this.darkMode ? '#66000000' : '#2E000000', 1]]
+        })
+        .opacity(Math.min(1, (this.viewW() - this.slotX(spread)) / PUSH_SHADOW_SIZE))
+        .hitTestBehavior(HitTestMode.None)
+    }
+  }
+
   @Builder
   slot(chapterIndex: number, spread: number) {
     Stack() {
@@ -875,6 +907,9 @@ export struct ReaderComicPagedView {
       .height(this.viewH())
       .backgroundColor(this.surfaceColor)
       .id(this.snapshotId(this.relativeSpread(chapterIndex, spread)))
+      if (this.animationType === ReaderPageTurnAnimation.PUSH) {
+        this.pushShade(this.relativeSpread(chapterIndex, spread))
+      }
     }
     .width(this.viewW())
     .height(this.viewH())
