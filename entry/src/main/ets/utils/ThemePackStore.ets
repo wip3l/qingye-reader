@@ -237,6 +237,8 @@ export class ThemePackStore {
     parts.startupLight = source.startupLight || null;
     parts.startupDark = source.startupDark || null;
     parts.bubble = source.bubble || null;
+    parts.homeBackdropLight = source.homeBackdropLight || '';
+    parts.homeBackdropDark = source.homeBackdropDark || '';
     parts.logo = source.logo || '';
     parts.preview = source.preview || '';
     parts.radius = source.radius || null;
