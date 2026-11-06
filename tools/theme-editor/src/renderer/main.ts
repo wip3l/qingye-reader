@@ -416,7 +416,8 @@ function assetThumb(asset: EditorAsset | undefined, ref: string, icon = false): 
   const thumb = h('div', { class: 'thumb' });
   if (!asset) return thumb;
   if (asset.kind === 'font') thumb.append(h('b', { class: 'font-thumb' }, 'Aa'));
-  else if (icon) thumb.append(h('i', { class: 'ico', style: `--m:url("${assetUrl(ref)}")` }));
+  // 只有 SVG 图标会被应用着色；位图图标按原色显示。
+  else if (icon && asset.kind === 'vector') thumb.append(h('i', { class: 'ico', style: `--m:url("${assetUrl(ref)}")` }));
   else thumb.append(h('img', { src: assetUrl(ref), alt: '' }));
   return thumb;
 }

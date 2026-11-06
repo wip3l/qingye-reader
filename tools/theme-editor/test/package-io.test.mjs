@@ -101,6 +101,29 @@ test('switching background mode drops the other mode\'s images from the export',
   assert.equal(theme.parts.light.reader.backgroundMode, 'none');
 });
 
+test('navigation takes bitmap icons, selected icons and an icons-only bar', async () => {
+  const entries = handWritten();
+  const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));
+  theme.parts.navigation.explore = 'assets/n2.png';
+  theme.parts.navigation.bookshelfSelected = 'assets/n1on.png';
+  theme.parts.navigation.labels = 'hidden';
+  entries['night-garden/theme.json'] = json(theme);
+  entries['night-garden/assets/n2.png'] = png(96, 96);
+  entries['night-garden/assets/n1on.png'] = png(96, 97);
+  const { project, problems } = await io.loadProject(io.readZip(zipSync(entries)));
+  assert.deepEqual(problems, []);
+  assert.equal(project.parts.navigation.explore, 'assets/n2.png');
+  assert.equal(project.parts.navigation.bookshelfSelected, 'assets/n1on.png');
+  assert.equal(project.parts.navigation.labels, 'hidden');
+
+  const files = await io.exportFiles(project);
+  assert.equal(files.has('assets/n1on.png'), true);
+  const nav = JSON.parse(strFromU8(files.get('theme.json'))).parts.navigation;
+  assert.equal(nav.bookshelfSelected, 'assets/n1on.png');
+  assert.equal(nav.labels, 'hidden');
+  assert.equal(nav.exploreSelected, undefined);
+});
+
 test('export reports the same errors the app would', async () => {
   const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
   project.parts.navigation.mine = '';

@@ -220,6 +220,7 @@ pre.json { font-family: var(--f-mono); font-size: 11.5px; background: var(--sunk
 .navbar .it { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; color: var(--p-sub); }
 .navbar .it.on { color: var(--p-accent); }
 .ico { display: block; width: 24px; height: 24px; background: currentColor; -webkit-mask: var(--m) center / contain no-repeat; mask: var(--m) center / contain no-repeat; }
+img.ico { background: none; -webkit-mask: none; mask: none; object-fit: contain; }
 
 .reader { background: var(--p-rbg); color: var(--p-rtext); }
 .reader .bgimg { position: absolute; inset: 0; width: 100%; height: 100%; }

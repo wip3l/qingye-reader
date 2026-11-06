@@ -327,16 +327,23 @@ export class ThemeAssetRegistry {
     return trailing === ThemeAssetRegistry.readerBackgroundDecoration(assetId) ? 180 : 0;
   }
 
-  static navigationIcon(iconPackId: string, tabId: string): ResourceStr {
+  /** selected 为 true 时优先取主题包的选中态图标；内置图标包没有选中态。 */
+  static navigationIcon(iconPackId: string, tabId: string, selected: boolean = false): ResourceStr {
     const normalizedPackId = ThemeAssetRegistry.normalizeIconPackId(iconPackId);
     const normalizedTabId = ThemeAssetRegistry.normalizeTabId(tabId);
     if (ThemePackRegistry.isPackId(normalizedPackId)) {
       const pack = ThemePackRegistry.get(normalizedPackId);
       if (pack && pack.hasNavigation()) {
-        if (normalizedTabId === ThemeAssetRegistry.TAB_EXPLORE) return pack.navExplore;
-        if (normalizedTabId === ThemeAssetRegistry.TAB_SEARCH) return pack.navSearch;
-        if (normalizedTabId === ThemeAssetRegistry.TAB_MINE) return pack.navMine;
-        return pack.navBookshelf;
+        if (normalizedTabId === ThemeAssetRegistry.TAB_EXPLORE) {
+          return selected && pack.navExploreSelected ? pack.navExploreSelected : pack.navExplore;
+        }
+        if (normalizedTabId === ThemeAssetRegistry.TAB_SEARCH) {
+          return selected && pack.navSearchSelected ? pack.navSearchSelected : pack.navSearch;
+        }
+        if (normalizedTabId === ThemeAssetRegistry.TAB_MINE) {
+          return selected && pack.navMineSelected ? pack.navMineSelected : pack.navMine;
+        }
+        return selected && pack.navBookshelfSelected ? pack.navBookshelfSelected : pack.navBookshelf;
       }
       return ThemeAssetRegistry.classicNavigationIcon(normalizedTabId);
     }
@@ -755,6 +762,23 @@ export class ThemeAssetRegistry {
       return normalized;
     }
     return ThemeAssetRegistry.ICON_PACK_CLASSIC;
+  }
+
+  /** 主题包带了选中态图标；没有时底栏不必在切换页签时重设图标。 */
+  static navigationHasSelectedIcons(iconPackId: string): boolean {
+    const normalizedPackId = ThemeAssetRegistry.normalizeIconPackId(iconPackId);
+    if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
+    const pack = ThemePackRegistry.get(normalizedPackId);
+    return !!pack && pack.hasNavigation() && !!(pack.navBookshelfSelected || pack.navExploreSelected ||
+      pack.navSearchSelected || pack.navMineSelected);
+  }
+
+  /** 主题包要求底栏只显示图标。 */
+  static navigationHidesLabels(iconPackId: string): boolean {
+    const normalizedPackId = ThemeAssetRegistry.normalizeIconPackId(iconPackId);
+    if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
+    const pack = ThemePackRegistry.get(normalizedPackId);
+    return !!pack && pack.hasNavigation() && pack.navHideLabels;
   }
 
   static normalizeTabId(tabId: string): string {

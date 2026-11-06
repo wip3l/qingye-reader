@@ -3,6 +3,7 @@
 import { assetFontFamily, assetUrl, h, project, S, type Mode } from './state.ts';
 import { baseTheme, bubbleLabel, effective, GENERIC_BUBBLES, type Effective } from './tokens.ts';
 import { cssColor, luminance } from './colors.ts';
+import { NAV_TABS } from './sections.ts';
 
 export const PHONE_W = 360;
 export const PHONE_H = 780;
@@ -74,9 +75,13 @@ function coverTile(index: number, title: string): HTMLElement {
   return tile;
 }
 
-function navIcon(key: string): string {
+/** 底栏一个页签的图标：SVG 用遮罩按文字色着色，位图原样显示，和应用一致。 */
+function navIcon(key: string, selected: boolean): HTMLElement {
   const nav = project().parts.navigation || {};
-  return assetUrl(nav[key]) || svgUrl(DEFAULT_NAV[key]);
+  const ref = (selected && nav[`${key}Selected`]) || nav[key] || '';
+  const url = assetUrl(ref);
+  if (url && project().assets.get(ref)?.kind === 'image') return h('img', { class: 'ico', src: url, alt: '' });
+  return h('i', { class: 'ico', style: `--m:url("${url || svgUrl(DEFAULT_NAV[key])}")` });
 }
 
 function screenShelf(mode: Mode, e: Effective): HTMLElement {
@@ -104,9 +109,11 @@ function screenShelf(mode: Mode, e: Effective): HTMLElement {
     folder ? h('img', { class: 'cv', src: folder, alt: '' }) : (usesBaseArt() ? placeholder(`沿用「${baseTheme().name}」文件夹`, 'fill') : h('div', { class: 'plain folder' }, h('b', {}, '分组'))));
   grid.append(h('div', { class: 'cell' }, folderTile, h('div', { class: 'gname' }, '收藏夹'), h('div', { class: 'gsub' }, '8 本')));
   s.append(grid);
-  const bar = h('div', { class: 'navbar', 'data-sec': 'nav' });
-  ([['bookshelf', '书架'], ['explore', '发现'], ['search', '搜索'], ['mine', '我的']] as const).forEach(([key, label], i) => {
-    bar.append(h('div', { class: `it${i === 0 ? ' on' : ''}` }, h('i', { class: 'ico', style: `--m:url("${navIcon(key)}")` }), label));
+  const nav = project().parts.navigation || {};
+  const iconsOnly = nav.labels === 'hidden' && !!nav.bookshelf;
+  const bar = h('div', { class: `navbar${iconsOnly ? ' icons-only' : ''}`, 'data-sec': 'nav' });
+  NAV_TABS.forEach(([key, label], i) => {
+    bar.append(h('div', { class: `it${i === 0 ? ' on' : ''}` }, navIcon(key, i === 0), iconsOnly ? null : label));
   });
   s.append(bar);
   return s;

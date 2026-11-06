@@ -883,7 +883,7 @@ struct Index {
       }
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.bottomTabBar(this.navigationIcon('bookshelf'), '书架'))
+      .tabBar(this.bottomTabBar('bookshelf', '书架', 0))
 
       TabContent() {
         if (this.exploreTabMounted) {
@@ -899,7 +899,7 @@ struct Index {
       }
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.bottomTabBar(this.navigationIcon('explore'), '发现'))
+      .tabBar(this.bottomTabBar('explore', '发现', 1))
 
       TabContent() {
         SearchPage({
@@ -911,7 +911,7 @@ struct Index {
       }
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.bottomTabBar(this.navigationIcon('search'), '搜索'))
+      .tabBar(this.bottomTabBar('search', '搜索', 2))
 
       TabContent() {
         if (this.homeTabIsMounted(3)) {
@@ -927,7 +927,7 @@ struct Index {
       .height('100%')
       .align(Alignment.TopStart)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.bottomTabBar(this.navigationIcon('mine'), '我的'))
+      .tabBar(this.bottomTabBar('mine', '我的', 3))
     }
     .key(`home_immersive_tabs_${this.themeRevision}_${this.appDarkMode ? 'dark' : 'light'}`)
     .barBackgroundColor(this.immersiveTabsBarBackgroundColor())
@@ -985,7 +985,7 @@ struct Index {
       }
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.compatTabBar(this.navigationIcon('bookshelf'), '书架', 0))
+      .tabBar(this.compatTabBar('bookshelf', '书架', 0))
 
       TabContent() {
         if (this.exploreTabMounted) {
@@ -1001,7 +1001,7 @@ struct Index {
       }
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.compatTabBar(this.navigationIcon('explore'), '发现', 1))
+      .tabBar(this.compatTabBar('explore', '发现', 1))
 
       TabContent() {
         SearchPage({
@@ -1013,7 +1013,7 @@ struct Index {
       }
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.compatTabBar(this.navigationIcon('search'), '搜索', 2))
+      .tabBar(this.compatTabBar('search', '搜索', 2))
 
       TabContent() {
         if (this.homeTabIsMounted(3)) {
@@ -1029,7 +1029,7 @@ struct Index {
       .height('100%')
       .align(Alignment.TopStart)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.compatTabBar(this.navigationIcon('mine'), '我的', 3))
+      .tabBar(this.compatTabBar('mine', '我的', 3))
     }
     .barMode(BarMode.Fixed)
     .barHeight(this.bookshelfMultiSelectActive ? 0 : 56 + this.compatTabSafeHeight())
@@ -1048,8 +1048,9 @@ struct Index {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
   }
 
-  bottomTabBar(icon: ResourceStr, title: string): BottomTabBarStyle {
-    return BottomTabBarStyle.of(icon, title)
+  // SVG 图标按 iconStyle 染色，位图保持原色（系统只给 SVG 填色）。
+  bottomTabBar(tabId: string, title: string, index: number): BottomTabBarStyle {
+    return BottomTabBarStyle.of(this.navigationIcon(tabId, index), this.navigationHidesLabels() ? '' : title)
       .labelStyle({
         font: { size: 11 },
         selectedColor: this.tabBarActiveColor(),
@@ -1065,25 +1066,27 @@ struct Index {
   }
 
   @Builder
-  compatTabBar(icon: ResourceStr, title: string, index: number) {
+  compatTabBar(tabId: string, title: string, index: number) {
     Column() {
       Column({ space: AppSpacing.XXS }) {
         Column() {
-          Image(icon)
-            .width(22)
-            .height(22)
+          Image(this.navigationIcon(tabId, index))
+            .width(this.navigationHidesLabels() ? 28 : 22)
+            .height(this.navigationHidesLabels() ? 28 : 22)
             .fillColor(this.currentIndex === index ? this.tabBarActiveColor() : this.tabBarTextColor())
         }
-        .width(24)
-        .height(24)
+        .width(this.navigationHidesLabels() ? 30 : 24)
+        .height(this.navigationHidesLabels() ? 30 : 24)
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
 
-        Text(title)
-          .fontSize(AppFontSize.MICRO)
-          .lineHeight(14)
-          .height(14)
-          .fontColor(this.currentIndex === index ? this.tabBarActiveColor() : this.tabBarTextColor())
+        if (!this.navigationHidesLabels()) {
+          Text(title)
+            .fontSize(AppFontSize.MICRO)
+            .lineHeight(14)
+            .height(14)
+            .fontColor(this.currentIndex === index ? this.tabBarActiveColor() : this.tabBarTextColor())
+        }
       }
       .width('100%')
       .height(56)
@@ -1126,8 +1129,16 @@ struct Index {
     return ThemeRuntime.subTextColor(this.appDarkMode);
   }
 
-  navigationIcon(tabId: string): ResourceStr {
-    return ThemeAssetRegistry.navigationIcon(ThemeRuntime.iconPackId(), tabId);
+  // 选中态跟内容切换同时换图（homeTabIsActive 在转场开始时就指向目标页签）。没有选中态图标的主题
+  // 不读页签状态，切换页签时底栏样式不会被重设。
+  navigationIcon(tabId: string, index: number): ResourceStr {
+    const iconPackId = ThemeRuntime.iconPackId();
+    const selected = ThemeAssetRegistry.navigationHasSelectedIcons(iconPackId) && this.homeTabIsActive(index);
+    return ThemeAssetRegistry.navigationIcon(iconPackId, tabId, selected);
+  }
+
+  navigationHidesLabels(): boolean {
+    return ThemeAssetRegistry.navigationHidesLabels(ThemeRuntime.iconPackId());
   }
 
   floatingBarBottomMargin(): number {

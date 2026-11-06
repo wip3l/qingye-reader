@@ -160,12 +160,25 @@ export class ThemePackageTtsPanel {
   glowColor: string = '';
 }
 
+/**
+ * 首页底栏图标。SVG 按主题色染色，位图保持原色；选中态图标可选，没给的页签选中时仍用普通图标。
+ * labels 为 'hidden' 时底栏只显示图标。
+ */
 export class ThemePackageNavigation {
   bookshelf: string = '';
   explore: string = '';
   search: string = '';
   mine: string = '';
+  bookshelfSelected: string = '';
+  exploreSelected: string = '';
+  searchSelected: string = '';
+  mineSelected: string = '';
+  labels: string = '';
 }
+
+export const NAVIGATION_ICON_KEYS: string[] = [
+  'bookshelf', 'explore', 'search', 'mine', 'bookshelfSelected', 'exploreSelected', 'searchSelected', 'mineSelected'
+];
 
 export class ThemePackageBook {
   covers: string[] = [];
@@ -910,14 +923,15 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
   const navigation = objectField(record, 'navigation');
   if (navigation) {
     parts.navigation = new ThemePackageNavigation();
-    const vector: string[] = [ThemePackageAssetKinds.VECTOR];
-    parts.navigation.bookshelf = partAssetRef(navigation, 'bookshelf', manifest, vector, 'parts.navigation');
-    parts.navigation.explore = partAssetRef(navigation, 'explore', manifest, vector, 'parts.navigation');
-    parts.navigation.search = partAssetRef(navigation, 'search', manifest, vector, 'parts.navigation');
-    parts.navigation.mine = partAssetRef(navigation, 'mine', manifest, vector, 'parts.navigation');
+    const icon: string[] = [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE];
+    const result = parts.navigation as Object as Record<string, string>;
+    for (const key of NAVIGATION_ICON_KEYS) {
+      result[key] = partAssetRef(navigation, key, manifest, icon, 'parts.navigation');
+    }
+    parts.navigation.labels = stringField(navigation, 'labels').trim() === 'hidden' ? 'hidden' : '';
     if (!parts.navigation.bookshelf || !parts.navigation.explore || !parts.navigation.search ||
       !parts.navigation.mine) {
-      throw new Error('主题包的 parts.navigation 需要 bookshelf、explore、search、mine 四个 SVG');
+      throw new Error('主题包的 parts.navigation 需要 bookshelf、explore、search、mine 四个图标');
     }
   }
   const book = objectField(record, 'book');
@@ -1055,10 +1069,9 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
     if (tts) add(tts.artwork);
   }
   if (parts.navigation) {
-    add(parts.navigation.bookshelf);
-    add(parts.navigation.explore);
-    add(parts.navigation.search);
-    add(parts.navigation.mine);
+    // 本机旧版记录里没有选中态字段。
+    const navigation = parts.navigation as Object as Record<string, string>;
+    for (const key of NAVIGATION_ICON_KEYS) add(navigation[key] || '');
   }
   if (parts.book) {
     for (const cover of parts.book.covers) add(cover);
@@ -1095,10 +1108,8 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
     if (tts) tts.artwork = swap(tts.artwork);
   }
   if (copy.navigation) {
-    copy.navigation.bookshelf = swap(copy.navigation.bookshelf);
-    copy.navigation.explore = swap(copy.navigation.explore);
-    copy.navigation.search = swap(copy.navigation.search);
-    copy.navigation.mine = swap(copy.navigation.mine);
+    const navigation = copy.navigation as Object as Record<string, string>;
+    for (const key of NAVIGATION_ICON_KEYS) navigation[key] = swap(navigation[key] || '');
   }
   if (copy.book) {
     copy.book.covers = copy.book.covers.map((cover: string): string => swap(cover));

@@ -159,7 +159,7 @@ export struct CustomThemePreview {
       .alignItems(VerticalAlign.Center)
       Row() {
         ForEach(['bookshelf', 'explore', 'search', 'mine'], (tabId: string) => {
-          Image(ThemeAssetRegistry.navigationIcon(this.themePack.navigation.iconPackId, tabId))
+          Image(ThemeAssetRegistry.navigationIcon(this.themePack.navigation.iconPackId, tabId, tabId === 'bookshelf'))
             .width(20)
             .height(20)
             .fillColor(tabId === 'bookshelf' ? this.variant().colors.accentColor : this.variant().colors.subTextColor)

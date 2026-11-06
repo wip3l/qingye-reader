@@ -76,7 +76,9 @@ my-theme/
 | | `reader` | 阅读页：`backgroundColor`（必须是铺满任意尺寸的底色）、`textColor`、`subTextColor`、`contentTone`（`light` / `dark`，决定系统栏图标明暗）、`backgroundMode`（`ornaments` 角饰 / `image` 整图 / `none` 只有底色）。角饰模式填 `leading`（左上）与 `trailing`（右下）两张图（SVG 或透明底位图）；整图模式填 `image` 和 `imageFit`（`cover` / `contain` / `fill`）。 |
 | | `emphasis` | 正文强调：`mode`（`none` / `text` / `highlight` / `bubble`）、`bubbleStyle`（内置气泡 ID，见主题开发指南；包里带了 `bubble` 节时自动用包内气泡）、`color`、`textColor`（可带透明度）。 |
 | `ttsPanel` | `light` / `dark` | 朗读与有声书面板：`artwork`（720 × 520 的 SVG 或位图，贴顶等比缩放）、`skyColor`（插画背后的天空色）、`surfaceColor`（不透明的面板底色）、`glowColor`（带透明度的强调光）。四项都要写；只写一种模式时另一种模式沿用它。 |
-| `navigation` | `bookshelf`、`explore`、`search`、`mine` | 四个导航图标 SVG，缺一不可。 |
+| `navigation` | `bookshelf`、`explore`、`search`、`mine` | 首页底栏的四个图标，缺一不可。SVG 按主题色着色，位图保持原色。 |
+| | `bookshelfSelected`、`exploreSelected`、`searchSelected`、`mineSelected` | 选中态图标，可选；没写的页签选中时仍用普通图标。旧版本应用会忽略这几项。 |
+| | `labels` | 写 `hidden` 时底栏只显示图标，不显示“书架”等文字。 |
 | `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 8 张，书架按书轮播）、书架边框 SVG、分组文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
 | `bubble` | `frame`、`cap` | 强调气泡的边框 SVG（可选）与端饰 SVG（必填）。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。 |
@@ -131,7 +133,7 @@ my-theme/
 | 阅读角饰 `leading` / `trailing` | SVG 或 PNG / WebP | SVG 用 `viewBox="0 0 480 480"`，位图取正方形，都要透明底；左上角与右下角是同一场景的两幅图，正文区域不要放密集细节。 |
 | 阅读整图 `image` | PNG / JPG / WebP | 竖屏位图，按 `imageFit` 铺满或包含；浅色与深色各一张。 |
 | 朗读面板 `artwork` | SVG 或位图 | 720 × 520，透明底或完整插画；下半部分会渐隐到 `surfaceColor`。 |
-| 导航图标 | SVG | `viewBox="0 0 24 24"`，单色纯黑填充，应用按主题色着色。 |
+| 导航图标 | SVG 或 PNG / WebP | SVG 用 `viewBox="0 0 24 24"`、单色纯黑填充，应用按主题色着色（选中为强调色）；位图取 96 × 96 透明底，按原色显示在 24 × 24 vp 的位置，选中与否要靠选中态图标区分。旧版本应用只接受 SVG，带位图图标的包在旧版本上无法导入。 |
 | 封面 `covers` | JPG / PNG | 450 × 660，完整插画，不叠加书名或作者。 |
 | 书架边框 `shelfFrame` | SVG | 与封面同比例，中心透明，只画外框和角花。 |
 | 文件夹插画 `shelfFolder` | JPG / PNG | 450 × 660。 |

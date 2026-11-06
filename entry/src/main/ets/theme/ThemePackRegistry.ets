@@ -64,6 +64,12 @@ export class InstalledThemePack {
   navExplore: string = '';
   navSearch: string = '';
   navMine: string = '';
+  // 选中态图标，没给的页签选中时用普通图标。
+  navBookshelfSelected: string = '';
+  navExploreSelected: string = '';
+  navSearchSelected: string = '';
+  navMineSelected: string = '';
+  navHideLabels: boolean = false;
   covers: string[] = [];
   shelfFrame: string = '';
   shelfFolder: string = '';
@@ -207,6 +213,11 @@ export class ThemePackRegistry {
       installed.navExplore = uri(parts.navigation.explore);
       installed.navSearch = uri(parts.navigation.search);
       installed.navMine = uri(parts.navigation.mine);
+      installed.navBookshelfSelected = uri(parts.navigation.bookshelfSelected || '');
+      installed.navExploreSelected = uri(parts.navigation.exploreSelected || '');
+      installed.navSearchSelected = uri(parts.navigation.searchSelected || '');
+      installed.navMineSelected = uri(parts.navigation.mineSelected || '');
+      installed.navHideLabels = parts.navigation.labels === 'hidden';
       if (installed.hasNavigation()) pack.navigation.iconPackId = themeId;
     }
     if (parts.book) {

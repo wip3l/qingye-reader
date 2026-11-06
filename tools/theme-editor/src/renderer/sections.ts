@@ -41,6 +41,13 @@ export interface Section {
 
 const mode = (m: Mode, path: string): any => getPath(`${m}.${path}`);
 
+export const NAV_TABS: [string, string][] = [['bookshelf', '书架'], ['explore', '发现'], ['search', '搜索'], ['mine', '我的']];
+
+function navIconField(k: string, label: string): Field {
+  return { k, label, type: 'asset', kinds: ['vector', 'image'], icon: true, square: true, viewBox: [24, 24], target: [96, 96],
+    spec: 'SVG：viewBox 0 0 24 24，单色纯黑；位图：96 × 96 透明底，原色显示' };
+}
+
 export const SECTIONS: Section[] = [
   {
     id: 'meta', group: '包', name: '包信息', screen: 'card',
@@ -116,12 +123,14 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'nav', group: '素材', name: '导航图标', screen: 'shelf',
-    desc: '四个要么都给，要么都不给。单色纯黑填充的 SVG，应用按主题色着色。', fields: [
-      { g: 'SVG，viewBox 0 0 24 24' },
-      { k: 'navigation.bookshelf', label: '书架', type: 'asset', kinds: ['vector'], icon: true, viewBox: [24, 24], spec: '单色纯黑' },
-      { k: 'navigation.explore', label: '发现', type: 'asset', kinds: ['vector'], icon: true, viewBox: [24, 24], spec: '单色纯黑' },
-      { k: 'navigation.search', label: '搜索', type: 'asset', kinds: ['vector'], icon: true, viewBox: [24, 24], spec: '单色纯黑' },
-      { k: 'navigation.mine', label: '我的', type: 'asset', kinds: ['vector'], icon: true, viewBox: [24, 24], spec: '单色纯黑' }
+    desc: '首页底栏。四个普通图标要么都给，要么都不给。SVG 按主题色着色，位图（PNG / WebP）保持原色。选中态可选，没给的页签选中时仍用普通图标。', fields: [
+      { g: '普通图标' },
+      ...NAV_TABS.map(([key, label]): Field => navIconField(`navigation.${key}`, label)),
+      { g: '选中态（可选）' },
+      ...NAV_TABS.map(([key, label]): Field => navIconField(`navigation.${key}Selected`, label)),
+      { g: '底栏' },
+      { k: 'navigation.labels', label: '文字', type: 'select', options: [['', '图标下显示文字'], ['hidden', '只显示图标']],
+        hint: '只显示图标时，图标本身要能认出是哪个页签' }
     ]
   },
   {

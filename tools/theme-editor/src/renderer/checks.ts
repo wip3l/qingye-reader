@@ -28,6 +28,9 @@ export function sizeWarning(field: Field, asset: { kind: string; width: number; 
     return '';
   }
   if (field.square && Math.abs(asset.width - asset.height) > 2) return '应为正方形';
+  if (field.icon && field.target && asset.width < field.target[0] * 0.75) {
+    return `小于 ${field.target[0]} × ${field.target[1]}，高分屏上会发虚`;
+  }
   if (field.target && Math.abs(asset.width / asset.height - field.target[0] / field.target[1]) > 0.02) {
     return `比例不是 ${field.target[0]}:${field.target[1]}，会被裁切`;
   }
@@ -103,6 +106,10 @@ export function editorIssues(): Issue[] {
   const navKeys = ['bookshelf', 'explore', 'search', 'mine'];
   const navCount = navKeys.filter((k) => nav[k]).length;
   if (navCount > 0 && navCount < 4) add('error', `navigation.${navKeys.find((k) => !nav[k])}`, `导航图标要四个都有（现在 ${navCount} 个）`);
+  const selectedKey = navKeys.find((k) => nav[`${k}Selected`]);
+  if (navCount === 0 && (selectedKey || nav.labels)) {
+    add('error', 'navigation.bookshelf', '给了选中态图标或底栏文字设置，还需要四个普通图标');
+  }
   if (p.parts.bubble && p.parts.bubble.frame && !p.parts.bubble.cap) add('error', 'bubble.cap', '包内气泡有边框时还需要端饰');
 
   for (const { field } of assetFields()) {
