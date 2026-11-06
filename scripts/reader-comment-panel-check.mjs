@@ -132,7 +132,7 @@ for (const dark of [false, true]) {
   assert(html.indexOf('__LEGADO_COMMENT_INLINE__') < html.indexOf('pageInit()'), 'theme precedes page scripts');
 }
 {
-  // Whatever the page's own theme button changes, the host sheet receives the page's real top colour.
+  // The page's own theme button is locked to the app scheme; the sheet takes the page's real top colour once.
   const reports = [], styles = new Map(), timers = [], observers = [], clicks = [];
   const classes = new Set();
   let headerColor = 'rgb(255, 255, 255)';
@@ -143,17 +143,18 @@ for (const dark of [false, true]) {
   const header = { nodeType: 1, parentElement: body };
   const label = { nodeType: 1, parentElement: header };
   const root = { style: {}, setAttribute() {}, appendChild(node) { styles.set(node.id, node); } };
+  let pageToggles = 0;
   const window = {
     innerWidth: 400,
     LegadoCommentHost: { surfaceColor: color => reports.push(color) },
-    toggleCmtTheme() { body.classList.toggle('dark'); },
+    toggleCmtTheme() { pageToggles++; body.classList.toggle('dark'); },
     dispatchEvent() {}
   };
   const document = { documentElement: root, body, head: root, readyState: 'complete',
     getElementById: id => id === 'themeToggle' ? {} : (styles.get(id) ?? null),
     createElement: () => ({ remove() { styles.delete(this.id); } }),
     elementFromPoint: () => label,
-    addEventListener: (type, fn, capture) => { assert.equal(type, 'click'); assert.equal(capture, true); clicks.push(fn); } };
+    addEventListener: (type, fn) => clicks.push(fn) };
   const context = vm.createContext({ window, document, localStorage: { setItem() {} }, location: { href: 'about:blank' },
     CustomEvent: class {}, requestAnimationFrame: fn => fn(), setTimeout: fn => timers.push(fn),
     getComputedStyle: node => ({ backgroundColor: node === header ? headerColor : 'rgba(0, 0, 0, 0)' }),
@@ -161,19 +162,18 @@ for (const dark of [false, true]) {
   vm.runInContext(`window.__LEGADO_COMMENT_INLINE__=true;`, context);
   vm.runInContext(ReaderCommentWebTheme.apply(false, true), context);
   assert.deepEqual(reports, ['#ffffff'], 'host learns the top colour once applied');
-  assert.deepEqual(observers.map(item => item.target), [root, body], 'root and body attributes are watched');
-  assert.equal(clicks.length, 1);
-  // A theme button that only swaps a stylesheet: nothing but the painted colour changes, after a transition.
-  clicks[0]();
+  assert.match(styles.get('legado-theme-lock').textContent, /#themeToggle\{display:none/, 'page theme button is hidden');
+  assert.equal(clicks.length + observers.length, 0, 'page clicks no longer drive the sheet colour');
+  window.toggleCmtTheme();
+  assert.equal(pageToggles, 0, 'page theme switch is disabled');
   headerColor = 'rgb(43, 43, 43)';
   for (const fn of timers.splice(0)) fn();
-  assert.deepEqual(reports, ['#ffffff', '#2b2b2b'], 'delayed recheck catches transitions');
+  assert.deepEqual(reports, ['#ffffff', '#2b2b2b'], 'delayed recheck catches the initial transition');
   assert.match(styles.get('legado-comment-canvas').textContent, /#131313/, 'root canvas follows the page');
-  observers[1].fn();
-  for (const fn of timers.splice(0)) fn();
-  assert.deepEqual(reports, ['#ffffff', '#2b2b2b'], 'unchanged colour does not repeat reports');
-  vm.runInContext(ReaderCommentWebTheme.apply(false, true), context);
-  assert.equal(clicks.length, 1, 'repeated readiness polls do not stack listeners');
+  // The app switches to dark while the sheet is open: the host still drives the page's original switch.
+  vm.runInContext(ReaderCommentWebTheme.apply(true, true), context);
+  assert.equal(pageToggles, 1);
+  assert(classes.has('dark'), 'page follows the app dark mode');
 }
 {
   const context = vm.createContext({});
@@ -196,7 +196,7 @@ for (const dark of [false, true]) {
   page.appDarkMode = false;
   assert.equal(page.readerCommentPanelWebBackground(), '#FFFFFF', 'inline sheet returns to light mode');
 }
-console.log('PASS comment panel: live resize, painted-theme reveal, stale callbacks, bounded failure/retry, early HTML theme, Web back/close bridge, page top colour reaches sheet');
+console.log('PASS comment panel: live resize, painted-theme reveal, stale callbacks, bounded failure/retry, early HTML theme, Web back/close bridge, page theme locked to app, page top colour reaches sheet');
 
 for (const inline of [true, false]) {
   let refresh, remoteChecks=0;

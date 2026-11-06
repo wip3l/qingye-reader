@@ -79,11 +79,20 @@ export class ReaderCommentWebTheme {
       if(guard)guard.remove();
       root.style.colorScheme=scheme;
       root.setAttribute('data-legado-color-scheme',scheme);
-      var ownToggle=!!(document.getElementById('themeToggle')&&typeof window.toggleCmtTheme==='function');
+      var ownToggle=!!(document.getElementById('themeToggle')&&
+        (window.__LEGADO_CMT_TOGGLE__||typeof window.toggleCmtTheme==='function'));
       if(ownToggle){
-        if(body.classList.contains('dark')!==dark)window.toggleCmtTheme();
+        if(!window.__LEGADO_CMT_TOGGLE__)window.__LEGADO_CMT_TOGGLE__=window.toggleCmtTheme;
+        if(body.classList.contains('dark')!==dark)window.__LEGADO_CMT_TOGGLE__();
         try{localStorage.setItem('cmt-theme',scheme);}catch(_){}
         body.classList.toggle('dark',dark);
+        // 评论页始终跟随应用深浅色：藏起页面自带的切换按钮，切换函数也不再生效，免得点击后被页面记住。
+        window.toggleCmtTheme=function(){};
+        if(!document.getElementById('legado-theme-lock')){
+          var lock=document.createElement('style');lock.id='legado-theme-lock';
+          lock.textContent='#themeToggle{display:none!important;}';
+          (document.head||root).appendChild(lock);
+        }
       }
       window.__LEGADO_COLOR_SCHEME__=scheme;window.__LEGADO_DARK_MODE__=dark;
       window.dispatchEvent(new CustomEvent('legado-color-scheme-change',{detail:{colorScheme:scheme,dark:dark}}));
@@ -118,8 +127,8 @@ export class ReaderCommentWebTheme {
       canvas=document.createElement('style');canvas.id='legado-comment-canvas';
       canvas.textContent=canvasCss(dark);
       (document.head||root).appendChild(canvas);
-      // 宿主弹层的拖动条区域取网页顶部的实际底色。页面自带的深浅色按钮怎么实现都不要紧：
-      // 点击或根节点属性变化后重新取色，延迟复查以等过渡动画结束。反色兜底时取色是反色前的值，直接用深色。
+      // 宿主弹层的拖动条区域取网页顶部的实际底色，延迟复查以等过渡动画结束；之后不再随页面点击改色。
+      // 反色兜底时取色是反色前的值，直接用深色。
       var report=function(color){
         var host=window.LegadoCommentHost;
         if(host&&typeof host.surfaceColor==='function')host.surfaceColor(color);
@@ -153,14 +162,7 @@ export class ReaderCommentWebTheme {
           report(color);
         };
         window.__LEGADO_SURFACE_COLOR__='';
-        sync();
-        if(!window.__LEGADO_SURFACE_WATCH__){
-          window.__LEGADO_SURFACE_WATCH__=true;
-          var later=function(){sync();setTimeout(sync,120);setTimeout(sync,450);};
-          document.addEventListener('click',later,true);
-          new MutationObserver(later).observe(root,{attributes:true});
-          new MutationObserver(later).observe(body,{attributes:true});
-        }
+        sync();setTimeout(sync,120);setTimeout(sync,450);
       }
       window.__LEGADO_THEME_PAINTED__='';window.__LEGADO_THEME_APPLIED__=scheme;
       requestAnimationFrame(function(){requestAnimationFrame(function(){
