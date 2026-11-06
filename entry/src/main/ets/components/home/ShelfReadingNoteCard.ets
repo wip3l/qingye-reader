@@ -75,6 +75,8 @@ export struct ShelfReadingNoteCard {
     }
     this.dayMs = week;
     this.todayMs = week[week.length - 1];
+    // 问候语的 {今日阅读} 用同一个数，不再另查一遍统计。
+    AppStorage.setOrCreate('shelfTodayReadMs', this.todayMs);
     this.weekMs = week.reduce((sum: number, value: number): number => sum + value, 0);
     this.streakDays = streak;
   }

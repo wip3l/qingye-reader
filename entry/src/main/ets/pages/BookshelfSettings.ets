@@ -22,6 +22,9 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
+import { ShelfGreetingEditor } from '../components/home/ShelfGreetingEditor';
+import { ShelfGreetingTemplate } from '../utils/ShelfGreetingTemplate';
+import { BookshelfSortHelper } from '../utils/BookshelfSortHelper';
 
 @Entry
 @Component
@@ -44,6 +47,11 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfTypeCategoryEnabled') bookshelfTypeCategoryEnabled: boolean = true;
   @StorageLink('bookshelfShowAllTypeTab') bookshelfShowAllTypeTab: boolean = true;
   @StorageLink('bookshelfCompanionStagger') bookshelfCompanionStagger: boolean = true;
+  @StorageLink('bookshelfGreetingMode') bookshelfGreetingMode: string = 'time';
+  @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
+  @StorageLink('bookshelfGreetingSubtitle') bookshelfGreetingSubtitle: string = '';
+  @StorageProp('accountDisplayName') accountDisplayName: string = '';
+  @StorageProp('shelfTodayReadMs') shelfTodayReadMs: number = 0;
   @StorageLink('bookshelfCoverAlbums') @Watch('onCoverAlbumsChanged') bookshelfCoverAlbums: string = '';
   @StorageLink('bookshelfLightCoverAlbumId') bookshelfLightCoverAlbumId: string = '';
   @StorageLink('bookshelfDarkCoverAlbumId') bookshelfDarkCoverAlbumId: string = '';
@@ -80,6 +88,7 @@ struct BookshelfSettingsPage {
   @State privatePasswordError: string = '';
   @State privateShelfBusy: boolean = false;
   private privatePasswordDialogSession: SystemDialogSession = new SystemDialogSession();
+  private greetingEditorDialogSession: SystemDialogSession = new SystemDialogSession();
   private skipNextCoverGalleryReload: boolean = false;
 
   aboutToAppear(): void {
@@ -151,6 +160,17 @@ struct BookshelfSettingsPage {
           this.onDisplaySettingChanged();
         }
       })
+      this.itemDivider()
+      this.selectItem('问候语', '书架左上角的两行文案，也可在书架上长按修改',
+        this.greetingModeOptions(), this.greetingModeSelectedIndex(), (index: number) => {
+          this.selectGreetingMode(index === 1 ? 'custom' : (index === 2 ? 'off' : 'time'));
+        })
+      if (this.bookshelfGreetingMode === 'custom') {
+        this.itemDivider()
+        this.actionItem('编辑问候语', this.greetingSummary(), this.primaryTextColor(), () => {
+          this.openGreetingEditor();
+        })
+      }
     }
     if (this.bookshelfLayoutMode === 'tile' && this.bookshelfLastReadPinMode === 'medium') {
       this.itemDivider()
@@ -398,6 +418,9 @@ struct BookshelfSettingsPage {
       this.bookshelfTypeCategoryEnabled = settings.typeCategoryEnabled;
       this.bookshelfShowAllTypeTab = settings.showAllTypeTab;
       this.bookshelfCompanionStagger = settings.companionStagger;
+      this.bookshelfGreetingMode = settings.greetingMode;
+      this.bookshelfGreetingTitle = settings.greetingTitle;
+      this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
     } catch (e) {
       console.warn('重新加载书架显示设置失败:', e);
     }
@@ -593,6 +616,9 @@ struct BookshelfSettingsPage {
     settings.typeCategoryEnabled = this.bookshelfTypeCategoryEnabled;
     settings.showAllTypeTab = this.bookshelfShowAllTypeTab;
     settings.companionStagger = this.bookshelfCompanionStagger;
+    settings.greetingMode = this.bookshelfGreetingMode;
+    settings.greetingTitle = this.bookshelfGreetingTitle;
+    settings.greetingSubtitle = this.bookshelfGreetingSubtitle;
     BookshelfDisplaySettingsStore.applyToStorage(settings);
     BookshelfDisplaySettingsStore.save(getContext(this), settings).catch((e: Error) => {
       console.warn('保存书架显示设置失败:', e);
@@ -782,6 +808,83 @@ struct BookshelfSettingsPage {
 
   scopeOptions(): SelectOption[] {
     return [{ value: '全部应用' }, { value: '指定书籍' }];
+  }
+
+  greetingModeOptions(): SelectOption[] {
+    return [{ value: '按时段' }, { value: '自定义' }, { value: '不显示' }];
+  }
+
+  greetingModeSelectedIndex(): number {
+    if (this.bookshelfGreetingMode === 'custom') return 1;
+    return this.bookshelfGreetingMode === 'off' ? 2 : 0;
+  }
+
+  greetingSummary(): string {
+    const lines = [this.bookshelfGreetingTitle, this.bookshelfGreetingSubtitle].filter((line: string) => !!line);
+    return lines.length > 0 ? lines.join(' / ') : '未填写，显示默认问候';
+  }
+
+  /** 切到自定义时若还没写过，先填入和内置一样的文案，书架上看起来不变，再打开编辑框。 */
+  selectGreetingMode(mode: string): void {
+    if (mode === 'custom' && !this.bookshelfGreetingTitle && !this.bookshelfGreetingSubtitle) {
+      const draft = ShelfGreetingTemplate.defaultDraft(new Date().getHours());
+      this.bookshelfGreetingTitle = draft[0];
+      this.bookshelfGreetingSubtitle = draft[1];
+    }
+    this.bookshelfGreetingMode = mode;
+    this.onDisplaySettingChanged();
+    if (mode === 'custom') this.openGreetingEditor();
+  }
+
+  async openGreetingEditor(): Promise<void> {
+    // 预览里的 {在读} 用书架上最近读的那本。
+    let readingBookName = '';
+    try {
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(getContext(this));
+      const books = PrivateShelfStore.publicBooks(SearchExplorePendingBook.filterShelfBooks(await db.getAllBooks()));
+      const latest = BookshelfSortHelper.getPinnedRecentReadBooks(books, 1);
+      readingBookName = latest.length > 0 ? latest[0].name : '';
+    } catch (e) {
+      console.warn('读取最近阅读书籍失败:', e);
+    }
+    const title = this.bookshelfGreetingTitle;
+    const subtitle = this.bookshelfGreetingSubtitle;
+    this.greetingEditorDialogSession.open(this.getUIContext(), (): void => {
+      this.greetingEditorDialogContent(title, subtitle, readingBookName);
+    }, {
+      // 写到一半误触蒙层或返回键不能丢稿，只能点取消或保存关闭。
+      autoCancel: false,
+      maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
+      warnTag: '显示问候语编辑弹窗失败:'
+    });
+  }
+
+  @Builder
+  greetingEditorDialogContent(title: string, subtitle: string, readingBookName: string) {
+    ShelfGreetingEditor({
+      appDarkMode: this.appDarkMode,
+      initialTitle: title,
+      initialSubtitle: subtitle,
+      nickname: this.accountDisplayName,
+      todayReadMs: this.shelfTodayReadMs,
+      readingBookName: readingBookName,
+      onSave: (nextTitle: string, nextSubtitle: string): void => {
+        this.bookshelfGreetingMode = 'custom';
+        this.bookshelfGreetingTitle = nextTitle;
+        this.bookshelfGreetingSubtitle = nextSubtitle;
+        this.onDisplaySettingChanged();
+        this.greetingEditorDialogSession.close(this.getUIContext());
+      },
+      onSaveDefault: (): void => {
+        this.bookshelfGreetingMode = 'time';
+        this.bookshelfGreetingTitle = '';
+        this.bookshelfGreetingSubtitle = '';
+        this.onDisplaySettingChanged();
+        this.greetingEditorDialogSession.close(this.getUIContext());
+      },
+      onCancel: (): void => this.greetingEditorDialogSession.close(this.getUIContext())
+    })
   }
 
   bookshelfLayoutOptions(): SelectOption[] {

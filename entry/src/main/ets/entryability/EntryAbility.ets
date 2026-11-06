@@ -216,6 +216,9 @@ export default class EntryAbility extends UIAbility {
     PersistentStorage.persistProp('bookshelfTypeCategoryEnabled', true);
     PersistentStorage.persistProp('bookshelfShowAllTypeTab', true);
     PersistentStorage.persistProp('bookshelfCompanionStagger', true);
+    PersistentStorage.persistProp('bookshelfGreetingMode', 'time');
+    PersistentStorage.persistProp('bookshelfGreetingTitle', '');
+    PersistentStorage.persistProp('bookshelfGreetingSubtitle', '');
     PersistentStorage.persistProp('bookshelfCoverAlbums', '');
     PersistentStorage.persistProp('bookshelfLightCoverAlbumId', '');
     PersistentStorage.persistProp('bookshelfDarkCoverAlbumId', '');

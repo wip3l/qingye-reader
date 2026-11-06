@@ -42,6 +42,8 @@ import { SearchExplorePendingBook } from '../../utils/SearchExplorePendingBook';
 import { BookshelfSortHelper } from '../../utils/BookshelfSortHelper';
 import { RecentReadCarousel } from './RecentReadCarousel';
 import { ShelfReadingNoteCard } from './ShelfReadingNoteCard';
+import { ShelfGreetingEditor } from './ShelfGreetingEditor';
+import { ShelfGreetingTemplate, ShelfGreetingValues } from '../../utils/ShelfGreetingTemplate';
 import { CategorySwipePager } from './CategorySwipePager';
 import { ShelfCategoryMaterial } from './ShelfCategoryMaterial';
 import { SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
@@ -366,6 +368,7 @@ export struct BookshelfPage {
   private batchDeleteDialogSession: SystemDialogSession = new SystemDialogSession();
   private deleteBookDialogSession: SystemDialogSession = new SystemDialogSession();
   private editBookInfoDialogSession: SystemDialogSession = new SystemDialogSession();
+  private greetingEditorDialogSession: SystemDialogSession = new SystemDialogSession();
   private tagDialogSession: SystemDialogSession = new SystemDialogSession();
   private customCoverDialogSession: SystemDialogSession = new SystemDialogSession();
   @State showAddBookGroupDialog: boolean = false;
@@ -457,6 +460,13 @@ export struct BookshelfPage {
   /** 书架设置“错落摆放”：关闭后陪伴网格里的书一样大、全部立正。 */
   @StorageLink('bookshelfCompanionStagger') @Watch('onCompanionStaggerChanged')
   bookshelfCompanionStagger: boolean = true;
+  /** 陪伴布局左上角问候语：time 内置按时段，custom 用户自写两行（可含占位符），off 不显示。 */
+  @StorageLink('bookshelfGreetingMode') bookshelfGreetingMode: string = 'time';
+  @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
+  @StorageLink('bookshelfGreetingSubtitle') bookshelfGreetingSubtitle: string = '';
+  @StorageProp('accountDisplayName') accountDisplayName: string = '';
+  /** 阅读小记读出的今日时长，问候语 {今日阅读} 直接用。 */
+  @StorageProp('shelfTodayReadMs') shelfTodayReadMs: number = 0;
   @StorageLink('bookshelfCoverAlbums') @Watch('onShelfCoverSettingsChanged') bookshelfCoverAlbums: string = '';
   @StorageLink('bookshelfLightCoverAlbumId') @Watch('onShelfCoverSettingsChanged') bookshelfLightCoverAlbumId: string = '';
   @StorageLink('bookshelfDarkCoverAlbumId') @Watch('onShelfCoverSettingsChanged') bookshelfDarkCoverAlbumId: string = '';
@@ -613,6 +623,9 @@ export struct BookshelfPage {
       this.bookshelfTypeCategoryEnabled = settings.typeCategoryEnabled;
       this.bookshelfShowAllTypeTab = settings.showAllTypeTab;
       this.bookshelfCompanionStagger = settings.companionStagger;
+      this.bookshelfGreetingMode = settings.greetingMode;
+      this.bookshelfGreetingTitle = settings.greetingTitle;
+      this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
     } catch (e) {
       console.warn('恢复书架显示设置失败:', e);
     }
@@ -4143,11 +4156,13 @@ export struct BookshelfPage {
 
       if (this.shouldShowLatestExpandedTileBook()) {
         if (this.isCompanionLayout()) {
+          if (this.bookshelfGreetingMode !== 'off') {
           GridItem() {
-            this.shelfCompanionGreeting()
+            this.shelfCompanionGreeting(pageKey)
           }
           .columnStart(0)
           .columnEnd(this.shelfTileColumnCount() - 1)
+          }
 
           if (this.getLatestReadTileBooks(this.shelfBooksForPage(pageKey)).length > 0) {
           GridItem() {
@@ -4476,31 +4491,85 @@ export struct BookshelfPage {
       finger ? finger.globalY : this.contextViewportHeight / 2);
   }
 
-  shelfCompanionGreetingLines(): string[] {
-    const hour = new Date().getHours();
-    if (hour < 5) return ['夜深了，慢慢读。', '读完这一章，就早点休息吧。'];
-    if (hour < 11) return ['早上好，慢慢读。', '翻开一本，日子就慢下来了。'];
-    if (hour < 13) return ['中午好，慢慢读。', '歇一会儿，读上几页。'];
-    if (hour < 18) return ['下午好，慢慢读。', '泡杯茶，故事还在原处等你。'];
-    return ['晚上好，慢慢读。', '夜里读书，最是安静。'];
+  shelfCompanionReadingBookName(pageKey: string): string {
+    const latest = this.getLatestReadTileBooks(this.shelfBooksForPage(pageKey));
+    return latest.length > 0 ? latest[0].name : '';
   }
 
+  shelfCompanionGreetingLines(pageKey: string): string[] {
+    const now = new Date();
+    if (this.bookshelfGreetingMode !== 'custom') return ShelfGreetingTemplate.defaultLines(now.getHours());
+    const values = new ShelfGreetingValues();
+    values.hour = now.getHours();
+    values.date = now;
+    values.nickname = this.accountDisplayName;
+    values.todayReadMs = this.shelfTodayReadMs;
+    values.readingBookName = this.shelfCompanionReadingBookName(pageKey);
+    return ShelfGreetingTemplate.customLines(this.bookshelfGreetingTitle, this.bookshelfGreetingSubtitle, values);
+  }
+
+  /** 长按问候语直接改文案，不用进书架设置。 */
   @Builder
-  shelfCompanionGreeting() {
+  shelfCompanionGreeting(pageKey: string) {
     Column({ space: AppSpacing.XS }) {
-      Text(this.shelfCompanionGreetingLines()[0])
+      Text(this.shelfCompanionGreetingLines(pageKey)[0])
         .fontSize(AppFontSize.HEADLINE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.accentColor())
         .maxLines(1)
-      Text(this.shelfCompanionGreetingLines()[1])
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.subTextColor())
-        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      if (this.shelfCompanionGreetingLines(pageKey)[1]) {
+        Text(this.shelfCompanionGreetingLines(pageKey)[1])
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.subTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding({ left: AppSpacing.XS, bottom: AppSpacing.SM })
+    .gesture(LongPressGesture().onAction(() => this.openGreetingEditor(pageKey)))
+  }
+
+  openGreetingEditor(pageKey: string): void {
+    if (this.isBookMultiSelect) return;
+    const custom = this.bookshelfGreetingMode === 'custom';
+    const draft = ShelfGreetingTemplate.defaultDraft(new Date().getHours());
+    const title = custom ? this.bookshelfGreetingTitle : draft[0];
+    const subtitle = custom ? this.bookshelfGreetingSubtitle : draft[1];
+    const readingBookName = this.shelfCompanionReadingBookName(pageKey);
+    this.greetingEditorDialogSession.open(this.getUIContext(), (): void => {
+      this.greetingEditorDialogContent(title, subtitle, readingBookName);
+    }, {
+      // 写到一半误触蒙层或返回键不能丢稿，只能点取消或保存关闭。
+      autoCancel: false,
+      maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
+      warnTag: '显示问候语编辑弹窗失败:'
+    });
+  }
+
+  @Builder
+  greetingEditorDialogContent(title: string, subtitle: string, readingBookName: string) {
+    ShelfGreetingEditor({
+      appDarkMode: this.appDarkMode,
+      initialTitle: title,
+      initialSubtitle: subtitle,
+      nickname: this.accountDisplayName,
+      todayReadMs: this.shelfTodayReadMs,
+      readingBookName: readingBookName,
+      onSave: (nextTitle: string, nextSubtitle: string): void => this.saveGreeting('custom', nextTitle, nextSubtitle),
+      onSaveDefault: (): void => this.saveGreeting('time', '', ''),
+      onCancel: (): void => this.greetingEditorDialogSession.close(this.getUIContext())
+    })
+  }
+
+  saveGreeting(mode: string, title: string, subtitle: string): void {
+    this.greetingEditorDialogSession.close(this.getUIContext());
+    BookshelfDisplaySettingsStore.saveGreeting(getContext(this), mode, title, subtitle).catch((e: Error) => {
+      console.warn('保存问候语失败:', e);
+      HdsFeedback.showToast('问候语保存失败');
+    });
   }
 
   shelfCompanionHeroHeight(): number {
