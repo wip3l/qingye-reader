@@ -80,6 +80,8 @@ struct SearchBookDetailPage {
   private holdingHandCallback: (status: motion.HoldingHandStatus) => void =
     (status: motion.HoldingHandStatus): void => this.onHoldingHandChanged(status);
   @State isInShelf: boolean = false;
+  /** 库里这本书已有阅读进度（含未入架的临时阅读书），阅读按钮显示“继续…”。 */
+  @State hasReadProgress: boolean = false;
   @State isSaving: boolean = false;
   @State isLoadingBookInfo: boolean = false;
   @State bookInfoRenderVersion: number = 0;
@@ -347,8 +349,7 @@ struct SearchBookDetailPage {
 
       Row() {
         ImmersiveReadButton({
-          label: BookTypeSupport.isVideo(this.detailTypeProbe()) ? '开始观看' :
-            (BookTypeSupport.isAudio(this.detailTypeProbe()) ? '开始听书' : '开始阅读'),
+          label: this.readButtonLabel(),
           icon: BookTypeSupport.isVideo(this.detailTypeProbe()) || BookTypeSupport.isAudio(this.detailTypeProbe()) ?
             $r('sys.symbol.play_fill') : $r('sys.symbol.book'),
           darkMode: this.appDarkMode,
@@ -723,6 +724,14 @@ struct SearchBookDetailPage {
     return text.length > 120 || text.split('\n').length > SearchBookDetailPage.INTRO_COLLAPSED_LINES;
   }
 
+  private readButtonLabel(): string {
+    const verb = this.hasReadProgress ? '继续' : '开始';
+    const probe = this.detailTypeProbe();
+    if (BookTypeSupport.isVideo(probe)) return `${verb}观看`;
+    if (BookTypeSupport.isAudio(probe)) return `${verb}听书`;
+    return `${verb}阅读`;
+  }
+
   onBackPress(): boolean {
     if (this.shouldPromptAddToShelfOnBack()) {
       this.showAddToShelfOnBackPrompt();
@@ -769,7 +778,8 @@ struct SearchBookDetailPage {
       if (existing) {
         this.syncStateFromBook(existing);
       }
-      this.isInShelf = existing !== null && !SearchExplorePendingBook.isPendingAddToShelf(existing);
+      this.hasReadProgress = existing !== null && Book.hasStartedReading(existing);
+      this.isInShelf =existing !== null && !SearchExplorePendingBook.isPendingAddToShelf(existing);
     } catch (e) {
       console.error('检查书架失败:', e);
       this.isInShelf = false;
@@ -785,6 +795,7 @@ struct SearchBookDetailPage {
       book.origin = this.origin;
       await SearchBookShelfHelper.removeFromShelf(getContext(this), book);
       this.isInShelf = false;
+      this.hasReadProgress = false;
       this.promptAddToShelfAfterRead = false;
       this.pendingAddToShelfBookUrl = '';
       this.shelfCheckKey = '';
@@ -1603,6 +1614,8 @@ struct SearchBookDetailPage {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
       const book = await db.getBook(this.bookUrl);
+      // 阅读页存进度不一定发 shelfUpdateTime，checkShelf 可能被跳过；每次回到详情页都在这里重读一次。
+      if (book) this.hasReadProgress = Book.hasStartedReading(book);
       const stored = book ? book.totalChapterNum : 0;
       this.totalChapterNum = stored > 0 ? stored : await db.getBookChapterCount(this.bookUrl);
     } catch (e) {
