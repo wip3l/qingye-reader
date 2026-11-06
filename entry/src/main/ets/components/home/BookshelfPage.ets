@@ -89,6 +89,10 @@ const SHELF_GROUP_RESTORE_WAIT: number = 600;
 const SHELF_GROUP_MOTION_WATCHDOG: number = 1600;
 /** 请系统按高刷跑，不然会先掉到 60Hz。 */
 const SHELF_GROUP_FRAME_RATE: ExpectedFrameRateRange = { min: 60, max: 120, expected: 120 };
+/** 隐私书架进出的时长；进入前先等一帧让隐私书架层建好。 */
+const PRIVATE_SHELF_ENTER_DURATION: number = 420;
+const PRIVATE_SHELF_EXIT_DURATION: number = 340;
+const PRIVATE_SHELF_PREMOUNT_DELAY: number = 16;
 /** 飞行的书先盖在原书上画这么多帧（封面图要解码），再藏起原书起飞，不然起飞那一刻会空一下。 */
 const SHELF_GROUP_PREMOUNT_FRAMES: number = 2;
 
@@ -225,7 +229,7 @@ export struct BookshelfPage {
   static readonly SCOPE_TABS_HEIGHT: number = 44;
   static readonly SCOPE_TABS_PADDING: number = 6;
   static readonly SCOPE_TAB_INDICATOR_WIDTH: number = 18;
-  /** 分类栏按书籍类型切换，没有书的类型不显示；隐私书架不在栏里，从最后一项继续左滑进入。 */
+  /** 分类栏按书籍类型切换，没有书的类型不显示；隐私书架不在栏里，双击书架顶部进出。 */
   static readonly TYPE_TAB_IDS: string[] = ['all', 'text', 'image', 'audio', 'video'];
   /**
    * 弹窗里直接列出的筛选组：来源、状态、阅读进度、最近阅读与更新。
@@ -287,7 +291,6 @@ export struct BookshelfPage {
   private shelfCategoryAnimationWatchdog: number = -1;
   @StorageLink('privateShelfEnabled') @Watch('onPrivateShelfEnabledChanged') privateShelfEnabled: boolean = false;
   @StorageLink('privateShelfHasPassword') privateShelfHasPassword: boolean = false;
-  @StorageLink('privateShelfHeaderDoubleTap') privateShelfHeaderDoubleTap: boolean = false;
   @StorageLink('privateShelfBiometric') privateShelfBiometric: boolean = false;
   @State privateShelfBiometricUsable: boolean = false;
   private privateShelfBiometricPending: boolean = false;
@@ -320,6 +323,11 @@ export struct BookshelfPage {
   @State shelfScopeTransitionX: number = 0;
   @State shelfScopeTransitionScale: number = 1;
   @State shelfScopeTransitionOpacity: number = 1;
+  /** 隐私书架单独一层盖在分类页上；进出时挂上/卸下，0 为普通书架，1 为隐私书架完全展开。 */
+  @State privateShelfLayerMounted: boolean = false;
+  @State privateShelfLayerProgress: number = 0;
+  /** 进入动画走完后隐藏底下的分类页，退出动画开始前再显示。 */
+  @State privateShelfLayerCovering: boolean = false;
   @StorageLink('bookshelfGroupBackRequest') @Watch('onTileGroupBackRequested') tileGroupBackRequest: number = 0;
   @StorageLink('bookshelfGroupTransitionActive') tileGroupAnimating: boolean = false;
   /** 是从书架上的分组文件夹点进来的、有书可飞：返回时飞回文件夹，否则只淡出淡入。 */
@@ -508,6 +516,8 @@ export struct BookshelfPage {
   private shelfScopeSwapTimer: number = -1;
   private shelfScopeFinishTimer: number = -1;
   private shelfScopeSwitchAnimating: boolean = false;
+  private privateShelfLayerTimer: number = -1;
+  private privateShelfLayerGeneration: number = 0;
   private suppressShelfBookClickUntil: number = 0;
   private pendingShelfSortTimer: number = -1;
   private pendingShelfSortMode: string = '';
@@ -564,6 +574,7 @@ export struct BookshelfPage {
     this.cancelShelfBookOpening();
     this.cancelNetworkCoverSearch();
     this.clearShelfScopeTransition();
+    this.clearPrivateShelfLayerTimer();
     this.shelfCoverCacheRevision++;
     this.localBookIntroMigrationGeneration++;
     this.localBookIntroMigrationQueue = [];
@@ -1564,10 +1575,11 @@ export struct BookshelfPage {
         .justifyContent(FlexAlign.Center)
 
       } else {
+        // 隐私书架期间分类页停在原来的类型上，退出时直接露出来。
         CategorySwipePager({
           pageKeys: this.shelfPageOrder(),
-          selectedIndex: Math.max(0, this.shelfPageOrder().indexOf(this.shelfPageKey())),
-          swipeEnabled: !this.isBookMultiSelect && !this.isTileGroupPage(),
+          selectedIndex: Math.max(0, this.shelfPageOrder().indexOf(this.activeShelfTypeTab())),
+          swipeEnabled: !this.isBookMultiSelect && !this.isTileGroupPage() && this.shelfScope !== 'private',
           swipeExcludedGestureTag: 'recentReadCarouselPan',
           canSelect: (key: string): boolean => this.canSelectShelfPage(key),
           onSelect: (key: string): void => this.setShelfPage(key),
@@ -1578,8 +1590,25 @@ export struct BookshelfPage {
           pageContent: (key: string) => { this.shelfCategoryContent(key); }
         })
         .translate({ x: this.shelfScopeTransitionX })
-        .scale({ x: this.shelfScopeTransitionScale, y: this.shelfScopeTransitionScale })
-        .opacity(this.shelfScopeTransitionOpacity)
+        .scale({
+          x: this.shelfScopeTransitionScale * this.privateShelfOuterScale(),
+          y: this.shelfScopeTransitionScale * this.privateShelfOuterScale()
+        })
+        .opacity(this.shelfScopeTransitionOpacity * (1 - this.privateShelfLayerProgress))
+        .visibility(this.privateShelfLayerCovering ? Visibility.Hidden : Visibility.Visible)
+        .hitTestBehavior(this.shelfScope === 'private' ? HitTestMode.None : HitTestMode.Default)
+
+        if (this.privateShelfLayerMounted) {
+          Column() {
+            this.shelfCategoryContent('private')
+          }
+          .width('100%')
+          .height('100%')
+          .clip(true)
+          .scale({ x: this.privateShelfInnerScale(), y: this.privateShelfInnerScale() })
+          .opacity(this.privateShelfLayerProgress)
+          .hitTestBehavior(this.shelfScope === 'private' ? HitTestMode.Default : HitTestMode.None)
+        }
       }
     }
     .width('100%')
@@ -6853,16 +6882,7 @@ export struct BookshelfPage {
   }
 
   canSelectShelfPage(key: string): boolean {
-    if (this.isBookMultiSelect || this.isTileGroupPage() || !this.shelfPageOrder().includes(key)) return false;
-    if (key === 'private' && this.privateShelfHasPassword && !this.privateShelfRevealed && this.shelfScope !== 'private') {
-      if (this.privateShelfUnlockDialogSession.isOpen() || this.privateShelfBiometricPending ||
-        this.privateShelfBiometricQueued) return false;
-      if (!this.privateShelfBiometric || !BiometricAuth.isAvailable()) this.openPrivateShelfUnlockDialog();
-      else if (this.shelfContentTouching) this.privateShelfBiometricQueued = true;
-      else this.startPrivateShelfBiometricUnlock(false);
-      return false;
-    }
-    return true;
+    return !this.isBookMultiSelect && !this.isTileGroupPage() && this.shelfPageOrder().includes(key);
   }
 
   /** 当前所在页：分类栏里的类型，或隐私书架 'private'。 */
@@ -6870,13 +6890,9 @@ export struct BookshelfPage {
     return this.shelfScope === 'private' ? 'private' : this.activeShelfTypeTab();
   }
 
-  /** 左右滑动的页序：分类栏里显示的类型，隐私书架开启时接在最后。 */
+  /** 左右滑动的页序：分类栏里显示的类型。隐私书架不在页序里，只能双击顶部进出。 */
   shelfPageOrder(): string[] {
-    const pages: string[] = [...this.shelfTypeTabIds];
-    if (this.privateShelfEnabled) {
-      pages.push('private');
-    }
-    return pages;
+    return [...this.shelfTypeTabIds];
   }
 
   setShelfPage(page: string): void {
@@ -6885,8 +6901,13 @@ export struct BookshelfPage {
     const nextType = toPrivate ? this.shelfTypeTab : (this.shelfTypeTabIds.indexOf(page) >= 0 ? page : 'all');
     if (this.shelfScope === nextScope && this.shelfTypeTab === nextType) return;
     const typeChanged = this.shelfTypeTab !== nextType;
+    const scopeChanged = this.shelfScope !== nextScope;
     this.shelfScope = nextScope;
     this.shelfTypeTab = nextType;
+    if (scopeChanged) {
+      if (!toPrivate) this.privateShelfRevealed = false;
+      this.animatePrivateShelfLayer(toPrivate);
+    }
     // 只记类型；隐私书架不记，下次打开回到普通书架。
     if (typeChanged && this.shelfStateRestored) {
       BookshelfStateStore.saveTypeTab(getContext(this), nextType).catch((e: Error) => {
@@ -6917,23 +6938,90 @@ export struct BookshelfPage {
     return true;
   }
 
-  /** 设置里打开后，双击顶部标题栏进入隐私书架（有密码先验证），在隐私书架里双击回到原来的分类。 */
+  /** 隐私书架唯一的入口：双击顶部标题栏进入（有密码先验证），在隐私书架里双击回到原来的分类。 */
   toggleShelfPrivateByHeaderDoubleTap(): void {
-    if (!this.privateShelfEnabled || !this.privateShelfHeaderDoubleTap) return;
-    this.switchShelfScopeBySelection(this.shelfScope === 'private' ? this.activeShelfTypeTab() : 'private');
+    if (!this.privateShelfEnabled || this.shelfScopeSwapTimer >= 0 || this.shelfScopeFinishTimer >= 0) return;
+    if (this.shelfScope === 'private') {
+      this.setShelfPage(this.activeShelfTypeTab());
+      return;
+    }
+    if (this.isBookMultiSelect || this.isTileGroupPage()) return;
+    if (this.privateShelfHasPassword && !this.privateShelfRevealed) {
+      if (this.privateShelfUnlockDialogSession.isOpen() || this.privateShelfBiometricPending ||
+        this.privateShelfBiometricQueued) return;
+      if (!this.privateShelfBiometric || !BiometricAuth.isAvailable()) this.openPrivateShelfUnlockDialog();
+      else if (this.shelfContentTouching) this.privateShelfBiometricQueued = true;
+      else this.startPrivateShelfBiometricUnlock(false);
+      return;
+    }
+    this.setShelfPage('private');
   }
 
+  /** 分类栏点选类型；在隐私书架里点任一类型都回到普通书架的该类型。 */
   switchShelfScopeBySelection(page: string): void {
     if (this.shelfScopeSwapTimer >= 0 || this.shelfScopeFinishTimer >= 0) {
       return;
     }
-    const pages: string[] = this.shelfPageOrder();
-    const currentIndex = pages.indexOf(this.shelfPageKey());
-    const nextIndex = pages.indexOf(page);
-    if (currentIndex < 0 || nextIndex < 0 || currentIndex === nextIndex) {
+    if (this.shelfScope !== 'private' && page === this.activeShelfTypeTab()) {
       return;
     }
     if (this.canSelectShelfPage(page)) this.setShelfPage(page);
+  }
+
+  /**
+   * 隐私书架进出：进入时普通书架向外放大淡出，隐私书架从稍小处浮起；退出反过来。
+   * 进入先挂上隐私书架层按起点画一帧再动，免得建列表那一帧吃掉动画开头。
+   */
+  animatePrivateShelfLayer(enter: boolean): void {
+    this.clearPrivateShelfLayerTimer();
+    const generation = ++this.privateShelfLayerGeneration;
+    if (enter) {
+      this.privateShelfLayerMounted = true;
+      this.privateShelfLayerTimer = setTimeout(() => {
+        this.privateShelfLayerTimer = -1;
+        if (generation !== this.privateShelfLayerGeneration) return;
+        this.getUIContext().animateTo({
+          duration: PRIVATE_SHELF_ENTER_DURATION, curve: curves.cubicBezierCurve(0.2, 0, 0, 1),
+          expectedFrameRateRange: SHELF_GROUP_FRAME_RATE
+        }, () => {
+          this.privateShelfLayerProgress = 1;
+        });
+        this.privateShelfLayerTimer = setTimeout(() => {
+          this.privateShelfLayerTimer = -1;
+          if (generation === this.privateShelfLayerGeneration) this.privateShelfLayerCovering = true;
+        }, PRIVATE_SHELF_ENTER_DURATION);
+      }, PRIVATE_SHELF_PREMOUNT_DELAY);
+      return;
+    }
+    this.privateShelfLayerCovering = false;
+    this.getUIContext().animateTo({
+      duration: PRIVATE_SHELF_EXIT_DURATION, curve: curves.cubicBezierCurve(0.2, 0, 0, 1),
+      expectedFrameRateRange: SHELF_GROUP_FRAME_RATE
+    }, () => {
+      this.privateShelfLayerProgress = 0;
+    });
+    // 不靠 onFinish 卸下：切到后台时回调可能丢，隐私书架层会一直挂着。
+    this.privateShelfLayerTimer = setTimeout(() => {
+      this.privateShelfLayerTimer = -1;
+      if (generation === this.privateShelfLayerGeneration) this.privateShelfLayerMounted = false;
+    }, PRIVATE_SHELF_EXIT_DURATION);
+  }
+
+  clearPrivateShelfLayerTimer(): void {
+    if (this.privateShelfLayerTimer >= 0) {
+      clearTimeout(this.privateShelfLayerTimer);
+      this.privateShelfLayerTimer = -1;
+    }
+  }
+
+  /** 普通书架：隐私书架展开时向外放大。 */
+  privateShelfOuterScale(): number {
+    return 1 + 0.06 * this.privateShelfLayerProgress;
+  }
+
+  /** 隐私书架：从 0.94 浮到原大。 */
+  privateShelfInnerScale(): number {
+    return 0.94 + 0.06 * this.privateShelfLayerProgress;
   }
 
   @Builder

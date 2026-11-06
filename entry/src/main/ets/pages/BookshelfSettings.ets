@@ -74,7 +74,6 @@ struct BookshelfSettingsPage {
   @State settingsRenderTick: number = 0;
   @StorageLink('privateShelfEnabled') @Watch('onPrivateShelfEnabledChanged') privateShelfEnabled: boolean = false;
   @StorageLink('privateShelfHasPassword') privateShelfHasPassword: boolean = false;
-  @StorageLink('privateShelfHeaderDoubleTap') privateShelfHeaderDoubleTap: boolean = false;
   @StorageLink('privateShelfBiometric') @Watch('onPrivateShelfBiometricChanged') privateShelfBiometric: boolean = false;
   // 打开需要先通过一次系统验证，验证期间显示值与真实状态可以暂时不一致。
   @State privateShelfBiometricSwitchOn: boolean = false;
@@ -349,8 +348,6 @@ struct BookshelfSettingsPage {
       this.privateShelfSwitchItem()
       if (this.privateShelfEnabled) {
         this.itemDivider()
-        this.privateShelfDoubleTapItem()
-        this.itemDivider()
         this.actionItem('隐私书架密码',
           this.privateShelfHasPassword ? '已设置，进入时需输入' : '未设置',
           this.primaryTextColor(), () => {
@@ -487,16 +484,6 @@ struct BookshelfSettingsPage {
       HdsFeedback.showToast('保存失败');
     }
     this.privateShelfSwitchOn = this.privateShelfEnabled;
-  }
-
-  async applyPrivateShelfHeaderDoubleTap(enabled: boolean): Promise<void> {
-    if (enabled === this.privateShelfHeaderDoubleTap) return;
-    try {
-      await PrivateShelfStore.setHeaderDoubleTap(getContext(this), enabled);
-    } catch (e) {
-      console.warn('保存隐私书架双击设置失败:', e);
-      HdsFeedback.showToast('保存失败');
-    }
   }
 
   openPrivatePasswordDialog(mode: string): void {
@@ -1110,24 +1097,11 @@ struct BookshelfSettingsPage {
   privateShelfSwitchItem() {
     SettingSwitchRow({
       title: '隐私书架',
-      description: '在书架最后一个分类继续左滑进入，顶部不显示入口；关闭后隐私书籍仍隐藏',
+      description: '双击书架顶部空白处进入，在隐私书架里双击返回；顶部不显示入口，关闭后隐私书籍仍隐藏',
       isOn: this.privateShelfSwitchOn,
       showDivider: false,
       onChange: (checked: boolean) => {
         this.onPrivateShelfSwitchChanged(checked);
-      }
-    })
-  }
-
-  @Builder
-  privateShelfDoubleTapItem() {
-    SettingSwitchRow({
-      title: '双击顶部进入',
-      description: '双击书架顶部空白处进入隐私书架，在隐私书架里双击返回',
-      isOn: this.privateShelfHeaderDoubleTap,
-      showDivider: false,
-      onChange: (checked: boolean) => {
-        this.applyPrivateShelfHeaderDoubleTap(checked);
       }
     })
   }

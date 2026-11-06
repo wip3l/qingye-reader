@@ -10,8 +10,6 @@ import { HuksSecretStore } from './HuksSecretStore';
 export class PrivateShelfStore {
   static readonly KEY_ENABLED: string = 'privateShelfEnabled';
   static readonly KEY_HAS_PASSWORD: string = 'privateShelfHasPassword';
-  /** 双击书架顶部标题栏进出隐私书架，默认关闭。 */
-  static readonly KEY_HEADER_DOUBLE_TAP: string = 'privateShelfHeaderDoubleTap';
   /** 进入时先用系统指纹/人脸验证，失败或取消再退回密码；只在设了密码时有意义。 */
   static readonly KEY_BIOMETRIC: string = 'privateShelfBiometric';
   private static readonly STORE_NAME: string = 'private_shelf_settings';
@@ -26,10 +24,8 @@ export class PrivateShelfStore {
     const store = await preferences.getPreferences(context, PrivateShelfStore.STORE_NAME);
     const enabled = await store.get(PrivateShelfStore.KEY_ENABLED, false);
     const hasPassword = await store.get(PrivateShelfStore.KEY_HAS_PASSWORD, false);
-    const headerDoubleTap = await store.get(PrivateShelfStore.KEY_HEADER_DOUBLE_TAP, false);
     AppStorage.setOrCreate(PrivateShelfStore.KEY_ENABLED, enabled === true);
     AppStorage.setOrCreate(PrivateShelfStore.KEY_HAS_PASSWORD, hasPassword === true);
-    AppStorage.setOrCreate(PrivateShelfStore.KEY_HEADER_DOUBLE_TAP, headerDoubleTap === true);
     const biometric = await store.get(PrivateShelfStore.KEY_BIOMETRIC, false);
     AppStorage.setOrCreate(PrivateShelfStore.KEY_BIOMETRIC, biometric === true && hasPassword === true);
     PrivateShelfStore.loaded = true;
@@ -40,13 +36,6 @@ export class PrivateShelfStore {
     await store.put(PrivateShelfStore.KEY_ENABLED, enabled);
     await store.flush();
     AppStorage.setOrCreate(PrivateShelfStore.KEY_ENABLED, enabled);
-  }
-
-  static async setHeaderDoubleTap(context: Context, enabled: boolean): Promise<void> {
-    const store = await preferences.getPreferences(context, PrivateShelfStore.STORE_NAME);
-    await store.put(PrivateShelfStore.KEY_HEADER_DOUBLE_TAP, enabled);
-    await store.flush();
-    AppStorage.setOrCreate(PrivateShelfStore.KEY_HEADER_DOUBLE_TAP, enabled);
   }
 
   static async setBiometric(context: Context, enabled: boolean): Promise<void> {

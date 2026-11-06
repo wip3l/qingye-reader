@@ -9,7 +9,8 @@ const compile = code => stripTypeScriptTypes(code.replace(/^import .*;\r?\n/gm, 
 const names = ['setShelfPage', 'applyShelfScope', 'refreshShelfTypeTabs', 'booksForShelfScope', 'isInShelfView',
   'matchesShelfGroup', 'shelfBookType', 'activeShelfTypeTab', 'shelfPageKey', 'shelfPageOrder', 'isTileLayout', 'isCompanionLayout',
   'switchShelfScopeBySelection', 'canSelectShelfPage', 'shelfCategoryPage', 'markShelfScopePanGesture', 'clearShelfScopeTransition', 'shelfBookViewPrefix', 'shelfBookRenderKey',
-  'shelfScopeTabIndex', 'shelfScopeTabHighlighted', 'onPrivateShelfEnabledChanged', 'showsShelfScopeTabs'];
+  'shelfScopeTabIndex', 'shelfScopeTabHighlighted', 'onPrivateShelfEnabledChanged', 'showsShelfScopeTabs',
+  'toggleShelfPrivateByHeaderDoubleTap'];
 const methods = names.map(name => {
   const start = source.indexOf(`  ${name}(`);
   assert.ok(start >= 0, name);
@@ -17,7 +18,7 @@ const methods = names.map(name => {
 }).join('\n');
 const context = vm.createContext({
   Date, console, ListScroller: class {}, Scroller: class {}, Curve: { EaseOut: 'ease-out' }, curves: { springMotion: () => 'spring' },
-  SHELF_COVER_INITIAL_PREFETCH_COUNT: 16,
+  SHELF_COVER_INITIAL_PREFETCH_COUNT: 16, BiometricAuth: { isAvailable: () => false },
   BookTypeSupport: { isVideo: b => b.type === 'video', isAudio: b => b.type === 'audio', isImage: b => b.type === 'image' },
   setTimeout() { assert.fail('category selection must not wait on a JS timer'); }, clearTimeout() {}
 });
@@ -57,7 +58,9 @@ function makeShelf(layout, folders = false) {
     ensureShelfBookCoverCache: book => warmed.push(book.bookUrl),
     refreshShelfCoverCache() { assert.fail('category changes must preserve in-flight cover tasks'); },
     reloadShelfDataSources() { assert.fail('category changes must not rebuild inactive layouts'); },
-    isTileGroupPage: () => false, isBookMultiSelect: false, unlockRequests: 0,
+    isTileGroupPage: () => false, isBookMultiSelect: false, unlockRequests: 0, privateLayerMoves: [],
+    privateShelfBiometric: false, privateShelfBiometricPending: false, privateShelfBiometricQueued: false,
+    animatePrivateShelfLayer(enter) { this.privateLayerMoves.push(enter); },
     openPrivateShelfUnlockDialog() { this.unlockRequests++; },
     getUIContext: () => ({ animateTo: (options, update) => {
       update();
@@ -89,14 +92,21 @@ for (const [layout, folders, active] of [['compact', false, 'list'], ['loose', f
   assert.equal(shelf.shelfCategoryPage('text'), novelPage);
   assert.equal(novelPage.listOffset, 320);
   assert.equal(reloads, 0, 'warm page selection does not rebuild its data source');
+  assert.ok(!shelf.shelfPageOrder().includes('private'), 'the private shelf is never a swipe page');
   shelf.switchShelfScopeBySelection('private');
+  assert.equal(shelf.shelfPageKey(), 'text', 'selection cannot reach the private shelf');
+  shelf.toggleShelfPrivateByHeaderDoubleTap();
   assert.equal(shelf.unlockRequests, 1);
-  assert.equal(shelf.shelfCategoryPage('private').books.length, 0, 'locked neighbor never renders private books');
+  assert.equal(shelf.shelfCategoryPage('private').books.length, 0, 'locked private shelf never renders its books');
   assert.equal(shelf.shelfPageKey(), 'text');
   shelf.privateShelfHasPassword = false;
-  shelf.switchShelfScopeBySelection('private');
+  shelf.toggleShelfPrivateByHeaderDoubleTap();
   assert.deepEqual(Array.from(shelf.books, b => b.bookUrl), ['secret']);
   assert.equal(shelf.shelfScopeTabHighlighted(), false);
+  shelf.toggleShelfPrivateByHeaderDoubleTap();
+  assert.equal(shelf.shelfPageKey(), 'text', 'double tap inside returns to the previous category');
+  assert.deepEqual(Array.from(shelf.privateLayerMoves), [true, false], 'entering and leaving animate the private layer');
+  shelf.toggleShelfPrivateByHeaderDoubleTap();
   shelf.privateShelfEnabled = false;
   shelf.onPrivateShelfEnabledChanged();
   assert.ok(shelf.books.every(b => !b.isPrivate), 'disabling privacy removes private content immediately');
@@ -123,7 +133,7 @@ for (const [layout, folders, active] of [['compact', false, 'list'], ['loose', f
   shelf.bookshelfTypeCategoryEnabled = false;
   shelf.applyShelfScope(false);
   assert.deepEqual(Array.from(shelf.shelfTypeTabIds), ['all']);
-  assert.deepEqual(Array.from(shelf.shelfPageOrder()), ['all', 'private'], 'the private shelf stays reachable');
+  assert.deepEqual(Array.from(shelf.shelfPageOrder()), ['all'], 'the private shelf is entered by double tap only');
   assert.equal(shelf.shelfPageKey(), 'all');
   assert.equal(shelf.showsShelfScopeTabs(), false, 'no category bar without categories');
   assert.deepEqual(Array.from(shelf.books, b => b.bookUrl), ['novel', 'comic', 'audio']);
