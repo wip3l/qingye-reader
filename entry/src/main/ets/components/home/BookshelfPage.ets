@@ -1069,10 +1069,11 @@ export struct BookshelfPage {
   shelfBookRenderKey(book: Book, prefix: string): string {
     // LazyForEach keeps an item node when its key is unchanged. Reading progress is persisted into a fresh Book
     // snapshot while the URL/pin/cover identity remains stable, so include the progress checkpoint in the key or
-    // the retained card keeps rendering the old percentage until the whole bookshelf is recreated.
+    // the retained card keeps rendering the old percentage until the whole bookshelf is recreated. Name and author
+    // are part of the key for the same reason: editing a local book's info would otherwise leave the old card.
     const progressChapterIndex = book.getVariable('readProgressChapterIndex');
     const progressPageCount = book.getVariable('readProgressPageCount');
-    return `${prefix}_${book.bookUrl}_pin_${book.isPinned ? '1' : '0'}_` +
+    return `${prefix}_${book.bookUrl}_pin_${book.isPinned ? '1' : '0'}_name_${book.name}_${book.author}_` +
       `read_${book.durChapterTime}_${book.durChapterIndex}_${book.durChapterPos}_` +
       `${book.totalChapterNum}_${book.getVariable('readStarted')}_` +
       `badges_${book.getVariable('shelfHasUpdate')}_${book.origin}_${book.originName}_` +
@@ -3982,7 +3983,7 @@ export struct BookshelfPage {
     const latestBookUrls = latestBooks.map((book: Book): string => book.bookUrl).join('|');
     const cacheKey = `${mode}_${viewKey}_${this.activeShelfGroupId}_${this.isBookMultiSelect ? '1' : '0'}_` +
       `${this.shouldShowLatestExpandedTileBook() ? latestBookUrls : ''}_` +
-      `${books.map((book: Book) => `${book.bookUrl}:${book.name}:${this.getBookReadTime(book)}:${this.getBookAddTime(book)}:` +
+      `${books.map((book: Book) => `${book.bookUrl}:${book.name}:${book.author}:${this.getBookReadTime(book)}:${this.getBookAddTime(book)}:` +
         `${BookshelfSortHelper.getBookUpdateTime(book)}:${book.group}:${book.isPinned ? '1' : '0'}`).join('|')}_` +
       `${this.shelfGroups.map((group: BookGroup) => `${group.groupId}:${group.groupName}`).join('|')}`;
     if (cacheKey === this.shelfTileEntriesCacheKey) {
