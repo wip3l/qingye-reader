@@ -8,7 +8,7 @@
 - [JS 函数库 `js`](../harmony-book-source-engine/docs/book-source-development.md#js-函数库-js)：表达式调用、内置函数、参数与返回值、限制
 - [后台脚本阶段 `script`](../harmony-book-source-engine/docs/book-source-development.md#脚本阶段-script)：请求、状态、登录、网页交互、完整示例与排错
 - [网页验证与会话诊断](../harmony-book-source-engine/docs/book-source-development.md#网页验证与会话诊断)：阶段差异、UA 传递、分区 Cookie、验证后继续、错误码及验收边界
-- [封面解密 coverDecode](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md#加密封面-coverdecode)：含封面请求头 `coverHeaders`
+- [封面解密 coverDecode](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md#加密封面-coverdecode)：含封面请求头 `coverHeaders`，以及用 `js` 函数解密的 `coverDecode.script`
 - [自定义图片字节脚本](../harmony-book-source-engine/docs/book-source-development.md#自定义图片字节脚本)：`content.imageDecode.script`，以及标准算法的 `ivPrefixBytes`、`keyEncoding`
 - [视频网页回退](../harmony-book-source-engine/docs/book-source-development.md#视频网页回退)：`content.videoPage`、声明式与脚本示例、错误处理及播放限制
 - [宿主图片加载接入](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/cover-decoding.md)
@@ -87,7 +87,8 @@ AI 处理位于图片下载、解密和重排之后。含透明或半透明像�
 开发时注意：
 
 - `videoPage` 是字段规则；固定地址写为 `"= 'https://example.com/watch/1'"`，接口字段可以写 `"$.webUrl"`。不能直接把不含模板的固定 URL 当选择器规则填写。
-- 媒体请求头不会注入回退网页，当前原生 `Video` 组件仍不发送 `mediaHeaders`；网页使用对应域的 ArkWeb Cookie。网页回退不保证解决编码、鉴权或站点限制。
+- 书源给了 Referer、Cookie 等媒体请求头时，原生播放改用 AVPlayer 并带上这些请求头；兼容书源的“地址,{headers}”写法会拆开解析，不再整串当作地址。请求头不会注入回退网页，网页使用对应域的 ArkWeb Cookie。网页回退不保证解决编码、鉴权或站点限制。
+- 搜索、发现的 `fields` 不写 `type` 时沿用书源顶层的 `type`，视频书源的书不会被当成文本书打开；已在书架上的这类书会在下次取详情时纠正。
 - 通用正文调试不启用视频专用回退，空直链仍可能报错；仅网页的视频源需要进入实际播放页验证。
 
 ## 原生 JS 开发路线
