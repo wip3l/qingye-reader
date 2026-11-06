@@ -195,6 +195,9 @@ export class ThemePackageParts {
   startupLight: ThemePackageStartup | null = null;
   startupDark: ThemePackageStartup | null = null;
   bubble: ThemePackageBubble | null = null;
+  // 首页四个页签顶部的背景图；只写了一种模式时另一种模式不显示背景。
+  homeBackdropLight: string = '';
+  homeBackdropDark: string = '';
   logo: string = '';
   preview: string = '';
   radius: Record<string, number> | null = null;
@@ -251,6 +254,7 @@ export const THEME_SOURCE_FIELDS: ThemeSourceField[] = [
   new ThemeSourceField('bubbleThemeId', '强调气泡'),
   new ThemeSourceField('navigationThemeId', '导航图标'),
   new ThemeSourceField('bookThemeId', '书籍素材'),
+  new ThemeSourceField('homeBackdropThemeId', '首页背景'),
   new ThemeSourceField('typographyThemeId', '字体'),
   new ThemeSourceField('layoutThemeId', '阅读排版'),
   new ThemeSourceField('radiusThemeId', '圆角形状')
@@ -954,6 +958,15 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
       throw new Error('主题包的 parts.bubble 需要 cap');
     }
   }
+  const homeBackdrop = objectField(record, 'homeBackdrop');
+  if (homeBackdrop) {
+    const image: string[] = [ThemePackageAssetKinds.IMAGE];
+    parts.homeBackdropLight = partAssetRef(homeBackdrop, 'light', manifest, image, 'parts.homeBackdrop');
+    parts.homeBackdropDark = partAssetRef(homeBackdrop, 'dark', manifest, image, 'parts.homeBackdrop');
+    if (!parts.homeBackdropLight && !parts.homeBackdropDark) {
+      throw new Error('主题包的 parts.homeBackdrop 至少要有 light 或 dark');
+    }
+  }
   parts.logo = partAssetRef(record, 'logo', manifest, [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE],
     'parts');
   parts.preview = partAssetRef(record, 'preview', manifest, [ThemePackageAssetKinds.IMAGE], 'parts');
@@ -1008,6 +1021,12 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     record['startup'] = startup;
   }
   if (parts.bubble) record['bubble'] = JSON.parse(JSON.stringify(parts.bubble)) as Object;
+  if (parts.homeBackdropLight || parts.homeBackdropDark) {
+    const homeBackdrop: Record<string, Object> = {};
+    if (parts.homeBackdropLight) homeBackdrop['light'] = parts.homeBackdropLight;
+    if (parts.homeBackdropDark) homeBackdrop['dark'] = parts.homeBackdropDark;
+    record['homeBackdrop'] = homeBackdrop;
+  }
   if (parts.logo) record['logo'] = parts.logo;
   if (parts.preview) record['preview'] = parts.preview;
   if (parts.radius) record['radius'] = parts.radius;
@@ -1053,6 +1072,9 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
     add(parts.bubble.frame);
     add(parts.bubble.cap);
   }
+  // 本机旧版记录里没有这两个字段。
+  add(parts.homeBackdropLight || '');
+  add(parts.homeBackdropDark || '');
   add(parts.logo);
   add(parts.preview);
   add(parts.appFont);
@@ -1090,6 +1112,8 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
     copy.bubble.frame = swap(copy.bubble.frame);
     copy.bubble.cap = swap(copy.bubble.cap);
   }
+  copy.homeBackdropLight = swap(copy.homeBackdropLight || '');
+  copy.homeBackdropDark = swap(copy.homeBackdropDark || '');
   copy.logo = swap(copy.logo);
   copy.preview = swap(copy.preview);
   copy.appFont = swap(copy.appFont);
@@ -1123,6 +1147,12 @@ export function describeParts(parts: ThemePackageParts): string[] {
   }
   if (parts.startupLight || parts.startupDark) items.push('启动封面');
   if (parts.bubble) items.push('强调气泡端饰');
+  if (parts.homeBackdropLight || parts.homeBackdropDark) {
+    const modes: string[] = [];
+    if (parts.homeBackdropLight) modes.push('浅色');
+    if (parts.homeBackdropDark) modes.push('深色');
+    items.push(`首页背景（${modes.join('、')}）`);
+  }
   if (parts.logo) items.push('主题标识');
   if (parts.radius) items.push('圆角');
   if (parts.appFont || parts.appFontFamily) items.push('界面字体');

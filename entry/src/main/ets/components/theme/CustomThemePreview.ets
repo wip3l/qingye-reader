@@ -1,6 +1,7 @@
 import { ThemePack, ThemeVariant } from '../../theme/ThemeModels';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
+import { HexColor } from '../../utils/HexColor';
 import { BuiltinThemeRegistry } from '../../theme/BuiltinThemeRegistry';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
@@ -30,6 +31,7 @@ export struct CustomThemePreview {
   @Prop startupTitleSize: number = 0;
   @Prop startupSubtitleSize: number = 0;
   @Prop ttsThemeId: string = '';
+  @Prop homeBackdropThemeId: string = '';
   @Prop readerSettings: ReaderSettings = new ReaderSettings();
   @Prop useReaderProfile: boolean = false;
 
@@ -55,6 +57,9 @@ export struct CustomThemePreview {
       } else if (this.scene === 'tts') {
         this.ttsPreview()
       } else {
+        if (this.homeBackdrop()) {
+          this.homeBackdropLayer()
+        }
         this.bookshelfPreview()
       }
     }
@@ -68,6 +73,35 @@ export struct CustomThemePreview {
 
   variant(): ThemeVariant {
     return this.previewDark ? this.themePack.dark : this.themePack.light;
+  }
+
+  homeBackdrop(): ResourceStr | null {
+    return this.homeBackdropThemeId ?
+      ThemeAssetRegistry.homeBackdrop(this.homeBackdropThemeId, this.previewDark) : null;
+  }
+
+  /** 首页背景：贴顶铺满宽度，和首页一样向下淡成页面底色。 */
+  @Builder
+  homeBackdropLayer() {
+    Stack({ alignContent: Alignment.Top }) {
+      Image(this.homeBackdrop() as ResourceStr)
+        .width('100%')
+        .aspectRatio(ThemeAssetRegistry.HOME_BACKDROP_ASPECT)
+        .objectFit(ImageFit.Cover)
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient({
+          direction: GradientDirection.Bottom,
+          colors: [[HexColor.withOpacity(this.variant().colors.pageColor, this.previewDark ? 0.4 : 0.2), 0],
+            [this.variant().colors.pageColor, 1]]
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .position({ x: 0, y: 0 })
+    .clip(true)
+    .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder

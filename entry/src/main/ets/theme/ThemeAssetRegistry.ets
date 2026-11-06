@@ -443,8 +443,16 @@ export class ThemeAssetRegistry {
     }
   }
 
-  /** 首页四个页签顶部的主题背景图（宽高比 HOME_BACKDROP_ASPECT，画面集中在上部、向下淡成纯底色）；没有的主题返回 null。 */
-  static homeBackdrop(themeId: string, darkMode: boolean = false): Resource | null {
+  /**
+   * 首页四个页签顶部的主题背景图（宽高比 HOME_BACKDROP_ASPECT，画面集中在上部、向下淡成纯底色）；没有的主题返回 null。
+   * 主题包只取对应模式那一张，深浅色不互相借用：浅色图放进深色模式会是一大块亮斑。
+   */
+  static homeBackdrop(themeId: string, darkMode: boolean = false): ResourceStr | null {
+    if (ThemePackRegistry.isPackId(themeId)) {
+      const pack = ThemePackRegistry.get(themeId);
+      const image = pack ? pack.homeBackdrop(darkMode) : '';
+      return image || null;
+    }
     switch ((themeId || '').trim().toLowerCase()) {
       case ThemeIds.OBSIDIAN_ARCHIVE:
         return darkMode ? $r('app.media.home_bg_obsidian_archive_dark') : $r('app.media.home_bg_obsidian_archive_light');

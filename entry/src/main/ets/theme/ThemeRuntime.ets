@@ -144,10 +144,17 @@ export class ThemeRuntime {
       ThemeRuntime.KEY_LIGHT_PAGE_COLOR, fallback);
   }
 
-  /** 首页四个页签顶部的主题背景图；当前主题没有、自定义主题或用户在“其他设置”里关掉时为 null。 */
-  static homeBackdrop(darkMode: boolean): Resource | null {
+  /** 首页四个页签顶部的主题背景图；当前主题（自定义方案按“首页背景”来源）没有或用户在“其他设置”里关掉时为 null。 */
+  static homeBackdrop(darkMode: boolean): ResourceStr | null {
     if (AppStorage.get<boolean>(ThemeRuntime.KEY_HOME_BACKDROP_ENABLED) === false) return null;
-    return ThemeAssetRegistry.homeBackdrop(ThemeRuntime.currentThemeId(), darkMode);
+    return ThemeAssetRegistry.homeBackdrop(ThemeRuntime.homeBackdropThemeId(darkMode), darkMode);
+  }
+
+  static homeBackdropThemeId(darkMode: boolean): string {
+    if (ThemeRuntime.currentThemeId() !== ThemeIds.CUSTOM) return ThemeRuntime.currentThemeId();
+    const fallback = AppStorage.get<string>(ThemeRuntime.KEY_CUSTOM_BASE_THEME_ID) ||
+      BuiltinThemeRegistry.DEFAULT_THEME_ID;
+    return ThemeRuntime.customSources(darkMode, fallback).homeBackdropThemeId;
   }
 
   /** 首页列表、滚动区等铺满整页的层：有主题背景图时透明，让页面根部铺的背景透上来。 */
@@ -662,6 +669,8 @@ export class ThemeRuntime {
     normalized.bubbleThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source.bubbleThemeId || fallback);
     normalized.navigationThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source.navigationThemeId || fallback);
     normalized.bookThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source.bookThemeId || fallback);
+    normalized.homeBackdropThemeId = BuiltinThemeRegistry.normalizeBuiltinId(
+      source.homeBackdropThemeId || source.startupThemeId || fallback);
     normalized.typographyThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source.typographyThemeId || fallback);
     normalized.layoutThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source.layoutThemeId || fallback);
     normalized.radiusThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source.radiusThemeId || fallback);

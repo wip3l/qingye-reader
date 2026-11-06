@@ -186,6 +186,7 @@ BuiltinThemeRegistry.register(theme);
 | 分组文件夹插画 | `theme_folder_art_<id>.jpg` | 450 × 660 | `themeShelfFolder()` |
 | 主题标识 | `theme_logo_<id>.svg` | `viewBox="0 0 64 64"` | `themeLogo()` |
 | 启动封面 | `theme_startup_<id>` | 841 × 1870 JPG 竖屏插画；底部约 1/5 叠加文案，不放主体 | `startupBackground()` |
+| 首页背景（可选） | `home_bg_<id>_light.jpg` / `_dark.jpg` | 1080 × 1350 JPG；画面集中在上部，下半部分接近纯底色 | `homeBackdrop()` |
 | 导航图标包 | `ic_theme_<pack>_<tab>.svg` | `viewBox="0 0 24 24"`，单色纯黑填充 | `navigationIcon()` |
 | 正则气泡边框 / 端饰 | `regex_frame_<style>.svg` / `regex_cap_<style>.svg` | — | `regexBubbleFrame()` / `regexBubbleCap()` |
 
@@ -219,6 +220,17 @@ BuiltinThemeRegistry.register(theme);
 - 阅读页的朗读面板沿用阅读配色的文字色，只有阅读配色选中“应用主题”时才使用主题面板背景，其余配色保持玻璃面板。
 - 自定义主题通过部件来源 `ThemeComponentSourceIds.ttsPanelThemeId` 选择面板背景来自哪个主题（`ThemeRuntime.ttsPanelThemeId()`）。该字段是后加的，旧方案里为空，读取时回退到 `readerThemeId`。
 
+### 首页背景
+
+书架、发现、搜索和我的四个页签顶部可以铺一张主题背景图，由 `components/home/HomeThemeBackdrop.ets` 绘制：图片贴顶、按宽度铺满（宽高比 `ThemeAssetRegistry.HOME_BACKDROP_ASPECT`，即 4:5），不随列表滚动，叠一层按页面底色计算的渐变向下淡出。书架整张显示，发现、搜索只衬在标题区，我的衬在资料卡后面，强度依次减弱。
+
+1. 添加浅色、深色两张 `home_bg_<id>_*.jpg`。画面放在上部约四成，下面要能自然过渡到 `pageColor`；不要放文字。深色图的亮部要克制，渐变在深色下压得更重。
+2. 在 `ThemeAssetRegistry.homeBackdrop()` 中增加分支。没有分支的主题保持纯底色。
+
+页面里铺满整页的层（列表、网格、下拉刷新、滚动区）用 `ThemeRuntime.homeSurfaceColor()` 作底色：有背景图时透明，否则是 `pageColor`。顶栏毛玻璃 `HeaderBackdrop` 的 `reveal` 按列表实际滚动距离（`CollapsingHeader.backdropReveal()`）显现，列表在顶部时背景一直透到状态栏。用户可以在“其他设置 › 外观 › 主题背景图”关掉（`HomeBackdropSettingsStore`）。
+
+自定义主题通过部件来源 `ThemeComponentSourceIds.homeBackdropThemeId` 选择背景来自哪个主题（`ThemeRuntime.homeBackdropThemeId()`），选没有背景图的主题即不显示。该字段是后加的，旧方案里为空，读取时回退到 `startupThemeId`。主题包的 `parts.homeBackdrop` 只取对应模式的那一张，浅深色不互相借用。
+
 ### 主题封面与书架边框
 
 1. 添加封面、边框和文件夹插画资源。封面底图是完整插画，不叠加书名或作者。
@@ -248,7 +260,7 @@ BuiltinThemeRegistry.register(theme);
 
 ## 方案自有素材包
 
-编辑器里上传的封面、书架边框、文件夹插画、导航图标、朗读面板插画、气泡端饰与边框、阅读角饰或整图背景由 `utils/SchemeAssetService.ets` 收进方案自己的素材包：`theme_packs/custom-<随机>/`，与导入的主题包同一套存储（`ThemePackStore.importAsset()` 负责嗅探类型、限大小、SVG 自包含检查并按内容哈希命名），同样注册为 `pack:<packageId>`，方案的 `packageId` 指向它。上传后编辑器把对应部件来源（封面与图标两种模式一起，面板插画按当前模式）指向这个包；包内气泡通过方案的强调覆盖 `bubbleStyle` 生效；阅读背景素材写进 `parts.light/dark.reader`，方案只把 `customLight/DarkReaderBackgroundAssetId` 指向 `pack:<id>:light/dark`，阅读来源主题与文字色不变。第一次上传时该部件原来所选的主题记为包的 `baseTheme`，没上传的那部分素材继续取自它；移除后来源退回 `baseTheme`，所有部件都移掉时整个包卸载、方案解绑。方案本身由主题包安装而来时直接写进那个包。导出时按格式 2 随包打出去（`packageId` 就是这个包的 ID，不算混搭），删除方案时由 `cleanupImportedFiles()` 一并清理。
+编辑器里上传的封面、书架边框、文件夹插画、导航图标、朗读面板插画、首页背景、气泡端饰与边框、阅读角饰或整图背景由 `utils/SchemeAssetService.ets` 收进方案自己的素材包：`theme_packs/custom-<随机>/`，与导入的主题包同一套存储（`ThemePackStore.importAsset()` 负责嗅探类型、限大小、SVG 自包含检查并按内容哈希命名），同样注册为 `pack:<packageId>`，方案的 `packageId` 指向它。上传后编辑器把对应部件来源（封面与图标两种模式一起，面板插画和首页背景按当前模式）指向这个包；包内气泡通过方案的强调覆盖 `bubbleStyle` 生效；阅读背景素材写进 `parts.light/dark.reader`，方案只把 `customLight/DarkReaderBackgroundAssetId` 指向 `pack:<id>:light/dark`，阅读来源主题与文字色不变。第一次上传时该部件原来所选的主题记为包的 `baseTheme`，没上传的那部分素材继续取自它；移除后来源退回 `baseTheme`，所有部件都移掉时整个包卸载、方案解绑。方案本身由主题包安装而来时直接写进那个包。导出时按格式 2 随包打出去（`packageId` 就是这个包的 ID，不算混搭），删除方案时由 `cleanupImportedFiles()` 一并清理。
 
 ## 导入的主题包
 

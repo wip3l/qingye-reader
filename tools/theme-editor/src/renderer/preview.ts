@@ -81,6 +81,12 @@ function navIcon(key: string): string {
 
 function screenShelf(mode: Mode, e: Effective): HTMLElement {
   const s = h('div', { class: 'scr shelf' });
+  // 首页背景贴顶、铺满宽度，和应用一样向下淡成页面底色；状态栏和标题都压在它上面。
+  const backdrop = assetUrl((project().parts.homeBackdrop || {})[mode]);
+  if (backdrop) {
+    s.append(h('div', { class: 'hbg', 'data-sec': 'homeBackdrop' },
+      h('img', { src: backdrop, alt: '' }), h('i', { class: mode === 'dark' ? 'dark' : '' })));
+  }
   s.append(statusBar(luminance(e.c.pageColor) < 0.25));
   s.append(h('div', { class: 'hd', 'data-sec': 'colors' }, h('b', {}, '书架'), h('span', { class: 'hd-acts' }, '整理', h('i', { class: 'dots' }))));
   s.append(h('div', { class: 'search', 'data-sec': 'colors' }, '搜索书架里的书'));
@@ -103,7 +109,6 @@ function screenShelf(mode: Mode, e: Effective): HTMLElement {
     bar.append(h('div', { class: `it${i === 0 ? ' on' : ''}` }, h('i', { class: 'ico', style: `--m:url("${navIcon(key)}")` }), label));
   });
   s.append(bar);
-  void mode;
   return s;
 }
 

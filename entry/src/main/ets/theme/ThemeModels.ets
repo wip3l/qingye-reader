@@ -30,6 +30,8 @@ export class ThemeComponentSourceIds {
   bubbleThemeId: string = ThemeIds.PLAIN_DEFAULT;
   navigationThemeId: string = ThemeIds.PLAIN_DEFAULT;
   bookThemeId: string = ThemeIds.PLAIN_DEFAULT;
+  // 同样是后加的：旧方案里为空，跟随 startupThemeId（启动封面和首页背景都是主题的整幅插画）。
+  homeBackdropThemeId: string = '';
   typographyThemeId: string = ThemeIds.PLAIN_DEFAULT;
   layoutThemeId: string = ThemeIds.PLAIN_DEFAULT;
   radiusThemeId: string = ThemeIds.PLAIN_DEFAULT;

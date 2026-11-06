@@ -71,6 +71,8 @@ export class InstalledThemePack {
   startupDark: InstalledThemePackStartup | null = null;
   bubbleFrame: string = '';
   bubbleCap: string = '';
+  homeBackdropLight: string = '';
+  homeBackdropDark: string = '';
   logo: string = '';
   preview: string = '';
   appFont: string = '';
@@ -90,6 +92,10 @@ export class InstalledThemePack {
 
   startup(darkMode: boolean): InstalledThemePackStartup | null {
     return (darkMode ? this.startupDark : this.startupLight) || this.startupLight || this.startupDark;
+  }
+
+  homeBackdrop(darkMode: boolean): string {
+    return darkMode ? this.homeBackdropDark : this.homeBackdropLight;
   }
 
   ttsPanel(darkMode: boolean): InstalledThemePackTtsPanel | null {
@@ -235,6 +241,9 @@ export class ThemePackRegistry {
         pack.dark.regexEmphasis.bubbleStyle = themeId;
       }
     }
+    // 本机旧版记录里没有这两个字段。
+    installed.homeBackdropLight = uri(parts.homeBackdropLight || '');
+    installed.homeBackdropDark = uri(parts.homeBackdropDark || '');
     installed.logo = uri(parts.logo);
     installed.preview = uri(parts.preview);
     installed.appFont = uri(parts.appFont);

@@ -80,6 +80,7 @@ my-theme/
 | `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 8 张，书架按书轮播）、书架边框 SVG、分组文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
 | `bubble` | `frame`、`cap` | 强调气泡的边框 SVG（可选）与端饰 SVG（必填）。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。 |
+| `homeBackdrop` | `light` / `dark` | 书架、发现、搜索和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
 | `logo` | | 主题标识，SVG 或位图，显示在方案卡片的角标处。 |
 | `preview` | | 预览图位图，显示在主题页的方案卡片上；省略时卡片显示启动封面。 |
 | `radius` | `small`、`medium`、`large`、`card`、`button`、`bubble` | 圆角，0 到 48。 |
@@ -116,6 +117,7 @@ my-theme/
     "book": { "covers": ["assets/cover_01.jpg", "assets/cover_02.jpg"], "shelfFrame": "assets/frame.svg", "shelfFolder": "assets/folder.jpg" },
     "startup": { "light": { "image": "assets/startup.jpg", "title": "夜花园", "subtitle": "月下翻页" } },
     "bubble": { "cap": "assets/bubble_cap.svg" },
+    "homeBackdrop": { "light": "assets/home_light.jpg", "dark": "assets/home_dark.jpg" },
     "logo": "assets/logo.svg",
     "radius": { "card": 14, "button": 22 }
   }
@@ -134,6 +136,7 @@ my-theme/
 | 书架边框 `shelfFrame` | SVG | 与封面同比例，中心透明，只画外框和角花。 |
 | 文件夹插画 `shelfFolder` | JPG / PNG | 450 × 660。 |
 | 启动封面 `image` | JPG / PNG | 841 × 1870 竖屏，底部约 1/5 会叠加文案，不放主体。 |
+| 首页背景 `homeBackdrop` | JPG / PNG / WebP | 1080 × 1350（4:5），贴顶铺满宽度，比例不同时居中裁成 4:5。画面放在上部约四成，应用会叠渐变向下淡成页面底色；不要放文字，深色图的亮部要克制。 |
 | 气泡边框 `frame` / 端饰 `cap` | SVG | 端饰为正方形小图，按字号缩放，右端自动旋转 180°。 |
 | 主题标识 `logo` | SVG | `viewBox="0 0 64 64"`。 |
 | 字体 `appFont` | TTF / OTF / TTC | 请确认字体允许再分发。 |
@@ -160,7 +163,7 @@ my-theme/
 
 1. 把文件夹压成 ZIP，改名为 `.qytheme`，用文件管理或聊天软件发到手机，用开源轻页打开，或在主题页点“导入”。
 2. 导入前的预览会列出包里有哪些部件；确认后在主题详情点“应用主题”。
-3. 浅色、深色、跟随系统各检查一次：首页导航图标、书架封面与分组文件夹、阅读页背景与强调气泡、朗读面板、启动封面。
+3. 浅色、深色、跟随系统各检查一次：首页导航图标与首页背景、书架封面与分组文件夹、阅读页背景与强调气泡、朗读面板、启动封面。
 4. 改动素材后保持 `packageId` 不变再次导入，确认走的是更新。
 
 仓库里 `node --experimental-strip-types scripts/theme-package-check.mjs` 覆盖格式校验的纯逻辑，可以在提交格式改动前运行。

@@ -421,6 +421,7 @@ struct ThemeColorSettingsPage {
     else if (category === 'bubble') sources.bubbleThemeId = themeId;
     else if (category === 'navigation') sources.navigationThemeId = themeId;
     else if (category === 'book') sources.bookThemeId = themeId;
+    else if (category === 'homeBackdrop') sources.homeBackdropThemeId = themeId;
     else if (category === 'typography') sources.typographyThemeId = themeId;
     else if (category === 'layout') sources.layoutThemeId = themeId;
     else if (category === 'radius') sources.radiusThemeId = themeId;
@@ -584,6 +585,7 @@ struct ThemeColorSettingsPage {
     if (category === 'bubble') return sources.bubbleThemeId;
     if (category === 'navigation') return sources.navigationThemeId;
     if (category === 'book') return sources.bookThemeId;
+    if (category === 'homeBackdrop') return sources.homeBackdropThemeId;
     if (category === 'typography') return sources.typographyThemeId;
     if (category === 'layout') return sources.layoutThemeId;
     if (category === 'radius') return sources.radiusThemeId;
@@ -733,7 +735,8 @@ struct ThemeColorSettingsPage {
     return sources.startupThemeId === themeId || sources.paletteThemeId === themeId ||
       sources.readerThemeId === themeId || sources.ttsPanelThemeId === themeId ||
       sources.bubbleThemeId === themeId || sources.navigationThemeId === themeId ||
-      sources.bookThemeId === themeId || sources.typographyThemeId === themeId ||
+      sources.bookThemeId === themeId || sources.homeBackdropThemeId === themeId ||
+      sources.typographyThemeId === themeId ||
       sources.layoutThemeId === themeId || sources.radiusThemeId === themeId ||
       sources.glassThemeId === themeId;
   }
@@ -1300,6 +1303,8 @@ struct ThemeColorSettingsPage {
       this.navigationAssetRows()
       this.componentSourceRow('书籍素材', '主题封面、书架边框和文件夹图案', 'book')
       this.bookAssetRows()
+      this.componentSourceRow('首页背景', '书架、发现、搜索和我的页顶部的背景图；选没有背景图的主题即不显示', 'homeBackdrop')
+      this.homeBackdropAssetRows()
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -1436,6 +1441,7 @@ struct ThemeColorSettingsPage {
 
   sourceValueFor(sources: ThemeComponentSourceIds, category: string): string {
     if (category === 'book') return sources.bookThemeId;
+    if (category === 'homeBackdrop') return sources.homeBackdropThemeId;
     if (category === 'navigation') return sources.navigationThemeId;
     if (category === 'ttsPanel') return sources.ttsPanelThemeId;
     if (category === 'bubble') return sources.bubbleThemeId;
@@ -1475,7 +1481,7 @@ struct ThemeColorSettingsPage {
       }
       if (!result.packageId) {
         // 包已经卸掉：所有还指着它的来源都退回基底主题。
-        for (const item of ['book', 'navigation', 'ttsPanel', 'bubble', 'reader', 'startup', 'palette']) {
+        for (const item of ['book', 'navigation', 'ttsPanel', 'bubble', 'reader', 'startup', 'palette', 'homeBackdrop']) {
           this.detachPackSource(item, previous, fallback);
         }
       }
@@ -1591,6 +1597,22 @@ struct ThemeColorSettingsPage {
       SchemeAssetService.setTtsArtwork(getContext(this), this.schemeId, uris[0], dark, scheme,
         this.sourceThemeId('ttsPanel')),
       'ttsPanel', !dark, dark, `${dark ? '深色' : '浅色'}面板插画已更新`);
+  }
+
+  async uploadHomeBackdrop(): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    const uris = await SchemeAssetService.pickImages(getContext(this), 1);
+    if (uris.length === 0) return;
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setHomeBackdrop(getContext(this), this.schemeId, uris[0], dark,
+        this.sourceThemeId('homeBackdrop')),
+      'homeBackdrop', !dark, dark, `${dark ? '深色' : '浅色'}首页背景已更新`);
+  }
+
+  async clearHomeBackdrop(): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    await this.runAssetClear((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.clearHomeBackdrop(getContext(this), this.schemeId, dark), 'homeBackdrop');
   }
 
   async uploadBubbleCap(): Promise<void> {
@@ -1722,6 +1744,24 @@ struct ThemeColorSettingsPage {
     if (SchemeAssetService.hasNavigation(this.ownPackageId)) {
       this.assetRow({ title: '移除上传的导航图标', description: '恢复为所选主题的图标',
         onTap: () => this.clearNavigationAssets() })
+    }
+  }
+
+  @Builder
+  homeBackdropAssetRows() {
+    if (this.assetRevision >= 0) {
+      this.homeBackdropAssetRowsContent()
+    }
+  }
+
+  @Builder
+  homeBackdropAssetRowsContent() {
+    this.assetRow({ title: `上传${this.selectedMode === 'dark' ? '深色' : '浅色'}首页背景`,
+      description: '1080 × 1350，画面放在上半部分，下面会自动淡成页面底色',
+      onTap: () => this.uploadHomeBackdrop() })
+    if (SchemeAssetService.hasHomeBackdrop(this.ownPackageId, this.selectedMode === 'dark')) {
+      this.assetRow({ title: `移除上传的${this.selectedMode === 'dark' ? '深色' : '浅色'}首页背景`,
+        description: '恢复为所选主题的背景', onTap: () => this.clearHomeBackdrop() })
     }
   }
 
@@ -2202,6 +2242,7 @@ struct ThemeColorSettingsPage {
       startupTitleSize: this.currentStartupText().titleSize,
       startupSubtitleSize: this.currentStartupText().subtitleSize,
       ttsThemeId: this.currentSources().ttsPanelThemeId || this.currentSources().readerThemeId,
+      homeBackdropThemeId: this.currentSources().homeBackdropThemeId,
       readerSettings: this.readerProfile,
       useReaderProfile: this.readerProfileBound
     })

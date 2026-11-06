@@ -43,6 +43,7 @@ function handWritten() {
         book: { covers: ['assets/c1.jpg', 'assets/c2.png'], shelfFrame: 'assets/frame.svg' },
         startup: { light: { image: 'assets/start.jpg', title: '夜花园', subtitle: '月下翻页' } },
         bubble: { cap: 'assets/cap.svg' },
+        homeBackdrop: { light: 'assets/home.jpg' },
         logo: 'assets/logo.svg',
         radius: { card: 14, button: 22 }
       }
@@ -56,6 +57,7 @@ function handWritten() {
     'night-garden/assets/c1.jpg': jpg(450, 660, 1), 'night-garden/assets/c2.png': png(450, 660),
     'night-garden/assets/frame.svg': svg('<rect x="2" y="2" width="446" height="656" fill="none" stroke="#000"/>', '0 0 450 660'),
     'night-garden/assets/start.jpg': jpg(841, 1870, 2),
+    'night-garden/assets/home.jpg': jpg(1080, 1350, 3),
     'night-garden/assets/cap.svg': svg('<circle cx="8" cy="8" r="8"/>', '0 0 16 16'),
     'night-garden/assets/logo.svg': svg('<circle cx="32" cy="32" r="30"/>', '0 0 64 64')
   };
@@ -75,8 +77,9 @@ test('a hand-written package opens strictly and survives export', async () => {
   assert.equal(p.manifest.packageId, 'night-garden');
   assert.equal(p.parts.light.reader.leading, 'assets/tl.svg');
   assert.deepEqual(p.parts.book.covers, ['assets/c1.jpg', 'assets/c2.png']);
+  assert.equal(p.parts.homeBackdrop.light, 'assets/home.jpg');
   assert.equal(p.assets.get('assets/c2.png').width, 450);
-  assert.equal(p.assets.size, 14);
+  assert.equal(p.assets.size, 15);
 
   const zip = await io.exportZip(p);
   const again = await io.loadProject(io.readZip(zip));
@@ -84,7 +87,7 @@ test('a hand-written package opens strictly and survives export', async () => {
   assert.deepEqual(io.normalizedParts(again.project.parts), io.normalizedParts(p.parts));
   const manifest = JSON.parse(strFromU8(io.readZip(zip).get('manifest.json')));
   assert.deepEqual(manifest.requires, ['custom-scheme-v1', 'theme-parts-v1']);
-  assert.equal(manifest.assets.length, 14);
+  assert.equal(manifest.assets.length, 15);
   assert.equal(manifest.assets[0].sha256.length, 64);
 });
 

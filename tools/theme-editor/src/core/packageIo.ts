@@ -88,6 +88,7 @@ export function emptyParts(): Json {
     book: { covers: [] },
     startup: { light: {}, dark: {} },
     bubble: {},
+    homeBackdrop: {},
     logo: '',
     preview: '',
     radius: {},

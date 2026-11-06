@@ -742,6 +742,7 @@ export class AppThemeSettingsStore {
     sources.bubbleThemeId = normalized;
     sources.navigationThemeId = normalized;
     sources.bookThemeId = normalized;
+    sources.homeBackdropThemeId = normalized;
     sources.typographyThemeId = normalized;
     sources.layoutThemeId = normalized;
     sources.radiusThemeId = normalized;
@@ -778,6 +779,8 @@ export class AppThemeSettingsStore {
     normalized.bubbleThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source?.bubbleThemeId || fallback);
     normalized.navigationThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source?.navigationThemeId || fallback);
     normalized.bookThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source?.bookThemeId || fallback);
+    normalized.homeBackdropThemeId = BuiltinThemeRegistry.normalizeBuiltinId(
+      source?.homeBackdropThemeId || source?.startupThemeId || fallback);
     normalized.typographyThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source?.typographyThemeId || fallback);
     normalized.layoutThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source?.layoutThemeId || fallback);
     normalized.radiusThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source?.radiusThemeId || fallback);

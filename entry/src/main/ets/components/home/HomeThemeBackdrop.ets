@@ -50,7 +50,7 @@ export struct HomeThemeBackdrop {
 
   @Builder
   layers() {
-    Image(ThemeRuntime.homeBackdrop(this.appDarkMode) as Resource)
+    Image(ThemeRuntime.homeBackdrop(this.appDarkMode) as ResourceStr)
       .width('100%')
       .aspectRatio(ThemeAssetRegistry.HOME_BACKDROP_ASPECT)
       .objectFit(ImageFit.Cover)

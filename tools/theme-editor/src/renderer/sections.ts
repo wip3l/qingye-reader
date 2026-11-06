@@ -144,6 +144,14 @@ export const SECTIONS: Section[] = [
     ]
   },
   {
+    id: 'homeBackdrop', group: '素材', name: '首页背景', screen: 'shelf', modal: true,
+    desc: '书架、发现、搜索和我的页顶部的背景，不随列表滚动，向下自动淡成页面底色。浅色、深色各做一张；只做一种时另一种模式不显示背景。', fields: [
+      { g: '背景图' },
+      { k: 'homeBackdrop.{m}', label: '背景图', type: 'asset', kinds: ['image'], target: [1080, 1350],
+        spec: '1080 × 1350（4:5），画面放在上半部分；比例不同时居中裁成 4:5' }
+    ]
+  },
+  {
     id: 'tts', group: '素材', name: '朗读面板', screen: 'tts', modal: true,
     desc: '朗读与有声书面板的背景。四项都要填；只做一种模式时，另一种模式沿用它。', fields: [
       { g: '插画' },

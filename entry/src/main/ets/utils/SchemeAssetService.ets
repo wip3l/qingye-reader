@@ -33,7 +33,7 @@ export class SchemeAssetResult {
 }
 
 /**
- * 自定义方案在编辑器里直接上传的素材：封面、书架边框、文件夹插画、导航图标、朗读面板插画、气泡端饰与边框。
+ * 自定义方案在编辑器里直接上传的素材：封面、书架边框、文件夹插画、导航图标、朗读面板插画、气泡端饰与边框、首页背景。
  * 素材放进方案自己的素材包（theme_packs/custom-<随机>/，与导入的主题包同一套存储和注册），方案的 packageId
  * 指向它；导出时随包打出去，删方案时随包清理。方案本身由主题包安装而来时直接写进那个包。
  */
@@ -253,6 +253,23 @@ export class SchemeAssetService {
     });
   }
 
+  /** 首页背景：浅色、深色各一张，互不借用。 */
+  static async setHomeBackdrop(context: Context, schemeId: string, uri: string, darkMode: boolean,
+    baseTheme: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '首页背景');
+      if (darkMode) record.parts.homeBackdropDark = path;
+      else record.parts.homeBackdropLight = path;
+    });
+  }
+
+  static async clearHomeBackdrop(context: Context, schemeId: string, darkMode: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      if (darkMode) record.parts.homeBackdropDark = '';
+      else record.parts.homeBackdropLight = '';
+    });
+  }
+
   static async setBubbleCap(context: Context, schemeId: string, uri: string, baseTheme: string): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const bubble = record.parts.bubble || new ThemePackageBubble();
@@ -328,7 +345,8 @@ export class SchemeAssetService {
   static hasAnyPart(record: ThemePackRecord): boolean {
     const parts = record.parts;
     return !!(parts.light || parts.dark || parts.ttsPanelLight || parts.ttsPanelDark || parts.navigation ||
-      parts.book || parts.startupLight || parts.startupDark || parts.bubble || parts.logo || parts.preview ||
+      parts.book || parts.startupLight || parts.startupDark || parts.bubble || parts.homeBackdropLight ||
+      parts.homeBackdropDark || parts.logo || parts.preview ||
       parts.radius || parts.appFont || parts.appFontFamily);
   }
 
@@ -371,6 +389,11 @@ export class SchemeAssetService {
   static hasBubble(packageId: string): boolean {
     const pack = ThemePackRegistry.getByPackageId(packageId);
     return !!pack && !!pack.record.parts.bubble;
+  }
+
+  static hasHomeBackdrop(packageId: string, darkMode: boolean): boolean {
+    const pack = ThemePackRegistry.getByPackageId(packageId);
+    return !!pack && !!pack.homeBackdrop(darkMode);
   }
 
   static coverCount(packageId: string): number {
