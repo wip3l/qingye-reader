@@ -14,7 +14,7 @@ const names = [
   'splitOutsideTemplate', 'indexOutsideTemplate', 'encodeParams', 'encodeComponent', 'escapeComponent',
   'parseHeaders', 'recordToHeaders', 'mergeHeaders', 'hasHeader', 'findHeader', 'emptyHeaders',
   'looksLikeStructuredBody',
-  'looksEncoded', 'toRequestMethod', 'normalizeCharset'
+  'looksEncoded', 'toRequestMethod', 'normalizeCharset', 'describeHttpFailure', 'jsonErrorMessage', 'errorBodyPreview'
 ];
 const methods = names.map(name => {
   const start = source.indexOf(`  private ${name}(`);
@@ -130,5 +130,17 @@ const build = (url, text, extra = {}) => reader.buildRequest({ url, header: '', 
   assert.equal(loose.retry, 3);
   assert.equal(loose.timeout, 9000);
   assert.equal(loose.body, 't=x');
+}
+// Failures name the likely cause; JSON bodies show only their error text, HTML error pages are not echoed.
+{
+  assert.equal(reader.describeHttpFailure(429, '{"error":{"message":"Too many requests"}}'),
+    'HTTP 429 请求太频繁，被服务端限流：Too many requests');
+  assert.equal(reader.describeHttpFailure(403, '{"msg":"voice not allowed"}'), 'HTTP 403 鉴权失败或无权使用该音色：voice not allowed');
+  assert.equal(reader.describeHttpFailure(500, '<!DOCTYPE html><html><head><title>Worker exceeded CPU | Cloudflare</title></head><body>x</body></html>'),
+    'HTTP 500 服务端出错：服务端平台返回了错误网页（Worker exceeded CPU | Cloudflare）');
+  assert.equal(reader.describeHttpFailure(502, '<html><body>bad gateway</body></html>'), 'HTTP 502 服务端出错：服务端平台返回了错误网页');
+  assert.equal(reader.describeHttpFailure(400, 'bad   input'), 'HTTP 400：bad input');
+  assert.equal(reader.describeHttpFailure(404, ''), 'HTTP 404 接口地址或音色不存在');
+  assert.equal(reader.describeHttpFailure(500, '{"code":1}'), 'HTTP 500 服务端出错：{"code":1}');
 }
 console.log('http-tts-request-check: ok');

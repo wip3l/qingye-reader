@@ -255,8 +255,7 @@ export class HttpTtsReader {
       if (response.responseCode < 200 || response.responseCode >= 300) {
         const bodyText = this.decodeText(buffer, rule.charset);
         this.handleLoginCheck(voice, bodyText, rule.url);
-        const preview = this.errorBodyPreview(bodyText);
-        throw new Error(preview ? `HTTP ${response.responseCode}：${preview}` : `HTTP ${response.responseCode}`);
+        throw new Error(this.describeHttpFailure(response.responseCode, bodyText));
       }
       if (!buffer || buffer.byteLength <= 0) {
         throw new Error('音频响应为空');
@@ -1186,6 +1185,47 @@ export class HttpTtsReader {
       .replace(/\s+/g, ' ')
       .trim()
       .substring(0, 160);
+  }
+
+  // 失败提示要让用户分得清该换音色、该等一会儿还是服务端坏了：按状态码给出原因，JSON 只取其中的错误说明，
+  // 云平台返回的 HTML 错误页不再原样显示。
+  private describeHttpFailure(code: number, bodyText: string): string {
+    let reason = '';
+    if (code === 401 || code === 403) reason = '鉴权失败或无权使用该音色';
+    else if (code === 404) reason = '接口地址或音色不存在';
+    else if (code === 429) reason = '请求太频繁，被服务端限流';
+    else if (code >= 500) reason = '服务端出错';
+    const text = (bodyText || '').trim();
+    let detail = '';
+    if (/^<(?:!doctype|html)\b/i.test(text) || /<\/(?:html|body|head)>/i.test(text)) {
+      const title = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      detail = `服务端平台返回了错误网页${title ? `（${this.errorBodyPreview(title[1]).substring(0, 60)}）` : ''}`;
+    } else if (/^[\[{]/.test(text)) {
+      detail = this.errorBodyPreview(this.jsonErrorMessage(text) || text);
+    } else {
+      detail = this.errorBodyPreview(text);
+    }
+    const head = reason ? `HTTP ${code} ${reason}` : `HTTP ${code}`;
+    return detail ? `${head}：${detail}` : head;
+  }
+
+  private jsonErrorMessage(text: string): string {
+    try {
+      const value = JSON.parse(text) as Record<string, Object>;
+      if (!value || typeof value !== 'object') return '';
+      const error = value['error'];
+      if (typeof error === 'string') return error;
+      if (error && typeof error === 'object') {
+        const nested = (error as Record<string, Object>)['message'];
+        if (typeof nested === 'string' && nested) return nested;
+      }
+      for (const key of ['message', 'msg', 'detail', 'errmsg']) {
+        const item = value[key];
+        if (typeof item === 'string' && item) return item;
+      }
+    } catch (_) {
+    }
+    return '';
   }
 
   private assertGeneration(generation: number): void {
