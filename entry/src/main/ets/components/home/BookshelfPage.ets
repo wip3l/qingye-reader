@@ -4521,10 +4521,15 @@ export struct BookshelfPage {
     return `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`;
   }
 
-  /** 章节名多半自带“第N章”，这里只放章节名；没有章节名（PDF、未开始读）时才用带章节序号的说法。 */
+  /**
+   * “当前章/总章数 · 章节名”，如“11/1234 · 第11章 夜雨”。章节名多半自带“第N章”，序号只用分数形式给出；
+   * 总章数未知时只放章节名，PDF 与未开始读的书沿用原来的说法。
+   */
   shelfCompanionChapterText(book: Book): string {
-    return LocalBookService.isPdfBook(book) ? this.getLastReadChapterText(book) :
-      (this.getReadChapterText(book) || this.getLastReadChapterText(book));
+    const title = this.getReadChapterText(book);
+    if (LocalBookService.isPdfBook(book) || !title) return this.getLastReadChapterText(book);
+    if (!this.hasKnownReadProgressTotal(book)) return title;
+    return `${book.durChapterIndex + 1}/${book.totalChapterNum} · ${title}`;
   }
 
   shelfCompanionNoteRefreshKey(books: Book[]): string {
