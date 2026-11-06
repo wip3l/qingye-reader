@@ -387,17 +387,20 @@ struct MemberBenefitsPage {
       this.benefitRow($r('sys.symbol.speaker_wave_2'), '在线朗读优先排队', '高峰期优先 · 已生效', true, undefined)
       this.benefitRow($r('sys.symbol.picture'), 'AI超分', '支持低清漫画与 PDF 扫描页；在阅读设置的漫画、PDF 分类中开启', true, undefined)
       this.benefitRow($r('sys.symbol.picture'), 'AI着色', '漫画阅读 → 画面设置 → AI着色', true, undefined)
-      this.benefitRow($r('sys.symbol.textformat'), 'AI翻译', '支持繁→简；日→中、韩→中即将推出', true, undefined)
+      this.benefitRow($r('sys.symbol.textformat'), 'AI翻译', '漫画对白繁→简；日→中、韩→中即将推出', true, undefined)
       this.benefitRow($r('sys.symbol.arrow_2_circlepath'), '超大书源同步', this.largeSourceSyncText(), true, undefined)
       this.benefitRow($r('sys.symbol.star'), '功能尝鲜', '新功能优先试用', true, undefined)
       this.benefitRow($r('sys.symbol.paintpalette'), '自定义主题方案',
         `最多 ${CustomThemeQuota.forSku(this.membershipSku)} 套 · 已生效`, true, () => {
           router.pushUrl({ url: 'pages/ThemeSettings' });
         })
+      this.benefitRow($r('sys.symbol.paintpalette'), '高级主题自定义', '逐项配色、上传素材、界面字体与圆角 · 已生效',
+        true, () => {
+          router.pushUrl({ url: 'pages/ThemeSettings' });
+        })
       this.benefitRow($r('sys.symbol.share'), '主题分享 Beta', '长按自定义方案分享，或在主题页导入主题包', true, () => {
         router.pushUrl({ url: 'pages/ThemeSettings' });
       })
-      this.benefitRow($r('sys.symbol.paintpalette'), '高级主题自定义', '即将推出', true, undefined)
       if (this.membershipSku === 'LIFETIME' || this.isSuperMember()) {
         this.benefitRow($r('sys.symbol.person'), '动态头像', '支持 GIF / WebP 动图，可在会员与账号页编辑头像', true, undefined)
       }

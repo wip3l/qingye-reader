@@ -1,4 +1,4 @@
-import { router } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 import { syncSystemBars } from '../utils/SystemBars';
 import { AppThemeSettings, AppThemeSettingsStore } from '../utils/AppThemeSettingsStore';
 import { CustomThemeScheme, CustomThemeSchemeStore } from '../utils/CustomThemeSchemeStore';
@@ -49,6 +49,8 @@ interface AssetRowOptions {
   description: string;
   onTap: () => void;
   divider?: boolean;
+  // 上传类入口属于高级自定义，非会员点开先提示开通；移除类入口不受限。
+  member?: boolean;
 }
 
 class ThemeEditorUndoEntry {
@@ -111,6 +113,7 @@ struct ThemeColorSettingsPage {
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('appThemeId') appThemeId: string = AppThemeSettingsStore.DEFAULT_THEME_ID;
   @StorageLink('accountEntitlementsRevision') accountEntitlementsRevision: number = 0;
+  @StorageLink('accountMembershipSku') membershipSku: string = '';
   @State selectedMode: string = 'light';
   @State lightAccentColor: string = '#007DFF';
   @State darkAccentColor: string = '#4E9BFF';
@@ -222,6 +225,9 @@ struct ThemeColorSettingsPage {
           Column() {
             if (this.editorSection && this.compactEditor()) {
               this.previewPanel()
+            }
+            if (this.editorReady && this.advancedLocked()) {
+              this.advancedNotice()
             }
             if (!this.editorReady) {
               this.sectionTitle({ title: '正在读取主题方案…' })
@@ -895,13 +901,21 @@ struct ThemeColorSettingsPage {
     .clip(true)
     this.sectionTitle({ title: '逐项覆盖 · 没改过的颜色跟随上面所选的主题' })
     Column() {
-      this.paletteOverrideRow('页面底色', 'pageColor')
-      this.paletteOverrideRow('卡片色', 'cardColor')
-      this.paletteOverrideRow('输入框色', 'inputColor')
-      this.paletteOverrideRow('正文字色', 'primaryTextColor')
-      this.paletteOverrideRow('辅助文字色', 'subTextColor')
-      this.paletteOverrideRow('分割线色', 'dividerColor')
-      this.paletteOverrideRow('危险色', 'dangerColor')
+      Stack() {
+        Column() {
+          this.paletteOverrideRow('页面底色', 'pageColor')
+          this.paletteOverrideRow('卡片色', 'cardColor')
+          this.paletteOverrideRow('输入框色', 'inputColor')
+          this.paletteOverrideRow('正文字色', 'primaryTextColor')
+          this.paletteOverrideRow('辅助文字色', 'subTextColor')
+          this.paletteOverrideRow('分割线色', 'dividerColor')
+          this.paletteOverrideRow('危险色', 'dangerColor')
+        }
+        .width('100%')
+        .opacity(this.advancedOpacity())
+        this.advancedLockLayer()
+      }
+      .width('100%')
       if (AppThemeSettingsStore.hasPaletteOverride(this.currentPalette())) {
         this.resetRow('恢复为所选主题的配色', () => this.resetPalette())
       }
@@ -981,6 +995,7 @@ struct ThemeColorSettingsPage {
   }
 
   setPaletteColor(key: string, color: string): void {
+    if (this.advancedLocked()) return;
     const current = this.colorTokenValue(this.effectiveColors(), key);
     const normalized = AppThemeSettingsStore.normalizeColor(color, current);
     if (normalized === current && this.overrideValue(this.currentPalette(), key)) return;
@@ -1054,6 +1069,7 @@ struct ThemeColorSettingsPage {
   }
 
   updateEmphasis(apply: (next: ThemeEmphasisOverrides) => void): void {
+    if (this.advancedLocked()) return;
     this.rememberChange();
     const next = AppThemeSettingsStore.normalizeEmphasis(this.currentEmphasis());
     apply(next);
@@ -1134,6 +1150,22 @@ struct ThemeColorSettingsPage {
 
   @Builder
   emphasisOverrideRows() {
+    Stack() {
+      Column() {
+        this.emphasisOverrideControls()
+      }
+      .width('100%')
+      .opacity(this.advancedOpacity())
+      this.advancedLockLayer()
+    }
+    .width('100%')
+    if (AppThemeSettingsStore.hasEmphasisOverride(this.currentEmphasis())) {
+      this.resetRow('恢复为所选主题的强调气泡', () => this.resetEmphasis())
+    }
+  }
+
+  @Builder
+  emphasisOverrideControls() {
     SettingRow({ title: '强调方式', description: this.currentEmphasis().mode ? '自定义' : `跟随「${this.emphasisSourceName()}」` }) {
       Select(this.emphasisModeOptions())
         .id('theme_editor_emphasis_mode')
@@ -1209,9 +1241,6 @@ struct ThemeColorSettingsPage {
         this.setEmphasisColor(true, color);
       }
     })
-    if (AppThemeSettingsStore.hasEmphasisOverride(this.currentEmphasis())) {
-      this.resetRow('恢复为所选主题的强调气泡', () => this.resetEmphasis())
-    }
   }
 
   @Builder
@@ -1407,6 +1436,63 @@ struct ThemeColorSettingsPage {
         }
       })
     }
+  }
+
+  // ---- 高级自定义的会员限制 ----
+
+  /**
+   * 逐项配色、强调覆盖、上传素材、界面字体、圆角、启动文案样式和方案预览图是会员专享的高级自定义。
+   * 只限制修改：会员到期后已保存的值照常生效，恢复与移除也不受限（与方案额度只限新增一致）。
+   */
+  advancedLocked(): boolean {
+    return this.membershipSku === '' || AccountSessionStore.activeMembershipSku() === '';
+  }
+
+  advancedOpacity(): number {
+    return this.advancedLocked() ? 0.45 : 1;
+  }
+
+  async ensureAdvanced(): Promise<boolean> {
+    if (!this.advancedLocked()) return true;
+    const result = await promptAction.showDialog({
+      title: '高级主题自定义 · 会员专享',
+      message: '开通任一档会员后，可以逐项调整配色和强调气泡，上传封面、图标、背景等素材，绑定界面字体，' +
+        '调整圆角与启动封面文案样式，并设置方案预览图。已保存的改动在会员到期后继续生效。',
+      buttons: [
+        { text: '取消', color: this.subTextColor() },
+        { text: '了解会员', color: ThemeRuntime.accentColor(this.appDarkMode) }
+      ]
+    });
+    if (result.index === 1) {
+      router.pushUrl({ url: 'pages/AccountCenter' });
+    }
+    return false;
+  }
+
+  /** 盖在高级选项上的透明层：拦下拾色器、下拉与滑杆的操作，改为提示开通会员。 */
+  @Builder
+  advancedLockLayer() {
+    if (this.advancedLocked()) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .accessibilityText('会员专享，了解会员')
+        .onClick(() => {
+          this.ensureAdvanced();
+        })
+    }
+  }
+
+  @Builder
+  advancedNotice() {
+    Text('浅色显示的高级选项为会员专享，点开可了解会员')
+      .fontSize(AppFontSize.CAPTION)
+      .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
+      .width('100%')
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD })
+      .onClick(() => {
+        this.ensureAdvanced();
+      })
   }
 
   // ---- 方案自己上传的素材 ----
@@ -1683,8 +1769,15 @@ struct ThemeColorSettingsPage {
   /** 按引用传参（对象字面量）：按值传的 @Builder 不会随上传后的状态刷新（见“按值 @Builder 的下拉不刷新”）。 */
   @Builder
   assetRow($$: AssetRowOptions) {
-    SettingNavRow({ title: $$.title, description: $$.description, showDivider: $$.divider !== false,
-      onTap: () => $$.onTap() })
+    Column() {
+      SettingNavRow({ title: $$.title, description: $$.description, showDivider: $$.divider !== false,
+        onTap: () => {
+          if ($$.member && this.advancedLocked()) this.ensureAdvanced();
+          else $$.onTap();
+        } })
+    }
+    .width('100%')
+    .opacity($$.member ? this.advancedOpacity() : 1)
   }
 
   @Builder
@@ -1698,10 +1791,11 @@ struct ThemeColorSettingsPage {
   bookAssetRowsContent() {
     this.assetRow({ title: '上传封面图片',
       description: `最多 ${ThemePackageLimits.MAX_COVERS} 张，书架按书轮播；已有 ${SchemeAssetService.coverCount(this.ownPackageId)} 张`,
-      onTap: () => this.uploadCovers() })
-    this.assetRow({ title: '上传书架边框', description: 'SVG，中心透明，只画外框和角花', onTap: () => this.uploadShelfFrame() })
+      onTap: () => this.uploadCovers(), member: true })
+    this.assetRow({ title: '上传书架边框', description: 'SVG，中心透明，只画外框和角花',
+      onTap: () => this.uploadShelfFrame(), member: true })
     this.assetRow({ title: '上传文件夹插画', description: '平铺分组的文件夹图案，450 × 660',
-      onTap: () => this.uploadShelfFolder(), divider: SchemeAssetService.hasBook(this.ownPackageId) })
+      onTap: () => this.uploadShelfFolder(), member: true, divider: SchemeAssetService.hasBook(this.ownPackageId) })
     if (SchemeAssetService.hasBook(this.ownPackageId)) {
       this.assetRow({ title: '移除上传的书籍素材', description: '恢复为所选主题的封面、边框与插画',
         onTap: () => this.clearBookAssets(), divider: false })
@@ -1718,11 +1812,11 @@ struct ThemeColorSettingsPage {
   @Builder
   readerAssetRowsContent() {
     this.assetRow({ title: `上传${this.modeLabel()}左上角饰`, description: '透明底的 SVG 或位图，贴在阅读页左上角',
-      onTap: () => this.uploadReaderOrnament(false) })
+      onTap: () => this.uploadReaderOrnament(false), member: true })
     this.assetRow({ title: `上传${this.modeLabel()}右下角饰`, description: '不传时用左上角那张旋转 180°',
-      onTap: () => this.uploadReaderOrnament(true) })
+      onTap: () => this.uploadReaderOrnament(true), member: true })
     this.assetRow({ title: `上传${this.modeLabel()}整图背景`, description: '竖屏位图，铺满阅读页；会替换角饰',
-      onTap: () => this.uploadReaderImage(), divider: !!this.readerAssetMode() })
+      onTap: () => this.uploadReaderImage(), member: true, divider: !!this.readerAssetMode() })
     if (this.readerAssetMode()) {
       this.assetRow({ title: `移除${this.modeLabel()}阅读背景素材`,
         description: this.readerAssetMode() === 'image' ? '当前为整图，恢复为所选主题的背景' : '当前为角饰，恢复为所选主题的背景',
@@ -1740,7 +1834,7 @@ struct ThemeColorSettingsPage {
   @Builder
   navigationAssetRowsContent() {
     this.assetRow({ title: '上传导航图标', description: '一次选 4 个 SVG，文件名含 bookshelf、explore、search、mine',
-      onTap: () => this.uploadNavigation() })
+      onTap: () => this.uploadNavigation(), member: true })
     if (SchemeAssetService.hasNavigation(this.ownPackageId)) {
       this.assetRow({ title: '移除上传的导航图标', description: '恢复为所选主题的图标',
         onTap: () => this.clearNavigationAssets() })
@@ -1758,7 +1852,7 @@ struct ThemeColorSettingsPage {
   homeBackdropAssetRowsContent() {
     this.assetRow({ title: `上传${this.selectedMode === 'dark' ? '深色' : '浅色'}首页背景`,
       description: '1080 × 1350，画面放在上半部分，下面会自动淡成页面底色',
-      onTap: () => this.uploadHomeBackdrop() })
+      onTap: () => this.uploadHomeBackdrop(), member: true })
     if (SchemeAssetService.hasHomeBackdrop(this.ownPackageId, this.selectedMode === 'dark')) {
       this.assetRow({ title: `移除上传的${this.selectedMode === 'dark' ? '深色' : '浅色'}首页背景`,
         description: '恢复为所选主题的背景', onTap: () => this.clearHomeBackdrop() })
@@ -1775,7 +1869,7 @@ struct ThemeColorSettingsPage {
   @Builder
   ttsAssetRowsContent() {
     this.assetRow({ title: `上传${this.selectedMode === 'dark' ? '深色' : '浅色'}面板插画`,
-      description: '720 × 520，贴顶等比缩放，下半部渐隐到面板底色', onTap: () => this.uploadTtsArtwork() })
+      description: '720 × 520，贴顶等比缩放，下半部渐隐到面板底色', onTap: () => this.uploadTtsArtwork(), member: true })
     if (SchemeAssetService.hasTts(this.ownPackageId)) {
       this.assetRow({ title: '移除上传的面板插画', description: '恢复为所选主题的面板', onTap: () => this.clearTtsAssets() })
     }
@@ -1790,8 +1884,9 @@ struct ThemeColorSettingsPage {
 
   @Builder
   bubbleAssetRowsContent() {
-    this.assetRow({ title: '上传气泡端饰', description: '正方形 SVG，放在强调文字两端', onTap: () => this.uploadBubbleCap() })
-    this.assetRow({ title: '上传气泡边框', description: 'SVG，可选，先上传端饰', onTap: () => this.uploadBubbleFrame(),
+    this.assetRow({ title: '上传气泡端饰', description: '正方形 SVG，放在强调文字两端',
+      onTap: () => this.uploadBubbleCap(), member: true })
+    this.assetRow({ title: '上传气泡边框', description: 'SVG，可选，先上传端饰', onTap: () => this.uploadBubbleFrame(), member: true,
       divider: SchemeAssetService.hasBubble(this.ownPackageId) })
     if (SchemeAssetService.hasBubble(this.ownPackageId)) {
       this.assetRow({ title: '移除上传的气泡素材', description: '气泡样式恢复为跟随所选主题',
@@ -1820,6 +1915,7 @@ struct ThemeColorSettingsPage {
   }
 
   setAppFont(index: number): void {
+    if (this.advancedLocked()) return;
     const family = index <= 0 || index > this.fontLibrary.length ? '' : this.fontLibrary[index - 1].family;
     if (family === this.appFontFamily) return;
     this.rememberChange();
@@ -1829,6 +1925,19 @@ struct ThemeColorSettingsPage {
 
   @Builder
   appFontRow() {
+    Stack() {
+      Column() {
+        this.appFontControl()
+      }
+      .width('100%')
+      .opacity(this.advancedOpacity())
+      this.advancedLockLayer()
+    }
+    .width('100%')
+  }
+
+  @Builder
+  appFontControl() {
     SettingRow({ title: '界面字体文件', description: this.fontLibrary.length > 0 ?
       '绑定字体库里的字体；阅读字体选“跟随主题”时生效，随导出打包' : '字体库里还没有自定义字体，先在阅读设置里添加' }) {
       Select(this.appFontOptions())
@@ -1882,6 +1991,7 @@ struct ThemeColorSettingsPage {
   }
 
   setRadius(key: string, value: number): void {
+    if (this.advancedLocked()) return;
     const rounded = Math.max(0, Math.min(48, Math.round(value)));
     if (rounded === this.radiusValue(key) && this.radiusOverrideValue(key) >= 0) return;
     this.rememberChange();
@@ -1904,12 +2014,20 @@ struct ThemeColorSettingsPage {
 
   @Builder
   radiusRows() {
-    this.radiusRow({ title: '小圆角', key: 'small' })
-    this.radiusRow({ title: '中圆角', key: 'medium' })
-    this.radiusRow({ title: '大圆角', key: 'large' })
-    this.radiusRow({ title: '卡片', key: 'card' })
-    this.radiusRow({ title: '按钮', key: 'button' })
-    this.radiusRow({ title: '气泡', key: 'bubble' })
+    Stack() {
+      Column() {
+        this.radiusRow({ title: '小圆角', key: 'small' })
+        this.radiusRow({ title: '中圆角', key: 'medium' })
+        this.radiusRow({ title: '大圆角', key: 'large' })
+        this.radiusRow({ title: '卡片', key: 'card' })
+        this.radiusRow({ title: '按钮', key: 'button' })
+        this.radiusRow({ title: '气泡', key: 'bubble' })
+      }
+      .width('100%')
+      .opacity(this.advancedOpacity())
+      this.advancedLockLayer()
+    }
+    .width('100%')
     if (AppThemeSettingsStore.hasRadiusOverride(this.radiusOverride)) {
       this.resetRow('恢复为所选主题的圆角', () => this.resetRadius())
     }
@@ -1946,6 +2064,7 @@ struct ThemeColorSettingsPage {
   }
 
   updateStartupText(apply: (next: ThemeStartupTextStyle) => void): void {
+    if (this.advancedLocked()) return;
     this.rememberChange();
     const next = AppThemeSettingsStore.normalizeStartupText(this.currentStartupText());
     apply(next);
@@ -1964,38 +2083,15 @@ struct ThemeColorSettingsPage {
   @Builder
   startupTextStyleOptions() {
     Column() {
-      ThemeColorOption({
-        title: '标题颜色',
-        description: this.currentStartupText().titleColor ? '自定义' : '默认白色',
-        color: this.currentStartupText().titleColor || '#FFFFFF',
-        appDarkMode: this.appDarkMode,
-        cardColor: this.cardColor(),
-        primaryTextColor: this.primaryTextColor(),
-        accentColor: ThemeRuntime.accentColor(this.appDarkMode),
-        onColorChange: (color: string) => {
-          const normalized = AppThemeSettingsStore.normalizeColor(color, '#FFFFFF');
-          this.updateStartupText((next: ThemeStartupTextStyle): void => {
-            next.titleColor = normalized;
-          });
+      Stack() {
+        Column() {
+          this.startupTextControls()
         }
-      })
-      ThemeColorOption({
-        title: '副标题颜色',
-        description: this.currentStartupText().subtitleColor ? '自定义' : '默认白色',
-        color: this.currentStartupText().subtitleColor || '#FFFFFF',
-        appDarkMode: this.appDarkMode,
-        cardColor: this.cardColor(),
-        primaryTextColor: this.primaryTextColor(),
-        accentColor: ThemeRuntime.accentColor(this.appDarkMode),
-        onColorChange: (color: string) => {
-          const normalized = AppThemeSettingsStore.normalizeColor(color, '#FFFFFF');
-          this.updateStartupText((next: ThemeStartupTextStyle): void => {
-            next.subtitleColor = normalized;
-          });
-        }
-      })
-      this.startupSizeRow({ title: '标题字号', key: 'title' })
-      this.startupSizeRow({ title: '副标题字号', key: 'subtitle' })
+        .width('100%')
+        .opacity(this.advancedOpacity())
+        this.advancedLockLayer()
+      }
+      .width('100%')
       if (AppThemeSettingsStore.hasStartupTextStyle(this.currentStartupText())) {
         this.resetRow(`恢复${this.modeLabel()}文案默认样式`, () => this.resetStartupText())
       }
@@ -2005,6 +2101,42 @@ struct ThemeColorSettingsPage {
     .backgroundColor(this.cardColor())
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
+  }
+
+  @Builder
+  startupTextControls() {
+    ThemeColorOption({
+      title: '标题颜色',
+      description: this.currentStartupText().titleColor ? '自定义' : '默认白色',
+      color: this.currentStartupText().titleColor || '#FFFFFF',
+      appDarkMode: this.appDarkMode,
+      cardColor: this.cardColor(),
+      primaryTextColor: this.primaryTextColor(),
+      accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+      onColorChange: (color: string) => {
+        const normalized = AppThemeSettingsStore.normalizeColor(color, '#FFFFFF');
+        this.updateStartupText((next: ThemeStartupTextStyle): void => {
+          next.titleColor = normalized;
+        });
+      }
+    })
+    ThemeColorOption({
+      title: '副标题颜色',
+      description: this.currentStartupText().subtitleColor ? '自定义' : '默认白色',
+      color: this.currentStartupText().subtitleColor || '#FFFFFF',
+      appDarkMode: this.appDarkMode,
+      cardColor: this.cardColor(),
+      primaryTextColor: this.primaryTextColor(),
+      accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+      onColorChange: (color: string) => {
+        const normalized = AppThemeSettingsStore.normalizeColor(color, '#FFFFFF');
+        this.updateStartupText((next: ThemeStartupTextStyle): void => {
+          next.subtitleColor = normalized;
+        });
+      }
+    })
+    this.startupSizeRow({ title: '标题字号', key: 'title' })
+    this.startupSizeRow({ title: '副标题字号', key: 'subtitle' })
   }
 
   startupSizeValue(key: string): number {
@@ -2047,6 +2179,7 @@ struct ThemeColorSettingsPage {
   // ---- 方案预览图 ----
 
   async choosePreviewImage(): Promise<void> {
+    if (!(await this.ensureAdvanced())) return;
     try {
       const old = this.previewImagePath;
       const path = await SchemePreviewImageStore.pickAndSave(getContext(this), this.schemeId);
@@ -2089,6 +2222,7 @@ struct ThemeColorSettingsPage {
           .fontColor(ThemeRuntime.onAccentColor())
           .backgroundColor(ThemeRuntime.buttonColor(this.appDarkMode))
           .layoutWeight(1)
+          .opacity(this.advancedOpacity())
           .onClick(() => this.choosePreviewImage())
         if (this.previewImagePath) {
           Button('恢复用启动封面', { type: ButtonType.Normal })

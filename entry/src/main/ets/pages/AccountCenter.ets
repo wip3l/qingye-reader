@@ -1393,13 +1393,13 @@ struct AccountCenterPage {
       new BenefitCompareRow('在线朗读优先排队', '高峰期优先', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('AI超分', '增强低清漫画与 PDF 扫描页', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('AI着色', '借助AI为黑白漫画着色', ['—', '✓', '✓', '✓', '✓']),
-      new BenefitCompareRow('AI翻译', '繁→简；日→中、韩→中即将推出', ['—', '✓', '✓', '✓', '✓']),
+      new BenefitCompareRow('AI翻译', '漫画对白繁→简；日→中、韩→中即将推出', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('功能尝鲜', '新功能优先试用', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('自定义主题方案', '最多保存套数',
         ['', 'MONTHLY', 'ANNUAL', 'LIFETIME', 'SUPER_LIFETIME'].map((sku: string): string =>
           `${CustomThemeQuota.forSku(sku)} 套`)),
+      new BenefitCompareRow('高级主题自定义', '逐项配色、上传素材、界面字体、圆角等', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('主题分享 Beta', '导出、导入 .qytheme 主题包', ['—', '✓', '✓', '✓', '✓']),
-      new BenefitCompareRow('高级主题自定义', '即将推出', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('有效期', '不自动续费', ['—', '1 个月', '12 个月', '永久', '永久'])
     ];
     if (limits) {
