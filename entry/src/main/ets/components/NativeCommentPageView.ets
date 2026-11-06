@@ -125,6 +125,9 @@ export struct NativeCommentPageView {
       this.load();
       return;
     }
+    // The generated document sits on top of the initial blank in Web history, and ArkWeb consumes the
+    // system back gesture to go back while it can. Drop that entry so one back swipe closes the panel.
+    try { this.controller.clearHistory(); } catch (_) { }
     this.scheduleReady();
   }
 
