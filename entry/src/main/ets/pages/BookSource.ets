@@ -194,6 +194,8 @@ struct BookSourcePage {
   @State @Watch('onSystemDialogFlagChanged') showImportSourceSelectionDialog: boolean = false;
   @State pendingImportSources: BookSource[] = [];
   @State selectedImportSourceUrls: string[] = [];
+  // 导入时是否沿用书源文件里的分组；一次导入（含一次多选的多个文件）只问一次，本页内记住上次的选择。
+  @State importKeepSourceGroups: boolean = true;
   @State selectionMode: boolean = false;
   @State selectedSourceUrls: string[] = [];
   @State @Watch('syncBatchDeleteDialog') showBatchDeleteDialog: boolean = false;
@@ -2355,6 +2357,36 @@ struct BookSourcePage {
       .width('100%')
       .constraintSize({ maxHeight: 360 })
       .scrollBar(BarState.Auto)
+
+      if (this.importSourceGroupNames(this.pendingImportSources).length > 0) {
+        Row() {
+          Toggle({ type: ToggleType.Checkbox, isOn: this.importKeepSourceGroups })
+            .selectedColor(this.buttonColor())
+            .onChange((isOn: boolean) => {
+              if (isOn !== this.importKeepSourceGroups) {
+                this.importKeepSourceGroups = isOn;
+              }
+            })
+          Column() {
+            Text('保留书源自带的分组')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.primaryTextColor())
+            Text(this.importSourceGroupSummary(this.pendingImportSources))
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .margin({ top: AppSpacing.XXS })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+          .margin({ left: AppSpacing.MD })
+        }
+        .width('100%')
+        .onClick(() => {
+          this.importKeepSourceGroups = !this.importKeepSourceGroups;
+        })
+      }
 
       Row({ space: AppSpacing.MD }) {
         Button('取消', { type: ButtonType.Normal })
@@ -7041,12 +7073,72 @@ struct BookSourcePage {
       return;
     }
 
-    await this.persistImportedSources(sources);
+    let keepGroups = true;
+    if (this.importSourceGroupNames(sources).length > 0) {
+      // 单个书源不经过选择框，单独问一次；先收起“正在导入”框，免得两个框叠在一起。
+      const wasImporting = this.isImporting;
+      this.isImporting = false;
+      const choice = await this.askKeepImportSourceGroups(sources);
+      if (choice === null) return;
+      this.isImporting = wasImporting;
+      keepGroups = choice;
+    }
+    await this.persistImportedSources(sources, keepGroups);
   }
 
-  async persistImportedSources(sources: BookSource[]): Promise<void> {
+  // 书源里自带的分组名（去重、去空白），用来判断要不要问“是否保留分组”。
+  importSourceGroupNames(sources: BookSource[]): string[] {
+    const groups: string[] = [];
+    for (const source of sources) {
+      const group = (source.bookSourceGroup || '').trim();
+      if (group && !groups.includes(group)) {
+        groups.push(group);
+      }
+    }
+    return groups;
+  }
+
+  importSourceGroupSummary(sources: BookSource[]): string {
+    const groups = this.importSourceGroupNames(sources);
+    const localGroups = new Set<string>(this.sourceGroupsFromSources().concat(this.sourceGroups));
+    const newCount = groups.filter((group: string) => !localGroups.has(group)).length;
+    const shown = groups.slice(0, 3).map((group: string) => `「${group}」`).join('');
+    const more = groups.length > 3 ? ` 等 ${groups.length} 个分组` : '';
+    const newText = newCount > 0 ? `，其中 ${newCount} 个是新分组` : '';
+    return `${shown}${more}${newText}；不保留时，已有书源沿用本地分组，新书源不分组`;
+  }
+
+  // 返回 null 表示用户取消了这次导入。
+  async askKeepImportSourceGroups(sources: BookSource[]): Promise<boolean | null> {
+    try {
+      const confirmation = await promptAction.showDialog({
+        title: '保留原分组？',
+        message: `书源自带分组 ${this.importSourceGroupSummary(sources)}。`,
+        buttons: [
+          { text: '不保留', color: this.subTextColor() },
+          { text: '保留', color: this.accentColor() }
+        ]
+      });
+      this.importKeepSourceGroups = confirmation.index === 1;
+      return this.importKeepSourceGroups;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async persistImportedSources(sources: BookSource[], keepGroups: boolean = true): Promise<void> {
     const db = AppDatabase.getInstance();
     await db.initWithContext(getContext(this));
+    if (!keepGroups) {
+      // 不沿用文件里的分组：覆盖已有书源时保留用户在本地设的分组，新书源放进未分组。
+      const localGroups = new Map<string, string>();
+      for (const local of this.allSources) {
+        localGroups.set(local.bookSourceUrl, local.bookSourceGroup || '');
+      }
+      for (const source of sources) {
+        source.bookSourceGroup = localGroups.get(source.bookSourceUrl) ?? '';
+      }
+    }
     let importCount = 0;
     let failedCount = 0;
     let lockedCount = 0;
@@ -7133,7 +7225,9 @@ struct BookSourcePage {
     if (selected.length === 0) return;
     this.isImporting = true;
     try {
-      await this.persistImportedSources(selected);
+      const keepGroups = this.importKeepSourceGroups ||
+        this.importSourceGroupNames(this.pendingImportSources).length === 0;
+      await this.persistImportedSources(selected, keepGroups);
       this.cancelImportSourceSelection();
     } catch (e) {
       console.error('导入所选书源失败:', e);
