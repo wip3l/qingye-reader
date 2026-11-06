@@ -69,10 +69,10 @@ struct BookImportPage {
           router.pushUrl({ url: 'pages/WebDav' });
         })
       this.menuRow($r('sys.symbol.book'), '本地导入',
-        '选择并导入 TXT / EPUB / MOBI / PDF 文件', false, () => {
+        '选择并导入 TXT / EPUB / MOBI / PDF 文件或 ZIP 压缩包', false, () => {
           this.addBooks();
         })
-      Text('支持 TXT / EPUB / MOBI / PDF 格式，MOBI 需未加密且不是 KF8（AZW3），PDF 暂不支持打开密码')
+      Text('支持 TXT / EPUB / MOBI / PDF 格式，也可以选装着这些文件的 ZIP 压缩包（不支持加密包）。MOBI 需未加密且不是 KF8（AZW3），PDF 暂不支持打开密码')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .width('100%')
@@ -91,7 +91,7 @@ struct BookImportPage {
       const selected = await LocalBookService.chooseBookFiles(getContext(this));
       if (selected.length === 0) return;
       this.isScanning = true;
-      this.statusText = `正在导入${selected.length}本书...`;
+      this.statusText = `正在导入${selected.length}个文件...`;
       const result = await LocalBookService.importSelectedFiles(getContext(this), selected);
       this.finishImport(result);
       CloudAutoSync.schedule(getContext(this));

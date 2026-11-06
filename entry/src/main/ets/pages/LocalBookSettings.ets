@@ -63,7 +63,7 @@ struct LocalBookSettingsPage {
           Text('暂无已添加书籍')
             .fontSize(AppFontSize.BODY_LARGE)
             .fontColor(this.primaryTextColor())
-          Text('点击下方按钮选择 TXT / EPUB / MOBI / PDF 文件')
+          Text('点击下方按钮选择 TXT / EPUB / MOBI / PDF 文件或 ZIP 压缩包')
             .fontSize(AppFontSize.BODY)
             .fontColor(this.subTextColor())
         }
@@ -96,7 +96,7 @@ struct LocalBookSettingsPage {
         })
       }
 
-      Text('选择 TXT / EPUB / MOBI / PDF 文件导入书架')
+      Text('选择 TXT / EPUB / MOBI / PDF 文件或 ZIP 压缩包导入书架')
         .fontSize(AppFontSize.BODY_LARGE)
         .fontColor(this.primaryTextColor())
       Text('支持一次选择多个文件，导入后文件会复制到应用内部存储，不依赖原文件位置。')
@@ -169,7 +169,7 @@ struct LocalBookSettingsPage {
       const selected = await LocalBookService.chooseBookFiles(getContext(this));
       if (selected.length === 0) return;
       this.isScanning = true;
-      this.statusText = `正在导入${selected.length}本书...`;
+      this.statusText = `正在导入${selected.length}个文件...`;
       const result = await LocalBookService.importSelectedFiles(getContext(this), selected);
       this.finishImport(result);
       CloudAutoSync.schedule(getContext(this));

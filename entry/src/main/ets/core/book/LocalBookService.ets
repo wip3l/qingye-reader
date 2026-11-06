@@ -15,6 +15,7 @@ import { EpubConvertResult, EpubHtmlConverter } from './EpubHtmlConverter';
 import { EpubTextOffsetMap } from './EpubTextOffsetMap';
 import { MobiImportTask } from '../concurrency/MobiImportTask';
 import { PdfBookService } from './pdf/PdfBookService';
+import { LocalArchiveImport } from './LocalArchiveImport';
 
 
 export class LocalBookExportResult {
@@ -305,7 +306,7 @@ export class LocalBookService {
     const options = new picker.DocumentSelectOptions();
     options.selectMode = picker.DocumentSelectMode.FILE;
     options.maxSelectNumber = 500;
-    options.fileSuffixFilters = ['电子书|.txt,.epub,.mobi,.pdf'];
+    options.fileSuffixFilters = ['电子书|.txt,.epub,.mobi,.pdf,.zip'];
     const result = await new picker.DocumentViewPicker(context).select(options);
     const paths: LocalBookFile[] = [];
     for (const uri of result) {
@@ -324,6 +325,10 @@ export class LocalBookService {
     await appDb.initWithContext(context);
     result.discovered = selected.length;
     for (const path of selected) {
+      if (LocalArchiveImport.isArchiveFormat(LocalBookService.extensionOf(path.uri))) {
+        await LocalBookService.importArchive(context, path, result);
+        continue;
+      }
       try {
         const outcome = await LocalBookService.importLocalFile(context, path.uri);
         if (outcome.duplicate) {
@@ -338,6 +343,46 @@ export class LocalBookService {
       }
     }
     return result;
+  }
+
+  /** 压缩包按包里的每本书计数；包本身打不开时算一次失败。 */
+  private static async importArchive(context: Context, archive: LocalBookFile,
+    result: LocalBookScanResult): Promise<void> {
+    const archiveName = archive.name || LocalBookService.displayName(archive.uri);
+    const workDir = `${context.cacheDir}/archive_import/${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+    try {
+      const extracted = await LocalArchiveImport.extractBooks(archive.uri, workDir, LocalBookService.SUPPORTED_FORMATS);
+      result.discovered += extracted.files.length + extracted.failures.length - 1;
+      for (const failure of extracted.failures) {
+        result.failed++;
+        result.failures.push(`${archiveName}/${failure}`);
+      }
+      if (extracted.files.length === 0 && extracted.failures.length === 0) {
+        result.failed++;
+        result.failures.push(`${archiveName}：压缩包内没有可导入的书籍`);
+      }
+      for (const file of extracted.files) {
+        try {
+          const outcome = await LocalBookService.importLocalFile(context, file.path, file.format, file.name,
+            file.identity);
+          if (outcome.duplicate) {
+            result.duplicates.push(`${file.name}（书架中为《${outcome.book.name}》）`);
+          } else {
+            result.imported++;
+          }
+        } catch (e) {
+          result.failed++;
+          result.failures.push(`${archiveName}/${file.name}：${e instanceof Error ? e.message : '文件读取失败'}`);
+          console.error('[LocalBook] archive entry import failed:', file.identity, e);
+        }
+      }
+    } catch (e) {
+      result.failed++;
+      result.failures.push(`${archiveName}：${e instanceof Error ? e.message : '压缩包读取失败'}`);
+      console.error('[LocalBook] archive import failed:', archive.uri, e);
+    } finally {
+      LocalArchiveImport.removeWorkDir(workDir);
+    }
   }
 
   static async importExternalBook(context: Context, sourceUri: string,
@@ -356,11 +401,11 @@ export class LocalBookService {
    * identical content instead of adding a second one. Re-importing the same URI still refreshes it.
    */
   private static async importLocalFile(context: Context, sourceUri: string,
-    formatHint: string = '', sourceName: string = ''): Promise<LocalImportOutcome> {
+    formatHint: string = '', sourceName: string = '', identityUri: string = ''): Promise<LocalImportOutcome> {
     const extension = (formatHint || LocalBookService.extensionOf(sourceUri)).toLowerCase();
     if (!LocalBookService.isSupportedFormat(extension)) throw new Error(LocalBookService.UNSUPPORTED_FORMAT_MESSAGE);
     let contentHash = '';
-    if (!await appDb.getBook(`local://${LocalBookService.hashText(sourceUri)}`)) {
+    if (!await appDb.getBook(`local://${LocalBookService.hashText(identityUri || sourceUri)}`)) {
       try {
         contentHash = await LocalBookService.hashFile(sourceUri);
       } catch (e) {
@@ -370,7 +415,7 @@ export class LocalBookService {
       if (existing) return new LocalImportOutcome(existing, true);
     }
     const book = await LocalBookService.importBook(context, sourceUri, extension, sourceName,
-      '', '', '', '', 0, 0, null, '', contentHash);
+      '', '', '', '', 0, 0, null, '', contentHash, identityUri);
     return new LocalImportOutcome(book, false);
   }
 
@@ -517,10 +562,12 @@ export class LocalBookService {
     webDavConnectionId: string = '', webDavRemotePath: string = '', webDavETag: string = '',
     webDavLastModified: number = 0, webDavRemoteSize: number = 0,
     storageVariables: Record<string, string> | null = null,
-    storageOriginName: string = '', knownContentHash: string = ''): Promise<Book> {
+    storageOriginName: string = '', knownContentHash: string = '', identityUri: string = ''): Promise<Book> {
     const extension = (formatHint || LocalBookService.extensionOf(sourceUri)).toLowerCase();
     if (!LocalBookService.isSupportedFormat(extension)) throw new Error(LocalBookService.UNSUPPORTED_FORMAT_MESSAGE);
-    const sourceId = LocalBookService.hashText(sourceUri);
+    // 压缩包里的书 sourceUri 是临时解压文件，身份另用“压缩包 URI#包内路径”。
+    const identity = identityUri || sourceUri;
+    const sourceId = LocalBookService.hashText(identity);
     const bookUrl = bookUrlOverride || `local://${sourceId}`;
     const id = bookUrlOverride ? LocalBookService.hashText(bookUrl) : sourceId;
     const sourceStat = await fs.stat(sourceUri);
@@ -535,7 +582,7 @@ export class LocalBookService {
       book.bookUrl = bookUrl; book.tocUrl = bookUrl; book.origin = LocalBookService.ORIGIN;
       book.originName = storageOriginName || (webDavConnectionId ? 'WebDAV' : 'PDF');
       book.type = LocalBookService.TYPE_PDF; book.canUpdate = false;
-      book.putVariable('localFormat', 'pdf'); book.putVariable('localSourceUri', sourceUri);
+      book.putVariable('localFormat', 'pdf'); book.putVariable('localSourceUri', identity);
       book.putVariable('localSourceMtime', `${sourceStat.mtime}`); book.putVariable('localSourceSize', `${sourceStat.size}`);
       book.putVariable('bookAddTime', book.getVariable('bookAddTime') || `${Date.now()}`);
       if (webDavConnectionId) {
@@ -590,7 +637,7 @@ export class LocalBookService {
     book.canUpdate = false;
     book.group = 0;
     book.type = LocalBookService.bookTypeForFormat(extension);
-    book.putVariable('localSourceUri', sourceUri);
+    book.putVariable('localSourceUri', identity);
     book.putVariable('localFilePath', localPath);
     book.putVariable('localFormat', extension);
     book.putVariable('localParserVersion', 'importing');
