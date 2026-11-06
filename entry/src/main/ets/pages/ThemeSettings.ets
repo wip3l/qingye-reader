@@ -1670,8 +1670,8 @@ struct ThemeSettingsPage {
       Row() {
         ForEach(['bookshelf', 'explore', 'search', 'mine'], (tabId: string, index: number) => {
           Image(ThemeAssetRegistry.navigationIcon(entry.theme.navigation.iconPackId, tabId, index === 0))
-            .width(22)
-            .height(22)
+            .width(ThemeAssetRegistry.navigationHidesLabels(entry.theme.navigation.iconPackId) ? 30 : 22)
+            .height(ThemeAssetRegistry.navigationHidesLabels(entry.theme.navigation.iconPackId) ? 30 : 22)
             .fillColor(index === 0 ? this.activeVariant(entry.theme).colors.accentColor :
               this.activeVariant(entry.theme).colors.subTextColor)
             .draggable(false)
