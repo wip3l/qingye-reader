@@ -1,4 +1,4 @@
-import { abilityAccessCtrl, common, Permissions, Want } from '@kit.AbilityKit';
+import { common, Want } from '@kit.AbilityKit';
 import { Book } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { LocalBookService } from '../core/book/LocalBookService';
@@ -16,8 +16,6 @@ const PROGRESS_VARIABLE_KEYS: string[] = ['readStarted', 'lastReadTime', 'readPr
 const CHECKPOINT_WAIT_MS: number = 600;
 // 接续参数整体上限约 100KB；书源运行时变量偶尔很大，超出时只带书籍基本信息。
 const PAYLOAD_SOFT_LIMIT: number = 60 * 1024;
-// 没有这项权限系统不会把本应用列进接续入口。
-const CONTINUATION_PERMISSION: Permissions = 'ohos.permission.DISTRIBUTED_DATASYNC';
 const TOAST_RETRY_MS: number = 800;
 const TOAST_RETRY_LIMIT: number = 6;
 
@@ -54,20 +52,9 @@ class ContinuationPayload {
 /**
  * 跨设备接续：在读的书和进度随任务流转到另一台设备，对端直接打开到同一位置。
  * 不迁移页面栈，对端照常启动后按书籍地址打开阅读页；没有在读的书时只把应用接续过去。
+ * API 12 起接续不需要 DISTRIBUTED_DATASYNC 权限，数据只走 wantParam，不要再加回启动时申请（上架检测判为提前索权）。
  */
 export class ReadingContinuation {
-  /** 申请多设备协同权限；已允许或已拒绝过时系统不再弹框，直接返回结果。 */
-  static async requestPermission(context: common.UIAbilityContext): Promise<boolean> {
-    try {
-      const result = await abilityAccessCtrl.createAtManager().requestPermissionsFromUser(context,
-        [CONTINUATION_PERMISSION]);
-      return result.authResults.length > 0 && result.authResults[0] === 0;
-    } catch (error) {
-      console.warn('[ReadingContinuation] request permission failed:', error);
-      return false;
-    }
-  }
-
   static async collect(context: common.Context, wantParam: Record<string, Object>): Promise<void> {
     wantParam['ohos.extra.param.key.supportContinuePageStack'] = false;
     // 接续后本机不退出，正在听书的不会被打断。

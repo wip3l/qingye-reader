@@ -69,10 +69,6 @@
       "value": "用于在阅读页本地识别注视方向并进行眼动翻页，画面不会上传或保存"
     },
     {
-      "name": "reading_continuation_permission",
-      "value": "用于把正在读的书和进度接续到你的其他设备上继续阅读"
-    },
-    {
       "name": "loading",
       "value": "加载中..."
     },

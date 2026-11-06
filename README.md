@@ -281,7 +281,7 @@ qingye-reader/
 | `versionName` | `4.4.956` |
 | `versionCode` / `buildVersion` | `4040956` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
-| 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`VIBRATE`（翻页震感）、`DETECT_GESTURE`（握姿感知）、`ACCESS_BIOMETRIC`（隐私书架指纹或人脸解锁）、`DISTRIBUTED_DATASYNC`（跨设备接续，首屏后申请一次）、`CAMERA`（仅在用户启用眼动翻页时请求） |
+| 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`VIBRATE`（翻页震感）、`DETECT_GESTURE`（握姿感知）、`ACCESS_BIOMETRIC`（隐私书架指纹或人脸解锁）、`CAMERA`（仅在用户启用眼动翻页时请求） |
 
 ### 获取源码
 
