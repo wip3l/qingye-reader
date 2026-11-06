@@ -12,12 +12,16 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { VideoPlaybackSource, VideoPlaybackSupport } from '../core/book/VideoPlaybackSupport';
+import { VideoAvSession, VideoAvSessionListener } from '../utils/VideoAvSession';
 
 /** 每次尝试创建独立实例，让旧组件回调携带旧编号。 */
 class VideoNativeAttempt {
   id: number;
   url: string;
   controller: VideoController = new VideoController();
+  // 书源给了请求头时改用 AVPlayer 播到 XComponent 上；没有请求头仍用 Video 组件。
+  session: VideoAvSession | null = null;
+  surface: XComponentController | null = null;
   constructor(id: number, url: string) { this.id = id; this.url = url; }
 }
 
@@ -67,6 +71,14 @@ class EpisodeDataSource implements IDataSource {
 const SPEEDS: number[] = [0.75, 1, 1.25, 1.75, 2];
 const CONTROLS_HIDE_DELAY_MS: number = 4000;
 const DISPLAY_MODES: string[] = ['contain', 'none', 'cover', 'fill'];
+// 网络流还没报过进度时，恢复跳转最多等这么久，再改用关键帧跳转重试。
+const RESUME_WAIT_MS: number = 15000;
+// 该推进却一直不动：先提示缓冲，再重新取地址从原位置接着播，同一集最多自动重来两次。
+const STALL_HINT_MS: number = 8000;
+const STALL_RELOAD_MS: number = 25000;
+const MAX_STALL_RELOADS: number = 2;
+// 暂停超过这么久再继续，带时效的播放地址多半已过期，直接重新取地址。
+const PAUSE_REFRESH_MS: number = 10 * 60 * 1000;
 
 // 视频画面上的中性控件；图标保持高对比度，点击区域不少于 44vp。
 @Extend(Button)
@@ -119,6 +131,9 @@ struct VideoPlayerPage {
   @State playbackReady: boolean = false;
   @State resumeNotice: string = '';
   @State resumeSeekPending: boolean = false;
+  @State resumeFailedSec: number = -1;
+  @State avVideoWidth: number = 0;
+  @State avVideoHeight: number = 0;
   private controller: VideoController = new VideoController();
   private fullScreenHandler: FullScreenExitHandler | null = null;
   private activeAttemptId: number = 0;
@@ -129,6 +144,21 @@ struct VideoPlayerPage {
   // 合并连续点按的目标，同一时刻只向播放器提交一次 seek，避免旧回调覆盖新目标。
   private pendingSeekSec: number = -1;
   private issuedSeekSec: number = -1;
+  // 网络流上精确跳转可能很慢，恢复进度时第二次改用关键帧跳转，确认时的容差相应放宽。
+  private seekAccurate: boolean = true;
+  private resumeTargetSec: number = -1;
+  private resumeSeekRetried: boolean = false;
+  private resumeWaitStartedAt: number = 0;
+  // 播放器重新准备时用户处于暂停：记下位置，等按播放时再跳过去。
+  private deferredResumeSec: number = -1;
+  private stallTimerId: number = -1;
+  private lastProgressAt: number = 0;
+  private stallReloads: number = 0;
+  // 自动恢复（出错重试、卡住重载）时的位置；从这里稳定往后播满 30 秒，才把本集的自动恢复额度还回去。
+  private recoveryFromSec: number = -1;
+  private stallHintShown: boolean = false;
+  private playIntent: boolean = false;
+  private pausedAt: number = 0;
   private episodeScroller: Scroller = new Scroller();
   private episodeData: EpisodeDataSource = new EpisodeDataSource();
   private book: Book | null = null;
@@ -184,7 +214,10 @@ struct VideoPlayerPage {
     this.showDisplayModes = false;
     this.playerPageVisible = false;
     this.orientationSerial++;
-    try { this.controller.pause(); } catch (_) {}
+    // 切后台时 Video 不一定回调 onPause，这里也记下暂停时刻，回来久了再播会先重取地址。
+    if (this.nativeAttempts.length > 0 && this.pausedAt <= 0) this.pausedAt = Date.now();
+    this.playIntent = false;
+    try { this.nativePause(); } catch (_) {}
     this.pauseWeb();
     this.clearHideTimer();
     this.saveProgress(true);
@@ -308,18 +341,28 @@ struct VideoPlayerPage {
     }
   }
 
-  private async playEpisode(index: number, resumeSec: number = 0, isRetry: boolean = false): Promise<void> {
+  /** isReload：卡住或暂停太久后重新取地址，沿用本集的重试额度与网页地址。 */
+  private async playEpisode(index: number, resumeSec: number = 0, isRetry: boolean = false,
+    isReload: boolean = false): Promise<void> {
     const book = this.book;
     const source = this.source;
     if (!book || !source || this.chapters.length === 0) return;
     const target = Math.max(0, Math.min(index, this.chapters.length - 1));
     const chapter = this.chapters[target];
-    const previousPageUrl = isRetry && target === this.episodeIndex ? this.videoPageUrl : '';
+    const sameEpisode = target === this.episodeIndex;
+    const previousPageUrl = (isRetry || isReload) && sameEpisode ? this.videoPageUrl : '';
     this.saveProgress(true);
     this.cancelResolve();
     this.stopPlayback();
     const serial = ++this.loadSerial;
-    this.retried = isRetry;
+    if (!isReload || !sameEpisode) {
+      this.retried = isRetry;
+      this.stallReloads = 0;
+    }
+    this.resumeFailedSec = -1;
+    this.deferredResumeSec = -1;
+    this.resumeTargetSec = -1;
+    this.pausedAt = 0;
     this.episodeIndex = target;
     this.episodeTitle = chapter.title;
     this.positionSec = VideoPlaybackSupport.position(resumeSec);
@@ -333,6 +376,7 @@ struct VideoPlayerPage {
     this.resumeSec = this.positionSec;
     this.showControls = true;
     this.seeking = false;
+    this.recoveryFromSec = isRetry || isReload ? this.positionSec : -1;
     book.durChapterIndex = target;
     book.durChapterTitle = chapter.title;
     book.durChapterPos = Math.floor(this.positionSec);
@@ -367,10 +411,174 @@ struct VideoPlayerPage {
     }
     this.statusText = '正在缓冲...';
     this.videoUrl = result.url;
+    const headers = result.headers || {};
     const attempt = new VideoNativeAttempt(++this.activeAttemptId, result.url);
+    // 只有 User-Agent 时媒体服务器几乎不校验，仍用 Video 组件；有 Referer、Cookie 等才必须带上。
+    if (Object.keys(headers).some((name: string): boolean => name.toLowerCase() !== 'user-agent')) {
+      attempt.surface = new XComponentController();
+      attempt.session = new VideoAvSession(result.url, headers, this.speed, this.avListener(attempt));
+    }
+    console.info(`[VideoPlayer] play episode=${target} resume=${this.resumeSec} reload=${isReload} ` +
+      `retry=${isRetry} headers=${Object.keys(headers).length}`);
     this.controller = attempt.controller;
+    this.avVideoWidth = 0;
+    this.avVideoHeight = 0;
     this.nativeAttempts = [attempt];
+    if (attempt.session) attempt.session.open();
+    this.startStallWatch();
     this.scheduleHideControls();
+  }
+
+  private avListener(attempt: VideoNativeAttempt): VideoAvSessionListener {
+    return {
+      onPrepared: (duration: number): void => {
+        if (this.isCurrentNative(attempt)) this.onVideoPrepared(duration);
+      },
+      onStart: (): void => this.handleNativeStart(attempt),
+      onPause: (): void => this.handleNativePause(attempt),
+      onUpdate: (seconds: number): void => {
+        if (this.isCurrentNative(attempt)) this.onVideoUpdated(seconds);
+      },
+      onSeeked: (seconds: number): void => {
+        if (this.isCurrentNative(attempt)) this.onVideoSeeked(seconds);
+      },
+      onFinish: (): void => {
+        if (this.isCurrentNative(attempt) && this.playerPageVisible) this.onVideoFinished();
+      },
+      onError: (code: number): void => {
+        if (this.isCurrentNative(attempt)) this.onVideoError(code);
+      },
+      onVideoSize: (width: number, height: number): void => {
+        if (!this.isCurrentNative(attempt)) return;
+        this.avVideoWidth = width;
+        this.avVideoHeight = height;
+      }
+    };
+  }
+
+  private currentSession(): VideoAvSession | null {
+    const attempt = this.nativeAttempts.length > 0 ? this.nativeAttempts[0] : null;
+    return attempt && attempt.session ? attempt.session : null;
+  }
+
+  private nativeStart(): void {
+    this.playIntent = true;
+    const session = this.currentSession();
+    if (session) session.start();
+    else this.controller.start();
+  }
+
+  private nativePause(): void {
+    const session = this.currentSession();
+    if (session) session.pause();
+    else this.controller.pause();
+  }
+
+  private nativeSeek(seconds: number, accurate: boolean): void {
+    const session = this.currentSession();
+    if (session) session.seek(seconds, accurate);
+    else this.controller.setCurrentTime(seconds, accurate ? SeekMode.Accurate : SeekMode.ClosestKeyframe);
+  }
+
+  private handleNativeStart(attempt: VideoNativeAttempt): void {
+    if (!this.isCurrentNative(attempt) || !this.playerPageVisible) {
+      try {
+        if (attempt.session) attempt.session.pause();
+        else attempt.controller.pause();
+      } catch (_) {}
+      return;
+    }
+    // 同一应用内的音频流系统不会互相打断，朗读/听书要自己停下，免得和视频声音叠在一起。
+    ReaderTtsFloatingSession.pause().catch((error: Error) => {
+      console.warn('[VideoPlayer] pause tts failed:', error.message);
+    });
+    this.isPlaying = true;
+    this.pausedAt = 0;
+    this.lastProgressAt = Date.now();
+    if (!this.stallHintShown) this.statusText = '';
+    this.scheduleHideControls();
+  }
+
+  private handleNativePause(attempt: VideoNativeAttempt): void {
+    if (!this.isCurrentNative(attempt)) return;
+    this.isPlaying = false;
+    // 用户暂停、系统因音频焦点暂停都不算卡住。
+    this.playIntent = false;
+    this.pausedAt = Date.now();
+    this.showControls = true;
+    this.saveProgress(true);
+  }
+
+  /** 进度落库与重试时使用的位置：跳转目标、恢复目标优先于播放器暂时报的位置。 */
+  private durablePositionSec(): number {
+    if (this.pendingSeekSec >= 0) return this.pendingSeekSec;
+    if (this.resumeSeekPending && this.resumeTargetSec >= 0) return this.resumeTargetSec;
+    if (this.deferredResumeSec >= 0) return this.deferredResumeSec;
+    if (this.resumeFailedSec >= 0) return this.resumeFailedSec;
+    return this.positionSec;
+  }
+
+  private stopStallWatch(): void {
+    if (this.stallTimerId >= 0) clearTimeout(this.stallTimerId);
+    this.stallTimerId = -1;
+  }
+
+  private startStallWatch(): void {
+    this.stopStallWatch();
+    this.lastProgressAt = Date.now();
+    this.stallHintShown = false;
+    const attemptId = this.activeAttemptId;
+    const tick = (): void => {
+      this.stallTimerId = -1;
+      if (attemptId !== this.activeAttemptId) return;
+      this.checkStall();
+      if (attemptId === this.activeAttemptId && this.stallTimerId < 0) this.stallTimerId = setTimeout(tick, 1000);
+    };
+    this.stallTimerId = setTimeout(tick, 1000);
+  }
+
+  // Video 组件没有缓冲事件：等待起播或播放中，进度长时间不动就视为卡住。
+  private checkStall(): void {
+    const expectingProgress = !this.playbackReady || this.isPlaying || this.playIntent;
+    if (this.webMode || this.nativeAttempts.length === 0 || this.playbackFailed || !this.playerPageVisible ||
+      this.seeking || !expectingProgress) {
+      this.lastProgressAt = Date.now();
+      return;
+    }
+    const stalledMs = Date.now() - this.lastProgressAt;
+    if (stalledMs >= STALL_RELOAD_MS) {
+      this.reloadAfterStall();
+      return;
+    }
+    if (stalledMs >= STALL_HINT_MS && !this.stallHintShown && (!this.statusText || !this.playbackReady)) {
+      this.stallHintShown = true;
+      this.statusText = '网络较慢，正在缓冲...';
+      this.showControls = true;
+    }
+  }
+
+  private markProgress(): void {
+    this.lastProgressAt = Date.now();
+    if (!this.stallHintShown) return;
+    this.stallHintShown = false;
+    if (this.statusText === '网络较慢，正在缓冲...') this.statusText = '';
+  }
+
+  private reloadAfterStall(): void {
+    const position = this.durablePositionSec();
+    console.warn(`[VideoPlayer] stalled episode=${this.episodeIndex} position=${position} ` +
+      `ready=${this.playbackReady} reloads=${this.stallReloads}`);
+    if (this.stallReloads >= MAX_STALL_RELOADS) {
+      this.saveProgress(true);
+      this.stopPlayback();
+      this.videoUrl = '';
+      this.playbackFailed = true;
+      this.showControls = true;
+      this.statusText = '网络较慢，视频一直没能加载出来';
+      return;
+    }
+    this.stallReloads++;
+    this.playEpisode(this.episodeIndex, position, false, true);
   }
 
   private cancelResolve(): void {
@@ -409,6 +617,9 @@ struct VideoPlayerPage {
   private stopPlayback(): void {
     this.showDisplayModes = false;
     this.resumeNotice = '';
+    this.stopStallWatch();
+    this.playIntent = false;
+    this.stallHintShown = false;
     this.clearSeekTimer();
     this.resumeSeekPending = false;
     this.pendingSeekSec = -1;
@@ -425,6 +636,9 @@ struct VideoPlayerPage {
       }
     }
     if (this.webAttempts.length > 0) CookieStore.saveSync();
+    for (const attempt of this.nativeAttempts) {
+      if (attempt.session) attempt.session.release();
+    }
     this.nativeAttempts = [];
     this.webAttempts = [];
     this.webMode = false;
@@ -461,7 +675,10 @@ struct VideoPlayerPage {
     // 播放中每 10 秒落一次库，切集、离开页面时立即保存。
     if (!force && Math.abs(second - this.lastSavedSec) < 10) return;
     this.lastSavedSec = second;
-    if (!this.webMode && this.playbackReady && !this.resumeSeekPending) book.durChapterPos = second;
+    // 恢复跳转没成功（或等用户按播放再跳）时，实际位置追上已存进度前不覆盖它，免得卡住退出再进就从头播。
+    const holdSec = Math.max(this.resumeFailedSec, this.deferredResumeSec);
+    const held = holdSec >= 0 && !(this.pendingSeekSec >= 0) && second < holdSec - 3;
+    if (!this.webMode && this.playbackReady && !this.resumeSeekPending && !held) book.durChapterPos = second;
     book.durChapterTime = Date.now();
     AppDatabase.getInstance().updateBook(book, false).catch((error: Error): void => {
       console.warn('[VideoPlayer] save progress failed:', error.message);
@@ -469,17 +686,45 @@ struct VideoPlayerPage {
   }
 
   private onVideoPrepared(duration: number): void {
+    // 同一个播放器再次准备（切后台被系统回收后恢复等）会回到 0 秒：跳回刚才的位置，不能从头播。
+    const reprepared = this.playbackReady;
+    const target = reprepared ? this.durablePositionSec() : this.resumeSec;
+    const shouldStart = this.playerPageVisible && (!reprepared || this.isPlaying || this.playIntent);
     this.playbackReady = true;
     this.durationSec = Math.max(0, duration);
     this.statusText = '';
-    if (this.resumeSec > 1 && (this.durationSec <= 0 || this.resumeSec < this.durationSec - 3)) {
-      this.resumeSeekPending = true;
-      this.issueSeek(this.resumeSec);
-    } else {
-      this.positionSec = 0;
-    }
+    this.stallHintShown = false;
+    this.lastProgressAt = Date.now();
     this.resumeSec = 0;
-    if (this.playerPageVisible) this.controller.start();
+    console.info(`[VideoPlayer] prepared duration=${duration} target=${target} reprepared=${reprepared}`);
+    if (reprepared) {
+      this.clearSeekTimer();
+      this.resumeSeekPending = false;
+      this.pendingSeekSec = -1;
+      this.issuedSeekSec = -1;
+      this.isPlaying = false;
+    }
+    const resumable = target > 1 && (this.durationSec <= 0 || target < this.durationSec - 3);
+    if (!resumable) {
+      this.positionSec = 0;
+    } else if (reprepared && !shouldStart) {
+      this.positionSec = target;
+      this.deferredResumeSec = target;
+    } else {
+      this.positionSec = target;
+      this.beginResumeSeek(target);
+    }
+    if (shouldStart) this.nativeStart();
+  }
+
+  private beginResumeSeek(target: number): void {
+    this.deferredResumeSec = -1;
+    this.resumeFailedSec = -1;
+    this.resumeSeekPending = true;
+    this.resumeTargetSec = target;
+    this.resumeSeekRetried = false;
+    this.resumeWaitStartedAt = Date.now();
+    this.issueSeek(target);
   }
 
   private canSeek(): boolean {
@@ -492,10 +737,21 @@ struct VideoPlayerPage {
     this.seekTimerId = -1;
   }
 
-  private issueSeek(seconds: number): void {
-    this.clearSeekTimer();
+  private issueSeek(seconds: number, accurate: boolean = true): void {
     this.issuedSeekSec = seconds;
+    this.seekAccurate = accurate;
     this.lastNativePositionSec = -1;
+    this.armSeekTimer();
+    try {
+      this.nativeSeek(seconds, accurate);
+    } catch (_) {
+      this.clearSeekTimer();
+      this.recoverUnconfirmedSeek();
+    }
+  }
+
+  private armSeekTimer(): void {
+    this.clearSeekTimer();
     const attemptId = this.activeAttemptId;
     // onSeeked 是原生进度条的回调；控制器跳转以 onUpdate 到达目标为准，不能无限等待回调。
     this.seekTimerId = setTimeout((): void => {
@@ -503,17 +759,42 @@ struct VideoPlayerPage {
       this.seekTimerId = -1;
       this.recoverUnconfirmedSeek();
     }, 3000);
-    try {
-      this.controller.setCurrentTime(seconds, SeekMode.Accurate);
-    } catch (_) {
-      this.clearSeekTimer();
-      this.recoverUnconfirmedSeek();
-    }
+  }
+
+  // 关键帧跳转会落在目标前几秒；目标较小时收窄容差，免得把起播时的 0 秒附近误当成已跳到。
+  private seekToleranceSec(): number {
+    return this.seekAccurate ? 2 : Math.max(2, Math.min(10, this.issuedSeekSec * 0.3));
   }
 
   private recoverUnconfirmedSeek(): void {
     if (this.pendingSeekSec >= 0 && this.pendingSeekSec !== this.issuedSeekSec) {
       this.issueSeek(this.pendingSeekSec);
+      return;
+    }
+    if (this.resumeSeekPending && this.resumeTargetSec >= 0) {
+      const target = this.resumeTargetSec;
+      // 播放器还没报过任何进度，多半仍在缓冲，先继续等。
+      if (this.lastNativePositionSec < 0 && Date.now() - this.resumeWaitStartedAt < RESUME_WAIT_MS) {
+        this.armSeekTimer();
+        return;
+      }
+      if (!this.resumeSeekRetried) {
+        this.resumeSeekRetried = true;
+        console.warn(`[VideoPlayer] resume seek to ${target} unconfirmed, retry on keyframe`);
+        this.issueSeek(target, false);
+        return;
+      }
+      // 两次都没跳到：已存进度保持不动，提示用户可以手动跳过去。
+      console.warn(`[VideoPlayer] resume seek to ${target} failed, actual=${this.lastNativePositionSec}`);
+      this.resumeSeekPending = false;
+      this.resumeTargetSec = -1;
+      this.resumeFailedSec = target;
+      this.pendingSeekSec = -1;
+      this.issuedSeekSec = -1;
+      if (!this.seeking && this.lastNativePositionSec >= 0) this.positionSec = this.lastNativePositionSec;
+      this.resumeNotice = `没能跳到上次的 ${this.formatTime(target)}`;
+      this.showControls = true;
+      this.scheduleHideControls();
       return;
     }
     this.resumeSeekPending = false;
@@ -526,6 +807,8 @@ struct VideoPlayerPage {
   private seekTo(seconds: number): void {
     if (!this.canSeek()) return;
     this.resumeNotice = '';
+    this.resumeFailedSec = -1;
+    this.deferredResumeSec = -1;
     this.pendingSeekSec = Math.min(this.durationSec, VideoPlaybackSupport.position(seconds));
     this.positionSec = this.pendingSeekSec;
     if (this.issuedSeekSec < 0) {
@@ -543,24 +826,42 @@ struct VideoPlayerPage {
   private restartPlayback(): void {
     if (!this.canSeek()) return;
     this.seekTo(0);
-    this.controller.start();
+    this.nativeStart();
+  }
+
+  private jumpToFailedResume(): void {
+    const target = this.resumeFailedSec;
+    if (target < 0 || !this.canSeek()) return;
+    this.seekTo(target);
   }
 
   private onVideoUpdated(seconds: number): void {
     if (!this.playbackReady || !Number.isFinite(seconds)) return;
+    const previous = this.lastNativePositionSec;
     this.lastNativePositionSec = VideoPlaybackSupport.position(seconds);
+    if (previous < 0 || Math.abs(this.lastNativePositionSec - previous) >= 0.2) this.markProgress();
     if (this.issuedSeekSec >= 0) {
-      if (Math.abs(this.lastNativePositionSec - this.issuedSeekSec) <= 2) this.onVideoSeeked(seconds);
+      if (Math.abs(this.lastNativePositionSec - this.issuedSeekSec) <= this.seekToleranceSec()) {
+        this.onVideoSeeked(seconds);
+      }
       return;
     }
     if (this.seeking) return;
     this.positionSec = VideoPlaybackSupport.position(seconds);
+    if (this.resumeFailedSec >= 0 && this.positionSec >= this.resumeFailedSec - 3) this.resumeFailedSec = -1;
+    if (this.recoveryFromSec >= 0 && this.positionSec >= this.recoveryFromSec + 30) {
+      // 一集很长时偶尔卡一次不该耗尽额度：恢复后已正常播了一段，再遇到问题仍可自动重来。
+      this.recoveryFromSec = -1;
+      this.retried = false;
+      this.stallReloads = 0;
+    }
     this.saveProgress();
   }
 
   private onVideoSeeked(seconds: number): void {
     // 原生进度条的旧回调可能晚于新的控制器跳转，只接受当前目标附近的实际进度。
-    if (!Number.isFinite(seconds) || this.issuedSeekSec < 0 || Math.abs(seconds - this.issuedSeekSec) > 2) return;
+    if (!Number.isFinite(seconds) || this.issuedSeekSec < 0 ||
+      Math.abs(seconds - this.issuedSeekSec) > this.seekToleranceSec()) return;
     if (this.pendingSeekSec >= 0 && this.pendingSeekSec !== this.issuedSeekSec) {
       this.issueSeek(this.pendingSeekSec);
       return;
@@ -568,6 +869,7 @@ struct VideoPlayerPage {
     this.clearSeekTimer();
     const resumed = this.resumeSeekPending;
     this.resumeSeekPending = false;
+    this.resumeTargetSec = -1;
     this.pendingSeekSec = -1;
     this.issuedSeekSec = -1;
     if (!this.seeking) this.positionSec = VideoPlaybackSupport.position(seconds);
@@ -581,6 +883,9 @@ struct VideoPlayerPage {
 
   private onVideoFinished(): void {
     this.isPlaying = false;
+    this.playIntent = false;
+    this.resumeFailedSec = -1;
+    this.deferredResumeSec = -1;
     this.positionSec = this.durationSec;
     this.saveProgress(true);
     if (this.autoNext && this.episodeIndex < this.chapters.length - 1) {
@@ -592,6 +897,7 @@ struct VideoPlayerPage {
   }
 
   private onVideoError(code: number): void {
+    const position = this.durablePositionSec();
     this.saveProgress(true);
     this.stopPlayback();
     this.videoUrl = '';
@@ -602,8 +908,9 @@ struct VideoPlayerPage {
       this.openWebPlayback(true);
       return;
     }
-    if (!VideoPlaybackSupport.unsupported(code) && code !== 5411005 && !this.retried) {
-      this.playEpisode(this.episodeIndex, this.positionSec, true);
+    // 403 也重取一次地址：带时效的地址过期后同样返回拒绝访问。
+    if (!VideoPlaybackSupport.unsupported(code) && !this.retried) {
+      this.playEpisode(this.episodeIndex, position, true);
       return;
     }
     this.isPlaying = false;
@@ -612,14 +919,21 @@ struct VideoPlayerPage {
 
   private togglePlay(): void {
     if (!this.videoUrl) {
-      this.playEpisode(this.episodeIndex, this.positionSec);
+      this.playEpisode(this.episodeIndex, this.durablePositionSec());
       return;
     }
     if (this.isPlaying) {
+      this.playIntent = false;
       this.saveProgress(true);
-      this.controller.pause();
+      this.nativePause();
+    } else if (this.pausedAt > 0 && Date.now() - this.pausedAt > PAUSE_REFRESH_MS) {
+      // 暂停太久，带时效的播放地址多半已过期，继续播会卡住：重新取地址从原位置接着播。
+      this.playEpisode(this.episodeIndex, this.durablePositionSec(), false, true);
+      return;
+    } else {
+      if (this.deferredResumeSec >= 0 && this.playbackReady) this.beginResumeSeek(this.deferredResumeSec);
+      this.nativeStart();
     }
-    else this.controller.start();
     this.scheduleHideControls();
   }
 
@@ -655,6 +969,8 @@ struct VideoPlayerPage {
   private selectSpeed(speed: number): void {
     if (SPEEDS.indexOf(speed) < 0) return;
     this.speed = speed;
+    const session = this.currentSession();
+    if (session) session.setSpeed(speed);
     this.closeDisplayModes();
   }
 
@@ -681,6 +997,20 @@ struct VideoPlayerPage {
       case 'fill': return ImageFit.Fill;
       default: return ImageFit.Contain;
     }
+  }
+
+  /** AVPlayer 画面没有 objectFit，按显示方式自己算 XComponent 的尺寸（vp），外层裁切。 */
+  private avSurfaceSize(): number[] {
+    const boxWidth = this.viewportWidth;
+    const boxHeight = this.viewportHeight;
+    if (this.avVideoWidth <= 0 || this.avVideoHeight <= 0 || this.displayMode === 'fill') return [boxWidth, boxHeight];
+    const ui = this.getUIContext();
+    const width = ui.px2vp(this.avVideoWidth);
+    const height = ui.px2vp(this.avVideoHeight);
+    if (this.displayMode === 'none') return [width, height];
+    const scale = this.displayMode === 'cover' ? Math.max(boxWidth / width, boxHeight / height) :
+      Math.min(boxWidth / width, boxHeight / height);
+    return [width * scale, height * scale];
   }
 
   private displayModeTitle(mode: string): string {
@@ -789,11 +1119,14 @@ struct VideoPlayerPage {
           SymbolGlyph($r('sys.symbol.clock')).fontSize(16).fontColor([Color.White])
           Text(this.resumeNotice).fontSize(AppFontSize.CAPTION).fontColor(Color.White)
             .layoutWeight(1).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-          Button('从头播放', { type: ButtonType.Normal })
+          Button(this.resumeFailedSec >= 0 ? '跳过去' : '从头播放', { type: ButtonType.Normal })
             .fontSize(AppFontSize.CAPTION).fontColor(Color.White)
             .height(44).padding({ left: AppSpacing.MD, right: AppSpacing.MD })
             .backgroundColor(Color.Transparent)
-            .onClick(() => this.restartPlayback())
+            .onClick(() => {
+              if (this.resumeFailedSec >= 0) this.jumpToFailedResume();
+              else this.restartPlayback();
+            })
         }
         .width(Math.min(300, this.viewportWidth - AppSpacing.LG * 2))
         .padding({ left: AppSpacing.LG, right: AppSpacing.XS })
@@ -1083,7 +1416,7 @@ struct VideoPlayerPage {
             .playerIconButton().enabled(this.episodeIndex < this.episodeCount - 1).accessibilityText('下一集')
             .onClick(() => this.playEpisode(this.episodeIndex + 1))
           this.playerIcon($r('sys.symbol.play_fill'), '重试原生播放',
-            () => this.playEpisode(this.episodeIndex, this.positionSec))
+            () => this.playEpisode(this.episodeIndex, this.durablePositionSec()))
           this.playerIcon($r('sys.symbol.arrow_clockwise'), '刷新网页', () => this.retryWebPlayback())
         }.padding(AppSpacing.SM).width('100%').justifyContent(FlexAlign.SpaceAround)
         if (this.webStatus) {
@@ -1151,52 +1484,52 @@ struct VideoPlayerPage {
         this.webPlayback()
       } else {
         ForEach(this.nativeAttempts, (attempt: VideoNativeAttempt) => {
-          Video({ src: attempt.url, controller: attempt.controller, currentProgressRate: this.speed })
+          if (attempt.session && attempt.surface) {
+            Stack() {
+              XComponent({ type: XComponentType.SURFACE, controller: attempt.surface })
+                .onLoad(() => {
+                  if (attempt.session && attempt.surface) {
+                    attempt.session.attachSurface(attempt.surface.getXComponentSurfaceId());
+                  }
+                })
+                .width(this.avSurfaceSize()[0])
+                .height(this.avSurfaceSize()[1])
+            }
             .width('100%')
             .height('100%')
-            .controls(false)
-            .autoPlay(false)
-            .loop(false)
-            .objectFit(this.videoObjectFit())
+            .clip(true)
             .backgroundColor(Color.Black)
-            .onPrepared((event: PreparedInfo) => {
-              if (!this.isCurrentNative(attempt)) return;
-              this.onVideoPrepared(event.duration);
-            })
-            .onStart(() => {
-              if (!this.isCurrentNative(attempt) || !this.playerPageVisible) {
-                try { attempt.controller.pause(); } catch (_) {}
-                return;
-              }
-              // 同一应用内的音频流系统不会互相打断，朗读/听书要自己停下，免得和视频声音叠在一起。
-              ReaderTtsFloatingSession.pause().catch((error: Error) => {
-                console.warn('[VideoPlayer] pause tts failed:', error.message);
-              });
-              this.isPlaying = true;
-              this.statusText = '';
-              this.scheduleHideControls();
-            })
-            .onPause(() => {
-              if (!this.isCurrentNative(attempt)) return;
-              this.isPlaying = false;
-              this.showControls = true;
-              this.saveProgress(true);
-            })
-            .onUpdate((event: PlaybackInfo) => {
-              if (!this.isCurrentNative(attempt)) return;
-              this.onVideoUpdated(event.time);
-            })
-            .onSeeked((event: PlaybackInfo) => {
-              if (!this.isCurrentNative(attempt)) return;
-              this.onVideoSeeked(event.time);
-            })
-            .onFinish(() => {
-              if (!this.isCurrentNative(attempt) || !this.playerPageVisible) return;
-              this.onVideoFinished();
-            })
-            .onError((error?: BusinessError) => {
-              if (this.isCurrentNative(attempt)) this.onVideoError(error ? error.code : 0);
-            })
+          } else {
+            Video({ src: attempt.url, controller: attempt.controller, currentProgressRate: this.speed })
+              .width('100%')
+              .height('100%')
+              .controls(false)
+              .autoPlay(false)
+              .loop(false)
+              .objectFit(this.videoObjectFit())
+              .backgroundColor(Color.Black)
+              .onPrepared((event: PreparedInfo) => {
+                if (!this.isCurrentNative(attempt)) return;
+                this.onVideoPrepared(event.duration);
+              })
+              .onStart(() => this.handleNativeStart(attempt))
+              .onPause(() => this.handleNativePause(attempt))
+              .onUpdate((event: PlaybackInfo) => {
+                if (!this.isCurrentNative(attempt)) return;
+                this.onVideoUpdated(event.time);
+              })
+              .onSeeked((event: PlaybackInfo) => {
+                if (!this.isCurrentNative(attempt)) return;
+                this.onVideoSeeked(event.time);
+              })
+              .onFinish(() => {
+                if (!this.isCurrentNative(attempt) || !this.playerPageVisible) return;
+                this.onVideoFinished();
+              })
+              .onError((error?: BusinessError) => {
+                if (this.isCurrentNative(attempt)) this.onVideoError(error ? error.code : 0);
+              })
+          }
         }, (attempt: VideoNativeAttempt): string => `${attempt.id}`)
 
         // 点画面显示或隐藏操作栏，双击暂停或继续。
@@ -1217,7 +1550,7 @@ struct VideoPlayerPage {
               .backgroundColor('#80000000')
             if (this.playbackFailed) {
               Row({ space: AppSpacing.MD }) {
-                Button('重试').onClick(() => this.playEpisode(this.episodeIndex, this.positionSec))
+                Button('重试').onClick(() => this.playEpisode(this.episodeIndex, this.durablePositionSec()))
                 if (this.videoPageUrl) {
                   Button('网页播放').onClick(() => this.openWebPlayback())
                 }

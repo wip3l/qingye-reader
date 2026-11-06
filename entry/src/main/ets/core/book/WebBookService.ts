@@ -12,6 +12,7 @@ import { ReaderImageResults } from './ReaderImageResults';
 import { BookSourceInteractionPostProcessor } from './BookSourceInteractionPostProcessor';
 import { BookSourceAudioWebRuntime } from './BookSourceAudioWebRuntime';
 import { AudioRuleSupport } from './AudioRuleSupport';
+import { AudioUrlResolver } from './AudioUrlResolver';
 import { BookSourceMetadataSupport } from './BookSourceMetadataSupport';
 import { VideoPlaybackSource, VideoPlaybackSupport } from './VideoPlaybackSupport';
 
@@ -77,7 +78,10 @@ export class WebBookService {
         video.headers = result.mediaHeaders;
         video.error = result.mediaError || '';
       } else {
-        video.url = VideoPlaybackSupport.httpUrl(await this.getContent(source, book, chapter, cancelled));
+        // 兼容书源沿用“地址,{"headers":{…}}”的写法，整串交给播放器会被当成一个打不开的地址。
+        const options = AudioRuleSupport.splitRequestOptions(await this.getContent(source, book, chapter, cancelled));
+        video.url = VideoPlaybackSupport.httpUrl(options.url);
+        if (video.url) video.headers = AudioUrlResolver.videoHeaders(video.url, source, options.headers);
       }
       if (!video.url && !video.error) video.error = '没有取到有效的视频地址';
     } catch (error) {

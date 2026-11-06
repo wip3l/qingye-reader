@@ -26,9 +26,9 @@ class MediaController {
 }
 let resolveContent = async () => ({ url: 'https://cdn.example/v.mp4', pageUrl: 'https://site.example/watch/1', error: '', headers: {} });
 const context = vm.createContext({
-  console: { warn() {} },
+  console: { warn() {}, info() {} },
   VideoController: MediaController, webview: { WebviewController: MediaController },
-  Scroller: class {}, EpisodeDataSource: class { replace() {} }, SeekMode: { Accurate: 0 },
+  Scroller: class {}, EpisodeDataSource: class { replace() {} }, SeekMode: { Accurate: 0, ClosestKeyframe: 3 },
   WebBookService: class {
     cancelled = false;
     getVideoContent(...args) { requests.push(args); return resolveContent(...args); }
@@ -41,6 +41,18 @@ const context = vm.createContext({
   clearTimeout: id => timers.delete(id), CONTROLS_HIDE_DELAY_MS: 4000, SPEEDS: [1, 1.25, 1.75, 2, 0.75],
   DISPLAY_MODES: ['contain', 'none', 'cover', 'fill'],
   ImageFit: { Contain: 0, None: 1, Cover: 2, Fill: 3 },
+  RESUME_WAIT_MS: 15000, STALL_HINT_MS: 8000, STALL_RELOAD_MS: 25000, MAX_STALL_RELOADS: 2,
+  PAUSE_REFRESH_MS: 600000, XComponentController: class {},
+  VideoAvSession: class {
+    calls = [];
+    constructor(url, headers, speed, listener) { Object.assign(this, { url, headers, speed, listener }); }
+    open() { this.calls.push('open'); }
+    start() { this.calls.push('start'); }
+    pause() { this.calls.push('pause'); }
+    seek(second, accurate) { this.calls.push(['seek', second, accurate]); }
+    setSpeed(speed) { this.calls.push(['speed', speed]); }
+    release() { this.calls.push('release'); }
+  },
 });
 vm.runInContext(stripTypeScriptTypes(support.replace(/^export /gm, '') + '\n' + attempts + '\n' + methods + '\n}', { mode: 'strip' }), context);
 const Page = vm.runInContext('VideoPlayerPage', context);
@@ -183,11 +195,21 @@ let seekWatchdog = timers.get(missingConfirmation.seekTimerId);
 assert.ok(seekWatchdog, 'seek confirmation must have a bounded wait');
 timers.delete(missingConfirmation.seekTimerId);
 seekWatchdog.fn();
+assert.equal(missingConfirmation.resumeSeekPending, true, 'first timeout retries the resume on a keyframe');
+assert.equal(missingConfirmation.seekAccurate, false);
+assert.equal(missingConfirmation.controller.calls.at(-1)[1], 12);
+missingConfirmation.onVideoUpdated(4);
+seekWatchdog = timers.get(missingConfirmation.seekTimerId);
+timers.delete(missingConfirmation.seekTimerId);
+seekWatchdog.fn();
 assert.equal(missingConfirmation.resumeSeekPending, false);
 assert.equal(missingConfirmation.canSeek(), true);
-assert.equal(missingConfirmation.resumeNotice, '', 'an unconfirmed resume must not announce success');
+assert.equal(missingConfirmation.resumeFailedSec, 12);
+assert.equal(missingConfirmation.resumeNotice, '没能跳到上次的 00:12', 'an unconfirmed resume must not announce success');
 missingConfirmation.onVideoUpdated(5);
 assert.equal(missingConfirmation.positionSec, 5, 'timeout returns to actual media updates');
+missingConfirmation.saveProgress(true);
+assert.equal(missingConfirmation.book.durChapterPos, 12, 'a failed resume keeps the saved position until playback reaches it');
 missingConfirmation.isPlaying = false;
 missingConfirmation.seekBy(15);
 missingConfirmation.seekBy(15);
@@ -350,6 +372,146 @@ display.onPageHide();
 assert.equal(display.showDisplayModes, false);
 display.stopPlayback();
 
+// The same player preparing again (e.g. reclaimed in the background) must return to the last position, not zero.
+const reprepare = newPage();
+await reprepare.playEpisode(0);
+reprepare.onVideoPrepared(300);
+reprepare.handleNativeStart(reprepare.nativeAttempts[0]);
+reprepare.onVideoUpdated(1);
+reprepare.onVideoUpdated(50);
+assert.equal(reprepare.book.durChapterPos, 50);
+reprepare.onVideoPrepared(300);
+assert.deepEqual(reprepare.controller.calls.findLast(call => Array.isArray(call)), ['seek', 50]);
+assert.equal(reprepare.controller.calls.at(-1), 'start', 'a playing player resumes after re-preparing');
+reprepare.onVideoUpdated(0);
+reprepare.saveProgress(true);
+assert.equal(reprepare.book.durChapterPos, 50, 're-preparation cannot erase the position');
+reprepare.onVideoUpdated(50);
+assert.equal(reprepare.resumeSeekPending, false);
+reprepare.handleNativePause(reprepare.nativeAttempts[0]);
+const pausedCalls = reprepare.controller.calls.length;
+reprepare.onVideoPrepared(300);
+assert.equal(reprepare.controller.calls.length, pausedCalls, 'a paused player is not seeked or started yet');
+assert.equal(reprepare.deferredResumeSec, 50);
+reprepare.onVideoUpdated(0);
+reprepare.saveProgress(true);
+assert.equal(reprepare.book.durChapterPos, 50, 'deferred resume keeps the saved position');
+reprepare.togglePlay();
+assert.deepEqual(reprepare.controller.calls.slice(pausedCalls), [['seek', 50], 'start'], 'play seeks back first');
+reprepare.stopPlayback();
+
+// A paused URL may have expired: resuming after a long pause resolves the address again at the same position.
+const longPause = newPage();
+await longPause.playEpisode(0);
+longPause.onVideoPrepared(300);
+longPause.handleNativeStart(longPause.nativeAttempts[0]);
+longPause.onVideoUpdated(1);
+longPause.onVideoUpdated(70);
+longPause.handleNativePause(longPause.nativeAttempts[0]);
+longPause.pausedAt = Date.now() - 11 * 60 * 1000;
+const beforeRefresh = requests.length;
+longPause.togglePlay();
+assert.equal(requests.length, beforeRefresh + 1, 'long pause refreshes the playback address');
+await flush();
+assert.equal(longPause.book.durChapterPos, 70);
+assert.equal(longPause.resumeSec, 70);
+assert.equal(longPause.retried, false, 'refreshing keeps the automatic error retry');
+longPause.stopPlayback();
+
+// Expired addresses answer 403; that is retried once with a fresh address too.
+const forbidden = newPage();
+await forbidden.playEpisode(0, 30);
+const beforeForbidden = requests.length;
+forbidden.onVideoError(5411005);
+await flush();
+assert.equal(requests.length, beforeForbidden + 1);
+assert.equal(forbidden.resumeSec, 30);
+forbidden.onVideoError(5411005);
+assert.equal(forbidden.playbackFailed, true);
+forbidden.stopPlayback();
+
+// Video has no buffering events: lack of progress first shows a hint, then reloads twice, then fails visibly.
+const stall = newPage();
+await stall.playEpisode(0);
+assert.ok(timers.get(stall.stallTimerId), 'the stall watch runs while native playback is active');
+stall.onVideoPrepared(300);
+stall.handleNativeStart(stall.nativeAttempts[0]);
+stall.onVideoUpdated(1);
+stall.onVideoUpdated(40);
+stall.lastProgressAt = Date.now() - 9000;
+stall.checkStall();
+assert.equal(stall.statusText, '网络较慢，正在缓冲...');
+stall.onVideoUpdated(41);
+assert.equal(stall.statusText, '', 'progress clears the buffering hint');
+stall.handleNativePause(stall.nativeAttempts[0]);
+stall.lastProgressAt = Date.now() - 60000;
+stall.checkStall();
+assert.equal(stall.statusText, '', 'a user pause is never treated as a stall');
+stall.togglePlay();
+stall.lastProgressAt = Date.now() - 26000;
+const beforeStall = requests.length;
+stall.checkStall();
+assert.equal(requests.length, beforeStall + 1, 'a long stall resolves the address again');
+await flush();
+assert.equal(stall.resumeSec, 41);
+stall.lastProgressAt = Date.now() - 26000;
+stall.checkStall();
+await flush();
+assert.equal(requests.length, beforeStall + 2);
+stall.lastProgressAt = Date.now() - 26000;
+stall.checkStall();
+assert.equal(requests.length, beforeStall + 2, 'automatic reloads are bounded');
+assert.equal(stall.playbackFailed, true);
+assert.equal(stall.book.durChapterPos, 41);
+assert.equal(stall.stallTimerId, -1);
+stall.stopPlayback();
+
+// Automatic recovery budgets refill once playback has run steadily past the recovery point.
+const refill = newPage();
+await refill.playEpisode(0, 100);
+refill.onVideoError(5411002);
+await flush();
+assert.equal(refill.retried, true);
+refill.onVideoPrepared(600);
+refill.onVideoUpdated(100);
+refill.onVideoUpdated(120);
+assert.equal(refill.retried, true, 'twenty seconds is not yet steady playback');
+refill.onVideoUpdated(131);
+assert.equal(refill.retried, false, 'steady playback restores the automatic retry');
+const beforeRefill = requests.length;
+refill.onVideoError(5411002);
+await flush();
+assert.equal(requests.length, beforeRefill + 1);
+refill.handleNativeStart(refill.nativeAttempts[0]);
+refill.pausedAt = 0;
+refill.onPageHide();
+assert.ok(refill.pausedAt > 0, 'hiding the page records the pause time even without onPause');
+refill.stopPlayback();
+
+// Sources with media headers play through AVPlayer; Video cannot send request headers.
+resolveContent = async () => ({ url: 'https://cdn.example/h.m3u8', pageUrl: '', error: '',
+  headers: { Referer: 'https://site.example/' } });
+const headed = newPage();
+await headed.playEpisode(0, 20);
+const session = headed.nativeAttempts[0].session;
+assert.ok(session, 'media headers select the AVPlayer session');
+assert.deepEqual(session.headers, { Referer: 'https://site.example/' });
+assert.deepEqual(session.calls, ['open']);
+headed.onVideoPrepared(300);
+assert.deepEqual(session.calls.slice(1), [['seek', 20, true], 'start']);
+assert.equal(headed.controller.calls.length, 0, 'the unused Video controller receives nothing');
+headed.selectSpeed(1.25);
+assert.deepEqual(session.calls.at(-1), ['speed', 1.25]);
+headed.stopPlayback();
+assert.equal(session.calls.at(-1), 'release');
+resolveContent = async () => ({ url: 'https://cdn.example/u.mp4', pageUrl: '', error: '',
+  headers: { 'User-Agent': 'Mozilla/5.0' } });
+const agentOnly = newPage();
+await agentOnly.playEpisode(0);
+assert.equal(agentOnly.nativeAttempts[0].session, null, 'a User-Agent alone keeps the Video component');
+agentOnly.stopPlayback();
+resolveContent = async () => ({ url: 'https://cdn.example/v.mp4', pageUrl: 'https://site.example/watch/1', error: '' });
+
 const pending = [];
 resolveContent = (...args) => new Promise(resolve => pending.push({ resolve, cancelled: args[3] }));
 const racing = newPage();
@@ -378,4 +540,4 @@ assert.equal(timeout.book.durChapterPos, 85);
 assert.equal(timeout.playbackFailed, true);
 assert.equal(pending[pending.length - 1].cancelled(), true, 'timed-out resolver remains cancelled after returning');
 assert.equal(timers.size, 0, 'all lifecycle timers cleaned up');
-console.log('video-playback-fallback-check: fallback, persisted resume, missing seek callbacks, bounded seek recovery, queued 15-second seeking, pause/restart, menus and lifecycle passed');
+console.log('video-playback-fallback-check: fallback, persisted resume, missing seek callbacks, bounded seek recovery, re-preparation, stalls, expired addresses, header playback, queued 15-second seeking, pause/restart, menus and lifecycle passed');

@@ -145,10 +145,25 @@ export class AudioUrlResolver {
     return AudioRuleSupport.mergeHeaders(headers, explicit);
   }
 
-  private static sourceAudioHeaders(source: BookSource | null): Record<string, string> {
-    const headers: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36'
-    };
+  /**
+   * 视频的请求头：书源级请求头（按媒体站点收窄）、媒体地址的 Cookie 和规则里显式给出的请求头。
+   * 不补默认 UA——播放页只在确有请求头时才改用能带请求头的播放器。
+   */
+  static videoHeaders(url: string, source: BookSource | null, explicit: Record<string, string>): Record<string, string> {
+    let headers = AudioUrlResolver.sourceAudioHeaders(source, false);
+    if (source) {
+      headers = AudioRuleSupport.scopeHeadersToMediaHost(headers, source.bookSourceUrl, url);
+      const cookie = VerificationSupport.sourceCookieHeader(source, url);
+      if (cookie) headers = AudioRuleSupport.mergeHeaders(headers, { 'Cookie': cookie });
+    }
+    return AudioRuleSupport.mergeHeaders(headers, explicit);
+  }
+
+  private static sourceAudioHeaders(source: BookSource | null, withDefaultAgent: boolean = true): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (withDefaultAgent) {
+      headers['User-Agent'] = 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36';
+    }
     if (!source) return headers;
     const rawHeader = source.header || '';
     try {
