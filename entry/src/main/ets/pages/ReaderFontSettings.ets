@@ -16,6 +16,7 @@ import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
 import { AdaptiveColorPicker } from '../components/AdaptiveColorPicker';
 import { AdaptiveIconButton } from '../components/AdaptiveIconButton';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import {
   ReaderRegexBubbleStyleResolver,
   ReaderRegexEmphasisContext,
@@ -51,6 +52,9 @@ class ReaderRegexPreviewSlice {
   highlighted: boolean = false;
   key: string = '';
 }
+
+/** 共用规则控件时，编辑页草稿用的下标（-1 已被标题强调占用）。 */
+const EDITING_REGEX_RULE_INDEX: number = -2;
 
 class ReaderBubbleStyleOption {
   styleId: string = '';
@@ -106,6 +110,11 @@ export struct ReaderFontSettingsEditor {
   @State regexRules: ReaderRegexFontRule[] = [];
   @State regexHighlightRefreshKey: number = 0;
   @State activeRegexInputKey: string = '';
+  // 正则规则在单独的编辑页里改草稿，点保存才写回列表；新建规则的下标为 -1。
+  @State regexEditorShown: boolean = false;
+  @State editingRegexRule: ReaderRegexFontRule = new ReaderRegexFontRule();
+  private editingRegexRuleIndex: number = -1;
+  private editingRegexRuleSnapshot: string = '';
   private readerSettingsLoaded: boolean = false;
   private readerSettingsLoading: boolean = false;
   private closingReaderFontSettings: boolean = false;
@@ -142,6 +151,10 @@ export struct ReaderFontSettingsEditor {
   }
 
   async closeReaderFontSettings(): Promise<void> {
+    if (this.regexEditorShown) {
+      this.leaveRegexRuleEditor();
+      return;
+    }
     if (this.closingReaderFontSettings) {
       return;
     }
@@ -216,6 +229,14 @@ export struct ReaderFontSettingsEditor {
           this.pageContent()
         } })
       }
+
+      // 同一节点只能挂一个模态，标题预览面板已占了根节点，规则编辑页单独挂在 1×1 节点上。
+      Column().width(1).height(1).position({ x: 0, y: 0 }).hitTestBehavior(HitTestMode.None)
+        .bindContentCover($$this.regexEditorShown, this.regexRuleEditorCover(), {
+          transition: this.regexEditorTransition(),
+          // 侧滑返回也走“是否保存？”，由 leaveRegexRuleEditor 决定关不关。
+          onWillDismiss: (_action: DismissContentCoverAction): void => this.leaveRegexRuleEditor()
+        })
     }
     .width('100%')
     .height(this.embedded ? 'auto' : '100%')
@@ -225,6 +246,16 @@ export struct ReaderFontSettingsEditor {
       height: SheetSize.LARGE, dragBar: true, showClose: true,
       backgroundColor: ThemeRuntime.readerBackgroundColor(this.appDarkMode)
     })
+  }
+
+  regexEditorTransition(): TransitionEffect {
+    const appear = TransitionEffect.translate({ x: 48 })
+      .combine(TransitionEffect.opacity(0))
+      .animation({ duration: 260, curve: Curve.Friction });
+    const disappear = TransitionEffect.translate({ x: 48 })
+      .combine(TransitionEffect.opacity(0))
+      .animation({ duration: 180, curve: Curve.EaseIn });
+    return TransitionEffect.asymmetric(appear, disappear);
   }
 
   @Builder
@@ -291,8 +322,8 @@ export struct ReaderFontSettingsEditor {
           this.emptyRegexRule()
         }
         ForEach(this.regexRules, (rule: ReaderRegexFontRule, index: number) => {
-          this.regexRulePanel(rule, index, this.regexHighlightRefreshKey)
-        }, (rule: ReaderRegexFontRule) => rule.id)
+          this.regexRuleRow(rule, index)
+        }, (rule: ReaderRegexFontRule) => `${rule.id}|${rule.name}|${rule.pattern}`)
       }
     }
     .width('calc(100% - 24vp)')
@@ -389,6 +420,7 @@ export struct ReaderFontSettingsEditor {
     return ReaderRegexFontCodec.newRuleId();
   }
 
+  /** 模板按钮直接进新建页，保存后才加入列表。 */
   addRegexRule(name: string, pattern: string): void {
     const rule = new ReaderRegexFontRule();
     rule.id = this.newRuleId();
@@ -401,13 +433,85 @@ export struct ReaderFontSettingsEditor {
     rule.emphasisColor = '';
     rule.highlightColorEnabled = false;
     rule.shadowColor = '';
-    rule.expanded = true;
-    this.regexRules = [...this.regexRules, rule];
+    this.openRegexRuleEditor(-1, rule);
+  }
+
+  openRegexRuleEditor(index: number, rule: ReaderRegexFontRule): void {
+    this.editingRegexRuleIndex = index;
+    this.editingRegexRule = ReaderRegexFontCodec.cloneRule(rule);
+    this.editingRegexRuleSnapshot = this.encodeRegexRules([this.editingRegexRule]);
+    this.activeRegexInputKey = '';
     this.bumpRegexHighlightRefresh();
-    this.saveSettings();
+    this.regexEditorShown = true;
+  }
+
+  isEditingNewRegexRule(): boolean {
+    return this.editingRegexRuleIndex < 0;
+  }
+
+  editingRegexRuleListIndex(): number {
+    for (let i = 0; i < this.regexRules.length; i++) {
+      if (this.regexRules[i].id === this.editingRegexRule.id) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  saveRegexRuleEditor(): void {
+    if (!this.regexEditorShown) return;
+    const rule = ReaderRegexFontCodec.cloneRule(this.editingRegexRule);
+    const next = this.regexRules.slice();
+    const index = this.editingRegexRuleListIndex();
+    if (index >= 0) {
+      next[index] = rule;
+    } else {
+      next.push(rule);
+    }
+    this.regexRules = next;
+    this.bumpRegexHighlightRefresh();
+    this.saveSettings(next);
+    this.closeRegexRuleEditor();
+  }
+
+  /** 返回时有改动（新建的规则总算有改动）就问是否保存。 */
+  leaveRegexRuleEditor(): void {
+    if (!this.regexEditorShown) return;
+    const changed = this.isEditingNewRegexRule() ||
+      this.encodeRegexRules([this.editingRegexRule]) !== this.editingRegexRuleSnapshot;
+    if (!changed) {
+      this.closeRegexRuleEditor();
+      return;
+    }
+    this.getUIContext().showAlertDialog({
+      title: '是否保存？',
+      message: this.isEditingNewRegexRule() ? '这条新规则还没有保存。' : '这条规则的修改还没有保存。',
+      primaryButton: { value: '不保存', action: () => this.closeRegexRuleEditor() },
+      secondaryButton: { value: '保存', action: () => this.saveRegexRuleEditor() }
+    });
+  }
+
+  deleteEditingRegexRule(): void {
+    const index = this.editingRegexRuleListIndex();
+    if (index >= 0) {
+      this.removeRegexRule(index);
+    }
+    this.closeRegexRuleEditor();
+  }
+
+  closeRegexRuleEditor(): void {
+    this.activeRegexInputKey = '';
+    this.regexEditorShown = false;
   }
 
   updateRegexRule(index: number, updater: (rule: ReaderRegexFontRule) => void): void {
+    if (index === EDITING_REGEX_RULE_INDEX) {
+      const draft = ReaderRegexFontCodec.cloneRule(this.editingRegexRule);
+      updater(draft);
+      this.editingRegexRule = draft;
+      this.bumpRegexHighlightRefresh();
+      return;
+    }
     // Title emphasis uses the same controls and resolver without joining the regex rule list.
     if (index === -1) {
       const title = ReaderTitleStyleCodec.decode(ReaderTitleStyleCodec.encode(this.titleStyle));
@@ -861,107 +965,146 @@ export struct ReaderFontSettingsEditor {
   }
 
   @Builder
-  regexRulePanel(rule: ReaderRegexFontRule, index: number, refreshKey: number) {
-    Column({ space: AppSpacing.MD }) {
-      Row() {
-        Column({ space: AppSpacing.XS }) {
-          Text(rule.name || `规则${index + 1}`)
-            .fontSize(AppFontSize.BODY_LARGE)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.primaryTextColor())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(rule.pattern || '未设置正则表达式')
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.subTextColor())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-        Button(this.isRegexRuleExpanded(index, refreshKey) ? '收起' : '展开')
-          .fontSize(AppFontSize.BODY)
+  regexRuleRow(rule: ReaderRegexFontRule, index: number) {
+    Row({ space: AppSpacing.MD }) {
+      Column({ space: AppSpacing.XS }) {
+        Text(rule.name || `规则${index + 1}`)
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Medium)
           .fontColor(this.primaryTextColor())
-          .backgroundColor(this.inputColor())
-          .height(32)
-          .onClick(() => {
-            this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
-              target.expanded = !target.expanded;
-            });
-          })
-        Button('删除')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(ThemeRuntime.dangerColor(this.appDarkMode))
-          .backgroundColor(this.inputColor())
-          .height(32)
-          .onClick(() => {
-            this.removeRegexRule(index);
-          })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(rule.pattern || '未设置正则表达式')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
-      .width('100%')
-
-      if (this.isRegexRuleExpanded(index, refreshKey)) {
-        TextInput({ text: rule.name, placeholder: '规则名称' })
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.primaryTextColor())
-          .placeholderColor(this.subTextColor())
-          .backgroundColor(this.inputColor())
-          .borderRadius(ThemeRuntime.mediumRadius())
-          .onEditChange((isEditing: boolean) => {
-            this.setRegexInputEditing(rule.id, 'name', isEditing);
-          })
-          .onChange((value: string) => {
-            if (!this.isRegexInputEditing(rule.id, 'name')) {
-              return;
-            }
-            this.updateRegexRuleById(rule.id, (target: ReaderRegexFontRule) => {
-              target.name = value;
-            });
-          })
-
-        TextInput({ text: rule.pattern, placeholder: '正则表达式' })
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.primaryTextColor())
-          .placeholderColor(this.subTextColor())
-          .backgroundColor(this.inputColor())
-          .borderRadius(ThemeRuntime.mediumRadius())
-          .onEditChange((isEditing: boolean) => {
-            this.setRegexInputEditing(rule.id, 'pattern', isEditing);
-          })
-          .onChange((value: string) => {
-            if (!this.isRegexInputEditing(rule.id, 'pattern')) {
-              return;
-            }
-            this.updateRegexRuleById(rule.id, (target: ReaderRegexFontRule) => {
-              target.pattern = value;
-            });
-          })
-
-        this.compactFontModeItem('字体类型', rule.fontMode, rule.fontFamily, (mode: string, family: string) => {
-          this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
-            target.fontMode = mode;
-            target.fontFamily = family;
-          });
-        })
-        this.regexFontSizeStepper(index)
-        ReaderFontWeightStepper({ value: this.regexRuleAt(index).fontWeight, scope: '规则', nested: true,
-          textColor: this.primaryTextColor(), disabledColor: this.subTextColor(), dividerColor: this.settingsDividerColor(),
-          onChange: (value: number) => {
-            this.updateRegexRule(index, (target: ReaderRegexFontRule) => { target.fontWeight = value; });
-          } })
-
-        this.regexEmphasisSettings(index, refreshKey)
-
-        if (!this.embedded) {
-          this.regexRulePreviewItem(index, refreshKey)
-        }
-      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(18)
+        .fontColor([this.subTextColor()])
     }
     .width('calc(100% - 32vp)')
     .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
     .backgroundColor(Color.Transparent)
     .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      for (let i = 0; i < this.regexRules.length; i++) {
+        if (this.regexRules[i].id === rule.id) {
+          this.openRegexRuleEditor(i, this.regexRules[i]);
+          return;
+        }
+      }
+    })
+  }
+
+  @Builder
+  regexRuleEditorCover() {
+    PageScaffold({ title: this.isEditingNewRegexRule() ? '新建规则' : '编辑规则',
+      onBack: () => this.leaveRegexRuleEditor(),
+      actions: () => {
+        this.regexRuleEditorActions()
+      },
+      content: () => {
+        this.regexRuleEditorContent(this.regexHighlightRefreshKey)
+      } })
+  }
+
+  @Builder
+  regexRuleEditorActions() {
+    ImmersiveHeaderAction({
+      label: '保存',
+      tint: ThemeRuntime.buttonColor(this.appDarkMode),
+      onTap: () => this.saveRegexRuleEditor()
+    })
+      .margin({ right: AppSpacing.XL })
+  }
+
+  @Builder
+  regexRuleEditorContent(refreshKey: number) {
+    Column() {
+      Column({ space: AppSpacing.MD }) {
+        TextInput({ text: this.editingRegexRule.name, placeholder: '规则名称' })
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.primaryTextColor())
+          .placeholderColor(this.subTextColor())
+          .backgroundColor(this.inputColor())
+          .borderRadius(ThemeRuntime.mediumRadius())
+          .onEditChange((isEditing: boolean) => {
+            this.setRegexInputEditing(this.editingRegexRule.id, 'name', isEditing);
+          })
+          .onChange((value: string) => {
+            if (!this.isRegexInputEditing(this.editingRegexRule.id, 'name')) {
+              return;
+            }
+            this.updateRegexRule(EDITING_REGEX_RULE_INDEX, (target: ReaderRegexFontRule) => {
+              target.name = value;
+            });
+          })
+
+        TextInput({ text: this.editingRegexRule.pattern, placeholder: '正则表达式' })
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.primaryTextColor())
+          .placeholderColor(this.subTextColor())
+          .backgroundColor(this.inputColor())
+          .borderRadius(ThemeRuntime.mediumRadius())
+          .onEditChange((isEditing: boolean) => {
+            this.setRegexInputEditing(this.editingRegexRule.id, 'pattern', isEditing);
+          })
+          .onChange((value: string) => {
+            if (!this.isRegexInputEditing(this.editingRegexRule.id, 'pattern')) {
+              return;
+            }
+            this.updateRegexRule(EDITING_REGEX_RULE_INDEX, (target: ReaderRegexFontRule) => {
+              target.pattern = value;
+            });
+          })
+
+        this.compactFontModeItem('字体类型', this.editingRegexRule.fontMode, this.editingRegexRule.fontFamily,
+          (mode: string, family: string) => {
+            this.updateRegexRule(EDITING_REGEX_RULE_INDEX, (target: ReaderRegexFontRule) => {
+              target.fontMode = mode;
+              target.fontFamily = family;
+            });
+          })
+        this.regexFontSizeStepper(EDITING_REGEX_RULE_INDEX)
+        ReaderFontWeightStepper({ value: this.editingRegexRule.fontWeight, scope: '规则', nested: true,
+          textColor: this.primaryTextColor(), disabledColor: this.subTextColor(), dividerColor: this.settingsDividerColor(),
+          onChange: (value: number) => {
+            this.updateRegexRule(EDITING_REGEX_RULE_INDEX, (target: ReaderRegexFontRule) => { target.fontWeight = value; });
+          } })
+
+        this.regexEmphasisSettings(EDITING_REGEX_RULE_INDEX, refreshKey)
+
+        // 编辑页盖住了设置页顶部的实时预览，嵌入时也显示规则预览。
+        this.regexRulePreviewItem(EDITING_REGEX_RULE_INDEX, refreshKey)
+      }
+      .width('calc(100% - 32vp)')
+      .padding({ left: 0, right: 0, top: AppSpacing.LG, bottom: AppSpacing.LG })
+      .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+
+    if (!this.isEditingNewRegexRule()) {
+      Button('删除规则')
+        .fontSize(AppFontSize.BODY)
+        .fontColor(ThemeRuntime.dangerColor(this.appDarkMode))
+        .backgroundColor(this.cardColor())
+        .width('calc(100% - 24vp)')
+        .height(44)
+        .margin({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.XXL })
+        .onClick(() => {
+          this.deleteEditingRegexRule();
+        })
+    }
   }
 
   @Builder
@@ -1541,15 +1684,11 @@ export struct ReaderFontSettingsEditor {
 
   regexRuleAt(index: number): ReaderRegexFontRule {
     if (index === -1) return this.titleStyle.emphasis;
+    if (index === EDITING_REGEX_RULE_INDEX) return this.editingRegexRule;
     if (index >= 0 && index < this.regexRules.length) {
       return this.regexRules[index];
     }
     return new ReaderRegexFontRule();
-  }
-
-  isRegexRuleExpanded(index: number, refreshKey: number): boolean {
-    const key = refreshKey >= 0 ? true : true;
-    return this.regexRuleAt(index).expanded && key;
   }
 
   regexPreviewText(rule: ReaderRegexFontRule): string {
