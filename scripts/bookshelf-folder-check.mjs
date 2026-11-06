@@ -17,7 +17,7 @@ const names = ['openTileGroupPage', 'flyIntoTileGroup', 'leaveTileGroupPage', 'f
   'measureTileGroupPageCover', 'measureTileGroupPagePose', 'estimateTileGroupPagePose', 'tileGroupPagePoseKey',
   'rememberTileGroupPagePoses', 'makeTileGroupBookFlyer', 'retargetTileGroupFlyer', 'mountTileGroupFlyers',
   'openTileGroupFlyers', 'closeTileGroupFlyers', 'shelfCoverScope', 'shelfCoverElementId', 'shelfFolderFanSlots',
-  'shelfFolderFanAngle', 'shelfFolderFanShift', 'shelfHardcoverThickness'];
+  'shelfFolderFanAngle', 'shelfFolderFanShift', 'shelfFolderFanRise', 'shelfHardcoverThickness'];
 const methods = names.map(name => {
   const plain = source.indexOf(`  ${name}(`);
   const at = plain >= 0 ? plain : source.indexOf(`  async ${name}(`);
@@ -78,7 +78,7 @@ const books = [
   { bookUrl: 'ungrouped', group: 0, type: 'audio' }
 ].map(book => ({ isPrivate: false, ...book }));
 Object.assign(shelf, {
-  bookshelfLayoutMode: 'tile', bookshelfTypeCategoryEnabled: true, bookshelfShowAllTypeTab: true, shelfScope: 'all', shelfTypeTab: 'audio', shelfTypeTabIds: ['all', 'audio'],
+  bookshelfLayoutMode: 'tile', bookshelfCompanionStagger: true, bookshelfTypeCategoryEnabled: true, bookshelfShowAllTypeTab: true, shelfScope: 'all', shelfTypeTab: 'audio', shelfTypeTabIds: ['all', 'audio'],
   shelfGroups: [{ groupId: 7, groupName: '分组甲' }, { groupId: 8, groupName: '分组乙' }],
   allBooks: books, books: [], isBookMultiSelect: false, shelfAppliedSearchKeyword: '',
   shelfCategoryRevision: 0, shelfStateRestored: false, shelfScopeSwitchAnimating: false,

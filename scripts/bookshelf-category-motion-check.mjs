@@ -45,7 +45,7 @@ function makeShelf(layout, folders = false) {
   Object.assign(shelf, {
     allBooks: books, books, shelfScope: 'all', shelfTypeTab: 'all', activeShelfGroupId: 0,
     bookshelfLayoutMode: layout, shelfTypeTabIds: ['all', 'text', 'image', 'audio'],
-    bookshelfTypeCategoryEnabled: true, bookshelfShowAllTypeTab: true,
+    bookshelfTypeCategoryEnabled: true, bookshelfShowAllTypeTab: true, bookshelfCompanionStagger: true,
     shelfCategoryPages: new Map(), shelfCategoryRevision: 0, privateShelfRevealed: false,
     privateShelfUnlockDialogSession: { isOpen: () => false }, shelfScopeSwapTimer: -1, shelfScopeFinishTimer: -1, shelfScopeTransitionGeneration: 0,
     shelfScopeSwitchAnimating: false, privateShelfEnabled: true, privateShelfHasPassword: true,

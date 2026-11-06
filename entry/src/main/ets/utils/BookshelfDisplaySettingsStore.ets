@@ -24,6 +24,8 @@ export class BookshelfDisplaySettings {
   typeCategoryEnabled: boolean = true;
   // 分类栏里是否有“全部”一项。
   showAllTypeTab: boolean = true;
+  // 陪伴布局网格里的书高矮不一、少数斜靠；关闭后一样大、全部立正。
+  companionStagger: boolean = true;
 }
 
 export class BookshelfDisplaySettingsStore {
@@ -44,6 +46,7 @@ export class BookshelfDisplaySettingsStore {
   private static readonly KEY_BOOK_OPEN_ANIMATION: string = 'bookshelfBookOpenAnimation';
   private static readonly KEY_TYPE_CATEGORY_ENABLED: string = 'bookshelfTypeCategoryEnabled';
   private static readonly KEY_SHOW_ALL_TYPE_TAB: string = 'bookshelfShowAllTypeTab';
+  private static readonly KEY_COMPANION_STAGGER: string = 'bookshelfCompanionStagger';
   // 4.4.956 起书架默认使用“陪伴”布局：升级后把已有设置统一改一次，之后用户自己改的布局不再动。
   private static readonly KEY_COMPANION_LAYOUT_MIGRATED: string = 'bookshelfCompanionLayoutMigrated';
   private static cachedSettings: BookshelfDisplaySettings | null = null;
@@ -89,6 +92,8 @@ export class BookshelfDisplaySettingsStore {
       store, BookshelfDisplaySettingsStore.KEY_TYPE_CATEGORY_ENABLED, true);
     settings.showAllTypeTab = await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB, true);
+    settings.companionStagger = await BookshelfDisplaySettingsStore.getBoolean(
+      store, BookshelfDisplaySettingsStore.KEY_COMPANION_STAGGER, true);
     if (!(await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_COMPANION_LAYOUT_MIGRATED, false))) {
       settings.layoutMode = 'companion';
@@ -124,6 +129,7 @@ export class BookshelfDisplaySettingsStore {
     await store.put(BookshelfDisplaySettingsStore.KEY_BOOK_OPEN_ANIMATION, settings.bookOpenAnimation !== false);
     await store.put(BookshelfDisplaySettingsStore.KEY_TYPE_CATEGORY_ENABLED, settings.typeCategoryEnabled !== false);
     await store.put(BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB, settings.showAllTypeTab !== false);
+    await store.put(BookshelfDisplaySettingsStore.KEY_COMPANION_STAGGER, settings.companionStagger !== false);
     await store.flush();
     BookshelfDisplaySettingsStore.cachedSettings = BookshelfDisplaySettingsStore.clone(settings);
     CloudSyncChangeTracker.markApplicationPreferenceChanged();
@@ -153,6 +159,7 @@ export class BookshelfDisplaySettingsStore {
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_TYPE_CATEGORY_ENABLED,
       settings.typeCategoryEnabled !== false);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB, settings.showAllTypeTab !== false);
+    AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_COMPANION_STAGGER, settings.companionStagger !== false);
   }
 
   static fromStorage(): BookshelfDisplaySettings {
@@ -179,6 +186,8 @@ export class BookshelfDisplaySettingsStore {
     settings.typeCategoryEnabled =
       AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_TYPE_CATEGORY_ENABLED) ?? true;
     settings.showAllTypeTab = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB) ?? true;
+    settings.companionStagger =
+      AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_COMPANION_STAGGER) ?? true;
     return settings;
   }
 
@@ -244,6 +253,7 @@ export class BookshelfDisplaySettingsStore {
     settings.bookOpenAnimation = source.bookOpenAnimation !== false;
     settings.typeCategoryEnabled = source.typeCategoryEnabled !== false;
     settings.showAllTypeTab = source.showAllTypeTab !== false;
+    settings.companionStagger = source.companionStagger !== false;
     return settings;
   }
 }

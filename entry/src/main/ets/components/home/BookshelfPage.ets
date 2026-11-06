@@ -454,6 +454,9 @@ export struct BookshelfPage {
   /** 书架设置“显示全部分类”：关闭后分类栏只列有书的类型。 */
   @StorageLink('bookshelfShowAllTypeTab') @Watch('onShelfTypeCategorySettingChanged')
   bookshelfShowAllTypeTab: boolean = true;
+  /** 书架设置“错落摆放”：关闭后陪伴网格里的书一样大、全部立正。 */
+  @StorageLink('bookshelfCompanionStagger') @Watch('onCompanionStaggerChanged')
+  bookshelfCompanionStagger: boolean = true;
   @StorageLink('bookshelfCoverAlbums') @Watch('onShelfCoverSettingsChanged') bookshelfCoverAlbums: string = '';
   @StorageLink('bookshelfLightCoverAlbumId') @Watch('onShelfCoverSettingsChanged') bookshelfLightCoverAlbumId: string = '';
   @StorageLink('bookshelfDarkCoverAlbumId') @Watch('onShelfCoverSettingsChanged') bookshelfDarkCoverAlbumId: string = '';
@@ -609,6 +612,7 @@ export struct BookshelfPage {
       this.bookshelfBookOpenAnimation = settings.bookOpenAnimation;
       this.bookshelfTypeCategoryEnabled = settings.typeCategoryEnabled;
       this.bookshelfShowAllTypeTab = settings.showAllTypeTab;
+      this.bookshelfCompanionStagger = settings.companionStagger;
     } catch (e) {
       console.warn('恢复书架显示设置失败:', e);
     }
@@ -639,6 +643,11 @@ export struct BookshelfPage {
 
   // 置顶开关决定平铺数据源里是否剔除上次阅读的书，切换后立即重建，避免同一本书出现两次或消失。
   onLastReadPinModeChanged(): void {
+    this.reloadShelfDataSources(true);
+  }
+
+  // 书的高矮、斜靠和分组叠法都跟着开关变；渲染键带上开关值，重建数据源让已有的书和分组按新样式重画。
+  onCompanionStaggerChanged(): void {
     this.reloadShelfDataSources(true);
   }
 
@@ -1077,7 +1086,8 @@ export struct BookshelfPage {
       `read_${book.durChapterTime}_${book.durChapterIndex}_${book.durChapterPos}_` +
       `${book.totalChapterNum}_${book.getVariable('readStarted')}_` +
       `badges_${book.getVariable('shelfHasUpdate')}_${book.origin}_${book.originName}_` +
-      `${progressChapterIndex}_${progressPageCount}_cover_${this.shelfCoverRenderVersions.get(book.bookUrl) || 0}`;
+      `${progressChapterIndex}_${progressPageCount}_cover_${this.shelfCoverRenderVersions.get(book.bookUrl) || 0}_` +
+      `stagger_${this.bookshelfCompanionStagger ? '1' : '0'}`;
   }
 
   openCustomNetworkCoverDialog(): void {
@@ -3266,7 +3276,7 @@ export struct BookshelfPage {
       for (const slot of this.shelfFolderFanSlots(previewBooks)) {
         const bounds = new SharedElementBounds(folder.x + Math.round((this.shelfTileColumnWidth() - width -
           this.shelfHardcoverThickness(width) - 3) / 2) + this.shelfFolderFanShift(slot),
-          folder.y + this.shelfTileHardcoverHeight() - height, width, height);
+          folder.y + this.shelfTileHardcoverHeight() - height - this.shelfFolderFanRise(slot), width, height);
         sources.push(new TileGroupPreviewSource(previewBooks[slot], bounds, this.shelfFolderFanAngle(slot),
           slot === 2 ? 0.2 : (slot === 1 ? 0.12 : 0)));
       }
@@ -4217,7 +4227,8 @@ export struct BookshelfPage {
           }
           .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey)) })
         }, (entry: ShelfTileSortEntry) => entry.book ?
-          this.shelfBookRenderKey(entry.book, entry.key) : entry.key)
+          this.shelfBookRenderKey(entry.book, entry.key) :
+          `${entry.key}_stagger_${this.bookshelfCompanionStagger ? '1' : '0'}`)
       } else {
         LazyForEach(this.shelfTileBookDataSource(pageKey), (book: Book) => {
           GridItem() {
@@ -4698,8 +4709,9 @@ export struct BookshelfPage {
     .height(coverHeight + 4)
   }
 
-  /** 分组里扇形张开的书比单本书小一圈，张开后两侧只略微探进列间距。 */
+  /** 分组里扇形张开的书比单本书小一圈，张开后两侧只略微探进列间距；关闭错落摆放时与单本书一样大。 */
   shelfFolderBookWidth(): number {
+    if (!this.bookshelfCompanionStagger) return this.shelfTileHardcoverWidth();
     return Math.max(32, Math.round(this.shelfTileHardcoverWidth() * 0.76));
   }
 
@@ -4714,11 +4726,19 @@ export struct BookshelfPage {
   }
 
   shelfFolderFanAngle(slot: number): number {
+    if (!this.bookshelfCompanionStagger) return 0;
     return slot === 1 ? -7 : (slot === 2 ? 7 : 0);
   }
 
+  /** 关闭错落摆放时不张开：三本立正叠放，后面的依次向右上露出一条边，整叠左右各探进列间距 4vp。 */
   shelfFolderFanShift(slot: number): number {
+    if (!this.bookshelfCompanionStagger) return slot === 1 ? 0 : (slot === 2 ? 4 : -4);
     return slot === 1 ? -5 : (slot === 2 ? 5 : 0);
+  }
+
+  shelfFolderFanRise(slot: number): number {
+    if (!this.bookshelfCompanionStagger) return slot * 4;
+    return 0;
   }
 
   @Builder
@@ -4748,7 +4768,7 @@ export struct BookshelfPage {
     .position({
       x: Math.round((this.shelfTileColumnWidth() - this.shelfFolderBookWidth() -
         this.shelfHardcoverThickness(this.shelfFolderBookWidth()) - 3) / 2) + this.shelfFolderFanShift(slot),
-      y: this.shelfTileHardcoverHeight() - this.shelfFolderBookHeight()
+      y: this.shelfTileHardcoverHeight() - this.shelfFolderBookHeight() - this.shelfFolderFanRise(slot)
     })
     // 以书底中点为轴张开，三本书的书底仍落在同一条线上。
     .rotate({ angle: this.shelfFolderFanAngle(slot), centerX: '50%', centerY: '100%' })
@@ -4818,12 +4838,14 @@ export struct BookshelfPage {
 
   /** 书架上的书不一样高：在单本最大尺寸的 88%–100% 之间取几档。 */
   shelfTileBookScale(book: Book): number {
+    if (!this.bookshelfCompanionStagger) return 1;
     const scales = [1, 0.94, 0.9, 0.97, 0.88, 1, 0.92];
     return scales[this.shelfBookJitterSeed(book) % scales.length];
   }
 
   /** 大多数书立正，少数几本以书底为轴微微斜靠。 */
   shelfTileBookLean(book: Book): number {
+    if (!this.bookshelfCompanionStagger) return 0;
     const angles = [0, 0, -2, 0, 2.5, 0, -1.5, 0, 3, 0, 0];
     return angles[Math.floor(this.shelfBookJitterSeed(book) / 7) % angles.length];
   }

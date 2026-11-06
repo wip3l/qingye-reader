@@ -43,6 +43,7 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfBookOpenAnimation') bookshelfBookOpenAnimation: boolean = true;
   @StorageLink('bookshelfTypeCategoryEnabled') bookshelfTypeCategoryEnabled: boolean = true;
   @StorageLink('bookshelfShowAllTypeTab') bookshelfShowAllTypeTab: boolean = true;
+  @StorageLink('bookshelfCompanionStagger') bookshelfCompanionStagger: boolean = true;
   @StorageLink('bookshelfCoverAlbums') @Watch('onCoverAlbumsChanged') bookshelfCoverAlbums: string = '';
   @StorageLink('bookshelfLightCoverAlbumId') bookshelfLightCoverAlbumId: string = '';
   @StorageLink('bookshelfDarkCoverAlbumId') bookshelfDarkCoverAlbumId: string = '';
@@ -137,6 +138,19 @@ struct BookshelfSettingsPage {
           this.bookshelfLastReadPinCount = index + 1;
           this.onDisplaySettingChanged();
         })
+    }
+    if (this.bookshelfLayoutMode === 'companion') {
+      this.itemDivider()
+      SettingSwitchRow({
+        title: '错落摆放',
+        description: '书本高矮不一、偶有斜靠；关闭后大小一致、整齐立正',
+        isOn: this.bookshelfCompanionStagger,
+        showDivider: false,
+        onChange: (value: boolean) => {
+          this.bookshelfCompanionStagger = value;
+          this.onDisplaySettingChanged();
+        }
+      })
     }
     if (this.bookshelfLayoutMode === 'tile' && this.bookshelfLastReadPinMode === 'medium') {
       this.itemDivider()
@@ -383,6 +397,7 @@ struct BookshelfSettingsPage {
       this.bookshelfBookOpenAnimation = settings.bookOpenAnimation;
       this.bookshelfTypeCategoryEnabled = settings.typeCategoryEnabled;
       this.bookshelfShowAllTypeTab = settings.showAllTypeTab;
+      this.bookshelfCompanionStagger = settings.companionStagger;
     } catch (e) {
       console.warn('重新加载书架显示设置失败:', e);
     }
@@ -577,6 +592,7 @@ struct BookshelfSettingsPage {
     settings.bookOpenAnimation = this.bookshelfBookOpenAnimation;
     settings.typeCategoryEnabled = this.bookshelfTypeCategoryEnabled;
     settings.showAllTypeTab = this.bookshelfShowAllTypeTab;
+    settings.companionStagger = this.bookshelfCompanionStagger;
     BookshelfDisplaySettingsStore.applyToStorage(settings);
     BookshelfDisplaySettingsStore.save(getContext(this), settings).catch((e: Error) => {
       console.warn('保存书架显示设置失败:', e);
