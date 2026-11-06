@@ -394,6 +394,8 @@ struct ComicSettingsPage {
         .selected(selected)
         .value(selected >= 0 && selected < options.length ? options[selected].value : '')
         .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+        .optionFont({ family: this.applicationFontFamily })
+        .selectedOptionFont({ family: this.applicationFontFamily })
         .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
         .backgroundColor(Color.Transparent)
         .arrowPosition(ArrowPosition.END)

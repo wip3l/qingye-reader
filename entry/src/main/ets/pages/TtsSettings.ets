@@ -330,6 +330,8 @@ struct TtsSettingsPage {
         option.key === this.selectedVoiceKey))
       .value(this.selectedVoiceTitle())
       .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+      .optionFont({ family: this.applicationFontFamily })
+      .selectedOptionFont({ family: this.applicationFontFamily })
       .fontColor(this.subTextColor())
       .backgroundColor(Color.Transparent)
       .arrowPosition(ArrowPosition.END)

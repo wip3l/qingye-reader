@@ -208,6 +208,8 @@ struct ReadingStatsPage {
         Select(this.periodOptions())
           .selected(STATS_MODES.indexOf(this.mode)).value(STATS_MODE_LABELS[STATS_MODES.indexOf(this.mode)])
           .font({ size: AppFontSize.BODY_LARGE, weight: FontWeight.Medium, family: this.applicationFontFamily }).fontColor(this.primaryTextColor())
+          .optionFont({ family: this.applicationFontFamily })
+          .selectedOptionFont({ family: this.applicationFontFamily })
           .backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.buttonRadius()).height(44)
           .optionFontColor(this.primaryTextColor()).selectedOptionFontColor(this.accentColor())
           .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
@@ -222,6 +224,8 @@ struct ReadingStatsPage {
         if (this.devices.length > 1) {
           Select(this.deviceOptions()).selected(this.deviceIndex()).value(this.deviceTitle())
             .font({ size: AppFontSize.BODY, weight: FontWeight.Medium, family: this.applicationFontFamily }).fontColor(this.primaryTextColor())
+            .optionFont({ family: this.applicationFontFamily })
+            .selectedOptionFont({ family: this.applicationFontFamily })
             .backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.buttonRadius()).height(44)
             .constraintSize({ maxWidth: 180 })
             .optionFontColor(this.primaryTextColor()).selectedOptionFontColor(this.accentColor())

@@ -665,6 +665,8 @@ export struct ReaderTtsPlayerPanel {
       .selected(ReaderTtsFloatingSession.ttsVoiceIndex())
       .value(this.globalTtsVoiceCode)
       .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+      .optionFont({ family: this.applicationFontFamily })
+      .selectedOptionFont({ family: this.applicationFontFamily })
       .fontColor(this.primaryTextColor)
       // The API 26 branch fills its Stack by width; inside the legacy Row the
       // layoutWeight owns the main axis and this width is ignored, so both
@@ -736,6 +738,8 @@ export struct ReaderTtsPlayerPanel {
       .selected(this.audioVoiceSelectedIndex())
       .value(this.hostAudioPage ? (this.hostVoiceTitles[this.hostVoiceIndex] || '默认') : this.globalTtsVoiceCode)
       .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+      .optionFont({ family: this.applicationFontFamily })
+      .selectedOptionFont({ family: this.applicationFontFamily })
       .fontColor(this.primaryTextColor)
       // The API 26 branch fills its Stack by width; inside the legacy Row the
       // layoutWeight owns the main axis and this width is ignored, so both

@@ -1728,6 +1728,8 @@ struct BookSourcePage {
                   .maxLines(2)
                 Select(this.sourceLoginSelectOptions(item))
                   .font({ family: this.applicationFontFamily })
+                  .optionFont({ family: this.applicationFontFamily })
+                  .selectedOptionFont({ family: this.applicationFontFamily })
                   .selected(this.sourceLoginSelectIndex(item))
                   .value(this.sourceLoginChoiceValue(item))
                   .fontColor(this.primaryTextColor())

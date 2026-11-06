@@ -412,6 +412,8 @@ struct NativeSourceSettingsPage {
                     .selected(Math.max(0, item.options.indexOf(item.value)))
                     .value(item.value)
                     .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+                    .optionFont({ family: this.applicationFontFamily })
+                    .selectedOptionFont({ family: this.applicationFontFamily })
                     .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
                     .divider(null)
                     .optionBgColor(Color.Transparent)
