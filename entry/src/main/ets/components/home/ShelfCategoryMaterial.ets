@@ -1,4 +1,5 @@
 import { ImmersiveMaterialSurface } from '../ImmersiveMaterialSurface';
+import { ThemeRuntime } from '../../theme/ThemeRuntime';
 
 /** 只共享底板；分类文字和按钮图标留在各自布局中，避免被压缩成一团。 */
 @Component
@@ -28,6 +29,8 @@ export struct ShelfCategoryMaterial {
         }
         .width(Math.max(1, this.viewportWidth - this.side * 2)).height(44)
         .borderRadius(22).clip(true)
+        // 底板自带的阴影被这一层 clip 裁掉了，阴影改挂在裁剪层上，和其他顶部按钮一致。
+        .shadow(ThemeRuntime.floatingControlShadow(this.darkMode))
         .geometryTransition('bookshelf_category_surface')
         .transition(TransitionEffect.opacity(0.99))
         .position({ x: this.side, y: this.top })
@@ -39,6 +42,7 @@ export struct ShelfCategoryMaterial {
           }) { Row().width('100%').height('100%') }
         }
         .width(40).height(40).borderRadius(20).clip(true)
+        .shadow(ThemeRuntime.floatingControlShadow(this.darkMode))
         .geometryTransition('bookshelf_category_surface')
         .transition(TransitionEffect.opacity(0.99))
         .position({ x: this.viewportWidth - this.side - 140, y: this.buttonTop })
