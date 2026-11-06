@@ -1,4 +1,5 @@
 import { ImmersiveLightSettingsStore } from '../utils/ImmersiveLightSettingsStore';
+import { SmartGripSettingsStore } from '../utils/SmartGripSettingsStore';
 import { promptAction, router } from '@kit.ArkUI';
 import pasteboard from '@ohos.pasteboard';
 import { syncSystemBars } from '../utils/SystemBars';
@@ -177,7 +178,12 @@ struct OtherSettingsPage {
         description: '根据左右手握持，自动调整导航栏和部分操作按钮的位置；需设备支持',
         isOn: this.smartGripEnabled,
         showDivider: false,
-        onChange: (value: boolean) => { this.smartGripEnabled = value; }
+        onChange: (value: boolean) => {
+          SmartGripSettingsStore.save(getContext(this), value).catch((error: Error) => {
+            console.warn('保存智感握姿设置失败:', error);
+            HdsFeedback.showToast('保存失败，请重试');
+          });
+        }
       })
     }
     .width('calc(100% - 24vp)')
