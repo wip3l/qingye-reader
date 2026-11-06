@@ -1,7 +1,7 @@
-import { ReaderFontSettingsEditor } from './ReaderFontSettings';
+import { READER_FONT_SECTION_BODY, READER_FONT_SECTION_LABELS, ReaderFontSettingsEditor } from './ReaderFontSettings';
+import { MaterialSegmentTabs } from '../components/common/MaterialSegmentTabs';
 import { ReaderMaterialPanel } from '../components/reader/ReaderFloatingMaterialBar';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
-import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { ReaderSettingsPreview, ReaderSettingsPreviewNavigation } from '../components/reader/ReaderSettingsPreview';
 import { ReaderTitleStyleCodec } from '../model/reader/ReaderTitleStyle';
 import { ReaderTypographyField } from '../components/reader/ReaderLayoutSettings';
@@ -70,15 +70,19 @@ struct SettingsPage {
   @State showNovelStyleEditor: boolean = false;
   @State fontPreviewSettings: ReaderSettings = new ReaderSettings();
   @State novelSettingsCollapsed: boolean = false;
+  // 四个样式入口各开各的悬浮面板，面板里不再互相切换。
   @State novelSettingsGroup: number = 0;
-  @State novelDisplayedSettingsGroup: number = 0;
   @State novelPreviewPageIndex: number = 0;
-  private novelStyleGroupSwitchTimer: number = -1;
-  private static readonly STYLE_GROUP_SWITCH_DURATION: number = 180;
+  // 面板高度跟随内容：内容不满时收矮，超出时在面板内滚动；0 表示还没量到。
+  @State novelStyleContentHeight: number = 0;
+  @State novelPanelHeaderHeight: number = 0;
+  @State novelPanelFooterHeight: number = 0;
+  // 阅读字体面板顶部固定的分段：自定义字体 / 正文字体 / 标题字体 / 正则字体。
+  @State novelFontSection: number = READER_FONT_SECTION_BODY;
   @State novelViewportHeight: number = 0;
   @State novelViewportWidth: number = 0;
   private novelSettingsScroller: Scroller = new Scroller();
-  private readonly novelSettingsGroups: string[] = ['排版', '页眉页脚', '字体', '背景'];
+  private readonly novelSettingsGroupTitles: string[] = ['排版', '页眉页脚', '阅读字体', '阅读背景'];
   @State typographySettingIndex: number = 0;
   @State showTypographyValueInput: boolean = false;
   @State typographyValueDraft: string = '';
@@ -167,7 +171,6 @@ struct SettingsPage {
   }
 
   aboutToDisappear(): void {
-    this.cancelNovelStyleGroupSwitch();
     if (this.isNovelSection()) this.saveReaderLayoutSettings();
   }
 
@@ -264,84 +267,15 @@ struct SettingsPage {
     // 上下使用相同的安全留白，让面板在整张阅读页内居中，同时避开系统栏。
     const edgeInset = Math.max(this.statusBarHeight, this.navBarHeight) + AppSpacing.LG;
     const available = Math.max(0, height - edgeInset * 2);
-    return Math.min(640, Math.max(260, height * 0.68), available);
+    const maxHeight = Math.min(640, Math.max(260, height * 0.68), available);
+    // 阅读字体在面板里切分段，固定用最大高度，免得每切一次面板忽高忽低。
+    if (this.novelStyleContentHeight <= 0 || this.novelSettingsGroup === 2) return maxHeight;
+    const fitted = this.novelPanelHeaderHeight + this.novelStyleContentHeight + this.novelPanelFooterHeight;
+    return Math.min(maxHeight, Math.max(Math.min(200, maxHeight), Math.ceil(fitted)));
   }
 
   novelPanelWidth(): number {
     return Math.max(1, (this.novelViewportWidth || 360) - AppSpacing.LG * 2);
-  }
-
-  selectNovelStyleGroup(index: number): void {
-    if (index < 0 || index >= this.novelSettingsGroups.length || index === this.novelSettingsGroup) return;
-    this.applyTypographyValueInput();
-    this.cancelNovelStyleGroupSwitch();
-    this.novelSettingsGroup = index;
-    // 先让同一块光感胶囊滑到目标位置，再挂载字体、正则等较重的控件。
-    this.novelStyleGroupSwitchTimer = setTimeout(() => {
-      this.novelStyleGroupSwitchTimer = -1;
-      if (this.novelDisplayedSettingsGroup === index) return;
-      this.novelDisplayedSettingsGroup = index;
-      this.novelSettingsScroller.scrollTo({ xOffset: 0, yOffset: 0 });
-    }, SettingsPage.STYLE_GROUP_SWITCH_DURATION);
-  }
-
-  cancelNovelStyleGroupSwitch(): void {
-    if (this.novelStyleGroupSwitchTimer >= 0) {
-      clearTimeout(this.novelStyleGroupSwitchTimer);
-      this.novelStyleGroupSwitchTimer = -1;
-    }
-  }
-
-  novelStyleSegmentWidth(): number {
-    return Math.max(1, (this.novelPanelWidth() - 32) / this.novelSettingsGroups.length);
-  }
-
-  @Builder
-  novelStyleSegmentContent() {
-    Stack({ alignContent: Alignment.Start }) {
-      Stack() {
-        ImmersiveMaterialSurface({ surfaceWidth: this.novelStyleSegmentWidth(), surfaceHeight: 36,
-          darkMode: this.appDarkMode, fallbackColor: ThemeRuntime.accentSurfaceColor(this.appDarkMode),
-          glowColor: `#40${this.accentColor().substring(1)}` }) {
-          Stack()
-        }
-      }
-      .id('novel_settings_indicator')
-      .width(this.novelStyleSegmentWidth())
-      .height(36)
-      .translate({ x: this.novelSettingsGroup * this.novelStyleSegmentWidth() })
-      .animation({ duration: SettingsPage.STYLE_GROUP_SWITCH_DURATION, curve: Curve.EaseOut })
-      .hitTestBehavior(HitTestMode.None)
-      .accessibilityLevel('no')
-      Row() {
-        ForEach(this.novelSettingsGroups, (group: string, index: number) => {
-          Button(group, { type: ButtonType.Capsule, stateEffect: true })
-            .id(`novel_settings_group_${index}`)
-            .height(36)
-            .layoutWeight(1)
-            .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
-            .fontSize(AppFontSize.BODY)
-            .fontWeight(this.novelSettingsGroup === index ? FontWeight.Medium : FontWeight.Normal)
-            .fontColor(this.novelSettingsGroup === index ? this.accentColor() : this.subTextColor())
-            .backgroundColor(Color.Transparent)
-            .accessibilitySelected(this.novelSettingsGroup === index)
-            .onClick(() => { this.selectNovelStyleGroup(index); })
-        }, (group: string) => group)
-      }
-      .width('100%')
-      .height(36)
-    }
-    .width(this.novelPanelWidth() - 32)
-    .height(36)
-  }
-
-  @Builder
-  novelStyleGroupSelector() {
-    ImmersiveMaterialSurface({ surfaceWidth: this.novelPanelWidth() - 24, surfaceHeight: 44,
-      darkMode: this.appDarkMode, fallbackColor: this.cardColor(),
-      glowColor: `#40${this.accentColor().substring(1)}` }) {
-      this.novelStyleSegmentContent()
-    }
   }
 
   @Builder
@@ -374,34 +308,51 @@ struct SettingsPage {
       ReaderMaterialPanel({ panelWidth: this.novelPanelWidth(), panelHeight: this.novelPanelHeight(),
       cornerRadius: ThemeRuntime.cardRadius(), darkMode: this.appDarkMode, fallbackColor: this.cardColor() }) {
       Column() {
-        Row({ space: AppSpacing.SM }) {
-          ImmersiveBackButton({ darkMode: this.appDarkMode, iconColor: this.primaryTextColor(),
-            accessibilityLabel: '返回小说设置', buttonSize: 32, containerWidth: 36, containerHeight: 40,
-            startInset: 0, compactLayout: true, onBack: () => { this.closeNovelStyleEditor(); } })
-          Text('阅读样式')
-            .fontSize(AppFontSize.SUBTITLE)
-            .fontColor(this.primaryTextColor())
-            .layoutWeight(1)
-          ImmersiveHeaderAction({ label: '查看整页 ↑', tint: this.accentColor(), onTap: () => {
-            this.applyTypographyValueInput();
-            this.novelSettingsCollapsed = true;
-          } })
-            .id('novel_settings_collapse')
+        Column() {
+          Row({ space: AppSpacing.SM }) {
+            ImmersiveBackButton({ darkMode: this.appDarkMode, iconColor: this.primaryTextColor(),
+              accessibilityLabel: '返回小说设置', buttonSize: 32, containerWidth: 36, containerHeight: 40,
+              startInset: 0, compactLayout: true, onBack: () => { this.closeNovelStyleEditor(); } })
+            Text(this.novelSettingsGroupTitles[this.novelSettingsGroup] ?? '阅读样式')
+              .fontSize(AppFontSize.SUBTITLE)
+              .fontColor(this.primaryTextColor())
+              .layoutWeight(1)
+            ImmersiveHeaderAction({ label: '查看整页 ↑', tint: this.accentColor(), onTap: () => {
+              this.applyTypographyValueInput();
+              this.novelSettingsCollapsed = true;
+            } })
+              .id('novel_settings_collapse')
+          }
+          .width('100%')
+          .padding({ left: AppSpacing.SM, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.XS })
+          if (this.novelSettingsGroup === 2) {
+            Row() {
+              MaterialSegmentTabs({ labels: READER_FONT_SECTION_LABELS, selectedIndex: this.novelFontSection,
+                tabsWidth: this.novelPanelWidth() - 24, idPrefix: 'novel_font_section',
+                onSelect: (index: number) => {
+                  this.novelFontSection = index;
+                  this.novelSettingsScroller.scrollTo({ xOffset: 0, yOffset: 0 });
+                } })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Center)
+            .padding({ top: AppSpacing.XS, bottom: AppSpacing.SM })
+          }
         }
         .width('100%')
-        .padding({ left: AppSpacing.SM, right: AppSpacing.MD, top: AppSpacing.SM })
-        Row() {
-          this.novelStyleGroupSelector()
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
-        .padding({ top: AppSpacing.XS, bottom: AppSpacing.SM })
+        .onAreaChange((_previous: Area, current: Area) => {
+          this.novelPanelHeaderHeight = Number(current.height);
+        })
         Scroll(this.novelSettingsScroller) {
           Column() {
             this.novelStyleContent()
           }
           .width('100%')
           .padding({ bottom: AppSpacing.LG })
+          .onAreaChange((_previous: Area, current: Area) => {
+            const next = Number(current.height);
+            if (Math.abs(next - this.novelStyleContentHeight) >= 1) this.novelStyleContentHeight = next;
+          })
         }
         .id('novel_settings_scroll')
         .width('100%')
@@ -409,15 +360,14 @@ struct SettingsPage {
         .align(Alignment.TopStart)
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
-        .opacity(this.novelSettingsGroup === this.novelDisplayedSettingsGroup ? 1 : 0)
-        .translate({ y: this.novelSettingsGroup === this.novelDisplayedSettingsGroup ? 0 : 6 })
-        .animation({ duration: SettingsPage.STYLE_GROUP_SWITCH_DURATION, curve: Curve.EaseOut })
-        .enabled(this.novelSettingsGroup === this.novelDisplayedSettingsGroup)
         Text('框内滑动调整 · 实时预览')
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
           .width('100%')
           .padding({ left: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+          .onAreaChange((_previous: Area, current: Area) => {
+            this.novelPanelFooterHeight = Number(current.height);
+          })
       }
       .width('100%')
       .height('100%')
@@ -501,6 +451,8 @@ struct SettingsPage {
           .selectedColor(this.accentColor())
           .blockColor(this.accentColor())
           .showTips(true)
+          // 只能拖动滑块调整，点到条上不跳值，防止在面板里上下滑动时误触。
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .accessibilityText(label)
           .onChange((currentValue: number, mode: SliderChangeMode) => {
             this.setNovelTypography(field, currentValue, mode === SliderChangeMode.End || mode === SliderChangeMode.Click);
@@ -744,7 +696,7 @@ struct SettingsPage {
   /** 样式控件共享同一个固定尺寸的阅读预览，滚动只发生在悬浮框内。 */
   @Builder
   novelStyleContent() {
-    if (this.novelDisplayedSettingsGroup === 0) {
+    if (this.novelSettingsGroup === 0) {
       this.sectionTitle('排版')
       Column() {
         ForEach(ReaderTypographyField.LABELS, (label: string, field: number) => {
@@ -774,10 +726,10 @@ struct SettingsPage {
       .borderRadius(ThemeRuntime.cardRadius())
       .clip(true)
       .backgroundColor(this.showNovelStyleEditor ? Color.Transparent : this.cardColor())
-    } else if (this.novelDisplayedSettingsGroup === 1) {
+    } else if (this.novelSettingsGroup === 1) {
       this.readerHeaderFooterSettingsPanel()
-    } else if (this.novelDisplayedSettingsGroup === 2) {
-      ReaderFontSettingsEditor({ embedded: true,
+    } else if (this.novelSettingsGroup === 2) {
+      ReaderFontSettingsEditor({ embedded: true, fontSection: this.novelFontSection,
         onStylePreviewChanged: (settings: ReaderSettings) => {
           this.fontPreviewSettings = settings;
           this.readerFontSize = settings.fontSize;
@@ -797,16 +749,14 @@ struct SettingsPage {
   }
 
   openNovelStyleEditor(group: number): void {
-    this.cancelNovelStyleGroupSwitch();
     this.novelSettingsGroup = group;
-    this.novelDisplayedSettingsGroup = group;
+    this.novelStyleContentHeight = 0;
     this.novelSettingsCollapsed = false;
     this.showNovelStyleEditor = true;
     this.syncBars();
   }
 
   closeNovelStyleEditor(): void {
-    this.cancelNovelStyleGroupSwitch();
     this.applyTypographyValueInput();
     this.saveReaderLayoutSettings();
     this.showNovelStyleEditor = false;

@@ -135,7 +135,8 @@ try {
   }
   assert.equal(Codec.decode('{"alignment":"invalid","marginTop":-5,"marginBottom":999}').alignment, 'center');
   assert.equal(Codec.decode('{"marginTop":-5,"marginBottom":999}').marginTop, 0);
-  assert.equal(Codec.decode('{"marginTop":-5,"marginBottom":999}').marginBottom, 120);
+  assert.equal(Codec.decode('{"marginTop":-5,"marginBottom":999}').marginBottom, 300);
+  assert.equal(Codec.decode('{"marginTop":300,"marginBottom":250}').marginTop, 300, 'title margins reach 300 vp');
   assert.equal(Codec.decode('{"marginTop":12.7,"marginBottom":"bad"}').marginTop, 13);
   assert.equal(Codec.decode('{"marginTop":12.7,"marginBottom":"bad"}').marginBottom, 0);
   for (const raw of ['{', 'null', '[]', '42', '{"mode":"invalid","emphasis":null}']) {
@@ -177,8 +178,12 @@ try {
     assert(start >= 0, name);
     return fontPage.slice(start, fontPage.indexOf('\n  }', start) + 4);
   };
-  vm.runInContext(compile(`class TitleControls {
+  const editingIndex = fontPage.match(/const EDITING_REGEX_RULE_INDEX: number = (-?\d+);/);
+  assert(editingIndex, 'rule editor draft index is defined');
+  vm.runInContext(compile(`const EDITING_REGEX_RULE_INDEX = ${Number(editingIndex[1])};
+  class TitleControls {
     titleStyle = new ReaderTitleStyleSettings(); regexRules = []; saves = 0; regexHighlightRefreshKey = 0;
+    editingRegexRule = new ReaderRegexFontRule();
     saveSettings() { this.saves++; this.savedTitle = ReaderTitleStyleCodec.encode(this.titleStyle); }
     bumpRegexHighlightRefresh() { this.regexHighlightRefreshKey++; }
     ${['updateTitleSplit','updateRegexRule','regexRuleAt','adjustTitleSplit',
@@ -208,6 +213,13 @@ try {
   assert.equal(JSON.parse(controls.savedTitle).marginTop, 24);
   assert.equal(JSON.parse(controls.savedTitle).marginBottom, 36);
   assert.equal(controls.saves, 10);
+  controls.updateTitleSplit('marginTop', '299');
+  controls.adjustTitleMargin(true, 1);
+  assert.equal(JSON.parse(controls.savedTitle).marginTop, 300, 'the plus button reaches the 300 vp maximum');
+  controls.adjustTitleMargin(true, 1);
+  assert.equal(JSON.parse(controls.savedTitle).marginTop, 300);
+  controls.updateTitleSplit('marginTop', '24');
+  controls.saves = 10;
   controls.updateTitleSplit('singlePage', 'true');
   assert.equal(JSON.parse(controls.savedTitle).singlePage, true);
   controls.updateTitleSplit('singlePage', 'false');

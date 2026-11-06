@@ -16,6 +16,7 @@ import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
 import { AdaptiveColorPicker } from '../components/AdaptiveColorPicker';
 import { AdaptiveIconButton } from '../components/AdaptiveIconButton';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
+import { MaterialSegmentTabs } from '../components/common/MaterialSegmentTabs';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import {
   ReaderRegexBubbleStyleResolver,
@@ -53,6 +54,10 @@ class ReaderRegexPreviewSlice {
   key: string = '';
 }
 
+/** 字体设置分四段显示，顶部切换；默认停在正文字体。 */
+export const READER_FONT_SECTION_LABELS: string[] = ['自定义字体', '正文字体', '标题字体', '正则字体'];
+export const READER_FONT_SECTION_BODY: number = 1;
+
 /** 共用规则控件时，编辑页草稿用的下标（-1 已被标题强调占用）。 */
 const EDITING_REGEX_RULE_INDEX: number = -2;
 
@@ -69,6 +74,11 @@ class ReaderBubbleStyleOption {
 @Component
 export struct ReaderFontSettingsEditor {
   @Prop embedded: boolean = false;
+  // 外层自己放切换栏时传入当前分段（小说设置的悬浮面板把切换栏固定在面板顶部）；-1 表示由本组件显示切换栏。
+  @Prop fontSection: number = -1;
+  @State ownFontSection: number = READER_FONT_SECTION_BODY;
+  @State editorWidth: number = 0;
+  private customFontPreviewFamilies: Map<string, string> = new Map<string, string>();
   onStylePreviewChanged: (settings: ReaderSettings) => void = (_settings: ReaderSettings): void => {};
   onCloseReady: (close: () => void) => void = (_close: () => void): void => {};
   onShownReady: (show: () => void) => void = (_show: () => void): void => {};
@@ -240,6 +250,10 @@ export struct ReaderFontSettingsEditor {
     }
     .width('100%')
     .height(this.embedded ? 'auto' : '100%')
+    .onAreaChange((_previous: Area, current: Area) => {
+      const width = Number(current.width);
+      if (width > 0 && Math.abs(width - this.editorWidth) >= 1) this.editorWidth = width;
+    })
     .backgroundColor(this.embedded ? Color.Transparent : this.pageColor())
     .expandSafeArea(this.embedded ? [] : [SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindSheet($$this.titleReadingPreview, this.titleReadingPreviewSheet, {
@@ -258,10 +272,105 @@ export struct ReaderFontSettingsEditor {
     return TransitionEffect.asymmetric(appear, disappear);
   }
 
+  activeFontSection(): number {
+    return this.fontSection >= 0 ? this.fontSection : this.ownFontSection;
+  }
+
   @Builder
   pageContent() {
-    this.customFontEntryItem()
+    if (this.fontSection < 0) {
+      Row() {
+        MaterialSegmentTabs({ labels: READER_FONT_SECTION_LABELS, selectedIndex: this.ownFontSection,
+          tabsWidth: Math.max(1, (this.editorWidth || 360) - AppSpacing.LG * 2), idPrefix: 'reader_font_section',
+          onSelect: (index: number) => { this.ownFontSection = index; } })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .padding({ top: AppSpacing.SM })
+    }
+    if (this.activeFontSection() === 0) {
+      this.customFontSection()
+    } else if (this.activeFontSection() === 1) {
+      this.bodyFontSection()
+    } else if (this.activeFontSection() === 2) {
+      this.titleFontSection()
+    } else {
+      this.regexFontSection()
+    }
+  }
 
+  @Builder
+  customFontSection() {
+    this.customFontEntryItem()
+    this.sectionTitle('已上传的字体')
+    Column() {
+      if (this.customFonts().length === 0) {
+        Text('还没有上传字体，点上方“上传 / 管理”添加 ttf、otf、ttc 字体文件。')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.subTextColor())
+          .width('100%')
+          .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+      }
+      ForEach(this.customFonts(), (font: ReaderCustomFontItem, index: number) => {
+        this.customFontRow(font, index)
+      }, (font: ReaderCustomFontItem) => font.filePath || font.familyName)
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
+  }
+
+  @Builder
+  customFontRow(font: ReaderCustomFontItem, index: number) {
+    Row({ space: AppSpacing.MD }) {
+      Text(font.sourceName || font.familyName)
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontColor(this.primaryTextColor())
+        .fontFamily(this.customFontPreviewFamily(font))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      if (this.customFontUsage(index)) {
+        Text(this.customFontUsage(index))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.accentColor())
+      }
+    }
+    .width('calc(100% - 32vp)')
+    .constraintSize({ minHeight: 52 })
+    .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
+    .border({ width: { bottom: index < this.customFonts().length - 1 ? 0.5 : 0 }, color: this.settingsDividerColor() })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 列表里用字体本身显示名字；注册结果按文件缓存，避免每次重绘都重新注册。 */
+  customFontPreviewFamily(font: ReaderCustomFontItem): string {
+    const key = font.filePath || font.familyName;
+    let family = this.customFontPreviewFamilies.get(key);
+    if (family === undefined) {
+      family = this.registerCustomFont(font);
+      this.customFontPreviewFamilies.set(key, family);
+    }
+    return family || this.applicationFontFamily;
+  }
+
+  /** 这款字体正被正文或标题使用时，在列表里标出来。 */
+  customFontUsage(index: number): string {
+    const optionIndex = index + 2;
+    const uses: string[] = [];
+    if (this.selectedFontIndex(this.readerBodyFontMode, this.readerBodyFontFamily) === optionIndex) {
+      uses.push('正文');
+    }
+    if (this.selectedFontIndex(this.readerTitleFontMode, this.readerTitleFontFamily) === optionIndex) {
+      uses.push('标题');
+    }
+    return uses.length > 0 ? `${uses.join('、')}在用` : '';
+  }
+
+  @Builder
+  bodyFontSection() {
     this.sectionTitle('正文字体设置')
     Column() {
       this.fontModeItem('字体类型', this.readerBodyFontMode, this.readerBodyFontFamily, (mode: string, family: string) => {
@@ -285,7 +394,10 @@ export struct ReaderFontSettingsEditor {
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
     .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
+  }
 
+  @Builder
+  titleFontSection() {
     this.sectionTitle('标题字体设置')
     Column() {
       if (!this.embedded) {
@@ -312,7 +424,10 @@ export struct ReaderFontSettingsEditor {
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
     .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
+  }
 
+  @Builder
+  regexFontSection() {
     this.sectionTitle('正则字体设置')
     Column() {
       this.regexEnableSwitchItem()
@@ -763,7 +878,7 @@ export struct ReaderFontSettingsEditor {
         .fontSize(AppFontSize.BODY_LARGE)
         .fontColor(this.primaryTextColor())
         .layoutWeight(1)
-      Text('上传 / 删除')
+      Text('上传 / 管理')
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .margin({ right: AppSpacing.MD })
@@ -1232,15 +1347,18 @@ export struct ReaderFontSettingsEditor {
         this.fontSizeStepButton($r('sys.symbol.minus'), `减小标题${label}`,
           (top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) > 0,
           () => this.adjustTitleMargin(top, -1))
-        Slider({ value: top ? this.titleStyle.marginTop : this.titleStyle.marginBottom, min: 0, max: 120, step: 1 })
+        Slider({ value: top ? this.titleStyle.marginTop : this.titleStyle.marginBottom, min: 0,
+          max: ReaderTitleSplit.MAX_MARGIN, step: 1 })
           .layoutWeight(1)
           .selectedColor(this.accentColor())
           .blockColor(this.accentColor())
           .trackColor(this.inputColor())
+          // 只能拖动滑块调整，点到条上不跳值，防止滑动面板时误触。
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .onChange((current: number) => this.updateTitleSplit(top ? 'marginTop' : 'marginBottom', `${current}`))
           .accessibilityText(`标题${label}`)
         this.fontSizeStepButton($r('sys.symbol.plus'), `增大标题${label}`,
-          (top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) < 120,
+          (top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) < ReaderTitleSplit.MAX_MARGIN,
           () => this.adjustTitleMargin(top, 1))
       }.width('100%')
     }.width('100%')
@@ -1396,6 +1514,7 @@ export struct ReaderFontSettingsEditor {
           .selectedColor(this.accentColor())
           .blockColor(this.accentColor())
           .trackColor(this.inputColor())
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .onChange((current: number) => {
             this.updateTitleSplit(secondary ? 'secondaryScale' : 'lineGap', `${current}`);
           })

@@ -13,12 +13,15 @@ export class ReaderTitleSplitSettings {
 }
 
 export class ReaderTitleSplit {
+  /** 标题上、下边距的上限（vp）。 */
+  static readonly MAX_MARGIN: number = 300;
+
   static normalizeAlignment(alignment: string): string {
     return alignment === 'left' || alignment === 'right' ? alignment : 'center';
   }
 
   static normalizeMargin(margin: number): number {
-    return Number.isFinite(margin) ? Math.round(Math.max(0, Math.min(120, margin))) : 0;
+    return Number.isFinite(margin) ? Math.round(Math.max(0, Math.min(ReaderTitleSplit.MAX_MARGIN, margin))) : 0;
   }
 
   static normalizeMode(mode: string): string {

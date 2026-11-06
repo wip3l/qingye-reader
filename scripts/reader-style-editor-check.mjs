@@ -8,8 +8,6 @@ import { loadReaderModules } from './lib/load-reader-modules.mjs';
 const base = new URL('../entry/src/main/ets/', import.meta.url);
 const read = name => fs.readFileSync(new URL(name, base), 'utf8').replace(/\r\n/g, '\n');
 const source = read('pages/Settings.ets');
-const switchDuration = source.match(/STYLE_GROUP_SWITCH_DURATION:\s*number\s*=\s*(\d+)/);
-assert(switchDuration, 'style category transition duration is defined');
 function method(name, moduleSource = source) {
   const start = moduleSource.indexOf(`  ${name}(`);
   assert(start >= 0, `Missing ${name}`);
@@ -32,7 +30,6 @@ vm.runInContext(compile(read('core/reader/ReaderFontWeight.ts')) + '\n' +
   compile(read('core/reader/ReaderCommentBubbleSize.ts')) + '\n' +
   compile(fieldsSource.slice(fieldsStart, fieldsEnd)) + '\n' + compile(`
 class ReaderSettings {}
-class SettingsPage { static STYLE_GROUP_SWITCH_DURATION = ${Number(switchDuration[1])}; }
 class EditorHarness {
   readerFontSize = 20;
   readerFontWeight = 400;
@@ -59,16 +56,14 @@ class EditorHarness {
   novelSettingsCollapsed = false;
   novelViewportWidth = 390;
   novelSettingsGroup = 0;
-  novelDisplayedSettingsGroup = 0;
-  novelStyleGroupSwitchTimer = -1;
-  novelSettingsGroups = ['排版', '页眉页脚', '字体', '背景'];
-  scrollResets = 0;
-  novelSettingsScroller = { scrollTo: () => { this.scrollResets++; } };
+  novelStyleContentHeight = 0;
+  novelPanelHeaderHeight = 0;
+  novelPanelFooterHeight = 0;
   applyTypographyValueInput(): void {}
   saveReaderLayoutSettings(): void { this.saves++; }
+  syncBars(): void {}
   ${['setNovelTypography', 'currentTypographySettingValue', 'previewLayoutSettings',
-    'novelPanelTop', 'novelPanelHeight', 'novelPanelWidth', 'novelStyleSegmentWidth',
-    'selectNovelStyleGroup', 'cancelNovelStyleGroupSwitch'].map(name => method(name)).join('\n')}
+    'novelPanelTop', 'novelPanelHeight', 'novelPanelWidth', 'openNovelStyleEditor'].map(name => method(name)).join('\n')}
 }
 globalThis.api = { EditorHarness, ReaderTypographyField };
 `), context);
@@ -106,30 +101,27 @@ for (const height of [280, 360, 600, 844, 1200]) {
 }
 console.log('PASS: all ten typography fields clamp, preview live, save on commit, preserve font/chrome settings, and fit short and tall windows');
 
-const switching = new Harness();
-switching.selectNovelStyleGroup(2);
-assert.equal(switching.novelSettingsGroup, 2, 'selection responds before heavy controls mount');
-assert.equal(switching.novelDisplayedSettingsGroup, 0);
-assert.equal([...pendingSwitches.values()][0].delay, 180, 'match the quick-jump transition duration');
-switching.selectNovelStyleGroup(3);
-assert.equal(pendingSwitches.size, 1, 'rapid taps cancel the previous pending content switch');
-for (const { callback } of pendingSwitches.values()) callback();
-pendingSwitches.clear();
-assert.equal(switching.novelDisplayedSettingsGroup, 3, 'only the final category mounts');
-assert.equal(switching.scrollResets, 1);
-switching.selectNovelStyleGroup(3);
-switching.selectNovelStyleGroup(-1);
-switching.selectNovelStyleGroup(4);
-assert.equal(pendingSwitches.size, 0, 'repeated and invalid taps schedule no rebuild');
-switching.selectNovelStyleGroup(1);
-switching.cancelNovelStyleGroupSwitch();
-assert.equal(pendingSwitches.size, 0, 'closing the editor cancels a pending switch');
-for (const width of [320, 390, 600]) {
-  switching.novelViewportWidth = width;
-  assert.equal(switching.novelStyleSegmentWidth() * 4, switching.novelPanelWidth() - 32,
-    'indicator and four buttons share the same equal-width geometry');
-}
-console.log('PASS: immediate selection, 180 ms transitions, rapid-tap cancellation and equal segment geometry');
+const fitted = new Harness();
+fitted.novelViewportHeight = 844;
+const fullHeight = fitted.novelPanelHeight();
+fitted.openNovelStyleEditor(3);
+assert.equal(fitted.novelSettingsGroup, 3, 'each entry opens its own panel');
+fitted.novelPanelHeaderHeight = 48;
+fitted.novelPanelFooterHeight = 32;
+fitted.novelStyleContentHeight = 220;
+assert.equal(fitted.novelPanelHeight(), 300, 'a short category shrinks the panel to its content');
+assert(Math.abs(fitted.novelPanelTop() - (844 - fitted.novelPanelTop() - 300)) < 0.001, 'a fitted panel stays centered');
+fitted.novelStyleContentHeight = 40;
+assert.equal(fitted.novelPanelHeight(), 200, 'nearly empty content keeps a usable minimum height');
+fitted.novelStyleContentHeight = 5000;
+assert.equal(fitted.novelPanelHeight(), fullHeight, 'long content scrolls inside the full-height panel');
+fitted.openNovelStyleEditor(2);
+fitted.novelStyleContentHeight = 220;
+assert.equal(fitted.novelPanelHeight(), fullHeight, 'the font panel keeps one height while switching its sections');
+fitted.openNovelStyleEditor(0);
+assert.equal(fitted.novelStyleContentHeight, 0, 'reopening re-measures the new category');
+assert.equal(fitted.novelPanelHeight(), fullHeight);
+console.log('PASS: separate category panels fit short content, cap long content and stay centered');
 
 const previewSource = read('components/reader/ReaderSettingsPreview.ets');
 const withoutImports = code => code.replace(/^import .*;\n/gm, '');
