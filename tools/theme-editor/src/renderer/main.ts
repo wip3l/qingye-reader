@@ -5,7 +5,7 @@ import {
   deserializeDraft, usedAssetPaths, type EditorAsset, type EditorProject, type FileMap
 } from '../core/packageIo.ts';
 import { $, assetUrl, getPath, h, mp, project, S, setPath, toast, type Mode } from './state.ts';
-import { SECTIONS, SCREENS, section, assetFields, type Field } from './sections.ts';
+import { SECTIONS, SCREENS, SHELF_LAYOUTS, section, assetFields, type Field } from './sections.ts';
 import { renderScreen, PHONE_H, PHONE_W } from './preview.ts';
 import { editorIssues, sizeWarning, strictIssue, type Issue } from './checks.ts';
 import { alphaOf, contrast, darkDraft, isColor, withAlpha } from './colors.ts';
@@ -252,6 +252,13 @@ function renderPreview(): void {
   fitPhones();
   $('#screens').replaceChildren(...SCREENS.map(([id, label]) => h('button', {
     'aria-pressed': S.ui.screen === id ? 'true' : 'false', onclick: () => { S.ui.screen = id; renderPreview(); }
+  }, label)));
+  // 书架画面才有布局切换；应用里四种布局对主题素材的用法不同（陪伴用精装书，紧凑和宽松是列表）。
+  const layouts = $('#shelf-layouts');
+  layouts.hidden = S.ui.screen !== 'shelf';
+  layouts.replaceChildren(...SHELF_LAYOUTS.map(([id, label]) => h('button', {
+    'aria-pressed': S.ui.shelfLayout === id ? 'true' : 'false', title: `书架布局：${label}`,
+    onclick: () => { S.ui.shelfLayout = id as typeof S.ui.shelfLayout; renderPreview(); }
   }, label)));
   document.querySelectorAll('#layout-seg button').forEach((b) => b.setAttribute('aria-pressed', (b as HTMLElement).dataset.l === S.ui.layout ? 'true' : 'false'));
 }

@@ -199,7 +199,10 @@ export const SECTIONS: Section[] = [
   }
 ];
 
-export const SCREENS: [string, string][] = [['shelf', '书架'], ['reader', '阅读'], ['tts', '朗读'], ['startup', '启动'], ['card', '主题卡片']];
+export const SCREENS: [string, string][] = [['shelf', '书架'], ['explore', '发现'], ['search', '搜索'], ['mine', '我的'],
+  ['reader', '阅读'], ['tts', '朗读'], ['startup', '启动'], ['card', '主题卡片']];
+/** 应用“书架布局”的四个选项；陪伴是新装应用的默认值。 */
+export const SHELF_LAYOUTS: [string, string][] = [['companion', '陪伴'], ['tile', '平铺'], ['loose', '宽松'], ['compact', '紧凑']];
 
 export function section(id: string): Section {
   return SECTIONS.find((s) => s.id === id) || SECTIONS[0];

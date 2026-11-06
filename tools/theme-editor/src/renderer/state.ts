@@ -18,12 +18,14 @@ export interface UiState {
   mode: Mode;
   screen: string;
   layout: 'both' | 'one';
+  /** 书架画面按哪种布局画，与应用“书架布局”设置的四个值一致。 */
+  shelfLayout: 'companion' | 'tile' | 'loose' | 'compact';
 }
 
 export const S: { project: EditorProject | null; doc: DocInfo; ui: UiState } = {
   project: null,
   doc: { filePath: null, fileName: '', dirty: false, problems: [] },
-  ui: { section: 'meta', mode: 'light', screen: 'card', layout: 'both' }
+  ui: { section: 'meta', mode: 'light', screen: 'card', layout: 'both', shelfLayout: 'companion' }
 };
 
 export function project(): EditorProject {

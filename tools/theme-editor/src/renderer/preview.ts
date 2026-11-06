@@ -84,39 +84,153 @@ function navIcon(key: string, selected: boolean): HTMLElement {
   return h('i', { class: 'ico', style: `--m:url("${url || svgUrl(DEFAULT_NAV[key])}")` });
 }
 
-function screenShelf(mode: Mode, e: Effective): HTMLElement {
-  const s = h('div', { class: 'scr shelf' });
-  // 首页背景贴顶、铺满宽度，和应用一样向下淡成页面底色；状态栏和标题都压在它上面。
-  const backdrop = assetUrl((project().parts.homeBackdrop || {})[mode]);
-  if (backdrop) {
-    s.append(h('div', { class: 'hbg', 'data-sec': 'homeBackdrop' },
-      h('img', { src: backdrop, alt: '' }), h('i', { class: mode === 'dark' ? 'dark' : '' })));
-  }
+/**
+ * 首页背景（HomeThemeBackdrop）：贴顶、4:5 铺满宽度，向下淡成页面底色。书架整张显示；发现、搜索、我的只衬标题区，
+ * 高度和不透明度取各页传给组件的值，渐变停点照搬组件。浅深色不互相借用。
+ */
+function homeBackdrop(mode: Mode, e: Effective, visibleHeight: number, strength: number): HTMLElement | null {
+  const url = assetUrl((project().parts.homeBackdrop || {})[mode]);
+  if (!url) return null;
+  const stops = mode === 'dark' ? [[0.25, 0], [0.55, 38], [0.9, 70], [1, 100]] : [[0.1, 0], [0.3, 38], [0.85, 72], [1, 100]];
+  const gradient = stops.map(([a, at]) => `color-mix(in srgb, ${e.c.pageColor} ${Math.round(a * 100)}%, transparent) ${at}%`).join(', ');
+  return h('div', { class: 'hbg', 'data-sec': 'homeBackdrop', style: visibleHeight ? `height:${visibleHeight}px` : 'aspect-ratio:4 / 5' },
+    h('img', { src: url, alt: '', style: `opacity:${strength}` }), h('i', { style: `background:linear-gradient(${gradient})` }));
+}
+
+/** 首页四个页签共用的骨架：背景、状态栏、内容、底栏（当前页签用选中态图标）。 */
+function homeScreen(mode: Mode, e: Effective, tab: number, cls: string, backdrop: HTMLElement | null, ...content: HTMLElement[]): HTMLElement {
+  const s = h('div', { class: `scr home ${cls}` });
+  if (backdrop) s.append(backdrop);
   s.append(statusBar(luminance(e.c.pageColor) < 0.25));
-  s.append(h('div', { class: 'hd', 'data-sec': 'colors' }, h('b', {}, '书架'), h('span', { class: 'hd-acts' }, '整理', h('i', { class: 'dots' }))));
-  s.append(h('div', { class: 'search', 'data-sec': 'colors' }, '搜索书架里的书'));
-  const recentCover = coverTile(1, '夜航船');
-  recentCover.classList.add('mini');
-  s.append(h('div', { class: 'recent', 'data-sec': 'colors' }, recentCover,
-    h('div', { class: 'rc-body' }, h('div', { class: 't' }, '夜航船'), h('div', { class: 's' }, '第十七章 · 灯下'),
-      h('div', { class: 'bar' }, h('i'))),
-    h('span', { class: 'go' }, '继续阅读')));
-  s.append(h('div', { class: 'sec-title', 'data-sec': 'colors' }, '全部书籍', h('span', {}, '6')));
-  const grid = h('div', { class: 'grid' });
-  BOOKS.forEach(([title, sub], i) => grid.append(h('div', { class: 'cell' }, coverTile(i, title), h('div', { class: 'gname' }, title), h('div', { class: 'gsub' }, sub))));
-  const folder = assetUrl((project().parts.book || {}).shelfFolder);
-  const folderTile = h('div', { class: 'bk', 'data-sec': 'book' },
-    folder ? h('img', { class: 'cv', src: folder, alt: '' }) : (usesBaseArt() ? placeholder(`沿用「${baseTheme().name}」文件夹`, 'fill') : h('div', { class: 'plain folder' }, h('b', {}, '分组'))));
-  grid.append(h('div', { class: 'cell' }, folderTile, h('div', { class: 'gname' }, '收藏夹'), h('div', { class: 'gsub' }, '8 本')));
-  s.append(grid);
+  s.append(h('div', { class: 'home-body' }, ...content));
   const nav = project().parts.navigation || {};
   const iconsOnly = nav.labels === 'hidden' && !!nav.bookshelf;
   const bar = h('div', { class: `navbar${iconsOnly ? ' icons-only' : ''}`, 'data-sec': 'nav' });
   NAV_TABS.forEach(([key, label], i) => {
-    bar.append(h('div', { class: `it${i === 0 ? ' on' : ''}` }, navIcon(key, i === 0), iconsOnly ? null : label));
+    bar.append(h('div', { class: `it${i === tab ? ' on' : ''}` }, navIcon(key, i === tab), iconsOnly ? null : label));
   });
   s.append(bar);
   return s;
+}
+
+function folderArt(): HTMLElement {
+  const folder = assetUrl((project().parts.book || {}).shelfFolder);
+  if (folder) return h('img', { class: 'cv', src: folder, alt: '' });
+  return usesBaseArt() ? placeholder(`沿用「${baseTheme().name}」文件夹`, 'fill') : h('div', { class: 'plain folder' }, h('b', {}, '分组'));
+}
+
+function shelfHeader(): HTMLElement[] {
+  return [
+    h('div', { class: 'hd', 'data-sec': 'colors' }, h('b', {}, '书架'), h('span', { class: 'hd-acts' }, '整理', h('i', { class: 'dots' }))),
+    h('div', { class: 'search', 'data-sec': 'colors' }, '搜索书架里的书')
+  ];
+}
+
+/** 平铺：上次阅读卡 + 三列封面网格，分组是一张文件夹插画。 */
+function shelfTile(): HTMLElement[] {
+  const recentCover = coverTile(1, '夜航船');
+  recentCover.classList.add('mini');
+  const grid = h('div', { class: 'grid' });
+  BOOKS.forEach(([title, sub], i) => grid.append(h('div', { class: 'cell' }, coverTile(i, title), h('div', { class: 'gname' }, title), h('div', { class: 'gsub' }, sub))));
+  grid.append(h('div', { class: 'cell' }, h('div', { class: 'bk', 'data-sec': 'book' }, folderArt()), h('div', { class: 'gname' }, '收藏夹'), h('div', { class: 'gsub' }, '8 本')));
+  return [...shelfHeader(),
+    h('div', { class: 'recent', 'data-sec': 'colors' }, recentCover,
+      h('div', { class: 'rc-body' }, h('div', { class: 't' }, '夜航船'), h('div', { class: 's' }, '第十七章 · 灯下'), h('div', { class: 'bar' }, h('i'))),
+      h('span', { class: 'go' }, '继续阅读')),
+    h('div', { class: 'sec-title', 'data-sec': 'colors' }, '全部书籍', h('span', {}, '6')),
+    grid];
+}
+
+const LIST_BOOKS: [string, string, string, string][] = [
+  ['夜航船', '张岱', '最新：第二百零三章 归舟', '读到 58%'], ['山海拾遗', '佚名', '最新：卷九 大荒北经', '读到 12%'],
+  ['长安客', '沈三白', '已完结 · 共 86 章', '未读'], ['北窗', '林间', '更新 2 章：第四十一章 雪夜', '读到 3%'], ['雾港来信', '海生', '最新：番外 灯塔', '读到 91%']
+];
+
+/** 紧凑 / 宽松：一本一张卡片，封面按 7:9 跟着信息块高度走；宽松多一行、进度单独成行。 */
+function shelfList(loose: boolean): HTMLElement[] {
+  const rows = h('div', { class: `list${loose ? ' loose' : ''}` });
+  LIST_BOOKS.forEach(([title, author, update, progress], i) => {
+    const cover = coverTile(i, title);
+    cover.classList.add('lc');
+    rows.append(h('div', { class: 'row-card', 'data-sec': 'colors' }, cover,
+      h('div', { class: 'row-info' }, h('b', {}, title), h('span', {}, author), h('span', {}, update),
+        loose ? h('span', { class: 'prog-line' }, progress) : h('span', { class: 'prog-tag' }, progress))));
+  });
+  return [...shelfHeader(), rows];
+}
+
+/** 精装书：深色底板 + 书页 + 封面压槽，和应用陪伴布局的 shelfHardcoverBook 同一套层次。 */
+function hardcover(index: number, title: string, scale = 1, lean = 0, art?: HTMLElement): HTMLElement {
+  const book = h('div', { class: 'hc', 'data-sec': 'book', style: `--s:${scale};transform:rotate(${lean}deg)` });
+  const cover = art ? h('div', { class: 'bk hc-cover' }, art) : coverTile(index, title);
+  cover.classList.add('hc-cover');
+  book.append(h('i', { class: 'hc-board' }), h('i', { class: 'hc-pages' }), cover, h('i', { class: 'hc-spine' }));
+  return book;
+}
+
+/** 陪伴：问候、继续阅读大卡（立体书）、阅读小记，下面是错落的精装书网格；分组是文件夹插画做封面的精装书。 */
+function shelfCompanion(): HTMLElement[] {
+  const hero = h('div', { class: 'cp-hero', 'data-sec': 'colors' }, hardcover(1, '夜航船'),
+    h('div', { class: 'cp-info' }, h('small', {}, '继续阅读'), h('b', {}, '夜航船'), h('span', {}, '第十七章 · 灯下'),
+      h('div', { class: 'bar' }, h('i')), h('span', { class: 'go' }, '继续阅读')));
+  const days = [22, 40, 15, 0, 55, 30, 46];
+  const note = h('div', { class: 'cp-note', 'data-sec': 'colors' },
+    h('div', {}, h('small', {}, '阅读小记'), h('b', {}, '46 分钟'), h('span', {}, '今日 · 已连续 5 天')),
+    h('div', { class: 'cp-bars' }, ...days.map((m, i) => h('i', { class: i === days.length - 1 ? 'today' : '', style: `height:${Math.max(3, m)}%` }))));
+  const scales = [1, 0.94, 0.9, 0.97, 0.88];
+  const leans = [0, -2, 0, 2.5, 0];
+  const grid = h('div', { class: 'grid cp-grid' });
+  BOOKS.forEach(([title, sub], i) => grid.append(h('div', { class: 'cell' }, hardcover(i, title, scales[i], leans[i]),
+    h('div', { class: 'gname' }, title), h('div', { class: 'gsub' }, sub))));
+  grid.append(h('div', { class: 'cell' }, hardcover(0, '收藏夹', 1, 0, folderArt()), h('div', { class: 'gname' }, '收藏夹'), h('div', { class: 'gsub' }, '8 本')));
+  return [
+    h('div', { class: 'hd cp-top' }, h('span'), h('span', { class: 'hd-acts' }, h('i', { class: 'folder-ico' }), h('i', { class: 'dots' }))),
+    h('div', { class: 'cp-greet', 'data-sec': 'colors' }, h('b', {}, '晚上好，慢慢读。'), h('span', {}, '夜里读书，最是安静。')),
+    hero, note,
+    h('div', { class: 'sec-title', 'data-sec': 'colors' }, '书架里，还有故事'),
+    grid];
+}
+
+function screenShelf(mode: Mode, e: Effective): HTMLElement {
+  const layout = S.ui.shelfLayout;
+  const content = layout === 'companion' ? shelfCompanion() : layout === 'tile' ? shelfTile() : shelfList(layout === 'loose');
+  return homeScreen(mode, e, 0, `shelf shelf-${layout}`, homeBackdrop(mode, e, 0, 1), ...content);
+}
+
+function screenExplore(mode: Mode, e: Effective): HTMLElement {
+  const chips = ['推荐', '玄幻', '历史', '悬疑', '言情', '出版'];
+  const books: [string, string][] = [['长夜渡', '一叶舟 · 古风'], ['星海归航', '北辰 · 科幻'], ['旧城往事', '林间 · 都市'], ['青灯志异', '佚名 · 悬疑']];
+  const list = h('div', { class: 'ex-list' });
+  books.forEach(([title, meta], i) => list.append(h('div', { class: 'row-card', 'data-sec': 'colors' }, coverTile(i + 2, title),
+    h('div', { class: 'row-info' }, h('b', {}, title), h('span', {}, meta), h('span', {}, '一句话简介：风起于青萍之末。')))));
+  return homeScreen(mode, e, 1, 'explore', homeBackdrop(mode, e, 30 + 250, 0.7),
+    h('div', { class: 'hd', 'data-sec': 'colors' }, h('b', {}, '发现'), h('span', { class: 'hd-acts' }, '书源')),
+    h('div', { class: 'chips', 'data-sec': 'colors' }, ...chips.map((c, i) => h('span', { class: i === 0 ? 'on' : '' }, c))),
+    h('div', { class: 'sec-title', 'data-sec': 'colors' }, '本周热读'),
+    list);
+}
+
+function screenSearch(mode: Mode, e: Effective): HTMLElement {
+  const history = ['夜航船', '山海经', '雪中', '长安', '星辰变'];
+  const hot = ['长夜渡', '星海归航', '旧城往事', '青灯志异', '北窗', '雾港来信'];
+  return homeScreen(mode, e, 2, 'search-tab', homeBackdrop(mode, e, 30 + 230, 0.6),
+    h('div', { class: 'hd', 'data-sec': 'colors' }, h('b', {}, '搜索')),
+    h('div', { class: 'search big', 'data-sec': 'colors' }, '书名、作者'),
+    h('div', { class: 'sec-title', 'data-sec': 'colors' }, '搜索历史'),
+    h('div', { class: 'chips wrap', 'data-sec': 'colors' }, ...history.map((c) => h('span', {}, c))),
+    h('div', { class: 'sec-title', 'data-sec': 'colors' }, '大家在搜'),
+    h('div', { class: 'hot', 'data-sec': 'colors' }, ...hot.map((t, i) => h('div', {}, h('b', { class: i < 3 ? 'top' : '' }, String(i + 1)), t))));
+}
+
+function screenMine(mode: Mode, e: Effective): HTMLElement {
+  const group = (rows: string[]): HTMLElement => h('div', { class: 'mine-group', 'data-sec': 'colors' },
+    ...rows.map((r) => h('div', {}, r, h('i', { class: 'chev' }))));
+  return homeScreen(mode, e, 3, 'mine', homeBackdrop(mode, e, 30 + 330, 0.85),
+    h('div', { class: 'profile', 'data-sec': 'colors' }, h('i', { class: 'avatar' }),
+      h('div', {}, h('b', {}, '书友 0571'), h('span', {}, '已读 128 本 · 累计 312 小时'))),
+    h('div', { class: 'stats', 'data-sec': 'colors' }, ...[['46', '今日分钟'], ['5', '连续天数'], ['12', '本月本数']].map(([v, l]) => h('div', {}, h('b', {}, v), h('span', {}, l)))),
+    group(['主题', '阅读设置', '朗读与有声书']),
+    group(['书源管理', '同步与备份', '帮助']));
 }
 
 function emphasis(text: string, e: Effective): HTMLElement | string {
@@ -242,6 +356,7 @@ export function describe(): string[] {
   if (p.navigation && has(p.navigation)) out.push('导航图标');
   if (p.book && ((p.book.covers || []).length || p.book.shelfFrame || p.book.shelfFolder)) out.push('书籍素材');
   if (p.startup && ((p.startup.light && p.startup.light.image) || (p.startup.dark && p.startup.dark.image))) out.push('启动封面');
+  if (p.homeBackdrop && (p.homeBackdrop.light || p.homeBackdrop.dark)) out.push('首页背景');
   if (p.logo) out.push('主题标识');
   if (p.typography && (p.typography.appFont || p.typography.appFontFamily)) out.push('界面字体');
   if (p.radius && Object.keys(p.radius).some((k) => typeof p.radius[k] === 'number')) out.push('圆角');
@@ -252,8 +367,10 @@ export function renderScreen(mode: Mode): HTMLElement {
   const e = effective(mode);
   const screen = S.ui.screen;
   const content = screen === 'reader' ? readerBody(e) : screen === 'tts' ? screenTts(e)
-    : screen === 'startup' ? screenStartup(e) : screen === 'card' ? screenCard(e) : screenShelf(mode, e);
-  const phone = h('div', { class: 'phone', style: `${themeVars(mode, e)};width:${PHONE_W}px;height:${PHONE_H}px` }, content);
+    : screen === 'startup' ? screenStartup(e) : screen === 'card' ? screenCard(e)
+    : screen === 'explore' ? screenExplore(mode, e) : screen === 'search' ? screenSearch(mode, e)
+    : screen === 'mine' ? screenMine(mode, e) : screenShelf(mode, e);
+  const phone = h('div', { class: `phone ${mode}`, style: `${themeVars(mode, e)};width:${PHONE_W}px;height:${PHONE_H}px` }, content);
   phone.querySelectorAll(`[data-sec="${S.ui.section}"]`).forEach((el) => el.classList.add('focus'));
   return phone;
 }

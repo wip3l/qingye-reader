@@ -185,17 +185,87 @@ pre.json { font-family: var(--f-mono); font-size: 11.5px; background: var(--sunk
 .ph.fill { position: absolute; inset: 0; }
 .ph.dark { color: #bbb; background-color: #222; }
 
-.shelf { background: var(--p-page); color: var(--p-text); }
-.shelf .hbg { position: absolute; left: 0; top: 0; width: 100%; aspect-ratio: 4 / 5; overflow: hidden; }
-.shelf .hbg img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.shelf .hbg i { position: absolute; inset: 0; background: linear-gradient(color-mix(in srgb, var(--p-page) 10%, transparent), color-mix(in srgb, var(--p-page) 30%, transparent) 38%, color-mix(in srgb, var(--p-page) 85%, transparent) 72%, var(--p-page)); }
-.shelf .hbg i.dark { background: linear-gradient(color-mix(in srgb, var(--p-page) 25%, transparent), color-mix(in srgb, var(--p-page) 55%, transparent) 38%, color-mix(in srgb, var(--p-page) 90%, transparent) 70%, var(--p-page)); }
-.shelf > .hd, .shelf > .search, .shelf > .recent, .shelf > .sec-title, .shelf > .grid { position: relative; }
-.shelf .hd { display: flex; align-items: center; justify-content: space-between; padding: 6px 18px 10px; }
-.shelf .hd b { font-size: 24px; }
+/* 首页四个页签：背景图在最底层，内容区在它上面，底栏浮在最上 */
+.home { background: var(--p-page); color: var(--p-text); }
+.hbg { position: absolute; left: 0; top: 0; width: 100%; overflow: hidden; }
+.hbg img { position: absolute; left: 0; top: 0; width: 100%; aspect-ratio: 4 / 5; object-fit: cover; display: block; }
+.hbg i { position: absolute; inset: 0; }
+.home-body { position: relative; z-index: 1; }
+.home .hd { display: flex; align-items: center; justify-content: space-between; padding: 6px 18px 10px; min-height: 46px; }
+.home .hd b { font-size: 24px; }
 .hd-acts { font-size: 13px; color: var(--p-sub); display: flex; gap: 10px; align-items: center; }
 .dots { width: 16px; height: 4px; background: radial-gradient(circle, var(--p-sub) 1.6px, transparent 2px) 0 0 / 5.5px 4px repeat-x; }
-.shelf .search { margin: 0 18px 12px; background: var(--p-input); border-radius: var(--p-r-large); padding: 9px 14px; font-size: 13px; color: var(--p-sub); }
+.folder-ico { width: 20px; height: 15px; border: 2px solid var(--p-sub); border-radius: 3px; }
+.home .search { margin: 0 18px 12px; background: var(--p-input); border-radius: var(--p-r-large); padding: 9px 14px; font-size: 13px; color: var(--p-sub); }
+.home .search.big { padding: 12px 16px; font-size: 14px; margin-bottom: 18px; }
+
+/* 紧凑 / 宽松列表与发现页的书目行 */
+.list, .ex-list { display: grid; gap: 10px; padding: 0 18px; }
+.row-card { display: flex; gap: 12px; align-items: center; background: var(--p-card); border-radius: var(--p-r-medium); padding: 10px; }
+.row-card .bk { width: 62px; flex: none; }
+.list.loose .row-card .bk { width: 72px; }
+.list.loose .row-card { padding: 12px; }
+.row-info { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.row-info b { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-info span { font-size: 12px; color: var(--p-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-card .bk .ttl { display: none; }
+.prog-tag { justify-self: start; font-size: 10px !important; color: var(--p-accent) !important; background: color-mix(in srgb, var(--p-accent) 14%, transparent); border-radius: 8px; padding: 0 6px; }
+.prog-line { color: var(--p-accent) !important; }
+
+/* 陪伴：问候、继续阅读大卡、阅读小记、精装书网格 */
+.cp-top { min-height: 36px !important; }
+.cp-greet { padding: 0 18px 12px; display: grid; gap: 2px; }
+.cp-greet b { font-size: 22px; }
+.cp-greet span { font-size: 12px; color: var(--p-sub); }
+.cp-hero { margin: 0 18px 10px; background: var(--p-card); border-radius: var(--p-r-card); padding: 16px; display: flex; gap: 18px; align-items: center; }
+.cp-hero .hc { width: 92px; flex: none; }
+.cp-info { min-width: 0; flex: 1; display: grid; gap: 4px; }
+.cp-info small { font-size: 11px; color: var(--p-sub); }
+.cp-info b { font-size: 18px; }
+.cp-info > span:not(.go) { font-size: 12px; color: var(--p-sub); }
+.cp-info .bar { height: 4px; background: var(--p-divider); border-radius: 2px; overflow: hidden; margin: 4px 0; }
+.cp-info .bar i { display: block; height: 100%; width: 58%; background: var(--p-accent); }
+.cp-info .go { justify-self: start; background: var(--p-button); color: #fff; border-radius: var(--p-r-button); padding: 5px 14px; font-size: 12px; }
+.cp-note { margin: 0 18px 14px; background: var(--p-card); border-radius: var(--p-r-card); padding: 12px 14px; display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.cp-note > div:first-child { display: grid; gap: 1px; }
+.cp-note small { font-size: 11px; color: var(--p-sub); }
+.cp-note b { font-size: 18px; }
+.cp-note span { font-size: 11px; color: var(--p-sub); }
+.cp-bars { display: flex; gap: 5px; align-items: flex-end; height: 40px; }
+.cp-bars i { width: 8px; border-radius: 3px; background: color-mix(in srgb, var(--p-accent) 35%, transparent); }
+.cp-bars i.today { background: var(--p-accent); }
+.cp-grid { align-items: end; row-gap: 12px; }
+.hc { position: relative; width: calc(100% * var(--s, 1)); margin: 0 auto; transform-origin: 50% 100%; aspect-ratio: 0.735; }
+.hc .hc-board { position: absolute; inset: 2% 0 0 4%; border-radius: 3px 5px 5px 3px; background: #3B332B; box-shadow: 0 6px 12px rgba(0,0,0,.28), 0 2px 3px rgba(0,0,0,.2); }
+.hc .hc-pages { position: absolute; top: 3%; bottom: 1.5%; right: 0; width: 6%; border-radius: 0 3px 3px 0; background: repeating-linear-gradient(90deg, #F1EBDD 0 1px, #D9D1C1 1px 2px); }
+.hc .hc-cover { position: absolute; inset: 0 5% 2.5% 0; width: auto; aspect-ratio: auto; border-radius: 2px 4px 4px 2px; box-shadow: none; }
+.hc .hc-cover .ttl { display: none; }
+.hc .hc-spine { position: absolute; top: 0; bottom: 2.5%; left: 0; width: 9%; background: linear-gradient(90deg, rgba(0,0,0,.35), rgba(255,255,255,.18) 45%, rgba(0,0,0,.12)); border-radius: 2px 0 0 2px; pointer-events: none; }
+.phone.dark .hc .hc-board { background: #17120F; }
+
+/* 发现、搜索、我的 */
+.chips { display: flex; gap: 8px; padding: 0 18px 14px; flex-wrap: nowrap; overflow: hidden; }
+.chips.wrap { flex-wrap: wrap; }
+.chips span { background: color-mix(in srgb, var(--p-card) 85%, transparent); border-radius: 14px; padding: 4px 12px; font-size: 12px; white-space: nowrap; color: var(--p-text); }
+.chips span.on { background: var(--p-accent); color: #fff; }
+.hot { margin: 0 18px; background: var(--p-card); border-radius: var(--p-r-card); padding: 6px 14px; display: grid; }
+.hot div { display: flex; gap: 12px; align-items: center; padding: 8px 0; font-size: 14px; border-bottom: 1px solid var(--p-divider); }
+.hot div:last-child { border-bottom: 0; }
+.hot b { width: 16px; color: var(--p-sub); font-size: 13px; }
+.hot b.top { color: var(--p-accent); }
+.profile { display: flex; gap: 14px; align-items: center; padding: 34px 20px 20px; }
+.profile .avatar { width: 58px; height: 58px; border-radius: 50%; background: linear-gradient(135deg, var(--p-accent), var(--p-button)); border: 3px solid var(--p-card); }
+.profile div { display: grid; gap: 2px; }
+.profile b { font-size: 20px; }
+.profile span { font-size: 12px; color: var(--p-sub); }
+.stats { margin: 0 18px 14px; background: var(--p-card); border-radius: var(--p-r-card); display: grid; grid-template-columns: repeat(3, 1fr); padding: 12px 0; text-align: center; }
+.stats div { display: grid; }
+.stats b { font-size: 18px; }
+.stats span { font-size: 11px; color: var(--p-sub); }
+.mine-group { margin: 0 18px 12px; background: var(--p-card); border-radius: var(--p-r-card); padding: 0 14px; }
+.mine-group div { display: flex; justify-content: space-between; align-items: center; padding: 13px 0; font-size: 14px; border-bottom: 1px solid var(--p-divider); }
+.mine-group div:last-child { border-bottom: 0; }
+.chev { width: 7px; height: 7px; border-top: 1.5px solid var(--p-sub); border-right: 1.5px solid var(--p-sub); transform: rotate(45deg); }
 .recent { margin: 0 18px 14px; background: var(--p-card); border-radius: var(--p-r-card); padding: 12px; display: flex; gap: 12px; align-items: center; }
 .recent .bk.mini { width: 52px; flex: none; }
 .rc-body { min-width: 0; flex: 1; }
