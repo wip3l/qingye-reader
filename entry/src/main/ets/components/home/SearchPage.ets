@@ -15,6 +15,7 @@ import { ImmersiveMaterialSurface } from '../../components/ImmersiveMaterialSurf
 import { GlassTagModifier, ImmersiveMaterialRuntime, ImmersiveTagModifier } from '../../utils/ImmersiveMaterialRuntime';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../common/HeaderBackdrop';
+import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { SearchBookShelfHelper } from '../../utils/SearchBookShelfHelper';
 import { SearchExploreSettings, SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
@@ -111,6 +112,8 @@ export struct SearchPage {
   private searchCategoryScrollers: Map<string, ListScroller> = new Map();
   /** 分类栏以上（标题行、搜索框、状态行）的收起量，0 为完整显示；结果分类栏不收起。 */
   @State searchHeaderCollapse: number = 0;
+  // 顶栏毛玻璃按列表实际滚动距离显现，见 CollapsingHeader.backdropReveal。
+  @State searchHeaderBackdropReveal: number = 0;
   onHeaderCollapseChange: (progress: number) => void = () => {};
   private searchSessionId: number = 0;
   private resultArrivalTracker: ResultArrivalTracker = new ResultArrivalTracker();
@@ -525,6 +528,9 @@ export struct SearchPage {
 
   build() {
     Stack() {
+      HomeThemeBackdrop({ visibleHeight: this.statusBarHeight + 230, strength: 0.6 })
+        .position({ x: 0, y: 0 })
+
       Column() {
         Column() {
           // 状态栏占位固定不动；下面的标题行、搜索框和状态行作为一整块随列表上滑收起，只留结果分类栏。
@@ -682,7 +688,8 @@ export struct SearchPage {
 
         HeaderBackdrop({ backdropHeight: this.searchHeaderBackdropHeight(),
           statusBarHeight: this.statusBarHeight,
-          backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
+          backdropColor: ThemeRuntime.topBarColor(this.appDarkMode),
+          reveal: ThemeRuntime.homeBackdrop(this.appDarkMode) ? this.searchHeaderBackdropReveal : 1 })
           .width('100%')
           .position({ x: 0, y: 0 })
           .zIndex(3)
@@ -703,7 +710,7 @@ export struct SearchPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor(this.pageColor())
+      .backgroundColor(this.surfaceColor())
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
 
 
@@ -755,7 +762,7 @@ export struct SearchPage {
         showResultCoverBackground: this.searchExploreShowResultCoverBackground,
         useBookshelfCoverGallery: this.searchExploreUseBookshelfCoverGallery,
         showResultTags: this.searchExploreShowResultTags,
-        pageColor: this.pageColor(),
+        pageColor: this.surfaceColor(),
         cardColor: this.glassCardColor(),
         itemBorderColor: this.glassBorderColor(),
         itemBorderWidth: 1,
@@ -1763,6 +1770,11 @@ export struct SearchPage {
     return ThemeRuntime.pageColor(this.appDarkMode);
   }
 
+  // 有主题背景图时铺满整页的层透明，背景由根部的 HomeThemeBackdrop 铺。
+  surfaceColor(): string {
+    return ThemeRuntime.homeSurfaceColor(this.appDarkMode);
+  }
+
   cardColor(): string {
     return ThemeRuntime.cardColor(this.appDarkMode);
   }
@@ -1859,6 +1871,8 @@ export struct SearchPage {
   }
 
   onSearchListScroll(delta: number, offset: number): void {
+    const reveal = CollapsingHeader.backdropReveal(offset);
+    if (reveal !== this.searchHeaderBackdropReveal) this.searchHeaderBackdropReveal = reveal;
     // 分类共享顶栏收起量，不受各自纵向位置限制；布局变化由结果列表过滤，不驱动顶栏。
     if (this.usesSearchCategoryPager() && offset <= 0 && delta >= 0) return;
     const next = CollapsingHeader.next(this.searchHeaderCollapseValue(), delta,

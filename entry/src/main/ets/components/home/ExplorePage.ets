@@ -17,6 +17,7 @@ import { ImmersiveMaterialSurface } from '../../components/ImmersiveMaterialSurf
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../common/HeaderBackdrop';
+import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { SearchBookShelfHelper } from '../../utils/SearchBookShelfHelper';
 import { SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
@@ -135,6 +136,8 @@ export struct ExplorePage {
   private exploreChannelScroller: Scroller = new Scroller();
   /** 标题行收起量，0 为完整显示，CollapsingHeader.DISTANCE 为完全收起。 */
   @State exploreHeaderCollapse: number = 0;
+  // 顶栏毛玻璃按列表实际滚动距离显现，见 CollapsingHeader.backdropReveal。
+  @State exploreHeaderBackdropReveal: number = 0;
   onHeaderCollapseChange: (progress: number) => void = () => {};
   private hasLoaded: boolean = false;
   private hasRestoredExploreSelection: boolean = false;
@@ -500,6 +503,8 @@ export struct ExplorePage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
+      HomeThemeBackdrop({ visibleHeight: this.statusBarHeight + 250, strength: 0.7 })
+
       Column() {
         Column() {
           // 列表上滑时标题行收起：外层按收起量变矮并裁剪，标题行贴底上移并淡出。
@@ -594,7 +599,8 @@ export struct ExplorePage {
 
       HeaderBackdrop({ backdropHeight: this.statusBarHeight + 56 - this.exploreHeaderCollapseValue(),
         statusBarHeight: this.statusBarHeight,
-        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
+        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode),
+        reveal: ThemeRuntime.homeBackdrop(this.appDarkMode) ? this.exploreHeaderBackdropReveal : 1 })
         .width('100%')
         .position({ x: 0, y: 0 })
         .zIndex(3)
@@ -619,7 +625,7 @@ export struct ExplorePage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor(this.pageColor())
+      .backgroundColor(this.surfaceColor())
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
 
       // 长按书源菜单的锚点：放在手指位置的 1×1 节点，弹出层贴着它弹出。
@@ -1270,7 +1276,7 @@ export struct ExplorePage {
         useBookshelfCoverGallery: this.searchExploreUseBookshelfCoverGallery,
         showResultTags: this.searchExploreShowResultTags,
         showSourceLine: false,
-        pageColor: this.pageColor(),
+        pageColor: this.surfaceColor(),
         cardColor: this.glassCardColor(),
         itemBorderColor: this.glassBorderColor(),
         itemBorderWidth: 1,
@@ -2133,6 +2139,8 @@ export struct ExplorePage {
   }
 
   onExploreListScroll(delta: number, offset: number): void {
+    const reveal = CollapsingHeader.backdropReveal(offset);
+    if (reveal !== this.exploreHeaderBackdropReveal) this.exploreHeaderBackdropReveal = reveal;
     if (this.usesExploreCategoryPager() && offset <= 0 && delta >= 0) return;
     const next = CollapsingHeader.next(this.exploreHeaderCollapse, delta,
       this.usesExploreCategoryPager() ? CollapsingHeader.DISTANCE : offset);
@@ -2262,6 +2270,11 @@ export struct ExplorePage {
 
   pageColor(): string {
     return ThemeRuntime.pageColor(this.appDarkMode);
+  }
+
+  // 有主题背景图时铺满整页的层透明，背景由根部的 HomeThemeBackdrop 铺。
+  surfaceColor(): string {
+    return ThemeRuntime.homeSurfaceColor(this.appDarkMode);
   }
 
   cardColor(): string {

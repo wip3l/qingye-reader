@@ -1,5 +1,6 @@
 import { BuiltinThemeRegistry } from './BuiltinThemeRegistry';
 import { ThemePackRegistry } from './ThemePackRegistry';
+import { ThemeAssetRegistry } from './ThemeAssetRegistry';
 import {
   ThemeBubbleStyles,
   ThemeBookTokens,
@@ -17,6 +18,7 @@ import { HexColor } from '../utils/HexColor';
 export class ThemeRuntime {
   static readonly KEY_THEME_ID: string = 'appThemeId';
   static readonly KEY_THEME_REVISION: string = 'themeRevision';
+  static readonly KEY_HOME_BACKDROP_ENABLED: string = 'homeBackdropEnabled';
   static readonly KEY_FONT_FAMILY: string = 'themeFontFamily';
   static readonly KEY_ICON_PACK_ID: string = 'themeIconPackId';
   static readonly KEY_CUSTOM_BASE_THEME_ID: string = 'appCustomBaseThemeId';
@@ -140,6 +142,17 @@ export class ThemeRuntime {
     const fallback = ThemeRuntime.fallbackVariant(darkMode).colors.pageColor;
     return ThemeRuntime.colorFromStorage(darkMode ? ThemeRuntime.KEY_DARK_PAGE_COLOR :
       ThemeRuntime.KEY_LIGHT_PAGE_COLOR, fallback);
+  }
+
+  /** 首页四个页签顶部的主题背景图；当前主题没有、自定义主题或用户在“其他设置”里关掉时为 null。 */
+  static homeBackdrop(darkMode: boolean): Resource | null {
+    if (AppStorage.get<boolean>(ThemeRuntime.KEY_HOME_BACKDROP_ENABLED) === false) return null;
+    return ThemeAssetRegistry.homeBackdrop(ThemeRuntime.currentThemeId(), darkMode);
+  }
+
+  /** 首页列表、滚动区等铺满整页的层：有主题背景图时透明，让页面根部铺的背景透上来。 */
+  static homeSurfaceColor(darkMode: boolean): string {
+    return ThemeRuntime.homeBackdrop(darkMode) ? '#00000000' : ThemeRuntime.pageColor(darkMode);
   }
 
   static cardColor(darkMode: boolean): string {

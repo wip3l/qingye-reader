@@ -8,6 +8,7 @@ import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../common/HeaderBackdrop';
+import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { CommunityGroup } from '../../utils/CommunityGroup';
 import { MembershipIcons } from '../../account/MembershipIcons';
 import { AppThemeModeStore } from '../../utils/AppThemeModeStore';
@@ -26,6 +27,7 @@ export struct SettingsPage {
   @Prop statusBarHeight: number = 0;
   @Prop navBarHeight: number = 0;
   @State headerCollapse: number = 0;
+  @State headerBackdropReveal: number = 0;
   private scroller: Scroller = new Scroller();
   onHeaderCollapseChange: (progress: number) => void = () => {};
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
@@ -50,6 +52,8 @@ export struct SettingsPage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
+      HomeThemeBackdrop({ visibleHeight: this.statusBarHeight + 330, strength: 0.85 })
+
       Scroll(this.scroller) {
         Column({ space: AppSpacing.LG }) {
           Row()
@@ -132,9 +136,11 @@ export struct SettingsPage {
       .width('100%')
       .height('100%')
       .align(Alignment.TopStart)
-      .backgroundColor(this.pageColor())
+      .backgroundColor(this.surfaceColor())
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
       .onDidScroll((_xOffset: number, yOffset: number) => {
+        const reveal = CollapsingHeader.backdropReveal(this.scroller.currentOffset().yOffset);
+        if (reveal !== this.headerBackdropReveal) this.headerBackdropReveal = reveal;
         this.headerCollapse = CollapsingHeader.next(this.headerCollapse, yOffset,
           this.scroller.currentOffset().yOffset);
       })
@@ -149,7 +155,8 @@ export struct SettingsPage {
 
       HeaderBackdrop({ backdropHeight: this.statusBarHeight + 56 - this.headerCollapse,
         statusBarHeight: this.statusBarHeight,
-        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
+        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode),
+        reveal: ThemeRuntime.homeBackdrop(this.appDarkMode) ? this.headerBackdropReveal : 1 })
         .width('100%')
 
       Column() {
@@ -466,6 +473,11 @@ export struct SettingsPage {
 
   pageColor(): string {
     return ThemeRuntime.pageColor(this.appDarkMode);
+  }
+
+  // 有主题背景图时铺满整页的层透明，背景由根部的 HomeThemeBackdrop 铺。
+  surfaceColor(): string {
+    return ThemeRuntime.homeSurfaceColor(this.appDarkMode);
   }
 
   primaryTextColor(): string {

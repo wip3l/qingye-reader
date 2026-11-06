@@ -1,6 +1,7 @@
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
+import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 
 /** 首页页签的占位外壳：冷启动时先显示的书架骨架，以及尚未激活页签的空白页。 */
 @Component
@@ -11,6 +12,8 @@ export struct FastBookshelfShell {
 
   build() {
     Column() {
+      HomeThemeBackdrop()
+        .position({ x: 0, y: 0 })
       Row() {
         Text('书架')
           .fontSize(AppFontSize.TITLE)

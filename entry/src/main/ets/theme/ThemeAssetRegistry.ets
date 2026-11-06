@@ -443,6 +443,17 @@ export class ThemeAssetRegistry {
     }
   }
 
+  /** 首页四个页签顶部的主题背景图（宽高比 HOME_BACKDROP_ASPECT，画面集中在上部、向下淡成纯底色）；没有的主题返回 null。 */
+  static homeBackdrop(themeId: string, darkMode: boolean = false): Resource | null {
+    switch ((themeId || '').trim().toLowerCase()) {
+      case ThemeIds.OBSIDIAN_ARCHIVE:
+        return darkMode ? $r('app.media.home_bg_obsidian_archive_dark') : $r('app.media.home_bg_obsidian_archive_light');
+      default: return null;
+    }
+  }
+
+  static readonly HOME_BACKDROP_ASPECT: number = 1080 / 1350;
+
   static themeBookCover(assetId: string): ResourceStr {
     const covers = ThemeAssetRegistry.themeBookCovers(assetId);
     return covers.length > 0 ? covers[0] : '';

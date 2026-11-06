@@ -31,6 +31,7 @@ import { ImmersiveHeaderAction } from '../../components/ImmersiveHeaderAction';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../common/HeaderBackdrop';
+import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { BookDisplayHelper } from '../../utils/BookDisplayHelper';
 import { BookTileLayout } from '../../utils/BookTileLayout';
@@ -1282,6 +1283,8 @@ export struct BookshelfPage {
 
   /** 标题行收起量，0 为完整显示，CollapsingHeader.DISTANCE 为完全收起；类型页签不收起。 */
   @State shelfHeaderCollapse: number = 0;
+  // 顶栏毛玻璃按列表实际滚动距离显现，见 CollapsingHeader.backdropReveal。
+  @State shelfHeaderBackdropReveal: number = 0;
   onHeaderCollapseChange: (progress: number) => void = () => {};
   private shelfListScroller: ListScroller = new ListScroller();
   private shelfTileScroller: Scroller = new Scroller();
@@ -1383,6 +1386,10 @@ export struct BookshelfPage {
   @Builder
   shelfPageBody() {
     Column() {
+      // 主题背景图垫在最底层，不占布局、不随列表滚动；下面的列表和网格要用 shelfSurfaceColor 透出它。
+      HomeThemeBackdrop()
+        .position({ x: 0, y: 0 })
+
       Column() {
       // 列表上滑时标题行收起：外层按收起量变矮并裁剪，标题行贴底上移并淡出。
       Stack({ alignContent: Alignment.Bottom }) {
@@ -1504,7 +1511,8 @@ export struct BookshelfPage {
 
       HeaderBackdrop({ backdropHeight: this.shelfHeaderBackdropHeight(),
         statusBarHeight: this.statusBarHeight,
-        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
+        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode),
+        reveal: ThemeRuntime.homeBackdrop(this.appDarkMode) ? this.shelfHeaderBackdropReveal : 1 })
         .width('100%')
         .position({ x: 0, y: 0 })
         .zIndex(3)
@@ -1786,7 +1794,7 @@ export struct BookshelfPage {
             .width('100%')
             .height('100%')
             .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-            .backgroundColor(this.pageColor())
+            .backgroundColor(this.shelfSurfaceColor())
             .onAppear(() => this.restoreShelfPageScroll(pageKey, false))
             .onDidScroll((delta: number) => {
               if (pageKey === this.shelfPageKey()) {
@@ -1802,7 +1810,7 @@ export struct BookshelfPage {
             }
           }
           .layoutWeight(1)
-          .backgroundColor(this.pageColor())
+          .backgroundColor(this.shelfSurfaceColor())
           .refreshOffset(64)
           .onStateChange((state: RefreshStatus) => {
             if (pageKey === this.shelfPageKey()) this.updateShelfRefreshPrompt(state);
@@ -3756,6 +3764,8 @@ export struct BookshelfPage {
   }
 
   onShelfListScroll(delta: number, offset: number): void {
+    const reveal = CollapsingHeader.backdropReveal(offset);
+    if (reveal !== this.shelfHeaderBackdropReveal) this.shelfHeaderBackdropReveal = reveal;
     if (this.shelfCategoryAnimating) return;
     const next = CollapsingHeader.next(this.shelfHeaderCollapse, delta, offset);
     if (next !== this.shelfHeaderCollapse) {
@@ -4234,7 +4244,7 @@ export struct BookshelfPage {
     .columnsGap(this.shelfTileColumnGap())
     .rowsGap(this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey)))
     .padding({ left: BookTileLayout.SIDE_PADDING, right: BookTileLayout.SIDE_PADDING, top: 10 })
-    .backgroundColor(this.pageColor())
+    .backgroundColor(this.shelfSurfaceColor())
     .scrollBar(BarState.Off)
     .cachedCount(4)
     .onAppear(() => this.restoreShelfPageScroll(pageKey, true))
@@ -9518,6 +9528,10 @@ export struct BookshelfPage {
 
   pageColor(): string {
     return ThemeRuntime.pageColor(this.appDarkMode);
+  }
+
+  shelfSurfaceColor(): string {
+    return ThemeRuntime.homeSurfaceColor(this.appDarkMode);
   }
 
   cardColor(): string {

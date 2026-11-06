@@ -1,5 +1,6 @@
 import { ImmersiveLightSettingsStore } from '../utils/ImmersiveLightSettingsStore';
 import { SmartGripSettingsStore } from '../utils/SmartGripSettingsStore';
+import { HomeBackdropSettingsStore } from '../utils/HomeBackdropSettingsStore';
 import { promptAction, router } from '@kit.ArkUI';
 import pasteboard from '@ohos.pasteboard';
 import { syncSystemBars } from '../utils/SystemBars';
@@ -29,6 +30,7 @@ struct OtherSettingsPage {
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('smartGripEnabled') smartGripEnabled: boolean = true;
+  @StorageLink('homeBackdropEnabled') homeBackdropEnabled: boolean = true;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @StorageLink('lanReaderEnabled') lanReaderEnabled: boolean = false;
@@ -197,6 +199,12 @@ struct OtherSettingsPage {
       SettingRow({ title: '沉浸光感', description: this.immersiveLightLevelDescription() }) {
         this.immersiveLightLevelSelect()
       }
+      SettingSwitchRow({
+        title: '主题背景图',
+        description: '主题自带背景图时，铺在书架、发现、搜索和我的页顶部',
+        isOn: this.homeBackdropEnabled,
+        onChange: (value: boolean) => { this.setHomeBackdropEnabled(value); }
+      })
       SettingNavRow({
         title: '字体设置',
         description: '全局字体、自定义字体',
@@ -325,6 +333,17 @@ struct OtherSettingsPage {
   immersiveLightLevelSelectedIndex(): number {
     const index = this.immersiveLightLevelValues().indexOf(this.immersiveLightLevel);
     return index >= 0 ? index : 0;
+  }
+
+  setHomeBackdropEnabled(enabled: boolean): void {
+    if (this.homeBackdropEnabled === enabled) return;
+    HomeBackdropSettingsStore.save(getContext(this), enabled).catch((error: Error) => {
+      console.warn('保存首页背景设置失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
+    // 首页各页签按主题版本号重建，背景层和透明的列表底色一起切换。
+    const revision = AppStorage.get<number>('themeRevision') ?? 0;
+    AppStorage.setOrCreate('themeRevision', revision + 1);
   }
 
   async setImmersiveLightLevel(index: number): Promise<void> {

@@ -43,6 +43,19 @@ export class CollapsingHeader {
     return Math.max(0, 1 - collapse / (CollapsingHeader.DISTANCE * 0.6));
   }
 
+  /** 顶栏毛玻璃随列表滚动显现的距离。 */
+  static readonly BACKDROP_REVEAL_DISTANCE: number = 24;
+
+  /**
+   * 有主题背景图时，列表在顶部就不需要顶栏毛玻璃，背景图一直透到状态栏；内容滚到顶栏下面才显现。
+   * 按实际滚动距离算，不按收起量：下滑展开标题行时列表可能还没回到顶部。按 0.05 取整，免得每帧刷新。
+   */
+  static backdropReveal(offset: number): number {
+    if (!Number.isFinite(offset)) return 1;
+    const progress = Math.max(0, Math.min(1, offset / CollapsingHeader.BACKDROP_REVEAL_DISTANCE));
+    return Math.round(progress * 20) / 20;
+  }
+
   /** 状态栏遮罩在状态栏下沿之外继续渐隐的高度。 */
   static readonly SCRIM_FADE_HEIGHT: number = 16;
 

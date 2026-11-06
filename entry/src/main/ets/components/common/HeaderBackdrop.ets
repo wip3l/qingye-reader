@@ -6,6 +6,8 @@ export struct HeaderBackdrop {
   @Prop backdropHeight: number = 0;
   @Prop backdropColor: string = '#FFFFFF';
   @Prop statusBarHeight: number = 0;
+  /** 整块毛玻璃的显现程度；首页有主题背景图时随列表滚动从 0 到 1，其余场景保持 1。 */
+  @Prop reveal: number = 1;
 
   fadeProgress(): number {
     if (this.statusBarHeight <= 0) return 0;
@@ -48,6 +50,7 @@ export struct HeaderBackdrop {
       .blendMode(BlendMode.SRC_OVER, BlendApplyType.OFFSCREEN)
       .backgroundEffect({ radius: 32, saturation: 1.05, brightness: 1, color: this.tintColor() })
       // 渐变尾部只绘制，不能挡住其下方常驻光感栏的点击。
+      .opacity(this.reveal)
       .hitTestBehavior(this.fadeProgress() > 0 ? HitTestMode.None : HitTestMode.Block)
       .accessibilityLevel('no')
   }
