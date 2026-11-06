@@ -336,8 +336,13 @@ assert(readerBackgroundComponent.includes('.objectFit(ImageFit.Contain)') &&
   !readerBackgroundComponent.includes('.border('),
   'Builtin reader backgrounds must preserve ornament proportions and draw no frame border');
 assert(indexPage.includes('ThemeRuntime.iconPackId()'), 'Floating tab bar does not resolve the active icon pack');
+// Both tab bar builders take the tab id and resolve its icon through navigationIcon(tabId, index).
+assert(indexPage.includes('BottomTabBarStyle.of(this.navigationIcon(tabId, index)') &&
+  indexPage.includes('Image(this.navigationIcon(tabId, index))'),
+  'Tab bar builders do not resolve themed navigation icons');
 for (const tabId of ['bookshelf', 'explore', 'search', 'mine']) {
-  assert(indexPage.includes(`this.navigationIcon('${tabId}')`), `Floating tab icon is not themed: ${tabId}`);
+  assert(indexPage.includes(`this.bottomTabBar('${tabId}'`) && indexPage.includes(`this.compatTabBar('${tabId}'`),
+    `Floating tab icon is not themed: ${tabId}`);
 }
 assert(indexPage.includes('this.shelfMoreButton()') &&
   indexPage.includes('shelfMoreDropdown()') &&
