@@ -54,6 +54,41 @@ interface ParsedSearchBooks {
 }
 
 /**
+ * How many results one source may add. When the search caps each media type separately, a source that aggregates
+ * novels, audio and comics gets the cap for each type, so its novels (usually listed first) cannot crowd out the rest.
+ */
+class SourceResultBudget {
+  private readonly limit: number;
+  private readonly perCategory: boolean;
+  private readonly counts: Map<string, number> = new Map<string, number>();
+  private total: number = 0;
+
+  constructor(limit: number, perCategory: boolean) {
+    this.limit = limit;
+    this.perCategory = perCategory;
+  }
+
+  /** Takes a slot for the book; false when its type (or the whole source) is already full. */
+  take(book: SearchBook): boolean {
+    if (!this.perCategory) {
+      if (this.total >= this.limit) return false;
+      this.total++;
+      return true;
+    }
+    const category = book.mediaCategory || BookTypeSupport.mediaCategoryOf(book);
+    const count = this.counts.get(category) || 0;
+    if (count >= this.limit) return false;
+    this.counts.set(category, count + 1);
+    return true;
+  }
+
+  /** True once no further book can be taken. Per-type budgets never count as full: a later book may be another type. */
+  get full(): boolean {
+    return !this.perCategory && this.total >= this.limit;
+  }
+}
+
+/**
  * Books a search script hands over while it is still running (java.emitSearch / ui.emitSearch). Batches are parsed
  * one after another and given to the listener as they settle; the final result is merged behind them.
  */
@@ -100,7 +135,7 @@ const MAX_SEARCH_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_VALIDATION_RESPONSE_BYTES = 512 * 1024;
 const MAX_VALIDATION_STAGE_RESPONSE_BYTES = 512 * 1024;
 const MAX_VALIDATION_STAGE_TOTAL_RESPONSE_BYTES = 2 * 1024 * 1024;
-const MAX_RESULTS_PER_SOURCE = 30;
+const MAX_RESULTS_PER_SOURCE = 50;
 const MAX_TOTAL_SEARCH_RESULTS = 300;
 const MAX_VALIDATION_RULE_CHARS = 32 * 1024;
 // Keep preflight validation aligned with ScriptEngine's executable script ceiling. Aggregated
@@ -400,13 +435,14 @@ export class SearchCoordinator {
       }
       const responseLimit = options.validationOnly === true ?
         MAX_VALIDATION_RESPONSE_BYTES : MAX_SEARCH_RESPONSE_BYTES;
-      const resultLimit = options.validationOnly === true ? 1 : this.normalizedLimit(options.maxResultsPerSource,
-        MAX_RESULTS_PER_SOURCE, 1, MAX_RESULTS_PER_SOURCE);
+      const budget = options.validationOnly === true ? new SourceResultBudget(1, false) :
+        new SourceResultBudget(this.normalizedLimit(options.maxResultsPerSource, MAX_RESULTS_PER_SOURCE, 1,
+          MAX_RESULTS_PER_SOURCE), options.maxResultsPerCategory !== undefined);
       if (stopped()) {
         return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
       }
       if (NativeSourceService.isNative(source)) {
-        const nativeResult = await this.searchNative(source, keyword, options, responseLimit, resultLimit, stopped,
+        const nativeResult = await this.searchNative(source, keyword, options, responseLimit, budget, stopped,
           onPartial);
         debugPassed = nativeResult.books.length > 0;
         debugError = debugPassed ? '' : nativeResult.reason;
@@ -414,7 +450,7 @@ export class SearchCoordinator {
       }
       const partial = new PartialSearchSink(options.validationOnly === true ? null : onPartial);
       const merged = await partial.merge(await this.searchCompat(source, keyword, options, stopped, responseLimit,
-        resultLimit, debugContext || null, partial));
+        budget, debugContext || null, partial));
       debugPassed = merged.books.length > 0;
       debugError = debugPassed ? '' : merged.reason;
       return merged;
@@ -438,7 +474,7 @@ export class SearchCoordinator {
    * here holds only the books the final response adds beyond them. Rule errors propagate to the caller.
    */
   private async searchCompat(source: BookSource, keyword: string, options: SearchOptions, stopped: () => boolean,
-    responseLimit: number, resultLimit: number, debugContext: BookSourceDebugContext | null,
+    responseLimit: number, budget: SourceResultBudget, debugContext: BookSourceDebugContext | null,
     partial: PartialSearchSink): Promise<SearchSourceResult> {
     if (!source.searchUrl || !source.searchRule?.bookList || !source.searchRule?.name || !source.searchRule?.bookUrl) {
       if (ENABLE_SEARCH_DEBUG_LOG) {
@@ -465,11 +501,11 @@ export class SearchCoordinator {
         SEARCH_RATE_LIMIT_MAX_WAIT_MS);
     const onPartialBody = partial.listener ? (text: string): void => {
       partial.enqueue(async (): Promise<SearchBook[]> => {
-        if (stopped() || partial.emitted.length >= resultLimit) return [];
+        if (stopped() || budget.full) return [];
         const batch = await this.resolvePartialSearchBody(text, source, au, responseLimit);
         if (!batch.body || stopped()) return [];
         const parsed = await this.parseSearchBooks(source, keyword, options, stopped, batch.body, batch.baseUrl,
-          batch.variables, resultLimit - partial.emitted.length, debugContext, partial.seenBookKeys);
+          batch.variables, budget, debugContext, partial.seenBookKeys);
         return parsed.cancelled ? [] : parsed.books;
       }, source.bookSourceName || '', debugContext);
     } : null;
@@ -516,12 +552,11 @@ export class SearchCoordinator {
     if (stopped()) {
       return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
     }
-    const remaining = resultLimit - partial.emitted.length;
-    if (remaining <= 0) {
+    if (budget.full) {
       return this.sourceResult([], BookSource.VALIDATION_PASSED, '');
     }
     const parsed = await this.parseSearchBooks(source, keyword, options, stopped, resp.body, baseUrl,
-      EncodedSourceUrl.scalarVariables(urlTemplate), remaining, debugContext, partial.seenBookKeys);
+      EncodedSourceUrl.scalarVariables(urlTemplate), budget, debugContext, partial.seenBookKeys);
     if (parsed.cancelled) {
       return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
     }
@@ -557,7 +592,7 @@ export class SearchCoordinator {
 
   /** Runs the source's bookList and field rules over one response body; seenBookKeys carries across batches. */
   private async parseSearchBooks(source: BookSource, keyword: string, options: SearchOptions, stopped: () => boolean,
-    body: string, baseUrl: string, encodedVariables: Record<string, string>, resultLimit: number,
+    body: string, baseUrl: string, encodedVariables: Record<string, string>, budget: SourceResultBudget,
     debugContext: BookSourceDebugContext | null, seenBookKeys: Set<string>): Promise<ParsedSearchBooks> {
     const parsed: ParsedSearchBooks = { books: [], itemCount: 0, cancelled: false };
     const searchRule = source.searchRule;
@@ -580,8 +615,9 @@ export class SearchCoordinator {
     const allTypedItems = stageItems === null ?
       rule.execute(searchRule.bookList || '', RuleExecutionTarget.ELEMENTS) :
       stageItems.map((item: string): RuleValue => RuleValue.fromExternal(item));
+    // A per-type search reads further down the list, so an aggregated source's later types are reached at all.
     const candidateLimit = this.normalizedLimit(options.maxCandidatesPerSource,
-      options.leanResult === true ? 60 : 120, 1, 200);
+      options.leanResult === true ? 60 : options.maxResultsPerCategory !== undefined ? 200 : 120, 1, 200);
     const typedItems = allTypedItems.length > candidateLimit ?
       allTypedItems.slice(0, candidateLimit) : allTypedItems;
     const items = typedItems.map((item: RuleValue): string => item.asString());
@@ -745,12 +781,13 @@ export class SearchCoordinator {
       if (!this.matchesMediaCategory(book, options)) continue;
       const bookKey = `${book.origin || ''}::${book.bookUrl || ''}`;
       if (book.name && book.bookUrl && !seenBookKeys.has(bookKey)) {
+        if (!budget.take(book)) continue;
         seenBookKeys.add(bookKey);
         if (ENABLE_SEARCH_DEBUG_LOG && books.length === 0) {
           console.log('[SC] 第一条结果:', book.name, 'from:', source.bookSourceName);
         }
         books.push(book);
-        if (books.length >= resultLimit) {
+        if (budget.full) {
           break;
         }
       }
@@ -767,14 +804,14 @@ export class SearchCoordinator {
 
   /** 原生书源的搜索：不经过脚本引擎，结果仍走统一的精确匹配、去重与字段清洗。 */
   private async searchNative(source: BookSource, keyword: string, options: SearchOptions,
-    responseLimit: number, resultLimit: number, stopped: () => boolean,
+    responseLimit: number, budget: SourceResultBudget, stopped: () => boolean,
     onPartial: ((books: SearchBook[]) => void) | null = null): Promise<SearchSourceResult> {
     if (!source.searchUrl) return this.sourceResult([], BookSource.VALIDATION_FAILED, '该书源没有配置搜索');
     const normalizedKeyword = this.normalizeSearchText(keyword);
     const seen = new Set<string>();
-    const accept = (candidates: SearchBook[], limit: number): SearchBook[] => {
+    const accept = (candidates: SearchBook[]): SearchBook[] => {
       const books: SearchBook[] = [];
-      if (limit <= 0) return books;
+      if (budget.full) return books;
       for (const book of candidates) {
         if (options.exactMatch && !this.matchesExactSearch(this.normalizeSearchText(book.name),
           this.normalizeSearchText(book.author), normalizedKeyword, options)) {
@@ -786,8 +823,9 @@ export class SearchCoordinator {
         this.sanitizeSearchBook(book);
         book.mediaCategory = BookTypeSupport.mediaCategoryOf(book);
         if (!this.matchesMediaCategory(book, options)) continue;
+        if (!budget.take(book)) continue;
         books.push(book);
-        if (books.length >= limit) break;
+        if (budget.full) break;
       }
       return books;
     };
@@ -795,7 +833,7 @@ export class SearchCoordinator {
     const emitted: SearchBook[] = [];
     const partial = onPartial && options.validationOnly !== true ? (batch: SearchBook[]): void => {
       if (stopped()) return;
-      const books = accept(batch, resultLimit - emitted.length);
+      const books = accept(batch);
       if (books.length === 0) return;
       emitted.push(...books);
       if (options.debugContext) options.debugContext.addLog('info', `脚本分批返回：本批 ${books.length} 本`);
@@ -820,7 +858,7 @@ export class SearchCoordinator {
     }
     if (stopped()) return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
     if (options.debugContext) options.debugContext.addLog('info', `原生搜索有效记录：${found.length}`);
-    const books = emitted.concat(accept(found, resultLimit - emitted.length));
+    const books = emitted.concat(accept(found));
     if (options.debugContext) options.debugContext.addLog('info', `去重、精确匹配及上限后：${books.length}`);
     return books.length > 0 ? this.sourceResult(books, BookSource.VALIDATION_PASSED, '') :
       this.sourceResult([], BookSource.VALIDATION_NO_RESULTS, '未搜索到结果');
