@@ -4676,7 +4676,8 @@ export struct BookshelfPage {
 
       Stack({ alignContent: Alignment.TopStart }) {
         // 圆角交给外面的封面面板裁，封面图自己不再裁 8vp，否则四角会露出下面的深色底板。
-        this.coverView(book, '100%', '100%', ImageFit.Cover, animateCovers, true, idScope, 0)
+        this.coverView(book, '100%', '100%', ImageFit.Cover, animateCovers, true, idScope, 0,
+          this.shelfHardcoverSpineWidth(coverWidth) + this.shelfHardcoverHingeWidth(coverWidth))
         this.shelfHardcoverCoverLight(coverWidth)
       }
       .width(coverWidth)
@@ -4718,7 +4719,8 @@ export struct BookshelfPage {
       this.shelfHardcoverBack(this.shelfFolderBookWidth(), this.shelfFolderBookHeight())
 
       Stack({ alignContent: Alignment.TopStart }) {
-        this.coverView(book, '100%', '100%', ImageFit.Cover, true, false, '', 0)
+        this.coverView(book, '100%', '100%', ImageFit.Cover, true, false, '', 0,
+          this.shelfHardcoverSpineWidth(this.shelfFolderBookWidth()) + this.shelfHardcoverHingeWidth(this.shelfFolderBookWidth()))
         this.shelfHardcoverCoverLight(this.shelfFolderBookWidth())
         if (slot > 0) {
           // 后面两本压暗一点，叠出前后层次。
@@ -5863,7 +5865,7 @@ export struct BookshelfPage {
 
   @Builder
   coverView(book: Book, width: Length, height: Length, imageFit: ImageFit, animateCovers: boolean = true, measure: boolean = true,
-    idScope: string = '', radius: number = 8) {
+    idScope: string = '', radius: number = 8, spineInset: number = -1) {
     Stack() {
       if (this.shouldUseThemeBookCover()) {
         if (this.activeThemeBookCovers(book).length === 1 || !animateCovers) {
@@ -5956,7 +5958,7 @@ export struct BookshelfPage {
         sourceText: LocalBookService.isLocalBook(book) ? '本地' : (book.originName || book.origin || '').trim(),
         unreadCount: book.totalChapterNum > 0 ? book.getUnreadChapterNum() : 0,
         updated: this.hasShelfBookUpdate(book), pinned: book.isPinned, offline: this.hasOfflineContent(book),
-        selecting: this.isBookMultiSelect
+        selecting: this.isBookMultiSelect, spineInset: spineInset
       })
     }
     .id(measure ? this.shelfCoverElementId(book, idScope) : '')
