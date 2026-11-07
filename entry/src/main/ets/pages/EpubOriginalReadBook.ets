@@ -61,6 +61,7 @@ import {
 } from '../core/reader/ReaderInfoBarModel';
 import { ReaderInfoBarClock } from '../core/reader/ReaderInfoBarClock';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
+import { ReaderNightImage } from '../core/reader/ReaderNightImage';
 import { TapZoneSettingsDialogContent } from '../components/TapZoneSettingsDialog';
 import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
@@ -240,6 +241,8 @@ struct EpubOriginalReadBookPage {
   @StorageLink('readerFontFilePath') @Watch('onReaderFontChanged') readerFontFilePath: string = '';
   @StorageLink('readerFontSourceName') readerFontSourceName: string = '系统默认';
   @State useReaderFont: boolean = false;
+  /** 夜间图片（与普通阅读页共用）：深色时插图保持原色、调暗、反色或自动。 */
+  @StorageLink('readerNightImageMode') @Watch('onReaderChromeChanged') nightImageMode: string = ReaderNightImage.ORIGINAL;
   @State infoTimeText: string = '';
   @State infoBatteryPercent: number = -1;
   @State title: string = '文件排版';
@@ -1068,6 +1071,7 @@ struct EpubOriginalReadBookPage {
     const margins = this.margins();
     return `${this.paged ? 1 : 0}_${this.zoom}_${this.darkMode ? 1 : 0}_${margins.top}_${margins.bottom}_` +
       `${margins.left}_${margins.right}_${this.webInsetTop()}_${this.webInsetBottom()}_${this.readerFontOption()}_` +
+      `${this.darkMode ? ReaderNightImage.normalize(this.nightImageMode) : ''}_` +
       `${Math.round(this.viewWidth)}x${Math.round(this.viewHeight)}`;
   }
 
@@ -1124,6 +1128,7 @@ struct EpubOriginalReadBookPage {
     options.nativeTurn = true;
     options.readerFont = this.readerFontOption();
     options.forceDark = this.darkMode;
+    options.nightImage = this.nightImageMode;
     options.margins = this.margins();
     options.target = target;
     const html = EpubOriginalDocument.build(pieces, relative, EpubOriginalScript.injection(options),
@@ -1276,6 +1281,15 @@ struct EpubOriginalReadBookPage {
   /** 应用换了阅读字体：开着“使用阅读字体”的话按新字体重排。 */
   onReaderFontChanged(): void {
     if (this.useReaderFont) this.onReaderChromeChanged();
+  }
+
+  private setNightImageMode(mode: string): void {
+    const value = ReaderNightImage.normalize(mode);
+    if (value === ReaderNightImage.normalize(this.nightImageMode)) return;
+    this.nightImageMode = value;
+    ReaderSettingsStore.saveNightImageMode(getContext(this), value).catch((error: Error): void => {
+      console.warn('[EpubOriginal] save night image mode failed:', error);
+    });
   }
 
   private saveMargins(left: number, right: number, top: number, bottom: number): void {
@@ -2876,6 +2890,8 @@ struct EpubOriginalReadBookPage {
         useReaderFont: this.useReaderFont,
         readerFontName: this.readerFontFilePath ? (this.readerFontSourceName || '自定义字体') : '系统字体',
         onUseReaderFontChange: (enabled: boolean): void => { this.setUseReaderFont(enabled); },
+        nightImageMode: ReaderNightImage.normalize(this.nightImageMode),
+        onNightImageModeChange: (mode: string): void => { this.setNightImageMode(mode); },
         onReaderChromeChange: (headerEnabled: boolean, footerEnabled: boolean, infoBarConfig: string): void => {
           this.saveReaderChrome(headerEnabled, footerEnabled, infoBarConfig);
         },

@@ -9,6 +9,7 @@ import { ReaderChromeMotion } from './ReaderChromeMotion';
 import { ReaderSettingActionRow, ReaderSettingLabel, ReaderSettingSelectRow, ReaderSettingSwitchRow } from './ReaderSettingRows';
 import { ReaderQuickJumpModel } from '../../core/reader/ReaderQuickJumpModel';
 import { ReaderPageTurnAnimation } from '../../core/reader/ReaderPageTurnAnimation';
+import { ReaderNightImage } from '../../core/reader/ReaderNightImage';
 import { ReaderHeaderFooterSettings, ReaderTypographyField, ReaderTypographyStepper } from './ReaderLayoutSettings';
 import { ReaderSettingsStore } from '../../utils/ReaderSettingsStore';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
@@ -71,6 +72,7 @@ export struct EpubOriginalControls {
   @Prop useReaderFont: boolean = false;
   /** 当前阅读字体的名字（系统字体或自定义字体名）。 */
   @Prop readerFontName: string = '';
+  @Prop nightImageMode: string = ReaderNightImage.ORIGINAL;
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 720;
   @State showMore: boolean = false;
@@ -92,6 +94,7 @@ export struct EpubOriginalControls {
     (_left: number, _right: number, _top: number, _bottom: number): void => {};
   onTapZones: () => void = (): void => {};
   onUseReaderFontChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
+  onNightImageModeChange: (mode: string) => void = (_mode: string): void => {};
   onReaderChromeChange: (headerEnabled: boolean, footerEnabled: boolean, infoBarConfig: string) => void =
     (_headerEnabled: boolean, _footerEnabled: boolean, _infoBarConfig: string): void => {};
   /** 与普通阅读页的日夜按钮相同：点按在日间、夜间之间切换（应用全局），长按改为跟随系统。 */
@@ -540,6 +543,16 @@ export struct EpubOriginalControls {
         ReaderSettingSwitchRow({ title: '使用阅读字体', description: `用${this.readerFontName || '阅读字体'}显示本书，字号与排版仍按书的样式`,
           checked: this.useReaderFont, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onUseReaderFontChange })
+        // 与普通阅读页同一个设置。
+        ReaderSettingSelectRow({ title: '夜间图片', description: ReaderNightImage.DESCRIPTION,
+          options: ReaderNightImage.LABELS.map((label: string): SelectOption => ({ value: label })),
+          selected: Math.max(0, ReaderNightImage.VALUES.indexOf(this.nightImageMode)),
+          textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+          accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode,
+          menuColor: this.solidPanelColor(),
+          onSelect: (index: number): void => {
+            if (index >= 0 && index < ReaderNightImage.VALUES.length) this.onNightImageModeChange(ReaderNightImage.VALUES[index]);
+          } })
         ReaderSettingActionRow({ title: '点击区域动作', description: this.tapZoneSummary,
           actionText: '配置', textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode), buttonColor: ThemeRuntime.accentColor(this.darkMode),
@@ -594,7 +607,7 @@ export struct EpubOriginalControls {
           onChanged: (headerEnabled: boolean, footerEnabled: boolean, infoBarConfig: string): void =>
             this.onReaderChromeChange(headerEnabled, footerEnabled, infoBarConfig)
         })
-        Text('文件排版按书本身的样式显示，阅读主题、字号和行距在这里不生效；边距、点击区域、页眉页脚与翻页动画和应用排版共用设置。应用处于夜间模式时，页面整体转成深色，图片保持原样。').fontSize(AppFontSize.CAPTION)
+        Text('文件排版按书本身的样式显示，阅读主题、字号和行距在这里不生效；边距、点击区域、页眉页脚与翻页动画和应用排版共用设置。应用处于夜间模式时，页面整体转成深色，图片按“夜间图片”处理。').fontSize(AppFontSize.CAPTION)
           .fontColor(ThemeRuntime.subTextColor(this.darkMode)).width('100%').margin({ top: 4 })
       }.width('100%').padding({ left: 24, right: 24, bottom: 16 }).alignItems(HorizontalAlign.Start)
     }.layoutWeight(1).width('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring, { alwaysEnabled: false })

@@ -1,4 +1,5 @@
 import { EpubOriginalInjection } from './EpubOriginalDocument';
+import { ReaderNightImage } from '../reader/ReaderNightImage';
 
 /** 原版排版的页边距（CSS 像素，已含状态栏、导航条）。 */
 export class EpubOriginalMargins {
@@ -21,6 +22,8 @@ export class EpubOriginalLayoutOptions {
   /** 翻页模式下拖动与翻页动画由原生截图翻页层负责，网页只在原地换页（见 step / show）。 */
   nativeTurn: boolean = false;
   forceDark: boolean = false;
+  /** 深色时插图怎么处理（ReaderNightImage 的值）；只在 forceDark 时有意义。 */
+  nightImage: string = ReaderNightImage.ORIGINAL;
   /**
    * 用应用的阅读字体代替书里的字体：空串不改；'system' 用系统字体；其余是字体文件在虚拟站点里的地址。
    * 只换字体，字号、行距等仍按书的样式。
@@ -30,9 +33,18 @@ export class EpubOriginalLayoutOptions {
   target: EpubOriginalTarget = new EpubOriginalTarget();
 }
 
+/** 自动模式在网页里逐张判断插图用的参数，与 ReaderNightImage.shouldInvert 相同。 */
+class EpubOriginalNightConfig {
+  auto: boolean = false;
+  minLuma: number = ReaderNightImage.AUTO_MIN_LUMA;
+  maxColorful: number = ReaderNightImage.AUTO_MAX_COLORFUL;
+  spread: number = ReaderNightImage.AUTO_COLOR_SPREAD;
+}
+
 class EpubOriginalScriptConfig {
   paged: boolean = true;
   nativeTurn: boolean = false;
+  night: EpubOriginalNightConfig = new EpubOriginalNightConfig();
   top: number = 0;
   bottom: number = 0;
   target: EpubOriginalTarget = new EpubOriginalTarget();
@@ -54,6 +66,7 @@ export class EpubOriginalScript {
     const config = new EpubOriginalScriptConfig();
     config.paged = options.paged;
     config.nativeTurn = options.paged && options.nativeTurn;
+    config.night.auto = options.forceDark && ReaderNightImage.normalize(options.nightImage) === ReaderNightImage.AUTO;
     config.top = options.margins.top;
     config.bottom = options.margins.bottom;
     config.target = options.target;
@@ -91,9 +104,24 @@ export class EpubOriginalScript {
     // 不能写 text-size-adjust:none：它会连网页组件的文字缩放（textZoomRatio）一起关掉，字号缩放就失效了。
     css += 'html{-webkit-tap-highlight-color:transparent;}';
     if (options.forceDark) {
-      // 应用处于深色模式时，与段评网页的夜间处理相同：整体反色，图片再反回来；翻页模式下 body 之外的栏露出的是 html 的底色。
-      css += 'html{background:#141414!important;}body{filter:invert(.92) hue-rotate(180deg)!important;}' +
-        'img,video,picture,canvas,svg image,[style*="background-image"]{filter:invert(1) hue-rotate(180deg)!important;}';
+      // 应用处于深色模式时，与段评网页的夜间处理相同：整体反色（invert .92 + 色相转回）；翻页模式下 body 之外的栏露出的是 html 的底色。
+      // 插图跟着整页一起被反色，再按“夜间图片”设置决定给它加什么滤镜：
+      // 保持原色 = 先反回来；调暗 = 先压暗再反回来（整页反色后剩下压暗）；反色 = 不加，留着整页的反色；
+      // 自动 = 默认按调暗，脚本判断为白底少色的图（标记 data-legado-night="invert"）不加。
+      css += 'html{background:#141414!important;}body{filter:invert(.92) hue-rotate(180deg)!important;}';
+      // 不含 picture：它里面的 img 已经有滤镜，再给外层加一次会叠两遍。
+      const media = 'img,video,canvas,svg image,[style*="background-image"]';
+      const keep = 'invert(1) hue-rotate(180deg)';
+      const dim = `brightness(${ReaderNightImage.DIM_BRIGHTNESS}) invert(1) hue-rotate(180deg)`;
+      const mode = ReaderNightImage.normalize(options.nightImage);
+      if (mode === ReaderNightImage.ORIGINAL) {
+        css += `${media}{filter:${keep}!important;}`;
+      } else if (mode === ReaderNightImage.DIM) {
+        css += `${media}{filter:${dim}!important;}`;
+      } else if (mode === ReaderNightImage.AUTO) {
+        css += `${media}{filter:${dim}!important;}` +
+          '[data-legado-night="invert"]{filter:none!important;}';
+      }
     }
     return css;
   }
@@ -328,9 +356,56 @@ export class EpubOriginalScript {
     if (!text) return !!a.querySelector('img,image');
     return NOTE.test(text);
   }
+  // 夜间图片“自动”：把每张插图缩小画进画布取样，白底少色的图标记为反色（样式里不再反回来）。
+  // 插图都在虚拟站点同源，画布可以读像素；读不了就按调暗处理。
+  function nightInvert(d) {
+    var n = cfg.night, counted = 0, luma = 0, colorful = 0;
+    for (var i = 0; i + 3 < d.length; i += 4) {
+      var a = d[i + 3] / 255;
+      var r = (d[i] * a + 255 * (1 - a)) / 255, g = (d[i + 1] * a + 255 * (1 - a)) / 255,
+        b = (d[i + 2] * a + 255 * (1 - a)) / 255;
+      luma += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      if (Math.max(r, g, b) - Math.min(r, g, b) > n.spread) colorful++;
+      counted++;
+    }
+    if (!counted) return true;
+    return luma / counted >= n.minLuma && colorful / counted <= n.maxColorful;
+  }
+  function nightMark(target, source) {
+    try {
+      var w = 48, h = Math.max(1, Math.min(96, Math.round(48 * source.naturalHeight / Math.max(1, source.naturalWidth))));
+      var canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      var g = canvas.getContext('2d');
+      g.drawImage(source, 0, 0, w, h);
+      target.setAttribute('data-legado-night', nightInvert(g.getImageData(0, 0, w, h).data) ? 'invert' : 'keep');
+    } catch (e) {
+      target.setAttribute('data-legado-night', 'keep');
+    }
+  }
+  function nightWhenLoaded(target, source) {
+    if (source.complete && source.naturalWidth) nightMark(target, source);
+    else source.addEventListener('load', function () { nightMark(target, source); }, { once: true });
+  }
+  function nightClassify() {
+    if (!cfg.night || !cfg.night.auto) return;
+    var images = document.images;
+    for (var i = 0; i < images.length; i++) nightWhenLoaded(images[i], images[i]);
+    var svgImages = document.querySelectorAll('svg image');
+    for (var j = 0; j < svgImages.length; j++) {
+      var node = svgImages[j];
+      var href = node.getAttribute('href') || node.getAttribute('xlink:href') ||
+        node.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+      if (!href) continue;
+      var probe = new Image();
+      probe.src = new URL(href, document.baseURI).href;
+      nightWhenLoaded(node, probe);
+    }
+  }
   function start() {
     if (started) return;
     started = true;
+    nightClassify();
     layout();
     var t = cfg.target || {};
     if (t.kind === 'end') {

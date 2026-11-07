@@ -200,6 +200,8 @@ import { ReaderParagraphIndent } from '../core/reader/ReaderParagraphIndent';
 import { ReaderHorizontalMargin } from '../core/reader/ReaderHorizontalMargin';
 import { ReaderImageSizeResolver } from '../core/reader/ReaderImageSizeResolver';
 import { ReaderImageBitmapCache } from '../core/reader/ReaderImageBitmapCache';
+import { ReaderNightImage } from '../core/reader/ReaderNightImage';
+import { ReaderNightImageCache } from '../core/reader/ReaderNightImageCache';
 import { ReaderChunkPagination, ReaderChunkResult } from '../core/reader/ReaderChunkPagination';
 import { ReaderPageOffsets } from '../core/reader/ReaderPageOffsets';
 import { ReaderScrollAnchor } from '../core/reader/ReaderScrollAnchor';
@@ -298,6 +300,15 @@ class ReaderCommentNavigationBridge {
   close(): void { this.dismiss(); }
   surfaceColor(color: string): void { this.surfaceChanged(String(color)); }
 }
+
+/** 网络插图（没有解码好的位图可处理）在夜间时只能用滤镜调暗；本地插图的调暗与反色见 ReaderNightImageCache。 */
+const READER_NIGHT_DIM_FILTER: ColorFilter = new ColorFilter(ReaderNightImage.dimMatrix());
+const READER_IDENTITY_FILTER: ColorFilter = new ColorFilter([
+  1, 0, 0, 0, 0,
+  0, 1, 0, 0, 0,
+  0, 0, 1, 0, 0,
+  0, 0, 0, 1, 0
+]);
 
 @Entry
 @Component
@@ -543,6 +554,9 @@ struct ReadBookPage {
   @State readerV2LoadedImageSources: string[] = [];
   // 本地插图解码进缓存后加一，让已挂着文件地址的 Image 换成 PixelMap。
   @State readerV2ImageBitmapVersion: number = 0;
+  /** 夜间图片（与文件排版共用）：阅读主题为深色时插图保持原色、调暗、反色或自动。 */
+  @StorageLink('readerNightImageMode') @Watch('onReaderNightImageModeChanged')
+  readerNightImageMode: string = ReaderNightImage.ORIGINAL;
   @State readerV2SelectionPaintVersion: number = 0;
   @State ttsSleepTimerMinutes: number = 0;
   @State ttsSleepTimerRemainingSeconds: number = 0;
@@ -682,6 +696,7 @@ struct ReadBookPage {
   private readerV2SelectionExtraGaps: Map<string, number> = new Map<string, number>();
   private readerV2SelectionShownHostVersion: number = -1;
   private readerV2ImageBitmaps: ReaderImageBitmapCache = new ReaderImageBitmapCache();
+  private readerNightImages: ReaderNightImageCache = new ReaderNightImageCache();
   private readerV2Controllers: Map<string, ReaderV2PageNodeController> =
     new Map<string, ReaderV2PageNodeController>();
   private readerV2SelectionStyledTextCache: Map<string, MutableStyledString> =
@@ -12238,6 +12253,20 @@ struct ReadBookPage {
             });
           }
         })
+        // 与文件排版同一个设置；直接建组件，选择后下拉跟着刷新。
+        ReaderSettingSelectRow({
+          title: '夜间图片',
+          description: ReaderNightImage.DESCRIPTION,
+          options: ReaderNightImage.LABELS.map((label: string): SelectOption => ({ value: label })),
+          selected: Math.max(0, ReaderNightImage.VALUES.indexOf(ReaderNightImage.normalize(this.readerNightImageMode))),
+          controlId: 'reader_night_image_select',
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          accentColor: this.accentColor(),
+          dark: this.isReaderThemeDark(),
+          menuColor: this.readerSolidPanelColor(),
+          onSelect: (index: number): void => this.setReaderNightImageMode(index)
+        })
       }
 
       this.readerSelectSettingItem('翻页方式', '上下滑动、横向滑动或滚动阅读',
@@ -17774,6 +17803,7 @@ struct ReadBookPage {
     // 已解码的本地插图直接用 PixelMap 绘制：翻页和跨章会新建 Image 节点，用文件地址时新节点要重新异步解码，
     // 解码完成前插图位置是空的。
     Image(this.readerV2ImageContent(fragment, this.readerV2ImageBitmapVersion))
+      .colorFilter(this.readerV2ImageColorFilter(fragment, this.readerV2ImageBitmapVersion))
       .syncLoad(this.readerV2ImageBitmapReady(fragment, this.readerV2ImageBitmapVersion))
       .opacity(this.isReaderV2ImageShown(fragment, this.readerV2ImageBitmapVersion) ? 1 : 0)
       .animation({ duration: 220, curve: Curve.EaseOut })
@@ -17815,19 +17845,69 @@ struct ReadBookPage {
   readerV2ImageContent(fragment: ReaderV2PageFragment, _bitmapVersion: number): string | image.PixelMap {
     const bitmap = this.readerV2ImageBitmaps.get(fragment.imageSource, fragment.imageRect.width(),
       fragment.imageRect.height());
-    if (bitmap) return bitmap;
+    if (bitmap) return this.readerV2NightBitmap(fragment, bitmap) ?? bitmap;
     this.prepareReaderV2ImageBitmap(fragment);
     return this.readerImageUriForSource(fragment.imageSource);
   }
 
   readerV2ImageBitmapReady(fragment: ReaderV2PageFragment, _bitmapVersion: number): boolean {
-    return !!this.readerV2ImageBitmaps.get(fragment.imageSource, fragment.imageRect.width(),
+    const bitmap = this.readerV2ImageBitmaps.get(fragment.imageSource, fragment.imageRect.width(),
       fragment.imageRect.height());
+    return !!bitmap && this.readerV2NightBitmap(fragment, bitmap) !== undefined;
   }
 
   isReaderV2ImageShown(fragment: ReaderV2PageFragment, bitmapVersion: number): boolean {
-    return this.readerV2LoadedImageSources.includes(fragment.imageSource) ||
-      this.readerV2ImageBitmapReady(fragment, bitmapVersion);
+    // 解码好的本地插图要等夜间处理完才显示，免得深色下先闪一下原色。
+    const bitmap = this.readerV2ImageBitmaps.get(fragment.imageSource, fragment.imageRect.width(),
+      fragment.imageRect.height());
+    if (bitmap) return this.readerV2NightBitmap(fragment, bitmap) !== undefined;
+    return this.readerV2LoadedImageSources.includes(fragment.imageSource);
+  }
+
+  /** 当前生效的夜间图片处理：阅读主题不是深色或在漫画模式时一律保持原色。 */
+  readerNightImageModeActive(): string {
+    if (!this.isReaderThemeDark() || this.isReaderComicModeActive()) return ReaderNightImage.ORIGINAL;
+    return ReaderNightImage.normalize(this.readerNightImageMode);
+  }
+
+  /**
+   * 本地插图按夜间设置处理后的位图；还在处理时返回 undefined（先不显示、翻页纹理退回截图），
+   * 处理失败或不需要处理时返回原图。实时页面与自绘翻页纹理共用。
+   */
+  readerV2NightBitmap(fragment: ReaderV2PageFragment, base: image.PixelMap): image.PixelMap | undefined {
+    const mode = this.readerNightImageModeActive();
+    if (mode === ReaderNightImage.ORIGINAL) return base;
+    const key = `${Math.round(fragment.imageRect.width())}x${Math.round(fragment.imageRect.height())}|` +
+      fragment.imageSource;
+    const result = this.readerNightImages.get(key, mode);
+    if (result === null) return base;
+    if (result) return result;
+    this.readerNightImages.prepare(key, base, mode, (): void => {
+      this.readerV2ImageBitmapVersion++;
+    });
+    return undefined;
+  }
+
+  /** 只给没有本地位图的插图（网络图）用：夜间时调暗。本地插图已经换成处理过的位图。 */
+  readerV2ImageColorFilter(fragment: ReaderV2PageFragment, _bitmapVersion: number): ColorFilter {
+    if (this.readerNightImageModeActive() === ReaderNightImage.ORIGINAL) return READER_IDENTITY_FILTER;
+    const bitmap = this.readerV2ImageBitmaps.get(fragment.imageSource, fragment.imageRect.width(),
+      fragment.imageRect.height());
+    return bitmap ? READER_IDENTITY_FILTER : READER_NIGHT_DIM_FILTER;
+  }
+
+  onReaderNightImageModeChanged(): void {
+    this.readerV2ImageBitmapVersion++;
+  }
+
+  setReaderNightImageMode(index: number): void {
+    if (index < 0 || index >= ReaderNightImage.VALUES.length) return;
+    const value = ReaderNightImage.VALUES[index];
+    if (value === ReaderNightImage.normalize(this.readerNightImageMode)) return;
+    this.readerNightImageMode = value;
+    ReaderSettingsStore.saveNightImageMode(getContext(this), value).catch((error: Error) => {
+      console.warn('保存夜间图片设置失败:', error);
+    });
   }
 
   prepareReaderV2ImageBitmap(fragment: ReaderV2PageFragment): void {
@@ -21531,7 +21611,7 @@ struct ReadBookPage {
     return `${this.currentChapterIndex}_${this.currentPageIndex}_${this.pageRenderVersion}_` +
       `${this.ttsHighlightRenderVersion}_${this.themeRevision}_${this.getPageTurnWidth()}_` +
       `${this.getPageTurnHeight()}_${this.readerPageCurlSnapshotScale()}_${this.readerV2ImageBitmapVersion}_` +
-      `${this.readerInfoTimeText}_${this.readerInfoBatteryPercent}_${this.currentReaderInfoBarLayoutIdentity()}_` +
+      `${this.readerNightImageModeActive()}_${this.readerInfoTimeText}_${this.readerInfoBatteryPercent}_${this.currentReaderInfoBarLayoutIdentity()}_` +
       `${this.getReaderPageContentTopPadding()}_${this.navBarHeight}_${this.readerExtendToStatusBar}_` +
       `${this.isLandscapeDoublePageActive() ? direction : 0}`;
   }
@@ -21660,8 +21740,10 @@ struct ReadBookPage {
       spec.pages.push(new ReaderRasterPage(page, offsetX, offsetY));
       for (const fragment of page.fragments) {
         if (fragment.imageSource) {
-          const bitmap = this.readerV2ImageBitmaps.get(fragment.imageSource, fragment.imageRect.width(),
+          const base = this.readerV2ImageBitmaps.get(fragment.imageSource, fragment.imageRect.width(),
             fragment.imageRect.height());
+          if (!base) return null;
+          const bitmap = this.readerV2NightBitmap(fragment, base);
           if (!bitmap) return null;
           spec.images.push(new ReaderRasterImage(bitmap, offsetX + fragment.imageRect.left,
             offsetY + fragment.imageRect.top, offsetX + fragment.imageRect.right,

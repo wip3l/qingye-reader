@@ -42,6 +42,7 @@ function harness() {
     compile(read('core/reader/ReaderParagraphIndent.ts')) + '\n' +
     compile(read('core/reader/ReaderInfoBarModel.ts')) + '\n' +
     compile(read('core/reader/ReaderQuickJumpModel.ts')) + '\n' +
+    compile(read('core/reader/ReaderNightImage.ts')) + '\n' +
     compile(read('core/reader/ReaderTitleSplit.ts')) + '\n' +
     compile(read('model/reader/ReaderRegexFontRule.ets')) + '\n' +
     compile(read('model/reader/ReaderTitleStyle.ets')) + '\n' +

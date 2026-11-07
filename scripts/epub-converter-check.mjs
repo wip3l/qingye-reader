@@ -8,7 +8,7 @@ import { loadReaderModules } from './lib/load-reader-modules.mjs';
 
 const { EpubHtmlConverter, EpubImageRef, EpubChapterPlanner, EpubChapterSegment, EpubTocEntry, ReaderImageMarker,
   ReaderActionMarker, EpubNoteLink, EpubTextOffsetMap, EpubOriginalDocument, EpubOriginalPiece, EpubOriginalPosition,
-  EpubOriginalSpot, EpubOriginalScript, EpubOriginalLayoutOptions, cleanup } = await loadReaderModules();
+  EpubOriginalSpot, EpubOriginalScript, EpubOriginalLayoutOptions, ReaderNightImage, cleanup } = await loadReaderModules();
 
 let failures = 0;
 const check = (condition, message, detail = '') => {
@@ -362,6 +362,53 @@ try {
     tricky.target.snippet = '$&</script>';
     const trickyScript = EpubOriginalScript.injection(tricky).script;
     check(!trickyScript.includes('</script>') && trickyScript.includes('$&'), '定位文字里的 </script> 与 $& 不破坏脚本');
+
+    // 夜间图片：深色时各模式给插图的滤镜，以及自动模式的判断。
+    const nightStyle = (mode) => {
+      const options = new EpubOriginalLayoutOptions();
+      options.forceDark = true;
+      options.nightImage = mode;
+      return EpubOriginalScript.injection(options);
+    };
+    check(nightStyle('original').style.includes('img,video,canvas,svg image') &&
+      nightStyle('original').style.includes('invert(1) hue-rotate(180deg)!important'), '夜间图片保持原色：插图反回来');
+    check(nightStyle('dim').style.includes('brightness(0.8) invert(1)'), '夜间图片调暗：先压暗再反回来');
+    check(!nightStyle('invert').style.includes('invert(1)'), '夜间图片反色：插图不再反回来');
+    const autoInjection = nightStyle('auto');
+    check(autoInjection.style.includes('[data-legado-night="invert"]{filter:none') &&
+      autoInjection.script.includes('"auto":true'), '夜间图片自动：默认调暗、标记为反色的不加滤镜，脚本开启判断');
+    check(!nightStyle('bogus').style.includes('brightness('), '未知取值按保持原色处理');
+    const lightOptions = new EpubOriginalLayoutOptions();
+    lightOptions.nightImage = 'invert';
+    check(!EpubOriginalScript.injection(lightOptions).style.includes('invert('), '浅色时不加任何反色样式');
+    let autoScriptOk = true;
+    try {
+      new Function(autoInjection.script);
+    } catch (error) {
+      autoScriptOk = false;
+      console.error(error);
+    }
+    check(autoScriptOk, '自动模式注入脚本语法正确');
+    const pixels = (count, rgba) => {
+      const data = new Uint8Array(count * 4);
+      for (let i = 0; i < count; i++) data.set(rgba(i), i * 4);
+      return data;
+    };
+    check(ReaderNightImage.shouldInvert(pixels(400, (i) => i % 10 === 0 ? [20, 20, 20, 255] : [250, 250, 250, 255])),
+      '白底黑线的图判为反色');
+    check(!ReaderNightImage.shouldInvert(pixels(400, (i) => [40 + (i % 120), 90, 160 - (i % 80), 255])),
+      '深色彩色照片不反色');
+    check(!ReaderNightImage.shouldInvert(pixels(400, (i) => i % 3 === 0 ? [230, 60, 60, 255] : [245, 245, 245, 255])),
+      '浅底但大面积彩色的插画不反色');
+    check(ReaderNightImage.shouldInvert(pixels(400, (i) => i % 8 === 0 ? [0, 0, 0, 255] : [0, 0, 0, 0])),
+      '透明底黑线稿按白底合成后判为反色');
+    const invert = ReaderNightImage.invertMatrix();
+    const apply = (rgb) => [0, 1, 2].map((row) => Math.max(0, Math.min(1,
+      invert[row * 5] * rgb[0] + invert[row * 5 + 1] * rgb[1] + invert[row * 5 + 2] * rgb[2] + invert[row * 5 + 4])));
+    check(apply([1, 1, 1]).every((v) => Math.abs(v - 0.08) < 0.01) && apply([0, 0, 0]).every((v) => Math.abs(v - 0.92) < 0.01),
+      '反色矩阵：白变深灰、黑变浅灰');
+    const red = apply([0.9, 0.1, 0.1]);
+    check(red[0] > red[1] && red[0] > red[2], '反色矩阵保留色相（红仍偏红）');
 
     const content = `标题\n\n正文${ReaderActionMarker.create('1', 'legado-epub-note:a#b')}后文¹ 很长的一段内容在这里继续写下去，` +
       '一直写到足够长的位置。';

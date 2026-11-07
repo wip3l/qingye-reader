@@ -1,3 +1,4 @@
+import { ReaderNightImage } from '../core/reader/ReaderNightImage';
 import { ReaderQuickJumpModel } from '../core/reader/ReaderQuickJumpModel';
 import { ReaderCommentBubbleSize } from '../core/reader/ReaderCommentBubbleSize';
 import { ReaderFontWeight } from '../core/reader/ReaderFontWeight';
@@ -60,6 +61,8 @@ export class ReaderSettings {
   useBrightnessQuickAction: boolean = true;
   quickJumpMode: string = 'chapter';
   quickBookmarkEnabled: boolean = true;
+  /** 夜间模式下插图的处理：保持原色 / 调暗 / 反色 / 自动（见 ReaderNightImage）。 */
+  nightImageMode: string = ReaderNightImage.ORIGINAL;
   // 阅读页眉页脚配置。默认页眉关闭、页脚保持现有章节/页码信息。
   readerHeaderEnabled: boolean = false;
   readerHeaderContentMode: string = 'chapter';
@@ -155,6 +158,7 @@ export class ReaderSettingsStore {
   static readonly KEY_USE_BRIGHTNESS_QUICK_ACTION: string = 'readerUseBrightnessQuickAction';
   static readonly KEY_QUICK_JUMP_MODE: string = 'readerQuickJumpMode';
   static readonly KEY_QUICK_BOOKMARK_ENABLED: string = 'readerQuickBookmarkEnabled';
+  static readonly KEY_NIGHT_IMAGE_MODE: string = 'readerNightImageMode';
   static readonly KEY_HEADER_ENABLED: string = 'readerHeaderEnabled';
   static readonly KEY_HEADER_CONTENT_MODE: string = 'readerHeaderContentMode';
   static readonly KEY_FOOTER_ENABLED: string = 'readerFooterEnabled';
@@ -454,6 +458,8 @@ export class ReaderSettingsStore {
       ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED,
       AppStorage.get<boolean>(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED) ?? true
     );
+    settings.nightImageMode = ReaderNightImage.normalize(await ReaderSettingsStore.getString(
+      store, ReaderSettingsStore.KEY_NIGHT_IMAGE_MODE, ReaderNightImage.ORIGINAL));
     settings.readerHeaderEnabled = await ReaderSettingsStore.getBoolean(
       store, ReaderSettingsStore.KEY_HEADER_ENABLED, false);
     settings.readerHeaderContentMode = ReaderSettingsStore.normalizeHeaderContentMode(
@@ -803,6 +809,17 @@ export class ReaderSettingsStore {
     await store.flush();
   }
 
+  static async saveNightImageMode(context: Context, mode: string): Promise<void> {
+    const settings = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
+    settings.nightImageMode = ReaderNightImage.normalize(mode);
+    ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(settings);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_NIGHT_IMAGE_MODE, settings.nightImageMode);
+    const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
+    await store.put(ReaderSettingsStore.KEY_NIGHT_IMAGE_MODE, settings.nightImageMode);
+    await ReaderSettingsStore.persistActiveThemeProfile(store, settings);
+    await store.flush();
+  }
+
   static async saveAiProcessingIndicatorEnabled(context: Context,
     enabled: boolean = AppStorage.get<boolean>(ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED) ?? true): Promise<void> {
     const settings = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
@@ -1117,6 +1134,7 @@ export class ReaderSettingsStore {
     await ReaderSettingsStore.savePreloadChapterCount(context, settings.preloadChapterCount);
     await ReaderSettingsStore.saveAiProcessingIndicatorEnabled(context, settings.aiProcessingIndicatorEnabled);
     await ReaderSettingsStore.saveQuickBookmarkEnabled(context, settings.quickBookmarkEnabled);
+    await ReaderSettingsStore.saveNightImageMode(context, settings.nightImageMode);
     await ReaderSettingsStore.saveFontSettings(
       context,
       settings.fontFamily,
@@ -1171,6 +1189,7 @@ export class ReaderSettingsStore {
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION, normalized.useBrightnessQuickAction);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_QUICK_JUMP_MODE, normalized.quickJumpMode);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED, normalized.quickBookmarkEnabled);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_NIGHT_IMAGE_MODE, normalized.nightImageMode);
     ReaderSettingsStore.applyReaderChromeToStorage(normalized);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_FONT_FAMILY, normalized.fontFamily);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_FONT_FILE_PATH, normalized.fontFilePath);
@@ -1920,6 +1939,8 @@ export class ReaderSettingsStore {
       (AppStorage.get<boolean>(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION) ?? true);
     settings.quickBookmarkEnabled = typeof source.quickBookmarkEnabled === 'boolean' ? source.quickBookmarkEnabled :
       (AppStorage.get<boolean>(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED) ?? true);
+    settings.nightImageMode = ReaderNightImage.normalize(source.nightImageMode ??
+      (AppStorage.get<string>(ReaderSettingsStore.KEY_NIGHT_IMAGE_MODE) || ReaderNightImage.ORIGINAL));
     settings.readerHeaderEnabled = source.readerHeaderEnabled === true;
     settings.readerHeaderContentMode = ReaderSettingsStore.normalizeHeaderContentMode(source.readerHeaderContentMode);
     settings.readerFooterEnabled = source.readerFooterEnabled !== false;
@@ -2068,6 +2089,8 @@ export class ReaderSettingsStore {
     settings.quickJumpMode = ReaderQuickJumpModel.normalizeMode(
       AppStorage.get<string>(ReaderSettingsStore.KEY_QUICK_JUMP_MODE) || 'chapter');
     settings.quickBookmarkEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_QUICK_BOOKMARK_ENABLED) ?? true;
+    settings.nightImageMode = ReaderNightImage.normalize(
+      AppStorage.get<string>(ReaderSettingsStore.KEY_NIGHT_IMAGE_MODE) || ReaderNightImage.ORIGINAL);
     settings.readerHeaderEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_HEADER_ENABLED) ?? false;
     settings.readerHeaderContentMode = ReaderSettingsStore.normalizeHeaderContentMode(
       AppStorage.get<string>(ReaderSettingsStore.KEY_HEADER_CONTENT_MODE) || 'chapter');
