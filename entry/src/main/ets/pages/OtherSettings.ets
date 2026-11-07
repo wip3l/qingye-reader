@@ -248,11 +248,11 @@ struct OtherSettingsPage {
         onChange: (value: boolean) => { this.saveHttpCompatibility(value); }
       })
       SettingNavRow({
-        title: '脚本引擎迁移',
-        description: 'QuickJS 影子校验、灰度路由、自动回退状态',
+        title: '后台脚本线程验证',
+        description: '检查 QuickJS 后台线程的响应、超时取消与并发',
         showDivider: false,
         onTap: () => {
-          router.pushUrl({ url: 'pages/QuickJsDiagnostics' });
+          router.pushUrl({ url: 'pages/ScriptThreadProbe' });
         }
       })
     }

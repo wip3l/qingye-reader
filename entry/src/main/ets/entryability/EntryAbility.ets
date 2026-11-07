@@ -39,7 +39,6 @@ import { StartupCoverTextStore } from '../utils/StartupCoverTextStore';
 import { BookSourceRuntimeStore, NativeSourceInteraction, SourceScriptNotice, TlsTrustStore } from '@legado/sourceengine';
 import { AppSourceInteraction } from '../utils/AppSourceInteraction';
 import { HdsFeedback } from '../utils/HdsFeedback';
-import { QuickJsDiagnostics } from '@legado/sourceengine/Diagnostics';
 import { AppDatabase } from '../model/data/AppDatabase';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
@@ -403,10 +402,6 @@ export default class EntryAbility extends UIAbility {
       setTimeout(() => {
         AudioOfflineStore.cleanupOrphans().catch((error: Error) => console.warn('清理离线音频残留失败:', error));
       }, 20000);
-      QuickJsDiagnostics.initialize(this.context).catch((error: Error) => {
-
-        hilog.warn(0x0000, 'QuickJS', 'Migration initialization failed: %{public}s', error.message);
-      });
       // ReaderFontHelper only counts a font as registered when the UIContext registration succeeds, so a null
       // context here always fell back to the theme font when Index (not Startup) was the first page.
       this.readerBootstrapPromise

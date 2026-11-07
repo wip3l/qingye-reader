@@ -1,4 +1,4 @@
-import { NativeSourceService, BookSource, SearchBook, HttpClient, HttpResponse, AnalyzeUrl, AnalyzeRule, RuleContext, ScriptCompatibility, JsRuntime, VerificationSupport, EncodedSourceUrl, BookUrlResolver, PageCandidateUrl, BookFieldSanitizer, BookTypeSupport, BookSourceRuntimeRouter, SourceRuntimeStage, BookSourceStageWebRuntime, StageWebRuntimeRequest, RuleExecutionService, RuleBatchExecutionRequest, RuleFieldRequest, CooperativeScheduler, QuickJsObservationContext, RuleExecutionTarget, RuleValue, BookSourceDebugContext, LogText, NetworkErrorText } from '@legado/sourceengine';
+import { NativeSourceService, BookSource, SearchBook, HttpClient, HttpResponse, AnalyzeUrl, AnalyzeRule, RuleContext, ScriptCompatibility, JsRuntime, VerificationSupport, EncodedSourceUrl, BookUrlResolver, PageCandidateUrl, BookFieldSanitizer, BookTypeSupport, BookSourceRuntimeRouter, SourceRuntimeStage, BookSourceStageWebRuntime, StageWebRuntimeRequest, RuleExecutionService, RuleBatchExecutionRequest, RuleFieldRequest, CooperativeScheduler, RuleExecutionTarget, RuleValue, BookSourceDebugContext, LogText, NetworkErrorText } from '@legado/sourceengine';
 import { appDb } from '../../model/data/AppDatabase';
 import { BookSourceDataUrlSupport } from './BookSourceDataUrlSupport';
 import { BookSourceMetadataSupport } from './BookSourceMetadataSupport';
@@ -483,12 +483,6 @@ export class SearchCoordinator {
       return this.sourceResult([], BookSource.VALIDATION_FAILED, '缺少搜索地址或必要搜索规则');
     }
     const js = new JsRuntime();
-    const urlObservation = new QuickJsObservationContext();
-    urlObservation.sourceUrl = source.bookSourceUrl || '';
-    urlObservation.sourceName = source.bookSourceName || urlObservation.sourceUrl;
-    urlObservation.stage = SourceRuntimeStage.SEARCH;
-    urlObservation.field = 'searchUrl';
-    js.setQuickJsObservation(urlObservation);
     js.setVar('key', encodeURIComponent(keyword));
     js.setVar('searchKey', encodeURIComponent(keyword));
     js.setVar('keyword', encodeURIComponent(keyword));

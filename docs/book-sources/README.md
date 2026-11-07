@@ -22,7 +22,7 @@
 | 单书源调试 | 书源管理 → 操作菜单 → 调试，或书源编辑页 | 管理入口默认检查全链路；有阶段选项的入口可单独运行。查看每一步的请求、规则匹配数、输出预览和错误。 |
 | 批量校验 | 书源管理 → 校验 | “搜索能力”模式快速检查搜索；“发现/阅读链路”模式走完发现、详情、目录和正文抽样。 |
 | 应用内验收 | 搜索、发现、阅读页 | 按书源开发文档的[应用内验收清单](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md#应用内验收清单)逐项确认。 |
-| 后台脚本线程验证 | 其他设置 → 兼容与诊断 → 脚本引擎迁移 | 检查原生 QuickJS 后台线程的响应、超时取消、并发及 JS 函数库用例；不验证实际网站链路。 |
+| 后台脚本线程验证 | 其他设置 → 兼容与诊断 | 检查原生 QuickJS 后台线程的响应、超时取消、并发及 JS 函数库用例；不验证实际网站链路。 |
 
 调试和校验的细节见书源开发文档的[单书源调试](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md#单书源调试)和[批量书源校验状态](https://github.com/wip3l/harmony-book-source-engine/blob/main/docs/book-source-development.md#批量书源校验状态)。
 

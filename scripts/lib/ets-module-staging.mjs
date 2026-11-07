@@ -13,7 +13,7 @@ export const ETS_ROOTS = [
   path.join(projectRoot, 'harmony-book-ai-engine', 'aiengine', 'src', 'main', 'ets'),
 ];
 const PACKAGES = [
-  { name: '@legado/sourceengine', root: ETS_ROOTS[1], indexes: ['Index.ts', 'Diagnostics.ets'] },
+  { name: '@legado/sourceengine', root: ETS_ROOTS[1], indexes: ['Index.ts'] },
   { name: '@legado/aiengine', root: ETS_ROOTS[2], indexes: ['Index.ets'] },
 ];
 

@@ -178,7 +178,7 @@ MiMo 支持音色预设、试听及按书选择人物音色方案；方案切换
 | 请求 | HTTP GET/POST、请求头、请求体、URL 模板、字符集、重试、Cookie 注入与 `Set-Cookie` 保存；`header` 可用 `@js:` 动态计算；URL 选项支持显式 `session` 会话规则。 |
 | 网页抓取 | URL 选项 `webView: true` 改走隐藏 ArkWeb 并返回渲染后的 DOM，`webJs` 可在页面上下文生成最终响应。 |
 | 解析 | JSONPath、CSS、基础 XPath、旧式链式规则、属性提取、`&&` / `\|\|` / `%%` 组合、模板拼接、`##` 正则后处理（兼容 Java 正则方言）、`@put` / `@get`。 |
-| JavaScript | `<js>` / `@js:` 混合规则与 `jsLib`；轻量兼容引擎处理常用表达式，复杂脚本按搜索、发现、详情、目录、正文阶段路由到受控 ArkWeb；原生 QuickJS 以影子比对和灰度方式逐步接管纯表达式。 |
+| JavaScript | `<js>` / `@js:` 混合规则与 `jsLib`；轻量兼容引擎处理常用表达式，复杂脚本按搜索、发现、详情、目录、正文阶段路由到受控 ArkWeb；轻量引擎替换掉已知主机调用后剩下的纯 JavaScript 由沙箱 QuickJS 求值。 |
 | 主机函数 | 常见 `java.*`、`source.*`、`book.*`、`cache.*`、`cookie.*`，以及 Base64、Hex、摘要、URL/HTML 编解码和 AES/DES/3DES；`java.toast` 在阅读阶段显示为应用内提示。 |
 | 登录 | 动态登录面板、`startBrowserAwait`、登录页脚本、验证码跳转和跨地址 Cookie 同步。 |
 | 内容类型 | 普通文本、漫画、有声书识别；正文中的显式网页操作、图片和媒体标记；`data:` / Base64 地址。 |
@@ -246,7 +246,7 @@ qingye-reader/
 | `AnalyzeUrl` / `AnalyzeRule` | 请求描述、选择器、正则与脚本规则解析。 |
 | `JavaRegexCompat` / `BudgetedRegexReplace` | Android 正则方言转换（含 `\w`、`\d`、`\b` 的 Unicode 语义），以及带时间预算的净化替换。 |
 | `BookSourceRuntimeRouter` / `BookSourceStageWebRuntime` / `BookSourceHeaderRuntime` | 复杂 JavaScript 的分阶段运行、受控桥接与 `@js:` 动态请求头。 |
-| `QuickJsScriptRuntime` / `QuickJsRuntimeStatus` | QuickJS 自检、资源限制和纯表达式影子比对。 |
+| `QuickJsScriptRuntime` | 兼容书源规则经文本替换后剩余纯 JavaScript 的沙箱求值与资源限制。 |
 | `NativeJsLibrary` / `NativeScriptSessions` / `NativeScriptHost`（内核） | 原生书源 JS 函数库、后台脚本会话、宿主接口与执行预算。 |
 | `AppSourceInteraction` / `NativeSourceSettings` | 原生脚本提示、发现缓存失效、网页验证，以及设置页动态选项、登录与动作按钮。 |
 | `WebBookFetchRuntime` | 书源显式声明的 `webView: true` / `webJs` 页面抓取。 |
@@ -362,7 +362,7 @@ for f in scripts/*-check.mjs; do node --experimental-strip-types "$f" || exit 1;
 for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-strip-types "$f" || exit 1; done
 ```
 
-这些脚本使用 Node 替身验证规则和宿主协议；真机 QuickJS、线程响应和网页交互还应在“其他设置 → 兼容与诊断 → 脚本引擎迁移 → 后台脚本线程验证”及实际书源链路中检查。它们用于代码回归，不能替代授权审查、安全审计或法律意见。
+这些脚本使用 Node 替身验证规则和宿主协议；真机 QuickJS、线程响应和网页交互还应在“其他设置 → 兼容与诊断 → 后台脚本线程验证”及实际书源链路中检查。它们用于代码回归，不能替代授权审查、安全审计或法律意见。
 
 ## 调试
 
@@ -379,7 +379,6 @@ for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-
 | `[InteractionPostProcessor]` | 评论、正文动作和媒体标记 |
 | `[TTS]` / `[HttpTtsReader]` | 系统 TTS 与 HTTP TTS |
 | `[RemoteAudioPlayback]` | 有声书请求、预取和播放状态 |
-| `[QuickJS]` / `[QuickJSShadow]` | 原生运行时自检、纯表达式影子比对及灰度路由 |
 | `[ReaderOpen]` | 打开书籍、路由、首屏和分页阶段耗时 |
 
 建议按“搜索结果 → 详情地址 → 详情解析 → 目录 → 正文 → 发现”的顺序排查。遇到登录或验证码响应时，先在验证页完成登录并同步 Cookie，再重试相应链路。
@@ -387,7 +386,7 @@ for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-
 ## 已知限制
 
 - 书源兼容层不是完整的 Android Java/WebView 环境；分阶段 ArkWeb 只开放受控桥接，`fetch`、`XMLHttpRequest`、`WebSocket`、任意 Java 导入、文件、进程、反射和系统组件不会自动可用。
-- 兼容书源的 QuickJS 迁移只接管符合条件的短纯表达式，默认影子校验。原生书源的 `js` / `script` 已直接使用 QuickJS；网络和状态操作必须经后台脚本的受控宿主接口，不能照搬 Android `java.*` 或浏览器 `fetch`。
+- 兼容书源的表达式由 JS 兼容层执行，替换掉已知主机调用后剩下的纯 JavaScript 交给沙箱 QuickJS 求值，复杂脚本走分阶段 ArkWeb。原生书源的 `js` / `script` 已直接使用 QuickJS；网络和状态操作必须经后台脚本的受控宿主接口，不能照搬 Android `java.*` 或浏览器 `fetch`。
 - 原生脚本不能绘制任意设置界面，也不能刷新已打开的目录或正文；`keep` 仅允许详情阶段写书籍变量。脚本阶段的请求次数、返回数据和运行时间均有上限，详见公共开发文档。
 - 规则单次求值最多保留 50000 条结果、JSON 遍历最多 200000 个节点，超出部分被截断。
 - 替换净化规则单条最多执行 3 秒、整章 8 秒，超时的规则会被跳过；`\w`、`\d`、`\b` 按 Android 的 Unicode 语义匹配，与浏览器中的 ASCII 语义不同。
