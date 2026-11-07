@@ -11,18 +11,18 @@
 > 本项目不内置、不托管、不分发小说正文、章节、封面、付费资源或书源订阅。应用仅处理用户自行导入且具备合法使用权限的书源规则与本地文件。使用前请确认内容授权、目标站点协议及所在地法律法规要求。
 
 <p align="center">
-  <a href="docs/manual/shots/01-shelf.webp"><img src="docs/manual/shots/01-shelf.webp" width="19%" alt="书架：小说、漫画、有声书与视频统一管理" /></a>
-  <a href="docs/manual/shots/02-search.webp"><img src="docs/manual/shots/02-search.webp" width="19%" alt="在线阅读：多书源搜索与同名结果聚合" /></a>
-  <a href="docs/manual/shots/03-formats.webp"><img src="docs/manual/shots/03-formats.webp" width="19%" alt="多格式支持：在线与离线阅读，导入 TXT、EPUB、MOBI" /></a>
-  <a href="docs/manual/shots/04-stats.webp"><img src="docs/manual/shots/04-stats.webp" width="19%" alt="阅读统计：日周月阅读时长、书籍排行与时长占比" /></a>
-  <a href="docs/manual/shots/05-sync.webp"><img src="docs/manual/shots/05-sync.webp" width="19%" alt="进度同步：阅读进度与书签跨设备自动同步" /></a>
+  <a href="docs/manual/shots/01-companion-v5.webp"><img src="docs/manual/shots/01-companion-v5.webp" width="19%" alt="陪伴书架：立体书本、分组与继续阅读；把每日阅读，变成温柔的陪伴" /></a>
+  <a href="docs/manual/shots/02-discover-v5.webp"><img src="docs/manual/shots/02-discover-v5.webp" width="19%" alt="搜索与发现：书源榜单与分类，一屏探索；在线搜索，找到下一段好故事" /></a>
+  <a href="docs/manual/shots/03-formats-v5.webp"><img src="docs/manual/shots/03-formats-v5.webp" width="19%" alt="在线与离线：TXT / EPUB / MOBI / PDF；支持 ZIP 批量导入与远程书库" /></a>
+  <a href="docs/manual/shots/04-statistics-v5.webp"><img src="docs/manual/shots/04-statistics-v5.webp" width="19%" alt="阅读统计：阅读与听书合并计时；阅读趋势、书籍排行，看见时间的积累" /></a>
+  <a href="docs/manual/shots/05-continuity-v5.webp"><img src="docs/manual/shots/05-continuity-v5.webp" width="19%" alt="数据同步：书架、进度、书签与统计随账号同步；本地书籍与自定义字体，也能带着走" /></a>
 </p>
 <p align="center">
-  <a href="docs/manual/shots/06-layout.webp"><img src="docs/manual/shots/06-layout.webp" width="19%" alt="布局随心：字号、间距、缩进、对齐与页眉页脚" /></a>
-  <a href="docs/manual/shots/07-comic-ai.webp"><img src="docs/manual/shots/07-comic-ai.webp" width="19%" alt="漫画 AI：AI 着色、AI 超分、AI 翻译，黑白与着色效果对照" /></a>
-  <a href="docs/manual/shots/08-voice.webp"><img src="docs/manual/shots/08-voice.webp" width="19%" alt="朗读音色自定义：手动新建、URL 导入与文件导入" /></a>
-  <a href="docs/manual/shots/09-theme-share.webp"><img src="docs/manual/shots/09-theme-share.webp" width="19%" alt="主题分享与导入：导出、分享和导入 .qytheme 主题包" /></a>
-  <a href="docs/manual/shots/10-theme.webp"><img src="docs/manual/shots/10-theme.webp" width="19%" alt="多变主题：多套主题切换与自定义方案" /></a>
+  <a href="docs/manual/shots/06-reading-v5.webp"><img src="docs/manual/shots/06-reading-v5.webp" width="19%" alt="图文阅读：正文与插图相伴，沉浸故事之中；字体、间距与页眉页脚，按习惯调整" /></a>
+  <a href="docs/manual/shots/07-comic-ai-v5.webp"><img src="docs/manual/shots/07-comic-ai-v5.webp" width="19%" alt="漫画 AI：AI 着色 · AI 超分 · AI 翻译；让画面更鲜活，让对白更好读" /></a>
+  <a href="docs/manual/shots/08-voices-v5.webp"><img src="docs/manual/shots/08-voices-v5.webp" width="19%" alt="朗读与音色：离线、系统、云端与自定义音色；跟随高亮、倍速与定时，让耳朵接着读" /></a>
+  <a href="docs/manual/shots/09-custom-theme-v5.webp"><img src="docs/manual/shots/09-custom-theme-v5.webp" width="19%" alt="主题编辑与排版：配色、阅读、首页、封面与排版自由搭配；支持主题包分享与导入，让灵感流转" /></a>
+  <a href="docs/manual/shots/10-theme-library-v5.webp"><img src="docs/manual/shots/10-theme-library-v5.webp" width="19%" alt="多变主题：主题库随心挑选，浅色深色分别预览；从首页到阅读，让喜欢的风格贯穿始终" /></a>
 </p>
 
 | 项目 | 信息 |
