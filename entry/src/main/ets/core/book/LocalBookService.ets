@@ -16,6 +16,8 @@ import { EpubTextOffsetMap } from './EpubTextOffsetMap';
 import { MobiImportTask } from '../concurrency/MobiImportTask';
 import { PdfBookService } from './pdf/PdfBookService';
 import { LocalArchiveImport } from './LocalArchiveImport';
+import { TxtChapterMatcher, TxtTocResolvedRule, TxtTocRules } from './TxtTocRules';
+import { TxtTocRuleStore } from '../../utils/TxtTocRuleStore';
 
 
 export class LocalBookExportResult {
@@ -101,6 +103,26 @@ class LocalTxtImportResult {
   chapterCount: number = 0;
   latestTitle: string = '';
   intro: string = '';
+  /** 不到 TxtTocRules.SHORT_CHAPTER_CHARS 字的章节数。 */
+  shortCount: number = 0;
+  /** 每章正文在全书里的起始字符位置。 */
+  chapterStarts: number[] = [];
+  chapterTitles: string[] = [];
+}
+
+export class TxtTocPreviewItem {
+  title: string = '';
+  length: number = 0;
+}
+
+/** 用某条规则试分章的结果，不写数据库。 */
+export class TxtTocPreview {
+  chapterCount: number = 0;
+  totalChars: number = 0;
+  shortCount: number = 0;
+  /** 是否一个标题都没认出来（整本书只能按长度自动分段）。 */
+  noTitleMatched: boolean = false;
+  items: TxtTocPreviewItem[] = [];
 }
 
 export class LocalBookService {
@@ -129,22 +151,11 @@ export class LocalBookService {
   private static readonly TXT_DB_BATCH_SIZE: number = 16;
   private static readonly TXT_CHARSET_OVERRIDE_KEY: string = 'localCharsetOverride';
   private static readonly LOCAL_INTRO_TARGET_LENGTH: number = 96;
-  private static readonly TXT_RULE_TOP_LEVEL: string =
-    '^(?:扉页|正文|目录|[序引前楔][言子]?|(?:内容|文章|书籍|作品|作者)?简介|作品相关|后记|尾声|' +
-    '卷[首尾末](?:语|总结|感言)|最?[上中下序引终末][章卷篇幕回节册季话集]|' +
-    '第\\s*[\\dO零〇一两二三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟萬]{1,12}\\s*' +
-    '[章卷页季回幕册话段篇节集部](?:\\s+|[：:、._—-]\\s*)?.{0,30}|' +
-    '[\\dO零〇一两二三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟萬]{1,12}\\s*' +
-    '[章卷页季回幕册话段篇节集部](?:(?:\\s+|[：:、._—-]\\s*).{1,30})?|' +
-    '[章卷篇节幕回册话段季集部]\\s*[\\dO零〇一两二三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟萬]{1,12}' +
-    '(?:\\s+|[：:、._—-]\\s*)?.{0,30}|' +
-    '[\\dO零〇一两二三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟萬]{1,12}\\s*[｜、_|：:；;–.·—-]\\s*' +
-    '[^\\s].{0,30}|(?:chapter|part|volume|book)\\s+[0-9ivxlcdm]+(?:\\s+|[：:._—-]\\s*)?.{0,30}|' +
-    '[-·.–—_*＊~～=]{2,}\\s*.{1,35}\\s*[-·.–—_*＊~～=]{2,})$';
-  private static readonly TXT_RULE_PUNCTUATION_ONLY: string =
-    '^[\\s\\u0000-\\u001F\\u007F-\\u009F\\x21-\\x2F\\x3A-\\x40\\x5B-\\x60\\x7B-\\x7E' +
-    '\\u2000-\\u206F\\u2100-\\u2BFF\\u2E00-\\u2E7F\\u3000-\\u303F\\uFE10-\\uFE1F' +
-    '\\uFE30-\\uFE4F\\uFF01-\\uFF0F\\uFF1A-\\uFF20\\uFF3B-\\uFF40\\uFF5B-\\uFF65]+$';
+  /** 本书用的目录规则引用（见 TxtTocRules.ref），空串表示智能识别。 */
+  static readonly TXT_TOC_RULE_KEY: string = 'localTocRule';
+  private static readonly TXT_TOC_SHORT_KEY: string = 'localTocShortChapters';
+  private static readonly TXT_TOC_COUNT_KEY: string = 'localTocChapterCount';
+  private static readonly TXT_TOC_HINT_DISMISSED_KEY: string = 'localTocHintDismissed';
 
   static isSupportedFormat(format: string): boolean {
     return LocalBookService.SUPPORTED_FORMATS.includes((format || '').toLowerCase());
@@ -241,7 +252,7 @@ export class LocalBookService {
     book.putVariable('localParserVersion', 'importing');
     await appDb.updateBook(book);
     try {
-      await LocalBookService.rebuildTxtBook(book, localPath);
+      await LocalBookService.rebuildTxtBook(context, book, localPath);
     } catch (e) {
       book.putVariable(LocalBookService.TXT_CHARSET_OVERRIDE_KEY, previousOverride);
       book.charset = previousCharset;
@@ -251,6 +262,105 @@ export class LocalBookService {
       console.error('[LocalBookService] Failed to rebuild TXT with selected charset', e);
       throw new Error('TXT 字符编码重新解析失败');
     }
+  }
+
+  static isLocalTxtBook(book: Book | null): boolean {
+    return !!book && LocalBookService.isLocalBook(book) && book.type === LocalBookService.TYPE_TXT;
+  }
+
+  static getTxtTocRuleRef(book: Book | null): string {
+    if (!book || !LocalBookService.isLocalTxtBook(book)) return '';
+    return book.getVariable(LocalBookService.TXT_TOC_RULE_KEY) || '';
+  }
+
+  /**
+   * 目录里短章太多、而用户还没为这本书选过规则时，提示可能把正文认成了标题。
+   * 统计在解析时记下；从没按新版解析过的书不提示。
+   */
+  static shouldHintTxtToc(book: Book | null): boolean {
+    if (!book || !LocalBookService.isLocalTxtBook(book)) return false;
+    if (book.getVariable(LocalBookService.TXT_TOC_RULE_KEY) ||
+      book.getVariable(LocalBookService.TXT_TOC_HINT_DISMISSED_KEY) === '1') return false;
+    const shortCount = Number(book.getVariable(LocalBookService.TXT_TOC_SHORT_KEY));
+    const count = Number(book.getVariable(LocalBookService.TXT_TOC_COUNT_KEY));
+    return LocalBookService.looksOverSplit(shortCount, count);
+  }
+
+  static txtTocShortChapterCount(book: Book | null): number {
+    const value = Number(book?.getVariable(LocalBookService.TXT_TOC_SHORT_KEY));
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  static looksOverSplit(shortCount: number, chapterCount: number): boolean {
+    return Number.isFinite(shortCount) && Number.isFinite(chapterCount) && shortCount >= 10 &&
+      shortCount >= chapterCount * 0.15;
+  }
+
+  static async dismissTxtTocHint(context: Context, book: Book): Promise<void> {
+    await appDb.initWithContext(context);
+    book.putVariable(LocalBookService.TXT_TOC_HINT_DISMISSED_KEY, '1');
+    await appDb.updateBook(book);
+  }
+
+  /** 换用另一条目录规则并重新解析；阅读位置按全书字符位置换算到新章节上。失败时恢复原规则。 */
+  static async setTxtTocRule(context: Context, book: Book, ref: string): Promise<void> {
+    if (!LocalBookService.isLocalTxtBook(book)) throw new Error('仅本地 TXT 书籍支持目录规则');
+    const localPath = book.getVariable('localFilePath');
+    if (!localPath || !LocalBookService.exists(localPath)) {
+      throw new Error('本地 TXT 文件不存在，请重新导入');
+    }
+    await appDb.initWithContext(context);
+    const previousRef = book.getVariable(LocalBookService.TXT_TOC_RULE_KEY);
+    // 明确选过规则（哪怕选回智能识别）就不再提示“可能切错了”。
+    book.putVariable(LocalBookService.TXT_TOC_HINT_DISMISSED_KEY, '1');
+    book.putVariable(LocalBookService.TXT_TOC_RULE_KEY, ref);
+    book.putVariable('localParserVersion', 'importing');
+    await appDb.updateBook(book);
+    try {
+      await LocalBookService.rebuildTxtBook(context, book, localPath, true);
+    } catch (e) {
+      book.putVariable(LocalBookService.TXT_TOC_RULE_KEY, previousRef);
+      book.putVariable('localParserVersion', 'importing');
+      await appDb.updateBook(book);
+      console.error('[LocalBookService] Failed to rebuild TXT with selected toc rule', e);
+      throw new Error('按新目录规则重新解析失败');
+    }
+  }
+
+  /** 用某条规则试着分章，只统计不落库；sampleCount 是返回的开头章节数。 */
+  static async previewTxtToc(context: Context, book: Book, ref: string,
+    sampleCount: number = 5): Promise<TxtTocPreview> {
+    return LocalBookService.previewTxtTocWithRule(book, await TxtTocRuleStore.resolve(context, ref), sampleCount);
+  }
+
+  /** 同 previewTxtToc，但直接给规则（编辑中还没保存的规则）。 */
+  static async previewTxtTocWithRule(book: Book, resolved: TxtTocResolvedRule,
+    sampleCount: number = 5): Promise<TxtTocPreview> {
+    if (!LocalBookService.isLocalTxtBook(book)) throw new Error('仅本地 TXT 书籍支持目录规则');
+    const localPath = book.getVariable('localFilePath');
+    if (!localPath || !LocalBookService.exists(localPath)) {
+      throw new Error('本地 TXT 文件不存在，请重新导入');
+    }
+    const charset = book.charset || LocalBookService.getTxtCharsetOverride(book) ||
+      await LocalBookService.detectTextFileCharset(localPath);
+    const matcher = new TxtChapterMatcher(resolved);
+    const preview = new TxtTocPreview();
+    let matchedTitle = false;
+    await LocalBookService.scanTxtChapters(localPath, charset, matcher,
+      async (title: string, body: string): Promise<void> => {
+        preview.chapterCount++;
+        preview.totalChars += body.length;
+        if (body.length < TxtTocRules.SHORT_CHAPTER_CHARS) preview.shortCount++;
+        if (!matcher.isWordSplit() && title !== '正文' && !title.startsWith('正文（')) matchedTitle = true;
+        if (preview.items.length < sampleCount) {
+          const item = new TxtTocPreviewItem();
+          item.title = title;
+          item.length = body.length;
+          preview.items.push(item);
+        }
+      });
+    preview.noTitleMatched = !matcher.isWordSplit() && !matchedTitle;
+    return preview;
   }
 
   static isEpubImageMarker(value: string): boolean {
@@ -684,12 +794,16 @@ export class LocalBookService {
       book.coverUrl = '';
       book.putVariable('localExtractRoot', '');
       book.putVariable('localParserVersion', 'importing');
+      if (!oldBook && !book.getVariable(LocalBookService.TXT_TOC_RULE_KEY)) {
+        const tocSettings = await TxtTocRuleStore.load(context);
+        if (tocSettings.defaultRuleRef) book.putVariable(LocalBookService.TXT_TOC_RULE_KEY, tocSettings.defaultRuleRef);
+      }
       if (oldBook) {
         await appDb.updateBook(book);
       } else {
         await appDb.insertBook(book);
       }
-      await LocalBookService.rebuildTxtBook(book, localPath);
+      await LocalBookService.rebuildTxtBook(context, book, localPath);
       return book;
     }
 
@@ -746,7 +860,7 @@ export class LocalBookService {
     await appDb.initWithContext(context);
     book.putVariable('localParserVersion', 'importing');
     await appDb.updateBook(book);
-    await LocalBookService.rebuildTxtBook(book, localPath);
+    await LocalBookService.rebuildTxtBook(context, book, localPath);
     return true;
   }
 
@@ -947,25 +1061,37 @@ export class LocalBookService {
     return true;
   }
 
-  private static async rebuildTxtBook(book: Book, localPath: string): Promise<void> {
+  /**
+   * 重新解析本地 TXT。remapProgress 为 true 时（换了分章规则），把阅读位置换算成全书字符位置，
+   * 再落到新的章节上；否则沿用原来的章节序号。
+   */
+  private static async rebuildTxtBook(context: Context, book: Book, localPath: string,
+    remapProgress: boolean = false): Promise<void> {
     const charsetOverride = LocalBookService.getTxtCharsetOverride(book);
     book.charset = charsetOverride || await LocalBookService.detectTextFileCharset(localPath);
+    const matcher = new TxtChapterMatcher(
+      await TxtTocRuleStore.resolve(context, LocalBookService.getTxtTocRuleRef(book)));
     const previousChapterCount = Math.max(book.totalChapterNum,
       await appDb.getBookChapterCount(book.bookUrl));
     const previousChapterIndex = Math.max(0, book.durChapterIndex);
+    const targetCharPosition = remapProgress ? await LocalBookService.currentTxtCharPosition(book) : -1;
     await appDb.deleteBookChapters(book.bookUrl);
     await appDb.deleteBookCachedContent(book.bookUrl);
     const imported = await LocalBookService.importTxtChapters(
-      book.bookUrl, localPath, book.charset, book.name, book.author);
+      book.bookUrl, localPath, book.charset, book.name, book.author, matcher);
     book.totalChapterNum = imported.chapterCount;
     book.latestChapterTitle = imported.latestTitle;
     book.latestChapterTime = Date.now();
     book.intro = imported.intro;
     book.putVariable('localContentIntroVersion', '6');
-    // Parser v7 could classify nearly every short body line as a title. When repairing
-    // such an over-split book, retain an approximate whole-book position instead of
-    // dropping the reader at an unrelated chapter or resetting all progress.
-    if (previousChapterCount > imported.chapterCount * 4 && imported.chapterCount > 0) {
+    book.putVariable(LocalBookService.TXT_TOC_SHORT_KEY, `${imported.shortCount}`);
+    book.putVariable(LocalBookService.TXT_TOC_COUNT_KEY, `${imported.chapterCount}`);
+    if (targetCharPosition >= 0 && imported.chapterCount > 0) {
+      LocalBookService.moveTxtProgressTo(book, imported, targetCharPosition);
+    } else if (previousChapterCount > imported.chapterCount * 4 && imported.chapterCount > 0) {
+      // Parser v7 could classify nearly every short body line as a title. When repairing
+      // such an over-split book, retain an approximate whole-book position instead of
+      // dropping the reader at an unrelated chapter or resetting all progress.
       const progress = previousChapterCount > 1 ? previousChapterIndex / (previousChapterCount - 1) : 0;
       book.durChapterIndex = Math.min(imported.chapterCount - 1,
         Math.max(0, Math.round(progress * (imported.chapterCount - 1))));
@@ -980,18 +1106,48 @@ export class LocalBookService {
     await appDb.updateBook(book);
   }
 
-  private static async importTxtChapters(bookUrl: string, path: string,
-    charset: string, bookName: string, bookAuthor: string): Promise<LocalTxtImportResult> {
+  /** 重新解析前的阅读位置在全书正文里的字符位置（按缓存正文的字数累加）；读不到时返回 -1。 */
+  private static async currentTxtCharPosition(book: Book): Promise<number> {
+    try {
+      const lengths = await appDb.getCachedChapterContentLengths(book.bookUrl);
+      const index = Math.max(0, book.durChapterIndex);
+      if (lengths.length === 0 || index >= lengths.length) return -1;
+      let position = 0;
+      for (let i = 0; i < index; i++) position += lengths[i] || 0;
+      const offset = Number(book.getVariable('readProgressCharOffsetV2'));
+      if (book.getVariable('readProgressCharOffsetChapterV2') === `${index}` && Number.isFinite(offset) && offset > 0) {
+        position += Math.min(offset, lengths[index] || 0);
+      }
+      return position;
+    } catch (e) {
+      console.warn('[LocalBookService] 读取 TXT 阅读位置失败:', e);
+      return -1;
+    }
+  }
+
+  private static moveTxtProgressTo(book: Book, imported: LocalTxtImportResult, position: number): void {
+    const starts = imported.chapterStarts;
+    let index = 0;
+    for (let i = 0; i < starts.length; i++) {
+      if (starts[i] <= position) index = i;
+      else break;
+    }
+    index = Math.min(imported.chapterCount - 1, index);
+    const offset = Math.max(0, Math.round(position - (starts[index] || 0)));
+    book.durChapterIndex = index;
+    book.durChapterPos = 0;
+    book.durChapterTitle = imported.chapterTitles[index] || '';
+    book.putVariable('readProgressCharOffsetV2', `${offset}`);
+    book.putVariable('readProgressCharOffsetChapterV2', `${index}`);
+    if (book.getVariable('readProgressChapterIndex')) book.putVariable('readProgressChapterIndex', `${index}`);
+  }
+
+  private static async importTxtChapters(bookUrl: string, path: string, charset: string, bookName: string,
+    bookAuthor: string, matcher: TxtChapterMatcher): Promise<LocalTxtImportResult> {
     const result = new LocalTxtImportResult();
-    const titleRegex = new RegExp(LocalBookService.TXT_RULE_TOP_LEVEL, 'i');
-    const punctuationOnlyRegex = new RegExp(LocalBookService.TXT_RULE_PUNCTUATION_ONLY);
-    let currentTitle = '';
-    let currentPart = 1;
-    let currentHasPersisted = false;
-    let bodyParts: string[] = [];
-    let bodyLength = 0;
     let chapterBatch: BookChapter[] = [];
     let contentBatch: string[] = [];
+    let position = 0;
 
     const flushBatch = async (): Promise<void> => {
       if (chapterBatch.length === 0) return;
@@ -1002,35 +1158,70 @@ export class LocalBookService {
       await appDb.insertBookChaptersWithContents(bookUrl, pendingChapters, pendingContents);
     };
 
+    const sink = async (title: string, body: string): Promise<void> => {
+      const content = body || title;
+      const dbChapter = new BookChapter();
+      dbChapter.bookUrl = bookUrl;
+      dbChapter.index = result.chapterCount;
+      dbChapter.title = title;
+      dbChapter.url = `${bookUrl}#chapter=${dbChapter.index}`;
+      dbChapter.resourceUrl = path;
+      chapterBatch.push(dbChapter);
+      contentBatch.push(content);
+      if (result.intro.length < LocalBookService.LOCAL_INTRO_TARGET_LENGTH) {
+        result.intro = LocalBookService.appendContentIntro(result.intro, content, title, bookName, bookAuthor);
+      }
+      result.chapterStarts.push(position);
+      result.chapterTitles.push(title);
+      position += content.length;
+      if (body.length < TxtTocRules.SHORT_CHAPTER_CHARS) result.shortCount++;
+      result.chapterCount++;
+      result.latestTitle = title;
+      if (chapterBatch.length >= LocalBookService.TXT_DB_BATCH_SIZE) {
+        await flushBatch();
+      }
+    };
+
+    await LocalBookService.scanTxtChapters(path, charset, matcher, sink);
+    if (result.chapterCount === 0) {
+      await sink('正文', '暂无可阅读内容');
+      result.shortCount = 0;
+    }
+    await flushBatch();
+    return result;
+  }
+
+  /**
+   * 按规则逐行扫描 TXT，每分出一章调用一次 sink(标题, 正文)。正文已去掉首尾空白，可能为空串
+   * （标题后紧跟下一个标题）。导入和预览共用这一段，保证预览看到的就是应用后的结果。
+   */
+  private static async scanTxtChapters(path: string, charset: string, matcher: TxtChapterMatcher,
+    sink: (title: string, body: string) => Promise<void>): Promise<void> {
+    const wordSplit = matcher.isWordSplit();
+    let currentTitle = '';
+    let currentPart = 1;
+    let currentHasPersisted = false;
+    let emitted = 0;
+    let bodyParts: string[] = [];
+    let bodyLength = 0;
+
     const persistCurrent = async (allowEmptyTitle: boolean): Promise<boolean> => {
       const content = bodyParts.join('').trim();
       bodyParts = [];
       bodyLength = 0;
+      if (wordSplit) {
+        if (!content) return false;
+        emitted++;
+        await sink(`${emitted}. ${LocalBookService.txtLeadSentence(content)}`, content);
+        return true;
+      }
       if (!content && (!allowEmptyTitle || !currentTitle || currentHasPersisted)) {
         return false;
       }
-      const chapter = new LocalChapterData();
       const baseTitle = currentTitle || '正文';
-      chapter.title = currentPart > 1 ? `${baseTitle}（${currentPart}）` : baseTitle;
-      chapter.content = content || chapter.title;
-      const dbChapter = new BookChapter();
-      dbChapter.bookUrl = bookUrl;
-      dbChapter.index = result.chapterCount;
-      dbChapter.title = chapter.title;
-      dbChapter.url = `${bookUrl}#chapter=${dbChapter.index}`;
-      dbChapter.resourceUrl = path;
-      chapterBatch.push(dbChapter);
-      contentBatch.push(chapter.content);
-      if (result.intro.length < LocalBookService.LOCAL_INTRO_TARGET_LENGTH) {
-        result.intro = LocalBookService.appendContentIntro(
-          result.intro, chapter.content, chapter.title, bookName, bookAuthor);
-      }
-      result.chapterCount++;
-      result.latestTitle = chapter.title;
+      emitted++;
+      await sink(currentPart > 1 ? `${baseTitle}（${currentPart}）` : baseTitle, content);
       currentHasPersisted = true;
-      if (chapterBatch.length >= LocalBookService.TXT_DB_BATCH_SIZE) {
-        await flushBatch();
-      }
       return true;
     };
 
@@ -1051,9 +1242,14 @@ export class LocalBookService {
 
     const consumeLine = async (rawLine: string, forceBody: boolean = false): Promise<void> => {
       const line = rawLine.endsWith('\r') ? rawLine.substring(0, rawLine.length - 1) : rawLine;
+      if (wordSplit) {
+        await appendBodyText(`${line}\n`);
+        // 只在行尾切，不把一句话拦腰截断。
+        if (bodyLength >= matcher.wordsPerChapter) await persistCurrent(false);
+        return;
+      }
       const candidate = LocalBookService.normalizeTxtChapterCandidate(line);
-      if (!forceBody && LocalBookService.isTxtChapterTitleCandidate(candidate, titleRegex,
-        punctuationOnlyRegex)) {
+      if (!forceBody && matcher.isTitle(line, candidate)) {
         await persistCurrent(true);
         currentTitle = candidate;
         currentPart = 1;
@@ -1102,31 +1298,24 @@ export class LocalBookService {
         await consumeLine(carry, carryIsBody);
       }
       await persistCurrent(true);
-      if (result.chapterCount === 0) {
-        currentTitle = '正文';
-        currentPart = 1;
-        currentHasPersisted = false;
-        bodyParts = ['暂无可阅读内容'];
-        bodyLength = bodyParts[0].length;
-        await persistCurrent(true);
-      }
-      await flushBatch();
     } finally {
       await fs.close(file);
     }
-    return result;
+  }
+
+  /** 按字数分章时的章节标题：取章首第一句，过长截断。 */
+  private static txtLeadSentence(content: string): string {
+    const text = content.replace(/^[\s\u3000]+/, '');
+    const end = text.search(/[。！？!?…\n]/);
+    let sentence = (end > 0 ? text.substring(0, end) : text).replace(/\s+/g, ' ').trim();
+    if (sentence.length > 18) sentence = `${sentence.substring(0, 18)}…`;
+    return sentence || '正文';
   }
 
   private static normalizeTxtChapterCandidate(value: string): string {
     // trim() does not remove zero-width characters. Treat formatting-only lines as
     // blank before applying the chapter-title grammar.
     return (value || '').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').trim();
-  }
-
-  private static isTxtChapterTitleCandidate(candidate: string, titleRegex: RegExp,
-    punctuationOnlyRegex: RegExp): boolean {
-    if (!candidate || candidate.length > 50 || punctuationOnlyRegex.test(candidate)) return false;
-    return titleRegex.test(candidate);
   }
 
   private static appendContentIntro(currentIntro: string, content: string, chapterTitle: string = '',

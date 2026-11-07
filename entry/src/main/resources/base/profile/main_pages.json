@@ -57,6 +57,8 @@
     "pages/CloudFiles",
     "pages/WebDavBrowse",
     "pages/ReaderReplaceRules",
+    "pages/TxtTocRules",
+    "pages/TxtTocRuleEdit",
     "pages/CoverGalleryManager",
     "pages/Help",
     "pages/HelpTopic",

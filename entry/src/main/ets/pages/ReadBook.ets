@@ -146,6 +146,9 @@ import { ReaderContentSearchCapsule, ReaderContentSearchDataSource, ReaderConten
 import { ReaderHeaderFooterSettings, ReaderTypographyField, ReaderTypographyStepper } from '../components/reader/ReaderLayoutSettings';
 import { ReaderCacheDialogContent } from '../components/reader/ReaderCacheDialogContent';
 import { ReaderTxtCharsetDialogContent, ReaderTxtCharsets } from '../components/reader/ReaderTxtCharsetDialogContent';
+import { ReaderTxtTocRuleDialogContent } from '../components/reader/ReaderTxtTocRuleDialogContent';
+import { TxtTocRules } from '../core/book/TxtTocRules';
+import { TxtTocRuleStore } from '../utils/TxtTocRuleStore';
 import { ReaderLayoutElementSettingsPanel } from '../components/reader/ReaderLayoutElementSettingsPanel';
 import { ReaderTocPanel, ReaderTocPanelController } from '../components/reader/ReaderTocPanel';
 import { ReaderFloatingMaterialBar, ReaderMaterialPanel } from '../components/reader/ReaderFloatingMaterialBar';
@@ -351,6 +354,12 @@ struct ReadBookPage {
   @State @Watch('onSystemDialogFlagChanged') showTxtCharsetDialog: boolean = false;
   // Mirrors the charset dialog's "re-parsing" flag so the page does not dismiss it midway.
   private txtCharsetApplying: boolean = false;
+  private txtTocRuleDialogSession: SystemDialogSession = new SystemDialogSession();
+  @State @Watch('onSystemDialogFlagChanged') showTxtTocRuleDialog: boolean = false;
+  private txtTocRuleApplying: boolean = false;
+  @State txtTocRuleMenuLabel: string = '智能识别';
+  // 关掉“目录可能切错了”提示后改它，让目录面板重新取提示文字。
+  @State txtTocRuleHintRevision: number = 0;
   @State @Watch('restoreReaderKeyboardFocus') showReaderCommentPanel: boolean = false;
   @State readerCommentPanelTitle: string = '段评';
   @State readerCommentPanelUrl: string = '';
@@ -1370,6 +1379,10 @@ struct ReadBookPage {
     }
     if (this.showTxtCharsetDialog) {
       if (!this.txtCharsetApplying) this.showTxtCharsetDialog = false;
+      return true;
+    }
+    if (this.showTxtTocRuleDialog) {
+      if (!this.txtTocRuleApplying) this.showTxtTocRuleDialog = false;
       return true;
     }
     if (this.showTapZoneSettings) {
@@ -4067,6 +4080,7 @@ struct ReadBookPage {
         }
         Row() {
           this.readerRoundMenuButton($r('sys.symbol.more'), '更多操作', () => {
+            if (!this.showReaderActionMenu) this.refreshTxtTocRuleMenuLabel();
             this.showReaderActionMenu = !this.showReaderActionMenu;
           })
         }
@@ -4685,6 +4699,12 @@ struct ReadBookPage {
           this.jumpToBookmark(bookmark);
         },
         onRefreshToc: (): Promise<void> => this.retryFetchChapters(),
+        showTocRuleButton: this.canSelectTxtCharset(),
+        tocRuleHint: this.readerTocRuleHint(),
+        onOpenTocRules: (): void => this.openTxtTocRuleDialog(),
+        onDismissTocRuleHint: (): void => {
+          this.dismissReaderTocRuleHint();
+        },
         onLoadBookmarks: (): void => {
           this.loadBookmarks();
         },
@@ -4805,6 +4825,11 @@ struct ReadBookPage {
             `字符编码 · ${this.txtCharsetMenuLabel()}`,
             () => this.openTxtCharsetDialog()
           )
+          this.readerActionMenuItem(
+            $r('sys.symbol.ruler'),
+            `目录规则 · ${this.txtTocRuleMenuLabel}`,
+            () => this.openTxtTocRuleDialog()
+          )
         }
         this.readerActionMenuItem(
           this.isReaderComicModeActive() ? $r('sys.symbol.book') : $r('sys.symbol.rectangle_3_group'),
@@ -4853,6 +4878,7 @@ struct ReadBookPage {
 
   onSystemDialogFlagChanged(): void {
     if (!this.showTxtCharsetDialog) this.txtCharsetDialogSession.close(this.getUIContext());
+    if (!this.showTxtTocRuleDialog) this.txtTocRuleDialogSession.close(this.getUIContext());
     if (!this.showReaderCacheDialog) this.readerCacheDialogSession.close(this.getUIContext());
     if (!this.showReaderChapterCacheDialog) this.chapterCacheDialogSession.close(this.getUIContext());
     if (!this.showTapZoneSettings) this.tapZoneDialogSession.close(this.getUIContext());
@@ -4971,6 +4997,95 @@ struct ReadBookPage {
       },
       onApplyingChanged: (applying: boolean): void => {
         this.txtCharsetApplying = applying;
+      }
+    })
+  }
+
+  async refreshTxtTocRuleMenuLabel(): Promise<void> {
+    if (!this.book || !this.canSelectTxtCharset()) return;
+    try {
+      const ref = LocalBookService.getTxtTocRuleRef(this.book);
+      const resolved = await TxtTocRuleStore.resolve(getContext(this), ref);
+      this.txtTocRuleMenuLabel = TxtTocRules.displayName(resolved.rule, resolved.wordsPerChapter);
+    } catch (e) {
+      console.warn('读取目录规则名称失败:', e);
+    }
+  }
+
+  readerTocRuleHint(): string {
+    if (this.txtTocRuleHintRevision < 0 || !LocalBookService.shouldHintTxtToc(this.book)) return '';
+    const shortCount = LocalBookService.txtTocShortChapterCount(this.book);
+    return `有 ${shortCount} 章不到 ${TxtTocRules.SHORT_CHAPTER_CHARS} 字，可能把正文认成了标题。`;
+  }
+
+  async dismissReaderTocRuleHint(): Promise<void> {
+    if (!this.book) return;
+    try {
+      await LocalBookService.dismissTxtTocHint(getContext(this), this.book);
+    } catch (e) {
+      console.warn('保存目录提示状态失败:', e);
+    }
+    this.txtTocRuleHintRevision++;
+  }
+
+  openTxtTocRuleDialog(): void {
+    if (!this.canSelectTxtCharset()) return;
+    this.showReaderActionMenu = false;
+    this.showTxtTocRuleDialog = true;
+    this.txtTocRuleDialogSession.open(this.getUIContext(), (): void => {
+      this.readerTxtTocRuleDialogContent();
+    }, {
+      autoCancel: false,
+      maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
+      warnTag: '显示目录规则弹窗失败:'
+    });
+  }
+
+  async applyTxtTocRuleSelection(ref: string): Promise<void> {
+    if (!this.book || !this.canSelectTxtCharset()) return;
+    const targetBook: Book = this.book;
+    if (ref === LocalBookService.getTxtTocRuleRef(targetBook)) {
+      this.showTxtTocRuleDialog = false;
+      return;
+    }
+    try {
+      await this.saveReadingProgress();
+      this.stopTtsReading();
+      await LocalBookService.setTxtTocRule(getContext(this), targetBook, ref);
+      this.showTxtTocRuleDialog = false;
+      this.showToc = false;
+      this.showMenu = false;
+      await this.loadBook();
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      await this.refreshTxtTocRuleMenuLabel();
+      this.txtTocRuleHintRevision++;
+      HdsFeedback.showToast(`已按「${this.txtTocRuleMenuLabel}」重新分章，共 ${this.book?.totalChapterNum ?? 0} 章`);
+    } catch (e) {
+      console.error('切换 TXT 目录规则失败:', e);
+      HdsFeedback.showToast('按新规则分章失败，请换一条规则试试');
+    }
+  }
+
+  openTxtTocRuleManager(): void {
+    if (this.txtTocRuleApplying) return;
+    const bookUrl = this.book?.bookUrl || '';
+    this.showTxtTocRuleDialog = false;
+    this.hideReaderPanels();
+    router.pushUrl({ url: 'pages/TxtTocRules', params: { bookUrl: bookUrl } });
+  }
+
+  @Builder
+  readerTxtTocRuleDialogContent() {
+    ReaderTxtTocRuleDialogContent({
+      book: this.book,
+      listHeight: Math.min(300, Math.max(140, this.pageViewHeight - 560)),
+      onApply: (ref: string): Promise<void> => this.applyTxtTocRuleSelection(ref),
+      onClose: (): void => {
+        this.showTxtTocRuleDialog = false;
+      },
+      onManageRules: (): void => this.openTxtTocRuleManager(),
+      onApplyingChanged: (applying: boolean): void => {
+        this.txtTocRuleApplying = applying;
       }
     })
   }
@@ -5754,7 +5869,8 @@ struct ReadBookPage {
     // 顶部/底部悬浮栏和胶囊不遮挡大段正文，展开这些控件时继续滚动。
     return this.showToc || this.showSettings || this.showLayoutElementSettings ||
       this.showReaderCommentPanel || this.showReaderAutoScrollSpeed || this.showTapZoneSettings ||
-      this.showChangeSourceDialog || this.showTxtCharsetDialog || this.showReaderCacheDialog ||
+      this.showChangeSourceDialog || this.showTxtCharsetDialog || this.showTxtTocRuleDialog ||
+      this.showReaderCacheDialog ||
       this.showReaderChapterCacheDialog || this.showTtsQuickPlayer || this.showGlobalTtsQuickPlayer ||
       this.showGlobalTtsCatalog;
   }
@@ -16689,6 +16805,7 @@ struct ReadBookPage {
     this.showReaderChapterCacheDialog = false;
     this.showLayoutElementSettings = false;
     if (!this.txtCharsetApplying) this.showTxtCharsetDialog = false;
+    if (!this.txtTocRuleApplying) this.showTxtTocRuleDialog = false;
     this.showMenu = false;
     this.showTtsVoiceDropdown = false;
     this.showSettings = false;

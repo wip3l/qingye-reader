@@ -2437,6 +2437,27 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     }
   }
 
+  /** 每章缓存正文的字数（下标是章节序号，没缓存的章节为 0）；用来把阅读位置换算成全书字符位置。 */
+  async getCachedChapterContentLengths(bookUrl: string): Promise<number[]> {
+    if (!this.store) return [];
+    const resultSet = await this.store.querySql(
+      'SELECT chapterIndex, length(content) AS len FROM book_contents WHERE bookUrl = ?', [bookUrl]);
+    const lengths: number[] = [];
+    try {
+      const indexColumn = resultSet.getColumnIndex('chapterIndex');
+      const lengthColumn = resultSet.getColumnIndex('len');
+      while (resultSet.goToNextRow()) {
+        const index = resultSet.getLong(indexColumn);
+        if (index < 0 || index > 1000000) continue;
+        while (lengths.length <= index) lengths.push(0);
+        lengths[index] = resultSet.getLong(lengthColumn);
+      }
+    } finally {
+      resultSet.close();
+    }
+    return lengths;
+  }
+
   async getCachedChapterContent(bookUrl: string, chapterIndex: number): Promise<string> {
     if (!this.store) return '';
     const predicates = new relationalStore.RdbPredicates('book_contents');

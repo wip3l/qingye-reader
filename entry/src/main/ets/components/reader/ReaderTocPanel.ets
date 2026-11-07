@@ -75,6 +75,14 @@ export struct ReaderTocPanel {
   onRefreshToc: () => Promise<void> = (): Promise<void> => Promise.resolve();
   onLoadBookmarks: () => void = (): void => {
   };
+  /** 本地 TXT 显示"目录规则"按钮。 */
+  showTocRuleButton: boolean = false;
+  /** 目录可能切错时的提示，空串不显示。 */
+  @Prop tocRuleHint: string = '';
+  onOpenTocRules: () => void = (): void => {
+  };
+  onDismissTocRuleHint: () => void = (): void => {
+  };
   onShowBookmarkActions: (bookmark: Bookmark, globalX: number, globalY: number) => void =
     (_bookmark: Bookmark, _globalX: number, _globalY: number): void => {
     };
@@ -872,6 +880,23 @@ export struct ReaderTocPanel {
             .borderRadius(ThemeRuntime.buttonRadius())
             .backgroundColor(ThemeRuntime.softFillColor(this.dark))
         }
+        if (this.showTocRuleButton) {
+          ImmersiveBackButton({
+            icon: $r('sys.symbol.ruler'),
+            iconOffsetX: 0,
+            iconColor: this.tocRuleHint ? this.accentColor : this.textColor,
+            darkMode: this.dark,
+            buttonSize: 34,
+            containerWidth: 34,
+            containerHeight: 34,
+            startInset: 0,
+            materialScale: 0.7,
+            compactLayout: true,
+            accessibilityLabel: '目录规则',
+            onBack: () => this.onOpenTocRules()
+          })
+            .margin({ left: AppSpacing.MD })
+        }
         ImmersiveBackButton({
           icon: $r('sys.symbol.arrow_clockwise'),
           iconOffsetX: 0,
@@ -907,6 +932,31 @@ export struct ReaderTocPanel {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+
+      if (this.tocRuleHint && !this.isSearchActive()) {
+        Row({ space: AppSpacing.SM }) {
+          Text(this.tocRuleHint)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.dark ? '#F2B766' : '#8A4500')
+            .layoutWeight(1)
+          Text('换个规则')
+            .fontSize(AppFontSize.CAPTION)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.accentColor)
+            .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
+            .onClick(() => this.onOpenTocRules())
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(14)
+            .fontColor([this.dark ? '#F2B766' : '#8A4500'])
+            .padding(AppSpacing.XS)
+            .accessibilityText('不再提示')
+            .onClick(() => this.onDismissTocRuleHint())
+        }
+        .width('100%')
+        .padding({ left: AppSpacing.MD, right: AppSpacing.SM, top: AppSpacing.SM, bottom: AppSpacing.SM })
+        .borderRadius(12)
+        .backgroundColor(this.dark ? '#3A2C1A' : '#FFF3E6')
+      }
 
       if (this.searchVisible) {
         Row({ space: AppSpacing.MD }) {

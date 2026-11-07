@@ -151,6 +151,7 @@ export class AppDataBackupService {
     'search_explore_settings',
     'startup_cover_texts',
     'tts_settings',
+    'txt_toc_rules',
     'webdav_settings'
   ];
 

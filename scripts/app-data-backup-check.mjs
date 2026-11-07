@@ -243,7 +243,7 @@ test('full export/import preserves themes, OPDS, fonts, books and reports missin
   assert.equal(result.books, 1);
   assert.equal(result.bookmarks, 1);
   assert.equal(result.progress, 2);
-  assert.equal(result.settings, 14);
+  assert.equal(result.settings, 15);
   assert.equal(h.to.prefs.get('immersive_light_settings').immersiveLightLevel, 'balanced');
   assert.equal(h.to.books.get('local://1').durChapterPos, 120);
   assert.equal(fs.readFileSync(`${h.target.filesDir}/local_books/1.txt`, 'utf8'), '本地书正文');

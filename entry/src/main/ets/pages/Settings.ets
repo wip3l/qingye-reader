@@ -2439,9 +2439,16 @@ struct SettingsPage {
     SettingNavRow({
       title: '替换净化',
       description: '正文与章节标题的替换规则',
-      showDivider: false,
       onTap: () => {
         router.pushUrl({ url: 'pages/ReaderReplaceRules' });
+      }
+    })
+    SettingNavRow({
+      title: 'TXT 目录规则',
+      description: '本地 TXT 怎样识别章节标题',
+      showDivider: false,
+      onTap: () => {
+        router.pushUrl({ url: 'pages/TxtTocRules' });
       }
     })
   }
