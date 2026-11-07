@@ -102,6 +102,7 @@ export class ReaderSettingsStore {
   static readonly PAGE_TURN_ANIMATION_PUSH: number = 8;
   static readonly SCREEN_TIMEOUT_FOLLOW_SYSTEM: number = 0;
   static readonly SCREEN_TIMEOUT_ALWAYS_ON: number = -1;
+  static readonly SCREEN_TIMEOUT_MAX_MINUTES: number = 60;
   static readonly SCREEN_ORIENTATION_SYSTEM: string = 'system';
   static readonly SCREEN_ORIENTATION_PORTRAIT: string = 'portrait';
   static readonly SCREEN_ORIENTATION_LANDSCAPE: string = 'landscape';
@@ -1746,14 +1747,30 @@ export class ReaderSettingsStore {
     return Math.max(1, Math.min(value, 10));
   }
 
+  /**
+   * 亮屏时间存储值：-1 常亮，1～60 为无操作后多少分钟恢复系统息屏。
+   * 旧版的“跟随系统”（0）已不再提供，按最短的 1 分钟处理，最接近原来不额外保持亮屏的效果。
+   */
   static normalizeScreenTimeoutMinutes(minutes: number): number {
-    const value = Math.round(minutes);
-    if (value === ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON ||
-      value === ReaderSettingsStore.SCREEN_TIMEOUT_FOLLOW_SYSTEM ||
-      value === 1 || value === 5 || value === 10) {
-      return value;
+    if (typeof minutes !== 'number' || !Number.isFinite(minutes)) {
+      return ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON;
     }
-    return ReaderSettingsStore.SCREEN_TIMEOUT_FOLLOW_SYSTEM;
+    const value = Math.round(minutes);
+    if (value < 0) return ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON;
+    return Math.max(1, Math.min(ReaderSettingsStore.SCREEN_TIMEOUT_MAX_MINUTES, value));
+  }
+
+  /** 存储值换成步进器上的数值：常亮显示为 0。 */
+  static screenTimeoutStepperValue(minutes: number): number {
+    const value = ReaderSettingsStore.normalizeScreenTimeoutMinutes(minutes);
+    return value === ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON ? 0 : value;
+  }
+
+  /** 步进器数值换成存储值：0 为常亮。 */
+  static screenTimeoutFromStepperValue(stepValue: number): number {
+    const value = Math.round(stepValue);
+    if (!Number.isFinite(value) || value <= 0) return ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON;
+    return Math.min(ReaderSettingsStore.SCREEN_TIMEOUT_MAX_MINUTES, value);
   }
 
   static normalizeScreenOrientation(orientation: string): string {

@@ -33,6 +33,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
+import { ScreenTimeoutStepper } from '../components/common/ScreenTimeoutStepper';
 import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 import { CloudFontMenu } from '../account/CloudFontMenu';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
@@ -543,10 +544,17 @@ struct SettingsPage {
         this.screenOrientationOptions(), this.screenOrientationSelectedIndex(), (index: number) => {
           this.setReaderScreenOrientationByIndex(index);
         }, 'settings_screen_orientation_select')
-      this.selectItem('亮屏时间设置', '无操作达到所选时长后恢复系统息屏',
-        this.screenTimeoutOptions(), this.screenTimeoutSelectedIndex(), (index: number) => {
-          this.setReaderScreenTimeoutByIndex(index);
-        }, 'settings_screen_timeout_select')
+      SettingRow({ title: '亮屏时间设置', description: '无操作达到所选分钟数后恢复系统息屏，0 为常亮' }) {
+        ScreenTimeoutStepper({
+          minutes: this.readerScreenTimeoutMinutes,
+          textColor: this.primaryTextColor(),
+          subTextColor: this.subTextColor(),
+          inputColor: this.inputColor(),
+          darkMode: this.appDarkMode,
+          controlId: 'settings_screen_timeout_stepper',
+          onChange: (minutes: number): void => this.setReaderScreenTimeoutMinutes(minutes)
+        })
+      }
       SettingSwitchRow({
         title: '音量键翻页',
         description: '音量上/下键翻到上一页/下一页，条漫为翻一屏',
@@ -2102,38 +2110,8 @@ struct SettingsPage {
     return `竖屏 ${portrait} · 横屏 ${landscape}`;
   }
 
-  screenTimeoutOptions(): SelectOption[] {
-    return [
-      { value: '跟随系统' },
-      { value: '1分钟' },
-      { value: '5分钟' },
-      { value: '10分钟' },
-      { value: '常亮' }
-    ];
-  }
-
-  screenTimeoutValues(): number[] {
-    return [
-      ReaderSettingsStore.SCREEN_TIMEOUT_FOLLOW_SYSTEM,
-      1,
-      5,
-      10,
-      ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON
-    ];
-  }
-
-  screenTimeoutSelectedIndex(): number {
-    const index = this.screenTimeoutValues().indexOf(
-      ReaderSettingsStore.normalizeScreenTimeoutMinutes(this.readerScreenTimeoutMinutes)
-    );
-    return index >= 0 ? index : 0;
-  }
-
-  setReaderScreenTimeoutByIndex(index: number): void {
-    const values = this.screenTimeoutValues();
-    this.readerScreenTimeoutMinutes = index >= 0 && index < values.length ?
-      values[index] :
-      ReaderSettingsStore.SCREEN_TIMEOUT_FOLLOW_SYSTEM;
+  setReaderScreenTimeoutMinutes(minutes: number): void {
+    this.readerScreenTimeoutMinutes = ReaderSettingsStore.normalizeScreenTimeoutMinutes(minutes);
     this.saveReaderInteractionSettings();
   }
 

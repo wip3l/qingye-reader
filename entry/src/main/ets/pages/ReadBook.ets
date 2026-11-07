@@ -166,7 +166,8 @@ import {
   ReaderComicModeSettingsPanel,
   ReaderComicPanelColors
 } from '../components/reader/ReaderComicSettingsPanels';
-import { ReaderSettingActionRow, ReaderSettingSelectRow, ReaderSettingSwitchRow } from '../components/reader/ReaderSettingRows';
+import { ReaderSettingActionRow, ReaderSettingLabel, ReaderSettingSelectRow, ReaderSettingSwitchRow } from '../components/reader/ReaderSettingRows';
+import { ScreenTimeoutStepper } from '../components/common/ScreenTimeoutStepper';
 import {
   ReaderComicBackground,
   ReaderComicFit,
@@ -12218,10 +12219,27 @@ struct ReadBookPage {
         this.readerEyeTurnCalibrationSettingItem()
       }
 
-      this.readerSelectSettingItem('亮屏时间设置', '无操作达到所选时长后恢复系统息屏',
-        this.screenTimeoutOptions(), this.screenTimeoutSelectedIndex(), (index: number) => {
-          this.setReaderScreenTimeoutByIndex(index);
-        }, 'reader_screen_timeout_select')
+      Row() {
+        ReaderSettingLabel({
+          title: '亮屏时间设置',
+          description: '无操作达到所选分钟数后恢复系统息屏，0 为常亮',
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor()
+        })
+          .layoutWeight(1)
+        ScreenTimeoutStepper({
+          minutes: this.readerScreenTimeoutMinutes,
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          inputColor: this.readerSolidPanelColor(),
+          darkMode: this.isReaderThemeDark(),
+          controlId: 'reader_screen_timeout_stepper',
+          onChange: (minutes: number): void => this.setReaderScreenTimeoutMinutes(minutes)
+        })
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 56 })
+      .alignItems(VerticalAlign.Center)
 
       Row({ space: 10 }) {
         ForEach(this.currentReaderThemes(), (theme: ReaderThemeItem, index: number) => {
@@ -12434,37 +12452,6 @@ struct ReadBookPage {
     const value = this.normalizePageTurnAnimationType(this.readerPageTurnAnimationType);
     for (let i = 0; i < types.length; i++) {
       if (types[i] === value) {
-        return i;
-      }
-    }
-    return 0;
-  }
-
-  screenTimeoutOptions(): SelectOption[] {
-    return [
-      { value: '跟随系统' },
-      { value: '1分钟' },
-      { value: '5分钟' },
-      { value: '10分钟' },
-      { value: '常亮' }
-    ];
-  }
-
-  screenTimeoutValues(): number[] {
-    return [
-      ReaderSettingsStore.SCREEN_TIMEOUT_FOLLOW_SYSTEM,
-      1,
-      5,
-      10,
-      ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON
-    ];
-  }
-
-  screenTimeoutSelectedIndex(): number {
-    const values = this.screenTimeoutValues();
-    const current = ReaderSettingsStore.normalizeScreenTimeoutMinutes(this.readerScreenTimeoutMinutes);
-    for (let i = 0; i < values.length; i++) {
-      if (values[i] === current) {
         return i;
       }
     }
@@ -12948,11 +12935,8 @@ struct ReadBookPage {
     return 'ok';
   }
 
-  setReaderScreenTimeoutByIndex(index: number): void {
-    const values = this.screenTimeoutValues();
-    this.readerScreenTimeoutMinutes = index >= 0 && index < values.length ?
-      values[index] :
-      ReaderSettingsStore.SCREEN_TIMEOUT_FOLLOW_SYSTEM;
+  setReaderScreenTimeoutMinutes(minutes: number): void {
+    this.readerScreenTimeoutMinutes = ReaderSettingsStore.normalizeScreenTimeoutMinutes(minutes);
     this.applyReaderScreenTimeout();
     this.saveReaderInteractionSettings();
     this.saveReadConfig();
