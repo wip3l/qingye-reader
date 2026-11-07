@@ -1,5 +1,5 @@
 import { PageScaffold } from '../components/common/PageScaffold';
-import { SettingNavRow, SettingSwitchRow } from '../components/common/SettingRow';
+import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
 import { ReaderPdfSettings } from '../core/book/pdf/ReaderPdfSettings';
 import { ReaderPdfSettingsStore } from '../core/book/pdf/ReaderPdfSettingsStore';
 import { ReaderComicSuperResolution, ReaderComicSuperResolutionAccess } from '@legado/aiengine';
@@ -9,6 +9,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { syncSystemBars } from '../utils/SystemBars';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 
 /** Reading settings → PDF: default preferences, below explicit per-book choices. */
 @Entry
@@ -16,6 +17,8 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 struct PdfSettingsPage {
   @StorageProp('appDarkMode') darkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
+  @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageProp('accountMembershipSku') @Watch('refreshAccess') membershipSku: string = '';
   @StorageProp('accountEntitlementsRevision') @Watch('refreshAccess') accountRevision: number = 0;
   @StorageProp('aiTrialOpen') @Watch('refreshAccess') trialOpen: boolean = false;
@@ -104,6 +107,42 @@ struct PdfSettingsPage {
         SettingSwitchRow({ title: '适配整页', description: '关闭后按页面宽度显示', isOn: this.settings.fitPage, showDivider: false,
           onChange: (checked: boolean): void => {
             this.update((next: ReaderPdfSettings): void => { next.fitPage = checked; });
+          } })
+      }.width('calc(100% - 24vp)').margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+        .borderRadius(ThemeRuntime.cardRadius()).clip(true).backgroundColor(ThemeRuntime.cardColor(this.darkMode))
+
+      this.sectionTitle('画面')
+      Column() {
+        // 与漫画设置页的下拉行同一种写法；直接写在这里而不是按值 @Builder，选完下拉跟着刷新。
+        SettingRow({ title: '夜间页面', description: '应用夜间模式时 PDF 页面的显示；反色把白纸变成深灰、黑字变成浅灰' }) {
+          Select(ReaderPdfSettings.NIGHT_LABELS.map((label: string): SelectOption => ({ value: label })))
+            .selected(Math.max(0, ReaderPdfSettings.NIGHT_MODES.indexOf(this.settings.nightMode)))
+            .value(ReaderPdfSettings.NIGHT_LABELS[Math.max(0, ReaderPdfSettings.NIGHT_MODES.indexOf(this.settings.nightMode))])
+            .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+            .optionFont({ family: this.applicationFontFamily })
+            .selectedOptionFont({ family: this.applicationFontFamily })
+            .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+            .backgroundColor(Color.Transparent)
+            .arrowPosition(ArrowPosition.END)
+            .padding({ left: 0, right: 0 })
+            .borderRadius(16)
+            .border({ width: 0 })
+            .optionBgColor(Color.Transparent)
+            .divider(null)
+            .optionFontColor(ThemeRuntime.primaryTextColor(this.darkMode))
+            .selectedOptionFontColor(ThemeRuntime.accentColor(this.darkMode))
+            .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.darkMode))
+            .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.darkMode))
+            .menuBackgroundBlurStyle(BlurStyle.NONE)
+            .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+            .onSelect((index: number): void => {
+              this.update((next: ReaderPdfSettings): void => { next.nightMode = ReaderPdfSettings.NIGHT_MODES[index]; });
+            })
+        }
+        SettingSwitchRow({ title: '页码角标', description: '阅读时右下角显示目录标题、页码、时间与电量',
+          isOn: this.settings.pageBadge, showDivider: false,
+          onChange: (checked: boolean): void => {
+            this.update((next: ReaderPdfSettings): void => { next.pageBadge = checked; });
           } })
       }.width('calc(100% - 24vp)').margin({ left: AppSpacing.LG, right: AppSpacing.LG })
         .borderRadius(ThemeRuntime.cardRadius()).clip(true).backgroundColor(ThemeRuntime.cardColor(this.darkMode))

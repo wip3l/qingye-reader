@@ -63,6 +63,8 @@ export struct ReaderTocPanel {
 
   book: Book | null = null;
   controller: ReaderTocPanelController | null = null;
+  /** 章节列表不是书里的章节表时关掉（PDF 传的是目录条目，数据库里存的是页），滚动条只按传入的条目算。 */
+  @Prop useDatabaseCount: boolean = true;
   /** 目录里显示的章节标题（页面负责清洗标题）。 */
   chapterTitle: (chapterIndex: number) => string = (_chapterIndex: number): string => '';
   onClose: () => void = (): void => {
@@ -138,7 +140,7 @@ export struct ReaderTocPanel {
     this.setWindowAround(this.currentChapterIndex, ScrollAlign.CENTER);
     this.scrollToCurrentChapter(false);
     this.onLoadBookmarks();
-    this.loadDatabaseChapterCount();
+    if (this.useDatabaseCount) this.loadDatabaseChapterCount();
   }
 
   aboutToDisappear(): void {

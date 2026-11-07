@@ -7,7 +7,14 @@ import { ReaderEmulationFlipPainter, ReaderEmulationFlipRegion } from '../Reader
 // 推页接缝阴影的宽度（vp），以及被压住那页在完全盖住时浅纱的不透明度；与正文阅读页、漫画翻页一致。
 const PUSH_SHADOW_SIZE = 18;
 const PUSH_SHADE_MAX_OPACITY = 0.45;
-const TOUCH_SLOP = 8;
+// 与普通阅读页相同的手势参数（ReadBook 的 readerTapSlop / readerPageTurn*）：移动 12vp 才算拖动，横向位移大于
+// 竖向的 0.8 倍算翻页；慢拖到页宽 10%、快甩（≥800vp/s）到 3% 即提交，两者都至少 18vp。
+const TOUCH_SLOP = 12;
+const DIRECTION_RATIO = 0.8;
+const COMMIT_RATIO = 0.1;
+const FLICK_RATIO = 0.03;
+const FLICK_VELOCITY = 800;
+const COMMIT_MIN_DISTANCE = 18;
 /** 目标页截图和起点一模一样（网页还没按新位置出帧）时，隔这么久重截，最多这么多次。 */
 const STALE_RETRY_MS = 50;
 const STALE_RETRY_LIMIT = 8;
@@ -90,6 +97,19 @@ export struct ReaderSnapshotPageTurn {
   private touchStartTime: number = 0;
   /** 本次拖动的方向；无动画时拖动只记方向，松手才决定翻不翻。 */
   private dragDirection: number = 0;
+  /** 最近的触摸采样，用来算松手时的速度。 */
+  private sampleX: number = 0;
+  private sampleTime: number = 0;
+  private lastX: number = 0;
+  private lastTime: number = 0;
+  /**
+   * 跟手拖动时目标页还没截好，先拿一张纸色的图顶上，动画立刻跟着手指走；底下换页、截图在后台进行，
+   * 截好再换成真页面。pendingAdvance 是这次后台换页，结果为底下是否真的换了页。
+   */
+  private pendingAdvance: Promise<boolean> | null = null;
+  private placeholderMap: image.PixelMap | null = null;
+  private placeholderKey: string = '';
+  private backIsPlaceholder: boolean = false;
 
   aboutToAppear(): void {
     this.controller.touch = (event: TouchEvent): void => this.handleTouch(event);
@@ -107,6 +127,9 @@ export struct ReaderSnapshotPageTurn {
     this.frontMap = null;
     this.backMap = null;
     this.dropCache();
+    const placeholder = this.placeholderMap;
+    this.placeholderMap = null;
+    if (placeholder) setTimeout((): void => { placeholder.release().catch((): void => {}); }, 64);
     this.controller.touch = () => {};
     this.controller.turn = () => {};
     this.controller.prewarm = () => {};
@@ -138,7 +161,7 @@ export struct ReaderSnapshotPageTurn {
   // ---- 截图缓存：翻完一页时目标页的截图留下来，下一次翻页直接用作起点 ----
 
   private releaseLater(map: image.PixelMap | null): void {
-    if (!map) return;
+    if (!map || map === this.placeholderMap) return;
     // 图片组件 / Canvas 的最后一帧提交到渲染线程后再释放。
     setTimeout((): void => { map.release().catch((): void => {}); }, 64);
   }
@@ -252,6 +275,72 @@ export struct ReaderSnapshotPageTurn {
     return back;
   }
 
+  /** 纸色的整页图，按视图尺寸与纸色缓存；DMA 分配（交给 Canvas 反复绘制的图用堆内存会让 RS 泄漏显存）。 */
+  private placeholder(): image.PixelMap | null {
+    const vp2px = this.getUIContext().vp2px(1);
+    const width = Math.max(1, Math.round(this.viewW() * vp2px));
+    const height = Math.max(1, Math.round(this.viewH() * vp2px));
+    const key = `${width}x${height}|${this.paperColor}`;
+    if (this.placeholderMap && this.placeholderKey === key) return this.placeholderMap;
+    const hex = (this.paperColor || '#FFFFFF').replace('#', '');
+    const rgb = hex.length >= 6 ? hex.substring(hex.length - 6) : 'FFFFFF';
+    const r = Number.parseInt(rgb.substring(0, 2), 16) || 0;
+    const g = Number.parseInt(rgb.substring(2, 4), 16) || 0;
+    const b = Number.parseInt(rgb.substring(4, 6), 16) || 0;
+    const bytes = new Uint8Array(width * height * 4);
+    for (let i = 0; i < bytes.length; i += 4) {
+      bytes[i] = b; bytes[i + 1] = g; bytes[i + 2] = r; bytes[i + 3] = 255;
+    }
+    const options: image.InitializationOptions = {
+      size: { width: width, height: height }, srcPixelFormat: image.PixelMapFormat.BGRA_8888,
+      pixelFormat: image.PixelMapFormat.RGBA_8888, editable: false
+    };
+    let map: image.PixelMap | null = null;
+    try {
+      map = image.createPixelMapUsingAllocatorSync(bytes.buffer, options, image.AllocatorType.DMA);
+    } catch (_) {
+      try {
+        map = image.createPixelMapSync(bytes.buffer, options);
+      } catch (error) {
+        console.warn('[SnapshotTurn] placeholder failed:', error);
+      }
+    }
+    const old = this.placeholderMap;
+    this.placeholderMap = map;
+    this.placeholderKey = map ? key : '';
+    if (old) setTimeout((): void => { old.release().catch((): void => {}); }, 64);
+    return map;
+  }
+
+  /** 跟手拖动时在后台换页并截目标页；截好就把纸色占位换成真页面。 */
+  private async advanceInBackground(direction: number, front: image.PixelMap, serial: number): Promise<boolean> {
+    await this.nextFrame();
+    if (serial !== this.serial) return false;
+    const moved = await this.host.advance(direction);
+    if (serial !== this.serial) return moved;
+    if (!moved) {
+      // 已经到头（或换不过去）：手指还在拖也直接退回。
+      this.tracking = false;
+      if (this.phase === 'ready') {
+        this.emulationPainter.releaseCorner();
+        this.settle(false);
+      }
+      return false;
+    }
+    const back = await this.captureFresh(front, serial);
+    if (serial !== this.serial) {
+      this.releaseLater(back);
+      return true;
+    }
+    if (back) {
+      this.backMap = back;
+      this.backKey = this.host.textureKey();
+      this.backIsPlaceholder = false;
+      this.drawCurl();
+    }
+    return true;
+  }
+
   private nextFrame(): Promise<void> {
     return new Promise<void>((resolve) => setTimeout(resolve, 20));
   }
@@ -269,13 +358,15 @@ export struct ReaderSnapshotPageTurn {
     if (this.phase !== 'idle') this.release = 1;
   }
 
-  private async begin(direction: number): Promise<void> {
+  private async begin(direction: number, dragging: boolean = false): Promise<void> {
     const serial = ++this.serial;
     this.phase = 'preparing';
     this.turnDirection = direction;
     this.turnOffset = 0;
     this.release = 0;
     this.backReady = false;
+    this.pendingAdvance = null;
+    this.backIsPlaceholder = false;
     this.host.activeChanged(true);
     if (this.animationType === ReaderPageTurnAnimation.NONE) {
       this.dropCache();
@@ -302,6 +393,19 @@ export struct ReaderSnapshotPageTurn {
     }
     this.frontMap = front;
     this.active = true;
+    const placeholder = dragging ? this.placeholder() : null;
+    if (placeholder) {
+      // 跟手：纸色占位当目标页，立刻进入可拖动状态；换页与截图在后台。
+      this.backMap = placeholder;
+      this.backIsPlaceholder = true;
+      this.backKey = '';
+      this.phase = 'ready';
+      this.backReady = true;
+      this.drawCurl();
+      this.pendingAdvance = this.advanceInBackground(direction, front, serial);
+      if (this.release !== 0) this.settle(this.release > 0);
+      return;
+    }
     // 遮盖先画出来，再去动底下的内容，免得闪出目标页。
     await this.nextFrame();
     if (serial !== this.serial) return;
@@ -363,7 +467,7 @@ export struct ReaderSnapshotPageTurn {
       if (serial !== this.serial || this.phase !== 'animating') return;
       this.cancelAnimator();
       this.turnOffset = target;
-      if (complete) this.finishCommit(); else this.finishCancel(serial);
+      if (complete) this.finishCommit(serial); else this.finishCancel(serial);
     };
     if (Math.abs(this.turnOffset - target) < 0.5) {
       finish();
@@ -395,17 +499,34 @@ export struct ReaderSnapshotPageTurn {
     if (animator) animator.cancel();
   }
 
-  private finishCommit(): void {
+  private async finishCommit(serial: number): Promise<void> {
+    const advance = this.pendingAdvance;
+    this.pendingAdvance = null;
+    if (advance) {
+      this.phase = 'finishing';
+      const moved = await advance;
+      if (serial !== this.serial) return;
+      if (!moved) {
+        const front = this.frontMap;
+        this.frontMap = null;
+        this.hide(front, this.frontKey);
+        return;
+      }
+    }
     this.host.committed(this.turnDirection);
-    const back = this.backMap;
+    const back = this.backIsPlaceholder ? null : this.backMap;
     this.backMap = null;
-    this.hide(back, this.backKey);
+    this.hide(back, back ? this.backKey : '');
   }
 
   private async finishCancel(serial: number): Promise<void> {
     this.phase = 'finishing';
     this.queued = 0;
-    await this.host.revert(this.turnDirection);
+    const advance = this.pendingAdvance;
+    this.pendingAdvance = null;
+    const moved = advance ? await advance : true;
+    if (serial !== this.serial) return;
+    if (moved) await this.host.revert(this.turnDirection);
     if (serial !== this.serial) return;
     const front = this.frontMap;
     this.frontMap = null;
@@ -436,6 +557,8 @@ export struct ReaderSnapshotPageTurn {
     this.turnOffset = 0;
     this.turnDirection = 0;
     this.release = 0;
+    this.backIsPlaceholder = false;
+    this.pendingAdvance = null;
     this.emulationPainter.clearCorner();
     this.curlRegion = ReaderEmulationFlipRegion.BOTTOM;
     this.host.activeChanged(false);
@@ -457,10 +580,20 @@ export struct ReaderSnapshotPageTurn {
         this.touchStartY = point.y;
       }
       this.touchStartTime = Date.now();
+      this.sampleX = this.lastX = point ? point.x : 0;
+      this.sampleTime = this.lastTime = this.touchStartTime;
       return;
     }
     if (!point) return;
     if (event.type === TouchType.Move) {
+      const now = Date.now();
+      // 速度取最近约 40ms 的位移，松手前停顿过就不算甩。
+      if (now - this.lastTime > 40) {
+        this.sampleX = this.lastX;
+        this.sampleTime = this.lastTime;
+      }
+      this.lastX = point.x;
+      this.lastTime = now;
       if (event.touches.length > 1) {
         if (this.decided) this.endDrag(false);
         this.tracking = false;
@@ -471,7 +604,7 @@ export struct ReaderSnapshotPageTurn {
       const dy = point.y - this.touchStartY;
       if (!this.decided) {
         if (Math.abs(dx) < TOUCH_SLOP && Math.abs(dy) < TOUCH_SLOP) return;
-        if (Math.abs(dy) > Math.abs(dx) || this.phase !== 'idle') {
+        if (Math.abs(dx) <= Math.abs(dy) * DIRECTION_RATIO || this.phase !== 'idle') {
           this.tracking = false;
           return;
         }
@@ -485,7 +618,7 @@ export struct ReaderSnapshotPageTurn {
           this.curlRegion = y < this.viewH() / 3 ? ReaderEmulationFlipRegion.TOP :
             (y > this.viewH() * 2 / 3 ? ReaderEmulationFlipRegion.BOTTOM : ReaderEmulationFlipRegion.MIDDLE);
         }
-        this.begin(direction);
+        this.begin(direction, true);
       }
       if (this.phase !== 'preparing' && this.phase !== 'ready') return;
       if (this.animationType === ReaderPageTurnAnimation.THREE_D) this.emulationPainter.dragCorner(point.x, point.y);
@@ -497,10 +630,16 @@ export struct ReaderSnapshotPageTurn {
     if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
       if (this.decided) {
         const dx = point.x - this.touchStartX;
-        const quick = Date.now() - this.touchStartTime < 250 && Math.abs(dx) > 30;
+        const now = Date.now();
+        const elapsed = Math.max(1, now - this.sampleTime);
+        const velocity = now - this.lastTime > 80 ? 0 : (point.x - this.sampleX) / elapsed * 1000;
         const forward = this.dragDirection > 0 ? dx < 0 : dx > 0;
-        const complete = event.type === TouchType.Up && forward &&
-          (Math.abs(dx) > this.viewW() * 0.18 || quick);
+        const flickForward = this.dragDirection > 0 ? velocity < 0 : velocity > 0;
+        const distance = Math.abs(dx);
+        const commitDistance = Math.max(COMMIT_MIN_DISTANCE, this.viewW() * COMMIT_RATIO);
+        const flickDistance = Math.max(COMMIT_MIN_DISTANCE, this.viewW() * FLICK_RATIO);
+        const complete = event.type === TouchType.Up && forward && (distance >= commitDistance ||
+          (flickForward && Math.abs(velocity) >= FLICK_VELOCITY && distance >= flickDistance));
         if (this.animationType === ReaderPageTurnAnimation.NONE) {
           if (complete) this.turn(this.dragDirection);
         } else {

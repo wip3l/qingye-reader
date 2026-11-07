@@ -1,7 +1,7 @@
 import { pdfViewManager, pdfService } from '@kit.PDFKit';
 import { HomeRoute } from '../utils/HomeRoute';
 import { common } from '@kit.AbilityKit';
-import { Book } from '@legado/sourceengine';
+import { Book, BookChapter, Bookmark } from '@legado/sourceengine';
 import { appDb } from '../model/data/AppDatabase';
 import { LocalBookService } from '../core/book/LocalBookService';
 import { PdfBookService } from '../core/book/pdf/PdfBookService';
@@ -43,6 +43,28 @@ import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
 import { ReaderOpenSnapshotMeta, ReaderOpenSnapshotStore } from '../core/reader/ReaderOpenSnapshotStore';
 import { ReaderRenderFrame } from '../core/reader/ReaderRenderFrame';
 import { KnockShare } from '../utils/KnockShare';
+import { ReaderComicInfoBadge } from '../components/reader/ReaderComicView';
+import { ReaderTocPanel, ReaderTocPanelController } from '../components/reader/ReaderTocPanel';
+import { PopupMenuAction } from '../components/common/PopupMenuAction';
+import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
+import { ReaderInfoBarClock } from '../core/reader/ReaderInfoBarClock';
+import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
+import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKeyboard';
+import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';
+import { SmartControlKey } from '../utils/SmartControlKey';
+import { ReaderTurnKeys } from '../utils/ReaderTurnKeys';
+import { ReaderScreenTimeout } from '../utils/ReaderScreenTimeout';
+import { TapZoneSettingsDialogContent } from '../components/TapZoneSettingsDialog';
+import {
+  ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
+} from '../components/reader/ReaderSnapshotPageTurn';
+
+const DEFAULT_TAP_ZONES: number[] = [3, 3, 3, 3, 1, 2, 2, 2, 2];
+/** 截图翻页层截的是这一层：PDF 页面加角标与书签角。 */
+const PDF_PAGE_SURFACE_ID = 'pdf_page_surface';
+/** 翻页时跳到目标页后，等页码回报的上限与再给渲染留的时间。 */
+const PAGE_SETTLE_TIMEOUT_MS = 600;
+const PAGE_RENDER_WAIT_MS = 140;
 
 @Entry
 @Component
@@ -53,6 +75,44 @@ struct PdfReadBookPage {
   @StorageProp('accountMembershipSku') @Watch('refreshAiAccess') membershipSku: string = '';
   @StorageProp('aiTrialOpen') @Watch('refreshAiAccess') aiTrialOpen: boolean = false;
   @StorageLink('launchShortcutNonce') @Watch('onShortcut') shortcutNonce: number = 0;
+  // 与书籍共用：点击区域、智控键支持；音量键、智控键开关与翻页动画在打开时从阅读设置读。
+  @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
+  @StorageProp('readerSmartKeyTurnSupported') @Watch('updateTurnKeys') smartKeySupported: boolean = false;
+  @State volumeTurnPage: boolean = false;
+  @State smartKeyTurnPage: boolean = false;
+  @State pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  /** PDF 自己的全局设置：夜间页面（原样 / 调暗 / 反色）与页码角标。 */
+  @State nightMode: string = ReaderPdfSettings.NIGHT_ORIGINAL;
+  @State pageBadge: boolean = true;
+  @State bookmarks: Bookmark[] = [];
+  /** 通用目录书签面板用的条目：PDF 目录（没有目录时是各页），序号即面板里的行号。 */
+  @State tocChapters: BookChapter[] = [];
+  @State tocReverseOrder: boolean = false;
+  @State showBookmarkActions: boolean = false;
+  @State bookmarkActionX: number = 0;
+  @State bookmarkActionY: number = 0;
+  @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('navBarHeight') navBarHeight: number = 0;
+  private tocController: ReaderTocPanelController = new ReaderTocPanelController();
+  private pendingBookmark: Bookmark | null = null;
+  @State infoTimeText: string = '';
+  @State infoBatteryPercent: number = -1;
+  @State viewWidth: number = 360;
+  @State viewHeight: number = 720;
+  @State @Watch('syncTapZoneDialog') showTapZones: boolean = false;
+  private pdfDefaults: ReaderPdfSettings = new ReaderPdfSettings();
+  private readerSettings: ReaderSettings | null = null;
+  private turnKeys: ReaderTurnKeys = new ReaderTurnKeys('PDF');
+  private screenTimeout: ReaderScreenTimeout = new ReaderScreenTimeout('PDF');
+  private keyboardSettings: ReaderKeyboardSettings = new ReaderKeyboardSettings();
+  private keyboard: ReaderKeyboard = new ReaderKeyboard();
+  private tapZoneDialog: SystemDialogSession = new SystemDialogSession();
+  private infoClock: ReaderInfoBarClock | null = null;
+  private turnController: ReaderSnapshotTurnController = new ReaderSnapshotTurnController();
+  private turnHost: ReaderSnapshotTurnHost = this.createTurnHost();
+  private turnActive: boolean = false;
+  private turnUndoPage: number = -1;
+  private prewarmTimer: number = -1;
   @State title: string = 'PDF 阅读';
   @State sourcePath: string = '';
   @State pageCount: number = 0;
@@ -92,7 +152,6 @@ struct PdfReadBookPage {
   @State navigationTitle: string = '目录';
   @State navigationCount: number = 0;
   private navigation: PdfNavigationDataSource = new PdfNavigationDataSource();
-  private navigationScroller: Scroller = new Scroller();
   private book: Book | null = null;
   private bookUrl: string = '';
   private alive: boolean = true;
@@ -162,6 +221,9 @@ struct PdfReadBookPage {
     this.activateBrightness();
     AiAccessPolicy.refresh(); this.refreshAiAccess();
     this.applySystemBars();
+    this.updateTurnKeys();
+    this.syncInfoClock();
+    this.screenTimeout.apply(this.getUIContext().getHostContext(), true);
     if (this.ready) readStatsTracker.setReadingActive(this.bookUrl);
     this.onShortcut();
   }
@@ -170,7 +232,12 @@ struct PdfReadBookPage {
     KnockShare.detach(this.owner);
     this.visible = false; this.previewIndex = -1;
     this.showLayoutElements = false;
+    this.showTapZones = false;
     this.brightnessSession.deactivate();
+    this.turnKeys.release();
+    this.keyboard.reset();
+    this.syncInfoClock();
+    this.screenTimeout.release(this.getUIContext().getHostContext());
     this.applySystemBars();
     readStatsTracker.setReadingActive('');
     this.flushAndSyncProgress();
@@ -181,7 +248,12 @@ struct PdfReadBookPage {
     this.flushAndSyncProgress();
     this.alive = false; this.generation++; this.searchGeneration++;
     this.showLayoutElements = false;
+    this.showTapZones = false;
     this.brightnessSession.deactivate();
+    this.turnKeys.release();
+    this.infoClock?.stop();
+    if (this.prewarmTimer >= 0) clearTimeout(this.prewarmTimer);
+    this.screenTimeout.release(this.getUIContext().getHostContext());
     this.dropShelfOpeningPageSnapshot();
     const closeBackdrop = this.shelfMotionBackdrop;
     this.shelfMotionBackdrop = null;
@@ -192,6 +264,8 @@ struct PdfReadBookPage {
   }
 
   onBackPress(): boolean {
+    if (this.showBookmarkActions) { this.closeBookmarkActions(); return true; }
+    if (this.showTapZones) { this.showTapZones = false; return true; }
     if (this.showLayoutElements) { this.showLayoutElements = false; return true; }
     if (this.activePanel) { this.setPanel(''); return true; }
     if (this.menuVisible) { this.menuVisible = false; return true; }
@@ -223,6 +297,10 @@ struct PdfReadBookPage {
       book = await appDb.getBook(this.bookUrl);
       if (!book || !this.alive || token !== this.generation) return;
       const defaults = await ReaderPdfSettingsStore.load(context);
+      this.pdfDefaults = defaults;
+      this.nightMode = defaults.nightMode;
+      this.pageBadge = defaults.pageBadge;
+      this.syncInfoClock();
       await this.loadReaderSettings(context);
       if (!this.alive || token !== this.generation) return;
       const settings = defaults.withOverrides({
@@ -245,7 +323,9 @@ struct PdfReadBookPage {
       this.navigationTitle = this.navigation.hasOutline() ? '目录' : '页面';
       this.navigationCount = this.navigation.totalCount();
       this.navigationIndex = this.navigation.indexForPage(this.pageIndex);
+      this.tocChapters = this.buildTocChapters(book.bookUrl);
       this.sourcePath = book.getVariable('localFilePath');
+      this.loadBookmarks();
     } catch (error) {
       if (this.alive && token === this.generation) this.fail(error instanceof Error ? error.message : '打开 PDF 失败');
     }
@@ -256,9 +336,13 @@ struct PdfReadBookPage {
     try {
       const settings: ReaderSettings = await ReaderSettingsStore.load(context);
       AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION, settings.useBrightnessQuickAction);
+      this.applyReaderSettings(settings);
+      this.keyboardSettings = await ReaderKeyboardSettingsStore.load(context);
     } catch (error) {
       console.warn('[PDF] reader settings failed:', error);
     }
+    SmartControlKey.detect().catch((): void => {});
+    this.updateTurnKeys();
   }
 
   private activateBrightness(): void {
@@ -363,6 +447,7 @@ struct PdfReadBookPage {
     this.jumpInput = `${this.pageIndex + 1}`;
     this.navigationIndex = this.navigation.indexForPage(this.pageIndex);
     this.scheduleSave();
+    this.schedulePrewarm();
   }
 
   private scheduleSave(): void {
@@ -846,30 +931,465 @@ struct PdfReadBookPage {
     });
   }
 
+  // ---- 与普通阅读页拉齐的交互：点击区域、按键翻页、亮屏时间（不加界面元素） ----
+
+  /** 普通阅读页的翻页、按键、亮屏时间设置；直接从书架打开 PDF 时普通阅读页还没读过。 */
+  private applyReaderSettings(settings: ReaderSettings): void {
+    this.readerSettings = settings;
+    this.volumeTurnPage = settings.volumeTurnPage;
+    this.smartKeyTurnPage = settings.smartKeyTurnPage;
+    this.pageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.pageTurnAnimationType);
+    if (settings.tapZoneActions) this.readerTapZoneActions = settings.tapZoneActions;
+    this.screenTimeout.setMinutes(settings.screenTimeoutMinutes);
+    this.screenTimeout.apply(this.getUIContext().getHostContext(), this.visible);
+  }
+
+  updateTurnKeys(): void {
+    this.turnKeys.update(this.alive && this.visible, this.volumeTurnPage, this.smartKeyTurnPage,
+      this.smartKeySupported, (direction: number): void => {
+        if (this.canTurnByKey()) this.turn(direction);
+      });
+  }
+
+  /** 菜单、面板、弹窗开着时按键不翻页，与普通阅读页一致。 */
+  private canTurnByKey(): boolean {
+    return this.ready && this.visible && !this.menuVisible && !this.activePanel && !this.showLayoutElements &&
+      !this.showTapZones;
+  }
+
+  /** 键盘翻页：按键映射与开关在普通阅读页的阅读设置里配置。 */
+  private handleKeyboardEvent(event: KeyEvent): boolean {
+    const settings = this.keyboardSettings;
+    const direction = event.keyCode === settings.previous ? -1 : (event.keyCode === settings.next ? 1 : 0);
+    if (event.type === KeyType.Up) return this.keyboard.release(event.keyCode, event.deviceId);
+    if (event.type !== KeyType.Down) return false;
+    const first = this.keyboard.press(event.keyCode, event.deviceId);
+    if (!settings.enabled || direction === 0 || ReaderKeyboard.hasModifiers(event)) return false;
+    this.keyboard.consume(event.keyCode, event.deviceId);
+    if (first && this.canTurnByKey()) this.turn(direction);
+    return true;
+  }
+
+  private setVolumeTurnPage(enabled: boolean): void {
+    this.volumeTurnPage = enabled;
+    this.updateTurnKeys();
+    const context = this.getUIContext().getHostContext();
+    const settings = this.readerSettings;
+    if (!context || !settings) return;
+    settings.volumeTurnPage = enabled;
+    ReaderSettingsStore.saveReadingInteractionSettings(context, enabled, settings.screenTimeoutMinutes,
+      settings.extendToStatusBar).catch((error: Error): void => {
+      console.error('[PDF] save volume turn failed:', error);
+    });
+  }
+
+  private setSmartKeyTurnPage(enabled: boolean): void {
+    this.smartKeyTurnPage = enabled;
+    this.updateTurnKeys();
+    if (this.readerSettings) this.readerSettings.smartKeyTurnPage = enabled;
+    const context = this.getUIContext().getHostContext();
+    if (!context) return;
+    ReaderSettingsStore.saveSmartKeyTurnPage(context, enabled).catch((error: Error): void => {
+      console.error('[PDF] save smart key turn failed:', error);
+    });
+  }
+
+  private setPageTurnAnimation(type: number): void {
+    const value = ReaderPageTurnAnimation.normalize(type);
+    if (value === this.pageTurnAnimation) return;
+    this.pageTurnAnimation = value;
+    this.turnController.invalidate();
+    ReaderSettingsStore.savePageTurnAnimationType(getContext(this), value).catch((error: Error): void => {
+      console.warn('[PDF] save page turn animation failed:', error);
+    });
+  }
+
+  // ---- 夜间页面与页码角标：PDF 自己的全局设置（ReaderPdfSettings） ----
+
+  private savePdfDefaults(mutate: (settings: ReaderPdfSettings) => void): void {
+    const next = this.pdfDefaults.copy();
+    mutate(next);
+    this.pdfDefaults = next;
+    ReaderPdfSettingsStore.save(getContext(this), next).catch((error: Error): void => {
+      console.warn('[PDF] save defaults failed:', error);
+    });
+  }
+
+  private setNightMode(mode: string): void {
+    const value = ReaderPdfSettings.normalizeNightMode(mode);
+    if (value === this.nightMode) return;
+    this.nightMode = value;
+    this.turnController.invalidate();
+    this.savePdfDefaults((settings: ReaderPdfSettings): void => { settings.nightMode = value; });
+  }
+
+  private setPageBadge(enabled: boolean): void {
+    if (enabled === this.pageBadge) return;
+    this.pageBadge = enabled;
+    this.turnController.invalidate();
+    this.savePdfDefaults((settings: ReaderPdfSettings): void => { settings.pageBadge = enabled; });
+    this.syncInfoClock();
+  }
+
+  /** 应用夜间模式时交给视图的显示方式；白天一律原样。 */
+  private viewNightMode(): string {
+    return this.darkMode ? this.nightMode : ReaderPdfSettings.NIGHT_ORIGINAL;
+  }
+
+  /** 角标里的时间与电量每分钟刷新，只在页面可见、角标打开时走。 */
+  private syncInfoClock(): void {
+    if (!(this.alive && this.visible && this.pageBadge)) {
+      this.infoClock?.stop();
+      return;
+    }
+    if (!this.infoClock) {
+      this.infoClock = new ReaderInfoBarClock((): void => {
+        this.infoTimeText = ReaderInfoBarClock.timeText();
+        this.infoBatteryPercent = ReaderInfoBarClock.batteryPercent();
+      });
+    }
+    this.infoClock.start();
+  }
+
+  /** 角标里的目录标题：目录中当前页所在的条目，没有目录就不显示。 */
+  private sectionTitle(): string {
+    if (!this.navigation.hasOutline() || this.navigationCount <= 0) return '';
+    return this.navigation.getData(Math.max(0, Math.min(this.navigationCount - 1, this.navigationIndex))).title;
+  }
+
+  // ---- 点击区域与翻页 ----
+
+  private tapZoneActions(): number[] {
+    const parts = (this.readerTapZoneActions || '').split(',');
+    const result: number[] = [];
+    for (let i = 0; i < 9; i++) {
+      const value = Number(parts[i]);
+      result.push(Number.isFinite(value) && value >= 0 && value <= 3 ? Math.round(value) : DEFAULT_TAP_ZONES[i]);
+    }
+    return result;
+  }
+
+  private tapZoneSummary(): string {
+    const actions = this.tapZoneActions();
+    const count = (action: number): number => actions.filter((value: number): boolean => value === action).length;
+    return `上一页 ${count(3)} · 菜单 ${count(1)} · 下一页 ${count(2)}，与书籍共用`;
+  }
+
+  /** 点按页面：菜单开着就收起；否则按点击区域翻页或呼出菜单（九格里没有“菜单”时中间格保留菜单）。 */
+  private onTapAt(x: number, y: number): void {
+    this.screenTimeout.refresh(this.getUIContext().getHostContext(), this.visible);
+    if (this.menuVisible || this.activePanel) {
+      this.toggleMenu();
+      return;
+    }
+    const column = Math.max(0, Math.min(2, Math.floor(Math.max(0, x) * 3)));
+    const row = Math.max(0, Math.min(2, Math.floor(Math.max(0, y) * 3)));
+    const zone = row * 3 + column;
+    const actions = this.tapZoneActions();
+    const action = zone === 4 && !actions.includes(1) ? 1 : actions[zone];
+    if (action === 1) this.toggleMenu();
+    else if (action === 2) this.turn(1);
+    else if (action === 3) this.turn(-1);
+  }
+
+  /** 一次翻页的步长：双页并排时一次翻两页。 */
+  private pageStep(): number {
+    return this.doublePage && this.wideWindow ? 2 : 1;
+  }
+
+  /** 点按、按键翻页：逐页翻阅时播放与书籍相同的翻页动画；连续滚动时直接跳到相邻页。 */
+  private turn(direction: number): void {
+    if (!this.ready) return;
+    this.screenTimeout.refresh(this.getUIContext().getHostContext(), this.visible);
+    if (!this.continuous) {
+      this.turnController.turn(direction > 0 ? 1 : -1);
+      return;
+    }
+    const target = this.pageIndex + (direction > 0 ? 1 : -1) * this.pageStep();
+    if (target < 0 || target >= this.pageCount) {
+      HdsFeedback.showToast(direction > 0 ? '已经是最后一页' : '已经是第一页');
+      return;
+    }
+    this.goTo(target);
+  }
+
+  private openTapZones(): void {
+    this.setPanel('');
+    this.menuVisible = false;
+    this.showTapZones = true;
+  }
+
   @Builder
-  navigationPanel() {
-    // Opens at the section containing the current page, which stays highlighted while reading.
-    List({ scroller: this.navigationScroller, initialIndex: Math.max(0, this.navigationIndex - 2) }) {
-      LazyForEach(this.navigation, (entry: PdfOutlineEntry, index: number) => {
-        ListItem() {
-          Row({ space: 12 }) {
-            Text(entry.title).layoutWeight(1).fontSize(AppFontSize.BODY)
-              .fontWeight(index === this.navigationIndex ? FontWeight.Medium : FontWeight.Normal)
-              .fontColor(index === this.navigationIndex ? ThemeRuntime.accentColor(this.darkMode) :
-                ThemeRuntime.primaryTextColor(this.darkMode)).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
-            if (this.navigation.hasOutline()) {
-              Text(`${entry.pageIndex + 1}`).fontSize(AppFontSize.CAPTION)
-                .fontColor(ThemeRuntime.subTextColor(this.darkMode))
-            }
-          }.width('100%').constraintSize({ minHeight: 48 })
-            .padding({ left: 16 + Math.min(entry.depth, 8) * 12, right: 16, top: 10, bottom: 10 })
-            .borderRadius(16).backgroundColor(index === this.navigationIndex ?
-              ThemeRuntime.accentSurfaceColor(this.darkMode) : Color.Transparent)
-            .onClick((): void => { this.setPanel(''); this.goTo(entry.pageIndex); })
+  tapZoneDialogContent() {
+    TapZoneSettingsDialogContent({
+      onDone: (): void => {
+        this.showTapZones = false;
+      }
+    })
+  }
+
+  syncTapZoneDialog(): void {
+    this.tapZoneDialog.sync(this.getUIContext(), this.showTapZones, (): void => {
+      this.tapZoneDialogContent();
+    }, {
+      autoCancel: false,
+      maskColor: ThemeRuntime.scrimColor(this.darkMode),
+      warnTag: '显示点击区域设置失败:',
+      onDismiss: (): void => {
+        this.showTapZones = false;
+      }
+    });
+  }
+
+  // ---- 翻页动画：截图翻页层（与文件排版相同的 ReaderSnapshotPageTurn） ----
+
+  private createTurnHost(): ReaderSnapshotTurnHost {
+    const host = new ReaderSnapshotTurnHost();
+    host.capture = (): Promise<image.PixelMap | null> => this.capturePage();
+    host.textureKey = (): string => this.pageTextureKey();
+    host.advance = (direction: number): Promise<boolean> => this.advanceForTurn(direction);
+    host.revert = (_direction: number): Promise<void> => this.revertTurn();
+    host.committed = (_direction: number): void => { this.turnUndoPage = -1; this.scheduleSave(); };
+    host.activeChanged = (active: boolean): void => {
+      this.turnActive = active;
+      if (!active) this.schedulePrewarm();
+    };
+    return host;
+  }
+
+  private capturePage(): Promise<image.PixelMap | null> {
+    if (!this.alive || !this.ready || this.closing) return Promise.resolve(null);
+    return this.getUIContext().getComponentSnapshot()
+      .get(PDF_PAGE_SURFACE_ID, { scale: 1, waitUntilRenderFinished: true })
+      .catch((error: Error): image.PixelMap | null => {
+        console.warn('[PDF] page snapshot failed:', error);
+        return null;
+      });
+  }
+
+  private pageTextureKey(): string {
+    if (!this.ready) return '';
+    return `${this.pageIndex}/${this.pageCount}|${this.continuous}|${this.doublePage}|${this.fitPage}|${this.wideWindow}|` +
+      `${this.darkMode}|${this.viewNightMode()}|${this.superResolution}|${this.showOriginal}|${this.layoutRevision}|` +
+      `${this.pageBadge}|${this.isPageBookmarked()}|${this.infoTimeText}|${this.infoBatteryPercent}`;
+  }
+
+  /** 跳到某页并等它显示出来：等页码回报，再留一点时间让新页面渲染完。 */
+  private async showPageForTurn(target: number): Promise<void> {
+    try {
+      this.controller.goToPage(target);
+    } catch (error) {
+      console.warn('[PDF] turn navigation failed:', error);
+      return;
+    }
+    const started = Date.now();
+    while (this.alive && this.pageIndex !== target && Date.now() - started < PAGE_SETTLE_TIMEOUT_MS) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 16));
+    }
+    if (!this.alive) return;
+    if (this.pageIndex !== target) this.onPage(target);
+    await new Promise<void>((resolve) => setTimeout(resolve, PAGE_RENDER_WAIT_MS));
+  }
+
+  private async advanceForTurn(direction: number): Promise<boolean> {
+    if (!this.alive || !this.ready || this.continuous) return false;
+    const target = this.pageIndex + direction * this.pageStep();
+    if (target < 0 || target >= this.pageCount) {
+      HdsFeedback.showToast(direction > 0 ? '已经是最后一页' : '已经是第一页');
+      return false;
+    }
+    this.turnUndoPage = this.pageIndex;
+    await this.showPageForTurn(target);
+    return this.alive;
+  }
+
+  private async revertTurn(): Promise<void> {
+    const page = this.turnUndoPage;
+    this.turnUndoPage = -1;
+    if (page >= 0 && this.alive) await this.showPageForTurn(page);
+  }
+
+  private schedulePrewarm(): void {
+    if (this.prewarmTimer >= 0) clearTimeout(this.prewarmTimer);
+    this.prewarmTimer = setTimeout((): void => {
+      this.prewarmTimer = -1;
+      if (!this.alive || !this.visible || !this.ready || this.continuous || this.turnActive || this.closing) return;
+      this.turnController.prewarm();
+    }, 600);
+  }
+
+  // ---- 书签：与书籍同一张表，章节序号记 PDF 页码 ----
+
+  private isPageBookmarked(): boolean {
+    return this.bookmarks.some((item: Bookmark): boolean => item.chapterIndex === this.pageIndex);
+  }
+
+  private async loadBookmarks(): Promise<void> {
+    try {
+      const list = await appDb.getBookmarks(this.bookUrl);
+      this.bookmarks = list.sort((a: Bookmark, b: Bookmark): number => a.chapterIndex - b.chapterIndex);
+    } catch (error) {
+      console.warn('[PDF] load bookmarks failed:', error);
+    }
+  }
+
+  /** ⋯ 菜单里的“添加书签 / 移除本页书签”。 */
+  private async toggleBookmark(): Promise<void> {
+    if (!this.book || !this.ready) {
+      HdsFeedback.showToast('当前没有可添加的阅读位置');
+      return;
+    }
+    const page = this.pageIndex;
+    const existing = this.bookmarks.filter((item: Bookmark): boolean => item.chapterIndex === page);
+    try {
+      if (existing.length > 0) {
+        await appDb.deleteBookmarks(existing.map((item: Bookmark): number => item.id));
+        await this.loadBookmarks();
+        HdsFeedback.showToast('已移除本页书签');
+        return;
+      }
+      const bookmark = new Bookmark();
+      bookmark.bookUrl = this.book.bookUrl;
+      bookmark.bookName = this.book.name;
+      bookmark.bookAuthor = this.book.author;
+      bookmark.chapterIndex = page;
+      bookmark.chapterName = this.sectionTitle() || PdfPagePosition.title(page);
+      bookmark.pageIndex = 0;
+      bookmark.startPos = 0;
+      bookmark.endPos = 0;
+      bookmark.content = '';
+      bookmark.createTime = Date.now();
+      bookmark.id = await appDb.insertBookmark(bookmark);
+      await this.loadBookmarks();
+      HdsFeedback.showToast('书签已添加');
+    } catch (error) {
+      console.error('[PDF] toggle bookmark failed:', error);
+      HdsFeedback.showToast('书签操作失败');
+    }
+  }
+
+  // ---- 目录与书签：阅读页通用的目录书签面板（ReaderTocPanel），与文件排版页相同 ----
+
+  /** 把 PDF 目录（没有目录时是每一页）转成面板的条目；下级条目用缩进表示层级。 */
+  private buildTocChapters(bookUrl: string): BookChapter[] {
+    const result: BookChapter[] = [];
+    const count = this.navigation.totalCount();
+    for (let i = 0; i < count; i++) {
+      const entry = this.navigation.getData(i);
+      const chapter = new BookChapter();
+      chapter.bookUrl = bookUrl;
+      chapter.index = i;
+      chapter.url = `pdf-page:${entry.pageIndex}`;
+      chapter.title = `${'　'.repeat(Math.min(entry.depth, 4))}${entry.title}`;
+      result.push(chapter);
+    }
+    return result;
+  }
+
+  private openBookmarkActions(bookmark: Bookmark, globalX: number, globalY: number): void {
+    this.bookmarkActionX = globalX;
+    this.bookmarkActionY = globalY;
+    this.pendingBookmark = bookmark;
+    this.showBookmarkActions = true;
+  }
+
+  private closeBookmarkActions(): void {
+    this.showBookmarkActions = false;
+    this.pendingBookmark = null;
+  }
+
+  @Builder
+  bookmarkActionMenu() {
+    Column() {
+      PopupMenuAction($r('sys.symbol.checkmark_circle'), '多选', ThemeRuntime.primaryTextColor(this.darkMode), () => {
+        const bookmark = this.pendingBookmark;
+        this.closeBookmarkActions();
+        if (bookmark) this.tocController.enterBookmarkMultiSelect(bookmark.id);
+      })
+      PopupMenuAction($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.darkMode), () => {
+        const bookmark = this.pendingBookmark;
+        this.closeBookmarkActions();
+        if (bookmark) this.tocController.deleteBookmark(bookmark);
+      })
+    }
+    .width(220)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+
+  /** 与普通阅读页相同的参数，从目录面板顶部的书名进入书籍详情。 */
+  private async openBookDetail(): Promise<void> {
+    const book = this.book;
+    if (!book) return;
+    try {
+      await this.saveProgress();
+      this.setPanel('');
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/SearchBookDetail',
+        params: {
+          bookUrl: book.bookUrl, tocUrl: book.tocUrl, origin: book.origin, originName: book.originName,
+          name: book.name, author: book.author, kind: book.kind, status: book.status,
+          coverUrl: book.customCoverUrl || book.coverUrl, intro: book.customIntro || book.intro,
+          latestChapterTitle: book.latestChapterTitle, updateTime: book.updateTime, wordCount: book.wordCount,
+          type: `${book.type}`, variable: book.variable, readerBookUrl: book.bookUrl, promptAddToShelfOnBack: 'false'
         }
-      }, (entry: PdfOutlineEntry): string => entry.id)
-    }.width('100%').height('100%').cachedCount(4).scrollBar(BarState.Auto)
-      .padding({ left: 8, right: 8, bottom: 12 })
+      });
+    } catch (error) {
+      console.error('[PDF] open book detail failed:', error);
+      HdsFeedback.showToast('打开书籍详情失败');
+    }
+  }
+
+  @Builder
+  tocPanel() {
+    ReaderTocPanel({
+      chapters: $tocChapters,
+      bookmarks: $bookmarks,
+      reverseOrder: $tocReverseOrder,
+      currentChapterIndex: this.navigationIndex,
+      dark: this.darkMode,
+      textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+      subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+      accentColor: ThemeRuntime.accentColor(this.darkMode),
+      swipeButtonColor: ThemeRuntime.buttonColor(this.darkMode),
+      panelColor: this.darkMode ? '#191B1F' : '#FFFFFF',
+      solidPanelColor: this.darkMode ? '#191B1F' : '#FFFFFF',
+      panelBorderColor: this.darkMode ? '#26FFFFFF' : '#14000000',
+      panelShadowColor: this.darkMode ? '#66000000' : '#1F000000',
+      selectedColor: ThemeRuntime.accentSurfaceColor(this.darkMode),
+      panelWidth: PdfReaderControls.tocPanelWidth(this.viewWidth),
+      panelHeight: PdfReaderControls.tocPanelHeight(this.viewHeight, this.navBarHeight > 0 ? this.navBarHeight : 8),
+      book: this.book,
+      controller: this.tocController,
+      useDatabaseCount: false,
+      chapterTitle: (index: number): string => this.tocChapters[index]?.title.trim() || PdfPagePosition.title(index),
+      onClose: (): void => { this.setPanel(''); },
+      onOpenBookDetail: (): void => { this.openBookDetail(); },
+      onJumpToChapter: (index: number): void => {
+        this.activePanel = '';
+        this.menuVisible = false;
+        if (this.navigationCount > 0) this.goTo(this.navigation.getData(Math.max(0, Math.min(index, this.navigationCount - 1))).pageIndex);
+      },
+      onJumpToBookmark: (bookmark: Bookmark): void => {
+        this.activePanel = '';
+        this.menuVisible = false;
+        this.goTo(bookmark.chapterIndex);
+      },
+      onRefreshToc: (): Promise<void> => Promise.resolve(),
+      onLoadBookmarks: (): void => { this.loadBookmarks(); },
+      onShowBookmarkActions: (bookmark: Bookmark, globalX: number, globalY: number): void =>
+        this.openBookmarkActions(bookmark, globalX, globalY)
+    })
+  }
+
+  /** 已加书签的页右上角的小书签角。 */
+  @Builder
+  bookmarkRibbon() {
+    SymbolGlyph($r('sys.symbol.bookmark_fill'))
+      .fontSize(24)
+      .fontColor([ThemeRuntime.accentColor(this.darkMode)])
+      .position({ x: this.viewWidth - 42, y: -2 })
+      .hitTestBehavior(HitTestMode.None)
+      .accessibilityText('本页已加书签')
   }
 
   build() {
@@ -884,15 +1404,49 @@ struct PdfReadBookPage {
       }
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.sourcePath && !this.failed) {
-        PdfReaderView({ controller: this.controller, sourcePath: this.sourcePath, initialPage: this.initialPage,
-          superResolution: this.superResolution && this.superResolutionAccess === ReaderComicSuperResolutionAccess.READY,
-          showOriginal: this.showOriginal, enhancementSuspended: !this.visible || this.activePanel === 'search',
-          layoutRevision: this.layoutRevision,
-          onEnhancementStatus: (text: string): void => { this.enhancementStatus = text; this.refreshAiAccess(); },
-          onReady: (count: number, page: number): void => { this.documentReady(count, page); },
-          onPage: (index: number): void => { this.onPage(index); },
-          onFailure: (message: string): void => { this.fail(message); },
-          onTap: (): void => { this.toggleMenu(); } })
+        // 页面层：PDF 整屏铺满，右下角页码角标、已加书签页的书签角都在这一层，截图翻页截的就是它。
+        Stack({ alignContent: Alignment.TopStart }) {
+          PdfReaderView({ controller: this.controller, sourcePath: this.sourcePath, initialPage: this.initialPage,
+            superResolution: this.superResolution && this.superResolutionAccess === ReaderComicSuperResolutionAccess.READY,
+            showOriginal: this.showOriginal, enhancementSuspended: !this.visible || this.activePanel === 'search',
+            layoutRevision: this.layoutRevision, nightMode: this.viewNightMode(),
+            onEnhancementStatus: (text: string): void => { this.enhancementStatus = text; this.refreshAiAccess(); },
+            onReady: (count: number, page: number): void => { this.documentReady(count, page); },
+            onPage: (index: number): void => { this.onPage(index); },
+            onFailure: (message: string): void => { this.fail(message); },
+            onTap: (): void => { this.toggleMenu(); },
+            onTapAt: (x: number, y: number): void => { this.onTapAt(x, y); },
+            // 逐页翻阅时横向滑动跟手翻页（PDF 自己的单页模式不响应横向滑动）；连续滚动时滑动交给 PDF 滚动。
+            onTouchObserved: (event: TouchEvent): void => {
+              if (!this.continuous && this.ready && !this.menuVisible && !this.activePanel) this.turnController.touch(event);
+            } })
+          if (this.ready && this.isPageBookmarked()) {
+            this.bookmarkRibbon()
+          }
+          if (this.ready && this.pageBadge) {
+            ReaderComicInfoBadge({
+              chapterText: this.sectionTitle(),
+              pageText: `${this.pageIndex + 1} / ${this.pageCount}`,
+              timeText: this.infoTimeText,
+              battery: this.infoBatteryPercent
+            })
+              .position({ right: 10, bottom: 10 })
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor(ThemeRuntime.pageColor(this.darkMode))
+        .id(PDF_PAGE_SURFACE_ID)
+
+        ReaderSnapshotPageTurn({
+          host: this.turnHost,
+          controller: this.turnController,
+          animationType: this.pageTurnAnimation,
+          viewWidth: this.viewWidth,
+          viewHeight: this.viewHeight,
+          darkMode: this.darkMode,
+          paperColor: ThemeRuntime.pageColor(this.darkMode)
+        })
       }
       if (!this.ready) {
         Column({ space: 16 }) {
@@ -918,7 +1472,7 @@ struct PdfReadBookPage {
         searchInput: this.searchInput, searching: this.searching, searchCompleted: this.searchCompleted,
         searchCount: this.searchCount, searchIndex: this.searchIndex, navigationTitle: this.navigationTitle,
         navigationCount: this.navigationCount,
-        navigationContent: (): void => { this.navigationPanel(); },
+        navigationContent: (): void => { this.tocPanel(); },
         onClose: (): void => { this.close(); }, onPanelChange: (panel: string): void => { this.setPanel(panel); },
         onPageChange: (index: number): void => { this.goTo(index); },
         onQuickJump: (index: number, percent: number): void => { this.confirmQuickJump(index, percent); },
@@ -933,7 +1487,30 @@ struct PdfReadBookPage {
         brightnessValue: this.brightnessValue, lastManualBrightness: this.lastManualBrightness,
         brightnessReady: this.brightnessReady,
         onBrightnessChange: (value: number, persist: boolean): void => { this.setBrightness(value, persist); },
-        onLayoutElements: (): void => { this.setPanel(''); this.showLayoutElements = true; } })
+        onLayoutElements: (): void => { this.setPanel(''); this.showLayoutElements = true; },
+        alignedLayout: true, pageTurnAnimation: this.pageTurnAnimation,
+        tapZoneActions: this.tapZoneActions().join(','), tapZoneSummary: this.tapZoneSummary(),
+        volumeTurnPage: this.volumeTurnPage, smartKeyTurnPage: this.smartKeyTurnPage,
+        smartKeySupported: this.smartKeySupported, pdfNightMode: this.nightMode, pageBadge: this.pageBadge,
+        bookmarkedPage: this.isPageBookmarked(),
+        onPageTurnAnimationChange: (type: number): void => { this.setPageTurnAnimation(type); },
+        onTapZones: (): void => { this.openTapZones(); },
+        onVolumeTurnChange: (enabled: boolean): void => { this.setVolumeTurnPage(enabled); },
+        onSmartKeyTurnChange: (enabled: boolean): void => { this.setSmartKeyTurnPage(enabled); },
+        onNightModeChange: (mode: string): void => { this.setNightMode(mode); },
+        onPageBadgeChange: (enabled: boolean): void => { this.setPageBadge(enabled); },
+        onToggleBookmark: (): void => { this.toggleBookmark(); } })
+      Column()
+        .width(1)
+        .height(1)
+        .position({ x: this.bookmarkActionX, y: this.bookmarkActionY })
+        .hitTestBehavior(HitTestMode.None)
+        .bindPopup(this.showBookmarkActions, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+          (): void => {
+            this.bookmarkActionMenu()
+          }, Placement.BottomLeft, this.darkMode, ThemeRuntime.accentColor(this.darkMode), () => {
+            if (this.showBookmarkActions) this.closeBookmarkActions();
+          }))
       if (this.shelfOpeningPageSnapshot) {
         Image(this.shelfOpeningPageSnapshot)
           .width('100%')
@@ -963,7 +1540,12 @@ struct PdfReadBookPage {
         duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut, type: SharedTransitionEffectType.Exchange
       })
       .onAppear((): void => { this.startShelfOpening(); })
+      .onKeyEvent((event: KeyEvent): boolean => this.handleKeyboardEvent(event))
       .onSizeChange((_before: SizeOptions, after: SizeOptions): void => {
+        if (!this.closing) {
+          this.viewWidth = Number(after.width) || this.viewWidth;
+          this.viewHeight = Number(after.height) || this.viewHeight;
+        }
         const wide = Number(after.width) >= 840;
         if (wide !== this.wideWindow) { this.wideWindow = wide; this.applyViewSettings(); }
       })

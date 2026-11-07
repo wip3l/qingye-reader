@@ -6,7 +6,10 @@ import { ReaderBrightnessControl } from './ReaderBrightnessControl';
 import { ReaderChromeMotion } from './ReaderChromeMotion';
 import { common } from '@kit.AbilityKit';
 import { ReaderQuickJumpModel } from '../../core/reader/ReaderQuickJumpModel';
-import { ReaderSettingSwitchRow, ReaderSettingActionRow } from './ReaderSettingRows';
+import { ReaderSettingSwitchRow, ReaderSettingActionRow, ReaderSettingSelectRow } from './ReaderSettingRows';
+import { PopupMenuAction } from '../common/PopupMenuAction';
+import { ReaderPageTurnAnimation } from '../../core/reader/ReaderPageTurnAnimation';
+import { ReaderPdfSettings } from '../../core/book/pdf/ReaderPdfSettings';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
@@ -87,6 +90,30 @@ export struct PdfReaderControls {
   onSearchStep: (direction: number) => void = (_direction: number): void => {};
   onBrightnessChange: (value: number, persist: boolean) => void = (_value: number, _persist: boolean): void => {};
   onLayoutElements: () => void = (): void => {};
+  @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  /**
+   * 与其它阅读页一致的布局（阅读页打开；设计预览测试页不传，保持旧布局）：顶栏右侧换成“⋯”（书签、跳转页码、
+   * 布局元素），底栏 目录 · 搜索 · 设置；目录用阅读页通用的目录书签面板（navigationContent 传入，自带材质与标题），
+   * 阅读设置用通用的设置行。
+   */
+  @Prop alignedLayout: boolean = false;
+  @Prop pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  @Prop tapZoneActions: string = '3,3,3,3,1,2,2,2,2';
+  @Prop tapZoneSummary: string = '';
+  @Prop volumeTurnPage: boolean = false;
+  @Prop smartKeyTurnPage: boolean = false;
+  @Prop smartKeySupported: boolean = false;
+  @Prop pdfNightMode: string = 'original';
+  @Prop pageBadge: boolean = true;
+  @Prop bookmarkedPage: boolean = false;
+  onPageTurnAnimationChange: (type: number) => void = (_type: number): void => {};
+  onTapZones: () => void = (): void => {};
+  onVolumeTurnChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
+  onSmartKeyTurnChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
+  onNightModeChange: (mode: string) => void = (_mode: string): void => {};
+  onPageBadgeChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
+  onToggleBookmark: () => void = (): void => {};
+  @State showMore: boolean = false;
 
   @Builder
   emptyContent() {}
@@ -182,7 +209,9 @@ export struct PdfReaderControls {
   /** 按内容估算面板高度，避免短内容下方留出大片空白；目录和设置在矮窗口里改为滚动。 */
   private panelHeight(): number {
     let desired = PANEL_HEADER_HEIGHT;
-    if (this.activePanel === 'toc') desired = this.navigationCount > 0 ? Math.min(520, desired + this.navigationCount * 56 + 12) : 520;
+    if (this.alignedLayout && this.activePanel === 'settings') {
+      desired += 9 * 64 + 40;
+    } else if (this.activePanel === 'toc') desired = this.navigationCount > 0 ? Math.min(520, desired + this.navigationCount * 56 + 12) : 520;
     else if (this.activePanel === 'settings') desired += 5 * 64 + 40 + (this.superResolution && this.superResolutionReady() ? 40 : 0) + 16;
     else if (this.activePanel === 'search') desired += 44 + 8 + 36 + 16;
     else desired += 44 + 10 + 20 + 20;
@@ -281,7 +310,16 @@ export struct PdfReaderControls {
           .accessibilityText(`${this.bookTitle}，${this.pageSummary()}，点按跳转页码`)
           .onClick((): void => { if (this.ready) this.selectPanel('jump'); })
       }
-      if (this.ready) {
+      if (this.ready && this.alignedLayout) {
+        Stack() {
+          this.roundButton($r('sys.symbol.more'), '更多操作', (): void => { this.showMore = !this.showMore; })
+        }
+        .bindPopup(this.showMore, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+          this.moreMenu()
+        }, Placement.BottomRight, this.darkMode, ThemeRuntime.accentColor(this.darkMode), (): void => {
+          this.showMore = false;
+        }))
+      } else if (this.ready) {
         // Inline so the icon tint follows the open panel (a by-value builder argument would not refresh).
         ImmersiveBackButton({ icon: $r('sys.symbol.magnifyingglass'), iconOffsetX: 0,
           iconColor: this.activePanel === 'search' ? ThemeRuntime.accentColor(this.darkMode) :
@@ -311,6 +349,9 @@ export struct PdfReaderControls {
   actionBar(rowHeight: number = BOTTOM_BAR_ACTIONS_HEIGHT) {
     Row() {
       this.actionButton($r('sys.symbol.list_bullet'), this.navigationTitle, 'toc')
+      if (this.alignedLayout) {
+        this.actionButton($r('sys.symbol.magnifyingglass'), '搜索', 'search')
+      }
       this.actionButton($r('sys.symbol.gearshape'), '阅读设置', 'settings')
     }.width('100%').height(rowHeight).padding({ left: 12, right: 12 })
   }
@@ -449,6 +490,104 @@ export struct PdfReaderControls {
     }.layoutWeight(1).width('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring, { alwaysEnabled: false })
   }
 
+  // ---- 改版后的布局（alignedLayout）：⋯ 菜单、目录|书签、翻页|画面 ----
+
+  @Builder
+  moreMenu() {
+    Column() {
+      PopupMenuAction($r('sys.symbol.bookmark'), this.bookmarkedPage ? '移除本页书签' : '添加书签',
+        ThemeRuntime.primaryTextColor(this.darkMode), () => {
+          this.showMore = false;
+          this.onToggleBookmark();
+        })
+      PopupMenuAction($r('sys.symbol.arrow_right_to_line'), '跳转页码', ThemeRuntime.primaryTextColor(this.darkMode), () => {
+        this.showMore = false;
+        this.selectPanel('jump');
+      })
+      PopupMenuAction($r('sys.symbol.square_grid_2x2'), '布局元素设置', ThemeRuntime.primaryTextColor(this.darkMode), () => {
+        this.showMore = false;
+        this.onLayoutElements();
+      })
+    }
+    .width(220)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+
+  /** 与文件排版、普通阅读页同一种设置行：下拉、开关、操作按钮。 */
+  @Builder
+  alignedSettings() {
+    Scroll() {
+      Column({ space: 8 }) {
+        ReaderSettingSelectRow({ title: '翻页方式', description: '连续滚动上下滑动阅读；逐页翻阅一次一页',
+          options: [{ value: '连续滚动' }, { value: '逐页翻阅' }], selected: this.continuous ? 0 : 1,
+          textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+          accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode, menuColor: this.solidPanelColor(),
+          onSelect: (index: number): void => this.onContinuousChange(index === 0) })
+        if (!this.continuous) {
+          ReaderSettingSelectRow({ title: '翻页动画', description: '点按与按键翻页时的效果，与书籍共用',
+            options: ReaderPageTurnAnimation.labels().map((label: string): SelectOption => ({ value: label })),
+            selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.pageTurnAnimation)),
+            textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+            accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode, menuColor: this.solidPanelColor(),
+            onSelect: (index: number): void => {
+              const types = ReaderPageTurnAnimation.types();
+              if (index >= 0 && index < types.length) this.onPageTurnAnimationChange(types[index]);
+            } })
+        }
+        ReaderSettingActionRow({ title: '点击区域动作', description: this.tapZoneSummary,
+          actionText: '配置', textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode), buttonColor: ThemeRuntime.accentColor(this.darkMode),
+          buttonTextColor: ThemeRuntime.onAccentColor(), onAction: this.onTapZones })
+        ReaderSettingSwitchRow({ title: '音量键翻页', description: '音量上/下键翻到上一页/下一页',
+          checked: this.volumeTurnPage, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onVolumeTurnChange })
+        if (this.smartKeySupported) {
+          ReaderSettingSwitchRow({ title: '智控键翻页', description: '智控键上滑/下滑翻到上一页/下一页',
+            checked: this.smartKeyTurnPage, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+            subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onSmartKeyTurnChange })
+        }
+        ReaderSettingSwitchRow({ title: '适配整页', description: '整页完整可见；关闭后按页面宽度显示', checked: this.fitPage,
+          textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+          onChange: this.onFitPageChange })
+        ReaderSettingSwitchRow({ title: '双页显示', description: this.wideWindow ? '并排展示两页，适合横屏阅读' : '在宽屏窗口下可用',
+          checked: this.doublePage, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onDoublePageChange })
+          .enabled(this.wideWindow).opacity(this.wideWindow ? 1 : 0.5)
+        ReaderSettingSelectRow({ title: '夜间页面', description: '应用夜间模式时页面的显示；反色把白纸变成深灰',
+          options: ReaderPdfSettings.NIGHT_LABELS.map((label: string): SelectOption => ({ value: label })),
+          selected: Math.max(0, ReaderPdfSettings.NIGHT_MODES.indexOf(this.pdfNightMode)),
+          textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+          accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode, menuColor: this.solidPanelColor(),
+          onSelect: (index: number): void => {
+            if (index >= 0 && index < ReaderPdfSettings.NIGHT_MODES.length) {
+              this.onNightModeChange(ReaderPdfSettings.NIGHT_MODES[index]);
+            }
+          } })
+        ReaderSettingSwitchRow({ title: '页码角标', description: '右下角显示目录标题、页码、时间与电量',
+          checked: this.pageBadge, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onPageBadgeChange })
+        this.aiSettingsRow()
+        if (this.superResolution && this.superResolutionReady()) {
+          Text('AI 可能改变细小文字和数字，可通过“查看原页”对照。').fontSize(AppFontSize.CAPTION)
+            .fontColor(ThemeRuntime.subTextColor(this.darkMode)).width('100%')
+        }
+        Text('翻页动画、点击区域与按键翻页和书籍共用设置；左右滑动仍是 PDF 自带的翻页，双指可缩放页面。')
+          .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.darkMode)).width('100%').margin({ top: 4 })
+      }.width('100%').padding({ left: 24, right: 24, bottom: 16 }).alignItems(HorizontalAlign.Start)
+    }.layoutWeight(1).width('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring, { alwaysEnabled: false })
+  }
+
+  /** 通用目录书签面板（ReaderTocPanel）的位置与尺寸，与文件排版页相同。 */
+  static tocPanelWidth(viewportWidth: number): number {
+    const available = Math.max(1, viewportWidth - 36);
+    return viewportWidth >= 600 ? Math.min(available, Math.min(520, Math.max(320, viewportWidth * 0.52))) : available;
+  }
+
+  static tocPanelHeight(viewportHeight: number, bottomInset: number): number {
+    const available = Math.max(1, viewportHeight - bottomInset - BOTTOM_BAR_ACTIONS_HEIGHT - 4 - 12);
+    return Math.min(available, Math.max(Math.min(280, available), viewportHeight * 0.81));
+  }
+
   @Builder
   jumpContent() {
     Column({ space: 10 }) {
@@ -507,6 +646,8 @@ export struct PdfReaderControls {
           this.panelHeader()
           if (this.activePanel === 'toc') {
             Column() { this.navigationContent() }.width('100%').layoutWeight(1)
+          } else if (this.activePanel === 'settings' && this.alignedLayout) {
+            this.alignedSettings()
           } else if (this.activePanel === 'settings') {
             this.settingsContent()
           } else if (this.activePanel === 'search') {
@@ -539,7 +680,15 @@ export struct PdfReaderControls {
           } else if (!this.activePanel && this.superResolution && this.superResolutionReady()) {
             this.compareBar()
           }
-          if (this.activePanel) { this.floatingPanel() }
+          if (this.activePanel === 'toc' && this.alignedLayout) {
+            // 通用目录书签面板自带材质与标题，这里只负责摆放（与文件排版页相同）。
+            Column() { this.navigationContent() }
+              .position({ x: this.panelLeft(), y: '100%' })
+              .translate({ y: -(this.bottomInset() + BOTTOM_BAR_ACTIONS_HEIGHT + 4 +
+                PdfReaderControls.tocPanelHeight(this.viewportHeight, this.bottomInset())) })
+              .transition(this.panelTransition())
+              .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
+          } else if (this.activePanel) { this.floatingPanel() }
           if (!this.activePanel && this.previewIndex < 0 && this.readerUseBrightnessQuickAction &&
             this.brightnessHeight() >= 132) {
             this.brightnessControl()

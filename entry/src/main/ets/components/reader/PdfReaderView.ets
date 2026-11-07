@@ -1,5 +1,6 @@
 import { PdfView, pdfViewManager, pdfService } from '@kit.PDFKit';
 import { PdfSuperResolutionOverlay } from './PdfSuperResolutionOverlay';
+import { ReaderNightImage } from '../../core/reader/ReaderNightImage';
 
 const SCROLL_THUMB_HIDE_MS: number = 1200;
 const SCROLL_THUMB_MIN_HEIGHT: number = 40;
@@ -15,6 +16,8 @@ export struct PdfReaderView {
   @Prop showOriginal: boolean = false;
   @Prop enhancementSuspended: boolean = false;
   @Prop layoutRevision: number = 0;
+  /** 夜间页面：original 原样、dim 调暗、invert 反色（与 ReaderNightImage 同值）；页面在非夜间时传原样。 */
+  @Prop nightMode: string = ReaderNightImage.ORIGINAL;
   @State currentPage: number = 0;
   @State loadedPageCount: number = 0;
   @State viewportRevision: number = 0;
@@ -28,6 +31,14 @@ export struct PdfReaderView {
   onPage: (page: number) => void = (): void => {};
   onFailure: (message: string) => void = (): void => {};
   onTap: () => void = (): void => {};
+  /** 点按位置（占视图宽高的比例）；设了它就不再调用 onTap，由页面按点击区域决定翻页还是呼出菜单。 */
+  onTapAt?: (x: number, y: number) => void;
+  /**
+   * 把页面上的触摸转给阅读页（逐页翻阅时横向滑动由阅读页的翻页层接管）。本页双指缩放过之后不再转发，
+   * 横向拖动留给 PDF 自己平移，换页或改版面后恢复；缩放手势本身仍转发，翻页层据此放弃这次拖动。
+   */
+  onTouchObserved?: (event: TouchEvent) => void;
+  private zoomedOnPage: boolean = false;
   onEnhancementStatus: (text: string) => void = (_text: string): void => {};
   private alive: boolean = false;
   private loaded: boolean = false;
@@ -42,6 +53,9 @@ export struct PdfReaderView {
   private dragPage: number = -1;
 
   private observeTouch(event: TouchEvent): void {
+    const wasZoomed = this.zoomedOnPage;
+    if (event.touches.length > 1) this.zoomedOnPage = true;
+    if (this.onTouchObserved && (!wasZoomed || event.touches.length > 1)) this.onTouchObserved(event);
     const touch = event.changedTouches.length ? event.changedTouches[0] : event.touches[0];
     if (!touch) return;
     if (event.type === TouchType.Down) {
@@ -53,7 +67,11 @@ export struct PdfReaderView {
     } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
       if (event.type === TouchType.Up && this.tapCandidate && Date.now() - this.touchStarted < 350 && this.loaded &&
         !this.scrollThumbDragging && Math.abs(touch.windowX - this.touchX) <= 8 && Math.abs(touch.windowY - this.touchY) <= 8) {
-        this.onTap();
+        if (this.onTapAt) {
+          this.onTapAt(touch.x / Math.max(1, this.viewWidth), touch.y / Math.max(1, this.viewHeight));
+        } else {
+          this.onTap();
+        }
       }
       this.tapCandidate = false; this.viewportRevision++;
     }
@@ -62,7 +80,9 @@ export struct PdfReaderView {
   aboutToAppear(): void {
     this.alive = true;
     this.controller.registerPageChangedListener((index: number): void => {
-      if (this.alive && this.loaded) { this.currentPage = index; this.viewportRevision++; this.onPage(index); }
+      if (this.alive && this.loaded) {
+        this.currentPage = index; this.viewportRevision++; this.zoomedOnPage = false; this.onPage(index);
+      }
     });
     this.controller.registerScrollListener((param: pdfViewManager.ScrollParam): void => {
       if (!this.alive) return;
@@ -70,7 +90,10 @@ export struct PdfReaderView {
       if (this.superResolution) this.viewportRevision++;
     });
     this.controller.registerScaleChangedListener((): void => { if (this.alive && this.superResolution) this.viewportRevision++; });
-    this.controller.registerPageFitChangedListener((): void => { if (this.alive && this.superResolution) this.viewportRevision++; });
+    this.controller.registerPageFitChangedListener((): void => {
+      this.zoomedOnPage = false;
+      if (this.alive && this.superResolution) this.viewportRevision++;
+    });
   }
 
   private async open(): Promise<void> {
@@ -178,18 +201,27 @@ export struct PdfReaderView {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      PdfView({ controller: this.controller, pageFit: pdfService.PageFit.FIT_WIDTH,
-        pageLayout: pdfService.PageLayout.LAYOUT_SINGLE, isContinuous: true, showScroll: false })
-        .id('pdf_document_view')
-        .width('100%')
-        .height('100%')
-        .onAppear((): void => { this.open(); })
-      if (this.loadedPageCount > 0 && this.superResolution) {
-        PdfSuperResolutionOverlay({ controller: this.controller, sourcePath: this.sourcePath,
-          active: this.superResolution, suspended: this.showOriginal || this.enhancementSuspended,
-          pageIndex: this.currentPage, pageCount: this.loadedPageCount,
-          viewportRevision: this.viewportRevision + this.layoutRevision, onStatus: this.onEnhancementStatus })
+      // 页面与超分覆盖图一起套夜间效果，滚动条不套。
+      Stack({ alignContent: Alignment.TopStart }) {
+        PdfView({ controller: this.controller, pageFit: pdfService.PageFit.FIT_WIDTH,
+          pageLayout: pdfService.PageLayout.LAYOUT_SINGLE, isContinuous: true, showScroll: false })
+          .id('pdf_document_view')
+          .width('100%')
+          .height('100%')
+          .onAppear((): void => { this.open(); })
+        if (this.loadedPageCount > 0 && this.superResolution) {
+          PdfSuperResolutionOverlay({ controller: this.controller, sourcePath: this.sourcePath,
+            active: this.superResolution, suspended: this.showOriginal || this.enhancementSuspended,
+            pageIndex: this.currentPage, pageCount: this.loadedPageCount,
+            viewportRevision: this.viewportRevision + this.layoutRevision, onStatus: this.onEnhancementStatus })
+        }
       }
+      .width('100%')
+      .height('100%')
+      // 反色与文件排版的夜间页面一致：invert .92 再把色相转回来，白纸变深灰、黑字变浅灰、彩色大致保持。
+      .invert(this.nightMode === ReaderNightImage.INVERT ? ReaderNightImage.INVERT_AMOUNT : 0)
+      .hueRotate(this.nightMode === ReaderNightImage.INVERT ? 180 : 0)
+      .brightness(this.nightMode === ReaderNightImage.DIM ? ReaderNightImage.DIM_BRIGHTNESS : 1)
       if (this.loadedPageCount > 1 && this.viewWidth > SCROLL_THUMB_TOUCH_WIDTH) {
         this.scrollThumb()
       }
