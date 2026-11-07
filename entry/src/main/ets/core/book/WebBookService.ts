@@ -689,11 +689,15 @@ export class WebBookService {
     return chapters;
   }
 
-  /** imageRequest 决定正文图片的调度优先级，以及是否先返回待加载标记，见 ReaderImageRequest。 */
+  /**
+   * imageRequest 决定正文图片的调度优先级，以及是否先返回待加载标记，见 ReaderImageRequest。
+   * nextChapterUrl 是目录里下一章的地址：“正文下一页”翻到它就停，不把后面的章节拼进本章。
+   */
   async getContent(source: BookSource, book: Book, chapter: BookChapter,
     shouldCancel: (() => boolean) | null = null,
     debugContext: BookSourceDebugContext | null = null,
-    imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT): Promise<string> {
+    imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT,
+    nextChapterUrl: string = ''): Promise<string> {
     if (NativeSourceService.isNative(source)) {
       return await this.getNativeContent(source, book, chapter, shouldCancel, debugContext, imageRequest);
     }
@@ -702,13 +706,14 @@ export class WebBookService {
     const audioUrlRule = this.isAudioContent(source, book) ? (source.contentRule.audioUrl || '').trim() : '';
     if (audioUrlRule) {
       const preferred = await this.getContentWithRules(this.sourceWithContentRule(source, audioUrlRule),
-        book, chapter, shouldCancel, debugContext);
+        book, chapter, shouldCancel, debugContext, ReaderImageRequest.DEFAULT, nextChapterUrl);
       if (preferred || this.contentRequestCanceled(shouldCancel) ||
         !(source.contentRule.content || '').trim()) {
         return preferred;
       }
     }
-    return await this.getContentWithRules(source, book, chapter, shouldCancel, debugContext, imageRequest);
+    return await this.getContentWithRules(source, book, chapter, shouldCancel, debugContext, imageRequest,
+      nextChapterUrl);
   }
 
   private async getNativeContent(source: BookSource, book: Book, chapter: BookChapter,
@@ -757,7 +762,8 @@ export class WebBookService {
   private async getContentWithRules(source: BookSource, book: Book, chapter: BookChapter,
     shouldCancel: (() => boolean) | null = null,
     debugContext: BookSourceDebugContext | null = null,
-    imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT): Promise<string> {
+    imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT,
+    nextChapterUrl: string = ''): Promise<string> {
     if (this.contentRequestCanceled(shouldCancel)) return '';
     // Validation and reader diagnostics must describe the current content request, not a
     // stale error left by a previous catalog/script stage.
@@ -840,6 +846,7 @@ export class WebBookService {
     const contentRule = source.contentRule;
     const parts: string[] = [];
     const seenPageUrls = new Set<string>();
+    const nextChapterKey = this.contentPageKey(nextChapterUrl);
     let currentUrl = resp.url || chapter.url;
     let currentResp = resp;
     let totalLength = 0;
@@ -873,6 +880,8 @@ export class WebBookService {
       if (!contentRule.nextContentUrl || !pageData.nextUrl) break;
       const nextKey = this.urlWithoutFragment(pageData.nextUrl);
       if (seenPageUrls.has(nextKey)) break;
+      // 很多站点在本章末页把“下一页”换成“下一章”，规则照样取得到；翻到下一章就停，否则会把后面几章拼进本章。
+      if (nextChapterKey && this.contentPageKey(pageData.nextUrl) === nextChapterKey) break;
       currentUrl = pageData.nextUrl;
       currentResp = EncodedSourceUrl.canHandle(currentUrl) ?
         await this.fetchEncodedDataUrl(currentUrl, source) : await au.fetch(currentUrl, undefined, debugContext);
@@ -2451,6 +2460,16 @@ export class WebBookService {
   private urlWithoutFragment(url: string): string {
     const index = (url || '').indexOf('#');
     return index >= 0 ? url.substring(0, index) : (url || '');
+  }
+
+  /** 比较正文分页与章节地址用：去掉请求参数后缀（`,{...}`）、锚点和末尾斜杠。 */
+  private contentPageKey(url: string): string {
+    let key = (url || '').trim();
+    const optionsIndex = key.indexOf(',{');
+    if (optionsIndex > 0) key = key.substring(0, optionsIndex);
+    key = this.urlWithoutFragment(key).trim();
+    while (key.length > 1 && key.endsWith('/')) key = key.substring(0, key.length - 1);
+    return key;
   }
 
   private seedSourceVariables(ctx: RuleContext, source: BookSource): void {

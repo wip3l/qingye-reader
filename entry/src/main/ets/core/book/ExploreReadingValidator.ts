@@ -2,6 +2,7 @@ import { Book, BookChapter, BookSource, SearchBook, BookTypeSupport } from '@leg
 import { appDb } from '../../model/data/AppDatabase';
 import { ExploreCoordinator, ExploreEntry } from './ExploreCoordinator';
 import { WebBookService } from './WebBookService';
+import { ReaderImageRequest } from './ReaderImageScheduler';
 import { ReaderImageMarker } from './ReaderImageMarker';
 
 export class ExploreReadingValidationResult {
@@ -157,7 +158,10 @@ export class ExploreReadingValidator {
         result.chapterTitle = chapter.title;
         if (onStage) onStage(`${result.mediaType === '音频' ? '音频地址' :
           (result.mediaType === '漫画图片' ? '漫画正文' : '章节正文')} ${candidateIndex + 1}/${candidateCount}`);
-        content = await service.getContent(source, fullBook, chapter);
+        const position = chapters.indexOf(chapter);
+        const nextChapter = position >= 0 ? chapters[position + 1] : undefined;
+        content = await service.getContent(source, fullBook, chapter, null, null, ReaderImageRequest.DEFAULT,
+          nextChapter?.url || '');
         if (this.cancelled) return this.temporary(result, '校验已取消');
         contentIssue = this.contentIssue(fullBook, content, chapter.url);
         if (!contentIssue) break;

@@ -624,6 +624,8 @@ export class ReadBookEngine {
     const sessionBook = this.book;
     const sessionBookUrl = sessionBook.bookUrl;
     const chapter = this.chapters[idx];
+    // “正文下一页”翻到下一章就停，见 WebBookService.getContent。
+    const nextChapterUrl = this.chapters[idx + 1]?.url || '';
     const saved = await appDb.getCachedChapterContent(sessionBookUrl, idx);
     let cached = ReaderImageCache.normalize(saved);
     const releaseImages = ReaderImageCache.retainText(cached);
@@ -685,7 +687,8 @@ export class ReadBookEngine {
     try {
       let text = '';
       try {
-        text = await this.webBook.getContent(sessionSource, sessionBook, chapter, shouldCancel, null, imageRequest);
+        text = await this.webBook.getContent(sessionSource, sessionBook, chapter, shouldCancel, null, imageRequest,
+          nextChapterUrl);
       } catch (e) {
         if (cached && this.isCurrentBookSession(generation, sessionBookUrl) && !shouldCancel?.()) return cached;
         throw e;

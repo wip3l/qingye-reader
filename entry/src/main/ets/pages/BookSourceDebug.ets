@@ -9,6 +9,7 @@ import { AppDatabase } from '../model/data/AppDatabase';
 import { SearchCoordinator } from '../core/book/SearchCoordinator';
 import { ExploreCoordinator, ExploreEntry } from '../core/book/ExploreCoordinator';
 import { WebBookService } from '../core/book/WebBookService';
+import { ReaderImageRequest } from '../core/book/ReaderImageScheduler';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
 import { HdsFeedback } from '../utils/HdsFeedback';
@@ -510,7 +511,8 @@ struct BookSourceDebugPage {
     if (chapters.length === 0) return;
     debug.beginStep(SourceRuntimeStage.CONTENT, '章节正文');
     debug.setOutput('正文替换净化规则', this.source.contentRule.replaceRegex || '未配置');
-    const content = await service.getContent(this.source, fullBook, chapters[0], null, debug);
+    const content = await service.getContent(this.source, fullBook, chapters[0], null, debug,
+      ReaderImageRequest.DEFAULT, chapters[1]?.url || '');
     this.debugContent = content;
     this.collectInlineActions(content, fullBook, chapters[0], debug);
     debug.setOutput('contentLength', String(content.length));
