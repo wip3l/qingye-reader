@@ -6977,15 +6977,16 @@ struct ReadBookPage {
     const book = this.book;
     if (!book || !LocalBookService.canUseEpubOriginalLayout(book)) return;
     this.showReaderActionMenu = false;
+    const previous = book.getVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY);
     try {
       // 先记下开关再存进度：进度保存会通知书架刷新，书架据此选阅读页。
-      book.putVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY, '1');
+      book.putVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY, LocalBookService.EPUB_LAYOUT_FILE);
       await this.saveReadingProgress(true);
       await AppDatabase.getInstance().updateBook(book, false);
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
       await router.replaceUrl({ url: 'pages/EpubOriginalReadBook', params: { bookUrl: book.bookUrl } });
     } catch (error) {
-      book.putVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY, '');
+      book.putVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY, previous);
       console.warn('[EpubOriginal] switch failed:', error);
       HdsFeedback.showToast('切换文件排版失败');
     }

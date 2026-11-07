@@ -177,18 +177,25 @@ export class LocalBookService {
     return !!book && book.origin === LocalBookService.ORIGIN && LocalBookService.formatOf(book) === 'pdf';
   }
 
-  /** 书籍变量：'1' 表示这本 EPUB 用“文件排版”（原版 CSS，网页组件渲染）打开。 */
+  /**
+   * 书籍变量：这本 EPUB 用哪种排版打开。'1' 文件排版（原版 CSS，网页组件渲染），'0' 应用排版；
+   * 空表示用户还没选过，按默认用文件排版。用户在阅读页切换后记住选择。
+   */
   static readonly EPUB_ORIGINAL_LAYOUT_KEY: string = 'epubOriginalLayout';
+  static readonly EPUB_LAYOUT_FILE: string = '1';
+  static readonly EPUB_LAYOUT_APP: string = '0';
 
   /** 能用文件排版的书：本地 EPUB 的文字书（漫画仍走漫画阅读）。 */
   static canUseEpubOriginalLayout(book: Book | null): boolean {
     return !!book && book.origin === LocalBookService.ORIGIN && book.type === LocalBookService.TYPE_EPUB &&
-      LocalBookService.formatOf(book) === 'epub' && book.getVariable('readerComicMode') !== '1';
+      LocalBookService.formatOf(book) === 'epub' && book.getVariable('readerComicMode') !== '1' &&
+      book.getVariable('readerComicManualMode') !== 'comic';
   }
 
+  /** 默认用文件排版；用户选过应用排版的书（'0'）才走普通阅读页。 */
   static usesEpubOriginalLayout(book: Book | null): boolean {
     return LocalBookService.canUseEpubOriginalLayout(book) &&
-      book?.getVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY) === '1';
+      book?.getVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY) !== LocalBookService.EPUB_LAYOUT_APP;
   }
 
   private static parserVersionFor(format: string): string {

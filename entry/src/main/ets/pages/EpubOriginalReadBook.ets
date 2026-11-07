@@ -2303,7 +2303,8 @@ struct EpubOriginalReadBookPage {
       await this.saveProgress();
       const latest = await appDb.getBook(this.bookUrl);
       if (latest) {
-        latest.putVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY, '');
+        // 记住用户选了应用排版；空值会按默认再进文件排版。
+        latest.putVariable(LocalBookService.EPUB_ORIGINAL_LAYOUT_KEY, LocalBookService.EPUB_LAYOUT_APP);
         await appDb.updateBook(latest, false);
         // 书架按书籍记录选阅读页，让它重新读一遍，下次从书架打开才不会又进文件排版。
         AppStorage.setOrCreate('shelfUpdateTime', Date.now());
