@@ -8,11 +8,13 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { TtsPanelThemeBackground } from './TtsPanelThemeBackground';
 import { ImmersiveMaterialSurface } from './ImmersiveMaterialSurface';
+import { PlaybackLoudnessGain } from '../utils/PlaybackLoudnessGain';
 
 /** 顶栏圆形按钮的尺寸。 */
 const PANEL_CONTROL_SIZE: number = 40;
 const SECONDARY_TIMER: string = 'timer';
 const SECONDARY_SPEED: string = 'speed';
+const SECONDARY_GAIN: string = 'gain';
 const SECONDARY_CATALOG: string = 'catalog';
 const SECONDARY_STOP: string = 'stop';
 const SECONDARY_DOWNLOAD: string = 'download';
@@ -90,7 +92,14 @@ export struct ReaderTtsPlayerPanel {
   @StorageLink('globalTtsVoiceRevision') globalTtsVoiceRevision: number = 0;
   @StorageLink('globalTtsStatusText') globalTtsStatusText: string = '';
   @StorageLink('globalTtsBusy') globalTtsBusy: boolean = false;
+  @StorageProp('ttsLoudnessGain') ttsLoudnessGain: number = 0;
+  @StorageProp('audioLoudnessGain') audioLoudnessGain: number = 0;
+  @StorageProp('ttsLoudnessGainSupported') ttsLoudnessGainSupported: boolean = true;
+  @StorageProp('audioLoudnessGainSupported') audioLoudnessGainSupported: boolean = true;
+  /** 0 关闭，1 定时，2 倍速，3 音量增益。 */
   @State optionsPanel: number = 0;
+  /** 拖动增益滑条时只改显示，松手才下发；-1 表示没在拖。 */
+  @State gainDraft: number = -1;
   @State audioVoiceMenuRevision: number = 0;
   private textScroller: Scroller = new Scroller();
   private readingTextController: TextController = new TextController();
@@ -154,6 +163,8 @@ export struct ReaderTtsPlayerPanel {
             this.timerOptions()
           } else if (this.optionsPanel === 2) {
             this.speedOptions()
+          } else if (this.optionsPanel === 3) {
+            this.gainOptions()
           }
 
           this.secondaryActions()
@@ -530,12 +541,13 @@ export struct ReaderTtsPlayerPanel {
     })
   }
 
-  /** 底部一排：定时、倍速、目录、停止；音色统一使用内容下方的整行下拉框。 */
+  /** 底部一排：定时、倍速、增益、目录、停止；音色统一使用内容下方的整行下拉框。 */
   @Builder
   secondaryActions() {
     Row() {
       this.secondaryItem(SECONDARY_TIMER)
       this.secondaryItem(SECONDARY_SPEED)
+      this.secondaryItem(SECONDARY_GAIN)
       this.secondaryItem(SECONDARY_CATALOG)
       if (this.hostDownloadAvailable && this.isAudio()) {
         this.secondaryItem(SECONDARY_DOWNLOAD)
@@ -605,6 +617,90 @@ export struct ReaderTtsPlayerPanel {
       .backgroundColor(Math.abs(this.globalTtsSpeed - value) < 0.01 ? this.accentColor :
         (ThemeRuntime.softFillColor(this.darkMode)))
       .onClick(() => ReaderTtsFloatingSession.setSpeed(value))
+  }
+
+  /** 音量增益：滑条到 24 dB，快捷档到 +12；朗读和有声书各存一个值。 */
+  @Builder
+  gainOptions() {
+    Column({ space: AppSpacing.SM }) {
+      Row() {
+        Text('音量增益')
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor)
+          .layoutWeight(1)
+        Text(this.gainSupported() ? this.gainValueText(this.gainShown()) : '不可用')
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(this.gainShown() > 0 && this.gainSupported() ? FontWeight.Bold : FontWeight.Regular)
+          .fontColor(this.gainShown() > 0 && this.gainSupported() ? this.accentColor : this.subTextColor)
+      }
+      .width('100%')
+
+      Row({ space: AppSpacing.SM }) {
+        SymbolGlyph($r('sys.symbol.speaker_wave_2'))
+          .fontSize(16)
+          .fontColor([this.subTextColor])
+        Slider({ value: this.gainShown(), min: 0, max: PlaybackLoudnessGain.MAX_DB, step: 1 })
+          .layoutWeight(1)
+          .selectedColor(this.accentColor)
+          .trackColor(ThemeRuntime.inputColor(this.darkMode))
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+          .enabled(this.gainSupported())
+          .accessibilityText('音量增益')
+          .onChange((value: number, mode: SliderChangeMode) => {
+            const gain = Math.round(value);
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.gainDraft = -1;
+              PlaybackLoudnessGain.set(this.gainKind(), gain);
+            } else {
+              this.gainDraft = gain;
+            }
+          })
+        SymbolGlyph($r('sys.symbol.speaker_wave_3'))
+          .fontSize(18)
+          .fontColor([this.subTextColor])
+      }
+      .width('100%')
+      .opacity(this.gainSupported() ? 1 : 0.5)
+
+      Row({ space: AppSpacing.SM }) {
+        this.gainChip(0)
+        this.gainChip(3)
+        this.gainChip(6)
+        this.gainChip(9)
+        this.gainChip(12)
+      }
+      .width('100%')
+      .opacity(this.gainSupported() ? 1 : 0.5)
+
+      if (this.gainHint()) {
+        Text(this.gainHint())
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.gainSupported() ? ThemeRuntime.warningColor(this.darkMode) : this.subTextColor)
+          .width('100%')
+          .maxLines(2)
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  gainChip(value: number) {
+    Text(value === 0 ? '关' : `+${value}`)
+      .fontSize(AppFontSize.CAPTION)
+      .fontWeight(this.gainShown() === value ? FontWeight.Bold : FontWeight.Regular)
+      .fontColor(this.gainShown() === value ? ThemeRuntime.onAccentColor() : this.primaryTextColor)
+      .textAlign(TextAlign.Center)
+      .layoutWeight(1)
+      .height(30)
+      .borderRadius(ThemeRuntime.buttonRadius())
+      .backgroundColor(this.gainShown() === value ? this.accentColor : ThemeRuntime.softFillColor(this.darkMode))
+      .accessibilityText(value === 0 ? '关闭音量增益' : `音量增益 ${value} 分贝`)
+      .onClick(() => {
+        if (!this.gainSupported()) return;
+        this.gainDraft = -1;
+        PlaybackLoudnessGain.set(this.gainKind(), value);
+      })
   }
 
   @Builder
@@ -862,9 +958,41 @@ export struct ReaderTtsPlayerPanel {
     return forward ? this.globalTtsCanNext : this.globalTtsCanPrevious;
   }
 
+  gainKind(): string {
+    return this.isAudio() ? PlaybackLoudnessGain.AUDIO : PlaybackLoudnessGain.TTS;
+  }
+
+  gainStored(): number {
+    return this.isAudio() ? this.audioLoudnessGain : this.ttsLoudnessGain;
+  }
+
+  gainShown(): number {
+    return this.gainDraft >= 0 ? this.gainDraft : this.gainStored();
+  }
+
+  gainSupported(): boolean {
+    return this.isAudio() ? this.audioLoudnessGainSupported : this.ttsLoudnessGainSupported;
+  }
+
+  gainValueText(gain: number): string {
+    return gain > 0 ? `+${gain} dB` : '关闭';
+  }
+
+  gainHint(): string {
+    if (!this.gainSupported()) {
+      if (this.isAudio()) {
+        return PlaybackLoudnessGain.avPlayerSupported() ? '当前音频不支持音量增益' :
+          '当前系统版本不支持有声书音量增益';
+      }
+      return '当前朗读方式不支持音量增益，可换用其他音色后再试';
+    }
+    return this.gainShown() > PlaybackLoudnessGain.SAFE_DB ? '增益较高，人声可能破音，建议先调大系统音量' : '';
+  }
+
   secondaryIcon(kind: string): Resource {
     if (kind === SECONDARY_TIMER) return $r('sys.symbol.timer');
     if (kind === SECONDARY_SPEED) return $r('sys.symbol.hourglass');
+    if (kind === SECONDARY_GAIN) return $r('sys.symbol.speaker_wave_3');
     if (kind === SECONDARY_CATALOG) return $r('sys.symbol.list_bullet');
     if (kind === SECONDARY_DOWNLOAD) return $r('sys.symbol.download');
     return $r('sys.symbol.stop_circle');
@@ -876,6 +1004,7 @@ export struct ReaderTtsPlayerPanel {
         `${Math.max(1, Math.ceil(this.globalTtsTimerRemainingSeconds / 60))}分` : '定时';
     }
     if (kind === SECONDARY_SPEED) return `${this.globalTtsSpeed.toFixed(1)}x`;
+    if (kind === SECONDARY_GAIN) return this.gainSupported() && this.gainStored() > 0 ? `+${this.gainStored()}dB` : '增益';
     if (kind === SECONDARY_CATALOG) return '目录';
     if (kind === SECONDARY_DOWNLOAD) return '下载';
     return '停止';
@@ -888,6 +1017,8 @@ export struct ReaderTtsPlayerPanel {
       active = this.globalTtsTimerMinutes > 0 || this.optionsPanel === 1;
     } else if (kind === SECONDARY_SPEED) {
       active = Math.abs(this.globalTtsSpeed - 1) > 0.01 || this.optionsPanel === 2;
+    } else if (kind === SECONDARY_GAIN) {
+      active = (this.gainSupported() && this.gainStored() > 0) || this.optionsPanel === 3;
     }
     if (active) return this.accentColor;
     return icon ? this.primaryTextColor : this.subTextColor;
@@ -898,6 +1029,9 @@ export struct ReaderTtsPlayerPanel {
       this.optionsPanel = this.optionsPanel === 1 ? 0 : 1;
     } else if (kind === SECONDARY_SPEED) {
       this.optionsPanel = this.optionsPanel === 2 ? 0 : 2;
+    } else if (kind === SECONDARY_GAIN) {
+      this.gainDraft = -1;
+      this.optionsPanel = this.optionsPanel === 3 ? 0 : 3;
     } else if (kind === SECONDARY_CATALOG) {
       this.onOpenCatalog();
     } else if (kind === SECONDARY_DOWNLOAD) {

@@ -2,6 +2,7 @@ import { audio } from '@kit.AudioKit';
 import { media } from '@kit.MediaKit';
 import fs from '@ohos.file.fs';
 import { TtsAudioSession } from './TtsAudioSession';
+import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
 
 export class TtsAvAudioPlayer {
   private readonly audioSessionOwnerPrefix: string = `tts_av_${Date.now()}_${Math.random()}`;
@@ -58,6 +59,7 @@ export class TtsAvAudioPlayer {
       if (generation !== this.playGeneration) {
         return;
       }
+      PlaybackLoudnessGain.trackAvPlayer(PlaybackLoudnessGain.TTS, player);
       const ended = new Promise<void>((resolve, reject) => {
         // The initialized waiter has already settled, so its listeners can go now. Clearing
         // everything first also keeps a resident player from accumulating one set of listeners
@@ -437,6 +439,7 @@ export class TtsAvAudioPlayer {
   }
 
   private async releasePlayer(player: media.AVPlayer): Promise<void> {
+    PlaybackLoudnessGain.untrackAvPlayer(player);
     try {
       if (player.state === 'playing' || player.state === 'paused' || player.state === 'prepared' ||
         player.state === 'completed') {

@@ -1,6 +1,7 @@
 import { audio } from '@kit.AudioKit';
 import { media } from '@kit.MediaKit';
 import fs from '@ohos.file.fs';
+import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
 
 export interface RemoteAudioPlaybackListener {
   onStateChanged(state: string): void;
@@ -171,6 +172,7 @@ export class RemoteAudioPlayback {
       if (generation !== this.generation) return;
       this.durationMs = Math.max(0, player.duration || this.durationMs);
       this.applySpeed(player, this.speed);
+      PlaybackLoudnessGain.trackAvPlayer(PlaybackLoudnessGain.AUDIO, player);
       if (resumeMs > 0 && (this.durationMs <= 0 || resumeMs < this.durationMs - 1000)) {
         this.beginSeek(player, generation, resumeMs);
       } else {
@@ -440,6 +442,7 @@ export class RemoteAudioPlayback {
     const player = this.player;
     this.player = null;
     if (!player) return;
+    PlaybackLoudnessGain.untrackAvPlayer(player);
     try {
       if (player.state === 'playing' || player.state === 'paused' || player.state === 'prepared' ||
         player.state === 'completed') await player.stop();

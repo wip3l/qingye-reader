@@ -8,6 +8,7 @@ import { PcmPlaybackCue, TtsPcmAudioPlayer } from './TtsPcmAudioPlayer';
 import { MimoReadingSession } from './mimo/MimoReadingSession';
 import { MimoUnit } from '../core/mimo/MimoPolicy';
 import { TtsCustomVoices, TtsVoiceOption } from './TtsVoiceModels';
+import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
 
 export interface TtsChunk {
   text: string;
@@ -1416,6 +1417,8 @@ export class SystemTtsReader {
     this.resetSystemPcmPipeline();
     this.pcmPlayer.stop();
     this.ttsPcmPlayType = 1;
+    // 引擎自己出声，拿不到音频流，增益不起作用；回到 PCM 输出时渲染器启动会重新标记可用。
+    PlaybackLoudnessGain.markSupported(PlaybackLoudnessGain.TTS, false);
     this.currentRequestId = '';
     this.currentSpeakStartedAt = 0;
     this.currentSpeakMinDuration = 0;

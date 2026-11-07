@@ -51,6 +51,7 @@ import { ReaderCacheBudget } from '../core/book/ReaderCacheBudget';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
 import { AudioOfflineSettingsStore } from '../utils/AudioOfflineSettingsStore';
 import { AudioBookSettingsStore } from '../utils/AudioBookSettingsStore';
+import { PlaybackLoudnessGain } from '../utils/PlaybackLoudnessGain';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { syncDesktopTitleBar, releaseSystemBarListeners } from '../utils/SystemBars';
 
@@ -82,6 +83,9 @@ export default class EntryAbility extends UIAbility {
     });
     AudioBookSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复听书设置失败:', error);
+    });
+    PlaybackLoudnessGain.load(this.context.getApplicationContext()).catch((error: Error) => {
+      console.warn('恢复音量增益设置失败:', error);
     });
     AppStorage.setOrCreate('appCacheDir', this.context.cacheDir);
     AppStorage.setOrCreate('appFilesDir', this.context.filesDir);

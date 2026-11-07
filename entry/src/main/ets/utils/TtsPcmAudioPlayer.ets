@@ -1,6 +1,7 @@
 import { audio } from '@kit.AudioKit';
 import deviceInfo from '@ohos.deviceInfo';
 import { TtsAudioSession } from './TtsAudioSession';
+import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
 import { sleepMs } from '@legado/sourceengine';
 
 interface PcmPlaybackMark {
@@ -427,6 +428,7 @@ export class TtsPcmAudioPlayer {
         return;
       }
       await renderer.setVolume(1);
+      PlaybackLoudnessGain.markSupported(PlaybackLoudnessGain.TTS, true);
       if (!this.paused && !this.systemInterrupted && generation === this.playGeneration &&
         renderer === this.renderer) {
         await renderer.start();
@@ -691,6 +693,7 @@ export class TtsPcmAudioPlayer {
     this.rendererWriteCallback = writeCallback;
     this.rendererInterruptCallback = interruptCallback;
     this.renderer = renderer;
+    PlaybackLoudnessGain.trackRenderer(renderer);
     console.info(`[TTS] audio renderer created: ${this.debugState()}`);
     return renderer;
   }
@@ -698,6 +701,7 @@ export class TtsPcmAudioPlayer {
   private async releaseRenderer(renderer: audio.AudioRenderer,
     writeCallback: audio.AudioRendererWriteDataCallback | null,
     interruptCallback: ((event: audio.InterruptEvent) => void) | null): Promise<void> {
+    PlaybackLoudnessGain.untrackRenderer(renderer);
     if (writeCallback) {
       try {
         renderer.off('writeData', writeCallback);
