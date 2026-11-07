@@ -19,6 +19,31 @@ export class ThemeIds {
   static readonly LETTERPRESS_PAGE: string = 'letterpress-page';
   static readonly OBSIDIAN_ARCHIVE: string = 'obsidian-archive';
   static readonly NEON_HARBOR: string = 'neon-harbor';
+  static readonly CELESTIAL_VAULT: string = 'celestial-vault';
+}
+
+/**
+ * 终身超级会员手动领取的专属主题：不进会员主题库，不能点数兑换或试用；
+ * 授权同时要求终身超级会员身份和一年内的领取记录（服务端 theme_catalog.acquisition = SUPER_CLAIM）。
+ */
+export class SuperExclusiveThemes {
+  static readonly IDS: string[] = [ThemeIds.OBSIDIAN_ARCHIVE, ThemeIds.CELESTIAL_VAULT];
+
+  static has(themeId: string): boolean {
+    return SuperExclusiveThemes.IDS.indexOf((themeId || '').trim()) >= 0;
+  }
+
+  /** 自定义方案的底子或任一部件来源里用到的专属主题。 */
+  static usedByScheme(baseThemeId: string, lightSources: ThemeComponentSourceIds,
+    darkSources: ThemeComponentSourceIds): string[] {
+    const sources = (JSON.stringify(lightSources) || '') + (JSON.stringify(darkSources) || '');
+    return SuperExclusiveThemes.IDS.filter((id: string) => baseThemeId === id || sources.includes(`"${id}"`));
+  }
+
+  /** 主题配套的桌面图标选项 ID（AppIconManager / app.json5 的 alternateIcons）。 */
+  static appIconId(themeId: string): string {
+    return `theme_${themeId.replace(/-/g, '_')}`;
+  }
 }
 
 export class ThemeComponentSourceIds {
@@ -71,6 +96,7 @@ export class ThemeBubbleStyles {
   static readonly PENCIL_MARK: string = 'pencil-mark';
   static readonly GILDED_ORBIT: string = 'gilded-orbit';
   static readonly HARBOR_POSTCARD: string = 'harbor-postcard';
+  static readonly CELESTIAL_ORBIT: string = 'celestial-orbit';
 }
 
 /** 自定义方案对“完整配色”来源的逐项覆盖：空串表示跟随所选主题。 */
@@ -136,6 +162,7 @@ export class ThemeBubbleStyleLabels {
     if (id === 'pencil-mark') return '铅笔划线';
     if (id === 'gilded-orbit') return '曜金藏签';
     if (id === 'harbor-postcard') return '港湾邮笺';
+    if (id === 'celestial-orbit') return '星穹御签';
     return id;
   }
 
@@ -143,7 +170,7 @@ export class ThemeBubbleStyleLabels {
   static readonly BUILTIN_IDS: string[] = ['qq-soft', 'qq-solid', 'capsule', 'paper', 'neon', 'classic-glass',
     'warm-scroll', 'forest-dew', 'ink-brush', 'neon-pulse', 'strawberry-ribbon', 'crimson-stamp', 'celadon-slip',
     'rose-frame', 'moon-halo', 'sword-talisman', 'qingluan-jade', 'pipi-soft-paw', 'mecha-comm', 'starwish-ribbon',
-    'pencil-mark', 'gilded-orbit', 'harbor-postcard'];
+    'pencil-mark', 'gilded-orbit', 'harbor-postcard', 'celestial-orbit'];
 }
 
 export class ThemeColorTokens {

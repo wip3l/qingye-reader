@@ -312,7 +312,9 @@ BuiltinThemeRegistry.register(theme);
 
 ### 终身超级会员领取型主题
 
-`obsidian-archive`（曜金藏书）是手动领取型主题，不能套用普通主题的点数购买、会员主题库自动授权或试用逻辑。它使用 `gilded-orbit` 气泡、配套浅深阅读角饰及独立即梦位图。授权同时要求终身超级会员身份和一年内的有效领取记录；到期后才能再次领取。
+`obsidian-archive`（曜金藏书）和 `celestial-vault`（星穹御藏）是终身超级会员手动领取的专属主题，名单集中在 `SuperExclusiveThemes.IDS`（客户端）与 `SUPER_CLAIM_THEME_IDS`（服务端 `themeCatalog.ts`），目录行为 `acquisition = 'SUPER_CLAIM'`。它们不能套用普通主题的点数购买、会员主题库自动授权或试用逻辑；授权同时要求终身超级会员身份和这套主题一年内的有效领取记录，每套单独领取，到期后才能再次领取。自定义方案的底子或任一部件用到某套专属主题而没有它的领取记录时，会退回默认主题，配套桌面图标也会复原。
+
+曜金藏书使用 `gilded-orbit` 气泡、矢量阅读角饰和即梦位图。星穹御藏使用 `celestial-orbit` 气泡，阅读角饰、朗读面板插画和底栏图标都是位图；它的图标包 `celestial-vault` 是唯一带选中态的内置图标包，底栏只显示图标、不显示文字（与主题包的 `labels: hidden` 相同）。新增专属主题时：加进上述两份名单，服务端补一条 `SUPER_CLAIM` 目录迁移，再在 `AppScope/app.json5` 登记配套桌面图标。
 
 修改相关入口时，保持 `ThemeAccessPolicy`、自定义部件选择、`ThemeTrialManager`、`AppIconManager` 和 `MembershipThemeGuard` 的一致性。领取接口与数据库迁移以 `server/src` 和 `server/migrations` 中的实现为准；素材生成与校验记录位于 `scripts/assets/`。
 

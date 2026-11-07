@@ -20,7 +20,7 @@ import { ThemeRecentStore } from '../utils/ThemeRecentStore';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
 import { TtsPanelThemeBackground } from '../components/TtsPanelThemeBackground';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
-import { ThemeIds, ThemePack, ThemeRegexEmphasisModes, ThemeVariant } from '../theme/ThemeModels';
+import { SuperExclusiveThemes, ThemeIds, ThemePack, ThemeRegexEmphasisModes, ThemeVariant } from '../theme/ThemeModels';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { AccountCommerceConfig } from '../account/AccountCommerceConfig';
@@ -85,11 +85,12 @@ class ThemeStoreGroup {
 }
 
 const THEME_STORE_GROUPS: ThemeStoreGroup[] = [
+  new ThemeStoreGroup('超级会员专属', [ThemeIds.CELESTIAL_VAULT, ThemeIds.OBSIDIAN_ARCHIVE]),
   new ThemeStoreGroup('国风雅韵', [ThemeIds.QINGLUAN_WATER, ThemeIds.PLUM_TEA, ThemeIds.SWORD_FROST,
     ThemeIds.MOON_CRANE, ThemeIds.INK_WASH]),
   new ThemeStoreGroup('插画角色', [ThemeIds.CAT_PIPI, ThemeIds.STRAWBERRY_CREAM, ThemeIds.STARWISH_MAGIC,
     ThemeIds.AZURE_MECHA, ThemeIds.NEON_HARBOR]),
-  new ThemeStoreGroup('纸本质感', [ThemeIds.OBSIDIAN_ARCHIVE, ThemeIds.LETTERPRESS_PAGE, ThemeIds.WARM_PAPER,
+  new ThemeStoreGroup('纸本质感', [ThemeIds.LETTERPRESS_PAGE, ThemeIds.WARM_PAPER,
     ThemeIds.ROSE_LETTER, ThemeIds.CRIMSON_ARCHIVE]),
   new ThemeStoreGroup('清爽日常', [ThemeIds.PLAIN_DEFAULT, ThemeIds.CLASSIC_BLUE, ThemeIds.FOREST_MIST,
     ThemeIds.NEON_NIGHT])
@@ -287,7 +288,7 @@ struct ThemeSettingsPage {
     this.loadRecentThemes();
     this.syncBars();
     const params = router.getParams() as ThemeSettingsRouteParams;
-    if (params?.themeId === ThemeIds.OBSIDIAN_ARCHIVE) {
+    if (params?.themeId && SuperExclusiveThemes.has(params.themeId)) {
       this.openDetail([`theme:${params.themeId}`], 0, '主题库');
     }
     this.onPendingThemeImport();
@@ -841,7 +842,7 @@ struct ThemeSettingsPage {
           .borderRadius(10)
           .backgroundColor(this.accentColor())
         Row({ space: AppSpacing.XS }) {
-          if (entry.theme.id === ThemeIds.OBSIDIAN_ARCHIVE) {
+          if (SuperExclusiveThemes.has(entry.theme.id)) {
             MembershipBadge({ sku: 'SUPER_LIFETIME' })
           }
           Text(entry.theme.name)
@@ -1002,7 +1003,7 @@ struct ThemeSettingsPage {
           .clip(true)
           Column({ space: 2 }) {
             Row({ space: AppSpacing.XS }) {
-              if (entry.theme.id === ThemeIds.OBSIDIAN_ARCHIVE) {
+              if (SuperExclusiveThemes.has(entry.theme.id)) {
                 MembershipBadge({ sku: 'SUPER_LIFETIME' })
               }
               Text(entry.theme.name)
@@ -1439,7 +1440,7 @@ struct ThemeSettingsPage {
             .fontColor('#E6FFFFFF')
         }
         Row({ space: AppSpacing.XS }) {
-          if (entry.theme.id === ThemeIds.OBSIDIAN_ARCHIVE) {
+          if (SuperExclusiveThemes.has(entry.theme.id)) {
             MembershipBadge({ sku: 'SUPER_LIFETIME' })
           }
           Text(entry.theme.name)
@@ -1981,7 +1982,7 @@ struct ThemeSettingsPage {
     if (themeId === ThemeIds.CUSTOM || this.hasThemeAccess(themeId)) {
       return true;
     }
-    if (themeId === ThemeIds.OBSIDIAN_ARCHIVE) return this.claimExclusiveTheme();
+    if (SuperExclusiveThemes.has(themeId)) return this.claimExclusiveTheme(themeId);
     const offer = this.themeOffer(themeId);
     if (!offer) {
       if (this.themeCatalogLoaded) {
@@ -2059,7 +2060,8 @@ struct ThemeSettingsPage {
     return null;
   }
 
-  async claimExclusiveTheme(): Promise<boolean> {
+  async claimExclusiveTheme(themeId: string): Promise<boolean> {
+    const name = BuiltinThemeRegistry.findById(themeId).name;
     if (!this.accountLoggedIn) {
       HdsFeedback.showToast('请登录终身超级会员账号后领取');
       router.pushUrl({ url: 'pages/AccountCenter' });
@@ -2068,27 +2070,27 @@ struct ThemeSettingsPage {
     try {
       await HuaweiAccountService.refresh(getContext(this));
       if (AccountSessionStore.activeMembershipSku() !== 'SUPER_LIFETIME') {
-        HdsFeedback.showToast('「曜金藏书」仅供终身超级会员领取，不支持点数购买');
+        HdsFeedback.showToast(`「${name}」仅供终身超级会员领取，不支持点数购买`);
         router.pushUrl({ url: 'pages/AccountCenter' });
         return false;
       }
-      if (AccountSessionStore.hasOwnedEntitlement(ThemeIds.OBSIDIAN_ARCHIVE)) return true;
-      if (!this.themeOffer(ThemeIds.OBSIDIAN_ARCHIVE)) {
+      if (AccountSessionStore.hasOwnedEntitlement(themeId)) return true;
+      if (!this.themeOffer(themeId)) {
         await this.refreshThemeCatalog();
-        if (!this.themeOffer(ThemeIds.OBSIDIAN_ARCHIVE)) {
+        if (!this.themeOffer(themeId)) {
           HdsFeedback.showToast('专属主题暂未开放领取，请稍后再试');
           return false;
         }
       }
       const choice = await promptAction.showDialog({
-        title: '领取「曜金藏书」',
+        title: `领取「${name}」`,
         message: '终身超级会员专属，不扣除点数。领取后有效一年，到期后可再次手动领取；有效期内不重复叠加。',
         buttons: [{ text: '取消', color: this.subTextColor() }, { text: '领取一年', color: this.accentColor() }]
       });
       if (choice.index !== 1) return false;
-      await MembershipCommerceService.claimSuperTheme(getContext(this), ThemeIds.OBSIDIAN_ARCHIVE);
-      HdsFeedback.showToast('已领取「曜金藏书」，有效一年');
-      return AccountSessionStore.hasOwnedEntitlement(ThemeIds.OBSIDIAN_ARCHIVE);
+      await MembershipCommerceService.claimSuperTheme(getContext(this), themeId);
+      HdsFeedback.showToast(`已领取「${name}」，有效一年`);
+      return AccountSessionStore.hasOwnedEntitlement(themeId);
     } catch (e) {
       HdsFeedback.showToast((e as Error).message || '领取失败，请稍后重试');
       return false;
@@ -2227,7 +2229,7 @@ struct ThemeSettingsPage {
         })
     } else {
       Row({ space: AppSpacing.MD }) {
-        if (theme.id !== ThemeIds.OBSIDIAN_ARCHIVE) {
+        if (!SuperExclusiveThemes.has(theme.id)) {
           this.storeTrialButton(theme)
         }
         this.storeAcquireButton(theme)
@@ -3088,7 +3090,7 @@ struct ThemeSettingsPage {
   }
 
   hasThemeAccess(themeId: string): boolean {
-    if (themeId === ThemeIds.OBSIDIAN_ARCHIVE) return AccountSessionStore.hasOwnedEntitlement(themeId);
+    if (SuperExclusiveThemes.has(themeId)) return AccountSessionStore.hasOwnedEntitlement(themeId);
     if (ThemePackRegistry.isPackId(themeId)) return ThemePackRegistry.has(themeId);
     return BuiltinThemeRegistry.isFree(themeId) ||
       (themeId === this.appThemeId && !this.isTrialTheme(themeId)) ||
@@ -3096,11 +3098,11 @@ struct ThemeSettingsPage {
   }
 
   unavailableCustomStartupTheme(settings: AppThemeSettings): string {
-    const usesExclusive = settings.customBaseThemeId === ThemeIds.OBSIDIAN_ARCHIVE ||
-      (JSON.stringify(settings.customLightSources) || '').includes(ThemeIds.OBSIDIAN_ARCHIVE) ||
-      (JSON.stringify(settings.customDarkSources) || '').includes(ThemeIds.OBSIDIAN_ARCHIVE);
-    if (usesExclusive && !AccountSessionStore.hasOwnedEntitlement(ThemeIds.OBSIDIAN_ARCHIVE)) {
-      return BuiltinThemeRegistry.findById(ThemeIds.OBSIDIAN_ARCHIVE).name;
+    const missingExclusive = SuperExclusiveThemes.usedByScheme(settings.customBaseThemeId,
+      settings.customLightSources, settings.customDarkSources)
+      .find((id: string) => !AccountSessionStore.hasOwnedEntitlement(id));
+    if (missingExclusive) {
+      return BuiltinThemeRegistry.findById(missingExclusive).name;
     }
     // 已安装的主题包不需要权益；缺包时按默认主题显示，不拦截应用。
     const lightThemeId = settings.customLightSources.startupThemeId;
@@ -3220,7 +3222,7 @@ struct ThemeSettingsPage {
 
   /** Price text for a paid theme; never a guessed price while the catalog is missing. */
   storeThemePriceLabel(themeId: string): string {
-    if (themeId === ThemeIds.OBSIDIAN_ARCHIVE) return '终身超级会员专属';
+    if (SuperExclusiveThemes.has(themeId)) return '终身超级会员专属';
     const offer = this.themeOffer(themeId);
     if (offer) return `${offer.pricePoints}点`;
     if (this.themeCatalogLoaded) return '暂未上架';
@@ -3228,7 +3230,7 @@ struct ThemeSettingsPage {
   }
 
   acquireButtonLabel(themeId: string, action: string): string {
-    if (themeId === ThemeIds.OBSIDIAN_ARCHIVE) {
+    if (SuperExclusiveThemes.has(themeId)) {
       return AccountSessionStore.hasOwnedEntitlement(themeId) ? '已领取 · 应用主题' :
         (AccountSessionStore.activeMembershipSku() === 'SUPER_LIFETIME' ? '领取一年' : '终身超级会员专属');
     }
@@ -3240,12 +3242,12 @@ struct ThemeSettingsPage {
 
   /** Greyed out until the price is known; after a failed load the button becomes the retry. */
   acquireButtonEnabled(themeId: string): boolean {
-    if (themeId === ThemeIds.OBSIDIAN_ARCHIVE) return !this.applyingThemeId;
+    if (SuperExclusiveThemes.has(themeId)) return !this.applyingThemeId;
     return this.themeCatalogLoaded ? !!this.themeOffer(themeId) : this.themeCatalogFailed;
   }
 
   onAcquireButtonTap(themeId: string): void {
-    if (themeId === ThemeIds.OBSIDIAN_ARCHIVE || this.themeCatalogLoaded) {
+    if (SuperExclusiveThemes.has(themeId) || this.themeCatalogLoaded) {
       this.acquireTheme(themeId);
     } else {
       this.refreshThemeCatalog();
@@ -3253,7 +3255,7 @@ struct ThemeSettingsPage {
   }
 
   storeThemeCaption(theme: ThemePack): string {
-    if (theme.id === ThemeIds.OBSIDIAN_ARCHIVE) {
+    if (SuperExclusiveThemes.has(theme.id)) {
       const owned = AccountSessionStore.entitlement(theme.id);
       return AccountSessionStore.hasOwnedEntitlement(theme.id) && owned ?
         `已领取 · 有效至 ${this.formatDate(owned.expiresAt)}` : '终身超级会员手动领取 · 每次一年 · 不售卖';
@@ -3281,7 +3283,7 @@ struct ThemeSettingsPage {
   }
 
   themeAccessLabel(themeId: string): string {
-    if (themeId === ThemeIds.OBSIDIAN_ARCHIVE && !AccountSessionStore.hasOwnedEntitlement(themeId)) {
+    if (SuperExclusiveThemes.has(themeId) && !AccountSessionStore.hasOwnedEntitlement(themeId)) {
       return '终身超级会员专属 · 领取一年';
     }
     if (AccountSessionStore.hasMemberThemeAccess(themeId)) return '会员免费';

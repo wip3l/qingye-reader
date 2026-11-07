@@ -25,7 +25,7 @@ import { CloudSyncSummary } from '../account/CloudSyncModels';
 import { HuaweiAccountService } from '../account/HuaweiAccountService';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
-import { ThemeIds } from '../theme/ThemeModels';
+import { SuperExclusiveThemes } from '../theme/ThemeModels';
 import { syncSystemBars } from '../utils/SystemBars';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -980,15 +980,16 @@ struct AccountCenterPage {
     return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
   }
 
-  /** 会员卡上“领取会员权益”入口的提示：本期礼包、专属主题还有没有没领的。 */
+  /** 会员卡上“领取会员权益”入口的提示：本期礼包、每套专属主题还有没有没领的。 */
   benefitsEntryHint(): string {
     const revision = this.entitlementsRevision;
     const gift = MembershipGiftRules.pending(this.membership, this.membershipSku);
-    const theme = revision >= 0 && this.isSuperMember() &&
-      !AccountSessionStore.hasOwnedEntitlement(ThemeIds.OBSIDIAN_ARCHIVE);
-    if (gift && theme) return '2 项权益待领取';
+    const themes = revision >= 0 && this.isSuperMember() ?
+      SuperExclusiveThemes.IDS.filter((id: string) => !AccountSessionStore.hasOwnedEntitlement(id)).length : 0;
+    const total = (gift ? 1 : 0) + themes;
+    if (total > 1) return `${total} 项权益待领取`;
     if (gift) return '本期礼包待领取';
-    if (theme) return '专属主题待领取';
+    if (themes) return '专属主题待领取';
     return '';
   }
 
@@ -1388,7 +1389,7 @@ struct AccountCenterPage {
     const limits = this.sourceUsage.membershipLimitsEnabled;
     const rows: BenefitCompareRow[] = [
       new BenefitCompareRow('会员主题库', '现有及新增会员主题', ['—', '✓', '✓', '✓', '✓']),
-      new BenefitCompareRow('专属主题', '曜金藏书 · 手动领取一年', ['—', '—', '—', '—', '✓']),
+      new BenefitCompareRow('专属主题', '曜金藏书、星穹御藏 · 各领一年', ['—', '—', '—', '—', '✓']),
       new BenefitCompareRow('每月朗读礼包', '标准 / 精品（字）', ['—', '—', '5000\n2500', '8000\n4000', '12000\n6000']),
       new BenefitCompareRow('在线朗读优先排队', '高峰期优先', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('AI超分', '增强低清漫画与 PDF 扫描页', ['—', '✓', '✓', '✓', '✓']),

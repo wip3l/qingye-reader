@@ -14,7 +14,8 @@ import {
   ThemePack,
   ThemeRadiusOverrides,
   ThemeRegexEmphasisTokens,
-  ThemeStartupTextStyle
+  ThemeStartupTextStyle,
+  SuperExclusiveThemes
 } from '../theme/ThemeModels';
 import { ThemeAccessPolicy } from '../account/ThemeAccessPolicy';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
@@ -380,7 +381,7 @@ struct ThemeColorSettingsPage {
   async setComponentSource(category: string, themeId: string): Promise<void> {
     if (!themeId) return;
     if (themeId === this.sourceThemeId(category)) return;
-    if (themeId === ThemeIds.OBSIDIAN_ARCHIVE && !AccountSessionStore.hasOwnedEntitlement(themeId)) {
+    if (SuperExclusiveThemes.has(themeId) && !AccountSessionStore.hasOwnedEntitlement(themeId)) {
       this.refreshAvailableThemes();
       return;
     }
@@ -719,7 +720,7 @@ struct ThemeColorSettingsPage {
     const available: ThemePack[] = [];
     const trialThemeId = AppStorage.get<string>('themeTrialThemeId') || '';
     for (const theme of themes) {
-      if (theme.id === ThemeIds.OBSIDIAN_ARCHIVE && !AccountSessionStore.hasOwnedEntitlement(theme.id)) continue;
+      if (SuperExclusiveThemes.has(theme.id) && !AccountSessionStore.hasOwnedEntitlement(theme.id)) continue;
       if (BuiltinThemeRegistry.isFree(theme.id) ||
         (theme.id === this.appThemeId && theme.id !== trialThemeId) ||
         AccountSessionStore.hasValidEntitlement(theme.id)) {

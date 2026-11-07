@@ -719,7 +719,8 @@ export class ThemeRuntime {
       style === ThemeBubbleStyles.SWORD_TALISMAN || style === ThemeBubbleStyles.QINGLUAN_JADE ||
       style === ThemeBubbleStyles.PIPI_SOFT_PAW || style === ThemeBubbleStyles.MECHA_COMM ||
       style === ThemeBubbleStyles.STARWISH_RIBBON || style === ThemeBubbleStyles.PENCIL_MARK ||
-      style === ThemeBubbleStyles.GILDED_ORBIT || style === ThemeBubbleStyles.HARBOR_POSTCARD) {
+      style === ThemeBubbleStyles.GILDED_ORBIT || style === ThemeBubbleStyles.HARBOR_POSTCARD ||
+      style === ThemeBubbleStyles.CELESTIAL_ORBIT) {
       return style;
     }
     const fallbackStyle = (fallback || '').trim();
@@ -737,7 +738,8 @@ export class ThemeRuntime {
       fallbackStyle === ThemeBubbleStyles.MECHA_COMM ||
       fallbackStyle === ThemeBubbleStyles.STARWISH_RIBBON ||
       fallbackStyle === ThemeBubbleStyles.PENCIL_MARK ||
-      fallbackStyle === ThemeBubbleStyles.GILDED_ORBIT || fallbackStyle === ThemeBubbleStyles.HARBOR_POSTCARD) {
+      fallbackStyle === ThemeBubbleStyles.GILDED_ORBIT || fallbackStyle === ThemeBubbleStyles.HARBOR_POSTCARD ||
+      fallbackStyle === ThemeBubbleStyles.CELESTIAL_ORBIT) {
       return fallbackStyle;
     }
     return ThemeBubbleStyles.QQ_SOFT;

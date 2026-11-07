@@ -1,6 +1,6 @@
 import { AccountSessionStore } from './AccountSessionStore';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
-import { ThemeIds } from '../theme/ThemeModels';
+import { SuperExclusiveThemes, ThemeIds } from '../theme/ThemeModels';
 import { ThemePackRegistry } from '../theme/ThemePackRegistry';
 
 export class ThemeAccessPolicy {
@@ -16,7 +16,7 @@ export class ThemeAccessPolicy {
     if (ThemePackRegistry.isPackId(normalized)) {
       return ThemePackRegistry.has(normalized);
     }
-    if (normalized === ThemeIds.OBSIDIAN_ARCHIVE) return AccountSessionStore.hasOwnedEntitlement(normalized);
+    if (SuperExclusiveThemes.has(normalized)) return AccountSessionStore.hasOwnedEntitlement(normalized);
     const activeThemeId = AppStorage.get<string>('appThemeId') || '';
     // The currently applied theme must retain its complete runtime appearance,
     // including during a timed trial. Theme selection and component-source
@@ -46,6 +46,7 @@ export class ThemeAccessPolicy {
     if (normalized === 'pencil-mark') return ThemeIds.LETTERPRESS_PAGE;
     if (normalized === 'gilded-orbit') return ThemeIds.OBSIDIAN_ARCHIVE;
     if (normalized === 'harbor-postcard') return ThemeIds.NEON_HARBOR;
+    if (normalized === 'celestial-orbit') return ThemeIds.CELESTIAL_VAULT;
     return '';
   }
 

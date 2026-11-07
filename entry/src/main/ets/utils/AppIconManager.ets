@@ -2,7 +2,7 @@ import { bundleManager, Context } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { AppIconSettings, AppIconSettingsStore } from './AppIconSettingsStore';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
-import { ThemeIds } from '../theme/ThemeModels';
+import { SuperExclusiveThemes, ThemeIds } from '../theme/ThemeModels';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 
 export class AppIconOption {
@@ -43,6 +43,7 @@ export class AppIconManager {
     AppIconManager.themeOption(ThemeIds.LETTERPRESS_PAGE, 'theme_letterpress_page', $r('app.media.ic_app_theme_letterpress_page')),
     AppIconManager.themeOption(ThemeIds.OBSIDIAN_ARCHIVE, 'theme_obsidian_archive', $r('app.media.ic_app_theme_obsidian_archive')),
     AppIconManager.themeOption(ThemeIds.NEON_HARBOR, 'theme_neon_harbor', $r('app.media.ic_app_theme_neon_harbor')),
+    AppIconManager.themeOption(ThemeIds.CELESTIAL_VAULT, 'theme_celestial_vault', $r('app.media.ic_app_theme_celestial_vault')),
     AppIconManager.themeOption(ThemeIds.CUSTOM, 'theme_custom', $r('app.media.ic_app_theme_custom'))
   ];
   private static changeRevision: number = 0;
@@ -70,7 +71,8 @@ export class AppIconManager {
   }
 
   static async applyIcon(context: Context, option: AppIconOption): Promise<void> {
-    if (option.id === 'theme_obsidian_archive' && !AccountSessionStore.hasOwnedEntitlement(ThemeIds.OBSIDIAN_ARCHIVE)) {
+    const exclusiveTheme = SuperExclusiveThemes.IDS.find((id: string) => SuperExclusiveThemes.appIconId(id) === option.id);
+    if (exclusiveTheme && !AccountSessionStore.hasOwnedEntitlement(exclusiveTheme)) {
       throw new Error('请先领取终身超级会员专属主题');
     }
     if (!AppIconManager.isSupported()) throw new Error(AppIconManager.UNSUPPORTED_MESSAGE);

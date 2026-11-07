@@ -120,6 +120,10 @@
       {
         "name": "theme_neon_harbor",
         "icon": "$media:ic_app_theme_neon_harbor"
+      },
+      {
+        "name": "theme_celestial_vault",
+        "icon": "$media:ic_app_theme_celestial_vault"
       }
     ]
   }

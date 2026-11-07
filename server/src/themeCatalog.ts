@@ -20,6 +20,9 @@ export interface ThemeCatalogEntry {
   acquisition?: 'POINTS' | 'SUPER_CLAIM';
 }
 
+/** Exclusive themes super lifetime members claim yearly; never sold for points even if the catalog row is edited. */
+export const SUPER_CLAIM_THEME_IDS: readonly string[] = ['obsidian-archive', 'celestial-vault'];
+
 const LEGACY_THEME_PRICE_POINTS = 60;
 const LEGACY_THEME_VALID_DAYS = 365;
 
@@ -32,7 +35,7 @@ export function themeOfferMatchesExpectation(
   expectedPricePoints: number | undefined,
   expectedValidDays: number | undefined
 ): boolean {
-  if (theme.acquisition === 'SUPER_CLAIM' || theme.themeId === 'obsidian-archive') return false;
+  if (theme.acquisition === 'SUPER_CLAIM' || SUPER_CLAIM_THEME_IDS.includes(theme.themeId)) return false;
   if (expectedPricePoints === undefined && expectedValidDays === undefined) {
     return theme.pricePoints === LEGACY_THEME_PRICE_POINTS &&
       theme.validDays === LEGACY_THEME_VALID_DAYS;
@@ -54,7 +57,7 @@ export async function findRedeemableTheme(
   db: Queryable,
   themeId: string
 ): Promise<ThemeCatalogEntry | null> {
-  if (!isValidThemeId(themeId) || themeId === 'obsidian-archive') return null;
+  if (!isValidThemeId(themeId) || SUPER_CLAIM_THEME_IDS.includes(themeId)) return null;
   const result = await db.query<ThemeCatalogRow>(
     `SELECT theme_id, display_name, price_points, valid_days
      FROM theme_catalog

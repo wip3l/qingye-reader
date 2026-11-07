@@ -20,14 +20,15 @@ function fixture() {
     AccountCommerceApi: { fetchAccount: (...args) => state.fetch(...args) },
     ThemeTrialManager: { isActive: () => state.trial },
     AppIconManager: { optionById: id => ({ id }), applyIcon: async (_ctx, option) => { icons.push(option.id); } },
-    BuiltinThemeRegistry: { isFree: id => id === 'free' }, ThemeIds: { CUSTOM: 'custom', OBSIDIAN_ARCHIVE: 'obsidian-archive' },
+    BuiltinThemeRegistry: { isFree: id => id === 'free' },
     AppThemeSettingsStore: { DEFAULT_THEME_ID: 'free', load: () => state.load(),
       activateTheme: (themeId, previous) => ({ ...previous, themeId }),
       save: async (_ctx, settings) => { saved.push(settings); },
       applyToStorage: settings => { applied.push(settings); } },
     ReaderFontBootstrap: { applyApplicationFont: () => {} }
   });
-  for (const file of ['account/AccountCommerceModels.ets', 'account/AccountSessionStore.ets', 'account/MembershipThemeGuard.ets']) {
+  for (const file of ['theme/ThemeModels.ets', 'account/AccountCommerceModels.ets', 'account/AccountSessionStore.ets',
+    'account/MembershipThemeGuard.ets']) {
     const source = fs.readFileSync(new URL('../entry/src/main/ets/' + file, import.meta.url), 'utf8');
     vm.runInContext(stripTypeScriptTypes(source.replace(/^import\s[\s\S]*?;\r?\n/gm, '').replace(/^export /gm, ''),
       { mode: 'strip' }), sandbox);
@@ -140,57 +141,74 @@ test('a theme trial starting while the guard awaits settings is not canceled by 
   assert.equal(f.applied.length, 0);
 });
 
-test('exclusive theme requires both super membership and an unexpired manual grant', async () => {
-  const f = fixture(), themeId = 'obsidian-archive';
-  const member = { active: true, restricted: false, serverNow: f.now,
-    state: { sku: 'SUPER_LIFETIME', expiresAt: null } };
-  await f.login(f.account({ membership: member, memberThemeIds: [themeId] }));
-  assert.equal(f.store.hasValidEntitlement(themeId), false, 'Membership library must not auto-grant');
-  const entitlements = [{ themeId, expiresAt: f.now + hour }];
-  await f.login(f.account({ membership: member, entitlements }));
-  assert.equal(f.store.hasValidEntitlement(themeId), true);
-  assert.equal(f.store.hasValidEntitlement(themeId, f.now + hour), false);
-  assert.equal(f.store.hasValidEntitlement(themeId, f.now - 1), false);
-  for (const sku of ['MONTHLY', 'ANNUAL', 'LIFETIME']) {
-    await f.login(f.account({ membership: { ...member, state: { sku, expiresAt: null } }, entitlements }));
+const EXCLUSIVE = ['obsidian-archive', 'celestial-vault'];
+const SUPER = now => ({ active: true, restricted: false, serverNow: now, state: { sku: 'SUPER_LIFETIME', expiresAt: null } });
+
+test('exclusive themes require both super membership and an unexpired manual grant', async () => {
+  for (const themeId of EXCLUSIVE) {
+    const f = fixture();
+    const member = SUPER(f.now);
+    await f.login(f.account({ membership: member, memberThemeIds: [themeId] }));
+    assert.equal(f.store.hasValidEntitlement(themeId), false, 'Membership library must not auto-grant');
+    const entitlements = [{ themeId, expiresAt: f.now + hour }];
+    await f.login(f.account({ membership: member, entitlements }));
+    assert.equal(f.store.hasValidEntitlement(themeId), true);
+    assert.equal(f.store.hasValidEntitlement(themeId, f.now + hour), false);
+    assert.equal(f.store.hasValidEntitlement(themeId, f.now - 1), false);
+    for (const sku of ['MONTHLY', 'ANNUAL', 'LIFETIME']) {
+      await f.login(f.account({ membership: { ...member, state: { sku, expiresAt: null } }, entitlements }));
+      assert.equal(f.store.hasValidEntitlement(themeId), false);
+    }
+    await f.login(f.account({ membership: member, entitlements, iapDebtPoints: 1 }));
+    assert.equal(f.store.hasValidEntitlement(themeId), false);
+    await f.store.clear({});
     assert.equal(f.store.hasValidEntitlement(themeId), false);
   }
-  await f.login(f.account({ membership: member, entitlements, iapDebtPoints: 1 }));
-  assert.equal(f.store.hasValidEntitlement(themeId), false);
-  await f.store.clear({});
-  assert.equal(f.store.hasValidEntitlement(themeId), false);
 });
 
 test('expired exclusive theme and every custom source fall back; exclusive icon is reset', async () => {
-  for (const settings of [
-    { themeId: 'obsidian-archive' },
-    { themeId: 'custom', customBaseThemeId: 'obsidian-archive' },
-    ...['startup', 'palette', 'reader', 'ttsPanel', 'bubble', 'navigation', 'book', 'layout'].flatMap(category =>
-      ['customLightSources', 'customDarkSources'].map(mode =>
-        ({ themeId: 'custom', [mode]: { [category + 'ThemeId']: 'obsidian-archive' } })))
-  ]) {
-    const f = fixture();
-    f.state.load = async () => ({ ...settings, customAccent: '#123456' });
-    f.values.set('appIconId', 'theme_obsidian_archive');
-    await f.login(f.account({ membership: { active: true, restricted: false, serverNow: f.now,
-      state: { sku: 'SUPER_LIFETIME', expiresAt: null } },
-      entitlements: [{ themeId: 'obsidian-archive', expiresAt: f.now }] }));
-    await f.guard.refresh({});
-    assert.equal(f.saved[0].themeId, 'free');
-    assert.equal(f.saved[0].customAccent, '#123456');
-    assert.deepEqual(f.icons, ['default']);
+  for (const themeId of EXCLUSIVE) {
+    for (const settings of [
+      { themeId },
+      { themeId: 'custom', customBaseThemeId: themeId },
+      ...['startup', 'palette', 'reader', 'ttsPanel', 'bubble', 'navigation', 'book', 'layout'].flatMap(category =>
+        ['customLightSources', 'customDarkSources'].map(mode =>
+          ({ themeId: 'custom', [mode]: { [category + 'ThemeId']: themeId } })))
+    ]) {
+      const f = fixture();
+      f.state.load = async () => ({ ...settings, customAccent: '#123456' });
+      f.values.set('appIconId', 'theme_' + themeId.replace('-', '_'));
+      await f.login(f.account({ membership: SUPER(f.now), entitlements: [{ themeId, expiresAt: f.now }] }));
+      await f.guard.refresh({});
+      assert.equal(f.saved[0].themeId, 'free');
+      assert.equal(f.saved[0].customAccent, '#123456');
+      assert.deepEqual(f.icons, ['default']);
+    }
   }
 });
 
-test('valid exclusive annual grant remains applied until expiry', async () => {
+test('each exclusive theme needs its own grant', async () => {
+  // Owning one exclusive theme does not cover a scheme that borrows the other one.
   const f = fixture();
-  f.state.load = async () => ({ themeId: 'obsidian-archive' });
-  await f.login(f.account({ membership: { active: true, restricted: false, serverNow: f.now,
-    state: { sku: 'SUPER_LIFETIME', expiresAt: null } },
+  f.state.load = async () => ({ themeId: 'custom', customBaseThemeId: 'obsidian-archive',
+    customDarkSources: { readerThemeId: 'celestial-vault' } });
+  f.values.set('appIconId', 'theme_obsidian_archive');
+  await f.login(f.account({ membership: SUPER(f.now),
     entitlements: [{ themeId: 'obsidian-archive', expiresAt: f.now + hour }] }));
   await f.guard.refresh({});
-  assert.equal(f.saved.length, 0);
-  await f.store.clear({});
-  await f.guard.refresh({});
   assert.equal(f.saved[0].themeId, 'free');
+  assert.deepEqual(f.icons, [], 'The owned theme keeps its desktop icon');
+});
+
+test('valid exclusive annual grant remains applied until expiry', async () => {
+  for (const themeId of EXCLUSIVE) {
+    const f = fixture();
+    f.state.load = async () => ({ themeId });
+    await f.login(f.account({ membership: SUPER(f.now), entitlements: [{ themeId, expiresAt: f.now + hour }] }));
+    await f.guard.refresh({});
+    assert.equal(f.saved.length, 0);
+    await f.store.clear({});
+    await f.guard.refresh({});
+    assert.equal(f.saved[0].themeId, 'free');
+  }
 });

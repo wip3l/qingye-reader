@@ -3,7 +3,7 @@ import preferences from '@ohos.data.preferences';
 import { AccountSessionStore } from './AccountSessionStore';
 import { AccountCommerceApi } from './AccountCommerceApi';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
-import { ThemeIds } from '../theme/ThemeModels';
+import { SuperExclusiveThemes, ThemeIds } from '../theme/ThemeModels';
 import { AppThemeSettingsStore } from '../utils/AppThemeSettingsStore';
 import { ThemeTrialManager } from '../utils/ThemeTrialManager';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
@@ -35,13 +35,14 @@ export class MembershipThemeGuard {
       const themeId = settings.themeId;
       const store = await preferences.getPreferences(context, MembershipThemeGuard.STORE_NAME);
       const marked = await store.get(MembershipThemeGuard.KEY_GRANTED_THEME, '') as string;
-      const exclusiveAllowed = AccountSessionStore.hasOwnedEntitlement(ThemeIds.OBSIDIAN_ARCHIVE);
-      const customUsesExclusive = themeId === ThemeIds.CUSTOM &&
-        (settings.customBaseThemeId === ThemeIds.OBSIDIAN_ARCHIVE ||
-        (JSON.stringify(settings.customLightSources) || '').includes(ThemeIds.OBSIDIAN_ARCHIVE) ||
-        (JSON.stringify(settings.customDarkSources) || '').includes(ThemeIds.OBSIDIAN_ARCHIVE));
-      const withdrawExclusive = !exclusiveAllowed && (themeId === ThemeIds.OBSIDIAN_ARCHIVE || customUsesExclusive);
-      if (!exclusiveAllowed && AppStorage.get<string>('appIconId') === 'theme_obsidian_archive') {
+      // 专属主题逐套看：直接应用的、自定义方案底子或部件用到的，任一套没有领取记录就撤下。
+      const usedExclusive = themeId === ThemeIds.CUSTOM ? SuperExclusiveThemes.usedByScheme(
+        settings.customBaseThemeId, settings.customLightSources, settings.customDarkSources) :
+        (SuperExclusiveThemes.has(themeId) ? [themeId] : []);
+      const withdrawExclusive = usedExclusive.some((id: string) => !AccountSessionStore.hasOwnedEntitlement(id));
+      const iconId = AppStorage.get<string>('appIconId') || '';
+      const iconTheme = SuperExclusiveThemes.IDS.find((id: string) => SuperExclusiveThemes.appIconId(id) === iconId);
+      if (iconTheme && !AccountSessionStore.hasOwnedEntitlement(iconTheme)) {
         await AppIconManager.applyIcon(context, AppIconManager.optionById('default')).catch(() => {});
       }
       if (!withdrawExclusive && (!themeId || themeId === ThemeIds.CUSTOM || BuiltinThemeRegistry.isFree(themeId) ||

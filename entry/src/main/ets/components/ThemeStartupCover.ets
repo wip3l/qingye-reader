@@ -1,6 +1,6 @@
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
-import { ThemeIds, ThemePack, ThemeVariant } from '../theme/ThemeModels';
+import { SuperExclusiveThemes, ThemeIds, ThemePack, ThemeVariant } from '../theme/ThemeModels';
 import { StartupCoverTextStore } from '../utils/StartupCoverTextStore';
 
 @Component
@@ -183,8 +183,9 @@ export struct ThemeStartupCover {
     return this.resolvedThemeId() === ThemeIds.PLAIN_DEFAULT;
   }
 
+  /** 专属主题的启动图底部本身是深色留白，不再压暗，文字用香槟金。 */
   isObsidianArtwork(): boolean {
-    return !this.customImagePath && this.resolvedThemeId() === ThemeIds.OBSIDIAN_ARCHIVE;
+    return !this.customImagePath && SuperExclusiveThemes.has(this.resolvedThemeId());
   }
 
   usesBusinessCover(): boolean {

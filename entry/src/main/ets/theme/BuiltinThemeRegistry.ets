@@ -149,6 +149,7 @@ export class BuiltinThemeRegistry {
     themes.push(BuiltinThemeRegistry.starwishMagic());
     themes.push(BuiltinThemeRegistry.letterpressPage());
     themes.push(BuiltinThemeRegistry.obsidianArchive());
+    themes.push(BuiltinThemeRegistry.celestialVault());
     themes.push(BuiltinThemeRegistry.neonHarbor());
     themes.push(BuiltinThemeRegistry.classicBlue());
     themes.push(BuiltinThemeRegistry.warmPaper());
@@ -580,6 +581,27 @@ export class BuiltinThemeRegistry {
       BuiltinThemeRegistry.reader('#1C1C1B', 'obsidian-archive-dark', '#DED6C8', '#AEA492', 'dark'),
       BuiltinThemeRegistry.regex(ThemeBubbleStyles.GILDED_ORBIT, '#463B2A', '#F4E3BF'));
     theme.radius = BuiltinThemeRegistry.radius(6, 12, 20, 14, 18, 7);
+    theme.readerLayout = BuiltinThemeRegistry.readerLayout(21, 14, 8, 25, 25, 26, 26);
+    theme.glass = BuiltinThemeRegistry.glass(20, 16, 92, 86, 48, 24, 14, 3);
+    return theme;
+  }
+
+  /** 终身超级会员的第二套专属主题：午夜蓝漆面、香槟金浑天仪与星轨，底栏是带选中态的位图图标、不显示文字。 */
+  private static celestialVault(): ThemePack {
+    const theme = BuiltinThemeRegistry.theme(
+      ThemeIds.CELESTIAL_VAULT, '星穹御藏',
+      '午夜蓝穹顶下，香槟金星轨绕着书架缓缓转动。以星为签，此生所读皆珍藏。', 'serif', 'celestial-vault');
+    theme.light = BuiltinThemeRegistry.variant(
+      BuiltinThemeRegistry.colors('#F5F0E5', '#FFFCF5', '#EAE2D0', '#1B2340', '#6E6A60', '#DDD3BF',
+        '#8E6E33', '#1E2A4F', '#A6423C'),
+      BuiltinThemeRegistry.reader('#F6F1E6', 'celestial-vault-light', '#22283A', '#6F6B62', 'light'),
+      BuiltinThemeRegistry.regex(ThemeBubbleStyles.CELESTIAL_ORBIT, '#1E2A4F', '#F1E3BF'));
+    theme.dark = BuiltinThemeRegistry.variant(
+      BuiltinThemeRegistry.colors('#0E1428', '#161E38', '#212A48', '#EFE6D2', '#A7A190', '#2A3352',
+        '#D8BB7A', '#8A6D38', '#E79086'),
+      BuiltinThemeRegistry.reader('#10162A', 'celestial-vault-dark', '#DCD6C8', '#A39D8D', 'dark'),
+      BuiltinThemeRegistry.regex(ThemeBubbleStyles.CELESTIAL_ORBIT, '#2C3866', '#F4E3BF'));
+    theme.radius = BuiltinThemeRegistry.radius(6, 12, 20, 14, 22, 9);
     theme.readerLayout = BuiltinThemeRegistry.readerLayout(21, 14, 8, 25, 25, 26, 26);
     theme.glass = BuiltinThemeRegistry.glass(20, 16, 92, 86, 48, 24, 14, 3);
     return theme;

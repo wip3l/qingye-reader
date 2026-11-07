@@ -9,7 +9,8 @@ const argb = color => Number.parseInt(`FF${color.slice(1)}`, 16);
 
 for (const [theme, style, lightFill, darkFill] of [
   ['obsidian-archive', 'gilded-orbit', '#292620', '#463B2A'],
-  ['neon-harbor', 'harbor-postcard', '#EEDBD7', '#3B3048']
+  ['neon-harbor', 'harbor-postcard', '#EEDBD7', '#3B3048'],
+  ['celestial-vault', 'celestial-orbit', '#1E2A4F', '#2C3866']
 ]) {
   runtime.applyTheme(theme);
   for (const dark of [false, true]) {

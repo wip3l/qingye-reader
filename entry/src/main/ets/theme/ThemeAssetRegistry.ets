@@ -36,6 +36,8 @@ export class ThemeAssetRegistry {
   static readonly BACKGROUND_LETTERPRESS_PAGE_DARK: string = 'letterpress-page-dark';
   static readonly BACKGROUND_OBSIDIAN_ARCHIVE_DARK: string = 'obsidian-archive-dark';
   static readonly BACKGROUND_NEON_HARBOR_DARK: string = 'neon-harbor-dark';
+  static readonly BACKGROUND_CELESTIAL_VAULT_LIGHT: string = 'celestial-vault-light';
+  static readonly BACKGROUND_CELESTIAL_VAULT_DARK: string = 'celestial-vault-dark';
 
   static readonly ICON_PACK_CLASSIC: string = 'classic';
   static readonly ICON_PACK_ROUNDED: string = 'rounded';
@@ -53,6 +55,8 @@ export class ThemeAssetRegistry {
   static readonly ICON_PACK_LETTERPRESS_PAGE: string = 'letterpress-page';
   static readonly ICON_PACK_OBSIDIAN_ARCHIVE: string = 'obsidian-archive';
   static readonly ICON_PACK_NEON_HARBOR: string = 'neon-harbor';
+  /** 位图图标、带选中态、底栏不显示文字（同主题包的 labels: hidden）。 */
+  static readonly ICON_PACK_CELESTIAL_VAULT: string = 'celestial-vault';
 
   static readonly TAB_BOOKSHELF: string = 'bookshelf';
   static readonly TAB_EXPLORE: string = 'explore';
@@ -154,6 +158,10 @@ export class ThemeAssetRegistry {
         return $r('app.media.reader_bg_obsidian_archive_dark');
       case ThemeAssetRegistry.BACKGROUND_NEON_HARBOR_DARK:
         return $r('app.media.reader_bg_neon_harbor_dark');
+      case ThemeAssetRegistry.BACKGROUND_CELESTIAL_VAULT_LIGHT:
+        return $r('app.media.reader_bg_celestial_vault_light');
+      case ThemeAssetRegistry.BACKGROUND_CELESTIAL_VAULT_DARK:
+        return $r('app.media.reader_bg_celestial_vault_dark');
       default:
         return '';
     }
@@ -234,6 +242,10 @@ export class ThemeAssetRegistry {
         return $r('app.media.reader_decor_obsidian_archive_dark');
       case ThemeAssetRegistry.BACKGROUND_NEON_HARBOR_DARK:
         return $r('app.media.reader_decor_neon_harbor_dark');
+      case ThemeAssetRegistry.BACKGROUND_CELESTIAL_VAULT_LIGHT:
+        return $r('app.media.reader_decor_celestial_vault_light');
+      case ThemeAssetRegistry.BACKGROUND_CELESTIAL_VAULT_DARK:
+        return $r('app.media.reader_decor_celestial_vault_dark');
       default:
         return '';
     }
@@ -317,6 +329,10 @@ export class ThemeAssetRegistry {
         return $r('app.media.reader_decor_obsidian_archive_trailing_dark');
       case ThemeAssetRegistry.BACKGROUND_NEON_HARBOR_DARK:
         return $r('app.media.reader_decor_neon_harbor_trailing_dark');
+      case ThemeAssetRegistry.BACKGROUND_CELESTIAL_VAULT_LIGHT:
+        return $r('app.media.reader_decor_celestial_vault_trailing_light');
+      case ThemeAssetRegistry.BACKGROUND_CELESTIAL_VAULT_DARK:
+        return $r('app.media.reader_decor_celestial_vault_trailing_dark');
       default:
         return ThemeAssetRegistry.readerBackgroundDecoration(assetId);
     }
@@ -327,7 +343,7 @@ export class ThemeAssetRegistry {
     return trailing === ThemeAssetRegistry.readerBackgroundDecoration(assetId) ? 180 : 0;
   }
 
-  /** selected 为 true 时优先取主题包的选中态图标；内置图标包没有选中态。 */
+  /** selected 为 true 时优先取选中态图标：主题包和星穹御藏有选中态，其余内置图标包没有。 */
   static navigationIcon(iconPackId: string, tabId: string, selected: boolean = false): ResourceStr {
     const normalizedPackId = ThemeAssetRegistry.normalizeIconPackId(iconPackId);
     const normalizedTabId = ThemeAssetRegistry.normalizeTabId(tabId);
@@ -349,6 +365,9 @@ export class ThemeAssetRegistry {
     }
     if (normalizedPackId === ThemeAssetRegistry.ICON_PACK_ROUNDED) {
       return ThemeAssetRegistry.roundedNavigationIcon(normalizedTabId);
+    }
+    if (normalizedPackId === ThemeAssetRegistry.ICON_PACK_CELESTIAL_VAULT) {
+      return ThemeAssetRegistry.celestialNavigationIcon(normalizedTabId, selected);
     }
     if (normalizedPackId === ThemeAssetRegistry.ICON_PACK_INK) {
       return ThemeAssetRegistry.inkNavigationIcon(normalizedTabId);
@@ -416,6 +435,8 @@ export class ThemeAssetRegistry {
         return $r('app.media.theme_logo_obsidian_archive');
       case ThemeIds.NEON_HARBOR:
         return $r('app.media.theme_logo_neon_harbor');
+      case ThemeIds.CELESTIAL_VAULT:
+        return $r('app.media.theme_logo_celestial_vault');
       default:
         return $r('app.media.theme_logo_classic_blue');
     }
@@ -446,6 +467,7 @@ export class ThemeAssetRegistry {
       case ThemeIds.LETTERPRESS_PAGE: return $r('app.media.theme_startup_letterpress_page');
       case ThemeIds.OBSIDIAN_ARCHIVE: return $r('app.media.theme_startup_obsidian_archive');
       case ThemeIds.NEON_HARBOR: return $r('app.media.theme_startup_neon_harbor');
+      case ThemeIds.CELESTIAL_VAULT: return $r('app.media.theme_startup_celestial_vault');
       default: return $r('app.media.theme_startup_classic_blue');
     }
   }
@@ -463,6 +485,8 @@ export class ThemeAssetRegistry {
     switch ((themeId || '').trim().toLowerCase()) {
       case ThemeIds.OBSIDIAN_ARCHIVE:
         return darkMode ? $r('app.media.home_bg_obsidian_archive_dark') : $r('app.media.home_bg_obsidian_archive_light');
+      case ThemeIds.CELESTIAL_VAULT:
+        return darkMode ? $r('app.media.home_bg_celestial_vault_dark') : $r('app.media.home_bg_celestial_vault_light');
       default: return null;
     }
   }
@@ -566,6 +590,11 @@ export class ThemeAssetRegistry {
         $r('app.media.theme_cover_neon_harbor_03'), $r('app.media.theme_cover_neon_harbor_04'),
         $r('app.media.theme_cover_neon_harbor_05'), $r('app.media.theme_cover_neon_harbor_06')
       ];
+      case ThemeIds.CELESTIAL_VAULT: return [
+        $r('app.media.theme_cover_celestial_vault_01'), $r('app.media.theme_cover_celestial_vault_02'),
+        $r('app.media.theme_cover_celestial_vault_03'), $r('app.media.theme_cover_celestial_vault_04'),
+        $r('app.media.theme_cover_celestial_vault_05'), $r('app.media.theme_cover_celestial_vault_06')
+      ];
       default: return [
         $r('app.media.theme_cover_classic_blue_01'), $r('app.media.theme_cover_classic_blue_02'),
         $r('app.media.theme_cover_classic_blue_03'), $r('app.media.theme_cover_classic_blue_04')
@@ -597,6 +626,7 @@ export class ThemeAssetRegistry {
       case ThemeIds.LETTERPRESS_PAGE: return $r('app.media.theme_frame_letterpress_page');
       case ThemeIds.OBSIDIAN_ARCHIVE: return $r('app.media.theme_frame_obsidian_archive');
       case ThemeIds.NEON_HARBOR: return $r('app.media.theme_frame_neon_harbor');
+      case ThemeIds.CELESTIAL_VAULT: return $r('app.media.theme_frame_celestial_vault');
       default: return $r('app.media.theme_frame_classic_blue');
     }
   }
@@ -625,6 +655,7 @@ export class ThemeAssetRegistry {
       case ThemeIds.LETTERPRESS_PAGE: return $r('app.media.theme_folder_art_letterpress_page');
       case ThemeIds.OBSIDIAN_ARCHIVE: return $r('app.media.theme_folder_art_obsidian_archive');
       case ThemeIds.NEON_HARBOR: return $r('app.media.theme_folder_art_neon_harbor');
+      case ThemeIds.CELESTIAL_VAULT: return $r('app.media.theme_folder_art_celestial_vault');
       default: return $r('app.media.theme_folder_art_classic_blue');
     }
   }
@@ -653,6 +684,7 @@ export class ThemeAssetRegistry {
       case 'pencil-mark': return $r('app.media.regex_frame_pencil_mark');
       case 'gilded-orbit': return $r('app.media.regex_frame_gilded_orbit');
       case 'harbor-postcard': return $r('app.media.regex_frame_harbor_postcard');
+      case 'celestial-orbit': return $r('app.media.regex_frame_celestial_orbit');
       default: return '';
     }
   }
@@ -685,6 +717,7 @@ export class ThemeAssetRegistry {
       case 'pencil-mark': return $r('app.media.regex_cap_pencil_mark');
       case 'gilded-orbit': return $r('app.media.regex_cap_gilded_orbit');
       case 'harbor-postcard': return $r('app.media.regex_cap_harbor_postcard');
+      case 'celestial-orbit': return $r('app.media.regex_cap_celestial_orbit');
       default: return '';
     }
   }
@@ -733,6 +766,8 @@ export class ThemeAssetRegistry {
       case ThemeAssetRegistry.BACKGROUND_NEON_HARBOR_LIGHT:
       case ThemeAssetRegistry.BACKGROUND_OBSIDIAN_ARCHIVE_DARK:
       case ThemeAssetRegistry.BACKGROUND_NEON_HARBOR_DARK:
+      case ThemeAssetRegistry.BACKGROUND_CELESTIAL_VAULT_LIGHT:
+      case ThemeAssetRegistry.BACKGROUND_CELESTIAL_VAULT_DARK:
         return normalized;
       default:
         return '';
@@ -758,7 +793,8 @@ export class ThemeAssetRegistry {
       normalized === ThemeAssetRegistry.ICON_PACK_STARWISH_MAGIC ||
       normalized === ThemeAssetRegistry.ICON_PACK_LETTERPRESS_PAGE ||
       normalized === ThemeAssetRegistry.ICON_PACK_OBSIDIAN_ARCHIVE ||
-      normalized === ThemeAssetRegistry.ICON_PACK_NEON_HARBOR) {
+      normalized === ThemeAssetRegistry.ICON_PACK_NEON_HARBOR ||
+      normalized === ThemeAssetRegistry.ICON_PACK_CELESTIAL_VAULT) {
       return normalized;
     }
     return ThemeAssetRegistry.ICON_PACK_CLASSIC;
@@ -767,6 +803,7 @@ export class ThemeAssetRegistry {
   /** 主题包带了选中态图标；没有时底栏不必在切换页签时重设图标。 */
   static navigationHasSelectedIcons(iconPackId: string): boolean {
     const normalizedPackId = ThemeAssetRegistry.normalizeIconPackId(iconPackId);
+    if (normalizedPackId === ThemeAssetRegistry.ICON_PACK_CELESTIAL_VAULT) return true;
     if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
     const pack = ThemePackRegistry.get(normalizedPackId);
     return !!pack && pack.hasNavigation() && !!(pack.navBookshelfSelected || pack.navExploreSelected ||
@@ -776,6 +813,7 @@ export class ThemeAssetRegistry {
   /** 主题包要求底栏只显示图标。 */
   static navigationHidesLabels(iconPackId: string): boolean {
     const normalizedPackId = ThemeAssetRegistry.normalizeIconPackId(iconPackId);
+    if (normalizedPackId === ThemeAssetRegistry.ICON_PACK_CELESTIAL_VAULT) return true;
     if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
     const pack = ThemePackRegistry.get(normalizedPackId);
     return !!pack && pack.hasNavigation() && pack.navHideLabels;
@@ -827,6 +865,19 @@ export class ThemeAssetRegistry {
         return $r('app.media.ic_theme_ink_mine');
       default:
         return $r('app.media.ic_theme_ink_bookshelf');
+    }
+  }
+
+  private static celestialNavigationIcon(tabId: string, selected: boolean): Resource {
+    switch (tabId) {
+      case ThemeAssetRegistry.TAB_EXPLORE: return selected ?
+        $r('app.media.ic_theme_celestial_vault_explore_selected') : $r('app.media.ic_theme_celestial_vault_explore');
+      case ThemeAssetRegistry.TAB_SEARCH: return selected ?
+        $r('app.media.ic_theme_celestial_vault_search_selected') : $r('app.media.ic_theme_celestial_vault_search');
+      case ThemeAssetRegistry.TAB_MINE: return selected ?
+        $r('app.media.ic_theme_celestial_vault_mine_selected') : $r('app.media.ic_theme_celestial_vault_mine');
+      default: return selected ?
+        $r('app.media.ic_theme_celestial_vault_bookshelf_selected') : $r('app.media.ic_theme_celestial_vault_bookshelf');
     }
   }
 

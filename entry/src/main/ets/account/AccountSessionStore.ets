@@ -6,6 +6,7 @@ import {
   HuaweiLoginResponse,
   ThemeEntitlement
 } from './AccountCommerceModels';
+import { SuperExclusiveThemes } from '../theme/ThemeModels';
 
 export class AccountSessionStore {
   static readonly STORAGE_LOGGED_IN: string = 'accountLoggedIn';
@@ -134,10 +135,10 @@ export class AccountSessionStore {
       (membership.tierSku || membership.state.sku) : '';
   }
 
-  /** Owned themes; the exclusive annual grant additionally requires super membership. */
+  /** Owned themes; the exclusive annual grants additionally require super membership. */
   static hasOwnedEntitlement(themeId: string, now: number = Date.now()): boolean {
     const entitlement = AccountSessionStore.entitlement(themeId);
-    if (themeId === 'obsidian-archive') {
+    if (SuperExclusiveThemes.has(themeId)) {
       const account = AccountSessionStore.snapshot;
       const elapsed = now - account.memberVerifiedAt;
       if (AccountSessionStore.activeMembershipSku(now) !== 'SUPER_LIFETIME' || elapsed < 0 || !account.membership) return false;
@@ -147,8 +148,8 @@ export class AccountSessionStore {
   }
 
   static hasMemberThemeAccess(themeId: string, now: number = Date.now()): boolean {
-    // This theme requires an explicit annual claim, never the general member theme library.
-    if (themeId === 'obsidian-archive') return false;
+    // These themes require an explicit annual claim, never the general member theme library.
+    if (SuperExclusiveThemes.has(themeId)) return false;
     const account = AccountSessionStore.snapshot;
     const membership = account.membership;
     const elapsed = now - account.memberVerifiedAt;

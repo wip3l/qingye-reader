@@ -12,7 +12,9 @@ test('administrator migration preserves SELECT-only catalog access and grants on
   const db = new PGlite({ loadDataDir: data, database: 'legado_commerce' });
   try {
     const migrations = new URL('../migrations/', import.meta.url);
-    for (const file of (await readdir(migrations)).filter(n => n.endsWith('.sql') && !n.startsWith('023')).sort()) {
+    // The database as it stood before 023; 030 adds a catalog row that needs 023's acquisition column.
+    for (const file of (await readdir(migrations)).filter(n => n.endsWith('.sql') && !n.startsWith('023') &&
+      !n.startsWith('030')).sort()) {
       await db.exec((await readFile(new URL(file, migrations), 'utf8')).replace(/^VACUUM[^;]*;/gm, ''));
     }
     await db.exec(`CREATE ROLE qingye NOSUPERUSER;

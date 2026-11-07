@@ -85,7 +85,8 @@ const pages = JSON.parse(read('entry/src/main/resources/base/profile/main_pages.
 
 const expectedThemes = [
   'classic-blue', 'warm-paper', 'forest-mist', 'ink-wash', 'neon-night', 'sword-frost',
-  'qingluan-water', 'cat-pipi', 'azure-mecha', 'starwish-magic', 'letterpress-page', 'obsidian-archive', 'neon-harbor'
+  'qingluan-water', 'cat-pipi', 'azure-mecha', 'starwish-magic', 'letterpress-page', 'obsidian-archive', 'neon-harbor',
+  'celestial-vault'
 ];
 for (const themeId of expectedThemes) {
   assert(models.includes(`'${themeId}'`), `Theme id is missing from ThemeModels: ${themeId}`);
@@ -111,7 +112,7 @@ const expectedBackgrounds = [
   'sword-frost-light', 'sword-frost-dark', 'qingluan-water-light', 'qingluan-water-dark',
   'cat-pipi-light', 'cat-pipi-dark', 'azure-mecha-light', 'azure-mecha-dark',
   'starwish-magic-light', 'starwish-magic-dark', 'letterpress-page-light', 'letterpress-page-dark',
-  'neon-harbor-light', 'neon-harbor-dark'
+  'neon-harbor-light', 'neon-harbor-dark', 'celestial-vault-light', 'celestial-vault-dark'
 ];
 for (const assetId of expectedBackgrounds) {
   assert(assets.includes(`'${assetId}'`), `Background asset id is not mapped: ${assetId}`);

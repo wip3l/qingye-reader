@@ -41,6 +41,7 @@ export class StartupCoverTextStore {
 
   static defaultSubtitle(themeId: string): string {
     if (themeId === ThemeIds.OBSIDIAN_ARCHIVE) return '字里山河，耳畔书声';
+    if (themeId === ThemeIds.CELESTIAL_VAULT) return '以星为签，此生珍藏';
     if (themeId === ThemeIds.CLASSIC_BLUE) return '在字里，遇见辽阔';
     if (themeId === ThemeIds.WARM_PAPER) return '一页暖光，静读时光';
     if (themeId === ThemeIds.FOREST_MIST) return '林深见字，雾散成章';

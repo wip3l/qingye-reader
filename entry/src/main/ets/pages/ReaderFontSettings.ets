@@ -2094,6 +2094,7 @@ export struct ReaderFontSettingsEditor {
     this.appendAccessibleBubbleStyle(options, 'pencil-mark', '铅笔划线', revision);
     this.appendAccessibleBubbleStyle(options, 'gilded-orbit', '曜金藏签', revision);
     this.appendAccessibleBubbleStyle(options, 'harbor-postcard', '港湾邮笺', revision);
+    this.appendAccessibleBubbleStyle(options, 'celestial-orbit', '星穹御签', revision);
     return options;
   }
 

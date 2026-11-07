@@ -1,13 +1,14 @@
 import type { MembershipDb } from './membershipService.js';
 import { membershipSnapshot } from './membershipService.js';
 import { MembershipError, membershipAnniversary } from './membershipPolicy.js';
+import { SUPER_CLAIM_THEME_IDS } from './themeCatalog.js';
 
 export const SUPER_THEME_ID = 'obsidian-archive';
 
-/** Run in a transaction. One live annual grant; repeated requests never extend it. */
+/** Run in a transaction. One live annual grant per theme; repeated requests never extend it. */
 export async function claimSuperTheme(db: MembershipDb, userId: string, themeId: string,
   requestId: string, now = Date.now()) {
-  if (themeId !== SUPER_THEME_ID) throw new MembershipError(404, 'THEME_NOT_FOUND', '专属主题不存在');
+  if (!SUPER_CLAIM_THEME_IDS.includes(themeId)) throw new MembershipError(404, 'THEME_NOT_FOUND', '专属主题不存在');
   if (typeof requestId !== 'string' || !requestId.trim() || requestId.length > 128) {
     throw new MembershipError(400, 'INVALID_REQUEST_ID', '请求标识无效');
   }

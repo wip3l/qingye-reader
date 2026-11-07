@@ -11,7 +11,9 @@ import { MembershipSnapshot } from '../account/MembershipModels';
 import { CloudFileClient } from '../account/CloudFileClient';
 import { CloudFileSummary } from '../account/CloudFileModels';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
-import { ThemeIds } from '../theme/ThemeModels';
+import { SuperExclusiveThemes, ThemeIds } from '../theme/ThemeModels';
+import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
+import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { syncSystemBars } from '../utils/SystemBars';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -105,12 +107,12 @@ struct MemberBenefitsPage {
     return `${Math.max(0, Math.round(bytes / 1024))} KB`;
   }
 
-  /** 还没领取的权益条数：本期礼包、专属主题。 */
+  /** 还没领取的权益条数：本期礼包、每套专属主题各算一条。 */
   pendingCount(): number {
     const revision = this.entitlementsRevision;
     let count = MembershipGiftRules.pending(this.membership, this.membershipSku) ? 1 : 0;
-    if (revision >= 0 && this.isSuperMember() && !AccountSessionStore.hasOwnedEntitlement(ThemeIds.OBSIDIAN_ARCHIVE)) {
-      count++;
+    if (revision >= 0 && this.isSuperMember()) {
+      count += SuperExclusiveThemes.IDS.filter((id: string) => !AccountSessionStore.hasOwnedEntitlement(id)).length;
     }
     return count;
   }
@@ -320,27 +322,36 @@ struct MemberBenefitsPage {
 
   // ---- 专属主题 ----
 
-  exclusiveThemeHint(): string {
-    const revision = this.entitlementsRevision;
-    const owned = AccountSessionStore.entitlement(ThemeIds.OBSIDIAN_ARCHIVE);
-    return revision >= 0 && owned && AccountSessionStore.hasOwnedEntitlement(ThemeIds.OBSIDIAN_ARCHIVE) ?
-      `已领取 · 有效至 ${this.formatDate(owned.expiresAt)}` : '每次领取一年，到期后可再次领取 · 不支持点数购买';
+  exclusiveThemeTagline(themeId: string): string {
+    if (themeId === ThemeIds.CELESTIAL_VAULT) return '午夜蓝穹顶，香槟金星轨';
+    return '曜黑藏书，香槟描金';
   }
 
-  async claimExclusiveTheme(): Promise<void> {
+  exclusiveThemeOwned(themeId: string): boolean {
+    return this.entitlementsRevision >= 0 && AccountSessionStore.hasOwnedEntitlement(themeId);
+  }
+
+  exclusiveThemeHint(themeId: string): string {
+    const owned = AccountSessionStore.entitlement(themeId);
+    return this.exclusiveThemeOwned(themeId) && owned ? `已领取 · 有效至 ${this.formatDate(owned.expiresAt)}` :
+      '每次领取一年，到期后可再次领取';
+  }
+
+  async claimExclusiveTheme(themeId: string): Promise<void> {
     if (this.memberBusy) return;
-    if (AccountSessionStore.hasOwnedEntitlement(ThemeIds.OBSIDIAN_ARCHIVE)) {
-      router.pushUrl({ url: 'pages/ThemeSettings', params: { themeId: ThemeIds.OBSIDIAN_ARCHIVE } });
+    if (AccountSessionStore.hasOwnedEntitlement(themeId)) {
+      router.pushUrl({ url: 'pages/ThemeSettings', params: { themeId: themeId } });
       return;
     }
-    const choice = await promptAction.showDialog({ title: '领取「曜金藏书」',
+    const name = BuiltinThemeRegistry.findById(themeId).name;
+    const choice = await promptAction.showDialog({ title: `领取「${name}」`,
       message: '终身超级会员专属，不扣除点数。领取后有效一年，到期后可再次手动领取。',
       buttons: [{ text: '取消', color: this.subTextColor() }, { text: '领取一年', color: this.accentColor() }] });
     if (choice.index !== 1) return;
     this.memberBusy = true;
     try {
-      await MembershipCommerceService.claimSuperTheme(getContext(this), ThemeIds.OBSIDIAN_ARCHIVE);
-      HdsFeedback.showToast('已领取「曜金藏书」，可在主题设置中应用');
+      await MembershipCommerceService.claimSuperTheme(getContext(this), themeId);
+      HdsFeedback.showToast(`已领取「${name}」，可在主题设置中应用`);
     } catch (e) {
       HdsFeedback.showToast((e as Error).message || '领取失败，请稍后重试');
     } finally { this.memberBusy = false; }
@@ -349,22 +360,38 @@ struct MemberBenefitsPage {
   @Builder
   exclusiveThemeCard() {
     Column({ space: AppSpacing.MD }) {
-      Row({ space: AppSpacing.MD }) {
-        Image($r('app.media.theme_cover_obsidian_archive_01'))
-          .width(62).height(86).objectFit(ImageFit.Cover).borderRadius(7)
-        Column({ space: AppSpacing.XS }) {
-          Text('专属主题 · 曜金藏书').fontSize(AppFontSize.BODY_LARGE)
-            .fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
-          Text('曜黑藏书，香槟描金').fontSize(AppFontSize.BODY).fontColor(this.accentColor())
-          Text(this.exclusiveThemeHint()).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
-        }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-      }.width('100%')
-      Button(AccountSessionStore.hasOwnedEntitlement(ThemeIds.OBSIDIAN_ARCHIVE) ? '已领取 · 查看主题' : '领取一年')
-        .width('100%').height(42).fontSize(AppFontSize.BODY)
-        .fontColor(ThemeRuntime.onAccentColor(this.accentColor())).backgroundColor(this.accentColor())
-        .enabled(!this.memberBusy).onClick(() => this.claimExclusiveTheme())
+      Column({ space: AppSpacing.XXS }) {
+        Text('专属主题').fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
+        Text('终身超级会员专属 · 每套各领一年 · 不支持点数购买')
+          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+      }.alignItems(HorizontalAlign.Start).width('100%')
+      ForEach(SuperExclusiveThemes.IDS, (themeId: string) => {
+        this.exclusiveThemeRow(themeId)
+      }, (themeId: string) => themeId)
     }.width('100%').padding(AppSpacing.LG).borderRadius(ThemeRuntime.cardRadius())
       .backgroundColor(this.cardColor())
+  }
+
+  @Builder
+  exclusiveThemeRow(themeId: string) {
+    Row({ space: AppSpacing.MD }) {
+      Image(ThemeAssetRegistry.themeBookCovers(themeId)[0])
+        .width(56).height(78).objectFit(ImageFit.Cover).borderRadius(6)
+      Column({ space: AppSpacing.XXS }) {
+        Text(BuiltinThemeRegistry.findById(themeId).name).fontSize(AppFontSize.BODY)
+          .fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
+        Text(this.exclusiveThemeTagline(themeId)).fontSize(AppFontSize.CAPTION).fontColor(this.accentColor())
+        Text(this.exclusiveThemeHint(themeId)).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+          .maxLines(2)
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+      Button(this.exclusiveThemeOwned(themeId) ? '查看' : '领取一年')
+        .height(34).fontSize(AppFontSize.CAPTION)
+        .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+        .fontColor(this.exclusiveThemeOwned(themeId) ? this.accentColor() : ThemeRuntime.onAccentColor(this.accentColor()))
+        .backgroundColor(this.exclusiveThemeOwned(themeId) ? this.inputColor() : this.accentColor())
+        .enabled(!this.memberBusy).onClick(() => this.claimExclusiveTheme(themeId))
+    }.width('100%')
   }
 
   // ---- 其余权益 ----

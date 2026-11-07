@@ -85,6 +85,23 @@ test('exclusive annual theme claims enforce membership, idempotency and no point
     await assert.rejects(tx(owner),{code:'THEME_NOT_FOUND'});
     await db.query('UPDATE theme_catalog SET enabled=TRUE WHERE theme_id=$1',[SUPER_THEME_ID]);
   });
+  await t.test('each exclusive theme is claimed separately and never sold for points', async () => {
+    const second = 'celestial-vault';
+    const offer = (await listPublishedThemes(query)).find(x => x.themeId===second)!;
+    assert.equal(offer.acquisition,'SUPER_CLAIM'); assert.equal(offer.pricePoints,0);
+    assert.equal(await findRedeemableTheme(query,second),null);
+    assert.equal(themeOfferMatchesExpectation(offer,0,365),false);
+    const fresh = await user('SUPER_LIFETIME');
+    await tx(fresh,randomUUID(),now);
+    assert.equal((await db.query('SELECT 1 FROM theme_entitlements WHERE user_id=$1 AND theme_id=$2',[fresh,second])).rows.length,0);
+    assert.deepEqual(await tx(fresh,randomUUID(),now,second),{themeId:second,expiresAt:nextYear,duplicate:false});
+    assert.equal((await db.query('SELECT 1 FROM theme_entitlements WHERE user_id=$1',[fresh])).rows.length,2);
+    await assert.rejects(tx(await user('LIFETIME'),randomUUID(),now,second),{code:'SUPER_THEME_REQUIRED'});
+    // A request ID stays bound to the theme it first claimed.
+    const shared = randomUUID();
+    await tx(fresh,shared,now);
+    await assert.rejects(tx(fresh,shared,now,second),{code:'REQUEST_CONFLICT'});
+  });
   await t.test('rerunning migration preserves the already claimed year', async () => {
     const before = (await db.query('SELECT * FROM theme_entitlements WHERE user_id=$1',[owner])).rows;
     await db.exec(await readFile(new URL('023_super_exclusive_theme.sql',migrations),'utf8'));

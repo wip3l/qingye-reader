@@ -30,7 +30,7 @@ function fixture({ now = end - 10000, persisted = new Map() } = {}) {
     deviceInfo: { sdkApiVersion: 26 }, canIUse: () => true,
     ComicTextRecognizer: { supported: () => true }
   });
-  for (const file of ['account/AccountCommerceModels.ets', 'account/AccountSessionStore.ets',
+  for (const file of ['theme/ThemeModels.ets', 'account/AccountCommerceModels.ets', 'account/AccountSessionStore.ets',
     'account/AiAccessPolicy.ets', 'runtime/AiRuntime.ets', 'core/book/ReaderCacheCoordinator.ts', 'utils/AppAiHost.ets',
     'core/reader/ReaderComicComputeQueue.ts', 'core/reader/ReaderComicSuperResolution.ets',
     'core/reader/ComicColorizer.ets', 'core/reader/ComicChineseConverter.ets']) {

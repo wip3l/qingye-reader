@@ -165,7 +165,8 @@ export class ReaderRegexFontCodec {
       value === 'crimson-stamp' || value === 'celadon-slip' || value === 'rose-frame' ||
       value === 'moon-halo' || value === 'sword-talisman' || value === 'qingluan-jade' ||
       value === 'pipi-soft-paw' || value === 'mecha-comm' || value === 'starwish-ribbon' ||
-      value === 'pencil-mark' || value === 'gilded-orbit' || value === 'harbor-postcard') {
+      value === 'pencil-mark' || value === 'gilded-orbit' || value === 'harbor-postcard' ||
+      value === 'celestial-orbit') {
       return value;
     }
     // Compatibility with early theme drafts.
@@ -524,6 +525,14 @@ export class ReaderRegexBubbleStyleResolver {
       result.textColor = result.mode === 'custom' ? ReaderRegexBubbleStyleResolver.contrastTextColor(base) :
         (context.darkMode ? '#F4E3BF' : '#F2DEAE');
       ReaderRegexBubbleStyleResolver.setRadii(result, 2, 9, 9, 2);
+      return;
+    }
+    if (result.bubbleStyleId === 'celestial-orbit') {
+      // A midnight enamel plate between two star caps; deeper navy on dark pages.
+      result.backgroundColor = result.mode === 'custom' ? base : (context.darkMode ? '#2C3866' : '#1E2A4F');
+      result.textColor = result.mode === 'custom' ? ReaderRegexBubbleStyleResolver.contrastTextColor(base) :
+        (context.darkMode ? '#F4E3BF' : '#F1E3BF');
+      ReaderRegexBubbleStyleResolver.setUniformRadius(result, 9);
       return;
     }
     if (result.bubbleStyleId === 'pencil-mark') {

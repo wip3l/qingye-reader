@@ -19,7 +19,7 @@ import { ReaderFontHelper } from '../../utils/ReaderFontHelper';
 import { ReaderSettings, ReaderSettingsStore } from '../../utils/ReaderSettingsStore';
 import { ReaderThemeHelper } from '../../utils/ReaderThemeHelper';
 import { BuiltinThemeRegistry } from '../BuiltinThemeRegistry';
-import { ThemeIds, ThemePack } from '../ThemeModels';
+import { SuperExclusiveThemes, ThemeIds, ThemePack } from '../ThemeModels';
 import { InstalledThemePack, ThemePackRecord, ThemePackRegistry } from '../ThemePackRegistry';
 import { ThemePackStore } from '../../utils/ThemePackStore';
 import {
@@ -857,7 +857,7 @@ export class ThemePackageService {
   /** 导入方能否使用某个内置主题的部件：免费、已获得或会员主题库内；试用中的主题不算。 */
   static canUseTheme(themeId: string): boolean {
     if (ThemePackRegistry.isPackId(themeId)) return ThemePackRegistry.has(themeId);
-    if (themeId === ThemeIds.OBSIDIAN_ARCHIVE) return AccountSessionStore.hasOwnedEntitlement(themeId);
+    if (SuperExclusiveThemes.has(themeId)) return AccountSessionStore.hasOwnedEntitlement(themeId);
     return BuiltinThemeRegistry.isFree(themeId) || AccountSessionStore.hasValidEntitlement(themeId);
   }
 
