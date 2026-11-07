@@ -3930,6 +3930,8 @@ struct ReadBookPage {
       scrollSizeMode: ScrollSizeMode.CONTINUOUS,
       // 底色与评论页一致，拖动到网页尚未铺满的位置时也看不出接缝。
       backgroundColor: this.readerCommentPanelWebBackground(),
+      // 圆角跟随主题设置里的“大圆角”，与其它面板、对话框一致；每次打开时读取。
+      radius: LengthMetrics.vp(ThemeRuntime.largeRadius()),
       onDisappear: () => {
         if (!this.showReaderCommentPanel) {
           this.resetReaderCommentPanelState();
