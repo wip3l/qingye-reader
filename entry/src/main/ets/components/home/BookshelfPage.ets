@@ -2276,7 +2276,7 @@ export struct BookshelfPage {
                   this.openNetworkCoverPicker(book);
                 }
               })
-              this.contextActionItem($r('sys.symbol.folder'), '上传本地图片', this.primaryTextColor(), () => {
+              this.contextActionItem($r('sys.symbol.picture_badge_arrowshape_turn_right_up'), '上传本地图片', this.primaryTextColor(), () => {
                 if (this.pendingActionBook) {
                   const book = this.pendingActionBook;
                   this.closeBookActions();
