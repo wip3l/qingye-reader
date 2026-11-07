@@ -5,7 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { projectRoot } from './lib/ets-module-staging.mjs';
 
-// 主题排版页：排版写进某套自定义主题的阅读档案、记为已绑定，切换到该主题时随档案生效。
+// 排版跟随主题：每套主题的阅读档案各记一份排版，切换即取回；关闭跟随时所有主题共用当前排版。
 
 const read = file => fs.readFileSync(`${projectRoot}/entry/src/main/ets/${file}`, 'utf8');
 const compile = text => stripTypeScriptTypes(text.replace(/^import .*;\r?\n/gm, '')
@@ -29,6 +29,7 @@ function harness() {
     AppStorage: { get: key => values.get(key), setOrCreate: (key, value) => values.set(key, value) },
     preferences: { getPreferences: async () => store },
     CloudSyncChangeTracker: { markPreferenceChanged() { syncMarks++; } },
+    isPackThemeId: format.isPackThemeId,
     ReaderThemeHelper: {
       LIGHT_CUSTOM_BACKGROUND_COLOR: '#FFFFFF', LIGHT_CUSTOM_TEXT_COLOR: '#333333',
       DARK_CUSTOM_BACKGROUND_COLOR: '#121212', DARK_CUSTOM_TEXT_COLOR: '#CCCCCC',
@@ -133,7 +134,7 @@ const tests = {
     await h.settings.reload({});
     // 阅读页连续调整后立即打开主题页，此时不要求主题排版页曾经保存过。
     const pending = h.settings.saveLayoutSettings({}, 30, 16, 8, 24, 25);
-    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), true);
+    assert.equal(await h.settings.hasThemeTypography({}, SCHEME_PROFILE), true);
     const profile = await h.settings.loadProfile({}, SCHEME_PROFILE);
     assert.equal(profile.fontSize, 30);
     assert.equal(profile.lineHeight, 16);
@@ -150,7 +151,7 @@ const tests = {
     saved.fontSize = 30;
     h.disk.set(`readerThemeProfileV1_${SCHEME_PROFILE}`, JSON.stringify(saved));
     assert.equal(h.disk.has(`readerThemeTypographyBoundV1_${SCHEME_PROFILE}`), false);
-    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), true);
+    assert.equal(await h.settings.hasThemeTypography({}, SCHEME_PROFILE), true);
     assert.equal((await h.settings.loadProfile({}, SCHEME_PROFILE)).fontSize, 30);
     assert.equal((await h.settings.load({})).fontSize, 20, 'inactive profile does not change live settings');
 
@@ -166,25 +167,25 @@ const tests = {
     assert.equal((await h.settings.loadProfile({}, secondId)).fontSize, 22);
   },
 
-  async 'missing or corrupt inactive profiles and builtin profiles do not imply typography binding'() {
+  async 'only themes with a readable profile or the active theme count as having typography'() {
     const h = harness();
-    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), false);
+    assert.equal(await h.settings.hasThemeTypography({}, SCHEME_PROFILE), false);
     h.disk.set(`readerThemeProfileV1_${SCHEME_PROFILE}`, '{broken');
-    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), false);
-    await h.settings.load({});
-    assert.equal(await h.settings.isTypographyBound({}, 'classic-blue'), false);
-    h.disk.set('readerThemeProfileV1_custom', JSON.stringify(new h.ReaderSettings()));
-    assert.equal(await h.settings.isTypographyBound({}, 'custom'), false);
+    assert.equal(await h.settings.hasThemeTypography({}, SCHEME_PROFILE), false);
+    assert.equal(await h.settings.hasThemeTypography({}, 'classic-blue'), true, 'the active theme always has one');
+    assert.equal(await h.settings.hasThemeTypography({}, 'warm-paper'), false, 'unused builtin theme');
+    h.disk.set('readerThemeProfileV1_warm-paper', JSON.stringify(new h.ReaderSettings()));
+    assert.equal(await h.settings.hasThemeTypography({}, 'warm-paper'), true, 'used builtin theme');
   },
 
-  async 'saving an inactive scheme writes only its profile and marks it bound'() {
+  async 'saving an inactive scheme writes only its profile'() {
     const h = harness();
     await h.settings.saveLayoutSettings({}, 20, 12, 0);
     const existing = new h.ReaderSettings();
     existing.pageTurnMode = 0;
     existing.lightThemeIndex = 2;
     h.disk.set(`readerThemeProfileV1_${SCHEME_PROFILE}`, JSON.stringify(existing));
-    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), true,
+    assert.equal(await h.settings.hasThemeTypography({}, SCHEME_PROFILE), true,
       'an existing custom scheme profile already owns its typography');
 
     await h.settings.saveTypographyToProfile({}, SCHEME_PROFILE, typography(h));
@@ -195,7 +196,7 @@ const tests = {
     assert.equal(saved.lightThemeIndex, 2);
     assert.equal(saved.volumeTurnPage, false);
     assert.notEqual(saved.fontFamily, 'should-not-copy');
-    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), true);
+    assert.equal(await h.settings.hasThemeTypography({}, SCHEME_PROFILE), true);
     // 正在使用的主题完全不受影响。
     assert.equal(h.values.get('readerFontSize'), 20);
     assert.equal(h.values.get('readerHeaderEnabled'), false);
@@ -251,15 +252,97 @@ const tests = {
     assertTypography(reloaded);
     assert.equal(reloaded.volumeTurnPage, true, 'other interaction settings are kept');
     assert.equal(reloaded.screenTimeoutMinutes, 5);
-    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), true);
+    assert.equal(await h.settings.hasThemeTypography({}, SCHEME_PROFILE), true);
   },
 
-  async 'deleting a scheme profile forgets the binding'() {
+  async 'deleting a scheme profile forgets its typography'() {
     const h = harness();
     await h.settings.saveTypographyToProfile({}, SCHEME_PROFILE, typography(h));
     await h.settings.deleteProfile({}, SCHEME_PROFILE);
     assert.equal(h.disk.has(`readerThemeProfileV1_${SCHEME_PROFILE}`), false);
-    assert.equal(await h.settings.isTypographyBound({}, SCHEME_PROFILE), false);
+    assert.equal(await h.settings.hasThemeTypography({}, SCHEME_PROFILE), false);
+  },
+
+  async 'builtin themes keep their own typography when switching back and forth'() {
+    const h = harness();
+    await h.settings.load({});
+    await h.settings.saveLayoutSettings({}, 28, 18, 6);
+    await h.settings.saveReaderChromeSettings({}, true, true, '');
+    h.values.set('appThemeId', 'warm-paper');
+    const fresh = await h.settings.switchThemeProfile({}, 'classic-blue', 'warm-paper');
+    assert.equal(fresh.fontSize, 28, 'a theme used for the first time starts from the current typography');
+    await h.settings.saveLayoutSettings({}, 18, 10, 0);
+    await h.settings.saveReaderChromeSettings({}, false, true, '');
+    h.values.set('appThemeId', 'classic-blue');
+    const back = await h.settings.switchThemeProfile({}, 'warm-paper', 'classic-blue');
+    assert.equal(back.fontSize, 28);
+    assert.equal(back.lineHeight, 18);
+    assert.equal(back.readerHeaderEnabled, true);
+    h.values.set('appThemeId', 'warm-paper');
+    const again = await h.settings.switchThemeProfile({}, 'classic-blue', 'warm-paper');
+    assert.equal(again.fontSize, 18);
+    assert.equal(again.readerHeaderEnabled, false);
+  },
+
+  async 'with typography not following the theme every theme shares the current typography'() {
+    const h = harness();
+    await h.settings.load({});
+    const saved = typography(h);
+    saved.fontSize = 30;
+    saved.pageTurnMode = 0;
+    h.disk.set('readerThemeProfileV1_warm-paper', JSON.stringify(saved));
+    assert.equal(await h.settings.typographyFollowsTheme({}), true, 'follows by default');
+    await h.settings.setTypographyFollowsTheme({}, false);
+    assert.equal(h.values.get('readerTypographyFollowsTheme'), false);
+    await h.settings.saveLayoutSettings({}, 24, 14, 2);
+    h.values.set('appThemeId', 'warm-paper');
+    const next = await h.settings.switchThemeProfile({}, 'classic-blue', 'warm-paper');
+    assert.equal(next.fontSize, 24, 'current typography carried over');
+    assert.equal(next.readerHeaderEnabled, false);
+    assert.equal(next.pageTurnMode, 0, 'non-typography settings still come from the theme');
+
+    await h.settings.setTypographyFollowsTheme({}, true);
+    h.values.set('appThemeId', 'classic-blue');
+    await h.settings.switchThemeProfile({}, 'warm-paper', 'classic-blue');
+    h.values.set('appThemeId', 'warm-paper');
+    assert.equal((await h.settings.switchThemeProfile({}, 'classic-blue', 'warm-paper')).fontSize, 24,
+      'the shared typography was saved into the theme while it was in use');
+  },
+
+  async 'restoring the theme preset resets every typography field but keeps emphasis rules'() {
+    const h = harness();
+    await h.settings.load({});
+    await h.settings.saveTypographyToProfile({}, 'classic-blue', typography(h));
+    await h.settings.restoreThemePreset({}, 21, 14, 2, 22, 23, 24, 25, 1);
+    const restored = await h.settings.reload({});
+    const defaults = new h.ReaderSettings();
+    assert.equal(restored.fontSize, 21);
+    assert.equal(restored.lineHeight, 14);
+    assert.equal(restored.paragraphSpacing, 2);
+    assert.equal(restored.marginLeft, 22);
+    assert.equal(restored.marginRight, 23);
+    assert.equal(restored.marginTop, 24);
+    assert.equal(restored.marginBottom, 25);
+    assert.equal(restored.letterSpacing, 1);
+    assert.equal(restored.fontWeight, defaults.fontWeight);
+    assert.equal(restored.textAlign, defaults.textAlign);
+    assert.equal(restored.paragraphIndent, defaults.paragraphIndent);
+    assert.equal(restored.extendToStatusBar, false);
+    assert.equal(restored.readerHeaderEnabled, defaults.readerHeaderEnabled);
+    assert.equal(restored.readerFooterEnabled, defaults.readerFooterEnabled);
+    assert.equal(restored.bodyFontMode, 'global');
+    assert.equal(restored.titleFontSize, defaults.titleFontSize);
+    assert.equal(restored.regexFontEnabled, true, 'emphasis rules are kept');
+  },
+
+  async 'copying typography from another theme applies it to the current theme'() {
+    const h = harness();
+    await h.settings.load({});
+    h.disk.set('readerThemeProfileV1_warm-paper', JSON.stringify(typography(h)));
+    await h.settings.copyTypographyFromProfile({}, 'warm-paper');
+    assertTypography(await h.settings.reload({}));
+    assert.equal(h.values.get('readerFontSize'), 26);
+    assert.equal(JSON.parse(h.disk.get('readerThemeProfileV1_warm-paper')).fontSize, 26, 'source unchanged');
   },
 
   async 'every field the layout page saves travels in a theme package'() {

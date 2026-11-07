@@ -540,9 +540,6 @@ export class SchemeAssetService {
       const fromProfile = ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, scheme.id);
       const toProfile = ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, added.id);
       await ReaderSettingsStore.writeProfile(context, toProfile, await ReaderSettingsStore.loadProfile(context, fromProfile));
-      if (await ReaderSettingsStore.isTypographyBound(context, fromProfile)) {
-        await ReaderSettingsStore.markTypographyBound(context, toProfile);
-      }
     } catch (e) {
       console.warn('复制方案排版失败:', (e as Error).message);
     }

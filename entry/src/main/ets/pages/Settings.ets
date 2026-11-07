@@ -7,7 +7,7 @@ import { ReaderTitleStyleCodec } from '../model/reader/ReaderTitleStyle';
 import { ReaderTypographyField } from '../components/reader/ReaderLayoutSettings';
 import { ReaderFontWeight } from '../core/reader/ReaderFontWeight';
 import { ReaderCommentBubbleSize } from '../core/reader/ReaderCommentBubbleSize';
-import { router } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
@@ -36,6 +36,7 @@ import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/commo
 import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 import { CloudFontMenu } from '../account/CloudFontMenu';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
+import { ReaderTypographyThemes, TypographyThemeOption } from '../utils/ReaderTypographyThemes';
 class ReaderCustomFontItem {
   familyName: string = '';
   filePath: string = '';
@@ -54,6 +55,11 @@ struct SettingsPage {
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('readerFontWeight') readerFontWeight: number = 400;
+  @StorageLink('readerTypographyFollowsTheme') typographyFollowsTheme: boolean = true;
+  @State typographyThemeName: string = '';
+  @State typographyCopySources: TypographyThemeOption[] = [];
+  // 下拉选过一次后会停在所选主题上；每次选完换个键重建，让它回到“选择主题”。
+  @State typographyCopyRevision: number = 0;
   @StorageLink('readerFontSize') readerFontSize: number = 20;
   @StorageLink('readerLetterSpacing') readerLetterSpacing: number = 0;
   @StorageLink('readerTextAlign') readerTextAlign: string = 'justify';
@@ -166,6 +172,7 @@ struct SettingsPage {
   onPageShow(): void {
     this.refreshSystemFontFamily();
     this.loadReaderSettings();
+    if (this.isNovelSection()) this.refreshTypographyThemes();
     this.reloadCustomFonts();
     this.syncBars();
   }
@@ -603,6 +610,7 @@ struct SettingsPage {
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
     .backgroundColor(this.cardColor())
+    this.typographyThemeSection()
     this.sectionTitle('替换净化')
     Column() {
       this.readerReplaceRulesEntryItem()
@@ -2840,6 +2848,127 @@ struct SettingsPage {
         .fontSize(AppFontSize.BODY)
         .fontColor(this.accentColor())
         .margin({ left: AppSpacing.LG })
+    }
+  }
+
+  /** 排版与主题的关系：跟随时每套主题各记一份排版，不跟随时所有主题共用；另有恢复预设与跨主题复制。 */
+  @Builder
+  typographyThemeSection() {
+    this.sectionTitle('排版与主题')
+    Column() {
+      SettingSwitchRow({
+        title: '排版跟随主题',
+        description: this.typographyFollowsTheme ?
+          `每套主题各记一套排版，换主题即换排版；当前排版记在「${this.typographyThemeName}」` :
+          '所有主题共用一套排版，换主题时排版不变',
+        isOn: this.typographyFollowsTheme,
+        onChange: (enabled: boolean): void => {
+          this.setTypographyFollowsTheme(enabled);
+        }
+      })
+      SettingNavRow({ title: '恢复主题预设', description: '字号、间距、边距用主题预设，页眉页脚和字体等回到默认',
+        onTap: () => { this.confirmRestoreThemePreset(); } })
+      SettingRow({ title: '从其他主题复制排版', description: this.typographyCopySources.length > 0 ?
+        '把那套主题的排版（含页眉页脚与阅读字体）用到当前主题' : '还没有其他主题保存过排版', showDivider: false }) {
+        ForEach(this.typographyCopySources.length > 0 ? [this.typographyCopyRevision] : [], () => {
+          Select(this.typographyCopySources.map((source: TypographyThemeOption): SelectOption => {
+            const option: SelectOption = { value: source.name };
+            return option;
+          }))
+            .id('settings_reader_typography_copy_select')
+            .selected(-1)
+            .value('选择主题')
+            .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+            .optionFont({ family: this.applicationFontFamily })
+            .selectedOptionFont({ family: this.applicationFontFamily })
+            .fontColor(this.subTextColor())
+            .backgroundColor(Color.Transparent)
+            .arrowPosition(ArrowPosition.END)
+            .padding({ left: 0, right: 0 })
+            .borderRadius(16)
+            .border({ width: 0 })
+            .optionBgColor(Color.Transparent)
+            .divider(null)
+            .optionFontColor(this.primaryTextColor())
+            .selectedOptionFontColor(this.accentColor())
+            .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+            .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+            .menuBackgroundBlurStyle(BlurStyle.NONE)
+            .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+            .onSelect((index: number) => {
+              const source = this.typographyCopySources[index];
+              this.typographyCopyRevision++;
+              if (source) this.confirmCopyTypography(source);
+            })
+        }, (revision: number) => `typography_copy_${revision}`)
+      }
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+  }
+
+  async refreshTypographyThemes(): Promise<void> {
+    try {
+      await ReaderSettingsStore.typographyFollowsTheme(getContext(this));
+      this.typographyThemeName = await ReaderTypographyThemes.activeThemeName(getContext(this));
+      this.typographyCopySources = await ReaderTypographyThemes.copySources(getContext(this));
+    } catch (e) {
+      console.warn('读取主题排版信息失败:', e);
+    }
+  }
+
+  async setTypographyFollowsTheme(enabled: boolean): Promise<void> {
+    try {
+      await ReaderSettingsStore.setTypographyFollowsTheme(getContext(this), enabled);
+      HdsFeedback.showToast(enabled ? '已开启，之后换主题会换成那套主题的排版' : '已关闭，所有主题共用当前排版');
+    } catch (e) {
+      console.warn('保存排版跟随主题失败:', e);
+      HdsFeedback.showToast('保存失败，请稍后重试');
+    }
+  }
+
+  async confirmTypographyChange(title: string, message: string): Promise<boolean> {
+    try {
+      const result = await promptAction.showDialog({
+        title: title,
+        message: message,
+        buttons: [{ text: '取消', color: this.subTextColor() }, { text: '确定', color: this.accentColor() }]
+      });
+      return result.index === 1;
+    } catch (e) {
+      console.warn('显示排版确认失败:', e);
+      return false;
+    }
+  }
+
+  async confirmRestoreThemePreset(): Promise<void> {
+    if (!await this.confirmTypographyChange('恢复主题预设？',
+      '当前排版会换成主题预设，页眉页脚、阅读字体、缩进与对齐也回到默认，强调规则保留。')) return;
+    try {
+      this.applyTypographyValueInput();
+      await ReaderTypographyThemes.restoreActivePreset(getContext(this));
+      await this.loadReaderSettings();
+      HdsFeedback.showToast('已恢复主题预设排版');
+    } catch (e) {
+      console.warn('恢复主题预设排版失败:', e);
+      HdsFeedback.showToast('恢复失败，请稍后重试');
+    }
+  }
+
+  async confirmCopyTypography(source: TypographyThemeOption): Promise<void> {
+    if (!await this.confirmTypographyChange(`复制「${source.name}」的排版？`,
+      '当前排版会换成那套主题的排版，包括页眉页脚、阅读字体与强调规则。')) return;
+    try {
+      this.applyTypographyValueInput();
+      await ReaderSettingsStore.copyTypographyFromProfile(getContext(this), source.profileId);
+      await this.loadReaderSettings();
+      HdsFeedback.showToast(`已复制「${source.name}」的排版`);
+    } catch (e) {
+      console.warn('复制主题排版失败:', e);
+      HdsFeedback.showToast('复制失败，请稍后重试');
     }
   }
 

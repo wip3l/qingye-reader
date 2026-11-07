@@ -126,6 +126,7 @@ import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
 import { ReaderPreparedContentCache } from '../core/reader/ReaderPreparedContentCache';
 import { ReaderOpenSnapshotMeta, ReaderOpenSnapshotStore } from '../core/reader/ReaderOpenSnapshotStore';
 import lazy { ReaderEyeTurnCoordinator } from '../core/reader/ReaderEyeTurnCoordinator';
+import lazy { ReaderTypographyThemes } from '../utils/ReaderTypographyThemes';
 import { ReaderEyeTurnViewState } from '../core/reader/ReaderEyeTurnViewState';
 import { ReaderEyeCalibrationPanel, ReaderEyeTurnCalibrationSettingItem } from '../components/reader/ReaderEyeTurnViews';
 import { ReaderFullTextCacheController } from '../core/reader/ReaderFullTextCacheController';
@@ -392,6 +393,8 @@ struct ReadBookPage {
   private readerKeyboardSettingsReady: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showTapZoneSettings: boolean = false;
   @State settingsPanelTab: number = 0;
+  // 排版面板底部说明：这套排版记在哪套主题，或所有主题共用。打开排版面板时读取。
+  @State readerTypographyOwnerText: string = '';
   @State loadStatus: string = '正在加载...';
   @State verificationUrl: string = '';
   @State verificationTitle: string = '网页验证';
@@ -8778,6 +8781,18 @@ struct ReadBookPage {
     this.showTtsVoiceDropdown = false;
     this.showSettings = true;
     this.showMenu = false;
+    this.refreshReaderTypographyOwner();
+  }
+
+  async refreshReaderTypographyOwner(): Promise<void> {
+    try {
+      const follows = await ReaderSettingsStore.typographyFollowsTheme(getContext(this));
+      this.readerTypographyOwnerText = follows ?
+        `排版记在「${await ReaderTypographyThemes.activeThemeName(getContext(this))}」，换主题会换成那套主题的排版` :
+        '排版不跟随主题，所有主题共用这套排版';
+    } catch (e) {
+      console.warn('读取排版所属主题失败:', e);
+    }
   }
 
   closeSettingsPanelKeepMenu(): void {
@@ -11983,6 +11998,13 @@ struct ReadBookPage {
         }
       })
 
+      if (this.readerTypographyOwnerText) {
+        Text(this.readerTypographyOwnerText)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.readerPanelSubTextColor())
+          .width('100%')
+          .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
+      }
     }
     .width('100%')
   }

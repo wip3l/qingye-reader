@@ -738,11 +738,6 @@ export class ThemePackageService {
       }
       await ReaderSettingsStore.writeProfile(context, ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, scheme.id),
         JSON.parse(JSON.stringify(profileRecord)) as ReaderSettings);
-      if (layout) {
-        // 包里带了作者的排版：应用这套主题时默认沿用它，而不是重置成预设排版。
-        await ReaderSettingsStore.markTypographyBound(context,
-          ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, scheme.id));
-      }
       result.scheme = scheme;
       result.replacedActive = replacesActive;
       installedPackageId = '';

@@ -642,7 +642,7 @@ struct ThemeColorSettingsPage {
     if (!this.schemeId) return;
     try {
       const profileId = ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, this.schemeId);
-      this.readerProfileBound = await ReaderSettingsStore.isTypographyBound(getContext(this), profileId);
+      this.readerProfileBound = await ReaderSettingsStore.hasThemeTypography(getContext(this), profileId);
       this.readerProfile = await ReaderSettingsStore.loadProfile(getContext(this), profileId);
     } catch (e) {
       console.warn('读取主题排版预览失败:', e);
@@ -1374,7 +1374,7 @@ struct ThemeColorSettingsPage {
     .backgroundColor(this.cardColor())
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
-    this.sectionTitle({ title: this.readerProfileBound ? '已保存专属阅读排版，优先于主题推荐排版，浅深色模式共用' :
+    this.sectionTitle({ title: this.readerProfileBound ? '已保存这套主题的阅读排版，浅深色模式共用' :
       '阅读排版在浅深色模式间共用，可进入详细阅读排版继续调整' })
   }
 

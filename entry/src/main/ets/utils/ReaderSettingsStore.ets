@@ -186,9 +186,12 @@ export class ReaderSettingsStore {
   static readonly KEY_REGEX_FONT_SIZE: string = 'readerRegexFontSize';
   static readonly KEY_REGEX_SHADOW_COLOR: string = 'readerRegexShadowColor';
   static readonly KEY_REGEX_FONT_RULES_RAW: string = 'readerRegexFontRulesRaw';
+  /** 打开时每套主题各记一份排版、换主题即换排版；关闭时所有主题共用当前排版。同时作为 AppStorage 键。 */
+  static readonly KEY_TYPOGRAPHY_FOLLOWS_THEME: string = 'readerTypographyFollowsTheme';
   private static readonly STORE_NAME: string = 'reader_settings';
   private static readonly THEME_PROFILE_PREFIX: string = 'readerThemeProfileV1_';
   private static readonly LEGACY_CUSTOM_PROFILE_ID: string = 'custom';
+  // 旧版“已绑定排版”标记，现在只在删除档案时顺带清掉。
   private static readonly TYPOGRAPHY_BOUND_PREFIX: string = 'readerThemeTypographyBoundV1_';
   private static cachedSettings: ReaderSettings | null = null;
   private static cachedThemeId: string = '';
@@ -520,10 +523,14 @@ export class ReaderSettingsStore {
 
     let next = await ReaderSettingsStore.loadThemeProfile(store, nextId);
     if (!next) {
+      // 第一次使用的主题从当前设置起步；要用主题预设时由调用方随后 restoreThemePreset。
       next = ReaderSettingsStore.clone(current);
       next.lightThemeIndex = ReaderThemeHelper.APP_THEME_INDEX;
       next.darkThemeIndex = ReaderThemeHelper.APP_THEME_INDEX;
       next.themeIndex = ReaderThemeHelper.APP_THEME_INDEX;
+    } else if (!await ReaderSettingsStore.readTypographyFollowsTheme(store)) {
+      // 排版不跟随主题：目标主题只换翻页等其余设置，排版沿用当前这套。
+      ReaderSettingsStore.copyTypography(current, next);
     }
     next.quickJumpMode = current.quickJumpMode;
     next.aiProcessingIndicatorEnabled = current.aiProcessingIndicatorEnabled;
@@ -1349,21 +1356,70 @@ export class ReaderSettingsStore {
     ReaderSettingsStore.updateFontRules(target, source);
   }
 
-  /** 方案已有自己的排版时，主题摘要和应用选项都沿用它，阅读页与主题排版页的修改同等生效。 */
-  static async isTypographyBound(context: Context, profileId: string): Promise<boolean> {
+  /**
+   * 这套主题是否已经有自己的排版：用过（阅读页会随时保存档案）、在主题排版页保存过或随主题包导入过。
+   * 没有的主题第一次应用时才需要选“主题预设”还是“沿用当前排版”。
+   */
+  static async hasThemeTypography(context: Context, profileId: string): Promise<boolean> {
     const id = ReaderSettingsStore.normalizeThemeProfileId(profileId);
-    const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
-    if (await store.get(ReaderSettingsStore.typographyBoundKey(id), false) === true) return true;
-    // 阅读页一直会保存方案档案，但旧数据只有从主题排版页保存才带绑定标记。
-    // 当前方案直接读实时设置；其他方案有有效档案即可复用，避免把已调好的排版显示或应用成预设值。
-    if (!id.startsWith(`${ReaderSettingsStore.LEGACY_CUSTOM_PROFILE_ID}__`)) return false;
     if (id === ReaderSettingsStore.activeThemeId()) return true;
+    const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
     return await ReaderSettingsStore.loadThemeProfile(store, id) !== null;
   }
 
+  static async typographyFollowsTheme(context: Context): Promise<boolean> {
+    const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
+    const follows = await ReaderSettingsStore.readTypographyFollowsTheme(store);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_TYPOGRAPHY_FOLLOWS_THEME, follows);
+    return follows;
+  }
+
   /**
-   * 把主题排版页的设置写进对应主题的档案并记为已绑定。正在使用的档案走各项原有的保存路径，
-   * 阅读页与设置页立即同步；其他档案直接改存储，切换到这套主题时随档案一起生效。
+   * 关闭后换主题时不再取用各主题档案里的排版，而是把当前排版带过去（用过的主题档案随之记下共用排版）；
+   * 没用过的主题保留原有排版，重新打开后照常取用。
+   * 与各主题档案一样只存本机。
+   */
+  static async setTypographyFollowsTheme(context: Context, follows: boolean): Promise<void> {
+    const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
+    await store.put(ReaderSettingsStore.KEY_TYPOGRAPHY_FOLLOWS_THEME, follows);
+    await store.flush();
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_TYPOGRAPHY_FOLLOWS_THEME, follows);
+  }
+
+  private static async readTypographyFollowsTheme(store: preferences.Preferences): Promise<boolean> {
+    return await store.get(ReaderSettingsStore.KEY_TYPOGRAPHY_FOLLOWS_THEME, true) !== false;
+  }
+
+  /**
+   * 把当前主题的排版整套恢复成主题预设：字号、间距、边距取主题给的值，其余排版项（缩进、对齐、字重、
+   * 页眉页脚、正文与标题字体、扩展至状态栏、气泡大小）回到默认。强调规则是用户自己的内容，保留不动。
+   */
+  static async restoreThemePreset(context: Context, fontSize: number, lineHeight: number, paragraphSpacing: number,
+    marginLeft: number, marginRight: number, marginTop: number, marginBottom: number,
+    letterSpacing: number): Promise<void> {
+    const current = await ReaderSettingsStore.load(context);
+    const preset = new ReaderSettings();
+    preset.fontSize = fontSize;
+    preset.lineHeight = lineHeight;
+    preset.paragraphSpacing = paragraphSpacing;
+    preset.marginLeft = marginLeft;
+    preset.marginRight = marginRight;
+    preset.marginTop = marginTop;
+    preset.marginBottom = marginBottom;
+    preset.letterSpacing = letterSpacing;
+    ReaderSettingsStore.updateFontRules(preset, current);
+    await ReaderSettingsStore.saveTypographyToProfile(context, ReaderSettingsStore.activeThemeId(), preset);
+  }
+
+  /** 把另一套主题的排版（含页眉页脚、阅读字体与强调规则）复制给当前主题，立即生效。 */
+  static async copyTypographyFromProfile(context: Context, sourceProfileId: string): Promise<void> {
+    const source = await ReaderSettingsStore.loadProfile(context, sourceProfileId);
+    await ReaderSettingsStore.saveTypographyToProfile(context, ReaderSettingsStore.activeThemeId(), source);
+  }
+
+  /**
+   * 把排版写进对应主题的档案。正在使用的档案走各项原有的保存路径，阅读页与设置页立即同步；
+   * 其他档案直接改存储，切换到这套主题时随档案一起生效。
    */
   static async saveTypographyToProfile(context: Context, profileId: string, source: ReaderSettings): Promise<void> {
     const id = ReaderSettingsStore.normalizeThemeProfileId(profileId);
@@ -1392,15 +1448,9 @@ export class ReaderSettingsStore {
       }
       ReaderSettingsStore.copyTypography(source, profile);
       await store.put(ReaderSettingsStore.themeProfileKey(id), JSON.stringify(ReaderSettingsStore.clone(profile)));
+      await store.flush();
     }
     // 排版本身只存在本机，与阅读页里调整排版一样不触发云同步；强调规则的变化由各自的保存路径标记。
-    await ReaderSettingsStore.markTypographyBound(context, id);
-  }
-
-  static async markTypographyBound(context: Context, profileId: string): Promise<void> {
-    const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
-    await store.put(ReaderSettingsStore.typographyBoundKey(profileId), true);
-    await store.flush();
   }
 
   private static typographyBoundKey(profileId: string): string {

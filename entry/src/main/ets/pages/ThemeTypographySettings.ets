@@ -121,6 +121,7 @@ struct ThemeTypographySettingsPage {
   @State schemeName: string = '';
   @State activeScheme: boolean = false;
   @State typographyBound: boolean = false;
+  @State typographyFollowsTheme: boolean = true;
   @State previewDark: boolean = false;
   @State fullPreview: boolean = false;
   @State viewportWidth: number = 0;
@@ -687,7 +688,8 @@ struct ThemeTypographySettingsPage {
       this.themePack = AppThemeSettingsStore.customTheme(scheme.settings, this.appDarkMode);
       this.profileId = ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, scheme.id);
       this.activeScheme = this.profileId === ReaderSettingsStore.activeProfileId();
-      this.typographyBound = await ReaderSettingsStore.isTypographyBound(getContext(this), this.profileId);
+      this.typographyBound = await ReaderSettingsStore.hasThemeTypography(getContext(this), this.profileId);
+      this.typographyFollowsTheme = await ReaderSettingsStore.typographyFollowsTheme(getContext(this));
       const profile = await ReaderSettingsStore.loadProfile(getContext(this), this.profileId);
       this.applyDraft(ThemeTypographySettingsPage.copySettings(profile));
       this.loaded = true;
@@ -840,8 +842,8 @@ struct ThemeTypographySettingsPage {
       await ReaderSettingsStore.saveTypographyToProfile(getContext(this), this.profileId, this.draftSnapshot());
       this.dirty = false;
       this.typographyBound = true;
-      HdsFeedback.showToast(this.activeScheme ? '主题排版已保存并生效' :
-        `已保存，切换到「${this.schemeName}」时排版一起生效`);
+      HdsFeedback.showToast(this.activeScheme ? '主题排版已保存并生效' : !this.typographyFollowsTheme ?
+        '已保存，打开“排版跟随主题”后切换到这套主题时生效' : `已保存，切换到「${this.schemeName}」时排版一起生效`);
       this.leave();
     } catch (e) {
       console.error('保存主题排版失败:', e);
@@ -883,7 +885,8 @@ struct ThemeTypographySettingsPage {
     if (!this.loaded) return '正在读取排版…';
     if (this.dirty) return this.activeScheme ? '有未保存的修改 · 保存后立即生效' : '有未保存的修改 · 保存后与主题绑定';
     if (this.activeScheme) return '正在使用 · 这里的排版就是当前阅读排版';
-    return this.typographyBound ? '已绑定排版 · 切换到这套主题时一起生效' : '尚未单独设置 · 保存后与主题绑定';
+    if (!this.typographyFollowsTheme) return '排版不跟随主题 · 打开“排版跟随主题”后这里的排版才会生效';
+    return this.typographyBound ? '已有专属排版 · 切换到这套主题时一起生效' : '尚未使用过 · 保存后与主题绑定';
   }
 
   openFullPreview(): void {
