@@ -11,6 +11,8 @@ import { CoverGalleryStore, CoverGallerySnapshot } from '../utils/CoverGallerySt
 import { RecentReadCardUpdater } from '../utils/RecentReadCardUpdater';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -50,6 +52,9 @@ struct CoverGalleryManagerPage {
   @State @Watch('onSystemDialogFlagChanged') showDeleteAlbumConfirm: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showImageManager: boolean = false;
   @State selectedImages: string[] = [];
+  /** 正在消散的图集 id 与图片路径，见 ListDissolve。 */
+  @State dissolvingKeys: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State albumCount: number = 0;
   @State totalCoverSize: number = 0;
   @State selectedAlbumCoverSize: number = 0;
@@ -118,7 +123,12 @@ struct CoverGalleryManagerPage {
 
 
 
+
+      if (this.deleteParticleBursts.length > 0 && !this.showImageManager) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('cover_gallery_root')
     .width('100%')
     .height('100%')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
@@ -246,10 +256,26 @@ struct CoverGalleryManagerPage {
     this.openDeleteAlbumConfirm();
   }
 
-  deleteSelectedAlbum(): void {
-    if (!this.selectedAlbumId) {
+  async deleteSelectedAlbum(): Promise<void> {
+    if (!this.selectedAlbumId || this.isKeyDissolving(this.selectedAlbumId)) {
       return;
     }
+    // 先关确认框，等它退场后图集消散，播完再在补位动画里删掉。
+    this.showDeleteAlbumConfirm = false;
+    const albumId = this.selectedAlbumId;
+    const keys = [albumId];
+    await ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingKeys = [...this.dissolvingKeys, key];
+    }, ListDissolve.particles('cover_gallery_root', [this.buttonColor(), this.primaryTextColor(), this.subTextColor()],
+      (key: string): string => this.galleryElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
+    ListDissolve.commit(this.getUIContext(), () => this.removeAlbum(albumId), () => {
+      this.dissolvingKeys = ListDissolve.without(this.dissolvingKeys, keys);
+    });
+  }
+
+  removeAlbum(albumId: string): void {
+    this.selectedAlbumId = albumId;
     const next = this.albums.filter((album: CoverAlbum) => album.id !== this.selectedAlbumId);
     if (this.bookshelfLightCoverAlbumId === this.selectedAlbumId) {
       this.bookshelfLightCoverAlbumId = '';
@@ -304,7 +330,7 @@ struct CoverGalleryManagerPage {
     this.selectedImages = [];
   }
 
-  deleteSelectedImages(): void {
+  async deleteSelectedImages(): Promise<void> {
     const album = this.getSelectedAlbum();
     if (!album) {
       return;
@@ -325,8 +351,18 @@ struct CoverGalleryManagerPage {
       return item;
     });
     const count = this.selectedImages.length;
-    this.saveAlbums(next, album.id);
-    this.selectedImages = [];
+    const keys = [...this.selectedImages];
+    await ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingKeys = [...this.dissolvingKeys, key];
+    }, ListDissolve.particles('cover_image_manager_root', [this.buttonColor(), this.primaryTextColor(), this.subTextColor()],
+      (key: string): string => this.galleryElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }));
+    ListDissolve.commit(this.getUIContext(), () => {
+      this.saveAlbums(next, album.id);
+      this.selectedImages = [];
+    }, () => {
+      this.dissolvingKeys = ListDissolve.without(this.dissolvingKeys, keys);
+    });
     HdsFeedback.showToast(`已删除 ${count} 张图片`);
   }
 
@@ -735,7 +771,7 @@ struct CoverGalleryManagerPage {
       Column({ space: AppSpacing.MD }) {
         ForEach(this.albums, (album: CoverAlbum) => {
           this.albumRow(album)
-        })
+        }, (album: CoverAlbum): string => `${album.id}_${album.name}_${album.covers.length}`)
       }
       .width('100%')
       .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
@@ -794,9 +830,22 @@ struct CoverGalleryManagerPage {
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
     .borderRadius(ThemeRuntime.mediumRadius())
     .backgroundColor(this.selectedAlbumId === album.id ? this.selectedColor() : this.inputColor())
+    .opacity(ListDissolve.opacity(this.isKeyDissolving(album.id)))
+    .scale(ListDissolve.scale(this.isKeyDissolving(album.id)))
+    .blur(ListDissolve.blur(this.isKeyDissolving(album.id)))
+    .hitTestBehavior(this.isKeyDissolving(album.id) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.galleryElementId(album.id))
     .onClick(() => {
       this.selectAlbum(album);
     })
+  }
+
+  galleryElementId(key: string): string {
+    return `cover_gallery_item_${encodeURIComponent(key)}`;
+  }
+
+  isKeyDissolving(key: string): boolean {
+    return this.dissolvingKeys.length > 0 && this.dissolvingKeys.indexOf(key) >= 0;
   }
 
   @Builder
@@ -1021,6 +1070,8 @@ struct CoverGalleryManagerPage {
 
   @Builder
   imageManagerDialogContent() {
+    // 图片管理在弹窗里，粒子层也放在弹窗内容里。
+    Stack() {
     Column({ space: AppSpacing.LG }) {
       Row() {
         Column() {
@@ -1077,7 +1128,16 @@ struct CoverGalleryManagerPage {
         .height(180)
         .justifyContent(FlexAlign.Center)
       }
-    }    .width('100%')
+    }
+    .width('100%')
+    .height('100%')
+
+    if (this.deleteParticleBursts.length > 0 && this.showImageManager) {
+      DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+    }
+    }
+    .id('cover_image_manager_root')
+    .width('100%')
     .constraintSize({ maxWidth: 520 })
     .height(520)
     .padding(AppSpacing.XL)
@@ -1121,6 +1181,11 @@ struct CoverGalleryManagerPage {
     .width(66)
     .height(88)
     .margin({ right: AppSpacing.MD, bottom: AppSpacing.MD })
+    .opacity(ListDissolve.opacity(this.isKeyDissolving(cover)))
+    .scale(ListDissolve.scale(this.isKeyDissolving(cover)))
+    .blur(ListDissolve.blur(this.isKeyDissolving(cover)))
+    .hitTestBehavior(this.isKeyDissolving(cover) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.galleryElementId(cover))
     .onClick(() => {
       this.toggleImageSelection(cover);
     })

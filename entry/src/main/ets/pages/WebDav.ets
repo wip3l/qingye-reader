@@ -9,6 +9,8 @@ import { WebDavConnection } from '../webdav/WebDavModels';
 import { WebDavSecretStore } from '../webdav/WebDavSecretStore';
 import { WebDavSettingsStore } from '../webdav/WebDavSettingsStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -33,6 +35,9 @@ struct WebDavPage {
   @StorageProp('navBarHeight') navBarHeight: number = 0;
 
   @State connections: WebDavConnection[] = [];
+  /** 正在消散的条目 id，见 ListDissolve。 */
+  @State dissolvingIds: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State busy: boolean = false;
   @State busyText: string = '';
   @State busyProgress: number = 0;
@@ -112,7 +117,12 @@ struct WebDavPage {
         .shadow({ radius: 18, color: this.appDarkMode ? '#66000000' : '#28000000' })
         .position({ x: '11%', y: '42%' })
       }
+
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('webdav_connections_root')
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
@@ -242,6 +252,11 @@ struct WebDavPage {
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
     .backgroundColor(this.cardColor())
     .borderRadius(ThemeRuntime.cardRadius())
+    .opacity(ListDissolve.opacity(this.isDissolving(connection.id)))
+    .scale(ListDissolve.scale(this.isDissolving(connection.id)))
+    .blur(ListDissolve.blur(this.isDissolving(connection.id)))
+    .hitTestBehavior(this.isDissolving(connection.id) ? HitTestMode.None : HitTestMode.Default)
+    .id(`webdav_connection_card_${connection.id}`)
     .gesture(
       LongPressGesture({ repeat: false })
         .onAction((event: GestureEvent) => {
@@ -586,8 +601,26 @@ struct WebDavPage {
     if (confirmation.index !== 1) return;
     await WebDavSecretStore.deletePassword(getContext(this), connection.id);
     await WebDavSettingsStore.deleteConnection(getContext(this), connection.id);
-    this.connections = this.connections.filter((item: WebDavConnection): boolean => item.id !== connection.id);
+    await this.dissolveAndRemove([connection.id], () => {
+      this.connections = this.connections.filter((item: WebDavConnection): boolean => item.id !== connection.id);
+    });
     HdsFeedback.showToast('连接已删除');
+  }
+
+  isDissolving(id: string): boolean {
+    return this.dissolvingIds.length > 0 && this.dissolvingIds.indexOf(id) >= 0;
+  }
+
+  /** 从确认框里删除：等它退场后消散，播完在补位动画里执行 remove。 */
+  async dissolveAndRemove(ids: string[], remove: () => void): Promise<void> {
+    await ListDissolve.fadeOut(this.getUIContext(), ids, (id: string) => {
+      this.dissolvingIds = [...this.dissolvingIds, id];
+    }, ListDissolve.particles('webdav_connections_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
+      (id: string): string => `webdav_connection_card_${id}`, (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
+    ListDissolve.commit(this.getUIContext(), remove, () => {
+      this.dissolvingIds = ListDissolve.without(this.dissolvingIds, ids);
+    });
   }
 
   openAddDialog(): void {

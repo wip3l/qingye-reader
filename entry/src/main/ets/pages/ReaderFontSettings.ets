@@ -28,6 +28,8 @@ import {
 } from '../model/reader/ReaderRegexFontRule';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { ThemeAccessPolicy } from '../account/ThemeAccessPolicy';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
@@ -122,6 +124,9 @@ export struct ReaderFontSettingsEditor {
   @StorageLink('cloudRemoteFontsRaw') cloudRemoteFontsRaw: string = '';
   private downloadingRemoteFont: boolean = false;
   @State regexRules: ReaderRegexFontRule[] = [];
+  /** 正在消散的正则规则 id，见 ListDissolve。 */
+  @State dissolvingRuleIds: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State regexHighlightRefreshKey: number = 0;
   @State activeRegexInputKey: string = '';
   // 正则规则在单独的编辑页里改草稿，点保存才写回列表；新建规则的下标为 -1。
@@ -451,6 +456,8 @@ export struct ReaderFontSettingsEditor {
   @Builder
   regexFontSection() {
     this.sectionTitle('正则字体设置')
+    // 编辑器可能嵌在主题编辑器里、没有统一的根层，粒子层套在规则卡片外面（外层不裁切，颗粒能飘出卡片）。
+    Stack() {
     Column() {
       this.regexEnableSwitchItem()
       if (this.readerRegexFontEnabled) {
@@ -463,11 +470,18 @@ export struct ReaderFontSettingsEditor {
         }, (rule: ReaderRegexFontRule) => `${rule.id}|${rule.name}|${rule.pattern}`)
       }
     }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .width('100%')
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
     .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
+
+    if (this.deleteParticleBursts.length > 0) {
+      DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+    }
+    }
+    .id('reader_regex_rules_root')
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
   }
 
   saveSettings(regexRules: ReaderRegexFontRule[] = this.regexRules): void {
@@ -628,12 +642,32 @@ export struct ReaderFontSettingsEditor {
     });
   }
 
-  deleteEditingRegexRule(): void {
+  async deleteEditingRegexRule(): Promise<void> {
     const index = this.editingRegexRuleListIndex();
-    if (index >= 0) {
-      this.removeRegexRule(index);
-    }
     this.closeRegexRuleEditor();
+    if (index < 0 || index >= this.regexRules.length) return;
+    // 编辑面板滑走后这一条再消散，播完在补位动画里删掉。
+    const ruleId = `${this.regexRules[index].id}`;
+    const keys = [ruleId];
+    await ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingRuleIds = [...this.dissolvingRuleIds, key];
+    }, ListDissolve.particles('reader_regex_rules_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
+      (key: string): string => this.regexRuleElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
+    ListDissolve.commit(this.getUIContext(), () => {
+      const current = this.regexRules.findIndex((rule: ReaderRegexFontRule) => `${rule.id}` === ruleId);
+      if (current >= 0) this.removeRegexRule(current);
+    }, () => {
+      this.dissolvingRuleIds = ListDissolve.without(this.dissolvingRuleIds, keys);
+    });
+  }
+
+  regexRuleElementId(key: string): string {
+    return `reader_regex_rule_${encodeURIComponent(key)}`;
+  }
+
+  isRegexRuleDissolving(rule: ReaderRegexFontRule): boolean {
+    return this.dissolvingRuleIds.length > 0 && this.dissolvingRuleIds.indexOf(`${rule.id}`) >= 0;
   }
 
   closeRegexRuleEditor(): void {
@@ -1129,6 +1163,11 @@ export struct ReaderFontSettingsEditor {
     .backgroundColor(Color.Transparent)
     .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
     .alignItems(VerticalAlign.Center)
+    .opacity(ListDissolve.opacity(this.isRegexRuleDissolving(rule)))
+    .scale(ListDissolve.scale(this.isRegexRuleDissolving(rule)))
+    .blur(ListDissolve.blur(this.isRegexRuleDissolving(rule)))
+    .hitTestBehavior(this.isRegexRuleDissolving(rule) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.regexRuleElementId(`${rule.id}`))
     .onClick(() => {
       for (let i = 0; i < this.regexRules.length; i++) {
         if (this.regexRules[i].id === rule.id) {

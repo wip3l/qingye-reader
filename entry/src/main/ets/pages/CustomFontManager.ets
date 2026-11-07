@@ -8,6 +8,8 @@ import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
@@ -42,6 +44,9 @@ struct CustomFontManagerPage {
   @StorageLink('appDarkButtonColor') appDarkButtonColor: string = '#3F8CFF';
 
   @State customFonts: ReaderCustomFontItem[] = [];
+  /** 正在消散的字体文件路径，见 ListDissolve。 */
+  @State dissolvingPaths: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State refreshingCloudFonts: boolean = false;
   @State cloudFontError: string = '';
   @StorageLink('cloudDownloadQueueRaw') @Watch('onCloudDownloadQueueChanged') cloudDownloadQueueRaw: string = '[]';
@@ -76,7 +81,12 @@ struct CustomFontManagerPage {
       PageScaffold({ title: '自定义字体', content: () => {
         this.pageContent()
       } })
+
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('custom_font_manager_root')
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
@@ -325,10 +335,21 @@ struct CustomFontManagerPage {
     }
   }
 
-  deleteCustomFont(item: ReaderCustomFontItem): void {
+  async deleteCustomFont(item: ReaderCustomFontItem): Promise<void> {
+    if (this.dissolvingPaths.indexOf(item.filePath) >= 0) return;
+    const keys = [item.filePath];
+    await ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingPaths = [...this.dissolvingPaths, key];
+    }, ListDissolve.particles('custom_font_manager_root', [this.buttonColor(), this.primaryTextColor(), this.subTextColor()],
+      (key: string): string => this.fontCardElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }));
     const next = this.customFonts.filter((fontItem: ReaderCustomFontItem) =>
       fontItem.familyName !== item.familyName && fontItem.filePath !== item.filePath);
-    this.saveCustomFonts(next);
+    ListDissolve.commit(this.getUIContext(), () => {
+      this.saveCustomFonts(next);
+    }, () => {
+      this.dissolvingPaths = ListDissolve.without(this.dissolvingPaths, keys);
+    });
     if (this.readerFontFilePath === item.filePath || this.readerFontFamily === item.familyName) {
       this.refreshSystemFontFamily();
       this.readerFontMode = ReaderSettingsStore.FONT_MODE_DEVICE;
@@ -811,5 +832,18 @@ struct CustomFontManagerPage {
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
     .backgroundColor(this.cardColor())
     .alignItems(VerticalAlign.Center)
+    .opacity(ListDissolve.opacity(this.isFontDissolving(item)))
+    .scale(ListDissolve.scale(this.isFontDissolving(item)))
+    .blur(ListDissolve.blur(this.isFontDissolving(item)))
+    .hitTestBehavior(this.isFontDissolving(item) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.fontCardElementId(item.filePath))
+  }
+
+  fontCardElementId(path: string): string {
+    return `custom_font_card_${encodeURIComponent(path)}`;
+  }
+
+  isFontDissolving(item: ReaderCustomFontItem): boolean {
+    return this.dissolvingPaths.length > 0 && this.dissolvingPaths.indexOf(item.filePath) >= 0;
   }
 }

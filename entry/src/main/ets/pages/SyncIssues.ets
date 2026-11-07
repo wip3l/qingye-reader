@@ -6,6 +6,8 @@ import { AppDatabase } from '../model/data/AppDatabase';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { ExploreResultCache } from '../utils/ExploreResultCache';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -30,6 +32,9 @@ struct SyncIssuesPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @State issues: CloudSyncIssue[] = [];
+  /** 正在消散的记录 key，见 ListDissolve。 */
+  @State dissolvingKeys: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State sources: IssueSourceInfo[] = [];
   @State loading: boolean = true;
   @State errorMessage: string = '';
@@ -93,7 +98,12 @@ struct SyncIssuesPage {
       }, actions: () => {
         this.titleActions()
       } })
+
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('sync_issues_root')
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
@@ -281,6 +291,11 @@ struct SyncIssuesPage {
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.MD })
     .backgroundColor(this.cardColor())
     .borderRadius(ThemeRuntime.cardRadius())
+    .opacity(ListDissolve.opacity(this.isIssueDissolving(issue)))
+    .scale(ListDissolve.scale(this.isIssueDissolving(issue)))
+    .blur(ListDissolve.blur(this.isIssueDissolving(issue)))
+    .hitTestBehavior(this.isIssueDissolving(issue) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.issueCardElementId(issue.key))
   }
 
   @Builder
@@ -348,7 +363,9 @@ struct SyncIssuesPage {
   async removeIssue(issue: CloudSyncIssue): Promise<void> {
     try {
       await CloudSyncIssueStore.remove(getContext(this), this.userId, issue.key);
-      this.issues = this.issues.filter((item: CloudSyncIssue) => item.key !== issue.key);
+      await this.dissolveIssues([issue.key], 0, () => {
+        this.issues = this.issues.filter((item: CloudSyncIssue) => item.key !== issue.key);
+      });
     } catch (e) {
       HdsFeedback.showToast('移除记录失败');
     }
@@ -366,11 +383,33 @@ struct SyncIssuesPage {
     if (result.index !== 1) return;
     try {
       await CloudSyncIssueStore.clear(getContext(this), this.userId);
-      this.issues = [];
+      await this.dissolveIssues(this.issues.map((item: CloudSyncIssue) => item.key), ListDissolve.AFTER_DIALOG_MS, () => {
+        this.issues = [];
+      });
       HdsFeedback.showToast('已清除同步问题记录');
     } catch (e) {
       HdsFeedback.showToast('清除失败');
     }
+  }
+
+  issueCardElementId(key: string): string {
+    return `sync_issue_card_${encodeURIComponent(key)}`;
+  }
+
+  isIssueDissolving(issue: CloudSyncIssue): boolean {
+    return this.dissolvingKeys.length > 0 && this.dissolvingKeys.indexOf(issue.key) >= 0;
+  }
+
+  /** 这些记录消散后在补位动画里执行 remove；从确认框里清除时 delayMs 等它退场。 */
+  async dissolveIssues(keys: string[], delayMs: number, remove: () => void): Promise<void> {
+    await ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingKeys = [...this.dissolvingKeys, key];
+    }, ListDissolve.particles('sync_issues_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
+      (key: string): string => this.issueCardElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), delayMs);
+    ListDissolve.commit(this.getUIContext(), remove, () => {
+      this.dissolvingKeys = ListDissolve.without(this.dissolvingKeys, keys);
+    });
   }
 
   issueTarget(issue: CloudSyncIssue): string {

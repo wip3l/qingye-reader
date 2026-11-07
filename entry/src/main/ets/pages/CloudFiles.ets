@@ -10,6 +10,8 @@ import { CloudAutoSync } from '../account/CloudAutoSync';
 import { CloudFontImport } from '../account/CloudFontImport';
 import { CloudFileItem, CloudFileSummary, CloudUploadTask } from '../account/CloudFileModels';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { syncSystemBars } from '../utils/SystemBars';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -32,6 +34,9 @@ struct CloudFilesPage {
   @State summary: CloudFileSummary = new CloudFileSummary();
   @State summaryLoaded: boolean = false;
   @State files: CloudFileItem[] = [];
+  /** 正在消散的云文件 id，见 ListDissolve。 */
+  @State dissolvingIds: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State nextCursor: string = '';
   @State busy: boolean = false;
   @State progress: string = '';
@@ -45,9 +50,18 @@ struct CloudFilesPage {
   }
   aboutToDisappear(): void { CloudFileClient.pause(); }
   build() {
-    Column() {
-      PageScaffold({ title: '我的云空间', content: () => { this.content() } })
-    }.width('100%').height('100%').backgroundColor(ThemeRuntime.pageColor(this.dark))
+    Stack() {
+      Column() {
+        PageScaffold({ title: '我的云空间', content: () => { this.content() } })
+      }.width('100%').height('100%').backgroundColor(ThemeRuntime.pageColor(this.dark))
+
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
+    }
+    .id('cloud_files_root')
+    .width('100%')
+    .height('100%')
   }
 
   @Builder
@@ -362,6 +376,19 @@ struct CloudFilesPage {
     .padding({ left: AppSpacing.LG, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
     .borderRadius(ThemeRuntime.largeRadius())
     .backgroundColor(ThemeRuntime.cardColor(this.dark))
+    .opacity(ListDissolve.opacity(this.isFileDissolving(file)))
+    .scale(ListDissolve.scale(this.isFileDissolving(file)))
+    .blur(ListDissolve.blur(this.isFileDissolving(file)))
+    .hitTestBehavior(this.isFileDissolving(file) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.fileCardElementId(file.id))
+  }
+
+  fileCardElementId(id: string): string {
+    return `cloud_file_card_${encodeURIComponent(id)}`;
+  }
+
+  isFileDissolving(file: CloudFileItem): boolean {
+    return this.dissolvingIds.length > 0 && this.dissolvingIds.indexOf(file.id) >= 0;
   }
 
   formatDate(value: number): string {
@@ -506,7 +533,24 @@ struct CloudFilesPage {
         `只删除“${file.name}”的云端副本，各设备已下载的文件保留，之后不再自动同步它。想在所有设备移除，请在书架或字体管理里删除。`,
       buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.dark) }, { text: '删除', color: ThemeRuntime.accentColor(this.dark) }] });
     if (answer.index !== 1) return;
-    try { await CloudFileClient.remove(file.id); await this.refresh(); }
+    try {
+      await CloudFileClient.remove(file.id);
+      // 从确认框里删除：等它退场后消散，播完先在本地拿掉并补位，再刷新云端列表。
+      const ids = [file.id];
+      await ListDissolve.fadeOut(this.getUIContext(), ids, (id: string) => {
+        this.dissolvingIds = [...this.dissolvingIds, id];
+      }, ListDissolve.particles('cloud_files_root',
+        [ThemeRuntime.accentColor(this.dark), ThemeRuntime.primaryTextColor(this.dark), ThemeRuntime.subTextColor(this.dark)],
+        (id: string): string => this.fileCardElementId(id), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+        (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
+      ListDissolve.commit(this.getUIContext(), () => {
+        this.files = this.files.filter((item: CloudFileItem) => item.id !== file.id);
+      }, () => {
+        this.dissolvingIds = ListDissolve.without(this.dissolvingIds, ids);
+      });
+      await new Promise<void>((resolve: () => void) => { setTimeout(resolve, ListDissolve.CLEAR_DELAY_MS); });
+      await this.refresh();
+    }
     catch (error) { this.error = (error as Error).message; }
   }
 }

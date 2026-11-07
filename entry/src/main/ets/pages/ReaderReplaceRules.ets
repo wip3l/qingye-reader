@@ -14,6 +14,8 @@ import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve, ListDissolveParticles } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -65,6 +67,9 @@ struct ReaderReplaceRulesPage {
   @State contextViewportHeight: number = 720;
   @State selectionMode: boolean = false;
   @State selectedRuleIds: number[] = [];
+  /** 正在消散的规则 id（字符串），见 ListDissolve。 */
+  @State dissolvingRuleKeys: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State isBatchOperating: boolean = false;
   @State previewMode: boolean = false;
   @State previewTitle: string = '';
@@ -352,7 +357,11 @@ struct ReaderReplaceRulesPage {
           this.showRuleActionDialog = false;
         }))
 
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('replace_rules_root')
     .width('100%')
     .height('100%')
     .onAreaChange((_oldValue: Area, newValue: Area) => this.updateContextViewport(newValue))
@@ -714,7 +723,11 @@ struct ReaderReplaceRulesPage {
     .backgroundColor(this.cardColor())
     .borderRadius(ThemeRuntime.cardRadius())
     .border({ width: ThemeRuntime.glassBorderWidth(), color: ThemeRuntime.glassBorderColor(this.appDarkMode) })
-    .opacity(rule.enabled ? 1 : 0.5)
+    .opacity(this.isRuleDissolving(rule) ? 0 : (rule.enabled ? 1 : 0.5))
+    .scale(ListDissolve.scale(this.isRuleDissolving(rule)))
+    .blur(ListDissolve.blur(this.isRuleDissolving(rule)))
+    .hitTestBehavior(this.isRuleDissolving(rule) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.ruleCardElementId(`${rule.id}`))
     .gesture(
       LongPressGesture({ repeat: false })
         .onAction((event: GestureEvent) => {
@@ -1344,11 +1357,13 @@ struct ReaderReplaceRulesPage {
     if (result.index !== 1) return;
     this.isBatchOperating = true;
     try {
-      const next = this.rules.filter((rule: ReaderReplaceRule) => !this.selectedRuleIds.includes(rule.id));
-      await ReaderReplaceRuleStore.save(getContext(this), next);
-      this.rules = next;
-      this.exitRuleSelectionMode();
-      HdsFeedback.showToast(`已删除 ${count} 条规则`);
+      const ids = [...this.selectedRuleIds];
+      const next = this.rules.filter((rule: ReaderReplaceRule) => !ids.includes(rule.id));
+      if (await this.dissolveRulesAndSave(ids, next)) {
+        // 列表项的 key 带多选状态，补位动画放完再退出多选，否则其余卡片会整批重建、看不到补位。
+        setTimeout(() => this.exitRuleSelectionMode(), ListDissolve.CLOSE_MS + 40);
+        HdsFeedback.showToast(`已删除 ${count} 条规则`);
+      }
     } finally {
       this.isBatchOperating = false;
     }
@@ -1642,8 +1657,54 @@ struct ReaderReplaceRulesPage {
     });
     if (result.index !== 1) return;
     const next = this.rules.filter((item: ReaderReplaceRule) => item.id !== rule.id);
-    await ReaderReplaceRuleStore.save(getContext(this), next);
-    this.rules = next;
+    await this.dissolveRulesAndSave([rule.id], next);
+  }
+
+  ruleCardElementId(key: string): string {
+    return `replace_rule_card_${key}`;
+  }
+
+  ruleDeleteParticles(): ListDissolveParticles {
+    const particles = new ListDissolveParticles();
+    particles.rootId = 'replace_rules_root';
+    particles.colors = [this.accentColor(), this.primaryTextColor(), this.subTextColor()];
+    particles.elementIdOf = (key: string): string => this.ruleCardElementId(key);
+    particles.show = (bursts: DeleteParticleBurst[]): void => {
+      this.deleteParticleBursts = [...this.deleteParticleBursts, ...bursts];
+    };
+    particles.hide = (ids: number[]): void => {
+      this.deleteParticleBursts = this.deleteParticleBursts.filter((burst: DeleteParticleBurst) => ids.indexOf(burst.id) < 0);
+    };
+    return particles;
+  }
+
+  isRuleDissolving(rule: ReaderReplaceRule): boolean {
+    return this.dissolvingRuleKeys.length > 0 && this.dissolvingRuleKeys.indexOf(`${rule.id}`) >= 0;
+  }
+
+  /** 被删的规则先消散，同时保存；播完在补位动画里换成 next。保存失败时恢复原样。 */
+  async dissolveRulesAndSave(ids: number[], next: ReaderReplaceRule[]): Promise<boolean> {
+    const keys = ids.map((id: number) => `${id}`);
+    // 单条和批量删除都从确认框里点，等它退场再开始。
+    const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingRuleKeys = [...this.dissolvingRuleKeys, key];
+    }, this.ruleDeleteParticles(), ListDissolve.AFTER_DIALOG_MS);
+    try {
+      await ReaderReplaceRuleStore.save(getContext(this), next);
+    } catch (e) {
+      console.error('删除规则失败:', e);
+      await fade;
+      this.dissolvingRuleKeys = ListDissolve.without(this.dissolvingRuleKeys, keys);
+      HdsFeedback.showToast('删除失败');
+      return false;
+    }
+    await fade;
+    ListDissolve.commit(this.getUIContext(), () => {
+      this.rules = next;
+    }, () => {
+      this.dissolvingRuleKeys = ListDissolve.without(this.dissolvingRuleKeys, keys);
+    });
+    return true;
   }
 
   syncBars(): void {

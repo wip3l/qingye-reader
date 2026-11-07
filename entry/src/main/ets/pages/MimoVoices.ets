@@ -8,6 +8,8 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
@@ -30,6 +32,13 @@ class MimoPresetDataSource implements IDataSource {
     this.listeners = this.listeners.filter((item: DataChangeListener): boolean => item !== listener);
   }
   reload(items: MimoVoicePreset[]): void { this.items = items; this.listeners.forEach((l: DataChangeListener): void => l.onDataReloaded()); }
+  /** 删掉一个预设，走 onDataDelete 让 List 播补位动画。 */
+  remove(id: string): void {
+    const index = this.items.findIndex((item: MimoVoicePreset): boolean => item.id === id);
+    if (index < 0) return;
+    this.items = this.items.filter((item: MimoVoicePreset): boolean => item.id !== id);
+    this.listeners.forEach((l: DataChangeListener): void => l.onDataDelete(index));
+  }
 }
 const MIMO_PREVIEW_NAMES: string[] = ['旁白与对白', '儿童对白', '情绪变化', '自定义文字'];
 const MIMO_PREVIEW_TEXTS: string[] = [
@@ -82,6 +91,9 @@ struct MimoVoicesPage {
   private pageX: number = 0;
   private pageY: number = 0;
   private source: MimoPresetDataSource = new MimoPresetDataSource();
+  /** 正在消散的预设或方案 id，见 ListDissolve。 */
+  @State dissolvingIds: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   private book: string = '';
   private roleId: string = '';
   private editId: string = '';
@@ -210,7 +222,29 @@ struct MimoVoicesPage {
   }
   private async remove(preset: MimoVoicePreset): Promise<void> {
     if (!await this.confirm('删除“' + preset.name + '”？', '', '删除', true)) return;
-    try { MimoStore.deletePreset(preset.id); this.refresh(); } catch (error) { HdsFeedback.showToast((error as Error).message); }
+    try { MimoStore.deletePreset(preset.id); } catch (error) { HdsFeedback.showToast((error as Error).message); return; }
+    await this.dissolveMimo(preset.id, () => this.source.remove(preset.id));
+  }
+
+  mimoCardElementId(id: string): string { return `mimo_card_${encodeURIComponent(id)}`; }
+
+  isMimoDissolving(id: string): boolean {
+    return this.dissolvingIds.length > 0 && this.dissolvingIds.indexOf(id) >= 0;
+  }
+
+  /** 从确认框里删除：等它退场后这张卡片消散，播完在补位动画里执行 remove，补位结束再整体刷新。 */
+  private async dissolveMimo(id: string, remove: () => void): Promise<void> {
+    const keys = [id];
+    await ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingIds = [...this.dissolvingIds, key];
+    }, ListDissolve.particles('mimo_voices_root',
+      [ThemeRuntime.accentColor(this.dark), ThemeRuntime.primaryTextColor(this.dark), ThemeRuntime.subTextColor(this.dark)],
+      (key: string): string => this.mimoCardElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
+    ListDissolve.commit(this.getUIContext(), remove, () => {
+      this.dissolvingIds = ListDissolve.without(this.dissolvingIds, keys);
+      this.refresh();
+    });
   }
   private editScheme(scheme?: MimoVoiceScheme): void {
     this.editId = scheme?.id || ''; this.editName = scheme?.name || '';
@@ -218,8 +252,11 @@ struct MimoVoicesPage {
   }
   private async removeScheme(scheme: MimoVoiceScheme): Promise<void> {
     if (!await this.confirm('删除方案“' + scheme.name + '”？', '仅删除方案，保留音色预设和人物声音。', '删除', true)) return;
-    try { MimoStore.deleteScheme(scheme.id); this.refresh(); }
-    catch (error) { HdsFeedback.showToast((error as Error).message); }
+    try { MimoStore.deleteScheme(scheme.id); }
+    catch (error) { HdsFeedback.showToast((error as Error).message); return; }
+    await this.dissolveMimo(scheme.id, () => {
+      this.schemes = this.schemes.filter((item: MimoVoiceScheme): boolean => item.id !== scheme.id);
+    });
   }
   private schemeEnabled(scheme: MimoVoiceScheme): boolean { return !this.disabledSchemeIds.includes(scheme.id); }
   private toggleScheme(scheme: MimoVoiceScheme): void {
@@ -322,7 +359,10 @@ struct MimoVoicesPage {
         .bindPopup(this.showSchemeMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
           this.schemeMenu()
         }, Placement.BottomLeft, this.dark, ThemeRuntime.accentColor(this.dark), () => { this.showSchemeMenu = false; }))
-    }.width('100%').height('100%')
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
+    }.id('mimo_voices_root').width('100%').height('100%')
     .onAreaChange((_old: Area, area: Area) => {
       this.pageX = Number(area.globalPosition.x) || 0; this.pageY = Number(area.globalPosition.y) || 0;
     })
@@ -442,7 +482,11 @@ struct MimoVoicesPage {
     }
     .alignItems(HorizontalAlign.Start).width('100%').padding(AppSpacing.LG)
     .backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.mediumRadius())
-    .opacity(this.presetEnabled(preset) ? 1 : 0.45)
+    .opacity(this.isMimoDissolving(preset.id) ? 0 : (this.presetEnabled(preset) ? 1 : 0.45))
+    .scale(ListDissolve.scale(this.isMimoDissolving(preset.id)))
+    .blur(ListDissolve.blur(this.isMimoDissolving(preset.id)))
+    .hitTestBehavior(this.isMimoDissolving(preset.id) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.mimoCardElementId(preset.id))
     .gesture(LongPressGesture({ repeat: false }).onAction((event: GestureEvent) => this.openPresetMenu(preset, event)))
     .onClick(() => this.editPreset(preset))
   }
@@ -579,7 +623,11 @@ struct MimoVoicesPage {
     }
     .alignItems(HorizontalAlign.Start).width('100%').padding(AppSpacing.LG)
     .backgroundColor(ThemeRuntime.cardColor(this.dark)).borderRadius(ThemeRuntime.mediumRadius())
-    .opacity(this.schemeEnabled(scheme) ? 1 : 0.45)
+    .opacity(this.isMimoDissolving(scheme.id) ? 0 : (this.schemeEnabled(scheme) ? 1 : 0.45))
+    .scale(ListDissolve.scale(this.isMimoDissolving(scheme.id)))
+    .blur(ListDissolve.blur(this.isMimoDissolving(scheme.id)))
+    .hitTestBehavior(this.isMimoDissolving(scheme.id) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.mimoCardElementId(scheme.id))
     .gesture(LongPressGesture({ repeat: false }).onAction((event: GestureEvent) => this.openSchemeMenu(scheme, event)))
     .onClick(() => this.editScheme(scheme))
   }

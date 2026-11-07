@@ -1,6 +1,6 @@
 import { SourceGroupSortList } from '../components/book/SourceGroupSortList';
 import { BookSourceExport } from '../utils/BookSourceExport';
-import { NativeSourceService, NativeSourceSpec, BookSource, SearchBook, BookListRule, SearchRule, ExploreRule, BookInfoRule, TocRule, ContentRule, HttpClient, HttpResponse, RawHttpTextClient, VerificationSupport, CookieStore, TlsTrustStore, BookSourceLoginItem, BookSourceScriptRunner, BookSourceLoginCrypto, BookSourceExecutionJournal, BookSourceRuntimeRouter, SourceRuntimeDecision, SourceRuntimeStage, AnalyzeUrl } from '@legado/sourceengine';
+import { NativeSourceService, NativeSourceSpec, BookSource, SearchBook, BookListRule, SearchRule, ExploreRule, BookInfoRule, TocRule, ContentRule, HttpClient, HttpResponse, RawHttpTextClient, VerificationSupport, CookieStore, TlsTrustStore, BookSourceLoginItem, BookSourceScriptRunner, BookSourceLoginCrypto, BookSourceExecutionJournal, BookSourceRuntimeRouter, SourceRuntimeDecision, SourceRuntimeStage, AnalyzeUrl, sleepMs } from '@legado/sourceengine';
 import { router, promptAction } from '@kit.ArkUI';
 import { AppDatabase, BookSourcePositionUpdate } from '../model/data/AppDatabase';
 import { SearchCoordinator, SearchProgress, SearchSourceResult } from '../core/book/SearchCoordinator';
@@ -37,6 +37,8 @@ import {
   ExploreReadingValidator
 } from '../core/book/ExploreReadingValidator';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve, ListDissolveParticles } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -87,6 +89,20 @@ class BookSourceListDataSource implements IDataSource {
 
   orderedUrls(): string[] {
     return this.sources.map((source: BookSource) => source.bookSourceUrl);
+  }
+
+  /** 删除这些书源，逐条走 onDataDelete 让 List 播补位动画；数量多时退回整表重载。 */
+  remove(urls: Set<string>): void {
+    if (urls.size > 50) {
+      this.sources = this.sources.filter((source: BookSource) => !urls.has(source.bookSourceUrl));
+      for (const listener of this.listeners) listener.onDataReloaded();
+      return;
+    }
+    for (let index = this.sources.length - 1; index >= 0; index--) {
+      if (!urls.has(this.sources[index].bookSourceUrl)) continue;
+      this.sources.splice(index, 1);
+      for (const listener of this.listeners) listener.onDataDelete(index);
+    }
   }
 
   hasSameOrder(urls: string[]): boolean {
@@ -145,6 +161,10 @@ struct BookSourcePage {
   @State allSources: BookSource[] = [];
   @State sources: BookSource[] = [];
   @State visibleSources: BookSource[] = [];
+  /** 正在消散的书源 URL，见 ListDissolve。 */
+  @State dissolvingSourceUrls: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
+  private sourceDeleteInFlight: boolean = false;
   private sourceListDataSource: BookSourceListDataSource = new BookSourceListDataSource();
   @State sourceListViewportHeight: number = 0;
   @State sourceFirstVisibleIndex: number = 0;
@@ -604,7 +624,11 @@ struct BookSourcePage {
                 .borderRadius(ThemeRuntime.mediumRadius())
                 .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
                 .shadow({ radius: ThemeRuntime.glassShadowRadius(), color: this.glassShadowColor(), offsetX: ThemeRuntime.glassShadowOffsetX(), offsetY: ThemeRuntime.glassShadowOffsetY() })
-                .opacity(source.enabled ? 1 : 0.45)
+                .opacity(this.isSourceDissolving(source) ? 0 : (source.enabled ? 1 : 0.45))
+                .scale(ListDissolve.scale(this.isSourceDissolving(source)))
+                .blur(ListDissolve.blur(this.isSourceDissolving(source)))
+                .hitTestBehavior(this.isSourceDissolving(source) ? HitTestMode.None : HitTestMode.Default)
+                .id(this.sourceCardElementId(source.bookSourceUrl))
                 .onClick(() => {
                   if (this.isBatchOperating) {
                     return;
@@ -831,7 +855,11 @@ struct BookSourcePage {
           this.continueLoginRuntime();
         })
 
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('book_source_root')
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
@@ -1977,7 +2005,11 @@ struct BookSourcePage {
     .padding(AppSpacing.LG)
     .backgroundColor(this.glassCardColor())
     .borderRadius(ThemeRuntime.mediumRadius())
-    .opacity(source.enabled ? 1 : 0.45)
+    .opacity(this.isSourceDissolving(source) ? 0 : (source.enabled ? 1 : 0.45))
+    .scale(ListDissolve.scale(this.isSourceDissolving(source)))
+    .blur(ListDissolve.blur(this.isSourceDissolving(source)))
+    .hitTestBehavior(this.isSourceDissolving(source) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.sourceCardElementId(source.bookSourceUrl))
     .onClick(() => {
       if (this.isBatchOperating) return;
       if (this.selectionMode) {
@@ -5426,25 +5458,77 @@ struct BookSourcePage {
       return;
     }
     this.showSourceDeleteDialog = false;
-    this.isBatchOperating = true;
-    this.batchOperationText = '正在删除书源...';
+    if (this.sourceDeleteInFlight) return;
+    // 单个删除很快，不弹“正在删除”进度框（它的遮罩会盖住消散），删库与消散同时进行。
+    this.sourceDeleteInFlight = true;
+    const url = source.bookSourceUrl;
     try {
-      const db = AppDatabase.getInstance();
-      await db.deleteBookSource(source.bookSourceUrl);
-      await ExploreResultCache.invalidateSources(getContext(this), [source.bookSourceUrl]);
-      this.sources = this.sources.filter((item: BookSource) => item.bookSourceUrl !== source.bookSourceUrl);
-      this.allSources = this.allSources.filter((item: BookSource) => item.bookSourceUrl !== source.bookSourceUrl);
-      this.visibleSources = this.visibleSources.filter((item: BookSource) => item.bookSourceUrl !== source.bookSourceUrl);
-      this.selectedSourceUrls = this.selectedSourceUrls.filter((url: string) => url !== source.bookSourceUrl);
+      await this.dissolveSources([url], async (): Promise<void> => {
+        await AppDatabase.getInstance().deleteBookSource(url);
+        await ExploreResultCache.invalidateSources(getContext(this), [url]);
+      });
+      this.selectedSourceUrls = this.selectedSourceUrls.filter((item: string) => item !== url);
       this.actionSourceUrl = '';
+      await sleepMs(ListDissolve.CLOSE_MS);
       await this.reconcileSourceGroups();
       HdsFeedback.showToast('书源已删除');
     } catch (e) {
       console.error('删除书源失败:', e);
       HdsFeedback.showToast('删除书源失败');
     } finally {
-      this.isBatchOperating = false;
+      this.sourceDeleteInFlight = false;
     }
+  }
+
+  sourceCardElementId(url: string): string {
+    return `book_source_card_${encodeURIComponent(url)}`;
+  }
+
+  sourceDeleteParticles(): ListDissolveParticles {
+    const particles = new ListDissolveParticles();
+    particles.rootId = 'book_source_root';
+    particles.colors = [this.accentColor(), this.primaryTextColor(), this.subTextColor()];
+    particles.elementIdOf = (url: string): string => this.sourceCardElementId(url);
+    particles.show = (bursts: DeleteParticleBurst[]): void => {
+      this.deleteParticleBursts = [...this.deleteParticleBursts, ...bursts];
+    };
+    particles.hide = (ids: number[]): void => {
+      this.deleteParticleBursts = this.deleteParticleBursts.filter((burst: DeleteParticleBurst) => ids.indexOf(burst.id) < 0);
+    };
+    return particles;
+  }
+
+  isSourceDissolving(source: BookSource): boolean {
+    return this.dissolvingSourceUrls.length > 0 && this.dissolvingSourceUrls.indexOf(source.bookSourceUrl) >= 0;
+  }
+
+  /**
+   * 被删的书源先消散，播完从列表里拿掉并补位。work 与消散同时执行（单个删除时删库），批量删除时库已删完、不传。
+   * work 失败时恢复原样并把错误抛给调用方。
+   */
+  async dissolveSources(urls: string[], work?: () => Promise<void>): Promise<void> {
+    const ui = this.getUIContext();
+    // 三个入口都是从弹窗里确认的（删除确认、批量进度、校验结果），等弹窗退场再开始。
+    const fade = ListDissolve.fadeOut(ui, urls, (url: string) => {
+      this.dissolvingSourceUrls = [...this.dissolvingSourceUrls, url];
+    }, this.sourceDeleteParticles(), ListDissolve.AFTER_DIALOG_MS);
+    try {
+      if (work) await work();
+    } catch (e) {
+      await fade;
+      this.dissolvingSourceUrls = ListDissolve.without(this.dissolvingSourceUrls, urls);
+      throw e as Error;
+    }
+    await fade;
+    const removed = new Set<string>(urls);
+    ListDissolve.commit(ui, () => {
+      this.sourceListDataSource.remove(removed);
+      this.allSources = this.allSources.filter((item: BookSource) => !removed.has(item.bookSourceUrl));
+      this.sources = this.sources.filter((item: BookSource) => !removed.has(item.bookSourceUrl));
+      this.visibleSources = this.visibleSources.filter((item: BookSource) => !removed.has(item.bookSourceUrl));
+    }, () => {
+      this.dissolvingSourceUrls = ListDissolve.without(this.dissolvingSourceUrls, urls);
+    });
   }
 
   enterSelectionMode(): void {
@@ -5732,9 +5816,14 @@ struct BookSourcePage {
         await db.deleteBookSource(url);
       }
       await ExploreResultCache.invalidateSources(getContext(this), selectedUrls);
+      // 先关掉进度框露出列表，选中的书源在多选状态下消散、补位；条目 key 带多选状态，补位放完再退出多选并重读。
+      this.isBatchOperating = false;
+      await this.dissolveSources(selectedUrls);
       this.selectedSourceUrls = [];
-      await this.loadSources();
+      await sleepMs(ListDissolve.CLOSE_MS + 40);
       this.selectionMode = false;
+      // 原位重读：普通重读会先切到“加载中”占位，补位刚放完列表会整个闪一下。
+      await this.loadSources(true);
       HdsFeedback.showToast(`已删除 ${selectedUrls.length} 个书源`);
     } catch (e) {
       console.error('批量删除书源失败:', e);
@@ -6430,7 +6519,10 @@ struct BookSourcePage {
       await ExploreResultCache.invalidateSources(getContext(this), failedUrls);
       this.checkBadUrls = [];
       this.showCheckDialog = false;
-      await this.loadSources();
+      this.isBatchOperating = false;
+      await this.dissolveSources(failedUrls);
+      await sleepMs(ListDissolve.CLOSE_MS + 40);
+      await this.loadSources(true);
       HdsFeedback.showToast(`已删除 ${failedUrls.length} 个明确失败的书源`);
     } catch (e) {
       console.error('删除异常书源失败:', e);

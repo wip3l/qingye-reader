@@ -7,6 +7,7 @@ import {
 } from '../reader/ReaderShelfCoverOpening';
 import { ReaderOpenSnapshot, ReaderOpenSnapshotStore } from '../../core/reader/ReaderOpenSnapshotStore';
 import { SharedElementBounds } from '../../utils/SharedElementBounds';
+import { DeleteParticles, DeleteParticleLayer, DeleteParticleBurst } from '../common/DeleteParticles';
 import { BookshelfCoverBadges } from '../BookshelfCoverBadges';
 import { BookshelfCoverBadgeSettings } from '../../utils/BookshelfCoverBadgeSettings';
 import { componentUtils, curves, FrameCallback, router, window } from '@kit.ArkUI';
@@ -405,6 +406,9 @@ export struct BookshelfPage {
   private shelfCoverBookTasks: Set<string> = new Set();
   private pendingShelfCoverUpdates: Map<string, string> = new Map();
   private shelfCoverUpdateTimer: number = -1;
+  /** 正在消散的书：卡片淡出、缩小、模糊，动画结束后才真正从列表里拿掉。 */
+  @State shelfDissolvingUrls: string[] = [];
+  @State shelfDissolveBursts: DeleteParticleBurst[] = [];
   @StorageLink('shelfUpdateTime') @Watch('onShelfChanged') shelfUpdateTime: number = 0;
   @StorageLink('bookshelfSortMode') sortMode: string = 'recentRead';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
@@ -770,19 +774,112 @@ export struct BookshelfPage {
   }
 
   async deleteBook(book: Book) {
+    // 消散动画与删库同时进行；封面缓存等动画播完再清，否则封面会先变回占位图。
+    const dissolve = this.dissolveShelfBooks([book]);
     try {
       const db = AppDatabase.getInstance();
-      this.deleteBookCoverCache(book);
       CloudAutoSync.onBookRemoved(getContext(this), book).catch(() => undefined);
       LocalBookService.deleteLocalBookFiles(getContext(this), book);
       await db.deleteBook(book.bookUrl, 'bookshelf_user_delete');
+      await dissolve;
+      this.commitShelfBookRemoval([book.bookUrl]);
+      this.deleteBookCoverCache(book);
       HdsFeedback.showToast(`已删除《${book.name}》`);
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
       await this.loadBooks();
     } catch (e) {
       console.error('删除书籍失败:', e);
+      this.shelfDissolvingUrls = this.shelfDissolvingUrls.filter((url: string) => url !== book.bookUrl);
       HdsFeedback.showToast('删除失败');
     }
+  }
+
+  isShelfBookDissolving(bookUrl: string): boolean {
+    return this.shelfDissolvingUrls.length > 0 && this.shelfDissolvingUrls.indexOf(bookUrl) >= 0;
+  }
+
+  shelfDissolveScale(bookUrl: string): number {
+    return this.isShelfBookDissolving(bookUrl) ? 0.9 : 1;
+  }
+
+  shelfCardElementId(book: Book, scope: string): string {
+    return `shelf_book_card_${scope}${encodeURIComponent(book.bookUrl)}`;
+  }
+
+  /**
+   * 当前分类页上这本书看得见的那张卡片（相对书架根节点，vp）。先找继续阅读卡片里的封面，再找格子或列表行；
+   * 滚出屏幕、只在相邻分类页里的不算，这些书不播粒子，直接随列表一起删掉。
+   */
+  locateShelfDissolveTarget(book: Book, pageKey: string): DeleteParticleBurst | undefined {
+    const viewportWidth = this.contextViewportWidth;
+    const viewportHeight = this.contextViewportHeight;
+    for (const latest of [true, false]) {
+      const scope = this.shelfCoverScope(pageKey, latest);
+      const coverId = this.shelfCoverElementId(book, scope);
+      const bounds = (latest ? undefined : this.measureTileGroupRect(this.shelfCardElementId(book, scope))) ||
+        this.measureTileGroupRect(coverId);
+      if (!bounds || bounds.width < 4 || bounds.height < 4) continue;
+      if (viewportWidth > 0 && (bounds.x + bounds.width <= 0 || bounds.x >= viewportWidth)) continue;
+      if (viewportHeight > 0 && (bounds.y + bounds.height <= 0 || bounds.y >= viewportHeight)) continue;
+      const burst = new DeleteParticleBurst();
+      burst.x = bounds.x;
+      burst.y = bounds.y;
+      burst.width = bounds.width;
+      burst.height = bounds.height;
+      burst.coverId = coverId;
+      return burst;
+    }
+    return undefined;
+  }
+
+  /** 让这些书的卡片散成颗粒，等卡片淡出完再返回；看不见的书不等。 */
+  async dissolveShelfBooks(books: Book[]): Promise<void> {
+    if (books.length === 0) return;
+    const pageKey = this.shelfPageKey();
+    const targets: DeleteParticleBurst[] = [];
+    for (const book of books) {
+      if (targets.length >= 16) break;
+      const target = this.locateShelfDissolveTarget(book, pageKey);
+      if (target) targets.push(target);
+    }
+    const urls = books.map((book: Book) => book.bookUrl);
+    if (targets.length === 0) {
+      this.shelfDissolvingUrls = [...this.shelfDissolvingUrls, ...urls];
+      return;
+    }
+    const ui = this.getUIContext();
+    const fallback = this.appDarkMode ? ['#C8CCD2', '#8A9099', '#5F6670'] : ['#5F6670', '#9AA0A6', '#C4C8CE'];
+    const colors = await Promise.all(targets.map((target: DeleteParticleBurst) =>
+      DeleteParticles.pickColors(ui, target.coverId, fallback)));
+    const ids: number[] = [];
+    targets.forEach((target: DeleteParticleBurst, index: number) => {
+      target.id = DeleteParticles.newId();
+      target.colors = colors[index];
+      target.count = DeleteParticles.particleCount(target.width, target.height, targets.length);
+      ids.push(target.id);
+    });
+    this.shelfDissolveBursts = [...this.shelfDissolveBursts, ...targets];
+    this.getUIContext().animateTo({ duration: DeleteParticles.FADE_MS, curve: Curve.EaseIn }, () => {
+      this.shelfDissolvingUrls = [...this.shelfDissolvingUrls, ...urls];
+    });
+    setTimeout(() => {
+      this.shelfDissolveBursts = this.shelfDissolveBursts.filter((burst: DeleteParticleBurst) => ids.indexOf(burst.id) < 0);
+    }, DeleteParticles.LAYER_MS);
+    await sleepMs(DeleteParticles.FADE_MS);
+  }
+
+  /** 消散完的书先从内存里拿掉并让其余卡片补位，库里的最新数据随后由 loadBooks 补齐。 */
+  commitShelfBookRemoval(urls: string[]): void {
+    this.getUIContext().animateTo({ duration: 320, curve: Curve.FastOutSlowIn }, () => {
+      this.allBooks = this.allBooks.filter((book: Book) => urls.indexOf(book.bookUrl) < 0);
+      this.applyShelfScope();
+      this.reloadShelfDataSources();
+    });
+    // 被拿掉的格子在补位动画里还会播一段系统默认的消失转场，期间节点仍在画；消散状态要等这段结束再清，
+    // 否则透明度先回到 1，已经散掉的封面会重新露出来再淡出。
+    setTimeout(() => {
+      this.shelfDissolvingUrls = this.shelfDissolvingUrls.filter((url: string) => urls.indexOf(url) < 0);
+    }, 600);
   }
 
   showDeleteConfirm(book: Book) {
@@ -1421,6 +1518,9 @@ export struct BookshelfPage {
       if (this.tileGroupFlyers.length > 0) {
         this.tileGroupFlyerLayer()
       }
+      if (this.shelfDissolveBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.shelfDissolveBursts })
+      }
 
       if (this.books.length > 0 && this.shouldShowShelfRefreshStatus()) {
         this.shelfRefreshStatusOverlay()
@@ -1897,6 +1997,12 @@ export struct BookshelfPage {
                   }
                   .width('100%')
                   .alignItems(VerticalAlign.Center)
+                  .id(this.shelfCardElementId(book, this.shelfCoverScope(pageKey, false)))
+                  .opacity(this.isShelfBookDissolving(book.bookUrl) ? 0 : 1)
+                  .scale({ x: this.isShelfBookDissolving(book.bookUrl) ? 0.96 : 1,
+                    y: this.isShelfBookDissolving(book.bookUrl) ? 0.96 : 1 })
+                  .blur(this.isShelfBookDissolving(book.bookUrl) ? 16 : 0)
+                  .hitTestBehavior(this.isShelfBookDissolving(book.bookUrl) ? HitTestMode.None : HitTestMode.Default)
                 }
               }, (book: Book) => this.shelfBookRenderKey(book, `list_${pageKey}`))
 
@@ -3653,13 +3759,21 @@ export struct BookshelfPage {
     const urls = [...this.selectedBookUrls];
     const targets = this.allBooks.filter((book: Book) => urls.includes(book.bookUrl));
     const db = AppDatabase.getInstance();
-    for (const book of targets) {
-      this.deleteBookCoverCache(book);
-      await CloudAutoSync.onBookRemoved(getContext(this), book).catch(() => undefined);
-      LocalBookService.deleteLocalBookFiles(getContext(this), book);
-      await db.deleteBook(book.bookUrl, 'bookshelf_batch_delete');
+    // 先关掉确认框露出书架，选中的书在多选状态下原地消散，播完再退出多选、补位。
+    this.closeBatchDeleteDialog();
+    const dissolve = this.dissolveShelfBooks(targets);
+    try {
+      for (const book of targets) {
+        await CloudAutoSync.onBookRemoved(getContext(this), book).catch(() => undefined);
+        LocalBookService.deleteLocalBookFiles(getContext(this), book);
+        await db.deleteBook(book.bookUrl, 'bookshelf_batch_delete');
+      }
+    } finally {
+      await dissolve;
+      this.exitBookMultiSelect();
+      this.commitShelfBookRemoval(urls);
+      for (const book of targets) this.deleteBookCoverCache(book);
     }
-    this.exitBookMultiSelect();
     AppStorage.setOrCreate('shelfUpdateTime', Date.now());
     await this.loadBooks();
     HdsFeedback.showToast(`已删除 ${targets.length} 本书`);
@@ -4296,6 +4410,10 @@ export struct BookshelfPage {
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
+    .opacity(this.isShelfBookDissolving(book.bookUrl) ? 0 : 1)
+    .scale({ x: this.shelfDissolveScale(book.bookUrl), y: this.shelfDissolveScale(book.bookUrl) })
+    .blur(this.isShelfBookDissolving(book.bookUrl) ? 16 : 0)
+    .hitTestBehavior(this.isShelfBookDissolving(book.bookUrl) ? HitTestMode.None : HitTestMode.Default)
     .priorityGesture(
       GestureGroup(GestureMode.Exclusive,
         LongPressGesture({ repeat: false })
@@ -4381,6 +4499,9 @@ export struct BookshelfPage {
     .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
     .shadow({ radius: ThemeRuntime.glassShadowRadius(), color: this.glassShadowColor(),
       offsetX: ThemeRuntime.glassShadowOffsetX(), offsetY: ThemeRuntime.glassShadowOffsetY() })
+    .opacity(this.isShelfBookDissolving(book.bookUrl) ? 0 : 1)
+    .scale({ x: this.shelfDissolveScale(book.bookUrl), y: this.shelfDissolveScale(book.bookUrl) })
+    .blur(this.isShelfBookDissolving(book.bookUrl) ? 16 : 0)
   }
 
   shelfTileColumnWidth(): number {
@@ -4907,6 +5028,9 @@ export struct BookshelfPage {
     .height('100%')
     .alignItems(VerticalAlign.Top)
     .padding({ left: AppSpacing.XS, right: AppSpacing.XS, top: AppSpacing.XS, bottom: AppSpacing.XXL * 2 - AppSpacing.XS })
+    .opacity(this.isShelfBookDissolving(book.bookUrl) ? 0 : 1)
+    .scale({ x: this.shelfDissolveScale(book.bookUrl), y: this.shelfDissolveScale(book.bookUrl) })
+    .blur(this.isShelfBookDissolving(book.bookUrl) ? 16 : 0)
   }
 
   @Builder
@@ -5122,6 +5246,11 @@ export struct BookshelfPage {
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
+    .id(this.shelfCardElementId(book, this.shelfCoverScope(pageKey, false)))
+    .opacity(this.isShelfBookDissolving(book.bookUrl) ? 0 : 1)
+    .scale({ x: this.shelfDissolveScale(book.bookUrl), y: this.shelfDissolveScale(book.bookUrl) })
+    .blur(this.isShelfBookDissolving(book.bookUrl) ? 16 : 0)
+    .hitTestBehavior(this.isShelfBookDissolving(book.bookUrl) ? HitTestMode.None : HitTestMode.Default)
     .priorityGesture(
       GestureGroup(GestureMode.Exclusive,
         LongPressGesture({ repeat: false })

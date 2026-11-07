@@ -20,6 +20,8 @@ import deviceInfo from '@ohos.deviceInfo';
 import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -99,6 +101,9 @@ struct CustomTtsVoiceManagerPage {
   @State searchText: string = '';
   @State selectionMode: boolean = false;
   @State selectedVoiceIds: string[] = [];
+  /** 正在消散的自定义音色 id，见 ListDissolve。 */
+  @State dissolvingVoiceIds: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State showAddDialog: boolean = false;
   private importUrlDialogSession: SystemDialogSession = new SystemDialogSession();
   private editVoiceDialogSession: SystemDialogSession = new SystemDialogSession();
@@ -185,7 +190,12 @@ struct CustomTtsVoiceManagerPage {
         }, Placement.BottomLeft, this.appDarkMode, this.accentColor(), () => {
           this.showVoiceActionMenu = false;
         }))
+
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('tts_voice_manager_root')
     .width('100%')
     .height('100%')
     .onAreaChange((_oldValue: Area, newValue: Area) => {
@@ -579,16 +589,43 @@ struct CustomTtsVoiceManagerPage {
     });
   }
 
-  private confirmDeleteVoice(voice: HttpTTS): void {
+  private async confirmDeleteVoice(voice: HttpTTS): Promise<void> {
     if (!this.voices.some((item: HttpTTS): boolean => String(item.id) === String(voice.id))) return;
     const id = String(voice.id);
+    await this.dissolveVoices([id]);
+    if (!this.pageAlive) return;
     if (this.isCurrentVoice(voice)) {
       this.clearCustomVoiceSelection();
     }
-    this.voices = this.voices.filter((item: HttpTTS) => String(item.id) !== id);
-    this.selectedVoiceIds = this.selectedVoiceIds.filter((selectedId: string) => selectedId !== this.customSelectionKey(id));
+    this.commitVoiceRemoval([id], () => {
+      this.voices = this.voices.filter((item: HttpTTS) => String(item.id) !== id);
+      this.selectedVoiceIds = this.selectedVoiceIds.filter((selectedId: string) => selectedId !== this.customSelectionKey(id));
+    });
     this.saveSettings();
     HdsFeedback.showToast('音色已删除');
+  }
+
+  voiceCardElementId(id: string): string {
+    return `tts_voice_card_${id}`;
+  }
+
+  isVoiceDissolving(voice: HttpTTS): boolean {
+    return this.dissolvingVoiceIds.length > 0 && this.dissolvingVoiceIds.indexOf(String(voice.id)) >= 0;
+  }
+
+  /** 从确认框里删除，等它退场再让这些音色消散。 */
+  async dissolveVoices(ids: string[]): Promise<void> {
+    await ListDissolve.fadeOut(this.getUIContext(), ids, (id: string) => {
+      this.dissolvingVoiceIds = [...this.dissolvingVoiceIds, id];
+    }, ListDissolve.particles('tts_voice_manager_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
+      (id: string): string => this.voiceCardElementId(id), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
+  }
+
+  commitVoiceRemoval(ids: string[], remove: () => void): void {
+    ListDissolve.commit(this.getUIContext(), remove, () => {
+      this.dissolvingVoiceIds = ListDissolve.without(this.dissolvingVoiceIds, ids);
+    });
   }
 
   clearCustomVoiceSelection(): void {
@@ -749,16 +786,23 @@ struct CustomTtsVoiceManagerPage {
     });
   }
 
-  private confirmBatchDelete(deletable: string[]): void {
+  private async confirmBatchDelete(deletable: string[]): Promise<void> {
     if (this.isBatchOperating) return;
     this.isBatchOperating = true;
     try {
-      const count = this.voices.filter((voice: HttpTTS): boolean => deletable.includes(this.customSelectionKey(String(voice.id)))).length;
+      const ids = this.voices.filter((voice: HttpTTS): boolean => deletable.includes(this.customSelectionKey(String(voice.id))))
+        .map((voice: HttpTTS): string => String(voice.id));
+      const count = ids.length;
+      await this.dissolveVoices(ids);
+      if (!this.pageAlive) return;
       if (deletable.includes(this.customSelectionKey(this.ttsCustomVoiceId))) this.clearCustomVoiceSelection();
-      this.voices = this.voices.filter((voice: HttpTTS): boolean => !deletable.includes(this.customSelectionKey(String(voice.id))));
-      this.selectedVoiceIds = this.selectedVoiceIds.filter((key: string): boolean => !deletable.includes(key));
+      this.commitVoiceRemoval(ids, () => {
+        this.voices = this.voices.filter((voice: HttpTTS): boolean => !deletable.includes(this.customSelectionKey(String(voice.id))));
+        this.selectedVoiceIds = this.selectedVoiceIds.filter((key: string): boolean => !deletable.includes(key));
+      });
       if (count > 0) this.saveSettings();
-      if (this.selectedVoiceIds.length === 0) this.exitSelectionMode();
+      // 条目 key 带多选状态，补位放完再退出多选，否则其余条目整批重建、看不到补位。
+      if (this.selectedVoiceIds.length === 0) setTimeout(() => this.exitSelectionMode(), ListDissolve.CLOSE_MS + 40);
       HdsFeedback.showToast(`已删除 ${count} 个音色`);
     } finally { this.isBatchOperating = false; }
   }
@@ -1439,7 +1483,11 @@ struct CustomTtsVoiceManagerPage {
     .padding(AppSpacing.LG)
     .backgroundColor(this.cardColor())
     .borderRadius(ThemeRuntime.cardRadius())
-    .opacity(voice.enabled ? 1 : 0.45)
+    .opacity(this.isVoiceDissolving(voice) ? 0 : (voice.enabled ? 1 : 0.45))
+    .scale(ListDissolve.scale(this.isVoiceDissolving(voice)))
+    .blur(ListDissolve.blur(this.isVoiceDissolving(voice)))
+    .hitTestBehavior(this.isVoiceDissolving(voice) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.voiceCardElementId(String(voice.id)))
     .onAreaChange((_oldValue: Area, area: Area) => { this.rememberVoiceSelectionArea(this.customSelectionKey(String(voice.id)), area); })
     .gesture(
       LongPressGesture({ repeat: false })

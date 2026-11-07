@@ -12,6 +12,8 @@ import { WebDavConnection, WebDavEntry } from '../webdav/WebDavModels';
 import { WebDavSecretStore } from '../webdav/WebDavSecretStore';
 import { WebDavSettingsStore } from '../webdav/WebDavSettingsStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -35,6 +37,9 @@ struct WebDavBrowsePage {
   @State connectionMissing: boolean = false;
   @State currentPath: string = '';
   @State entries: WebDavEntry[] = [];
+  /** 正在消散的条目路径，见 ListDissolve。 */
+  @State dissolvingPaths: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State busy: boolean = false;
   @State busyText: string = '';
   @State busyProgress: number = 0;
@@ -119,7 +124,12 @@ struct WebDavBrowsePage {
         .shadow({ radius: 18, color: this.appDarkMode ? '#66000000' : '#28000000' })
         .position({ x: '11%', y: '42%' })
       }
+
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('webdav_browse_root')
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
@@ -247,6 +257,11 @@ struct WebDavBrowsePage {
               .height(64)
               .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
               .backgroundColor(this.cardColor())
+              .opacity(ListDissolve.opacity(this.isEntryDissolving(entry)))
+              .scale(ListDissolve.scale(this.isEntryDissolving(entry)))
+              .blur(ListDissolve.blur(this.isEntryDissolving(entry)))
+              .hitTestBehavior(this.isEntryDissolving(entry) ? HitTestMode.None : HitTestMode.Default)
+              .id(this.entryCardElementId(entry.relativePath))
               .gesture(
                 LongPressGesture({ repeat: false })
                   .onAction((event: GestureEvent) => {
@@ -768,8 +783,21 @@ struct WebDavBrowsePage {
     try {
       await client.deleteLibraryEntry(entry.relativePath, entry.directory);
       this.busyProgress = 80;
-      this.entries = await client.list(this.currentPath);
+      const next = await client.list(this.currentPath);
       this.busyProgress = 100;
+      // 先收起进度提示露出列表，被删的条目消散后再换成新列表。
+      this.busy = false;
+      const keys = [entry.relativePath];
+      await ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+        this.dissolvingPaths = [...this.dissolvingPaths, key];
+      }, ListDissolve.particles('webdav_browse_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
+        (key: string): string => this.entryCardElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+        (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
+      ListDissolve.commit(this.getUIContext(), () => {
+        this.entries = next;
+      }, () => {
+        this.dissolvingPaths = ListDissolve.without(this.dissolvingPaths, keys);
+      });
       HdsFeedback.showToast('删除完成');
     } catch (error) {
       HdsFeedback.showToast(`删除失败：${this.message(error)}`);
@@ -897,5 +925,13 @@ struct WebDavBrowsePage {
   primaryTextColor(): string { return ThemeRuntime.primaryTextColor(this.appDarkMode); }
   subTextColor(): string { return ThemeRuntime.subTextColor(this.appDarkMode); }
   accentColor(): string { return ThemeRuntime.accentColor(this.appDarkMode); }
+
+  entryCardElementId(path: string): string {
+    return `webdav_entry_card_${encodeURIComponent(path)}`;
+  }
+
+  isEntryDissolving(entry: WebDavEntry): boolean {
+    return this.dissolvingPaths.length > 0 && this.dissolvingPaths.indexOf(entry.relativePath) >= 0;
+  }
   softColor(): string { return ThemeRuntime.inputColor(this.appDarkMode); }
 }

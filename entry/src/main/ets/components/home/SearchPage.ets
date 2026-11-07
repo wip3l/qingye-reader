@@ -17,6 +17,8 @@ import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { HdsFeedback } from '../../utils/HdsFeedback';
+import { ListDissolve } from '../../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../common/DeleteParticles';
 import { SearchBookShelfHelper } from '../../utils/SearchBookShelfHelper';
 import { SearchExploreSettings, SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
 import { SearchResultAggregationStore } from '../../utils/SearchResultAggregationStore';
@@ -61,6 +63,9 @@ export struct SearchPage {
   @State addingShelfBookKeys: string[] = [];
   @State isSearching: boolean = false;
   @State searchHistory: string[] = [];
+  /** 正在消散的搜索记录，见 ListDissolve。 */
+  @State dissolvingHistory: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State searchHistoryExpanded: boolean = false;
   @State searchHistoryEditing: boolean = false;
   @State showSearchHistoryDropdown: boolean = false;
@@ -716,7 +721,11 @@ export struct SearchPage {
 
 
 
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('search_page_root')
     .width('100%')
     .height('100%')
     .onAreaChange((_oldValue: Area, newValue: Area) => {
@@ -1011,6 +1020,11 @@ export struct SearchPage {
       .attributeModifier(new ImmersiveTagModifier(ThemeRuntime.cardColor(this.appDarkMode),
         this.secondaryTextColor(), this.appDarkMode))
       .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.94 })
+      .opacity(ListDissolve.opacity(this.isHistoryDissolving(keyword)))
+      .scale(ListDissolve.scale(this.isHistoryDissolving(keyword)))
+      .blur(ListDissolve.blur(this.isHistoryDissolving(keyword)))
+      .hitTestBehavior(this.isHistoryDissolving(keyword) ? HitTestMode.None : HitTestMode.Default)
+      .id(this.historyTagElementId(keyword, false))
       .priorityGesture(
         GestureGroup(GestureMode.Exclusive,
           LongPressGesture({ repeat: false })
@@ -1195,6 +1209,11 @@ export struct SearchPage {
               .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
               .attributeModifier(new GlassTagModifier(this.appDarkMode))
               .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.94 })
+              .opacity(ListDissolve.opacity(this.isHistoryDissolving(keyword)))
+              .scale(ListDissolve.scale(this.isHistoryDissolving(keyword)))
+              .blur(ListDissolve.blur(this.isHistoryDissolving(keyword)))
+              .hitTestBehavior(this.isHistoryDissolving(keyword) ? HitTestMode.None : HitTestMode.Default)
+              .id(this.historyTagElementId(keyword, true))
               .priorityGesture(
                 GestureGroup(GestureMode.Exclusive,
                   LongPressGesture({ repeat: false })
@@ -1235,10 +1254,35 @@ export struct SearchPage {
     this.doSearch();
   }
 
+  historyTagElementId(keyword: string, dropdown: boolean): string {
+    return `search_history_${dropdown ? 'drop' : 'tag'}_${encodeURIComponent(keyword)}`;
+  }
+
+  isHistoryDissolving(keyword: string): boolean {
+    return this.dissolvingHistory.length > 0 && this.dissolvingHistory.indexOf(keyword) >= 0;
+  }
+
+  /** 这些搜索记录消散后在补位动画里执行 remove；下拉框打开时量下拉里那一份。 */
+  async dissolveHistory(keywords: string[], remove: () => void): Promise<void> {
+    const dropdown = this.showSearchHistoryDropdown;
+    await ListDissolve.fadeOut(this.getUIContext(), keywords, (keyword: string) => {
+      this.dissolvingHistory = [...this.dissolvingHistory, keyword];
+    }, ListDissolve.particles('search_page_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
+      (keyword: string): string => this.historyTagElementId(keyword, dropdown),
+      (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }));
+    ListDissolve.commit(this.getUIContext(), remove, () => {
+      this.dissolvingHistory = ListDissolve.without(this.dissolvingHistory, keywords);
+    });
+  }
+
   async deleteSearchHistoryItem(keyword: string): Promise<void> {
+    if (this.isHistoryDissolving(keyword)) return;
     try {
       await AppDatabase.getInstance().deleteSearchKeyword(keyword);
-      this.searchHistory = this.searchHistory.filter((item: string) => item !== keyword);
+      await this.dissolveHistory([keyword], () => {
+        this.searchHistory = this.searchHistory.filter((item: string) => item !== keyword);
+      });
       HdsFeedback.showToast('已删除该条搜索记录');
       if (this.searchHistory.length === 0) {
         this.searchHistoryEditing = false;
@@ -1254,7 +1298,9 @@ export struct SearchPage {
   async clearSearchHistory(): Promise<void> {
     try {
       await AppDatabase.getInstance().clearSearchKeywords();
-      this.searchHistory = [];
+      await this.dissolveHistory([...this.searchHistory], () => {
+        this.searchHistory = [];
+      });
       this.searchHistoryEditing = false;
       this.searchHistoryExpanded = false;
       this.showSearchHistoryDropdown = false;

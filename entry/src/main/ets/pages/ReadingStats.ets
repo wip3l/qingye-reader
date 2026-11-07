@@ -10,6 +10,8 @@ import { ReadStatsDevice } from '../core/stats/ReadStatsDevice';
 import { ReadStatsSummary, ReadStatsRank, ReadStatsBar } from '../core/stats/ReadStatsSummary';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { BookCover } from '../components/book/BookCover';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -42,6 +44,13 @@ class ReadStatsListDataSource implements IDataSource {
     this.rows = [new ReadStatsRank(), ...rows];
     this.listeners.forEach((listener: DataChangeListener): void => listener.onDataReloaded());
   }
+  /** 删掉一本书的那一行，走 onDataDelete 让 List 播补位动画。 */
+  remove(bookKey: string): void {
+    const index = this.rows.findIndex((row: ReadStatsRank): boolean => !!row.bookKey && row.bookKey === bookKey);
+    if (index < 0) return;
+    this.rows.splice(index, 1);
+    this.listeners.forEach((listener: DataChangeListener): void => listener.onDataDelete(index));
+  }
 }
 
 @Entry
@@ -71,6 +80,9 @@ struct ReadingStatsPage {
   @State contextMenuX: number = 16;
   @State contextMenuY: number = 96;
   private source: ReadStatsListDataSource = new ReadStatsListDataSource();
+  /** 正在消散的书 key，见 ListDissolve。 */
+  @State dissolvingBookKeys: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   private requestVersion: number = 0;
   private alive: boolean = true;
   private ownerId: string = '';
@@ -139,17 +151,20 @@ struct ReadingStatsPage {
     });
     try { await this.selectionWrite; } catch (error) { console.warn('保存统计筛选失败:', error); }
   }
-  async loadStats(): Promise<void> {
+  /** quiet 为 true 时原位重读：不清空列表、不显示加载中，删除记录补位后用，避免列表整个闪一下。 */
+  async loadStats(quiet: boolean = false): Promise<void> {
     const version = ++this.requestVersion;
     const mode = this.mode;
     const anchor = this.anchorTs;
     const ownerId = this.ownerId;
     let deviceId = this.selectedDevice;
-    this.loading = true;
     this.errorMessage = '';
-    this.selectedBar = '';
-    this.summary = new ReadStatsSummary();
-    this.source.update([]);
+    if (!quiet) {
+      this.loading = true;
+      this.selectedBar = '';
+      this.summary = new ReadStatsSummary();
+      this.source.update([]);
+    }
     try {
       await appDb.init(getContext(this));
       await readStatsTracker.flushAndWait();
@@ -387,6 +402,11 @@ struct ReadingStatsPage {
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
     }.width('100%').padding(AppSpacing.XL).backgroundColor(this.cardColor())
       .borderRadius(ThemeRuntime.cardRadius()).alignItems(VerticalAlign.Center)
+      .opacity(ListDissolve.opacity(this.isStatsRowDissolving(item)))
+      .scale(ListDissolve.scale(this.isStatsRowDissolving(item)))
+      .blur(ListDissolve.blur(this.isStatsRowDissolving(item)))
+      .hitTestBehavior(this.isStatsRowDissolving(item) ? HitTestMode.None : HitTestMode.Default)
+      .id(this.statsRowElementId(item.bookKey))
       .gesture(LongPressGesture({ repeat: false }).onAction((event: GestureEvent): void => {
         const finger = event.fingerList.length > 0 ? event.fingerList[0] : undefined;
         if (finger) { this.contextMenuX = finger.globalX; this.contextMenuY = finger.globalY; }
@@ -423,13 +443,33 @@ struct ReadingStatsPage {
         message: `删除“${item.name}”在 ${this.periodTitle()}、${this.deviceTitle()} 范围内已获取的阅读记录？开启同步后会同步删除，尚未上传的其他设备记录不受影响。不会删除书籍。`,
         buttons: [{ text: '取消', color: this.subTextColor() }, { text: '删除', color: ThemeRuntime.dangerColor(this.appDarkMode) }] });
       if (confirmation.index !== 1) return;
-      await readStatsTracker.flushAndWait();
-      for (const recordBookKey of item.recordBookKeys) {
-        await appDb.deleteReadStatsSelection(recordBookKey, range.startKey, range.endKey, deviceId, ownerId);
+      // 等确认框退场后这一行消散，与删记录同时进行；播完补位，再原位重读排名和图表。
+      const keys = [item.bookKey];
+      const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+        this.dissolvingBookKeys = [...this.dissolvingBookKeys, key];
+      }, ListDissolve.particles('reading_stats_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
+        (key: string): string => this.statsRowElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+        (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
+      try {
+        await readStatsTracker.flushAndWait();
+        for (const recordBookKey of item.recordBookKeys) {
+          await appDb.deleteReadStatsSelection(recordBookKey, range.startKey, range.endKey, deviceId, ownerId);
+        }
+      } finally {
+        await fade;
       }
-      if (this.alive) await this.loadStats();
+      if (!this.alive) return;
+      ListDissolve.commit(this.getUIContext(), () => this.source.remove(item.bookKey), () => {
+        this.dissolvingBookKeys = ListDissolve.without(this.dissolvingBookKeys, keys);
+      });
+      await new Promise<void>((resolve: () => void) => { setTimeout(resolve, ListDissolve.CLEAR_DELAY_MS); });
+      if (this.alive) await this.loadStats(true);
       HdsFeedback.showToast('记录已删除');
-    } catch (error) { console.warn('删除阅读记录失败:', error); HdsFeedback.showToast('删除失败，请重试'); }
+    } catch (error) {
+      console.warn('删除阅读记录失败:', error);
+      this.dissolvingBookKeys = ListDissolve.without(this.dissolvingBookKeys, [item.bookKey]);
+      HdsFeedback.showToast('删除失败，请重试');
+    }
   }
   private shiftPeriod(step: number): void {
     if (step > 0 && !this.canGoForward()) return;
@@ -486,6 +526,10 @@ struct ReadingStatsPage {
   primaryTextColor(): string { return ThemeRuntime.primaryTextColor(this.appDarkMode); }
   subTextColor(): string { return ThemeRuntime.subTextColor(this.appDarkMode); }
   accentColor(): string { return ThemeRuntime.accentColor(this.appDarkMode); }
+  statsRowElementId(bookKey: string): string { return `reading_stats_row_${encodeURIComponent(bookKey)}`; }
+  isStatsRowDissolving(item: ReadStatsRank): boolean {
+    return this.dissolvingBookKeys.length > 0 && !!item.bookKey && this.dissolvingBookKeys.indexOf(item.bookKey) >= 0;
+  }
   syncBars(): void { syncSystemBars(getContext(this), this.appDarkMode, this.pageColor()); }
   @Builder
   pageContent() {
@@ -531,7 +575,10 @@ struct ReadingStatsPage {
         .bindPopup(this.showItemActionMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
           (): void => { this.itemActionMenu() }, Placement.BottomLeft, this.appDarkMode, this.accentColor(),
           (): void => { this.showItemActionMenu = false; }))
-    }.width('100%').height('100%').backgroundColor(this.pageColor())
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
+    }.id('reading_stats_root').width('100%').height('100%').backgroundColor(this.pageColor())
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

@@ -44,6 +44,8 @@ import {
 } from '../core/reader/ReaderCommentBubble';
 import { StartupCoverTextStore } from '../utils/StartupCoverTextStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -229,6 +231,9 @@ struct ThemeSettingsPage {
   // 详情页可单独切浅色 / 深色预览，不改应用的深浅色。
   @State detailDark: boolean = false;
   @State customSchemes: CustomThemeScheme[] = [];
+  /** 正在消散的自定义方案 id，见 ListDissolve。 */
+  @State dissolvingSchemeIds: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   // 已经有自己排版的主题：阅读档案 ID → 排版摘要。卡片上显示它，没有的才显示预设排版。
   @State boundLayoutRevision: number = 0;
   private boundLayoutSummaries: Map<string, string> = new Map<string, string>();
@@ -505,7 +510,12 @@ struct ThemeSettingsPage {
         }, Placement.BottomLeft, this.appDarkMode, this.accentColor(), () => {
           this.showCustomThemeActionMenu = false;
         }))
+
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('theme_settings_root')
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
@@ -1054,6 +1064,20 @@ struct ThemeSettingsPage {
       .padding({ left: AppSpacing.MD, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
     }
     .width('100%')
+    .opacity(ListDissolve.opacity(this.isSchemeRowDissolving(entry, context)))
+    .scale(ListDissolve.scale(this.isSchemeRowDissolving(entry, context)))
+    .blur(ListDissolve.blur(this.isSchemeRowDissolving(entry, context)))
+    .id(context === 'schemes' && entry.customSchemeId ? this.schemeRowElementId(entry.customSchemeId) : '')
+  }
+
+  schemeRowElementId(schemeId: string): string {
+    return `theme_scheme_row_${encodeURIComponent(schemeId)}`;
+  }
+
+  /** 只有“我的方案”列表里的那一行消散，其他列表里同一方案的预览不动。 */
+  isSchemeRowDissolving(entry: ThemeListEntry, context: string): boolean {
+    return context === 'schemes' && !!entry.customSchemeId && this.dissolvingSchemeIds.length > 0 &&
+      this.dissolvingSchemeIds.indexOf(entry.customSchemeId) >= 0;
   }
 
   @Builder
@@ -3162,21 +3186,37 @@ struct ThemeSettingsPage {
           return;
         }
       }
+      // 从确认框里删除：等它退场后这一行消散，与删方案同时进行；播完在补位动画里拿掉，再重读方案。
+      const keys = [schemeId];
+      const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+        this.dissolvingSchemeIds = [...this.dissolvingSchemeIds, key];
+      }, ListDissolve.particles('theme_settings_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
+        (key: string): string => this.schemeRowElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+        (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
       const settings = await AppThemeSettingsStore.load(getContext(this));
       const deleted = await CustomThemeSchemeStore.delete(getContext(this), settings, schemeId);
+      await fade;
       if (!deleted) {
+        this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, keys);
         HdsFeedback.showToast('删除失败，至少需要保留一套方案');
         return;
       }
+      ListDissolve.commit(this.getUIContext(), () => {
+        this.customSchemes = this.customSchemes.filter((item: CustomThemeScheme) => item.id !== schemeId);
+      }, () => {
+        this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, keys);
+      });
       this.actionCustomSchemeId = '';
       if (this.detailOpen && this.detailKeys.indexOf(`scheme:${schemeId}`) >= 0) {
         this.closeDetail();
       }
+      await new Promise<void>((resolve: () => void) => { setTimeout(resolve, ListDissolve.CLOSE_MS); });
       await this.refreshCustomSchemes();
       await ThemePackageService.cleanupImportedFiles(getContext(this));
       HdsFeedback.showToast(`已删除「${scheme.name}」`);
     } catch (e) {
       console.error('删除自定义主题失败:', e);
+      this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, [schemeId]);
       HdsFeedback.showToast('删除失败，请稍后重试');
     }
   }

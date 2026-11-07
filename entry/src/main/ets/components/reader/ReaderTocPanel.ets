@@ -4,6 +4,8 @@ import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { Book, BookChapter, Bookmark } from '@legado/sourceengine';
 import { AppDatabase } from '../../model/data/AppDatabase';
 import { HdsFeedback } from '../../utils/HdsFeedback';
+import { ListDissolve, ListDissolveParticles } from '../../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../common/DeleteParticles';
 import { BookCover } from '../book/BookCover';
 import { VirtualListScrollbar } from '../../utils/VirtualListScrollbar';
 import { ImmersiveBackButton } from '../ImmersiveBackButton';
@@ -107,6 +109,9 @@ export struct ReaderTocPanel {
   @State private scrollbarDragOffset: number = 0;
   @State private bookmarkMultiSelectMode: boolean = false;
   @State private selectedBookmarkIds: number[] = [];
+  /** 正在消散的书签 id（字符串），见 ListDissolve。 */
+  @State private dissolvingBookmarkKeys: string[] = [];
+  @State private deleteParticleBursts: DeleteParticleBurst[] = [];
   private searchRequestSerial: number = 0;
   private scrollbarPointerAnchor: number = 0;
   private scrollbarPendingIndex: number = -1;
@@ -124,7 +129,9 @@ export struct ReaderTocPanel {
       controller.showTocTab = (): void => this.selectTocTab();
       controller.cancelBookmarkMultiSelect = (): void => this.cancelBookmarkMultiSelect();
       controller.enterBookmarkMultiSelect = (bookmarkId: number): void => this.enterBookmarkMultiSelect(bookmarkId);
-      controller.deleteBookmark = (bookmark: Bookmark): Promise<void> => this.deleteBookmark(bookmark);
+      // 从长按菜单删除时，等菜单收起再开始消散。
+      controller.deleteBookmark = (bookmark: Bookmark): Promise<void> =>
+        this.deleteBookmark(bookmark, ListDissolve.AFTER_DIALOG_MS);
     }
     this.databaseChapterCount = this.chapters.length;
     this.firstVisibleGlobalIndex = this.currentChapterIndex;
@@ -602,19 +609,29 @@ export struct ReaderTocPanel {
     this.scrollToCurrentChapter(false);
   }
 
-  private async deleteBookmark(bookmark: Bookmark): Promise<void> {
+  private async deleteBookmark(bookmark: Bookmark, delayMs: number = 0): Promise<void> {
+    const keys = [`${bookmark.id}`];
+    const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingBookmarkKeys = [...this.dissolvingBookmarkKeys, key];
+    }, this.bookmarkDeleteParticles(), delayMs);
     try {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
       await db.deleteBookmark(bookmark.id);
-      this.bookmarks = this.bookmarks.filter((item: Bookmark) => item.id !== bookmark.id);
-      this.selectedBookmarkIds = this.selectedBookmarkIds.filter((id: number) => id !== bookmark.id);
+      await fade;
+      ListDissolve.commit(this.getUIContext(), () => {
+        this.bookmarks = this.bookmarks.filter((item: Bookmark) => item.id !== bookmark.id);
+        this.selectedBookmarkIds = this.selectedBookmarkIds.filter((id: number) => id !== bookmark.id);
+      }, () => {
+        this.dissolvingBookmarkKeys = ListDissolve.without(this.dissolvingBookmarkKeys, keys);
+      });
       if (this.bookmarkMultiSelectMode && this.bookmarks.length === 0) {
         this.cancelBookmarkMultiSelect();
       }
       HdsFeedback.showToast('书签已删除');
     } catch (e) {
       console.error('删除书签失败:', e);
+      this.dissolvingBookmarkKeys = ListDissolve.without(this.dissolvingBookmarkKeys, keys);
       HdsFeedback.showToast('删除书签失败');
     }
   }
@@ -622,17 +639,49 @@ export struct ReaderTocPanel {
   private async deleteSelectedBookmarks(): Promise<void> {
     const ids = [...this.selectedBookmarkIds];
     if (ids.length === 0) return;
+    const keys = ids.map((id: number) => `${id}`);
+    const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingBookmarkKeys = [...this.dissolvingBookmarkKeys, key];
+    }, this.bookmarkDeleteParticles());
     try {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
       await db.deleteBookmarks(ids);
-      this.bookmarks = this.bookmarks.filter((bookmark: Bookmark) => !ids.includes(bookmark.id));
+      await fade;
+      ListDissolve.commit(this.getUIContext(), () => {
+        this.bookmarks = this.bookmarks.filter((bookmark: Bookmark) => !ids.includes(bookmark.id));
+      }, () => {
+        this.dissolvingBookmarkKeys = ListDissolve.without(this.dissolvingBookmarkKeys, keys);
+      });
       this.cancelBookmarkMultiSelect();
       HdsFeedback.showToast(`已删除 ${ids.length} 条书签`);
     } catch (e) {
       console.error('批量删除书签失败:', e);
+      this.dissolvingBookmarkKeys = ListDissolve.without(this.dissolvingBookmarkKeys, keys);
       HdsFeedback.showToast('批量删除书签失败');
     }
+  }
+
+  private bookmarkCardElementId(key: string): string {
+    return `reader_bookmark_card_${key}`;
+  }
+
+  private bookmarkDeleteParticles(): ListDissolveParticles {
+    const particles = new ListDissolveParticles();
+    particles.rootId = 'reader_bookmark_list_root';
+    particles.colors = [this.accentColor, this.textColor, this.subTextColor];
+    particles.elementIdOf = (key: string): string => this.bookmarkCardElementId(key);
+    particles.show = (bursts: DeleteParticleBurst[]): void => {
+      this.deleteParticleBursts = [...this.deleteParticleBursts, ...bursts];
+    };
+    particles.hide = (ids: number[]): void => {
+      this.deleteParticleBursts = this.deleteParticleBursts.filter((burst: DeleteParticleBurst) => ids.indexOf(burst.id) < 0);
+    };
+    return particles;
+  }
+
+  private isBookmarkDissolving(bookmark: Bookmark): boolean {
+    return this.dissolvingBookmarkKeys.length > 0 && this.dissolvingBookmarkKeys.indexOf(`${bookmark.id}`) >= 0;
   }
 
   private enterBookmarkMultiSelect(bookmarkId: number): void {
@@ -1173,6 +1222,8 @@ export struct ReaderTocPanel {
 
   @Builder
   bookmarkList() {
+    // 粒子层与空状态、列表放在同一层：删掉最后一条书签切到空状态时，颗粒还要飘完。
+    Stack() {
     if (this.bookmarks.length === 0) {
       Column({ space: AppSpacing.LG }) {
         SymbolGlyph($r('sys.symbol.bookmark'))
@@ -1185,8 +1236,8 @@ export struct ReaderTocPanel {
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor)
       }
-      .layoutWeight(1)
       .width('100%')
+      .height('100%')
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
     } else {
@@ -1225,12 +1276,20 @@ export struct ReaderTocPanel {
         }, (bookmark: Bookmark) => `${bookmark.id}`)
       }
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-      .layoutWeight(1)
       .width('100%')
+      .height('100%')
       .clip(true)
       .scrollBar(BarState.Auto)
       .scrollBarColor(this.dark ? '#668A8F98' : '#667A6F63')
     }
+
+    if (this.deleteParticleBursts.length > 0) {
+      DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+    }
+    }
+    .id('reader_bookmark_list_root')
+    .layoutWeight(1)
+    .width('100%')
   }
 
   @Builder
@@ -1267,6 +1326,11 @@ export struct ReaderTocPanel {
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
     .backgroundColor(this.selectedBookmarkIds.includes(bookmark.id) ? this.selectedColor : Color.Transparent)
     .border({ width: { bottom: 0.5 }, color: ThemeRuntime.softFillColor(this.dark) })
+    .opacity(ListDissolve.opacity(this.isBookmarkDissolving(bookmark)))
+    .scale(ListDissolve.scale(this.isBookmarkDissolving(bookmark)))
+    .blur(ListDissolve.blur(this.isBookmarkDissolving(bookmark)))
+    .hitTestBehavior(this.isBookmarkDissolving(bookmark) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.bookmarkCardElementId(`${bookmark.id}`))
     .onClick(() => {
       if (this.bookmarkMultiSelectMode) this.toggleBookmarkSelection(bookmark.id)
       else this.onJumpToBookmark(bookmark)

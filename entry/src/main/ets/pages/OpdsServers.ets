@@ -10,6 +10,8 @@ import { OpdsClient } from '../opds/OpdsClient';
 import { OpdsError } from '../opds/OpdsError';
 import { OpdsKavita } from '../opds/OpdsKavita';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -34,6 +36,9 @@ struct OpdsServersPage {
   @StorageProp('navBarHeight') navBarHeight: number = 0;
 
   @State servers: OpdsServerConfig[] = [];
+  /** 正在消散的条目 id，见 ListDissolve。 */
+  @State dissolvingIds: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State busy: boolean = false;
   @State busyText: string = '';
   @State busyProgress: number = 0;
@@ -112,7 +117,12 @@ struct OpdsServersPage {
         .shadow({ radius: 18, color: this.appDarkMode ? '#66000000' : '#28000000' })
         .position({ x: '11%', y: '42%' })
       }
+
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('opds_servers_root')
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
@@ -267,6 +277,11 @@ struct OpdsServersPage {
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
     .backgroundColor(this.cardColor())
     .borderRadius(ThemeRuntime.cardRadius())
+    .opacity(ListDissolve.opacity(this.isDissolving(server.id)))
+    .scale(ListDissolve.scale(this.isDissolving(server.id)))
+    .blur(ListDissolve.blur(this.isDissolving(server.id)))
+    .hitTestBehavior(this.isDissolving(server.id) ? HitTestMode.None : HitTestMode.Default)
+    .id(`opds_server_card_${server.id}`)
     .gesture(
       LongPressGesture({ repeat: false })
         .onAction((event: GestureEvent) => {
@@ -598,8 +613,26 @@ struct OpdsServersPage {
     if (confirmation.index !== 1) return;
     await OpdsSecretStore.deletePassword(getContext(this), server.id);
     await OpdsSettingsStore.deleteServer(getContext(this), server.id);
-    this.servers = this.servers.filter((item: OpdsServerConfig): boolean => item.id !== server.id);
+    await this.dissolveAndRemove([server.id], () => {
+      this.servers = this.servers.filter((item: OpdsServerConfig): boolean => item.id !== server.id);
+    });
     HdsFeedback.showToast('书库已删除');
+  }
+
+  isDissolving(id: string): boolean {
+    return this.dissolvingIds.length > 0 && this.dissolvingIds.indexOf(id) >= 0;
+  }
+
+  /** 从确认框里删除：等它退场后消散，播完在补位动画里执行 remove。 */
+  async dissolveAndRemove(ids: string[], remove: () => void): Promise<void> {
+    await ListDissolve.fadeOut(this.getUIContext(), ids, (id: string) => {
+      this.dissolvingIds = [...this.dissolvingIds, id];
+    }, ListDissolve.particles('opds_servers_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
+      (id: string): string => `opds_server_card_${id}`, (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
+    ListDissolve.commit(this.getUIContext(), remove, () => {
+      this.dissolvingIds = ListDissolve.without(this.dissolvingIds, ids);
+    });
   }
 
   openAddDialog(): void {
