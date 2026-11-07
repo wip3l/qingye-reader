@@ -10,7 +10,8 @@ const names = ['setShelfPage', 'applyShelfScope', 'refreshShelfTypeTabs', 'books
   'matchesShelfGroup', 'shelfBookType', 'activeShelfTypeTab', 'shelfPageKey', 'shelfPageOrder', 'isTileLayout', 'isCompanionLayout',
   'switchShelfScopeBySelection', 'canSelectShelfPage', 'shelfCategoryPage', 'markShelfScopePanGesture', 'clearShelfScopeTransition', 'shelfBookViewPrefix', 'shelfBookRenderKey',
   'shelfScopeTabIndex', 'shelfScopeTabHighlighted', 'onPrivateShelfEnabledChanged', 'showsShelfScopeTabs',
-  'toggleShelfPrivateByHeaderDoubleTap'];
+  'toggleShelfPrivateByHeaderDoubleTap', 'shelfBaseGroupId', 'isTileGroupPageKey', 'pageGroupId', 'pageTypeKey',
+  'tileGroupPageKey'];
 const methods = names.map(name => {
   const start = source.indexOf(`  ${name}(`);
   assert.ok(start >= 0, name);
@@ -53,7 +54,7 @@ function makeShelf(layout, folders = false) {
     shelfCoverRenderVersions: new Map(), shelfListBooksSource: list, shelfTileBooksSource: tiles,
     shelfTileEntriesSource: entries, matchesShelfFilters: () => true, matchesShelfSearch: () => true,
     sortBooks: books => books.slice(), shouldUseTileGroupFolders: () => folders,
-    getTileBooksWithoutLatest: books => books.slice(),
+    getTileBooksWithoutLatest: books => books.slice(), getLatestReadTileBooks: () => [],
     getSortedTileRootEntries: books => books.map(book => ({ key: book.bookUrl, book })),
     ensureShelfBookCoverCache: book => warmed.push(book.bookUrl),
     refreshShelfCoverCache() { assert.fail('category changes must preserve in-flight cover tasks'); },
@@ -153,4 +154,8 @@ assert.notEqual(key(books[0]), before, 'reading progress still refreshes a retai
 const publicKey = key(books[0]);
 shelf.shelfScope = 'private';
 assert.notEqual(key(books[0]), publicKey, 'private and public nodes remain isolated');
+// The page body is a Column: an in-flow private layer would be laid out under the category pager, off screen.
+const privateLayer = source.slice(source.indexOf('if (this.privateShelfLayerMounted) {'));
+assert.match(privateLayer.slice(0, privateLayer.indexOf('.hitTestBehavior(')), /\.position\(\{ x: 0, y: 0 \}\)/,
+  'the private shelf layer overlays the category pager');
 console.log('PASS shelf native pages: immediate and rapid selections, native completion races, active-layout updates, cover reuse, empty results and privacy gates');

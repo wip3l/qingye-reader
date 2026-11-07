@@ -74,51 +74,32 @@ const SHELF_COVER_UPDATE_BATCH_MS: number = 48;
 const SHELF_UPDATE_BADGE_VARIABLE: string = 'shelfHasUpdate';
 const SHELF_SEARCH_INPUT_KEY: string = 'bookshelf_search_input';
 /**
- * 分组打开：文件夹里的书飞到分组页里各自的位置；收回时飞回文件夹。书架、分组页只整页淡出淡入，
- * 拆旧页、建新页放在淡出之后，主线程堵着的那段书在渲染线程上照常飞。
+ * 分组开合：和隐私书架进出一样整页缩放、交叉淡入淡出。分组页是盖在书架上的独立一层，书架不拆；打开时书架放大到
+ * ZOOM_LARGE 淡出，分组页从 ZOOM_SMALL 浮起；返回反过来。曲线与隐私书架相同。
  */
-const SHELF_GROUP_FLY_DURATION: number = 440;
-const SHELF_GROUP_FLY_BACK_DURATION: number = 400;
-const SHELF_GROUP_FADE_OUT_DURATION: number = 160;
-const SHELF_GROUP_FADE_IN_DURATION: number = 180;
-/** 书落地后和页面上的真书没对齐（第一次打开时落点是估的）时滑过去的时长。 */
-const SHELF_GROUP_SETTLE_DURATION: number = 180;
-/** 收回时等书架滚回进入前的位置再淡入，最多等这么久。 */
-const SHELF_GROUP_RESTORE_WAIT: number = 600;
+const SHELF_GROUP_ZOOM_IN_DURATION: number = 420;
+const SHELF_GROUP_ZOOM_OUT_DURATION: number = 340;
+const SHELF_GROUP_ZOOM_LARGE: number = 1.06;
+const SHELF_GROUP_ZOOM_SMALL: number = 0.94;
+/** 要浮起的那一层等待期间的透明度：不是 0，渲染服务在等待时就把它画好，开动第一帧不卡（0 时整层被跳过，第一帧要画 40ms）。 */
+const SHELF_GROUP_PAGE_PREPARE_OPACITY: number = 0.01;
+/**
+ * 打开分组时等分组页这一屏封面解码完再浮起，最多等这么久（主题的大封面图后台解码要一两百毫秒）；
+ * 分组页开头几十毫秒几乎透明，晚一点解码完的封面看不出来。
+ */
+const SHELF_GROUP_COVER_WAIT: number = 150;
 /** 动画回调丢失（切到后台等）时的兜底收尾。 */
-const SHELF_GROUP_MOTION_WATCHDOG: number = 1600;
+const SHELF_GROUP_MOTION_WATCHDOG: number = 2400;
 /** 请系统按高刷跑，不然会先掉到 60Hz。 */
 const SHELF_GROUP_FRAME_RATE: ExpectedFrameRateRange = { min: 60, max: 120, expected: 120 };
 /** 隐私书架进出的时长；进入前先等一帧让隐私书架层建好。 */
 const PRIVATE_SHELF_ENTER_DURATION: number = 420;
 const PRIVATE_SHELF_EXIT_DURATION: number = 340;
 const PRIVATE_SHELF_PREMOUNT_DELAY: number = 16;
-/** 飞行的书先盖在原书上画这么多帧（封面图要解码），再藏起原书起飞，不然起飞那一刻会空一下。 */
-const SHELF_GROUP_PREMOUNT_FRAMES: number = 2;
 
-/** 一本书在某一处的样子：摆正时封面的位置与大小、以书底中点为轴的倾斜角、压暗程度（文件夹后面两本更暗）。 */
-class TileGroupPreviewSource {
-  book: Book;
-  bounds: SharedElementBounds;
-  angle: number;
-  shade: number;
-
-  constructor(book: Book, bounds: SharedElementBounds, angle: number, shade: number) {
-    this.book = book;
-    this.bounds = bounds;
-    this.angle = angle;
-    this.shade = shade;
-  }
-}
-
-/**
- * 单独飞的一本书：按 width/height 排版，只用缩放平移旋转从 from 走到 to，由 tileGroupFlyProgress 驱动。
- * image 是关书挪位用的平面封面；flat、hardcover 是分组开合时平铺布局的封面与陪伴布局的精装书，和书架上画法一致。
- */
+/** 关书挪位时单独飞的平面封面：按 width/height 排版，只用缩放平移从 from 走到 to，由 tileGroupFlyProgress 驱动。 */
 class TileGroupFlyer {
   key: string = '';
-  kind: string = 'image';
-  book: Book | undefined = undefined;
   cover: ResourceStr = '';
   /** 主题封面在书架上是拉伸铺满的，飞行时一样。 */
   fill: boolean = false;
@@ -130,40 +111,10 @@ class TileGroupFlyer {
   fromY: number = 0;
   fromScaleX: number = 1;
   fromScaleY: number = 1;
-  fromAngle: number = 0;
-  fromShade: number = 0;
   toX: number = 0;
   toY: number = 0;
   toScaleX: number = 1;
   toScaleY: number = 1;
-  toAngle: number = 0;
-  toShade: number = 0;
-
-  clone(): TileGroupFlyer {
-    const next = new TileGroupFlyer();
-    next.key = this.key;
-    next.kind = this.kind;
-    next.book = this.book;
-    next.cover = this.cover;
-    next.fill = this.fill;
-    next.color = this.color;
-    next.initial = this.initial;
-    next.width = this.width;
-    next.height = this.height;
-    next.fromX = this.fromX;
-    next.fromY = this.fromY;
-    next.fromScaleX = this.fromScaleX;
-    next.fromScaleY = this.fromScaleY;
-    next.fromAngle = this.fromAngle;
-    next.fromShade = this.fromShade;
-    next.toX = this.toX;
-    next.toY = this.toY;
-    next.toScaleX = this.toScaleX;
-    next.toScaleY = this.toScaleY;
-    next.toAngle = this.toAngle;
-    next.toShade = this.toShade;
-    return next;
-  }
 }
 
 /** 下一帧开始渲染时回调。 */
@@ -330,41 +281,52 @@ export struct BookshelfPage {
   @State privateShelfLayerCovering: boolean = false;
   @StorageLink('bookshelfGroupBackRequest') @Watch('onTileGroupBackRequested') tileGroupBackRequest: number = 0;
   @StorageLink('bookshelfGroupTransitionActive') tileGroupAnimating: boolean = false;
-  /** 是从书架上的分组文件夹点进来的、有书可飞：返回时飞回文件夹，否则只淡出淡入。 */
+  /** 是从书架上的分组文件夹点进来的：返回时缩回那个文件夹（tileGroupOriginX/Y），否则以屏幕中心缩放。 */
   @State tileGroupHasOrigin: boolean = false;
   private tileGroupOriginGroupId: number = 0;
-  private tileGroupOriginPageKey: string = '';
   private tileGroupOriginViewportKey: string = '';
+  private tileGroupOriginX: number = 0;
+  private tileGroupOriginY: number = 0;
   /** 关书挪位时盖着的旧书架截图里那本书的封面先藏起来（只藏封面图）。 */
   @State tileGroupHiddenCovers: string[] = [];
-  /** 开合分组时单独飞的书；飞行期间页面里对应的整本书藏起来，文件夹里的那叠也藏起来。 */
+  /** 关书挪位时单独飞的封面。 */
   @State tileGroupFlyers: TileGroupFlyer[] = [];
   @State tileGroupFlyProgress: number = 0;
-  @State tileGroupFlyingBooks: string[] = [];
-  @State tileGroupHiddenFolder: string = '';
+  /**
+   * 分组页那一层显示的分组（0 为没有这一层）。平铺布局的分组页盖在书架上，书架底层不拆、停在进入前的分组上：
+   * 打开不用销毁书架，返回不用重建、滚回。返回动画结束后才卸下这一层。
+   */
+  @State tileGroupLayerGroupId: number = 0;
+  /** 分组页那一层的分类页（键见 tileGroupPageKey），换分组或这一层卸下时清空。 */
+  private tileGroupPages: Map<string, ShelfCategoryPage> = new Map();
+  /** 书架底层显示的分组：进入分组页前所在的分组（0 或 -1）。 */
+  private tileGroupBaseGroupId: number = 0;
+  /** 分组页那一层的标题栏毛玻璃按它自己的滚动显现。 */
+  @State tileGroupBackdropReveal: number = 0;
+  /** 两层的缩放：分组页从 ZOOM_SMALL 浮起，书架从 ZOOM_LARGE 落回。 */
+  @State tileGroupShelfScale: number = 1;
+  @State tileGroupPageScale: number = 1;
+  /** 缩放中心（相对书架根节点，vp）。 */
+  @State tileGroupZoomX: number = 0;
+  @State tileGroupZoomY: number = 0;
+  /** 开合期间两层都不画底色和主题背景图（由 tileGroupBackgroundLayer 垫着）：缩放的只有内容，背景不动。 */
+  @State tileGroupBareBody: boolean = false;
   /** 开合期间垫在最底下的页面背景（底色与主题背景图），书架或分组页淡出时露出的仍是同样的背景。 */
   @State tileGroupMotionBackground: boolean = false;
-  /** 开合中重建的书架、分组页封面同步解码（只在建的那一刻读，不是状态，翻转它不会让已有封面重画）。 */
-  private tileGroupSyncCovers: boolean = false;
-  /** 收回时书架先从顶部建起、下一帧才滚回原位：滚回原位那一刻才打开同步解码，顶部那屏不白白同步解。 */
-  private tileGroupSyncAfterRestore: boolean = false;
+  /** 打开分组时为真：分组页挂上的本地封面登记进 tileGroupPendingCovers，后台解码完移出，都解码完分组页才浮起。 */
+  private tileGroupAwaitCovers: boolean = false;
+  private tileGroupPendingCovers: Set<string> = new Set();
   @State tileGroupShelfOpacity: number = 1;
   @State tileGroupPageOpacity: number = 1;
   @State shelfReorderCurtain: image.PixelMap | undefined = undefined;
   @State shelfReorderCurtainOpacity: number = 1;
   /** 关书回到书架到挪位动画结束；期间不在 loadBooks 里放掉按住的阅读时间。 */
   private shelfReturnMotionActive: boolean = false;
-  /** 文件夹里看得见的那几本在书架上的样子（打开时量），返回时飞回这里。 */
-  private tileGroupPreviewSources: TileGroupPreviewSource[] = [];
-  /** 分组页里每本书量到过的准确落点，下次打开直接用，不必再估。 */
-  private tileGroupPagePoseCache: Map<string, TileGroupPreviewSource> = new Map();
   private tileGroupPendingBack: boolean = false;
   /** 已开始但还没切过去的目标分组（-1 表示没有）；兜底收尾时直接切过去，不让点击落空。 */
   private tileGroupPendingTarget: number = -1;
   private tileGroupMotionGeneration: number = 0;
   private tileGroupMotionWatchdog: number = -1;
-  private tileGroupRootPages: Map<string, ShelfCategoryPage> | null = null;
-  private tileGroupRootHeaderCollapse: number = 0;
   @State selectedBookUrls: string[] = [];
   @State showMultiSelectMoreMenu: boolean = false;
   private batchExportDialogSession: SystemDialogSession = new SystemDialogSession();
@@ -600,12 +562,14 @@ export struct BookshelfPage {
   }
 
   onActiveShelfGroupChanged(): void {
-    this.applyShelfScope();
+    // 平铺布局进出分组页时书架底层的分组不变：不作废书架的分类页，不然书架整屏重建，正是开合要省掉的。
+    const tileGroupMove = this.isTileLayout() && (this.activeShelfGroupId > 0 || this.tileGroupLayerGroupId > 0);
+    this.syncTileGroupLayer();
+    this.applyShelfScope(!tileGroupMove);
     // A group switch changes the visible snapshot while the shelf's LazyForEach data sources
     // are retained.  Replacing them here (and forcing a reload) prevents a retained list/grid
-    // from continuing to render the books from the previous group, especially on the tile group
-    // page where the source is shared across group transitions.
-    this.reloadShelfDataSources(true);
+    // from continuing to render the books from the previous group.
+    this.reloadShelfDataSources(true, !tileGroupMove);
     if (this.shelfStateRestored) {
       BookshelfStateStore.saveActiveGroupId(getContext(this), this.activeShelfGroupId).catch((e: Error) => {
         console.warn('保存书架分组状态失败:', e);
@@ -754,8 +718,8 @@ export struct BookshelfPage {
     }
   }
 
-  reloadShelfDataSources(force: boolean = false): void {
-    this.shelfCategoryRevision++;
+  reloadShelfDataSources(force: boolean = false, invalidatePages: boolean = true): void {
+    if (invalidatePages) this.shelfCategoryRevision++;
     this.shelfTileEntriesCacheKey = '';
     this.shelfTileEntriesCache = [];
     this.shelfListBooksSource.replace(this.books, force);
@@ -1355,22 +1319,31 @@ export struct BookshelfPage {
       if (this.tileGroupMotionBackground) {
         this.tileGroupBackgroundLayer()
       }
-      // 分组页和书架各自重建：两页的滚动器与懒加载数据源不共用，返回时才能对准进入前的位置。
-      if (this.isTileGroupPage()) {
+      // 书架一直在底下，分组页打开后藏起来（不排版、不拆）；分组页另成一层盖在上面。
+      Stack() {
+        this.shelfPageBody()
+      }
+      .width('100%')
+      .height('100%')
+      .scale({ x: this.tileGroupShelfScale, y: this.tileGroupShelfScale,
+        centerX: this.tileGroupZoomX, centerY: this.tileGroupZoomY })
+      .opacity(this.tileGroupShelfOpacity)
+      // 开合时整层画成一张再缩放淡出：两整层带阴影的书一起半透明缩放，渲染服务每帧重画两层要 25–50ms。
+      .renderGroup(this.tileGroupAnimating)
+      .visibility(this.isTileGroupPage() && !this.tileGroupAnimating ? Visibility.None : Visibility.Visible)
+      .hitTestBehavior(this.isTileGroupPage() ? HitTestMode.None : HitTestMode.Default)
+      // 在分组页里切到列表布局时分组变成书架的筛选，这一层不再显示。
+      if (this.tileGroupLayerGroupId > 0 && this.isTileLayout()) {
         Stack() {
-          this.shelfPageBody()
+          this.tileGroupPageBody()
         }
         .width('100%')
         .height('100%')
-        .backgroundColor(this.pageColor())
+        .scale({ x: this.tileGroupPageScale, y: this.tileGroupPageScale,
+          centerX: this.tileGroupZoomX, centerY: this.tileGroupZoomY })
         .opacity(this.tileGroupPageOpacity)
-      } else {
-        Stack() {
-          this.shelfPageBody()
-        }
-        .width('100%')
-        .height('100%')
-        .opacity(this.tileGroupShelfOpacity)
+        .renderGroup(this.tileGroupAnimating)
+        .hitTestBehavior(this.isTileGroupPage() ? HitTestMode.Default : HitTestMode.None)
       }
       if (this.shelfReorderCurtain) {
         // 关书回来挪位时盖着的旧书架截图，在飞行封面下面淡出。
@@ -1414,6 +1387,13 @@ export struct BookshelfPage {
           if (this.showBookGroupActionMenu) this.closeBookGroupActionMenu();
         }))
 
+      Column()
+        .width(1)
+        .height(1)
+        .position({ x: 0, y: 0 })
+        .hitTestBehavior(HitTestMode.None)
+        .bindSheet(this.showBookGroupPicker, this.bookGroupPickerDialog(), this.bookGroupPickerSheetOptions())
+
       if (this.isBookMultiSelect) {
         this.bookMultiSelectBar()
       }
@@ -1434,77 +1414,56 @@ export struct BookshelfPage {
   shelfPageBody() {
     Column() {
       // 主题背景图垫在最底层，不占布局、不随列表滚动；下面的列表和网格要用 shelfSurfaceColor 透出它。
-      HomeThemeBackdrop()
-        .position({ x: 0, y: 0 })
+      // 分组开合期间由 tileGroupBackgroundLayer 垫着，这里不画。
+      if (!this.tileGroupBareBody) {
+        HomeThemeBackdrop()
+          .position({ x: 0, y: 0 })
+      }
 
       Column() {
       // 列表上滑时标题行收起：外层按收起量变矮并裁剪，标题行贴底上移并淡出。
       Stack({ alignContent: Alignment.Bottom }) {
         Row() {
-          if (this.isTileGroupPage() && !this.isBookMultiSelect) {
-            ImmersiveBackButton({
-              iconColor: this.primaryTextColor(),
-              darkMode: this.appDarkMode,
-              buttonSize: 40,
-              containerWidth: 56,
-              materialScale: 0.83,
-              compactLayout: true,
-              onBack: () => this.exitTileGroupPage()
-            })
-            Text(this.activeShelfGroupName())
+          if (this.isBookMultiSelect) {
+            Text('书架')
+              .fontSize(AppFontSize.DISPLAY)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.primaryTextColor())
+          } else if (!this.isCompanionLayout()) {
+            this.shelfGroupSwitcher()
+          } else if (this.shelfBaseGroupId() === -1) {
+            // 陪伴布局左上角不放标题，分组改由右侧图标切换；只有“未分组”没有单独的分组页，留个名字说明当前在看什么。
+            Text(this.shelfGroupTitle())
               .fontSize(AppFontSize.TITLE)
               .fontWeight(FontWeight.Bold)
               .fontColor(this.primaryTextColor())
               .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+
+          if (this.isBookMultiSelect) {
             Blank()
-            Text(this.books.length > 0 ? `${this.books.length}本` : '')
-              .fontSize(AppFontSize.BODY)
-              .fontColor(this.subTextColor())
-              .margin({ right: AppSpacing.MD })
-            this.shelfMoreButton()
+            ImmersiveHeaderAction({
+              label: '取消',
+              accessibilityLabel: '退出多选',
+              onTap: () => this.exitBookMultiSelect()
+            })
           } else {
-            if (this.isBookMultiSelect) {
-              Text('书架')
-                .fontSize(AppFontSize.DISPLAY)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(this.primaryTextColor())
-            } else if (!this.isCompanionLayout()) {
-              this.shelfGroupSwitcher()
-            } else if (this.activeShelfGroupId === -1) {
-              // 陪伴布局左上角不放标题，分组改由右侧图标切换；只有“未分组”没有单独的分组页，留个名字说明当前在看什么。
-              Text(this.shelfGroupTitle())
-                .fontSize(AppFontSize.TITLE)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(this.primaryTextColor())
-                .maxLines(1)
-            }
+            Blank()
 
-            if (this.isBookMultiSelect) {
-              Blank()
-              ImmersiveHeaderAction({
-                label: '取消',
-                accessibilityLabel: '退出多选',
-                onTap: () => this.exitBookMultiSelect()
-              })
-            } else {
-              Blank()
-
-              if (this.isCompanionLayout()) {
-                this.shelfGroupButton()
-              }
-              if (this.bookshelfTypeCategoryEnabled) {
-                this.shelfCategoryButton()
-              }
-              this.shelfFilterButton()
-              this.shelfMoreButton()
+            if (this.isCompanionLayout()) {
+              this.shelfGroupButton()
             }
+            if (this.bookshelfTypeCategoryEnabled) {
+              this.shelfCategoryButton()
+            }
+            this.shelfFilterButton()
+            this.shelfMoreButton(!this.isTileGroupPage())
           }
         }
         .width('100%')
         .height(56 + this.statusBarHeight)
         .padding({
-          left: this.isTileGroupPage() && !this.isBookMultiSelect ? 0 : AppSpacing.XL,
+          left: AppSpacing.XL,
           right: AppSpacing.XL,
           top: this.statusBarHeight
         })
@@ -1584,7 +1543,7 @@ export struct BookshelfPage {
         CategorySwipePager({
           pageKeys: this.shelfPageOrder(),
           selectedIndex: Math.max(0, this.shelfPageOrder().indexOf(this.activeShelfTypeTab())),
-          swipeEnabled: !this.isBookMultiSelect && !this.isTileGroupPage() && this.shelfScope !== 'private',
+          swipeEnabled: !this.isBookMultiSelect && this.shelfScope !== 'private',
           swipeExcludedGestureTag: 'recentReadCarouselPan',
           canSelect: (key: string): boolean => this.canSelectShelfPage(key),
           onSelect: (key: string): void => this.setShelfPage(key),
@@ -1604,11 +1563,13 @@ export struct BookshelfPage {
         .hitTestBehavior(this.shelfScope === 'private' ? HitTestMode.None : HitTestMode.Default)
 
         if (this.privateShelfLayerMounted) {
+          // 外层是 Column：不脱离排版的话会排在分类页下面、整层落在屏幕外。
           Column() {
             this.shelfCategoryContent('private')
           }
           .width('100%')
           .height('100%')
+          .position({ x: 0, y: 0 })
           .clip(true)
           .scale({ x: this.privateShelfInnerScale(), y: this.privateShelfInnerScale() })
           .opacity(this.privateShelfLayerProgress)
@@ -1618,23 +1579,105 @@ export struct BookshelfPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.pageColor())
+    .backgroundColor(this.tileGroupBareBody ? Color.Transparent : this.pageColor())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-    .onTouch((event: TouchEvent) => {
-      if (event.type === TouchType.Down) {
-        this.shelfContentTouching = true;
-        this.prewarmShelfOpeningBackdrop();
-      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-        this.shelfContentTouching = false;
-        if (this.privateShelfBiometricQueued) {
-          this.privateShelfBiometricQueued = false;
-          this.startPrivateShelfBiometricUnlock(false);
+    .onTouch((event: TouchEvent) => this.onShelfBodyTouch(event))
+    // 开合期间的背景由 tileGroupBackgroundLayer 负责。
+  }
+
+  onShelfBodyTouch(event: TouchEvent): void {
+    if (event.type === TouchType.Down) {
+      this.shelfContentTouching = true;
+      this.prewarmShelfOpeningBackdrop();
+    } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      this.shelfContentTouching = false;
+      if (this.privateShelfBiometricQueued) {
+        this.privateShelfBiometricQueued = false;
+        this.startPrivateShelfBiometricUnlock(false);
+      }
+    }
+  }
+
+  /** 分组页那一层：返回键、分组名、本数和更多按钮，下面是这个分组的书（标题栏不随滚动收起）。 */
+  @Builder
+  tileGroupPageBody() {
+    Column() {
+      if (!this.tileGroupBareBody) {
+        HomeThemeBackdrop()
+          .position({ x: 0, y: 0 })
+      }
+
+      Column() {
+        Row() {
+          if (this.isBookMultiSelect) {
+            Text('书架')
+              .fontSize(AppFontSize.DISPLAY)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.primaryTextColor())
+            Blank()
+            ImmersiveHeaderAction({
+              label: '取消',
+              accessibilityLabel: '退出多选',
+              onTap: () => this.exitBookMultiSelect()
+            })
+          } else {
+            ImmersiveBackButton({
+              iconColor: this.primaryTextColor(),
+              darkMode: this.appDarkMode,
+              buttonSize: 40,
+              containerWidth: 56,
+              materialScale: 0.83,
+              compactLayout: true,
+              onBack: () => this.exitTileGroupPage()
+            })
+            Text(this.tileGroupLayerName())
+              .fontSize(AppFontSize.TITLE)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.primaryTextColor())
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Blank()
+            // 按这一层自己的书数：返回时当前分组已切回书架，this.books 不再是这个分组的书。
+            Text(this.shelfBooksForPage(this.tileGroupLayerKey()).length > 0 ?
+              `${this.shelfBooksForPage(this.tileGroupLayerKey()).length}本` : '')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.subTextColor())
+              .margin({ right: AppSpacing.MD })
+            this.shelfMoreButton(this.isTileGroupPage())
+          }
+        }
+        .width('100%')
+        .height(56 + this.statusBarHeight)
+        .padding({ left: this.isBookMultiSelect ? AppSpacing.XL : 0, right: AppSpacing.XL, top: this.statusBarHeight })
+        .alignItems(VerticalAlign.Center)
+
+        if (this.isBookMultiSelect) {
+          this.bookSelectionStatusBar()
         }
       }
-    })
-    .bindSheet(this.showBookGroupPicker, this.bookGroupPickerDialog(), this.bookGroupPickerSheetOptions())
-    // 不要给整页加消失转场：切到分组页时旧书架会多留一两帧，而且已经换成了分组的书，整屏闪一下。
-    // 开合期间的背景由 tileGroupBackgroundLayer 负责。
+      .width('100%')
+      .position({ x: 0, y: 0 })
+      .zIndex(5)
+
+      HeaderBackdrop({ backdropHeight: this.statusBarHeight + 56,
+        statusBarHeight: this.statusBarHeight,
+        backdropColor: ThemeRuntime.topBarColor(this.appDarkMode),
+        reveal: ThemeRuntime.homeBackdrop(this.appDarkMode) ? this.tileGroupBackdropReveal : 1 })
+        .width('100%')
+        .position({ x: 0, y: 0 })
+        .zIndex(3)
+
+      Column() {
+        this.shelfCategoryContent(this.tileGroupLayerKey())
+      }
+      .width('100%')
+      .layoutWeight(1)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.tileGroupBareBody ? Color.Transparent : this.pageColor())
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .onTouch((event: TouchEvent) => this.onShelfBodyTouch(event))
   }
 
   /** 和分组页一样的底色与主题背景图：书架或分组页整页淡出时，背景留在原处不跟着淡。 */
@@ -1655,45 +1698,25 @@ export struct BookshelfPage {
   tileGroupFlyerLayer() {
     Stack({ alignContent: Alignment.TopStart }) {
       ForEach(this.tileGroupFlyers, (flyer: TileGroupFlyer) => {
-        // 外层按左上角缩放平移，里层以书底中点为轴倾斜：两个变换的中心不同，分开挂在两层上。
-        Stack({ alignContent: Alignment.TopStart }) {
-          Stack({ alignContent: Alignment.TopStart }) {
-            if (flyer.kind === 'hardcover' && flyer.book) {
-              this.tileGroupHardcoverFlyer(flyer, flyer.book)
-            } else if (flyer.kind === 'flat' && flyer.book) {
-              Stack() {
-                this.coverView(flyer.book, '100%', '100%', ImageFit.Cover, true, false, '', 8, -1, true)
-              }
-              .width(flyer.width)
-              .height(flyer.height)
-              .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
-              .borderRadius(8)
-              .shadow({ radius: ThemeRuntime.glassShadowRadius(), color: this.glassShadowColor(),
-                offsetX: ThemeRuntime.glassShadowOffsetX(), offsetY: ThemeRuntime.glassShadowOffsetY() })
-            } else {
-              Stack() {
-                if (flyer.cover) {
-                  Image(flyer.cover)
-                    .width('100%')
-                    .height('100%')
-                    .objectFit(flyer.fill ? ImageFit.Fill : ImageFit.Cover)
-                    .syncLoad(true)
-                    .draggable(false)
-                } else {
-                  Text(flyer.initial)
-                    .fontSize(28)
-                    .fontColor('#FFFFFF')
-                }
-              }
-              .width(flyer.width)
-              .height(flyer.height)
-              .backgroundColor(flyer.color)
-              .borderRadius(8)
-              .clip(true)
-            }
+        Stack() {
+          if (flyer.cover) {
+            Image(flyer.cover)
+              .width('100%')
+              .height('100%')
+              .objectFit(flyer.fill ? ImageFit.Fill : ImageFit.Cover)
+              .syncLoad(this.coverSyncLoadable(flyer.cover))
+              .draggable(false)
+          } else {
+            Text(flyer.initial)
+              .fontSize(28)
+              .fontColor('#FFFFFF')
           }
-          .rotate({ angle: this.tileGroupFlyValue(flyer.fromAngle, flyer.toAngle), centerX: '50%', centerY: '100%' })
         }
+        .width(flyer.width)
+        .height(flyer.height)
+        .backgroundColor(flyer.color)
+        .borderRadius(8)
+        .clip(true)
         .position({ x: 0, y: 0 })
         .scale({ x: this.tileGroupFlyValue(flyer.fromScaleX, flyer.toScaleX),
           y: this.tileGroupFlyValue(flyer.fromScaleY, flyer.toScaleY), centerX: 0, centerY: 0 })
@@ -1704,31 +1727,6 @@ export struct BookshelfPage {
     .height('100%')
     .hitTestBehavior(HitTestMode.None)
     .accessibilityLevel('no-hide-descendants')
-  }
-
-  /** 飞行中的精装书：画法同 shelfHardcoverBook，不挂 id；文件夹后面两本的压暗随飞行褪掉。 */
-  @Builder
-  tileGroupHardcoverFlyer(flyer: TileGroupFlyer, book: Book) {
-    Stack({ alignContent: Alignment.TopStart }) {
-      this.shelfHardcoverBack(flyer.width, flyer.height)
-      Stack({ alignContent: Alignment.TopStart }) {
-        this.coverView(book, '100%', '100%', ImageFit.Cover, true, false, '', 0,
-          this.shelfHardcoverSpineWidth(flyer.width) + this.shelfHardcoverHingeWidth(flyer.width), true)
-        this.shelfHardcoverCoverLight(flyer.width)
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#000000')
-          .opacity(this.tileGroupFlyValue(flyer.fromShade, flyer.toShade))
-          .hitTestBehavior(HitTestMode.None)
-      }
-      .width(flyer.width)
-      .height(flyer.height)
-      .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 4, bottomRight: 4 })
-      .clip(true)
-    }
-    .width(flyer.width + this.shelfHardcoverThickness(flyer.width) + 3)
-    .height(flyer.height + 4)
   }
 
   /** 换源：系统对话框，API 26+ 是沉浸光感表面。 */
@@ -1778,7 +1776,7 @@ export struct BookshelfPage {
           }
           .width('100%')
           .height('100%')
-          .padding({ top: this.bookshelfTopOverlayHeight() })
+          .padding({ top: this.bookshelfTopOverlayHeight(pageKey) })
           .justifyContent(FlexAlign.Center)
         } else {
           Refresh({ refreshing: $$this.isShelfRefreshing, builder: this.shelfRefreshBuilder }) {
@@ -1788,7 +1786,7 @@ export struct BookshelfPage {
               List({ scroller: this.shelfListScrollerForPage(pageKey), space: AppSpacing.MD }) {
               ListItem() {
                 Row()
-                  .height(this.bookshelfTopOverlayHeight())
+                  .height(this.bookshelfTopOverlayHeight(pageKey))
               }
 
               LazyForEach(this.shelfListBookDataSource(pageKey), (book: Book) => {
@@ -1920,7 +1918,7 @@ export struct BookshelfPage {
   @Builder
   shelfGroupButton() {
     Row() {
-      this.shelfHeaderCircleButton($r('sys.symbol.folder'), this.showShelfGroupMenu || this.activeShelfGroupId !== 0,
+      this.shelfHeaderCircleButton($r('sys.symbol.folder'), this.showShelfGroupMenu || this.shelfBaseGroupId() !== 0,
         `切换分组，当前${this.shelfGroupTitle()}`, () => {
           this.showShelfGroupMenu = !this.showShelfGroupMenu;
           this.showShelfMoreMenu = false;
@@ -1935,11 +1933,13 @@ export struct BookshelfPage {
     }))
   }
 
+  /** 书架标题栏上的分组名（书架底层那一层所在的分组）。 */
   shelfGroupTitle(): string {
-    if (this.activeShelfGroupId === 0) {
+    const groupId = this.shelfBaseGroupId();
+    if (groupId === 0) {
       return '书架';
     }
-    if (this.activeShelfGroupId === -1) {
+    if (groupId === -1) {
       return '未分组';
     }
     return this.activeShelfGroupName();
@@ -3079,9 +3079,7 @@ export struct BookshelfPage {
   }
 
   /**
-   * 点分组卡片：文件夹里看得见的几本书直接飞到分组页里各自的位置，书架原地淡出，背景不动；书架淡完才拆书架、
-   * 建分组页（主线程要堵两三百毫秒，书照样在渲染线程上飞），建好后分组页淡入，书落定后换成页面里的真封面。
-   * 不截图、不缩放整页，点下去就动。
+   * 点分组卡片打开分组页：和隐私书架进出一样整页缩放、交叉淡入淡出，缩放中心是点的这个文件夹。
    */
   openTileGroupPage(groupId: number, pageKey: string, touchX: number, touchY: number): void {
     if (this.tileGroupAnimating || this.consumeShelfSwipeClick()) return;
@@ -3089,224 +3087,116 @@ export struct BookshelfPage {
     this.showShelfMoreMenu = false;
     this.showShelfFilterMenu = false;
     const generation = this.beginTileGroupMotion(groupId);
-    const cardId = this.tileGroupElementId(groupId, pageKey);
-    this.tileGroupPreviewSources = this.captureTileGroupPreviewSources(groupId, pageKey, cardId);
+    const folder = this.measureTileGroupRect(this.tileGroupElementId(groupId, pageKey));
+    this.tileGroupHasOrigin = folder !== undefined;
     this.tileGroupOriginGroupId = groupId;
-    this.tileGroupOriginPageKey = pageKey;
     this.tileGroupOriginViewportKey = this.tileGroupViewportKey();
-    this.tileGroupHasOrigin = this.tileGroupPreviewSources.length > 0;
-    if (!this.tileGroupHasOrigin) {
-      this.crossFadeTileGroup(groupId, generation);
-      return;
+    if (folder) {
+      this.tileGroupOriginX = folder.x + folder.width / 2;
+      this.tileGroupOriginY = folder.y + folder.height / 2;
     }
-    this.tileGroupMotionBackground = true;
-    const flyers = this.openTileGroupFlyers(groupId);
-    this.mountTileGroupFlyers(flyers);
-    // 分组页建好淡入时这几本还在落，页面里的先藏着，落定后再换。
-    this.tileGroupFlyingBooks = flyers.map((flyer: TileGroupFlyer): string => flyer.key);
-    // 飞行的书先原样盖在文件夹那几本上画出来（封面图要一两帧解码），再藏起原书一起起飞。
-    this.afterTileGroupFrames(generation, SHELF_GROUP_PREMOUNT_FRAMES, (): void => {
-      this.tileGroupHiddenFolder = cardId;
-      this.flyIntoTileGroup(groupId, generation);
-    });
+    this.zoomTileGroup(groupId, generation, folder !== undefined);
   }
 
-  flyIntoTileGroup(groupId: number, generation: number): void {
-    const ui = this.getUIContext();
-    let landed = false;
-    let shown = false;
-    const settle = (): void => {
-      if (!landed || !shown || generation !== this.tileGroupMotionGeneration) return;
-      const targets = this.tileGroupFlyers.map((flyer: TileGroupFlyer): TileGroupPreviewSource | undefined =>
-        flyer.book ? this.measureTileGroupPagePose(flyer.book) : undefined);
-      this.rememberTileGroupPagePoses(groupId, targets);
-      this.settleTileGroupFlyers(generation, targets, (): void => this.finishTileGroupMotion(generation));
-    };
-    ui.animateTo({ duration: SHELF_GROUP_FLY_DURATION, curve: curves.cubicBezierCurve(0.2, 0, 0, 1),
-      expectedFrameRateRange: SHELF_GROUP_FRAME_RATE, onFinish: (): void => {
-        landed = true;
-        settle();
-      } }, (): void => {
-      this.tileGroupFlyProgress = 1;
-    });
-    ui.animateTo({ duration: SHELF_GROUP_FADE_OUT_DURATION, curve: Curve.EaseOut, onFinish: (): void => {
-      if (generation !== this.tileGroupMotionGeneration) return;
-      // 书架已经看不见了，这时再拆书架、建分组页。
-      this.tileGroupPageOpacity = 0;
-      this.tileGroupSyncCovers = true;
-      this.applyTileGroupTarget(groupId);
-      this.afterTileGroupFrames(generation, 2, (): void => {
-        ui.animateTo({ duration: SHELF_GROUP_FADE_IN_DURATION, curve: Curve.EaseOut, onFinish: (): void => {
-          shown = true;
-          settle();
-        } }, (): void => {
-          this.tileGroupPageOpacity = 1;
-        });
-      });
-    } }, (): void => {
-      this.tileGroupShelfOpacity = 0;
-    });
-  }
-
-  /**
-   * 返回：分组页里那几本从页面上飞回文件夹，分组页淡出；淡完再重建书架（恢复进入前的分类页和滚动），
-   * 书架淡入，书落回文件夹后显出原来那叠书。窗口变了、分组没了或是从菜单进来的，只整页淡出淡入。
-   */
+  /** 返回书架：缩回进来时那个文件夹；窗口变了、分组没了或是从菜单进来的，以屏幕中心缩放。 */
   leaveTileGroupPage(): void {
-    const generation = this.beginTileGroupMotion(0);
-    const toCard = this.tileGroupHasOrigin && this.activeShelfGroupId === this.tileGroupOriginGroupId &&
+    const target = this.tileGroupBaseGroupId;
+    const generation = this.beginTileGroupMotion(target);
+    const toFolder = this.tileGroupHasOrigin && this.activeShelfGroupId === this.tileGroupOriginGroupId &&
       this.tileGroupOriginViewportKey === this.tileGroupViewportKey() &&
       this.shelfGroups.some((group: BookGroup): boolean => group.groupId === this.tileGroupOriginGroupId);
-    const flyers = toCard ? this.closeTileGroupFlyers() : [];
-    if (flyers.length === 0) {
-      this.crossFadeTileGroup(0, generation);
-      return;
-    }
-    this.tileGroupMotionBackground = true;
-    this.mountTileGroupFlyers(flyers);
-    // 飞行的书先盖在页面里那几本上画出来，再藏起页面里的书一起起飞。
-    this.afterTileGroupFrames(generation, SHELF_GROUP_PREMOUNT_FRAMES, (): void => {
-      this.tileGroupFlyingBooks = flyers.map((flyer: TileGroupFlyer): string => flyer.key);
-      this.flyOutOfTileGroup(generation);
-    });
-  }
-
-  flyOutOfTileGroup(generation: number): void {
-    const ui = this.getUIContext();
-    const groupId = this.tileGroupOriginGroupId;
-    const cardId = this.tileGroupElementId(groupId, this.tileGroupOriginPageKey);
-    let landed = false;
-    let shown = false;
-    const settle = (): void => {
-      if (!landed || !shown || generation !== this.tileGroupMotionGeneration) return;
-      // 书架重建后文件夹可能挪了一点（滚动没恢复到位等），按现在的位置落定。
-      const fan = this.captureTileGroupPreviewSources(groupId, this.tileGroupOriginPageKey, cardId);
-      const targets = this.tileGroupFlyers.map((flyer: TileGroupFlyer): TileGroupPreviewSource | undefined =>
-        fan.find((source: TileGroupPreviewSource): boolean => source.book.bookUrl === flyer.key));
-      this.settleTileGroupFlyers(generation, targets, (): void => this.finishTileGroupMotion(generation));
-    };
-    ui.animateTo({ duration: SHELF_GROUP_FLY_BACK_DURATION, curve: curves.cubicBezierCurve(0.2, 0, 0, 1),
-      expectedFrameRateRange: SHELF_GROUP_FRAME_RATE, onFinish: (): void => {
-        landed = true;
-        settle();
-      } }, (): void => {
-      this.tileGroupFlyProgress = 1;
-    });
-    ui.animateTo({ duration: SHELF_GROUP_FADE_OUT_DURATION, curve: Curve.EaseOut, onFinish: (): void => {
-      if (generation !== this.tileGroupMotionGeneration) return;
-      this.tileGroupShelfOpacity = 0;
-      this.tileGroupHiddenFolder = cardId;
-      this.returnToTileGroupShelf();
-      // 书架先在顶部建起来、再滚回原位：滚到位、那一屏画好了才淡入，不然先淡入顶部、再整页跳一下。
-      this.afterTileGroupShelfRestored(generation, (): void => {
-        ui.animateTo({ duration: SHELF_GROUP_FADE_IN_DURATION, curve: Curve.EaseOut, onFinish: (): void => {
-          shown = true;
-          settle();
-        } }, (): void => {
-          this.tileGroupShelfOpacity = 1;
-        });
-      });
-    } }, (): void => {
-      this.tileGroupPageOpacity = 0;
-    });
-  }
-
-  /** 没有书可飞（菜单切换、窗口变了、主题文件夹图）：当前页淡出，换页，新页淡入。 */
-  crossFadeTileGroup(groupId: number, generation: number): void {
-    const ui = this.getUIContext();
-    const fromGroupPage = this.isTileGroupPage();
-    this.tileGroupMotionBackground = true;
-    ui.animateTo({ duration: SHELF_GROUP_FADE_OUT_DURATION, curve: Curve.EaseOut, onFinish: (): void => {
-      if (generation !== this.tileGroupMotionGeneration) return;
-      this.tileGroupShelfOpacity = 0;
-      this.tileGroupPageOpacity = 0;
-      if (groupId === 0) {
-        this.returnToTileGroupShelf();
-      } else {
-        this.tileGroupSyncCovers = true;
-        this.applyTileGroupTarget(groupId);
-      }
-      const reveal = (): void => {
-        ui.animateTo({ duration: SHELF_GROUP_FADE_IN_DURATION, curve: Curve.EaseOut,
-          onFinish: (): void => this.finishTileGroupMotion(generation) }, (): void => {
-          this.tileGroupShelfOpacity = 1;
-          this.tileGroupPageOpacity = 1;
-        });
-      };
-      if (groupId === 0) this.afterTileGroupShelfRestored(generation, reveal);
-      else this.afterTileGroupFrames(generation, 2, reveal);
-    } }, (): void => {
-      if (fromGroupPage) this.tileGroupPageOpacity = 0;
-      else this.tileGroupShelfOpacity = 0;
-    });
-  }
-
-  /** 换回书架。要恢复滚动时顶部那屏照常异步解码（看不见，马上滚走），滚回原位时才同步（见 restoreShelfPageScroll）。 */
-  returnToTileGroupShelf(): void {
-    const root = this.tileGroupRootPages ? this.tileGroupRootPages.get(this.shelfPageKey()) : undefined;
-    const restoring = root !== undefined && root.tileOffset > 0;
-    this.tileGroupSyncAfterRestore = restoring;
-    this.tileGroupSyncCovers = !restoring;
-    this.applyTileGroupTarget(0);
+    this.zoomTileGroup(target, generation, toFolder);
   }
 
   /**
-   * 书架滚回进入前的位置、那一屏也画出来之后再执行。滚回发生在 restoreShelfPageScroll（网格挂上后的下一个任务），
-   * 以它清掉 tileGroupSyncAfterRestore 为准：不能读滚动器的 currentOffset，重建后它还留着离开时的旧值。
-   * 滚回后那一帧要按新位置排版、同步解码这一屏的封面，再等一帧画出来。迟迟不滚最多等 SHELF_GROUP_RESTORE_WAIT。
+   * 从分组菜单等处切换分组：书架打开某个分组时以屏幕中心缩放；分组页里回到书架时若有来处就缩回那个文件夹；
+   * 书架底层换个分组（全部 / 未分组）或分组页换个分组时不用开合，直接换。
    */
-  afterTileGroupShelfRestored(generation: number, run: () => void): void {
-    const deadline = Date.now() + SHELF_GROUP_RESTORE_WAIT;
+  changeTileGroup(groupId: number): void {
+    if (groupId > 0 && !this.isTileGroupPage()) {
+      this.tileGroupHasOrigin = false;
+      this.zoomTileGroup(groupId, this.beginTileGroupMotion(groupId), false);
+    } else if (groupId <= 0 && this.isTileGroupPage()) {
+      this.leaveTileGroupPage();
+    } else {
+      this.applyTileGroupTarget(groupId);
+    }
+  }
+
+  /**
+   * 开合：两层都撤掉底色和主题背景图（由 tileGroupBackgroundLayer 垫着），缩放的只有内容。打开时在书架上面建分组页
+   * （透明、停在起点），等这一屏封面解码完；返回时把藏着的书架显出来（只排版、不重建），等它画出来。然后两层一口气走完。
+   * 建页时主线程堵着、动画也画不出帧（真机实测整段冻住），所以动画不提前开始。
+   */
+  zoomTileGroup(groupId: number, generation: number, fromFolder: boolean): void {
+    const entering = groupId > 0;
+    this.tileGroupZoomX = fromFolder ? this.tileGroupOriginX : this.contextViewportWidth / 2;
+    this.tileGroupZoomY = fromFolder ? this.tileGroupOriginY : this.contextViewportHeight / 2;
+    this.tileGroupMotionBackground = true;
+    this.tileGroupBareBody = true;
+    const run = (): void => {
+      this.getUIContext().animateTo({
+        duration: entering ? SHELF_GROUP_ZOOM_IN_DURATION : SHELF_GROUP_ZOOM_OUT_DURATION,
+        curve: curves.cubicBezierCurve(0.2, 0, 0, 1), expectedFrameRateRange: SHELF_GROUP_FRAME_RATE,
+        onFinish: (): void => this.finishTileGroupMotion(generation)
+      }, (): void => {
+        this.tileGroupShelfScale = entering ? SHELF_GROUP_ZOOM_LARGE : 1;
+        this.tileGroupShelfOpacity = entering ? 0 : 1;
+        this.tileGroupPageScale = entering ? 1 : SHELF_GROUP_ZOOM_SMALL;
+        this.tileGroupPageOpacity = entering ? 1 : 0;
+      });
+    };
+    if (entering) {
+      this.tileGroupPageScale = SHELF_GROUP_ZOOM_SMALL;
+      this.tileGroupPageOpacity = SHELF_GROUP_PAGE_PREPARE_OPACITY;
+      this.beginTileGroupCoverWait(groupId);
+      this.applyTileGroupTarget(groupId);
+      this.afterTileGroupCoversReady(generation, run);
+    } else {
+      this.tileGroupShelfScale = SHELF_GROUP_ZOOM_LARGE;
+      this.tileGroupShelfOpacity = SHELF_GROUP_PAGE_PREPARE_OPACITY;
+      this.applyTileGroupTarget(groupId);
+      this.afterTileGroupFrames(generation, 2, run);
+    }
+  }
+
+  /**
+   * 打开分组：封面换成磁盘缓存后在后台解码，分组页建好后等这一屏都解码完再开始动画。同步解码一屏要在主线程上
+   * 堵几百毫秒。
+   */
+  beginTileGroupCoverWait(groupId: number): void {
+    this.warmTileGroupCovers(groupId);
+    this.tileGroupPendingCovers.clear();
+    this.tileGroupAwaitCovers = true;
+  }
+
+  /** 分组页挂上的封面（见 coverView）都解码完、再等一帧画出来后执行；没缓存的网络封面不等，最多等 SHELF_GROUP_COVER_WAIT。 */
+  afterTileGroupCoversReady(generation: number, run: () => void, maxWait: number = SHELF_GROUP_COVER_WAIT): void {
+    const deadline = Date.now() + maxWait;
     const check = (): void => {
-      if (!this.tileGroupSyncAfterRestore || Date.now() >= deadline) {
-        this.afterTileGroupFrames(generation, 2, run);
+      if (this.tileGroupPendingCovers.size === 0 || Date.now() >= deadline) {
+        this.tileGroupAwaitCovers = false;
+        this.tileGroupPendingCovers.clear();
+        this.afterTileGroupFrames(generation, 1, run);
         return;
       }
       this.afterTileGroupFrames(generation, 1, check);
     };
-    check();
+    // 建页这一帧里封面才挂上、登记成待解码。
+    this.afterTileGroupFrames(generation, 2, check);
   }
 
-  /**
-   * 书落地后和页面上的真书对一对：第一次打开时落点是估的，差了就滑过去，对上了再收尾（收尾时撤飞行的书、显出真书）。
-   */
-  settleTileGroupFlyers(generation: number, targets: (TileGroupPreviewSource | undefined)[], done: () => void): void {
-    let moved = false;
-    const next = this.tileGroupFlyers.map((flyer: TileGroupFlyer, index: number): TileGroupFlyer => {
-      const target = index < targets.length ? targets[index] : undefined;
-      if (!target || (Math.abs(target.bounds.x - flyer.toX) <= 0.75 && Math.abs(target.bounds.y - flyer.toY) <= 0.75 &&
-        Math.abs(target.bounds.width - flyer.width * flyer.toScaleX) <= 0.75 && target.angle === flyer.toAngle)) {
-        return flyer;
-      }
-      moved = true;
-      return this.retargetTileGroupFlyer(flyer, target);
-    });
-    if (!moved) {
-      done();
-      return;
-    }
-    this.getUIContext().animateTo({ duration: SHELF_GROUP_SETTLE_DURATION, curve: curves.cubicBezierCurve(0.2, 0, 0, 1),
-      expectedFrameRateRange: SHELF_GROUP_FRAME_RATE, onFinish: (): void => {
-        if (generation === this.tileGroupMotionGeneration) done();
-      } }, (): void => {
-      this.tileGroupFlyers = next;
-    });
+  /** 只登记后台解码的本地封面：同步解码的挂上就画好了，网络封面不等。 */
+  noteTileGroupCoverMounted(book: Book, src: string, sync: boolean): void {
+    if (this.tileGroupAwaitCovers && !sync && this.coverSyncLoadable(src)) this.tileGroupPendingCovers.add(book.bookUrl);
   }
 
   tileGroupElementId(groupId: number, pageKey: string): string {
     return `shelf_group_${pageKey}_${groupId}`;
   }
 
-  tileGroupPreviewCoverId(cardId: string, book: Book): string {
-    return `${cardId}_cover_${encodeURIComponent(book.bookUrl)}`;
-  }
-
   tileGroupFlyValue(from: number, to: number): number {
     return from + (to - from) * this.tileGroupFlyProgress;
-  }
-
-  isTileGroupFlyingBook(book: Book): boolean {
-    return this.tileGroupFlyingBooks.length > 0 && this.tileGroupFlyingBooks.includes(book.bookUrl);
   }
 
   /** 尺寸、布局或状态栏变了，书架上量到的位置和缓存的落点都作废。 */
@@ -3331,111 +3221,6 @@ export struct BookshelfPage {
     }
   }
 
-  /**
-   * 文件夹里看得见的书在书架上的位置，按画的先后（后画的盖在上面）。陪伴布局是扇形张开的几本精装书，
-   * 位置按排版公式从文件夹算（量倾斜的书会量到外接框）；平铺布局量四宫格的格子。主题文件夹图没有可飞的书。
-   */
-  captureTileGroupPreviewSources(groupId: number, pageKey: string, cardId: string): TileGroupPreviewSource[] {
-    if (this.shouldUseThemeBookCover()) return [];
-    const previewBooks = this.getTileGroupPreviewBooks(groupId, this.shelfBooksForPage(pageKey));
-    const sources: TileGroupPreviewSource[] = [];
-    if (this.isCompanionLayout()) {
-      const folder = this.measureTileGroupRect(cardId);
-      if (!folder) return [];
-      const width = this.shelfFolderBookWidth();
-      const height = this.shelfFolderBookHeight();
-      for (const slot of this.shelfFolderFanSlots(previewBooks)) {
-        const bounds = new SharedElementBounds(folder.x + Math.round((this.shelfTileColumnWidth() - width -
-          this.shelfHardcoverThickness(width) - 3) / 2) + this.shelfFolderFanShift(slot),
-          folder.y + this.shelfTileHardcoverHeight() - height - this.shelfFolderFanRise(slot), width, height);
-        sources.push(new TileGroupPreviewSource(previewBooks[slot], bounds, this.shelfFolderFanAngle(slot),
-          slot === 2 ? 0.2 : (slot === 1 ? 0.12 : 0)));
-      }
-      return sources;
-    }
-    for (const book of previewBooks) {
-      const bounds = this.measureTileGroupRect(this.tileGroupPreviewCoverId(cardId, book));
-      if (bounds) sources.push(new TileGroupPreviewSource(book, bounds, 0, 0));
-    }
-    return sources;
-  }
-
-  /**
-   * 分组页里这本书封面的位置。getRectangleById 给的是排版位置、不含斜靠的旋转，所以和书架上的书一样
-   * 按“摆正时的位置 + 斜靠角度”描述。在屏幕外的不飞。
-   */
-  measureTileGroupPageCover(book: Book): SharedElementBounds | undefined {
-    const rect = this.measureTileGroupRect(this.shelfCoverElementId(book, this.shelfCoverScope(this.shelfPageKey(), false)));
-    if (!rect || rect.y + rect.height <= 0 || rect.y >= this.contextViewportHeight ||
-      rect.x + rect.width <= 0 || rect.x >= this.contextViewportWidth) {
-      return undefined;
-    }
-    return rect;
-  }
-
-  measureTileGroupPagePose(book: Book): TileGroupPreviewSource | undefined {
-    const rect = this.measureTileGroupPageCover(book);
-    return rect ? new TileGroupPreviewSource(book, rect, this.isCompanionLayout() ? this.shelfTileBookLean(book) : 0, 0) : undefined;
-  }
-
-  /**
-   * 分组页还没建时估这本书的落点：分组页没有顶部卡片，第一行书从标题栏下面 12vp 起排（见
-   * bookshelfTileTopSpacerHeight），横向和书架同一套列。上次量到的准位置优先。
-   */
-  estimateTileGroupPagePose(groupId: number, book: Book, index: number): TileGroupPreviewSource {
-    const cached = this.tileGroupPagePoseCache.get(this.tileGroupPagePoseKey(groupId, book));
-    if (cached) return new TileGroupPreviewSource(book, cached.bounds, cached.angle, 0);
-    const columns = this.shelfTileColumnCount();
-    const columnWidth = this.shelfTileColumnWidth();
-    const cellX = BookTileLayout.SIDE_PADDING + (index % columns) * (columnWidth + this.shelfTileColumnGap());
-    const cellY = this.statusBarHeight + 56 + 12;
-    if (!this.isCompanionLayout()) {
-      return new TileGroupPreviewSource(book, new SharedElementBounds(cellX, cellY, columnWidth, columnWidth / 0.735), 0, 0);
-    }
-    const width = this.shelfTileBookCoverWidth(book);
-    const height = this.shelfTileBookCoverHeight(book);
-    return new TileGroupPreviewSource(book, new SharedElementBounds(
-      cellX + Math.round((columnWidth - width - this.shelfHardcoverThickness(width) - 3) / 2),
-      cellY + this.shelfTileHardcoverHeight() - height, width, height), this.shelfTileBookLean(book), 0);
-  }
-
-  tileGroupPagePoseKey(groupId: number, book: Book): string {
-    return `${this.tileGroupViewportKey()}|${groupId}|${book.bookUrl}`;
-  }
-
-  rememberTileGroupPagePoses(groupId: number, poses: (TileGroupPreviewSource | undefined)[]): void {
-    for (const pose of poses) {
-      if (pose) this.tileGroupPagePoseCache.set(this.tileGroupPagePoseKey(groupId, pose.book), pose);
-    }
-  }
-
-  /** 精装书按分组页里那本的尺寸排版（大的那头），起飞时缩到文件夹里那本的大小；平铺的封面按两头较大的排版。 */
-  makeTileGroupBookFlyer(from: TileGroupPreviewSource, to: TileGroupPreviewSource, page: SharedElementBounds): TileGroupFlyer {
-    const book = from.book;
-    const flyer = new TileGroupFlyer();
-    flyer.key = book.bookUrl;
-    flyer.book = book;
-    flyer.kind = this.isCompanionLayout() ? 'hardcover' : 'flat';
-    flyer.color = this.getBookColor(book.name);
-    flyer.initial = book.name ? book.name.substring(0, 1) : '书';
-    flyer.width = page.width;
-    flyer.height = page.height;
-    flyer.fromX = from.bounds.x;
-    flyer.fromY = from.bounds.y;
-    flyer.toX = to.bounds.x;
-    flyer.toY = to.bounds.y;
-    flyer.fromScaleX = from.bounds.width / page.width;
-    flyer.toScaleX = to.bounds.width / page.width;
-    // 精装书等比缩放，书页厚度和底板跟着一起缩；平铺封面各自按宽高。
-    flyer.fromScaleY = flyer.kind === 'hardcover' ? flyer.fromScaleX : from.bounds.height / page.height;
-    flyer.toScaleY = flyer.kind === 'hardcover' ? flyer.toScaleX : to.bounds.height / page.height;
-    flyer.fromAngle = from.angle;
-    flyer.toAngle = to.angle;
-    flyer.fromShade = from.shade;
-    flyer.toShade = to.shade;
-    return flyer;
-  }
-
   /** 关书挪位用的平面封面：按较大那头的尺寸排版，只用缩放平移从 from 走到 to。 */
   makeTileGroupFlyer(book: Book, from: SharedElementBounds, to: SharedElementBounds): TileGroupFlyer {
     const flyer = new TileGroupFlyer();
@@ -3457,53 +3242,6 @@ export struct BookshelfPage {
     return flyer;
   }
 
-  retargetTileGroupFlyer(flyer: TileGroupFlyer, target: TileGroupPreviewSource): TileGroupFlyer {
-    const next = flyer.clone();
-    next.toX = target.bounds.x;
-    next.toY = target.bounds.y;
-    next.toScaleX = target.bounds.width / flyer.width;
-    next.toScaleY = flyer.kind === 'hardcover' ? next.toScaleX : target.bounds.height / flyer.height;
-    next.toAngle = target.angle;
-    next.toShade = target.shade;
-    return next;
-  }
-
-  /** 挂上飞行的书（停在起点）。 */
-  mountTileGroupFlyers(flyers: TileGroupFlyer[]): void {
-    this.tileGroupFlyProgress = 0;
-    this.tileGroupFlyers = flyers;
-  }
-
-  /** 打开：文件夹里的书飞到分组页里估出的位置。 */
-  openTileGroupFlyers(groupId: number): TileGroupFlyer[] {
-    const books = this.getTileGroupBooks(groupId, this.shelfBooksForPage(this.tileGroupOriginPageKey));
-    return this.tileGroupPreviewSources.map((source: TileGroupPreviewSource): TileGroupFlyer => {
-      const index = books.findIndex((book: Book): boolean => book.bookUrl === source.book.bookUrl);
-      const target = this.estimateTileGroupPagePose(groupId, source.book, Math.max(0, index));
-      return this.makeTileGroupBookFlyer(source, target, target.bounds);
-    });
-  }
-
-  /** 返回：分组页里这几本从现在的位置飞回文件夹（进来时量的位置，书架重建后再校正）。 */
-  closeTileGroupFlyers(): TileGroupFlyer[] {
-    const flyers: TileGroupFlyer[] = [];
-    for (const source of this.tileGroupPreviewSources) {
-      const from = this.measureTileGroupPagePose(source.book);
-      if (from) flyers.push(this.makeTileGroupBookFlyer(from, source, from.bounds));
-    }
-    return flyers;
-  }
-
-  /** 从分组菜单等处切换分组：没有书可飞，整页淡出淡入；切回书架时若有来处就飞回去。 */
-  changeTileGroup(groupId: number): void {
-    if (groupId === 0) {
-      this.leaveTileGroupPage();
-      return;
-    }
-    this.tileGroupHasOrigin = false;
-    this.crossFadeTileGroup(groupId, this.beginTileGroupMotion(groupId));
-  }
-
   beginTileGroupMotion(targetGroupId: number): number {
     const generation = ++this.tileGroupMotionGeneration;
     this.tileGroupAnimating = true;
@@ -3514,24 +3252,32 @@ export struct BookshelfPage {
     return generation;
   }
 
-  /** 切换页面状态；进入时存下书架的分类页和标题收起量，返回时原样换回。 */
+  /** 切换当前分组。进入分组页时挂上分组页那一层（换了分组就换一套分类页），书架底层记住进来前的分组。 */
   applyTileGroupTarget(groupId: number): void {
     this.tileGroupPendingTarget = -1;
-    if (groupId === 0) {
-      if (this.tileGroupRootPages) {
-        this.shelfCategoryPages = this.tileGroupRootPages;
-        this.tileGroupRootPages = null;
-        this.shelfHeaderCollapse = this.tileGroupRootHeaderCollapse;
-      }
-    } else {
-      if (this.activeShelfGroupId === 0) {
-        this.tileGroupRootPages = this.shelfCategoryPages;
-        this.tileGroupRootHeaderCollapse = this.shelfHeaderCollapse;
-      }
-      this.shelfCategoryPages = new Map();
-      this.shelfHeaderCollapse = 0;
+    if (groupId > 0 && this.isTileLayout()) {
+      if (this.activeShelfGroupId <= 0) this.tileGroupBaseGroupId = this.activeShelfGroupId;
+      this.mountTileGroupLayer(groupId);
     }
     this.activeShelfGroupId = groupId;
+  }
+
+  mountTileGroupLayer(groupId: number): void {
+    if (this.tileGroupLayerGroupId === groupId) return;
+    this.tileGroupPages = new Map();
+    this.tileGroupBackdropReveal = 0;
+    this.tileGroupLayerGroupId = groupId;
+  }
+
+  /** 没在开合时，分组页那一层跟着当前分组：启动时恢复到分组页、分组被删等都走这里。 */
+  syncTileGroupLayer(): void {
+    if (this.tileGroupAnimating) return;
+    if (this.isTileGroupPage()) {
+      this.mountTileGroupLayer(this.activeShelfGroupId);
+    } else if (this.tileGroupLayerGroupId > 0) {
+      this.tileGroupLayerGroupId = 0;
+      this.tileGroupPages = new Map();
+    }
   }
 
   /** 等 frames 帧（0 则立即）后执行；被新一轮动画取代时作废。帧回调拿不到时最多等 80ms。 */
@@ -3588,26 +3334,24 @@ export struct BookshelfPage {
     // 首帧回调卡住时也要切到用户选的页面，不能一直锁住书架。
     if (this.tileGroupPendingTarget >= 0) this.applyTileGroupTarget(this.tileGroupPendingTarget);
     this.clearTileGroupMotionLayers();
-    if (this.activeShelfGroupId === 0) {
-      this.tileGroupHasOrigin = false;
-      this.tileGroupPreviewSources = [];
-    }
+    if (!this.isTileGroupPage()) this.tileGroupHasOrigin = false;
     this.tileGroupAnimating = false;
+    // 返回动画走完、画面静止后才卸下分组页那一层，销毁它的那一帧看不出来。
+    this.syncTileGroupLayer();
     if (this.tileGroupPendingBack) {
       this.tileGroupPendingBack = false;
       this.exitTileGroupPage();
     }
   }
 
-  /** 撤下飞行的书、同一帧显出页面里的真书和文件夹，两页都回到不透明。 */
+  /** 背景放回两层里，两层都回到原大、不透明（书架在分组页下面时是藏着的）。 */
   clearTileGroupMotionLayers(): void {
-    this.tileGroupFlyers = [];
-    this.tileGroupFlyProgress = 0;
-    this.tileGroupFlyingBooks = [];
-    this.tileGroupHiddenFolder = '';
+    this.tileGroupShelfScale = 1;
+    this.tileGroupPageScale = 1;
+    this.tileGroupBareBody = false;
     this.tileGroupMotionBackground = false;
-    this.tileGroupSyncCovers = false;
-    this.tileGroupSyncAfterRestore = false;
+    this.tileGroupAwaitCovers = false;
+    this.tileGroupPendingCovers.clear();
     this.tileGroupShelfOpacity = 1;
     this.tileGroupPageOpacity = 1;
   }
@@ -3619,8 +3363,8 @@ export struct BookshelfPage {
     this.tileGroupPendingTarget = -1;
     this.tileGroupPendingBack = false;
     this.clearTileGroupMotionLayers();
-    this.tileGroupPreviewSources = [];
     this.tileGroupAnimating = false;
+    this.syncTileGroupLayer();
   }
 
   onTileGroupBackRequested(): void {
@@ -3843,9 +3587,9 @@ export struct BookshelfPage {
   }
 
 
-  /** 实际生效的标题行收起量：没有可滚动的列表时标题行始终完整显示。 */
+  /** 书架标题行实际生效的收起量：没有可滚动的列表时标题行始终完整显示（分组页的标题栏不收起）。 */
   shelfHeaderCollapseValue(): number {
-    return !this.isLoading && this.books.length > 0 && !this.isBookMultiSelect && !this.isTileGroupPage() ? this.shelfHeaderCollapse : 0;
+    return !this.isLoading && this.books.length > 0 && !this.isBookMultiSelect ? this.shelfHeaderCollapse : 0;
   }
 
   onShelfListScroll(delta: number, offset: number): void {
@@ -3868,9 +3612,12 @@ export struct BookshelfPage {
     }
   }
 
-  /** 列表顶部留白按标题行完整显示时的高度预留，不随收起变化，避免滚动中列表跳动。 */
-  bookshelfTopOverlayHeight(): number {
+  /** 列表顶部留白按标题行完整显示时的高度预留，不随收起变化，避免滚动中列表跳动。分组页那一层只有标题栏。 */
+  bookshelfTopOverlayHeight(pageKey: string = ''): number {
     let height = this.statusBarHeight + 56;
+    if (this.isTileGroupPageKey(pageKey)) {
+      return height + (this.isBookMultiSelect ? 42 : 0);
+    }
     if (this.shelfSearchActive) {
       height += BookshelfPage.SEARCH_BAR_HEIGHT + AppSpacing.MD;
     }
@@ -3889,12 +3636,12 @@ export struct BookshelfPage {
       (this.shelfSearchActive ? BookshelfPage.SEARCH_BAR_HEIGHT : 0);
   }
 
-  bookshelfTileTopSpacerHeight(books: Book[] = this.books): number {
+  bookshelfTileTopSpacerHeight(books: Book[] = this.books, pageKey: string = ''): number {
     const gridTopPadding = 10;
     const comfortableGap = 12;
     // Grid 会在顶部占位项与首行之间继续添加 rowsGap，需要从占位高度中抵消。
-    return Math.max(0, this.bookshelfTopOverlayHeight() + comfortableGap -
-      gridTopPadding - this.shelfTileGridRowGap(books));
+    return Math.max(0, this.bookshelfTopOverlayHeight(pageKey) + comfortableGap -
+      gridTopPadding - this.shelfTileGridRowGap(books, pageKey));
   }
 
   bookshelfListBottomInset(): number {
@@ -4006,8 +3753,8 @@ export struct BookshelfPage {
   }
 
   /** 搜索时把分组文件夹摊开，命中的书直接排出来，不会被折进文件夹里。 */
-  shouldUseTileGroupFolders(): boolean {
-    return this.isTileLayout() && this.activeShelfGroupId === 0 && !this.isBookMultiSelect &&
+  shouldUseTileGroupFolders(pageKey: string = ''): boolean {
+    return this.isTileLayout() && this.pageGroupId(pageKey) === 0 && !this.isBookMultiSelect &&
       !this.shelfAppliedSearchKeyword;
   }
 
@@ -4026,9 +3773,9 @@ export struct BookshelfPage {
     return BookshelfSortHelper.getPinnedRecentReadBooks(books, count);
   }
 
-  shouldShowLatestExpandedTileBook(): boolean {
+  shouldShowLatestExpandedTileBook(pageKey: string = ''): boolean {
     return this.isTileLayout() && (this.isCompanionLayout() || this.bookshelfLastReadPinMode !== 'off') &&
-      this.activeShelfGroupId === 0 &&
+      this.pageGroupId(pageKey) === 0 &&
       !this.isBookMultiSelect && !this.shelfAppliedSearchKeyword;
   }
 
@@ -4036,7 +3783,7 @@ export struct BookshelfPage {
     return this.isCompanionLayout() || this.bookshelfLastReadPinMode === 'large';
   }
 
-  getTileBooksWithoutLatest(books: Book[], latest: Book[] = this.getLatestReadTileBooks(books)): Book[] {
+  getTileBooksWithoutLatest(books: Book[], latest: Book[] = this.getLatestReadTileBooks(books), pageKey: string = ''): Book[] {
     const uniqueBooks: Book[] = [];
     const seenBookUrls = new Set<string>();
     books.forEach((book: Book) => {
@@ -4045,7 +3792,7 @@ export struct BookshelfPage {
       if (bookUrl) seenBookUrls.add(bookUrl);
       uniqueBooks.push(book);
     });
-    if (!this.shouldShowLatestExpandedTileBook()) {
+    if (!this.shouldShowLatestExpandedTileBook(pageKey)) {
       return uniqueBooks;
     }
     const latestUrls = new Set<string>(latest.map((book: Book): string => book.bookUrl.trim()));
@@ -4069,7 +3816,7 @@ export struct BookshelfPage {
     // to let the new expanded card coexist with the old ordinary entry for one retained data-source generation.
     const latestBooks = this.getLatestReadTileBooks(books);
     const latestBookUrls = latestBooks.map((book: Book): string => book.bookUrl).join('|');
-    const cacheKey = `${mode}_${viewKey}_${this.activeShelfGroupId}_${this.isBookMultiSelect ? '1' : '0'}_` +
+    const cacheKey = `${mode}_${viewKey}_${this.shelfBaseGroupId()}_${this.isBookMultiSelect ? '1' : '0'}_` +
       `${this.shouldShowLatestExpandedTileBook() ? latestBookUrls : ''}_` +
       `${books.map((book: Book) => `${book.bookUrl}:${book.name}:${book.author}:${this.getBookReadTime(book)}:${this.getBookAddTime(book)}:` +
         `${BookshelfSortHelper.getBookUpdateTime(book)}:${book.group}:${book.isPinned ? '1' : '0'}`).join('|')}_` +
@@ -4191,11 +3938,11 @@ export struct BookshelfPage {
     return Math.max(24, Math.min(30, this.shelfTileColumnGap() + 8));
   }
 
-  shelfTileGridRowGap(books: Book[] = this.books): number {
+  shelfTileGridRowGap(books: Book[] = this.books, pageKey: string = ''): number {
     // 轮播卡片在 deck 内上下各留 10vp；圆点行上下对称，下方也只需 10vp。
     // 普通书籍项补回剩余行距，不改变后续书籍行之间的距离。陪伴布局顶部有多块整行内容，统一用小行距。
-    if (this.shouldShowLatestExpandedTileBook() && this.isCompanionLayout()) return 10;
-    return this.shouldShowLatestExpandedTileBook() && this.isLatestTileCardLarge() &&
+    if (this.shouldShowLatestExpandedTileBook(pageKey) && this.isCompanionLayout()) return 10;
+    return this.shouldShowLatestExpandedTileBook(pageKey) && this.isLatestTileCardLarge() &&
       this.getLatestReadTileBooks(books).length > 1 ? 10 : this.shelfTileRowGap();
   }
 
@@ -4214,12 +3961,12 @@ export struct BookshelfPage {
     Grid(this.shelfTileScrollerForPage(pageKey)) {
       GridItem() {
         Row()
-          .height(this.bookshelfTileTopSpacerHeight(this.shelfBooksForPage(pageKey)))
+          .height(this.bookshelfTileTopSpacerHeight(this.shelfBooksForPage(pageKey), pageKey))
       }
       .columnStart(0)
       .columnEnd(this.shelfTileColumnCount() - 1)
 
-      if (this.shouldShowLatestExpandedTileBook()) {
+      if (this.shouldShowLatestExpandedTileBook(pageKey)) {
         if (this.isCompanionLayout()) {
           if (this.bookshelfGreetingMode !== 'off') {
           GridItem() {
@@ -4310,7 +4057,7 @@ export struct BookshelfPage {
         }
       }
 
-      if (this.shouldUseTileGroupFolders()) {
+      if (this.shouldUseTileGroupFolders(pageKey)) {
         LazyForEach(this.shelfTileEntryDataSource(pageKey), (entry: ShelfTileSortEntry) => {
           GridItem() {
             if (entry.kind === 'group' && entry.group) {
@@ -4319,7 +4066,7 @@ export struct BookshelfPage {
               this.shelfTileBook(entry.book, pageKey)
             }
           }
-          .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey)) })
+          .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey), pageKey) })
         }, (entry: ShelfTileSortEntry) => entry.book ?
           this.shelfBookRenderKey(entry.book, entry.key) :
           `${entry.key}_stagger_${this.bookshelfCompanionStagger ? '1' : '0'}`)
@@ -4328,7 +4075,7 @@ export struct BookshelfPage {
           GridItem() {
             this.shelfTileBook(book, pageKey)
           }
-          .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey)) })
+          .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey), pageKey) })
         }, (book: Book) => this.shelfBookRenderKey(book, `tile_${pageKey}`))
       }
 
@@ -4344,7 +4091,7 @@ export struct BookshelfPage {
     .height('100%')
     .columnsTemplate(this.shelfTileColumnsTemplate())
     .columnsGap(this.shelfTileColumnGap())
-    .rowsGap(this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey)))
+    .rowsGap(this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey), pageKey))
     .padding({ left: BookTileLayout.SIDE_PADDING, right: BookTileLayout.SIDE_PADDING, top: 10 })
     .backgroundColor(this.shelfSurfaceColor())
     .scrollBar(BarState.Off)
@@ -4354,11 +4101,17 @@ export struct BookshelfPage {
       if (!this.tileGroupAnimating && pageKey === this.shelfPageKey()) {
         const page = this.shelfCategoryPage(pageKey);
         page.tileOffset = page.tileScroller.currentOffset().yOffset;
-        this.onShelfListScroll(delta, page.tileOffset);
+        if (this.isTileGroupPageKey(pageKey)) {
+          // 分组页的标题栏不收起，只让毛玻璃按滚动显现。
+          const reveal = CollapsingHeader.backdropReveal(page.tileOffset);
+          if (reveal !== this.tileGroupBackdropReveal) this.tileGroupBackdropReveal = reveal;
+        } else {
+          this.onShelfListScroll(delta, page.tileOffset);
+        }
       }
     })
     .onScrollStop(() => {
-      if (!this.tileGroupAnimating && pageKey === this.shelfPageKey()) {
+      if (!this.tileGroupAnimating && pageKey === this.shelfPageKey() && !this.isTileGroupPageKey(pageKey)) {
         this.onShelfListScrollStop(this.shelfTileScrollerForPage(pageKey).currentOffset().yOffset);
       }
     })
@@ -4907,7 +4660,6 @@ export struct BookshelfPage {
             .hitTestBehavior(HitTestMode.None)
         }
       }
-      .id(this.tileGroupPreviewCoverId(elementId, book))
       .width(this.shelfFolderBookWidth())
       .height(this.shelfFolderBookHeight())
       .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 4, bottomRight: 4 })
@@ -4920,13 +4672,10 @@ export struct BookshelfPage {
     })
     // 以书底中点为轴张开，三本书的书底仍落在同一条线上。
     .rotate({ angle: this.shelfFolderFanAngle(slot), centerX: '50%', centerY: '100%' })
-    // 开合分组时这几本正在飞（飞出去或还没落回来）。
-    .opacity(this.tileGroupHiddenFolder === elementId ? 0 : 1)
   }
 
   /**
-   * 陪伴布局的分组：最多三本精装书以书底为轴扇形张开。分组展开动画按 elementId 量整叠书的位置并截图、
-   * 按各本封面的 id 起飞；倾斜的两本按未旋转的位置起飞，起步时会摆正。
+   * 陪伴布局的分组：最多三本精装书以书底为轴扇形张开。打开分组时按 elementId 量这叠书的中心，作为整页缩放的中心。
    */
   @Builder
   shelfHardcoverFolder(previewBooks: Book[], elementId: string) {
@@ -5111,8 +4860,6 @@ export struct BookshelfPage {
               GridItem() {
                 this.coverView(book, '100%', '100%', ImageFit.Cover, true, false)
               }
-              .id(this.tileGroupPreviewCoverId(elementId, book))
-              .opacity(this.tileGroupHiddenFolder === elementId ? 0 : 1)
             }, (book: Book) => this.shelfBookRenderKey(book, `group_${elementId}`))
           }
           .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
@@ -5227,8 +4974,6 @@ export struct BookshelfPage {
             y: this.shelfTileHardcoverHeight() - this.shelfTileBookCoverHeight(book)
           })
           .rotate({ angle: this.shelfTileBookLean(book), centerX: '50%', centerY: '100%' })
-          // 开合分组时这本书由飞行的那本代替。
-          .opacity(this.isTileGroupFlyingBook(book) ? 0 : 1)
           if (this.isBookMultiSelect) {
             this.shelfTileSelectMark(book)
           }
@@ -5248,7 +4993,6 @@ export struct BookshelfPage {
       }
       .width('100%')
       .aspectRatio(0.735)
-      .opacity(this.isTileGroupFlyingBook(book) ? 0 : 1)
       .border({
         width: this.isBookSelected(book.bookUrl) ? 2 : ThemeRuntime.glassBorderWidth(),
         color: this.isBookSelected(book.bookUrl) ? this.accentColor() : this.glassBorderColor()
@@ -5612,7 +5356,7 @@ export struct BookshelfPage {
   shelfCoverCropsImage(book: Book, pageKey: string, latest: boolean): boolean {
     if (latest) return true;
     if (this.shouldUseThemeBookCover()) return false;
-    if (this.shouldShowLatestExpandedTileBook() && !this.isLatestTileCardLarge() &&
+    if (this.shouldShowLatestExpandedTileBook(pageKey) && !this.isLatestTileCardLarge() &&
       this.getLatestReadTileBooks(this.shelfBooksForPage(pageKey))
         .some((item: Book): boolean => item.bookUrl === book.bookUrl)) {
       return false;
@@ -6062,7 +5806,13 @@ export struct BookshelfPage {
             .height(height)
             .objectFit(animateCovers ? ImageFit.Fill : imageFit)
             // 返回书架后进度变了的卡片会整体重建，封面异步加载会先空一帧；本地封面同步解码，让关书动画落地后无缝。
-            .syncLoad(true)
+            // 打开分组时例外：分组页一屏的主题封面在后台解码，解码完分组页才浮起（见 afterTileGroupCoversReady）。
+            .syncLoad(syncDecode || !this.tileGroupAwaitCovers)
+            .onAppear(() => {
+              if (this.tileGroupAwaitCovers && !syncDecode) this.tileGroupPendingCovers.add(book.bookUrl);
+            })
+            .onComplete(() => this.tileGroupPendingCovers.delete(book.bookUrl))
+            .onError(() => this.tileGroupPendingCovers.delete(book.bookUrl))
         } else {
           Swiper() {
             ForEach(this.activeThemeBookCovers(book), (cover: ResourceStr, index: number) => {
@@ -6071,7 +5821,17 @@ export struct BookshelfPage {
                 .height(height)
                 .objectFit(ImageFit.Fill)
                 // 返回书架后进度变了的卡片会整体重建，封面异步加载会先空一帧；本地封面同步解码，让关书动画落地后无缝。
-                .syncLoad(true)
+                // 打开分组时改后台解码，分组页等开头显示的第一张解码完再浮起。
+                .syncLoad(!this.tileGroupAwaitCovers)
+                .onAppear(() => {
+                  if (this.tileGroupAwaitCovers && index === 0) this.tileGroupPendingCovers.add(`${book.bookUrl}#theme`);
+                })
+                .onComplete(() => {
+                  if (index === 0) this.tileGroupPendingCovers.delete(`${book.bookUrl}#theme`);
+                })
+                .onError(() => {
+                  if (index === 0) this.tileGroupPendingCovers.delete(`${book.bookUrl}#theme`);
+                })
             }, (_cover: ResourceStr, index: number) => `${book.bookUrl}_theme_${index}`)
           }
           .width(width)
@@ -6101,7 +5861,12 @@ export struct BookshelfPage {
           .height(height)
           .objectFit(imageFit)
           // 分组开合时新建的封面同步解码：陪伴布局的书底板和书页先画出来，封面晚一两帧就是一本空书一闪。
-          .syncLoad(syncDecode || this.tileGroupSyncCovers)
+          .syncLoad(this.shelfCoverSyncLoad(this.imageCover(this.getShelfCover(book, animateCovers)), syncDecode))
+          // 打开分组时分组页的封面在后台解码，解码完才淡入（见 afterTileGroupCoversReady）。
+          .onAppear(() => this.noteTileGroupCoverMounted(book, this.imageCover(this.getShelfCover(book, animateCovers)),
+            this.shelfCoverSyncLoad(this.imageCover(this.getShelfCover(book, animateCovers)), syncDecode)))
+          .onComplete(() => this.tileGroupPendingCovers.delete(book.bookUrl))
+          .onError(() => this.tileGroupPendingCovers.delete(book.bookUrl))
       } else {
         Swiper() {
           ForEach(this.getShelfCoverList(book), (cover: string) => {
@@ -6110,7 +5875,7 @@ export struct BookshelfPage {
               .height(height)
               .objectFit(imageFit)
               // 返回书架后进度变了的卡片会整体重建，封面异步加载会先空一帧；本地封面同步解码，让关书动画落地后无缝。
-              .syncLoad(true)
+              .syncLoad(this.coverSyncLoadable(this.imageCover(cover)))
           }, (cover: string) => cover)
         }
         .width(width)
@@ -6205,13 +5970,47 @@ export struct BookshelfPage {
     return this.sourceCoverRevision >= 0 ? BookCoverCache.displayCover(getContext(this), raw) : raw;
   }
 
-  getShelfCover(book: Book, animateCovers: boolean = true): string {
-    const covers = this.getShelfCoverList(book);
-    return covers.length > 0 ? (animateCovers ? BookDisplayHelper.pickCover(covers) : covers[0]) : '';
+  /** 只有本地文件和资源能同步解码：网络地址同步加载会在主线程上下载，一屏没缓存的封面就能把界面卡死。 */
+  coverSyncLoadable(src: ResourceStr): boolean {
+    if (typeof src !== 'string') return true;
+    return !!src && !src.startsWith('http://') && !src.startsWith('https://');
   }
 
-  getShelfCoverList(book: Book): string[] {
-    const covers = CoverGallerySettings.getDisplayCoverList(
+  shelfCoverSyncLoad(src: string, syncDecode: boolean): boolean {
+    return syncDecode && this.coverSyncLoadable(src);
+  }
+
+  /**
+   * 分组页建起来之前，把头几屏书的封面换成磁盘上已有的缓存。文件夹里只露三四本，其余的书架上没显示过，
+   * 封面还是网络地址：建好后才换成缓存文件、一本本重新加载闪一下。只查磁盘、不下载。
+   */
+  warmTileGroupCovers(groupId: number): void {
+    const privateScope = this.shelfScope === 'private';
+    const columns = Math.max(1, this.shelfTileColumnCount());
+    const rows = Math.ceil(Math.max(1, this.contextViewportHeight) / Math.max(1, this.shelfTileColumnWidth())) + 1;
+    const books = this.sortBooks(this.allBooks.filter((book: Book): boolean =>
+      book.group === groupId && book.isPrivate === privateScope)).slice(0, columns * rows);
+    const context = getContext(this);
+    let nextMap: Map<string, string> | null = null;
+    for (const book of books) {
+      const covers = this.rawShelfCoverList(book);
+      for (let i = 0; i < covers.length; i++) {
+        const raw = covers[i];
+        if (!raw || (!raw.startsWith('http://') && !raw.startsWith('https://'))) continue;
+        const key = this.shelfCoverKey(book, i);
+        if (this.shelfCoverMap.get(key) && this.shelfCoverRawUrls.get(key) === raw) continue;
+        const local = BookCoverCache.resolveCachedCover(context, raw);
+        if (!local || local === raw) continue;
+        if (!nextMap) nextMap = new Map(this.shelfCoverMap);
+        this.shelfCoverRawUrls.set(key, raw);
+        nextMap.set(key, local);
+      }
+    }
+    if (nextMap) this.shelfCoverMap = nextMap;
+  }
+
+  rawShelfCoverList(book: Book): string[] {
+    return CoverGallerySettings.getDisplayCoverList(
       book,
       this.appDarkMode,
       this.bookshelfCoverAlbums,
@@ -6222,6 +6021,15 @@ export struct BookshelfPage {
       this.bookshelfIgnoreSourceCover,
       this.bookshelfCoverMode
     );
+  }
+
+  getShelfCover(book: Book, animateCovers: boolean = true): string {
+    const covers = this.getShelfCoverList(book);
+    return covers.length > 0 ? (animateCovers ? BookDisplayHelper.pickCover(covers) : covers[0]) : '';
+  }
+
+  getShelfCoverList(book: Book): string[] {
+    const covers = this.rawShelfCoverList(book);
     const displayCovers: string[] = [];
     for (let i = 0; i < covers.length; i++) {
       const raw = covers[i];
@@ -6558,7 +6366,7 @@ export struct BookshelfPage {
     if (this.bookshelfTypeCategoryEnabled) {
       const present: boolean[] = BookshelfPage.TYPE_TAB_IDS.map((): boolean => false);
       for (const book of this.allBooks) {
-        if (!book.isPrivate && this.matchesShelfGroup(book)) {
+        if (!book.isPrivate && this.matchesShelfGroup(book, this.shelfBaseGroupId())) {
           present[BookshelfPage.TYPE_TAB_IDS.indexOf(this.shelfBookType(book))] = true;
         }
       }
@@ -6610,9 +6418,40 @@ export struct BookshelfPage {
     return privateScope || typeTab === 'all' || this.shelfBookType(book) === typeTab;
   }
 
-  matchesShelfGroup(book: Book): boolean {
-    return this.activeShelfGroupId === 0 ||
-      (this.activeShelfGroupId === -1 ? book.group <= 0 : book.group === this.activeShelfGroupId);
+  matchesShelfGroup(book: Book, groupId: number = this.activeShelfGroupId): boolean {
+    return groupId === 0 || (groupId === -1 ? book.group <= 0 : book.group === groupId);
+  }
+
+  /** 书架底层显示的分组：平铺布局打开分组页时停在进入前的分组上，分组页另成一层。 */
+  shelfBaseGroupId(): number {
+    return this.isTileGroupPage() ? this.tileGroupBaseGroupId : this.activeShelfGroupId;
+  }
+
+  /** 分组页那一层的分类页键 `g<分组>:<类型>`；书架底层直接用类型（或 'private'）作键。 */
+  tileGroupPageKey(groupId: number): string {
+    return `g${groupId}:${this.shelfScope === 'private' ? 'private' : this.activeShelfTypeTab()}`;
+  }
+
+  tileGroupLayerKey(): string {
+    return this.tileGroupPageKey(this.tileGroupLayerGroupId);
+  }
+
+  tileGroupLayerName(): string {
+    const group = this.shelfGroups.find((item: BookGroup) => item.groupId === this.tileGroupLayerGroupId);
+    return group ? group.groupName : '书籍分组';
+  }
+
+  isTileGroupPageKey(key: string): boolean {
+    return /^g\d+:/.test(key);
+  }
+
+  /** 这个分类页显示的分组：分组页的键里带着分组，其余是书架底层的分组。 */
+  pageGroupId(key: string): number {
+    return this.isTileGroupPageKey(key) ? Number(key.substring(1, key.indexOf(':'))) : this.shelfBaseGroupId();
+  }
+
+  pageTypeKey(key: string): string {
+    return this.isTileGroupPageKey(key) ? key.substring(key.indexOf(':') + 1) : key;
   }
 
   /** 与书籍角标同一优先级：视频 > 有声 > 漫画 > 小说。 */
@@ -6881,26 +6720,30 @@ export struct BookshelfPage {
   }
 
   shelfCategoryPage(key: string): ShelfCategoryPage {
-    let page = this.shelfCategoryPages.get(key);
+    const pages = this.isTileGroupPageKey(key) ? this.tileGroupPages : this.shelfCategoryPages;
+    let page = pages.get(key);
     if (!page) {
       page = new ShelfCategoryPage();
-      this.shelfCategoryPages.set(key, page);
+      pages.set(key, page);
     }
+    const groupId = this.pageGroupId(key);
+    const type = this.pageTypeKey(key);
     const privateAllowed = this.privateShelfEnabled &&
       (!this.privateShelfHasPassword || this.privateShelfRevealed || this.shelfScope === 'private');
-    const signature = `${this.shelfCategoryRevision}:${this.activeShelfGroupId}:${this.sortMode}:` +
+    const signature = `${this.shelfCategoryRevision}:${groupId}:${this.sortMode}:` +
       `${this.bookshelfLayoutMode}:${this.bookshelfLastReadPinMode}:${this.bookshelfLastReadPinCount}:` +
       `${this.isBookMultiSelect}:${this.shelfFilterKeys}:${this.shelfAppliedSearchKeyword}:${privateAllowed}`;
     if (signature !== page.signature) {
       page.signature = signature;
-      page.books = key === 'private' && !privateAllowed ? [] : this.sortBooks(this.allBooks.filter((book: Book): boolean =>
-        book.isPrivate === (key === 'private') && this.matchesShelfGroup(book) &&
-        (key === 'all' || key === 'private' || this.shelfBookType(book) === key) &&
+      page.books = type === 'private' && !privateAllowed ? [] : this.sortBooks(this.allBooks.filter((book: Book): boolean =>
+        book.isPrivate === (type === 'private') && this.matchesShelfGroup(book, groupId) &&
+        (type === 'all' || type === 'private' || this.shelfBookType(book) === type) &&
         this.matchesShelfFilters(book) && this.matchesShelfSearch(book)));
       if (!this.isTileLayout()) page.listSource.replace(page.books, true);
-      else if (this.shouldUseTileGroupFolders()) {
+      else if (this.shouldUseTileGroupFolders(key)) {
         page.entrySource.replace(this.getSortedTileRootEntries(page.books, this.sortMode, key), true);
-      } else page.tileSource.replace(this.getTileBooksWithoutLatest(page.books), true);
+      } else page.tileSource.replace(this.getTileBooksWithoutLatest(page.books,
+        this.getLatestReadTileBooks(page.books), key), true);
     }
     if (key === this.shelfPageKey()) {
       this.shelfListScroller = page.listScroller;
@@ -6921,11 +6764,6 @@ export struct BookshelfPage {
     if (offset <= 0) return;
     setTimeout((): void => {
       if (!this.shelfComponentActive) return;
-      if (tile && this.tileGroupSyncAfterRestore && key === this.shelfPageKey()) {
-        // 分组收回时书架从顶部建起再滚回这里：滚到的这一屏封面同步解码，淡入时不会一本本冒出来。
-        this.tileGroupSyncAfterRestore = false;
-        this.tileGroupSyncCovers = true;
-      }
       try {
         if (tile) page.tileScroller.scrollTo({ xOffset: 0, yOffset: offset, animation: false });
         else page.listScroller.scrollTo({ xOffset: 0, yOffset: offset, animation: false });
@@ -6939,8 +6777,9 @@ export struct BookshelfPage {
     return !this.isBookMultiSelect && !this.isTileGroupPage() && this.shelfPageOrder().includes(key);
   }
 
-  /** 当前所在页：分类栏里的类型，或隐私书架 'private'。 */
+  /** 当前所在页：分组页、分类栏里的类型，或隐私书架 'private'。 */
   shelfPageKey(): string {
+    if (this.isTileGroupPage()) return this.tileGroupPageKey(this.activeShelfGroupId);
     return this.shelfScope === 'private' ? 'private' : this.activeShelfTypeTab();
   }
 
@@ -8700,8 +8539,9 @@ export struct BookshelfPage {
     .onClick(() => this.toggleShelfCategory())
   }
 
+  /** 书架底层的分类栏（分组页那一层没有分类栏）。 */
   showsShelfScopeTabs(): boolean {
-    return this.bookshelfTypeCategoryEnabled && !this.isBookMultiSelect && !this.isTileGroupPage();
+    return this.bookshelfTypeCategoryEnabled && !this.isBookMultiSelect;
   }
 
   @Builder
@@ -9118,8 +8958,9 @@ export struct BookshelfPage {
     this.refreshShelfCoverCache(this.books);
   }
 
+  /** 书架和分组页的标题栏各有一个；只有当前那一层的按钮挂菜单，免得两处同时弹出。 */
   @Builder
-  shelfMoreButton() {
+  shelfMoreButton(menuHost: boolean = true) {
     Row() {
       this.shelfHeaderCircleButton($r('sys.symbol.more'), this.showShelfMoreMenu, '更多操作', () => {
         this.shelfMoreMenuPage = '';
@@ -9128,7 +8969,7 @@ export struct BookshelfPage {
         this.showShelfGroupMenu = false;
       })
     }
-    .bindPopup(this.showShelfMoreMenu, this.shelfMenuPopupOptions((): void => {
+    .bindPopup(this.showShelfMoreMenu && menuHost, this.shelfMenuPopupOptions((): void => {
       this.shelfMoreDropdown()
     }, Placement.BottomRight, () => {
       this.showShelfMoreMenu = false;

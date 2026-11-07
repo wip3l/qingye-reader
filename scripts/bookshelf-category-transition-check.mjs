@@ -4,7 +4,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { readEtsModule } from './lib/ets-module-staging.mjs';
 
 const source = readEtsModule('components/home/BookshelfPage.ets');
-const methods = ['toggleShelfCategory', 'stopShelfCategoryAnimation', 'bookshelfTopOverlayHeight'].map(name => {
+const methods = ['toggleShelfCategory', 'stopShelfCategoryAnimation', 'bookshelfTopOverlayHeight', 'isTileGroupPageKey'].map(name => {
   const start = source.indexOf(`  ${name}(`);
   assert.ok(start >= 0, name);
   return source.slice(start, source.indexOf('\n  }', start) + 4);
