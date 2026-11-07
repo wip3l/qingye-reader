@@ -1146,7 +1146,7 @@ export struct SearchPage {
       materialColor: this.appDarkMode ? '#351B1D22' : '#35FFFFFF',
       applyShadow: true,
       interactive: this.immersiveLightLevel !== 'weak',
-      lightEffect: ImmersiveMaterialRuntime.lightEffect(false, this.immersiveLightLevel)
+      lightEffect: ImmersiveMaterialRuntime.lightEffect(false, this.immersiveLightLevel, '#FFFFFF', this.appDarkMode)
     }, this.immersiveLightLevel);
   }
 

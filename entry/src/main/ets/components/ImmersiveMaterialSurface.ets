@@ -133,7 +133,7 @@ export struct ImmersiveMaterialSurface {
           colors: [[this.glowColor, 0], [Color.Transparent, 1]]
         })
         .opacity(this.touching || this.externalTouching ?
-          ImmersiveMaterialRuntime.touchGlowOpacity(this.immersiveLightLevel) : 0)
+          ImmersiveMaterialRuntime.touchGlowOpacity(this.immersiveLightLevel, this.darkMode) : 0)
         .animation({ duration: 160, curve: Curve.Friction })
         .hitTestBehavior(HitTestMode.None)
         .accessibilityLevel('no')

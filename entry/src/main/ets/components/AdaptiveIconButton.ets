@@ -60,7 +60,7 @@ export struct AdaptiveIconButton {
           .width(this.buttonSize * 0.72)
           .height(this.buttonSize * 0.72)
           .backgroundColor('#38FFFFFF')
-          .opacity(ImmersiveMaterialRuntime.touchGlowOpacity(this.immersiveLightLevel))
+          .opacity(ImmersiveMaterialRuntime.touchGlowOpacity(this.immersiveLightLevel, this.appDarkMode))
           .borderRadius(this.buttonSize * 0.36)
           .hitTestBehavior(HitTestMode.None)
       }
@@ -101,7 +101,7 @@ export struct AdaptiveIconButton {
       materialColor: '#2EFFFFFF',
       applyShadow: true,
       interactive: this.immersiveLightLevel !== 'weak',
-      lightEffect: ImmersiveMaterialRuntime.lightEffect(this.immersiveLightEffect, this.immersiveLightLevel)
+      lightEffect: ImmersiveMaterialRuntime.lightEffect(this.immersiveLightEffect, this.immersiveLightLevel, '#FFFFFF', this.appDarkMode)
     }, this.immersiveLightLevel);
   }
 }

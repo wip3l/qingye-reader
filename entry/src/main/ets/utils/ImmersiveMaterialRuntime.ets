@@ -304,25 +304,32 @@ export class ImmersiveMaterialRuntime {
    */
   static lightEffect(forceAdaptive: boolean = false,
     configured: string = ImmersiveMaterialRuntime.configuredLightLevel(),
-    color: string = '#FFFFFF'): uiMaterial.LightEffectOptions | null | undefined {
+    color: string = '#FFFFFF',
+    dimForDark: boolean = AppStorage.get<boolean>('appDarkMode') || false): uiMaterial.LightEffectOptions | null | undefined {
     configured = ImmersiveMaterialRuntime.effectiveLevel(configured);
     if (configured === 'weak') return null;
     const rgb = /^#[0-9a-fA-F]{6}$/.test(color) ? color.substring(1) :
       (/^#[0-9a-fA-F]{8}$/.test(color) ? color.substring(3) : 'FFFFFF');
-    if (configured === 'high') return { color: `#88${rgb}` };
-    if (configured === 'balanced') return { color: `#55${rgb}` };
+    // 深色表面上跟手的光效很刺眼，夜间统一改用约四成的强度。不传时跟随应用日夜模式，
+    // 阅读页等按自身主题明暗显示的地方要显式传入。
+    const strongAlpha = dimForDark ? '38' : '88';
+    const normalAlpha = dimForDark ? '22' : '55';
+    if (configured === 'high') return { color: `#${strongAlpha}${rgb}` };
+    if (configured === 'balanced') return { color: `#${normalAlpha}${rgb}` };
     // An undefined lightEffect means "do not enable light feedback" for a
     // component-level material. Stepper buttons opt in explicitly so the
     // default follow-system setting still provides the expected touch glow.
-    if (forceAdaptive) return { color: `#55${rgb}` };
+    if (forceAdaptive) return { color: `#${normalAlpha}${rgb}` };
     return undefined;
   }
 
-  /** The manually drawn touch glow follows the same strength as system material feedback. */
-  static touchGlowOpacity(configured: string): number {
+  /** The manually drawn touch glow follows the same strength (and night dimming) as system material feedback. */
+  static touchGlowOpacity(configured: string,
+    dimForDark: boolean = AppStorage.get<boolean>('appDarkMode') || false): number {
     configured = ImmersiveMaterialRuntime.effectiveLevel(configured);
     if (configured === 'weak') return 0;
-    return configured === 'high' ? 1 : 0.625;
+    const opacity = configured === 'high' ? 1 : 0.625;
+    return dimForDark ? opacity * 0.4 : opacity;
   }
 
   /**
@@ -350,7 +357,7 @@ export class ImmersiveMaterialRuntime {
       materialColor: ImmersiveMaterialRuntime.menuSurfaceColor(lightLevel, darkMode),
       applyShadow: true,
       interactive: false,
-      lightEffect: ImmersiveMaterialRuntime.lightEffect(true, lightLevel, accentColor)
+      lightEffect: ImmersiveMaterialRuntime.lightEffect(true, lightLevel, accentColor, darkMode)
     }, lightLevel);
   }
 
@@ -472,7 +479,7 @@ export class ImmersiveMaterialRuntime {
       materialColor: ImmersiveMaterialRuntime.surfaceColor(lightLevel, darkMode, backgroundColor),
       applyShadow: true,
       interactive: false,
-      lightEffect: ImmersiveMaterialRuntime.lightEffect(true, lightLevel, accentColor)
+      lightEffect: ImmersiveMaterialRuntime.lightEffect(true, lightLevel, accentColor, darkMode)
     }, lightLevel);
   }
 
@@ -485,7 +492,7 @@ export class ImmersiveMaterialRuntime {
       materialColor: ImmersiveMaterialRuntime.menuSurfaceColor(lightLevel, darkMode, backgroundColor),
       applyShadow: false,
       interactive: lightLevel !== 'weak',
-      lightEffect: ImmersiveMaterialRuntime.lightEffect(false, lightLevel)
+      lightEffect: ImmersiveMaterialRuntime.lightEffect(false, lightLevel, '#FFFFFF', darkMode)
     }, lightLevel);
   }
 }

@@ -56,7 +56,7 @@ export struct ReaderFloatingMaterialBar {
       applyShadow: false,
       // Sliders must not deform the whole capsule while the user drags them.
       interactive: false,
-      lightEffect: ImmersiveMaterialRuntime.lightEffect(true, this.immersiveLightLevel)
+      lightEffect: ImmersiveMaterialRuntime.lightEffect(true, this.immersiveLightLevel, '#FFFFFF', this.darkMode)
     }, this.immersiveLightLevel);
   }
 
