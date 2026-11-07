@@ -12,6 +12,10 @@ import { PlaybackLoudnessGain } from '../utils/PlaybackLoudnessGain';
 
 /** 顶栏圆形按钮的尺寸。 */
 const PANEL_CONTROL_SIZE: number = 40;
+/** 听书大封面在空间不够时最多缩到这个高度。 */
+const AUDIO_COVER_MIN_HEIGHT: number = 72;
+/** 听书音色下拉框的高度，与 audioVoiceSelect 一致。 */
+const AUDIO_VOICE_ROW_HEIGHT: number = 44;
 const SECONDARY_TIMER: string = 'timer';
 const SECONDARY_SPEED: string = 'speed';
 const SECONDARY_GAIN: string = 'gain';
@@ -101,6 +105,11 @@ export struct ReaderTtsPlayerPanel {
   /** 拖动增益滑条时只改显示，松手才下发；-1 表示没在拖。 */
   @State gainDraft: number = -1;
   @State audioVoiceMenuRevision: number = 0;
+  // 听书封面区实际分到的高度和其中章节名、状态行的高度。定时/倍速/增益面板展开后封面区变矮，
+  // 封面按这些量出来的值缩小；否则屏幕矮的机型上内容溢出，音色下拉会压到进度条上。
+  @State audioHeroHeight: number = 0;
+  @State audioHeroTitleHeight: number = 0;
+  @State audioHeroStatusHeight: number = 0;
   private textScroller: Scroller = new Scroller();
   private readingTextController: TextController = new TextController();
   private readingViewportHeight: number = 0;
@@ -287,6 +296,10 @@ export struct ReaderTtsPlayerPanel {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .textAlign(TextAlign.Center)
         .margin({ top: AppSpacing.SM })
+        .onAreaChange((_oldArea: Area, area: Area): void => {
+          const height = Math.ceil(Number(area.height));
+          if (this.audioHeroTitleHeight !== height) this.audioHeroTitleHeight = height;
+        })
 
       Scroll() {
         Text(this.globalTtsContent || this.hostIntro || '暂无书籍简介')
@@ -303,7 +316,14 @@ export struct ReaderTtsPlayerPanel {
       .scrollBar(BarState.Off)
 
       if (this.statusText()) {
-        this.statusLine()
+        Column() {
+          this.statusLine()
+        }
+        .width('100%')
+        .onAreaChange((_oldArea: Area, area: Area): void => {
+          const height = Math.ceil(Number(area.height));
+          if (this.audioHeroStatusHeight !== height) this.audioHeroStatusHeight = height;
+        })
       }
 
       Row() {
@@ -314,6 +334,10 @@ export struct ReaderTtsPlayerPanel {
     .layoutWeight(1)
     .width('100%')
     .alignItems(HorizontalAlign.Center)
+    .onAreaChange((_oldArea: Area, area: Area): void => {
+      const height = Math.floor(Number(area.height));
+      if (this.audioHeroHeight !== height) this.audioHeroHeight = height;
+    })
   }
 
   /** 朗读：当前朗读文字放在玻璃卡片里，上下文浅色，当前句高亮并自动居中。 */
@@ -445,12 +469,12 @@ export struct ReaderTtsPlayerPanel {
         })
       } else {
         Text(this.coverInitial())
-          .fontSize(large ? Math.max(16, Math.round(this.coverHeight() * 0.22)) : 16)
+          .fontSize(large ? Math.max(16, Math.round(this.audioCoverHeight() * 0.22)) : 16)
           .fontColor(ThemeRuntime.onAccentColor())
       }
     }
-    .width(large ? Math.round(this.coverHeight() * 0.75) : 42)
-    .height(large ? this.coverHeight() : 56)
+    .width(large ? Math.round(this.audioCoverHeight() * 0.75) : 42)
+    .height(large ? this.audioCoverHeight() : 56)
     .borderRadius(large ? 14 : 6)
     .clip(true)
     .backgroundColor(this.accentColor)
@@ -947,6 +971,21 @@ export struct ReaderTtsPlayerPanel {
   coverHeight(): number {
     return Math.round(Math.min(300, Math.max(150,
       (Math.max(1, this.viewportHeight) - this.topInset - this.bottomInset) * 0.36)));
+  }
+
+  /**
+   * 听书大封面的高度：优先用 coverHeight()，封面区放不下时扣掉章节名、状态行、音色下拉和间距后缩小。
+   * 封面区是 layoutWeight 分到的高度，不随封面大小变化，所以不会来回触发布局。
+   */
+  audioCoverHeight(): number {
+    const preferred = this.coverHeight();
+    if (this.audioHeroHeight <= 0) return preferred;
+    const hasStatus = !!this.statusText();
+    // 子项间距：封面、章节名、简介、[状态行]、音色；再加封面和章节名各自的上边距。
+    const gaps = AppSpacing.MD * (hasStatus ? 4 : 3) + AppSpacing.SM * 2;
+    const fixed = this.audioHeroTitleHeight + (hasStatus ? this.audioHeroStatusHeight : 0) +
+      AUDIO_VOICE_ROW_HEIGHT + gaps;
+    return Math.max(AUDIO_COVER_MIN_HEIGHT, Math.min(preferred, Math.floor(this.audioHeroHeight - fixed)));
   }
 
   hasTtsVoices(): boolean {
