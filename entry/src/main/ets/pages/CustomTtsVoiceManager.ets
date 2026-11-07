@@ -33,6 +33,7 @@ import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenu
 import { LocalTtsModel, LocalTtsModels } from '../utils/localtts/LocalTtsModels';
 import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
 import { LocalTtsEngine } from '../utils/localtts/LocalTtsEngine';
+import { LocalTtsImport } from '../utils/localtts/LocalTtsImport';
 
 class ManagedTtsVoiceEntry {
   key: string = '';
@@ -101,6 +102,7 @@ struct CustomTtsVoiceManagerPage {
   @State systemVoices: TtsVoiceOption[] = [TtsVoiceCatalog.defaultVoice()];
   @State cloudVoices: TtsVoiceInfo[] = [];
   @State loadingCatalog: boolean = false;
+  @State localImportStage: string = '';
   @State catalogError: string = '';
   @State downloadingVoiceKey: string = '';
   @State downloadProgress: string = '';
@@ -237,8 +239,8 @@ struct CustomTtsVoiceManagerPage {
         }
         if (!this.selectionMode && !this.searchText) {
           ListItem() { this.voiceSectionTitle('离线音色') }
-          ForEach(LocalTtsModels.CATALOG, (model: LocalTtsModel) => {
-            if (!this.localInstalled(model)) {
+          ForEach(this.localModels(), (model: LocalTtsModel) => {
+            if (!this.localInstalled(model) && !model.imported) {
               ListItem() { this.localVoiceRow(model) }
             } else if (deviceInfo.sdkApiVersion >= 26) {
               HdsListItem({ customItemBuilder: (): void => { this.localVoiceRow(model); },
@@ -248,8 +250,9 @@ struct CustomTtsVoiceManagerPage {
                 .swipeAction({ end: { builder: (): void => { this.localFallbackSwipeActions(model); } },
                   edgeEffect: SwipeEdgeEffect.Spring })
             }
-          }, (model: LocalTtsModel): string => `${model.id}:${this.localTtsInstalledIds}:` +
+          }, (model: LocalTtsModel): string => `${model.id}:${model.name}:${this.localTtsInstalledIds}:` +
             `${this.localTtsDownloadingId}:${this.ttsLocalVoiceId}:${this.localEnabled(model)}`)
+          ListItem() { this.localImportRow() }
         }
         if (this.nativeVoices(false).length > 0) {
           ListItem() { this.voiceSectionTitle('系统音色') }
@@ -348,7 +351,7 @@ struct CustomTtsVoiceManagerPage {
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
       if (this.localTtsDownloadingId === model.id) {
         this.localActionButton('取消', () => { LocalTtsModels.cancelDownload(); })
-      } else if (!this.localInstalled(model)) {
+      } else if (!this.localInstalled(model) && !model.imported) {
         this.localActionButton(this.localMemberAllowed() ? '下载' : '开通会员', () => { this.downloadLocalVoice(model); })
       } else if (this.ttsLocalVoiceId === model.id && this.localEnabled(model)) {
         SymbolGlyph($r('sys.symbol.checkmark')).fontSize(18).fontColor([this.accentColor()])
@@ -358,8 +361,80 @@ struct CustomTtsVoiceManagerPage {
       .opacity(!this.localInstalled(model) || this.localEnabled(model) ? 1 : 0.5)
       .onClick(() => {
         if (this.localInstalled(model)) this.selectLocalVoice(model);
+        else if (model.imported) HdsFeedback.showToast('这个模型上次加载失败，已停用；可左滑删除后重新导入');
         else if (this.localTtsDownloadingId !== model.id) this.downloadLocalVoice(model);
       })
+  }
+
+  @Builder
+  localImportRow() {
+    Row({ space: AppSpacing.MD }) {
+      Column({ space: AppSpacing.XS }) {
+        Text('导入模型').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor())
+        Text(this.localImportStage ||
+          `选择 sherpa-onnx 语音合成模型的 zip 压缩包（VITS / Piper / Matcha / Kokoro）${this.localMemberAllowed() ? '' : ' · 会员专享'}`)
+          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).maxLines(3)
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      if (this.localImportStage) {
+        LoadingProgress().width(24).height(24).color(this.accentColor())
+      } else {
+        this.localActionButton(this.localMemberAllowed() ? '选择文件' : '开通会员', () => { this.importLocalModel(); })
+      }
+    }.width('100%').constraintSize({ minHeight: 72 }).padding(AppSpacing.XL)
+      .backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.cardRadius())
+      .onClick(() => { if (!this.localImportStage) this.importLocalModel(); })
+  }
+
+  localModels(): LocalTtsModel[] {
+    return this.localTtsInstalledIds === undefined ? [] : LocalTtsModels.all();
+  }
+
+  importLocalModel(): void {
+    if (!this.localMemberAllowed()) {
+      HdsFeedback.showToast(LocalTtsModels.MEMBER_REQUIRED);
+      router.pushUrl({ url: 'pages/MemberBenefits' });
+      return;
+    }
+    if (LocalTtsImport.isBusy()) return;
+    this.getUIContext().showAlertDialog({
+      title: '导入离线模型',
+      message: '支持 sherpa-onnx 的 VITS、Piper、Matcha、Kokoro 语音合成模型，请把模型文件夹打成 zip 再导入' +
+        '（官方的 .tar.bz2 需要先解压）。\n\n导入的模型由你自行确认版权与用途。不兼容的模型可能在第一次朗读时让应用退出，' +
+        '重新打开后会自动停用它。',
+      primaryButton: { value: '取消', action: (): void => {} },
+      secondaryButton: { value: '选择文件', action: (): void => { this.pickAndImportLocalModel(); } }
+    });
+  }
+
+  private async pickAndImportLocalModel(): Promise<void> {
+    const context = getContext(this);
+    let uri = '';
+    try {
+      uri = await LocalTtsImport.pick(context);
+    } catch (error) {
+      HdsFeedback.showToast(`无法打开文件选择器：${this.shortErrorMessage(error as Object)}`);
+      return;
+    }
+    if (!uri) return;
+    this.localImportStage = '准备导入';
+    try {
+      const model = await LocalTtsImport.importZip(context, uri, (text: string): void => {
+        if (this.pageAlive) this.localImportStage = text;
+      });
+      HdsFeedback.showToast(`已导入 ${model.name}`);
+      if (this.pageAlive && !this.ttsLocalVoiceId) this.selectLocalVoice(model);
+    } catch (error) {
+      if (this.pageAlive) {
+        this.getUIContext().showAlertDialog({
+          title: '导入失败',
+          message: (error as Error).message || String(error),
+          confirm: { value: '知道了', action: (): void => {} }
+        });
+      }
+    } finally {
+      this.localImportStage = '';
+    }
   }
 
   @Builder
@@ -412,8 +487,9 @@ struct CustomTtsVoiceManagerPage {
     const tier = this.localMemberAllowed() ? '' : ' · 会员专享';
     if (this.localInstalled(model)) {
       const state = !this.localEnabled(model) ? '已禁用' : (this.ttsLocalVoiceId === model.id ? '当前使用' : '已启用');
-      return `已下载 · ${state}${tier}`;
+      return `${model.imported ? `${LocalTtsModels.sizeText(model)}` : '已下载'} · ${state}${tier}`;
     }
+    if (model.imported) return '上次加载失败，已停用 · 可左滑删除后重新导入';
     return `本机合成，不联网、不限字数 · 约 ${LocalTtsModels.sizeText(model)}${tier}`;
   }
 
@@ -469,7 +545,7 @@ struct CustomTtsVoiceManagerPage {
   confirmRemoveLocalVoice(model: LocalTtsModel): void {
     this.getUIContext().showAlertDialog({
       title: '删除音色',
-      message: `确定删除离线音色“${model.name}”吗？删除后需要重新下载才能使用。`,
+      message: `确定删除离线音色“${model.name}”吗？删除后需要重新${model.imported ? '导入' : '下载'}才能使用。`,
       primaryButton: { value: '取消', action: (): void => {} },
       secondaryButton: {
         value: '删除', fontColor: ThemeRuntime.dangerColor(this.appDarkMode), action: (): void => {

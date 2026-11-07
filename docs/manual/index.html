@@ -1155,7 +1155,9 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
         <ul>
           <li>下载可以随时取消；离开音色管理页也会在后台继续。</li>
           <li>开始朗读时会加载模型，第一句稍慢；停止朗读一会儿后自动释放内存。</li>
-          <li>不需要时点“删除”收回存储空间，之后需要重新下载才能使用。</li>
+          <li>已下载的音色可以左滑启用、禁用或删除；删除后需要重新下载才能使用。</li>
+          <li><b>导入模型</b>：在离线音色列表底部点“导入模型”，选择 sherpa-onnx 语音合成模型的 zip 压缩包（支持 VITS、Piper、Matcha、Kokoro）。官方提供的 .tar.bz2 需要先在电脑上解压，再把模型文件夹打成 zip。包里要有 .onnx 模型和 tokens.txt，以及 lexicon.txt 或 espeak-ng-data 目录；Matcha 模型要把声码器（如 vocos-22khz-univ.onnx）一起放进去。</li>
+          <li>导入的模型由你自行确认版权与用途。不兼容的模型可能在第一次朗读时让应用退出，重新打开后会自动停用它，可以左滑删除。</li>
         </ul>
       </div>
       <div class="sub">

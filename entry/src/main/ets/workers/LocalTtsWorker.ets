@@ -10,8 +10,13 @@ interface LocalTtsRequest {
   type: string;
   id?: number;
   kind?: string;
-  dir?: string;
-  modelFile?: string;
+  model?: string;
+  vocoder?: string;
+  voices?: string;
+  tokens?: string;
+  lexicon?: string;
+  dataDir?: string;
+  ruleFsts?: string;
   threads?: number;
   text?: string;
   speed?: number;
@@ -23,26 +28,34 @@ let tts: OfflineTts | null = null;
 let queue: LocalTtsRequest[] = [];
 let scheduled: boolean = false;
 
-function joinExisting(dir: string, names: string[]): string {
-  return names.map((name: string): string => `${dir}/${name}`)
-    .filter((path: string): boolean => fs.accessSync(path))
-    .join(',');
-}
-
+// 主线程传来的都是绝对路径（多个词典/规则用逗号连接），这里只按模型结构填进对应的配置。
 function buildConfig(request: LocalTtsRequest): OfflineTtsConfig {
-  const dir = request.dir || '';
   const config = new OfflineTtsConfig();
   config.model.numThreads = request.threads || 2;
   config.model.debug = false;
-  config.model.vits.model = `${dir}/${request.modelFile || 'model.onnx'}`;
-  config.model.vits.tokens = `${dir}/tokens.txt`;
-  if (request.kind === 'vits-espeak') {
-    // 旧版 Piper 转换：发音由 espeak-ng 生成，需要 espeak-ng-data，不用词典。
-    config.model.vits.dataDir = `${dir}/espeak-ng-data`;
+  const tokens = request.tokens || '';
+  const lexicon = request.lexicon || '';
+  const dataDir = request.dataDir || '';
+  if (request.kind === 'matcha') {
+    config.model.matcha.acousticModel = request.model || '';
+    config.model.matcha.vocoder = request.vocoder || '';
+    config.model.matcha.tokens = tokens;
+    config.model.matcha.lexicon = lexicon;
+    config.model.matcha.dataDir = dataDir;
+  } else if (request.kind === 'kokoro') {
+    config.model.kokoro.model = request.model || '';
+    config.model.kokoro.voices = request.voices || '';
+    config.model.kokoro.tokens = tokens;
+    config.model.kokoro.lexicon = lexicon;
+    config.model.kokoro.dataDir = dataDir;
   } else {
-    config.model.vits.lexicon = `${dir}/lexicon.txt`;
+    config.model.vits.model = request.model || '';
+    config.model.vits.tokens = tokens;
+    config.model.vits.lexicon = lexicon;
+    config.model.vits.dataDir = dataDir;
   }
-  config.ruleFsts = joinExisting(dir, ['phone.fst', 'date.fst', 'number.fst']);
+  config.ruleFsts = (request.ruleFsts || '').split(',')
+    .filter((path: string): boolean => !!path && fs.accessSync(path)).join(',');
   return config;
 }
 

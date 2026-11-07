@@ -15,8 +15,13 @@ class LocalTtsWorkerRequest {
   type: string = '';
   id: number = 0;
   kind: string = '';
-  dir: string = '';
-  modelFile: string = '';
+  model: string = '';
+  vocoder: string = '';
+  voices: string = '';
+  tokens: string = '';
+  lexicon: string = '';
+  dataDir: string = '';
+  ruleFsts: string = '';
   threads: number = 2;
   text: string = '';
   speed: number = 1;
@@ -74,6 +79,7 @@ export class LocalTtsEngine {
       const request = new LocalTtsWorkerRequest('synthesize');
       request.id = id;
       request.text = text;
+      request.sid = model.sid;
       // 语速交给模型（拉长/缩短音长），不改音高；返回的音频不用再变速。
       request.speed = Math.max(0.5, Math.min(2.5, speed || 1));
       thread.postMessage(request);
@@ -99,6 +105,9 @@ export class LocalTtsEngine {
     LocalTtsEngine.initResolve = null;
     LocalTtsEngine.initReject = null;
     LocalTtsEngine.modelId = '';
+    // 正常释放说明进程没被带崩，不能把模型误判为损坏。
+    if (LocalTtsEngine.loadingDir) LocalTtsModels.clearLoading(LocalTtsEngine.loadingDir);
+    LocalTtsEngine.loadingDir = '';
     const thread = LocalTtsEngine.thread;
     LocalTtsEngine.thread = null;
     if (thread) {
@@ -136,9 +145,15 @@ export class LocalTtsEngine {
       LocalTtsEngine.release();
     };
     const request = new LocalTtsWorkerRequest('init');
+    const at = (name: string): string => name ? `${dir}/${name}` : '';
     request.kind = model.kind;
-    request.dir = dir;
-    request.modelFile = model.modelFile;
+    request.model = at(model.modelFile);
+    request.vocoder = at(model.vocoderFile);
+    request.voices = at(model.voicesFile);
+    request.tokens = at('tokens.txt');
+    request.lexicon = model.lexicons.map((name: string): string => at(name)).join(',');
+    request.dataDir = at(model.dataDir);
+    request.ruleFsts = model.ruleFsts.map((name: string): string => at(name)).join(',');
     request.threads = LocalTtsEngine.THREADS;
     LocalTtsEngine.loadingDir = dir;
     LocalTtsModels.markLoading(dir);
@@ -152,8 +167,10 @@ export class LocalTtsEngine {
 
   private static onReply(thread: worker.ThreadWorker, reply: LocalTtsReply): void {
     if (LocalTtsEngine.thread !== thread) return;
-    if (reply.type === 'init-done' || reply.type === 'init-error') {
+    // 首句合成成功（或明确报错）才撤掉 loading 标记：不兼容的模型也可能在第一次合成时把进程带崩。
+    if (LocalTtsEngine.loadingDir && reply.type !== 'init-done' && reply.type !== 'cancelled') {
       LocalTtsModels.clearLoading(LocalTtsEngine.loadingDir);
+      LocalTtsEngine.loadingDir = '';
     }
     if (reply.type === 'init-done') {
       console.info(`[LocalTts] model loaded in ${reply.ms}ms, sampleRate=${reply.sampleRate}`);
