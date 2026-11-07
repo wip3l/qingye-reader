@@ -84,12 +84,14 @@ export class ResultCoverPreparation {
       frame = ThemeBookCoverSettings.frame(options.darkMode);
       prepared.interval = ThemeBookCoverSettings.interval(book);
     } else if (options.useBookshelf) {
-      candidates = ResultCoverPreparation.albumCovers(book, options);
+      const emptyOnly = options.gallery.ignoreSourceCover && options.gallery.ignoreEmptyCoverOnly;
+      // 仅忽略空封面时要先看书有没有自带封面，不能直接走图集。
+      candidates = emptyOnly ? [] : ResultCoverPreparation.albumCovers(book, options);
       if (candidates.length === 0) {
         await AppDatabase.getInstance().initWithContext(context);
         const shelfBook = await SearchBookShelfHelper.findShelfBookByKey(BookIdentity.keyOfBook(book));
         if (shelfBook) book = shelfBook;
-        if (!book.coverUrl && !book.customCoverUrl && !options.gallery.ignoreSourceCover) {
+        if (!book.coverUrl && !book.customCoverUrl && (!options.gallery.ignoreSourceCover || emptyOnly)) {
           book = await ResultCoverPreparation.completeSourceCover(book);
         }
         candidates = BookCoverResolver.sourceCovers(book, options.darkMode, options.gallery);

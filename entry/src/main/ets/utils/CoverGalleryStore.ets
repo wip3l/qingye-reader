@@ -8,6 +8,8 @@ export class CoverGallerySnapshot {
   applyScope: string = 'all';
   targetBooksRaw: string = '';
   ignoreSourceCover: boolean = false;
+  /** 忽略原始封面的子选项：只在书本身没有封面时改用图集。 */
+  ignoreEmptyCoverOnly: boolean = false;
   coverMode: string = 'sequence';
 }
 
@@ -19,6 +21,7 @@ export class CoverGalleryStore {
   private static readonly KEY_APPLY_SCOPE: string = 'bookshelfCoverApplyScope';
   private static readonly KEY_TARGET_BOOKS: string = 'bookshelfCoverTargetBooks';
   private static readonly KEY_IGNORE_SOURCE: string = 'bookshelfIgnoreSourceCover';
+  private static readonly KEY_IGNORE_EMPTY_ONLY: string = 'bookshelfIgnoreEmptyCoverOnly';
   private static readonly KEY_COVER_MODE: string = 'bookshelfCoverMode';
   private static cachedSnapshot: CoverGallerySnapshot | null = null;
 
@@ -43,6 +46,7 @@ export class CoverGalleryStore {
     await store.put(CoverGalleryStore.KEY_APPLY_SCOPE, snapshot.applyScope);
     await store.put(CoverGalleryStore.KEY_TARGET_BOOKS, snapshot.targetBooksRaw);
     await store.put(CoverGalleryStore.KEY_IGNORE_SOURCE, snapshot.ignoreSourceCover);
+    await store.put(CoverGalleryStore.KEY_IGNORE_EMPTY_ONLY, snapshot.ignoreEmptyCoverOnly);
     await store.put(CoverGalleryStore.KEY_COVER_MODE, snapshot.coverMode);
     await store.flush();
   }
@@ -75,6 +79,7 @@ export class CoverGalleryStore {
     AppStorage.setOrCreate(CoverGalleryStore.KEY_APPLY_SCOPE, snapshot.applyScope);
     AppStorage.setOrCreate(CoverGalleryStore.KEY_TARGET_BOOKS, snapshot.targetBooksRaw);
     AppStorage.setOrCreate(CoverGalleryStore.KEY_IGNORE_SOURCE, snapshot.ignoreSourceCover);
+    AppStorage.setOrCreate(CoverGalleryStore.KEY_IGNORE_EMPTY_ONLY, snapshot.ignoreEmptyCoverOnly);
     AppStorage.setOrCreate(CoverGalleryStore.KEY_COVER_MODE, snapshot.coverMode);
   }
 
@@ -96,6 +101,7 @@ export class CoverGalleryStore {
     snapshot.applyScope = AppStorage.get<string>(CoverGalleryStore.KEY_APPLY_SCOPE) || 'all';
     snapshot.targetBooksRaw = AppStorage.get<string>(CoverGalleryStore.KEY_TARGET_BOOKS) || '';
     snapshot.ignoreSourceCover = AppStorage.get<boolean>(CoverGalleryStore.KEY_IGNORE_SOURCE) || false;
+    snapshot.ignoreEmptyCoverOnly = AppStorage.get<boolean>(CoverGalleryStore.KEY_IGNORE_EMPTY_ONLY) || false;
     snapshot.coverMode = AppStorage.get<string>(CoverGalleryStore.KEY_COVER_MODE) || 'sequence';
     return snapshot;
   }
@@ -109,6 +115,7 @@ export class CoverGalleryStore {
     snapshot.applyScope = await CoverGalleryStore.getString(store, CoverGalleryStore.KEY_APPLY_SCOPE, 'all');
     snapshot.targetBooksRaw = await CoverGalleryStore.getString(store, CoverGalleryStore.KEY_TARGET_BOOKS, '');
     snapshot.ignoreSourceCover = await CoverGalleryStore.getBoolean(store, CoverGalleryStore.KEY_IGNORE_SOURCE, false);
+    snapshot.ignoreEmptyCoverOnly = await CoverGalleryStore.getBoolean(store, CoverGalleryStore.KEY_IGNORE_EMPTY_ONLY, false);
     snapshot.coverMode = await CoverGalleryStore.getString(store, CoverGalleryStore.KEY_COVER_MODE, 'sequence');
     return snapshot;
   }
@@ -125,6 +132,7 @@ export class CoverGalleryStore {
     snapshot.applyScope = source.applyScope;
     snapshot.targetBooksRaw = source.targetBooksRaw;
     snapshot.ignoreSourceCover = source.ignoreSourceCover;
+    snapshot.ignoreEmptyCoverOnly = source.ignoreEmptyCoverOnly;
     snapshot.coverMode = source.coverMode;
     return snapshot;
   }

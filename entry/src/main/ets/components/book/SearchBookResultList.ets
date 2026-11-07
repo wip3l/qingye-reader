@@ -80,6 +80,7 @@ export struct SearchBookResultList {
   @StorageProp('bookshelfCoverApplyScope') @Watch('onCoverSettingsChanged') coverScope: string = '';
   @StorageProp('bookshelfCoverTargetBooks') @Watch('onCoverSettingsChanged') coverTargets: string = '';
   @StorageProp('bookshelfIgnoreSourceCover') @Watch('onCoverSettingsChanged') ignoreSourceCover: boolean = false;
+  @StorageProp('bookshelfIgnoreEmptyCoverOnly') @Watch('onCoverSettingsChanged') ignoreEmptyCoverOnly: boolean = false;
   @StorageProp('bookshelfCoverMode') @Watch('onCoverSettingsChanged') coverMode: string = '';
   @StorageProp('shelfUpdateTime') @Watch('onCoverSettingsChanged') shelfRevision: number = 0;
   @State preparedCovers: Map<string, PreparedResultCover> = new Map<string, PreparedResultCover>();

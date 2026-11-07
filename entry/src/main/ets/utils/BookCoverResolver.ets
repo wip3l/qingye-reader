@@ -14,7 +14,7 @@ export class BookCoverResolver {
     settings: CoverGallerySnapshot = CoverGalleryStore.snapshotFromStorage()): string[] {
     return CoverGallerySettings.getDisplayCoverList(book, darkMode, settings.albumsRaw,
       settings.lightAlbumId, settings.darkAlbumId, settings.applyScope, settings.targetBooksRaw,
-      settings.ignoreSourceCover, settings.coverMode);
+      settings.ignoreSourceCover, settings.coverMode, settings.ignoreEmptyCoverOnly);
   }
 
   static first(book: Book | null, darkMode: boolean = AppStorage.get<boolean>('appDarkMode') || false,

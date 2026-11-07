@@ -17,6 +17,7 @@ import deviceInfo from '@ohos.deviceInfo';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
+import picker from '@ohos.file.picker';
 import { Book, BookChapter, BookGroup, SearchBook, BookTypeSupport, sleepMs } from '@legado/sourceengine';
 import { AppDatabase } from '../../model/data/AppDatabase';
 import { SearchCoordinator, SearchProgress } from '../../core/book/SearchCoordinator';
@@ -355,6 +356,8 @@ export struct BookshelfPage {
   @State isLoading: boolean = false;
   @State showDeleteDialog: boolean = false;
   @State showActionDialog: boolean = false;
+  /** 长按菜单里“单独设置封面”是否展开了二级选项。 */
+  @State bookActionCoverExpanded: boolean = false;
   @State showEditBookInfoDialog: boolean = false;
   @State editingBookName: string = '';
   @State editingBookAuthor: string = '';
@@ -447,6 +450,7 @@ export struct BookshelfPage {
   @StorageLink('bookshelfCoverApplyScope') @Watch('onShelfCoverSettingsChanged') bookshelfCoverApplyScope: string = 'all';
   @StorageLink('bookshelfCoverTargetBooks') @Watch('onShelfCoverSettingsChanged') bookshelfCoverTargetBooks: string = '';
   @StorageLink('bookshelfIgnoreSourceCover') @Watch('onShelfCoverSettingsChanged') bookshelfIgnoreSourceCover: boolean = false;
+  @StorageLink('bookshelfIgnoreEmptyCoverOnly') @Watch('onShelfCoverSettingsChanged') bookshelfIgnoreEmptyCoverOnly: boolean = false;
   @StorageLink('bookshelfCoverMode') @Watch('onShelfCoverSettingsChanged') bookshelfCoverMode: string = 'sequence';
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
@@ -789,6 +793,7 @@ export struct BookshelfPage {
   showBookActions(book: Book, event?: GestureEvent): void {
     this.captureContextMenuAnchor(event);
     this.pendingActionBook = book;
+    this.bookActionCoverExpanded = false;
     this.showActionDialog = true;
   }
 
@@ -912,6 +917,7 @@ export struct BookshelfPage {
   closeBookActions(): void {
     this.showActionDialog = false;
     this.pendingActionBook = null;
+    this.bookActionCoverExpanded = false;
   }
 
   openShelfBookDetail(book: Book): void {
@@ -1021,8 +1027,10 @@ export struct BookshelfPage {
         this.closeNetworkCoverPicker();
         return;
       }
+      const previousCover = current.customCoverUrl;
       current.customCoverUrl = coverUrl;
       await db.updateBook(current);
+      this.removeLocalBookCoverFile(previousCover, coverUrl);
       this.applyShelfBookCoverState(current);
       this.closeNetworkCoverPicker();
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
@@ -1042,14 +1050,65 @@ export struct BookshelfPage {
         HdsFeedback.showToast('书籍已不在书架中');
         return;
       }
+      const previousCover = current.customCoverUrl;
       current.customCoverUrl = '';
       await db.updateBook(current);
+      this.removeLocalBookCoverFile(previousCover, '');
       this.applyShelfBookCoverState(current);
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
       HdsFeedback.showToast('已恢复默认封面');
     } catch (e) {
       console.error('恢复默认封面失败:', e);
       HdsFeedback.showToast('恢复默认封面失败');
+    }
+  }
+
+  /** 上传本地图片作封面：复制进沙箱后写入 customCoverUrl，与网络封面同一优先级。 */
+  async pickLocalBookCover(book: Book): Promise<void> {
+    try {
+      const options = new picker.DocumentSelectOptions();
+      options.maxSelectNumber = 1;
+      options.fileSuffixFilters = ['图片|.jpg,.jpeg,.png,.webp,.gif,.bmp,.heic,.heif'];
+      const result = await new picker.DocumentViewPicker(getContext(this)).select(options);
+      if (!result || result.length === 0 || !result[0]) return;
+      const source = result[0];
+      const db = AppDatabase.getInstance();
+      const current = await db.getBook(book.bookUrl);
+      if (!current) {
+        HdsFeedback.showToast('书籍已不在书架中');
+        return;
+      }
+      const dir = this.localBookCoverDir();
+      if (!fs.accessSync(dir)) fs.mkdirSync(dir, true);
+      const match = /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.exec(decodeURIComponent(source));
+      const ext = match ? `.${match[1].toLowerCase()}` : '.jpg';
+      const destUri = fileUri.getUriFromPath(`${dir}/${Date.now()}${ext}`);
+      await fs.copy(source, destUri);
+      const previousCover = current.customCoverUrl;
+      current.customCoverUrl = destUri;
+      await db.updateBook(current);
+      this.removeLocalBookCoverFile(previousCover, destUri);
+      this.applyShelfBookCoverState(current);
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      HdsFeedback.showToast('本地封面已启用');
+    } catch (e) {
+      console.error('设置本地封面失败:', e);
+      HdsFeedback.showToast('设置本地封面失败');
+    }
+  }
+
+  localBookCoverDir(): string {
+    return `${getContext(this).filesDir}/book_covers`;
+  }
+
+  /** 换掉或恢复封面后，删掉不再使用的本地上传封面文件。 */
+  removeLocalBookCoverFile(previous: string, next: string): void {
+    const prefix = `${fileUri.getUriFromPath(this.localBookCoverDir())}/`;
+    if (!previous || previous === next || !previous.startsWith(prefix)) return;
+    try {
+      fs.unlinkSync(new fileUri.FileUri(previous).path);
+    } catch (e) {
+      console.warn('删除旧本地封面失败:', e);
     }
   }
 
@@ -1106,8 +1165,10 @@ export struct BookshelfPage {
         this.closeNetworkCoverPicker();
         return;
       }
+      const previousCover = current.customCoverUrl;
       current.customCoverUrl = coverUrl;
       await db.updateBook(current);
+      this.removeLocalBookCoverFile(previousCover, coverUrl);
       this.applyShelfBookCoverState(current);
       this.closeNetworkCoverPicker();
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
@@ -1268,7 +1329,8 @@ export struct BookshelfPage {
       this.bookshelfCoverApplyScope,
       this.bookshelfCoverTargetBooks,
       this.bookshelfIgnoreSourceCover,
-      this.bookshelfCoverMode
+      this.bookshelfCoverMode,
+      this.bookshelfIgnoreEmptyCoverOnly
     );
     const context = getContext(this);
     for (let i = 0; i < covers.length; i++) {
@@ -2202,14 +2264,31 @@ export struct BookshelfPage {
               }
             })
           }
-          this.contextActionItem($r('sys.symbol.picture_badge_arrow_down'), '获取网络封面', this.primaryTextColor(), () => {
-            if (this.pendingActionBook) {
-              const book = this.pendingActionBook;
-              this.showActionDialog = false;
-              this.pendingActionBook = null;
-              this.openNetworkCoverPicker(book);
+          PopupMenuAction($r('sys.symbol.picture'), '单独设置封面', this.primaryTextColor(), () => {
+            this.bookActionCoverExpanded = !this.bookActionCoverExpanded;
+          }, true, this.bookActionCoverExpanded ? '▾' : '▸', this.subTextColor())
+          if (this.bookActionCoverExpanded) {
+            Column() {
+              this.contextActionItem($r('sys.symbol.picture_badge_arrow_down'), '获取网络封面', this.primaryTextColor(), () => {
+                if (this.pendingActionBook) {
+                  const book = this.pendingActionBook;
+                  this.closeBookActions();
+                  this.openNetworkCoverPicker(book);
+                }
+              })
+              this.contextActionItem($r('sys.symbol.folder'), '上传本地图片', this.primaryTextColor(), () => {
+                if (this.pendingActionBook) {
+                  const book = this.pendingActionBook;
+                  this.closeBookActions();
+                  setTimeout(() => {
+                    this.pickLocalBookCover(book);
+                  }, 0);
+                }
+              })
             }
-          })
+            .width('100%')
+            .padding({ left: 16 })
+          }
           if (this.pendingActionBook.customCoverUrl) {
             this.contextActionItem($r('sys.symbol.minus_circle'), '恢复默认封面',
               this.primaryTextColor(), () => {
@@ -6019,7 +6098,8 @@ export struct BookshelfPage {
       this.bookshelfCoverApplyScope,
       this.bookshelfCoverTargetBooks,
       this.bookshelfIgnoreSourceCover,
-      this.bookshelfCoverMode
+      this.bookshelfCoverMode,
+      this.bookshelfIgnoreEmptyCoverOnly
     );
   }
 

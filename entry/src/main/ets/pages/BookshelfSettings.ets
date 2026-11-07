@@ -59,6 +59,7 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfCoverApplyScope') bookshelfCoverApplyScope: string = 'all';
   @StorageLink('bookshelfCoverTargetBooks') bookshelfCoverTargetBooks: string = '';
   @StorageLink('bookshelfIgnoreSourceCover') bookshelfIgnoreSourceCover: boolean = false;
+  @StorageLink('bookshelfIgnoreEmptyCoverOnly') bookshelfIgnoreEmptyCoverOnly: boolean = false;
   @StorageLink('bookshelfCoverMode') bookshelfCoverMode: string = 'sequence';
   @StorageLink('coverGalleryUpdateTime') @Watch('onCoverGalleryUpdateTimeChanged') coverGalleryUpdateTime: number = 0;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
@@ -348,6 +349,19 @@ struct BookshelfSettingsPage {
         this.onCoverSettingChanged();
       }
     })
+    if (this.bookshelfIgnoreSourceCover) {
+      this.itemDivider()
+      SettingSwitchRow({
+        title: '仅忽略空封面',
+        description: '书自带封面时照常显示，没有封面才用图集',
+        isOn: this.bookshelfIgnoreEmptyCoverOnly,
+        showDivider: false,
+        onChange: (value: boolean) => {
+          this.bookshelfIgnoreEmptyCoverOnly = value;
+          this.onCoverSettingChanged();
+        }
+      })
+    }
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -638,6 +652,7 @@ struct BookshelfSettingsPage {
     this.bookshelfCoverTargetBooks = snapshot.targetBooksRaw;
     this.targetBookUrls = CoverGallerySettings.parseTargetBooks(snapshot.targetBooksRaw);
     this.bookshelfIgnoreSourceCover = snapshot.ignoreSourceCover;
+    this.bookshelfIgnoreEmptyCoverOnly = snapshot.ignoreEmptyCoverOnly;
     this.bookshelfCoverMode = snapshot.coverMode;
     this.syncAlbums(albumsRaw);
     this.bumpSettingsRender();
@@ -738,6 +753,7 @@ struct BookshelfSettingsPage {
     snapshot.applyScope = this.showTargetBookList ? 'books' : 'all';
     snapshot.targetBooksRaw = this.bookshelfCoverTargetBooks;
     snapshot.ignoreSourceCover = this.bookshelfIgnoreSourceCover;
+    snapshot.ignoreEmptyCoverOnly = this.bookshelfIgnoreEmptyCoverOnly;
     snapshot.coverMode = this.bookshelfCoverMode;
     return snapshot;
   }

@@ -78,12 +78,18 @@ export class CoverGallerySettings {
     applyScope: string,
     targetBooksRaw: string,
     ignoreSourceCover: boolean,
-    coverMode: string
+    coverMode: string,
+    ignoreEmptyCoverOnly: boolean = false
   ): string[] {
     const selectedAlbumId = CoverGallerySettings.selectedAlbumId(darkMode, lightAlbumId, darkAlbumId);
     const albums = CoverGallerySettings.parseAlbums(albumsRaw);
     const album = CoverGallerySettings.getAlbum(albums, selectedAlbumId);
-    const sourceCovers = ignoreSourceCover ? [] : BookDisplayHelper.getCoverList(book);
+    // “仅忽略空封面”：书自带封面就只用它，没有封面才落到图集。
+    const emptyOnly = ignoreSourceCover && ignoreEmptyCoverOnly;
+    const sourceCovers = ignoreSourceCover && !emptyOnly ? [] : BookDisplayHelper.getCoverList(book);
+    if (emptyOnly && sourceCovers.length > 0) {
+      return CoverGallerySettings.applyCoverMode(sourceCovers, coverMode, book.bookUrl);
+    }
     if (!album || album.covers.length === 0 || !CoverGallerySettings.appliesToBook(book.bookUrl, applyScope, targetBooksRaw)) {
       return CoverGallerySettings.applyCoverMode(sourceCovers, coverMode, book.bookUrl);
     }
