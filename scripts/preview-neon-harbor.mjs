@@ -16,8 +16,8 @@ const status=(color)=>text(24,31,'9:41',14,color,600)+text(252,31,'● ▰',14,c
 const footer=(dark)=>{
   const c=dark?theme.dark.colors:theme.light.colors;
   let s=rect(14,678,312,60,c.cardColor,20);
-  ['bookshelf','explore','search','mine'].forEach((tab,i)=>{
-    s+=art(`ic_theme_neon_harbor_${tab}.svg`,40+i*75,689,21,21)+text(37+i*75,727,['书架','发现','搜索','我的'][i],12,c.subTextColor);
+  ['bookshelf','explore','mine'].forEach((tab,i)=>{
+    s+=art(`ic_theme_neon_harbor_${tab}.svg`,58+i*100,689,21,21)+text(55+i*100,727,['书架','发现','我的'][i],12,c.subTextColor);
   });
   return s;
 };

@@ -46,6 +46,8 @@ export interface HelpAction {
   label: string;
   url?: string;
   home?: number;
+  /** 与 home 一起用：切到发现页签后打开搜索层。 */
+  search?: boolean;
 }
 
 export interface HelpSection {
@@ -275,6 +277,7 @@ export class HelpManual {
     }
     if (action.home !== undefined) {
       // 首页监听这对键切页签；说明页可能叠在多层之上，直接退回首页。
+      if (action.search === true) AppStorage.setOrCreate('homeSearchActive', true);
       AppStorage.setOrCreate('homeTabRequestIndex', action.home);
       AppStorage.setOrCreate('homeTabRequestNonce', (AppStorage.get<number>('homeTabRequestNonce') || 0) + 1);
       router.back({ url: 'pages/Index' });

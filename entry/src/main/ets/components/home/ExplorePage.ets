@@ -18,6 +18,7 @@ import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { HomeThemeBackdrop } from './HomeThemeBackdrop';
+import { SearchSettingsPanel } from './SearchSettingsPanel';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { SearchBookShelfHelper } from '../../utils/SearchBookShelfHelper';
 import { SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
@@ -49,7 +50,7 @@ class ExplorePageSnapshot {
   covers: ResultCoverCache = new ResultCoverCache();
 }
 
-/** 首页"发现"页签：发现源、筛选条件与结果列表。 */
+/** 首页"发现"页签：发现源、筛选条件与结果列表；标题行的搜索按钮打开整页的搜索层（SearchPage）。 */
 @Component
 export struct ExplorePage {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
@@ -62,6 +63,8 @@ export struct ExplorePage {
   static readonly CHANNEL_BLUR_LENGTH: number = 52;
   static readonly CHANNEL_BLUR_RADIUS: number = 5;
   static readonly MENU_ITEM_HEIGHT: number = 44;
+  static readonly MORE_MENU_WIDTH: number = 224;
+  static readonly SEARCH_SETTINGS_MENU_WIDTH: number = 272;
   /** 分类达到这个数量才在频道栏右端显示“全部分类”按钮，少量分类横滑就能看完。 */
   static readonly CATEGORY_SHEET_MIN_COUNT: number = 6;
   /** 本地分组键与书源平台参数分开；空分组也有非空、稳定的身份。 */
@@ -81,9 +84,13 @@ export struct ExplorePage {
   @State exploreFilterDrafts: ExploreFilterGroup[] = [];
   @State showExploreFilterPanel: boolean = false;
   @State sourceNames: string[] = [];
-  @State selectedSourceName: string = '';
+  /** 搜索层的范围“当前书源”要显示名字，放进 AppStorage。 */
+  @StorageLink('exploreSourceName') selectedSourceName: string = '';
   @State selectedIndex: number = 0;
   @State showExploreSourcePicker: boolean = false;
+  @State showExploreMoreMenu: boolean = false;
+  /** “更多”菜单当前页：'' 一级，'layout' 结果布局，'search' 搜索设置。 */
+  @State exploreMoreMenuPage: string = '';
   /** 频道栏左侧“模式”的下拉。 */
   @State showExplorePlatformMenu: boolean = false;
   @State showExploreCategorySheet: boolean = false;
@@ -142,7 +149,7 @@ export struct ExplorePage {
   private coordinator: ExploreCoordinator = new ExploreCoordinator();
   private exploreSourceScroller: Scroller = new Scroller();
   private exploreChannelScroller: Scroller = new Scroller();
-  /** 标题行收起量，0 为完整显示，CollapsingHeader.DISTANCE 为完全收起。 */
+  /** 标题行收起量，0 为完整显示，exploreCollapsibleHeight() 为完全收起。 */
   @State exploreHeaderCollapse: number = 0;
   // 顶栏毛玻璃按列表实际滚动距离显现，见 CollapsingHeader.backdropReveal。
   @State exploreHeaderBackdropReveal: number = 0;
@@ -173,6 +180,7 @@ export struct ExplorePage {
       this.resultArrivalTracker.discardPending();
       this.closeExploreFilterPanel();
       this.showExplorePlatformMenu = false;
+      this.showExploreMoreMenu = false;
       if (this.showExploreSourcePicker) {
         this.showExploreSourcePicker = false;
         this.clearExploreSourceFilter();
@@ -533,24 +541,13 @@ export struct ExplorePage {
               }
 
               Row() {
-                // 显式分支重建按钮，避免嵌套 Builder 按值参数保留旧图标和提示。
-                if (this.exploreResultLayout === 'grid') {
-                  this.exploreHeaderCircleButton($r('sys.symbol.list_bullet'), false,
-                    '当前为平铺，切换为列表', () => {
-                      this.applyResultLayout('list');
-                    })
-                } else {
-                  this.exploreHeaderCircleButton($r('sys.symbol.square_grid_2x2'), false,
-                    '当前为列表，切换为平铺', () => {
-                      this.applyResultLayout('grid');
-                    })
-                }
+                this.exploreHeaderCircleButton($r('sys.symbol.magnifyingglass'), false, '搜索书名或作者', () => {
+                  this.openHomeSearch();
+                })
               }
               .margin({ right: 10 })
 
-              this.exploreHeaderCircleButton($r('sys.symbol.arrow_clockwise'), false, '刷新发现内容', () => {
-                this.loadEntries('', true);
-              })
+              this.exploreMoreButton()
             }
             .width('100%')
             .height(56 + this.statusBarHeight)
@@ -560,11 +557,11 @@ export struct ExplorePage {
             .hitTestBehavior(CollapsingHeader.acceptsTouch(this.exploreHeaderCollapseValue()) ? HitTestMode.Default : HitTestMode.None)
           }
           .width('100%')
-          .height(56 + this.statusBarHeight - this.exploreHeaderCollapseValue())
+          .height(this.statusBarHeight + this.exploreCollapsibleHeight() - this.exploreHeaderCollapseValue())
           .clip(true)
           .onAreaChange((_oldArea: Area, newArea: Area) => {
-            this.onHeaderCollapseChange((56 + this.statusBarHeight - Number(newArea.height)) /
-              CollapsingHeader.DISTANCE);
+            this.onHeaderCollapseChange((this.statusBarHeight + this.exploreCollapsibleHeight() -
+              Number(newArea.height)) / this.exploreCollapsibleHeight());
           })
 
           if (this.showsExploreChannelBar()) {
@@ -605,7 +602,8 @@ export struct ExplorePage {
         .position({ x: 0, y: 0 })
         .zIndex(4)
 
-      HeaderBackdrop({ backdropHeight: this.statusBarHeight + 56 - this.exploreHeaderCollapseValue(),
+      HeaderBackdrop({ backdropHeight: this.statusBarHeight + this.exploreCollapsibleHeight() -
+        this.exploreHeaderCollapseValue(),
         statusBarHeight: this.statusBarHeight,
         backdropColor: ThemeRuntime.topBarColor(this.appDarkMode),
         reveal: ThemeRuntime.homeBackdrop(this.appDarkMode) ? this.exploreHeaderBackdropReveal : 1 })
@@ -811,7 +809,7 @@ export struct ExplorePage {
   exploreSourceActionMenu() {
     SourceActionMenu(this.actionExploreSourceNative, this.appDarkMode, (kind: string): void => {
       this.runExploreSourceAction(kind);
-    }, true)
+    })
   }
 
   @Builder
@@ -905,7 +903,7 @@ export struct ExplorePage {
     const name = this.selectedSourceName || '选择书源';
     // 左右留白 24、箭头 14、间隔 4，再留 2 防止取整后差一点被省略。
     const desired = Math.ceil(this.measureExploreSourceLabelText(name)) + 44;
-    // 右侧还有布局、刷新（以及可选的筛选）按钮，各 40 加 10 间隔；标题约 56，页边距 32。
+    // 右侧还有搜索、更多（以及可选的筛选）按钮，各 40 加 10 间隔；标题约 56，页边距 32。
     const buttonsWidth = (this.exploreFilters.length > 0 ? 3 : 2) * (ExplorePage.HEADER_CONTROL_SIZE + 10);
     const available = this.exploreViewportWidth - 32 - 56 - AppSpacing.MD - buttonsWidth;
     return Math.max(72, Math.min(desired, Math.floor(Math.min(this.exploreViewportWidth * 0.45, available))));
@@ -949,6 +947,152 @@ export struct ExplorePage {
       .accessibilityText(label)
       .onClick(() => onTap())
     }
+  }
+
+  /** 随列表收起的高度：标题行；频道栏常驻。 */
+  exploreCollapsibleHeight(): number {
+    return CollapsingHeader.DISTANCE;
+  }
+
+  openHomeSearch(): void {
+    this.showExploreSourcePicker = false;
+    this.showExploreFilterPanel = false;
+    this.showExplorePlatformMenu = false;
+    this.showExploreMoreMenu = false;
+    AppStorage.setOrCreate('homeSearchActive', true);
+  }
+
+  @Builder
+  exploreMoreButton() {
+    Row() {
+      this.exploreHeaderCircleButton($r('sys.symbol.more'), this.showExploreMoreMenu, '更多操作', () => {
+        this.exploreMoreMenuPage = '';
+        this.showExploreSourcePicker = false;
+        this.showExploreFilterPanel = false;
+        this.showExplorePlatformMenu = false;
+        this.showExploreMoreMenu = !this.showExploreMoreMenu;
+      })
+    }
+    .bindPopup(this.showExploreMoreMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+      this.exploreMoreDropdown()
+    }, Placement.BottomRight, this.appDarkMode, this.accentColor(), () => {
+      this.showExploreMoreMenu = false;
+    }))
+  }
+
+  /** 与书架“更多”同样的两级菜单：一级是刷新与布局、搜索设置，后两项点进去换成二级内容，顶部一行返回。 */
+  @Builder
+  exploreMoreDropdown() {
+    Column({ space: AppSpacing.XXS }) {
+      if (this.exploreMoreMenuPage !== '') {
+        Row({ space: AppSpacing.SM }) {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(14)
+            .fontColor([this.primaryTextColor()])
+          Text(this.exploreMoreMenuPage === 'layout' ? '结果布局' : '搜索设置')
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.primaryTextColor())
+        }
+        .width('100%')
+        .height(ExplorePage.MENU_ITEM_HEIGHT)
+        .padding({ left: 12, right: 12 })
+        .accessibilityText('返回更多操作')
+        .onClick(() => { this.exploreMoreMenuPage = ''; })
+        Divider().color(ThemeRuntime.hairlineColor(this.appDarkMode))
+      }
+      if (this.exploreMoreMenuPage === 'layout') {
+        this.exploreLayoutItem('列表', 'list', $r('sys.symbol.list_bullet'))
+        this.exploreLayoutItem('平铺', 'grid', $r('sys.symbol.square_grid_2x2'))
+      } else if (this.exploreMoreMenuPage === 'search') {
+        SearchSettingsPanel({ panelWidth: ExplorePage.SEARCH_SETTINGS_MENU_WIDTH -
+          ImmersiveMaterialRuntime.POPUP_MENU_PADDING * 2, inMenu: true })
+      } else {
+        this.exploreMoreActionItem('刷新发现内容', $r('sys.symbol.arrow_clockwise'), () => {
+          this.showExploreMoreMenu = false;
+          this.loadEntries('', true);
+        })
+        this.exploreMoreMenuItem('结果布局', this.exploreResultLayout === 'grid' ? '平铺' : '列表',
+          $r('sys.symbol.square_grid_2x2'), 'layout')
+        this.exploreMoreMenuItem('搜索设置', '', $r('sys.symbol.gearshape'), 'search')
+      }
+    }
+    .width(this.exploreMoreMenuPage === 'search' ? ExplorePage.SEARCH_SETTINGS_MENU_WIDTH : ExplorePage.MORE_MENU_WIDTH)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+
+  @Builder
+  exploreMoreMenuItem(label: string, value: string, icon: Resource, page: string) {
+    Row({ space: AppSpacing.SM }) {
+      SymbolGlyph(icon)
+        .fontSize(18)
+        .fontColor([this.primaryTextColor()])
+      Text(label)
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontColor(this.primaryTextColor())
+        .layoutWeight(1)
+      if (value) {
+        Text(value)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+      }
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(12)
+        .fontColor([this.subTextColor()])
+    }
+    .width('100%')
+    .height(ExplorePage.MENU_ITEM_HEIGHT)
+    .padding({ left: 12, right: 12 })
+    .borderRadius(this.exploreMenuItemRadius())
+    .accessibilityText(value ? `${label}：${value}` : label)
+    .onClick(() => { this.exploreMoreMenuPage = page; })
+  }
+
+  /** 一级菜单里直接执行的操作（没有二级页）。 */
+  @Builder
+  exploreMoreActionItem(label: string, icon: Resource, action: () => void) {
+    Row({ space: AppSpacing.SM }) {
+      SymbolGlyph(icon)
+        .fontSize(18)
+        .fontColor([this.primaryTextColor()])
+      Text(label)
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontColor(this.primaryTextColor())
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(ExplorePage.MENU_ITEM_HEIGHT)
+    .padding({ left: 12, right: 12 })
+    .borderRadius(this.exploreMenuItemRadius())
+    .accessibilityText(label)
+    .onClick(() => action())
+  }
+
+  @Builder
+  exploreLayoutItem(label: string, layout: string, icon: Resource) {
+    Row({ space: 10 }) {
+      SymbolGlyph(icon)
+        .fontSize(17)
+        .fontColor([this.exploreResultLayout === layout ? this.accentColor() : this.secondaryTextColor()])
+      Text(label)
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontWeight(this.exploreResultLayout === layout ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.exploreResultLayout === layout ? this.accentColor() : this.primaryTextColor())
+        .layoutWeight(1)
+
+      if (this.exploreResultLayout === layout) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(14)
+          .fontColor([this.accentColor()])
+      }
+    }
+    .width('100%')
+    .height(ExplorePage.MENU_ITEM_HEIGHT)
+    .padding({ left: 12, right: 12 })
+    .borderRadius(this.exploreMenuItemRadius())
+    .backgroundColor(this.exploreResultLayout === layout ? this.exploreSelectedBackgroundColor() : '#00000000')
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => this.applyResultLayout(layout))
   }
 
   @Builder
@@ -1634,9 +1778,7 @@ export struct ExplorePage {
     const isNative = this.actionExploreSourceNative;
     this.closeExploreSourceActions();
     if (!sourceUrl) return;
-    if (kind === SourceActionKind.SEARCH) {
-      this.searchWithExploreSource(sourceUrl);
-    } else if (SourceActionRunner.isNavigation(kind)) {
+    if (SourceActionRunner.isNavigation(kind)) {
       SourceActionRunner.navigate(kind, sourceUrl, isNative);
     } else if (kind === SourceActionKind.VARIABLE) {
       SourceActionRunner.openVariableEditor(this.getUIContext(), sourceUrl,
@@ -1665,15 +1807,6 @@ export struct ExplorePage {
         }
       });
     }
-  }
-
-  /** 与书源管理长按“搜索”同一条路：写入单书源搜索参数，首页收到 nonce 后切到搜索页签。 */
-  searchWithExploreSource(sourceUrl: string): void {
-    const option = this.sourceOptions.find((item: ExploreSourceOption): boolean => item.sourceUrl === sourceUrl);
-    const nonce = AppStorage.get<number>('singleSourceSearchNonce') || 0;
-    AppStorage.setOrCreate('singleSourceSearchUrl', sourceUrl);
-    AppStorage.setOrCreate('singleSourceSearchName', option?.sourceName || sourceUrl);
-    AppStorage.setOrCreate('singleSourceSearchNonce', nonce + 1);
   }
 
   getFilteredExploreSourceOptions(): ExploreSourceOption[] {
@@ -1930,12 +2063,13 @@ export struct ExplorePage {
     }
   }
 
+  /** 发现内容和搜索层的结果共用这一个布局设置（搜索层直接读 exploreResultLayout）。 */
   applyResultLayout(layout: string): void {
     this.exploreResultLayout = layout;
     SearchExploreSettingsStore.saveResultLayout(
       getContext(this), SearchExploreSettingsStore.KEY_EXPLORE_RESULT_LAYOUT, layout
     ).catch((e: Error) => {
-      console.warn('保存发现结果布局失败:', e);
+      console.warn('保存结果布局失败:', e);
     });
   }
 
@@ -2202,7 +2336,7 @@ export struct ExplorePage {
   /** 平铺分类共享顶栏状态，分类加载中或为空时保持原来的收起量。 */
   exploreHeaderCollapseValue(): number {
     return this.usesExploreCategoryPager() || (!this.isLoading && this.books.length > 0) ?
-      this.exploreHeaderCollapse : 0;
+      Math.min(this.exploreHeaderCollapse, this.exploreCollapsibleHeight()) : 0;
   }
 
   onExploreListScroll(delta: number, offset: number): void {
@@ -2210,7 +2344,7 @@ export struct ExplorePage {
     if (reveal !== this.exploreHeaderBackdropReveal) this.exploreHeaderBackdropReveal = reveal;
     if (this.usesExploreCategoryPager() && offset <= 0 && delta >= 0) return;
     const next = CollapsingHeader.next(this.exploreHeaderCollapse, delta,
-      this.usesExploreCategoryPager() ? CollapsingHeader.DISTANCE : offset);
+      this.usesExploreCategoryPager() ? this.exploreCollapsibleHeight() : offset, this.exploreCollapsibleHeight());
     if (next !== this.exploreHeaderCollapse) {
       this.exploreHeaderCollapse = next;
     }
@@ -2218,7 +2352,7 @@ export struct ExplorePage {
 
   onExploreListScrollStop(offset: number): void {
     const target = CollapsingHeader.settle(this.exploreHeaderCollapse,
-      this.usesExploreCategoryPager() ? CollapsingHeader.DISTANCE : offset);
+      this.usesExploreCategoryPager() ? this.exploreCollapsibleHeight() : offset, this.exploreCollapsibleHeight());
     if (target !== this.exploreHeaderCollapse) {
       animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => {
         this.exploreHeaderCollapse = target;
@@ -2228,7 +2362,7 @@ export struct ExplorePage {
 
   /** 列表顶部留白按标题行完整显示时的高度预留，不随收起变化，避免滚动中列表跳动。 */
   exploreTopOverlayHeight(): number {
-    let height = this.statusBarHeight + 56;
+    let height = this.statusBarHeight + this.exploreCollapsibleHeight();
     if (this.showsExploreChannelBar()) {
       height += ExplorePage.CHANNEL_BAR_HEIGHT + AppSpacing.MD;
     }

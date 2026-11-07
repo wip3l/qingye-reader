@@ -122,7 +122,6 @@ export struct SourceGroupTag {
 }
 
 export class SourceActionKind {
-  static readonly SEARCH: string = 'search';
   static readonly LOGIN: string = 'login';
   static readonly VARIABLE: string = 'variable';
   static readonly GROUP: string = 'group';
@@ -140,19 +139,14 @@ class SourceActionItem {
 
 /** 长按书源的操作菜单条目。 */
 export class SourceActionMenuList {
-  static readonly WIDTH: number = 176;
+  static readonly WIDTH: number = 160;
 
-  static items(isNative: boolean, showSearch: boolean = false): SourceActionItem[] {
-    const result: SourceActionItem[] = [];
-    if (showSearch) {
-      result.push({ kind: SourceActionKind.SEARCH, label: '使用该书源搜索', icon: $r('sys.symbol.magnifyingglass'),
-        danger: false });
-    }
-    result.push(
+  static items(isNative: boolean): SourceActionItem[] {
+    const result: SourceActionItem[] = [
       { kind: SourceActionKind.LOGIN, label: '登录', icon: $r('sys.symbol.arrow_right_up_and_square'), danger: false },
       { kind: SourceActionKind.VARIABLE, label: '源变量', icon: $r('sys.symbol.list_bullet'), danger: false },
       { kind: SourceActionKind.GROUP, label: '设置分组', icon: $r('sys.symbol.folder'), danger: false }
-    );
+    ];
     if (isNative) {
       result.push({ kind: SourceActionKind.SETTINGS, label: '书源设置', icon: $r('sys.symbol.gearshape'), danger: false });
     }
@@ -171,10 +165,9 @@ export class SourceActionMenuList {
  * 沉浸光感材质也由外层容器提供。
  */
 @Builder
-export function SourceActionMenu(isNative: boolean, darkMode: boolean, onAction: (kind: string) => void,
-  showSearch: boolean) {
+export function SourceActionMenu(isNative: boolean, darkMode: boolean, onAction: (kind: string) => void) {
   Column() {
-    ForEach(SourceActionMenuList.items(isNative, showSearch), (item: SourceActionItem) => {
+    ForEach(SourceActionMenuList.items(isNative), (item: SourceActionItem) => {
       PopupMenuAction(item.icon, item.label, SourceActionMenuList.itemColor(item, darkMode), () => onAction(item.kind))
     }, (item: SourceActionItem): string => item.kind)
   }

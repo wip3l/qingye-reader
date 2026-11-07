@@ -790,9 +790,9 @@ export class ThemePackageService {
   private static async packParts(bundled: InstalledThemePack, assetsDir: string,
     manifest: ThemePackageManifest): Promise<ThemePackageParts> {
     const record = JSON.parse(JSON.stringify(bundled.record.parts)) as ThemePackageParts;
-    // 编辑器里逐个上传、还没传齐四个的导航图标不符合包格式，不随包导出（导入方沿用基底主题的图标）。
+    // 编辑器里逐个上传、还没传齐三个的导航图标不符合包格式，不随包导出（导入方沿用基底主题的图标）。
     const navigation = record.navigation;
-    if (navigation && !(navigation.bookshelf && navigation.explore && navigation.search && navigation.mine)) {
+    if (navigation && !(navigation.bookshelf && navigation.explore && navigation.mine)) {
       record.navigation = null;
     }
     for (const relativePath of partsAssetRefs(record)) {

@@ -41,7 +41,7 @@ export interface Section {
 
 const mode = (m: Mode, path: string): any => getPath(`${m}.${path}`);
 
-export const NAV_TABS: [string, string][] = [['bookshelf', '书架'], ['explore', '发现'], ['search', '搜索'], ['mine', '我的']];
+export const NAV_TABS: [string, string][] = [['bookshelf', '书架'], ['explore', '发现'], ['mine', '我的']];
 
 function navIconField(k: string, label: string): Field {
   return { k, label, type: 'asset', kinds: ['vector', 'image'], icon: true, square: true, viewBox: [24, 24], target: [96, 96],
@@ -123,7 +123,7 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'nav', group: '素材', name: '导航图标', screen: 'shelf',
-    desc: '首页底栏。四个普通图标要么都给，要么都不给。SVG 按主题色着色，位图（PNG / WebP）保持原色。选中态可选，没给的页签选中时仍用普通图标。', fields: [
+    desc: '首页底栏。三个普通图标要么都给，要么都不给。SVG 按主题色着色，位图（PNG / WebP）保持原色。选中态可选，没给的页签选中时仍用普通图标。', fields: [
       { g: '普通图标' },
       ...NAV_TABS.map(([key, label]): Field => navIconField(`navigation.${key}`, label)),
       { g: '选中态（可选）' },
@@ -154,7 +154,7 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'homeBackdrop', group: '素材', name: '首页背景', screen: 'shelf', modal: true,
-    desc: '书架、发现、搜索和我的页顶部的背景，不随列表滚动，向下自动淡成页面底色。浅色、深色各做一张；只做一种时另一种模式不显示背景。', fields: [
+    desc: '书架、发现和我的页顶部的背景，不随列表滚动，向下自动淡成页面底色。浅色、深色各做一张；只做一种时另一种模式不显示背景。', fields: [
       { g: '背景图' },
       { k: 'homeBackdrop.{m}', label: '背景图', type: 'asset', kinds: ['image'], target: [1080, 1350],
         spec: '1080 × 1350（4:5），画面放在上半部分；比例不同时居中裁成 4:5' }
@@ -199,7 +199,7 @@ export const SECTIONS: Section[] = [
   }
 ];
 
-export const SCREENS: [string, string][] = [['shelf', '书架'], ['explore', '发现'], ['search', '搜索'], ['mine', '我的'],
+export const SCREENS: [string, string][] = [['shelf', '书架'], ['explore', '发现'], ['mine', '我的'],
   ['reader', '阅读'], ['tts', '朗读'], ['startup', '启动'], ['card', '主题卡片']];
 /** 应用“书架布局”的四个选项；陪伴是新装应用的默认值。 */
 export const SHELF_LAYOUTS: [string, string][] = [['companion', '陪伴'], ['tile', '平铺'], ['loose', '宽松'], ['compact', '紧凑']];

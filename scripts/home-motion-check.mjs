@@ -72,19 +72,19 @@ assert.equal(home.homeTabIsActive(1), true, 'destination starts loading immediat
 home.finishHomeTabSwitch(1);
 assert.equal(home.homeTabIsMounted(0), true, 'an early onChange must not blank the outgoing page');
 now = 100;
-home.selectHomeTab(3);
+home.selectHomeTab(2);
 home.finishHomeTabSwitch(1);
-assert.equal(home.homeTransitionTo, 3, 'late callback from the previous slide cannot replace latest selection');
+assert.equal(home.homeTransitionTo, 2, 'late callback from the previous slide cannot replace latest selection');
 assert.equal(timers.size, 0, 'new selection cancels old cleanup');
-home.finishHomeTabSwitch(3);
+home.finishHomeTabSwitch(2);
 now = 420;
 for (const [id, timer] of timers) if (timer.due <= now) { timers.delete(id); timer.callback(); }
-assert.equal(home.currentIndex, 3);
+assert.equal(home.currentIndex, 2);
 assert.equal(home.homeTabIsMounted(0), true, 'shelf survives completion so returning cannot mount an empty loading page');
 assert.equal(home.homeTransitionTo, -1);
 hds = false;
 home.selectHomeTab(0);
-assert.deepEqual(changes, [['hds', 1], ['hds', 3], ['compat', 0]], 'programmatic navigation uses native controllers in both paths');
+assert.deepEqual(changes, [['hds', 1], ['hds', 2], ['compat', 0]], 'programmatic navigation uses native controllers in both paths');
 home.finishHomeTabSwitch(0);
 home.clearHomeTabSwitch();
 assert.equal(timers.size, 0, 'unmount/theme replacement cancels delayed cleanup');
@@ -101,20 +101,20 @@ for (let round = 0; round < 3; round++) {
     now += 1000;
     for (const [id, timer] of timers) if (timer.due <= now) { timers.delete(id); timer.callback(); }
     assert.equal(home.homeTabIsMounted(0), true, 'shelf survives offscreen cleanup and the next return');
-    assert.equal(home.homeTabIsMounted(3), false, 'retaining the shelf does not retain the settings page');
+    assert.equal(home.homeTabIsMounted(2), false, 'retaining the shelf does not retain the settings page');
   }
 }
 
 const indexChangeStart = indexSource.indexOf('  onCurrentIndexChanged(');
 const indexChangeBody = indexSource.slice(indexChangeStart, indexSource.indexOf('\n  }', indexChangeStart) + 4);
 const indexChange = vm.runInContext(stripTypeScriptTypes(`({${indexChangeBody}})`), context);
-const collapse = [0.75, 0.5, 0, 0.5];
+const collapse = [0.75, 0.5, 0.5];
 const collapseState = { currentIndex: 0, tabHeaderCollapseProgress: collapse, syncBottomBarCollapse() {} };
 indexChange.onCurrentIndexChanged.call(collapseState);
 assert.equal(collapse[0], 0.75, 'returning shelf keeps bottom-bar progress consistent with its retained header');
-collapseState.currentIndex = 3;
+collapseState.currentIndex = 2;
 indexChange.onCurrentIndexChanged.call(collapseState);
-assert.equal(collapse[3], 0, 'rebuilt settings page still resets its header');
+assert.equal(collapse[2], 0, 'rebuilt settings page still resets its header');
 
 // Discovery uses the same ledger with category-scoped identities, including its dynamic list page.
 vm.runInContext(stripTypeScriptTypes(ledgerSource), context);

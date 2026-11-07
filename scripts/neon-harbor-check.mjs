@@ -60,7 +60,7 @@ for(const dark of [false,true]) {
   runtime.applyTheme(pack.id);
 }
 assert.equal(assets.normalizeIconPackId(pack.navigation.iconPackId),'neon-harbor');
-for(const tab of ['bookshelf','explore','search','mine'])assert.equal(assets.navigationIcon('neon-harbor',tab),`app.media.ic_theme_neon_harbor_${tab}`);
+for(const tab of ['bookshelf','explore','mine'])assert.equal(assets.navigationIcon('neon-harbor',tab),`app.media.ic_theme_neon_harbor_${tab}`);
 assert.equal(assets.startupBackground(pack.startup.styleId),'app.media.theme_startup_neon_harbor');
 assert.equal(assets.themeShelfFolder(pack.book.shelfFolderAssetId),'app.media.theme_folder_art_neon_harbor');
 assert.equal(new Set(assets.themeBookCovers(pack.book.coverAssetId)).size,6);

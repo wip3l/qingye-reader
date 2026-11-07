@@ -64,12 +64,10 @@ export class InstalledThemePack {
   ttsDark: InstalledThemePackTtsPanel | null = null;
   navBookshelf: string = '';
   navExplore: string = '';
-  navSearch: string = '';
   navMine: string = '';
   // 选中态图标，没给的页签选中时用普通图标。
   navBookshelfSelected: string = '';
   navExploreSelected: string = '';
-  navSearchSelected: string = '';
   navMineSelected: string = '';
   navHideLabels: boolean = false;
   // 编辑器逐个上传导航图标时可能只有几张：缺的页签用基底主题的这套图标。
@@ -88,13 +86,13 @@ export class InstalledThemePack {
   appFont: string = '';
   record: ThemePackRecord = new ThemePackRecord();
 
-  /** 四个普通图标都齐：主题包格式要求的完整导航，只有这样才随分享导出。 */
+  /** 三个普通图标都齐：主题包格式要求的完整导航，只有这样才随分享导出。 */
   hasNavigation(): boolean {
-    return !!this.navBookshelf && !!this.navExplore && !!this.navSearch && !!this.navMine;
+    return !!this.navBookshelf && !!this.navExplore && !!this.navMine;
   }
 
   hasAnyNavigation(): boolean {
-    return !!this.navBookshelf || !!this.navExplore || !!this.navSearch || !!this.navMine;
+    return !!this.navBookshelf || !!this.navExplore || !!this.navMine;
   }
 
   hasBubble(): boolean {
@@ -220,11 +218,9 @@ export class ThemePackRegistry {
     if (parts.navigation) {
       installed.navBookshelf = uri(parts.navigation.bookshelf);
       installed.navExplore = uri(parts.navigation.explore);
-      installed.navSearch = uri(parts.navigation.search);
       installed.navMine = uri(parts.navigation.mine);
       installed.navBookshelfSelected = uri(parts.navigation.bookshelfSelected || '');
       installed.navExploreSelected = uri(parts.navigation.exploreSelected || '');
-      installed.navSearchSelected = uri(parts.navigation.searchSelected || '');
       installed.navMineSelected = uri(parts.navigation.mineSelected || '');
       installed.navHideLabels = parts.navigation.labels === 'hidden';
       installed.navFallbackIconPackId = record.navFallbackIconPackId || pack.navigation.iconPackId;

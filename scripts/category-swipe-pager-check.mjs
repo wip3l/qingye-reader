@@ -17,8 +17,8 @@ const context = vm.createContext({
   ListScroller: class { scrollToIndex() {} }
 });
 Object.assign(context, {
-  SearchPage: { HEADER_CONTROL_SIZE: 40, TITLE_ROW_HEIGHT: 56, STATUS_ROW_HEIGHT: 32, CATEGORY_BAR_HEIGHT: 44 },
-  ExplorePage: { CHANNEL_BAR_HEIGHT: 44 }, AppSpacing: { MD: 8 },
+  SearchPage: { HEADER_CONTROL_SIZE: 40, FIELD_ROW_TOP_GAP: 8, STATUS_ROW_HEIGHT: 28, CATEGORY_BAR_HEIGHT: 44 },
+  ExplorePage: { CHANNEL_BAR_HEIGHT: 44, SEARCH_ENTRY_ROW_HEIGHT: 48 }, AppSpacing: { XS: 4, MD: 8 },
   ScrollState: { Idle: 0, Scroll: 1, Fling: 2 }, Curve: { FastOutSlowIn: 0, EaseOut: 1 },
   animateTo: (_options, update) => update()
 });
@@ -222,7 +222,8 @@ for (const [file, prefix] of [['ExplorePage', 'explore'], ['SearchPage', 'search
     `uses${isSearch ? 'Search' : 'Explore'}CategoryPager`, `${prefix}ResultTopPadding`,
     `${prefix}HeaderCollapseValue`, `${prefix}TopOverlayHeight`,
     `on${isSearch ? 'Search' : 'Explore'}ListScroll`, `on${isSearch ? 'Search' : 'Explore'}ListScrollStop`,
-    ...(isSearch ? ['searchCollapsibleHeight', 'searchFieldRowHeight', 'searchStatusRowTop'] : [])
+    ...(isSearch ? ['searchCollapsibleHeight', 'searchFieldRowHeight', 'searchStatusRowHeight', 'searchStatusRowTop'] :
+      ['exploreCollapsibleHeight'])
   ]);
   Object.assign(page, {
     statusBarHeight: 24, showResult: true, isLoading: true, statusMessage: '搜索中',
@@ -230,7 +231,7 @@ for (const [file, prefix] of [['ExplorePage', 'explore'], ['SearchPage', 'search
     getActiveEntries: () => [{}], showsExploreChannelBar: () => true, shouldShowExploreStatus: () => false,
     searchResultLayout: 'grid', exploreResultLayout: 'grid'
   });
-  const distance = isSearch ? page.searchCollapsibleHeight() : 56;
+  const distance = isSearch ? page.searchCollapsibleHeight() : page.exploreCollapsibleHeight();
   const collapseKey = `${prefix}HeaderCollapse`;
   const value = () => page[`${prefix}HeaderCollapseValue`]();
   page[collapseKey] = distance;

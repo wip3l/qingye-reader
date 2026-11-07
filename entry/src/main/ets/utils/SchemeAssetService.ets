@@ -200,25 +200,25 @@ export class SchemeAssetService {
   }
 
   /**
-   * 一次选多个导航图标：按文件名里的 bookshelf / explore / search / mine 对号入座，认不出的按选择顺序补进
+   * 一次选多个导航图标：按文件名里的 bookshelf / explore / mine 对号入座，认不出的按选择顺序补进
    * 还空着的页签。已有的选中态和“只显示图标”保留。
    */
   static async setNavigation(context: Context, schemeId: string, uris: string[], baseTheme: string): Promise<SchemeAssetResult> {
-    if (uris.length === 0 || uris.length > 4) {
-      throw new Error('导航图标一次最多选 4 个');
+    if (uris.length === 0 || uris.length > 3) {
+      throw new Error('导航图标一次最多选 3 个');
     }
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       if (!record.parts.navigation) SchemeAssetService.rememberNavigationFallback(record, baseTheme);
       const navigation = record.parts.navigation || new ThemePackageNavigation();
-      const tabs: string[] = ['bookshelf', 'explore', 'search', 'mine'];
-      const slots: string[] = ['', '', '', ''];
+      const tabs: string[] = ['bookshelf', 'explore', 'mine'];
+      const slots: string[] = ['', '', ''];
       const keywords: string[][] = [['bookshelf', 'shelf', 'book'], ['explore', 'discover'],
-        ['search', 'find'], ['mine', 'me', 'user', 'profile']];
+        ['mine', 'me', 'user', 'profile']];
       const leftover: string[] = [];
       for (const uri of uris) {
         const name = SchemeAssetService.fileName(uri).toLowerCase();
         let placed = false;
-        for (let slot = 0; slot < 4 && !placed; slot++) {
+        for (let slot = 0; slot < tabs.length && !placed; slot++) {
           if (slots[slot]) continue;
           for (const keyword of keywords[slot]) {
             if (name.includes(keyword)) {
@@ -232,13 +232,13 @@ export class SchemeAssetService {
       }
       const fields = navigation as Object as Record<string, string>;
       // 认不出名字的先补没有图标的页签，再按顺序覆盖。
-      for (let slot = 0; slot < 4 && leftover.length > 0; slot++) {
+      for (let slot = 0; slot < tabs.length && leftover.length > 0; slot++) {
         if (!slots[slot] && !fields[tabs[slot]]) slots[slot] = leftover.shift() || '';
       }
-      for (let slot = 0; slot < 4 && leftover.length > 0; slot++) {
+      for (let slot = 0; slot < tabs.length && leftover.length > 0; slot++) {
         if (!slots[slot]) slots[slot] = leftover.shift() || '';
       }
-      for (let slot = 0; slot < 4; slot++) {
+      for (let slot = 0; slot < tabs.length; slot++) {
         if (!slots[slot]) continue;
         fields[tabs[slot]] = await ThemePackStore.importAsset(context, record.packageId, slots[slot],
           SchemeAssetService.ARTWORK, SchemeAssetService.navigationLabel(tabs[slot]));
@@ -368,8 +368,8 @@ export class SchemeAssetService {
   }
 
   /**
-   * 单个导航图标（key 是 bookshelf / exploreSelected 这类字段名）。四个普通图标不必一次传齐：
-   * 没传的页签显示基底主题的图标，传齐四个之前分享导出时不带导航图标。
+   * 单个导航图标（key 是 bookshelf / exploreSelected 这类字段名）。三个普通图标不必一次传齐：
+   * 没传的页签显示基底主题的图标，传齐三个之前分享导出时不带导航图标。
    */
   static async setNavigationIcon(context: Context, schemeId: string, key: string, uri: string,
     baseTheme: string): Promise<SchemeAssetResult> {
@@ -390,7 +390,7 @@ export class SchemeAssetService {
       const navigation = record.parts.navigation;
       if (!navigation || !NAVIGATION_ICON_KEYS.includes(key)) return;
       (navigation as Object as Record<string, string>)[key] = '';
-      if (!navigation.bookshelf && !navigation.explore && !navigation.search && !navigation.mine) {
+      if (!navigation.bookshelf && !navigation.explore && !navigation.mine) {
         record.parts.navigation = null;
       }
     });
@@ -411,7 +411,7 @@ export class SchemeAssetService {
 
   static navigationLabel(key: string): string {
     const tab = key.replace('Selected', '');
-    const name = tab === 'explore' ? '发现' : (tab === 'search' ? '搜索' : (tab === 'mine' ? '我的' : '书架'));
+    const name = tab === 'explore' ? '发现' : (tab === 'mine' ? '我的' : '书架');
     return `${name}${key.endsWith('Selected') ? '选中' : ''}图标`;
   }
 

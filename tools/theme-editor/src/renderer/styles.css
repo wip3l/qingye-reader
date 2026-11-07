@@ -185,7 +185,7 @@ pre.json { font-family: var(--f-mono); font-size: 11.5px; background: var(--sunk
 .ph.fill { position: absolute; inset: 0; }
 .ph.dark { color: #bbb; background-color: #222; }
 
-/* 首页四个页签：背景图在最底层，内容区在它上面，底栏浮在最上 */
+/* 首页三个页签：背景图在最底层，内容区在它上面，底栏浮在最上 */
 .home { background: var(--p-page); color: var(--p-text); }
 .hbg { position: absolute; left: 0; top: 0; width: 100%; overflow: hidden; }
 .hbg img { position: absolute; left: 0; top: 0; width: 100%; aspect-ratio: 4 / 5; object-fit: cover; display: block; }
@@ -197,7 +197,6 @@ pre.json { font-family: var(--f-mono); font-size: 11.5px; background: var(--sunk
 .dots { width: 16px; height: 4px; background: radial-gradient(circle, var(--p-sub) 1.6px, transparent 2px) 0 0 / 5.5px 4px repeat-x; }
 .folder-ico { width: 20px; height: 15px; border: 2px solid var(--p-sub); border-radius: 3px; }
 .home .search { margin: 0 18px 12px; background: var(--p-input); border-radius: var(--p-r-large); padding: 9px 14px; font-size: 13px; color: var(--p-sub); }
-.home .search.big { padding: 12px 16px; font-size: 14px; margin-bottom: 18px; }
 
 /* 紧凑 / 宽松列表与发现页的书目行 */
 .list, .ex-list { display: grid; gap: 10px; padding: 0 18px; }
@@ -243,16 +242,10 @@ pre.json { font-family: var(--f-mono); font-size: 11.5px; background: var(--sunk
 .hc .hc-spine { position: absolute; top: 0; bottom: 2.5%; left: 0; width: 9%; background: linear-gradient(90deg, rgba(0,0,0,.35), rgba(255,255,255,.18) 45%, rgba(0,0,0,.12)); border-radius: 2px 0 0 2px; pointer-events: none; }
 .phone.dark .hc .hc-board { background: #17120F; }
 
-/* 发现、搜索、我的 */
+/* 发现、我的 */
 .chips { display: flex; gap: 8px; padding: 0 18px 14px; flex-wrap: nowrap; overflow: hidden; }
-.chips.wrap { flex-wrap: wrap; }
 .chips span { background: color-mix(in srgb, var(--p-card) 85%, transparent); border-radius: 14px; padding: 4px 12px; font-size: 12px; white-space: nowrap; color: var(--p-text); }
 .chips span.on { background: var(--p-accent); color: #fff; }
-.hot { margin: 0 18px; background: var(--p-card); border-radius: var(--p-r-card); padding: 6px 14px; display: grid; }
-.hot div { display: flex; gap: 12px; align-items: center; padding: 8px 0; font-size: 14px; border-bottom: 1px solid var(--p-divider); }
-.hot div:last-child { border-bottom: 0; }
-.hot b { width: 16px; color: var(--p-sub); font-size: 13px; }
-.hot b.top { color: var(--p-accent); }
 .profile { display: flex; gap: 14px; align-items: center; padding: 34px 20px 20px; }
 .profile .avatar { width: 58px; height: 58px; border-radius: 50%; background: linear-gradient(135deg, var(--p-accent), var(--p-button)); border: 3px solid var(--p-card); }
 .profile div { display: grid; gap: 2px; }

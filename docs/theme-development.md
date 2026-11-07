@@ -222,7 +222,7 @@ BuiltinThemeRegistry.register(theme);
 
 ### 首页背景
 
-书架、发现、搜索和我的四个页签顶部可以铺一张主题背景图，由 `components/home/HomeThemeBackdrop.ets` 绘制：图片贴顶、按宽度铺满（宽高比 `ThemeAssetRegistry.HOME_BACKDROP_ASPECT`，即 4:5），不随列表滚动，叠一层按页面底色计算的渐变向下淡出。书架整张显示，发现、搜索只衬在标题区，我的衬在资料卡后面，强度依次减弱。
+书架、发现和我的三个页签顶部可以铺一张主题背景图，由 `components/home/HomeThemeBackdrop.ets` 绘制：图片贴顶、按宽度铺满（宽高比 `ThemeAssetRegistry.HOME_BACKDROP_ASPECT`，即 4:5），不随列表滚动，叠一层按页面底色计算的渐变向下淡出。书架整张显示，发现（包括其中的搜索层）只衬在标题区，我的衬在资料卡后面，强度依次减弱。
 
 1. 添加浅色、深色两张 `home_bg_<id>_*.jpg`。画面放在上部约四成，下面要能自然过渡到 `pageColor`；不要放文字。深色图的亮部要克制，渐变在深色下压得更重。
 2. 在 `ThemeAssetRegistry.homeBackdrop()` 中增加分支。没有分支的主题保持纯底色。
@@ -241,7 +241,7 @@ BuiltinThemeRegistry.register(theme);
 
 ### 导航图标包
 
-图标包固定包含 `bookshelf`、`explore`、`search`、`mine` 四个图标，路径使用纯黑填充，由 ArkUI 的 `fillColor` 注入主题色。
+图标包固定包含 `bookshelf`、`explore`、`mine` 三个底栏图标，路径使用纯黑填充，由 ArkUI 的 `fillColor` 注入主题色。
 
 新增图标包时：
 

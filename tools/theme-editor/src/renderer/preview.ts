@@ -14,7 +14,6 @@ const svgUrl = (svg: string): string => `data:image/svg+xml;charset=utf-8,${enco
 const DEFAULT_NAV: Record<string, string> = {
   bookshelf: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 3h4v18H4zM10 3h4v18h-4zM16.5 4.2l3.8-1 3.2 16.6-3.8 1z"/></svg>',
   explore: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm4.5 5.5-2.8 6.2-6.2 2.8 2.8-6.2z"/></svg>',
-  search: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 3a7 7 0 1 1 0 14 7 7 0 0 1 0-14zm0 2.4a4.6 4.6 0 1 0 0 9.2 4.6 4.6 0 0 0 0-9.2zM15.2 16.9l1.7-1.7 5 5-1.7 1.7z"/></svg>',
   mine: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zM3 21c0-4.4 4-7 9-7s9 2.6 9 7z"/></svg>'
 };
 
@@ -85,7 +84,7 @@ function navIcon(key: string, selected: boolean): HTMLElement {
 }
 
 /**
- * 首页背景（HomeThemeBackdrop）：贴顶、4:5 铺满宽度，向下淡成页面底色。书架整张显示；发现、搜索、我的只衬标题区，
+ * 首页背景（HomeThemeBackdrop）：贴顶、4:5 铺满宽度，向下淡成页面底色。书架整张显示；发现、我的只衬标题区，
  * 高度和不透明度取各页传给组件的值，渐变停点照搬组件。浅深色不互相借用。
  */
 function homeBackdrop(mode: Mode, e: Effective, visibleHeight: number, strength: number): HTMLElement | null {
@@ -97,7 +96,7 @@ function homeBackdrop(mode: Mode, e: Effective, visibleHeight: number, strength:
     h('img', { src: url, alt: '', style: `opacity:${strength}` }), h('i', { style: `background:linear-gradient(${gradient})` }));
 }
 
-/** 首页四个页签共用的骨架：背景、状态栏、内容、底栏（当前页签用选中态图标）。 */
+/** 首页三个页签共用的骨架：背景、状态栏、内容、底栏（当前页签用选中态图标）。 */
 function homeScreen(mode: Mode, e: Effective, tab: number, cls: string, backdrop: HTMLElement | null, ...content: HTMLElement[]): HTMLElement {
   const s = h('div', { class: `scr home ${cls}` });
   if (backdrop) s.append(backdrop);
@@ -210,22 +209,10 @@ function screenExplore(mode: Mode, e: Effective): HTMLElement {
     list);
 }
 
-function screenSearch(mode: Mode, e: Effective): HTMLElement {
-  const history = ['夜航船', '山海经', '雪中', '长安', '星辰变'];
-  const hot = ['长夜渡', '星海归航', '旧城往事', '青灯志异', '北窗', '雾港来信'];
-  return homeScreen(mode, e, 2, 'search-tab', homeBackdrop(mode, e, 30 + 230, 0.6),
-    h('div', { class: 'hd', 'data-sec': 'colors' }, h('b', {}, '搜索')),
-    h('div', { class: 'search big', 'data-sec': 'colors' }, '书名、作者'),
-    h('div', { class: 'sec-title', 'data-sec': 'colors' }, '搜索历史'),
-    h('div', { class: 'chips wrap', 'data-sec': 'colors' }, ...history.map((c) => h('span', {}, c))),
-    h('div', { class: 'sec-title', 'data-sec': 'colors' }, '大家在搜'),
-    h('div', { class: 'hot', 'data-sec': 'colors' }, ...hot.map((t, i) => h('div', {}, h('b', { class: i < 3 ? 'top' : '' }, String(i + 1)), t))));
-}
-
 function screenMine(mode: Mode, e: Effective): HTMLElement {
   const group = (rows: string[]): HTMLElement => h('div', { class: 'mine-group', 'data-sec': 'colors' },
     ...rows.map((r) => h('div', {}, r, h('i', { class: 'chev' }))));
-  return homeScreen(mode, e, 3, 'mine', homeBackdrop(mode, e, 30 + 330, 0.85),
+  return homeScreen(mode, e, 2, 'mine', homeBackdrop(mode, e, 30 + 330, 0.85),
     h('div', { class: 'profile', 'data-sec': 'colors' }, h('i', { class: 'avatar' }),
       h('div', {}, h('b', {}, '书友 0571'), h('span', {}, '已读 128 本 · 累计 312 小时'))),
     h('div', { class: 'stats', 'data-sec': 'colors' }, ...[['46', '今日分钟'], ['5', '连续天数'], ['12', '本月本数']].map(([v, l]) => h('div', {}, h('b', {}, v), h('span', {}, l)))),
@@ -368,7 +355,7 @@ export function renderScreen(mode: Mode): HTMLElement {
   const screen = S.ui.screen;
   const content = screen === 'reader' ? readerBody(e) : screen === 'tts' ? screenTts(e)
     : screen === 'startup' ? screenStartup(e) : screen === 'card' ? screenCard(e)
-    : screen === 'explore' ? screenExplore(mode, e) : screen === 'search' ? screenSearch(mode, e)
+    : screen === 'explore' ? screenExplore(mode, e)
     : screen === 'mine' ? screenMine(mode, e) : screenShelf(mode, e);
   const phone = h('div', { class: `phone ${mode}`, style: `${themeVars(mode, e)};width:${PHONE_W}px;height:${PHONE_H}px` }, content);
   phone.querySelectorAll(`[data-sec="${S.ui.section}"]`).forEach((el) => el.classList.add('focus'));

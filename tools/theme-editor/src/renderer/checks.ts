@@ -103,12 +103,12 @@ export function editorIssues(): Issue[] {
   }
 
   const nav = p.parts.navigation || {};
-  const navKeys = ['bookshelf', 'explore', 'search', 'mine'];
+  const navKeys = ['bookshelf', 'explore', 'mine'];
   const navCount = navKeys.filter((k) => nav[k]).length;
-  if (navCount > 0 && navCount < 4) add('error', `navigation.${navKeys.find((k) => !nav[k])}`, `导航图标要四个都有（现在 ${navCount} 个）`);
+  if (navCount > 0 && navCount < 3) add('error', `navigation.${navKeys.find((k) => !nav[k])}`, `导航图标要三个都有（现在 ${navCount} 个）`);
   const selectedKey = navKeys.find((k) => nav[`${k}Selected`]);
   if (navCount === 0 && (selectedKey || nav.labels)) {
-    add('error', 'navigation.bookshelf', '给了选中态图标或底栏文字设置，还需要四个普通图标');
+    add('error', 'navigation.bookshelf', '给了选中态图标或底栏文字设置，还需要三个普通图标');
   }
   if (p.parts.bubble && p.parts.bubble.frame && !p.parts.bubble.cap) add('error', 'bubble.cap', '包内气泡有边框时还需要端饰');
 

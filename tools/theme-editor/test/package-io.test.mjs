@@ -124,10 +124,19 @@ test('navigation takes bitmap icons, selected icons and an icons-only bar', asyn
   assert.equal(nav.exploreSelected, undefined);
 });
 
+test('export fills the legacy search icon from explore for older apps', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  project.parts.navigation.search = '';
+  const files = await io.exportFiles(project);
+  const nav = JSON.parse(strFromU8(files.get('theme.json'))).parts.navigation;
+  assert.equal(nav.search, nav.explore);
+  assert.equal(files.has('assets/n3.svg'), false);
+});
+
 test('export reports the same errors the app would', async () => {
   const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
   project.parts.navigation.mine = '';
-  await assert.rejects(io.exportFiles(project), /parts\.navigation 需要 bookshelf、explore、search、mine/);
+  await assert.rejects(io.exportFiles(project), /parts\.navigation 需要 bookshelf、explore、mine/);
   project.parts.navigation.mine = 'assets/n4.svg';
   project.parts.light.reader.trailing = '';
   await assert.rejects(io.exportFiles(project), /角饰模式需要 leading 和 trailing/);

@@ -246,7 +246,7 @@ const swordFrostSvgs = [
   'reader_bg_sword_frost_light.svg', 'reader_bg_sword_frost_dark.svg',
   'reader_decor_sword_frost_light.svg', 'reader_decor_sword_frost_dark.svg',
   'ic_theme_sword_frost_bookshelf.svg', 'ic_theme_sword_frost_explore.svg',
-  'ic_theme_sword_frost_search.svg', 'ic_theme_sword_frost_mine.svg',
+  'ic_theme_sword_frost_mine.svg',
   'regex_frame_sword_talisman.svg', 'regex_cap_sword_talisman.svg'
 ];
 for (const fileName of swordFrostSvgs) {
@@ -274,7 +274,7 @@ const qingluanWaterSvgs = [
   'reader_bg_qingluan_water_light.svg', 'reader_bg_qingluan_water_dark.svg',
   'reader_decor_qingluan_water_light.svg', 'reader_decor_qingluan_water_dark.svg',
   'ic_theme_qingluan_water_bookshelf.svg', 'ic_theme_qingluan_water_explore.svg',
-  'ic_theme_qingluan_water_search.svg', 'ic_theme_qingluan_water_mine.svg',
+  'ic_theme_qingluan_water_mine.svg',
   'regex_frame_qingluan_jade.svg', 'regex_cap_qingluan_jade.svg'
 ];
 for (const fileName of qingluanWaterSvgs) {
@@ -302,7 +302,7 @@ const catPipiSvgs = [
   'reader_bg_cat_pipi_light.svg', 'reader_bg_cat_pipi_dark.svg',
   'reader_decor_cat_pipi_light.svg', 'reader_decor_cat_pipi_dark.svg',
   'ic_theme_cat_pipi_bookshelf.svg', 'ic_theme_cat_pipi_explore.svg',
-  'ic_theme_cat_pipi_search.svg', 'ic_theme_cat_pipi_mine.svg',
+  'ic_theme_cat_pipi_mine.svg',
   'regex_frame_pipi_soft_paw.svg', 'regex_cap_pipi_soft_paw.svg'
 ];
 for (const fileName of catPipiSvgs) {
@@ -341,11 +341,15 @@ assert(indexPage.includes('ThemeRuntime.iconPackId()'), 'Floating tab bar does n
 assert(indexPage.includes('BottomTabBarStyle.of(this.navigationIcon(tabId, index)') &&
   indexPage.includes('Image(this.navigationIcon(tabId, index))'),
   'Tab bar builders do not resolve themed navigation icons');
-for (const tabId of ['bookshelf', 'explore', 'search', 'mine']) {
+for (const tabId of ['bookshelf', 'explore', 'mine']) {
   assert(indexPage.includes(`this.bottomTabBar('${tabId}'`) && indexPage.includes(`this.compatTabBar('${tabId}'`),
     `Floating tab icon is not themed: ${tabId}`);
 }
-assert(indexPage.includes('this.shelfMoreButton()') &&
+// 搜索并进发现页签：底栏只有三个页签，搜索是盖在发现内容上的一层。
+assert(!indexPage.includes("this.bottomTabBar('search'") && !indexPage.includes("this.compatTabBar('search'") &&
+  indexPage.includes('exploreTabContent()') && indexPage.includes('homeSearchLayerActive()'),
+  'Search must live inside the discovery tab instead of a fourth bottom tab');
+assert(indexPage.includes('this.shelfMoreButton(') &&
   indexPage.includes('shelfMoreDropdown()') &&
   indexPage.includes("this.sortDropdownItem('新阅读', 'recentRead')") &&
   !indexPage.includes('this.shelfSortButton()') &&
@@ -561,11 +565,13 @@ assert(indexPage.includes('this.exploreChannelBar()') &&
   indexPage.includes('this.exploreFilterPopupContent()') &&
   !indexPage.includes('compactExploreFilterBar()') && !indexPage.includes('inlineExploreFilterRow('),
   'Explore header must stay at a title row plus one channel bar, with modes and filters in popups');
-assert(indexPage.includes('this.searchScopeLabel()') &&
-  indexPage.includes('this.searchSettingsContent()') &&
+assert(indexPage.includes('this.searchScopePrefix()') &&
+  indexPage.includes('this.searchStatusRow()') &&
   indexPage.includes('this.searchIdleContent()') &&
+  indexPage.includes('this.openHomeSearch()') &&
+  indexPage.includes('SearchSettingsPanel({') &&
   !indexPage.includes('searchSettingsDialog()'),
-  'Search header must use the title row scope label, a settings popup and inline search history');
+  'Search layer must show scope choices, inline search history, and keep settings in the discovery more menu');
 assert(!themePage.includes("'衬线字体'") && !themePage.includes("'清晰字体'") &&
   !themePage.includes("'水墨图标'") && !themePage.includes("'主题图标'") &&
   !themePage.includes('themeFeatureChips') && !themePage.includes('featureChip(') &&

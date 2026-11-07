@@ -76,13 +76,14 @@ my-theme/
 | | `reader` | 阅读页：`backgroundColor`（必须是铺满任意尺寸的底色）、`textColor`、`subTextColor`、`contentTone`（`light` / `dark`，决定系统栏图标明暗）、`backgroundMode`（`ornaments` 角饰 / `image` 整图 / `none` 只有底色）。角饰模式填 `leading`（左上）与 `trailing`（右下）两张图（SVG 或透明底位图）；整图模式填 `image` 和 `imageFit`（`cover` / `contain` / `fill`）。 |
 | | `emphasis` | 正文强调：`mode`（`none` / `text` / `highlight` / `bubble`）、`bubbleStyle`（内置气泡 ID，见主题开发指南；包里带了 `bubble` 节时自动用包内气泡）、`color`、`textColor`（可带透明度）。 |
 | `ttsPanel` | `light` / `dark` | 朗读与有声书面板：`artwork`（720 × 520 的 SVG 或位图，贴顶等比缩放）、`skyColor`（插画背后的天空色）、`surfaceColor`（不透明的面板底色）、`glowColor`（带透明度的强调光）。四项都要写；只写一种模式时另一种模式沿用它。 |
-| `navigation` | `bookshelf`、`explore`、`search`、`mine` | 首页底栏的四个图标，缺一不可。SVG 按主题色着色，位图保持原色。 |
-| | `bookshelfSelected`、`exploreSelected`、`searchSelected`、`mineSelected` | 选中态图标，可选；没写的页签选中时仍用普通图标。旧版本应用会忽略这几项。 |
+| `navigation` | `bookshelf`、`explore`、`mine` | 首页底栏的三个图标，缺一不可。SVG 按主题色着色，位图保持原色。 |
+| | `bookshelfSelected`、`exploreSelected`、`mineSelected` | 选中态图标，可选；没写的页签选中时仍用普通图标。旧版本应用会忽略这几项。 |
+| | `search`、`searchSelected` | 旧版本应用底栏“搜索”页签的图标。本应用读包时照收但不显示；旧版本应用要求有 `search` 才肯导入，应用和桌面编辑器导出时缺了就用 `explore`（与 `exploreSelected`）的图标补上。 |
 | | `labels` | 写 `hidden` 时底栏只显示图标，不显示“书架”等文字。 |
 | `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 8 张，书架按书轮播）、书架边框 SVG、分组文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
 | `bubble` | `frame`、`cap` | 强调气泡的边框 SVG（可选）与端饰 SVG（必填）。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。 |
-| `homeBackdrop` | `light` / `dark` | 书架、发现、搜索和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
+| `homeBackdrop` | `light` / `dark` | 书架、发现和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
 | `logo` | | 主题标识，SVG 或位图，显示在方案卡片的角标处。 |
 | `preview` | | 预览图位图，显示在主题页的方案卡片上；省略时卡片显示启动封面。 |
 | `radius` | `small`、`medium`、`large`、`card`、`button`、`bubble` | 圆角，0 到 48。 |
@@ -113,8 +114,7 @@ my-theme/
       "dark": { "artwork": "assets/tts_dark.svg", "skyColor": "#15302A", "surfaceColor": "#10171A", "glowColor": "#338FD3C2" }
     },
     "navigation": {
-      "bookshelf": "assets/nav_bookshelf.svg", "explore": "assets/nav_explore.svg",
-      "search": "assets/nav_search.svg", "mine": "assets/nav_mine.svg"
+      "bookshelf": "assets/nav_bookshelf.svg", "explore": "assets/nav_explore.svg", "mine": "assets/nav_mine.svg"
     },
     "book": { "covers": ["assets/cover_01.jpg", "assets/cover_02.jpg"], "shelfFrame": "assets/frame.svg", "shelfFolder": "assets/folder.jpg" },
     "startup": { "light": { "image": "assets/startup.jpg", "title": "夜花园", "subtitle": "月下翻页" } },

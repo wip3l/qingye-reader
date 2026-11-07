@@ -71,8 +71,6 @@ export struct CustomThemePreview {
         Column({ space: AppSpacing.MD }) {
           if (this.scene === 'explore') {
             this.explorePreview()
-          } else if (this.scene === 'search') {
-            this.searchPreview()
           } else if (this.scene === 'mine') {
             this.minePreview()
           } else {
@@ -359,34 +357,6 @@ export struct CustomThemePreview {
   }
 
   @Builder
-  searchPreview() {
-    Column({ space: AppSpacing.MD }) {
-      this.titleRow('搜索', '')
-      Row({ space: AppSpacing.SM }) {
-        SymbolGlyph($r('sys.symbol.magnifyingglass'))
-          .fontSize(14)
-          .fontColor([this.variant().colors.subTextColor])
-        this.smallText('书名或作者', this.variant().colors.subTextColor)
-      }
-      .width('100%')
-      .height(30)
-      .padding({ left: AppSpacing.MD })
-      .borderRadius(this.themePack.radius.button)
-      .backgroundColor(this.variant().colors.inputColor)
-      this.smallText('最近搜索', this.variant().colors.subTextColor)
-      Row({ space: AppSpacing.SM }) {
-        this.chip('山野来信', false)
-        this.chip('雪国', false)
-        this.chip('海上来客', false)
-      }
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .alignItems(HorizontalAlign.Start)
-    .clip(true)
-  }
-
-  @Builder
   mineRow(label: string, last: boolean) {
     Row() {
       Text(label)
@@ -439,7 +409,7 @@ export struct CustomThemePreview {
   }
 
   selectedTab(): string {
-    if (this.scene === 'explore' || this.scene === 'search' || this.scene === 'mine') return this.scene;
+    if (this.scene === 'explore' || this.scene === 'mine') return this.scene;
     return 'bookshelf';
   }
 
@@ -449,7 +419,6 @@ export struct CustomThemePreview {
 
   tabLabel(tabId: string): string {
     if (tabId === 'explore') return '发现';
-    if (tabId === 'search') return '搜索';
     if (tabId === 'mine') return '我的';
     return '书架';
   }
@@ -457,7 +426,7 @@ export struct CustomThemePreview {
   @Builder
   navigationBar() {
     Row() {
-      ForEach(['bookshelf', 'explore', 'search', 'mine'], (tabId: string) => {
+      ForEach(['bookshelf', 'explore', 'mine'], (tabId: string) => {
         Column({ space: 2 }) {
           Image(ThemeAssetRegistry.navigationIcon(this.themePack.navigation.iconPackId, tabId,
             tabId === this.selectedTab()))

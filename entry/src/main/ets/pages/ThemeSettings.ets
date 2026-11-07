@@ -1707,7 +1707,7 @@ struct ThemeSettingsPage {
       .width('100%')
       .alignItems(VerticalAlign.Top)
       Row() {
-        ForEach(['bookshelf', 'explore', 'search', 'mine'], (tabId: string, index: number) => {
+        ForEach(['bookshelf', 'explore', 'mine'], (tabId: string, index: number) => {
           Image(ThemeAssetRegistry.navigationIcon(entry.theme.navigation.iconPackId, tabId, index === 0))
             .width(ThemeAssetRegistry.navigationHidesLabels(entry.theme.navigation.iconPackId) ? 30 : 22)
             .height(ThemeAssetRegistry.navigationHidesLabels(entry.theme.navigation.iconPackId) ? 30 : 22)

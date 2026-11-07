@@ -15,6 +15,10 @@ export class SearchExploreSettings {
   searchConcurrency: number = 6;
   selectedSourceGroupsRaw: string = '';
   selectedSourceUrlsRaw: string = '__LEGACY_SOURCE_GROUP_SELECTION__';
+  // 搜索范围“自选”记住的书源；选“全部书源”时 selectedSourceUrlsRaw 清空，这份留着下次直接切回。
+  customSourceUrlsRaw: string = '';
+  // 搜索框前缀选的范围：all / current（跟着发现页当前书源）/ custom，重启后照旧；空为旧版本，按上面的选择推断。
+  scopeMode: string = '';
   sourceSortRaw: string = '';
   exploreSourceUrl: string = '';
   explorePlatform: string = '';
@@ -36,6 +40,8 @@ export class SearchExploreSettingsStore {
   static readonly KEY_SEARCH_CONCURRENCY: string = 'searchExploreSearchConcurrency';
   static readonly KEY_SELECTED_SOURCE_GROUPS: string = 'searchExploreSelectedSourceGroups';
   static readonly KEY_SELECTED_SOURCE_URLS: string = 'searchExploreSelectedSourceUrls';
+  static readonly KEY_CUSTOM_SOURCE_URLS: string = 'searchExploreCustomSourceUrls';
+  static readonly KEY_SCOPE_MODE: string = 'searchExploreScopeMode';
   static readonly LEGACY_SOURCE_SELECTION: string = '__LEGACY_SOURCE_GROUP_SELECTION__';
   static readonly KEY_SOURCE_SORT: string = 'searchExploreSourceSort';
   static readonly KEY_EXPLORE_SOURCE_URL: string = 'exploreSourceUrl';
@@ -84,6 +90,10 @@ export class SearchExploreSettingsStore {
     settings.selectedSourceUrlsRaw = await SearchExploreSettingsStore.getString(
       store, SearchExploreSettingsStore.KEY_SELECTED_SOURCE_URLS,
       SearchExploreSettingsStore.LEGACY_SOURCE_SELECTION);
+    settings.customSourceUrlsRaw = await SearchExploreSettingsStore.getString(
+      store, SearchExploreSettingsStore.KEY_CUSTOM_SOURCE_URLS, '');
+    settings.scopeMode = await SearchExploreSettingsStore.getString(
+      store, SearchExploreSettingsStore.KEY_SCOPE_MODE, '');
     settings.sourceSortRaw = await SearchExploreSettingsStore.getString(
       store, SearchExploreSettingsStore.KEY_SOURCE_SORT, '');
     settings.exploreSourceUrl = await SearchExploreSettingsStore.getString(
@@ -119,6 +129,8 @@ export class SearchExploreSettingsStore {
       SearchExploreSettingsStore.normalizeSearchConcurrency(settings.searchConcurrency));
     await store.put(SearchExploreSettingsStore.KEY_SELECTED_SOURCE_GROUPS, settings.selectedSourceGroupsRaw);
     await store.put(SearchExploreSettingsStore.KEY_SELECTED_SOURCE_URLS, settings.selectedSourceUrlsRaw);
+    await store.put(SearchExploreSettingsStore.KEY_CUSTOM_SOURCE_URLS, settings.customSourceUrlsRaw);
+    await store.put(SearchExploreSettingsStore.KEY_SCOPE_MODE, settings.scopeMode);
     await store.put(SearchExploreSettingsStore.KEY_SOURCE_SORT, settings.sourceSortRaw);
     await store.put(SearchExploreSettingsStore.KEY_EXPLORE_SOURCE_URL, settings.exploreSourceUrl);
     await store.put(SearchExploreSettingsStore.KEY_EXPLORE_PLATFORM, settings.explorePlatform);
@@ -189,6 +201,8 @@ export class SearchExploreSettingsStore {
       SearchExploreSettingsStore.normalizeSearchConcurrency(settings.searchConcurrency));
     AppStorage.setOrCreate(SearchExploreSettingsStore.KEY_SELECTED_SOURCE_GROUPS, settings.selectedSourceGroupsRaw);
     AppStorage.setOrCreate(SearchExploreSettingsStore.KEY_SELECTED_SOURCE_URLS, settings.selectedSourceUrlsRaw);
+    AppStorage.setOrCreate(SearchExploreSettingsStore.KEY_CUSTOM_SOURCE_URLS, settings.customSourceUrlsRaw);
+    AppStorage.setOrCreate(SearchExploreSettingsStore.KEY_SCOPE_MODE, settings.scopeMode);
     AppStorage.setOrCreate(SearchExploreSettingsStore.KEY_SOURCE_SORT, settings.sourceSortRaw);
     AppStorage.setOrCreate(SearchExploreSettingsStore.KEY_EXPLORE_SOURCE_URL, settings.exploreSourceUrl);
     AppStorage.setOrCreate(SearchExploreSettingsStore.KEY_EXPLORE_PLATFORM, settings.explorePlatform);
@@ -247,6 +261,8 @@ export class SearchExploreSettingsStore {
     settings.searchConcurrency = SearchExploreSettingsStore.normalizeSearchConcurrency(source.searchConcurrency);
     settings.selectedSourceGroupsRaw = source.selectedSourceGroupsRaw;
     settings.selectedSourceUrlsRaw = source.selectedSourceUrlsRaw || '';
+    settings.customSourceUrlsRaw = source.customSourceUrlsRaw || '';
+    settings.scopeMode = source.scopeMode || '';
     settings.sourceSortRaw = source.sourceSortRaw;
     settings.exploreSourceUrl = source.exploreSourceUrl;
     settings.explorePlatform = source.explorePlatform || '';

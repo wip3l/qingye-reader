@@ -361,7 +361,7 @@ export struct SearchSourceSheet {
     SourceActionMenu(NativeSourceService.isNative(this.sources[index]), this.appDarkMode, (kind: string): void => {
       ContextMenu.close();
       this.runSourceAction(index, kind);
-    }, false)
+    })
   }
 
   @Builder

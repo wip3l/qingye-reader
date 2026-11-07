@@ -1927,7 +1927,7 @@ struct ThemeColorSettingsPage {
   homeSection() {
     this.sectionTitle({ title: '导航图标' })
     Column() {
-      this.componentSourceRow('来源', '书架、发现、搜索和我的底部图标', 'navigation')
+      this.componentSourceRow('来源', '书架、发现和我的底部图标', 'navigation')
       if (this.assetRevision >= 0) {
         this.navigationSlots()
       }
@@ -1997,7 +1997,6 @@ struct ThemeColorSettingsPage {
       Row() {
         this.navSlot('bookshelf', '书架')
         this.navSlot('explore', '发现')
-        this.navSlot('search', '搜索')
         this.navSlot('mine', '我的')
       }
       .width('100%')
@@ -2009,7 +2008,6 @@ struct ThemeColorSettingsPage {
       Row() {
         this.navSlot('bookshelfSelected', '书架')
         this.navSlot('exploreSelected', '发现')
-        this.navSlot('searchSelected', '搜索')
         this.navSlot('mineSelected', '我的')
       }
       .width('100%')
@@ -2032,7 +2030,7 @@ struct ThemeColorSettingsPage {
     }
     .width('100%')
     .opacity(this.ownNavigationActive() ? this.advancedOpacity() : 0.45)
-    SettingNavRow({ title: '一次选多个图标', description: '文件名含 bookshelf、explore、search、mine 时自动对号',
+    SettingNavRow({ title: '一次选多个图标', description: '文件名含 bookshelf、explore、mine 时自动对号',
       showDivider: this.ownNavigationActive(), onTap: () => {
         if (this.advancedLocked()) this.ensureAdvanced();
         else this.uploadNavigation();
@@ -2043,10 +2041,10 @@ struct ThemeColorSettingsPage {
   }
 
   navigationHint(): string {
-    const missing = ['bookshelf', 'explore', 'search', 'mine']
+    const missing = ['bookshelf', 'explore', 'mine']
       .filter((key: string): boolean => !this.navSlotValue(key)).length;
     if (this.ownNavigationActive() && missing > 0) {
-      return `还差 ${missing} 个普通图标：缺的先用基底主题的图标，传齐四个之前分享导出时不带导航图标`;
+      return `还差 ${missing} 个普通图标：缺的先用基底主题的图标，传齐三个之前分享导出时不带导航图标`;
     }
     return 'SVG 跟随主题色着色；PNG / WebP 保持原色。选中态没给的页签，选中时仍用普通图标';
   }
@@ -2292,7 +2290,7 @@ struct ThemeColorSettingsPage {
       this.assetSlot({ label: '4 : 5', image: this.homeBackdropImage(),
         state: this.ownHomeBackdrop() ? 'own' : (ThemeColorSettingsPage.hasImage(this.homeBackdropImage()) ? 'inherit' : 'empty'),
         slotWidth: 64, slotHeight: 80, onTap: () => this.tapHomeBackdrop() })
-      Text('书架、发现、搜索和我的页顶部共用，画面放上半部分，向下自动淡成页面底色。浅色、深色各一张，互不借用')
+      Text('书架、发现和我的页顶部共用，画面放上半部分，向下自动淡成页面底色。浅色、深色各一张，互不借用')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .layoutWeight(1)
@@ -2757,7 +2755,7 @@ struct ThemeColorSettingsPage {
       if (sub < 3) add(`辅助文字与页面对比 ${sub.toFixed(1)}`, '低于 3，说明文字可能看不清', 'colors', colors.subTextColor);
     }
     if (this.ownNavigationActive()) {
-      const missing = ['bookshelf', 'explore', 'search', 'mine'].filter((key: string): boolean => !this.navSlotValue(key));
+      const missing = ['bookshelf', 'explore', 'mine'].filter((key: string): boolean => !this.navSlotValue(key));
       if (missing.length > 0) {
         const issue = new ThemeEditorIssue();
         issue.text = `导航图标还差 ${missing.length} 个`;
@@ -3235,7 +3233,7 @@ struct ThemeColorSettingsPage {
   }
 
   async uploadNavigation(): Promise<void> {
-    const uris = await SchemeAssetService.pickIconFiles(getContext(this), 4);
+    const uris = await SchemeAssetService.pickIconFiles(getContext(this), 3);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setNavigation(getContext(this), this.schemeId, uris, this.sourceThemeId('navigation')),
@@ -3677,11 +3675,10 @@ struct ThemeColorSettingsPage {
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD })
   }
 
-  static readonly SCENES: string[] = ['bookshelf', 'explore', 'search', 'mine', 'reader', 'tts', 'startup', 'card'];
+  static readonly SCENES: string[] = ['bookshelf', 'explore', 'mine', 'reader', 'tts', 'startup', 'card'];
 
   sceneLabel(scene: string): string {
     if (scene === 'explore') return '发现';
-    if (scene === 'search') return '搜索';
     if (scene === 'mine') return '我的';
     if (scene === 'reader') return '阅读';
     if (scene === 'tts') return '朗读';
@@ -3692,7 +3689,6 @@ struct ThemeColorSettingsPage {
 
   sceneIcon(scene: string): Resource {
     if (scene === 'explore') return $r('sys.symbol.square_grid_2x2');
-    if (scene === 'search') return $r('sys.symbol.magnifyingglass');
     if (scene === 'mine') return $r('sys.symbol.person');
     if (scene === 'reader') return $r('sys.symbol.book_pages');
     if (scene === 'tts') return $r('sys.symbol.earphone');
@@ -3766,22 +3762,25 @@ struct ThemeColorSettingsPage {
     .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
   }
 
-  /** 放大预览底部的画面格：4 × 2，图标加文字，拇指够得着。 */
+  /** 放大预览底部的画面格：两行，首页三个页签在上，阅读相关在下，图标加文字，拇指够得着。 */
   @Builder
   sceneGrid() {
     Column({ space: AppSpacing.XS }) {
       Row({ space: AppSpacing.XS }) {
         this.sceneCell('书架', 'bookshelf', $r('sys.symbol.bookshelf'))
         this.sceneCell('发现', 'explore', $r('sys.symbol.square_grid_2x2'))
-        this.sceneCell('搜索', 'search', $r('sys.symbol.magnifyingglass'))
         this.sceneCell('我的', 'mine', $r('sys.symbol.person'))
+        this.sceneCell('阅读', 'reader', $r('sys.symbol.book_pages'))
       }
       .width('100%')
       Row({ space: AppSpacing.XS }) {
-        this.sceneCell('阅读', 'reader', $r('sys.symbol.book_pages'))
         this.sceneCell('朗读', 'tts', $r('sys.symbol.earphone'))
         this.sceneCell('启动', 'startup', $r('sys.symbol.picture'))
         this.sceneCell('卡片', 'card', $r('sys.symbol.rectangle_3_group'))
+        // 补一个空格位，两行格子等宽对齐。
+        Blank()
+          .layoutWeight(1)
+          .height(52)
       }
       .width('100%')
     }

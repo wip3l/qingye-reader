@@ -60,7 +60,6 @@ export class ThemeAssetRegistry {
 
   static readonly TAB_BOOKSHELF: string = 'bookshelf';
   static readonly TAB_EXPLORE: string = 'explore';
-  static readonly TAB_SEARCH: string = 'search';
   static readonly TAB_MINE: string = 'mine';
 
   /** 主题包阅读背景（pack:<id>:light / :dark）对应的已安装包；不是主题包素材或缺包时返回 null。 */
@@ -355,9 +354,6 @@ export class ThemeAssetRegistry {
         if (normalizedTabId === ThemeAssetRegistry.TAB_EXPLORE) {
           normal = pack.navExplore;
           active = pack.navExploreSelected;
-        } else if (normalizedTabId === ThemeAssetRegistry.TAB_SEARCH) {
-          normal = pack.navSearch;
-          active = pack.navSearchSelected;
         } else if (normalizedTabId === ThemeAssetRegistry.TAB_MINE) {
           normal = pack.navMine;
           active = pack.navMineSelected;
@@ -481,7 +477,7 @@ export class ThemeAssetRegistry {
   }
 
   /**
-   * 首页四个页签顶部的主题背景图（宽高比 HOME_BACKDROP_ASPECT，画面集中在上部、向下淡成纯底色）；没有的主题返回 null。
+   * 首页三个页签顶部的主题背景图（宽高比 HOME_BACKDROP_ASPECT，画面集中在上部、向下淡成纯底色）；没有的主题返回 null。
    * 主题包只取对应模式那一张，深浅色不互相借用：浅色图放进深色模式会是一大块亮斑。
    */
   static homeBackdrop(themeId: string, darkMode: boolean = false): ResourceStr | null {
@@ -815,7 +811,7 @@ export class ThemeAssetRegistry {
     if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
     const pack = ThemePackRegistry.get(normalizedPackId);
     return !!pack && pack.hasAnyNavigation() && !!(pack.navBookshelfSelected || pack.navExploreSelected ||
-      pack.navSearchSelected || pack.navMineSelected);
+      pack.navMineSelected);
   }
 
   /** 主题包要求底栏只显示图标。 */
@@ -829,9 +825,7 @@ export class ThemeAssetRegistry {
 
   static normalizeTabId(tabId: string): string {
     const normalized = (tabId || '').trim().toLowerCase();
-    if (normalized === ThemeAssetRegistry.TAB_EXPLORE ||
-      normalized === ThemeAssetRegistry.TAB_SEARCH ||
-      normalized === ThemeAssetRegistry.TAB_MINE) {
+    if (normalized === ThemeAssetRegistry.TAB_EXPLORE || normalized === ThemeAssetRegistry.TAB_MINE) {
       return normalized;
     }
     return ThemeAssetRegistry.TAB_BOOKSHELF;
@@ -841,8 +835,6 @@ export class ThemeAssetRegistry {
     switch (tabId) {
       case ThemeAssetRegistry.TAB_EXPLORE:
         return $r('app.media.ic_tab_explore');
-      case ThemeAssetRegistry.TAB_SEARCH:
-        return $r('app.media.ic_tab_search');
       case ThemeAssetRegistry.TAB_MINE:
         return $r('app.media.ic_tab_mine');
       default:
@@ -854,8 +846,6 @@ export class ThemeAssetRegistry {
     switch (tabId) {
       case ThemeAssetRegistry.TAB_EXPLORE:
         return $r('app.media.ic_theme_rounded_explore');
-      case ThemeAssetRegistry.TAB_SEARCH:
-        return $r('app.media.ic_theme_rounded_search');
       case ThemeAssetRegistry.TAB_MINE:
         return $r('app.media.ic_theme_rounded_mine');
       default:
@@ -867,8 +857,6 @@ export class ThemeAssetRegistry {
     switch (tabId) {
       case ThemeAssetRegistry.TAB_EXPLORE:
         return $r('app.media.ic_theme_ink_explore');
-      case ThemeAssetRegistry.TAB_SEARCH:
-        return $r('app.media.ic_theme_ink_search');
       case ThemeAssetRegistry.TAB_MINE:
         return $r('app.media.ic_theme_ink_mine');
       default:
@@ -880,8 +868,6 @@ export class ThemeAssetRegistry {
     switch (tabId) {
       case ThemeAssetRegistry.TAB_EXPLORE: return selected ?
         $r('app.media.ic_theme_celestial_vault_explore_selected') : $r('app.media.ic_theme_celestial_vault_explore');
-      case ThemeAssetRegistry.TAB_SEARCH: return selected ?
-        $r('app.media.ic_theme_celestial_vault_search_selected') : $r('app.media.ic_theme_celestial_vault_search');
       case ThemeAssetRegistry.TAB_MINE: return selected ?
         $r('app.media.ic_theme_celestial_vault_mine_selected') : $r('app.media.ic_theme_celestial_vault_mine');
       default: return selected ?
@@ -893,7 +879,6 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_STRAWBERRY) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_strawberry_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_strawberry_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_strawberry_mine');
         default: return $r('app.media.ic_theme_strawberry_bookshelf');
       }
@@ -901,7 +886,6 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_CRIMSON) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_crimson_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_crimson_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_crimson_mine');
         default: return $r('app.media.ic_theme_crimson_bookshelf');
       }
@@ -909,7 +893,6 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_PLUM) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_plum_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_plum_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_plum_mine');
         default: return $r('app.media.ic_theme_plum_bookshelf');
       }
@@ -917,7 +900,6 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_ROSE) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_rose_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_rose_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_rose_mine');
         default: return $r('app.media.ic_theme_rose_bookshelf');
       }
@@ -925,7 +907,6 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_SWORD_FROST) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_sword_frost_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_sword_frost_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_sword_frost_mine');
         default: return $r('app.media.ic_theme_sword_frost_bookshelf');
       }
@@ -933,7 +914,6 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_QINGLUAN_WATER) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_qingluan_water_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_qingluan_water_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_qingluan_water_mine');
         default: return $r('app.media.ic_theme_qingluan_water_bookshelf');
       }
@@ -941,7 +921,6 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_CAT_PIPI) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_cat_pipi_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_cat_pipi_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_cat_pipi_mine');
         default: return $r('app.media.ic_theme_cat_pipi_bookshelf');
       }
@@ -949,7 +928,6 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_AZURE_MECHA) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_azure_mecha_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_azure_mecha_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_azure_mecha_mine');
         default: return $r('app.media.ic_theme_azure_mecha_bookshelf');
       }
@@ -957,7 +935,6 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_STARWISH_MAGIC) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_starwish_magic_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_starwish_magic_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_starwish_magic_mine');
         default: return $r('app.media.ic_theme_starwish_magic_bookshelf');
       }
@@ -965,7 +942,6 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_LETTERPRESS_PAGE) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_letterpress_page_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_letterpress_page_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_letterpress_page_mine');
         default: return $r('app.media.ic_theme_letterpress_page_bookshelf');
       }
@@ -973,7 +949,6 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_OBSIDIAN_ARCHIVE) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_obsidian_archive_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_obsidian_archive_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_obsidian_archive_mine');
         default: return $r('app.media.ic_theme_obsidian_archive_bookshelf');
       }
@@ -981,14 +956,12 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_NEON_HARBOR) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_neon_harbor_explore');
-        case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_neon_harbor_search');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_neon_harbor_mine');
         default: return $r('app.media.ic_theme_neon_harbor_bookshelf');
       }
     }
     switch (tabId) {
       case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_crane_explore');
-      case ThemeAssetRegistry.TAB_SEARCH: return $r('app.media.ic_theme_crane_search');
       case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_crane_mine');
       default: return $r('app.media.ic_theme_crane_bookshelf');
     }

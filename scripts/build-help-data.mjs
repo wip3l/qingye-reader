@@ -10,14 +10,14 @@ const SOURCE = resolve(root, 'docs/manual/index.html');
 const OUTPUT = resolve(root, 'entry/src/main/resources/rawfile/manual/help.json');
 
 // 首页“按功能查看”的分组：一个专题由说明书里的一个或几个章节（h2 所在 section 的 id）合成。
-// action 是专题页顶部的跳转按钮，url 为应用内页面，home: N 表示回首页并切到第 N 个页签。
+// action 是专题页顶部的跳转按钮，url 为应用内页面，home: N 表示回首页并切到第 N 个页签，search: true 再打开发现页的搜索层。
 const GROUPS = [
   [
     { id: 'layout', title: '界面总览', icon: 'square_grid_2x2', summary: '底部页签、“我的”入口、桌面卡片', parts: ['layout'] },
     { id: 'shelf', title: '书架', icon: 'bookshelf', summary: '筛选、分组、多选、隐私书架、封面', parts: ['shelf', 'shelfset'],
       action: { label: '打开书架设置', url: 'pages/BookshelfSettings' } },
     { id: 'search', title: '搜索与发现', icon: 'magnifyingglass', summary: '搜索范围、历史、遇到“去验证”', parts: ['search', 'explore'],
-      action: { label: '去搜索', home: 2 } },
+      action: { label: '去搜索', home: 1, search: true } },
     { id: 'detail', title: '书籍详情与换源', icon: 'arrow_left_arrow_right', summary: '完整目录、视频内容、换源', parts: ['detail'] },
   ],
   [
@@ -57,7 +57,7 @@ const EXTRA_TOPICS = [
 const QUICK_START = [
   { title: '导入书源', desc: 'URL 或文件导入，多个可勾选', action: { label: '去书源管理', url: 'pages/BookSource' } },
   { title: '校验书源', desc: '先看哪些能用，失败的一键禁用', action: { label: '去校验', url: 'pages/BookSource' } },
-  { title: '搜书加书架', desc: '搜索或发现，在详情页加入书架', action: { label: '去搜索', home: 2 } },
+  { title: '搜书加书架', desc: '搜索或发现，在详情页加入书架', action: { label: '去搜索', home: 1, search: true } },
   { title: '开始阅读', desc: '点屏幕中央呼出菜单，调字号与翻页', action: { label: '去书架', home: 0 } },
 ];
 

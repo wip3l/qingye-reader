@@ -43,7 +43,7 @@ export class AppIntentActions {
     AppStorage.setOrCreate('globalSearchPendingNonce', nonce + 1);
     try {
       const state = router.getState();
-      // 首页上面叠着别的页面时退回首页，首页再切到搜索页签。
+      // 首页上面叠着别的页面时退回首页，首页再切到发现页签并打开搜索层。
       if (state && state.name !== 'Index' && state.name !== 'Startup') router.back({ url: 'pages/Index' });
     } catch (_) {
     }

@@ -552,6 +552,12 @@ export function normalizedParts(parts: Json): Json {
     if (reader.imageFit === 'cover' && Object.keys(strip(reader)).length === 1) delete reader.imageFit;
   }
   const result = strip(copy);
+  // 旧版本应用还有“搜索”页签，导入时要求四个导航图标都在：没给就用发现的图标顶上（应用导出时同样处理）。
+  const nav = result.navigation;
+  if (nav && nav.explore && !nav.search) {
+    nav.search = nav.explore;
+    if (nav.exploreSelected && !nav.searchSelected) nav.searchSelected = nav.exploreSelected;
+  }
   if (result.radius) {
     for (const key of Object.keys(result.radius)) {
       if (typeof result.radius[key] !== 'number') delete result.radius[key];

@@ -144,7 +144,7 @@ export class ThemeRuntime {
       ThemeRuntime.KEY_LIGHT_PAGE_COLOR, fallback);
   }
 
-  /** 首页四个页签顶部的主题背景图；当前主题（自定义方案按“首页背景”来源）没有或用户在“其他设置”里关掉时为 null。 */
+  /** 首页三个页签顶部的主题背景图；当前主题（自定义方案按“首页背景”来源）没有或用户在“其他设置”里关掉时为 null。 */
   static homeBackdrop(darkMode: boolean): ResourceStr | null {
     if (AppStorage.get<boolean>(ThemeRuntime.KEY_HOME_BACKDROP_ENABLED) === false) return null;
     return ThemeAssetRegistry.homeBackdrop(ThemeRuntime.homeBackdropThemeId(darkMode), darkMode);

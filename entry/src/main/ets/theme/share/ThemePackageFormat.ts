@@ -161,8 +161,10 @@ export class ThemePackageTtsPanel {
 }
 
 /**
- * 首页底栏图标。SVG 按主题色染色，位图保持原色；选中态图标可选，没给的页签选中时仍用普通图标。
+ * 首页底栏图标（书架、发现、我的）。SVG 按主题色染色，位图保持原色；选中态图标可选，没给的页签选中时仍用普通图标。
  * labels 为 'hidden' 时底栏只显示图标。
+ * search / searchSelected 是旧版底栏“搜索”页签的图标：读包时照收但不显示；导出时缺了就用发现的图标补上，
+ * 旧版本应用要求四个图标齐全才肯导入。
  */
 export class ThemePackageNavigation {
   bookshelf: string = '';
@@ -208,7 +210,7 @@ export class ThemePackageParts {
   startupLight: ThemePackageStartup | null = null;
   startupDark: ThemePackageStartup | null = null;
   bubble: ThemePackageBubble | null = null;
-  // 首页四个页签顶部的背景图；只写了一种模式时另一种模式不显示背景。
+  // 首页三个页签顶部的背景图；只写了一种模式时另一种模式不显示背景。
   homeBackdropLight: string = '';
   homeBackdropDark: string = '';
   logo: string = '';
@@ -929,9 +931,8 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
       result[key] = partAssetRef(navigation, key, manifest, icon, 'parts.navigation');
     }
     parts.navigation.labels = stringField(navigation, 'labels').trim() === 'hidden' ? 'hidden' : '';
-    if (!parts.navigation.bookshelf || !parts.navigation.explore || !parts.navigation.search ||
-      !parts.navigation.mine) {
-      throw new Error('主题包的 parts.navigation 需要 bookshelf、explore、search、mine 四个图标');
+    if (!parts.navigation.bookshelf || !parts.navigation.explore || !parts.navigation.mine) {
+      throw new Error('主题包的 parts.navigation 需要 bookshelf、explore、mine 三个图标');
     }
   }
   const book = objectField(record, 'book');
@@ -1026,7 +1027,15 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     if (parts.ttsPanelDark) tts['dark'] = JSON.parse(JSON.stringify(parts.ttsPanelDark)) as Object;
     record['ttsPanel'] = tts;
   }
-  if (parts.navigation) record['navigation'] = JSON.parse(JSON.stringify(parts.navigation)) as Object;
+  if (parts.navigation) {
+    const navigation = JSON.parse(JSON.stringify(parts.navigation)) as ThemePackageNavigation;
+    // 旧版本应用还有“搜索”页签，要求四个图标都在：用发现的图标顶上。
+    if (!navigation.search) {
+      navigation.search = navigation.explore;
+      if (!navigation.searchSelected) navigation.searchSelected = navigation.exploreSelected;
+    }
+    record['navigation'] = navigation as Object;
+  }
   if (parts.book) record['book'] = JSON.parse(JSON.stringify(parts.book)) as Object;
   if (parts.startupLight || parts.startupDark) {
     const startup: Record<string, Object> = {};

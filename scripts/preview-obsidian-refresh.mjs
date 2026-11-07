@@ -49,7 +49,7 @@ const layers = [{ input: svg(1440, 1060, body), left: 0, top: 0 }];
 for (let i = 0; i < 6; i++) {
   layers.push({ input: await sharp(`${root}theme_cover_obsidian_archive_0${i + 1}.jpg`).resize(210, 308).toBuffer(), left: 40 + i * 230, top: 150 });
 }
-const names = ['bookshelf', 'explore', 'search', 'mine'];
+const names = ['bookshelf', 'explore', 'mine'];
 for (const p of panels) {
   for (let i = 0; i < names.length; i++) {
     const source = readFileSync(`${root}ic_theme_obsidian_archive_${names[i]}.svg`, 'utf8').replaceAll('#000000', i === 0 ? p.accent : p.secondary);

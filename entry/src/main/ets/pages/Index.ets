@@ -36,6 +36,7 @@ struct Index {
   @StorageProp('smartGripEnabled') smartGripEnabled: boolean = true;
   /** 方案 B：由原生页签容器统一执行连续横移，不再叠加页面入场动画。 */
   static readonly TAB_SWITCH_DURATION: number = 320;
+  static readonly SEARCH_LAYER_FADE_DURATION: number = 200;
   private stageRuntimeController: webview.WebviewController = new webview.WebviewController();
   @State stageRuntimeMounted: boolean = true;
   private stageRuntimeResetScheduled: boolean = false;
@@ -46,6 +47,13 @@ struct Index {
   @State @Watch('onCurrentIndexChanged') currentIndex: number = 0;
   /** 发现页第一次打开后常驻，切走只停用不销毁，回来时直接显示已加载的分类和列表。 */
   @State exploreTabMounted: boolean = false;
+  /** 发现页里的搜索层：点发现页搜索框或外部要求搜索时打开，取消/返回收起。 */
+  @StorageLink('homeSearchActive') @Watch('onHomeSearchActiveChanged') homeSearchActive: boolean = false;
+  /** 搜索层第一次打开后常驻，收起只隐藏，关键词与结果保留。 */
+  @State searchLayerMounted: boolean = false;
+  /** 搜索层淡出期间仍可见，淡完再隐藏，不再参与绘制。 */
+  @State searchLayerFading: boolean = false;
+  private searchLayerFadeTimer: number = -1;
   /** 原生切换完成前保留出入两页，避免离场内容提前变成空白。 */
   @State homeTransitionFrom: number = -1;
   @State homeTransitionTo: number = -1;
@@ -57,8 +65,9 @@ struct Index {
   private immersiveTabsController: HdsTabsController = new HdsTabsController();
   private compatTabsController: TabsController = new TabsController();
   private immersiveTabBarHidden: boolean = false;
-  // 每页单独保存进度，常驻的搜索/发现页不能改变当前页的底栏。
-  private tabHeaderCollapseProgress: number[] = [0, 0, 0, 0];
+  // 每页单独保存进度，常驻的发现页不能改变当前页的底栏；发现页里的搜索层另记一份。
+  private tabHeaderCollapseProgress: number[] = [0, 0, 0];
+  private searchHeaderCollapseProgress: number = 0;
   @State bottomBarCollapseProgress: number = 0;
   @StorageLink('themeRevision') @Watch('onThemeRevisionChanged') themeRevision: number = 0;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -113,9 +122,13 @@ struct Index {
     hilog.info(0x0000, 'testTag', 'StartupTrace Index aboutToAppear %{public}d', Date.now());
     this.syncHomeSystemBars();
     this.openPendingShortcut();
-    // 冷启动时小艺等入口先写好搜索词。Tabs 还没建，控制器切页签会被忽略，直接以搜索页签为初始页，
-    // 搜索页首次挂载时自己取走搜索词。
-    if ((AppStorage.get<string>('globalSearchPendingKeyword') || '').trim()) this.currentIndex = 2;
+    // 冷启动时小艺等入口先写好搜索词。Tabs 还没建，控制器切页签会被忽略，直接以发现页签为初始页并打开搜索层，
+    // 搜索层首次挂载时自己取走搜索词。
+    if ((AppStorage.get<string>('globalSearchPendingKeyword') || '').trim()) {
+      this.currentIndex = 1;
+      this.exploreTabMounted = true;
+      this.openHomeSearchLayer();
+    }
   }
 
   onPageShow(): void {
@@ -209,7 +222,8 @@ struct Index {
       return;
     }
     this.bookshelfMultiSelectActive = false;
-    this.selectHomeTab(2);
+    this.selectHomeTab(1);
+    this.openHomeSearchLayer();
     this.syncHomeSystemBars();
   }
 
@@ -219,14 +233,59 @@ struct Index {
       return;
     }
     this.bookshelfMultiSelectActive = false;
-    this.selectHomeTab(2);
+    this.selectHomeTab(1);
+    this.openHomeSearchLayer();
     this.syncHomeSystemBars();
+  }
+
+  openHomeSearchLayer(): void {
+    this.exploreTabMounted = true;
+    this.searchLayerMounted = true;
+    if (!this.homeSearchActive) this.homeSearchActive = true;
+  }
+
+  onHomeSearchActiveChanged(): void {
+    if (this.searchLayerFadeTimer >= 0) clearTimeout(this.searchLayerFadeTimer);
+    this.searchLayerFadeTimer = -1;
+    if (this.homeSearchActive) {
+      this.exploreTabMounted = true;
+      this.searchLayerMounted = true;
+      this.searchLayerFading = false;
+    } else {
+      this.searchLayerFading = true;
+      this.searchLayerFadeTimer = setTimeout((): void => {
+        this.searchLayerFadeTimer = -1;
+        this.searchLayerFading = false;
+      }, Index.SEARCH_LAYER_FADE_DURATION);
+    }
+    try {
+      // 冷启动时 aboutToAppear 里就会打开搜索层，那时底栏还没建好；建好后 onAppear 会再同步一次。
+      this.syncBottomBarCollapse(true);
+    } catch (e) {
+    }
+  }
+
+  homeSearchLayerActive(): boolean {
+    return this.homeSearchActive && this.homeTabIsActive(1);
+  }
+
+  /** 书架多选和发现页的搜索层都是整页，底栏收起。 */
+  homeTabBarHidden(): boolean {
+    return this.bookshelfMultiSelectActive || this.homeSearchLayerActive();
+  }
+
+  onSearchHeaderCollapseChange(progress: number): void {
+    if (!Number.isFinite(progress)) return;
+    this.searchHeaderCollapseProgress = Math.max(0, Math.min(1, progress));
+    if (this.currentIndex === 1 && this.homeSearchActive) {
+      this.syncBottomBarCollapse();
+    }
   }
 
   /** 其他页面（如使用说明里的“去搜索”）退回首页时要求切到指定页签。 */
   onHomeTabRequested(): void {
     const index = AppStorage.get<number>('homeTabRequestIndex') ?? -1;
-    if (index < 0 || index > 3) {
+    if (index < 0 || index > 2) {
       return;
     }
     this.bookshelfMultiSelectActive = false;
@@ -239,7 +298,7 @@ struct Index {
       this.exploreTabMounted = true;
     }
     // 书架保留列表与滚动位置，底栏沿用该页的收起进度；只有重建的“我的”重置。
-    if (this.currentIndex === 3) {
+    if (this.currentIndex === 2) {
       this.tabHeaderCollapseProgress[this.currentIndex] = 0;
     }
     this.syncBottomBarCollapse(true);
@@ -248,13 +307,14 @@ struct Index {
   onTabHeaderCollapseChange(index: number, progress: number): void {
     if (!Number.isFinite(progress)) return;
     this.tabHeaderCollapseProgress[index] = Math.max(0, Math.min(1, progress));
-    if (index === this.currentIndex) {
+    if (index === this.currentIndex && !(index === 1 && this.homeSearchActive)) {
       this.syncBottomBarCollapse();
     }
   }
 
   syncBottomBarCollapse(resetImmersiveState: boolean = false): void {
-    this.bottomBarCollapseProgress = this.tabHeaderCollapseProgress[this.currentIndex] || 0;
+    this.bottomBarCollapseProgress = this.currentIndex === 1 && this.homeSearchActive ?
+      this.searchHeaderCollapseProgress : (this.tabHeaderCollapseProgress[this.currentIndex] || 0);
     if (this.supportsImmersiveTabs()) {
       // 原生滚动动效统一控制位移、透明度和材质，不能再叠加逐帧下移/淡出。
       // 收起、展开使用不同阈值，避免在临界位置反复启动系统动画。
@@ -315,6 +375,11 @@ struct Index {
     }
     if (this.showGlobalTtsPanel) {
       this.closeGlobalTtsPanel();
+      return true;
+    }
+    // 发现页的搜索层开着时，返回键先收起它回到发现内容。
+    if (this.currentIndex === 1 && this.homeSearchActive) {
+      this.homeSearchActive = false;
       return true;
     }
     // 书架搜索栏开着时，返回键先清空关键词并收起它。
@@ -802,7 +867,7 @@ struct Index {
   }
 
   prepareHomeTabSwitch(from: number, to: number): boolean {
-    if (from === to || to < 0 || to > 3) return true;
+    if (from === to || to < 0 || to > 2) return true;
     if (this.homeTransitionTo !== to || this.homeTransitionFrom !== from) {
       if (this.homeTransitionTimer >= 0) clearTimeout(this.homeTransitionTimer);
       this.homeTransitionTimer = -1;
@@ -865,6 +930,37 @@ struct Index {
       ThemeRuntime.glassPanelColor(this.appDarkMode, '', 'panel');
   }
 
+  /** 发现页签：发现内容常驻，搜索层盖在上面，收起时只隐藏。 */
+  @Builder
+  exploreTabContent() {
+    Stack() {
+      if (this.exploreTabMounted) {
+        ExplorePage({
+          statusBarHeight: this.statusBarHeight,
+          navBarHeight: this.navBarHeight,
+          isActive: this.homeTabIsActive(1) && !this.homeSearchActive,
+          onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(1, progress)
+        })
+      } else {
+        BlankTabPage()
+      }
+      if (this.searchLayerMounted) {
+        SearchPage({
+          statusBarHeight: this.statusBarHeight,
+          navBarHeight: this.navBarHeight,
+          isActive: this.homeSearchLayerActive(),
+          onHeaderCollapseChange: (progress: number) => this.onSearchHeaderCollapseChange(progress)
+        })
+          .opacity(this.homeSearchActive ? 1 : 0)
+          .animation({ duration: Index.SEARCH_LAYER_FADE_DURATION, curve: Curve.FastOutSlowIn })
+          .hitTestBehavior(this.homeSearchActive ? HitTestMode.Default : HitTestMode.None)
+          .visibility(this.homeSearchActive || this.searchLayerFading ? Visibility.Visible : Visibility.Hidden)
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
   @Builder
   immersiveTabs() {
     HdsTabs({ barPosition: BarPosition.End, index: this.currentIndex, controller: this.immersiveTabsController }) {
@@ -886,39 +982,18 @@ struct Index {
       .tabBar(this.bottomTabBar('bookshelf', '书架', 0))
 
       TabContent() {
-        if (this.exploreTabMounted) {
-          ExplorePage({
-            statusBarHeight: this.statusBarHeight,
-            navBarHeight: this.navBarHeight,
-            isActive: this.homeTabIsActive(1),
-            onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(1, progress)
-          })
-        } else {
-          BlankTabPage()
-        }
+        this.exploreTabContent()
       }
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
       .tabBar(this.bottomTabBar('explore', '发现', 1))
 
       TabContent() {
-        SearchPage({
-          statusBarHeight: this.statusBarHeight,
-          navBarHeight: this.navBarHeight,
-          isActive: this.homeTabIsActive(2),
-          onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(2, progress)
-        })
-      }
-      .height('100%')
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.bottomTabBar('search', '搜索', 2))
-
-      TabContent() {
-        if (this.homeTabIsMounted(3)) {
+        if (this.homeTabIsMounted(2)) {
           SettingsPage({
             statusBarHeight: this.statusBarHeight,
             navBarHeight: this.navBarHeight,
-            onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(3, progress)
+            onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(2, progress)
           })
         } else {
           BlankTabPage()
@@ -927,12 +1002,12 @@ struct Index {
       .height('100%')
       .align(Alignment.TopStart)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.bottomTabBar('mine', '我的', 3))
+      .tabBar(this.bottomTabBar('mine', '我的', 2))
     }
     .key(`home_immersive_tabs_${this.themeRevision}_${this.appDarkMode ? 'dark' : 'light'}`)
     .barBackgroundColor(this.immersiveTabsBarBackgroundColor())
     .barMode(BarMode.Fixed)
-    .barHeight(this.bookshelfMultiSelectActive ? 0 : 56)
+    .barHeight(this.homeTabBarHidden() ? 0 : 56)
     .barOverlap(true)
     // Desktop already clips the entire window to its native outline. A second 30vp
     // content radius cuts away the header backdrop inside the smaller window corners.
@@ -950,7 +1025,7 @@ struct Index {
       },
       adaptToHandedness: this.smartGripEnabled,
       thermoCtrl: true,
-      barOpacity: this.bookshelfMultiSelectActive ? 0 : 1
+      barOpacity: this.homeTabBarHidden() ? 0 : 1
     })
     .scrollable(false)
     // 主题/深浅色切换会重建 HdsTabs，新实例需要重新应用显隐状态。
@@ -988,39 +1063,18 @@ struct Index {
       .tabBar(this.compatTabBar('bookshelf', '书架', 0))
 
       TabContent() {
-        if (this.exploreTabMounted) {
-          ExplorePage({
-            statusBarHeight: this.statusBarHeight,
-            navBarHeight: this.navBarHeight,
-            isActive: this.homeTabIsActive(1),
-            onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(1, progress)
-          })
-        } else {
-          BlankTabPage()
-        }
+        this.exploreTabContent()
       }
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
       .tabBar(this.compatTabBar('explore', '发现', 1))
 
       TabContent() {
-        SearchPage({
-          statusBarHeight: this.statusBarHeight,
-          navBarHeight: this.navBarHeight,
-          isActive: this.homeTabIsActive(2),
-          onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(2, progress)
-        })
-      }
-      .height('100%')
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.compatTabBar('search', '搜索', 2))
-
-      TabContent() {
-        if (this.homeTabIsMounted(3)) {
+        if (this.homeTabIsMounted(2)) {
           SettingsPage({
             statusBarHeight: this.statusBarHeight,
             navBarHeight: this.navBarHeight,
-            onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(3, progress)
+            onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(2, progress)
           })
         } else {
           BlankTabPage()
@@ -1029,10 +1083,10 @@ struct Index {
       .height('100%')
       .align(Alignment.TopStart)
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.compatTabBar('mine', '我的', 3))
+      .tabBar(this.compatTabBar('mine', '我的', 2))
     }
     .barMode(BarMode.Fixed)
-    .barHeight(this.bookshelfMultiSelectActive ? 0 : 56 + this.compatTabSafeHeight())
+    .barHeight(this.homeTabBarHidden() ? 0 : 56 + this.compatTabSafeHeight())
     .barBackgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
     .scrollable(false)
     .onAppear(() => this.syncBottomBarCollapse())

@@ -412,8 +412,14 @@ test('v2 theme: parts resolve by path, settings optional, kinds and required fie
     mutate(json);
     assert.throws(() => format.decodeTheme(JSON.stringify({ parts: json }), manifest), pattern);
   };
-  broken(j => { j.navigation.mine = 'assets/cover_01.jpg'; }, /SVG/);
-  broken(j => { delete j.navigation.mine; }, /四个 SVG/);
+  broken(j => { delete j.navigation.mine; }, /bookshelf、explore、mine 三个图标/);
+  // 底栏没有搜索页签了：不带 search 的包照样能读，导出时用发现的图标补上给旧版本应用。
+  const withoutSearch = partsJson();
+  delete withoutSearch.navigation.search;
+  const decodedWithoutSearch = format.decodeTheme(JSON.stringify({ parts: withoutSearch }), manifest).parts;
+  assert.equal(decodedWithoutSearch.navigation.search, '');
+  const encodedNavigation = format.encodeParts(decodedWithoutSearch).navigation;
+  assert.equal(encodedNavigation.search, decodedWithoutSearch.navigation.explore);
   broken(j => { j.light.colors.pageColor = 'red'; }, /颜色/);
   broken(j => { j.light.reader.trailing = ''; }, /leading 和 trailing/);
   broken(j => { j.ttsPanel.light.glowColor = ''; }, /artwork、skyColor/);
