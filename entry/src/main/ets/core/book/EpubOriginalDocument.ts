@@ -24,6 +24,8 @@ export class EpubOriginalDocument {
   static readonly ORIGIN: string = 'https://epub.legado.local';
   /** 拼好的章节文档挂在这个目录下，不和书里的文件重名。 */
   static readonly CHAPTER_DIR: string = '__legado_chapter';
+  /** 应用阅读字体在虚拟站点里的地址前缀，后面跟字体文件名（只用来带出扩展名）。 */
+  static readonly READER_FONT_DIR: string = '__legado_reader_font';
   private static readonly VOID_TAGS: string =
     'area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr';
 
@@ -63,6 +65,14 @@ export class EpubOriginalDocument {
 
   static fragmentOf(url: string): string {
     return EpubHtmlConverter.fragmentOf(url || '');
+  }
+
+  static readerFontUrl(fileName: string): string {
+    return `${EpubOriginalDocument.ORIGIN}/${EpubOriginalDocument.READER_FONT_DIR}/${encodeURIComponent(fileName || 'font.ttf')}`;
+  }
+
+  static isReaderFontUrl(url: string): boolean {
+    return (url || '').startsWith(`${EpubOriginalDocument.ORIGIN}/${EpubOriginalDocument.READER_FONT_DIR}/`);
   }
 
   static isChapterUrl(url: string): boolean {

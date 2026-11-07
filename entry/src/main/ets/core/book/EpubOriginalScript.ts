@@ -18,13 +18,21 @@ export class EpubOriginalTarget {
 
 export class EpubOriginalLayoutOptions {
   paged: boolean = true;
+  /** 翻页模式下拖动与翻页动画由原生截图翻页层负责，网页只在原地换页（见 step / show）。 */
+  nativeTurn: boolean = false;
   forceDark: boolean = false;
+  /**
+   * 用应用的阅读字体代替书里的字体：空串不改；'system' 用系统字体；其余是字体文件在虚拟站点里的地址。
+   * 只换字体，字号、行距等仍按书的样式。
+   */
+  readerFont: string = '';
   margins: EpubOriginalMargins = new EpubOriginalMargins();
   target: EpubOriginalTarget = new EpubOriginalTarget();
 }
 
 class EpubOriginalScriptConfig {
   paged: boolean = true;
+  nativeTurn: boolean = false;
   top: number = 0;
   bottom: number = 0;
   target: EpubOriginalTarget = new EpubOriginalTarget();
@@ -38,13 +46,14 @@ class EpubOriginalScriptConfig {
  */
 export class EpubOriginalScript {
   static readonly HOST_NAME: string = 'LegadoEpubHost';
-  static readonly HOST_METHODS: string[] = ['ready', 'position', 'tap', 'link', 'edge'];
+  static readonly HOST_METHODS: string[] = ['ready', 'position', 'tap', 'link', 'edge', 'stepped'];
 
   static injection(options: EpubOriginalLayoutOptions): EpubOriginalInjection {
     const injection = new EpubOriginalInjection();
     injection.style = EpubOriginalScript.style(options);
     const config = new EpubOriginalScriptConfig();
     config.paged = options.paged;
+    config.nativeTurn = options.paged && options.nativeTurn;
     config.top = options.margins.top;
     config.bottom = options.margins.bottom;
     config.target = options.target;
@@ -71,6 +80,14 @@ export class EpubOriginalScript {
       'html{margin:0!important;padding:0!important;}' +
         `body{box-sizing:border-box!important;margin:0!important;padding:${padding}!important;max-width:none!important;}` +
         'img,svg,video{max-width:100%!important;box-sizing:border-box;}img,video{object-fit:contain;}';
+    if (options.readerFont) {
+      const family = options.readerFont === 'system' ? 'sans-serif' :
+        '"LegadoReaderFont",sans-serif';
+      if (options.readerFont !== 'system') {
+        css += `@font-face{font-family:"LegadoReaderFont";src:url("${options.readerFont.replace(/"/g, '%22')}");}`;
+      }
+      css += `body,body *{font-family:${family}!important;}`;
+    }
     // 不能写 text-size-adjust:none：它会连网页组件的文字缩放（textZoomRatio）一起关掉，字号缩放就失效了。
     css += 'html{-webkit-tap-highlight-color:transparent;}';
     if (options.forceDark) {
@@ -84,7 +101,7 @@ export class EpubOriginalScript {
   private static readonly SCRIPT: string = String.raw`(function () {
   var cfg = __LEGADO_CONFIG__;
   var host = window.LegadoEpubHost || null;
-  var paged = cfg.paged;
+  var paged = cfg.paged, nativeTurn = !!cfg.nativeTurn;
   var page = 0, count = 1, width = 1, started = false, cache = null, reportTimer = 0;
   var SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹', SUB = '₀₁₂₃₄₅₆₇₈₉';
   var NOTE = /^[\[［(（【〔〈]?\s*(?:注|註|note)?\s*(?:\d{1,4}|[０-９]{1,4}|[一二三四五六七八九十]{1,3}|[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,4}|[①-⓿❶-➓㉑-㉟㊱-㊿]|[*＊†‡§]{1,3})?\s*[\]］)）】〕〉]?$/i;
@@ -276,6 +293,32 @@ export class EpubOriginalScript {
     if (direction < 0 && y <= 0) { if (host) host.edge(-1); return; }
     scrollToY(y + direction * step, true);
   }
+  // 原生翻页层用：不带动画地换到相邻页 / 指定页，等网页按新位置画过一帧再回报 stepped(token, moved, page, count)。
+  // 已在本章首尾时 moved 为 0，由原生层决定是否翻章。
+  function settled(token, moved) {
+    var done = false;
+    // moved 回报 1 表示网页按新位置画过帧；2 表示一直没等到帧、靠定时器兜底（原生层会多等再截图）。
+    var send = function (viaFrame) {
+      if (done) return;
+      done = true;
+      if (host) host.stepped(token, moved ? (viaFrame ? 1 : 2) : 0, page, count);
+    };
+    if (!moved) { send(true); return; }
+    requestAnimationFrame(function () { requestAnimationFrame(function () { send(true); }); });
+    setTimeout(function () { send(false); }, 150);
+  }
+  function step(direction, token) {
+    stopAnimation();
+    var moved = false;
+    if (direction > 0 && !isLastPage()) { goPage(page + 1, false); moved = true; }
+    else if (direction < 0 && page > 0) { goPage(page - 1, false); moved = true; }
+    settled(token, moved);
+  }
+  function show(n, token) {
+    stopAnimation();
+    goPage(n, false);
+    settled(token, true);
+  }
   function isNote(a) {
     var semantics = ((a.getAttribute('epub:type') || '') + ' ' + (a.getAttribute('role') || '')).toLowerCase();
     if (/\b(?:doc-)?backlink\b/.test(semantics)) return false;
@@ -336,7 +379,8 @@ export class EpubOriginalScript {
     if (!moved && Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
     if (!moved && Math.abs(dy) > Math.abs(dx)) { dragging = false; return; }
     moved = true;
-    window.scrollTo(base - dx, 0);
+    // 原生翻页层跟手时网页不动，只记下“拖过”，免得松手后的 click 被当成点按。
+    if (!nativeTurn) window.scrollTo(base - dx, 0);
   }, { passive: true });
   document.addEventListener('touchend', function (e) {
     if (!paged) {
@@ -349,6 +393,7 @@ export class EpubOriginalScript {
     }
     if (!dragging || !moved) { dragging = false; return; }
     dragging = false;
+    if (nativeTurn) return;
     var dx = e.changedTouches[0].clientX - sx;
     var flick = Math.abs(dx) > width * 0.18 || (Math.abs(dx) > 30 && Date.now() - st < 250);
     if (flick && dx < 0) next(true);
@@ -376,7 +421,7 @@ export class EpubOriginalScript {
     goSpot(s.snippet, s.fraction);
   });
   window.__legado = { next: next, prev: prev, goSpot: goSpot, goAnchor: goAnchor, goPage: goPage, screen: screen,
-    preview: preview };
+    preview: preview, step: step, show: show };
   var begin = function () {
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(start, start); else start();
   };

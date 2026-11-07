@@ -586,6 +586,14 @@ export class ReaderSettingsStore {
     return next;
   }
 
+  /** 只改四侧边距，其余排版参数保持当前值（文件排版页用，与普通阅读页共用同一组边距）。 */
+  static saveMargins(context: Context, left: number, right: number, top: number, bottom: number): Promise<void> {
+    const current = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
+    return ReaderSettingsStore.saveLayoutSettings(context, current.fontSize, current.lineHeight,
+      current.paragraphSpacing, left, right, top, bottom, current.letterSpacing, current.textAlign,
+      current.fontWeight, current.paragraphIndent, current.commentBubbleSize);
+  }
+
   private static async waitForReaderLayoutSaves(): Promise<void> {
     try {
       await ReaderSettingsStore.readerLayoutSaveQueue;

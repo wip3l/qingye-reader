@@ -8,6 +8,8 @@ import { ReaderBrightnessControl } from './ReaderBrightnessControl';
 import { ReaderChromeMotion } from './ReaderChromeMotion';
 import { ReaderSettingActionRow, ReaderSettingLabel, ReaderSettingSelectRow, ReaderSettingSwitchRow } from './ReaderSettingRows';
 import { ReaderQuickJumpModel } from '../../core/reader/ReaderQuickJumpModel';
+import { ReaderPageTurnAnimation } from '../../core/reader/ReaderPageTurnAnimation';
+import { ReaderHeaderFooterSettings, ReaderTypographyField, ReaderTypographyStepper } from './ReaderLayoutSettings';
 import { ReaderSettingsStore } from '../../utils/ReaderSettingsStore';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../../utils/HdsFeedback';
@@ -59,6 +61,16 @@ export struct EpubOriginalControls {
   @Prop volumeTurnPage: boolean = false;
   @Prop smartKeyTurnPage: boolean = false;
   @Prop smartKeySupported: boolean = false;
+  /** 翻页动画，与普通阅读页共用。 */
+  @Prop pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  /** 页眉默认位置（状态栏下方或屏幕顶端），页眉页脚设置里的位置步进以它为基准。 */
+  @Prop headerBaseInset: number = 0;
+  /** 四侧边距：左、右、上、下，与普通阅读页共用。 */
+  @Prop margins: number[] = [18, 18, 18, 18];
+  @Prop tapZoneSummary: string = '';
+  @Prop useReaderFont: boolean = false;
+  /** 当前阅读字体的名字（系统字体或自定义字体名）。 */
+  @Prop readerFontName: string = '';
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 720;
   @State showMore: boolean = false;
@@ -75,6 +87,13 @@ export struct EpubOriginalControls {
   onStep: (direction: number) => void = (_direction: number): void => {};
   onPagedChange: (paged: boolean) => void = (_paged: boolean): void => {};
   onZoomChange: (zoom: number) => void = (_zoom: number): void => {};
+  onPageTurnAnimationChange: (type: number) => void = (_type: number): void => {};
+  onMarginsChange: (left: number, right: number, top: number, bottom: number) => void =
+    (_left: number, _right: number, _top: number, _bottom: number): void => {};
+  onTapZones: () => void = (): void => {};
+  onUseReaderFontChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
+  onReaderChromeChange: (headerEnabled: boolean, footerEnabled: boolean, infoBarConfig: string) => void =
+    (_headerEnabled: boolean, _footerEnabled: boolean, _infoBarConfig: string): void => {};
   /** 与普通阅读页的日夜按钮相同：点按在日间、夜间之间切换（应用全局），长按改为跟随系统。 */
   onDayNight: () => void = (): void => {};
   onAutoMode: () => void = (): void => {};
@@ -469,6 +488,17 @@ export struct EpubOriginalControls {
     }.width('100%').height(PANEL_HEADER_HEIGHT).padding({ left: 24, right: 10 })
   }
 
+  /** 边距调节控件要整组初值（见 ReaderTypographyField），只有四侧边距这几格有意义。 */
+  private marginStepperValues(): number[] {
+    const values: number[] = [];
+    for (let field = 0; field < ReaderTypographyField.COUNT; field++) values.push(0);
+    values[ReaderTypographyField.MARGIN_LEFT] = this.margins[0] ?? 18;
+    values[ReaderTypographyField.MARGIN_RIGHT] = this.margins[1] ?? 18;
+    values[ReaderTypographyField.MARGIN_TOP] = this.margins[2] ?? 18;
+    values[ReaderTypographyField.MARGIN_BOTTOM] = this.margins[3] ?? 18;
+    return values;
+  }
+
   @Builder
   settingsContent() {
     Scroll() {
@@ -479,6 +509,41 @@ export struct EpubOriginalControls {
           accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode,
           menuColor: this.solidPanelColor(),
           onSelect: (index: number): void => this.onPagedChange(index === 0) })
+        if (this.paged) {
+          // 与普通阅读页同一个设置、同一组选项；文件排版用截图播放同样的动画。
+          ReaderSettingSelectRow({ title: '翻页动画', description: '与应用排版共用',
+            options: ReaderPageTurnAnimation.labels().map((label: string): SelectOption => ({ value: label })),
+            selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.pageTurnAnimation)),
+            textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+            accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode,
+            menuColor: this.solidPanelColor(),
+            onSelect: (index: number): void => {
+              const types = ReaderPageTurnAnimation.types();
+              if (index >= 0 && index < types.length) this.onPageTurnAnimationChange(types[index]);
+            } })
+        }
+        // 与普通阅读页排版里的同一组边距、同一个调节控件，只列出四侧边距。
+        ReaderTypographyStepper({
+          initialValues: this.marginStepperValues(),
+          fields: [ReaderTypographyField.MARGIN_LEFT, ReaderTypographyField.MARGIN_RIGHT,
+            ReaderTypographyField.MARGIN_TOP, ReaderTypographyField.MARGIN_BOTTOM],
+          dark: this.darkMode,
+          textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+          accentColor: ThemeRuntime.accentColor(this.darkMode),
+          inputColor: this.solidPanelColor(),
+          menuColor: this.solidPanelColor(),
+          onChange: (values: number[]): void => this.onMarginsChange(values[ReaderTypographyField.MARGIN_LEFT],
+            values[ReaderTypographyField.MARGIN_RIGHT], values[ReaderTypographyField.MARGIN_TOP],
+            values[ReaderTypographyField.MARGIN_BOTTOM])
+        })
+        ReaderSettingSwitchRow({ title: '使用阅读字体', description: `用${this.readerFontName || '阅读字体'}显示本书，字号与排版仍按书的样式`,
+          checked: this.useReaderFont, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onUseReaderFontChange })
+        ReaderSettingActionRow({ title: '点击区域动作', description: this.tapZoneSummary,
+          actionText: '配置', textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode), buttonColor: ThemeRuntime.accentColor(this.darkMode),
+          buttonTextColor: ThemeRuntime.onAccentColor(), onAction: this.onTapZones })
         // 与排版设置里的步进项（如“页脚不透明度”）同一种写法：一行，左边标题，右边减、数值、加。
         Row({ space: 12 }) {
           ReaderSettingLabel({ title: '字号缩放', description: '按比例放大或缩小书里的文字',
@@ -515,7 +580,21 @@ export struct EpubOriginalControls {
           actionText: '切换', textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode), buttonColor: ThemeRuntime.accentColor(this.darkMode),
           buttonTextColor: ThemeRuntime.onAccentColor(), onAction: this.onAppLayout })
-        Text('文件排版按书本身的样式显示，阅读主题、字体、行距和仿真翻页在这里不生效；应用处于夜间模式时，页面整体转成深色，图片保持原样。').fontSize(AppFontSize.CAPTION)
+        Text('页眉页脚').fontSize(AppFontSize.BODY).fontWeight(FontWeight.Medium)
+          .fontColor(ThemeRuntime.primaryTextColor(this.darkMode)).width('100%').margin({ top: 8 })
+        // 与普通阅读页“排版 · 页眉页脚”同一个设置组，改动两边同时生效。
+        ReaderHeaderFooterSettings({
+          headerBaseInset: this.headerBaseInset,
+          dark: this.darkMode,
+          textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+          accentColor: ThemeRuntime.accentColor(this.darkMode),
+          switchColor: ThemeRuntime.accentColor(this.darkMode),
+          menuColor: this.solidPanelColor(),
+          onChanged: (headerEnabled: boolean, footerEnabled: boolean, infoBarConfig: string): void =>
+            this.onReaderChromeChange(headerEnabled, footerEnabled, infoBarConfig)
+        })
+        Text('文件排版按书本身的样式显示，阅读主题、字号和行距在这里不生效；边距、点击区域、页眉页脚与翻页动画和应用排版共用设置。应用处于夜间模式时，页面整体转成深色，图片保持原样。').fontSize(AppFontSize.CAPTION)
           .fontColor(ThemeRuntime.subTextColor(this.darkMode)).width('100%').margin({ top: 4 })
       }.width('100%').padding({ left: 24, right: 24, bottom: 16 }).alignItems(HorizontalAlign.Start)
     }.layoutWeight(1).width('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring, { alwaysEnabled: false })

@@ -76,6 +76,8 @@ export struct ReaderTypographyStepper {
   @Prop accentColor: string = '#0A59F7';
   @Prop inputColor: string = '#FFFFFF';
   @Prop menuColor: string = '#FFFFFF';
+  /** 只列出这些参数（ReaderTypographyField 下标）；空数组列出全部。文件排版只调四侧边距。 */
+  fields: number[] = [];
   onChange: (values: number[]) => void = (_values: number[]): void => {
   };
 
@@ -93,6 +95,14 @@ export struct ReaderTypographyStepper {
         field < this.initialValues.length ? this.initialValues[field] : fallback));
     }
     this.values = values;
+    if (this.fields.length > 0) this.field = this.fields[0];
+  }
+
+  private visibleFields(): number[] {
+    if (this.fields.length > 0) return this.fields;
+    const all: number[] = [];
+    for (let field = 0; field < ReaderTypographyField.COUNT; field++) all.push(field);
+    return all;
   }
 
   private current(): number {
@@ -116,9 +126,9 @@ export struct ReaderTypographyStepper {
   build() {
     Column() {
       Row({ space: AppSpacing.MD }) {
-        Select(ReaderTypographyField.LABELS.map((label: string): SelectOption => ({ value: label })))
+        Select(this.visibleFields().map((field: number): SelectOption => ({ value: ReaderTypographyField.LABELS[field] })))
           .id('reader_typography_selector')
-          .selected(this.field)
+          .selected(Math.max(0, this.visibleFields().indexOf(this.field)))
           .value(ReaderTypographyField.LABELS[this.field])
           .font({ size: AppFontSize.BODY_LARGE, family: this.applicationFontFamily })
           .optionFont({ family: this.applicationFontFamily })
@@ -139,7 +149,8 @@ export struct ReaderTypographyStepper {
           .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel, this.dark, this.menuColor))
           .onSelect((index: number) => {
             this.inputVisible = false;
-            this.field = Math.max(0, Math.min(index, ReaderTypographyField.COUNT - 1));
+            const visible = this.visibleFields();
+            this.field = visible[Math.max(0, Math.min(index, visible.length - 1))];
           })
         Blank()
           .layoutWeight(1)
