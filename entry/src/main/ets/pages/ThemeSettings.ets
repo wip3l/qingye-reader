@@ -354,7 +354,17 @@ struct ThemeSettingsPage {
 
   async requestThemeExport(schemeId: string): Promise<void> {
     const scheme = CustomThemeSchemeStore.find(this.customSchemes, schemeId);
-    if (!scheme || !(await this.ensureThemeShareAccess())) return;
+    if (!scheme) return;
+    const exclusiveName = ThemePackageService.exclusiveThemeBlockingExport(scheme);
+    if (exclusiveName) {
+      await promptAction.showDialog({
+        title: '这套主题不能分享',
+        message: `它用到了终身超级会员专属主题「${exclusiveName}」，专属主题的素材只能自己使用，不能导出为主题包分享。`,
+        buttons: [{ text: '知道了', color: this.accentColor() }]
+      });
+      return;
+    }
+    if (!(await this.ensureThemeShareAccess())) return;
     try {
       this.exportPlan = await ThemePackageService.planExport(getContext(this), scheme);
       this.showThemeExportDialog = true;

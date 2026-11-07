@@ -176,7 +176,19 @@ export class ThemePackageService {
     return AccountSessionStore.activeMembershipSku() !== '';
   }
 
+  /**
+   * 方案的底子或任一部件来源用了终身超级会员专属主题时，不允许导出分享，
+   * 返回第一套用到的专属主题名；可以导出时返回空串。
+   */
+  static exclusiveThemeBlockingExport(scheme: CustomThemeScheme): string {
+    const settings = scheme.settings;
+    const used = SuperExclusiveThemes.usedByScheme(settings.customBaseThemeId,
+      settings.customLightSources, settings.customDarkSources);
+    return used.length > 0 ? BuiltinThemeRegistry.findById(used[0]).name : '';
+  }
+
   static async planExport(context: Context, scheme: CustomThemeScheme): Promise<ThemeExportPlan> {
+    ThemePackageService.assertExportable(scheme);
     const plan = new ThemeExportPlan();
     plan.schemeId = scheme.id;
     plan.name = scheme.name;
@@ -273,6 +285,7 @@ export class ThemePackageService {
   /** 在临时目录生成主题包（ZIP），之后由用户选择保存到文件或分享。 */
   static async buildPackage(context: Context, scheme: CustomThemeScheme,
     options: ThemeExportOptions): Promise<ThemeExportResult> {
+    ThemePackageService.assertExportable(scheme);
     const workDir = `${context.tempDir}/qytheme_export_${Date.now()}`;
     const pkgDir = `${workDir}/theme`;
     const assetsDir = `${pkgDir}/assets`;
@@ -862,6 +875,13 @@ export class ThemePackageService {
   }
 
   // ---- 导出辅助 ----
+
+  private static assertExportable(scheme: CustomThemeScheme): void {
+    const exclusiveName = ThemePackageService.exclusiveThemeBlockingExport(scheme);
+    if (exclusiveName) {
+      throw new Error(`用到了终身超级会员专属主题「${exclusiveName}」，不能导出分享`);
+    }
+  }
 
   private static async schemeProfile(context: Context, scheme: CustomThemeScheme): Promise<ReaderSettings> {
     return await ReaderSettingsStore.loadProfile(context, ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, scheme.id));

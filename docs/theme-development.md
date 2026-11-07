@@ -272,7 +272,7 @@ BuiltinThemeRegistry.register(theme);
 - 包内气泡的样式 ID 就是 `pack:<packageId>`：`ReaderRegexFontCodec.normalizeBubbleStyleId()` 原样保留，`ReaderRegexBubbleStyleResolver` 用统一的圆角预设配端饰，`ThemeAccessPolicy` 以“包已安装”为可用条件。
 - 访问策略：已安装的包随方案走，不另设权益，会员过期后已导入的方案照常使用；导出和导入主题包本身仍要求有效会员。
 - `CustomThemeScheme.packageId` 记录方案来自哪个包：同一个 `packageId` 再次导入时原位更新（可以更新正在使用的方案，导入后重新应用），删除或替换方案后 `ThemePackageService.cleanupImportedFiles()` 清掉没有方案再引用的包目录。
-- 导出：方案由包安装而来、或部件里选了某个已安装的包时按格式 2 导出，包内素材复制进包，方案里指向它的来源写成 `pack:self`；混搭别人的包时换新 `packageId` 并把原包记进 `credits`。不带包内素材的方案仍按格式 1 导出，老版本应用可以导入。
+- 导出：方案由包安装而来、或部件里选了某个已安装的包时按格式 2 导出，包内素材复制进包，方案里指向它的来源写成 `pack:self`；混搭别人的包时换新 `packageId` 并把原包记进 `credits`。不带包内素材的方案仍按格式 1 导出，老版本应用可以导入。基底或任一部件来源用了 `SuperExclusiveThemes` 里的终身超级会员专属主题时不允许导出（`ThemePackageService.exclusiveThemeBlockingExport()`，入口弹窗说明，`planExport()` / `buildPackage()` 再兜底拒绝）。
 
 ## 正则气泡
 
