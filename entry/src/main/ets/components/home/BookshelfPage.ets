@@ -3981,7 +3981,7 @@ export struct BookshelfPage {
       this.shelfInfoTailHeight() + this.shelfRowSpace() * 4;
   }
 
-  /** 宽松布局信息块高度，尾部是阅读进度行（进度条开着时该行隐藏，高度照旧保留）。 */
+  /** 宽松布局信息块高度，尾部是阅读进度行（进度条开着时该行隐藏，高度照旧保留、其余行上下均分）。 */
   shelfLooseInfoHeight(): number {
     return this.shelfTitleLineHeight() + this.shelfTextLineHeight() + this.shelfTextLineHeight() +
       this.shelfTextLineHeight() + this.shelfRowSpace() * 4;
@@ -5981,11 +5981,11 @@ export struct BookshelfPage {
               .width('100%')
           }
 
-          // 恒定的 Blank：某本书没有更新行时由它吸收多余空间，尾部仍被顶到底部。
-          Blank()
-
-          // 进度条开着时下方面板已带百分比，这里不再重复；封面高度不变，空出的一行由 Blank 吸收。
+          // 进度条开着时下方面板已带百分比，这里不再重复；封面高度不变，剩下的行由 SpaceBetween 上下撑开。
           if (!this.bookshelfShowProgressBar) {
+            // 恒定的 Blank：某本书没有更新行时由它吸收多余空间，尾部仍被顶到底部。
+            Blank()
+
             Row() {
 
               // 与作者名保持一致的格式（字号 14 + 次级文字色）。
@@ -6000,6 +6000,7 @@ export struct BookshelfPage {
         .height(this.shelfLooseInfoHeight())
         .margin({ left: AppSpacing.LG })
         .alignItems(HorizontalAlign.Start)
+        .justifyContent(FlexAlign.SpaceBetween)
       }
       .width('100%')
       .alignItems(VerticalAlign.Top)
