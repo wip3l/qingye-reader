@@ -37,6 +37,7 @@ export struct ReaderBrightnessControl {
           }
           Slider({ value: this.value < 0 ? this.lastManualValue : this.value,
             min: 1, max: 100, step: 1, direction: Axis.Vertical, reverse: true })
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
             .width(44).layoutWeight(1)
             .trackThickness(4).trackColor(this.trackColor).selectedColor(this.accentColor)
             .blockColor(this.thumbColor)

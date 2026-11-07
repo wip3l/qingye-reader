@@ -61,8 +61,7 @@ export struct ReaderTtsQuickSettingsPanel {
           .layoutWeight(1)
           .showTips(true)
           .selectedColor(this.accentColor)
-          .sliderInteractionMode(ImmersiveMaterialRuntime.supportsHds() ?
-            SliderInteraction.SLIDE_AND_CLICK_UP : SliderInteraction.SLIDE_ONLY)
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .onChange((value: number) => this.onSpeedChange(value))
         this.stepButton($r('sys.symbol.plus'), '提高朗读倍速', this.speed !== 2, () => {
           this.onSpeedChange(this.speed + 0.1);

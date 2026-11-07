@@ -1909,6 +1909,7 @@ struct AccountCenterPage {
           .fontSize(AppFontSize.BODY)
           .fontColor(this.subTextColor())
         Slider({ value: this.cropZoom, min: 1, max: 4, step: 0.05 })
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .layoutWeight(1)
           .showTips(true)
           .selectedColor(this.accentColor())

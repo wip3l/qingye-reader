@@ -581,6 +581,7 @@ export struct ColorCodePicker {
               .fontColor(this.subTextColor())
           }
           Slider({ value: 100 - this.colorOpacity, min: 0, max: 100, step: 1 })
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
             .width('100%')
             .selectedColor(this.accentColor)
             .onChange((value: number) => {

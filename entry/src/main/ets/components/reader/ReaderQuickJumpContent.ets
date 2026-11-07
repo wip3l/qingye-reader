@@ -209,6 +209,7 @@ export struct ReaderQuickJumpContent {
           step: this.mode === 'percent' ? 0.1 : 1,
           style: SliderStyle.OutSet
         })
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .layoutWeight(1)
           .height(40)
           .trackThickness(4)

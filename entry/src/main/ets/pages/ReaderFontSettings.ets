@@ -1371,6 +1371,7 @@ export struct ReaderFontSettingsEditor {
           () => this.adjustTitleMargin(top, -1))
         Slider({ value: top ? this.titleStyle.marginTop : this.titleStyle.marginBottom, min: 0,
           max: ReaderTitleSplit.MAX_MARGIN, step: 1 })
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .layoutWeight(1)
           .selectedColor(this.accentColor())
           .blockColor(this.accentColor())

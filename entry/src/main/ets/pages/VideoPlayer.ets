@@ -1149,6 +1149,7 @@ struct VideoPlayerPage {
           .fontSize(AppFontSize.CAPTION)
           .fontColor('#FFFFFF')
         Slider({ value: this.positionSec, min: 0, max: Math.max(1, this.durationSec), step: 1 })
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .enabled(this.canSeek())
           .accessibilityText('播放进度')
           .layoutWeight(1)

@@ -796,6 +796,7 @@ export struct ReaderTtsPlayerPanel {
       // 还不知道总时长（缓冲中，或关了自动播放、还没点播放）时进度条留空、不能拖，左边照样显示已听到的位置。
       Slider({ value: this.globalTtsAudioDurationMs > 0 ? this.globalTtsAudioPositionMs : 0, min: 0,
         max: Math.max(1, this.globalTtsAudioDurationMs), step: 1000 })
+        .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
         .width('100%')
         .showTips(true)
         .enabled(this.globalTtsAudioDurationMs > 0)

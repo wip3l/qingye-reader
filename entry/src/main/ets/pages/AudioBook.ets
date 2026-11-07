@@ -515,6 +515,7 @@ struct AudioBookPage {
   progressSection() {
     Column() {
       Slider({ value: this.positionMs, min: 0, max: Math.max(1, this.durationMs), step: 1000 })
+        .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
         .width('100%')
         .showTips(true)
         .selectedColor(this.accentColor())

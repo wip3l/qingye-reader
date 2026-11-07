@@ -446,6 +446,7 @@ struct SettingsPage {
           })
         Slider({ value: this.currentTypographySettingValue(field), min: ReaderTypographyField.min(field),
           max: ReaderTypographyField.max(field), step: ReaderTypographyField.step(field) })
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .id(`novel_typography_slider_${field}`)
           .layoutWeight(1)
           .selectedColor(this.accentColor())

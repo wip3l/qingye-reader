@@ -133,8 +133,7 @@ export struct ReaderAutoScrollSpeedPanel {
           Slider({ value: this.speed, min: 6, max: 60, step: 2 })
             .height(44).selectedColor(this.accentColor).blockColor(this.accentColor)
             .trackColor(this.controlColor)
-            .sliderInteractionMode(ImmersiveMaterialRuntime.supportsHds() ?
-              SliderInteraction.SLIDE_AND_CLICK_UP : SliderInteraction.SLIDE_ONLY)
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
             .accessibilityText(this.comic ? '自动滚动速度，每分钟零点三至三屏' : '自动滚动速度，每分钟六至六十行')
             .onChange((speed: number) => this.onSpeed(speed))
           Row() {

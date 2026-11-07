@@ -158,7 +158,7 @@ struct TtsSettingsPage {
           })
           Slider({ value: this.ttsSpeed, min: 0.5, max: 2, step: 0.1 })
             .layoutWeight(1).showTips(true).selectedColor(this.accentColor())
-            .sliderInteractionMode(ImmersiveMaterialRuntime.supportsHds() ? SliderInteraction.SLIDE_AND_CLICK_UP : SliderInteraction.SLIDE_ONLY)
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
             .onChange((value: number) => { this.applySpeed(value); })
           this.speedStepButton($r('sys.symbol.plus'), '提高朗读倍速', this.ttsSpeed < 2, () => {
             this.applySpeed(this.ttsSpeed + 0.1);
