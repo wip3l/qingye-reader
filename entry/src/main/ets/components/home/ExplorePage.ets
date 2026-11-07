@@ -1,6 +1,6 @@
 import { BookSourceGroupStore } from '../../utils/BookSourceGroupStore';
 import { SharedElementMotion } from '../../utils/SharedElementMotion';
-import { router } from '@kit.ArkUI';
+import { LengthMetrics, router } from '@kit.ArkUI';
 import deviceInfo from '@ohos.deviceInfo';
 import { Book, BookSource, SearchBook, BookFieldSanitizer } from '@legado/sourceengine';
 import { AppDatabase } from '../../model/data/AppDatabase';
@@ -57,6 +57,10 @@ export struct ExplorePage {
   static readonly HEADER_CONTROL_SIZE: number = 40;
   /** 标题下方频道栏的高度。 */
   static readonly CHANNEL_BAR_HEIGHT: number = 44;
+  /** 频道栏被裁端：淡出长度、模糊过渡长度（略长于淡出，先糊后淡）与模糊半径，单位 vp。 */
+  static readonly CHANNEL_FADE_LENGTH: number = 36;
+  static readonly CHANNEL_BLUR_LENGTH: number = 52;
+  static readonly CHANNEL_BLUR_RADIUS: number = 5;
   static readonly MENU_ITEM_HEIGHT: number = 44;
   /** 分类达到这个数量才在频道栏右端显示“全部分类”按钮，少量分类横滑就能看完。 */
   static readonly CATEGORY_SHEET_MIN_COUNT: number = 6;
@@ -85,6 +89,10 @@ export struct ExplorePage {
   @State showExploreCategorySheet: boolean = false;
   /** 频道栏的实际宽度：沉浸材质底板需要具体数值。 */
   @State exploreChannelBarWidth: number = 0;
+  /** 频道列表自身宽度与两端是否还有被裁掉的频道：决定边缘模糊落在哪一端。 */
+  @State exploreChannelListWidth: number = 0;
+  @State exploreChannelClippedStart: boolean = false;
+  @State exploreChannelClippedEnd: boolean = false;
   @State showExploreSourceActionMenu: boolean = false;
   @State actionExploreSourceUrl: string = '';
   @State actionExploreSourceNative: boolean = false;
@@ -1078,43 +1086,64 @@ export struct ExplorePage {
                 .color(ThemeRuntime.hairlineColor(this.appDarkMode))
             }
 
-            List({ scroller: this.exploreChannelScroller }) {
-              ForEach(this.getActiveEntries(), (entry: ExploreEntry, index: number) => {
-                ListItem() {
-                  Column({ space: 3 }) {
-                    Text(entry.title)
-                      .fontSize(AppFontSize.BODY_LARGE)
-                      .fontWeight(this.selectedIndex === index ? FontWeight.Medium : FontWeight.Regular)
-                      .fontColor(this.selectedIndex === index ? this.accentColor() : this.secondaryTextColor())
-                      .maxLines(1)
-                    Stack() {
-                      if (this.selectedIndex === index) {
-                        Row()
-                          .width(16)
-                          .height(3)
-                          .borderRadius(1.5)
-                          .backgroundColor(this.accentColor())
-                          .geometryTransition('home_explore_channel_indicator')
+            // linearGradientBlur 直接挂在 List 上会让整条频道不显示，所以套一层 Stack 承载模糊。
+            Stack() {
+              List({ scroller: this.exploreChannelScroller }) {
+                ForEach(this.getActiveEntries(), (entry: ExploreEntry, index: number) => {
+                  ListItem() {
+                    Column({ space: 3 }) {
+                      Text(entry.title)
+                        .fontSize(AppFontSize.BODY_LARGE)
+                        .fontWeight(this.selectedIndex === index ? FontWeight.Medium : FontWeight.Regular)
+                        .fontColor(this.selectedIndex === index ? this.accentColor() : this.secondaryTextColor())
+                        .maxLines(1)
+                      Stack() {
+                        if (this.selectedIndex === index) {
+                          Row()
+                            .width(16)
+                            .height(3)
+                            .borderRadius(1.5)
+                            .backgroundColor(this.accentColor())
+                            .geometryTransition('home_explore_channel_indicator')
+                        }
                       }
+                      .width(16)
+                      .height(3)
                     }
-                    .width(16)
-                    .height(3)
+                    .height('100%')
+                    .padding({ left: 10, right: 10, top: 6 })
+                    .justifyContent(FlexAlign.Center)
+                    .accessibilityText(entry.title)
+                    .accessibilitySelected(this.selectedIndex === index)
+                    .onClick(() => this.selectExploreEntry(index))
                   }
-                  .height('100%')
-                  .padding({ left: 10, right: 10, top: 6 })
-                  .justifyContent(FlexAlign.Center)
-                  .accessibilityText(entry.title)
-                  .accessibilitySelected(this.selectedIndex === index)
-                  .onClick(() => this.selectExploreEntry(index))
+                }, (entry: ExploreEntry, index: number): string => `${index}_${entry.title}`)
+              }
+              .listDirection(Axis.Horizontal)
+              .width('100%')
+              .height('100%')
+              .padding({ left: this.showsExplorePlatformSelector() ? 2 : 6, right: 6 })
+              .scrollBar(BarState.Off)
+              .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+              // 被裁掉的一端先渐变模糊、再淡出，不再硬切；滑到头的一端恢复清晰。
+              // fadingEdge 由系统按是否到边自动开关；模糊挂在外层 Stack 上，按同样的到边状态自己算。
+              .fadingEdge(true, { fadingEdgeLength: LengthMetrics.vp(ExplorePage.CHANNEL_FADE_LENGTH) })
+              .onAreaChange((_oldValue: Area, newValue: Area) => {
+                const width = Number(newValue.width);
+                if (Number.isFinite(width) && width > 0 && Math.abs(width - this.exploreChannelListWidth) >= 1) {
+                  this.exploreChannelListWidth = width;
                 }
-              }, (entry: ExploreEntry, index: number): string => `${index}_${entry.title}`)
+                this.updateExploreChannelEdges();
+              })
+              .onScrollIndex(() => this.updateExploreChannelEdges())
+              .onDidScroll(() => this.updateExploreChannelEdges())
             }
-            .listDirection(Axis.Horizontal)
             .layoutWeight(1)
             .height('100%')
-            .padding({ left: this.showsExplorePlatformSelector() ? 2 : 6, right: 6 })
-            .scrollBar(BarState.Off)
-            .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+            .linearGradientBlur(this.exploreChannelEdgeBlurRadius(), {
+              fractionStops: this.exploreChannelEdgeBlurStops(),
+              direction: GradientDirection.Right
+            })
 
             // 固定在右端、不随频道横滑：打开全部分类面板。图标与标题行的布局切换按钮区分开。
             if (this.showsExploreCategoryButton()) {
@@ -1151,6 +1180,33 @@ export struct ExplorePage {
         this.exploreChannelBarWidth = width;
       }
     })
+  }
+
+  updateExploreChannelEdges(): void {
+    const clippedStart = this.exploreChannelScroller.currentOffset().xOffset > 1;
+    const clippedEnd = !this.exploreChannelScroller.isAtEnd();
+    if (clippedStart !== this.exploreChannelClippedStart) this.exploreChannelClippedStart = clippedStart;
+    if (clippedEnd !== this.exploreChannelClippedEnd) this.exploreChannelClippedEnd = clippedEnd;
+  }
+
+  exploreChannelEdgeBlurRadius(): number {
+    if (this.exploreChannelListWidth <= 0 || (!this.exploreChannelClippedStart && !this.exploreChannelClippedEnd)) {
+      return 0;
+    }
+    return Math.round(this.getUIContext().vp2px(ExplorePage.CHANNEL_BLUR_RADIUS));
+  }
+
+  /** linearGradientBlur 的 [模糊程度, 位置] 节点，位置须递增；两端各自按是否被裁决定糊不糊。 */
+  exploreChannelEdgeBlurStops(): FractionStop[] {
+    const width = this.exploreChannelListWidth;
+    if (width <= 0) return [[0, 0], [0, 1]];
+    const span = Math.min(0.4, ExplorePage.CHANNEL_BLUR_LENGTH / width);
+    return [
+      [this.exploreChannelClippedStart ? 1 : 0, 0],
+      [0, span],
+      [0, 1 - span],
+      [this.exploreChannelClippedEnd ? 1 : 0, 1]
+    ];
   }
 
   explorePageKeys(): string[] {
