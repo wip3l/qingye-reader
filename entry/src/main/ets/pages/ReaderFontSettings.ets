@@ -37,6 +37,7 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 import { CloudFontMenu } from '../account/CloudFontMenu';
 import { ThemeTypographyDraft } from '../utils/ThemeTypographyDraft';
+import { ReaderTitlePreviewStore } from '../utils/ReaderTitlePreviewStore';
 
 class ReaderCustomFontItem {
   familyName: string = '';
@@ -99,8 +100,11 @@ export struct ReaderFontSettingsEditor {
   @State readerTitleFontSize: number = 22;
   @State readerTitleFontWeight: number = 600;
   @State titleStyle: ReaderTitleStyleSettings = new ReaderTitleStyleSettings();
-  @State titlePreviewText: string = '第七十四章：卖鸭蛋，卖粽子喽';
-  @State titlePreviewEditing: boolean = false;
+  @State titlePreviewText: string = ReaderTitlePreviewStore.DEFAULT_TEXT;
+  // 示例编辑框展开的位置：顶部标题预览 'preview'、标题分段 'split'，空串为收起。
+  @State titlePreviewEditingAt: string = '';
+  // 读出上次的示例之前用户已经改过，就不再用读到的值覆盖。
+  private titlePreviewTouched: boolean = false;
   @State titleReadingPreview: boolean = false;
   @State titleReadingPreviewHeight: number = 720;
   @State previewLayoutSettings: ReaderSettings = new ReaderSettings();
@@ -141,7 +145,25 @@ export struct ReaderFontSettingsEditor {
     this.draftMode = !!params && params[ThemeTypographyDraft.DRAFT_PARAM] === true &&
       ThemeTypographyDraft.current() !== null;
     this.loadSettings();
+    this.loadTitlePreviewText();
     this.syncBars();
+  }
+
+  async loadTitlePreviewText(): Promise<void> {
+    try {
+      const text = await ReaderTitlePreviewStore.load(getContext(this));
+      if (!this.titlePreviewTouched) this.titlePreviewText = text;
+    } catch (e) {
+      console.warn('读取标题预览示例失败:', e);
+    }
+  }
+
+  setTitlePreviewText(text: string): void {
+    this.titlePreviewTouched = true;
+    this.titlePreviewText = text;
+    ReaderTitlePreviewStore.save(getContext(this), text).catch((e: Error) => {
+      console.warn('保存标题预览示例失败:', e);
+    });
   }
 
   aboutToDisappear(): void {
@@ -1390,6 +1412,19 @@ export struct ReaderFontSettingsEditor {
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
           .width('100%')
+        // 阅读页里的字体面板不显示顶部标题预览，分段结果旁边也能看到并更换示例。
+        Row({ space: AppSpacing.XS }) {
+          Text(`示例：${this.titlePreviewText}`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          this.titlePreviewEditButton('split')
+        }.width('100%')
+        if (this.titlePreviewEditingAt === 'split') {
+          this.titlePreviewEditor()
+        }
         this.titleSplitResult()
         this.titleSplitSlider('第二段字号', true)
         this.titleSplitSlider('标题行距', false)
@@ -1727,16 +1762,39 @@ export struct ReaderFontSettingsEditor {
     }.width('100%').height('100%')
   }
 
+  @Builder
+  titlePreviewEditButton(at: string) {
+    Button(this.titlePreviewEditingAt === at ? '完成' : '换示例')
+      .fontSize(AppFontSize.CAPTION).fontColor(this.accentColor()).backgroundColor(Color.Transparent)
+      .height(32).padding({ left: 8, right: 8 })
+      .onClick(() => { this.titlePreviewEditingAt = this.titlePreviewEditingAt === at ? '' : at; })
+  }
+
+  @Builder
+  titlePreviewEditor() {
+    TextInput({ text: this.titlePreviewText, placeholder: '输入示例标题' })
+      .fontColor(this.primaryTextColor()).fontSize(AppFontSize.BODY)
+      .backgroundColor(this.inputColor()).maxLength(160)
+      .onChange((content: string) => { this.setTitlePreviewText(content); })
+    Row({ space: AppSpacing.SM }) {
+      Button('短标题')
+        .fontSize(AppFontSize.CAPTION).fontColor(this.primaryTextColor()).backgroundColor(this.inputColor())
+        .height(30).padding({ left: 12, right: 12 })
+        .onClick(() => { this.setTitlePreviewText(ReaderTitlePreviewStore.DEFAULT_TEXT); })
+      Button('长标题')
+        .fontSize(AppFontSize.CAPTION).fontColor(this.primaryTextColor()).backgroundColor(this.inputColor())
+        .height(30).padding({ left: 12, right: 12 })
+        .onClick(() => { this.setTitlePreviewText('第494章：天下承平，一世长安，人间烟火寻常巷陌'); })
+    }.width('100%')
+  }
+
   /** 预览放在标题设置的最前面，调整下面任一项都能直接看到效果。 */
   @Builder
   titlePreviewItem() {
     Column({ space: AppSpacing.MD }) {
       Row({ space: AppSpacing.XS }) {
         Text('标题预览').fontSize(AppFontSize.BODY).fontColor(this.subTextColor()).layoutWeight(1)
-        Button(this.titlePreviewEditing ? '完成' : '换示例')
-          .fontSize(AppFontSize.CAPTION).fontColor(this.accentColor()).backgroundColor(Color.Transparent)
-          .height(32).padding({ left: 8, right: 8 })
-          .onClick(() => { this.titlePreviewEditing = !this.titlePreviewEditing; })
+        this.titlePreviewEditButton('preview')
         Button('阅读预览')
           .fontSize(AppFontSize.CAPTION).fontColor(this.accentColor()).backgroundColor(Color.Transparent)
           .height(32).padding({ left: 8, right: 8 })
@@ -1747,21 +1805,8 @@ export struct ReaderFontSettingsEditor {
       }.width('100%').padding({ top: AppSpacing.XXL, bottom: AppSpacing.XXL })
         .backgroundColor(ThemeRuntime.readerBackgroundColor(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
-      if (this.titlePreviewEditing) {
-        TextInput({ text: this.titlePreviewText, placeholder: '输入示例标题' })
-          .fontColor(this.primaryTextColor()).fontSize(AppFontSize.BODY)
-          .backgroundColor(this.inputColor()).maxLength(160)
-          .onChange((content: string) => { this.titlePreviewText = content; })
-        Row({ space: AppSpacing.SM }) {
-          Button('短标题')
-            .fontSize(AppFontSize.CAPTION).fontColor(this.primaryTextColor()).backgroundColor(this.inputColor())
-            .height(30).padding({ left: 12, right: 12 })
-            .onClick(() => { this.titlePreviewText = '第七十四章：卖鸭蛋，卖粽子喽'; })
-          Button('长标题')
-            .fontSize(AppFontSize.CAPTION).fontColor(this.primaryTextColor()).backgroundColor(this.inputColor())
-            .height(30).padding({ left: 12, right: 12 })
-            .onClick(() => { this.titlePreviewText = '第494章：天下承平，一世长安，人间烟火寻常巷陌'; })
-        }.width('100%')
+      if (this.titlePreviewEditingAt === 'preview') {
+        this.titlePreviewEditor()
       }
     }
     .width('calc(100% - 32vp)')
