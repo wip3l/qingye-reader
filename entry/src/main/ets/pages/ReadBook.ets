@@ -250,8 +250,6 @@ const READER_PAGE_CURL_SNAPSHOT_SCALE = 0.42;
 // 3D 仿真单双页共用平折绘制，每帧只画两次贴图，快照分辨率取正文清晰与截图回读开销的折中：
 // 0.75 时单页位图约 8 MB，渲染服务的离屏渲染与回读落在翻页起始帧；0.6 少三成多像素，正文仍可读。
 const READER_PAGE_3D_SNAPSHOT_SCALE = 0.6;
-// 3D 仿真按通用比例要拖得太远才翻页，拖动与快甩的提交距离都按这个比例缩短。
-const READER_PAGE_3D_COMMIT_SCALE = 0.5;
 const READER_IDLE_WORK_RETRY_MS = 120;
 // 翻页动画进行中，后台分页的每次同步排版（2–7ms）只在帧内还剩这么多空闲时才开始；一直没有就最多等 32ms。
 const READER_PAGINATION_MOTION_IDLE_MS = 5;
@@ -868,8 +866,9 @@ struct ReadBookPage {
   // 翻页提交距离下限；实际阈值按页面尺寸比例计算，避免手指只动一点点就把整页翻过去。
   private readerPageTurnCommitDistance: number = 18;
   private readerPageTurnDirectionRatio: number = 0.8;
-  private readerPageTurnCommitRatio: number = 0.2;
-  private readerPageTurnFlickRatio: number = 0.06;
+  // 所有翻页方式共用：慢拖到页面尺寸的 10%、快甩到 3% 即提交。
+  private readerPageTurnCommitRatio: number = 0.1;
+  private readerPageTurnFlickRatio: number = 0.03;
   private readerPageTurnFlickVelocity: number = 800;
   private readerBookmarkPullStartDistance: number = 48;
   private readerBookmarkPullDirectionRatio: number = 1.5;
@@ -11789,15 +11788,14 @@ struct ReadBookPage {
   // 拖动达到页面尺寸的一定比例才提交；快速甩动允许用更短的距离提交，但仍需明确位移。
   isPageTurnCommitOffset(axisOffset: number, axisVelocity: number): boolean {
     const dimension = this.isVerticalPageTurnAnimation() ? this.getPageTurnHeight() : this.getPageTurnWidth();
-    const scale = this.is3DPageTurnAnimation() ? READER_PAGE_3D_COMMIT_SCALE : 1;
     const commitDistance = Math.max(this.readerPageTurnCommitDistance,
-      dimension * this.readerPageTurnCommitRatio * scale);
+      dimension * this.readerPageTurnCommitRatio);
     const total = Math.abs(axisOffset);
     if (total >= commitDistance) {
       return true;
     }
     const flickDistance = Math.max(this.readerPageTurnCommitDistance,
-      dimension * this.readerPageTurnFlickRatio * scale);
+      dimension * this.readerPageTurnFlickRatio);
     return Math.abs(axisVelocity) >= this.readerPageTurnFlickVelocity && total >= flickDistance;
   }
 
