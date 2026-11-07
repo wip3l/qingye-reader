@@ -57,12 +57,19 @@ await Service.explore(source,{},'/list',1,null,cancel);assert.equal(received,can
 await Service.exploreMenus(source,{},null,cancel);assert.equal(received,cancel);
 
 const pageSource=fs.readFileSync(`${projectRoot}/entry/src/main/ets/components/home/ExplorePage.ets`,'utf8');
-const page=vm.runInContext(stripTypeScriptTypes(`({${['beginExploreLoad','cancelExploreLoad','aboutToDisappear']
+const page=vm.runInContext(stripTypeScriptTypes(`({${['beginExploreLoad','cancelExploreLoad','cancelExploreOverview','aboutToDisappear']
   .map(n=>method(pageSource,n)).join(',')}})`),context);
 let cancellations=0;
+let overviewCancellations=0;
+const overviewWorker={cancelPending(){overviewCancellations++;}};
 Object.assign(page,{coordinator:{cancelPending(){cancellations++;}},exploreLoadVersion:0,
-  exploreMetadataQueued:new Set(),exploreMetadataUnavailable:new Set(),isLoadingMore:true,exploreContentLoadedAt:42});
+  exploreMetadataQueued:new Set(),exploreMetadataUnavailable:new Set(),isLoadingMore:true,exploreContentLoadedAt:42,
+  overviewWorkers:[overviewWorker,overviewWorker],overviewGeneration:0,overviewQueue:[3],
+  overviewCards:new Map([['loading',{state:'loading'}],['ready',{state:'ready'}]])});
 page.beginExploreLoad();page.aboutToDisappear();
 assert.equal(cancellations,2);assert.equal(page.exploreLoadVersion,2);
+// 榜单总览的卡片用独立解析器加载：离开页面时一并取消，加载到一半的卡片退回未请求，回来再要。
+assert.equal(overviewCancellations,2);assert.equal(page.overviewGeneration,1);assert.equal(page.overviewQueue.length,0);
+assert.deepEqual([...page.overviewCards.keys()],['ready']);
 assert.equal(page.isLoading,false);assert.equal(page.isLoadingMore,false);assert.equal(page.exploreContentLoadedAt,0);
 console.log('PASS explore cancellation: active requests, dynamic menus/cache, stale errors, independent coordinator, service forwarding, page lifecycle');

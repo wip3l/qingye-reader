@@ -13,6 +13,7 @@ import { AppSpacing } from '../../theme/AppSpacing';
 import { CoverBackdropCard } from './CoverBackdropCard';
 import { SearchResultArrival } from './SearchResultArrival';
 import { PreparedResultCover, ResultCoverOptions, ResultCoverPreparation } from '../../utils/ResultCoverPreparation';
+import { ExploreRankStyle } from '../../utils/ExploreRankStyle';
 
 export type SearchBookAction = (book: SearchBook) => void;
 
@@ -124,8 +125,17 @@ export struct SearchBookResultList {
   @Prop subTextColor: string = '#999999';
   @Prop topPadding: number = 0;
   @Prop bottomPadding: number = 12;
-  /** 'list' 为卡片列表，'grid' 为封面平铺（列数随宽度自适应）。 */
-  @Prop layoutMode: string = 'list';
+  /**
+   * 'list' 为卡片列表，'grid' 为封面平铺（列数随宽度自适应）；
+   * 'rank' 为排行行（榜单时前三名上领奖台），'rankCompact' 为侧栏右侧的窄版排行行。
+   */
+  @Prop @Watch('onRankLayoutChanged') layoutMode: string = 'list';
+  /** 排行样式下是否显示名次（'rank' 时连带领奖台）；不显示时只是紧凑行。 */
+  @Prop @Watch('onRankLayoutChanged') showRankNumbers: boolean = false;
+  /** 领奖台上的前三名；不足三本或不显示名次时为空，三本都在下面的行里。 */
+  @State podiumKeys: string[] = [];
+  /** 结果身份到名次（书源返回顺序，从 1 起）。 */
+  private rankIndex: Map<string, number> = new Map<string, number>();
   /** 分类翻页的顶栏只响应真实纵向滚动，忽略新页布局、回顶等产生的空闲滚动回调。 */
   @Prop userScrollOnly: boolean = false;
   @Prop @Watch('onGridPageActiveChanged') gridPageActive: boolean = true;
@@ -208,10 +218,12 @@ export struct SearchBookResultList {
 
   onBooksChanged(): void {
     const snapshot = new Map<string, SearchBook>();
+    const ranks = new Map<string, number>();
     let actionsChanged = false;
     const now = Date.now();
     for (const book of this.books) {
       const key = this.itemKey(book);
+      if (!ranks.has(key)) ranks.set(key, ranks.size + 1);
       if (!this.resultSeenAt.has(key)) this.resultSeenAt.set(key, now);
       const previous = this.resultBooks.get(key);
       if (this.layoutMode !== 'grid' && previous && this.listItemKey(previous) !== this.listItemKey(book)) {
@@ -219,6 +231,7 @@ export struct SearchBookResultList {
       }
       snapshot.set(key, book);
     }
+    this.rankIndex = ranks;
     this.resultBooks = snapshot;
     this.preparedCovers.forEach((_cover: PreparedResultCover, key: string): void => {
       if (!snapshot.has(key)) {
@@ -255,6 +268,24 @@ export struct SearchBookResultList {
     if (this.coverMounted) this.requestResultCovers();
   }
 
+  onRankLayoutChanged(): void {
+    // 领奖台出现或撤下时，前三名要在领奖台和行之间搬家，整表重载。
+    if (this.coverMounted) this.publishReadyResults(true);
+  }
+
+  isRankLayout(): boolean {
+    return this.layoutMode === ExploreRankStyle.LAYOUT_RANK ||
+      this.layoutMode === ExploreRankStyle.LIST_MODE_RANK_COMPACT;
+  }
+
+  isCompactRank(): boolean {
+    return this.layoutMode === ExploreRankStyle.LIST_MODE_RANK_COMPACT;
+  }
+
+  usesPodium(): boolean {
+    return this.layoutMode === ExploreRankStyle.LAYOUT_RANK && this.showRankNumbers;
+  }
+
   requestResultCovers(): void {
     const options = ResultCoverPreparation.options(this.showResultCover, this.useBookshelfCoverGallery, this.appDarkMode);
     this.resultBooks.forEach((book: SearchBook, key: string): void => {
@@ -283,7 +314,10 @@ export struct SearchBookResultList {
       Array.from(this.resultBooks.keys()).filter((key: string): boolean => this.preparedCovers.has(key));
     this.visibleResultCount = readyKeys.length;
     this.preparingCoverCount = this.pendingCovers.size;
-    this.dataSource.replace(readyKeys, force);
+    // 按序显示时前三本陆续到齐，凑满三本才上领奖台，之前先作为普通行显示。
+    const podium = this.usesPodium() && readyKeys.length >= 3 ? readyKeys.slice(0, 3) : [];
+    if (podium.join('\n') !== this.podiumKeys.join('\n')) this.podiumKeys = podium;
+    this.dataSource.replace(podium.length > 0 ? readyKeys.slice(3) : readyKeys, force);
   }
 
   /** 从头取连续可显示的项，遇到还在准备且没等够的封面就停下，等它好了或超时再继续。 */
@@ -573,12 +607,19 @@ export struct SearchBookResultList {
 
   @Builder
   resultList() {
-    List({ scroller: this.scroller, space: AppSpacing.MD }) {
+    List({ scroller: this.scroller, space: this.isRankLayout() ? AppSpacing.SM : AppSpacing.MD }) {
       if (this.topPadding > 0) {
         ListItem() {
           Row()
             .height(this.topPadding)
         }
+      }
+
+      if (this.podiumKeys.length === 3) {
+        ListItem() {
+          this.rankPodium()
+        }
+        .margin({ bottom: AppSpacing.XS })
       }
 
       LazyForEach(this.dataSource, (key: string) => {
@@ -599,7 +640,8 @@ export struct SearchBookResultList {
     .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     .width('100%')
     .layoutWeight(1)
-    .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+    // 侧栏右侧左边紧挨着频道栏，只留一点缝。
+    .padding({ left: this.isCompactRank() ? AppSpacing.XS : AppSpacing.XL, right: AppSpacing.XL })
     .height('100%')
     .backgroundColor(this.pageColor)
     .scrollBar(BarState.Auto)
@@ -607,8 +649,9 @@ export struct SearchBookResultList {
       if (this.preparingCoverCount === 0) this.onReachEnd();
     })
     .onScrollIndex((_start: number, end: number) => {
-      // 顶部留白占一项，末尾的提示行和底部留白按最后一个结果算。
-      const index = end - (this.topPadding > 0 ? 1 : 0);
+      // 顶部留白、领奖台各占一项（领奖台里有三本），末尾的提示行和底部留白按最后一个结果算。
+      const podium = this.podiumKeys.length === 3;
+      const index = end - (this.topPadding > 0 ? 1 : 0) + (podium ? 2 : 0);
       this.prefetchNearEnd(Math.min(index, this.visibleResultCount - 1));
     })
     .onAppear(() => this.onGridPageActiveChanged())
@@ -663,8 +706,209 @@ export struct SearchBookResultList {
     SearchResultArrival({
       claimArrival: (): number => this.gridPageActive ? this.claimArrival(this.resultBook(key)) : -1
     }) {
-      this.searchResultCard(key)
+      if (this.isRankLayout()) {
+        this.rankRow(key)
+      } else {
+        this.searchResultCard(key)
+      }
     }
+  }
+
+  /** 排行行：名次、小封面、书名和两行信息；窄版去掉简介，只留字数或状态。 */
+  @Builder
+  rankRow(key: string) {
+    Row({ space: this.isCompactRank() ? AppSpacing.SM : 10 }) {
+      if (this.showRankNumbers) {
+        Text(`${this.rankOf(key)}`)
+          .width(this.isCompactRank() ? 22 : 28)
+          .fontSize(this.rankOf(key) > 99 ? AppFontSize.BODY : (this.isCompactRank() ? 18 : 20))
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.rankColor(this.rankOf(key)))
+          .textAlign(TextAlign.Center)
+          .maxLines(1)
+      }
+
+      if (this.showResultCover) {
+        Stack() {
+          this.resultCover(key, 5, 150, 200)
+        }
+        .sharedTransition(this.resultSharedCoverId(key), { duration: 360, curve: Curve.Friction, type: SharedTransitionEffectType.Exchange })
+        .width(this.isCompactRank() ? 44 : 46)
+        .height(this.isCompactRank() ? 59 : 62)
+        .borderRadius(5)
+        .clip(true)
+      }
+
+      Column({ space: 2 }) {
+        Row({ space: AppSpacing.XS }) {
+          Text(this.safeText(this.resultBook(key).name, '未知书名'))
+            .fontSize(this.isCompactRank() ? AppFontSize.BODY : AppFontSize.BODY_LARGE)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.primaryTextColor)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .flexShrink(1)
+          if (this.mediaBadge(this.resultBook(key))) {
+            Text(this.mediaBadge(this.resultBook(key)))
+              .fontSize(AppFontSize.MICRO)
+              .fontColor(this.accentColor())
+              .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
+              .border({ width: 1, color: this.accentColor() })
+              .borderRadius(4)
+          }
+        }
+        .width('100%')
+
+        Text(this.rankByline(this.resultBook(key)))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.secondaryTextColor)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+
+        if (this.rankDetailLine(this.resultBook(key))) {
+          Text(this.rankDetailLine(this.resultBook(key)))
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .padding({ left: this.showRankNumbers ? 6 : AppSpacing.MD, right: AppSpacing.MD, top: 10, bottom: 10 })
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor(this.cardColor)
+    .borderRadius(ThemeRuntime.cardRadius())
+    .border({ width: this.itemBorderWidth, color: this.itemBorderColor })
+    .shadow({ radius: 10, color: this.shadowColor, offsetX: 0, offsetY: 4 })
+    .onClick(() => {
+      this.onOpenBook(this.resultBook(key));
+    })
+    .onAppear(() => {
+      if (this.resultBook(key).aggregationCount <= 1 &&
+        !this.safeText(this.resultBook(key).author, '')) {
+        this.onNeedMetadata(this.resultBook(key));
+      }
+    })
+  }
+
+  /** 前三名领奖台：第一名居中稍大，二、三名在两侧；名次徽章压在封面左上角。 */
+  @Builder
+  rankPodium() {
+    Row({ space: AppSpacing.SM }) {
+      this.podiumColumn(this.podiumKeys[1], 2)
+      this.podiumColumn(this.podiumKeys[0], 1)
+      this.podiumColumn(this.podiumKeys[2], 3)
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 18, bottom: 14 })
+    .alignItems(VerticalAlign.Bottom)
+    .backgroundColor(this.cardColor)
+    .borderRadius(ThemeRuntime.cardRadius())
+    .border({ width: this.itemBorderWidth, color: this.itemBorderColor })
+    .shadow({ radius: 10, color: this.shadowColor, offsetX: 0, offsetY: 4 })
+  }
+
+  @Builder
+  podiumColumn(key: string, rank: number) {
+    Column({ space: AppSpacing.XS }) {
+      Stack({ alignContent: Alignment.TopStart }) {
+        Stack() {
+          Column() {
+            Text(this.safeText(this.resultBook(key).name, '书').substring(0, 1))
+              .fontSize(AppFontSize.HEADLINE)
+              .fontColor(this.showResultCover ? this.secondaryTextColor : '#FFFFFF')
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(this.showResultCover ? this.cardColor : this.accentColor())
+
+          if (this.showResultCover) {
+            this.resultCover(key, 6, 240, 320)
+          }
+        }
+        .width(rank === 1 ? 86 : 70)
+        .height(rank === 1 ? 115 : 93)
+        .borderRadius(6)
+        .clip(true)
+        .sharedTransition(this.resultSharedCoverId(key), { duration: 360, curve: Curve.Friction, type: SharedTransitionEffectType.Exchange })
+
+        Text(`${rank}`)
+          .width(22)
+          .height(22)
+          .borderRadius(11)
+          .textAlign(TextAlign.Center)
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FFFFFF')
+          .backgroundColor(ExploreRankStyle.medalColor(rank, this.isDarkMode()))
+          .shadow({ radius: 4, color: '#33000000', offsetX: 0, offsetY: 1 })
+          .markAnchor({ x: 6, y: 6 })
+      }
+
+      Text(this.safeText(this.resultBook(key).name, '未知书名'))
+        .fontSize(rank === 1 ? AppFontSize.BODY : AppFontSize.CAPTION)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.primaryTextColor)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .textAlign(TextAlign.Center)
+        .width('100%')
+        .margin({ top: AppSpacing.XS })
+      Text(this.safeText(this.resultBook(key).author, '作者未知'))
+        .fontSize(AppFontSize.MICRO)
+        .fontColor(this.subTextColor)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .textAlign(TextAlign.Center)
+        .width('100%')
+    }
+    .layoutWeight(rank === 1 ? 1.2 : 1)
+    .alignItems(HorizontalAlign.Center)
+    .accessibilityText(`第 ${rank} 名，${this.safeText(this.resultBook(key).name, '未知书名')}`)
+    .onClick(() => {
+      this.onOpenBook(this.resultBook(key));
+    })
+    .onAppear(() => {
+      if (!this.safeText(this.resultBook(key).author, '')) this.onNeedMetadata(this.resultBook(key));
+    })
+  }
+
+  rankOf(key: string): number {
+    return this.rankIndex.get(key) ?? 0;
+  }
+
+  rankColor(rank: number): string {
+    return ExploreRankStyle.medalColor(rank, this.isDarkMode()) || this.subTextColor;
+  }
+
+  /** 第二行：作者和第一个分类标签。 */
+  rankByline(book: SearchBook): string {
+    const parts: string[] = [this.safeText(book.author, '作者未知')];
+    const tags = BookDisplayHelper.splitTags(this.safeText(book.kind, ''), '');
+    if (tags.length > 0) parts.push(tags[0]);
+    return parts.join(' · ');
+  }
+
+  /** 第三行：宽版放简介（没有就放最新章节），窄版放字数和状态。 */
+  rankDetailLine(book: SearchBook): string {
+    if (this.isCompactRank()) {
+      const parts: string[] = [];
+      if (this.safeText(book.wordCount, '')) parts.push(this.safeText(book.wordCount, ''));
+      if (this.safeText(book.status, '')) parts.push(this.safeText(book.status, ''));
+      if (parts.length === 0 && this.safeText(book.latestChapterTitle, '')) {
+        parts.push(this.safeText(book.latestChapterTitle, ''));
+      }
+      return parts.join(' · ');
+    }
+    const intro = this.safeText(book.intro, '').replace(/\s+/g, ' ');
+    if (intro) return intro;
+    return this.safeText(book.latestChapterTitle, '') ? `最新：${this.safeText(book.latestChapterTitle, '')}` : '';
   }
 
   @Builder

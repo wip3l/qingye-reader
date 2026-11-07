@@ -35,6 +35,8 @@ import { CoverUrlNormalizer } from '../../utils/CoverUrlNormalizer';
 import { ExploreSourceOptionDataSource, ExploreMetadataTask } from '../../core/book/ShelfDataSources';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
+import { ExploreRankStyle } from '../../utils/ExploreRankStyle';
+import { BookCover } from '../book/BookCover';
 
 class ExplorePageSnapshot {
   books: SearchBook[] = [];
@@ -48,6 +50,20 @@ class ExplorePageSnapshot {
   verificationTitle: string = '';
   scrollOffset: number = 0;
   covers: ResultCoverCache = new ResultCoverCache();
+}
+
+/** 榜单总览里一张榜单卡的加载状态：idle 未请求，loading 加载中，ready 有结果，failed 没拿到。 */
+class ExploreOverviewCard {
+  books: SearchBook[] = [];
+  state: string = 'idle';
+  message: string = '';
+}
+
+/** 侧栏布局左侧的一节：书源自带分组，或者“榜单 / 分类”两节；只有一节时不显示节名。 */
+class ExploreSidebarSection {
+  key: string = '';
+  title: string = '';
+  indices: number[] = [];
 }
 
 /** 首页"发现"页签：发现源、筛选条件与结果列表；标题行的搜索按钮打开整页的搜索层（SearchPage）。 */
@@ -67,6 +83,15 @@ export struct ExplorePage {
   static readonly SEARCH_SETTINGS_MENU_WIDTH: number = 272;
   /** 分类达到这个数量才在频道栏右端显示“全部分类”按钮，少量分类横滑就能看完。 */
   static readonly CATEGORY_SHEET_MIN_COUNT: number = 6;
+  /** 侧栏布局左侧频道列的宽度。 */
+  static readonly SIDEBAR_RAIL_WIDTH: number = 96;
+  /** 榜单总览最多做几张卡片（其余进宫格）；书源没有榜单类频道时取前几个频道做预览。 */
+  static readonly OVERVIEW_MAX_BOARDS: number = 8;
+  static readonly OVERVIEW_PREVIEW_FALLBACK: number = 4;
+  /** 榜单卡片：最宽 320、占屏宽八成；高度放得下第一名（封面 80）加四行。 */
+  static readonly OVERVIEW_CARD_MAX_WIDTH: number = 320;
+  static readonly OVERVIEW_CARD_HEIGHT: number = 304;
+  static readonly OVERVIEW_ROW_HEIGHT: number = 34;
   /** 本地分组键与书源平台参数分开；空分组也有非空、稳定的身份。 */
   static readonly ENTRY_GROUP_PREFIX: string = 'explore-group:';
   @Prop statusBarHeight: number = 0;
@@ -126,8 +151,26 @@ export struct ExplorePage {
   private verificationContextToken: string = '';
   @State verificationTitle: string = '';
   @StorageLink('explorePlatform') selectedPlatform: string = '';
-  /** 结果布局：'list' 卡片列表，'grid' 封面平铺（列数随宽度自适应）；持久保存。 */
+  /**
+   * 结果布局，持久保存：'list' 卡片列表，'grid' 封面平铺，'rank' 排行，'overview' 榜单总览，
+   * 'sidebar' 侧栏。约定见 ExploreRankStyle。
+   */
   @StorageLink('exploreResultLayout') exploreResultLayout: string = 'list';
+  /** 榜单总览里点进了某个榜或分类（看的是 selectedIndex 那一项）；返回键据此先回总览。 */
+  @StorageLink('exploreOverviewDrillActive') @Watch('onOverviewDrillActiveChanged') overviewDrilled: boolean = false;
+  /** 榜单总览各卡片的结果，键与 explorePageKeys() 一致；整表替换才会刷新界面。 */
+  @State overviewCards: Map<string, ExploreOverviewCard> = new Map();
+  /** 总览卡片用自己的解析器，和当前频道的加载互不取消；两路并发，一路一个。 */
+  private overviewWorkers: ExploreCoordinator[] = [new ExploreCoordinator(), new ExploreCoordinator()];
+  private overviewWorkerBusy: boolean[] = [false, false];
+  private overviewQueue: number[] = [];
+  private overviewGeneration: number = 0;
+  /** 总览横滑到的最后一张卡；只加载已经看到的和下一张。 */
+  private overviewVisibleEnd: number = 1;
+  /** 并发写发现缓存会互相覆盖（整份读改写），总览的写入排队进行。 */
+  private overviewCacheChain: Promise<void> = Promise.resolve();
+  private exploreOverviewScroller: Scroller = new Scroller();
+  private exploreRailScroller: ListScroller = new ListScroller();
   @StorageLink('exploreSourceUrl') selectedSourceUrl: string = '';
   @StorageLink('bookSourceExploreRefreshNonce') @Watch('onExploreRefreshRequested')
   bookSourceExploreRefreshNonce: number = 0;
@@ -175,8 +218,10 @@ export struct ExplorePage {
   onActiveChanged(): void {
     if (this.isActive) {
       this.ensureLoaded();
+      if (this.showsOverviewHome()) this.requestOverviewCards(this.overviewVisibleEnd);
     } else {
       this.cancelExploreLoad();
+      this.cancelExploreOverview();
       this.resultArrivalTracker.discardPending();
       this.closeExploreFilterPanel();
       this.showExplorePlatformMenu = false;
@@ -198,6 +243,7 @@ export struct ExplorePage {
 
   aboutToDisappear(): void {
     this.cancelExploreLoad();
+    this.cancelExploreOverview();
   }
 
   cancelExploreLoad(): void {
@@ -337,7 +383,20 @@ export struct ExplorePage {
         if (this.selectedIndex > 0) {
           this.scrollExploreChannelToSelected();
         }
-        if (forceRefresh || !this.restoreExplorePage(this.explorePageKeys()[this.selectedIndex] || '')) {
+        if (this.showsOverviewHome()) {
+          // 总览首屏不加载单个频道，各榜单卡片自己按需加载。
+          if (forceRefresh) {
+            try {
+              await ExploreResultCache.clearSource(getContext(this), this.selectedSourceUrl);
+            } catch (cacheError) {
+              console.warn('清除发现内容缓存失败:', cacheError);
+            }
+            if (!this.isCurrentExploreLoad(loadVersion)) return;
+          }
+          this.status = '';
+          this.exploreContentLoadedAt = Date.now();
+          this.startExploreOverview();
+        } else if (forceRefresh || !this.restoreExplorePage(this.explorePageKeys()[this.selectedIndex] || '')) {
           await this.loadBooks(loadVersion, forceRefresh);
         }
       } else {
@@ -564,7 +623,13 @@ export struct ExplorePage {
               Number(newArea.height)) / this.exploreCollapsibleHeight());
           })
 
-          if (this.showsExploreChannelBar()) {
+          if (this.isOverviewLayout() && this.overviewDrilled) {
+            this.exploreOverviewDrillBar()
+          } else if (this.isOverviewLayout() || this.isSidebarLayout()) {
+            if (this.showsExplorePlatformSelector()) {
+              this.explorePlatformBar()
+            }
+          } else if (this.showsExploreChannelBar()) {
             this.exploreChannelBar()
           }
 
@@ -611,7 +676,19 @@ export struct ExplorePage {
         .position({ x: 0, y: 0 })
         .zIndex(3)
 
-      if (this.usesExploreCategoryPager()) {
+      if (this.showsOverviewHome() && this.getActiveEntries().length > 0) {
+        this.exploreOverviewHome()
+      } else if (this.isSidebarLayout() && this.getActiveEntries().length > 0) {
+        Row() {
+          this.exploreSidebarRail()
+          this.exploreCurrentResultContent()
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .alignItems(VerticalAlign.Top)
+      } else if (this.isOverviewLayout() && this.getActiveEntries().length > 0) {
+        this.exploreCurrentResultContent()
+      } else if (this.usesExploreCategoryPager()) {
         CategorySwipePager({
           pageKeys: this.explorePageKeys(),
           selectedIndex: this.selectedIndex,
@@ -1002,8 +1079,11 @@ export struct ExplorePage {
         Divider().color(ThemeRuntime.hairlineColor(this.appDarkMode))
       }
       if (this.exploreMoreMenuPage === 'layout') {
-        this.exploreLayoutItem('列表', 'list', $r('sys.symbol.list_bullet'))
-        this.exploreLayoutItem('平铺', 'grid', $r('sys.symbol.square_grid_2x2'))
+        this.exploreLayoutItem('列表', ExploreRankStyle.LAYOUT_LIST, $r('sys.symbol.list_bullet'))
+        this.exploreLayoutItem('平铺', ExploreRankStyle.LAYOUT_GRID, $r('sys.symbol.square_grid_2x2'))
+        this.exploreLayoutItem('排行', ExploreRankStyle.LAYOUT_RANK, $r('sys.symbol.ranking'))
+        this.exploreLayoutItem('榜单总览', ExploreRankStyle.LAYOUT_OVERVIEW, $r('sys.symbol.rectangle_on_rectangle'))
+        this.exploreLayoutItem('侧栏', ExploreRankStyle.LAYOUT_SIDEBAR, $r('sys.symbol.open_sidebar'))
       } else if (this.exploreMoreMenuPage === 'search') {
         SearchSettingsPanel({ panelWidth: ExplorePage.SEARCH_SETTINGS_MENU_WIDTH -
           ImmersiveMaterialRuntime.POPUP_MENU_PADDING * 2, inMenu: true })
@@ -1012,7 +1092,7 @@ export struct ExplorePage {
           this.showExploreMoreMenu = false;
           this.loadEntries('', true);
         })
-        this.exploreMoreMenuItem('结果布局', this.exploreResultLayout === 'grid' ? '平铺' : '列表',
+        this.exploreMoreMenuItem('结果布局', this.exploreLayoutLabel(),
           $r('sys.symbol.square_grid_2x2'), 'layout')
         this.exploreMoreMenuItem('搜索设置', '', $r('sys.symbol.gearshape'), 'search')
       }
@@ -1462,7 +1542,8 @@ export struct ExplorePage {
         claimArrival: (book: SearchBook): number => this.claimExploreResultArrival(key, book),
         onResultReady: (book: SearchBook): void => this.onExploreResultReady(key, book),
         orderedReveal: true,
-        layoutMode: this.exploreResultLayout,
+        layoutMode: this.exploreListLayoutMode(key),
+        showRankNumbers: this.exploreShowsRankNumbers(key),
         gridViewportWidth: this.exploreViewportWidth,
         shelfBookKeys: this.shelfBookKeys,
         busyBookKeys: this.addingShelfBookKeys,
@@ -1890,7 +1971,12 @@ export struct ExplorePage {
     AppStorage.setOrCreate('explorePlatform', platform);
     this.saveExploreSelection();
     if (this.entryGroupMode) {
-      if (!this.restoreExplorePage(this.explorePageKeys()[0] || '')) this.loadBooks();
+      if (this.showsOverviewHome()) {
+        this.status = '';
+        this.startExploreOverview();
+      } else if (!this.restoreExplorePage(this.explorePageKeys()[0] || '')) {
+        this.loadBooks();
+      }
       this.scrollExploreChannelToSelected();
     } else {
       this.loadEntries(platform, false, true);
@@ -1903,6 +1989,7 @@ export struct ExplorePage {
     }
     this.selectedSourceName = option.sourceName;
     this.closeExploreFilterPanel();
+    this.overviewDrilled = false;
     this.selectedSourceUrl = option.sourceUrl;
     this.entryGroupMode = false;
     this.platformNames = this.getSelectedSourcePlatforms();
@@ -2065,12 +2152,31 @@ export struct ExplorePage {
 
   /** 发现内容和搜索层的结果共用这一个布局设置（搜索层直接读 exploreResultLayout）。 */
   applyResultLayout(layout: string): void {
+    const previous = this.exploreResultLayout;
     this.exploreResultLayout = layout;
     SearchExploreSettingsStore.saveResultLayout(
       getContext(this), SearchExploreSettingsStore.KEY_EXPLORE_RESULT_LAYOUT, layout
     ).catch((e: Error) => {
       console.warn('保存结果布局失败:', e);
     });
+    if (previous === layout) return;
+    this.exploreHeaderCollapse = 0;
+    this.exploreHeaderBackdropReveal = 0;
+    if (layout === ExploreRankStyle.LAYOUT_OVERVIEW) {
+      this.overviewDrilled = false;
+      this.startExploreOverview();
+      return;
+    }
+    if (previous === ExploreRankStyle.LAYOUT_OVERVIEW) {
+      this.cancelExploreOverview();
+      this.overviewDrilled = false;
+      this.ensureCurrentExploreEntryLoaded();
+    }
+    if (layout === ExploreRankStyle.LAYOUT_SIDEBAR) {
+      this.scrollExploreRailToSelected();
+    } else {
+      this.scrollExploreChannelToSelected();
+    }
   }
 
   saveExploreSelection(): void {
@@ -2157,6 +2263,10 @@ export struct ExplorePage {
 
   shouldShowExploreStatus(): boolean {
     if (!this.status) {
+      return false;
+    }
+    // 总览首屏的加载和失败都显示在各自的卡片里。
+    if (this.showsOverviewHome() && this.getActiveEntries().length > 0) {
       return false;
     }
     if (this.verificationUrl) {
@@ -2280,6 +2390,10 @@ export struct ExplorePage {
   }
 
   scrollExploreChannelToSelected(): void {
+    if (this.isSidebarLayout()) {
+      this.scrollExploreRailToSelected();
+      return;
+    }
     setTimeout(() => {
       try {
         this.exploreChannelScroller.scrollToIndex(this.selectedIndex, true, ScrollAlign.CENTER);
@@ -2324,8 +2438,9 @@ export struct ExplorePage {
     return this.getActiveEntries().findIndex(matches);
   }
 
+  /** 左右滑动切频道只在横向频道栏的布局里有；侧栏和总览没有频道栏，也就不翻页。 */
   usesExploreCategoryPager(): boolean {
-    return this.getActiveEntries().length > 0;
+    return this.getActiveEntries().length > 0 && !this.isOverviewLayout() && !this.isSidebarLayout();
   }
 
   exploreResultTopPadding(): number {
@@ -2335,7 +2450,7 @@ export struct ExplorePage {
 
   /** 平铺分类共享顶栏状态，分类加载中或为空时保持原来的收起量。 */
   exploreHeaderCollapseValue(): number {
-    return this.usesExploreCategoryPager() || (!this.isLoading && this.books.length > 0) ?
+    return this.usesExploreCategoryPager() || this.showsOverviewHome() || (!this.isLoading && this.books.length > 0) ?
       Math.min(this.exploreHeaderCollapse, this.exploreCollapsibleHeight()) : 0;
   }
 
@@ -2363,7 +2478,7 @@ export struct ExplorePage {
   /** 列表顶部留白按标题行完整显示时的高度预留，不随收起变化，避免滚动中列表跳动。 */
   exploreTopOverlayHeight(): number {
     let height = this.statusBarHeight + this.exploreCollapsibleHeight();
-    if (this.showsExploreChannelBar()) {
+    if (this.showsExploreSecondaryBar()) {
       height += ExplorePage.CHANNEL_BAR_HEIGHT + AppSpacing.MD;
     }
     if (this.shouldShowExploreStatus()) {
@@ -2458,6 +2573,817 @@ export struct ExplorePage {
       .onClick(() => {
         if (filter.selected !== name) this.selectExploreFilterDraft(filter.title, name);
       })
+  }
+
+  // ---------- 结果布局：排行、榜单总览、侧栏 ----------
+
+  isOverviewLayout(): boolean {
+    return this.exploreResultLayout === ExploreRankStyle.LAYOUT_OVERVIEW;
+  }
+
+  isSidebarLayout(): boolean {
+    return this.exploreResultLayout === ExploreRankStyle.LAYOUT_SIDEBAR;
+  }
+
+  /** 总览布局且没有点进某个榜单：显示榜单卡片和分类宫格。 */
+  showsOverviewHome(): boolean {
+    return this.isOverviewLayout() && !this.overviewDrilled;
+  }
+
+  /** 标题下面那一行：频道栏；侧栏和总览只在书源有多个模式时显示模式栏；总览点进去后是返回栏。 */
+  showsExploreSecondaryBar(): boolean {
+    if (this.isOverviewLayout() && this.overviewDrilled) return true;
+    if (this.isOverviewLayout() || this.isSidebarLayout()) return this.showsExplorePlatformSelector();
+    return this.showsExploreChannelBar();
+  }
+
+  exploreLayoutLabel(): string {
+    switch (this.exploreResultLayout) {
+      case ExploreRankStyle.LAYOUT_GRID:
+        return '平铺';
+      case ExploreRankStyle.LAYOUT_RANK:
+        return '排行';
+      case ExploreRankStyle.LAYOUT_OVERVIEW:
+        return '榜单总览';
+      case ExploreRankStyle.LAYOUT_SIDEBAR:
+        return '侧栏';
+      default:
+        return '列表';
+    }
+  }
+
+  /** 空 key 表示当前频道。 */
+  exploreEntryTitleForKey(key: string): string {
+    const entries = this.getActiveEntries();
+    const index = key ? this.explorePageKeys().indexOf(key) : this.selectedIndex;
+    return index >= 0 && index < entries.length ? entries[index].title : '';
+  }
+
+  /**
+   * 排行和侧栏是用户自己选的按名次看，所有频道都编号（排行另有领奖台），名次就是书源返回顺序；
+   * 频道名猜不全榜单（“热门”“月票”“完本”等不带“榜”字），不再拿它决定编不编号。
+   * 总览点进去时才按频道名分：榜单用排行，分类用列表。
+   */
+  exploreShowsRankNumbers(key: string): boolean {
+    if (this.isOverviewLayout()) return ExploreRankStyle.isBoardTitle(this.exploreEntryTitleForKey(key));
+    return true;
+  }
+
+  /** 结果列表组件的样式：总览点进榜单用排行，点进分类用列表。 */
+  exploreListLayoutMode(key: string): string {
+    switch (this.exploreResultLayout) {
+      case ExploreRankStyle.LAYOUT_GRID:
+        return ExploreRankStyle.LAYOUT_GRID;
+      case ExploreRankStyle.LAYOUT_RANK:
+        return ExploreRankStyle.LAYOUT_RANK;
+      case ExploreRankStyle.LAYOUT_SIDEBAR:
+        return ExploreRankStyle.LIST_MODE_RANK_COMPACT;
+      case ExploreRankStyle.LAYOUT_OVERVIEW:
+        return ExploreRankStyle.isBoardTitle(this.exploreEntryTitleForKey(key)) ?
+          ExploreRankStyle.LAYOUT_RANK : ExploreRankStyle.LAYOUT_LIST;
+      default:
+        return ExploreRankStyle.LAYOUT_LIST;
+    }
+  }
+
+  /** 从总览切到别的布局时，当前频道可能还没加载过。 */
+  ensureCurrentExploreEntryLoaded(): void {
+    const key = this.explorePageKeys()[this.selectedIndex] || '';
+    if (!key || this.isLoading || key === this.exploreBooksPageKey) return;
+    if (!this.restoreExplorePage(key)) this.loadBooks();
+  }
+
+  /**
+   * 侧栏和总览点进去后只显示当前频道。外面套一层按页键的 ForEach：换频道时重建结果列表，
+   * 滚动位置和封面缓存跟着各自频道走，不会停在上一个频道滚到的位置。
+   */
+  @Builder
+  exploreCurrentResultContent() {
+    Column() {
+      ForEach([this.explorePageKeys()[this.selectedIndex] || ''], (pageKey: string) => {
+        this.exploreResultContent(pageKey)
+      }, (pageKey: string): string => pageKey || 'current')
+    }
+    .layoutWeight(1)
+    .height('100%')
+  }
+
+  // ---------- 侧栏 ----------
+
+  exploreSidebarSections(): ExploreSidebarSection[] {
+    const entries = this.getActiveEntries();
+    const groupTitles: string[] = [];
+    for (const entry of entries) {
+      const title = (entry.groupTitle || '').trim();
+      if (!groupTitles.includes(title)) groupTitles.push(title);
+    }
+    const sections: ExploreSidebarSection[] = [];
+    if (groupTitles.length > 1) {
+      for (const title of groupTitles) {
+        const section = new ExploreSidebarSection();
+        section.key = `group:${title}`;
+        section.title = title || '其他';
+        entries.forEach((entry: ExploreEntry, index: number): void => {
+          if ((entry.groupTitle || '').trim() === title) section.indices.push(index);
+        });
+        sections.push(section);
+      }
+      return sections;
+    }
+    const boards = new ExploreSidebarSection();
+    boards.key = 'boards';
+    boards.title = '榜单';
+    const categories = new ExploreSidebarSection();
+    categories.key = 'categories';
+    categories.title = '分类';
+    entries.forEach((entry: ExploreEntry, index: number): void => {
+      if (ExploreRankStyle.isBoardTitle(entry.title)) {
+        boards.indices.push(index);
+      } else {
+        categories.indices.push(index);
+      }
+    });
+    if (boards.indices.length > 0 && categories.indices.length > 0) return [boards, categories];
+    const all = new ExploreSidebarSection();
+    all.key = 'all';
+    all.indices = entries.map((_entry: ExploreEntry, index: number): number => index);
+    return [all];
+  }
+
+  scrollExploreRailToSelected(): void {
+    if (!this.isSidebarLayout()) return;
+    setTimeout(() => {
+      const sections = this.exploreSidebarSections();
+      for (let group = 0; group < sections.length; group++) {
+        const item = sections[group].indices.indexOf(this.selectedIndex);
+        if (item < 0) continue;
+        try {
+          // 第 0 项是顶部留白，分组从 1 起。
+          this.exploreRailScroller.scrollToItemInGroup(group + 1, item, true, ScrollAlign.CENTER);
+        } catch (error) {
+          console.warn('定位当前发现频道失败:', error);
+        }
+        return;
+      }
+    }, 0);
+  }
+
+  /** 左侧竖排频道：顶部留白跟着标题行收起，频道多时自己上下滑。 */
+  @Builder
+  exploreSidebarRail() {
+    List({ scroller: this.exploreRailScroller, space: 2 }) {
+      ListItem() {
+        Row()
+          .width('100%')
+          .height(Math.max(0, this.exploreTopOverlayHeight() - this.exploreHeaderCollapseValue()))
+      }
+
+      ForEach(this.exploreSidebarSections(), (section: ExploreSidebarSection) => {
+        ListItemGroup({ header: this.exploreRailHeader(section.title) }) {
+          ForEach(section.indices, (index: number) => {
+            ListItem() {
+              this.exploreRailItem(index)
+            }
+          }, (index: number): string => `${index}_${this.exploreEntryTitleAt(index)}`)
+        }
+      }, (section: ExploreSidebarSection): string => `${section.key}:${section.indices.join(',')}`)
+
+      ListItem() {
+        Row()
+          .width('100%')
+          .height(this.resultListBottomInset())
+      }
+    }
+    .width(ExplorePage.SIDEBAR_RAIL_WIDTH)
+    .height('100%')
+    .padding({ left: AppSpacing.MD, right: AppSpacing.XS })
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+  }
+
+  @Builder
+  exploreRailHeader(title: string) {
+    if (title) {
+      Text(title)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .padding({ left: 10, right: 4, top: AppSpacing.MD, bottom: AppSpacing.XS })
+    }
+  }
+
+  @Builder
+  exploreRailItem(index: number) {
+    Text(this.exploreEntryTitleAt(index))
+      .fontSize(AppFontSize.BODY)
+      .fontWeight(this.selectedIndex === index ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.selectedIndex === index ? this.accentColor() : this.secondaryTextColor())
+      .maxLines(2)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .width('100%')
+      .padding({ left: 10, right: 6, top: 9, bottom: 9 })
+      .borderRadius(12)
+      .backgroundColor(this.selectedIndex === index ? this.glassCardColor() : '#00000000')
+      .accessibilityText(this.exploreEntryTitleAt(index))
+      .accessibilitySelected(this.selectedIndex === index)
+      .onClick(() => this.selectExploreEntry(index))
+  }
+
+  exploreEntryTitleAt(index: number): string {
+    const entries = this.getActiveEntries();
+    return index >= 0 && index < entries.length ? entries[index].title : '';
+  }
+
+  /** 侧栏和总览没有频道栏，书源有多个模式（站点、男女频等）时用这一行切换。 */
+  @Builder
+  explorePlatformBar() {
+    Row() {
+      if (this.exploreChannelBarWidth > 0) {
+        ImmersiveMaterialSurface({
+          surfaceWidth: this.exploreChannelBarWidth,
+          surfaceHeight: ExplorePage.CHANNEL_BAR_HEIGHT,
+          darkMode: this.appDarkMode,
+          fallbackColor: this.cardColor(),
+          glowColor: this.accentGlowColor()
+        }) {
+          List() {
+            ForEach(this.platformNames, (name: string) => {
+              ListItem() {
+                Column({ space: 3 }) {
+                  Text(this.explorePlatformLabel(name))
+                    .fontSize(AppFontSize.BODY_LARGE)
+                    .fontWeight(this.selectedPlatform === name ? FontWeight.Medium : FontWeight.Regular)
+                    .fontColor(this.selectedPlatform === name ? this.accentColor() : this.secondaryTextColor())
+                    .maxLines(1)
+                  Row()
+                    .width(16)
+                    .height(3)
+                    .borderRadius(1.5)
+                    .backgroundColor(this.accentColor())
+                    .opacity(this.selectedPlatform === name ? 1 : 0)
+                }
+                .height('100%')
+                .padding({ left: 10, right: 10, top: 6 })
+                .justifyContent(FlexAlign.Center)
+                .accessibilityText(this.explorePlatformLabel(name))
+                .accessibilitySelected(this.selectedPlatform === name)
+                .onClick(() => this.switchExplorePlatform(name))
+              }
+            }, (name: string): string => name)
+          }
+          .listDirection(Axis.Horizontal)
+          .width('100%')
+          .height('100%')
+          .padding({ left: 6, right: 6 })
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        }
+      }
+    }
+    .width(`calc(100% - ${AppSpacing.XL * 2}vp)`)
+    .height(ExplorePage.CHANNEL_BAR_HEIGHT)
+    .margin({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.MD })
+    .onAreaChange((_oldValue: Area, newValue: Area) => {
+      const width = Math.floor(Number(newValue.width));
+      if (Number.isFinite(width) && width > 0 && width !== this.exploreChannelBarWidth) {
+        this.exploreChannelBarWidth = width;
+      }
+    })
+  }
+
+  // ---------- 榜单总览 ----------
+
+  /** 点进总览里的某个榜单或分类：沿用普通的频道加载，总览卡片已拿到的结果会直接复用。 */
+  openOverviewEntry(index: number): void {
+    this.exploreHeaderCollapse = 0;
+    this.exploreHeaderBackdropReveal = 0;
+    this.overviewDrilled = true;
+    this.selectExploreEntry(index);
+  }
+
+  onOverviewDrillActiveChanged(): void {
+    if (this.overviewDrilled) return;
+    this.exploreHeaderCollapse = 0;
+    this.exploreHeaderBackdropReveal = 0;
+    if (this.showsOverviewHome()) this.requestOverviewCards(this.overviewVisibleEnd);
+  }
+
+  /** 点进总览后标题下面的返回栏：整行点了都回总览。 */
+  @Builder
+  exploreOverviewDrillBar() {
+    Row() {
+      if (this.exploreChannelBarWidth > 0) {
+        ImmersiveMaterialSurface({
+          surfaceWidth: this.exploreChannelBarWidth,
+          surfaceHeight: ExplorePage.CHANNEL_BAR_HEIGHT,
+          darkMode: this.appDarkMode,
+          fallbackColor: this.cardColor(),
+          glowColor: this.accentGlowColor()
+        }) {
+          Row({ space: AppSpacing.SM }) {
+            SymbolGlyph($r('sys.symbol.chevron_left'))
+              .fontSize(18)
+              .fontColor([this.primaryTextColor()])
+            Text(this.exploreEntryTitleAt(this.selectedIndex))
+              .fontSize(AppFontSize.BODY_LARGE)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.primaryTextColor())
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .flexShrink(1)
+            Blank()
+            Text('返回总览')
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+              .flexShrink(0)
+          }
+          .width('100%')
+          .height('100%')
+          .padding({ left: 14, right: 16 })
+          .alignItems(VerticalAlign.Center)
+          .accessibilityText(`${this.exploreEntryTitleAt(this.selectedIndex)}，返回榜单总览`)
+          .onClick(() => {
+            this.overviewDrilled = false;
+          })
+        }
+      }
+    }
+    .width(`calc(100% - ${AppSpacing.XL * 2}vp)`)
+    .height(ExplorePage.CHANNEL_BAR_HEIGHT)
+    .margin({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.MD })
+    .onAreaChange((_oldValue: Area, newValue: Area) => {
+      const width = Math.floor(Number(newValue.width));
+      if (Number.isFinite(width) && width > 0 && width !== this.exploreChannelBarWidth) {
+        this.exploreChannelBarWidth = width;
+      }
+    })
+  }
+
+  /** 总览里做成卡片的频道：名字带“榜”的；一个都没有时取前几个频道做预览。 */
+  overviewBoardIndices(): number[] {
+    const entries = this.getActiveEntries();
+    const boards: number[] = [];
+    entries.forEach((entry: ExploreEntry, index: number): void => {
+      if (ExploreRankStyle.isBoardTitle(entry.title)) boards.push(index);
+    });
+    if (boards.length > 0) return boards.slice(0, ExplorePage.OVERVIEW_MAX_BOARDS);
+    const count = Math.min(ExplorePage.OVERVIEW_PREVIEW_FALLBACK, entries.length);
+    const preview: number[] = [];
+    for (let index = 0; index < count; index++) preview.push(index);
+    return preview;
+  }
+
+  overviewHasBoards(): boolean {
+    return this.getActiveEntries().some((entry: ExploreEntry): boolean => ExploreRankStyle.isBoardTitle(entry.title));
+  }
+
+  /** 其余频道（含超出卡片数量的榜单）放进下面的宫格。 */
+  overviewCategoryIndices(): number[] {
+    const boards = this.overviewBoardIndices();
+    const result: number[] = [];
+    this.getActiveEntries().forEach((_entry: ExploreEntry, index: number): void => {
+      if (!boards.includes(index)) result.push(index);
+    });
+    return result;
+  }
+
+  startExploreOverview(): void {
+    this.cancelExploreOverview();
+    this.overviewCards = new Map();
+    this.overviewVisibleEnd = 1;
+    this.requestOverviewCards(1);
+  }
+
+  /** 停掉在途的卡片加载；加载到一半的卡片退回未请求，回来时再要。 */
+  cancelExploreOverview(): void {
+    this.overviewGeneration++;
+    this.overviewQueue = [];
+    for (const worker of this.overviewWorkers) worker.cancelPending();
+    let changed = false;
+    const next = new Map<string, ExploreOverviewCard>();
+    this.overviewCards.forEach((card: ExploreOverviewCard, key: string): void => {
+      if (card.state === 'loading') {
+        changed = true;
+        return;
+      }
+      next.set(key, card);
+    });
+    if (changed) this.overviewCards = next;
+  }
+
+  /** 加载已经滑到的卡片和下一张；visibleEnd 是卡片序号（不是频道序号）。 */
+  requestOverviewCards(visibleEnd: number): void {
+    if (!this.showsOverviewHome() || !this.isActive) return;
+    this.overviewVisibleEnd = Math.max(this.overviewVisibleEnd, visibleEnd);
+    const indices = this.overviewBoardIndices();
+    const keys = this.explorePageKeys();
+    for (let position = 0; position < indices.length && position <= this.overviewVisibleEnd; position++) {
+      const index = indices[position];
+      const card = this.overviewCards.get(keys[index] || '');
+      if ((!card || card.state === 'idle') && !this.overviewQueue.includes(index)) this.overviewQueue.push(index);
+    }
+    this.drainOverviewQueue();
+  }
+
+  private drainOverviewQueue(): void {
+    for (let worker = 0; worker < this.overviewWorkers.length; worker++) {
+      if (this.overviewWorkerBusy[worker] || this.overviewQueue.length === 0) continue;
+      const index = this.overviewQueue.shift();
+      if (index === undefined) return;
+      this.overviewWorkerBusy[worker] = true;
+      this.loadOverviewCard(worker, index, this.overviewGeneration).catch((error: Object): void => {
+        console.warn('加载榜单总览失败:', error instanceof Error ? error.message : String(error));
+      }).finally((): void => {
+        this.overviewWorkerBusy[worker] = false;
+        this.drainOverviewQueue();
+      });
+    }
+  }
+
+  setOverviewCard(key: string, state: string, books: SearchBook[], message: string): void {
+    const card = new ExploreOverviewCard();
+    card.state = state;
+    card.books = books;
+    card.message = message;
+    const next = new Map<string, ExploreOverviewCard>(this.overviewCards);
+    next.set(key, card);
+    this.overviewCards = next;
+  }
+
+  /** 先用内存里的分类结果和发现缓存，没有再请求第一页；拿到的结果写进缓存，点进去时不用再等。 */
+  private async loadOverviewCard(worker: number, index: number, generation: number): Promise<void> {
+    const entries = this.getActiveEntries();
+    const entry = index < entries.length ? entries[index] : undefined;
+    const key = this.explorePageKeys()[index] || '';
+    if (!entry || !key || generation !== this.overviewGeneration) return;
+    const existing = this.overviewCards.get(key);
+    if (existing && existing.state !== 'idle') return;
+    this.setOverviewCard(key, 'loading', [], '');
+    const platform = this.selectedPlatform;
+    let books: SearchBook[] = [];
+    const snapshot = this.explorePages.get(key);
+    if (snapshot && snapshot.books.length > 0 && ExploreResultCache.isFresh(snapshot.updatedAt)) {
+      books = snapshot.books;
+    } else {
+      try {
+        const cached = await ExploreResultCache.load(getContext(this), entry.sourceUrl, platform, entry.title, entry.url);
+        if (cached) books = cached.books;
+      } catch (cacheError) {
+        console.warn('读取发现内容缓存失败，改用网络加载:', cacheError);
+      }
+    }
+    if (generation !== this.overviewGeneration) return;
+    if (books.length === 0) {
+      const coordinator = this.overviewWorkers[worker];
+      try {
+        books = await coordinator.explore(entry, 1);
+      } catch (error) {
+        if (generation === this.overviewGeneration) this.setOverviewCard(key, 'failed', [], '加载失败，点开重试');
+        return;
+      }
+      if (generation !== this.overviewGeneration) return;
+      if (books.length === 0) {
+        const needsVerify = !!(AppStorage.get<string>('pendingVerificationUrl') || '');
+        const message = needsVerify ? '需要网页验证，点开处理' : (coordinator.getNoticeMessage() || '暂无内容');
+        this.setOverviewCard(key, 'failed', [], message);
+        return;
+      }
+      this.rememberOverviewBooks(key, entry, platform, books);
+    }
+    this.setOverviewCard(key, 'ready', books, '');
+  }
+
+  private rememberOverviewBooks(key: string, entry: ExploreEntry, platform: string, books: SearchBook[]): void {
+    if (!this.explorePages.has(key)) {
+      const snapshot = new ExplorePageSnapshot();
+      snapshot.books = books;
+      snapshot.pageCount = 1;
+      snapshot.hasMore = true;
+      snapshot.updatedAt = Date.now();
+      this.explorePages.set(key, snapshot);
+    }
+    const context = getContext(this);
+    this.overviewCacheChain = this.overviewCacheChain.then((): Promise<void> =>
+      ExploreResultCache.save(context, entry.sourceUrl, platform, entry.title, entry.url, books, 1, true)
+    ).catch((cacheError: Object): void => {
+      console.warn('保存发现内容缓存失败:', cacheError);
+    });
+  }
+
+  overviewCardWidth(): number {
+    return Math.min(ExplorePage.OVERVIEW_CARD_MAX_WIDTH, Math.floor(this.exploreViewportWidth * 0.8));
+  }
+
+  overviewChipWidth(): number {
+    const gap = AppSpacing.SM;
+    return Math.max(80, Math.floor((this.exploreViewportWidth - AppSpacing.XL * 2 - gap * 2) / 3));
+  }
+
+  /** 总览首屏：横滑的榜单卡片，下面是其余频道的宫格。 */
+  @Builder
+  exploreOverviewHome() {
+    Scroll(this.exploreOverviewScroller) {
+      Column() {
+        Row()
+          .width('100%')
+          .height(this.exploreTopOverlayHeight())
+
+        this.overviewSectionHeader(this.overviewHasBoards() ? '榜单' : '频道速览',
+          this.overviewBoardIndices().length > 1 ? '左右滑动' : '')
+
+        List({ space: AppSpacing.MD }) {
+          ForEach(this.overviewBoardIndices(), (index: number, position: number) => {
+            ListItem() {
+              this.overviewBoardCard(index, position)
+            }
+          }, (index: number): string => this.explorePageKeys()[index] || `${index}`)
+        }
+        .listDirection(Axis.Horizontal)
+        .scrollSnapAlign(ScrollSnapAlign.START)
+        .contentStartOffset(AppSpacing.XL)
+        .contentEndOffset(AppSpacing.XL)
+        .width('100%')
+        .height(ExplorePage.OVERVIEW_CARD_HEIGHT + 8)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .onScrollIndex((_start: number, end: number) => {
+          this.requestOverviewCards(end + 1);
+        })
+
+        if (this.overviewCategoryIndices().length > 0) {
+          this.overviewSectionHeader(this.overviewHasBoards() ? '分类' : '更多频道', '')
+          Flex({ wrap: FlexWrap.Wrap }) {
+            ForEach(this.overviewCategoryIndices(), (index: number) => {
+              this.overviewCategoryChip(index)
+            }, (index: number): string => this.explorePageKeys()[index] || `${index}`)
+          }
+          .width('100%')
+          .padding({ left: AppSpacing.XL, right: AppSpacing.XL - AppSpacing.SM })
+        }
+
+        Row()
+          .width('100%')
+          .height(this.resultListBottomInset())
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    .onDidScroll((_xOffset: number, yOffset: number) => {
+      this.onExploreListScroll(yOffset, this.exploreOverviewScroller.currentOffset().yOffset);
+    })
+    .onScrollStop(() => {
+      this.onExploreListScrollStop(this.exploreOverviewScroller.currentOffset().yOffset);
+    })
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+  }
+
+  @Builder
+  overviewSectionHeader(title: string, hint: string) {
+    Row() {
+      Text(title)
+        .fontSize(AppFontSize.TITLE)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.primaryTextColor())
+      Blank()
+      if (hint) {
+        Text(hint)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+      }
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL + 2, right: AppSpacing.XL + 2, top: AppSpacing.SM, bottom: AppSpacing.MD })
+    .alignItems(VerticalAlign.Bottom)
+  }
+
+  /** 一张榜单卡：第一名带封面和简介，二到五名各一行；整张点开是完整榜单，点某本书直接看详情。 */
+  @Builder
+  overviewBoardCard(index: number, position: number) {
+    Column() {
+      Row({ space: AppSpacing.XS }) {
+        Text(this.exploreEntryTitleAt(index))
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.primaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        Text('完整榜单')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.accentColor())
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(12)
+          .fontColor([this.accentColor()])
+      }
+      .width('100%')
+      .height(28)
+
+      if (this.overviewCardState(index) === 'ready' && this.overviewCardBooks(index).length > 0) {
+        this.overviewTopBook(this.overviewCardBooks(index)[0])
+
+        Divider()
+          .color(ThemeRuntime.hairlineColor(this.appDarkMode))
+          .margin({ top: AppSpacing.MD, bottom: AppSpacing.XS })
+
+        ForEach(this.overviewCardBooks(index).slice(1, 5), (book: SearchBook, offset: number) => {
+          this.overviewBookRow(book, offset + 2)
+        }, (book: SearchBook, offset: number): string => `${offset}_${book.origin}_${book.bookUrl}`)
+      } else if (this.overviewCardState(index) === 'failed') {
+        Column({ space: AppSpacing.SM }) {
+          Text(this.overviewCardMessage(index))
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.subTextColor())
+            .maxLines(3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .textAlign(TextAlign.Center)
+          Text('点开查看')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.accentColor())
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        Column() {
+          LoadingProgress()
+            .width(28)
+            .height(28)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      }
+    }
+    .width(this.overviewCardWidth())
+    .height(ExplorePage.OVERVIEW_CARD_HEIGHT)
+    .padding(14)
+    .backgroundColor(this.glassCardColor())
+    .borderRadius(ThemeRuntime.cardRadius())
+    .border({ width: 1, color: this.glassBorderColor() })
+    .accessibilityText(`${this.exploreEntryTitleAt(index)}，第 ${position + 1} 个，打开完整榜单`)
+    .onClick(() => this.openOverviewEntry(index))
+  }
+
+  @Builder
+  overviewTopBook(book: SearchBook) {
+    Row({ space: AppSpacing.MD }) {
+      Stack({ alignContent: Alignment.TopStart }) {
+        Stack() {
+          Text((book.name || '书').substring(0, 1))
+            .fontSize(AppFontSize.HEADLINE)
+            .fontColor(this.searchExploreShowResultCover ? this.secondaryTextColor() : '#FFFFFF')
+          if (this.searchExploreShowResultCover) {
+            BookCover({
+              bookUrl: book.bookUrl,
+              origin: book.origin,
+              coverUrl: book.coverUrl,
+              name: book.name,
+              author: book.author,
+              useBookshelfCover: this.searchExploreUseBookshelfCoverGallery,
+              placeholderColor: this.cardColor(),
+              cornerRadius: 6,
+              decodeWidth: 180,
+              decodeHeight: 240
+            })
+          }
+        }
+        .width(60)
+        .height(80)
+        .borderRadius(6)
+        .clip(true)
+        .backgroundColor(this.searchExploreShowResultCover ? this.cardColor() : this.accentColor())
+
+        Text('1')
+          .width(20)
+          .height(20)
+          .borderRadius(10)
+          .textAlign(TextAlign.Center)
+          .fontSize(AppFontSize.MICRO)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FFFFFF')
+          .backgroundColor(ExploreRankStyle.medalColor(1, this.appDarkMode))
+          .markAnchor({ x: 5, y: 5 })
+      }
+
+      Column({ space: 2 }) {
+        Text(book.name || '未知书名')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.overviewByline(book))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.secondaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text((book.intro || book.latestChapterTitle || '').replace(/\s+/g, ' ').trim())
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .margin({ top: AppSpacing.MD })
+    .alignItems(VerticalAlign.Top)
+    .onClick(() => this.openSearchBookDetail(book))
+  }
+
+  @Builder
+  overviewBookRow(book: SearchBook, rank: number) {
+    Row({ space: AppSpacing.SM }) {
+      Text(`${rank}`)
+        .width(20)
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ExploreRankStyle.medalColor(rank, this.appDarkMode) || this.subTextColor())
+        .textAlign(TextAlign.Center)
+      Text(book.name || '未知书名')
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.primaryTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      Text(this.overviewFirstTag(book))
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .maxLines(1)
+        .constraintSize({ maxWidth: 72 })
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .height(ExplorePage.OVERVIEW_ROW_HEIGHT)
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => this.openSearchBookDetail(book))
+  }
+
+  @Builder
+  overviewCategoryChip(index: number) {
+    Column({ space: 2 }) {
+      Text(this.exploreEntryTitleAt(index))
+        .fontSize(AppFontSize.BODY)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.primaryTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      if (this.isLastVisitedExploreEntry(index)) {
+        Text('上次看过')
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(this.accentColor())
+      }
+    }
+    .width(this.overviewChipWidth())
+    .height(52)
+    .padding({ left: 12, right: 8 })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Start)
+    .backgroundColor(this.glassCardColor())
+    .borderRadius(14)
+    .border({ width: 1, color: this.glassBorderColor() })
+    .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
+    .accessibilityText(this.exploreEntryTitleAt(index))
+    .onClick(() => this.openOverviewEntry(index))
+  }
+
+  isLastVisitedExploreEntry(index: number): boolean {
+    const entries = this.getActiveEntries();
+    if (index < 0 || index >= entries.length) return false;
+    return ExploreCategoryHistoryStore.last(this.selectedSourceUrl) ===
+      ExploreCategoryHistoryStore.entryKey(entries[index].title, entries[index].url);
+  }
+
+  overviewCardState(index: number): string {
+    return this.overviewCards.get(this.explorePageKeys()[index] || '')?.state || 'idle';
+  }
+
+  overviewCardBooks(index: number): SearchBook[] {
+    return this.overviewCards.get(this.explorePageKeys()[index] || '')?.books || [];
+  }
+
+  overviewCardMessage(index: number): string {
+    return this.overviewCards.get(this.explorePageKeys()[index] || '')?.message || '暂无内容';
+  }
+
+  overviewFirstTag(book: SearchBook): string {
+    const kind = (book.kind || '').trim();
+    if (!kind) return '';
+    return kind.split(/[,，、|/\s]+/).filter((tag: string): boolean => tag.length > 0)[0] || '';
+  }
+
+  overviewByline(book: SearchBook): string {
+    const parts: string[] = [(book.author || '').trim() || '作者未知'];
+    const tag = this.overviewFirstTag(book);
+    if (tag) parts.push(tag);
+    return parts.join(' · ');
   }
 
   resultListBottomInset(): number {

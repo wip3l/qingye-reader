@@ -27,6 +27,7 @@ import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { PopupMenuAction } from '../common/PopupMenuAction';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
+import { ExploreRankStyle } from '../../utils/ExploreRankStyle';
 
 const SEARCH_CATEGORY_ALL = 'all';
 // 小说、漫画、有声、视频各自的结果上限，互不挤占。
@@ -751,7 +752,8 @@ export struct SearchPage {
         claimArrival: (book: SearchBook): number => this.claimSearchResultArrival(book),
         onResultReady: (book: SearchBook): void => this.onSearchResultReady(book),
         scroller: category ? this.searchCategoryScroller(category) : this.searchResultScroller,
-        layoutMode: this.searchResultLayout,
+        // 发现页的排行、总览、侧栏布局对搜索结果没有意义，搜索只分列表和平铺。
+        layoutMode: ExploreRankStyle.searchLayout(this.searchResultLayout),
         gridViewportWidth: this.searchViewportWidth,
         shelfBookKeys: this.shelfBookKeys,
         busyBookKeys: this.addingShelfBookKeys,

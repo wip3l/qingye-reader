@@ -229,7 +229,9 @@ for (const [file, prefix] of [['ExplorePage', 'explore'], ['SearchPage', 'search
     statusBarHeight: 24, showResult: true, isLoading: true, statusMessage: '搜索中',
     books: [], displayedSearchResults: [], showSearchCategoryBar: () => true,
     getActiveEntries: () => [{}], showsExploreChannelBar: () => true, shouldShowExploreStatus: () => false,
-    searchResultLayout: 'grid', exploreResultLayout: 'grid'
+    searchResultLayout: 'grid', exploreResultLayout: 'grid',
+    isOverviewLayout: () => false, isSidebarLayout: () => false, showsOverviewHome: () => false,
+    showsExploreSecondaryBar: () => true
   });
   const distance = isSearch ? page.searchCollapsibleHeight() : page.exploreCollapsibleHeight();
   const collapseKey = `${prefix}HeaderCollapse`;

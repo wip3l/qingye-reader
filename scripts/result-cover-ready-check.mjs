@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
 import { projectRoot } from './lib/ets-module-staging.mjs';
 const read = file => fs.readFileSync(`${projectRoot}/entry/src/main/ets/${file}`, 'utf8');
-const context = vm.createContext({ console, clearTimeout() {},
+const context = vm.createContext({ ExploreRankStyle: { LAYOUT_RANK: 'rank', LIST_MODE_RANK_COMPACT: 'rankCompact' }, console, clearTimeout() {},
   SearchBook: class {}, Book: class { coverUrl = ''; customCoverUrl = ''; }, CoverGallerySnapshot: class {},
   BookIdentity: { keyOfBook: b => `${b.origin}:${b.bookUrl}` },
   CoverUrlNormalizer: { normalize: url => url || '' },
@@ -83,11 +83,11 @@ function methods(names) {
 prepare.options = () => ({ showCover: true });
 prepare.signature = b => `${b.bookUrl}:${b.coverUrl}`;
 const list = methods(['onBooksChanged', 'resultBook', 'itemKey', 'listItemKey', 'safeText', 'requestResultCovers',
-  'publishReadyResults', 'drainCoverQueue', 'aboutToAppear', 'aboutToDisappear']);
+  'publishReadyResults', 'usesPodium', 'drainCoverQueue', 'aboutToAppear', 'aboutToDisappear']);
 let visible = [], tasks = new Map(), admitted = [];
 Object.assign(list, { books: [], resultBooks: new Map(), readyCoverUrls: new Map(), tagCache: new Map(),
   preparedCovers: new Map(), preparedSignatures: new Map(), pendingCovers: new Map(), runningCovers: new Set(),
-  activeCoverTasks: 0, coverGeneration: 0, coverMounted: true, gridPageActive: true, layoutMode: 'grid',
+  activeCoverTasks: 0, coverGeneration: 0, coverMounted: true, gridPageActive: true, layoutMode: 'grid', podiumKeys: [],
   shelfBookKeys: [], gridAlignTimer: -1, coverCache: { covers: new Map(), signatures: new Map() },
   orderedReveal: false, resultSeenAt: new Map(), revealedKeys: new Set(), revealTimer: -1,
   dataSource: { replace: keys => { visible = Array.from(keys); } },
@@ -133,11 +133,11 @@ const timers = [];
 context.setTimeout = fn => { timers.push(fn); return timers.length; };
 context.ORDERED_REVEAL_WAIT_MS = 800;
 const ordered = methods(['onBooksChanged', 'resultBook', 'itemKey', 'listItemKey', 'safeText', 'requestResultCovers',
-  'publishReadyResults', 'orderedReadyKeys', 'drainCoverQueue']);
+  'publishReadyResults', 'usesPodium', 'orderedReadyKeys', 'drainCoverQueue']);
 visible = []; tasks = new Map(); admitted = [];
 Object.assign(ordered, { books: [], resultBooks: new Map(), readyCoverUrls: new Map(), tagCache: new Map(),
   preparedCovers: new Map(), preparedSignatures: new Map(), pendingCovers: new Map(), runningCovers: new Set(),
-  activeCoverTasks: 0, coverGeneration: 0, coverMounted: true, gridPageActive: true, layoutMode: 'grid',
+  activeCoverTasks: 0, coverGeneration: 0, coverMounted: true, gridPageActive: true, layoutMode: 'grid', podiumKeys: [],
   shelfBookKeys: [], coverCache: null,
   orderedReveal: true, resultSeenAt: new Map(), revealedKeys: new Set(), revealTimer: -1,
   dataSource: { replace: keys => { visible = Array.from(keys); } },

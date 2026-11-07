@@ -1,6 +1,7 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
 import { CloudSyncChangeTracker } from '../account/CloudSyncChangeTracker';
+import { ExploreRankStyle } from './ExploreRankStyle';
 
 export class SearchExploreSettings {
   showResultCover: boolean = true;
@@ -234,8 +235,9 @@ export class SearchExploreSettingsStore {
     );
   }
 
+  /** 发现页有列表、平铺、排行、榜单总览、侧栏五种；搜索层只按列表或平铺显示。 */
   private static normalizeResultLayout(value: string): string {
-    return value === 'grid' ? 'grid' : 'list';
+    return ExploreRankStyle.normalizeLayout(value);
   }
 
   private static async getBoolean(

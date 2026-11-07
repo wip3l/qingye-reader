@@ -50,6 +50,7 @@ function makePage({ menu = entries, platforms = [], selected = '女频', filters
     beginExploreLoad() { return 1; }, isCurrentExploreLoad: () => true, finishExploreLoad() {},
     rebuildExploreSourceDisplayNames() {}, buildExploreSourceGroups: () => [], refreshExploreSourceDataSource() {},
     scrollExploreChannelToSelected() {},
+    showsOverviewHome: () => false, startExploreOverview() {},
     saveExploreSelection() { this.saves.push(this.selectedPlatform); },
     restoreExplorePage() { return false; },
     retainCurrentExplorePage() {},

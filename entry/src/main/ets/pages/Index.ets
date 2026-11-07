@@ -382,6 +382,12 @@ struct Index {
       this.homeSearchActive = false;
       return true;
     }
+    // 发现页“榜单总览”点进了某个榜单时，返回键先回到总览。
+    if (this.currentIndex === 1 && AppStorage.get<boolean>('exploreOverviewDrillActive') &&
+      AppStorage.get<string>('exploreResultLayout') === 'overview') {
+      AppStorage.setOrCreate('exploreOverviewDrillActive', false);
+      return true;
+    }
     // 书架搜索栏开着时，返回键先清空关键词并收起它。
     if (this.currentIndex === 0 && AppStorage.get<boolean>('bookshelfSearchActive')) {
       AppStorage.setOrCreate('bookshelfSearchKeyword', '');
