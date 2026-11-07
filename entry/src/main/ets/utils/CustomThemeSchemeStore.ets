@@ -15,6 +15,8 @@ export class CustomThemeScheme {
   author: string = '';
   // 从带素材的主题包安装而来时记下包 ID：同一个包再次导入时原位更新，删除方案时连素材一起清理。
   packageId: string = '';
+  // 方案说明：编辑器里填写或随主题包导入，分享导出时写进清单。
+  description: string = '';
 }
 
 export class CustomThemeSchemeStore {
@@ -79,7 +81,8 @@ export class CustomThemeSchemeStore {
           scheme.settings,
           schemes[index].revision + 1,
           schemes[index].author,
-          schemes[index].packageId
+          schemes[index].packageId,
+          schemes[index].description
         );
         replaced = true;
         break;
@@ -124,6 +127,62 @@ export class CustomThemeSchemeStore {
     return CustomThemeSchemeStore.cloneScheme(scheme);
   }
 
+  /**
+   * 新建一套方案：settings 为空时从默认外观开始（原“新建”），否则用给定的方案设置（以某个主题为基础、复制方案）。
+   * 名称与已有方案重复时加序号。超出权益额度返回 null。
+   */
+  static async addWith(
+    context: Context,
+    legacySettings: AppThemeSettings,
+    name: string,
+    settings: AppThemeSettings,
+    author: string = '',
+    packageId: string = '',
+    description: string = ''
+  ): Promise<CustomThemeScheme | null> {
+    const schemes = await CustomThemeSchemeStore.load(context, legacySettings);
+    if (schemes.length >= CustomThemeQuota.current()) {
+      return null;
+    }
+    const baseName = (name || '').trim().substring(0, 20) || '自定义主题';
+    let uniqueName = baseName;
+    for (let sequence = 2; schemes.some((item: CustomThemeScheme): boolean => item.name === uniqueName); sequence++) {
+      uniqueName = `${baseName} ${sequence}`;
+    }
+    const scheme = CustomThemeSchemeStore.createScheme(`custom_${Date.now()}_${schemes.length + 1}`, uniqueName,
+      settings, 1, author, packageId, description);
+    schemes.push(scheme);
+    await CustomThemeSchemeStore.persistSchemes(context, schemes);
+    return CustomThemeSchemeStore.cloneScheme(scheme);
+  }
+
+  /** 编辑器“方案信息”：作者与说明（名称走 rename，要查重）。 */
+  static async updateInfo(
+    context: Context,
+    legacySettings: AppThemeSettings,
+    schemeId: string,
+    author: string,
+    description: string
+  ): Promise<boolean> {
+    const schemes = await CustomThemeSchemeStore.load(context, legacySettings);
+    for (let index = 0; index < schemes.length; index++) {
+      if (schemes[index].id !== schemeId) continue;
+      if (schemes[index].author === author && schemes[index].description === description) return true;
+      schemes[index] = CustomThemeSchemeStore.createScheme(
+        schemes[index].id,
+        schemes[index].name,
+        schemes[index].settings,
+        schemes[index].revision,
+        author,
+        schemes[index].packageId,
+        description
+      );
+      await CustomThemeSchemeStore.persistSchemes(context, schemes);
+      return true;
+    }
+    return false;
+  }
+
   /** 方案绑定（或解绑）自己的素材包；由编辑器上传素材时调用。 */
   static async setPackageId(
     context: Context,
@@ -142,7 +201,8 @@ export class CustomThemeSchemeStore {
         schemes[index].settings,
         schemes[index].revision,
         schemes[index].author,
-        packageId
+        packageId,
+        schemes[index].description
       );
       changed = true;
       break;
@@ -177,7 +237,8 @@ export class CustomThemeSchemeStore {
           schemes[index].settings,
           schemes[index].revision,
           schemes[index].author,
-          schemes[index].packageId
+          schemes[index].packageId,
+          schemes[index].description
         );
         renamed = true;
         break;
@@ -235,7 +296,8 @@ export class CustomThemeSchemeStore {
     settings: AppThemeSettings,
     author: string,
     replaceSchemeId: string,
-    packageId: string = ''
+    packageId: string = '',
+    description: string = ''
   ): Promise<CustomThemeScheme | null> {
     const schemes = await CustomThemeSchemeStore.load(context, legacySettings);
     const replaceIndex = replaceSchemeId ?
@@ -254,7 +316,8 @@ export class CustomThemeSchemeStore {
       settings,
       replaceIndex >= 0 ? schemes[replaceIndex].revision + 1 : 1,
       author,
-      packageId
+      packageId,
+      description
     );
     if (replaceIndex >= 0) {
       schemes[replaceIndex] = scheme;
@@ -347,7 +410,8 @@ export class CustomThemeSchemeStore {
         incomingSettings,
         item.revision || 1,
         item.author || '',
-        item.packageId || (localScheme ? localScheme.packageId : '')
+        item.packageId || (localScheme ? localScheme.packageId : ''),
+        item.description || ''
       ));
     }
     if (schemes.length === 0) {
@@ -376,7 +440,8 @@ export class CustomThemeSchemeStore {
     settings: AppThemeSettings,
     revision: number,
     author: string = '',
-    packageId: string = ''
+    packageId: string = '',
+    description: string = ''
   ): CustomThemeScheme {
     const scheme = new CustomThemeScheme();
     scheme.id = id;
@@ -385,6 +450,7 @@ export class CustomThemeSchemeStore {
     scheme.settings = CustomThemeSchemeStore.normalizeSettings(settings);
     scheme.author = typeof author === 'string' ? author : '';
     scheme.packageId = typeof packageId === 'string' ? packageId : '';
+    scheme.description = typeof description === 'string' ? description : '';
     return scheme;
   }
 
@@ -422,7 +488,8 @@ export class CustomThemeSchemeStore {
           item.settings || new AppThemeSettings(),
           item.revision || 1,
           item.author || '',
-          item.packageId || ''
+          item.packageId || '',
+          item.description || ''
         ));
       }
       return schemes;
@@ -441,6 +508,6 @@ export class CustomThemeSchemeStore {
 
   private static cloneScheme(source: CustomThemeScheme): CustomThemeScheme {
     return CustomThemeSchemeStore.createScheme(source.id, source.name, source.settings, source.revision,
-      source.author, source.packageId);
+      source.author, source.packageId, source.description);
   }
 }

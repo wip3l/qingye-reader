@@ -13,7 +13,11 @@ export class SchemePreviewImageStore {
     options.maxSelectNumber = 1;
     const result = await new picker.PhotoViewPicker(context).select(options);
     if (!result || result.photoUris.length === 0) return '';
-    const source = result.photoUris[0];
+    return SchemePreviewImageStore.saveFrom(context, schemeId, result.photoUris[0]);
+  }
+
+  /** source 可以是相册 URI，也可以是取景后缓存目录里的文件路径。 */
+  static async saveFrom(context: Context, schemeId: string, source: string): Promise<string> {
     const dir = `${context.filesDir}/${SchemePreviewImageStore.DIR_NAME}`;
     try {
       if (!fs.accessSync(dir)) fs.mkdirSync(dir, true);
@@ -21,8 +25,11 @@ export class SchemePreviewImageStore {
     }
     const safeId = (schemeId || 'custom').replace(/[^a-zA-Z0-9_-]/g, '_');
     const path = `${dir}/${safeId}_${Date.now()}${SchemePreviewImageStore.extension(source)}`;
-    const copySource = source.startsWith('/') ? fileUri.getUriFromPath(source) : source;
-    await fs.copy(copySource, fileUri.getUriFromPath(path));
+    if (source.startsWith('/')) {
+      fs.copyFileSync(source, path);
+    } else {
+      await fs.copy(source, fileUri.getUriFromPath(path));
+    }
     return fileUri.getUriFromPath(path);
   }
 

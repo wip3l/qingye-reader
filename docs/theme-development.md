@@ -262,6 +262,12 @@ BuiltinThemeRegistry.register(theme);
 
 编辑器里上传的封面、书架边框、文件夹插画、导航图标、朗读面板插画、首页背景、气泡端饰与边框、阅读角饰或整图背景由 `utils/SchemeAssetService.ets` 收进方案自己的素材包：`theme_packs/custom-<随机>/`，与导入的主题包同一套存储（`ThemePackStore.importAsset()` 负责嗅探类型、限大小、SVG 自包含检查并按内容哈希命名），同样注册为 `pack:<packageId>`，方案的 `packageId` 指向它。上传后编辑器把对应部件来源（封面与图标两种模式一起，面板插画和首页背景按当前模式）指向这个包；包内气泡通过方案的强调覆盖 `bubbleStyle` 生效；阅读背景素材写进 `parts.light/dark.reader`，方案只把 `customLight/DarkReaderBackgroundAssetId` 指向 `pack:<id>:light/dark`，阅读来源主题与文字色不变。第一次上传时该部件原来所选的主题记为包的 `baseTheme`，没上传的那部分素材继续取自它；移除后来源退回 `baseTheme`，所有部件都移掉时整个包卸载、方案解绑。方案本身由主题包安装而来时直接写进那个包。导出时按格式 2 随包打出去（`packageId` 就是这个包的 ID，不算混搭），删除方案时由 `cleanupImportedFiles()` 一并清理。
 
+编辑器按素材槽逐个管理：封面可单张替换、删除和调整顺序（`replaceCover` / `removeCover` / `moveCover`），书架边框、文件夹、气泡边框、主题标识（`parts.logo`）各自可移除，浅深色分开的阅读背景素材、朗读面板和首页背景可以 `copyToOtherMode()` 复制到另一种模式。朗读面板三色只在这个模式已有自传插画时可改（直接改 `parts.ttsPanelLight/Dark`）；整图铺放改 `parts.light/dark.reader.imageFit`。阅读底色、正文、页眉页脚与内容明暗是方案设置里的 `customLight/DarkReader*`，换阅读来源时整组重置为来源主题的值。
+
+导航图标可以逐个上传，`parts.navigation` 在本机允许只有几张：`InstalledThemePack.hasAnyNavigation()` 为真时底栏就用包里的图标，缺的页签取 `ThemePackRecord.navFallbackIconPackId`（第一次上传时导航来源主题的内置图标包，只存在本机 `pack.json`，不进包格式）。主题包格式仍要求四个普通图标齐全，所以 `ThemePackageService.packParts()` 导出时丢掉没传齐的 `navigation`。
+
+位图素材上传前经过 `components/theme/ThemeImageCropper.ets` 取景：在解码后的工作图上按槽位比例裁剪，输出到缓存目录再交给 `importAsset()`（沙箱路径直接按路径复制）。复制方案由 `SchemeAssetService.duplicateScheme()` 完成：自有素材包用 `ThemePackStore.copyPack()` 复制成新 `custom-<随机>` 包，设置里的 `pack:<旧 ID>` 引用全部换成新 ID，启动封面、预览图和阅读排版档案（含绑定标记）各复制一份。方案的作者与说明（`CustomThemeScheme.author` / `description`）由编辑器“方案信息”写入，导出时进清单。
+
 ## 导入的主题包
 
 用户导入带素材的 `.qytheme`（格式 2，作者按 [主题包开发指南](theme-package-format.md) 制作）时，包里的部件在本机注册为一个主题，ID 为 `pack:<packageId>`；导入得到的自定义方案各部件来源都指向它，与内置主题一样参与 `ThemeComponentSourceIds` 的混搭。

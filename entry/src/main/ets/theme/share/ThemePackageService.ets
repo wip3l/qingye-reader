@@ -54,6 +54,7 @@ import {
   restrictBaseTheme,
   restrictSources,
   sanitizeAuthor,
+  sanitizeDescription,
   sanitizeThemeName,
   sniffAssetExtension,
   SourceRestriction,
@@ -302,13 +303,14 @@ export class ThemePackageService {
       if (options.includeAuthor && !manifest.author) {
         throw new Error('请填写作者名称');
       }
+      manifest.description = sanitizeDescription(scheme.description || '');
       manifest.exportedAt = Date.now();
       manifest.appVersion = ThemePackageService.appVersion();
       manifest.requires = [ThemePackageFeatures.CUSTOM_SCHEME, ThemePackageFeatures.READER_LAYOUT];
       if (bundled) {
         manifest.requires.push(ThemePackageFeatures.THEME_PARTS);
         manifest.version = bundled.version;
-        manifest.description = bundled.description;
+        if (!manifest.description) manifest.description = bundled.description;
         manifest.baseTheme = bundled.baseTheme;
         if (scheme.packageId === bundled.packageId) {
           manifest.credits = bundled.credits;
@@ -729,7 +731,7 @@ export class ThemePackageService {
       schemeSettings.themeBookCoverEnabled = false;
       schemeSettings.themeApplyLayoutEnabled = false;
       const scheme = await CustomThemeSchemeStore.addImported(context, appSettings, manifest.name, schemeSettings,
-        manifest.author, replaceSchemeId, parts ? manifest.packageId : '');
+        manifest.author, replaceSchemeId, parts ? manifest.packageId : '', manifest.description);
       if (!scheme) {
         throw new Error(replaceSchemeId ? '要替换的方案已不存在' :
           `已达到 ${CustomThemeQuota.current()} 套方案上限`);
@@ -792,7 +794,12 @@ export class ThemePackageService {
   /** 导出时把已安装主题包的素材复制进包，按格式 2 登记到清单；parts 里的引用就是包内路径。 */
   private static async packParts(bundled: InstalledThemePack, assetsDir: string,
     manifest: ThemePackageManifest): Promise<ThemePackageParts> {
-    const record = bundled.record.parts;
+    const record = JSON.parse(JSON.stringify(bundled.record.parts)) as ThemePackageParts;
+    // 编辑器里逐个上传、还没传齐四个的导航图标不符合包格式，不随包导出（导入方沿用基底主题的图标）。
+    const navigation = record.navigation;
+    if (navigation && !(navigation.bookshelf && navigation.explore && navigation.search && navigation.mine)) {
+      record.navigation = null;
+    }
     for (const relativePath of partsAssetRefs(record)) {
       const source = `${bundled.dir}/${relativePath}`;
       if (!ThemePackageService.exists(source)) {
@@ -815,7 +822,7 @@ export class ThemePackageService {
       manifest.assets.push(asset);
       fs.copyFileSync(source, `${assetsDir}/${relativePath.substring('assets/'.length)}`);
     }
-    return JSON.parse(JSON.stringify(record)) as ThemePackageParts;
+    return record;
   }
 
   /** 删除或替换方案后，清掉没有任何方案再引用的导入图片（只清本功能写入的 qytheme_ 文件）。 */

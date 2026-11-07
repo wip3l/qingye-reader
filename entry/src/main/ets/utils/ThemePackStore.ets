@@ -129,6 +129,7 @@ export class ThemePackStore {
     record.baseTheme = parsed.baseTheme || '';
     record.installedAt = parsed.installedAt || 0;
     record.credits = parsed.credits || null;
+    record.navFallbackIconPackId = parsed.navFallbackIconPackId || '';
     record.parts = ThemePackStore.normalizeParts(parsed.parts);
     return record;
   }
@@ -143,8 +144,12 @@ export class ThemePackStore {
     // mkdirSync 的递归模式对已存在的目录会报 File exists。
     if (!ThemePackStore.exists(`${dir}/assets`)) fs.mkdirSync(`${dir}/assets`, true);
     const temp = `${dir}/assets/.incoming_${Date.now()}`;
-    const copySource = sourceUri.startsWith('/') ? fileUri.getUriFromPath(sourceUri) : sourceUri;
-    await fs.copy(copySource, fileUri.getUriFromPath(temp));
+    if (sourceUri.startsWith('/')) {
+      // 应用沙箱里的文件（取景裁出来的图）：fs.copy 对沙箱路径的 URI 会报 EINVAL，直接按路径复制。
+      fs.copyFileSync(sourceUri, temp);
+    } else {
+      await fs.copy(sourceUri, fileUri.getUriFromPath(temp));
+    }
     try {
       const size = fs.statSync(temp).size;
       const extension = sniffAssetExtension(ThemePackStore.readHead(temp));
@@ -176,6 +181,25 @@ export class ThemePackStore {
       }
       throw e as Error;
     }
+  }
+
+  /** 复制方案时连素材包一起复制成新包（素材文件照搬，记录换成新 ID），两套方案以后各改各的。 */
+  static copyPack(context: Context, sourcePackageId: string, targetPackageId: string): ThemePackRecord | null {
+    const record = ThemePackStore.readRecord(context, sourcePackageId);
+    if (!record) return null;
+    const sourceDir = `${ThemePackStore.packDir(context, sourcePackageId)}/assets`;
+    const targetDir = ThemePackStore.prepareDir(context, targetPackageId);
+    for (const relativePath of partsAssetRefs(record.parts)) {
+      const name = relativePath.substring('assets/'.length);
+      if (!name || name.includes('/') || name.includes('..')) continue;
+      const source = `${sourceDir}/${name}`;
+      const target = `${targetDir}/assets/${name}`;
+      if (ThemePackStore.exists(source) && !ThemePackStore.exists(target)) fs.copyFileSync(source, target);
+    }
+    record.packageId = targetPackageId;
+    record.installedAt = Date.now();
+    ThemePackStore.install(context, record);
+    return record;
   }
 
   /** 删掉 assets/ 里没有任何部件再引用的文件。 */

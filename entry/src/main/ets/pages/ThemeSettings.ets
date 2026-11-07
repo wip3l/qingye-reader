@@ -13,6 +13,7 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { RecentReadCardUpdater } from '../utils/RecentReadCardUpdater';
 import { ThemeTrialManager } from '../utils/ThemeTrialManager';
 import { CustomThemeScheme, CustomThemeSchemeStore } from '../utils/CustomThemeSchemeStore';
+import { SchemeAssetService } from '../utils/SchemeAssetService';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
@@ -826,7 +827,7 @@ struct ThemeSettingsPage {
         }
         .themeCardList(this.cardColor())
       }
-      Text('左滑可应用或删除，长按还可设置排版、重命名或分享')
+      Text('左滑可应用或删除，长按还可复制、设置排版、重命名或分享')
         .fontSize(AppFontSize.MICRO)
         .fontColor(this.subTextColor())
         .padding({ left: AppSpacing.XXS })
@@ -2216,27 +2217,39 @@ struct ThemeSettingsPage {
       }
       .width('100%')
     } else if (this.isSelected(theme)) {
-      Row() {
-        Text(this.isTrialTheme(theme.id) ? '试用中 · 5分钟后自动恢复' : '正在使用该主题')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.activeVariant(theme).colors.accentColor)
+      Row({ space: AppSpacing.MD }) {
+        if (this.canBaseSchemeOn(theme)) {
+          this.newSchemeButton(theme)
+        }
+        Row() {
+          Text(this.isTrialTheme(theme.id) ? '试用中 · 5分钟后自动恢复' : '正在使用该主题')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.activeVariant(theme).colors.accentColor)
+        }
+        .layoutWeight(1)
+        .height(44)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(this.storeButtonRadius(theme))
+        .backgroundColor(this.activeVariant(theme).colors.inputColor)
       }
       .width('100%')
-      .height(44)
-      .justifyContent(FlexAlign.Center)
-      .borderRadius(this.storeButtonRadius(theme))
-      .backgroundColor(this.activeVariant(theme).colors.inputColor)
     } else if (BuiltinThemeRegistry.isFree(theme.id) || AccountSessionStore.hasValidEntitlement(theme.id)) {
-      Button('应用主题', { type: ButtonType.Normal })
-        .borderRadius(this.storeButtonRadius(theme))
-        .width('100%')
-        .height(44)
-        .fontSize(AppFontSize.BODY)
-        .fontColor(ThemeRuntime.onAccentColor(this.activeVariant(theme).colors.buttonColor))
-        .backgroundColor(this.activeVariant(theme).colors.buttonColor)
-        .onClick(() => {
-          this.selectTheme(theme.id);
-        })
+      Row({ space: AppSpacing.MD }) {
+        if (this.canBaseSchemeOn(theme)) {
+          this.newSchemeButton(theme)
+        }
+        Button('应用主题', { type: ButtonType.Normal })
+          .borderRadius(this.storeButtonRadius(theme))
+          .layoutWeight(1)
+          .height(44)
+          .fontSize(AppFontSize.BODY)
+          .fontColor(ThemeRuntime.onAccentColor(this.activeVariant(theme).colors.buttonColor))
+          .backgroundColor(this.activeVariant(theme).colors.buttonColor)
+          .onClick(() => {
+            this.selectTheme(theme.id);
+          })
+      }
+      .width('100%')
     } else {
       Row({ space: AppSpacing.MD }) {
         if (!SuperExclusiveThemes.has(theme.id)) {
@@ -2245,6 +2258,72 @@ struct ThemeSettingsPage {
         this.storeAcquireButton(theme)
       }
       .width('100%')
+    }
+  }
+
+  @Builder
+  newSchemeButton(theme: ThemePack) {
+    Button(this.addingCustomScheme ? '新建中' : '以此新建方案', { type: ButtonType.Normal })
+      .borderRadius(this.storeButtonRadius(theme))
+      .height(44)
+      .fontSize(AppFontSize.BODY)
+      .fontColor(this.activeVariant(theme).colors.accentColor)
+      .backgroundColor(this.activeVariant(theme).colors.inputColor)
+      .layoutWeight(1)
+      .enabled(!this.addingCustomScheme)
+      .onClick(() => this.createSchemeFromTheme(theme))
+  }
+
+  /** 自己能用的内置主题才能当新方案的底子（试用中的不算）；主题包不在主题库里。 */
+  canBaseSchemeOn(theme: ThemePack): boolean {
+    if (theme.id === ThemeIds.CUSTOM || this.isTrialTheme(theme.id) || ThemePackRegistry.isPackId(theme.id)) return false;
+    if (SuperExclusiveThemes.has(theme.id)) return AccountSessionStore.hasOwnedEntitlement(theme.id);
+    return BuiltinThemeRegistry.isFree(theme.id) || AccountSessionStore.hasValidEntitlement(theme.id);
+  }
+
+  /** 以某个内置主题为底子新建方案：各部件来源都指向它，直接进编辑器。 */
+  async createSchemeFromTheme(theme: ThemePack): Promise<void> {
+    if (this.addingCustomScheme) return;
+    this.addingCustomScheme = true;
+    try {
+      const appSettings = await AppThemeSettingsStore.load(getContext(this));
+      const settings = AppThemeSettingsStore.activateTheme(ThemeIds.CUSTOM,
+        AppThemeSettingsStore.createForTheme(theme.id));
+      const added = await CustomThemeSchemeStore.addWith(getContext(this), appSettings, `${theme.name} 改`, settings);
+      if (!added) {
+        this.refreshCustomSchemeLimit();
+        HdsFeedback.showToast(`当前权益最多可创建 ${this.customSchemeLimit} 套自定义主题，已有方案保留`);
+        return;
+      }
+      await this.refreshCustomSchemes();
+      HdsFeedback.showToast(`已新建「${added.name}」`);
+      router.pushUrl({ url: 'pages/ThemeColorSettings', params: { schemeId: added.id } });
+    } catch (e) {
+      console.error('以主题新建方案失败:', e);
+      HdsFeedback.showToast('新建方案失败，请稍后重试');
+    } finally {
+      this.addingCustomScheme = false;
+    }
+  }
+
+  /** 复制方案：设置、自传素材、本机图片和阅读排版各复制一份，之后两套互不影响。 */
+  async duplicateCustomScheme(schemeId: string): Promise<void> {
+    if (this.addingCustomScheme) return;
+    this.addingCustomScheme = true;
+    try {
+      const added = await SchemeAssetService.duplicateScheme(getContext(this), schemeId);
+      if (!added) {
+        this.refreshCustomSchemeLimit();
+        HdsFeedback.showToast(`当前权益最多可创建 ${this.customSchemeLimit} 套自定义主题，已有方案保留`);
+        return;
+      }
+      await this.refreshCustomSchemes();
+      HdsFeedback.showToast(`已复制为「${added.name}」`);
+    } catch (e) {
+      console.error('复制自定义主题方案失败:', e);
+      HdsFeedback.showToast((e as Error).message || '复制方案失败，请稍后重试');
+    } finally {
+      this.addingCustomScheme = false;
     }
   }
 
@@ -2652,6 +2731,11 @@ struct ThemeSettingsPage {
           url: 'pages/ThemeTypographySettings',
           params: { schemeId: schemeId }
         });
+      })
+      this.contextActionItem($r('sys.symbol.plus_square_on_square'), '复制方案', this.primaryTextColor(), () => {
+        const schemeId = this.actionCustomSchemeId;
+        this.closeCustomThemeActions();
+        this.duplicateCustomScheme(schemeId);
       })
       this.contextActionItem($r('sys.symbol.square_and_pencil'), '重命名', this.primaryTextColor(), () => {
         const scheme = this.actionCustomScheme();

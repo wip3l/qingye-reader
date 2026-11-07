@@ -20,6 +20,8 @@ export class ThemePackRecord {
   installedAt: number = 0;
   credits: ThemePackageCredits | null = null;
   parts: ThemePackageParts = new ThemePackageParts();
+  // 只在本机：编辑器逐个上传导航图标时，没传的页签用这套内置图标（第一次上传时导航来源主题的图标）。
+  navFallbackIconPackId: string = '';
 }
 
 export class InstalledThemePackReader {
@@ -70,6 +72,8 @@ export class InstalledThemePack {
   navSearchSelected: string = '';
   navMineSelected: string = '';
   navHideLabels: boolean = false;
+  // 编辑器逐个上传导航图标时可能只有几张：缺的页签用基底主题的这套图标。
+  navFallbackIconPackId: string = '';
   covers: string[] = [];
   shelfFrame: string = '';
   shelfFolder: string = '';
@@ -84,8 +88,13 @@ export class InstalledThemePack {
   appFont: string = '';
   record: ThemePackRecord = new ThemePackRecord();
 
+  /** 四个普通图标都齐：主题包格式要求的完整导航，只有这样才随分享导出。 */
   hasNavigation(): boolean {
     return !!this.navBookshelf && !!this.navExplore && !!this.navSearch && !!this.navMine;
+  }
+
+  hasAnyNavigation(): boolean {
+    return !!this.navBookshelf || !!this.navExplore || !!this.navSearch || !!this.navMine;
   }
 
   hasBubble(): boolean {
@@ -218,7 +227,8 @@ export class ThemePackRegistry {
       installed.navSearchSelected = uri(parts.navigation.searchSelected || '');
       installed.navMineSelected = uri(parts.navigation.mineSelected || '');
       installed.navHideLabels = parts.navigation.labels === 'hidden';
-      if (installed.hasNavigation()) pack.navigation.iconPackId = themeId;
+      installed.navFallbackIconPackId = record.navFallbackIconPackId || pack.navigation.iconPackId;
+      if (installed.hasAnyNavigation()) pack.navigation.iconPackId = themeId;
     }
     if (parts.book) {
       for (const cover of parts.book.covers) {

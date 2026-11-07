@@ -1,10 +1,13 @@
 import { Context } from '@kit.AbilityKit';
+import fs from '@ohos.file.fs';
+import fileUri from '@ohos.file.fileuri';
 import picker from '@ohos.file.picker';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ThemePackRegistry, ThemePackRecord } from '../theme/ThemePackRegistry';
 import { ThemeIds } from '../theme/ThemeModels';
 import {
   isPackThemeId,
+  NAVIGATION_ICON_KEYS,
   packThemeId,
   ThemePackageAssetKinds,
   ThemePackageBook,
@@ -14,11 +17,13 @@ import {
   ThemePackageTtsPanel,
   ThemePackageVariantParts
 } from '../theme/share/ThemePackageFormat';
-import { AppThemeSettingsStore } from './AppThemeSettingsStore';
+import { AppThemeSettings, AppThemeSettingsStore } from './AppThemeSettingsStore';
 import { ReaderCustomFontData, ReaderCustomFontItem } from '../core/reader/ReaderSettingsModels';
 import { ReaderFontHelper } from './ReaderFontHelper';
 import { CustomThemeScheme, CustomThemeSchemeStore } from './CustomThemeSchemeStore';
 import { ThemePackStore } from './ThemePackStore';
+import { CustomThemeQuota } from '../account/CustomThemeQuota';
+import { ReaderSettingsStore } from './ReaderSettingsStore';
 
 /** 字体库里的一款字体，供编辑器的界面字体下拉使用。 */
 export class SchemeFontOption {
@@ -48,6 +53,15 @@ export class SchemeAssetService {
     options.maxSelectNumber = max;
     const result = await new picker.PhotoViewPicker(context).select(options);
     return result && result.photoUris ? result.photoUris.slice(0, max) : [];
+  }
+
+  /** 导航图标与主题标识：SVG 跟主题色着色，PNG / WebP 保持原色。 */
+  static async pickIconFiles(context: Context, max: number): Promise<string[]> {
+    const options = new picker.DocumentSelectOptions();
+    options.maxSelectNumber = max;
+    options.fileSuffixFilters = ['图标|.svg,.png,.webp'];
+    const result = await new picker.DocumentViewPicker(context).select(options);
+    return result ? result.slice(0, max) : [];
   }
 
   static async pickSvgFiles(context: Context, max: number): Promise<string[]> {
@@ -186,15 +200,19 @@ export class SchemeAssetService {
   }
 
   /**
-   * 四个导航图标：按文件名里的 bookshelf / explore / search / mine 对号入座，认不出的按选择顺序补位。
+   * 一次选多个导航图标：按文件名里的 bookshelf / explore / search / mine 对号入座，认不出的按选择顺序补进
+   * 还空着的页签。已有的选中态和“只显示图标”保留。
    */
   static async setNavigation(context: Context, schemeId: string, uris: string[], baseTheme: string): Promise<SchemeAssetResult> {
-    if (uris.length !== 4) {
-      throw new Error('导航图标需要一次选择 4 个 SVG');
+    if (uris.length === 0 || uris.length > 4) {
+      throw new Error('导航图标一次最多选 4 个');
     }
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      if (!record.parts.navigation) SchemeAssetService.rememberNavigationFallback(record, baseTheme);
+      const navigation = record.parts.navigation || new ThemePackageNavigation();
+      const tabs: string[] = ['bookshelf', 'explore', 'search', 'mine'];
       const slots: string[] = ['', '', '', ''];
-      const keywords: string[][] = [['bookshelf', 'shelf', 'book'], ['explore', 'discover', 'find'],
+      const keywords: string[][] = [['bookshelf', 'shelf', 'book'], ['explore', 'discover'],
         ['search', 'find'], ['mine', 'me', 'user', 'profile']];
       const leftover: string[] = [];
       for (const uri of uris) {
@@ -212,14 +230,19 @@ export class SchemeAssetService {
         }
         if (!placed) leftover.push(uri);
       }
-      for (let slot = 0; slot < 4; slot++) {
-        if (!slots[slot] && leftover.length > 0) slots[slot] = leftover.shift() || '';
+      const fields = navigation as Object as Record<string, string>;
+      // 认不出名字的先补没有图标的页签，再按顺序覆盖。
+      for (let slot = 0; slot < 4 && leftover.length > 0; slot++) {
+        if (!slots[slot] && !fields[tabs[slot]]) slots[slot] = leftover.shift() || '';
       }
-      const navigation = new ThemePackageNavigation();
-      navigation.bookshelf = await ThemePackStore.importAsset(context, record.packageId, slots[0], SchemeAssetService.VECTOR, '书架图标');
-      navigation.explore = await ThemePackStore.importAsset(context, record.packageId, slots[1], SchemeAssetService.VECTOR, '发现图标');
-      navigation.search = await ThemePackStore.importAsset(context, record.packageId, slots[2], SchemeAssetService.VECTOR, '搜索图标');
-      navigation.mine = await ThemePackStore.importAsset(context, record.packageId, slots[3], SchemeAssetService.VECTOR, '我的图标');
+      for (let slot = 0; slot < 4 && leftover.length > 0; slot++) {
+        if (!slots[slot]) slots[slot] = leftover.shift() || '';
+      }
+      for (let slot = 0; slot < 4; slot++) {
+        if (!slots[slot]) continue;
+        fields[tabs[slot]] = await ThemePackStore.importAsset(context, record.packageId, slots[slot],
+          SchemeAssetService.ARTWORK, SchemeAssetService.navigationLabel(tabs[slot]));
+      }
       record.parts.navigation = navigation;
     });
   }
@@ -292,6 +315,256 @@ export class SchemeAssetService {
     });
   }
 
+  // ---- 逐个管理的素材 ----
+
+  /** 替换第 index 张封面。 */
+  static async replaceCover(context: Context, schemeId: string, index: number, uri: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const book = record.parts.book;
+      if (!book || index < 0 || index >= book.covers.length) throw new Error('这张封面已不存在');
+      const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '封面');
+      if (book.covers.includes(path)) throw new Error('这张图已经在封面里了');
+      book.covers[index] = path;
+    });
+  }
+
+  /** 删掉第 index 张封面；封面、边框、文件夹都没了时整节清掉。 */
+  static async removeCover(context: Context, schemeId: string, index: number): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const book = record.parts.book;
+      if (!book || index < 0 || index >= book.covers.length) return;
+      book.covers.splice(index, 1);
+      SchemeAssetService.tidyBook(record);
+    });
+  }
+
+  /** 调整轮播顺序：把 from 位置的封面挪到 to。 */
+  static async moveCover(context: Context, schemeId: string, from: number, to: number): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const book = record.parts.book;
+      if (!book || from === to || from < 0 || to < 0 || from >= book.covers.length || to >= book.covers.length) return;
+      const moved = book.covers.splice(from, 1)[0];
+      book.covers.splice(to, 0, moved);
+    });
+  }
+
+  static async clearShelfFrame(context: Context, schemeId: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      if (record.parts.book) record.parts.book.shelfFrame = '';
+      SchemeAssetService.tidyBook(record);
+    });
+  }
+
+  static async clearShelfFolder(context: Context, schemeId: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      if (record.parts.book) record.parts.book.shelfFolder = '';
+      SchemeAssetService.tidyBook(record);
+    });
+  }
+
+  private static tidyBook(record: ThemePackRecord): void {
+    const book = record.parts.book;
+    if (book && book.covers.length === 0 && !book.shelfFrame && !book.shelfFolder) record.parts.book = null;
+  }
+
+  /**
+   * 单个导航图标（key 是 bookshelf / exploreSelected 这类字段名）。四个普通图标不必一次传齐：
+   * 没传的页签显示基底主题的图标，传齐四个之前分享导出时不带导航图标。
+   */
+  static async setNavigationIcon(context: Context, schemeId: string, key: string, uri: string,
+    baseTheme: string): Promise<SchemeAssetResult> {
+    if (!NAVIGATION_ICON_KEYS.includes(key)) throw new Error('未知的导航图标');
+    return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      if (!record.parts.navigation) SchemeAssetService.rememberNavigationFallback(record, baseTheme);
+      const navigation = record.parts.navigation || new ThemePackageNavigation();
+      const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK,
+        SchemeAssetService.navigationLabel(key));
+      (navigation as Object as Record<string, string>)[key] = path;
+      record.parts.navigation = navigation;
+    });
+  }
+
+  /** 移除单个导航图标；普通图标一个都不剩时连选中态和“只显示图标”一起清掉。 */
+  static async clearNavigationIcon(context: Context, schemeId: string, key: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const navigation = record.parts.navigation;
+      if (!navigation || !NAVIGATION_ICON_KEYS.includes(key)) return;
+      (navigation as Object as Record<string, string>)[key] = '';
+      if (!navigation.bookshelf && !navigation.explore && !navigation.search && !navigation.mine) {
+        record.parts.navigation = null;
+      }
+    });
+  }
+
+  static async setNavigationLabelsHidden(context: Context, schemeId: string, hidden: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      if (!record.parts.navigation) throw new Error('请先上传导航图标');
+      record.parts.navigation.labels = hidden ? 'hidden' : '';
+    });
+  }
+
+  /** 第一次上传导航图标时记下当时导航来源的内置图标，没传齐的页签继续显示它们。 */
+  private static rememberNavigationFallback(record: ThemePackRecord, sourceThemeId: string): void {
+    record.navFallbackIconPackId = sourceThemeId && !isPackThemeId(sourceThemeId) ?
+      BuiltinThemeRegistry.findById(sourceThemeId).navigation.iconPackId : '';
+  }
+
+  static navigationLabel(key: string): string {
+    const tab = key.replace('Selected', '');
+    const name = tab === 'explore' ? '发现' : (tab === 'search' ? '搜索' : (tab === 'mine' ? '我的' : '书架'));
+    return `${name}${key.endsWith('Selected') ? '选中' : ''}图标`;
+  }
+
+  /** 移除右下角饰：恢复成左上角那张旋转 180°；移除左上角饰或整图：这个模式的背景素材全部清掉。 */
+  static async clearReaderSlot(context: Context, schemeId: string, darkMode: boolean,
+    slot: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const variant = darkMode ? record.parts.dark : record.parts.light;
+      if (!variant) return;
+      if (slot === 'trailing' && variant.reader.leading) {
+        variant.reader.trailing = variant.reader.leading;
+        return;
+      }
+      SchemeAssetService.storeVariant(record, darkMode, null);
+    });
+  }
+
+  static async setReaderImageFit(context: Context, schemeId: string, darkMode: boolean,
+    fit: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const variant = darkMode ? record.parts.dark : record.parts.light;
+      if (!variant || variant.reader.backgroundMode !== 'image') throw new Error('请先上传整图背景');
+      variant.reader.imageFit = fit === 'contain' || fit === 'fill' ? fit : 'cover';
+    });
+  }
+
+  /** 朗读面板三种颜色；空串表示不改那一项。只有已经上传了这个模式的插画时才能调。 */
+  static async setTtsColors(context: Context, schemeId: string, darkMode: boolean, skyColor: string,
+    surfaceColor: string, glowColor: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const panel = darkMode ? record.parts.ttsPanelDark : record.parts.ttsPanelLight;
+      if (!panel) throw new Error('请先上传面板插画');
+      if (skyColor) panel.skyColor = skyColor;
+      if (surfaceColor) panel.surfaceColor = surfaceColor;
+      if (glowColor) panel.glowColor = glowColor;
+    });
+  }
+
+  static async clearTtsMode(context: Context, schemeId: string, darkMode: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      if (darkMode) record.parts.ttsPanelDark = null;
+      else record.parts.ttsPanelLight = null;
+    });
+  }
+
+  static async clearBubbleFrame(context: Context, schemeId: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      if (record.parts.bubble) record.parts.bubble.frame = '';
+    });
+  }
+
+  /** 主题标识：主题卡片角标和详情页名字旁的小图。 */
+  static async setLogo(context: Context, schemeId: string, uri: string, baseTheme: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      record.parts.logo = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK,
+        '主题标识');
+    });
+  }
+
+  static async clearLogo(context: Context, schemeId: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      record.parts.logo = '';
+    });
+  }
+
+  /**
+   * “另一种模式也用这张”：把当前模式的阅读背景素材、朗读面板或首页背景复制到另一种模式。
+   * kind：reader / ttsPanel / homeBackdrop。
+   */
+  static async copyToOtherMode(context: Context, schemeId: string, kind: string,
+    fromDark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const parts = record.parts;
+      if (kind === 'reader') {
+        const source = fromDark ? parts.dark : parts.light;
+        if (!source) throw new Error('这个模式还没有阅读背景素材');
+        const copy = JSON.parse(JSON.stringify(source)) as ThemePackageVariantParts;
+        if (fromDark) parts.light = copy;
+        else parts.dark = copy;
+      } else if (kind === 'ttsPanel') {
+        const source = fromDark ? parts.ttsPanelDark : parts.ttsPanelLight;
+        if (!source) throw new Error('这个模式还没有面板插画');
+        const copy = JSON.parse(JSON.stringify(source)) as ThemePackageTtsPanel;
+        if (fromDark) parts.ttsPanelLight = copy;
+        else parts.ttsPanelDark = copy;
+      } else {
+        const source = fromDark ? parts.homeBackdropDark : parts.homeBackdropLight;
+        if (!source) throw new Error('这个模式还没有首页背景');
+        if (fromDark) parts.homeBackdropLight = source;
+        else parts.homeBackdropDark = source;
+      }
+    });
+  }
+
+  /**
+   * 复制方案：设置照搬；方案有自己的素材包时复制成新包，设置里指向旧包的来源一并改过去；
+   * 本机的启动封面与预览图复制一份；阅读排版档案（含绑定标记）也复制。超出额度返回 null。
+   */
+  static async duplicateScheme(context: Context, schemeId: string): Promise<CustomThemeScheme | null> {
+    const appSettings = await AppThemeSettingsStore.load(context);
+    const schemes = await CustomThemeSchemeStore.load(context, appSettings);
+    const scheme = CustomThemeSchemeStore.find(schemes, schemeId);
+    if (!scheme) throw new Error('方案不存在');
+    if (schemes.length >= CustomThemeQuota.current()) return null;
+    let settings = AppThemeSettingsStore.cloneSettings(scheme.settings);
+    let packageId = '';
+    const ownPackageId = SchemeAssetService.packageIdOf(scheme);
+    if (ownPackageId) {
+      packageId = `custom-${SchemeAssetService.randomHex(8)}`;
+      if (!ThemePackStore.copyPack(context, ownPackageId, packageId)) throw new Error('复制方案素材失败');
+      const pattern = new RegExp(`pack:${ownPackageId.replace(/[.\-]/g, '\\$&')}(?=[":])`, 'g');
+      settings = AppThemeSettingsStore.cloneSettings(
+        JSON.parse(JSON.stringify(settings).replace(pattern, `pack:${packageId}`)) as AppThemeSettings);
+    }
+    settings.customLightStartupImagePath = SchemeAssetService.copyLocalImage(context, settings.customLightStartupImagePath);
+    settings.customDarkStartupImagePath = settings.customDarkStartupImagePath === scheme.settings.customLightStartupImagePath ?
+      settings.customLightStartupImagePath : SchemeAssetService.copyLocalImage(context, settings.customDarkStartupImagePath);
+    settings.customPreviewImagePath = SchemeAssetService.copyLocalImage(context, settings.customPreviewImagePath);
+    const added = await CustomThemeSchemeStore.addWith(context, appSettings, `${scheme.name} 副本`, settings,
+      scheme.author, packageId, scheme.description);
+    if (!added) {
+      if (packageId) ThemePackStore.uninstall(context, packageId);
+      return null;
+    }
+    try {
+      const fromProfile = ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, scheme.id);
+      const toProfile = ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, added.id);
+      await ReaderSettingsStore.writeProfile(context, toProfile, await ReaderSettingsStore.loadProfile(context, fromProfile));
+      if (await ReaderSettingsStore.isTypographyBound(context, fromProfile)) {
+        await ReaderSettingsStore.markTypographyBound(context, toProfile);
+      }
+    } catch (e) {
+      console.warn('复制方案排版失败:', (e as Error).message);
+    }
+    return added;
+  }
+
+  /** 方案引用的本机图片（启动封面、预览图）复制一份，复制出的方案删改时互不影响。 */
+  private static copyLocalImage(context: Context, uri: string): string {
+    if (!uri || !uri.startsWith('file://')) return uri;
+    try {
+      const path = new fileUri.FileUri(uri).path;
+      if (!path.startsWith(`${context.filesDir}/`) || !fs.accessSync(path)) return '';
+      const dot = path.lastIndexOf('.');
+      const target = `${dot > path.lastIndexOf('/') ? path.substring(0, dot) : path}_copy${Date.now()}` +
+        `${dot > path.lastIndexOf('/') ? path.substring(dot) : ''}`;
+      fs.copyFileSync(path, target);
+      return fileUri.getUriFromPath(target);
+    } catch (_) {
+      return '';
+    }
+  }
+
   /**
    * 取（或建）方案的素材包，改 parts，清掉不再引用的文件，重新注册。
    * 改完没有任何部件时整个卸掉并解绑，方案回到纯组合状态。
@@ -350,7 +623,7 @@ export class SchemeAssetService {
       parts.radius || parts.appFont || parts.appFontFamily);
   }
 
-  private static fileName(uri: string): string {
+  static fileName(uri: string): string {
     const clean = uri.split('?')[0].split('#')[0];
     const slash = clean.lastIndexOf('/');
     let name = slash >= 0 ? clean.substring(slash + 1) : clean;

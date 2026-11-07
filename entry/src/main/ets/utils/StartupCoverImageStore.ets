@@ -5,12 +5,20 @@ import fileUri from '@ohos.file.fileuri';
 
 export class StartupCoverImageStore {
   static async pickAndSave(context: Context, schemeId: string, darkMode: boolean): Promise<string> {
+    const source = await StartupCoverImageStore.pickSource(context);
+    return source ? StartupCoverImageStore.saveFrom(context, schemeId, darkMode, source) : '';
+  }
+
+  static async pickSource(context: Context): Promise<string> {
     const options: picker.PhotoSelectOptions = new picker.PhotoSelectOptions();
     options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
     options.maxSelectNumber = 1;
     const result = await new picker.PhotoViewPicker(context).select(options);
-    if (!result || result.photoUris.length === 0) return '';
-    const source = result.photoUris[0];
+    return result && result.photoUris.length > 0 ? result.photoUris[0] : '';
+  }
+
+  /** source 可以是相册 URI，也可以是取景后缓存目录里的文件路径。 */
+  static async saveFrom(context: Context, schemeId: string, darkMode: boolean, source: string): Promise<string> {
     const dir = `${context.filesDir}/theme_startups`;
     try {
       await fs.mkdir(dir, true);
@@ -19,8 +27,11 @@ export class StartupCoverImageStore {
     const safeId = (schemeId || 'custom').replace(/[^a-zA-Z0-9_-]/g, '_');
     const mode = darkMode ? 'dark' : 'light';
     const path = `${dir}/${safeId}_${mode}_${Date.now()}${StartupCoverImageStore.extension(source)}`;
-    const copySource = source.startsWith('/') ? fileUri.getUriFromPath(source) : source;
-    await fs.copy(copySource, fileUri.getUriFromPath(path));
+    if (source.startsWith('/')) {
+      fs.copyFileSync(source, path);
+    } else {
+      await fs.copy(source, fileUri.getUriFromPath(path));
+    }
     return fileUri.getUriFromPath(path);
   }
 

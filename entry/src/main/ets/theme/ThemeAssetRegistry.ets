@@ -349,17 +349,25 @@ export class ThemeAssetRegistry {
     const normalizedTabId = ThemeAssetRegistry.normalizeTabId(tabId);
     if (ThemePackRegistry.isPackId(normalizedPackId)) {
       const pack = ThemePackRegistry.get(normalizedPackId);
-      if (pack && pack.hasNavigation()) {
+      if (pack && pack.hasAnyNavigation()) {
+        let normal = pack.navBookshelf;
+        let active = pack.navBookshelfSelected;
         if (normalizedTabId === ThemeAssetRegistry.TAB_EXPLORE) {
-          return selected && pack.navExploreSelected ? pack.navExploreSelected : pack.navExplore;
+          normal = pack.navExplore;
+          active = pack.navExploreSelected;
+        } else if (normalizedTabId === ThemeAssetRegistry.TAB_SEARCH) {
+          normal = pack.navSearch;
+          active = pack.navSearchSelected;
+        } else if (normalizedTabId === ThemeAssetRegistry.TAB_MINE) {
+          normal = pack.navMine;
+          active = pack.navMineSelected;
         }
-        if (normalizedTabId === ThemeAssetRegistry.TAB_SEARCH) {
-          return selected && pack.navSearchSelected ? pack.navSearchSelected : pack.navSearch;
-        }
-        if (normalizedTabId === ThemeAssetRegistry.TAB_MINE) {
-          return selected && pack.navMineSelected ? pack.navMineSelected : pack.navMine;
-        }
-        return selected && pack.navBookshelfSelected ? pack.navBookshelfSelected : pack.navBookshelf;
+        if (selected && active) return active;
+        if (normal) return normal;
+        // 只上传了几个图标的方案：缺的页签用基底主题的图标（基底一定是内置主题，不会再递归回包）。
+        return ThemePackRegistry.isPackId(pack.navFallbackIconPackId) ?
+          ThemeAssetRegistry.classicNavigationIcon(normalizedTabId) :
+          ThemeAssetRegistry.navigationIcon(pack.navFallbackIconPackId, normalizedTabId);
       }
       return ThemeAssetRegistry.classicNavigationIcon(normalizedTabId);
     }
@@ -806,7 +814,7 @@ export class ThemeAssetRegistry {
     if (normalizedPackId === ThemeAssetRegistry.ICON_PACK_CELESTIAL_VAULT) return true;
     if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
     const pack = ThemePackRegistry.get(normalizedPackId);
-    return !!pack && pack.hasNavigation() && !!(pack.navBookshelfSelected || pack.navExploreSelected ||
+    return !!pack && pack.hasAnyNavigation() && !!(pack.navBookshelfSelected || pack.navExploreSelected ||
       pack.navSearchSelected || pack.navMineSelected);
   }
 
@@ -816,7 +824,7 @@ export class ThemeAssetRegistry {
     if (normalizedPackId === ThemeAssetRegistry.ICON_PACK_CELESTIAL_VAULT) return true;
     if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
     const pack = ThemePackRegistry.get(normalizedPackId);
-    return !!pack && pack.hasNavigation() && pack.navHideLabels;
+    return !!pack && pack.hasAnyNavigation() && pack.navHideLabels;
   }
 
   static normalizeTabId(tabId: string): string {
