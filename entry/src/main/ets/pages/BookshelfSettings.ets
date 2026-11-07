@@ -47,6 +47,7 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfTypeCategoryEnabled') bookshelfTypeCategoryEnabled: boolean = true;
   @StorageLink('bookshelfShowAllTypeTab') bookshelfShowAllTypeTab: boolean = true;
   @StorageLink('bookshelfCompanionStagger') bookshelfCompanionStagger: boolean = true;
+  @StorageLink('bookshelfCompanionReadingNote') bookshelfCompanionReadingNote: boolean = true;
   @StorageLink('bookshelfGreetingMode') bookshelfGreetingMode: string = 'time';
   @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
   @StorageLink('bookshelfGreetingSubtitle') bookshelfGreetingSubtitle: string = '';
@@ -156,6 +157,17 @@ struct BookshelfSettingsPage {
         showDivider: false,
         onChange: (value: boolean) => {
           this.bookshelfCompanionStagger = value;
+          this.onDisplaySettingChanged();
+        }
+      })
+      this.itemDivider()
+      SettingSwitchRow({
+        title: '阅读小记',
+        description: '在继续阅读下方显示今日时长、近 7 天和连续阅读天数',
+        isOn: this.bookshelfCompanionReadingNote,
+        showDivider: false,
+        onChange: (value: boolean) => {
+          this.bookshelfCompanionReadingNote = value;
           this.onDisplaySettingChanged();
         }
       })
@@ -415,6 +427,7 @@ struct BookshelfSettingsPage {
       this.bookshelfTypeCategoryEnabled = settings.typeCategoryEnabled;
       this.bookshelfShowAllTypeTab = settings.showAllTypeTab;
       this.bookshelfCompanionStagger = settings.companionStagger;
+      this.bookshelfCompanionReadingNote = settings.companionReadingNote;
       this.bookshelfGreetingMode = settings.greetingMode;
       this.bookshelfGreetingTitle = settings.greetingTitle;
       this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
@@ -603,6 +616,7 @@ struct BookshelfSettingsPage {
     settings.typeCategoryEnabled = this.bookshelfTypeCategoryEnabled;
     settings.showAllTypeTab = this.bookshelfShowAllTypeTab;
     settings.companionStagger = this.bookshelfCompanionStagger;
+    settings.companionReadingNote = this.bookshelfCompanionReadingNote;
     settings.greetingMode = this.bookshelfGreetingMode;
     settings.greetingTitle = this.bookshelfGreetingTitle;
     settings.greetingSubtitle = this.bookshelfGreetingSubtitle;

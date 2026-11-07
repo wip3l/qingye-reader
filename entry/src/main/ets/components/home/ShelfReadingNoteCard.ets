@@ -17,6 +17,8 @@ export struct ShelfReadingNoteCard {
   /** 最近阅读的书或进度一变就重读统计，回书架时能带上刚读的时长。 */
   @Prop @Watch('onRefreshKeyChanged') refreshKey: string = '';
   @Prop appDarkMode: boolean = false;
+  /** 书架设置关掉小记时只保留统计读取（问候语 {今日阅读} 要用），卡片本身不显示也不占位。 */
+  @Prop collapsed: boolean = false;
   @StorageProp('accountUserId') @Watch('onRefreshKeyChanged') accountUserId: string = '';
   @State todayMs: number = 0;
   @State weekMs: number = 0;
@@ -183,6 +185,7 @@ export struct ShelfReadingNoteCard {
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
     .backgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
     .borderRadius(ThemeRuntime.cardRadius())
+    .visibility(this.collapsed ? Visibility.None : Visibility.Visible)
     .accessibilityGroup(true)
     .accessibilityText(`阅读小记，今日阅读 ${this.todayMinutesText()} 分钟，${this.summaryText()}`)
     .onClick(() => {

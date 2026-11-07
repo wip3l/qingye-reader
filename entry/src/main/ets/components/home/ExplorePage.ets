@@ -803,7 +803,7 @@ export struct ExplorePage {
   exploreSourceActionMenu() {
     SourceActionMenu(this.actionExploreSourceNative, this.appDarkMode, (kind: string): void => {
       this.runExploreSourceAction(kind);
-    })
+    }, true)
   }
 
   @Builder
@@ -1578,7 +1578,9 @@ export struct ExplorePage {
     const isNative = this.actionExploreSourceNative;
     this.closeExploreSourceActions();
     if (!sourceUrl) return;
-    if (SourceActionRunner.isNavigation(kind)) {
+    if (kind === SourceActionKind.SEARCH) {
+      this.searchWithExploreSource(sourceUrl);
+    } else if (SourceActionRunner.isNavigation(kind)) {
       SourceActionRunner.navigate(kind, sourceUrl, isNative);
     } else if (kind === SourceActionKind.VARIABLE) {
       SourceActionRunner.openVariableEditor(this.getUIContext(), sourceUrl,
@@ -1607,6 +1609,15 @@ export struct ExplorePage {
         }
       });
     }
+  }
+
+  /** 与书源管理长按“搜索”同一条路：写入单书源搜索参数，首页收到 nonce 后切到搜索页签。 */
+  searchWithExploreSource(sourceUrl: string): void {
+    const option = this.sourceOptions.find((item: ExploreSourceOption): boolean => item.sourceUrl === sourceUrl);
+    const nonce = AppStorage.get<number>('singleSourceSearchNonce') || 0;
+    AppStorage.setOrCreate('singleSourceSearchUrl', sourceUrl);
+    AppStorage.setOrCreate('singleSourceSearchName', option?.sourceName || sourceUrl);
+    AppStorage.setOrCreate('singleSourceSearchNonce', nonce + 1);
   }
 
   getFilteredExploreSourceOptions(): ExploreSourceOption[] {

@@ -380,6 +380,8 @@ export struct BookshelfPage {
   private tagDialogSession: SystemDialogSession = new SystemDialogSession();
   private customCoverDialogSession: SystemDialogSession = new SystemDialogSession();
   @State showAddBookGroupDialog: boolean = false;
+  /** 新建分组弹窗是从“移动到分组”打开的：建好后把待移动的书移进去，不切换当前分组。 */
+  private addBookGroupThenAssign: boolean = false;
   @State newBookGroupName: string = '';
   @State showBookGroupActionMenu: boolean = false;
   @State showRenameBookGroupDialog: boolean = false;
@@ -468,6 +470,8 @@ export struct BookshelfPage {
   /** 书架设置“错落摆放”：关闭后陪伴网格里的书一样大、全部立正。 */
   @StorageLink('bookshelfCompanionStagger') @Watch('onCompanionStaggerChanged')
   bookshelfCompanionStagger: boolean = true;
+  /** 书架设置“阅读小记”：关闭后陪伴布局不显示阅读小记卡片。 */
+  @StorageLink('bookshelfCompanionReadingNote') bookshelfCompanionReadingNote: boolean = true;
   /** 陪伴布局左上角问候语：time 内置按时段，custom 用户自写两行（可含占位符），off 不显示。 */
   @StorageLink('bookshelfGreetingMode') bookshelfGreetingMode: string = 'time';
   @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
@@ -634,6 +638,7 @@ export struct BookshelfPage {
       this.bookshelfTypeCategoryEnabled = settings.typeCategoryEnabled;
       this.bookshelfShowAllTypeTab = settings.showAllTypeTab;
       this.bookshelfCompanionStagger = settings.companionStagger;
+      this.bookshelfCompanionReadingNote = settings.companionReadingNote;
       this.bookshelfGreetingMode = settings.greetingMode;
       this.bookshelfGreetingTitle = settings.greetingTitle;
       this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
@@ -2498,6 +2503,25 @@ export struct BookshelfPage {
           ForEach(this.shelfGroups, (group: BookGroup) => {
             this.bookGroupPickerItem(group.groupName, group.groupId)
           }, (group: BookGroup) => `picker_${group.groupId}`)
+          Row({ space: AppSpacing.SM }) {
+            SymbolGlyph($r('sys.symbol.plus'))
+              .fontSize(16)
+              .fontColor([this.accentColor()])
+            Text('新建分组')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.accentColor())
+          }
+          .width('100%')
+          .height(38)
+          .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+          .borderRadius(ThemeRuntime.mediumRadius())
+          .backgroundColor(this.glassCardColor())
+          .accessibilityText('新建分组并移入')
+          .onClick(() => {
+            // 只收起弹层、不走 closeBookGroupPicker，单本移动的目标书还要留给新分组用。
+            this.showBookGroupPicker = false;
+            this.openAddBookGroupDialog(true);
+          })
         }
         .width('100%')
       }
@@ -2528,7 +2552,7 @@ export struct BookshelfPage {
   @Builder
   addBookGroupDialogContent() {
     Column({ space: AppSpacing.XL }) {
-      Text('新增书籍分组').fontSize(AppFontSize.SUBTITLE).fontWeight(FontWeight.Bold).fontColor(this.primaryTextColor())
+      Text(this.addBookGroupThenAssign ? '新建分组并移入' : '新增书籍分组').fontSize(AppFontSize.SUBTITLE).fontWeight(FontWeight.Bold).fontColor(this.primaryTextColor())
       TextInput({ placeholder: '输入分组名称', text: this.newBookGroupName })
         .width('100%').height(42).backgroundColor(this.inputColor()).fontColor(this.primaryTextColor())
         .borderRadius(ThemeRuntime.mediumRadius()).onChange((value: string) => this.newBookGroupName = value)
@@ -2536,14 +2560,15 @@ export struct BookshelfPage {
         Button('取消', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
           .backgroundColor(this.glassCardColor()).fontColor(this.primaryTextColor())
           .onClick(() => this.closeAddBookGroupDialog())
-        Button('新增', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
+        Button(this.addBookGroupThenAssign ? '新建并移入' : '新增', { type: ButtonType.Normal }).layoutWeight(1).height(42).borderRadius(ThemeRuntime.buttonRadius())
           .backgroundColor(this.buttonColor()).fontColor(ThemeRuntime.onAccentColor()).enabled(!!this.newBookGroupName.trim())
           .onClick(() => this.addShelfBookGroup())
       }.width('100%')
     }    .padding(22)
   }
 
-  openAddBookGroupDialog(): void {
+  openAddBookGroupDialog(thenAssign: boolean = false): void {
+    this.addBookGroupThenAssign = thenAssign;
     this.newBookGroupName = '';
     this.showAddBookGroupDialog = true;
     this.addBookGroupDialogSession.open(this.getUIContext(), (): void => {
@@ -2556,6 +2581,10 @@ export struct BookshelfPage {
   }
 
   closeAddBookGroupDialog(): void {
+    if (this.addBookGroupThenAssign) {
+      this.addBookGroupThenAssign = false;
+      this.groupPickerSingleBookUrl = '';
+    }
     this.showAddBookGroupDialog = false;
     this.addBookGroupDialogSession.close(this.getUIContext());
   }
@@ -3722,9 +3751,16 @@ export struct BookshelfPage {
       HdsFeedback.showToast('分组名称已存在');
       return;
     }
+    const thenAssign = this.addBookGroupThenAssign;
+    // 先清标记再关弹窗，关弹窗时不清掉单本移动的目标书。
+    this.addBookGroupThenAssign = false;
     this.closeAddBookGroupDialog();
     this.newBookGroupName = '';
     this.shelfGroups = await db.getCustomBookGroups();
+    if (thenAssign) {
+      await this.assignSelectedBooksToGroup(group.groupId);
+      return;
+    }
     this.selectShelfGroup(group.groupId);
   }
 
@@ -4187,7 +4223,19 @@ export struct BookshelfPage {
         if (this.isCompanionLayout()) {
           if (this.bookshelfGreetingMode !== 'off') {
           GridItem() {
-            this.shelfCompanionGreeting(pageKey)
+            Column() {
+              this.shelfCompanionGreeting(pageKey)
+              if (!this.bookshelfCompanionReadingNote) {
+                // 小记卡片关闭时仍挂一个不占位的实例，问候语的 {今日阅读} 继续有数可用。
+                ShelfReadingNoteCard({
+                  refreshKey: this.shelfCompanionNoteRefreshKey(this.shelfBooksForPage(pageKey)),
+                  appDarkMode: this.appDarkMode,
+                  collapsed: true
+                })
+              }
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
           }
           .columnStart(0)
           .columnEnd(this.shelfTileColumnCount() - 1)
@@ -4213,6 +4261,7 @@ export struct BookshelfPage {
           .columnEnd(this.shelfTileColumnCount() - 1)
           }
 
+          if (this.bookshelfCompanionReadingNote) {
           GridItem() {
             ShelfReadingNoteCard({
               refreshKey: this.shelfCompanionNoteRefreshKey(this.shelfBooksForPage(pageKey)),
@@ -4221,6 +4270,7 @@ export struct BookshelfPage {
           }
           .columnStart(0)
           .columnEnd(this.shelfTileColumnCount() - 1)
+          }
 
           if (this.shelfBooksForPage(pageKey).length > this.getLatestReadTileBooks(this.shelfBooksForPage(pageKey)).length) {
           GridItem() {

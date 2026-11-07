@@ -27,7 +27,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
-import { PopupMenuAction } from '../components/common/PopupMenuAction';
+import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
 
 class ManagedTtsVoiceEntry {
   key: string = '';
@@ -107,6 +107,7 @@ struct CustomTtsVoiceManagerPage {
   @State importUrl: string = '';
   @State isImporting: boolean = false;
   @State isBatchOperating: boolean = false;
+  @State isExporting: boolean = false;
   @State editingVoiceId: string = '';
   @State editName: string = '';
   @State editUrl: string = '';
@@ -120,6 +121,7 @@ struct CustomTtsVoiceManagerPage {
   @State editJsEngine: string = '';
   @State editEnabledCookieJar: boolean = false;
   @State showVoiceActionMenu: boolean = false;
+  @State showBatchMoreMenu: boolean = false;
   @State actionVoiceId: string = '';
   @State contextMenuX: number = 16;
   @State contextMenuY: number = 96;
@@ -608,6 +610,7 @@ struct CustomTtsVoiceManagerPage {
 
   exitSelectionMode(): void {
     this.stopVoiceSelectionAutoScroll();
+    this.showBatchMoreMenu = false;
     this.selectionMode = false;
     this.headerCollapse = 0;
     this.voiceListScroller.scrollTo({ xOffset: 0, yOffset: 0 });
@@ -1009,6 +1012,64 @@ struct CustomTtsVoiceManagerPage {
     voice.id = id;
   }
 
+  // 导出为与导入相同的 HttpTTS 数组 JSON，可直接用“从文件导入”或其他阅读应用导入。
+  async exportVoices(voices: HttpTTS[]): Promise<void> {
+    if (voices.length === 0) {
+      HdsFeedback.showToast('请先选择自定义音色');
+      return;
+    }
+    if (this.isExporting) return;
+    this.isExporting = true;
+    let file: fs.File | null = null;
+    try {
+      const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
+      const baseName = voices.length === 1 ? this.exportFileNamePart(voices[0].name || '') : '';
+      options.newFileNames = [`qingye-tts-${baseName ? `${baseName}-` : ''}${this.exportTimestamp()}.json`];
+      options.fileSuffixChoices = ['JSON 文件|.json'];
+      const result = await new picker.DocumentViewPicker(getContext(this)).save(options);
+      if (!result || result.length === 0) return;
+      const bytes = new util.TextEncoder().encodeInto(JSON.stringify(voices, null, 2));
+      file = await fs.open(result[0], fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      await fs.write(file.fd, bytes.buffer, { offset: 0, length: bytes.byteLength });
+      await fs.close(file);
+      file = null;
+      HdsFeedback.showToast(`已导出 ${voices.length} 个自定义音色`);
+    } catch (error) {
+      console.error('导出自定义音色失败:', error);
+      HdsFeedback.showToast(`导出失败：${this.shortErrorMessage(error as Object)}`);
+    } finally {
+      if (file) {
+        try { await fs.close(file); } catch (_) {}
+      }
+      this.isExporting = false;
+    }
+  }
+
+  batchExport(): void {
+    if (this.selectedVoiceIds.length === 0 || this.isBatchOperating) return;
+    const selected = this.voices.filter((voice: HttpTTS): boolean => this.isVoiceSelected(voice));
+    if (selected.length === 0) {
+      this.getUIContext().showAlertDialog({
+        title: '无法导出所选音色',
+        message: '仅自定义音色可以导出，当前选择中没有自定义音色。',
+        confirm: { value: '知道了', action: (): void => {} }
+      });
+      return;
+    }
+    this.exportVoices(selected);
+  }
+
+  exportFileNamePart(name: string): string {
+    return name.trim().replace(/[\\/:*?"<>|\s]+/g, '_').substring(0, 32);
+  }
+
+  exportTimestamp(): string {
+    const date = new Date();
+    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
+    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-` +
+      `${pad(date.getHours())}${pad(date.getMinutes())}`;
+  }
+
   async readTextFile(filePath: string): Promise<string> {
     let file: fs.File | null = null;
     try {
@@ -1218,6 +1279,13 @@ struct CustomTtsVoiceManagerPage {
     if (!voice) return;
     this.closeVoiceActions();
     this.deleteVoice(voice);
+  }
+
+  exportActionVoice(): void {
+    const voice = this.actionVoice();
+    if (!voice) return;
+    this.closeVoiceActions();
+    this.exportVoices([voice]);
   }
 
   enterActionVoiceSelection(): void {
@@ -1445,6 +1513,8 @@ struct CustomTtsVoiceManagerPage {
         this.voiceContextActionItem(this.actionVoice()?.enabled ? $r('sys.symbol.minus_circle') :
           $r('sys.symbol.checkmark_circle'), this.actionVoice()?.enabled ? '禁用' : '启用', this.primaryTextColor(),
           () => this.toggleActionVoiceEnabled())
+        this.voiceContextActionItem($r('sys.symbol.share'), '导出', this.primaryTextColor(),
+          () => this.exportActionVoice())
         this.voiceContextActionItem($r('sys.symbol.list_bullet'), '多选', this.primaryTextColor(),
           () => this.enterActionVoiceSelection())
         this.voiceContextActionItem($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => this.deleteActionVoice())
@@ -1485,20 +1555,47 @@ struct CustomTtsVoiceManagerPage {
         .onClick(() => {
           this.batchSetEnabled(false);
         })
-      Button('删除')
+      Button('更多')
         .layoutWeight(1)
         .height(42)
         .margin({ left: AppSpacing.MD })
         .enabled(this.selectedVoiceIds.length > 0 && !this.isBatchOperating)
-        .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
-        .fontColor(ThemeRuntime.onAccentColor())
+        .backgroundColor(this.inputColor())
+        .fontColor(this.primaryTextColor())
         .onClick(() => {
-          this.batchDelete();
+          this.showBatchMoreMenu = true;
         })
+        .bindPopup(this.showBatchMoreMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+          this.batchMorePopupMenu()
+        }, Placement.TopRight, this.appDarkMode, this.accentColor(), () => {
+          this.showBatchMoreMenu = false;
+        }))
     }
     .width('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: this.navBarHeight + AppSpacing.LG })
     .backgroundColor(this.cardColor())
+  }
+
+  @Builder
+  batchMorePopupMenu() {
+    Scroll() {
+      Column() {
+        PopupMenuHeader(`已选择 ${this.selectedVoiceIds.length} 个音色`, this.subTextColor())
+        PopupMenuAction($r('sys.symbol.download'), '导出 JSON', this.primaryTextColor(), () => {
+          this.showBatchMoreMenu = false;
+          if (!this.isExporting) this.batchExport();
+        })
+        PopupMenuAction($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => {
+          this.showBatchMoreMenu = false;
+          this.batchDelete();
+        })
+      }
+      .width('100%')
+    }
+    .width(188)
+    .constraintSize({ maxHeight: ImmersiveMaterialRuntime.popupMenuMaxHeight() })
+    .scrollBar(BarState.Off)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
   }
 
   @Builder
