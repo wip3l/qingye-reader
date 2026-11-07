@@ -1,4 +1,5 @@
 import { router } from '@kit.ArkUI';
+import { HomeRoute } from '../utils/HomeRoute';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { RecentReadShortcut } from '../utils/RecentReadShortcut';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
@@ -93,13 +94,13 @@ struct StartupPage {
     }
     if (this.hasPendingBookSourceImport()) {
       // Keep a real home route under the external-import page so Back returns to the app.
-      await router.replaceUrl({ url: 'pages/Index' });
+      await HomeRoute.replaceWithHome(this.getUIContext().getRouter());
       await router.pushUrl({ url: 'pages/BookSource' });
       return;
     }
     if (AppStorage.get<string>('pendingThemeImportUri')) {
       // 主题页打开时读取待导入的主题包。
-      await router.replaceUrl({ url: 'pages/Index' });
+      await HomeRoute.replaceWithHome(this.getUIContext().getRouter());
       await router.pushUrl({ url: 'pages/ThemeSettings' });
       return;
     }
@@ -152,7 +153,7 @@ struct StartupPage {
 
   async replaceToIndex(): Promise<void> {
     try {
-      await router.replaceUrl({ url: 'pages/Index' });
+      await HomeRoute.replaceWithHome(this.getUIContext().getRouter());
     } catch (e) {
       console.error('跳转首页失败:', e);
     }

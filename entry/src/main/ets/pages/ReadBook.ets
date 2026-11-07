@@ -1,4 +1,5 @@
 import { ReaderQuickJumpModel } from '../core/reader/ReaderQuickJumpModel';
+import { HomeRoute } from '../utils/HomeRoute';
 import { ReaderBrightnessControl } from '../components/reader/ReaderBrightnessControl';
 import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
 import { ReaderQuickJumpContent } from '../components/reader/ReaderQuickJumpContent';
@@ -19330,7 +19331,7 @@ struct ReadBookPage {
       });
       try {
         if (this.shortcutReplacedPreviousPage) {
-          await router.replaceUrl({ url: 'pages/Index' });
+          await HomeRoute.replaceWithHome(this.getUIContext().getRouter());
         } else {
           router.back();
         }

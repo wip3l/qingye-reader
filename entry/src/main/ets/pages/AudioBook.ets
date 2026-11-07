@@ -1,4 +1,5 @@
 import { BookCoverResolver } from '../utils/BookCoverResolver';
+import { HomeRoute } from '../utils/HomeRoute';
 import { ThemeBookCoverSettings } from '../utils/ThemeBookCoverSettings';
 import { BookCover } from '../components/book/BookCover';
 import { NativeSourceService, NativeVoiceOption, Book, BookChapter, BookSource, BookTypeSupport } from '@legado/sourceengine';
@@ -1115,7 +1116,7 @@ struct AudioBookPage {
     }
     try {
       if (this.openedFromShortcut && this.shortcutReplacedPreviousPage) {
-        await router.replaceUrl({ url: 'pages/Index' });
+        await HomeRoute.replaceWithHome(this.getUIContext().getRouter());
       } else {
         router.back();
       }

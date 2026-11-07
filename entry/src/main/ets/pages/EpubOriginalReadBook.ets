@@ -1,4 +1,5 @@
 import { webview } from '@kit.ArkWeb';
+import { HomeRoute } from '../utils/HomeRoute';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import image from '@ohos.multimedia.image';
@@ -1707,7 +1708,7 @@ struct EpubOriginalReadBookPage {
     this.closing = true;
     if (this.shortcutReplace) {
       try { await this.saveProgress(); } catch (error) { console.warn('[EpubOriginal] exit save failed:', error); }
-      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' })
+      HomeRoute.replaceWithHome(this.getUIContext().getRouter())
         .catch((): void => { this.getUIContext().getRouter().back(); });
       return;
     }

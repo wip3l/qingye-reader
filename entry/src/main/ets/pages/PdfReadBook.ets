@@ -1,4 +1,5 @@
 import { pdfViewManager, pdfService } from '@kit.PDFKit';
+import { HomeRoute } from '../utils/HomeRoute';
 import { common } from '@kit.AbilityKit';
 import { Book } from '@legado/sourceengine';
 import { appDb } from '../model/data/AppDatabase';
@@ -590,7 +591,7 @@ struct PdfReadBookPage {
     this.closing = true;
     if (this.shortcutReplace) {
       try { await this.saveProgress(); } catch (error) { console.warn('[PDF] exit save failed:', error); }
-      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' }).catch((): void => { this.getUIContext().getRouter().back(); });
+      HomeRoute.replaceWithHome(this.getUIContext().getRouter()).catch((): void => { this.getUIContext().getRouter().back(); });
       return;
     }
     // Finish an unfinished opening first so the return transition has its shared id; close the cover while saving.
