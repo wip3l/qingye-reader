@@ -21,6 +21,8 @@ import { AppIconManager } from '../utils/AppIconManager';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
 import { ReaderSystemFontHelper } from '../utils/ReaderSystemFontHelper';
 import { TtsSettingsStore } from '../utils/TtsSettingsStore';
+import { LocalTtsModels } from '../utils/localtts/LocalTtsModels';
+import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
 import { MimoStore } from '../utils/mimo/MimoStore';
 import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
 import { ReadingContinuation, QYBOOK_UTD } from '../utils/ReadingContinuation';
@@ -290,6 +292,8 @@ export default class EntryAbility extends UIAbility {
     }).catch((e: Error) => {
       hilog.warn(0x0000, 'testTag', 'Sync tts settings failed: %{public}s', JSON.stringify(e));
     });
+    LocalTtsModels.recoverInterruptedLoads(this.context);
+    LocalTtsSelection.load(this.context);
     this.accountBootstrapPromise = AccountSessionStore.load(this.context).then(() => {
       AiAccessPolicy.start();
       const userId = AccountSessionStore.isLoggedIn() ? AccountSessionStore.account().userId : '';

@@ -9,6 +9,9 @@ import { MimoReadingSession } from './mimo/MimoReadingSession';
 import { MimoUnit } from '../core/mimo/MimoPolicy';
 import { TtsCustomVoices, TtsVoiceOption } from './TtsVoiceModels';
 import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
+import { LocalTtsModel } from './localtts/LocalTtsModels';
+import { LocalTtsSelection } from './localtts/LocalTtsSelection';
+import { LocalTtsEngine } from './localtts/LocalTtsEngine';
 
 export interface TtsChunk {
   text: string;
@@ -92,6 +95,7 @@ export class SystemTtsReader {
   private static readonly LEGACY_ONLINE_MODE: number = 0;
   private static readonly OFFLINE_MODE: number = 1;
   private static readonly CUSTOM_TTS_PREFETCH_WINDOW: number = 3;
+  private static readonly LOCAL_TTS_PREFETCH_WINDOW: number = 2;
   private static readonly CUSTOM_TTS_HIDDEN_GAP_LENGTH: number = 8;
   // Custom voices return the whole clip only after synthesizing it, so the wait before the first sound grows
   // with the first chunk (a 60-character WAV is ~430KB and 1-2s on Baidu). A shorter opening chunk starts
@@ -318,7 +322,7 @@ export class SystemTtsReader {
   }
 
   audioDebugState(): string {
-    return (this.getCurrentCustomVoice() || this.optionCloudVoiceId) ?
+    return (LocalTtsSelection.current() || this.getCurrentCustomVoice() || this.optionCloudVoiceId) ?
       this.httpReader.debugState() : this.pcmPlayer.debugState();
   }
 
@@ -432,8 +436,10 @@ export class SystemTtsReader {
     this.optionFocusBreakOffsets = this.normalizeFocusBreakOffsets(options?.focusBreakOffsets, cleanText.length);
     this.keepAudioOutputOnFinish = options?.keepAudioOutputOnFinish === true;
     const customVoice = this.getCurrentCustomVoice();
+    // 选了离线音色时它优先于自定义音色；云端音色由调用方显式传入，选离线音色时调用方不会传。
+    const localVoice = this.optionCloudVoiceId || options?.mimo ? undefined : LocalTtsSelection.current();
     const splitChunks = this.optionCloudVoiceId ? this.splitCloudText(cleanText) :
-      (customVoice ? this.splitCustomText(cleanText, SystemTtsReader.CUSTOM_TTS_CHUNK_LENGTH) :
+      ((localVoice || customVoice) ? this.splitCustomText(cleanText, SystemTtsReader.CUSTOM_TTS_CHUNK_LENGTH) :
         this.splitSystemText(cleanText, this.optionFocusBreakOffsets));
     // A run of trailing punctuation (for example "......" or "……") can be split into a
     // punctuation-only chunk. Some Harmony TTS engines return no PCM/onStart for such a
@@ -498,6 +504,17 @@ export class SystemTtsReader {
         this.engine = null;
       }
       this.speakCloudNext(generation, this.optionCloudVoiceId);
+      return;
+    }
+    if (localVoice) {
+      if (this.engine) {
+        try {
+          this.engine.shutdown();
+        } catch (_) {
+        }
+        this.engine = null;
+      }
+      this.speakLocalNext(generation, localVoice);
       return;
     }
     if (customVoice) {
@@ -718,6 +735,7 @@ export class SystemTtsReader {
     this.resetSystemPcmPipeline();
     this.clearSpeakWatchdog();
     this.httpReader.stop();
+    LocalTtsEngine.cancelAll();
     this.cloudReader.stop();
     this.mimoReader.stop();
     this.pcmPlayer.stop();
@@ -1396,6 +1414,93 @@ export class SystemTtsReader {
       text: speakText,
       promise
     };
+  }
+
+  private speakLocalNext(generation: number, voice: LocalTtsModel): void {
+    this.playLocalQueue(generation, voice).catch((error: Error) => {
+      if (this.readGeneration !== generation || !this.active || LocalTtsEngine.isCancelled(error)) {
+        return;
+      }
+      this.currentRequestId = '';
+      this.active = false;
+      const message = `离线音色朗读失败：${error.message || error}`;
+      console.error('[TTS] local voice failed:', message);
+      if (this.onError) this.onError(message);
+    });
+  }
+
+  /**
+   * 离线音色与自定义音色同样是“整段合成后交给 PCM 播放器”，所以沿用自定义音色的分段与焦点节奏；
+   * 区别是合成在本机后台线程里排队进行，预取两段就足够填满播放间隙（合成约为实时的 5 倍速）。
+   */
+  private async playLocalQueue(generation: number, voice: LocalTtsModel): Promise<void> {
+    const jobs: CustomTtsAudioJob[] = [];
+    this.fillLocalAudioJobs(generation, voice, jobs);
+    while (this.readGeneration === generation && this.active) {
+      if (jobs.length === 0) {
+        await this.httpReader.drain();
+        if (this.readGeneration === generation && this.active) {
+          this.finish(true);
+        }
+        return;
+      }
+      const job = jobs.shift() as CustomTtsAudioJob;
+      this.currentRequestId = this.createRequestId();
+      this.currentSpeakStartedAt = Date.now();
+      this.currentSpeakMinDuration = this.estimateSpeakDuration(job.text);
+      this.completionPending = false;
+      this.currentFocusChunk = job.chunk;
+      this.currentFocusChunkIndex = job.index;
+      this.currentFocusDuration = this.currentSpeakMinDuration;
+      this.currentFocusQueued = false;
+      this.currentFocusAudioReceived = false;
+      this.currentFocusAudioWritten = false;
+      const result = await job.promise;
+      if (this.readGeneration !== generation || !this.active) {
+        return;
+      }
+      if (result.error || !result.audio) {
+        throw result.error || new Error('离线合成失败');
+      }
+      this.fillLocalAudioJobs(generation, voice, jobs);
+      this.currentFocusAudioReceived = true;
+      await this.httpReader.writeAudio(result.audio, (durationMs: number): void => {
+        if (durationMs > 0) this.currentFocusDuration = durationMs;
+        this.emitCurrentCustomChunkFocus(generation);
+      });
+      if (this.readGeneration !== generation || !this.active) {
+        return;
+      }
+      this.emitCurrentCustomChunkFocus(generation);
+      this.currentFocusAudioWritten = true;
+      this.notifyAudioStarted();
+      this.currentRequestId = '';
+      this.currentSpeakStartedAt = 0;
+      this.currentSpeakMinDuration = 0;
+      this.completionPending = false;
+      this.currentFocusChunk = null;
+      this.currentFocusChunkIndex = -1;
+      this.currentFocusDuration = 0;
+      this.currentFocusQueued = false;
+      this.currentFocusAudioReceived = false;
+      this.currentFocusAudioWritten = false;
+    }
+  }
+
+  private fillLocalAudioJobs(generation: number, voice: LocalTtsModel, jobs: CustomTtsAudioJob[]): void {
+    while (this.readGeneration === generation && this.active &&
+      jobs.length < SystemTtsReader.LOCAL_TTS_PREFETCH_WINDOW && this.chunkIndex < this.chunks.length) {
+      const index = this.chunkIndex;
+      const chunk = this.chunks[this.chunkIndex++];
+      const speakText = this.normalizeChunkForSpeech(chunk.text);
+      if (!speakText) {
+        continue;
+      }
+      const promise = LocalTtsEngine.synthesize(voice, speakText, this.getTtsSpeed())
+        .then((audio: HttpTtsAudio): CustomTtsAudioResult => ({ audio }))
+        .catch((error: Error): CustomTtsAudioResult => ({ error }));
+      jobs.push({ index, chunk, text: speakText, promise });
+    }
   }
 
   private handleCustomVoiceError(generation: number, voice: HttpTTS, error: Error): void {
@@ -2284,6 +2389,10 @@ export class SystemTtsReader {
   }
 
   private currentVoiceLabel(): string {
+    const localVoice = LocalTtsSelection.current();
+    if (localVoice) {
+      return `离线音色 ${localVoice.name}`;
+    }
     const customVoice = this.getCurrentCustomVoice();
     if (customVoice) {
       return `自定义音色 ${customVoice.name || customVoice.id}`;

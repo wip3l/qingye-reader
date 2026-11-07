@@ -134,6 +134,8 @@ import { ReaderFullTextCacheController } from '../core/reader/ReaderFullTextCach
 import lazy { ReaderTtsMediaInfo, ReaderTtsMediaSession } from '../core/reader/ReaderTtsMediaSession';
 import { TtsVoiceCatalog } from '../utils/TtsVoiceCatalog';
 import { ReaderTtsQuickSettingsPanel, ReaderTtsVoicePickerPanel } from '../components/reader/ReaderTtsSettingsPanels';
+import { LocalTtsModel, LocalTtsModels } from '../utils/localtts/LocalTtsModels';
+import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
 import { ReaderCustomThemeEditor } from '../components/reader/ReaderCustomThemeEditor';
 import { ReaderTtsCapsule } from '../components/reader/ReaderTtsControls';
 import { ReaderAutoScrollCapsule, ReaderAutoScrollSpeedPanel } from '../components/reader/ReaderAutoScrollControls';
@@ -1031,6 +1033,8 @@ struct ReadBookPage {
   @StorageLink('ttsCustomVoiceId') ttsCustomVoiceId: string = '';
   @StorageLink('ttsCustomVoices') @Watch('onTtsCustomVoicesChanged') ttsCustomVoices: string = '';
   @StorageLink('ttsCloudVoiceId') ttsCloudVoiceId: string = '';
+  @StorageLink('ttsLocalVoiceId') ttsLocalVoiceId: string = '';
+  @StorageProp('localTtsInstalledIds') localTtsInstalledIds: string = '';
   @StorageLink('ttsDisabledVoiceKeys') @Watch('onTtsAvailabilityChanged') ttsDisabledVoiceKeys: string = '';
   @StorageLink('launchShortcutNonce') @Watch('onLaunchShortcutChanged') launchShortcutNonce: number = 0;
   @StorageLink('fullTextCacheCancelNonce') @Watch('onFullTextCacheCancelNonceChanged') fullTextCacheCancelNonce: number = 0;
@@ -9052,6 +9056,12 @@ struct ReadBookPage {
         this.ttsSelectedVoiceKey = TtsVoiceCatalog.customVoiceKey(currentCustomVoice);
         return;
       }
+      // 选着离线音色时 findCurrentTtsVoice 恒为空，不能当成“系统音色不可用”回退默认，否则会把离线选择清掉。
+      const currentLocalVoice = this.currentLocalTtsVoice();
+      if (currentLocalVoice) {
+        this.ttsSelectedVoiceKey = LocalTtsModels.voiceKey(currentLocalVoice);
+        return;
+      }
       const currentVoice = this.findCurrentTtsVoice();
       if (currentVoice && currentVoice.available) {
         this.ttsSelectedVoiceKey = TtsVoiceCatalog.voiceKey(currentVoice);
@@ -9097,6 +9107,7 @@ struct ReadBookPage {
     this.ttsLanguage = voice.language;
     this.ttsCustomVoiceId = '';
     this.ttsCloudVoiceId = '';
+    LocalTtsSelection.clear(getContext(this));
     this.ttsSelectedVoiceKey = TtsVoiceCatalog.voiceKey(voice);
     this.saveTtsSettings();
     if (shouldResume) {
@@ -9190,6 +9201,10 @@ struct ReadBookPage {
   }
 
   currentTtsVoiceKey(): string {
+    const localVoice = this.currentLocalTtsVoice();
+    if (localVoice) {
+      return LocalTtsModels.voiceKey(localVoice);
+    }
     const cloudVoice = this.findCurrentCloudTtsVoice();
     if (cloudVoice) {
       return TtsVoiceCatalog.cloudVoiceKey(cloudVoice);
@@ -9208,7 +9223,7 @@ struct ReadBookPage {
   }
 
   isCurrentTtsVoice(voice: TtsVoiceOption): boolean {
-    if (this.ttsCustomVoiceId || this.ttsCloudVoiceId) {
+    if (this.ttsCustomVoiceId || this.ttsCloudVoiceId || this.currentLocalTtsVoice()) {
       return false;
     }
     return voice.id === this.ttsPerson && voice.online === this.ttsOnline &&
@@ -9228,6 +9243,7 @@ struct ReadBookPage {
     }
     this.ttsCustomVoiceId = String(voice.id);
     this.ttsCloudVoiceId = '';
+    LocalTtsSelection.clear(getContext(this));
     this.ttsSelectedVoiceKey = TtsVoiceCatalog.customVoiceKey(voice);
     this.saveTtsSettings();
     if (shouldResume) {
@@ -9262,11 +9278,44 @@ struct ReadBookPage {
     }
     this.ttsCloudVoiceId = voice.id;
     this.ttsCustomVoiceId = '';
+    LocalTtsSelection.clear(getContext(this));
     this.ttsSelectedVoiceKey = TtsVoiceCatalog.cloudVoiceKey(voice);
     this.saveTtsSettings();
     if (shouldResume) {
       this.startTtsReadingFromCurrentPosition(false).catch((e: Error) => {
         console.warn('切换在线朗读音色后恢复失败:', e);
+      });
+    }
+  }
+
+  currentLocalTtsVoice(): LocalTtsModel | undefined {
+    if (!this.ttsLocalVoiceId || this.localTtsInstalledIds === undefined) return undefined;
+    return LocalTtsSelection.current();
+  }
+
+  selectableLocalTtsVoices(): LocalTtsModel[] {
+    return this.localTtsInstalledIds === undefined || this.ttsDisabledVoiceKeys === undefined ? [] :
+      LocalTtsModels.selectableModels();
+  }
+
+  applyLocalTtsVoice(voice: LocalTtsModel, restartSpeaking: boolean): void {
+    if (!LocalTtsModels.memberAllowed()) {
+      HdsFeedback.showToast(LocalTtsModels.MEMBER_REQUIRED);
+      return;
+    }
+    if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);
+    const shouldResume = restartSpeaking && (this.isTtsSpeaking || this.ttsReader?.isSpeaking());
+    if (shouldResume) {
+      this.stopTtsReading();
+    }
+    LocalTtsSelection.select(getContext(this), voice.id);
+    this.ttsCloudVoiceId = '';
+    this.ttsCustomVoiceId = '';
+    this.ttsSelectedVoiceKey = LocalTtsModels.voiceKey(voice);
+    this.saveTtsSettings();
+    if (shouldResume) {
+      this.startTtsReadingFromCurrentPosition(false).catch((e: Error) => {
+        console.warn('切换离线朗读音色后恢复失败:', e);
       });
     }
   }
@@ -9291,6 +9340,10 @@ struct ReadBookPage {
 
   selectedTtsVoiceTitle(): string {
     if (MimoStore.load().enabled) return MimoStore.selectedVoiceTitle(this.bookUrl);
+    const localVoice = this.currentLocalTtsVoice();
+    if (localVoice) {
+      return LocalTtsModels.voiceTitle(localVoice);
+    }
     const cloudVoice = this.findCurrentCloudTtsVoice();
     if (cloudVoice) {
       return TtsVoiceCatalog.cloudVoiceTitle(cloudVoice);
@@ -9336,7 +9389,8 @@ struct ReadBookPage {
   }
 
   regularTtsVoiceCount(): number {
-    return this.ttsCloudVoices.length + this.selectableCustomTtsVoices().length + this.selectableSystemTtsVoices().length;
+    return this.selectableLocalTtsVoices().length + this.ttsCloudVoices.length +
+      this.selectableCustomTtsVoices().length + this.selectableSystemTtsVoices().length;
   }
 
   applyMimoVoice(multi: boolean): void {
@@ -9362,6 +9416,9 @@ struct ReadBookPage {
 
   ttsQuickVoiceOptions(): SelectOption[] {
     const options: SelectOption[] = this.mimoQuickVoiceLabels().map((label: string): SelectOption => ({ value: label }));
+    for (const voice of this.selectableLocalTtsVoices()) {
+      options.push({ value: LocalTtsModels.voiceTitle(voice) });
+    }
     for (const voice of this.ttsCloudVoices) {
       options.push({ value: TtsVoiceCatalog.cloudVoiceTitle(voice) });
     }
@@ -9389,7 +9446,11 @@ struct ReadBookPage {
     if (mimoLabels.length > 0 && MimoStore.load().enabled) {
       return MimoStore.voiceChoices(this.bookUrl).findIndex((choice: MimoVoiceChoice): boolean => choice.key === MimoStore.selectedVoiceKey(this.bookUrl));
     }
-    const offset = mimoLabels.length;
+    const localVoices = this.selectableLocalTtsVoices();
+    const localIndex = localVoices.findIndex((voice: LocalTtsModel): boolean =>
+      LocalTtsModels.voiceKey(voice) === this.currentTtsVoiceKey());
+    if (localIndex >= 0) return mimoLabels.length + localIndex;
+    const offset = mimoLabels.length + localVoices.length;
     const cloudIndex = this.ttsCloudVoices.findIndex((voice: TtsVoiceInfo) =>
       this.isCurrentCloudTtsVoice(voice));
     if (cloudIndex >= 0) return offset + cloudIndex;
@@ -9410,11 +9471,17 @@ struct ReadBookPage {
       if (choice) this.applyMimoPresetChoice(choice);
       return;
     }
-    const index = selectedIndex - mimoLabels.length;
-    if (MimoStore.load().enabled && index === this.regularTtsVoiceCount()) {
+    const regularIndex = selectedIndex - mimoLabels.length;
+    if (MimoStore.load().enabled && regularIndex === this.regularTtsVoiceCount()) {
       this.getUIContext().getRouter().pushUrl({ url: 'pages/MimoSettings' });
       return;
     }
+    const localVoices = this.selectableLocalTtsVoices();
+    if (regularIndex < localVoices.length) {
+      this.applyLocalTtsVoice(localVoices[regularIndex], true);
+      return;
+    }
+    const index = regularIndex - localVoices.length;
     if (index < this.ttsCloudVoices.length) {
       this.applyCloudTtsVoice(this.ttsCloudVoices[index], true);
       return;
@@ -12525,6 +12592,7 @@ struct ReadBookPage {
         })
 
       ReaderTtsVoicePickerPanel({
+        localVoices: this.selectableLocalTtsVoices(),
         cloudVoices: this.ttsCloudVoices,
         customVoices: this.selectableCustomTtsVoices(),
         systemVoices: this.selectableSystemTtsVoices(),
@@ -12541,6 +12609,10 @@ struct ReadBookPage {
         panelHeight: this.readerTocPanelHeight(),
         onClose: (): void => {
           this.showTtsVoiceDropdown = false;
+        },
+        onSelectLocalVoice: (voice: LocalTtsModel): void => {
+          this.showTtsVoiceDropdown = false;
+          this.applyLocalTtsVoice(voice, true);
         },
         onSelectCloudVoice: (voice: TtsVoiceInfo): void => {
           this.showTtsVoiceDropdown = false;

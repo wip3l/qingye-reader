@@ -9,6 +9,7 @@ import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { PlaybackLoudnessGain } from '../../utils/PlaybackLoudnessGain';
+import { LocalTtsModel, LocalTtsModels } from '../../utils/localtts/LocalTtsModels';
 
 /**
  * 阅读设置面板里的"朗读"页：倍速、音量增益、音色入口、定时、开始/停止。
@@ -259,6 +260,7 @@ export struct ReaderTtsQuickSettingsPanel {
  */
 @Component
 export struct ReaderTtsVoicePickerPanel {
+  @Prop localVoices: LocalTtsModel[] = [];
   @Prop cloudVoices: TtsVoiceInfo[] = [];
   @Prop customVoices: HttpTTS[] = [];
   @Prop systemVoices: TtsVoiceOption[] = [];
@@ -275,6 +277,8 @@ export struct ReaderTtsVoicePickerPanel {
   @Prop panelWidth: number = 360;
   @Prop panelHeight: number = 480;
   onClose: () => void = (): void => {
+  };
+  onSelectLocalVoice: (voice: LocalTtsModel) => void = (_voice: LocalTtsModel): void => {
   };
   onSelectCloudVoice: (voice: TtsVoiceInfo) => void = (_voice: TtsVoiceInfo): void => {
   };
@@ -328,6 +332,14 @@ export struct ReaderTtsVoicePickerPanel {
 
       Scroll() {
         Column() {
+          if (this.localVoices.length > 0) {
+            this.sectionTitle('离线音色')
+            ForEach(this.localVoices, (voice: LocalTtsModel) => {
+              this.option(LocalTtsModels.voiceTitle(voice),
+                LocalTtsModels.voiceKey(voice) === this.selectedKey, () => this.onSelectLocalVoice(voice))
+            }, (voice: LocalTtsModel) => LocalTtsModels.voiceKey(voice))
+          }
+
           if (this.cloudVoices.length > 0) {
             this.sectionTitle('云端音色')
             ForEach(this.cloudVoices, (voice: TtsVoiceInfo) => {

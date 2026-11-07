@@ -30,6 +30,9 @@ import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
+import { LocalTtsModel, LocalTtsModels } from '../utils/localtts/LocalTtsModels';
+import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
+import { LocalTtsEngine } from '../utils/localtts/LocalTtsEngine';
 
 class ManagedTtsVoiceEntry {
   key: string = '';
@@ -79,6 +82,11 @@ struct CustomTtsVoiceManagerPage {
   @StorageLink('ttsSpeed') ttsSpeed: number = 1;
   @StorageLink('ttsInstalledVoiceKeys') ttsInstalledVoiceKeys: string = '';
   @StorageLink('ttsCloudVoiceId') ttsCloudVoiceId: string = '';
+  @StorageLink('ttsLocalVoiceId') ttsLocalVoiceId: string = '';
+  @StorageProp('localTtsInstalledIds') localTtsInstalledIds: string = '';
+  @StorageProp('localTtsDownloadingId') localTtsDownloadingId: string = '';
+  @StorageProp('localTtsDownloadProgress') localTtsDownloadProgress: string = '';
+  @StorageProp('accountMembershipSku') accountMembershipSku: string = '';
   @StorageLink('ttsDisabledVoiceKeys') ttsDisabledVoiceKeys: string = '';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -227,6 +235,22 @@ struct CustomTtsVoiceManagerPage {
             if (this.selectionMode) { this.selectionHeader() }
           }.width('100%').padding({ top: PageScaffold.BAR_HEIGHT + this.statusBarHeight })
         }
+        if (!this.selectionMode && !this.searchText) {
+          ListItem() { this.voiceSectionTitle('离线音色') }
+          ForEach(LocalTtsModels.CATALOG, (model: LocalTtsModel) => {
+            if (!this.localInstalled(model)) {
+              ListItem() { this.localVoiceRow(model) }
+            } else if (deviceInfo.sdkApiVersion >= 26) {
+              HdsListItem({ customItemBuilder: (): void => { this.localVoiceRow(model); },
+                swipeActionOptions: this.localSwipeActions(model) })
+            } else {
+              ListItem() { this.localVoiceRow(model) }
+                .swipeAction({ end: { builder: (): void => { this.localFallbackSwipeActions(model); } },
+                  edgeEffect: SwipeEdgeEffect.Spring })
+            }
+          }, (model: LocalTtsModel): string => `${model.id}:${this.localTtsInstalledIds}:` +
+            `${this.localTtsDownloadingId}:${this.ttsLocalVoiceId}:${this.localEnabled(model)}`)
+        }
         if (this.nativeVoices(false).length > 0) {
           ListItem() { this.voiceSectionTitle('系统音色') }
         }
@@ -315,6 +339,153 @@ struct CustomTtsVoiceManagerPage {
   }
 
   @Builder
+  localVoiceRow(model: LocalTtsModel) {
+    Row({ space: AppSpacing.MD }) {
+      Column({ space: AppSpacing.XS }) {
+        Text(`${model.name} · ${model.description}`).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor()).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.localVoiceStatus(model)).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).maxLines(3)
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      if (this.localTtsDownloadingId === model.id) {
+        this.localActionButton('取消', () => { LocalTtsModels.cancelDownload(); })
+      } else if (!this.localInstalled(model)) {
+        this.localActionButton(this.localMemberAllowed() ? '下载' : '开通会员', () => { this.downloadLocalVoice(model); })
+      } else if (this.ttsLocalVoiceId === model.id && this.localEnabled(model)) {
+        SymbolGlyph($r('sys.symbol.checkmark')).fontSize(18).fontColor([this.accentColor()])
+      }
+    }.width('100%').constraintSize({ minHeight: 72 }).padding(AppSpacing.XL)
+      .backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.cardRadius())
+      .opacity(!this.localInstalled(model) || this.localEnabled(model) ? 1 : 0.5)
+      .onClick(() => {
+        if (this.localInstalled(model)) this.selectLocalVoice(model);
+        else if (this.localTtsDownloadingId !== model.id) this.downloadLocalVoice(model);
+      })
+  }
+
+  @Builder
+  localActionButton(label: string, action: () => void) {
+    Button(label).fontSize(AppFontSize.CAPTION).height(32)
+      .backgroundColor(this.buttonColor()).fontColor(ThemeRuntime.onAccentColor(this.buttonColor()))
+      .onClick(action)
+  }
+
+  private localSwipeActions(model: LocalTtsModel): HdsSwipeActionOptions {
+    const enabled = this.localEnabled(model);
+    return { icons: [
+      {
+        icon: new SymbolGlyphModifier(enabled ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle')),
+        backgroundColor: this.buttonColor(),
+        iconOptions: { accessibilityText: enabled ? '禁用音色' : '启用音色' },
+        onAction: (): void => { this.toggleLocalVoice(model); }
+      },
+      { icon: new SymbolGlyphModifier($r('sys.symbol.trash')), backgroundColor: ThemeRuntime.dangerColor(this.appDarkMode),
+        iconOptions: { accessibilityText: '删除音色' }, onAction: (): void => { this.confirmRemoveLocalVoice(model); } }
+    ] };
+  }
+
+  @Builder
+  localFallbackSwipeActions(model: LocalTtsModel) {
+    Row() {
+      Button(this.localEnabled(model) ? '禁用' : '启用').height('100%').width(72)
+        .backgroundColor(this.buttonColor()).fontColor(ThemeRuntime.onAccentColor(this.buttonColor()))
+        .onClick(() => { this.toggleLocalVoice(model); })
+      Button('删除').height('100%').width(72)
+        .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode)).fontColor('#FFFFFF')
+        .onClick(() => { this.confirmRemoveLocalVoice(model); })
+    }.height('100%')
+  }
+
+  localInstalled(model: LocalTtsModel): boolean {
+    return this.localTtsInstalledIds.split('\n').includes(model.id);
+  }
+
+  localEnabled(model: LocalTtsModel): boolean {
+    return TtsVoiceAvailability.isEnabled(this.ttsDisabledVoiceKeys, LocalTtsModels.availabilityKey(model));
+  }
+
+  localMemberAllowed(): boolean {
+    return this.accountMembershipSku !== undefined && LocalTtsModels.memberAllowed();
+  }
+
+  localVoiceStatus(model: LocalTtsModel): string {
+    if (this.localTtsDownloadingId === model.id) return this.localTtsDownloadProgress || '下载中';
+    const tier = this.localMemberAllowed() ? '' : ' · 会员专享';
+    if (this.localInstalled(model)) {
+      const state = !this.localEnabled(model) ? '已禁用' : (this.ttsLocalVoiceId === model.id ? '当前使用' : '已启用');
+      return `已下载 · ${state}${tier}`;
+    }
+    return `本机合成，不联网、不限字数 · 约 ${LocalTtsModels.sizeText(model)}${tier}`;
+  }
+
+  selectLocalVoice(model: LocalTtsModel): void {
+    if (!this.localEnabled(model)) {
+      HdsFeedback.showToast('请先左滑启用该音色');
+      return;
+    }
+    if (!this.localMemberAllowed()) {
+      HdsFeedback.showToast(LocalTtsModels.MEMBER_REQUIRED);
+      router.pushUrl({ url: 'pages/MemberBenefits' });
+      return;
+    }
+    LocalTtsSelection.select(getContext(this), model.id);
+    this.ttsCustomVoiceId = '';
+    this.ttsCloudVoiceId = '';
+    this.saveSettings();
+    HdsFeedback.showToast(`已选择 ${model.name}`);
+  }
+
+  toggleLocalVoice(model: LocalTtsModel): void {
+    const enabled = !this.localEnabled(model);
+    const selected = this.ttsLocalVoiceId === model.id;
+    this.ttsDisabledVoiceKeys = TtsVoiceAvailability.setEnabled(this.ttsDisabledVoiceKeys,
+      LocalTtsModels.availabilityKey(model), enabled);
+    if (!enabled && selected) {
+      LocalTtsSelection.clear(getContext(this));
+      this.clearCustomVoiceSelection();
+    }
+    this.saveSettings();
+    HdsFeedback.showToast(!enabled && selected ? '音色已禁用，已切换为系统默认音色' : (enabled ? '音色已启用' : '音色已禁用'));
+  }
+
+  downloadLocalVoice(model: LocalTtsModel): void {
+    if (!this.localMemberAllowed()) {
+      HdsFeedback.showToast(LocalTtsModels.MEMBER_REQUIRED);
+      router.pushUrl({ url: 'pages/MemberBenefits' });
+      return;
+    }
+    if (LocalTtsModels.isDownloading()) {
+      HdsFeedback.showToast('已有音色正在下载');
+      return;
+    }
+    const context = getContext(this);
+    LocalTtsModels.install(context, model).then((): void => {
+      HdsFeedback.showToast(`${model.name} 下载完成`);
+      if (this.pageAlive && !this.ttsLocalVoiceId) this.selectLocalVoice(model);
+    }).catch((error: Error): void => {
+      HdsFeedback.showToast(error.message || '下载失败，请重试');
+    });
+  }
+
+  confirmRemoveLocalVoice(model: LocalTtsModel): void {
+    this.getUIContext().showAlertDialog({
+      title: '删除音色',
+      message: `确定删除离线音色“${model.name}”吗？删除后需要重新下载才能使用。`,
+      primaryButton: { value: '取消', action: (): void => {} },
+      secondaryButton: {
+        value: '删除', fontColor: ThemeRuntime.dangerColor(this.appDarkMode), action: (): void => {
+          const context = getContext(this);
+          if (this.ttsLocalVoiceId === model.id) {
+            LocalTtsSelection.clear(context);
+          }
+          LocalTtsEngine.release();
+          LocalTtsModels.remove(context, model);
+          HdsFeedback.showToast(`已删除 ${model.name}`);
+        }
+      }
+    });
+  }
+
+  @Builder
   voiceSectionTitle(title: string) {
     Text(title).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
       .width('100%').padding({ top: AppSpacing.MD })
@@ -354,7 +525,7 @@ struct CustomTtsVoiceManagerPage {
 
   nativeSelected(entry: ManagedTtsVoiceEntry): boolean {
     if (entry.cloud) return this.ttsCloudVoiceId === entry.cloudVoice.id;
-    return !this.ttsCloudVoiceId && !this.ttsCustomVoiceId && entry.key ===
+    return !this.ttsCloudVoiceId && !this.ttsCustomVoiceId && !this.ttsLocalVoiceId && entry.key ===
       TtsVoiceAvailability.systemKey(this.ttsPerson, this.ttsOnline, this.ttsLanguage, this.ttsStyle);
   }
 
@@ -454,6 +625,7 @@ struct CustomTtsVoiceManagerPage {
       this.ttsCloudVoiceId = '';
       this.ttsCustomVoiceId = '';
     }
+    LocalTtsSelection.clear(getContext(this));
     this.saveSettings();
     HdsFeedback.showToast(`已选择 ${entry.title}`);
   }
@@ -1506,6 +1678,7 @@ struct CustomTtsVoiceManagerPage {
       } else {
         this.ttsCustomVoiceId = String(voice.id);
         this.ttsCloudVoiceId = '';
+        LocalTtsSelection.clear(getContext(this));
         this.saveSettings();
         HdsFeedback.showToast(`已选择 ${voice.name || '自定义音色'}`);
       }

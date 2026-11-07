@@ -12,11 +12,13 @@ export class TtsVoiceAvailability {
 
   static cloudKey(id: string): string { return `cloud:${id}`; }
 
+  static localKey(id: string): string { return `local:${id}`; }
+
   static normalize(raw: string): string {
     const keys: string[] = [];
     for (const line of (raw || '').split('\n')) {
       const key = line.trim();
-      if ((key.startsWith('system:') || key.startsWith('cloud:')) &&
+      if ((key.startsWith('system:') || key.startsWith('cloud:') || key.startsWith('local:')) &&
         key !== TtsVoiceAvailability.DEFAULT_KEY && !keys.includes(key)) keys.push(key);
     }
     return keys.join('\n');

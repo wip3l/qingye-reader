@@ -28,6 +28,8 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow } from '../components/common/SettingRow';
+import { LocalTtsModel, LocalTtsModels } from '../utils/localtts/LocalTtsModels';
+import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
 
 interface TtsSettingsVoiceSelectOption extends SelectOption {
   key: string;
@@ -50,6 +52,8 @@ struct TtsSettingsPage {
   @StorageLink('ttsCustomVoiceId') @Watch('onCustomVoiceSelectionChanged') ttsCustomVoiceId: string = '';
   @StorageLink('ttsCustomVoices') @Watch('onCustomVoicesStorageChanged') ttsCustomVoices: string = '';
   @StorageLink('ttsCloudVoiceId') ttsCloudVoiceId: string = '';
+  @StorageLink('ttsLocalVoiceId') @Watch('onCustomVoiceSelectionChanged') ttsLocalVoiceId: string = '';
+  @StorageProp('localTtsInstalledIds') @Watch('onCustomVoiceSelectionChanged') localTtsInstalledIds: string = '';
   @StorageLink('ttsDisabledVoiceKeys') @Watch('onVoiceAvailabilityChanged') ttsDisabledVoiceKeys: string = '';
   @StorageLink('accountLoggedIn') accountLoggedIn: boolean = false;
   @StorageLink('accountPaidPoints') paidPoints: number = 0;
@@ -131,7 +135,7 @@ struct TtsSettingsPage {
         SettingRow({ title: '朗读音色' }) {
           this.voiceDropdownSelector()
         }
-        SettingNavRow({ title: '音色管理', description: '系统音色 / 云端音色 / 自定义音色', showDivider: false,
+        SettingNavRow({ title: '音色管理', description: '离线音色 / 系统音色 / 云端音色 / 自定义音色', showDivider: false,
           onTap: (): void => {
             this.stopPreview();
             this.getUIContext().getRouter().pushUrl({ url: 'pages/CustomTtsVoiceManager' });
@@ -265,6 +269,10 @@ struct TtsSettingsPage {
 
   selectedVoiceTitle(): string {
     if (this.mimoEnabled) return MimoStore.selectedVoiceTitle();
+    const localVoice = this.currentLocalVoice();
+    if (localVoice) {
+      return LocalTtsModels.voiceTitle(localVoice);
+    }
     const cloudVoice = this.findCurrentCloudVoice();
     if (cloudVoice) {
       return TtsVoiceCatalog.cloudVoiceTitle(cloudVoice);
@@ -289,6 +297,10 @@ struct TtsSettingsPage {
       options.push({ value: 'MiMo 朗读设置', key: 'mimo',
         selectVoice: (): void => { this.stopPreview(); router.pushUrl({ url: 'pages/MimoSettings' }); } });
     }
+    LocalTtsModels.selectableModels().forEach((model: LocalTtsModel): void => {
+      options.push({ value: LocalTtsModels.voiceTitle(model), key: LocalTtsModels.voiceKey(model),
+        selectVoice: (): void => { this.applyLocalVoice(model); } });
+    });
     this.cloudVoices.forEach((voice: TtsVoiceInfo): void => {
       options.push({ value: TtsVoiceCatalog.cloudVoiceTitle(voice),
         key: TtsVoiceCatalog.cloudVoiceKey(voice),
@@ -542,6 +554,12 @@ struct TtsSettingsPage {
         this.selectedVoiceKey = TtsVoiceCatalog.customVoiceKey(currentCustomVoice);
         return;
       }
+      // 选着离线音色时 findCurrentVoice 恒为空，不能当成“系统音色不可用”回退默认，否则会把离线选择清掉。
+      const currentLocalVoice = this.currentLocalVoice();
+      if (currentLocalVoice) {
+        this.selectedVoiceKey = LocalTtsModels.voiceKey(currentLocalVoice);
+        return;
+      }
       const currentVoice = this.findCurrentVoice();
       if (!currentVoice || !currentVoice.available) {
         const defaultVoice = this.firstAvailableVoice();
@@ -593,8 +611,33 @@ struct TtsSettingsPage {
     this.ttsLanguage = voice.language;
     this.ttsCustomVoiceId = '';
     this.ttsCloudVoiceId = '';
+    LocalTtsSelection.clear(this.context);
     this.selectedVoiceKey = TtsVoiceCatalog.voiceKey(voice);
     this.saveSettings();
+  }
+
+  currentLocalVoice(): LocalTtsModel | undefined {
+    if (!this.ttsLocalVoiceId || this.localTtsInstalledIds === undefined) return undefined;
+    return LocalTtsSelection.current();
+  }
+
+  applyLocalVoice(model: LocalTtsModel): void {
+    if (!LocalTtsModels.memberAllowed()) {
+      HdsFeedback.showToast(LocalTtsModels.MEMBER_REQUIRED);
+      router.pushUrl({ url: 'pages/MemberBenefits' });
+      return;
+    }
+    if (this.mimoEnabled) MimoStore.setEnabled(false);
+    if (this.isPreviewing) {
+      this.previewReader.stop();
+      this.isPreviewing = false;
+    }
+    LocalTtsSelection.select(this.context, model.id);
+    this.ttsCustomVoiceId = '';
+    this.ttsCloudVoiceId = '';
+    this.selectedVoiceKey = LocalTtsModels.voiceKey(model);
+    this.saveSettings();
+    HdsFeedback.showToast(`已启用 ${model.name}`);
   }
 
   applyCustomVoice(voice: HttpTTS): void {
@@ -609,6 +652,7 @@ struct TtsSettingsPage {
     }
     this.ttsCustomVoiceId = String(voice.id);
     this.ttsCloudVoiceId = '';
+    LocalTtsSelection.clear(this.context);
     this.selectedVoiceKey = TtsVoiceCatalog.customVoiceKey(voice);
     this.saveSettings();
     HdsFeedback.showToast(`已启用 ${voice.name}`);
@@ -627,6 +671,7 @@ struct TtsSettingsPage {
     }
     this.ttsCloudVoiceId = voice.id;
     this.ttsCustomVoiceId = '';
+    LocalTtsSelection.clear(this.context);
     this.selectedVoiceKey = `cloud_${voice.id}`;
     this.saveSettings();
     HdsFeedback.showToast(`已启用 ${voice.name}`);
@@ -717,6 +762,10 @@ struct TtsSettingsPage {
 
   currentVoiceKey(): string {
     if (MimoStore.load().enabled) return MimoStore.selectedVoiceKey();
+    const localVoice = this.currentLocalVoice();
+    if (localVoice) {
+      return LocalTtsModels.voiceKey(localVoice);
+    }
     if (this.ttsCloudVoiceId) {
       return `cloud_${this.ttsCloudVoiceId}`;
     }
@@ -734,7 +783,7 @@ struct TtsSettingsPage {
   }
 
   isCurrentVoice(voice: TtsVoiceOption): boolean {
-    if (this.ttsCustomVoiceId || this.ttsCloudVoiceId) {
+    if (this.ttsCustomVoiceId || this.ttsCloudVoiceId || this.currentLocalVoice()) {
       return false;
     }
     return voice.id === this.ttsPerson && voice.online === this.ttsOnline &&

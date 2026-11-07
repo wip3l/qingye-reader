@@ -2,7 +2,7 @@
   "apiType": "stageMode",
   "buildOption": {
     "sourceOption": {
-      "workers": ["./src/main/ets/workers/ComicColorWorker.ets"]
+      "workers": ["./src/main/ets/workers/ComicColorWorker.ets", "./src/main/ets/workers/LocalTtsWorker.ets"]
     }
   },
   "buildOptionSet": [
@@ -13,6 +13,11 @@
           "ruleOptions": {
             "enable": false
           }
+        }
+      },
+      "nativeLib": {
+        "filter": {
+          "excludes": ["**/x86_64/*.so"]
         }
       }
     }
