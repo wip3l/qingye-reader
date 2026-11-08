@@ -1018,7 +1018,7 @@ export struct ReaderFontSettingsEditor {
         .fontSize(AppFontSize.BODY_LARGE)
         .fontColor(this.primaryTextColor())
         .layoutWeight(1)
-      this.fontSizeStepButton($r('sys.symbol.minus'), '减小正文字体', this.readerFontSize > 14, () => {
+      this.fontSizeStepButton($r('sys.symbol.minus'), '减小正文字体', () => this.readerFontSize > 14, () => {
         this.setBodyFontSize(this.readerFontSize - 1);
       })
       Text(`${this.readerFontSize}sp`)
@@ -1027,7 +1027,7 @@ export struct ReaderFontSettingsEditor {
         .width(52)
         .height(36)
         .textAlign(TextAlign.Center)
-      this.fontSizeStepButton($r('sys.symbol.plus'), '增大正文字体', this.readerFontSize !== 50, () => {
+      this.fontSizeStepButton($r('sys.symbol.plus'), '增大正文字体', () => this.readerFontSize < 50, () => {
         this.setBodyFontSize(this.readerFontSize + 1);
       })
     }
@@ -1047,7 +1047,7 @@ export struct ReaderFontSettingsEditor {
         .fontSize(AppFontSize.BODY_LARGE)
         .fontColor(this.primaryTextColor())
         .layoutWeight(1)
-      this.fontSizeStepButton($r('sys.symbol.minus'), '减小标题字体', this.readerTitleFontSize > 14, () => {
+      this.fontSizeStepButton($r('sys.symbol.minus'), '减小标题字体', () => this.readerTitleFontSize > 14, () => {
         this.setTitleFontSize(this.readerTitleFontSize - 1);
       })
       Text(`${this.readerTitleFontSize}sp`)
@@ -1056,7 +1056,7 @@ export struct ReaderFontSettingsEditor {
         .width(52)
         .height(36)
         .textAlign(TextAlign.Center)
-      this.fontSizeStepButton($r('sys.symbol.plus'), '增大标题字体', this.readerTitleFontSize !== 50, () => {
+      this.fontSizeStepButton($r('sys.symbol.plus'), '增大标题字体', () => this.readerTitleFontSize < 50, () => {
         this.setTitleFontSize(this.readerTitleFontSize + 1);
       })
     }
@@ -1070,11 +1070,13 @@ export struct ReaderFontSettingsEditor {
   }
 
   @Builder
-  fontSizeStepButton(icon: Resource, accessibilityText: string, enabled: boolean, action: () => void) {
+  fontSizeStepButton(icon: Resource, accessibilityText: string, enabled: () => boolean, action: () => void) {
+    // enabled 必须是取值函数：@Builder 多参数按值传递，直接传 boolean 只取首次建出时的值，
+    // 到过上下限再回来按钮会一直灰着点不了；在绑定里调用才会跟着状态刷新。
     AdaptiveIconButton({
       icon: icon,
       accessibilityLabel: accessibilityText,
-      buttonEnabled: enabled,
+      buttonEnabled: enabled(),
       buttonSize: 34,
       iconSize: 17,
       fillColor: this.inputColor(),
@@ -1406,7 +1408,7 @@ export struct ReaderFontSettingsEditor {
       }.width('100%')
       Row({ space: AppSpacing.MD }) {
         this.fontSizeStepButton($r('sys.symbol.minus'), `减小标题${label}`,
-          (top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) > 0,
+          () => (top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) > 0,
           () => this.adjustTitleMargin(top, -1))
         Slider({ value: top ? this.titleStyle.marginTop : this.titleStyle.marginBottom, min: 0,
           max: ReaderTitleSplit.MAX_MARGIN, step: 1 })
@@ -1420,7 +1422,7 @@ export struct ReaderFontSettingsEditor {
           .onChange((current: number) => this.updateTitleSplit(top ? 'marginTop' : 'marginBottom', `${current}`))
           .accessibilityText(`标题${label}`)
         this.fontSizeStepButton($r('sys.symbol.plus'), `增大标题${label}`,
-          (top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) < ReaderTitleSplit.MAX_MARGIN,
+          () => (top ? this.titleStyle.marginTop : this.titleStyle.marginBottom) < ReaderTitleSplit.MAX_MARGIN,
           () => this.adjustTitleMargin(top, 1))
       }.width('100%')
     }.width('100%')
@@ -1581,7 +1583,7 @@ export struct ReaderFontSettingsEditor {
       }.width('100%')
       Row({ space: AppSpacing.MD }) {
         this.fontSizeStepButton($r('sys.symbol.minus'), `减小${label}`,
-          secondary ? this.titleStyle.secondaryScale > 0.5 : this.titleStyle.lineGap > 0,
+          () => secondary ? this.titleStyle.secondaryScale > 0.5 : this.titleStyle.lineGap > 0,
           () => this.adjustTitleSplit(secondary, -1))
         Slider({ value: secondary ? this.titleStyle.secondaryScale : this.titleStyle.lineGap,
           min: secondary ? 0.5 : 0, max: secondary ? 2 : 40, step: secondary ? 0.1 : 1 })
@@ -1595,7 +1597,7 @@ export struct ReaderFontSettingsEditor {
           })
           .accessibilityText(label)
         this.fontSizeStepButton($r('sys.symbol.plus'), `增大${label}`,
-          secondary ? this.titleStyle.secondaryScale < 2 : this.titleStyle.lineGap < 40,
+          () => secondary ? this.titleStyle.secondaryScale < 2 : this.titleStyle.lineGap < 40,
           () => this.adjustTitleSplit(secondary, 1))
       }.width('100%')
     }.width('100%').padding({ top: AppSpacing.XS })
@@ -2439,7 +2441,7 @@ export struct ReaderFontSettingsEditor {
         .fontColor(this.primaryTextColor())
         .layoutWeight(1)
       this.fontSizeStepButton($r('sys.symbol.minus'), '减小规则字体',
-        this.regexRuleAt(index).fontSize > 14, () => {
+        () => Math.round(this.regexRuleAt(index).fontSize) > 14, () => {
         this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
           target.fontSize = Math.max(14, Math.round(target.fontSize) - 1);
         });
@@ -2451,7 +2453,7 @@ export struct ReaderFontSettingsEditor {
         .height(36)
         .textAlign(TextAlign.Center)
       this.fontSizeStepButton($r('sys.symbol.plus'), '增大规则字体',
-        this.regexRuleAt(index).fontSize !== 50, () => {
+        () => Math.round(this.regexRuleAt(index).fontSize) < 50, () => {
         this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
           target.fontSize = Math.min(50, Math.round(target.fontSize) + 1);
         });
