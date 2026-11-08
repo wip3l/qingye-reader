@@ -38,7 +38,7 @@ struct OpenSourceLicensesPage {
   pageContent() {
     Column() {
       Column() {
-        Text('开源轻页采用 GPL-3.0 许可证，并包含 ohos_quickjs、QuickJS、OpenCC 简繁字典、Manga-Colorizer 着色模型和部分 OpenHarmony/Huawei N-API 封装代码。以下源码信息、版权声明与完整许可文本随 HAP 一同分发。')
+        Text('开源轻页采用 GPL-3.0 许可证，并包含 ohos_quickjs、QuickJS、acorn、OpenCC 简繁字典、Manga-Colorizer 着色模型和部分 OpenHarmony/Huawei N-API 封装代码。以下源码信息、版权声明与完整许可文本随 HAP 一同分发。')
           .fontSize(AppFontSize.BODY)
           .fontColor(this.secondaryTextColor())
           .lineHeight(22)
