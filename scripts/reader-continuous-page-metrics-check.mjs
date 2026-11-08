@@ -17,7 +17,7 @@ const sandbox = vm.createContext({
   console, Date: { now: () => now },
   setTimeout: fn => { timers.set(++timerId, fn); return timerId; },
   clearTimeout: id => timers.delete(id),
-  READER_DOUBLE_PAGE_DIVIDER_WIDTH: 1,
+  READER_DOUBLE_PAGE_DIVIDER_WIDTH: 1, READER_SPREAD_MIN_WIDTH_VP: 600, READER_SPREAD_MIN_ASPECT: 0.8,
   ReaderV2DocumentParser: { parse: source => ({ source }) },
   ReaderV2Paginator: {
     start: (document, snapshot) => ({ document, snapshot, pageSet: { pages: [], complete: false } }),
@@ -36,7 +36,7 @@ const names = ['cancelReaderContinuousMetricsTimers', 'refreshReaderContinuousPa
   'scheduleReaderContinuousPositionUpdate', 'updateReaderContinuousDisplayPosition',
   'readerContinuousV2ChapterEndVisible', 'readerContinuousV2FirstVisibleSourceOffset',
   'getReaderInfoBarContext', 'getProgressText', 'ttsQuickProgress',
-  'getReaderPageColumnWidth'];
+  'getReaderPageColumnWidth', 'readerViewportFitsSpread'];
 vm.runInContext(stripTypeScriptTypes(
   ['core/reader/ReaderFontWeight.ts', 'core/reader/ReaderTitleSplit.ts',
     'model/reader/ReaderRegexFontRule.ets', 'model/reader/ReaderTitleStyle.ets']
@@ -168,6 +168,7 @@ assert.equal(p.readerContinuousDisplayPageCount, 1);
 p.readerLandscapeDoublePage = true; p.pageViewWidth = 1200; p.pageViewHeight = 800;
 assert.equal(p.getReaderPageColumnWidth(), 1200, 'scroll surface remains a full-width column');
 assert.equal(p.getReaderPageColumnWidth(true), 599.5, 'statistics use paged landscape leaf geometry');
+p.pageViewWidth = 760; p.pageViewHeight = 840;assert.equal(p.getReaderPageColumnWidth(true), 379.5, 'unfolded near-square foldable also uses spread leaves');p.pageViewWidth = 800; p.pageViewHeight = 1280;assert.equal(p.getReaderPageColumnWidth(true), 800, 'tablet portrait stays a single leaf');p.pageViewWidth = 1200; p.pageViewHeight = 800;
 p.isReaderNovelContinuousScrollModeActive = () => false;
 p.refreshReaderContinuousPageMetrics();
 assert.equal(timers.size, 0);

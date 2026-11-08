@@ -1549,7 +1549,12 @@ struct PdfReadBookPage {
           this.viewWidth = Number(after.width) || this.viewWidth;
           this.viewHeight = Number(after.height) || this.viewHeight;
         }
-        const wide = Number(after.width) >= 840;
+        // Same spread rule as the text reader (wider than tall, or near-square and ≥600vp such as an
+        // unfolded foldable); very wide portrait windows keep the original 840vp allowance.
+        const width = Number(after.width) || 0;
+        const height = Number(after.height) || 0;
+        const wide = width >= 840 || (width > 0 && height > 0 &&
+          (width > height || (width >= 600 && width / height >= 0.8)));
         if (wide !== this.wideWindow) { this.wideWindow = wide; this.applyViewSettings(); }
       })
     }

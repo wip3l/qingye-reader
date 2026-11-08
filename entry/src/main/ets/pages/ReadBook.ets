@@ -247,6 +247,11 @@ const READER_PAGINATION_BATCH_DELAY_MS = 64;
 const READER_INTERACTIVE_PAGINATION_BATCH_DELAY_MS = 56;
 const READER_PAGINATION_BUSY_RETRY_DELAY_MS = 48;
 const READER_DOUBLE_PAGE_DIVIDER_WIDTH = 1;
+// Unfolded book-style foldables are held slightly taller than wide, so "width > height" alone never
+// enables the spread there. Near-square viewports that are wide enough for two readable leaves also count;
+// tablet portrait (~0.6–0.7) and split-screen halves stay single.
+const READER_SPREAD_MIN_WIDTH_VP = 600;
+const READER_SPREAD_MIN_ASPECT = 0.8;
 // 推页接缝阴影的宽度（vp），以及被压住那页在完全盖住时浅纱的不透明度。
 const PUSH_PAGE_TURN_SHADOW_SIZE = 18;
 const PUSH_PAGE_TURN_SHADE_MAX_OPACITY = 0.45;
@@ -2896,7 +2901,7 @@ struct ReadBookPage {
 
   isReaderComicDualPageActive(): boolean {
     return this.isReaderComicPagedMode() && this.readerComicSettings.dualPage &&
-      this.pageViewWidth > this.pageViewHeight;
+      this.readerViewportFitsSpread();
   }
 
   onReaderComicPagedPageChanged(pageIndex: number): void {
@@ -6919,9 +6924,17 @@ struct ReadBookPage {
     return this.getPageText(this.currentPageIndex);
   }
 
+  readerViewportFitsSpread(): boolean {
+    const width = this.pageViewWidth;
+    const height = this.pageViewHeight;
+    if (width <= 0 || height <= 0) return false;
+    if (width > height) return true;
+    return width >= READER_SPREAD_MIN_WIDTH_VP && width / height >= READER_SPREAD_MIN_ASPECT;
+  }
+
   isLandscapeDoublePageActive(): boolean {
     return this.readerLandscapeDoublePage &&
-      this.pageViewWidth > this.pageViewHeight &&
+      this.readerViewportFitsSpread() &&
       !this.isReaderContinuousScrollSurfaceActive();
   }
 
@@ -9910,7 +9923,7 @@ struct ReadBookPage {
   }
 
   getReaderPageColumnWidth(forPageMetrics: boolean = false): number {
-    const doublePage = forPageMetrics ? this.readerLandscapeDoublePage && this.pageViewWidth > this.pageViewHeight :
+    const doublePage = forPageMetrics ? this.readerLandscapeDoublePage && this.readerViewportFitsSpread() :
       this.isLandscapeDoublePageActive();
     if (!doublePage) return Math.max(1, this.pageViewWidth);
     // The divider participates in Row layout. Measuring each leaf as exactly half of the spread makes
