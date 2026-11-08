@@ -21,6 +21,17 @@ export class ReaderPageTurnAnimation {
     return result;
   }
 
+  /**
+   * 卷页动画用的页面截图比例。截图交给 Canvas 每帧贴图，整页原尺寸截图的离屏渲染与回读会落在翻页起始帧，
+   * 贴图填充也随像素数增长。仿真 0.42 在高密度屏上移动中仍清晰；3D 仿真每帧只画两次贴图，0.6 折中正文清晰与回读开销。
+   * 平移、推页、淡入、叠页直接显示截图本身，保持原尺寸。
+   */
+  static snapshotScale(type: number): number {
+    if (type === this.THREE_D) return 0.6;
+    if (type === this.SIMULATION) return 0.42;
+    return 1;
+  }
+
   static normalize(value: number): number {
     const rounded = Math.round(value);
     return this.types().includes(rounded) ? rounded : this.SLIDE;

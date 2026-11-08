@@ -252,14 +252,6 @@ const PUSH_PAGE_TURN_SHADOW_SIZE = 18;
 const PUSH_PAGE_TURN_SHADE_MAX_OPACITY = 0.45;
 // 正文选中菜单里的自定义“替换”项 ID，用于与系统菜单项（复制/翻译等）区分。
 const READER_REPLACE_MENU_ITEM_ID: string = 'reader_replace_rule';
-// Page-curl textures are transient animation rasters, not the settled正文 surface. Capturing a full 2080x3120
-// page and sampling it through every mesh triangle can block the ArkUI thread for several seconds on tablets.
-// A 0.42 raster remains sharp while moving on high-density screens and reduces texture fill by another 29%
-// compared with the previous half-resolution capture. This matters most on dialogue-heavy pages.
-const READER_PAGE_CURL_SNAPSHOT_SCALE = 0.42;
-// 3D 仿真单双页共用平折绘制，每帧只画两次贴图，快照分辨率取正文清晰与截图回读开销的折中：
-// 0.75 时单页位图约 8 MB，渲染服务的离屏渲染与回读落在翻页起始帧；0.6 少三成多像素，正文仍可读。
-const READER_PAGE_3D_SNAPSHOT_SCALE = 0.6;
 const READER_IDLE_WORK_RETRY_MS = 120;
 // 翻页动画进行中，后台分页的每次同步排版（2–7ms）只在帧内还剩这么多空闲时才开始；一直没有就最多等 32ms。
 const READER_PAGINATION_MOTION_IDLE_MS = 5;
@@ -21674,7 +21666,9 @@ struct ReadBookPage {
   }
 
   readerPageCurlSnapshotScale(): number {
-    return this.is3DPageTurnAnimation() ? READER_PAGE_3D_SNAPSHOT_SCALE : READER_PAGE_CURL_SNAPSHOT_SCALE;
+    // 整页 2080x3120 截图逐个网格三角形采样会在平板上卡住 ArkUI 线程数秒；比例与文件排版、PDF 的截图翻页共用。
+    return ReaderPageTurnAnimation.snapshotScale(this.is3DPageTurnAnimation() ? ReaderPageTurnAnimation.THREE_D :
+      ReaderPageTurnAnimation.SIMULATION);
   }
 
   // 3D 仿真单页不绘制背页位图，省掉这次截图可以让卷曲更快起步。

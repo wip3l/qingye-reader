@@ -465,12 +465,15 @@ struct PdfReadBookPage {
 
   private flushAndSyncProgress(): void {
     const context = this.getUIContext().getHostContext();
-    this.saveProgress().then(async (): Promise<void> => {
+    this.saveProgress(true).then(async (): Promise<void> => {
       if (context) await CloudSyncCoordinator.syncAutomatically(context, CloudSyncCoordinator.TRIGGER_CHANGE);
     }).catch((error: Error): void => { console.warn('[PDF] progress sync failed:', error); });
   }
 
-  private saveProgress(): Promise<void> {
+  // 翻页后的保存很频繁，书架页还挂在阅读页下面：每次都发 shelfUpdateTime 会让它整页重读数据库、重建卡片，
+  // 正好落在下一次翻页动画里（真机上一次 20–30ms 的主线程卡顿）。和普通阅读页一样，进度照常写库，
+  // 只有离开这本书时（关书、切排版、进详情、退到后台）才通知书架。
+  private saveProgress(notifyShelf: boolean = false): Promise<void> {
     if (this.saveTimer >= 0) { clearTimeout(this.saveTimer); this.saveTimer = -1; }
     if (!this.ready || !this.book || !ReaderProgressCheckpoint.canWrite(this.owner)) return this.saveTask;
     const page = this.pageIndex;
@@ -479,6 +482,7 @@ struct PdfReadBookPage {
     settings.fitPage = this.fitPage; settings.superResolution = this.superResolution;
     const overrides = settings.bookVariables(Array.from(this.customizedPreferences));
     const timestamp = Date.now();
+    const notify = notifyShelf || this.closing;
     const bookUrl = this.bookUrl;
     const task = this.saveTask.catch((): void => {}).then(async (): Promise<void> => {
       const latest = await appDb.getBook(bookUrl);
@@ -494,7 +498,7 @@ struct PdfReadBookPage {
       latest.putVariable('readProgressPageCount', '1');
       await appDb.updateBookReadingProgress(bookUrl, PdfPagePosition.title(page), page, 0, readTime, latest.variable,
         pageChanged);
-      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      if (notify) AppStorage.setOrCreate('shelfUpdateTime', Date.now());
       this.reloadRecentReadCard(this.closing);
     });
     this.saveTask = task;
@@ -670,7 +674,7 @@ struct PdfReadBookPage {
 
   private onShortcut(): void {
     if (this.alive && this.visible && RecentReadShortcut.isPending()) {
-      this.saveProgress().then((): Promise<boolean> => RecentReadShortcut.openPending(true))
+      this.saveProgress(true).then((): Promise<boolean> => RecentReadShortcut.openPending(true))
         .catch((error: Error): void => { console.warn('[PDF] shortcut failed:', error); });
     }
   }
@@ -1143,7 +1147,7 @@ struct PdfReadBookPage {
 
   private createTurnHost(): ReaderSnapshotTurnHost {
     const host = new ReaderSnapshotTurnHost();
-    host.capture = (): Promise<image.PixelMap | null> => this.capturePage();
+    host.capture = (scale: number): Promise<image.PixelMap | null> => this.capturePage(scale);
     host.textureKey = (): string => this.pageTextureKey();
     host.advance = (direction: number): Promise<boolean> => this.advanceForTurn(direction);
     host.revert = (_direction: number): Promise<void> => this.revertTurn();
@@ -1155,10 +1159,10 @@ struct PdfReadBookPage {
     return host;
   }
 
-  private capturePage(): Promise<image.PixelMap | null> {
+  private capturePage(scale: number): Promise<image.PixelMap | null> {
     if (!this.alive || !this.ready || this.closing) return Promise.resolve(null);
     return this.getUIContext().getComponentSnapshot()
-      .get(PDF_PAGE_SURFACE_ID, { scale: 1, waitUntilRenderFinished: true })
+      .get(PDF_PAGE_SURFACE_ID, { scale: scale, waitUntilRenderFinished: true })
       .catch((error: Error): image.PixelMap | null => {
         console.warn('[PDF] page snapshot failed:', error);
         return null;
@@ -1319,7 +1323,7 @@ struct PdfReadBookPage {
     const book = this.book;
     if (!book) return;
     try {
-      await this.saveProgress();
+      await this.saveProgress(true);
       this.setPanel('');
       await this.getUIContext().getRouter().pushUrl({
         url: 'pages/SearchBookDetail',

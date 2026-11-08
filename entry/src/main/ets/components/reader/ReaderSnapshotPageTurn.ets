@@ -20,14 +20,17 @@ const FLICK_VELOCITY = 800;
 const COMMIT_MIN_DISTANCE = 18;
 /** 目标页截图和起点一模一样（网页还没按新位置出帧）时，隔这么久重截，最多这么多次。 */
 const STALE_RETRY_MS = 50;
-const STALE_RETRY_LIMIT = 8;
+// 重截上限。之前查明截图其实都是新帧，这只是保险；内容稀疏的页（大片空白、只有表格框）两页指纹本来就一样，
+// 上限大了每次翻页都要白截好几轮（真机一次 40ms 回读加主线程读像素，累计近一秒）。
+const STALE_RETRY_LIMIT = 2;
+const PLACEHOLDER_SIZE = 32;
 
 /**
  * 翻页层向页面要的几件事。页面负责截图、把底下的内容换页，翻页层只管两张图之间的动画。
  */
 export class ReaderSnapshotTurnHost {
-  /** 截下当前显示的整页（含页眉页脚）；失败返回 null，本次翻页不播动画。 */
-  capture: () => Promise<image.PixelMap | null> = () => Promise.resolve(null);
+  /** 按 scale 截下当前显示的整页（含页眉页脚）；失败返回 null，本次翻页不播动画。 */
+  capture: (scale: number) => Promise<image.PixelMap | null> = (_scale: number) => Promise.resolve(null);
   /** 当前页的渲染身份：相同就能直接用上次留下的截图当翻页起点。 */
   textureKey: () => string = () => '';
   /** 把底下的内容换到 direction 方向的下一页并等它画好；没有下一页或换不过去返回 false。 */
@@ -97,6 +100,8 @@ export struct ReaderSnapshotPageTurn {
   private animationWatchdog: number = -1;
   private tracking: boolean = false;
   private decided: boolean = false;
+  /** 这次滑动开始时上一页还没翻完：不跟手，松手时判断成翻页就排队。 */
+  private dragDeferred: boolean = false;
   private touchStartX: number = 0;
   private touchStartY: number = 0;
   private touchStartTime: number = 0;
@@ -143,7 +148,10 @@ export struct ReaderSnapshotPageTurn {
   }
 
   onAnimationTypeChanged(): void {
-    if (this.phase === 'idle') this.emulationPainter.clearCorner();
+    if (this.phase !== 'idle') return;
+    this.emulationPainter.clearCorner();
+    // 截图比例随动画类型变，留着的起点截图尺寸不对了。
+    this.dropCache();
   }
 
   private viewW(): number {
@@ -199,7 +207,7 @@ export struct ReaderSnapshotPageTurn {
 
   private async captureSafe(): Promise<image.PixelMap | null> {
     try {
-      return await this.host.capture();
+      return await this.host.capture(ReaderPageTurnAnimation.snapshotScale(this.animationType));
     } catch (error) {
       console.warn('[SnapshotTurn] capture failed:', error);
       return null;
@@ -234,15 +242,19 @@ export struct ReaderSnapshotPageTurn {
     const top = Math.floor(height * 0.18);
     const rows = Math.max(1, Math.floor(height * 0.64));
     const stripe = 2;
-    let hash = 2166136261;
-    for (const fraction of [0.3, 0.5, 0.7]) {
+    // 六条竖线并行读：只取三条时稀疏页容易全落在空白处，被误判成“还是旧页”。
+    const areas: image.PositionArea[] = [0.12, 0.27, 0.42, 0.57, 0.72, 0.87].map((fraction: number) => {
       const area: image.PositionArea = {
         pixels: new ArrayBuffer(stripe * rows * 4),
         offset: 0,
         stride: stripe * 4,
         region: { size: { width: stripe, height: rows }, x: Math.min(width - stripe, Math.floor(width * fraction)), y: top }
       };
-      await map.readPixels(area);
+      return area;
+    });
+    await Promise.all(areas.map((area: image.PositionArea): Promise<void> => map.readPixels(area)));
+    let hash = 2166136261;
+    for (const area of areas) {
       const bytes = new Uint8Array(area.pixels);
       for (let i = 0; i < bytes.length; i += 4) {
         hash = Math.imul(hash ^ (bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16)), 16777619);
@@ -280,12 +292,14 @@ export struct ReaderSnapshotPageTurn {
     return back;
   }
 
-  /** 纸色的整页图，按视图尺寸与纸色缓存；DMA 分配（交给 Canvas 反复绘制的图用堆内存会让 RS 泄漏显存）。 */
+  /**
+   * 纸色占位图，按纸色缓存；DMA 分配（交给 Canvas 反复绘制的图用堆内存会让 RS 泄漏显存）。
+   * 纯色图拉伸后还是纯色，只做 32×32：以前按整屏像素逐个在 JS 里填，真机上第一次跟手拖动主线程卡 260ms。
+   */
   private placeholder(): image.PixelMap | null {
-    const vp2px = this.getUIContext().vp2px(1);
-    const width = Math.max(1, Math.round(this.viewW() * vp2px));
-    const height = Math.max(1, Math.round(this.viewH() * vp2px));
-    const key = `${width}x${height}|${this.paperColor}`;
+    const width = PLACEHOLDER_SIZE;
+    const height = PLACEHOLDER_SIZE;
+    const key = this.paperColor;
     if (this.placeholderMap && this.placeholderKey === key) return this.placeholderMap;
     const hex = (this.paperColor || '#FFFFFF').replace('#', '');
     const rgb = hex.length >= 6 ? hex.substring(hex.length - 6) : 'FFFFFF';
@@ -293,9 +307,8 @@ export struct ReaderSnapshotPageTurn {
     const g = Number.parseInt(rgb.substring(2, 4), 16) || 0;
     const b = Number.parseInt(rgb.substring(4, 6), 16) || 0;
     const bytes = new Uint8Array(width * height * 4);
-    for (let i = 0; i < bytes.length; i += 4) {
-      bytes[i] = b; bytes[i + 1] = g; bytes[i + 2] = r; bytes[i + 3] = 255;
-    }
+    // 小端序下一个 uint32 依次是 B、G、R、A 四个字节。
+    new Uint32Array(bytes.buffer).fill(((255 << 24) | (r << 16) | (g << 8) | b) >>> 0);
     const options: image.InitializationOptions = {
       size: { width: width, height: height }, srcPixelFormat: image.PixelMapFormat.BGRA_8888,
       pixelFormat: image.PixelMapFormat.RGBA_8888, editable: false
@@ -588,8 +601,10 @@ export struct ReaderSnapshotPageTurn {
     const touches = event.touches && event.touches.length > 0 ? event.touches : event.changedTouches;
     const point = touches && touches.length > 0 ? touches[0] : undefined;
     if (event.type === TouchType.Down) {
-      this.tracking = this.phase === 'idle' && !!point && event.touches.length <= 1;
+      // 上一页还在翻（动画、换页或截图）时也要跟踪这次滑动，松手后排队接着翻；以前直接忽略，快速连滑会丢页。
+      this.tracking = !!point && event.touches.length <= 1;
       this.decided = false;
+      this.dragDeferred = false;
       if (point) {
         this.touchStartX = point.x;
         this.touchStartY = point.y;
@@ -619,13 +634,18 @@ export struct ReaderSnapshotPageTurn {
       const dy = point.y - this.touchStartY;
       if (!this.decided) {
         if (Math.abs(dx) < TOUCH_SLOP && Math.abs(dy) < TOUCH_SLOP) return;
-        if (Math.abs(dx) <= Math.abs(dy) * DIRECTION_RATIO || this.phase !== 'idle') {
+        if (Math.abs(dx) <= Math.abs(dy) * DIRECTION_RATIO) {
           this.tracking = false;
           return;
         }
         this.decided = true;
         const direction = dx < 0 ? 1 : -1;
         this.dragDirection = direction;
+        if (this.phase !== 'idle') {
+          // 不跟手，只在松手时按同样的距离/速度判断是否翻页，交给 turn() 排队。
+          this.dragDeferred = true;
+          return;
+        }
         if (this.animationType === ReaderPageTurnAnimation.NONE) return;
         if (this.animationType === ReaderPageTurnAnimation.THREE_D) {
           this.emulationPainter.clearCorner();
@@ -635,7 +655,7 @@ export struct ReaderSnapshotPageTurn {
         }
         this.begin(direction, true);
       }
-      if (this.phase !== 'preparing' && this.phase !== 'ready') return;
+      if (this.dragDeferred || (this.phase !== 'preparing' && this.phase !== 'ready')) return;
       if (this.animationType === ReaderPageTurnAnimation.THREE_D) this.emulationPainter.dragCorner(point.x, point.y);
       // 方向在起步时定下；往回拖只退到起点，不会变成反方向翻页。
       this.turnOffset = this.turnDirection > 0 ? Math.max(-this.viewW(), Math.min(0, dx)) :
@@ -655,7 +675,7 @@ export struct ReaderSnapshotPageTurn {
         const flickDistance = Math.max(COMMIT_MIN_DISTANCE, this.viewW() * FLICK_RATIO);
         const complete = event.type === TouchType.Up && forward && (distance >= commitDistance ||
           (flickForward && Math.abs(velocity) >= FLICK_VELOCITY && distance >= flickDistance));
-        if (this.animationType === ReaderPageTurnAnimation.NONE) {
+        if (this.dragDeferred || this.animationType === ReaderPageTurnAnimation.NONE) {
           if (complete) this.turn(this.dragDirection);
         } else {
           this.endDrag(complete);
@@ -663,6 +683,7 @@ export struct ReaderSnapshotPageTurn {
       }
       this.tracking = false;
       this.decided = false;
+      this.dragDeferred = false;
     }
   }
 
