@@ -362,6 +362,11 @@ try {
     tricky.target.snippet = '$&</script>';
     const trickyScript = EpubOriginalScript.injection(tricky).script;
     check(!trickyScript.includes('</script>') && trickyScript.includes('$&'), '定位文字里的 </script> 与 $& 不破坏脚本');
+    const baseScript = EpubOriginalScript.injection(new EpubOriginalLayoutOptions()).script;
+    check(/speechInfo: speechInfo, ttsMark: ttsMark, ttsClear: ttsClear/.test(baseScript), '朗读取字、高亮与清除接口挂在 __legado 上');
+    equal(EpubOriginalScript.ttsMarkColor('#0A59F7', false), 'rgba(10,89,247,0.3)', '朗读高亮色：#RRGGBB 浅色');
+    equal(EpubOriginalScript.ttsMarkColor('#FF3D7BFF', true), 'rgba(61,123,255,0.42)', '朗读高亮色：#AARRGGBB 去掉透明度');
+    check(EpubOriginalScript.ttsMarkColor('bogus', false).startsWith('rgba('), '朗读高亮色：无法解析时用默认色');
 
     // 夜间图片：深色时各模式给插图的滤镜，以及自动模式的判断。
     const nightStyle = (mode) => {

@@ -18,6 +18,7 @@ import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { ReaderHaptics } from '../../utils/ReaderHaptics';
 import { ReaderInputKind, ReaderInputScopes } from '../../utils/ReaderInputScopes';
 import { AppFontSize } from '../../theme/AppFontSize';
+import { ReaderTtsCapsule } from './ReaderTtsControls';
 
 const PANEL_HEADER_HEIGHT: number = 56;
 const ACTION_ROW_HEIGHT: number = 56;
@@ -27,7 +28,8 @@ const ACTION_ROW_HEIGHT: number = 56;
  * - 顶栏：返回、书名与进度胶囊、“更多操作”（添加书签、使用应用排版、布局元素设置）；
  * - 底栏：快速跳转（章节 / 全书百分比 / 本章页数三种模式，可收起，松手确认后跳转，模式与收起状态和普通阅读页共用）
  *   加目录、阅读设置、日夜三个按钮；关掉快速跳转组件时只剩按钮行；
- * - 右侧亮度条随菜单出现，受“使用快速亮度组件”控制。
+ * - 右侧亮度条随菜单出现，受“使用快速亮度组件”控制；
+ * - 底栏右上方的朗读按钮（受“使用快速朗读组件”控制），朗读中换成朗读胶囊，与普通阅读页相同。
  * 材质、圆形按钮、进度条、设置行都是阅读页共用组件（沉浸光感）。真正的跳转由页面执行。
  */
 @Component
@@ -43,6 +45,7 @@ export struct EpubOriginalControls {
   @StorageLink('readerUseBrightnessQuickAction') readerUseBrightnessQuickAction: boolean = true;
   @StorageLink('readerQuickJumpMode') readerQuickJumpMode: string = 'chapter';
   @StorageLink('readerQuickJumpExpanded') readerQuickJumpExpanded: boolean = false;
+  @StorageLink('readerUseTtsQuickAction') readerUseTtsQuickAction: boolean = true;
   @StorageProp('appThemeMode') appThemeMode: string = 'system';
   @Prop darkMode: boolean = false;
   @Prop bookTitle: string = '';
@@ -77,6 +80,10 @@ export struct EpubOriginalControls {
   /** 当前阅读字体的名字（系统字体或自定义字体名）。 */
   @Prop readerFontName: string = '';
   @Prop nightImageMode: string = ReaderNightImage.ORIGINAL;
+  /** 朗读会话还在（在念或暂停）：朗读按钮换成胶囊。 */
+  @Prop ttsActive: boolean = false;
+  @Prop ttsPaused: boolean = false;
+  @Prop ttsSubtitle: string = '';
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 720;
   @State showMore: boolean = false;
@@ -110,6 +117,10 @@ export struct EpubOriginalControls {
   onVolumeTurnChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
   onSmartKeyTurnChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
   onAppLayout: () => void = (): void => {};
+  /** 打开朗读面板（没在念就从当前屏开始念）。 */
+  onTtsOpen: () => void = (): void => {};
+  onTtsToggle: () => void = (): void => {};
+  onTtsStop: () => void = (): void => {};
 
   @Builder
   emptyContent() {}
@@ -298,6 +309,11 @@ export struct EpubOriginalControls {
         this.showMore = false;
         this.onAddBookmark();
       })
+      PopupMenuAction($r('sys.symbol.play'), this.ttsActive ? '朗读控制' : '开始朗读',
+        ThemeRuntime.primaryTextColor(this.darkMode), () => {
+          this.showMore = false;
+          this.onTtsOpen();
+        })
       PopupMenuAction($r('sys.symbol.book'), '使用应用排版', ThemeRuntime.primaryTextColor(this.darkMode), () => {
         this.showMore = false;
         this.onAppLayout();
@@ -449,6 +465,51 @@ export struct EpubOriginalControls {
       .translate({ y: -(this.bottomInset() + this.bottomBarHeight()) })
       .transition(ReaderChromeMotion.bottom(this.bottomInset() + this.bottomBarHeight()))
       .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
+  }
+
+  /** 朗读按钮与胶囊停在底栏右上方（与普通阅读页 readerTtsQuickActionLeft 相同的靠右对齐）。 */
+  private ttsAnchorTop(height: number): number {
+    return this.viewportHeight - this.bottomInset() - this.bottomBarHeight() - 14 - height;
+  }
+
+  @Builder
+  ttsQuickAction() {
+    if (this.ttsActive) {
+      ReaderTtsCapsule({
+        title: this.ttsPaused ? '已暂停' : '朗读中',
+        subtitle: this.ttsSubtitle,
+        paused: this.ttsPaused,
+        playbackKey: `epub_tts_capsule_${this.ttsPaused}`,
+        panelColor: this.solidPanelColor(),
+        panelBorderColor: this.darkMode ? '#26FFFFFF' : '#14000000',
+        panelShadowColor: this.darkMode ? '#66000000' : '#1F000000',
+        dark: this.darkMode,
+        textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+        subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+        accentColor: ThemeRuntime.accentColor(this.darkMode),
+        onOpen: (): void => this.onTtsOpen(),
+        onToggle: (): void => this.onTtsToggle(),
+        onClose: (): void => this.onTtsStop()
+      })
+        .position({ x: 0, y: 0 })
+        .translate({
+          x: Math.max(8, this.panelLeft() + this.panelWidth() - ReaderTtsCapsule.WIDTH),
+          y: this.ttsAnchorTop(ReaderTtsCapsule.HEIGHT)
+        })
+        .transition(ReaderChromeMotion.bottom(this.bottomInset() + this.bottomBarHeight() + ReaderTtsCapsule.HEIGHT))
+    } else {
+      Stack() {
+        ImmersiveBackButton({ icon: $r('sys.symbol.play'), iconOffsetX: 0,
+          iconColor: ThemeRuntime.primaryTextColor(this.darkMode), darkMode: this.darkMode,
+          buttonSize: 48, containerWidth: 48, containerHeight: 48, startInset: 0, compactLayout: true,
+          accessibilityLabel: '开始朗读', onBack: (): void => this.onTtsOpen() })
+      }
+      .width(48)
+      .height(48)
+      .position({ x: this.panelLeft() + this.panelWidth() - 48, y: this.ttsAnchorTop(48) })
+      .transition(ReaderChromeMotion.bottom(this.bottomInset() + this.bottomBarHeight() + 48))
+      .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
+    }
   }
 
   /** 拖动进度条时在底栏上方提示目标位置，与普通阅读页相同：章名加模式对应的读数。 */
@@ -668,6 +729,9 @@ export struct EpubOriginalControls {
           }
           if (!this.activePanel && this.readerUseBrightnessQuickAction && this.brightnessHeight() >= 132) {
             this.brightnessControl()
+          }
+          if (!this.activePanel && !this.tooltipVisible && this.readerUseTtsQuickAction) {
+            this.ttsQuickAction()
           }
         }
       }

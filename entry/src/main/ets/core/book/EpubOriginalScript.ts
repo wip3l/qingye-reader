@@ -59,6 +59,13 @@ class EpubOriginalScriptConfig {
 export class EpubOriginalScript {
   static readonly HOST_NAME: string = 'LegadoEpubHost';
   static readonly HOST_METHODS: string[] = ['ready', 'position', 'tap', 'link', 'edge', 'stepped'];
+  /** 朗读高亮的底色：浅色页面正片叠底、深色页面滤色，字的颜色不受影响。 */
+  static ttsMarkColor(accent: string, dark: boolean): string {
+    const match = /^#(?:([0-9a-fA-F]{2}))?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(accent || '');
+    const alpha = dark ? 0.42 : 0.3;
+    if (!match) return dark ? `rgba(90,140,255,${alpha})` : `rgba(10,89,247,${alpha})`;
+    return `rgba(${parseInt(match[2], 16)},${parseInt(match[3], 16)},${parseInt(match[4], 16)},${alpha})`;
+  }
 
   static injection(options: EpubOriginalLayoutOptions): EpubOriginalInjection {
     const injection = new EpubOriginalInjection();
@@ -187,9 +194,21 @@ export class EpubOriginalScript {
     var rects = range.getClientRects();
     return rects.length ? rects[0] : range.getBoundingClientRect();
   }
+  // 多栏排版时最后一栏右侧的页边距不计入可滚动宽度，最后一页滚不到 (count-1)×width，正文会整体偏右一个页边距。
+  // 在第 count 页末尾放一个 1px 的占位撑开滚动宽度，最后一页才能停在正确位置。
+  var spacer = null;
   function layout() {
     width = window.innerWidth || document.documentElement.clientWidth || 1;
-    if (paged) count = Math.max(1, Math.round(document.documentElement.scrollWidth / width));
+    if (!paged) return;
+    if (spacer) spacer.style.left = '0px';
+    count = Math.max(1, Math.round(document.documentElement.scrollWidth / width));
+    if (!spacer) {
+      spacer = document.createElement('div');
+      spacer.setAttribute('aria-hidden', 'true');
+      spacer.style.cssText = 'position:absolute;top:0;width:1px;height:1px;pointer-events:none;visibility:hidden;';
+      document.documentElement.appendChild(spacer);
+    }
+    spacer.style.left = (count * width - 1) + 'px';
   }
   function pageOfRect(r) {
     return Math.max(0, Math.min(count - 1, Math.floor((r.left + window.scrollX + 1) / width)));
@@ -259,10 +278,10 @@ export class EpubOriginalScript {
     return true;
   }
   // 当前屏第一个可见字在紧凑文字里的下标。
-  function firstVisible(c) {
+  function firstVisible(c, measure) {
     var lo = 0, hi = c.text.length - 1;
     while (lo < hi) {
-      var mid = (lo + hi) >> 1, r = rectAt(c, mid);
+      var mid = (lo + hi) >> 1, r = measure ? measure(c, mid) : rectAt(c, mid);
       // 滚动模式以上边距那条线为准，和 goSpot 把目标放到的位置一致，保存再恢复不会一次次往上挪。
       var before = paged ? r.right <= 1 : (r.top + r.bottom) / 2 < cfg.top;
       if (before) lo = mid + 1; else hi = mid;
@@ -346,6 +365,125 @@ export class EpubOriginalScript {
     stopAnimation();
     goPage(n, false);
     settled(token, true);
+  }
+  // ---- 朗读：从正文取出要念的文字，记下每个字在网页里的位置，用来高亮正在念的句子、翻到它所在的页 ----
+  // 段落之间用换行分开，段内空白合并成一个空格；注音、脚本样式与注释上标链接不念。
+  var BLOCK = /^(?:address|article|aside|blockquote|body|caption|center|dd|details|dialog|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)$/;
+  var speechCache = null, markLayer = null;
+  function blockOf(node) {
+    for (var p = node.parentNode; p && p !== document.body; p = p.parentNode) {
+      if (p.nodeType === 1 && BLOCK.test(p.nodeName.toLowerCase())) return p;
+    }
+    return document.body;
+  }
+  function speech() {
+    if (speechCache) return speechCache;
+    var out = [], nodes = [], nodeOf = [], offOf = [], last = '', lastBlock = null, pendingBreak = false;
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: function (n) {
+      if (n.nodeType !== 1) return NodeFilter.FILTER_ACCEPT;
+      var t = n.nodeName.toLowerCase();
+      if (t === 'rt' || t === 'rp' || t === 'script' || t === 'style' || t === 'noscript') return NodeFilter.FILTER_REJECT;
+      if (t === 'a' && n.hasAttribute('href') && isNote(n)) return NodeFilter.FILTER_REJECT;
+      return t === 'br' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    } });
+    var push = function (c, node, off) { out.push(c); nodeOf.push(node); offOf.push(off); last = c; };
+    var n;
+    while ((n = walker.nextNode())) {
+      if (n.nodeType === 1) { pendingBreak = true; continue; }
+      var v = n.nodeValue || '';
+      if (!v) continue;
+      var block = blockOf(n);
+      if (lastBlock && block !== lastBlock) pendingBreak = true;
+      lastBlock = block;
+      var index = nodes.length;
+      nodes.push(n);
+      for (var j = 0; j < v.length; j++) {
+        var c = v.charAt(j), code = v.charCodeAt(j);
+        // 零宽空格、BOM、软连字符
+        if (code === 0x200b || code === 0xfeff || code === 0xad) continue;
+        if (/\s/.test(c)) {
+          if (out.length && !pendingBreak && last !== ' ' && last !== '\n') push(' ', index, j);
+          continue;
+        }
+        if (pendingBreak && out.length) {
+          if (last === ' ') { out[out.length - 1] = '\n'; last = '\n'; }
+          else if (last !== '\n') push('\n', index, j);
+        }
+        pendingBreak = false;
+        push(c, index, j);
+      }
+    }
+    speechCache = { text: out.join(''), nodes: nodes, nodeOf: nodeOf, offOf: offOf };
+    return speechCache;
+  }
+  // 空格可能被排版折叠、量不出位置，用后面第一个字的位置。
+  function speechRect(s, i) {
+    while (i < s.text.length - 1 && /\s/.test(s.text.charAt(i))) i++;
+    return rectAt(s, i);
+  }
+  function speechPageOf(s, i) {
+    return pageOfRect(speechRect(s, i));
+  }
+  // 当前屏第一个要念的字，以及翻页模式下每一页第一个字的下标（让朗读在页边断句，翻页时不念半句）。
+  function speechInfo() {
+    var s = speech(), total = s.text.length, breaks = [];
+    if (!total) return JSON.stringify({ text: '', start: 0, breaks: breaks });
+    var start = firstVisible(s, speechRect);
+    if (start >= total) start = 0;
+    if (paged) {
+      for (var p = 1; p < count; p++) {
+        var lo = 0, hi = total;
+        while (lo < hi) {
+          var mid = (lo + hi) >> 1;
+          if (speechPageOf(s, mid) < p) lo = mid + 1; else hi = mid;
+        }
+        if (lo > 0 && lo < total && (!breaks.length || breaks[breaks.length - 1] < lo)) breaks.push(lo);
+      }
+    }
+    return JSON.stringify({ text: s.text, start: start, breaks: breaks });
+  }
+  function ttsClear() {
+    if (markLayer && markLayer.parentNode) markLayer.parentNode.removeChild(markLayer);
+    markLayer = null;
+  }
+  // 给正在念的那一段文字铺上底色（盖在 body 外面，不受夜间反色影响），滚动模式下顺带把它滚进屏幕。
+  // 返回它开头所在的页，翻页模式由原生层决定要不要翻过去。
+  function ttsMark(start, end, color, dark) {
+    ttsClear();
+    var s = speech(), total = s.text.length;
+    if (!total) return JSON.stringify({ page: -1 });
+    var a = Math.max(0, Math.min(total - 1, start)), b = Math.max(a, Math.min(total - 1, end - 1));
+    while (a < b && /\s/.test(s.text.charAt(a))) a++;
+    while (b > a && /\s/.test(s.text.charAt(b))) b--;
+    var range = document.createRange();
+    var endNode = s.nodes[s.nodeOf[b]];
+    range.setStart(s.nodes[s.nodeOf[a]], s.offOf[a]);
+    range.setEnd(endNode, Math.min(endNode.nodeValue.length, s.offOf[b] + 1));
+    var rects = range.getClientRects();
+    var layer = document.createElement('div');
+    layer.setAttribute('aria-hidden', 'true');
+    layer.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:2147483647;';
+    var sx = window.scrollX, sy = window.scrollY, first = null, lastRect = null;
+    for (var i = 0; i < rects.length; i++) {
+      var r = rects[i];
+      if (r.width < 1 || r.height < 1) continue;
+      if (!first) first = r;
+      lastRect = r;
+      var box = document.createElement('div');
+      box.style.cssText = 'position:absolute;border-radius:3px;background:' + color + ';' +
+        'mix-blend-mode:' + (dark ? 'screen' : 'multiply') + ';' +
+        'left:' + (r.left + sx - 1) + 'px;top:' + (r.top + sy) + 'px;width:' + (r.width + 2) + 'px;height:' + r.height + 'px;';
+      layer.appendChild(box);
+    }
+    document.documentElement.appendChild(layer);
+    markLayer = layer;
+    if (!paged && first) {
+      var top = cfg.top, bottom = window.innerHeight - cfg.bottom;
+      if (first.top < top || lastRect.bottom > bottom) {
+        scrollToY(first.top + window.scrollY - top - Math.round(Math.max(0, bottom - top) * 0.2), true);
+      }
+    }
+    return JSON.stringify({ page: paged ? speechPageOf(s, a) : page });
   }
   function isNote(a) {
     var semantics = ((a.getAttribute('epub:type') || '') + ' ' + (a.getAttribute('role') || '')).toLowerCase();
@@ -492,11 +630,13 @@ export class EpubOriginalScript {
     if (!started) return;
     var s = spot();
     cache = null;
+    speechCache = null;
+    ttsClear();
     layout();
     goSpot(s.snippet, s.fraction);
   });
   window.__legado = { next: next, prev: prev, goSpot: goSpot, goAnchor: goAnchor, goPage: goPage, screen: screen,
-    preview: preview, step: step, show: show };
+    preview: preview, step: step, show: show, speechInfo: speechInfo, ttsMark: ttsMark, ttsClear: ttsClear };
   var begin = function () {
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(start, start); else start();
   };

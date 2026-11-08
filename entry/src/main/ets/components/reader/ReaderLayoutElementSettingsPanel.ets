@@ -15,6 +15,8 @@ export struct ReaderLayoutElementSettingsPanel {
   @Prop comicMode: boolean = false;
   /** 文件排版、PDF 没有朗读与自动滚动，不显示这两项。 */
   @Prop showReadingActions: boolean = true;
+  /** 文件排版页能朗读但没有自动滚动：只显示朗读组件开关。 */
+  @Prop showAutoScrollAction: boolean = true;
   /** PDF 的页码进度条固定显示，不显示快速跳转开关。 */
   @Prop showQuickJump: boolean = true;
   dark: boolean = false;
@@ -78,7 +80,7 @@ export struct ReaderLayoutElementSettingsPanel {
             this.save();
           })
       }
-      if (this.showReadingActions) {
+      if (this.showReadingActions && this.showAutoScrollAction) {
         this.toggleRow('使用快速滚动组件', '显示自动滚动快捷按钮', this.readerUseAutoScrollQuickAction,
           (enabled: boolean) => {
             this.readerUseAutoScrollQuickAction = enabled;
