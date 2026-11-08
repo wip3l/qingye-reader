@@ -268,6 +268,8 @@ struct EpubOriginalReadBookPage {
   @State useReaderFont: boolean = false;
   /** 夜间图片（与普通阅读页共用）：深色时插图保持原色、调暗、反色或自动。 */
   @StorageLink('readerNightImageMode') @Watch('onReaderChromeChanged') nightImageMode: string = ReaderNightImage.ORIGINAL;
+  // 小说的双翻页开关，应用排版与文件排版共用。
+  @StorageProp('readerLandscapeDoublePage') @Watch('onReaderChromeChanged') readerDoublePage: boolean = false;
   @State infoTimeText: string = '';
   @State infoBatteryPercent: number = -1;
   @State title: string = '文件排版';
@@ -1132,7 +1134,7 @@ struct EpubOriginalReadBookPage {
     const margins = this.margins();
     return `${this.paged ? 1 : 0}_${this.zoom}_${this.darkMode ? 1 : 0}_${margins.top}_${margins.bottom}_` +
       `${margins.left}_${margins.right}_${this.webInsetTop()}_${this.webInsetBottom()}_${this.readerFontOption()}_` +
-      `${this.darkMode ? ReaderNightImage.normalize(this.nightImageMode) : ''}_` +
+      `${this.darkMode ? ReaderNightImage.normalize(this.nightImageMode) : ''}_${this.readerDoublePage ? 1 : 0}_` +
       `${Math.round(this.viewWidth)}x${Math.round(this.viewHeight)}`;
   }
 
@@ -1188,6 +1190,7 @@ struct EpubOriginalReadBookPage {
     options.paged = this.paged;
     options.nativeTurn = true;
     options.readerFont = this.readerFontOption();
+    options.spread = this.readerDoublePage;
     options.forceDark = this.darkMode;
     options.nightImage = this.nightImageMode;
     options.margins = this.margins();
@@ -1312,6 +1315,14 @@ struct EpubOriginalReadBookPage {
     }
     const lift = ReaderInfoBarConfig.footerBaseInset(this.navBarHeight);
     return lift + Math.min(Math.max(0, this.navBarHeight - lift), bottom);
+  }
+
+  /** 网页此刻是否并排两栏：与 EpubOriginalScript.SPREAD_MEDIA 同一规则（翻页模式下网页铺满本页）。 */
+  private spreadActive(): boolean {
+    const width = this.viewWidth;
+    const height = this.viewHeight;
+    if (!this.paged || !this.readerDoublePage || width <= 0 || height <= 0) return false;
+    return width > height || (width >= 600 && width / height >= 0.8);
   }
 
   private webInsetTop(): number {
@@ -3249,7 +3260,8 @@ struct EpubOriginalReadBookPage {
         viewWidth: this.viewWidth,
         viewHeight: this.viewHeight,
         darkMode: this.darkMode,
-        paperColor: this.darkMode ? '#141414' : '#FFFFFF'
+        paperColor: this.darkMode ? '#141414' : '#FFFFFF',
+        spread: this.spreadActive()
       })
       // 调用处不能加 width/height 之类的属性：自定义组件带属性会多包一层默认可点的节点，整屏挡住网页的点按和滑动。
 

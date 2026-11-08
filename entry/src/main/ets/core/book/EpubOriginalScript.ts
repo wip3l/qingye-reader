@@ -29,6 +29,8 @@ export class EpubOriginalLayoutOptions {
    * 只换字体，字号、行距等仍按书的样式。
    */
   readerFont: string = '';
+  /** 双翻页开关（与应用排版共用）；翻页模式下屏幕够宽时一屏并排两栏，见 SPREAD_MEDIA。 */
+  spread: boolean = false;
   margins: EpubOriginalMargins = new EpubOriginalMargins();
   target: EpubOriginalTarget = new EpubOriginalTarget();
 }
@@ -47,6 +49,8 @@ class EpubOriginalScriptConfig {
   night: EpubOriginalNightConfig = new EpubOriginalNightConfig();
   top: number = 0;
   bottom: number = 0;
+  /** 双翻页生效的媒体查询；空串表示不并排。 */
+  spreadQuery: string = '';
   target: EpubOriginalTarget = new EpubOriginalTarget();
 }
 
@@ -58,6 +62,11 @@ class EpubOriginalScriptConfig {
  */
 export class EpubOriginalScript {
   static readonly HOST_NAME: string = 'LegadoEpubHost';
+  /**
+   * 何时并排两栏，与应用排版 ReadBook.readerViewportFitsSpread 同一规则：比高宽，或接近方形且至少 600 宽
+   * （书本式折叠屏展开时略高于宽）。写成媒体查询，折叠/旋转时网页自己切换，不用重载章节。
+   */
+  static readonly SPREAD_MEDIA: string = '(min-aspect-ratio: 1001/1000), (min-width: 600px) and (min-aspect-ratio: 4/5)';
   static readonly HOST_METHODS: string[] = ['ready', 'position', 'tap', 'link', 'edge', 'stepped'];
   /** 朗读高亮的底色：浅色页面正片叠底、深色页面滤色，字的颜色不受影响。 */
   static ttsMarkColor(accent: string, dark: boolean): string {
@@ -76,12 +85,27 @@ export class EpubOriginalScript {
     config.night.auto = options.forceDark && ReaderNightImage.normalize(options.nightImage) === ReaderNightImage.AUTO;
     config.top = options.margins.top;
     config.bottom = options.margins.bottom;
+    config.spreadQuery = options.paged && options.spread ? EpubOriginalScript.SPREAD_MEDIA : '';
     config.target = options.target;
     // 文字片段可能含有 "</script>"，按 JSON 转义尖括号。
     const json = JSON.stringify(config).replace(/</g, '\\u003c');
     // 用函数替换：文字片段里的 "$&" 之类不能被当成替换模式。
     injection.script = EpubOriginalScript.SCRIPT.replace('__LEGADO_CONFIG__', (): string => json);
     return injection;
+  }
+
+  /**
+   * 双页中缝的书脊阴影，与应用排版 ReadBook.readerDoublePageSpine 同一组色标。挂在 html 上固定在屏幕中间，
+   * 不随横向翻页移动，也在 body 之外，夜间整页反色不会把它变成亮条。
+   */
+  static spineStyle(dark: boolean): string {
+    const k = dark ? 2.6 : 1;
+    const shade = (alpha: number, at: number): string =>
+      `rgba(0,0,0,${Math.min(0.4, alpha * k).toFixed(3)}) ${Math.round(at * 100)}%`;
+    const stops = [shade(0, 0), shade(0.02, 0.22), shade(0.06, 0.42), shade(0.11, 0.5), shade(0.05, 0.57),
+      shade(0.015, 0.76), shade(0, 1)].join(',');
+    return 'html::after{content:"";position:fixed;top:0;bottom:0;left:calc(50% - 22px);width:44px;' +
+      `pointer-events:none;z-index:2147483647;background:linear-gradient(to right,${stops});}`;
   }
 
   static style(options: EpubOriginalLayoutOptions): string {
@@ -96,7 +120,10 @@ export class EpubOriginalScript {
         `column-width:calc(100vw - ${px(m.left + m.right)})!important;column-gap:${px(m.left + m.right)}!important;` +
         'column-fill:auto!important;overflow:visible!important;}' +
         `img,svg,video{max-width:100%!important;max-height:calc(100vh - ${px(m.top + m.bottom)})!important;` +
-        'box-sizing:border-box;}img,video{object-fit:contain;}' :
+        'box-sizing:border-box;}img,video{object-fit:contain;}' +
+        // 并排两栏：栏宽 = (一屏 - 两侧页边距 - 中缝) / 2，中缝取左右边距之和，翻一屏正好移过两栏。
+        (options.spread ? `@media ${EpubOriginalScript.SPREAD_MEDIA}{body{column-width:auto!important;` +
+          `column-count:2!important;}${EpubOriginalScript.spineStyle(options.forceDark)}}` : '') :
       'html{margin:0!important;padding:0!important;}' +
         `body{box-sizing:border-box!important;margin:0!important;padding:${padding}!important;max-width:none!important;}` +
         'img,svg,video{max-width:100%!important;box-sizing:border-box;}img,video{object-fit:contain;}';
@@ -201,7 +228,10 @@ export class EpubOriginalScript {
     width = window.innerWidth || document.documentElement.clientWidth || 1;
     if (!paged) return;
     if (spacer) spacer.style.left = '0px';
-    count = Math.max(1, Math.round(document.documentElement.scrollWidth / width));
+    // 并排两栏时最后一屏可能只有左栏，scrollWidth 只到半屏多一点，四舍五入会丢掉这一屏，所以向上取整。
+    var spread = !!cfg.spreadQuery && window.matchMedia && window.matchMedia(cfg.spreadQuery).matches;
+    var screens = document.documentElement.scrollWidth / width;
+    count = Math.max(1, spread ? Math.ceil(screens - 0.05) : Math.round(screens));
     if (!spacer) {
       spacer = document.createElement('div');
       spacer.setAttribute('aria-hidden', 'true');

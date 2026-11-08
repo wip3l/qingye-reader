@@ -74,6 +74,11 @@ export struct ReaderSnapshotPageTurn {
   @Prop darkMode: boolean = false;
   /** 卷页背面与空白处的纸色，必须不透明。 */
   @Prop paperColor: string = '#FFFFFF';
+  /**
+   * 底下的内容是并排两页（左右各占半屏）。仿真、3D 仿真时与应用排版的双页一样只卷翻动的那一页：
+   * 不动的半边留着起点截图，翻动那一侧下面垫目标页同侧的半边，背面是目标页另一侧的半边。
+   */
+  @Prop spread: boolean = false;
   @State private active: boolean = false;
   @State private frontMap: image.PixelMap | null = null;
   @State private backMap: image.PixelMap | null = null;
@@ -124,6 +129,11 @@ export struct ReaderSnapshotPageTurn {
   private backIsPlaceholder: boolean = false;
   /** 这次翻页的纸色：从起点截图的左右页边取样（书页可能是黑底），取不到用 paperColor。 */
   private turnPaper: string = '';
+  /** 本次翻页按双页卷：开始时 spread 且是卷页动画、翻动页裁得出来才算。 */
+  @State private turnSpread: boolean = false;
+  /** 双页卷页用的两张半页：翻动那页（起点截图翻页方向那一半）与它的背面（目标页另一半，或纸色占位）。 */
+  private frontLeaf: image.PixelMap | null = null;
+  private backLeaf: image.PixelMap | null = null;
 
   aboutToAppear(): void {
     this.controller.touch = (event: TouchEvent): void => this.handleTouch(event);
@@ -140,6 +150,7 @@ export struct ReaderSnapshotPageTurn {
     this.releaseLater(this.backMap);
     this.frontMap = null;
     this.backMap = null;
+    this.releaseLeaves();
     this.dropCache();
     const placeholder = this.placeholderMap;
     this.placeholderMap = null;
@@ -173,6 +184,48 @@ export struct ReaderSnapshotPageTurn {
 
   private progress(): number {
     return Math.min(1, Math.abs(this.turnOffset) / this.viewW());
+  }
+
+  // ---- 双页：半页的裁切与摆放（左右两页各占半屏，与文件排版的两栏一致） ----
+
+  private leafWidth(): number {
+    return this.viewW() / 2;
+  }
+
+  /** 复制一份截图裁出左半或右半；原图还要当整屏底图用，不能就地裁。失败返回 null。 */
+  private async cutLeaf(source: image.PixelMap, right: boolean): Promise<image.PixelMap | null> {
+    let copy: image.PixelMap | null = null;
+    try {
+      const info = await source.getImageInfo();
+      const width = Math.max(2, info.size.width);
+      const half = Math.round(width / 2);
+      copy = await source.clone();
+      await copy.crop({ x: right ? half : 0, y: 0,
+        size: { width: right ? width - half : half, height: Math.max(1, info.size.height) } });
+      return copy;
+    } catch (error) {
+      console.warn('[SnapshotTurn] cut leaf failed:', error);
+      if (copy) copy.release().catch((): void => {});
+      return null;
+    }
+  }
+
+  /** 背面：纸色占位直接用（绘制器会铺满半页），真页面裁目标页另一侧那一半。 */
+  private async cutBackLeaf(back: image.PixelMap): Promise<image.PixelMap | null> {
+    if (back === this.placeholderMap) return back;
+    return this.cutLeaf(back, this.turnDirection < 0);
+  }
+
+  private setBackLeaf(leaf: image.PixelMap | null): void {
+    if (this.backLeaf && this.backLeaf !== leaf) this.releaseLater(this.backLeaf);
+    this.backLeaf = leaf;
+  }
+
+  private releaseLeaves(): void {
+    this.releaseLater(this.frontLeaf);
+    this.releaseLater(this.backLeaf);
+    this.frontLeaf = null;
+    this.backLeaf = null;
   }
 
   // ---- 截图缓存：翻完一页时目标页的截图留下来，下一次翻页直接用作起点 ----
@@ -401,6 +454,14 @@ export struct ReaderSnapshotPageTurn {
       return true;
     }
     if (back) {
+      const leaf = this.turnSpread ? await this.cutBackLeaf(back) : null;
+      if (serial !== this.serial) {
+        this.releaseLater(back);
+        this.releaseLater(leaf);
+        return true;
+      }
+      // 裁不出背面就继续用纸色占位当背面，底下的半边照样换成真页面。
+      if (leaf) this.setBackLeaf(leaf);
       this.backMap = back;
       this.backKey = this.host.textureKey();
       this.backIsPlaceholder = false;
@@ -471,11 +532,24 @@ export struct ReaderSnapshotPageTurn {
       this.releaseLater(front);
       return;
     }
+    this.turnSpread = false;
+    if (this.spread && this.usesCurl()) {
+      const leaf = await this.cutLeaf(front, direction > 0);
+      if (serial !== this.serial) {
+        this.releaseLater(front);
+        this.releaseLater(leaf);
+        return;
+      }
+      // 裁不出来就按整屏一张纸卷，至少照常翻页。
+      this.frontLeaf = leaf;
+      this.turnSpread = !!leaf;
+    }
     this.frontMap = front;
     this.active = true;
     const placeholder = dragging ? this.placeholder() : null;
     if (placeholder) {
       // 跟手：纸色占位当目标页，立刻进入可拖动状态；换页与截图在后台。
+      if (this.turnSpread) this.setBackLeaf(placeholder);
       this.backMap = placeholder;
       this.backIsPlaceholder = true;
       this.backKey = '';
@@ -508,6 +582,16 @@ export struct ReaderSnapshotPageTurn {
       this.host.committed(direction);
       this.hide(null, '');
       return;
+    }
+    if (this.turnSpread) {
+      const leaf = await this.cutBackLeaf(back);
+      if (serial !== this.serial) {
+        this.releaseLater(back);
+        this.releaseLater(leaf);
+        return;
+      }
+      if (leaf) this.setBackLeaf(leaf);
+      else this.turnSpread = false;
     }
     this.backMap = back;
     this.backKey = this.host.textureKey();
@@ -644,6 +728,8 @@ export struct ReaderSnapshotPageTurn {
     this.release = 0;
     this.backIsPlaceholder = false;
     this.pendingAdvance = null;
+    this.turnSpread = false;
+    this.releaseLeaves();
     this.emulationPainter.clearCorner();
     this.curlRegion = ReaderEmulationFlipRegion.BOTTOM;
     this.host.activeChanged(false);
@@ -753,6 +839,19 @@ export struct ReaderSnapshotPageTurn {
 
   private drawCurl(): void {
     if (!this.canvasReady || !this.backReady || !this.usesCurl() || !this.frontMap || !this.backMap) return;
+    if (this.turnSpread && this.frontLeaf && this.backLeaf) {
+      // 与 ReadBook.drawReaderPageCurl 双页分支同样的参数：纹理是半页，栏宽与右页起点都是半屏。
+      const leaf = this.leafWidth();
+      if (this.animationType === ReaderPageTurnAnimation.THREE_D) {
+        this.emulationPainter.draw(this.curlContext, this.frontLeaf, this.backLeaf, this.viewW(), this.viewH(),
+          this.progress(), this.turnDirection, this.curlRegion, true, leaf, leaf,
+          1 / this.getUIContext().vp2px(1), this.effectivePaper(), this.darkMode);
+      } else {
+        this.curlPainter.draw(this.curlContext, this.frontLeaf, this.backLeaf, this.viewW(), this.viewH(),
+          this.progress(), this.turnDirection, true, this.darkMode, leaf, leaf, this.effectivePaper());
+      }
+      return;
+    }
     if (this.animationType === ReaderPageTurnAnimation.THREE_D) {
       this.emulationPainter.draw(this.curlContext, this.frontMap, this.backMap, this.viewW(), this.viewH(),
         this.progress(), this.turnDirection, this.curlRegion, false, this.viewW() / 2, this.viewW() / 2,
@@ -777,7 +876,13 @@ export struct ReaderSnapshotPageTurn {
   private sheetVisible(back: boolean): boolean {
     if (!this.active || !this.frontMap) return false;
     if (back) return this.backReady && !!this.backMap;
-    return !this.backReady || !this.usesCurl();
+    // 双页卷页：不动的那半边一直由起点截图呈现。
+    return !this.backReady || !this.usesCurl() || this.turnSpread;
+  }
+
+  /** 双页卷页时目标页只垫在翻动那一侧（下一页在右半、上一页在左半）。 */
+  private backHalfX(): number {
+    return this.turnDirection > 0 ? this.leafWidth() : 0;
   }
 
   /** 平移、推页时起点跟着手指走；叠页、淡入时起点不动。目标页从翻页方向那一侧移进来，淡入原地。 */
@@ -827,6 +932,28 @@ export struct ReaderSnapshotPageTurn {
   }
 
   @Builder
+  spreadBackHalf() {
+    Stack() {
+      if (this.backMap) {
+        Image(this.backMap as image.PixelMap)
+          .width(this.viewW())
+          .height(this.viewH())
+          .objectFit(ImageFit.Fill)
+          .syncLoad(true)
+          .draggable(false)
+          .position({ x: -this.backHalfX(), y: 0 })
+          .hitTestBehavior(HitTestMode.None)
+      }
+    }
+    .width(this.leafWidth())
+    .height(this.viewH())
+    .position({ x: this.backHalfX(), y: 0 })
+    .clip(true)
+    .zIndex(1)
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
   sheet(back: boolean) {
     Stack() {
       if (this.sheetMap(back)) {
@@ -856,7 +983,11 @@ export struct ReaderSnapshotPageTurn {
         this.sheet(false)
       }
       if (this.sheetVisible(true)) {
-        this.sheet(true)
+        if (this.turnSpread && this.usesCurl()) {
+          this.spreadBackHalf()
+        } else {
+          this.sheet(true)
+        }
       }
       if (this.usesCurl()) {
         Canvas(this.curlContext)

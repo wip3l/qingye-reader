@@ -104,16 +104,6 @@ struct ComicSettingsPage {
           });
         }, 'comic_settings_default_mode_select')
       SettingSwitchRow({
-        title: '使用双翻页',
-        description: '从左往右或从右往左阅读时，宽屏下并排显示两页；条漫不生效',
-        isOn: this.settings.dualPage,
-        onChange: (value: boolean) => {
-          this.update((next: ReaderComicSettings): void => {
-            next.dualPage = value;
-          });
-        }
-      })
-      SettingSwitchRow({
         title: '点击翻页',
         description: '点击屏幕两侧翻页（条漫为翻一屏），中间呼出菜单',
         isOn: this.settings.tapTurn,
@@ -194,7 +184,7 @@ struct ComicSettingsPage {
     .clip(true)
     .backgroundColor(this.cardColor())
 
-    Text('点击区域动作、屏幕方向与小说共用，在上一页「阅读通用」中调整；音量键、智控键翻页和翻页震感也在那里按小说、漫画、PDF 分别选择。AI 着色和翻译是默认值，在阅读页里给某本书单独开关过的以那本书为准；单本漫画的阅读方式也在阅读页里设置。')
+    Text('点击区域动作、屏幕方向与小说共用，在上一页「阅读通用」中调整；双翻页、音量键、智控键翻页和翻页震感也在那里按小说、漫画、PDF 分别选择。AI 着色和翻译是默认值，在阅读页里给某本书单独开关过的以那本书为准；单本漫画的阅读方式也在阅读页里设置。')
       .fontSize(AppFontSize.CAPTION)
       .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
       .width('100%')

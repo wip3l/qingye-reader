@@ -251,6 +251,8 @@ const READER_DOUBLE_PAGE_DIVIDER_WIDTH = 1;
 // enables the spread there. Near-square viewports that are wide enough for two readable leaves also count;
 // tablet portrait (~0.6–0.7) and split-screen halves stay single.
 const READER_SPREAD_MIN_WIDTH_VP = 600;
+// 双页中缝的书脊阴影宽度：只画在 1vp 分隔位上方，不占排版宽度，分页结果不变。
+const READER_DOUBLE_PAGE_SPINE_WIDTH = 44;
 const READER_SPREAD_MIN_ASPECT = 0.8;
 // 推页接缝阴影的宽度（vp），以及被压住那页在完全盖住时浅纱的不透明度。
 const PUSH_PAGE_TURN_SHADOW_SIZE = 18;
@@ -6930,6 +6932,33 @@ struct ReadBookPage {
     if (width <= 0 || height <= 0) return false;
     if (width > height) return true;
     return width >= READER_SPREAD_MIN_WIDTH_VP && width / height >= READER_SPREAD_MIN_ASPECT;
+  }
+
+  /** 双页中缝：像摊开的书，两页朝中间逐渐压暗，中缝最深；深色背景加大不透明度才看得出来。 */
+  @Builder
+  readerDoublePageSpine() {
+    Stack() {
+      Column()
+        .width(READER_DOUBLE_PAGE_SPINE_WIDTH)
+        .height('100%')
+        .position({ x: (READER_DOUBLE_PAGE_DIVIDER_WIDTH - READER_DOUBLE_PAGE_SPINE_WIDTH) / 2, y: 0 })
+        .linearGradient({ angle: 90, colors: this.readerDoublePageSpineColors() })
+        .hitTestBehavior(HitTestMode.None)
+    }
+    .width(READER_DOUBLE_PAGE_DIVIDER_WIDTH)
+    .height('100%')
+    .zIndex(1)
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  readerDoublePageSpineColors(): Array<[ResourceColor, number]> {
+    const theme = this.currentReaderTheme();
+    const dark = theme.contentTone === 'dark' || theme.contentTone === 'light' ?
+      theme.contentTone === 'dark' : this.isDarkHexColor(theme.backgroundColor);
+    const k = dark ? 2.6 : 1;
+    const shade = (alpha: number): string => `rgba(0,0,0,${Math.min(0.4, alpha * k).toFixed(3)})`;
+    return [[shade(0), 0], [shade(0.02), 0.22], [shade(0.06), 0.42], [shade(0.11), 0.5],
+      [shade(0.05), 0.57], [shade(0.015), 0.76], [shade(0), 1]];
   }
 
   isLandscapeDoublePageActive(): boolean {
@@ -15454,11 +15483,7 @@ struct ReadBookPage {
         Row() {
           this.readerV2PageSurface(`${controllerRole}_left`, this.currentChapterIndex,
             this.currentPageIndex, this.pagedContentText, true)
-          Blank()
-            .width(READER_DOUBLE_PAGE_DIVIDER_WIDTH)
-            .height('88%')
-            .backgroundColor(this.getSubTextColor())
-            .opacity(0.22)
+          this.readerDoublePageSpine()
           this.readerV2PageSurface(`${controllerRole}_right`, this.currentChapterIndex,
             this.currentPageIndex + 1, this.pagedContentText, true)
         }
@@ -15491,11 +15516,7 @@ struct ReadBookPage {
         Row() {
           this.readerV2PageSurface(`${controllerRole}_left`, this.pageTurnIncomingChapterIndex,
             this.pageTurnIncomingPageIndex, this.pageTurnIncomingDocumentSource, true)
-          Blank()
-            .width(READER_DOUBLE_PAGE_DIVIDER_WIDTH)
-            .height('88%')
-            .backgroundColor(this.getSubTextColor())
-            .opacity(0.22)
+          this.readerDoublePageSpine()
           this.readerV2PageSurface(`${controllerRole}_right`, this.pageTurnIncomingChapterIndex,
             this.pageTurnIncomingPageIndex + 1, this.pageTurnIncomingDocumentSource, true)
         }

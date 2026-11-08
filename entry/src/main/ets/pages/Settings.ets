@@ -34,6 +34,8 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow, SettingScopeRow, SettingSwitchRow } from '../components/common/SettingRow';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
+import { ReaderComicSettings, ReaderComicSettingsStore } from '../core/reader/ReaderComicSettings';
+import { ReaderPdfSettingsStore } from '../core/book/pdf/ReaderPdfSettingsStore';
 import { ScreenTimeoutStepper } from '../components/common/ScreenTimeoutStepper';
 import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 import { CloudFontMenu } from '../account/CloudFontMenu';
@@ -116,6 +118,10 @@ struct SettingsPage {
   @StorageLink('readerPageTurnMode') readerPageTurnMode: number = 1;
   @StorageLink('readerPageTurnAnimationType') readerPageTurnAnimationType: number = ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE;
   @StorageLink('readerLandscapeDoublePage') readerLandscapeDoublePage: boolean = false;
+  // 漫画、PDF 的双翻页存在各自的设置里，这里只在第一层显示时读出来拼成“双翻页”那一行的类型位。
+  @State comicDualPage: boolean = true;
+  @State pdfDoublePage: boolean = false;
+  private doublePageSerial: number = 0;
   @StorageLink('readerScreenOrientation') readerScreenOrientation: string =
     ReaderSettingsStore.SCREEN_ORIENTATION_SYSTEM;
   @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
@@ -175,6 +181,7 @@ struct SettingsPage {
     this.refreshSystemFontFamily();
     this.loadReaderSettings();
     if (this.isNovelSection()) this.refreshTypographyThemes();
+    else this.loadDoublePageScope();
     this.reloadCustomFonts();
     this.syncBars();
   }
@@ -545,6 +552,14 @@ struct SettingsPage {
         this.screenOrientationOptions(), this.screenOrientationSelectedIndex(), (index: number) => {
           this.setReaderScreenOrientationByIndex(index);
         }, 'settings_screen_orientation_select')
+      SettingScopeRow({
+        title: '双翻页',
+        description: '横屏、折叠屏展开等宽屏下并排显示两页；漫画条漫与滚动阅读不生效',
+        scope: this.doublePageScope(),
+        labels: ReaderInputKind.LABELS,
+        values: ReaderInputKind.VALUES,
+        onToggle: (kind: number, on: boolean): void => this.toggleDoublePage(kind, on)
+      })
       SettingRow({ title: '亮屏时间设置', description: '无操作达到所选分钟数后恢复系统息屏，0 为常亮' }) {
         ScreenTimeoutStepper({
           minutes: this.readerScreenTimeoutMinutes,
@@ -680,14 +695,6 @@ struct SettingsPage {
             this.setReaderPageTurnAnimationType(index);
           }, 'settings_page_turn_animation_select_vertical')
       }
-      SettingSwitchRow({
-        title: '使用双翻页',
-        description: '横屏、折叠屏展开等宽屏下并排显示两页',
-        isOn: this.readerLandscapeDoublePage,
-        onChange: (value: boolean) => {
-          this.setReaderLandscapeDoublePage(value);
-        }
-      })
       SettingSwitchRow({
         title: '快速添加书签',
         description: '下拉正文添加或删除当前页书签',
@@ -1938,6 +1945,47 @@ struct SettingsPage {
     ReaderSettingsStore.savePageTurnAnimationType(getContext(this), this.readerPageTurnAnimationType).catch((e: Error) => {
       console.error('保存翻页动画失败:', e);
     });
+  }
+
+  doublePageScope(): number {
+    return (this.readerLandscapeDoublePage ? ReaderInputKind.NOVEL : 0) |
+      (this.comicDualPage ? ReaderInputKind.COMIC : 0) | (this.pdfDoublePage ? ReaderInputKind.PDF : 0);
+  }
+
+  loadDoublePageScope(): void {
+    const context = getContext(this);
+    const serial = ++this.doublePageSerial;
+    Promise.all([ReaderComicSettingsStore.load(context), ReaderPdfSettingsStore.load(context)])
+      .then((results): void => {
+        if (serial !== this.doublePageSerial) return;
+        this.comicDualPage = (results[0] as ReaderComicSettings).dualPage;
+        this.pdfDoublePage = results[1].doublePage;
+      })
+      .catch((e: Error) => console.warn('读取双翻页设置失败:', e));
+  }
+
+  /** 小说（含 EPUB 文件排版）存全局阅读设置；漫画、PDF 改各自设置里的默认值，PDF 在阅读页给单本改过的以那本为准。 */
+  toggleDoublePage(kind: number, on: boolean): void {
+    const context = getContext(this);
+    if (kind === ReaderInputKind.NOVEL) {
+      this.setReaderLandscapeDoublePage(on);
+      return;
+    }
+    // 先改界面，读出最新的整份设置改一项再存，不覆盖别处刚改的其它项。
+    ++this.doublePageSerial;
+    if (kind === ReaderInputKind.COMIC) {
+      this.comicDualPage = on;
+      ReaderComicSettingsStore.load(context).then((settings: ReaderComicSettings): Promise<void> => {
+        settings.dualPage = on;
+        return ReaderComicSettingsStore.save(context, settings);
+      }).catch((e: Error) => console.error('保存漫画双翻页失败:', e));
+    } else if (kind === ReaderInputKind.PDF) {
+      this.pdfDoublePage = on;
+      ReaderPdfSettingsStore.load(context).then((settings): Promise<void> => {
+        settings.doublePage = on;
+        return ReaderPdfSettingsStore.save(context, settings);
+      }).catch((e: Error) => console.error('保存 PDF 双页失败:', e));
+    }
   }
 
   setReaderLandscapeDoublePage(enabled: boolean): void {

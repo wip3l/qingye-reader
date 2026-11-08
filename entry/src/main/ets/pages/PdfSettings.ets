@@ -100,10 +100,6 @@ struct PdfSettingsPage {
           onChange: (checked: boolean): void => {
             this.update((next: ReaderPdfSettings): void => { next.continuous = checked; });
           } })
-        SettingSwitchRow({ title: '双页显示', description: '宽屏窗口下并排显示两页，窄窗口自动使用单页', isOn: this.settings.doublePage,
-          onChange: (checked: boolean): void => {
-            this.update((next: ReaderPdfSettings): void => { next.doublePage = checked; });
-          } })
         SettingSwitchRow({ title: '适配整页', description: '关闭后按页面宽度显示', isOn: this.settings.fitPage, showDivider: false,
           onChange: (checked: boolean): void => {
             this.update((next: ReaderPdfSettings): void => { next.fitPage = checked; });
