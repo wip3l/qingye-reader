@@ -559,7 +559,6 @@ struct SettingsPage {
         title: '音量键翻页',
         description: '音量上/下键翻到上一页/下一页，条漫为翻一屏',
         isOn: this.readerVolumeTurnPage,
-        showDivider: this.readerSmartKeyTurnSupported,
         onChange: (value: boolean) => {
           this.setReaderVolumeTurnPage(value);
         }
@@ -569,12 +568,22 @@ struct SettingsPage {
           title: '智控键翻页',
           description: '智控键上滑/下滑翻到上一页/下一页，条漫为翻一屏',
           isOn: this.readerSmartKeyTurnPage,
-          showDivider: false,
           onChange: (value: boolean) => {
             this.setReaderSmartKeyTurnPage(value);
           }
         })
       }
+      SettingSwitchRow({
+        title: '翻页震感',
+        description: '点击、滑动或按键翻页时轻震一下，翻到新章节时稍重',
+        isOn: this.readerPageTurnHaptics,
+        showDivider: false,
+        onChange: (value: boolean) => {
+          ReaderHaptics.setEnabled(getContext(this), value).catch((e: Error) => {
+            console.error('保存翻页震感设置失败:', e);
+          });
+        }
+      })
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -678,16 +687,6 @@ struct SettingsPage {
         isOn: this.readerQuickBookmarkEnabled,
         onChange: (value: boolean) => {
           this.setReaderQuickBookmarkEnabled(value);
-        }
-      })
-      SettingSwitchRow({
-        title: '翻页震感',
-        description: '手动翻页时轻震一下，翻到新章节时稍重',
-        isOn: this.readerPageTurnHaptics,
-        onChange: (value: boolean) => {
-          ReaderHaptics.setEnabled(getContext(this), value).catch((e: Error) => {
-            console.error('保存翻页震感设置失败:', e);
-          });
         }
       })
       SettingSwitchRow({

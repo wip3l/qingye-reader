@@ -2,8 +2,10 @@ import { preferences } from '@kit.ArkData';
 import { vibrator } from '@kit.SensorServiceKit';
 
 /**
- * 翻页震感：手动翻页时给一下轻震，跨章时稍重一些。设置存在 reader_settings 里但不进主题档案，
- * 换主题不变，随数据备份一起走。听书自动翻页和滚动模式不震。
+ * 翻页震感：手动翻页时给一下轻震，跨章时稍重一些。全局设置（阅读通用），小说、漫画、PDF、EPUB 原版
+ * 都生效；存在 reader_settings 里但不进主题档案，换主题不变，随数据备份一起走。
+ * 触发点：小说 runPageTurnAnimation、漫画翻页视图、快照翻页（PDF/EPUB 原版）、滚动模式与条漫的点击/按键翻屏。
+ * 听书自动翻页、自动滚动和手指拖动滚动不震。
  */
 export class ReaderHaptics {
   static readonly KEY_ENABLED: string = 'readerPageTurnHaptics';

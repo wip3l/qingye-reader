@@ -194,7 +194,7 @@ struct ComicSettingsPage {
     .clip(true)
     .backgroundColor(this.cardColor())
 
-    Text('点击区域动作、屏幕方向、音量键翻页与小说共用，在上一页「阅读通用」中调整。AI 着色和翻译是默认值，在阅读页里给某本书单独开关过的以那本书为准；单本漫画的阅读方式也在阅读页里设置。')
+    Text('点击区域动作、屏幕方向、音量键翻页、翻页震感与小说共用，在上一页「阅读通用」中调整。AI 着色和翻译是默认值，在阅读页里给某本书单独开关过的以那本书为准；单本漫画的阅读方式也在阅读页里设置。')
       .fontSize(AppFontSize.CAPTION)
       .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
       .width('100%')

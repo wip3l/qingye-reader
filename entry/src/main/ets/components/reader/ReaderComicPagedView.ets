@@ -1,6 +1,8 @@
 import { LocalBookService } from '../../core/book/LocalBookService';
 import { image } from '@kit.ImageKit';
 import { AnimatorResult } from '@kit.ArkUI';
+import { ReaderHaptics } from '../../utils/ReaderHaptics';
+import { applyReaderTurnFrameRate } from '../../utils/ReaderTurnFrameRate';
 import { ReaderPageTurnAnimation } from '../../core/reader/ReaderPageTurnAnimation';
 import { ReaderPageCurlPainter } from '../ReaderPageCurlPainter';
 import { ReaderEmulationFlipPainter, ReaderEmulationFlipRegion } from '../ReaderEmulationFlipPainter';
@@ -491,6 +493,7 @@ export struct ReaderComicPagedView {
         direction: 'normal', iterations: 1, begin: this.dragOffset, end: target
       });
       this.turnAnimator = animator;
+      applyReaderTurnFrameRate(animator);
       animator.onFrame = (offset: number): void => {
         if (serial !== this.animationSerial) return;
         this.dragOffset = offset;
@@ -538,12 +541,14 @@ export struct ReaderComicPagedView {
 
   /** 翻进预先装好的相邻章节后停住，等阅读页发布新章（onLayoutChanged）或取消（cancelCross）。 */
   private animateCross(direction: number): void {
+    ReaderHaptics.pageTurned(true);
     this.animateOffset(this.turnOffset(direction), (): void => {
       this.onCrossChapter(direction);
     });
   }
 
   private animateTurn(direction: number): void {
+    ReaderHaptics.pageTurned(false);
     this.animateOffset(this.turnOffset(direction), (): void => this.finishTurn(direction));
   }
 

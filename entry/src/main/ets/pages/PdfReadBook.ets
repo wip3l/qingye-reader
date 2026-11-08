@@ -55,6 +55,7 @@ import { SmartControlKey } from '../utils/SmartControlKey';
 import { ReaderTurnKeys } from '../utils/ReaderTurnKeys';
 import { ReaderScreenTimeout } from '../utils/ReaderScreenTimeout';
 import { TapZoneSettingsDialogContent } from '../components/TapZoneSettingsDialog';
+import { ReaderHaptics } from '../utils/ReaderHaptics';
 import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
 } from '../components/reader/ReaderSnapshotPageTurn';
@@ -211,6 +212,8 @@ struct PdfReadBookPage {
     this.takeShelfOpeningPageSnapshot();
     if (!this.shelfOpenAnimating) AppStorage.setOrCreate('shelfReaderDirectTransition', false);
     ReaderProgressCheckpoint.attach(this.owner, (): Promise<void> => this.saveProgress(), (): string => this.bookUrl);
+    // 翻页震感是全局设置；直接从书架打开这两种阅读页时普通阅读页还没加载过它。
+    ReaderHaptics.load(this.getUIContext().getHostContext() as Context);
     this.refreshAiAccess();
     this.open();
   }
@@ -1110,6 +1113,7 @@ struct PdfReadBookPage {
       HdsFeedback.showToast(direction > 0 ? '已经是最后一页' : '已经是第一页');
       return;
     }
+    ReaderHaptics.pageTurned(false);
     this.goTo(target);
   }
 

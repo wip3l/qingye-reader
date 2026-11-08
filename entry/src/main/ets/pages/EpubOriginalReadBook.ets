@@ -63,6 +63,7 @@ import { ReaderInfoBarClock } from '../core/reader/ReaderInfoBarClock';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
 import { ReaderNightImage } from '../core/reader/ReaderNightImage';
 import { TapZoneSettingsDialogContent } from '../components/TapZoneSettingsDialog';
+import { ReaderHaptics } from '../utils/ReaderHaptics';
 import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
 } from '../components/reader/ReaderSnapshotPageTurn';
@@ -401,6 +402,8 @@ struct EpubOriginalReadBookPage {
     this.takeShelfOpeningPageSnapshot();
     if (!this.shelfOpenAnimating) AppStorage.setOrCreate('shelfReaderDirectTransition', false);
     ReaderProgressCheckpoint.attach(this.owner, (): Promise<void> => this.saveProgress(), (): string => this.bookUrl);
+    // 翻页震感是全局设置；直接从书架打开这两种阅读页时普通阅读页还没加载过它。
+    ReaderHaptics.load(this.getUIContext().getHostContext() as Context);
     this.open();
   }
 
@@ -665,8 +668,12 @@ struct EpubOriginalReadBookPage {
 
   private turnByKey(direction: number): void {
     this.refreshScreenTimeout();
-    if (this.paged) this.turnController.turn(direction > 0 ? 1 : -1);
-    else this.run(`__legado.screen(${direction > 0 ? 1 : -1})`);
+    if (this.paged) {
+      this.turnController.turn(direction > 0 ? 1 : -1);
+    } else {
+      ReaderHaptics.pageTurned(false);
+      this.run(`__legado.screen(${direction > 0 ? 1 : -1})`);
+    }
   }
 
   /** 键盘翻页：按键映射与开关在普通阅读页的阅读设置里配置。 */
@@ -2027,8 +2034,12 @@ struct EpubOriginalReadBookPage {
       this.toggleMenu();
     } else if (action === 2 || action === 3) {
       const direction = action === 2 ? 1 : -1;
-      if (this.paged) this.turnController.turn(direction);
-      else this.run(`__legado.screen(${direction})`);
+      if (this.paged) {
+        this.turnController.turn(direction);
+      } else {
+        ReaderHaptics.pageTurned(false);
+        this.run(`__legado.screen(${direction})`);
+      }
     }
   }
 

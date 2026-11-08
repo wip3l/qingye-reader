@@ -12,6 +12,7 @@ import {
 } from '../../core/reader/ReaderComicSettings';
 import { ReaderComicSuperResolutionAccess } from '@legado/aiengine';
 import { ReaderSettingActionRow, ReaderSettingSelectRow, ReaderSettingSwitchRow } from './ReaderSettingRows';
+import { ReaderHaptics } from '../../utils/ReaderHaptics';
 
 /** 阅读主题下的设置面板配色，由阅读页传入。 */
 export class ReaderComicPanelColors {
@@ -91,6 +92,8 @@ export struct ReaderComicModeSettingsPanel {
   @Prop smartKeyTurnPage: boolean = false;
   /** 设备支持智控键滑动时才显示对应开关。 */
   @Prop smartKeyTurnSupported: boolean = false;
+  /** 翻页震感是全局设置，与小说、PDF、EPUB 原版共用。 */
+  @StorageLink(ReaderHaptics.KEY_ENABLED) pageTurnHaptics: boolean = false;
   @Prop tapZoneSummary: string = '';
   @Prop orientationOptions: SelectOption[] = [];
   @Prop orientationSelected: number = 0;
@@ -228,6 +231,19 @@ export struct ReaderComicModeSettingsPanel {
           onChange: (checked: boolean): void => this.onSmartKeyTurnChange(checked)
         })
       }
+
+      ReaderSettingSwitchRow({
+        title: '翻页震感',
+        description: '点击、滑动或按键翻页时轻震一下，翻到新一话时稍重',
+        checked: this.pageTurnHaptics,
+        textColor: this.colors.textColor,
+        subTextColor: this.colors.subTextColor,
+        onChange: (checked: boolean): void => {
+          ReaderHaptics.setEnabled(this.getUIContext().getHostContext() as Context, checked).catch((e: Error) => {
+            console.error('保存翻页震感设置失败:', e);
+          });
+        }
+      })
 
       ReaderSettingSelectRow({
         title: '屏幕方向',

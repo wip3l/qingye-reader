@@ -238,6 +238,7 @@ import { CloudAutoSync } from '../account/CloudAutoSync';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { KnockShare } from '../utils/KnockShare';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
+import { READER_TURN_FRAME_RATE, applyReaderTurnFrameRate } from '../utils/ReaderTurnFrameRate';
 
 const READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT = 4;
 const READER_ADJACENT_PAGINATION_PREVIEW_PAGE_COUNT = 2;
@@ -3024,6 +3025,7 @@ struct ReadBookPage {
     // 放大后屏幕只显示列表的 1/倍数，翻一屏对应的列表距离同比缩短。
     const step = Math.max(120, this.pageViewHeight * 0.8) / Math.max(1, this.readerComicZoomScale) *
       (direction > 0 ? 1 : -1);
+    ReaderHaptics.pageTurned(false);
     this.startReaderComicScreenScroll(step);
   }
 
@@ -3130,6 +3132,7 @@ struct ReadBookPage {
       HdsFeedback.showToast('已经是第一话');
       return;
     }
+    ReaderHaptics.pageTurned(true);
     this.switchComicBoundaryChapter(direction);
   }
 
@@ -12418,7 +12421,7 @@ struct ReadBookPage {
           this.setReaderQuickBookmarkEnabled(checked);
         })
 
-      this.readerSwitchSettingItem('翻页震感', '手动翻页时轻震一下，翻到新章节时稍重', this.readerPageTurnHaptics,
+      this.readerSwitchSettingItem('翻页震感', '点击、滑动或按键翻页时轻震一下，翻到新章节时稍重', this.readerPageTurnHaptics,
         (checked: boolean) => {
           ReaderHaptics.setEnabled(getContext(this), checked).catch((e: Error) => {
             console.error('保存翻页震感设置失败:', e);
@@ -14951,7 +14954,8 @@ struct ReadBookPage {
         resolve();
       };
       fallbackTimerId = setTimeout(settle, Math.max(0, duration) + 120);
-      animateTo({ duration: duration, curve: curve, onFinish: settle }, apply);
+      animateTo({ duration: duration, curve: curve, expectedFrameRateRange: READER_TURN_FRAME_RATE, onFinish: settle },
+        apply);
     });
   }
 
@@ -20527,6 +20531,7 @@ struct ReadBookPage {
       const height = Number.isFinite(measuredHeight) && measuredHeight > 0 ? measuredHeight :
         Math.max(1, this.pageViewHeight - this.getEffectiveReaderMarginTop() -
           this.getReaderContinuousScrollBottomPadding());
+      ReaderHaptics.pageTurned(false);
       this.startReaderComicScreenScroll(height * (direction > 0 ? 1 : -1));
       return;
     }
@@ -20536,6 +20541,7 @@ struct ReadBookPage {
       // contentPages is an incremental snapshot. Its temporary tail is not the chapter tail until the retained
       // pagination session reports complete; crossing here can skip pages which are appended a moment later.
       if (!this.isCurrentReaderPaginationComplete()) return;
+      ReaderHaptics.pageTurned(true);
       this.loadNextChapter(false, true);
     } else {
       if (!this.isPreviousChapterTurnReady()) {
@@ -20543,6 +20549,7 @@ struct ReadBookPage {
         this.preloadPreviousChapterPaginationLater(0);
         return;
       }
+      ReaderHaptics.pageTurned(true);
       this.loadPrevChapter(true, false, true);
     }
   }
@@ -22349,6 +22356,7 @@ struct ReadBookPage {
           settle();
           return;
         }
+        applyReaderTurnFrameRate(pageCurlAnimator);
         current = pageCurlAnimator;
         currentStartedAt = Date.now();
         currentDuration = Math.max(1, playDuration);

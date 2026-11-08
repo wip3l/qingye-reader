@@ -1,5 +1,7 @@
 import { image } from '@kit.ImageKit';
 import { AnimatorResult } from '@kit.ArkUI';
+import { ReaderHaptics } from '../../utils/ReaderHaptics';
+import { applyReaderTurnFrameRate } from '../../utils/ReaderTurnFrameRate';
 import { ReaderPageTurnAnimation } from '../../core/reader/ReaderPageTurnAnimation';
 import { ReaderPageCurlPainter } from '../ReaderPageCurlPainter';
 import { ReaderEmulationFlipPainter, ReaderEmulationFlipRegion } from '../ReaderEmulationFlipPainter';
@@ -372,7 +374,10 @@ export struct ReaderSnapshotPageTurn {
       this.dropCache();
       const moved = await this.host.advance(direction);
       if (serial !== this.serial) return;
-      if (moved) this.host.committed(direction);
+      if (moved) {
+        ReaderHaptics.pageTurned(false);
+        this.host.committed(direction);
+      }
       this.reset();
       return;
     }
@@ -387,7 +392,10 @@ export struct ReaderSnapshotPageTurn {
       // 截不到图：照常翻页，只是没有动画。
       const moved = await this.host.advance(direction);
       if (serial !== this.serial) return;
-      if (moved) this.host.committed(direction);
+      if (moved) {
+        ReaderHaptics.pageTurned(false);
+        this.host.committed(direction);
+      }
       this.reset();
       return;
     }
@@ -424,6 +432,7 @@ export struct ReaderSnapshotPageTurn {
       return;
     }
     if (!back) {
+      ReaderHaptics.pageTurned(false);
       this.host.committed(direction);
       this.hide(null, '');
       return;
@@ -448,6 +457,8 @@ export struct ReaderSnapshotPageTurn {
     }
     if (this.phase !== 'ready') return;
     this.phase = 'animating';
+    // 松手确定翻过去（或点按、按键翻页截图就绪）时震，不等动画播完。
+    if (complete) ReaderHaptics.pageTurned(false);
     const serial = this.serial;
     const target = complete ? -this.turnDirection * this.viewW() : 0;
     let duration = this.usesCurl() ? 320 : 240;
@@ -479,6 +490,7 @@ export struct ReaderSnapshotPageTurn {
         direction: 'normal', iterations: 1, begin: this.turnOffset, end: target
       });
       this.animator = animator;
+      applyReaderTurnFrameRate(animator);
       animator.onFrame = (value: number): void => {
         if (serial === this.serial) this.turnOffset = value;
       };
