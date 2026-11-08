@@ -238,6 +238,7 @@ import { CloudAutoSync } from '../account/CloudAutoSync';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { KnockShare } from '../utils/KnockShare';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
+import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { READER_TURN_FRAME_RATE, applyReaderTurnFrameRate } from '../utils/ReaderTurnFrameRate';
 
 const READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT = 4;
@@ -445,7 +446,8 @@ struct ReadBookPage {
   @State readerStageRuntimeHostMounted: boolean = false;
   private readerStageRuntimeHostTimerId: number = -1;
   private readerVolumeKeySubscribeTimerId: number = -1;
-  @State readerComicMode: boolean = false;
+  // 音量键、智控键翻页按阅读类型生效，小说与漫画模式互切时要重新决定是否接管按键。
+  @State @Watch('updateVolumeKeySubscription') readerComicMode: boolean = false;
   @State readerComicSettings: ReaderComicSettings = new ReaderComicSettings();
   @State readerComicTitleCapsuleWidth: number = 0;
   /** 本书单独选的漫画阅读方式（书籍变量 readerComicReadingMode）；空串跟随全局默认。 */
@@ -931,8 +933,8 @@ struct ReadBookPage {
   @StorageLink('readerScreenOrientation') @Watch('onReaderScreenOrientationChanged') readerScreenOrientation: string =
     ReaderSettingsStore.SCREEN_ORIENTATION_SYSTEM;
   @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
-  @StorageLink('readerVolumeTurnPage') @Watch('onReaderVolumeTurnPageChanged') readerVolumeTurnPage: boolean = false;
-  @StorageLink('readerSmartKeyTurnPage') @Watch('updateVolumeKeySubscription') readerSmartKeyTurnPage: boolean = false;
+  @StorageProp('readerVolumeTurnScope') @Watch('updateVolumeKeySubscription') readerVolumeTurnScope: number = 0;
+  @StorageProp('readerSmartKeyTurnScope') @Watch('updateVolumeKeySubscription') readerSmartKeyTurnScope: number = 0;
   @StorageProp('readerSmartKeyTurnSupported') @Watch('updateVolumeKeySubscription') readerSmartKeyTurnSupported: boolean = false;
   @StorageLink('readerLongPressSelectText') @Watch('onReaderLongPressSelectTextChanged') readerLongPressSelectText: boolean = true;
   @StorageLink('readerEyeTurnEnabled') readerEyeTurnEnabled: boolean = false;
@@ -958,7 +960,7 @@ struct ReadBookPage {
   @StorageLink('readerQuickJumpMode') readerQuickJumpMode: string = 'chapter';
   @StorageLink('readerQuickJumpExpanded') readerQuickJumpExpanded: boolean = false;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
-  @StorageLink('readerPageTurnHaptics') readerPageTurnHaptics: boolean = false;
+  @StorageProp('readerPageTurnHapticsScope') readerPageTurnHapticsScope: number = 0;
   @StorageLink('readerHeaderEnabled') @Watch('onReaderChromeChanged') readerHeaderEnabled: boolean = false;
   @StorageLink('readerFooterEnabled') @Watch('onReaderChromeChanged') readerFooterEnabled: boolean = true;
   // 页眉页脚的槽位与外观，ReaderInfoBarConfig 的 JSON；解析结果缓存在 readerInfoBarConfigCache。
@@ -1163,7 +1165,7 @@ struct ReadBookPage {
   private readerEntryAlive: boolean = false;
 
   async aboutToAppear() {
-    ReaderHaptics.load(getContext(this));
+    ReaderInputScopes.load(getContext(this));
     this.readerEntryAlive = true;
     // Fixed-layout documents must not acquire text/TTS sessions or warm chapter content.
     const formatParams = router.getParams() as Record<string, string>;
@@ -3025,7 +3027,7 @@ struct ReadBookPage {
     // 放大后屏幕只显示列表的 1/倍数，翻一屏对应的列表距离同比缩短。
     const step = Math.max(120, this.pageViewHeight * 0.8) / Math.max(1, this.readerComicZoomScale) *
       (direction > 0 ? 1 : -1);
-    ReaderHaptics.pageTurned(false);
+    ReaderHaptics.pageTurned(this.readerInputKind(), false);
     this.startReaderComicScreenScroll(step);
   }
 
@@ -3132,7 +3134,7 @@ struct ReadBookPage {
       HdsFeedback.showToast('已经是第一话');
       return;
     }
-    ReaderHaptics.pageTurned(true);
+    ReaderHaptics.pageTurned(this.readerInputKind(), true);
     this.switchComicBoundaryChapter(direction);
   }
 
@@ -3412,8 +3414,8 @@ struct ReadBookPage {
       defaultMode: this.readerComicSettings.defaultMode,
       tapTurn: this.readerComicSettings.tapTurn,
       dualPage: this.readerComicSettings.dualPage,
-      volumeTurnPage: this.readerVolumeTurnPage,
-      smartKeyTurnPage: this.readerSmartKeyTurnPage,
+      volumeTurnPage: ReaderInputScopes.includes(this.readerVolumeTurnScope, ReaderInputKind.COMIC),
+      smartKeyTurnPage: ReaderInputScopes.includes(this.readerSmartKeyTurnScope, ReaderInputKind.COMIC),
       smartKeyTurnSupported: this.readerSmartKeyTurnSupported,
       tapZoneSummary: this.tapZoneSummaryText(),
       orientationOptions: this.screenOrientationOptions(),
@@ -8629,8 +8631,6 @@ struct ReadBookPage {
     this.readerLandscapeDoublePage = settings.landscapeDoublePage;
     this.readerScreenOrientation = settings.screenOrientation;
     this.readerTapZoneActions = settings.tapZoneActions;
-    this.readerVolumeTurnPage = settings.volumeTurnPage;
-    this.readerSmartKeyTurnPage = settings.smartKeyTurnPage;
     this.readerLongPressSelectText = settings.longPressSelectText;
     this.readerEyeTurnEnabled = settings.eyeTurnEnabled;
     this.readerEyeTurnPortraitCalibration = settings.eyeTurnPortraitCalibration || '';
@@ -10272,11 +10272,6 @@ struct ReadBookPage {
     });
   }
 
-  onReaderVolumeTurnPageChanged(): void {
-    this.updateVolumeKeySubscription();
-    this.saveReadConfig();
-  }
-
   async loadReaderKeyboardSettings(): Promise<void> {
     try {
       this.readerKeyboardSettings = await ReaderKeyboardSettingsStore.load(getContext(this));
@@ -10425,16 +10420,33 @@ struct ReadBookPage {
       this.ttsReader?.isSpeaking() || ReaderTtsFloatingSession.isActive()) {
       return;
     }
-    if (this.readerVolumeTurnPage) this.registerVolumeKeyTurn();
-    if (this.readerSmartKeyTurnPage && this.readerSmartKeyTurnSupported) this.registerSmartKeyTurn();
+    if (this.readerVolumeTurnActive()) this.registerVolumeKeyTurn();
+    if (this.readerSmartKeyTurnActive() && this.readerSmartKeyTurnSupported) this.registerSmartKeyTurn();
+  }
+
+  /** 当前阅读类型：漫画模式算漫画，其余（含滚动阅读）算小说。 */
+  readerInputKind(): number {
+    return this.isReaderComicModeActive() ? ReaderInputKind.COMIC : ReaderInputKind.NOVEL;
+  }
+
+  readerVolumeTurnActive(): boolean {
+    return ReaderInputScopes.includes(this.readerVolumeTurnScope, this.readerInputKind());
+  }
+
+  readerSmartKeyTurnActive(): boolean {
+    return ReaderInputScopes.includes(this.readerSmartKeyTurnScope, this.readerInputKind());
+  }
+
+  readerPageTurnHapticsActive(): boolean {
+    return ReaderInputScopes.includes(this.readerPageTurnHapticsScope, this.readerInputKind());
   }
 
   registerVolumeKeyTurn(): void {
     this.volumeUpCallback = (_event: InputKeyEvent) => {
-      this.handleHardwareKeyTurn(-1, this.readerVolumeTurnPage);
+      this.handleHardwareKeyTurn(-1, this.readerVolumeTurnActive());
     };
     this.volumeDownCallback = (_event: InputKeyEvent) => {
-      this.handleHardwareKeyTurn(1, this.readerVolumeTurnPage);
+      this.handleHardwareKeyTurn(1, this.readerVolumeTurnActive());
     };
     try {
       inputConsumer.on('keyPressed', {
@@ -10474,10 +10486,10 @@ struct ReadBookPage {
     const keys: Array<KeyCode> = SmartControlKey.slideKeys();
     if (keys.length < 2) return;
     this.smartKeyUpCallback = (_event: InputKeyEvent) => {
-      this.handleHardwareKeyTurn(-1, this.readerSmartKeyTurnPage);
+      this.handleHardwareKeyTurn(-1, this.readerSmartKeyTurnActive());
     };
     this.smartKeyDownCallback = (_event: InputKeyEvent) => {
-      this.handleHardwareKeyTurn(1, this.readerSmartKeyTurnPage);
+      this.handleHardwareKeyTurn(1, this.readerSmartKeyTurnActive());
     };
     try {
       inputConsumer.on('keyPressed', {
@@ -12373,13 +12385,13 @@ struct ReadBookPage {
           this.setReaderScreenOrientationByIndex(index);
         }, 'reader_screen_orientation_select')
 
-      this.readerSwitchSettingItem('音量键翻页', '音量上/下键翻到上一页/下一页', this.readerVolumeTurnPage,
+      this.readerSwitchSettingItem('音量键翻页', '音量上/下键翻到上一页/下一页，只改小说', this.readerVolumeTurnActive(),
         (checked: boolean) => {
           this.setReaderVolumeTurnPage(checked);
         })
 
       if (this.readerSmartKeyTurnSupported) {
-        this.readerSwitchSettingItem('智控键翻页', '智控键上滑/下滑翻到上一页/下一页', this.readerSmartKeyTurnPage,
+        this.readerSwitchSettingItem('智控键翻页', '智控键上滑/下滑翻到上一页/下一页，只改小说', this.readerSmartKeyTurnActive(),
           (checked: boolean) => {
             this.setReaderSmartKeyTurnPage(checked);
           })
@@ -12421,9 +12433,9 @@ struct ReadBookPage {
           this.setReaderQuickBookmarkEnabled(checked);
         })
 
-      this.readerSwitchSettingItem('翻页震感', '点击、滑动或按键翻页时轻震一下，翻到新章节时稍重', this.readerPageTurnHaptics,
+      this.readerSwitchSettingItem('翻页震感', '翻页时轻震一下，翻到新章节时稍重，只改小说', this.readerPageTurnHapticsActive(),
         (checked: boolean) => {
-          ReaderHaptics.setEnabled(getContext(this), checked).catch((e: Error) => {
+          ReaderHaptics.toggle(getContext(this), ReaderInputKind.NOVEL, checked).catch((e: Error) => {
             console.error('保存翻页震感设置失败:', e);
           });
         })
@@ -13070,7 +13082,6 @@ struct ReadBookPage {
   saveReaderInteractionSettings(): void {
     ReaderSettingsStore.saveReadingInteractionSettings(
       getContext(this),
-      this.readerVolumeTurnPage,
       this.readerScreenTimeoutMinutes,
       this.readerExtendToStatusBar,
       this.readerLongPressSelectText
@@ -13079,19 +13090,15 @@ struct ReadBookPage {
     });
   }
 
+  /** 阅读页面板里的按键翻页开关只改当前阅读类型；订阅由 scope 的 @Watch 重新决定。 */
   setReaderVolumeTurnPage(enabled: boolean): void {
-    this.readerVolumeTurnPage = enabled;
-    this.updateVolumeKeySubscription();
-    this.saveReaderInteractionSettings();
-    this.saveReadConfig();
+    ReaderInputScopes.toggle(getContext(this), ReaderInputScopes.KEY_VOLUME_TURN, this.readerInputKind(), enabled)
+      .catch((e: Error) => console.error('保存音量键翻页设置失败:', e));
   }
 
   setReaderSmartKeyTurnPage(enabled: boolean): void {
-    this.readerSmartKeyTurnPage = enabled;
-    this.updateVolumeKeySubscription();
-    ReaderSettingsStore.saveSmartKeyTurnPage(getContext(this), enabled).catch((e: Error) => {
-      console.error('保存智控键翻页设置失败:', e);
-    });
+    ReaderInputScopes.toggle(getContext(this), ReaderInputScopes.KEY_SMART_KEY_TURN, this.readerInputKind(), enabled)
+      .catch((e: Error) => console.error('保存智控键翻页设置失败:', e));
   }
 
   onReaderLongPressSelectTextChanged(): void {
@@ -20531,7 +20538,7 @@ struct ReadBookPage {
       const height = Number.isFinite(measuredHeight) && measuredHeight > 0 ? measuredHeight :
         Math.max(1, this.pageViewHeight - this.getEffectiveReaderMarginTop() -
           this.getReaderContinuousScrollBottomPadding());
-      ReaderHaptics.pageTurned(false);
+      ReaderHaptics.pageTurned(this.readerInputKind(), false);
       this.startReaderComicScreenScroll(height * (direction > 0 ? 1 : -1));
       return;
     }
@@ -20541,7 +20548,7 @@ struct ReadBookPage {
       // contentPages is an incremental snapshot. Its temporary tail is not the chapter tail until the retained
       // pagination session reports complete; crossing here can skip pages which are appended a moment later.
       if (!this.isCurrentReaderPaginationComplete()) return;
-      ReaderHaptics.pageTurned(true);
+      ReaderHaptics.pageTurned(this.readerInputKind(), true);
       this.loadNextChapter(false, true);
     } else {
       if (!this.isPreviousChapterTurnReady()) {
@@ -20549,7 +20556,7 @@ struct ReadBookPage {
         this.preloadPreviousChapterPaginationLater(0);
         return;
       }
-      ReaderHaptics.pageTurned(true);
+      ReaderHaptics.pageTurned(this.readerInputKind(), true);
       this.loadPrevChapter(true, false, true);
     }
   }
@@ -20915,7 +20922,7 @@ struct ReadBookPage {
       }
       return;
     }
-    ReaderHaptics.pageTurned(this.getLocalPageTurnTargetPageIndex(direction) < 0);
+    ReaderHaptics.pageTurned(this.readerInputKind(), this.getLocalPageTurnTargetPageIndex(direction) < 0);
     if (direction < 0 && this.pageTurnQueue.hasPendingForward()) {
       // 用户已经往回翻了，章末那次等排版的向后翻页作废，免得排完后突然自己翻一页。
       this.pageTurnQueue.reset();

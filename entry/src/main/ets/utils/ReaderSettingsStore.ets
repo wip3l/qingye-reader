@@ -37,8 +37,6 @@ export class ReaderSettings {
   landscapeDoublePage: boolean = false;
   screenOrientation: string = 'system';
   tapZoneActions: string = '3,3,3,3,1,2,2,2,2';
-  volumeTurnPage: boolean = false;
-  smartKeyTurnPage: boolean = false;
   longPressSelectText: boolean = true;
   eyeTurnEnabled: boolean = false;
   eyeTurnPortraitCalibration: string = '';
@@ -136,8 +134,6 @@ export class ReaderSettingsStore {
   static readonly KEY_LANDSCAPE_DOUBLE_PAGE: string = 'readerLandscapeDoublePage';
   static readonly KEY_SCREEN_ORIENTATION: string = 'readerScreenOrientation';
   static readonly KEY_TAP_ZONE_ACTIONS: string = 'readerTapZoneActions';
-  static readonly KEY_VOLUME_TURN_PAGE: string = 'readerVolumeTurnPage';
-  static readonly KEY_SMART_KEY_TURN_PAGE: string = 'readerSmartKeyTurnPage';
   static readonly KEY_LONG_PRESS_SELECT_TEXT: string = 'readerLongPressSelectText';
   static readonly KEY_EYE_TURN_ENABLED: string = 'readerEyeTurnEnabled';
   static readonly KEY_EYE_TURN_PORTRAIT_CALIBRATION: string = 'readerEyeTurnPortraitCalibration';
@@ -366,16 +362,6 @@ export class ReaderSettingsStore {
     );
     settings.longPressSelectText = await ReaderSettingsStore.getBoolean(
       store, ReaderSettingsStore.KEY_LONG_PRESS_SELECT_TEXT, true);
-    settings.volumeTurnPage = await ReaderSettingsStore.getBoolean(
-      store,
-      ReaderSettingsStore.KEY_VOLUME_TURN_PAGE,
-      AppStorage.get<boolean>(ReaderSettingsStore.KEY_VOLUME_TURN_PAGE) ?? false
-    );
-    settings.smartKeyTurnPage = await ReaderSettingsStore.getBoolean(
-      store,
-      ReaderSettingsStore.KEY_SMART_KEY_TURN_PAGE,
-      AppStorage.get<boolean>(ReaderSettingsStore.KEY_SMART_KEY_TURN_PAGE) ?? false
-    );
     settings.eyeTurnEnabled = await ReaderSettingsStore.getBoolean(
       store,
       ReaderSettingsStore.KEY_EYE_TURN_ENABLED,
@@ -692,15 +678,14 @@ export class ReaderSettingsStore {
     await store.flush();
   }
 
+  /** 音量键、智控键翻页已改为按阅读类型的全局设置，见 ReaderInputScopes。 */
   static async saveReadingInteractionSettings(
     context: Context,
-    volumeTurnPage: boolean,
     screenTimeoutMinutes: number,
     extendToStatusBar: boolean,
     longPressSelectText: boolean = AppStorage.get<boolean>(ReaderSettingsStore.KEY_LONG_PRESS_SELECT_TEXT) ?? true
   ): Promise<void> {
     const settings = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
-    settings.volumeTurnPage = volumeTurnPage;
     settings.longPressSelectText = longPressSelectText;
     settings.screenTimeoutMinutes = ReaderSettingsStore.normalizeScreenTimeoutMinutes(screenTimeoutMinutes);
     settings.keepScreenOn =
@@ -709,22 +694,10 @@ export class ReaderSettingsStore {
     ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(settings);
     ReaderSettingsStore.applyInteractionToStorage(settings);
     const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
-    await store.put(ReaderSettingsStore.KEY_VOLUME_TURN_PAGE, settings.volumeTurnPage);
     await store.put(ReaderSettingsStore.KEY_LONG_PRESS_SELECT_TEXT, settings.longPressSelectText);
     await store.put(ReaderSettingsStore.KEY_SCREEN_TIMEOUT_MINUTES, settings.screenTimeoutMinutes);
     await store.put(ReaderSettingsStore.KEY_KEEP_SCREEN_ON, settings.keepScreenOn);
     await store.put(ReaderSettingsStore.KEY_EXTEND_TO_STATUS_BAR, settings.extendToStatusBar);
-    await ReaderSettingsStore.persistActiveThemeProfile(store, settings);
-    await store.flush();
-  }
-
-  static async saveSmartKeyTurnPage(context: Context, enabled: boolean): Promise<void> {
-    const settings = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
-    settings.smartKeyTurnPage = enabled;
-    ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(settings);
-    ReaderSettingsStore.applyInteractionToStorage(settings);
-    const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
-    await store.put(ReaderSettingsStore.KEY_SMART_KEY_TURN_PAGE, settings.smartKeyTurnPage);
     await ReaderSettingsStore.persistActiveThemeProfile(store, settings);
     await store.flush();
   }
@@ -1113,12 +1086,10 @@ export class ReaderSettingsStore {
     await ReaderSettingsStore.saveScreenOrientation(context, settings.screenOrientation);
     await ReaderSettingsStore.saveReadingInteractionSettings(
       context,
-      settings.volumeTurnPage,
       settings.screenTimeoutMinutes,
       settings.extendToStatusBar,
       settings.longPressSelectText
     );
-    await ReaderSettingsStore.saveSmartKeyTurnPage(context, settings.smartKeyTurnPage);
     await ReaderSettingsStore.saveEyeTurnSettings(
       context,
       settings.eyeTurnEnabled,
@@ -1222,8 +1193,6 @@ export class ReaderSettingsStore {
   }
 
   private static applyInteractionToStorage(settings: ReaderSettings): void {
-    AppStorage.setOrCreate(ReaderSettingsStore.KEY_VOLUME_TURN_PAGE, settings.volumeTurnPage);
-    AppStorage.setOrCreate(ReaderSettingsStore.KEY_SMART_KEY_TURN_PAGE, settings.smartKeyTurnPage);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_LONG_PRESS_SELECT_TEXT, settings.longPressSelectText);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_SCREEN_TIMEOUT_MINUTES, settings.screenTimeoutMinutes);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_KEEP_SCREEN_ON, settings.keepScreenOn);
@@ -1459,8 +1428,8 @@ export class ReaderSettingsStore {
       await ReaderSettingsStore.saveReaderChromeSettings(context, source.readerHeaderEnabled,
         source.readerFooterEnabled, source.readerInfoBarConfig);
       const current = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
-      await ReaderSettingsStore.saveReadingInteractionSettings(context, current.volumeTurnPage,
-        current.screenTimeoutMinutes, source.extendToStatusBar);
+      await ReaderSettingsStore.saveReadingInteractionSettings(context, current.screenTimeoutMinutes,
+        source.extendToStatusBar);
     } else {
       await ReaderSettingsStore.waitForReaderFontStyleSaves();
       await ReaderSettingsStore.waitForReaderLayoutSaves();
@@ -1901,8 +1870,6 @@ export class ReaderSettingsStore {
     settings.landscapeDoublePage = source.landscapeDoublePage;
     settings.screenOrientation = ReaderSettingsStore.normalizeScreenOrientation(source.screenOrientation);
     settings.tapZoneActions = ReaderSettingsStore.normalizeTapZoneActions(source.tapZoneActions);
-    settings.volumeTurnPage = source.volumeTurnPage;
-    settings.smartKeyTurnPage = source.smartKeyTurnPage === true;
     settings.longPressSelectText = source.longPressSelectText !== false;
     settings.eyeTurnEnabled = source.eyeTurnEnabled === true;
     settings.eyeTurnPortraitCalibration = source.eyeTurnPortraitCalibration || '';
@@ -2048,8 +2015,6 @@ export class ReaderSettingsStore {
     settings.tapZoneActions = ReaderSettingsStore.normalizeTapZoneActions(
       AppStorage.get<string>(ReaderSettingsStore.KEY_TAP_ZONE_ACTIONS) || ''
     );
-    settings.volumeTurnPage = AppStorage.get<boolean>(ReaderSettingsStore.KEY_VOLUME_TURN_PAGE) ?? false;
-    settings.smartKeyTurnPage = AppStorage.get<boolean>(ReaderSettingsStore.KEY_SMART_KEY_TURN_PAGE) ?? false;
     settings.longPressSelectText = AppStorage.get<boolean>(ReaderSettingsStore.KEY_LONG_PRESS_SELECT_TEXT) ?? true;
     settings.eyeTurnEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_EYE_TURN_ENABLED) ?? false;
     settings.eyeTurnPortraitCalibration =

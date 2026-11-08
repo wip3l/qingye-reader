@@ -257,8 +257,8 @@ const keys = hostFor(readerSource, ['updateVolumeKeySubscription', 'delayPastShe
 let registered = 0;
 Object.assign(keys, {
   readerVolumeKeySubscribeTimerId: -1, readerEntryAlive: true, shelfOpenAnimating: true, shelfOpenEndsAt: now + 500,
-  readerPageVisible: true, isTtsSpeaking: false, ttsReader: { isSpeaking: () => false }, readerVolumeTurnPage: true,
-  readerSmartKeyTurnPage: false, readerSmartKeyTurnSupported: false,
+  readerPageVisible: true, isTtsSpeaking: false, ttsReader: { isSpeaking: () => false }, readerVolumeTurnActive: () => true,
+  readerSmartKeyTurnActive: () => false, readerSmartKeyTurnSupported: false,
   unregisterVolumeKeyTurn() {}, unregisterSmartKeyTurn() {}, registerVolumeKeyTurn() { registered++; },
   registerSmartKeyTurn() {}
 });

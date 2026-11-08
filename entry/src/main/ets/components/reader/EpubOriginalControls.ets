@@ -15,6 +15,8 @@ import { ReaderSettingsStore } from '../../utils/ReaderSettingsStore';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
+import { ReaderHaptics } from '../../utils/ReaderHaptics';
+import { ReaderInputKind, ReaderInputScopes } from '../../utils/ReaderInputScopes';
 import { AppFontSize } from '../../theme/AppFontSize';
 
 const PANEL_HEADER_HEIGHT: number = 56;
@@ -62,6 +64,8 @@ export struct EpubOriginalControls {
   @Prop volumeTurnPage: boolean = false;
   @Prop smartKeyTurnPage: boolean = false;
   @Prop smartKeySupported: boolean = false;
+  /** 翻页震感按阅读类型存；这里的开关只改小说一类。 */
+  @StorageProp('readerPageTurnHapticsScope') pageTurnHapticsScope: number = 0;
   /** 翻页动画，与普通阅读页共用。 */
   @Prop pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   /** 页眉默认位置（状态栏下方或屏幕顶端），页眉页脚设置里的位置步进以它为基准。 */
@@ -581,14 +585,21 @@ export struct EpubOriginalControls {
         .constraintSize({ minHeight: 56 })
         .alignItems(VerticalAlign.Center)
         // 与普通阅读页的阅读设置同一个开关：在这里改了，回到普通阅读页也是这个设置。
-        ReaderSettingSwitchRow({ title: '音量键翻页', description: '音量上/下键翻到上一页/下一页',
+        ReaderSettingSwitchRow({ title: '音量键翻页', description: '音量上/下键翻到上一页/下一页，只改小说',
           checked: this.volumeTurnPage, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onVolumeTurnChange })
         if (this.smartKeySupported) {
-          ReaderSettingSwitchRow({ title: '智控键翻页', description: '智控键上滑/下滑翻到上一页/下一页',
+          ReaderSettingSwitchRow({ title: '智控键翻页', description: '智控键上滑/下滑翻到上一页/下一页，只改小说',
             checked: this.smartKeyTurnPage, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
             subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onSmartKeyTurnChange })
         }
+        ReaderSettingSwitchRow({ title: '翻页震感', description: '翻页时轻震一下，只改小说',
+          checked: ReaderInputScopes.includes(this.pageTurnHapticsScope, ReaderInputKind.NOVEL),
+          textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+          onChange: (checked: boolean): void => {
+            ReaderHaptics.toggle(this.getUIContext().getHostContext() as Context, ReaderInputKind.NOVEL, checked)
+              .catch((e: Error) => console.error('[EpubOriginal] save haptics failed:', e));
+          } })
         ReaderSettingActionRow({ title: '使用应用排版', description: '改回阅读主题、字体与仿真翻页排版这本书',
           actionText: '切换', textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode), buttonColor: ThemeRuntime.accentColor(this.darkMode),

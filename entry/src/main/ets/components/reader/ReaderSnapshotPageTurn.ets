@@ -1,6 +1,7 @@
 import { image } from '@kit.ImageKit';
 import { AnimatorResult } from '@kit.ArkUI';
 import { ReaderHaptics } from '../../utils/ReaderHaptics';
+import { ReaderInputKind } from '../../utils/ReaderInputScopes';
 import { applyReaderTurnFrameRate } from '../../utils/ReaderTurnFrameRate';
 import { ReaderPageTurnAnimation } from '../../core/reader/ReaderPageTurnAnimation';
 import { ReaderPageCurlPainter } from '../ReaderPageCurlPainter';
@@ -62,6 +63,8 @@ export class ReaderSnapshotTurnController {
 export struct ReaderSnapshotPageTurn {
   host: ReaderSnapshotTurnHost = new ReaderSnapshotTurnHost();
   controller: ReaderSnapshotTurnController = new ReaderSnapshotTurnController();
+  /** 翻页震感按哪类阅读生效：PDF 页传 PDF，EPUB 原版排版算小说。 */
+  hapticsKind: number = ReaderInputKind.NOVEL;
   @Prop @Watch('onAnimationTypeChanged') animationType: number = ReaderPageTurnAnimation.SLIDE;
   @Prop viewWidth: number = 0;
   @Prop viewHeight: number = 0;
@@ -375,7 +378,7 @@ export struct ReaderSnapshotPageTurn {
       const moved = await this.host.advance(direction);
       if (serial !== this.serial) return;
       if (moved) {
-        ReaderHaptics.pageTurned(false);
+        ReaderHaptics.pageTurned(this.hapticsKind, false);
         this.host.committed(direction);
       }
       this.reset();
@@ -393,7 +396,7 @@ export struct ReaderSnapshotPageTurn {
       const moved = await this.host.advance(direction);
       if (serial !== this.serial) return;
       if (moved) {
-        ReaderHaptics.pageTurned(false);
+        ReaderHaptics.pageTurned(this.hapticsKind, false);
         this.host.committed(direction);
       }
       this.reset();
@@ -432,7 +435,7 @@ export struct ReaderSnapshotPageTurn {
       return;
     }
     if (!back) {
-      ReaderHaptics.pageTurned(false);
+      ReaderHaptics.pageTurned(this.hapticsKind, false);
       this.host.committed(direction);
       this.hide(null, '');
       return;
@@ -458,7 +461,7 @@ export struct ReaderSnapshotPageTurn {
     if (this.phase !== 'ready') return;
     this.phase = 'animating';
     // 松手确定翻过去（或点按、按键翻页截图就绪）时震，不等动画播完。
-    if (complete) ReaderHaptics.pageTurned(false);
+    if (complete) ReaderHaptics.pageTurned(this.hapticsKind, false);
     const serial = this.serial;
     const target = complete ? -this.turnDirection * this.viewW() : 0;
     let duration = this.usesCurl() ? 320 : 240;

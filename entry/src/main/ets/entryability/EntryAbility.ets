@@ -54,6 +54,7 @@ import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
 import { AudioOfflineSettingsStore } from '../utils/AudioOfflineSettingsStore';
 import { AudioBookSettingsStore } from '../utils/AudioBookSettingsStore';
 import { PlaybackLoudnessGain } from '../utils/PlaybackLoudnessGain';
+import { ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { syncDesktopTitleBar, releaseSystemBarListeners } from '../utils/SystemBars';
 
@@ -199,8 +200,10 @@ export default class EntryAbility extends UIAbility {
     }
     PersistentStorage.persistProp('readerPageTurnAnimation', true);
     PersistentStorage.persistProp('readerPageTurnAnimationType', 1);
+    // 旧版音量键/智控键开关，只供 ReaderInputScopes 第一次迁移时兜底读取。
     PersistentStorage.persistProp('readerVolumeTurnPage', false);
     PersistentStorage.persistProp('readerSmartKeyTurnPage', false);
+    ReaderInputScopes.load(this.context);
     PersistentStorage.persistProp('readerKeepScreenOn', true);
     PersistentStorage.persistProp('readerExtendToStatusBar', false);
     PersistentStorage.persistProp('readerLastPageViewWidth', 0);

@@ -228,11 +228,11 @@ const tests = {
   async 'long press selection defaults on and persists through reload, saveAll and legacy profiles'() {
     const h = harness();
     assert.equal((await h.settings.load({})).longPressSelectText, true);
-    await h.settings.saveReadingInteractionSettings({}, false, -1, false, false);
+    await h.settings.saveReadingInteractionSettings({}, -1, false, false);
     assert.equal(h.values.get('readerLongPressSelectText'), false);
     assert.equal((await h.settings.reload({})).longPressSelectText, false);
     // Other interaction and typography callers omit the new argument.
-    await h.settings.saveReadingInteractionSettings({}, true, 5, true);
+    await h.settings.saveReadingInteractionSettings({}, 5, true);
     assert.equal((await h.settings.reload({})).longPressSelectText, false);
     const saved = await h.settings.load({});
     await h.settings.saveAll({}, saved);
@@ -244,7 +244,7 @@ const tests = {
     assert.equal((await h.settings.switchThemeProfile({}, 'classic-blue', 'legacy')).longPressSelectText, true);
     h.values.set('appThemeId', 'classic-blue');
     assert.equal((await h.settings.switchThemeProfile({}, 'legacy', 'classic-blue')).longPressSelectText, false);
-    await h.settings.saveReadingInteractionSettings({}, false, -1, false, true);
+    await h.settings.saveReadingInteractionSettings({}, -1, false, true);
     assert.equal((await h.settings.reload({})).longPressSelectText, true);
   },
   async 'paragraph bubble size defaults, clamps, persists and remains local across theme switches'() {
@@ -552,7 +552,7 @@ const tests = {
     await h.settings.saveLayoutSettings({}, 25, 12, 3);
     await h.settings.saveReaderChromeSettings({}, true, true, new h.Config().serialize());
     await h.settings.savePageTurnMode({}, 1);
-    await h.settings.saveReadingInteractionSettings({}, true, 5, true);
+    await h.settings.saveReadingInteractionSettings({}, 5, true);
     const style = await h.settings.load({});
     style.fontSize = 28;
     style.titleFontSize = 30;

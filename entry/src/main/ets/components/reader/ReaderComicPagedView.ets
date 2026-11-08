@@ -2,6 +2,7 @@ import { LocalBookService } from '../../core/book/LocalBookService';
 import { image } from '@kit.ImageKit';
 import { AnimatorResult } from '@kit.ArkUI';
 import { ReaderHaptics } from '../../utils/ReaderHaptics';
+import { ReaderInputKind } from '../../utils/ReaderInputScopes';
 import { applyReaderTurnFrameRate } from '../../utils/ReaderTurnFrameRate';
 import { ReaderPageTurnAnimation } from '../../core/reader/ReaderPageTurnAnimation';
 import { ReaderPageCurlPainter } from '../ReaderPageCurlPainter';
@@ -541,14 +542,14 @@ export struct ReaderComicPagedView {
 
   /** 翻进预先装好的相邻章节后停住，等阅读页发布新章（onLayoutChanged）或取消（cancelCross）。 */
   private animateCross(direction: number): void {
-    ReaderHaptics.pageTurned(true);
+    ReaderHaptics.pageTurned(ReaderInputKind.COMIC, true);
     this.animateOffset(this.turnOffset(direction), (): void => {
       this.onCrossChapter(direction);
     });
   }
 
   private animateTurn(direction: number): void {
-    ReaderHaptics.pageTurned(false);
+    ReaderHaptics.pageTurned(ReaderInputKind.COMIC, false);
     this.animateOffset(this.turnOffset(direction), (): void => this.finishTurn(direction));
   }
 

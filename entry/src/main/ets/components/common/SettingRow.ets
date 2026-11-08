@@ -137,3 +137,67 @@ export struct SettingNavRow {
     }
   }
 }
+
+/**
+ * 按阅读类型多选的设置行：标题下面一排胶囊，点一下开关一类，全不选即关闭。
+ * scope 是类型位掩码，labels 与 values 一一对应（见 ReaderInputKind）。
+ */
+@Component
+export struct SettingScopeRow {
+  @Prop title: string = '';
+  @Prop description: string = '';
+  @Prop scope: number = 0;
+  @Prop labels: string[] = [];
+  @Prop values: number[] = [];
+  @Prop showDivider: boolean = true;
+  @StorageProp('appDarkMode') appDarkMode: boolean = false;
+  @StorageProp('themeRevision') themeRevision: number = 0;
+  onToggle: (value: number, on: boolean) => void = (_value: number, _on: boolean) => {
+  };
+
+  private isOn(value: number): boolean {
+    return (this.scope & value) !== 0;
+  }
+
+  build() {
+    Column() {
+      Text(this.title)
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+      if (this.description) {
+        Text(this.description)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+          .margin({ top: AppSpacing.XS })
+      }
+      Row({ space: AppSpacing.SM }) {
+        ForEach(this.values, (value: number, index: number) => {
+          Row({ space: 4 }) {
+            if (this.isOn(value)) {
+              SymbolGlyph($r('sys.symbol.checkmark'))
+                .fontSize(14)
+                .fontColor([ThemeRuntime.accentColor(this.appDarkMode)])
+            }
+            Text(this.labels[index] ?? '')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.isOn(value) ? ThemeRuntime.accentColor(this.appDarkMode) :
+                ThemeRuntime.primaryTextColor(this.appDarkMode))
+          }
+          .height(32)
+          .padding({ left: 14, right: 14 })
+          .borderRadius(16)
+          .backgroundColor(this.isOn(value) ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) : Color.Transparent)
+          .border({ width: this.isOn(value) ? 0 : 1, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
+          .accessibilityText(`${this.title}：${this.labels[index] ?? ''}${this.isOn(value) ? '，已开启' : '，已关闭'}`)
+          .onClick(() => this.onToggle(value, !this.isOn(value)))
+        }, (value: number) => `${value}`)
+      }
+      .margin({ top: AppSpacing.MD })
+    }
+    .width('calc(100% - 32vp)')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
+    .border({ width: { bottom: this.showDivider ? 0.5 : 0 }, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
+  }
+}

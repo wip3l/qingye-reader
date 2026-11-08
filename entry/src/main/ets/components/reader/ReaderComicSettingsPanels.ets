@@ -13,6 +13,7 @@ import {
 import { ReaderComicSuperResolutionAccess } from '@legado/aiengine';
 import { ReaderSettingActionRow, ReaderSettingSelectRow, ReaderSettingSwitchRow } from './ReaderSettingRows';
 import { ReaderHaptics } from '../../utils/ReaderHaptics';
+import { ReaderInputKind, ReaderInputScopes } from '../../utils/ReaderInputScopes';
 
 /** 阅读主题下的设置面板配色，由阅读页传入。 */
 export class ReaderComicPanelColors {
@@ -92,8 +93,8 @@ export struct ReaderComicModeSettingsPanel {
   @Prop smartKeyTurnPage: boolean = false;
   /** 设备支持智控键滑动时才显示对应开关。 */
   @Prop smartKeyTurnSupported: boolean = false;
-  /** 翻页震感是全局设置，与小说、PDF、EPUB 原版共用。 */
-  @StorageLink(ReaderHaptics.KEY_ENABLED) pageTurnHaptics: boolean = false;
+  /** 翻页震感按阅读类型存；这里的开关只改漫画一类。 */
+  @StorageProp('readerPageTurnHapticsScope') pageTurnHapticsScope: number = 0;
   @Prop tapZoneSummary: string = '';
   @Prop orientationOptions: SelectOption[] = [];
   @Prop orientationSelected: number = 0;
@@ -214,7 +215,7 @@ export struct ReaderComicModeSettingsPanel {
 
       ReaderSettingSwitchRow({
         title: '音量键翻页',
-        description: this.paged() ? '音量上/下键翻到上一页/下一页' : '音量上/下键向上/向下翻一屏',
+        description: (this.paged() ? '音量上/下键翻到上一页/下一页' : '音量上/下键向上/向下翻一屏') + '，只改漫画',
         checked: this.volumeTurnPage,
         textColor: this.colors.textColor,
         subTextColor: this.colors.subTextColor,
@@ -224,7 +225,7 @@ export struct ReaderComicModeSettingsPanel {
       if (this.smartKeyTurnSupported) {
         ReaderSettingSwitchRow({
           title: '智控键翻页',
-          description: this.paged() ? '智控键上滑/下滑翻到上一页/下一页' : '智控键上滑/下滑向上/向下翻一屏',
+          description: (this.paged() ? '智控键上滑/下滑翻到上一页/下一页' : '智控键上滑/下滑向上/向下翻一屏') + '，只改漫画',
           checked: this.smartKeyTurnPage,
           textColor: this.colors.textColor,
           subTextColor: this.colors.subTextColor,
@@ -234,14 +235,13 @@ export struct ReaderComicModeSettingsPanel {
 
       ReaderSettingSwitchRow({
         title: '翻页震感',
-        description: '点击、滑动或按键翻页时轻震一下，翻到新一话时稍重',
-        checked: this.pageTurnHaptics,
+        description: '翻页时轻震一下，翻到新一话时稍重，只改漫画',
+        checked: ReaderInputScopes.includes(this.pageTurnHapticsScope, ReaderInputKind.COMIC),
         textColor: this.colors.textColor,
         subTextColor: this.colors.subTextColor,
         onChange: (checked: boolean): void => {
-          ReaderHaptics.setEnabled(this.getUIContext().getHostContext() as Context, checked).catch((e: Error) => {
-            console.error('保存翻页震感设置失败:', e);
-          });
+          ReaderHaptics.toggle(this.getUIContext().getHostContext() as Context, ReaderInputKind.COMIC, checked)
+            .catch((e: Error) => console.error('保存翻页震感设置失败:', e));
         }
       })
 

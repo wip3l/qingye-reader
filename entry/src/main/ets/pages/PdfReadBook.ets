@@ -56,6 +56,7 @@ import { ReaderTurnKeys } from '../utils/ReaderTurnKeys';
 import { ReaderScreenTimeout } from '../utils/ReaderScreenTimeout';
 import { TapZoneSettingsDialogContent } from '../components/TapZoneSettingsDialog';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
+import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
 } from '../components/reader/ReaderSnapshotPageTurn';
@@ -79,8 +80,9 @@ struct PdfReadBookPage {
   // 与书籍共用：点击区域、智控键支持；音量键、智控键开关与翻页动画在打开时从阅读设置读。
   @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
   @StorageProp('readerSmartKeyTurnSupported') @Watch('updateTurnKeys') smartKeySupported: boolean = false;
-  @State volumeTurnPage: boolean = false;
-  @State smartKeyTurnPage: boolean = false;
+  // 按键翻页按阅读类型生效，这里只看 PDF 一类。
+  @StorageProp('readerVolumeTurnScope') @Watch('updateTurnKeys') volumeTurnScope: number = 0;
+  @StorageProp('readerSmartKeyTurnScope') @Watch('updateTurnKeys') smartKeyTurnScope: number = 0;
   @State pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   /** PDF 自己的全局设置：夜间页面（原样 / 调暗 / 反色）与页码角标。 */
   @State nightMode: string = ReaderPdfSettings.NIGHT_ORIGINAL;
@@ -102,7 +104,6 @@ struct PdfReadBookPage {
   @State viewHeight: number = 720;
   @State @Watch('syncTapZoneDialog') showTapZones: boolean = false;
   private pdfDefaults: ReaderPdfSettings = new ReaderPdfSettings();
-  private readerSettings: ReaderSettings | null = null;
   private turnKeys: ReaderTurnKeys = new ReaderTurnKeys('PDF');
   private screenTimeout: ReaderScreenTimeout = new ReaderScreenTimeout('PDF');
   private keyboardSettings: ReaderKeyboardSettings = new ReaderKeyboardSettings();
@@ -212,8 +213,8 @@ struct PdfReadBookPage {
     this.takeShelfOpeningPageSnapshot();
     if (!this.shelfOpenAnimating) AppStorage.setOrCreate('shelfReaderDirectTransition', false);
     ReaderProgressCheckpoint.attach(this.owner, (): Promise<void> => this.saveProgress(), (): string => this.bookUrl);
-    // 翻页震感是全局设置；直接从书架打开这两种阅读页时普通阅读页还没加载过它。
-    ReaderHaptics.load(this.getUIContext().getHostContext() as Context);
+    // 按键翻页、翻页震感按阅读类型存；直接从书架打开时普通阅读页还没读过。
+    ReaderInputScopes.load(this.getUIContext().getHostContext() as Context);
     this.refreshAiAccess();
     this.open();
   }
@@ -938,9 +939,6 @@ struct PdfReadBookPage {
 
   /** 普通阅读页的翻页、按键、亮屏时间设置；直接从书架打开 PDF 时普通阅读页还没读过。 */
   private applyReaderSettings(settings: ReaderSettings): void {
-    this.readerSettings = settings;
-    this.volumeTurnPage = settings.volumeTurnPage;
-    this.smartKeyTurnPage = settings.smartKeyTurnPage;
     this.pageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.pageTurnAnimationType);
     if (settings.tapZoneActions) this.readerTapZoneActions = settings.tapZoneActions;
     this.screenTimeout.setMinutes(settings.screenTimeoutMinutes);
@@ -948,7 +946,7 @@ struct PdfReadBookPage {
   }
 
   updateTurnKeys(): void {
-    this.turnKeys.update(this.alive && this.visible, this.volumeTurnPage, this.smartKeyTurnPage,
+    this.turnKeys.update(this.alive && this.visible, this.volumeTurnOn(), this.smartKeyTurnOn(),
       this.smartKeySupported, (direction: number): void => {
         if (this.canTurnByKey()) this.turn(direction);
       });
@@ -973,28 +971,24 @@ struct PdfReadBookPage {
     return true;
   }
 
+  private volumeTurnOn(): boolean {
+    return ReaderInputScopes.includes(this.volumeTurnScope, ReaderInputKind.PDF);
+  }
+
+  private smartKeyTurnOn(): boolean {
+    return ReaderInputScopes.includes(this.smartKeyTurnScope, ReaderInputKind.PDF);
+  }
+
+  /** 面板里的开关只改 PDF 一类；订阅由 scope 的 @Watch 重新决定。 */
   private setVolumeTurnPage(enabled: boolean): void {
-    this.volumeTurnPage = enabled;
-    this.updateTurnKeys();
-    const context = this.getUIContext().getHostContext();
-    const settings = this.readerSettings;
-    if (!context || !settings) return;
-    settings.volumeTurnPage = enabled;
-    ReaderSettingsStore.saveReadingInteractionSettings(context, enabled, settings.screenTimeoutMinutes,
-      settings.extendToStatusBar).catch((error: Error): void => {
-      console.error('[PDF] save volume turn failed:', error);
-    });
+    ReaderInputScopes.toggle(this.getUIContext().getHostContext() as Context, ReaderInputScopes.KEY_VOLUME_TURN,
+      ReaderInputKind.PDF, enabled).catch((error: Error): void => console.error('[PDF] save volume turn failed:', error));
   }
 
   private setSmartKeyTurnPage(enabled: boolean): void {
-    this.smartKeyTurnPage = enabled;
-    this.updateTurnKeys();
-    if (this.readerSettings) this.readerSettings.smartKeyTurnPage = enabled;
-    const context = this.getUIContext().getHostContext();
-    if (!context) return;
-    ReaderSettingsStore.saveSmartKeyTurnPage(context, enabled).catch((error: Error): void => {
-      console.error('[PDF] save smart key turn failed:', error);
-    });
+    ReaderInputScopes.toggle(this.getUIContext().getHostContext() as Context, ReaderInputScopes.KEY_SMART_KEY_TURN,
+      ReaderInputKind.PDF, enabled)
+      .catch((error: Error): void => console.error('[PDF] save smart key turn failed:', error));
   }
 
   private setPageTurnAnimation(type: number): void {
@@ -1113,7 +1107,7 @@ struct PdfReadBookPage {
       HdsFeedback.showToast(direction > 0 ? '已经是最后一页' : '已经是第一页');
       return;
     }
-    ReaderHaptics.pageTurned(false);
+    ReaderHaptics.pageTurned(ReaderInputKind.PDF, false);
     this.goTo(target);
   }
 
@@ -1445,6 +1439,7 @@ struct PdfReadBookPage {
         ReaderSnapshotPageTurn({
           host: this.turnHost,
           controller: this.turnController,
+          hapticsKind: ReaderInputKind.PDF,
           animationType: this.pageTurnAnimation,
           viewWidth: this.viewWidth,
           viewHeight: this.viewHeight,
@@ -1494,7 +1489,7 @@ struct PdfReadBookPage {
         onLayoutElements: (): void => { this.setPanel(''); this.showLayoutElements = true; },
         alignedLayout: true, pageTurnAnimation: this.pageTurnAnimation,
         tapZoneActions: this.tapZoneActions().join(','), tapZoneSummary: this.tapZoneSummary(),
-        volumeTurnPage: this.volumeTurnPage, smartKeyTurnPage: this.smartKeyTurnPage,
+        volumeTurnPage: this.volumeTurnOn(), smartKeyTurnPage: this.smartKeyTurnOn(),
         smartKeySupported: this.smartKeySupported, pdfNightMode: this.nightMode, pageBadge: this.pageBadge,
         bookmarkedPage: this.isPageBookmarked(),
         onPageTurnAnimationChange: (type: number): void => { this.setPageTurnAnimation(type); },

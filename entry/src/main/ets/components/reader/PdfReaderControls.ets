@@ -12,6 +12,8 @@ import { ReaderPageTurnAnimation } from '../../core/reader/ReaderPageTurnAnimati
 import { ReaderPdfSettings } from '../../core/book/pdf/ReaderPdfSettings';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
+import { ReaderHaptics } from '../../utils/ReaderHaptics';
+import { ReaderInputKind, ReaderInputScopes } from '../../utils/ReaderInputScopes';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { PdfPagePosition } from '../../core/book/pdf/PdfModels';
 import { ReaderComicSuperResolutionAccess } from '@legado/aiengine';
@@ -103,6 +105,8 @@ export struct PdfReaderControls {
   @Prop volumeTurnPage: boolean = false;
   @Prop smartKeyTurnPage: boolean = false;
   @Prop smartKeySupported: boolean = false;
+  /** 翻页震感按阅读类型存；这里的开关只改PDF一类。 */
+  @StorageProp('readerPageTurnHapticsScope') pageTurnHapticsScope: number = 0;
   @Prop pdfNightMode: string = 'original';
   @Prop pageBadge: boolean = true;
   @Prop bookmarkedPage: boolean = false;
@@ -538,14 +542,21 @@ export struct PdfReaderControls {
           actionText: '配置', textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode), buttonColor: ThemeRuntime.accentColor(this.darkMode),
           buttonTextColor: ThemeRuntime.onAccentColor(), onAction: this.onTapZones })
-        ReaderSettingSwitchRow({ title: '音量键翻页', description: '音量上/下键翻到上一页/下一页',
+        ReaderSettingSwitchRow({ title: '音量键翻页', description: '音量上/下键翻到上一页/下一页，只改PDF',
           checked: this.volumeTurnPage, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onVolumeTurnChange })
         if (this.smartKeySupported) {
-          ReaderSettingSwitchRow({ title: '智控键翻页', description: '智控键上滑/下滑翻到上一页/下一页',
+          ReaderSettingSwitchRow({ title: '智控键翻页', description: '智控键上滑/下滑翻到上一页/下一页，只改PDF',
             checked: this.smartKeyTurnPage, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
             subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onSmartKeyTurnChange })
         }
+        ReaderSettingSwitchRow({ title: '翻页震感', description: '翻页时轻震一下，只改PDF',
+          checked: ReaderInputScopes.includes(this.pageTurnHapticsScope, ReaderInputKind.PDF),
+          textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+          onChange: (checked: boolean): void => {
+            ReaderHaptics.toggle(this.getUIContext().getHostContext() as Context, ReaderInputKind.PDF, checked)
+              .catch((e: Error) => console.error('[PDF] save haptics failed:', e));
+          } })
         ReaderSettingSwitchRow({ title: '适配整页', description: '整页完整可见；关闭后按页面宽度显示', checked: this.fitPage,
           textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
           onChange: this.onFitPageChange })

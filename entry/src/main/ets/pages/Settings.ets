@@ -32,7 +32,8 @@ import { HexColor } from '../utils/HexColor';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
-import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
+import { SettingNavRow, SettingRow, SettingScopeRow, SettingSwitchRow } from '../components/common/SettingRow';
+import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { ScreenTimeoutStepper } from '../components/common/ScreenTimeoutStepper';
 import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 import { CloudFontMenu } from '../account/CloudFontMenu';
@@ -118,8 +119,8 @@ struct SettingsPage {
   @StorageLink('readerScreenOrientation') readerScreenOrientation: string =
     ReaderSettingsStore.SCREEN_ORIENTATION_SYSTEM;
   @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
-  @StorageLink('readerVolumeTurnPage') readerVolumeTurnPage: boolean = false;
-  @StorageLink('readerSmartKeyTurnPage') readerSmartKeyTurnPage: boolean = false;
+  @StorageProp('readerVolumeTurnScope') readerVolumeTurnScope: number = 0;
+  @StorageProp('readerSmartKeyTurnScope') readerSmartKeyTurnScope: number = 0;
   @StorageProp('readerSmartKeyTurnSupported') readerSmartKeyTurnSupported: boolean = false;
   @StorageProp('audioBookAutoPlay') audioBookAutoPlay: boolean = true;
   @StorageProp('ttsSpeed') ttsSpeed: number = 1;
@@ -141,7 +142,7 @@ struct SettingsPage {
   @StorageLink('readerAiProcessingIndicatorEnabled') readerAiProcessingIndicatorEnabled: boolean = true;
   @StorageLink('readerPreloadChapterCount') readerPreloadChapterCount: number = 1;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
-  @StorageLink('readerPageTurnHaptics') readerPageTurnHaptics: boolean = false;
+  @StorageProp('readerPageTurnHapticsScope') readerPageTurnHapticsScope: number = 0;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @StorageLink('appLightButtonColor') appLightButtonColor: string = '#007DFF';
@@ -160,7 +161,7 @@ struct SettingsPage {
 
   // 设置和字体只在 onPageShow 里读：首次进入时它紧跟 aboutToAppear 执行，两处都读会把同样的活做两遍。
   aboutToAppear() {
-    ReaderHaptics.load(getContext(this));
+    ReaderInputScopes.load(getContext(this));
     const params = router.getParams() as Record<string, string> | undefined;
     this.section = params?.['section'] === SettingsPage.SECTION_NOVEL ? SettingsPage.SECTION_NOVEL : '';
     SmartControlKey.detect();
@@ -555,31 +556,37 @@ struct SettingsPage {
           onChange: (minutes: number): void => this.setReaderScreenTimeoutMinutes(minutes)
         })
       }
-      SettingSwitchRow({
+      SettingScopeRow({
         title: '音量键翻页',
         description: '音量上/下键翻到上一页/下一页，条漫为翻一屏',
-        isOn: this.readerVolumeTurnPage,
-        onChange: (value: boolean) => {
-          this.setReaderVolumeTurnPage(value);
+        scope: this.readerVolumeTurnScope,
+        labels: ReaderInputKind.LABELS,
+        values: ReaderInputKind.VALUES,
+        onToggle: (kind: number, on: boolean): void => {
+          this.toggleReaderInputScope(ReaderInputScopes.KEY_VOLUME_TURN, kind, on);
         }
       })
       if (this.readerSmartKeyTurnSupported) {
-        SettingSwitchRow({
+        SettingScopeRow({
           title: '智控键翻页',
           description: '智控键上滑/下滑翻到上一页/下一页，条漫为翻一屏',
-          isOn: this.readerSmartKeyTurnPage,
-          onChange: (value: boolean) => {
-            this.setReaderSmartKeyTurnPage(value);
+          scope: this.readerSmartKeyTurnScope,
+          labels: ReaderInputKind.LABELS,
+          values: ReaderInputKind.VALUES,
+          onToggle: (kind: number, on: boolean): void => {
+            this.toggleReaderInputScope(ReaderInputScopes.KEY_SMART_KEY_TURN, kind, on);
           }
         })
       }
-      SettingSwitchRow({
+      SettingScopeRow({
         title: '翻页震感',
         description: '点击、滑动或按键翻页时轻震一下，翻到新章节时稍重',
-        isOn: this.readerPageTurnHaptics,
+        scope: this.readerPageTurnHapticsScope,
+        labels: ReaderInputKind.LABELS,
+        values: ReaderInputKind.VALUES,
         showDivider: false,
-        onChange: (value: boolean) => {
-          ReaderHaptics.setEnabled(getContext(this), value).catch((e: Error) => {
+        onToggle: (kind: number, on: boolean): void => {
+          ReaderHaptics.toggle(getContext(this), kind, on).catch((e: Error) => {
             console.error('保存翻页震感设置失败:', e);
           });
         }
@@ -1049,8 +1056,6 @@ struct SettingsPage {
     this.readerLandscapeDoublePage = settings.landscapeDoublePage;
     this.readerScreenOrientation = settings.screenOrientation;
     this.readerTapZoneActions = settings.tapZoneActions;
-    this.readerVolumeTurnPage = settings.volumeTurnPage;
-    this.readerSmartKeyTurnPage = settings.smartKeyTurnPage;
     this.readerLongPressSelectText = settings.longPressSelectText;
     this.readerScreenTimeoutMinutes = settings.screenTimeoutMinutes;
     this.readerExtendToStatusBar = settings.extendToStatusBar;
@@ -1994,7 +1999,6 @@ struct SettingsPage {
   saveReaderInteractionSettings(): void {
     ReaderSettingsStore.saveReadingInteractionSettings(
       getContext(this),
-      this.readerVolumeTurnPage,
       this.readerScreenTimeoutMinutes,
       this.readerExtendToStatusBar,
       this.readerLongPressSelectText
@@ -2003,15 +2007,9 @@ struct SettingsPage {
     });
   }
 
-  setReaderVolumeTurnPage(enabled: boolean): void {
-    this.readerVolumeTurnPage = enabled;
-    this.saveReaderInteractionSettings();
-  }
-
-  setReaderSmartKeyTurnPage(enabled: boolean): void {
-    this.readerSmartKeyTurnPage = enabled;
-    ReaderSettingsStore.saveSmartKeyTurnPage(getContext(this), enabled).catch((e: Error) => {
-      console.error('保存智控键翻页设置失败:', e);
+  toggleReaderInputScope(key: string, kind: number, on: boolean): void {
+    ReaderInputScopes.toggle(getContext(this), key, kind, on).catch((e: Error) => {
+      console.error('保存按键翻页设置失败:', e);
     });
   }
 

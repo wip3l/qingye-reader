@@ -88,7 +88,7 @@ function typography(h) {
   // 不属于排版的字段不能被带进档案。
   source.pageTurnMode = 2;
   source.fontFamily = 'should-not-copy';
-  source.volumeTurnPage = true;
+  source.longPressSelectText = false;
   return source;
 }
 
@@ -195,7 +195,7 @@ const tests = {
     assertTypography(saved);
     assert.equal(saved.pageTurnMode, 0, 'unrelated settings in the scheme profile stay');
     assert.equal(saved.lightThemeIndex, 2);
-    assert.equal(saved.volumeTurnPage, false);
+    assert.equal(saved.longPressSelectText, true);
     assert.notEqual(saved.fontFamily, 'should-not-copy');
     assert.equal(await h.settings.hasThemeTypography({}, SCHEME_PROFILE), true);
     // 正在使用的主题完全不受影响。
@@ -241,7 +241,7 @@ const tests = {
     h.values.set('appThemeId', 'custom');
     h.values.set('activeCustomThemeSchemeId', 'custom_1');
     await h.settings.reload({});
-    await h.settings.saveReadingInteractionSettings({}, true, 5, false);
+    await h.settings.saveReadingInteractionSettings({}, 5, false, false);
     await h.settings.saveTypographyToProfile({}, SCHEME_PROFILE, typography(h));
     assert.equal(h.values.get('readerFontSize'), 26);
     assert.equal(h.values.get('readerFontWeight'), 550);
@@ -251,7 +251,7 @@ const tests = {
     assert.equal(h.values.get('readerExtendToStatusBar'), true);
     const reloaded = await h.settings.reload({});
     assertTypography(reloaded);
-    assert.equal(reloaded.volumeTurnPage, true, 'other interaction settings are kept');
+    assert.equal(reloaded.longPressSelectText, false, 'other interaction settings are kept');
     assert.equal(reloaded.screenTimeoutMinutes, 5);
     assert.equal(await h.settings.hasThemeTypography({}, SCHEME_PROFILE), true);
   },
@@ -364,7 +364,7 @@ const tests = {
     format.applyLayout(target, JSON.parse(JSON.stringify(exported)));
     assertTypography({ ...target, regexFontEnabled: true });
     assert.equal(target.pageTurnMode, new h.ReaderSettings().pageTurnMode, 'page turning does not travel');
-    assert.equal(target.volumeTurnPage, false);
+    assert.equal(target.longPressSelectText, true);
   },
 
   async 'font page draft only takes the fields it manages'() {

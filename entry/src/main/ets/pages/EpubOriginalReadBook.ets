@@ -64,6 +64,7 @@ import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation'
 import { ReaderNightImage } from '../core/reader/ReaderNightImage';
 import { TapZoneSettingsDialogContent } from '../components/TapZoneSettingsDialog';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
+import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
 } from '../components/reader/ReaderSnapshotPageTurn';
@@ -274,8 +275,9 @@ struct EpubOriginalReadBookPage {
   @State showBookmarkActions: boolean = false;
   @State bookmarkActionX: number = 0;
   @State bookmarkActionY: number = 0;
-  @State volumeTurnPage: boolean = false;
-  @State smartKeyTurnPage: boolean = false;
+  // 按键翻页按阅读类型生效，EPUB 原版排版算小说。
+  @StorageProp('readerVolumeTurnScope') @Watch('updateKeySubscription') volumeTurnScope: number = 0;
+  @StorageProp('readerSmartKeyTurnScope') @Watch('updateKeySubscription') smartKeyTurnScope: number = 0;
   @State @Watch('syncLayoutElementDialog') showLayoutElements: boolean = false;
   /** 快速跳转在等确认或正在载入目标章节。 */
   @State jumpBusy: boolean = false;
@@ -304,8 +306,6 @@ struct EpubOriginalReadBookPage {
   private spinnerTimer: number = -1;
   private tocController: ReaderTocPanelController = new ReaderTocPanelController();
   private pendingBookmark: Bookmark | null = null;
-  /** 改按键翻页开关时要连同这些一起存（saveReadingInteractionSettings 一次写一组）。 */
-  private readerSettings: ReaderSettings | null = null;
   private book: Book | null = null;
   private bookUrl: string = '';
   private extractRoot: string = '';
@@ -402,8 +402,8 @@ struct EpubOriginalReadBookPage {
     this.takeShelfOpeningPageSnapshot();
     if (!this.shelfOpenAnimating) AppStorage.setOrCreate('shelfReaderDirectTransition', false);
     ReaderProgressCheckpoint.attach(this.owner, (): Promise<void> => this.saveProgress(), (): string => this.bookUrl);
-    // 翻页震感是全局设置；直接从书架打开这两种阅读页时普通阅读页还没加载过它。
-    ReaderHaptics.load(this.getUIContext().getHostContext() as Context);
+    // 按键翻页、翻页震感按阅读类型存；直接从书架打开时普通阅读页还没读过。
+    ReaderInputScopes.load(this.getUIContext().getHostContext() as Context);
     this.open();
   }
 
@@ -589,15 +589,12 @@ struct EpubOriginalReadBookPage {
   private async loadReaderSettings(context: Context): Promise<void> {
     try {
       const settings: ReaderSettings = await ReaderSettingsStore.load(context);
-      this.readerSettings = settings;
       AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_CHAPTER_QUICK_JUMP, settings.useChapterQuickJump);
       AppStorage.setOrCreate(ReaderSettingsStore.KEY_USE_BRIGHTNESS_QUICK_ACTION, settings.useBrightnessQuickAction);
       AppStorage.setOrCreate(ReaderSettingsStore.KEY_QUICK_JUMP_MODE,
         ReaderQuickJumpModel.normalizeMode(settings.quickJumpMode));
       this.screenTimeoutMinutes = ReaderSettingsStore.normalizeScreenTimeoutMinutes(settings.screenTimeoutMinutes);
       this.applyScreenTimeout();
-      this.volumeTurnPage = settings.volumeTurnPage;
-      this.smartKeyTurnPage = settings.smartKeyTurnPage;
       this.pageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.pageTurnAnimationType);
       if (settings.tapZoneActions) this.readerTapZoneActions = settings.tapZoneActions;
       this.keyboardSettings = await ReaderKeyboardSettingsStore.load(context);
@@ -614,14 +611,14 @@ struct EpubOriginalReadBookPage {
   updateKeySubscription(): void {
     this.unregisterHardwareKeys();
     if (!this.alive || !this.visible) return;
-    if (this.volumeTurnPage) {
+    if (this.volumeTurnOn()) {
       this.volumeUpCallback = (_event: InputKeyEvent): void => this.hardwareTurn(-1);
       this.volumeDownCallback = (_event: InputKeyEvent): void => this.hardwareTurn(1);
       this.subscribeKeys(KeyCode.KEYCODE_VOLUME_UP, KeyCode.KEYCODE_VOLUME_DOWN,
         this.volumeUpCallback, this.volumeDownCallback, '音量键');
     }
     const slideKeys: Array<KeyCode> = SmartControlKey.slideKeys();
-    if (this.smartKeyTurnPage && this.smartKeySupported && slideKeys.length >= 2) {
+    if (this.smartKeyTurnOn() && this.smartKeySupported && slideKeys.length >= 2) {
       this.smartUpCallback = (_event: InputKeyEvent): void => this.hardwareTurn(-1);
       this.smartDownCallback = (_event: InputKeyEvent): void => this.hardwareTurn(1);
       this.subscribeKeys(slideKeys[0], slideKeys[1], this.smartUpCallback, this.smartDownCallback, '智控键');
@@ -671,7 +668,7 @@ struct EpubOriginalReadBookPage {
     if (this.paged) {
       this.turnController.turn(direction > 0 ? 1 : -1);
     } else {
-      ReaderHaptics.pageTurned(false);
+      ReaderHaptics.pageTurned(ReaderInputKind.NOVEL, false);
       this.run(`__legado.screen(${direction > 0 ? 1 : -1})`);
     }
   }
@@ -838,30 +835,25 @@ struct EpubOriginalReadBookPage {
     }
   }
 
-  /** 与普通阅读页阅读设置里的“音量键翻页”同一个设置。 */
+  private volumeTurnOn(): boolean {
+    return ReaderInputScopes.includes(this.volumeTurnScope, ReaderInputKind.NOVEL);
+  }
+
+  private smartKeyTurnOn(): boolean {
+    return ReaderInputScopes.includes(this.smartKeyTurnScope, ReaderInputKind.NOVEL);
+  }
+
+  /** 与普通阅读页同一个“小说”类开关；订阅由 scope 的 @Watch 重新决定。 */
   private setVolumeTurnPage(enabled: boolean): void {
-    this.volumeTurnPage = enabled;
-    this.updateKeySubscription();
-    const context = this.getUIContext().getHostContext();
-    const settings = this.readerSettings;
-    if (!context) return;
-    ReaderSettingsStore.saveReadingInteractionSettings(context, enabled,
-      settings ? settings.screenTimeoutMinutes : this.screenTimeoutMinutes,
-      settings ? settings.extendToStatusBar : false).catch((error: Error): void => {
-      console.error('[EpubOriginal] save volume turn failed:', error);
-    });
-    if (settings) settings.volumeTurnPage = enabled;
+    ReaderInputScopes.toggle(this.getUIContext().getHostContext() as Context, ReaderInputScopes.KEY_VOLUME_TURN,
+      ReaderInputKind.NOVEL, enabled)
+      .catch((error: Error): void => console.error('[EpubOriginal] save volume turn failed:', error));
   }
 
   private setSmartKeyTurnPage(enabled: boolean): void {
-    this.smartKeyTurnPage = enabled;
-    this.updateKeySubscription();
-    const context = this.getUIContext().getHostContext();
-    if (!context) return;
-    ReaderSettingsStore.saveSmartKeyTurnPage(context, enabled).catch((error: Error): void => {
-      console.error('[EpubOriginal] save smart key turn failed:', error);
-    });
-    if (this.readerSettings) this.readerSettings.smartKeyTurnPage = enabled;
+    ReaderInputScopes.toggle(this.getUIContext().getHostContext() as Context, ReaderInputScopes.KEY_SMART_KEY_TURN,
+      ReaderInputKind.NOVEL, enabled)
+      .catch((error: Error): void => console.error('[EpubOriginal] save smart key turn failed:', error));
   }
 
   private activateBrightness(): void {
@@ -2037,7 +2029,7 @@ struct EpubOriginalReadBookPage {
       if (this.paged) {
         this.turnController.turn(direction);
       } else {
-        ReaderHaptics.pageTurned(false);
+        ReaderHaptics.pageTurned(ReaderInputKind.NOVEL, false);
         this.run(`__legado.screen(${direction})`);
       }
     }
@@ -2886,7 +2878,7 @@ struct EpubOriginalReadBookPage {
         onBrightnessChange: (value: number, persist: boolean): void => { this.setBrightness(value, persist); },
         onLayoutElements: (): void => { this.openLayoutElements(); },
         onAddBookmark: (): void => { this.addBookmark(); },
-        volumeTurnPage: this.volumeTurnPage, smartKeyTurnPage: this.smartKeyTurnPage,
+        volumeTurnPage: this.volumeTurnOn(), smartKeyTurnPage: this.smartKeyTurnOn(),
         smartKeySupported: this.smartKeySupported,
         onVolumeTurnChange: (enabled: boolean): void => { this.setVolumeTurnPage(enabled); },
         onSmartKeyTurnChange: (enabled: boolean): void => { this.setSmartKeyTurnPage(enabled); },
