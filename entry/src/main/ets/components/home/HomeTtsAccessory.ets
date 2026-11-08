@@ -25,6 +25,7 @@ export struct HomeTtsAccessory {
   @StorageProp('globalTtsMode') mode: string = '';
   @StorageProp('globalTtsPaused') @Watch('syncSpin') paused: boolean = false;
   @StorageProp('globalTtsBusy') @Watch('syncSpin') busy: boolean = false;
+  @StorageProp('globalTtsCanPrevious') canPrevious: boolean = false;
   @StorageProp('globalTtsCanNext') canNext: boolean = false;
   @StorageProp('globalTtsProgress') bookProgress: number = 0;
   @StorageProp('globalTtsChapterPercent') chapterPercent: number = -1;
@@ -37,6 +38,9 @@ export struct HomeTtsAccessory {
 
   static readonly DISC_SIZE: number = 38;
   static readonly SPIN_DURATION: number = 9000;
+  static readonly BUTTON_PREVIOUS: number = 0;
+  static readonly BUTTON_TOGGLE: number = 1;
+  static readonly BUTTON_NEXT: number = 2;
 
   aboutToAppear(): void {
     this.syncSpin();
@@ -72,13 +76,12 @@ export struct HomeTtsAccessory {
         .accessibilityText(`${this.bookName}，${this.subtitle()}，打开播放面板`)
         .onClick(() => this.onOpen())
 
-        this.iconButton(this.paused ? $r('sys.symbol.play_fill') : $r('sys.symbol.pause_fill'),
-          this.paused ? '继续' : '暂停', true, () => {
-            ReaderTtsFloatingSession.toggle();
-          })
-        this.iconButton($r('sys.symbol.forward_end_fill'), '下一章', this.canNext, () => {
-          ReaderTtsFloatingSession.next();
-        })
+        // 三个按钮紧挨着排，并成一行时伴生条变窄，也给书名留出位置。
+        Row() {
+          this.iconButton(HomeTtsAccessory.BUTTON_PREVIOUS)
+          this.iconButton(HomeTtsAccessory.BUTTON_TOGGLE)
+          this.iconButton(HomeTtsAccessory.BUTTON_NEXT)
+        }
       }
       .width('100%')
       .height('100%')
@@ -142,20 +145,52 @@ export struct HomeTtsAccessory {
     .rotate({ angle: this.coverAngle })
   }
 
+  /**
+   * 只传固定的按钮类型：@Builder 按值传入的图标和可用状态在状态变化后不会刷新，
+   * 暂停/继续图标和上一章、下一章的可点状态都要在这里直接读状态。
+   */
   @Builder
-  iconButton(icon: Resource, label: string, enabled: boolean, action: () => void) {
+  iconButton(kind: number) {
     Stack({ alignContent: Alignment.Center }) {
-      SymbolGlyph(icon)
+      SymbolGlyph(this.buttonIcon(kind))
         .fontSize(20)
         .fontColor([this.textColor])
     }
     .width(36)
     .height(40)
-    .opacity(enabled ? 1 : 0.35)
-    .enabled(enabled)
-    .accessibilityText(label)
+    .opacity(this.buttonEnabled(kind) ? 1 : 0.35)
+    .enabled(this.buttonEnabled(kind))
+    .accessibilityText(this.buttonLabel(kind))
     .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.88 })
-    .onClick(action)
+    .onClick(() => this.onButton(kind))
+  }
+
+  buttonIcon(kind: number): Resource {
+    if (kind === HomeTtsAccessory.BUTTON_PREVIOUS) return $r('sys.symbol.backward_end_fill');
+    if (kind === HomeTtsAccessory.BUTTON_NEXT) return $r('sys.symbol.forward_end_fill');
+    return this.paused ? $r('sys.symbol.play_fill') : $r('sys.symbol.pause_fill');
+  }
+
+  buttonLabel(kind: number): string {
+    if (kind === HomeTtsAccessory.BUTTON_PREVIOUS) return '上一章';
+    if (kind === HomeTtsAccessory.BUTTON_NEXT) return '下一章';
+    return this.paused ? '继续' : '暂停';
+  }
+
+  buttonEnabled(kind: number): boolean {
+    if (kind === HomeTtsAccessory.BUTTON_PREVIOUS) return this.canPrevious;
+    if (kind === HomeTtsAccessory.BUTTON_NEXT) return this.canNext;
+    return true;
+  }
+
+  onButton(kind: number): void {
+    if (kind === HomeTtsAccessory.BUTTON_PREVIOUS) {
+      ReaderTtsFloatingSession.previous();
+    } else if (kind === HomeTtsAccessory.BUTTON_NEXT) {
+      ReaderTtsFloatingSession.next();
+    } else {
+      ReaderTtsFloatingSession.toggle();
+    }
   }
 
   syncSpin(): void {

@@ -868,6 +868,10 @@ struct Index {
           }
           .width(Index.FLOATING_TAB_BAR_HEIGHT)
           .height(Index.FLOATING_TAB_BAR_HEIGHT)
+          // 点击要挂在材质里面：材质底板是一个单页签 Tabs，挂在外层会被它的页签栏接走。
+          .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+          .accessibilityText('展开底栏')
+          .onClick(() => this.expandHomeTabBarFromMerged())
         }
       }
       .width(Index.FLOATING_TAB_BAR_HEIGHT)
@@ -875,9 +879,6 @@ struct Index {
       .borderRadius(Index.FLOATING_TAB_BAR_HEIGHT / 2)
       .position({ x: this.globalTtsTabButtonLeft(), y: this.globalTtsTabBarTop() })
       .transition(TransitionEffect.scale({ x: 0.6, y: 0.6 }).combine(TransitionEffect.opacity(0)))
-      .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
-      .accessibilityText('展开底栏')
-      .onClick(() => this.expandHomeTabBarFromMerged())
     }
     this.globalTtsAccessory()
   }
