@@ -1,5 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
+import { SearchExploreSettingsStore } from './SearchExploreSettingsStore';
 
 export class BookSourceGroupStore {
   private static readonly STORE_NAME: string = 'book_source_groups';
@@ -41,6 +42,11 @@ export class BookSourceGroupStore {
       userGroups.map((group: string) => group === oldName ? newName : group)
     );
     await BookSourceGroupStore.save(context, next, nextUserGroups);
+    try {
+      await SearchExploreSettingsStore.renameChangeSourceGroup(context, oldName, newName);
+    } catch (e) {
+      console.warn('同步换源范围分组名失败:', e);
+    }
     return next;
   }
 

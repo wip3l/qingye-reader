@@ -28,6 +28,12 @@ export class SearchExploreSettings {
   exploreResultLayout: string = 'list';
 }
 
+/** 换源面板记住的搜索范围：mode 为 all（全部启用书源）或 group（只搜 groups 里的分组）。 */
+export class ChangeSourceScope {
+  mode: string = 'all';
+  groups: string[] = [];
+}
+
 export class SearchExploreSettingsStore {
   static readonly KEY_SHOW_RESULT_COVER: string = 'searchExploreShowResultCover';
   static readonly KEY_SHOW_RESULT_COVER_BACKGROUND: string = 'searchExploreShowResultCoverBackground';
@@ -49,7 +55,13 @@ export class SearchExploreSettingsStore {
   static readonly KEY_EXPLORE_PLATFORM: string = 'explorePlatform';
   static readonly KEY_SEARCH_RESULT_LAYOUT: string = 'searchResultLayout';
   static readonly KEY_EXPLORE_RESULT_LAYOUT: string = 'exploreResultLayout';
+  // 换源范围单独读写，不进 SearchExploreSettings：设置页整份保存时不会把面板里刚改的范围盖回旧值。
+  static readonly KEY_CHANGE_SOURCE_SCOPE_MODE: string = 'changeSourceScopeMode';
+  static readonly KEY_CHANGE_SOURCE_SCOPE_GROUPS: string = 'changeSourceScopeGroups';
+  static readonly CHANGE_SOURCE_SCOPE_ALL: string = 'all';
+  static readonly CHANGE_SOURCE_SCOPE_GROUP: string = 'group';
   private static readonly STORE_NAME: string = 'search_explore_settings';
+  private static changeSourceScope: ChangeSourceScope | null = null;
   private static readonly DEFAULT_SEARCH_CONCURRENCY: number = 6;
   private static readonly MIN_SEARCH_CONCURRENCY: number = 1;
   private static readonly MAX_SEARCH_CONCURRENCY: number = 12;
@@ -176,6 +188,69 @@ export class SearchExploreSettingsStore {
     const store = await preferences.getPreferences(context, SearchExploreSettingsStore.STORE_NAME);
     await store.put(key, normalized);
     await store.flush();
+  }
+
+  static async loadChangeSourceScope(context: Context): Promise<ChangeSourceScope> {
+    if (SearchExploreSettingsStore.changeSourceScope) {
+      return SearchExploreSettingsStore.cloneChangeSourceScope(SearchExploreSettingsStore.changeSourceScope);
+    }
+    const store = await preferences.getPreferences(context, SearchExploreSettingsStore.STORE_NAME);
+    const scope = new ChangeSourceScope();
+    const mode = await SearchExploreSettingsStore.getString(
+      store, SearchExploreSettingsStore.KEY_CHANGE_SOURCE_SCOPE_MODE, SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_ALL);
+    const raw = await SearchExploreSettingsStore.getString(store, SearchExploreSettingsStore.KEY_CHANGE_SOURCE_SCOPE_GROUPS, '');
+    scope.groups = SearchExploreSettingsStore.decodeGroups(raw);
+    scope.mode = mode === SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_GROUP && scope.groups.length > 0 ?
+      SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_GROUP : SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_ALL;
+    SearchExploreSettingsStore.changeSourceScope = SearchExploreSettingsStore.cloneChangeSourceScope(scope);
+    return scope;
+  }
+
+  static async saveChangeSourceScope(context: Context, scope: ChangeSourceScope): Promise<void> {
+    const next = SearchExploreSettingsStore.cloneChangeSourceScope(scope);
+    next.groups = SearchExploreSettingsStore.decodeGroups(JSON.stringify(next.groups));
+    if (next.mode !== SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_GROUP || next.groups.length === 0) {
+      next.mode = SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_ALL;
+    }
+    SearchExploreSettingsStore.changeSourceScope = next;
+    const store = await preferences.getPreferences(context, SearchExploreSettingsStore.STORE_NAME);
+    await store.put(SearchExploreSettingsStore.KEY_CHANGE_SOURCE_SCOPE_MODE, next.mode);
+    // 选“全部”时分组照留，下次切回组内直接沿用。
+    await store.put(SearchExploreSettingsStore.KEY_CHANGE_SOURCE_SCOPE_GROUPS, JSON.stringify(next.groups));
+    await store.flush();
+  }
+
+  /** 书源管理里给分组改名时调用，换源范围记住的分组名跟着改。 */
+  static async renameChangeSourceGroup(context: Context, oldName: string, newName: string): Promise<void> {
+    const from = (oldName || '').trim();
+    const to = (newName || '').trim();
+    if (!from || !to || from === to) return;
+    const scope = await SearchExploreSettingsStore.loadChangeSourceScope(context);
+    if (!scope.groups.includes(from)) return;
+    scope.groups = scope.groups.map((group: string): string => group === from ? to : group);
+    await SearchExploreSettingsStore.saveChangeSourceScope(context, scope);
+  }
+
+  private static cloneChangeSourceScope(source: ChangeSourceScope): ChangeSourceScope {
+    const scope = new ChangeSourceScope();
+    scope.mode = source.mode;
+    scope.groups = source.groups.slice();
+    return scope;
+  }
+
+  private static decodeGroups(raw: string): string[] {
+    const groups: string[] = [];
+    try {
+      const parsed: Object = JSON.parse(raw || '[]') as Object;
+      if (!Array.isArray(parsed)) return groups;
+      for (const item of parsed as Object[]) {
+        const name = typeof item === 'string' ? (item as string).trim() : '';
+        if (name && !groups.includes(name)) groups.push(name);
+      }
+    } catch (_e) {
+      return groups;
+    }
+    return groups;
   }
 
   static applyToStorage(settings: SearchExploreSettings): void {
