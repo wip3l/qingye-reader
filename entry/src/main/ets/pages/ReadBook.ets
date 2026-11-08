@@ -683,6 +683,8 @@ struct ReadBookPage {
   private readerContinuousLayoutQueue: ReaderContinuousLayoutRequest[] = [];
   private readerContinuousLayoutSerial: number = 0;
   private readerContinuousLayoutGeneration: number = 0;
+  /** 滚动列表最近一次发布时的排版代次，见 syncReaderComicPageDataSource()。 */
+  private readerContinuousPublishedLayoutGeneration: number = 0;
   private readerContinuousLayoutActiveSerial: number = -1;
   private readerContinuousLayoutTimer: number = -1;
   private readerContinuousMetricsWorkSerial: number = 0;
@@ -7280,7 +7282,12 @@ struct ReadBookPage {
     segment.ends = this.contentPageEnds;
     segment.source = this.pagedContentText;
     const nextChapter = this.currentChapterIndex < this.chapters.length - 1 ? this.currentChapterIndex + 1 : -1;
-    const reloaded = this.readerComicPageDataSource.setCurrent(segment, nextChapter);
+    // 排版缓存被整体作废（日夜/主题切换、排版设置变化）后，已挂载的列表项还拿着旧排版的原生节点；
+    // 分块文字不变时数据源不会通知，正文会一直是旧颜色，所以首次发布要强制整体重建。
+    const relayout = this.usesReaderContinuousV2() &&
+      this.readerContinuousPublishedLayoutGeneration !== this.readerContinuousLayoutGeneration;
+    this.readerContinuousPublishedLayoutGeneration = this.readerContinuousLayoutGeneration;
+    const reloaded = this.readerComicPageDataSource.setCurrent(segment, nextChapter, relayout);
     this.reanchorContinuousReaderScrollAfterReload(reloaded);
   }
 

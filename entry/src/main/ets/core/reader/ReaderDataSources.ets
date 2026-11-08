@@ -106,9 +106,15 @@ export class ReaderContinuousDataSource implements IDataSource {
   /**
    * 发布当前章。列表里已有这一章且分块相同：不动；只是在原有分块后追加：按区间插入；
    * 其他情况（不在列表里、分块被重排）整体换成只含这一章。返回是否整体重建。
+   * relayout：已挂载项的排版作废（主题/日夜切换只改颜色，分块文字不变），必须整体重建才会换掉旧节点。
    */
-  setCurrent(segment: ReaderScrollSegment, nextChapter: number): boolean {
+  setCurrent(segment: ReaderScrollSegment, nextChapter: number, relayout: boolean = false): boolean {
     const existing = this.segment(segment.chapterIndex);
+    if (relayout) {
+      this.segments = [this.copySegment(segment)];
+      this.rebuild(true, nextChapter);
+      return true;
+    }
     if (existing && this.samePages(existing.pages, segment.pages)) {
       existing.starts = segment.starts;
       existing.ends = segment.ends;
