@@ -78,7 +78,7 @@ Object.assign(p, {
   },
   captureReaderContinuousAnchor() {},
   buildReaderV2RegexStyles: () => [], readerV2HeadingHints: () => [],
-  getChapterTitle: () => '测试章', clampChapterIndex: index => index,
+  getChapterTitle: () => '测试章', readerLayoutChapterTitle: () => '测试章', clampChapterIndex: index => index,
   isLandscapeDoublePageActive: () => false,
   isCurrentReaderPaginationComplete: () => true,
   getPageStartOffset: index => index * 1800,
