@@ -728,6 +728,11 @@ struct ReadBookPage {
   private adjacentPaginationPreloadActiveKey: string = '';
   private previousPaginationPreloadActiveSerial: number = -1;
   private previousPaginationPreloadActiveKey: string = '';
+  // 已排定但还没开始的上一章预排版计划在何时动手；0 表示已开始（或没有计划）。更急的请求可以把它提前。
+  private previousPaginationPreloadDueAt: number = 0;
+  // 跨章前翻的卷页/滑动已经走完、正等上一章排出真实末页。此时 isPageTurning 仍为真，但屏幕上没有任何东西在动，
+  // 排版不必再逐段让出动画帧（见 appendReaderV2PaginationBatch）。
+  private readerChapterTailWaitActive: boolean = false;
   private readerPaginationWorkSerial: number = 0;
   private readerPaginationScheduledResult: ReaderPaginationResult | null = null;
   private readerPaginationScheduledSerial: number = -1;
@@ -2213,8 +2218,9 @@ struct ReadBookPage {
       ReaderOpenTrace.mark(this.bookUrl, 'pagination-published',
         `pages=${this.contentPages.length} restored=${restoredPagination}`);
       // Let the restored/current page win the first frame before network and native-Paragraph work for
-      // neighbouring chapters starts competing for the UI thread.
-      this.preloadReaderContentLater(720);
+      // neighbouring chapters starts competing for the UI thread. 落在章首几页时缩短，上一章末页要赶在
+      // 用户往回翻之前排好（preloadReaderContent 仍会等首页就绪、打开动画结束和空闲）。
+      this.preloadReaderContentLater(this.readerPreviousChapterPreloadDelay() === 0 ? 360 : 720);
       const publishedSource = this.pagedContentText || this.getPagedSourceText();
       return !!body && this.currentChapterIndex === chapterIndex && publishedSource.length > 0;
     } catch (e) {
@@ -17264,8 +17270,10 @@ ${leading}` : leading;
     if (!session || result.complete || maxPages <= 0) return;
     // 跨章翻页时目标章的分页有意不停（落地前要排完），同章快翻时排队的翻页也可能等着某一页：
     // 这些批次不再在定时器到点时直接抢主线程，而是在动画帧的空闲段里做每次同步排版。
+    // 跨章前翻落地后等末页时动画已经结束、画面静止：静止时不出帧，每次让出都要白等满 waitIdle 的超时，
+    // 一页要让出十来次，整章二十多页就成了近十秒的空白页（碰一下屏幕出帧才突然变快）。
     await ReaderV2Paginator.appendPageAsync(session, isCurrent, (): Promise<void> =>
-      this.isReaderPageTurnMotionActive() ?
+      this.isReaderPageTurnMotionActive() && !this.readerChapterTailWaitActive ?
         ReaderRenderFrame.waitIdle(this.getUIContext(), READER_PAGINATION_MOTION_IDLE_MS) : Promise.resolve());
     if (!isCurrent()) return;
     const startedAt = Date.now();
@@ -19829,7 +19837,8 @@ ${leading}` : leading;
         // leaving the reader stuck on the restore overlay.
         let evictableKey: string | undefined = undefined;
         for (const cacheKey of this.readerPaginationCache.keys()) {
-          if (cacheKey !== key) {
+          // 当前章的补排链也在用自己的那份结果；挤掉它同样会让链静默退出（例如前翻刚提交、末页还在排）。
+          if (cacheKey !== key && this.readerPaginationCache.get(cacheKey) !== this.readerPaginationScheduledResult) {
             evictableKey = cacheKey;
             break;
           }
@@ -20354,12 +20363,17 @@ ${leading}` : leading;
       `${this.readerTypographyCacheIdentity()}_${this.readerParagraphCommentPaginationIdentity()}`;
     // Page 2/3 hooks can request the same previous chapter repeatedly. Restarting the retained V2 session on
     // every local turn prevented it from ever reaching the real last page before the user swiped backwards.
+    // 只有还在等定时器、且这次请求更急（例如回到了章首）时才改排，已经开始的会话不打断。
+    const effectiveDelay = this.delayPastShelfOpening(delayMs);
     if (this.previousPaginationPreloadActiveSerial === this.previousPaginationPreloadSerial &&
-      this.previousPaginationPreloadActiveKey === activeKey) return;
+      this.previousPaginationPreloadActiveKey === activeKey &&
+      this.previousPaginationPreloadDueAt <= Date.now() + effectiveDelay + 40) return;
     const serial = ++this.previousPaginationPreloadSerial;
     this.previousPaginationPreloadActiveSerial = serial;
     this.previousPaginationPreloadActiveKey = activeKey;
+    this.previousPaginationPreloadDueAt = Date.now() + effectiveDelay;
     setTimeout(() => this.runWhenReaderIdle(() => {
+      if (serial === this.previousPaginationPreloadSerial) this.previousPaginationPreloadDueAt = 0;
       if (!this.readerPageVisible || serial !== this.previousPaginationPreloadSerial ||
         !this.isCurrentReaderEngineBook(sessionBookUrl) ||
         this.currentChapterIndex !== sourceChapterIndex) return;
@@ -20392,7 +20406,7 @@ ${leading}` : leading;
           }
           console.error('预排版上一章失败:', error);
         });
-    }, 800, (): boolean => this.isReaderPageMotionActive()), this.delayPastShelfOpening(delayMs));
+    }, 800, (): boolean => this.isReaderPageMotionActive()), effectiveDelay);
   }
 
   schedulePreviousChapterPaginationCompletion(sourceChapterIndex: number, targetChapterIndex: number, key: string,
@@ -20453,8 +20467,9 @@ ${leading}` : leading;
           return;
         }
         const elapsedMs = Math.max(0, Date.now() - startedAt);
+        // 停在章首页时下一下就可能往回翻，不再在页与页之间额外歇 24ms（每页之间照样让出主线程）。
         const nextDelay = elapsedMs >= CooperativeScheduler.SLOW_OPERATION_MS ?
-          Math.min(160, Math.max(32, elapsedMs * 2)) : Math.min(batchDelay, 24);
+          Math.min(160, Math.max(32, elapsedMs * 2)) : (this.currentPageIndex === 0 ? 0 : Math.min(batchDelay, 24));
         setTimeout(runBatch, nextDelay);
       } catch (error) {
         // Same protection as the main completion chain: an unhandled batch exception would kill the
@@ -20655,7 +20670,13 @@ ${leading}` : leading;
     if (!this.isCurrentReaderEngineBook()) return;
     engine.preloadAround(this.currentChapterIndex, this.normalizePreloadChapterCount(this.readerPreloadChapterCount), 0);
     this.preloadNextChapterPaginationLater();
-    this.preloadPreviousChapterPaginationLater();
+    this.preloadPreviousChapterPaginationLater(this.readerPreviousChapterPreloadDelay());
+  }
+
+  // 停在章首几页时，往回翻进上一章随时可能发生（刚打开书就往前翻也很常见），上一章末页要尽快排好；
+  // 读到章中再按原来的延时，让当前页和下一章优先。
+  readerPreviousChapterPreloadDelay(): number {
+    return this.currentPageIndex <= 2 ? 0 : 760;
   }
 
   // Lock-screen reading has no visible page, but the next chapter body must still be fetched while the current
@@ -20742,11 +20763,18 @@ ${leading}` : leading;
     if (this.pendingRestorePageIndex < 0 && this.readerTypographyRestoreOffset < 0) return;
     const startedAtChapterIndex = this.currentChapterIndex;
     const deadline = Date.now() + Math.max(0, timeoutMs);
+    let nextChainCheckAt = Date.now() + 240;
     while (Date.now() < deadline && this.readerPageVisible &&
       (this.pendingRestorePageIndex >= 0 || this.readerTypographyRestoreOffset >= 0)) {
       if (this.currentChapterIndex !== startedAtChapterIndex) return;
       // 加载失败/需要网页验证的提示正文只有一页，不会再排版出尾页，立即落地展示。
       if (this.content.includes('章节正文加载失败') || this.content.includes('完成网页验证')) break;
+      if (Date.now() >= nextChainCheckAt) {
+        // 补排链被别的会话顶掉序号、或分页会话被挤出缓存时会静默退出，用户就只能干等到超时。
+        // 链还活着时这里是空操作（scheduleReaderPaginationCompletion 按结果去重）。
+        nextChainCheckAt = Date.now() + 240;
+        this.ensureCurrentReaderPaginationAhead(0);
+      }
       await sleepMs(16);
     }
     if (this.pendingRestorePageIndex < 0 && this.readerTypographyRestoreOffset < 0) return;
@@ -20889,14 +20917,21 @@ ${leading}` : leading;
       this.applyLocalPageTurnTarget(localPageIndex, targetPreview, commitText);
       if (this.currentPageIndex <= 2) {
         this.preloadReaderContentLater();
+        // 不经 preloadReaderContent 那两道空闲等待；关掉预加载时已缓存的上一章也照样预排。
+        this.preloadPreviousChapterPaginationLater(0);
       }
       this.scheduleReaderPagedProgressSave();
     } else {
       // 与向前跨章、滚动模式同策略：立即提交章节切换。提示页（“上一章排版中/加载中”）在等待期间
       // 覆盖屏幕，尾页排版完成后 pendingRestorePageIndex 复位、自动落在真实的最后一页。
-      await this.loadPrevChapter(true);
-      this.showReaderTailWaitingLeafIfGeneric();
-      await this.waitForReaderChapterTailSettled();
+      this.readerChapterTailWaitActive = true;
+      try {
+        await this.loadPrevChapter(true);
+        this.showReaderTailWaitingLeafIfGeneric();
+        await this.waitForReaderChapterTailSettled();
+      } finally {
+        this.readerChapterTailWaitActive = false;
+      }
       this.scheduleReaderPagedProgressSave();
     }
   }
@@ -21162,6 +21197,7 @@ ${leading}` : leading;
         this.preloadNextChapterPaginationLater(0);
       } else if (direction < 0 && this.currentPageIndex <= 2) {
         this.preloadReaderContentLater();
+        this.preloadPreviousChapterPaginationLater(0);
       }
       this.scheduleReaderPagedProgressSave();
       this.commitCurrentPageTextLater(this.currentChapterIndex, this.currentPageIndex, targetText);
@@ -21171,8 +21207,13 @@ ${leading}` : leading;
     if (direction > 0) {
       if (this.isCurrentReaderPaginationComplete()) await this.loadNextChapter();
     } else {
-      await this.loadPrevChapter(true);
-      await this.waitForReaderChapterTailSettled();
+      this.readerChapterTailWaitActive = true;
+      try {
+        await this.loadPrevChapter(true);
+        await this.waitForReaderChapterTailSettled();
+      } finally {
+        this.readerChapterTailWaitActive = false;
+      }
     }
     const targetText = this.getCurrentPageText();
     if (!isCurrent()) return;
