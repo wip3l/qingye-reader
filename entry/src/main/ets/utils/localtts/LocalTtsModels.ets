@@ -1,8 +1,10 @@
 import http from '@ohos.net.http';
 import fs from '@ohos.file.fs';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
+import util from '@ohos.util';
 import { AccountSessionStore } from '../../account/AccountSessionStore';
 import { TtsVoiceAvailability } from '../TtsVoiceAvailability';
+import { LocalTtsSpeakerInfo, LocalTtsSpeakers } from './LocalTtsSpeakers';
 
 /**
  * 离线神经网络音色（sherpa-onnx）的模型目录、下载、导入登记与校验。
@@ -18,11 +20,39 @@ export class LocalTtsModelFile {
   bytes: number = 0;
   /** 内置模型下载时校验用；导入的模型为空，只核对大小。 */
   sha256: string = '';
+  /** 以下仅内置模型用。下载来源仓库，空则用模型的 repo。 */
+  repo: string = '';
+  /** 仓库里的路径，空则与 name 相同。 */
+  remotePath: string = '';
+  /** 固定到某个提交，免得上游改动文件后哈希对不上；空则用 main。 */
+  revision: string = '';
+  /**
+   * 下载后要追加进 ONNX 的元数据（key=value）。有些上游模型元数据不全，sherpa-onnx 会选错前端，
+   * 而元数据在 ModelProto 末尾追加一个字段即可补上，不必另找地方托管改过的文件。
+   * 设置了它时 bytes/sha256 是补完后的值，sourceBytes/sourceSha256 是上游原文件的值。
+   */
+  onnxMeta: string = '';
+  sourceBytes: number = 0;
+  sourceSha256: string = '';
 
   constructor(name: string, bytes: number, sha256: string) {
     this.name = name;
     this.bytes = bytes;
     this.sha256 = sha256;
+  }
+
+  static from(repo: string, name: string, bytes: number, sha256: string): LocalTtsModelFile {
+    const file = new LocalTtsModelFile(name, bytes, sha256);
+    file.repo = repo;
+    return file;
+  }
+
+  downloadBytes(): number {
+    return this.onnxMeta ? this.sourceBytes : this.bytes;
+  }
+
+  downloadSha256(): string {
+    return this.onnxMeta ? this.sourceSha256 : this.sha256;
   }
 }
 
@@ -47,7 +77,26 @@ export class LocalTtsModel {
   ruleFsts: string[] = [];
   /** 多说话人模型朗读用的说话人编号。 */
   sid: number = 0;
+  /** VITS 噪声参数；0 表示用 sherpa-onnx 默认值。Piper 模型按其 .onnx.json 里的推荐值填。 */
+  noiseScale: number = 0;
+  noiseScaleW: number = 0;
+  /**
+   * 同一个多说话人模型拆成的几个内置音色共用 pack（目录与文件也相同）：下载一次全部可用，删除也一起删。
+   * 没下载时音色管理只显示一行音色包，标题用 packTitle。
+   */
+  pack: string = '';
+  packTitle: string = '';
   imported: boolean = false;
+  /**
+   * 以下仅导入的模型用。一个多说话人模型可以添加其中几个说话人，各占一行音色，共用同一目录
+   * （pack 设为 importId，删除时整包删）。speakers 是模型里的说话人总数，未知时为 1。
+   */
+  importId: string = '';
+  importName: string = '';
+  speakers: number = 1;
+  speakerNames: string[] = [];
+  /** 这个导入包里已添加的说话人编号，同包各行相同。 */
+  importedSids: number[] = [];
   files: LocalTtsModelFile[] = [];
 
   totalBytes(): number {
@@ -72,6 +121,11 @@ interface LocalTtsModelManifest {
   dataDir?: string;
   ruleFsts?: string[];
   sid?: number;
+  /** 模型里的说话人总数与名字；缺省表示旧版导入、还没检测过。 */
+  speakers?: number;
+  speakerNames?: string[];
+  /** 已添加的说话人编号；缺省时只有 sid。 */
+  sids?: number[];
   files?: LocalTtsModelFile[];
 }
 
@@ -94,7 +148,8 @@ export class LocalTtsModels {
   private static downloadCancelled: boolean = false;
   private static userModels: LocalTtsModel[] = [];
 
-  static readonly CATALOG: LocalTtsModel[] = [LocalTtsModels.chaowen(), LocalTtsModels.huayan()];
+  static readonly CATALOG: LocalTtsModel[] = [LocalTtsModels.chaowen(), LocalTtsModels.huayan()]
+    .concat(LocalTtsModels.aishell3Voices());
 
   private static chaowen(): LocalTtsModel {
     const model = new LocalTtsModel();
@@ -154,6 +209,74 @@ export class LocalTtsModels {
         'a130a38e3b622735c2401cb37f6719f46995e84a133729185cef9a543ec0b072')
     ];
     return model;
+  }
+
+  /**
+   * Piper 版 AISHELL-3（174 个说话人，22.05kHz），数据集与模型都是 Apache-2.0。
+   * 但它从 en_US libritts_r（LibriTTS-R，CC BY 4.0）热启动，后者又源自 en_US lessac，
+   * 而 Lessac 数据集许可禁止商用；权重是否继承该限制没有定论，许可声明里已写明这条来源链。
+   * 它与超文用同一套拼音音素表（85 个符号逐一相同），所以词典、tokens、规则文件直接取超文仓库的；
+   * 上游 onnx 的元数据缺 has_g2pw=1，不补的话 sherpa-onnx 会退回通用词典前端，读音全错。
+   * 说话人按语音识别错字率从 174 个里挑，男女各取几个音高不同的；噪声参数取模型推荐的 0.333
+   * （默认的 0.667/0.8 错字率明显更高）。
+   */
+  private static aishell3Voices(): LocalTtsModel[] {
+    const voices: string[][] = [
+      ['14', '青岩', '男声 · 低沉'], ['124', '远舟', '男声 · 沉稳'], ['111', '子墨', '男声 · 温和'],
+      ['43', '清朗', '男声 · 清亮'], ['118', '晚晴', '女声 · 知性'], ['25', '知夏', '女声 · 温柔'],
+      ['52', '若溪', '女声 · 自然'], ['51', '星语', '女声 · 明快'], ['138', '小棠', '女声 · 甜美'],
+      ['88', '安然', '女声 · 清脆']
+    ];
+    const lexiconRepo = 'csukuangfj2/vits-piper-zh_CN-chaowen-medium';
+    return voices.map((voice: string[]): LocalTtsModel => {
+      const model = new LocalTtsModel();
+      model.id = `piper-zh-aishell3-${voice[0]}`;
+      model.name = voice[1];
+      model.description = voice[2];
+      model.sid = Number(voice[0]);
+      model.pack = 'piper-zh-aishell3';
+      model.packTitle = `多人音色包 · 普通话 ${voices.length} 个音色`;
+      model.dirName = 'vits-piper-zh_CN-aishell3-medium';
+      model.repo = 'writeAPoemForYou/piper-voices-zh-AISHELL-3';
+      model.kind = 'vits';
+      model.modelFile = 'zh_CN-cn_aishell3-medium.onnx';
+      model.lexicons = ['lexicon.txt'];
+      model.ruleFsts = ['phone.fst', 'date.fst', 'number.fst'];
+      model.noiseScale = 0.333;
+      model.noiseScaleW = 0.333;
+      const onnx = new LocalTtsModelFile('zh_CN-cn_aishell3-medium.onnx', 77639633,
+        '22f09cc9f8667b37abe0b0bf8efe51e1be9bf4427929708ca1966ab5f575aa70');
+      onnx.remotePath = 'zh/zh_CN/cn_aishell3/medium/zh_CN-cn_aishell3-medium.onnx';
+      onnx.revision = 'be77d1b11c7bc242a6c897c513e1fd8f23aac0e3';
+      onnx.onnxMeta = 'has_g2pw=1';
+      onnx.sourceBytes = 77639618;
+      onnx.sourceSha256 = 'f46e009dcfcaa0f8c5e6eefe23dabc36296c69123ea22df82d31078ab6e0174f';
+      model.files = [
+        onnx,
+        LocalTtsModelFile.from(lexiconRepo, 'lexicon.txt', 2064505,
+          '003e76f89fec389ec109b557f47cc315a1ac31a99091f0cc9d15949f9024416b'),
+        LocalTtsModelFile.from(lexiconRepo, 'tokens.txt', 485,
+          'e9e6d2838a2676749adbf0376c4cf3c3cd28eb27ed953dcc2adcab8db3c33ba7'),
+        LocalTtsModelFile.from(lexiconRepo, 'date.fst', 59154,
+          'eb8aa079ae3cb81d8f4404992f39d61a0cb990947512b5b8d1e54d1f6980e718'),
+        LocalTtsModelFile.from(lexiconRepo, 'number.fst', 64482,
+          '743f402181fcfebf76cc2f0546b71fa26476e626fbe4e460fb7b4c3a7a8bd5bd'),
+        LocalTtsModelFile.from(lexiconRepo, 'phone.fst', 88630,
+          '1ac2b6fa56b1442320c4de7db08353bab8963a2b57f365eebcdd3a2d3562f8d7')
+      ];
+      return model;
+    });
+  }
+
+  /** 同一音色包里的全部音色（内置音色包或同一个导入的多说话人模型）；不属于音色包时只有它自己。 */
+  static packMembers(model: LocalTtsModel): LocalTtsModel[] {
+    if (!model.pack) return [model];
+    return LocalTtsModels.all().filter((item: LocalTtsModel): boolean => item.pack === model.pack);
+  }
+
+  /** 音色管理里没下载的音色包只显示第一个音色那一行。 */
+  static isPackLead(model: LocalTtsModel): boolean {
+    return !model.pack || LocalTtsModels.packMembers(model)[0].id === model.id;
   }
 
   /** 内置音色在前，导入的按导入顺序排在后面。 */
@@ -298,8 +421,7 @@ export class LocalTtsModels {
       if (LocalTtsModels.root && fs.accessSync(userRoot)) {
         const names = fs.listFileSync(userRoot).sort();
         for (const name of names) {
-          const model = LocalTtsModels.readManifest(`${userRoot}/${name}`, name);
-          if (model) models.push(model);
+          models.push(...LocalTtsModels.readManifest(`${userRoot}/${name}`, name));
         }
       }
     } catch (error) {
@@ -308,33 +430,93 @@ export class LocalTtsModels {
     LocalTtsModels.userModels = models;
   }
 
-  private static readManifest(dir: string, folder: string): LocalTtsModel | undefined {
+  /** 一个导入目录展开成若干音色：每个已添加的说话人一行。描述损坏时返回空数组。 */
+  private static readManifest(dir: string, folder: string): LocalTtsModel[] {
     try {
       const path = `${dir}/${LocalTtsModels.USER_MANIFEST}`;
-      if (!fs.accessSync(path) || fs.statSync(path).size > 256 * 1024) return undefined;
+      if (!fs.accessSync(path) || fs.statSync(path).size > 256 * 1024) return [];
       const raw = JSON.parse(fs.readTextSync(path)) as LocalTtsModelManifest;
-      const model = new LocalTtsModel();
-      model.id = String(raw.id || '');
-      model.name = String(raw.name || '导入的音色');
-      model.kind = String(raw.kind || 'vits');
-      model.modelFile = String(raw.modelFile || '');
-      model.vocoderFile = String(raw.vocoderFile || '');
-      model.voicesFile = String(raw.voicesFile || '');
-      model.lexicons = Array.isArray(raw.lexicons) ? raw.lexicons.map((item: string): string => String(item)) : [];
-      model.dataDir = String(raw.dataDir || '');
-      model.ruleFsts = Array.isArray(raw.ruleFsts) ? raw.ruleFsts.map((item: string): string => String(item)) : [];
-      model.sid = Math.max(0, Math.floor(Number(raw.sid) || 0));
-      model.files = Array.isArray(raw.files) ? raw.files.map((item: LocalTtsModelFile): LocalTtsModelFile =>
+      const base = new LocalTtsModel();
+      base.importId = String(raw.id || '');
+      base.importName = String(raw.name || '导入的音色');
+      base.kind = String(raw.kind || 'vits');
+      base.modelFile = String(raw.modelFile || '');
+      base.vocoderFile = String(raw.vocoderFile || '');
+      base.voicesFile = String(raw.voicesFile || '');
+      base.lexicons = Array.isArray(raw.lexicons) ? raw.lexicons.map((item: string): string => String(item)) : [];
+      base.dataDir = String(raw.dataDir || '');
+      base.ruleFsts = Array.isArray(raw.ruleFsts) ? raw.ruleFsts.map((item: string): string => String(item)) : [];
+      base.files = Array.isArray(raw.files) ? raw.files.map((item: LocalTtsModelFile): LocalTtsModelFile =>
         new LocalTtsModelFile(String(item.name || ''), Number(item.bytes) || 0, '')) : [];
-      model.imported = true;
-      model.dirName = `${LocalTtsModels.USER_DIR}/${folder}`;
-      model.description = `导入 · ${LocalTtsModels.kindLabel(model.kind)}`;
-      if (!model.id.startsWith('user-') || !model.modelFile || model.files.length === 0) return undefined;
-      return model;
+      base.imported = true;
+      base.dirName = `${LocalTtsModels.USER_DIR}/${folder}`;
+      if (!base.importId.startsWith('user-') || !base.modelFile || base.files.length === 0) return [];
+      if (raw.speakers === undefined) {
+        // 旧版导入没记说话人数，补检测一次写回描述，之后不再读模型文件。
+        const info = LocalTtsSpeakers.detect(dir, base.modelFile, base.kind, base.voicesFile);
+        raw.speakers = info.count;
+        raw.speakerNames = info.names;
+        LocalTtsModels.writeText(path, JSON.stringify(raw));
+      }
+      base.speakers = Math.max(1, Math.floor(Number(raw.speakers) || 1));
+      base.speakerNames = Array.isArray(raw.speakerNames) && raw.speakerNames.length === base.speakers ?
+        raw.speakerNames.map((item: string): string => String(item)) : [];
+      const legacySid = Math.max(0, Math.floor(Number(raw.sid) || 0));
+      const sids = (Array.isArray(raw.sids) ? raw.sids : [legacySid])
+        .map((item: number): number => Math.floor(Number(item)))
+        .filter((item: number, index: number, list: number[]): boolean =>
+          Number.isFinite(item) && item >= 0 && item < base.speakers && list.indexOf(item) === index);
+      base.importedSids = sids.length > 0 ? sids : [Math.min(legacySid, base.speakers - 1)];
+      return base.importedSids.map((sid: number): LocalTtsModel => LocalTtsModels.speakerVariant(base, sid));
     } catch (error) {
       console.warn('[LocalTts] bad imported model manifest:', error);
-      return undefined;
+      return [];
     }
+  }
+
+  /**
+   * 导入模型某个说话人的音色。0 号沿用导入时的 id（旧版导入只有它，已选中的设置不失效），
+   * 其他说话人在后面加编号。也用来试听还没添加的说话人。
+   */
+  static speakerVariant(base: LocalTtsModel, sid: number): LocalTtsModel {
+    const model = new LocalTtsModel();
+    model.importId = base.importId;
+    model.importName = base.importName;
+    model.id = sid === 0 ? base.importId : `${base.importId}-s${sid}`;
+    model.kind = base.kind;
+    model.modelFile = base.modelFile;
+    model.vocoderFile = base.vocoderFile;
+    model.voicesFile = base.voicesFile;
+    model.lexicons = base.lexicons;
+    model.dataDir = base.dataDir;
+    model.ruleFsts = base.ruleFsts;
+    model.files = base.files;
+    model.imported = true;
+    model.dirName = base.dirName;
+    model.speakers = base.speakers;
+    model.speakerNames = base.speakerNames;
+    model.importedSids = base.importedSids;
+    model.sid = sid;
+    const kind = LocalTtsModels.kindLabel(model.kind);
+    if (model.speakers <= 1) {
+      model.name = model.importName;
+      model.description = `导入 · ${kind}`;
+      return model;
+    }
+    const info = LocalTtsModels.speakerInfo(model);
+    model.pack = model.importId;
+    model.packTitle = model.importName;
+    model.name = `${model.importName} ${LocalTtsSpeakers.title(info, sid)}`;
+    const voice = LocalTtsSpeakers.describe(info.names[sid] || '');
+    model.description = `导入 · ${kind}${voice ? ` · ${voice}` : ''}`;
+    return model;
+  }
+
+  static speakerInfo(model: LocalTtsModel): LocalTtsSpeakerInfo {
+    const info = new LocalTtsSpeakerInfo();
+    info.count = model.speakers;
+    info.names = model.speakerNames;
+    return info;
   }
 
   static kindLabel(kind: string): string {
@@ -356,6 +538,9 @@ export class LocalTtsModels {
       dataDir: model.dataDir,
       ruleFsts: model.ruleFsts,
       sid: model.sid,
+      speakers: model.speakers,
+      speakerNames: model.speakerNames,
+      sids: [model.sid],
       files: model.files
     };
     LocalTtsModels.writeText(`${dir}/${LocalTtsModels.USER_MANIFEST}`, JSON.stringify(manifest));
@@ -367,16 +552,15 @@ export class LocalTtsModels {
     LocalTtsModels.refreshInstalledPaths();
   }
 
-  /** 改名、改说话人编号等，只改描述文件。 */
-  static updateImported(model: LocalTtsModel): void {
-    if (!model.imported) return;
+  /** 改导入模型里已添加的说话人（至少一个），只改描述文件。 */
+  static setImportedSids(model: LocalTtsModel, sids: number[]): void {
+    if (!model.imported || sids.length === 0) return;
     const dir = LocalTtsModels.modelPath(model);
     if (!dir) return;
     const path = `${dir}/${LocalTtsModels.USER_MANIFEST}`;
     try {
       const raw = JSON.parse(fs.readTextSync(path)) as LocalTtsModelManifest;
-      raw.name = model.name;
-      raw.sid = model.sid;
+      raw.sids = sids.slice().sort((a: number, b: number): number => a - b);
       LocalTtsModels.writeText(path, JSON.stringify(raw));
     } catch (error) {
       console.warn('[LocalTts] update imported model failed:', error);
@@ -407,7 +591,8 @@ export class LocalTtsModels {
       LocalTtsModels.ensureDir(LocalTtsModels.rootDir(context));
       LocalTtsModels.ensureDir(dir);
       try { fs.unlinkSync(`${dir}/${LocalTtsModels.MARKER}`); } catch (_) {}
-      const total = model.totalBytes();
+      const total = model.files.reduce((sum: number, file: LocalTtsModelFile): number =>
+        sum + file.downloadBytes(), 0);
       let done = 0;
       for (const file of model.files) {
         const path = `${dir}/${file.name}`;
@@ -418,8 +603,9 @@ export class LocalTtsModels {
             const percent = Math.min(99, Math.floor((done + received) * 100 / total));
             AppStorage.setOrCreate(LocalTtsModels.STORAGE_PROGRESS, `下载中 ${percent}%`);
           });
+          if (file.onnxMeta) await LocalTtsModels.applyOnnxMeta(path, file);
         }
-        done += file.bytes;
+        done += file.downloadBytes();
       }
       const marker = new LocalTtsInstallMarker();
       marker.id = model.id;
@@ -431,6 +617,27 @@ export class LocalTtsModels {
       LocalTtsModels.downloadCancelled = false;
       AppStorage.setOrCreate(LocalTtsModels.STORAGE_DOWNLOADING, '');
       AppStorage.setOrCreate(LocalTtsModels.STORAGE_PROGRESS, '');
+    }
+  }
+
+  /**
+   * 在 ONNX 文件末尾追加一条 metadata_props（ModelProto 第 14 号字段，内容是 StringStringEntryProto）。
+   * protobuf 允许字段出现在任意位置，追加即生效。追加后整体再校验一次哈希，对不上就删掉、下次重下。
+   */
+  private static async applyOnnxMeta(path: string, file: LocalTtsModelFile): Promise<void> {
+    const pair = file.onnxMeta.split('=');
+    const encoder = new util.TextEncoder();
+    const key = encoder.encodeInto(pair[0]);
+    const value = encoder.encodeInto(pair.slice(1).join('='));
+    const inner: number[] = [0x0a, key.length].concat(Array.from(key))
+      .concat([0x12, value.length]).concat(Array.from(value));
+    if (inner.length > 127) throw new Error('音色元数据过长');
+    const bytes = new Uint8Array([0x72, inner.length].concat(inner));
+    const output = fs.openSync(path, fs.OpenMode.WRITE_ONLY | fs.OpenMode.APPEND);
+    try { fs.writeSync(output.fd, bytes.buffer); } finally { fs.closeSync(output); }
+    if (fs.statSync(path).size !== file.bytes || await LocalTtsModels.fileHash(path) !== file.sha256) {
+      try { fs.unlinkSync(path); } catch (_) {}
+      throw new Error('音色文件校验失败，请重试');
     }
   }
 
@@ -469,7 +676,9 @@ export class LocalTtsModels {
     for (const host of LocalTtsModels.HOSTS) {
       if (LocalTtsModels.downloadCancelled) throw new Error('已取消下载');
       try {
-        await LocalTtsModels.downloadFrom(`${host}/${model.repo}/resolve/main/${file.name}`, file, path, progress);
+        const repo = file.repo || model.repo;
+        const url = `${host}/${repo}/resolve/${file.revision || 'main'}/${file.remotePath || file.name}`;
+        await LocalTtsModels.downloadFrom(url, file, path, progress);
         return;
       } catch (error) {
         lastError = error as Error;
@@ -503,13 +712,13 @@ export class LocalTtsModels {
         };
         const complete = (): void => {
           if (!ended || !accepted || failure) return;
-          if (received !== file.bytes) fail('音色文件下载不完整，请重试');
+          if (received !== file.downloadBytes()) fail('音色文件下载不完整，请重试');
           else resolve();
         };
         client.on('dataReceive', (chunk: ArrayBuffer): void => {
           if (failure) return;
           if (LocalTtsModels.downloadCancelled) { fail('已取消下载'); return; }
-          if (received + chunk.byteLength > file.bytes) { fail('音色文件大小异常'); return; }
+          if (received + chunk.byteLength > file.downloadBytes()) { fail('音色文件大小异常'); return; }
           try {
             let offset = 0;
             while (offset < chunk.byteLength) {
@@ -539,7 +748,7 @@ export class LocalTtsModels {
         }).catch((): void => { fail('音色下载失败，请检查网络后重试'); });
       });
       const hash = LocalTtsModels.hex(digest.digestSync().data);
-      if (hash !== file.sha256) throw new Error('音色文件校验失败，请重试');
+      if (hash !== file.downloadSha256()) throw new Error('音色文件校验失败，请重试');
       completed = true;
     } finally {
       if (timer >= 0) clearInterval(timer);

@@ -44,6 +44,8 @@ export interface TtsReadOptions {
   cloudVoiceId?: string;
   cloudVoiceName?: string;
   cloudVoiceTier?: string;
+  /** 指定离线音色，不用当前选中的（音色管理里试听还没添加的说话人用）。 */
+  localVoice?: LocalTtsModel;
   focusBreakOffsets?: number[];
   keepAudioOutputOnFinish?: boolean;
 }
@@ -437,7 +439,8 @@ export class SystemTtsReader {
     this.keepAudioOutputOnFinish = options?.keepAudioOutputOnFinish === true;
     const customVoice = this.getCurrentCustomVoice();
     // 选了离线音色时它优先于自定义音色；云端音色由调用方显式传入，选离线音色时调用方不会传。
-    const localVoice = this.optionCloudVoiceId || options?.mimo ? undefined : LocalTtsSelection.current();
+    const localVoice = this.optionCloudVoiceId || options?.mimo ? undefined :
+      (options?.localVoice || LocalTtsSelection.current());
     const splitChunks = this.optionCloudVoiceId ? this.splitCloudText(cleanText) :
       ((localVoice || customVoice) ? this.splitCustomText(cleanText, SystemTtsReader.CUSTOM_TTS_CHUNK_LENGTH) :
         this.splitSystemText(cleanText, this.optionFocusBreakOffsets));

@@ -22,6 +22,8 @@ class LocalTtsWorkerRequest {
   lexicon: string = '';
   dataDir: string = '';
   ruleFsts: string = '';
+  noiseScale: number = 0;
+  noiseScaleW: number = 0;
   threads: number = 2;
   text: string = '';
   speed: number = 1;
@@ -58,6 +60,7 @@ export class LocalTtsEngine {
   private static readonly THREADS: number = 2;
   private static readonly IDLE_RELEASE_MS: number = 90000;
   private static thread: worker.ThreadWorker | null = null;
+  /** 已加载模型的目录。音色包里的几个音色共用一个模型，换音色只换 sid，不重新加载。 */
   private static modelId: string = '';
   private static initPromise: Promise<number> | null = null;
   private static initResolve: ((sampleRate: number) => void) | null = null;
@@ -120,7 +123,9 @@ export class LocalTtsEngine {
   }
 
   private static ensureLoaded(model: LocalTtsModel): Promise<number> {
-    if (LocalTtsEngine.initPromise && LocalTtsEngine.modelId === model.id) return LocalTtsEngine.initPromise;
+    if (LocalTtsEngine.initPromise && LocalTtsEngine.modelId === LocalTtsModels.modelPath(model)) {
+      return LocalTtsEngine.initPromise;
+    }
     LocalTtsEngine.release();
     // 坏文件会让原生层直接 abort 进程，加载前必须确认文件完整。
     const dir = LocalTtsModels.modelPath(model);
@@ -130,7 +135,7 @@ export class LocalTtsEngine {
     }
     const thread = new worker.ThreadWorker('../../workers/LocalTtsWorker.ets', { name: 'LocalTts' });
     LocalTtsEngine.thread = thread;
-    LocalTtsEngine.modelId = model.id;
+    LocalTtsEngine.modelId = dir;
     LocalTtsEngine.initPromise = new Promise<number>((resolve, reject): void => {
       LocalTtsEngine.initResolve = resolve;
       LocalTtsEngine.initReject = reject;
@@ -154,6 +159,8 @@ export class LocalTtsEngine {
     request.lexicon = model.lexicons.map((name: string): string => at(name)).join(',');
     request.dataDir = at(model.dataDir);
     request.ruleFsts = model.ruleFsts.map((name: string): string => at(name)).join(',');
+    request.noiseScale = model.noiseScale;
+    request.noiseScaleW = model.noiseScaleW;
     request.threads = LocalTtsEngine.THREADS;
     LocalTtsEngine.loadingDir = dir;
     LocalTtsModels.markLoading(dir);

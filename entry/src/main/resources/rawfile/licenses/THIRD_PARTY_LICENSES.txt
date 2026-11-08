@@ -328,3 +328,26 @@ SOFTWARE.
 Voice: rhasspy/piper-voices zh_CN chaowen (medium), sherpa-onnx conversion
 Project: https://github.com/OHF-Voice/piper1-gpl
 Dataset: https://github.com/OHF-Voice/voice-datasets (CC0)
+
+==========================================================================
+7. Piper voice "cn_aishell3" (downloaded on demand, not bundled)
+==========================================================================
+
+Voice: writeAPoemForYou/piper-voices-zh-AISHELL-3 zh_CN cn_aishell3 (medium)
+License: Apache License 2.0 (full text in section 3)
+Dataset: AISHELL-3, https://www.openslr.org/93/ (Apache License 2.0)
+Copyright (c) Beijing Shell Shell Technology Co., Ltd. (AISHELL-3 corpus)
+
+Used for the multi-speaker offline voices. The app appends one metadata entry
+(has_g2pw=1) to the downloaded model so sherpa-onnx picks the pinyin frontend;
+the lexicon and rule files come from the "chaowen" voice above.
+
+The voice was warm-started from the Piper voice en_US libritts_r (medium)
+(https://huggingface.co/rhasspy/piper-voices), which was trained on:
+  LibriTTS-R, https://www.openslr.org/141/ (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/)
+  Copyright (c) Yuma Koizumi, Heiga Zen, Shigeki Karita, Yifan Ding,
+  Kohei Yatabe, Nobuyuki Morioka, Michiel Bacchiani, Yu Zhang, Wei Han,
+  Ankur Bapna (LibriTTS-R corpus)
+That voice was in turn fine-tuned from the Piper voice en_US lessac (medium),
+trained on the Blizzard Challenge 2013 Lessac dataset,
+https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/

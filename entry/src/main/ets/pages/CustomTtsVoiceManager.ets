@@ -34,6 +34,7 @@ import { LocalTtsModel, LocalTtsModels } from '../utils/localtts/LocalTtsModels'
 import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
 import { LocalTtsEngine } from '../utils/localtts/LocalTtsEngine';
 import { LocalTtsImport } from '../utils/localtts/LocalTtsImport';
+import { LocalTtsSpeakers } from '../utils/localtts/LocalTtsSpeakers';
 
 class ManagedTtsVoiceEntry {
   key: string = '';
@@ -50,6 +51,7 @@ class TtsBatchVoiceEntry {
   title: string = '';
   kind: string = '';
   protectedVoice: boolean = false;
+  localId: string = '';
 }
 
 class VoiceEditFormDraft {
@@ -156,6 +158,12 @@ struct CustomTtsVoiceManagerPage {
   private voiceFirstVisibleIndex: number = 0;
   private voiceLastVisibleIndex: number = 0;
   private voiceSelectionSuppressClickUntil: number = 0;
+  /** 导入的多说话人模型：选择要添加哪些说话人的面板。 */
+  @State speakerSheetVisible: boolean = false;
+  @State speakerSheetImportId: string = '';
+  @State speakerPreviewSid: number = -1;
+  @State speakerPreviewPlaying: boolean = false;
+  private speakerPreviewReader: SystemTtsReader = new SystemTtsReader();
 
   aboutToAppear(): void {
     this.syncBars();
@@ -172,12 +180,17 @@ struct CustomTtsVoiceManagerPage {
 
   onPageHide(): void {
     this.pageAlive = false;
+    this.stopSpeakerPreview();
     this.catalogRevision++;
     this.loadingCatalog = false;
     this.showAddDialog = false;
     this.closeVoiceActions();
     this.stopVoiceSelectionAutoScroll();
     this.persistVoiceEditDraftNow();
+  }
+
+  aboutToDisappear(): void {
+    this.speakerPreviewReader.shutdown();
   }
 
   build() {
@@ -208,6 +221,7 @@ struct CustomTtsVoiceManagerPage {
     .id('tts_voice_manager_root')
     .width('100%')
     .height('100%')
+    .bindSheet($$this.speakerSheetVisible, this.speakerSheet(), this.speakerSheetOptions())
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       const width = Number(newValue.width);
       const height = Number(newValue.height);
@@ -253,6 +267,12 @@ struct CustomTtsVoiceManagerPage {
           }, (model: LocalTtsModel): string => `${model.id}:${model.name}:${this.localTtsInstalledIds}:` +
             `${this.localTtsDownloadingId}:${this.ttsLocalVoiceId}:${this.localEnabled(model)}`)
           ListItem() { this.localImportRow() }
+        } else if (this.selectionMode && this.batchLocalModels(true).length > 0) {
+          // 多选只列已下载/已导入的离线音色；没下载的不能启用、禁用或删除。
+          ListItem() { this.voiceSectionTitle('离线音色') }
+          ForEach(this.batchLocalModels(true), (model: LocalTtsModel) => {
+            ListItem() { this.localVoiceRow(model) }
+          }, (model: LocalTtsModel): string => `sel:${model.id}:${this.localEnabled(model)}`)
         }
         if (this.nativeVoices(false).length > 0) {
           ListItem() { this.voiceSectionTitle('系统音色') }
@@ -344,23 +364,38 @@ struct CustomTtsVoiceManagerPage {
   @Builder
   localVoiceRow(model: LocalTtsModel) {
     Row({ space: AppSpacing.MD }) {
+      if (this.selectionMode) { this.voiceSelectionSafeArea(LocalTtsModels.availabilityKey(model)) }
       Column({ space: AppSpacing.XS }) {
-        Text(`${model.name} · ${model.description}`).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
+        Text(this.localVoiceTitle(model)).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium)
           .fontColor(this.primaryTextColor()).maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
         Text(this.localVoiceStatus(model)).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).maxLines(3)
       }.layoutWeight(1).alignItems(HorizontalAlign.Start)
-      if (this.localTtsDownloadingId === model.id) {
-        this.localActionButton('取消', () => { LocalTtsModels.cancelDownload(); })
-      } else if (!this.localInstalled(model) && !model.imported) {
-        this.localActionButton(this.localMemberAllowed() ? '下载' : '开通会员', () => { this.downloadLocalVoice(model); })
-      } else if (this.ttsLocalVoiceId === model.id && this.localEnabled(model)) {
-        SymbolGlyph($r('sys.symbol.checkmark')).fontSize(18).fontColor([this.accentColor()])
+      if (!this.selectionMode) {
+        if (this.localTtsDownloadingId === model.id) {
+          this.localActionButton('取消', () => { LocalTtsModels.cancelDownload(); })
+        } else if (!this.localInstalled(model) && !model.imported) {
+          this.localActionButton(this.localMemberAllowed() ? '下载' : '开通会员', () => { this.downloadLocalVoice(model); })
+        } else {
+          if (this.ttsLocalVoiceId === model.id && this.localEnabled(model)) {
+            SymbolGlyph($r('sys.symbol.checkmark')).fontSize(18).fontColor([this.accentColor()])
+          }
+          if (this.speakerPickable(model)) {
+            this.localActionButton('选音色', () => { this.openSpeakerSheet(model); })
+          }
+        }
       }
     }.width('100%').constraintSize({ minHeight: 72 }).padding(AppSpacing.XL)
       .backgroundColor(this.cardColor()).borderRadius(ThemeRuntime.cardRadius())
       .opacity(!this.localInstalled(model) || this.localEnabled(model) ? 1 : 0.5)
+      .onAreaChange((_oldValue: Area, area: Area) => {
+        if (this.selectionMode) this.rememberVoiceSelectionArea(LocalTtsModels.availabilityKey(model), area);
+      })
       .onClick(() => {
-        if (this.localInstalled(model)) this.selectLocalVoice(model);
+        if (this.selectionMode) {
+          if (Date.now() < this.voiceSelectionSuppressClickUntil || this.isBatchOperating) return;
+          const key = LocalTtsModels.availabilityKey(model);
+          this.setSelectionKey(key, !this.selectedVoiceIds.includes(key));
+        } else if (this.localInstalled(model)) this.selectLocalVoice(model);
         else if (model.imported) HdsFeedback.showToast('这个模型上次加载失败，已停用；可左滑删除后重新导入');
         else if (this.localTtsDownloadingId !== model.id) this.downloadLocalVoice(model);
       })
@@ -386,8 +421,25 @@ struct CustomTtsVoiceManagerPage {
       .onClick(() => { if (!this.localImportStage) this.importLocalModel(); })
   }
 
+  /** 没下载的音色包只列一行（第一个音色代表整包），下载后包里每个音色各占一行。 */
   localModels(): LocalTtsModel[] {
-    return this.localTtsInstalledIds === undefined ? [] : LocalTtsModels.all();
+    if (this.localTtsInstalledIds === undefined) return [];
+    return LocalTtsModels.all().filter((model: LocalTtsModel): boolean =>
+      !model.pack || this.localInstalled(model) || LocalTtsModels.isPackLead(model));
+  }
+
+  /** 多选可操作的离线音色：已下载的内置音色和导入的模型（含加载失败被停用的）。 */
+  batchLocalModels(filtered: boolean = false): LocalTtsModel[] {
+    if (this.localTtsInstalledIds === undefined) return [];
+    const keyword = filtered ? this.searchText.trim().toLowerCase() : '';
+    return LocalTtsModels.all().filter((model: LocalTtsModel): boolean =>
+      (this.localInstalled(model) || model.imported) &&
+        (!keyword || `${model.name} ${model.description}`.toLowerCase().includes(keyword)));
+  }
+
+  localVoiceTitle(model: LocalTtsModel): string {
+    if (model.pack && !this.localInstalled(model)) return model.packTitle;
+    return `${model.name} · ${model.description}`;
   }
 
   importLocalModel(): void {
@@ -487,7 +539,8 @@ struct CustomTtsVoiceManagerPage {
     const tier = this.localMemberAllowed() ? '' : ' · 会员专享';
     if (this.localInstalled(model)) {
       const state = !this.localEnabled(model) ? '已禁用' : (this.ttsLocalVoiceId === model.id ? '当前使用' : '已启用');
-      return `${model.imported ? `${LocalTtsModels.sizeText(model)}` : '已下载'} · ${state}${tier}`;
+      const speakers = this.speakerPickable(model) ? ` · 已添加 ${model.importedSids.length}/${model.speakers} 个音色` : '';
+      return `${model.imported ? `${LocalTtsModels.sizeText(model)}` : '已下载'} · ${state}${speakers}${tier}`;
     }
     if (model.imported) return '上次加载失败，已停用 · 可左滑删除后重新导入';
     return `本机合成，不联网、不限字数 · 约 ${LocalTtsModels.sizeText(model)}${tier}`;
@@ -535,7 +588,7 @@ struct CustomTtsVoiceManagerPage {
     }
     const context = getContext(this);
     LocalTtsModels.install(context, model).then((): void => {
-      HdsFeedback.showToast(`${model.name} 下载完成`);
+      HdsFeedback.showToast(`${model.pack ? '多人音色包' : model.name} 下载完成`);
       if (this.pageAlive && !this.ttsLocalVoiceId) this.selectLocalVoice(model);
     }).catch((error: Error): void => {
       HdsFeedback.showToast(error.message || '下载失败，请重试');
@@ -543,22 +596,186 @@ struct CustomTtsVoiceManagerPage {
   }
 
   confirmRemoveLocalVoice(model: LocalTtsModel): void {
+    // 音色包共用一份模型文件，删一个就是删整包。
+    const members = LocalTtsModels.packMembers(model);
+    const message = members.length > 1 ?
+      `“${model.name}”属于多人音色包，删除会同时移除包里的 ${members.length} 个音色，之后需要重新${model.imported ? '导入' : '下载'}才能使用。` :
+      `确定删除离线音色“${model.name}”吗？删除后需要重新${model.imported ? '导入' : '下载'}才能使用。`;
     this.getUIContext().showAlertDialog({
-      title: '删除音色',
-      message: `确定删除离线音色“${model.name}”吗？删除后需要重新${model.imported ? '导入' : '下载'}才能使用。`,
+      title: members.length > 1 ? '删除音色包' : '删除音色',
+      message: message,
       primaryButton: { value: '取消', action: (): void => {} },
       secondaryButton: {
         value: '删除', fontColor: ThemeRuntime.dangerColor(this.appDarkMode), action: (): void => {
           const context = getContext(this);
-          if (this.ttsLocalVoiceId === model.id) {
+          if (members.some((item: LocalTtsModel): boolean => item.id === this.ttsLocalVoiceId)) {
             LocalTtsSelection.clear(context);
           }
           LocalTtsEngine.release();
           LocalTtsModels.remove(context, model);
-          HdsFeedback.showToast(`已删除 ${model.name}`);
+          HdsFeedback.showToast(members.length > 1 ? '已删除多人音色包' : `已删除 ${model.name}`);
         }
       }
     });
+  }
+
+  /** 导入的多说话人模型只在第一行放“选音色”，免得每行都有一个。 */
+  speakerPickable(model: LocalTtsModel): boolean {
+    return model.imported && model.speakers > 1 && this.localInstalled(model) && LocalTtsModels.isPackLead(model);
+  }
+
+  openSpeakerSheet(model: LocalTtsModel): void {
+    if (!this.localMemberAllowed()) {
+      HdsFeedback.showToast(LocalTtsModels.MEMBER_REQUIRED);
+      router.pushUrl({ url: 'pages/MemberBenefits' });
+      return;
+    }
+    this.speakerSheetImportId = model.importId;
+    this.speakerSheetVisible = true;
+  }
+
+  /** 面板对应导入包的任意一行；包被删掉后为空。读 localTtsInstalledIds 让增删后面板跟着刷新。 */
+  speakerSheetBase(): LocalTtsModel | undefined {
+    if (this.localTtsInstalledIds === undefined || !this.speakerSheetImportId) return undefined;
+    return LocalTtsModels.all().find((item: LocalTtsModel): boolean => item.importId === this.speakerSheetImportId);
+  }
+
+  speakerSids(base: LocalTtsModel | undefined): number[] {
+    const sids: number[] = [];
+    if (!base) return sids;
+    for (let sid = 0; sid < base.speakers; sid++) sids.push(sid);
+    return sids;
+  }
+
+  toggleSpeaker(base: LocalTtsModel, sid: number): void {
+    const sids = base.importedSids.slice();
+    const index = sids.indexOf(sid);
+    if (index < 0) {
+      sids.push(sid);
+    } else {
+      if (sids.length === 1) {
+        HdsFeedback.showToast('至少保留一个音色；不需要了可以左滑删除整个模型');
+        return;
+      }
+      sids.splice(index, 1);
+      if (this.ttsLocalVoiceId === LocalTtsModels.speakerVariant(base, sid).id) {
+        LocalTtsSelection.clear(getContext(this));
+        this.clearCustomVoiceSelection();
+        this.saveSettings();
+        HdsFeedback.showToast('移除的是当前音色，已切换为系统默认音色');
+      }
+    }
+    LocalTtsModels.setImportedSids(base, sids);
+  }
+
+  toggleSpeakerPreview(base: LocalTtsModel, sid: number): void {
+    if (this.speakerPreviewSid === sid) {
+      this.stopSpeakerPreview();
+      return;
+    }
+    this.stopSpeakerPreview();
+    this.speakerPreviewSid = sid;
+    this.speakerPreviewPlaying = false;
+    const done = (): void => {
+      if (this.speakerPreviewSid !== sid) return;
+      this.speakerPreviewSid = -1;
+      this.speakerPreviewPlaying = false;
+    };
+    this.speakerPreviewReader.start('你好，这是离线音色试听。今天天气不错，适合读一本好书。', {
+      localVoice: LocalTtsModels.speakerVariant(base, sid),
+      speed: this.ttsSpeed,
+      onAudioStart: (): void => { if (this.speakerPreviewSid === sid) this.speakerPreviewPlaying = true; },
+      onFinished: done,
+      onError: (message: string): void => {
+        if (this.speakerPreviewSid === sid) HdsFeedback.showToast(message || '试听失败');
+        done();
+      }
+    }).catch((error: Error): void => {
+      if (this.speakerPreviewSid === sid) HdsFeedback.showToast(error.message || '试听失败');
+      done();
+    });
+  }
+
+  stopSpeakerPreview(): void {
+    if (this.speakerPreviewSid >= 0) this.speakerPreviewReader.stop();
+    this.speakerPreviewSid = -1;
+    this.speakerPreviewPlaying = false;
+  }
+
+  @Builder
+  speakerSheet() {
+    Column({ space: AppSpacing.MD }) {
+      if (this.speakerSheetBase() !== undefined) {
+        Text(this.speakerSheetBase()?.importName || '').fontSize(AppFontSize.TITLE).fontWeight(FontWeight.Bold)
+          .fontColor(this.primaryTextColor()).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        Text(`模型里共有 ${this.speakerSheetBase()?.speakers || 0} 个音色，已添加 ` +
+          `${this.speakerSheetBase()?.importedSids.length || 0} 个。勾选的会出现在音色列表里，共用同一份模型文件。`)
+          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
+        List() {
+          ForEach(this.speakerSids(this.speakerSheetBase()), (sid: number) => {
+            ListItem() { this.speakerRow(sid) }
+          }, (sid: number): string => `${sid}:${this.speakerSheetBase()?.importedSids.includes(sid)}:` +
+            `${this.speakerPreviewSid === sid}:${this.speakerPreviewPlaying}`)
+        }.width('100%').layoutWeight(1).scrollBar(BarState.Auto)
+          .padding({ bottom: this.navBarHeight })
+      } else {
+        Text('这个模型已删除').fontSize(AppFontSize.BODY).fontColor(this.subTextColor())
+      }
+    }.width('100%').height('100%').padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG })
+  }
+
+  @Builder
+  speakerRow(sid: number) {
+    Row({ space: AppSpacing.MD }) {
+      Column({ space: AppSpacing.XS }) {
+        Text(this.speakerTitle(sid)).fontSize(AppFontSize.BODY).fontColor(this.primaryTextColor())
+        if (this.speakerSubtitle(sid)) {
+          Text(this.speakerSubtitle(sid)).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+        }
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      Button(this.speakerPreviewSid === sid ? (this.speakerPreviewPlaying ? '停止' : '准备中') : '试听')
+        .fontSize(AppFontSize.CAPTION).height(30)
+        .backgroundColor(this.speakerPreviewSid === sid ? this.buttonColor() : Color.Transparent)
+        .fontColor(this.speakerPreviewSid === sid ? ThemeRuntime.onAccentColor(this.buttonColor()) : this.accentColor())
+        .onClick(() => {
+          const base = this.speakerSheetBase();
+          if (base) this.toggleSpeakerPreview(base, sid);
+        })
+      Checkbox({ name: `speaker_${sid}` })
+        .select(this.speakerSheetBase()?.importedSids.includes(sid) === true)
+        .selectedColor(this.buttonColor())
+        .width(22).height(22).hitTestBehavior(HitTestMode.None)
+    }.width('100%').constraintSize({ minHeight: 56 }).padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
+      .onClick(() => {
+        const base = this.speakerSheetBase();
+        if (base) this.toggleSpeaker(base, sid);
+      })
+      .accessibilityText(`${this.speakerTitle(sid)}，${this.speakerSheetBase()?.importedSids.includes(sid) ? '已添加' : '未添加'}`)
+  }
+
+  speakerTitle(sid: number): string {
+    const base = this.speakerSheetBase();
+    return base ? LocalTtsSpeakers.title(LocalTtsModels.speakerInfo(base), sid) : `${sid} 号`;
+  }
+
+  speakerSubtitle(sid: number): string {
+    const base = this.speakerSheetBase();
+    if (!base) return '';
+    const voice = LocalTtsSpeakers.describe(base.speakerNames[sid] || '');
+    return base.speakerNames[sid] ? `${sid} 号${voice ? ` · ${voice}` : ''}` : '';
+  }
+
+  speakerSheetOptions(): SheetOptions {
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, {
+      height: '75%',
+      dragBar: true,
+      showClose: true,
+      onDisappear: () => {
+        this.speakerSheetVisible = false;
+        this.stopSpeakerPreview();
+      }
+    }, this.appDarkMode, this.accentColor());
   }
 
   @Builder
@@ -908,6 +1125,14 @@ struct CustomTtsVoiceManagerPage {
 
   batchVoices(filtered: boolean = false): TtsBatchVoiceEntry[] {
     const entries: TtsBatchVoiceEntry[] = [];
+    for (const model of this.batchLocalModels(filtered)) {
+      const entry = new TtsBatchVoiceEntry();
+      entry.key = LocalTtsModels.availabilityKey(model);
+      entry.title = model.name;
+      entry.kind = '离线音色';
+      entry.localId = model.id;
+      entries.push(entry);
+    }
     for (const voice of this.nativeVoices(false, filtered).concat(this.nativeVoices(true, filtered))) {
       const entry = new TtsBatchVoiceEntry();
       entry.key = voice.key;
@@ -986,10 +1211,14 @@ struct CustomTtsVoiceManagerPage {
           blocked.push(`${entry.title}（默认音色始终启用）`);
           continue;
         }
-        if (entry.kind !== '自定义音色') {
+        if (entry.kind === '离线音色') {
+          if (!enabled && this.ttsLocalVoiceId === entry.localId) resetCurrent = true;
+          this.ttsDisabledVoiceKeys = TtsVoiceAvailability.setEnabled(this.ttsDisabledVoiceKeys, entry.key, enabled);
+        } else if (entry.kind !== '自定义音色') {
           const currentKey = this.ttsCloudVoiceId ? TtsVoiceAvailability.cloudKey(this.ttsCloudVoiceId) :
             TtsVoiceAvailability.systemKey(this.ttsPerson, this.ttsOnline, this.ttsLanguage, this.ttsStyle);
-          if (!enabled && !this.ttsCustomVoiceId && entry.key === currentKey) resetCurrent = true;
+          // 正在用离线音色时，残留的系统音色参数不算“当前音色”。
+          if (!enabled && !this.ttsCustomVoiceId && !this.ttsLocalVoiceId && entry.key === currentKey) resetCurrent = true;
           this.ttsDisabledVoiceKeys = TtsVoiceAvailability.setEnabled(this.ttsDisabledVoiceKeys, entry.key, enabled);
         }
         count++;
@@ -1001,7 +1230,10 @@ struct CustomTtsVoiceManagerPage {
         }
         return voice;
       });
-      if (resetCurrent) this.clearCustomVoiceSelection();
+      if (resetCurrent) {
+        if (this.ttsLocalVoiceId) LocalTtsSelection.clear(getContext(this));
+        this.clearCustomVoiceSelection();
+      }
       if (count > 0) this.saveSettings();
       this.showBatchResult(enabled ? '启用' : '禁用', count, blocked);
     } finally { this.isBatchOperating = false; }
@@ -1010,49 +1242,103 @@ struct CustomTtsVoiceManagerPage {
   batchDelete(): void {
     if (this.selectedVoiceIds.length === 0 || this.isBatchOperating) return;
     const selected = this.batchVoices().filter((voice: TtsBatchVoiceEntry): boolean => this.selectedVoiceIds.includes(voice.key));
-    const blocked = selected.filter((voice: TtsBatchVoiceEntry): boolean => voice.kind !== '自定义音色')
-      .map((voice: TtsBatchVoiceEntry): string => `${voice.title}（${voice.kind}，仅自定义音色可删除）`);
+    const blocked = selected.filter((voice: TtsBatchVoiceEntry): boolean =>
+      voice.kind !== '自定义音色' && voice.kind !== '离线音色')
+      .map((voice: TtsBatchVoiceEntry): string => `${voice.title}（${voice.kind}，仅自定义和离线音色可删除）`);
     const customVoices = selected.filter((voice: TtsBatchVoiceEntry): boolean => voice.kind === '自定义音色');
-    if (customVoices.length === 0) {
+    const localTargets = this.batchLocalRemovalTargets(selected);
+    if (customVoices.length === 0 && localTargets.length === 0) {
       this.getUIContext().showAlertDialog({
         title: '无法删除所选音色',
-        message: `仅自定义音色可以删除，当前选择中没有自定义音色。未删除任何音色。\n\n${blocked.join('\n')}`,
+        message: `仅自定义音色和离线音色可以删除，当前选择中没有这两类音色。未删除任何音色。\n\n${blocked.join('\n')}`,
         confirm: { value: '知道了', action: (): void => {} }
       });
       return;
     }
     // 固定确认弹窗中的删除范围，确认后不重新读取可能已经变化的勾选项。
     const deletable = customVoices.map((voice: TtsBatchVoiceEntry): string => voice.key);
-    const names = customVoices.map((voice: TtsBatchVoiceEntry): string => voice.title).join('\n');
+    const localIds = localTargets.map((model: LocalTtsModel): string => model.id);
+    const names = customVoices.map((voice: TtsBatchVoiceEntry): string => voice.title)
+      .concat(localTargets.map((model: LocalTtsModel): string => this.localRemovalLabel(model))).join('\n');
+    const total = deletable.length + localTargets.length;
+    const hint = localTargets.length === 0 ? '删除后无法撤销。' :
+      (deletable.length === 0 ? '删除后需要重新下载或导入才能使用。' : '自定义音色删除后无法撤销，离线音色需要重新下载或导入。');
     const restrictions = blocked.length > 0 ? `\n\n以下音色无法删除，将保留：\n${blocked.join('\n')}` : '';
     this.getUIContext().showAlertDialog({
       title: '批量删除音色',
-      message: `确定删除以下 ${deletable.length} 个自定义音色吗？删除后无法撤销。\n\n${names}${restrictions}`,
+      message: `确定删除以下 ${total} 项吗？${hint}\n\n${names}${restrictions}`,
       primaryButton: { value: '取消', action: (): void => {} },
-      secondaryButton: { value: `删除 ${deletable.length} 个`, fontColor: ThemeRuntime.dangerColor(this.appDarkMode),
-        action: (): void => { if (this.pageAlive) this.confirmBatchDelete(deletable); } }
+      secondaryButton: { value: `删除 ${total} 项`, fontColor: ThemeRuntime.dangerColor(this.appDarkMode),
+        action: (): void => { if (this.pageAlive) this.confirmBatchDelete(deletable, localIds); } }
     });
   }
 
-  private async confirmBatchDelete(deletable: string[]): Promise<void> {
+  /** 选中的离线音色按模型目录去重：多人音色包共用一份文件，勾了包里任意一个就整包删除。 */
+  batchLocalRemovalTargets(selected: TtsBatchVoiceEntry[]): LocalTtsModel[] {
+    const targets: LocalTtsModel[] = [];
+    for (const entry of selected) {
+      if (entry.kind !== '离线音色') continue;
+      const model = LocalTtsModels.find(entry.localId);
+      if (!model || targets.some((item: LocalTtsModel): boolean => item.dirName === model.dirName)) continue;
+      targets.push(model);
+    }
+    return targets;
+  }
+
+  localRemovalLabel(model: LocalTtsModel): string {
+    const members = LocalTtsModels.packMembers(model);
+    if (members.length > 1) return `多人音色包（${members.length} 个音色，整包删除）`;
+    return `${model.name}（离线音色）`;
+  }
+
+  private async confirmBatchDelete(deletable: string[], localIds: string[]): Promise<void> {
     if (this.isBatchOperating) return;
     this.isBatchOperating = true;
     try {
+      const localCount = this.removeLocalModels(localIds);
       const ids = this.voices.filter((voice: HttpTTS): boolean => deletable.includes(this.customSelectionKey(String(voice.id))))
         .map((voice: HttpTTS): string => String(voice.id));
       const count = ids.length;
-      await this.dissolveVoices(ids);
-      if (!this.pageAlive) return;
-      if (deletable.includes(this.customSelectionKey(this.ttsCustomVoiceId))) this.clearCustomVoiceSelection();
-      this.commitVoiceRemoval(ids, () => {
-        this.voices = this.voices.filter((voice: HttpTTS): boolean => !deletable.includes(this.customSelectionKey(String(voice.id))));
-        this.selectedVoiceIds = this.selectedVoiceIds.filter((key: string): boolean => !deletable.includes(key));
-      });
-      if (count > 0) this.saveSettings();
+      if (count > 0) {
+        await this.dissolveVoices(ids);
+        if (!this.pageAlive) return;
+        if (deletable.includes(this.customSelectionKey(this.ttsCustomVoiceId))) this.clearCustomVoiceSelection();
+        this.commitVoiceRemoval(ids, () => {
+          this.voices = this.voices.filter((voice: HttpTTS): boolean => !deletable.includes(this.customSelectionKey(String(voice.id))));
+          this.selectedVoiceIds = this.selectedVoiceIds.filter((key: string): boolean => !deletable.includes(key));
+        });
+        this.saveSettings();
+      }
       // 条目 key 带多选状态，补位放完再退出多选，否则其余条目整批重建、看不到补位。
-      if (this.selectedVoiceIds.length === 0) setTimeout(() => this.exitSelectionMode(), ListDissolve.CLOSE_MS + 40);
-      HdsFeedback.showToast(`已删除 ${count} 个音色`);
+      if (this.selectedVoiceIds.length === 0) {
+        setTimeout(() => this.exitSelectionMode(), count > 0 ? ListDissolve.CLOSE_MS + 40 : 0);
+      }
+      HdsFeedback.showToast(`已删除 ${count + localCount} 个音色`);
     } finally { this.isBatchOperating = false; }
+  }
+
+  /** 删除离线模型文件；返回移除的音色数（音色包按包内音色数计）。 */
+  private removeLocalModels(localIds: string[]): number {
+    if (localIds.length === 0) return 0;
+    const context = getContext(this);
+    const removedKeys: string[] = [];
+    let clearSelection = false;
+    let count = 0;
+    LocalTtsEngine.release();
+    for (const id of localIds) {
+      const model = LocalTtsModels.find(id);
+      if (!model) continue;
+      const members = LocalTtsModels.packMembers(model);
+      for (const member of members) {
+        removedKeys.push(LocalTtsModels.availabilityKey(member));
+        if (member.id === this.ttsLocalVoiceId) clearSelection = true;
+      }
+      LocalTtsModels.remove(context, model);
+      count += members.length;
+    }
+    if (clearSelection) LocalTtsSelection.clear(context);
+    this.selectedVoiceIds = this.selectedVoiceIds.filter((key: string): boolean => !removedKeys.includes(key));
+    return count;
   }
 
   openEditDialog(voice: HttpTTS): void {

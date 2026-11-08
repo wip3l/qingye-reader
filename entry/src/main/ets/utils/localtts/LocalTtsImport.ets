@@ -4,6 +4,7 @@ import picker from '@ohos.file.picker';
 import zlib from '@ohos.zlib';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from '../../theme/share/ZipEntryInspector';
 import { LocalTtsModel, LocalTtsModelFile, LocalTtsModels } from './LocalTtsModels';
+import { LocalTtsSpeakers } from './LocalTtsSpeakers';
 
 class ImportedFile {
   path: string = '';
@@ -85,7 +86,8 @@ export class LocalTtsImport {
         if (copied !== target) fs.renameSync(copied, target);
       }
       LocalTtsModels.registerImported(target, model);
-      return LocalTtsModels.find(model.id) || model;
+      return LocalTtsModels.all().find((item: LocalTtsModel): boolean =>
+        item.importId === model.id && item.sid === model.sid) || model;
     } catch (error) {
       const message = ((error as Error).message || String(error)).replace(/主题包/g, '压缩包');
       throw new Error(message.startsWith('模型') || message.startsWith('压缩包') || message.startsWith('缺少') ||
@@ -214,6 +216,10 @@ export class LocalTtsImport {
       if (!fs.accessSync(phontab)) throw new Error('espeak-ng-data 目录不完整（缺少 phontab）');
       model.files.push(new LocalTtsModelFile(`${model.dataDir}/phontab`, fs.statSync(phontab).size, ''));
     }
+    const speakers = LocalTtsSpeakers.detect(dir, model.modelFile, model.kind, model.voicesFile);
+    model.speakers = speakers.count;
+    model.speakerNames = speakers.names;
+    model.sid = LocalTtsSpeakers.defaultSid(speakers);
     return model;
   }
 

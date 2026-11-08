@@ -17,6 +17,8 @@ interface LocalTtsRequest {
   lexicon?: string;
   dataDir?: string;
   ruleFsts?: string;
+  noiseScale?: number;
+  noiseScaleW?: number;
   threads?: number;
   text?: string;
   speed?: number;
@@ -53,6 +55,9 @@ function buildConfig(request: LocalTtsRequest): OfflineTtsConfig {
     config.model.vits.tokens = tokens;
     config.model.vits.lexicon = lexicon;
     config.model.vits.dataDir = dataDir;
+    // 不传就用 sherpa-onnx 默认值；Piper 模型训练时的推荐值往往更小，读错字更少。
+    if ((request.noiseScale || 0) > 0) config.model.vits.noiseScale = request.noiseScale || 0;
+    if ((request.noiseScaleW || 0) > 0) config.model.vits.noiseScaleW = request.noiseScaleW || 0;
   }
   config.ruleFsts = (request.ruleFsts || '').split(',')
     .filter((path: string): boolean => !!path && fs.accessSync(path)).join(',');
