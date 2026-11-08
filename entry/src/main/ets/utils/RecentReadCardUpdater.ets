@@ -5,7 +5,7 @@ import fs from '@ohos.file.fs';
 import {
   RECENT_READ_FORM_ABILITY,
   RECENT_READ_FORM_MODULE,
-  RECENT_READ_FORM_NAME,
+  RECENT_READ_FORM_NAMES,
   RecentReadCardData,
   RecentReadCardDataProvider
 } from './RecentReadCardData';
@@ -79,21 +79,23 @@ export class RecentReadCardUpdater {
   }
 
   private static async requestSystemReload(context: common.UIAbilityContext): Promise<void> {
-    try {
-      const count = await formProvider.reloadForms(
-        context,
-        RECENT_READ_FORM_MODULE,
-        RECENT_READ_FORM_ABILITY,
-        RECENT_READ_FORM_NAME
-      );
-      hilog.info(0x0000, 'recentCard', 'System reload %{public}d', count);
-    } catch (e) {
-      console.info('请求系统重载最近阅读卡片失败，已使用直接 updateForm 路径:', e);
+    for (const formName of RECENT_READ_FORM_NAMES) {
+      try {
+        const count = await formProvider.reloadForms(
+          context,
+          RECENT_READ_FORM_MODULE,
+          RECENT_READ_FORM_ABILITY,
+          formName
+        );
+        hilog.info(0x0000, 'recentCard', 'System reload %{public}s %{public}d', formName, count);
+      } catch (e) {
+        console.info(`请求系统重载卡片 ${formName} 失败，已使用直接 updateForm 路径:`, e);
+      }
     }
   }
 
   private static isRecentReadForm(runningForm: formInfo.RunningFormInfo): boolean {
-    if (runningForm.formName !== RECENT_READ_FORM_NAME) {
+    if (!RECENT_READ_FORM_NAMES.includes(runningForm.formName)) {
       return false;
     }
     if (runningForm.moduleName && runningForm.moduleName !== RECENT_READ_FORM_MODULE) {

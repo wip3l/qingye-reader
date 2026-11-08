@@ -21,6 +21,14 @@
       "value": "显示最近阅读书籍并快速继续阅读"
     },
     {
+      "name": "cover_read_form_name",
+      "value": "封面阅读"
+    },
+    {
+      "name": "cover_read_form_desc",
+      "value": "以封面铺满卡片显示最近在读的书"
+    },
+    {
       "name": "bookshelf",
       "value": "书架"
     },

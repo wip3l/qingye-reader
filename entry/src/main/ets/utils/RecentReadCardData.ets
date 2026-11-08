@@ -14,6 +14,9 @@ import { PrivateShelfStore } from './PrivateShelfStore';
 import { AppThemeSettingsStore } from './AppThemeSettingsStore';
 
 export const RECENT_READ_FORM_NAME = 'RecentReadForm';
+/** 封面卡片与最近阅读卡片共用同一个 FormExtensionAbility 和同一份数据。 */
+export const COVER_READ_FORM_NAME = 'CoverReadForm';
+export const RECENT_READ_FORM_NAMES: string[] = [RECENT_READ_FORM_NAME, COVER_READ_FORM_NAME];
 export const RECENT_READ_FORM_ABILITY = 'RecentReadFormAbility';
 export const RECENT_READ_FORM_MODULE = 'entry';
 export const RECENT_READ_DIMENSION_2_2 = 2;

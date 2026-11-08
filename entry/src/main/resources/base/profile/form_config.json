@@ -18,6 +18,23 @@
       "formVisibleNotify": true,
       "updateDuration": 1,
       "scheduledUpdateTime": "06:00"
+    },
+    {
+      "name": "CoverReadForm",
+      "displayName": "$string:cover_read_form_name",
+      "description": "$string:cover_read_form_desc",
+      "src": "./ets/widgets/CoverReadCard.ets",
+      "uiSyntax": "arkts",
+      "isDefault": false,
+      "colorMode": "auto",
+      "defaultDimension": "2*2",
+      "supportDimensions": [
+        "2*2"
+      ],
+      "updateEnabled": true,
+      "formVisibleNotify": true,
+      "updateDuration": 1,
+      "scheduledUpdateTime": "06:00"
     }
   ]
 }
