@@ -34,9 +34,12 @@ function filesUnder(target) {
   });
 }
 
+// W3C namespace URIs (XLink, SVG, XHTML) are identifiers, never fetched, so they are not content endpoints.
+const namespaceUri = /https?:\/\/www\.w3\.org\/[a-z0-9_/.-]*/gi;
+
 const failures = [];
 for (const file of scanRoots.flatMap(filesUnder)) {
-  const content = fs.readFileSync(file, 'utf8');
+  const content = fs.readFileSync(file, 'utf8').replace(namespaceUri, '');
   for (const [label, pattern] of forbidden) {
     if (pattern.test(content)) failures.push(`${path.relative(projectRoot, file)}: ${label}`);
   }

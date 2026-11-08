@@ -13,6 +13,7 @@ const context=vm.createContext({
  selectedVoiceKey:()=>selected,selectedVoiceTitle:()=>choices.find(c=>c.key===selected).label,
  selectVoice:(c,book)=>{selected=c.key;calls.push([c.key,book]);return true}},
  TtsVoiceCatalog:{cloudVoiceTitle:()=> 'cloud',customVoiceTitle:()=> 'custom',voiceTitle:()=> 'system'},
+ LocalTtsModels:{voiceTitle:()=> 'local',voiceKey:model=>'local:'+model.id,selectableModels:()=>[]},
  HdsFeedback:{showToast:message=>{throw Error(message)}},console
 });
 const readerSource=read('pages/ReadBook.ets'),settingsSource=read('pages/TtsSettings.ets');
@@ -20,14 +21,14 @@ const reader=vm.runInContext(stripTypeScriptTypes('({'+[
  'mimoQuickVoiceLabels','regularTtsVoiceCount','applyMimoPresetChoice','ttsQuickVoiceOptions','ttsQuickVoiceLabels',
  'ttsQuickVoiceSelectedIndex','selectTtsQuickVoice'].map(n=>method(readerSource,n)).join(',')+'})'),context);
 Object.assign(reader,{bookUrl:'current-book',isTtsSpeaking:false,ttsReader:{isSpeaking:()=>false},
- ttsCloudVoices:[{}],selectableCustomTtsVoices:()=>[{}],selectableSystemTtsVoices:()=>[{}],
+ ttsCloudVoices:[{}],selectableLocalTtsVoices:()=>[{id:'offline'}],currentTtsVoiceKey:()=>'',selectableCustomTtsVoices:()=>[{}],selectableSystemTtsVoices:()=>[{}],
  isCurrentCloudTtsVoice:()=>false,isCurrentCustomTtsVoice:()=>false,isCurrentTtsVoice:()=>false,
  getUIContext:()=>({getRouter:()=>({pushUrl:()=>routes++})}),publishTtsFloatingVoices(){},
- applyCloudTtsVoice:()=>calls.push(['cloud']),applyCustomTtsVoice:()=>calls.push(['custom']),applyTtsVoice:()=>calls.push(['system'])});
+ applyLocalTtsVoice:()=>calls.push(['local']),applyCloudTtsVoice:()=>calls.push(['cloud']),applyCustomTtsVoice:()=>calls.push(['custom']),applyTtsVoice:()=>calls.push(['system'])});
 assert.deepEqual(Array.from(reader.ttsQuickVoiceLabels()).slice(0,3),choices.map(c=>c.label));
 for(let i=0;i<choices.length;i++){reader.selectTtsQuickVoice(i);assert.equal(selected,choices[i].key);assert.equal(reader.ttsQuickVoiceSelectedIndex(),i);assert.equal(calls.at(-1)[1],'current-book');}
-for(const [offset,name] of [[0,'cloud'],[1,'custom'],[2,'system']]){reader.selectTtsQuickVoice(choices.length+offset);assert.equal(calls.at(-1)[0],name,'regular-provider indexes remain aligned');}
-reader.selectTtsQuickVoice(choices.length+3);assert.equal(routes,1,'trailing settings entry still opens settings');
+for(const [offset,name] of [[0,'local'],[1,'cloud'],[2,'custom'],[3,'system']]){reader.selectTtsQuickVoice(choices.length+offset);assert.equal(calls.at(-1)[0],name,'regular-provider indexes remain aligned');}
+reader.selectTtsQuickVoice(choices.length+4);assert.equal(routes,1,'trailing settings entry still opens settings');
 configured=false;const before=calls.length;reader.selectTtsQuickVoice(1);assert.equal(routes,2);assert.equal(calls.length,before,'no key navigates to setup without activating a preset');
 const settings=vm.runInContext(stripTypeScriptTypes('({'+method(settingsSource,'voiceSelectOptions')+'})'),context);
 Object.assign(settings,{mimoChoices:choices,cloudVoices:[],enabledCustomVoices:()=>[],voices:[],
