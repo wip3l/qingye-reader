@@ -81,6 +81,27 @@ try {
   equal(N.stripDuplicatedTitle(`${cover}\n正文第一段。`, '第1章 戏鬼回家'), `${cover}\n正文第一段。`,
     '插图后不是标题时原样返回');
   equal(N.stripDuplicatedTitle('第一章开端了\n正文。', '第一章 开端'), '第一章开端了\n正文。', '忽略空白后仍不同则保留');
+  equal(N.stripDuplicatedTitle('第1272章：好好的，都好好的\n正文。', '第1272章 好好的，都好好的'), '正文。',
+    '带章节号的标题只差标点时剥离');
+  equal(N.stripDuplicatedTitle('好好的，都好好的\n正文。', '第1272章 好好的，都好好的'), '正文。',
+    '首行只差章节号时剥离');
+  equal(N.stripDuplicatedTitle('他笑了。\n正文。', '第3章 他笑了'), '他笑了。\n正文。', '去掉章节号后只差句号的首句保留');
+  equal(N.stripDuplicatedTitle('他笑了。\n正文。', '他笑了'), '他笑了。\n正文。', '不带章节号的标题不做宽松比较');
+  equal(N.stripDuplicatedTitle('夜\n正文。', '第5章 夜'), '夜\n正文。', '去掉章节号后太短不比较');
+  equal(N.stripDuplicatedTitle('第1272章 好好的，都好好的她扭脸，小眉头拧起，受屈感明显。\n下一段。',
+    '第1272章 好好的，都好好的'), '她扭脸，小眉头拧起，受屈感明显。\n下一段。', '标题后直接接正文时只去掉标题');
+  equal(N.stripDuplicatedTitle(`第1章${zwsp}戏鬼回家：“我……是谁？”${comment}`, '第1章 戏鬼回家'), `“我……是谁？”${comment}`,
+    '标题后接正文时保留正文上的段评');
+  equal(N.stripDuplicatedTitle('楔子开始的地方，很远。', '楔子'), '楔子开始的地方，很远。', '短标题不做前缀剥离');
+  equal(N.stripDuplicatedTitle('第一章 开端已过去很久\n正文。', '第一章 开端'), '第一章 开端已过去很久\n正文。',
+    '标题后剩下的不像正文句子时保留');
+
+  // ---- 剥离在软换行合并之前 ----
+  equal(N.mergeSoftWrappedLines('第十二章 归来\n他回来了'), '第十二章 归来\n他回来了', '标题行不与下一行合并');
+  equal(N.normalizeChapterBody('第1272章 好好的，都好好的\n她扭脸，小眉头拧起，受屈感明显……男人嘛。\n不要过分相信。',
+    '第1272章 好好的，都好好的'), '她扭脸，小眉头拧起，受屈感明显……男人嘛。\n不要过分相信。', '标题行与短首段不会先被合并');
+  equal(N.normalizeChapterBody('好好的，\n都好好的\n\n她扭脸。', '好好的，都好好的'), '她扭脸。', '标题被拆成两行时合并后再剥离');
+  equal(N.normalizeChapterBody('第一章 开端\n正文。'), '第一章 开端\n正文。', '不传标题时不剥离');
   equal(N.splitLeadingImages(`${cover}\n\n　　正文。`), [cover, '　　正文。'], '拆出开头的卷首插图');
   equal(N.splitLeadingImages(`\n${cover}\n\n${inlineImage}\n　　正文。`), [`${cover}\n\n${inlineImage}`, '　　正文。'],
     '连续多张插图一起拆出');
