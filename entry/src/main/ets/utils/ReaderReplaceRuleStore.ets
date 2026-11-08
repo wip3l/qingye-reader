@@ -41,6 +41,9 @@ export class ReaderReplaceRuleStore {
   // 固定编号让多设备同步时是同一条；取远大于时间戳的值，避开导入规则自带的小编号。旧版客户端回传会丢掉
   // builtin 字段，所以也按编号认。
   private static readonly BUILTIN_REMOVE_TITLE_ID: number = 8888000000001;
+  /** 内置“移除重复标题”：正文开头重复章节名时去掉那一行（或那一截），默认开启。 */
+  static readonly BUILTIN_REMOVE_DUPLICATE_TITLE: string = 'removeDuplicateTitle';
+  private static readonly BUILTIN_REMOVE_DUPLICATE_TITLE_ID: number = 8888000000002;
 
   static async load(context: Context, force: boolean = false): Promise<ReaderReplaceRule[]> {
     if (!force && ReaderReplaceRuleStore.cachedRules) {
@@ -82,9 +85,19 @@ export class ReaderReplaceRuleStore {
         ReaderReplaceRuleStore.matchesBookScope(rule, book));
   }
 
+  /** 本书是否启用了内置“移除重复标题”（同样受特定范围、排除范围限制）。 */
+  static removesDuplicateTitle(rules: ReaderReplaceRule[], book: Book | null): boolean {
+    return rules.some((rule: ReaderReplaceRule): boolean =>
+      rule.builtin === ReaderReplaceRuleStore.BUILTIN_REMOVE_DUPLICATE_TITLE && rule.enabled !== false &&
+        ReaderReplaceRuleStore.matchesBookScope(rule, book));
+  }
+
   static builtinDescription(rule: ReaderReplaceRule): string {
-    return rule.builtin === ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE ?
-      '正文顶部不显示章节名，顶栏和目录照常显示' : '';
+    if (rule.builtin === ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE) {
+      return '正文顶部不显示章节名，顶栏和目录照常显示';
+    }
+    return rule.builtin === ReaderReplaceRuleStore.BUILTIN_REMOVE_DUPLICATE_TITLE ?
+      '书源正文开头又写了一遍章节名时去掉，只保留排版的章节名' : '';
   }
 
   static applyTitle(text: string, rules: ReaderReplaceRule[], book: Book | null): string {
@@ -262,23 +275,31 @@ export class ReaderReplaceRuleStore {
     }
   }
 
-  /** 内置规则不能删除：缺了就补回列表最前面，默认关闭；重复的只留第一条。 */
+  /** 内置规则不能删除：缺了就按固定顺序补回列表最前面；重复的只留第一条。 */
   private static withBuiltins(rules: ReaderReplaceRule[]): ReaderReplaceRule[] {
-    let seen = false;
+    const seen: string[] = [];
     const result = rules.filter((rule: ReaderReplaceRule): boolean => {
-      if (rule.builtin !== ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE) return true;
-      if (seen) return false;
-      seen = true;
+      if (!rule.builtin) return true;
+      if (seen.includes(rule.builtin)) return false;
+      seen.push(rule.builtin);
       return true;
     });
-    if (!seen) {
-      const rule = new ReaderReplaceRule();
-      rule.id = ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE_ID;
-      rule.builtin = ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE;
-      rule.enabled = false;
-      result.unshift(ReaderReplaceRuleStore.normalize(rule));
+    // 倒序 unshift，补回后的顺序与这里列出的一致。
+    const defaults: ReaderReplaceRule[] = [
+      ReaderReplaceRuleStore.builtinRule(ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE_ID, false),
+      ReaderReplaceRuleStore.builtinRule(ReaderReplaceRuleStore.BUILTIN_REMOVE_DUPLICATE_TITLE_ID, true)
+    ];
+    for (let index = defaults.length - 1; index >= 0; index--) {
+      if (!seen.includes(defaults[index].builtin)) result.unshift(defaults[index]);
     }
     return result;
+  }
+
+  private static builtinRule(id: number, enabled: boolean): ReaderReplaceRule {
+    const rule = new ReaderReplaceRule();
+    rule.id = id;
+    rule.enabled = enabled;
+    return ReaderReplaceRuleStore.normalize(rule);
   }
 
   private static normalize(source: ReaderReplaceRule): ReaderReplaceRule {
@@ -296,20 +317,30 @@ export class ReaderReplaceRuleStore {
     const timeout = Math.round(Number(source?.timeoutMs));
     rule.timeoutMs = Number.isNaN(timeout) ? 3000 : Math.max(100, Math.min(timeout, 10000));
     rule.enabled = source?.enabled !== false;
+    // 内置规则只有开关和书籍范围可改，其余字段固定；匹配内容留空，替换流程自然跳过它。
     if (source?.builtin === ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE ||
       rule.id === ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE_ID) {
-      // 内置规则只有开关和书籍范围可改，其余字段固定；匹配内容留空，替换流程自然跳过它。
-      rule.id = ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE_ID;
-      rule.builtin = ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE;
-      rule.name = '移除标题';
-      rule.group = '内置';
-      rule.pattern = '';
-      rule.replacement = '';
-      rule.applyToTitle = true;
-      rule.applyToContent = false;
-      rule.isRegex = false;
+      ReaderReplaceRuleStore.fixBuiltin(rule, ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE_ID,
+        ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE, '移除标题', true, false);
+    } else if (source?.builtin === ReaderReplaceRuleStore.BUILTIN_REMOVE_DUPLICATE_TITLE ||
+      rule.id === ReaderReplaceRuleStore.BUILTIN_REMOVE_DUPLICATE_TITLE_ID) {
+      ReaderReplaceRuleStore.fixBuiltin(rule, ReaderReplaceRuleStore.BUILTIN_REMOVE_DUPLICATE_TITLE_ID,
+        ReaderReplaceRuleStore.BUILTIN_REMOVE_DUPLICATE_TITLE, '移除重复标题', false, true);
     }
     return rule;
+  }
+
+  private static fixBuiltin(rule: ReaderReplaceRule, id: number, builtin: string, name: string,
+    applyToTitle: boolean, applyToContent: boolean): void {
+    rule.id = id;
+    rule.builtin = builtin;
+    rule.name = name;
+    rule.group = '内置';
+    rule.pattern = '';
+    rule.replacement = '';
+    rule.applyToTitle = applyToTitle;
+    rule.applyToContent = applyToContent;
+    rule.isRegex = false;
   }
 
   static cloneRule(source: ReaderReplaceRule): ReaderReplaceRule {

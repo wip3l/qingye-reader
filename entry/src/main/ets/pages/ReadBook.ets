@@ -256,8 +256,6 @@ const READER_DOUBLE_PAGE_SPINE_WIDTH = 44;
 const READER_SPREAD_MIN_ASPECT = 0.8;
 // 推页接缝阴影的宽度（vp），以及被压住那页在完全盖住时浅纱的不透明度。
 const PUSH_PAGE_TURN_SHADOW_SIZE = 18;
-/** 书籍变量：本书是否去掉正文开头重复的章节名，只记关闭（off）。 */
-const READER_REMOVE_DUPLICATE_TITLE_VARIABLE = 'readerRemoveDuplicateTitle';
 const PUSH_PAGE_TURN_SHADE_MAX_OPACITY = 0.45;
 // 正文选中菜单里的自定义“替换”项 ID，用于与系统菜单项（复制/翻译等）区分。
 const READER_REPLACE_MENU_ITEM_ID: string = 'reader_replace_rule';
@@ -459,8 +457,6 @@ struct ReadBookPage {
   @State readerComicTextConvert: boolean = false;
   /** 本书正文繁→简（书籍变量 readerTextConvert），漫画模式下不生效。 */
   @State readerTextConvert: boolean = false;
-  /** 本书去掉正文开头重复的章节名（书籍变量 readerRemoveDuplicateTitle，默认开，关掉记 off）。 */
-  @State readerRemoveDuplicateTitle: boolean = true;
   /** 简繁字典加载完成后递增：章节标题等同步显示处据此重算。 */
   @State readerTextConvertRevision: number = 0;
   /** 开书检测到繁体、本书又没选过时显示的询问卡片。 */
@@ -1916,8 +1912,6 @@ struct ReadBookPage {
       this.book = engine.book || this.book;
       this.chapters = engine.chapters;
       this.initializeReaderComicMode();
-      this.readerRemoveDuplicateTitle =
-        this.book?.getVariable(READER_REMOVE_DUPLICATE_TITLE_VARIABLE) !== ReaderTextConvert.OFF;
       await this.initializeReaderTextConvert();
       if (loadSerial !== this.bookLoadSerial) {
         return;
@@ -4883,16 +4877,6 @@ struct ReadBookPage {
           '布局元素设置',
           () => this.openLayoutElementSettings()
         )
-        if (!this.isReaderComicModeActive()) {
-          this.readerActionMenuItem(
-            $r('sys.symbol.doc_text_badge_nosign'),
-            '移除重复标题',
-            () => this.setReaderRemoveDuplicateTitle(!this.readerRemoveDuplicateTitle),
-            true,
-            true,
-            this.readerRemoveDuplicateTitle ? '已开启' : '已关闭'
-          )
-        }
         this.readerActionMenuItem(
           $r('sys.symbol.arrow_left_arrow_right'),
           '替换净化配置',
@@ -4912,13 +4896,13 @@ struct ReadBookPage {
 
   @Builder
   readerActionMenuItem(icon: Resource, label: string, action: () => void,
-    enabled: boolean = true, _showDivider: boolean = true, badge: string = '') {
+    enabled: boolean = true, _showDivider: boolean = true) {
     // 系统弹出层跟随应用的日夜模式，文字用应用主题色。
     PopupMenuAction(icon, label, ThemeRuntime.primaryTextColor(this.appDarkMode), () => {
       if (!enabled) return;
       this.showReaderActionMenu = false;
       action();
-    }, enabled, badge, ThemeRuntime.subTextColor(this.appDarkMode))
+    }, enabled)
   }
 
   onSystemDialogFlagChanged(): void {
@@ -6813,40 +6797,6 @@ struct ReadBookPage {
     this.content = processed;
     this.refreshReaderTextRender();
     this.paginateContent(processed, chapterIndex);
-    if (this.hasPagedReaderArea() && this.pagedContentText) {
-      this.currentPageIndex = this.normalizeReaderSpreadPageIndex(this.findPageIndexByOffset(readingOffset));
-      this.syncCurrentPageText();
-      this.forceCurrentReaderPageRender();
-      this.refreshCurrentReaderV2RetainedPages(true);
-    }
-    this.preloadNextChapterPaginationLater();
-    this.preloadPreviousChapterPaginationLater();
-  }
-
-  /** “更多”菜单里的开关：只改本书。默认开着，关掉才记下 off。 */
-  setReaderRemoveDuplicateTitle(enabled: boolean): void {
-    if (!this.book || enabled === this.readerRemoveDuplicateTitle) return;
-    const chapterIndex = this.currentChapterIndex;
-    const content = this.content || '';
-    const oldLength = content ? this.buildPagedSourceText(chapterIndex, content).length : 0;
-    this.readerRemoveDuplicateTitle = enabled;
-    this.book.putVariable(READER_REMOVE_DUPLICATE_TITLE_VARIABLE, enabled ? '' : ReaderTextConvert.OFF);
-    AppDatabase.getInstance().updateBook(this.book, false).catch((error: Error) => {
-      console.warn('保存移除重复标题设置失败:', error);
-    });
-    this.readerPaginationCache.clear();
-    this.adjacentPaginationPreloadSerial++;
-    this.pageTurnPreviewKey = '';
-    this.pageTurnPreviewLoadingKey = '';
-    if (!content || this.chapters.length === 0 || this.isReaderComicModeActive()) return;
-    // 只有章首那一行增删，阅读位置按全章长度差平移；还在章首的不动。
-    const shift = this.buildPagedSourceText(chapterIndex, content).length - oldLength;
-    const offset = this.getReaderStableReflowOffset();
-    const readingOffset = offset > 0 ? Math.max(0, offset + shift) : offset;
-    this.readerTypographyRestoreOffset = readingOffset;
-    this.invalidateReaderTypographyLayout();
-    this.refreshReaderTextRender();
-    this.paginateContent(content, chapterIndex);
     if (this.hasPagedReaderArea() && this.pagedContentText) {
       this.currentPageIndex = this.normalizeReaderSpreadPageIndex(this.findPageIndexByOffset(readingOffset));
       this.syncCurrentPageText();
@@ -14412,7 +14362,7 @@ struct ReadBookPage {
       effectiveContent.substring(leadingAction.end).replace(/^\s+/, '') :
       effectiveContent;
     const sourceBody = ReaderTextNormalizer.normalizeChapterBody(contentBody,
-      this.readerRemoveDuplicateTitle ? title : '');
+      this.readerRemovesDuplicateTitle() ? title : '');
     const body = this.buildIndentedChapterBody(sourceBody);
     if (LocalBookService.hasEpubImageMarkers(body) &&
       !LocalBookService.stripEpubImageMarkers(body).trim()) {
@@ -14441,6 +14391,11 @@ ${leading}` : leading;
     const parts = ReaderTextNormalizer.splitLeadingImages(body);
     return parts[0] ? `${volumeTitle}\n\n${parts[0]}\n\n${heading}\n\n${parts[1]}` :
       `${volumeTitle}\n\n${heading}\n\n${body}`;
+  }
+
+  /** 替换净化里的内置“移除重复标题”（默认开启）。 */
+  readerRemovesDuplicateTitle(): boolean {
+    return ReaderReplaceRuleStore.removesDuplicateTitle(this.readerReplaceRules, this.book);
   }
 
   readerRemovesChapterTitle(): boolean {
