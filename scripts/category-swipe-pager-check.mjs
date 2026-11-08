@@ -14,7 +14,9 @@ const context = vm.createContext({
     MEDIA_CATEGORIES: ['novel', 'comic', 'audio', 'video'],
     mediaCategoryOf: book => book.category || 'novel'
   },
-  ListScroller: class { scrollToIndex() {} }
+  ListScroller: class { scrollToIndex() {} },
+  // 简繁同搜未就绪时聚合按逐字分组，与没开该功能时一致。
+  SearchChineseScriptRuntime: { ready: () => null }
 });
 Object.assign(context, {
   SearchPage: { HEADER_CONTROL_SIZE: 40, FIELD_ROW_TOP_GAP: 8, STATUS_ROW_HEIGHT: 28, CATEGORY_BAR_HEIGHT: 44 },

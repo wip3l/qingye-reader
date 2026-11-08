@@ -69,6 +69,7 @@ function harness(disk = new Map()) {
     AppStorage: { setOrCreate() {} }, getContext: () => ({}),
     SearchExploreSettingsStore: { getSearchConcurrency: () => 6 },
     SearchBookShelfHelper: { isNavigationResult: () => false },
+    SearchChineseScriptRuntime: { forSearch: async () => null, saveHints: async () => {} },
     HdsFeedback: { showToast: text => events.push(text) }
   });
   function load(path, name, component = false) {
