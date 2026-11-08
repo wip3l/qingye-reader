@@ -3,7 +3,8 @@ import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { webview } from '@kit.ArkWeb';
 import { WebRuntimeAvailability } from '../utils/WebRuntimeAvailability';
-import { HdsAnimationMode, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
+import { HdsAnimationMode, HdsBarWidthRangeOptions, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
+import lazy { motion } from '@kit.MultimodalAwarenessKit';
 import { Book, BookChapter, BookSourceStageWebRuntime } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookFetchRuntimeHost } from '../components/WebBookFetchRuntimeHost';
@@ -19,7 +20,8 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';
 import { AudioOfflineCatalogInfo, ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { ReaderTtsPlayerPanel } from '../components/ReaderTtsPlayerPanel';
-import { ReaderTtsCapsule } from '../components/reader/ReaderTtsControls';
+import { HomeTtsAccessory } from '../components/home/HomeTtsAccessory';
+import { ReaderMaterialPanel } from '../components/reader/ReaderFloatingMaterialBar';
 import { TtsCatalogSheet, CatalogTitleDataSource } from '../components/TtsCatalogSheet';
 import { BlankTabPage } from '../components/home/HomeTabShells';
 import { BookshelfPage } from '../components/home/BookshelfPage';
@@ -36,6 +38,15 @@ struct Index {
   @StorageProp('smartGripEnabled') smartGripEnabled: boolean = true;
   /** 方案 B：由原生页签容器统一执行连续横移，不再叠加页面入场动画。 */
   static readonly TAB_SWITCH_DURATION: number = 320;
+  static readonly COMPAT_ACCESSORY_HEIGHT: number = 56;
+  static readonly COMPAT_ACCESSORY_MARGIN: number = 12;
+  /** 悬浮底栏（barHeight）高度；并成一行时伴生条和页签圆钮都用这个高度。 */
+  static readonly FLOATING_TAB_BAR_HEIGHT: number = 56;
+  static readonly ACCESSORY_HEIGHT: number = 48;
+  static readonly ACCESSORY_GAP: number = 8;
+  static readonly ACCESSORY_SIDE_MARGIN: number = 16;
+  static readonly ACCESSORY_MAX_WIDTH: number = 480;
+  static readonly TTS_SHARED_MOTION_ID: string = 'home_tts_player';
   static readonly SEARCH_LAYER_FADE_DURATION: number = 200;
   private stageRuntimeController: webview.WebviewController = new webview.WebviewController();
   @State stageRuntimeMounted: boolean = true;
@@ -106,10 +117,13 @@ struct Index {
   globalTtsCatalogReverseOrder: boolean = false;
   @State globalTtsViewportWidth: number = 360;
   @State globalTtsViewportHeight: number = 720;
-  @StorageLink('globalTtsCapsulePositionX') globalTtsCapsulePositionX: number = 16;
-  @StorageLink('globalTtsCapsulePositionY') globalTtsCapsulePositionY: number = -1;
-  private globalTtsDragOriginX: number = 0;
-  private globalTtsDragOriginY: number = 0;
+  /** 列表下滑后底栏藏起，伴生条落到底栏那一行、旁边留当前页签的圆钮；回到上方再分成两行。 */
+  @State globalTtsBarMerged: boolean = false;
+  /** 握持手：-1 左手，1 右手，0 未知（按左手）。并成一行时页签圆钮放在握持手一侧。 */
+  @State globalTtsHandSide: number = 0;
+  private homeHoldingHandSubscribed: boolean = false;
+  private homeHoldingHandCallback: (status: motion.HoldingHandStatus) => void =
+    (status: motion.HoldingHandStatus): void => this.onHomeHoldingHandChanged(status);
   private globalTtsCatalogScroller: ListScroller = new ListScroller();
   private globalTtsCatalogSource: CatalogTitleDataSource = new CatalogTitleDataSource();
 
@@ -138,6 +152,7 @@ struct Index {
     this.openPendingShortcut();
     hilog.info(0x0000, 'testTag', 'StartupTrace Index onPageShow %{public}d', Date.now());
     this.syncHomeSystemBars();
+    this.syncHomeHoldingHandTracking();
     // ReadBook is pushed over the retained Index route. Its final progress notification can arrive while the
     // bookshelf component is covered, so the storage watcher may already have been consumed before the route is
     // visible again. Publish a strictly monotonic refresh revision on page-show to force the retained shelf to
@@ -163,10 +178,13 @@ struct Index {
 
   onPageHide(): void {
     this.shortcutRoutingActive = false;
+    this.syncHomeHoldingHandTracking();
   }
 
   aboutToDisappear(): void {
     this.clearHomeTabSwitch();
+    this.shortcutRoutingActive = false;
+    this.syncHomeHoldingHandTracking();
     this.stageRuntimeDisappearing = true;
     if (this.stageRuntimeAttachRetryId >= 0) clearTimeout(this.stageRuntimeAttachRetryId);
     this.stageRuntimeAttachRetryId = -1;
@@ -322,6 +340,8 @@ struct Index {
       const hidden = this.bottomBarCollapseProgress >= threshold;
       if (!resetImmersiveState && hidden === this.immersiveTabBarHidden) return;
       this.immersiveTabBarHidden = hidden;
+      // 有伴生条时底栏照样藏起，伴生条落到底栏那一行，旁边留一个当前页签的圆钮。
+      this.setGlobalTtsBarMerged(hidden && this.globalTtsActive);
       if (hidden) {
         this.immersiveTabsController.applyHideAnimation(HdsAnimationMode.SCROLL_ANIMATION);
       } else {
@@ -366,6 +386,40 @@ struct Index {
     if (!this.globalTtsActive) {
       this.showGlobalTtsPanel = false;
     }
+    // 伴生条出现或消失时重新套用底栏宽度和收起状态。
+    this.syncBottomBarCollapse(true);
+    this.syncHomeHoldingHandTracking();
+  }
+
+  private syncHomeHoldingHandTracking(): void {
+    const wanted = this.smartGripEnabled && this.shortcutRoutingActive && this.globalTtsActive &&
+      this.supportsImmersiveTabs() && canIUse('SystemCapability.MultimodalAwareness.Motion');
+    if (wanted === this.homeHoldingHandSubscribed) return;
+    try {
+      if (wanted) {
+        this.homeHoldingHandSubscribed = true;
+        motion.on('holdingHandChanged', this.homeHoldingHandCallback);
+      } else {
+        this.homeHoldingHandSubscribed = false;
+        // 只取消首页的回调，阅读页自己的订阅不受影响。
+        motion.off('holdingHandChanged', this.homeHoldingHandCallback);
+      }
+    } catch (error) {
+      this.homeHoldingHandSubscribed = false;
+      console.warn('首页握姿感知不可用，页签圆钮保持在左侧:', error);
+    }
+  }
+
+  private onHomeHoldingHandChanged(status: motion.HoldingHandStatus): void {
+    if (!this.homeHoldingHandSubscribed) return;
+    // 双手、未握持和未知都保留上次位置，放下手机时不来回跳。
+    if (status !== motion.HoldingHandStatus.LEFT_HAND_HELD &&
+      status !== motion.HoldingHandStatus.RIGHT_HAND_HELD) return;
+    const side = status === motion.HoldingHandStatus.LEFT_HAND_HELD ? -1 : 1;
+    if (side === this.globalTtsHandSide) return;
+    this.getUIContext().animateTo({ duration: 280, curve: Curve.Friction }, (): void => {
+      this.globalTtsHandSide = side;
+    });
   }
 
   onBackPress(): boolean {
@@ -676,12 +730,16 @@ struct Index {
       } else {
         this.compatTabs()
       }
-      if (this.globalTtsActive && !this.showGlobalTtsPanel) {
-        this.globalTtsMiniPlayer()
+      if (this.globalTtsActive && !this.homeTabBarHidden()) {
+        if (this.supportsImmersiveTabs()) {
+          this.globalTtsFloatingAccessory()
+        } else {
+          this.globalTtsCompatAccessory()
+        }
       }
       if (this.globalTtsActive && this.showGlobalTtsPanel) {
         ReaderTtsPlayerPanel({
-          sharedMotionId: 'home_tts_player',
+          sharedMotionId: Index.TTS_SHARED_MOTION_ID,
           darkMode: this.appDarkMode,
           accentColor: this.tabBarActiveColor(),
           playButtonColor: ThemeRuntime.buttonColor(this.appDarkMode),
@@ -755,65 +813,164 @@ struct Index {
     })
   }
 
+  /**
+   * 伴生条本体。面板打开时移除，和面板的 geometryTransition 成对完成一镜到底；悬浮底栏与旧底栏共用。
+   * 位置和宽高必须在这里直接读状态：@Builder 按值传入的数字在状态变化后不会刷新。
+   */
   @Builder
-  globalTtsMiniPlayer() {
-    ReaderTtsCapsule({
-      sharedMotionId: 'home_tts_player',
-      title: this.globalTtsBusy ? '加载中' :
-        (this.globalTtsPaused ? '已暂停' : (this.globalTtsMode === 'audio' ? '听书中' : '朗读中')),
-      subtitle: this.globalTtsChapterProgress || (this.globalTtsMode === 'audio' ? '后台听书' : '后台朗读'),
-      paused: this.globalTtsPaused,
-      playbackKey: `global_tts_capsule_playback_${this.globalTtsPaused}`,
-      panelColor: ThemeRuntime.cardColor(this.appDarkMode),
-      dark: this.appDarkMode,
-      textColor: ThemeRuntime.primaryTextColor(this.appDarkMode),
-      subTextColor: ThemeRuntime.subTextColor(this.appDarkMode),
-      accentColor: this.tabBarActiveColor(),
-      onCapsuleDragStart: (): void => {
-        this.globalTtsDragOriginX = this.globalTtsCapsuleLeft();
-        this.globalTtsDragOriginY = this.globalTtsCapsuleTop();
-      },
-      onCapsuleDragMove: (offsetX: number, offsetY: number): void => {
-        this.globalTtsCapsulePositionX = this.clampGlobalTtsPositionX(this.globalTtsDragOriginX + offsetX);
-        this.globalTtsCapsulePositionY = this.clampGlobalTtsPositionY(this.globalTtsDragOriginY + offsetY);
-      },
-      onOpen: (): void => this.openGlobalTtsPanel(),
-      onToggle: (): void => {
-        ReaderTtsFloatingSession.toggle();
-      },
-      onClose: (): void => {
-        this.closeGlobalTtsPanel();
-        ReaderTtsFloatingSession.stop();
+  globalTtsAccessory() {
+    if (!this.showGlobalTtsPanel) {
+      Column() {
+        ReaderMaterialPanel({
+          panelWidth: this.globalTtsAccessoryWidth(),
+          panelHeight: this.globalTtsAccessoryHeight(),
+          cornerRadius: this.globalTtsAccessoryHeight() / 2,
+          darkMode: this.appDarkMode,
+          fallbackColor: ThemeRuntime.cardColor(this.appDarkMode)
+        }) {
+          HomeTtsAccessory({
+            accentColor: this.tabBarActiveColor(),
+            textColor: ThemeRuntime.primaryTextColor(this.appDarkMode),
+            subTextColor: ThemeRuntime.subTextColor(this.appDarkMode),
+            trackColor: ThemeRuntime.hairlineColor(this.appDarkMode),
+            holeColor: ThemeRuntime.cardColor(this.appDarkMode),
+            onOpen: (): void => this.openGlobalTtsPanel()
+          })
+        }
       }
-    })
-      .position({ x: 0, y: 0 })
-      .translate({
-        x: this.globalTtsCapsuleLeft(),
-        y: this.globalTtsCapsuleTop()
-      })
-
+      .width(this.globalTtsAccessoryWidth())
+      .height(this.globalTtsAccessoryHeight())
+      .borderRadius(this.globalTtsAccessoryHeight() / 2)
+      .position({ x: this.globalTtsAccessoryLeft(), y: this.globalTtsAccessoryTop() })
+      .geometryTransition(Index.TTS_SHARED_MOTION_ID)
+      .transition(TransitionEffect.opacity(0.99))
+    }
   }
 
-  globalTtsCapsuleLeft(): number {
-    return this.clampGlobalTtsPositionX(this.globalTtsCapsulePositionX);
+  /** 悬浮底栏：平时贴在底栏正上方、与底栏同宽；并成一行时落到底栏那一行，旁边是当前页签圆钮。 */
+  @Builder
+  globalTtsFloatingAccessory() {
+    if (this.globalTtsBarMerged) {
+      Column() {
+        ReaderMaterialPanel({
+          panelWidth: Index.FLOATING_TAB_BAR_HEIGHT,
+          panelHeight: Index.FLOATING_TAB_BAR_HEIGHT,
+          cornerRadius: Index.FLOATING_TAB_BAR_HEIGHT / 2,
+          darkMode: this.appDarkMode,
+          fallbackColor: ThemeRuntime.cardColor(this.appDarkMode)
+        }) {
+          Stack({ alignContent: Alignment.Center }) {
+            Image(this.navigationIcon(this.currentHomeTabId(), this.currentIndex))
+              .width(this.navigationHidesLabels() ? 30 : 26)
+              .height(this.navigationHidesLabels() ? 30 : 26)
+              .fillColor(this.tabBarActiveColor())
+              .draggable(false)
+          }
+          .width(Index.FLOATING_TAB_BAR_HEIGHT)
+          .height(Index.FLOATING_TAB_BAR_HEIGHT)
+        }
+      }
+      .width(Index.FLOATING_TAB_BAR_HEIGHT)
+      .height(Index.FLOATING_TAB_BAR_HEIGHT)
+      .borderRadius(Index.FLOATING_TAB_BAR_HEIGHT / 2)
+      .position({ x: this.globalTtsTabButtonLeft(), y: this.globalTtsTabBarTop() })
+      .transition(TransitionEffect.scale({ x: 0.6, y: 0.6 }).combine(TransitionEffect.opacity(0)))
+      .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+      .accessibilityText('展开底栏')
+      .onClick(() => this.expandHomeTabBarFromMerged())
+    }
+    this.globalTtsAccessory()
   }
 
-  globalTtsCapsuleTop(): number {
-    const defaultTop = this.globalTtsViewportHeight - this.navBarHeight - 118;
-    return this.clampGlobalTtsPositionY(this.globalTtsCapsulePositionY < 0 ?
-      defaultTop : this.globalTtsCapsulePositionY);
+  /** 旧系统：同样贴在底栏正上方、左右与底栏对齐，底栏下滑收起时一起下移。 */
+  @Builder
+  globalTtsCompatAccessory() {
+    Stack() {
+      this.globalTtsAccessory()
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.Transparent)
+    .translate({ y: this.compatTabBarHeight() * this.bottomBarCollapseProgress })
   }
 
-  clampGlobalTtsPositionX(position: number): number {
-    const minLeft = 8;
-    const maxLeft = Math.max(minLeft, this.globalTtsViewportWidth - ReaderTtsCapsule.WIDTH - 8);
-    return Math.max(minLeft, Math.min(position, maxLeft));
+  compatTabBarHeight(): number {
+    return 56 + this.compatTabSafeHeight();
   }
 
-  clampGlobalTtsPositionY(position: number): number {
-    const minTop = this.statusBarHeight + 8;
-    const maxTop = Math.max(minTop, this.globalTtsViewportHeight - this.navBarHeight - 110);
-    return Math.max(minTop, Math.min(position, maxTop));
+  currentHomeTabId(): string {
+    return this.currentIndex === 1 ? 'explore' : (this.currentIndex === 2 ? 'mine' : 'bookshelf');
+  }
+
+  /** 有伴生条时底栏和伴生条用同一个宽度，左右对齐。 */
+  globalTtsRowWidth(): number {
+    return Math.max(0, Math.min(Index.ACCESSORY_MAX_WIDTH,
+      this.globalTtsViewportWidth - Index.ACCESSORY_SIDE_MARGIN * 2));
+  }
+
+  globalTtsRowLeft(): number {
+    return (this.globalTtsViewportWidth - this.globalTtsRowWidth()) / 2;
+  }
+
+  globalTtsTabBarWidth(): HdsBarWidthRangeOptions | undefined {
+    if (!this.globalTtsActive || this.homeTabBarHidden()) return undefined;
+    const width = this.globalTtsRowWidth();
+    const options: HdsBarWidthRangeOptions = { smallWidth: width, mediumWidth: width, largeWidth: width };
+    return options;
+  }
+
+  globalTtsTabBarTop(): number {
+    return this.globalTtsViewportHeight - this.floatingBarBottomMargin() - Index.FLOATING_TAB_BAR_HEIGHT;
+  }
+
+  globalTtsAccessoryWidth(): number {
+    if (!this.supportsImmersiveTabs()) {
+      return Math.max(0, this.globalTtsViewportWidth - Index.COMPAT_ACCESSORY_MARGIN * 2);
+    }
+    return this.globalTtsBarMerged ?
+      Math.max(0, this.globalTtsRowWidth() - Index.FLOATING_TAB_BAR_HEIGHT - Index.ACCESSORY_GAP) :
+      this.globalTtsRowWidth();
+  }
+
+  globalTtsAccessoryHeight(): number {
+    if (!this.supportsImmersiveTabs()) return Index.COMPAT_ACCESSORY_HEIGHT;
+    return this.globalTtsBarMerged ? Index.FLOATING_TAB_BAR_HEIGHT : Index.ACCESSORY_HEIGHT;
+  }
+
+  globalTtsAccessoryLeft(): number {
+    if (!this.supportsImmersiveTabs()) return Index.COMPAT_ACCESSORY_MARGIN;
+    if (this.globalTtsBarMerged && this.globalTtsHandSide <= 0) {
+      return this.globalTtsRowLeft() + Index.FLOATING_TAB_BAR_HEIGHT + Index.ACCESSORY_GAP;
+    }
+    return this.globalTtsRowLeft();
+  }
+
+  globalTtsAccessoryTop(): number {
+    if (!this.supportsImmersiveTabs()) {
+      return this.globalTtsViewportHeight - this.compatTabBarHeight() - Index.COMPAT_ACCESSORY_HEIGHT -
+        Index.COMPAT_ACCESSORY_MARGIN;
+    }
+    return this.globalTtsBarMerged ? this.globalTtsTabBarTop() :
+      this.globalTtsTabBarTop() - Index.ACCESSORY_GAP - Index.ACCESSORY_HEIGHT;
+  }
+
+  globalTtsTabButtonLeft(): number {
+    return this.globalTtsHandSide > 0 ?
+      this.globalTtsRowLeft() + this.globalTtsRowWidth() - Index.FLOATING_TAB_BAR_HEIGHT : this.globalTtsRowLeft();
+  }
+
+  setGlobalTtsBarMerged(merged: boolean): void {
+    if (merged === this.globalTtsBarMerged) return;
+    this.getUIContext().animateTo({ duration: 320, curve: Curve.Friction }, (): void => {
+      this.globalTtsBarMerged = merged;
+    });
+  }
+
+  /** 点并成一行时的页签圆钮：放出底栏、伴生条回到上方，下次滚过阈值再收。 */
+  expandHomeTabBarFromMerged(): void {
+    this.immersiveTabBarHidden = false;
+    this.immersiveTabsController.applyShowAnimation(HdsAnimationMode.SCROLL_ANIMATION);
+    this.setGlobalTtsBarMerged(false);
   }
 
   @Builder
@@ -1029,6 +1186,7 @@ struct Index {
         maskColor: Color.Transparent,
         maskHeight: 96
       },
+      barWidth: this.globalTtsTabBarWidth(),
       adaptToHandedness: this.smartGripEnabled,
       thermoCtrl: true,
       barOpacity: this.homeTabBarHidden() ? 0 : 1

@@ -664,7 +664,7 @@ export class EpubOriginalReadAloud {
     const progress = Math.max(0, Math.min(100, (Math.min(index, count - 1) + inChapter) / count * 100));
     ReaderTtsFloatingSession.updateDetails(this.ownerId, (before + current + after) || '正在准备朗读内容…',
       before, current, after, this.host.cover(), '', `${index + 1}/${count}章`, this.picker().speed,
-      this.sleepMinutes, this.sleepRemaining, index > 0, index < count - 1, progress);
+      this.sleepMinutes, this.sleepRemaining, index > 0, index < count - 1, progress, inChapter * 100);
   }
 
   private mediaSession(): ReaderTtsMediaSession {

@@ -344,6 +344,8 @@ struct ReadBookPage {
   @State readerMenuAnchorSide: number = 1;
   // 0 表示尚未识别，继续使用原有位置；左右手分别为 -1 / 1。
   @State readerHoldingHandSide: number = 0;
+  private ttsLastChapterPercent: number = 0;
+  private ttsLastChapterPercentIndex: number = -1;
   @StorageProp('smartGripEnabled') @Watch('onSmartGripEnabledChanged') smartGripEnabled: boolean = true;
   @State readerAutoScrollManuallyPositioned: boolean = false;
   @State readerTtsManuallyPositioned: boolean = false;
@@ -6454,6 +6456,28 @@ struct ReadBookPage {
 
   ttsQuickProgress(): number {
     return ReaderInfoBarText.bookPercent(this.getReaderInfoBarContext());
+  }
+
+  /**
+   * 首页伴生条的本章进度（0–100）：按朗读位置在本章原文里的字数比例算，不依赖分页。
+   * 阅读页关闭后页面会释放或重新分页，页进度会掉成 0，所以算不出来时沿用同一章上次的值。
+   */
+  ttsChapterPercent(): number {
+    let percent = -1;
+    if (this.ttsPanelHasChapterFocus()) {
+      const total = (this.pagedContentText || this.getPagedSourceText()).length;
+      if (total > 0) percent = Math.max(0, Math.min(100, this.readerV2TtsSourceEnd / total * 100));
+    }
+    if (percent < 0) {
+      const context = this.getReaderInfoBarContext();
+      if (!context.pageCountPending && context.pageCount > 0) percent = ReaderInfoBarText.chapterPercent(context);
+    }
+    if (percent < 0) {
+      return this.ttsLastChapterPercentIndex === this.currentChapterIndex ? this.ttsLastChapterPercent : 0;
+    }
+    this.ttsLastChapterPercent = percent;
+    this.ttsLastChapterPercentIndex = this.currentChapterIndex;
+    return percent;
   }
 
   showBookmarkActions(bookmark: Bookmark, globalX: number, globalY: number): void {
@@ -13294,7 +13318,8 @@ struct ReadBookPage {
       this.ttsSleepTimerRemainingSeconds,
       this.canPlayPreviousTtsChapter(),
       this.canPlayNextTtsChapter(),
-      this.ttsQuickProgress()
+      this.ttsQuickProgress(),
+      this.ttsChapterPercent()
     );
   }
 

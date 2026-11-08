@@ -279,7 +279,7 @@ export class ReaderTtsFloatingSession {
   static updateDetails(ownerId: string, content: string, textBefore: string, currentText: string,
     textAfter: string, cover: ResourceStr, coverFrame: ResourceStr,
     chapterProgress: string, speed: number, timerMinutes: number, timerRemainingSeconds: number,
-    canPrevious: boolean, canNext: boolean, progress: number = 0): void {
+    canPrevious: boolean, canNext: boolean, progress: number = 0, chapterPercent: number = -1): void {
     if (!ReaderTtsFloatingSession.isOwner(ownerId)) {
       return;
     }
@@ -307,6 +307,11 @@ export class ReaderTtsFloatingSession {
     const normalizedProgress = Math.max(0, Math.min(100, progress || 0));
     if (AppStorage.get<number>('globalTtsProgress') !== normalizedProgress) {
       AppStorage.setOrCreate('globalTtsProgress', normalizedProgress);
+    }
+    // 本章进度（0–100，-1 表示没有）：首页伴生条的进度线用它，整本进度在长书里几乎不动。
+    const normalizedChapter = chapterPercent < 0 ? -1 : Math.max(0, Math.min(100, chapterPercent));
+    if (AppStorage.get<number>('globalTtsChapterPercent') !== normalizedChapter) {
+      AppStorage.setOrCreate('globalTtsChapterPercent', normalizedChapter);
     }
     if (AppStorage.get<number>('globalTtsSpeed') !== speed) {
       AppStorage.setOrCreate('globalTtsSpeed', speed);
@@ -512,6 +517,7 @@ export class ReaderTtsFloatingSession {
     AppStorage.setOrCreate('globalTtsTextAfter', '');
     AppStorage.setOrCreate('globalTtsChapterProgress', '');
     AppStorage.setOrCreate('globalTtsProgress', 0);
+    AppStorage.setOrCreate('globalTtsChapterPercent', -1);
     AppStorage.setOrCreate('globalTtsSpeed', 1);
     AppStorage.setOrCreate('globalTtsTimerMinutes', 0);
     AppStorage.setOrCreate('globalTtsTimerRemainingSeconds', 0);
