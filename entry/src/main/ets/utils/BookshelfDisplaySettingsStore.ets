@@ -32,6 +32,8 @@ export class BookshelfDisplaySettings {
   greetingMode: string = 'time';
   greetingTitle: string = '';
   greetingSubtitle: string = '';
+  // 陪伴布局书架网格上方的标题；空串显示默认文案。
+  companionSectionTitle: string = '';
 }
 
 export class BookshelfDisplaySettingsStore {
@@ -57,6 +59,9 @@ export class BookshelfDisplaySettingsStore {
   private static readonly KEY_GREETING_MODE: string = 'bookshelfGreetingMode';
   private static readonly KEY_GREETING_TITLE: string = 'bookshelfGreetingTitle';
   private static readonly KEY_GREETING_SUBTITLE: string = 'bookshelfGreetingSubtitle';
+  private static readonly KEY_COMPANION_SECTION_TITLE: string = 'bookshelfCompanionSectionTitle';
+  static readonly DEFAULT_COMPANION_SECTION_TITLE: string = '书架里，还有故事';
+  static readonly COMPANION_SECTION_TITLE_MAX_LENGTH: number = 20;
   // 4.4.956 起书架默认使用“陪伴”布局：升级后把已有设置统一改一次，之后用户自己改的布局不再动。
   private static readonly KEY_COMPANION_LAYOUT_MIGRATED: string = 'bookshelfCompanionLayoutMigrated';
   private static cachedSettings: BookshelfDisplaySettings | null = null;
@@ -112,6 +117,8 @@ export class BookshelfDisplaySettingsStore {
       store, BookshelfDisplaySettingsStore.KEY_GREETING_TITLE, '');
     settings.greetingSubtitle = await BookshelfDisplaySettingsStore.getString(
       store, BookshelfDisplaySettingsStore.KEY_GREETING_SUBTITLE, '');
+    settings.companionSectionTitle = await BookshelfDisplaySettingsStore.getString(
+      store, BookshelfDisplaySettingsStore.KEY_COMPANION_SECTION_TITLE, '');
     if (!(await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_COMPANION_LAYOUT_MIGRATED, false))) {
       settings.layoutMode = 'companion';
@@ -152,6 +159,7 @@ export class BookshelfDisplaySettingsStore {
     await store.put(BookshelfDisplaySettingsStore.KEY_GREETING_MODE, settings.greetingMode);
     await store.put(BookshelfDisplaySettingsStore.KEY_GREETING_TITLE, settings.greetingTitle);
     await store.put(BookshelfDisplaySettingsStore.KEY_GREETING_SUBTITLE, settings.greetingSubtitle);
+    await store.put(BookshelfDisplaySettingsStore.KEY_COMPANION_SECTION_TITLE, settings.companionSectionTitle);
     await store.flush();
     BookshelfDisplaySettingsStore.cachedSettings = BookshelfDisplaySettingsStore.clone(settings);
     CloudSyncChangeTracker.markApplicationPreferenceChanged();
@@ -165,6 +173,19 @@ export class BookshelfDisplaySettingsStore {
     settings.greetingSubtitle = subtitle;
     BookshelfDisplaySettingsStore.applyToStorage(settings);
     await BookshelfDisplaySettingsStore.save(context, settings);
+  }
+
+  /** 书架长按标题与书架设置共用：只改书架标题，其余设置取当前内存里的值。空串即恢复默认。 */
+  static async saveCompanionSectionTitle(context: Context, title: string): Promise<void> {
+    const settings = BookshelfDisplaySettingsStore.fromStorage();
+    settings.companionSectionTitle = title.trim();
+    BookshelfDisplaySettingsStore.applyToStorage(settings);
+    await BookshelfDisplaySettingsStore.save(context, settings);
+  }
+
+  static companionSectionTitleText(title: string): string {
+    const text = (title || '').trim();
+    return text ? text : BookshelfDisplaySettingsStore.DEFAULT_COMPANION_SECTION_TITLE;
   }
 
   static applyToStorage(settings: BookshelfDisplaySettings): void {
@@ -197,6 +218,7 @@ export class BookshelfDisplaySettingsStore {
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_GREETING_MODE, settings.greetingMode);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_GREETING_TITLE, settings.greetingTitle);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_GREETING_SUBTITLE, settings.greetingSubtitle);
+    AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_COMPANION_SECTION_TITLE, settings.companionSectionTitle);
   }
 
   static fromStorage(): BookshelfDisplaySettings {
@@ -231,6 +253,8 @@ export class BookshelfDisplaySettingsStore {
       AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_GREETING_MODE) ?? 'time');
     settings.greetingTitle = AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_GREETING_TITLE) ?? '';
     settings.greetingSubtitle = AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_GREETING_SUBTITLE) ?? '';
+    settings.companionSectionTitle =
+      AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_COMPANION_SECTION_TITLE) ?? '';
     return settings;
   }
 
@@ -305,6 +329,7 @@ export class BookshelfDisplaySettingsStore {
     settings.greetingMode = BookshelfDisplaySettingsStore.normalizeGreetingMode(source.greetingMode);
     settings.greetingTitle = source.greetingTitle || '';
     settings.greetingSubtitle = source.greetingSubtitle || '';
+    settings.companionSectionTitle = source.companionSectionTitle || '';
     return settings;
   }
 }

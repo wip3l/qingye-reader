@@ -45,6 +45,7 @@ import { BookshelfSortHelper } from '../../utils/BookshelfSortHelper';
 import { RecentReadCarousel } from './RecentReadCarousel';
 import { ShelfReadingNoteCard } from './ShelfReadingNoteCard';
 import { ShelfGreetingEditor } from './ShelfGreetingEditor';
+import { ShelfSectionTitleEditor } from './ShelfSectionTitleEditor';
 import { ShelfGreetingTemplate, ShelfGreetingValues } from '../../utils/ShelfGreetingTemplate';
 import { CategorySwipePager } from './CategorySwipePager';
 import { ShelfCategoryMaterial } from './ShelfCategoryMaterial';
@@ -341,6 +342,7 @@ export struct BookshelfPage {
   private deleteBookDialogSession: SystemDialogSession = new SystemDialogSession();
   private editBookInfoDialogSession: SystemDialogSession = new SystemDialogSession();
   private greetingEditorDialogSession: SystemDialogSession = new SystemDialogSession();
+  private sectionTitleEditorDialogSession: SystemDialogSession = new SystemDialogSession();
   private tagDialogSession: SystemDialogSession = new SystemDialogSession();
   private customCoverDialogSession: SystemDialogSession = new SystemDialogSession();
   @State showAddBookGroupDialog: boolean = false;
@@ -445,6 +447,7 @@ export struct BookshelfPage {
   @StorageLink('bookshelfGreetingMode') bookshelfGreetingMode: string = 'time';
   @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
   @StorageLink('bookshelfGreetingSubtitle') bookshelfGreetingSubtitle: string = '';
+  @StorageLink('bookshelfCompanionSectionTitle') bookshelfCompanionSectionTitle: string = '';
   @StorageProp('accountDisplayName') accountDisplayName: string = '';
   /** 阅读小记读出的今日时长，问候语 {今日阅读} 直接用。 */
   @StorageProp('shelfTodayReadMs') shelfTodayReadMs: number = 0;
@@ -614,6 +617,7 @@ export struct BookshelfPage {
       this.bookshelfGreetingMode = settings.greetingMode;
       this.bookshelfGreetingTitle = settings.greetingTitle;
       this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
+      this.bookshelfCompanionSectionTitle = settings.companionSectionTitle;
     } catch (e) {
       console.warn('恢复书架显示设置失败:', e);
     }
@@ -4604,6 +4608,34 @@ export struct BookshelfPage {
     });
   }
 
+  openSectionTitleEditor(): void {
+    if (this.isBookMultiSelect) return;
+    const title = this.bookshelfCompanionSectionTitle;
+    this.sectionTitleEditorDialogSession.open(this.getUIContext(), (): void => {
+      this.sectionTitleEditorDialogContent(title);
+    }, {
+      autoCancel: false,
+      maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
+      warnTag: '显示书架标题编辑弹窗失败:'
+    });
+  }
+
+  @Builder
+  sectionTitleEditorDialogContent(title: string) {
+    ShelfSectionTitleEditor({
+      appDarkMode: this.appDarkMode,
+      initialTitle: title,
+      onSave: (nextTitle: string): void => {
+        this.sectionTitleEditorDialogSession.close(this.getUIContext());
+        BookshelfDisplaySettingsStore.saveCompanionSectionTitle(getContext(this), nextTitle).catch((e: Error) => {
+          console.warn('保存书架标题失败:', e);
+          HdsFeedback.showToast('书架标题保存失败');
+        });
+      },
+      onCancel: (): void => this.sectionTitleEditorDialogSession.close(this.getUIContext())
+    })
+  }
+
   shelfCompanionHeroHeight(): number {
     return 228;
   }
@@ -5049,13 +5081,18 @@ export struct BookshelfPage {
     .blur(this.isShelfBookDissolving(book.bookUrl) ? 16 : 0)
   }
 
+  /** 长按标题直接改文案，不用进书架设置。 */
   @Builder
   shelfCompanionSectionHeader(pageKey: string) {
     Row() {
-      Text('书架里，还有故事')
+      Text(BookshelfDisplaySettingsStore.companionSectionTitleText(this.bookshelfCompanionSectionTitle))
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .flexShrink(1)
+        .gesture(LongPressGesture().onAction(() => this.openSectionTitleEditor()))
       Blank()
       Text(`共 ${this.shelfBooksForPage(pageKey).length} 本`)
         .fontSize(AppFontSize.CAPTION)

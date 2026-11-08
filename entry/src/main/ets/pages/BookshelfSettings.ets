@@ -23,6 +23,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
 import { ShelfGreetingEditor } from '../components/home/ShelfGreetingEditor';
+import { ShelfSectionTitleEditor } from '../components/home/ShelfSectionTitleEditor';
 import { ShelfGreetingTemplate } from '../utils/ShelfGreetingTemplate';
 import { BookshelfSortHelper } from '../utils/BookshelfSortHelper';
 
@@ -51,6 +52,7 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfGreetingMode') bookshelfGreetingMode: string = 'time';
   @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
   @StorageLink('bookshelfGreetingSubtitle') bookshelfGreetingSubtitle: string = '';
+  @StorageLink('bookshelfCompanionSectionTitle') bookshelfCompanionSectionTitle: string = '';
   @StorageProp('accountDisplayName') accountDisplayName: string = '';
   @StorageProp('shelfTodayReadMs') shelfTodayReadMs: number = 0;
   @StorageLink('bookshelfCoverAlbums') @Watch('onCoverAlbumsChanged') bookshelfCoverAlbums: string = '';
@@ -90,6 +92,7 @@ struct BookshelfSettingsPage {
   @State privateShelfBusy: boolean = false;
   private privatePasswordDialogSession: SystemDialogSession = new SystemDialogSession();
   private greetingEditorDialogSession: SystemDialogSession = new SystemDialogSession();
+  private sectionTitleEditorDialogSession: SystemDialogSession = new SystemDialogSession();
   private skipNextCoverGalleryReload: boolean = false;
 
   aboutToAppear(): void {
@@ -183,6 +186,12 @@ struct BookshelfSettingsPage {
           this.openGreetingEditor();
         })
       }
+      this.itemDivider()
+      this.actionItem('书架标题',
+        `${BookshelfDisplaySettingsStore.companionSectionTitleText(this.bookshelfCompanionSectionTitle)}，也可在书架上长按修改`,
+        this.primaryTextColor(), () => {
+          this.openSectionTitleEditor();
+        })
     }
     if (this.bookshelfLayoutMode === 'tile' && this.bookshelfLastReadPinMode === 'medium') {
       this.itemDivider()
@@ -445,6 +454,7 @@ struct BookshelfSettingsPage {
       this.bookshelfGreetingMode = settings.greetingMode;
       this.bookshelfGreetingTitle = settings.greetingTitle;
       this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
+      this.bookshelfCompanionSectionTitle = settings.companionSectionTitle;
     } catch (e) {
       console.warn('重新加载书架显示设置失败:', e);
     }
@@ -634,6 +644,7 @@ struct BookshelfSettingsPage {
     settings.greetingMode = this.bookshelfGreetingMode;
     settings.greetingTitle = this.bookshelfGreetingTitle;
     settings.greetingSubtitle = this.bookshelfGreetingSubtitle;
+    settings.companionSectionTitle = this.bookshelfCompanionSectionTitle;
     BookshelfDisplaySettingsStore.applyToStorage(settings);
     BookshelfDisplaySettingsStore.save(getContext(this), settings).catch((e: Error) => {
       console.warn('保存书架显示设置失败:', e);
@@ -901,6 +912,31 @@ struct BookshelfSettingsPage {
         this.greetingEditorDialogSession.close(this.getUIContext());
       },
       onCancel: (): void => this.greetingEditorDialogSession.close(this.getUIContext())
+    })
+  }
+
+  openSectionTitleEditor(): void {
+    const title = this.bookshelfCompanionSectionTitle;
+    this.sectionTitleEditorDialogSession.open(this.getUIContext(), (): void => {
+      this.sectionTitleEditorDialogContent(title);
+    }, {
+      autoCancel: false,
+      maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
+      warnTag: '显示书架标题编辑弹窗失败:'
+    });
+  }
+
+  @Builder
+  sectionTitleEditorDialogContent(title: string) {
+    ShelfSectionTitleEditor({
+      appDarkMode: this.appDarkMode,
+      initialTitle: title,
+      onSave: (nextTitle: string): void => {
+        this.bookshelfCompanionSectionTitle = nextTitle;
+        this.onDisplaySettingChanged();
+        this.sectionTitleEditorDialogSession.close(this.getUIContext());
+      },
+      onCancel: (): void => this.sectionTitleEditorDialogSession.close(this.getUIContext())
     })
   }
 
