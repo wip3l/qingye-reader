@@ -15,6 +15,14 @@ export class AppIconOption {
 
 export class AppIconManager {
   static readonly UNSUPPORTED_MESSAGE: string = '该能力需要鸿蒙7及以上';
+  /**
+   * setAlternateIcon's generic failure. Seen in the field when the system theme supplies its own icon for this
+   * app: the launcher gives theme icons priority and rejects the switch (AppGallery's selectDynamicIcon reports
+   * the same situation as 1006800013). No API tells whether a theme icon is active, so it is only a likely cause.
+   */
+  static readonly SET_FAILED_CODE: number = 17700310;
+  static readonly THEME_ICON_NOTE: string =
+    '若系统主题替换了本应用的桌面图标，将无法在此更换。可在系统设置的主题中换回默认主题后再试。';
   static readonly OPTIONS: AppIconOption[] = [
     AppIconManager.option('default', '默认主题', '应用默认桌面图标', '', $r('app.media.icon')),
     AppIconManager.option('nostalgic', '怀旧', '原版经典书本图标', 'nostalgic', $r('app.media.ic_app_nostalgic')),
@@ -94,6 +102,31 @@ export class AppIconManager {
       AppIconManager.changeRevision++;
       AppIconManager.applying = false;
     }
+  }
+
+  static isSetFailed(error: Object): boolean {
+    return AppIconManager.errorCode(error) === `${AppIconManager.SET_FAILED_CODE}`;
+  }
+
+  static failureMessage(error: Object): string {
+    if (AppIconManager.isSetFailed(error)) {
+      return '系统暂时无法更换桌面图标，可能是系统主题替换了本应用图标。请在系统设置的主题中换回默认主题，或重启手机后再试';
+    }
+    const code = AppIconManager.errorCode(error);
+    if (code) {
+      return `桌面图标切换失败(${code})，请稍后重试`;
+    }
+    // Our own guards throw plain Errors whose message is already user-facing.
+    const message = error instanceof Error ? error.message : '';
+    return message || '桌面图标切换失败，请稍后重试';
+  }
+
+  private static errorCode(error: Object): string {
+    if (!error) {
+      return '';
+    }
+    const code = (error as Record<string, Object>)['code'];
+    return code === undefined || code === null ? '' : `${code}`;
   }
 
   static optionById(iconId: string): AppIconOption {

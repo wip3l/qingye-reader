@@ -1934,7 +1934,8 @@ struct ThemeSettingsPage {
             await AppIconManager.applyIcon(getContext(this), AppIconManager.optionForTheme(theme.id));
           } catch (error) {
             console.warn('应用主题桌面图标失败:', error);
-            iconNotice = '；桌面图标切换失败，可在图标设置中重试';
+            iconNotice = AppIconManager.isSetFailed(error) ?
+              '；桌面图标未更换，可能是系统主题替换了本应用图标' : '；桌面图标切换失败，可在图标设置中重试';
           }
         }
       }

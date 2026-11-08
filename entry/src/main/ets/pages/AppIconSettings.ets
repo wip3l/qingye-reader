@@ -60,6 +60,13 @@ struct AppIconSettingsPage {
     }
     .width('100%')
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+
+    Text(AppIconManager.THEME_ICON_NOTE)
+      .fontSize(AppFontSize.CAPTION)
+      .fontColor(this.subTextColor())
+      .lineHeight(18)
+      .width('100%')
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.XXL })
   }
 
   pageColor(): string {
@@ -128,7 +135,7 @@ struct AppIconSettingsPage {
     } catch (e) {
       hilog.warn(0x0000, 'appIcon', 'Switch app icon failed option=%{public}s err=%{public}s',
         option.id, JSON.stringify(e));
-      this.showToastSafely(this.switchErrorMessage(e));
+      this.showToastSafely(AppIconManager.failureMessage(e));
       this.refreshAlternateIcons();
     } finally {
       this.applyingIconId = '';
@@ -221,23 +228,4 @@ struct AppIconSettingsPage {
     })
   }
 
-  switchErrorMessage(error: Object): string {
-    const code = this.errorCode(error);
-    if (!code) {
-      return '桌面图标切换失败，请稍后重试';
-    }
-    return `桌面图标切换失败(${code})，请稍后重试`;
-  }
-
-  errorCode(error: Object): string {
-    if (!error) {
-      return '';
-    }
-    const source = error as Record<string, Object>;
-    const code = source['code'];
-    if (code === undefined || code === null) {
-      return '';
-    }
-    return `${code}`;
-  }
 }
