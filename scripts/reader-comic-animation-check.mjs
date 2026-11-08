@@ -9,6 +9,7 @@ const compile = source => stripTypeScriptTypes(source.replace(/^import .*;\r?\n/
 const draws = [];
 const stationaryDraws = [];
 const sandbox = vm.createContext({ console, setTimeout, clearTimeout, setInterval, clearInterval,
+  ReaderHaptics: { pageTurned() {} }, ReaderInputKind: { NOVEL: 1, COMIC: 2, PDF: 4 }, applyReaderTurnFrameRate() {},
   CanvasRenderingContext2D: class {
     clearRect() {} fillRect() {} save() {} restore() {}
     drawImage(...args) { stationaryDraws.push({args, operation: this.globalCompositeOperation}); }

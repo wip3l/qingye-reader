@@ -5,6 +5,8 @@ import { TtsVoicePicker } from '../../utils/TtsVoicePicker';
 import { ReaderTtsFloatingSession } from '../../utils/ReaderTtsFloatingSession';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { ReaderTtsMediaInfo, ReaderTtsMediaSession } from '../reader/ReaderTtsMediaSession';
+import { ReaderProgressCheckpoint } from '../../utils/ReaderProgressCheckpoint';
+import { EpubOriginalPosition } from './EpubOriginalPosition';
 
 /** 网页正文里要念的文字（见 EpubOriginalScript 的 speechInfo）。 */
 export class EpubSpeechText {
@@ -15,7 +17,9 @@ export class EpubSpeechText {
   breaks: number[] = [];
 }
 
-/** 文件排版页为朗读提供的内容与动作。 */
+/**
+ * 朗读的内容与动作由谁提供：文件排版页（网页正文）或页面关掉后的后台朗读（应用排版正文，见 EpubOriginalBackgroundHost）。
+ */
 export interface EpubReadAloudHost {
   context: () => common.UIAbilityContext;
   bookUrl: () => string;
@@ -23,37 +27,51 @@ export interface EpubReadAloudHost {
   author: () => string;
   chapterIndex: () => number;
   chapterTitles: () => string[];
-  pageIndex: () => number;
-  pageCount: () => number;
+  /** 章内进度 0–1，用于面板与媒体卡片的进度。 */
+  chapterProgress: () => number;
+  /** 媒体卡片副标题里的位置，如“第 3/12 页”。 */
+  positionLabel: () => string;
   cover: () => ResourceStr;
   coverRaw: () => ResourceStr;
-  /** 取当前章（前面的网页）里要念的文字。 */
+  /** 取当前章里要念的文字。 */
   speech: () => Promise<EpubSpeechText | null>;
-  /** 高亮 [start, end) 并让它出现在屏幕上（翻页或滚动）。 */
-  focus: (start: number, end: number) => void;
+  /** 正在念 text 的 [start, end)：页面高亮并翻页跟随，后台记下进度。 */
+  focus: (start: number, end: number, text: string) => void;
   clearFocus: () => void;
-  /** 换到某章开头并等它显示出来；换成了返回 true。 */
+  /** 换到某章开头并等它准备好；换成了返回 true。 */
   openChapter: (index: number) => Promise<boolean>;
   openMimoSettings: () => void;
   /** 朗读 / 暂停状态变了，页面据此刷新按钮与胶囊。 */
   changed: () => void;
+  /** 朗读结束（停止、读完、被别处接管）。 */
+  stopped: () => void;
 }
 
 /** 连续朗读时章节末尾没确认念完，最多从最后一句重读这么多次。 */
 const TAIL_RETRIES = 2;
 /** 用户翻页、跳转后等这么久再从新位置接着读，连续翻页只重开一次。 */
 const MOVE_RESTART_MS = 450;
+/** 后台朗读时隔这么久看一眼：普通阅读页在前台打开了同一本书就停下，交给它。 */
+const DETACHED_WATCH_MS = 1000;
 
 /**
  * 文件排版页的朗读：文字从网页正文取（排版即所见），朗读引擎、系统媒体控件、悬浮朗读面板与普通阅读页共用。
  * 念到哪句由引擎回报文字里的偏移，交给页面高亮、翻页；一章念完换到下一章开头接着念。
- * 用户自己翻页、跳章时从新位置重新开始；离开这本书就停止朗读。
+ * 用户自己翻页、跳章时从新位置重新开始。
+ * 离开这本书时页面把朗读交给后台（detach），文字改读应用排版正文接着念；重新打开这本书时页面接回来（attach）。
+ * 两种文字之间的位置按文字片段换算（EpubOriginalPosition），同一章换了文字来源也能接着原处读。
  */
 export class EpubOriginalReadAloud {
+  /** 离开了页面、在后台接着念的朗读，按书记着，重新打开这本书的页面据此接手。 */
+  private static detachedSessions: Map<string, EpubOriginalReadAloud> = new Map<string, EpubOriginalReadAloud>();
   readonly ownerId: string = `epub_original_tts_${Date.now()}_${Math.random()}`;
   speaking: boolean = false;
   paused: boolean = false;
-  private readonly host: EpubReadAloudHost;
+  private host: EpubReadAloudHost;
+  private detachedBookUrl: string = '';
+  /** 重新打开这本书的文件排版页已经认领，正在等它排好版再接手。 */
+  private claimed: boolean = false;
+  private watchTimer: number = -1;
   private engine: SystemTtsReader | null = null;
   private media: ReaderTtsMediaSession | null = null;
   private voices: TtsVoicePicker | null = null;
@@ -79,6 +97,17 @@ export class EpubOriginalReadAloud {
 
   constructor(host: EpubReadAloudHost) {
     this.host = host;
+  }
+
+  /** 这本书在后台接着念的朗读；没有返回 null。 */
+  static detachedFor(bookUrl: string): EpubOriginalReadAloud | null {
+    const session = bookUrl ? EpubOriginalReadAloud.detachedSessions.get(bookUrl) : undefined;
+    if (!session) return null;
+    if (!session.active()) {
+      session.endDetached();
+      return null;
+    }
+    return session;
   }
 
   /** 朗读会话还在（在念、暂停或出错后停着等重试）。 */
@@ -116,6 +145,8 @@ export class EpubOriginalReadAloud {
     if (!keepRetries) this.tailRetries = 0;
     await this.picker().load(!this.voicesRequested);
     this.voicesRequested = true;
+    const previousText = this.text;
+    const previousChapter = this.chapter;
     const speech = await this.host.speech();
     if (token !== this.token) return;
     const text = speech ? speech.text : '';
@@ -133,7 +164,12 @@ export class EpubOriginalReadAloud {
     }
     this.text = text;
     this.chapter = this.host.chapterIndex();
-    const begin = Math.max(0, Math.min(text.length - 1, offset >= 0 ? offset : (speech?.start ?? 0)));
+    let requested = offset >= 0 ? offset : (speech?.start ?? 0);
+    if (offset >= 0 && previousText && previousText !== text && previousChapter === this.chapter) {
+      // 同一章换了文字来源（离开页面改读正文、回到页面改读网页）：offset 是旧文字里的，按文字片段换算过来。
+      requested = EpubOriginalPosition.offsetFor(text, EpubOriginalPosition.spotAt(previousText, offset));
+    }
+    const begin = Math.max(0, Math.min(text.length - 1, requested));
     const part = text.substring(begin);
     this.begin = begin;
     this.focusStart = -1;
@@ -254,6 +290,8 @@ export class EpubOriginalReadAloud {
     this.media?.stopBackgroundRunning();
     this.host.clearFocus();
     this.host.changed();
+    this.host.stopped();
+    this.endDetached();
   }
 
   /**
@@ -279,6 +317,99 @@ export class EpubOriginalReadAloud {
     this.media?.stopBackgroundRunning();
     this.host.clearFocus();
     this.host.changed();
+    this.host.stopped();
+    this.endDetached();
+  }
+
+  // ---- 离开页面后接着念 ----
+
+  /** 页面关掉了：换成后台的内容来源接着念，当前这段已经交给引擎的文字照常念完。 */
+  detach(host: EpubReadAloudHost): void {
+    this.cancelMoveRestart();
+    this.host = host;
+    this.claimed = false;
+    this.detachedBookUrl = host.bookUrl();
+    if (this.detachedBookUrl) EpubOriginalReadAloud.detachedSessions.set(this.detachedBookUrl, this);
+    // 页面不在了，用户翻页后等着重开的那次照样要开：从停下的地方接着读。
+    if (this.speaking && !this.paused && this.engine && !this.engine.isSpeaking()) {
+      this.start(this.resumeOffset());
+    }
+    ReaderProgressCheckpoint.retainBackground(this.ownerId, (): string => this.detachedBookUrl);
+    this.watchTimer = setInterval((): void => this.watchDetached(), DETACHED_WATCH_MS);
+    this.publishDetails();
+  }
+
+  /** 重新打开这本书的文件排版页先认领，排好版后再 attach；页面没打开成就 unclaim。 */
+  claim(): void {
+    this.claimed = true;
+  }
+
+  unclaim(): void {
+    this.claimed = false;
+  }
+
+  /** 页面接回来：在念就从正在念的那句接着（换算到网页文字），暂停着就停在那里等继续。 */
+  async attach(host: EpubReadAloudHost): Promise<void> {
+    this.endDetached();
+    this.host = host;
+    host.changed();
+    if (!this.active()) return;
+    const playing = this.speaking && !this.paused;
+    const offset = this.focusStart >= 0 ? this.focusStart : this.begin;
+    const token = ++this.token;
+    this.engine?.stop();
+    if (this.chapter >= 0 && this.chapter !== host.chapterIndex()) {
+      this.switching = true;
+      let opened = false;
+      try {
+        opened = await host.openChapter(this.chapter);
+      } finally {
+        this.switching = false;
+      }
+      if (token !== this.token) return;
+      if (!opened) this.chapter = -1;
+    }
+    if (playing) {
+      await this.start(this.chapter >= 0 ? offset : -1);
+      return;
+    }
+    this.speaking = false;
+    this.paused = true;
+    this.publishState();
+    host.changed();
+  }
+
+  private watchDetached(): void {
+    if (!this.detachedBookUrl || this.claimed) return;
+    if (!this.active()) {
+      this.endDetached();
+      return;
+    }
+    // 普通阅读页在前台打开了同一本书：它看不懂网页文字的位置，两边一起控制会乱，停下交给它。
+    if (ReaderProgressCheckpoint.activeBookUrl() === this.detachedBookUrl) {
+      this.stop();
+      HdsFeedback.showToast('已在阅读页打开这本书，后台朗读已停止');
+    }
+  }
+
+  private endDetached(): void {
+    if (this.watchTimer >= 0) {
+      clearInterval(this.watchTimer);
+      this.watchTimer = -1;
+    }
+    if (this.detachedBookUrl &&
+      EpubOriginalReadAloud.detachedSessions.get(this.detachedBookUrl) === this) {
+      EpubOriginalReadAloud.detachedSessions.delete(this.detachedBookUrl);
+    }
+    const wasDetached = !!this.detachedBookUrl;
+    this.detachedBookUrl = '';
+    this.claimed = false;
+    ReaderProgressCheckpoint.releaseBackground(this.ownerId);
+    // 后台朗读结束后没有页面再用这个引擎了。
+    if (wasDetached && !this.active()) {
+      this.engine?.shutdown();
+      this.engine = null;
+    }
   }
 
   /** 页面关闭：停掉朗读并释放引擎。 */
@@ -299,7 +430,7 @@ export class EpubOriginalReadAloud {
     this.focusStart = start;
     this.focusEnd = end;
     this.spokenEnd = Math.max(this.spokenEnd, end);
-    this.host.focus(start, end);
+    this.host.focus(start, end, this.text);
     this.publishDetails();
   }
 
@@ -332,7 +463,7 @@ export class EpubOriginalReadAloud {
     let opened = false;
     try {
       this.mediaSession().updatePlaybackState(avSession.PlaybackState.PLAYBACK_STATE_BUFFERING).catch((): void => {});
-      opened = await this.host.openChapter(next);
+      opened = await this.openChapterOnHost(next);
     } finally {
       this.switching = false;
     }
@@ -371,6 +502,14 @@ export class EpubOriginalReadAloud {
     }, MOVE_RESTART_MS);
   }
 
+  /** 换章期间页面关掉了（交给了后台）：页面那边的等待作废，换到新的内容来源上再换一次。 */
+  private async openChapterOnHost(index: number): Promise<boolean> {
+    const host = this.host;
+    const opened = await host.openChapter(index);
+    if (opened || this.host === host) return opened;
+    return await this.host.openChapter(index);
+  }
+
   private cancelMoveRestart(): void {
     if (this.moveTimer >= 0) {
       clearTimeout(this.moveTimer);
@@ -391,7 +530,7 @@ export class EpubOriginalReadAloud {
     this.switching = true;
     let opened = false;
     try {
-      opened = await this.host.openChapter(index);
+      opened = await this.openChapterOnHost(index);
     } finally {
       this.switching = false;
     }
@@ -521,8 +660,7 @@ export class EpubOriginalReadAloud {
     } else if (text) {
       after = text.substring(this.begin, Math.min(text.length, this.begin + 6000));
     }
-    const pages = Math.max(1, this.host.pageCount());
-    const inChapter = Math.min(1, (Math.max(0, this.host.pageIndex()) + 1) / pages);
+    const inChapter = Math.max(0, Math.min(1, this.host.chapterProgress()));
     const progress = Math.max(0, Math.min(100, (Math.min(index, count - 1) + inChapter) / count * 100));
     ReaderTtsFloatingSession.updateDetails(this.ownerId, (before + current + after) || '正在准备朗读内容…',
       before, current, after, this.host.cover(), '', `${index + 1}/${count}章`, this.picker().speed,
@@ -559,8 +697,7 @@ export class EpubOriginalReadAloud {
   private mediaInfo(): ReaderTtsMediaInfo {
     const index = this.host.chapterIndex();
     const count = this.host.chapterTitles().length;
-    const pages = Math.max(1, this.host.pageCount());
-    const page = Math.max(0, Math.min(pages - 1, this.host.pageIndex()));
+    const fraction = Math.max(0, Math.min(1, this.host.chapterProgress()));
     const chars = Math.max(1, this.chapter === index ? this.text.length : 0);
     const duration = Math.max(60000, Math.round(chars / (260 * Math.max(this.picker().speed || 1, 0.5)) * 60000));
     const title = this.chapterTitle();
@@ -570,9 +707,9 @@ export class EpubOriginalReadAloud {
       author: this.host.author(),
       chapterIndex: index,
       chapterTitle: title,
-      subtitle: `${title} · 第 ${page + 1}/${pages} 页`,
-      pageIndex: page,
-      elapsedTime: Math.round(page / pages * duration),
+      subtitle: this.host.positionLabel() ? `${title} · ${this.host.positionLabel()}` : title,
+      pageIndex: 0,
+      elapsedTime: Math.round(fraction * duration),
       duration: duration,
       canPlayPrevious: index > 0,
       canPlayNext: index < count - 1

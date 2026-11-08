@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { stripTypeScriptTypes } from 'node:module';
 import { readEtsModule } from './lib/ets-module-staging.mjs';
 
-const sandbox = vm.createContext({ console, px2vp: value => value / 2,
+const sandbox = vm.createContext({ console, px2vp: value => value / 2, ReaderHaptics: { pageTurned() {} },
   ReaderTtsFloatingSession: { isActive: () => false } });
 vm.runInContext(stripTypeScriptTypes(readEtsModule('core/reader/ReaderScreenScrollMotion.ts')
   .replace(/^export /gm, '')) + '\nglobalThis.Motion = ReaderScreenScrollMotion;', sandbox);
@@ -97,7 +97,7 @@ function fixture() {
     ttsReader: { isSpeaking: () => false }, readerComicChapterSwitching: false,
     contentPages: ['chunk-1', 'chunk-2', 'chunk-3', 'chunk-4'], currentPageIndex: 0,
     isReaderComicModeActive: () => false, isReaderContinuousScrollSurfaceActive: () => true,
-    isReaderComicPagedMode: () => false, pauseReaderAutoScroll() {},
+    isReaderComicPagedMode: () => false, pauseReaderAutoScroll() {}, readerInputKind: () => 1,
     // A 900vp surface with 50vp top and 100vp bottom reserved leaves 750vp of正文.
     pageViewHeight: 900, getEffectiveReaderMarginTop: () => 50,
     getReaderContinuousScrollBottomPadding: () => 100,

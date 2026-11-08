@@ -68,7 +68,8 @@ import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
 } from '../components/reader/ReaderSnapshotPageTurn';
-import lazy { EpubOriginalReadAloud, EpubSpeechText } from '../core/book/EpubOriginalReadAloud';
+import lazy { EpubOriginalReadAloud, EpubReadAloudHost, EpubSpeechText } from '../core/book/EpubOriginalReadAloud';
+import lazy { EpubOriginalBackgroundHost, EpubOriginalBackgroundSeed } from '../core/book/EpubOriginalBackgroundHost';
 import { ReaderTtsPlayerPanel } from '../components/ReaderTtsPlayerPanel';
 import { CatalogTitleDataSource, TtsCatalogSheet } from '../components/TtsCatalogSheet';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
@@ -414,6 +415,8 @@ struct EpubOriginalReadBookPage {
   @State showTtsCatalog: boolean = false;
   @State ttsCatalogReverse: boolean = false;
   private readAloud: EpubOriginalReadAloud | null = null;
+  /** 打开时这本书正在后台朗读：排好版后接手（见 EpubOriginalReadAloud.attach）。 */
+  private adoptReadAloud: EpubOriginalReadAloud | null = null;
   private ttsCatalogSource: CatalogTitleDataSource = new CatalogTitleDataSource();
   private ttsCatalogScroller: ListScroller = new ListScroller();
   /** 每次高亮新的一句加一：翻页截图的身份带上它，旧高亮的截图不会被拿来当起点。 */
@@ -437,6 +440,9 @@ struct EpubOriginalReadBookPage {
     this.takeShelfOpeningBackdrop();
     this.takeShelfOpeningPageSnapshot();
     if (!this.shelfOpenAnimating) AppStorage.setOrCreate('shelfReaderDirectTransition', false);
+    // 先认领后台朗读再挂进度：后台看到有页面打开同一本书时，认领过的不会自己停下。
+    this.adoptReadAloud = EpubOriginalReadAloud.detachedFor(this.bookUrl);
+    this.adoptReadAloud?.claim();
     ReaderProgressCheckpoint.attach(this.owner, (): Promise<void> => this.saveProgress(), (): string => this.bookUrl);
     // 按键翻页、翻页震感按阅读类型存；直接从书架打开时普通阅读页还没读过。
     ReaderInputScopes.load(this.getUIContext().getHostContext() as Context);
@@ -480,8 +486,10 @@ struct EpubOriginalReadBookPage {
     if (this.spinnerTimer >= 0) clearTimeout(this.spinnerTimer);
     if (this.prewarmTimer >= 0) clearTimeout(this.prewarmTimer);
     this.infoBarClock?.stop();
+    // 还在朗读就交给后台接着念（换读应用排版正文），否则停掉释放。要在作废换章等待之前交接，
+    // 正在等页面换章的朗读才会改到后台去换。
+    this.handOffReadAloud();
     this.resolveTtsChapter(false);
-    this.readAloud?.shutdown();
     this.resolveCut(false);
     for (const waiter of Array.from(this.stepWaiters.values())) waiter(new EpubStepResult());
     this.stepWaiters.clear();
@@ -561,6 +569,7 @@ struct EpubOriginalReadBookPage {
       if (!LocalBookService.canUseEpubOriginalLayout(book)) throw new Error('这本书不能用文件排版打开');
       if (!LocalBookService.usesEpubOriginalLayout(book)) {
         // 书架上的书籍记录还没刷新（刚在别处关掉了文件排版）：交回普通阅读器。
+        this.releaseAdoptReadAloud();
         await this.getUIContext().getRouter().replaceUrl({
           url: 'pages/ReadBook', params: { bookUrl: this.bookUrl, formatChecked: 'true' }
         });
@@ -1495,6 +1504,7 @@ struct EpubOriginalReadBookPage {
       this.statusText = '';
       this.settleShelfOpeningPageSnapshot();
       ReaderOpenTrace.finish(this.bookUrl, 'epub-original-ready');
+      this.takeOverReadAloud();
       if (this.visible) readStatsTracker.setReadingActive(this.bookUrl);
     }
     this.schedulePreload();
@@ -2420,6 +2430,7 @@ struct EpubOriginalReadBookPage {
   }
 
   private fail(message: string): void {
+    this.releaseAdoptReadAloud();
     this.ready = false;
     this.stopSpinner();
     this.failed = true;
@@ -2461,7 +2472,8 @@ struct EpubOriginalReadBookPage {
   private async close(): Promise<void> {
     if (this.closing) return;
     this.closing = true;
-    if (this.readAloud?.active()) this.readAloud?.stop();
+    // 朗读不停（关掉后在后台接着念），只撤掉高亮，关书截图里不带它。
+    if (this.readAloud?.active()) this.ttsClearFocus();
     if (this.shortcutReplace) {
       try { await this.saveProgress(); } catch (error) { console.warn('[EpubOriginal] exit save failed:', error); }
       HomeRoute.replaceWithHome(this.getUIContext().getRouter())
@@ -2719,31 +2731,76 @@ struct EpubOriginalReadBookPage {
   // ---- 朗读：文字取自网页正文，念到哪句高亮哪句并翻页跟随；面板、音色与系统媒体控件和普通阅读页共用 ----
 
   private ensureReadAloud(): EpubOriginalReadAloud {
-    if (!this.readAloud) {
-      this.readAloud = new EpubOriginalReadAloud({
-        context: (): common.UIAbilityContext => this.getUIContext().getHostContext() as common.UIAbilityContext,
-        bookUrl: (): string => this.bookUrl,
-        bookName: (): string => this.book?.name || this.title,
-        author: (): string => this.book?.author || '',
-        chapterIndex: (): number => this.chapterIndex,
-        chapterTitles: (): string[] => this.ttsChapterTitles(),
-        pageIndex: (): number => this.pageIndex,
-        pageCount: (): number => this.pageCount,
-        cover: (): ResourceStr => this.ttsCover(),
-        coverRaw: (): ResourceStr => BookCoverResolver.first(this.book, this.darkMode),
-        speech: (): Promise<EpubSpeechText | null> => this.ttsSpeech(),
-        focus: (start: number, end: number): void => this.ttsFocus(start, end),
-        clearFocus: (): void => this.ttsClearFocus(),
-        openChapter: (index: number): Promise<boolean> => this.ttsOpenChapter(index),
-        openMimoSettings: (): void => {
-          this.getUIContext().getRouter().pushUrl({ url: 'pages/MimoSettings' }).catch((error: Error): void => {
-            console.warn('[EpubOriginal] open MiMo settings failed:', error);
-          });
-        },
-        changed: (): void => this.onTtsStateChanged()
-      });
-    }
+    if (!this.readAloud) this.readAloud = new EpubOriginalReadAloud(this.readAloudHost());
     return this.readAloud;
+  }
+
+  /** 这一页给朗读的内容与动作：网页正文、高亮翻页、按页算的进度。 */
+  private readAloudHost(): EpubReadAloudHost {
+    const host: EpubReadAloudHost = {
+      context: (): common.UIAbilityContext => this.getUIContext().getHostContext() as common.UIAbilityContext,
+      bookUrl: (): string => this.bookUrl,
+      bookName: (): string => this.book?.name || this.title,
+      author: (): string => this.book?.author || '',
+      chapterIndex: (): number => this.chapterIndex,
+      chapterTitles: (): string[] => this.ttsChapterTitles(),
+      chapterProgress: (): number => Math.min(1, (Math.max(0, this.pageIndex) + 1) / Math.max(1, this.pageCount)),
+      positionLabel: (): string => `第 ${this.pageIndex + 1}/${Math.max(1, this.pageCount)} 页`,
+      cover: (): ResourceStr => this.ttsCover(),
+      coverRaw: (): ResourceStr => BookCoverResolver.first(this.book, this.darkMode),
+      speech: (): Promise<EpubSpeechText | null> => this.ttsSpeech(),
+      focus: (start: number, end: number, _text: string): void => this.ttsFocus(start, end),
+      clearFocus: (): void => this.ttsClearFocus(),
+      openChapter: (index: number): Promise<boolean> => this.ttsOpenChapter(index),
+      openMimoSettings: (): void => {
+        this.getUIContext().getRouter().pushUrl({ url: 'pages/MimoSettings' }).catch((error: Error): void => {
+          console.warn('[EpubOriginal] open MiMo settings failed:', error);
+        });
+      },
+      changed: (): void => this.onTtsStateChanged(),
+      stopped: (): void => {}
+    };
+    return host;
+  }
+
+  /** 页面关掉时：还在朗读就交给后台接着念，否则释放。 */
+  private handOffReadAloud(): void {
+    this.releaseAdoptReadAloud();
+    const tts = this.readAloud;
+    this.readAloud = null;
+    if (!tts) return;
+    if (!tts.active() || !this.book || this.chapters.length === 0) {
+      tts.shutdown();
+      return;
+    }
+    const seed = new EpubOriginalBackgroundSeed();
+    seed.context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    seed.ui = this.getUIContext();
+    seed.book = this.book;
+    seed.chapters = this.chapters;
+    seed.chapterIndex = this.chapterIndex;
+    seed.spot = this.spot;
+    seed.cover = this.ttsCover();
+    seed.coverRaw = BookCoverResolver.first(this.book, this.darkMode);
+    seed.ownerId = tts.ownerId;
+    tts.detach(new EpubOriginalBackgroundHost(seed));
+  }
+
+  /** 排好版了：把后台在念的这本书接回来，从正在念的那句接着念、高亮并翻到那里。 */
+  private takeOverReadAloud(): void {
+    const tts = this.adoptReadAloud;
+    this.adoptReadAloud = null;
+    if (!tts) return;
+    if (this.readAloud && this.readAloud !== tts) this.readAloud.shutdown();
+    this.readAloud = tts;
+    tts.attach(this.readAloudHost()).catch((error: Error): void => {
+      console.warn('[EpubOriginal] take over read aloud failed:', error);
+    });
+  }
+
+  private releaseAdoptReadAloud(): void {
+    this.adoptReadAloud?.unclaim();
+    this.adoptReadAloud = null;
   }
 
   private ttsTitles: string[] = [];

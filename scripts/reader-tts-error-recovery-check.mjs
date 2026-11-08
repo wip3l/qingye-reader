@@ -21,6 +21,8 @@ const context = vm.createContext({
   readStatsTracker: { setTtsActive() {} },
   HdsFeedback: { showToast: message => toasts.push(message) },
   MimoStore: { load: () => ({ enabled: mimoEnabled }), setEnabled: value => { mimoEnabled = value; } },
+  LocalTtsSelection: { clear() {}, select() {} },
+  getContext: () => ({}),
   console
 });
 vm.runInContext(stripTypeScriptTypes(session.replace(/^import .*;\r?\n/gm, '')
