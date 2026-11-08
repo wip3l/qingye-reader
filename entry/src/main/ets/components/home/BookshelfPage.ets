@@ -54,6 +54,7 @@ import { AppThemeSettingsStore } from '../../utils/AppThemeSettingsStore';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 import { ThemeBookCoverSettings } from '../../utils/ThemeBookCoverSettings';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
+import { HexColor } from '../../utils/HexColor';
 import { LocalBookService } from '../../core/book/LocalBookService';
 import { BookChangeSourceDialog } from '../../components/BookChangeSourceDialog';
 import { SystemDialogSession } from '../../utils/SystemDialogSession';
@@ -3877,6 +3878,7 @@ export struct BookshelfPage {
    * Second info line of the compact/loose shelf row: "<x小时前> · <最新章节名>".
    * The old "作者 · 最后更新 xxx" single line is split so the update time gets its own row and
    * can carry the latest chapter title. It shares the author line's font and colour.
+   * 没有更新时间时补“最新”前缀：书源章节名常常只有“第N章”，单独显示会被误读成“共N章”。
    */
   getShelfUpdateLineText(book: Book): string {
     const timeText = BookDisplayHelper.getLastUpdateRelativeText(book);
@@ -3884,7 +3886,94 @@ export struct BookshelfPage {
     if (timeText && chapterText) {
       return `${timeText} · ${chapterText}`;
     }
-    return timeText || chapterText;
+    if (chapterText) {
+      return `最新 · ${chapterText}`;
+    }
+    return timeText;
+  }
+
+  getShelfLatestChapterTitle(book: Book): string {
+    return (book.latestChapterTitle || '').trim();
+  }
+
+  /** 宽松布局的作者信息行：作者 · 书源 · 字数。书源已在封面角标上显示时不重复。 */
+  getLooseShelfMetaText(book: Book): string {
+    const parts: string[] = [this.getShelfAuthorText(book)];
+    const origin = this.shelfBookOriginName(book);
+    if (origin && BookshelfCoverBadgeSettings.location(this.bookshelfCoverBadges, 'source') < 0) {
+      parts.push(origin);
+    }
+    const words = this.formatShelfWordCount(book.wordCount);
+    if (words) {
+      parts.push(words);
+    }
+    return parts.join(' · ');
+  }
+
+  /** 书源给的字数可能是纯数字，也可能已带“万字”等单位；纯数字才换算。 */
+  formatShelfWordCount(raw: string): string {
+    const text = (raw || '').trim();
+    if (!/^\d+$/.test(text)) {
+      return text;
+    }
+    const count = Number.parseInt(text);
+    if (!Number.isFinite(count) || count <= 0) {
+      return '';
+    }
+    if (count < 10000) {
+      return `${count}字`;
+    }
+    const wan = count / 10000;
+    return wan >= 100 ? `${Math.round(wan)}万字` : `${Math.round(wan * 10) / 10}万字`;
+  }
+
+  /** 封面角标没放“书籍更新标识”时，在最新章节标签旁补一个“新”。 */
+  shouldShowLooseUpdateBadge(book: Book): boolean {
+    return this.hasShelfBookUpdate(book) &&
+      BookshelfCoverBadgeSettings.location(this.bookshelfCoverBadges, 'update') < 0;
+  }
+
+  @Builder
+  looseLatestChapterRow(book: Book) {
+    Row({ space: 6 }) {
+      if (this.getShelfLatestChapterTitle(book) || BookDisplayHelper.getLastUpdateRelativeText(book)) {
+        Row({ space: 6 }) {
+          Text(BookDisplayHelper.getLastUpdateRelativeText(book) || '最新')
+            .fontSize(AppFontSize.CAPTION)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.accentColor())
+            .maxLines(1)
+            .flexShrink(0)
+          if (this.getShelfLatestChapterTitle(book)) {
+            Text(this.getShelfLatestChapterTitle(book))
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.secondaryTextColor())
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .flexShrink(1)
+          }
+        }
+        .height(24)
+        .padding({ left: 9, right: 9 })
+        .borderRadius(12)
+        .backgroundColor(HexColor.withOpacity(this.accentColor(), 0.1))
+        .alignItems(VerticalAlign.Center)
+        .flexShrink(1)
+      }
+      if (this.shouldShowLooseUpdateBadge(book)) {
+        Text('新')
+          .fontSize(AppFontSize.MICRO)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeRuntime.onAccentColor())
+          .height(16)
+          .padding({ left: 5, right: 5 })
+          .borderRadius(8)
+          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
+          .flexShrink(0)
+      }
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
   }
 
   // --- 书架行排版尺寸 ---------------------------------------------------------
@@ -3925,7 +4014,7 @@ export struct BookshelfPage {
       this.shelfInfoTailHeight() + this.shelfRowSpace() * 4;
   }
 
-  /** 宽松布局信息块高度，尾部是阅读进度行（进度条开着时该行隐藏，高度照旧保留、其余行上下均分）。 */
+  /** 宽松布局信息块（= 封面）高度。进度条开着时没有进度行，这份高度留给书名第二行，见 looseBookContent。 */
   shelfLooseInfoHeight(): number {
     return this.shelfTitleLineHeight() + this.shelfTextLineHeight() + this.shelfTextLineHeight() +
       this.shelfTextLineHeight() + this.shelfRowSpace() * 4;
@@ -5954,58 +6043,48 @@ export struct BookshelfPage {
         this.coverView(book, this.shelfCoverWidth(this.shelfLooseInfoHeight()),
           this.shelfLooseInfoHeight(), ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false))
 
-        Column({ space: this.shelfRowSpace() }) {
-          Row({ space: AppSpacing.SM }) {
-            Text(this.shelfTileBookDisplayName(book))
-              .fontSize(AppFontSize.BODY_LARGE)
-              .lineHeight(this.shelfTitleLineHeight())
-              .fontWeight(FontWeight.Bold)
-              .fontColor(this.primaryTextColor())
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-
-          Text(this.getShelfAuthorText(book))
-            .fontSize(AppFontSize.BODY)
-            .lineHeight(this.shelfTextLineHeight())
-            .fontColor(this.secondaryTextColor())
-            .maxLines(1)
+        // 分层排：书名和作者信息贴顶，最新章节标签（进度条关着时再加进度行）贴封面底边，空白只留在中间。
+        // 高度预算（封面 93）：进度条开着 = 书名两行 40 + 6 + 信息行 16 + 标签 24 = 86；
+        // 关着 = 书名一行 20 + 6 + 16 + 标签 24 + 4 + 进度 19 = 89。
+        Column() {
+          Text(this.shelfTileBookDisplayName(book))
+            .fontSize(AppFontSize.BODY_LARGE)
+            .lineHeight(this.shelfTitleLineHeight())
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.primaryTextColor())
+            .maxLines(this.bookshelfShowProgressBar ? 2 : 1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
 
-          if (this.getShelfUpdateLineText(book)) {
-            Text(this.getShelfUpdateLineText(book))
+          Text(this.getLooseShelfMetaText(book))
+            .fontSize(AppFontSize.CAPTION)
+            .lineHeight(this.shelfSmallTextLineHeight())
+            .fontColor(this.subTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .margin({ top: 6 })
+
+          Blank()
+
+          if (this.getShelfLatestChapterTitle(book) || this.shouldShowLooseUpdateBadge(book)) {
+            this.looseLatestChapterRow(book)
+          }
+
+          // 进度条开着时下方面板已带百分比，这里不再重复。
+          if (!this.bookshelfShowProgressBar) {
+            Text(this.getShelfProgressText(book))
               .fontSize(AppFontSize.BODY)
               .lineHeight(this.shelfTextLineHeight())
               .fontColor(this.secondaryTextColor())
               .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('100%')
-          }
-
-          // 进度条开着时下方面板已带百分比，这里不再重复；封面高度不变，剩下的行由 SpaceBetween 上下撑开。
-          if (!this.bookshelfShowProgressBar) {
-            // 恒定的 Blank：某本书没有更新行时由它吸收多余空间，尾部仍被顶到底部。
-            Blank()
-
-            Row() {
-
-              // 与作者名保持一致的格式（字号 14 + 次级文字色）。
-              Text(this.getShelfProgressText(book))
-                .fontSize(AppFontSize.BODY)
-                .lineHeight(this.shelfTextLineHeight())
-                .fontColor(this.secondaryTextColor())
-            }
+              .margin({ top: this.shelfRowSpace() })
           }
         }
         .layoutWeight(1)
         .height(this.shelfLooseInfoHeight())
         .margin({ left: AppSpacing.LG })
         .alignItems(HorizontalAlign.Start)
-        .justifyContent(FlexAlign.SpaceBetween)
       }
       .width('100%')
       .alignItems(VerticalAlign.Top)
