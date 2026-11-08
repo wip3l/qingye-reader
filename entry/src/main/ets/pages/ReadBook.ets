@@ -14421,6 +14421,16 @@ struct ReadBookPage {
     if (!title) {
       return body;
     }
+    if (this.readerRemovesChapterTitle()) {
+      // 替换净化里的内置“移除标题”：章首不排章节名。章评入口单独留一行，卷名照常放在卷首。
+      const leading = titleAction ? `${titleAction}
+
+${body}` : body;
+      const volume = this.readerVolumeTitle(chapterIndex);
+      return volume ? `${volume}
+
+${leading}` : leading;
+    }
     const heading = titleAction ? `${title}${titleAction}` : title;
     const volumeTitle = this.readerVolumeTitle(chapterIndex);
     if (!volumeTitle) {
@@ -14431,6 +14441,15 @@ struct ReadBookPage {
     const parts = ReaderTextNormalizer.splitLeadingImages(body);
     return parts[0] ? `${volumeTitle}\n\n${parts[0]}\n\n${heading}\n\n${parts[1]}` :
       `${volumeTitle}\n\n${heading}\n\n${body}`;
+  }
+
+  readerRemovesChapterTitle(): boolean {
+    return ReaderReplaceRuleStore.removesChapterTitle(this.readerReplaceRules, this.book);
+  }
+
+  /** 排版时认作章节标题的文字；章首不排章节名时为空，免得正文首段恰好以章节名开头被当成标题。 */
+  readerLayoutChapterTitle(chapterIndex: number): string {
+    return this.readerRemovesChapterTitle() ? '' : this.getChapterTitle(chapterIndex);
   }
 
   buildIndentedChapterBody(text: string): string {
@@ -17241,7 +17260,7 @@ struct ReadBookPage {
   createIncrementalReaderV2Pagination(source: string, chapterIndex: number,
     initialPageCount: number, registerSession: boolean = true): ReaderPaginationResult {
     const snapshot = this.buildReaderV2Snapshot();
-    const document = ReaderV2DocumentParser.parse(source, chapterIndex, this.getChapterTitle(chapterIndex),
+    const document = ReaderV2DocumentParser.parse(source, chapterIndex, this.readerLayoutChapterTitle(chapterIndex),
       this.readerV2HeadingHints(chapterIndex), ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw));
     const session = ReaderV2Paginator.start(document, snapshot, this.buildReaderV2RegexStyles(document));
     const result: ReaderPaginationResult = {
@@ -18777,7 +18796,7 @@ struct ReadBookPage {
     try {
       if (!valid()) return;
       const document = ReaderV2DocumentParser.parse(request.chunk, request.chapter,
-        request.index === 0 ? this.getChapterTitle(request.chapter) : '', this.readerV2HeadingHints(request.chapter),
+        request.index === 0 ? this.readerLayoutChapterTitle(request.chapter) : '', this.readerV2HeadingHints(request.chapter),
         ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw));
       // Identical text can occur in different chunks. Their selection/progress maps still own different offsets.
       document.identity = `continuous_${request.key}`;
@@ -19026,7 +19045,8 @@ struct ReadBookPage {
       let session = this.readerContinuousMetricsSession;
       if (!session) {
         const document = ReaderV2DocumentParser.parse(this.readerContinuousMetricsSource,
-          this.currentChapterIndex, this.getChapterTitle(), this.readerV2HeadingHints(this.currentChapterIndex),
+          this.currentChapterIndex, this.readerLayoutChapterTitle(this.currentChapterIndex),
+          this.readerV2HeadingHints(this.currentChapterIndex),
           ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw));
         session = ReaderV2Paginator.start(document, snapshot, this.buildReaderV2RegexStyles(document));
         this.readerContinuousMetricsSession = session;

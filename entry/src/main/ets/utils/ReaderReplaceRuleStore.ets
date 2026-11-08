@@ -16,6 +16,8 @@ export class ReaderReplaceRule {
   excludeScope: string = '';
   timeoutMs: number = 3000;
   enabled: boolean = true;
+  /** 内置规则类型；空串是用户自己的规则。内置规则没有匹配内容，由阅读页按类型处理。 */
+  builtin: string = '';
 }
 
 export class ReaderReplaceRuleCheck {
@@ -34,6 +36,11 @@ export class ReaderReplaceRuleStore {
   private static readonly STORE_NAME: string = 'reader_replace_rules';
   private static readonly RULES_KEY: string = 'rulesV1';
   private static cachedRules: ReaderReplaceRule[] | null = null;
+  /** 内置“移除标题”：开启后正文顶部不排版章节名，顶栏、目录等处照常显示。 */
+  static readonly BUILTIN_REMOVE_TITLE: string = 'removeChapterTitle';
+  // 固定编号让多设备同步时是同一条；取远大于时间戳的值，避开导入规则自带的小编号。旧版客户端回传会丢掉
+  // builtin 字段，所以也按编号认。
+  private static readonly BUILTIN_REMOVE_TITLE_ID: number = 8888000000001;
 
   static async load(context: Context, force: boolean = false): Promise<ReaderReplaceRule[]> {
     if (!force && ReaderReplaceRuleStore.cachedRules) {
@@ -48,7 +55,8 @@ export class ReaderReplaceRuleStore {
   }
 
   static async save(context: Context, rules: ReaderReplaceRule[]): Promise<void> {
-    const normalized = rules.map((rule: ReaderReplaceRule) => ReaderReplaceRuleStore.normalize(rule));
+    const normalized = ReaderReplaceRuleStore.withBuiltins(
+      rules.map((rule: ReaderReplaceRule) => ReaderReplaceRuleStore.normalize(rule)));
     ReaderReplaceRuleStore.cachedRules = ReaderReplaceRuleStore.cloneRules(normalized);
     const store = await preferences.getPreferences(context, ReaderReplaceRuleStore.STORE_NAME);
     await store.put(ReaderReplaceRuleStore.RULES_KEY, JSON.stringify(normalized));
@@ -61,6 +69,22 @@ export class ReaderReplaceRuleStore {
     const rule = new ReaderReplaceRule();
     rule.id = Date.now();
     return rule;
+  }
+
+  static isBuiltin(rule: ReaderReplaceRule): boolean {
+    return !!rule.builtin;
+  }
+
+  /** 本书是否启用了内置“移除标题”（同样受特定范围、排除范围限制）。 */
+  static removesChapterTitle(rules: ReaderReplaceRule[], book: Book | null): boolean {
+    return rules.some((rule: ReaderReplaceRule): boolean =>
+      rule.builtin === ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE && rule.enabled !== false &&
+        ReaderReplaceRuleStore.matchesBookScope(rule, book));
+  }
+
+  static builtinDescription(rule: ReaderReplaceRule): string {
+    return rule.builtin === ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE ?
+      '正文顶部不显示章节名，顶栏和目录照常显示' : '';
   }
 
   static applyTitle(text: string, rules: ReaderReplaceRule[], book: Book | null): string {
@@ -78,6 +102,12 @@ export class ReaderReplaceRuleStore {
     if (!rule.enabled) {
       result.state = 'disabled';
       result.label = '已禁用';
+      return result;
+    }
+    if (rule.builtin) {
+      result.scopeMatched = ReaderReplaceRuleStore.matchesBookScope(rule, book);
+      result.state = result.scopeMatched ? 'builtin' : 'outOfScope';
+      result.label = result.scopeMatched ? '当前书籍已生效' : '不适用于当前书籍';
       return result;
     }
     if (!rule.pattern) {
@@ -217,18 +247,38 @@ export class ReaderReplaceRuleStore {
 
   private static decode(raw: string): ReaderReplaceRule[] {
     if (!raw) {
-      return [];
+      return ReaderReplaceRuleStore.withBuiltins([]);
     }
     try {
       const values = JSON.parse(raw) as ReaderReplaceRule[];
       if (!Array.isArray(values)) {
-        return [];
+        return ReaderReplaceRuleStore.withBuiltins([]);
       }
-      return values.map((rule: ReaderReplaceRule) => ReaderReplaceRuleStore.normalize(rule));
+      return ReaderReplaceRuleStore.withBuiltins(
+        values.map((rule: ReaderReplaceRule) => ReaderReplaceRuleStore.normalize(rule)));
     } catch (error) {
       console.warn('读取替换净化规则失败:', error);
-      return [];
+      return ReaderReplaceRuleStore.withBuiltins([]);
     }
+  }
+
+  /** 内置规则不能删除：缺了就补回列表最前面，默认关闭；重复的只留第一条。 */
+  private static withBuiltins(rules: ReaderReplaceRule[]): ReaderReplaceRule[] {
+    let seen = false;
+    const result = rules.filter((rule: ReaderReplaceRule): boolean => {
+      if (rule.builtin !== ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE) return true;
+      if (seen) return false;
+      seen = true;
+      return true;
+    });
+    if (!seen) {
+      const rule = new ReaderReplaceRule();
+      rule.id = ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE_ID;
+      rule.builtin = ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE;
+      rule.enabled = false;
+      result.unshift(ReaderReplaceRuleStore.normalize(rule));
+    }
+    return result;
   }
 
   private static normalize(source: ReaderReplaceRule): ReaderReplaceRule {
@@ -246,6 +296,19 @@ export class ReaderReplaceRuleStore {
     const timeout = Math.round(Number(source?.timeoutMs));
     rule.timeoutMs = Number.isNaN(timeout) ? 3000 : Math.max(100, Math.min(timeout, 10000));
     rule.enabled = source?.enabled !== false;
+    if (source?.builtin === ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE ||
+      rule.id === ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE_ID) {
+      // 内置规则只有开关和书籍范围可改，其余字段固定；匹配内容留空，替换流程自然跳过它。
+      rule.id = ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE_ID;
+      rule.builtin = ReaderReplaceRuleStore.BUILTIN_REMOVE_TITLE;
+      rule.name = '移除标题';
+      rule.group = '内置';
+      rule.pattern = '';
+      rule.replacement = '';
+      rule.applyToTitle = true;
+      rule.applyToContent = false;
+      rule.isRegex = false;
+    }
     return rule;
   }
 

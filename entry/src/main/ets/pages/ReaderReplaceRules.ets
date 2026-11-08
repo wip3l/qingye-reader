@@ -255,9 +255,11 @@ struct ReaderReplaceRulesPage {
       HdsFeedback.showToast('请先进入选择模式');
       return;
     }
-    const selected = this.rules.filter((rule: ReaderReplaceRule) => this.selectedRuleIds.includes(rule.id));
+    // 内置规则没有匹配内容，导出给其他应用没有意义。
+    const selected = this.rules.filter((rule: ReaderReplaceRule) =>
+      this.selectedRuleIds.includes(rule.id) && !ReaderReplaceRuleStore.isBuiltin(rule));
     if (selected.length === 0) {
-      HdsFeedback.showToast('请先选择规则');
+      HdsFeedback.showToast('请先选择规则（内置规则不导出）');
       return;
     }
     let file: fs.File | null = null;
@@ -595,7 +597,9 @@ struct ReaderReplaceRulesPage {
                       this.ruleFallbackSwipeActions(rule)
                     },
                     actionAreaDistance: 128,
-                    onAction: () => this.confirmDelete(rule)
+                    onAction: () => {
+                      if (!ReaderReplaceRuleStore.isBuiltin(rule)) this.confirmDelete(rule);
+                    }
                   },
                   edgeEffect: SwipeEdgeEffect.Spring
                 })
@@ -648,6 +652,16 @@ struct ReaderReplaceRulesPage {
   }
 
   private ruleSwipeActions(rule: ReaderReplaceRule): HdsSwipeActionOptions {
+    if (ReaderReplaceRuleStore.isBuiltin(rule)) {
+      return { icons: [
+        {
+          icon: new SymbolGlyphModifier(rule.enabled ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle')),
+          backgroundColor: this.buttonColor(),
+          iconOptions: { accessibilityText: rule.enabled ? '禁用规则' : '启用规则' },
+          onAction: () => this.setRuleEnabled(rule.id, !rule.enabled)
+        }
+      ] };
+    }
     return { icons: [
       {
         icon: new SymbolGlyphModifier(rule.enabled ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle')),
@@ -663,7 +677,9 @@ struct ReaderReplaceRulesPage {
   ruleFallbackSwipeActions(rule: ReaderReplaceRule) {
     Row() {
       this.ruleEnableSwipeAction(rule)
-      this.ruleDeleteSwipeAction(rule)
+      if (!ReaderReplaceRuleStore.isBuiltin(rule)) {
+        this.ruleDeleteSwipeAction(rule)
+      }
     }
     .height('100%')
   }
@@ -683,7 +699,7 @@ struct ReaderReplaceRulesPage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        Text(rule.pattern || '未填写匹配规则')
+        Text(ReaderReplaceRuleStore.builtinDescription(rule) || rule.pattern || '未填写匹配规则')
           .fontSize(AppFontSize.BODY)
           .fontColor(this.secondaryTextColor())
           .maxLines(2)
@@ -853,7 +869,7 @@ struct ReaderReplaceRulesPage {
 
   ruleEffectColor(rule: ReaderReplaceRule): string {
     const state = this.ruleEffectCheck(rule).state;
-    if (state === 'effective') return ThemeRuntime.successColor(this.appDarkMode);
+    if (state === 'effective' || state === 'builtin') return ThemeRuntime.successColor(this.appDarkMode);
     if (state === 'invalid') return ThemeRuntime.dangerColor(this.appDarkMode);
     if (state === 'matched') return '#D17A00';
     return this.subTextColor();
@@ -992,26 +1008,41 @@ struct ReaderReplaceRulesPage {
   editorView() {
     Scroll() {
       Column({ space: AppSpacing.LG }) {
-        this.inputField('规则名称', this.draft.name, '例如：去除章节末广告', (value: string) => {
-          this.draft.name = value;
-          this.refreshDraft();
-        })
-        this.textAreaField('匹配规则', this.draft.pattern, '输入文本或正则表达式', (value: string) => {
-          this.draft.pattern = value;
-          this.refreshDraft();
-        })
-        this.textAreaField('替换为', this.draft.replacement, '留空表示删除匹配内容', (value: string) => {
-          this.draft.replacement = value;
-          this.refreshDraft();
-        })
+        if (ReaderReplaceRuleStore.isBuiltin(this.draft)) {
+          Column({ space: AppSpacing.XS }) {
+            Text(this.draft.name)
+              .fontSize(AppFontSize.BODY_LARGE)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.primaryTextColor())
+              .width('100%')
+            Text('内置规则：' + ReaderReplaceRuleStore.builtinDescription(this.draft) + '。可以限定只对部分书籍生效。')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.secondaryTextColor())
+              .width('100%')
+          }
+          .width('100%')
+        } else {
+          this.inputField('规则名称', this.draft.name, '例如：去除章节末广告', (value: string) => {
+            this.draft.name = value;
+            this.refreshDraft();
+          })
+          this.textAreaField('匹配规则', this.draft.pattern, '输入文本或正则表达式', (value: string) => {
+            this.draft.pattern = value;
+            this.refreshDraft();
+          })
+          this.textAreaField('替换为', this.draft.replacement, '留空表示删除匹配内容', (value: string) => {
+            this.draft.replacement = value;
+            this.refreshDraft();
+          })
 
-        Row({ space: AppSpacing.MD }) {
-          this.titleOptionChip()
-          this.contentOptionChip()
-          Blank()
-          this.regexOptionChip()
+          Row({ space: AppSpacing.MD }) {
+            this.titleOptionChip()
+            this.contentOptionChip()
+            Blank()
+            this.regexOptionChip()
+          }
+          .width('100%')
         }
-        .width('100%')
 
         this.textAreaField('特定范围', this.draft.scope, '书名、作者、书源或地址；留空表示全部', (value: string) => {
           this.draft.scope = value;
@@ -1021,9 +1052,11 @@ struct ReaderReplaceRulesPage {
           this.draft.excludeScope = value;
           this.refreshDraft();
         })
-        this.inputField('超时 (ms)', this.timeoutDraft, '3000', (value: string) => {
-          this.timeoutDraft = value.replace(/[^0-9]/g, '').substring(0, 5);
-        }, InputType.Number)
+        if (!ReaderReplaceRuleStore.isBuiltin(this.draft)) {
+          this.inputField('超时 (ms)', this.timeoutDraft, '3000', (value: string) => {
+            this.timeoutDraft = value.replace(/[^0-9]/g, '').substring(0, 5);
+          }, InputType.Number)
+        }
 
         Row({ space: AppSpacing.LG }) {
           Button('取消', { type: ButtonType.Capsule })
@@ -1226,11 +1259,13 @@ struct ReaderReplaceRulesPage {
           this.closeRuleActions();
           if (rule) this.enterRuleSelectionMode(rule.id);
         })
-        this.contextActionItem($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => {
-          const rule = this.actionRule();
-          this.closeRuleActions();
-          if (rule) this.confirmDelete(rule);
-        })
+        if (!this.actionRuleBuiltin()) {
+          this.contextActionItem($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => {
+            const rule = this.actionRule();
+            this.closeRuleActions();
+            if (rule) this.confirmDelete(rule);
+          })
+        }
 
       }
       .width('100%')
@@ -1266,6 +1301,9 @@ struct ReaderReplaceRulesPage {
   }
 
   ruleScopeSummary(rule: ReaderReplaceRule): string {
+    if (ReaderReplaceRuleStore.isBuiltin(rule)) {
+      return rule.scope ? '内置规则 · 限定书籍' : '内置规则';
+    }
     const targets: string[] = [];
     if (rule.applyToTitle) targets.push('标题');
     if (rule.applyToContent) targets.push('正文');
@@ -1348,7 +1386,13 @@ struct ReaderReplaceRulesPage {
 
   async batchDeleteRules(): Promise<void> {
     if (this.selectedRuleIds.length === 0 || this.isBatchOperating) return;
-    const count = this.selectedRuleIds.length;
+    const deletableIds = this.selectedRuleIds.filter((id: number) =>
+      !this.rules.some((rule: ReaderReplaceRule) => rule.id === id && ReaderReplaceRuleStore.isBuiltin(rule)));
+    if (deletableIds.length === 0) {
+      HdsFeedback.showToast('内置规则不能删除，可以禁用');
+      return;
+    }
+    const count = deletableIds.length;
     const result = await promptAction.showDialog({
       title: '删除规则',
       message: `确定删除已选择的 ${count} 条规则吗？`,
@@ -1357,7 +1401,7 @@ struct ReaderReplaceRulesPage {
     if (result.index !== 1) return;
     this.isBatchOperating = true;
     try {
-      const ids = [...this.selectedRuleIds];
+      const ids = [...deletableIds];
       const next = this.rules.filter((rule: ReaderReplaceRule) => !ids.includes(rule.id));
       if (await this.dissolveRulesAndSave(ids, next)) {
         // 列表项的 key 带多选状态，补位动画放完再退出多选，否则其余卡片会整批重建、看不到补位。
@@ -1591,6 +1635,11 @@ struct ReaderReplaceRulesPage {
     return this.rules.find((rule: ReaderReplaceRule) => rule.id === this.actionRuleId);
   }
 
+  actionRuleBuiltin(): boolean {
+    const rule = this.actionRule();
+    return rule ? ReaderReplaceRuleStore.isBuiltin(rule) : false;
+  }
+
   actionRuleEnabled(): boolean {
     const rule = this.actionRule();
     return rule ? rule.enabled : false;
@@ -1604,6 +1653,13 @@ struct ReaderReplaceRulesPage {
   }
 
   async saveDraft(): Promise<void> {
+    if (ReaderReplaceRuleStore.isBuiltin(this.draft)) {
+      // 内置规则只保存书籍范围，其余字段由存储层固定。
+      const next = this.rules.map((rule: ReaderReplaceRule) => rule.id === this.draft.id ?
+        ReaderReplaceRuleStore.cloneRule(this.draft) : rule);
+      await this.finishSaveDraft(next);
+      return;
+    }
     const pattern = (this.draft.pattern || '').trim();
     if (!pattern) {
       HdsFeedback.showToast('请填写匹配规则');
@@ -1632,6 +1688,10 @@ struct ReaderReplaceRulesPage {
     this.draft.timeoutMs = Number.isNaN(timeout) ? 3000 : Math.max(100, Math.min(Math.round(timeout), 10000));
     const next = this.rules.filter((rule: ReaderReplaceRule) => rule.id !== this.draft.id);
     next.push(ReaderReplaceRuleStore.cloneRule(this.draft));
+    await this.finishSaveDraft(next);
+  }
+
+  async finishSaveDraft(next: ReaderReplaceRule[]): Promise<void> {
     await ReaderReplaceRuleStore.save(getContext(this), next);
     this.rules = await ReaderReplaceRuleStore.load(getContext(this), true);
     this.editing = false;
@@ -1650,6 +1710,10 @@ struct ReaderReplaceRulesPage {
   }
 
   async confirmDelete(rule: ReaderReplaceRule): Promise<void> {
+    if (ReaderReplaceRuleStore.isBuiltin(rule)) {
+      HdsFeedback.showToast('内置规则不能删除，可以禁用');
+      return;
+    }
     const result = await promptAction.showDialog({
       title: '删除规则',
       message: `确定删除“${rule.name || '未命名规则'}”吗？`,
