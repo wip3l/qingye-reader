@@ -4810,10 +4810,21 @@ export struct BookshelfPage {
     .height(coverHeight + 4)
   }
 
-  /** 分组里扇形张开的书比单本书小一圈，张开后两侧只略微探进列间距；关闭错落摆放时与单本书一样大。 */
+  /**
+   * 分组里扇形张开的书比单本书小一圈，张开后两侧只略微探进列间距。
+   * 关闭错落摆放时三本书向右上阶梯错开，每本缩小一点，整叠约等于一本书的占位。
+   * 错开只有几 vp 时后两本只露出一条细缝，看着像描边错位而不像摞在一起的书。
+   */
   shelfFolderBookWidth(): number {
-    if (!this.bookshelfCompanionStagger) return this.shelfTileHardcoverWidth();
+    if (!this.bookshelfCompanionStagger) {
+      return Math.max(32, this.shelfTileHardcoverWidth() - Math.round(this.shelfFolderStackStep() * 1.2));
+    }
     return Math.max(32, Math.round(this.shelfTileHardcoverWidth() * 0.76));
+  }
+
+  /** 关闭错落摆放时每本书向右上错开的距离，按单本书宽度缩放。 */
+  shelfFolderStackStep(): number {
+    return Math.max(5, Math.round(this.shelfTileHardcoverWidth() * 0.075));
   }
 
   shelfFolderBookHeight(): number {
@@ -4831,15 +4842,21 @@ export struct BookshelfPage {
     return slot === 1 ? -7 : (slot === 2 ? 7 : 0);
   }
 
-  /** 关闭错落摆放时不张开：三本立正叠放，后面的依次向右上露出一条边，整叠左右各探进列间距 4vp。 */
+  /** 关闭错落摆放时不张开：三本立正，后面的依次向右上错开一个台阶，露出书头和书页侧面。 */
   shelfFolderFanShift(slot: number): number {
-    if (!this.bookshelfCompanionStagger) return slot === 1 ? 0 : (slot === 2 ? 4 : -4);
+    if (!this.bookshelfCompanionStagger) return (slot - 1) * this.shelfFolderStackStep();
     return slot === 1 ? -5 : (slot === 2 ? 5 : 0);
   }
 
   shelfFolderFanRise(slot: number): number {
-    if (!this.bookshelfCompanionStagger) return slot * 4;
+    if (!this.bookshelfCompanionStagger) return slot * this.shelfFolderStackStep();
     return 0;
+  }
+
+  /** 后面的书压暗，叠出前后层次；阶梯叠放露出的部分少，压得比扇形更重一些才分得清。 */
+  shelfFolderBackShade(slot: number): string {
+    if (!this.bookshelfCompanionStagger) return slot === 2 ? '#4D000000' : '#29000000';
+    return slot === 2 ? '#33000000' : '#1F000000';
   }
 
   @Builder
@@ -4852,11 +4869,10 @@ export struct BookshelfPage {
           this.shelfHardcoverSpineWidth(this.shelfFolderBookWidth()) + this.shelfHardcoverHingeWidth(this.shelfFolderBookWidth()))
         this.shelfHardcoverCoverLight(this.shelfFolderBookWidth())
         if (slot > 0) {
-          // 后面两本压暗一点，叠出前后层次。
           Column()
             .width('100%')
             .height('100%')
-            .backgroundColor(slot === 2 ? '#33000000' : '#1F000000')
+            .backgroundColor(this.shelfFolderBackShade(slot))
             .hitTestBehavior(HitTestMode.None)
         }
       }
