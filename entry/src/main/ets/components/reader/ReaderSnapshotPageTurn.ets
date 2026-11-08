@@ -47,8 +47,8 @@ export class ReaderSnapshotTurnHost {
 export class ReaderSnapshotTurnController {
   /** 转发正文区域收到的触摸事件（不拦截，网页照常收到点按、链接与长按）。 */
   touch: (event: TouchEvent) => void = () => {};
-  /** 点按翻页、按键翻页：1 下一页，-1 上一页。 */
-  turn: (direction: number) => void = () => {};
+  /** 点按翻页、按键翻页：1 下一页，-1 上一页。quiet：朗读跟随这类不是用户发起的翻页，不震动。 */
+  turn: (direction: number, quiet?: boolean) => void = () => {};
   /** 空闲时预先截好当前页，下一次翻页起步不用等截图。 */
   prewarm: () => void = () => {};
   /** 版式、深浅之类变了：丢掉留着的截图。 */
@@ -91,6 +91,8 @@ export struct ReaderSnapshotPageTurn {
   /** 截图还没好时手指已经松开：1 翻过去，-1 退回，0 还没决定。 */
   private release: number = 0;
   private queued: number = 0;
+  /** 这一次翻页不震动（朗读跟随翻页）；回到空闲时清掉。 */
+  private quiet: boolean = false;
   private frontKey: string = '';
   private backKey: string = '';
   private cacheMap: image.PixelMap | null = null;
@@ -120,10 +122,12 @@ export struct ReaderSnapshotPageTurn {
   private placeholderMap: image.PixelMap | null = null;
   private placeholderKey: string = '';
   private backIsPlaceholder: boolean = false;
+  /** 这次翻页的纸色：从起点截图的左右页边取样（书页可能是黑底），取不到用 paperColor。 */
+  private turnPaper: string = '';
 
   aboutToAppear(): void {
     this.controller.touch = (event: TouchEvent): void => this.handleTouch(event);
-    this.controller.turn = (direction: number): void => this.turn(direction);
+    this.controller.turn = (direction: number, quiet?: boolean): void => this.turn(direction, quiet === true);
     this.controller.prewarm = (): void => { this.prewarm(); };
     this.controller.invalidate = (): void => this.dropCache();
     this.controller.busy = (): boolean => this.phase !== 'idle';
@@ -299,9 +303,10 @@ export struct ReaderSnapshotPageTurn {
   private placeholder(): image.PixelMap | null {
     const width = PLACEHOLDER_SIZE;
     const height = PLACEHOLDER_SIZE;
-    const key = this.paperColor;
+    const paper = this.effectivePaper();
+    const key = paper;
     if (this.placeholderMap && this.placeholderKey === key) return this.placeholderMap;
-    const hex = (this.paperColor || '#FFFFFF').replace('#', '');
+    const hex = (paper || '#FFFFFF').replace('#', '');
     const rgb = hex.length >= 6 ? hex.substring(hex.length - 6) : 'FFFFFF';
     const r = Number.parseInt(rgb.substring(0, 2), 16) || 0;
     const g = Number.parseInt(rgb.substring(2, 4), 16) || 0;
@@ -328,6 +333,51 @@ export struct ReaderSnapshotPageTurn {
     this.placeholderKey = map ? key : '';
     if (old) setTimeout((): void => { old.release().catch((): void => {}); }, 64);
     return map;
+  }
+
+  private effectivePaper(): string {
+    return this.turnPaper || this.paperColor;
+  }
+
+  /**
+   * 页面底色：在左右页边、上中下三处各取一小块，按亮度取中位数。页边一般只有书页背景，
+   * 避开了页眉页脚和正文；黑底的书拿到的就是黑色，占位和卷起的纸背不会白得刺眼。
+   */
+  private async samplePaper(map: image.PixelMap): Promise<string> {
+    try {
+      const info = await map.getImageInfo();
+      const width = info.size.width;
+      const height = info.size.height;
+      if (width < 8 || height < 8) return '';
+      const colors: number[][] = [];
+      for (const fx of [0.015, 0.985]) {
+        for (const fy of [0.3, 0.5, 0.7]) {
+          const area: image.PositionArea = {
+            pixels: new ArrayBuffer(4 * 4 * 4), offset: 0, stride: 4 * 4,
+            region: { size: { width: 4, height: 4 }, x: Math.min(width - 4, Math.max(0, Math.round(width * fx) - 2)),
+              y: Math.min(height - 4, Math.round(height * fy)) }
+          };
+          await map.readPixels(area);
+          const bytes = new Uint8Array(area.pixels);
+          let r = 0;
+          let g = 0;
+          let b = 0;
+          for (let i = 0; i < bytes.length; i += 4) {
+            b += bytes[i]; g += bytes[i + 1]; r += bytes[i + 2];
+          }
+          const n = bytes.length / 4;
+          colors.push([r / n, g / n, b / n]);
+        }
+      }
+      colors.sort((a: number[], c: number[]): number =>
+        (0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]) - (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]));
+      const mid = colors[Math.floor(colors.length / 2)];
+      const hex = (value: number): string => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0');
+      return `#${hex(mid[0])}${hex(mid[1])}${hex(mid[2])}`.toUpperCase();
+    } catch (error) {
+      console.warn('[SnapshotTurn] paper sample failed:', error);
+      return '';
+    }
   }
 
   /** 跟手拖动时在后台换页并截目标页；截好就把纸色占位换成真页面。 */
@@ -365,13 +415,14 @@ export struct ReaderSnapshotPageTurn {
 
   // ---- 一次翻页 ----
 
-  private turn(direction: number): void {
+  private turn(direction: number, quiet: boolean = false): void {
     if (direction === 0) return;
     if (this.phase !== 'idle') {
       // 动画进行中又点了一下：记下一页，当前这页翻完马上接着翻。
       this.queued = direction;
       return;
     }
+    this.quiet = quiet;
     this.begin(direction);
     if (this.phase !== 'idle') this.release = 1;
   }
@@ -391,7 +442,7 @@ export struct ReaderSnapshotPageTurn {
       const moved = await this.host.advance(direction);
       if (serial !== this.serial) return;
       if (moved) {
-        ReaderHaptics.pageTurned(this.hapticsKind, false);
+        if (!this.quiet) ReaderHaptics.pageTurned(this.hapticsKind, false);
         this.host.committed(direction);
       }
       this.reset();
@@ -409,10 +460,15 @@ export struct ReaderSnapshotPageTurn {
       const moved = await this.host.advance(direction);
       if (serial !== this.serial) return;
       if (moved) {
-        ReaderHaptics.pageTurned(this.hapticsKind, false);
+        if (!this.quiet) ReaderHaptics.pageTurned(this.hapticsKind, false);
         this.host.committed(direction);
       }
       this.reset();
+      return;
+    }
+    this.turnPaper = await this.samplePaper(front);
+    if (serial !== this.serial) {
+      this.releaseLater(front);
       return;
     }
     this.frontMap = front;
@@ -448,7 +504,7 @@ export struct ReaderSnapshotPageTurn {
       return;
     }
     if (!back) {
-      ReaderHaptics.pageTurned(this.hapticsKind, false);
+      if (!this.quiet) ReaderHaptics.pageTurned(this.hapticsKind, false);
       this.host.committed(direction);
       this.hide(null, '');
       return;
@@ -474,7 +530,7 @@ export struct ReaderSnapshotPageTurn {
     if (this.phase !== 'ready') return;
     this.phase = 'animating';
     // 松手确定翻过去（或点按、按键翻页截图就绪）时震，不等动画播完。
-    if (complete) ReaderHaptics.pageTurned(this.hapticsKind, false);
+    if (complete && !this.quiet) ReaderHaptics.pageTurned(this.hapticsKind, false);
     const serial = this.serial;
     const target = complete ? -this.turnDirection * this.viewW() : 0;
     let duration = this.usesCurl() ? 320 : 240;
@@ -581,6 +637,7 @@ export struct ReaderSnapshotPageTurn {
   private reset(): void {
     this.cancelAnimator();
     this.phase = 'idle';
+    this.quiet = false;
     this.backReady = false;
     this.turnOffset = 0;
     this.turnDirection = 0;
@@ -699,10 +756,10 @@ export struct ReaderSnapshotPageTurn {
     if (this.animationType === ReaderPageTurnAnimation.THREE_D) {
       this.emulationPainter.draw(this.curlContext, this.frontMap, this.backMap, this.viewW(), this.viewH(),
         this.progress(), this.turnDirection, this.curlRegion, false, this.viewW() / 2, this.viewW() / 2,
-        1 / this.getUIContext().vp2px(1), this.paperColor, this.darkMode);
+        1 / this.getUIContext().vp2px(1), this.effectivePaper(), this.darkMode);
     } else {
       this.curlPainter.draw(this.curlContext, this.frontMap, this.backMap, this.viewW(), this.viewH(),
-        this.progress(), this.turnDirection, false, this.darkMode, 0, 0, this.paperColor);
+        this.progress(), this.turnDirection, false, this.darkMode, 0, 0, this.effectivePaper());
     }
   }
 
