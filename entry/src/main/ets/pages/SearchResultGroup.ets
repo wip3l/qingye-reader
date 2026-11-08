@@ -49,6 +49,7 @@ struct SearchResultGroupPage {
       if (this.books.length > 0) {
         SearchBookResultList({
           books: this.books,
+          markTraditional: true,
           scroller: this.scroller,
           shelfBookKeys: this.shelfBookKeys,
           busyBookKeys: this.busyBookKeys,

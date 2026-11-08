@@ -3,6 +3,7 @@ import { appDb } from '../../model/data/AppDatabase';
 import { BookSourceDataUrlSupport } from './BookSourceDataUrlSupport';
 import { BookSourceMetadataSupport } from './BookSourceMetadataSupport';
 import { BookSourceStageRuleSupport } from './BookSourceStageRuleSupport';
+import { SearchChineseScript, SearchKeywordVariants, SearchSourcePlan } from './SearchChineseScript';
 
 export interface SearchProgress {
   done: number;
@@ -166,6 +167,11 @@ export interface SearchOptions {
   stopAfterResults?: number;
   maxCandidatesPerSource?: number;
   debugContext?: BookSourceDebugContext;
+  /**
+   * 简繁同搜：按书源用字发对应写法的关键词（未知书源没有相关结果时补搜另一种），相关度、排序、精准搜索都折成简体比对。
+   * 不传时逐字比较，与以前一样。
+   */
+  chineseScript?: SearchChineseScript;
 }
 
 interface ScoredSearchBook {
@@ -194,6 +200,8 @@ export class SearchCoordinator {
   private currentPage: number = 1;
   private stageRuntimeOwnerId: string = '';
   private lastFailureReason: string = '';
+  private chineseScript: SearchChineseScript | null = null;
+  private keywordVariants: SearchKeywordVariants | null = null;
 
   getLastFailureReason(): string {
     return this.lastFailureReason;
@@ -217,6 +225,8 @@ export class SearchCoordinator {
     this.searchSerial++;
     this.currentPage = Math.max(1, Math.floor(options.page || 1));
     this.lastFailureReason = '';
+    this.chineseScript = options.validationOnly === true ? null : (options.chineseScript || null);
+    this.keywordVariants = this.chineseScript ? this.chineseScript.variants(keyword) : null;
     VerificationSupport.clearVerification();
     const safeCallback = (progress: SearchProgress): void => {
       try {
@@ -325,7 +335,7 @@ export class SearchCoordinator {
           all.push(...displayBooks);
           emitProgress();
         };
-        const sourceResult = await this.searchOneWithDeadline(sources[sourceIndex], keyword, options, onPartial);
+        const sourceResult = await this.searchSourceForScript(sources[sourceIndex], keyword, options, onPartial);
         if (sourceResult.books.length === 0 && sourceResult.reason && sourceResult.reason !== '未搜索到结果') {
           this.lastFailureReason = `${sources[sourceIndex].bookSourceName || '书源'}：${sourceResult.reason}`;
         }
@@ -378,6 +388,49 @@ export class SearchCoordinator {
    * On timeout the worker moves on and the abandoned run stops at its next checkpoint; a request already on the
    * wire ends through the HTTP client's own timeout.
    */
+  /**
+   * 简繁同搜时按书源用字选关键词；还不知道用字的书源先发原词，没有相关结果再补搜另一种写法（同一个书源依次进行）。
+   * 搜完记下站点用字。没开简繁同搜或关键词没有简繁差异时就是一次普通搜索。
+   */
+  private async searchSourceForScript(source: BookSource, keyword: string, options: SearchOptions,
+    onPartial: ((books: SearchBook[]) => void) | null): Promise<SearchSourceResult> {
+    const script = this.chineseScript;
+    const variants = this.keywordVariants;
+    if (!script || !variants) return await this.searchOneWithDeadline(source, keyword, options, onPartial);
+    const plan: SearchSourcePlan = script.plan(source, variants);
+    const first = await this.searchOneWithDeadline(source, plan.first, options, onPartial);
+    let result = first;
+    let workedScript = plan.firstScript;
+    let relevant = this.filterSearchResults(first.books, keyword, options).length;
+    if (relevant === 0 && plan.second && !this.cancelled && this.canRetryWithVariant(first)) {
+      const second = await this.searchOneWithDeadline(source, plan.second, options, onPartial);
+      result = this.mergeSourceResults(first, second);
+      workedScript = plan.secondScript;
+      relevant = this.filterSearchResults(second.books, keyword, options).length;
+    }
+    if (!this.cancelled) script.learn(source, result.books, relevant > 0 ? workedScript : '');
+    return result;
+  }
+
+  /** 超时、网络或规则出错时换写法也没用，只有“正常搜完但没有相关结果”才补搜。 */
+  private canRetryWithVariant(result: SearchSourceResult): boolean {
+    return result.books.length > 0 || !result.reason || result.reason === '未搜索到结果';
+  }
+
+  private mergeSourceResults(first: SearchSourceResult, second: SearchSourceResult): SearchSourceResult {
+    if (first.books.length === 0) return second;
+    if (second.books.length === 0) return first;
+    const seen = new Set<string>(first.books.map((book: SearchBook): string => this.searchBookKey(book)));
+    const books = first.books.slice();
+    for (const book of second.books) {
+      const key = this.searchBookKey(book);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      books.push(book);
+    }
+    return this.sourceResult(books, BookSource.VALIDATION_PASSED, '');
+  }
+
   private async searchOneWithDeadline(source: BookSource, keyword: string, options: SearchOptions,
     onPartial: ((books: SearchBook[]) => void) | null = null): Promise<SearchSourceResult> {
     const abort = new SearchSourceAbort();
@@ -1276,10 +1329,12 @@ export class SearchCoordinator {
   }
 
   private normalizeSearchText(value: string): string {
-    return (value || '').trim().toLowerCase()
+    const normalized = (value || '').trim().toLowerCase()
       .replace(/[\u200B-\u200D\uFEFF]/g, '')
       .replace(/\s+/g, '')
       .replace(/[《》【】\[\]（）()「」『』"“”'‘’.,，。:：;；!！?？、·_\-]/g, '');
+    // 简繁同搜时折成简体再比，「鬥破蒼穹」与「斗破苍穹」视为同一书名。
+    return this.chineseScript ? this.chineseScript.fold(normalized) : normalized;
   }
 
   private filterAndSortSearchResults(results: SearchBook[], keyword: string, options: SearchOptions): SearchBook[] {

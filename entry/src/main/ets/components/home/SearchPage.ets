@@ -28,6 +28,7 @@ import { PopupMenuAction } from '../common/PopupMenuAction';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ExploreRankStyle } from '../../utils/ExploreRankStyle';
+import { SearchChineseScriptRuntime } from '../../core/book/SearchChineseScriptRuntime';
 
 const SEARCH_CATEGORY_ALL = 'all';
 // 小说、漫画、有声、视频各自的结果上限，互不挤占。
@@ -114,6 +115,10 @@ export struct SearchPage {
   @StorageLink('searchExploreExactSearch') exactSearch: boolean = false;
   @StorageLink('searchExploreExactSearchMatchAuthor') exactSearchMatchAuthor: boolean = true;
   @StorageLink('searchExploreShowSearchProgress') showSearchProgress: boolean = true;
+  /** 简繁同搜开关：切换时按新规则重新聚合已有结果（不重新搜索）。 */
+  @StorageLink('searchExploreSimpTradSearch') @Watch('onSearchAggregationChanged') simpTradSearch: boolean = true;
+  /** 这次搜索关键词的另一种写法（简繁同搜），进度行显示；没有差异时为空。 */
+  @State scriptVariantText: string = '';
   @StorageLink('searchExploreSearchConcurrency') searchConcurrency: number = 6;
   @StorageLink('searchExploreSelectedSourceGroups') selectedSourceGroupsRaw: string = '';
   @StorageLink('searchExploreSelectedSourceUrls') selectedSourceUrlsRaw: string =
@@ -748,6 +753,7 @@ export struct SearchPage {
     if (this.showResult && this.searchBooksForCategory(category).length > 0) {
       SearchBookResultList({
         sharedCoverScope: 'search',
+        markTraditional: true,
         books: this.searchBooksForCategory(category),
         claimArrival: (book: SearchBook): number => this.claimSearchResultArrival(book),
         onResultReady: (book: SearchBook): void => this.onSearchResultReady(book),
@@ -918,6 +924,20 @@ export struct SearchPage {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
+
+      if (this.simpTradSearch && this.scriptVariantText) {
+        Text(`简繁 · ${this.scriptVariantText}`)
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(this.secondaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .constraintSize({ maxWidth: '40%' })
+          .flexShrink(0)
+          .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: 1, bottom: 1 })
+          .border({ width: 1, color: this.secondaryTextColor() })
+          .borderRadius(ThemeRuntime.mediumRadius())
+          .accessibilityText(`简繁同搜，同时搜索${this.scriptVariantText}`)
+      }
 
       if (this.verificationUrl) {
         this.searchStatusLink('去验证', '去网页验证', () => this.openVerification())
@@ -1543,6 +1563,9 @@ export struct SearchPage {
       this.statusMessage = targetSources.length === 1 ?
         `正在通过 ${this.singleSourceSearchName || targetSources[0].bookSourceName} 搜索...` :
         (targetSources.length > 1 ? `正在通过 ${targetSources.length} 个书源搜索...` : '正在搜索...');
+      const chineseScript = await SearchChineseScriptRuntime.forSearch(getContext(this));
+      if (sessionId !== this.searchSessionId) return;
+      this.scriptVariantText = chineseScript ? chineseScript.variants(keyword).other() : '';
       const coordinator = new SearchCoordinator(SearchExploreSettingsStore.getSearchConcurrency());
       activeCoordinator = coordinator;
       this.coordinator = coordinator;
@@ -1582,8 +1605,10 @@ export struct SearchPage {
         exactMatch: this.exactSearch,
         exactMatchAuthor: this.exactSearchMatchAuthor,
         targetSources: targetSources,
-        maxResultsPerCategory: SEARCH_RESULTS_PER_CATEGORY
+        maxResultsPerCategory: SEARCH_RESULTS_PER_CATEGORY,
+        chineseScript: chineseScript || undefined
       });
+      SearchChineseScriptRuntime.saveHints(getContext(this));
       if (sessionId !== this.searchSessionId || this.coordinator !== coordinator) {
         return;
       }

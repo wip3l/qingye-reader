@@ -1,4 +1,5 @@
 import { SearchBook, BookTypeSupport } from '@legado/sourceengine';
+import { SearchChineseScriptRuntime } from '../core/book/SearchChineseScriptRuntime';
 
 export class SearchResultGroupSnapshot {
   token: string = '';
@@ -15,6 +16,8 @@ export class SearchResultAggregationStore {
   private static serial: number = 0;
   private static snapshots: Map<string, SearchResultGroupSnapshot> = new Map();
   private static order: string[] = [];
+  /** 最近一次聚合里每组繁体书名的条数（简繁同搜开着时才统计），结果卡片写“含繁体 N 个”。 */
+  private static traditionalCounts: Map<string, number> = new Map();
 
   static aggregate(books: SearchBook[]): SearchBook[] {
     const groups: Map<string, SearchBook[]> = new Map();
@@ -30,15 +33,33 @@ export class SearchResultAggregationStore {
       }
     }
     const result: SearchBook[] = [];
+    const script = SearchChineseScriptRuntime.ready();
+    SearchResultAggregationStore.traditionalCounts = new Map();
     for (const key of order) {
       const members = groups.get(key) || [];
       if (members.length === 0) continue;
-      const representative = SearchResultAggregationStore.cloneBook(members[0]);
+      // 简繁同名合成一组时，代表条目优先取简体书名的那条。
+      let lead = members[0];
+      if (script && members.length > 1) {
+        let traditional = 0;
+        let simplified: SearchBook | null = null;
+        for (const member of members) {
+          if (script.isTraditional(member.name || '')) traditional++;
+          else if (!simplified) simplified = member;
+        }
+        if (simplified) lead = simplified;
+        if (traditional > 0) SearchResultAggregationStore.traditionalCounts.set(key, traditional);
+      }
+      const representative = SearchResultAggregationStore.cloneBook(lead);
       representative.aggregationKey = key;
       representative.aggregationCount = members.length;
       result.push(representative);
     }
     return result;
+  }
+
+  static traditionalCount(aggregationKey: string): number {
+    return SearchResultAggregationStore.traditionalCounts.get(aggregationKey) || 0;
   }
 
   static members(books: SearchBook[], aggregationKey: string): SearchBook[] {
@@ -90,10 +111,13 @@ export class SearchResultAggregationStore {
   }
 
   private static normalizeTitle(value: string): string {
-    return (value || '').trim().toLowerCase()
+    const normalized = (value || '').trim().toLowerCase()
       .replace(/[\u200B-\u200D\uFEFF]/g, '')
       .replace(/\s+/g, '')
       .replace(/[《》【】\[\]（）()「」『』"“”'‘’.,，。:：;；!！?？、·_\-]/g, '');
+    // 简繁同搜开着时按简体分组，「鬥破蒼穹」与「斗破苍穹」进同一组。
+    const script = SearchChineseScriptRuntime.ready();
+    return script ? script.fold(normalized) : normalized;
   }
 
   private static cloneBook(source: SearchBook): SearchBook {

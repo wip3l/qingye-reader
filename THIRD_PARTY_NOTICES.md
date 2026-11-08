@@ -39,9 +39,9 @@
 
 - 上游：https://github.com/BYVoid/OpenCC/tree/ver.1.1.9
 - 版本：ver.1.1.9；作者：BYVoid and OpenCC contributors
-- 文件：TSCharacters.txt、TSPhrases.txt（未修改）
+- 文件：TSCharacters.txt、TSPhrases.txt、STCharacters.txt、STPhrases.txt、TWVariants.txt（未修改）
 - 许可证：Apache-2.0
-- 用途：漫画识别文本的繁→简转换，应用自行实现词组最长匹配适配器，不包含完整 OpenCC 引擎。
+- 用途：漫画识别文本与小说正文的繁→简转换、搜索关键词的简繁互转（台湾用字），应用自行实现词组最长匹配适配器，不包含完整 OpenCC 引擎。
 - 字典、来源校验及完整许可证见 `harmony-book-ai-engine/aiengine/src/main/resources/rawfile/opencc/`，由 HAR 合并到 HAP，应用开源许可页面显示许可全文。
 
 ## Manga-Colorizer 着色模型

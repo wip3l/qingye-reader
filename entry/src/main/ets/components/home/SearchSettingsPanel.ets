@@ -16,6 +16,7 @@ export struct SearchSettingsPanel {
   @StorageLink('searchExploreExactSearchMatchAuthor') exactSearchMatchAuthor: boolean = true;
   @StorageLink('searchExploreShowSearchProgress') showSearchProgress: boolean = true;
   @StorageLink('searchExploreAggregateResults') searchExploreAggregateResults: boolean = true;
+  @StorageLink('searchExploreSimpTradSearch') simpTradSearch: boolean = true;
   @StorageLink('searchExploreSearchConcurrency') searchConcurrency: number = 6;
   @Prop panelWidth: number = 272;
   @Prop inMenu: boolean = false;
@@ -38,6 +39,11 @@ export struct SearchSettingsPanel {
 
       this.switchSettingRow('匹配作者', this.exactSearchMatchAuthor, (checked: boolean) => {
         this.exactSearchMatchAuthor = checked;
+        this.save();
+      })
+
+      this.switchSettingRow('简繁同搜', this.simpTradSearch, (checked: boolean) => {
+        this.simpTradSearch = checked;
         this.save();
       })
 
@@ -67,6 +73,7 @@ export struct SearchSettingsPanel {
       settings.exactSearchMatchAuthor = this.exactSearchMatchAuthor;
       settings.showSearchProgress = this.showSearchProgress;
       settings.aggregateSearchResults = this.searchExploreAggregateResults;
+      settings.simpTradSearch = this.simpTradSearch;
       settings.searchConcurrency = SearchExploreSettingsStore.normalizeSearchConcurrency(this.searchConcurrency);
       SearchExploreSettingsStore.applyToStorage(settings);
       return SearchExploreSettingsStore.save(getContext(this), settings);

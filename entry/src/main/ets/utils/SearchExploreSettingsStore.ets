@@ -12,6 +12,8 @@ export class SearchExploreSettings {
   promptAddToShelfOnBack: boolean = true;
   exactSearch: boolean = false;
   exactSearchMatchAuthor: boolean = true;
+  // 简繁同搜：按书源用字转换关键词，结果按简体比对与聚合。
+  simpTradSearch: boolean = true;
   showSearchProgress: boolean = true;
   searchConcurrency: number = 6;
   selectedSourceGroupsRaw: string = '';
@@ -44,6 +46,7 @@ export class SearchExploreSettingsStore {
   static readonly KEY_EXACT_SEARCH: string = 'searchExploreExactSearch';
   static readonly KEY_EXACT_SEARCH_MATCH_AUTHOR: string = 'searchExploreExactSearchMatchAuthor';
   static readonly KEY_SHOW_SEARCH_PROGRESS: string = 'searchExploreShowSearchProgress';
+  static readonly KEY_SIMP_TRAD_SEARCH: string = 'searchExploreSimpTradSearch';
   static readonly KEY_SEARCH_CONCURRENCY: string = 'searchExploreSearchConcurrency';
   static readonly KEY_SELECTED_SOURCE_GROUPS: string = 'searchExploreSelectedSourceGroups';
   static readonly KEY_SELECTED_SOURCE_URLS: string = 'searchExploreSelectedSourceUrls';
@@ -91,6 +94,8 @@ export class SearchExploreSettingsStore {
       store, SearchExploreSettingsStore.KEY_EXACT_SEARCH_MATCH_AUTHOR, true);
     settings.showSearchProgress = await SearchExploreSettingsStore.getBoolean(
       store, SearchExploreSettingsStore.KEY_SHOW_SEARCH_PROGRESS, true);
+    settings.simpTradSearch = await SearchExploreSettingsStore.getBoolean(
+      store, SearchExploreSettingsStore.KEY_SIMP_TRAD_SEARCH, true);
     const storageConcurrency = AppStorage.get<number>(SearchExploreSettingsStore.KEY_SEARCH_CONCURRENCY);
     settings.searchConcurrency = await SearchExploreSettingsStore.getNumber(
       store,
@@ -138,6 +143,7 @@ export class SearchExploreSettingsStore {
     await store.put(SearchExploreSettingsStore.KEY_EXACT_SEARCH, settings.exactSearch);
     await store.put(SearchExploreSettingsStore.KEY_EXACT_SEARCH_MATCH_AUTHOR, settings.exactSearchMatchAuthor);
     await store.put(SearchExploreSettingsStore.KEY_SHOW_SEARCH_PROGRESS, settings.showSearchProgress);
+    await store.put(SearchExploreSettingsStore.KEY_SIMP_TRAD_SEARCH, settings.simpTradSearch);
     await store.put(SearchExploreSettingsStore.KEY_SEARCH_CONCURRENCY,
       SearchExploreSettingsStore.normalizeSearchConcurrency(settings.searchConcurrency));
     await store.put(SearchExploreSettingsStore.KEY_SELECTED_SOURCE_GROUPS, settings.selectedSourceGroupsRaw);
@@ -273,6 +279,7 @@ export class SearchExploreSettingsStore {
       SearchExploreSettingsStore.KEY_EXACT_SEARCH_MATCH_AUTHOR,
       settings.exactSearchMatchAuthor);
     AppStorage.setOrCreate(SearchExploreSettingsStore.KEY_SHOW_SEARCH_PROGRESS, settings.showSearchProgress);
+    AppStorage.setOrCreate(SearchExploreSettingsStore.KEY_SIMP_TRAD_SEARCH, settings.simpTradSearch);
     AppStorage.setOrCreate(SearchExploreSettingsStore.KEY_SEARCH_CONCURRENCY,
       SearchExploreSettingsStore.normalizeSearchConcurrency(settings.searchConcurrency));
     AppStorage.setOrCreate(SearchExploreSettingsStore.KEY_SELECTED_SOURCE_GROUPS, settings.selectedSourceGroupsRaw);
@@ -335,6 +342,7 @@ export class SearchExploreSettingsStore {
     settings.exactSearch = source.exactSearch;
     settings.exactSearchMatchAuthor = source.exactSearchMatchAuthor;
     settings.showSearchProgress = source.showSearchProgress;
+    settings.simpTradSearch = source.simpTradSearch !== false;
     settings.searchConcurrency = SearchExploreSettingsStore.normalizeSearchConcurrency(source.searchConcurrency);
     settings.selectedSourceGroupsRaw = source.selectedSourceGroupsRaw;
     settings.selectedSourceUrlsRaw = source.selectedSourceUrlsRaw || '';
@@ -385,6 +393,7 @@ export class SearchExploreSettingsStore {
       left.exactSearch !== right.exactSearch ||
       left.exactSearchMatchAuthor !== right.exactSearchMatchAuthor ||
       left.showSearchProgress !== right.showSearchProgress ||
+      left.simpTradSearch !== right.simpTradSearch ||
       left.selectedSourceUrlsRaw !== right.selectedSourceUrlsRaw;
   }
 }

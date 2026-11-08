@@ -160,6 +160,7 @@ class SearchPreferencesSyncPayload {
   exactSearch: boolean = false;
   exactSearchMatchAuthor: boolean = true;
   showSearchProgress: boolean = true;
+  simpTradSearch: boolean = true;
 }
 
 class CustomThemeSchemesSyncPayload {
@@ -748,6 +749,7 @@ export class CloudSyncCoordinator {
     searchPreferences.exactSearch = searchSettings.exactSearch;
     searchPreferences.exactSearchMatchAuthor = searchSettings.exactSearchMatchAuthor;
     searchPreferences.showSearchProgress = searchSettings.showSearchProgress;
+    searchPreferences.simpTradSearch = searchSettings.simpTradSearch;
     result.push(CloudSyncCoordinator.entity(
       'search_preferences', 'global', searchPreferences, 'global'));
 
@@ -1130,6 +1132,7 @@ export class CloudSyncCoordinator {
       searchSettings.exactSearch = remoteSearch.exactSearch === true;
       searchSettings.exactSearchMatchAuthor = remoteSearch.exactSearchMatchAuthor !== false;
       searchSettings.showSearchProgress = remoteSearch.showSearchProgress !== false;
+      searchSettings.simpTradSearch = remoteSearch.simpTradSearch !== false;
       await SearchExploreSettingsStore.save(context, searchSettings);
       SearchExploreSettingsStore.applyToStorage(searchSettings);
       entityState.localKey = 'global';

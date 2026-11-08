@@ -95,7 +95,7 @@ struct OpenSourceLicensesPage {
       const colorBytes = await context.resourceManager.getRawFileContent('comic-colorizer/LICENSE');
       const colorText = util.TextDecoder.create('utf-8').decodeWithStream(colorBytes, { stream: false });
       this.licenseText = projectNotice + gplText + '\n\n' + permissionText + '\n\n' + thirdPartyText +
-        '\n\nOpenCC ver.1.1.9 — TSCharacters / TSPhrases\n' +
+        '\n\nOpenCC ver.1.1.9 — TSCharacters / TSPhrases / STCharacters / STPhrases / TWVariants\n' +
         'Authors: BYVoid and OpenCC contributors\n' +
         'https://github.com/BYVoid/OpenCC/tree/ver.1.1.9\n' + openccText +
         '\n\nManga-Colorizer — AlacGAN mobile preview\n' +

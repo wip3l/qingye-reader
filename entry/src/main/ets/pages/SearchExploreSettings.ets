@@ -18,6 +18,7 @@ struct SearchExploreSettingsPage {
   @StorageLink('searchExploreExactSearch') searchExploreExactSearch: boolean = false;
   @StorageLink('searchExploreExactSearchMatchAuthor') searchExploreExactSearchMatchAuthor: boolean = true;
   @StorageLink('searchExploreShowSearchProgress') searchExploreShowSearchProgress: boolean = true;
+  @StorageLink('searchExploreSimpTradSearch') searchExploreSimpTradSearch: boolean = true;
   @StorageLink('searchExploreSearchConcurrency') searchExploreSearchConcurrency: number = 6;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -135,6 +136,15 @@ struct SearchExploreSettingsPage {
         }
       })
       SettingSwitchRow({
+        title: '简繁同搜',
+        description: '按书源的简繁用字自动转换关键词，结果按简体比对',
+        isOn: this.searchExploreSimpTradSearch,
+        onChange: (value: boolean) => {
+          this.searchExploreSimpTradSearch = value;
+          this.onSettingChanged();
+        }
+      })
+      SettingSwitchRow({
         title: '显示搜索进度',
         description: '搜索时显示已搜书源数和结果数',
         isOn: this.searchExploreShowSearchProgress,
@@ -176,6 +186,7 @@ struct SearchExploreSettingsPage {
       this.searchExploreExactSearch = settings.exactSearch;
       this.searchExploreExactSearchMatchAuthor = settings.exactSearchMatchAuthor;
       this.searchExploreShowSearchProgress = settings.showSearchProgress;
+      this.searchExploreSimpTradSearch = settings.simpTradSearch;
       this.searchExploreSearchConcurrency = settings.searchConcurrency;
     } catch (e) {
       console.warn('重新加载搜索/发现配置失败:', e);
@@ -198,6 +209,7 @@ struct SearchExploreSettingsPage {
       settings.exactSearch = this.searchExploreExactSearch;
       settings.exactSearchMatchAuthor = this.searchExploreExactSearchMatchAuthor;
       settings.showSearchProgress = this.searchExploreShowSearchProgress;
+      settings.simpTradSearch = this.searchExploreSimpTradSearch;
       settings.searchConcurrency = SearchExploreSettingsStore.normalizeSearchConcurrency(this.searchExploreSearchConcurrency);
       SearchExploreSettingsStore.applyToStorage(settings);
       return SearchExploreSettingsStore.save(getContext(this), settings);

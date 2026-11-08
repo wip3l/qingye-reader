@@ -14,6 +14,8 @@ import { CoverBackdropCard } from './CoverBackdropCard';
 import { SearchResultArrival } from './SearchResultArrival';
 import { PreparedResultCover, ResultCoverOptions, ResultCoverPreparation } from '../../utils/ResultCoverPreparation';
 import { ExploreRankStyle } from '../../utils/ExploreRankStyle';
+import { SearchChineseScriptRuntime } from '../../core/book/SearchChineseScriptRuntime';
+import { SearchResultAggregationStore } from '../../utils/SearchResultAggregationStore';
 
 export type SearchBookAction = (book: SearchBook) => void;
 
@@ -107,6 +109,8 @@ export struct SearchBookResultList {
    * 停在底部的列表会被撑高再缩回，看起来底部在来回跳。
    */
   @Prop keepLoadingFooter: boolean = false;
+  /** 搜索结果里给繁体书名加“繁”角标（简繁同搜开着时）；发现页不用。 */
+  @Prop markTraditional: boolean = false;
   /** 配合 keepLoadingFooter：还有下一页时提示“继续加载中”，到底了提示“没有更多了”。 */
   @Prop hasMoreResults: boolean = false;
   @Prop showKind: boolean = false;
@@ -937,6 +941,15 @@ export struct SearchBookResultList {
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .flexShrink(1)
 
+              if (this.isTraditionalTitle(this.resultBook(key))) {
+                Text('繁')
+                  .fontSize(AppFontSize.CAPTION)
+                  .fontColor(this.subTextColor)
+                  .padding({ left: AppSpacing.XS, right: AppSpacing.XS, top: 1, bottom: 1 })
+                  .border({ width: 1, color: this.subTextColor })
+                  .borderRadius(ThemeRuntime.mediumRadius())
+              }
+
               if (this.mediaBadge(this.resultBook(key))) {
                 Text(this.mediaBadge(this.resultBook(key)))
                   .fontSize(AppFontSize.CAPTION)
@@ -1114,8 +1127,19 @@ export struct SearchBookResultList {
     return '';
   }
 
+  /** 简繁同搜开着时，书名里有繁体字就标“繁”；聚合组的代表条目优先取简体，标了说明整组都是繁体。 */
+  isTraditionalTitle(book: SearchBook): boolean {
+    if (!this.markTraditional) return false;
+    const script = SearchChineseScriptRuntime.ready();
+    return !!script && script.isTraditional(book.name || '');
+  }
+
   sourceLine(book: SearchBook): string {
     if (book.aggregationCount > 1) {
+      const traditional = this.markTraditional ? SearchResultAggregationStore.traditionalCount(book.aggregationKey) : 0;
+      if (traditional > 0 && traditional < book.aggregationCount) {
+        return `已聚合 ${book.aggregationCount} 个同名结果（含繁体 ${traditional} 个），点击展开`;
+      }
       return `已聚合 ${book.aggregationCount} 个同名结果，点击展开`;
     }
     return this.safeText(book.originName, '');

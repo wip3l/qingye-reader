@@ -11,6 +11,7 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { SearchChineseScriptRuntime } from '../core/book/SearchChineseScriptRuntime';
 
 class ChangeSourceGroupOption {
   name: string = '';
@@ -211,6 +212,9 @@ export struct BookChangeSourceDialog {
     this.searching = true;
     this.status = '正在搜索可用书源...';
     try {
+      // 简繁同搜：繁体站的同名书也能出现在换源列表里（书名折成简体比对）。
+      const chineseScript = await SearchChineseScriptRuntime.forSearch(context);
+      if (!this.isSessionActive(sessionId)) return;
       const results = await coordinator.search(target.name, (progress: SearchProgress) => {
         if (!this.isSessionActive(sessionId)) return;
         const found = progress.finished ? progress.results : (progress.deltaResults || []);
@@ -234,8 +238,10 @@ export struct BookChangeSourceDialog {
         maxTotalResults: 60,
         stopAfterResults: 20,
         maxCandidatesPerSource: 32,
-        sourceGroups: this.isScoped() ? this.scopeGroups.slice() : []
+        sourceGroups: this.isScoped() ? this.scopeGroups.slice() : [],
+        chineseScript: chineseScript || undefined
       });
+      SearchChineseScriptRuntime.saveHints(context);
       if (!this.isSessionActive(sessionId)) return;
       this.allResults = this.filterResults(results.concat(this.allResults), target.bookUrl, target.origin);
       this.applyScope();
