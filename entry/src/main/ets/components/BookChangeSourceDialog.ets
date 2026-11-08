@@ -473,11 +473,17 @@ export struct BookChangeSourceDialog {
     Column() {
       Row() {
         Column({ space: AppSpacing.XXS }) {
-          Text('换源')
-            .fontSize(AppFontSize.TITLE)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.primaryTextColor())
-          Text(`《${this.targetBook?.name || ''}》`)
+          Row({ space: AppSpacing.LG }) {
+            Text('换源')
+              .fontSize(AppFontSize.TITLE)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.primaryTextColor())
+            if (this.groupOptions.length > 0) {
+              this.scopeSwitch()
+            }
+          }
+          .alignItems(VerticalAlign.Center)
+          Text(this.subtitleText())
             .fontSize(AppFontSize.CAPTION)
             .fontColor(this.subTextColor())
             .maxLines(1)
@@ -507,8 +513,8 @@ export struct BookChangeSourceDialog {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      if (this.groupOptions.length > 0) {
-        this.scopeBar()
+      if (this.groupOptions.length > 0 && this.scopeMode === SCOPE_GROUP) {
+        this.scopeGroupChips()
       }
 
       if (this.scopeNotice) {
@@ -669,59 +675,54 @@ export struct BookChangeSourceDialog {
   }
 
   @Builder
-  scopeBar() {
-    Column({ space: AppSpacing.MD }) {
-      Row({ space: AppSpacing.LG }) {
-        Row() {
-          this.scopeSegment('全部', SCOPE_ALL)
-          this.scopeSegment('组内', SCOPE_GROUP)
-        }
-        .padding(3)
-        .borderRadius(18)
-        .backgroundColor(ThemeRuntime.softFillColor(this.appDarkMode))
+  scopeSwitch() {
+    Row() {
+      this.scopeSegment('全部', SCOPE_ALL)
+      this.scopeSegment('组内', SCOPE_GROUP)
+    }
+    .padding(2)
+    .borderRadius(15)
+    .backgroundColor(ThemeRuntime.softFillColor(this.appDarkMode))
+  }
 
-        Blank()
-        Text(this.scopeSummary())
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
-          .maxLines(1)
-      }
-      .width('100%')
+  /** 书名后接本次会搜的书源数。 */
+  subtitleText(): string {
+    const name = `《${this.targetBook?.name || ''}》`;
+    return this.groupOptions.length > 0 ? `${name} · ${this.scopeSummary()}` : name;
+  }
 
-      if (this.scopeMode === SCOPE_GROUP) {
-        Scroll() {
-          Row({ space: AppSpacing.MD }) {
-            ForEach(this.groupOptions, (option: ChangeSourceGroupOption) => {
-              Row({ space: AppSpacing.XS }) {
-                Text(option.name)
-                  .fontSize(AppFontSize.BODY - 1)
-                  .fontColor(this.isGroupChipSelected(option.name) ? this.accentColor() : this.primaryTextColor())
-                Text(`${option.count}`)
-                  .fontSize(AppFontSize.CAPTION)
-                  .fontColor(this.isGroupChipSelected(option.name) ? this.accentColor() : this.subTextColor())
-              }
-              .height(30)
-              .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-              .borderRadius(15)
-              .border({
-                width: 1,
-                color: this.isGroupChipSelected(option.name) ? this.accentColor() :
-                  ThemeRuntime.dividerColor(this.appDarkMode)
-              })
-              .backgroundColor(this.isGroupChipSelected(option.name) ?
-                ThemeRuntime.selectedFillColor(this.appDarkMode) : Color.Transparent)
-              .accessibilityText(`${option.name}，${option.count} 个书源`)
-              .accessibilitySelected(this.isGroupChipSelected(option.name))
-              .onClick(() => this.toggleScopeGroup(option.name))
-            }, (option: ChangeSourceGroupOption): string => `${option.name}|${option.count}`)
+  @Builder
+  scopeGroupChips() {
+    Scroll() {
+      Row({ space: AppSpacing.MD }) {
+        ForEach(this.groupOptions, (option: ChangeSourceGroupOption) => {
+          Row({ space: AppSpacing.XS }) {
+            Text(option.name)
+              .fontSize(AppFontSize.BODY - 1)
+              .fontColor(this.isGroupChipSelected(option.name) ? this.accentColor() : this.primaryTextColor())
+            Text(`${option.count}`)
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.isGroupChipSelected(option.name) ? this.accentColor() : this.subTextColor())
           }
-        }
-        .scrollable(ScrollDirection.Horizontal)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring)
-        .width('100%')
+          .height(30)
+          .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+          .borderRadius(15)
+          .border({
+            width: 1,
+            color: this.isGroupChipSelected(option.name) ? this.accentColor() :
+              ThemeRuntime.dividerColor(this.appDarkMode)
+          })
+          .backgroundColor(this.isGroupChipSelected(option.name) ?
+            ThemeRuntime.selectedFillColor(this.appDarkMode) : Color.Transparent)
+          .accessibilityText(`${option.name}，${option.count} 个书源`)
+          .accessibilitySelected(this.isGroupChipSelected(option.name))
+          .onClick(() => this.toggleScopeGroup(option.name))
+        }, (option: ChangeSourceGroupOption): string => `${option.name}|${option.count}`)
       }
     }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
     .width('100%')
     .margin({ top: AppSpacing.LG })
   }
@@ -732,9 +733,9 @@ export struct BookChangeSourceDialog {
       .fontSize(AppFontSize.BODY)
       .fontWeight(this.scopeMode === mode ? FontWeight.Medium : FontWeight.Normal)
       .fontColor(this.scopeMode === mode ? this.accentColor() : this.subTextColor())
-      .height(30)
-      .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-      .borderRadius(15)
+      .height(26)
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+      .borderRadius(13)
       .backgroundColor(this.scopeMode === mode ? ThemeRuntime.selectedFillColor(this.appDarkMode) : Color.Transparent)
       .accessibilitySelected(this.scopeMode === mode)
       .onClick(() => this.selectScopeMode(mode))
