@@ -420,6 +420,15 @@ test('v2 theme: parts resolve by path, settings optional, kinds and required fie
   assert.equal(decodedWithoutSearch.navigation.search, '');
   const encodedNavigation = format.encodeParts(decodedWithoutSearch).navigation;
   assert.equal(encodedNavigation.search, decodedWithoutSearch.navigation.explore);
+  // 第四个页签“听”“足迹”的图标可选：带了就读进来并算进素材，没带照样能读。
+  const withExtraTabs = partsJson();
+  withExtraTabs.navigation.listen = 'assets/nav_search.svg';
+  withExtraTabs.navigation.footprintSelected = 'assets/nav_mine.svg';
+  const decodedExtra = format.decodeTheme(JSON.stringify({ parts: withExtraTabs }), manifest).parts;
+  assert.match(decodedExtra.navigation.listen, /^qytheme-asset:[0-9a-f]{24}$/);
+  assert.equal(decodedExtra.navigation.footprint, '');
+  assert.equal(format.encodeParts(decodedExtra).navigation.listen, decodedExtra.navigation.listen);
+  assert.equal(decodedWithoutSearch.navigation.listen, '');
   broken(j => { j.light.colors.pageColor = 'red'; }, /颜色/);
   broken(j => { j.light.reader.trailing = ''; }, /leading 和 trailing/);
   broken(j => { j.ttsPanel.light.glowColor = ''; }, /artwork、skyColor/);

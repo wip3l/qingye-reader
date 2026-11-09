@@ -61,6 +61,9 @@ export class ThemeAssetRegistry {
   static readonly TAB_BOOKSHELF: string = 'bookshelf';
   static readonly TAB_EXPLORE: string = 'explore';
   static readonly TAB_MINE: string = 'mine';
+  // 首页可选的第四个页签（其他设置 › 底栏）。
+  static readonly TAB_LISTEN: string = 'listen';
+  static readonly TAB_FOOTPRINT: string = 'footprint';
 
   /** 主题包阅读背景（pack:<id>:light / :dark）对应的已安装包；不是主题包素材或缺包时返回 null。 */
   private static packReader(assetId: string): InstalledThemePack | null {
@@ -357,13 +360,20 @@ export class ThemeAssetRegistry {
         } else if (normalizedTabId === ThemeAssetRegistry.TAB_MINE) {
           normal = pack.navMine;
           active = pack.navMineSelected;
+        } else if (normalizedTabId === ThemeAssetRegistry.TAB_LISTEN) {
+          normal = pack.navListen;
+          active = pack.navListenSelected;
+        } else if (normalizedTabId === ThemeAssetRegistry.TAB_FOOTPRINT) {
+          normal = pack.navFootprint;
+          active = pack.navFootprintSelected;
         }
         if (selected && active) return active;
         if (normal) return normal;
-        // 只上传了几个图标的方案：缺的页签用基底主题的图标（基底一定是内置主题，不会再递归回包）。
+        // 只上传了几个图标的方案、没带“听”“足迹”图标的包：缺的页签用基底主题的图标（基底一定是内置主题，
+        // 不会再递归回包）。
         return ThemePackRegistry.isPackId(pack.navFallbackIconPackId) ?
           ThemeAssetRegistry.classicNavigationIcon(normalizedTabId) :
-          ThemeAssetRegistry.navigationIcon(pack.navFallbackIconPackId, normalizedTabId);
+          ThemeAssetRegistry.navigationIcon(pack.navFallbackIconPackId, normalizedTabId, selected);
       }
       return ThemeAssetRegistry.classicNavigationIcon(normalizedTabId);
     }
@@ -811,7 +821,7 @@ export class ThemeAssetRegistry {
     if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
     const pack = ThemePackRegistry.get(normalizedPackId);
     return !!pack && pack.hasAnyNavigation() && !!(pack.navBookshelfSelected || pack.navExploreSelected ||
-      pack.navMineSelected);
+      pack.navMineSelected || pack.navListenSelected || pack.navFootprintSelected);
   }
 
   /** 主题包要求底栏只显示图标。 */
@@ -825,7 +835,8 @@ export class ThemeAssetRegistry {
 
   static normalizeTabId(tabId: string): string {
     const normalized = (tabId || '').trim().toLowerCase();
-    if (normalized === ThemeAssetRegistry.TAB_EXPLORE || normalized === ThemeAssetRegistry.TAB_MINE) {
+    if (normalized === ThemeAssetRegistry.TAB_EXPLORE || normalized === ThemeAssetRegistry.TAB_MINE ||
+      normalized === ThemeAssetRegistry.TAB_LISTEN || normalized === ThemeAssetRegistry.TAB_FOOTPRINT) {
       return normalized;
     }
     return ThemeAssetRegistry.TAB_BOOKSHELF;
@@ -835,6 +846,10 @@ export class ThemeAssetRegistry {
     switch (tabId) {
       case ThemeAssetRegistry.TAB_EXPLORE:
         return $r('app.media.ic_tab_explore');
+      case ThemeAssetRegistry.TAB_LISTEN:
+        return $r('app.media.ic_tab_listen');
+      case ThemeAssetRegistry.TAB_FOOTPRINT:
+        return $r('app.media.ic_tab_footprint');
       case ThemeAssetRegistry.TAB_MINE:
         return $r('app.media.ic_tab_mine');
       default:
@@ -846,6 +861,10 @@ export class ThemeAssetRegistry {
     switch (tabId) {
       case ThemeAssetRegistry.TAB_EXPLORE:
         return $r('app.media.ic_theme_rounded_explore');
+      case ThemeAssetRegistry.TAB_LISTEN:
+        return $r('app.media.ic_theme_rounded_listen');
+      case ThemeAssetRegistry.TAB_FOOTPRINT:
+        return $r('app.media.ic_theme_rounded_footprint');
       case ThemeAssetRegistry.TAB_MINE:
         return $r('app.media.ic_theme_rounded_mine');
       default:
@@ -857,6 +876,10 @@ export class ThemeAssetRegistry {
     switch (tabId) {
       case ThemeAssetRegistry.TAB_EXPLORE:
         return $r('app.media.ic_theme_ink_explore');
+      case ThemeAssetRegistry.TAB_LISTEN:
+        return $r('app.media.ic_theme_ink_listen');
+      case ThemeAssetRegistry.TAB_FOOTPRINT:
+        return $r('app.media.ic_theme_ink_footprint');
       case ThemeAssetRegistry.TAB_MINE:
         return $r('app.media.ic_theme_ink_mine');
       default:
@@ -868,6 +891,10 @@ export class ThemeAssetRegistry {
     switch (tabId) {
       case ThemeAssetRegistry.TAB_EXPLORE: return selected ?
         $r('app.media.ic_theme_celestial_vault_explore_selected') : $r('app.media.ic_theme_celestial_vault_explore');
+      case ThemeAssetRegistry.TAB_LISTEN: return selected ?
+        $r('app.media.ic_theme_celestial_vault_listen_selected') : $r('app.media.ic_theme_celestial_vault_listen');
+      case ThemeAssetRegistry.TAB_FOOTPRINT: return selected ?
+        $r('app.media.ic_theme_celestial_vault_footprint_selected') : $r('app.media.ic_theme_celestial_vault_footprint');
       case ThemeAssetRegistry.TAB_MINE: return selected ?
         $r('app.media.ic_theme_celestial_vault_mine_selected') : $r('app.media.ic_theme_celestial_vault_mine');
       default: return selected ?
@@ -879,6 +906,8 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_STRAWBERRY) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_strawberry_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_strawberry_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_strawberry_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_strawberry_mine');
         default: return $r('app.media.ic_theme_strawberry_bookshelf');
       }
@@ -886,6 +915,8 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_CRIMSON) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_crimson_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_crimson_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_crimson_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_crimson_mine');
         default: return $r('app.media.ic_theme_crimson_bookshelf');
       }
@@ -893,6 +924,8 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_PLUM) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_plum_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_plum_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_plum_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_plum_mine');
         default: return $r('app.media.ic_theme_plum_bookshelf');
       }
@@ -900,6 +933,8 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_ROSE) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_rose_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_rose_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_rose_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_rose_mine');
         default: return $r('app.media.ic_theme_rose_bookshelf');
       }
@@ -907,6 +942,8 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_SWORD_FROST) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_sword_frost_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_sword_frost_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_sword_frost_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_sword_frost_mine');
         default: return $r('app.media.ic_theme_sword_frost_bookshelf');
       }
@@ -914,6 +951,8 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_QINGLUAN_WATER) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_qingluan_water_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_qingluan_water_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_qingluan_water_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_qingluan_water_mine');
         default: return $r('app.media.ic_theme_qingluan_water_bookshelf');
       }
@@ -921,6 +960,8 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_CAT_PIPI) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_cat_pipi_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_cat_pipi_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_cat_pipi_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_cat_pipi_mine');
         default: return $r('app.media.ic_theme_cat_pipi_bookshelf');
       }
@@ -928,6 +969,8 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_AZURE_MECHA) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_azure_mecha_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_azure_mecha_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_azure_mecha_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_azure_mecha_mine');
         default: return $r('app.media.ic_theme_azure_mecha_bookshelf');
       }
@@ -935,6 +978,8 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_STARWISH_MAGIC) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_starwish_magic_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_starwish_magic_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_starwish_magic_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_starwish_magic_mine');
         default: return $r('app.media.ic_theme_starwish_magic_bookshelf');
       }
@@ -942,6 +987,8 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_LETTERPRESS_PAGE) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_letterpress_page_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_letterpress_page_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_letterpress_page_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_letterpress_page_mine');
         default: return $r('app.media.ic_theme_letterpress_page_bookshelf');
       }
@@ -949,6 +996,8 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_OBSIDIAN_ARCHIVE) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_obsidian_archive_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_obsidian_archive_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_obsidian_archive_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_obsidian_archive_mine');
         default: return $r('app.media.ic_theme_obsidian_archive_bookshelf');
       }
@@ -956,12 +1005,16 @@ export class ThemeAssetRegistry {
     if (iconPackId === ThemeAssetRegistry.ICON_PACK_NEON_HARBOR) {
       switch (tabId) {
         case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_neon_harbor_explore');
+        case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_neon_harbor_listen');
+        case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_neon_harbor_footprint');
         case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_neon_harbor_mine');
         default: return $r('app.media.ic_theme_neon_harbor_bookshelf');
       }
     }
     switch (tabId) {
       case ThemeAssetRegistry.TAB_EXPLORE: return $r('app.media.ic_theme_crane_explore');
+      case ThemeAssetRegistry.TAB_LISTEN: return $r('app.media.ic_theme_crane_listen');
+      case ThemeAssetRegistry.TAB_FOOTPRINT: return $r('app.media.ic_theme_crane_footprint');
       case ThemeAssetRegistry.TAB_MINE: return $r('app.media.ic_theme_crane_mine');
       default: return $r('app.media.ic_theme_crane_bookshelf');
     }

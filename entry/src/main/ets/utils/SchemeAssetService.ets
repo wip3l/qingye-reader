@@ -46,6 +46,8 @@ export class SchemeAssetService {
   static readonly IMAGE: string[] = [ThemePackageAssetKinds.IMAGE];
   static readonly VECTOR: string[] = [ThemePackageAssetKinds.VECTOR];
   static readonly ARTWORK: string[] = [ThemePackageAssetKinds.IMAGE, ThemePackageAssetKinds.VECTOR];
+  /** 编辑器能上传的底栏页签：前三个是主题包必备，“听”“足迹”可选。 */
+  static readonly NAVIGATION_TABS: string[] = ['bookshelf', 'explore', 'mine', 'listen', 'footprint'];
 
   static async pickImages(context: Context, max: number): Promise<string[]> {
     const options = new picker.PhotoSelectOptions();
@@ -200,25 +202,28 @@ export class SchemeAssetService {
   }
 
   /**
-   * 一次选多个导航图标：按文件名里的 bookshelf / explore / mine 对号入座，认不出的按选择顺序补进
-   * 还空着的页签。已有的选中态和“只显示图标”保留。
+   * 一次选多个导航图标：按文件名里的 bookshelf / explore / mine / listen / footprint 对号入座，认不出的按选择
+   * 顺序补进还空着的页签。已有的选中态和“只显示图标”保留。
    */
   static async setNavigation(context: Context, schemeId: string, uris: string[], baseTheme: string): Promise<SchemeAssetResult> {
-    if (uris.length === 0 || uris.length > 3) {
-      throw new Error('导航图标一次最多选 3 个');
+    if (uris.length === 0 || uris.length > SchemeAssetService.NAVIGATION_TABS.length) {
+      throw new Error(`导航图标一次最多选 ${SchemeAssetService.NAVIGATION_TABS.length} 个`);
     }
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       if (!record.parts.navigation) SchemeAssetService.rememberNavigationFallback(record, baseTheme);
       const navigation = record.parts.navigation || new ThemePackageNavigation();
-      const tabs: string[] = ['bookshelf', 'explore', 'mine'];
-      const slots: string[] = ['', '', ''];
+      const tabs: string[] = SchemeAssetService.NAVIGATION_TABS;
+      const slots: string[] = tabs.map((): string => '');
       const keywords: string[][] = [['bookshelf', 'shelf', 'book'], ['explore', 'discover'],
-        ['mine', 'me', 'user', 'profile']];
+        ['mine', 'me', 'user', 'profile'], ['listen', 'audio', 'headphone'], ['footprint', 'history', 'stats']];
+      // 先认“听”“足迹”：mine 的关键词 me 会被 theme_listen 这类文件名误中。
+      const matchOrder: number[] = [3, 4, 0, 1, 2];
       const leftover: string[] = [];
       for (const uri of uris) {
         const name = SchemeAssetService.fileName(uri).toLowerCase();
         let placed = false;
-        for (let slot = 0; slot < tabs.length && !placed; slot++) {
+        for (const slot of matchOrder) {
+          if (placed) break;
           if (slots[slot]) continue;
           for (const keyword of keywords[slot]) {
             if (name.includes(keyword)) {
@@ -390,7 +395,8 @@ export class SchemeAssetService {
       const navigation = record.parts.navigation;
       if (!navigation || !NAVIGATION_ICON_KEYS.includes(key)) return;
       (navigation as Object as Record<string, string>)[key] = '';
-      if (!navigation.bookshelf && !navigation.explore && !navigation.mine) {
+      if (!navigation.bookshelf && !navigation.explore && !navigation.mine && !navigation.listen &&
+        !navigation.footprint) {
         record.parts.navigation = null;
       }
     });
@@ -411,7 +417,11 @@ export class SchemeAssetService {
 
   static navigationLabel(key: string): string {
     const tab = key.replace('Selected', '');
-    const name = tab === 'explore' ? '发现' : (tab === 'mine' ? '我的' : '书架');
+    let name = '书架';
+    if (tab === 'explore') name = '发现';
+    else if (tab === 'mine') name = '我的';
+    else if (tab === 'listen') name = '听';
+    else if (tab === 'footprint') name = '足迹';
     return `${name}${key.endsWith('Selected') ? '选中' : ''}图标`;
   }
 

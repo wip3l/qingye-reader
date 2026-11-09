@@ -42,6 +42,10 @@ export interface Section {
 const mode = (m: Mode, path: string): any => getPath(`${m}.${path}`);
 
 export const NAV_TABS: [string, string][] = [['bookshelf', '书架'], ['explore', '发现'], ['mine', '我的']];
+/** 应用“其他设置 › 底栏”可选的第四个页签，排在“我的”前面；图标可不给，应用用基底主题的。 */
+export const EXTRA_NAV_TABS: [string, string][] = [['listen', '听'], ['footprint', '足迹']];
+/** 编辑器里列图标格的顺序，和底栏一致。 */
+const NAV_ICON_TABS: [string, string][] = [NAV_TABS[0], NAV_TABS[1], ...EXTRA_NAV_TABS, NAV_TABS[2]];
 
 function navIconField(k: string, label: string): Field {
   return { k, label, type: 'asset', kinds: ['vector', 'image'], icon: true, square: true, viewBox: [24, 24], target: [96, 96],
@@ -123,11 +127,11 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'nav', group: '素材', name: '导航图标', screen: 'shelf',
-    desc: '首页底栏。三个普通图标要么都给，要么都不给。SVG 按主题色着色，位图（PNG / WebP）保持原色。选中态可选，没给的页签选中时仍用普通图标。', fields: [
+    desc: '首页底栏。书架、发现、我的三个普通图标要么都给，要么都不给；“听”“足迹”是可选的第四个页签，可以不给（应用用基底主题的图标），旧版本应用会忽略。SVG 按主题色着色，位图（PNG / WebP）保持原色。选中态可选，没给的页签选中时仍用普通图标。', fields: [
       { g: '普通图标' },
-      ...NAV_TABS.map(([key, label]): Field => navIconField(`navigation.${key}`, label)),
+      ...NAV_ICON_TABS.map(([key, label]): Field => navIconField(`navigation.${key}`, label)),
       { g: '选中态（可选）' },
-      ...NAV_TABS.map(([key, label]): Field => navIconField(`navigation.${key}Selected`, label)),
+      ...NAV_ICON_TABS.map(([key, label]): Field => navIconField(`navigation.${key}Selected`, label)),
       { g: '底栏' },
       { k: 'navigation.labels', label: '文字', type: 'select', options: [['', '图标下显示文字'], ['hidden', '只显示图标']],
         hint: '只显示图标时，图标本身要能认出是哪个页签' }
@@ -203,6 +207,8 @@ export const SCREENS: [string, string][] = [['shelf', '书架'], ['explore', '�
   ['reader', '阅读'], ['tts', '朗读'], ['startup', '启动'], ['card', '主题卡片']];
 /** 应用“书架布局”的四个选项；陪伴是新装应用的默认值。 */
 export const SHELF_LAYOUTS: [string, string][] = [['companion', '陪伴'], ['tile', '平铺'], ['loose', '宽松'], ['compact', '紧凑']];
+/** 预览底栏的第四个页签，与应用“其他设置 › 底栏”的三个值一致。 */
+export const EXTRA_TAB_CHOICES: [string, string][] = [['none', '三页签'], ...EXTRA_NAV_TABS];
 
 export function section(id: string): Section {
   return SECTIONS.find((s) => s.id === id) || SECTIONS[0];

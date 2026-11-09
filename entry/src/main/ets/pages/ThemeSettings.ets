@@ -1707,7 +1707,8 @@ struct ThemeSettingsPage {
       .width('100%')
       .alignItems(VerticalAlign.Top)
       Row() {
-        ForEach(['bookshelf', 'explore', 'mine'], (tabId: string, index: number) => {
+        // 整套底栏图标都列出来，包括可选第四个页签“听”“足迹”。
+        ForEach(['bookshelf', 'explore', 'listen', 'footprint', 'mine'], (tabId: string, index: number) => {
           Image(ThemeAssetRegistry.navigationIcon(entry.theme.navigation.iconPackId, tabId, index === 0))
             .width(ThemeAssetRegistry.navigationHidesLabels(entry.theme.navigation.iconPackId) ? 30 : 22)
             .height(ThemeAssetRegistry.navigationHidesLabels(entry.theme.navigation.iconPackId) ? 30 : 22)

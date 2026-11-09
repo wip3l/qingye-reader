@@ -124,6 +124,28 @@ test('navigation takes bitmap icons, selected icons and an icons-only bar', asyn
   assert.equal(nav.exploreSelected, undefined);
 });
 
+test('navigation keeps the optional listen and footprint tab icons', async () => {
+  const entries = handWritten();
+  const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));
+  theme.parts.navigation.listen = 'assets/n5.svg';
+  theme.parts.navigation.footprintSelected = 'assets/n6.png';
+  entries['night-garden/theme.json'] = json(theme);
+  entries['night-garden/assets/n5.svg'] = strToU8('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/></svg>');
+  entries['night-garden/assets/n6.png'] = png(96, 96);
+  const { project, problems } = await io.loadProject(io.readZip(zipSync(entries)));
+  assert.deepEqual(problems, []);
+  assert.equal(project.parts.navigation.listen, 'assets/n5.svg');
+  assert.equal(project.parts.navigation.footprintSelected, 'assets/n6.png');
+
+  const files = await io.exportFiles(project);
+  assert.equal(files.has('assets/n5.svg'), true);
+  assert.equal(files.has('assets/n6.png'), true);
+  const nav = JSON.parse(strFromU8(files.get('theme.json'))).parts.navigation;
+  assert.equal(nav.listen, 'assets/n5.svg');
+  assert.equal(nav.footprintSelected, 'assets/n6.png');
+  assert.equal(nav.footprint, undefined);
+});
+
 test('export fills the legacy search icon from explore for older apps', async () => {
   const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
   project.parts.navigation.search = '';

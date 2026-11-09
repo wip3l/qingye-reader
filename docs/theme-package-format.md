@@ -78,6 +78,7 @@ my-theme/
 | `ttsPanel` | `light` / `dark` | 朗读与有声书面板：`artwork`（720 × 520 的 SVG 或位图，贴顶等比缩放）、`skyColor`（插画背后的天空色）、`surfaceColor`（不透明的面板底色）、`glowColor`（带透明度的强调光）。四项都要写；只写一种模式时另一种模式沿用它。 |
 | `navigation` | `bookshelf`、`explore`、`mine` | 首页底栏的三个图标，缺一不可。SVG 按主题色着色，位图保持原色。 |
 | | `bookshelfSelected`、`exploreSelected`、`mineSelected` | 选中态图标，可选；没写的页签选中时仍用普通图标。旧版本应用会忽略这几项。 |
+| | `listen`、`footprint`（及 `listenSelected`、`footprintSelected`） | 可选第四个页签“听”“足迹”的图标（其他设置 › 底栏里开启），可以不写；没写时这个页签用基底主题的图标。旧版本应用会忽略。 |
 | | `search`、`searchSelected` | 旧版本应用底栏“搜索”页签的图标。本应用读包时照收但不显示；旧版本应用要求有 `search` 才肯导入，应用和桌面编辑器导出时缺了就用 `explore`（与 `exploreSelected`）的图标补上。 |
 | | `labels` | 写 `hidden` 时底栏只显示图标，不显示“书架”等文字。 |
 | `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 8 张，书架按书轮播）、书架边框 SVG、分组文件夹插画。 |
@@ -114,7 +115,8 @@ my-theme/
       "dark": { "artwork": "assets/tts_dark.svg", "skyColor": "#15302A", "surfaceColor": "#10171A", "glowColor": "#338FD3C2" }
     },
     "navigation": {
-      "bookshelf": "assets/nav_bookshelf.svg", "explore": "assets/nav_explore.svg", "mine": "assets/nav_mine.svg"
+      "bookshelf": "assets/nav_bookshelf.svg", "explore": "assets/nav_explore.svg", "mine": "assets/nav_mine.svg",
+      "listen": "assets/nav_listen.svg", "footprint": "assets/nav_footprint.svg"
     },
     "book": { "covers": ["assets/cover_01.jpg", "assets/cover_02.jpg"], "shelfFrame": "assets/frame.svg", "shelfFolder": "assets/folder.jpg" },
     "startup": { "light": { "image": "assets/startup.jpg", "title": "夜花园", "subtitle": "月下翻页" } },

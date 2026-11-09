@@ -162,6 +162,7 @@ export class ThemePackageTtsPanel {
 
 /**
  * 首页底栏图标（书架、发现、我的）。SVG 按主题色染色，位图保持原色；选中态图标可选，没给的页签选中时仍用普通图标。
+ * listen / footprint 是可选第四个页签“听”“足迹”的图标，可以不给（用基底主题的图标）；旧版本应用会忽略。
  * labels 为 'hidden' 时底栏只显示图标。
  * search / searchSelected 是旧版底栏“搜索”页签的图标：读包时照收但不显示；导出时缺了就用发现的图标补上，
  * 旧版本应用要求四个图标齐全才肯导入。
@@ -175,11 +176,16 @@ export class ThemePackageNavigation {
   exploreSelected: string = '';
   searchSelected: string = '';
   mineSelected: string = '';
+  listen: string = '';
+  footprint: string = '';
+  listenSelected: string = '';
+  footprintSelected: string = '';
   labels: string = '';
 }
 
 export const NAVIGATION_ICON_KEYS: string[] = [
-  'bookshelf', 'explore', 'search', 'mine', 'bookshelfSelected', 'exploreSelected', 'searchSelected', 'mineSelected'
+  'bookshelf', 'explore', 'search', 'mine', 'bookshelfSelected', 'exploreSelected', 'searchSelected', 'mineSelected',
+  'listen', 'footprint', 'listenSelected', 'footprintSelected'
 ];
 
 export class ThemePackageBook {

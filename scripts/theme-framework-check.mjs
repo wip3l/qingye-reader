@@ -345,6 +345,20 @@ for (const tabId of ['bookshelf', 'explore', 'mine']) {
   assert(indexPage.includes(`this.bottomTabBar('${tabId}'`) && indexPage.includes(`this.compatTabBar('${tabId}'`),
     `Floating tab icon is not themed: ${tabId}`);
 }
+// 可选的第四个页签（听 / 足迹）：每个内置图标包都有自己的一套，主题包缺图标时回退到基底主题。
+for (const fileName of fs.readdirSync(mediaRoot).filter(name => /^ic_theme_[a-z_]+_mine\.(svg|png)$/.test(name))) {
+  for (const tab of ['listen', 'footprint']) {
+    const expected = fileName.replace('_mine.', `_${tab}.`);
+    assert(fs.existsSync(path.join(mediaRoot, expected)), `Icon pack is missing its ${tab} tab icon: ${expected}`);
+    assert(assets.includes(`app.media.${expected.replace(/\.(svg|png)$/, '')}'`),
+      `Icon is not routed by ThemeAssetRegistry: ${expected}`);
+  }
+}
+assert(fs.existsSync(path.join(mediaRoot, 'ic_theme_celestial_vault_listen_selected.png')) &&
+  fs.existsSync(path.join(mediaRoot, 'ic_theme_celestial_vault_footprint_selected.png')),
+  'Celestial vault needs selected icons for the extra tabs');
+assert(!indexPage.includes("$r('app.media.ic_tab_listen')"),
+  'The extra tab icon must come from the active icon pack, not a fixed resource');
 // 搜索并进发现页签：底栏只有三个页签，搜索是盖在发现内容上的一层。
 assert(!indexPage.includes("this.bottomTabBar('search'") && !indexPage.includes("this.compatTabBar('search'") &&
   indexPage.includes('exploreTabContent()') && indexPage.includes('homeSearchLayerActive()'),

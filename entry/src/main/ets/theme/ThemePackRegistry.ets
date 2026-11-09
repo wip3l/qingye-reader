@@ -65,10 +65,15 @@ export class InstalledThemePack {
   navBookshelf: string = '';
   navExplore: string = '';
   navMine: string = '';
+  // 第四个页签“听”“足迹”的图标，可选：没给时用基底主题的图标。
+  navListen: string = '';
+  navFootprint: string = '';
   // 选中态图标，没给的页签选中时用普通图标。
   navBookshelfSelected: string = '';
   navExploreSelected: string = '';
   navMineSelected: string = '';
+  navListenSelected: string = '';
+  navFootprintSelected: string = '';
   navHideLabels: boolean = false;
   // 编辑器逐个上传导航图标时可能只有几张：缺的页签用基底主题的这套图标。
   navFallbackIconPackId: string = '';
@@ -92,7 +97,7 @@ export class InstalledThemePack {
   }
 
   hasAnyNavigation(): boolean {
-    return !!this.navBookshelf || !!this.navExplore || !!this.navMine;
+    return !!this.navBookshelf || !!this.navExplore || !!this.navMine || !!this.navListen || !!this.navFootprint;
   }
 
   hasBubble(): boolean {
@@ -222,6 +227,10 @@ export class ThemePackRegistry {
       installed.navBookshelfSelected = uri(parts.navigation.bookshelfSelected || '');
       installed.navExploreSelected = uri(parts.navigation.exploreSelected || '');
       installed.navMineSelected = uri(parts.navigation.mineSelected || '');
+      installed.navListen = uri(parts.navigation.listen || '');
+      installed.navFootprint = uri(parts.navigation.footprint || '');
+      installed.navListenSelected = uri(parts.navigation.listenSelected || '');
+      installed.navFootprintSelected = uri(parts.navigation.footprintSelected || '');
       installed.navHideLabels = parts.navigation.labels === 'hidden';
       installed.navFallbackIconPackId = record.navFallbackIconPackId || pack.navigation.iconPackId;
       if (installed.hasAnyNavigation()) pack.navigation.iconPackId = themeId;

@@ -5,7 +5,7 @@ import {
   deserializeDraft, usedAssetPaths, type EditorAsset, type EditorProject, type FileMap
 } from '../core/packageIo.ts';
 import { $, assetUrl, getPath, h, mp, project, S, setPath, toast, type Mode } from './state.ts';
-import { SECTIONS, SCREENS, SHELF_LAYOUTS, section, assetFields, type Field } from './sections.ts';
+import { SECTIONS, SCREENS, SHELF_LAYOUTS, EXTRA_TAB_CHOICES, section, assetFields, type Field } from './sections.ts';
 import { renderScreen, PHONE_H, PHONE_W } from './preview.ts';
 import { editorIssues, sizeWarning, strictIssue, type Issue } from './checks.ts';
 import { alphaOf, contrast, darkDraft, isColor, withAlpha } from './colors.ts';
@@ -259,6 +259,13 @@ function renderPreview(): void {
   layouts.replaceChildren(...SHELF_LAYOUTS.map(([id, label]) => h('button', {
     'aria-pressed': S.ui.shelfLayout === id ? 'true' : 'false', title: `书架布局：${label}`,
     onclick: () => { S.ui.shelfLayout = id as typeof S.ui.shelfLayout; renderPreview(); }
+  }, label)));
+  // 首页三个画面（书架、发现、我的）有底栏，可以切换第四个页签看“听”“足迹”的图标。
+  const extraTab = $('#extra-tab');
+  extraTab.hidden = !['shelf', 'explore', 'mine'].includes(S.ui.screen);
+  extraTab.replaceChildren(...EXTRA_TAB_CHOICES.map(([id, label]) => h('button', {
+    'aria-pressed': S.ui.extraTab === id ? 'true' : 'false', title: id === 'none' ? '底栏只有三个页签' : `底栏第四个页签：${label}`,
+    onclick: () => { S.ui.extraTab = id as typeof S.ui.extraTab; renderPreview(); }
   }, label)));
   document.querySelectorAll('#layout-seg button').forEach((b) => b.setAttribute('aria-pressed', (b as HTMLElement).dataset.l === S.ui.layout ? 'true' : 'false'));
 }

@@ -106,9 +106,14 @@ export function editorIssues(): Issue[] {
   const navKeys = ['bookshelf', 'explore', 'mine'];
   const navCount = navKeys.filter((k) => nav[k]).length;
   if (navCount > 0 && navCount < 3) add('error', `navigation.${navKeys.find((k) => !nav[k])}`, `导航图标要三个都有（现在 ${navCount} 个）`);
-  const selectedKey = navKeys.find((k) => nav[`${k}Selected`]);
-  if (navCount === 0 && (selectedKey || nav.labels)) {
-    add('error', 'navigation.bookshelf', '给了选中态图标或底栏文字设置，还需要三个普通图标');
+  const selectedKey = [...navKeys, 'listen', 'footprint'].find((k) => nav[`${k}Selected`]);
+  if (navCount === 0 && (selectedKey || nav.labels || nav.listen || nav.footprint)) {
+    add('error', 'navigation.bookshelf', '给了“听”“足迹”、选中态图标或底栏文字设置，还需要书架、发现、我的三个普通图标');
+  }
+  for (const extra of ['listen', 'footprint']) {
+    if (nav[`${extra}Selected`] && !nav[extra]) {
+      add('warn', `navigation.${extra}`, `给了“${extra === 'listen' ? '听' : '足迹'}”的选中态，普通态会用基底主题的图标，两张可能对不上`);
+    }
   }
   if (p.parts.bubble && p.parts.bubble.frame && !p.parts.bubble.cap) add('error', 'bubble.cap', '包内气泡有边框时还需要端饰');
 

@@ -3,7 +3,7 @@
 import { assetFontFamily, assetUrl, h, project, S, type Mode } from './state.ts';
 import { baseTheme, bubbleLabel, effective, GENERIC_BUBBLES, type Effective } from './tokens.ts';
 import { cssColor, luminance } from './colors.ts';
-import { NAV_TABS } from './sections.ts';
+import { NAV_TABS, EXTRA_NAV_TABS } from './sections.ts';
 
 export const PHONE_W = 360;
 export const PHONE_H = 780;
@@ -14,7 +14,9 @@ const svgUrl = (svg: string): string => `data:image/svg+xml;charset=utf-8,${enco
 const DEFAULT_NAV: Record<string, string> = {
   bookshelf: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 3h4v18H4zM10 3h4v18h-4zM16.5 4.2l3.8-1 3.2 16.6-3.8 1z"/></svg>',
   explore: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm4.5 5.5-2.8 6.2-6.2 2.8 2.8-6.2z"/></svg>',
-  mine: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zM3 21c0-4.4 4-7 9-7s9 2.6 9 7z"/></svg>'
+  mine: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zM3 21c0-4.4 4-7 9-7s9 2.6 9 7z"/></svg>',
+  listen: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3.5A8.5 8.5 0 0 0 3.5 12v2.2h1.6V12a6.9 6.9 0 0 1 13.8 0v2.2h1.6V12A8.5 8.5 0 0 0 12 3.5zM5.5 13h1a2 2 0 0 1 2 2v3.5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2V15a2 2 0 0 1 2-2zm12 0h1a2 2 0 0 1 2 2v3.5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2V15a2 2 0 0 1 2-2z"/></svg>',
+  footprint: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4.7 11.5h2.6a1.2 1.2 0 0 1 1.2 1.2v6.6a1.2 1.2 0 0 1-1.2 1.2H4.7a1.2 1.2 0 0 1-1.2-1.2v-6.6a1.2 1.2 0 0 1 1.2-1.2zm6-8h2.6a1.2 1.2 0 0 1 1.2 1.2v14.6a1.2 1.2 0 0 1-1.2 1.2h-2.6a1.2 1.2 0 0 1-1.2-1.2V4.7a1.2 1.2 0 0 1 1.2-1.2zm6 4h2.6a1.2 1.2 0 0 1 1.2 1.2v10.6a1.2 1.2 0 0 1-1.2 1.2h-2.6a1.2 1.2 0 0 1-1.2-1.2V8.7a1.2 1.2 0 0 1 1.2-1.2z"/></svg>'
 };
 
 /** 沿用基底主题的图片：编辑器不带内置素材，画成占位并写明来源。 */
@@ -105,8 +107,12 @@ function homeScreen(mode: Mode, e: Effective, tab: number, cls: string, backdrop
   const nav = project().parts.navigation || {};
   const iconsOnly = nav.labels === 'hidden' && !!nav.bookshelf;
   const bar = h('div', { class: `navbar${iconsOnly ? ' icons-only' : ''}`, 'data-sec': 'nav' });
-  NAV_TABS.forEach(([key, label], i) => {
-    bar.append(h('div', { class: `it${i === tab ? ' on' : ''}` }, navIcon(key, i === tab), iconsOnly ? null : label));
+  // 第四个页签排在“我的”前面；包里没给它的图标时应用用基底主题的，这里画默认图标。
+  const selectedKey = NAV_TABS[tab][0];
+  const extra = EXTRA_NAV_TABS.find(([key]) => key === S.ui.extraTab);
+  const tabs = extra ? [NAV_TABS[0], NAV_TABS[1], extra, NAV_TABS[2]] : NAV_TABS;
+  tabs.forEach(([key, label]) => {
+    bar.append(h('div', { class: `it${key === selectedKey ? ' on' : ''}` }, navIcon(key, key === selectedKey), iconsOnly ? null : label));
   });
   s.append(bar);
   return s;

@@ -1447,9 +1447,7 @@ struct Index {
   // 选中态跟内容切换同时换图（homeTabIsActive 在转场开始时就指向目标页签）。没有选中态图标的主题
   // 不读页签状态，切换页签时底栏样式不会被重设。
   navigationIcon(tabId: string, index: number): ResourceStr {
-    // 主题图标方案只有书架/发现/我的三个页签，第四个页签用内置图标（SVG，随底栏颜色染色）。
-    if (tabId === HomeTabBarSettingsStore.EXTRA_LISTEN) return $r('app.media.ic_tab_listen');
-    if (tabId === HomeTabBarSettingsStore.EXTRA_FOOTPRINT) return $r('app.media.ic_tab_footprint');
+    // 第四个页签（听 / 足迹）也由图标包提供：内置主题各有一套，主题包没给时用基底主题的。
     const iconPackId = ThemeRuntime.iconPackId();
     const selected = ThemeAssetRegistry.navigationHasSelectedIcons(iconPackId) && this.homeTabIsActive(index);
     return ThemeAssetRegistry.navigationIcon(iconPackId, tabId, selected);

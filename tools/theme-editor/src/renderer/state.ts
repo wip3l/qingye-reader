@@ -20,12 +20,14 @@ export interface UiState {
   layout: 'both' | 'one';
   /** 书架画面按哪种布局画，与应用“书架布局”设置的四个值一致。 */
   shelfLayout: 'companion' | 'tile' | 'loose' | 'compact';
+  /** 首页画面底栏的第四个页签，与应用“其他设置 › 底栏”一致。 */
+  extraTab: 'none' | 'listen' | 'footprint';
 }
 
 export const S: { project: EditorProject | null; doc: DocInfo; ui: UiState } = {
   project: null,
   doc: { filePath: null, fileName: '', dirty: false, problems: [] },
-  ui: { section: 'meta', mode: 'light', screen: 'card', layout: 'both', shelfLayout: 'companion' }
+  ui: { section: 'meta', mode: 'light', screen: 'card', layout: 'both', shelfLayout: 'companion', extraTab: 'none' }
 };
 
 export function project(): EditorProject {

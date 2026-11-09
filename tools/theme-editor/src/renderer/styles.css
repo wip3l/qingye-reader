@@ -52,7 +52,7 @@ button { cursor: pointer; }
 .legend span { display: flex; align-items: center; gap: 6px; }
 
 .stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: repeating-conic-gradient(var(--sunk) 0 25%, var(--panel) 0 50%) 0 0 / 16px 16px; }
-.stagebar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.stagebar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; flex: none; }
 .seg button { border: 0; background: var(--panel); padding: 3px 11px; color: var(--muted); }
 .seg button + button { border-left: 1px solid var(--line); }

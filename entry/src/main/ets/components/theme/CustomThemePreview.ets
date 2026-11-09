@@ -10,6 +10,7 @@ import { ReaderThemeBackground } from '../ReaderThemeBackground';
 import { ThemeStartupCover } from '../ThemeStartupCover';
 import { TtsPanelThemeBackground } from '../TtsPanelThemeBackground';
 import { BookCover } from '../book/BookCover';
+import { HomeTabBarSettingsStore } from '../../utils/HomeTabBarSettingsStore';
 import {
   ReaderRegexBubbleStyleResolver,
   ReaderRegexEmphasisContext,
@@ -40,6 +41,8 @@ export struct CustomThemePreview {
   @Prop schemeName: string = '';
   @Prop cardImagePath: string = '';
   @Prop logoThemeId: string = '';
+  // 底栏按“其他设置 › 底栏”里选的第四个页签画，和首页一致。
+  @StorageProp('homeExtraTab') homeExtraTab: string = 'none';
 
   build() {
     Stack() {
@@ -420,13 +423,21 @@ export struct CustomThemePreview {
   tabLabel(tabId: string): string {
     if (tabId === 'explore') return '发现';
     if (tabId === 'mine') return '我的';
+    if (tabId === 'listen') return '听';
+    if (tabId === 'footprint') return '足迹';
     return '书架';
+  }
+
+  navigationTabs(): string[] {
+    const extra = HomeTabBarSettingsStore.normalizeExtraTab(this.homeExtraTab);
+    return extra === HomeTabBarSettingsStore.EXTRA_NONE ? ['bookshelf', 'explore', 'mine'] :
+      ['bookshelf', 'explore', extra, 'mine'];
   }
 
   @Builder
   navigationBar() {
     Row() {
-      ForEach(['bookshelf', 'explore', 'mine'], (tabId: string) => {
+      ForEach(this.navigationTabs(), (tabId: string) => {
         Column({ space: 2 }) {
           Image(ThemeAssetRegistry.navigationIcon(this.themePack.navigation.iconPackId, tabId,
             tabId === this.selectedTab()))

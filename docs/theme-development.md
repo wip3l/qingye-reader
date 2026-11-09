@@ -49,7 +49,7 @@ entry/src/main/resources/base/media/
 ├── theme_folder_art_*          # 平铺模式分组文件夹插画（450 × 660）
 ├── theme_logo_*                # 主题标识 SVG（64 × 64）
 ├── theme_startup_*             # 启动封面
-├── ic_theme_<pack>_*           # 导航图标包，每包四个 24 × 24 SVG
+├── ic_theme_<pack>_*           # 导航图标包，每包五个 24 × 24 SVG（星穹御藏是带选中态的位图）
 └── regex_frame_* / regex_cap_* # 主题专属正则气泡的边框与端饰
 ```
 
@@ -241,13 +241,13 @@ BuiltinThemeRegistry.register(theme);
 
 ### 导航图标包
 
-图标包固定包含 `bookshelf`、`explore`、`mine` 三个底栏图标，路径使用纯黑填充，由 ArkUI 的 `fillColor` 注入主题色。
+图标包包含 `bookshelf`、`explore`、`mine` 三个固定页签和可选第四个页签 `listen`、`footprint`（其他设置 › 底栏）共五个底栏图标，路径使用纯黑填充，由 ArkUI 的 `fillColor` 注入主题色。`fillColor` 只对填充轮廓可靠，线条要先描成轮廓：“听”“足迹”两枚图标由 `scripts/generate-extra-tab-icons.mjs`（pathkit 描边）生成，星穹御藏的位图由 `scripts/generate-celestial-extra-tab-icons.py` 生成。主题包没带 `listen` / `footprint` 时，`navigationIcon()` 回退到包的 `navFallbackIconPackId`（基底主题的图标包）。
 
 新增图标包时：
 
 1. 在 `ThemeAssetRegistry` 中增加 `ICON_PACK_*` 常量。
 2. 在 `normalizeIconPackId()` 中放行该 ID，否则会回退到 `classic`。
-3. 在 `navigationIcon()` 的分支中增加映射。
+3. 在 `navigationIcon()` 的分支中增加映射，五个页签都要有（`theme-framework-check` 会检查 `listen`、`footprint` 是否齐全）。
 4. 把 `ThemePack.navigation.iconPackId` 指向新 ID。
 
 当前可用的图标包 ID：`classic`、`rounded`、`ink`、`strawberry`、`crimson`、`plum`、`rose`、`crane`、`sword-frost`、`qingluan-water`、`cat-pipi`、`azure-mecha`、`starwish-magic`、`letterpress-page`。
@@ -264,7 +264,7 @@ BuiltinThemeRegistry.register(theme);
 
 编辑器按素材槽逐个管理：封面可单张替换、删除和调整顺序（`replaceCover` / `removeCover` / `moveCover`），书架边框、文件夹、气泡边框、主题标识（`parts.logo`）各自可移除，浅深色分开的阅读背景素材、朗读面板和首页背景可以 `copyToOtherMode()` 复制到另一种模式。朗读面板三色只在这个模式已有自传插画时可改（直接改 `parts.ttsPanelLight/Dark`）；整图铺放改 `parts.light/dark.reader.imageFit`。阅读底色、正文、页眉页脚与内容明暗是方案设置里的 `customLight/DarkReader*`，换阅读来源时整组重置为来源主题的值。
 
-导航图标可以逐个上传，`parts.navigation` 在本机允许只有几张：`InstalledThemePack.hasAnyNavigation()` 为真时底栏就用包里的图标，缺的页签取 `ThemePackRecord.navFallbackIconPackId`（第一次上传时导航来源主题的内置图标包，只存在本机 `pack.json`，不进包格式）。主题包格式仍要求四个普通图标齐全，所以 `ThemePackageService.packParts()` 导出时丢掉没传齐的 `navigation`。
+导航图标可以逐个上传，`parts.navigation` 在本机允许只有几张：`InstalledThemePack.hasAnyNavigation()` 为真时底栏就用包里的图标，缺的页签取 `ThemePackRecord.navFallbackIconPackId`（第一次上传时导航来源主题的内置图标包，只存在本机 `pack.json`，不进包格式）。“听”“足迹”两个页签的图标可以不传，同样回退到它。主题包格式仍要求书架、发现、我的三个普通图标齐全，所以 `ThemePackageService.packParts()` 导出时丢掉没传齐的 `navigation`。
 
 位图素材上传前经过 `components/theme/ThemeImageCropper.ets` 取景：在解码后的工作图上按槽位比例裁剪，输出到缓存目录再交给 `importAsset()`（沙箱路径直接按路径复制）。复制方案由 `SchemeAssetService.duplicateScheme()` 完成：自有素材包用 `ThemePackStore.copyPack()` 复制成新 `custom-<随机>` 包，设置里的 `pack:<旧 ID>` 引用全部换成新 ID，启动封面、预览图和阅读排版档案（含绑定标记）各复制一份。方案的作者与说明（`CustomThemeScheme.author` / `description`）由编辑器“方案信息”写入，导出时进清单。
 

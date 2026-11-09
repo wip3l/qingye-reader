@@ -1997,6 +1997,8 @@ struct ThemeColorSettingsPage {
       Row() {
         this.navSlot('bookshelf', '书架')
         this.navSlot('explore', '发现')
+        this.navSlot('listen', '听')
+        this.navSlot('footprint', '足迹')
         this.navSlot('mine', '我的')
       }
       .width('100%')
@@ -2008,6 +2010,8 @@ struct ThemeColorSettingsPage {
       Row() {
         this.navSlot('bookshelfSelected', '书架')
         this.navSlot('exploreSelected', '发现')
+        this.navSlot('listenSelected', '听')
+        this.navSlot('footprintSelected', '足迹')
         this.navSlot('mineSelected', '我的')
       }
       .width('100%')
@@ -2030,7 +2034,7 @@ struct ThemeColorSettingsPage {
     }
     .width('100%')
     .opacity(this.ownNavigationActive() ? this.advancedOpacity() : 0.45)
-    SettingNavRow({ title: '一次选多个图标', description: '文件名含 bookshelf、explore、mine 时自动对号',
+    SettingNavRow({ title: '一次选多个图标', description: '文件名含 bookshelf、explore、listen、footprint、mine 时自动对号',
       showDivider: this.ownNavigationActive(), onTap: () => {
         if (this.advancedLocked()) this.ensureAdvanced();
         else this.uploadNavigation();
@@ -2046,7 +2050,8 @@ struct ThemeColorSettingsPage {
     if (this.ownNavigationActive() && missing > 0) {
       return `还差 ${missing} 个普通图标：缺的先用基底主题的图标，传齐三个之前分享导出时不带导航图标`;
     }
-    return 'SVG 跟随主题色着色；PNG / WebP 保持原色。选中态没给的页签，选中时仍用普通图标';
+    return 'SVG 跟随主题色着色；PNG / WebP 保持原色。选中态没给的页签，选中时仍用普通图标。' +
+      '“听”“足迹”是可选的第四个页签，不传就用基底主题的图标';
   }
 
   navLabelsHidden(): boolean {
@@ -3249,7 +3254,7 @@ struct ThemeColorSettingsPage {
   }
 
   async uploadNavigation(): Promise<void> {
-    const uris = await SchemeAssetService.pickIconFiles(getContext(this), 3);
+    const uris = await SchemeAssetService.pickIconFiles(getContext(this), SchemeAssetService.NAVIGATION_TABS.length);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setNavigation(getContext(this), this.schemeId, uris, this.sourceThemeId('navigation')),
