@@ -49,6 +49,8 @@ export struct FootprintTabPage {
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageProp('readStatsRecording') readStatsRecording: boolean = true;
+  /** 本月日历卡收起与否，在 EntryAbility 里持久化。 */
+  @StorageLink('footprintMonthCollapsed') monthCollapsed: boolean = false;
   private scroller: Scroller = new Scroller();
   private alive: boolean = false;
   private ownerId: string = '';
@@ -361,48 +363,72 @@ export struct FootprintTabPage {
   @Builder
   monthCard() {
     Column({ space: AppSpacing.MD }) {
-      Row() {
+      Row({ space: AppSpacing.SM }) {
         Text(this.monthTitle)
           .fontSize(AppFontSize.BODY_LARGE)
           .fontWeight(FontWeight.Bold)
           .fontColor(this.primaryTextColor())
           .layoutWeight(1)
-        Row({ space: 4 }) {
-          Text('少')
-            .fontSize(AppFontSize.MICRO)
+        if (this.monthCollapsed) {
+          Text(this.monthSummaryText())
+            .fontSize(AppFontSize.CAPTION)
             .fontColor(this.subTextColor())
-          ForEach([0, 1, 2, 3], (level: number) => {
-            Column()
-              .width(10)
-              .height(10)
-              .borderRadius(3)
-              .backgroundColor(this.levelColor(level))
-          }, (level: number) => `${level}`)
-          Text('多')
-            .fontSize(AppFontSize.MICRO)
-            .fontColor(this.subTextColor())
+            .maxLines(1)
+        } else {
+          this.monthLegend()
         }
-        .alignItems(VerticalAlign.Center)
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(16)
+          .fontColor([this.subTextColor()])
+          .rotate({ angle: this.monthCollapsed ? 0 : 180 })
       }
       .width('100%')
+      .height(24)
+      .accessibilityGroup(true)
+      .accessibilityText(`${this.monthTitle}，${this.monthCollapsed ? '已收起，点按展开' : '已展开，点按收起'}`)
+      .onClick(() => this.toggleMonthCollapsed())
 
-      Grid() {
-        ForEach(this.monthDays, (item: FootprintDay) => {
-          GridItem() {
-            this.dayCell(item)
-          }
-        }, (item: FootprintDay) => `${item.key}|${item.level}|${item.today}`)
+      if (!this.monthCollapsed) {
+        Grid() {
+          ForEach(this.monthDays, (item: FootprintDay) => {
+            GridItem() {
+              this.dayCell(item)
+            }
+          }, (item: FootprintDay) => `${item.key}|${item.level}|${item.today}`)
+        }
+        .columnsTemplate('1fr 1fr 1fr 1fr 1fr 1fr 1fr')
+        .columnsGap(5)
+        .rowsGap(5)
+        .width('100%')
+        .layoutDirection(GridDirection.Row)
+        .transition(TransitionEffect.OPACITY)
       }
-      .columnsTemplate('1fr 1fr 1fr 1fr 1fr 1fr 1fr')
-      .columnsGap(5)
-      .rowsGap(5)
-      .width('100%')
-      .layoutDirection(GridDirection.Row)
     }
     .width('100%')
     .padding(AppSpacing.XL)
     .borderRadius(ThemeRuntime.largeRadius())
     .backgroundColor(this.cardColor())
+    .clip(true)
+  }
+
+  @Builder
+  monthLegend() {
+    Row({ space: 4 }) {
+      Text('少')
+        .fontSize(AppFontSize.MICRO)
+        .fontColor(this.subTextColor())
+      ForEach([0, 1, 2, 3], (level: number) => {
+        Column()
+          .width(10)
+          .height(10)
+          .borderRadius(3)
+          .backgroundColor(this.levelColor(level))
+      }, (level: number) => `${level}`)
+      Text('多')
+        .fontSize(AppFontSize.MICRO)
+        .fontColor(this.subTextColor())
+    }
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
@@ -519,6 +545,18 @@ export struct FootprintTabPage {
     .onClick(() => {
       if (bookmark.bookUrl) this.openBook(bookmark.bookUrl);
     })
+  }
+
+  /** 收起后标题右边写本月读了几天，展开看日历。 */
+  monthSummaryText(): string {
+    const days = this.monthDays.filter((item: FootprintDay): boolean => item.day > 0 && item.durationMs > 0).length;
+    return days > 0 ? `${days} 天有阅读` : '本月还没有阅读';
+  }
+
+  toggleMonthCollapsed(): void {
+    this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, (): void => {
+      this.monthCollapsed = !this.monthCollapsed;
+    });
   }
 
   compareText(): string {

@@ -270,6 +270,7 @@ export default class EntryAbility extends UIAbility {
     // Immersive light strength: adaptive follows the system by default.
     PersistentStorage.persistProp('immersiveLightLevel', 'adaptive');
     PersistentStorage.persistProp('smartGripEnabled', true);
+    PersistentStorage.persistProp('footprintMonthCollapsed', false);
     this.smartGripBootstrapPromise = SmartGripSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复智感握姿设置失败:', error);
     });
