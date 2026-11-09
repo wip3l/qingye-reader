@@ -3071,10 +3071,26 @@ struct ThemeColorSettingsPage {
 
   /** 素材移掉后，指向素材包的来源退回包的基底主题（第一次上传时该部件所选的主题）。 */
   detachPackSource(category: string, previousThemeId: string, fallbackThemeId: string): void {
-    const lightUses = this.sourceValueFor(this.lightSources, category) === previousThemeId;
-    const darkUses = this.sourceValueFor(this.darkSources, category) === previousThemeId;
+    const lightUses = this.sourceValueFor(this.lightSources, category) === previousThemeId &&
+      !this.packPartRemains(category, false);
+    const darkUses = this.sourceValueFor(this.darkSources, category) === previousThemeId &&
+      !this.packPartRemains(category, true);
     if (!lightUses && !darkUses) return;
     this.applyPackSource(category, fallbackThemeId, lightUses, darkUses);
+  }
+
+  /**
+   * 只移掉部件里的一项（某个导航图标、某张封面、某个模式的首页背景）后，包里这一部件还在就不退回基底，
+   * 否则删一个选中态图标会把已传的普通图标也一起换回基底主题。
+   */
+  packPartRemains(category: string, dark: boolean): boolean {
+    const pack = this.ownPack();
+    if (!pack) return false;
+    const parts = pack.record.parts;
+    if (category === 'navigation') return !!parts.navigation;
+    if (category === 'book') return !!parts.book;
+    if (category === 'homeBackdrop') return !!(dark ? parts.homeBackdropDark : parts.homeBackdropLight);
+    return false;
   }
 
   sourceValueFor(sources: ThemeComponentSourceIds, category: string): string {
