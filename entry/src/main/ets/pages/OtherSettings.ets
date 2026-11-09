@@ -17,6 +17,7 @@ import { ReaderCacheBudget, ReaderCacheCleanup } from '../core/book/ReaderCacheB
 import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
+import { HomeTabBarSettingsStore } from '../utils/HomeTabBarSettingsStore';
 
 @Entry
 @Component
@@ -31,6 +32,8 @@ struct OtherSettingsPage {
   @StorageLink('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('smartGripEnabled') smartGripEnabled: boolean = true;
   @StorageLink('homeBackdropEnabled') homeBackdropEnabled: boolean = true;
+  @StorageProp('homeTabBarStyle') homeTabBarStyle: string = 'floating';
+  @StorageProp('homeExtraTab') homeExtraTab: string = 'none';
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @StorageLink('lanReaderEnabled') lanReaderEnabled: boolean = false;
@@ -187,6 +190,25 @@ struct OtherSettingsPage {
           });
         }
       })
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+
+    this.sectionTitle('底栏')
+    Column() {
+      SettingRow({ title: '底栏样式', description: this.tabBarStyleDescription() }) {
+        this.tabBarStyleSelect()
+      }
+      SettingRow({
+        title: '更多底栏项目',
+        description: '在发现和我的之间加一个页签：“听”汇集正在播放、有声书和朗读设置，“足迹”展示本周阅读统计和书签',
+        showDivider: false
+      }) {
+        this.extraTabSelect()
+      }
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -607,6 +629,94 @@ struct OtherSettingsPage {
       .fontColor(this.subTextColor())
       .width('100%')
       .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.XXL, bottom: AppSpacing.MD })
+  }
+
+  tabBarStyleDescription(): string {
+    return ImmersiveMaterialRuntime.supportsHdsTabs() ? '悬浮底栏浮在页面上，带沉浸材质；平铺底栏贴底铺满' :
+      '本机系统不支持悬浮底栏，使用平铺底栏';
+  }
+
+  tabBarStyleIndex(): number {
+    return ImmersiveMaterialRuntime.supportsHdsTabs() &&
+      HomeTabBarSettingsStore.normalizeStyle(this.homeTabBarStyle) === HomeTabBarSettingsStore.STYLE_FLOATING ? 0 : 1;
+  }
+
+  extraTabValues(): string[] {
+    return [HomeTabBarSettingsStore.EXTRA_NONE, HomeTabBarSettingsStore.EXTRA_LISTEN,
+      HomeTabBarSettingsStore.EXTRA_FOOTPRINT];
+  }
+
+  extraTabIndex(): number {
+    return Math.max(0, this.extraTabValues().indexOf(HomeTabBarSettingsStore.normalizeExtraTab(this.homeExtraTab)));
+  }
+
+  saveTabBarStyle(index: number): void {
+    const style = index === 0 ? HomeTabBarSettingsStore.STYLE_FLOATING : HomeTabBarSettingsStore.STYLE_FLAT;
+    if (style === HomeTabBarSettingsStore.normalizeStyle(this.homeTabBarStyle)) return;
+    HomeTabBarSettingsStore.saveStyle(getContext(this), style).catch((error: Error) => {
+      console.warn('保存底栏样式失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
+  }
+
+  saveExtraTab(index: number): void {
+    const extra = this.extraTabValues()[index] || HomeTabBarSettingsStore.EXTRA_NONE;
+    if (extra === HomeTabBarSettingsStore.normalizeExtraTab(this.homeExtraTab)) return;
+    HomeTabBarSettingsStore.saveExtraTab(getContext(this), extra).catch((error: Error) => {
+      console.warn('保存底栏项目失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
+  }
+
+  @Builder
+  tabBarStyleSelect() {
+    Select([{ value: '悬浮' }, { value: '平铺' }])
+      .enabled(ImmersiveMaterialRuntime.supportsHdsTabs())
+      .selected(this.tabBarStyleIndex())
+      .value(this.tabBarStyleIndex() === 0 ? '悬浮' : '平铺')
+      .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+      .optionFont({ family: this.applicationFontFamily })
+      .selectedOptionFont({ family: this.applicationFontFamily })
+      .fontColor(this.subTextColor())
+      .backgroundColor(Color.Transparent)
+      .arrowPosition(ArrowPosition.END)
+      .padding({ left: 0, right: 0 })
+      .borderRadius(16)
+      .border({ width: 0 })
+      .divider(null)
+      .optionBgColor(Color.Transparent)
+      .optionFontColor(this.primaryTextColor())
+      .selectedOptionFontColor(this.accentColor())
+      .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+      .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+      .menuBackgroundBlurStyle(BlurStyle.NONE)
+      .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+      .onSelect((index: number) => this.saveTabBarStyle(index))
+  }
+
+  @Builder
+  extraTabSelect() {
+    Select([{ value: '关' }, { value: '听' }, { value: '足迹' }])
+      .selected(this.extraTabIndex())
+      .value(['关', '听', '足迹'][this.extraTabIndex()])
+      .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+      .optionFont({ family: this.applicationFontFamily })
+      .selectedOptionFont({ family: this.applicationFontFamily })
+      .fontColor(this.subTextColor())
+      .backgroundColor(Color.Transparent)
+      .arrowPosition(ArrowPosition.END)
+      .padding({ left: 0, right: 0 })
+      .borderRadius(16)
+      .border({ width: 0 })
+      .divider(null)
+      .optionBgColor(Color.Transparent)
+      .optionFontColor(this.primaryTextColor())
+      .selectedOptionFontColor(this.accentColor())
+      .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+      .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+      .menuBackgroundBlurStyle(BlurStyle.NONE)
+      .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+      .onSelect((index: number) => this.saveExtraTab(index))
   }
 
   @Builder

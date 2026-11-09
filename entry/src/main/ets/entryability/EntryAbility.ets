@@ -4,6 +4,7 @@ import { ComicColorizer } from '@legado/aiengine';
 import { ImmersiveLightSettingsStore } from '../utils/ImmersiveLightSettingsStore';
 import { SmartGripSettingsStore } from '../utils/SmartGripSettingsStore';
 import { HomeBackdropSettingsStore } from '../utils/HomeBackdropSettingsStore';
+import { HomeTabBarSettingsStore } from '../utils/HomeTabBarSettingsStore';
 import { AbilityConstant, UIAbility, Want, Configuration, ConfigurationConstant } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { UIContext, window } from '@kit.ArkUI';
@@ -68,6 +69,7 @@ export default class EntryAbility extends UIAbility {
   private networkBootstrapPromise: Promise<void> = Promise.resolve();
   private smartGripBootstrapPromise: Promise<void> = Promise.resolve();
   private homeBackdropBootstrapPromise: Promise<void> = Promise.resolve();
+  private homeTabBarBootstrapPromise: Promise<void> = Promise.resolve();
   private accountBootstrapPromise: Promise<void> = Promise.resolve();
   private membershipThemeTimer: number = -1;
   private deferredStartupScheduled: boolean = false;
@@ -270,6 +272,9 @@ export default class EntryAbility extends UIAbility {
     this.homeBackdropBootstrapPromise = HomeBackdropSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复首页背景设置失败:', error);
     });
+    this.homeTabBarBootstrapPromise = HomeTabBarSettingsStore.load(this.context).catch((error: Error) => {
+      console.warn('恢复底栏设置失败:', error);
+    });
     this.immersiveLightBootstrapPromise = ImmersiveLightSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复沉浸光感设置失败:', error);
     });
@@ -375,7 +380,8 @@ export default class EntryAbility extends UIAbility {
 
     Promise.all([this.themeBootstrapPromise, this.immersiveLightBootstrapPromise,
       this.memberSettingsBootstrapPromise, this.networkBootstrapPromise,
-      this.smartGripBootstrapPromise, this.homeBackdropBootstrapPromise]).finally(() => {
+      this.smartGripBootstrapPromise, this.homeBackdropBootstrapPromise,
+      this.homeTabBarBootstrapPromise]).finally(() => {
       this.loadStartupContent(windowStage);
     });
   }

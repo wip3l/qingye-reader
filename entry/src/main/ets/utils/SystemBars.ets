@@ -111,6 +111,9 @@ export function syncSystemSafeAreas(mainWindow: window.Window): void {
     // permanent 32vp strip in full-screen readers.
     AppStorage.setOrCreate('statusBarHeight', topHeight);
     AppStorage.setOrCreate('navBarHeight', bottomHeight > 0 ? bottomHeight : 0);
+    // 只算底部导航条本身（不含手势区），平铺底栏贴底时按它留白，留够手势区会显得太高。
+    AppStorage.setOrCreate('navIndicatorHeight',
+      uiContext.px2vp(Math.max(0, navigationArea.bottomRect.height)));
     registerSafeAreaListener(mainWindow);
   } catch (err) {
     console.error('同步系统安全区失败:', err);
