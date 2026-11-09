@@ -5,7 +5,7 @@ import { ReaderTtsFloatingSession } from '../../utils/ReaderTtsFloatingSession';
 
 /**
  * 首页底栏上方的朗读/听书伴生条，朗读与听书共用；背景与位置由首页给。
- * 封面是圆形唱片，播放时慢转、暂停或加载时停在当前角度。
+ * 封面裁成圆形，播放时慢转、暂停或加载时停在当前角度。
  * 状态全部直接读 AppStorage。
  */
 @Component
@@ -14,8 +14,6 @@ export struct HomeTtsAccessory {
   @Prop textColor: string = '#202124';
   @Prop subTextColor: string = '#8A8A8A';
   @Prop trackColor: string = '#1F000000';
-  /** 唱片中心孔的颜色，取伴生条底色。 */
-  @Prop holeColor: string = '#FFFFFF';
   onOpen: () => void = (): void => {
   };
 
@@ -129,12 +127,6 @@ export struct HomeTtsAccessory {
         .height(HomeTtsAccessory.DISC_SIZE)
         .fill(Color.Transparent)
         .stroke('#33FFFFFF')
-        .strokeWidth(1)
-      Circle()
-        .width(9)
-        .height(9)
-        .fill(this.holeColor)
-        .stroke('#40000000')
         .strokeWidth(1)
     }
     .width(HomeTtsAccessory.DISC_SIZE)

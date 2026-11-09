@@ -844,7 +844,6 @@ struct Index {
             textColor: ThemeRuntime.primaryTextColor(this.appDarkMode),
             subTextColor: ThemeRuntime.subTextColor(this.appDarkMode),
             trackColor: ThemeRuntime.hairlineColor(this.appDarkMode),
-            holeColor: ThemeRuntime.cardColor(this.appDarkMode),
             onOpen: (): void => this.openGlobalTtsPanel()
           })
         }
