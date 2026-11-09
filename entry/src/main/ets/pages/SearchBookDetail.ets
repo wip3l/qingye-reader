@@ -447,6 +447,7 @@ struct SearchBookDetailPage {
     Stack({ alignContent: Alignment.TopStart }) {
       Row() {
         ImmersiveBackButton({ iconColor: this.primaryTextColor(), darkMode: this.appDarkMode,
+          buttonSize: 40, containerWidth: 56, materialScale: 0.83, compactLayout: true,
           onBack: () => this.handleBack() })
 
         Text(this.titleBarProgress() > 0.6 ? (this.name || this.detailPageTitle()) : this.detailPageTitle())

@@ -128,7 +128,8 @@ const SOURCE_FORMAT_BAR_PADDING: number = 6;
 const SOURCE_FORMAT_INDICATOR_WIDTH: number = 18;
 const COMPAT_SOURCE_NOTICE_HEIGHT: number = 44;
 const SOURCE_SEARCH_ROW_HEIGHT: number = 40 + AppSpacing.MD * 2;
-const SOURCE_HEADER_CONTROL_SIZE: number = 40;
+// 与左侧返回钮、ImmersiveHeaderAction 同尺寸。
+const SOURCE_HEADER_CONTROL_SIZE: number = ImmersiveHeaderAction.SIZE;
 const SOURCE_SEARCH_INPUT_KEY: string = 'book_source_search_input';
 const SOURCE_SELECTION_ROW_HEIGHT: number = 42;
 
