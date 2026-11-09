@@ -14,30 +14,22 @@ const OUTPUT = resolve(root, 'entry/src/main/resources/rawfile/manual/help.json'
 const GROUPS = [
   [
     { id: 'layout', title: '界面总览', icon: 'square_grid_2x2', summary: '底部页签、“我的”入口、桌面卡片', parts: ['layout'] },
+    { id: 'import', title: '导入、OPDS 与浏览器看书', icon: 'download', summary: '本地导入、ZIP、书库、WebDAV', parts: ['import', 'lan'],
+      action: { label: '打开书籍导入', url: 'pages/BookImport' } },
     { id: 'shelf', title: '书架', icon: 'bookshelf', summary: '筛选、分组、多选、隐私书架、封面', parts: ['shelf', 'shelfset'],
       action: { label: '打开书架设置', url: 'pages/BookshelfSettings' } },
-    { id: 'search', title: '搜索与发现', icon: 'magnifyingglass', summary: '搜索范围、历史、遇到“去验证”', parts: ['search', 'explore'],
-      action: { label: '去搜索', home: 1, search: true } },
-    { id: 'detail', title: '书籍详情与换源', icon: 'arrow_left_arrow_right', summary: '完整目录、视频内容、换源', parts: ['detail'] },
   ],
   [
-    { id: 'source', title: '书源管理', icon: 'externaldrive', summary: '导入、校验、分组、登录', parts: ['source'],
-      action: { label: '打开书源管理', url: 'pages/BookSource' } },
-    { id: 'sourceedit', title: '书源编辑与调试', icon: 'square_and_pencil', summary: '原生书源 JS、单书源调试', parts: ['sourceedit'] },
-  ],
-  [
-    { id: 'reader', title: '阅读', icon: 'book', summary: '点击区域、目录、书签、漫画', parts: ['reader'],
+    { id: 'reader', title: '阅读', icon: 'book', summary: '点击区域、目录、划线笔记、本地书格式', parts: ['reader'],
       action: { label: '打开阅读设置', url: 'pages/Settings' } },
     { id: 'typo', title: '排版、字体与配色', icon: 'textformat', summary: '排版参数、页眉页脚、背景', parts: ['typo'],
       action: { label: '打开阅读设置', url: 'pages/Settings' } },
-    { id: 'tts', title: '朗读与有声书', icon: 'speaker_wave_3', summary: '音色、朗读面板、后台播放', parts: ['tts', 'audio'],
+    { id: 'tts', title: '朗读', icon: 'speaker_wave_3', summary: '音色、朗读面板、后台播放', parts: ['tts'],
       action: { label: '打开朗读设置', url: 'pages/TtsSettings' } },
-    { id: 'clean', title: '缓存与替换净化', icon: 'funnel', summary: '缓存章节、预缓存、净化规则', parts: ['clean'],
+    { id: 'clean', title: '替换净化', icon: 'funnel', summary: '净化规则、生效检查', parts: ['clean'],
       action: { label: '管理替换规则', url: 'pages/ReaderReplaceRules' } },
   ],
   [
-    { id: 'import', title: '导入、OPDS 与浏览器看书', icon: 'download', summary: '本地导入、书库、WebDAV', parts: ['import', 'lan'],
-      action: { label: '打开书籍导入', url: 'pages/BookImport' } },
     { id: 'backup', title: '备份与云同步', icon: 'arrow_2_circlepath', summary: '导出导入、迁移、多设备同步', parts: ['backup', 'sync'],
       action: { label: '打开数据同步', url: 'pages/DataSync' } },
     { id: 'look', title: '主题与外观', icon: 'paintpalette', summary: '主题、自定义方案、字体与图标', parts: ['look'],
@@ -55,20 +47,20 @@ const EXTRA_TOPICS = [
 
 // 首页“新手上手”卡片：说明书里的步骤偏长，卡片用短句，详细步骤点标题进“快速上手”专题看。
 const QUICK_START = [
-  { title: '导入书源', desc: 'URL 或文件导入，多个可勾选', action: { label: '去书源管理', url: 'pages/BookSource' } },
-  { title: '校验书源', desc: '先看哪些能用，失败的一键禁用', action: { label: '去校验', url: 'pages/BookSource' } },
-  { title: '搜书加书架', desc: '搜索或发现，在详情页加入书架', action: { label: '去搜索', home: 1, search: true } },
-  { title: '开始阅读', desc: '点屏幕中央呼出菜单，调字号与翻页', action: { label: '去书架', home: 0 } },
+  { title: '导入本地书', desc: 'TXT、EPUB、MOBI、PDF 或 ZIP，可多选', action: { label: '去书籍导入', url: 'pages/BookImport' } },
+  { title: '开始阅读', desc: '点封面打开，点屏幕中央呼出菜单', action: { label: '去书架', home: 0 } },
+  { title: '调整排版', desc: '字号、行距、翻页方式与背景', action: { label: '去阅读设置', url: 'pages/Settings' } },
+  { title: '备份与同步', desc: '换设备时进度和书都能带走', action: { label: '去数据同步', url: 'pages/DataSync' } },
 ];
 
 // 首页直接展示的常见问题（按问题原文匹配），以及个别答案下的跳转按钮。
-const FEATURED_FAQ = ['搜索不到任何书', '换了手机，数据怎么搬过去', '正文里有广告或乱七八糟的文字'];
+const FEATURED_FAQ = ['导入失败或提示格式不支持', 'TXT 章节分得不对', '换了手机，数据怎么搬过去'];
 const FAQ_ACTIONS = {
-  '搜索不到任何书': { label: '打开书源管理', url: 'pages/BookSource' },
+  '导入失败或提示格式不支持': { label: '打开书籍导入', url: 'pages/BookImport' },
+  'TXT 章节分得不对': { label: '打开 TXT 目录规则', url: 'pages/TxtTocRules' },
   '换了手机，数据怎么搬过去': { label: '打开数据备份', url: 'pages/DataBackup' },
-  '正文里有广告或乱七八糟的文字': { label: '管理替换规则', url: 'pages/ReaderReplaceRules' },
+  '正文里有水印或乱七八糟的文字': { label: '管理替换规则', url: 'pages/ReaderReplaceRules' },
   'OPDS 书库连不上': { label: '打开 OPDS 书库', url: 'pages/OpdsServers' },
-  '书源提示证书错误': { label: '打开书源管理', url: 'pages/BookSource' },
 };
 
 // ───────────── 极简 HTML 解析：说明书是手写的规整 HTML，够用即可 ─────────────

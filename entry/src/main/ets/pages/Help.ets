@@ -126,7 +126,7 @@ struct HelpPage {
           .fontColor([this.subTextColor()])
           .margin({ left: AppSpacing.LG })
           .hitTestBehavior(HitTestMode.None)
-        TextInput({ placeholder: '搜索问题，如：换源、备份', text: this.keyword })
+        TextInput({ placeholder: '搜索问题，如：导入、备份', text: this.keyword })
           .layoutWeight(1)
           .height(40)
           .fontSize(AppFontSize.BODY_LARGE)

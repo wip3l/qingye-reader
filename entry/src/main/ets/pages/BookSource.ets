@@ -2958,14 +2958,6 @@ struct BookSourcePage {
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
-      Text('了解区别')
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.accentColor())
-        .height(40)
-        .textAlign(TextAlign.Center)
-        .onClick(() => {
-          router.pushUrl({ url: 'pages/HelpTopic', params: { anchor: 'sourcekinds' } });
-        })
       SymbolGlyph($r('sys.symbol.xmark'))
         .fontSize(16)
         .fontColor([this.subTextColor()])
