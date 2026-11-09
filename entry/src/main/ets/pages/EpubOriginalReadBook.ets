@@ -19,6 +19,8 @@ import { EpubOriginalDocument, EpubOriginalPiece } from '../core/book/EpubOrigin
 import { EpubOriginalFont } from '../core/book/EpubOriginalFont';
 import { ReaderFontHelper } from '../utils/ReaderFontHelper';
 import { ReaderCustomFontData, ReaderCustomFontItem } from '../core/reader/ReaderSettingsModels';
+import { EpubDuokanExtensions, EpubDuokanPackage } from '../core/book/EpubDuokanExtensions';
+import { util } from '@kit.ArkTS';
 import { EpubOriginalPosition, EpubOriginalSpot } from '../core/book/EpubOriginalPosition';
 import {
   EpubOriginalLayoutOptions, EpubOriginalMargins, EpubOriginalScript, EpubOriginalTarget
@@ -121,6 +123,21 @@ class EpubOriginalReport {
   scroll: number = 0;
 }
 
+/** 网页回报的一个当前屏上的多看画廊：视口内的边界（CSS 像素，即 vp）、停在第几格、共几格。 */
+class EpubGalleryZone {
+  l: number = 0;
+  t: number = 0;
+  r: number = 0;
+  b: number = 0;
+  i: number = 0;
+  n: number = 0;
+}
+
+class EpubGalleryReport {
+  moving: number = 0;
+  zones: EpubGalleryZone[] = [];
+}
+
 /** 文件排版上次保存的位置；offset 与普通阅读器的偏移相同时说明之后没在普通阅读器里读过，可以直接用 snippet。 */
 class EpubOriginalSavedPosition {
   chapter: number = -1;
@@ -137,17 +154,25 @@ class EpubOriginalBridge {
   onLink: (href: string, note: boolean, x: number, y: number) => void;
   onEdge: (direction: number) => void;
   onStepped: (token: number, moved: boolean, page: number, count: number) => void;
+  onGallery: (json: string) => void;
 
   constructor(onReady: (count: number, page: number) => void, onPosition: (json: string) => void,
     onTap: (x: number, y: number) => void, onLink: (href: string, note: boolean, x: number, y: number) => void,
     onEdge: (direction: number) => void,
-    onStepped: (token: number, moved: boolean, page: number, count: number) => void) {
+    onStepped: (token: number, moved: boolean, page: number, count: number) => void,
+    onGallery: (json: string) => void) {
     this.onReady = onReady;
     this.onPosition = onPosition;
     this.onTap = onTap;
     this.onLink = onLink;
     this.onEdge = onEdge;
     this.onStepped = onStepped;
+    this.onGallery = onGallery;
+  }
+
+  /** 画廊的位置与当前格立即记下（不推迟）：紧接着的下一次滑动要靠它判断归画廊还是翻页。 */
+  gallery(json: string): void {
+    this.onGallery(`${json}`);
   }
 
   ready(count: number, page: number): void {
@@ -229,6 +254,9 @@ class EpubWebSlot {
   pageIndex: number = 0;
   pageCount: number = 1;
   spot: EpubOriginalSpot = new EpubOriginalSpot();
+  /** 当前屏上的多看画廊（见 EpubOriginalScript 的 galleryReport）；galleryKey 是原始回报，画廊换格后页面样子变了。 */
+  galleryZones: EpubGalleryZone[] = [];
+  galleryKey: string = '';
 
   constructor(id: number, bridge: EpubOriginalBridge) {
     this.id = id;
@@ -285,6 +313,8 @@ struct EpubOriginalReadBookPage {
   @State infoBatteryPercent: number = -1;
   @State title: string = '文件排版';
   @State chapterTitle: string = '';
+  /** 当前章是多看全屏页：不显示页眉页脚。 */
+  @State fullscreenFront: boolean = false;
   @State chapterIndex: number = 0;
   @State chapterCount: number = 0;
   @State pageIndex: number = 0;
@@ -345,6 +375,8 @@ struct EpubOriginalReadBookPage {
   private book: Book | null = null;
   private bookUrl: string = '';
   private extractRoot: string = '';
+  /** OPF 里的多看扩展：全屏页与“~slim”图。 */
+  private duokan: EpubDuokanPackage = new EpubDuokanPackage();
   private chapters: BookChapter[] = [];
   private documents: Map<string, string> = new Map<string, string>();
   private nativeTexts: Map<number, string> = new Map<number, string>();
@@ -591,6 +623,7 @@ struct EpubOriginalReadBookPage {
       this.extractRoot = EpubHtmlConverter.normalizePath(book.getVariable('localExtractRoot'));
       if (!this.extractRoot || !LocalBookService.exists(this.extractRoot)) throw new Error('书籍文件不存在，请重新导入');
       this.chapters = await appDb.getBookChapters(this.bookUrl);
+      this.duokan = await this.readDuokanPackage();
       if (!this.alive) return;
       if (this.chapters.length === 0) throw new Error('这本书没有可阅读的章节');
       this.book = book;
@@ -1129,7 +1162,8 @@ struct EpubOriginalReadBookPage {
       (direction: number): void => { if (id === this.frontSlot) this.onEdge(direction); },
       (token: number, moved: boolean, page: number, count: number): void => {
         this.onStepped(token, moved, page, count);
-      }));
+      },
+      (json: string): void => this.onGallery(id, json)));
   }
 
   private front(): EpubWebSlot {
@@ -1143,6 +1177,46 @@ struct EpubOriginalReadBookPage {
   private applyChapterState(index: number): void {
     this.chapterIndex = index;
     this.chapterTitle = this.chapterTitleAt(index);
+    this.fullscreenFront = this.isFullscreenChapter(index);
+  }
+
+  /** 读 OPF 里的多看扩展（全屏页、“~slim”图）；读不到就当没有。 */
+  private async readDuokanPackage(): Promise<EpubDuokanPackage> {
+    try {
+      const container = await LocalChapterContentLoader.readHtmlFile(`${this.extractRoot}/META-INF/container.xml`);
+      const opfPath = EpubDuokanExtensions.opfPath(container);
+      if (!opfPath || !LocalBookService.exists(`${this.extractRoot}/${opfPath}`)) return new EpubDuokanPackage();
+      const opf = await LocalChapterContentLoader.readHtmlFile(`${this.extractRoot}/${opfPath}`);
+      return EpubDuokanExtensions.parsePackage(opf, opfPath);
+    } catch (error) {
+      console.warn('[EpubOriginal] read duokan package failed:', error);
+      return new EpubDuokanPackage();
+    }
+  }
+
+  /** 这一章用到的文件（相对解压目录）。 */
+  private chapterPaths(index: number): string[] {
+    const chapter = this.chapters[index];
+    if (!chapter) return [];
+    let segments = EpubChapterPlanner.decodeSegments(chapter.variable);
+    if (segments.length === 0) {
+      const whole = new EpubChapterSegment();
+      whole.path = EpubHtmlConverter.normalizePath(EpubHtmlConverter.withoutFragment(chapter.resourceUrl || ''));
+      segments = [whole];
+    }
+    const paths: string[] = [];
+    for (const segment of segments) {
+      const absolute = EpubHtmlConverter.normalizePath(segment.path);
+      if (absolute.startsWith(`${this.extractRoot}/`)) paths.push(absolute.substring(this.extractRoot.length + 1));
+    }
+    return paths;
+  }
+
+  /** 多看全屏页：这一章的文件都标了 duokan-page-fullscreen（一般是封面）。 */
+  private isFullscreenChapter(index: number): boolean {
+    if (this.duokan.fullscreen.length === 0) return false;
+    const paths = this.chapterPaths(index);
+    return paths.length > 0 && paths.every((path: string): boolean => this.duokan.fullscreen.includes(path));
   }
 
   /** 预载的章节只有在版式完全相同时才能直接拿来显示。 */
@@ -1161,6 +1235,8 @@ struct EpubOriginalReadBookPage {
     if (!chapter) return;
     const serial = ++this.loadSerial;
     slot.serial = serial;
+    slot.galleryZones = [];
+    slot.galleryKey = '';
     slot.chapter = index;
     slot.targetKind = target.kind;
     slot.layoutKey = this.layoutKey();
@@ -1213,6 +1289,15 @@ struct EpubOriginalReadBookPage {
     options.nightImage = this.nightImageMode;
     options.margins = this.margins();
     options.target = target;
+    // 多看全屏页：不留页边距（页眉页脚也不显示，见 fullscreenFront），单张图铺满屏幕，瘦长屏幕换用“~slim”图。
+    if (this.isFullscreenChapter(index)) {
+      options.fullscreen = true;
+      options.margins = EpubOriginalMargins.none();
+      for (let i = 0; i < this.duokan.slimFrom.length; i++) {
+        options.slimFrom.push(EpubOriginalDocument.urlFor(this.duokan.slimFrom[i]));
+        options.slimTo.push(EpubOriginalDocument.urlFor(this.duokan.slimTo[i]));
+      }
+    }
     const html = EpubOriginalDocument.build(pieces, relative, EpubOriginalScript.injection(options),
       chapter.title || this.title);
     const url = EpubOriginalDocument.chapterUrl(index, serial);
@@ -1719,7 +1804,43 @@ struct EpubOriginalReadBookPage {
     host.revert = (_direction: number): Promise<void> => this.revertTurn();
     host.committed = (_direction: number): void => this.onTurnCommitted();
     host.activeChanged = (active: boolean): void => this.onTurnActiveChanged(active);
+    host.claimsDrag = (x: number, y: number, direction: number): boolean =>
+      this.galleryClaimsDrag(x, y - this.webInsetTop(), direction);
     return host;
+  }
+
+  /** 从画廊上起手横滑：交给网页换卡，不翻页。画廊首尾相接，两个方向都归它；要翻页从画廊外面滑。 */
+  private galleryClaimsDrag(x: number, y: number, _direction: number): boolean {
+    for (const zone of this.front().galleryZones) {
+      if (x < zone.l || x > zone.r || y < zone.t || y > zone.b) continue;
+      return zone.n > 1;
+    }
+    return false;
+  }
+
+  private onGallery(slotId: number, json: string): void {
+    if (!this.alive) return;
+    try {
+      const report = JSON.parse(json) as EpubGalleryReport;
+      const slot = this.slots[slotId];
+      const zones: EpubGalleryZone[] = [];
+      for (const item of report.zones || []) {
+        const zone = new EpubGalleryZone();
+        zone.l = Number(item.l) || 0;
+        zone.t = Number(item.t) || 0;
+        zone.r = Number(item.r) || 0;
+        zone.b = Number(item.b) || 0;
+        zone.i = Number(item.i) || 0;
+        zone.n = Number(item.n) || 0;
+        zones.push(zone);
+      }
+      slot.galleryZones = zones;
+      slot.galleryKey = json;
+      // 换格动画落定后当前页样子变了，重新预截翻页起点；动画中途不截。
+      if (slotId === this.frontSlot && Number(report.moving) !== 1) this.schedulePrewarm();
+    } catch (error) {
+      console.warn('[EpubOriginal] bad gallery report:', error);
+    }
   }
 
   /** 截下网页加页眉页脚这一层；菜单、转圈、翻页层都不在里面。 */
@@ -1738,7 +1859,7 @@ struct EpubOriginalReadBookPage {
     if (!this.ready) return '';
     return `${this.frontSlot}|${this.front().serial}|${this.chapterIndex}|${this.pageIndex}/${this.pageCount}|` +
       `${this.layoutKey()}|${this.readerHeaderEnabled}|${this.readerFooterEnabled}|${this.readerInfoBarConfigRaw}|` +
-      `${this.infoTimeText}|${this.infoBatteryPercent}|${this.ttsFocusSerial}`;
+      `${this.infoTimeText}|${this.infoBatteryPercent}|${this.ttsFocusSerial}|${this.front().galleryKey}`;
   }
 
   private waitFrame(): Promise<void> {
@@ -2157,7 +2278,34 @@ struct EpubOriginalReadBookPage {
   }
 
   private async fillResource(response: WebResourceResponse, path: string): Promise<void> {
-    await this.fillFile(response, `${this.extractRoot}/${path}`, EpubOriginalDocument.mimeType(path));
+    const mime = EpubOriginalDocument.mimeType(path);
+    if (mime === 'text/css') {
+      await this.fillStylesheet(response, `${this.extractRoot}/${path}`);
+      return;
+    }
+    await this.fillFile(response, `${this.extractRoot}/${path}`, mime);
+  }
+
+  /** 样式表先还原多看扩展（字体名、出血）再交给网页；里面的相对地址由网页按样式表自己的地址解析。 */
+  private async fillStylesheet(response: WebResourceResponse, absolute: string): Promise<void> {
+    const stat = await fs.stat(absolute);
+    if (!stat.isFile() || stat.size > MAX_RESOURCE_BYTES) throw new Error('not a readable file');
+    const file = await fs.open(absolute, fs.OpenMode.READ_ONLY);
+    const buffer = new ArrayBuffer(stat.size);
+    try {
+      if (stat.size > 0) await fs.read(file.fd, buffer, { offset: 0, length: stat.size });
+    } finally {
+      await fs.close(file);
+    }
+    const text = util.TextDecoder.create('utf-8', { ignoreBOM: true })
+      .decodeToString(new Uint8Array(buffer), { stream: false });
+    response.setResponseData(EpubDuokanExtensions.rewriteCss(text));
+    response.setResponseMimeType('text/css');
+    response.setResponseEncoding('utf-8');
+    response.setResponseHeader([{ headerKey: 'Access-Control-Allow-Origin', headerValue: '*' }]);
+    response.setResponseCode(200);
+    response.setReasonMessage('OK');
+    response.setResponseIsReady(true);
   }
 
   private async fillFile(response: WebResourceResponse, absolute: string, mime: string): Promise<void> {
@@ -3348,10 +3496,10 @@ struct EpubOriginalReadBookPage {
         .height('100%')
         .padding({ top: this.webInsetTop(), bottom: this.webInsetBottom() })
 
-        if (this.ready && this.headerShown()) {
+        if (this.ready && this.headerShown() && !this.fullscreenFront) {
           this.headerBar()
         }
-        if (this.ready && this.footerShown()) {
+        if (this.ready && this.footerShown() && !this.fullscreenFront) {
           this.footerBar()
         }
       }

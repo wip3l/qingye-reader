@@ -41,6 +41,11 @@ export class ReaderSnapshotTurnHost {
   committed: (direction: number) => void = () => {};
   /** 翻页开始 / 结束；开始后页面不能再改动底下的内容（预载换槽位之类）。 */
   activeChanged: (active: boolean) => void = () => {};
+  /**
+   * 从 (x, y) 起手、朝 direction 方向的横向拖动是否由内容自己处理（如网页里还能接着左右滑的图片画廊）。
+   * 返回 true 时翻页层放过这次手势。坐标是翻页层视图内的 vp。
+   */
+  claimsDrag: (x: number, y: number, direction: number) => boolean = () => false;
 }
 
 /** 页面向翻页层发的指令；组件挂载时填入实现。 */
@@ -781,8 +786,12 @@ export struct ReaderSnapshotPageTurn {
           this.tracking = false;
           return;
         }
-        this.decided = true;
         const direction = dx < 0 ? 1 : -1;
+        if (this.host.claimsDrag(this.touchStartX, this.touchStartY, direction)) {
+          this.tracking = false;
+          return;
+        }
+        this.decided = true;
         this.dragDirection = direction;
         if (this.phase !== 'idle') {
           // 不跟手，只在松手时按同样的距离/速度判断是否翻页，交给 turn() 排队。

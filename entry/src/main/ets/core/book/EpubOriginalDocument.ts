@@ -1,5 +1,6 @@
 import { EpubChapterSegment } from './EpubChapterPlanner';
 import { EpubHtmlConverter } from './EpubHtmlConverter';
+import { EpubDuokanExtensions } from './EpubDuokanExtensions';
 
 /** 一个章节片段对应文件的原始 XHTML。 */
 export class EpubOriginalPiece {
@@ -195,8 +196,9 @@ export class EpubOriginalDocument {
       });
   }
 
-  private static rewriteCss(css: string, baseDir: string): string {
-    return css.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (all: string, quote: string, value: string): string => {
+  /** 样式里的 url() 改成虚拟站点的绝对地址，同时还原多看扩展（字体名、出血，见 EpubDuokanExtensions）。 */
+  static rewriteCss(css: string, baseDir: string): string {
+    return EpubDuokanExtensions.rewriteCss(css).replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (all: string, quote: string, value: string): string => {
       const url = EpubOriginalDocument.absolute(value.trim(), baseDir, '');
       return url === null ? all : `url(${quote}${url}${quote})`;
     });
