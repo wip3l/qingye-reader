@@ -233,7 +233,7 @@ struct DataBackupPage {
           '当前章节、页码、单书状态；Android 备份另含阅读时长记录'), exporting,
         AppDataBackupService.CATEGORY_PROGRESS)
       if (!this.androidImport) {
-        this.selectionRow('书签', '章节位置和书签正文', exporting,
+        this.selectionRow('书签与笔记', '书签、正文划线和笔记', exporting,
           AppDataBackupService.CATEGORY_BOOKMARKS)
         this.selectionRow('本地图书', 'TXT/EPUB/MOBI/PDF 原文件及本地书籍信息', exporting,
           AppDataBackupService.CATEGORY_LOCAL_BOOKS)

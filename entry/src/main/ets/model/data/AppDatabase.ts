@@ -1294,9 +1294,59 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     return annotations;
   }
 
+  async getAllBookAnnotations(): Promise<BookAnnotation[]> {
+    const annotations: BookAnnotation[] = [];
+    if (!this.store) return annotations;
+    const predicates = new relationalStore.RdbPredicates('book_annotations');
+    predicates.orderByAsc('bookUrl');
+    predicates.orderByAsc('chapterIndex');
+    predicates.orderByAsc('startPos');
+    const resultSet = await this.store.query(predicates, []);
+    try {
+      while (resultSet.goToNextRow()) {
+        annotations.push(this.resultSetToBookAnnotation(resultSet));
+      }
+    } finally {
+      resultSet.close();
+    }
+    return annotations;
+  }
+
+  /**
+   * 备份恢复、云同步写入：同一本书同一创建时间视为同一条划线，先删再插，重复恢复不会多出副本。
+   * 传入的可能是 JSON 解析出的普通对象，字段逐个规整。返回新行 id。
+   */
+  async restoreBookAnnotation(source: BookAnnotation): Promise<number> {
+    if (!this.store || !source || !source.bookUrl) return 0;
+    const annotation = new BookAnnotation();
+    annotation.bookUrl = String(source.bookUrl);
+    annotation.bookName = String(source.bookName || '');
+    annotation.chapterIndex = Math.max(0, Math.floor(Number(source.chapterIndex) || 0));
+    annotation.chapterName = String(source.chapterName || '');
+    annotation.start = Math.max(0, Math.floor(Number(source.start) || 0));
+    annotation.end = Math.max(annotation.start, Math.floor(Number(source.end) || 0));
+    annotation.quote = String(source.quote || '');
+    annotation.prefix = String(source.prefix || '');
+    annotation.suffix = String(source.suffix || '');
+    annotation.color = BookAnnotationStyles.normalizeColor(String(source.color || ''));
+    annotation.style = BookAnnotationStyles.normalizeStyle(String(source.style || ''));
+    annotation.note = String(source.note || '');
+    annotation.createTime = Math.max(0, Math.floor(Number(source.createTime) || 0));
+    annotation.updateTime = Math.max(annotation.createTime, Math.floor(Number(source.updateTime) || 0));
+    const predicates = new relationalStore.RdbPredicates('book_annotations');
+    predicates.equalTo('bookUrl', annotation.bookUrl);
+    predicates.equalTo('createTime', annotation.createTime);
+    await this.store.delete(predicates);
+    const id = await this.store.insert('book_annotations', this.bookAnnotationBucket(annotation));
+    CloudSyncChangeTracker.markDataChanged();
+    return id;
+  }
+
   async insertBookAnnotation(annotation: BookAnnotation): Promise<number> {
     if (!this.store || !annotation.bookUrl) return 0;
-    return await this.store.insert('book_annotations', this.bookAnnotationBucket(annotation));
+    const id = await this.store.insert('book_annotations', this.bookAnnotationBucket(annotation));
+    CloudSyncChangeTracker.markDataChanged();
+    return id;
   }
 
   async updateBookAnnotation(annotation: BookAnnotation): Promise<void> {
@@ -1304,6 +1354,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     const predicates = new relationalStore.RdbPredicates('book_annotations');
     predicates.equalTo('id', annotation.id);
     await this.store.update(this.bookAnnotationBucket(annotation), predicates);
+    CloudSyncChangeTracker.markDataChanged();
   }
 
   async deleteBookAnnotationsById(ids: number[]): Promise<void> {
@@ -1312,6 +1363,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     const predicates = new relationalStore.RdbPredicates('book_annotations');
     predicates.in('id', validIds);
     await this.store.delete(predicates);
+    CloudSyncChangeTracker.markDataChanged();
   }
 
   async deleteBookAnnotations(bookUrl: string): Promise<void> {

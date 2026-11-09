@@ -13,6 +13,7 @@ import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
+import { BookAnnotation, BookAnnotationStyles } from '../../model/reader/BookAnnotation';
 
 const TOC_WINDOW_PAGE_SIZE = 72;
 const TOC_SCROLLBAR_DRAG_UPDATE_INTERVAL_MS = 90;
@@ -90,6 +91,14 @@ export struct ReaderTocPanel {
   onShowBookmarkActions: (bookmark: Bookmark, globalX: number, globalY: number) => void =
     (_bookmark: Bookmark, _globalX: number, _globalY: number): void => {
     };
+  /** 本书的划线（阅读页内存里的那份）；每次切到“笔记”页签时重新取。 */
+  annotationsProvider: () => BookAnnotation[] = (): BookAnnotation[] => [];
+  /** 这条划线在已载入的章节文本里找不到原文时返回 true；章节没载入时不判断。 */
+  annotationMissing: (annotation: BookAnnotation) => boolean = (_annotation: BookAnnotation): boolean => false;
+  onJumpToAnnotation: (annotation: BookAnnotation) => void = (_annotation: BookAnnotation): void => {
+  };
+  onDeleteAnnotation: (annotation: BookAnnotation) => Promise<boolean> =
+    (_annotation: BookAnnotation): Promise<boolean> => Promise.resolve(false);
 
   @State private tab: number = 0;
   @State private visibleChapters: BookChapter[] = [];
@@ -114,6 +123,9 @@ export struct ReaderTocPanel {
   /** 正在消散的书签 id（字符串），见 ListDissolve。 */
   @State private dissolvingBookmarkKeys: string[] = [];
   @State private deleteParticleBursts: DeleteParticleBurst[] = [];
+  @State private noteItems: BookAnnotation[] = [];
+  @State private dissolvingNoteKeys: string[] = [];
+  private noteScroller: ListScroller = new ListScroller();
   private searchRequestSerial: number = 0;
   private scrollbarPointerAnchor: number = 0;
   private scrollbarPendingIndex: number = -1;
@@ -750,6 +762,80 @@ export struct ReaderTocPanel {
     };
   }
 
+  // ---------------------------------------------------------------- 笔记（划线）
+
+  private selectNoteTab(): void {
+    this.cancelBookmarkMultiSelect();
+    this.tab = 2;
+    this.reloadNoteItems();
+  }
+
+  private reloadNoteItems(): void {
+    this.noteItems = this.annotationsProvider().slice().sort((left: BookAnnotation, right: BookAnnotation): number =>
+      left.chapterIndex - right.chapterIndex || left.start - right.start || left.createTime - right.createTime);
+  }
+
+  private noteKey(annotation: BookAnnotation): string {
+    return `n${annotation.id}`;
+  }
+
+  private isNoteDissolving(annotation: BookAnnotation): boolean {
+    return this.dissolvingNoteKeys.length > 0 && this.dissolvingNoteKeys.indexOf(this.noteKey(annotation)) >= 0;
+  }
+
+  private noteDeleteParticles(): ListDissolveParticles {
+    const particles = new ListDissolveParticles();
+    particles.rootId = 'reader_note_list_root';
+    particles.colors = [this.accentColor, this.textColor, this.subTextColor];
+    particles.elementIdOf = (key: string): string => `reader_note_card_${key}`;
+    particles.show = (bursts: DeleteParticleBurst[]): void => {
+      this.deleteParticleBursts = [...this.deleteParticleBursts, ...bursts];
+    };
+    particles.hide = (ids: number[]): void => {
+      this.deleteParticleBursts = this.deleteParticleBursts.filter((burst: DeleteParticleBurst) => ids.indexOf(burst.id) < 0);
+    };
+    return particles;
+  }
+
+  private async deleteNote(annotation: BookAnnotation): Promise<void> {
+    const keys = [this.noteKey(annotation)];
+    const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingNoteKeys = [...this.dissolvingNoteKeys, key];
+    }, this.noteDeleteParticles());
+    const deleted = await this.onDeleteAnnotation(annotation);
+    if (!deleted) {
+      this.dissolvingNoteKeys = ListDissolve.without(this.dissolvingNoteKeys, keys);
+      HdsFeedback.showToast('删除划线失败');
+      return;
+    }
+    await fade;
+    ListDissolve.commit(this.getUIContext(), () => {
+      this.noteItems = this.noteItems.filter((item: BookAnnotation) => item.id !== annotation.id);
+    }, () => {
+      this.dissolvingNoteKeys = ListDissolve.without(this.dissolvingNoteKeys, keys);
+    });
+    HdsFeedback.showToast('划线已删除');
+  }
+
+  private noteSwipeActions(annotation: BookAnnotation): HdsSwipeActionOptions {
+    return {
+      icons: [
+        {
+          icon: new SymbolGlyphModifier($r('sys.symbol.trash')),
+          backgroundColor: ThemeRuntime.dangerColor(this.appDarkMode),
+          iconOptions: { accessibilityText: '删除划线' },
+          onAction: () => {
+            this.deleteNote(annotation);
+          }
+        }
+      ]
+    };
+  }
+
+  private withAlpha(color: string, alphaHex: string): string {
+    return `#${alphaHex}${BookAnnotationStyles.normalizeColor(color).substring(1)}`;
+  }
+
   // ---------------------------------------------------------------- 界面
 
   build() {
@@ -824,6 +910,7 @@ export struct ReaderTocPanel {
           this.tab = 1;
           this.onLoadBookmarks();
         })
+        this.tabButton('笔记', 2, () => this.selectNoteTab())
       }
       .width('calc(100% - 40vp)')
       .height(44)
@@ -835,9 +922,12 @@ export struct ReaderTocPanel {
       if (this.tab === 0) {
         this.tocSummary()
         this.chapterList()
-      } else {
+      } else if (this.tab === 1) {
         this.bookmarkSummary()
         this.bookmarkList()
+      } else {
+        this.noteSummary()
+        this.noteList()
       }
     }
     .width('100%')
@@ -1372,5 +1462,156 @@ export struct ReaderTocPanel {
     .alignItems(HorizontalAlign.Center)
     .backgroundColor(color)
     .onClick(action)
+  }
+
+  @Builder
+  noteSummary() {
+    Row() {
+      Text(`${this.noteItems.length} 条划线`)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.subTextColor)
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XXL, right: AppSpacing.XXL, top: AppSpacing.XL, bottom: AppSpacing.MD })
+  }
+
+  @Builder
+  noteList() {
+    // 粒子层与空状态、列表放在同一层：删掉最后一条划线切到空状态时，颗粒还要飘完。
+    Stack() {
+      if (this.noteItems.length === 0) {
+        Column({ space: AppSpacing.LG }) {
+          SymbolGlyph($r('sys.symbol.square_and_pencil'))
+            .fontSize(34)
+            .fontColor([this.subTextColor])
+          Text('暂无划线')
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontColor(this.subTextColor)
+          Text('长按正文选中文字，点“划线”或“笔记”')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor)
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else {
+        List({ space: 0, scroller: this.noteScroller }) {
+          ForEach(this.noteItems, (annotation: BookAnnotation) => {
+            if (deviceInfo.sdkApiVersion >= 26) {
+              HdsListItem({
+                customItemBuilder: () => {
+                  this.noteCard(annotation)
+                },
+                swipeActionOptions: this.noteSwipeActions(annotation)
+              })
+            } else {
+              ListItem() {
+                this.noteCard(annotation)
+              }
+              .width('100%')
+              .clip(true)
+              .swipeAction({
+                end: {
+                  builder: () => {
+                    this.noteFallbackSwipeActions(annotation)
+                  },
+                  actionAreaDistance: 64,
+                  onAction: () => {
+                    this.deleteNote(annotation);
+                  }
+                },
+                edgeEffect: SwipeEdgeEffect.Spring
+              })
+            }
+          }, (annotation: BookAnnotation) => `${annotation.id}_${annotation.updateTime}`)
+        }
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .width('100%')
+        .height('100%')
+        .clip(true)
+        .scrollBar(BarState.Auto)
+        .scrollBarColor(this.dark ? '#668A8F98' : '#667A6F63')
+      }
+
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
+    }
+    .id('reader_note_list_root')
+    .layoutWeight(1)
+    .width('100%')
+  }
+
+  @Builder
+  noteCard(annotation: BookAnnotation) {
+    Column({ space: AppSpacing.XS }) {
+      Text(annotation.quote)
+        .fontSize(AppFontSize.BODY)
+        .lineHeight(24)
+        .fontColor(annotation.style === BookAnnotationStyles.TEXT ? annotation.color : this.textColor)
+        .backgroundColor(annotation.style === BookAnnotationStyles.BACKGROUND ?
+          this.withAlpha(annotation.color, '40') : Color.Transparent)
+        .decoration({
+          type: annotation.style === BookAnnotationStyles.SOLID || annotation.style === BookAnnotationStyles.WAVY ||
+            annotation.style === BookAnnotationStyles.DASHED ? TextDecorationType.Underline : TextDecorationType.None,
+          color: annotation.color,
+          style: annotation.style === BookAnnotationStyles.WAVY ? TextDecorationStyle.WAVY :
+            (annotation.style === BookAnnotationStyles.DASHED ? TextDecorationStyle.DASHED : TextDecorationStyle.SOLID)
+        })
+        .maxLines(4)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+      if (annotation.note.trim()) {
+        Text(annotation.note.trim())
+          .fontSize(AppFontSize.CAPTION)
+          .lineHeight(20)
+          .fontColor(this.subTextColor)
+          .maxLines(3)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .padding({ left: AppSpacing.MD })
+          .border({ width: { left: 2 }, color: annotation.color })
+          .margin({ top: AppSpacing.XS })
+      }
+      Row({ space: AppSpacing.MD }) {
+        Text(annotation.chapterName || `第 ${annotation.chapterIndex + 1} 章`)
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(this.subTextColor)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        if (this.annotationMissing(annotation)) {
+          Text('原文已变化')
+            .fontSize(AppFontSize.MICRO)
+            .fontColor(ThemeRuntime.dangerColor(this.appDarkMode))
+        }
+        Text(this.formatBookmarkTime(annotation.updateTime || annotation.createTime))
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(this.subTextColor)
+      }
+      .width('100%')
+      .margin({ top: AppSpacing.XS })
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+    .border({ width: { bottom: 0.5 }, color: ThemeRuntime.softFillColor(this.dark) })
+    .opacity(ListDissolve.opacity(this.isNoteDissolving(annotation)))
+    .scale(ListDissolve.scale(this.isNoteDissolving(annotation)))
+    .blur(ListDissolve.blur(this.isNoteDissolving(annotation)))
+    .hitTestBehavior(this.isNoteDissolving(annotation) ? HitTestMode.None : HitTestMode.Default)
+    .id(`reader_note_card_${this.noteKey(annotation)}`)
+    .onClick(() => this.onJumpToAnnotation(annotation))
+  }
+
+  @Builder
+  noteFallbackSwipeActions(annotation: BookAnnotation) {
+    Row() {
+      this.swipeActionButton($r('sys.symbol.trash'), '删除', ThemeRuntime.dangerColor(this.appDarkMode), () => {
+        this.deleteNote(annotation);
+      })
+    }
+    .height('100%')
   }
 }

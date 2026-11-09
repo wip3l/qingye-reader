@@ -102,6 +102,19 @@ test('payload strings jsonb cannot store are cleaned instead of failing the batc
   assert.deepEqual(stored.rows[0]!.j, payload);
 });
 
+test('reader annotations are accepted as a sync entity type', () => {
+  const normalized = normalizeOperation({
+    opId: OP_ID,
+    entityType: 'book_annotation',
+    entityId: 'annotation_0123456789abcdef',
+    operation: 'upsert',
+    baseRevision: 0,
+    payload: { bookUrl: 'https://book.test/1', quote: '原文', note: '想法', style: 'wavy', createTime: 1 }
+  });
+  assert.equal(normalized.entityType, 'book_annotation');
+  assert.equal((normalized.payload as Record<string, unknown>).note, '想法');
+});
+
 test('a "__proto__" payload key stays data after cleaning', () => {
   const normalized = normalizeOperation({
     opId: OP_ID,
