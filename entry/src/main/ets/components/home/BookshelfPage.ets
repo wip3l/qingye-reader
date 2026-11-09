@@ -1652,7 +1652,7 @@ export struct BookshelfPage {
               this.shelfCategoryButton()
             }
             this.shelfFilterButton()
-            this.shelfMoreButton(!this.isTileGroupPage())
+            this.shelfMoreButton(false)
           }
         }
         .width('100%')
@@ -1838,7 +1838,7 @@ export struct BookshelfPage {
               .fontSize(AppFontSize.BODY)
               .fontColor(this.subTextColor())
               .margin({ right: AppSpacing.MD })
-            this.shelfMoreButton(this.isTileGroupPage())
+            this.shelfMoreButton(true)
           }
         }
         .width('100%')
@@ -9556,9 +9556,12 @@ export struct BookshelfPage {
     this.refreshShelfCoverCache(this.books);
   }
 
-  /** 书架和分组页的标题栏各有一个；只有当前那一层的按钮挂菜单，免得两处同时弹出。 */
+  /**
+   * 书架和分组页的标题栏各有一个；只有当前那一层的按钮挂菜单，免得两处同时弹出。
+   * @Builder 按值传参不随状态刷新，所以只传固定的“属于哪一层”，当前在哪一层在这里现读。
+   */
   @Builder
-  shelfMoreButton(menuHost: boolean = true) {
+  shelfMoreButton(onGroupLayer: boolean) {
     Row() {
       this.shelfHeaderCircleButton($r('sys.symbol.more'), this.showShelfMoreMenu, '更多操作', () => {
         this.shelfMoreMenuPage = '';
@@ -9567,7 +9570,7 @@ export struct BookshelfPage {
         this.showShelfGroupMenu = false;
       })
     }
-    .bindPopup(this.showShelfMoreMenu && menuHost, this.shelfMenuPopupOptions((): void => {
+    .bindPopup(this.showShelfMoreMenu && onGroupLayer === this.isTileGroupPage(),this.shelfMenuPopupOptions((): void => {
       this.shelfMoreDropdown()
     }, Placement.BottomRight, () => {
       this.showShelfMoreMenu = false;
