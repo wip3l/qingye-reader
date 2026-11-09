@@ -93,6 +93,11 @@ export class BookAnnotationRange {
   }
 }
 
+export class BookAnnotationCompactText {
+  text: string = '';
+  offsets: number[] = [];
+}
+
 export class BookAnnotationAnchor {
   static readonly CONTEXT_LENGTH: number = 16;
   private static readonly MAX_CANDIDATES: number = 256;
@@ -136,7 +141,56 @@ export class BookAnnotationAnchor {
       }
       from = index + 1;
     }
-    return best >= 0 ? [best, best + quote.length] : null;
+    return best >= 0 ? [best, best + quote.length] : BookAnnotationAnchor.resolveCompact(annotation, source);
+  }
+
+  /**
+   * 原样找不到时，去掉空白、零宽字符并统一上下标数字后再找（规则与 EpubOriginalPosition 相同）：
+   * 文件排版里划的线存的是网页里的文字，段落之间的换行、缩进与应用排版的正文不一样。
+   */
+  private static resolveCompact(annotation: BookAnnotation, source: string): number[] | null {
+    const quote = BookAnnotationAnchor.compact(annotation.quote);
+    if (!quote.text) return null;
+    const text = BookAnnotationAnchor.compact(source);
+    const prefix = BookAnnotationAnchor.compact(annotation.prefix).text;
+    const suffix = BookAnnotationAnchor.compact(annotation.suffix).text;
+    const expected = source.length > 0 ? annotation.start / source.length * text.text.length : 0;
+    let best = -1;
+    let bestScore = -1;
+    let from = 0;
+    for (let count = 0; count < BookAnnotationAnchor.MAX_CANDIDATES; count++) {
+      const index = text.text.indexOf(quote.text, from);
+      if (index < 0) break;
+      const score = BookAnnotationAnchor.suffixMatch(text.text.substring(0, index), prefix) +
+        BookAnnotationAnchor.prefixMatch(text.text.substring(index + quote.text.length), suffix);
+      if (score > bestScore || (score === bestScore && Math.abs(index - expected) < Math.abs(best - expected))) {
+        best = index;
+        bestScore = score;
+      }
+      from = index + 1;
+    }
+    if (best < 0) return null;
+    return [text.offsets[best], text.offsets[best + quote.text.length - 1] + 1];
+  }
+
+  private static readonly SUPERSCRIPTS: string = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+  private static readonly SUBSCRIPTS: string = '₀₁₂₃₄₅₆₇₈₉';
+
+  /** 紧凑文字与每个字在原文里的下标。 */
+  static compact(value: string): BookAnnotationCompactText {
+    const result = new BookAnnotationCompactText();
+    const chars: string[] = [];
+    const source = value || '';
+    for (let index = 0; index < source.length; index++) {
+      const char = source.charAt(index);
+      if (/\s/.test(char) || char === '\u200B' || char === '\uFEFF' || char === '\u3000') continue;
+      const superscript = BookAnnotationAnchor.SUPERSCRIPTS.indexOf(char);
+      const subscript = BookAnnotationAnchor.SUBSCRIPTS.indexOf(char);
+      chars.push(superscript >= 0 ? `${superscript}` : (subscript >= 0 ? `${subscript}` : char));
+      result.offsets.push(index);
+    }
+    result.text = chars.join('');
+    return result;
   }
 
   /** 一章内所有能定位的划线，按起点排序。 */
@@ -155,8 +209,8 @@ export class BookAnnotationAnchor {
   static trim(source: string, start: number, end: number): number[] | null {
     let safeStart = Math.max(0, Math.min(source.length, start));
     let safeEnd = Math.max(safeStart, Math.min(source.length, end));
-    while (safeStart < safeEnd && /[\s　​￼]/.test(source.charAt(safeStart))) safeStart++;
-    while (safeEnd > safeStart && /[\s　​￼]/.test(source.charAt(safeEnd - 1))) safeEnd--;
+    while (safeStart < safeEnd && /[\s\u3000\u200B\uFFFC]/.test(source.charAt(safeStart))) safeStart++;
+    while (safeEnd > safeStart && /[\s\u3000\u200B\uFFFC]/.test(source.charAt(safeEnd - 1))) safeEnd--;
     return safeEnd > safeStart ? [safeStart, safeEnd] : null;
   }
 

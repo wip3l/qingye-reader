@@ -81,6 +81,10 @@ import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
 import { BookCoverCache } from '../utils/BookCoverCache';
 import { EpubAudioPlayer, EpubAudioState } from '../utils/EpubAudioPlayer';
+import { BookAnnotation, BookAnnotationAnchor, BookAnnotationStyles } from '../model/reader/BookAnnotation';
+import { ReaderAnnotationSettings, ReaderAnnotationSettingsStore } from '../utils/ReaderAnnotationSettingsStore';
+import { ReaderAnnotationLayer, ReaderAnnotationLayerMode } from '../components/reader/ReaderAnnotationLayer';
+import { ReaderAnnotationShare } from '../utils/ReaderAnnotationShare';
 
 /** 本书的文件排版设置与位置（书籍变量）。 */
 const SCROLL_KEY = 'epubOriginalScroll';
@@ -150,7 +154,41 @@ class EpubOriginalSavedPosition {
 }
 
 /** 网页脚本调用的宿主对象；方法名见 EpubOriginalScript.HOST_METHODS。回调都推到下一轮再处理，不在网页的同步调用里跑。 */
+// 网页选中文字后系统菜单里的“划线”“笔记”。
+const EPUB_ANNOTATE_MENU_ID: string = 'epub_annotate';
+const EPUB_ANNOTATE_NOTE_MENU_ID: string = 'epub_annotate_note';
+
+/** 交给网页脚本 marks() 的一条划线：紧凑文字与前后文、章内比例和样式（见 EpubOriginalScript）。 */
+class EpubAnnotationMark {
+  id: number = 0;
+  q: string = '';
+  p: string = '';
+  s: string = '';
+  f: number = 0;
+  color: string = '';
+  style: string = '';
+  dot: boolean = false;
+}
+
+/** 网页脚本 selection() 的结果。 */
+class EpubSelectionInfo {
+  text: string = '';
+  q: string = '';
+  p: string = '';
+  s: string = '';
+  f: number = 0;
+}
+
+/** 网页脚本给的划线位置，都是网页可视区里的比例。 */
+class EpubAnnotationBounds {
+  top: number = 0;
+  bottom: number = 0;
+  x: number = 0;
+}
+
 class EpubOriginalBridge {
+  /** 点到网页里画的划线（见 EpubOriginalScript 的 annoAt）。 */
+  onAnnotation: (id: number, bounds: string) => void = (_id: number, _bounds: string): void => {};
   onReady: (count: number, page: number) => void;
   onPosition: (json: string) => void;
   onTap: (x: number, y: number) => void;
@@ -195,6 +233,10 @@ class EpubOriginalBridge {
 
   tap(x: number, y: number): void {
     setTimeout((): void => this.onTap(Number(x), Number(y)), 0);
+  }
+
+  annotation(id: number, bounds: string): void {
+    setTimeout((): void => this.onAnnotation(Number(id) || 0, `${bounds}`), 0);
   }
 
   link(href: string, note: number, x: number, y: number): void {
@@ -344,6 +386,22 @@ struct EpubOriginalReadBookPage {
   @State failed: boolean = false;
   @State @Watch('applySystemBars') menuVisible: boolean = false;
   @State activePanel: string = '';
+  private annotations: BookAnnotation[] = [];
+  private annotationSettings: ReaderAnnotationSettings = new ReaderAnnotationSettings();
+  private annotationActive: BookAnnotation | null = null;
+  @State annotationMode: string = '';
+  @State annotationColor: string = BookAnnotationStyles.DEFAULT_COLOR;
+  @State annotationStyle: string = BookAnnotationStyles.SOLID;
+  @State annotationQuote: string = '';
+  @State annotationTimeText: string = '';
+  @State annotationNoteSaved: string = '';
+  @State annotationNoteDraft: string = '';
+  @State annotationFocusNote: boolean = false;
+  @State annotationAnchorTop: number = 0;
+  @State annotationAnchorBottom: number = 0;
+  @State annotationAnchorX: number = 0;
+  @State annotationAutoPanel: boolean = true;
+  @State annotationShowNoteDot: boolean = true;
   /** 目录 / 书签面板（阅读页通用的 ReaderTocPanel）用的数据。 */
   @State tocChapters: BookChapter[] = [];
   @State bookmarks: Bookmark[] = [];
@@ -576,6 +634,10 @@ struct EpubOriginalReadBookPage {
   }
 
   onBackPress(): boolean {
+    if (this.annotationMode) {
+      this.closeAnnotationLayer();
+      return true;
+    }
     if (this.showTtsCatalog) {
       this.showTtsCatalog = false;
       return true;
@@ -655,6 +717,7 @@ struct EpubOriginalReadBookPage {
       this.tocChapters = this.chapters;
       await this.loadReaderSettings(context);
       await this.loadBookmarks();
+      this.loadAnnotations();
       this.paged = book.getVariable(SCROLL_KEY) !== '1';
       const zoom = Number(book.getVariable(ZOOM_KEY));
       this.zoom = Number.isFinite(zoom) && zoom >= 50 && zoom <= 250 ? Math.round(zoom) : 100;
@@ -817,6 +880,385 @@ struct EpubOriginalReadBookPage {
     this.keyboard.consume(event.keyCode, event.deviceId);
     if (first && this.canTurnByKey()) this.turnByKey(direction);
     return true;
+  }
+
+  // ---- 划线：与应用排版同一张表、同一份数据。位置记在应用排版的正文里（nativeText），
+  // 网页里按“紧凑文字”找（EpubOriginalScript 的 marks / selection），所以两种排版划的线互相都看得到。
+
+  private async loadAnnotations(): Promise<void> {
+    try {
+      this.annotationSettings = await ReaderAnnotationSettingsStore.load(getContext(this));
+      this.annotationAutoPanel = this.annotationSettings.autoPanel;
+      this.annotationShowNoteDot = this.annotationSettings.showNoteDot;
+      this.annotations = await appDb.getBookAnnotations(this.bookUrl);
+    } catch (error) {
+      console.warn('[EpubOriginal] load annotations failed:', error);
+    }
+    this.refreshAnnotationMarks();
+  }
+
+  private refreshAnnotationMarks(): void {
+    for (const slot of this.slots) {
+      if (slot.ready && slot.chapter >= 0) this.pushAnnotationMarks(slot);
+    }
+  }
+
+  /** 把这一章的划线交给网页去画；章节没有划线时也要发一次空表，清掉换章前画的线。 */
+  private async pushAnnotationMarks(slot: EpubWebSlot): Promise<void> {
+    const chapter = slot.chapter;
+    const serial = slot.serial;
+    const list = this.annotations.filter((annotation: BookAnnotation) => annotation.chapterIndex === chapter);
+    const native = list.length > 0 ? await this.nativeText(chapter) : '';
+    if (!this.alive || slot.chapter !== chapter || slot.serial !== serial) return;
+    const marks: EpubAnnotationMark[] = [];
+    for (const annotation of list) {
+      const range = native ? BookAnnotationAnchor.resolve(annotation, native) : null;
+      const mark = new EpubAnnotationMark();
+      mark.id = annotation.id;
+      mark.q = EpubOriginalPosition.compactOf(range ? native.substring(range[0], range[1]) : annotation.quote);
+      if (!mark.q) continue;
+      const prefix = EpubOriginalPosition.compactOf(annotation.prefix);
+      mark.p = prefix.substring(Math.max(0, prefix.length - 16));
+      mark.s = EpubOriginalPosition.compactOf(annotation.suffix).substring(0, 16);
+      mark.f = native.length > 0 ? Math.max(0, Math.min(1, (range ? range[0] : annotation.start) / native.length)) : 0;
+      mark.color = annotation.color;
+      mark.style = annotation.style;
+      mark.dot = this.annotationShowNoteDot && annotation.note.trim().length > 0;
+      marks.push(mark);
+    }
+    this.runInSlot(slot, `__legado.marks(${JSON.stringify(JSON.stringify(marks))})`);
+  }
+
+  /** 网页选中文字后的系统菜单：最前面加“划线”“笔记”。网页里菜单回调给的范围没有意义，选区由脚本取。 */
+  private annotationMenuOptions(slotId: number): EditMenuOptions {
+    return {
+      onCreateMenu: (items: TextMenuItem[]): TextMenuItem[] => {
+        const result = items.slice();
+        result.unshift({ id: TextMenuItemId.of(EPUB_ANNOTATE_NOTE_MENU_ID), content: '笔记' });
+        result.unshift({ id: TextMenuItemId.of(EPUB_ANNOTATE_MENU_ID), content: '划线' });
+        return result;
+      },
+      onMenuItemClick: (item: TextMenuItem, _range: TextRange): boolean => {
+        const annotate = item.id.equals(TextMenuItemId.of(EPUB_ANNOTATE_MENU_ID));
+        if (annotate || item.id.equals(TextMenuItemId.of(EPUB_ANNOTATE_NOTE_MENU_ID))) {
+          this.annotateSelection(slotId, !annotate);
+          return true;
+        }
+        return false;
+      }
+    };
+  }
+
+  private async annotateSelection(slotId: number, withNote: boolean): Promise<void> {
+    const slot = this.slots[slotId];
+    if (!slot.attached || !slot.ready || slot.chapter < 0) return;
+    let picked: EpubSelectionInfo | null = null;
+    try {
+      const result = await slot.controller.runJavaScript(
+        'window.__legado && __legado.selection ? __legado.selection() : ""');
+      const raw = JSON.parse(result) as string;
+      if (typeof raw === 'string' && raw) picked = JSON.parse(raw) as EpubSelectionInfo;
+    } catch (error) {
+      console.warn('[EpubOriginal] read selection failed:', error);
+    }
+    if (!picked || !picked.q) {
+      HdsFeedback.showToast('这段文字无法划线');
+      return;
+    }
+    await this.createAnnotation(slot, picked, withNote);
+  }
+
+  private async createAnnotation(slot: EpubWebSlot, picked: EpubSelectionInfo, withNote: boolean): Promise<void> {
+    const book = this.book;
+    if (!book) return;
+    const chapter = slot.chapter;
+    const native = await this.nativeText(chapter);
+    const fraction = Math.max(0, Math.min(1, Number(picked.f) || 0));
+    const located = native ? EpubOriginalPosition.locate(native, `${picked.q}`, `${picked.p || ''}`,
+      `${picked.s || ''}`, fraction) : null;
+    const annotation = new BookAnnotation();
+    annotation.bookUrl = book.bookUrl;
+    annotation.bookName = book.name;
+    annotation.chapterIndex = chapter;
+    annotation.chapterName = this.chapterTitleAt(chapter);
+    const overlaps: BookAnnotation[] = [];
+    if (located) {
+      // 与应用排版相同：和已有划线重叠就合并成一条。
+      let start = located[0];
+      let end = located[1];
+      const chapterAnnotations = this.annotations.filter((item: BookAnnotation) => item.chapterIndex === chapter);
+      for (const range of BookAnnotationAnchor.resolveAll(chapterAnnotations, native)) {
+        if (range.end <= start || range.start >= end) continue;
+        overlaps.push(range.annotation);
+        start = Math.min(start, range.start);
+        end = Math.max(end, range.end);
+      }
+      BookAnnotationAnchor.capture(annotation, native, start, end);
+    } else {
+      // 应用排版的正文里没有这段（例如只在网页里出现的文字）：按网页里的文字记，应用排版里找不到就不画。
+      annotation.quote = `${picked.text || ''}`.trim() || `${picked.q}`;
+      annotation.prefix = `${picked.p || ''}`;
+      annotation.suffix = `${picked.s || ''}`;
+      annotation.start = Math.round(fraction * native.length);
+      annotation.end = annotation.start + annotation.quote.length;
+    }
+    const notes: string[] = [];
+    for (const item of overlaps) {
+      if (item.note.trim()) notes.push(item.note.trim());
+    }
+    const now = Date.now();
+    annotation.color = this.annotationSettings.lastColor;
+    annotation.style = this.annotationSettings.lastStyle;
+    annotation.note = notes.join('\n');
+    annotation.createTime = now;
+    annotation.updateTime = now;
+    try {
+      annotation.id = await appDb.insertBookAnnotation(annotation);
+      if (annotation.id > 0 && overlaps.length > 0) {
+        await appDb.deleteBookAnnotationsById(overlaps.map((item: BookAnnotation): number => item.id));
+      }
+    } catch (error) {
+      console.error('[EpubOriginal] save annotation failed:', error);
+    }
+    if (annotation.id <= 0) {
+      HdsFeedback.showToast('划线保存失败');
+      return;
+    }
+    const removed = new Set<number>(overlaps.map((item: BookAnnotation): number => item.id));
+    this.annotations = this.annotations.filter((item: BookAnnotation) => !removed.has(item.id));
+    this.annotations.push(annotation);
+    await this.pushAnnotationMarks(slot);
+    if (slot.id !== this.frontSlot) return;
+    if (withNote || this.annotationSettings.autoPanel) {
+      if (overlaps.length > 0) HdsFeedback.showToast('已与原有划线合并');
+      // 等网页画完再量划线的位置。
+      setTimeout((): void => {
+        this.openAnnotationAt(annotation, ReaderAnnotationLayerMode.PANEL, withNote);
+      }, 120);
+    } else {
+      HdsFeedback.showToast(overlaps.length > 0 ? '已与原有划线合并' : '已划线');
+    }
+    this.refreshAnnotationMarks();
+  }
+
+  /** 点到网页里的划线：有笔记先看笔记，没有就打开面板。 */
+  private openAnnotationById(id: number, bounds: string): void {
+    const annotation = this.annotations.find((item: BookAnnotation) => item.id === id);
+    if (!annotation || this.menuVisible || this.activePanel) return;
+    this.openAnnotation(annotation, annotation.note.trim() ? ReaderAnnotationLayerMode.BUBBLE :
+      ReaderAnnotationLayerMode.PANEL, false, bounds);
+  }
+
+  /** 先向网页要划线的位置再打开弹层。 */
+  private async openAnnotationAt(annotation: BookAnnotation, mode: string, focusNote: boolean): Promise<void> {
+    let bounds = '';
+    const slot = this.front();
+    try {
+      const result = await slot.controller.runJavaScript(
+        `window.__legado && __legado.annoRect ? __legado.annoRect(${annotation.id}) : ""`);
+      const raw = JSON.parse(result) as string;
+      if (typeof raw === 'string') bounds = raw;
+    } catch (error) {
+      console.warn('[EpubOriginal] annotation bounds failed:', error);
+    }
+    if (!this.alive) return;
+    this.openAnnotation(annotation, mode, focusNote, bounds);
+  }
+
+  private openAnnotation(annotation: BookAnnotation, mode: string, focusNote: boolean, bounds: string): void {
+    this.annotationActive = annotation;
+    this.annotationColor = annotation.color;
+    this.annotationStyle = annotation.style;
+    this.annotationQuote = annotation.quote;
+    this.annotationNoteSaved = annotation.note;
+    this.annotationNoteDraft = annotation.note;
+    this.annotationTimeText = ReaderAnnotationShare.timeLabel(annotation.updateTime || annotation.createTime);
+    this.annotationFocusNote = focusNote;
+    let parsed: EpubAnnotationBounds | null = null;
+    try {
+      parsed = bounds ? JSON.parse(bounds) as EpubAnnotationBounds : null;
+    } catch (_) {
+      parsed = null;
+    }
+    // 网页铺满整页宽，纵向夹在滚动模式的页眉页脚之间；脚本给的是网页可视区里的比例。
+    const top = this.webInsetTop();
+    const height = Math.max(1, this.viewHeight - top - this.webInsetBottom());
+    if (parsed && Number.isFinite(Number(parsed.top))) {
+      this.annotationAnchorTop = top + Number(parsed.top) * height;
+      this.annotationAnchorBottom = top + Number(parsed.bottom) * height;
+      this.annotationAnchorX = Number(parsed.x) * this.viewWidth;
+    } else {
+      this.annotationAnchorTop = this.viewHeight * 0.45;
+      this.annotationAnchorBottom = this.viewHeight * 0.45;
+      this.annotationAnchorX = this.viewWidth / 2;
+    }
+    this.annotationMode = mode;
+  }
+
+  private setAnnotationLook(color: string, style: string): void {
+    const annotation = this.annotationActive;
+    if (!annotation) return;
+    annotation.color = BookAnnotationStyles.normalizeColor(color);
+    annotation.style = BookAnnotationStyles.normalizeStyle(style);
+    annotation.updateTime = Date.now();
+    this.annotationColor = annotation.color;
+    this.annotationStyle = annotation.style;
+    this.annotationSettings.lastColor = annotation.color;
+    this.annotationSettings.lastStyle = annotation.style;
+    ReaderAnnotationSettingsStore.save(getContext(this), this.annotationSettings);
+    this.saveAnnotation(annotation);
+    this.refreshAnnotationMarks();
+  }
+
+  private async saveAnnotation(annotation: BookAnnotation): Promise<void> {
+    try {
+      await appDb.updateBookAnnotation(annotation);
+    } catch (error) {
+      console.error('[EpubOriginal] save annotation failed:', error);
+      HdsFeedback.showToast('划线保存失败');
+    }
+  }
+
+  private commitAnnotationNote(): void {
+    const annotation = this.annotationActive;
+    if (!annotation) return;
+    const note = this.annotationNoteDraft.replace(/\s+$/, '');
+    if (note === annotation.note) return;
+    const hadNote = annotation.note.trim().length > 0;
+    annotation.note = note;
+    annotation.updateTime = Date.now();
+    this.annotationNoteSaved = note;
+    this.annotationTimeText = ReaderAnnotationShare.timeLabel(annotation.updateTime);
+    this.saveAnnotation(annotation);
+    if (hadNote !== (note.trim().length > 0)) this.refreshAnnotationMarks();
+  }
+
+  private closeAnnotationLayer(): void {
+    if (this.annotationMode === ReaderAnnotationLayerMode.PANEL ||
+      this.annotationMode === ReaderAnnotationLayerMode.EDITOR) {
+      this.commitAnnotationNote();
+    }
+    this.annotationMode = ReaderAnnotationLayerMode.NONE;
+    this.annotationActive = null;
+    this.annotationFocusNote = false;
+  }
+
+  /** 擦除（面板里）与目录“笔记”页签里的删除共用。 */
+  private async deleteAnnotation(annotation: BookAnnotation): Promise<boolean> {
+    try {
+      await appDb.deleteBookAnnotationsById([annotation.id]);
+    } catch (error) {
+      console.error('[EpubOriginal] delete annotation failed:', error);
+      return false;
+    }
+    if (this.annotationActive?.id === annotation.id) {
+      this.annotationMode = ReaderAnnotationLayerMode.NONE;
+      this.annotationActive = null;
+    }
+    this.annotations = this.annotations.filter((item: BookAnnotation) => item.id !== annotation.id);
+    this.refreshAnnotationMarks();
+    return true;
+  }
+
+  private isAnnotationMissing(annotation: BookAnnotation): boolean {
+    const native = this.nativeTexts.get(annotation.chapterIndex);
+    return native !== undefined && !!native && BookAnnotationAnchor.resolve(annotation, native) === null;
+  }
+
+  /** 目录“笔记”页签里点一条：与书签相同，按应用排版正文里的位置换成网页里的一段文字跳过去。 */
+  private async openAnnotationFromList(annotation: BookAnnotation): Promise<void> {
+    this.activePanel = '';
+    this.menuVisible = false;
+    const chapter = Math.max(0, Math.min(this.chapters.length - 1, annotation.chapterIndex));
+    const native = await this.nativeText(chapter);
+    const range = native ? BookAnnotationAnchor.resolve(annotation, native) : null;
+    const target = new EpubOriginalTarget();
+    const spot = EpubOriginalPosition.spotAt(native, range ? range[0] : annotation.start);
+    if (spot.snippet) {
+      target.kind = 'spot';
+      target.snippet = spot.snippet;
+      target.fraction = spot.fraction;
+    }
+    if (!range) HdsFeedback.showToast('原文已变化，已跳到划线原来的大致位置');
+    if (!this.alive) return;
+    if (chapter === this.chapterIndex) {
+      if (target.kind === 'spot') this.run(`__legado.goSpot(${JSON.stringify(target.snippet)}, ${target.fraction})`);
+      this.readAloud?.userMoved();
+      return;
+    }
+    this.showChapter(chapter, target, 'fade');
+  }
+
+  @Builder
+  annotationLayer() {
+    ReaderAnnotationLayer({
+      mode: this.annotationMode,
+      color: this.annotationColor,
+      styleId: this.annotationStyle,
+      quote: this.annotationQuote,
+      timeText: this.annotationTimeText,
+      noteSaved: this.annotationNoteSaved,
+      anchorTop: this.annotationAnchorTop,
+      anchorBottom: this.annotationAnchorBottom,
+      anchorX: this.annotationAnchorX,
+      dark: this.darkMode,
+      panelColor: this.solidPanelColor(),
+      textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+      accentColor: ThemeRuntime.accentColor(this.darkMode),
+      safeTop: this.readerExtendToStatusBar ? 0 : this.statusBarHeight,
+      safeBottom: this.navBarHeight,
+      focusNote: this.annotationFocusNote,
+      autoPanel: this.annotationAutoPanel,
+      showNoteDot: this.annotationShowNoteDot,
+      noteDraft: $annotationNoteDraft,
+      onClose: (): void => this.closeAnnotationLayer(),
+      onColor: (color: string): void => this.setAnnotationLook(color, this.annotationStyle),
+      onStyle: (style: string): void => this.setAnnotationLook(this.annotationColor, style),
+      onErase: (): void => {
+        const annotation = this.annotationActive;
+        if (!annotation) return;
+        this.deleteAnnotation(annotation).then((deleted: boolean): void => {
+          HdsFeedback.showToast(deleted ? '已擦除' : '擦除失败');
+        });
+      },
+      onCopy: (): void => {
+        const annotation = this.annotationActive;
+        if (annotation) ReaderAnnotationShare.copy(annotation);
+      },
+      onShare: (): void => {
+        const annotation = this.annotationActive;
+        if (!annotation) return;
+        this.commitAnnotationNote();
+        ReaderAnnotationShare.share(getContext(this), annotation);
+      },
+      onOpenConfig: (): void => {
+        this.commitAnnotationNote();
+        this.annotationMode = ReaderAnnotationLayerMode.CONFIG;
+      },
+      onEditNote: (): void => {
+        const annotation = this.annotationActive;
+        if (annotation) this.openAnnotationAt(annotation, ReaderAnnotationLayerMode.PANEL, true);
+      },
+      onExpand: (): void => {
+        this.annotationMode = ReaderAnnotationLayerMode.EDITOR;
+      },
+      onEditorDone: (): void => this.closeAnnotationLayer(),
+      onAutoPanelChange: (value: boolean): void => {
+        this.annotationAutoPanel = value;
+        this.annotationSettings.autoPanel = value;
+        ReaderAnnotationSettingsStore.save(getContext(this), this.annotationSettings);
+      },
+      onShowNoteDotChange: (value: boolean): void => {
+        this.annotationShowNoteDot = value;
+        this.annotationSettings.showNoteDot = value;
+        ReaderAnnotationSettingsStore.save(getContext(this), this.annotationSettings);
+        this.refreshAnnotationMarks();
+      }
+    })
+      .width('100%')
+      .height('100%')
+      .position({ x: 0, y: 0 })
+      .zIndex(30)
   }
 
   // ---- 书签：与普通阅读页同一张表；位置记成普通阅读器正文里的偏移，两种排版都能定位 ----
@@ -1175,7 +1617,7 @@ struct EpubOriginalReadBookPage {
   }
 
   private createSlot(id: number): EpubWebSlot {
-    return new EpubWebSlot(id, new EpubOriginalBridge(
+    const slot = new EpubWebSlot(id, new EpubOriginalBridge(
       (count: number, page: number): void => this.onSlotReady(id, count, page),
       (json: string): void => this.onPosition(id, json),
       (x: number, y: number): void => { if (id === this.frontSlot) this.onTap(x, y); },
@@ -1188,6 +1630,10 @@ struct EpubOriginalReadBookPage {
       },
       (json: string): void => this.onGallery(id, json),
       (src: string, title: string): void => { if (id === this.frontSlot) this.onMedia(src, title); }));
+    slot.bridge.onAnnotation = (annotationId: number, bounds: string): void => {
+      if (id === this.frontSlot) this.openAnnotationById(annotationId, bounds);
+    };
+    return slot;
   }
 
   private front(): EpubWebSlot {
@@ -1706,6 +2152,7 @@ struct EpubOriginalReadBookPage {
     if (!this.alive) return;
     const slot = this.slots[slotId];
     slot.ready = true;
+    this.pushAnnotationMarks(slot);
     slot.pageCount = Math.max(1, count);
     slot.pageIndex = Math.max(0, Math.min(slot.pageCount - 1, page));
     if (this.pendingSlot === slotId) {
@@ -3481,7 +3928,13 @@ struct EpubOriginalReadBookPage {
       onRefreshToc: (): Promise<void> => Promise.resolve(),
       onLoadBookmarks: (): void => { this.loadBookmarks(); },
       onShowBookmarkActions: (bookmark: Bookmark, globalX: number, globalY: number): void =>
-        this.openBookmarkActions(bookmark, globalX, globalY)
+        this.openBookmarkActions(bookmark, globalX, globalY),
+      annotationsProvider: (): BookAnnotation[] => this.annotations,
+      annotationMissing: (annotation: BookAnnotation): boolean => this.isAnnotationMissing(annotation),
+      onJumpToAnnotation: (annotation: BookAnnotation): void => {
+        this.openAnnotationFromList(annotation);
+      },
+      onDeleteAnnotation: (annotation: BookAnnotation): Promise<boolean> => this.deleteAnnotation(annotation)
     })
   }
 
@@ -3521,6 +3974,7 @@ struct EpubOriginalReadBookPage {
       .overScrollMode(OverScrollMode.NEVER)
       .horizontalScrollBarAccess(false)
       .verticalScrollBarAccess(!this.paged)
+      .editMenuOptions(this.annotationMenuOptions(slotId))
       .javaScriptProxy({
         object: this.slots[slotId].bridge,
         name: EpubOriginalScript.HOST_NAME,
@@ -3723,6 +4177,10 @@ struct EpubOriginalReadBookPage {
 
       if (this.showTtsPanel) {
         this.ttsPlayerPanel()
+      }
+
+      if (this.annotationMode) {
+        this.annotationLayer()
       }
 
       // 朗读目录：系统半模态，挂在 1×1 节点上（与普通阅读页相同）。

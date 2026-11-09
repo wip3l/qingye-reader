@@ -122,8 +122,7 @@ import { BookAnnotation, BookAnnotationAnchor, BookAnnotationRange,
   BookAnnotationStyles } from '../model/reader/BookAnnotation';
 import { ReaderAnnotationSettings, ReaderAnnotationSettingsStore } from '../utils/ReaderAnnotationSettingsStore';
 import { ReaderAnnotationLayer, ReaderAnnotationLayerMode } from '../components/reader/ReaderAnnotationLayer';
-import { systemShare } from '@kit.ShareKit';
-import { uniformTypeDescriptor } from '@kit.ArkData';
+import { ReaderAnnotationShare } from '../utils/ReaderAnnotationShare';
 import { ReaderV2PaginationSession, ReaderV2Paginator } from '../core/reader/ReaderV2Paginator';
 import { ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2Style';
 import { ReaderCommentBubbleStyle, ReaderCommentBubbleStyles } from '../core/reader/ReaderCommentBubble';
@@ -17675,16 +17674,7 @@ ${leading}` : leading;
   }
 
   readerAnnotationTimeLabel(time: number): string {
-    const elapsed = Date.now() - time;
-    if (elapsed < 60000) return '刚刚';
-    if (elapsed < 3600000) return `${Math.floor(elapsed / 60000)} 分钟前`;
-    const date = new Date(time);
-    const today = new Date();
-    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
-    const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-    if (date.toDateString() === today.toDateString()) return clock;
-    const day = `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-    return date.getFullYear() === today.getFullYear() ? `${day} ${clock}` : `${date.getFullYear()}-${day}`;
+    return ReaderAnnotationShare.timeLabel(time);
   }
 
   /** 划线在屏幕上的位置（阅读页根节点坐标，vp）：[首行顶, 末行底, 箭头横坐标]；不在屏幕上返回空数组。 */
@@ -17868,41 +17858,14 @@ ${leading}` : leading;
 
   async copyReaderAnnotation(): Promise<void> {
     const annotation = this.readerAnnotationActive;
-    if (!annotation) return;
-    try {
-      await pasteboard.getSystemPasteboard().setData(
-        pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, annotation.quote));
-      HdsFeedback.showToast('已复制');
-    } catch (error) {
-      console.warn('复制划线失败:', error);
-      HdsFeedback.showToast('复制失败，请重试');
-    }
+    if (annotation) await ReaderAnnotationShare.copy(annotation);
   }
 
   async shareReaderAnnotation(): Promise<void> {
     const annotation = this.readerAnnotationActive;
     if (!annotation) return;
     this.commitReaderAnnotationNote();
-    const parts: string[] = [];
-    if (annotation.bookName) parts.push(`《${annotation.bookName}》`);
-    if (annotation.chapterName) parts.push(annotation.chapterName);
-    let text = `「${annotation.quote}」`;
-    if (parts.length > 0) text += `\n—— ${parts.join(' ')}`;
-    if (annotation.note.trim()) text += `\n\n${annotation.note.trim()}`;
-    try {
-      const data = new systemShare.SharedData({
-        utd: uniformTypeDescriptor.UniformDataType.PLAIN_TEXT,
-        content: text
-      });
-      const controller = new systemShare.ShareController(data);
-      await controller.show(getContext(this) as common.UIAbilityContext, {
-        previewMode: systemShare.SharePreviewMode.DEFAULT,
-        selectionMode: systemShare.SelectionMode.SINGLE
-      });
-    } catch (error) {
-      console.warn('分享划线失败:', error);
-      HdsFeedback.showToast('分享失败');
-    }
+    await ReaderAnnotationShare.share(getContext(this), annotation);
   }
 
   setReaderAnnotationAutoPanel(value: boolean): void {

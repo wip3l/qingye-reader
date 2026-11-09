@@ -70,6 +70,8 @@ class EpubOriginalNightConfig {
 
 class EpubOriginalScriptConfig {
   paged: boolean = true;
+  /** 夜间整体反色（forceDark）：划线的字体色要按反色滤镜反算。 */
+  dark: boolean = false;
   nativeTurn: boolean = false;
   /** 只换正文的字体（见 EpubOriginalLayoutOptions.readerFontBodyOnly）。 */
   fontBody: boolean = false;
@@ -101,7 +103,7 @@ export class EpubOriginalScript {
    */
   static readonly SPREAD_MEDIA: string = '(min-aspect-ratio: 1001/1000), (min-width: 600px) and (min-aspect-ratio: 4/5)';
   static readonly HOST_METHODS: string[] = ['ready', 'position', 'tap', 'link', 'edge', 'stepped', 'gallery',
-    'media'];
+    'media', 'annotation'];
   /** 朗读高亮的底色：浅色页面正片叠底、深色页面滤色，字的颜色不受影响。 */
   static ttsMarkColor(accent: string, dark: boolean): string {
     const match = /^#(?:([0-9a-fA-F]{2}))?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(accent || '');
@@ -115,6 +117,7 @@ export class EpubOriginalScript {
     injection.style = EpubOriginalScript.style(options);
     const config = new EpubOriginalScriptConfig();
     config.paged = options.paged;
+    config.dark = options.forceDark;
     config.nativeTurn = options.paged && options.nativeTurn;
     config.fontBody = !!options.readerFont && options.readerFontBodyOnly;
     config.night.auto = options.forceDark && ReaderNightImage.normalize(options.nightImage) === ReaderNightImage.AUTO;
@@ -1171,6 +1174,7 @@ export class EpubOriginalScript {
     };
     requestAnimationFrame(function () { requestAnimationFrame(announce); });
     setTimeout(announce, 150);
+    annoDraw();
   }
   var sx = 0, sy = 0, st = 0, base = 0, dragging = false, moved = false;
   // 滚动模式：已经在章末继续上拉、在章首继续下拉超过这个距离，就接着读下一章、上一章。
@@ -1256,8 +1260,14 @@ export class EpubOriginalScript {
       if (host) host.link(a.href, isNote(a) ? 1 : 0, e.clientX, e.clientY);
       return;
     }
-    var selection = window.getSelection ? window.getSelection() : null;
-    if (selection && !selection.isCollapsed) return;
+    var current = window.getSelection ? window.getSelection() : null;
+    if (current && !current.isCollapsed) return;
+    var marked = annoAt(e.clientX, e.clientY);
+    if (marked && host && host.annotation) {
+      e.preventDefault();
+      host.annotation(marked.id, annoBounds(marked));
+      return;
+    }
     if (host) host.tap(e.clientX / Math.max(1, window.innerWidth), e.clientY / Math.max(1, window.innerHeight));
   }, true);
   window.addEventListener('scroll', function () { if (!paged) report(); }, { passive: true });
@@ -1273,10 +1283,194 @@ export class EpubOriginalScript {
     applyBleed();
     layout();
     goSpot(s.snippet, s.fraction);
+    annoDraw();
   });
+  // ---- 划线：与应用排版同一份数据，页面经 __legado.marks 传入本章要画的划线（紧凑文字 q 及前后文 p / s、章内比例 f）。
+  // 线、背景和笔记圆点画在 body 外面的一层（不受夜间整体反色影响，截图翻页也带着）；字体色只能改字本身，
+  // 用 CSS 自定义高亮，夜间先按 body 的反色滤镜反算颜色。点按命中划线时经 host.annotation 回报，不再当成翻页点按。
+  var annoList = [], annoLayer = null, annoHits = [], annoStyle = null, annoNames = [];
+  function annoLocate(c, a) {
+    var q = a.q || '', p = a.p || '', s = a.s || '';
+    if (!q) return -1;
+    var expected = (a.f || 0) * c.text.length, best = -1, bestScore = -1, i = c.text.indexOf(q), guard = 0;
+    while (i >= 0 && guard++ < 256) {
+      var score = 0, k;
+      for (k = 1; k <= p.length && i - k >= 0 && c.text.charAt(i - k) === p.charAt(p.length - k); k++) score++;
+      for (k = 0; k < s.length && i + q.length + k < c.text.length && c.text.charAt(i + q.length + k) === s.charAt(k); k++) score++;
+      if (score > bestScore || (score === bestScore && Math.abs(i - expected) < Math.abs(best - expected))) {
+        best = i;
+        bestScore = score;
+      }
+      i = c.text.indexOf(q, i + 1);
+    }
+    return best;
+  }
+  function annoRange(c, from, len) {
+    var a = c.nodes[c.nodeOf[from]], b = c.nodes[c.nodeOf[from + len - 1]];
+    var r = document.createRange();
+    r.setStart(a, c.offOf[from]);
+    r.setEnd(b, Math.min(b.nodeValue.length, c.offOf[from + len - 1] + 1));
+    return r;
+  }
+  // body 的夜间滤镜：invert(.92) 再 hue-rotate(180deg)。求出经过它之后正好是 hex 的颜色。
+  function annoBodyColor(hex) {
+    var v = parseInt(String(hex).replace('#', ''), 16) || 0;
+    var t = [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
+    if (!cfg.dark) return 'rgb(' + Math.round(t[0] * 255) + ',' + Math.round(t[1] * 255) + ',' + Math.round(t[2] * 255) + ')';
+    var m = [[-0.574, 1.430, 0.144], [0.426, 0.430, 0.144], [0.426, 1.430, -0.856]];
+    var det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+      m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+    var inv = [
+      [(m[1][1] * m[2][2] - m[1][2] * m[2][1]) / det, (m[0][2] * m[2][1] - m[0][1] * m[2][2]) / det, (m[0][1] * m[1][2] - m[0][2] * m[1][1]) / det],
+      [(m[1][2] * m[2][0] - m[1][0] * m[2][2]) / det, (m[0][0] * m[2][2] - m[0][2] * m[2][0]) / det, (m[0][2] * m[1][0] - m[0][0] * m[1][2]) / det],
+      [(m[1][0] * m[2][1] - m[1][1] * m[2][0]) / det, (m[0][1] * m[2][0] - m[0][0] * m[2][1]) / det, (m[0][0] * m[1][1] - m[0][1] * m[1][0]) / det]];
+    var out = [];
+    for (var r = 0; r < 3; r++) {
+      var u = inv[r][0] * t[0] + inv[r][1] * t[1] + inv[r][2] * t[2];
+      out.push(Math.round(Math.max(0, Math.min(1, (0.92 - u) / 0.84)) * 255));
+    }
+    return 'rgb(' + out.join(',') + ')';
+  }
+  function annoWave(color) {
+    var svg = "<svg xmlns='http://www.w3.org/2000/svg' width='8' height='4'><path d='M0 2 Q2 0 4 2 T8 2' fill='none' stroke='" +
+      color + "' stroke-width='1.2'/></svg>";
+    return 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '") 0 0 / 8px 4px repeat-x';
+  }
+  function annoClear() {
+    if (annoLayer && annoLayer.parentNode) annoLayer.parentNode.removeChild(annoLayer);
+    annoLayer = null;
+    annoHits = [];
+    if (window.CSS && CSS.highlights) {
+      for (var i = 0; i < annoNames.length; i++) CSS.highlights.delete(annoNames[i]);
+    }
+    annoNames = [];
+    if (annoStyle) annoStyle.textContent = '';
+  }
+  function annoDraw() {
+    annoClear();
+    if (!started || !annoList.length) return;
+    var c = compact();
+    if (!c.text.length) return;
+    var layer = document.createElement('div');
+    layer.setAttribute('aria-hidden', 'true');
+    layer.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:2147483646;';
+    var sx = window.scrollX, sy = window.scrollY, rules = '';
+    for (var n = 0; n < annoList.length; n++) {
+      var a = annoList[n], at = annoLocate(c, a);
+      if (at < 0) continue;
+      var range = annoRange(c, at, a.q.length), rects = range.getClientRects(), boxes = [];
+      for (var i = 0; i < rects.length; i++) {
+        var rc = rects[i];
+        if (rc.width < 1 || rc.height < 1) continue;
+        boxes.push({ l: rc.left + sx, t: rc.top + sy, r: rc.right + sx, b: rc.bottom + sy });
+      }
+      if (!boxes.length) continue;
+      for (var j = 0; j < boxes.length; j++) {
+        var x = boxes[j], h = x.b - x.t;
+        if (a.style === 'text') continue;
+        var css = 'position:absolute;left:' + x.l + 'px;width:' + (x.r - x.l) + 'px;';
+        if (a.style === 'bg') {
+          css += 'top:' + x.t + 'px;height:' + h + 'px;border-radius:3px;background:' + a.color + ';opacity:.34;' +
+            'mix-blend-mode:' + (cfg.dark ? 'screen' : 'multiply') + ';';
+        } else if (a.style === 'wavy') {
+          css += 'top:' + (x.b + 1) + 'px;height:4px;background:' + annoWave(a.color) + ';';
+        } else {
+          css += 'top:' + (x.b + Math.max(1, h * 0.06)) + 'px;height:0;border-bottom:' +
+            Math.max(1.2, h * 0.055).toFixed(1) + 'px ' + (a.style === 'dashed' ? 'dashed ' : 'solid ') + a.color + ';';
+        }
+        var line = document.createElement('div');
+        line.style.cssText = css;
+        layer.appendChild(line);
+      }
+      if (a.style === 'text' && window.CSS && CSS.highlights && window.Highlight) {
+        var name = 'legado-anno-' + a.id;
+        CSS.highlights.set(name, new Highlight(range));
+        annoNames.push(name);
+        rules += '::highlight(' + name + '){color:' + annoBodyColor(a.color) + ';}';
+      }
+      var last = boxes[boxes.length - 1], dot = null;
+      if (a.dot) {
+        var lh = last.b - last.t, rad = Math.max(7, lh * 0.3);
+        var cy = a.style === 'bg' || a.style === 'text' ? last.b : last.b + Math.max(1, lh * 0.06);
+        dot = { x: last.r, y: cy, r: rad };
+        var d = document.createElement('div');
+        d.textContent = '…';
+        d.style.cssText = 'position:absolute;left:' + (last.r - rad) + 'px;top:' + (cy - rad) + 'px;width:' + (2 * rad) +
+          'px;height:' + (2 * rad) + 'px;border-radius:50%;background:' + a.color + ';color:#fff;text-align:center;' +
+          'text-indent:0;letter-spacing:0;font:bold ' + Math.round(rad * 1.2) + 'px/' + Math.round(rad * 1.5) + 'px sans-serif;';
+        layer.appendChild(d);
+      }
+      annoHits.push({ id: a.id, boxes: boxes, dot: dot });
+    }
+    if (rules) {
+      if (!annoStyle) {
+        annoStyle = document.createElement('style');
+        (document.head || document.documentElement).appendChild(annoStyle);
+      }
+      annoStyle.textContent = rules;
+    }
+    document.documentElement.appendChild(layer);
+    annoLayer = layer;
+  }
+  function annoAt(clientX, clientY) {
+    var x = clientX + window.scrollX, y = clientY + window.scrollY, i, j;
+    for (i = annoHits.length - 1; i >= 0; i--) {
+      var d = annoHits[i].dot;
+      if (d && Math.abs(x - d.x) <= d.r + 8 && Math.abs(y - d.y) <= d.r + 8) return annoHits[i];
+    }
+    for (i = annoHits.length - 1; i >= 0; i--) {
+      var bs = annoHits[i].boxes;
+      for (j = 0; j < bs.length; j++) {
+        if (x >= bs[j].l - 2 && x <= bs[j].r + 2 && y >= bs[j].t - 2 && y <= bs[j].b + 8) return annoHits[i];
+      }
+    }
+    return null;
+  }
+  // 弹层定位用：划线首行顶、末行底与箭头横坐标，按屏幕比例。只取当前屏上的几行。
+  function annoBounds(hit) {
+    var sx = window.scrollX, sy = window.scrollY, w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
+    var shown = [];
+    for (var i = 0; i < hit.boxes.length; i++) {
+      var b = hit.boxes[i];
+      if (b.r - sx > 0 && b.l - sx < w && b.b - sy > 0 && b.t - sy < h) shown.push(b);
+    }
+    if (!shown.length) shown = hit.boxes;
+    var f = shown[0], l = shown[shown.length - 1];
+    return JSON.stringify({ top: (f.t - sy) / h, bottom: (l.b - sy) / h, x: ((f.l + Math.min(f.r, f.l + 160)) / 2 - sx) / w });
+  }
+  function marks(json) {
+    try { annoList = JSON.parse(json) || []; } catch (e) { annoList = []; }
+    annoDraw();
+  }
+  function annoRect(id) {
+    for (var i = 0; i < annoHits.length; i++) if (annoHits[i].id === id) return annoBounds(annoHits[i]);
+    return '';
+  }
+  // 当前选区：紧凑文字下标范围内的字、前后各 16 字与章内比例，取完就收起选区。
+  function selection() {
+    var sel = window.getSelection ? window.getSelection() : null;
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return '';
+    var range = sel.getRangeAt(0), c = compact(), n = c.text.length;
+    if (!n) return '';
+    var at = function (i, after) {
+      var node = c.nodes[c.nodeOf[i]];
+      try { return range.comparePoint(node, Math.min(node.nodeValue.length, c.offOf[i] + (after ? 1 : 0))); } catch (e) { return 1; }
+    };
+    var lo = 0, hi = n, mid;
+    while (lo < hi) { mid = (lo + hi) >> 1; if (at(mid, false) < 0) lo = mid + 1; else hi = mid; }
+    var start = lo;
+    hi = n;
+    while (lo < hi) { mid = (lo + hi) >> 1; if (at(mid, true) <= 0) lo = mid + 1; else hi = mid; }
+    var end = lo;
+    if (end <= start) return '';
+    var text = sel.toString();
+    sel.removeAllRanges();
+    return JSON.stringify({ text: text, q: c.text.substring(start, end), p: c.text.substring(Math.max(0, start - 16), start),
+      s: c.text.substring(end, end + 16), f: start / n });
+  }
   window.__legado = { next: next, prev: prev, goSpot: goSpot, goAnchor: goAnchor, goPage: goPage, screen: screen,
     preview: preview, step: step, show: show, speechInfo: speechInfo, ttsMark: ttsMark, ttsClear: ttsClear,
-    media: media, pauseVideos: pauseVideos };
+    media: media, pauseVideos: pauseVideos, marks: marks, annoRect: annoRect, selection: selection };
   var begin = function () {
     var wait = function () {
       if (document.fonts && document.fonts.ready) document.fonts.ready.then(start, start); else start();

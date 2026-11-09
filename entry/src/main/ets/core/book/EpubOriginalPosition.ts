@@ -45,6 +45,39 @@ export class EpubOriginalPosition {
     return compact.offsets[position];
   }
 
+  /**
+   * 网页里选中的一段（紧凑文字 quote，及其前后各一小段 prefix / suffix）在普通阅读器正文里的范围 [start, end)。
+   * 有多处时取前后文吻合多的、离 fraction 近的；找不到返回 null。划线用它把文件排版的选区换成应用排版的位置。
+   */
+  static locate(content: string, quote: string, prefix: string, suffix: string, fraction: number): number[] | null {
+    const target = EpubOriginalPosition.normalize(quote);
+    if (!target) return null;
+    const compact = EpubOriginalPosition.compact(content);
+    const text = compact.text;
+    const expected = Math.max(0, Math.min(1, fraction || 0)) * text.length;
+    const before = EpubOriginalPosition.normalize(prefix);
+    const after = EpubOriginalPosition.normalize(suffix);
+    let best = -1;
+    let bestScore = -1;
+    let index = text.indexOf(target);
+    for (let guard = 0; index >= 0 && guard < 256; guard++) {
+      let score = 0;
+      while (score < before.length && index - score - 1 >= 0 &&
+        text.charAt(index - score - 1) === before.charAt(before.length - score - 1)) score++;
+      let tail = 0;
+      while (tail < after.length && index + target.length + tail < text.length &&
+        text.charAt(index + target.length + tail) === after.charAt(tail)) tail++;
+      score += tail;
+      if (score > bestScore || (score === bestScore && Math.abs(index - expected) < Math.abs(best - expected))) {
+        best = index;
+        bestScore = score;
+      }
+      index = text.indexOf(target, index + 1);
+    }
+    if (best < 0) return null;
+    return [compact.offsets[best], compact.offsets[best + target.length - 1] + 1];
+  }
+
   /** 紧凑文字里找 snippet，找不到就逐步缩短；有多处时取离 fraction 最近的一处。 */
   static find(text: string, snippet: string, fraction: number): number {
     const expected = fraction * text.length;
@@ -59,6 +92,11 @@ export class EpubOriginalPosition {
       if (best >= 0) return best;
     }
     return -1;
+  }
+
+  /** 一段正文的紧凑文字（动作标记换成显示文字、去掉图片标记），与网页脚本 compact() 得到的文字可直接比较。 */
+  static compactOf(content: string): string {
+    return EpubOriginalPosition.compact(content).text;
   }
 
   /** 统一上下标数字并去掉空白，网页脚本里有同样的实现。 */
