@@ -152,6 +152,8 @@ export struct ReaderAnnotationLayer {
       .backgroundColor(this.panelColor)
       .borderRadius(20)
       .border({ width: 0.5, color: this.lineColor() })
+      // 阴影跟着圆角主体走；挂在外层直角的容器上会在四角露出方形的阴影尖角。
+      .shadow({ radius: 24, color: this.dark ? '#80000000' : '#33000000', offsetY: 6 })
       .onAreaChange((_old: Area, area: Area) => {
         if (panel) this.panelHeight = Number(area.height);
         else this.bubbleHeight = Number(area.height);
@@ -159,7 +161,6 @@ export struct ReaderAnnotationLayer {
     }
     .width(this.popupWidth())
     .position({ x: this.popupLeft(), y: this.popupPlacement(panel ? this.panelHeight : this.bubbleHeight)[0] })
-    .shadow({ radius: 24, color: this.dark ? '#80000000' : '#33000000', offsetY: 6 })
     .onClick(() => {})
   }
 
@@ -201,7 +202,8 @@ export struct ReaderAnnotationLayer {
           .fontColor(this.textColor)
           .placeholderColor(this.subColor())
           .backgroundColor(Color.Transparent)
-          .padding({ left: 0, right: 0, top: 0, bottom: 0 })
+          // 输入框不能去掉内边距：为 0 时首字和提示文字的上沿、左沿会被裁掉。
+          .padding({ left: 10, right: 10, top: 8, bottom: 8 })
           .caretColor(this.accentColor)
           .defaultFocus(this.focusNote)
           .id('reader_annotation_note_input')
@@ -219,6 +221,7 @@ export struct ReaderAnnotationLayer {
           Text(this.noteSaved ? this.timeText : '')
             .fontSize(12)
             .fontColor(this.subColor())
+            .padding({ left: 10 })
             .layoutWeight(1)
           SymbolGlyph($r('sys.symbol.arrow_up_left_and_arrow_down_right'))
             .fontSize(18)
@@ -231,7 +234,7 @@ export struct ReaderAnnotationLayer {
       }
       .width('100%')
       .margin({ top: 8 })
-      .padding({ left: 12, right: 6, top: 10, bottom: 4 })
+      .padding({ left: 2, right: 6, top: 4, bottom: 4 })
       .borderRadius(14)
       .backgroundColor(this.fieldColor())
       .border({ width: 0.5, color: this.lineColor() })
@@ -415,6 +418,7 @@ export struct ReaderAnnotationLayer {
         .placeholderColor(this.subColor())
         .backgroundColor(this.fieldColor())
         .borderRadius(12)
+        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
         .caretColor(this.accentColor)
         .id('reader_annotation_editor_input')
         .onAppear(() => {
