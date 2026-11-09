@@ -16277,7 +16277,7 @@ ${leading}` : leading;
 
   isReaderParagraphCommentAction(data: ReaderActionData): boolean {
     const identity = `${data.label || ''}\n${data.title || ''}\n${data.url || ''}`;
-    return /段评|章评|本章说|评论|comment|review|para_idea|idea_comment|legado-provider-action/i.test(identity);
+    return /段评|章评|热评|本章说|评论|comment|review|para_idea|idea_comment|legado-provider-action/i.test(identity);
   }
 
   stripReaderParagraphCommentActions(value: string): string {
@@ -16356,7 +16356,7 @@ ${leading}` : leading;
 
   isReaderCommentAction(action: ReaderActionData): boolean {
     const metadata = `${action.label || ''}\n${action.title || ''}`;
-    if (/段评|章评|神评论|评论|本章说/.test(metadata)) return true;
+    if (/段评|章评|热评|神评论|评论|本章说/.test(metadata)) return true;
     return /\/(?:get_review|get_para_review|para_idea)(?:[/?#]|$)|[?&](?:review|comment)=/i.test(action.url || '');
   }
 

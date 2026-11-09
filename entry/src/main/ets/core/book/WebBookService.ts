@@ -1518,12 +1518,23 @@ export class WebBookService {
     if (!/<(?:div|span)\b[^>]*\brs-native\b/i.test(value)) return value;
     return value.replace(/<(div|span)\b[^>]*\brs-native\b[^>]*>([\s\S]*?)<\/\1>/gi,
       (_all: string, _tagName: string, inner: string): string => {
-        const comment = /<comment\b([^>]*)>/i.exec(inner || '');
-        const text = this.decodeHtmlEntities((inner || '').replace(/<comment\b[^>]*>/gi, '')
+        // Clickable images inside the paragraph (hot-comment cards) were already turned into
+        // action markers; keep them after the paragraph and its comment bubble.
+        const cards: string[] = [];
+        let rest = inner || '';
+        let card = ReaderActionMarker.findFirst(rest);
+        while (card) {
+          cards.push(card.marker);
+          rest = rest.substring(0, card.start) + rest.substring(card.end);
+          card = ReaderActionMarker.findFirst(rest, card.start);
+        }
+        const comment = /<comment\b([^>]*)>/i.exec(rest);
+        const text = this.decodeHtmlEntities(rest.replace(/<comment\b[^>]*>/gi, '')
           .replace(/<[^>]+>/g, '')).trim();
-        if (!comment) return text ? `${text}\n` : '';
-        const marker = this.readerActionMarkerFromCommentAttributes(comment[1] || '');
-        return `${text}${marker}\n`;
+        const marker = comment ? this.readerActionMarkerFromCommentAttributes(comment[1] || '') : '';
+        const lines = cards.map((item: string): string => `${item}\n`).join('');
+        if (!text && !marker) return lines;
+        return `${text}${marker}\n${lines}`;
       });
   }
 
@@ -1534,6 +1545,8 @@ export class WebBookService {
    */
   private convertReaderImageScriptActions(content: string): string {
     return (content || '').replace(/<img\b[^>]*>/gi, (tag: string): string => {
+      const clickMarker = this.readerActionMarkerFromClickableImage(tag);
+      if (clickMarker) return `${clickMarker}\n`;
       const data = /data:image\/[A-Za-z0-9.+-]+;base64,([A-Za-z0-9+/=]+),(\{[\s\S]*\})/i.exec(tag);
       if (!data || !data[2]) return tag;
       const action = this.readerImageOptionString(data[2], 'click') ||
@@ -1607,6 +1620,42 @@ export class WebBookService {
     return '';
   }
 
+  /** The first few `<text>` labels of a data-URI SVG card, joined; used to name its action. */
+  private readerDataImageText(encoded: string): string {
+    try {
+      const bytes = new util.Base64Helper().decodeSync(encoded || '');
+      const svg = util.TextDecoder.create('utf-8').decodeWithStream(bytes, { stream: false });
+      const labels = (svg.match(/<text\b[^>]*>([^<]{1,48})<\/text>/gi) || []).slice(0, 4);
+      return labels.map((item: string): string => this.decodeHtmlEntities(item.replace(/<[^>]+>/g, '')).trim())
+        .join(' ');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /**
+   * iOS-style Legado markup puts the action on the image itself:
+   * `<img src="data:image/svg+xml;base64,…" onClick="java.startBrowser('url')"/>` (hot-comment and
+   * chapter-comment cards). Turn the card into a reader action that opens the page; the label comes
+   * from the card's own wording. Images without such an action are left to the image pipeline.
+   */
+  private readerActionMarkerFromClickableImage(tag: string): string {
+    const press = /\b(?:onPress|onClick)\s*=\s*(["'])([\s\S]*?)\1/i.exec(tag || '');
+    if (!press) return '';
+    const action = /java\.(?:showReadingBrowser|startBrowserDp|startBrowser|showBrowser)\(\s*(["'])([\s\S]*?)\1/i
+      .exec(this.decodeHtmlEntities(press[2] || ''));
+    const url = action && action[2] ? action[2] : '';
+    if (!/^https?:\/\//i.test(url)) return '';
+    // Only generated SVG cards are controls; a real picture with a link stays a picture.
+    const svg = /\bsrc\s*=\s*["']data:image\/svg\+xml;base64,([A-Za-z0-9+/=]+)/i.exec(tag);
+    if (!svg) return '';
+    const wording = this.readerDataImageText(svg[1] || '');
+    const count = this.readerDataImageLabel(svg[1] || '');
+    const label = /本章说|章评|章末/.test(wording) ? '章评' : (/热评|神评/.test(wording) ? '热评' :
+      (count ? `段评 ${count}` : '评论'));
+    return ReaderActionMarker.create(label, url, label === '章评' ? '章评' : (label === '热评' ? '热评' : '段评'));
+  }
+
   private readerActionMarkerFromCommentAttributes(attrs: string): string {
     const countMatch = /\bcount\s*=\s*["']([^"']*)["']/i.exec(attrs || '');
     const identMatch = /\bident\s*=\s*["']([^"']*)["']/i.exec(attrs || '');
@@ -1618,9 +1667,9 @@ export class WebBookService {
     if (!url) return '';
     const rawTitle = this.decodeHtmlEntities(actionMatch && actionMatch[4] ? actionMatch[4] : '');
     const count = this.decodeHtmlEntities(countMatch && countMatch[1] ? countMatch[1] : '');
-    const isComment = /\/comments(?:[/?#]|$)|\/idea_comment(?:[/?#]|$)|\/get_review(?:[/?#]|$)/i.test(url);
-    const title = isComment ? (rawTitle ? `段评 · ${rawTitle}` : '段评') : (rawTitle || '打开');
-    const label = isComment ? (count ? `段评 ${count}` : '段评') : (count ? `${title} ${count}` : title);
+    // `<comment>` is the paragraph-comment tag of Legado-compatible readers, whatever the page's path.
+    const title = rawTitle ? `段评 · ${rawTitle}` : '段评';
+    const label = count ? `段评 ${count}` : '段评';
     return ReaderActionMarker.create(label, url, title);
   }
 
