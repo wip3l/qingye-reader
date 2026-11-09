@@ -83,6 +83,18 @@ export class ReaderV2PageFragment {
   commentBubbleSegments: ReaderV2CommentBubbleSegment[] = [];
 }
 
+/** 一条划线落在本页的部分，偏移是本页所属文档的显示偏移（与片段 displayStart 同一坐标）。 */
+export class ReaderV2AnnotationMark {
+  id: number = 0;
+  displayStart: number = 0;
+  displayEnd: number = 0;
+  style: string = 'solid';
+  /** 不透明 ARGB。 */
+  color: number = 0xFF3B82F6;
+  /** 有笔记且要显示标记：在划线末端画小圆点（末端不在本页时不画）。 */
+  noteDot: boolean = false;
+}
+
 export class ReaderV2ActionHitArea {
   actionId: string = '';
   marker: string = '';
@@ -107,6 +119,9 @@ export class ReaderV2PageLayout implements ReaderPaginationBoundary {
   selectionHeight: number = 0;
   /** 本页最后一个片段的下边缘（含字形出血），滚动阅读用它确定列表项高度。 */
   contentBottomPx: number = 0;
+  /** 划线由阅读页按当前划线数据填入；annotationStamp 记填入时的数据版本，版本变了重新填。 */
+  annotationMarks: ReaderV2AnnotationMark[] = [];
+  annotationStamp: string = '';
 
   actionAt(x: number, y: number, slopX: number, slopY: number): ReaderV2ActionHitArea | null {
     // Later actions win where expanded hit slop overlaps, which matches visual painting order.

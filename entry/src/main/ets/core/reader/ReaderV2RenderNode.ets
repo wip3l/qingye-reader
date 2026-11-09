@@ -123,6 +123,11 @@ export class ReaderV2PageNodeController extends NodeController {
     }
   }
 
+  /** 页对象不变、内容变了（例如划线）时重画当前页。 */
+  repaint(): void {
+    if (this.page) this.updatePage(this.page, true);
+  }
+
   /** Window position (vp) of the mounted native page node, so a raster can align with the live glyphs. */
   nodePositionToWindow(): Position | null {
     if (!this.node) return null;

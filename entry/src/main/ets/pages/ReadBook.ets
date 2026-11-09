@@ -111,11 +111,19 @@ import {
 import { ReaderV2LayoutInput, ReaderV2LayoutSnapshot } from '../core/reader/ReaderV2LayoutSnapshot';
 import {
   ReaderV2PageFragment,
+  ReaderV2AnnotationMark,
   ReaderV2PageLayout,
   ReaderV2PageSet,
   ReaderV2RegexBubbleSegment
 } from '../core/reader/ReaderV2PageLayout';
 import { ReaderV2PaginationSession, ReaderV2Paginator } from '../core/reader/ReaderV2Paginator';
+import { ReaderV2AnnotationPainter } from '../core/reader/ReaderV2AnnotationPainter';
+import { BookAnnotation, BookAnnotationAnchor, BookAnnotationRange,
+  BookAnnotationStyles } from '../model/reader/BookAnnotation';
+import { ReaderAnnotationSettings, ReaderAnnotationSettingsStore } from '../utils/ReaderAnnotationSettingsStore';
+import { ReaderAnnotationLayer, ReaderAnnotationLayerMode } from '../components/reader/ReaderAnnotationLayer';
+import { systemShare } from '@kit.ShareKit';
+import { uniformTypeDescriptor } from '@kit.ArkData';
 import { ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2Style';
 import { ReaderCommentBubbleStyle, ReaderCommentBubbleStyles } from '../core/reader/ReaderCommentBubble';
 import { ReaderCommentBubbleSize } from '../core/reader/ReaderCommentBubbleSize';
@@ -258,6 +266,18 @@ const READER_SPREAD_MIN_ASPECT = 0.8;
 const PUSH_PAGE_TURN_SHADOW_SIZE = 18;
 const PUSH_PAGE_TURN_SHADE_MAX_OPACITY = 0.45;
 // 正文选中菜单里的自定义“替换”项 ID，用于与系统菜单项（复制/翻译等）区分。
+// 正文选中菜单里的“划线”“笔记”两项。
+const READER_ANNOTATE_MENU_ITEM_ID: string = 'reader_annotate';
+const READER_ANNOTATE_NOTE_MENU_ITEM_ID: string = 'reader_annotate_note';
+// 点按命中划线时借用书源按钮的触摸认领通道，标记以此开头。
+const READER_ANNOTATION_MARKER_PREFIX: string = 'reader-annotation:';
+
+/** 一章的划线在该章当前文本里的位置；文本或划线数据变了就重算。 */
+class ReaderAnnotationChapterRanges {
+  source: string = '';
+  version: number = -1;
+  ranges: BookAnnotationRange[] = [];
+}
 const READER_REPLACE_MENU_ITEM_ID: string = 'reader_replace_rule';
 const READER_IDLE_WORK_RETRY_MS = 120;
 // 翻页动画进行中，后台分页的每次同步排版（2–7ms）只在帧内还剩这么多空闲时才开始；一直没有就最多等 32ms。
@@ -833,6 +853,26 @@ struct ReadBookPage {
   private readerSelectableTextControllers: Map<string, TextController> = new Map<string, TextController>();
   private readerSelectableTextAreas: Map<string, number[]> = new Map<string, number[]>();
   private readerSelectableTextScrollOffsets: Map<string, number> = new Map<string, number>();
+  // 正文划线：本书全部划线在内存里，按章解析出当前文本里的位置，绘制时填进页对象（见 decorateReaderV2Page）。
+  private readerAnnotations: BookAnnotation[] = [];
+  private readerAnnotationVersion: number = 0;
+  private readerAnnotationResolved: Map<number, ReaderAnnotationChapterRanges> =
+    new Map<number, ReaderAnnotationChapterRanges>();
+  private readerAnnotationSettings: ReaderAnnotationSettings = new ReaderAnnotationSettings();
+  private readerAnnotationActive: BookAnnotation | null = null;
+  @State private readerAnnotationMode: string = '';
+  @State private readerAnnotationColor: string = BookAnnotationStyles.DEFAULT_COLOR;
+  @State private readerAnnotationStyle: string = BookAnnotationStyles.SOLID;
+  @State private readerAnnotationQuote: string = '';
+  @State private readerAnnotationTimeText: string = '';
+  @State private readerAnnotationNoteSaved: string = '';
+  @State private readerAnnotationNoteDraft: string = '';
+  @State private readerAnnotationFocusNote: boolean = false;
+  @State private readerAnnotationAnchorTop: number = 0;
+  @State private readerAnnotationAnchorBottom: number = 0;
+  @State private readerAnnotationAnchorX: number = 0;
+  @State private readerAnnotationAutoPanel: boolean = true;
+  @State private readerAnnotationShowNoteDot: boolean = true;
   private readerSelectableTextValues: Map<string, string> = new Map<string, string>();
   @State private readerTextSelectionActive: boolean = false;
   @State private readerDesktopSelectionMenuVisible: boolean = false;
@@ -1266,6 +1306,9 @@ struct ReadBookPage {
         await this.loadBook();
         this.loadBookmarks().catch((error: Error) => {
           console.warn('读取书签失败:', error);
+        this.loadReaderAnnotations().catch((error: Error) => {
+          console.warn('读取划线失败:', error);
+        });
         });
     }
     } catch (error) {
@@ -1382,6 +1425,10 @@ struct ReadBookPage {
     if (this.showReaderAutoScrollSpeed) {
       this.showReaderAutoScrollSpeed = false;
       return true;
+    if (this.readerAnnotationMode) {
+      this.closeReaderAnnotationLayer();
+      return true;
+    }
     }
     if (this.eyeTurnState.showCalibration) {
       this.eyeTurn().cancelCalibration();
@@ -3878,6 +3925,10 @@ struct ReadBookPage {
       if (this.readerDesktopSelectionMenuVisible) {
         this.readerDesktopSelectionMenu()
         if (this.readerSelectionHandlesReady) {
+      if (this.readerAnnotationMode) {
+        this.readerAnnotationLayer()
+      }
+
           this.readerSelectionHandle(true)
           this.readerSelectionHandle(false)
         }
@@ -5902,7 +5953,7 @@ struct ReadBookPage {
 
   shouldPauseReaderAutoScrollForPanel(): boolean {
     // 顶部/底部悬浮栏和胶囊不遮挡大段正文，展开这些控件时继续滚动。
-    return this.showToc || this.showSettings || this.showLayoutElementSettings ||
+    return this.showToc || this.showSettings || this.showLayoutElementSettings || !!this.readerAnnotationMode ||
       this.showReaderCommentPanel || this.showReaderAutoScrollSpeed || this.showTapZoneSettings ||
       this.showChangeSourceDialog || this.showTxtCharsetDialog || this.showTxtTocRuleDialog ||
       this.showReaderCacheDialog ||
@@ -9749,6 +9800,7 @@ struct ReadBookPage {
   getReaderGestureIndicatorLift(): number {
     return ReaderInfoBarConfig.footerBaseInset(this.navBarHeight);
   }
+        this.loadReaderAnnotations();
 
   getReaderBottomInfoBarContentGap(): number {
     return this.readerVerticalGapWithinMargin(8, false);
@@ -10367,7 +10419,7 @@ struct ReadBookPage {
   readerKeyboardHasOverlay(): boolean {
     return this.showMenu || this.shouldPauseReaderAutoScrollForPanel() || this.showReaderActionMenu ||
       this.showBookmarkActionMenu || this.showTtsVoiceDropdown || this.eyeTurnState.showCalibration ||
-      this.keyboardDialogSession.isOpen() || this.hasReaderTextSelection();
+      this.keyboardDialogSession.isOpen() || this.hasReaderTextSelection() || !!this.readerAnnotationMode;
   }
 
   restoreReaderKeyboardFocus(): void {
@@ -16221,6 +16273,10 @@ ${leading}` : leading;
       return;
     }
     if (action && source && ReaderActionMarker.sourceScript(action.url)) {
+    if (marker.startsWith(READER_ANNOTATION_MARKER_PREFIX)) {
+      this.openReaderAnnotationById(Number(marker.substring(READER_ANNOTATION_MARKER_PREFIX.length)));
+      return;
+    }
       this.openReaderSourceScriptAction(source, action, marker);
       return;
     }
@@ -16672,6 +16728,8 @@ ${leading}` : leading;
   }
 
   continuousSelectionPageIndexForKey(key: string): number {
+    // 按在划线或书源按钮上的长按是选字，抬手时不再打开它们。
+    this.readerTouchActionMarker = '';
     const nativePrefix = `reader_continuous_native_${this.currentChapterIndex}_`;
     if (key.startsWith(nativePrefix)) {
       const suffix = key.substring(nativePrefix.length);
@@ -17311,7 +17369,12 @@ ${leading}` : leading;
   readerV2Page(chapterIndex: number, pageIndex: number, source: string): ReaderV2PageLayout | null {
     const pageSet = this.readerV2PageSet(chapterIndex, source);
     if (!pageSet || pageIndex < 0 || pageIndex >= pageSet.pages.length) return null;
-    return pageSet.pages[pageIndex];
+    const page = pageSet.pages[pageIndex];
+    // 划线填进页对象：常驻页、翻页纹理和选区换算都从这里取页，数据版本没变时只比较一次字符串。
+    if (page.annotationStamp !== this.readerAnnotationStamp()) {
+      this.decorateReaderV2Page(page, this.readerV2Document(chapterIndex, source), chapterIndex, source, 0);
+    }
+    return page;
   }
 
   readerV2Controller(role: string, chapterIndex: number, pageIndex: number,
@@ -17333,7 +17396,493 @@ ${leading}` : leading;
     return controller;
   }
 
-  readerTextEditMenuOptions(textProvider: () => string): EditMenuOptions {
+  // ---------------------------------------------------------------- 划线与笔记
+
+  async loadReaderAnnotations(): Promise<void> {
+    const bookUrl = this.book?.bookUrl || this.bookUrl;
+    const hadAnnotations = this.readerAnnotations.length > 0;
+    const showNoteDot = this.readerAnnotationShowNoteDot;
+    try {
+      this.readerAnnotationSettings = await ReaderAnnotationSettingsStore.load(getContext(this));
+      this.readerAnnotationAutoPanel = this.readerAnnotationSettings.autoPanel;
+      this.readerAnnotationShowNoteDot = this.readerAnnotationSettings.showNoteDot;
+      if (!bookUrl) {
+        this.readerAnnotations = [];
+      } else {
+        const db = AppDatabase.getInstance();
+        await db.initWithContext(getContext(this));
+        this.readerAnnotations = await db.getBookAnnotations(bookUrl);
+      }
+    } catch (error) {
+      console.warn('加载划线失败:', error);
+      this.readerAnnotations = [];
+    }
+    // 没有划线的书不重画正文，开书动画期间不多做一次整页重建。
+    if (!hadAnnotations && this.readerAnnotations.length === 0 && showNoteDot === this.readerAnnotationShowNoteDot) return;
+    this.onReaderAnnotationsChanged();
+  }
+
+  readerAnnotationStamp(): string {
+    return `${this.readerAnnotationVersion}_${this.readerAnnotationShowNoteDot ? 1 : 0}`;
+  }
+
+  /** 一章的划线在该章当前文本里的位置（按原文重新定位，找不到的不在其中）。 */
+  readerAnnotationRangesFor(chapterIndex: number, source: string): BookAnnotationRange[] {
+    if (this.readerAnnotations.length === 0 || !source) return [];
+    const cached = this.readerAnnotationResolved.get(chapterIndex);
+    if (cached && cached.version === this.readerAnnotationVersion && cached.source === source) return cached.ranges;
+    const entry = new ReaderAnnotationChapterRanges();
+    entry.source = source;
+    entry.version = this.readerAnnotationVersion;
+    entry.ranges = BookAnnotationAnchor.resolveAll(this.readerAnnotations.filter((annotation: BookAnnotation) =>
+      annotation.chapterIndex === chapterIndex), source);
+    this.readerAnnotationResolved.set(chapterIndex, entry);
+    return entry.ranges;
+  }
+
+  /**
+   * 把落在这一页（或滚动模式的一块）里的划线换成页内显示偏移填进页对象，绘制器据此画线。
+   * chunkStart 是这块文本在章节源文本里的起点，翻页模式整章一份文档，为 0。
+   */
+  decorateReaderV2Page(page: ReaderV2PageLayout, document: ReaderV2Document | null | undefined, chapterIndex: number,
+    source: string, chunkStart: number): void {
+    const stamp = this.readerAnnotationStamp();
+    if (page.annotationStamp === stamp) return;
+    if (this.readerAnnotations.length === 0) {
+      page.annotationMarks = [];
+      page.annotationStamp = stamp;
+      return;
+    }
+    if (!document || chunkStart < 0) return;
+    const marks: ReaderV2AnnotationMark[] = [];
+    const length = document.sourceText.length;
+    for (const range of this.readerAnnotationRangesFor(chapterIndex, source)) {
+      const start = range.start - chunkStart;
+      const end = range.end - chunkStart;
+      if (end <= 0 || start >= length) continue;
+      const displayStart = document.displayOffsetForSource(Math.max(0, start));
+      const displayEnd = document.displayOffsetForSource(Math.min(length, end));
+      if (displayEnd <= displayStart || displayEnd <= page.displayStart || displayStart >= page.displayEnd) continue;
+      const mark = new ReaderV2AnnotationMark();
+      mark.id = range.annotation.id;
+      mark.displayStart = displayStart;
+      mark.displayEnd = displayEnd;
+      mark.style = range.annotation.style;
+      mark.color = BookAnnotationStyles.argb(range.annotation.color);
+      mark.noteDot = this.readerAnnotationShowNoteDot && range.annotation.note.trim().length > 0 && end <= length;
+      marks.push(mark);
+    }
+    page.annotationMarks = marks;
+    page.annotationStamp = stamp;
+  }
+
+  /** 划线数据变了：重新填页对象、重画常驻页，丢掉已截好的翻页纹理。 */
+  onReaderAnnotationsChanged(): void {
+    this.readerAnnotationVersion++;
+    this.readerAnnotationResolved.clear();
+    if (this.usesReaderContinuousV2()) {
+      for (const entry of this.readerContinuousV2Layouts.entries()) {
+        const layout = entry[1];
+        const chapter = Number(entry[0].split('_')[0]);
+        if (!Number.isFinite(chapter)) continue;
+        this.decorateReaderV2Page(layout, this.readerContinuousV2Documents.get(layout.identity), chapter,
+          this.readerContinuousSourceOf(chapter), this.readerContinuousV2Sources.get(layout.identity) ?? -1);
+      }
+      for (const controller of this.readerContinuousV2Controllers.values()) controller.repaint();
+    } else if (this.shouldUseReaderLayoutV2(this.pagedContentText)) {
+      this.refreshCurrentReaderV2RetainedPages(true);
+      this.readerPageTextureCache.clear();
+      this.scheduleReaderPageTextureWarmup();
+    }
+  }
+
+  /** 选中文本层里的下标换算成章节源文本下标；换算不了返回 -1。 */
+  readerSelectionSourceOffset(page: ReaderV2PageLayout, chapterIndex: number, selectionOffset: number): number {
+    const display = this.readerV2DisplayOffsetForPageSelection(page, selectionOffset);
+    const chunkDocument = this.readerContinuousV2Documents.get(page.identity);
+    if (chunkDocument) {
+      const chunkStart = this.readerContinuousV2Sources.get(page.identity) ?? -1;
+      return chunkStart < 0 ? -1 : chunkStart + chunkDocument.sourceOffsetForDisplay(display);
+    }
+    const document = this.readerV2Document(chapterIndex, this.readerContinuousSourceOf(chapterIndex));
+    return document ? document.sourceOffsetForDisplay(display) : -1;
+  }
+
+  createReaderAnnotationFromSelection(page: ReaderV2PageLayout, chapterIndex: number, selectionStart: number,
+    selectionEnd: number, withNote: boolean): void {
+    const start = this.readerSelectionSourceOffset(page, chapterIndex, Math.min(selectionStart, selectionEnd));
+    const end = this.readerSelectionSourceOffset(page, chapterIndex, Math.max(selectionStart, selectionEnd));
+    this.createReaderAnnotation(chapterIndex, start, end, withNote).catch((error: Error): void => {
+      console.error('划线失败:', error);
+    });
+  }
+
+  /** 平板、电脑的自绘选区菜单：选区可能跨滚动模式的几块。 */
+  createReaderAnnotationFromDesktopSelection(withNote: boolean): void {
+    const chapterIndex = this.readerV2SelectionChapterIndex >= 0 ? this.readerV2SelectionChapterIndex :
+      this.currentChapterIndex;
+    let startPage = this.readerDesktopSelectionPage;
+    let endPage = this.readerDesktopSelectionPage;
+    if (this.readerSelectionStartChunk >= 0 && this.readerSelectionEndChunk >= this.readerSelectionStartChunk) {
+      startPage = this.readerContinuousV2Layout(this.readerSelectionStartChunk,
+        this.contentPages[this.readerSelectionStartChunk] || '');
+      endPage = this.readerContinuousV2Layout(this.readerSelectionEndChunk,
+        this.contentPages[this.readerSelectionEndChunk] || '');
+    }
+    if (!startPage || !endPage) return;
+    const start = this.readerSelectionSourceOffset(startPage, chapterIndex, this.readerDesktopSelectionStart);
+    const end = this.readerSelectionSourceOffset(endPage, chapterIndex, this.readerDesktopSelectionEnd);
+    this.scheduleReaderTextSelectionClear();
+    this.createReaderAnnotation(chapterIndex, start, end, withNote).catch((error: Error): void => {
+      console.error('划线失败:', error);
+    });
+  }
+
+  async createReaderAnnotation(chapterIndex: number, start: number, end: number, withNote: boolean): Promise<void> {
+    const bookUrl = this.book?.bookUrl || this.bookUrl;
+    const source = this.readerContinuousSourceOf(chapterIndex);
+    const trimmed = bookUrl && source && start >= 0 && end > start ? BookAnnotationAnchor.trim(source, start, end) : null;
+    if (!trimmed) {
+      HdsFeedback.showToast('这段文字无法划线');
+      return;
+    }
+    let rangeStart = trimmed[0];
+    let rangeEnd = trimmed[1];
+    // 与已有划线重叠时合并成一条，原有笔记按先后接在一起。
+    const overlaps = this.readerAnnotationRangesFor(chapterIndex, source).filter((range: BookAnnotationRange) =>
+      range.end > rangeStart && range.start < rangeEnd);
+    const notes: string[] = [];
+    for (const range of overlaps) {
+      rangeStart = Math.min(rangeStart, range.start);
+      rangeEnd = Math.max(rangeEnd, range.end);
+      const note = range.annotation.note.trim();
+      if (note) notes.push(note);
+    }
+    const now = Date.now();
+    const annotation = new BookAnnotation();
+    annotation.bookUrl = bookUrl;
+    annotation.bookName = this.book?.name || '';
+    annotation.chapterIndex = chapterIndex;
+    annotation.chapterName = this.getChapterTitle(chapterIndex);
+    BookAnnotationAnchor.capture(annotation, source, rangeStart, rangeEnd);
+    annotation.color = this.readerAnnotationSettings.lastColor;
+    annotation.style = this.readerAnnotationSettings.lastStyle;
+    annotation.note = notes.join('\n');
+    annotation.createTime = now;
+    annotation.updateTime = now;
+    try {
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(getContext(this));
+      annotation.id = await db.insertBookAnnotation(annotation);
+      if (annotation.id > 0 && overlaps.length > 0) {
+        await db.deleteBookAnnotationsById(overlaps.map((range: BookAnnotationRange): number => range.annotation.id));
+      }
+    } catch (error) {
+      console.error('保存划线失败:', error);
+      HdsFeedback.showToast('划线保存失败');
+      return;
+    }
+    if (annotation.id <= 0) {
+      HdsFeedback.showToast('划线保存失败');
+      return;
+    }
+    const removed = new Set<number>(overlaps.map((range: BookAnnotationRange): number => range.annotation.id));
+    this.readerAnnotations = this.readerAnnotations.filter((item: BookAnnotation) => !removed.has(item.id));
+    this.readerAnnotations.push(annotation);
+    this.onReaderAnnotationsChanged();
+    if (withNote || this.readerAnnotationSettings.autoPanel) {
+      if (overlaps.length > 0) HdsFeedback.showToast('已与原有划线合并');
+      // 选区在 80ms 后才收起，等它和重画都结束再量划线位置。
+      setTimeout((): void => {
+        this.openReaderAnnotation(annotation, ReaderAnnotationLayerMode.PANEL, withNote);
+      }, 140);
+    } else {
+      HdsFeedback.showToast(overlaps.length > 0 ? '已与原有划线合并' : '已划线');
+    }
+  }
+
+  readerAnnotationById(id: number): BookAnnotation | null {
+    for (const annotation of this.readerAnnotations) {
+      if (annotation.id === id) return annotation;
+    }
+    return null;
+  }
+
+  /** 点按命中的划线：有笔记先看笔记，没有就直接打开面板。 */
+  openReaderAnnotationById(id: number): void {
+    if (this.hasReaderTextSelection()) return;
+    const annotation = this.readerAnnotationById(id);
+    if (!annotation) return;
+    this.openReaderAnnotation(annotation, annotation.note.trim() ? ReaderAnnotationLayerMode.BUBBLE :
+      ReaderAnnotationLayerMode.PANEL, false);
+  }
+
+  openReaderAnnotation(annotation: BookAnnotation, mode: string, focusNote: boolean): void {
+    this.readerAnnotationActive = annotation;
+    this.readerAnnotationColor = annotation.color;
+    this.readerAnnotationStyle = annotation.style;
+    this.readerAnnotationQuote = annotation.quote;
+    this.readerAnnotationNoteSaved = annotation.note;
+    this.readerAnnotationNoteDraft = annotation.note;
+    this.readerAnnotationTimeText = this.readerAnnotationTimeLabel(annotation.updateTime || annotation.createTime);
+    this.readerAnnotationFocusNote = focusNote;
+    const anchor = this.readerAnnotationAnchor(annotation.id);
+    if (anchor.length >= 3) {
+      this.readerAnnotationAnchorTop = anchor[0];
+      this.readerAnnotationAnchorBottom = anchor[1];
+      this.readerAnnotationAnchorX = anchor[2];
+    } else {
+      const height = this.pageViewHeight || this.getPageTurnHeight();
+      this.readerAnnotationAnchorTop = height * 0.45;
+      this.readerAnnotationAnchorBottom = height * 0.45;
+      this.readerAnnotationAnchorX = (this.pageViewWidth || this.getPageTurnWidth()) / 2;
+    }
+    this.readerAnnotationMode = mode;
+  }
+
+  readerAnnotationTimeLabel(time: number): string {
+    const elapsed = Date.now() - time;
+    if (elapsed < 60000) return '刚刚';
+    if (elapsed < 3600000) return `${Math.floor(elapsed / 60000)} 分钟前`;
+    const date = new Date(time);
+    const today = new Date();
+    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
+    const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    if (date.toDateString() === today.toDateString()) return clock;
+    const day = `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    return date.getFullYear() === today.getFullYear() ? `${day} ${clock}` : `${date.getFullYear()}-${day}`;
+  }
+
+  /** 划线在屏幕上的位置（阅读页根节点坐标，vp）：[首行顶, 末行底, 箭头横坐标]；不在屏幕上返回空数组。 */
+  readerAnnotationAnchor(id: number): number[] {
+    try {
+      const utils = this.getUIContext().getComponentUtils();
+      const root = utils.getRectangleById('reader_keyboard_surface');
+      const rootX = px2vp(root.windowOffset.x);
+      const rootY = px2vp(root.windowOffset.y);
+      const boxes: number[][] = [];
+      if (this.usesReaderContinuousV2()) {
+        const first = Math.max(0, this.readerContinuousVisibleStart - 1);
+        const last = Math.min(this.contentPages.length - 1, this.readerContinuousVisibleEnd + 1);
+        for (let index = first; index <= last; index++) {
+          const layout = this.readerContinuousV2Layout(index, this.contentPages[index] || '');
+          if (!layout) continue;
+          const rects = ReaderV2AnnotationPainter.rects(layout, id);
+          if (rects.length === 0) continue;
+          const item = utils.getRectangleById(this.readerContinuousV2ItemId(index));
+          if (item.size.width <= 0 || item.size.height <= 0) continue;
+          for (const rect of rects) {
+            boxes.push([px2vp(item.windowOffset.x + rect.left), px2vp(item.windowOffset.y + rect.top),
+              px2vp(item.windowOffset.x + rect.right), px2vp(item.windowOffset.y + rect.bottom)]);
+          }
+        }
+      } else {
+        const pageCount = this.isLandscapeDoublePageActive() ? 2 : 1;
+        for (let offset = 0; offset < pageCount; offset++) {
+          const page = this.readerV2Page(this.currentChapterIndex, this.currentPageIndex + offset,
+            this.pagedContentText);
+          if (!page) continue;
+          const originX = this.readerTapLayerGlobalX + (offset === 1 ?
+            Math.max(0, (this.pageViewWidth - READER_DOUBLE_PAGE_DIVIDER_WIDTH) / 2) + READER_DOUBLE_PAGE_DIVIDER_WIDTH : 0);
+          const originY = this.readerTapLayerGlobalY + this.readerV2SurfaceTopOffset();
+          for (const rect of ReaderV2AnnotationPainter.rects(page, id)) {
+            boxes.push([originX + px2vp(rect.left), originY + px2vp(rect.top),
+              originX + px2vp(rect.right), originY + px2vp(rect.bottom)]);
+          }
+        }
+      }
+      if (boxes.length === 0) return [];
+      const firstBox = boxes[0];
+      const lastBox = boxes[boxes.length - 1];
+      return [firstBox[1] - rootY, lastBox[3] - rootY,
+        (firstBox[0] + Math.min(firstBox[2], firstBox[0] + 160)) / 2 - rootX];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  async saveReaderAnnotation(annotation: BookAnnotation): Promise<void> {
+    try {
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(getContext(this));
+      await db.updateBookAnnotation(annotation);
+    } catch (error) {
+      console.error('保存划线失败:', error);
+      HdsFeedback.showToast('划线保存失败');
+    }
+  }
+
+  setReaderAnnotationLook(color: string, style: string): void {
+    const annotation = this.readerAnnotationActive;
+    if (!annotation) return;
+    annotation.color = BookAnnotationStyles.normalizeColor(color);
+    annotation.style = BookAnnotationStyles.normalizeStyle(style);
+    annotation.updateTime = Date.now();
+    this.readerAnnotationColor = annotation.color;
+    this.readerAnnotationStyle = annotation.style;
+    this.readerAnnotationSettings.lastColor = annotation.color;
+    this.readerAnnotationSettings.lastStyle = annotation.style;
+    ReaderAnnotationSettingsStore.save(getContext(this), this.readerAnnotationSettings);
+    this.saveReaderAnnotation(annotation);
+    this.onReaderAnnotationsChanged();
+  }
+
+  /** 笔记草稿有改动就保存；返回是否改过。 */
+  commitReaderAnnotationNote(): boolean {
+    const annotation = this.readerAnnotationActive;
+    if (!annotation) return false;
+    const note = this.readerAnnotationNoteDraft.replace(/\s+$/, '');
+    if (note === annotation.note) return false;
+    const hadNote = annotation.note.trim().length > 0;
+    annotation.note = note;
+    annotation.updateTime = Date.now();
+    this.readerAnnotationNoteSaved = note;
+    this.readerAnnotationTimeText = this.readerAnnotationTimeLabel(annotation.updateTime);
+    this.saveReaderAnnotation(annotation);
+    // 笔记标记只跟“有没有笔记”有关，内容改动不必重画正文。
+    if (hadNote !== (note.trim().length > 0)) this.onReaderAnnotationsChanged();
+    return true;
+  }
+
+  closeReaderAnnotationLayer(): void {
+    if (this.readerAnnotationMode === ReaderAnnotationLayerMode.PANEL ||
+      this.readerAnnotationMode === ReaderAnnotationLayerMode.EDITOR) {
+      this.commitReaderAnnotationNote();
+    }
+    this.readerAnnotationMode = ReaderAnnotationLayerMode.NONE;
+    this.readerAnnotationActive = null;
+    this.readerAnnotationFocusNote = false;
+    this.restoreReaderKeyboardFocus();
+  }
+
+  async eraseReaderAnnotation(): Promise<void> {
+    const annotation = this.readerAnnotationActive;
+    if (!annotation) return;
+    this.readerAnnotationMode = ReaderAnnotationLayerMode.NONE;
+    this.readerAnnotationActive = null;
+    try {
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(getContext(this));
+      await db.deleteBookAnnotationsById([annotation.id]);
+    } catch (error) {
+      console.error('删除划线失败:', error);
+      HdsFeedback.showToast('擦除失败');
+      return;
+    }
+    this.readerAnnotations = this.readerAnnotations.filter((item: BookAnnotation) => item.id !== annotation.id);
+    this.onReaderAnnotationsChanged();
+    HdsFeedback.showToast('已擦除');
+  }
+
+  async copyReaderAnnotation(): Promise<void> {
+    const annotation = this.readerAnnotationActive;
+    if (!annotation) return;
+    try {
+      await pasteboard.getSystemPasteboard().setData(
+        pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, annotation.quote));
+      HdsFeedback.showToast('已复制');
+    } catch (error) {
+      console.warn('复制划线失败:', error);
+      HdsFeedback.showToast('复制失败，请重试');
+    }
+  }
+
+  async shareReaderAnnotation(): Promise<void> {
+    const annotation = this.readerAnnotationActive;
+    if (!annotation) return;
+    this.commitReaderAnnotationNote();
+    const parts: string[] = [];
+    if (annotation.bookName) parts.push(`《${annotation.bookName}》`);
+    if (annotation.chapterName) parts.push(annotation.chapterName);
+    let text = `「${annotation.quote}」`;
+    if (parts.length > 0) text += `\n—— ${parts.join(' ')}`;
+    if (annotation.note.trim()) text += `\n\n${annotation.note.trim()}`;
+    try {
+      const data = new systemShare.SharedData({
+        utd: uniformTypeDescriptor.UniformDataType.PLAIN_TEXT,
+        content: text
+      });
+      const controller = new systemShare.ShareController(data);
+      await controller.show(getContext(this) as common.UIAbilityContext, {
+        previewMode: systemShare.SharePreviewMode.DEFAULT,
+        selectionMode: systemShare.SelectionMode.SINGLE
+      });
+    } catch (error) {
+      console.warn('分享划线失败:', error);
+      HdsFeedback.showToast('分享失败');
+    }
+  }
+
+  setReaderAnnotationAutoPanel(value: boolean): void {
+    this.readerAnnotationAutoPanel = value;
+    this.readerAnnotationSettings.autoPanel = value;
+    ReaderAnnotationSettingsStore.save(getContext(this), this.readerAnnotationSettings);
+  }
+
+  setReaderAnnotationShowNoteDot(value: boolean): void {
+    this.readerAnnotationShowNoteDot = value;
+    this.readerAnnotationSettings.showNoteDot = value;
+    ReaderAnnotationSettingsStore.save(getContext(this), this.readerAnnotationSettings);
+    this.onReaderAnnotationsChanged();
+  }
+
+  @Builder
+  readerAnnotationLayer() {
+    ReaderAnnotationLayer({
+      mode: this.readerAnnotationMode,
+      color: this.readerAnnotationColor,
+      styleId: this.readerAnnotationStyle,
+      quote: this.readerAnnotationQuote,
+      timeText: this.readerAnnotationTimeText,
+      noteSaved: this.readerAnnotationNoteSaved,
+      anchorTop: this.readerAnnotationAnchorTop,
+      anchorBottom: this.readerAnnotationAnchorBottom,
+      anchorX: this.readerAnnotationAnchorX,
+      dark: this.isReaderThemeDark(),
+      panelColor: this.readerSolidPanelColor(),
+      textColor: this.readerPanelTextColor(),
+      accentColor: this.accentColor(),
+      safeTop: this.getReaderTopSafePadding(),
+      safeBottom: this.navBarHeight,
+      focusNote: this.readerAnnotationFocusNote,
+      autoPanel: this.readerAnnotationAutoPanel,
+      showNoteDot: this.readerAnnotationShowNoteDot,
+      noteDraft: $readerAnnotationNoteDraft,
+      onClose: (): void => this.closeReaderAnnotationLayer(),
+      onColor: (color: string): void => this.setReaderAnnotationLook(color, this.readerAnnotationStyle),
+      onStyle: (style: string): void => this.setReaderAnnotationLook(this.readerAnnotationColor, style),
+      onErase: (): void => {
+        this.eraseReaderAnnotation();
+      },
+      onCopy: (): void => {
+        this.copyReaderAnnotation();
+      },
+      onShare: (): void => {
+        this.shareReaderAnnotation();
+      },
+      onOpenConfig: (): void => {
+        this.commitReaderAnnotationNote();
+        this.readerAnnotationMode = ReaderAnnotationLayerMode.CONFIG;
+      },
+      onEditNote: (): void => {
+        const annotation = this.readerAnnotationActive;
+        if (annotation) this.openReaderAnnotation(annotation, ReaderAnnotationLayerMode.PANEL, true);
+      },
+      onExpand: (): void => {
+        this.readerAnnotationMode = ReaderAnnotationLayerMode.EDITOR;
+      },
+      onEditorDone: (): void => this.closeReaderAnnotationLayer(),
+      onAutoPanelChange: (value: boolean): void => this.setReaderAnnotationAutoPanel(value),
+      onShowNoteDotChange: (value: boolean): void => this.setReaderAnnotationShowNoteDot(value)
+    })
+      .width('100%')
+      .height('100%')
+      .position({ x: 0, y: 0 })
+      .zIndex(20)
+  }
+
+  readerTextEditMenuOptions(textProvider: () => string, page: ReaderV2PageLayout | null = null,
+    chapterIndex: number = -1): EditMenuOptions {
     return {
       onCreateMenu: (items: TextMenuItem[]): TextMenuItem[] => {
         // 正文节点只覆盖当前页或文本块，“全选”的范围不符合阅读场景的预期。
@@ -17378,9 +17927,22 @@ ${leading}` : leading;
       for (let index = this.readerSelectionStartChunk; index <= this.readerSelectionEndChunk; index++) {
         const page = this.readerContinuousV2Layout(index, this.contentPages[index] || '');
         if (!page) continue;
+        if (page) {
+          // 划线、笔记放在最前面。
+          menuItems.unshift({ id: TextMenuItemId.of(READER_ANNOTATE_NOTE_MENU_ITEM_ID), content: '笔记' });
+          menuItems.unshift({ id: TextMenuItemId.of(READER_ANNOTATE_MENU_ITEM_ID), content: '划线' });
+        }
         const part = page.selectionText.substring(index === this.readerSelectionStartChunk ?
           this.readerDesktopSelectionStart : 0, index === this.readerSelectionEndChunk ?
           this.readerDesktopSelectionEnd : page.selectionText.length);
+        const annotate = item.id.equals(TextMenuItemId.of(READER_ANNOTATE_MENU_ITEM_ID));
+        if (page && (annotate || item.id.equals(TextMenuItemId.of(READER_ANNOTATE_NOTE_MENU_ITEM_ID)))) {
+          const selectionStart = range.start ?? 0;
+          const selectionEnd = range.end ?? 0;
+          this.scheduleReaderTextSelectionClear();
+          this.createReaderAnnotationFromSelection(page, chapterIndex, selectionStart, selectionEnd, !annotate);
+          return true;
+        }
         if (selected && part && !selected.endsWith('\n') && !part.startsWith('\n')) selected += '\n';
         selected += part;
       }
@@ -17604,6 +18166,10 @@ ${leading}` : leading;
   scheduleReaderTextSelectionClear(): void {
     if (this.readerTextSelectionClearPending) return;
     this.readerTextSelectionClearPending = true;
+      Button('划线').fontColor(this.accentColor()).backgroundColor(Color.Transparent)
+        .id('reader_selection_annotate').onClick(() => { this.createReaderAnnotationFromDesktopSelection(false); })
+      Button('笔记').fontColor(this.accentColor()).backgroundColor(Color.Transparent)
+        .id('reader_selection_annotate_note').onClick(() => { this.createReaderAnnotationFromDesktopSelection(true); })
     const serial = ++this.readerTextSelectionSerial;
     setTimeout(() => {
       // The flag must be released even when a newer selection superseded this clear, otherwise the
@@ -18346,7 +18912,7 @@ ${leading}` : leading;
           .lineBreakStrategy(LineBreakStrategy.GREEDY)
           .copyOption(CopyOptions.LocalDevice)
           .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
-          .editMenuOptions(this.readerTextEditMenuOptions(() => page.selectionText))
+          .editMenuOptions(this.readerTextEditMenuOptions(() => page.selectionText, page, chapterIndex))
           .onCopy(() => this.scheduleReaderTextSelectionClear())
           .selectedBackgroundColor(Color.Transparent)
           .width('100%')
@@ -18373,7 +18939,7 @@ ${leading}` : leading;
           .lineBreakStrategy(LineBreakStrategy.GREEDY)
           .copyOption(CopyOptions.LocalDevice)
           .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
-          .editMenuOptions(this.readerTextEditMenuOptions(() => page.selectionText))
+          .editMenuOptions(this.readerTextEditMenuOptions(() => page.selectionText, page, chapterIndex))
           .onCopy(() => this.scheduleReaderTextSelectionClear())
           .width('100%')
           .hitTestBehavior(HitTestMode.None)
@@ -18446,7 +19012,9 @@ ${leading}` : leading;
     const page = this.readerV2Page(this.currentChapterIndex, pageIndex, this.pagedContentText);
     const snapshot = this.readerV2ActiveSnapshot || this.buildReaderV2Snapshot();
     const hit: ReaderV2TapResult = ReaderV2GestureRouter.hitTest(page, snapshot, xPx, yPx);
-    return hit.kind === 'action' ? hit.marker : '';
+    if (hit.kind === 'action') return hit.marker;
+    const annotationId = page ? ReaderV2AnnotationPainter.hitTest(page, xPx, yPx, this.toMeasurePx(10)) : 0;
+    return annotationId > 0 ? `${READER_ANNOTATION_MARKER_PREFIX}${annotationId}` : '';
   }
 
   readerV2LocatedPagePoint(xVp: number, yVp: number): number[] {
@@ -18718,7 +19286,12 @@ ${leading}` : leading;
   readerContinuousV2Layout(index: number, text: string, chapterIndex: number = -1): ReaderV2PageLayout | null {
     if (!text || this.pageViewWidth <= 0) return null;
     const request = this.readerContinuousV2Request(index, text, chapterIndex);
-    return this.readerContinuousV2Layouts.get(request.key) || null;
+    const layout = this.readerContinuousV2Layouts.get(request.key) || null;
+    if (layout && layout.annotationStamp !== this.readerAnnotationStamp()) {
+      this.decorateReaderV2Page(layout, this.readerContinuousV2Documents.get(layout.identity), request.chapter,
+        request.source, this.readerContinuousV2Sources.get(layout.identity) ?? -1);
+    }
+    return layout;
   }
 
   queueReaderContinuousLayout(request: ReaderContinuousLayoutRequest): void {
@@ -19372,7 +19945,9 @@ ${leading}` : leading;
     if (!layout) return '';
     const action = layout.actionAt(located[1], located[2], this.toMeasurePx(this.readerSourceActionHitSlopX),
       this.toMeasurePx(this.readerSourceActionHitSlopY));
-    return action ? action.marker : '';
+    if (action) return action.marker;
+    const annotationId = ReaderV2AnnotationPainter.hitTest(layout, located[1], located[2], this.toMeasurePx(10));
+    return annotationId > 0 ? `${READER_ANNOTATION_MARKER_PREFIX}${annotationId}` : '';
   }
 
   selectReaderContinuousV2TextAtPoint(globalX: number, globalY: number, serial: number, attempt: number): void {

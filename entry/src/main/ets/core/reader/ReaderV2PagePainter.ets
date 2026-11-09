@@ -3,6 +3,7 @@ import common2D from '@ohos.graphics.common2D';
 import graphicsText from '@ohos.graphics.text';
 import { ReaderFontStroke } from './ReaderFontStroke';
 import { ReaderCommentBubblePainter } from './ReaderCommentBubble';
+import { ReaderV2AnnotationPainter } from './ReaderV2AnnotationPainter';
 import {
   ReaderV2PageFragment,
   ReaderV2PageLayout,
@@ -35,6 +36,7 @@ export class ReaderV2PagePainter {
         canvas.restore();
       }
     }
+    const hasAnnotations = page.annotationMarks.length > 0;
     for (const fragment of page.fragments) {
       if (!fragment.paragraph) continue;
       canvas.save();
@@ -44,12 +46,15 @@ export class ReaderV2PagePainter {
         right: fragment.clipRect.right,
         bottom: fragment.clipRect.bottom
       }, drawing.ClipOp.INTERSECT, true);
+      if (hasAnnotations) ReaderV2AnnotationPainter.paintBackgrounds(canvas, fragment, page.annotationMarks);
       ReaderV2PagePainter.drawRange(canvas, fragment, selectionStart, selectionEnd, selectionColor);
       ReaderV2PagePainter.drawRange(canvas, fragment, highlightStart, highlightEnd, highlightColor);
       fragment.paragraph.paint(canvas, fragment.paragraphX, fragment.paragraphY);
       ReaderFontStroke.paint(canvas, fragment.fontStrokes, fragment.paragraphX, fragment.paragraphY);
+      if (hasAnnotations) ReaderV2AnnotationPainter.paintTextColors(canvas, fragment, page.annotationMarks);
       canvas.restore();
     }
+    if (hasAnnotations) ReaderV2AnnotationPainter.paintLines(canvas, page);
   }
 
   // Brush.setColor(number) only exists from API 18; the colour-object overload works on every supported API.

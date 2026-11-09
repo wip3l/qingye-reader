@@ -7,6 +7,7 @@ import { Book, BookChapter, BookSource, BookGroup, Bookmark, SearchKeyword, Expl
 import { Context } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import { CloudSyncChangeTracker } from '../../account/CloudSyncChangeTracker';
+import { BookAnnotation, BookAnnotationStyles } from '../reader/BookAnnotation';
 import { BookIdentity } from '../../utils/BookIdentity';
 import { ReadStatsPendingUpload, ReadStatsSyncPayload, ReadStatsSyncChange,
   ReadStatsSyncAck } from '../../core/stats/ReadStatsSyncModels';
@@ -389,6 +390,26 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     `);
 
     await this.store.executeSql(`
+      CREATE TABLE IF NOT EXISTS book_annotations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bookUrl TEXT DEFAULT '',
+        bookName TEXT DEFAULT '',
+        chapterIndex INTEGER DEFAULT 0,
+        chapterName TEXT DEFAULT '',
+        startPos INTEGER DEFAULT 0,
+        endPos INTEGER DEFAULT 0,
+        quote TEXT DEFAULT '',
+        prefix TEXT DEFAULT '',
+        suffix TEXT DEFAULT '',
+        color TEXT DEFAULT '',
+        style TEXT DEFAULT '',
+        note TEXT DEFAULT '',
+        createTime INTEGER DEFAULT 0,
+        updateTime INTEGER DEFAULT 0
+      )
+    `);
+
+    await this.store.executeSql(`
       CREATE TABLE IF NOT EXISTS schema_meta (
         key TEXT PRIMARY KEY,
         value INTEGER DEFAULT 0
@@ -450,6 +471,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       'CREATE INDEX IF NOT EXISTS idx_book_chapters_book_order ON book_chapters(bookUrl, chapterIndex)');
     await this.store.executeSql(
       'CREATE INDEX IF NOT EXISTS idx_bookmarks_book_time ON bookmarks(bookUrl, createTime DESC)');
+    await this.store.executeSql(
+      'CREATE INDEX IF NOT EXISTS idx_book_annotations_book ON book_annotations(bookUrl, chapterIndex)');
     await this.store.executeSql(
       'CREATE INDEX IF NOT EXISTS idx_books_read_time ON books(durChapterTime DESC)');
     await this.store.executeSql(
@@ -987,6 +1010,11 @@ export class AppDatabase implements BookSourceRuntimePersistence {
           bookAuthor: book.author
         }, sourceBookmarks);
 
+        // 划线随书迁移；目标书原有的划线保留（同一本书换回来时不丢）。
+        const sourceAnnotations = new relationalStore.RdbPredicates('book_annotations');
+        sourceAnnotations.equalTo('bookUrl', oldBookUrl);
+        await transaction.update({ bookUrl: book.bookUrl, bookName: book.name }, sourceAnnotations);
+
         for (const table of ['book_chapters', 'book_contents', 'books']) {
           const oldPredicates = new relationalStore.RdbPredicates(table);
           oldPredicates.equalTo('bookUrl', oldBookUrl);
@@ -1105,6 +1133,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       console.warn('删除书籍的离线音频失败:', e);
     }
     await this.deleteBookBookmarks(bookUrl);
+    await this.deleteBookAnnotations(bookUrl);
     if (existing?.origin && existing.origin !== 'local') {
       CloudSyncChangeTracker.markDataChanged();
     }
@@ -1245,6 +1274,90 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     const predicates = new relationalStore.RdbPredicates('bookmarks');
     predicates.equalTo('bookUrl', bookUrl);
     await this.store.delete(predicates);
+  }
+
+  async getBookAnnotations(bookUrl: string): Promise<BookAnnotation[]> {
+    const annotations: BookAnnotation[] = [];
+    if (!this.store || !bookUrl) return annotations;
+    const predicates = new relationalStore.RdbPredicates('book_annotations');
+    predicates.equalTo('bookUrl', bookUrl);
+    predicates.orderByAsc('chapterIndex');
+    predicates.orderByAsc('startPos');
+    const resultSet = await this.store.query(predicates, []);
+    try {
+      while (resultSet.goToNextRow()) {
+        annotations.push(this.resultSetToBookAnnotation(resultSet));
+      }
+    } finally {
+      resultSet.close();
+    }
+    return annotations;
+  }
+
+  async insertBookAnnotation(annotation: BookAnnotation): Promise<number> {
+    if (!this.store || !annotation.bookUrl) return 0;
+    return await this.store.insert('book_annotations', this.bookAnnotationBucket(annotation));
+  }
+
+  async updateBookAnnotation(annotation: BookAnnotation): Promise<void> {
+    if (!this.store || annotation.id <= 0) return;
+    const predicates = new relationalStore.RdbPredicates('book_annotations');
+    predicates.equalTo('id', annotation.id);
+    await this.store.update(this.bookAnnotationBucket(annotation), predicates);
+  }
+
+  async deleteBookAnnotationsById(ids: number[]): Promise<void> {
+    const validIds = ids.filter((id: number) => id > 0);
+    if (!this.store || validIds.length === 0) return;
+    const predicates = new relationalStore.RdbPredicates('book_annotations');
+    predicates.in('id', validIds);
+    await this.store.delete(predicates);
+  }
+
+  async deleteBookAnnotations(bookUrl: string): Promise<void> {
+    if (!this.store || !bookUrl) return;
+    const predicates = new relationalStore.RdbPredicates('book_annotations');
+    predicates.equalTo('bookUrl', bookUrl);
+    await this.store.delete(predicates);
+  }
+
+  private bookAnnotationBucket(annotation: BookAnnotation): relationalStore.ValuesBucket {
+    return {
+      bookUrl: annotation.bookUrl,
+      bookName: annotation.bookName,
+      chapterIndex: annotation.chapterIndex,
+      chapterName: annotation.chapterName,
+      startPos: annotation.start,
+      endPos: annotation.end,
+      quote: annotation.quote,
+      prefix: annotation.prefix,
+      suffix: annotation.suffix,
+      color: annotation.color,
+      style: annotation.style,
+      note: annotation.note,
+      createTime: annotation.createTime,
+      updateTime: annotation.updateTime
+    };
+  }
+
+  private resultSetToBookAnnotation(resultSet: relationalStore.ResultSet): BookAnnotation {
+    const annotation = new BookAnnotation();
+    annotation.id = resultSet.getLong(resultSet.getColumnIndex('id'));
+    annotation.bookUrl = resultSet.getString(resultSet.getColumnIndex('bookUrl'));
+    annotation.bookName = resultSet.getString(resultSet.getColumnIndex('bookName'));
+    annotation.chapterIndex = resultSet.getLong(resultSet.getColumnIndex('chapterIndex'));
+    annotation.chapterName = resultSet.getString(resultSet.getColumnIndex('chapterName'));
+    annotation.start = resultSet.getLong(resultSet.getColumnIndex('startPos'));
+    annotation.end = resultSet.getLong(resultSet.getColumnIndex('endPos'));
+    annotation.quote = resultSet.getString(resultSet.getColumnIndex('quote'));
+    annotation.prefix = resultSet.getString(resultSet.getColumnIndex('prefix'));
+    annotation.suffix = resultSet.getString(resultSet.getColumnIndex('suffix'));
+    annotation.color = BookAnnotationStyles.normalizeColor(resultSet.getString(resultSet.getColumnIndex('color')));
+    annotation.style = BookAnnotationStyles.normalizeStyle(resultSet.getString(resultSet.getColumnIndex('style')));
+    annotation.note = resultSet.getString(resultSet.getColumnIndex('note'));
+    annotation.createTime = resultSet.getLong(resultSet.getColumnIndex('createTime'));
+    annotation.updateTime = resultSet.getLong(resultSet.getColumnIndex('updateTime'));
+    return annotation;
   }
 
   async moveBookBookmarks(fromBookUrl: string, toBookUrl: string, bookName: string, bookAuthor: string): Promise<void> {
