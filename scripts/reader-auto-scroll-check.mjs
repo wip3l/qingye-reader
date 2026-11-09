@@ -66,7 +66,7 @@ assert.equal(clock.advance(120032, 40, 60, true), 0.64, 'new speed and font size
 clock.reset();
 assert.equal(clock.advance(130000, 60, 30, true), 0, 'resume starts a fresh clock');
 assert.equal(clock.advance(129000, 60, 30, true), 0, 'clock moving backwards cannot reverse text');
-assert.deepEqual([NaN, 0, 7, 100].map(Clock.normalizeSpeed), [20, 6, 8, 60]);
+assert.deepEqual([NaN, 0, 7, 100, 150].map(Clock.normalizeSpeed), [20, 6, 8, 100, 100]);
 await Promise.all([Store.save({}, 12), Store.save({}, 32), Store.save({}, 60)]);
 assert.deepEqual(persisted, [12, 32, 60], 'concurrent saves stay ordered');
 assert.equal(await Store.load({}), 60, 'reopen gets latest saved speed');

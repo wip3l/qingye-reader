@@ -3,7 +3,7 @@ export class ReaderAutoScrollClock {
   private lastFrame: number = -1;
 
   static normalizeSpeed(value: number): number {
-    return Number.isFinite(value) ? Math.max(6, Math.min(60, Math.round(value / 2) * 2)) : 20;
+    return Number.isFinite(value) ? Math.max(6, Math.min(100, Math.round(value / 2) * 2)) : 20;
   }
 
   reset(): void {
