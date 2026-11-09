@@ -15,6 +15,29 @@ export class SyncApiError extends Error {
   }
 }
 
+const LONE_SURROGATE_SOURCE = '[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]';
+const HAS_JSONB_UNSAFE = new RegExp(`\\u0000|${LONE_SURROGATE_SOURCE}`);
+const LONE_SURROGATE = new RegExp(LONE_SURROGATE_SOURCE, 'g');
+
+/**
+ * PostgreSQL jsonb rejects U+0000 (22P05) and unpaired UTF-16 surrogates (22P02). Such
+ * characters come from mis-decoded local files or book-source scripts; left in place they
+ * fail the whole sync transaction on every retry. Drop NUL and replace lone surrogates.
+ */
+export function jsonbSafe<T>(value: T): T {
+  if (typeof value === 'string') {
+    return (HAS_JSONB_UNSAFE.test(value)
+      ? value.replace(/\u0000/g, '').replace(LONE_SURROGATE, '\ufffd') : value) as T;
+  }
+  if (Array.isArray(value)) return value.map(item => jsonbSafe(item)) as T;
+  if (value && typeof value === 'object') {
+    // fromEntries defines own properties, so a "__proto__" key stays data.
+    return Object.fromEntries(Object.entries(value).map(([key, item]) =>
+      [jsonbSafe(key), jsonbSafe(item)])) as T;
+  }
+  return value;
+}
+
 export interface SyncOperationBody {
   opId?: string;
   entityType?: string;
@@ -385,14 +408,14 @@ export function normalizeOperation(source: SyncOperationBody,
     if (!source.payload || typeof source.payload !== 'object' || Array.isArray(source.payload)) {
       throw new SyncApiError(400, 'INVALID_SYNC_PAYLOAD', '同步数据内容无效');
     }
-    const serialized = JSON.stringify(source.payload);
+    payload = jsonbSafe(source.payload);
+    const serialized = JSON.stringify(payload);
     const maxPayloadBytes = entityType === 'book_source' ? maxBookSourceBytes : MAX_PAYLOAD_BYTES;
     payloadBytes = Buffer.byteLength(serialized, 'utf8');
     if (maxPayloadBytes !== null && payloadBytes > maxPayloadBytes) {
       throw new SyncApiError(413, 'SYNC_PAYLOAD_TOO_LARGE',
         `单项同步数据不能超过 ${Math.round(maxPayloadBytes / 1024)}KB`);
     }
-    payload = source.payload;
   }
   return {
     opId,

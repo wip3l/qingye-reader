@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { SyncApiError } from './sync.js';
+import { SyncApiError, jsonbSafe } from './sync.js';
 
 interface ReadingStatsDb { query: PoolClient['query']; }
 export interface ReadingStatsPayload {
@@ -37,8 +37,10 @@ const MAX_BYTES = 512 * 1024 * 1024;
 
 function invalid(): never { throw new SyncApiError(400, 'INVALID_READING_STATS', '阅读统计同步数据无效'); }
 function text(input: unknown, max: number, required = false): string {
-  if (typeof input !== 'string' || input.length > max || (required && !input.trim())) invalid();
-  return input;
+  if (typeof input !== 'string') invalid();
+  const value = jsonbSafe(input);
+  if (value.length > max || (required && !value.trim())) invalid();
+  return value;
 }
 function integer(input: unknown, min: number, max: number): number {
   if (typeof input !== 'number' || !Number.isSafeInteger(input) || input < min || input > max) invalid();

@@ -34,6 +34,14 @@ test('reading stats validate identities, timestamps, bounds and portable metadat
   assert.equal(deletion.operations[0]!.payload, null);
 });
 
+test('reading stats clean text jsonb cannot store', () => {
+  const op = operation();
+  Object.assign(op.payload, { name: '书\u0000名', author: '作\ud83d者' });
+  const cleaned = normalizeReadingStats(request(phone, [op])).operations[0]!.payload!;
+  assert.equal(cleaned.name, '书名');
+  assert.equal(cleaned.author, '作\ufffd者');
+});
+
 test('PostgreSQL exchange: two devices, replay, pagination, tombstones, privacy and account isolation', async t => {
   const db = new PGlite(); t.after(() => db.close());
   for (const migration of ['001_account_commerce.sql', '005_data_sync.sql', '006_sync_device_metadata.sql', '025_reading_statistics.sql']) {

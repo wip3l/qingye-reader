@@ -83,6 +83,39 @@ test('non-book-source payloads keep the 64KB limit', () => {
     error.code === 'SYNC_PAYLOAD_TOO_LARGE');
 });
 
+test('payload strings jsonb cannot store are cleaned instead of failing the batch', async t => {
+  const normalized = normalizeOperation({
+    opId: OP_ID,
+    entityType: 'bookmark',
+    entityId: 'bookmark_test',
+    operation: 'upsert',
+    baseRevision: 0,
+    payload: { title: 'a\u0000b', note: ['x\ud83d', '\ude00y', '😀'], ['k\u0000']: 1 }
+  });
+  const payload = normalized.payload as Record<string, unknown>;
+  assert.equal(payload.title, 'ab');
+  assert.deepEqual(payload.note, ['x\ufffd', '\ufffdy', '😀']);
+  assert.equal(payload.k, 1);
+  assert.equal(normalized.payloadBytes, Buffer.byteLength(JSON.stringify(payload), 'utf8'));
+  const db = new PGlite(); t.after(() => db.close());
+  const stored = await db.query<{ j: unknown }>('SELECT $1::jsonb AS j', [JSON.stringify(payload)]);
+  assert.deepEqual(stored.rows[0]!.j, payload);
+});
+
+test('a "__proto__" payload key stays data after cleaning', () => {
+  const normalized = normalizeOperation({
+    opId: OP_ID,
+    entityType: 'bookmark',
+    entityId: 'bookmark_test',
+    operation: 'upsert',
+    baseRevision: 0,
+    payload: JSON.parse('{"__proto__":{"polluted":"a\\u0000"}}') as object
+  });
+  const payload = normalized.payload as Record<string, unknown>;
+  assert.equal(Object.getPrototypeOf(payload), Object.prototype);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(payload, '__proto__')?.value, { polluted: 'a' });
+});
+
 test('local reading progress payloads remain metadata-only JSON', () => {
   const normalized = normalizeOperation({
     opId: OP_ID,

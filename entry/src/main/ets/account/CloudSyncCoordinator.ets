@@ -28,6 +28,7 @@ import {
 import { AppDatabase } from '../model/data/AppDatabase';
 import { Book, BookGroup, BookInfoRule, BookListRule, BookSource, Bookmark, ContentRule, ExploreRule, ReadConfig, SearchRule, TocRule } from '@legado/sourceengine';
 import { ReaderSettingsStore } from '../utils/ReaderSettingsStore';
+import { jsonbSafeJson } from '../utils/JsonbSafeText';
 import { ReaderPreferencesSync, ReaderPreferencesSyncPayload } from './ReaderPreferencesSync';
 import {
   ReaderReplaceRule,
@@ -1501,7 +1502,7 @@ export class CloudSyncCoordinator {
     const result = new LocalSyncEntity();
     result.entityType = entityType;
     result.entityId = entityId;
-    result.payloadJson = JSON.stringify(payload);
+    result.payloadJson = jsonbSafeJson(JSON.stringify(payload));
     result.contentHash = CloudSyncCoordinator.digest(result.payloadJson);
     result.localKey = localKey;
     result.label = label;
