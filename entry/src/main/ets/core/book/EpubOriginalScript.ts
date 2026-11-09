@@ -127,7 +127,7 @@ export class EpubOriginalScript {
   }
 
   /**
-   * 双页中缝的书脊阴影，与应用排版 ReadBook.readerDoublePageSpine 同一组色标。挂在 html 上固定在屏幕中间，
+   * 双页中缝的书脊阴影，与应用排版 ReaderSpreadSpine 同一组色标。挂在 html 上固定在屏幕中间，
    * 不随横向翻页移动，也在 body 之外，夜间整页反色不会把它变成亮条。
    */
   static spineStyle(dark: boolean): string {

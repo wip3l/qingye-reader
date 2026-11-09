@@ -1,6 +1,7 @@
 import { PdfView, pdfViewManager, pdfService } from '@kit.PDFKit';
 import { PdfSuperResolutionOverlay } from './PdfSuperResolutionOverlay';
 import { ReaderNightImage } from '../../core/reader/ReaderNightImage';
+import { ReaderSpreadSpine } from './ReaderSpreadSpine';
 
 const SCROLL_THUMB_HIDE_MS: number = 1200;
 const SCROLL_THUMB_MIN_HEIGHT: number = 40;
@@ -18,6 +19,8 @@ export struct PdfReaderView {
   @Prop layoutRevision: number = 0;
   /** 夜间页面：original 原样、dim 调暗、invert 反色（与 ReaderNightImage 同值）；页面在非夜间时传原样。 */
   @Prop nightMode: string = ReaderNightImage.ORIGINAL;
+  /** 双页版面：屏幕中间画中缝阴影（整屏铺满，贯穿状态栏区域）。 */
+  @Prop spreadSpine: boolean = false;
   @State currentPage: number = 0;
   @State loadedPageCount: number = 0;
   @State viewportRevision: number = 0;
@@ -38,7 +41,8 @@ export struct PdfReaderView {
    * 横向拖动留给 PDF 自己平移，换页或改版面后恢复；缩放手势本身仍转发，翻页层据此放弃这次拖动。
    */
   onTouchObserved?: (event: TouchEvent) => void;
-  private zoomedOnPage: boolean = false;
+  // 缩放后页面可能被平移，屏幕中线不再是两页交界，中缝先隐藏，换页或改版面后恢复。
+  @State private zoomedOnPage: boolean = false;
   onEnhancementStatus: (text: string) => void = (_text: string): void => {};
   private alive: boolean = false;
   private loaded: boolean = false;
@@ -222,6 +226,16 @@ export struct PdfReaderView {
       .invert(this.nightMode === ReaderNightImage.INVERT ? ReaderNightImage.INVERT_AMOUNT : 0)
       .hueRotate(this.nightMode === ReaderNightImage.INVERT ? 180 : 0)
       .brightness(this.nightMode === ReaderNightImage.DIM ? ReaderNightImage.DIM_BRIGHTNESS : 1)
+      // 放在夜间滤镜之外：反色不会把阴影翻成亮条；反色后页面是深色，按深色加深。
+      if (this.spreadSpine && this.loadedPageCount > 1 && !this.zoomedOnPage) {
+        Stack() {
+          ReaderSpreadSpine({ dark: this.nightMode === ReaderNightImage.INVERT })
+            .height('100%')
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.None)
+      }
       if (this.loadedPageCount > 1 && this.viewWidth > SCROLL_THUMB_TOUCH_WIDTH) {
         this.scrollThumb()
       }

@@ -1,6 +1,7 @@
 import { ReaderQuickJumpModel } from '../core/reader/ReaderQuickJumpModel';
 import { HomeRoute } from '../utils/HomeRoute';
 import { ReaderBrightnessControl } from '../components/reader/ReaderBrightnessControl';
+import { ReaderSpreadSpine, READER_SPREAD_SPINE_WIDTH } from '../components/reader/ReaderSpreadSpine';
 import { ReaderBrightnessSession } from '../utils/ReaderBrightnessSession';
 import { ReaderQuickJumpContent } from '../components/reader/ReaderQuickJumpContent';
 import {
@@ -259,8 +260,6 @@ const READER_DOUBLE_PAGE_DIVIDER_WIDTH = 1;
 // enables the spread there. Near-square viewports that are wide enough for two readable leaves also count;
 // tablet portrait (~0.6–0.7) and split-screen halves stay single.
 const READER_SPREAD_MIN_WIDTH_VP = 600;
-// 双页中缝的书脊阴影宽度：只画在 1vp 分隔位上方，不占排版宽度，分页结果不变。
-const READER_DOUBLE_PAGE_SPINE_WIDTH = 44;
 const READER_SPREAD_MIN_ASPECT = 0.8;
 // 推页接缝阴影的宽度（vp），以及被压住那页在完全盖住时浅纱的不透明度。
 const PUSH_PAGE_TURN_SHADOW_SIZE = 18;
@@ -3764,6 +3763,10 @@ struct ReadBookPage {
       .hitTestBehavior(HitTestMode.Default)
       .renderGroup(this.shelfMotionRasterized)
 
+      if (this.readerStatusBarSpineHeight() > 0) {
+        this.readerStatusBarSpine()
+      }
+
       // 页眉放在全屏层，负位置可以越过正文安全区，且不会被正文容器裁掉。
       if (this.shouldRenderPrimaryReaderContent() && this.isReaderHeaderVisible()) {
         Column() {
@@ -6991,16 +6994,22 @@ struct ReadBookPage {
     return width >= READER_SPREAD_MIN_WIDTH_VP && width / height >= READER_SPREAD_MIN_ASPECT;
   }
 
-  /** 双页中缝：像摊开的书，两页朝中间逐渐压暗，中缝最深；深色背景加大不透明度才看得出来。 */
+  /**
+   * 双页中缝：画在 1vp 分隔位上方，不占排版宽度。仿真、叠页、推页的纸张铺满全屏、正文列在状态栏下方起排，
+   * 这里再向上补一段盖住状态栏区域，让中缝随纸张一起贯穿到屏幕顶端；其余翻页由根层的 readerStatusBarSpine 补。
+   */
   @Builder
   readerDoublePageSpine() {
     Stack() {
-      Column()
-        .width(READER_DOUBLE_PAGE_SPINE_WIDTH)
+      ReaderSpreadSpine({ dark: this.readerDoublePageSpineDark() })
         .height('100%')
-        .position({ x: (READER_DOUBLE_PAGE_DIVIDER_WIDTH - READER_DOUBLE_PAGE_SPINE_WIDTH) / 2, y: 0 })
-        .linearGradient({ angle: 90, colors: this.readerDoublePageSpineColors() })
-        .hitTestBehavior(HitTestMode.None)
+        .position({ x: (READER_DOUBLE_PAGE_DIVIDER_WIDTH - READER_SPREAD_SPINE_WIDTH) / 2, y: 0 })
+      if (this.getReaderPageContentTopPadding() > 0) {
+        ReaderSpreadSpine({ dark: this.readerDoublePageSpineDark() })
+          .height(this.getReaderPageContentTopPadding())
+          .position({ x: (READER_DOUBLE_PAGE_DIVIDER_WIDTH - READER_SPREAD_SPINE_WIDTH) / 2,
+            y: -this.getReaderPageContentTopPadding() })
+      }
     }
     .width(READER_DOUBLE_PAGE_DIVIDER_WIDTH)
     .height('100%')
@@ -7008,14 +7017,33 @@ struct ReadBookPage {
     .hitTestBehavior(HitTestMode.None)
   }
 
-  readerDoublePageSpineColors(): Array<[ResourceColor, number]> {
+  readerDoublePageSpineDark(): boolean {
     const theme = this.currentReaderTheme();
-    const dark = theme.contentTone === 'dark' || theme.contentTone === 'light' ?
+    return theme.contentTone === 'dark' || theme.contentTone === 'light' ?
       theme.contentTone === 'dark' : this.isDarkHexColor(theme.backgroundColor);
-    const k = dark ? 2.6 : 1;
-    const shade = (alpha: number): string => `rgba(0,0,0,${Math.min(0.4, alpha * k).toFixed(3)})`;
-    return [[shade(0), 0], [shade(0.02), 0.22], [shade(0.06), 0.42], [shade(0.11), 0.5],
-      [shade(0.05), 0.57], [shade(0.015), 0.76], [shade(0), 1]];
+  }
+
+  /** 滑动、淡入、无动画时正文层在状态栏下方起算，状态栏区域那段中缝画在根层，不随翻页移动。 */
+  readerStatusBarSpineHeight(): number {
+    if (!this.shouldRenderPrimaryReaderContent() || this.isReaderComicModeActive() ||
+      this.readerExtendToStatusBar || !this.isLandscapeDoublePageActive() ||
+      this.getReaderPageContentTopPadding() > 0) {
+      return 0;
+    }
+    return Math.max(0, this.getReaderTopSafePadding());
+  }
+
+  @Builder
+  readerStatusBarSpine() {
+    Stack() {
+      ReaderSpreadSpine({ dark: this.readerDoublePageSpineDark() })
+        .height('100%')
+    }
+    .width('100%')
+    .height(this.readerStatusBarSpineHeight())
+    .position({ x: 0, y: 0 })
+    .opacity(this.readerInitialPageReady ? 1 : 0)
+    .hitTestBehavior(HitTestMode.None)
   }
 
   isLandscapeDoublePageActive(): boolean {

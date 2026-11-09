@@ -13,6 +13,7 @@ import { AppSpacing } from '../../theme/AppSpacing';
 import { ReaderImageMarker } from '../../core/book/ReaderImageMarker';
 import { ReaderComicProcessing } from '../../core/reader/ReaderComicProcessing';
 import { ReaderComicProcessingBadge } from './ReaderComicProcessingBadge';
+import { ReaderSpreadSpine } from './ReaderSpreadSpine';
 import {
   ReaderComicImageItem, ReaderComicImageSizes, ReaderComicInfoBadge, ReaderComicRetryRegistry, ReaderPendingImageHint
 } from './ReaderComicView';
@@ -913,6 +914,11 @@ export struct ReaderComicPagedView {
       .height(this.viewH())
       .backgroundColor(this.surfaceColor)
       .id(this.snapshotId(this.relativeSpread(chapterIndex, spread)))
+      // 双页中缝：漫画整屏铺满，中缝从屏幕顶端贯穿到底；放在截图节点外，翻页纹理自己画中缝，不会叠两道。
+      if (this.chapterSpreadPages(chapterIndex, spread).length === 2) {
+        ReaderSpreadSpine({ dark: this.darkMode })
+          .height(this.viewH())
+      }
       if (this.animationType === ReaderPageTurnAnimation.PUSH) {
         this.pushShade(this.relativeSpread(chapterIndex, spread))
       }

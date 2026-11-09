@@ -1412,6 +1412,7 @@ struct PdfReadBookPage {
             superResolution: this.superResolution && this.superResolutionAccess === ReaderComicSuperResolutionAccess.READY,
             showOriginal: this.showOriginal, enhancementSuspended: !this.visible || this.activePanel === 'search',
             layoutRevision: this.layoutRevision, nightMode: this.viewNightMode(),
+            spreadSpine: this.doublePage && this.wideWindow,
             onEnhancementStatus: (text: string): void => { this.enhancementStatus = text; this.refreshAiAccess(); },
             onReady: (count: number, page: number): void => { this.documentReady(count, page); },
             onPage: (index: number): void => { this.onPage(index); },
