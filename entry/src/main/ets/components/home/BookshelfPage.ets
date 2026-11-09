@@ -3927,8 +3927,8 @@ export struct BookshelfPage {
     return wan >= 100 ? `${Math.round(wan)}万字` : `${Math.round(wan * 10) / 10}万字`;
   }
 
-  /** 封面角标没放“书籍更新标识”时，在最新章节标签旁补一个“新”。 */
-  shouldShowLooseUpdateBadge(book: Book): boolean {
+  /** 封面角标没放“书籍更新标识”时，在宽松/紧凑卡片右上角补一个“新”。 */
+  shouldShowShelfCardUpdateCorner(book: Book): boolean {
     return this.hasShelfBookUpdate(book) &&
       BookshelfCoverBadgeSettings.location(this.bookshelfCoverBadges, 'update') < 0;
   }
@@ -3960,20 +3960,26 @@ export struct BookshelfPage {
         .alignItems(VerticalAlign.Center)
         .flexShrink(1)
       }
-      if (this.shouldShowLooseUpdateBadge(book)) {
-        Text('新')
-          .fontSize(AppFontSize.MICRO)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(ThemeRuntime.onAccentColor())
-          .height(16)
-          .padding({ left: 5, right: 5 })
-          .borderRadius(8)
-          .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
-          .flexShrink(0)
-      }
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
+  }
+
+  /** 列表卡片右上角的“新”：贴住卡片角，外侧圆角跟卡片一致，只在内侧左下留圆角。 */
+  @Builder
+  shelfCardUpdateCorner() {
+    Text('新')
+      .fontSize(AppFontSize.MICRO)
+      .fontWeight(FontWeight.Medium)
+      .fontColor(ThemeRuntime.onAccentColor())
+      .height(this.shelfCardUpdateCornerHeight())
+      .padding({ left: 8, right: 8 })
+      .borderRadius({ topRight: ThemeRuntime.mediumRadius(), bottomLeft: 10 })
+      .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
+  }
+
+  shelfCardUpdateCornerHeight(): number {
+    return 20;
   }
 
   // --- 书架行排版尺寸 ---------------------------------------------------------
@@ -5967,137 +5973,155 @@ export struct BookshelfPage {
 
   @Builder
   compactBookContent(book: Book, pageKey: string) {
-    Column({ space: AppSpacing.MD }) {
-      Row() {
-        // 封面高度 = 信息块高度，顶部对齐书名行、底部对齐进度条底部。
-        this.coverView(book, this.shelfCoverWidth(this.shelfCompactInfoHeight()),
-          this.shelfCompactInfoHeight(), ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false))
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Column({ space: AppSpacing.MD }) {
+        Row() {
+          // 封面高度 = 信息块高度，顶部对齐书名行、底部对齐进度条底部。
+          this.coverView(book, this.shelfCoverWidth(this.shelfCompactInfoHeight()),
+            this.shelfCompactInfoHeight(), ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false))
 
-        Column({ space: this.shelfRowSpace() }) {
-          Row({ space: AppSpacing.SM }) {
-            Text(this.shelfTileBookDisplayName(book))
-              .fontSize(AppFontSize.BODY_LARGE)
-              .lineHeight(this.shelfTitleLineHeight())
-              .fontWeight(FontWeight.Bold)
-              .fontColor(this.primaryTextColor())
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
+          Column({ space: this.shelfRowSpace() }) {
+            Row({ space: AppSpacing.SM }) {
+              Text(this.shelfTileBookDisplayName(book))
+                .fontSize(AppFontSize.BODY_LARGE)
+                .lineHeight(this.shelfTitleLineHeight())
+                .fontWeight(FontWeight.Bold)
+                .fontColor(this.primaryTextColor())
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+                // 右上角“新”标识会压到书名末尾，有标识时让出位置。
+                .margin({ right: this.shouldShowShelfCardUpdateCorner(book) ? 18 : 0 })
 
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-
-          Text(this.getShelfAuthorText(book))
-            .fontSize(AppFontSize.BODY)
-            .lineHeight(this.shelfTextLineHeight())
-            .fontColor(this.secondaryTextColor())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
             .width('100%')
+            .alignItems(VerticalAlign.Center)
 
-          if (this.getShelfUpdateLineText(book)) {
-            Text(this.getShelfUpdateLineText(book))
+            Text(this.getShelfAuthorText(book))
               .fontSize(AppFontSize.BODY)
               .lineHeight(this.shelfTextLineHeight())
               .fontColor(this.secondaryTextColor())
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
-          }
 
-          // 恒定的 Blank：某本书没有更新行时由它吸收多余空间，尾部仍被顶到底部。
-          Blank()
+            if (this.getShelfUpdateLineText(book)) {
+              Text(this.getShelfUpdateLineText(book))
+                .fontSize(AppFontSize.BODY)
+                .lineHeight(this.shelfTextLineHeight())
+                .fontColor(this.secondaryTextColor())
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+            }
 
-          if (this.bookshelfShowProgressBar) {
-            this.readProgressPanel(book)
-          } else {
-            Row() {
-              Text(this.getShelfProgressText(book))
-                .fontSize(AppFontSize.CAPTION)
-                .lineHeight(this.shelfSmallTextLineHeight())
-                .fontColor(this.subTextColor())
+            // 恒定的 Blank：某本书没有更新行时由它吸收多余空间，尾部仍被顶到底部。
+            Blank()
+
+            if (this.bookshelfShowProgressBar) {
+              this.readProgressPanel(book)
+            } else {
+              Row() {
+                Text(this.getShelfProgressText(book))
+                  .fontSize(AppFontSize.CAPTION)
+                  .lineHeight(this.shelfSmallTextLineHeight())
+                  .fontColor(this.subTextColor())
+              }
             }
           }
+          .layoutWeight(1)
+          .height(this.shelfCompactInfoHeight())
+          .margin({ left: AppSpacing.LG })
+          .alignItems(HorizontalAlign.Start)
         }
-        .layoutWeight(1)
-        .height(this.shelfCompactInfoHeight())
-        .margin({ left: AppSpacing.LG })
-        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+
+        this.bookExtraContent(book)
       }
       .width('100%')
-      .alignItems(VerticalAlign.Top)
+      .alignItems(HorizontalAlign.Start)
+      .padding(AppSpacing.LG)
 
-      this.bookExtraContent(book)
+      if (this.shouldShowShelfCardUpdateCorner(book)) {
+        this.shelfCardUpdateCorner()
+      }
     }
     .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .padding(AppSpacing.LG)
   }
 
   @Builder
   looseBookContent(book: Book, pageKey: string) {
-    Column({ space: AppSpacing.MD }) {
-      Row() {
-        // 封面高度 = 信息块高度，顶部对齐书名行、底部对齐阅读进度行。
-        this.coverView(book, this.shelfCoverWidth(this.shelfLooseInfoHeight()),
-          this.shelfLooseInfoHeight(), ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false))
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Column({ space: AppSpacing.MD }) {
+        Row() {
+          // 封面高度 = 信息块高度，顶部对齐书名行、底部对齐阅读进度行。
+          this.coverView(book, this.shelfCoverWidth(this.shelfLooseInfoHeight()),
+            this.shelfLooseInfoHeight(), ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false))
 
-        // 分层排：书名和作者信息贴顶，最新章节标签（进度条关着时再加进度行）贴封面底边，空白只留在中间。
-        // 高度预算（封面 93）：进度条开着 = 书名两行 40 + 6 + 信息行 16 + 标签 24 = 86；
-        // 关着 = 书名一行 20 + 6 + 16 + 标签 24 + 4 + 进度 19 = 89。
-        Column() {
-          Text(this.shelfTileBookDisplayName(book))
-            .fontSize(AppFontSize.BODY_LARGE)
-            .lineHeight(this.shelfTitleLineHeight())
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.primaryTextColor())
-            .maxLines(this.bookshelfShowProgressBar ? 2 : 1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
+          // 分层排：书名和作者信息贴顶，最新章节标签（进度条关着时再加进度行）贴封面底边，空白只留在中间。
+          // 高度预算（封面 93）：进度条开着 = 书名两行 40 + 6 + 信息行 16 + 标签 24 = 86；
+          // 关着 = 书名一行 20 + 6 + 16 + 标签 24 + 4 + 进度 19 = 89。
+          Column() {
+            Text(this.shelfTileBookDisplayName(book))
+              .fontSize(AppFontSize.BODY_LARGE)
+              .lineHeight(this.shelfTitleLineHeight())
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.primaryTextColor())
+              .maxLines(this.bookshelfShowProgressBar ? 2 : 1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              // 右上角“新”标识会压到书名第一行末尾，有标识时书名右侧让出位置。
+              .padding({ right: this.shouldShowShelfCardUpdateCorner(book) ? 18 : 0 })
 
-          Text(this.getLooseShelfMetaText(book))
-            .fontSize(AppFontSize.CAPTION)
-            .lineHeight(this.shelfSmallTextLineHeight())
-            .fontColor(this.subTextColor())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-            .margin({ top: 6 })
-
-          Blank()
-
-          if (this.getShelfLatestChapterTitle(book) || this.shouldShowLooseUpdateBadge(book)) {
-            this.looseLatestChapterRow(book)
-          }
-
-          // 进度条开着时下方面板已带百分比，这里不再重复。
-          if (!this.bookshelfShowProgressBar) {
-            Text(this.getShelfProgressText(book))
-              .fontSize(AppFontSize.BODY)
-              .lineHeight(this.shelfTextLineHeight())
-              .fontColor(this.secondaryTextColor())
+            Text(this.getLooseShelfMetaText(book))
+              .fontSize(AppFontSize.CAPTION)
+              .lineHeight(this.shelfSmallTextLineHeight())
+              .fontColor(this.subTextColor())
               .maxLines(1)
-              .margin({ top: this.shelfRowSpace() })
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              .margin({ top: 6 })
+
+            Blank()
+
+            if (this.getShelfLatestChapterTitle(book) || BookDisplayHelper.getLastUpdateRelativeText(book)) {
+              this.looseLatestChapterRow(book)
+            }
+
+            // 进度条开着时下方面板已带百分比，这里不再重复。
+            if (!this.bookshelfShowProgressBar) {
+              Text(this.getShelfProgressText(book))
+                .fontSize(AppFontSize.BODY)
+                .lineHeight(this.shelfTextLineHeight())
+                .fontColor(this.secondaryTextColor())
+                .maxLines(1)
+                .margin({ top: this.shelfRowSpace() })
+            }
           }
+          .layoutWeight(1)
+          .height(this.shelfLooseInfoHeight())
+          .margin({ left: AppSpacing.LG })
+          .alignItems(HorizontalAlign.Start)
         }
-        .layoutWeight(1)
-        .height(this.shelfLooseInfoHeight())
-        .margin({ left: AppSpacing.LG })
-        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+
+        this.bookExtraContent(book)
+
+        if (this.bookshelfShowProgressBar) {
+          this.looseReadProgressPanel(book)
+        }
       }
       .width('100%')
-      .alignItems(VerticalAlign.Top)
+      .alignItems(HorizontalAlign.Start)
+      .padding(AppSpacing.LG)
 
-      this.bookExtraContent(book)
-
-      if (this.bookshelfShowProgressBar) {
-        this.looseReadProgressPanel(book)
+      if (this.shouldShowShelfCardUpdateCorner(book)) {
+        this.shelfCardUpdateCorner()
       }
     }
     .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .padding(AppSpacing.LG)
   }
 
   @Builder
