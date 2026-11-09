@@ -74,6 +74,12 @@ import { ReaderHaptics } from '../../utils/ReaderHaptics';
 const SHELF_FULL_TEXT_CACHE_NOTIFICATION_INTERVAL_MS: number = 5000;
 /** 有声书同时下载的章数。 */
 const SHELF_AUDIO_DOWNLOAD_CONCURRENCY: number = 2;
+/**
+ * 书架检查更新同时刷新的书数，每路各用一个后台引擎。耗时主要在等网络，并发能把总时长压到接近最慢的几本。
+ * 同一书源最多同时刷 SHELF_REFRESH_PER_SOURCE 本，没填 concurrentRate 的书源也不至于被一下子打满。
+ */
+const SHELF_REFRESH_CONCURRENCY: number = 6;
+const SHELF_REFRESH_PER_SOURCE: number = 2;
 const SHELF_COVER_INITIAL_PREFETCH_COUNT: number = 16;
 const SHELF_COVER_UPDATE_BATCH_MS: number = 48;
 const SHELF_UPDATE_BADGE_VARIABLE: string = 'shelfHasUpdate';
@@ -8606,40 +8612,55 @@ export struct BookshelfPage {
     try {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
-      const engine = ReadBookEngine.createBackgroundWorker();
-      engine.chapterUpdateBatchTime = refreshStartedAt;
-      for (const shelfBook of targets) {
-        try {
-          const freshBook = await db.getBook(shelfBook.bookUrl) || shelfBook;
-          const beforeUpdateTime = BookshelfSortHelper.getBookUpdateTime(freshBook);
-          const hadPendingUpdate = this.hasShelfBookUpdate(freshBook);
-          await engine.openBook(freshBook);
-          await engine.refreshToc();
-          const refreshedBook = await db.getBook(shelfBook.bookUrl);
-          if (refreshedBook) {
-            refreshedBook.lastCheckTime = Date.now();
-            refreshedBook.lastCheckCount = engine.chapters.length;
-            if (engine.chapters.length > 0) {
-              refreshedBook.totalChapterNum = engine.chapters.length;
-              refreshedBook.latestChapterTitle = engine.chapters[engine.chapters.length - 1].title;
-            }
-            const hasNewUpdate = BookshelfSortHelper.getBookUpdateTime(refreshedBook) > beforeUpdateTime;
-            const acknowledgedAt = this.shelfUpdateAcknowledgedAt.get(refreshedBook.bookUrl) || 0;
-            const keepPendingUpdate = hadPendingUpdate && acknowledgedAt === 0;
-            const keepNewUpdate = hasNewUpdate && acknowledgedAt < refreshStartedAt;
-            refreshedBook.putVariable(SHELF_UPDATE_BADGE_VARIABLE,
-              keepPendingUpdate || keepNewUpdate ? '1' : '');
-            await db.updateBook(refreshedBook);
-            if (hasNewUpdate) {
+      const pending: Book[] = [...targets];
+      const sourceActive: Map<string, number> = new Map();
+      let waiters: (() => void)[] = [];
+      const takeNext = (): Book | null => {
+        const index = pending.findIndex((book: Book): boolean =>
+          (sourceActive.get(book.origin) || 0) < SHELF_REFRESH_PER_SOURCE);
+        if (index < 0) return null;
+        const book = pending.splice(index, 1)[0];
+        sourceActive.set(book.origin, (sourceActive.get(book.origin) || 0) + 1);
+        return book;
+      };
+      const release = (origin: string): void => {
+        sourceActive.set(origin, Math.max(0, (sourceActive.get(origin) || 0) - 1));
+        const woken = waiters;
+        waiters = [];
+        woken.forEach((wake: () => void) => wake());
+      };
+      const runWorker = async (): Promise<void> => {
+        // 每路一个引擎：引擎持有当前书的目录与会话，不能在两本书之间共用。
+        const engine = ReadBookEngine.createBackgroundWorker();
+        engine.chapterUpdateBatchTime = refreshStartedAt;
+        while (pending.length > 0) {
+          const shelfBook = takeNext();
+          if (!shelfBook) {
+            // 剩下的书所属书源都已满额，等任意一本刷完再挑。
+            await new Promise<void>((resolve: () => void) => {
+              waiters.push(resolve);
+            });
+            continue;
+          }
+          try {
+            if (await this.refreshShelfBookToc(engine, db, shelfBook, refreshStartedAt)) {
               updated++;
             }
+          } catch (e) {
+            failed++;
+            console.error('刷新书架目录失败:', shelfBook.name, e);
+          } finally {
+            this.shelfRefreshChecked++;
+            release(shelfBook.origin);
           }
-        } catch (e) {
-          failed++;
-          console.error('刷新书架目录失败:', shelfBook.name, e);
         }
-        this.shelfRefreshChecked++;
+      };
+      const workers: Promise<void>[] = [];
+      const workerCount = Math.min(SHELF_REFRESH_CONCURRENCY, targets.length);
+      for (let i = 0; i < workerCount; i++) {
+        workers.push(runWorker());
       }
+      await Promise.all(workers);
       await this.loadBooks();
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
       this.finishShelfRefreshCapsule(updated > 0 ? `${updated} 本有更新` : '没有新章节',
@@ -8654,6 +8675,32 @@ export struct BookshelfPage {
       this.shelfRefreshRunning = false;
       this.shelfRefreshStatus = RefreshStatus.Inactive;
     }
+  }
+
+  /** 刷新一本书的目录并记下检查结果与更新角标；返回这次是否发现新章节。 */
+  async refreshShelfBookToc(engine: ReadBookEngine, db: AppDatabase, shelfBook: Book,
+    refreshStartedAt: number): Promise<boolean> {
+    const freshBook = await db.getBook(shelfBook.bookUrl) || shelfBook;
+    const beforeUpdateTime = BookshelfSortHelper.getBookUpdateTime(freshBook);
+    const hadPendingUpdate = this.hasShelfBookUpdate(freshBook);
+    await engine.openBook(freshBook);
+    await engine.refreshToc();
+    const refreshedBook = await db.getBook(shelfBook.bookUrl);
+    if (!refreshedBook) return false;
+    refreshedBook.lastCheckTime = Date.now();
+    refreshedBook.lastCheckCount = engine.chapters.length;
+    if (engine.chapters.length > 0) {
+      refreshedBook.totalChapterNum = engine.chapters.length;
+      refreshedBook.latestChapterTitle = engine.chapters[engine.chapters.length - 1].title;
+    }
+    const hasNewUpdate = BookshelfSortHelper.getBookUpdateTime(refreshedBook) > beforeUpdateTime;
+    const acknowledgedAt = this.shelfUpdateAcknowledgedAt.get(refreshedBook.bookUrl) || 0;
+    const keepPendingUpdate = hadPendingUpdate && acknowledgedAt === 0;
+    const keepNewUpdate = hasNewUpdate && acknowledgedAt < refreshStartedAt;
+    refreshedBook.putVariable(SHELF_UPDATE_BADGE_VARIABLE,
+      keepPendingUpdate || keepNewUpdate ? '1' : '');
+    await db.updateBook(refreshedBook);
+    return hasNewUpdate;
   }
 
   async refreshLocalBooks(): Promise<void> {
