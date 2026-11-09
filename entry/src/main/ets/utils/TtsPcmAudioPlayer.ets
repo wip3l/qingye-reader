@@ -66,6 +66,20 @@ export class TtsPcmAudioPlayer {
     return this.enqueueWrite(data, sampleRate);
   }
 
+  /**
+   * 只启动渲染器、不写数据，让本应用一直有一条运行中的有声书音频流，直到 stop()。
+   * 没有数据时 writeData 返回 INVALID，渲染器保持 RUNNING，播放时间线也不会越过已写入的帧。
+   * 自定义音色的非 PCM 音频走 AVPlayer，句与句之间播放器复位、音频流断开；后台时系统把这当成
+   * 播放结束，取消音频长时任务并挂起应用（熄屏几分钟后停住，回到前台才接着读）。这条流撑住那段间隙。
+   */
+  async keepOutputRunning(): Promise<void> {
+    if (this.paused || this.systemInterrupted) return;
+    const renderer = this.renderer;
+    if (renderer && renderer.state === audio.AudioState.STATE_RUNNING) return;
+    const sampleRate = renderer ? Number(this.currentSampleRate) : (this.queuedSampleRate || 16000);
+    await this.ensureRendererStarted(sampleRate, this.playGeneration);
+  }
+
   writeSegment(data: ArrayBuffer, sampleRate: number, onPlaybackStart: () => void): Promise<void> {
     return this.enqueueWrite(data, sampleRate, [{
       frameOffset: 0,

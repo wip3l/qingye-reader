@@ -114,6 +114,11 @@ export class HttpTtsReader {
   async writeAudio(audio: HttpTtsAudio, onPlaybackStart?: (durationMs: number) => void): Promise<void> {
     if (audio.filePath) {
       try {
+        await this.pcmPlayer.keepOutputRunning();
+      } catch (error) {
+        console.warn('[TTS] keep pcm output running for av playback failed:', error);
+      }
+      try {
         await this.avPlayer.play(audio.filePath, audio.speed || 1, onPlaybackStart);
       } finally {
         this.releaseCacheFile(audio.filePath);

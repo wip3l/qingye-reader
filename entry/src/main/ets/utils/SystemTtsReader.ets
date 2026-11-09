@@ -914,6 +914,9 @@ export class SystemTtsReader {
       this.schedulePcmOutputRelease();
     } else {
       this.pcmPlayer.stop();
+      // 自定义音色播放期间 httpReader 一直开着一条空转的输出流（见 TtsPcmAudioPlayer.keepOutputRunning），
+      // 不再接着读就要一起关掉。
+      this.httpReader.stop();
     }
     this.releaseSystemAudioSession();
     this.audioStarted = false;
