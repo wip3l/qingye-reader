@@ -354,6 +354,11 @@ export class ReadBookEngine {
         targetBook.latestChapterTitle = chapters[chapters.length - 1].title;
         if (temporaryFallback) {
           console.warn('[RE] using temporary generic catalog; skip persistent catalog replacement');
+        } else if (BookChapterUpdate.sameStoredCatalog(previousChapters, chapters)) {
+          // 目录原样未变：不删表重插，只补回缓存标记并保存书籍信息。
+          await this.syncChapterCacheDates(expectedGeneration, sessionBookUrl);
+          if (!this.isCurrentBookSession(expectedGeneration, sessionBookUrl)) return;
+          await appDb.updateBook(targetBook);
         } else {
           if (!staleCatalog && BookChapterUpdate.hasNewChapters(previousChapters, chapters)) {
             targetBook.confirmedChapterUpdateTime = Math.max(targetBook.confirmedChapterUpdateTime,
