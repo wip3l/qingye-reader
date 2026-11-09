@@ -16,6 +16,9 @@ import { EpubChapterPlanner, EpubChapterSegment } from '../core/book/EpubChapter
 import { EpubConvertResult, EpubHtmlConverter } from '../core/book/EpubHtmlConverter';
 import { EpubNoteLink } from '../core/book/EpubNoteLink';
 import { EpubOriginalDocument, EpubOriginalPiece } from '../core/book/EpubOriginalDocument';
+import { EpubOriginalFont } from '../core/book/EpubOriginalFont';
+import { ReaderFontHelper } from '../utils/ReaderFontHelper';
+import { ReaderCustomFontData, ReaderCustomFontItem } from '../core/reader/ReaderSettingsModels';
 import { EpubOriginalPosition, EpubOriginalSpot } from '../core/book/EpubOriginalPosition';
 import {
   EpubOriginalLayoutOptions, EpubOriginalMargins, EpubOriginalScript, EpubOriginalTarget
@@ -79,8 +82,9 @@ import { BookCoverCache } from '../utils/BookCoverCache';
 /** 本书的文件排版设置与位置（书籍变量）。 */
 const SCROLL_KEY = 'epubOriginalScroll';
 const ZOOM_KEY = 'epubOriginalZoom';
-/** 本书是否用应用的阅读字体代替书里的字体。 */
+/** 本书用什么字体代替书里的字体、替换范围（取值见 EpubOriginalFont）。 */
 const READER_FONT_KEY = 'epubOriginalReaderFont';
+const READER_FONT_SCOPE_KEY = 'epubOriginalFontScope';
 const DEFAULT_TAP_ZONES: number[] = [3, 3, 3, 3, 1, 2, 2, 2, 2];
 const POSITION_KEY = 'epubOriginalPosition';
 /** 与普通阅读器共用的章内字符偏移（见 ReadBook 的 READER_PROGRESS_OFFSET_KEY）。 */
@@ -265,7 +269,14 @@ struct EpubOriginalReadBookPage {
   /** 应用的阅读字体文件；空串表示系统字体。 */
   @StorageLink('readerFontFilePath') @Watch('onReaderFontChanged') readerFontFilePath: string = '';
   @StorageLink('readerFontSourceName') readerFontSourceName: string = '系统默认';
-  @State useReaderFont: boolean = false;
+  /** 已上传的字体（与应用排版的字体列表同一份）。 */
+  @StorageLink('readerCustomFontsRaw') @Watch('onCustomFontsChanged') readerCustomFontsRaw: string = '';
+  /** 本书的字体选择与替换范围（EpubOriginalFont）。 */
+  @State fontChoice: string = EpubOriginalFont.NONE;
+  @State fontScope: string = EpubOriginalFont.SCOPE_BODY;
+  private customFontsCacheRaw: string = '';
+  private customFontsCache: ReaderCustomFontItem[] = [];
+  private systemSerifPathCache: string | undefined = undefined;
   /** 夜间图片（与普通阅读页共用）：深色时插图保持原色、调暗、反色或自动。 */
   @StorageLink('readerNightImageMode') @Watch('onReaderChromeChanged') nightImageMode: string = ReaderNightImage.ORIGINAL;
   // 小说的双翻页开关，应用排版与文件排版共用。
@@ -591,7 +602,8 @@ struct EpubOriginalReadBookPage {
       this.paged = book.getVariable(SCROLL_KEY) !== '1';
       const zoom = Number(book.getVariable(ZOOM_KEY));
       this.zoom = Number.isFinite(zoom) && zoom >= 50 && zoom <= 250 ? Math.round(zoom) : 100;
-      this.useReaderFont = book.getVariable(READER_FONT_KEY) === '1';
+      this.fontChoice = EpubOriginalFont.normalize(book.getVariable(READER_FONT_KEY));
+      this.fontScope = EpubOriginalFont.normalizeScope(book.getVariable(READER_FONT_SCOPE_KEY));
       const index = Math.max(0, Math.min(this.chapters.length - 1, book.durChapterIndex));
       const target = await this.initialTarget(book, index);
       if (!this.alive) return;
@@ -654,6 +666,10 @@ struct EpubOriginalReadBookPage {
       this.applyScreenTimeout();
       this.pageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.pageTurnAnimationType);
       if (settings.tapZoneActions) this.readerTapZoneActions = settings.tapZoneActions;
+      // 直接从书架进来时普通阅读页没读过字体列表。
+      if (!this.readerCustomFontsRaw && settings.customFontsRaw) {
+        AppStorage.setOrCreate(ReaderSettingsStore.KEY_CUSTOM_FONTS_RAW, settings.customFontsRaw);
+      }
       this.keyboardSettings = await ReaderKeyboardSettingsStore.load(context);
     } catch (error) {
       console.warn('[EpubOriginal] reader settings failed:', error);
@@ -1134,6 +1150,7 @@ struct EpubOriginalReadBookPage {
     const margins = this.margins();
     return `${this.paged ? 1 : 0}_${this.zoom}_${this.darkMode ? 1 : 0}_${margins.top}_${margins.bottom}_` +
       `${margins.left}_${margins.right}_${this.webInsetTop()}_${this.webInsetBottom()}_${this.readerFontOption()}_` +
+      `${this.fontScope}_` +
       `${this.darkMode ? ReaderNightImage.normalize(this.nightImageMode) : ''}_${this.readerDoublePage ? 1 : 0}_` +
       `${Math.round(this.viewWidth)}x${Math.round(this.viewHeight)}`;
   }
@@ -1190,6 +1207,7 @@ struct EpubOriginalReadBookPage {
     options.paged = this.paged;
     options.nativeTurn = true;
     options.readerFont = this.readerFontOption();
+    options.readerFontBodyOnly = this.fontScope !== EpubOriginalFont.SCOPE_ALL;
     options.spread = this.readerDoublePage;
     options.forceDark = this.darkMode;
     options.nightImage = this.nightImageMode;
@@ -1333,26 +1351,112 @@ struct EpubOriginalReadBookPage {
     return !this.paged && this.footerShown() ? Math.round(this.footerBand()) : 0;
   }
 
-  /** 交给网页样式的阅读字体：没开就是空串；开了且有字体文件用它，否则用系统字体。 */
+  /**
+   * 交给网页样式的字体（EpubOriginalLayoutOptions.readerFont）：书本字体为空串；系统黑体/宋体为 'sans'/'serif'；
+   * 字体文件给虚拟站点地址。阅读字体没有文件时用系统黑体；选中的上传字体被删了就退回书本字体（面板也显示书本字体）。
+   */
   private readerFontOption(): string {
-    if (!this.useReaderFont) return '';
-    const path = this.readerFontFilePath;
-    if (path && LocalBookService.exists(path)) {
-      return EpubOriginalDocument.readerFontUrl(path.substring(path.lastIndexOf('/') + 1));
+    const choice = this.fontChoice;
+    if (choice === EpubOriginalFont.SERIF) {
+      return this.systemSerifPath() ? EpubOriginalDocument.readerFontUrl(EpubOriginalFont.SYSTEM_SERIF_NAME) : choice;
     }
-    return 'system';
+    if (choice === EpubOriginalFont.SANS) return choice;
+    if (choice === EpubOriginalFont.READER) {
+      const path = this.readerFontFilePath;
+      return path && LocalBookService.exists(path) ?
+        EpubOriginalDocument.readerFontUrl(EpubOriginalFont.fileNameOfPath(path)) : EpubOriginalFont.SANS;
+    }
+    const fileName = EpubOriginalFont.fileNameOf(choice);
+    return fileName && this.readerFontPath(fileName) ? EpubOriginalDocument.readerFontUrl(fileName) : '';
   }
 
-  private setUseReaderFont(enabled: boolean): void {
-    if (this.useReaderFont === enabled) return;
-    this.useReaderFont = enabled;
+  /** 已上传的字体，与应用排版字体设置页同样只列文件还在的；页面每次重绘都会问，按原始串缓存。 */
+  private customFonts(): ReaderCustomFontItem[] {
+    const raw = (this.readerCustomFontsRaw || '').trim();
+    if (raw === this.customFontsCacheRaw) return this.customFontsCache;
+    let fonts: ReaderCustomFontItem[] = [];
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as ReaderCustomFontData | ReaderCustomFontItem[];
+        const source = Array.isArray(parsed) ? parsed as ReaderCustomFontItem[] :
+          ((parsed as ReaderCustomFontData).fonts || []);
+        fonts = source.filter((item: ReaderCustomFontItem): boolean =>
+          !!item && !!item.filePath && LocalBookService.exists(item.filePath));
+      } catch (_) {
+        fonts = [];
+      }
+    }
+    this.customFontsCacheRaw = raw;
+    this.customFontsCache = fonts;
+    return fonts;
+  }
+
+  /** 虚拟站点里的字体文件名对应的本机路径：阅读字体或某款上传字体；找不到为空串。 */
+  private readerFontPath(fileName: string): string {
+    if (fileName === EpubOriginalFont.SYSTEM_SERIF_NAME) return this.systemSerifPath();
+    const path = this.readerFontFilePath;
+    if (path && EpubOriginalFont.fileNameOfPath(path) === fileName && LocalBookService.exists(path)) return path;
+    const font = this.customFonts().find((item: ReaderCustomFontItem): boolean =>
+      EpubOriginalFont.fileNameOfPath(item.filePath) === fileName);
+    return font ? font.filePath : '';
+  }
+
+  /** 系统自带的书宋字体文件（见 EpubOriginalFont.SERIF_STACK 为什么不按名字用）；没有为空串。 */
+  private systemSerifPath(): string {
+    if (this.systemSerifPathCache === undefined) {
+      this.systemSerifPathCache = EpubOriginalFont.SYSTEM_SERIF_FILES.find((path: string): boolean =>
+        LocalBookService.exists(path)) || '';
+    }
+    return this.systemSerifPathCache;
+  }
+
+  /** 面板“字体”下拉的取值，与 fontChoiceLabels 一一对应。 */
+  private fontChoiceValues(): string[] {
+    const values: string[] = [EpubOriginalFont.NONE, EpubOriginalFont.READER, EpubOriginalFont.SANS,
+      EpubOriginalFont.SERIF];
+    for (const font of this.customFonts()) {
+      values.push(EpubOriginalFont.fileChoice(EpubOriginalFont.fileNameOfPath(font.filePath)));
+    }
+    return values;
+  }
+
+  private fontChoiceLabels(): string[] {
+    const readerName = this.readerFontFilePath ? (this.readerFontSourceName || '自定义字体') : '系统字体';
+    const labels: string[] = ['书本字体', `阅读字体（${readerName}）`, '系统黑体', '系统宋体'];
+    for (const font of this.customFonts()) {
+      labels.push(ReaderFontHelper.resolveDisplayName(font.sourceName || font.familyName, font.filePath));
+    }
+    return labels;
+  }
+
+  private fontChoiceIndex(): number {
+    return Math.max(0, this.fontChoiceValues().indexOf(this.fontChoice));
+  }
+
+  private setFontChoice(index: number): void {
+    const values = this.fontChoiceValues();
+    if (index < 0 || index >= values.length || values[index] === this.fontChoice) return;
+    this.fontChoice = values[index];
     this.reloadAtCurrentSpot();
     this.scheduleSave();
   }
 
-  /** 应用换了阅读字体：开着“使用阅读字体”的话按新字体重排。 */
+  private setFontBodyOnly(bodyOnly: boolean): void {
+    const scope = bodyOnly ? EpubOriginalFont.SCOPE_BODY : EpubOriginalFont.SCOPE_ALL;
+    if (scope === this.fontScope) return;
+    this.fontScope = scope;
+    if (this.fontChoice) this.reloadAtCurrentSpot();
+    this.scheduleSave();
+  }
+
+  /** 应用换了阅读字体：本书跟随阅读字体的话按新字体重排。 */
   onReaderFontChanged(): void {
-    if (this.useReaderFont) this.onReaderChromeChanged();
+    if (this.fontChoice === EpubOriginalFont.READER) this.onReaderChromeChanged();
+  }
+
+  /** 上传字体列表变了（删除、改名）：本书用的是上传字体的话重排，删掉了就退回书本字体。 */
+  onCustomFontsChanged(): void {
+    if (EpubOriginalFont.fileNameOf(this.fontChoice) && this.ready) this.onReaderChromeChanged();
   }
 
   private setNightImageMode(mode: string): void {
@@ -2006,7 +2110,12 @@ struct EpubOriginalReadBookPage {
   private intercept(url: string): WebResourceResponse | null {
     if (!url || url.startsWith('about:')) return null;
     if (EpubOriginalDocument.isReaderFontUrl(url)) {
-      const fontPath = this.readerFontFilePath;
+      let fontName = url.substring(url.lastIndexOf('/') + 1);
+      try {
+        fontName = decodeURIComponent(fontName);
+      } catch (_) {
+      }
+      const fontPath = this.readerFontPath(fontName);
       if (!fontPath) return this.response('', 'text/plain', 404);
       const fontResponse = new WebResourceResponse();
       fontResponse.setResponseIsReady(false);
@@ -2291,7 +2400,8 @@ struct EpubOriginalReadBookPage {
     const spot = this.spot;
     const paged = this.paged;
     const zoom = this.zoom;
-    const useReaderFont = this.useReaderFont;
+    const fontChoice = this.fontChoice;
+    const fontScope = this.fontScope;
     const timestamp = Date.now();
     const notify = notifyShelf || this.closing;
     const bookUrl = this.bookUrl;
@@ -2318,7 +2428,8 @@ struct EpubOriginalReadBookPage {
       latest.putVariable(POSITION_KEY, JSON.stringify(saved));
       latest.putVariable(SCROLL_KEY, paged ? '' : '1');
       latest.putVariable(ZOOM_KEY, zoom === 100 ? '' : `${zoom}`);
-      latest.putVariable(READER_FONT_KEY, useReaderFont ? '1' : '');
+      latest.putVariable(READER_FONT_KEY, fontChoice);
+      latest.putVariable(READER_FONT_SCOPE_KEY, fontScope);
       await appDb.updateBookReadingProgress(bookUrl, title, index, page, readTime, latest.variable, positionChanged);
       if (notify) AppStorage.setOrCreate('shelfUpdateTime', Date.now());
       this.reloadRecentReadCard(this.closing);
@@ -3322,9 +3433,11 @@ struct EpubOriginalReadBookPage {
         },
         tapZoneSummary: this.tapZoneSummary(),
         onTapZones: (): void => { this.openTapZones(); },
-        useReaderFont: this.useReaderFont,
-        readerFontName: this.readerFontFilePath ? (this.readerFontSourceName || '自定义字体') : '系统字体',
-        onUseReaderFontChange: (enabled: boolean): void => { this.setUseReaderFont(enabled); },
+        fontLabels: this.fontChoiceLabels(),
+        fontSelected: this.fontChoiceIndex(),
+        fontBodyOnly: this.fontScope !== EpubOriginalFont.SCOPE_ALL,
+        onFontSelect: (index: number): void => { this.setFontChoice(index); },
+        onFontBodyOnlyChange: (bodyOnly: boolean): void => { this.setFontBodyOnly(bodyOnly); },
         nightImageMode: ReaderNightImage.normalize(this.nightImageMode),
         onNightImageModeChange: (mode: string): void => { this.setNightImageMode(mode); },
         onReaderChromeChange: (headerEnabled: boolean, footerEnabled: boolean, infoBarConfig: string): void => {

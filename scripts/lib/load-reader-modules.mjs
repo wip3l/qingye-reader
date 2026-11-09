@@ -19,6 +19,7 @@ const MODULES = [
   'core/book/EpubOriginalDocument.ts',
   'core/book/EpubOriginalPosition.ts',
   'core/reader/ReaderNightImage.ts',
+  'core/book/EpubOriginalFont.ts',
   'core/book/EpubOriginalScript.ts',
   'core/book/ReaderCacheBudgetPolicy.ts',
   'core/book/MobiBookParser.ts',

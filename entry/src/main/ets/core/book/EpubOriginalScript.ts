@@ -1,5 +1,6 @@
 import { EpubOriginalInjection } from './EpubOriginalDocument';
 import { ReaderNightImage } from '../reader/ReaderNightImage';
+import { EpubOriginalFont } from './EpubOriginalFont';
 
 /** 原版排版的页边距（CSS 像素，已含状态栏、导航条）。 */
 export class EpubOriginalMargins {
@@ -25,10 +26,15 @@ export class EpubOriginalLayoutOptions {
   /** 深色时插图怎么处理（ReaderNightImage 的值）；只在 forceDark 时有意义。 */
   nightImage: string = ReaderNightImage.ORIGINAL;
   /**
-   * 用应用的阅读字体代替书里的字体：空串不改；'system' 用系统字体；其余是字体文件在虚拟站点里的地址。
-   * 只换字体，字号、行距等仍按书的样式。
+   * 代替书里字体的字体：空串不改；'sans' / 'serif' 用系统黑体 / 宋体（旧值 'system' 同 'sans'）；
+   * 其余是字体文件在虚拟站点里的地址。只换字体，字号、行距等仍按书的样式。见 EpubOriginalFont。
    */
   readerFont: string = '';
+  /**
+   * 只换正文：脚本按字数找出正文用的字体，只给用这款字体（或网页默认字体）、字号不比正文大一截、
+   * 不在标题/注音/代码里的元素标上 data-legado-font；书里单独设了字体的文字保持原样。false 则全部文字都换。
+   */
+  readerFontBodyOnly: boolean = true;
   /** 双翻页开关（与应用排版共用）；翻页模式下屏幕够宽时一屏并排两栏，见 SPREAD_MEDIA。 */
   spread: boolean = false;
   margins: EpubOriginalMargins = new EpubOriginalMargins();
@@ -46,6 +52,8 @@ class EpubOriginalNightConfig {
 class EpubOriginalScriptConfig {
   paged: boolean = true;
   nativeTurn: boolean = false;
+  /** 只换正文的字体（见 EpubOriginalLayoutOptions.readerFontBodyOnly）。 */
+  fontBody: boolean = false;
   night: EpubOriginalNightConfig = new EpubOriginalNightConfig();
   top: number = 0;
   bottom: number = 0;
@@ -82,6 +90,7 @@ export class EpubOriginalScript {
     const config = new EpubOriginalScriptConfig();
     config.paged = options.paged;
     config.nativeTurn = options.paged && options.nativeTurn;
+    config.fontBody = !!options.readerFont && options.readerFontBodyOnly;
     config.night.auto = options.forceDark && ReaderNightImage.normalize(options.nightImage) === ReaderNightImage.AUTO;
     config.top = options.margins.top;
     config.bottom = options.margins.bottom;
@@ -128,12 +137,12 @@ export class EpubOriginalScript {
         `body{box-sizing:border-box!important;margin:0!important;padding:${padding}!important;max-width:none!important;}` +
         'img,svg,video{max-width:100%!important;box-sizing:border-box;}img,video{object-fit:contain;}';
     if (options.readerFont) {
-      const family = options.readerFont === 'system' ? 'sans-serif' :
-        '"LegadoReaderFont",sans-serif';
-      if (options.readerFont !== 'system') {
+      const family = EpubOriginalFont.cssFamily(options.readerFont);
+      if (EpubOriginalFont.isFileFont(options.readerFont)) {
         css += `@font-face{font-family:"LegadoReaderFont";src:url("${options.readerFont.replace(/"/g, '%22')}");}`;
       }
-      css += `body,body *{font-family:${family}!important;}`;
+      css += options.readerFontBodyOnly ? `[data-legado-font]{font-family:${family}!important;}` :
+        `body,body *{font-family:${family}!important;}`;
     }
     // 不能写 text-size-adjust:none：它会连网页组件的文字缩放（textZoomRatio）一起关掉，字号缩放就失效了。
     css += 'html{-webkit-tap-highlight-color:transparent;}';
@@ -570,6 +579,44 @@ export class EpubOriginalScript {
       nightWhenLoaded(node, probe);
     }
   }
+  // 只换正文的字体：按字数找出正文的字体与字号，给正文元素标 data-legado-font（样式只认这个标记）。
+  // 网页默认字体（html 上的字体，书没设字体的段落用它）也算正文；标题（h1-h6 或字号比正文大 25% 以上）、
+  // 代码（注音跟着所在段落走），以及书里单独设了别的字体的文字（花体、符号字体等）都保持原样。
+  function markBodyFont() {
+    if (!cfg.fontBody || !document.body) return;
+    var KEEP = 'h1,h2,h3,h4,h5,h6,rt,rp,code,pre,kbd,samp,tt,var,math,svg';
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+    var els = [], families = {}, sizes = {}, n, el, info, len;
+    while ((n = walker.nextNode())) {
+      len = n.nodeValue.replace(/\s+/g, '').length;
+      el = n.parentElement;
+      if (!len || !el || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(el.tagName)) continue;
+      info = el.__legadoFont;
+      if (!info) {
+        var cs = getComputedStyle(el);
+        info = el.__legadoFont = { family: cs.fontFamily, size: parseFloat(cs.fontSize) || 0 };
+        els.push(el);
+      }
+      families[info.family] = (families[info.family] || 0) + len;
+      sizes[info.size] = (sizes[info.size] || 0) + len;
+    }
+    var pick = function (tally) {
+      var best = null, most = -1;
+      for (var k in tally) if (tally[k] > most) { most = tally[k]; best = k; }
+      return best;
+    };
+    var bodyFamily = pick(families), bodySize = parseFloat(pick(sizes)) || 0;
+    var rootFamily = getComputedStyle(document.documentElement).fontFamily;
+    for (var i = 0; i < els.length; i++) {
+      el = els[i];
+      info = el.__legadoFont;
+      delete el.__legadoFont;
+      if (info.family !== bodyFamily && info.family !== rootFamily) continue;
+      if (bodySize > 0 && info.size > bodySize * 1.25) continue;
+      if (el.closest(KEEP)) continue;
+      el.setAttribute('data-legado-font', '');
+    }
+  }
   function start() {
     if (started) return;
     started = true;
@@ -668,7 +715,14 @@ export class EpubOriginalScript {
   window.__legado = { next: next, prev: prev, goSpot: goSpot, goAnchor: goAnchor, goPage: goPage, screen: screen,
     preview: preview, step: step, show: show, speechInfo: speechInfo, ttsMark: ttsMark, ttsClear: ttsClear };
   var begin = function () {
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(start, start); else start();
+    var wait = function () {
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(start, start); else start();
+    };
+    if (!cfg.fontBody) { wait(); return; }
+    // 标记完正文才用上替换字体，得先让它载入，不然按书的字体分完页又换字形，页数就不对了。
+    try { markBodyFont(); } catch (e) {}
+    if (document.fonts && document.fonts.load) document.fonts.load('1em "LegadoReaderFont"').then(wait, wait);
+    else wait();
   };
   if (document.readyState === 'complete') begin(); else window.addEventListener('load', begin);
   setTimeout(start, 4000);

@@ -76,9 +76,11 @@ export struct EpubOriginalControls {
   /** 四侧边距：左、右、上、下，与普通阅读页共用。 */
   @Prop margins: number[] = [18, 18, 18, 18];
   @Prop tapZoneSummary: string = '';
-  @Prop useReaderFont: boolean = false;
-  /** 当前阅读字体的名字（系统字体或自定义字体名）。 */
-  @Prop readerFontName: string = '';
+  /** “字体”下拉的选项（书本字体、阅读字体、系统黑体/宋体、上传的字体）与当前选中项。 */
+  @Prop fontLabels: string[] = [];
+  @Prop fontSelected: number = 0;
+  /** 只换正文（保留标题、代码和书里单独设了字体的文字）；否则全部文字都换。 */
+  @Prop fontBodyOnly: boolean = true;
   @Prop nightImageMode: string = ReaderNightImage.ORIGINAL;
   /** 朗读会话还在（在念或暂停）：朗读按钮换成胶囊。 */
   @Prop ttsActive: boolean = false;
@@ -104,7 +106,8 @@ export struct EpubOriginalControls {
   onMarginsChange: (left: number, right: number, top: number, bottom: number) => void =
     (_left: number, _right: number, _top: number, _bottom: number): void => {};
   onTapZones: () => void = (): void => {};
-  onUseReaderFontChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
+  onFontSelect: (index: number) => void = (_index: number): void => {};
+  onFontBodyOnlyChange: (bodyOnly: boolean) => void = (_bodyOnly: boolean): void => {};
   onNightImageModeChange: (mode: string) => void = (_mode: string): void => {};
   onReaderChromeChange: (headerEnabled: boolean, footerEnabled: boolean, infoBarConfig: string) => void =
     (_headerEnabled: boolean, _footerEnabled: boolean, _infoBarConfig: string): void => {};
@@ -605,9 +608,22 @@ export struct EpubOriginalControls {
             values[ReaderTypographyField.MARGIN_RIGHT], values[ReaderTypographyField.MARGIN_TOP],
             values[ReaderTypographyField.MARGIN_BOTTOM])
         })
-        ReaderSettingSwitchRow({ title: '使用阅读字体', description: `用${this.readerFontName || '阅读字体'}显示本书，字号与排版仍按书的样式`,
-          checked: this.useReaderFont, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
-          subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onUseReaderFontChange })
+        ReaderSettingSelectRow({ title: '字体', description: '只换字形，字号与排版仍按书的样式',
+          options: this.fontLabels.map((label: string): SelectOption => ({ value: label })),
+          selected: this.fontSelected,
+          textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+          accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode,
+          menuColor: this.solidPanelColor(),
+          onSelect: (index: number): void => this.onFontSelect(index) })
+        if (this.fontSelected > 0) {
+          ReaderSettingSelectRow({ title: '替换范围',
+            description: this.fontBodyOnly ? '标题、代码和书里单独设了字体的文字保持原样' : '书里所有文字都换成这款字体',
+            options: [{ value: '只换正文' }, { value: '全部文字' }], selected: this.fontBodyOnly ? 0 : 1,
+            textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+            accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode,
+            menuColor: this.solidPanelColor(),
+            onSelect: (index: number): void => this.onFontBodyOnlyChange(index === 0) })
+        }
         // 与普通阅读页同一个设置。
         ReaderSettingSelectRow({ title: '夜间图片', description: ReaderNightImage.DESCRIPTION,
           options: ReaderNightImage.LABELS.map((label: string): SelectOption => ({ value: label })),

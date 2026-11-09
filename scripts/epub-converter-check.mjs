@@ -357,6 +357,20 @@ try {
       console.error(error);
     }
     check(scriptOk, '注入脚本语法正确');
+    // 字体：只换正文时样式只认脚本标的 data-legado-font；全部文字时覆盖 body 里所有元素；系统宋体没有字体文件时退到通用 serif。
+    const bodyFont = new EpubOriginalLayoutOptions();
+    bodyFont.readerFont = 'serif';
+    const bodyFontStyle = EpubOriginalScript.style(bodyFont);
+    const allFont = new EpubOriginalLayoutOptions();
+    allFont.readerFont = 'https://epub.legado.local/__legado_reader_font/a.ttf';
+    allFont.readerFontBodyOnly = false;
+    const allFontStyle = EpubOriginalScript.style(allFont);
+    check(bodyFontStyle.includes('[data-legado-font]{font-family:serif!important;}') && !bodyFontStyle.includes('body,body *{font-family') &&
+      !bodyFontStyle.includes('@font-face') && /"fontBody":true/.test(EpubOriginalScript.injection(bodyFont).script),
+      '字体：只换正文时样式只认标记、脚本开启正文标记');
+    check(allFontStyle.includes('@font-face{font-family:"LegadoReaderFont"') &&
+      allFontStyle.includes('body,body *{font-family:"LegadoReaderFont",sans-serif!important;}') &&
+      /"fontBody":false/.test(EpubOriginalScript.injection(allFont).script), '字体：全部文字时覆盖所有元素、不做正文标记');
     const tricky = new EpubOriginalLayoutOptions();
     tricky.target.kind = 'spot';
     tricky.target.snippet = '$&</script>';
