@@ -11,6 +11,7 @@ import { ReadStatsDevice } from './ReadStatsDevice';
  * - 听书通道：TTS/听书播放中即计时（ReaderTtsFloatingSession 驱动），后台长时任务播放照常累计。
  *
  * 同一时刻只计一个通道（听书优先），避免"阅读页开着朗读"被双计。
+ * 本机开关见 setRecordingOptions，所有采集点照常上报，闸门只在这里。
  * 结算时机：通道/书目切换、每 60 秒定时、应用前后台切换；跨午夜的时间段按 00:00 拆分到两天。
  */
 export class ReadStatsTracker {
@@ -20,6 +21,8 @@ export class ReadStatsTracker {
 
   private context: Context | null = null;
   private appForeground: boolean = true;
+  private recordingEnabled: boolean = true;
+  private listeningEnabled: boolean = true;
   private readingBookUrl: string = '';
   private ttsBookUrl: string = '';
   private currentBookUrl: string = '';
@@ -69,6 +72,18 @@ export class ReadStatsTracker {
     this.refreshSegment();
   }
 
+  /**
+   * 本机开关（ReadStatsSettingsStore 驱动）：recording 关闭时两路都不计；listening 关闭时播放期间整段不计，
+   * 不退回按阅读计，免得开着阅读页朗读被算成阅读。keepCurrent 为 false 时丢掉正在计的这段（启动读盘前的零头）。
+   */
+  setRecordingOptions(recording: boolean, listening: boolean, keepCurrent: boolean = true): void {
+    if (this.recordingEnabled === recording && this.listeningEnabled === listening) return;
+    if (!keepCurrent && this.segmentStart > 0) this.segmentStart = Date.now();
+    this.recordingEnabled = recording;
+    this.listeningEnabled = listening;
+    this.refreshSegment();
+  }
+
   /** 立即结算当前段（进程退出前调用，尽量减少丢数）。 */
   flush(): void {
     this.settleCurrentSegment(Date.now());
@@ -81,7 +96,8 @@ export class ReadStatsTracker {
   }
 
   private effectiveBookUrl(): string {
-    if (this.ttsBookUrl) return this.ttsBookUrl;
+    if (!this.recordingEnabled) return '';
+    if (this.ttsBookUrl) return this.listeningEnabled ? this.ttsBookUrl : '';
     if (this.appForeground && this.readingBookUrl) return this.readingBookUrl;
     return '';
   }

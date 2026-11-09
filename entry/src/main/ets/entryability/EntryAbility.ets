@@ -49,6 +49,7 @@ import { FullTextCacheCancelCoordinator } from '../utils/FullTextCacheCancelCoor
 import { lanReaderServer } from '../core/lan/LanReaderServer';
 import { LanReaderPasswordStore } from '../core/lan/LanReaderPasswordStore';
 import { readStatsTracker } from '../core/stats/ReadStatsTracker';
+import { ReadStatsSettingsStore } from '../utils/ReadStatsSettingsStore';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { ReaderCacheBudget } from '../core/book/ReaderCacheBudget';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
@@ -119,6 +120,9 @@ export default class EntryAbility extends UIAbility {
     CloudSyncSettingsStore.initializeStorage();
     CloudSyncChangeTracker.initializeStorage();
     readStatsTracker.init(this.context);
+    ReadStatsSettingsStore.load(this.context).catch((error: Error) => {
+      console.warn('恢复阅读统计开关失败:', error);
+    });
     BookSourceRuntimeStore.install(AppDatabase.getInstance());
     SourceScriptNotice.setHandler((sourceName: string, message: string): void => {
       HdsFeedback.showToast(sourceName ? `${sourceName}：${message}` : message);

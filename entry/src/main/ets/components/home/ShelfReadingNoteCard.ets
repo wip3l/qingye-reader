@@ -20,6 +20,7 @@ export struct ShelfReadingNoteCard {
   /** 书架设置关掉小记时只保留统计读取（问候语 {今日阅读} 要用），卡片本身不显示也不占位。 */
   @Prop collapsed: boolean = false;
   @StorageProp('accountUserId') @Watch('onRefreshKeyChanged') accountUserId: string = '';
+  @StorageProp('readStatsRecording') readStatsRecording: boolean = true;
   @State todayMs: number = 0;
   @State weekMs: number = 0;
   @State streakDays: number = 0;
@@ -121,9 +122,9 @@ export struct ShelfReadingNoteCard {
           .fontWeight(FontWeight.Bold)
           .fontColor(this.accentColor())
         Blank()
-        Text('阅读统计')
+        Text(this.readStatsRecording ? '阅读统计' : '已暂停记录')
           .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
+          .fontColor(this.readStatsRecording ? this.subTextColor() : ThemeRuntime.warningColor(this.appDarkMode))
         SymbolGlyph($r('sys.symbol.chevron_right'))
           .fontSize(12)
           .fontColor([this.subTextColor()])
@@ -187,7 +188,7 @@ export struct ShelfReadingNoteCard {
     .borderRadius(ThemeRuntime.cardRadius())
     .visibility(this.collapsed ? Visibility.None : Visibility.Visible)
     .accessibilityGroup(true)
-    .accessibilityText(`阅读小记，今日阅读 ${this.todayMinutesText()} 分钟，${this.summaryText()}`)
+    .accessibilityText(`阅读小记，${this.readStatsRecording ? '' : '本机已暂停记录，'}今日阅读 ${this.todayMinutesText()} 分钟，${this.summaryText()}`)
     .onClick(() => {
       this.getUIContext().getRouter().pushUrl({ url: 'pages/ReadingStats' }).catch((error: Error) => {
         console.warn('打开阅读统计失败:', error);

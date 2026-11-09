@@ -17,10 +17,12 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
-import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { ReadStatsPosterSnapshot, ReadStatsPosterSession } from '../core/stats/ReadStatsPosterModel';
+import { ReadStatsSettingsStore } from '../utils/ReadStatsSettingsStore';
 
 const STATS_MODES: string[] = ['day', 'week', 'month', 'year', 'all'];
 const STATS_MODE_LABELS: string[] = ['日', '周', '月', '年', '全部'];
@@ -76,6 +78,9 @@ struct ReadingStatsPage {
   @State localDeviceId: string = '';
   @State selectedBar: string = '';
   @State showItemActionMenu: boolean = false;
+  @State showMoreMenu: boolean = false;
+  @StorageProp('readStatsRecording') statsRecording: boolean = true;
+  @StorageProp('readStatsCountListening') statsCountListening: boolean = true;
   @State actionBookKey: string = '';
   @State contextMenuX: number = 16;
   @State contextMenuY: number = 96;
@@ -108,6 +113,7 @@ struct ReadingStatsPage {
     this.initialize();
   }
   onBackPress(): boolean {
+    if (this.showMoreMenu) { this.showMoreMenu = false; return true; }
     if (!this.showItemActionMenu) return false;
     this.showItemActionMenu = false;
     return true;
@@ -346,10 +352,11 @@ struct ReadingStatsPage {
   headerContent() {
     Column() {
       this.filters()
+      if (!this.statsRecording) { this.pausedBanner() }
       this.periodSelector()
       this.summaryCard()
       if (!this.loading && !this.errorMessage && this.summary.totalMs > 0 && this.mode !== 'day') { this.trendCard() }
-      Text(this.selectedDevice === ReadStatsDevice.LEGACY_ID ? '历史导入 · 原设备来源未留存' : '阅读与听书合并计时')
+      Text(this.statsCaption())
         .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).margin({ top: AppSpacing.LG, bottom: AppSpacing.LG })
       Row() {
         Text('书籍排行').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
@@ -510,16 +517,84 @@ struct ReadingStatsPage {
       this.getUIContext().getPromptAction().showToast({ message: '打开分享页面失败，请重试' });
     } finally { this.openingShare = false; }
   }
+  private statsCaption(): string {
+    if (this.selectedDevice === ReadStatsDevice.LEGACY_ID) return '历史导入 · 原设备来源未留存';
+    if (!this.statsRecording) return '本机暂停记录中 · 其他设备照常计时';
+    return this.statsCountListening ? '阅读与听书合并计时' : '只计阅读，听书不计时';
+  }
+  private setStatsRecording(recording: boolean, listening: boolean): void {
+    if (recording === this.statsRecording && listening === this.statsCountListening) return;
+    const recordingChanged = recording !== this.statsRecording;
+    ReadStatsSettingsStore.save(getContext(this), recording, listening).catch((error: Error): void => {
+      console.warn('保存阅读统计开关失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
+    if (recordingChanged) HdsFeedback.showToast(recording ? '已恢复记录' : '已暂停记录，已有记录保留');
+    else HdsFeedback.showToast(listening ? '听书恢复计时' : '听书不再计时');
+  }
   @Builder
-  shareAction() {
-    ImmersiveBackButton({
-      icon: $r('sys.symbol.share'), iconColor: this.primaryTextColor(), iconOffsetX: 0,
-      darkMode: this.appDarkMode, buttonSize: 40, containerWidth: 56,
-      materialScale: 0.83, compactLayout: true, alignToEnd: true,
-      accessibilityLabel: '分享阅读统计',
-      buttonEnabled: !this.loading && !this.errorMessage && !this.openingShare,
-      onBack: (): void => { this.shareStatistics(); }
-    })
+  pausedBanner() {
+    Row({ space: AppSpacing.MD }) {
+      SymbolGlyph($r('sys.symbol.pause')).fontSize(18).fontColor([ThemeRuntime.warningColor(this.appDarkMode)])
+      Column({ space: 2 }) {
+        Text('本机已暂停记录').fontSize(AppFontSize.BODY).fontWeight(FontWeight.Medium)
+          .fontColor(ThemeRuntime.warningColor(this.appDarkMode))
+        Text('已有记录照常查看和同步').fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+      Button('恢复', { type: ButtonType.Capsule }).fontSize(AppFontSize.CAPTION).fontWeight(FontWeight.Medium)
+        .fontColor(ThemeRuntime.warningColor(this.appDarkMode)).backgroundColor(this.cardColor()).height(30)
+        .padding({ left: 14, right: 14 })
+        .onClick((): void => { this.setStatsRecording(true, this.statsCountListening); })
+    }.width('100%').padding({ left: AppSpacing.LG, right: AppSpacing.MD, top: AppSpacing.MD, bottom: AppSpacing.MD })
+      .backgroundColor('#24E89725').borderRadius(ThemeRuntime.cardRadius()).margin({ bottom: AppSpacing.LG })
+  }
+  /** 第二行读状态而不靠传值，按值传入的 @Builder 不刷新。 */
+  @Builder
+  statsSwitchRow(listeningRow: boolean) {
+    Row({ space: AppSpacing.MD }) {
+      Column({ space: 2 }) {
+        Text(listeningRow ? '听书计入时长' : '记录阅读时长').fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.primaryTextColor())
+        Text(listeningRow ? '朗读和有声书播放时计时' : '关闭后本机不再计时，已有记录保留')
+          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+      }.alignItems(HorizontalAlign.Start).layoutWeight(1)
+      AdaptiveSwitch({
+        isOn: listeningRow ? this.statsCountListening : this.statsRecording,
+        switchEnabled: listeningRow ? this.statsRecording : true,
+        accessibilityLabel: listeningRow ? '听书计入时长' : '记录阅读时长',
+        onChange: (isOn: boolean): void => {
+          if (listeningRow) this.setStatsRecording(this.statsRecording, isOn);
+          else this.setStatsRecording(isOn, this.statsCountListening);
+        }
+      })
+    }.width('100%').padding({ left: 12, right: 12, top: 10, bottom: 10 })
+      .opacity(listeningRow && !this.statsRecording ? 0.45 : 1)
+  }
+  @Builder
+  moreMenu() {
+    Column() {
+      this.statsSwitchRow(false)
+      this.statsSwitchRow(true)
+    }.width(300).padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+  @Builder
+  pageActions() {
+    Row({ space: AppSpacing.MD }) {
+      ImmersiveHeaderAction({
+        icon: $r('sys.symbol.share'),
+        accessibilityLabel: '分享阅读统计',
+        actionEnabled: !this.loading && !this.errorMessage && !this.openingShare,
+        onTap: (): void => { this.shareStatistics(); }
+      })
+      ImmersiveHeaderAction({
+        icon: $r('sys.symbol.more'),
+        accessibilityLabel: '统计设置',
+        onTap: (): void => { this.showMoreMenu = !this.showMoreMenu; }
+      })
+        .bindPopup(this.showMoreMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+          (): void => { this.moreMenu(); }, Placement.BottomRight, this.appDarkMode, this.accentColor(),
+          (): void => { this.showMoreMenu = false; }))
+    }.margin({ right: AppSpacing.XL })
   }
   cardColor(): string { return ThemeRuntime.cardColor(this.appDarkMode); }
   softColor(): string { return ThemeRuntime.inputColor(this.appDarkMode); }
@@ -570,7 +645,7 @@ struct ReadingStatsPage {
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       PageScaffold({ title: '阅读统计', scrollable: false, edgeToEdge: true, externalCollapse: this.headerCollapse,
-        actions: (): void => { this.shareAction() }, content: (): void => { this.pageContent() } })
+        actions: (): void => { this.pageActions() }, content: (): void => { this.pageContent() } })
       Column().width(1).height(1).position({ x: this.contextMenuX, y: this.contextMenuY }).hitTestBehavior(HitTestMode.None)
         .bindPopup(this.showItemActionMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
           (): void => { this.itemActionMenu() }, Placement.BottomLeft, this.appDarkMode, this.accentColor(),

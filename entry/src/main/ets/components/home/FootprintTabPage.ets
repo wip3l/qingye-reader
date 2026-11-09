@@ -48,6 +48,7 @@ export struct FootprintTabPage {
   @State todayKey: string = '';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
+  @StorageProp('readStatsRecording') readStatsRecording: boolean = true;
   private scroller: Scroller = new Scroller();
   private alive: boolean = false;
   private ownerId: string = '';
@@ -265,9 +266,19 @@ export struct FootprintTabPage {
   weekCard() {
     Column({ space: AppSpacing.LG }) {
       Column({ space: AppSpacing.XS }) {
-        Text('本周阅读')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
+        Row({ space: AppSpacing.SM }) {
+          Text('本周阅读')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+          if (!this.readStatsRecording) {
+            Text('已暂停记录')
+              .fontSize(AppFontSize.MICRO)
+              .fontColor(ThemeRuntime.warningColor(this.appDarkMode))
+              .padding({ left: 8, right: 8, top: 1, bottom: 1 })
+              .borderRadius(10)
+              .backgroundColor('#24E89725')
+          }
+        }
         Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
           Text(this.loading ? '—' : this.durationText(this.summary.totalMs))
             .fontSize(32)

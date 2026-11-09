@@ -31,6 +31,7 @@ export struct SettingsPage {
   private scroller: Scroller = new Scroller();
   onHeaderCollapseChange: (progress: number) => void = () => {};
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
+  @StorageProp('readStatsRecording') readStatsRecording: boolean = true;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('accountLoggedIn') accountLoggedIn: boolean = false;
   @StorageLink('accountDisplayName') accountDisplayName: string = '';
@@ -66,7 +67,7 @@ export struct SettingsPage {
             this.syncMenuItem()
             this.menuItem($r('sys.symbol.timer'), '阅读统计', false, () => {
               router.pushUrl({ url: 'pages/ReadingStats' });
-            })
+            }, this.readStatsRecording ? '' : '已暂停')
           }
           .width('100%')
           .borderRadius(ThemeRuntime.largeRadius())
@@ -437,7 +438,7 @@ export struct SettingsPage {
   }
 
   @Builder
-  menuItem(icon: Resource, title: string, showDivider: boolean, onClick: () => void) {
+  menuItem(icon: Resource, title: string, showDivider: boolean, onClick: () => void, value: string = '') {
     Column() {
       Row() {
         SymbolGlyph(icon)
@@ -450,6 +451,13 @@ export struct SettingsPage {
           .fontColor(this.primaryTextColor())
           .layoutWeight(1)
           .margin({ left: AppSpacing.LG })
+
+        if (value) {
+          Text(value)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(ThemeRuntime.warningColor(this.appDarkMode))
+            .margin({ right: AppSpacing.XS })
+        }
 
         SymbolGlyph($r('sys.symbol.chevron_right'))
           .fontSize(18)
