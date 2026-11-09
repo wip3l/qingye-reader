@@ -265,6 +265,7 @@ export struct ExplorePage {
 
   onSourceGroupOrderChanged(): void {
     this.exploreSourceGroups = this.buildExploreSourceGroups();
+    this.syncExploreSourceGroupsFromDb();
   }
 
   onExploreRefreshRequested(): void {
@@ -1712,6 +1713,48 @@ export struct ExplorePage {
       this.exploreSourceGroupLabel(selectedSource.sourceGroup) : '__all__';
     this.refreshExploreSourceDataSource();
     this.showExploreSourcePicker = true;
+    this.syncExploreSourceGroupsFromDb();
+  }
+
+  /**
+   * 书源管理是另一个页面，在那里分组、改名或删组不会重载发现页，sourceOptions 里的分组会一直是旧的。
+   * 打开书源下拉和分组顺序变化时从库里重读一遍分组（只查本地库、不碰网络），就地改写。
+   */
+  async syncExploreSourceGroupsFromDb(): Promise<void> {
+    if (this.sourceOptions.length === 0) return;
+    let sources: BookSource[] = [];
+    try {
+      sources = await AppDatabase.getInstance().getEnabledBookSourcesForExplore();
+    } catch (error) {
+      console.warn('同步发现书源分组失败:', error);
+      return;
+    }
+    const groups: Map<string, string> = new Map<string, string>();
+    sources.forEach((source: BookSource): void => {
+      groups.set(source.bookSourceUrl, (source.bookSourceGroup || '').trim());
+    });
+    const selectedBefore = this.sourceOptions.find((option: ExploreSourceOption): boolean =>
+      option.sourceUrl === this.selectedSourceUrl);
+    const selectedLabelBefore = selectedBefore ? this.exploreSourceGroupLabel(selectedBefore.sourceGroup) : '';
+    let changed = false;
+    this.sourceOptions.forEach((option: ExploreSourceOption): void => {
+      const group = groups.get(option.sourceUrl);
+      if (group !== undefined && group !== option.sourceGroup) {
+        option.sourceGroup = group;
+        changed = true;
+      }
+    });
+    if (!changed) return;
+    this.exploreSourceGroups = this.buildExploreSourceGroups();
+    // 下拉刚按旧分组定位到当前书源所在组；当前书源换了组就跟过去。
+    if (selectedBefore && this.activeExploreSourceGroup === selectedLabelBefore) {
+      this.activeExploreSourceGroup = this.exploreSourceGroupLabel(selectedBefore.sourceGroup);
+    }
+    if (this.activeExploreSourceGroup !== '__all__' &&
+      !this.exploreSourceGroups.includes(this.activeExploreSourceGroup)) {
+      this.activeExploreSourceGroup = '__all__';
+    }
+    this.refreshExploreSourceDataSource();
   }
 
   scrollExploreSourceToCurrent(): void {
