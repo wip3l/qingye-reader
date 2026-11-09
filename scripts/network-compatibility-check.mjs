@@ -70,6 +70,8 @@ function fixture(api = 26) {
       fetch: async req => { state.webRequests = (state.webRequests || 0) + 1; state.webRequest = req;
         return { url: 'https://web.example/final', success: true, statusCode: 200, body: 'web', headers: {} }; } }) },
     BookSourceDebugNetworkTrace: class {},
+    // None of these fixtures use a `@js:`/`<js>` header rule, so the script header runtime never runs.
+    BookSourceHeaderRuntime: { script: () => '', resolve: async () => { throw new Error('unexpected header script'); } },
     RequestSessionSupport: { emptyConfig: () => ({}), apply() {} },
     VerificationSupport: { shouldRequestBrowserVerification: () => false, sourceCookieHeader: () => '' },
     RateLimitAcquireResult: { Acquired: 0, Cancelled: 1, RateLimited: 2 },

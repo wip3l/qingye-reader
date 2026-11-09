@@ -403,7 +403,8 @@ assert(!settingsPageSource.includes(".backgroundColor(this.appDarkMode ? '#10111
 assert(settingsPageSource.includes('ThemeRuntime.primaryTextColor') &&
   settingsPageSource.includes('ThemeRuntime.subTextColor'),
   'Mine page semantic text colors are not connected to ThemeRuntime');
-assert(settingsPageSource.includes('menuItem(icon: Resource, title: string, showDivider: boolean, onClick: () => void)') &&
+// menuItem may grow optional trailing parameters (e.g. a right-side value text); only pin the leading ones.
+assert(settingsPageSource.includes('menuItem(icon: Resource, title: string, showDivider: boolean, onClick: () => void') &&
   settingsPageSource.includes('SymbolGlyph(icon)') &&
   settingsPageSource.includes("SymbolGlyph($r('sys.symbol.chevron_right'))") &&
   settingsPageSource.includes('Divider()') &&

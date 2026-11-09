@@ -28,7 +28,7 @@ function harness(t, nestedTarget = false) {
     fs.mkdirSync(filesDir, { recursive: true });
     fs.mkdirSync(tempDir, { recursive: true });
     const context = { filesDir, tempDir };
-    states.set(filesDir, { prefs: new Map(), books: new Map(), sources: [], addedTimes: new Map(), groups: [], bookmarks: [], keywords: [], readRecords: new Map() });
+    states.set(filesDir, { prefs: new Map(), books: new Map(), sources: [], addedTimes: new Map(), groups: [], bookmarks: [], annotations: [], keywords: [], readRecords: new Map() });
     return context;
   };
   const source = makeDevice('source');
@@ -51,6 +51,7 @@ function harness(t, nestedTarget = false) {
       if (!old || old.durationMs < record.durationMs) active.readRecords.set(record.recordId, { ...plain(record), name, author });
     },
     getAllBookmarks: async () => active.bookmarks,
+    getAllBookAnnotations: async () => active.annotations,
     getSearchKeywords: async () => active.keywords,
     getBook: async url => active.books.get(url),
     restoreBook: async book => active.books.set(book.bookUrl, book),
@@ -65,6 +66,7 @@ function harness(t, nestedTarget = false) {
       if (index < 0) active.groups.push(plain(value)); else active.groups[index] = plain(value);
     },
     restoreBookmark: async value => active.bookmarks.push(plain(value)),
+    restoreBookAnnotation: async value => active.annotations.push(plain(value)),
     restoreSearchKeyword: async value => active.keywords.push(plain(value))
   };
   const handles = new Map();
@@ -224,6 +226,7 @@ test('full export/import preserves themes, OPDS, fonts, books and reports missin
   h.addBook('local://2', '缺失的书', `${h.source.filesDir}/local_books/missing.txt`);
   h.addBook('local://3', '没有路径的书');
   h.from.bookmarks = [{ bookUrl: 'local://1', content: '书签正文' }];
+  h.from.annotations = [{ bookUrl: 'local://1', quote: '划线原文' }, { bookUrl: 'local://missing', quote: '孤儿划线' }];
   h.from.keywords = [{ word: '测试', usage: 2 }];
   const selected = new h.Selection();
   selected.searchHistory = true;
@@ -242,6 +245,7 @@ test('full export/import preserves themes, OPDS, fonts, books and reports missin
   assert.equal(h.to.addedTimes.get('https://source.example'), 1700000000000);
   assert.equal(result.books, 1);
   assert.equal(result.bookmarks, 1);
+  assert.equal(result.annotations, 1, 'annotations restore only for books present on the target');
   assert.equal(result.progress, 2);
   assert.equal(result.settings, 15);
   assert.equal(h.to.prefs.get('immersive_light_settings').immersiveLightLevel, 'balanced');

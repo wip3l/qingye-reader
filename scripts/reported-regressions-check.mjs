@@ -127,7 +127,8 @@ assert.equal(restored.confirmedChapterUpdateTime, 700, 'late sync cannot roll ba
 const Explore = compile(`class Explore { ${method('components/home/ExplorePage.ets', 'openExploreSourcePicker')} }; Explore`);
 const explore = new Explore();
 Object.assign(explore, { sourceOptions: [{ sourceUrl: 'a', sourceGroup: '漫画' }, { sourceUrl: 'b', sourceGroup: '' }],
-  exploreSourceGroupLabel: group => group.trim() || '未分组', refreshExploreSourceDataSource() {} });
+  exploreSourceGroupLabel: group => group.trim() || '未分组', refreshExploreSourceDataSource() {},
+  syncExploreSourceGroupsFromDb() {} });
 for (const [url, group] of [['a', '漫画'], ['b', '未分组'], ['removed', '__all__']]) {
   explore.selectedSourceUrl = url; explore.activeExploreSourceGroup = '旧分组';
   explore.exploreSourceFilterInput = '旧搜索'; explore.openExploreSourcePicker();

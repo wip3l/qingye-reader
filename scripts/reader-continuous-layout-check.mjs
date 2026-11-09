@@ -33,7 +33,8 @@ sandbox.ReaderV2Paginator.layoutContinuousAsync = (document, snapshot, styles, v
 };
 const names = ['readerContinuousV2Request', 'readerContinuousV2State', 'readerContinuousV2Layout',
   'queueReaderContinuousLayout', 'scheduleReaderContinuousLayout', 'runReaderContinuousLayout',
-  'pruneReaderContinuousLayouts', 'warmReaderContinuousLayouts', 'cancelReaderContinuousLayouts', 'updatePagedReaderArea'];
+  'pruneReaderContinuousLayouts', 'warmReaderContinuousLayouts', 'cancelReaderContinuousLayouts', 'updatePagedReaderArea',
+  'readerAnnotationStamp', 'decorateReaderV2Page'];
 vm.runInContext(stripTypeScriptTypes(requestSource.replace(/^import .*;\r?\n/gm, '')
   .replace(/^@Observed\r?\n/gm, '').replace(/^export /gm, '') +
   `\nclass Reader { ${names.map(method).join('\n')} }; globalThis.Reader = Reader;`), sandbox);
@@ -47,6 +48,7 @@ function fixture() {
     readerContinuousLayoutRequests: new Map(), readerContinuousLayoutQueue: [],
     readerContinuousV2Layouts: new Map(), readerContinuousV2Documents: new Map(),
     readerContinuousV2Sources: new Map(), readerContinuousV2Controllers: new Map(), readerPageVisible: true,
+    readerAnnotations: [], readerAnnotationVersion: 0, readerAnnotationShowNoteDot: false,
     sourceText: 'chapter', usesReaderContinuousV2: () => true,
     readerContinuousChapterOf: n => n < 0 ? 0 : n, readerContinuousV2ChunkText: (_index, text) => text,
     readerContinuousV2ChunkStart: index => index * 1800, readerContinuousSourceOf() { return this.sourceText; },

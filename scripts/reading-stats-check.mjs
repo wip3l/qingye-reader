@@ -123,7 +123,8 @@ async function database(t) {
   const migrate = db.migrateReadStats.bind(db);
   db.migrateReadStats = async () => { await migrate(); await db.migrateReadStatsSync(); };
   db.recordBookMutation = async () => {};
-  db.deleteBookChapters = db.deleteBookCachedContent = db.deleteBookBookmarks = async () => {};
+  db.deleteBookChapters = db.deleteBookCachedContent = db.deleteBookBookmarks = db.deleteBookAnnotations = async () => {};
+  db.deleteAudioOfflineFiles = async () => [];
   const book = (url, name, isPrivate = 0) => sql.prepare('INSERT OR REPLACE INTO books (bookUrl,name,isPrivate) VALUES(?,?,?)').run(url, name, isPrivate);
   const entry = (overrides = {}) => Object.assign(new Entry(), {
     recordId: randomUUID(), bookUrl: 'book', dayKey: '2026-10-26', deviceId: 'phone', deviceName: '手机',
