@@ -22,6 +22,8 @@ import { ReaderTtsCapsule } from './ReaderTtsControls';
 
 const PANEL_HEADER_HEIGHT: number = 56;
 const ACTION_ROW_HEIGHT: number = 56;
+const MUSIC_CAPSULE_MIN_WIDTH: number = 132;
+const MUSIC_CAPSULE_MAX_WIDTH: number = 220;
 
 /**
  * EPUB 文件排版页的菜单，与普通阅读页的布局和逻辑一致：
@@ -29,7 +31,8 @@ const ACTION_ROW_HEIGHT: number = 56;
  * - 底栏：快速跳转（章节 / 全书百分比 / 本章页数三种模式，可收起，松手确认后跳转，模式与收起状态和普通阅读页共用）
  *   加目录、阅读设置、日夜三个按钮；关掉快速跳转组件时只剩按钮行；
  * - 右侧亮度条随菜单出现，受“使用快速亮度组件”控制；
- * - 底栏右上方的朗读按钮（受“使用快速朗读组件”控制），朗读中换成朗读胶囊，与普通阅读页相同。
+ * - 底栏右上方的朗读按钮（受“使用快速朗读组件”控制），朗读中换成朗读胶囊，与普通阅读页相同；
+ * - 书里的音频在放或暂停时，底栏左上方一枚音乐胶囊：曲名、进度、播放 / 暂停、关闭。
  * 材质、圆形按钮、进度条、设置行都是阅读页共用组件（沉浸光感）。真正的跳转由页面执行。
  */
 @Component
@@ -86,6 +89,11 @@ export struct EpubOriginalControls {
   @Prop ttsActive: boolean = false;
   @Prop ttsPaused: boolean = false;
   @Prop ttsSubtitle: string = '';
+  /** 书里的音频：'' 没在放、loading、playing、paused（见 EpubAudioPlayer）。 */
+  @Prop musicState: string = '';
+  @Prop musicTitle: string = '';
+  /** “0:04 / 3:33”；还不知道时长时为空。 */
+  @Prop musicTime: string = '';
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 720;
   @State showMore: boolean = false;
@@ -124,6 +132,8 @@ export struct EpubOriginalControls {
   onTtsOpen: () => void = (): void => {};
   onTtsToggle: () => void = (): void => {};
   onTtsStop: () => void = (): void => {};
+  onMusicToggle: () => void = (): void => {};
+  onMusicStop: () => void = (): void => {};
 
   @Builder
   emptyContent() {}
@@ -515,6 +525,76 @@ export struct EpubOriginalControls {
     }
   }
 
+  /** 音乐胶囊的宽度：右边让出朗读按钮或朗读胶囊。 */
+  private musicCapsuleWidth(): number {
+    const tts = !this.readerUseTtsQuickAction ? 0 : (this.ttsActive ? ReaderTtsCapsule.WIDTH : 48);
+    return Math.max(MUSIC_CAPSULE_MIN_WIDTH, Math.min(MUSIC_CAPSULE_MAX_WIDTH, this.panelWidth() - tts - 12));
+  }
+
+  @Builder
+  musicQuickAction() {
+    Column() {
+      ReaderMaterialPanel({
+        panelWidth: this.musicCapsuleWidth(),
+        panelHeight: ReaderTtsCapsule.HEIGHT,
+        cornerRadius: ReaderTtsCapsule.HEIGHT / 2,
+        darkMode: this.darkMode,
+        fallbackColor: this.solidPanelColor()
+      }) {
+        Row({ space: 6 }) {
+          Stack({ alignContent: Alignment.Center }) {
+            Circle().width(30).height(30).fill(ThemeRuntime.accentColor(this.darkMode))
+            SymbolGlyph($r('sys.symbol.music')).fontSize(15).fontColor(['#FFFFFF'])
+          }
+          .width(30)
+          .height(30)
+
+          Column({ space: 1 }) {
+            Text(this.musicTitle || '书中音乐')
+              .fontSize(AppFontSize.CAPTION)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(this.musicState === 'paused' ? `已暂停 ${this.musicTime}` :
+              (this.musicState === 'loading' ? '准备中' : this.musicTime))
+              .fontSize(9)
+              .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          SymbolGlyph(this.musicState === 'paused' ? $r('sys.symbol.play') : $r('sys.symbol.pause'))
+            .id(`epub_music_capsule_${this.musicState === 'paused'}`)
+            .fontSize(17)
+            .fontColor([ThemeRuntime.primaryTextColor(this.darkMode)])
+            .width(28)
+            .height(34)
+            .accessibilityText(this.musicState === 'paused' ? '继续播放' : '暂停')
+            .onClick((): void => this.onMusicToggle())
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(14)
+            .fontColor([ThemeRuntime.subTextColor(this.darkMode)])
+            .width(24)
+            .height(34)
+            .accessibilityText('停止播放')
+            .onClick((): void => this.onMusicStop())
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ left: 8, right: 4 })
+      }
+    }
+    .width(this.musicCapsuleWidth())
+    .height(ReaderTtsCapsule.HEIGHT)
+    .borderRadius(ReaderTtsCapsule.HEIGHT / 2)
+    .position({ x: this.panelLeft(), y: this.ttsAnchorTop(ReaderTtsCapsule.HEIGHT) })
+    .transition(ReaderChromeMotion.bottom(this.bottomInset() + this.bottomBarHeight() + ReaderTtsCapsule.HEIGHT))
+    .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
+  }
+
   /** 拖动进度条时在底栏上方提示目标位置，与普通阅读页相同：章名加模式对应的读数。 */
   @Builder
   previewTooltip() {
@@ -748,6 +828,9 @@ export struct EpubOriginalControls {
           }
           if (!this.activePanel && !this.tooltipVisible && this.readerUseTtsQuickAction) {
             this.ttsQuickAction()
+          }
+          if (!this.activePanel && !this.tooltipVisible && this.musicState) {
+            this.musicQuickAction()
           }
         }
       }

@@ -230,6 +230,14 @@ export class EpubHtmlConverter {
       return `${EpubHtmlConverter.IMAGE_OPEN}${images.length - 1}${EpubHtmlConverter.IMAGE_CLOSE}`;
     };
     source = source
+      // 应用排版放不了书里的音频、视频：多看音频的封面图（placeholder）、视频的海报（poster）当插图显示，
+      // 播放要到“文件排版”里点（见 EpubOriginalScript 的 setupMedia）。
+      .replace(/<(audio|video)\b[^>]*>/gi, (tag: string, name: string): string => {
+        const cover = EpubHtmlConverter.findHtmlAttribute(tag,
+          name.toLowerCase() === 'audio' ? ['placeholder'] : ['poster']);
+        if (!cover || /^(?:data:|https?:)/i.test(cover)) return ' ';
+        return pushImage(resolveImage(EpubHtmlConverter.decodeEntities(cover)), '');
+      })
       .replace(/<(?:img|image)\b[^>]*>/gi, (tag: string): string => {
         const src = EpubHtmlConverter.findHtmlAttribute(tag, ['src', 'xlink:href', 'href']);
         if (!src || /^(?:data:|https?:)/i.test(src)) return ' ';

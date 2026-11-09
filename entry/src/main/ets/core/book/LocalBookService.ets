@@ -135,8 +135,8 @@ export class LocalBookService {
   static readonly EPUB_IMAGE_MARKER_SUFFIX: string = ReaderImageMarker.SUFFIX;
 
   private static readonly TXT_PARSER_VERSION: string = '10';
-  // 10 / 2：注释编号换成可点的注释标记。
-  private static readonly EPUB_PARSER_VERSION: string = '10';
+  // 10 / 2：注释编号换成可点的注释标记。11：音频的封面图、视频的海报当插图显示。
+  private static readonly EPUB_PARSER_VERSION: string = '11';
   private static readonly MOBI_PARSER_VERSION: string = '2';
   /** 导入时同时预读的正文文件数。 */
   private static readonly IMPORT_READ_AHEAD: number = 4;

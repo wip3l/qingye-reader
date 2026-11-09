@@ -55,6 +55,9 @@ export class EpubOriginalLayoutOptions {
   /** 多看“~slim”图的虚拟地址对照（下标一一对应），全屏页在瘦长屏幕上换用 slimTo。 */
   slimFrom: string[] = [];
   slimTo: string[] = [];
+  /** 书里的音频由原生播放器放（见 EpubAudioPlayer）：载入时它正在放哪个（虚拟地址）、playing / paused，空串表示没有。 */
+  mediaSrc: string = '';
+  mediaState: string = '';
 }
 
 /** 自动模式在网页里逐张判断插图用的参数，与 ReaderNightImage.shouldInvert 相同。 */
@@ -80,6 +83,8 @@ class EpubOriginalScriptConfig {
   slimFrom: string[] = [];
   slimTo: string[] = [];
   slimRatio: number = EpubDuokanExtensions.SLIM_MIN_RATIO;
+  mediaSrc: string = '';
+  mediaState: string = '';
 }
 
 /**
@@ -95,7 +100,8 @@ export class EpubOriginalScript {
    * （书本式折叠屏展开时略高于宽）。写成媒体查询，折叠/旋转时网页自己切换，不用重载章节。
    */
   static readonly SPREAD_MEDIA: string = '(min-aspect-ratio: 1001/1000), (min-width: 600px) and (min-aspect-ratio: 4/5)';
-  static readonly HOST_METHODS: string[] = ['ready', 'position', 'tap', 'link', 'edge', 'stepped', 'gallery'];
+  static readonly HOST_METHODS: string[] = ['ready', 'position', 'tap', 'link', 'edge', 'stepped', 'gallery',
+    'media'];
   /** 朗读高亮的底色：浅色页面正片叠底、深色页面滤色，字的颜色不受影响。 */
   static ttsMarkColor(accent: string, dark: boolean): string {
     const match = /^#(?:([0-9a-fA-F]{2}))?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(accent || '');
@@ -119,6 +125,8 @@ export class EpubOriginalScript {
     config.fullscreen = options.fullscreen;
     config.slimFrom = options.slimFrom;
     config.slimTo = options.slimTo;
+    config.mediaSrc = options.mediaSrc;
+    config.mediaState = options.mediaState;
     // 文字片段可能含有 "</script>"，按 JSON 转义尖括号。
     const json = JSON.stringify(config).replace(/</g, '\\u003c');
     // 用函数替换：文字片段里的 "$&" 之类不能被当成替换模式。
@@ -180,6 +188,36 @@ export class EpubOriginalScript {
       'background-position:center;background-repeat:no-repeat;background-size:contain;}';
   }
 
+  /**
+   * 书里的音频（多看写法 <audio class="duokan-audio" placeholder="封面图" activestate="播放时的图" title="曲名">）：
+   * <audio> 本身没有 controls 时网页什么都不画，脚本在它前面放一块可点的卡片——有封面图就是整张图，没有就是一条带曲名的横条；
+   * 右上角的小圆标表示状态（♪ 未播放、暂停竖线 = 正在放、三角 = 已暂停），播放时底边一条进度线。
+   * 曲名、圆标都用伪元素画，不进正文文字，位置换算与朗读取字不受影响。
+   */
+  static mediaStyle(): string {
+    return 'audio{display:none!important;}' +
+      '.legado-audio{position:relative;display:block;margin:.6em 0;text-indent:0;line-height:0;cursor:pointer;' +
+      'break-inside:avoid;-webkit-column-break-inside:avoid;-webkit-user-select:none;user-select:none;}' +
+      '.legado-audio>img.legado-audio-cover{display:block;width:100%;height:auto;margin:0;}' +
+      '.legado-audio.legado-audio-pill{display:flex;align-items:center;min-height:44px;padding:0 48px 0 14px;' +
+      'border-radius:12px;background:rgba(128,128,128,.14);overflow:hidden;}' +
+      '.legado-audio.legado-audio-pill::before{content:"\\266A  " attr(data-title);font-size:.95em;line-height:1.4;' +
+      'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+      '.legado-audio-badge{position:absolute;top:8px;right:8px;width:28px;height:28px;border-radius:14px;' +
+      'background:rgba(0,0,0,.5);color:#FFF;font-size:15px;line-height:28px;text-align:center;pointer-events:none;}' +
+      '.legado-audio-pill>.legado-audio-badge{top:50%;margin-top:-14px;}' +
+      '.legado-audio-badge::before{content:"\\266A";}' +
+      // 正在放：两条竖线；暂停：向右的三角（边框画的）。
+      '.legado-audio[data-state="playing"]>.legado-audio-badge::before{content:"";position:absolute;left:9px;top:8px;' +
+      'width:3px;height:12px;background:#FFF;box-shadow:7px 0 0 #FFF;}' +
+      '.legado-audio[data-state="paused"]>.legado-audio-badge::before{content:"";position:absolute;left:11px;top:8px;' +
+      'border-style:solid;border-width:6px 0 6px 10px;border-color:transparent transparent transparent #FFF;}' +
+      '.legado-audio-progress{position:absolute;left:0;bottom:0;height:3px;width:0;background:rgba(255,255,255,.9);' +
+      'box-shadow:0 0 2px rgba(0,0,0,.5);pointer-events:none;}' +
+      '.legado-audio[data-state="idle"]>.legado-audio-progress{display:none;}' +
+      'video{background:#000;}';
+  }
+
   static style(options: EpubOriginalLayoutOptions): string {
     const m = options.margins;
     const px = (value: number): string => `${Math.max(0, Math.round(value))}px`;
@@ -201,6 +239,7 @@ export class EpubOriginalScript {
         'img,svg,video{max-width:100%!important;box-sizing:border-box;}img,video{object-fit:contain;}';
     css += EpubOriginalScript.galleryStyle(options);
     css += EpubOriginalScript.duokanStyle();
+    css += EpubOriginalScript.mediaStyle();
     if (options.readerFont) {
       const family = EpubOriginalFont.cssFamily(options.readerFont);
       if (EpubOriginalFont.isFileFont(options.readerFont)) {
@@ -476,8 +515,15 @@ export class EpubOriginalScript {
   }
   // 当前屏上的画廊（视口坐标、CSS 像素）以及各自停在第几格；只在翻页模式下报，滚动模式不经原生层拖动。
   function galleryReport(moving) {
-    if (!paged || !started || !galleries.length || !host || !host.gallery) return;
+    if (!paged || !started || (!galleries.length && !videos.length) || !host || !host.gallery) return;
     var zones = [], w = window.innerWidth, h = window.innerHeight;
+    // 正在放的视频也报上去（v=1）：在它上面拖动是拖进度条，原生层不翻页；停下来以后照常翻页。
+    for (var k = 0; k < videos.length; k++) {
+      var vr = videos[k].getBoundingClientRect();
+      if (videos[k].paused || vr.width < 1 || vr.right <= 0 || vr.left >= w || vr.bottom <= 0 || vr.top >= h) continue;
+      zones.push({ l: Math.round(vr.left), t: Math.round(vr.top), r: Math.round(vr.right), b: Math.round(vr.bottom),
+        i: 0, n: 1, v: 1 });
+    }
     for (var i = 0; i < galleries.length; i++) {
       var g = galleries[i], r = g.el.getBoundingClientRect();
       if (r.width < 1 || r.right <= 0 || r.left >= w || r.bottom <= 0 || r.top >= h) continue;
@@ -547,6 +593,7 @@ export class EpubOriginalScript {
     }
     page = Math.max(0, Math.min(count - 1, n));
     slideTo(page * width, 0, smooth);
+    pauseVideos(true);
     report();
     galleryReport(false);
   }
@@ -995,10 +1042,112 @@ export class EpubOriginalScript {
     };
     probe.src = url;
   }
+  // ---- 书里的音频与视频 ----
+  // 音频：<audio> 前放一块卡片（样式见 mediaStyle），点它经 host.media(地址, 曲名) 交给原生播放器，换章、翻页都接着放；
+  // 原生层把播放状态经 __legado.media 推回来，卡片据此换圆标、画进度线（有 activestate 图的播放时换图）。
+  // 视频：加上浏览器自带的播放控件，就在网页里放；翻到别的页或换章时暂停。
+  var mediaWidgets = [], videos = [];
+  var mediaNow = { src: cfg.mediaSrc || '', state: cfg.mediaState || '', pos: 0, dur: 0 };
+  function mediaSrcOf(el) {
+    var value = el.getAttribute('src') || '';
+    if (!value) {
+      var sources = el.getElementsByTagName('source');
+      for (var i = 0; i < sources.length && !value; i++) value = sources[i].getAttribute('src') || '';
+    }
+    if (!value) return '';
+    try { return new URL(value, document.baseURI).href.replace(/#.*$/, ''); } catch (e) { return value; }
+  }
+  function setupMedia() {
+    var list = document.getElementsByTagName('audio');
+    for (var i = 0; i < list.length; i++) {
+      var a = list[i], src = mediaSrcOf(a);
+      if (!src || !a.parentNode) continue;
+      var box = document.createElement('div');
+      box.className = 'legado-audio';
+      box.setAttribute('role', 'button');
+      box.setAttribute('data-legado-media', src);
+      box.setAttribute('data-title', (a.getAttribute('title') || '').trim());
+      var cover = a.getAttribute('placeholder') || '';
+      if (cover) {
+        var img = document.createElement('img');
+        img.className = 'legado-audio-cover';
+        img.alt = '';
+        img.src = cover;
+        box.appendChild(img);
+        box.__legadoCover = img;
+        box.__legadoIdle = cover;
+        box.__legadoActive = a.getAttribute('activestate') || '';
+      } else {
+        box.className += ' legado-audio-pill';
+      }
+      var badge = document.createElement('span');
+      badge.className = 'legado-audio-badge';
+      box.appendChild(badge);
+      var bar = document.createElement('span');
+      bar.className = 'legado-audio-progress';
+      box.appendChild(bar);
+      box.__legadoBar = bar;
+      a.parentNode.insertBefore(box, a);
+      mediaWidgets.push(box);
+    }
+    var vs = document.getElementsByTagName('video');
+    for (var j = 0; j < vs.length; j++) {
+      var v = vs[j];
+      v.setAttribute('controls', '');
+      v.setAttribute('playsinline', '');
+      v.setAttribute('controlslist', 'nodownload');
+      v.removeAttribute('autoplay');
+      v.addEventListener('play', videoChanged);
+      v.addEventListener('pause', videoChanged);
+      v.addEventListener('ended', videoChanged);
+      videos.push(v);
+    }
+    mediaPaint();
+  }
+  function videoChanged() { galleryReport(false); }
+  function mediaPaint() {
+    for (var i = 0; i < mediaWidgets.length; i++) {
+      var box = mediaWidgets[i];
+      var mine = box.getAttribute('data-legado-media') === mediaNow.src;
+      // 正在准备（loading）也按“在放”画，点下去马上有反馈。
+      var state = !mine ? 'idle' : (mediaNow.state === 'paused' ? 'paused' :
+        (mediaNow.state === 'playing' || mediaNow.state === 'loading' ? 'playing' : 'idle'));
+      if (box.getAttribute('data-state') !== state) box.setAttribute('data-state', state);
+      var img = box.__legadoCover;
+      if (img && box.__legadoActive && box.__legadoActive !== box.__legadoIdle) {
+        var want = state === 'playing' ? box.__legadoActive : box.__legadoIdle;
+        if (img.getAttribute('src') !== want) {
+          // 换图不能改变版面：锁住当前的高度，新图按比例放进去。
+          if (img.offsetHeight > 0) { img.style.height = img.offsetHeight + 'px'; img.style.objectFit = 'contain'; }
+          img.setAttribute('src', want);
+        }
+      }
+      var ratio = state !== 'idle' && mediaNow.dur > 0 ? Math.max(0, Math.min(1, mediaNow.pos / mediaNow.dur)) : 0;
+      box.__legadoBar.style.width = (ratio * 100).toFixed(2) + '%';
+    }
+  }
+  function media(src, state, pos, dur) {
+    mediaNow = { src: src || '', state: state || '', pos: Number(pos) || 0, dur: Number(dur) || 0 };
+    mediaPaint();
+  }
+  // 暂停视频；onlyHidden 时只停已经不在当前屏上的。
+  function pauseVideos(onlyHidden) {
+    var w = window.innerWidth, h = window.innerHeight;
+    for (var i = 0; i < videos.length; i++) {
+      var v = videos[i];
+      if (v.paused) continue;
+      if (onlyHidden) {
+        var r = v.getBoundingClientRect();
+        if (r.right > 0 && r.left < w && r.bottom > 0 && r.top < h) continue;
+      }
+      try { v.pause(); } catch (e) {}
+    }
+  }
   function start() {
     if (started) return;
     started = true;
     applyFullscreen();
+    setupMedia();
     setupGalleries();
     applyBleed();
     nightClassify();
@@ -1092,6 +1241,15 @@ export class EpubOriginalScript {
   }, { passive: true });
   document.addEventListener('click', function (e) {
     if (moved) { moved = false; e.preventDefault(); return; }
+    var audio = e.target && e.target.closest ? e.target.closest('.legado-audio') : null;
+    if (audio) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (host && host.media) host.media(audio.getAttribute('data-legado-media') || '', audio.getAttribute('data-title') || '');
+      return;
+    }
+    // 点视频交给它自己的播放控件，不当成翻页或呼出菜单的点按。
+    if (e.target && e.target.closest && e.target.closest('video')) return;
     var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
     if (a) {
       e.preventDefault();
@@ -1109,12 +1267,16 @@ export class EpubOriginalScript {
     cache = null;
     speechCache = null;
     ttsClear();
+    for (var mi = 0; mi < mediaWidgets.length; mi++) {
+      if (mediaWidgets[mi].__legadoCover) mediaWidgets[mi].__legadoCover.style.height = '';
+    }
     applyBleed();
     layout();
     goSpot(s.snippet, s.fraction);
   });
   window.__legado = { next: next, prev: prev, goSpot: goSpot, goAnchor: goAnchor, goPage: goPage, screen: screen,
-    preview: preview, step: step, show: show, speechInfo: speechInfo, ttsMark: ttsMark, ttsClear: ttsClear };
+    preview: preview, step: step, show: show, speechInfo: speechInfo, ttsMark: ttsMark, ttsClear: ttsClear,
+    media: media, pauseVideos: pauseVideos };
   var begin = function () {
     var wait = function () {
       if (document.fonts && document.fonts.ready) document.fonts.ready.then(start, start); else start();

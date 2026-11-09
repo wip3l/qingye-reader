@@ -430,6 +430,36 @@ try {
     const fullscreenScript = EpubOriginalScript.injection(fullscreenOptions).script;
     check(fullscreenScript.includes('"fullscreen":true') && fullscreenScript.includes('cover~slim.jpg'),
       '多看：全屏页与 ~slim 对照传进脚本');
+    // 书里的音频、视频：多看音频的封面图地址改写，不自动播放、不预取；脚本把卡片点按交给原生层。
+    const mediaPiece = new EpubOriginalPiece();
+    mediaPiece.path = 'OEBPS/Text/m.xhtml';
+    mediaPiece.html = '<html><body><input placeholder="写点什么"/>' +
+      '<audio placeholder="../Images/ZJ.webp" activestate="../Images/ZJ2.webp" class="duokan-audio" title="少年无恙" ' +
+      'autoplay="autoplay" preload="auto"><source src="../Audio/SN.mp3" type="audio/mpeg"/></audio>' +
+      '<video class="duokan-video" poster="../Images/FM.webp" autoplay><source src="../Video/v.mp4" type="video/mp4"/></video>' +
+      '</body></html>';
+    const mediaSegment = new EpubChapterSegment();
+    mediaSegment.path = mediaPiece.path;
+    const mediaOptions = new EpubOriginalLayoutOptions();
+    mediaOptions.mediaSrc = `${origin}/OEBPS/Audio/SN.mp3`;
+    mediaOptions.mediaState = 'paused';
+    const mediaHtml = EpubOriginalDocument.build([mediaPiece], [mediaSegment], EpubOriginalScript.injection(mediaOptions), 'm');
+    check(mediaHtml.includes(`placeholder="${origin}/OEBPS/Images/ZJ.webp"`) &&
+      mediaHtml.includes(`activestate="${origin}/OEBPS/Images/ZJ2.webp"`) && mediaHtml.includes('placeholder="写点什么"'),
+      '音频：placeholder / activestate 只在 <audio> 上按地址改写');
+    check(mediaHtml.includes('<audio preload="none" placeholder=') &&
+      mediaHtml.includes('<video preload="none" class="duokan-video"') && !/<(?:audio|video)\b[^>]*(?:autoplay|preload="auto")/.test(mediaHtml),
+      '音频视频：去掉自动播放，不预取');
+    check(mediaHtml.includes(`<source src="${origin}/OEBPS/Audio/SN.mp3"`) && mediaHtml.includes(`poster="${origin}/OEBPS/Images/FM.webp"`),
+      '音频视频：source 与海报地址改写');
+    check(mediaHtml.includes('"mediaState":"paused"') && mediaHtml.includes('host.media(') &&
+      mediaHtml.includes('audio{display:none!important;}') && mediaHtml.includes('content:"\\266A"'),
+      '音频：脚本放卡片、点按交给原生层，载入时带上播放状态');
+    check(EpubOriginalScript.HOST_METHODS.includes('media'), '音频：宿主方法登记 media');
+    equal(convert('<div><img src="cover.jpg"/></div><audio placeholder="cover.jpg" title="曲"><source src="a.mp3"/></audio>' +
+      '<p>词</p><video poster="cover.jpg"><source src="v.mp4"/></video><audio><source src="b.mp3"/></audio>').content,
+    `${marker('cover.jpg')}\n\n${marker('cover.jpg')}\n\n词\n\n${marker('cover.jpg')}`,
+    '应用排版：音频封面图与视频海报当插图，没有封面的音频不留东西');
     equal(EpubOriginalScript.ttsMarkColor('#0A59F7', false), 'rgba(10,89,247,0.3)', '朗读高亮色：#RRGGBB 浅色');
     equal(EpubOriginalScript.ttsMarkColor('#FF3D7BFF', true), 'rgba(61,123,255,0.42)', '朗读高亮色：#AARRGGBB 去掉透明度');
     check(EpubOriginalScript.ttsMarkColor('bogus', false).startsWith('rgba('), '朗读高亮色：无法解析时用默认色');

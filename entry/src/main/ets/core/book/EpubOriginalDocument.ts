@@ -175,11 +175,20 @@ export class EpubOriginalDocument {
       .replace(/<script\b[\s\S]*?<\/script\s*>/gi, '')
       .replace(/<script\b[^>]*\/>/gi, '')
       .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*')/gi, '');
-    result = result.replace(/(\s(?:src|href|xlink:href|poster|data)\s*=\s*)(["'])([^"']*)\2/gi,
-      (all: string, prefix: string, quote: string, value: string): string => {
-        const url = EpubOriginalDocument.absolute(EpubHtmlConverter.decodeEntities(value), baseDir, filePath);
-        return url === null ? all : `${prefix}${quote}${EpubOriginalDocument.escapeAttribute(url)}${quote}`;
-      });
+    const rewriteUrl = (all: string, prefix: string, quote: string, value: string): string => {
+      const url = EpubOriginalDocument.absolute(EpubHtmlConverter.decodeEntities(value), baseDir, filePath);
+      return url === null ? all : `${prefix}${quote}${EpubOriginalDocument.escapeAttribute(url)}${quote}`;
+    };
+    // 音频、视频不自动播放、不预取（音频由原生播放器放，见 EpubOriginalScript 的 setupMedia；视频点了才载入）。
+    // 多看音频的 placeholder / activestate 是封面图地址（不是表单的占位文字），只在 <audio> 上改写。
+    result = result.replace(/<(audio|video)\b[^>]*>/gi, (tag: string, name: string): string => {
+      let next = tag.replace(/\s(?:autoplay|preload)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?(?=[\s/>])/gi, '');
+      if (name.toLowerCase() === 'audio') {
+        next = next.replace(/(\s(?:placeholder|activestate)\s*=\s*)(["'])([^"']*)\2/gi, rewriteUrl);
+      }
+      return `<${name} preload="none"${next.substring(name.length + 1)}`;
+    });
+    result = result.replace(/(\s(?:src|href|xlink:href|poster|data)\s*=\s*)(["'])([^"']*)\2/gi, rewriteUrl);
     result = result.replace(/(\sstyle\s*=\s*)(?:"([^"]*)"|'([^']*)')/gi,
       (all: string, prefix: string, double: string | undefined, single: string | undefined): string =>
         double !== undefined ? `${prefix}"${EpubOriginalDocument.rewriteCss(double, baseDir)}"` :

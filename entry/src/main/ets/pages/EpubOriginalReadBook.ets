@@ -80,6 +80,7 @@ import { CatalogTitleDataSource, TtsCatalogSheet } from '../components/TtsCatalo
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
 import { BookCoverCache } from '../utils/BookCoverCache';
+import { EpubAudioPlayer, EpubAudioState } from '../utils/EpubAudioPlayer';
 
 /** 本书的文件排版设置与位置（书籍变量）。 */
 const SCROLL_KEY = 'epubOriginalScroll';
@@ -131,6 +132,8 @@ class EpubGalleryZone {
   b: number = 0;
   i: number = 0;
   n: number = 0;
+  /** 1 表示这是一段正在放的视频（不是画廊）：在它上面拖动是拖播放进度。 */
+  v: number = 0;
 }
 
 class EpubGalleryReport {
@@ -155,12 +158,13 @@ class EpubOriginalBridge {
   onEdge: (direction: number) => void;
   onStepped: (token: number, moved: boolean, page: number, count: number) => void;
   onGallery: (json: string) => void;
+  onMedia: (src: string, title: string) => void;
 
   constructor(onReady: (count: number, page: number) => void, onPosition: (json: string) => void,
     onTap: (x: number, y: number) => void, onLink: (href: string, note: boolean, x: number, y: number) => void,
     onEdge: (direction: number) => void,
     onStepped: (token: number, moved: boolean, page: number, count: number) => void,
-    onGallery: (json: string) => void) {
+    onGallery: (json: string) => void, onMedia: (src: string, title: string) => void) {
     this.onReady = onReady;
     this.onPosition = onPosition;
     this.onTap = onTap;
@@ -168,6 +172,12 @@ class EpubOriginalBridge {
     this.onEdge = onEdge;
     this.onStepped = onStepped;
     this.onGallery = onGallery;
+    this.onMedia = onMedia;
+  }
+
+  /** 点了书里的音频卡片（见 EpubOriginalScript 的 setupMedia）。 */
+  media(src: string, title: string): void {
+    setTimeout((): void => this.onMedia(`${src}`, `${title}`), 0);
   }
 
   /** 画廊的位置与当前格立即记下（不推迟）：紧接着的下一次滑动要靠它判断归画廊还是翻页。 */
@@ -469,9 +479,17 @@ struct EpubOriginalReadBookPage {
   /** 朗读自己发起的翻页，提交时不当成用户翻页。 */
   private ttsTurnAt: number = 0;
   private ttsChapterWaiter: EpubTtsChapterWaiter | null = null;
+  // ---- 书里的音频（EpubAudioPlayer）：网页里点卡片开始 / 暂停，菜单里有一枚音乐胶囊 ----
+  @State musicState: string = '';
+  @State musicTitle: string = '';
+  @State musicTime: string = '';
+  /** 卡片画成什么样（地址 + 在放 / 暂停）：翻页截图的身份带上它，换了状态不拿旧截图当起点。 */
+  private musicPaintKey: string = '';
+  private musicUnsubscribe: (() => void) | null = null;
 
   aboutToAppear(): void {
     this.alive = true;
+    this.musicUnsubscribe = EpubAudioPlayer.subscribe((state: EpubAudioState): void => this.onMusicState(state));
     const params = this.getUIContext().getRouter().getParams() as Record<string, string>;
     this.bookUrl = params?.['bookUrl'] || '';
     this.shortcutReplace = params?.['shortcutEntry'] === 'true' && params?.['shortcutReplace'] === 'true';
@@ -509,6 +527,8 @@ struct EpubOriginalReadBookPage {
   onPageHide(): void {
     KnockShare.detach(this.owner);
     this.visible = false;
+    // 没有接系统媒体控件，退到后台或盖上别的页面时音乐先停下，回来再点卡片或胶囊继续。
+    EpubAudioPlayer.pause(this.owner);
     this.unregisterHardwareKeys();
     this.keyboard.reset();
     this.showLayoutElements = false;
@@ -525,6 +545,9 @@ struct EpubOriginalReadBookPage {
     KnockShare.detach(this.owner);
     this.flushAndSyncProgress();
     this.alive = false;
+    this.musicUnsubscribe?.();
+    this.musicUnsubscribe = null;
+    EpubAudioPlayer.stop(this.owner);
     this.loadSerial++;
     if (this.readyTimer >= 0) clearTimeout(this.readyTimer);
     if (this.preloadTimer >= 0) clearTimeout(this.preloadTimer);
@@ -1163,7 +1186,8 @@ struct EpubOriginalReadBookPage {
       (token: number, moved: boolean, page: number, count: number): void => {
         this.onStepped(token, moved, page, count);
       },
-      (json: string): void => this.onGallery(id, json)));
+      (json: string): void => this.onGallery(id, json),
+      (src: string, title: string): void => { if (id === this.frontSlot) this.onMedia(src, title); }));
   }
 
   private front(): EpubWebSlot {
@@ -1289,6 +1313,9 @@ struct EpubOriginalReadBookPage {
     options.nightImage = this.nightImageMode;
     options.margins = this.margins();
     options.target = target;
+    const music = EpubAudioPlayer.state();
+    options.mediaSrc = music.src;
+    options.mediaState = music.state;
     // 多看全屏页：不留页边距（页眉页脚也不显示，见 fullscreenFront），单张图铺满屏幕，瘦长屏幕换用“~slim”图。
     if (this.isFullscreenChapter(index)) {
       options.fullscreen = true;
@@ -1729,6 +1756,8 @@ struct EpubOriginalReadBookPage {
     const outgoing: number = 0 - incoming;
     const finish = (): void => {
       this.frontSlot = slot.id;
+      // 换走的那一章里还在放的视频停下（音频由原生播放器放，换章接着放）。
+      if (old.id !== slot.id) this.runInSlot(old, '__legado.pauseVideos && __legado.pauseVideos(false)');
       this.setSlotOffset(old.id, 0, 0, 1);
       this.setSlotOffset(slot.id, 0, 0, 1);
       this.transitioning = false;
@@ -1813,7 +1842,7 @@ struct EpubOriginalReadBookPage {
   private galleryClaimsDrag(x: number, y: number, _direction: number): boolean {
     for (const zone of this.front().galleryZones) {
       if (x < zone.l || x > zone.r || y < zone.t || y > zone.b) continue;
-      return zone.n > 1;
+      return zone.n > 1 || zone.v === 1;
     }
     return false;
   }
@@ -1832,6 +1861,7 @@ struct EpubOriginalReadBookPage {
         zone.b = Number(item.b) || 0;
         zone.i = Number(item.i) || 0;
         zone.n = Number(item.n) || 0;
+        zone.v = Number(item.v) || 0;
         zones.push(zone);
       }
       slot.galleryZones = zones;
@@ -1859,7 +1889,8 @@ struct EpubOriginalReadBookPage {
     if (!this.ready) return '';
     return `${this.frontSlot}|${this.front().serial}|${this.chapterIndex}|${this.pageIndex}/${this.pageCount}|` +
       `${this.layoutKey()}|${this.readerHeaderEnabled}|${this.readerFooterEnabled}|${this.readerInfoBarConfigRaw}|` +
-      `${this.infoTimeText}|${this.infoBatteryPercent}|${this.ttsFocusSerial}|${this.front().galleryKey}`;
+      `${this.infoTimeText}|${this.infoBatteryPercent}|${this.ttsFocusSerial}|${this.front().galleryKey}|` +
+      `${this.musicPaintKey}`;
   }
 
   private waitFrame(): Promise<void> {
@@ -2411,6 +2442,60 @@ struct EpubOriginalReadBookPage {
       return;
     }
     this.jumpTo(path, fragment);
+  }
+
+  // ---- 书里的音频 ----
+
+  /** 网页里点了音频卡片：地址换成解压目录里的文件交给播放器；同一段再点就暂停 / 继续。 */
+  private onMedia(src: string, title: string): void {
+    if (!this.alive || !this.extractRoot) return;
+    const path = EpubOriginalDocument.pathOf(src);
+    const absolute = path ? `${this.extractRoot}/${path}` : '';
+    if (!absolute || !LocalBookService.exists(absolute)) {
+      this.getUIContext().getPromptAction().showToast({ message: '找不到这段音频', duration: 1500 });
+      return;
+    }
+    EpubAudioPlayer.toggle(this.owner, src.replace(/#.*$/, ''), absolute, title.trim() || this.title);
+  }
+
+  private onMusicState(state: EpubAudioState): void {
+    if (!this.alive) return;
+    this.musicState = state.state;
+    this.musicTitle = state.title;
+    this.musicTime = state.duration > 0 ?
+      `${EpubOriginalReadBookPage.clock(state.position)} / ${EpubOriginalReadBookPage.clock(state.duration)}` : '';
+    const painted = state.state === 'paused' ? 'paused' : (state.state ? 'playing' : '');
+    const paintKey = painted ? `${state.src}:${painted}` : '';
+    // 两个槽位都推：后面那个预载的章节里可能也有这段音频的卡片。
+    const script = `__legado.media && __legado.media(${JSON.stringify(state.src)}, ${JSON.stringify(state.state)}, ` +
+      `${Math.round(state.position)}, ${Math.round(state.duration)})`;
+    for (const slot of this.slots) this.runInSlot(slot, script);
+    if (paintKey !== this.musicPaintKey) {
+      this.musicPaintKey = paintKey;
+      this.schedulePrewarm();
+    }
+  }
+
+  private static clock(ms: number): string {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const seconds = total % 60;
+    return `${Math.floor(total / 60)}:${seconds < 10 ? '0' : ''}${seconds}`;
+  }
+
+  private toggleMusic(): void {
+    if (this.musicState === 'paused') EpubAudioPlayer.resume();
+    else EpubAudioPlayer.pause();
+  }
+
+  private runInSlot(slot: EpubWebSlot, script: string): void {
+    if (!slot.attached || !slot.url) return;
+    try {
+      slot.controller.runJavaScript(`window.__legado && ${script}`).catch((error: Error): void => {
+        console.warn('[EpubOriginal] script failed:', error);
+      });
+    } catch (error) {
+      console.warn('[EpubOriginal] script failed:', error);
+    }
   }
 
   private run(script: string): void {
@@ -3597,7 +3682,12 @@ struct EpubOriginalReadBookPage {
         ttsSubtitle: `${this.chapterIndex + 1}/${Math.max(1, this.chapterCount)}章`,
         onTtsOpen: (): void => { this.openTtsPanel(); },
         onTtsToggle: (): void => { this.readAloud?.toggle(); },
-        onTtsStop: (): void => { this.readAloud?.stop(); } })
+        onTtsStop: (): void => { this.readAloud?.stop(); },
+        musicState: this.musicState,
+        musicTitle: this.musicTitle,
+        musicTime: this.musicTime,
+        onMusicToggle: (): void => { this.toggleMusic(); },
+        onMusicStop: (): void => { EpubAudioPlayer.stop(); } })
 
       Column()
         .width(1)
