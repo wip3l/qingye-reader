@@ -16,6 +16,8 @@ export class ReaderTextNormalizer {
     /[!-\/:-@\[-`{-~、。，．：；！？…—–―·‧・“”‘’「」『』《》〈〉【】〔〕（）［］｛｝＂＇｀〜～｜／＼]/g;
   /** 首行以标题开头、后面直接接正文时，只有标题够长才剥离，免得“序”“楔子”截掉正文开头。 */
   private static readonly MIN_PREFIX_TITLE_LENGTH: number = 4;
+  /** 标题被书源拆成多行时最多拼几行来比较。 */
+  private static readonly MAX_SPLIT_TITLE_LINES: number = 3;
 
   static isTrimChar(value: string): boolean {
     return value === ' ' || value === '\t' || value === '\n' || value === '\r' ||
@@ -167,7 +169,8 @@ export class ReaderTextNormalizer {
   /**
    * 正文开头重复章节名时剥离。比较时忽略空白、零宽字符和行内交互标记：有的书源用零宽空格代替章节名里的
    * 空格，或者在标题行上挂段评。标题行前面的图片行（如卷首插图）和空行会被跳过并保留。
-   * 认作标题行的情况：与标题相同；标题带章节号时只差标点（“第1章：开端”）或只差章节号（“开端”）。
+   * 认作标题行的情况：与标题相同；标题带章节号时只差标点（“第1章：开端”）或只差章节号（“开端”）；
+   * 标题被拆成相邻几行（可隔空行）、拼起来符合前面的条件。
    * 首行以标题开头、后面直接接着一句正文时只去掉标题部分，其余作为首段保留。
    */
   static stripDuplicatedTitle(body: string, title: string): string {
@@ -186,7 +189,11 @@ export class ReaderTextNormalizer {
     if (index >= lines.length) {
       return body;
     }
+    let titleEnd = index;
     if (!ReaderTextNormalizer.isTitleLine(lines[index], title)) {
+      titleEnd = ReaderTextNormalizer.findSplitTitleEnd(lines, index, title);
+    }
+    if (titleEnd < 0) {
       const rest = ReaderTextNormalizer.stripTitlePrefix(lines[index], wanted);
       if (!rest) {
         return body;
@@ -194,11 +201,47 @@ export class ReaderTextNormalizer {
       lines[index] = rest;
       return ReaderTextNormalizer.trim(lines.join('\n'));
     }
-    const rest = lines.slice(index + 1).join('\n').replace(/^\n+/, '');
+    const rest = lines.slice(titleEnd + 1).join('\n').replace(/^\n+/, '');
     if (index === 0) {
       return ReaderTextNormalizer.trim(rest);
     }
     return ReaderTextNormalizer.trim(`${lines.slice(0, index).join('\n')}\n${rest}`);
+  }
+
+  /**
+   * 书源把标题拆成几行（如“第235章”一行、“猝不及防的人物”一行，中间可能夹空行）时，返回最后一个标题行的下标；
+   * 不是拆开的标题返回 -1。章节号行不会被软换行合并，所以这种情况要在这里认。
+   * 每多拼一行，已拼内容都必须是标题的开头部分，拼完还得整体认作标题行，正文首句拼不出完整标题，不会被误剥。
+   */
+  private static findSplitTitleEnd(lines: string[], start: number, title: string): number {
+    const titleKey = ReaderTextNormalizer.titleKey(title);
+    const loose = ReaderTextNormalizer.HEADING_PREFIX.test(titleKey);
+    const compareKey = (text: string): string => {
+      const key = ReaderTextNormalizer.titleKey(text);
+      return loose ? key.replace(ReaderTextNormalizer.TITLE_PUNCTUATION, '') : key;
+    };
+    const wanted = compareKey(title);
+    let joined = lines[start];
+    let end = start;
+    for (let count = 1; count < ReaderTextNormalizer.MAX_SPLIT_TITLE_LINES; count++) {
+      const joinedKey = compareKey(joined);
+      if (joinedKey.length < 2 || joinedKey.length >= wanted.length || !wanted.startsWith(joinedKey)) {
+        return -1;
+      }
+      let next = end + 1;
+      while (next < lines.length && !lines[next].trim()) {
+        next++;
+      }
+      if (next >= lines.length || ReaderImageMarker.isMarker(lines[next].trim())) {
+        return -1;
+      }
+      joined += ` ${lines[next]}`;
+      end = next;
+      if (ReaderTextNormalizer.isTitleLine(joined, title)) {
+        return end;
+      }
+    }
+    return -1;
   }
 
   private static isTitleLine(line: string, title: string): boolean {
