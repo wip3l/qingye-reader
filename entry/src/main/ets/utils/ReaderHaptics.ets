@@ -21,6 +21,11 @@ export class ReaderHaptics {
     ReaderHaptics.vibrate(crossChapter);
   }
 
+  /** 界面操作的一次轻震（如书架下拉越过松手线），不受翻页震感开关控制，跟随系统触感设置。 */
+  static uiTick(): void {
+    ReaderHaptics.vibrate(false);
+  }
+
   private static vibrate(crossChapter: boolean): void {
     const effectId = crossChapter ? ReaderHaptics.hard() : ReaderHaptics.soft();
     if (effectId === '-') return;

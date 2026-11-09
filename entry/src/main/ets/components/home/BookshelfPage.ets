@@ -69,6 +69,7 @@ import { AppSpacing } from '../../theme/AppSpacing';
 import { CloudAutoSync } from '../../account/CloudAutoSync';
 import { CloudDownloadQueue } from '../../account/CloudDownloadQueue';
 import { PopupMenuAction } from '../common/PopupMenuAction';
+import { ReaderHaptics } from '../../utils/ReaderHaptics';
 
 const SHELF_FULL_TEXT_CACHE_NOTIFICATION_INTERVAL_MS: number = 5000;
 /** 有声书同时下载的章数。 */
@@ -136,6 +137,11 @@ class ShelfGroupNextFrame extends FrameCallback {
 }
 /** 下拉偏移回退超过这个距离（vp）才算往回推，避免手指抖动时提示闪烁。 */
 const SHELF_REFRESH_PULL_DIRECTION_SLOP: number = 2;
+/** 与 Refresh.refreshOffset 一致：下拉超过这个距离松手才刷新。 */
+const SHELF_REFRESH_TRIGGER_OFFSET: number = 64;
+/** 翻书指示（书本 30 + 间距 4 + 一行说明）的高度，用于在露出的空隙里居中。 */
+const SHELF_REFRESH_INDICATOR_HEIGHT: number = 50;
+const SHELF_REFRESH_CAPSULE_HEIGHT: number = 32;
 /** 输入停顿这么久才按新关键词重新筛选，连续打字时不必每个字都重建列表。 */
 const SHELF_SEARCH_APPLY_DELAY_MS: number = 200;
 /** 标签、书源筛选键的前缀，后面跟 encodeURIComponent 过的名字，避免名字里的逗号打乱键列表。 */
@@ -395,11 +401,30 @@ export struct BookshelfPage {
   @State isCacheTocLoading: boolean = false;
   @State isShelfRefreshing: boolean = false;
   @State shelfRefreshStatus: RefreshStatus = RefreshStatus.Inactive;
-  @State shelfRefreshPrompt: string = '下拉刷新书架';
+  @State shelfRefreshPrompt: string = '下拉检查更新';
   /** 下拉途中手指往回推时收起提示，再往下拉才重新显示。 */
   @State shelfRefreshPullRetracting: boolean = false;
   private shelfRefreshPullPeak: number = 0;
   private shelfRefreshPullTrough: number = 0;
+  /** Refresh 当前下拉距离，驱动翻书指示的翻开程度。 */
+  @State shelfRefreshPullOffset: number = 0;
+  /**
+   * 进度胶囊：松手后书架立刻弹回，检查在后台进行，进度显示在顶栏下方的胶囊里。
+   * 胶囊跟标题行一起收起/展开；收起期间检查完成时结果先留着（summaryPending），等标题行完整展开再显示。
+   */
+  @State shelfRefreshCapsuleVisible: boolean = false;
+  @State shelfRefreshCapsuleDone: boolean = false;
+  /** 本轮要检查的书数与已检查数；总数为 0 表示只刷本地书，胶囊显示转圈。 */
+  @State shelfRefreshTotal: number = 0;
+  @State shelfRefreshChecked: number = 0;
+  /** 完成或本地刷新时的胶囊文字；检查中由 total/checked 拼出。 */
+  @State shelfRefreshCapsuleText: string = '';
+  @State shelfRefreshCapsuleSubText: string = '';
+  @State shelfRefreshCapsuleScale: number = 1;
+  /** 胶囊内容实测宽度，沉浸材质底板只接受具体宽度。 */
+  @State shelfRefreshCapsuleWidth: number = 0;
+  private shelfRefreshSummaryPending: boolean = false;
+  private shelfRefreshCapsuleTimer: number = -1;
   @State editingTags: string[] = [];
   @State tagInput: string = '';
   @State shelfCoverMap: Map<string, string> = new Map();
@@ -1471,7 +1496,7 @@ export struct BookshelfPage {
   }
 
   /** 标题行收起量，0 为完整显示，CollapsingHeader.DISTANCE 为完全收起；类型页签不收起。 */
-  @State shelfHeaderCollapse: number = 0;
+  @State @Watch('onShelfHeaderCollapseChanged') shelfHeaderCollapse: number = 0;
   // 顶栏毛玻璃按列表实际滚动距离显现，见 CollapsingHeader.backdropReveal。
   @State shelfHeaderBackdropReveal: number = 0;
   onHeaderCollapseChange: (progress: number) => void = () => {};
@@ -1528,7 +1553,10 @@ export struct BookshelfPage {
       }
 
       if (this.books.length > 0 && this.shouldShowShelfRefreshStatus()) {
-        this.shelfRefreshStatusOverlay()
+        this.shelfRefreshPullIndicator()
+      }
+      if (this.shelfRefreshCapsuleVisible) {
+        this.shelfRefreshCapsule()
       }
 
       // 长按菜单的锚点：放在手指位置的 1×1 节点，弹出层贴着它弹出。
@@ -2037,15 +2065,17 @@ export struct BookshelfPage {
           }
           .layoutWeight(1)
           .backgroundColor(this.shelfSurfaceColor())
-          .refreshOffset(64)
+          .refreshOffset(SHELF_REFRESH_TRIGGER_OFFSET)
           .onStateChange((state: RefreshStatus) => {
             if (pageKey === this.shelfPageKey()) this.updateShelfRefreshPrompt(state);
           })
           .onOffsetChange((offset: number) => {
-            if (pageKey === this.shelfPageKey()) this.trackShelfRefreshPullOffset(offset);
+            if (pageKey !== this.shelfPageKey()) return;
+            this.shelfRefreshPullOffset = offset;
+            this.trackShelfRefreshPullOffset(offset);
           })
           .onRefreshing(() => {
-            if (pageKey === this.shelfPageKey()) this.refreshBookshelfToc();
+            if (pageKey === this.shelfPageKey()) this.onShelfPullRefresh();
           })
         }
   }
@@ -8521,11 +8551,25 @@ export struct BookshelfPage {
     }
   }
 
+  /** 下拉松手：书架立刻弹回，检查放到后台；已在检查（含冷启动静默刷新）时只亮出胶囊并弹一下。 */
+  onShelfPullRefresh(): void {
+    // 等 Refresh 把 refreshing 双向写成 true 之后再收回，否则可能被它覆盖、列表停在下拉位置。
+    setTimeout(() => {
+      this.isShelfRefreshing = false;
+    }, 0);
+    if (this.shelfRefreshRunning) {
+      this.showShelfRefreshCapsule();
+      this.bumpShelfRefreshCapsule();
+      return;
+    }
+    this.refreshBookshelfToc();
+  }
+
   async refreshBookshelfToc(silent: boolean = false): Promise<void> {
     if (this.shelfRefreshRunning) {
       if (!silent) {
-        this.shelfRefreshPrompt = '书架刷新中';
-        this.isShelfRefreshing = true;
+        this.showShelfRefreshCapsule();
+        this.bumpShelfRefreshCapsule();
       }
       return;
     }
@@ -8534,35 +8578,37 @@ export struct BookshelfPage {
       return;
     }
     const shelfBooks = silent ? [...this.allBooks] : [...this.books];
-    if (shelfBooks.length === 0) {
-      if (!silent) this.isShelfRefreshing = false;
+    let skippedFinished = 0;
+    const targets = shelfBooks.filter((book: Book) => {
+      if (!book.bookUrl || LocalBookService.isLocalBook(book) || !book.canUpdate) return false;
+      if (this.isFinishedBook(book)) {
+        skippedFinished++;
+        return false;
+      }
+      return true;
+    });
+    if (targets.length === 0) {
+      if (!silent && shelfBooks.length > 0) {
+        HdsFeedback.showToast(skippedFinished > 0 ? `没有可刷新的连载书籍，已跳过${skippedFinished}本完结` :
+          '没有可刷新的网络书籍');
+      }
       return;
     }
     this.shelfRefreshRunning = true;
-    const refreshStartedAt = Date.now();
+    this.shelfRefreshTotal = targets.length;
+    this.shelfRefreshChecked = 0;
     if (!silent) {
-      this.isShelfRefreshing = true;
-      HdsFeedback.showToast('正在刷新书架...');
+      this.showShelfRefreshCapsule();
     }
-    let attempted = 0;
-    let skippedFinished = 0;
+    const refreshStartedAt = Date.now();
     let updated = 0;
     let failed = 0;
-    let taskFailed = false;
     try {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
       const engine = ReadBookEngine.createBackgroundWorker();
       engine.chapterUpdateBatchTime = refreshStartedAt;
-      for (const shelfBook of shelfBooks) {
-        if (!shelfBook.bookUrl || LocalBookService.isLocalBook(shelfBook) || !shelfBook.canUpdate) {
-          continue;
-        }
-        if (this.isFinishedBook(shelfBook)) {
-          skippedFinished++;
-          continue;
-        }
-        attempted++;
+      for (const shelfBook of targets) {
         try {
           const freshBook = await db.getBook(shelfBook.bookUrl) || shelfBook;
           const beforeUpdateTime = BookshelfSortHelper.getBookUpdateTime(freshBook);
@@ -8592,50 +8638,114 @@ export struct BookshelfPage {
           failed++;
           console.error('刷新书架目录失败:', shelfBook.name, e);
         }
+        this.shelfRefreshChecked++;
       }
-      if (attempted > 0) {
-        await this.loadBooks();
-        if (!silent) {
-          const skippedText = skippedFinished > 0 ? `，跳过${skippedFinished}本完结` : '';
-          const message = failed > 0 ?
-            `书架刷新完成：${updated}本有更新，${failed}本失败${skippedText}` :
-            `书架刷新完成：${updated}本有更新${skippedText}`;
-          HdsFeedback.showToast(message);
-        }
-        AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-      }
+      await this.loadBooks();
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      this.finishShelfRefreshCapsule(updated > 0 ? `${updated} 本有更新` : '没有新章节',
+        failed > 0 ? ` · ${failed} 本失败` : '');
     } catch (e) {
-      taskFailed = true;
       console.error('刷新书架失败:', e);
-      if (!silent) HdsFeedback.showToast('书架刷新失败');
+      if (this.shelfRefreshCapsuleVisible) {
+        this.hideShelfRefreshCapsule();
+        HdsFeedback.showToast('书架刷新失败');
+      }
     } finally {
       this.shelfRefreshRunning = false;
-      this.isShelfRefreshing = false;
       this.shelfRefreshStatus = RefreshStatus.Inactive;
-      this.shelfRefreshPrompt = '下拉刷新书架';
-      if (!silent && !taskFailed && attempted === 0) {
-        const message = skippedFinished > 0 ? `没有可刷新的连载书籍，已跳过${skippedFinished}本完结` : '没有可刷新的网络书籍';
-        HdsFeedback.showToast(message);
-      }
     }
   }
 
   async refreshLocalBooks(): Promise<void> {
     this.shelfRefreshRunning = true;
-    this.isShelfRefreshing = true;
-    this.shelfRefreshPrompt = '正在刷新本地书籍...';
+    this.shelfRefreshTotal = 0;
+    this.shelfRefreshChecked = 0;
+    this.shelfRefreshCapsuleText = '正在刷新本地书籍';
+    this.showShelfRefreshCapsule();
     try {
       await this.loadBooks();
-      HdsFeedback.showToast('本地书架已刷新');
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      this.finishShelfRefreshCapsule('本地书架已刷新', '');
     } catch (e) {
       console.error('刷新本地书籍失败:', e);
+      this.hideShelfRefreshCapsule();
       HdsFeedback.showToast('本地书架刷新失败');
     } finally {
       this.shelfRefreshRunning = false;
-      this.isShelfRefreshing = false;
       this.shelfRefreshStatus = RefreshStatus.Inactive;
-      this.shelfRefreshPrompt = '下拉刷新书架';
+    }
+  }
+
+  /** 胶囊跟随的标题行收起量；分组页标题栏不收起。 */
+  shelfRefreshCapsuleCollapse(): number {
+    return this.isTileGroupPage() ? 0 : this.shelfHeaderCollapseValue();
+  }
+
+  showShelfRefreshCapsule(): void {
+    this.clearShelfRefreshCapsuleTimer();
+    this.shelfRefreshSummaryPending = false;
+    this.shelfRefreshCapsuleDone = false;
+    if (this.shelfRefreshCapsuleVisible) return;
+    animateTo({ curve: curves.springMotion(0.42, 0.82) }, () => {
+      this.shelfRefreshCapsuleVisible = true;
+    });
+  }
+
+  /** 显示完成结果；标题行收着（胶囊随之隐藏）时先挂起，等标题行完整展开再显示。 */
+  finishShelfRefreshCapsule(text: string, subText: string): void {
+    if (!this.shelfRefreshCapsuleVisible) return;
+    this.shelfRefreshCapsuleText = text;
+    this.shelfRefreshCapsuleSubText = subText;
+    this.shelfRefreshCapsuleDone = true;
+    if (this.shelfRefreshCapsuleCollapse() >= CollapsingHeader.DISTANCE / 2) {
+      this.shelfRefreshSummaryPending = true;
+      return;
+    }
+    this.revealShelfRefreshSummary();
+  }
+
+  revealShelfRefreshSummary(): void {
+    this.shelfRefreshSummaryPending = false;
+    this.bumpShelfRefreshCapsule();
+    this.clearShelfRefreshCapsuleTimer();
+    this.shelfRefreshCapsuleTimer = setTimeout(() => {
+      this.shelfRefreshCapsuleTimer = -1;
+      this.hideShelfRefreshCapsule();
+    }, 2400);
+  }
+
+  hideShelfRefreshCapsule(): void {
+    this.clearShelfRefreshCapsuleTimer();
+    this.shelfRefreshSummaryPending = false;
+    if (!this.shelfRefreshCapsuleVisible) return;
+    animateTo({ duration: 240, curve: Curve.FastOutSlowIn }, () => {
+      this.shelfRefreshCapsuleVisible = false;
+    });
+  }
+
+  clearShelfRefreshCapsuleTimer(): void {
+    if (this.shelfRefreshCapsuleTimer >= 0) {
+      clearTimeout(this.shelfRefreshCapsuleTimer);
+      this.shelfRefreshCapsuleTimer = -1;
+    }
+  }
+
+  bumpShelfRefreshCapsule(): void {
+    if (!this.shelfRefreshCapsuleVisible) return;
+    animateTo({
+      duration: 140, curve: Curve.FastOutSlowIn, onFinish: () => {
+        animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => {
+          this.shelfRefreshCapsuleScale = 1;
+        });
+      }
+    }, () => {
+      this.shelfRefreshCapsuleScale = 1.08;
+    });
+  }
+
+  onShelfHeaderCollapseChanged(): void {
+    if (this.shelfRefreshSummaryPending && this.shelfRefreshCapsuleCollapse() === 0) {
+      this.revealShelfRefreshSummary();
     }
   }
 
@@ -8665,7 +8775,7 @@ export struct BookshelfPage {
   }
 
   trackShelfRefreshPullOffset(offset: number): void {
-    if (this.shelfRefreshRunning || this.isShelfRefreshing) {
+    if (this.isShelfRefreshing) {
       return;
     }
     if (this.shelfRefreshStatus !== RefreshStatus.Drag && this.shelfRefreshStatus !== RefreshStatus.OverDrag) {
@@ -8680,7 +8790,7 @@ export struct BookshelfPage {
       }
     } else if (this.shelfRefreshStatus === RefreshStatus.Drag &&
       offset < this.shelfRefreshPullPeak - SHELF_REFRESH_PULL_DIRECTION_SLOP) {
-      // 只收起“下拉刷新书架”；“松手刷新书架”阶段往回推仍会刷新，提示要留着。
+      // 只收起“下拉检查更新”；“松手检查更新”阶段往回推仍会刷新，提示要留着。
       this.shelfRefreshPullRetracting = true;
       this.shelfRefreshPullTrough = offset;
     } else {
@@ -8698,30 +8808,51 @@ export struct BookshelfPage {
     if (state === RefreshStatus.Inactive || state === RefreshStatus.Done || state === RefreshStatus.Refresh) {
       this.resetShelfRefreshPullTracking();
     }
+    if (state === RefreshStatus.Inactive) {
+      this.shelfRefreshPullOffset = 0;
+    }
+    if (state === RefreshStatus.OverDrag && this.shelfRefreshStatus === RefreshStatus.Drag) {
+      ReaderHaptics.uiTick();
+    }
     this.shelfRefreshStatus = state;
     if (this.shelfRefreshRunning) {
-      this.shelfRefreshPrompt = '书架刷新中';
+      this.shelfRefreshPrompt = '正在检查';
       return;
     }
+    if (state === RefreshStatus.Refresh || state === RefreshStatus.Done) {
+      // 松手后书架立刻弹回，提示停在“松手”那一句跟着淡出。
+      return;
+    }
+    const localOnly = this.shelfShowsLocalOnly();
     if (state === RefreshStatus.OverDrag) {
-      this.shelfRefreshPrompt = '松手刷新书架';
-    } else if (state === RefreshStatus.Refresh) {
-      this.shelfRefreshPrompt = '正在刷新书架...';
-    } else if (state === RefreshStatus.Done) {
-      // Done is the native rebound/settled phase. Keeping a fixed sibling visible here makes
-      // the prompt overlap the first shelf item after the books have already returned to place.
-      this.shelfRefreshPrompt = '下拉刷新书架';
+      this.shelfRefreshPrompt = localOnly ? '松手刷新' : '松手检查更新';
     } else {
-      this.shelfRefreshPrompt = '下拉刷新书架';
+      this.shelfRefreshPrompt = localOnly ? '下拉刷新' : '下拉检查更新';
     }
   }
 
   shouldShowShelfRefreshStatus(): boolean {
-    if (this.isShelfRefreshing) return true;
     if (this.shelfRefreshPullRetracting) return false;
-    return this.shelfRefreshStatus === RefreshStatus.Drag ||
-      this.shelfRefreshStatus === RefreshStatus.OverDrag ||
-      this.shelfRefreshStatus === RefreshStatus.Refresh;
+    if (this.shelfRefreshStatus === RefreshStatus.Drag || this.shelfRefreshStatus === RefreshStatus.OverDrag) {
+      return true;
+    }
+    // 弹回途中按下拉距离淡出，回到原位即消失。
+    return (this.shelfRefreshStatus === RefreshStatus.Refresh || this.shelfRefreshStatus === RefreshStatus.Done) &&
+      this.shelfRefreshPullOffset > 1;
+  }
+
+  /** 翻书指示：0 合拢，1 到达松手线完全翻开。 */
+  shelfRefreshPullProgress(): number {
+    return Math.max(0, Math.min(1, this.shelfRefreshPullOffset / SHELF_REFRESH_TRIGGER_OFFSET));
+  }
+
+  shelfRefreshPullOver(): boolean {
+    return this.shelfRefreshStatus === RefreshStatus.OverDrag ||
+      this.shelfRefreshPullOffset >= SHELF_REFRESH_TRIGGER_OFFSET;
+  }
+
+  shelfRefreshIndicatorColor(): ResourceColor {
+    return this.shelfRefreshPullOver() ? this.accentColor() : this.secondaryTextColor();
   }
 
   async updateShelfBook(book: Book): Promise<void> {
@@ -8752,26 +8883,128 @@ export struct BookshelfPage {
       .opacity(0)
   }
 
+  /** 翻书指示的一页：从书脊处按下拉进度展开到 angle 度。angle 只传常量，进度在这里读状态。 */
   @Builder
-  shelfRefreshStatusOverlay() {
-    Row({ space: AppSpacing.MD }) {
-      if (this.isShelfRefreshing) {
-        LoadingProgress()
-          .width(18)
-          .height(18)
-          .color(this.accentColor())
+  shelfRefreshFanPage(angle: number) {
+    Column()
+      .width(2)
+      .height(16)
+      .borderRadius(1)
+      .backgroundColor(this.shelfRefreshIndicatorColor())
+      .rotate({ angle: angle * this.shelfRefreshPullProgress(), centerX: '50%', centerY: '100%' })
+      .margin({ bottom: 3 })
+  }
+
+  @Builder
+  shelfRefreshPullIndicator() {
+    Column({ space: 4 }) {
+      Stack({ alignContent: Alignment.Bottom }) {
+        this.shelfRefreshFanPage(-62)
+        this.shelfRefreshFanPage(-31)
+        this.shelfRefreshFanPage(0)
+        this.shelfRefreshFanPage(31)
+        this.shelfRefreshFanPage(62)
+        Row()
+          .width(26)
+          .height(2.4)
+          .borderRadius(1.2)
+          .backgroundColor(this.shelfRefreshIndicatorColor())
       }
+      .width(36)
+      .height(30)
       Text(this.shelfRefreshPrompt)
-        .fontSize(AppFontSize.BODY)
+        .fontSize(AppFontSize.CAPTION)
         .fontColor(this.secondaryTextColor())
+        .maxLines(1)
     }
-    .height(48)
     .width('100%')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
-    .position({ x: 0, y: this.bookshelfTopOverlayHeight() + 4 })
+    .alignItems(HorizontalAlign.Center)
+    // 指示放在顶栏下方露出的空隙里居中，不随 Refresh 的 builder 穿过毛玻璃顶栏。
+    .position({
+      x: 0,
+      y: this.bookshelfTopOverlayHeight(this.shelfPageKey()) +
+        Math.max(0, (this.shelfRefreshPullOffset - SHELF_REFRESH_INDICATOR_HEIGHT) / 2)
+    })
+    .opacity(Math.min(1, this.shelfRefreshPullProgress() * 1.4))
     .zIndex(3)
     .hitTestBehavior(HitTestMode.None)
+    .accessibilityLevel('no')
+  }
+
+  /** 进度胶囊文字：检查中显示进度，完成或只刷本地书时显示 shelfRefreshCapsuleText。 */
+  shelfRefreshCapsuleLabel(): string {
+    if (this.shelfRefreshCapsuleDone || this.shelfRefreshTotal <= 0) return this.shelfRefreshCapsuleText;
+    return `检查更新 ${this.shelfRefreshChecked}/${this.shelfRefreshTotal}`;
+  }
+
+  @Builder
+  shelfRefreshCapsule() {
+    Row() {
+      Stack() {
+        ImmersiveMaterialSurface({
+          surfaceWidth: Math.max(SHELF_REFRESH_CAPSULE_HEIGHT, this.shelfRefreshCapsuleWidth),
+          surfaceHeight: SHELF_REFRESH_CAPSULE_HEIGHT,
+          darkMode: this.appDarkMode,
+          fallbackColor: this.cardColor(),
+          glowColor: this.accentGlowColor()
+        }) {
+          Row().width('100%').height('100%')
+        }
+        Row({ space: AppSpacing.SM }) {
+          if (this.shelfRefreshCapsuleDone) {
+            SymbolGlyph($r('sys.symbol.checkmark'))
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor([this.accentColor()])
+          } else if (this.shelfRefreshTotal > 0) {
+            Progress({ value: this.shelfRefreshChecked, total: this.shelfRefreshTotal, type: ProgressType.Ring })
+              .width(16)
+              .height(16)
+              .color(this.accentColor())
+              .style({ strokeWidth: 2.4 })
+          } else {
+            LoadingProgress()
+              .width(16)
+              .height(16)
+              .color(this.accentColor())
+          }
+          Text(this.shelfRefreshCapsuleLabel())
+            .fontSize(AppFontSize.CAPTION)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.primaryTextColor())
+            .maxLines(1)
+          if (this.shelfRefreshCapsuleDone && this.shelfRefreshCapsuleSubText) {
+            Text(this.shelfRefreshCapsuleSubText)
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.secondaryTextColor())
+              .maxLines(1)
+          }
+        }
+        .height(SHELF_REFRESH_CAPSULE_HEIGHT)
+        .padding({ left: 10, right: 14 })
+        .alignItems(VerticalAlign.Center)
+        .onAreaChange((_oldValue: Area, newValue: Area) => {
+          const width = this.areaDimension(newValue.width);
+          if (width > 0 && Math.abs(width - this.shelfRefreshCapsuleWidth) >= 0.5) {
+            this.shelfRefreshCapsuleWidth = width;
+          }
+        })
+      }
+      .scale({ x: this.shelfRefreshCapsuleScale, y: this.shelfRefreshCapsuleScale })
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+    // 跟标题行一起收起：同步上移收起量，并用标题文字同一条淡出曲线，不会滑进状态栏。
+    .position({ x: 0, y: this.bookshelfTopOverlayHeight(this.shelfPageKey()) + AppSpacing.SM })
+    .translate({ y: -this.shelfRefreshCapsuleCollapse() })
+    .opacity(CollapsingHeader.contentOpacity(this.shelfRefreshCapsuleCollapse()))
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ y: -10 }))
+      .combine(TransitionEffect.scale({ x: 0.88, y: 0.88, centerX: '50%', centerY: '0%' })))
+    .zIndex(3)
+    .hitTestBehavior(HitTestMode.None)
+    .accessibilityText(this.shelfRefreshCapsuleLabel() +
+      (this.shelfRefreshCapsuleDone ? this.shelfRefreshCapsuleSubText : ''))
   }
 
   /** 从筛选菜单的“搜索书架”展开，边输入边筛当前书架；“取消”清空关键词并收起。 */
