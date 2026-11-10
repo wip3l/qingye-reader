@@ -1348,15 +1348,17 @@ struct Index {
 
   // SVG 图标按 iconStyle 染色，位图保持原色（系统只给 SVG 填色）。
   bottomTabBar(tabId: string, title: string, index: number): BottomTabBarStyle {
+    const selectedColor = this.bottomTabBarColor(index, true);
+    const unselectedColor = this.bottomTabBarColor(index, false);
     return BottomTabBarStyle.of(this.navigationIcon(tabId, index), this.navigationHidesLabels() ? '' : title)
       .labelStyle({
         font: { size: 11 },
-        selectedColor: this.tabBarActiveColor(),
-        unselectedColor: this.tabBarTextColor()
+        selectedColor: selectedColor,
+        unselectedColor: unselectedColor
       })
       .iconStyle({
-        selectedColor: this.tabBarActiveColor(),
-        unselectedColor: this.tabBarTextColor()
+        selectedColor: selectedColor,
+        unselectedColor: unselectedColor
       })
       .padding({ left: AppSpacing.XS, right: AppSpacing.XS, top: 0, bottom: 0 })
       .layoutMode(LayoutMode.VERTICAL)
@@ -1425,6 +1427,18 @@ struct Index {
 
   tabBarTextColor(): string {
     return ThemeRuntime.subTextColor(this.appDarkMode);
+  }
+
+  /**
+   * 悬浮底栏页签的染色。有选中态图标的主题在切换开始时就换图，悬浮底栏收到新样式后按切换前的选中项重绘，
+   * 之后不再纠正，染色会一直慢一拍（停在书架时亮的是上一个页签）。所以这类主题的选中/未选中两种颜色
+   * 都按应用自己的选中状态给同一个值，不用系统的选中项；没有选中态图标的主题照旧交给系统。
+   */
+  bottomTabBarColor(index: number, forSelected: boolean): string {
+    if (!ThemeAssetRegistry.navigationHasSelectedIcons(ThemeRuntime.iconPackId())) {
+      return forSelected ? this.tabBarActiveColor() : this.tabBarTextColor();
+    }
+    return this.homeTabIsActive(index) ? this.tabBarActiveColor() : this.tabBarTextColor();
   }
 
   // 选中态跟内容切换同时换图（homeTabIsActive 在转场开始时就指向目标页签）。没有选中态图标的主题
