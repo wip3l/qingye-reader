@@ -42,7 +42,6 @@ struct SearchBookDetailPage {
   /** 封面氛围背景的高度。 */
   static readonly AMBIENT_HEIGHT: number = 460;
   /** 简介收起时显示的行数。 */
-  static readonly INTRO_COLLAPSED_LINES: number = 6;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
@@ -105,7 +104,6 @@ struct SearchBookDetailPage {
   /** 正文滚动距离：顶栏底色与书名随之渐显。 */
   @State detailScrollY: number = 0;
   @State headerCollapse: number = 0;
-  @State introExpanded: boolean = true;
   /** 头部封面已加载完成的地址；氛围背景只对它显示，读系统缓存而不再发第二次网络请求。 */
   @State readyCoverUrl: ResourceStr = '';
   private detailScroller: Scroller = new Scroller();
@@ -693,36 +691,13 @@ struct SearchBookDetailPage {
         .fontSize(AppFontSize.BODY_LARGE)
         .fontColor(this.secondaryTextColor())
         .lineHeight(26)
-        .maxLines(this.introExpanded ? 1000 : SearchBookDetailPage.INTRO_COLLAPSED_LINES)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
         .copyOption(CopyOptions.LocalDevice)
         .width('100%')
         .id(`book_detail_intro_${this.bookInfoRenderVersion}`)
-        .onClick(() => {
-          if (this.introIsLong()) {
-            this.introExpanded = !this.introExpanded;
-          }
-        })
-
-      if (this.introIsLong()) {
-        Text(this.introExpanded ? '收起' : '展开全部')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.accentColor())
-          .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
-          .onClick(() => {
-            this.introExpanded = !this.introExpanded;
-          })
-      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding({ top: AppSpacing.MD })
-  }
-
-  /** 粗略按字数判断简介是否超过收起时的行数，避免为测量文字再做一次布局。 */
-  introIsLong(): boolean {
-    const text = this.intro || '';
-    return text.length > 120 || text.split('\n').length > SearchBookDetailPage.INTRO_COLLAPSED_LINES;
   }
 
   private readButtonLabel(): string {
