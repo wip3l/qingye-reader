@@ -41,6 +41,9 @@ struct Index {
   @StorageProp('smartGripEnabled') smartGripEnabled: boolean = true;
   /** 底栏样式：floating 悬浮（系统支持 HDS 页签时）/ flat 平铺。 */
   @StorageProp('homeTabBarStyle') @Watch('onHomeTabBarStyleChanged') homeTabBarStyle: string = 'floating';
+  /** 平铺底栏底色不透明度 0~100 与磨砂开关。 */
+  @StorageProp('homeTabBarFlatOpacity') homeTabBarFlatOpacity: number = 100;
+  @StorageProp('homeTabBarFlatFrosted') homeTabBarFlatFrosted: boolean = false;
   /** 第四个页签：none / listen / footprint，放在发现和我的之间。 */
   @StorageProp('homeExtraTab') @Watch('onHomeExtraTabChanged') homeExtraTab: string = 'none';
   /** 方案 B：由原生页签容器统一执行连续横移，不再叠加页面入场动画。 */
@@ -1107,7 +1110,16 @@ struct Index {
 
   /** 悬浮底栏要系统支持；用户选了平铺或系统不支持时走平铺底栏。 */
   useFloatingTabs(): boolean {
-    return this.supportsImmersiveTabs() && this.homeTabBarStyle !== HomeTabBarSettingsStore.STYLE_FLAT;
+    return this.supportsImmersiveTabs() &&
+      HomeTabBarSettingsStore.normalizeStyle(this.homeTabBarStyle) === HomeTabBarSettingsStore.STYLE_FLOATING;
+  }
+
+  /**
+   * 平铺底栏不透明度低于 100 时盖在页面上，页面内容（含主题背景图）一直铺到屏幕底；100 时和原来一样上下分开排。
+   * 各页签列表末尾已按悬浮底栏留了 56 + 导航条的空白，比平铺底栏高，不用另外让位。
+   */
+  compatTabBarTranslucent(): boolean {
+    return HomeTabBarSettingsStore.normalizeFlatOpacity(this.homeTabBarFlatOpacity) < 100;
   }
 
   extraTabId(): string {
@@ -1313,7 +1325,13 @@ struct Index {
     // 第四个页签增减时整个重建，页签数和选中项才不会错位。
     .key(`home_compat_tabs_${this.extraTabId()}`)
     .barHeight(this.homeTabBarHidden() ? 0 : this.compatTabBarHeight())
-    .barBackgroundColor(ThemeRuntime.cardColor(this.appDarkMode))
+    .barOverlap(this.compatTabBarTranslucent())
+    .barBackgroundColor(HomeTabBarSettingsStore.flatBarColor(ThemeRuntime.cardColor(this.appDarkMode),
+      this.homeTabBarFlatOpacity))
+    // 页签栏盖在内容上时系统默认加一层带底色的模糊，关掉后磨砂只按用户开关做纯模糊。
+    .barBackgroundBlurStyle(BlurStyle.NONE)
+    .barBackgroundEffect(HomeTabBarSettingsStore.flatBarFrostEffect(
+      this.homeTabBarFlatFrosted && this.compatTabBarTranslucent()))
     .scrollable(false)
     .onAppear(() => this.syncBottomBarCollapse())
     .animationDuration(Index.TAB_SWITCH_DURATION)

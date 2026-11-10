@@ -19,6 +19,8 @@ import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
 import { HomeTabBarSettingsStore } from '../utils/HomeTabBarSettingsStore';
+import { HexColor } from '../utils/HexColor';
+import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 
 @Entry
 @Component
@@ -36,6 +38,10 @@ struct OtherSettingsPage {
   @StorageProp('animatedImagesEnabled') animatedImagesEnabled: boolean = true;
   @StorageProp('homeTabBarStyle') homeTabBarStyle: string = 'floating';
   @StorageProp('homeExtraTab') homeExtraTab: string = 'none';
+  @StorageProp('homeTabBarFlatOpacity') homeTabBarFlatOpacity: number = 100;
+  @StorageProp('homeTabBarFlatFrosted') homeTabBarFlatFrosted: boolean = false;
+  /** 拖动不透明度滑杆时的临时值，-1 表示没在拖。 */
+  @State flatOpacityDraft: number = -1;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @StorageLink('lanReaderEnabled') lanReaderEnabled: boolean = false;
@@ -203,6 +209,17 @@ struct OtherSettingsPage {
     Column() {
       SettingRow({ title: '底栏样式', description: this.tabBarStyleDescription() }) {
         this.tabBarStyleSelect()
+      }
+      if (this.flatTabBarInUse()) {
+        this.flatOpacityRow()
+        SettingSwitchRow({
+          title: '底栏磨砂',
+          description: this.flatOpacityValue() < 100 ? '透出底栏的内容先模糊，透明度调低时图标也看得清' :
+            '不透明度低于 100% 时生效',
+          isOn: this.homeTabBarFlatFrosted,
+          switchEnabled: this.flatOpacityValue() < 100,
+          onChange: (value: boolean) => this.setFlatFrosted(value)
+        })
       }
       SettingRow({
         title: '更多底栏项目',
@@ -646,13 +663,152 @@ struct OtherSettingsPage {
   }
 
   tabBarStyleDescription(): string {
-    return ImmersiveMaterialRuntime.supportsHdsTabs() ? '悬浮底栏浮在页面上，带沉浸材质；平铺底栏贴底铺满' :
+    return ImmersiveMaterialRuntime.supportsHdsTabs() ? '悬浮底栏浮在页面上，带沉浸材质；平铺底栏贴底铺满，可调透明度' :
       '本机系统不支持悬浮底栏，使用平铺底栏';
   }
 
   tabBarStyleIndex(): number {
     return ImmersiveMaterialRuntime.supportsHdsTabs() &&
       HomeTabBarSettingsStore.normalizeStyle(this.homeTabBarStyle) === HomeTabBarSettingsStore.STYLE_FLOATING ? 0 : 1;
+  }
+
+  /** 首页实际用的是平铺底栏（选了平铺，或系统不支持悬浮）。 */
+  flatTabBarInUse(): boolean {
+    return this.tabBarStyleIndex() === 1;
+  }
+
+  /** 拖动中用本页的临时值，松手才落盘；没在拖时跟随已存的值。 */
+  flatOpacityValue(): number {
+    return this.flatOpacityDraft >= 0 ? this.flatOpacityDraft :
+      HomeTabBarSettingsStore.normalizeFlatOpacity(this.homeTabBarFlatOpacity);
+  }
+
+  flatOpacityDescription(): string {
+    const value = this.flatOpacityValue();
+    if (value >= 100) return '100%：纯色底栏，页面停在底栏上方';
+    if (value <= 0) return '0%：只留图标，页面和背景图铺到屏幕底';
+    return `${value}%：页面和背景图透过底栏铺到屏幕底`;
+  }
+
+  onFlatOpacityChange(value: number, mode: SliderChangeMode): void {
+    const opacity = HomeTabBarSettingsStore.normalizeFlatOpacity(value);
+    this.flatOpacityDraft = opacity;
+    if (mode !== SliderChangeMode.End && mode !== SliderChangeMode.Click) return;
+    this.flatOpacityDraft = -1;
+    if (opacity === HomeTabBarSettingsStore.normalizeFlatOpacity(this.homeTabBarFlatOpacity)) return;
+    HomeTabBarSettingsStore.saveFlatOpacity(getContext(this), opacity).catch((error: Error) => {
+      console.warn('保存底栏不透明度失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
+  }
+
+  setFlatFrosted(frosted: boolean): void {
+    if (frosted === this.homeTabBarFlatFrosted) return;
+    HomeTabBarSettingsStore.saveFlatFrosted(getContext(this), frosted).catch((error: Error) => {
+      console.warn('保存底栏磨砂设置失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
+  }
+
+  previewTabIds(): string[] {
+    const extra = HomeTabBarSettingsStore.normalizeExtraTab(this.homeExtraTab);
+    return extra === HomeTabBarSettingsStore.EXTRA_NONE ? ['bookshelf', 'explore', 'mine'] :
+      ['bookshelf', 'explore', extra, 'mine'];
+  }
+
+  /** 示意条里垫在底栏下面的几本“书”，颜色取主题强调色的深浅变化，让透明度和磨砂一眼看得出。 */
+  previewBlockColors(): string[] {
+    const accent = this.accentColor();
+    return [HexColor.withOpacity(accent, 0.9), HexColor.withOpacity(accent, 0.45), this.primaryTextColor(),
+      HexColor.withOpacity(accent, 0.7), HexColor.withOpacity(this.primaryTextColor(), 0.35)];
+  }
+
+  /** 平铺底栏效果示意：当前主题背景图（没有时用页面底色）上叠几块内容，底部盖一条按当前设置绘制的底栏。 */
+  @Builder
+  flatTabBarPreview() {
+    Stack({ alignContent: Alignment.Bottom }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.pageColor())
+      if (ThemeRuntime.homeBackdrop(this.appDarkMode)) {
+        Image(ThemeRuntime.homeBackdrop(this.appDarkMode) as ResourceStr)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .draggable(false)
+      }
+      Row({ space: AppSpacing.SM }) {
+        ForEach(this.previewBlockColors(), (color: string) => {
+          Column()
+            .layoutWeight(1)
+            .height(78)
+            .borderRadius(6)
+            .backgroundColor(color)
+        }, (color: string, index: number) => `${index}_${color}`)
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+      .position({ x: 0, y: 26 })
+      Row() {
+        ForEach(this.previewTabIds(), (tabId: string, index: number) => {
+          Column() {
+            Image(ThemeAssetRegistry.navigationIcon(ThemeRuntime.iconPackId(), tabId, false))
+              .width(20)
+              .height(20)
+              .fillColor(index === 0 ? this.accentColor() : this.subTextColor())
+              .draggable(false)
+          }
+          .layoutWeight(1)
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        }, (tabId: string) => tabId)
+      }
+      .width('100%')
+      .height(40)
+      .backgroundColor(HomeTabBarSettingsStore.flatBarColor(this.cardColor(), this.flatOpacityValue()))
+      .backgroundEffect(HomeTabBarSettingsStore.flatBarFrostEffect(
+        this.homeTabBarFlatFrosted && this.flatOpacityValue() < 100))
+    }
+    .width('100%')
+    .height(132)
+    .borderRadius(12)
+    .clip(true)
+    .border({ width: 0.5, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
+    .accessibilityLevel('no')
+  }
+
+  @Builder
+  flatOpacityRow() {
+    Column({ space: AppSpacing.SM }) {
+      Row() {
+        Text('底栏不透明度')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.primaryTextColor())
+        Blank()
+        Text(`${this.flatOpacityValue()}%`)
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.subTextColor())
+      }
+      .width('100%')
+      Text(this.flatOpacityDescription())
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
+      Slider({ value: this.flatOpacityValue(), min: 0, max: 100, step: 5 })
+        .width('100%')
+        .selectedColor(this.accentColor())
+        .blockColor(this.accentColor())
+        .trackColor(ThemeRuntime.inputColor(this.appDarkMode))
+        // 只能拖动滑块调整，点到条上不跳值，防止上下滑动页面时误触。
+        .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+        .accessibilityText('底栏不透明度')
+        .onChange((value: number, mode: SliderChangeMode) => this.onFlatOpacityChange(value, mode))
+      this.flatTabBarPreview()
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .border({ width: { bottom: 0.5 }, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
   }
 
   extraTabValues(): string[] {
