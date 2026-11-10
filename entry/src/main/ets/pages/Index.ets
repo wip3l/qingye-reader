@@ -1198,58 +1198,64 @@ struct Index {
     return this.extraTabId() === HomeTabBarSettingsStore.EXTRA_LISTEN ? '听' : '足迹';
   }
 
+  /** 底栏页签顺序：书架、发现、[听/足迹]、我的。 */
+  homeTabIds(): string[] {
+    const extra = this.extraTabId();
+    return extra ? ['bookshelf', 'explore', extra, 'mine'] : ['bookshelf', 'explore', 'mine'];
+  }
+
+  homeTabTitle(tabId: string): string {
+    if (tabId === 'bookshelf') return '书架';
+    if (tabId === 'explore') return '发现';
+    if (tabId === 'mine') return '我的';
+    return this.extraTabTitle();
+  }
+
+  @Builder
+  homeTabBody(tabId: string) {
+    if (tabId === 'bookshelf') {
+      if (this.homeTabIsMounted(0)) {
+        BookshelfPage({
+          statusBarHeight: this.statusBarHeight,
+          navBarHeight: this.navBarHeight,
+          isBookMultiSelect: $bookshelfMultiSelectActive,
+          activeShelfGroupId: $bookshelfActiveGroupId,
+          onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(0, progress)
+        })
+      } else {
+        BlankTabPage()
+      }
+    } else if (tabId === 'explore') {
+      this.exploreTabContent()
+    } else if (tabId === 'mine') {
+      if (this.homeTabIsMounted(this.mineTabIndex())) {
+        SettingsPage({
+          statusBarHeight: this.statusBarHeight,
+          navBarHeight: this.navBarHeight,
+          onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(this.mineTabIndex(), progress)
+        })
+      } else {
+        BlankTabPage()
+      }
+    } else {
+      this.extraTabContent()
+    }
+  }
+
   @Builder
   immersiveTabs() {
     HdsTabs({ barPosition: BarPosition.End, index: this.currentIndex, controller: this.immersiveTabsController }) {
-      TabContent() {
-        if (this.homeTabIsMounted(0)) {
-          BookshelfPage({
-            statusBarHeight: this.statusBarHeight,
-            navBarHeight: this.navBarHeight,
-            isBookMultiSelect: $bookshelfMultiSelectActive,
-            activeShelfGroupId: $bookshelfActiveGroupId,
-            onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(0, progress)
-          })
-        } else {
-          BlankTabPage()
-        }
-      }
-      .height('100%')
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.bottomTabBar('bookshelf', '书架', 0))
-
-      TabContent() {
-        this.exploreTabContent()
-      }
-      .height('100%')
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.bottomTabBar('explore', '发现', 1))
-
-      if (this.extraTabId()) {
+      // 页签用 ForEach 按列表生成：三页签时若在“我的”前面留一个空的 if 分支，
+      // 系统更新页签栏项时会错位一格，选中态图标和文字颜色对不上。
+      ForEach(this.homeTabIds(), (tabId: string, index: number) => {
         TabContent() {
-          this.extraTabContent()
+          this.homeTabBody(tabId)
         }
         .height('100%')
-        .align(Alignment.TopStart)
+        .align(index < 2 ? Alignment.Center : Alignment.TopStart)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-        .tabBar(this.bottomTabBar(this.extraTabId(), this.extraTabTitle(), 2))
-      }
-
-      TabContent() {
-        if (this.homeTabIsMounted(this.mineTabIndex())) {
-          SettingsPage({
-            statusBarHeight: this.statusBarHeight,
-            navBarHeight: this.navBarHeight,
-            onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(this.mineTabIndex(), progress)
-          })
-        } else {
-          BlankTabPage()
-        }
-      }
-      .height('100%')
-      .align(Alignment.TopStart)
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.bottomTabBar('mine', '我的', this.mineTabIndex()))
+        .tabBar(this.bottomTabBar(tabId, this.homeTabTitle(tabId), index))
+      }, (tabId: string) => tabId)
     }
     .key(`home_immersive_tabs_${this.themeRevision}_${this.appDarkMode ? 'dark' : 'light'}_${this.extraTabId()}`)
     .barBackgroundColor(this.immersiveTabsBarBackgroundColor())
@@ -1293,55 +1299,15 @@ struct Index {
   @Builder
   compatTabs() {
     Tabs({ barPosition: BarPosition.End, index: this.currentIndex, controller: this.compatTabsController }) {
-      TabContent() {
-        if (this.homeTabIsMounted(0)) {
-          BookshelfPage({
-            statusBarHeight: this.statusBarHeight,
-            navBarHeight: this.navBarHeight,
-            isBookMultiSelect: $bookshelfMultiSelectActive,
-            activeShelfGroupId: $bookshelfActiveGroupId,
-            onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(0, progress)
-          })
-        } else {
-          BlankTabPage()
-        }
-      }
-      .height('100%')
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.compatTabBar('bookshelf', '书架', 0))
-
-      TabContent() {
-        this.exploreTabContent()
-      }
-      .height('100%')
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.compatTabBar('explore', '发现', 1))
-
-      if (this.extraTabId()) {
+      ForEach(this.homeTabIds(), (tabId: string, index: number) => {
         TabContent() {
-          this.extraTabContent()
+          this.homeTabBody(tabId)
         }
         .height('100%')
-        .align(Alignment.TopStart)
+        .align(index < 2 ? Alignment.Center : Alignment.TopStart)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-        .tabBar(this.compatTabBar(this.extraTabId(), this.extraTabTitle(), 2))
-      }
-
-      TabContent() {
-        if (this.homeTabIsMounted(this.mineTabIndex())) {
-          SettingsPage({
-            statusBarHeight: this.statusBarHeight,
-            navBarHeight: this.navBarHeight,
-            onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(this.mineTabIndex(), progress)
-          })
-        } else {
-          BlankTabPage()
-        }
-      }
-      .height('100%')
-      .align(Alignment.TopStart)
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-      .tabBar(this.compatTabBar('mine', '我的', this.mineTabIndex()))
+        .tabBar(this.compatTabBar(tabId, this.homeTabTitle(tabId), index))
+      }, (tabId: string) => tabId)
     }
     .barMode(BarMode.Fixed)
     // 第四个页签增减时整个重建，页签数和选中项才不会错位。
