@@ -1,5 +1,6 @@
 import { ThemeIds } from './ThemeModels';
 import { InstalledThemePack, ThemePackRegistry } from './ThemePackRegistry';
+import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 
 export class ThemeAssetRegistry {
   static readonly BACKGROUND_PAPER_LIGHT: string = 'paper-light';
@@ -496,10 +497,21 @@ export class ThemeAssetRegistry {
       const image = pack ? pack.homeBackdrop(darkMode) : '';
       return image || null;
     }
+    // 两套超级会员专属主题的背景带一段循环动图（*_anim.webp，首尾帧相同的 6 秒视频转成）；
+    // “播放动图”关闭时退回同一画面的静图。
+    const animated = AnimatedImagePolicy.enabled();
     switch ((themeId || '').trim().toLowerCase()) {
       case ThemeIds.OBSIDIAN_ARCHIVE:
+        if (animated) {
+          return darkMode ? $r('app.media.home_bg_obsidian_archive_dark_anim') :
+            $r('app.media.home_bg_obsidian_archive_light_anim');
+        }
         return darkMode ? $r('app.media.home_bg_obsidian_archive_dark') : $r('app.media.home_bg_obsidian_archive_light');
       case ThemeIds.CELESTIAL_VAULT:
+        if (animated) {
+          return darkMode ? $r('app.media.home_bg_celestial_vault_dark_anim') :
+            $r('app.media.home_bg_celestial_vault_light_anim');
+        }
         return darkMode ? $r('app.media.home_bg_celestial_vault_dark') : $r('app.media.home_bg_celestial_vault_light');
       default: return null;
     }
