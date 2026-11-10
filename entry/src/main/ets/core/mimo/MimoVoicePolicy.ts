@@ -173,7 +173,7 @@ export class MimoVoicePolicy {
     const tone = mode === '克制' || mode === '平稳' ? '平静' : emotion;
     return '单一说话人，保持基础音色稳定。' + (p.prompt ? p.prompt.trim() + '\n' : '') +
       `本段情绪：${tone}，${mode === '生动' ? '情绪鲜明' : '自然克制'}。` +
-      `最终朗读语速为通常的 ${Math.max(0.5, Math.min(2, speed)).toFixed(1)} 倍，优先于风格中的语速描述。`;
+      `最终朗读语速为通常的 ${Math.max(0.5, Math.min(3, speed)).toFixed(1)} 倍，优先于风格中的语速描述。`;
   }
   static ageLabel(age: string): string { return MIMO_AGE_LABELS[MIMO_AGES.indexOf(age)] || '未知'; }
   static genderLabel(gender: string): string { return MIMO_GENDER_LABELS[MIMO_GENDERS.indexOf(gender)] || '不限'; }

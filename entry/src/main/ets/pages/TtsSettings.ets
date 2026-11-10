@@ -160,11 +160,11 @@ struct TtsSettingsPage {
           this.speedStepButton($r('sys.symbol.minus'), '降低朗读倍速', this.ttsSpeed > 0.5, () => {
             this.applySpeed(this.ttsSpeed - 0.1);
           })
-          Slider({ value: this.ttsSpeed, min: 0.5, max: 2, step: 0.1 })
+          Slider({ value: this.ttsSpeed, min: 0.5, max: 3, step: 0.1 })
             .layoutWeight(1).showTips(true).selectedColor(this.accentColor())
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
             .onChange((value: number) => { this.applySpeed(value); })
-          this.speedStepButton($r('sys.symbol.plus'), '提高朗读倍速', this.ttsSpeed < 2, () => {
+          this.speedStepButton($r('sys.symbol.plus'), '提高朗读倍速', this.ttsSpeed < 3, () => {
             this.applySpeed(this.ttsSpeed + 0.1);
           })
         }.width('100%')
@@ -174,6 +174,7 @@ struct TtsSettingsPage {
           this.speedChip(1.2)
           this.speedChip(1.5)
           this.speedChip(2.0)
+          this.speedChip(3.0)
         }.width('100%')
       }.width('100%').padding(AppSpacing.XL).backgroundColor(this.cardColor())
         .borderRadius(ThemeRuntime.cardRadius())
@@ -1179,7 +1180,7 @@ struct TtsSettingsPage {
   }
 
   applySpeed(value: number): void {
-    const nextSpeed = Math.max(0.5, Math.min(2, Math.round(value * 10) / 10));
+    const nextSpeed = Math.max(0.5, Math.min(3, Math.round(value * 10) / 10));
     if (Math.abs(this.ttsSpeed - nextSpeed) < 0.01) {
       return;
     }

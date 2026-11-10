@@ -6,6 +6,7 @@ import { AccountApiError } from './AccountCommerceModels';
 import { AccountSessionStore } from './AccountSessionStore';
 import { HttpTtsAudio } from '../utils/HttpTtsReader';
 import { sleepMs } from '@legado/sourceengine';
+import { PcmTimeStretch } from '../utils/PcmTimeStretch';
 
 class CloudTtsErrorBody {
   code: string = '';
@@ -61,11 +62,14 @@ export class CloudTtsClient {
       throw new AccountApiError('在线朗读服务端尚未配置', 0, 'SERVER_NOT_CONFIGURED');
     }
     const generation = this.generation;
-    const normalizedSpeed = Math.max(0.5, Math.min(2, speed || 1));
+    const requestedSpeed = Math.max(0.5, Math.min(3, speed || 1));
+    // 服务端语速只到 2 倍；更快时按 2 倍合成，剩下的倍数在本地变速不变调。
+    const normalizedSpeed = Math.min(2, requestedSpeed);
+    const extraSpeed = requestedSpeed / normalizedSpeed;
     const cachePath = this.cachePath(voiceId, text, normalizedSpeed);
     if (cachePath && this.fileExists(cachePath)) {
       try {
-        return this.audioFromFile(cachePath, text);
+        return this.applyExtraSpeed(this.audioFromFile(cachePath, text), extraSpeed);
       } catch (error) {
         console.warn('[TTS] discard invalid timed cloud cache:', error);
         try {
@@ -89,7 +93,7 @@ export class CloudTtsClient {
         }
         this.writeCacheFile(cachePath, responseBuffer);
         this.pruneCache();
-        return this.audioFromBuffer(responseBuffer, text);
+        return this.applyExtraSpeed(this.audioFromBuffer(responseBuffer, text), extraSpeed);
       } catch (error) {
         lastError = error as Error;
         const apiError = error as AccountApiError;
@@ -110,6 +114,17 @@ export class CloudTtsClient {
       }
     }
     throw lastError;
+  }
+
+  private applyExtraSpeed(audio: CloudTtsAudio, factor: number): CloudTtsAudio {
+    if (Math.abs(factor - 1) < 0.01 || !audio.pcm || audio.pcm.byteLength < 4) return audio;
+    audio.pcm = PcmTimeStretch.stretch16BitMono(audio.pcm, audio.sampleRate, factor);
+    const durationMs = Math.round(audio.pcm.byteLength * 1000 / (Math.max(1, audio.sampleRate) * 2));
+    for (const timing of audio.timings) {
+      timing.startTime = Math.min(durationMs, Math.round(timing.startTime / factor));
+      timing.endTime = Math.max(timing.startTime, Math.min(durationMs, Math.round(timing.endTime / factor)));
+    }
+    return audio;
   }
 
   stop(): void {

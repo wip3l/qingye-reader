@@ -31,7 +31,7 @@ export struct ListenTabPage {
   static readonly HERO_COVER_WIDTH: number = 96;
   static readonly HERO_COVER_HEIGHT: number = 128;
   /** 和播放面板的倍速档一致，点一下换到下一档。 */
-  static readonly SPEEDS: number[] = [0.8, 1.0, 1.2, 1.5, 2.0];
+  static readonly SPEEDS: number[] = [0.8, 1.0, 1.2, 1.5, 2.0, 3.0];
   static readonly TIMER_MINUTES: number[] = [15, 30, 60, 90];
   @Prop statusBarHeight: number = 0;
   @Prop navBarHeight: number = 0;

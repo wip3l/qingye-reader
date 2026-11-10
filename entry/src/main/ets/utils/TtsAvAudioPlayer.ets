@@ -245,8 +245,10 @@ export class TtsAvAudioPlayer {
         player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_1_00_X);
       } else if (speed <= 1.75) {
         player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_1_25_X);
-      } else {
+      } else if (speed <= 2.5) {
         player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_2_00_X);
+      } else {
+        player.setSpeed(media.PlaybackSpeed.SPEED_FORWARD_3_00_X);
       }
     } catch (_) {
     }

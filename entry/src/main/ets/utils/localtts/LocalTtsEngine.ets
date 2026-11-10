@@ -84,7 +84,7 @@ export class LocalTtsEngine {
       request.text = text;
       request.sid = model.sid;
       // 语速交给模型（拉长/缩短音长），不改音高；返回的音频不用再变速。
-      request.speed = Math.max(0.5, Math.min(2.5, speed || 1));
+      request.speed = Math.max(0.5, Math.min(3, speed || 1));
       thread.postMessage(request);
     });
     LocalTtsEngine.scheduleIdleRelease();

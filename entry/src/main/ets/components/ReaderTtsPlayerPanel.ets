@@ -624,6 +624,7 @@ export struct ReaderTtsPlayerPanel {
       this.speedChip(1.2)
       this.speedChip(1.5)
       this.speedChip(2.0)
+      this.speedChip(3.0)
     }
     .width('100%')
   }

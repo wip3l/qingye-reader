@@ -12,6 +12,7 @@ import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
 import { LocalTtsModel } from './localtts/LocalTtsModels';
 import { LocalTtsSelection } from './localtts/LocalTtsSelection';
 import { LocalTtsEngine } from './localtts/LocalTtsEngine';
+import { PcmTimeStretch } from './PcmTimeStretch';
 
 export interface TtsChunk {
   text: string;
@@ -826,7 +827,8 @@ export class SystemTtsReader {
     }
     const extraParams: Record<string, Object> = {};
     extraParams['queueMode'] = 0 as Object;
-    extraParams['speed'] = this.getTtsSpeed() as Object;
+    // 系统引擎语速只接受 0.5–2；更快的倍数在 completeSystemPcmChunk 里本地变速补上。
+    extraParams['speed'] = Math.min(2, this.getTtsSpeed()) as Object;
     extraParams['volume'] = 2 as Object;
     extraParams['pitch'] = 1 as Object;
     extraParams['languageContext'] = this.getTtsLanguage() as Object;
@@ -1571,7 +1573,10 @@ export class SystemTtsReader {
       pcm, this.currentAudioSampleBit, this.currentAudioChannel, this.currentAudioType);
     const trimmedPcm = this.trimSystemPcmSilence(
       normalizedPcm, this.currentAudioSampleRate, this.currentFocusChunk.text);
-    const playbackPcm = this.fadeSystemPcmEdges(trimmedPcm, this.currentAudioSampleRate);
+    const fadedPcm = this.fadeSystemPcmEdges(trimmedPcm, this.currentAudioSampleRate);
+    const speed = this.getTtsSpeed();
+    const playbackPcm = speed > 2 ?
+      PcmTimeStretch.stretch16BitMono(fadedPcm, this.currentAudioSampleRate, speed / 2) : fadedPcm;
     if (playbackPcm.byteLength === 0) {
       this.completionPending = false;
       this.currentFocusAudioReceived = false;
@@ -2373,7 +2378,7 @@ export class SystemTtsReader {
   private getTtsSpeed(): number {
     const value = AppStorage.get<number>('ttsSpeed');
     const optionValue = this.optionSpeed;
-    return Math.max(0.5, Math.min(2, optionValue === null ? (value === undefined ? 1 : value) : optionValue));
+    return Math.max(0.5, Math.min(3, optionValue === null ? (value === undefined ? 1 : value) : optionValue));
   }
 
   private getTtsOnline(): number {

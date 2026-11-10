@@ -73,13 +73,13 @@ export struct ReaderTtsQuickSettingsPanel {
         this.stepButton($r('sys.symbol.minus'), '降低朗读倍速', this.speed > 0.5, () => {
           this.onSpeedChange(this.speed - 0.1);
         })
-        Slider({ value: this.speed, min: 0.5, max: 2, step: 0.1 })
+        Slider({ value: this.speed, min: 0.5, max: 3, step: 0.1 })
           .layoutWeight(1)
           .showTips(true)
           .selectedColor(this.accentColor)
           .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
           .onChange((value: number) => this.onSpeedChange(value))
-        this.stepButton($r('sys.symbol.plus'), '提高朗读倍速', this.speed !== 2, () => {
+        this.stepButton($r('sys.symbol.plus'), '提高朗读倍速', this.speed < 3, () => {
           this.onSpeedChange(this.speed + 0.1);
         })
       }
@@ -91,6 +91,7 @@ export struct ReaderTtsQuickSettingsPanel {
         this.speedChip(1.2)
         this.speedChip(1.5)
         this.speedChip(2.0)
+        this.speedChip(3.0)
       }
       .width('100%')
 

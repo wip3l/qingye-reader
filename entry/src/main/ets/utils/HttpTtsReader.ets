@@ -6,6 +6,7 @@ import { HttpTTS, CookieStore, JsRuntime, sleepMs } from '@legado/sourceengine';
 import { TtsAvAudioPlayer } from './TtsAvAudioPlayer';
 import { PcmPlaybackCue, TtsPcmAudioPlayer } from './TtsPcmAudioPlayer';
 import { HdsFeedback } from './HdsFeedback';
+import { PcmTimeStretch } from './PcmTimeStretch';
 
 class TtsRequestRule {
   url: string = '';
@@ -475,7 +476,7 @@ export class HttpTtsReader {
       HttpTtsReader.sharedRuntimes[key] = runtime;
     }
     const normalizedSpeed = this.normalizeSpeed(speed);
-    const speakSpeed = Math.max(0, Math.min(20, Math.round(normalizedSpeed * 10)));
+    const speakSpeed = Math.max(0, Math.min(30, Math.round(normalizedSpeed * 10)));
     runtime.setVar('speakText', text || '');
     runtime.setVar('text', text || '');
     runtime.setVar('speakSpeed', String(speakSpeed));
@@ -734,28 +735,8 @@ export class HttpTtsReader {
     adjusted.sampleRate = audio.sampleRate;
     adjusted.contentType = audio.contentType;
     adjusted.speed = normalizedSpeed;
-    adjusted.pcm = this.resample16BitPcm(audio.pcm, normalizedSpeed);
+    adjusted.pcm = PcmTimeStretch.stretch16BitMono(audio.pcm, audio.sampleRate, normalizedSpeed);
     return adjusted;
-  }
-
-  private resample16BitPcm(buffer: ArrayBuffer, speed: number): ArrayBuffer {
-    const inputFrames = Math.floor(buffer.byteLength / 2);
-    if (inputFrames <= 1) return buffer;
-    const outputFrames = Math.max(1, Math.floor(inputFrames / speed));
-    const input = new DataView(buffer);
-    const output = new ArrayBuffer(outputFrames * 2);
-    const outputView = new DataView(output);
-    for (let frame = 0; frame < outputFrames; frame++) {
-      const sourcePosition = Math.min(inputFrames - 1, frame * speed);
-      const sourceFrame = Math.floor(sourcePosition);
-      const nextFrame = Math.min(inputFrames - 1, sourceFrame + 1);
-      const fraction = sourcePosition - sourceFrame;
-      const current = input.getInt16(sourceFrame * 2, true);
-      const next = input.getInt16(nextFrame * 2, true);
-      const sample = Math.round(current + (next - current) * fraction);
-      outputView.setInt16(frame * 2, Math.max(-32768, Math.min(32767, sample)), true);
-    }
-    return output;
   }
 
   private downmix16BitPcmToMono(buffer: ArrayBuffer, channels: number): ArrayBuffer {
@@ -1146,7 +1127,7 @@ export class HttpTtsReader {
   }
 
   private normalizeSpeed(speed: number): number {
-    return Math.max(0.5, Math.min(2, speed || 1));
+    return Math.max(0.5, Math.min(3, speed || 1));
   }
 
   // Matches the speed variables injected in runtimeForVoice inside a {{...}}

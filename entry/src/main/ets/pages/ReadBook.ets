@@ -9276,7 +9276,7 @@ struct ReadBookPage {
   }
 
   applyTtsSpeed(value: number): void {
-    const nextSpeed = Math.max(0.5, Math.min(2, Math.round(value * 10) / 10));
+    const nextSpeed = Math.max(0.5, Math.min(3, Math.round(value * 10) / 10));
     if (Math.abs(this.ttsSpeed - nextSpeed) < 0.01) {
       return;
     }

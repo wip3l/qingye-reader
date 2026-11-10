@@ -156,7 +156,7 @@ export class TtsSettingsStore {
       return Math.round(value) === 0 ? 0 : 1;
     }
     if (type === 'speed') {
-      return Math.max(0.5, Math.min(2, Math.round(value * 10) / 10));
+      return Math.max(0.5, Math.min(3, Math.round(value * 10) / 10));
     }
     return fallback;
   }

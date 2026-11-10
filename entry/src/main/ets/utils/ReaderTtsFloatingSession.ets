@@ -432,7 +432,7 @@ export class ReaderTtsFloatingSession {
   }
 
   static setSpeed(value: number): void {
-    const nextSpeed = Math.max(0.5, Math.min(2, Math.round((value || 1) * 10) / 10));
+    const nextSpeed = Math.max(0.5, Math.min(3, Math.round((value || 1) * 10) / 10));
     // The bookshelf retains its own host page. Publish the shared panel state before dispatching
     // to the hidden reader owner so every mounted instance updates in the same UI turn.
     AppStorage.setOrCreate('globalTtsSpeed', nextSpeed);
