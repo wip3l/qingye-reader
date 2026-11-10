@@ -42,6 +42,14 @@ export class ReaderAnnotationShare {
     }
   }
 
+  /** 摘录增删改后调用，足迹页的“最近摘录”据此重读。 */
+  static notifyExcerptsChanged(): void {
+    AppStorage.setOrCreate<number>(ReaderAnnotationShare.EXCERPT_REVISION_KEY,
+      (AppStorage.get<number>(ReaderAnnotationShare.EXCERPT_REVISION_KEY) || 0) + 1);
+  }
+
+  static readonly EXCERPT_REVISION_KEY: string = 'excerptRevision';
+
   static timeLabel(time: number): string {
     const elapsed = Date.now() - time;
     if (elapsed < 60000) return '刚刚';

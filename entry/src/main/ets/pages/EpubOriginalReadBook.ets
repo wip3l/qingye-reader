@@ -157,6 +157,7 @@ class EpubOriginalSavedPosition {
 // 网页选中文字后系统菜单里的“划线”“笔记”。
 const EPUB_ANNOTATE_MENU_ID: string = 'epub_annotate';
 const EPUB_ANNOTATE_NOTE_MENU_ID: string = 'epub_annotate_note';
+const EPUB_EXCERPT_MENU_ID: string = 'epub_excerpt';
 
 /** 交给网页脚本 marks() 的一条划线：紧凑文字与前后文、章内比例和样式（见 EpubOriginalScript）。 */
 class EpubAnnotationMark {
@@ -402,6 +403,7 @@ struct EpubOriginalReadBookPage {
   @State annotationAnchorX: number = 0;
   @State annotationAutoPanel: boolean = true;
   @State annotationShowNoteDot: boolean = true;
+  @State annotationExcerpt: boolean = false;
   /** 目录 / 书签面板（阅读页通用的 ReaderTocPanel）用的数据。 */
   @State tocChapters: BookChapter[] = [];
   @State bookmarks: Bookmark[] = [];
@@ -929,19 +931,21 @@ struct EpubOriginalReadBookPage {
     this.runInSlot(slot, `__legado.marks(${JSON.stringify(JSON.stringify(marks))})`);
   }
 
-  /** 网页选中文字后的系统菜单：最前面加“划线”“笔记”。网页里菜单回调给的范围没有意义，选区由脚本取。 */
+  /** 网页选中文字后的系统菜单：最前面加“划线”“笔记”“摘录”。网页里菜单回调给的范围没有意义，选区由脚本取。 */
   private annotationMenuOptions(slotId: number): EditMenuOptions {
     return {
       onCreateMenu: (items: TextMenuItem[]): TextMenuItem[] => {
         const result = items.slice();
+        result.unshift({ id: TextMenuItemId.of(EPUB_EXCERPT_MENU_ID), content: '摘录' });
         result.unshift({ id: TextMenuItemId.of(EPUB_ANNOTATE_NOTE_MENU_ID), content: '笔记' });
         result.unshift({ id: TextMenuItemId.of(EPUB_ANNOTATE_MENU_ID), content: '划线' });
         return result;
       },
       onMenuItemClick: (item: TextMenuItem, _range: TextRange): boolean => {
         const annotate = item.id.equals(TextMenuItemId.of(EPUB_ANNOTATE_MENU_ID));
-        if (annotate || item.id.equals(TextMenuItemId.of(EPUB_ANNOTATE_NOTE_MENU_ID))) {
-          this.annotateSelection(slotId, !annotate);
+        const excerpt = item.id.equals(TextMenuItemId.of(EPUB_EXCERPT_MENU_ID));
+        if (annotate || excerpt || item.id.equals(TextMenuItemId.of(EPUB_ANNOTATE_NOTE_MENU_ID))) {
+          this.annotateSelection(slotId, !annotate && !excerpt, excerpt);
           return true;
         }
         return false;
@@ -949,7 +953,7 @@ struct EpubOriginalReadBookPage {
     };
   }
 
-  private async annotateSelection(slotId: number, withNote: boolean): Promise<void> {
+  private async annotateSelection(slotId: number, withNote: boolean, excerpt: boolean = false): Promise<void> {
     const slot = this.slots[slotId];
     if (!slot.attached || !slot.ready || slot.chapter < 0) return;
     let picked: EpubSelectionInfo | null = null;
@@ -965,10 +969,12 @@ struct EpubOriginalReadBookPage {
       HdsFeedback.showToast('这段文字无法划线');
       return;
     }
-    await this.createAnnotation(slot, picked, withNote);
+    await this.createAnnotation(slot, picked, withNote, excerpt);
   }
 
-  private async createAnnotation(slot: EpubWebSlot, picked: EpubSelectionInfo, withNote: boolean): Promise<void> {
+  /** excerpt 为真时是菜单里的“摘录”：划线同时收进我的摘录，不弹面板。 */
+  private async createAnnotation(slot: EpubWebSlot, picked: EpubSelectionInfo, withNote: boolean,
+    excerpt: boolean = false): Promise<void> {
     const book = this.book;
     if (!book) return;
     const chapter = slot.chapter;
@@ -1003,13 +1009,16 @@ struct EpubOriginalReadBookPage {
       annotation.end = annotation.start + annotation.quote.length;
     }
     const notes: string[] = [];
+    let mergedExcerpt = excerpt;
     for (const item of overlaps) {
       if (item.note.trim()) notes.push(item.note.trim());
+      if (item.excerpt) mergedExcerpt = true;
     }
     const now = Date.now();
     annotation.color = this.annotationSettings.lastColor;
     annotation.style = this.annotationSettings.lastStyle;
     annotation.note = notes.join('\n');
+    annotation.excerpt = mergedExcerpt;
     annotation.createTime = now;
     annotation.updateTime = now;
     try {
@@ -1027,9 +1036,12 @@ struct EpubOriginalReadBookPage {
     const removed = new Set<number>(overlaps.map((item: BookAnnotation): number => item.id));
     this.annotations = this.annotations.filter((item: BookAnnotation) => !removed.has(item.id));
     this.annotations.push(annotation);
+    if (annotation.excerpt) ReaderAnnotationShare.notifyExcerptsChanged();
     await this.pushAnnotationMarks(slot);
     if (slot.id !== this.frontSlot) return;
-    if (withNote || this.annotationSettings.autoPanel) {
+    if (excerpt) {
+      HdsFeedback.showToast(overlaps.length > 0 ? '已与原有划线合并，并加入摘录' : '已加入摘录');
+    } else if (withNote || this.annotationSettings.autoPanel) {
       if (overlaps.length > 0) HdsFeedback.showToast('已与原有划线合并');
       // 等网页画完再量划线的位置。
       setTimeout((): void => {
@@ -1072,6 +1084,7 @@ struct EpubOriginalReadBookPage {
     this.annotationQuote = annotation.quote;
     this.annotationNoteSaved = annotation.note;
     this.annotationNoteDraft = annotation.note;
+    this.annotationExcerpt = annotation.excerpt;
     this.annotationTimeText = ReaderAnnotationShare.timeLabel(annotation.updateTime || annotation.createTime);
     this.annotationFocusNote = focusNote;
     let parsed: EpubAnnotationBounds | null = null;
@@ -1116,7 +1129,9 @@ struct EpubOriginalReadBookPage {
     } catch (error) {
       console.error('[EpubOriginal] save annotation failed:', error);
       HdsFeedback.showToast('划线保存失败');
+      return;
     }
+    ReaderAnnotationShare.notifyExcerptsChanged();
   }
 
   private commitAnnotationNote(): void {
@@ -1157,6 +1172,7 @@ struct EpubOriginalReadBookPage {
     }
     this.annotations = this.annotations.filter((item: BookAnnotation) => item.id !== annotation.id);
     this.refreshAnnotationMarks();
+    if (annotation.excerpt) ReaderAnnotationShare.notifyExcerptsChanged();
     return true;
   }
 
@@ -1210,6 +1226,7 @@ struct EpubOriginalReadBookPage {
       focusNote: this.annotationFocusNote,
       autoPanel: this.annotationAutoPanel,
       showNoteDot: this.annotationShowNoteDot,
+      excerpt: this.annotationExcerpt,
       noteDraft: $annotationNoteDraft,
       onClose: (): void => this.closeAnnotationLayer(),
       onColor: (color: string): void => this.setAnnotationLook(color, this.annotationStyle),
@@ -1230,6 +1247,16 @@ struct EpubOriginalReadBookPage {
         if (!annotation) return;
         this.commitAnnotationNote();
         ReaderAnnotationShare.share(getContext(this), annotation);
+      },
+      onExcerpt: (): void => {
+        const annotation = this.annotationActive;
+        if (!annotation) return;
+        this.commitAnnotationNote();
+        annotation.excerpt = !annotation.excerpt;
+        annotation.updateTime = Date.now();
+        this.annotationExcerpt = annotation.excerpt;
+        this.saveAnnotation(annotation);
+        HdsFeedback.showToast(annotation.excerpt ? '已加入摘录' : '已移出摘录');
       },
       onOpenConfig: (): void => {
         this.commitAnnotationNote();

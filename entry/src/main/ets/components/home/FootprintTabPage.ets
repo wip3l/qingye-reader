@@ -14,6 +14,7 @@ import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { BookCover } from '../book/BookCover';
 import { ImmersiveMaterialSurface } from '../ImmersiveMaterialSurface';
+import { BookAnnotation } from '../../model/reader/BookAnnotation';
 
 /** 本月日历的一格；day 为 0 是月初前的空位。level 0 没读，1~3 越大读得越久，-1 是还没到的日子。 */
 class FootprintDay {
@@ -24,7 +25,7 @@ class FootprintDay {
   today: boolean = false;
 }
 
-/** 首页第四个页签“足迹”：本周阅读（全部设备）、本月日历、读得最多的书和最近书签。 */
+/** 首页第四个页签“足迹”：本周阅读（全部设备）、本月日历、读得最多的书、最近摘录和最近书签。 */
 @Component
 export struct FootprintTabPage {
   static readonly HEADER_CONTROL_SIZE: number = 40;
@@ -32,6 +33,8 @@ export struct FootprintTabPage {
   static readonly RANK_LIMIT: number = 3;
   static readonly BOOKMARK_LIMIT: number = 10;
   static readonly BOOKMARK_CARD_HEIGHT: number = 148;
+  static readonly EXCERPT_LIMIT: number = 10;
+  static readonly EXCERPT_CARD_HEIGHT: number = 168;
   /** 日历颜色分档：20 分钟、1 小时。 */
   static readonly LEVEL_STEPS_MS: number[] = [20 * 60000, 60 * 60000];
   @Prop statusBarHeight: number = 0;
@@ -44,6 +47,10 @@ export struct FootprintTabPage {
   @State monthDays: FootprintDay[] = [];
   @State monthTitle: string = '';
   @State bookmarks: Bookmark[] = [];
+  @State excerpts: BookAnnotation[] = [];
+  @State excerptsLoaded: boolean = false;
+  /** 阅读页、我的摘录改了摘录后加一，这里重读最近摘录。 */
+  @StorageProp('excerptRevision') @Watch('onExcerptRevision') excerptRevision: number = 0;
   @State loading: boolean = true;
   @State todayKey: string = '';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
@@ -83,7 +90,10 @@ export struct FootprintTabPage {
       const endKey = week.endKey > month.endKey ? week.endKey : month.endKey;
       const rows = await appDb.getReadStatsByDayRange(startKey, endKey, '', ownerId);
       const bookmarks = await appDb.getAllBookmarks();
+      const excerpts = await appDb.getExcerptAnnotations(FootprintTabPage.EXCERPT_LIMIT);
       if (!this.alive) return;
+      this.excerpts = excerpts;
+      this.excerptsLoaded = true;
       this.ownerId = ownerId;
       this.summary = ReadStatsSummary.calculate(rows, 'week', now, now);
       this.lastWeekMs = ReadStatsSummary.calculate(rows, 'week', lastWeekAnchor, now).totalMs;
@@ -94,6 +104,20 @@ export struct FootprintTabPage {
       console.warn('读取足迹失败:', error);
     } finally {
       if (this.alive) this.loading = false;
+    }
+  }
+
+  onExcerptRevision(): void {
+    this.loadExcerpts();
+  }
+
+  async loadExcerpts(): Promise<void> {
+    try {
+      await appDb.init(getContext(this));
+      const excerpts = await appDb.getExcerptAnnotations(FootprintTabPage.EXCERPT_LIMIT);
+      if (this.alive) this.excerpts = excerpts;
+    } catch (error) {
+      console.warn('读取摘录失败:', error);
     }
   }
 
@@ -157,6 +181,26 @@ export struct FootprintTabPage {
             .borderRadius(ThemeRuntime.largeRadius())
             .clip(true)
             .backgroundColor(this.cardColor())
+          }
+
+          if (this.excerptsLoaded) {
+            this.sectionHeaderWithMore('最近摘录', '我的摘录', () => this.openExcerpts())
+            if (this.excerpts.length > 0) {
+              List({ space: AppSpacing.MD }) {
+                ForEach(this.excerpts, (excerpt: BookAnnotation) => {
+                  ListItem() {
+                    this.excerptCard(excerpt)
+                  }
+                }, (excerpt: BookAnnotation) => `${excerpt.id}|${excerpt.updateTime}|${excerpt.color}`)
+              }
+              .listDirection(Axis.Horizontal)
+              .scrollBar(BarState.Off)
+              .edgeEffect(EdgeEffect.Spring)
+              .width('100%')
+              .height(FootprintTabPage.EXCERPT_CARD_HEIGHT)
+            } else {
+              this.excerptEmptyCard()
+            }
           }
 
           if (this.bookmarks.length > 0) {
@@ -461,6 +505,100 @@ export struct FootprintTabPage {
   }
 
   @Builder
+  sectionHeaderWithMore(title: string, moreLabel: string, action: () => void) {
+    Row() {
+      Text(title)
+        .fontSize(AppFontSize.TITLE)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.primaryTextColor())
+        .layoutWeight(1)
+      Row({ space: 2 }) {
+        Text(moreLabel)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(14)
+          .fontColor([this.subTextColor()])
+      }
+      .padding({ left: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
+      .accessibilityGroup(true)
+      .accessibilityText(moreLabel)
+      .onClick(action)
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 摘录卡：左边划线颜色的竖条 + 原文，有想法再带一行，底下书名章节。 */
+  @Builder
+  excerptCard(excerpt: BookAnnotation) {
+    Row({ space: AppSpacing.MD }) {
+      Column()
+        .width(3)
+        .height('100%')
+        .borderRadius(1.5)
+        .backgroundColor(excerpt.color)
+      Column({ space: AppSpacing.XS }) {
+        Text(excerpt.quote)
+          .fontSize(AppFontSize.BODY)
+          .lineHeight(21)
+          .fontColor(this.primaryTextColor())
+          .maxLines(excerpt.note.trim() ? 4 : 5)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .wordBreak(WordBreak.BREAK_WORD)
+          .width('100%')
+        Blank()
+        if (excerpt.note.trim()) {
+          Text(`想法：${excerpt.note.trim()}`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+        Text(excerpt.chapterName ? `${excerpt.bookName} · ${excerpt.chapterName}` : excerpt.bookName)
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(this.subTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+      }
+      .layoutWeight(1)
+      .height('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width(232)
+    .height(FootprintTabPage.EXCERPT_CARD_HEIGHT)
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.LG, bottom: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.largeRadius())
+    .backgroundColor(this.cardColor())
+    .accessibilityGroup(true)
+    .accessibilityText(`${excerpt.quote}，出自${excerpt.bookName}`)
+    .onClick(() => this.openExcerpt(excerpt))
+  }
+
+  /** 还没有摘录时告诉怎么收。 */
+  @Builder
+  excerptEmptyCard() {
+    Row({ space: AppSpacing.LG }) {
+      SymbolGlyph($r('sys.symbol.star'))
+        .fontSize(24)
+        .fontColor([this.accentColor()])
+      Text('阅读时选中文字点“摘录”，喜欢的句子和段落会收在这里')
+        .fontSize(AppFontSize.BODY)
+        .lineHeight(20)
+        .fontColor(this.subTextColor())
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .padding(AppSpacing.XL)
+    .borderRadius(ThemeRuntime.largeRadius())
+    .backgroundColor(this.cardColor())
+    .onClick(() => this.openExcerpts())
+  }
+
+  @Builder
   rankRow(item: ReadStatsRank) {
     Row({ space: AppSpacing.LG }) {
       Stack() {
@@ -607,6 +745,29 @@ export struct FootprintTabPage {
     } finally {
       this.openingShare = false;
     }
+  }
+
+  openExcerpts(): void {
+    router.pushUrl({ url: 'pages/ExcerptList' }).catch((error: Error) => {
+      console.error('打开我的摘录失败:', error);
+    });
+  }
+
+  /** 书还在书架上就回到原文；书已删了（摘录留着）打开我的摘录看全文。 */
+  async openExcerpt(excerpt: BookAnnotation): Promise<void> {
+    let onShelf = false;
+    try {
+      onShelf = !!(await appDb.getBook(excerpt.bookUrl));
+    } catch (_) {
+    }
+    if (!onShelf) {
+      this.openExcerpts();
+      return;
+    }
+    router.pushUrl({ url: 'pages/ReadBook', params: { bookUrl: excerpt.bookUrl, annotationId: `${excerpt.id}` } })
+      .catch((error: Error) => {
+        console.error('从足迹打开摘录失败:', error);
+      });
   }
 
   /** 阅读页按书的进度打开，有声书、视频和 PDF 由阅读页自己转过去。 */

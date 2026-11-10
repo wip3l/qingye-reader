@@ -633,7 +633,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       { table: 'book_contents', column: 'contentBytes', definition: 'contentBytes INTEGER DEFAULT -1' },
       { table: 'book_contents', column: 'accessDate', definition: 'accessDate INTEGER DEFAULT 0' },
       { table: 'book_contents', column: 'cacheRevision', definition: 'cacheRevision INTEGER DEFAULT 0' },
-      { table: 'book_contents', column: 'imagesIndexed', definition: 'imagesIndexed INTEGER DEFAULT 0' }
+      { table: 'book_contents', column: 'imagesIndexed', definition: 'imagesIndexed INTEGER DEFAULT 0' },
+      { table: 'book_annotations', column: 'excerpt', definition: 'excerpt INTEGER DEFAULT 0' }
     ];
 
     for (const migration of migrations) {
@@ -1331,6 +1332,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     annotation.color = BookAnnotationStyles.normalizeColor(String(source.color || ''));
     annotation.style = BookAnnotationStyles.normalizeStyle(String(source.style || ''));
     annotation.note = String(source.note || '');
+    annotation.excerpt = source.excerpt === true || Number(source.excerpt) === 1;
     annotation.createTime = Math.max(0, Math.floor(Number(source.createTime) || 0));
     annotation.updateTime = Math.max(annotation.createTime, Math.floor(Number(source.updateTime) || 0));
     const predicates = new relationalStore.RdbPredicates('book_annotations');
@@ -1366,11 +1368,32 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     CloudSyncChangeTracker.markDataChanged();
   }
 
+  /** 删书时调用：摘录留着（我的摘录里还能看、复制），其余划线随书删掉。 */
   async deleteBookAnnotations(bookUrl: string): Promise<void> {
     if (!this.store || !bookUrl) return;
     const predicates = new relationalStore.RdbPredicates('book_annotations');
     predicates.equalTo('bookUrl', bookUrl);
+    predicates.notEqualTo('excerpt', 1);
     await this.store.delete(predicates);
+  }
+
+  /** 我的摘录：最近收的在前。 */
+  async getExcerptAnnotations(limit: number = 0): Promise<BookAnnotation[]> {
+    const annotations: BookAnnotation[] = [];
+    if (!this.store) return annotations;
+    const predicates = new relationalStore.RdbPredicates('book_annotations');
+    predicates.equalTo('excerpt', 1);
+    predicates.orderByDesc('updateTime');
+    if (limit > 0) predicates.limitAs(limit);
+    const resultSet = await this.store.query(predicates, []);
+    try {
+      while (resultSet.goToNextRow()) {
+        annotations.push(this.resultSetToBookAnnotation(resultSet));
+      }
+    } finally {
+      resultSet.close();
+    }
+    return annotations;
   }
 
   private bookAnnotationBucket(annotation: BookAnnotation): relationalStore.ValuesBucket {
@@ -1387,6 +1410,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       color: annotation.color,
       style: annotation.style,
       note: annotation.note,
+      excerpt: annotation.excerpt ? 1 : 0,
       createTime: annotation.createTime,
       updateTime: annotation.updateTime
     };
@@ -1407,6 +1431,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     annotation.color = BookAnnotationStyles.normalizeColor(resultSet.getString(resultSet.getColumnIndex('color')));
     annotation.style = BookAnnotationStyles.normalizeStyle(resultSet.getString(resultSet.getColumnIndex('style')));
     annotation.note = resultSet.getString(resultSet.getColumnIndex('note'));
+    annotation.excerpt = resultSet.getLong(resultSet.getColumnIndex('excerpt')) === 1;
     annotation.createTime = resultSet.getLong(resultSet.getColumnIndex('createTime'));
     annotation.updateTime = resultSet.getLong(resultSet.getColumnIndex('updateTime'));
     return annotation;

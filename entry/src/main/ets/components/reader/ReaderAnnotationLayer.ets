@@ -40,6 +40,8 @@ export struct ReaderAnnotationLayer {
   @Prop focusNote: boolean = false;
   @Prop autoPanel: boolean = true;
   @Prop showNoteDot: boolean = true;
+  /** 当前划线是否已收进“我的摘录”。 */
+  @Prop excerpt: boolean = false;
   @Link noteDraft: string;
   @State private viewWidth: number = 0;
   @State private viewHeight: number = 0;
@@ -51,6 +53,7 @@ export struct ReaderAnnotationLayer {
   onErase: () => void = (): void => {};
   onCopy: () => void = (): void => {};
   onShare: () => void = (): void => {};
+  onExcerpt: () => void = (): void => {};
   onOpenConfig: () => void = (): void => {};
   onEditNote: () => void = (): void => {};
   onExpand: () => void = (): void => {};
@@ -189,6 +192,7 @@ export struct ReaderAnnotationLayer {
       Row() {
         this.actionButton($r('sys.symbol.trash'), '擦除', () => this.onErase())
         this.actionButton($r('sys.symbol.rectangle_on_rectangle'), '复制', () => this.onCopy())
+        this.excerptButton()
         this.actionButton($r('sys.symbol.share'), '分享', () => this.onShare())
         this.actionButton($r('sys.symbol.gearshape'), '配置', () => this.onOpenConfig())
       }
@@ -344,6 +348,25 @@ export struct ReaderAnnotationLayer {
     .borderRadius(12)
     .accessibilityText(label)
     .onClick(action)
+  }
+
+  /** 摘录开关：收进后图标填成划线颜色。 */
+  @Builder
+  excerptButton() {
+    Column({ space: 4 }) {
+      SymbolGlyph(this.excerpt ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'))
+        .fontSize(22)
+        .fontColor([this.excerpt ? this.color : this.iconColor()])
+        .height(28)
+      Text(this.excerpt ? '已摘录' : '摘录')
+        .fontSize(12)
+        .fontColor(this.excerpt ? this.color : this.iconColor())
+    }
+    .layoutWeight(1)
+    .padding({ top: 6, bottom: 6 })
+    .borderRadius(12)
+    .accessibilityText(this.excerpt ? '已摘录，点按移出摘录' : '加入摘录')
+    .onClick(() => this.onExcerpt())
   }
 
   @Builder

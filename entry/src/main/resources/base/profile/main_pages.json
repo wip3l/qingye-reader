@@ -46,6 +46,7 @@
     "pages/DataSync",
     "pages/ReadingStats",
     "pages/ReadingStatsShare",
+    "pages/ExcerptList",
     "pages/SyncDevices",
     "pages/SyncIssues",
     "pages/FontSettings",

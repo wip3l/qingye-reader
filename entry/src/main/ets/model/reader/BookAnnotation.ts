@@ -18,6 +18,8 @@ export class BookAnnotation {
   color: string = BookAnnotationStyles.DEFAULT_COLOR;
   style: string = BookAnnotationStyles.SOLID;
   note: string = '';
+  /** 收进“我的摘录”。删书时摘录留着，书再加回书架还能跳回原文。 */
+  excerpt: boolean = false;
   createTime: number = 0;
   updateTime: number = 0;
 
@@ -36,6 +38,7 @@ export class BookAnnotation {
     copy.color = this.color;
     copy.style = this.style;
     copy.note = this.note;
+    copy.excerpt = this.excerpt;
     copy.createTime = this.createTime;
     copy.updateTime = this.updateTime;
     return copy;

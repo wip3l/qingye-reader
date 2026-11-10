@@ -570,7 +570,9 @@ export class AppDataBackupService {
         result.bookmarks++;
       }
       for (const annotation of manifest.annotations || []) {
-        if (!annotation || !annotation.bookUrl || !annotation.quote || !await db.getBook(annotation.bookUrl)) continue;
+        if (!annotation || !annotation.bookUrl || !annotation.quote) continue;
+        // 摘录不跟书走，书不在也恢复；普通划线没有书就没处显示。
+        if (!annotation.excerpt && !await db.getBook(annotation.bookUrl)) continue;
         await db.restoreBookAnnotation(annotation);
         result.annotations++;
       }

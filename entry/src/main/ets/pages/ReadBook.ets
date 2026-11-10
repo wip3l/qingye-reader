@@ -271,6 +271,7 @@ const READER_REPLACE_MENU_ITEM_ID: string = 'reader_replace_rule';
 // 正文选中菜单里的“划线”“笔记”两项。
 const READER_ANNOTATE_MENU_ITEM_ID: string = 'reader_annotate';
 const READER_ANNOTATE_NOTE_MENU_ITEM_ID: string = 'reader_annotate_note';
+const READER_EXCERPT_MENU_ITEM_ID: string = 'reader_excerpt';
 // 点按命中划线时借用书源按钮的触摸认领通道，标记以此开头。
 const READER_ANNOTATION_MARKER_PREFIX: string = 'reader-annotation:';
 
@@ -875,6 +876,9 @@ struct ReadBookPage {
   @State private readerAnnotationAnchorX: number = 0;
   @State private readerAnnotationAutoPanel: boolean = true;
   @State private readerAnnotationShowNoteDot: boolean = true;
+  @State private readerAnnotationExcerpt: boolean = false;
+  /** 从“我的摘录”打开时要跳到的划线 id，划线载入后跳一次。 */
+  private readerPendingAnnotationJumpId: number = 0;
   @State private readerTextSelectionActive: boolean = false;
   @State private readerDesktopSelectionMenuVisible: boolean = false;
   private readerDesktopSelectionPage: ReaderV2PageLayout | null = null;
@@ -1276,6 +1280,7 @@ struct ReadBookPage {
       this.readerStageRuntimeHostTimerId = -1;
       if (this.readerEntryAlive) this.readerStageRuntimeHostMounted = true;
     }, this.delayPastShelfOpening(300));
+    this.readerPendingAnnotationJumpId = Math.max(0, Math.floor(Number(params?.['annotationId']) || 0));
     this.openedFromShortcut = !!params && params['shortcutEntry'] === 'true';
     this.shortcutReplacedPreviousPage = !!params && params['shortcutReplace'] === 'true';
     if (params && params['bookUrl']) {
@@ -1313,7 +1318,9 @@ struct ReadBookPage {
         this.loadBookmarks().catch((error: Error) => {
           console.warn('读取书签失败:', error);
         });
-        this.loadReaderAnnotations().catch((error: Error) => {
+        this.loadReaderAnnotations().then((): void => {
+          this.jumpToPendingReaderAnnotation();
+        }).catch((error: Error) => {
           console.warn('读取划线失败:', error);
         });
     }
@@ -17606,16 +17613,16 @@ ${leading}` : leading;
   }
 
   createReaderAnnotationFromSelection(page: ReaderV2PageLayout, chapterIndex: number, selectionStart: number,
-    selectionEnd: number, withNote: boolean): void {
+    selectionEnd: number, withNote: boolean, excerpt: boolean = false): void {
     const start = this.readerSelectionSourceOffset(page, chapterIndex, Math.min(selectionStart, selectionEnd));
     const end = this.readerSelectionSourceOffset(page, chapterIndex, Math.max(selectionStart, selectionEnd));
-    this.createReaderAnnotation(chapterIndex, start, end, withNote).catch((error: Error): void => {
+    this.createReaderAnnotation(chapterIndex, start, end, withNote, excerpt).catch((error: Error): void => {
       console.error('划线失败:', error);
     });
   }
 
   /** 平板、电脑的自绘选区菜单：选区可能跨滚动模式的几块。 */
-  createReaderAnnotationFromDesktopSelection(withNote: boolean): void {
+  createReaderAnnotationFromDesktopSelection(withNote: boolean, excerpt: boolean = false): void {
     const chapterIndex = this.readerV2SelectionChapterIndex >= 0 ? this.readerV2SelectionChapterIndex :
       this.currentChapterIndex;
     let startPage = this.readerDesktopSelectionPage;
@@ -17630,12 +17637,14 @@ ${leading}` : leading;
     const start = this.readerSelectionSourceOffset(startPage, chapterIndex, this.readerDesktopSelectionStart);
     const end = this.readerSelectionSourceOffset(endPage, chapterIndex, this.readerDesktopSelectionEnd);
     this.scheduleReaderTextSelectionClear();
-    this.createReaderAnnotation(chapterIndex, start, end, withNote).catch((error: Error): void => {
+    this.createReaderAnnotation(chapterIndex, start, end, withNote, excerpt).catch((error: Error): void => {
       console.error('划线失败:', error);
     });
   }
 
-  async createReaderAnnotation(chapterIndex: number, start: number, end: number, withNote: boolean): Promise<void> {
+  /** excerpt 为真时是选区菜单里的“摘录”：划线同时收进我的摘录，不弹面板。 */
+  async createReaderAnnotation(chapterIndex: number, start: number, end: number, withNote: boolean,
+    excerpt: boolean = false): Promise<void> {
     const bookUrl = this.book?.bookUrl || this.bookUrl;
     const source = this.readerContinuousSourceOf(chapterIndex);
     const trimmed = bookUrl && source && start >= 0 && end > start ? BookAnnotationAnchor.trim(source, start, end) : null;
@@ -17649,11 +17658,13 @@ ${leading}` : leading;
     const overlaps = this.readerAnnotationRangesFor(chapterIndex, source).filter((range: BookAnnotationRange) =>
       range.end > rangeStart && range.start < rangeEnd);
     const notes: string[] = [];
+    let mergedExcerpt = excerpt;
     for (const range of overlaps) {
       rangeStart = Math.min(rangeStart, range.start);
       rangeEnd = Math.max(rangeEnd, range.end);
       const note = range.annotation.note.trim();
       if (note) notes.push(note);
+      if (range.annotation.excerpt) mergedExcerpt = true;
     }
     const now = Date.now();
     const annotation = new BookAnnotation();
@@ -17665,6 +17676,7 @@ ${leading}` : leading;
     annotation.color = this.readerAnnotationSettings.lastColor;
     annotation.style = this.readerAnnotationSettings.lastStyle;
     annotation.note = notes.join('\n');
+    annotation.excerpt = mergedExcerpt;
     annotation.createTime = now;
     annotation.updateTime = now;
     try {
@@ -17687,7 +17699,10 @@ ${leading}` : leading;
     this.readerAnnotations = this.readerAnnotations.filter((item: BookAnnotation) => !removed.has(item.id));
     this.readerAnnotations.push(annotation);
     this.onReaderAnnotationsChanged();
-    if (withNote || this.readerAnnotationSettings.autoPanel) {
+    if (annotation.excerpt) ReaderAnnotationShare.notifyExcerptsChanged();
+    if (excerpt) {
+      HdsFeedback.showToast(overlaps.length > 0 ? '已与原有划线合并，并加入摘录' : '已加入摘录');
+    } else if (withNote || this.readerAnnotationSettings.autoPanel) {
       if (overlaps.length > 0) HdsFeedback.showToast('已与原有划线合并');
       // 选区在 80ms 后才收起，等它和重画都结束再量划线位置。
       setTimeout((): void => {
@@ -17721,6 +17736,7 @@ ${leading}` : leading;
     this.readerAnnotationQuote = annotation.quote;
     this.readerAnnotationNoteSaved = annotation.note;
     this.readerAnnotationNoteDraft = annotation.note;
+    this.readerAnnotationExcerpt = annotation.excerpt;
     this.readerAnnotationTimeText = this.readerAnnotationTimeLabel(annotation.updateTime || annotation.createTime);
     this.readerAnnotationFocusNote = focusNote;
     const anchor = this.readerAnnotationAnchor(annotation.id);
@@ -17797,7 +17813,10 @@ ${leading}` : leading;
     } catch (error) {
       console.error('保存划线失败:', error);
       HdsFeedback.showToast('划线保存失败');
+      return;
     }
+    // 摘录标记、笔记、颜色都显示在足迹的摘录卡上；刚移出摘录的也要通知。
+    ReaderAnnotationShare.notifyExcerptsChanged();
   }
 
   setReaderAnnotationLook(color: string, style: string): void {
@@ -17859,7 +17878,35 @@ ${leading}` : leading;
     }
     this.readerAnnotations = this.readerAnnotations.filter((item: BookAnnotation) => item.id !== annotation.id);
     this.onReaderAnnotationsChanged();
+    if (annotation.excerpt) ReaderAnnotationShare.notifyExcerptsChanged();
     HdsFeedback.showToast('已擦除');
+  }
+
+  /** 面板里的摘录开关。 */
+  toggleReaderAnnotationExcerpt(): void {
+    const annotation = this.readerAnnotationActive;
+    if (!annotation) return;
+    this.commitReaderAnnotationNote();
+    annotation.excerpt = !annotation.excerpt;
+    annotation.updateTime = Date.now();
+    this.readerAnnotationExcerpt = annotation.excerpt;
+    this.saveReaderAnnotation(annotation);
+    HdsFeedback.showToast(annotation.excerpt ? '已加入摘录' : '已移出摘录');
+  }
+
+  /** 从我的摘录打开：划线载入后跳到原文；划线已擦除就停在阅读进度。 */
+  jumpToPendingReaderAnnotation(): void {
+    const id = this.readerPendingAnnotationJumpId;
+    this.readerPendingAnnotationJumpId = 0;
+    if (id <= 0) return;
+    const annotation = this.readerAnnotationById(id);
+    if (!annotation) {
+      HdsFeedback.showToast('没找到这条摘录在书中的位置');
+      return;
+    }
+    this.jumpToReaderAnnotation(annotation).catch((error: Error): void => {
+      console.warn('跳到摘录位置失败:', error);
+    });
   }
 
   /** 只判断已载入正文的当前章；其他章没有文本可比，不标“原文已变化”。 */
@@ -17917,6 +17964,7 @@ ${leading}` : leading;
     }
     this.readerAnnotations = this.readerAnnotations.filter((item: BookAnnotation) => item.id !== annotation.id);
     this.onReaderAnnotationsChanged();
+    if (annotation.excerpt) ReaderAnnotationShare.notifyExcerptsChanged();
     return true;
   }
 
@@ -17966,6 +18014,7 @@ ${leading}` : leading;
       focusNote: this.readerAnnotationFocusNote,
       autoPanel: this.readerAnnotationAutoPanel,
       showNoteDot: this.readerAnnotationShowNoteDot,
+      excerpt: this.readerAnnotationExcerpt,
       noteDraft: $readerAnnotationNoteDraft,
       onClose: (): void => this.closeReaderAnnotationLayer(),
       onColor: (color: string): void => this.setReaderAnnotationLook(color, this.readerAnnotationStyle),
@@ -17979,6 +18028,7 @@ ${leading}` : leading;
       onShare: (): void => {
         this.shareReaderAnnotation();
       },
+      onExcerpt: (): void => this.toggleReaderAnnotationExcerpt(),
       onOpenConfig: (): void => {
         this.commitReaderAnnotationNote();
         this.readerAnnotationMode = ReaderAnnotationLayerMode.CONFIG;
@@ -18019,7 +18069,8 @@ ${leading}` : leading;
           menuItems.unshift(replaceItem);
         }
         if (page) {
-          // 划线、笔记放在最前面。
+          // 划线、笔记、摘录放在最前面。
+          menuItems.unshift({ id: TextMenuItemId.of(READER_EXCERPT_MENU_ITEM_ID), content: '摘录' });
           menuItems.unshift({ id: TextMenuItemId.of(READER_ANNOTATE_NOTE_MENU_ITEM_ID), content: '笔记' });
           menuItems.unshift({ id: TextMenuItemId.of(READER_ANNOTATE_MENU_ITEM_ID), content: '划线' });
         }
@@ -18027,11 +18078,13 @@ ${leading}` : leading;
       },
       onMenuItemClick: (item: TextMenuItem, range: TextRange): boolean => {
         const annotate = item.id.equals(TextMenuItemId.of(READER_ANNOTATE_MENU_ITEM_ID));
-        if (page && (annotate || item.id.equals(TextMenuItemId.of(READER_ANNOTATE_NOTE_MENU_ITEM_ID)))) {
+        const excerpt = item.id.equals(TextMenuItemId.of(READER_EXCERPT_MENU_ITEM_ID));
+        if (page && (annotate || excerpt || item.id.equals(TextMenuItemId.of(READER_ANNOTATE_NOTE_MENU_ITEM_ID)))) {
           const selectionStart = range.start ?? 0;
           const selectionEnd = range.end ?? 0;
           this.scheduleReaderTextSelectionClear();
-          this.createReaderAnnotationFromSelection(page, chapterIndex, selectionStart, selectionEnd, !annotate);
+          this.createReaderAnnotationFromSelection(page, chapterIndex, selectionStart, selectionEnd,
+            !annotate && !excerpt, excerpt);
           return true;
         }
         if (item.id.equals(TextMenuItemId.of(READER_REPLACE_MENU_ITEM_ID))) {
@@ -18261,6 +18314,8 @@ ${leading}` : leading;
         .id('reader_selection_annotate').onClick(() => { this.createReaderAnnotationFromDesktopSelection(false); })
       Button('笔记').fontColor(this.accentColor()).backgroundColor(Color.Transparent)
         .id('reader_selection_annotate_note').onClick(() => { this.createReaderAnnotationFromDesktopSelection(true); })
+      Button('摘录').fontColor(this.accentColor()).backgroundColor(Color.Transparent)
+        .id('reader_selection_excerpt').onClick(() => { this.createReaderAnnotationFromDesktopSelection(false, true); })
       Button('复制').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)
         .id('reader_selection_copy').onClick(() => { this.copyReaderDesktopSelection(); })
       Button('替换').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)

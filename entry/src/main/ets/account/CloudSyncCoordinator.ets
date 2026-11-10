@@ -127,6 +127,8 @@ class BookAnnotationSyncPayload {
   color: string = '';
   style: string = '';
   note: string = '';
+  /** 旧版客户端没有这个字段，读到 undefined 按不是摘录处理。 */
+  excerpt: boolean = false;
   createTime: number = 0;
   updateTime: number = 0;
 }
@@ -739,10 +741,14 @@ export class CloudSyncCoordinator {
     }
 
     // 划线和书签一样只同步网络书：本地书的 bookUrl 是本机路径，换台设备对不上。
+    // 摘录删书后还留着，书已不在书架时按网址判断是不是网络书，否则会当成删除同步到别的设备。
     if (CloudSyncCoordinator.annotationSyncAvailable()) {
+      const shelfBookUrls = new Set<string>(allBooks.map((book: Book): string => book.bookUrl));
       const annotations = await db.getAllBookAnnotations();
       for (const annotation of annotations) {
-        if (!onlineBookUrls.has(annotation.bookUrl)) continue;
+        const orphanOnlineExcerpt = annotation.excerpt && !shelfBookUrls.has(annotation.bookUrl) &&
+          /^https?:\/\//i.test(annotation.bookUrl);
+        if (!onlineBookUrls.has(annotation.bookUrl) && !orphanOnlineExcerpt) continue;
         const key = CloudSyncCoordinator.annotationKey(annotation.bookUrl, annotation.createTime);
         result.push(CloudSyncCoordinator.entity(
           CloudSyncCoordinator.ANNOTATION_ENTITY_TYPE,
@@ -1438,6 +1444,7 @@ export class CloudSyncCoordinator {
     payload.color = annotation.color;
     payload.style = annotation.style;
     payload.note = annotation.note;
+    payload.excerpt = annotation.excerpt;
     payload.createTime = annotation.createTime;
     payload.updateTime = annotation.updateTime;
     return payload;
@@ -1457,6 +1464,7 @@ export class CloudSyncCoordinator {
     annotation.color = payload.color || '';
     annotation.style = payload.style || '';
     annotation.note = payload.note || '';
+    annotation.excerpt = payload.excerpt === true;
     annotation.createTime = Math.max(0, Math.floor(Number(payload.createTime) || 0));
     annotation.updateTime = Math.max(0, Math.floor(Number(payload.updateTime) || 0));
     return annotation;
