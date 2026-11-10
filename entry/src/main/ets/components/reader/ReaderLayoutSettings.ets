@@ -243,6 +243,8 @@ export struct ReaderHeaderFooterSettings {
   @Prop menuColor: string = '#FFFFFF';
   @Prop cardStyle: boolean = false;
   @Prop dividerColor: string = '#00000000';
+  /** 应用当前是否深色模式：页眉页脚颜色按浅色、深色分别编辑。dark 只管面板外观，可能取自背景深浅。 */
+  @Prop modeDark: boolean = false;
   onChanged: (headerEnabled: boolean, footerEnabled: boolean, infoBarConfig: string) => void = () => {
   };
   @StorageLink('readerHeaderEnabled') readerHeaderEnabled: boolean = false;
@@ -262,6 +264,7 @@ export struct ReaderHeaderFooterSettings {
       menuColor: this.menuColor,
       cardStyle: this.cardStyle,
       dividerColor: this.dividerColor,
+      modeDark: this.modeDark,
       readerHeaderEnabled: $readerHeaderEnabled,
       readerFooterEnabled: $readerFooterEnabled,
       readerInfoBarConfig: $readerInfoBarConfig,
@@ -289,6 +292,7 @@ export struct ReaderHeaderFooterEditor {
   @Prop menuColor: string = '#FFFFFF';
   @Prop cardStyle: boolean = false;
   @Prop dividerColor: string = '#00000000';
+  @Prop modeDark: boolean = false;
   onChanged: (headerEnabled: boolean, footerEnabled: boolean, infoBarConfig: string) => void = () => {
   };
   @Link readerHeaderEnabled: boolean;
@@ -364,10 +368,14 @@ export struct ReaderHeaderFooterEditor {
 
   private setInfoColor(header: boolean, value: string): void {
     const config = this.config();
-    const color = ReaderInfoBarConfig.normalizeColor(value);
-    if (header) config.headerColor = color;
-    else config.footerColor = color;
+    config.setCustomColor(header, this.modeDark, value);
     this.commit(config);
+  }
+
+  private colorDescription(header: boolean): string {
+    const mode = this.modeDark ? '深色模式' : '浅色模式';
+    return this.config().customColor(header, this.modeDark) ?
+      `${mode}已自定义，可选“跟随主题”恢复` : `${mode}跟随主题配色`;
   }
 
   private isOffsetStepper(field: number): boolean {
@@ -563,21 +571,23 @@ export struct ReaderHeaderFooterEditor {
   colorItem(title: string, header: boolean) {
     Stack() {
       Row() {
-        this.itemLabel(title, '')
+        this.itemLabel(title, this.colorDescription(header))
         Row()
           .width(30)
           .height(30)
           .borderRadius(15)
-          .backgroundColor(this.config().textColor(header, this.subTextColor))
+          .backgroundColor(this.config().textColor(header, this.modeDark, this.subTextColor))
           .border({ width: 2, color: this.dark ? '#55FFFFFF' : '#22000000' })
+          .margin({ left: 12 })
       }
       .width('100%')
-      .height(60)
+      .constraintSize({ minHeight: 60 })
+      .padding({ top: 8, bottom: 8 })
       .alignItems(VerticalAlign.Center)
       .hitTestBehavior(HitTestMode.None)
 
       AdaptiveColorPicker({
-        value: header ? this.config().headerColor : this.config().footerColor,
+        value: this.config().customColor(header, this.modeDark),
         placeholder: this.subTextColor,
         appDarkMode: this.dark,
         accentColor: this.accentColor,

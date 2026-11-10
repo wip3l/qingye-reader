@@ -767,6 +767,7 @@ export struct EpubOriginalControls {
         ReaderHeaderFooterSettings({
           headerBaseInset: this.headerBaseInset,
           dark: this.darkMode,
+          modeDark: this.darkMode,
           textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode),
           accentColor: ThemeRuntime.accentColor(this.darkMode),

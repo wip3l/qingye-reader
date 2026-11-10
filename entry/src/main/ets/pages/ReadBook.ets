@@ -11339,7 +11339,7 @@ struct ReadBookPage {
         centerBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().footerCenter),
         rightBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().footerRight),
         textSize: this.getReaderInfoBarConfig().footerFontSize,
-        textColor: this.getReaderInfoBarConfig().textColor(false, this.getSubTextColor()),
+        textColor: this.getReaderInfoBarConfig().textColor(false, this.appDarkMode, this.getSubTextColor()),
         textOpacity: this.getReaderInfoBarConfig().footerOpacity / 100
       })
     }
@@ -11371,7 +11371,7 @@ struct ReadBookPage {
           centerBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().headerCenter),
           rightBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().headerRight),
           textSize: this.getReaderInfoBarConfig().headerFontSize,
-          textColor: this.getReaderInfoBarConfig().textColor(true, this.getSubTextColor()),
+          textColor: this.getReaderInfoBarConfig().textColor(true, this.appDarkMode, this.getSubTextColor()),
           textOpacity: this.getReaderInfoBarConfig().headerOpacity / 100
         })
       }
@@ -12426,6 +12426,7 @@ struct ReadBookPage {
     ReaderHeaderFooterSettings({
       headerBaseInset: ReaderInfoBarConfig.headerBaseInset(this.readerExtendToStatusBar, this.statusBarSafeHeight),
       dark: this.isReaderThemeDark(),
+      modeDark: this.appDarkMode,
       textColor: this.readerPanelTextColor(),
       subTextColor: this.readerPanelSubTextColor(),
       accentColor: this.accentColor(),

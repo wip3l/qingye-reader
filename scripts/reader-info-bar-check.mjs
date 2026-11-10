@@ -284,15 +284,24 @@ for (const value of [undefined, null, 'bad', NaN, Infinity]) {
 const colors = Config.parse(JSON.stringify({ headerColor: ' ff00aa ', footerColor: '#123abc' }));
 equal(colors.headerColor, '#FF00AA', '页眉颜色规范化');
 equal(colors.footerColor, '#123ABC', '页脚颜色规范化');
-equal(colors.textColor(true, '#808080'), '#FF00AA', '页眉显示独立颜色');
-equal(colors.textColor(false, '#808080'), '#123ABC', '页脚显示独立颜色');
+equal(colors.textColor(true, false, '#808080'), '#FF00AA', '页眉显示独立颜色');
+equal(colors.textColor(false, false, '#808080'), '#123ABC', '页脚显示独立颜色');
+equal(colors.textColor(true, true, '#808080'), '#FF00AA', '旧配置的颜色深色模式沿用，升级后显示不变');
 equal(colors.copy().serialize(), colors.serialize(), '颜色保存与复制后保持不变');
 equal(colors.layoutIdentity(), base.layoutIdentity(), '颜色不影响分页');
 for (const value of [undefined, null, '', 'oops', '#xyzxyz', '#123', '#AA123456', 123, {}]) {
   const invalid = Config.parse(JSON.stringify({ headerColor: value, footerColor: value }));
-  equal(invalid.textColor(true, '#808080'), '#808080', '缺失或非法页眉颜色沿用主题');
-  equal(invalid.textColor(false, '#EEEEEE'), '#EEEEEE', '缺失或非法页脚颜色沿用主题');
+  equal(invalid.textColor(true, false, '#808080'), '#808080', '缺失或非法页眉颜色沿用主题');
+  equal(invalid.textColor(false, true, '#EEEEEE'), '#EEEEEE', '缺失或非法页脚颜色沿用主题');
 }
+
+// 浅色、深色分别保存；深色清空后跟随主题，不影响浅色。
+const split = Config.parse(JSON.stringify({ headerColor: '#ff00aa', headerColorDark: '' }));
+equal(split.textColor(true, false, '#808080'), '#FF00AA', '浅色模式用自定义颜色');
+equal(split.textColor(true, true, '#444444'), '#444444', '深色模式跟随主题');
+split.setCustomColor(false, true, '#00ff00');
+equal(Config.parse(split.serialize()).textColor(false, true, '#444444'), '#00FF00', '深色页脚颜色可保存');
+equal(Config.parse(split.serialize()).textColor(false, false, '#808080'), '#808080', '深色设置不影响浅色');
 
 // 时钟需求。
 equal(base.usesClock(true, true), false, '默认配置不需要时钟');

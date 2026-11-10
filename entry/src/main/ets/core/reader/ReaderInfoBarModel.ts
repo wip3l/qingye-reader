@@ -113,9 +113,14 @@ export class ReaderInfoBarConfig {
   fontSize?: number;
   headerFontSize: number = ReaderInfoBarConfig.FONT_SIZE_DEFAULT;
   footerFontSize: number = ReaderInfoBarConfig.FONT_SIZE_DEFAULT;
-  /** 文字颜色；空字符串表示沿用当前阅读主题。 */
+  /**
+   * 文字颜色，浅色、深色模式各存一份；空字符串表示沿用当前阅读主题的辅助文字色。
+   * 旧配置只有 headerColor/footerColor，解析时深色沿用同一颜色，保证升级后显示不变。
+   */
   headerColor: string = '';
   footerColor: string = '';
+  headerColorDark: string = '';
+  footerColorDark: string = '';
   /** 仅用于读取旧版共用不透明度。 */
   opacity?: number;
   /** 页眉、页脚文字不透明度，百分比。 */
@@ -183,6 +188,10 @@ export class ReaderInfoBarConfig {
       config.footerFontSize = ReaderInfoBarConfig.clampFontSize(source.footerFontSize ?? source.fontSize);
       config.headerColor = ReaderInfoBarConfig.normalizeColor(source.headerColor);
       config.footerColor = ReaderInfoBarConfig.normalizeColor(source.footerColor);
+      config.headerColorDark = source.headerColorDark === undefined ? config.headerColor :
+        ReaderInfoBarConfig.normalizeColor(source.headerColorDark);
+      config.footerColorDark = source.footerColorDark === undefined ? config.footerColor :
+        ReaderInfoBarConfig.normalizeColor(source.footerColorDark);
       config.headerOpacity = ReaderInfoBarConfig.clampOpacity(source.headerOpacity ?? source.opacity);
       config.footerOpacity = ReaderInfoBarConfig.clampOpacity(source.footerOpacity ?? source.opacity);
       config.followMargin = source.followMargin === true;
@@ -211,8 +220,23 @@ export class ReaderInfoBarConfig {
     return typeof value === 'string' ? HexColor.parse(value) : '';
   }
 
-  textColor(header: boolean, fallback: string): string {
-    return (header ? this.headerColor : this.footerColor) || fallback;
+  /** 用户在该模式下设置的颜色；空字符串表示跟随主题。 */
+  customColor(header: boolean, dark: boolean): string {
+    if (dark) return header ? this.headerColorDark : this.footerColorDark;
+    return header ? this.headerColor : this.footerColor;
+  }
+
+  setCustomColor(header: boolean, dark: boolean, value: string): void {
+    const color = ReaderInfoBarConfig.normalizeColor(value);
+    if (dark && header) this.headerColorDark = color;
+    else if (dark) this.footerColorDark = color;
+    else if (header) this.headerColor = color;
+    else this.footerColor = color;
+  }
+
+  /** dark 指应用当前是浅色还是深色模式（决定用主题的哪一套阅读配色），不是背景深浅。 */
+  textColor(header: boolean, dark: boolean, fallback: string): string {
+    return this.customColor(header, dark) || fallback;
   }
 
   static clampOffset(value: number): number {

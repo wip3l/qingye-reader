@@ -284,7 +284,7 @@ export struct ReaderSettingsPreview {
       centerBattery: ReaderInfoBarText.battery(header ? this.info().headerCenter : this.info().footerCenter, this.infoContext(pageIndex)),
       rightBattery: ReaderInfoBarText.battery(header ? this.info().headerRight : this.info().footerRight, this.infoContext(pageIndex)),
       textSize: header ? this.info().headerFontSize : this.info().footerFontSize,
-      textColor: this.info().textColor(header, this.readerTheme.subTextColor),
+      textColor: this.info().textColor(header, this.appDarkMode, this.readerTheme.subTextColor),
       textOpacity: (header ? this.info().headerOpacity : this.info().footerOpacity) / 100
     })
   }

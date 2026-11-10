@@ -104,6 +104,7 @@ function openChromePanel(h) {
       readerHeaderEnabled = AppStorage.get('readerHeaderEnabled');
       readerFooterEnabled = AppStorage.get('readerFooterEnabled');
       readerInfoBarConfig = AppStorage.get('readerInfoBarConfig');
+      modeDark = AppStorage.get('appDarkMode') === true;
       options = new Map();
       onChanged = (header, footer, raw) => page.saveReaderChromeSettings(header, footer, raw);
       switchItem(options) { this.options.set(options.title, options); }
@@ -270,28 +271,36 @@ const tests = {
     h.values.set('appThemeId', 'classic-blue');
     assert.equal((await h.settings.switchThemeProfile({}, 'legacy', 'classic-blue')).commentBubbleSize, 175);
   },
-  async 'header and footer colors persist independently and can return to theme defaults'() {
+  async 'header and footer colors persist per light/dark mode and can return to theme defaults'() {
     const h = harness();
     let panel = openChromePanel(h);
     panel.setInfoColor(true, '#ff0011');
     let loaded = h.Config.parse((await h.settings.reload({})).readerInfoBarConfig);
-    assert.equal(loaded.headerColor, '#FF0011');
-    assert.equal(loaded.footerColor, '');
+    assert.equal(loaded.textColor(true, false, '#CCCCCC'), '#FF0011');
+    assert.equal(loaded.textColor(false, false, '#CCCCCC'), '#CCCCCC');
+    assert.equal(loaded.textColor(true, true, '#444444'), '#444444', 'a light-mode color leaves dark mode on the theme');
     panel.setInfoColor(false, '#1122aa');
     loaded = h.Config.parse((await h.settings.reload({})).readerInfoBarConfig);
-    assert.equal(loaded.headerColor, '#FF0011');
-    assert.equal(loaded.footerColor, '#1122AA');
+    assert.equal(loaded.textColor(true, false, '#CCCCCC'), '#FF0011');
+    assert.equal(loaded.textColor(false, false, '#CCCCCC'), '#1122AA');
     h.values.set('appDarkMode', true);
     panel = openChromePanel(h);
-    assert.equal(panel.config().headerColor, '#FF0011');
-    assert.equal(panel.config().footerColor, '#1122AA');
+    assert.equal(panel.config().customColor(true, true), '');
+    panel.setInfoColor(true, '#00ff00');
+    loaded = h.Config.parse((await h.settings.reload({})).readerInfoBarConfig);
+    assert.equal(loaded.textColor(true, true, '#444444'), '#00FF00');
+    assert.equal(loaded.textColor(true, false, '#CCCCCC'), '#FF0011', 'dark-mode edits keep the light color');
     panel.setInfoColor(true, '');
     loaded = h.Config.parse((await h.settings.reload({})).readerInfoBarConfig);
-    assert.equal(loaded.textColor(true, '#CCCCCC'), '#CCCCCC');
-    assert.equal(loaded.footerColor, '#1122AA');
+    assert.equal(loaded.textColor(true, true, '#444444'), '#444444');
+    assert.equal(loaded.textColor(true, false, '#CCCCCC'), '#FF0011');
+    h.values.set('appDarkMode', false);
+    panel = openChromePanel(h);
+    panel.setInfoColor(true, '');
     panel.setInfoColor(false, '');
     loaded = h.Config.parse((await h.settings.reload({})).readerInfoBarConfig);
-    assert.equal(loaded.textColor(false, '#808080'), '#808080');
+    assert.equal(loaded.textColor(true, false, '#CCCCCC'), '#CCCCCC');
+    assert.equal(loaded.textColor(false, false, '#808080'), '#808080');
   },
   async 'header and footer shrink step independently through zero and persist after reload'() {
     const h = harness();

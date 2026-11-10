@@ -377,7 +377,7 @@ struct ThemeTypographySettingsPage {
             centerBattery: this.infoSlotBattery(this.infoConfig().headerCenter),
             rightBattery: this.infoSlotBattery(this.infoConfig().headerRight),
             textSize: this.infoConfig().headerFontSize,
-            textColor: this.infoConfig().textColor(true, this.previewTheme().subTextColor),
+            textColor: this.infoConfig().textColor(true, this.previewDark, this.previewTheme().subTextColor),
             textOpacity: this.infoConfig().headerOpacity / 100
           })
         }
@@ -435,7 +435,7 @@ struct ThemeTypographySettingsPage {
           centerBattery: this.infoSlotBattery(this.infoConfig().footerCenter),
           rightBattery: this.infoSlotBattery(this.infoConfig().footerRight),
           textSize: this.infoConfig().footerFontSize,
-          textColor: this.infoConfig().textColor(false, this.previewTheme().subTextColor),
+          textColor: this.infoConfig().textColor(false, this.previewDark, this.previewTheme().subTextColor),
           textOpacity: this.infoConfig().footerOpacity / 100
         })
       }
@@ -560,6 +560,7 @@ struct ThemeTypographySettingsPage {
           headerBaseInset: ReaderInfoBarConfig.headerBaseInset(this.draft.extendToStatusBar, this.statusBarHeight),
           footerBaseInset: ReaderInfoBarConfig.footerBaseInset(this.navBarHeight),
           dark: this.appDarkMode,
+          modeDark: this.previewDark,
           textColor: this.primaryTextColor(),
           subTextColor: this.subTextColor(),
           accentColor: this.accentColor(),

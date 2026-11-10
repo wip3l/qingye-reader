@@ -2583,7 +2583,7 @@ struct EpubOriginalReadBookPage {
   }
 
   private infoTextColor(header: boolean): string {
-    return this.infoBarConfig().textColor(header, ThemeRuntime.subTextColor(this.darkMode));
+    return this.infoBarConfig().textColor(header, this.darkMode, ThemeRuntime.subTextColor(this.darkMode));
   }
 
   /** 时间和电量只在页面可见、且槽位用到时才每分钟刷新。 */

@@ -2806,6 +2806,7 @@ struct SettingsPage {
   readerHeaderFooterSettingsPanel() {
     ReaderHeaderFooterSettings({
       dark: this.appDarkMode,
+      modeDark: this.appDarkMode,
       textColor: this.primaryTextColor(),
       subTextColor: this.subTextColor(),
       accentColor: this.accentColor(),
