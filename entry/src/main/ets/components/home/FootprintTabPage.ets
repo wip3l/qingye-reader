@@ -16,6 +16,7 @@ import { BookCover } from '../book/BookCover';
 import { ImmersiveMaterialSurface } from '../ImmersiveMaterialSurface';
 import { BookAnnotation } from '../../model/reader/BookAnnotation';
 import { FootprintLayout } from '../../utils/FootprintLayout';
+import { FootprintSettingsStore } from '../../utils/FootprintSettingsStore';
 
 /** 本月日历的一格；day 为 0 是月初前的空位。level 0 没读，1~3 越大读得越久，-1 是还没到的日子。 */
 class FootprintDay {
@@ -675,6 +676,7 @@ export struct FootprintTabPage {
       .height(48)
       .borderRadius(4)
       .clip(true)
+      .opacity(item.onShelf ? 1 : 0.55)
       Column({ space: AppSpacing.SM }) {
         Row({ space: AppSpacing.SM }) {
           Text(item.name)
@@ -683,7 +685,15 @@ export struct FootprintTabPage {
             .fontColor(this.primaryTextColor())
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
+            .flexShrink(1)
+          if (!item.onShelf) {
+            Text('本机未上架')
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+              .maxLines(1)
+              .flexShrink(0)
+          }
+          Blank()
           Text(ReadStatsSummary.duration(item.durationMs))
             .fontSize(AppFontSize.CAPTION)
             .fontColor(this.primaryTextColor())
@@ -701,10 +711,27 @@ export struct FootprintTabPage {
     .width('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
     .alignItems(VerticalAlign.Center)
-    .accessibilityText(`${item.name}，${ReadStatsSummary.duration(item.durationMs)}，占本周 ${Math.round(item.percent)}%`)
-    .onClick(() => {
-      if (item.onShelf && item.bookUrl) this.openBook(item.bookUrl);
-    })
+    .accessibilityText(`${item.name}，${item.onShelf ? '' : '本机未上架，'}${ReadStatsSummary.duration(item.durationMs)}，占本周 ${Math.round(item.percent)}%`)
+    .onClick(() => this.openRankItem(item))
+  }
+
+  /**
+   * 书架上的书直接回到阅读页；统计里还有、本机书架没有的（已移出书架、别的设备读的、没加书架就读的）
+   * 按书名发起全局搜索，结果里能看到各书源的版本再决定是否加回书架。
+   */
+  openRankItem(item: ReadStatsRank): void {
+    if (item.onShelf && item.bookUrl) {
+      this.openBook(item.bookUrl);
+      return;
+    }
+    const name = (item.name || '').trim();
+    if (!name || name === '书名未留存') {
+      HdsFeedback.showToast('这本书不在本机书架，书名也没有留存');
+      return;
+    }
+    const nonce = AppStorage.get<number>('globalSearchPendingNonce') || 0;
+    AppStorage.setOrCreate('globalSearchPendingKeyword', name);
+    AppStorage.setOrCreate('globalSearchPendingNonce', nonce + 1);
   }
 
   /** 书签摘句卡：大引号 + 原文，下面是书名和章节。 */
@@ -751,6 +778,9 @@ export struct FootprintTabPage {
   toggleMonthCollapsed(): void {
     this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, (): void => {
       this.monthCollapsed = !this.monthCollapsed;
+    });
+    FootprintSettingsStore.saveMonthCollapsed(getContext(this), this.monthCollapsed).catch((error: Error) => {
+      console.warn('保存日历收起状态失败:', error);
     });
   }
 

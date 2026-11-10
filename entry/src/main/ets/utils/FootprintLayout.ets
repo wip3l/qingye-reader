@@ -1,3 +1,6 @@
+import { Context } from '@kit.AbilityKit';
+import { FootprintSettingsStore } from './FootprintSettingsStore';
+
 /** 足迹页的一块内容。 */
 export class FootprintSection {
   id: string = '';
@@ -18,7 +21,7 @@ export class FootprintSection {
 
 /**
  * 足迹页显示哪些内容、什么顺序、各显示几条。存成 JSON 放在 AppStorage 的 footprintLayout 里，
- * 由 EntryAbility 用 PersistentStorage 落盘；只存本机。空串就是默认（与没有这项设置之前一样）。
+ * 由 FootprintSettingsStore 写进 Preferences；只存本机。空串就是默认（与没有这项设置之前一样）。
  */
 export class FootprintLayout {
   static readonly STORAGE_KEY: string = 'footprintLayout';
@@ -76,8 +79,10 @@ export class FootprintLayout {
       FootprintLayout.SECTIONS[0];
   }
 
-  static save(layout: FootprintLayout): void {
-    AppStorage.setOrCreate<string>(FootprintLayout.STORAGE_KEY, layout.isDefault() ? '' : JSON.stringify(layout));
+  static save(context: Context, layout: FootprintLayout): void {
+    FootprintSettingsStore.saveLayout(context, layout.isDefault() ? '' : JSON.stringify(layout)).catch((error: Error) => {
+      console.warn('保存足迹页内容失败:', error);
+    });
   }
 
   isVisible(id: string): boolean {

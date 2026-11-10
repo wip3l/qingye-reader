@@ -414,12 +414,21 @@ struct ReadingStatsPage {
       .blur(ListDissolve.blur(this.isStatsRowDissolving(item)))
       .hitTestBehavior(this.isStatsRowDissolving(item) ? HitTestMode.None : HitTestMode.Default)
       .id(this.statsRowElementId(item.bookKey))
+      .onClick((): void => this.openShelfBook(item))
       .gesture(LongPressGesture({ repeat: false }).onAction((event: GestureEvent): void => {
         const finger = event.fingerList.length > 0 ? event.fingerList[0] : undefined;
         if (finger) { this.contextMenuX = finger.globalX; this.contextMenuY = finger.globalY; }
         this.actionBookKey = item.bookKey;
         this.showItemActionMenu = true;
       }))
+  }
+  /** 本机书架上的书按进度回到阅读页；未上架的行已标“本机未上架”，点按不做事。 */
+  openShelfBook(item: ReadStatsRank): void {
+    if (!item.onShelf || !item.bookUrl) return;
+    this.getUIContext().getRouter().pushUrl({ url: 'pages/ReadBook', params: { bookUrl: item.bookUrl } })
+      .catch((error: Error) => {
+        console.error('从阅读统计打开书籍失败:', error);
+      });
   }
   private itemSwipeActions(item: ReadStatsRank): HdsSwipeActionOptions {
     return { icons: [{ icon: new SymbolGlyphModifier($r('sys.symbol.trash')),

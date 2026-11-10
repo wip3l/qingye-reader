@@ -3,6 +3,7 @@ import { AiAccessPolicy } from '../account/AiAccessPolicy';
 import { ComicColorizer } from '@legado/aiengine';
 import { ImmersiveLightSettingsStore } from '../utils/ImmersiveLightSettingsStore';
 import { SmartGripSettingsStore } from '../utils/SmartGripSettingsStore';
+import { FootprintSettingsStore } from '../utils/FootprintSettingsStore';
 import { HomeBackdropSettingsStore } from '../utils/HomeBackdropSettingsStore';
 import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import { HomeTabBarSettingsStore } from '../utils/HomeTabBarSettingsStore';
@@ -70,6 +71,7 @@ export default class EntryAbility extends UIAbility {
   private readerBootstrapPromise: Promise<void> = Promise.resolve();
   private networkBootstrapPromise: Promise<void> = Promise.resolve();
   private smartGripBootstrapPromise: Promise<void> = Promise.resolve();
+  private footprintBootstrapPromise: Promise<void> = Promise.resolve();
   private homeBackdropBootstrapPromise: Promise<void> = Promise.resolve();
   private homeTabBarBootstrapPromise: Promise<void> = Promise.resolve();
   private accountBootstrapPromise: Promise<void> = Promise.resolve();
@@ -276,6 +278,9 @@ export default class EntryAbility extends UIAbility {
     this.smartGripBootstrapPromise = SmartGripSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复智感握姿设置失败:', error);
     });
+    this.footprintBootstrapPromise = FootprintSettingsStore.load(this.context).catch((error: Error) => {
+      console.warn('恢复足迹页设置失败:', error);
+    });
     this.homeBackdropBootstrapPromise = HomeBackdropSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复首页背景设置失败:', error);
     });
@@ -391,7 +396,7 @@ export default class EntryAbility extends UIAbility {
     Promise.all([this.themeBootstrapPromise, this.immersiveLightBootstrapPromise,
       this.memberSettingsBootstrapPromise, this.networkBootstrapPromise,
       this.smartGripBootstrapPromise, this.homeBackdropBootstrapPromise,
-      this.homeTabBarBootstrapPromise]).finally(() => {
+      this.homeTabBarBootstrapPromise, this.footprintBootstrapPromise]).finally(() => {
       this.loadStartupContent(windowStage);
     });
   }

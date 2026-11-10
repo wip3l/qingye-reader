@@ -34,7 +34,7 @@ struct FootprintLayoutSettingsPage {
   private commit(next: FootprintLayout): void {
     this.layout = next;
     this.order = next.order.slice();
-    FootprintLayout.save(next);
+    FootprintLayout.save(getContext(this), next);
   }
 
   private setVisible(id: string, visible: boolean): void {
