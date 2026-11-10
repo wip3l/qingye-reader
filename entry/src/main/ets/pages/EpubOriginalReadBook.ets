@@ -385,7 +385,11 @@ struct EpubOriginalReadBookPage {
   @State slotOpacity1: number = 1;
   @State statusText: string = '正在打开…';
   @State failed: boolean = false;
-  @State @Watch('applySystemBars') menuVisible: boolean = false;
+  @State @Watch('onMenuVisibleChange') menuVisible: boolean = false;
+  /** 快速跳转撤销：第一次从菜单跳走前的章与位置，关菜单即作废。 */
+  @State quickJumpUndoChapter: number = -1;
+  private quickJumpUndoSpot: EpubOriginalSpot = new EpubOriginalSpot();
+  private quickJumpUndoPage: number = 0;
   @State activePanel: string = '';
   private annotations: BookAnnotation[] = [];
   private annotationSettings: ReaderAnnotationSettings = new ReaderAnnotationSettings();
@@ -1556,55 +1560,29 @@ struct EpubOriginalReadBookPage {
     this.showLayoutElements = true;
   }
 
-  // ---- 快速跳转：与普通阅读页相同，章节与百分比松手后确认，本章页数也要确认；左右箭头直接到上一章、下一章 ----
+  // ---- 快速跳转：与普通阅读页相同，松手直接跳，胶囊上的撤销键回到第一次跳走前的位置 ----
 
-  private async quickJump(mode: string, value: number): Promise<void> {
+  private quickJump(mode: string, value: number): void {
     if (this.jumpBusy || !this.ready || this.chapters.length === 0) return;
     const count = this.chapters.length;
     let chapter = this.chapterIndex;
     let ratio = -1;
-    let page = -1;
-    let message = '';
     if (mode === 'percent') {
       const target = ReaderQuickJumpModel.fromPercent(value, count);
       chapter = target.chapterIndex;
       ratio = target.chapterRatio;
-      message = `跳转到全书 ${ReaderQuickJumpModel.clampPercent(value).toFixed(1)}%？\n` +
-        `「${this.chapterTitleAt(chapter)}」· 约章内 ${Math.round(ratio * 100)}%`;
     } else if (mode === 'page') {
-      page = Math.max(0, Math.min(Math.round(value), this.pageCount - 1));
+      const page = Math.max(0, Math.min(Math.round(value), this.pageCount - 1));
       if (page === this.pageIndex) return;
-      message = `跳转到本章第 ${page + 1} 页？\n「${this.chapterTitle}」· 共 ${this.pageCount} 页`;
+      this.rememberQuickJumpOrigin();
+      this.run(`__legado.goPage(${page}, false)`);
+      this.readAloud?.userMoved();
+      return;
     } else {
       chapter = Math.max(0, Math.min(count - 1, Math.round(value)));
       if (chapter === this.chapterIndex && this.pageIndex === 0) return;
-      message = `跳转到「${this.chapterTitleAt(chapter)}」？\n从该章开头继续阅读`;
     }
-    const serial = this.front().serial;
-    this.jumpBusy = true;
-    let confirmed = false;
-    try {
-      const result = await this.getUIContext().getPromptAction().showDialog({
-        title: '确认跳转',
-        message: message,
-        buttons: [
-          { text: '取消', color: ThemeRuntime.subTextColor(this.darkMode) },
-          { text: '跳转', color: ThemeRuntime.accentColor(this.darkMode) }
-        ]
-      });
-      confirmed = result.index === 1 && this.alive && serial === this.front().serial;
-    } catch (error) {
-      console.warn('[EpubOriginal] quick jump dialog failed:', error);
-    } finally {
-      this.jumpBusy = false;
-    }
-    if (!confirmed) return;
-    if (mode === 'page') {
-      this.run(`__legado.goPage(${page}, false)`);
-      this.readAloud?.userMoved();
-      HdsFeedback.showToast(`已跳转至第 ${page + 1} 页`);
-      return;
-    }
+    this.rememberQuickJumpOrigin();
     const target = new EpubOriginalTarget();
     if (ratio > 0) {
       target.kind = 'spot';
@@ -1616,8 +1594,45 @@ struct EpubOriginalReadBookPage {
     } else {
       this.showChapter(chapter, target, 'fade');
     }
-    HdsFeedback.showToast(mode === 'percent' ? `已跳转至全书 ${ReaderQuickJumpModel.clampPercent(value).toFixed(1)}%` :
-      `已跳转至第 ${chapter + 1} 章`);
+  }
+
+  /** 左右箭头的上一章、下一章也算一次跳转。 */
+  private quickJumpStep(direction: number): void {
+    const index = this.chapterIndex + direction;
+    if (this.jumpBusy || !this.ready || index < 0 || index >= this.chapters.length) return;
+    this.rememberQuickJumpOrigin();
+    this.goChapter(index);
+  }
+
+  private rememberQuickJumpOrigin(): void {
+    if (this.quickJumpUndoChapter >= 0) return;
+    const spot = new EpubOriginalSpot();
+    spot.snippet = this.spot.snippet;
+    spot.fraction = this.spot.fraction;
+    this.quickJumpUndoSpot = spot;
+    this.quickJumpUndoPage = this.pageIndex;
+    this.quickJumpUndoChapter = this.chapterIndex;
+  }
+
+  private undoQuickJump(): void {
+    const chapter = this.quickJumpUndoChapter;
+    if (chapter < 0 || this.jumpBusy || !this.ready) return;
+    this.quickJumpUndoChapter = -1;
+    if (chapter >= this.chapters.length) return;
+    const spot = this.quickJumpUndoSpot;
+    if (chapter === this.chapterIndex) {
+      if (spot.snippet) this.run(`__legado.goSpot(${JSON.stringify(spot.snippet)}, ${spot.fraction})`);
+      else this.run(`__legado.goPage(${this.quickJumpUndoPage}, false)`);
+      this.readAloud?.userMoved();
+      return;
+    }
+    const target = new EpubOriginalTarget();
+    if (spot.snippet) {
+      target.kind = 'spot';
+      target.snippet = spot.snippet;
+      target.fraction = spot.fraction;
+    }
+    this.showChapter(chapter, target, 'fade');
   }
 
   private chapterTitleAt(index: number): string {
@@ -3268,6 +3283,11 @@ struct EpubOriginalReadBookPage {
   }
 
   /** 与 PDF 阅读页一样：正文时隐藏状态栏，菜单出现时一起出来；布局始终全屏，安全区高度不随显隐变化。 */
+  onMenuVisibleChange(): void {
+    if (!this.menuVisible) this.quickJumpUndoChapter = -1;
+    this.applySystemBars();
+  }
+
   applySystemBars(): void {
     const context = this.getUIContext().getHostContext();
     if (!context) return;
@@ -4125,8 +4145,10 @@ struct EpubOriginalReadBookPage {
         titleOf: (index: number): string => this.chapterTitleAt(index),
         onClose: (): void => { this.close(); },
         onPanelChange: (panel: string): void => { this.setPanel(panel); },
+        quickJumpUndoChapter: this.quickJumpUndoChapter,
         onQuickJump: (mode: string, value: number): void => { this.quickJump(mode, value); },
-        onStep: (direction: number): void => { this.goChapter(this.chapterIndex + direction); },
+        onQuickJumpUndo: (): void => { this.undoQuickJump(); },
+        onStep: (direction: number): void => { this.quickJumpStep(direction); },
         onPagedChange: (paged: boolean): void => { this.setPaged(paged); },
         onZoomChange: (zoom: number): void => { this.setZoom(zoom); },
         onDayNight: (): void => { this.toggleDayNight(); },

@@ -4,6 +4,7 @@ import { PopupMenuAction } from '../common/PopupMenuAction';
 import { ReaderFloatingMaterialBar, ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { ReaderTitleCapsule } from './ReaderTitleCapsule';
 import { ReaderQuickJumpContent } from './ReaderQuickJumpContent';
+import { READER_QUICK_JUMP_CAPSULE_HEIGHT, ReaderQuickJumpCapsule } from './ReaderQuickJumpCapsule';
 import { ReaderBrightnessControl } from './ReaderBrightnessControl';
 import { ReaderChromeMotion } from './ReaderChromeMotion';
 import { ReaderSettingActionRow, ReaderSettingLabel, ReaderSettingSelectRow, ReaderSettingSwitchRow } from './ReaderSettingRows';
@@ -100,6 +101,8 @@ export struct EpubOriginalControls {
   @State sliderActive: boolean = false;
   @State previewValue: number = 0;
   @State tooltipVisible: boolean = false;
+  /** 页面记下的撤销目标章，-1 表示没有可撤销的跳转。 */
+  @Prop quickJumpUndoChapter: number = -1;
   private dayNightLongPressed: boolean = false;
   @BuilderParam tocContent: () => void = this.emptyContent;
   titleOf: (index: number) => string = (index: number): string => `第${index + 1}章`;
@@ -107,6 +110,7 @@ export struct EpubOriginalControls {
   onPanelChange: (panel: string) => void = (_panel: string): void => {};
   /** 快速跳转松手：mode 为 chapter / percent / page，value 为章节序号、全书百分比或本章页码。 */
   onQuickJump: (mode: string, value: number) => void = (_mode: string, _value: number): void => {};
+  onQuickJumpUndo: () => void = (): void => {};
   onStep: (direction: number) => void = (_direction: number): void => {};
   onPagedChange: (paged: boolean) => void = (_paged: boolean): void => {};
   onZoomChange: (zoom: number) => void = (_zoom: number): void => {};
@@ -595,23 +599,38 @@ export struct EpubOriginalControls {
     .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
-  /** 拖动进度条时在底栏上方提示目标位置，与普通阅读页相同：章名加模式对应的读数。 */
+  private capsuleVisible(): boolean {
+    return !this.activePanel && (this.tooltipVisible || this.quickJumpUndoChapter >= 0);
+  }
+
+  private capsuleWidth(): number {
+    return Math.max(200, Math.min(360, this.panelWidth() - 32));
+  }
+
+  /** 快速跳转胶囊，与普通阅读页相同：拖动时显示目标章名与读数，跳转后留着撤销键。 */
   @Builder
-  previewTooltip() {
-    Column({ space: 2 }) {
-      Text(this.titleOf(this.previewChapter())).fontSize(AppFontSize.CAPTION).fontColor('#FFFFFFFF')
-        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-      Text(this.valueLabel()).fontSize(AppFontSize.CAPTION).fontColor('#CCFFFFFF')
-    }
-    .constraintSize({ maxWidth: Math.min(this.panelWidth(), 320) })
-    .height(44)
-    .padding({ left: 14, right: 14, top: 5, bottom: 5 })
-    .justifyContent(FlexAlign.Center)
-    .borderRadius(22).backgroundColor(this.darkMode ? '#E63A3C40' : '#D94B4D52')
-    .shadow({ radius: 10, color: '#50000000', offsetX: 0, offsetY: 3 })
-    .position({ x: this.panelLeft() + this.panelWidth() / 2, y: '100%' })
-    .translate({ x: '-50%', y: -(this.bottomInset() + this.bottomBarHeight() + 56) })
-    .hitTestBehavior(HitTestMode.None)
+  quickJumpCapsule() {
+    Column() {
+      ReaderQuickJumpCapsule({
+        title: this.titleOf(this.tooltipVisible ? this.previewChapter() : this.chapterIndex),
+        detail: this.valueLabel(),
+        canUndo: this.quickJumpUndoChapter >= 0 && !this.tooltipVisible && !this.busy,
+        undoLabel: this.quickJumpUndoChapter >= 0 ?
+          `回到跳转前的位置，${this.titleOf(this.quickJumpUndoChapter)}` : '回到跳转前的位置',
+        capsuleWidth: this.capsuleWidth(),
+        darkMode: this.darkMode,
+        fallbackColor: this.solidPanelColor(),
+        textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+        subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+        dividerColor: ThemeRuntime.dividerColor(this.darkMode),
+        onUndo: (): void => this.onQuickJumpUndo()
+      })
+    }.width(this.capsuleWidth()).height(READER_QUICK_JUMP_CAPSULE_HEIGHT)
+      .position({ x: this.panelLeft() + (this.panelWidth() - this.capsuleWidth()) / 2, y: '100%' })
+      .translate({ y: -(this.bottomInset() + this.bottomBarHeight() + 10 + READER_QUICK_JUMP_CAPSULE_HEIGHT) })
+      .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: 8 }))
+        .animation({ duration: 180, curve: Curve.EaseOut }))
+      .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
   @Builder
@@ -813,7 +832,7 @@ export struct EpubOriginalControls {
         this.topMenu()
         if (this.ready) {
           this.bottomMenu()
-          if (!this.activePanel && this.tooltipVisible) this.previewTooltip()
+          if (this.capsuleVisible()) this.quickJumpCapsule()
           if (this.activePanel === 'toc') {
             // 目录 / 书签面板是页面传进来的阅读页通用面板（ReaderTocPanel），自带材质与标题，这里只负责摆放。
             Column() { this.tocContent() }
@@ -827,10 +846,10 @@ export struct EpubOriginalControls {
           if (!this.activePanel && this.readerUseBrightnessQuickAction && this.brightnessHeight() >= 132) {
             this.brightnessControl()
           }
-          if (!this.activePanel && !this.tooltipVisible && this.readerUseTtsQuickAction) {
+          if (!this.activePanel && !this.capsuleVisible() && this.readerUseTtsQuickAction) {
             this.ttsQuickAction()
           }
-          if (!this.activePanel && !this.tooltipVisible && this.musicState) {
+          if (!this.activePanel && !this.capsuleVisible() && this.musicState) {
             this.musicQuickAction()
           }
         }

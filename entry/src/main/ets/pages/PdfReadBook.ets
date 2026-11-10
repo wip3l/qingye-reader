@@ -120,11 +120,13 @@ struct PdfReadBookPage {
   @State pageCount: number = 0;
   @State pageIndex: number = 0;
   @State previewIndex: number = -1;
+  /** 快速跳转撤销：第一次从进度条跳走前的页，关菜单即作废。 */
+  @State quickJumpUndoIndex: number = -1;
   @State initialPage: number = 0;
   @State @Watch('applySystemBars') ready: boolean = false;
   @State statusText: string = '正在打开 PDF…';
   @State failed: boolean = false;
-  @State @Watch('applySystemBars') menuVisible: boolean = false;
+  @State @Watch('onMenuVisibleChange') menuVisible: boolean = false;
   @State activePanel: string = '';
   @State jumpInput: string = '';
   @State searchInput: string = '';
@@ -417,6 +419,11 @@ struct PdfReadBookPage {
    * Like the comic reader, the document runs under a hidden status bar and the bar returns with the menu.
    * Layout stays full screen either way, and the safe-area heights ignore visibility, so nothing shifts.
    */
+  onMenuVisibleChange(): void {
+    if (!this.menuVisible) this.quickJumpUndoIndex = -1;
+    this.applySystemBars();
+  }
+
   applySystemBars(): void {
     const context = this.getUIContext().getHostContext();
     if (!context) return;
@@ -517,44 +524,22 @@ struct PdfReadBookPage {
       .catch((error: Error): void => { console.warn('[PDF] recent card reload failed:', error); });
   }
 
-  private jumpConfirming: boolean = false;
-
-  /** 快速跳转松手后确认，文案与小说阅读页的“确认跳转”一致；确认后提示跳到第几页。 */
-  private async confirmQuickJump(index: number, percent: number): Promise<void> {
-    if (!this.ready || this.jumpConfirming) return;
+  /** 快速跳转松手直接跳；第一次跳走前记下原页，胶囊上的撤销键可回去。 */
+  private quickJump(index: number): void {
+    if (!this.ready) return;
     const target = PdfPagePosition.clamp(index, this.pageCount);
     if (target === this.pageIndex) {
       this.previewIndex = -1;
       return;
     }
-    const count = this.pageCount;
-    const token = this.generation;
-    this.jumpConfirming = true;
-    let confirmed = false;
-    try {
-      const result = await this.getUIContext().getPromptAction().showDialog({
-        title: '确认跳转',
-        message: percent >= 0 ? `跳转到全书 ${percent.toFixed(1)}%？
-第 ${target + 1} 页 · 共 ${count} 页` :
-          `跳转到第 ${target + 1} 页？
-共 ${count} 页`,
-        buttons: [
-          { text: '取消', color: ThemeRuntime.subTextColor(this.darkMode) },
-          { text: '跳转', color: ThemeRuntime.accentColor(this.darkMode) }
-        ]
-      });
-      confirmed = result.index === 1 && this.alive && token === this.generation && count === this.pageCount;
-    } catch (error) {
-      console.warn('[PDF] quick jump dialog failed:', error);
-    } finally {
-      this.jumpConfirming = false;
-    }
-    if (!confirmed) {
-      this.previewIndex = -1;
-      return;
-    }
+    if (this.quickJumpUndoIndex < 0) this.quickJumpUndoIndex = this.pageIndex;
     this.goTo(target);
-    HdsFeedback.showToast(`已跳转至第 ${target + 1} 页`);
+  }
+
+  private undoQuickJump(): void {
+    const target = this.quickJumpUndoIndex;
+    this.quickJumpUndoIndex = -1;
+    if (target >= 0 && target < this.pageCount) this.goTo(target);
   }
 
   private goTo(index: number): void {
@@ -1479,7 +1464,9 @@ struct PdfReadBookPage {
         navigationContent: (): void => { this.tocPanel(); },
         onClose: (): void => { this.close(); }, onPanelChange: (panel: string): void => { this.setPanel(panel); },
         onPageChange: (index: number): void => { this.goTo(index); },
-        onQuickJump: (index: number, percent: number): void => { this.confirmQuickJump(index, percent); },
+        quickJumpUndoIndex: this.quickJumpUndoIndex,
+        onQuickJump: (index: number): void => { this.quickJump(index); },
+        onQuickJumpUndo: (): void => { this.undoQuickJump(); },
         onPreview: (index: number): void => { this.previewIndex = index; },
         onJump: (text: string): void => { this.jumpInput = text; this.jump(); },
         onContinuousChange: (checked: boolean): void => { this.setViewPreference(ReaderPdfSettings.CONTINUOUS, checked); },

@@ -2,6 +2,7 @@ import { ImmersiveBackButton } from '../ImmersiveBackButton';
 import { ReaderFloatingMaterialBar, ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { ReaderTitleCapsule } from './ReaderTitleCapsule';
 import { ReaderQuickJumpContent } from './ReaderQuickJumpContent';
+import { READER_QUICK_JUMP_CAPSULE_HEIGHT, ReaderQuickJumpCapsule } from './ReaderQuickJumpCapsule';
 import { ReaderBrightnessControl } from './ReaderBrightnessControl';
 import { ReaderChromeMotion } from './ReaderChromeMotion';
 import { common } from '@kit.AbilityKit';
@@ -41,6 +42,10 @@ export struct PdfReaderControls {
   @StorageLink('readerQuickJumpExpanded') readerQuickJumpExpanded: boolean = false;
   /** 百分比模式拖动中的读数；页码预览仍走 previewIndex。 */
   @State previewPercent: number = -1;
+  /** 正在拖动快速跳转进度条：胶囊显示目标页、撤销键暂时不可点。 */
+  @State jumpDragging: boolean = false;
+  /** 页面记下的撤销目标页，-1 表示没有可撤销的跳转。 */
+  @Prop quickJumpUndoIndex: number = -1;
   @Prop darkMode: boolean = false;
   @Prop bookTitle: string = '';
   @Prop menuVisible: boolean = false;
@@ -77,8 +82,9 @@ export struct PdfReaderControls {
   onClose: () => void = (): void => {};
   onPanelChange: (panel: string) => void = (_panel: string): void => {};
   onPageChange: (index: number) => void = (_index: number): void => {};
-  /** 快速跳转进度条松手：由页面弹“确认跳转”再跳；percent 是百分比模式松手时的读数，页数模式为 -1。 */
-  onQuickJump: (index: number, percent: number) => void = (_index: number, _percent: number): void => {};
+  /** 快速跳转进度条松手：页面直接跳过去，并记下第一次跳走前的页供撤销。 */
+  onQuickJump: (index: number) => void = (_index: number): void => {};
+  onQuickJumpUndo: () => void = (): void => {};
   onPreview: (index: number) => void = (_index: number): void => {};
   onJump: (text: string) => void = (_text: string): void => {};
   onContinuousChange: (checked: boolean) => void = (_checked: boolean): void => {};
@@ -190,12 +196,13 @@ export struct PdfReaderControls {
     const page = percent ? PdfPagePosition.fromPercent(value, this.pageCount) :
       PdfPagePosition.clamp(Math.round(value), this.pageCount);
     if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-      // 与小说阅读页一致：松手后先确认再跳；确认期间保留预览，结果出来后由页面撤掉。
-      if (percent) this.previewPercent = ReaderQuickJumpModel.clampPercent(value);
-      this.onPreview(page);
-      this.onQuickJump(page, percent ? ReaderQuickJumpModel.clampPercent(value) : -1);
+      // 与小说阅读页一致：松手直接跳，跳转时页面撤掉预览。
+      this.jumpDragging = false;
+      this.previewPercent = -1;
+      this.onQuickJump(page);
       return;
     }
+    this.jumpDragging = true;
     if (percent) this.previewPercent = ReaderQuickJumpModel.clampPercent(value);
     this.onPreview(page);
   }
@@ -390,7 +397,7 @@ export struct PdfReaderControls {
                   onChange: (value: number, mode: SliderChangeMode): void => this.onJumpSlider(value, mode),
                   onStep: (direction: number): void => this.onPageChange(this.pageIndex + direction),
                   onExpandedChange: (expanded: boolean): void => this.setJumpExpanded(expanded),
-                  onSlideCancel: (): void => { this.previewPercent = -1; this.onPreview(-1); } })
+                  onSlideCancel: (): void => { this.jumpDragging = false; this.previewPercent = -1; this.onPreview(-1); } })
               }.width('100%').height(this.quickJumpHeight())
               Divider().strokeWidth(0.5).color(ThemeRuntime.dividerColor(this.darkMode)).margin({ left: 20, right: 20 })
             }
@@ -405,16 +412,39 @@ export struct PdfReaderControls {
       .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
-  /** 拖动进度条时在底栏上方提示目标页，松手才跳转。 */
+  private capsuleVisible(): boolean {
+    return !this.activePanel && (this.jumpDragging || this.quickJumpUndoIndex >= 0);
+  }
+
+  private capsuleWidth(): number {
+    return Math.max(200, Math.min(360, this.panelWidth() - 32));
+  }
+
+  /** 快速跳转胶囊：拖动时显示目标页，跳转后留着撤销键，点一下回到第一次跳走前的页。 */
   @Builder
-  previewTooltip() {
-    Text(`第 ${this.previewIndex + 1} 页 · ${PdfPagePosition.percent(this.previewIndex, this.pageCount, true).toFixed(1)}%`)
-      .fontSize(AppFontSize.CAPTION).fontColor('#FFFFFFFF').height(36).padding({ left: 16, right: 16 })
-      .borderRadius(18).backgroundColor(this.darkMode ? '#E63A3C40' : '#D94B4D52')
-      .shadow({ radius: 10, color: '#50000000', offsetX: 0, offsetY: 3 })
-      .position({ x: this.panelLeft() + this.panelWidth() / 2, y: '100%' })
-      .translate({ x: '-50%', y: -(this.bottomInset() + this.bottomBarHeight() + 48) })
-      .hitTestBehavior(HitTestMode.None)
+  quickJumpCapsule() {
+    Column() {
+      ReaderQuickJumpCapsule({
+        title: `第 ${this.displayIndex() + 1} 页`,
+        detail: this.jumpMode() === 'percent' ? `${this.percentValue().toFixed(1)}% · 共 ${this.pageCount} 页` :
+          `${this.displayIndex() + 1} / ${this.pageCount} 页`,
+        canUndo: this.quickJumpUndoIndex >= 0 && !this.jumpDragging,
+        undoLabel: this.quickJumpUndoIndex >= 0 ? `回到跳转前的位置，第 ${this.quickJumpUndoIndex + 1} 页` :
+          '回到跳转前的位置',
+        capsuleWidth: this.capsuleWidth(),
+        darkMode: this.darkMode,
+        fallbackColor: this.solidPanelColor(),
+        textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+        subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+        dividerColor: ThemeRuntime.dividerColor(this.darkMode),
+        onUndo: (): void => this.onQuickJumpUndo()
+      })
+    }.width(this.capsuleWidth()).height(READER_QUICK_JUMP_CAPSULE_HEIGHT)
+      .position({ x: this.panelLeft() + (this.panelWidth() - this.capsuleWidth()) / 2, y: '100%' })
+      .translate({ y: -(this.bottomInset() + this.bottomBarHeight() + 10 + READER_QUICK_JUMP_CAPSULE_HEIGHT) })
+      .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: 8 }))
+        .animation({ duration: 180, curve: Curve.EaseOut }))
+      .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
   @Builder
@@ -686,8 +716,8 @@ export struct PdfReaderControls {
         this.topMenu()
         if (this.ready) {
           this.bottomMenu()
-          if (!this.activePanel && this.previewIndex >= 0) {
-            this.previewTooltip()
+          if (this.capsuleVisible()) {
+            this.quickJumpCapsule()
           } else if (!this.activePanel && this.superResolution && this.superResolutionReady()) {
             this.compareBar()
           }
