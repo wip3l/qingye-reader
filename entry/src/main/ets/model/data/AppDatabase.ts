@@ -156,7 +156,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   cacheDatabaseName(): string { return this.openedDatabaseName; }
   cacheDatabaseDirectory(): string { return this.databaseDirectory; }
   private readonly DATABASE_NAME = 'legado.db';
-  private readonly SCHEMA_VERSION = 26;
+  private readonly SCHEMA_VERSION = 27;
 
   private constructor() {}
 
@@ -1431,7 +1431,9 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     annotation.color = BookAnnotationStyles.normalizeColor(resultSet.getString(resultSet.getColumnIndex('color')));
     annotation.style = BookAnnotationStyles.normalizeStyle(resultSet.getString(resultSet.getColumnIndex('style')));
     annotation.note = resultSet.getString(resultSet.getColumnIndex('note'));
-    annotation.excerpt = resultSet.getLong(resultSet.getColumnIndex('excerpt')) === 1;
+    // 列由 migrateTables 补上；万一没补上（版本号没升）也别让整个划线列表读不出来。
+    const excerptIndex = resultSet.getColumnIndex('excerpt');
+    annotation.excerpt = excerptIndex >= 0 && resultSet.getLong(excerptIndex) === 1;
     annotation.createTime = resultSet.getLong(resultSet.getColumnIndex('createTime'));
     annotation.updateTime = resultSet.getLong(resultSet.getColumnIndex('updateTime'));
     return annotation;
