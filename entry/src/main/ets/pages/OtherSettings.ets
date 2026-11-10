@@ -19,6 +19,7 @@ import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
 import { HomeTabBarSettingsStore } from '../utils/HomeTabBarSettingsStore';
+import { FootprintLayout } from '../utils/FootprintLayout';
 import { HexColor } from '../utils/HexColor';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 
@@ -38,6 +39,7 @@ struct OtherSettingsPage {
   @StorageProp('animatedImagesEnabled') animatedImagesEnabled: boolean = true;
   @StorageProp('homeTabBarStyle') homeTabBarStyle: string = 'floating';
   @StorageProp('homeExtraTab') homeExtraTab: string = 'none';
+  @StorageProp('footprintLayout') footprintLayoutRaw: string = '';
   @StorageProp('homeTabBarFlatOpacity') homeTabBarFlatOpacity: number = 100;
   @StorageProp('homeTabBarFlatFrosted') homeTabBarFlatFrosted: boolean = false;
   /** 拖动不透明度滑杆时的临时值，-1 表示没在拖。 */
@@ -224,9 +226,20 @@ struct OtherSettingsPage {
       SettingRow({
         title: '更多底栏项目',
         description: '在发现和我的之间加一个页签：“听”汇集正在播放、有声书和朗读设置，“足迹”展示本周阅读统计和书签',
-        showDivider: false
+        showDivider: this.footprintTabEnabled()
       }) {
         this.extraTabSelect()
+      }
+      if (this.footprintTabEnabled()) {
+        SettingNavRow({
+          title: '足迹页内容',
+          description: '选择足迹页显示哪些内容、顺序和数量',
+          value: this.footprintLayoutSummary(),
+          showDivider: false,
+          onTap: () => {
+            router.pushUrl({ url: 'pages/FootprintLayoutSettings' });
+          }
+        })
       }
     }
     .width('calc(100% - 24vp)')
@@ -814,6 +827,15 @@ struct OtherSettingsPage {
   extraTabValues(): string[] {
     return [HomeTabBarSettingsStore.EXTRA_NONE, HomeTabBarSettingsStore.EXTRA_LISTEN,
       HomeTabBarSettingsStore.EXTRA_FOOTPRINT];
+  }
+
+  footprintTabEnabled(): boolean {
+    return HomeTabBarSettingsStore.normalizeExtraTab(this.homeExtraTab) === HomeTabBarSettingsStore.EXTRA_FOOTPRINT;
+  }
+
+  footprintLayoutSummary(): string {
+    const visible = FootprintLayout.parse(this.footprintLayoutRaw).visibleOrder().length;
+    return visible === FootprintLayout.SECTIONS.length ? '全部显示' : `显示 ${visible} 项`;
   }
 
   extraTabIndex(): number {

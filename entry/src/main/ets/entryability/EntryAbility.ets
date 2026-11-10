@@ -272,6 +272,7 @@ export default class EntryAbility extends UIAbility {
     PersistentStorage.persistProp('immersiveLightLevel', 'adaptive');
     PersistentStorage.persistProp('smartGripEnabled', true);
     PersistentStorage.persistProp('footprintMonthCollapsed', false);
+    PersistentStorage.persistProp('footprintLayout', '');
     this.smartGripBootstrapPromise = SmartGripSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复智感握姿设置失败:', error);
     });

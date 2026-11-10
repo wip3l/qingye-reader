@@ -101,7 +101,8 @@ export class ReadStatsPosterRenderer {
     } catch (_) { /* Cache maintenance must not block sharing. */ }
   }
 
-  private static async loadImage(context: common.Context, raw: string, avatar: boolean): Promise<image.PixelMap | null> {
+  /** 摘录分享图也用它取封面。 */
+  static async loadImage(context: common.Context, raw: string, avatar: boolean): Promise<image.PixelMap | null> {
     if (!raw) return null;
     let source: image.ImageSource | null = null;
     let file: fileIo.File | null = null;

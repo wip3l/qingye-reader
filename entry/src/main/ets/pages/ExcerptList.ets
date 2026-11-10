@@ -11,6 +11,7 @@ import { ReaderAnnotationShare } from '../utils/ReaderAnnotationShare';
 import { appDb } from '../model/data/AppDatabase';
 import { BookAnnotation } from '../model/reader/BookAnnotation';
 import { Book } from '@legado/sourceengine';
+import { BookCover } from '../components/book/BookCover';
 
 /** 摘录里出现过的一本书，书名筛选条用。 */
 class ExcerptBookChip {
@@ -37,6 +38,8 @@ struct ExcerptListPage {
   /** 打开“更多”菜单的那条摘录 id，0 是都没开。 */
   @State menuId: number = 0;
   @State shelfUrls: string[] = [];
+  /** 书架上的书，封面按书架的规则取（自定义封面、书源封面、占位）。 */
+  private shelfBooks: Map<string, Book> = new Map<string, Book>();
   private loadGeneration: number = 0;
 
   aboutToAppear(): void {
@@ -57,6 +60,7 @@ struct ExcerptListPage {
       const items = await appDb.getExcerptAnnotations();
       const books = await appDb.getAllBooks();
       if (generation !== this.loadGeneration) return;
+      this.shelfBooks = new Map<string, Book>(books.map((book: Book): [string, Book] => [book.bookUrl, book]));
       this.shelfUrls = books.map((book: Book): string => book.bookUrl);
       this.applyItems(items);
     } catch (error) {
@@ -227,27 +231,23 @@ struct ExcerptListPage {
       })
   }
 
-  /** 一条摘录：左边划线颜色的竖条 + 原文，有想法另起一块，底下书名章节和时间。 */
+  /**
+   * 一条摘录：原文左边是划线颜色的竖线，有想法另起一块，底部一行小封面 + 书名、章节和时间。
+   * 竖线用左边框画：在 List 里给竖条写 100% 高度会撑满整个列表。
+   */
   @Builder
   excerptCard(item: BookAnnotation) {
     Column({ space: AppSpacing.MD }) {
-      Row({ space: AppSpacing.LG }) {
-        Column()
-          .width(3)
-          .height('100%')
-          .borderRadius(1.5)
-          .backgroundColor(item.color)
-        Text(item.quote)
-          .fontSize(AppFontSize.BODY_LARGE)
-          .lineHeight(26)
-          .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
-          .maxLines(10)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .wordBreak(WordBreak.BREAK_WORD)
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
+      Text(item.quote)
+        .fontSize(AppFontSize.BODY_LARGE)
+        .lineHeight(26)
+        .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
+        .maxLines(10)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .wordBreak(WordBreak.BREAK_WORD)
+        .width('100%')
+        .padding({ left: AppSpacing.LG })
+        .border({ width: { left: 3 }, color: item.color })
 
       if (item.note.trim()) {
         Row({ space: AppSpacing.SM }) {
@@ -271,23 +271,35 @@ struct ExcerptListPage {
         .backgroundColor(this.darkMode ? '#0DFFFFFF' : '#08000000')
       }
 
-      Row({ space: AppSpacing.SM }) {
-        Text(this.sourceText(item))
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(ThemeRuntime.subTextColor(this.darkMode))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        Text(ReaderAnnotationShare.timeLabel(item.updateTime || item.createTime))
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+      Divider()
+        .strokeWidth(0.5)
+        .color(ThemeRuntime.hairlineColor(this.darkMode))
+
+      Row({ space: AppSpacing.MD }) {
+        this.bookCover(item)
+        Column({ space: 2 }) {
+          Text(item.bookName || '未知书籍')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+          Text(this.metaText(item))
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
         Stack() {
           SymbolGlyph($r('sys.symbol.dot_grid_1x2'))
             .fontSize(18)
             .fontColor([ThemeRuntime.subTextColor(this.darkMode)])
         }
-        .width(32)
-        .height(28)
+        .width(36)
+        .height(36)
         .accessibilityText('更多操作')
         .onClick(() => {
           this.menuId = this.menuId === item.id ? 0 : item.id;
@@ -300,12 +312,49 @@ struct ExcerptListPage {
           }))
       }
       .width('100%')
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding({ left: AppSpacing.XL, right: AppSpacing.MD, top: AppSpacing.LG, bottom: AppSpacing.SM })
+    .padding({ left: AppSpacing.XL, right: AppSpacing.SM, top: AppSpacing.LG, bottom: AppSpacing.MD })
     .borderRadius(ThemeRuntime.largeRadius())
     .backgroundColor(ThemeRuntime.cardColor(this.darkMode))
     .onClick(() => this.openInBook(item))
+  }
+
+  /** 书在书架上就和书架一样取封面；删了的书只剩书名，画占位封面并压暗。 */
+  @Builder
+  bookCover(item: BookAnnotation) {
+    Stack() {
+      if (this.shelfBooks.has(item.bookUrl)) {
+        BookCover({
+          bookUrl: item.bookUrl,
+          origin: this.shelfBooks.get(item.bookUrl)?.origin || '',
+          coverUrl: this.shelfBooks.get(item.bookUrl)?.coverUrl || '',
+          customCoverUrl: this.shelfBooks.get(item.bookUrl)?.customCoverUrl || '',
+          name: item.bookName,
+          author: this.shelfBooks.get(item.bookUrl)?.author || '',
+          useBookshelfCover: true,
+          placeholderColor: ThemeRuntime.accentColor(this.darkMode),
+          cornerRadius: 3,
+          decodeWidth: 84,
+          decodeHeight: 112
+        })
+      } else {
+        BookCover({
+          name: item.bookName,
+          useBookshelfCover: false,
+          placeholderColor: ThemeRuntime.subTextColor(this.darkMode),
+          cornerRadius: 3,
+          decodeWidth: 84,
+          decodeHeight: 112
+        })
+      }
+    }
+    .width(28)
+    .height(38)
+    .borderRadius(3)
+    .clip(true)
+    .opacity(this.onShelf(item) ? 1 : 0.55)
   }
 
   @Builder
@@ -320,9 +369,9 @@ struct ExcerptListPage {
           this.menuId = 0;
           ReaderAnnotationShare.copy(item);
         })
-      PopupMenuAction($r('sys.symbol.share'), '分享', ThemeRuntime.primaryTextColor(this.darkMode), () => {
+      PopupMenuAction($r('sys.symbol.share'), '分享图片', ThemeRuntime.primaryTextColor(this.darkMode), () => {
         this.menuId = 0;
-        ReaderAnnotationShare.share(getContext(this), item);
+        ReaderAnnotationShare.openPoster(item, this.shelfBooks.get(item.bookUrl) || null);
       })
       PopupMenuAction($r('sys.symbol.star_slash'), '移出摘录', ThemeRuntime.dangerColor(this.darkMode), () => {
         this.menuId = 0;
@@ -351,10 +400,11 @@ struct ExcerptListPage {
     .padding({ top: 80, left: AppSpacing.XL, right: AppSpacing.XL })
   }
 
-  sourceText(item: BookAnnotation): string {
-    const name = item.bookName ? `《${item.bookName}》` : '';
-    const parts = [name, item.chapterName].filter((part: string): boolean => part.length > 0);
-    return parts.join(' · ') + (this.onShelf(item) ? '' : ' · 已不在书架');
+  /** 封面右边第二行：章节（书已删时换成“已不在书架”）· 时间。 */
+  metaText(item: BookAnnotation): string {
+    const place = this.onShelf(item) ? item.chapterName : '已不在书架';
+    const time = ReaderAnnotationShare.timeLabel(item.updateTime || item.createTime);
+    return place ? `${place} · ${time}` : time;
   }
 
   openInBook(item: BookAnnotation): void {

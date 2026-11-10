@@ -1250,7 +1250,8 @@ struct EpubOriginalReadBookPage {
         const annotation = this.annotationActive;
         if (!annotation) return;
         this.commitAnnotationNote();
-        ReaderAnnotationShare.share(getContext(this), annotation);
+        this.closeAnnotationLayer();
+        ReaderAnnotationShare.openPoster(annotation, this.book);
       },
       onExcerpt: (): void => {
         const annotation = this.annotationActive;

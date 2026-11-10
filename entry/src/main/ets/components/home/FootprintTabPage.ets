@@ -15,6 +15,7 @@ import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { BookCover } from '../book/BookCover';
 import { ImmersiveMaterialSurface } from '../ImmersiveMaterialSurface';
 import { BookAnnotation } from '../../model/reader/BookAnnotation';
+import { FootprintLayout } from '../../utils/FootprintLayout';
 
 /** 本月日历的一格；day 为 0 是月初前的空位。level 0 没读，1~3 越大读得越久，-1 是还没到的日子。 */
 class FootprintDay {
@@ -25,15 +26,17 @@ class FootprintDay {
   today: boolean = false;
 }
 
-/** 首页第四个页签“足迹”：本周阅读（全部设备）、本月日历、读得最多的书、最近摘录和最近书签。 */
+/**
+ * 首页第四个页签“足迹”：本周阅读（全部设备）、本月日历、读得最多的书、最近摘录和最近书签。
+ * 显示哪几块、顺序和条数由“足迹页内容”设置决定（FootprintLayout）。
+ */
 @Component
 export struct FootprintTabPage {
   static readonly HEADER_CONTROL_SIZE: number = 40;
   static readonly CHART_HEIGHT: number = 88;
-  static readonly RANK_LIMIT: number = 3;
-  static readonly BOOKMARK_LIMIT: number = 10;
   static readonly BOOKMARK_CARD_HEIGHT: number = 148;
-  static readonly EXCERPT_LIMIT: number = 10;
+  /** 按设置里最多的条数取，显示时再截。 */
+  static readonly EXCERPT_LOAD_LIMIT: number = 20;
   static readonly EXCERPT_CARD_HEIGHT: number = 168;
   /** 日历颜色分档：20 分钟、1 小时。 */
   static readonly LEVEL_STEPS_MS: number[] = [20 * 60000, 60 * 60000];
@@ -58,6 +61,7 @@ export struct FootprintTabPage {
   @StorageProp('readStatsRecording') readStatsRecording: boolean = true;
   /** 本月日历卡收起与否，在 EntryAbility 里持久化。 */
   @StorageLink('footprintMonthCollapsed') monthCollapsed: boolean = false;
+  @StorageProp('footprintLayout') layoutRaw: string = '';
   private scroller: Scroller = new Scroller();
   private alive: boolean = false;
   private ownerId: string = '';
@@ -90,7 +94,7 @@ export struct FootprintTabPage {
       const endKey = week.endKey > month.endKey ? week.endKey : month.endKey;
       const rows = await appDb.getReadStatsByDayRange(startKey, endKey, '', ownerId);
       const bookmarks = await appDb.getAllBookmarks();
-      const excerpts = await appDb.getExcerptAnnotations(FootprintTabPage.EXCERPT_LIMIT);
+      const excerpts = await appDb.getExcerptAnnotations(FootprintTabPage.EXCERPT_LOAD_LIMIT);
       if (!this.alive) return;
       this.excerpts = excerpts;
       this.excerptsLoaded = true;
@@ -99,7 +103,7 @@ export struct FootprintTabPage {
       this.lastWeekMs = ReadStatsSummary.calculate(rows, 'week', lastWeekAnchor, now).totalMs;
       this.monthDays = this.buildMonth(rows, month.startTs, now);
       this.monthTitle = `${new Date(now).getMonth() + 1} 月足迹`;
-      this.bookmarks = bookmarks.slice(0, FootprintTabPage.BOOKMARK_LIMIT);
+      this.bookmarks = bookmarks.slice(0, FootprintTabPage.EXCERPT_LOAD_LIMIT);
     } catch (error) {
       console.warn('读取足迹失败:', error);
     } finally {
@@ -114,7 +118,7 @@ export struct FootprintTabPage {
   async loadExcerpts(): Promise<void> {
     try {
       await appDb.init(getContext(this));
-      const excerpts = await appDb.getExcerptAnnotations(FootprintTabPage.EXCERPT_LIMIT);
+      const excerpts = await appDb.getExcerptAnnotations(FootprintTabPage.EXCERPT_LOAD_LIMIT);
       if (this.alive) this.excerpts = excerpts;
     } catch (error) {
       console.warn('读取摘录失败:', error);
@@ -166,57 +170,12 @@ export struct FootprintTabPage {
             .width('100%')
             .height(56 + this.statusBarHeight)
 
-          this.weekCard()
-          this.monthCard()
-
-          if (this.summary.items.length > 0) {
-            this.sectionHeader('读得最多')
-            Column() {
-              ForEach(this.summary.items.slice(0, FootprintTabPage.RANK_LIMIT), (item: ReadStatsRank) => {
-                this.rankRow(item)
-              }, (item: ReadStatsRank) => item.bookKey)
-            }
-            .width('100%')
-            .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
-            .borderRadius(ThemeRuntime.largeRadius())
-            .clip(true)
-            .backgroundColor(this.cardColor())
-          }
-
-          if (this.excerptsLoaded) {
-            this.sectionHeaderWithMore('最近摘录', '我的摘录', () => this.openExcerpts())
-            if (this.excerpts.length > 0) {
-              List({ space: AppSpacing.MD }) {
-                ForEach(this.excerpts, (excerpt: BookAnnotation) => {
-                  ListItem() {
-                    this.excerptCard(excerpt)
-                  }
-                }, (excerpt: BookAnnotation) => `${excerpt.id}|${excerpt.updateTime}|${excerpt.color}`)
-              }
-              .listDirection(Axis.Horizontal)
-              .scrollBar(BarState.Off)
-              .edgeEffect(EdgeEffect.Spring)
-              .width('100%')
-              .height(FootprintTabPage.EXCERPT_CARD_HEIGHT)
-            } else {
-              this.excerptEmptyCard()
-            }
-          }
-
-          if (this.bookmarks.length > 0) {
-            this.sectionHeader('最近书签')
-            List({ space: AppSpacing.MD }) {
-              ForEach(this.bookmarks, (bookmark: Bookmark) => {
-                ListItem() {
-                  this.bookmarkCard(bookmark)
-                }
-              }, (bookmark: Bookmark) => `${bookmark.id}`)
-            }
-            .listDirection(Axis.Horizontal)
-            .scrollBar(BarState.Off)
-            .edgeEffect(EdgeEffect.Spring)
-            .width('100%')
-            .height(FootprintTabPage.BOOKMARK_CARD_HEIGHT)
+          if (this.layout().visibleOrder().length === 0) {
+            this.emptyLayoutCard()
+          } else {
+            ForEach(this.layout().visibleOrder(), (id: string) => {
+              this.section(id)
+            }, (id: string) => id)
           }
 
           Row()
@@ -263,6 +222,7 @@ export struct FootprintTabPage {
             .layoutWeight(1)
           this.headerButton($r('sys.symbol.share'), '分享本周阅读海报', () => this.shareWeek())
           this.headerButton($r('sys.symbol.timer'), '完整阅读统计', () => this.openStats())
+          this.headerButton($r('sys.symbol.dot_grid_2x2'), '设置足迹页内容', () => this.openLayoutSettings())
         }
         .width('100%')
         .height(56 + this.statusBarHeight)
@@ -283,6 +243,103 @@ export struct FootprintTabPage {
     .height('100%')
     .backgroundColor(ThemeRuntime.pageColor(this.appDarkMode))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  layout(): FootprintLayout {
+    return FootprintLayout.parse(this.layoutRaw);
+  }
+
+  /** 一块内容；外层 Column 让块内标题和卡片之间、块与块之间的间距都一样。 */
+  @Builder
+  section(id: string) {
+    Column({ space: AppSpacing.LG }) {
+      if (id === FootprintLayout.WEEK) {
+        this.weekCard()
+      } else if (id === FootprintLayout.MONTH) {
+        this.monthCard()
+      } else if (id === FootprintLayout.RANK) {
+        if (this.summary.items.length > 0) {
+          this.sectionHeader('读得最多')
+          Column() {
+            ForEach(this.summary.items.slice(0, this.layout().limit(FootprintLayout.RANK)), (item: ReadStatsRank) => {
+              this.rankRow(item)
+            }, (item: ReadStatsRank) => item.bookKey)
+          }
+          .width('100%')
+          .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
+          .borderRadius(ThemeRuntime.largeRadius())
+          .clip(true)
+          .backgroundColor(this.cardColor())
+        }
+      } else if (id === FootprintLayout.EXCERPT) {
+        if (this.excerptsLoaded) {
+          this.sectionHeaderWithMore('最近摘录', '我的摘录', () => this.openExcerpts())
+          if (this.excerpts.length > 0) {
+            List({ space: AppSpacing.MD }) {
+              ForEach(this.excerpts.slice(0, this.layout().limit(FootprintLayout.EXCERPT)), (excerpt: BookAnnotation) => {
+                ListItem() {
+                  this.excerptCard(excerpt)
+                }
+              }, (excerpt: BookAnnotation) => `${excerpt.id}|${excerpt.updateTime}|${excerpt.color}`)
+            }
+            .listDirection(Axis.Horizontal)
+            .scrollBar(BarState.Off)
+            .edgeEffect(EdgeEffect.Spring)
+            .width('100%')
+            .height(FootprintTabPage.EXCERPT_CARD_HEIGHT)
+          } else {
+            this.excerptEmptyCard()
+          }
+        }
+      } else if (id === FootprintLayout.BOOKMARK) {
+        if (this.bookmarks.length > 0) {
+          this.sectionHeader('最近书签')
+          List({ space: AppSpacing.MD }) {
+            ForEach(this.bookmarks.slice(0, this.layout().limit(FootprintLayout.BOOKMARK)), (bookmark: Bookmark) => {
+              ListItem() {
+                this.bookmarkCard(bookmark)
+              }
+            }, (bookmark: Bookmark) => `${bookmark.id}`)
+          }
+          .listDirection(Axis.Horizontal)
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+          .width('100%')
+          .height(FootprintTabPage.BOOKMARK_CARD_HEIGHT)
+        }
+      }
+    }
+    .width('100%')
+  }
+
+  /** 所有内容都关掉了。 */
+  @Builder
+  emptyLayoutCard() {
+    Column({ space: AppSpacing.MD }) {
+      SymbolGlyph($r('sys.symbol.dot_grid_2x2'))
+        .fontSize(32)
+        .fontColor([this.subTextColor()])
+      Text('足迹页的内容都关掉了')
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontColor(this.primaryTextColor())
+      Text('去设置内容')
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.accentColor())
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+        .borderRadius(18)
+        .backgroundColor(this.accentTint('1F'))
+        .onClick(() => this.openLayoutSettings())
+    }
+    .width('100%')
+    .padding({ top: 40, bottom: 40 })
+    .borderRadius(ThemeRuntime.largeRadius())
+    .backgroundColor(this.cardColor())
+  }
+
+  openLayoutSettings(): void {
+    router.pushUrl({ url: 'pages/FootprintLayoutSettings' }).catch((error: Error) => {
+      console.error('打开足迹页内容设置失败:', error);
+    });
   }
 
   /** 和书架、发现顶栏的圆钮同一种沉浸光感材质、同样 40 大小。 */

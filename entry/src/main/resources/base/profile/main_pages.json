@@ -47,6 +47,8 @@
     "pages/ReadingStats",
     "pages/ReadingStatsShare",
     "pages/ExcerptList",
+    "pages/ExcerptShare",
+    "pages/FootprintLayoutSettings",
     "pages/SyncDevices",
     "pages/SyncIssues",
     "pages/FontSettings",

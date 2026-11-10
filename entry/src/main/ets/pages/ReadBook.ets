@@ -18026,7 +18026,8 @@ ${leading}` : leading;
     const annotation = this.readerAnnotationActive;
     if (!annotation) return;
     this.commitReaderAnnotationNote();
-    await ReaderAnnotationShare.share(getContext(this), annotation);
+    this.closeReaderAnnotationLayer();
+    ReaderAnnotationShare.openPoster(annotation, this.book);
   }
 
   setReaderAnnotationAutoPanel(value: boolean): void {
