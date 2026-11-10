@@ -190,6 +190,7 @@ export class VideoAvSession {
     else if (this.speed === 1.25) value = media.PlaybackSpeed.SPEED_FORWARD_1_25_X;
     else if (this.speed === 1.75) value = media.PlaybackSpeed.SPEED_FORWARD_1_75_X;
     else if (this.speed === 2) value = media.PlaybackSpeed.SPEED_FORWARD_2_00_X;
+    else if (this.speed === 3) value = media.PlaybackSpeed.SPEED_FORWARD_3_00_X;
     try { player.setSpeed(value); } catch (error) {
       console.warn('[VideoAvSession] set speed failed:', (error as Error).message);
     }
