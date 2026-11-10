@@ -15,9 +15,11 @@ const context = vm.createContext({ console, Date: { now: () => now },
   setTimeout: fn => { timers.push(fn); return timers.length; },
   READER_IDLE_WORK_RETRY_MS: 48,
   READER_INTERACTIVE_PAGINATION_BATCH_DELAY_MS: 56, READER_PAGINATION_BATCH_DELAY_MS: 64,
-  READER_PAGINATION_BUSY_RETRY_DELAY_MS: 48, ReaderActionMarker: { has: () => false },
+  READER_PAGINATION_BUSY_RETRY_DELAY_MS: 48, READER_IDLE_PAGINATION_BURST_MS: 10,
+  READER_IDLE_PAGINATION_GAP_MS: 16, ReaderActionMarker: { has: () => false },
   CooperativeScheduler: { SLOW_OPERATION_MS: 16 } });
-const names = ['scheduleReaderPaginationCompletion', 'getLocalPageTurnTargetPageIndex',
+const names = ['scheduleReaderPaginationCompletion', 'lookupPersistedReaderPageCount', 'isReaderPageMotionActive',
+  'getLocalPageTurnTargetPageIndex',
   'canTurnPage', 'isForwardChapterTurnWaitingForPagination', 'runTapPageTurn', 'runSlidePageTurn',
   'runNoAnimationPageTurn', 'cancelManualReaderTurn', 'publishCurrentReaderPagination',
   'currentReaderV2ChapterSurfaceKeys', 'runWhenReaderIdle', 'persistReaderPagination'];
@@ -81,7 +83,7 @@ function harness() {
   const result = { source: '正文', pages: ['first'], ends: [1], complete: false, v2Session: {} };
   const reader = new Reader();
   Object.assign(reader, { currentChapterIndex: 0, currentPageIndex: 0, chapters: [{}],
-    contentPages: ['first'], readerPageVisible: true, readerInitialPageReady: true,
+    bookUrl: '', contentPages: ['first'], readerPageVisible: true, readerInitialPageReady: true,
     readerPaginationWorkSerial: 0, readerPaginationScheduledResult: null, readerPaginationScheduledSerial: -1,
     readerPaginationRequiredPageCount: 4, readerPaginationCache: new Map([['key', result]]),
     pendingRestorePageIndex: -1, readerTypographyRestoreOffset: -1,
@@ -138,6 +140,20 @@ buffered.reader.isReaderPaginationInteractionBusy = () => false;
 await timers.shift()();
 assert.equal(buffered.reader.batches, 1, 'speculative native work resumes when interaction ends');
 buffered.reader.readerPaginationWorkSerial++;
+await timers.shift()();
+assert.equal(timers.length, 0);
+
+const idleBurst = harness();
+idleBurst.reader.isReaderPaginationInteractionBusy = () => false;
+const appendIdlePage = idleBurst.reader.appendReaderPaginationBatch;
+idleBurst.reader.appendReaderPaginationBatch = async () => {
+  await appendIdlePage();
+  now += 5;
+};
+idleBurst.reader.scheduleReaderPaginationCompletion(0, 'key', idleBurst.result);
+await timers.shift()();
+assert.equal(idleBurst.reader.batches, 2, 'idle pagination yields after using its burst budget');
+idleBurst.reader.readerPaginationWorkSerial++;
 await timers.shift()();
 assert.equal(timers.length, 0);
 

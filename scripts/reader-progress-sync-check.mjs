@@ -13,7 +13,7 @@ function method(name) {
 }
 const sandbox = vm.createContext({ console: { info() {}, warn() {}, error() {} } });
 const names = ['readerContinuousFirstVisiblePage', 'onReaderComicScrollIndexChanged',
-  'runReaderContinuousChapterCommit', 'restorePendingPageIndex', 'getReaderInfoBarContext',
+  'runReaderContinuousChapterCommit', 'restorePendingPageIndex', 'getReaderInfoBarContext', 'fillPagedReaderInfoProgress',
   'updateReaderContinuousDisplayPosition', 'readerContinuousV2FirstVisibleSourceOffset',
   'readerContinuousV2ChapterEndVisible'];
 vm.runInContext(stripTypeScriptTypes(
@@ -60,7 +60,9 @@ function fixture(current = 0) {
     comicImageActions: () => ({ onChapterBecameCurrent: noop }), pauseReaderAutoScroll: noop,
     normalizeReaderSpreadPageIndex: i => i, clampChapterIndex: i => i, getChapterTitle: i => `chapter-${i}`,
     isReaderComicModeActive: () => false, isLandscapeDoublePageActive: () => false,
-    isCurrentReaderPaginationComplete: () => true,
+    hasPagedReaderArea: () => true, currentReaderPaginationResult: () => ({ complete: true }),
+    buildReaderPaginationCacheKey: () => 'current-layout', readerKnownPageCountKey: '', readerKnownPageCount: 0,
+    readerTypographyRestoreOffset: -1,
     commitReaderContinuousChapter: (chapter, page) => calls.push([chapter, page]),
     scheduleReaderComicProgressSave() { saves.push([this.currentChapterIndex, this.currentPageIndex]); },
     getPageStartOffset: i => i * 100, readerContinuousV2ViewportPx: () => [0, 100],
@@ -153,8 +155,9 @@ for (const [from, to, initialPage, visiblePage] of [[0, 1, 0, 2], [1, 0, 1, 0]])
 {
   const { r } = fixture();
   r.isReaderNovelContinuousScrollModeActive = () => false;
-  r.isCurrentReaderPaginationComplete = () => false;
+  r.currentReaderPaginationResult = () => ({ complete: false });
   r.contentPages = ['first'];
+  r.contentPageEnds = [r.pagedContentText.length];
   let context = r.getReaderInfoBarContext();
   assert.equal(context.pageCountPending, true);
   for (const item of [sandbox.Item.PAGE, sandbox.Item.PAGES_LEFT, sandbox.Item.CHAPTER_PERCENT, sandbox.Item.BOOK_PERCENT]) {
@@ -162,12 +165,19 @@ for (const [from, to, initialPage, visiblePage] of [[0, 1, 0, 2], [1, 0, 1, 0]])
   }
   assert.equal(sandbox.Text.chapterPercent(context), 0, 'progress bar cannot fill from a partial denominator');
   assert.equal(sandbox.Text.of(sandbox.Item.CHAPTER_PROGRESS, context), '1/3 章');
-  r.contentPages = Array(10).fill('page'); r.isCurrentReaderPaginationComplete = () => true;
+  r.contentPageEnds = [20];
+  context = r.getReaderInfoBarContext();
+  assert.equal(sandbox.Text.of(sandbox.Item.PAGE, context), '…', 'the final page total is still unknown');
+  assert.equal(sandbox.Text.of(sandbox.Item.CHAPTER_PERCENT, context), '10%', 'progress follows the measured text');
+  r.readerKnownPageCount = 12; r.readerKnownPageCountKey = 'current-layout';
+  assert.equal(sandbox.Text.of(sandbox.Item.PAGE, r.getReaderInfoBarContext()), '1/12',
+    'a saved total for the current layout is usable before pagination completes');
+  r.contentPages = Array(10).fill('page'); r.currentReaderPaginationResult = () => ({ complete: true });
   context = r.getReaderInfoBarContext();
   assert.equal(sandbox.Text.of(sandbox.Item.PAGE, context), '1/10');
   assert.equal(sandbox.Text.of(sandbox.Item.CHAPTER_PERCENT, context), '10%');
   r.isReaderComicModeActive = () => true; r.readerComicTotalPageCount = () => 12;
-  r.isCurrentReaderPaginationComplete = () => false;
+  r.currentReaderPaginationResult = () => ({ complete: false });
   assert.equal(r.getReaderInfoBarContext().pageCountPending, false, 'comic pages retain their own total');
 }
 console.log('Reader progress sync: separators, asynchronous cross-chapter races, visible footer positions, guards and incomplete page totals passed.');

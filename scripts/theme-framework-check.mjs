@@ -337,14 +337,17 @@ assert(readerBackgroundComponent.includes('.objectFit(ImageFit.Contain)') &&
   !readerBackgroundComponent.includes('.border('),
   'Builtin reader backgrounds must preserve ornament proportions and draw no frame border');
 assert(indexPage.includes('ThemeRuntime.iconPackId()'), 'Floating tab bar does not resolve the active icon pack');
-// Both tab bar builders take the tab id and resolve its icon through navigationIcon(tabId, index).
-assert(indexPage.includes('BottomTabBarStyle.of(this.navigationIcon(tabId, index)') &&
-  indexPage.includes('Image(this.navigationIcon(tabId, index))'),
-  'Tab bar builders do not resolve themed navigation icons');
-for (const tabId of ['bookshelf', 'explore', 'mine']) {
-  assert(indexPage.includes(`this.bottomTabBar('${tabId}'`) && indexPage.includes(`this.compatTabBar('${tabId}'`),
-    `Floating tab icon is not themed: ${tabId}`);
+// Both tab layouts render the same list and forward each tab id to the theme icon resolver.
+for (const [layout, builder] of [['immersiveTabs', 'bottomTabBar'], ['compatTabs', 'compatTabBar']]) {
+  const layoutSource = indexPage.match(new RegExp(`^  ${layout}\\(\\) \\{([\\s\\S]*?)^  \\}`, 'm'))?.[1];
+  assert(layoutSource?.includes('ForEach(this.homeTabIds(), (tabId: string, index: number) =>') &&
+    layoutSource.includes(`.tabBar(this.${builder}(tabId, this.homeTabTitle(tabId), index))`),
+  `${layout} must use themed icons for every home tab`);
 }
+assert(indexPage.includes('BottomTabBarStyle.of(this.navigationIcon(tabId, index)') &&
+  indexPage.includes('Image(this.navigationIcon(tabId, index))') &&
+  indexPage.includes('ThemeAssetRegistry.navigationIcon(iconPackId, tabId, selected)'),
+  'Tab bar builders do not resolve themed navigation icons');
 // 可选的第四个页签（听 / 足迹）：每个内置图标包都有自己的一套，主题包缺图标时回退到基底主题。
 for (const fileName of fs.readdirSync(mediaRoot).filter(name => /^ic_theme_[a-z_]+_mine\.(svg|png)$/.test(name))) {
   for (const tab of ['listen', 'footprint']) {
@@ -359,10 +362,12 @@ assert(fs.existsSync(path.join(mediaRoot, 'ic_theme_celestial_vault_listen_selec
   'Celestial vault needs selected icons for the extra tabs');
 assert(!indexPage.includes("$r('app.media.ic_tab_listen')"),
   'The extra tab icon must come from the active icon pack, not a fixed resource');
-// 搜索并进发现页签：底栏只有三个页签，搜索是盖在发现内容上的一层。
-assert(!indexPage.includes("this.bottomTabBar('search'") && !indexPage.includes("this.compatTabBar('search'") &&
+// 搜索是发现页上的一层，底栏只在发现和我的之间插入可选页签。
+const homeTabIds = indexPage.match(/^  homeTabIds\(\): string\[\] \{([\s\S]*?)^  \}/m)?.[1];
+assert(homeTabIds?.includes('const extra = this.extraTabId()') &&
+  homeTabIds.includes("return extra ? ['bookshelf', 'explore', extra, 'mine'] : ['bookshelf', 'explore', 'mine']") &&
   indexPage.includes('exploreTabContent()') && indexPage.includes('homeSearchLayerActive()'),
-  'Search must live inside the discovery tab instead of a fourth bottom tab');
+  'Search must live inside the discovery tab');
 assert(indexPage.includes('this.shelfMoreButton(') &&
   indexPage.includes('shelfMoreDropdown()') &&
   indexPage.includes("this.sortDropdownItem('新阅读', 'recentRead')") &&

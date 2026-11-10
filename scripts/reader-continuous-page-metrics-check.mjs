@@ -35,7 +35,7 @@ const names = ['cancelReaderContinuousMetricsTimers', 'refreshReaderContinuousPa
   'scheduleReaderContinuousMetricsBatch', 'runReaderContinuousMetricsBatch',
   'scheduleReaderContinuousPositionUpdate', 'updateReaderContinuousDisplayPosition',
   'readerContinuousV2ChapterEndVisible', 'readerContinuousV2FirstVisibleSourceOffset',
-  'getReaderInfoBarContext', 'getProgressText', 'ttsQuickProgress',
+  'getReaderInfoBarContext', 'fillPagedReaderInfoProgress', 'getProgressText', 'ttsQuickProgress',
   'getReaderPageColumnWidth', 'readerViewportFitsSpread'];
 vm.runInContext(stripTypeScriptTypes(
   ['core/reader/ReaderFontWeight.ts', 'core/reader/ReaderTitleSplit.ts',
@@ -80,7 +80,7 @@ Object.assign(p, {
   buildReaderV2RegexStyles: () => [], readerV2HeadingHints: () => [],
   getChapterTitle: () => '测试章', readerLayoutChapterTitle: () => '测试章', clampChapterIndex: index => index,
   isLandscapeDoublePageActive: () => false,
-  isCurrentReaderPaginationComplete: () => true,
+  currentReaderPaginationResult: () => ({ complete: true }),
   getPageStartOffset: index => index * 1800,
   readerContinuousV2FirstVisibleSourceOffset: () => 0,
   readerContinuousV2ViewportPx: () => [0, 600],
