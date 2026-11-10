@@ -43,7 +43,7 @@ import { AccountCommerceApi } from '../account/AccountCommerceApi';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';
 import { TtsVoiceInfo } from '../account/AccountCommerceModels';
-import { AppDatabase } from '../model/data/AppDatabase';
+import { AppDatabase, ReaderPaginationCacheRecord } from '../model/data/AppDatabase';
 import { ReadBookEngine } from '../core/book/ReadBookEngine';
 import { ReaderImageMarker } from '../core/book/ReaderImageMarker';
 import { readStatsTracker } from '../core/stats/ReadStatsTracker';
@@ -254,6 +254,9 @@ const READER_ADJACENT_PAGINATION_PREVIEW_PAGE_COUNT = 2;
 const READER_PAGINATION_BATCH_DELAY_MS = 64;
 const READER_INTERACTIVE_PAGINATION_BATCH_DELAY_MS = 56;
 const READER_PAGINATION_BUSY_RETRY_DELAY_MS = 48;
+// 画面静止时后台排版每批最多占主线程这么久（一页 2–7ms），批与批之间歇一帧让渲染和触摸先走。
+const READER_IDLE_PAGINATION_BURST_MS = 10;
+const READER_IDLE_PAGINATION_GAP_MS = 16;
 const READER_DOUBLE_PAGE_DIVIDER_WIDTH = 1;
 // Unfolded book-style foldables are held slightly taller than wide, so "width > height" alone never
 // enables the spread there. Near-square viewports that are wide enough for two readable leaves also count;
@@ -1013,6 +1016,11 @@ struct ReadBookPage {
   @StorageLink('readerInfoBarConfig') @Watch('onReaderChromeChanged') readerInfoBarConfigRaw: string = '';
   @State readerInfoTimeText: string = '';
   @State readerInfoBatteryPercent: number = -1;
+  // 本章后台排版还没排完时，页脚先用上次排完存进库里的分页结果（同一排版键）显示总页数；键对不上就不用。
+  @State readerKnownPageCountKey: string = '';
+  private readerKnownPageCount: number = 0;
+  private readerKnownPageStarts: number[] = [];
+  private readerKnownPageCountLookupKey: string = '';
   private readerInfoBarConfigCache: ReaderInfoBarConfig = new ReaderInfoBarConfig();
   private readerInfoBarConfigCacheRaw: string = '';
   // The pagination key is rebuilt dozens of times per page turn. Hashing the regex rules and parsing the custom
@@ -6927,12 +6935,65 @@ struct ReadBookPage {
       context.chapterProgressRatio = this.readerContinuousDisplayProgress;
       context.doublePage = false;
     } else if (!this.isReaderComicModeActive()) {
-      // Published pages may be only the first window of an incremental chapter layout.
-      context.pageCountPending = !this.isCurrentReaderPaginationComplete();
+      this.fillPagedReaderInfoProgress(context);
     }
     context.timeText = this.readerInfoTimeText;
     context.batteryPercent = this.readerInfoBatteryPercent;
     return context;
+  }
+
+  /**
+   * 翻页模式的页数口径。已发布的页可能只是增量排版的前几页，本章排完前总页数不算数：
+   * 有同一排版键的已存分页就用它的总页数；没有就按当前页末字在本章正文里的位置给出本章进度，
+   * 百分比不必等总页数。
+   */
+  fillPagedReaderInfoProgress(context: ReaderInfoBarContext): void {
+    const source = this.pagedContentText;
+    if (!source || !this.hasPagedReaderArea()) return;
+    // 与 isCurrentReaderPaginationComplete 同口径（顺带把本章留在分页缓存的最新一端）。
+    if (this.currentReaderPaginationResult()?.complete === true) return;
+    const key = this.buildReaderPaginationCacheKey(this.currentChapterIndex, source);
+    context.pageCountPending = true;
+    if (this.readerKnownPageCountKey === key && this.readerKnownPageCount > 0) {
+      context.pageCount = Math.max(this.readerKnownPageCount, this.contentPages.length);
+      context.pageCountPending = false;
+      return;
+    }
+    // 恢复阅读位置期间当前页还不是真的；只有占位页时页尾就是全文末尾，也不能当成读完。
+    if (this.pendingRestorePageIndex >= 0 || this.readerTypographyRestoreOffset >= 0) return;
+    const ends = this.contentPageEnds;
+    if (ends.length === 0 || ends.length !== this.contentPages.length) return;
+    const shown = Math.min(ends.length - 1, this.currentPageIndex + (context.doublePage ? 1 : 0));
+    const end = ends[Math.max(0, shown)];
+    if (end > 0 && end < source.length) context.chapterProgressRatio = end / source.length;
+  }
+
+  /** 本章开始增量排版时查一次库里同一排版键的已存分页，查到就让页脚直接显示总页数。 */
+  lookupPersistedReaderPageCount(chapterIndex: number, key: string): void {
+    const bookUrl = this.bookUrl;
+    if (!bookUrl || this.readerKnownPageCountKey === key || this.readerKnownPageCountLookupKey === key) return;
+    this.readerKnownPageCountLookupKey = key;
+    // 库查询的回调落在主线程，翻页动画中途回来会掉帧，等动画停了再查。
+    this.runWhenReaderIdle((): void => {
+      if (this.readerKnownPageCountLookupKey !== key || this.bookUrl !== bookUrl) return;
+      AppDatabase.getInstance().getReaderPaginationCache(bookUrl, chapterIndex, key)
+        .then((record: ReaderPaginationCacheRecord | null): void => {
+          if (!record || this.bookUrl !== bookUrl || this.currentChapterIndex !== chapterIndex) return;
+          this.readerKnownPageCount = record.starts.length;
+          this.readerKnownPageStarts = record.starts;
+          this.readerKnownPageCountKey = key;
+        })
+        .catch((error: Error): void => {
+          console.warn('读取阅读分页缓存失败:', error);
+        });
+    }, 1500, (): boolean => this.isReaderPageMotionActive());
+  }
+
+  /** 本章还没排到的页，从已存分页里取页首位置；排版键对不上返回 -1。 */
+  readerKnownPageStartOffset(page: number): number {
+    if (page < 0 || page >= this.readerKnownPageStarts.length || !this.pagedContentText) return -1;
+    const key = this.buildReaderPaginationCacheKey(this.currentChapterIndex, this.pagedContentText);
+    return this.readerKnownPageCountKey === key ? this.readerKnownPageStarts[page] : -1;
   }
 
   getReaderInfoSlotText(item: string): string {
@@ -20526,6 +20587,7 @@ ${leading}` : leading;
 
   scheduleReaderPaginationCompletion(chapterIndex: number, key: string,
     result: ReaderPaginationResult): void {
+    if (!result.complete && result.v2Session) this.lookupPersistedReaderPageCount(chapterIndex, key);
     if (result.complete || (this.readerPaginationScheduledResult === result &&
       this.readerPaginationScheduledSerial === this.readerPaginationWorkSerial)) return;
     const serial = ++this.readerPaginationWorkSerial;
@@ -20544,6 +20606,7 @@ ${leading}` : leading;
       READER_INTERACTIVE_PAGINATION_BATCH_DELAY_MS : READER_PAGINATION_BATCH_DELAY_MS;
     let failureCount = 0;
     const runBatch = async (): Promise<void> => {
+      let idleBurst = false;
       if (!this.readerPageVisible || serial !== this.readerPaginationWorkSerial ||
         chapterIndex !== this.currentChapterIndex ||
         this.readerPaginationCache.get(key) !== result) {
@@ -20586,8 +20649,20 @@ ${leading}` : leading;
           // and avoid replacing the visible @State collection while a page is moving.
           // A pure comic page is already delimited by an image marker and requires no text measurement. Parse a small
           // group per idle slice so large comics finish promptly without turning the whole chapter into one UI task.
-          await this.appendReaderPaginationBatch(result, chapterIndex, imageOnlyPagination ? 8 : 1, 8, isCurrent);
-          if (!isCurrent()) { releaseOwner(); return; }
+          // 画面静止（没有翻页动画、手指没碰屏幕）时一次连排几页，排满预算再歇一帧；
+          // 否则一页歇 64ms，长章节要好几秒才知道总页数。一有触摸或翻页就回到一页一歇。
+          idleBurst = !!result.v2Session && !this.isReaderPaginationInteractionBusy() &&
+            !this.isReaderPageMotionActive();
+          while (true) {
+            const beforePageCount = result.pages.length;
+            await this.appendReaderPaginationBatch(result, chapterIndex, imageOnlyPagination ? 8 : 1, 8, isCurrent);
+            if (!isCurrent()) { releaseOwner(); return; }
+            if (!idleBurst || result.complete || result.pages.length <= beforePageCount ||
+              Date.now() - batchStartedAt >= READER_IDLE_PAGINATION_BURST_MS ||
+              this.isReaderPaginationInteractionBusy() || this.isReaderPageMotionActive()) {
+              break;
+            }
+          }
           // Native layout may continue while the user is moving the current page, but publication cannot
           // replace that page's state mid-gesture. A queued shortage is resumed as soon as its target exists.
           const canPublish = !this.isPageTurning && !this.readerPanActive && !this.readerTouchActive &&
@@ -20628,8 +20703,9 @@ ${leading}` : leading;
         const stillRestoring = !this.readerInitialPageReady;
         const needsAhead = result.pages.length < this.readerPaginationRequiredPageCount;
         const adaptiveDelay = stillRestoring || (result.v2Session && needsAhead) ? 0 :
-          (batchElapsedMs >= CooperativeScheduler.SLOW_OPERATION_MS ?
-            Math.min(240, Math.max(batchDelay, batchElapsedMs * 2)) : batchDelay);
+          (idleBurst ? READER_IDLE_PAGINATION_GAP_MS :
+            (batchElapsedMs >= CooperativeScheduler.SLOW_OPERATION_MS ?
+              Math.min(240, Math.max(batchDelay, batchElapsedMs * 2)) : batchDelay));
         setTimeout(runBatch, adaptiveDelay);
       } catch (error) {
         // A native measurement failure must not kill the self-scheduling chain: without a catch the
