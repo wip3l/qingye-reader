@@ -11456,6 +11456,8 @@ struct ReadBookPage {
       if (remaining <= 0) {
         this.clearTtsSleepTimer();
         this.stopTtsReading();
+        // 本页自己打开的朗读面板不跟随会话状态，定时停止后要主动收起，否则停在“正在准备”的空面板上。
+        if (this.showTtsQuickPlayer) this.closeTtsQuickPlayer();
         HdsFeedback.showToast('朗读定时结束，已停止朗读');
       }
     }, 1000);
