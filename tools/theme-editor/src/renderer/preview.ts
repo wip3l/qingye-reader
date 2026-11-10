@@ -173,15 +173,24 @@ function hardcover(index: number, title: string, scale = 1, lean = 0, art?: HTML
   return book;
 }
 
-/** 陪伴：问候、继续阅读大卡（立体书）、阅读小记，下面是错落的精装书网格；分组是文件夹插画做封面的精装书。 */
+/**
+ * 陪伴：问候、继续阅读大卡（立体书）、阅读小记，下面是错落的精装书网格；分组是文件夹插画做封面的精装书。
+ * 配色跟应用 BookshelfPage 的 shelfCompanionGreeting / shelfCompanionHeroCard 与 ShelfReadingNoteCard 一致：
+ * 问候大字、书名、“继续阅读”、小记标题与今日分钟数用强调色，“继续阅读”是强调色 10% 底的胶囊（不用按钮色）。
+ */
 function shelfCompanion(): HTMLElement[] {
   const hero = h('div', { class: 'cp-hero', 'data-sec': 'colors' }, hardcover(1, '夜航船'),
-    h('div', { class: 'cp-info' }, h('small', {}, '继续阅读'), h('b', {}, '夜航船'), h('span', {}, '第十七章 · 灯下'),
-      h('div', { class: 'bar' }, h('i')), h('span', { class: 'go' }, '继续阅读')));
+    h('div', { class: 'cp-info' }, h('b', {}, '夜航船'), h('small', {}, '张岱 著'), h('i', { class: 'gap' }),
+      h('small', {}, '上次读到 · 今天 20:50'), h('span', { class: 'ch' }, '68/524 · 第十七章 灯下'),
+      h('span', { class: 'go' }, '继续阅读 →')));
   const days = [22, 40, 15, 0, 55, 30, 46];
   const note = h('div', { class: 'cp-note', 'data-sec': 'colors' },
-    h('div', {}, h('small', {}, '阅读小记'), h('b', {}, '46 分钟'), h('span', {}, '今日 · 已连续 5 天')),
-    h('div', { class: 'cp-bars' }, ...days.map((m, i) => h('i', { class: i === days.length - 1 ? 'today' : '', style: `height:${Math.max(3, m)}%` }))));
+    h('div', { class: 'cp-note-hd' }, h('b', {}, '阅读小记'), h('span', {}, '阅读统计 ›')),
+    h('div', { class: 'cp-note-bd' },
+      h('div', { class: 'cp-today' }, h('small', {}, '今日阅读'), h('div', {}, h('b', {}, '46'), h('span', {}, '分钟'))),
+      h('div', { class: 'cp-trend' },
+        h('div', { class: 'cp-bars' }, ...days.map((m, i) => h('i', { class: i === days.length - 1 ? 'today' : '', style: `height:${Math.max(8, m * 1.6)}%` }))),
+        h('span', {}, '近 7 天 3小时28分 · 已连续读了 5 天'))));
   const scales = [1, 0.94, 0.9, 0.97, 0.88];
   const leans = [0, -2, 0, 2.5, 0];
   const grid = h('div', { class: 'grid cp-grid' });
@@ -190,9 +199,9 @@ function shelfCompanion(): HTMLElement[] {
   grid.append(h('div', { class: 'cell' }, hardcover(0, '收藏夹', 1, 0, folderArt()), h('div', { class: 'gname' }, '收藏夹'), h('div', { class: 'gsub' }, '8 本')));
   return [
     h('div', { class: 'hd cp-top' }, h('span'), h('span', { class: 'hd-acts' }, h('i', { class: 'folder-ico' }), h('i', { class: 'dots' }))),
-    h('div', { class: 'cp-greet', 'data-sec': 'colors' }, h('b', {}, '晚上好，慢慢读。'), h('span', {}, '夜里读书，最是安静。')),
+    h('div', { class: 'cp-greet', 'data-sec': 'colors' }, h('b', {}, '晚上好，慢慢读。'), h('span', {}, '泡杯茶，故事还在原处等你。')),
     hero, note,
-    h('div', { class: 'sec-title', 'data-sec': 'colors' }, '书架里，还有故事'),
+    h('div', { class: 'sec-title cp-sec', 'data-sec': 'colors' }, '书架里，还有故事', h('span', {}, `共 ${BOOKS.length} 本`)),
     grid];
 }
 
