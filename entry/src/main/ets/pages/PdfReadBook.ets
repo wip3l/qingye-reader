@@ -48,6 +48,7 @@ import { ReaderTocPanel, ReaderTocPanelController } from '../components/reader/R
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ReaderInfoBarClock } from '../core/reader/ReaderInfoBarClock';
+import { ScreenCornerInset } from '../utils/ScreenCornerInset';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
 import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKeyboard';
 import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';
@@ -1017,6 +1018,13 @@ struct PdfReadBookPage {
     this.syncInfoClock();
   }
 
+  /** 页码角标贴右下角，按屏幕圆角往里让，免得大圆角手机上被切掉。 */
+  private pageBadgePosition(): Edges {
+    const offset = ScreenCornerInset.place(this.viewWidth, 10, 10, 10);
+    const edges: Edges = { right: offset.right, bottom: offset.bottom };
+    return edges;
+  }
+
   /** 应用夜间模式时交给视图的显示方式；白天一律原样。 */
   private viewNightMode(): string {
     return this.darkMode ? this.nightMode : ReaderPdfSettings.NIGHT_ORIGINAL;
@@ -1418,7 +1426,7 @@ struct PdfReadBookPage {
               timeText: this.infoTimeText,
               battery: this.infoBatteryPercent
             })
-              .position({ right: 10, bottom: 10 })
+              .position(this.pageBadgePosition())
           }
         }
         .width('100%')

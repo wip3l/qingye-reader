@@ -233,6 +233,7 @@ import {
   ReaderInfoBarConfig, ReaderInfoBarContext, ReaderInfoBarText, ReaderInfoItem, ReaderInfoProgressBar
 } from '../core/reader/ReaderInfoBarModel';
 import { ReaderInfoBarClock } from '../core/reader/ReaderInfoBarClock';
+import { ScreenCornerInset, ScreenCornerOffset } from '../utils/ScreenCornerInset';
 import { ReaderInfoBarRow } from '../components/reader/ReaderInfoBar';
 import { EpubChapterPlanner } from '../core/book/EpubChapterPlanner';
 import { EpubConvertResult, EpubHeading } from '../core/book/EpubHtmlConverter';
@@ -2847,7 +2848,8 @@ struct ReadBookPage {
         infoPage: this.readerComicPageText(),
         infoTime: this.readerInfoTimeText,
         infoBattery: this.readerInfoBatteryPercent,
-        infoBottomInset: this.readerComicInfoBadgeBottomInset(),
+        infoBottomInset: this.readerComicInfoBadgeOffset().bottom,
+        infoRightInset: this.readerComicInfoBadgeOffset().right,
         onVisibleRangeChange: (start: number, end: number): void => this.onReaderComicScrollIndexChanged(start, end),
         onReachEnd: (): void => this.onReaderContinuousReachEnd(),
         onListAppear: (): void => {
@@ -2935,7 +2937,8 @@ struct ReadBookPage {
         infoPage: this.readerComicPageText(),
         infoTime: this.readerInfoTimeText,
         infoBattery: this.readerInfoBatteryPercent,
-        infoBottomInset: this.readerComicInfoBadgeBottomInset(),
+        infoBottomInset: this.readerComicInfoBadgeOffset().bottom,
+        infoRightInset: this.readerComicInfoBadgeOffset().right,
         onImageLongPress: (source: string, reload: () => void, snapshotId: string): void => {
           this.handleReaderComicImageLongPress(source, reload, snapshotId);
         },
@@ -3032,9 +3035,11 @@ struct ReadBookPage {
       !this.showMenu && !this.showToc && !this.showSettings;
   }
 
-  readerComicInfoBadgeBottomInset(): number {
+  /** 漫画角标位置：底边只让开手势横线，右边再按屏幕圆角往里让，免得大圆角手机上被切掉。 */
+  readerComicInfoBadgeOffset(): ScreenCornerOffset {
     // 只让开手势横线（贴在导航区最底部、约 5vp 高），不必让出整个导航区。
-    return Math.max(4, Math.max(0, this.navBarHeight) - 18);
+    const bottom = Math.max(4, Math.max(0, this.navBarHeight) - 18);
+    return ScreenCornerInset.place(this.pageViewWidth, bottom, 10, 10);
   }
 
   /** 增量排版期间 contentPages 还没有全部页，总页数取图片标记计数。 */

@@ -95,6 +95,8 @@ export struct ReaderComicPagedView {
   @Prop infoTime: string = '';
   @Prop infoBattery: number = -1;
   @Prop infoBottomInset: number = 6;
+  /** 角标右边距，阅读页按屏幕圆角算好传入。 */
+  @Prop infoRightInset: number = 10;
   onImageLongPress: (source: string, reload: () => void, snapshotId: string) => void = () => {};
   onImageDenied: (chapterIndex: number) => void = () => {};
   onPageChanged: (pageIndex: number) => void = () => {};
@@ -1024,12 +1026,12 @@ export struct ReaderComicPagedView {
           timeText: this.infoTime,
           battery: this.infoBattery
         })
-          .position({ right: 10, bottom: this.infoBottomInset })
+          .position({ right: this.infoRightInset, bottom: this.infoBottomInset })
           .hitTestBehavior(HitTestMode.None)
       }
 
       ReaderComicProcessingBadge({ processing: this.processing, colorSession: this.colorSession })
-        .position({ right: 10, bottom: this.infoBottomInset + (this.infoVisible ? 30 : 0) })
+        .position({ right: this.infoRightInset, bottom: this.infoBottomInset + (this.infoVisible ? 30 : 0) })
         .hitTestBehavior(HitTestMode.None)
 
       if (this.interactive) {
