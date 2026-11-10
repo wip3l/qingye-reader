@@ -1,6 +1,7 @@
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 import { HexColor } from '../../utils/HexColor';
+import { AnimatedImagePolicy } from '../../utils/AnimatedImagePolicy';
 
 /**
  * 首页页签顶部的主题背景图：放在页面根部最底层，不随列表滚动，向下淡成页面底色。
@@ -10,6 +11,7 @@ import { HexColor } from '../../utils/HexColor';
 export struct HomeThemeBackdrop {
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
+  @StorageProp('animatedImageRevision') animatedImageRevision: number = 0;
   /** 显示高度；0 表示按图片宽高比整张显示（书架用），其他页签只衬在标题区。 */
   @Prop visibleHeight: number = 0;
   /** 图片不透明度：书架最强，搜索、发现弱一些，免得和结果列表抢。 */
@@ -22,6 +24,13 @@ export struct HomeThemeBackdrop {
       [[0.25, 0], [0.55, 0.38], [0.9, 0.7], [1, 1]] :
       [[0.1, 0], [0.3, 0.38], [0.85, 0.72], [1, 1]];
     return stops.map((stop: number[]): [ResourceColor, number] => [HexColor.withOpacity(page, stop[0]), stop[1]]);
+  }
+
+  /** 背景是动图时由 AnimatedImagePolicy 决定播放还是只显示第一帧。 */
+  backdropImage(): ResourceStr {
+    const image = ThemeRuntime.homeBackdrop(this.appDarkMode) as ResourceStr;
+    if (typeof image !== 'string' || this.animatedImageRevision < 0) return image;
+    return AnimatedImagePolicy.display(getContext(this), image);
   }
 
   build() {
@@ -50,7 +59,7 @@ export struct HomeThemeBackdrop {
 
   @Builder
   layers() {
-    Image(ThemeRuntime.homeBackdrop(this.appDarkMode) as ResourceStr)
+    Image(this.backdropImage())
       .width('100%')
       .aspectRatio(ThemeAssetRegistry.HOME_BACKDROP_ASPECT)
       .objectFit(ImageFit.Cover)

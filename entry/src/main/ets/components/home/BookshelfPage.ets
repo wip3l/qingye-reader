@@ -36,6 +36,7 @@ import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { BookDisplayHelper } from '../../utils/BookDisplayHelper';
 import { BookTileLayout } from '../../utils/BookTileLayout';
+import { AnimatedImagePolicy } from '../../utils/AnimatedImagePolicy';
 import { BookCoverCache } from '../../utils/BookCoverCache';
 import { CoverGallerySettings } from '../../utils/CoverGallerySettings';
 import { BookshelfDisplaySettingsStore } from '../../utils/BookshelfDisplaySettingsStore';
@@ -222,6 +223,8 @@ export struct BookshelfPage {
   static readonly MENU_ITEM_HEIGHT: number = 44;
   // 加密的书源封面解密完成后递增，读取它的封面会重新取到本地文件地址。
   @StorageProp('sourceCoverRevision') sourceCoverRevision: number = 0;
+  /** 动图开关切换或第一帧静图生成后递增，封面地址重新经过 AnimatedImagePolicy。 */
+  @StorageProp('animatedImageRevision') animatedImageRevision: number = 0;
   @Prop statusBarHeight: number = 0;
   @Prop navBarHeight: number = 0;
   @Link isBookMultiSelect: boolean;
@@ -1205,6 +1208,12 @@ export struct BookshelfPage {
       const result = await new picker.DocumentViewPicker(getContext(this)).select(options);
       if (!result || result.length === 0 || !result[0]) return;
       const source = result[0];
+      // 动图原样复制、书架上照常播放；太大的拒收，免得一屏解码拖慢书架。
+      const oversize = await AnimatedImagePolicy.oversizeAnimatedMessage(source);
+      if (oversize) {
+        HdsFeedback.showToast(oversize);
+        return;
+      }
       const db = AppDatabase.getInstance();
       const current = await db.getBook(book.bookUrl);
       if (!current) {
@@ -6346,7 +6355,11 @@ export struct BookshelfPage {
   }
 
   activeThemeBookCovers(book: Book): ResourceStr[] {
-    return ThemeBookCoverSettings.covers(book, this.appDarkMode);
+    const covers = ThemeBookCoverSettings.covers(book, this.appDarkMode);
+    if (this.animatedImageRevision < 0) return covers;
+    const context = getContext(this);
+    return covers.map((cover: ResourceStr): ResourceStr =>
+      typeof cover === 'string' ? AnimatedImagePolicy.display(context, cover) : cover);
   }
 
   shouldUseThemeBookCover(): boolean {
@@ -6367,7 +6380,9 @@ export struct BookshelfPage {
 
   /** Image 能直接加载的封面地址；加密的书源封面在解密完成前为空。 */
   imageCover(raw: string): string {
-    return this.sourceCoverRevision >= 0 ? BookCoverCache.displayCover(getContext(this), raw) : raw;
+    if (this.sourceCoverRevision < 0 || this.animatedImageRevision < 0) return raw;
+    const context = getContext(this);
+    return AnimatedImagePolicy.display(context, BookCoverCache.displayCover(context, raw));
   }
 
   /** 只有本地文件和资源能同步解码：网络地址同步加载会在主线程上下载，一屏没缓存的封面就能把界面卡死。 */

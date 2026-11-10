@@ -1,6 +1,7 @@
 import { ImmersiveLightSettingsStore } from '../utils/ImmersiveLightSettingsStore';
 import { SmartGripSettingsStore } from '../utils/SmartGripSettingsStore';
 import { HomeBackdropSettingsStore } from '../utils/HomeBackdropSettingsStore';
+import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import { promptAction, router } from '@kit.ArkUI';
 import pasteboard from '@ohos.pasteboard';
 import { syncSystemBars } from '../utils/SystemBars';
@@ -32,6 +33,7 @@ struct OtherSettingsPage {
   @StorageLink('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('smartGripEnabled') smartGripEnabled: boolean = true;
   @StorageLink('homeBackdropEnabled') homeBackdropEnabled: boolean = true;
+  @StorageProp('animatedImagesEnabled') animatedImagesEnabled: boolean = true;
   @StorageProp('homeTabBarStyle') homeTabBarStyle: string = 'floating';
   @StorageProp('homeExtraTab') homeExtraTab: string = 'none';
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
@@ -226,6 +228,18 @@ struct OtherSettingsPage {
         description: '主题自带背景图时，铺在书架、发现、搜索和我的页顶部',
         isOn: this.homeBackdropEnabled,
         onChange: (value: boolean) => { this.setHomeBackdropEnabled(value); }
+      })
+      SettingSwitchRow({
+        title: '播放动图',
+        description: `书架封面、主题封面和背景图是 GIF 或动态 WebP 时播放动画；关闭后只显示第一帧，更省电。超过 ${AnimatedImagePolicy.MAX_PLAY_LABEL} 的动图始终只显示第一帧`,
+        isOn: this.animatedImagesEnabled,
+        onChange: (value: boolean) => {
+          if (value === AnimatedImagePolicy.enabled()) return;
+          AnimatedImagePolicy.save(getContext(this), value).catch((error: Error) => {
+            console.warn('保存动图设置失败:', error);
+            HdsFeedback.showToast('保存失败，请重试');
+          });
+        }
       })
       SettingNavRow({
         title: '字体设置',

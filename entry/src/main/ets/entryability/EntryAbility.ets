@@ -4,6 +4,7 @@ import { ComicColorizer } from '@legado/aiengine';
 import { ImmersiveLightSettingsStore } from '../utils/ImmersiveLightSettingsStore';
 import { SmartGripSettingsStore } from '../utils/SmartGripSettingsStore';
 import { HomeBackdropSettingsStore } from '../utils/HomeBackdropSettingsStore';
+import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import { HomeTabBarSettingsStore } from '../utils/HomeTabBarSettingsStore';
 import { AbilityConstant, UIAbility, Want, Configuration, ConfigurationConstant } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -276,6 +277,9 @@ export default class EntryAbility extends UIAbility {
     });
     this.homeBackdropBootstrapPromise = HomeBackdropSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复首页背景设置失败:', error);
+    });
+    AnimatedImagePolicy.load(this.context).catch((error: Error) => {
+      console.warn('恢复动图设置失败:', error);
     });
     this.homeTabBarBootstrapPromise = HomeTabBarSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复底栏设置失败:', error);

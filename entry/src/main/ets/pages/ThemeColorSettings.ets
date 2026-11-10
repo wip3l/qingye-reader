@@ -40,6 +40,7 @@ import { ThemeCropRequest, ThemeImageCropper } from '../components/theme/ThemeIm
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { TtsPanelThemeStyles } from '../theme/TtsPanelThemeStyles';
 import { HexColor } from '../utils/HexColor';
+import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
@@ -2699,6 +2700,21 @@ struct ThemeColorSettingsPage {
     });
   }
 
+  /**
+   * 动图不进取景层：取景会重新编码成单帧 PNG / JPEG，动画就没了。是动图时按原图使用并返回原地址，
+   * 超过播放上限的拒收并返回 null；不是动图返回空串，照常取景。
+   */
+  async animatedOriginal(uri: string): Promise<string | null> {
+    const oversize = await AnimatedImagePolicy.oversizeAnimatedMessage(uri);
+    if (oversize) {
+      HdsFeedback.showToast(oversize);
+      return null;
+    }
+    if (!(await AnimatedImagePolicy.isAnimated(uri))) return '';
+    HdsFeedback.showToast('动图不裁剪，按原图使用');
+    return uri;
+  }
+
   finishCrop(result: string): void {
     const resolve = this.cropResolve;
     this.cropResolve = null;
@@ -3164,7 +3180,10 @@ struct ThemeColorSettingsPage {
     // 一张张取景；取消的那张跳过。
     const uris: string[] = [];
     for (let index = 0; index < picked.length; index++) {
-      const path = await this.cropImage(picked[index], '封面取景', 450, 660, 450, false, index, picked.length);
+      const animated = await this.animatedOriginal(picked[index]);
+      if (animated === null) continue;
+      const path = animated ||
+        await this.cropImage(picked[index], '封面取景', 450, 660, 450, false, index, picked.length);
       if (path) uris.push(path);
     }
     if (uris.length === 0) return;
@@ -3185,7 +3204,9 @@ struct ThemeColorSettingsPage {
   async uploadShelfFolder(): Promise<void> {
     const picked = await SchemeAssetService.pickImages(getContext(this), 1);
     if (picked.length === 0) return;
-    const path = await this.cropImage(picked[0], '文件夹插画取景', 450, 660, 450, true);
+    const animated = await this.animatedOriginal(picked[0]);
+    if (animated === null) return;
+    const path = animated || await this.cropImage(picked[0], '文件夹插画取景', 450, 660, 450, true);
     if (!path) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setShelfFolder(getContext(this), this.schemeId, path, this.sourceThemeId('book')),
@@ -3281,7 +3302,9 @@ struct ThemeColorSettingsPage {
     const dark = this.selectedMode === 'dark';
     const picked = await SchemeAssetService.pickImages(getContext(this), 1);
     if (picked.length === 0) return;
-    const path = await this.cropImage(picked[0], '首页背景取景', 1080, 1350, 1080, false);
+    const animated = await this.animatedOriginal(picked[0]);
+    if (animated === null) return;
+    const path = animated || await this.cropImage(picked[0], '首页背景取景', 1080, 1350, 1080, false);
     if (!path) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setHomeBackdrop(getContext(this), this.schemeId, path, dark,
