@@ -3539,7 +3539,8 @@ struct ReadBookPage {
       modelReceivedBytes: this.readerComicModelReceivedBytes,
       modelTotalBytes: this.readerComicModelTotalBytes,
       onCancelModelDownload: (): void => { this.readerComicModelRequest++; },
-      colorEnabled: this.readerComicColorEnabled,
+      // 下载模型期间开关保持“开”：开关一旦被重建回 false 会触发 onChange(false)，静默取消下载。
+      colorEnabled: this.readerComicColorEnabled || !!this.readerComicModelStatus,
       colorAccess: this.readerComicColorAccess(),
       onColorEnabled: (enabled: boolean): void => this.setReaderComicColor(enabled),
       surface: this.readerComicSettings.background,
