@@ -42,6 +42,9 @@ export class ReaderTtsFloatingSession {
   private static ttsVoiceLabels: string[] = [];
   private static ttsVoiceSelectedIndex: number = 0;
   private static ttsVoiceSelectAction: ((index: number) => void) | null = null;
+  // 被视频等让出声音时暂停的会话主人；用户自己继续播放后清空，就不会在视频结束时替用户做主。
+  private static suspendedOwnerId: string = '';
+  private static resumeTimerId: number = -1;
 
   static attach(ownerId: string, bookUrl: string, bookName: string, chapterTitle: string,
     paused: boolean, toggleAction: () => Promise<void>, pausedState: () => boolean,
@@ -49,6 +52,7 @@ export class ReaderTtsFloatingSession {
     // 换了会话主人（例如从听书换成朗读）时，上一位发布的离线信息不再适用。
     if (ReaderTtsFloatingSession.ownerId !== ownerId) ReaderTtsFloatingSession.audioOffline = null;
     const previousBookUrl = ReaderTtsFloatingSession.isActive() ? AppStorage.get<string>('globalTtsBookUrl') || '' : '';
+    if (!paused || ReaderTtsFloatingSession.ownerId !== ownerId) ReaderTtsFloatingSession.suspendedOwnerId = '';
     ReaderTtsFloatingSession.ownerId = ownerId;
     ReaderTtsFloatingSession.toggleAction = toggleAction;
     ReaderTtsFloatingSession.pausedState = pausedState;
@@ -73,6 +77,7 @@ export class ReaderTtsFloatingSession {
     if (!ReaderTtsFloatingSession.isOwner(ownerId)) {
       return;
     }
+    if (!paused) ReaderTtsFloatingSession.suspendedOwnerId = '';
     const nextName = bookName || '正在朗读';
     const nextTitle = chapterTitle || '';
     const changed = AppStorage.get<boolean>('globalTtsPaused') !== paused ||
@@ -385,13 +390,55 @@ export class ReaderTtsFloatingSession {
     }
   }
 
-  /** 正在朗读/听书时暂停，已暂停或没在播放则不动。App 内其他声音（如视频）开播时调用。 */
+  /** 正在朗读/听书时暂停，已暂停或没在播放则不动。 */
   static async pause(): Promise<void> {
     if (!ReaderTtsFloatingSession.isActive()) return;
-    const pausedState = ReaderTtsFloatingSession.pausedState;
-    const paused = pausedState ? pausedState() : (AppStorage.get<boolean>('globalTtsPaused') || false);
-    if (paused) return;
+    if (ReaderTtsFloatingSession.currentlyPaused()) return;
     await ReaderTtsFloatingSession.toggle();
+  }
+
+  /**
+   * App 内其他声音（视频）要出声前调用：正在朗读/听书就暂停，并记下是它让出来的，
+   * 对方结束后由 resumeAfterOtherAudio() 接着播。
+   * 必须赶在对方出声之前：同一应用内的音频流也会被系统按焦点打断，打断后底层播放器自认已暂停，
+   * 上层和系统媒体控件却仍显示在播（进度在走、没有声音），这时再来暂停会被跳过，之后也不会自动恢复。
+   */
+  static async suspendForOtherAudio(): Promise<void> {
+    ReaderTtsFloatingSession.clearResumeTimer();
+    if (!ReaderTtsFloatingSession.isActive() || ReaderTtsFloatingSession.currentlyPaused()) return;
+    const owner = ReaderTtsFloatingSession.ownerId;
+    await ReaderTtsFloatingSession.toggle();
+    if (ReaderTtsFloatingSession.isOwner(owner) && ReaderTtsFloatingSession.currentlyPaused()) {
+      ReaderTtsFloatingSession.suspendedOwnerId = owner;
+    }
+  }
+
+  /**
+   * 让出声音的一方结束后调用。只恢复被 suspendForOtherAudio() 暂停的那一次会话；
+   * 期间用户自己继续过、停掉或换了书都不再动。稍等一会儿，等对方的播放器释放完再出声。
+   */
+  static resumeAfterOtherAudio(delayMs: number = 400): void {
+    const owner = ReaderTtsFloatingSession.suspendedOwnerId;
+    ReaderTtsFloatingSession.suspendedOwnerId = '';
+    ReaderTtsFloatingSession.clearResumeTimer();
+    if (!owner) return;
+    ReaderTtsFloatingSession.resumeTimerId = setTimeout((): void => {
+      ReaderTtsFloatingSession.resumeTimerId = -1;
+      if (!ReaderTtsFloatingSession.isOwner(owner) || !ReaderTtsFloatingSession.currentlyPaused()) return;
+      ReaderTtsFloatingSession.toggle().catch((error: Error) => {
+        console.warn('恢复朗读/听书失败:', error);
+      });
+    }, Math.max(0, delayMs));
+  }
+
+  private static currentlyPaused(): boolean {
+    const pausedState = ReaderTtsFloatingSession.pausedState;
+    return pausedState ? pausedState() : (AppStorage.get<boolean>('globalTtsPaused') || false);
+  }
+
+  private static clearResumeTimer(): void {
+    if (ReaderTtsFloatingSession.resumeTimerId >= 0) clearTimeout(ReaderTtsFloatingSession.resumeTimerId);
+    ReaderTtsFloatingSession.resumeTimerId = -1;
   }
 
   static stop(): void {
@@ -477,6 +524,8 @@ export class ReaderTtsFloatingSession {
       return;
     }
     const releasedBookUrl = AppStorage.get<string>('globalTtsBookUrl') || '';
+    ReaderTtsFloatingSession.suspendedOwnerId = '';
+    ReaderTtsFloatingSession.clearResumeTimer();
     ReaderTtsFloatingSession.ownerId = '';
     ReaderTtsFloatingSession.toggleAction = null;
     ReaderTtsFloatingSession.pausedState = null;

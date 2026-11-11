@@ -197,6 +197,10 @@ struct VideoPlayerPage {
       Number(params.chapterIndex) : -1;
     this.openedWithShelfAnimation = !!params && params.shelfBookOpening === 'true';
     this.openedBookUrl = bookUrl;
+    // 视频出声前先让朗读/听书暂停，离开播放页时再接着播；等视频开播后再停就晚了，见 suspendForOtherAudio。
+    ReaderTtsFloatingSession.suspendForOtherAudio().catch((error: Error) => {
+      console.warn('[VideoPlayer] pause tts failed:', error.message);
+    });
     this.loadBook(bookUrl, requestedIndex);
   }
 
@@ -209,6 +213,7 @@ struct VideoPlayerPage {
     this.endBoost();
     this.saveProgress(true);
     this.stopPlayback();
+    ReaderTtsFloatingSession.resumeAfterOtherAudio();
     this.leaveImmersive();
     this.requestShelfCloseAnimation();
   }
@@ -503,8 +508,8 @@ struct VideoPlayerPage {
       } catch (_) {}
       return;
     }
-    // 同一应用内的音频流系统不会互相打断，朗读/听书要自己停下，免得和视频声音叠在一起。
-    ReaderTtsFloatingSession.pause().catch((error: Error) => {
+    // 看视频途中用户又从胶囊继续了朗读/听书：视频再播时重新让它暂停，离开播放页时照样恢复。
+    ReaderTtsFloatingSession.suspendForOtherAudio().catch((error: Error) => {
       console.warn('[VideoPlayer] pause tts failed:', error.message);
     });
     this.isPlaying = true;
@@ -672,7 +677,7 @@ struct VideoPlayerPage {
     this.statusText = '';
     this.showEpisodes = false;
     this.webAttempts = [new VideoWebAttempt(++this.activeAttemptId, this.videoPageUrl)];
-    ReaderTtsFloatingSession.pause().catch((): void => {});
+    ReaderTtsFloatingSession.suspendForOtherAudio().catch((): void => {});
     if (automatic) HdsFeedback.showToast('原生播放不可用，已切换网页播放');
   }
 
