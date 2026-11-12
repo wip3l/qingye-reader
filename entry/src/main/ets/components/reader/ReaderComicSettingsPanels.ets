@@ -11,7 +11,7 @@ import {
   ReaderComicOption
 } from '../../core/reader/ReaderComicSettings';
 import { ReaderComicSuperResolutionAccess } from '@legado/aiengine';
-import { ReaderSettingActionRow, ReaderSettingSelectRow, ReaderSettingSwitchRow } from './ReaderSettingRows';
+import { ReaderNavIndicatorSwitchRow, ReaderSettingActionRow, ReaderSettingSelectRow, ReaderSettingSwitchRow } from './ReaderSettingRows';
 import { ReaderHaptics } from '../../utils/ReaderHaptics';
 import { ReaderInputKind, ReaderInputScopes } from '../../utils/ReaderInputScopes';
 
@@ -457,6 +457,8 @@ export struct ReaderComicDisplaySettingsPanel {
         subTextColor: this.colors.subTextColor,
         onChange: (checked: boolean): void => this.onInfoBarChange(checked)
       })
+
+      ReaderNavIndicatorSwitchRow({ textColor: this.colors.textColor, subTextColor: this.colors.subTextColor })
     }
     .width('100%')
   }

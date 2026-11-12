@@ -22,7 +22,7 @@ import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
 import { RecentReadShortcut } from '../utils/RecentReadShortcut';
 import { ReaderOpenTrace } from '../utils/ReaderOpenTrace';
 import { window } from '@kit.ArkUI';
-import { syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
+import { applyReaderSystemBars, syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { readStatsTracker } from '../core/stats/ReadStatsTracker';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';
@@ -128,6 +128,7 @@ struct PdfReadBookPage {
   @State statusText: string = '正在打开 PDF…';
   @State failed: boolean = false;
   @State @Watch('onMenuVisibleChange') menuVisible: boolean = false;
+  @StorageProp('readerHideNavIndicator') @Watch('applySystemBars') readerHideNavIndicator: boolean = false;
   @State activePanel: string = '';
   @State jumpInput: string = '';
   @State searchInput: string = '';
@@ -434,7 +435,7 @@ struct PdfReadBookPage {
       const dark = this.darkMode;
       mainWindow.setWindowBackgroundColor(ThemeRuntime.pageColor(dark));
       mainWindow.setWindowLayoutFullScreen(true);
-      mainWindow.setWindowSystemBarEnable(showStatus ? ['navigation', 'status'] : ['navigation']);
+      applyReaderSystemBars(mainWindow, showStatus, this.alive && this.visible && this.ready && !this.menuVisible);
       syncDesktopTitleBar(mainWindow, dark);
       syncSystemSafeAreas(mainWindow);
       mainWindow.setWindowSystemBarProperties({

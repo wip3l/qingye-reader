@@ -10,6 +10,7 @@ import { ReaderCommentBubbleSize } from '../core/reader/ReaderCommentBubbleSize'
 import { promptAction, router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { syncSystemBars } from '../utils/SystemBars';
+import { ReaderNavIndicatorStore } from '../utils/ReaderNavIndicatorStore';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ReaderThemeHelper, ReaderThemeItem } from '../utils/ReaderThemeHelper';
 import { ReaderCustomThemeData, ReaderCustomThemeHelper, ReaderCustomThemeScheme } from '../utils/ReaderCustomThemeHelper';
@@ -138,6 +139,7 @@ struct SettingsPage {
   @StorageLink('readerScreenTimeoutMinutes') readerScreenTimeoutMinutes: number =
     ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON;
   @StorageLink('readerExtendToStatusBar') readerExtendToStatusBar: boolean = false;
+  @StorageProp('readerHideNavIndicator') readerHideNavIndicator: boolean = false;
   @StorageLink('readerHeaderEnabled') readerHeaderEnabled: boolean = false;
   @StorageLink('readerFooterEnabled') readerFooterEnabled: boolean = true;
   @StorageLink('readerInfoBarConfig') readerInfoBarConfig: string = '';
@@ -551,21 +553,13 @@ struct SettingsPage {
     .clip(true)
     .backgroundColor(this.cardColor())
 
-    this.sectionTitle('阅读通用（小说、漫画共用）')
+    this.sectionTitle('阅读通用')
     Column() {
       this.tapZoneSettingItem()
       this.selectItem('屏幕方向', '阅读时的屏幕方向',
         this.screenOrientationOptions(), this.screenOrientationSelectedIndex(), (index: number) => {
           this.setReaderScreenOrientationByIndex(index);
         }, 'settings_screen_orientation_select')
-      SettingScopeRow({
-        title: '双翻页',
-        description: '横屏、折叠屏展开等宽屏下并排显示两页；漫画条漫与滚动阅读不生效',
-        scope: this.doublePageScope(),
-        labels: ReaderInputKind.LABELS,
-        values: ReaderInputKind.VALUES,
-        onToggle: (kind: number, on: boolean): void => this.toggleDoublePage(kind, on)
-      })
       SettingRow({ title: '亮屏时间设置', description: '无操作达到所选分钟数后恢复系统息屏，0 为常亮' }) {
         ScreenTimeoutStepper({
           minutes: this.readerScreenTimeoutMinutes,
@@ -577,6 +571,14 @@ struct SettingsPage {
           onChange: (minutes: number): void => this.setReaderScreenTimeoutMinutes(minutes)
         })
       }
+      SettingScopeRow({
+        title: '双翻页',
+        description: '横屏、折叠屏展开等宽屏下并排显示两页；漫画条漫与滚动阅读不生效',
+        scope: this.doublePageScope(),
+        labels: ReaderInputKind.LABELS,
+        values: ReaderInputKind.VALUES,
+        onToggle: (kind: number, on: boolean): void => this.toggleDoublePage(kind, on)
+      })
       SettingScopeRow({
         title: '音量键翻页',
         description: '音量上/下键翻到上一页/下一页，条漫为翻一屏',
@@ -605,11 +607,20 @@ struct SettingsPage {
         scope: this.readerPageTurnHapticsScope,
         labels: ReaderInputKind.LABELS,
         values: ReaderInputKind.VALUES,
-        showDivider: false,
         onToggle: (kind: number, on: boolean): void => {
           ReaderHaptics.toggle(getContext(this), kind, on).catch((e: Error) => {
             console.error('保存翻页震感设置失败:', e);
           });
+        }
+      })
+      SettingSwitchRow({
+        title: '隐藏底部小白条',
+        description: '阅读正文时收起底部导航条，呼出菜单时恢复；小说、漫画、PDF 都生效',
+        isOn: this.readerHideNavIndicator,
+        showDivider: false,
+        onChange: (value: boolean) => {
+          ReaderNavIndicatorStore.save(getContext(this), value)
+            .catch((error: Error) => console.error('保存隐藏底部小白条设置失败:', error));
         }
       })
     }

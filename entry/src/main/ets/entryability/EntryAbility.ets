@@ -5,6 +5,7 @@ import { ComicColorizer } from '@legado/aiengine';
 import { ImmersiveLightSettingsStore } from '../utils/ImmersiveLightSettingsStore';
 import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { SmartGripSettingsStore } from '../utils/SmartGripSettingsStore';
+import { ReaderNavIndicatorStore } from '../utils/ReaderNavIndicatorStore';
 import { FootprintSettingsStore } from '../utils/FootprintSettingsStore';
 import { HomeBackdropSettingsStore } from '../utils/HomeBackdropSettingsStore';
 import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
@@ -218,6 +219,11 @@ export default class EntryAbility extends UIAbility {
     ReaderInputScopes.load(this.context);
     PersistentStorage.persistProp('readerKeepScreenOn', true);
     PersistentStorage.persistProp('readerExtendToStatusBar', false);
+    // 开关值由 ReaderNavIndicatorStore 落盘，这里只先给各阅读页一个初值。
+    AppStorage.setOrCreate(ReaderNavIndicatorStore.KEY, false);
+    ReaderNavIndicatorStore.load(this.context).catch((error: Error) => {
+      console.warn('恢复隐藏底部小白条设置失败:', error);
+    });
     PersistentStorage.persistProp('readerLastPageViewWidth', 0);
     PersistentStorage.persistProp('readerLastPageViewHeight', 0);
     PersistentStorage.persistProp('bookshelfShowTags', true);

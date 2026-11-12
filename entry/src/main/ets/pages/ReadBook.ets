@@ -14,7 +14,7 @@ import {
 } from '../components/reader/ReaderShelfCoverOpening';
 import { ReaderCacheCoordinator } from '../core/book/ReaderCacheCoordinator';
 import { BookCoverResolver } from '../utils/BookCoverResolver';
-import { syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
+import { applyReaderSystemBars, syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation';
 import { ReaderScreenScrollMotion } from '../core/reader/ReaderScreenScrollMotion';
 import displaySync from '@ohos.graphics.displaySync';
@@ -186,7 +186,7 @@ import {
   ReaderComicModeSettingsPanel,
   ReaderComicPanelColors
 } from '../components/reader/ReaderComicSettingsPanels';
-import { ReaderSettingActionRow, ReaderSettingLabel, ReaderSettingSelectRow, ReaderSettingSwitchRow } from '../components/reader/ReaderSettingRows';
+import { ReaderNavIndicatorSwitchRow, ReaderSettingActionRow, ReaderSettingLabel, ReaderSettingSelectRow, ReaderSettingSwitchRow } from '../components/reader/ReaderSettingRows';
 import { ScreenTimeoutStepper } from '../components/common/ScreenTimeoutStepper';
 import {
   ReaderComicBackground,
@@ -1028,6 +1028,7 @@ struct ReadBookPage {
   @StorageLink('readerScreenTimeoutMinutes') readerScreenTimeoutMinutes: number =
     ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON;
   @StorageLink('readerExtendToStatusBar') @Watch('onReaderExtendToStatusBarChanged') readerExtendToStatusBar: boolean = false;
+  @StorageProp('readerHideNavIndicator') @Watch('applyReaderNavIndicator') readerHideNavIndicator: boolean = false;
   @StorageLink('readerPreloadEnabled') @Watch('onReaderPreloadChanged') readerPreloadEnabled: boolean = true;
   @StorageLink('readerPreloadChapterCount') @Watch('onReaderPreloadChanged') readerPreloadChapterCount: number = 1;
   @StorageLink('readerUseTtsQuickAction') readerUseTtsQuickAction: boolean = true;
@@ -1857,8 +1858,7 @@ struct ReadBookPage {
       mainWindow.setWindowBackgroundColor(bg);
       mainWindow.setWindowLayoutFullScreen(true);
       // 漫画铺满全屏，时间与电量改由角落信息条显示。
-      mainWindow.setWindowSystemBarEnable(comicMode || this.readerExtendToStatusBar ?
-        ['navigation'] : ['navigation', 'status']);
+      this.applyReaderSystemBarsTo(mainWindow);
       mainWindow.setWindowSystemBarProperties({
         statusBarColor: '#00000000',
         isStatusBarLightIcon: useLightIcons,
@@ -1870,6 +1870,22 @@ struct ReadBookPage {
       this.updateStatusBarSafeHeight(mainWindow);
     }).catch((err: Error) => {
       console.error('进入阅读沉浸模式失败:', err);
+    });
+  }
+
+  /** 漫画与“正文扩展至状态栏”隐藏状态栏；底部小白条只在停留于正文时按开关收起。 */
+  private applyReaderSystemBarsTo(mainWindow: window.Window): void {
+    applyReaderSystemBars(mainWindow, !(this.isReaderComicModeActive() || this.readerExtendToStatusBar),
+      this.readerPageVisible && !this.showMenu);
+  }
+
+  /** 菜单出现、开关变化时重新套用系统栏组合。 */
+  applyReaderNavIndicator(): void {
+    if (!this.readerPageVisible) return;
+    window.getLastWindow(getContext(this)).then((mainWindow: window.Window) => {
+      this.applyReaderSystemBarsTo(mainWindow);
+    }).catch((err: Error) => {
+      console.warn('切换底部导航条显隐失败:', err);
     });
   }
 
@@ -10661,6 +10677,7 @@ struct ReadBookPage {
 
   onReaderShowMenuChange(): void {
     if (!this.showMenu) this.clearReaderJumpUndo();
+    this.applyReaderNavIndicator();
     this.restoreReaderKeyboardFocus();
   }
 
@@ -12769,6 +12786,7 @@ struct ReadBookPage {
           this.setReaderExtendToStatusBar(checked);
         }
       })
+      ReaderNavIndicatorSwitchRow({ textColor: this.readerPanelTextColor(), subTextColor: this.readerPanelSubTextColor() })
     }
   }
 

@@ -71,6 +71,23 @@ export function releaseSystemBarListeners(): void {
   AppStorage.setOrCreate('desktopTitleBarHeight', 0);
 }
 
+/**
+ * 阅读页的系统栏显隐。readingBody 只在停留于正文时为 true，此时按“隐藏底部小白条”开关收起导航条；
+ * 菜单出现或离开阅读页时为 false，导航条随即恢复。
+ * 只切显隐，底部安全区高度按“忽略可见性”取值，正文排版不跟着变。
+ */
+export function applyReaderSystemBars(mainWindow: window.Window, showStatus: boolean, readingBody: boolean): void {
+  const hide = readingBody && (AppStorage.get<boolean>('readerHideNavIndicator') ?? false);
+  // 系统栏名单里的 'navigation' 会把导航条重新显示出来，所以等它生效后再单独切换导航条。
+  const applyIndicator = (): void => {
+    mainWindow.setSpecificSystemBarEnabled('navigationIndicator', !hide).catch((err: Error) => {
+      console.warn('切换底部导航条显隐失败:', err);
+    });
+  };
+  mainWindow.setWindowSystemBarEnable(showStatus ? ['navigation', 'status'] : ['navigation'])
+    .then(applyIndicator, applyIndicator);
+}
+
 export function syncSystemBars(context: Context, darkMode: boolean, backgroundColor?: string,
   hideStatusBar: boolean = false): void {
   const bg = backgroundColor || ThemeRuntime.pageColor(darkMode);

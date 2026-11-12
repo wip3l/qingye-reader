@@ -7,7 +7,7 @@ import { ReaderBrightnessControl } from './ReaderBrightnessControl';
 import { ReaderChromeMotion } from './ReaderChromeMotion';
 import { common } from '@kit.AbilityKit';
 import { ReaderQuickJumpModel } from '../../core/reader/ReaderQuickJumpModel';
-import { ReaderSettingSwitchRow, ReaderSettingActionRow, ReaderSettingSelectRow } from './ReaderSettingRows';
+import { ReaderNavIndicatorSwitchRow, ReaderSettingSwitchRow, ReaderSettingActionRow, ReaderSettingSelectRow } from './ReaderSettingRows';
 import { PopupMenuAction } from '../common/PopupMenuAction';
 import { ReaderPageTurnAnimation } from '../../core/reader/ReaderPageTurnAnimation';
 import { ReaderPdfSettings } from '../../core/book/pdf/ReaderPdfSettings';
@@ -607,6 +607,8 @@ export struct PdfReaderControls {
         ReaderSettingSwitchRow({ title: '页码角标', description: '右下角显示目录标题、页码、时间与电量',
           checked: this.pageBadge, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onPageBadgeChange })
+        ReaderNavIndicatorSwitchRow({ textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode) })
         this.aiSettingsRow()
         if (this.superResolution && this.superResolutionReady()) {
           Text('AI 可能改变细小文字和数字，可通过“查看原页”对照。').fontSize(AppFontSize.CAPTION)

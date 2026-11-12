@@ -44,7 +44,7 @@ import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
 import { RecentReadShortcut } from '../utils/RecentReadShortcut';
 import { ReaderOpenTrace } from '../utils/ReaderOpenTrace';
-import { syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
+import { applyReaderSystemBars, syncDesktopTitleBar, syncSystemSafeAreas } from '../utils/SystemBars';
 import { readStatsTracker } from '../core/stats/ReadStatsTracker';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';
@@ -354,6 +354,7 @@ struct EpubOriginalReadBookPage {
   @StorageLink('readerInfoBarConfig') @Watch('onReaderChromeChanged') readerInfoBarConfigRaw: string = '';
   /** 与普通阅读页相同：关闭时阅读中显示状态栏，页眉排在状态栏下面；打开时隐藏状态栏。 */
   @StorageProp('readerExtendToStatusBar') @Watch('onReaderChromeChanged') readerExtendToStatusBar: boolean = false;
+  @StorageProp('readerHideNavIndicator') @Watch('applySystemBars') readerHideNavIndicator: boolean = false;
   /** 翻页动画与普通阅读页共用（平移、推页、淡入、叠页、仿真、3D 仿真）。 */
   @State pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   // 四侧边距与普通阅读页共用（排版里的左/右/上/下边距），点击区域也是同一个设置。
@@ -3433,7 +3434,7 @@ struct EpubOriginalReadBookPage {
       const dark = this.darkMode;
       mainWindow.setWindowBackgroundColor(ThemeRuntime.pageColor(dark));
       mainWindow.setWindowLayoutFullScreen(true);
-      mainWindow.setWindowSystemBarEnable(showStatus ? ['navigation', 'status'] : ['navigation']);
+      applyReaderSystemBars(mainWindow, showStatus, this.alive && this.visible && this.ready && !this.menuVisible);
       syncDesktopTitleBar(mainWindow, dark);
       syncSystemSafeAreas(mainWindow);
       mainWindow.setWindowSystemBarProperties({

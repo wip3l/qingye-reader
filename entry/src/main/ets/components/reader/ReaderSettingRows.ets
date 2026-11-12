@@ -4,6 +4,7 @@ import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
+import { ReaderNavIndicatorStore } from '../../utils/ReaderNavIndicatorStore';
 
 /** 阅读页设置面板里的一行：标题与说明，右侧放控件。配色用阅读主题，由页面传入。 */
 @Component
@@ -65,6 +66,28 @@ export struct ReaderSettingSwitchRow {
     .width('100%')
     .constraintSize({ minHeight: 56 })
     .alignItems(VerticalAlign.Center)
+  }
+}
+
+/** “隐藏底部小白条”开关：各阅读页面板共用同一个设置，开关自己读写，页面只管按它切换导航条。 */
+@Component
+export struct ReaderNavIndicatorSwitchRow {
+  @StorageProp('readerHideNavIndicator') hideNavIndicator: boolean = false;
+  @Prop textColor: string = '#000000';
+  @Prop subTextColor: string = '#666666';
+
+  build() {
+    ReaderSettingSwitchRow({
+      title: '隐藏底部小白条',
+      description: '阅读正文时收起底部导航条，呼出菜单时恢复；所有阅读页共用',
+      checked: this.hideNavIndicator,
+      textColor: this.textColor,
+      subTextColor: this.subTextColor,
+      onChange: (checked: boolean): void => {
+        ReaderNavIndicatorStore.save(this.getUIContext().getHostContext() as Context, checked)
+          .catch((error: Error) => console.error('保存隐藏底部小白条设置失败:', error));
+      }
+    })
   }
 }
 
