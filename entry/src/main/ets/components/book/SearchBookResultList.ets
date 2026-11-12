@@ -147,6 +147,11 @@ export struct SearchBookResultList {
   @Prop gridHeaderCollapse: number = 0;
   private gridAlignTimer: number = -1;
   private gridUserScrolled: boolean = false;
+  /**
+   * 分类翻页里，换页时新页的对齐滚动会唤出滚动条、旧页的滚动条也还没淡出，两条都会跟着页面横滑。
+   * 所以只在当前页被手动滚动过之后才显示，离开当前页立即隐藏。
+   */
+  @State pagerScrollBarShown: boolean = false;
   scroller: ListScroller = new ListScroller();
   private dataSource: SearchBookResultDataSource = new SearchBookResultDataSource();
   private tagCache: Map<string, string[]> = new Map<string, string[]>();
@@ -200,12 +205,26 @@ export struct SearchBookResultList {
     if (this.gridPageActive) this.drainCoverQueue();
     if (this.gridAlignTimer >= 0) clearTimeout(this.gridAlignTimer);
     this.gridAlignTimer = -1;
-    if (!this.gridPageActive) return;
+    if (!this.gridPageActive) {
+      this.pagerScrollBarShown = false;
+      return;
+    }
     // 首次挂载需等 List 绑定 Scroller；重新进入已有分类时保留更深的阅读位置。
     this.gridAlignTimer = setTimeout(() => {
       this.gridAlignTimer = -1;
       this.alignGridToHeader();
     }, 0);
+  }
+
+  resultScrollBarState(): BarState {
+    if (!this.userScrollOnly) return BarState.Auto;
+    return this.gridPageActive && this.pagerScrollBarShown ? BarState.Auto : BarState.Off;
+  }
+
+  /** 真实纵向滚动才放出滚动条，见 pagerScrollBarShown。 */
+  markUserScrolled(): void {
+    this.gridUserScrolled = true;
+    if (this.userScrollOnly && this.gridPageActive && !this.pagerScrollBarShown) this.pagerScrollBarShown = true;
   }
 
   alignGridToHeader(): void {
@@ -486,7 +505,7 @@ export struct SearchBookResultList {
     .padding({ left: BookTileLayout.SIDE_PADDING, right: BookTileLayout.SIDE_PADDING })
     .height('100%')
     .backgroundColor(this.pageColor)
-    .scrollBar(BarState.Auto)
+    .scrollBar(this.resultScrollBarState())
     .onAppear(() => this.onGridPageActiveChanged())
     .onReachEnd(() => {
       if (this.preparingCoverCount === 0) this.onReachEnd();
@@ -499,7 +518,7 @@ export struct SearchBookResultList {
     .onDidScroll((delta: number, state: ScrollState) => {
       if (this.userScrollOnly && (state === ScrollState.Idle || delta === 0)) return;
       if (this.isEndOverscrollRebound(delta)) return;
-      this.gridUserScrolled = true;
+      this.markUserScrolled();
       this.onListScroll(delta, this.scroller.currentOffset().yOffset);
     })
     .onScrollStop(() => {
@@ -648,7 +667,7 @@ export struct SearchBookResultList {
     .padding({ left: this.isCompactRank() ? AppSpacing.XS : AppSpacing.XL, right: AppSpacing.XL })
     .height('100%')
     .backgroundColor(this.pageColor)
-    .scrollBar(BarState.Auto)
+    .scrollBar(this.resultScrollBarState())
     .onReachEnd(() => {
       if (this.preparingCoverCount === 0) this.onReachEnd();
     })
@@ -662,7 +681,7 @@ export struct SearchBookResultList {
     .onDidScroll((delta: number, state: ScrollState) => {
       if (this.userScrollOnly && (state === ScrollState.Idle || delta === 0)) return;
       if (this.isEndOverscrollRebound(delta)) return;
-      this.gridUserScrolled = true;
+      this.markUserScrolled();
       this.onListScroll(delta, this.scroller.currentOffset().yOffset);
     })
     .onScrollStop(() => {
