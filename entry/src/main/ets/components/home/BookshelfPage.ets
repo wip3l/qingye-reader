@@ -81,6 +81,17 @@ const SHELF_AUDIO_DOWNLOAD_CONCURRENCY: number = 2;
  */
 const SHELF_REFRESH_CONCURRENCY: number = 6;
 const SHELF_REFRESH_PER_SOURCE: number = 2;
+/**
+ * 单本检查更新的时长上限。网络请求有自己的超时，但网页解析、书源脚本卡住时不会结束，那一路会一直占着、进度停住；
+ * 超时就算这本失败，这一路丢掉旧引擎（它可能还卡在这本书上）换个新的接着查。
+ */
+const SHELF_REFRESH_BOOK_TIMEOUT_MS: number = 60000;
+/** 单本查了这么久，封面圆钮显示秒数、清单里给出“跳过”。 */
+const SHELF_REFRESH_STUCK_MS: number = 15000;
+/** 最近一次检查更新失败的原因，封面显示红色“!”；下次检查成功或点开这本书时清除。 */
+const SHELF_REFRESH_ERROR_VARIABLE: string = 'shelfRefreshError';
+const SHELF_REFRESH_STUCK_COLOR: string = '#E6E08A00';
+const SHELF_REFRESH_ERROR_COLOR: string = '#E5484D';
 const SHELF_COVER_INITIAL_PREFETCH_COUNT: number = 16;
 const SHELF_COVER_UPDATE_BATCH_MS: number = 48;
 const SHELF_UPDATE_BADGE_VARIABLE: string = 'shelfHasUpdate';
@@ -162,6 +173,41 @@ class ShelfFilterOption {
   key: string = '';
   label: string = '';
   count: number = 0;
+}
+
+/** 检查更新时正在查的一本书，封面圆钮与胶囊清单按 startedAt 算已用时。 */
+class ShelfRefreshActiveBook {
+  book: Book;
+  startedAt: number;
+
+  constructor(book: Book, startedAt: number) {
+    this.book = book;
+    this.startedAt = startedAt;
+  }
+}
+
+/** 本轮检查更新失败的一本书，胶囊清单里列出，点一行去换源。 */
+class ShelfRefreshFailure {
+  book: Book;
+  reason: string;
+
+  constructor(book: Book, reason: string) {
+    this.book = book;
+    this.reason = reason;
+  }
+}
+
+/** 一本书的检查结果；abandoned 表示超时或被跳过，引擎可能还卡在这本书上。 */
+class ShelfRefreshResult {
+  updated: boolean;
+  error: string;
+  abandoned: boolean;
+
+  constructor(updated: boolean, error: string, abandoned: boolean) {
+    this.updated = updated;
+    this.error = error;
+    this.abandoned = abandoned;
+  }
 }
 
 interface ShelfFullTextCacheTask {
@@ -434,6 +480,18 @@ export struct BookshelfPage {
   @State shelfRefreshCapsuleWidth: number = 0;
   private shelfRefreshSummaryPending: boolean = false;
   private shelfRefreshCapsuleTimer: number = -1;
+  /** 正在查的书（最多 SHELF_REFRESH_CONCURRENCY 本），封面圆钮与胶囊清单都读它。 */
+  @State shelfRefreshActive: ShelfRefreshActiveBook[] = [];
+  /** 本轮失败的书，胶囊清单里列出。 */
+  @State shelfRefreshFailures: ShelfRefreshFailure[] = [];
+  /** 本轮失败、还没落库重载的书；封面“!”在检查进行中就能显示。 */
+  @State shelfRefreshFailedUrls: string[] = [];
+  /** 检查进行中每秒更新一次，只有封面圆钮和清单里的已用秒数读它。 */
+  @State shelfRefreshNow: number = 0;
+  @State shelfRefreshSheetVisible: boolean = false;
+  private shelfRefreshTicker: number = -1;
+  /** 正在查的书各自的放弃入口：超时与清单里的“跳过”都走这里。 */
+  private shelfRefreshCancels: Map<string, (reason: string) => void> = new Map();
   @State editingTags: string[] = [];
   @State tagInput: string = '';
   @State shelfCoverMap: Map<string, string> = new Map();
@@ -578,6 +636,7 @@ export struct BookshelfPage {
 
   aboutToDisappear(): void {
     this.shelfComponentActive = false;
+    this.stopShelfRefreshTicker();
     ShelfCoverLocator.unregister(this.shelfCoverLocate);
     this.discardShelfOpeningBackdrop();
     this.cancelTileGroupMotion();
@@ -2385,6 +2444,16 @@ export struct BookshelfPage {
     Scroll() {
       Column() {
         if (this.pendingActionBook) {
+          if (this.hasShelfRefreshError(this.pendingActionBook) && !LocalBookService.isLocalBook(this.pendingActionBook)) {
+            this.contextActionItem($r('sys.symbol.exclamationmark_circle'),
+              `检查失败：${this.shelfRefreshErrorReason(this.pendingActionBook)}，去换源`, SHELF_REFRESH_ERROR_COLOR, () => {
+                if (this.pendingActionBook) {
+                  const book = this.pendingActionBook;
+                  this.closeBookActions();
+                  this.openShelfChangeSource(book);
+                }
+              })
+          }
           this.contextActionItem($r('sys.symbol.info_circle'), '查看书籍详情', this.primaryTextColor(), () => {
             if (this.pendingActionBook) {
               const book = this.pendingActionBook;
@@ -5312,12 +5381,22 @@ export struct BookshelfPage {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Row({ space: 5 }) {
-        SymbolGlyph($r('sys.symbol.folder'))
-          .fontSize(13)
-          .fontColor([this.subTextColor()])
-        Text(`共 ${this.getTileGroupBooks(group.groupId, this.shelfBooksForPage(pageKey)).length} 本`)
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
+        if (this.shelfRefreshActiveInGroup(group.groupId, pageKey) > 0) {
+          LoadingProgress()
+            .width(13)
+            .height(13)
+            .color(this.accentColor())
+          Text(`${this.shelfRefreshActiveInGroup(group.groupId, pageKey)} 本检查中`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.accentColor())
+        } else {
+          SymbolGlyph($r('sys.symbol.folder'))
+            .fontSize(13)
+            .fontColor([this.subTextColor()])
+          Text(`共 ${this.getTileGroupBooks(group.groupId, this.shelfBooksForPage(pageKey)).length} 本`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+        }
       }
       .width('100%')
       .height(18)
@@ -5334,6 +5413,13 @@ export struct BookshelfPage {
         })
     )
     .onClick((event: ClickEvent) => this.openTileGroupPage(group.groupId, pageKey, event.windowX, event.windowY))
+  }
+
+  shelfRefreshActiveInGroup(groupId: number, pageKey: string): number {
+    if (this.shelfRefreshActive.length === 0) return 0;
+    const urls = new Set<string>(this.getTileGroupBooks(groupId, this.shelfBooksForPage(pageKey))
+      .map((book: Book): string => book.bookUrl));
+    return this.shelfRefreshActive.filter((item: ShelfRefreshActiveBook): boolean => urls.has(item.book.bookUrl)).length;
   }
 
   @Builder
@@ -5813,6 +5899,15 @@ export struct BookshelfPage {
     // Remember the click while a background refresh may still be in flight, so that refresh cannot
     // write the badge back after the user has already entered this book.
     this.shelfUpdateAcknowledgedAt.set(book.bookUrl, Date.now());
+    if (this.hasShelfRefreshError(book)) {
+      const bookUrl = book.bookUrl;
+      if (deferVisual) {
+        // 与更新角标一样等开书动作过去再改状态，免得点开时整个书架重建。
+        setTimeout((): void => this.clearShelfRefreshError(bookUrl), this.shelfBookMotionDelay() + 120);
+      } else {
+        this.clearShelfRefreshError(bookUrl);
+      }
+    }
     if (!this.hasShelfBookUpdate(book)) {
       return;
     }
@@ -6339,6 +6434,12 @@ export struct BookshelfPage {
         .borderRadius(16)
         .backgroundColor('#73000000')
         .accessibilityText(`${book.name}在云端，${this.cloudBookStatus(book)}`)
+      }
+      // 分组卡片里的小封面（measure 为 false）不标，分组卡片的本数行另显示“N 本检查中”。
+      if (measure && this.shelfRefreshActiveStart(book.bookUrl) > 0) {
+        this.shelfRefreshCoverChip(book.bookUrl)
+      } else if (measure && this.hasShelfRefreshError(book)) {
+        this.shelfRefreshCoverError()
       }
       BookshelfCoverBadges({
         configuration: this.bookshelfCoverBadges,
@@ -8642,6 +8743,10 @@ export struct BookshelfPage {
     this.shelfRefreshRunning = true;
     this.shelfRefreshTotal = targets.length;
     this.shelfRefreshChecked = 0;
+    this.shelfRefreshActive = [];
+    this.shelfRefreshFailures = [];
+    this.shelfRefreshFailedUrls = [];
+    this.startShelfRefreshTicker();
     if (!silent) {
       this.showShelfRefreshCapsule();
     }
@@ -8670,7 +8775,7 @@ export struct BookshelfPage {
       };
       const runWorker = async (): Promise<void> => {
         // 每路一个引擎：引擎持有当前书的目录与会话，不能在两本书之间共用。
-        const engine = ReadBookEngine.createBackgroundWorker();
+        let engine = ReadBookEngine.createBackgroundWorker();
         engine.chapterUpdateBatchTime = refreshStartedAt;
         while (pending.length > 0) {
           const shelfBook = takeNext();
@@ -8681,15 +8786,24 @@ export struct BookshelfPage {
             });
             continue;
           }
+          this.beginShelfRefreshBook(shelfBook);
           try {
-            if (await this.refreshShelfBookToc(engine, db, shelfBook, refreshStartedAt)) {
+            const result = await this.runShelfRefreshBook(engine, db, shelfBook, refreshStartedAt);
+            if (result.abandoned) {
+              // 旧引擎可能还卡在这本书上，丢给它自己跑完，这一路换新的。
+              engine = ReadBookEngine.createBackgroundWorker();
+              engine.chapterUpdateBatchTime = refreshStartedAt;
+            }
+            if (result.error) {
+              failed++;
+              console.error('刷新书架目录失败:', shelfBook.name, result.error);
+              await this.recordShelfRefreshFailure(db, shelfBook, result.error);
+            } else if (result.updated) {
               updated++;
             }
-          } catch (e) {
-            failed++;
-            console.error('刷新书架目录失败:', shelfBook.name, e);
           } finally {
             this.shelfRefreshChecked++;
+            this.endShelfRefreshBook(shelfBook.bookUrl);
             release(shelfBook.origin);
           }
         }
@@ -8713,7 +8827,126 @@ export struct BookshelfPage {
     } finally {
       this.shelfRefreshRunning = false;
       this.shelfRefreshStatus = RefreshStatus.Inactive;
+      this.shelfRefreshActive = [];
+      this.shelfRefreshCancels.clear();
+      this.stopShelfRefreshTicker();
     }
+  }
+
+  /** 刷一本书，带超时与手动跳过；被放弃时 refreshShelfBookToc 仍在后台跑，晚到的结果照常落库。 */
+  async runShelfRefreshBook(engine: ReadBookEngine, db: AppDatabase, shelfBook: Book,
+    refreshStartedAt: number): Promise<ShelfRefreshResult> {
+    let timer: number = -1;
+    const cancelled = new Promise<ShelfRefreshResult>((resolve: (result: ShelfRefreshResult) => void) => {
+      const cancel = (reason: string): void => resolve(new ShelfRefreshResult(false, reason, true));
+      this.shelfRefreshCancels.set(shelfBook.bookUrl, cancel);
+      timer = setTimeout(() => cancel(`${Math.round(SHELF_REFRESH_BOOK_TIMEOUT_MS / 1000)} 秒未返回`),
+        SHELF_REFRESH_BOOK_TIMEOUT_MS);
+    });
+    const work = this.refreshShelfBookToc(engine, db, shelfBook, refreshStartedAt)
+      .then((updated: boolean): ShelfRefreshResult => new ShelfRefreshResult(updated, '', false))
+      .catch((e: Error): ShelfRefreshResult => new ShelfRefreshResult(false, this.shelfRefreshErrorText(e), false));
+    try {
+      return await Promise.race([work, cancelled]);
+    } finally {
+      clearTimeout(timer);
+      this.shelfRefreshCancels.delete(shelfBook.bookUrl);
+    }
+  }
+
+  shelfRefreshErrorText(e: Error): string {
+    const message = (e && e.message ? e.message : `${e}`).replace(/\s+/g, ' ').trim();
+    if (!message || message === 'undefined' || message === '[object Object]') return '书源出错';
+    return message.length > 24 ? `${message.substring(0, 24)}…` : message;
+  }
+
+  /** 记下失败原因：落库给下次打开书架用，同时立刻在封面上标出。 */
+  async recordShelfRefreshFailure(db: AppDatabase, shelfBook: Book, reason: string): Promise<void> {
+    this.shelfRefreshFailures = [...this.shelfRefreshFailures, new ShelfRefreshFailure(shelfBook, reason)];
+    if (!this.shelfRefreshFailedUrls.includes(shelfBook.bookUrl)) {
+      this.shelfRefreshFailedUrls = [...this.shelfRefreshFailedUrls, shelfBook.bookUrl];
+    }
+    try {
+      const current = await db.getBook(shelfBook.bookUrl);
+      if (!current) return;
+      current.putVariable(SHELF_REFRESH_ERROR_VARIABLE, reason);
+      await db.updateBook(current, false, 'shelf_refresh_failed');
+    } catch (e) {
+      console.error('记录书架检查失败原因失败:', shelfBook.name, e);
+    }
+  }
+
+  beginShelfRefreshBook(book: Book): void {
+    this.shelfRefreshActive = [...this.shelfRefreshActive, new ShelfRefreshActiveBook(book, Date.now())];
+  }
+
+  endShelfRefreshBook(bookUrl: string): void {
+    this.shelfRefreshActive = this.shelfRefreshActive.filter((item: ShelfRefreshActiveBook): boolean =>
+      item.book.bookUrl !== bookUrl);
+  }
+
+  /** 清单里的“跳过”：这本算失败，这一路马上去查下一本。 */
+  skipShelfRefreshBook(bookUrl: string): void {
+    const cancel = this.shelfRefreshCancels.get(bookUrl);
+    if (cancel) cancel('已跳过');
+  }
+
+  startShelfRefreshTicker(): void {
+    this.stopShelfRefreshTicker();
+    this.shelfRefreshNow = Date.now();
+    this.shelfRefreshTicker = setInterval(() => {
+      this.shelfRefreshNow = Date.now();
+    }, 1000);
+  }
+
+  stopShelfRefreshTicker(): void {
+    if (this.shelfRefreshTicker >= 0) {
+      clearInterval(this.shelfRefreshTicker);
+      this.shelfRefreshTicker = -1;
+    }
+  }
+
+  /** 正在查时返回开始时间，否则 0。 */
+  shelfRefreshActiveStart(bookUrl: string): number {
+    const item = this.shelfRefreshActive.find((entry: ShelfRefreshActiveBook): boolean => entry.book.bookUrl === bookUrl);
+    return item ? item.startedAt : 0;
+  }
+
+  shelfRefreshElapsed(startedAt: number): number {
+    return startedAt > 0 ? Math.max(0, this.shelfRefreshNow - startedAt) : 0;
+  }
+
+  shelfRefreshElapsedText(startedAt: number): string {
+    return `${Math.floor(this.shelfRefreshElapsed(startedAt) / 1000)}秒`;
+  }
+
+  shelfRefreshErrorReason(book: Book): string {
+    const failure = this.shelfRefreshFailures.find((item: ShelfRefreshFailure): boolean =>
+      item.book.bookUrl === book.bookUrl);
+    if (failure && this.shelfRefreshFailedUrls.includes(book.bookUrl)) return failure.reason;
+    return book.getVariable(SHELF_REFRESH_ERROR_VARIABLE) || '';
+  }
+
+  hasShelfRefreshError(book: Book): boolean {
+    return this.shelfRefreshFailedUrls.includes(book.bookUrl) || !!book.getVariable(SHELF_REFRESH_ERROR_VARIABLE);
+  }
+
+  /** 点开书或换源后清掉失败标记。 */
+  clearShelfRefreshError(bookUrl: string): void {
+    this.shelfRefreshFailedUrls = this.shelfRefreshFailedUrls.filter((url: string): boolean => url !== bookUrl);
+    const book = this.allBooks.find((item: Book): boolean => item.bookUrl === bookUrl);
+    if (book && book.getVariable(SHELF_REFRESH_ERROR_VARIABLE)) {
+      book.putVariable(SHELF_REFRESH_ERROR_VARIABLE, '');
+    }
+    const persist = async (): Promise<void> => {
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(getContext(this));
+      const current = await db.getBook(bookUrl);
+      if (!current || !current.getVariable(SHELF_REFRESH_ERROR_VARIABLE)) return;
+      current.putVariable(SHELF_REFRESH_ERROR_VARIABLE, '');
+      await db.updateBook(current, false, 'shelf_refresh_error_cleared');
+    };
+    persist().catch((e: Error) => console.error('清除书架检查失败标记失败:', bookUrl, e));
   }
 
   /** 刷新一本书的目录并记下检查结果与更新角标；返回这次是否发现新章节。 */
@@ -8738,6 +8971,7 @@ export struct BookshelfPage {
     const keepNewUpdate = hasNewUpdate && acknowledgedAt < refreshStartedAt;
     refreshedBook.putVariable(SHELF_UPDATE_BADGE_VARIABLE,
       keepPendingUpdate || keepNewUpdate ? '1' : '');
+    refreshedBook.putVariable(SHELF_REFRESH_ERROR_VARIABLE, '');
     await db.updateBook(refreshedBook);
     return hasNewUpdate;
   }
@@ -8794,10 +9028,12 @@ export struct BookshelfPage {
     this.shelfRefreshSummaryPending = false;
     this.bumpShelfRefreshCapsule();
     this.clearShelfRefreshCapsuleTimer();
+    // 清单开着时等它关掉再收（见 closeShelfRefreshSheet）；有失败的书多留一会儿，方便点开看是哪几本。
+    if (this.shelfRefreshSheetVisible) return;
     this.shelfRefreshCapsuleTimer = setTimeout(() => {
       this.shelfRefreshCapsuleTimer = -1;
       this.hideShelfRefreshCapsule();
-    }, 2400);
+    }, this.shelfRefreshFailures.length > 0 ? 4000 : 2400);
   }
 
   hideShelfRefreshCapsule(): void {
@@ -9065,9 +9301,16 @@ export struct BookshelfPage {
               .fontColor(this.secondaryTextColor())
               .maxLines(1)
           }
+          if (this.shelfRefreshTotal > 0) {
+            SymbolGlyph($r('sys.symbol.chevron_down'))
+              .fontSize(12)
+              .fontColor([this.secondaryTextColor()])
+              .rotate({ angle: this.shelfRefreshSheetVisible ? 180 : 0 })
+              .animation({ duration: 200, curve: Curve.FastOutSlowIn })
+          }
         }
         .height(SHELF_REFRESH_CAPSULE_HEIGHT)
-        .padding({ left: 10, right: 14 })
+        .padding({ left: 10, right: this.shelfRefreshTotal > 0 ? 10 : 14 })
         .alignItems(VerticalAlign.Center)
         .onAreaChange((_oldValue: Area, newValue: Area) => {
           const width = this.areaDimension(newValue.width);
@@ -9077,6 +9320,19 @@ export struct BookshelfPage {
         })
       }
       .scale({ x: this.shelfRefreshCapsuleScale, y: this.shelfRefreshCapsuleScale })
+      // 只有胶囊本身可点（展开清单）；标题行收着、胶囊淡没时不挡住下面的书。
+      .hitTestBehavior(this.shelfRefreshTotal > 0 &&
+        this.shelfRefreshCapsuleCollapse() < CollapsingHeader.DISTANCE / 2 ? HitTestMode.Default : HitTestMode.None)
+      .onClick(() => this.toggleShelfRefreshSheet())
+      .bindPopup(this.shelfRefreshSheetVisible, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+        (): void => {
+          this.shelfRefreshSheet()
+        }, Placement.Bottom, this.appDarkMode, this.accentColor(), () => {
+          if (this.shelfRefreshSheetVisible) this.closeShelfRefreshSheet();
+        }))
+      .accessibilityText(this.shelfRefreshCapsuleLabel() +
+        (this.shelfRefreshCapsuleDone ? this.shelfRefreshCapsuleSubText : ''))
+      .accessibilityDescription(this.shelfRefreshTotal > 0 ? '点按查看正在检查和失败的书' : '')
     }
     .width('100%')
     .justifyContent(FlexAlign.Center)
@@ -9088,9 +9344,220 @@ export struct BookshelfPage {
       .combine(TransitionEffect.translate({ y: -10 }))
       .combine(TransitionEffect.scale({ x: 0.88, y: 0.88, centerX: '50%', centerY: '0%' })))
     .zIndex(3)
+    // 整行自身不接触摸，只有胶囊接（见上）。
     .hitTestBehavior(HitTestMode.None)
-    .accessibilityText(this.shelfRefreshCapsuleLabel() +
-      (this.shelfRefreshCapsuleDone ? this.shelfRefreshCapsuleSubText : ''))
+  }
+
+  toggleShelfRefreshSheet(): void {
+    if (this.shelfRefreshSheetVisible) {
+      this.closeShelfRefreshSheet();
+      return;
+    }
+    if (this.shelfRefreshTotal <= 0) return;
+    // 清单开着时结果胶囊不自动收起，关掉清单后再收。
+    this.clearShelfRefreshCapsuleTimer();
+    this.shelfRefreshSheetVisible = true;
+  }
+
+  closeShelfRefreshSheet(): void {
+    this.shelfRefreshSheetVisible = false;
+    if (this.shelfRefreshCapsuleDone && !this.shelfRefreshRunning && this.shelfRefreshCapsuleVisible &&
+      !this.shelfRefreshSummaryPending && this.shelfRefreshCapsuleTimer < 0) {
+      this.shelfRefreshCapsuleTimer = setTimeout(() => {
+        this.shelfRefreshCapsuleTimer = -1;
+        this.hideShelfRefreshCapsule();
+      }, 1200);
+    }
+  }
+
+  /** 正在查的书按开始时间排，最久的在上面。 */
+  shelfRefreshActiveSorted(): ShelfRefreshActiveBook[] {
+    return [...this.shelfRefreshActive].sort((a: ShelfRefreshActiveBook, b: ShelfRefreshActiveBook): number =>
+      a.startedAt - b.startedAt);
+  }
+
+  shelfRefreshQueuedCount(): number {
+    return Math.max(0, this.shelfRefreshTotal - this.shelfRefreshChecked - this.shelfRefreshActive.length);
+  }
+
+  shelfRefreshStuckColor(): string {
+    return this.appDarkMode ? '#F0A63A' : '#C77700';
+  }
+
+  /** 封面正中的检查圆钮：转圈，查得久了变橙并显示秒数。bookUrl 只作查找键，状态在这里现读。 */
+  @Builder
+  shelfRefreshCoverChip(bookUrl: string) {
+    Row({ space: 4 }) {
+      LoadingProgress()
+        .width(16)
+        .height(16)
+        .color('#FFFFFF')
+      if (this.shelfRefreshElapsed(this.shelfRefreshActiveStart(bookUrl)) >= SHELF_REFRESH_STUCK_MS) {
+        Text(this.shelfRefreshElapsedText(this.shelfRefreshActiveStart(bookUrl)))
+          .fontSize(AppFontSize.MICRO)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .fontFeature('"tnum" on')
+          .maxLines(1)
+      }
+    }
+    .height(28)
+    .constraintSize({ minWidth: 28 })
+    .padding({ left: 6, right: 6 })
+    .borderRadius(14)
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(this.shelfRefreshElapsed(this.shelfRefreshActiveStart(bookUrl)) >= SHELF_REFRESH_STUCK_MS ?
+      SHELF_REFRESH_STUCK_COLOR : '#73000000')
+    .hitTestBehavior(HitTestMode.None)
+    .transition(TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.6, y: 0.6 }))
+      .animation({ duration: 200, curve: Curve.FastOutSlowIn }))
+    .accessibilityText(`正在检查更新，已用${this.shelfRefreshElapsedText(this.shelfRefreshActiveStart(bookUrl))}`)
+  }
+
+  @Builder
+  shelfRefreshCoverError() {
+    Text('!')
+      .width(22)
+      .height(22)
+      .borderRadius(11)
+      .textAlign(TextAlign.Center)
+      .fontSize(14)
+      .fontWeight(FontWeight.Bold)
+      .fontColor('#FFFFFF')
+      .backgroundColor(SHELF_REFRESH_ERROR_COLOR)
+      .hitTestBehavior(HitTestMode.None)
+      .transition(TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.4, y: 0.4 }))
+        .animation({ duration: 240, curve: curves.springMotion(0.36, 0.7) }))
+      .accessibilityText('上次检查更新失败，长按可换源')
+  }
+
+  @Builder
+  shelfRefreshThumb(book: Book) {
+    Stack() {
+      if (this.getShelfCoverList(book).length === 0) {
+        Text(book.name ? book.name.substring(0, 1) : '书')
+          .fontSize(12)
+          .fontColor('#FFFFFF')
+      } else {
+        Image(this.imageCover(this.getShelfCover(book, false)))
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+      }
+    }
+    .width(24)
+    .height(32)
+    .borderRadius(3)
+    .clip(true)
+    .backgroundColor(this.getShelfCoverList(book).length === 0 ? this.getBookColor(book.name) : this.inputColor())
+  }
+
+  @Builder
+  shelfRefreshSheetHeader(left: string, right: string) {
+    Row() {
+      Text(left)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.secondaryTextColor())
+      Blank()
+      Text(right)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.secondaryTextColor())
+    }
+    .width('100%')
+    .padding({ top: 4, bottom: 4 })
+  }
+
+  /** 点胶囊展开的清单：正在查的书（查久了可跳过）与本轮失败的书（点一行去换源）。 */
+  @Builder
+  shelfRefreshSheet() {
+    Scroll() {
+      Column() {
+        this.shelfRefreshSheetHeader(`正在检查 ${this.shelfRefreshActive.length}`,
+          this.shelfRefreshRunning ? `排队 ${this.shelfRefreshQueuedCount()}` : '')
+        if (this.shelfRefreshActive.length === 0) {
+          Text(this.shelfRefreshRunning ? '正在准备…' : '全部查完')
+            .width('100%')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.secondaryTextColor())
+            .padding({ top: 4, bottom: 6 })
+        }
+        ForEach(this.shelfRefreshActiveSorted(), (item: ShelfRefreshActiveBook) => {
+          Row({ space: AppSpacing.SM }) {
+            this.shelfRefreshThumb(item.book)
+            Column() {
+              Text(item.book.name)
+                .fontSize(AppFontSize.BODY)
+                .fontColor(this.primaryTextColor())
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text((item.book.originName || item.book.origin || '').trim())
+                .fontSize(AppFontSize.MICRO)
+                .fontColor(this.secondaryTextColor())
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+            Text(this.shelfRefreshElapsedText(item.startedAt))
+              .fontSize(AppFontSize.CAPTION)
+              .fontWeight(this.shelfRefreshElapsed(item.startedAt) >= SHELF_REFRESH_STUCK_MS ? FontWeight.Medium :
+                FontWeight.Regular)
+              .fontColor(this.shelfRefreshElapsed(item.startedAt) >= SHELF_REFRESH_STUCK_MS ?
+                this.shelfRefreshStuckColor() : this.secondaryTextColor())
+              .fontFeature('"tnum" on')
+            if (this.shelfRefreshElapsed(item.startedAt) >= SHELF_REFRESH_STUCK_MS) {
+              Text('跳过')
+                .fontSize(AppFontSize.CAPTION)
+                .fontColor(this.accentColor())
+                .padding({ left: 10, right: 10, top: 3, bottom: 3 })
+                .borderRadius(12)
+                .border({ width: 1, color: this.glassBorderColor() })
+                .onClick(() => this.skipShelfRefreshBook(item.book.bookUrl))
+                .accessibilityText(`跳过${item.book.name}`)
+            }
+          }
+          .width('100%')
+          .height(44)
+        }, (item: ShelfRefreshActiveBook) => `active_${item.book.bookUrl}`)
+        if (this.shelfRefreshFailures.length > 0) {
+          this.shelfRefreshSheetHeader(`失败 ${this.shelfRefreshFailures.length}`, '点一行去换源')
+          ForEach(this.shelfRefreshFailures, (item: ShelfRefreshFailure) => {
+            Row({ space: AppSpacing.SM }) {
+              this.shelfRefreshThumb(item.book)
+              Column() {
+                Text(item.book.name)
+                  .fontSize(AppFontSize.BODY)
+                  .fontColor(this.primaryTextColor())
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(`${(item.book.originName || item.book.origin || '').trim()} · ${item.reason}`)
+                  .fontSize(AppFontSize.MICRO)
+                  .fontColor(SHELF_REFRESH_ERROR_COLOR)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+              SymbolGlyph($r('sys.symbol.arrow_left_arrow_right'))
+                .fontSize(14)
+                .fontColor([this.secondaryTextColor()])
+            }
+            .width('100%')
+            .height(44)
+            .onClick(() => {
+              const book = item.book;
+              this.closeShelfRefreshSheet();
+              setTimeout(() => this.openShelfChangeSource(book), 0);
+            })
+          }, (item: ShelfRefreshFailure) => `failed_${item.book.bookUrl}`)
+        }
+      }
+      .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
+    }
+    .width(Math.min(340, this.contextViewportWidth - 32))
+    .constraintSize({ maxHeight: 420 })
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.None)
   }
 
   /** 从筛选菜单的“搜索书架”展开，边输入边筛当前书架；“取消”清空关键词并收起。 */
