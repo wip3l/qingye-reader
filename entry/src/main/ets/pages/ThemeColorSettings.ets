@@ -111,6 +111,8 @@ struct ThemeColorOption {
   @Prop accentColor: string = '#007DFF';
   @Prop showDivider: boolean = true;
   @Prop description: string = '';
+  /** 与桌面编辑器 alpha 字段对应：允许输入 #AARRGGBB，取色面板带透明度滑杆。 */
+  @Prop allowAlpha: boolean = false;
   onColorChange: (color: string) => void = (_color: string): void => {};
 
   build() {
@@ -135,6 +137,7 @@ struct ThemeColorOption {
         placeholder: this.color,
         appDarkMode: this.appDarkMode,
         accentColor: this.accentColor,
+        allowAlpha: this.allowAlpha,
         optionTitle: this.title,
         hideOptionTrigger: true,
         onColorChange: (color: string) => {
@@ -1214,7 +1217,7 @@ struct ThemeColorSettingsPage {
   setEmphasisColor(textColor: boolean, color: string): void {
     const tokens = this.effectiveEmphasis();
     const current = textColor ? tokens.emphasisTextColor : tokens.emphasisColor;
-    const normalized = AppThemeSettingsStore.normalizeColor(color, current);
+    const normalized = HexColor.normalizeAlpha(color, current);
     const override = this.currentEmphasis();
     if (normalized === current && (textColor ? override.textColor : override.color)) return;
     if (normalized === current && !(textColor ? override.textColor : override.color)) return;
@@ -1337,6 +1340,7 @@ struct ThemeColorSettingsPage {
       title: '强调底色',
       description: this.currentEmphasis().color ? '自定义' : `跟随「${this.emphasisSourceName()}」`,
       color: this.effectiveEmphasis().emphasisColor,
+      allowAlpha: true,
       appDarkMode: this.appDarkMode,
       cardColor: this.cardColor(),
       primaryTextColor: this.primaryTextColor(),
@@ -1349,6 +1353,7 @@ struct ThemeColorSettingsPage {
       title: '强调文字色',
       description: this.currentEmphasis().textColor ? '自定义' : `跟随「${this.emphasisSourceName()}」`,
       color: this.effectiveEmphasis().emphasisTextColor,
+      allowAlpha: true,
       showDivider: AppThemeSettingsStore.hasEmphasisOverride(this.currentEmphasis()),
       appDarkMode: this.appDarkMode,
       cardColor: this.cardColor(),
@@ -1865,6 +1870,7 @@ struct ThemeColorSettingsPage {
       title: title,
       description: key === 'glow' ? '播放区的强调光，可带透明度' : (key === 'surface' ? '不透明，接近页面色，保证文字看得清' : '插画背后的渐变起点'),
       color: this.ttsColorValue(key),
+      allowAlpha: key === 'glow',
       showDivider: key !== 'glow' || this.ownTtsPanel(),
       appDarkMode: this.appDarkMode,
       cardColor: this.cardColor(),
