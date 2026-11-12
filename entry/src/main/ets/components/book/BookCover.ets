@@ -6,6 +6,7 @@ import { CoverGallerySettings } from '../../utils/CoverGallerySettings';
 import { CoverUrlNormalizer } from '../../utils/CoverUrlNormalizer';
 import { SearchBookShelfHelper } from '../../utils/SearchBookShelfHelper';
 import { ThemeBookCoverSettings } from '../../utils/ThemeBookCoverSettings';
+import { CoverDimSettings } from '../../utils/CoverDimSettings';
 import { PreparedResultCover } from '../../utils/ResultCoverPreparation';
 
 /** 所有书籍展示入口共用书架的封面选择规则和多图轮播。 */
@@ -35,10 +36,14 @@ export struct BookCover {
   @StorageProp('appThemeBookCoverEnabled') @Watch('refreshCovers') themeCoverEnabled: boolean = false;
   @StorageProp('themeRevision') @Watch('refreshCovers') themeRevision: number = 0;
   @StorageProp('shelfUpdateTime') @Watch('onBookChanged') shelfUpdateTime: number = 0;
+  @StorageProp('bookshelfDarkCoverDim') darkCoverDim: boolean = false;
+  @StorageProp('bookshelfDarkCoverDimLevel') darkCoverDimLevel: number = 20;
   /** 实际交给 Image 的地址。每个异步任务完成后直接替换数组，避免依赖全局刷新穿透 Builder。 */
   @State displayCovers: ResourceStr[] = [];
   @State covers: ResourceStr[] = [];
   @State themeFrame: ResourceStr = '';
+  /** 正在显示主题自带的书籍封面（不一定有书框）。 */
+  @State themeCover: boolean = false;
   @State interval: number = 3500;
   @State activeIndex: number = 0;
   @State loadedRevision: number = 0;
@@ -128,6 +133,7 @@ export struct BookCover {
     const themeCover = this.useBookshelfCover && ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeCoverEnabled);
     const covers: ResourceStr[] = themeCover ? ThemeBookCoverSettings.covers(this.coverBook(), this.appDarkMode, this.coverMode) : this.rawCoverList();
     this.themeFrame = themeCover ? ThemeBookCoverSettings.frame(this.appDarkMode) : '';
+    this.themeCover = themeCover;
     this.interval = themeCover ? ThemeBookCoverSettings.interval(this.coverBook()) : 3500;
     if (JSON.stringify(covers) !== JSON.stringify(this.covers)) {
       this.covers = covers;
@@ -140,6 +146,7 @@ export struct BookCover {
     const prepared = this.preparedSelection;
     if (!prepared) return;
     this.themeFrame = prepared.frame;
+    this.themeCover = prepared.themeCover;
     this.interval = prepared.interval;
     if (JSON.stringify(prepared.covers) !== JSON.stringify(this.covers)) {
       this.covers = prepared.covers.slice();
@@ -239,6 +246,10 @@ export struct BookCover {
     this.notifyReadyCover();
   }
 
+  dimOpacity(): number {
+    return CoverDimSettings.opacity(this.appDarkMode, this.darkCoverDim, this.darkCoverDimLevel);
+  }
+
   @Builder
   coverImage(url: ResourceStr) {
     Image(url)
@@ -304,6 +315,15 @@ export struct BookCover {
           this.activeIndex = index;
           this.notifyReadyCover();
         })
+      }
+      // 深色模式调暗封面；主题自带的书籍封面是为深色单独设计的，不调暗。
+      if (!this.themeCover && this.dimOpacity() > 0) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#000000')
+          .opacity(this.dimOpacity())
+          .hitTestBehavior(HitTestMode.None)
       }
       if (this.themeFrame) {
         Image(this.themeFrame)

@@ -19,6 +19,8 @@ export class PreparedResultCover {
   covers: ResourceStr[] = [];
   frame: string = '';
   interval: number = 3500;
+  /** 用的是主题自带的书籍封面（可能没有书框），深色模式调暗封面时不调暗。 */
+  themeCover: boolean = false;
 }
 
 export class ResultCoverOptions {
@@ -82,6 +84,7 @@ export class ResultCoverPreparation {
     if (options.useBookshelf && ThemeBookCoverSettings.enabled(options.darkMode, options.themeEnabled)) {
       candidates = ThemeBookCoverSettings.covers(book, options.darkMode, options.gallery.coverMode);
       frame = ThemeBookCoverSettings.frame(options.darkMode);
+      prepared.themeCover = true;
       prepared.interval = ThemeBookCoverSettings.interval(book);
     } else if (options.useBookshelf) {
       const emptyOnly = options.gallery.ignoreSourceCover && options.gallery.ignoreEmptyCoverOnly;

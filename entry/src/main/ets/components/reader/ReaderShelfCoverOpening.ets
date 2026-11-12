@@ -1,4 +1,5 @@
 import { FrameCallback } from '@kit.ArkUI';
+import { CoverDimSettings } from '../../utils/CoverDimSettings';
 
 /** 书架点开书时交给阅读页的封面外观与位置，只在进程内经 AppStorage 传递。 */
 export interface ShelfOpeningCover {
@@ -18,6 +19,8 @@ export interface ShelfOpeningCover {
   windowHeight: number;
   /** 书架上这枚封面按 ImageFit.Cover 裁切显示（否则是拉伸铺满）。 */
   cropImage: boolean;
+  /** 主题自带的书籍封面（不一定有书框）：深色模式调暗封面时不调暗，和书架一致。 */
+  themeCover: boolean;
 }
 
 /** 整页缩到这枚封面时封面图要还原的裁切比例：书架裁切显示时为封面宽高比，拉伸铺满时为 0。 */
@@ -127,15 +130,23 @@ export struct ReaderShelfCoverOpening {
    */
   @Prop cropAspect: number = 0;
   @State imageAspect: number = 0;
+  @StorageProp('appDarkMode') appDarkMode: boolean = false;
+  @StorageProp('bookshelfDarkCoverDim') darkCoverDim: boolean = false;
+  @StorageProp('bookshelfDarkCoverDimLevel') darkCoverDimLevel: number = 20;
   cover: ShelfOpeningCover = {
     bookUrl: '', cover: '', frame: '', color: '#007DFF', initial: '书',
-    boundsX: 0, boundsY: 0, boundsWidth: 0, boundsHeight: 0, windowWidth: 0, windowHeight: 0, cropImage: false
+    boundsX: 0, boundsY: 0, boundsWidth: 0, boundsHeight: 0, windowWidth: 0, windowHeight: 0, cropImage: false,
+    themeCover: false
   };
 
   /** 图宽高比与封面宽高比之比，大于 1 时图比封面宽、左右裁掉，小于 1 时上下裁掉；不需要裁切时为 1。 */
   croppedImageRatio(): number {
     if (!this.fillImage || this.cropAspect <= 0 || this.imageAspect <= 0) return 1;
     return this.imageAspect / this.cropAspect;
+  }
+
+  dimOpacity(): number {
+    return CoverDimSettings.opacity(this.appDarkMode, this.darkCoverDim, this.darkCoverDimLevel);
   }
 
   build() {
@@ -162,6 +173,14 @@ export struct ReaderShelfCoverOpening {
         .height('100%')
         .justifyContent(FlexAlign.Center)
         .backgroundColor(this.cover.color)
+      }
+      // 和书架上一样调暗，翻开与缩回时封面亮度不跳；主题封面不调暗。
+      if (!this.cover.themeCover && this.dimOpacity() > 0) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#000000')
+          .opacity(this.dimOpacity())
       }
       if (this.cover.frame) {
         Image(this.cover.frame)

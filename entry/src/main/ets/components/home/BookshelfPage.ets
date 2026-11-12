@@ -54,6 +54,7 @@ import { SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsSto
 import { AppThemeSettingsStore } from '../../utils/AppThemeSettingsStore';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 import { ThemeBookCoverSettings } from '../../utils/ThemeBookCoverSettings';
+import { CoverDimSettings } from '../../utils/CoverDimSettings';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { HexColor } from '../../utils/HexColor';
 import { LocalBookService } from '../../core/book/LocalBookService';
@@ -552,6 +553,8 @@ export struct BookshelfPage {
   @StorageLink('bookshelfIgnoreSourceCover') @Watch('onShelfCoverSettingsChanged') bookshelfIgnoreSourceCover: boolean = false;
   @StorageLink('bookshelfIgnoreEmptyCoverOnly') @Watch('onShelfCoverSettingsChanged') bookshelfIgnoreEmptyCoverOnly: boolean = false;
   @StorageLink('bookshelfCoverMode') @Watch('onShelfCoverSettingsChanged') bookshelfCoverMode: string = 'sequence';
+  @StorageProp('bookshelfDarkCoverDim') bookshelfDarkCoverDim: boolean = false;
+  @StorageProp('bookshelfDarkCoverDimLevel') bookshelfDarkCoverDimLevel: number = 20;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @StorageLink('appLightButtonColor') appLightButtonColor: string = '#007DFF';
@@ -1979,6 +1982,9 @@ export struct BookshelfPage {
             Text(flyer.initial)
               .fontSize(28)
               .fontColor('#FFFFFF')
+          }
+          if (!flyer.fill && this.shelfCoverDimOpacity() > 0) {
+            this.shelfCoverDimLayer()
           }
         }
         .width(flyer.width)
@@ -5790,7 +5796,8 @@ export struct BookshelfPage {
     const opening: ShelfOpeningCover = {
       bookUrl: book.bookUrl, cover: '', frame: '', color: this.getBookColor(book.name),
       initial: book.name ? book.name.substring(0, 1) : '书',
-      boundsX: 0, boundsY: 0, boundsWidth: 0, boundsHeight: 0, windowWidth: 0, windowHeight: 0, cropImage: false
+      boundsX: 0, boundsY: 0, boundsWidth: 0, boundsHeight: 0, windowWidth: 0, windowHeight: 0, cropImage: false,
+      themeCover: false
     };
     this.measureShelfOpeningBounds(book, opening, touchX, touchY);
     if (this.shouldUseThemeBookCover()) {
@@ -5798,6 +5805,7 @@ export struct BookshelfPage {
       opening.cover = covers.length > 0 ? covers[0] : '';
       opening.frame = this.activeThemeShelfFrame();
       opening.color = this.inputColor();
+      opening.themeCover = true;
     } else {
       const covers = this.getShelfCoverList(book);
       opening.cover = covers.length > 0 ? this.imageCover(covers[0]) : '';
@@ -6413,6 +6421,10 @@ export struct BookshelfPage {
         .indicator(false)
         .loop(true)
       }
+      // 深色模式调暗封面：盖在图片上、角标和标记之下；主题封面不调暗。
+      if (!this.shouldUseThemeBookCover() && this.shelfCoverDimOpacity() > 0) {
+        this.shelfCoverDimLayer()
+      }
       if (CloudAutoSync.isPlaceholder(book)) {
         // 云端占位书显示当前进度或排队位置，其他书仍可继续点选下载。
         Stack({ alignContent: Alignment.Center }) {
@@ -6485,6 +6497,21 @@ export struct BookshelfPage {
     const context = getContext(this);
     return covers.map((cover: ResourceStr): ResourceStr =>
       typeof cover === 'string' ? AnimatedImagePolicy.display(context, cover) : cover);
+  }
+
+  /** 深色模式调暗封面的遮罩不透明度，0 表示不调暗。 */
+  shelfCoverDimOpacity(): number {
+    return CoverDimSettings.opacity(this.appDarkMode, this.bookshelfDarkCoverDim, this.bookshelfDarkCoverDimLevel);
+  }
+
+  @Builder
+  shelfCoverDimLayer() {
+    Column()
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#000000')
+      .opacity(this.shelfCoverDimOpacity())
+      .hitTestBehavior(HitTestMode.None)
   }
 
   shouldUseThemeBookCover(): boolean {
@@ -9443,6 +9470,9 @@ export struct BookshelfPage {
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)
+        if (this.shelfCoverDimOpacity() > 0) {
+          this.shelfCoverDimLayer()
+        }
       }
     }
     .width(24)

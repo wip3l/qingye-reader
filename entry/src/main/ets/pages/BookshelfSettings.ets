@@ -26,6 +26,7 @@ import { ShelfGreetingEditor } from '../components/home/ShelfGreetingEditor';
 import { ShelfSectionTitleEditor } from '../components/home/ShelfSectionTitleEditor';
 import { ShelfGreetingTemplate } from '../utils/ShelfGreetingTemplate';
 import { BookshelfSortHelper } from '../utils/BookshelfSortHelper';
+import { CoverDimSettings } from '../utils/CoverDimSettings';
 
 @Entry
 @Component
@@ -63,6 +64,8 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfIgnoreSourceCover') bookshelfIgnoreSourceCover: boolean = false;
   @StorageLink('bookshelfIgnoreEmptyCoverOnly') bookshelfIgnoreEmptyCoverOnly: boolean = false;
   @StorageLink('bookshelfCoverMode') bookshelfCoverMode: string = 'sequence';
+  @StorageLink('bookshelfDarkCoverDim') bookshelfDarkCoverDim: boolean = false;
+  @StorageLink('bookshelfDarkCoverDimLevel') bookshelfDarkCoverDimLevel: number = 20;
   @StorageLink('coverGalleryUpdateTime') @Watch('onCoverGalleryUpdateTimeChanged') coverGalleryUpdateTime: number = 0;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -347,6 +350,25 @@ struct BookshelfSettingsPage {
         this.bookshelfCoverMode = index === 2 ? 'fixed' : index === 1 ? 'random' : 'sequence';
         this.onCoverSettingChanged();
       })
+    this.itemDivider()
+    SettingSwitchRow({
+      title: '深色模式调暗封面',
+      description: '深色模式下降低封面亮度，夜里看书架不刺眼',
+      isOn: this.bookshelfDarkCoverDim,
+      showDivider: false,
+      onChange: (value: boolean) => {
+        this.bookshelfDarkCoverDim = value;
+        this.onCoverSettingChanged();
+      }
+    })
+    if (this.bookshelfDarkCoverDim) {
+      this.itemDivider()
+      this.selectItem('调暗程度', '封面亮的书多可以选强一些',
+        this.darkCoverDimOptions(), this.darkCoverDimSelectedIndex(), (index: number) => {
+          this.bookshelfDarkCoverDimLevel = CoverDimSettings.LEVELS[index] ?? CoverDimSettings.DEFAULT_LEVEL;
+          this.onCoverSettingChanged();
+        })
+    }
     this.itemDivider()
     SettingSwitchRow({
       title: '忽略原始封面',
@@ -665,6 +687,8 @@ struct BookshelfSettingsPage {
     this.bookshelfIgnoreSourceCover = snapshot.ignoreSourceCover;
     this.bookshelfIgnoreEmptyCoverOnly = snapshot.ignoreEmptyCoverOnly;
     this.bookshelfCoverMode = snapshot.coverMode;
+    this.bookshelfDarkCoverDim = snapshot.darkDim;
+    this.bookshelfDarkCoverDimLevel = snapshot.darkDimLevel;
     this.syncAlbums(albumsRaw);
     this.bumpSettingsRender();
     if (this.showTargetBookList) {
@@ -766,6 +790,8 @@ struct BookshelfSettingsPage {
     snapshot.ignoreSourceCover = this.bookshelfIgnoreSourceCover;
     snapshot.ignoreEmptyCoverOnly = this.bookshelfIgnoreEmptyCoverOnly;
     snapshot.coverMode = this.bookshelfCoverMode;
+    snapshot.darkDim = this.bookshelfDarkCoverDim;
+    snapshot.darkDimLevel = CoverDimSettings.normalizeLevel(this.bookshelfDarkCoverDimLevel);
     return snapshot;
   }
 
@@ -789,6 +815,17 @@ struct BookshelfSettingsPage {
   modeSelectedIndex(): number {
     if (this.bookshelfCoverMode === 'fixed') return 2;
     return this.bookshelfCoverMode === 'random' ? 1 : 0;
+  }
+
+  darkCoverDimOptions(): SelectOption[] {
+    return CoverDimSettings.LEVELS.map((level: number, index: number): SelectOption => {
+      const option: SelectOption = { value: `${CoverDimSettings.LEVEL_NAMES[index]}（${level}%）` };
+      return option;
+    });
+  }
+
+  darkCoverDimSelectedIndex(): number {
+    return Math.max(0, CoverDimSettings.LEVELS.indexOf(CoverDimSettings.normalizeLevel(this.bookshelfDarkCoverDimLevel)));
   }
 
   albumOptions(): SelectOption[] {

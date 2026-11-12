@@ -1,5 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import preferences from '@ohos.data.preferences';
+import { CoverDimSettings } from './CoverDimSettings';
 
 export class CoverGallerySnapshot {
   albumsRaw: string = '';
@@ -11,6 +12,9 @@ export class CoverGallerySnapshot {
   /** 忽略原始封面的子选项：只在书本身没有封面时改用图集。 */
   ignoreEmptyCoverOnly: boolean = false;
   coverMode: string = 'sequence';
+  /** 深色模式调暗封面（见 CoverDimSettings）。 */
+  darkDim: boolean = false;
+  darkDimLevel: number = CoverDimSettings.DEFAULT_LEVEL;
 }
 
 export class CoverGalleryStore {
@@ -48,6 +52,8 @@ export class CoverGalleryStore {
     await store.put(CoverGalleryStore.KEY_IGNORE_SOURCE, snapshot.ignoreSourceCover);
     await store.put(CoverGalleryStore.KEY_IGNORE_EMPTY_ONLY, snapshot.ignoreEmptyCoverOnly);
     await store.put(CoverGalleryStore.KEY_COVER_MODE, snapshot.coverMode);
+    await store.put(CoverDimSettings.KEY_ENABLED, snapshot.darkDim);
+    await store.put(CoverDimSettings.KEY_LEVEL, snapshot.darkDimLevel);
     await store.flush();
   }
 
@@ -81,11 +87,18 @@ export class CoverGalleryStore {
     AppStorage.setOrCreate(CoverGalleryStore.KEY_IGNORE_SOURCE, snapshot.ignoreSourceCover);
     AppStorage.setOrCreate(CoverGalleryStore.KEY_IGNORE_EMPTY_ONLY, snapshot.ignoreEmptyCoverOnly);
     AppStorage.setOrCreate(CoverGalleryStore.KEY_COVER_MODE, snapshot.coverMode);
+    AppStorage.setOrCreate(CoverDimSettings.KEY_ENABLED, snapshot.darkDim);
+    AppStorage.setOrCreate(CoverDimSettings.KEY_LEVEL, snapshot.darkDimLevel);
   }
 
   private static async getString(store: preferences.Preferences, key: string, fallback: string): Promise<string> {
     const value = await store.get(key, fallback);
     return typeof value === 'string' ? value : fallback;
+  }
+
+  private static async getNumber(store: preferences.Preferences, key: string, fallback: number): Promise<number> {
+    const value = await store.get(key, fallback);
+    return typeof value === 'number' ? value : fallback;
   }
 
   private static async getBoolean(store: preferences.Preferences, key: string, fallback: boolean): Promise<boolean> {
@@ -103,6 +116,8 @@ export class CoverGalleryStore {
     snapshot.ignoreSourceCover = AppStorage.get<boolean>(CoverGalleryStore.KEY_IGNORE_SOURCE) || false;
     snapshot.ignoreEmptyCoverOnly = AppStorage.get<boolean>(CoverGalleryStore.KEY_IGNORE_EMPTY_ONLY) || false;
     snapshot.coverMode = AppStorage.get<string>(CoverGalleryStore.KEY_COVER_MODE) || 'sequence';
+    snapshot.darkDim = AppStorage.get<boolean>(CoverDimSettings.KEY_ENABLED) || false;
+    snapshot.darkDimLevel = CoverDimSettings.normalizeLevel(AppStorage.get<number>(CoverDimSettings.KEY_LEVEL) || 0);
     return snapshot;
   }
 
@@ -117,6 +132,9 @@ export class CoverGalleryStore {
     snapshot.ignoreSourceCover = await CoverGalleryStore.getBoolean(store, CoverGalleryStore.KEY_IGNORE_SOURCE, false);
     snapshot.ignoreEmptyCoverOnly = await CoverGalleryStore.getBoolean(store, CoverGalleryStore.KEY_IGNORE_EMPTY_ONLY, false);
     snapshot.coverMode = await CoverGalleryStore.getString(store, CoverGalleryStore.KEY_COVER_MODE, 'sequence');
+    snapshot.darkDim = await CoverGalleryStore.getBoolean(store, CoverDimSettings.KEY_ENABLED, false);
+    snapshot.darkDimLevel = CoverDimSettings.normalizeLevel(
+      await CoverGalleryStore.getNumber(store, CoverDimSettings.KEY_LEVEL, CoverDimSettings.DEFAULT_LEVEL));
     return snapshot;
   }
 
@@ -134,6 +152,8 @@ export class CoverGalleryStore {
     snapshot.ignoreSourceCover = source.ignoreSourceCover;
     snapshot.ignoreEmptyCoverOnly = source.ignoreEmptyCoverOnly;
     snapshot.coverMode = source.coverMode;
+    snapshot.darkDim = source.darkDim;
+    snapshot.darkDimLevel = source.darkDimLevel;
     return snapshot;
   }
 }

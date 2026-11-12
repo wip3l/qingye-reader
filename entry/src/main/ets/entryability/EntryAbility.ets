@@ -247,6 +247,9 @@ export default class EntryAbility extends UIAbility {
     PersistentStorage.persistProp('bookshelfIgnoreSourceCover', false);
     PersistentStorage.persistProp('bookshelfIgnoreEmptyCoverOnly', false);
     PersistentStorage.persistProp('bookshelfCoverMode', 'sequence');
+    // 首帧就要按深色调暗画封面，不等封面设置异步读完。
+    PersistentStorage.persistProp('bookshelfDarkCoverDim', false);
+    PersistentStorage.persistProp('bookshelfDarkCoverDimLevel', 20);
     PersistentStorage.persistProp('searchExploreShowResultCover', true);
     PersistentStorage.persistProp('searchExploreShowResultCoverBackground', true);
     PersistentStorage.persistProp('searchExploreUseBookshelfCoverGallery', false);
