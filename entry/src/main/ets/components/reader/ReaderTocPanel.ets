@@ -14,6 +14,7 @@ import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { BookAnnotation, BookAnnotationStyles } from '../../model/reader/BookAnnotation';
+import { TocVolumeFold } from '../../core/reader/TocVolumeFold';
 
 const TOC_WINDOW_PAGE_SIZE = 72;
 const TOC_SCROLLBAR_DRAG_UPDATE_INTERVAL_MS = 90;
@@ -40,6 +41,9 @@ export class ReaderTocPanelController {
  * 目录只挂载一个 72 章的窗口，滚动到两端时再续上相邻的一段，长篇目录因此不会一次创建上千个列表项；
  * 右侧的滚动条按全书章节数换算，可以直接拖到任意位置。搜索、倒序、章节序号跳转、
  * 书签多选这些状态都属于面板自己，面板每次打开重新创建，从当前章节开始。
+ *
+ * 分卷的书点卷名收起或展开这一卷，长按卷名全部收起或全部展开（见 TocVolumeFold）。有卷收起时，
+ * 窗口和滚动条按收起后的列表（displayOrder）换算；搜索结果不受收起影响。
  */
 @Component
 export struct ReaderTocPanel {
@@ -125,6 +129,13 @@ export struct ReaderTocPanel {
   @State private deleteParticleBursts: DeleteParticleBurst[] = [];
   @State private noteItems: BookAnnotation[] = [];
   @State private dissolvingNoteKeys: string[] = [];
+  /** 收起的卷（卷首章在 chapters 里的位置）。 */
+  @State private collapsedVolumes: number[] = [];
+  private volumeStarts: number[] = [];
+  /** 有卷收起时按列表顺序排好的章节位置；没有收起时为 null，列表就是全部章节。 */
+  private displayOrder: number[] | null = null;
+  private displayOrderSignature: string = '';
+  private volumeStartsSignature: string = '';
   private noteScroller: ListScroller = new ListScroller();
   private searchRequestSerial: number = 0;
   private scrollbarPointerAnchor: number = 0;
@@ -149,6 +160,7 @@ export struct ReaderTocPanel {
     }
     this.databaseChapterCount = this.chapters.length;
     this.firstVisibleGlobalIndex = this.currentChapterIndex;
+    this.restoreCollapsedVolumes();
     this.setWindowAround(this.currentChapterIndex, ScrollAlign.CENTER);
     this.scrollToCurrentChapter(false);
     this.onLoadBookmarks();
@@ -184,13 +196,149 @@ export struct ReaderTocPanel {
     if (this.isSearchActive()) {
       return this.searchChapterIndexes[localIndex] ?? 0;
     }
-    const displayIndex = this.windowStart + localIndex;
+    return this.canonicalAtDisplayIndex(this.windowStart + localIndex);
+  }
+
+  // ---------------------------------------------------------------- 分卷收起
+
+  /** 章节在 chapters 里的位置；章节对象的 index 通常就是位置。 */
+  private positionOf(chapter: BookChapter): number {
+    const index = chapter.index;
+    if (index >= 0 && index < this.chapters.length && this.chapters[index] === chapter) return index;
+    const found = this.chapters.indexOf(chapter);
+    return found >= 0 ? found : index;
+  }
+
+  /** 章节、倒序或收起的卷变了才重排；有卷收起时 displayOrder 是收起后的列表。 */
+  private ensureDisplayOrder(): void {
+    const total = this.chapters.length;
+    const first = total > 0 ? this.chapters[0] : undefined;
+    const last = total > 0 ? this.chapters[total - 1] : undefined;
+    const chapterSignature = `${total}|${first?.url || first?.title || ''}|${last?.url || last?.title || ''}`;
+    if (chapterSignature !== this.volumeStartsSignature) {
+      const starts: number[] = [];
+      for (let i = 0; i < total; i++) {
+        if (BookChapter.volumeTitleOf(this.chapters[i])) starts.push(i);
+      }
+      this.volumeStarts = starts;
+      this.volumeStartsSignature = chapterSignature;
+      const kept = TocVolumeFold.sanitize(starts, this.collapsedVolumes);
+      if (kept.length !== this.collapsedVolumes.length) this.collapsedVolumes = kept;
+    }
+    const signature = `${chapterSignature}|${this.reverseOrder ? 1 : 0}|${this.collapsedVolumes.join(',')}`;
+    if (signature === this.displayOrderSignature) return;
+    this.displayOrder = this.collapsedVolumes.length > 0 ?
+      TocVolumeFold.visiblePositions(this.volumeStarts, this.collapsedVolumes, total, this.reverseOrder) : null;
+    this.displayOrderSignature = signature;
+  }
+
+  private displayCount(): number {
+    this.ensureDisplayOrder();
+    return this.displayOrder ? this.displayOrder.length : this.chapters.length;
+  }
+
+  private canonicalAtDisplayIndex(displayIndex: number): number {
+    this.ensureDisplayOrder();
+    const order = this.displayOrder;
+    if (order) return order[Math.max(0, Math.min(displayIndex, order.length - 1))] ?? 0;
     return this.reverseOrder ? this.chapters.length - 1 - displayIndex : displayIndex;
   }
 
+  /** 章节在列表里的下标；被收起的章节落到所在卷的卷头行。 */
+  private displayIndexOf(canonicalIndex: number): number {
+    this.ensureDisplayOrder();
+    const order = this.displayOrder;
+    if (order) {
+      return TocVolumeFold.displayIndexOf(order, this.volumeStarts, this.collapsedVolumes, canonicalIndex,
+        this.chapters.length, this.reverseOrder);
+    }
+    return this.reverseOrder ? this.chapters.length - 1 - canonicalIndex : canonicalIndex;
+  }
+
+  private foldMemoryKey(): string {
+    const bookUrl = this.book?.bookUrl || '';
+    return bookUrl ? `${bookUrl}|${this.chapters.length}` : '';
+  }
+
+  private restoreCollapsedVolumes(): void {
+    this.collapsedVolumes = TocVolumeFold.recall(this.foldMemoryKey());
+    this.ensureDisplayOrder();
+    // 打开目录时总能看到当前章节。
+    this.expandVolumeOf(this.currentChapterIndex);
+  }
+
+  /** 章节所在的卷收起着就展开它；返回是否改了收起状态。 */
+  private expandVolumeOf(canonicalIndex: number): boolean {
+    this.ensureDisplayOrder();
+    const start = TocVolumeFold.volumeOf(this.volumeStarts, canonicalIndex);
+    if (start < 0 || this.collapsedVolumes.indexOf(start) < 0) return false;
+    this.setCollapsedVolumes(this.collapsedVolumes.filter((item: number) => item !== start));
+    return true;
+  }
+
+  private setCollapsedVolumes(collapsed: number[]): void {
+    this.collapsedVolumes = collapsed;
+    this.ensureDisplayOrder();
+    TocVolumeFold.remember(this.foldMemoryKey(), this.collapsedVolumes);
+  }
+
+  /** 这一行上方要画卷头时返回卷首位置，否则 -1。 */
+  private volumeHeadOf(chapter: BookChapter): number {
+    this.ensureDisplayOrder();
+    if (this.volumeStarts.length === 0) return -1;
+    return TocVolumeFold.headVolumeAt(this.volumeStarts, this.positionOf(chapter), this.chapters.length,
+      this.reverseOrder);
+  }
+
+  private isVolumeCollapsed(start: number): boolean {
+    return start >= 0 && !this.isSearchActive() && this.collapsedVolumes.indexOf(start) >= 0;
+  }
+
+  private volumeChapterCount(start: number): number {
+    return TocVolumeFold.volumeEnd(this.volumeStarts, start, this.chapters.length) - start;
+  }
+
+  private volumeContainsCurrent(start: number): boolean {
+    return TocVolumeFold.volumeOf(this.volumeStarts, this.currentChapterIndex) === start;
+  }
+
+  /**
+   * 收起或展开一卷。变化都在卷头下方，窗口从原来的起点按新列表重新取，
+   * 卷头上方的列表项不变，滚动位置因此保持。
+   */
+  private toggleVolume(start: number): void {
+    if (start < 0 || this.isSearchActive()) return;
+    const collapsed = this.collapsedVolumes.indexOf(start) >= 0 ?
+      this.collapsedVolumes.filter((item: number) => item !== start) : this.collapsedVolumes.concat([start]);
+    this.setCollapsedVolumes(collapsed);
+    this.refillWindow();
+  }
+
+  /** 长按卷名：有展开的卷就全部收起，否则全部展开；之后把长按的那一卷移到顶部。 */
+  private toggleAllVolumes(start: number): void {
+    if (start < 0 || this.isSearchActive()) return;
+    this.ensureDisplayOrder();
+    const collapseAll = this.collapsedVolumes.length < this.volumeStarts.length;
+    this.setCollapsedVolumes(collapseAll ? this.volumeStarts.slice() : []);
+    HdsFeedback.showToast(collapseAll ? '已收起全部分卷' : '已展开全部分卷');
+    this.scrollToChapter(TocVolumeFold.headPosition(this.volumeStarts, start, this.chapters.length,
+      this.reverseOrder), ScrollAlign.START, false);
+  }
+
+  private refillWindow(): void {
+    const count = this.displayCount();
+    const start = Math.max(0, Math.min(this.windowStart, Math.max(0, count - 1)));
+    const end = Math.min(count, start + Math.max(this.visibleChapters.length, TOC_WINDOW_PAGE_SIZE));
+    const visibleChapters: BookChapter[] = [];
+    for (let displayIndex = start; displayIndex < end; displayIndex++) {
+      visibleChapters.push(this.chapterAtDisplayIndex(displayIndex));
+    }
+    this.windowStart = start;
+    this.visibleChapters = visibleChapters;
+  }
+
   private chapterAtDisplayIndex(displayIndex: number): BookChapter {
-    const canonicalIndex = this.reverseOrder ? this.chapters.length - 1 - displayIndex : displayIndex;
-    return this.chapters[canonicalIndex];
+    return this.chapters[this.canonicalAtDisplayIndex(displayIndex)];
   }
 
   private setWindowAround(index: number, align: ScrollAlign): number {
@@ -202,15 +350,16 @@ export struct ReaderTocPanel {
       return 0;
     }
     const canonicalTarget = Math.max(0, Math.min(index, this.chapters.length - 1));
-    const target = this.reverseOrder ? this.chapters.length - 1 - canonicalTarget : canonicalTarget;
+    const count = this.displayCount();
+    const target = this.displayIndexOf(canonicalTarget);
     let start = target - Math.floor(TOC_WINDOW_PAGE_SIZE / 2);
     if (align === ScrollAlign.START) {
       start = target;
     } else if (align === ScrollAlign.END) {
       start = target - TOC_WINDOW_PAGE_SIZE + 1;
     }
-    start = Math.max(0, Math.min(start, Math.max(0, this.chapters.length - TOC_WINDOW_PAGE_SIZE)));
-    const end = Math.min(this.chapters.length, start + TOC_WINDOW_PAGE_SIZE);
+    start = Math.max(0, Math.min(start, Math.max(0, count - TOC_WINDOW_PAGE_SIZE)));
+    const end = Math.min(count, start + TOC_WINDOW_PAGE_SIZE);
     const visibleChapters: BookChapter[] = [];
     for (let displayIndex = start; displayIndex < end; displayIndex++) {
       visibleChapters.push(this.chapterAtDisplayIndex(displayIndex));
@@ -223,9 +372,10 @@ export struct ReaderTocPanel {
   private loadNextPage(): void {
     if (this.isSearchActive() || this.positioning || this.loadingNextPage) return;
     const loadedEnd = this.windowStart + this.visibleChapters.length;
-    if (loadedEnd >= this.chapters.length) return;
+    const count = this.displayCount();
+    if (loadedEnd >= count) return;
     this.loadingNextPage = true;
-    const nextEnd = Math.min(this.chapters.length, loadedEnd + TOC_WINDOW_PAGE_SIZE);
+    const nextEnd = Math.min(count, loadedEnd + TOC_WINDOW_PAGE_SIZE);
     const nextChapters: BookChapter[] = [];
     for (let displayIndex = loadedEnd; displayIndex < nextEnd; displayIndex++) {
       nextChapters.push(this.chapterAtDisplayIndex(displayIndex));
@@ -435,6 +585,7 @@ export struct ReaderTocPanel {
       }, 50);
       return;
     }
+    this.expandVolumeOf(this.currentChapterIndex);
     this.scrollToCurrentChapter();
     this.quickJumpArmed = true;
   }
@@ -455,6 +606,7 @@ export struct ReaderTocPanel {
     this.quickJumpInputVisible = false;
     this.quickJumpDraft = '';
     this.quickJumpArmed = false;
+    this.expandVolumeOf(chapterNumber - 1);
     this.scrollToChapter(chapterNumber - 1, ScrollAlign.CENTER);
   }
 
@@ -466,21 +618,33 @@ export struct ReaderTocPanel {
     this.visibleItemCount = Math.max(1, end - start + 1);
   }
 
+  /** 有卷收起且不在搜索时，滚动条按收起后的列表换算。 */
+  private scrollbarFolded(): boolean {
+    this.ensureDisplayOrder();
+    return this.displayOrder !== null && !this.isSearchActive();
+  }
+
+  private scrollbarTotal(): number {
+    return this.scrollbarFolded() ? this.displayCount() : this.databaseChapterCount;
+  }
+
   private shouldShowScrollbar(): boolean {
-    return this.listViewportHeight > 0 && this.databaseChapterCount > this.visibleItemCount;
+    return this.listViewportHeight > 0 && this.scrollbarTotal() > this.visibleItemCount;
   }
 
   private scrollbarThumbLength(): number {
-    return VirtualListScrollbar.thumbLength(this.listViewportHeight, this.databaseChapterCount,
+    return VirtualListScrollbar.thumbLength(this.listViewportHeight, this.scrollbarTotal(),
       this.visibleItemCount);
   }
 
   private scrollbarThumbOffset(): number {
     const thumbLength = this.scrollbarThumbLength();
-    const firstVisibleIndex = this.reverseOrder ?
-      this.databaseChapterCount - 1 - this.firstVisibleGlobalIndex : this.firstVisibleGlobalIndex;
+    const total = this.scrollbarTotal();
+    let firstVisibleIndex = this.reverseOrder ?
+      total - 1 - this.firstVisibleGlobalIndex : this.firstVisibleGlobalIndex;
+    if (this.scrollbarFolded()) firstVisibleIndex = this.displayIndexOf(this.firstVisibleGlobalIndex);
     return VirtualListScrollbar.thumbOffset(this.listViewportHeight, thumbLength,
-      this.databaseChapterCount, firstVisibleIndex, this.visibleItemCount);
+      total, firstVisibleIndex, this.visibleItemCount);
   }
 
   private displayedScrollbarThumbOffset(): number {
@@ -537,9 +701,11 @@ export struct ReaderTocPanel {
     const offset = VirtualListScrollbar.clampThumbOffset(this.listViewportHeight, thumbLength,
       pointerY - this.scrollbarPointerAnchor);
     this.scrollbarDragOffset = offset;
+    const total = this.scrollbarTotal();
     const targetIndex = VirtualListScrollbar.firstVisibleIndex(this.listViewportHeight, thumbLength,
-      this.databaseChapterCount, this.visibleItemCount, offset);
-    const targetChapterIndex = this.reverseOrder ? this.databaseChapterCount - 1 - targetIndex : targetIndex;
+      total, this.visibleItemCount, offset);
+    const targetChapterIndex = this.scrollbarFolded() ? this.canonicalAtDisplayIndex(targetIndex) :
+      (this.reverseOrder ? total - 1 - targetIndex : targetIndex);
     this.firstVisibleGlobalIndex = targetChapterIndex;
     if (this.scrollbarDragging) {
       this.queueScrollbarTarget(targetChapterIndex, TOC_SCROLLBAR_DRAG_UPDATE_INTERVAL_MS);
@@ -1172,16 +1338,40 @@ export struct ReaderTocPanel {
         ForEach(this.visibleChapters, (chapter: BookChapter) => {
           ListItem() {
             Column() {
-            if (BookChapter.volumeTitleOf(chapter)) {
-              Text(BookChapter.volumeTitleOf(chapter))
-                .fontSize(AppFontSize.BODY)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(this.subTextColor)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .width('100%')
-                .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.SM })
+            if (this.volumeHeadOf(chapter) >= 0) {
+              Row({ space: AppSpacing.SM }) {
+                Text(BookChapter.volumeTitleOf(this.chapters[this.volumeHeadOf(chapter)]))
+                  .fontSize(AppFontSize.BODY)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(this.isVolumeCollapsed(this.volumeHeadOf(chapter)) &&
+                    this.volumeContainsCurrent(this.volumeHeadOf(chapter)) ? this.accentColor : this.subTextColor)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .layoutWeight(1)
+                if (!this.isSearchActive()) {
+                  if (this.isVolumeCollapsed(this.volumeHeadOf(chapter))) {
+                    Text(`${this.volumeChapterCount(this.volumeHeadOf(chapter))} 章`)
+                      .fontSize(AppFontSize.CAPTION)
+                      .fontColor(this.subTextColor)
+                  }
+                  SymbolGlyph($r('sys.symbol.chevron_down'))
+                    .fontSize(14)
+                    .fontColor([this.subTextColor])
+                    .rotate({ angle: this.isVolumeCollapsed(this.volumeHeadOf(chapter)) ? -90 : 0 })
+                    .animation({ duration: 200, curve: Curve.FastOutSlowIn })
+                }
+              }
+              .width('100%')
+              .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG,
+                bottom: this.isVolumeCollapsed(this.volumeHeadOf(chapter)) ? AppSpacing.LG : AppSpacing.SM })
+              .border({ width: { bottom: this.isVolumeCollapsed(this.volumeHeadOf(chapter)) ? 0.5 : 0 },
+                color: ThemeRuntime.softFillColor(this.dark) })
+              .accessibilityText(this.isVolumeCollapsed(this.volumeHeadOf(chapter)) ? '展开本卷' : '收起本卷')
+              .onClick(() => this.toggleVolume(this.volumeHeadOf(chapter)))
+              .gesture(LongPressGesture({ repeat: false })
+                .onAction(() => this.toggleAllVolumes(this.volumeHeadOf(chapter))))
             }
+            if (!this.isVolumeCollapsed(this.volumeHeadOf(chapter))) {
             Row({ space: AppSpacing.MD }) {
               Text(chapter.index === this.currentChapterIndex ? '•' : '·')
                 .fontSize(chapter.index === this.currentChapterIndex ? 22 : 18)
@@ -1214,6 +1404,7 @@ export struct ReaderTocPanel {
               this.selectedColor : Color.Transparent)
             .border({ width: { bottom: 0.5 }, color: ThemeRuntime.softFillColor(this.dark) })
             .onClick(() => this.onJumpToChapter(chapter.index))
+            }
             }
           }
         }, (chapter: BookChapter) =>

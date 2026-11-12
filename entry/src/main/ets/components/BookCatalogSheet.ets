@@ -5,6 +5,7 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ImmersiveBackButton } from './ImmersiveBackButton';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { TocVolumeFold } from '../core/reader/TocVolumeFold';
 
 const LOAD_LOADING: string = 'loading';
 const LOAD_READY: string = 'ready';
@@ -46,6 +47,7 @@ class CatalogSheetDataSource implements IDataSource {
  * 只负责取目录、搜索、排序与展示；点中章节后交给宿主页面落库并跳转，
  * 这样临时阅读书的写入与"加入书架"提示仍走详情页自己的那一套。
  * 宿主页面必须挂着 WebBookFetchRuntimeHost，否则需要 Web 通道的书源取不到目录。
+ * 分卷的书点卷名收起或展开这一卷，长按卷名全部收起或全部展开（见 TocVolumeFold）；搜索结果不受收起影响。
  */
 @Component
 export struct BookCatalogSheet {
@@ -73,6 +75,11 @@ export struct BookCatalogSheet {
   @State currentIndex: number = -1;
   @State keyword: string = '';
   @State searchVisible: boolean = false;
+  /** 收起的卷（卷首章在 chapters 里的位置）。 */
+  @State collapsedVolumes: number[] = [];
+  private volumeStarts: number[] = [];
+  /** 当前列表按顺序对应的章节位置。 */
+  private displayPositions: number[] = [];
   private alive: boolean = true;
   private dataSource: CatalogSheetDataSource = new CatalogSheetDataSource();
   private scroller: Scroller = new Scroller();
@@ -292,16 +299,39 @@ export struct BookCatalogSheet {
       LazyForEach(this.dataSource, (chapter: BookChapter) => {
         ListItem() {
           Column() {
-            if (BookChapter.volumeTitleOf(chapter)) {
-              Text(BookChapter.volumeTitleOf(chapter))
-                .fontSize(AppFontSize.BODY)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(this.subTextColor())
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .width('100%')
-                .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.SM })
+            if (this.volumeHeadOf(chapter) >= 0) {
+              Row({ space: AppSpacing.SM }) {
+                Text(BookChapter.volumeTitleOf(this.chapters[this.volumeHeadOf(chapter)]))
+                  .fontSize(AppFontSize.BODY)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(this.isVolumeCollapsed(this.volumeHeadOf(chapter)) &&
+                    this.volumeContainsCurrent(this.volumeHeadOf(chapter)) ? this.accentColor() : this.subTextColor())
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .layoutWeight(1)
+                if (!this.searchActive()) {
+                  if (this.isVolumeCollapsed(this.volumeHeadOf(chapter))) {
+                    Text(`${this.volumeChapterCount(this.volumeHeadOf(chapter))} ${this.unitText()}`)
+                      .fontSize(AppFontSize.CAPTION)
+                      .fontColor(this.subTextColor())
+                  }
+                  SymbolGlyph($r('sys.symbol.chevron_down'))
+                    .fontSize(14)
+                    .fontColor([this.subTextColor()])
+                    .rotate({ angle: this.isVolumeCollapsed(this.volumeHeadOf(chapter)) ? -90 : 0 })
+                }
+              }
+              .width('100%')
+              .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG,
+                bottom: this.isVolumeCollapsed(this.volumeHeadOf(chapter)) ? AppSpacing.LG : AppSpacing.SM })
+              .border({ width: { bottom: this.isVolumeCollapsed(this.volumeHeadOf(chapter)) ? 0.5 : 0 },
+                color: ThemeRuntime.softFillColor(this.appDarkMode) })
+              .accessibilityText(this.isVolumeCollapsed(this.volumeHeadOf(chapter)) ? '展开本卷' : '收起本卷')
+              .onClick((): void => this.toggleVolume(this.volumeHeadOf(chapter)))
+              .gesture(LongPressGesture({ repeat: false })
+                .onAction((): void => this.toggleAllVolumes(this.volumeHeadOf(chapter))))
             }
+            if (!this.isVolumeCollapsed(this.volumeHeadOf(chapter))) {
             Row({ space: AppSpacing.MD }) {
               Text(chapter.index === this.currentIndex ? '•' : '·')
                 .fontSize(chapter.index === this.currentIndex ? 22 : 18)
@@ -334,9 +364,12 @@ export struct BookCatalogSheet {
             .onClick((): void => {
               this.onChapterSelected(chapter);
             })
+            }
           }
         }
-      }, (chapter: BookChapter): string => `${chapter.index}_${chapter.url || chapter.title}`)
+        // 卷头行收起/展开时换个键重建这一项，LazyForEach 重载数据时不会漏掉它的变化。
+      }, (chapter: BookChapter): string => `${chapter.index}_${chapter.url || chapter.title}` +
+        `${this.isVolumeCollapsed(this.volumeHeadOf(chapter)) ? '_c' : ''}_${this.reverseOrder ? 'r' : 'f'}`)
     }
     .width('100%')
     .layoutWeight(1)
@@ -405,6 +438,12 @@ export struct BookCatalogSheet {
 
   private applyChapters(list: BookChapter[]): void {
     this.chapters = list;
+    const starts: number[] = [];
+    for (let i = 0; i < list.length; i++) {
+      if (BookChapter.volumeTitleOf(list[i])) starts.push(i);
+    }
+    this.volumeStarts = starts;
+    this.collapsedVolumes = TocVolumeFold.sanitize(starts, TocVolumeFold.recall(this.foldMemoryKey()));
     this.loadState = LOAD_READY;
     this.rebuildDisplayList();
     this.onLoaded(list.length);
@@ -412,11 +451,85 @@ export struct BookCatalogSheet {
 
   private rebuildDisplayList(): void {
     const keyword = this.keyword.trim();
-    const matched: BookChapter[] = keyword.length > 0 ?
-      this.chapters.filter((chapter: BookChapter): boolean => chapter.title.includes(keyword)) : this.chapters;
-    const display: BookChapter[] = this.reverseOrder ? [...matched].reverse() : matched;
-    this.displayedCount = display.length;
-    this.dataSource.replace(display);
+    let positions: number[] = [];
+    if (keyword.length > 0) {
+      const total = this.chapters.length;
+      for (let i = 0; i < total; i++) {
+        const position = this.reverseOrder ? total - 1 - i : i;
+        if (this.chapters[position].title.includes(keyword)) positions.push(position);
+      }
+    } else {
+      positions = TocVolumeFold.visiblePositions(this.volumeStarts, this.collapsedVolumes,
+        this.chapters.length, this.reverseOrder);
+    }
+    this.displayPositions = positions;
+    this.displayedCount = positions.length;
+    this.dataSource.replace(positions.map((position: number): BookChapter => this.chapters[position]));
+  }
+
+  private searchActive(): boolean {
+    return this.keyword.trim().length > 0;
+  }
+
+  private foldMemoryKey(): string {
+    const bookUrl = this.book.bookUrl || '';
+    return bookUrl ? `${bookUrl}|${this.chapters.length}` : '';
+  }
+
+  private positionOf(chapter: BookChapter): number {
+    const index = chapter.index;
+    if (index >= 0 && index < this.chapters.length && this.chapters[index] === chapter) return index;
+    const found = this.chapters.indexOf(chapter);
+    return found >= 0 ? found : index;
+  }
+
+  /** 这一行上方要画卷头时返回卷首位置，否则 -1。 */
+  private volumeHeadOf(chapter: BookChapter): number {
+    if (this.volumeStarts.length === 0) return -1;
+    return TocVolumeFold.headVolumeAt(this.volumeStarts, this.positionOf(chapter), this.chapters.length,
+      this.reverseOrder);
+  }
+
+  private isVolumeCollapsed(start: number): boolean {
+    return start >= 0 && !this.searchActive() && this.collapsedVolumes.indexOf(start) >= 0;
+  }
+
+  private volumeChapterCount(start: number): number {
+    return TocVolumeFold.volumeEnd(this.volumeStarts, start, this.chapters.length) - start;
+  }
+
+  private volumeContainsCurrent(start: number): boolean {
+    return this.currentIndex >= 0 && TocVolumeFold.volumeOf(this.volumeStarts, this.currentIndex) === start;
+  }
+
+  private setCollapsedVolumes(collapsed: number[]): void {
+    this.collapsedVolumes = collapsed;
+    TocVolumeFold.remember(this.foldMemoryKey(), collapsed);
+    this.rebuildDisplayList();
+  }
+
+  private toggleVolume(start: number): void {
+    if (start < 0 || this.searchActive()) return;
+    this.setCollapsedVolumes(this.collapsedVolumes.indexOf(start) >= 0 ?
+      this.collapsedVolumes.filter((item: number): boolean => item !== start) : this.collapsedVolumes.concat([start]));
+  }
+
+  /** 长按卷名：有展开的卷就全部收起，否则全部展开；之后把长按的那一卷移到顶部。 */
+  private toggleAllVolumes(start: number): void {
+    if (start < 0 || this.searchActive()) return;
+    const collapseAll = this.collapsedVolumes.length < this.volumeStarts.length;
+    this.setCollapsedVolumes(collapseAll ? this.volumeStarts.slice() : []);
+    const head = TocVolumeFold.headPosition(this.volumeStarts, start, this.chapters.length, this.reverseOrder);
+    const displayIndex = this.displayPositions.indexOf(head);
+    if (displayIndex < 0) return;
+    setTimeout((): void => {
+      if (!this.alive) return;
+      try {
+        this.scroller.scrollToIndex(displayIndex, false, ScrollAlign.START);
+      } catch (e) {
+        console.warn('定位分卷失败:', e);
+      }
+    }, 0);
   }
 
   private toggleOrder(): void {
@@ -458,8 +571,15 @@ export struct BookCatalogSheet {
   private scrollToCurrentChapter(): void {
     if (this.currentIndex < 0 || this.keyword.trim().length > 0) return;
     const total = this.chapters.length;
-    const displayIndex = this.reverseOrder ? total - 1 - this.currentIndex : this.currentIndex;
-    if (displayIndex < 0 || displayIndex >= total) return;
+    if (this.currentIndex >= total) return;
+    // 打开目录时总能看到当前章节：它所在的卷收起着就先展开。
+    const currentVolume = TocVolumeFold.volumeOf(this.volumeStarts, this.currentIndex);
+    if (currentVolume >= 0 && this.collapsedVolumes.indexOf(currentVolume) >= 0) {
+      this.setCollapsedVolumes(this.collapsedVolumes.filter((item: number): boolean => item !== currentVolume));
+    }
+    const displayIndex = TocVolumeFold.displayIndexOf(this.displayPositions, this.volumeStarts,
+      this.collapsedVolumes, this.currentIndex, total, this.reverseOrder);
+    if (displayIndex < 0 || displayIndex >= this.displayPositions.length) return;
     // Let the list finish its first layout pass before scrolling; index scrolling on a
     // just-attached List is otherwise a no-op.
     setTimeout((): void => {

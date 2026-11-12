@@ -18,24 +18,36 @@ const jump = rowSource.match(/\.onClick\(\(\) => (this\.onJumpToChapter\([^\n]+)
 const selected = rowSource.match(/\.backgroundColor\(([^\n]+) \?/)[1];
 const key = rowSource.match(/\n\s*(`[^\n]+`)\)/)[1];
 
+const foldSource = fs.readFileSync(new URL('../entry/src/main/ets/core/reader/TocVolumeFold.ts', import.meta.url), 'utf8');
+const TocVolumeFold = vm.runInNewContext(`${stripTypeScriptTypes(foldSource).replace('export class', 'class')}; TocVolumeFold`,
+  { Map, Set });
+// 第 1～3 章不属于任何卷，之后三卷从第 4、21、51 章开始。
+const VOLUMES = { 3: '第一卷', 20: '第二卷', 50: '第三卷' };
+
 function harness(reverseOrder = false) {
   const timers = [];
   const context = vm.createContext({
     console: { info() {}, warn() {} },
     setTimeout: fn => { timers.push(fn); return timers.length; },
-    ScrollAlign: { START: 0, CENTER: 1, END: 2 }, TOC_WINDOW_PAGE_SIZE: 72
+    ScrollAlign: { START: 0, CENTER: 1, END: 2 }, TOC_WINDOW_PAGE_SIZE: 72,
+    TocVolumeFold, BookChapter: { volumeTitleOf: chapter => chapter.volume || '' },
+    HdsFeedback: { showToast() {} }
   });
   const methods = ['isSearchActive', 'globalIndex', 'chapterAtDisplayIndex', 'setWindowAround',
     'submitSearch', 'clearSearchResult', 'toggleOrder', 'scrollToCurrentChapter', 'scrollToChapter',
-    'loadNextPage', 'loadPreviousPage'];
+    'loadNextPage', 'loadPreviousPage', 'positionOf', 'ensureDisplayOrder', 'displayCount',
+    'canonicalAtDisplayIndex', 'displayIndexOf', 'foldMemoryKey', 'expandVolumeOf', 'setCollapsedVolumes',
+    'volumeHeadOf', 'isVolumeCollapsed', 'toggleVolume', 'toggleAllVolumes', 'refillWindow'];
   const panel = vm.runInContext(stripTypeScriptTypes(`({${methods.map(method).join(',')}})`), context);
   const chapters = Array.from({ length: 75 }, (_, index) => ({
-    index, title: `第${index + 1}章`, url: `chapter-${index}`, cacheDate: 1
+    index, title: `第${index + 1}章`, url: `chapter-${index}`, cacheDate: 1, volume: VOLUMES[index] || ''
   }));
   Object.assign(panel, {
     chapters, reverseOrder, currentChapterIndex: 0, book: { bookUrl: 'test-book' },
     searchVisible: true, searchResultActive: false, searchChapterIndexes: [], searchQuery: '',
     searchRequestSerial: 0, positionRequestSerial: 0, orderRevision: 0,
+    collapsedVolumes: [], volumeStarts: [], displayOrder: null, displayOrderSignature: '', volumeStartsSignature: '',
+    visibleChapters: [], windowStart: 0,
     tocScroller: { scrollToIndex() {} },
     chapterTitle: index => chapters[index].title, onJumpToChapter: index => index
   });
@@ -103,4 +115,58 @@ for (const reversed of [false, true]) {
     'extending a catalog window preserves retained row titles');
   assert.deepEqual(rows.map(row => row.jump()), p.visibleChapters.map(chapter => chapter.index));
 }
-console.log('Reader TOC checks passed: retained rows, search, selection, clearing, reverse order and paging.');
+
+// 分卷收起：收起的卷只留卷头行，卷头上方的窗口不动，被收起的章节定位到卷头行。
+for (const reversed of [false, true]) {
+  const h = harness(reversed);
+  const p = h.panel;
+  p.setWindowAround(0, 0);
+  const head = reversed ? 49 : 20;
+  assert.equal(p.volumeHeadOf(p.chapters[head]), 20, 'volume header sits on the first row the volume shows');
+  assert.equal(p.volumeHeadOf(p.chapters[reversed ? 20 : 49]), -1);
+  assert.equal(p.volumeHeadOf(p.chapters[1]), -1, 'chapters before the first volume have no header');
+  const before = p.visibleChapters.slice(0, p.visibleChapters.indexOf(p.chapters[head]) + 1);
+  const startBefore = p.windowStart;
+  p.toggleVolume(20);
+  assert.equal(p.isVolumeCollapsed(20), true);
+  assert.equal(p.windowStart, startBefore, 'collapsing keeps the window start');
+  assert.deepEqual(p.visibleChapters.slice(0, before.length), before, 'rows above the header are untouched');
+  const shown = p.visibleChapters.map(chapter => chapter.index);
+  for (let index = 20; index < 50; index++) {
+    assert.equal(shown.includes(index), index === head, `chapter ${index + 1} visibility`);
+  }
+  assert.equal(p.displayCount(), 75 - 29);
+  assert.equal(p.canonicalAtDisplayIndex(p.displayIndexOf(35)), head, 'hidden chapters map to the header row');
+  const local = p.setWindowAround(35, 1);
+  assert.equal(p.visibleChapters[local].index, head);
+  p.loadNextPage();
+  h.flush();
+  assert.equal(new Set(p.visibleChapters).size, p.visibleChapters.length, 'paging never repeats rows');
+
+  p.toggleOrder();
+  h.flush();
+  assert.equal(p.isVolumeCollapsed(20), true, 'collapse survives order changes');
+  assert.equal(p.chapterAtDisplayIndex(p.displayIndexOf(30)).index, reversed ? 20 : 49);
+
+  p.searchQuery = '3';
+  await p.submitSearch();
+  assert.ok(p.visibleChapters.some(chapter => chapter.index === 29), 'search ignores collapsed volumes');
+  assert.equal(p.isVolumeCollapsed(20), false, 'search results show headers expanded');
+  p.clearSearchResult();
+  h.flush();
+
+  assert.equal(p.expandVolumeOf(25), true);
+  assert.equal(p.displayOrder, null, 'expanding the last collapsed volume drops the display order');
+  p.toggleAllVolumes(50);
+  h.flush();
+  assert.deepEqual([...p.collapsedVolumes], [3, 20, 50]);
+  assert.equal(p.displayCount(), 3 + 3);
+  p.toggleAllVolumes(50);
+  assert.deepEqual([...p.collapsedVolumes], []);
+}
+const remembered = harness(false).panel;
+remembered.toggleVolume(3);
+const reopened = harness(false).panel;
+reopened.collapsedVolumes = TocVolumeFold.recall(reopened.foldMemoryKey());
+assert.deepEqual([...reopened.collapsedVolumes], [3], 'collapsed volumes are remembered per book');
+console.log('Reader TOC checks passed: retained rows, search, selection, clearing, reverse order, paging and volume folding.');
