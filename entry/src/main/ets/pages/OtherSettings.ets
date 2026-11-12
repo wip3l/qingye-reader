@@ -42,6 +42,7 @@ struct OtherSettingsPage {
   @StorageProp('footprintLayout') footprintLayoutRaw: string = '';
   @StorageProp('homeTabBarFlatOpacity') homeTabBarFlatOpacity: number = 100;
   @StorageProp('homeTabBarFlatFrosted') homeTabBarFlatFrosted: boolean = false;
+  @StorageProp('homeTabBarFlatAutoHide') homeTabBarFlatAutoHide: boolean = false;
   /** 拖动不透明度滑杆时的临时值，-1 表示没在拖。 */
   @State flatOpacityDraft: number = -1;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
@@ -221,6 +222,12 @@ struct OtherSettingsPage {
           isOn: this.homeTabBarFlatFrosted,
           switchEnabled: this.flatOpacityValue() < 100,
           onChange: (value: boolean) => this.setFlatFrosted(value)
+        })
+        SettingSwitchRow({
+          title: '滑动收起',
+          description: '列表上滑时底栏自动收起，回到上方再出现',
+          isOn: this.homeTabBarFlatAutoHide,
+          onChange: (value: boolean) => this.setFlatAutoHide(value)
         })
       }
       SettingRow({
@@ -719,6 +726,14 @@ struct OtherSettingsPage {
     if (frosted === this.homeTabBarFlatFrosted) return;
     HomeTabBarSettingsStore.saveFlatFrosted(getContext(this), frosted).catch((error: Error) => {
       console.warn('保存底栏磨砂设置失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
+  }
+
+  setFlatAutoHide(autoHide: boolean): void {
+    if (autoHide === this.homeTabBarFlatAutoHide) return;
+    HomeTabBarSettingsStore.saveFlatAutoHide(getContext(this), autoHide).catch((error: Error) => {
+      console.warn('保存底栏滑动收起设置失败:', error);
       HdsFeedback.showToast('保存失败，请重试');
     });
   }

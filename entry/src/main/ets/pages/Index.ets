@@ -1,4 +1,4 @@
-import { router, window } from '@kit.ArkUI';
+import { AnimatorResult, router, window } from '@kit.ArkUI';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { webview } from '@kit.ArkWeb';
@@ -45,6 +45,8 @@ struct Index {
   /** 平铺底栏底色不透明度 0~100 与磨砂开关。 */
   @StorageProp('homeTabBarFlatOpacity') homeTabBarFlatOpacity: number = 100;
   @StorageProp('homeTabBarFlatFrosted') homeTabBarFlatFrosted: boolean = false;
+  /** 平铺底栏滑动收起：打开后和悬浮底栏一样，列表上滑过阈值收起、回到上方再出来。 */
+  @StorageProp('homeTabBarFlatAutoHide') @Watch('onFlatAutoHideChanged') homeTabBarFlatAutoHide: boolean = false;
   /** 第四个页签：none / listen / footprint，放在发现和我的之间。 */
   @StorageProp('homeExtraTab') @Watch('onHomeExtraTabChanged') homeExtraTab: string = 'none';
   /** 方案 B：由原生页签容器统一执行连续横移，不再叠加页面入场动画。 */
@@ -55,6 +57,7 @@ struct Index {
   static readonly FLOATING_TAB_BAR_HEIGHT: number = 56;
   /** 平铺底栏图标加文字那一行的高度，下面再接导航条留白。 */
   static readonly FLAT_TAB_BAR_HEIGHT: number = 50;
+  static readonly FLAT_TAB_BAR_SLIDE_DURATION: number = 260;
   static readonly ACCESSORY_HEIGHT: number = 48;
   static readonly ACCESSORY_GAP: number = 8;
   static readonly ACCESSORY_SIDE_MARGIN: number = 16;
@@ -89,6 +92,10 @@ struct Index {
   private immersiveTabsController: HdsTabsController = new HdsTabsController();
   private compatTabsController: TabsController = new TabsController();
   private immersiveTabBarHidden: boolean = false;
+  /** 平铺底栏是否已滑走；伴生条据此落到底部。位移和透明度由 flatTabBarShift 逐帧写给页签控制器。 */
+  @State flatTabBarHidden: boolean = false;
+  private flatTabBarShift: number = 0;
+  private flatTabBarAnimator: AnimatorResult | null = null;
   // 每页单独保存进度，常驻的发现页不能改变当前页的底栏；发现页里的搜索层另记一份。
   private tabHeaderCollapseProgress: number[] = [0, 0, 0, 0];
   private searchHeaderCollapseProgress: number = 0;
@@ -197,6 +204,8 @@ struct Index {
 
   aboutToDisappear(): void {
     this.clearHomeTabSwitch();
+    this.flatTabBarAnimator?.cancel();
+    this.flatTabBarAnimator = null;
     this.shortcutRoutingActive = false;
     this.syncHomeHoldingHandTracking();
     this.stageRuntimeDisappearing = true;
@@ -363,12 +372,74 @@ struct Index {
       } else {
         this.immersiveTabsController.applyShowAnimation(HdsAnimationMode.SCROLL_ANIMATION);
       }
+    } else if (this.homeTabBarFlatAutoHide) {
+      // 和悬浮底栏同一套阈值：收起、展开分开，停在临界位置时不来回抖。
+      const threshold = !resetImmersiveState && this.flatTabBarHidden ? 0.25 : 0.5;
+      this.setFlatTabBarHidden(this.bottomBarCollapseProgress >= threshold, resetImmersiveState);
     } else {
-      // 平铺底栏固定显示，列表滚动时不收起。
+      // 平铺底栏默认固定显示，列表滚动时不收起。
       this.bottomBarCollapseProgress = 0;
-      this.compatTabsController.setTabBarTranslate({ y: 0 });
-      this.compatTabsController.setTabBarOpacity(1);
+      this.setFlatTabBarHidden(false, true, false);
     }
+  }
+
+  /** 平铺底栏滑出/滑回：整条连同导航条留白一起下移并淡出，内容区高度不变（滑动收起时底栏盖在页面上）。 */
+  setFlatTabBarHidden(hidden: boolean, force: boolean = false, animated: boolean = true): void {
+    if (!force && hidden === this.flatTabBarHidden) return;
+    if (hidden !== this.flatTabBarHidden) {
+      if (animated) {
+        this.getUIContext().animateTo({ duration: Index.FLAT_TAB_BAR_SLIDE_DURATION, curve: Curve.Friction },
+          (): void => {
+            this.flatTabBarHidden = hidden;
+          });
+      } else {
+        this.flatTabBarHidden = hidden;
+      }
+    }
+    const target = hidden ? 1 : 0;
+    if (this.flatTabBarAnimator) {
+      this.flatTabBarAnimator.cancel();
+      this.flatTabBarAnimator = null;
+    }
+    if (!animated || this.flatTabBarShift === target) {
+      this.applyFlatTabBarShift(target);
+      return;
+    }
+    try {
+      const animator = this.getUIContext().createAnimator({
+        duration: Index.FLAT_TAB_BAR_SLIDE_DURATION, easing: 'friction', delay: 0, fill: 'forwards',
+        direction: 'normal', iterations: 1, begin: this.flatTabBarShift, end: target
+      });
+      this.flatTabBarAnimator = animator;
+      animator.onFrame = (value: number): void => {
+        if (this.flatTabBarAnimator === animator) this.applyFlatTabBarShift(value);
+      };
+      animator.onFinish = (): void => {
+        if (this.flatTabBarAnimator !== animator) return;
+        this.flatTabBarAnimator = null;
+        this.applyFlatTabBarShift(target);
+      };
+      animator.onCancel = (): void => {};
+      animator.play();
+    } catch (error) {
+      this.flatTabBarAnimator = null;
+      this.applyFlatTabBarShift(target);
+    }
+  }
+
+  applyFlatTabBarShift(shift: number): void {
+    this.flatTabBarShift = Math.max(0, Math.min(1, shift));
+    try {
+      // 切到悬浮底栏后平铺页签已卸载，控制器没有绑定对象，这时只记下状态。
+      this.compatTabsController.setTabBarTranslate({ y: this.compatTabBarHeight() * this.flatTabBarShift });
+      this.compatTabsController.setTabBarOpacity(1 - this.flatTabBarShift);
+    } catch (error) {
+    }
+  }
+
+  onFlatAutoHideChanged(): void {
+    if (this.useFloatingTabs()) return;
+    this.syncBottomBarCollapse(true);
   }
 
   onBookSourceExploreRefreshRequested(): void {
@@ -901,7 +972,7 @@ struct Index {
     this.globalTtsAccessory()
   }
 
-  /** 平铺底栏：贴在底栏正上方、左右与底栏对齐；底栏不收起，伴生条也不动。 */
+  /** 平铺底栏：贴在底栏正上方、左右与底栏对齐；底栏滑动收起时伴生条落到导航条上方。 */
   @Builder
   globalTtsCompatAccessory() {
     Stack() {
@@ -972,8 +1043,8 @@ struct Index {
 
   globalTtsAccessoryTop(): number {
     if (!this.useFloatingTabs()) {
-      return this.globalTtsViewportHeight - this.compatTabBarHeight() - Index.COMPAT_ACCESSORY_HEIGHT -
-        Index.COMPAT_ACCESSORY_MARGIN;
+      const barHeight = this.flatTabBarHidden ? this.compatTabSafeHeight() : this.compatTabBarHeight();
+      return this.globalTtsViewportHeight - barHeight - Index.COMPAT_ACCESSORY_HEIGHT - Index.COMPAT_ACCESSORY_MARGIN;
     }
     return this.globalTtsBarMerged ? this.globalTtsTabBarTop() :
       this.globalTtsTabBarTop() - Index.ACCESSORY_GAP - Index.ACCESSORY_HEIGHT;
@@ -1127,6 +1198,11 @@ struct Index {
     return HomeTabBarSettingsStore.normalizeFlatOpacity(this.homeTabBarFlatOpacity) < 100;
   }
 
+  /** 滑动收起时底栏也盖在页面上，滑走后底下露出的是页面内容而不是一条空白。 */
+  compatTabBarOverlap(): boolean {
+    return this.compatTabBarTranslucent() || this.homeTabBarFlatAutoHide;
+  }
+
   extraTabId(): string {
     return HomeTabBarSettingsStore.normalizeExtraTab(this.homeExtraTab) === HomeTabBarSettingsStore.EXTRA_NONE ? '' :
       this.homeExtraTab;
@@ -1141,6 +1217,7 @@ struct Index {
     this.clearHomeTabSwitch();
     this.immersiveTabBarHidden = false;
     this.globalTtsBarMerged = false;
+    this.setFlatTabBarHidden(false, true, false);
     this.syncHomeHoldingHandTracking();
   }
 
@@ -1330,7 +1407,7 @@ struct Index {
     // 第四个页签增减时整个重建，页签数和选中项才不会错位。
     .key(`home_compat_tabs_${this.extraTabId()}`)
     .barHeight(this.homeTabBarHidden() ? 0 : this.compatTabBarHeight())
-    .barOverlap(this.compatTabBarTranslucent())
+    .barOverlap(this.compatTabBarOverlap())
     .barBackgroundColor(HomeTabBarSettingsStore.flatBarColor(ThemeRuntime.cardColor(this.appDarkMode),
       this.homeTabBarFlatOpacity))
     // 页签栏盖在内容上时系统默认加一层带底色的模糊，关掉后磨砂只按用户开关做纯模糊。
@@ -1338,7 +1415,8 @@ struct Index {
     .barBackgroundEffect(HomeTabBarSettingsStore.flatBarFrostEffect(
       this.homeTabBarFlatFrosted && this.compatTabBarTranslucent()))
     .scrollable(false)
-    .onAppear(() => this.syncBottomBarCollapse())
+    // 切换样式或重建 Tabs 后，新实例要重新套用收起状态。
+    .onAppear(() => this.syncBottomBarCollapse(true))
     .animationDuration(Index.TAB_SWITCH_DURATION)
     .onContentWillChange((from: number, to: number): boolean => this.prepareHomeTabSwitch(from, to))
     .onAnimationStart((from: number, to: number): void => {
