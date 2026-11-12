@@ -2225,6 +2225,13 @@ export struct BookshelfPage {
     }))
   }
 
+  /** 分组下拉菜单里置顶分组排在前面，其余保持原有顺序。 */
+  shelfGroupsPinnedFirst(): BookGroup[] {
+    const pinned = this.shelfGroups.filter((group: BookGroup): boolean => group.pinned === true);
+    if (pinned.length === 0) return this.shelfGroups;
+    return pinned.concat(this.shelfGroups.filter((group: BookGroup): boolean => group.pinned !== true));
+  }
+
   /** 书架标题栏上的分组名（书架底层那一层所在的分组）。 */
   shelfGroupTitle(): string {
     const groupId = this.shelfBaseGroupId();
@@ -2243,9 +2250,9 @@ export struct BookshelfPage {
       Scroll() {
         Column({ space: AppSpacing.XXS }) {
           this.shelfGroupMenuItem('全部书籍', 0)
-          ForEach(this.shelfGroups, (group: BookGroup) => {
+          ForEach(this.shelfGroupsPinnedFirst(), (group: BookGroup) => {
             this.shelfGroupMenuItem(group.groupName, group.groupId, group)
-          }, (group: BookGroup) => `${group.groupId}_${group.groupName}`)
+          }, (group: BookGroup) => `${group.groupId}_${group.groupName}_${group.pinned ? '1' : '0'}`)
           this.shelfGroupMenuItem('未分组', -1)
         }
         .width('100%')
@@ -2277,7 +2284,7 @@ export struct BookshelfPage {
       })
 
       if (this.shelfGroups.length > 0) {
-        Text('长按分组可重命名或删除')
+        Text('长按分组可置顶、重命名或删除')
           .fontSize(AppFontSize.MICRO)
           .fontColor(this.secondaryTextColor())
           .width('100%')
@@ -2298,6 +2305,12 @@ export struct BookshelfPage {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
+      if (group?.pinned) {
+        SymbolGlyph($r('sys.symbol.pin'))
+          .fontSize(13)
+          .fontColor([this.secondaryTextColor()])
+          .accessibilityText('已置顶')
+      }
       Text(`${this.shelfGroupBookCount(groupId)}`)
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.secondaryTextColor())
@@ -2913,6 +2926,12 @@ export struct BookshelfPage {
   bookGroupActionMenu() {
     Scroll() {
       Column() {
+        this.contextActionItem($r('sys.symbol.pin'), this.pendingBookGroup?.pinned ? '取消置顶' : '置顶',
+          this.primaryTextColor(), () => {
+            const group = this.pendingBookGroup;
+            this.showBookGroupActionMenu = false;
+            if (group) this.toggleBookGroupPinned(group);
+          })
         this.contextActionItem($r('sys.symbol.square_and_pencil'), '重命名', this.primaryTextColor(), () => {
           this.renameBookGroupName = this.pendingBookGroup?.groupName || '';
           this.showBookGroupActionMenu = false;
@@ -3853,6 +3872,18 @@ export struct BookshelfPage {
     HdsFeedback.showToast('分组已重命名');
   }
 
+  async toggleBookGroupPinned(group: BookGroup): Promise<void> {
+    const nextPinned = !group.pinned;
+    try {
+      await AppDatabase.getInstance().setBookGroupPinned(group.groupId, nextPinned);
+      await this.loadBooks();
+      HdsFeedback.showToast(nextPinned ? `已置顶分组《${group.groupName}》` : `已取消置顶分组《${group.groupName}》`);
+    } catch (e) {
+      console.error('更新分组置顶状态失败:', e);
+      HdsFeedback.showToast(nextPinned ? '置顶失败' : '取消置顶失败');
+    }
+  }
+
   closeDeleteBookGroupDialog(): void {
     this.showDeleteBookGroupDialog = false;
     this.deleteBookGroupDialogSession.close(this.getUIContext());
@@ -4241,7 +4272,7 @@ export struct BookshelfPage {
       `${this.shouldShowLatestExpandedTileBook() ? latestBookUrls : ''}_` +
       `${books.map((book: Book) => `${book.bookUrl}:${book.name}:${book.author}:${this.getBookReadTime(book)}:${this.getBookAddTime(book)}:` +
         `${BookshelfSortHelper.getBookUpdateTime(book)}:${book.group}:${book.isPinned ? '1' : '0'}`).join('|')}_` +
-      `${this.shelfGroups.map((group: BookGroup) => `${group.groupId}:${group.groupName}`).join('|')}`;
+      `${this.shelfGroups.map((group: BookGroup) => `${group.groupId}:${group.groupName}:${group.pinned ? '1' : '0'}`).join('|')}`;
     if (cacheKey === this.shelfTileEntriesCacheKey) {
       return this.shelfTileEntriesCache;
     }
@@ -4275,6 +4306,8 @@ export struct BookshelfPage {
       entry.updateTime = groupBooks.reduce((latest: number, book: Book): number =>
         Math.max(latest, BookshelfSortHelper.getBookUpdateTime(book)), 0);
       entry.name = this.normalizeBookName(group.groupName);
+      // 置顶分组和置顶书籍同属最前一档，档内按当前排序方式排。
+      entry.pinned = group.pinned === true;
       entry.originalOrder = bookOffset + index;
       entries.push(entry);
     });
@@ -4490,7 +4523,7 @@ export struct BookshelfPage {
           .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey), pageKey) })
         }, (entry: ShelfTileSortEntry) => entry.book ?
           this.shelfBookRenderKey(entry.book, entry.key) :
-          `${entry.key}_stagger_${this.bookshelfCompanionStagger ? '1' : '0'}`)
+          `${entry.key}_stagger_${this.bookshelfCompanionStagger ? '1' : '0'}_pin_${entry.pinned ? '1' : '0'}`)
       } else {
         LazyForEach(this.shelfTileBookDataSource(pageKey), (book: Book) => {
           GridItem() {
@@ -5415,6 +5448,12 @@ export struct BookshelfPage {
             .fontSize(AppFontSize.CAPTION)
             .fontColor(this.accentColor())
         } else {
+          if (group.pinned) {
+            SymbolGlyph($r('sys.symbol.pin'))
+              .fontSize(12)
+              .fontColor([this.accentColor()])
+              .accessibilityText('已置顶')
+          }
           SymbolGlyph($r('sys.symbol.folder'))
             .fontSize(13)
             .fontColor([this.subTextColor()])

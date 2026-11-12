@@ -156,7 +156,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   cacheDatabaseName(): string { return this.openedDatabaseName; }
   cacheDatabaseDirectory(): string { return this.databaseDirectory; }
   private readonly DATABASE_NAME = 'legado.db';
-  private readonly SCHEMA_VERSION = 27;
+  private readonly SCHEMA_VERSION = 28;
 
   private constructor() {}
 
@@ -348,7 +348,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         groupName TEXT DEFAULT '',
         groupOrder INTEGER DEFAULT 0,
         show INTEGER DEFAULT 1,
-        enableRefresh INTEGER DEFAULT 1
+        enableRefresh INTEGER DEFAULT 1,
+        pinned INTEGER DEFAULT 0
       )
     `);
 
@@ -634,7 +635,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       { table: 'book_contents', column: 'accessDate', definition: 'accessDate INTEGER DEFAULT 0' },
       { table: 'book_contents', column: 'cacheRevision', definition: 'cacheRevision INTEGER DEFAULT 0' },
       { table: 'book_contents', column: 'imagesIndexed', definition: 'imagesIndexed INTEGER DEFAULT 0' },
-      { table: 'book_annotations', column: 'excerpt', definition: 'excerpt INTEGER DEFAULT 0' }
+      { table: 'book_annotations', column: 'excerpt', definition: 'excerpt INTEGER DEFAULT 0' },
+      { table: 'book_groups', column: 'pinned', definition: 'pinned INTEGER DEFAULT 0' }
     ];
 
     for (const migration of migrations) {
@@ -1631,7 +1633,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     const groups: BookGroup[] = [];
     if (!this.store) return groups;
     const resultSet = await this.store.querySql(
-      'SELECT groupId, groupName, groupOrder, show, enableRefresh FROM book_groups WHERE groupId > 0 ORDER BY groupOrder, groupId'
+      'SELECT groupId, groupName, groupOrder, show, enableRefresh, pinned FROM book_groups WHERE groupId > 0 ' +
+        'ORDER BY groupOrder, groupId'
     );
     try {
       while (resultSet.goToNextRow()) {
@@ -1641,6 +1644,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         group.order = resultSet.getLong(resultSet.getColumnIndex('groupOrder'));
         group.show = resultSet.getLong(resultSet.getColumnIndex('show')) === 1;
         group.enableRefresh = resultSet.getLong(resultSet.getColumnIndex('enableRefresh')) === 1;
+        group.pinned = resultSet.getLong(resultSet.getColumnIndex('pinned')) === 1;
         groups.push(group);
       }
     } finally {
@@ -1661,6 +1665,10 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       show: group.show ? 1 : 0,
       enableRefresh: group.enableRefresh ? 1 : 0
     };
+    // 旧备份里的分组没有 pinned，缺省时不覆盖本机的置顶状态（新插入的行按列默认值不置顶）。
+    if (typeof group.pinned === 'boolean') {
+      bucket['pinned'] = group.pinned ? 1 : 0;
+    }
     const exists = resultSet.rowCount > 0;
     resultSet.close();
     if (exists) {
@@ -1712,6 +1720,17 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     await this.store.update({ groupName: name }, predicates);
     CloudSyncChangeTracker.markDataChanged();
     return true;
+  }
+
+  async setBookGroupPinned(groupId: number, pinned: boolean): Promise<void> {
+    if (!this.store || groupId <= 0) return;
+    const predicates = new relationalStore.RdbPredicates('book_groups');
+    predicates.equalTo('groupId', groupId);
+    const changed = await this.store.update({ pinned: pinned ? 1 : 0 }, predicates);
+    if (changed <= 0) {
+      throw new Error(`置顶分组未命中数据库记录: ${groupId}`);
+    }
+    CloudSyncChangeTracker.markDataChanged();
   }
 
   async updateBooksGroup(bookUrls: string[], groupId: number): Promise<void> {

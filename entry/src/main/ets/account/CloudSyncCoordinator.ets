@@ -98,6 +98,8 @@ class BookGroupSyncPayload {
   order: number = 0;
   show: boolean = true;
   enableRefresh: boolean = true;
+  /** 旧版本上传的记录没有这个字段，缺省时保留本机的置顶状态。 */
+  pinned?: boolean;
 }
 
 class BookmarkSyncPayload {
@@ -630,6 +632,7 @@ export class CloudSyncCoordinator {
       payload.order = group.order;
       payload.show = group.show;
       payload.enableRefresh = group.enableRefresh;
+      payload.pinned = group.pinned === true;
       result.push(CloudSyncCoordinator.entity(
         'book_group',
         CloudSyncCoordinator.identity('group', group.groupName),
@@ -1350,6 +1353,9 @@ export class CloudSyncCoordinator {
     group.order = Math.max(0, Math.floor(Number(payload.order) || 0));
     group.show = payload.show !== false;
     group.enableRefresh = payload.enableRefresh !== false;
+    if (typeof payload.pinned === 'boolean') {
+      group.pinned = payload.pinned;
+    }
     await db.restoreBookGroup(group);
     return group;
   }
