@@ -42,4 +42,13 @@ export class ReaderV2Color {
     const parsed = Number.parseInt(text, 16);
     return Number.isFinite(parsed) ? (parsed >>> 0) : fallback;
   }
+
+  /** 按感知亮度判断颜色是否偏亮（深色主题的文字色）。 */
+  static isLight(color: number): boolean {
+    const value = color >>> 0;
+    const red = (value >>> 16) & 0xFF;
+    const green = (value >>> 8) & 0xFF;
+    const blue = value & 0xFF;
+    return red * 0.299 + green * 0.587 + blue * 0.114 > 150;
+  }
 }

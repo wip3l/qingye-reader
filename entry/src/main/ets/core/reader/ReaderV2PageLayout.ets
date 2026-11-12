@@ -3,6 +3,7 @@ import { ReaderPaginationBoundary } from './ReaderPaginationIndex';
 import { ReaderV2Rect } from './ReaderV2LayoutSnapshot';
 import { ReaderCommentBubbleStyle } from './ReaderCommentBubble';
 import { ReaderFontStrokeRun } from './ReaderFontStroke';
+import { ReaderV2CommentCard } from './ReaderV2CommentCard';
 
 /** Minimal native Text span metadata used by the transparent system-selection layer. */
 export class ReaderV2SelectionRun {
@@ -81,6 +82,8 @@ export class ReaderV2PageFragment {
   imageRect: ReaderV2Rect = new ReaderV2Rect();
   regexBubbleSegments: ReaderV2RegexBubbleSegment[] = [];
   commentBubbleSegments: ReaderV2CommentBubbleSegment[] = [];
+  /** 热评卡片段：paragraph 为 null，卡片坐标相对 paragraphX / paragraphY。 */
+  card: ReaderV2CommentCard | null = null;
 }
 
 /** 一条划线落在本页的部分，偏移是本页所属文档的显示偏移（与片段 displayStart 同一坐标）。 */

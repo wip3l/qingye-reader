@@ -4,6 +4,7 @@ import graphicsText from '@ohos.graphics.text';
 import { ReaderFontStroke } from './ReaderFontStroke';
 import { ReaderCommentBubblePainter } from './ReaderCommentBubble';
 import { ReaderV2AnnotationPainter } from './ReaderV2AnnotationPainter';
+import { ReaderV2CommentCardPainter } from './ReaderV2CommentCard';
 import {
   ReaderV2PageFragment,
   ReaderV2PageLayout,
@@ -35,6 +36,7 @@ export class ReaderV2PagePainter {
           (bubble.rect.bottom - bubble.rect.top) / bubble.scale, bubble.style, bubble.tail);
         canvas.restore();
       }
+      if (fragment.card) ReaderV2CommentCardPainter.paint(canvas, fragment.card, fragment.paragraphX, fragment.paragraphY);
     }
     const hasAnnotations = page.annotationMarks.length > 0;
     for (const fragment of page.fragments) {

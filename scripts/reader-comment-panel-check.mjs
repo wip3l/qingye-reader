@@ -207,18 +207,20 @@ for (const dark of [false, true]) {
 console.log('PASS comment panel: live resize, painted-theme reveal, stale callbacks, bounded failure/retry, early HTML theme, Web back/close bridge, manual page theme reaches sheet, page top colour reaches sheet');
 
 for (const inline of [true, false]) {
-  let refresh, remoteChecks=0;
+  let refresh, remoteChecks=0, stabilizations=0;
   const context=vm.createContext({setTimeout:fn=>{refresh=fn;return 1;},clearTimeout(){}});
   const reader=vm.runInContext(stripTypeScriptTypes(`({${method('scheduleReaderThemeRefresh')}})`,{mode:'strip'}),context);
   Object.assign(reader,{readerThemeRefreshOffset:-1,readerThemeRefreshTimerId:-1,readerPageVisible:true,content:'chapter',
+    readerThemeRefreshLayoutIdentity:'',readerTypographyCacheIdentity:()=>'layout',
     getReaderStableReflowOffset:()=>10,enterReaderImmersive(){},invalidateReaderTypographyLayout(){},
-    refreshReaderTextRender(){},paginateContent(){},scheduleReaderLayoutStabilization(){},saveReadingProgress(){},
+    refreshReaderTextRender(){},paginateContent(){},scheduleReaderLayoutStabilization(){stabilizations++;},saveReadingProgress(){},
     onTtsCoverSettingsChanged(){},showReaderCommentPanel:true,readerInlinePageMode:inline,
     readerCommentPanelLoadSerial:1,readerCommentPanelLoading:false,readerCommentPanelError:false,
     scheduleReaderCommentPanelHostReady(){remoteChecks++;}});
   reader.scheduleReaderThemeRefresh(); refresh();
   assert.equal(remoteChecks,inline?0:1,'offline theme changes must not invoke the remote Web readiness poll');
   assert.equal(reader.readerCommentPanelLoading,!inline,'offline content stays visible during theme change');
+  assert.equal(stabilizations,0,'a colour-only theme change paginates once without a stabilization pass');
 }
 
 function inlineHarness() {

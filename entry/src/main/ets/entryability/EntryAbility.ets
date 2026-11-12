@@ -2,6 +2,7 @@ import { AppAiHost } from '../utils/AppAiHost';
 import { AiAccessPolicy } from '../account/AiAccessPolicy';
 import { ComicColorizer } from '@legado/aiengine';
 import { ImmersiveLightSettingsStore } from '../utils/ImmersiveLightSettingsStore';
+import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { SmartGripSettingsStore } from '../utils/SmartGripSettingsStore';
 import { FootprintSettingsStore } from '../utils/FootprintSettingsStore';
 import { HomeBackdropSettingsStore } from '../utils/HomeBackdropSettingsStore';
@@ -289,6 +290,12 @@ export default class EntryAbility extends UIAbility {
     });
     this.homeTabBarBootstrapPromise = HomeTabBarSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复底栏设置失败:', error);
+    });
+    if (!AppStorage.has(ReaderCommentCardSettings.KEY)) {
+      AppStorage.setOrCreate(ReaderCommentCardSettings.KEY, ReaderCommentCardSettings.DEFAULT);
+    }
+    ReaderCommentCardSettings.load(this.context).catch((error: Error) => {
+      console.warn('恢复热评卡片设置失败:', error);
     });
     this.immersiveLightBootstrapPromise = ImmersiveLightSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复沉浸光感设置失败:', error);

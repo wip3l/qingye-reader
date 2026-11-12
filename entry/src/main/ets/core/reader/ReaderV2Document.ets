@@ -39,6 +39,11 @@ export class ReaderV2InlineAction {
   bubbleStart: number = 0;
   /** EPUB 注释编号：显示原来的编号文字（不画气泡），点开弹出注释正文。 */
   note: boolean = false;
+  /** 热评原文与点赞数；有原文时可画成热评卡。本章说入口的原文是卡面文字（如“76条评论”）。 */
+  preview: string = '';
+  likes: string = '';
+  /** 章末的本章说/章评入口：单独成段时画成本章说卡片，不会挂在段落后面。 */
+  chapter: boolean = false;
 
   constructor(id: string, marker: string, label: string, data: ReaderActionData,
     displayStart: number, displayEnd: number, sourceStart: number, sourceEnd: number) {
@@ -50,6 +55,11 @@ export class ReaderV2InlineAction {
     this.title = data.title || '';
     this.url = data.url || '';
     this.note = EpubNoteLink.isNote(this.url);
+    this.preview = this.note ? '' : (data.preview || '');
+    this.likes = this.preview ? (data.likes || '') : '';
+    const rawLabel = data.label || '';
+    this.chapter = !this.note && (/本章说|章评|章末/.test(rawLabel) ||
+      (/^(?:本章说|章评)/.test(data.title || '') && !/(?:99\+|\d+)\s*$/.test(rawLabel)));
     this.displayStart = displayStart;
     this.displayEnd = displayEnd;
     this.sourceStart = sourceStart;
@@ -91,6 +101,13 @@ export class ReaderV2Block {
   /** 1-6 表示章内小标题，0 表示普通段落。 */
   headingLevel: number = 0;
   image: ReaderV2ImageRef | null = null;
+  /**
+   * 整段只有一个带热评原文的入口（书源自带的热评卡），或只有一个本章说入口：开启热评卡片时整段画成卡片，
+   * 关闭时照旧显示气泡。段落文字仍是气泡标签，显示偏移与关闭时完全一致。
+   */
+  card: ReaderV2InlineAction | null = null;
+  /** 段末入口带热评原文：开启热评卡片时在本段下方追加一张卡片，气泡保留。 */
+  trailingCard: ReaderV2InlineAction | null = null;
 
   constructor(id: string, text: string, displayStart: number, displayEnd: number,
     sourceStart: number, sourceEnd: number, title: boolean) {
@@ -375,6 +392,7 @@ export class ReaderV2DocumentParser {
     document.displayText = display;
     ReaderV2DocumentParser.buildBlocks(document, headings);
     if (titleSplit) ReaderV2DocumentParser.splitTitleBlocks(document, titleSplit);
+    ReaderV2DocumentParser.assignCommentCards(document);
     document.identity = ReaderV2DocumentParser.hashIdentity(document.sourceText, chapterIndex);
     return document;
   }
@@ -398,6 +416,46 @@ export class ReaderV2DocumentParser {
       blocks.push(first, second);
     }
     document.blocks = blocks;
+  }
+
+  /** Characters a card-only paragraph may contain besides its bubble: indentation and the bubble's own padding. */
+  private static readonly CARD_FILLER: RegExp = /^[\s　 ⁠​]*$/;
+
+  /**
+   * Marks the paragraphs that can show a hot-comment card. Only the semantics are recorded here; whether a card is
+   * drawn is a layout setting, so turning cards off needs no re-parse and leaves every offset unchanged.
+   */
+  private static assignCommentCards(document: ReaderV2Document): void {
+    if (document.actions.length === 0) return;
+    let actionIndex = 0;
+    for (const block of document.blocks) {
+      if (block.image || block.title) continue;
+      while (actionIndex < document.actions.length && document.actions[actionIndex].displayEnd <= block.displayStart) {
+        actionIndex++;
+      }
+      let inBlock = 0;
+      let withPreview: ReaderV2InlineAction | null = null;
+      let chapterEntry: ReaderV2InlineAction | null = null;
+      let rest = '';
+      let cursor = block.displayStart;
+      for (let index = actionIndex; index < document.actions.length; index++) {
+        const action = document.actions[index];
+        if (action.displayStart >= block.displayEnd) break;
+        inBlock++;
+        if (action.chapter) chapterEntry = action;
+        else if (action.preview) withPreview = action;
+        rest += document.displayText.substring(cursor, Math.max(cursor, action.displayStart));
+        cursor = Math.max(cursor, action.displayEnd);
+      }
+      if (!withPreview && !chapterEntry) continue;
+      rest += document.displayText.substring(cursor, Math.max(cursor, block.displayEnd));
+      if (inBlock === 1 && ReaderV2DocumentParser.CARD_FILLER.test(rest)) {
+        block.card = chapterEntry || withPreview;
+      } else if (withPreview) {
+        // A 本章说 entry inside a paragraph stays a bubble; only paragraph hot comments trail a paragraph.
+        block.trailingCard = withPreview;
+      }
+    }
   }
 
   private static normalizeSource(source: string): string {

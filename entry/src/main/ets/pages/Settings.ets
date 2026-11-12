@@ -40,6 +40,7 @@ import { ScreenTimeoutStepper } from '../components/common/ScreenTimeoutStepper'
 import { CloudAutoSync, CloudRemoteFont } from '../account/CloudAutoSync';
 import { CloudFontMenu } from '../account/CloudFontMenu';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
+import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { ReaderTypographyThemes, TypographyThemeOption } from '../utils/ReaderTypographyThemes';
 class ReaderCustomFontItem {
   familyName: string = '';
@@ -131,6 +132,7 @@ struct SettingsPage {
   @StorageProp('audioBookAutoPlay') audioBookAutoPlay: boolean = true;
   @StorageProp('ttsSpeed') ttsSpeed: number = 1;
   @StorageLink('readerLongPressSelectText') readerLongPressSelectText: boolean = true;
+  @StorageLink('readerCommentCard') readerCommentCard: string = ReaderCommentCardSettings.DEFAULT;
   @StorageLink('readerScreenTimeoutMinutes') readerScreenTimeoutMinutes: number =
     ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON;
   @StorageLink('readerExtendToStatusBar') readerExtendToStatusBar: boolean = false;
@@ -671,6 +673,34 @@ struct SettingsPage {
           this.saveReaderInteractionSettings();
         }
       })
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+
+    this.sectionTitle('段评')
+    Column() {
+      this.selectItem('热评卡片', '段评热评显示在段落下方，章末本章说显示为卡片；关闭后只显示气泡',
+        this.commentCardOptions(ReaderCommentCardSettings.STYLE_LABELS),
+        ReaderCommentCardSettings.style(this.readerCommentCard), (index: number) => {
+          this.setReaderCommentCard(index, -1, -1);
+        }, 'settings_comment_card_style_select',
+        ReaderCommentCardSettings.style(this.readerCommentCard) !== ReaderCommentCardSettings.STYLE_OFF)
+      if (ReaderCommentCardSettings.style(this.readerCommentCard) !== ReaderCommentCardSettings.STYLE_OFF) {
+        this.selectItem('每页最多', '只限段评热评，书源自带的热评卡和本章说都会显示',
+          this.commentCardOptions(ReaderCommentCardSettings.MAX_LABELS),
+          Math.max(0, ReaderCommentCardSettings.MAX_VALUES.indexOf(
+            ReaderCommentCardSettings.maxPerPage(this.readerCommentCard))), (index: number) => {
+            this.setReaderCommentCard(-1, ReaderCommentCardSettings.MAX_VALUES[index] ?? -1, -1);
+          }, 'settings_comment_card_max_select')
+        this.selectItem('卡片行数', '热评超出时末尾显示省略号',
+          this.commentCardOptions(ReaderCommentCardSettings.LINE_LABELS),
+          ReaderCommentCardSettings.lines(this.readerCommentCard) - 1, (index: number) => {
+            this.setReaderCommentCard(-1, -1, index + 1);
+          }, 'settings_comment_card_lines_select', false)
+      }
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -2042,6 +2072,23 @@ struct SettingsPage {
       return value;
     }
     return ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE;
+  }
+
+  commentCardOptions(labels: string[]): SelectOption[] {
+    return labels.map((label: string): SelectOption => ({ value: label }));
+  }
+
+  /** 传 -1 的项保持不变。 */
+  setReaderCommentCard(style: number, maxPerPage: number, lines: number): void {
+    const current = this.readerCommentCard;
+    const next = ReaderCommentCardSettings.encode(
+      style >= 0 ? style : ReaderCommentCardSettings.style(current),
+      maxPerPage >= 0 ? maxPerPage : ReaderCommentCardSettings.maxPerPage(current),
+      lines >= 0 ? lines : ReaderCommentCardSettings.lines(current));
+    if (next === ReaderCommentCardSettings.normalize(current)) return;
+    ReaderCommentCardSettings.save(getContext(this), next).catch((error: Error) => {
+      console.warn('保存热评卡片设置失败:', error);
+    });
   }
 
   saveReaderInteractionSettings(): void {

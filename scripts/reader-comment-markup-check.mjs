@@ -20,6 +20,7 @@ const compile = text => stripTypeScriptTypes(text, { mode: 'strip' });
 const names = ['convertReaderNativeActions', 'convertReaderNoteActions', 'convertReaderImageScriptActions',
   'readerActionMarkerFromClickableImage',
   'readerActionMarkerFromCommentAttributes', 'readerImageOptionString', 'readerDataImageLabel', 'readerDataImageText',
+  'readerDataImageHot',
   'decodeHtmlEntities'];
 const util = {
   Base64Helper: class { decodeSync(text) { return Uint8Array.from(Buffer.from(text, 'base64')); } },
@@ -58,6 +59,8 @@ const ios = [
 const out = convert(ios);
 const found = actions(out);
 assert.deepEqual(found.map(item => item.label), ['段评 12', '热评', '章评']);
+assert.deepEqual(found.map(item => item.preview), ['', '写得真好', '906 条评论'],
+  'hot and chapter cards carry their wording, the trailing arrow dropped');
 assert.equal(found[0].url, 'https://reviews.example/reviews?bookId=1&chapterId=2&paragraphId=1');
 assert.equal(found[0].title, '段评', 'a <comment> bubble is a paragraph comment whatever the page path');
 assert.equal(found[2].url.endsWith('paragraphId=0'), true);
@@ -91,6 +94,9 @@ const optionActions = actions(convert(optionCards));
 assert.deepEqual(optionActions.map(item => item.label), ['段评 99', '热评', '章评']);
 assert.deepEqual(optionActions.map(item => item.title), ['段评 · 墨阅段评', '热评', '章评']);
 assert.match(Marker.sourceScript(optionActions[1].url), /^godOpen\(/);
+assert.equal(optionActions[1].preview, '写得真好');
+assert.equal(optionActions[1].likes, '22', 'the trailing number of a hot card is its like count');
+assert.equal(optionActions[2].preview, '76条评论');
 
 // <note> inline cards; a server that wraps each line in rs-native can split a multi-line text attribute
 // across two divs. The whole tag becomes one action and nothing of it leaks into the paragraph text.
@@ -104,10 +110,18 @@ const notedOut = convert(noted, 'https://reviews.example/legado/content?url=x');
 const notedActions = actions(notedOut);
 assert.deepEqual(notedActions.map(item => item.label), ['段评 3', '热评']);
 assert.equal(notedActions[1].url, 'https://reviews.example/get_para_review?book_id=1&para=1');
+assert.equal(notedActions[1].preview, '第一行>评论 第二行评论', 'a note keeps its text, whitespace folded');
 assert.equal(Marker.strip(notedOut).split('\n').filter(Boolean).join('|'), '正文第一段|正文第二段');
 // Without a resolvable address the note is dropped rather than shown as markup.
 assert.equal(Marker.strip(convert('<div rs-native>段落<note label="神评论" ident="/x" text="a"></note></div>'))
   .trim(), '段落');
+
+// Markers without a hot comment stay byte-identical to the old format.
+assert.equal(Marker.create('段评 3', 'https://a.example/x', '段评'),
+  `${Marker.PREFIX}${encodeURIComponent(JSON.stringify({ label: '段评 3', url: 'https://a.example/x', title: '段评' }))}]]`);
+const withHot = Marker.parse(Marker.create('段评 3', 'https://a.example/x', '段评', '  好\n看  ', '1.2k'));
+assert.equal(withHot.preview, '好 看');
+assert.equal(withHot.likes, '1.2k');
 
 console.log('reader-comment-markup-check: iOS bubbles/hot/chapter cards, notes, option cards, plain pictures and ' +
   'Android options passed');

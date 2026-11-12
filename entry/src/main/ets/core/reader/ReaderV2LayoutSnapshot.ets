@@ -67,6 +67,14 @@ export class ReaderV2LayoutInput {
   commentHitSlopXPx: number = 16;
   commentHitSlopYPx: number = 12;
   commentsEnabled: boolean = true;
+  /** 热评卡片：0 关闭，1 卡片，2 引文，3 挂件。见 ReaderCommentCardSettings。 */
+  commentCardStyle: number = 0;
+  /** 每页最多几张段评热评卡，0 不限。 */
+  commentCardMaxPerPage: number = 0;
+  commentCardLines: number = 1;
+  commentCardFontSizePx: number = 30;
+  /** 卡片上“热评”标签的颜色。 */
+  commentCardTagColor: number = 0xFFC4473A;
   regexEnabled: boolean = false;
   /** 图片原始像素按 vp 解释，这里是 1vp 对应的物理像素。 */
   imagePxPerVp: number = 1;
@@ -108,6 +116,11 @@ export class ReaderV2LayoutSnapshot {
   commentHitSlopXPx: number = 16;
   commentHitSlopYPx: number = 12;
   commentsEnabled: boolean = true;
+  commentCardStyle: number = 0;
+  commentCardMaxPerPage: number = 0;
+  commentCardLines: number = 1;
+  commentCardFontSizePx: number = 30;
+  commentCardTagColor: number = 0xFFC4473A;
   regexEnabled: boolean = false;
   imagePxPerVp: number = 1;
   imageMinHeightPx: number = 0;
@@ -164,6 +177,12 @@ export class ReaderV2LayoutSnapshot {
     snapshot.commentHitSlopXPx = Math.max(0, input.commentHitSlopXPx);
     snapshot.commentHitSlopYPx = Math.max(0, input.commentHitSlopYPx);
     snapshot.commentsEnabled = input.commentsEnabled;
+    snapshot.commentCardStyle = input.commentCardStyle >= 0 && input.commentCardStyle <= 3 ?
+      Math.round(input.commentCardStyle) : 0;
+    snapshot.commentCardMaxPerPage = Math.max(0, Math.round(input.commentCardMaxPerPage));
+    snapshot.commentCardLines = input.commentCardLines === 2 ? 2 : 1;
+    snapshot.commentCardFontSizePx = Math.max(1, input.commentCardFontSizePx);
+    snapshot.commentCardTagColor = input.commentCardTagColor;
     snapshot.regexEnabled = input.regexEnabled;
     snapshot.imagePxPerVp = Math.max(0.01, input.imagePxPerVp);
     snapshot.imageMinHeightPx = Math.max(0, input.imageMinHeightPx);
@@ -180,7 +199,9 @@ export class ReaderV2LayoutSnapshot {
       snapshot.titleAlignment, snapshot.titleMarginTopPx, snapshot.titleMarginBottomPx,
       snapshot.titleSinglePage ? 1 : 0,
       snapshot.letterSpacingPx, snapshot.textAlign, snapshot.noteColor, snapshot.commentFontSizePx, snapshot.commentBubbleSize, snapshot.commentBubble.identity(),
-      snapshot.commentsEnabled ? 1 : 0, snapshot.regexEnabled ? 1 : 0
+      snapshot.commentsEnabled ? 1 : 0, snapshot.regexEnabled ? 1 : 0,
+      snapshot.commentCardStyle, snapshot.commentCardMaxPerPage, snapshot.commentCardLines,
+      snapshot.commentCardFontSizePx, snapshot.commentCardTagColor
     ];
     const rounded = values.map((value: string | number): string =>
       typeof value === 'number' ? `${Math.round(value * 100) / 100}` : value).join('_');

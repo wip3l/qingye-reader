@@ -123,6 +123,7 @@ import { ReaderV2AnnotationPainter } from '../core/reader/ReaderV2AnnotationPain
 import { BookAnnotation, BookAnnotationAnchor, BookAnnotationRange,
   BookAnnotationStyles } from '../model/reader/BookAnnotation';
 import { ReaderAnnotationSettings, ReaderAnnotationSettingsStore } from '../utils/ReaderAnnotationSettingsStore';
+import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { ReaderAnnotationLayer, ReaderAnnotationLayerMode } from '../components/reader/ReaderAnnotationLayer';
 import { ReaderAnnotationShare } from '../utils/ReaderAnnotationShare';
 import { ReaderV2PaginationSession, ReaderV2Paginator } from '../core/reader/ReaderV2Paginator';
@@ -984,6 +985,7 @@ struct ReadBookPage {
   @StorageLink('readerMarginTop') @Watch('onReadLayoutChanged') readerMarginTop: number = 18;
   @StorageLink('readerMarginBottom') @Watch('onReadLayoutChanged') readerMarginBottom: number = 18;
   @StorageLink('readerCommentBubbleSize') @Watch('onReadLayoutChanged') readerCommentBubbleSize: number = ReaderCommentBubbleSize.DEFAULT;
+  @StorageLink('readerCommentCard') @Watch('onReadLayoutChanged') readerCommentCard: string = ReaderCommentCardSettings.DEFAULT;
   @StorageLink('readerLightThemeIndex') @Watch('onReaderThemeChanged') readerLightThemeIndex: number = 0;
   @StorageLink('readerDarkThemeIndex') @Watch('onReaderThemeChanged') readerDarkThemeIndex: number = 0;
   @StorageLink('readerLightCustomThemeBackgroundColor') @Watch('onReaderThemeChanged') readerLightCustomThemeBackgroundColor: string = ReaderThemeHelper.LIGHT_CUSTOM_BACKGROUND_COLOR;
@@ -17363,6 +17365,11 @@ ${leading}` : leading;
     input.commentHitSlopXPx = this.toMeasurePx(this.readerSourceActionHitSlopX);
     input.commentHitSlopYPx = this.toMeasurePx(this.readerSourceActionHitSlopY);
     input.commentsEnabled = true;
+    input.commentCardStyle = ReaderCommentCardSettings.style(this.readerCommentCard);
+    input.commentCardMaxPerPage = ReaderCommentCardSettings.maxPerPage(this.readerCommentCard);
+    input.commentCardLines = ReaderCommentCardSettings.lines(this.readerCommentCard);
+    input.commentCardFontSizePx = this.toMeasureFontPx(Math.max(11, Math.round(this.readerFontSize * 0.82)));
+    input.commentCardTagColor = ReaderV2Color.isLight(input.textColor) ? 0xFFE48A7F : 0xFFC4473A;
     input.regexEnabled = this.readerRegexFontEnabled;
     input.imagePxPerVp = this.toMeasurePx(1);
     input.imageMinHeightPx = this.getReaderMixedImageMinHeightPx();
@@ -20654,13 +20661,14 @@ ${leading}` : leading;
     return `${this.pageViewWidth}_${this.getReaderPaginationViewportHeight()}_${this.isLandscapeDoublePageActive()}`;
   }
 
-  readerTypographyCacheIdentity(): string {
+  /** includeThemeRevision 为 false 时只比排版：主题重新发布（themeRevision 加一）本身不改字号、边距和字体。 */
+  readerTypographyCacheIdentity(includeThemeRevision: boolean = true): string {
     const regexIdentity = `${this.readerRegexFontEnabled}_${this.readerRegexFontRulesRaw}_` +
       `${this.readerRegexFontPattern}_${this.readerRegexFontMode}_${this.readerRegexFontFamily}_` +
-      `${this.readerRegexFontSize}_${this.readerRegexShadowColor}_${this.themeRevision}_` +
+      `${this.readerRegexFontSize}_${this.readerRegexShadowColor}_${includeThemeRevision ? this.themeRevision : ''}_` +
       `${this.themeRegexEmphasisMode()}_${this.themeRegexBubbleStyleId()}_reader_action_layout_v7`;
     return `${this.readerFontSize}_${this.readerFontWeight}_${this.readerLetterSpacing}_${this.readerTextAlign}_${this.readerLineHeight}_${this.readerParagraphSpacing}_` +
-      `${this.readerParagraphIndent}_${this.readerCommentBubbleSize}_` +
+      `${this.readerParagraphIndent}_${this.readerCommentBubbleSize}_${this.readerCommentCard}_` +
       `${this.readerMarginLeft}_${this.readerMarginRight}_${this.readerMarginTop}_${this.readerMarginBottom}_` +
       `${this.readerBodyFontMode}_${this.readerBodyFontFamily}_${this.getBodyReaderFontFamily()}_` +
       `${this.readerTitleFontSize}_${this.readerTitleFontWeight}_${this.readerTitleFontMode}_${this.readerTitleFontFamily}_` +

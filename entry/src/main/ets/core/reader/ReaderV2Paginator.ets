@@ -18,6 +18,7 @@ import { ReaderMixedPageLayout } from './ReaderMixedPageLayout';
 import { ReaderFontWeight } from './ReaderFontWeight';
 import { ReaderFontStroke } from './ReaderFontStroke';
 import { EpubNoteLink } from '../book/EpubNoteLink';
+import { ReaderV2CommentCardLayout } from './ReaderV2CommentCard';
 
 class ReaderV2MeasuredBlock {
   block: ReaderV2Block;
@@ -71,6 +72,7 @@ export class ReaderV2PaginationSession {
   pageSet: ReaderV2PageSet = new ReaderV2PageSet();
   width: number = 0;
   blockIndex: number = 0;
+  /** -1：当前块的文字已排完，段末热评卡还没放（可能挪到下一页开头）。 */
   lineIndex: number = 0;
   pageIndex: number = 0;
   measuredBlock: ReaderV2MeasuredBlock | null = null;
@@ -266,9 +268,73 @@ export class ReaderV2Paginator {
       let titlePageBoundary = false;
       // Index of the first hit area each fragment contributed, so fragments can be moved with their areas.
       const fragmentActionStarts: number[] = [];
+      // Paragraph hot-comment cards placed in the current page (or, while scrolling, the current screen height).
+      let cardWindow = 0;
+      let cardsInWindow = 0;
+      const cardsEnabled = session.snapshot.commentsEnabled && session.snapshot.commentCardStyle > 0;
 
       while (session.blockIndex < session.document.blocks.length && !mustEndPage) {
         const imageBlock = session.document.blocks[session.blockIndex];
+        const pendingCard = session.lineIndex < 0;
+        if (pendingCard || (cardsEnabled && imageBlock.card && session.lineIndex === 0)) {
+          // A hot-comment card: either a whole source card paragraph, or the card after a paragraph's last line.
+          const action = pendingCard ? imageBlock.trailingCard : imageBlock.card;
+          const windowIndex = session.continuous ?
+            Math.floor(Math.max(0, y - column.top) / Math.max(1, column.height())) : 0;
+          if (windowIndex !== cardWindow) {
+            cardWindow = windowIndex;
+            cardsInWindow = 0;
+          }
+          const capped = pendingCard && session.snapshot.commentCardMaxPerPage > 0 &&
+            cardsInWindow >= session.snapshot.commentCardMaxPerPage;
+          if (!action || capped) {
+            session.blockIndex++;
+            session.lineIndex = 0;
+            session.measuredBlock = null;
+            continue;
+          }
+          const gap = !hasContent ? 0 : (pendingCard ? ReaderV2CommentCardLayout.gapBefore(session.snapshot) :
+            ReaderV2Paginator.blockSpacingBefore(session, hasContent, previousWasImage));
+          const anchor = pendingCard ? ReaderV2Paginator.bubbleCenterX(page, action.id) - column.left : -1;
+          const card = ReaderV2CommentCardLayout.build(action, session.snapshot, session.width,
+            anchor >= 0 ? anchor : -1);
+          const top = y + gap;
+          if (hasContent && top + card.height > columnBottom + 0.01) {
+            mustEndPage = true;
+            continue;
+          }
+          const cardFragment = new ReaderV2PageFragment();
+          cardFragment.blockId = imageBlock.id;
+          cardFragment.blockIndex = session.blockIndex;
+          cardFragment.card = card;
+          // Keep a trailing card attached to its paragraph when the page bottom is aligned.
+          cardFragment.fixedGapBefore = pendingCard && hasContent;
+          cardFragment.paragraphX = column.left;
+          cardFragment.paragraphY = top;
+          cardFragment.paragraphHeight = card.height;
+          cardFragment.clipRect = new ReaderV2Rect(column.left, top, column.right, top + card.height);
+          cardFragment.displayStart = pendingCard ? imageBlock.displayEnd : imageBlock.displayStart;
+          cardFragment.displayEnd = imageBlock.displayEnd;
+          fragmentActionStarts.push(page.actions.length);
+          page.fragments.push(cardFragment);
+          const hit = new ReaderV2ActionHitArea();
+          hit.actionId = action.id;
+          hit.marker = action.marker;
+          hit.rect = new ReaderV2Rect(column.left + card.box.left, top + card.box.top - card.tailSize,
+            column.left + card.box.right, top + card.box.bottom);
+          page.actions.push(hit);
+          if (!hasContent) page.displayStart = cardFragment.displayStart;
+          page.displayEnd = Math.max(page.displayEnd, cardFragment.displayEnd);
+          if (pendingCard) cardsInWindow++;
+          hasContent = true;
+          topInkGuardApplied = true;
+          previousWasImage = false;
+          y = top + card.height;
+          session.blockIndex++;
+          session.lineIndex = 0;
+          session.measuredBlock = null;
+          continue;
+        }
         if (session.snapshot.titleSinglePage && imageBlock.title && session.lineIndex === 0) {
           if (!session.continuous && hasContent) {
             titlePageBoundary = true;
@@ -439,6 +505,10 @@ export class ReaderV2Paginator {
         y += fragmentBottom - paragraphLineTop;
 
         if (session.lineIndex >= current.lineCount) {
+          if (cardsEnabled && current.block.trailingCard) {
+            session.lineIndex = -1;
+            continue;
+          }
           session.blockIndex++;
           session.lineIndex = 0;
           session.measuredBlock = null;
@@ -1294,6 +1364,15 @@ export class ReaderV2Paginator {
     if (pieces.length === 0) return;
     pieces[pieces.length - 1].tail = action.displayEnd <= fragment.displayEnd;
     for (const piece of pieces) fragment.commentBubbleSegments.push(piece);
+  }
+
+  /** Centre x of the last hit area this page has for the action (its count bubble), or -1. */
+  private static bubbleCenterX(page: ReaderV2PageLayout, actionId: string): number {
+    for (let index = page.actions.length - 1; index >= 0; index--) {
+      const area = page.actions[index];
+      if (area.actionId === actionId) return (area.rect.left + area.rect.right) / 2;
+    }
+    return -1;
   }
 
   private static firstActionWhoseEndExceeds(actions: ReaderV2InlineAction[], offset: number): number {
