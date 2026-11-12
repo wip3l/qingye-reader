@@ -481,14 +481,15 @@ export class ThemeRuntime {
 
   static regexEmphasisColor(darkMode: boolean): string {
     const fallback = ThemeRuntime.fallbackVariant(darkMode).regexEmphasis.emphasisColor;
-    return ThemeRuntime.colorFromStorage(darkMode ? ThemeRuntime.KEY_DARK_REGEX_EMPHASIS_COLOR :
-      ThemeRuntime.KEY_LIGHT_REGEX_EMPHASIS_COLOR, fallback);
+    return HexColor.normalizeAlpha(ThemeRuntime.storageString(darkMode ? ThemeRuntime.KEY_DARK_REGEX_EMPHASIS_COLOR :
+      ThemeRuntime.KEY_LIGHT_REGEX_EMPHASIS_COLOR, fallback), fallback);
   }
 
   static regexEmphasisTextColor(darkMode: boolean): string {
     const fallback = ThemeRuntime.fallbackVariant(darkMode).regexEmphasis.emphasisTextColor;
-    return ThemeRuntime.colorFromStorage(darkMode ? ThemeRuntime.KEY_DARK_REGEX_EMPHASIS_TEXT_COLOR :
-      ThemeRuntime.KEY_LIGHT_REGEX_EMPHASIS_TEXT_COLOR, fallback);
+    return HexColor.normalizeAlpha(ThemeRuntime.storageString(darkMode ?
+      ThemeRuntime.KEY_DARK_REGEX_EMPHASIS_TEXT_COLOR : ThemeRuntime.KEY_LIGHT_REGEX_EMPHASIS_TEXT_COLOR, fallback),
+      fallback);
   }
 
   static smallRadius(): number {
@@ -552,9 +553,10 @@ export class ThemeRuntime {
     const readerTextColor = ThemeRuntime.normalizeColor(variant.reader.textColor, fallback.reader.textColor);
     const readerSubTextColor = ThemeRuntime.normalizeColor(variant.reader.subTextColor,
       fallback.reader.subTextColor);
-    const regexColor = ThemeRuntime.normalizeColor(variant.regexEmphasis.emphasisColor,
+    // 强调色允许 #AARRGGBB：按六位规范化会把带透明度的颜色当非法值换成基底色，阅读页就和编辑器预览对不上。
+    const regexColor = HexColor.normalizeAlpha(variant.regexEmphasis.emphasisColor,
       fallback.regexEmphasis.emphasisColor);
-    const regexTextColor = ThemeRuntime.normalizeColor(variant.regexEmphasis.emphasisTextColor,
+    const regexTextColor = HexColor.normalizeAlpha(variant.regexEmphasis.emphasisTextColor,
       fallback.regexEmphasis.emphasisTextColor);
     const regexMode = ThemeRuntime.normalizeEmphasisMode(variant.regexEmphasis.emphasisMode,
       fallback.regexEmphasis.emphasisMode);
