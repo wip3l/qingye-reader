@@ -6481,11 +6481,9 @@ struct ReadBookPage {
     this.ttsMiniPlayerPositionY = this.clampTtsMiniPlayerPositionY(this.ttsMiniPlayerDragOriginY + offsetY);
   }
 
-  // The panel wears the reader's colours, so the app theme's artwork only fits
-  // while the reader itself is on the "应用主题" scheme.
+  // 听书面板背景始终用主题设置的面板插画（不再按阅读主题退回封面模糊背景）。
   ttsPanelBackgroundThemeId(): string {
-    return this.currentReaderThemeIndex() === ReaderThemeHelper.APP_THEME_INDEX ?
-      ThemeRuntime.ttsPanelThemeId(this.appDarkMode) : '';
+    return ThemeRuntime.ttsPanelThemeId(this.appDarkMode);
   }
 
   @Builder

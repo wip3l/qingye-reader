@@ -137,11 +137,8 @@ export struct ReaderTtsPlayerPanel {
         .onClick(() => this.close())
 
       Stack({ alignContent: Alignment.TopStart }) {
-        if (this.backgroundThemeId) {
-          TtsPanelThemeBackground({ themeId: this.backgroundThemeId, darkMode: this.darkMode })
-        } else {
-          this.ambientBackdrop()
-        }
+        // 空 id 时解析为默认主题的面板插画，背景始终是清晰的插画而不是封面模糊。
+        TtsPanelThemeBackground({ themeId: this.backgroundThemeId, darkMode: this.darkMode })
 
         Column({ space: AppSpacing.LG }) {
           this.header()
@@ -184,7 +181,6 @@ export struct ReaderTtsPlayerPanel {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor(this.backgroundThemeId ? Color.Transparent : ThemeRuntime.pageColor(this.darkMode))
       .transition(this.sharedMotionId ? TransitionEffect.IDENTITY : TransitionEffect.translate({ y: 520 })
         .combine(TransitionEffect.opacity(0))
         .animation({ duration: 280, curve: Curve.Friction }))
@@ -195,38 +191,6 @@ export struct ReaderTtsPlayerPanel {
     .clip(!!this.sharedMotionId)
     .geometryTransition(this.sharedMotionId)
     .transition(this.sharedMotionId ? TransitionEffect.opacity(0.99) : TransitionEffect.IDENTITY)
-  }
-
-  /** 没有主题背景图时，用封面做模糊氛围背景，渐隐到页面底色（底色层与渐变层不透明，底部无硬边）。 */
-  @Builder
-  ambientBackdrop() {
-    Stack({ alignContent: Alignment.Top }) {
-      if (this.coverSource()) {
-        Image(this.coverSource())
-          .width('100%')
-          .height(this.ambientHeight())
-          .objectFit(ImageFit.Cover)
-          .sourceSize({ width: 96, height: 128 })
-          .blur(48)
-          .opacity(this.darkMode ? 0.5 : 0.6)
-      }
-      Column()
-        .width('100%')
-        .height(this.ambientHeight())
-        .linearGradient({
-          direction: GradientDirection.Bottom,
-          colors: [
-            [this.pageColorWithAlpha('40'), 0],
-            [this.pageColorWithAlpha('33'), 0.3],
-            [this.pageColorWithAlpha('B3'), 0.7],
-            [ThemeRuntime.pageColor(this.darkMode), 1]
-          ]
-        })
-    }
-    .width('100%')
-    .height('100%')
-    .clip(true)
-    .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
@@ -1082,17 +1046,9 @@ export struct ReaderTtsPlayerPanel {
     }
   }
 
-  ambientHeight(): number {
-    return Math.round(Math.max(360, (Math.max(1, this.viewportHeight)) * 0.6));
-  }
-
   coverInitial(): string {
     const name = this.hostBookName || this.globalTtsBookName;
     return name ? name.substring(0, 1) : '书';
-  }
-
-  pageColorWithAlpha(alpha: string): string {
-    return `#${alpha}${ThemeRuntime.pageColor(this.darkMode).substring(1)}`;
   }
 
   accentGlowColor(): string {
