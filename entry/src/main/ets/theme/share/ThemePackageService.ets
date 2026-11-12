@@ -1182,7 +1182,8 @@ export class ThemePackageService {
   /** 素材按内容命名：同一张图重复导入只存一份。 */
   private static installAsset(context: Context, baseDir: string, asset: ThemePackageAsset, dir: string): string {
     const fullDir = `${context.filesDir}/${dir}`;
-    fs.mkdirSync(fullDir, true);
+    // mkdirSync 的递归模式对已存在的目录会报 File exists：同一目录装第二个素材（或之前导入过）就会失败。
+    if (!ThemePackageService.exists(fullDir)) fs.mkdirSync(fullDir, true);
     const dot = asset.path.lastIndexOf('.');
     const target = `${fullDir}/${ThemePackageService.IMPORTED_FILE_PREFIX}${asset.id}${asset.path.substring(dot)}`;
     if (!ThemePackageService.exists(target) || fs.statSync(target).size !== asset.size) {

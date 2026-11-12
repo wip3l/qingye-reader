@@ -82,7 +82,8 @@ export class ThemePackStore {
   static prepareDir(context: Context, packageId: string): string {
     const dir = ThemePackStore.packDir(context, packageId);
     ThemePackStore.removeDir(dir);
-    fs.mkdirSync(`${dir}/assets`, true);
+    // 旧目录删除失败时仍会留着，递归 mkdir 对已存在目录会报 File exists。
+    if (!ThemePackStore.exists(`${dir}/assets`)) fs.mkdirSync(`${dir}/assets`, true);
     return dir;
   }
 
