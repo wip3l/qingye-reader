@@ -255,7 +255,7 @@ for (const [file, prefix] of [['ExplorePage', 'explore'], ['SearchPage', 'search
 
   const name = isSearch ? 'Search' : 'Explore';
   let atEnd = false;
-  const list = methods('SearchBookResultList', ['isEndOverscrollRebound'], 'book');
+  const list = methods('SearchBookResultList', ['isEndOverscrollRebound', 'markUserScrolled'], 'book');
   Object.assign(list, { userScrollOnly: true, gridUserScrolled: false,
     scroller: { currentOffset: () => ({ yOffset: 0 }), isAtEnd: () => atEnd },
     onListScroll: (delta, offset) => page[`on${name}ListScroll`](delta, offset),
