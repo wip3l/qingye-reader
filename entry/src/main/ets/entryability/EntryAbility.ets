@@ -300,6 +300,9 @@ export default class EntryAbility extends UIAbility {
     this.immersiveLightBootstrapPromise = ImmersiveLightSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复沉浸光感设置失败:', error);
     });
+    ImmersiveLightSettingsStore.loadThemeTint(this.context).catch((error: Error) => {
+      console.warn('恢复沉浸光感主题色设置失败:', error);
+    });
     PersistentStorage.persistProp('appIconId', AppIconSettingsStore.DEFAULT_ICON_ID);
     PersistentStorage.persistProp('explorePlatform', '');
     PersistentStorage.persistProp('exploreSourceUrl', '');

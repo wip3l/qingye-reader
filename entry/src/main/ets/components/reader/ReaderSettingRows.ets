@@ -72,6 +72,7 @@ export struct ReaderSettingSwitchRow {
 export struct ReaderSettingSelectRow {
   @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('immersiveThemeTint') immersiveThemeTint: boolean = false;
   @Prop title: string = '';
   @Prop minimumMembership: string = '';
   @Prop description: string = '';
@@ -112,7 +113,7 @@ export struct ReaderSettingSelectRow {
         .selectedOptionFont({ family: this.applicationFontFamily })
         .fontColor(this.textColor)
         .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel,
-          this.dark, this.dark ? '#30343B' : '#ECEEF2', true))
+          this.dark, this.dark ? '#30343B' : '#ECEEF2', true, this.immersiveThemeTint))
         .arrowPosition(ArrowPosition.END)
         .padding({ left: 12, right: 12 })
         // Keep the hit area rectangular, but soften its corners to match the rounded settings cards.

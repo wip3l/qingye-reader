@@ -3294,7 +3294,7 @@ struct ReadBookPage {
     .height(40)
     .margin({ left: AppSpacing.MD, right: AppSpacing.MD })
     .borderRadius(20)
-    .backgroundColor(ImmersiveMaterialRuntime.supportsHdsTabs() ? Color.Transparent : this.readerPanelColor())
+    .backgroundColor(ImmersiveMaterialRuntime.supportsHdsTabs() ? Color.Transparent : this.readerSolidFloatingColor())
     .border(ImmersiveMaterialRuntime.surfaceBorder(this.immersiveLightLevel, this.isReaderThemeDark(),
       ImmersiveMaterialRuntime.supportsHdsTabs() ? 0 : 0.5, this.readerPanelBorderColor()))
     .onAreaChange((_oldArea: Area, newArea: Area) => {
@@ -4775,7 +4775,7 @@ struct ReadBookPage {
         .width('100%')
         .height(56)
         .borderRadius(28)
-        .backgroundColor(this.readerPanelColor())
+        .backgroundColor(this.readerSolidFloatingColor())
         .border({ width: 0.5, color: this.readerPanelBorderColor() })
         .shadow(this.readerPanelShadow())
       }
@@ -4938,7 +4938,7 @@ struct ReadBookPage {
         .height(56)
         .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
         .borderRadius(28)
-        .backgroundColor(this.readerPanelColor())
+        .backgroundColor(this.readerSolidFloatingColor())
         .border({ width: 0.5, color: this.readerPanelBorderColor() })
         .shadow(this.readerPanelShadow())
         .position({ x: this.readerFloatingBarLeft(), y: '100%' })
@@ -9872,6 +9872,11 @@ struct ReadBookPage {
 
   readerPanelSubTextColor(): string {
     return this.isReaderThemeDark() ? '#BCC1CA' : '#535963';
+  }
+
+  /** 旧系统没有材质时的不透明浮栏底：沉浸光感跟随主题色时叠上强调色。 */
+  readerSolidFloatingColor(): ResourceColor {
+    return ImmersiveMaterialRuntime.solidSurfaceColor(this.isReaderThemeDark(), this.readerPanelColor());
   }
 
   readerSolidPanelColor(): string {

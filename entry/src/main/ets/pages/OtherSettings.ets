@@ -36,6 +36,7 @@ struct OtherSettingsPage {
   @StorageLink('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('smartGripEnabled') smartGripEnabled: boolean = true;
   @StorageLink('homeBackdropEnabled') homeBackdropEnabled: boolean = true;
+  @StorageProp('immersiveThemeTint') immersiveThemeTint: boolean = false;
   @StorageProp('animatedImagesEnabled') animatedImagesEnabled: boolean = true;
   @StorageProp('homeTabBarStyle') homeTabBarStyle: string = 'floating';
   @StorageProp('homeExtraTab') homeExtraTab: string = 'none';
@@ -261,6 +262,12 @@ struct OtherSettingsPage {
         this.immersiveLightLevelSelect()
       }
       SettingSwitchRow({
+        title: '沉浸光感跟随主题色',
+        description: '菜单、弹窗、面板和悬浮按钮的半透明底色带上一点主题强调色；关闭时为中性色',
+        isOn: this.immersiveThemeTint,
+        onChange: (value: boolean) => { this.setImmersiveThemeTint(value); }
+      })
+      SettingSwitchRow({
         title: '主题背景图',
         description: '主题自带背景图时，铺在书架、发现、搜索和我的页顶部',
         isOn: this.homeBackdropEnabled,
@@ -415,6 +422,17 @@ struct OtherSettingsPage {
       HdsFeedback.showToast('保存失败，请重试');
     });
     // 首页各页签按主题版本号重建，背景层和透明的列表底色一起切换。
+    const revision = AppStorage.get<number>('themeRevision') ?? 0;
+    AppStorage.setOrCreate('themeRevision', revision + 1);
+  }
+
+  setImmersiveThemeTint(enabled: boolean): void {
+    if (this.immersiveThemeTint === enabled) return;
+    ImmersiveLightSettingsStore.saveThemeTint(getContext(this), enabled).catch((error: Error) => {
+      console.warn('保存沉浸光感主题色设置失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
+    // 底色在构建时读取，按主题版本号重建首页底栏、阅读页工具栏等缓存了材质的部分。
     const revision = AppStorage.get<number>('themeRevision') ?? 0;
     AppStorage.setOrCreate('themeRevision', revision + 1);
   }

@@ -9,6 +9,7 @@ import { ThemeRuntime } from '../../theme/ThemeRuntime';
 @Component
 export struct ReaderFloatingMaterialBar {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('immersiveThemeTint') immersiveThemeTint: boolean = false;
   @Prop darkMode: boolean = false;
   @Prop fallbackColor: ResourceColor = '';
   @Prop barWidth: number = 320;
@@ -33,7 +34,7 @@ export struct ReaderFloatingMaterialBar {
       .height(this.barHeight - 2)
       .borderRadius(Math.max(0, this.radius() - 1))
       .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel,
-        this.darkMode, this.fallbackColor, !this.denseContent))
+        this.darkMode, this.fallbackColor, !this.denseContent, this.immersiveThemeTint))
       .clip(true)
     }
     .width('100%')
@@ -91,6 +92,7 @@ export struct ReaderFloatingMaterialBar {
 @Component
 export struct ReaderMaterialPanel {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('immersiveThemeTint') immersiveThemeTint: boolean = false;
   @Prop panelWidth: number = 320;
   @Prop panelHeight: number = 400;
   @Prop cornerRadius: number = 28;
@@ -124,7 +126,8 @@ export struct ReaderMaterialPanel {
       .borderRadius(this.cornerRadius)
       .border(ImmersiveMaterialRuntime.surfaceBorder(this.immersiveLightLevel, this.darkMode))
       .clip(true)
-      .backgroundColor(this.fallbackColor)
+      .backgroundColor(ImmersiveMaterialRuntime.solidSurfaceColor(this.darkMode, this.fallbackColor,
+        this.immersiveThemeTint))
       .shadow({
         radius: 18,
         color: this.darkMode ? '#66000000' : '#1F000000',

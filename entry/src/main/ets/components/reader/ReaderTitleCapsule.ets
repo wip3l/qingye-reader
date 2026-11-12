@@ -9,6 +9,7 @@ import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 @Component
 export struct ReaderTitleCapsule {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('immersiveThemeTint') immersiveThemeTint: boolean = false;
   @Prop capsuleWidth: number = 200;
   @Prop darkMode: boolean = false;
   @BuilderParam content: () => void = this.emptyContent;
@@ -29,7 +30,7 @@ export struct ReaderTitleCapsule {
       .height('100%')
       .borderRadius(20)
       .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel, this.darkMode,
-        this.solidColor(), true))
+        this.solidColor(), true, this.immersiveThemeTint))
     }
     .width(this.capsuleWidth)
     .height(40)

@@ -31,6 +31,7 @@ class ImmersiveSurfaceClip implements AttributeModifier<CommonAttribute> {
 @Component
 export struct ImmersiveMaterialSurface {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('immersiveThemeTint') immersiveThemeTint: boolean = false;
   @Prop surfaceWidth: number = 40;
   @Prop surfaceHeight: number = 40;
   @Prop darkMode: boolean = false;
@@ -121,7 +122,7 @@ export struct ImmersiveMaterialSurface {
       .height(this.surfaceHeight - 2)
       .borderRadius(Math.max(0, this.surfaceHeight / 2 - 1))
       .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel,
-        this.darkMode, this.fallbackColor, true))
+        this.darkMode, this.fallbackColor, true, this.immersiveThemeTint))
 
       Row()
         .width(this.surfaceHeight * 2)

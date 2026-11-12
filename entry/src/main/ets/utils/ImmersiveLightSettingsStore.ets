@@ -5,7 +5,10 @@ import preferences from '@ohos.data.preferences';
 export class ImmersiveLightSettingsStore {
   static readonly KEY: string = 'immersiveLightLevel';
   static readonly STORE_NAME: string = 'immersive_light_settings';
+  /** 沉浸光感底色跟随主题强调色，与档位同存一份偏好，随设置一起备份。 */
+  static readonly KEY_THEME_TINT: string = 'immersiveThemeTint';
   private static revision: number = 0;
+  private static tintRevision: number = 0;
   private static writes: Promise<void> = Promise.resolve();
 
   static normalize(value: string): string {
@@ -25,6 +28,26 @@ export class ImmersiveLightSettingsStore {
     }
     AppStorage.setOrCreate(ImmersiveLightSettingsStore.KEY,
       ImmersiveLightSettingsStore.normalize(typeof value === 'string' ? value : 'adaptive'));
+  }
+
+  static async loadThemeTint(context: Context): Promise<void> {
+    const revision = ImmersiveLightSettingsStore.tintRevision;
+    const store = await preferences.getPreferences(context, ImmersiveLightSettingsStore.STORE_NAME);
+    const value = await store.get(ImmersiveLightSettingsStore.KEY_THEME_TINT, false);
+    if (revision !== ImmersiveLightSettingsStore.tintRevision) return;
+    AppStorage.setOrCreate(ImmersiveLightSettingsStore.KEY_THEME_TINT, value === true);
+  }
+
+  static saveThemeTint(context: Context, enabled: boolean): Promise<void> {
+    ++ImmersiveLightSettingsStore.tintRevision;
+    AppStorage.setOrCreate(ImmersiveLightSettingsStore.KEY_THEME_TINT, enabled);
+    const write = ImmersiveLightSettingsStore.writes.then(async (): Promise<void> => {
+      const store = await preferences.getPreferences(context, ImmersiveLightSettingsStore.STORE_NAME);
+      await store.put(ImmersiveLightSettingsStore.KEY_THEME_TINT, enabled);
+      await store.flush();
+    });
+    ImmersiveLightSettingsStore.writes = write.catch(() => {});
+    return write;
   }
 
   static save(context: Context, value: string): Promise<void> {

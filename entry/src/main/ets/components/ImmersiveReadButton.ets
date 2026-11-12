@@ -10,6 +10,7 @@ export const IMMERSIVE_READ_BUTTON_WIDTH: number = 160;
 @Component
 export struct ImmersiveReadButton {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('immersiveThemeTint') immersiveThemeTint: boolean = false;
   @Prop label: string = '开始阅读';
   @Prop icon: Resource = $r('sys.symbol.book');
   @Prop darkMode: boolean = false;
@@ -96,7 +97,8 @@ export struct ImmersiveReadButton {
       .width(IMMERSIVE_READ_BUTTON_WIDTH)
       .height(56)
       .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-      .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel, this.darkMode, '', true))
+      .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel, this.darkMode, '', true,
+        this.immersiveThemeTint))
       .enabled(!this.busy)
       .accessibilityText(this.label)
       .onClick(() => this.onRead())

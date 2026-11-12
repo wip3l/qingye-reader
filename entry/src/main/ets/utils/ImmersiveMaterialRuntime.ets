@@ -127,6 +127,7 @@ export class GlassTagModifier implements AttributeModifier<CommonAttribute> {
 /** Centralizes HDS material probing and compatibility fallback. */
 export class ImmersiveMaterialRuntime {
   static readonly KEY_LIGHT_LEVEL: string = 'immersiveLightLevel';
+  static readonly KEY_THEME_TINT: string = 'immersiveThemeTint';
   /** 下拉弹出菜单的圆角与内边距；菜单项圆角取两者之差，与弹出层同心。 */
   static readonly POPUP_MENU_RADIUS: number = 18;
   static readonly POPUP_MENU_PADDING: number = 4;
@@ -251,23 +252,70 @@ export class ImmersiveMaterialRuntime {
 
   /** 面板浅/深色底色为 25%/50%，紧凑控件为 15%/40%；弱档沿用实色。 */
   static surfaceColor(level: string, darkMode: boolean, fallback: ResourceColor = '',
-    compact: boolean = false): ResourceColor {
+    compact: boolean = false, themeTint: boolean = ImmersiveMaterialRuntime.themeTintEnabled()): ResourceColor {
     const alpha = compact ? (darkMode ? '66' : '26') : (darkMode ? '80' : '40');
-    return ImmersiveMaterialRuntime.tintedSurfaceColor(level, darkMode, fallback, alpha);
+    return ImmersiveMaterialRuntime.tintedSurfaceColor(level, darkMode, fallback, alpha, themeTint);
   }
 
   /** 菜单浅/深色底色为 20%/45%，独立于大面板和触发控件。 */
   static menuSurfaceColor(level: string, darkMode: boolean, fallback: ResourceColor = ''): ResourceColor {
-    return ImmersiveMaterialRuntime.tintedSurfaceColor(level, darkMode, fallback, darkMode ? '73' : '33');
+    return ImmersiveMaterialRuntime.tintedSurfaceColor(level, darkMode, fallback, darkMode ? '73' : '33',
+      ImmersiveMaterialRuntime.themeTintEnabled());
+  }
+
+  /**
+   * “其他设置 › 沉浸光感跟随主题色”：开启后在原中性底色里混入少量强调色（浅色 10%、深色 5%），不透明度不变。
+   * 常驻组件把 @StorageProp 的值传进 surfaceColor 的 themeTint，切换开关时才会重绘。
+   */
+  static themeTintEnabled(): boolean {
+    return AppStorage.get<boolean>(ImmersiveMaterialRuntime.KEY_THEME_TINT) === true;
   }
 
   private static tintedSurfaceColor(level: string, darkMode: boolean, fallback: ResourceColor,
-    alpha: string): ResourceColor {
+    alpha: string, themeTint: boolean): ResourceColor {
     const base = fallback || ThemeRuntime.cardColor(darkMode);
     if (typeof base !== 'string' || !/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(base)) return base;
-    const rgb = base.substring(base.length - 6);
+    const rgb = ImmersiveMaterialRuntime.themeTintRgb(base.substring(base.length - 6), darkMode, themeTint);
     // 统一替换旧 alpha，避免沿用上次过厚的底色。
     return ImmersiveMaterialRuntime.effectiveLevel(level) === 'weak' ? `#${rgb}` : `#${alpha}${rgb}`;
+  }
+
+  /** 没有系统材质的旧系统用的不透明面板底，开关打开时同样混入少量强调色。 */
+  static solidSurfaceColor(darkMode: boolean, base: ResourceColor,
+    themeTint: boolean = ImmersiveMaterialRuntime.themeTintEnabled()): ResourceColor {
+    if (!themeTint || typeof base !== 'string' || !/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(base)) return base;
+    return `#${ImmersiveMaterialRuntime.themeTintRgb(base.substring(base.length - 6), darkMode, themeTint)}`;
+  }
+
+  /** 中性底色里混入强调色的比例：整块换成强调色太浓，只带一点色调；浅色底更白，需要多混一些。 */
+  private static readonly THEME_TINT_RATIO_LIGHT: number = 0.10;
+  private static readonly THEME_TINT_RATIO_DARK: number = 0.05;
+
+  /** 开关打开时返回混入强调色后的 6 位色值；底色本身就是强调色（选中块）时原样返回。 */
+  private static themeTintRgb(rgb: string, darkMode: boolean, themeTint: boolean): string {
+    if (!themeTint) return rgb;
+    const accent = ImmersiveMaterialRuntime.accentRgb(darkMode);
+    if (rgb.toUpperCase() === accent) return rgb;
+    return ImmersiveMaterialRuntime.blendRgb(rgb, accent, darkMode ?
+      ImmersiveMaterialRuntime.THEME_TINT_RATIO_DARK : ImmersiveMaterialRuntime.THEME_TINT_RATIO_LIGHT);
+  }
+
+  private static accentRgb(darkMode: boolean): string {
+    const accent = ThemeRuntime.accentColor(darkMode);
+    return /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(accent) ?
+      accent.substring(accent.length - 6).toUpperCase() : (darkMode ? '4D8DFF' : '0A59F7');
+  }
+
+  /** 按 ratio 把 top 叠到 base 上，返回不透明的 6 位色值。 */
+  private static blendRgb(base: string, top: string, ratio: number): string {
+    let out = '';
+    for (let i = 0; i < 6; i += 2) {
+      const b = parseInt(base.substring(i, i + 2), 16);
+      const t = parseInt(top.substring(i, i + 2), 16);
+      const v = Math.round(b + (t - b) * ratio);
+      out += (v < 16 ? '0' : '') + v.toString(16).toUpperCase();
+    }
+    return out;
   }
 
   /** 原生材质已通过 materialColor 着色，背景不再重复叠色。 */

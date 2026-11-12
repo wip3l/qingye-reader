@@ -5,6 +5,7 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 @Component
 export struct ImmersiveBackButton {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('immersiveThemeTint') immersiveThemeTint: boolean = false;
   @Prop icon: Resource = $r('sys.symbol.chevron_left');
   @Prop iconColor: ResourceColor = '#18191C';
   @Prop labelText: string = '';
@@ -38,7 +39,7 @@ export struct ImmersiveBackButton {
         .padding(0)
         .enabled(this.buttonEnabled)
         .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel, this.darkMode,
-          this.darkMode ? '#191B1F' : '#FFFFFF', true))
+          this.darkMode ? '#191B1F' : '#FFFFFF', true, this.immersiveThemeTint))
         .border(ImmersiveMaterialRuntime.surfaceBorder(this.immersiveLightLevel, this.darkMode))
         .shadow(ThemeRuntime.floatingControlShadow(this.darkMode))
         .accessibilityText(this.accessibilityLabel)
@@ -96,7 +97,7 @@ export struct ImmersiveBackButton {
       .padding(0)
       .enabled(this.buttonEnabled)
       .backgroundColor(ImmersiveMaterialRuntime.surfaceColor(this.immersiveLightLevel, this.darkMode,
-        this.darkMode ? '#191B1F' : '#FFFFFF', true))
+        this.darkMode ? '#191B1F' : '#FFFFFF', true, this.immersiveThemeTint))
       .hitTestBehavior(HitTestMode.Transparent)
       .accessibilityText(this.accessibilityLabel)
       .onClick(() => this.onBack())
