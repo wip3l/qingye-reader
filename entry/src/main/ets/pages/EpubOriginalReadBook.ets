@@ -85,6 +85,8 @@ import { BookAnnotation, BookAnnotationAnchor, BookAnnotationStyles } from '../m
 import { ReaderAnnotationSettings, ReaderAnnotationSettingsStore } from '../utils/ReaderAnnotationSettingsStore';
 import { ReaderAnnotationLayer, ReaderAnnotationLayerMode } from '../components/reader/ReaderAnnotationLayer';
 import { ReaderAnnotationShare } from '../utils/ReaderAnnotationShare';
+import lazy { motion } from '@kit.MultimodalAwarenessKit';
+import deviceInfo from '@ohos.deviceInfo';
 
 /** 本书的文件排版设置与位置（书籍变量）。 */
 const SCROLL_KEY = 'epubOriginalScroll';
@@ -550,6 +552,12 @@ struct EpubOriginalReadBookPage {
   /** 卡片画成什么样（地址 + 在放 / 暂停）：翻页截图的身份带上它，换了状态不拿旧截图当起点。 */
   private musicPaintKey: string = '';
   private musicUnsubscribe: (() => void) | null = null;
+  /** 智感握姿（其他设置里的总开关）：单手握持时朗读按钮/胶囊移到握持一侧，与普通阅读页一致。 */
+  @StorageProp('smartGripEnabled') @Watch('onSmartGripEnabledChanged') smartGripEnabled: boolean = true;
+  @State holdingHandSide: number = 0;
+  private holdingHandSubscribed: boolean = false;
+  private holdingHandCallback: (status: motion.HoldingHandStatus) => void =
+    (status: motion.HoldingHandStatus): void => this.onHoldingHandChanged(status);
 
   aboutToAppear(): void {
     this.alive = true;
@@ -586,11 +594,13 @@ struct EpubOriginalReadBookPage {
     this.syncInfoBarClock();
     if (this.ready) readStatsTracker.setReadingActive(this.bookUrl);
     this.onShortcut();
+    this.startHoldingHandTracking();
   }
 
   onPageHide(): void {
     KnockShare.detach(this.owner);
     this.visible = false;
+    this.stopHoldingHandTracking();
     // 没有接系统媒体控件，退到后台或盖上别的页面时音乐先停下，回来再点卡片或胶囊继续。
     EpubAudioPlayer.pause(this.owner);
     this.unregisterHardwareKeys();
@@ -607,6 +617,7 @@ struct EpubOriginalReadBookPage {
 
   aboutToDisappear(): void {
     KnockShare.detach(this.owner);
+    this.stopHoldingHandTracking();
     this.flushAndSyncProgress();
     this.alive = false;
     this.musicUnsubscribe?.();
@@ -637,6 +648,51 @@ struct EpubOriginalReadBookPage {
     this.applySystemBars();
     ReaderProgressCheckpoint.detach(this.owner);
     readStatsTracker.setReadingActive('');
+  }
+
+  private onSmartGripEnabledChanged(): void {
+    if (!this.smartGripEnabled) {
+      this.stopHoldingHandTracking();
+      this.holdingHandSide = 0;
+    } else {
+      this.startHoldingHandTracking();
+    }
+  }
+
+  private startHoldingHandTracking(): void {
+    if (!this.smartGripEnabled || !this.visible || this.holdingHandSubscribed || deviceInfo.sdkApiVersion < 20 ||
+      !canIUse('SystemCapability.MultimodalAwareness.Motion')) return;
+    try {
+      this.holdingHandSubscribed = true;
+      motion.on('holdingHandChanged', this.holdingHandCallback);
+    } catch (error) {
+      this.holdingHandSubscribed = false;
+      this.holdingHandSide = 0;
+      console.warn('文件排版握姿感知不可用，朗读按钮保持靠右:', error);
+    }
+  }
+
+  private stopHoldingHandTracking(): void {
+    if (!this.holdingHandSubscribed) return;
+    this.holdingHandSubscribed = false;
+    try {
+      // 只取消本页回调，保留其他页面和系统控件的订阅。
+      motion.off('holdingHandChanged', this.holdingHandCallback);
+    } catch (error) {
+      console.warn('释放文件排版握姿监听失败:', error);
+    }
+  }
+
+  private onHoldingHandChanged(status: motion.HoldingHandStatus): void {
+    if (!this.smartGripEnabled || !this.holdingHandSubscribed || !this.visible) return;
+    // 双手、未握持和未知状态都保留上次位置，避免放下手机时来回跳。
+    if (status !== motion.HoldingHandStatus.LEFT_HAND_HELD &&
+      status !== motion.HoldingHandStatus.RIGHT_HAND_HELD) return;
+    const side = status === motion.HoldingHandStatus.LEFT_HAND_HELD ? -1 : 1;
+    if (side === this.holdingHandSide) return;
+    this.getUIContext().animateTo({ duration: 280, curve: Curve.Friction }, (): void => {
+      this.holdingHandSide = side;
+    });
   }
 
   onBackPress(): boolean {
@@ -4190,6 +4246,7 @@ struct EpubOriginalReadBookPage {
         musicState: this.musicState,
         musicTitle: this.musicTitle,
         musicTime: this.musicTime,
+        holdingHandSide: this.holdingHandSide,
         onMusicToggle: (): void => { this.toggleMusic(); },
         onMusicStop: (): void => { EpubAudioPlayer.stop(); } })
 

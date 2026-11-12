@@ -95,6 +95,8 @@ export struct EpubOriginalControls {
   @Prop musicTitle: string = '';
   /** “0:04 / 3:33”；还不知道时长时为空。 */
   @Prop musicTime: string = '';
+  /** 智感握姿：-1 左手、1 右手、0 未知（朗读控件按默认靠右）。 */
+  @Prop holdingHandSide: number = 0;
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 720;
   @State showMore: boolean = false;
@@ -484,9 +486,25 @@ export struct EpubOriginalControls {
       .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
 
-  /** 朗读按钮与胶囊停在底栏右上方（与普通阅读页 readerTtsQuickActionLeft 相同的靠右对齐）。 */
+  /** 朗读按钮与胶囊停在底栏上方（与普通阅读页 readerTtsQuickActionLeft 相同：默认靠右，左手握持时靠左）。 */
   private ttsAnchorTop(height: number): number {
     return this.viewportHeight - this.bottomInset() - this.bottomBarHeight() - 14 - height;
+  }
+
+  private ttsOnLeft(): boolean {
+    return this.holdingHandSide < 0;
+  }
+
+  /** 朗读控件的左边：左手握持贴屏幕左边距（大屏底栏靠右时也一样），否则对齐底栏右端。 */
+  private ttsLeft(width: number): number {
+    if (this.ttsOnLeft()) return Math.min(18, this.panelLeft());
+    return Math.max(8, this.panelLeft() + this.panelWidth() - width);
+  }
+
+  /** 音乐胶囊与朗读控件分占两边：朗读在左时音乐靠底栏右端。 */
+  private musicLeft(): number {
+    if (!this.ttsOnLeft() || !this.readerUseTtsQuickAction) return this.panelLeft();
+    return this.panelLeft() + this.panelWidth() - this.musicCapsuleWidth();
   }
 
   @Builder
@@ -510,7 +528,7 @@ export struct EpubOriginalControls {
       })
         .position({ x: 0, y: 0 })
         .translate({
-          x: Math.max(8, this.panelLeft() + this.panelWidth() - ReaderTtsCapsule.WIDTH),
+          x: this.ttsLeft(ReaderTtsCapsule.WIDTH),
           y: this.ttsAnchorTop(ReaderTtsCapsule.HEIGHT)
         })
         .transition(ReaderChromeMotion.bottom(this.bottomInset() + this.bottomBarHeight() + ReaderTtsCapsule.HEIGHT))
@@ -523,7 +541,7 @@ export struct EpubOriginalControls {
       }
       .width(48)
       .height(48)
-      .position({ x: this.panelLeft() + this.panelWidth() - 48, y: this.ttsAnchorTop(48) })
+      .position({ x: this.ttsLeft(48), y: this.ttsAnchorTop(48) })
       .transition(ReaderChromeMotion.bottom(this.bottomInset() + this.bottomBarHeight() + 48))
       .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
     }
@@ -594,7 +612,7 @@ export struct EpubOriginalControls {
     .width(this.musicCapsuleWidth())
     .height(ReaderTtsCapsule.HEIGHT)
     .borderRadius(ReaderTtsCapsule.HEIGHT / 2)
-    .position({ x: this.panelLeft(), y: this.ttsAnchorTop(ReaderTtsCapsule.HEIGHT) })
+    .position({ x: this.musicLeft(), y: this.ttsAnchorTop(ReaderTtsCapsule.HEIGHT) })
     .transition(ReaderChromeMotion.bottom(this.bottomInset() + this.bottomBarHeight() + ReaderTtsCapsule.HEIGHT))
     .hitTestBehavior(HitTestMode.BLOCK_HIERARCHY)
   }
