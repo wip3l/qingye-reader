@@ -24,8 +24,8 @@ export class AnimatedImagePolicy {
   static readonly KEY_ENABLED: string = 'animatedImagesEnabled';
   static readonly KEY_REVISION: string = 'animatedImageRevision';
   /** 超过这个大小的动图只显示第一帧，上传入口也按它拒收：一屏十几张大动图同时解码太费内存和电。 */
-  static readonly MAX_PLAY_BYTES: number = 8 * 1024 * 1024;
-  static readonly MAX_PLAY_LABEL: string = '8 MB';
+  static readonly MAX_PLAY_BYTES: number = 25 * 1024 * 1024;
+  static readonly MAX_PLAY_LABEL: string = '25 MB';
   private static readonly STORE_NAME: string = 'animated_image_settings';
   private static readonly STILL_DIR: string = 'animated_stills';
   /** 静图最长边，够书架封面和 1080 宽的首页背景用。 */

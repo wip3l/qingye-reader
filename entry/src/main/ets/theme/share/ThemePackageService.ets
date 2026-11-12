@@ -974,7 +974,7 @@ export class ThemePackageService {
       ThemePackageLimits.MAX_FONT_BYTES : ThemePackageLimits.MAX_IMAGE_BYTES;
     if (size <= 0 || size > maxSize) {
       throw new Error(kind === ThemePackageAssetKinds.FONT ? `字体「${name}」超过 40 MB，无法附带` :
-        '图片超过 20 MB，无法导出');
+        '图片超过 25 MB，无法导出');
     }
     const extension = sniffAssetExtension(ThemePackageService.readHead(path));
     if (!extension || kindForExtension(extension) !== kind) {

@@ -39,7 +39,8 @@ export class ThemePackageFeatures {
 export class ThemePackageLimits {
   static readonly MAX_PACKAGE_BYTES: number = 80 * 1024 * 1024;
   static readonly MAX_TOTAL_UNCOMPRESSED: number = 160 * 1024 * 1024;
-  static readonly MAX_IMAGE_BYTES: number = 20 * 1024 * 1024;
+  /** 不小于 AnimatedImagePolicy.MAX_PLAY_BYTES，能上传播放的动图也能随主题包导出。 */
+  static readonly MAX_IMAGE_BYTES: number = 25 * 1024 * 1024;
   static readonly MAX_FONT_BYTES: number = 40 * 1024 * 1024;
   static readonly MAX_VECTOR_BYTES: number = 1024 * 1024;
   static readonly MAX_JSON_BYTES: number = 1024 * 1024;
