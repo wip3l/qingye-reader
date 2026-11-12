@@ -1,12 +1,12 @@
 import { BookCoverResolver } from '../../utils/BookCoverResolver';
 import fileUri from '@ohos.file.fileuri';
 import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
-import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { avSession } from '@kit.AVSessionKit';
 import { audio } from '@kit.AudioKit';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import { BookCoverCache } from '../../utils/BookCoverCache';
+import { BackgroundPermit } from '../../utils/BackgroundPermit';
 
 /** 系统媒体卡片上展示的当前朗读信息。 */
 export interface ReaderTtsMediaInfo {
@@ -39,10 +39,6 @@ export interface ReaderTtsMediaHost {
   onPlayNext: () => void;
   onPlayPrevious: () => void;
   onSetSpeed: (speed: number) => void;
-  /** 章节缓存任务正在运行。它与朗读共用后台长时任务许可，朗读停止时许可要交给它而不是释放。 */
-  cacheTaskRunning: () => boolean;
-  cacheHoldsBackground: () => boolean;
-  handBackgroundToCache: () => void;
 }
 
 /**
@@ -54,6 +50,8 @@ export class ReaderTtsMediaSession {
   backgroundRequesting: boolean = false;
 
   private readonly host: ReaderTtsMediaHost;
+  // 后台许可由 BackgroundPermit 统一管理，这里只按名字登记和释放，不会影响缓存、听书等其他使用方。
+  private readonly permitOwner: string = BackgroundPermit.uniqueOwner('tts');
   private backgroundDesired: boolean = false;
   private heartbeatId: number = -1;
   private lastLogAt: number = 0;
@@ -124,14 +122,21 @@ export class ReaderTtsMediaSession {
     try {
       const agent = await this.createWantAgent();
       await this.startSession(agent);
-      await backgroundTaskManager.startBackgroundRunning(this.host.abilityContext(), ['audioPlayback'], agent);
-      if (this.backgroundDesired) {
-        this.backgroundRunning = true;
-        this.startHeartbeat();
-        console.info(`[TTS-BG] background audio task started: ${this.debugState()}`);
-      } else {
-        await backgroundTaskManager.stopBackgroundRunning(this.host.abilityContext());
+      const granted = await BackgroundPermit.acquire(this.host.abilityContext(), this.permitOwner, 'audioPlayback',
+        agent);
+      if (!this.backgroundDesired) {
+        await BackgroundPermit.release(this.permitOwner);
         await this.stopSession();
+      } else {
+        this.backgroundRunning = granted;
+        // 没申请到也开心跳：许可那边会自己重试，心跳负责把结果同步回来。
+        this.startHeartbeat();
+        if (granted) {
+          console.info(`[TTS-BG] background audio task started: ${this.debugState()}`);
+        } else {
+          console.warn(`[TTS-BG] background audio task not granted yet: ${BackgroundPermit.debugState()}; ` +
+            this.debugState());
+        }
       }
       return this.backgroundRunning;
     } catch (error) {
@@ -168,22 +173,11 @@ export class ReaderTtsMediaSession {
     this.backgroundDesired = false;
     this.stopHeartbeat();
     await this.stopSession();
-    if (!this.backgroundRunning && !this.backgroundRequesting) return;
+    // 申请还在途中：它完成后看到不再需要，会自己释放。
     if (this.backgroundRequesting && !this.backgroundRunning) return;
     this.backgroundRunning = false;
-    // The cache task shares this ability's background permit: hand it over instead of releasing it.
-    if (this.host.cacheTaskRunning()) {
-      this.host.handBackgroundToCache();
-      return;
-    }
-    if (this.host.cacheHoldsBackground()) return;
-    try {
-      await backgroundTaskManager.stopBackgroundRunning(this.host.abilityContext());
-      console.info(`[TTS-BG] background audio task stopped: ${this.debugState()}`);
-    } catch (error) {
-      console.warn(`[TTS-BG] stop background audio task failed: ` +
-        `${ReaderTtsMediaSession.formatError(error as Object)}; ${this.debugState()}`, error);
-    }
+    await BackgroundPermit.release(this.permitOwner);
+    console.info(`[TTS-BG] background audio task released: ${this.debugState()}`);
   }
 
   onAudioStarted(): void {
@@ -223,6 +217,8 @@ export class ReaderTtsMediaSession {
       this.stopHeartbeat();
       return;
     }
+    // 许可可能被系统取消，或上次没申请到、后来重试成功了：按实际情况对齐。
+    if (!this.backgroundRequesting) this.backgroundRunning = BackgroundPermit.satisfies(this.permitOwner);
     if (!this.backgroundRunning && !this.backgroundRequesting) {
       await this.startBackgroundRunning();
       return;

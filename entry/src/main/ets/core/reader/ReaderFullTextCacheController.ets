@@ -1,10 +1,10 @@
 import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
-import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { BookChapter, sleepMs } from '@legado/sourceengine';
 import { AppDatabase } from '../../model/data/AppDatabase';
 import { ReadBookEngine } from '../book/ReadBookEngine';
 import { HdsFeedback } from '../../utils/HdsFeedback';
+import { BackgroundPermit } from '../../utils/BackgroundPermit';
 import { FullTextCacheCancelCoordinator, FullTextCacheCancelSignal } from '../../utils/FullTextCacheCancelCoordinator';
 
 const NOTIFICATION_INTERVAL_MS = 5000;
@@ -17,10 +17,6 @@ export interface ReaderFullTextCacheHost {
   abilityContext: () => common.UIAbilityContext;
   bookUrl: () => string;
   bookName: () => string;
-  /** 朗读正持有后台长时任务。 */
-  ttsBackgroundRunning: () => boolean;
-  /** 朗读正持有或正在申请后台长时任务。 */
-  ttsBackgroundBusy: () => boolean;
   /** caching / done / total / status 有变化，页面据此刷新自己的展示状态。 */
   onStateChanged: () => void;
   onChaptersChanged: (chapters: BookChapter[]) => void;
@@ -30,19 +26,20 @@ export interface ReaderFullTextCacheHost {
  * 阅读页的章节缓存后台任务：缓存全文或指定章节，逐章缓存、通知栏进度与取消、后台长时任务的申请和释放。
  * 与书架的缓存任务同一套做法：任务用自己的后台引擎，不占用阅读页正在使用的引擎，
  * 进度按本次要缓存的章节计算，对话框可以随时关闭而不影响任务。
- * 不持有任何界面状态；后台长时任务与朗读共用同一个 Ability 许可，谁后结束谁负责释放。
+ * 不持有任何界面状态；后台长时任务经 BackgroundPermit 登记，与朗读、听书等互不影响。
  */
 export class ReaderFullTextCacheController {
   caching: boolean = false;
   done: number = 0;
   total: number = 0;
   status: string = '';
-  /** 本任务是否在占用后台长时任务许可；朗读停止后台时会读写它来交接许可。 */
+  /** 本任务是否已登记后台长时任务许可。 */
   backgroundRunning: boolean = false;
   /** 任务引擎里的最新目录（含缓存标记），对话框用它刷新"已缓存"标识；没有跑过任务时为空。 */
   chapters: BookChapter[] = [];
 
   private readonly host: ReaderFullTextCacheHost;
+  private readonly permitOwner: string = BackgroundPermit.uniqueOwner('reader-cache');
   private taskId: number = 0;
   private taskKey: string = '';
   private cancelRequested: boolean = false;
@@ -433,14 +430,11 @@ export class ReaderFullTextCacheController {
 
   private async startBackgroundRunning(): Promise<void> {
     if (this.backgroundRunning) return;
-    if (this.host.ttsBackgroundRunning()) {
-      this.backgroundRunning = true;
-      return;
-    }
     try {
       const agent = await this.openWantAgent();
-      await backgroundTaskManager.startBackgroundRunning(this.host.abilityContext(), ['dataTransfer'], agent);
+      // 没申请到时登记仍然保留，许可那边会自己重试。
       this.backgroundRunning = true;
+      await BackgroundPermit.acquire(this.host.abilityContext(), this.permitOwner, 'dataTransfer', agent);
     } catch (error) {
       console.warn('启动全文缓存后台任务失败:', error);
     }
@@ -449,9 +443,8 @@ export class ReaderFullTextCacheController {
   private async stopBackgroundRunning(): Promise<void> {
     if (!this.backgroundRunning) return;
     this.backgroundRunning = false;
-    if (this.host.ttsBackgroundBusy()) return;
     try {
-      await backgroundTaskManager.stopBackgroundRunning(this.host.abilityContext());
+      await BackgroundPermit.release(this.permitOwner);
     } catch (error) {
       console.warn('停止全文缓存后台任务失败:', error);
     }

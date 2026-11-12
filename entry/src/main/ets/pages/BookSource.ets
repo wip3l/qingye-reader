@@ -26,7 +26,7 @@ import { VirtualListScrollbar } from '../utils/VirtualListScrollbar';
 import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
 import { request } from '@kit.BasicServicesKit';
 import { webview } from '@kit.ArkWeb';
-import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
+import { BackgroundPermit } from '../utils/BackgroundPermit';
 import { notificationManager } from '@kit.NotificationKit';
 import commonEventManager from '@ohos.commonEventManager';
 import { BookSourceLoginWebRuntime, LoginCookieOperation, LoginRuntimeStep } from '../core/book/BookSourceLoginWebRuntime';
@@ -6239,8 +6239,9 @@ struct BookSourcePage {
     }
     try {
       const agent = await this.getBookSourceCheckOpenWantAgent();
-      await backgroundTaskManager.startBackgroundRunning(getContext(this), ['dataTransfer'], agent);
+      // 没申请到时登记仍然保留，许可那边会自己重试。
       this.checkBackgroundRunning = true;
+      await BackgroundPermit.acquire(getContext(this) as common.UIAbilityContext, 'source-check', 'dataTransfer', agent);
     } catch (e) {
       console.warn('启动规则校验后台任务失败:', e);
     }
@@ -6252,7 +6253,7 @@ struct BookSourcePage {
     }
     this.checkBackgroundRunning = false;
     try {
-      await backgroundTaskManager.stopBackgroundRunning(getContext(this));
+      await BackgroundPermit.release('source-check');
     } catch (e) {
       console.warn('停止规则校验后台任务失败:', e);
     }

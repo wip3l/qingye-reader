@@ -114,4 +114,6 @@ export class AudioBookAvSessionHolder {
   static backgroundStarting: boolean = false;
   static backgroundDesired: boolean = false;
   static heartbeatId: number = -1;
+  /** 申请和释放排成一队依次执行：出错后马上重试时，前一次的释放不会把后一次刚申请到的停掉。 */
+  static backgroundQueue: Promise<void> = Promise.resolve();
 }

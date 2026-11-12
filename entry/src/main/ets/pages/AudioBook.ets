@@ -8,7 +8,7 @@ import { BookCover } from '../components/book/BookCover';
 import { NativeSourceService, NativeVoiceOption, Book, BookChapter, BookSource, BookTypeSupport } from '@legado/sourceengine';
 import { promptAction, router } from '@kit.ArkUI';
 import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
-import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
+import { BackgroundPermit } from '../utils/BackgroundPermit';
 import { avSession } from '@kit.AVSessionKit';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { ReadBookEngine } from '../core/book/ReadBookEngine';
@@ -40,6 +40,8 @@ import { AppSpacing } from '../theme/AppSpacing';
 
 /** 书源解析出音频地址的总时限。WebView 嗅探本身最多 15 秒，失败后还会回退 HTTP 规则。 */
 const AUDIO_URL_RESOLVE_TIMEOUT_MS = 30000;
+// 听书在 BackgroundPermit 里登记用的名字；整个进程只有一个听书播放器，所以各个听书页共用。
+const AUDIO_PERMIT_OWNER = 'audiobook';
 
 class AudioBookPlaybackListener implements RemoteAudioPlaybackListener {
   private readonly stateCallback: (state: string) => void;
@@ -1475,25 +1477,43 @@ struct AudioBookPage {
   // 后台播放许可、媒体会话和保活心跳都存在 AudioBookAvSessionHolder 里，整个进程只有一份。
   // 以前每个听书页各记一份：重新打开听书页后，新页面以为还没申请，会重设共享会话（书还没加载完，
   // 标题为空、没有上一章下一章）；旧页面的心跳还在用旧章节刷新会话，通知栏控件就乱了。
-  async startAudioBackground(): Promise<void> {
+  // 许可本身由 BackgroundPermit 统一管理（缓存、规则校验、局域网服务也在用），这里只登记和释放“听书”这一方。
+  startAudioBackground(): Promise<void> {
     AudioBookAvSessionHolder.backgroundDesired = true;
-    if (AudioBookAvSessionHolder.backgroundRunning) {
-      await this.updateAudioAvSessionState(avSession.PlaybackState.PLAYBACK_STATE_PLAY);
-      this.startAudioBackgroundHeartbeat();
-      return;
-    }
-    if (AudioBookAvSessionHolder.backgroundStarting) return;
+    // 没申请到时也要有心跳：它每 30 秒再试一次，并把许可那边重试的结果同步回来。
+    this.startAudioBackgroundHeartbeat();
+    return this.enqueueAudioBackground((): Promise<void> => this.performStartAudioBackground());
+  }
+
+  stopAudioBackground(): Promise<void> {
+    AudioBookAvSessionHolder.backgroundDesired = false;
+    this.stopAudioBackgroundHeartbeat();
+    return this.enqueueAudioBackground((): Promise<void> => this.performStopAudioBackground());
+  }
+
+  private enqueueAudioBackground(task: () => Promise<void>): Promise<void> {
+    const next = AudioBookAvSessionHolder.backgroundQueue.then(task);
+    AudioBookAvSessionHolder.backgroundQueue = next.catch((error: Error): void => {
+      console.warn('处理听书后台任务失败:', error);
+    });
+    return AudioBookAvSessionHolder.backgroundQueue;
+  }
+
+  private async performStartAudioBackground(): Promise<void> {
+    // 排队期间又被停止了：交给后面排着的停止处理。
+    if (!AudioBookAvSessionHolder.backgroundDesired) return;
     AudioBookAvSessionHolder.backgroundStarting = true;
     try {
       const agent = await this.createAudioWantAgent();
-      await this.startAudioAvSession(agent);
-      await backgroundTaskManager.startBackgroundRunning(getContext(this), ['audioPlayback'], agent);
-      if (AudioBookAvSessionHolder.backgroundDesired) {
-        AudioBookAvSessionHolder.backgroundRunning = true;
-        this.startAudioBackgroundHeartbeat();
+      if (AudioBookAvSessionHolder.session) {
+        await this.updateAudioAvSessionState(avSession.PlaybackState.PLAYBACK_STATE_PLAY);
       } else {
-        await this.releaseAudioAvSession();
-        await backgroundTaskManager.stopBackgroundRunning(getContext(this));
+        await this.startAudioAvSession(agent);
+      }
+      AudioBookAvSessionHolder.backgroundRunning = await BackgroundPermit.acquire(
+        getContext(this) as common.UIAbilityContext, AUDIO_PERMIT_OWNER, 'audioPlayback', agent);
+      if (!AudioBookAvSessionHolder.backgroundRunning) {
+        console.warn(`申请听书后台任务未成功，稍后重试: ${BackgroundPermit.debugState()}`);
       }
     } catch (error) {
       console.warn('申请听书后台任务失败:', error);
@@ -1502,17 +1522,12 @@ struct AudioBookPage {
     }
   }
 
-  async stopAudioBackground(): Promise<void> {
-    AudioBookAvSessionHolder.backgroundDesired = false;
-    this.stopAudioBackgroundHeartbeat();
+  private async performStopAudioBackground(): Promise<void> {
+    // 排队期间又开始播放了：会话和许可都留着，后面排着的启动会接着用。
+    if (AudioBookAvSessionHolder.backgroundDesired) return;
     await this.releaseAudioAvSession();
-    if (!AudioBookAvSessionHolder.backgroundRunning && !AudioBookAvSessionHolder.backgroundStarting) return;
     AudioBookAvSessionHolder.backgroundRunning = false;
-    try {
-      await backgroundTaskManager.stopBackgroundRunning(getContext(this));
-    } catch (error) {
-      console.warn('停止听书后台任务失败:', error);
-    }
+    await BackgroundPermit.release(AUDIO_PERMIT_OWNER);
   }
 
   /** 心跳只有一个，每次都交给当前接管播放器的页面处理，旧页面不会再用旧章节刷新会话。 */
@@ -1539,8 +1554,13 @@ struct AudioBookPage {
       this.stopAudioBackgroundHeartbeat();
       return;
     }
+    // 许可可能被系统取消，或上次没申请到、后来重试成功了：按实际情况对齐。
+    if (!AudioBookAvSessionHolder.backgroundStarting) {
+      AudioBookAvSessionHolder.backgroundRunning = BackgroundPermit.satisfies(AUDIO_PERMIT_OWNER);
+    }
     if (!AudioBookAvSessionHolder.backgroundRunning && !AudioBookAvSessionHolder.backgroundStarting) {
-      await this.startAudioBackground();
+      // 暂停着时不去申请：系统可能正是因为没有声音才收回的，继续播放时会重新申请。
+      if (state !== 'paused' && state !== 'stopped' && state !== 'completed') await this.startAudioBackground();
       return;
     }
     if (!AudioBookAvSessionHolder.session) {

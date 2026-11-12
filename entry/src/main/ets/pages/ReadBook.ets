@@ -2436,9 +2436,6 @@ struct ReadBookPage {
         abilityContext: (): common.UIAbilityContext => getContext(this) as common.UIAbilityContext,
         bookUrl: (): string => this.book?.bookUrl || this.bookUrl,
         bookName: (): string => this.book?.name || '',
-        ttsBackgroundRunning: (): boolean => this.ttsMediaSession().backgroundRunning,
-        ttsBackgroundBusy: (): boolean =>
-          this.ttsMediaSession().backgroundRunning || this.ttsMediaSession().backgroundRequesting,
         onStateChanged: (): void => {
           const controller = this.fullTextCacheController();
           this.fullTextCaching = controller.caching;
@@ -14572,12 +14569,7 @@ struct ReadBookPage {
         onPlayPrevious: (): void => {
           this.playPreviousChapterFromMediaSession();
         },
-        onSetSpeed: (speed: number): void => this.applyTtsSpeed(speed),
-        cacheTaskRunning: (): boolean => this.fullTextCaching,
-        cacheHoldsBackground: (): boolean => this.fullTextCacheController().backgroundRunning,
-        handBackgroundToCache: (): void => {
-          this.fullTextCacheController().backgroundRunning = true;
-        }
+        onSetSpeed: (speed: number): void => this.applyTtsSpeed(speed)
       });
     }
     return this.ttsMedia;

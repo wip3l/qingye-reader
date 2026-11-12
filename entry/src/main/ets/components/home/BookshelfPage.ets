@@ -14,7 +14,7 @@ import { BookshelfCoverBadges } from '../BookshelfCoverBadges';
 import { BookshelfCoverBadgeSettings } from '../../utils/BookshelfCoverBadgeSettings';
 import { componentUtils, curves, FrameCallback, router, window } from '@kit.ArkUI';
 import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
-import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
+import { BackgroundPermit } from '../../utils/BackgroundPermit';
 import { notificationManager } from '@kit.NotificationKit';
 import deviceInfo from '@ohos.deviceInfo';
 import image from '@ohos.multimedia.image';
@@ -8626,8 +8626,9 @@ export struct BookshelfPage {
     }
     try {
       const agent = await this.createShelfFullTextCacheOpenWantAgent(book);
-      await backgroundTaskManager.startBackgroundRunning(getContext(this), ['dataTransfer'], agent);
+      // 没申请到时登记仍然保留，许可那边会自己重试。
       this.fullTextCacheBackgroundRunning = true;
+      await BackgroundPermit.acquire(getContext(this) as common.UIAbilityContext, 'shelf-cache', 'dataTransfer', agent);
     } catch (error) {
       console.warn('启动书架全文缓存后台任务失败:', error);
     }
@@ -8639,7 +8640,7 @@ export struct BookshelfPage {
     }
     this.fullTextCacheBackgroundRunning = false;
     try {
-      await backgroundTaskManager.stopBackgroundRunning(getContext(this));
+      await BackgroundPermit.release('shelf-cache');
     } catch (error) {
       console.warn('停止书架全文缓存后台任务失败:', error);
     }

@@ -685,10 +685,7 @@ export class EpubOriginalReadAloud {
         onStop: (): void => this.stop(),
         onPlayNext: (): void => { this.playChapter(this.host.chapterIndex() + 1); },
         onPlayPrevious: (): void => { this.playChapter(this.host.chapterIndex() - 1); },
-        onSetSpeed: (speed: number): void => this.setSpeed(speed),
-        cacheTaskRunning: (): boolean => false,
-        cacheHoldsBackground: (): boolean => false,
-        handBackgroundToCache: (): void => {}
+        onSetSpeed: (speed: number): void => this.setSpeed(speed)
       });
     }
     return this.media;
