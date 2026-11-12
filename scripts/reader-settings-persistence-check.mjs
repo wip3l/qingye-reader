@@ -514,11 +514,12 @@ const tests = {
     assert.equal(after.lightCustomThemeBackgroundColor, '#112233');
     assert.equal(await h.receive(JSON.stringify(h.sync.toPayload(after))), false);
   },
-  async 'sync payload contains only font rules and themes'() {
+  async 'sync payload contains only font rules, themes and the typography-follows-theme switch'() {
     const h = harness();
     const local = await h.settings.load({});
     const payload = h.sync.toPayload(local);
-    const allowed = ['syncVersion', 'regexFontEnabled', 'regexFontPattern', 'regexFontMode',
+    // typographyFollowsTheme 不在 ReaderSettings 里，由同步协调器另外填入。
+    const allowed = ['syncVersion', 'typographyFollowsTheme', 'regexFontEnabled', 'regexFontPattern', 'regexFontMode',
       'regexFontFamily', 'regexFontSize', 'regexShadowColor', 'regexFontRulesRaw',
       'lightThemeIndex', 'darkThemeIndex', 'lightCustomThemeBackgroundColor', 'lightCustomThemeTextColor',
       'darkCustomThemeBackgroundColor', 'darkCustomThemeTextColor', 'customThemesRaw'];

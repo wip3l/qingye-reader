@@ -187,11 +187,17 @@ export class ReaderSettingsStore {
   static readonly KEY_REGEX_FONT_SIZE: string = 'readerRegexFontSize';
   static readonly KEY_REGEX_SHADOW_COLOR: string = 'readerRegexShadowColor';
   static readonly KEY_REGEX_FONT_RULES_RAW: string = 'readerRegexFontRulesRaw';
-  /** 打开时每套主题各记一份排版、换主题即换排版；关闭时所有主题共用当前排版。同时作为 AppStorage 键。 */
+  /**
+   * 打开时每套主题各记一份排版和翻页等阅读设置、换主题一起换；关闭时这些所有主题共用，换主题只换阅读背景。
+   * 同时作为 AppStorage 键。
+   */
   static readonly KEY_TYPOGRAPHY_FOLLOWS_THEME: string = 'readerTypographyFollowsTheme';
   private static readonly STORE_NAME: string = 'reader_settings';
   private static readonly THEME_PROFILE_PREFIX: string = 'readerThemeProfileV1_';
   private static readonly LEGACY_CUSTOM_PROFILE_ID: string = 'custom';
+  // 上次在用的阅读档案：主题在应用外被换掉（同步后没读设置就退出）时，冷启动靠它把共用排版带过去。
+  private static readonly KEY_LAST_PROFILE_ID: string = 'readerLastThemeProfileId';
+  private static rememberedProfileId: string = '';
   // 旧版“已绑定排版”标记，现在只在删除档案时顺带清掉。
   private static readonly TYPOGRAPHY_BOUND_PREFIX: string = 'readerThemeTypographyBoundV1_';
   private static cachedSettings: ReaderSettings | null = null;
@@ -206,9 +212,23 @@ export class ReaderSettingsStore {
     if (ReaderSettingsStore.cachedSettings && ReaderSettingsStore.cachedThemeId === activeThemeId) {
       return ReaderSettingsStore.clone(ReaderSettingsStore.cachedSettings);
     }
+    // 走到这里时缓存若还在，就是上一套主题的设置。
+    let previousSettings = ReaderSettingsStore.cachedSettings;
     const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
     const profile = await ReaderSettingsStore.loadThemeProfile(store, activeThemeId);
     if (profile) {
+      // 排版不跟随主题时，不经 switchThemeProfile 换来的主题（试用、会员到期回退、同步来的主题，
+      // 或主题 ID 已换、档案还没切时被别处读到）也沿用刚才那套排版，不读档案里各主题的旧排版。
+      // 冷启动没有缓存时，从上次在用的档案取。
+      const follows = await ReaderSettingsStore.readTypographyFollowsTheme(store);
+      if (!previousSettings && !follows) {
+        previousSettings = await ReaderSettingsStore.loadRememberedProfile(store, activeThemeId);
+      }
+      const carried = previousSettings !== null && !follows;
+      if (carried && previousSettings) {
+        ReaderSettingsStore.copyTypography(previousSettings, profile);
+        ReaderSettingsStore.copyReadingBehavior(previousSettings, profile);
+      }
       // AI 处理标识是阅读通用设置，不随主题档案切换。
       profile.aiProcessingIndicatorEnabled = await ReaderSettingsStore.getBoolean(
         store, ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED, true);
@@ -219,6 +239,11 @@ export class ReaderSettingsStore {
       await ReaderSettingsStore.applyThemePageTurnDefault(store, activeThemeId, profile);
       ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(profile);
       ReaderSettingsStore.cachedThemeId = activeThemeId;
+      if (carried) {
+        await ReaderSettingsStore.persistThemeProfile(store, activeThemeId, profile);
+        await store.flush();
+      }
+      await ReaderSettingsStore.rememberActiveProfile(store, activeThemeId);
       return ReaderSettingsStore.clone(profile);
     }
     const settings = new ReaderSettings();
@@ -488,6 +513,7 @@ export class ReaderSettingsStore {
     ReaderSettingsStore.cachedThemeId = activeThemeId;
     await ReaderSettingsStore.persistThemeProfile(store, activeThemeId, settings);
     await store.flush();
+    await ReaderSettingsStore.rememberActiveProfile(store, activeThemeId);
     return settings;
   }
 
@@ -496,8 +522,11 @@ export class ReaderSettingsStore {
     await ReaderSettingsStore.waitForLayoutElementSaves();
     await ReaderSettingsStore.waitForReaderLayoutSaves();
     await ReaderSettingsStore.waitForReaderChromeSaves();
-    ReaderSettingsStore.cachedSettings = null;
-    ReaderSettingsStore.cachedThemeId = '';
+    // 主题已经换了就留着上一套的缓存，load 要靠它在排版不跟随主题时把排版带过去。
+    if (ReaderSettingsStore.cachedThemeId === ReaderSettingsStore.activeThemeId()) {
+      ReaderSettingsStore.cachedSettings = null;
+      ReaderSettingsStore.cachedThemeId = '';
+    }
     return await ReaderSettingsStore.load(context);
   }
 
@@ -522,8 +551,9 @@ export class ReaderSettingsStore {
       next.darkThemeIndex = ReaderThemeHelper.APP_THEME_INDEX;
       next.themeIndex = ReaderThemeHelper.APP_THEME_INDEX;
     } else if (!await ReaderSettingsStore.readTypographyFollowsTheme(store)) {
-      // 排版不跟随主题：目标主题只换翻页等其余设置，排版沿用当前这套。
+      // 排版不跟随主题：目标主题只换阅读背景，排版和翻页、点按区域等阅读设置都沿用当前这套。
       ReaderSettingsStore.copyTypography(current, next);
+      ReaderSettingsStore.copyReadingBehavior(current, next);
     }
     next.quickJumpMode = current.quickJumpMode;
     next.aiProcessingIndicatorEnabled = current.aiProcessingIndicatorEnabled;
@@ -534,6 +564,7 @@ export class ReaderSettingsStore {
     ReaderSettingsStore.cachedThemeId = nextId;
     ReaderSettingsStore.applyToStorage(next);
     await store.flush();
+    await ReaderSettingsStore.rememberActiveProfile(store, nextId);
     return ReaderSettingsStore.clone(next);
   }
 
@@ -1326,6 +1357,41 @@ export class ReaderSettingsStore {
    * 主题排版页能编辑的全部字段：正文排版、段首缩进与对齐、页眉页脚、正文扩展至状态栏，
    * 以及阅读字体页的正文、标题字体和正则强调规则。全局字体是全应用共用的选择，不在其中。
    */
+  /**
+   * 排版以外、仍记在主题档案里的阅读设置：翻页方式与动画、横屏双页、屏幕方向、点按区域、长按选字、眼动翻页、
+   * 息屏与常亮、预加载、菜单快捷按钮、快速书签、夜间插图，以及旧版页眉页脚内容字段。
+   * 排版不跟随主题时这些也所有主题共用；阅读背景（主题序号与自定义配色）始终跟着主题走。
+   */
+  private static copyReadingBehavior(source: ReaderSettings, target: ReaderSettings): void {
+    target.pageTurnMode = source.pageTurnMode;
+    target.pageTurnAnimationType = source.pageTurnAnimationType;
+    target.landscapeDoublePage = source.landscapeDoublePage;
+    target.screenOrientation = source.screenOrientation;
+    target.tapZoneActions = source.tapZoneActions;
+    target.longPressSelectText = source.longPressSelectText;
+    target.eyeTurnEnabled = source.eyeTurnEnabled;
+    target.eyeTurnPortraitCalibration = source.eyeTurnPortraitCalibration;
+    target.eyeTurnLandscapeCalibration = source.eyeTurnLandscapeCalibration;
+    target.eyeTurnPreviousEnabled = source.eyeTurnPreviousEnabled;
+    target.eyeTurnNextEnabled = source.eyeTurnNextEnabled;
+    target.eyeTurnPreviousDwellMs = source.eyeTurnPreviousDwellMs;
+    target.eyeTurnNextDwellMs = source.eyeTurnNextDwellMs;
+    target.screenTimeoutMinutes = source.screenTimeoutMinutes;
+    target.keepScreenOn = source.keepScreenOn;
+    target.preloadEnabled = source.preloadEnabled;
+    target.preloadChapterCount = source.preloadChapterCount;
+    target.useTtsQuickAction = source.useTtsQuickAction;
+    target.useAutoScrollQuickAction = source.useAutoScrollQuickAction;
+    target.useChapterQuickJump = source.useChapterQuickJump;
+    target.useBrightnessQuickAction = source.useBrightnessQuickAction;
+    target.quickBookmarkEnabled = source.quickBookmarkEnabled;
+    target.nightImageMode = source.nightImageMode;
+    target.readerHeaderContentMode = source.readerHeaderContentMode;
+    target.readerFooterLeftMode = source.readerFooterLeftMode;
+    target.readerFooterProgressMode = source.readerFooterProgressMode;
+    target.readerFooterShowProgressBar = source.readerFooterShowProgressBar;
+  }
+
   static copyTypography(source: ReaderSettings, target: ReaderSettings): void {
     target.fontSize = source.fontSize;
     target.fontWeight = source.fontWeight;
@@ -1374,13 +1440,17 @@ export class ReaderSettingsStore {
   /**
    * 关闭后换主题时不再取用各主题档案里的排版，而是把当前排版带过去（用过的主题档案随之记下共用排版）；
    * 没用过的主题保留原有排版，重新打开后照常取用。
-   * 与各主题档案一样只存本机。
+   * 各主题档案只存本机，开关本身随阅读设置云同步，重装或换设备登录后仍按用户的选择。
+   * 同步下来的值写入时 markChanged 传 false，不再触发一轮上传。
    */
-  static async setTypographyFollowsTheme(context: Context, follows: boolean): Promise<void> {
+  static async setTypographyFollowsTheme(context: Context, follows: boolean,
+    markChanged: boolean = true): Promise<void> {
     const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
+    const changed = await ReaderSettingsStore.readTypographyFollowsTheme(store) !== follows;
     await store.put(ReaderSettingsStore.KEY_TYPOGRAPHY_FOLLOWS_THEME, follows);
     await store.flush();
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_TYPOGRAPHY_FOLLOWS_THEME, follows);
+    if (changed && markChanged) CloudSyncChangeTracker.markPreferenceChanged();
   }
 
   private static async readTypographyFollowsTheme(store: preferences.Preferences): Promise<boolean> {
@@ -1467,6 +1537,8 @@ export class ReaderSettingsStore {
   private static async applyThemePageTurnDefault(store: preferences.Preferences, themeId: string,
     settings: ReaderSettings): Promise<void> {
     if (ReaderSettingsStore.normalizeThemeProfileId(themeId) !== 'obsidian-archive') return;
+    // 排版不跟随主题时翻页动画是所有主题共用的选择，不拿主题预设覆盖；标记不写，重新打开跟随后仍会升级一次。
+    if (!await ReaderSettingsStore.readTypographyFollowsTheme(store)) return;
     const key = 'readerObsidian3DDefaultV1';
     if (await store.get(key, false) === true) return;
     // Vertical paging cannot render a horizontal page curl; use the normal horizontal mode for this preset.
@@ -1475,6 +1547,21 @@ export class ReaderSettingsStore {
     await store.put(ReaderSettingsStore.themeProfileKey(themeId), JSON.stringify(ReaderSettingsStore.clone(settings)));
     await store.put(key, true);
     await store.flush();
+  }
+
+  private static async rememberActiveProfile(store: preferences.Preferences, profileId: string): Promise<void> {
+    if (ReaderSettingsStore.rememberedProfileId === profileId) return;
+    await store.put(ReaderSettingsStore.KEY_LAST_PROFILE_ID, profileId);
+    await store.flush();
+    ReaderSettingsStore.rememberedProfileId = profileId;
+  }
+
+  /** 上次在用、且不是当前主题的档案；没有记录或就是当前主题时返回 null。 */
+  private static async loadRememberedProfile(store: preferences.Preferences,
+    activeProfileId: string): Promise<ReaderSettings | null> {
+    const lastId = await store.get(ReaderSettingsStore.KEY_LAST_PROFILE_ID, '');
+    if (typeof lastId !== 'string' || !lastId || lastId === activeProfileId) return null;
+    return await ReaderSettingsStore.loadThemeProfile(store, lastId);
   }
 
   private static async loadThemeProfile(store: preferences.Preferences,
@@ -1553,6 +1640,9 @@ export class ReaderSettingsStore {
       ReaderSettingsStore.cachedThemeId === ReaderSettingsStore.normalizeThemeProfileId(themeId) ?
       ReaderSettingsStore.cachedSettings : settings;
     await store.put(ReaderSettingsStore.themeProfileKey(themeId), JSON.stringify(ReaderSettingsStore.clone(latest)));
+    // 存的是正在用的档案就顺带记下它；applyToStorage 预先填好缓存时 load 会直接返回，靠这里记录。
+    const id = ReaderSettingsStore.normalizeThemeProfileId(themeId);
+    if (id === ReaderSettingsStore.activeThemeId()) await ReaderSettingsStore.rememberActiveProfile(store, id);
   }
 
   private static async getNumber(

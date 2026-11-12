@@ -1,8 +1,12 @@
 import { ReaderSettings } from '../utils/ReaderSettingsStore';
 
-/** 阅读偏好只同步字体规则和配色；设备排版、全局字体与交互设置始终留在本机。 */
+/**
+ * 阅读偏好只同步字体规则、配色和“排版跟随主题”开关；设备排版、全局字体与交互设置始终留在本机。
+ * 旧版本上传的数据没有开关字段，读取时保留本机值。
+ */
 export class ReaderPreferencesSyncPayload {
   syncVersion: number = 2;
+  typographyFollowsTheme?: boolean;
   regexFontEnabled: boolean = false;
   regexFontPattern: string = '';
   regexFontMode: string = '';

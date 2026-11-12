@@ -776,6 +776,7 @@ export class CloudSyncCoordinator {
 
     const readerSettings = await ReaderSettingsStore.load(context);
     const safeReaderSettings = ReaderPreferencesSync.toPayload(readerSettings);
+    safeReaderSettings.typographyFollowsTheme = await ReaderSettingsStore.typographyFollowsTheme(context);
     result.push(CloudSyncCoordinator.entity(
       'reader_settings', 'global', safeReaderSettings, 'global'));
 
@@ -1163,6 +1164,10 @@ export class CloudSyncCoordinator {
       CloudSyncCoordinator.notifyBookSourcesChanged();
     } else if (entityType === 'reader_settings') {
       const remote = JSON.parse(raw) as ReaderPreferencesSyncPayload;
+      // 先于 theme_settings 应用（同步顺序 5 在 7 前），随后同步来的主题才按这个开关决定排版去留。
+      if (typeof remote.typographyFollowsTheme === 'boolean') {
+        await ReaderSettingsStore.setTypographyFollowsTheme(context, remote.typographyFollowsTheme, false);
+      }
       const local = await ReaderSettingsStore.load(context);
       const merged = ReaderPreferencesSync.merge(local, remote);
       await ReaderSettingsStore.saveReaderFontRuleSettings(context, merged);

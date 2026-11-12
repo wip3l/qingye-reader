@@ -1838,7 +1838,7 @@ struct ThemeSettingsPage {
   }
 
   themeLayoutSummary(theme: ThemePack, customSchemeId: string): string {
-    if (!this.typographyFollowsTheme) return '排版不跟随主题，所有主题共用当前排版';
+    if (!this.typographyFollowsTheme) return '排版不跟随主题，所有主题共用当前排版和翻页设置';
     const saved = this.boundLayoutRevision >= 0 ?
       this.boundLayoutSummaries.get(ReaderSettingsStore.profileIdFor(theme.id, customSchemeId)) : undefined;
     return saved ?? `预设排版：字号 ${theme.readerLayout.fontSize} · 行距 ${theme.readerLayout.lineHeight} · ` +

@@ -300,7 +300,7 @@ const tests = {
     const next = await h.settings.switchThemeProfile({}, 'classic-blue', 'warm-paper');
     assert.equal(next.fontSize, 24, 'current typography carried over');
     assert.equal(next.readerHeaderEnabled, false);
-    assert.equal(next.pageTurnMode, 0, 'non-typography settings still come from the theme');
+    assert.equal(next.pageTurnMode, 2, 'page turn and other reading settings are shared too');
 
     await h.settings.setTypographyFollowsTheme({}, true);
     h.values.set('appThemeId', 'classic-blue');
@@ -308,6 +308,63 @@ const tests = {
     h.values.set('appThemeId', 'warm-paper');
     assert.equal((await h.settings.switchThemeProfile({}, 'classic-blue', 'warm-paper')).fontSize, 24,
       'the shared typography was saved into the theme while it was in use');
+  },
+
+  async 'with typography not following, a theme changed elsewhere (trial, sync) still keeps the current settings'() {
+    const h = harness();
+    await h.settings.load({});
+    const saved = typography(h);
+    saved.fontSize = 30;
+    saved.pageTurnMode = 0;
+    saved.tapZoneActions = '1,1,1,1,1,1,1,1,1';
+    h.disk.set('readerThemeProfileV1_warm-paper', JSON.stringify(saved));
+    await h.settings.setTypographyFollowsTheme({}, false);
+    await h.settings.saveLayoutSettings({}, 24, 14, 2);
+    // 只改主题 ID，不走 switchThemeProfile；阅读页回前台时 reload。
+    h.values.set('appThemeId', 'warm-paper');
+    const reloaded = await h.settings.reload({});
+    assert.equal(reloaded.fontSize, 24, 'typography carried over without switchThemeProfile');
+    assert.equal(reloaded.pageTurnMode, 2);
+    assert.equal(reloaded.tapZoneActions, '3,3,3,3,1,2,2,2,2');
+    assert.equal(JSON.parse(h.disk.get('readerThemeProfileV1_warm-paper')).fontSize, 24,
+      'the carried settings are saved into the theme');
+
+    await h.settings.setTypographyFollowsTheme({}, true);
+    h.values.set('appThemeId', 'classic-blue');
+    await h.settings.saveLayoutSettings({}, 19, 14, 2);
+    h.values.set('appThemeId', 'warm-paper');
+    assert.equal((await h.settings.reload({})).fontSize, 24, 'following again reads the theme own profile');
+  },
+
+  async 'with typography not following, a theme synced in before a cold start still keeps the shared settings'() {
+    const h = harness();
+    await h.settings.load({});
+    const saved = typography(h);
+    saved.fontSize = 30;
+    saved.pageTurnMode = 0;
+    h.disk.set('readerThemeProfileV1_warm-paper', JSON.stringify(saved));
+    await h.settings.setTypographyFollowsTheme({}, false);
+    await h.settings.saveLayoutSettings({}, 24, 14, 2);
+    // 同步写入了别的主题，应用随后退出：重启时没有内存缓存。
+    h.values.set('appThemeId', 'warm-paper');
+    h.settings.cachedSettings = null;
+    h.settings.cachedThemeId = '';
+    h.settings.rememberedProfileId = '';
+    const cold = await h.settings.load({});
+    assert.equal(cold.fontSize, 24, 'the last used profile supplies the shared typography');
+    assert.equal(cold.pageTurnMode, 2);
+    assert.equal(h.disk.get('readerLastThemeProfileId'), 'warm-paper');
+  },
+
+  async 'the follow switch marks a sync change only when the user changes it'() {
+    const h = harness();
+    await h.settings.setTypographyFollowsTheme({}, true);
+    assert.equal(h.syncMarks, 0, 'setting the current value is not a change');
+    await h.settings.setTypographyFollowsTheme({}, false);
+    assert.equal(h.syncMarks, 1);
+    await h.settings.setTypographyFollowsTheme({}, true, false);
+    assert.equal(h.syncMarks, 1, 'a value applied from sync is not uploaded again');
+    assert.equal(await h.settings.typographyFollowsTheme({}), true);
   },
 
   async 'restoring the theme preset resets every typography field but keeps emphasis rules'() {

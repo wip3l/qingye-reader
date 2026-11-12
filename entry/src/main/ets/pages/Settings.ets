@@ -2937,8 +2937,8 @@ struct SettingsPage {
       SettingSwitchRow({
         title: '排版跟随主题',
         description: this.typographyFollowsTheme ?
-          `每套主题各记一套排版，换主题即换排版；当前排版记在「${this.typographyThemeName}」` :
-          '所有主题共用一套排版，换主题时排版不变',
+          `每套主题各记一套排版和翻页等阅读设置，换主题一起换；当前记在「${this.typographyThemeName}」` :
+          '所有主题共用排版和翻页、点按区域等阅读设置，换主题只换阅读背景',
         isOn: this.typographyFollowsTheme,
         onChange: (enabled: boolean): void => {
           this.setTypographyFollowsTheme(enabled);
@@ -3001,7 +3001,8 @@ struct SettingsPage {
   async setTypographyFollowsTheme(enabled: boolean): Promise<void> {
     try {
       await ReaderSettingsStore.setTypographyFollowsTheme(getContext(this), enabled);
-      HdsFeedback.showToast(enabled ? '已开启，之后换主题会换成那套主题的排版' : '已关闭，所有主题共用当前排版');
+      HdsFeedback.showToast(enabled ? '已开启，之后换主题会换成那套主题的排版和翻页设置' :
+        '已关闭，所有主题共用当前排版和翻页设置');
     } catch (e) {
       console.warn('保存排版跟随主题失败:', e);
       HdsFeedback.showToast('保存失败，请稍后重试');
