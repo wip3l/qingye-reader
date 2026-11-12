@@ -4658,7 +4658,7 @@ export struct BookshelfPage {
   shelfTileLatestCard(book: Book, pageKey: string) {
     Row({ space: AppSpacing.LG }) {
       Column() {
-        Text('继续阅读')
+        Text(this.shelfContinueActionText(book))
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.accentColor())
           .maxLines(1)
@@ -5262,7 +5262,7 @@ export struct BookshelfPage {
           .margin({ top: AppSpacing.XS })
 
         Row({ space: AppSpacing.XS }) {
-          Text('继续阅读')
+          Text(this.shelfContinueActionText(book))
             .fontSize(AppFontSize.BODY)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.accentColor())
@@ -10668,6 +10668,14 @@ export struct BookshelfPage {
       return 'comicPreview';
     }
     return 'contentPreview';
+  }
+
+  /** 继续卡片上的动作文案按书的类型区分：有声书是听、视频与漫画是看、其余是读。 */
+  shelfContinueActionText(book: Book): string {
+    if (BookTypeSupport.isAudio(book)) return '继续收听';
+    if (BookTypeSupport.isVideo(book)) return '继续观看';
+    if (this.isShelfComicBook(book)) return '继续看漫画';
+    return '继续阅读';
   }
 
   isShelfComicBook(book: Book): boolean {
