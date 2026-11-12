@@ -1499,9 +1499,10 @@ export class WebBookService {
       imageRequest);
   }
 
-  private convertReaderNativeActions(_source: BookSource, content: string, _baseUrl: string): string {
+  private convertReaderNativeActions(_source: BookSource, content: string, baseUrl: string): string {
     if (!content) return content;
-    let value = this.convertReaderImageScriptActions(content);
+    let value = this.convertReaderNoteActions(content, baseUrl);
+    value = this.convertReaderImageScriptActions(value);
     value = value.replace(/<p\b[^>]*>\s*<img\b([^>]*\bident\s*=\s*["'][^"']+["'][^>]*)\/?\s*>\s*<\/p>/gi,
       (_all: string, attrs: string): string => {
         const identMatch = /\bident\s*=\s*["']([^"']+)["']/i.exec(attrs || '');
@@ -1539,6 +1540,30 @@ export class WebBookService {
   }
 
   /**
+   * `<note label="神评论" ident="/path" text="…"></note>` is an inline comment card of iOS-style readers.
+   * Turn it into a reader action that opens `ident`. Attribute values are matched quote-aware: a server
+   * that wraps every line in `<div rs-native>` can split a multi-line `text` across two of those divs,
+   * so the whole tag must go before the rs-native pass or its halves leak into the text. A note without
+   * a usable address is dropped.
+   */
+  private convertReaderNoteActions(content: string, baseUrl: string): string {
+    if (!/<note\b/i.test(content || '')) return content;
+    return content.replace(/<note\b((?:[^>"']|"[^"]*"|'[^']*')*)>(?:\s*<\/note>)?/gi,
+      (_all: string, attrs: string): string => {
+        const attr = (name: string): string => {
+          const match = new RegExp(`\\b${name}\\s*=\\s*(["'])([\\s\\S]*?)\\1`, 'i').exec(attrs || '');
+          return this.decodeHtmlEntities(match && match[2] ? match[2] : '').trim();
+        };
+        const url = BookUrlResolver.resolve(attr('ident'), baseUrl || '');
+        if (!/^https?:\/\//i.test(url)) return '';
+        const wording = attr('label');
+        const kind = /本章说|章评|章末/.test(wording) ? '章评' : (/热评|神评/.test(wording) ? '热评' : '段评');
+        const marker = ReaderActionMarker.create(kind, url, kind);
+        return marker ? `${marker}\n` : '';
+      });
+  }
+
+  /**
    * Android-style Legado sources can render a clickable data-image whose trailing source options
    * contain a click/js expression. Convert that expression into a deferred reader action. The
    * expression is executed only after the user taps it, in the same bounded source runtime.
@@ -1552,12 +1577,17 @@ export class WebBookService {
       const action = this.readerImageOptionString(data[2], 'click') ||
         this.readerImageOptionString(data[2], 'js');
       if (!action) return tag;
-      // Chapter-tail cards mark themselves with a distinct marker id; everything else with a
-      // count bubble is a paragraph comment.
-      const isChapterTail = this.readerImageOptionString(data[2], 'marker').startsWith('xyCommentTail');
-      const count = isChapterTail ? '' : this.readerDataImageLabel(data[1] || '');
-      const label = isChapterTail ? '章评' : (count ? `段评 ${count}` : '段评');
-      const marker = ReaderActionMarker.createSourceScript(label, action, isChapterTail ? '章评' : '段评');
+      // Chapter-tail cards mark themselves with a distinct marker id or say so on the card
+      // (本章说); hot-comment cards say 热评/神评. Only the remaining count bubbles are paragraph
+      // comments — a card's number is a like count, not a comment count.
+      const wording = this.readerDataImageText(data[1] || '');
+      const isChapterTail = this.readerImageOptionString(data[2], 'marker').startsWith('xyCommentTail') ||
+        /本章说|章评|章末/.test(wording);
+      const isHot = !isChapterTail && /热评|神评/.test(wording);
+      const count = isChapterTail || isHot ? '' : this.readerDataImageLabel(data[1] || '');
+      const kind = isChapterTail ? '章评' : (isHot ? '热评' : '段评');
+      const label = count ? `段评 ${count}` : kind;
+      const marker = ReaderActionMarker.createSourceScript(label, action, kind);
       // This data-image is an interaction control, not正文 artwork. If its imported click script exceeds the
       // bounded action budget, drop the control instead of passing the enormous base64/options tag into the
       // ordinary image pipeline (the latter can exhaust memory while opening the chapter).
