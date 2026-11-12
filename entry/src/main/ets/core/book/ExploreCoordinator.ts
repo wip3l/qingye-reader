@@ -3,6 +3,7 @@ import { appDb } from '../../model/data/AppDatabase';
 import { BookSourceDataUrlSupport } from './BookSourceDataUrlSupport';
 import { BookSourceMetadataSupport } from './BookSourceMetadataSupport';
 import { BookSourceStageRuleSupport } from './BookSourceStageRuleSupport';
+import { ExploreTextMenu } from './ExploreTextMenu';
 
 export interface ExploreEntry {
   title: string;
@@ -779,7 +780,8 @@ export class ExploreCoordinator {
       if (Array.isArray(data)) return data as ExploreUrlItem[];
       if (message && !this.noticeMessage) this.noticeMessage = message;
     } catch (_) {
-      // 非 JSON 返回仍交给后续旧版 DSL 降级解析。
+      // 脚本返回 Legado 的“名称::地址”文本时按同样规则拆分；都不是才交给后续旧版 DSL 降级解析。
+      return ExploreTextMenu.parse(raw);
     }
     return [];
   }
