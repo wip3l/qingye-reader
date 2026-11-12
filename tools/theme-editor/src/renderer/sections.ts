@@ -118,7 +118,8 @@ export const SECTIONS: Section[] = [
         options: [['', '沿用基底'], ...BUBBLES.map((b) => [b.id, b.label] as [string, string])],
         hint: '主题专属气泡要导入的人拥有那套主题才能用，否则应用换成通用样式',
         when: (m) => !getPath('bubble.cap') },
-      { k: '{m}.emphasis.color', label: '底色', type: 'color', alpha: true },
+      { k: '{m}.emphasis.color', label: '底色', type: 'color', alpha: true,
+        hint: '底色和文字色可带透明度，写成 #AARRGGBB（透明度在前）。网页和设计软件常用的 #RRGGBBAA 要把末两位挪到最前，例如 #9EC0D9B6 → #B69EC0D9' },
       { k: '{m}.emphasis.textColor', label: '文字色', type: 'color', alpha: true },
       { g: '包内气泡（浅深共用）' },
       { k: 'bubble.cap', label: '端饰', type: 'asset', kinds: ['vector'], square: true, spec: '正方形小 SVG，按字号缩放，右端自动旋转 180°' },
@@ -173,7 +174,7 @@ export const SECTIONS: Section[] = [
       { g: '颜色' },
       { k: 'ttsPanel.{m}.skyColor', label: '天空色', type: 'color', hint: '插画背后的渐变起点' },
       { k: 'ttsPanel.{m}.surfaceColor', label: '面板底色', type: 'color', hint: '不透明；接近页面色，保证文字对比度' },
-      { k: 'ttsPanel.{m}.glowColor', label: '柔光', type: 'color', alpha: true, hint: '播放区的强调光，带透明度' }
+      { k: 'ttsPanel.{m}.glowColor', label: '柔光', type: 'color', alpha: true, hint: '播放区的强调光，带透明度：#AARRGGBB，透明度在前（不是网页常用的 #RRGGBBAA）' }
     ]
   },
   {

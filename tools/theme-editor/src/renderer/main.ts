@@ -400,6 +400,7 @@ function renderColor(f: Field, path: string, value: string, id: string): HTMLEle
   });
   const text = h('input', {
     id, type: 'text', value, spellcheck: 'false', placeholder: base ? `沿用 ${base}` : (f.alpha ? '#AARRGGBB' : '#RRGGBB'),
+    title: f.alpha ? '#RRGGBB 或 #AARRGGBB（透明度在前）' : '#RRGGBB',
     onchange: (event: Event) => setField(path, (event.target as HTMLInputElement).value.trim().toUpperCase())
   });
   const wrap = h('div', { class: 'color' }, picker, text);
