@@ -356,6 +356,44 @@ const tests = {
     assert.equal(h.disk.get('readerLastThemeProfileId'), 'warm-paper');
   },
 
+  async 'with typography not following, a read before the theme is restored does not reset the active theme'() {
+    const h = harness();
+    await h.settings.setTypographyFollowsTheme({}, false);
+    const stale = typography(h);
+    stale.fontSize = 30;
+    stale.pageTurnMode = 0;
+    h.disk.set('readerThemeProfileV1_classic-blue', JSON.stringify(stale));
+    const mine = typography(h);
+    mine.fontSize = 24;
+    mine.pageTurnMode = 2;
+    h.disk.set('readerThemeProfileV1_warm-paper', JSON.stringify(mine));
+    h.disk.set('readerLastThemeProfileId', 'warm-paper');
+    const coldStart = () => {
+      h.values.delete('appThemeId');
+      h.settings.cachedSettings = null;
+      h.settings.cachedThemeId = '';
+      h.settings.rememberedProfileId = '';
+    };
+    // 冷启动：主题设置迁移阅读外观时主题 ID 还没恢复，先按默认主题读一次。
+    coldStart();
+    assert.equal((await h.settings.load({})).fontSize, 30, 'the early read can only see the default theme');
+    assert.equal(h.disk.get('readerLastThemeProfileId'), 'warm-paper', 'the early read is not remembered');
+    h.values.set('appThemeId', 'warm-paper');
+    const restored = await h.settings.load({});
+    assert.equal(restored.fontSize, 24, 'the default theme typography is not carried over');
+    assert.equal(restored.pageTurnMode, 2, 'the default theme reading settings are not carried over');
+    assert.equal(JSON.parse(h.disk.get('readerThemeProfileV1_warm-paper')).fontSize, 24);
+    assert.equal(JSON.parse(h.disk.get('readerThemeProfileV1_classic-blue')).fontSize, 30);
+
+    // 默认主题没有档案时走旧版顶层键，也不能替默认主题建档案。
+    h.disk.delete('readerThemeProfileV1_classic-blue');
+    coldStart();
+    await h.settings.load({});
+    assert.equal(h.disk.has('readerThemeProfileV1_classic-blue'), false, 'the early read writes nothing');
+    h.values.set('appThemeId', 'warm-paper');
+    assert.equal((await h.settings.load({})).fontSize, 24);
+  },
+
   async 'the follow switch marks a sync change only when the user changes it'() {
     const h = harness();
     await h.settings.setTypographyFollowsTheme({}, true);

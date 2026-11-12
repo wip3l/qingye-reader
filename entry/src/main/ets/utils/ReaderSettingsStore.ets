@@ -212,10 +212,23 @@ export class ReaderSettingsStore {
     if (ReaderSettingsStore.cachedSettings && ReaderSettingsStore.cachedThemeId === activeThemeId) {
       return ReaderSettingsStore.clone(ReaderSettingsStore.cachedSettings);
     }
+    // 冷启动时 AppThemeSettingsStore.load 迁移阅读外观会先读一次，那时主题 ID 还没恢复，只能按默认主题取档案。
+    // 这份只给调用方临时用：不带排版、不进缓存、不记成上次在用的档案、不写盘。否则主题恢复后的那次读取
+    // 会把默认主题的设置当成“上一套”，在排版不跟随主题时整套抄到正在用的主题上，每次冷启动都重置一遍。
+    const provisional = !ReaderSettingsStore.themeRestored();
     // 走到这里时缓存若还在，就是上一套主题的设置。
-    let previousSettings = ReaderSettingsStore.cachedSettings;
+    let previousSettings = provisional ? null : ReaderSettingsStore.cachedSettings;
     const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
     const profile = await ReaderSettingsStore.loadThemeProfile(store, activeThemeId);
+    if (profile && provisional) {
+      profile.aiProcessingIndicatorEnabled = await ReaderSettingsStore.getBoolean(
+        store, ReaderSettingsStore.KEY_AI_PROCESSING_INDICATOR_ENABLED, true);
+      profile.quickJumpMode = ReaderQuickJumpModel.normalizeMode(await ReaderSettingsStore.getString(
+        store, ReaderSettingsStore.KEY_QUICK_JUMP_MODE, 'chapter'));
+      await ReaderSettingsStore.readGlobalFontSettings(store, profile);
+      ReaderSettingsStore.normalizeGlobalFontMode(profile);
+      return profile;
+    }
     if (profile) {
       // 排版不跟随主题时，不经 switchThemeProfile 换来的主题（试用、会员到期回退、同步来的主题，
       // 或主题 ID 已换、档案还没切时被别处读到）也沿用刚才那套排版，不读档案里各主题的旧排版。
@@ -508,6 +521,8 @@ export class ReaderSettingsStore {
     settings.regexFontRulesRaw = await ReaderSettingsStore.getString(store, ReaderSettingsStore.KEY_REGEX_FONT_RULES_RAW, '');
     ReaderSettingsStore.mergeStorageFontSettings(settings);
     ReaderSettingsStore.normalizeGlobalFontMode(settings);
+    // 旧版顶层键要迁进正在用的主题档案，主题还没恢复时不知道是哪一套，等恢复后的那次读取再迁。
+    if (provisional) return settings;
     await ReaderSettingsStore.applyThemePageTurnDefault(store, activeThemeId, settings);
     ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(settings);
     ReaderSettingsStore.cachedThemeId = activeThemeId;
@@ -1293,6 +1308,11 @@ export class ReaderSettingsStore {
       settings.darkCustomThemeTextColor
     );
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_CUSTOM_THEMES_RAW, settings.customThemesRaw);
+  }
+
+  /** 主题 ID 只在 AppThemeSettingsStore.applyToStorage 后才进 AppStorage，之前 activeThemeId 只是默认主题的猜测。 */
+  private static themeRestored(): boolean {
+    return !!AppStorage.get<string>('appThemeId');
   }
 
   private static activeThemeId(): string {
