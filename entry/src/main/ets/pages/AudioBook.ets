@@ -1,5 +1,8 @@
 import { BookCoverResolver } from '../utils/BookCoverResolver';
+import image from '@ohos.multimedia.image';
 import { HomeRoute } from '../utils/HomeRoute';
+import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
+import { AudioSheetTransition, AUDIO_SHEET_ENTER_DURATION, AUDIO_SHEET_EXIT_DURATION } from '../utils/AudioSheetTransition';
 import { ThemeBookCoverSettings } from '../utils/ThemeBookCoverSettings';
 import { BookCover } from '../components/book/BookCover';
 import { NativeSourceService, NativeVoiceOption, Book, BookChapter, BookSource, BookTypeSupport } from '@legado/sourceengine';
@@ -108,6 +111,7 @@ struct AudioBookPage {
   private openedWithShelfAnimation: boolean = false;
   private openedFromShortcut: boolean = false;
   private shortcutReplacedPreviousPage: boolean = false;
+  private closing: boolean = false;
   private playback: RemoteAudioPlayback = RemoteAudioPlayback.get();
   private playbackListener: RemoteAudioPlaybackListener = new AudioBookPlaybackListener(
     (state: string): void => {
@@ -153,6 +157,9 @@ struct AudioBookPage {
     this.openedWithShelfAnimation = params?.['shelfBookOpening'] === 'true';
     this.openedFromShortcut = params?.['shortcutEntry'] === 'true';
     this.shortcutReplacedPreviousPage = params?.['shortcutReplace'] === 'true';
+    // 听书页按播放器进出（见 pageTransition），下面那一页不动；书架那套整页 0 时长转场到这里就不再需要。
+    AudioSheetTransition.attach();
+    AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', false);
     this.playback.attach(this.playbackListener);
     if (this.bookUrl && this.playback.bookUrl === this.bookUrl && this.playback.mediaUrl) {
       // 从书架胶囊回到正在播放的这本书：沿用播放器状态，不显示加载中。
@@ -182,12 +189,21 @@ struct AudioBookPage {
   }
 
   aboutToDisappear(): void {
+    AudioSheetTransition.detach();
     this.saveProgressNow(true);
     if (!ReaderTtsFloatingSession.isOwner(this.floatingSessionOwnerId)) {
       this.playback.detach(this.playbackListener);
       this.clearProgressSaveTimer();
     }
     this.clearSleepTimer();
+  }
+
+  /** 从底部滑上来、向底部滑下去，与左上角向下箭头的关闭含义一致；所有入口都一样。 */
+  pageTransition() {
+    PageTransitionEnter({ type: RouteType.Push, duration: AUDIO_SHEET_ENTER_DURATION, curve: Curve.FastOutSlowIn })
+      .slide(SlideEffect.Bottom)
+    PageTransitionExit({ type: RouteType.Pop, duration: AUDIO_SHEET_EXIT_DURATION, curve: Curve.FastOutLinearIn })
+      .slide(SlideEffect.Bottom)
   }
 
   audioPanelTransition(): TransitionEffect {
@@ -1100,6 +1116,12 @@ struct AudioBookPage {
   }
 
   async closePage(): Promise<void> {
+    if (this.closing) return;
+    this.closing = true;
+    // 从书架打开的：回到书架后要按新进度刷新、重建卡片，封面图会重新加载暗一下。和阅读页一样截一张书架图
+    // 交给首页盖着，刷新画好再揭开（Index.shelfReturnBackdrop）。截图与保存进度并行。
+    const returnToShelf = this.openedWithShelfAnimation && !(this.openedFromShortcut && this.shortcutReplacedPreviousPage);
+    const backdropTask: Promise<image.PixelMap | null> = returnToShelf ? ShelfCoverLocator.backdrop() : Promise.resolve(null);
     await this.saveProgressNow(true);
     // 只看是不是这本书在播。页面还没加载完就被关掉时章节号还是默认值，按章节比对会误判成没在播，
     // 把播放和系统媒体控件一起停掉。
@@ -1110,10 +1132,13 @@ struct AudioBookPage {
     } else {
       await this.stopAudioPlayback();
     }
+    const backdrop = await backdropTask;
     if (this.openedWithShelfAnimation) {
       AppStorage.setOrCreate('shelfBookCloseAnimationUrl', this.bookUrl);
       AppStorage.setOrCreate('shelfBookCloseAnimationNonce', Date.now());
     }
+    // 紧跟关书通知交出：书架据此判断是否走快速刷新。首页一拿到就盖上，与下面露出来的书架是同一张画面。
+    if (backdrop) AppStorage.setOrCreate<image.PixelMap | null>('shelfReturnBackdrop', backdrop);
     try {
       if (this.openedFromShortcut && this.shortcutReplacedPreviousPage) {
         await HomeRoute.replaceWithHome(this.getUIContext().getRouter());
@@ -1121,6 +1146,7 @@ struct AudioBookPage {
         router.back();
       }
     } catch (error) {
+      this.closing = false;
       console.error('退出听书页失败:', error);
     }
   }

@@ -33,6 +33,7 @@ import { FootprintTabPage } from '../components/home/FootprintTabPage';
 import { HomeTabBarSettingsStore } from '../utils/HomeTabBarSettingsStore';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { AudioSheetTransition, AUDIO_SHEET_ENTER_DURATION, AUDIO_SHEET_EXIT_DURATION } from '../utils/AudioSheetTransition';
 
 @Entry
 @Component
@@ -730,6 +731,10 @@ struct Index {
     if (AppStorage.get<boolean>('shelfReaderDirectTransition') === true) {
       PageTransitionExit({ type: RouteType.Push, duration: 0 })
       PageTransitionEnter({ type: RouteType.Pop, duration: 0 })
+    } else if (AudioSheetTransition.active()) {
+      // 听书页从底部盖上来、再收下去，首页垫在下面不动。
+      PageTransitionExit({ type: RouteType.Push, duration: AUDIO_SHEET_ENTER_DURATION }).opacity(1)
+      PageTransitionEnter({ type: RouteType.Pop, duration: AUDIO_SHEET_EXIT_DURATION }).opacity(1)
     }
   }
 

@@ -31,6 +31,7 @@ import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { KnockShare } from '../utils/KnockShare';
+import { AudioSheetTransition, AUDIO_SHEET_ENTER_DURATION, AUDIO_SHEET_EXIT_DURATION } from '../utils/AudioSheetTransition';
 
 @Entry
 @Component
@@ -238,6 +239,14 @@ struct SearchBookDetailPage {
   private readButtonOffsetX(): number {
     return this.readButtonOnLeft ?
       -Math.max(0, this.readButtonBarWidth - IMMERSIVE_READ_BUTTON_WIDTH - AppSpacing.XL * 2) : 0;
+  }
+
+  pageTransition() {
+    if (AudioSheetTransition.active()) {
+      // 听书页从底部盖上来、再收下去，详情页垫在下面不动。
+      PageTransitionExit({ type: RouteType.Push, duration: AUDIO_SHEET_ENTER_DURATION }).opacity(1)
+      PageTransitionEnter({ type: RouteType.Pop, duration: AUDIO_SHEET_EXIT_DURATION }).opacity(1)
+    }
   }
 
   build() {

@@ -43,6 +43,8 @@ export struct BookCover {
   @State activeIndex: number = 0;
   @State loadedRevision: number = 0;
   private shelfBook: Book | null = null;
+  /** shelfBook 是哪本书查来的：同一本书再查时先沿用它。 */
+  private shelfBookKey: string = '';
   private loadedUrls: Set<string> = new Set();
   private requestSerial: number = 0;
   private mounted: boolean = false;
@@ -69,7 +71,13 @@ export struct BookCover {
       this.onPreparedSelectionChanged();
       return;
     }
-    this.shelfBook = null;
+    // 同一本书的刷新（保存进度后的 shelfUpdateTime 等）先沿用已查到的书目，查回来再换。清空的话这一帧封面列表
+    // 是空的，会露出占位色，查回来后图片还要重新解码一次——关听书页时大封面闪绿就是这样来的。
+    const key = `${this.origin}|${this.bookUrl}`;
+    if (key !== this.shelfBookKey) {
+      this.shelfBook = null;
+      this.shelfBookKey = key;
+    }
     this.refreshCovers();
     if (!this.mounted || !this.useBookshelfCover || !this.bookUrl) return;
     this.loadShelfBook(serial);

@@ -5529,6 +5529,10 @@ export struct BookshelfPage {
       BookshelfSortHelper.holdReadTime(book);
     }
     this.acknowledgeShelfBookUpdate(book, true);
+    if (BookTypeSupport.isAudio(book)) {
+      this.openShelfAudioBook(book);
+      return;
+    }
     // PDFs go straight to their own page (the text reader would first spend a database lookup on the format),
     // with the same cover-open animation parameters as other books.
     const pdf = LocalBookService.isPdfBook(book);
@@ -5590,6 +5594,26 @@ export struct BookshelfPage {
     this.takeShelfOpeningBackdrop().then((backdrop: image.PixelMap | null): void => {
       pageShot.then((shot: ReaderOpenSnapshot | null): void => push(backdrop, shot));
     }).catch((): void => push(null, null));
+  }
+
+  /**
+   * 有声书直接进听书页：听书页按播放器从底部滑上来、收下去，不做封面翻开，也就不要首页截图和整页 0 时长转场。
+   * 还判断不出类型的（书源没声明、第一次打开）仍走阅读页，由它查到是有声书后转过去。
+   * shelfBookOpening 让听书页关闭时通知书架放开按住的阅读时间、按新进度挪位。
+   */
+  private openShelfAudioBook(book: Book): void {
+    this.shelfBookRoutePending = true;
+    AppStorage.setOrCreate<boolean>('shelfReaderDirectTransition', false);
+    this.discardShelfOpeningBackdrop();
+    router.pushUrl({
+      url: 'pages/AudioBook',
+      params: { bookUrl: book.bookUrl, shelfBookOpening: this.bookshelfBookOpenAnimation ? 'true' : 'false' }
+    }).then((): void => {
+      this.shelfBookRoutePending = false;
+    }).catch((error: Error): void => {
+      console.error('打开听书页失败:', error);
+      this.cancelShelfBookOpening();
+    });
   }
 
   /** 手指按下时先截一张首页；正在截或刚截过的沿用。 */
