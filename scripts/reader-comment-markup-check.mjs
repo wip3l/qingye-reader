@@ -97,6 +97,7 @@ assert.match(Marker.sourceScript(optionActions[1].url), /^godOpen\(/);
 assert.equal(optionActions[1].preview, '写得真好');
 assert.equal(optionActions[1].likes, '22', 'the trailing number of a hot card is its like count');
 assert.equal(optionActions[2].preview, '76条评论');
+assert.equal(optionActions[2].likes, '', 'a 本章说 card number is not a like count');
 
 // <note> inline cards; a server that wraps each line in rs-native can split a multi-line text attribute
 // across two divs. The whole tag becomes one action and nothing of it leaks into the paragraph text.

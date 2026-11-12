@@ -1589,7 +1589,8 @@ export class WebBookService {
       const kind = isChapterTail ? '章评' : (isHot ? '热评' : '段评');
       const label = count ? `段评 ${count}` : kind;
       const hot = isHot || isChapterTail ? this.readerDataImageHot(data[1] || '') : ['', ''];
-      const marker = ReaderActionMarker.createSourceScript(label, action, kind, hot[0], hot[1]);
+      // 本章说卡面上的数字含义因书源而异，不当点赞数。
+      const marker = ReaderActionMarker.createSourceScript(label, action, kind, hot[0], isChapterTail ? '' : hot[1]);
       // This data-image is an interaction control, not正文 artwork. If its imported click script exceeds the
       // bounded action budget, drop the control instead of passing the enormous base64/options tag into the
       // ordinary image pipeline (the latter can exhaust memory while opening the chapter).
@@ -1709,7 +1710,7 @@ export class WebBookService {
       (count ? `段评 ${count}` : '评论'));
     const hot = label === '热评' || label === '章评' ? this.readerDataImageHot(svg[1] || '') : ['', ''];
     return ReaderActionMarker.create(label, url, label === '章评' ? '章评' : (label === '热评' ? '热评' : '段评'),
-      hot[0], hot[1]);
+      hot[0], label === '章评' ? '' : hot[1]);
   }
 
   private readerActionMarkerFromCommentAttributes(attrs: string): string {

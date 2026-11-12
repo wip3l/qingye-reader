@@ -95,10 +95,10 @@ export class ReaderV2CommentCardLayout {
     card.tagFill = ReaderV2CommentCardLayout.withAlpha(tagColor, 0x24);
 
     let metaWidth = 0;
-    // 本章说右侧是进入箭头；卡面上的数字含义因书源而异，不当点赞数显示。
-    const metaText = chapter ? '›' : (action.likes ? `♥ ${action.likes}` : '');
+    // 本章说右侧是进入箭头，书源给了热评点赞数时放在箭头前。
+    const metaText = chapter ? (action.likes ? `♥ ${action.likes}  ›` : '›') : (action.likes ? `♥ ${action.likes}` : '');
     if (metaText) {
-      const metaFontSize = f * (chapter ? 1.1 : 0.74);
+      const metaFontSize = f * (chapter && !action.likes ? 1.1 : 0.74);
       card.meta = ReaderV2CommentCardLayout.paragraph(metaText, metaFontSize,
         ReaderV2CommentCardLayout.withAlpha(ink, 0x99), graphicsText.FontWeight.W400, [], 1, metaFontSize * 12);
       metaWidth = Math.ceil(card.meta.getLongestLine());

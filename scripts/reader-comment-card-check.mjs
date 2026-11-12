@@ -224,7 +224,8 @@ try {
     }
     assert.equal(chapterCards[0].card.text.text, '查看本章评论');
     assert.equal(chapterCards[1].card.text.text, '76条评论');
-    assert.equal(chapterCards[1].card.meta.text, '›', 'the chapter card shows an arrow, not the source number');
+    assert.equal(chapterCards[1].card.meta.text, '♥ 698  ›', 'a chapter hot comment shows its likes before the arrow');
+    assert.equal(chapterCards[0].card.meta.text, '›');
   }
   input.commentCardStyle = 0;
   assert.equal(cardsOf(Paginator.paginate(Parser.parse(chapterSource, 0, '标题'), Snapshot.create(input)).pages[0])
