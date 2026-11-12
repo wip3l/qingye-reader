@@ -8,6 +8,7 @@ import { AdaptiveColorPicker } from '../AdaptiveColorPicker';
 import { ReaderInfoBarConfig, ReaderInfoItem, ReaderInfoProgressBar } from '../../core/reader/ReaderInfoBarModel';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
+import { ReaderSettingGroup, ReaderSettingStepperItem, ReaderSettingTabStrip } from './ReaderSettingGroups';
 
 interface ReaderHeaderFooterSwitchOptions {
   title: string;
@@ -224,6 +225,56 @@ export struct ReaderTypographyStepper {
 }
 
 /**
+ * 正文排版的单个参数（字号、字距、边距等）。数值草稿是组件自己的状态，连点加减只刷新这个控件；
+ * 每次变化把参数下标与新值交给页面，页面合并进整组草稿后稍后一次性提交并重排正文。
+ */
+@Component
+export struct ReaderTypographyFieldControl {
+  /** ReaderTypographyField 下标。 */
+  field: number = 0;
+  /** 打开时的初始值。 */
+  initialValue: number = 0;
+  @Prop title: string = '';
+  @Prop description: string = '';
+  @Prop cell: boolean = false;
+  @Prop large: boolean = false;
+  @Prop dark: boolean = false;
+  @Prop textColor: string = '#000000';
+  @Prop subTextColor: string = '#666666';
+  @Prop inputColor: string = '#FFFFFF';
+  onFieldChange: (field: number, value: number) => void = () => {};
+
+  @State private value: number = 0;
+
+  aboutToAppear(): void {
+    this.value = ReaderTypographyField.clamp(this.field, this.initialValue);
+  }
+
+  build() {
+    ReaderSettingStepperItem({
+      title: this.title || ReaderTypographyField.LABELS[this.field],
+      description: this.description,
+      cell: this.cell,
+      value: this.value,
+      minValue: ReaderTypographyField.min(this.field),
+      maxValue: ReaderTypographyField.max(this.field),
+      stepValue: ReaderTypographyField.step(this.field),
+      large: this.large,
+      dark: this.dark,
+      textColor: this.textColor,
+      subTextColor: this.subTextColor,
+      inputColor: this.inputColor,
+      onChange: (value: number): void => {
+        const next = ReaderTypographyField.clamp(this.field, value);
+        if (next === this.value) return;
+        this.value = next;
+        this.onFieldChange(this.field, next);
+      }
+    })
+  }
+}
+
+/**
  * 页眉页脚设置组：两个总开关、六个内容槽位和外观项，直接绑定全局设置。
  * 操作回调直接提交完整设置；页面监听只负责更新正文，避免依赖跨组件监听的通知时机保存。
  * cardStyle 为 true 时使用设置页的卡片行样式。
@@ -242,6 +293,8 @@ export struct ReaderHeaderFooterSettings {
   @Prop switchColor: string = '#0A59F7';
   @Prop menuColor: string = '#FFFFFF';
   @Prop cardStyle: boolean = false;
+  /** 阅读页面板用的紧凑布局：示意图上选六个位置的内容，页眉、页脚样式二选一显示。 */
+  @Prop compact: boolean = false;
   @Prop dividerColor: string = '#00000000';
   /** 应用当前是否深色模式：页眉页脚颜色按浅色、深色分别编辑。dark 只管面板外观，可能取自背景深浅。 */
   @Prop modeDark: boolean = false;
@@ -263,6 +316,7 @@ export struct ReaderHeaderFooterSettings {
       switchColor: this.switchColor,
       menuColor: this.menuColor,
       cardStyle: this.cardStyle,
+      compact: this.compact,
       dividerColor: this.dividerColor,
       modeDark: this.modeDark,
       readerHeaderEnabled: $readerHeaderEnabled,
@@ -291,6 +345,7 @@ export struct ReaderHeaderFooterEditor {
   @Prop switchColor: string = '#0A59F7';
   @Prop menuColor: string = '#FFFFFF';
   @Prop cardStyle: boolean = false;
+  @Prop compact: boolean = false;
   @Prop dividerColor: string = '#00000000';
   @Prop modeDark: boolean = false;
   onChanged: (headerEnabled: boolean, footerEnabled: boolean, infoBarConfig: string) => void = () => {
@@ -298,6 +353,10 @@ export struct ReaderHeaderFooterEditor {
   @Link readerHeaderEnabled: boolean;
   @Link readerFooterEnabled: boolean;
   @Link readerInfoBarConfig: string;
+  /** 紧凑布局：样式区当前显示页脚（否则页眉）的样式。 */
+  @State private styleFooter: boolean = true;
+  /** 紧凑布局：正在选内容的位置，-1 为没有。 */
+  @State private slotMenu: number = -1;
 
   private static readonly SLOT_HEADER_LEFT: number = 0;
   private static readonly SLOT_HEADER_CENTER: number = 1;
@@ -444,85 +503,311 @@ export struct ReaderHeaderFooterEditor {
     this.commit(config);
   }
 
+  aboutToAppear(): void {
+    this.styleFooter = this.readerFooterEnabled || !this.readerHeaderEnabled;
+  }
+
   build() {
-    Column({ space: AppSpacing.XS }) {
-      this.switchItem({ title: '显示页眉', description: '正文顶部显示书名、章节、时间等',
-        checked: this.readerHeaderEnabled, onChange: (checked: boolean) => {
-          this.readerHeaderEnabled = checked;
-          this.notifyChanged();
-        } })
-
-      if (this.readerHeaderEnabled) {
-        this.slotItem('页眉左侧', ReaderHeaderFooterEditor.SLOT_HEADER_LEFT, 'reader_header_left_select')
-        this.slotItem('页眉中间', ReaderHeaderFooterEditor.SLOT_HEADER_CENTER, 'reader_header_center_select')
-        this.slotItem('页眉右侧', ReaderHeaderFooterEditor.SLOT_HEADER_RIGHT, 'reader_header_right_select')
-        this.colorItem('页眉颜色', true)
-        this.stepperItem('页眉字号', ReaderHeaderFooterEditor.STEPPER_HEADER_FONT_SIZE)
-        this.stepperItem('页眉不透明度', ReaderHeaderFooterEditor.STEPPER_HEADER_OPACITY)
-        this.stepperItem('页眉位置', ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET)
-        this.stepperItem('页眉收缩', ReaderHeaderFooterEditor.STEPPER_HEADER_SHRINK)
-        this.switchItem({ title: '页眉分隔线', description: '页眉下方的细线',
-          checked: this.config().headerDivider, onChange: (checked: boolean) => {
-            const config = this.config();
-            config.headerDivider = checked;
-            this.commit(config);
-          }
-        })
-      }
-
-      this.switchItem({ title: '显示页脚', description: '正文底部显示章节信息和进度',
-        checked: this.readerFooterEnabled, onChange: (checked: boolean) => {
-          this.readerFooterEnabled = checked;
-          this.notifyChanged();
-        } })
-
-      if (this.readerFooterEnabled) {
-        this.slotItem('页脚左侧', ReaderHeaderFooterEditor.SLOT_FOOTER_LEFT, 'reader_footer_left_select')
-        this.slotItem('页脚中间', ReaderHeaderFooterEditor.SLOT_FOOTER_CENTER, 'reader_footer_center_select')
-        this.slotItem('页脚右侧', ReaderHeaderFooterEditor.SLOT_FOOTER_RIGHT, 'reader_footer_right_select')
-        this.colorItem('页脚颜色', false)
-        this.stepperItem('页脚字号', ReaderHeaderFooterEditor.STEPPER_FOOTER_FONT_SIZE)
-        this.stepperItem('页脚不透明度', ReaderHeaderFooterEditor.STEPPER_FOOTER_OPACITY)
-        this.stepperItem('页脚位置', ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET)
-        this.stepperItem('页脚收缩', ReaderHeaderFooterEditor.STEPPER_FOOTER_SHRINK)
-        this.switchItem({ title: '页脚分隔线', description: '页脚上方的细线',
-          checked: this.config().footerDivider, onChange: (checked: boolean) => {
-            const config = this.config();
-            config.footerDivider = checked;
-            this.commit(config);
-          }
-        })
-      }
-
-      if (this.readerHeaderEnabled || this.readerFooterEnabled) {
-        this.switchItem({ title: '边距跟随正文', description: '页眉页脚的左右边距与正文一致',
-          checked: this.config().followMargin, onChange: (checked: boolean) => {
-            const config = this.config();
-            config.followMargin = checked;
-            this.commit(config);
-          } })
-        this.selectItem('进度条', '显示在页眉下方或页脚上方', ReaderInfoProgressBar.LABELS,
-          Math.max(0, ReaderInfoProgressBar.VALUES.indexOf(this.config().progressBar)),
-          (index: number) => {
-            const config = this.config();
-            config.progressBar = index >= 0 && index < ReaderInfoProgressBar.VALUES.length ?
-              ReaderInfoProgressBar.VALUES[index] : ReaderInfoProgressBar.NONE;
-            this.commit(config);
-          }, 'reader_progress_bar_select')
-        if (this.config().progressBar !== ReaderInfoProgressBar.NONE) {
-          this.selectItem('进度条范围', '表示本章或全书的进度', ReaderInfoProgressBar.SCOPE_LABELS,
-            Math.max(0, ReaderInfoProgressBar.SCOPE_VALUES.indexOf(this.config().progressScope)),
-            (index: number) => {
-              const config = this.config();
-              config.progressScope = index === 1 ?
-                ReaderInfoProgressBar.SCOPE_BOOK : ReaderInfoProgressBar.SCOPE_CHAPTER;
-              this.commit(config);
-            }, 'reader_progress_scope_select')
-        }
+    Column({ space: this.compact ? 14 : AppSpacing.XS }) {
+      if (this.compact) {
+        this.compactContent()
+      } else {
+        this.listContent()
       }
     }
     .width('100%')
     .padding({ bottom: this.cardStyle ? 0 : 8 })
+  }
+
+  // 五个开关各包一层，列表布局与紧凑布局共用同一份回调。
+  @Builder
+  headerSwitch() {
+    this.switchItem({ title: '显示页眉', description: '正文顶部显示书名、章节、时间等',
+      checked: this.readerHeaderEnabled, onChange: (checked: boolean) => {
+        this.readerHeaderEnabled = checked;
+        this.notifyChanged();
+      } })
+  }
+
+  @Builder
+  headerDividerSwitch() {
+    this.switchItem({ title: '页眉分隔线', description: '页眉下方的细线',
+      checked: this.config().headerDivider, onChange: (checked: boolean) => {
+        const config = this.config();
+        config.headerDivider = checked;
+        this.commit(config);
+      }
+    })
+  }
+
+  @Builder
+  footerSwitch() {
+    this.switchItem({ title: '显示页脚', description: '正文底部显示章节信息和进度',
+      checked: this.readerFooterEnabled, onChange: (checked: boolean) => {
+        this.readerFooterEnabled = checked;
+        this.notifyChanged();
+      } })
+  }
+
+  @Builder
+  footerDividerSwitch() {
+    this.switchItem({ title: '页脚分隔线', description: '页脚上方的细线',
+      checked: this.config().footerDivider, onChange: (checked: boolean) => {
+        const config = this.config();
+        config.footerDivider = checked;
+        this.commit(config);
+      }
+    })
+  }
+
+  @Builder
+  followMarginSwitch() {
+    this.switchItem({ title: '边距跟随正文', description: '页眉页脚的左右边距与正文一致',
+      checked: this.config().followMargin, onChange: (checked: boolean) => {
+        const config = this.config();
+        config.followMargin = checked;
+        this.commit(config);
+      } })
+  }
+
+  @Builder
+  progressBarItems() {
+    this.selectItem('进度条', '显示在页眉下方或页脚上方', ReaderInfoProgressBar.LABELS,
+      Math.max(0, ReaderInfoProgressBar.VALUES.indexOf(this.config().progressBar)),
+      (index: number) => {
+        const config = this.config();
+        config.progressBar = index >= 0 && index < ReaderInfoProgressBar.VALUES.length ?
+          ReaderInfoProgressBar.VALUES[index] : ReaderInfoProgressBar.NONE;
+        this.commit(config);
+      }, 'reader_progress_bar_select')
+    if (this.config().progressBar !== ReaderInfoProgressBar.NONE) {
+      this.selectItem('进度条范围', '表示本章或全书的进度', ReaderInfoProgressBar.SCOPE_LABELS,
+        Math.max(0, ReaderInfoProgressBar.SCOPE_VALUES.indexOf(this.config().progressScope)),
+        (index: number) => {
+          const config = this.config();
+          config.progressScope = index === 1 ?
+            ReaderInfoProgressBar.SCOPE_BOOK : ReaderInfoProgressBar.SCOPE_CHAPTER;
+          this.commit(config);
+        }, 'reader_progress_scope_select')
+    }
+  }
+
+  @Builder
+  listContent() {
+    this.headerSwitch()
+
+    if (this.readerHeaderEnabled) {
+      this.slotItem('页眉左侧', ReaderHeaderFooterEditor.SLOT_HEADER_LEFT, 'reader_header_left_select')
+      this.slotItem('页眉中间', ReaderHeaderFooterEditor.SLOT_HEADER_CENTER, 'reader_header_center_select')
+      this.slotItem('页眉右侧', ReaderHeaderFooterEditor.SLOT_HEADER_RIGHT, 'reader_header_right_select')
+      this.colorItem('页眉颜色', true)
+      this.stepperItem('页眉字号', ReaderHeaderFooterEditor.STEPPER_HEADER_FONT_SIZE)
+      this.stepperItem('页眉不透明度', ReaderHeaderFooterEditor.STEPPER_HEADER_OPACITY)
+      this.stepperItem('页眉位置', ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET)
+      this.stepperItem('页眉收缩', ReaderHeaderFooterEditor.STEPPER_HEADER_SHRINK)
+      this.headerDividerSwitch()
+    }
+
+    this.footerSwitch()
+
+    if (this.readerFooterEnabled) {
+      this.slotItem('页脚左侧', ReaderHeaderFooterEditor.SLOT_FOOTER_LEFT, 'reader_footer_left_select')
+      this.slotItem('页脚中间', ReaderHeaderFooterEditor.SLOT_FOOTER_CENTER, 'reader_footer_center_select')
+      this.slotItem('页脚右侧', ReaderHeaderFooterEditor.SLOT_FOOTER_RIGHT, 'reader_footer_right_select')
+      this.colorItem('页脚颜色', false)
+      this.stepperItem('页脚字号', ReaderHeaderFooterEditor.STEPPER_FOOTER_FONT_SIZE)
+      this.stepperItem('页脚不透明度', ReaderHeaderFooterEditor.STEPPER_FOOTER_OPACITY)
+      this.stepperItem('页脚位置', ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET)
+      this.stepperItem('页脚收缩', ReaderHeaderFooterEditor.STEPPER_FOOTER_SHRINK)
+      this.footerDividerSwitch()
+    }
+
+    if (this.readerHeaderEnabled || this.readerFooterEnabled) {
+      this.followMarginSwitch()
+      this.progressBarItems()
+    }
+  }
+
+  @Builder
+  compactContent() {
+    ReaderSettingGroup({ title: '内容：点位置选择显示什么', dark: this.dark, subTextColor: this.subTextColor }) {
+      this.headerSwitch()
+      this.slotDiagram()
+      this.footerSwitch()
+    }
+
+    ReaderSettingGroup({ title: '样式', dark: this.dark, subTextColor: this.subTextColor }) {
+      ReaderSettingTabStrip({
+        labels: ['页眉', '页脚'],
+        selected: this.styleFooter ? 1 : 0,
+        dense: true,
+        dark: this.dark,
+        textColor: this.textColor,
+        subTextColor: this.subTextColor,
+        onSelect: (index: number): void => {
+          this.styleFooter = index === 1;
+        }
+      })
+        .margin({ top: 10, bottom: AppSpacing.XS })
+      if (this.styleFooter) {
+        Column() {
+          this.colorItem('页脚颜色', false)
+          Row({ space: 14 }) {
+            this.stepperCell('字号', ReaderHeaderFooterEditor.STEPPER_FOOTER_FONT_SIZE)
+            this.stepperCell('不透明度', ReaderHeaderFooterEditor.STEPPER_FOOTER_OPACITY)
+          }
+          Row({ space: 14 }) {
+            this.stepperCell('位置', ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET)
+            this.stepperCell('收缩', ReaderHeaderFooterEditor.STEPPER_FOOTER_SHRINK)
+          }
+          this.footerDividerSwitch()
+        }
+        .width('100%')
+        .opacity(this.readerFooterEnabled ? 1 : 0.4)
+        .enabled(this.readerFooterEnabled)
+      } else {
+        Column() {
+          this.colorItem('页眉颜色', true)
+          Row({ space: 14 }) {
+            this.stepperCell('字号', ReaderHeaderFooterEditor.STEPPER_HEADER_FONT_SIZE)
+            this.stepperCell('不透明度', ReaderHeaderFooterEditor.STEPPER_HEADER_OPACITY)
+          }
+          Row({ space: 14 }) {
+            this.stepperCell('位置', ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET)
+            this.stepperCell('收缩', ReaderHeaderFooterEditor.STEPPER_HEADER_SHRINK)
+          }
+          this.headerDividerSwitch()
+        }
+        .width('100%')
+        .opacity(this.readerHeaderEnabled ? 1 : 0.4)
+        .enabled(this.readerHeaderEnabled)
+      }
+    }
+
+    if (this.readerHeaderEnabled || this.readerFooterEnabled) {
+      ReaderSettingGroup({ title: '通用', dark: this.dark, subTextColor: this.subTextColor }) {
+        this.followMarginSwitch()
+        this.progressBarItems()
+      }
+    }
+  }
+
+  /** 一张小页面示意图：上排三个位置是页眉，下排三个是页脚，点一个位置选它显示的内容。 */
+  @Builder
+  slotDiagram() {
+    Column({ space: 10 }) {
+      Row({ space: 6 }) {
+        this.slotChip(ReaderHeaderFooterEditor.SLOT_HEADER_LEFT, '页眉左侧')
+        this.slotChip(ReaderHeaderFooterEditor.SLOT_HEADER_CENTER, '页眉中间')
+        this.slotChip(ReaderHeaderFooterEditor.SLOT_HEADER_RIGHT, '页眉右侧')
+      }
+      .width('100%')
+      .opacity(this.readerHeaderEnabled ? 1 : 0.35)
+      .enabled(this.readerHeaderEnabled)
+
+      ForEach(['100%', '100%', '62%'], (lineWidth: string) => {
+        Row()
+          .width(lineWidth)
+          .height(5)
+          .borderRadius(3)
+          .backgroundColor(this.dark ? '#1FFFFFFF' : '#14000000')
+      }, (_lineWidth: string, index: number) => `${index}`)
+
+      Row({ space: 6 }) {
+        this.slotChip(ReaderHeaderFooterEditor.SLOT_FOOTER_LEFT, '页脚左侧')
+        this.slotChip(ReaderHeaderFooterEditor.SLOT_FOOTER_CENTER, '页脚中间')
+        this.slotChip(ReaderHeaderFooterEditor.SLOT_FOOTER_RIGHT, '页脚右侧')
+      }
+      .width('100%')
+      .opacity(this.readerFooterEnabled ? 1 : 0.35)
+      .enabled(this.readerFooterEnabled)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(10)
+    .borderRadius(14)
+    .backgroundColor(this.dark ? '#14FFFFFF' : '#B3FFFFFF')
+    .margin({ top: AppSpacing.XS, bottom: AppSpacing.XS })
+  }
+
+  // 内容与弹出状态在这里直接读取，按值传入的只有固定的位置编号。
+  @Builder
+  slotChip(slot: number, title: string) {
+    Text(this.slotIndex(slot) > 0 ? ReaderInfoItem.LABELS[this.slotIndex(slot)] : '＋')
+      .fontSize(AppFontSize.CAPTION)
+      .fontColor(this.slotIndex(slot) > 0 ? this.accentColor : this.subTextColor)
+      .maxLines(1)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .textAlign(TextAlign.Center)
+      .layoutWeight(1)
+      .height(30)
+      .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
+      .borderRadius(9)
+      .border({
+        width: 1,
+        color: this.slotIndex(slot) > 0 ? this.accentColor : this.subTextColor,
+        style: this.slotIndex(slot) > 0 ? BorderStyle.Solid : BorderStyle.Dashed
+      })
+      .accessibilityText(`${title}：${ReaderInfoItem.LABELS[this.slotIndex(slot)]}`)
+      .onClick(() => {
+        this.slotMenu = slot;
+      })
+      .bindPopup(this.slotMenu === slot, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+        this.slotMenuContent(slot)
+      }, slot >= ReaderHeaderFooterEditor.SLOT_FOOTER_LEFT ? Placement.Top : Placement.Bottom, this.dark, this.accentColor, () => {
+        if (this.slotMenu === slot) this.slotMenu = -1;
+      }))
+  }
+
+  @Builder
+  slotMenuContent(slot: number) {
+    Scroll() {
+      Column() {
+        ForEach(ReaderInfoItem.LABELS, (label: string, index: number) => {
+          Text(label)
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.slotIndex(slot) === index ? this.accentColor : this.textColor)
+            .width('100%')
+            .height(42)
+            .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+            .borderRadius(12)
+            .backgroundColor(this.slotIndex(slot) === index ? ThemeRuntime.accentSurfaceColor(this.dark) : Color.Transparent)
+            .onClick(() => {
+              this.slotMenu = -1;
+              this.setSlot(slot, index);
+            })
+        }, (_label: string, index: number) => `${index}`)
+      }
+      .width(208)
+      .padding(6)
+    }
+    .constraintSize({ maxHeight: 336 })
+    .scrollBar(BarState.Off)
+  }
+
+  // 两列并排用的步进器：标题在上。数值与可用状态同样直接从配置读取。
+  @Builder
+  stepperCell(title: string, field: number) {
+    Column() {
+      Text(title)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor)
+        .width('100%')
+        .margin({ bottom: AppSpacing.XS })
+      Row() {
+        this.stepperButton($r('sys.symbol.minus'), `减小${title}`, field, -1)
+        Text(this.stepperText(field))
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.textColor)
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+        this.stepperButton($r('sys.symbol.plus'), `增大${title}`, field, 1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+    }
+    .layoutWeight(1)
+    .padding({ top: 8, bottom: 8 })
   }
 
   @Builder

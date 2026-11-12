@@ -537,8 +537,8 @@ assert(reader.includes('input.bodyFontFamily = this.getBodyReaderFontFamily()') 
   readerPaginator.includes('fontFamilies: [heading ? snapshot.titleFontFamily : snapshot.bodyFontFamily]'),
   'Reader pagination measurement must use the same body font as rendering');
 assert(reader.includes('this.readerTypographySettingsPanel()') &&
-  reader.includes('readerTypographyCombinedSettings()') &&
-  reader.includes('ReaderTypographyStepper({') &&
+  reader.includes('ReaderTypographyFieldControl({') &&
+  reader.includes('onReaderTypographyFieldChange') &&
   readerLayoutSettings.includes("'左边距', '右边距', '上边距', '下边距'") &&
   readerLayoutSettings.includes('static clamp(field: number, value: number)') &&
   reader.includes('onReaderTypographyDraftChange') &&
@@ -555,10 +555,10 @@ assert(indexPage.includes('Book.hasStartedReading(book)') &&
   recentReadCardData.includes('!Book.hasStartedReading(book)'),
   'Bookshelf and recent-read surfaces must treat unopened first pages as unread');
 assert(readerSettingsPage.includes("this.selectItem('翻页方式'") &&
-  reader.includes("this.readerSelectSettingItem('翻页方式'") &&
+  reader.includes("ReaderSettingSegmentRow({\n        title: '翻页方式'".replace(/\n/g, reader.includes('\r\n') ? '\r\n' : '\n')) &&
   !readerSettingsPage.includes('this.pageTurnOptions()') &&
   !reader.includes('pageTurnModeButton('),
-  'Page-turn mode must use dropdown selectors in both settings entries');
+  'Page-turn mode must use a dropdown on the settings page and the shared segmented row in the reader panel');
 assert(readerSettingsPage.includes('if (this.readerPageTurnMode === 2)') &&
   readerSettingsPage.includes('this.tapZoneSettingItem()') &&
   readerSettingsPage.includes('ReaderSettingsStore.saveTapZoneActions') &&

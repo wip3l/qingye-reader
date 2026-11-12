@@ -156,7 +156,11 @@ import { ReaderContentSearch, ReaderContentSearchHit, ReaderContentSearchProgres
 import { ReaderContentSearchMatch, ReaderContentSearchMatcher } from '../core/reader/ReaderContentSearchMatcher';
 import { ReaderContentSearchCapsule, ReaderContentSearchDataSource, ReaderContentSearchSheet } from
   '../components/reader/ReaderContentSearchViews';
-import { ReaderHeaderFooterSettings, ReaderTypographyField, ReaderTypographyStepper } from '../components/reader/ReaderLayoutSettings';
+import { ReaderHeaderFooterSettings, ReaderTypographyField, ReaderTypographyFieldControl } from '../components/reader/ReaderLayoutSettings';
+import {
+  ReaderSettingChipRow, ReaderSettingGroup, ReaderSettingSegmentRow, ReaderSettingStepperItem, ReaderSettingTabStrip
+} from '../components/reader/ReaderSettingGroups';
+import { ReaderFontWeight } from '../core/reader/ReaderFontWeight';
 import { ReaderCacheDialogContent } from '../components/reader/ReaderCacheDialogContent';
 import { ReaderTxtCharsetDialogContent, ReaderTxtCharsets } from '../components/reader/ReaderTxtCharsetDialogContent';
 import { ReaderTxtTocRuleDialogContent } from '../components/reader/ReaderTxtTocRuleDialogContent';
@@ -458,6 +462,11 @@ struct ReadBookPage {
   private readerKeyboardSettingsReady: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showTapZoneSettings: boolean = false;
   @State settingsPanelTab: number = 0;
+  /** 阅读设置面板内的页签：0 翻页，1 操作，2 内容。 */
+  @State readerQuickSettingsPage: number = 0;
+  /** 排版设置面板内的页签：0 文字，1 页面，2 页眉页脚。 */
+  @State readerTypographySettingsPage: number = 0;
+  private readerSettingsScroller: Scroller = new Scroller();
   // 排版面板底部说明：这套排版记在哪套主题，或所有主题共用。打开排版面板时读取。
   @State readerTypographyOwnerText: string = '';
   @State loadStatus: string = '正在加载...';
@@ -12519,7 +12528,22 @@ struct ReadBookPage {
       .padding({ left: AppSpacing.XXL, right: this.readerSettingsContentRightPadding() })
       .alignItems(VerticalAlign.Center)
 
-      Scroll() {
+      if (this.settingsPanelTab === 0 || this.settingsPanelTab === 2) {
+        Row() {
+          ReaderSettingTabStrip({
+            labels: this.settingsPanelTab === 0 ? ['翻页', '操作', '内容'] : ['文字', '页面', '页眉页脚'],
+            selected: this.settingsPanelTab === 0 ? this.readerQuickSettingsPage : this.readerTypographySettingsPage,
+            dark: this.isReaderThemeDark(),
+            textColor: this.readerPanelTextColor(),
+            subTextColor: this.readerPanelSubTextColor(),
+            onSelect: (index: number): void => this.selectReaderSettingsPage(index)
+          })
+        }
+        .width('100%')
+        .padding({ left: AppSpacing.XXL, right: this.readerSettingsContentRightPadding() })
+      }
+
+      Scroll(this.readerSettingsScroller) {
         Column({ space: 14 }) {
           if (this.settingsPanelTab === 0) {
             Column() {
@@ -12556,7 +12580,7 @@ struct ReadBookPage {
         .width('100%')
         // Keep the gutter inside the scroll viewport so the first Select's shadow
         // can extend to the left without being cut at the control's own edge.
-        .padding({ left: AppSpacing.XXL, right: this.readerSettingsContentRightPadding() })
+        .padding({ left: AppSpacing.XXL, right: this.readerSettingsContentRightPadding(), bottom: AppSpacing.XL })
       }
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .width('100%')
@@ -12567,6 +12591,16 @@ struct ReadBookPage {
     .width('100%')
     .height('100%')
     .padding({ right: this.readerSettingsScrollBarRightInset(), top: AppSpacing.XL, bottom: 0 })
+  }
+
+  /** 切换阅读设置或排版设置面板内的页签，并回到顶部。 */
+  selectReaderSettingsPage(index: number): void {
+    if (this.settingsPanelTab === 0) {
+      this.readerQuickSettingsPage = index;
+    } else if (this.settingsPanelTab === 2) {
+      this.readerTypographySettingsPage = index;
+    }
+    this.readerSettingsScroller.scrollTo({ xOffset: 0, yOffset: 0 });
   }
 
   settingsPanelTitle(): string {
@@ -12586,23 +12620,114 @@ struct ReadBookPage {
     return Math.max(0, 20 - this.readerSettingsScrollBarRightInset());
   }
 
+  // 排版设置分三页：文字、页面、页眉页脚；页签在面板标题下方，见 settingsPanelContent。
   @Builder
   readerTypographySettingsPanel() {
-    Column({ space: AppSpacing.XS }) {
-      // 正文排版作为面板首项，统一调整字号、字距、行距、段距及四侧边距。
-      this.readerTypographyCombinedSettings()
-      this.readerSelectSettingItem('段首缩进', '正文每段首行的缩进字符数',
-        this.readerParagraphIndentOptions(), this.readerParagraphIndent, (index: number) => {
-          this.readerParagraphIndent = index;
-          this.saveReaderLayoutSettings();
-        }, 'reader_paragraph_indent_select')
-      this.readerSelectSettingItem('正文对齐方式', '正文段落的水平对齐',
-        this.readerTextAlignOptions(), this.readerTextAlignSelectedIndex(), (index: number) => {
-          this.setReaderTextAlignByIndex(index);
-        }, 'reader_text_align_select')
-      this.readerHeaderFooterSettingsPanel()
-      this.readerFontEntryItem()
+    Column({ space: 14 }) {
+      if (this.readerTypographySettingsPage === 0) {
+        this.readerTextTypographyPage()
+      } else if (this.readerTypographySettingsPage === 1) {
+        this.readerPageTypographyPage()
+      } else {
+        this.readerHeaderFooterSettingsPanel()
+      }
 
+      if (this.readerTypographySettingsPage !== 2 && this.readerTypographyOwnerText) {
+        Text(this.readerTypographyOwnerText)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.readerPanelSubTextColor())
+          .width('100%')
+          .padding({ left: AppSpacing.XS, bottom: AppSpacing.SM })
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  readerTextTypographyPage() {
+    ReaderSettingGroup({ dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      this.readerTypographyField(ReaderTypographyField.FONT_SIZE, false, false, '')
+      this.readerFontEntryItem()
+      this.readerTypographyField(ReaderTypographyField.FONT_WEIGHT, false, false, ReaderFontWeight.HELP)
+    }
+
+    ReaderSettingGroup({ title: '间距与段落', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      Row({ space: 14 }) {
+        this.readerTypographyField(ReaderTypographyField.LETTER_SPACING, true, false, '')
+        this.readerTypographyField(ReaderTypographyField.LINE_HEIGHT, true, false, '')
+      }
+      .width('100%')
+
+      Row({ space: 14 }) {
+        this.readerTypographyField(ReaderTypographyField.PARAGRAPH_SPACING, true, false, '')
+        ReaderSettingStepperItem({
+          title: '段首缩进（字符）',
+          cell: true,
+          value: this.readerParagraphIndent,
+          minValue: 0,
+          maxValue: 4,
+          dark: this.isReaderThemeDark(),
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          inputColor: this.readerSolidPanelColor(),
+          onChange: (value: number): void => {
+            this.readerParagraphIndent = value;
+            this.saveReaderLayoutSettings();
+          }
+        })
+          .layoutWeight(1)
+      }
+      .width('100%')
+
+      ReaderSettingSegmentRow({
+        title: '正文对齐方式',
+        labels: ['两端对齐', '左对齐', '右对齐'],
+        selected: this.readerTextAlignSelectedIndex(),
+        dark: this.isReaderThemeDark(),
+        textColor: this.readerPanelTextColor(),
+        subTextColor: this.readerPanelSubTextColor(),
+        onSelect: (index: number): void => this.setReaderTextAlignByIndex(index)
+      })
+    }
+
+    ReaderSettingGroup({ title: '段评', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      this.readerTypographyField(ReaderTypographyField.COMMENT_BUBBLE_SIZE, false, false, '正文里段评气泡的大小')
+    }
+  }
+
+  @Builder
+  readerPageTypographyPage() {
+    ReaderSettingGroup({ title: '阅读背景', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      this.readerThemeSwatches()
+
+      if (this.currentReaderThemeIndex() === ReaderThemeHelper.CUSTOM_THEME_INDEX) {
+        ReaderCustomThemeEditor({
+          dark: this.isReaderThemeDark(),
+          textColor: this.readerPanelTextColor(),
+          accentColor: this.accentColor(),
+          menuColor: this.readerSolidPanelColor(),
+          onChanged: (): void => {
+            this.saveReadConfig();
+          }
+        })
+      }
+    }
+
+    ReaderSettingGroup({ title: '页边距', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      Row({ space: 14 }) {
+        this.readerTypographyField(ReaderTypographyField.MARGIN_TOP, true, false, '')
+        this.readerTypographyField(ReaderTypographyField.MARGIN_BOTTOM, true, false, '')
+      }
+      .width('100%')
+
+      Row({ space: 14 }) {
+        this.readerTypographyField(ReaderTypographyField.MARGIN_LEFT, true, false, '')
+        this.readerTypographyField(ReaderTypographyField.MARGIN_RIGHT, true, false, '')
+      }
+      .width('100%')
+    }
+
+    ReaderSettingGroup({ dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
       ReaderSettingSwitchRow({
         title: '正文扩展至状态栏', description: '隐藏状态栏，正文延伸到屏幕顶部',
         checked: this.readerExtendToStatusBar, textColor: this.readerPanelTextColor(), subTextColor: this.readerPanelSubTextColor(),
@@ -12610,24 +12735,59 @@ struct ReadBookPage {
           this.setReaderExtendToStatusBar(checked);
         }
       })
-
-      if (this.readerTypographyOwnerText) {
-        Text(this.readerTypographyOwnerText)
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.readerPanelSubTextColor())
-          .width('100%')
-          .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
-      }
     }
+  }
+
+  /** 阅读背景的一排圆点；主题多时横向滑动。 */
+  @Builder
+  readerThemeSwatches() {
+    Scroll() {
+      Row({ space: 10 }) {
+        ForEach(this.currentReaderThemes(), (theme: ReaderThemeItem, index: number) => {
+          Text(index === ReaderThemeHelper.CUSTOM_THEME_INDEX ? '自' :
+            (index === ReaderThemeHelper.APP_THEME_INDEX ? '主' : ''))
+            .width(42)
+            .height(42)
+            .borderRadius(21)
+            .fontSize(AppFontSize.BODY)
+            .fontColor(theme.textColor)
+            .textAlign(TextAlign.Center)
+            .backgroundColor(theme.backgroundColor)
+            .backgroundImage(theme.backgroundImageUri || '', ImageRepeat.NoRepeat)
+            .backgroundImageSize(ImageSize.Cover)
+            .border({
+              width: this.currentReaderThemeIndex() === index ? 3 : 1,
+              color: this.currentReaderThemeIndex() === index ? this.accentColor() : '#22000000'
+            })
+            .onClick(() => {
+              this.applyReaderThemeIndex(index);
+            })
+        })
+      }
+      .padding({ top: 12, bottom: 12 })
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
     .width('100%')
+    .align(Alignment.Start)
   }
 
-  readerParagraphIndentOptions(): SelectOption[] {
-    return [{ value: '0字符' }, { value: '1字符' }, { value: '2字符' }, { value: '3字符' }, { value: '4字符' }];
-  }
-
-  readerTextAlignOptions(): SelectOption[] {
-    return [{ value: '两端对齐' }, { value: '左对齐' }, { value: '右对齐' }];
+  // 排版参数的步进器：初始值取自草稿或当前设置，之后数值由控件自己保存；这里按值传入的都是固定值。
+  @Builder
+  readerTypographyField(field: number, cell: boolean, large: boolean, description: string) {
+    ReaderTypographyFieldControl({
+      field: field,
+      initialValue: this.readerTypographyInitialValues()[field],
+      description: description,
+      cell: cell,
+      large: large,
+      dark: this.isReaderThemeDark(),
+      textColor: this.readerPanelTextColor(),
+      subTextColor: this.readerPanelSubTextColor(),
+      inputColor: this.readerSolidPanelColor(),
+      onFieldChange: (changed: number, value: number): void => this.onReaderTypographyFieldChange(changed, value)
+    })
+      .layoutWeight(cell ? 1 : 0)
   }
 
   readerTextAlignValues(): string[] {
@@ -12646,23 +12806,10 @@ struct ReadBookPage {
   }
 
   @Builder
-  readerTypographyCombinedSettings() {
-    ReaderTypographyStepper({
-      initialValues: this.readerTypographyInitialValues(),
-      dark: this.isReaderThemeDark(),
-      textColor: this.readerPanelTextColor(),
-      subTextColor: this.readerPanelSubTextColor(),
-      accentColor: this.accentColor(),
-      inputColor: this.readerSolidPanelColor(),
-      menuColor: this.readerSolidPanelColor(),
-      onChange: (values: number[]): void => this.onReaderTypographyDraftChange(values)
-    })
-  }
-
-  @Builder
   readerHeaderFooterSettingsPanel() {
     ReaderHeaderFooterSettings({
       headerBaseInset: ReaderInfoBarConfig.headerBaseInset(this.readerExtendToStatusBar, this.statusBarSafeHeight),
+      compact: true,
       dark: this.isReaderThemeDark(),
       modeDark: this.appDarkMode,
       textColor: this.readerPanelTextColor(),
@@ -12676,7 +12823,7 @@ struct ReadBookPage {
     })
   }
 
-  // The stepper edits a draft; nothing is laid out until the short debounce below commits the whole set at once.
+  // The steppers edit a draft; nothing is laid out until the short debounce below commits the whole set at once.
   readerTypographyInitialValues(): number[] {
     if (this.readerTypographyDraftPending && this.readerTypographyDraft.length === ReaderTypographyField.COUNT) {
       return [...this.readerTypographyDraft];
@@ -12690,6 +12837,14 @@ struct ReadBookPage {
     this.readerTypographyDraft = values;
     this.readerTypographyDraftPending = true;
     this.scheduleReaderTypographyChange();
+  }
+
+  /** 单个排版参数变化：合并进整组草稿（已有未提交的草稿时在它之上改）。 */
+  onReaderTypographyFieldChange(field: number, value: number): void {
+    const values = this.readerTypographyInitialValues();
+    if (field < 0 || field >= values.length) return;
+    values[field] = value;
+    this.onReaderTypographyDraftChange(values);
   }
 
   commitReaderTypographyDraft(): void {
@@ -12711,9 +12866,169 @@ struct ReadBookPage {
     this.readerLayoutCommitInProgress = false;
   }
 
+  // 阅读设置分三页：翻页、操作、内容；页签在面板标题下方，见 settingsPanelContent。
   @Builder
   readerQuickSettingsPanel() {
     Column({ space: 14 }) {
+      if (this.readerQuickSettingsPage === 0) {
+        this.readerPageTurnSettingsPage()
+      } else if (this.readerQuickSettingsPage === 1) {
+        this.readerControlSettingsPage()
+      } else {
+        this.readerContentSettingsPage()
+      }
+    }
+    .width('100%')
+  }
+
+  // 选中项在这里直接读状态后交给控件，选择后分段与标签跟着刷新。
+  @Builder
+  readerPageTurnSettingsPage() {
+    ReaderSettingGroup({ title: '翻页', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      ReaderSettingSegmentRow({
+        title: '翻页方式',
+        labels: this.pageTurnModeOptions().map((option: SelectOption): string => option.value as string),
+        selected: this.pageTurnModeSelectedIndex(),
+        dark: this.isReaderThemeDark(),
+        textColor: this.readerPanelTextColor(),
+        subTextColor: this.readerPanelSubTextColor(),
+        onSelect: (index: number): void => this.switchPageTurnMode(this.pageTurnModeByIndex(index))
+      })
+
+      if (this.readerPageTurnMode === 2 || this.readerPageTurnMode === 0) {
+        ReaderSettingChipRow({
+          title: '翻页动画',
+          labels: ReaderPageTurnAnimation.labels(this.readerPageTurnMode === 2),
+          selected: this.pageTurnAnimationSelectedIndex(),
+          dark: this.isReaderThemeDark(),
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          accentColor: this.accentColor(),
+          onSelect: (index: number): void => this.setReaderPageTurnAnimationType(index)
+        })
+      }
+
+      if (this.readerPageTurnMode === 2) {
+        this.readerTapZoneSettingItem()
+      }
+    }
+
+    ReaderSettingGroup({ title: '屏幕', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      this.readerSwitchSettingItem('使用双翻页', '横屏、折叠屏展开等宽屏下并排显示两页',
+        this.readerLandscapeDoublePage, (checked: boolean) => {
+          this.setReaderLandscapeDoublePage(checked);
+        })
+
+      ReaderSettingSegmentRow({
+        title: '屏幕方向',
+        labels: this.screenOrientationOptions().map((option: SelectOption): string => option.value as string),
+        selected: this.screenOrientationSelectedIndex(),
+        dark: this.isReaderThemeDark(),
+        textColor: this.readerPanelTextColor(),
+        subTextColor: this.readerPanelSubTextColor(),
+        onSelect: (index: number): void => this.setReaderScreenOrientationByIndex(index)
+      })
+
+      Row() {
+        ReaderSettingLabel({
+          title: '亮屏时间',
+          description: '无操作达到所选分钟数后恢复系统息屏，0 为常亮',
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor()
+        })
+          .layoutWeight(1)
+        ScreenTimeoutStepper({
+          minutes: this.readerScreenTimeoutMinutes,
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          inputColor: this.readerSolidPanelColor(),
+          darkMode: this.isReaderThemeDark(),
+          controlId: 'reader_screen_timeout_stepper',
+          onChange: (minutes: number): void => this.setReaderScreenTimeoutMinutes(minutes)
+        })
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 56 })
+      .alignItems(VerticalAlign.Center)
+    }
+  }
+
+  @Builder
+  readerControlSettingsPage() {
+    ReaderSettingGroup({ title: '按键翻页', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      this.readerSwitchSettingItem('音量键翻页', '音量上/下键翻到上一页/下一页，只改小说', this.readerVolumeTurnActive(),
+        (checked: boolean) => {
+          this.setReaderVolumeTurnPage(checked);
+        })
+
+      if (this.readerSmartKeyTurnSupported) {
+        this.readerSwitchSettingItem('智控键翻页', '智控键上滑/下滑翻到上一页/下一页，只改小说', this.readerSmartKeyTurnActive(),
+          (checked: boolean) => {
+            this.setReaderSmartKeyTurnPage(checked);
+          })
+      }
+
+      this.readerSwitchSettingItem('键盘翻页', '外接键盘或翻页器，仅在正文阅读时生效',
+        this.readerKeyboardSettings.enabled, (checked: boolean): void => {
+          const settings = ReaderKeyboard.normalize(this.readerKeyboardSettings);
+          settings.enabled = checked;
+          this.saveReaderKeyboardSettings(settings).catch((): void => {});
+        })
+      if (this.readerKeyboardSettings.enabled) {
+        this.readerKeyboardMappingRow(-1)
+        this.readerKeyboardMappingRow(1)
+        ReaderSettingActionRow({
+          title: '恢复默认按键',
+          description: '上一页 PageUp，下一页 PageDown',
+          actionText: '恢复默认',
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          buttonColor: this.buttonColor(),
+          buttonTextColor: ThemeRuntime.onAccentColor(),
+          onAction: (): void => {
+            const settings = new ReaderKeyboardSettings();
+            settings.enabled = this.readerKeyboardSettings.enabled;
+            this.saveReaderKeyboardSettings(settings).catch((): void => {});
+          }
+        })
+      }
+    }
+
+    ReaderSettingGroup({ title: '手势与反馈', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      this.readerSwitchSettingItem('长按选中文字', '关闭后长按正文不选中文字，也不弹出操作选项',
+        this.readerLongPressSelectText, (checked: boolean): void => {
+          this.readerLongPressSelectText = checked;
+          this.saveReaderInteractionSettings();
+        })
+
+      this.readerSwitchSettingItem('快速添加书签', '下拉正文添加或删除当前页书签', this.readerQuickBookmarkEnabled,
+        (checked: boolean) => {
+          this.setReaderQuickBookmarkEnabled(checked);
+        })
+
+      this.readerSwitchSettingItem('翻页震感', '翻页时轻震一下，翻到新章节时稍重，只改小说', this.readerPageTurnHapticsActive(),
+        (checked: boolean) => {
+          ReaderHaptics.toggle(getContext(this), ReaderInputKind.NOVEL, checked).catch((e: Error) => {
+            console.error('保存翻页震感设置失败:', e);
+          });
+        })
+    }
+
+    ReaderSettingGroup({ title: '眼动', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      this.readerSwitchSettingItem('眼动翻页（beta）', '看到页底后向上看即翻页；摄像头图像仅在本机处理',
+        this.readerEyeTurnEnabled, (checked: boolean) => {
+          this.eyeTurn().setEnabled(checked);
+        })
+
+      if (this.readerEyeTurnEnabled) {
+        this.readerEyeTurnCalibrationSettingItem()
+      }
+    }
+  }
+
+  @Builder
+  readerContentSettingsPage() {
+    ReaderSettingGroup({ title: '正文处理', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
       this.readerReplaceRulesEntryItem()
 
       if (!this.isReaderComicModeActive()) {
@@ -12750,163 +13065,11 @@ struct ReadBookPage {
           onSelect: (index: number): void => this.setReaderNightImageMode(index)
         })
       }
+    }
 
-      this.readerSelectSettingItem('翻页方式', '上下滑动、横向滑动或滚动阅读',
-        this.pageTurnModeOptions(), this.pageTurnModeSelectedIndex(), (index: number) => {
-          this.switchPageTurnMode(this.pageTurnModeByIndex(index));
-        }, 'reader_page_turn_mode_select')
-
-      if (this.readerPageTurnMode === 2) {
-        this.readerTapZoneSettingItem()
-      }
-
-      if (this.readerPageTurnMode === 2) {
-        this.readerSelectSettingItem('翻页动画', '翻页时的切换效果',
-          this.pageTurnAnimationOptions(), this.pageTurnAnimationSelectedIndex(), (index: number) => {
-            this.setReaderPageTurnAnimationType(index);
-          }, 'reader_page_turn_animation_select_horizontal')
-      } else if (this.readerPageTurnMode === 0) {
-        this.readerSelectSettingItem('翻页动画', '翻页时的切换效果',
-          this.pageTurnAnimationOptions(), this.pageTurnAnimationSelectedIndex(), (index: number) => {
-            this.setReaderPageTurnAnimationType(index);
-          }, 'reader_page_turn_animation_select_vertical')
-      }
-
-      this.readerSwitchSettingItem('使用双翻页', '横屏、折叠屏展开等宽屏下并排显示两页',
-        this.readerLandscapeDoublePage, (checked: boolean) => {
-          this.setReaderLandscapeDoublePage(checked);
-        })
-
-      this.readerSelectSettingItem('屏幕方向', '阅读正文时的屏幕方向',
-        this.screenOrientationOptions(), this.screenOrientationSelectedIndex(), (index: number) => {
-          this.setReaderScreenOrientationByIndex(index);
-        }, 'reader_screen_orientation_select')
-
-      this.readerSwitchSettingItem('音量键翻页', '音量上/下键翻到上一页/下一页，只改小说', this.readerVolumeTurnActive(),
-        (checked: boolean) => {
-          this.setReaderVolumeTurnPage(checked);
-        })
-
-      if (this.readerSmartKeyTurnSupported) {
-        this.readerSwitchSettingItem('智控键翻页', '智控键上滑/下滑翻到上一页/下一页，只改小说', this.readerSmartKeyTurnActive(),
-          (checked: boolean) => {
-            this.setReaderSmartKeyTurnPage(checked);
-          })
-      }
-
-      this.readerSwitchSettingItem('长按选中文字', '关闭后长按正文不选中文字，也不弹出操作选项',
-        this.readerLongPressSelectText, (checked: boolean): void => {
-          this.readerLongPressSelectText = checked;
-          this.saveReaderInteractionSettings();
-        })
-
-      this.readerSwitchSettingItem('键盘翻页', '外接键盘或翻页器，仅在正文阅读时生效',
-        this.readerKeyboardSettings.enabled, (checked: boolean): void => {
-          const settings = ReaderKeyboard.normalize(this.readerKeyboardSettings);
-          settings.enabled = checked;
-          this.saveReaderKeyboardSettings(settings).catch((): void => {});
-        })
-      if (this.readerKeyboardSettings.enabled) {
-        this.readerKeyboardMappingRow(-1)
-        this.readerKeyboardMappingRow(1)
-        ReaderSettingActionRow({
-          title: '恢复默认按键',
-          description: '上一页 PageUp，下一页 PageDown',
-          actionText: '恢复默认',
-          textColor: this.readerPanelTextColor(),
-          subTextColor: this.readerPanelSubTextColor(),
-          buttonColor: this.buttonColor(),
-          buttonTextColor: ThemeRuntime.onAccentColor(),
-          onAction: (): void => {
-            const settings = new ReaderKeyboardSettings();
-            settings.enabled = this.readerKeyboardSettings.enabled;
-            this.saveReaderKeyboardSettings(settings).catch((): void => {});
-          }
-        })
-      }
-
-      this.readerSwitchSettingItem('快速添加书签', '下拉正文添加或删除当前页书签', this.readerQuickBookmarkEnabled,
-        (checked: boolean) => {
-          this.setReaderQuickBookmarkEnabled(checked);
-        })
-
-      this.readerSwitchSettingItem('翻页震感', '翻页时轻震一下，翻到新章节时稍重，只改小说', this.readerPageTurnHapticsActive(),
-        (checked: boolean) => {
-          ReaderHaptics.toggle(getContext(this), ReaderInputKind.NOVEL, checked).catch((e: Error) => {
-            console.error('保存翻页震感设置失败:', e);
-          });
-        })
-
-      this.readerSwitchSettingItem('眼动翻页（beta）', '看到页底后向上看即翻页；摄像头图像仅在本机处理',
-        this.readerEyeTurnEnabled, (checked: boolean) => {
-          this.eyeTurn().setEnabled(checked);
-        })
-
-      if (this.readerEyeTurnEnabled) {
-        this.readerEyeTurnCalibrationSettingItem()
-      }
-
-      Row() {
-        ReaderSettingLabel({
-          title: '亮屏时间设置',
-          description: '无操作达到所选分钟数后恢复系统息屏，0 为常亮',
-          textColor: this.readerPanelTextColor(),
-          subTextColor: this.readerPanelSubTextColor()
-        })
-          .layoutWeight(1)
-        ScreenTimeoutStepper({
-          minutes: this.readerScreenTimeoutMinutes,
-          textColor: this.readerPanelTextColor(),
-          subTextColor: this.readerPanelSubTextColor(),
-          inputColor: this.readerSolidPanelColor(),
-          darkMode: this.isReaderThemeDark(),
-          controlId: 'reader_screen_timeout_stepper',
-          onChange: (minutes: number): void => this.setReaderScreenTimeoutMinutes(minutes)
-        })
-      }
-      .width('100%')
-      .constraintSize({ minHeight: 56 })
-      .alignItems(VerticalAlign.Center)
-
-      Row({ space: 10 }) {
-        ForEach(this.currentReaderThemes(), (theme: ReaderThemeItem, index: number) => {
-          Text(index === ReaderThemeHelper.CUSTOM_THEME_INDEX ? '自' :
-            (index === ReaderThemeHelper.APP_THEME_INDEX ? '主' : ''))
-            .width(42)
-            .height(42)
-            .borderRadius(21)
-            .fontSize(AppFontSize.BODY)
-            .fontColor(theme.textColor)
-            .textAlign(TextAlign.Center)
-            .backgroundColor(theme.backgroundColor)
-            .backgroundImage(theme.backgroundImageUri || '', ImageRepeat.NoRepeat)
-            .backgroundImageSize(ImageSize.Cover)
-            .border({
-              width: this.currentReaderThemeIndex() === index ? 3 : 1,
-              color: this.currentReaderThemeIndex() === index ? this.accentColor() : '#22000000'
-            })
-            .onClick(() => {
-              this.applyReaderThemeIndex(index);
-            })
-        })
-      }
-      .width('100%')
-
-      if (this.currentReaderThemeIndex() === ReaderThemeHelper.CUSTOM_THEME_INDEX) {
-        ReaderCustomThemeEditor({
-          dark: this.isReaderThemeDark(),
-          textColor: this.readerPanelTextColor(),
-          accentColor: this.accentColor(),
-          menuColor: this.readerSolidPanelColor(),
-          onChanged: (): void => {
-            this.saveReadConfig();
-          }
-        })
-      }
-
+    ReaderSettingGroup({ title: '缓存', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
       this.readerPreloadSettingItem()
     }
-    .width('100%')
   }
 
   @Builder
