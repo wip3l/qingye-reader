@@ -1,5 +1,6 @@
 import { SharedElementMotion } from '../../utils/SharedElementMotion';
 import { ShelfCoverLocator } from '../../utils/ShelfCoverLocator';
+import { ShelfBookPerspective, ShelfBookShape } from '../../utils/ShelfBookPerspective';
 import { PdfPagePosition } from '../../core/book/pdf/PdfModels';
 import {
   SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
@@ -4935,11 +4936,6 @@ export struct BookshelfPage {
       .map((book: Book): string => `${book.bookUrl}:${this.getBookReadTime(book)}`).join('|');
   }
 
-  /** 书页厚度约为封面宽度的十分之一，宽屏放大封面时一起变厚。 */
-  shelfHardcoverThickness(coverWidth: number): number {
-    return Math.max(6, Math.round(coverWidth * 0.1));
-  }
-
   /** 书页条纹按像素宽度换算成渐变比例，三种纸色交替，重复铺满整个书页侧面。 */
   shelfHardcoverPageStripes(width: number): Array<[ResourceColor, number]> {
     const unit = 1 / Math.max(1, width);
@@ -4948,86 +4944,13 @@ export struct BookshelfPage {
       [colors[2], unit * 1.6], [colors[2], unit * 2.4]];
   }
 
-  /** 底板左缘缩进、书脊阴影宽度与压槽宽度都按封面宽度缩放，网格里的小书与继续阅读的大书比例一致。 */
-  shelfHardcoverBoardInset(coverWidth: number): number {
-    return Math.max(3, Math.round(coverWidth * 0.043));
-  }
-
+  /** 书脊阴影宽度与压槽宽度按封面宽度缩放，网格里的小书与继续阅读的大书比例一致。 */
   shelfHardcoverSpineWidth(coverWidth: number): number {
     return Math.max(6, Math.round(coverWidth * 0.11));
   }
 
   shelfHardcoverHingeWidth(coverWidth: number): number {
     return Math.max(2, Math.round(coverWidth * 0.03));
-  }
-
-  shelfHardcoverBoardWidth(coverWidth: number): number {
-    return coverWidth + this.shelfHardcoverThickness(coverWidth) + 3 - this.shelfHardcoverBoardInset(coverWidth);
-  }
-
-  /** 精装书封面以外的部分：两层底板投影、书页侧面与封面压在书页上的窄投影，封面面板叠在它上面。 */
-  @Builder
-  shelfHardcoverBack(coverWidth: number, coverHeight: number) {
-    Stack({ alignContent: Alignment.TopStart }) {
-      // 底板投影分两层：大而淡的落地投影、紧贴书底的接触投影。
-      Column()
-        .width(this.shelfHardcoverBoardWidth(coverWidth))
-        .height(coverHeight + 2)
-        .position({ x: this.shelfHardcoverBoardInset(coverWidth), y: 2 })
-        .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 5, bottomRight: 5 })
-        .backgroundColor(this.shelfHardcoverBoardColor())
-        .shadow({ radius: Math.round(coverWidth * 0.19), color: this.appDarkMode ? '#99000000' : '#5250341A',
-          offsetX: Math.round(coverWidth * 0.085), offsetY: Math.round(coverWidth * 0.115) })
-      Column()
-        .width(this.shelfHardcoverBoardWidth(coverWidth))
-        .height(coverHeight + 2)
-        .position({ x: this.shelfHardcoverBoardInset(coverWidth), y: 2 })
-        .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 5, bottomRight: 5 })
-        .backgroundColor(this.shelfHardcoverBoardColor())
-        .border({ width: { right: 1 }, color: '#1FFFFFFF' })
-        .shadow({ radius: 6, color: '#47000000', offsetX: 3, offsetY: 4 })
-
-      // 书页侧面：一层纸纹，再叠左右与上下两层明暗。左端藏在封面下面，只露出靠外的一截。
-      Column()
-        .width(18 + this.shelfHardcoverThickness(coverWidth))
-        .height(coverHeight - 4)
-        .position({ x: coverWidth - 18, y: 5 })
-        .borderRadius({ topRight: 2, bottomRight: 2 })
-        .linearGradient({
-          direction: GradientDirection.Right,
-          repeating: true,
-          colors: this.shelfHardcoverPageStripes(18 + this.shelfHardcoverThickness(coverWidth))
-        })
-      Column()
-        .width(18 + this.shelfHardcoverThickness(coverWidth))
-        .height(coverHeight - 4)
-        .position({ x: coverWidth - 18, y: 5 })
-        .borderRadius({ topRight: 2, bottomRight: 2 })
-        .linearGradient({
-          direction: GradientDirection.Right,
-          colors: [['#6B000000', 0], ['#14000000', 0.45], ['#4DFFFFFF', 0.82], ['#1F000000', 1]]
-        })
-      Column()
-        .width(18 + this.shelfHardcoverThickness(coverWidth))
-        .height(coverHeight - 4)
-        .position({ x: coverWidth - 18, y: 5 })
-        .borderRadius({ topRight: 2, bottomRight: 2 })
-        .linearGradient({
-          direction: GradientDirection.Bottom,
-          colors: [['#38FFFFFF', 0], ['#00FFFFFF', 0.3], ['#00000000', 0.75], ['#38000000', 1]]
-        })
-
-      // 封面压在书页上的一道窄投影。四边各缩进 1vp 藏在封面面板下面，圆角处的抗锯齿不会透出深色细边。
-      Column()
-        .width(coverWidth - 2)
-        .height(coverHeight - 2)
-        .position({ x: 1, y: 1 })
-        .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 4, bottomRight: 4 })
-        .backgroundColor(this.shelfHardcoverBoardColor())
-        .shadow({ radius: 3, color: '#59000000', offsetX: 2, offsetY: 0 })
-    }
-    .width(coverWidth + this.shelfHardcoverThickness(coverWidth) + 3)
-    .height(coverHeight + 4)
   }
 
   /** 封面面板上的打光：斜向明暗、高光带、书脊阴影、压槽与顶边亮线，盖在封面图或分组拼图上面。 */
@@ -5073,16 +4996,79 @@ export struct BookshelfPage {
     .hitTestBehavior(HitTestMode.None)
   }
 
+  /** angle 是侧转角度，depthRatio 是厚度占封面宽度的比例。继续阅读的大书 36°/0.24，网格与分组里的小书默认 24°/0.2。 */
+  shelfBookShape(coverWidth: number, coverHeight: number, angle: number, depthRatio: number): ShelfBookShape {
+    return ShelfBookPerspective.shape(coverWidth, coverHeight, angle, depthRatio, this.getUIContext().vp2px(1));
+  }
+
+  /** 书口上的书页：一层纸纹，再叠前后与上下两层明暗。靠封面的一头暗，往外渐亮。 */
+  @Builder
+  shelfHardcoverPagesFace(width: number) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient({
+          direction: GradientDirection.Right,
+          repeating: true,
+          colors: this.shelfHardcoverPageStripes(width)
+        })
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient({
+          direction: GradientDirection.Right,
+          colors: [['#6B000000', 0], ['#14000000', 0.45], ['#4DFFFFFF', 0.82], ['#1F000000', 1]]
+        })
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient({
+          direction: GradientDirection.Bottom,
+          colors: [['#38FFFFFF', 0], ['#00FFFFFF', 0.3], ['#00000000', 0.75], ['#38000000', 1]]
+        })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** 侧转立体书的书口：整面先铺硬壳色，书页缩进一圈盖在上面；贴着书底的接触投影挂在这一层。 */
+  @Builder
+  shelfHardcoverSide(coverWidth: number, coverHeight: number, angle: number, depthRatio: number) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Stack() {
+        this.shelfHardcoverPagesFace(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).depth -
+          this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).boardInset * 2)
+      }
+      .width(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).depth -
+        this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).boardInset * 2)
+      .height(coverHeight - this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).pageInset * 2)
+      .position({
+        x: this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).boardInset,
+        y: this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).pageInset
+      })
+    }
+    .width(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).depth)
+    .height(coverHeight)
+    .position({ x: this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).sideX, y: 0 })
+    .backgroundColor(this.shelfHardcoverBoardColor())
+    .shadow({ radius: 6, color: '#47000000', offsetX: 3, offsetY: 4 })
+    .scale({ x: 1, y: 1, centerX: 0, centerY: 0 })
+    .transform(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).sideMatrix)
+  }
+
   /**
-   * 立着的精装书：底板比封面略宽略长、右侧露出带明暗的书页、封面上叠书脊阴影、压槽、斜向打光与高光。
-   * 每层只能挂一个渐变，所以拆成多个叠放的块；封面仍走 coverView，开书动画按原作用域定位。
+   * 立着的精装书，绕竖轴侧转：封面近大远小，右侧书口是一个往里收的面，两头露出硬壳的厚度，中间是带明暗的书页。
+   * 封面和书口各是一个矩形，套上 ShelfBookPerspective 算好的矩阵变成投影后的四边形；矩阵以左上角为原点，
+   * 所以先用 scale 把变换中心挪到左上角。封面仍走 coverView，开书动画按原作用域定位。
    */
   @Builder
   shelfHardcoverBook(book: Book, idScope: string, coverWidth: number, coverHeight: number,
-    animateCovers: boolean = false, selected: boolean = false) {
+    animateCovers: boolean = false, selected: boolean = false, angle: number = 24, depthRatio: number = 0.2) {
     Stack({ alignContent: Alignment.TopStart }) {
-      this.shelfHardcoverBack(coverWidth, coverHeight)
+      this.shelfHardcoverSide(coverWidth, coverHeight, angle, depthRatio)
 
+      // 封面：大而淡的落地投影挂在这一层。
       Stack({ alignContent: Alignment.TopStart }) {
         // 圆角交给外面的封面面板裁，封面图自己不再裁 8vp，否则四角会露出下面的深色底板。
         this.coverView(book, '100%', '100%', ImageFit.Cover, animateCovers, true, idScope, 0,
@@ -5091,11 +5077,17 @@ export struct BookshelfPage {
       }
       .width(coverWidth)
       .height(coverHeight)
-      .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 4, bottomRight: 4 })
+      .position({ x: this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).coverX, y: 0 })
+      .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 3, bottomRight: 3 })
       .border({ width: selected ? 2 : 0, color: this.accentColor() })
+      .backgroundColor(this.shelfHardcoverBoardColor())
       .clip(true)
+      .shadow({ radius: Math.round(coverWidth * 0.19), color: this.appDarkMode ? '#99000000' : '#5250341A',
+        offsetX: Math.round(coverWidth * 0.085), offsetY: Math.round(coverWidth * 0.115) })
+      .scale({ x: 1, y: 1, centerX: 0, centerY: 0 })
+      .transform(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).coverMatrix)
     }
-    .width(coverWidth + this.shelfHardcoverThickness(coverWidth) + 3)
+    .width(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).stageWidth)
     .height(coverHeight + 4)
   }
 
@@ -5151,7 +5143,7 @@ export struct BookshelfPage {
   @Builder
   shelfFolderFanBook(book: Book, elementId: string, slot: number) {
     Stack({ alignContent: Alignment.TopStart }) {
-      this.shelfHardcoverBack(this.shelfFolderBookWidth(), this.shelfFolderBookHeight())
+      this.shelfHardcoverSide(this.shelfFolderBookWidth(), this.shelfFolderBookHeight(), 24, 0.2)
 
       Stack({ alignContent: Alignment.TopStart }) {
         this.coverView(book, '100%', '100%', ImageFit.Cover, true, false, '', 0,
@@ -5167,12 +5159,21 @@ export struct BookshelfPage {
       }
       .width(this.shelfFolderBookWidth())
       .height(this.shelfFolderBookHeight())
-      .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 4, bottomRight: 4 })
+      .position({ x: this.shelfBookShape(this.shelfFolderBookWidth(), this.shelfFolderBookHeight(), 24, 0.2).coverX, y: 0 })
+      .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 3, bottomRight: 3 })
+      .backgroundColor(this.shelfHardcoverBoardColor())
       .clip(true)
+      .shadow({ radius: Math.round(this.shelfFolderBookWidth() * 0.19), color: this.appDarkMode ? '#99000000' : '#5250341A',
+        offsetX: Math.round(this.shelfFolderBookWidth() * 0.085), offsetY: Math.round(this.shelfFolderBookWidth() * 0.115) })
+      .scale({ x: 1, y: 1, centerX: 0, centerY: 0 })
+      .transform(this.shelfBookShape(this.shelfFolderBookWidth(), this.shelfFolderBookHeight(), 24, 0.2).coverMatrix)
     }
+    .width(this.shelfBookShape(this.shelfFolderBookWidth(), this.shelfFolderBookHeight(), 24, 0.2).stageWidth)
+    .height(this.shelfFolderBookHeight() + 4)
     .position({
-      x: Math.round((this.shelfTileColumnWidth() - this.shelfFolderBookWidth() -
-        this.shelfHardcoverThickness(this.shelfFolderBookWidth()) - 3) / 2) + this.shelfFolderFanShift(slot),
+      x: Math.round((this.shelfTileColumnWidth() -
+        this.shelfBookShape(this.shelfFolderBookWidth(), this.shelfFolderBookHeight(), 24, 0.2).stageWidth) / 2) +
+        this.shelfFolderFanShift(slot),
       y: this.shelfTileHardcoverHeight() - this.shelfFolderBookHeight() - this.shelfFolderFanRise(slot)
     })
     // 以书底中点为轴张开，三本书的书底仍落在同一条线上。
@@ -5188,7 +5189,7 @@ export struct BookshelfPage {
       if (this.shouldUseThemeBookCover() || previewBooks.length === 0) {
         // 主题文件夹图没有单本封面可张开，做成一本以文件夹图为封面的精装书。
         Stack({ alignContent: Alignment.TopStart }) {
-          this.shelfHardcoverBack(this.shelfTileHardcoverWidth(), this.shelfTileHardcoverHeight())
+          this.shelfHardcoverSide(this.shelfTileHardcoverWidth(), this.shelfTileHardcoverHeight(), 24, 0.2)
           Stack({ alignContent: Alignment.TopStart }) {
             if (this.shouldUseThemeBookCover() && this.themeImageCrop(ThemeImageSlots.FOLDER, this.activeThemeShelfFolder())) {
               ThemeCroppedImage({ src: this.activeThemeShelfFolder(),
@@ -5210,9 +5211,22 @@ export struct BookshelfPage {
           }
           .width(this.shelfTileHardcoverWidth())
           .height(this.shelfTileHardcoverHeight())
-          .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 4, bottomRight: 4 })
+          .position({ x: this.shelfBookShape(this.shelfTileHardcoverWidth(), this.shelfTileHardcoverHeight(), 24, 0.2).coverX, y: 0 })
+          .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 3, bottomRight: 3 })
+          .backgroundColor(this.shelfHardcoverBoardColor())
           .clip(true)
+          .shadow({ radius: Math.round(this.shelfTileHardcoverWidth() * 0.19), color: this.appDarkMode ? '#99000000' : '#5250341A',
+            offsetX: Math.round(this.shelfTileHardcoverWidth() * 0.085), offsetY: Math.round(this.shelfTileHardcoverWidth() * 0.115) })
+          .scale({ x: 1, y: 1, centerX: 0, centerY: 0 })
+          .transform(this.shelfBookShape(this.shelfTileHardcoverWidth(), this.shelfTileHardcoverHeight(), 24, 0.2).coverMatrix)
         }
+        .width(this.shelfBookShape(this.shelfTileHardcoverWidth(), this.shelfTileHardcoverHeight(), 24, 0.2).stageWidth)
+        .height(this.shelfTileHardcoverHeight() + 4)
+        .position({
+          x: Math.round((this.shelfTileColumnWidth() -
+            this.shelfBookShape(this.shelfTileHardcoverWidth(), this.shelfTileHardcoverHeight(), 24, 0.2).stageWidth) / 2),
+          y: 0
+        })
       } else {
         ForEach(this.shelfFolderFanSlots(previewBooks), (slot: number) => {
           this.shelfFolderFanBook(previewBooks[slot], elementId, slot)
@@ -5243,18 +5257,32 @@ export struct BookshelfPage {
     return Math.abs(hash);
   }
 
-  /** 书架上的书不一样高：在单本最大尺寸的 88%–100% 之间取几档。 */
+  /** 书架上的书不一样高：在单本最大尺寸的 82%–100% 之间取几档。 */
   shelfTileBookScale(book: Book): number {
     if (!this.bookshelfCompanionStagger) return 1;
-    const scales = [1, 0.94, 0.9, 0.97, 0.88, 1, 0.92];
+    const scales = [1, 0.92, 0.86, 0.96, 0.82, 1, 0.89];
     return scales[this.shelfBookJitterSeed(book) % scales.length];
   }
 
-  /** 大多数书立正，少数几本以书底为轴微微斜靠。 */
+  /** 一半的书立正，另一半以书底为轴斜靠，最多 5°。 */
   shelfTileBookLean(book: Book): number {
     if (!this.bookshelfCompanionStagger) return 0;
-    const angles = [0, 0, -2, 0, 2.5, 0, -1.5, 0, 3, 0, 0];
+    const angles = [0, -3, 0, 4, 0, -2, 0, 5, -4, 0, 2.5];
     return angles[Math.floor(this.shelfBookJitterSeed(book) / 7) % angles.length];
+  }
+
+  /** 错落摆放时每本书侧转的角度不同：有的几乎正对着，有的转得能看见一大截书口。 */
+  shelfTileBookTurn(book: Book): number {
+    if (!this.bookshelfCompanionStagger) return 24;
+    const turns = [24, 14, 32, 20, 36, 10, 28];
+    return turns[Math.floor(this.shelfBookJitterSeed(book) / 77) % turns.length];
+  }
+
+  /** 错落摆放时书有厚有薄，厚度占封面宽度的 12%–30%。侧转角度与厚度取同一套档位，投影后都不超出一列的宽度。 */
+  shelfTileBookDepth(book: Book): number {
+    if (!this.bookshelfCompanionStagger) return 0.2;
+    const depths = [0.2, 0.14, 0.26, 0.3, 0.12, 0.22, 0.17];
+    return depths[Math.floor(this.shelfBookJitterSeed(book) / 539) % depths.length];
   }
 
   shelfTileBookCoverWidth(book: Book): number {
@@ -5273,7 +5301,7 @@ export struct BookshelfPage {
   shelfCompanionHeroCard(book: Book, pageKey: string) {
     Row({ space: AppSpacing.XXL }) {
       this.shelfHardcoverBook(book, this.shelfCoverScope(pageKey, true), this.shelfCompanionCoverWidth(),
-        this.shelfCompanionCoverHeight())
+        this.shelfCompanionCoverHeight(), false, false, 36, 0.24)
 
       Column() {
         Text(this.shelfTileBookDisplayName(book))
@@ -5512,11 +5540,12 @@ export struct BookshelfPage {
           // 书底对齐在同一条线上，高矮与斜靠各不相同，排出来错落一些。
           Stack() {
             this.shelfHardcoverBook(book, this.shelfCoverScope(pageKey, false), this.shelfTileBookCoverWidth(book),
-              this.shelfTileBookCoverHeight(book), true, this.isBookSelected(book.bookUrl))
+              this.shelfTileBookCoverHeight(book), true, this.isBookSelected(book.bookUrl),
+              this.shelfTileBookTurn(book), this.shelfTileBookDepth(book))
           }
           .position({
-            x: Math.round((this.shelfTileColumnWidth() - this.shelfTileBookCoverWidth(book) -
-              this.shelfHardcoverThickness(this.shelfTileBookCoverWidth(book)) - 3) / 2),
+            x: Math.round((this.shelfTileColumnWidth() - this.shelfBookShape(this.shelfTileBookCoverWidth(book),
+              this.shelfTileBookCoverHeight(book), this.shelfTileBookTurn(book), this.shelfTileBookDepth(book)).stageWidth) / 2),
             y: this.shelfTileHardcoverHeight() - this.shelfTileBookCoverHeight(book)
           })
           .rotate({ angle: this.shelfTileBookLean(book), centerX: '50%', centerY: '100%' })
