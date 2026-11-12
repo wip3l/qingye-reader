@@ -1,6 +1,6 @@
 import { audio } from '@kit.AudioKit';
 import deviceInfo from '@ohos.deviceInfo';
-import { TtsAudioSession } from './TtsAudioSession';
+import { TtsAudioSession, TtsAudioSessionHintListener } from './TtsAudioSession';
 import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
 import { sleepMs } from '@legado/sourceengine';
 
@@ -56,6 +56,11 @@ export class TtsPcmAudioPlayer {
   private systemDucked: boolean = false;
   private resumeWaiters: Array<() => void> = [];
   private playbackWaiters: Array<() => void> = [];
+  // 会话级焦点通知没有流对象：按当前渲染器、强制打断处理（系统已替应用暂停或停止了流）。
+  private readonly sessionHintListener: TtsAudioSessionHintListener = (hint: audio.InterruptHint): void => {
+    const renderer = this.renderer;
+    if (renderer) this.handleInterruptHint(renderer, hint, audio.InterruptForceType.INTERRUPT_FORCE, 'session');
+  };
 
   async play(data: ArrayBuffer, sampleRate: number): Promise<void> {
     await this.write(data, sampleRate);
@@ -374,6 +379,7 @@ export class TtsPcmAudioPlayer {
     this.systemDucked = false;
     this.resolveResumeWaiters();
     this.resolvePlaybackWaiters();
+    TtsAudioSession.removeHintListener(this.sessionHintListener);
     TtsAudioSession.release(this.audioSessionOwner);
     this.writeChain = Promise.resolve();
     this.rendererStartPromise = null;
@@ -707,6 +713,7 @@ export class TtsPcmAudioPlayer {
     this.rendererWriteCallback = writeCallback;
     this.rendererInterruptCallback = interruptCallback;
     this.renderer = renderer;
+    TtsAudioSession.addHintListener(this.sessionHintListener);
     PlaybackLoudnessGain.trackRenderer(renderer);
     console.info(`[TTS] audio renderer created: ${this.debugState()}`);
     return renderer;
@@ -748,17 +755,21 @@ export class TtsPcmAudioPlayer {
   }
 
   private handleAudioInterrupt(renderer: audio.AudioRenderer, event: audio.InterruptEvent): void {
+    this.handleInterruptHint(renderer, event.hintType, event.forceType, 'stream');
+  }
+
+  private handleInterruptHint(renderer: audio.AudioRenderer, hint: audio.InterruptHint,
+    forceType: audio.InterruptForceType, from: string): void {
     if (renderer !== this.renderer) {
       return;
     }
-    console.info(`[TTS] pcm audio interrupt: hint=${event.hintType},force=${event.forceType},` +
+    console.info(`[TTS] pcm audio interrupt: from=${from},hint=${hint},force=${forceType},` +
       `state=${this.audioStateName(renderer.state)},${this.debugState()}`);
-    const hint = event.hintType;
     if (hint === audio.InterruptHint.INTERRUPT_HINT_DUCK) {
       // Keep the application's stream gain invariant. FORCE ducking is
       // performed/restored by the system mixer; applying another 0.35 gain for
       // SHARE caused the rare but clearly audible down/up volume step.
-      this.systemDucked = event.forceType === audio.InterruptForceType.INTERRUPT_FORCE;
+      this.systemDucked = forceType === audio.InterruptForceType.INTERRUPT_FORCE;
       console.info(`[TTS] pcm duck handled by system mixer: forced=${this.systemDucked}`);
       return;
     }
@@ -770,17 +781,22 @@ export class TtsPcmAudioPlayer {
     if (hint === audio.InterruptHint.INTERRUPT_HINT_PAUSE ||
       hint === audio.InterruptHint.INTERRUPT_HINT_STOP) {
       this.interruptRevision++;
-      this.interruptResumeAllowed = hint === audio.InterruptHint.INTERRUPT_HINT_PAUSE && !this.paused;
+      // 永久停止也按可恢复处理，不记成用户暂停：API 26 起会话已让系统把停止改成暂停、之后会发恢复；
+      // 没改成的（低版本、系统不认）由 resumeWhenOtherAudioEnds 等别的声音结束后自己接着读。
+      // 以前这里记成用户暂停，上层和系统媒体控件却仍显示在播，只有手动暂停再播放才能出声。
+      this.interruptResumeAllowed = !this.paused;
       this.updatePlaybackTimeline(this.playGeneration);
       this.systemInterrupted = true;
-      if (hint === audio.InterruptHint.INTERRUPT_HINT_STOP) this.paused = true;
       this.updatePlaybackTimeline(this.playGeneration);
       // SHARE requires the application to pause. FORCE has already paused/stopped the renderer.
-      if (event.forceType === audio.InterruptForceType.INTERRUPT_SHARE &&
+      if (forceType === audio.InterruptForceType.INTERRUPT_SHARE &&
         renderer.state === audio.AudioState.STATE_RUNNING) {
         this.interruptPausePromise = renderer.pause().catch((error: Error) => {
           console.warn('[TTS] pcm interrupt pause failed:', error);
         });
+      }
+      if (hint === audio.InterruptHint.INTERRUPT_HINT_STOP && this.interruptResumeAllowed) {
+        this.resumeWhenOtherAudioEnds(renderer, this.interruptRevision);
       }
       return;
     }
@@ -791,6 +807,20 @@ export class TtsPcmAudioPlayer {
       this.interruptResumeRevision = revision;
       this.resumeRendererAfterInterrupt(renderer, revision);
     }
+  }
+
+  /** 系统对永久停止不发恢复通知：等通话结束、其他应用的媒体声音停下后，按收到恢复处理。 */
+  private resumeWhenOtherAudioEnds(renderer: audio.AudioRenderer, revision: number): void {
+    const cancelled = (): boolean => renderer !== this.renderer || revision !== this.interruptRevision ||
+      this.paused || !this.systemInterrupted || !this.interruptResumeAllowed;
+    TtsAudioSession.waitForOtherAudioToEnd(cancelled).then((ended: boolean) => {
+      if (!ended || cancelled() || this.interruptResumeRevision === revision) return;
+      console.info(`[TTS] pcm resume after other audio ended: ${this.debugState()}`);
+      this.interruptResumeRevision = revision;
+      this.resumeRendererAfterInterrupt(renderer, revision);
+    }).catch((error: Error) => {
+      console.warn('[TTS] wait for other audio failed:', error);
+    });
   }
 
   private async resumeRendererAfterInterrupt(renderer: audio.AudioRenderer, revision: number): Promise<void> {

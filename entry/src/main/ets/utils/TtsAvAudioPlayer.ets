@@ -1,7 +1,7 @@
 import { audio } from '@kit.AudioKit';
 import { media } from '@kit.MediaKit';
 import fs from '@ohos.file.fs';
-import { TtsAudioSession } from './TtsAudioSession';
+import { TtsAudioSession, TtsAudioSessionHintListener } from './TtsAudioSession';
 import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
 
 export class TtsAvAudioPlayer {
@@ -18,6 +18,14 @@ export class TtsAvAudioPlayer {
   private interruptRevision: number = 0;
   private interruptPausePromise: Promise<void> = Promise.resolve();
   private resumeWaiters: Array<() => void> = [];
+  // 会话级焦点通知没有流对象：交给当前这一句的播放器，按强制打断处理。
+  private readonly sessionHintListener: TtsAudioSessionHintListener = (hint: audio.InterruptHint): void => {
+    const player = this.player;
+    if (player && this.playerOwnerGeneration === this.playGeneration) {
+      this.handleInterruptHint(player, this.playGeneration, hint, audio.InterruptForceType.INTERRUPT_FORCE,
+        'session');
+    }
+  };
 
   /**
    * Play one synthesized chunk.
@@ -35,6 +43,7 @@ export class TtsAvAudioPlayer {
     this.interruptPaused = false;
     const sourceLength = this.getFileLength(filePath);
     const player = await this.acquirePlayer(generation);
+    TtsAudioSession.addHintListener(this.sessionHintListener);
     const sourceFile = fs.openSync(filePath, fs.OpenMode.READ_ONLY);
     this.sourceFile = sourceFile;
     const normalizedSpeed = Math.max(0.125, Math.min(4, speed || 1));
@@ -159,6 +168,7 @@ export class TtsAvAudioPlayer {
     this.paused = false;
     this.interruptPaused = false;
     this.resolveResumeWaiters();
+    TtsAudioSession.removeHintListener(this.sessionHintListener);
     TtsAudioSession.release(this.activeAudioSessionOwner);
     this.activeAudioSessionOwner = '';
     const player = this.player;
@@ -286,16 +296,20 @@ export class TtsAvAudioPlayer {
 
   private handleAudioInterrupt(player: media.AVPlayer, generation: number,
     event: audio.InterruptEvent): void {
+    this.handleInterruptHint(player, generation, event.hintType, event.forceType, 'stream');
+  }
+
+  private handleInterruptHint(player: media.AVPlayer, generation: number, hint: audio.InterruptHint,
+    forceType: audio.InterruptForceType, from: string): void {
     if (generation !== this.playGeneration || player !== this.player) return;
-    console.info(`[TTS] av audio interrupt: hint=${event.hintType},force=${event.forceType},` +
+    console.info(`[TTS] av audio interrupt: from=${from},hint=${hint},force=${forceType},` +
       `state=${player.state},generation=${generation}`);
-    const hint = event.hintType;
     if (hint === audio.InterruptHint.INTERRUPT_HINT_DUCK) {
       // Do not alter the application stream gain for advisory duck events.
       // Forced ducking is already applied by the system mixer and is restored
       // by it, so a second app-side gain change only creates an audible step.
       console.info(`[TTS] av duck handled by system mixer: ` +
-        `forced=${event.forceType === audio.InterruptForceType.INTERRUPT_FORCE}`);
+        `forced=${forceType === audio.InterruptForceType.INTERRUPT_FORCE}`);
       return;
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_UNDUCK) {
@@ -305,7 +319,7 @@ export class TtsAvAudioPlayer {
     if (hint === audio.InterruptHint.INTERRUPT_HINT_PAUSE) {
       this.interruptRevision++;
       this.interruptPaused = !this.paused;
-      if (event.forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
+      if (forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
         this.interruptPausePromise = player.pause().catch((error: Error) => {
           console.warn('[TTS] av interrupt pause failed:', error);
         });
@@ -314,12 +328,13 @@ export class TtsAvAudioPlayer {
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_STOP) {
       this.interruptRevision++;
-      this.interruptPaused = false;
-      // Permanent focus loss has no guaranteed RESUME. Keep advisory STOP resumable by the user.
-      this.paused = true;
-      if (event.forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
+      // 永久停止不记成用户暂停（那样上层和媒体控件仍显示在播），按可恢复的打断处理：
+      // 系统对它不发恢复通知，等通话、其他应用的媒体声音结束后自己接着播。
+      this.interruptPaused = !this.paused;
+      if (forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
         this.interruptPausePromise = player.pause().catch(() => {});
       }
+      if (this.interruptPaused) this.resumeWhenOtherAudioEnds(player, generation, this.interruptRevision);
       return;
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_RESUME) {
@@ -329,6 +344,22 @@ export class TtsAvAudioPlayer {
         console.warn('[TTS] av interrupt resume failed:', error);
       });
     }
+  }
+
+  private resumeWhenOtherAudioEnds(player: media.AVPlayer, generation: number, revision: number): void {
+    const cancelled = (): boolean => generation !== this.playGeneration || player !== this.player ||
+      revision !== this.interruptRevision || this.paused || !this.interruptPaused;
+    this.resumeAfterOtherAudio(player, generation, cancelled).catch((error: Error) => {
+      console.warn('[TTS] av resume after other audio failed:', error);
+    });
+  }
+
+  private async resumeAfterOtherAudio(player: media.AVPlayer, generation: number,
+    cancelled: () => boolean): Promise<void> {
+    const ended = await TtsAudioSession.waitForOtherAudioToEnd(cancelled);
+    if (!ended || cancelled()) return;
+    console.info(`[TTS] av resume after other audio ended: state=${player.state}`);
+    await this.resumeAfterInterrupt(player, generation, ++this.interruptRevision);
   }
 
   private async resumeAfterInterrupt(player: media.AVPlayer, generation: number,
