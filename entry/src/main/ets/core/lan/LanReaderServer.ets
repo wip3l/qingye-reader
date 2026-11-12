@@ -1,3 +1,4 @@
+import { WebParseSettingsStore } from '../../utils/WebParseSettingsStore';
 import fs from '@ohos.file.fs';
 import { BookCoverResolver } from '../../utils/BookCoverResolver';
 import socket from '@ohos.net.socket';
@@ -564,7 +565,8 @@ export class LanReaderServer {
   }
 
   private async booksResponse(): Promise<LanHttpResponse> {
-    const books = PrivateShelfStore.publicBooks(await appDb.getAllBooks());
+    const books = PrivateShelfStore.publicBooks(await appDb.getAllBooks())
+      .filter((book: Book): boolean => WebParseSettingsStore.visibleBook(book.origin));
     const groups = await appDb.getCustomBookGroups();
     const groupNames = new Map<number, string>();
     const groupOrders = new Map<number, number>();
@@ -668,7 +670,7 @@ export class LanReaderServer {
       const change = await SearchBookShelfHelper.addToShelf(this.context, book);
       const result = new LanAddResultDto(); result.ok = !!change.shelfKey; result.id = this.bookId(book.bookUrl);
       result.message = result.ok ? 'added' : (change.sameWorkBook ?
-        `书架已有《${change.sameWorkBook.name}》（来源：${change.sameWorkBook.originName || '其他书源'}），如需更换请在 App 内换源` :
+        `书架已有《${change.sameWorkBook.name}》（来源：${change.sameWorkBook.originName || '其他来源'}），如需更换请在 App 内换规则` :
         'unable to add');
       return this.jsonResponse(result);
     } catch (_) {

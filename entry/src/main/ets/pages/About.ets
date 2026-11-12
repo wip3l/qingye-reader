@@ -261,6 +261,7 @@ struct AboutPage {
           this.noticeText('项目说明', AboutContent.PROJECT_DESCRIPTION)
           this.noticeText('合规说明', AboutContent.COMPLIANCE_NOTICE)
           this.noticeText('使用提醒', AboutContent.USAGE_NOTICE)
+          this.noticeText('版权与投诉', AboutContent.COMPLAINT_NOTICE)
           Text('请仅使用自有、授权或明确允许访问的内容与规则。')
             .fontSize(AppFontSize.CAPTION)
             .fontColor(this.subTextColor())

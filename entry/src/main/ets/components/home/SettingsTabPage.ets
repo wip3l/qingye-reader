@@ -1,6 +1,5 @@
 import { router } from '@kit.ArkUI';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
-import { BookSource } from '@legado/sourceengine';
 import { SearchExploreSettings } from '../../utils/SearchExploreSettingsStore';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { CloudSyncSettingsStore } from '../../account/CloudSyncSettingsStore';
@@ -76,9 +75,6 @@ export struct SettingsPage {
           .backgroundColor(this.glassCardColor())
 
           Column() {
-            this.menuItem($r('sys.symbol.externaldrive'), '书源管理', true, () => {
-              router.pushUrl({ url: 'pages/BookSource' });
-            })
             this.menuItem($r('sys.symbol.download'), '书籍导入', false, () => {
               router.pushUrl({ url: 'pages/BookImport' });
             })
@@ -95,14 +91,18 @@ export struct SettingsPage {
             this.menuItem($r('sys.symbol.bookshelf'), '书架设置', true, () => {
               router.pushUrl({ url: 'pages/BookshelfSettings' });
             })
-            this.menuItem($r('sys.symbol.magnifyingglass'), '搜索/发现配置', true, () => {
-              router.pushUrl({ url: 'pages/SearchExploreSettings' });
-            })
             this.menuItem($r('sys.symbol.circle_lefthalf_inset_filled'), '主题', true, () => {
               router.pushUrl({ url: 'pages/ThemeSettings' });
             })
-            this.menuItem($r('sys.symbol.gearshape'), '其他设置', false, () => {
+            this.menuItem($r('sys.symbol.paintbrush'), '外观', true, () => {
+              router.pushUrl({ url: 'pages/AppearanceSettings' });
+            })
+            this.menuItem($r('sys.symbol.gearshape'), '其他设置', true, () => {
               router.pushUrl({ url: 'pages/OtherSettings' });
+            })
+            // 解析规则、搜索与发现等网页解析相关的入口都收在实验室里，不直接摆在这一页。
+            this.menuItem($r('sys.symbol.lightbulb'), '实验室', false, () => {
+              router.pushUrl({ url: 'pages/LabSettings' });
             })
           }
           .width('100%')

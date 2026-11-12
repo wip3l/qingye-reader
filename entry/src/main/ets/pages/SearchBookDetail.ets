@@ -296,7 +296,7 @@ struct SearchBookDetailPage {
                 BookTypeSupport.isVideo(this.detailTypeProbe()) ? '选集' : '目录', () => {
                   this.openChapterList();
                 })
-              this.detailActionItem($r('sys.symbol.arrow_left_arrow_right'), '换源', () => {
+              this.detailActionItem($r('sys.symbol.arrow_left_arrow_right'), '换规则', () => {
                 this.showChangeSourcePrompt();
               })
               this.detailActionItem($r('sys.symbol.person'), '同作者', () => {
@@ -409,7 +409,7 @@ struct SearchBookDetailPage {
       autoCancel: true,
       onDismiss: (): void => { this.showChangeSourcePanel = false; },
       maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
-      warnTag: '显示换源弹窗失败:'
+      warnTag: '显示换规则弹窗失败:'
     });
   }
 
@@ -589,7 +589,7 @@ struct SearchBookDetailPage {
           }
           .alignItems(VerticalAlign.Center)
           .margin({ top: AppSpacing.SM })
-          .accessibilityText(`书源${this.originName || this.origin}，换源`)
+          .accessibilityText(`规则${this.originName || this.origin}，换规则`)
           .onClick(() => {
             this.showChangeSourcePrompt();
           })
@@ -1042,11 +1042,11 @@ struct SearchBookDetailPage {
 
   showChangeSourcePrompt(): void {
     if (!this.bookUrl || !this.origin) {
-      HdsFeedback.showToast('书籍信息不完整，暂时无法换源');
+      HdsFeedback.showToast('书籍信息不完整，暂时无法换规则');
       return;
     }
     if (LocalBookService.isLocalBook(this.detailTargetBook())) {
-      HdsFeedback.showToast('本地书籍无需换源');
+      HdsFeedback.showToast('本地书籍无需换规则');
       return;
     }
     this.changeSourceDialogBuilder = (): void => {
@@ -1060,7 +1060,7 @@ struct SearchBookDetailPage {
     }).then((dialogId: number) => {
       this.changeSourceDialogId = dialogId;
     }).catch((error: Error) => {
-      console.warn('显示换源确认失败:', error);
+      console.warn('显示换规则确认失败:', error);
     });
   }
 
@@ -1483,13 +1483,13 @@ struct SearchBookDetailPage {
   @Builder
   changeSourceConfirmDialogContent() {
     Column({ space: AppSpacing.LG }) {
-      Text('换源')
+      Text('换规则')
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
         .width('100%')
 
-      Text(`是否为《${this.name || '这本书'}》搜索可切换的书源？`)
+      Text(`是否为《${this.name || '这本书'}》搜索可切换的规则？`)
         .fontSize(AppFontSize.BODY)
         .fontColor(this.secondaryTextColor())
         .width('100%')
@@ -1505,7 +1505,7 @@ struct SearchBookDetailPage {
             this.closeChangeSourceDialog();
           })
 
-        Button('换源')
+        Button('换规则')
           .layoutWeight(1)
           .height(42)
           .fontSize(AppFontSize.BODY_LARGE)

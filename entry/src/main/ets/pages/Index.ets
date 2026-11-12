@@ -49,6 +49,8 @@ struct Index {
   @StorageProp('homeTabBarFlatAutoHide') @Watch('onFlatAutoHideChanged') homeTabBarFlatAutoHide: boolean = false;
   /** 第四个页签：none / listen / footprint，放在发现和我的之间。 */
   @StorageProp('homeExtraTab') @Watch('onHomeExtraTabChanged') homeExtraTab: string = 'none';
+  /** 实验室 › 网页解析：关闭时没有发现页签和搜索层，后面的页签各往前挪一位。 */
+  @StorageProp('webParseEnabled') @Watch('onWebParseEnabledChanged') webParseEnabled: boolean = false;
   /** 方案 B：由原生页签容器统一执行连续横移，不再叠加页面入场动画。 */
   static readonly TAB_SWITCH_DURATION: number = 320;
   static readonly COMPAT_ACCESSORY_HEIGHT: number = 56;
@@ -70,6 +72,7 @@ struct Index {
   private stageRuntimeDisappearing: boolean = false;
   private stageRuntimeAttachRetryId: number = -1;
   private shortcutRoutingActive: boolean = false;
+  private webParseNoticePrompted: boolean = false;
   private cloudSyncDebounceTimer: number = -1;
   @State @Watch('onCurrentIndexChanged') currentIndex: number = 0;
   /** 发现页第一次打开后常驻，切走只停用不销毁，回来时直接显示已加载的分类和列表。 */
@@ -159,8 +162,8 @@ struct Index {
     this.openPendingShortcut();
     // 冷启动时小艺等入口先写好搜索词。Tabs 还没建，控制器切页签会被忽略，直接以发现页签为初始页并打开搜索层，
     // 搜索层首次挂载时自己取走搜索词。
-    if ((AppStorage.get<string>('globalSearchPendingKeyword') || '').trim()) {
-      this.currentIndex = 1;
+    if ((AppStorage.get<string>('globalSearchPendingKeyword') || '').trim() && this.webParseEnabled) {
+      this.currentIndex = this.exploreTabIndex();
       this.exploreTabMounted = true;
       this.openHomeSearchLayer();
     }
@@ -173,6 +176,7 @@ struct Index {
     this.openPendingShortcut();
     hilog.info(0x0000, 'testTag', 'StartupTrace Index onPageShow %{public}d', Date.now());
     this.syncHomeSystemBars();
+    this.promptWebParseNotice();
     this.syncHomeHoldingHandTracking();
     // ReadBook is pushed over the retained Index route. Its final progress notification can arrive while the
     // bookshelf component is covered, so the storage watcher may already have been consumed before the route is
@@ -182,6 +186,16 @@ struct Index {
       const previousShelfUpdate = AppStorage.get<number>('shelfUpdateTime') || 0;
       AppStorage.setOrCreate('shelfUpdateTime', Math.max(Date.now(), previousShelfUpdate + 1));
     }
+  }
+
+  /** 网页解析开着但当前版本的须知还没同意（升级用户或须知改版）：每次启动提醒一次，同意或关闭后不再出现。 */
+  promptWebParseNotice(): void {
+    if (this.webParseNoticePrompted || AppStorage.get<boolean>('webParseNoticePending') !== true) return;
+    this.webParseNoticePrompted = true;
+    setTimeout((): void => {
+      if (AppStorage.get<boolean>('webParseNoticePending') !== true || !this.shortcutRoutingActive) return;
+      router.pushUrl({ url: 'pages/WebParseNotice', params: { mode: 'accept' } }).catch(() => {});
+    }, 600);
   }
 
   onAppDarkModeChanged(): void {
@@ -262,8 +276,9 @@ struct Index {
     if (!sourceUrl) {
       return;
     }
+    if (!this.webParseEnabled) return;
     this.bookshelfMultiSelectActive = false;
-    this.selectHomeTab(1);
+    this.selectHomeTab(this.exploreTabIndex());
     this.openHomeSearchLayer();
     this.syncHomeSystemBars();
   }
@@ -273,8 +288,9 @@ struct Index {
     if (!keyword.trim()) {
       return;
     }
+    if (!this.webParseEnabled) return;
     this.bookshelfMultiSelectActive = false;
-    this.selectHomeTab(1);
+    this.selectHomeTab(this.exploreTabIndex());
     this.openHomeSearchLayer();
     this.syncHomeSystemBars();
   }
@@ -307,7 +323,7 @@ struct Index {
   }
 
   homeSearchLayerActive(): boolean {
-    return this.homeSearchActive && this.homeTabIsActive(1);
+    return this.homeSearchActive && this.homeTabIsActive(this.exploreTabIndex());
   }
 
   /** 书架多选和发现页的搜索层都是整页，底栏收起。 */
@@ -318,7 +334,7 @@ struct Index {
   onSearchHeaderCollapseChange(progress: number): void {
     if (!Number.isFinite(progress)) return;
     this.searchHeaderCollapseProgress = Math.max(0, Math.min(1, progress));
-    if (this.currentIndex === 1 && this.homeSearchActive) {
+    if (this.currentIndex === this.exploreTabIndex() && this.homeSearchActive) {
       this.syncBottomBarCollapse();
     }
   }
@@ -330,18 +346,19 @@ struct Index {
       return;
     }
     // 请求方按书架/发现/我的三个页签编号，“我的”在有第四个页签时顺延。
-    const index = requested === 2 ? this.mineTabIndex() : requested;
+    const index = requested === 2 ? this.mineTabIndex() : (requested === 1 ? this.exploreTabIndex() : requested);
+    if (index < 0) return;
     this.bookshelfMultiSelectActive = false;
     this.selectHomeTab(index);
     this.syncHomeSystemBars();
   }
 
   onCurrentIndexChanged(): void {
-    if (this.currentIndex === 1) {
+    if (this.currentIndex === this.exploreTabIndex()) {
       this.exploreTabMounted = true;
     }
     // 书架保留列表与滚动位置，底栏沿用该页的收起进度；重建的第四个页签和“我的”重置。
-    if (this.currentIndex >= 2) {
+    if (this.currentIndex > 0 && this.currentIndex !== this.exploreTabIndex()) {
       this.tabHeaderCollapseProgress[this.currentIndex] = 0;
     }
     this.syncBottomBarCollapse(true);
@@ -350,13 +367,13 @@ struct Index {
   onTabHeaderCollapseChange(index: number, progress: number): void {
     if (!Number.isFinite(progress)) return;
     this.tabHeaderCollapseProgress[index] = Math.max(0, Math.min(1, progress));
-    if (index === this.currentIndex && !(index === 1 && this.homeSearchActive)) {
+    if (index === this.currentIndex && !(index === this.exploreTabIndex() && this.homeSearchActive)) {
       this.syncBottomBarCollapse();
     }
   }
 
   syncBottomBarCollapse(resetImmersiveState: boolean = false): void {
-    this.bottomBarCollapseProgress = this.currentIndex === 1 && this.homeSearchActive ?
+    this.bottomBarCollapseProgress = this.currentIndex === this.exploreTabIndex() && this.homeSearchActive ?
       this.searchHeaderCollapseProgress : (this.tabHeaderCollapseProgress[this.currentIndex] || 0);
     if (this.useFloatingTabs()) {
       // 原生滚动动效统一控制位移、透明度和材质，不能再叠加逐帧下移/淡出。
@@ -443,9 +460,9 @@ struct Index {
   }
 
   onBookSourceExploreRefreshRequested(): void {
-    if (this.bookSourceExploreRefreshNonce <= 0) return;
+    if (this.bookSourceExploreRefreshNonce <= 0 || !this.webParseEnabled) return;
     this.bookshelfMultiSelectActive = false;
-    this.selectHomeTab(1);
+    this.selectHomeTab(this.exploreTabIndex());
     this.syncHomeSystemBars();
   }
 
@@ -518,12 +535,12 @@ struct Index {
       return true;
     }
     // 发现页的搜索层开着时，返回键先收起它回到发现内容。
-    if (this.currentIndex === 1 && this.homeSearchActive) {
+    if (this.currentIndex === this.exploreTabIndex() && this.homeSearchActive) {
       this.homeSearchActive = false;
       return true;
     }
     // 发现页“榜单总览”点进了某个榜单时，返回键先回到总览。
-    if (this.currentIndex === 1 && AppStorage.get<boolean>('exploreOverviewDrillActive') &&
+    if (this.currentIndex === this.exploreTabIndex() && AppStorage.get<boolean>('exploreOverviewDrillActive') &&
       AppStorage.get<string>('exploreResultLayout') === 'overview') {
       AppStorage.setOrCreate('exploreOverviewDrillActive', false);
       return true;
@@ -992,9 +1009,9 @@ struct Index {
   }
 
   homeTabIdAt(index: number): string {
-    if (index === 1) return 'explore';
+    if (index === this.exploreTabIndex()) return 'explore';
     if (index === this.mineTabIndex()) return 'mine';
-    if (index === 2) return this.extraTabId();
+    if (index === this.extraTabIndex()) return this.extraTabId();
     return 'bookshelf';
   }
 
@@ -1134,7 +1151,7 @@ struct Index {
       this.homeTransitionTo = to;
       this.homeTransitionStartedAt = Date.now();
     }
-    if (to === 1) this.exploreTabMounted = true;
+    if (to === this.exploreTabIndex()) this.exploreTabMounted = true;
     return true;
   }
 
@@ -1208,9 +1225,32 @@ struct Index {
       this.homeExtraTab;
   }
 
-  /** 有第四个页签时它占 2，“我的”顺延到 3。 */
+  /** 发现页签的位置；网页解析关闭时没有这个页签，返回 -1。 */
+  exploreTabIndex(): number {
+    return this.webParseEnabled ? 1 : -1;
+  }
+
+  /** 第四个页签（听/足迹）紧跟在发现后面；没有发现页签时紧跟书架。只在 extraTabId() 非空时有意义。 */
+  extraTabIndex(): number {
+    return this.webParseEnabled ? 2 : 1;
+  }
+
+  /** “我的”总在最后：前面是书架，以及可能有的发现和第四个页签。 */
   mineTabIndex(): number {
-    return this.extraTabId() ? 3 : 2;
+    return 1 + (this.webParseEnabled ? 1 : 0) + (this.extraTabId() ? 1 : 0);
+  }
+
+  /** 开关一般在“我的 › 实验室”里改，回到首页时仍停在“我的”；发现页和搜索层随页签一起撤掉。 */
+  onWebParseEnabledChanged(): void {
+    this.clearHomeTabSwitch();
+    if (!this.webParseEnabled) {
+      if (this.homeSearchActive) this.homeSearchActive = false;
+      this.exploreTabMounted = false;
+      this.searchLayerMounted = false;
+    }
+    if (this.currentIndex > 0) this.currentIndex = this.mineTabIndex();
+    this.tabHeaderCollapseProgress = [this.tabHeaderCollapseProgress[0], 0, 0, 0];
+    this.searchHeaderCollapseProgress = 0;
   }
 
   onHomeTabBarStyleChanged(): void {
@@ -1221,13 +1261,14 @@ struct Index {
     this.syncHomeHoldingHandTracking();
   }
 
-  /** 一般是在“我的 › 其他设置”里改的，回到首页时仍停在“我的”。 */
+  /** 一般是在“我的 › 外观”里改的，回到首页时仍停在“我的”。 */
   onHomeExtraTabChanged(): void {
     this.clearHomeTabSwitch();
-    if (this.currentIndex >= 2) {
+    if (this.currentIndex >= this.extraTabIndex()) {
       this.currentIndex = this.mineTabIndex();
     }
-    this.tabHeaderCollapseProgress = [this.tabHeaderCollapseProgress[0], this.tabHeaderCollapseProgress[1], 0, 0];
+    this.tabHeaderCollapseProgress = [this.tabHeaderCollapseProgress[0],
+      this.webParseEnabled ? this.tabHeaderCollapseProgress[1] : 0, 0, 0];
   }
 
   immersiveTabsBarBackgroundColor(): ResourceColor {
@@ -1243,8 +1284,8 @@ struct Index {
         ExplorePage({
           statusBarHeight: this.statusBarHeight,
           navBarHeight: this.navBarHeight,
-          isActive: this.homeTabIsActive(1) && !this.homeSearchActive,
-          onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(1, progress)
+          isActive: this.homeTabIsActive(this.exploreTabIndex()) && !this.homeSearchActive,
+          onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(this.exploreTabIndex(), progress)
         })
       } else {
         BlankTabPage()
@@ -1269,18 +1310,18 @@ struct Index {
   /** 第四个页签（听/足迹）：和“我的”一样只在显示时挂载。 */
   @Builder
   extraTabContent() {
-    if (this.homeTabIsMounted(2)) {
+    if (this.homeTabIsMounted(this.extraTabIndex())) {
       if (this.extraTabId() === HomeTabBarSettingsStore.EXTRA_LISTEN) {
         ListenTabPage({
           statusBarHeight: this.statusBarHeight,
           navBarHeight: this.navBarHeight,
-          onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(2, progress)
+          onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(this.extraTabIndex(), progress)
         })
       } else {
         FootprintTabPage({
           statusBarHeight: this.statusBarHeight,
           navBarHeight: this.navBarHeight,
-          onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(2, progress)
+          onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(this.extraTabIndex(), progress)
         })
       }
     } else {
@@ -1292,10 +1333,14 @@ struct Index {
     return this.extraTabId() === HomeTabBarSettingsStore.EXTRA_LISTEN ? '听' : '足迹';
   }
 
-  /** 底栏页签顺序：书架、发现、[听/足迹]、我的。 */
+  /** 底栏页签顺序：书架、[发现]、[听/足迹]、我的。 */
   homeTabIds(): string[] {
+    const ids: string[] = ['bookshelf'];
+    if (this.webParseEnabled) ids.push('explore');
     const extra = this.extraTabId();
-    return extra ? ['bookshelf', 'explore', extra, 'mine'] : ['bookshelf', 'explore', 'mine'];
+    if (extra) ids.push(extra);
+    ids.push('mine');
+    return ids;
   }
 
   homeTabTitle(tabId: string): string {
@@ -1346,12 +1391,12 @@ struct Index {
           this.homeTabBody(tabId)
         }
         .height('100%')
-        .align(index < 2 ? Alignment.Center : Alignment.TopStart)
+        .align(tabId === 'bookshelf' || tabId === 'explore' ? Alignment.Center : Alignment.TopStart)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
         .tabBar(this.bottomTabBar(tabId, this.homeTabTitle(tabId), index))
       }, (tabId: string) => tabId)
     }
-    .key(`home_immersive_tabs_${this.themeRevision}_${this.appDarkMode ? 'dark' : 'light'}_${this.extraTabId()}`)
+    .key(`home_immersive_tabs_${this.themeRevision}_${this.appDarkMode ? 'dark' : 'light'}_${this.extraTabId()}_${this.webParseEnabled ? 'web' : 'local'}`)
     .barBackgroundColor(this.immersiveTabsBarBackgroundColor())
     .barMode(BarMode.Fixed)
     .barHeight(this.homeTabBarHidden() ? 0 : 56)
@@ -1398,14 +1443,14 @@ struct Index {
           this.homeTabBody(tabId)
         }
         .height('100%')
-        .align(index < 2 ? Alignment.Center : Alignment.TopStart)
+        .align(tabId === 'bookshelf' || tabId === 'explore' ? Alignment.Center : Alignment.TopStart)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
         .tabBar(this.compatTabBar(tabId, this.homeTabTitle(tabId), index))
       }, (tabId: string) => tabId)
     }
     .barMode(BarMode.Fixed)
     // 第四个页签增减时整个重建，页签数和选中项才不会错位。
-    .key(`home_compat_tabs_${this.extraTabId()}`)
+    .key(`home_compat_tabs_${this.extraTabId()}_${this.webParseEnabled ? 'web' : 'local'}`)
     .barHeight(this.homeTabBarHidden() ? 0 : this.compatTabBarHeight())
     .barOverlap(this.compatTabBarOverlap())
     .barBackgroundColor(HomeTabBarSettingsStore.flatBarColor(ThemeRuntime.cardColor(this.appDarkMode),

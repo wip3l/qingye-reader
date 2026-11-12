@@ -1,3 +1,4 @@
+import { WebParseSettingsStore } from './WebParseSettingsStore';
 import { router } from '@kit.ArkUI';
 import { Book } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
@@ -18,7 +19,8 @@ export class AppIntentActions {
     if (!context) throw new Error('ability context not ready');
     const db = AppDatabase.getInstance();
     await db.initWithContext(context);
-    const books = (await db.getAllBooks()).filter((book: Book): boolean => !book.pendingAddToShelf && !book.isPrivate);
+    const books = (await db.getAllBooks()).filter((book: Book): boolean => !book.pendingAddToShelf && !book.isPrivate &&
+      WebParseSettingsStore.visibleBook(book.origin));
     const target = AppIntentActions.normalize(bookName);
     let candidates = books;
     if (target) {

@@ -1,3 +1,4 @@
+import { WebParseSettingsStore } from '../../utils/WebParseSettingsStore';
 import { router } from '@kit.ArkUI';
 import { Bookmark } from '@legado/sourceengine';
 import { appDb, ReadStatsRow } from '../../model/data/AppDatabase';
@@ -726,7 +727,7 @@ export struct FootprintTabPage {
 
   /**
    * 书架上的书直接回到阅读页；统计里还有、本机书架没有的（已移出书架、别的设备读的、没加书架就读的）
-   * 按书名发起全局搜索，结果里能看到各书源的版本再决定是否加回书架。
+   * 按书名发起全局搜索，结果里能看到各规则的版本再决定是否加回书架；网页解析关闭时只提示不在书架。
    */
   openRankItem(item: ReadStatsRank): void {
     if (item.onShelf && item.bookUrl) {
@@ -736,6 +737,10 @@ export struct FootprintTabPage {
     const name = (item.name || '').trim();
     if (!name || name === '书名未留存') {
       HdsFeedback.showToast('这本书不在本机书架，书名也没有留存');
+      return;
+    }
+    if (!WebParseSettingsStore.enabled()) {
+      HdsFeedback.showToast('这本书不在本机书架');
       return;
     }
     const nonce = AppStorage.get<number>('globalSearchPendingNonce') || 0;

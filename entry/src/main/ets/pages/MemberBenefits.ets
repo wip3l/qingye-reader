@@ -26,6 +26,8 @@ import { PageScaffold } from '../components/common/PageScaffold';
 struct MemberBenefitsPage {
   @StorageLink('accountMembershipSku') membershipSku: string = '';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
+  /** 配置同步的额度只对开启了网页解析的用户有意义。 */
+  @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('accountEntitlementsRevision') entitlementsRevision: number = 0;
   @State membership: MembershipSnapshot = new MembershipSnapshot();
@@ -397,12 +399,12 @@ struct MemberBenefitsPage {
   // ---- 其余权益 ----
 
   largeSourceSyncText(): string {
-    return this.isSuperMember() ? '单个书源最大 960KB · 已生效' : '终身超级会员专享 · 单个书源最大 960KB';
+    return this.isSuperMember() ? '单个配置最大 960KB · 已生效' : '终身超级会员专享 · 单个配置最大 960KB';
   }
 
   cloudSpaceText(): string {
     if (!this.isSuperMember()) return '终身超级会员专享';
-    if (!this.cloudSummary) return '书籍、字体与书源共用 1GB';
+    if (!this.cloudSummary) return '书籍、字体与同步配置共用 1GB';
     if (!this.cloudSummary.configured) return '云空间服务尚未启用';
     return `已用 ${this.formatBytes(this.cloudSummary.usedBytes)} / 1GB · 本月下载 ` +
       `${this.formatBytes(this.cloudSummary.downloadBytes)}`;
@@ -415,7 +417,9 @@ struct MemberBenefitsPage {
       this.benefitRow($r('sys.symbol.picture'), 'AI超分', '支持低清漫画与 PDF 扫描页；在阅读设置的漫画、PDF 分类中开启', true, undefined)
       this.benefitRow($r('sys.symbol.picture'), 'AI着色', '漫画阅读 → 画面设置 → AI着色', true, undefined)
       this.benefitRow($r('sys.symbol.textformat'), 'AI翻译', '漫画对白繁→简；日→中、韩→中即将推出', true, undefined)
-      this.benefitRow($r('sys.symbol.arrow_2_circlepath'), '超大书源同步', this.largeSourceSyncText(), true, undefined)
+      if (this.webParseEnabled) {
+        this.benefitRow($r('sys.symbol.arrow_2_circlepath'), '大体积配置同步', this.largeSourceSyncText(), true, undefined)
+      }
       this.benefitRow($r('sys.symbol.star'), '功能尝鲜', '新功能优先试用', true, undefined)
       this.benefitRow($r('sys.symbol.paintpalette'), '自定义主题方案',
         `最多 ${CustomThemeQuota.forSku(this.membershipSku)} 套 · 已生效`, true, () => {

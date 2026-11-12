@@ -76,7 +76,7 @@ struct NativeSourceSettingsPage {
       await db.initWithContext(getContext(this));
       const source = await db.getBookSource(this.bookSourceUrl);
       if (!source || !NativeSourceService.isNative(source)) {
-        HdsFeedback.showToast('未找到该原生书源');
+        HdsFeedback.showToast('未找到该原生规则');
         router.back();
         return;
       }
@@ -96,8 +96,8 @@ struct NativeSourceSettingsPage {
       this.loadVarOptions();
     } catch (e) {
       if (this.disposed) return;
-      console.error('加载书源设置失败:', e);
-      HdsFeedback.showToast('加载书源失败');
+      console.error('加载规则设置失败:', e);
+      HdsFeedback.showToast('加载规则失败');
     }
   }
 
@@ -109,7 +109,7 @@ struct NativeSourceSettingsPage {
       if (!this.disposed) this.actions = actions;
     } catch (e) {
       if (this.disposed) return;
-      console.warn('加载书源动作失败:', (e as Error).message);
+      console.warn('加载规则动作失败:', (e as Error).message);
       this.actions = [];
     }
   }
@@ -178,7 +178,7 @@ struct NativeSourceSettingsPage {
       this.loadActions();
     } catch (e) {
       if (this.disposed) return;
-      console.error('保存书源设置失败:', e);
+      console.error('保存规则设置失败:', e);
       HdsFeedback.showToast('保存失败');
     }
   }
@@ -191,11 +191,11 @@ struct NativeSourceSettingsPage {
     let ua = '';
     try { ua = await NativeSourceService.browserUserAgent(this.source, this.http); }
     catch (error) {
-      if (!this.disposed) HdsFeedback.showToast('无法解析书源请求头：' + (error as Error).message);
+      if (!this.disposed) HdsFeedback.showToast('无法解析规则请求头：' + (error as Error).message);
       return;
     }
     if (this.disposed) return;
-    const title = `${this.sourceName || '书源'} ${verification ? '网页验证' : '登录'}`;
+    const title = `${this.sourceName || '规则'} ${verification ? '网页验证' : '登录'}`;
     // 网页登录可能换了账号，登录站点的 Cookie 不参与缓存分区，所以在这里清掉旧的缓存值。
     NativeSourceService.clearCache(this.source.bookSourceUrl);
     VerificationSupport.requestVerification(target, title, this.source, ua);
@@ -303,7 +303,7 @@ struct NativeSourceSettingsPage {
       let ua = '';
       try { ua = await NativeSourceService.browserUserAgent(this.source, this.http); }
       catch (error) {
-        if (!this.disposed) HdsFeedback.showToast('无法解析书源请求头：' + (error as Error).message);
+        if (!this.disposed) HdsFeedback.showToast('无法解析规则请求头：' + (error as Error).message);
         return;
       }
       if (this.disposed) return;
@@ -364,7 +364,7 @@ struct NativeSourceSettingsPage {
           buttonSize: 40, containerWidth: 56, materialScale: 0.83, compactLayout: true,
           onBack: () => router.back() })
 
-        Text('书源设置')
+        Text('规则设置')
           .fontSize(AppFontSize.TITLE)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
@@ -542,7 +542,7 @@ struct NativeSourceSettingsPage {
           this.actionButton('网页验证', ThemeRuntime.primaryTextColor(this.appDarkMode), () => this.openLogin(true))
 
           if (this.items.length === 0 && !this.hasLogin && this.actions.length === 0) {
-            Text('该书源没有可设置的项目')
+            Text('该规则没有可设置的项目')
               .fontSize(AppFontSize.BODY)
               .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
               .width('100%')

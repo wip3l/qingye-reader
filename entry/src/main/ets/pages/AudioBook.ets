@@ -466,10 +466,10 @@ struct AudioBookPage {
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
-      Text('填写书源详情中列出的数字音色代码；留空使用书源默认音色')
+      Text('填写规则详情中列出的数字音色代码；留空使用规则默认音色')
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
-      TextInput({ text: this.voiceCodeInput, placeholder: '留空使用书源默认音色' })
+      TextInput({ text: this.voiceCodeInput, placeholder: '留空使用规则默认音色' })
         .type(InputType.Number)
         .height(44)
         .width('100%')
@@ -801,7 +801,7 @@ struct AudioBookPage {
       engine.clearCurrentBookMemoryCache();
     }
     this.showVoiceDialog = false;
-    this.statusText = value ? `正在切换音色 ${value}...` : '正在恢复书源默认音色...';
+    this.statusText = value ? `正在切换音色 ${value}...` : '正在恢复规则默认音色...';
     this.publishFloatingSession();
     await this.playCurrentChapter(0, true);
   }
@@ -1198,7 +1198,7 @@ struct AudioBookPage {
         this.publishVoiceChoices();
       }
     } catch (e) {
-      console.warn('刷新书源失败:', e);
+      console.warn('刷新规则失败:', e);
     }
   }
 

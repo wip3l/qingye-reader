@@ -264,7 +264,7 @@ export class ImmersiveMaterialRuntime {
   }
 
   /**
-   * “其他设置 › 沉浸光感跟随主题色”：开启后在原中性底色里混入少量强调色（浅色 10%、深色 5%），不透明度不变。
+   * “外观 › 沉浸光感跟随主题色”：开启后在原中性底色里混入少量强调色（浅色 10%、深色 5%），不透明度不变。
    * 常驻组件把 @StorageProp 的值传进 surfaceColor 的 themeTint，切换开关时才会重绘。
    */
   static themeTintEnabled(): boolean {

@@ -46,7 +46,7 @@
     },
     {
       "name": "book_source",
-      "value": "书源管理"
+      "value": "解析规则"
     },
     {
       "name": "replace_rule",

@@ -32,9 +32,9 @@ export class BookSourceSwitchTask {
     beforeSwitch: (() => Promise<void>) | null, progress: (label: string) => void,
     committed: (book: Book, previousUrl: string) => void,
     expectedRevision: number = BookSourceSwitchTask.revisionOf(target)): Promise<Book> {
-    if (BookSourceSwitchTask.active.has(key)) throw new Error('上一次换源仍在保存，请稍后重试');
+    if (BookSourceSwitchTask.active.has(key)) throw new Error('上一次换规则仍在保存，请稍后重试');
     if (expectedRevision !== BookSourceSwitchTask.revisionOf(target)) {
-      throw new Error('书籍已切换，请关闭后重新打开换源');
+      throw new Error('书籍已切换，请关闭后重新打开换规则');
     }
     const previousUrl = target.bookUrl;
     const previousVersion = target.origin + '\n' + previousUrl;
@@ -46,18 +46,18 @@ export class BookSourceSwitchTask {
       const db = AppDatabase.getInstance();
       await op.stage('读取书籍', 10000, async (): Promise<void> => { await db.initWithContext(context); });
       const oldBook = await op.stage('读取书籍', 10000, (): Promise<Book | null> => db.getBook(previousUrl));
-      const source = await op.stage('读取书源', 10000, () => db.getBookSource(candidate.origin));
-      if (!source || !source.enabled) throw new Error('书源不存在、已删除或已停用');
+      const source = await op.stage('读取规则', 10000, () => db.getBookSource(candidate.origin));
+      if (!source || !source.enabled) throw new Error('规则不存在、已删除或已停用');
       const nextBook = this.buildSourceBook(candidate, oldBook || target);
       progress('正在读取新源详情…');
       const fullBook = await op.stage('读取新源详情', 25000, () => this.service.getBookInfo(source, nextBook));
       this.preserveSourceBookState(fullBook, nextBook, oldBook || target);
       if (BookTypeSupport.mediaCategoryOf(fullBook) !== BookTypeSupport.mediaCategoryOf(target)) {
-        throw new Error('新源书籍类型与原书不同，已保留原书源');
+        throw new Error('新源书籍类型与原书不同，已保留原规则');
       }
       progress('正在加载新源完整目录…');
       const chapters = await op.stage('加载新源目录', 60000, () => this.service.getChapterList(source, fullBook, 0, false));
-      if (chapters.length === 0) throw new Error(SourceEngineHost.getError(source) || '新书源目录为空，已保留原书源');
+      if (chapters.length === 0) throw new Error(SourceEngineHost.getError(source) || '新规则目录为空，已保留原规则');
       fullBook.totalChapterNum = chapters.length;
       const safeIndex = Math.max(0, Math.min((oldBook || target).durChapterIndex, chapters.length - 1));
       fullBook.durChapterIndex = safeIndex;
@@ -67,7 +67,7 @@ export class BookSourceSwitchTask {
       // Bind aliases before the commit boundary, including rewritten detail URLs/metadata.
       ChangeSourceResultCache.rememberSwitch(context, key, oldBook || target);
       ChangeSourceResultCache.rememberSwitch(context, key, fullBook);
-      await op.stage('保存换源记录', 5000, () => ChangeSourceResultCache.flush(context));
+      await op.stage('保存换规则记录', 5000, () => ChangeSourceResultCache.flush(context));
       op.beginCommit();
       progress('正在保存切换结果…');
       if (oldBook) {
@@ -77,7 +77,7 @@ export class BookSourceSwitchTask {
       BookSourceSwitchTask.revisions.set(previousVersion, ++BookSourceSwitchTask.revisionSerial);
       // Delivery survives dialog disposal once the atomic commit has started.
       try { committed(fullBook, previousUrl); } catch (error) {
-        console.error('换源已提交，页面更新失败:', error);
+        console.error('换规则已提交，页面更新失败:', error);
       }
       return fullBook;
     } finally {

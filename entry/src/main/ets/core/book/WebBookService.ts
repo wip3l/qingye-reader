@@ -36,7 +36,7 @@ export class WebBookService {
   }
 
   private checkPreparation(): void {
-    if (this.preparationCancelled && this.preparationCancelled()) throw new Error('已取消换源');
+    if (this.preparationCancelled && this.preparationCancelled()) throw new Error('已取消换规则');
   }
 
   private isPreparationCancelled(): boolean {
@@ -445,12 +445,12 @@ export class WebBookService {
     for (let page = 0; page < 1000; page++) {
       this.checkPreparation();
       if (!currentResp.success || !currentResp.body) {
-        if (this.requireCompleteCatalog) throw new Error('目录分页加载失败，已保留原书源');
+        if (this.requireCompleteCatalog) throw new Error('目录分页加载失败，已保留原规则');
         break;
       }
       const pageKey = this.urlWithoutFragment(currentResp.url || currentUrl);
       if (seenPageUrls.has(pageKey)) {
-        if (this.requireCompleteCatalog) throw new Error('目录分页循环，已保留原书源');
+        if (this.requireCompleteCatalog) throw new Error('目录分页循环，已保留原规则');
         break;
       }
       seenPageUrls.add(pageKey);
@@ -458,7 +458,7 @@ export class WebBookService {
       const pageChapters = await parsePage(currentResp, currentUrl, page === 0);
       this.checkPreparation();
       if (pageChapters === null) {
-        if (this.requireCompleteCatalog) throw new Error('目录需要网页验证，已保留原书源');
+        if (this.requireCompleteCatalog) throw new Error('目录需要网页验证，已保留原规则');
         break;
       }
       if (page === 0 && !tocRule.nextTocUrl && hasStageRule && pageChapters.length > 0) {
@@ -483,7 +483,7 @@ export class WebBookService {
       this.checkPreparation();
       if (pendingUrls.length === 0) break;
       if (this.requireCompleteCatalog && (page === 999 || pendingUrls.length > 1000 - seenPageUrls.size)) {
-        throw new Error('目录分页超过限制，已保留原书源');
+        throw new Error('目录分页超过限制，已保留原规则');
       }
       if (pendingUrls.length === 1) {
         currentUrl = pendingUrls[0];
@@ -507,13 +507,13 @@ export class WebBookService {
           seenPageUrls.add(this.urlWithoutFragment(batchUrls[index]));
           this.checkPreparation();
           if (!listedResp || !listedResp.success || !listedResp.body) {
-            if (this.requireCompleteCatalog) throw new Error('目录分页加载失败，已保留原书源');
+            if (this.requireCompleteCatalog) throw new Error('目录分页加载失败，已保留原规则');
             continue;
           }
           const listedChapters = await parsePage(listedResp, batchUrls[index], false);
           this.checkPreparation();
           if (listedChapters === null) {
-            if (this.requireCompleteCatalog) throw new Error('目录需要网页验证，已保留原书源');
+            if (this.requireCompleteCatalog) throw new Error('目录需要网页验证，已保留原规则');
             stopped = true;
             break;
           }

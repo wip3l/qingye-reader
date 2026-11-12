@@ -63,7 +63,7 @@ export class ThemeAssetRegistry {
   static readonly TAB_BOOKSHELF: string = 'bookshelf';
   static readonly TAB_EXPLORE: string = 'explore';
   static readonly TAB_MINE: string = 'mine';
-  // 首页可选的第四个页签（其他设置 › 底栏）。
+  // 首页可选的第四个页签（外观 › 底栏）。
   static readonly TAB_LISTEN: string = 'listen';
   static readonly TAB_FOOTPRINT: string = 'footprint';
 

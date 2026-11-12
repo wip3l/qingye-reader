@@ -534,7 +534,7 @@ export struct ExplorePage {
   }
 
   exploreSourceLoginButtonLabel(): string {
-    return /登录设备数已达上限|设备管理/i.test(this.status || '') ? '管理登录设备' : '登录书源';
+    return /登录设备数已达上限|设备管理/i.test(this.status || '') ? '管理登录设备' : '登录规则';
   }
 
   openExploreSourceLogin(): void {
@@ -807,7 +807,7 @@ export struct ExplorePage {
       }
 
       if (this.getFilteredExploreSourceOptions().length === 0) {
-        Text(this.activeExploreSourceGroup === '__all__' ? '没有匹配的书源' : '当前分组没有匹配的书源')
+        Text(this.activeExploreSourceGroup === '__all__' ? '没有匹配的规则' : '当前分组没有匹配的规则')
           .fontSize(AppFontSize.BODY)
           .fontColor(this.secondaryTextColor())
           .width('100%')
@@ -938,7 +938,7 @@ export struct ExplorePage {
         glowColor: this.accentGlowColor()
       }) {
         Row({ space: AppSpacing.XS }) {
-          Text(this.selectedSourceName || '选择书源')
+          Text(this.selectedSourceName || '选择规则')
             .fontSize(AppFontSize.BODY)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.accentColor())
@@ -954,7 +954,7 @@ export struct ExplorePage {
         .padding({ left: 14, right: 10 })
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
-        .accessibilityText(`当前书源${this.selectedSourceName}，切换书源`)
+        .accessibilityText(`当前规则${this.selectedSourceName}，切换规则`)
         .onClick(() => {
           this.showExploreFilterPanel = false;
           this.showExplorePlatformMenu = false;
@@ -972,7 +972,7 @@ export struct ExplorePage {
   }
 
   exploreSourceLabelWidth(): number {
-    const name = this.selectedSourceName || '选择书源';
+    const name = this.selectedSourceName || '选择规则';
     // 左右留白 24、箭头 14、间隔 4，再留 2 防止取整后差一点被省略。
     const desired = Math.ceil(this.measureExploreSourceLabelText(name)) + 44;
     // 右侧还有搜索、更多（以及可选的筛选）按钮，各 40 加 10 间隔；标题约 56，页边距 32。
@@ -1553,7 +1553,7 @@ export struct ExplorePage {
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.subTextColor())
         Text(this.isCurrentExplorePage(key) && this.verificationUrl ?
-          '当前书源可能需要网页验证' : '请切换书源或网站，或检查已启用书源的发现地址')
+          '当前规则可能需要网页验证' : '请切换规则或网站，或检查已启用规则的发现地址')
           .fontSize(AppFontSize.BODY)
           .fontColor(this.subTextColor())
           .margin({ top: AppSpacing.MD })
@@ -1726,7 +1726,7 @@ export struct ExplorePage {
     try {
       sources = await AppDatabase.getInstance().getEnabledBookSourcesForExplore();
     } catch (error) {
-      console.warn('同步发现书源分组失败:', error);
+      console.warn('同步发现规则分组失败:', error);
       return;
     }
     const groups: Map<string, string> = new Map<string, string>();
@@ -1769,7 +1769,7 @@ export struct ExplorePage {
     try {
       this.exploreSourceScroller.scrollTo({ xOffset: 0, yOffset: targetOffset, animation: false });
     } catch (error) {
-      console.warn('定位当前发现书源失败:', error);
+      console.warn('定位当前发现规则失败:', error);
     }
   }
 
@@ -1915,7 +1915,7 @@ export struct ExplorePage {
 
   exploreSourceDisplayName(option: ExploreSourceOption): string {
     return this.exploreSourceDisplayNames.get(option.sourceUrl || option.sourceName) ||
-      option.sourceName || '未命名书源';
+      option.sourceName || '未命名规则';
   }
 
   buildExploreSourceGroups(): string[] {

@@ -1,3 +1,4 @@
+import { WebParseSettingsStore } from './WebParseSettingsStore';
 import { Book } from '@legado/sourceengine';
 
 export class SearchExplorePendingBook {
@@ -19,7 +20,8 @@ export class SearchExplorePendingBook {
   }
 
   static filterShelfBooks(books: Book[]): Book[] {
-    return books.filter((book: Book) => !SearchExplorePendingBook.isPendingAddToShelf(book));
+    return books.filter((book: Book) => !SearchExplorePendingBook.isPendingAddToShelf(book) &&
+      WebParseSettingsStore.visibleBook(book.origin));
   }
 
   private static removeLegacyVariable(book: Book): void {

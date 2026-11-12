@@ -19,17 +19,17 @@ export class ShelfWorkDuplicatePrompt {
     candidate: SearchBook): Promise<Book | null> {
     const dark = AppStorage.get<boolean>('appDarkMode') || false;
     const name = shelfBook.name || candidate.name;
-    const target = candidate.originName || '当前书源';
+    const target = candidate.originName || '当前规则';
     const message = shelfBook.origin === candidate.origin ?
       `《${name}》已在书架。要改用当前这个结果吗？阅读进度、分组和书签会保留。` :
-      `《${name}》已在书架（来源：${shelfBook.originName || '其他书源'}）。要换到「${target}」吗？阅读进度、分组和书签会保留。`;
+      `《${name}》已在书架（来源：${shelfBook.originName || '其他来源'}）。要换到「${target}」吗？阅读进度、分组和书签会保留。`;
     try {
       const choice = await uiContext.getPromptAction().showDialog({
         title: '书架已有这本书',
         message: message,
         buttons: [
           { text: '取消', color: ThemeRuntime.subTextColor(dark) },
-          { text: '换源', color: ThemeRuntime.primaryTextColor(dark) }
+          { text: '换规则', color: ThemeRuntime.primaryTextColor(dark) }
         ]
       });
       if (choice.index !== 1) return null;
@@ -37,7 +37,7 @@ export class ShelfWorkDuplicatePrompt {
       return null;
     }
 
-    HdsFeedback.showToast('正在换源…');
+    HdsFeedback.showToast('正在换规则…');
     try {
       const cache = await ChangeSourceResultCache.load(context, shelfBook);
       const task = new BookSourceSwitchTask(false);
@@ -48,8 +48,8 @@ export class ShelfWorkDuplicatePrompt {
       HdsFeedback.showToast('已切换至 ' + (switched.originName || target));
       return switched;
     } catch (error) {
-      console.error('同书换源失败:', error);
-      HdsFeedback.showToast((error as Error).message || '换源失败，已保留原书源');
+      console.error('同书换规则失败:', error);
+      HdsFeedback.showToast((error as Error).message || '换规则失败，已保留原规则');
       return null;
     }
   }

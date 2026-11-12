@@ -41,7 +41,7 @@ struct ScriptThreadProbePage {
   pageContent() {
     Column({ space: AppSpacing.LG }) {
       Column({ space: AppSpacing.MD }) {
-        Text('QuickJS 在后台线程运行，脚本里同步调用宿主（网络、选择器等由主线程代办）。逐项检查耗时、取消、超时、内存和并发；最后几项验证主线程上的书源 JS 函数库。')
+        Text('QuickJS 在后台线程运行，脚本里同步调用宿主（网络、选择器等由主线程代办）。逐项检查耗时、取消、超时、内存和并发；最后几项验证主线程上的规则 JS 函数库。')
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
         Text('真实请求地址').fontSize(AppFontSize.BODY).fontColor(this.primaryTextColor())

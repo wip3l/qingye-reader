@@ -2,7 +2,7 @@ import { CollapsingHeader } from '../../utils/CollapsingHeader';
 
 /**
  * 顶栏背后的实时毛玻璃。渐变只裁切材质，不影响上层标题、按钮和光感栏。
- * 其他设置“顶部磨砂”关闭时不模糊也不着色，顶栏完全透明；节点保留，照旧挡住顶栏区域下方列表的点击。
+ * 外观“顶部磨砂”关闭时不模糊也不着色，顶栏完全透明；节点保留，照旧挡住顶栏区域下方列表的点击。
  */
 @Component
 export struct HeaderBackdrop {

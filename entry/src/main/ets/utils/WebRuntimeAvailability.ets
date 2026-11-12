@@ -15,7 +15,7 @@ export class WebRuntimeAvailability {
     if (WebRuntimeAvailability.cachedResult === null) {
       WebRuntimeAvailability.cachedResult = WebRuntimeAvailability.probe();
       if (!WebRuntimeAvailability.cachedResult) {
-        console.warn('[WebRuntime] ArkWeb 不可用，隐藏的 Web 宿主不会挂载，依赖脚本运行层的书源将无法使用');
+        console.warn('[WebRuntime] ArkWeb 不可用，隐藏的 Web 宿主不会挂载，依赖脚本运行层的规则将无法使用');
       }
     }
     return WebRuntimeAvailability.cachedResult;

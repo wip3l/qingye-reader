@@ -134,7 +134,7 @@ export struct SourceGroupSortList {
                 .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(`${this.groupCount(group)} 个书源`)
+              Text(`${this.groupCount(group)} 个规则`)
                 .fontSize(AppFontSize.CAPTION)
                 .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
                 .margin({ top: AppSpacing.XXS })

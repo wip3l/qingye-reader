@@ -125,21 +125,21 @@ struct BookSourceEditPage {
         this.sourceLoadedVersion++;
       }
     } catch (e) {
-      console.error('加载书源失败:', e);
+      console.error('加载规则失败:', e);
     }
   }
 
   async saveSource() {
     if (this.source.isLocked) {
-      HdsFeedback.showToast('锁定的书源不能修改，请先在书源管理中解锁');
+      HdsFeedback.showToast('锁定的规则不能修改，请先在解析规则中解锁');
       return;
     }
     if (!this.source.bookSourceUrl) {
-      HdsFeedback.showToast('请输入书源地址');
+      HdsFeedback.showToast('请输入规则地址');
       return;
     }
     if (!this.source.bookSourceName) {
-      HdsFeedback.showToast('请输入书源名称');
+      HdsFeedback.showToast('请输入规则名称');
       return;
     }
 
@@ -151,7 +151,7 @@ struct BookSourceEditPage {
       if (originalUrl !== this.source.bookSourceUrl) {
         const conflicting = await db.getBookSource(this.source.bookSourceUrl);
         if (conflicting) {
-          HdsFeedback.showToast('新的书源地址已存在，请更换地址后再保存');
+          HdsFeedback.showToast('新的规则地址已存在，请更换地址后再保存');
           return;
         }
       }
@@ -168,18 +168,18 @@ struct BookSourceEditPage {
       HdsFeedback.showToast('保存成功');
       router.back();
     } catch (e) {
-      console.error('保存书源失败:', e);
+      console.error('保存规则失败:', e);
       HdsFeedback.showToast('保存失败');
     }
   }
 
   async saveSourceAndBackFromDialog(): Promise<void> {
     if (!this.source.bookSourceUrl) {
-      HdsFeedback.showToast('请输入书源地址');
+      HdsFeedback.showToast('请输入规则地址');
       return;
     }
     if (!this.source.bookSourceName) {
-      HdsFeedback.showToast('请输入书源名称');
+      HdsFeedback.showToast('请输入规则名称');
       return;
     }
     this.showUnsavedDialog = false;
@@ -194,7 +194,7 @@ struct BookSourceEditPage {
             buttonSize: 40, containerWidth: 56, materialScale: 0.83, compactLayout: true,
             onBack: () => this.requestBack() })
 
-          Text(this.bookSourceUrl ? '编辑书源' : '新建书源')
+          Text(this.bookSourceUrl ? '编辑规则' : '新建规则')
             .fontSize(AppFontSize.TITLE)
             .fontWeight(FontWeight.Bold)
             .fontColor(this.primaryTextColor())
@@ -307,7 +307,7 @@ struct BookSourceEditPage {
             LoadingProgress()
               .width(40)
               .height(40)
-            Text('加载书源中...')
+            Text('加载规则中...')
               .fontSize(AppFontSize.BODY)
               .fontColor(this.secondaryTextColor())
               .margin({ top: AppSpacing.MD })
@@ -359,7 +359,7 @@ struct BookSourceEditPage {
 
   openDebugDraft(): void {
     if (!this.source.bookSourceUrl) {
-      HdsFeedback.showToast('请先填写书源地址');
+      HdsFeedback.showToast('请先填写规则地址');
       return;
     }
     this.synchronizeRawSourceJson();
@@ -509,7 +509,7 @@ struct BookSourceEditPage {
     this.conflictingDraftRaw = '';
     this.showDraftConflictDialog = false;
     if (!raw || !this.restoreDraft(raw)) {
-      HdsFeedback.showToast('草稿已失效，已使用最新书源');
+      HdsFeedback.showToast('草稿已失效，已使用最新规则');
     }
   }
 
@@ -628,7 +628,7 @@ struct BookSourceEditPage {
   @Builder
   unsavedChangesDialogContent() {
     Column() {
-      Text('保存书源修改？')
+      Text('保存规则修改？')
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
@@ -636,7 +636,7 @@ struct BookSourceEditPage {
         .textAlign(TextAlign.Center)
         .margin({ bottom: AppSpacing.MD })
 
-      Text('当前书源有未保存的编辑，返回前请选择是否保存。')
+      Text('当前规则有未保存的编辑，返回前请选择是否保存。')
         .fontSize(AppFontSize.BODY)
         .fontColor(this.secondaryTextColor())
         .width('100%')
@@ -680,7 +680,7 @@ struct BookSourceEditPage {
   @Builder
   draftConflictDialogContent() {
     Column() {
-      Text('书源已经更新')
+      Text('规则已经更新')
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
@@ -688,7 +688,7 @@ struct BookSourceEditPage {
         .textAlign(TextAlign.Center)
         .margin({ bottom: AppSpacing.MD })
 
-      Text('检测到这个书源有一份基于旧版本的未保存草稿。使用新版可保留刚导入的内容；恢复草稿后再次保存会覆盖新版。')
+      Text('检测到这个规则有一份基于旧版本的未保存草稿。使用新版可保留刚导入的内容；恢复草稿后再次保存会覆盖新版。')
         .fontSize(AppFontSize.BODY)
         .fontColor(this.secondaryTextColor())
         .width('100%')
@@ -725,24 +725,24 @@ struct BookSourceEditPage {
         .height(0)
         .opacity(0)
 
-      this.inputItemBuilder('书源名称', this.source.bookSourceName, (value: string) => {
+      this.inputItemBuilder('规则名称', this.source.bookSourceName, (value: string) => {
         this.source.bookSourceName = value;
       })
 
-      this.inputItemBuilder('书源地址', this.source.bookSourceUrl, (value: string) => {
+      this.inputItemBuilder('规则地址', this.source.bookSourceUrl, (value: string) => {
         this.source.bookSourceUrl = value;
       })
 
-      this.inputItemBuilder('书源类型', String(this.source.bookSourceType), (value: string) => {
+      this.inputItemBuilder('规则类型', String(this.source.bookSourceType), (value: string) => {
         const parsed = Number(value);
         this.source.bookSourceType = Number.isFinite(parsed) ? parsed : 0;
       })
 
-      this.inputItemBuilder('书源分组', this.source.bookSourceGroup, (value: string) => {
+      this.inputItemBuilder('规则分组', this.source.bookSourceGroup, (value: string) => {
         this.source.bookSourceGroup = value;
       })
 
-      this.inputItemBuilder('书源备注', this.source.bookSourceComment, (value: string) => {
+      this.inputItemBuilder('规则备注', this.source.bookSourceComment, (value: string) => {
         this.source.bookSourceComment = value;
       })
 
@@ -782,7 +782,7 @@ struct BookSourceEditPage {
         this.source.header = value;
       })
 
-      this.inputItemBuilder('书源变量', this.source.variable, (value: string) => {
+      this.inputItemBuilder('规则变量', this.source.variable, (value: string) => {
         this.source.variable = value;
       })
 
@@ -804,7 +804,7 @@ struct BookSourceEditPage {
       .padding({ top: AppSpacing.LG, bottom: AppSpacing.LG })
 
       Row() {
-        Text('启用书源')
+        Text('启用规则')
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.primaryTextColor())
           .layoutWeight(1)
@@ -1170,7 +1170,7 @@ struct BookSourceEditPage {
       }
       uiContext.setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
     } catch (error) {
-      console.warn('设置书源编辑页键盘避让模式失败:', error);
+      console.warn('设置规则编辑页键盘避让模式失败:', error);
     }
   }
 

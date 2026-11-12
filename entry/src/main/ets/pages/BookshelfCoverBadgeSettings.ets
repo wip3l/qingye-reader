@@ -113,7 +113,7 @@ struct BookshelfCoverBadgeSettingsPage {
     if (item === 'pin') return '仅已置顶的书籍显示';
     if (item === 'offline') return '下载过音频，或手动缓存过正文、漫画的在线书显示';
     if (item === 'type') return '书／漫／声／视';
-    return '显示书源名称，本地书籍显示“本地”';
+    return '显示来源名称，本地书籍显示“本地”';
   }
 
   @Builder

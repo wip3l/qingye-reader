@@ -335,7 +335,7 @@ struct VideoPlayerPage {
       this.bookName = stored.name;
       this.source = stored.origin ? await db.getBookSource(stored.origin) : null;
       if (!this.source) {
-        this.statusText = '对应的书源已被删除';
+        this.statusText = '对应的规则已被删除';
         return;
       }
       // 选集沿用阅读引擎的目录加载与缓存；首次打开时由它去取并保存。

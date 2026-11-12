@@ -17,6 +17,7 @@ import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 @Entry
 @Component
 struct DataSyncPage {
+  @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('accountLoggedIn') accountLoggedIn: boolean = false;
@@ -144,20 +145,23 @@ struct DataSyncPage {
         this.fileSyncRow('自定义字体', '同步导入的自定义字体文件', false)
         SettingSwitchRow({
           title: '阅读数据',
-          description: '在线书架、分组、排序、进度、书签和阅读统计；本地书同步进度与统计',
+          description: this.webParseEnabled ? '在线书架、分组、排序、进度、书签和阅读统计；本地书同步进度与统计' :
+            '书架分组、排序、进度、书签和阅读统计',
           isOn: this.readingDataEnabled,
           onChange: (value: boolean) => {
             this.setScopeEnabled(true, value);
           }
         })
-        SettingSwitchRow({
-          title: '书源',
-          description: '配置、分组、排序、启用和锁定状态；不含登录凭证',
-          isOn: this.bookSourcesEnabled,
-          onChange: (value: boolean) => {
-            this.setBookSourcesEnabled(value);
-          }
-        })
+        if (this.webParseEnabled) {
+          SettingSwitchRow({
+            title: '解析规则',
+            description: '配置、分组、排序、启用和锁定状态；不含登录凭证。仅作为你的私有数据保存，不公开、不能分享',
+            isOn: this.bookSourcesEnabled,
+            onChange: (value: boolean) => {
+              this.setBookSourcesEnabled(value);
+            }
+          })
+        }
         SettingSwitchRow({
           title: '阅读偏好',
           description: '字体规则、替换规则、主题；排版仅保存在本机',

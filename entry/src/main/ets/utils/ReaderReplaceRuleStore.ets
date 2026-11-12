@@ -97,7 +97,7 @@ export class ReaderReplaceRuleStore {
       return '正文顶部不显示章节名，顶栏和目录照常显示';
     }
     return rule.builtin === ReaderReplaceRuleStore.BUILTIN_REMOVE_DUPLICATE_TITLE ?
-      '书源正文开头又写了一遍章节名时去掉，只保留排版的章节名' : '';
+      '规则正文开头又写了一遍章节名时去掉，只保留排版的章节名' : '';
   }
 
   static applyTitle(text: string, rules: ReaderReplaceRule[], book: Book | null): string {

@@ -2651,7 +2651,7 @@ struct ThemeSettingsPage {
     this.openCustomThemeActions(schemeId);
   }
 
-  /** 首页背景图：方案按它的“首页背景”来源取；用户在其他设置里关掉时样机也不画。 */
+  /** 首页背景图：方案按它的“首页背景”来源取；用户在外观里关掉时样机也不画。 */
   stageHomeBackdrop(theme: ThemePack, customSchemeId: string): ResourceStr | null {
     if (AppStorage.get<boolean>(ThemeRuntime.KEY_HOME_BACKDROP_ENABLED) === false) return null;
     const scheme = CustomThemeSchemeStore.find(this.customSchemes, customSchemeId);

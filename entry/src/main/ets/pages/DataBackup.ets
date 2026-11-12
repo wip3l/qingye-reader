@@ -38,6 +38,7 @@ struct DataBackupPage {
   @State importLocalBooks: boolean = false;
   @State importSettings: boolean = false;
   @State importSearchHistory: boolean = false;
+  @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
   @State importReady: boolean = false;
   @State importDescription: string = '请先选择备份文件';
   @State mode: string = 'export';
@@ -65,7 +66,12 @@ struct DataBackupPage {
     this.androidImport = this.mode === 'import' &&
       params?.['sourceFormat'] === AppDataBackupService.SOURCE_FORMAT_ANDROID;
     if (this.androidImport) {
-      this.importDescription = '请选择安卓版阅读导出的 ZIP 备份文件，可恢复书源、书架、阅读进度和阅读时长记录。';
+      this.importDescription = '请选择安卓版阅读导出的 ZIP 备份文件，可恢复规则、书架、阅读进度和阅读时长记录。';
+      if (!this.webParseEnabled) {
+        // 这份备份的主要内容是规则和在线书，入口只在网页解析开启后出现；被别处带到这里时直接退回。
+        HdsFeedback.showToast('未开启网页解析');
+        this.getUIContext().getRouter().back();
+      }
     }
     this.tempCleanupTask = AppDataBackupService.cleanupStaleTempFiles(getContext(this)).catch((error: Error) => {
       console.warn('清理遗留备份临时文件失败:', error);
@@ -223,10 +229,12 @@ struct DataBackupPage {
   @Builder
   selectionCard(exporting: boolean) {
     Column() {
-      this.selectionRow('书源', '规则、分组、排序和启用状态；不含登录凭据', exporting,
-        AppDataBackupService.CATEGORY_SOURCES)
-      this.selectionRow('书架', '网络书籍、书架分组、标签和单书配置', exporting,
-        AppDataBackupService.CATEGORY_BOOKSHELF)
+      if (this.webParseEnabled) {
+        this.selectionRow('解析规则', '规则、分组、排序和启用状态；不含登录凭据', exporting,
+          AppDataBackupService.CATEGORY_SOURCES)
+        this.selectionRow('在线书籍', '通过网页解析加入书架的书、标签和单书配置', exporting,
+          AppDataBackupService.CATEGORY_BOOKSHELF)
+      }
       this.selectionRow(this.androidImport ? '阅读进度与记录' : '阅读进度',
         this.androidImport ? '当前章节、章内位置、已读状态和阅读时长记录' :
         (exporting ? '当前章节、页码、阅读时间及单书状态' :
@@ -424,8 +432,9 @@ struct DataBackupPage {
 
   selection(exporting: boolean): AppDataBackupSelection {
     const value = new AppDataBackupSelection();
-    value.sources = exporting ? this.exportSources : this.importSources;
-    value.bookshelf = exporting ? this.exportBookshelf : this.importBookshelf;
+    // 网页解析关闭时规则和在线书既不导出也不导入，备份里带着的这两类直接跳过。
+    value.sources = this.webParseEnabled && (exporting ? this.exportSources : this.importSources);
+    value.bookshelf = this.webParseEnabled && (exporting ? this.exportBookshelf : this.importBookshelf);
     value.progress = exporting ? this.exportProgress : this.importProgress;
     value.bookmarks = exporting ? this.exportBookmarks : this.importBookmarks;
     value.localBooks = exporting ? this.exportLocalBooks : this.importLocalBooks;
@@ -589,7 +598,7 @@ struct DataBackupPage {
       this.importSettings = AppDataBackupService.hasCategory(manifest, AppDataBackupService.CATEGORY_SETTINGS);
       this.importSearchHistory = AppDataBackupService.hasCategory(manifest, AppDataBackupService.CATEGORY_SEARCH_HISTORY);
       if (this.importSession.sourceFormat === AppDataBackupService.SOURCE_FORMAT_ANDROID) {
-        this.importDescription = '已识别 Android 阅读 ZIP 备份；可转换导入书源、HTTP TTS、网络书架、' +
+        this.importDescription = '已识别 Android 阅读 ZIP 备份；可转换导入规则、HTTP TTS、在线书籍、' +
           '阅读进度、阅读时长记录、自定义分组、替换规则和搜索历史。阅读记录会去重合并；' +
           '仅有总时长的旧记录归入最后阅读日期。本地书及其他不兼容数据会跳过；' +
           '原备份未加密，可能包含敏感配置。';
@@ -637,7 +646,7 @@ struct DataBackupPage {
     if (this.busy || !this.importSession || !this.hasImportSelection()) return;
     const confirmation = await promptAction.showDialog({
       title: '确认导入数据',
-      message: '所选数据会合并到当前应用；相同书籍、书源和设置将以备份内容更新。是否继续？',
+      message: '所选数据会合并到当前应用；相同书籍、规则和设置将以备份内容更新。是否继续？',
       buttons: [
         { text: '取消', color: this.subTextColor() },
         { text: '继续导入', color: this.accentColor() }

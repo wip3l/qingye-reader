@@ -149,8 +149,8 @@ export class ExploreCoordinator {
       }
       if (!source.variable && this.requiresSourceVariable(source)) {
         const hint = (source.variableComment || '').trim();
-        this.noticeMessage = hint ? `请先在书源编辑中填写书源变量：${hint}` :
-          '请先在书源编辑中填写书源变量（共享 Token）';
+        this.noticeMessage = hint ? `请先在规则编辑中填写规则变量：${hint}` :
+          '请先在规则编辑中填写规则变量（共享 Token）';
         continue;
       }
       const exploreRule = this.effectiveExploreRule(source);

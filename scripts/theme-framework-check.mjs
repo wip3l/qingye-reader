@@ -362,10 +362,12 @@ assert(fs.existsSync(path.join(mediaRoot, 'ic_theme_celestial_vault_listen_selec
   'Celestial vault needs selected icons for the extra tabs');
 assert(!indexPage.includes("$r('app.media.ic_tab_listen')"),
   'The extra tab icon must come from the active icon pack, not a fixed resource');
-// 搜索是发现页上的一层，底栏只在发现和我的之间插入可选页签。
+// 搜索是发现页上的一层；发现页签只在网页解析开启时出现，可选页签插在“我的”前面。
 const homeTabIds = indexPage.match(/^  homeTabIds\(\): string\[\] \{([\s\S]*?)^  \}/m)?.[1];
 assert(homeTabIds?.includes('const extra = this.extraTabId()') &&
-  homeTabIds.includes("return extra ? ['bookshelf', 'explore', extra, 'mine'] : ['bookshelf', 'explore', 'mine']") &&
+  homeTabIds.includes("const ids: string[] = ['bookshelf']") &&
+  homeTabIds.includes("if (this.webParseEnabled) ids.push('explore')") &&
+  homeTabIds.includes('if (extra) ids.push(extra)') && homeTabIds.includes("ids.push('mine')") &&
   indexPage.includes('exploreTabContent()') && indexPage.includes('homeSearchLayerActive()'),
   'Search must live inside the discovery tab');
 assert(indexPage.includes('this.shelfMoreButton(') &&
@@ -573,7 +575,7 @@ assert(bookSourcePage.includes('checkOptionsDialog()') &&
   'Book source validation must support immediate disable/delete actions per completed source');
 // 搜索框与搜索范围面板共用 SourcePickerKit 的 SourcePickerSearchField。
 assert(indexPage.includes('SourcePickerSearchField({') &&
-  sourcePickerKit.includes("SEARCH_PLACEHOLDER: string = '搜索书源名称、地址或分组'") &&
+  sourcePickerKit.includes("SEARCH_PLACEHOLDER: string = '搜索规则名称、地址或分组'") &&
   /struct SourcePickerSearchField[\s\S]*?TextInput\(/.test(sourcePickerKit) &&
   indexPage.includes('this.exploreSourcePickerContent()') &&
   !indexPage.includes('builder: this.exploreSourcePopup') &&

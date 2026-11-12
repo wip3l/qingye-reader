@@ -28,7 +28,7 @@ try {
     NativeSourceSpec: mods.NativeSourceSpec,
     NativeImageScriptRunner: scriptRuntime.runner,
     digestHashHex: (algorithm, text) => crypto.createHash(algorithm).update(text).digest('hex'),
-    HttpClient: { CANCELLED_ERROR: '书源请求已取消' },
+    HttpClient: { CANCELLED_ERROR: '规则请求已取消' },
     AppStorage: { get: () => '/cache' },
     ReaderCacheBudget: { touchComicFile() { budget.touched++; }, noteComicWrite(path) {
       assert.ok(files.has(path), 'register only the completed image path'); budget.writes++;
@@ -193,7 +193,7 @@ ${failed}
   await pipeline.materialize(http,scripted,raw('plain-process',{...decodeScript,processPlainImages:true}),true);
   assert.equal(scriptRuntime.stats.created,beforeScripts+1);
   await assert.rejects(pipeline.materialize(http,scripted,scriptUrl,true),/已变更/);
-  await assert.rejects(pipeline.materialize(http,source,scriptUrl,true),/当前书源定义/);
+  await assert.rejects(pipeline.materialize(http,source,scriptUrl,true),/当前规则定义/);
   await assert.rejects(pipeline.materialize(http,scripted,raw('bad-script',{script:5}),true),/函数名/);
   await assert.rejects(pipeline.materialize(http,scripted,raw('bad-params',{script:'decodeImage',params:[]}),true),/params/);
   await assert.rejects(pipeline.materialize(http,scripted,raw('mixed',{...decodeScript,algorithm:'AES/CBC/PKCS7Padding'}),true),/混用/);

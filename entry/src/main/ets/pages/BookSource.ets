@@ -253,7 +253,7 @@ struct BookSourcePage {
   @State importUrl: string = '';
   @State @Watch('syncIsImporting') isImporting: boolean = false;
   @State @Watch('syncIsBatchOperating') isBatchOperating: boolean = false;
-  @State batchOperationText: string = '正在操作书源...';
+  @State batchOperationText: string = '正在操作规则...';
   @State @Watch('syncCheckDialog') showCheckDialog: boolean = false;
   @State @Watch('syncCheckOptionsDialog') showCheckOptionsDialog: boolean = false;
   @State isCheckingSources: boolean = false;
@@ -344,7 +344,7 @@ struct BookSourcePage {
     this.loadSources().then(() => {
       return this.openPendingReaderSourceLogin();
     }).catch((error: Error) => {
-      console.warn('从阅读页打开书源登录失败:', error);
+      console.warn('从阅读页打开规则登录失败:', error);
     });
     this.handlePendingBookSourceImport();
     this.ensureBookSourceCheckCancelSubscriber();
@@ -432,7 +432,7 @@ struct BookSourcePage {
       this.ensureActiveSourceGroup();
       this.applySourceFilters();
     } catch (e) {
-      console.error('加载书源失败:', e);
+      console.error('加载规则失败:', e);
     } finally {
       this.isLoading = false;
     }
@@ -445,7 +445,7 @@ struct BookSourcePage {
     this.pendingOpenLoginSourceUrl = '';
     const source = await AppDatabase.getInstance().getBookSource(sourceUrl);
     if (!source || !this.sourceNeedsLogin(source)) {
-      HdsFeedback.showToast('未找到可用的书源登录配置');
+      HdsFeedback.showToast('未找到可用的规则登录配置');
       return;
     }
     this.actionSourceUrl = source.bookSourceUrl;
@@ -466,7 +466,7 @@ struct BookSourcePage {
                   .fontColor([this.secondaryTextColor()])
                   .margin({ left: AppSpacing.LG })
                   .hitTestBehavior(HitTestMode.None)
-                TextInput({ placeholder: '书源名称、地址或分组', text: this.searchText })
+                TextInput({ placeholder: '规则名称、地址或分组', text: this.searchText })
                   .key(SOURCE_SEARCH_INPUT_KEY)
                   .layoutWeight(1)
                   .height(40)
@@ -489,7 +489,7 @@ struct BookSourcePage {
                 .fontSize(AppFontSize.BODY_LARGE)
                 .fontColor(this.primaryTextColor())
                 .height(40)
-                .accessibilityText('取消搜索书源')
+                .accessibilityText('取消搜索规则')
                 .onClick(() => this.closeSourceSearch())
             }
             .width('100%')
@@ -875,7 +875,7 @@ struct BookSourcePage {
         buttonSize: 40, containerWidth: 56, materialScale: 0.83, compactLayout: true,
         onBack: () => router.back() })
 
-      Text('书源管理')
+      Text('解析规则')
         .fontSize(AppFontSize.TITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
@@ -893,7 +893,7 @@ struct BookSourcePage {
       } else {
         this.sourceHeaderCircleButton({ icon: $r('sys.symbol.magnifyingglass'),
           active: this.sourceSearchOpen || this.searchText.trim().length > 0,
-          label: '搜索书源', badge: '', busy: false, onTap: () => {
+          label: '搜索规则', badge: '', busy: false, onTap: () => {
             this.toggleSourceSearch();
           } })
         this.sourceFilterButton()
@@ -928,7 +928,7 @@ struct BookSourcePage {
     .width(52)
     .height(52)
     .margin({ right: AppSpacing.XXL, bottom: this.navBarHeight + 22 })
-    .accessibilityText('新增书源')
+    .accessibilityText('新增规则')
     .accessibilityRole(AccessibilityRoleType.BUTTON)
     .translate({ y: (52 + this.navBarHeight + 38) * this.sourceChromeCollapseProgress() })
     .opacity(1 - this.sourceChromeCollapseProgress())
@@ -947,14 +947,14 @@ struct BookSourcePage {
   addSourceDropdown() {
     Scroll() {
       Column() {
-        this.popupActionItem($r('sys.symbol.plus'), '新建原生书源', this.primaryTextColor(), () => {
+        this.popupActionItem($r('sys.symbol.plus'), '新建原生规则', this.primaryTextColor(), () => {
           this.showAddDialog = false;
           router.pushUrl({
             url: 'pages/NativeSourceEdit',
             params: { bookSourceUrl: '' }
           });
         }, '推荐')
-        this.popupActionItem($r('sys.symbol.plus'), '新建兼容书源', this.primaryTextColor(), () => {
+        this.popupActionItem($r('sys.symbol.plus'), '新建兼容规则', this.primaryTextColor(), () => {
           this.showAddDialog = false;
           router.pushUrl({
             url: 'pages/BookSourceEdit',
@@ -969,6 +969,11 @@ struct BookSourcePage {
           this.showAddDialog = false;
           this.importFromFile();
         })
+        Text('规则由你自行提供，请确认你有权访问对应的网页')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .width('100%')
+          .padding({ left: 12, right: 12, top: AppSpacing.SM, bottom: AppSpacing.SM })
 
       }
       .width('100%')
@@ -983,7 +988,7 @@ struct BookSourcePage {
   batchMorePopupMenu() {
     Scroll() {
       Column() {
-        PopupMenuHeader(`已选择 ${this.selectedSourceUrls.length} 个书源`, this.subTextColor())
+        PopupMenuHeader(`已选择 ${this.selectedSourceUrls.length} 个规则`, this.subTextColor())
         this.popupActionItem($r('sys.symbol.checkmark_shield'), '校验所选', this.primaryTextColor(), () => {
           this.showMoreActionDialog = false;
           this.checkSelectedSources();
@@ -1038,7 +1043,7 @@ struct BookSourcePage {
         .textAlign(TextAlign.Center)
         .margin({ bottom: AppSpacing.XL })
 
-      TextInput({ placeholder: '请输入书源URL', text: this.importUrl })
+      TextInput({ placeholder: '请输入规则URL', text: this.importUrl })
         .width('100%')
         .height(48)
         .borderRadius(ThemeRuntime.mediumRadius())
@@ -1046,10 +1051,16 @@ struct BookSourcePage {
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.placeholderTextColor())
         .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-        .margin({ bottom: AppSpacing.XL })
+        .margin({ bottom: AppSpacing.MD })
         .onChange((value: string) => {
           this.importUrl = value;
         })
+
+      Text('地址由你自行提供，请确认你有权使用其中的规则并访问对应的网页')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
+        .margin({ bottom: AppSpacing.XL })
 
       Row() {
         Button('取消')
@@ -1090,7 +1101,7 @@ struct BookSourcePage {
         .textAlign(TextAlign.Center)
         .margin({ bottom: AppSpacing.LG })
 
-      Text(`确定删除已选择的 ${this.selectedSourceUrls.length} 个书源吗？删除后不可恢复。`)
+      Text(`确定删除已选择的 ${this.selectedSourceUrls.length} 个规则吗？删除后不可恢复。`)
         .fontSize(AppFontSize.BODY_LARGE)
         .fontColor(this.secondaryTextColor())
         .width('100%')
@@ -1127,7 +1138,7 @@ struct BookSourcePage {
   @Builder
   sourceGroupDialogContent() {
     Column() {
-      Text('设置书源分组')
+      Text('设置规则分组')
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
@@ -1135,8 +1146,8 @@ struct BookSourcePage {
         .textAlign(TextAlign.Center)
         .margin({ bottom: AppSpacing.LG })
 
-      Text(this.groupActionSourceUrl ? `书源：${this.actionGroupingSourceName()}` :
-        `已选择 ${this.selectedSourceUrls.length} 个书源`)
+      Text(this.groupActionSourceUrl ? `规则：${this.actionGroupingSourceName()}` :
+        `已选择 ${this.selectedSourceUrls.length} 个规则`)
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .width('100%')
@@ -1210,7 +1221,7 @@ struct BookSourcePage {
   @Builder
   checkProgressDialogContent() {
     Column() {
-      Text(this.isCheckingSources ? '正在校验书源' : '校验完成')
+      Text(this.isCheckingSources ? '正在校验规则' : '校验完成')
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
@@ -1370,7 +1381,7 @@ struct BookSourcePage {
         .height(46)
         .color(this.accentColor())
 
-      Text('正在导入书源...')
+      Text('正在导入规则...')
         .fontSize(AppFontSize.BODY_LARGE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
@@ -1527,8 +1538,8 @@ struct BookSourcePage {
 
       if (this.checkValidationMode === 'search') {
         this.checkActionOption('仅校验', '记录各类校验状态，校验完成后再手动处理', 'none')
-        this.checkActionOption('自动禁用', '仅禁用明确失败的书源，可稍后重新启用', 'disable')
-        this.checkActionOption('自动删除', '仅删除明确失败的书源，此操作不可恢复', 'delete', true)
+        this.checkActionOption('自动禁用', '仅禁用明确失败的规则，可稍后重新启用', 'disable')
+        this.checkActionOption('自动删除', '仅删除明确失败的规则，此操作不可恢复', 'delete', true)
       }
 
       Row({ space: AppSpacing.MD }) {
@@ -1617,11 +1628,11 @@ struct BookSourcePage {
         this.contextActionItem($r('sys.symbol.magnifyingglass'), '搜索', this.primaryTextColor(),
           () => this.openActionSourceSearch())
         if (this.actionSourceIsNative()) {
-          this.contextActionItem($r('sys.symbol.gearshape'), '书源设置', this.primaryTextColor(),
+          this.contextActionItem($r('sys.symbol.gearshape'), '规则设置', this.primaryTextColor(),
             () => this.openActionSourceSettings())
         }
         if (this.actionSourceNeedsLogin() && !this.actionSourceIsNative()) {
-          this.contextActionItem($r('sys.symbol.gearshape'), '书源设置', this.primaryTextColor(),
+          this.contextActionItem($r('sys.symbol.gearshape'), '规则设置', this.primaryTextColor(),
             () => this.openActionSourceLogin())
         }
         this.contextActionItem($r('sys.symbol.checkmark_shield'), '校验', this.primaryTextColor(),
@@ -2024,8 +2035,8 @@ struct BookSourcePage {
   private sourceSwipeActions(source: BookSource): HdsSwipeActionOptions {
     if (this.selectionMode || source.isLocked) return { icons: [] };
     return { icons: [
-      { icon: new SymbolGlyphModifier(source.enabled ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle')), backgroundColor: this.buttonColor(), iconOptions: { accessibilityText: source.enabled ? '禁用书源' : '启用书源' }, onAction: () => this.toggleSourceEnabled(source) },
-      { icon: new SymbolGlyphModifier($r('sys.symbol.trash')), backgroundColor: ThemeRuntime.dangerColor(this.appDarkMode), iconOptions: { accessibilityText: '删除书源' }, onAction: () => this.deleteSourceFromSwipe(source) }
+      { icon: new SymbolGlyphModifier(source.enabled ? $r('sys.symbol.minus_circle') : $r('sys.symbol.checkmark_circle')), backgroundColor: this.buttonColor(), iconOptions: { accessibilityText: source.enabled ? '禁用规则' : '启用规则' }, onAction: () => this.toggleSourceEnabled(source) },
+      { icon: new SymbolGlyphModifier($r('sys.symbol.trash')), backgroundColor: ThemeRuntime.dangerColor(this.appDarkMode), iconOptions: { accessibilityText: '删除规则' }, onAction: () => this.deleteSourceFromSwipe(source) }
     ] };
   }
 
@@ -2061,7 +2072,7 @@ struct BookSourcePage {
   @Builder
   sourceDeleteDialogContent() {
     Column() {
-      Text('删除书源')
+      Text('删除规则')
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
@@ -2224,7 +2235,7 @@ struct BookSourcePage {
         // 顶部 spacer 按列数占满一整行，源条目索引与 ListItem 索引相差一个列数。
         this.sourceListScroller.scrollToIndex(target + this.sourceListLaneCount(), false, ScrollAlign.START);
       } catch (e) {
-        console.warn('拖动书源滚动条定位失败:', e);
+        console.warn('拖动规则滚动条定位失败:', e);
       }
     }, 16);
   }
@@ -2320,14 +2331,14 @@ struct BookSourcePage {
   @Builder
   importSourceSelectionDialogContent() {
     Column({ space: AppSpacing.LG }) {
-      Text('选择要导入的书源')
+      Text('选择要导入的规则')
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
         .width('100%')
         .textAlign(TextAlign.Center)
 
-      Text(`共 ${this.pendingImportSources.length} 个书源，已选择 ${this.selectedImportSourceUrls.length} 个`)
+      Text(`共 ${this.pendingImportSources.length} 个规则，已选择 ${this.selectedImportSourceUrls.length} 个`)
         .fontSize(AppFontSize.BODY)
         .fontColor(this.secondaryTextColor())
         .width('100%')
@@ -2366,7 +2377,7 @@ struct BookSourcePage {
                   }
                 })
               Column() {
-                Text(source.bookSourceName || '未命名书源')
+                Text(source.bookSourceName || '未命名规则')
                   .fontSize(AppFontSize.BODY_LARGE)
                   .fontColor(this.primaryTextColor())
                   .maxLines(1)
@@ -2403,7 +2414,7 @@ struct BookSourcePage {
               }
             })
           Column() {
-            Text('保留书源自带的分组')
+            Text('保留规则自带的分组')
               .fontSize(AppFontSize.BODY)
               .fontColor(this.primaryTextColor())
             Text(this.importSourceGroupSummary(this.pendingImportSources))
@@ -2514,7 +2525,7 @@ struct BookSourcePage {
                 .padding({ top: AppSpacing.SM })
                 .justifyContent(FlexAlign.Center)
                 .accessibilityGroup(true)
-                .accessibilityText(format === 'all' ? '全部书源' : (format === 'native' ? '原生书源' : '兼容书源'))
+                .accessibilityText(format === 'all' ? '全部规则' : (format === 'native' ? '原生规则' : '兼容规则'))
                 .accessibilitySelected(this.sourceFormatFilter === format)
                 .onClick(() => {
                   if (this.sourceFormatFilter === format) return;
@@ -2597,7 +2608,7 @@ struct BookSourcePage {
     Row() {
       this.sourceHeaderCircleButton({ icon: $r('sys.symbol.funnel'),
         active: this.showSourceFilterMenu || this.hasActiveSourceFilters(),
-        label: this.hasActiveSourceFilters() ? `筛选，已启用 ${this.activeSourceFilterCount()} 项` : '筛选书源',
+        label: this.hasActiveSourceFilters() ? `筛选，已启用 ${this.activeSourceFilterCount()} 项` : '筛选规则',
         badge: this.hasActiveSourceFilters() ? `${this.activeSourceFilterCount()}` : '', busy: false, onTap: () => {
           this.showSourceMoreMenu = false;
           this.showSourceFilterMenu = !this.showSourceFilterMenu;
@@ -2616,7 +2627,7 @@ struct BookSourcePage {
     Column({ space: AppSpacing.XXS }) {
       Scroll() {
         Column({ space: AppSpacing.XXS }) {
-          this.sourceFilterSectionLabel('书源状态')
+          this.sourceFilterSectionLabel('规则状态')
           Flex({ wrap: FlexWrap.Wrap }) {
             this.sourceFilterChip('enabled', 'yes', '已启用')
             this.sourceFilterChip('enabled', 'no', '未启用')
@@ -2780,7 +2791,7 @@ struct BookSourcePage {
           .margin({ top: AppSpacing.XS, bottom: AppSpacing.XS })
 
         this.contextActionItem($r('sys.symbol.checkmark_shield'),
-          this.isCheckingSources ? `校验中 ${this.checkDone}/${this.checkTotal}` : '校验书源', this.primaryTextColor(), () => {
+          this.isCheckingSources ? `校验中 ${this.checkDone}/${this.checkTotal}` : '校验规则', this.primaryTextColor(), () => {
             this.showSourceMoreMenu = false;
             if (this.isCheckingSources) {
               // 校验中再点打开进度，与通知栏入口一致。
@@ -2869,7 +2880,7 @@ struct BookSourcePage {
       }, (mode: string) => mode)
 
       if (this.activeSourceSortMode() === 'custom') {
-        this.sourceSortMenuHint('长按左侧把手拖动调整顺序；新加入的书源排在置顶书源之后。')
+        this.sourceSortMenuHint('长按左侧把手拖动调整顺序；新加入的规则排在置顶规则之后。')
       } else {
         Divider()
           .color(ThemeRuntime.hairlineColor(this.appDarkMode))
@@ -2884,7 +2895,7 @@ struct BookSourcePage {
           this.sourceSortAscending === (this.activeSourceSortMode() !== 'name'), () => {
             this.selectSourceSortDirection(this.activeSourceSortMode() !== 'name');
           })
-        this.sourceSortMenuHint('置顶书源始终在最前，置底书源始终在最后；此排序下不能拖动。')
+        this.sourceSortMenuHint('置顶规则始终在最前，置底规则始终在最后；此排序下不能拖动。')
       }
     }
     .width(Math.min(260, Math.max(200, this.contextViewportWidth - AppSpacing.XL * 2)))
@@ -2952,7 +2963,7 @@ struct BookSourcePage {
   @Builder
   compatSourceNoticeBar() {
     Row({ space: AppSpacing.MD }) {
-      Text('兼容书源格式已过时，仍可正常使用。新书源建议使用原生格式。')
+      Text('兼容规则格式已过时，仍可正常使用。新规则建议使用原生格式。')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.secondaryTextColor())
         .maxLines(2)
@@ -3046,7 +3057,7 @@ struct BookSourcePage {
           SymbolGlyph($r('sys.symbol.folder'))
             .fontSize(30)
             .fontColor([this.subTextColor()])
-          Text('暂无书源分组')
+          Text('暂无规则分组')
             .fontSize(AppFontSize.BODY)
             .fontColor(this.subTextColor())
         }
@@ -3146,7 +3157,7 @@ struct BookSourcePage {
   @Builder
   addSourceGroupDialogContent() {
     Column({ space: AppSpacing.XL }) {
-      Text('新增书源分组')
+      Text('新增规则分组')
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
@@ -3184,7 +3195,7 @@ struct BookSourcePage {
   @Builder
   renameSourceGroupDialogContent() {
     Column({ space: AppSpacing.XL }) {
-      Text('重命名书源分组')
+      Text('重命名规则分组')
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
@@ -3222,11 +3233,11 @@ struct BookSourcePage {
   @Builder
   deleteSourceGroupDialogContent() {
     Column({ space: AppSpacing.XL }) {
-      Text('删除书源分组')
+      Text('删除规则分组')
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
-      Text(`删除“${this.pendingSourceGroup}”后，分组内书源将移到未分组，书源本身不会删除。`)
+      Text(`删除“${this.pendingSourceGroup}”后，分组内规则将移到未分组，规则本身不会删除。`)
         .fontSize(AppFontSize.BODY)
         .fontColor(this.secondaryTextColor())
         .textAlign(TextAlign.Center)
@@ -3279,7 +3290,7 @@ struct BookSourcePage {
     }, {
       autoCancel: true,
       maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
-      warnTag: '显示删除书源弹窗失败:'
+      warnTag: '显示删除规则弹窗失败:'
     });
   }
 
@@ -3567,7 +3578,7 @@ struct BookSourcePage {
       this.sourceGroups = await BookSourceGroupStore.reorder(getContext(this), groups);
       return true;
     } catch (e) {
-      console.error('保存书源分组顺序失败:', e);
+      console.error('保存规则分组顺序失败:', e);
       HdsFeedback.showToast('保存分组顺序失败');
       return false;
     }
@@ -3599,9 +3610,9 @@ struct BookSourcePage {
       this.activeSourceGroup = groupName;
       this.applySourceFilters();
       this.closeAddSourceGroupDialog();
-      HdsFeedback.showToast('书源分组已新增');
+      HdsFeedback.showToast('规则分组已新增');
     } catch (e) {
-      console.error('新增书源分组失败:', e);
+      console.error('新增规则分组失败:', e);
       HdsFeedback.showToast('新增分组失败');
     } finally {
       this.isBatchOperating = false;
@@ -3615,7 +3626,7 @@ struct BookSourcePage {
       this.ensureActiveSourceGroup();
       this.applySourceFilters();
     } catch (e) {
-      console.warn('清理空书源分组失败:', e);
+      console.warn('清理空规则分组失败:', e);
     }
   }
 
@@ -3652,7 +3663,7 @@ struct BookSourcePage {
       this.applySourceFilters();
       HdsFeedback.showToast(`已清除 ${emptyGroups.length} 个空分组`);
     } catch (e) {
-      console.error('清除空书源分组失败:', e);
+      console.error('清除空规则分组失败:', e);
       HdsFeedback.showToast('清除空分组失败');
     } finally {
       this.isBatchOperating = false;
@@ -3675,7 +3686,7 @@ struct BookSourcePage {
     }
 
     this.isBatchOperating = true;
-    this.batchOperationText = '正在重命名书源分组...';
+    this.batchOperationText = '正在重命名规则分组...';
     try {
       const db = AppDatabase.getInstance();
       const groupedSources = this.allSources.filter((source: BookSource) =>
@@ -3693,9 +3704,9 @@ struct BookSourcePage {
       this.renameSourceGroupInput = '';
       this.pendingSourceGroup = '';
       await this.loadSources();
-      HdsFeedback.showToast('书源分组已重命名');
+      HdsFeedback.showToast('规则分组已重命名');
     } catch (e) {
-      console.error('重命名书源分组失败:', e);
+      console.error('重命名规则分组失败:', e);
       HdsFeedback.showToast('重命名失败');
     } finally {
       this.isBatchOperating = false;
@@ -3708,7 +3719,7 @@ struct BookSourcePage {
       return;
     }
     this.isBatchOperating = true;
-    this.batchOperationText = '正在删除书源分组...';
+    this.batchOperationText = '正在删除规则分组...';
     try {
       const db = AppDatabase.getInstance();
       const groupedSources = this.allSources.filter((source: BookSource) =>
@@ -3724,9 +3735,9 @@ struct BookSourcePage {
       this.showDeleteSourceGroupDialog = false;
       this.pendingSourceGroup = '';
       await this.loadSources();
-      HdsFeedback.showToast('分组已删除，书源已移到未分组');
+      HdsFeedback.showToast('分组已删除，规则已移到未分组');
     } catch (e) {
-      console.error('删除书源分组失败:', e);
+      console.error('删除规则分组失败:', e);
       HdsFeedback.showToast('删除分组失败');
     } finally {
       this.isBatchOperating = false;
@@ -3847,7 +3858,7 @@ struct BookSourcePage {
       AppStorage.setOrCreate('bookSourceOrderRevision', revision + 1);
       if (successMessage) HdsFeedback.showToast(successMessage);
     } catch (e) {
-      console.error('保存书源排序失败:', e);
+      console.error('保存规则排序失败:', e);
       HdsFeedback.showToast('保存排序失败');
       for (let index = 0; index < previousSources.length; index++) {
         previousSources[index].customOrder = previousOrders[index];
@@ -4080,15 +4091,15 @@ struct BookSourcePage {
 
   emptySourceTitle(): string {
     if (this.searchText.trim()) {
-      return '未找到匹配书源';
+      return '未找到匹配规则';
     }
     if (this.hasActiveSourceFilters()) {
-      return '筛选条件下暂无书源';
+      return '筛选条件下暂无规则';
     }
     if (this.activeSourceGroup !== '__all__') {
-      return '当前分组暂无书源';
+      return '当前分组暂无规则';
     }
-    return '暂无书源';
+    return '暂无规则';
   }
 
   emptySourceDescription(): string {
@@ -4101,7 +4112,7 @@ struct BookSourcePage {
     if (this.activeSourceGroup !== '__all__') {
       return '可切换其他分组查看';
     }
-    return '点击右下角"+"添加书源';
+    return '点击右下角"+"添加规则';
   }
 
   sourceNeedsLogin(source: BookSource): boolean {
@@ -4203,7 +4214,7 @@ struct BookSourcePage {
 
   actionSourceName(): string {
     const source = this.actionSource();
-    return source ? (source.bookSourceName || source.bookSourceUrl) : '当前书源';
+    return source ? (source.bookSourceName || source.bookSourceUrl) : '当前规则';
   }
 
   actionSourceNeedsLogin(): boolean {
@@ -4272,7 +4283,7 @@ struct BookSourcePage {
       const pinnedCount = next.filter((item: BookSource) => item.isPinned).length;
       next.splice(pinnedCount, 0, moved);
     }
-    await this.applyAndPersistSourceOrder(next, pinned ? '书源已置顶' : '已取消置顶', {
+    await this.applyAndPersistSourceOrder(next, pinned ? '规则已置顶' : '已取消置顶', {
       bookSourceUrl: sourceUrl, isPinned: pinned, isBottom: false
     });
   }
@@ -4294,7 +4305,7 @@ struct BookSourcePage {
       const firstBottom = next.findIndex((item: BookSource) => this.isSourceAtBottom(item));
       next.splice(firstBottom < 0 ? next.length : firstBottom, 0, moved);
     }
-    await this.applyAndPersistSourceOrder(next, bottom ? '书源已置底' : '已取消置底', {
+    await this.applyAndPersistSourceOrder(next, bottom ? '规则已置底' : '已取消置底', {
       bookSourceUrl: sourceUrl, isPinned: false, isBottom: bottom
     });
   }
@@ -4304,7 +4315,7 @@ struct BookSourcePage {
     if (!source) return;
     if (source.isLocked) {
       this.closeSourceActions();
-      HdsFeedback.showToast('请先解锁书源');
+      HdsFeedback.showToast('请先解锁规则');
       return;
     }
     const sourceUrl = source.bookSourceUrl;
@@ -4323,14 +4334,14 @@ struct BookSourcePage {
     source.isLocked = locked;
     this.closeSourceActions();
     await this.loadSources();
-    HdsFeedback.showToast(locked ? '书源已锁定' : '书源已解锁');
+    HdsFeedback.showToast(locked ? '规则已锁定' : '规则已解锁');
   }
 
   openActionSourceSearch(): void {
     const source = this.actionSource();
     if (!source) {
       this.closeSourceActions();
-      HdsFeedback.showToast('书源不存在');
+      HdsFeedback.showToast('规则不存在');
       return;
     }
     const nonce = AppStorage.get<number>('singleSourceSearchNonce') || 0;
@@ -4348,7 +4359,7 @@ struct BookSourcePage {
     }
     const source = await AppDatabase.getInstance().getBookSource(summary.bookSourceUrl);
     if (!source || !this.sourceNeedsLogin(source)) {
-      HdsFeedback.showToast('书源不存在');
+      HdsFeedback.showToast('规则不存在');
       return;
     }
     this.showSourceActionDialog = false;
@@ -4390,17 +4401,17 @@ struct BookSourcePage {
     }
     if (dynamicLoginUi) {
       this.actionSourceUrl = '';
-      HdsFeedback.showToast('登录界面脚本未返回有效控件，请检查书源 loginUi 配置');
+      HdsFeedback.showToast('登录界面脚本未返回有效控件，请检查规则 loginUi 配置');
       return;
     }
     const loginEntryUrl = VerificationSupport.resolveBookSourceLoginUrl(source) ||
       VerificationSupport.pickVerificationUrl(source, source.bookSourceUrl);
     if (!loginEntryUrl || !/^https?:\/\//i.test(loginEntryUrl)) {
       this.actionSourceUrl = '';
-      HdsFeedback.showToast('未找到可用的网页登录地址，请检查书源登录配置');
+      HdsFeedback.showToast('未找到可用的网页登录地址，请检查规则登录配置');
       return;
     }
-    this.openSourceLoginBrowser(source, loginEntryUrl, `${source.bookSourceName || '书源'} 登录`, true);
+    this.openSourceLoginBrowser(source, loginEntryUrl, `${source.bookSourceName || '规则'} 登录`, true);
   }
 
   async resolveSourceLoginItems(source: BookSource): Promise<BookSourceLoginItem[]> {
@@ -4426,7 +4437,7 @@ struct BookSourcePage {
       this.showSourceLoginUiDialog = false;
       this.sourceLoginItems = [];
       this.openSourceLoginBrowser(currentSource, item.action.trim(),
-        `${currentSource.bookSourceName || '书源'} · ${item.name}`, /(?:登录|login)/i.test(item.name));
+        `${currentSource.bookSourceName || '规则'} · ${item.name}`, /(?:登录|login)/i.test(item.name));
       return;
     }
     this.isExecutingLoginAction = true;
@@ -4462,12 +4473,12 @@ struct BookSourcePage {
       if (result.toastMessage) {
         HdsFeedback.showToast(result.toastMessage.trim() || '操作成功');
       } else if (result.variable !== previousVariable && result.variable.trim()) {
-        HdsFeedback.showToast(/token/i.test(`${item.name}\n${item.action}`) ? 'Token 已获取并保存到书源变量' : '书源变量已更新');
+        HdsFeedback.showToast(/token/i.test(`${item.name}\n${item.action}`) ? 'Token 已获取并保存到规则变量' : '规则变量已更新');
       } else if (result.logMessage) {
         HdsFeedback.showToast(result.logMessage.trim());
       } else if (!result.requestedSearchKeyword && !result.refreshExploreRequested &&
         !result.requestedUrl && !result.requestedHtml) {
-        HdsFeedback.showToast('操作已执行，书源没有返回提示信息');
+        HdsFeedback.showToast('操作已执行，规则没有返回提示信息');
       }
       if (result.requestedSearchKeyword) {
         this.openRuntimeSourceSearch(source, result.requestedSearchKeyword);
@@ -4483,7 +4494,7 @@ struct BookSourcePage {
         const isLogin = /(?:登录|login)/i.test(item.name) ||
           /\/login(?:\.html)?(?:[?#]|$)/i.test(result.requestedUrl);
         this.openSourceLoginBrowser(source, result.requestedUrl || 'about:blank',
-          result.requestedTitle || `${source.bookSourceName || '书源'} · ${item.name}`, isLogin,
+          result.requestedTitle || `${source.bookSourceName || '规则'} · ${item.name}`, isLogin,
           '', result.requestedHtml, result.requestedInjectJs);
         return;
       }
@@ -4587,7 +4598,7 @@ struct BookSourcePage {
     this.syncSourceLoginInfo(source);
     AppDatabase.getInstance().updateBookSourceLoginRuntime(source.bookSourceUrl,
       source.variable, source.loginHeader, source.loginInfo).catch((error: Object): void => {
-      console.warn('保存书源登录选项失败:', error);
+      console.warn('保存规则登录选项失败:', error);
     });
     if (copy.action) this.executeSourceLoginAction(copy);
   }
@@ -4879,7 +4890,7 @@ struct BookSourcePage {
     this.syncSourceLoginInfo(source);
     AppDatabase.getInstance().updateBookSourceLoginRuntime(source.bookSourceUrl,
       source.variable, source.loginHeader, source.loginInfo).catch((error: Object): void => {
-      console.warn('保存书源登录输入失败:', error);
+      console.warn('保存规则登录输入失败:', error);
     });
   }
 
@@ -5154,7 +5165,7 @@ struct BookSourcePage {
           headers: {},
           body: '',
           success: false,
-          error: '登录请求超时，请检查网络或切换书源线路'
+          error: '登录请求超时，请检查网络或切换规则线路'
         });
       }, 20000);
       new AnalyzeUrl(source, client).fetch(requestUrl)
@@ -5259,7 +5270,7 @@ struct BookSourcePage {
     AppStorage.setOrCreate('bookSourceBrowserAwaitResultError', '');
     this.showSourceLoginUiDialog = false;
     this.openSourceLoginBrowser(source, step.pendingBrowserAwait,
-      step.pendingBrowserTitle || `${source.bookSourceName || '书源'} 网页操作`, false, token);
+      step.pendingBrowserTitle || `${source.bookSourceName || '规则'} 网页操作`, false, token);
   }
 
   resumeLoginRuntimeBrowserAwait(): void {
@@ -5362,7 +5373,7 @@ struct BookSourcePage {
     }
     if (source.isLocked) {
       this.closeSourceActions();
-      HdsFeedback.showToast('请先解锁书源');
+      HdsFeedback.showToast('请先解锁规则');
       return;
     }
     this.closeSourceActions();
@@ -5391,7 +5402,7 @@ struct BookSourcePage {
     const source = this.actionSource();
     if (!source) {
       this.closeSourceActions();
-      HdsFeedback.showToast('书源不存在');
+      HdsFeedback.showToast('规则不存在');
       return;
     }
     this.closeSourceActions();
@@ -5415,7 +5426,7 @@ struct BookSourcePage {
       return;
     }
     if (source.isLocked) {
-      HdsFeedback.showToast('锁定的书源不能修改');
+      HdsFeedback.showToast('锁定的规则不能修改');
       return;
     }
     const enabled = !source.enabled;
@@ -5424,7 +5435,7 @@ struct BookSourcePage {
     this.allSources = this.allSources.map((item: BookSource) =>
       item.bookSourceUrl === source.bookSourceUrl ? source : item);
     this.reapplySourceFiltersPreservingViewport();
-    HdsFeedback.showToast(enabled ? '书源已启用' : '书源已禁用');
+    HdsFeedback.showToast(enabled ? '规则已启用' : '规则已禁用');
   }
 
   async deleteSourceFromSwipe(source: BookSource): Promise<void> {
@@ -5432,7 +5443,7 @@ struct BookSourcePage {
       return;
     }
     if (source.isLocked) {
-      HdsFeedback.showToast('锁定的书源不能删除');
+      HdsFeedback.showToast('锁定的规则不能删除');
       return;
     }
     // 滑动删除与长按菜单共用同一二次确认弹窗，避免误触直接删除。
@@ -5447,7 +5458,7 @@ struct BookSourcePage {
     }
     if (source.isLocked) {
       this.showSourceDeleteDialog = false;
-      HdsFeedback.showToast('锁定的书源不能删除');
+      HdsFeedback.showToast('锁定的规则不能删除');
       return;
     }
     this.showSourceDeleteDialog = false;
@@ -5464,10 +5475,10 @@ struct BookSourcePage {
       this.actionSourceUrl = '';
       await sleepMs(ListDissolve.CLOSE_MS);
       await this.reconcileSourceGroups();
-      HdsFeedback.showToast('书源已删除');
+      HdsFeedback.showToast('规则已删除');
     } catch (e) {
-      console.error('删除书源失败:', e);
-      HdsFeedback.showToast('删除书源失败');
+      console.error('删除规则失败:', e);
+      HdsFeedback.showToast('删除规则失败');
     } finally {
       this.sourceDeleteInFlight = false;
     }
@@ -5655,7 +5666,7 @@ struct BookSourcePage {
 
   actionGroupingSourceName(): string {
     const source = this.groupingSources()[0];
-    return source ? (source.bookSourceName || source.bookSourceUrl) : '当前书源';
+    return source ? (source.bookSourceName || source.bookSourceUrl) : '当前规则';
   }
 
   closeSourceGroupDialog(): void {
@@ -5669,7 +5680,7 @@ struct BookSourcePage {
     }
     const selectedSources = this.mutableGroupingSources();
     if (selectedSources.length === 0) {
-      HdsFeedback.showToast('所选书源均已锁定');
+      HdsFeedback.showToast('所选规则均已锁定');
       return;
     }
 
@@ -5698,7 +5709,7 @@ struct BookSourcePage {
       this.closeSourceGroupDialog();
       HdsFeedback.showToast(groupName ? `已加入分组：${groupName}` : '已移出分组');
     } catch (e) {
-      console.error('设置书源分组失败:', e);
+      console.error('设置规则分组失败:', e);
       HdsFeedback.showToast('设置分组失败');
     } finally {
       this.isBatchOperating = false;
@@ -5711,12 +5722,12 @@ struct BookSourcePage {
     }
     const selectedSources = this.getSelectedMutableSources();
     if (selectedSources.length === 0) {
-      HdsFeedback.showToast('所选书源均已锁定');
+      HdsFeedback.showToast('所选规则均已锁定');
       return;
     }
 
     this.isBatchOperating = true;
-    this.batchOperationText = enabled ? '正在启用书源...' : '正在禁用书源...';
+    this.batchOperationText = enabled ? '正在启用规则...' : '正在禁用规则...';
     try {
       const db = AppDatabase.getInstance();
       for (const source of selectedSources) {
@@ -5724,9 +5735,9 @@ struct BookSourcePage {
         await db.updateBookSourceListFields(source.bookSourceUrl, { enabled: enabled ? 1 : 0 });
       }
       this.reapplySourceFiltersPreservingViewport();
-      HdsFeedback.showToast(`已${enabled ? '启用' : '禁用'} ${selectedSources.length} 个书源`);
+      HdsFeedback.showToast(`已${enabled ? '启用' : '禁用'} ${selectedSources.length} 个规则`);
     } catch (e) {
-      console.error('批量更新书源失败:', e);
+      console.error('批量更新规则失败:', e);
       HdsFeedback.showToast('批量操作失败');
     } finally {
       this.isBatchOperating = false;
@@ -5739,7 +5750,7 @@ struct BookSourcePage {
     }
     const selectedSources = this.getSelectedMutableSources();
     if (selectedSources.length === 0) {
-      HdsFeedback.showToast('所选书源均已锁定');
+      HdsFeedback.showToast('所选规则均已锁定');
       return;
     }
 
@@ -5752,7 +5763,7 @@ struct BookSourcePage {
         await db.updateBookSourceListFields(source.bookSourceUrl, { enabledExplore: enabled ? 1 : 0 });
       }
       this.reapplySourceFiltersPreservingViewport();
-      HdsFeedback.showToast(`已${enabled ? '启用' : '禁用'} ${selectedSources.length} 个书源的发现`);
+      HdsFeedback.showToast(`已${enabled ? '启用' : '禁用'} ${selectedSources.length} 个规则的发现`);
     } catch (e) {
       console.error('批量更新发现状态失败:', e);
       HdsFeedback.showToast('批量操作失败');
@@ -5768,12 +5779,12 @@ struct BookSourcePage {
     const selectedSources = this.getSelectedSources()
       .filter((source: BookSource) => source.isLocked !== locked);
     if (selectedSources.length === 0) {
-      HdsFeedback.showToast(locked ? '所选书源均已锁定' : '所选书源均已解锁');
+      HdsFeedback.showToast(locked ? '所选规则均已锁定' : '所选规则均已解锁');
       return;
     }
 
     this.isBatchOperating = true;
-    this.batchOperationText = locked ? '正在锁定书源...' : '正在解锁书源...';
+    this.batchOperationText = locked ? '正在锁定规则...' : '正在解锁规则...';
     try {
       const db = AppDatabase.getInstance();
       for (const source of selectedSources) {
@@ -5781,9 +5792,9 @@ struct BookSourcePage {
         source.isLocked = locked;
       }
       this.reapplySourceFiltersPreservingViewport();
-      HdsFeedback.showToast(`已${locked ? '锁定' : '解锁'} ${selectedSources.length} 个书源`);
+      HdsFeedback.showToast(`已${locked ? '锁定' : '解锁'} ${selectedSources.length} 个规则`);
     } catch (e) {
-      console.error(`批量${locked ? '锁定' : '解锁'}书源失败:`, e);
+      console.error(`批量${locked ? '锁定' : '解锁'}规则失败:`, e);
       await this.loadSources();
       HdsFeedback.showToast(`批量${locked ? '锁定' : '解锁'}失败`);
     } finally {
@@ -5797,12 +5808,12 @@ struct BookSourcePage {
     }
     const selectedUrls = this.getSelectedMutableSources().map((source: BookSource) => source.bookSourceUrl);
     if (selectedUrls.length === 0) {
-      HdsFeedback.showToast('所选书源均已锁定');
+      HdsFeedback.showToast('所选规则均已锁定');
       return;
     }
 
     this.isBatchOperating = true;
-    this.batchOperationText = '正在删除书源...';
+    this.batchOperationText = '正在删除规则...';
     try {
       const db = AppDatabase.getInstance();
       for (const url of selectedUrls) {
@@ -5817,9 +5828,9 @@ struct BookSourcePage {
       this.selectionMode = false;
       // 原位重读：普通重读会先切到“加载中”占位，补位刚放完列表会整个闪一下。
       await this.loadSources(true);
-      HdsFeedback.showToast(`已删除 ${selectedUrls.length} 个书源`);
+      HdsFeedback.showToast(`已删除 ${selectedUrls.length} 个规则`);
     } catch (e) {
-      console.error('批量删除书源失败:', e);
+      console.error('批量删除规则失败:', e);
       HdsFeedback.showToast('批量删除失败');
     } finally {
       this.isBatchOperating = false;
@@ -5835,7 +5846,7 @@ struct BookSourcePage {
         enabledExplore: source.enabledExplore ? 1 : 0
       });
     } catch (e) {
-      console.error('更新书源失败:', e);
+      console.error('更新规则失败:', e);
     }
   }
 
@@ -5865,7 +5876,7 @@ struct BookSourcePage {
     const db = AppDatabase.getInstance();
     const enabledSources = await db.getEnabledBookSources();
     if (enabledSources.length === 0) {
-      HdsFeedback.showToast('暂无启用书源');
+      HdsFeedback.showToast('暂无启用规则');
       return;
     }
 
@@ -5876,7 +5887,7 @@ struct BookSourcePage {
     const summary = this.actionSource();
     this.closeSourceActions();
     if (!summary) {
-      HdsFeedback.showToast('书源不存在');
+      HdsFeedback.showToast('规则不存在');
       return;
     }
     if (this.isCheckingSources) {
@@ -5885,7 +5896,7 @@ struct BookSourcePage {
     }
     const source = await AppDatabase.getInstance().getBookSource(summary.bookSourceUrl);
     if (!source) {
-      HdsFeedback.showToast('书源不存在');
+      HdsFeedback.showToast('规则不存在');
       return;
     }
     await this.startCheckSources([source], 'none');
@@ -5898,7 +5909,7 @@ struct BookSourcePage {
     }
     const selectedUrls = new Set<string>(this.selectedSourceUrls);
     if (selectedUrls.size === 0) {
-      HdsFeedback.showToast('请先选择书源');
+      HdsFeedback.showToast('请先选择规则');
       return;
     }
 
@@ -5906,13 +5917,13 @@ struct BookSourcePage {
       const allSources = await AppDatabase.getInstance().getAllBookSources();
       const targetSources = allSources.filter((source: BookSource) => selectedUrls.has(source.bookSourceUrl));
       if (targetSources.length === 0) {
-        HdsFeedback.showToast('所选书源不存在');
+        HdsFeedback.showToast('所选规则不存在');
         return;
       }
       await this.startCheckSources(targetSources, 'none');
     } catch (e) {
-      console.error('加载所选书源失败:', e);
-      HdsFeedback.showToast('加载所选书源失败');
+      console.error('加载所选规则失败:', e);
+      HdsFeedback.showToast('加载所选规则失败');
     }
   }
 
@@ -5943,7 +5954,7 @@ struct BookSourcePage {
     this.resetCheckedSourceUiUpdates();
     this.checkAutoHandledCount = 0;
     this.checkStatus = validationMode === 'exploreReading' ?
-      `准备检查 ${targetSources.length} 个书源的发现/阅读链路` : `准备校验 ${targetSources.length} 个书源`;
+      `准备检查 ${targetSources.length} 个规则的发现/阅读链路` : `准备校验 ${targetSources.length} 个规则`;
     this.checkNotificationLastAt = 0;
     this.checkCancelAgent = null;
     await this.ensureBookSourceCheckCancelSubscriber();
@@ -5964,7 +5975,7 @@ struct BookSourcePage {
           this.checkStatus = `${progress.sourceName} · ${progress.stage}（${progress.done}/${progress.total}）`;
           if (this.checkBackgroundMode) {
             this.publishBookSourceCheckProgress(false).catch((e: Error) => {
-              console.warn('更新书源发现/阅读校验通知失败:', e);
+              console.warn('更新规则发现/阅读校验通知失败:', e);
             });
           }
         }, async (source: BookSource, result: ExploreReadingValidationResult): Promise<void> => {
@@ -5983,7 +5994,7 @@ struct BookSourcePage {
           this.checkStatus = this.formatCheckProgressStatus(progress);
           if (this.checkBackgroundMode) {
             this.publishBookSourceCheckProgress(false).catch((e: Error) => {
-              console.warn('更新书源校验通知失败:', e);
+              console.warn('更新规则校验通知失败:', e);
             });
           }
         }, {
@@ -6009,7 +6020,7 @@ struct BookSourcePage {
       if (taskSerial !== this.checkTaskSerial) {
         return;
       }
-      console.error('校验书源失败:', e);
+      console.error('校验规则失败:', e);
       this.checkStatus = '校验失败，请稍后重试';
       HdsFeedback.showToast('校验失败');
     } finally {
@@ -6025,7 +6036,7 @@ struct BookSourcePage {
         await this.loadSources();
       }
       if (finishedInBackground) {
-        await this.publishBookSourceCheckNotification('书源校验完成', this.checkResultText(), false);
+        await this.publishBookSourceCheckNotification('规则校验完成', this.checkResultText(), false);
       }
       this.checkBackgroundMode = false;
       await this.stopBookSourceCheckBackgroundRunning();
@@ -6054,21 +6065,21 @@ struct BookSourcePage {
     this.checkBackgroundMode = false;
     this.checkStatus = `校验已取消（${this.checkDone}/${this.checkTotal}）`;
     if (showToast) {
-      HdsFeedback.showToast('已停止书源校验');
+      HdsFeedback.showToast('已停止规则校验');
     }
     if (this.checkInvalidAction !== 'none') {
       this.loadSources().catch((e: Error) => {
-        console.warn('取消校验后刷新书源失败:', e);
+        console.warn('取消校验后刷新规则失败:', e);
       });
     }
     if (wasBackground) {
-      this.publishBookSourceCheckNotification('书源校验已取消', this.bookSourceCheckProgressText(), false)
+      this.publishBookSourceCheckNotification('规则校验已取消', this.bookSourceCheckProgressText(), false)
         .catch((e: Error) => {
-          console.warn('更新书源校验取消通知失败:', e);
+          console.warn('更新规则校验取消通知失败:', e);
         });
     }
     this.stopBookSourceCheckBackgroundRunning().catch((e: Error) => {
-      console.warn('停止书源校验后台任务失败:', e);
+      console.warn('停止规则校验后台任务失败:', e);
     });
     if (!this.pageVisible) {
       this.releaseBookSourceCheckCancelSubscriber();
@@ -6081,7 +6092,7 @@ struct BookSourcePage {
     }
     this.checkBackgroundMode = true;
     this.showCheckDialog = false;
-    HdsFeedback.showToast('书源校验将在后台继续，可在通知栏取消');
+    HdsFeedback.showToast('规则校验将在后台继续，可在通知栏取消');
     await this.startBookSourceCheckBackgroundRunning();
     await this.requestBookSourceCheckNotificationEnabled();
     if (this.isCheckingSources && this.checkBackgroundMode) {
@@ -6092,7 +6103,7 @@ struct BookSourcePage {
   bookSourceCheckProgressText(): string {
     const total = Math.max(0, this.checkTotal);
     if (total === 0) {
-      return '正在准备校验书源（0%）';
+      return '正在准备校验规则（0%）';
     }
     const done = Math.max(0, Math.min(this.checkDone, total));
     const percent = Math.floor((done / total) * 100);
@@ -6106,7 +6117,7 @@ struct BookSourcePage {
     }
     this.checkNotificationLastAt = now;
     await this.publishBookSourceCheckNotification(
-      this.checkStatus || '书源校验后台进行中',
+      this.checkStatus || '规则校验后台进行中',
       this.bookSourceCheckProgressText(),
       true
     );
@@ -6125,7 +6136,7 @@ struct BookSourcePage {
         content: {
           notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
           normal: {
-            title: '书源校验',
+            title: '规则校验',
             text: text,
             additionalText: additionalText
           }
@@ -6141,7 +6152,7 @@ struct BookSourcePage {
       }
       await notificationManager.publish(request);
     } catch (e) {
-      console.warn('发布书源校验通知失败:', e);
+      console.warn('发布规则校验通知失败:', e);
     }
   }
 
@@ -6152,7 +6163,7 @@ struct BookSourcePage {
       }
       await notificationManager.requestEnableNotification(getContext(this) as common.UIAbilityContext);
     } catch (e) {
-      console.warn('请求书源校验通知权限失败:', e);
+      console.warn('请求规则校验通知权限失败:', e);
     }
   }
 
@@ -6199,13 +6210,13 @@ struct BookSourcePage {
       commonEventManager.subscribe(subscriber,
         (error: Error | null, _data: commonEventManager.CommonEventData) => {
           if (error) {
-            console.warn('接收书源校验取消事件失败:', error);
+            console.warn('接收规则校验取消事件失败:', error);
             return;
           }
           this.cancelBookSourceCheck(false);
         });
     } catch (e) {
-      console.warn('注册书源校验取消事件失败:', e);
+      console.warn('注册规则校验取消事件失败:', e);
     }
   }
 
@@ -6217,7 +6228,7 @@ struct BookSourcePage {
     this.checkCancelSubscriber = null;
     commonEventManager.unsubscribe(subscriber, (error: Error | null) => {
       if (error) {
-        console.warn('注销书源校验取消事件失败:', error);
+        console.warn('注销规则校验取消事件失败:', error);
       }
     });
   }
@@ -6231,7 +6242,7 @@ struct BookSourcePage {
       await backgroundTaskManager.startBackgroundRunning(getContext(this), ['dataTransfer'], agent);
       this.checkBackgroundRunning = true;
     } catch (e) {
-      console.warn('启动书源校验后台任务失败:', e);
+      console.warn('启动规则校验后台任务失败:', e);
     }
   }
 
@@ -6243,7 +6254,7 @@ struct BookSourcePage {
     try {
       await backgroundTaskManager.stopBackgroundRunning(getContext(this));
     } catch (e) {
-      console.warn('停止书源校验后台任务失败:', e);
+      console.warn('停止规则校验后台任务失败:', e);
     }
   }
 
@@ -6264,7 +6275,7 @@ struct BookSourcePage {
       await AppDatabase.getInstance().updateBookSourceValidationStatus(
         source.bookSourceUrl, source.validationStatus);
     } catch (e) {
-      console.error('保存书源校验状态失败:', source.bookSourceName, e);
+      console.error('保存规则校验状态失败:', source.bookSourceName, e);
     }
     let detail = '';
     if (source.validationStatus !== BookSource.VALIDATION_PASSED || includePassedDetail) {
@@ -6318,7 +6329,7 @@ struct BookSourcePage {
       }
       this.checkAutoHandledCount++;
     } catch (e) {
-      console.error(`自动${this.checkInvalidAction === 'delete' ? '删除' : '禁用'}无效书源失败:`, e);
+      console.error(`自动${this.checkInvalidAction === 'delete' ? '删除' : '禁用'}无效规则失败:`, e);
     }
   }
 
@@ -6378,7 +6389,7 @@ struct BookSourcePage {
   }
 
   checkSummaryText(): string {
-    return `已校验 ${this.checkTotal} 个书源${this.checkAutoActionSummary()}`;
+    return `已校验 ${this.checkTotal} 个规则${this.checkAutoActionSummary()}`;
   }
 
   checkDialogStatusText(): string {
@@ -6405,7 +6416,7 @@ struct BookSourcePage {
     const confirmation = await promptAction.showDialog({
       title: '信任证书风险提示',
       message: `系统无法验证以下主机的身份：\n${hosts.join('\n')}\n\n` +
-        '继续后，仅在本设备上对这些精确主机跳过证书校验。连接可能被冒充或监听；只有在你确认书源和网络可信时才继续。',
+        '继续后，仅在本设备上对这些精确主机跳过证书校验。连接可能被冒充或监听；只有在你确认规则和网络可信时才继续。',
       buttons: [
         { text: '保持安全', color: this.subTextColor() },
         { text: '信任并重试', color: '#B26A00' }
@@ -6417,7 +6428,7 @@ struct BookSourcePage {
       const allSources = await AppDatabase.getInstance().getAllBookSources();
       const retrySources = allSources.filter((source: BookSource) => retryUrls.has(source.bookSourceUrl));
       if (retrySources.length === 0) {
-        HdsFeedback.showToast('已保存证书信任，但原书源已不存在');
+        HdsFeedback.showToast('已保存证书信任，但原规则已不存在');
         this.checkTlsTrustHosts = [];
         this.checkTlsRetrySourceUrls = [];
         return;
@@ -6431,7 +6442,7 @@ struct BookSourcePage {
   }
 
   formatCheckProgressStatus(progress: SearchProgress): string {
-    const verifyText = progress.needVerification ? '；有书源需要网页验证' : '';
+    const verifyText = progress.needVerification ? '；有规则需要网页验证' : '';
     return `已校验 ${progress.done}/${progress.total}${this.checkAutoActionSummary()}${verifyText}`;
   }
 
@@ -6447,7 +6458,7 @@ struct BookSourcePage {
 
   checkResultText(): string {
     if (this.checkTotal === 0) {
-      return '没有需要校验的书源';
+      return '没有需要校验的规则';
     }
     return `通过 ${this.checkOkCount}，失败 ${this.checkFailedCount}，无结果 ${this.checkNoResultCount}，` +
       `需要验证 ${this.checkNeedVerificationCount}，暂时异常 ${this.checkTemporaryErrorCount}` +
@@ -6462,12 +6473,12 @@ struct BookSourcePage {
       .map((source: BookSource) => source.bookSourceUrl));
     const failedUrls = this.checkBadUrls.filter((url: string) => !lockedUrls.has(url));
     if (failedUrls.length === 0) {
-      HdsFeedback.showToast('明确失败的书源均已锁定，未执行禁用');
+      HdsFeedback.showToast('明确失败的规则均已锁定，未执行禁用');
       return;
     }
 
     this.isBatchOperating = true;
-    this.batchOperationText = '正在禁用书源...';
+    this.batchOperationText = '正在禁用规则...';
     try {
       const db = AppDatabase.getInstance();
       for (const url of failedUrls) {
@@ -6481,9 +6492,9 @@ struct BookSourcePage {
       const disabledCount = failedUrls.length;
       this.showCheckDialog = false;
       await this.loadSources();
-      HdsFeedback.showToast(`已禁用 ${disabledCount} 个明确失败的书源`);
+      HdsFeedback.showToast(`已禁用 ${disabledCount} 个明确失败的规则`);
     } catch (e) {
-      console.error('禁用异常书源失败:', e);
+      console.error('禁用异常规则失败:', e);
       HdsFeedback.showToast('禁用失败');
     } finally {
       this.isBatchOperating = false;
@@ -6498,12 +6509,12 @@ struct BookSourcePage {
       .map((source: BookSource) => source.bookSourceUrl));
     const failedUrls = this.checkBadUrls.filter((url: string) => !lockedUrls.has(url));
     if (failedUrls.length === 0) {
-      HdsFeedback.showToast('明确失败的书源均已锁定，未执行删除');
+      HdsFeedback.showToast('明确失败的规则均已锁定，未执行删除');
       return;
     }
 
     this.isBatchOperating = true;
-    this.batchOperationText = '正在删除书源...';
+    this.batchOperationText = '正在删除规则...';
     try {
       const db = AppDatabase.getInstance();
       for (const url of failedUrls) {
@@ -6516,9 +6527,9 @@ struct BookSourcePage {
       await this.dissolveSources(failedUrls);
       await sleepMs(ListDissolve.CLOSE_MS + 40);
       await this.loadSources(true);
-      HdsFeedback.showToast(`已删除 ${failedUrls.length} 个明确失败的书源`);
+      HdsFeedback.showToast(`已删除 ${failedUrls.length} 个明确失败的规则`);
     } catch (e) {
-      console.error('删除异常书源失败:', e);
+      console.error('删除异常规则失败:', e);
       HdsFeedback.showToast('删除失败');
     } finally {
       this.isBatchOperating = false;
@@ -6574,14 +6585,14 @@ struct BookSourcePage {
           nativeProblem = result.nativeProblem;
         }
         if (result.sources.length === 0 && !result.nativeProblem) {
-          failedFiles.push(`${name}（无有效书源）`);
+          failedFiles.push(`${name}（无有效规则）`);
           continue;
         }
         for (const source of result.sources) {
           sources.push(source);
         }
       } catch (e) {
-        console.error('读取书源文件失败:', name, e);
+        console.error('读取规则文件失败:', name, e);
         failedFiles.push(`${name}（${this.importErrorMessage(e as Object)}）`);
       }
     }
@@ -6593,14 +6604,14 @@ struct BookSourcePage {
       notices.push(`已跳过 ${shown}${more}`);
     }
     if (nativeProblem) {
-      notices.push(`原生书源未导入，${nativeProblem}`);
+      notices.push(`原生规则未导入，${nativeProblem}`);
     }
     if (notices.length > 0) {
       HdsFeedback.showToast(notices.join('\n'));
     }
     if (sources.length === 0) {
       if (notices.length === 0) {
-        HdsFeedback.showToast('未找到有效的书源');
+        HdsFeedback.showToast('未找到有效的规则');
       }
       return;
     }
@@ -6632,7 +6643,7 @@ struct BookSourcePage {
       }
       await this.importSourcesFromJson(content);
     } catch (e) {
-      console.error('打开 JSON 书源文件失败:', e);
+      console.error('打开 JSON 规则文件失败:', e);
       const message = this.importErrorMessage(e as Object);
       HdsFeedback.showToast(`导入失败: ${message}`);
     } finally {
@@ -6646,14 +6657,14 @@ struct BookSourcePage {
 
   async exportSelectedSources(): Promise<void> {
     if (this.selectedSourceUrls.length === 0 || this.isBatchOperating) {
-      HdsFeedback.showToast('请先选择书源');
+      HdsFeedback.showToast('请先选择规则');
       return;
     }
     const selectedLookup = this.getSelectedSourceUrlLookup();
     const selectedSummaries = this.sources.filter((source: BookSource) =>
       selectedLookup.has(source.bookSourceUrl));
     if (selectedSummaries.length === 0) {
-      HdsFeedback.showToast('未找到可导出的书源');
+      HdsFeedback.showToast('未找到可导出的规则');
       return;
     }
 
@@ -6668,7 +6679,7 @@ struct BookSourcePage {
       }
 
       this.isBatchOperating = true;
-      this.batchOperationText = '正在导出书源...';
+      this.batchOperationText = '正在导出规则...';
       const selected: BookSource[] = [];
       const db = AppDatabase.getInstance();
       for (const summary of selectedSummaries) {
@@ -6682,9 +6693,9 @@ struct BookSourcePage {
       await fs.write(file.fd, bytes.buffer, { offset: 0, length: bytes.byteLength });
       await fs.close(file);
       file = null;
-      HdsFeedback.showToast(`已导出 ${selected.length} 个书源`);
+      HdsFeedback.showToast(`已导出 ${selected.length} 个规则`);
     } catch (e) {
-      console.error('导出书源失败:', e);
+      console.error('导出规则失败:', e);
       const message = e instanceof Error ? e.message : String(e);
       HdsFeedback.showToast(`导出失败: ${message}`);
     } finally {
@@ -6695,7 +6706,7 @@ struct BookSourcePage {
         }
       }
       this.isBatchOperating = false;
-      this.batchOperationText = '正在操作书源...';
+      this.batchOperationText = '正在操作规则...';
     }
   }
 
@@ -6718,7 +6729,7 @@ struct BookSourcePage {
         return '';
       }
       if (stat.size > BOOK_SOURCE_IMPORT_FILE_LIMIT_BYTES) {
-        throw new Error('文件过大，请选择 25MB 以内的书源文件');
+        throw new Error('文件过大，请选择 25MB 以内的规则文件');
       }
 
       file = await fs.open(filePath, fs.OpenMode.READ_ONLY);
@@ -6776,7 +6787,7 @@ struct BookSourcePage {
       if (this.isValidBookSourceJson(response.body)) {
         return response.body.replace(/^\uFEFF/, '');
       }
-      const reason = response.success ? '响应内容不是有效书源JSON' :
+      const reason = response.success ? '响应内容不是有效规则JSON' :
         (response.error || `HTTP ${response.statusCode}`);
       lastError = `${this.importUrlHost(requestUrl)}: ${reason}`;
       if (reason.includes('2300056') || reason.toLowerCase().includes('failed to receive data from the peer')) {
@@ -6793,7 +6804,7 @@ struct BookSourcePage {
         const body = await RawHttpTextClient.get(plainHttpUrl, BOOK_SOURCE_IMPORT_FILE_LIMIT_BYTES,
           BOOK_SOURCE_IMPORT_TIMEOUT_MS);
         if (this.isValidBookSourceJson(body)) return body.replace(/^\uFEFF/, '');
-        lastError = `${this.importUrlHost(plainHttpUrl)}: TCP兜底响应不是有效书源JSON`;
+        lastError = `${this.importUrlHost(plainHttpUrl)}: TCP兜底响应不是有效规则JSON`;
       } catch (tcpError) {
         lastError = `${this.importUrlHost(plainHttpUrl)}: ${this.importErrorMessage(tcpError as Object)}`;
       }
@@ -6805,7 +6816,7 @@ struct BookSourcePage {
       try {
         const body = await this.fetchImportUrlViaWeb(webRequestUrl);
         if (this.isValidBookSourceJson(body)) return body.replace(/^\uFEFF/, '');
-        webFallbackError = '网页取数失败: 浏览器下载内容不是有效书源JSON';
+        webFallbackError = '网页取数失败: 浏览器下载内容不是有效规则JSON';
         lastError = `${this.importUrlHost(webRequestUrl)}: ${webFallbackError}`;
       } catch (webError) {
         webFallbackError = `网页取数失败: ${this.importErrorMessage(webError as Object)}`;
@@ -6820,14 +6831,14 @@ struct BookSourcePage {
       try {
         const body = await this.fetchImportUrlViaDownload(requestUrl);
         if (this.isValidBookSourceJson(body)) return body.replace(/^\uFEFF/, '');
-        lastError = `${this.importUrlHost(requestUrl)}: 下载内容不是有效书源JSON`;
+        lastError = `${this.importUrlHost(requestUrl)}: 下载内容不是有效规则JSON`;
       } catch (downloadError) {
         const downloadMessage = this.importErrorMessage(downloadError as Object);
         const combinedMessage = webFallbackError ? `${webFallbackError}；${downloadMessage}` : downloadMessage;
         lastError = `${this.importUrlHost(requestUrl)}: ${combinedMessage}`;
       }
     }
-    throw new Error(lastError || '获取书源失败');
+    throw new Error(lastError || '获取规则失败');
   }
 
   fetchImportUrlViaWeb(url: string): Promise<string> {
@@ -6868,7 +6879,7 @@ struct BookSourcePage {
         this.webImportDownloadItem = item;
         const totalBytes = item.getTotalBytes();
         if (totalBytes > BOOK_SOURCE_IMPORT_FILE_LIMIT_BYTES) {
-          this.finishWebImport('', '浏览器下载文件过大，请使用 25MB 以内的书源文件');
+          this.finishWebImport('', '浏览器下载文件过大，请使用 25MB 以内的规则文件');
           return;
         }
         try {
@@ -6952,7 +6963,7 @@ struct BookSourcePage {
         enableRoaming: true,
         filePath: filePath,
         background: false,
-        title: '导入书源'
+        title: '导入规则'
       });
       await this.waitForImportDownload(task);
       return await this.readTextFile(filePath);
@@ -6999,7 +7010,7 @@ struct BookSourcePage {
         if (info.status === request.SESSION_SUCCESSFUL) finish();
         else if (info.status === request.SESSION_FAILED) finish(this.downloadServiceErrorMessage(info.failedReason));
       }).catch((queryError: Object): void => {
-        if (!settled) console.warn('查询书源下载状态失败:', queryError);
+        if (!settled) console.warn('查询规则下载状态失败:', queryError);
       });
     });
   }
@@ -7022,7 +7033,7 @@ struct BookSourcePage {
 
   importUrlHost(url: string): string {
     const match = (url || '').match(/^https?:\/\/([^/?#]+)/i);
-    return match ? match[1] : '书源地址';
+    return match ? match[1] : '规则地址';
   }
 
   importUrlOrigin(url: string): string {
@@ -7084,14 +7095,14 @@ struct BookSourcePage {
     try {
       const result = this.parseImportSources(json);
       if (result.nativeProblem) {
-        HdsFeedback.showToast(`原生书源未导入，${result.nativeProblem}`);
+        HdsFeedback.showToast(`原生规则未导入，${result.nativeProblem}`);
         if (result.sources.length === 0) return;
       }
       await this.presentImportedSources(result.sources);
     } catch (e) {
-      console.error('解析书源失败:', e);
+      console.error('解析规则失败:', e);
       const errMsg = this.importErrorMessage(e as Object);
-      HdsFeedback.showToast(`书源格式错误: ${errMsg}`);
+      HdsFeedback.showToast(`规则格式错误: ${errMsg}`);
     }
   }
 
@@ -7116,7 +7127,7 @@ struct BookSourcePage {
       }
     }
 
-    console.log('待解析书源数量:', items.length);
+    console.log('待解析规则数量:', items.length);
 
     for (const item of items) {
       if (NativeSourceSpec.isDefinitionObject(item)) {
@@ -7124,7 +7135,7 @@ struct BookSourcePage {
         try {
           result.sources.push(NativeSourceService.importObject(item));
         } catch (e) {
-          result.nativeProblem = `${String(item['name'] || '原生书源')}：${(e as Error).message || '定义不合法'}`;
+          result.nativeProblem = `${String(item['name'] || '原生规则')}：${(e as Error).message || '定义不合法'}`;
         }
         continue;
       }
@@ -7133,7 +7144,7 @@ struct BookSourcePage {
         result.sources.push(source);
       }
     }
-    console.log('解析到书源数量:', result.sources.length);
+    console.log('解析到规则数量:', result.sources.length);
     return result;
   }
 
@@ -7147,7 +7158,7 @@ struct BookSourcePage {
     const sources = Array.from(byUrl.values());
 
     if (sources.length === 0) {
-      HdsFeedback.showToast('未找到有效的书源');
+      HdsFeedback.showToast('未找到有效的规则');
       return;
     }
 
@@ -7192,7 +7203,7 @@ struct BookSourcePage {
     const shown = groups.slice(0, 3).map((group: string) => `「${group}」`).join('');
     const more = groups.length > 3 ? ` 等 ${groups.length} 个分组` : '';
     const newText = newCount > 0 ? `，其中 ${newCount} 个是新分组` : '';
-    return `${shown}${more}${newText}；不保留时，已有书源沿用本地分组，新书源不分组`;
+    return `${shown}${more}${newText}；不保留时，已有规则沿用本地分组，新规则不分组`;
   }
 
   // 返回 null 表示用户取消了这次导入。
@@ -7200,7 +7211,7 @@ struct BookSourcePage {
     try {
       const confirmation = await promptAction.showDialog({
         title: '保留原分组？',
-        message: `书源自带分组 ${this.importSourceGroupSummary(sources)}。`,
+        message: `规则自带分组 ${this.importSourceGroupSummary(sources)}。`,
         buttons: [
           { text: '不保留', color: this.subTextColor() },
           { text: '保留', color: this.accentColor() }
@@ -7243,7 +7254,7 @@ struct BookSourcePage {
           if (stored) {
             storedUrls.push(source.bookSourceUrl);
             if (!await this.verifyImportedBookSource(db, source)) {
-              throw new Error('写入后校验失败，书源内容未完整保存');
+              throw new Error('写入后校验失败，规则内容未完整保存');
             }
             importCount++;
           } else {
@@ -7252,7 +7263,7 @@ struct BookSourcePage {
         } catch (insertErr) {
           failedCount++;
           lastInsertError = this.importErrorMessage(insertErr as Object);
-          console.error('插入书源失败:', source.bookSourceName, insertErr);
+          console.error('插入规则失败:', source.bookSourceName, insertErr);
         }
       }
     }
@@ -7261,17 +7272,17 @@ struct BookSourcePage {
     await ExploreResultCache.invalidateSources(getContext(this), storedUrls);
     if (importCount === 0) {
       if (lockedCount > 0 && failedCount === 0) {
-        HdsFeedback.showToast(`未导入：${lockedCount} 个同地址书源已锁定，请先解锁后重试`);
+        HdsFeedback.showToast(`未导入：${lockedCount} 个同地址规则已锁定，请先解锁后重试`);
         return;
       }
-      throw new Error(lastInsertError || '书源未能写入本地数据库');
+      throw new Error(lastInsertError || '规则未能写入本地数据库');
     }
 
     const loginCount = sources.filter((source: BookSource) => this.sourceNeedsLogin(source)).length;
     const loginMessage = loginCount > 0 ? `，其中 ${loginCount} 个需要登录` : '';
     const failedMessage = failedCount > 0 ? `，${failedCount} 个失败` : '';
     const lockedMessage = lockedCount > 0 ? `，${lockedCount} 个已锁定未覆盖` : '';
-    HdsFeedback.showToast(`成功导入 ${importCount} 个书源${failedMessage}${lockedMessage}${loginMessage}`);
+    HdsFeedback.showToast(`成功导入 ${importCount} 个规则${failedMessage}${lockedMessage}${loginMessage}`);
     await this.loadSources();
   }
 
@@ -7317,7 +7328,7 @@ struct BookSourcePage {
       await this.persistImportedSources(selected, keepGroups);
       this.cancelImportSourceSelection();
     } catch (e) {
-      console.error('导入所选书源失败:', e);
+      console.error('导入所选规则失败:', e);
       HdsFeedback.showToast(`导入失败: ${this.importErrorMessage(e as Object)}`);
     } finally {
       this.isImporting = false;

@@ -44,7 +44,7 @@ export struct CustomThemePreview {
   @Prop schemeName: string = '';
   @Prop cardImagePath: string = '';
   @Prop logoThemeId: string = '';
-  // 底栏按“其他设置 › 底栏”里选的第四个页签画，和首页一致。
+  // 底栏按“外观 › 底栏”里选的第四个页签画，和首页一致。
   @StorageProp('homeExtraTab') homeExtraTab: string = 'none';
 
   build() {
@@ -414,7 +414,7 @@ export struct CustomThemePreview {
       Column() {
         this.mineRow('主题', false)
         this.mineRow('阅读设置', false)
-        this.mineRow('书源管理', true)
+        this.mineRow('外观', true)
       }
       .width('100%')
       .padding({ left: AppSpacing.MD, right: AppSpacing.MD })

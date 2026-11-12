@@ -130,6 +130,8 @@ struct SettingsPage {
   @StorageProp('readerSmartKeyTurnScope') readerSmartKeyTurnScope: number = 0;
   @StorageProp('readerSmartKeyTurnSupported') readerSmartKeyTurnSupported: boolean = false;
   @StorageProp('audioBookAutoPlay') audioBookAutoPlay: boolean = true;
+  /** 有声书、段评、预缓存只对网页解析的内容有意义，开关关闭时不显示。 */
+  @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
   @StorageProp('ttsSpeed') ttsSpeed: number = 1;
   @StorageLink('readerLongPressSelectText') readerLongPressSelectText: boolean = true;
   @StorageLink('readerCommentCard') readerCommentCard: string = ReaderCommentCardSettings.DEFAULT;
@@ -521,15 +523,17 @@ struct SettingsPage {
           router.pushUrl({ url: 'pages/PdfSettings' });
         }
       })
-      SettingNavRow({
-        title: '有声书',
-        description: '自动播放、边听边下、离线下载',
-        value: this.audioBookAutoPlay ? '自动播放' : '手动播放',
-        icon: $r('sys.symbol.earphone'),
-        onTap: () => {
-          router.pushUrl({ url: 'pages/AudioBookSettings' });
-        }
-      })
+      if (this.webParseEnabled) {
+        SettingNavRow({
+          title: '有声书',
+          description: '自动播放、边听边下、离线下载',
+          value: this.audioBookAutoPlay ? '自动播放' : '手动播放',
+          icon: $r('sys.symbol.earphone'),
+          onTap: () => {
+            router.pushUrl({ url: 'pages/AudioBookSettings' });
+          }
+        })
+      }
       SettingNavRow({
         title: '朗读',
         description: '音色、倍速、MiMo 朗读、在线朗读字数',
@@ -615,15 +619,18 @@ struct SettingsPage {
     .clip(true)
     .backgroundColor(this.cardColor())
 
-    this.sectionTitle('缓存与提示')
+    this.sectionTitle(this.webParseEnabled ? '缓存与提示' : '提示')
     Column() {
       SettingSwitchRow({
         title: 'AI处理标识',
         description: '显示 EPUB 插图、漫画和 PDF 的 AI 处理及超分提示',
         isOn: this.readerAiProcessingIndicatorEnabled,
+        showDivider: this.webParseEnabled,
         onChange: (enabled: boolean): void => this.setReaderAiProcessingIndicatorEnabled(enabled)
       })
-      this.preloadSettingPanel()
+      if (this.webParseEnabled) {
+        this.preloadSettingPanel()
+      }
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: AppSpacing.XXL })
@@ -680,33 +687,35 @@ struct SettingsPage {
     .clip(true)
     .backgroundColor(this.cardColor())
 
-    this.sectionTitle('段评')
-    Column() {
-      this.selectItem('热评卡片', '段评热评显示在段落下方，章末本章说显示为卡片；关闭后只显示气泡',
-        this.commentCardOptions(ReaderCommentCardSettings.STYLE_LABELS),
-        ReaderCommentCardSettings.style(this.readerCommentCard), (index: number) => {
-          this.setReaderCommentCard(index, -1, -1);
-        }, 'settings_comment_card_style_select',
-        ReaderCommentCardSettings.style(this.readerCommentCard) !== ReaderCommentCardSettings.STYLE_OFF)
-      if (ReaderCommentCardSettings.style(this.readerCommentCard) !== ReaderCommentCardSettings.STYLE_OFF) {
-        this.selectItem('每页最多', '只限段评热评，书源自带的热评卡和本章说都会显示',
-          this.commentCardOptions(ReaderCommentCardSettings.MAX_LABELS),
-          Math.max(0, ReaderCommentCardSettings.MAX_VALUES.indexOf(
-            ReaderCommentCardSettings.maxPerPage(this.readerCommentCard))), (index: number) => {
-            this.setReaderCommentCard(-1, ReaderCommentCardSettings.MAX_VALUES[index] ?? -1, -1);
-          }, 'settings_comment_card_max_select')
-        this.selectItem('卡片行数', '热评超出时末尾显示省略号',
-          this.commentCardOptions(ReaderCommentCardSettings.LINE_LABELS),
-          ReaderCommentCardSettings.lines(this.readerCommentCard) - 1, (index: number) => {
-            this.setReaderCommentCard(-1, -1, index + 1);
-          }, 'settings_comment_card_lines_select', false)
+    if (this.webParseEnabled) {
+      this.sectionTitle('段评')
+      Column() {
+        this.selectItem('热评卡片', '段评热评显示在段落下方，章末本章说显示为卡片；关闭后只显示气泡',
+          this.commentCardOptions(ReaderCommentCardSettings.STYLE_LABELS),
+          ReaderCommentCardSettings.style(this.readerCommentCard), (index: number) => {
+            this.setReaderCommentCard(index, -1, -1);
+          }, 'settings_comment_card_style_select',
+          ReaderCommentCardSettings.style(this.readerCommentCard) !== ReaderCommentCardSettings.STYLE_OFF)
+        if (ReaderCommentCardSettings.style(this.readerCommentCard) !== ReaderCommentCardSettings.STYLE_OFF) {
+          this.selectItem('每页最多', '只限段评热评，规则自带的热评卡和本章说都会显示',
+            this.commentCardOptions(ReaderCommentCardSettings.MAX_LABELS),
+            Math.max(0, ReaderCommentCardSettings.MAX_VALUES.indexOf(
+              ReaderCommentCardSettings.maxPerPage(this.readerCommentCard))), (index: number) => {
+              this.setReaderCommentCard(-1, ReaderCommentCardSettings.MAX_VALUES[index] ?? -1, -1);
+            }, 'settings_comment_card_max_select')
+          this.selectItem('卡片行数', '热评超出时末尾显示省略号',
+            this.commentCardOptions(ReaderCommentCardSettings.LINE_LABELS),
+            ReaderCommentCardSettings.lines(this.readerCommentCard) - 1, (index: number) => {
+              this.setReaderCommentCard(-1, -1, index + 1);
+            }, 'settings_comment_card_lines_select', false)
+        }
       }
+      .width('calc(100% - 24vp)')
+      .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+      .borderRadius(ThemeRuntime.cardRadius())
+      .clip(true)
+      .backgroundColor(this.cardColor())
     }
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .borderRadius(ThemeRuntime.cardRadius())
-    .clip(true)
-    .backgroundColor(this.cardColor())
 
     this.sectionTitle('翻页')
     Column() {

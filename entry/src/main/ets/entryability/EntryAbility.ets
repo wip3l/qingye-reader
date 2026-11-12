@@ -1,3 +1,4 @@
+import { WebParseSettingsStore } from '../utils/WebParseSettingsStore';
 import { AppAiHost } from '../utils/AppAiHost';
 import { AiAccessPolicy } from '../account/AiAccessPolicy';
 import { ComicColorizer } from '@legado/aiengine';
@@ -75,6 +76,7 @@ export default class EntryAbility extends UIAbility {
   private footprintBootstrapPromise: Promise<void> = Promise.resolve();
   private homeBackdropBootstrapPromise: Promise<void> = Promise.resolve();
   private homeTabBarBootstrapPromise: Promise<void> = Promise.resolve();
+  private webParseBootstrapPromise: Promise<void> = Promise.resolve();
   private accountBootstrapPromise: Promise<void> = Promise.resolve();
   private membershipThemeTimer: number = -1;
   private deferredStartupScheduled: boolean = false;
@@ -294,6 +296,10 @@ export default class EntryAbility extends UIAbility {
     this.homeTabBarBootstrapPromise = HomeTabBarSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复底栏设置失败:', error);
     });
+    // 首页页签数量取决于这个开关，要在加载首页前恢复。
+    this.webParseBootstrapPromise = WebParseSettingsStore.load(this.context).catch((error: Error) => {
+      console.warn('恢复网页解析开关失败:', error);
+    });
     if (!AppStorage.has(ReaderCommentCardSettings.KEY)) {
       AppStorage.setOrCreate(ReaderCommentCardSettings.KEY, ReaderCommentCardSettings.DEFAULT);
     }
@@ -409,7 +415,8 @@ export default class EntryAbility extends UIAbility {
     Promise.all([this.themeBootstrapPromise, this.immersiveLightBootstrapPromise,
       this.memberSettingsBootstrapPromise, this.networkBootstrapPromise,
       this.smartGripBootstrapPromise, this.homeBackdropBootstrapPromise,
-      this.homeTabBarBootstrapPromise, this.footprintBootstrapPromise]).finally(() => {
+      this.homeTabBarBootstrapPromise, this.footprintBootstrapPromise,
+      this.webParseBootstrapPromise]).finally(() => {
       this.loadStartupContent(windowStage);
     });
   }
@@ -534,7 +541,13 @@ export default class EntryAbility extends UIAbility {
     if (launchParam.launchReason === AbilityConstant.LaunchReason.CONTINUATION) {
       ReadingContinuation.accept(this.context, want);
     }
-    const launchTarget = this.handleLaunchWant(want);
+    let launchTarget = this.handleLaunchWant(want);
+    if (launchTarget === 'bookSource' && !WebParseSettingsStore.enabled()) {
+      // 规则文件只在网页解析开启后接收。
+      AppStorage.setOrCreate('pendingBookSourceImportUri', '');
+      HdsFeedback.showToast('未开启网页解析，无法打开这个文件');
+      launchTarget = '';
+    }
     if (launchTarget && this.mainWindowStage) {
       const targetUrl = launchTarget === 'bookSource' ? 'pages/BookSource' :
         launchTarget === 'themeImport' ? 'pages/ThemeSettings' :
@@ -680,9 +693,16 @@ export default class EntryAbility extends UIAbility {
       return 'themeImport';
     }
     if (externalUri && externalFormat === 'qybook') {
-      // 碰一碰收到的在线书：加入书架（需本机有该书源）并打开到对方的阅读位置。
+      // 碰一碰收到的在线书：加入书架（需本机有对应规则）并打开到对方的阅读位置。
+      // 只在网页解析开启时接收；冷启动时开关还在恢复，等它读完再判断。
       const raw = this.readExternalText(externalUri);
-      if (raw) ReadingContinuation.acceptRaw(this.context, raw);
+      this.webParseBootstrapPromise.finally(() => {
+        if (!WebParseSettingsStore.enabled()) {
+          HdsFeedback.showToast('未开启网页解析，无法打开这个文件');
+        } else if (raw) {
+          ReadingContinuation.acceptRaw(this.context, raw);
+        }
+      });
       return '';
     }
     if (externalUri && externalFormat === 'json') {

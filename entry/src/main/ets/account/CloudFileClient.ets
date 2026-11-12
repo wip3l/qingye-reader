@@ -77,7 +77,7 @@ export class CloudFileClient {
   }
   static async stage(context: Context, uri: string, name: string, kind: string,
     meta: CloudFileMeta | null = null, auto: boolean = false, manifestHash: string = ''): Promise<void> {
-    if (kind !== 'BOOK' && kind !== 'FONT') throw new Error('书源请通过数据同步管理');
+    if (kind !== 'BOOK' && kind !== 'FONT') throw new Error('同步配置请通过数据同步管理');
     if (await CloudFileClient.pending(context)) throw new Error('请先继续或取消上次上传');
     const userId = AccountSessionStore.account().userId;
     if (!userId) throw new Error('请先登录');
@@ -114,7 +114,7 @@ export class CloudFileClient {
     try {
       const task = await CloudFileClient.pending(context);
       if (!task) throw new Error('没有待上传文件');
-      if (task.kind !== 'BOOK' && task.kind !== 'FONT') throw new Error('书源请通过数据同步管理，请取消此上传任务');
+      if (task.kind !== 'BOOK' && task.kind !== 'FONT') throw new Error('同步配置请通过数据同步管理，请取消此上传任务');
       const store = await preferences.getPreferences(context, 'cloud_file_transfers');
       if (!task.manifestHash) {
         const hashes: string[] = [];

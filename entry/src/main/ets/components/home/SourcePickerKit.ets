@@ -18,7 +18,7 @@ import { PopupMenuAction } from '../common/PopupMenuAction';
  */
 export class SourcePickerKit {
   static readonly UNGROUPED: string = '未分组';
-  static readonly SEARCH_PLACEHOLDER: string = '搜索书源名称、地址或分组';
+  static readonly SEARCH_PLACEHOLDER: string = '搜索规则名称、地址或分组';
 
   static groupLabel(group: string | undefined): string {
     const normalized = (group || '').trim();
@@ -44,7 +44,7 @@ export class SourcePickerKit {
   /** 同名书源在名称后补上去掉协议和末尾斜杠的地址；返回与输入同序的显示名。 */
   static displayNames(names: string[], urls: string[]): string[] {
     const counts: Map<string, number> = new Map<string, number>();
-    const normalized = names.map((name: string): string => name || '未命名书源');
+    const normalized = names.map((name: string): string => name || '未命名规则');
     for (const name of normalized) {
       counts.set(name, (counts.get(name) || 0) + 1);
     }
@@ -90,7 +90,7 @@ export struct SourcePickerSearchField {
           .fontColor([ThemeRuntime.subTextColor(this.appDarkMode)])
           .width(28)
           .height(36)
-          .accessibilityText('清空书源搜索')
+          .accessibilityText('清空规则搜索')
           .onClick((): void => this.onTextChange(''))
       }
     }
@@ -148,7 +148,7 @@ export class SourceActionMenuList {
       { kind: SourceActionKind.GROUP, label: '设置分组', icon: $r('sys.symbol.folder'), danger: false }
     ];
     if (isNative) {
-      result.push({ kind: SourceActionKind.SETTINGS, label: '书源设置', icon: $r('sys.symbol.gearshape'), danger: false });
+      result.push({ kind: SourceActionKind.SETTINGS, label: '规则设置', icon: $r('sys.symbol.gearshape'), danger: false });
     }
     result.push({ kind: SourceActionKind.EDIT, label: '编辑', icon: $r('sys.symbol.square_and_pencil'), danger: false });
     result.push({ kind: SourceActionKind.DELETE, label: '删除', icon: $r('sys.symbol.trash'), danger: true });
@@ -246,7 +246,7 @@ export struct SourceVariableEditor {
           .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
       }
 
-      TextArea({ text: this.value, placeholder: this.params.comment || '请输入书源变量' })
+      TextArea({ text: this.value, placeholder: this.params.comment || '请输入规则变量' })
         .width('100%')
         .height(180)
         .fontSize(AppFontSize.BODY)
@@ -296,7 +296,7 @@ export struct SourceVariableEditor {
       this.params.onSaved();
     } catch (error) {
       this.saving = false;
-      console.error('保存书源变量失败:', error);
+      console.error('保存规则变量失败:', error);
       HdsFeedback.showToast('保存源变量失败');
     }
   }
@@ -419,7 +419,7 @@ export struct SourceGroupEditor {
       this.params.onSaved(group);
     } catch (error) {
       this.saving = false;
-      console.error('设置书源分组失败:', error);
+      console.error('设置规则分组失败:', error);
       HdsFeedback.showToast('设置分组失败');
     }
   }
@@ -433,7 +433,7 @@ export struct SourceDeleteConfirm {
 
   build() {
     Column() {
-      Text('删除书源')
+      Text('删除规则')
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
@@ -508,7 +508,7 @@ export class SourceActionRunner {
   static async openVariableEditor(uiContext: UIContext, sourceUrl: string, buildDialog: SourceVariableDialogBuilder,
     onSaved: () => void): Promise<void> {
     if (!sourceUrl) return;
-    const source = await SourceActionRunner.loadSource(uiContext, sourceUrl, '读取书源变量失败');
+    const source = await SourceActionRunner.loadSource(uiContext, sourceUrl, '读取规则变量失败');
     if (!source) return;
     const params = new SourceVariableDialogParams();
     params.url = source.bookSourceUrl;
@@ -528,17 +528,17 @@ export class SourceActionRunner {
   static async openGroupEditor(uiContext: UIContext, sourceUrl: string, buildDialog: SourceGroupDialogBuilder,
     onSaved: (group: string) => void): Promise<void> {
     if (!sourceUrl) return;
-    const source = await SourceActionRunner.loadSource(uiContext, sourceUrl, '读取书源失败');
+    const source = await SourceActionRunner.loadSource(uiContext, sourceUrl, '读取规则失败');
     if (!source) return;
     if (source.isLocked) {
-      HdsFeedback.showToast('锁定的书源不能修改分组');
+      HdsFeedback.showToast('锁定的规则不能修改分组');
       return;
     }
     let groups: string[] = [];
     try {
       groups = await BookSourceGroupStore.loadOrder(uiContext.getHostContext() as Context);
     } catch (error) {
-      console.warn('读取书源分组失败:', error);
+      console.warn('读取规则分组失败:', error);
     }
     const params = new SourceGroupDialogParams();
     params.url = source.bookSourceUrl;
@@ -557,10 +557,10 @@ export class SourceActionRunner {
   static async confirmDelete(uiContext: UIContext, sourceUrl: string, buildDialog: SourceDeleteDialogBuilder,
     onDeleted: (url: string) => void): Promise<void> {
     if (!sourceUrl) return;
-    const source = await SourceActionRunner.loadSource(uiContext, sourceUrl, '读取书源失败');
+    const source = await SourceActionRunner.loadSource(uiContext, sourceUrl, '读取规则失败');
     if (!source) return;
     if (source.isLocked) {
-      HdsFeedback.showToast('锁定的书源不能删除');
+      HdsFeedback.showToast('锁定的规则不能删除');
       return;
     }
     const params = new SourceDeleteDialogParams();
@@ -573,7 +573,7 @@ export class SourceActionRunner {
     SourceActionRunner.deleteSession.open(uiContext, buildDialog(params), {
       autoCancel: true,
       maskColor: ThemeRuntime.scrimColor(AppStorage.get<boolean>('appDarkMode') === true),
-      warnTag: '显示删除书源弹窗失败:'
+      warnTag: '显示删除规则弹窗失败:'
     });
   }
 
@@ -585,11 +585,11 @@ export class SourceActionRunner {
       await db.initWithContext(context);
       await db.deleteBookSource(sourceUrl);
       await ExploreResultCache.clearSource(context, sourceUrl);
-      HdsFeedback.showToast('书源已删除');
+      HdsFeedback.showToast('规则已删除');
       onDeleted(sourceUrl);
     } catch (e) {
-      console.error('删除书源失败:', e);
-      HdsFeedback.showToast('删除书源失败');
+      console.error('删除规则失败:', e);
+      HdsFeedback.showToast('删除规则失败');
     }
   }
 
@@ -599,7 +599,7 @@ export class SourceActionRunner {
       await db.initWithContext(uiContext.getHostContext() as Context);
       const source = await db.getBookSource(sourceUrl);
       if (!source) {
-        HdsFeedback.showToast('书源不存在');
+        HdsFeedback.showToast('规则不存在');
         return null;
       }
       return source;

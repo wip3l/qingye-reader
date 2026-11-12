@@ -9,7 +9,7 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { FootprintLayout, FootprintSection } from '../utils/FootprintLayout';
 
-/** 其他设置 › 足迹页内容：每块的开关、拖动排序、显示数量。改了立即生效。 */
+/** 外观 › 底栏 › 足迹页内容：每块的开关、拖动排序、显示数量。改了立即生效。 */
 @Entry
 @Component
 struct FootprintLayoutSettingsPage {

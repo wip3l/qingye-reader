@@ -136,7 +136,7 @@ export class ReadingContinuation {
     if (!book) {
       const name = payload.book.name ? `《${payload.book.name}》` : '这本书';
       ReadingContinuation.toast(payload.localContentHash ? `这台设备上没有${name}的本地文件` :
-        `这台设备上没有${name}的书源，请先导入书源`);
+        `这台设备上没有${name}的规则，请先导入规则`);
       return;
     }
     RecentReadShortcut.requestBook(book.bookUrl);

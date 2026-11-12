@@ -1044,7 +1044,7 @@ struct ReaderReplaceRulesPage {
           .width('100%')
         }
 
-        this.textAreaField('特定范围', this.draft.scope, '书名、作者、书源或地址；留空表示全部', (value: string) => {
+        this.textAreaField('特定范围', this.draft.scope, '书名、作者、规则或地址；留空表示全部', (value: string) => {
           this.draft.scope = value;
           this.refreshDraft();
         })

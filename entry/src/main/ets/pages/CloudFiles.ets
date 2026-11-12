@@ -116,7 +116,7 @@ struct CloudFilesPage {
           .padding(AppSpacing.LG)
           .onClick(() => { this.more() })
       }
-      Text('此处管理书籍和字体文件。书源通过数据同步自动保存，无需在这里上传；其占用计入共用的 1GB 空间。每个北京时间自然月有 1GB 文件下载额度，每月1日零点重置，未用不结转。短时重试复用下载授权，过期后重新下载会再次计量。上传中和待清理的文件仍占用空间。')
+      Text('此处管理书籍和字体文件。同步配置通过数据同步自动保存，无需在这里上传；其占用计入共用的 1GB 空间。每个北京时间自然月有 1GB 文件下载额度，每月1日零点重置，未用不结转。短时重试复用下载授权，过期后重新下载会再次计量。上传中和待清理的文件仍占用空间。')
         .fontSize(AppFontSize.CAPTION)
         .lineHeight(18)
         .fontColor(ThemeRuntime.subTextColor(this.dark))
@@ -400,7 +400,7 @@ struct CloudFilesPage {
     if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(bytes % 1073741824 === 0 ? 0 : 2)} GB`;
     return bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
   }
-  kind(value: string): string { return value === 'BOOK' ? '书籍' : value === 'FONT' ? '字体' : '书源'; }
+  kind(value: string): string { return value === 'BOOK' ? '书籍' : value === 'FONT' ? '字体' : '配置'; }
   status(value: string): string { return value === 'READY' ? '已同步' : value === 'DELETING' ? '清理中' : '上传中'; }
   async refresh(preserveError: boolean = false): Promise<void> {
     if (this.busy) return;

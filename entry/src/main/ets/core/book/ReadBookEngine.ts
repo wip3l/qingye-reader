@@ -786,6 +786,7 @@ export class ReadBookEngine {
     return ReaderActionMarker.hasLegacy(text) || text.includes('免登录访问次数已达上限') || text.includes('继续阅读请登录') ||
       text.includes('请登录后刷新') || text.includes('今日免登录访问次数') ||
       text.includes('当前书源需要登录') || text.includes('该书源需要先完成网页验证') ||
+      text.includes('该规则需要先完成网页验证') ||
       text.includes('登录信息已失效') || text.includes('账号信息异常') ||
       text.includes('请重新登录') || text.includes('请重新登陆') ||
       text.includes('JSON.parse(undefined)') || text.includes('企点正文接口返回异常') ||

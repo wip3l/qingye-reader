@@ -71,7 +71,7 @@ export class AppDataBackupExportResult {
   summary(): string {
     const manifest = this.manifest;
     const parts: string[] = [];
-    if (manifest.categories.includes('sources')) parts.push(`书源 ${manifest.sources.length}`);
+    if (manifest.categories.includes('sources')) parts.push(`规则 ${manifest.sources.length}`);
     if (manifest.categories.includes('bookshelf')) parts.push(`网络书籍 ${manifest.books.length}`);
     if (manifest.categories.includes('progress')) parts.push(`进度 ${manifest.progress.length}`);
     if (manifest.categories.includes('bookmarks')) parts.push(`书签 ${manifest.bookmarks.length}`);
@@ -111,7 +111,7 @@ export class AppDataBackupImportResult {
 
   summary(): string {
     const parts: string[] = [];
-    if (this.sources > 0) parts.push(`书源 ${this.sources}`);
+    if (this.sources > 0) parts.push(`规则 ${this.sources}`);
     if (this.books > 0) parts.push(`书架 ${this.books}`);
     if (this.bookGroups > 0) parts.push(`分组 ${this.bookGroups}`);
     if (this.localBooks > 0) parts.push(`本地图书 ${this.localBooks}`);
@@ -662,7 +662,7 @@ export class AppDataBackupService {
 
     if (selection.sources &&
       AppDataBackupService.hasCategory(session.manifest, AppDataBackupService.CATEGORY_SOURCES)) {
-      AppDataBackupService.reportProgress(onProgress, '正在导入 Android 书源...', 10);
+      AppDataBackupService.reportProgress(onProgress, '正在导入 Android 规则...', 10);
       await AppDataBackupService.forEachAndroidJsonArray(session.rootPath,
         AppDataBackupService.ANDROID_SOURCE_FILE, AppDataBackupService.ANDROID_MAX_SOURCE_BYTES,
         async (raw: Record<string, Object>, index: number, offset: number, total: number): Promise<void> => {
@@ -671,7 +671,7 @@ export class AppDataBackupService {
           await db.restoreBookSource(source);
           result.sources++;
           if (index % 100 === 0) {
-            AppDataBackupService.reportProgress(onProgress, '正在导入 Android 书源...',
+            AppDataBackupService.reportProgress(onProgress, '正在导入 Android 规则...',
               10 + Math.floor(offset * 42 / Math.max(1, total)));
           }
         });

@@ -1,3 +1,4 @@
+import { WebParseSettingsStore } from '../../utils/WebParseSettingsStore';
 import { router } from '@kit.ArkUI';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction } from '../common/PopupMenuAction';
@@ -58,6 +59,8 @@ export struct ListenTabPage {
   @StorageProp('globalTtsVoiceCode') ttsVoiceCode: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @State showTimerMenu: boolean = false;
+  /** 有声书来自网页解析，开关关闭时不显示有声书相关的入口和文案。 */
+  @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
   @StorageProp('shelfUpdateTime') @Watch('onShelfUpdated') shelfUpdateTime: number = 0;
   private scroller: Scroller = new Scroller();
   private alive: boolean = false;
@@ -67,6 +70,11 @@ export struct ListenTabPage {
     { icon: $r('sys.symbol.earphone'), title: '音色管理', url: 'pages/CustomTtsVoiceManager' },
     { icon: $r('sys.symbol.square_and_arrow_down'), title: '有声书下载', url: 'pages/AudioBookSettings' }
   ];
+
+  visibleEntries(): ListenEntry[] {
+    return this.webParseEnabled ? this.entries :
+      this.entries.filter((entry: ListenEntry): boolean => entry.url !== 'pages/AudioBookSettings');
+  }
 
   aboutToAppear(): void {
     this.alive = true;
@@ -86,7 +94,7 @@ export struct ListenTabPage {
     try {
       await appDb.init(getContext(this));
       const books = (await appDb.getAllBooks())
-        .filter((book: Book): boolean => BookTypeSupport.isAudio(book))
+        .filter((book: Book): boolean => BookTypeSupport.isAudio(book) && WebParseSettingsStore.visibleBook(book.origin))
         .sort((a: Book, b: Book): number => (b.durChapterTime || 0) - (a.durChapterTime || 0));
       if (!this.alive || version !== this.loadVersion) return;
       const items = books.map((book: Book): ListenBookItem => {
@@ -164,7 +172,7 @@ export struct ListenTabPage {
           }
 
           Row({ space: AppSpacing.MD }) {
-            ForEach(this.entries, (entry: ListenEntry) => {
+            ForEach(this.visibleEntries(), (entry: ListenEntry) => {
               this.entryTile(entry)
             }, (entry: ListenEntry) => entry.url)
           }
@@ -491,10 +499,11 @@ export struct ListenTabPage {
       SymbolGlyph($r('sys.symbol.earphone'))
         .fontSize(32)
         .fontColor([this.subTextColor()])
-      Text('还没有有声书')
+      Text(this.webParseEnabled ? '还没有有声书' : '还没有在听的内容')
         .fontSize(AppFontSize.BODY_LARGE)
         .fontColor(this.primaryTextColor())
-      Text('在发现或搜索里找到有声书加入书架，或在阅读页开始朗读，这里就会出现')
+      Text(this.webParseEnabled ? '在发现或搜索里找到有声书加入书架，或在阅读页开始朗读，这里就会出现' :
+        '在阅读页开始朗读，这里就会出现')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .textAlign(TextAlign.Center)
