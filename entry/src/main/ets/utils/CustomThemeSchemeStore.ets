@@ -5,6 +5,8 @@ import { AppThemeSettings, AppThemeSettingsStore } from './AppThemeSettingsStore
 import { CloudSyncChangeTracker } from '../account/CloudSyncChangeTracker';
 import { CustomThemeQuota } from '../account/CustomThemeQuota';
 import { ReaderSettingsStore } from './ReaderSettingsStore';
+import { ThemePackRegistry } from '../theme/ThemePackRegistry';
+import { ThemePackStore } from './ThemePackStore';
 
 export class CustomThemeScheme {
   id: string = '';
@@ -63,7 +65,33 @@ export class CustomThemeSchemeStore {
       CustomThemeSchemeStore.STORAGE_REVISION,
       AppStorage.get<number>(CustomThemeSchemeStore.STORAGE_REVISION) || 0
     );
+    CustomThemeSchemeStore.syncPackNames(context, schemes);
     return CustomThemeSchemeStore.cloneSchemes(schemes);
+  }
+
+  /**
+   * 方案自己的素材包也会作为主题出现在各部件的来源下拉里，名字要跟方案一致。
+   * 包名在第一次上传素材（或导入）时取自方案名，改名、复制、云端同步之后在这里跟上；
+   * 同一个包被多套方案引用时不改，免得两套方案互相覆盖名字。
+   */
+  private static syncPackNames(context: Context, schemes: CustomThemeScheme[]): void {
+    const owners = new Map<string, number>();
+    for (const scheme of schemes) {
+      if (scheme.packageId) owners.set(scheme.packageId, (owners.get(scheme.packageId) || 0) + 1);
+    }
+    for (const scheme of schemes) {
+      if (!scheme.packageId || owners.get(scheme.packageId) !== 1 || !scheme.name) continue;
+      const pack = ThemePackRegistry.getByPackageId(scheme.packageId);
+      if (!pack || pack.name === scheme.name) continue;
+      try {
+        const record = ThemePackStore.readRecord(context, scheme.packageId);
+        if (!record) continue;
+        record.name = scheme.name;
+        ThemePackStore.install(context, record);
+      } catch (e) {
+        console.warn('同步方案素材包名称失败:', (e as Error).message);
+      }
+    }
   }
 
   static async saveScheme(
@@ -372,6 +400,7 @@ export class CustomThemeSchemeStore {
     const revision = (AppStorage.get<number>(CustomThemeSchemeStore.STORAGE_REVISION) || 0) + 1;
     AppStorage.setOrCreate(CustomThemeSchemeStore.STORAGE_REVISION, revision);
     CloudSyncChangeTracker.markPreferenceChanged();
+    CustomThemeSchemeStore.syncPackNames(context, schemes);
   }
 
   static async replaceFromSync(
