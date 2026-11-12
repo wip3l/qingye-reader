@@ -2,6 +2,10 @@ import { audio } from '@kit.AudioKit';
 import { media } from '@kit.MediaKit';
 import fs from '@ohos.file.fs';
 import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
+import { TtsAudioSession, TtsAudioSessionHintListener } from './TtsAudioSession';
+
+// 和朗读共用应用的音频会话（两者不会同时播放）：借它让系统把“停止”改成“暂停”，并收到会话级通知。
+const AUDIO_SESSION_OWNER: string = 'audiobook';
 
 export interface RemoteAudioPlaybackListener {
   onStateChanged(state: string): void;
@@ -38,6 +42,12 @@ export class RemoteAudioPlayback {
   private seekTimeoutId: number = -1;
   /** 正在播放的离线音频文件；播放器释放后才关闭。 */
   private localFile: fs.File | null = null;
+  // 会话级焦点通知没有流对象：交给当前播放器，按强制打断处理（系统已替应用暂停或停止了流）。
+  private readonly sessionHintListener: TtsAudioSessionHintListener = (hint: audio.InterruptHint): void => {
+    const player = this.player;
+    if (player) this.handleInterruptHint(player, this.generation, hint, audio.InterruptForceType.INTERRUPT_FORCE,
+      'session');
+  };
 
   bookUrl: string = '';
   chapterIndex: number = -1;
@@ -179,6 +189,8 @@ export class RemoteAudioPlayback {
         this.resetSeek();
         this.positionMs = 0;
       }
+      await this.acquireAudioSession();
+      if (generation !== this.generation) return;
       await player.play();
       timing.mark('play');
       if (generation === this.generation && player === this.player) {
@@ -217,6 +229,7 @@ export class RemoteAudioPlayback {
     this.userPaused = true;
     this.interruptPaused = false;
     this.interruptRevision++;
+    TtsAudioSession.release(AUDIO_SESSION_OWNER);
     const player = this.player;
     if (!player || player.state !== 'playing') return;
     await player.pause();
@@ -239,6 +252,8 @@ export class RemoteAudioPlayback {
     if (player && (playerState === 'paused' || playerState === 'prepared' || playerState === 'completed')) {
       try {
         if (playerState === 'completed') player.seek(0, media.SeekMode.SEEK_CLOSEST);
+        await this.acquireAudioSession();
+        if (player !== this.player || revision !== this.interruptRevision || this.userPaused) return;
         await player.play();
         if (player !== this.player) return;
         if (this.userPaused || this.interruptPaused) {
@@ -334,6 +349,8 @@ export class RemoteAudioPlayback {
     this.interruptPaused = false;
     this.resetSeek();
     this.clearSleepTimer();
+    TtsAudioSession.removeHintListener(this.sessionHintListener);
+    TtsAudioSession.release(AUDIO_SESSION_OWNER);
     await this.releasePlayer();
     this.bookUrl = '';
     this.chapterIndex = -1;
@@ -344,8 +361,15 @@ export class RemoteAudioPlayback {
     this.setState('idle');
   }
 
+  private async acquireAudioSession(): Promise<void> {
+    TtsAudioSession.addHintListener(this.sessionHintListener);
+    await TtsAudioSession.acquire(AUDIO_SESSION_OWNER);
+  }
+
   private setState(state: string): void {
     if (this.state === state) return;
+    // 播完、出错时不再占着会话；被打断停住（stopped）时要留着，等恢复通知。
+    if (state === 'completed' || state === 'error') TtsAudioSession.release(AUDIO_SESSION_OWNER);
     this.state = state || 'idle';
     this.listener?.onStateChanged(this.state);
   }
@@ -378,10 +402,15 @@ export class RemoteAudioPlayback {
 
   private handleAudioInterrupt(player: media.AVPlayer, generation: number,
     event: audio.InterruptEvent): void {
+    this.handleInterruptHint(player, generation, event.hintType, event.forceType, 'stream');
+  }
+
+  private handleInterruptHint(player: media.AVPlayer, generation: number, hint: audio.InterruptHint,
+    forceType: audio.InterruptForceType, from: string): void {
     if (generation !== this.generation || player !== this.player) return;
-    const hint = event.hintType;
+    console.info(`[AudioBook] audio interrupt: from=${from},hint=${hint},force=${forceType},state=${player.state}`);
     if (hint === audio.InterruptHint.INTERRUPT_HINT_DUCK) {
-      if (event.forceType === audio.InterruptForceType.INTERRUPT_SHARE) {
+      if (forceType === audio.InterruptForceType.INTERRUPT_SHARE) {
         try { player.setVolume(0.35); } catch (_) {}
       }
       return;
@@ -393,7 +422,7 @@ export class RemoteAudioPlayback {
     if (hint === audio.InterruptHint.INTERRUPT_HINT_PAUSE) {
       this.interruptRevision++;
       this.interruptPaused = !this.userPaused;
-      if (event.forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
+      if (forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
         this.interruptPausePromise = player.pause().catch((error: Error) => {
           console.warn('[AudioBook] interrupt pause failed:', error);
         });
@@ -403,12 +432,14 @@ export class RemoteAudioPlayback {
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_STOP) {
       this.interruptRevision++;
-      this.interruptPaused = false;
-      this.userPaused = true;
-      if (event.forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
+      // 永久停止也按可恢复的打断处理，不记成用户暂停：API 26 起会话已让系统改成暂停、之后会发恢复；
+      // 没改成的，等通话、其他应用的媒体声音结束后自己接着播（播放器已停住时 resume() 会重建）。
+      this.interruptPaused = !this.userPaused;
+      if (forceType === audio.InterruptForceType.INTERRUPT_SHARE && player.state === 'playing') {
         this.interruptPausePromise = player.pause().catch(() => {});
       }
       this.syncStateAfterInterrupt(player, generation);
+      if (this.interruptPaused) this.resumeWhenOtherAudioEnds(player, generation, this.interruptRevision);
       return;
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_RESUME) {
@@ -421,6 +452,25 @@ export class RemoteAudioPlayback {
         }
       });
     }
+  }
+
+  /** 系统对永久停止不发恢复通知：等对方声音结束后，按收到恢复处理。 */
+  private resumeWhenOtherAudioEnds(player: media.AVPlayer, generation: number, revision: number): void {
+    const cancelled = (): boolean => generation !== this.generation || player !== this.player ||
+      revision !== this.interruptRevision || this.userPaused || !this.interruptPaused;
+    this.resumeAfterOtherAudio(player, generation, cancelled).catch((error: Error) => {
+      if (generation === this.generation && player === this.player) {
+        this.listener?.onPlaybackError(error.message || String(error));
+      }
+    });
+  }
+
+  private async resumeAfterOtherAudio(player: media.AVPlayer, generation: number,
+    cancelled: () => boolean): Promise<void> {
+    const ended = await TtsAudioSession.waitForOtherAudioToEnd(cancelled);
+    if (!ended || cancelled()) return;
+    console.info(`[AudioBook] resume after other audio ended: state=${player.state}`);
+    await this.resumeAfterInterrupt(player, generation, ++this.interruptRevision);
   }
 
   private async resumeAfterInterrupt(player: media.AVPlayer, generation: number,

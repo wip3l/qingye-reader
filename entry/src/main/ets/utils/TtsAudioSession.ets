@@ -11,6 +11,7 @@ const OTHER_AUDIO_POLL_MS: number = 1500;
 const OTHER_AUDIO_QUIET_POLLS: number = 2;
 const OTHER_AUDIO_MAX_WAIT_MS: number = 60 * 60 * 1000;
 
+/** 应用的音频会话，朗读和有声书共用（两者不会同时播放），按 owner 计数，全部释放后才停用。 */
 export class TtsAudioSession {
   private static manager: audio.AudioSessionManager | null = null;
   private static owners: Set<string> = new Set<string>();
