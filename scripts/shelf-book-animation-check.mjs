@@ -232,6 +232,7 @@ const taggedBook = makeBook('1');
 Object.assign(badge, {
   shelfUpdateAcknowledgedAt: new Map(), shelfComponentActive: true, allBooks: [taggedBook],
   applyShelfScope() {}, reloadShelfDataSources() { shelfRebuilds++; },
+  hasShelfRefreshError: () => false, clearShelfRefreshError() {},
   persistShelfBookUpdateAcknowledgement() { persisted++; return Promise.resolve(); }
 });
 storage.set('shelfBookMotionUntil', now + 800);

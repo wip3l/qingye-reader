@@ -15,6 +15,7 @@ const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve();
 const context = vm.createContext({
   console: { error() {}, warn() {} },
   CloudAutoSync: { isPlaceholder: () => false },
+  BookTypeSupport: { isAudio: book => book.type === 'audio' },
   BookshelfSortHelper: { holdReadTime() {}, releaseReadTimes() {} },
   LocalBookService: {
     isPdfBook: book => book.format === 'pdf',

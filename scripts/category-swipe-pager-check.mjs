@@ -238,6 +238,12 @@ for (const [file, prefix] of [['ExplorePage', 'explore'], ['SearchPage', 'search
   const distance = isSearch ? page.searchCollapsibleHeight() : page.exploreCollapsibleHeight();
   const collapseKey = `${prefix}HeaderCollapse`;
   const value = () => page[`${prefix}HeaderCollapseValue`]();
+  if (isSearch) {
+    // 一条结果都没有时顶栏完整显示；只要别的分类有结果，切到空分类仍保持收起。
+    page[collapseKey] = distance;
+    assert.equal(value(), 0, 'SearchPage: no result list keeps the header expanded');
+    page.displayedSearchResults = [{}];
+  }
   page[collapseKey] = distance;
   assert.equal(value(), distance, `${file}: loading/empty incoming page preserves the collapsed header`);
   const expandedInset = page[`${prefix}TopOverlayHeight`]();

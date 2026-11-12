@@ -35,7 +35,7 @@ const context = vm.createContext({
     cancelPendingRequests() { this.cancelled = true; }
   },
   AppDatabase: { getInstance: () => ({ updateBook: async book => saves.push(structuredClone(book)) }) },
-  HdsFeedback: { showToast: text => notices.push(text) }, ReaderTtsFloatingSession: { pause: async () => {} },
+  HdsFeedback: { showToast: text => notices.push(text) }, ReaderTtsFloatingSession: { pause: async () => {}, suspendForOtherAudio: async () => {}, resumeAfterOtherAudio: async () => {} },
   CookieStore: { saveSync() {} },
   setTimeout: (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; },
   clearTimeout: id => timers.delete(id), CONTROLS_HIDE_DELAY_MS: 4000, SPEEDS: [1, 1.25, 1.75, 2, 0.75],
