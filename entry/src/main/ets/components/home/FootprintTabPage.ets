@@ -431,9 +431,9 @@ export struct FootprintTabPage {
         .color(ThemeRuntime.hairlineColor(this.appDarkMode))
 
       Row() {
-        this.statCell('日均', this.loading ? '—' : this.durationText(this.summary.averageMs))
-        this.statCell('读书天数', this.loading ? '—' : `${this.summary.activeDays} 天`)
-        this.statCell('读过', this.loading ? '—' : `${this.summary.items.length} 本`)
+        this.statCell('日均', 'average')
+        this.statCell('读书天数', 'days')
+        this.statCell('读过', 'books')
       }
       .width('100%')
     }
@@ -444,13 +444,15 @@ export struct FootprintTabPage {
     .onClick(() => this.openStats())
   }
 
+  // 按值传入 @Builder 的参数不会随状态刷新：首次渲染时还在加载，传进来的“—”会一直留着。
+  // 所以只传固定的统计项，数值在 builder 内读状态。
   @Builder
-  statCell(label: string, value: string) {
+  statCell(label: string, kind: string) {
     Column({ space: AppSpacing.XXS }) {
       Text(label)
         .fontSize(AppFontSize.MICRO)
         .fontColor(this.subTextColor())
-      Text(value)
+      Text(this.statValue(kind))
         .fontSize(AppFontSize.BODY_LARGE)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.primaryTextColor())
@@ -459,6 +461,13 @@ export struct FootprintTabPage {
     }
     .layoutWeight(1)
     .alignItems(HorizontalAlign.Start)
+  }
+
+  private statValue(kind: string): string {
+    if (this.loading) return '—';
+    if (kind === 'average') return this.durationText(this.summary.averageMs);
+    if (kind === 'days') return `${this.summary.activeDays} 天`;
+    return `${this.summary.items.length} 本`;
   }
 
   /** 本月日历：每天一格，颜色越深读得越久，今天加圈。 */
