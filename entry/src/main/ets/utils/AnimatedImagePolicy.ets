@@ -104,6 +104,15 @@ export class AnimatedImagePolicy {
     return '';
   }
 
+  /**
+   * 只看文件头的同步判断：本地 GIF、带动画标志的 WebP 返回 true（单帧 GIF 也算），其他格式、资源引用和网络地址
+   * 返回 false。给需要在构建时立刻决定排版方式的地方用，比如阅读背景。
+   */
+  static mayBeAnimatedFile(src: string): boolean {
+    const path = AnimatedImagePolicy.localPath(src);
+    return !!path && AnimatedImagePolicy.mayBeAnimated(path);
+  }
+
   /** 是不是多帧图片（GIF / 动态 WebP）。读不出来时按不是处理。 */
   static async isAnimated(uri: string): Promise<boolean> {
     return (await AnimatedImagePolicy.inspect(uri)).animated;

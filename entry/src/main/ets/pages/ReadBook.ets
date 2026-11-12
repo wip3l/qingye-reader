@@ -20,7 +20,7 @@ import { ReaderScreenScrollMotion } from '../core/reader/ReaderScreenScrollMotio
 import displaySync from '@ohos.graphics.displaySync';
 import { ThemeBookCoverSettings } from '../utils/ThemeBookCoverSettings';
 import { NativeSourceService, HttpClient, Book, BookChapter, Bookmark, BookSource, HttpTTS, BookTypeSupport, VerificationSupport, ReaderActionData, ReaderActionMarker, ReaderActionMatch, BookSourceStageWebRuntime, StageWebRuntimeRequest, WebBookFetchRuntime, SourceRuntimeStage, CooperativeScheduler, sleepMs } from '@legado/sourceengine';
-import { router, window, promptAction } from '@kit.ArkUI';
+import { router, window, promptAction, RectShape } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { inputConsumer, KeyCode, Action, KeyEvent as InputKeyEvent } from '@kit.InputKit';
@@ -101,6 +101,7 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ThemeRegexEmphasisModes } from '../theme/ThemeModels';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
+import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import { ReaderContentPreprocessor } from '../core/concurrency/ReaderContentPreprocessor';
 import { ReaderTextConvert } from '../core/reader/ReaderTextConvert';
 import { ReaderTextConvertRuntime } from '../core/reader/ReaderTextConvertRuntime';
@@ -354,6 +355,9 @@ struct ReadBookPage {
   @State tocReverseOrder: boolean = false;
   private tocPanelController: ReaderTocPanelController = new ReaderTocPanelController();
   private openingBookDetail: boolean = false;
+  // readerBackgroundMayBeAnimated 的缓存；初值用一个不会出现的地址，保证第一次一定探测。
+  private readerAnimatedBackgroundProbeUri: string = '<unprobed>';
+  private readerAnimatedBackgroundProbeResult: boolean = false;
   @State currentChapterIndex: number = 0;
   @State menuChapterPreviewIndex: number = 0;
   @State menuChapterSliderActive: boolean = false;
@@ -15326,6 +15330,9 @@ ${leading}` : leading;
           this.readerCurrentPageSurface(currentRenderVersion, currentText, ttsRenderVersion)
           this.readerIncomingPageSurface(this.pageTurnIncomingRenderVersion,
             this.getVisiblePageTurnIncomingText(), 'incoming_primary')
+          if (this.stackPageTurnClipsCurrentText()) {
+            this.readerStackPageTurnEdgeShadow()
+          }
         } else {
           this.readerIncomingPageSurface(this.pageTurnIncomingRenderVersion,
             this.getVisiblePageTurnIncomingText(), 'incoming_primary')
@@ -15355,6 +15362,9 @@ ${leading}` : leading;
           this.readerCurrentPageSurfaceAlternate(currentRenderVersion, currentText, ttsRenderVersion)
           this.readerIncomingPageSurface(this.pageTurnIncomingRenderVersion,
             this.getVisiblePageTurnIncomingText(), 'incoming_alternate')
+          if (this.stackPageTurnClipsCurrentText()) {
+            this.readerStackPageTurnEdgeShadow()
+          }
         } else {
           this.readerIncomingPageSurface(this.pageTurnIncomingRenderVersion,
             this.getVisiblePageTurnIncomingText(), 'incoming_alternate')
@@ -15402,6 +15412,53 @@ ${leading}` : leading;
     .width('100%')
     .height('100%')
     .hitTestBehavior(HitTestMode.None)
+  }
+
+  /**
+   * 背景动图时叠页的纸是透明的，盖上来的那页没有边，只在它的前缘朝被盖住的一侧投一道窄阴影，看得出是一页压上来。
+   */
+  @Builder
+  readerStackPageTurnEdgeShadow() {
+    Column()
+      .width(this.isVerticalPageTurnAnimation() ? '100%' : PUSH_PAGE_TURN_SHADOW_SIZE)
+      .height(this.isVerticalPageTurnAnimation() ? PUSH_PAGE_TURN_SHADOW_SIZE : '100%')
+      .position(this.isVerticalPageTurnAnimation() ?
+        { x: 0, y: this.stackPageTurnEdgeShadowStart() } : { x: this.stackPageTurnEdgeShadowStart(), y: 0 })
+      .linearGradient({
+        direction: this.stackPageTurnEdgeShadowDirection(),
+        colors: [['#00000000', 0], [this.isReaderThemeDark() ? '#66000000' : '#2E000000', 1]]
+      })
+      .opacity(this.stackPageTurnEdgeShadowOpacity())
+      .hitTestBehavior(HitTestMode.None)
+  }
+
+  /** 目标页前缘：从后面盖进来时是它的左（上）边，从前面盖进来时是它的右（下）边。 */
+  stackPageTurnEdge(): number {
+    const vertical = this.isVerticalPageTurnAnimation();
+    const extent = vertical ? this.getPageTurnHeight() : this.getPageTurnWidth();
+    const incoming = vertical ? this.getIncomingSlideY() : this.getIncomingSlideX();
+    return Math.max(0, Math.min(extent, incoming < 0 ? incoming + extent : incoming));
+  }
+
+  stackPageTurnEdgeShadowStart(): number {
+    const incoming = this.isVerticalPageTurnAnimation() ? this.getIncomingSlideY() : this.getIncomingSlideX();
+    return incoming < 0 ? this.stackPageTurnEdge() : this.stackPageTurnEdge() - PUSH_PAGE_TURN_SHADOW_SIZE;
+  }
+
+  stackPageTurnEdgeShadowDirection(): GradientDirection {
+    const vertical = this.isVerticalPageTurnAnimation();
+    const incoming = vertical ? this.getIncomingSlideY() : this.getIncomingSlideX();
+    if (vertical) {
+      return incoming < 0 ? GradientDirection.Top : GradientDirection.Bottom;
+    }
+    return incoming < 0 ? GradientDirection.Left : GradientDirection.Right;
+  }
+
+  // 前缘贴着屏幕边（刚起步或快盖满）时阴影随露出的距离渐隐，免得边上突然冒出一道黑线。
+  stackPageTurnEdgeShadowOpacity(): number {
+    const extent = this.isVerticalPageTurnAnimation() ? this.getPageTurnHeight() : this.getPageTurnWidth();
+    const edge = this.stackPageTurnEdge();
+    return Math.max(0, Math.min(1, Math.min(edge, extent - edge) / PUSH_PAGE_TURN_SHADOW_SIZE));
   }
 
   @Builder
@@ -15609,7 +15666,7 @@ ${leading}` : leading;
   @Builder
   readerCurrentPageSurface(renderVersion: number, text: string, ttsRenderVersion: number) {
     Stack() {
-      if (this.pageTurnSheetsOwnPaper() || this.isSimulationPageTurnAnimation() ||
+      if (this.pageTurnSheetsPaintPaper() || this.isSimulationPageTurnAnimation() ||
         this.is3DPageTurnAnimation()) {
         // Stack, push and simulation animate/snapshot a full-screen sheet, so their page must own the paper artwork.
         // Slide and fade live below the status-bar inset: painting the same Cover image here would restart its
@@ -15622,6 +15679,7 @@ ${leading}` : leading;
       .width('100%')
       .height('100%')
       .padding({ top: this.getReaderPageContentTopPadding() })
+      .clipShape(this.stackPageTurnUncoveredClip())
     }
     .width('100%')
     .height('100%')
@@ -15634,7 +15692,7 @@ ${leading}` : leading;
   @Builder
   readerCurrentPageSurfaceAlternate(renderVersion: number, text: string, ttsRenderVersion: number) {
     Stack() {
-      if (this.pageTurnSheetsOwnPaper() || this.isSimulationPageTurnAnimation() ||
+      if (this.pageTurnSheetsPaintPaper() || this.isSimulationPageTurnAnimation() ||
         this.is3DPageTurnAnimation()) {
         this.readerSimulationPaperBackground()
       }
@@ -15644,6 +15702,7 @@ ${leading}` : leading;
       .width('100%')
       .height('100%')
       .padding({ top: this.getReaderPageContentTopPadding() })
+      .clipShape(this.stackPageTurnUncoveredClip())
     }
     .width('100%')
     .height('100%')
@@ -15656,7 +15715,7 @@ ${leading}` : leading;
   @Builder
   readerIncomingPageSurface(renderVersion: number, text: string, controllerRole: string = 'incoming') {
     Stack() {
-      if (this.pageTurnSheetsOwnPaper() || this.is3DPageTurnAnimation()) {
+      if (this.pageTurnSheetsPaintPaper() || this.is3DPageTurnAnimation()) {
         this.readerIncomingPageBackground()
       }
       Column() {
@@ -22525,6 +22584,50 @@ ${leading}` : leading;
   // 叠页与推页移动的是整张纸，纸张背景要跟着页面走，不能留在根背景上不动。
   pageTurnSheetsOwnPaper(): boolean {
     return this.isStackPageTurnAnimation() || this.isPushPageTurnAnimation();
+  }
+
+  /**
+   * 叠页、推页的页面是否各自画一份背景图。背景是动图时不画：每张页面各挂一个动图 Image，翻页开始和结束时页面
+   * 重建会让动图从头重新加载，各份的帧也对不上，翻页时就会闪。这时背景只留根上那一份不动，页面透明只移动正文；
+   * 坐标系仍按“页面自己带背景”走（全屏页面、内部让状态栏），分页不受影响。
+   */
+  pageTurnSheetsPaintPaper(): boolean {
+    return this.pageTurnSheetsOwnPaper() && !this.readerBackgroundMayBeAnimated();
+  }
+
+  /** 背景动图时叠页没有不透明的纸挡住下面那页，当前页正文要裁掉被盖住的部分。 */
+  stackPageTurnClipsCurrentText(): boolean {
+    return this.isStackPageTurnAnimation() && this.readerBackgroundMayBeAnimated() &&
+      this.shouldRenderSlidingPageTurn();
+  }
+
+  readerBackgroundMayBeAnimated(): boolean {
+    const uri = this.currentReaderTheme().backgroundImageUri || '';
+    if (uri !== this.readerAnimatedBackgroundProbeUri) {
+      // 构建期间会频繁调用，按地址缓存，只在换背景时读一次文件头。
+      this.readerAnimatedBackgroundProbeUri = uri;
+      this.readerAnimatedBackgroundProbeResult = AnimatedImagePolicy.mayBeAnimatedFile(uri);
+    }
+    return this.readerAnimatedBackgroundProbeResult;
+  }
+
+  /** 叠页时当前页仍露在外面的那一段（以当前页自身坐标）；目标页从哪边盖进来，就裁掉哪边。 */
+  stackPageTurnUncoveredClip(): RectShape {
+    const width = this.getPageTurnWidth();
+    const height = this.getPageTurnHeight();
+    if (!this.stackPageTurnClipsCurrentText()) {
+      // 不需要裁时给一个远大于屏幕的矩形，等于不裁，不影响其他翻页方式里超出页面的绘制。
+      return new RectShape({ width: 100000, height: 100000 }).offset({ x: -50000, y: -50000 });
+    }
+    const vertical = this.isVerticalPageTurnAnimation();
+    const extent = vertical ? height : width;
+    const incoming = vertical ? this.getIncomingSlideY() : this.getIncomingSlideX();
+    const start = incoming < 0 ? Math.max(0, Math.min(extent, incoming + extent)) : 0;
+    const end = incoming < 0 ? extent : Math.max(0, Math.min(extent, incoming));
+    const size = Math.max(0, end - start);
+    return vertical ?
+      new RectShape({ width: width, height: size }).offset({ x: 0, y: start }) :
+      new RectShape({ width: size, height: height }).offset({ x: start, y: 0 });
   }
 
   /** 推页接缝：右（下）侧那页的左（上）边缘，两页贴着平移，取两者中靠后的位置即可。 */
