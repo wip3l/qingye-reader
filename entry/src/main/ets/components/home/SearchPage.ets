@@ -1517,6 +1517,9 @@ export struct SearchPage {
     this.searchResults = [];
     this.displayedSearchResults = [];
     this.searchCategoryCounts = [0, 0, 0, 0];
+    // 新一轮搜索从完整顶栏开始，不沿用上一轮结果滚动留下的收起量。
+    this.searchHeaderCollapse = 0;
+    this.searchHeaderBackdropReveal = 0;
     this.statusMessage = '正在准备搜索...';
     this.verificationUrl = '';
     this.verificationTitle = '';
@@ -1948,9 +1951,12 @@ export struct SearchPage {
     return this.searchTopOverlayHeight();
   }
 
-  /** 平铺分类共享收起状态，切到暂时没有结果的分类也不展开。 */
+  /**
+   * 平铺分类共享收起状态。当前页没有结果列表时（搜索中、无结果、空分类）一律完整显示：
+   * 占位内容不能滚动，收起后就再也拉不出搜索框。
+   */
   searchHeaderCollapseValue(): number {
-    return this.showResult && (this.usesSearchCategoryPager() || this.displayedSearchResults.length > 0) ?
+    return this.showResult && this.displayedSearchResults.length > 0 ?
       Math.min(this.searchHeaderCollapse, this.searchCollapsibleHeight()) : 0;
   }
 
