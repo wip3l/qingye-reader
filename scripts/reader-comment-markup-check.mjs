@@ -20,7 +20,7 @@ const compile = text => stripTypeScriptTypes(text, { mode: 'strip' });
 const names = ['convertReaderNativeActions', 'convertReaderNoteActions', 'convertReaderImageScriptActions',
   'readerActionMarkerFromClickableImage',
   'readerActionMarkerFromCommentAttributes', 'readerImageOptionString', 'readerDataImageLabel', 'readerDataImageText',
-  'readerDataImageHot',
+  'readerDataImageHot', 'readerDataImageTexts', 'readerDataImageIsCard', 'readerActionLine',
   'decodeHtmlEntities'];
 const util = {
   Base64Helper: class { decodeSync(text) { return Uint8Array.from(Buffer.from(text, 'base64')); } },
@@ -116,6 +116,31 @@ assert.equal(Marker.strip(notedOut).split('\n').filter(Boolean).join('|'), '正�
 // Without a resolvable address the note is dropped rather than shown as markup.
 assert.equal(Marker.strip(convert('<div rs-native>段落<note label="神评论" ident="/x" text="a"></note></div>'))
   .trim(), '段落');
+
+// Cards that do not say 热评/神评 — a nickname, the comment and its like count, drawn full width — are hot
+// comments, not “段评 N” bubbles; their like count must not become a bubble on a line of its own.
+const svgSpans = (...texts) => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg">${texts.map(text =>
+  `<text x="1" y="1"><tspan>${text}</tspan></text>`).join('')}</svg>`).toString('base64');
+const bareCards = [
+  `<p>化为丈许般巨大。<img src="data:image/svg+xml;base64,${svgSpans('15')},{'click':'para("15")','style':'TEXT'}"></p>`,
+  `<img src="data:image/svg+xml;base64,${svg('书友甲', '这章太燃了', '7')},{"click":"hot(\\"a\\")","style":"FULL"}">`,
+  `<img src="data:image/svg+xml;base64,${svg('掌门', '韩老魔又要跑路了', '1')},{"click":"hot(\\"b\\")"}">`,
+  '<p>“砰”的一声。</p>'
+].join('');
+const bareOut = convert(bareCards);
+const bareActions = actions(bareOut);
+assert.deepEqual(bareActions.map(item => item.label), ['段评 15', '热评', '热评'],
+  'tspan counts are read; worded cards are hot comments even without the word 热评');
+assert.deepEqual(bareActions.map(item => item.preview), ['', '书友甲 这章太燃了', '掌门 韩老魔又要跑路了']);
+assert.deepEqual(bareActions.map(item => item.likes), ['', '7', '1']);
+const bareLines = bareOut.split('\n').map(line => line.replace(/<\/?p>/g, '')).filter(line => line.trim());
+assert.equal(Marker.strip(bareLines[0]).trim(), '化为丈许般巨大。', 'the count bubble stays at the end of its paragraph');
+assert.ok(Marker.has(bareLines[0]));
+assert.equal(Marker.strip(bareLines[1]).trim(), '', 'each card sits on a line of its own');
+assert.equal(Marker.strip(bareLines[2]).trim(), '');
+// A plain count bubble with 段评/条 wording is still a bubble.
+const worded = actions(convert(`<p>段<img src="data:image/svg+xml;base64,${svg('段评', '12条')},{'click':'x()'}"></p>`));
+assert.equal(worded[0].label, '段评');
 
 // Markers without a hot comment stay byte-identical to the old format.
 assert.equal(Marker.create('段评 3', 'https://a.example/x', '段评'),

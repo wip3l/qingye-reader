@@ -1572,7 +1572,7 @@ export class WebBookService {
   private convertReaderImageScriptActions(content: string): string {
     return (content || '').replace(/<img\b[^>]*>/gi, (tag: string): string => {
       const clickMarker = this.readerActionMarkerFromClickableImage(tag);
-      if (clickMarker) return `${clickMarker}\n`;
+      if (clickMarker) return this.readerActionLine(clickMarker);
       const data = /data:image\/[A-Za-z0-9.+-]+;base64,([A-Za-z0-9+/=]+),(\{[\s\S]*\})/i.exec(tag);
       if (!data || !data[2]) return tag;
       const action = this.readerImageOptionString(data[2], 'click') ||
@@ -1581,21 +1581,33 @@ export class WebBookService {
       // Chapter-tail cards mark themselves with a distinct marker id or say so on the card
       // (本章说); hot-comment cards say 热评/神评. Only the remaining count bubbles are paragraph
       // comments — a card's number is a like count, not a comment count.
-      const wording = this.readerDataImageText(data[1] || '');
+      const texts = this.readerDataImageTexts(data[1] || '');
+      const wording = this.readerDataImageText(texts);
       const isChapterTail = this.readerImageOptionString(data[2], 'marker').startsWith('xyCommentTail') ||
         /本章说|章评|章末/.test(wording);
-      const isHot = !isChapterTail && /热评|神评/.test(wording);
-      const count = isChapterTail || isHot ? '' : this.readerDataImageLabel(data[1] || '');
+      const isHot = !isChapterTail && (/热评|神评/.test(wording) ||
+        this.readerDataImageIsCard(texts, this.readerImageOptionString(data[2], 'style')));
+      const count = isChapterTail || isHot ? '' : this.readerDataImageLabel(texts);
       const kind = isChapterTail ? '章评' : (isHot ? '热评' : '段评');
       const label = count ? `段评 ${count}` : kind;
-      const hot = isHot || isChapterTail ? this.readerDataImageHot(data[1] || '') : ['', ''];
+      const hot = isHot || isChapterTail ? this.readerDataImageHot(texts) : ['', ''];
       // 本章说卡面上的数字含义因书源而异，不当点赞数。
       const marker = ReaderActionMarker.createSourceScript(label, action, kind, hot[0], isChapterTail ? '' : hot[1]);
       // This data-image is an interaction control, not正文 artwork. If its imported click script exceeds the
       // bounded action budget, drop the control instead of passing the enormous base64/options tag into the
       // ordinary image pipeline (the latter can exhaust memory while opening the chapter).
-      return marker ? `${marker}\n` : '';
+      return marker ? this.readerActionLine(marker) : '';
     });
+  }
+
+  /**
+   * Text that replaces a converted comment control. A count bubble stays at the end of its paragraph; a card
+   * (热评、本章说) always gets a line of its own, even when the source put it inside the paragraph.
+   */
+  private readerActionLine(marker: string): string {
+    const data = ReaderActionMarker.parse(marker);
+    const card = !!data && /^(?:热评|章评)$/.test(data.title || '');
+    return card ? `\n${marker}\n` : `${marker}\n`;
   }
 
   /**
@@ -1639,54 +1651,66 @@ export class WebBookService {
     return this.decodeHtmlEntities(collected).trim();
   }
 
-  private readerDataImageLabel(encoded: string): string {
+  /**
+   * Every `<text>` of a data-URI SVG, nested `<tspan>` flattened, entities decoded and whitespace folded
+   * (at most 12). Some cards split one label across tspans, which a plain `<text>…</text>` match misses.
+   */
+  private readerDataImageTexts(encoded: string): string[] {
     try {
       const bytes = new util.Base64Helper().decodeSync(encoded || '');
       const svg = util.TextDecoder.create('utf-8').decodeWithStream(bytes, { stream: false });
-      const labels = svg.match(/<text\b[^>]*>([^<]{1,24})<\/text>/gi) || [];
-      for (const item of labels) {
-        const text = this.decodeHtmlEntities(item.replace(/<[^>]+>/g, '')).trim();
-        if (/^(?:\d+|99\+)$/.test(text)) return text;
-      }
+      return (svg.match(/<text\b[^>]*>[\s\S]{0,600}?<\/text>/gi) || []).slice(0, 12)
+        .map((item: string): string => this.decodeHtmlEntities(item.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim())
+        .filter((text: string): boolean => !!text);
     } catch (_) {
+      return [];
+    }
+  }
+
+  /** The comment count drawn on a bubble: its first bare number. */
+  private readerDataImageLabel(texts: string[]): string {
+    for (const text of texts) {
+      if (/^(?:\d+|99\+)$/.test(text)) return text;
     }
     return '';
+  }
+
+  /**
+   * A comment card rather than a count bubble. Cards are drawn full width, or carry words — a nickname or the
+   * comment itself — while a count bubble shows only its number (sometimes with 段评/评论/条). A card's number is
+   * a like count; reading it as a paragraph-comment count put a stray bubble on its own line under the paragraph.
+   */
+  private readerDataImageIsCard(texts: string[], style: string): boolean {
+    if (/^(?:FULL|BLOCK|CARD)$/i.test((style || '').trim())) return true;
+    return texts.some((text: string): boolean => text
+      .replace(/\d+(?:\.\d+)?[kKwW万千]?\+?|段评|评论|条|[\s，。！？、：；“”‘’"'.,!?:;()（）〈〉《》<>›»«…·\-—_|\/\\]/g, '')
+      .length >= 2);
+  }
+
+  /** The first few labels of a card, joined; used to name its action. */
+  private readerDataImageText(texts: string[]): string {
+    return texts.slice(0, 4).join(' ');
   }
 
   /**
    * Comment text and like count of a hot-comment SVG card: every `<text>` except the 神评/热评 tag; a trailing
    * bare number is the like count. A 本章说 card gives its wording (such as “76条评论”). Returns [text, likes].
    */
-  private readerDataImageHot(encoded: string): string[] {
-    try {
-      const bytes = new util.Base64Helper().decodeSync(encoded || '');
-      const svg = util.TextDecoder.create('utf-8').decodeWithStream(bytes, { stream: false });
-      const texts = (svg.match(/<text\b[^>]*>([^<]{1,200})<\/text>/gi) || []).slice(0, 12)
-        .map((item: string): string => this.decodeHtmlEntities(item.replace(/<[^>]+>/g, '')).trim())
-        .map((text: string): string => text.replace(/[\s〉›>»]+$/, '').trim())
-        .filter((text: string): boolean => !!text && !/^(?:神评论?|热评|热门评论|精彩评论|本章说|章评)$/.test(text));
-      let likes = '';
-      if (texts.length > 1 && /^(?:\d+(?:\.\d+)?[kKwW万千]?\+?|99\+)$/.test(texts[texts.length - 1])) {
-        likes = texts.pop() as string;
-      }
-      return [texts.join(''), likes];
-    } catch (_) {
-      return ['', ''];
+  private readerDataImageHot(texts: string[]): string[] {
+    const parts = texts.map((text: string): string => text.replace(/[\s〉›>»]+$/, '').trim())
+      .filter((text: string): boolean => !!text && !/^(?:神评论?|热评|热门评论|精彩评论|本章说|章评)$/.test(text));
+    let likes = '';
+    if (parts.length > 1 && /^(?:\d+(?:\.\d+)?[kKwW万千]?\+?|99\+)$/.test(parts[parts.length - 1])) {
+      likes = parts.pop() as string;
     }
+    // Lines of one wrapped comment join directly; a short leading part (a nickname) keeps a space.
+    let text = '';
+    for (const part of parts) {
+      text += text && text.length < 8 && !/[，。！？：,.!?:]$/.test(text) ? ` ${part}` : part;
+    }
+    return [text, likes];
   }
 
-  /** The first few `<text>` labels of a data-URI SVG card, joined; used to name its action. */
-  private readerDataImageText(encoded: string): string {
-    try {
-      const bytes = new util.Base64Helper().decodeSync(encoded || '');
-      const svg = util.TextDecoder.create('utf-8').decodeWithStream(bytes, { stream: false });
-      const labels = (svg.match(/<text\b[^>]*>([^<]{1,48})<\/text>/gi) || []).slice(0, 4);
-      return labels.map((item: string): string => this.decodeHtmlEntities(item.replace(/<[^>]+>/g, '')).trim())
-        .join(' ');
-    } catch (_) {
-      return '';
-    }
-  }
 
   /**
    * iOS-style Legado markup puts the action on the image itself:
@@ -1704,11 +1728,12 @@ export class WebBookService {
     // Only generated SVG cards are controls; a real picture with a link stays a picture.
     const svg = /\bsrc\s*=\s*["']data:image\/svg\+xml;base64,([A-Za-z0-9+/=]+)/i.exec(tag);
     if (!svg) return '';
-    const wording = this.readerDataImageText(svg[1] || '');
-    const count = this.readerDataImageLabel(svg[1] || '');
-    const label = /本章说|章评|章末/.test(wording) ? '章评' : (/热评|神评/.test(wording) ? '热评' :
-      (count ? `段评 ${count}` : '评论'));
-    const hot = label === '热评' || label === '章评' ? this.readerDataImageHot(svg[1] || '') : ['', ''];
+    const texts = this.readerDataImageTexts(svg[1] || '');
+    const wording = this.readerDataImageText(texts);
+    const count = this.readerDataImageLabel(texts);
+    const card = /热评|神评/.test(wording) || this.readerDataImageIsCard(texts, '');
+    const label = /本章说|章评|章末/.test(wording) ? '章评' : (card ? '热评' : (count ? `段评 ${count}` : '评论'));
+    const hot = label === '热评' || label === '章评' ? this.readerDataImageHot(texts) : ['', ''];
     return ReaderActionMarker.create(label, url, label === '章评' ? '章评' : (label === '热评' ? '热评' : '段评'),
       hot[0], label === '章评' ? '' : hot[1]);
   }
