@@ -9250,7 +9250,7 @@ struct ReadBookPage {
       const follows = await ReaderSettingsStore.typographyFollowsTheme(getContext(this));
       this.readerTypographyOwnerText = follows ?
         `排版记在「${await ReaderTypographyThemes.activeThemeName(getContext(this))}」，换主题会换成那套主题的排版` :
-        '排版不跟随主题，所有主题共用这套排版';
+        '排版不跟随主题，所有主题共用这套排版和翻页设置';
     } catch (e) {
       console.warn('读取排版所属主题失败:', e);
     }
