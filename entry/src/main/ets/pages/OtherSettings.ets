@@ -36,6 +36,7 @@ struct OtherSettingsPage {
   @StorageLink('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('smartGripEnabled') smartGripEnabled: boolean = true;
   @StorageLink('homeBackdropEnabled') homeBackdropEnabled: boolean = true;
+  @StorageProp('headerFrosted') headerFrosted: boolean = true;
   @StorageProp('immersiveThemeTint') immersiveThemeTint: boolean = false;
   @StorageProp('animatedImagesEnabled') animatedImagesEnabled: boolean = true;
   @StorageProp('homeTabBarStyle') homeTabBarStyle: string = 'floating';
@@ -274,6 +275,12 @@ struct OtherSettingsPage {
         onChange: (value: boolean) => { this.setHomeBackdropEnabled(value); }
       })
       SettingSwitchRow({
+        title: '顶部磨砂',
+        description: '页面顶栏背后的内容先模糊再透出；关闭后顶栏完全透明',
+        isOn: this.headerFrosted,
+        onChange: (value: boolean) => { this.setHeaderFrosted(value); }
+      })
+      SettingSwitchRow({
         title: '播放动图',
         description: `书架封面、主题封面和背景图是 GIF 或动态 WebP 时播放动画；关闭后只显示第一帧，更省电。超过 ${AnimatedImagePolicy.MAX_PLAY_LABEL} 的动图始终只显示第一帧`,
         isOn: this.animatedImagesEnabled,
@@ -413,6 +420,14 @@ struct OtherSettingsPage {
   immersiveLightLevelSelectedIndex(): number {
     const index = this.immersiveLightLevelValues().indexOf(this.immersiveLightLevel);
     return index >= 0 ? index : 0;
+  }
+
+  setHeaderFrosted(frosted: boolean): void {
+    if (this.headerFrosted === frosted) return;
+    HomeBackdropSettingsStore.saveHeaderFrosted(getContext(this), frosted).catch((error: Error) => {
+      console.warn('保存顶部磨砂设置失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
   }
 
   setHomeBackdropEnabled(enabled: boolean): void {
