@@ -80,7 +80,7 @@ export class ResultCoverPreparation {
     let candidates: ResourceStr[] = [];
     let frame: ResourceStr = '';
     if (options.useBookshelf && ThemeBookCoverSettings.enabled(options.darkMode, options.themeEnabled)) {
-      candidates = ThemeBookCoverSettings.covers(book, options.darkMode);
+      candidates = ThemeBookCoverSettings.covers(book, options.darkMode, options.gallery.coverMode);
       frame = ThemeBookCoverSettings.frame(options.darkMode);
       prepared.interval = ThemeBookCoverSettings.interval(book);
     } else if (options.useBookshelf) {

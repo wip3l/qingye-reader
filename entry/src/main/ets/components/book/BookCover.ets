@@ -126,7 +126,7 @@ export struct BookCover {
       return;
     }
     const themeCover = this.useBookshelfCover && ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeCoverEnabled);
-    const covers: ResourceStr[] = themeCover ? ThemeBookCoverSettings.covers(this.coverBook(), this.appDarkMode) : this.rawCoverList();
+    const covers: ResourceStr[] = themeCover ? ThemeBookCoverSettings.covers(this.coverBook(), this.appDarkMode, this.coverMode) : this.rawCoverList();
     this.themeFrame = themeCover ? ThemeBookCoverSettings.frame(this.appDarkMode) : '';
     this.interval = themeCover ? ThemeBookCoverSettings.interval(this.coverBook()) : 3500;
     if (JSON.stringify(covers) !== JSON.stringify(this.covers)) {

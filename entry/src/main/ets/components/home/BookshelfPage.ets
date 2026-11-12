@@ -6480,7 +6480,7 @@ export struct BookshelfPage {
   }
 
   activeThemeBookCovers(book: Book): ResourceStr[] {
-    const covers = ThemeBookCoverSettings.covers(book, this.appDarkMode);
+    const covers = ThemeBookCoverSettings.covers(book, this.appDarkMode, this.bookshelfCoverMode);
     if (this.animatedImageRevision < 0) return covers;
     const context = getContext(this);
     return covers.map((cover: ResourceStr): ResourceStr =>

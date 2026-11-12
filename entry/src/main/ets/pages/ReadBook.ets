@@ -14426,7 +14426,7 @@ struct ReadBookPage {
   }
 
   activeTtsThemeBookCovers(): ResourceStr[] {
-    return this.book ? ThemeBookCoverSettings.covers(this.book, this.appDarkMode) : [];
+    return this.book ? ThemeBookCoverSettings.covers(this.book, this.appDarkMode, this.bookshelfCoverMode) : [];
   }
 
   activeTtsThemeShelfFrame(): ResourceStr {

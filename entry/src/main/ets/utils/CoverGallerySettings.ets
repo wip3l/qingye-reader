@@ -87,14 +87,16 @@ export class CoverGallerySettings {
     // “仅忽略空封面”：书自带封面就只用它，没有封面才落到图集。
     const emptyOnly = ignoreSourceCover && ignoreEmptyCoverOnly;
     const sourceCovers = ignoreSourceCover && !emptyOnly ? [] : BookDisplayHelper.getCoverList(book);
+    // 书架书都有 bookUrl；临时拼的书没有时退到书名作者，免得“固定”模式全部落到同一张。
+    const seed = book.bookUrl || `${book.name}|${book.author}`;
     if (emptyOnly && sourceCovers.length > 0) {
-      return CoverGallerySettings.applyCoverMode(sourceCovers, coverMode, book.bookUrl);
+      return CoverGallerySettings.applyCoverMode(sourceCovers, coverMode, seed);
     }
     if (!album || album.covers.length === 0 || !CoverGallerySettings.appliesToBook(book.bookUrl, applyScope, targetBooksRaw)) {
-      return CoverGallerySettings.applyCoverMode(sourceCovers, coverMode, book.bookUrl);
+      return CoverGallerySettings.applyCoverMode(sourceCovers, coverMode, seed);
     }
     const covers = ignoreSourceCover ? album.covers : CoverGallerySettings.cleanCovers([...sourceCovers, ...album.covers]);
-    return CoverGallerySettings.applyCoverMode(covers, coverMode, book.bookUrl);
+    return CoverGallerySettings.applyCoverMode(covers, coverMode, seed);
   }
 
   static parseTargetBooks(raw: string): string[] {
@@ -146,9 +148,20 @@ export class CoverGallerySettings {
     return CoverGallerySettings.parseTargetBooks(targetBooksRaw).includes(bookUrl);
   }
 
+  /** 封面模式：sequence 轮播全部、random 每小时换一张、fixed 每本书固定一张（按书算哈希，不随时间变）。 */
+  static isFixedMode(coverMode: string): boolean {
+    return coverMode === 'fixed';
+  }
+
   private static applyCoverMode(covers: string[], coverMode: string, seed: string): string[] {
     const cleaned = CoverGallerySettings.cleanCovers(covers);
-    if (cleaned.length <= 1 || coverMode !== 'random') {
+    if (cleaned.length <= 1) {
+      return cleaned;
+    }
+    if (CoverGallerySettings.isFixedMode(coverMode)) {
+      return [cleaned[Math.abs(CoverGallerySettings.hashText(seed)) % cleaned.length]];
+    }
+    if (coverMode !== 'random') {
       return cleaned;
     }
     const index = Math.abs(CoverGallerySettings.hashText(`${seed}_${Math.floor(Date.now() / 3600000)}`)) % cleaned.length;

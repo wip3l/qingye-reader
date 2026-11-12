@@ -1,6 +1,7 @@
 import { Book } from '@legado/sourceengine';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
+import { CoverGallerySettings } from './CoverGallerySettings';
 
 /** 各页面共用主题封面的顺序和轮播间隔。 */
 export class ThemeBookCoverSettings {
@@ -8,21 +9,29 @@ export class ThemeBookCoverSettings {
     return enabled && ThemeAssetRegistry.themeBookCovers(ThemeRuntime.bookTokens(darkMode).coverAssetId).length > 0;
   }
 
-  static covers(book: Book, darkMode: boolean): ResourceStr[] {
-    return ThemeBookCoverSettings.coversForAsset(book, ThemeRuntime.bookTokens(darkMode).coverAssetId);
+  /** coverMode 传组件里的状态变量才会随设置刷新；不传时读当前存储。 */
+  static covers(book: Book, darkMode: boolean, coverMode: string = ThemeBookCoverSettings.storedMode()): ResourceStr[] {
+    return ThemeBookCoverSettings.coversForAsset(book, ThemeRuntime.bookTokens(darkMode).coverAssetId, coverMode);
   }
 
-  static coversForAsset(book: Book, assetId: string): ResourceStr[] {
+  /** “固定”模式每本书只留轮播的首张，和静态载体（卡片、媒体信息）取的是同一张。 */
+  static coversForAsset(book: Book, assetId: string,
+    coverMode: string = ThemeBookCoverSettings.storedMode()): ResourceStr[] {
     const covers = ThemeAssetRegistry.themeBookCovers(assetId);
     if (covers.length <= 1) return covers;
-    const result: ResourceStr[] = [];
     const seed = ThemeBookCoverSettings.seed(book);
     const start = seed % covers.length;
+    if (CoverGallerySettings.isFixedMode(coverMode)) return [covers[start]];
+    const result: ResourceStr[] = [];
     const direction = seed % 2 === 0 ? 1 : covers.length - 1;
     for (let index = 0; index < covers.length; index++) {
       result.push(covers[(start + index * direction) % covers.length]);
     }
     return result;
+  }
+
+  static storedMode(): string {
+    return AppStorage.get<string>('bookshelfCoverMode') || 'sequence';
   }
 
   static seed(book: Book): number {

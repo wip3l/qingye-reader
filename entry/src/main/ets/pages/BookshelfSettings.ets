@@ -342,9 +342,9 @@ struct BookshelfSettingsPage {
       this.targetBooksPanel()
     }
     this.itemDivider()
-    this.selectItem('封面模式', '多张封面的展示顺序',
+    this.selectItem('封面模式', '多张封面轮流显示、随机换一张或每本书固定一张',
       this.modeOptions(), this.modeSelectedIndex(), (index: number) => {
-        this.bookshelfCoverMode = index === 1 ? 'random' : 'sequence';
+        this.bookshelfCoverMode = index === 2 ? 'fixed' : index === 1 ? 'random' : 'sequence';
         this.onCoverSettingChanged();
       })
     this.itemDivider()
@@ -783,10 +783,11 @@ struct BookshelfSettingsPage {
   }
 
   modeOptions(): SelectOption[] {
-    return [{ value: '顺序' }, { value: '随机' }];
+    return [{ value: '顺序' }, { value: '随机' }, { value: '固定' }];
   }
 
   modeSelectedIndex(): number {
+    if (this.bookshelfCoverMode === 'fixed') return 2;
     return this.bookshelfCoverMode === 'random' ? 1 : 0;
   }
 
