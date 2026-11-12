@@ -10670,11 +10670,11 @@ export struct BookshelfPage {
     return 'contentPreview';
   }
 
-  /** 继续卡片上的动作文案按书的类型区分：有声书是听、视频与漫画是看、其余是读。 */
+  /** 继续卡片上的动作文案按书的类型区分：有声书是听、视频是观看、漫画是翻看、其余是读。 */
   shelfContinueActionText(book: Book): string {
     if (BookTypeSupport.isAudio(book)) return '继续收听';
     if (BookTypeSupport.isVideo(book)) return '继续观看';
-    if (this.isShelfComicBook(book)) return '继续看漫画';
+    if (this.isShelfComicBook(book)) return '继续翻看';
     return '继续阅读';
   }
 
