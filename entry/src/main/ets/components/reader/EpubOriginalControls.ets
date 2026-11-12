@@ -126,8 +126,9 @@ export struct EpubOriginalControls {
   onReaderChromeChange: (headerEnabled: boolean, footerEnabled: boolean, infoBarConfig: string) => void =
     (_headerEnabled: boolean, _footerEnabled: boolean, _infoBarConfig: string): void => {};
   /** 与普通阅读页的日夜按钮相同：点按在日间、夜间之间切换（应用全局），长按改为跟随系统。 */
-  onDayNight: () => void = (): void => {};
-  onAutoMode: () => void = (): void => {};
+  /** x/y：点按位置（vp，相对窗口），日夜切换的揭开动画从这里扩开；拿不到时为 -1。 */
+  onDayNight: (x: number, y: number) => void = (_x: number, _y: number): void => {};
+  onAutoMode: (x: number, y: number) => void = (_x: number, _y: number): void => {};
   onBrightnessChange: (value: number, persist: boolean) => void = (_value: number, _persist: boolean): void => {};
   onLayoutElements: () => void = (): void => {};
   onAddBookmark: () => void = (): void => {};
@@ -402,16 +403,17 @@ export struct EpubOriginalControls {
       }.width(32).height(32)
     }.layoutWeight(1).height(48).enabled(this.ready).opacity(this.ready ? 1 : 0.32)
       .accessibilityText('切换日间或夜间模式，长按跟随系统')
-      .onClick((): void => {
+      .onClick((event: ClickEvent): void => {
         if (this.dayNightLongPressed) {
           this.dayNightLongPressed = false;
           return;
         }
-        this.onDayNight();
+        this.onDayNight(event.windowX, event.windowY);
       })
-      .gesture(LongPressGesture({ duration: 600, repeat: false }).onAction((): void => {
+      .gesture(LongPressGesture({ duration: 600, repeat: false }).onAction((event: GestureEvent): void => {
         this.dayNightLongPressed = true;
-        this.onAutoMode();
+        const finger = event.fingerList.length > 0 ? event.fingerList[0] : undefined;
+        this.onAutoMode(finger ? finger.globalX : -1, finger ? finger.globalY : -1);
       }))
   }
 

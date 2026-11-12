@@ -12,6 +12,7 @@ import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { CommunityGroup } from '../../utils/CommunityGroup';
 import { MembershipIcons } from '../../account/MembershipIcons';
 import { AppThemeModeStore } from '../../utils/AppThemeModeStore';
+import { AppColorModeApplier } from '../../utils/AppColorModeApplier';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 
 class ThemeModeOption {
@@ -271,15 +272,12 @@ export struct SettingsPage {
     const context = getContext(this) as common.UIAbilityContext;
     const systemDarkMode = context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
     const nextDarkMode = mode === 'dark' || (mode === 'system' && systemDarkMode);
-    const colorMode = mode === 'dark' ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK :
-      (mode === 'light' ? ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT :
-        ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
     // 先同步模式来源，setColorMode 触发的配置更新才不会读到旧模式又改回去。
     AppThemeModeStore.applyToStorage(mode);
     if (this.appDarkMode !== nextDarkMode) {
       this.appDarkMode = nextDarkMode;
     }
-    context.getApplicationContext().setColorMode(colorMode);
+    AppColorModeApplier.apply(context, AppColorModeApplier.colorModeFor(mode));
     AppThemeModeStore.save(context, mode).catch((e: Error) => {
       console.warn('保存显示模式失败:', e);
     });

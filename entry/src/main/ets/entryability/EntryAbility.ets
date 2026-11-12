@@ -20,6 +20,7 @@ import { AppThemeSettingsStore } from '../utils/AppThemeSettingsStore';
 import { CustomThemeSchemeStore } from '../utils/CustomThemeSchemeStore';
 import { ThemePackStore } from '../utils/ThemePackStore';
 import { AppThemeModeStore } from '../utils/AppThemeModeStore';
+import { AppColorModeApplier } from '../utils/AppColorModeApplier';
 import { AppIconSettingsStore } from '../utils/AppIconSettingsStore';
 import { AppIconManager } from '../utils/AppIconManager';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
@@ -64,7 +65,6 @@ import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { syncDesktopTitleBar, releaseSystemBarListeners } from '../utils/SystemBars';
 
 export default class EntryAbility extends UIAbility {
-  private appliedColorMode: number = -1;
   private modeDependentThemeKey: string = '';
   private immersiveLightBootstrapPromise: Promise<void> = Promise.resolve();
   private memberSettingsBootstrapPromise: Promise<void> = Promise.resolve();
@@ -656,12 +656,8 @@ export default class EntryAbility extends UIAbility {
     ReaderFontBootstrap.applyApplicationFont(this.context, 'mode-dependent-theme');
   }
 
-  private setApplicationColorMode(colorMode: number): void {
-    if (this.appliedColorMode === colorMode) {
-      return;
-    }
-    this.appliedColorMode = colorMode;
-    this.context.getApplicationContext().setColorMode(colorMode);
+  private setApplicationColorMode(colorMode: ConfigurationConstant.ColorMode): void {
+    AppColorModeApplier.apply(this.context, colorMode);
   }
 
   private handleLaunchWant(want: Want): string {

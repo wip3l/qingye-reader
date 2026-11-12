@@ -37,6 +37,7 @@ import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStor
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppThemeModeStore } from '../utils/AppThemeModeStore';
+import { AppColorModeApplier } from '../utils/AppColorModeApplier';
 import { AppFontSize } from '../theme/AppFontSize';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
@@ -59,6 +60,11 @@ import {
 import { ShelfCoverLocator } from '../utils/ShelfCoverLocator';
 import { ReaderOpenSnapshotMeta, ReaderOpenSnapshotStore } from '../core/reader/ReaderOpenSnapshotStore';
 import { ReaderRenderFrame } from '../core/reader/ReaderRenderFrame';
+import {
+  READER_THEME_REVEAL_DURATION,
+  ReaderThemeReveal,
+  ReaderThemeRevealHelper
+} from '../components/reader/ReaderThemeReveal';
 import { KnockShare } from '../utils/KnockShare';
 import { ReaderInfoBarRow } from '../components/reader/ReaderInfoBar';
 import {
@@ -329,6 +335,13 @@ class EpubWebSlot {
 struct EpubOriginalReadBookPage {
   /** 深色跟随应用全局的日夜模式：深色时页面整体反色，图片保持原样。 */
   @StorageLink('appDarkMode') @Watch('onAppDarkChanged') darkMode: boolean = false;
+  // 日夜切换时盖在最上面的窗口截图与揭开进度，见 ReaderThemeReveal。
+  @State themeRevealSnapshot: image.PixelMap | null = null;
+  @State themeRevealProgress: number = 0;
+  @State themeRevealSerial: number = 0;
+  private themeRevealCenterX: number = 0;
+  private themeRevealCenterY: number = 0;
+  private themeRevealDiameter: number = 0;
   @StorageLink('appThemeMode') appThemeMode: string = 'system';
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
@@ -620,6 +633,8 @@ struct EpubOriginalReadBookPage {
     this.stopHoldingHandTracking();
     this.flushAndSyncProgress();
     this.alive = false;
+    this.themeRevealSerial++;
+    this.releaseThemeReveal();
     this.musicUnsubscribe?.();
     this.musicUnsubscribe = null;
     EpubAudioPlayer.stop(this.owner);
@@ -2237,12 +2252,12 @@ struct EpubOriginalReadBookPage {
   }
 
   /** 字号、翻页方式、深浅变了：在后面按新版式载入本章，停回原处后淡入。 */
-  private reloadAtCurrentSpot(): void {
+  private reloadAtCurrentSpot(transition: string = 'fade'): void {
     const target = new EpubOriginalTarget();
     target.kind = this.spot.snippet ? 'spot' : 'start';
     target.snippet = this.spot.snippet;
     target.fraction = this.spot.fraction;
-    this.showChapter(this.chapterIndex, target, 'fade');
+    this.showChapter(this.chapterIndex, target, transition);
   }
 
   // ---- 两个槽位之间的切换 ----
@@ -3250,21 +3265,33 @@ struct EpubOriginalReadBookPage {
   /** 应用日夜模式变了：页面跟着换深浅（重新载入本章并停回原处）。 */
   onAppDarkChanged(): void {
     this.applySystemBars();
-    if (this.ready && this.alive) this.reloadAtCurrentSpot();
+    // 截图盖着时直接换槽位：淡入在截图底下看不见，只会让揭开多等一段。
+    if (this.ready && this.alive) this.reloadAtCurrentSpot(this.themeRevealSnapshot ? 'cut' : 'fade');
   }
 
   /** 与普通阅读页 applyReaderThemeMode 相同：改的是应用全局的日间 / 夜间 / 跟随系统。 */
-  private applyThemeMode(nextMode: string): void {
+  private applyThemeMode(nextMode: string, originX: number = -1, originY: number = -1): void {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     const systemDark = context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
     const nextDark = nextMode === 'dark' || (nextMode === 'system' && systemDark);
-    const colorMode = nextMode === 'dark' ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK :
-      (nextMode === 'light' ? ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT :
-        ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+    // 深浅真的要变时先盖截图，下一帧再切换（与普通阅读页相同，见 ReaderThemeReveal）。
+    if (nextDark !== this.darkMode && this.beginThemeReveal(context, originX, originY)) {
+      const serial = this.themeRevealSerial;
+      ReaderRenderFrame.wait(this.getUIContext(), 50).then((): void => {
+        if (serial !== this.themeRevealSerial || !this.alive) return;
+        this.commitThemeMode(context, nextMode, nextDark);
+        this.finishThemeReveal(serial);
+      });
+      return;
+    }
+    this.commitThemeMode(context, nextMode, nextDark);
+  }
+
+  private commitThemeMode(context: common.UIAbilityContext, nextMode: string, nextDark: boolean): void {
     // 先同步模式来源，避免 setColorMode 引起的配置更新读到旧值。
     AppThemeModeStore.applyToStorage(nextMode);
     if (this.darkMode !== nextDark) this.darkMode = nextDark;
-    context.getApplicationContext().setColorMode(colorMode);
+    AppColorModeApplier.apply(context, AppColorModeApplier.colorModeFor(nextMode));
     AppThemeModeStore.save(context, nextMode).catch((error: Error): void => {
       console.warn('[EpubOriginal] save theme mode failed:', error);
     });
@@ -3272,10 +3299,62 @@ struct EpubOriginalReadBookPage {
       (nextMode === 'dark' ? '已切换至夜间模式' : '已切换至自动模式'));
   }
 
-  private toggleDayNight(): void {
+  private beginThemeReveal(context: common.UIAbilityContext, originX: number, originY: number): boolean {
+    const snapshot = ReaderThemeRevealHelper.capture(context);
+    if (!snapshot) return false;
+    let left = 0;
+    let top = 0;
+    let width = this.viewWidth;
+    let height = this.viewHeight;
+    try {
+      const rect = this.getUIContext().getComponentUtils().getRectangleById('epub_original_page_root');
+      left = px2vp(rect.windowOffset.x);
+      top = px2vp(rect.windowOffset.y);
+      width = px2vp(rect.size.width);
+      height = px2vp(rect.size.height);
+    } catch (_) {
+    }
+    const centerX = originX >= 0 ? originX - left : width - 48;
+    const centerY = originY >= 0 ? originY - top : height - 48;
+    const previous = this.themeRevealSnapshot;
+    this.themeRevealSerial++;
+    this.themeRevealCenterX = centerX;
+    this.themeRevealCenterY = centerY;
+    this.themeRevealDiameter = ReaderThemeRevealHelper.coverDiameter(centerX, centerY, width, height);
+    this.themeRevealProgress = 0;
+    this.themeRevealSnapshot = snapshot;
+    if (previous) previous.release().catch((): void => {});
+    return true;
+  }
+
+  /** 本章按新深浅重新载入并换到前面后，从点按处揭开。网页重载比普通正文慢，最多等 2.5 秒。 */
+  private async finishThemeReveal(serial: number): Promise<void> {
+    await ReaderThemeRevealHelper.waitSettled(this.getUIContext(),
+      (): boolean => this.pendingSlot < 0 && !this.transitioning, 2500);
+    if (serial !== this.themeRevealSerial || !this.themeRevealSnapshot || !this.alive) return;
+    this.getUIContext().animateTo({
+      duration: READER_THEME_REVEAL_DURATION,
+      curve: Curve.FastOutSlowIn,
+      onFinish: (): void => {
+        if (serial !== this.themeRevealSerial) return;
+        this.releaseThemeReveal();
+      }
+    }, (): void => {
+      this.themeRevealProgress = 1;
+    });
+  }
+
+  private releaseThemeReveal(): void {
+    const snapshot = this.themeRevealSnapshot;
+    this.themeRevealSnapshot = null;
+    this.themeRevealProgress = 0;
+    if (snapshot) snapshot.release().catch((): void => {});
+  }
+
+  private toggleDayNight(originX: number = -1, originY: number = -1): void {
     const mode = AppThemeModeStore.normalizeMode(this.appThemeMode);
     const dark = mode === 'dark' || (mode === 'system' && this.darkMode);
-    this.applyThemeMode(dark ? 'light' : 'dark');
+    this.applyThemeMode(dark ? 'light' : 'dark', originX, originY);
   }
 
   /** 关掉文件排版，回到普通阅读器，停在同一处。 */
@@ -4208,8 +4287,8 @@ struct EpubOriginalReadBookPage {
         onStep: (direction: number): void => { this.quickJumpStep(direction); },
         onPagedChange: (paged: boolean): void => { this.setPaged(paged); },
         onZoomChange: (zoom: number): void => { this.setZoom(zoom); },
-        onDayNight: (): void => { this.toggleDayNight(); },
-        onAutoMode: (): void => { this.applyThemeMode('system'); },
+        onDayNight: (x: number, y: number): void => { this.toggleDayNight(x, y); },
+        onAutoMode: (x: number, y: number): void => { this.applyThemeMode('system', x, y); },
         onBrightnessChange: (value: number, persist: boolean): void => { this.setBrightness(value, persist); },
         onLayoutElements: (): void => { this.openLayoutElements(); },
         onAddBookmark: (): void => { this.addBookmark(); },
@@ -4335,7 +4414,21 @@ struct EpubOriginalReadBookPage {
       this.viewWidth = Number(after.width) || this.viewWidth;
       this.viewHeight = Number(after.height) || this.viewHeight;
     })
+      if (this.themeRevealSnapshot) {
+        // 按切换序号重建：连续点按时换上新截图，旧动画的结束回调按序号作废。
+        ForEach([this.themeRevealSerial], (_serial: number) => {
+          ReaderThemeReveal({
+            snapshot: this.themeRevealSnapshot,
+            centerX: this.themeRevealCenterX,
+            centerY: this.themeRevealCenterY,
+            diameter: this.themeRevealDiameter,
+            progress: this.themeRevealProgress
+          })
+            .transition(TransitionEffect.IDENTITY)
+        }, (serial: number) => `${serial}`)
+      }
     }
+    .id('epub_original_page_root')
     .width('100%')
     .height('100%')
     .backgroundColor(this.shelfMotionBackdrop ? ThemeRuntime.pageColor(this.darkMode) : Color.Transparent)

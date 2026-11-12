@@ -222,6 +222,12 @@ import { ReaderPageTurnQueue } from '../core/reader/ReaderPageTurnQueue';
 import { ReaderPaginationIndex } from '../core/reader/ReaderPaginationIndex';
 import { ReaderTurnTrace } from '../core/reader/ReaderTurnTrace';
 import { ReaderRenderFrame } from '../core/reader/ReaderRenderFrame';
+import { AppColorModeApplier } from '../utils/AppColorModeApplier';
+import {
+  READER_THEME_REVEAL_DURATION,
+  ReaderThemeReveal,
+  ReaderThemeRevealHelper
+} from '../components/reader/ReaderThemeReveal';
 import { ReaderPageTextureCache, ReaderPageTextureLease } from '../core/reader/ReaderPageTextureCache';
 import { ReaderPageTexturePair } from '../core/reader/ReaderPageTexturePair';
 import {
@@ -1083,6 +1089,13 @@ struct ReadBookPage {
   @State readerFontRenderReady: boolean = false;
   @StorageLink('appDarkMode') @Watch('onReaderColorModeChanged') appDarkMode: boolean = false;
   @StorageLink('appThemeMode') appThemeMode: string = 'system';
+  // 日夜切换时盖在最上面的窗口截图与揭开进度，见 ReaderThemeReveal。
+  @State readerThemeRevealSnapshot: image.PixelMap | null = null;
+  @State readerThemeRevealProgress: number = 0;
+  @State readerThemeRevealSerial: number = 0;
+  private readerThemeRevealCenterX: number = 0;
+  private readerThemeRevealCenterY: number = 0;
+  private readerThemeRevealDiameter: number = 0;
   @StorageLink('appThemeBookCoverEnabled') themeBookCoverEnabled: boolean = false;
   @StorageLink('themeRevision') @Watch('onReaderThemeChanged') themeRevision: number = 0;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
@@ -1143,6 +1156,7 @@ struct ReadBookPage {
   // re-pagination transaction for that pair so the visible page does not jump twice.
   private readerThemeRefreshTimerId: number = -1;
   private readerThemeRefreshOffset: number = -1;
+  private readerThemeRefreshLayoutIdentity: string = '';
   private readerPageContentTopPaddingSnapshot: number = -1;
   private readerLayoutCommitInProgress: boolean = false;
   private readerTypographyDraftPending: boolean = false;
@@ -1573,6 +1587,10 @@ struct ReadBookPage {
       this.readerSafeAreaRepaginateTimerId = -1;
     }
     this.dropShelfOpeningPageSnapshot();
+    this.readerThemeRevealSerial++;
+    const themeRevealSnapshot = this.readerThemeRevealSnapshot;
+    this.readerThemeRevealSnapshot = null;
+    if (themeRevealSnapshot) themeRevealSnapshot.release().catch((): void => {});
     const closeBackdrop = this.shelfMotionBackdrop;
     this.shelfMotionBackdrop = null;
     if (closeBackdrop && !this.shelfMotionBackdropHandedOff) closeBackdrop.release().catch((): void => {});
@@ -4017,7 +4035,21 @@ struct ReadBookPage {
       }
     })
     .bindSheet($$this.showReaderCommentPanel, this.readerCommentPanel(), this.readerCommentSheetOptions())
+      if (this.readerThemeRevealSnapshot) {
+        // 按切换序号重建：连续点按时换上新截图，旧动画的结束回调按序号作废。
+        ForEach([this.readerThemeRevealSerial], (_serial: number) => {
+          ReaderThemeReveal({
+            snapshot: this.readerThemeRevealSnapshot,
+            centerX: this.readerThemeRevealCenterX,
+            centerY: this.readerThemeRevealCenterY,
+            diameter: this.readerThemeRevealDiameter,
+            progress: this.readerThemeRevealProgress
+          })
+            .transition(TransitionEffect.IDENTITY)
+        }, (serial: number) => `${serial}`)
+      }
     }
+    .id('reader_page_root')
     // 外层只在开书放大、关书缩回时有内容：书架截图不随整页缩放，铺满整个窗口（含状态栏区域，用书架页底色补齐）。
     .width('100%')
     .height('100%')
@@ -4547,10 +4579,12 @@ struct ReadBookPage {
     }
     .width('100%')
     .height(48)
-    .onClick(() => this.handleReaderDayNightClick())
+    .onClick((event: ClickEvent) => this.handleReaderDayNightClick(event.windowX, event.windowY))
     .gesture(
       LongPressGesture({ duration: 600, repeat: false })
-        .onAction(() => this.handleReaderDayNightLongPress())
+        .onAction((event: GestureEvent) => this.handleReaderDayNightLongPress(
+          event.fingerList.length > 0 ? event.fingerList[0].globalX : -1,
+          event.fingerList.length > 0 ? event.fingerList[0].globalY : -1))
     )
   }
 
@@ -4615,52 +4649,118 @@ struct ReadBookPage {
     return mode === 'dark' ? $r('sys.symbol.moon') : $r('sys.symbol.sun_max');
   }
 
-  toggleReaderDayNightMode(): void {
+  toggleReaderDayNightMode(originX: number = -1, originY: number = -1): void {
     const currentMode = AppThemeModeStore.normalizeMode(this.appThemeMode);
     const currentDark = currentMode === 'dark' || (currentMode === 'system' && this.appDarkMode);
-    this.applyReaderThemeMode(currentDark ? 'light' : 'dark');
+    this.applyReaderThemeMode(currentDark ? 'light' : 'dark', originX, originY);
   }
 
-  setReaderAutoMode(): void {
-    this.applyReaderThemeMode('system');
+  setReaderAutoMode(originX: number = -1, originY: number = -1): void {
+    this.applyReaderThemeMode('system', originX, originY);
   }
 
-  handleReaderDayNightClick(): void {
+  handleReaderDayNightClick(originX: number = -1, originY: number = -1): void {
     if (this.readerDayNightLongPressHandled) {
       this.readerDayNightLongPressHandled = false;
       return;
     }
-    this.toggleReaderDayNightMode();
+    this.toggleReaderDayNightMode(originX, originY);
   }
 
-  handleReaderDayNightLongPress(): void {
+  handleReaderDayNightLongPress(originX: number = -1, originY: number = -1): void {
     this.readerDayNightLongPressHandled = true;
-    this.setReaderAutoMode();
+    this.setReaderAutoMode(originX, originY);
   }
 
-  applyReaderThemeMode(nextMode: string): void {
+  /** originX/originY 是点按位置（vp，相对窗口），揭开动画从这里扩开；没有时从底栏右侧开始。 */
+  applyReaderThemeMode(nextMode: string, originX: number = -1, originY: number = -1): void {
     // 先提交面板草稿，再触发系统配色更新；不依赖关闭面板或稍后的 Watch 通知。
     this.flushPendingReaderLayoutChange(false);
     const context = getContext(this) as common.UIAbilityContext;
     const systemDarkMode =
       context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
     const nextDarkMode = nextMode === 'dark' || (nextMode === 'system' && systemDarkMode);
-    const colorMode = nextMode === 'dark' ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK :
-      (nextMode === 'light' ? ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT :
-        ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+    // 深浅真的要变时才盖截图：只在“自动”和当前同色之间切换时没有可见变化。
+    if (nextDarkMode !== this.appDarkMode && this.beginReaderThemeReveal(context, originX, originY)) {
+      // 截图先上屏一帧再切换：切换引起的整树重建包在系统 400ms 的颜色动画里，那时才挂上的截图层会跟着淡入。
+      const serial = this.readerThemeRevealSerial;
+      ReaderRenderFrame.wait(this.getUIContext(), 50).then((): void => {
+        if (serial !== this.readerThemeRevealSerial) return;
+        this.commitReaderThemeMode(context, nextMode, nextDarkMode);
+        this.finishReaderThemeReveal(serial);
+      });
+      return;
+    }
+    this.commitReaderThemeMode(context, nextMode, nextDarkMode);
+  }
 
+  private commitReaderThemeMode(context: common.UIAbilityContext, nextMode: string, nextDarkMode: boolean): void {
     // 先同步模式来源，避免 setColorMode 触发的 ConfigurationUpdate 读到旧值，
     // 又把刚选择的浅色模式覆盖回系统深色模式。
     AppThemeModeStore.applyToStorage(nextMode);
     if (this.appDarkMode !== nextDarkMode) {
       this.appDarkMode = nextDarkMode;
     }
-    context.getApplicationContext().setColorMode(colorMode);
+    AppColorModeApplier.apply(context, AppColorModeApplier.colorModeFor(nextMode));
 
     AppThemeModeStore.save(context, nextMode).catch((e: Error) => {
       console.warn('保存日间/夜间/自动模式失败:', e);
     });
     HdsFeedback.showToast(nextMode === 'light' ? '已切换至日间模式' : (nextMode === 'dark' ? '已切换至夜间模式' : '已切换至自动模式'));
+  }
+
+  /** 截下当前画面盖在最上面，返回是否盖上了。 */
+  private beginReaderThemeReveal(context: common.UIAbilityContext, originX: number, originY: number): boolean {
+    const snapshot = ReaderThemeRevealHelper.capture(context);
+    if (!snapshot) return false;
+    let left = 0;
+    let top = 0;
+    let width = this.pageViewWidth;
+    let height = this.pageViewHeight;
+    try {
+      const rect = this.getUIContext().getComponentUtils().getRectangleById('reader_page_root');
+      left = px2vp(rect.windowOffset.x);
+      top = px2vp(rect.windowOffset.y);
+      width = px2vp(rect.size.width);
+      height = px2vp(rect.size.height);
+    } catch (_) {
+    }
+    const centerX = originX >= 0 ? originX - left : width - 48;
+    const centerY = originY >= 0 ? originY - top : height - 48;
+    const previous = this.readerThemeRevealSnapshot;
+    this.readerThemeRevealSerial++;
+    this.readerThemeRevealCenterX = centerX;
+    this.readerThemeRevealCenterY = centerY;
+    this.readerThemeRevealDiameter = ReaderThemeRevealHelper.coverDiameter(centerX, centerY, width, height);
+    this.readerThemeRevealProgress = 0;
+    this.readerThemeRevealSnapshot = snapshot;
+    if (previous) previous.release().catch((): void => {});
+    return true;
+  }
+
+  /** 底下的整树重建与按新配色重排都完成后，从点按处把截图挖空揭开，结束后释放截图。 */
+  private async finishReaderThemeReveal(serial: number): Promise<void> {
+    await ReaderThemeRevealHelper.waitSettled(this.getUIContext(), (): boolean => this.isReaderThemeSwitchSettled());
+    if (serial !== this.readerThemeRevealSerial || !this.readerThemeRevealSnapshot) return;
+    this.getUIContext().animateTo({
+      duration: READER_THEME_REVEAL_DURATION,
+      curve: Curve.FastOutSlowIn,
+      onFinish: (): void => {
+        if (serial !== this.readerThemeRevealSerial) return;
+        const snapshot = this.readerThemeRevealSnapshot;
+        this.readerThemeRevealSnapshot = null;
+        this.readerThemeRevealProgress = 0;
+        if (snapshot) snapshot.release().catch((): void => {});
+      }
+    }, (): void => {
+      this.readerThemeRevealProgress = 1;
+    });
+  }
+
+  /** 按新配色的重新分页已经落到当前页（不再显示排版前的纯文本占位）。 */
+  private isReaderThemeSwitchSettled(): boolean {
+    return this.readerThemeRefreshTimerId < 0 && this.readerTypographyRestoreOffset < 0 &&
+      this.pendingRestorePageIndex < 0;
   }
 
   @Builder
@@ -4742,10 +4842,12 @@ struct ReadBookPage {
     }
     .layoutWeight(1)
     .height(56)
-    .onClick(() => this.handleReaderDayNightClick())
+    .onClick((event: ClickEvent) => this.handleReaderDayNightClick(event.windowX, event.windowY))
     .gesture(
       LongPressGesture({ duration: 600, repeat: false })
-        .onAction(() => this.handleReaderDayNightLongPress())
+        .onAction((event: GestureEvent) => this.handleReaderDayNightLongPress(
+          event.fingerList.length > 0 ? event.fingerList[0].globalX : -1,
+          event.fingerList.length > 0 ? event.fingerList[0].globalY : -1))
     )
   }
 
@@ -10432,6 +10534,7 @@ struct ReadBookPage {
   private scheduleReaderThemeRefresh(): void {
     if (this.readerThemeRefreshOffset < 0) {
       this.readerThemeRefreshOffset = this.getReaderStableReflowOffset();
+      this.readerThemeRefreshLayoutIdentity = this.readerTypographyCacheIdentity(false);
     }
     if (this.readerThemeRefreshTimerId >= 0) {
       clearTimeout(this.readerThemeRefreshTimerId);
@@ -10443,6 +10546,9 @@ struct ReadBookPage {
       const readingOffset = this.readerThemeRefreshOffset >= 0 ?
         this.readerThemeRefreshOffset : this.getReaderStableReflowOffset();
       this.readerThemeRefreshOffset = -1;
+      // 日夜切换通常只换颜色：排版没变时按新配色排这一次就够了。再补一轮稳定重排会让整章再排一遍，
+      // 揭开动画也要多等它一轮。
+      const typographyChanged = this.readerThemeRefreshLayoutIdentity !== this.readerTypographyCacheIdentity(false);
       if (!this.readerPageVisible || !this.content) {
         return;
       }
@@ -10451,7 +10557,7 @@ struct ReadBookPage {
       this.invalidateReaderTypographyLayout();
       this.refreshReaderTextRender();
       this.paginateContent(this.content);
-      this.scheduleReaderLayoutStabilization(readingOffset);
+      if (typographyChanged) this.scheduleReaderLayoutStabilization(readingOffset);
       this.saveReadingProgress();
       if (this.showReaderCommentPanel && !this.readerInlinePageMode) {
         this.readerCommentPanelLoadSerial++;
@@ -20986,6 +21092,8 @@ ${leading}` : leading;
   }
 
   isReaderPaginationInteractionBusy(): boolean {
+    // 日夜切换的截图盖着整页、也挡住了点按，底下没有要让路的交互：按新配色的重排全速跑完，才能早点揭开。
+    if (this.readerThemeRevealSnapshot) return false;
     const deferredPreviousTurn = this.pageTurnQueue.hasPendingBackward() &&
       this.currentPageIndex <= 0 && !this.isPreviousChapterTurnReady();
     // 章末等本章排完的向后翻页同理：排队中的翻页正是在等这条补排链，不能反过来把它卡住。
