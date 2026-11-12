@@ -21,9 +21,11 @@ import { ThemeRecentStore } from '../utils/ThemeRecentStore';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
 import { TtsPanelThemeBackground } from '../components/TtsPanelThemeBackground';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
+import { ThemeImageCrop } from '../theme/share/ThemePackageFormat';
+import { ThemeCroppedImage } from '../components/theme/ThemeCroppedImage';
 import { SuperExclusiveThemes, ThemeIds, ThemePack, ThemeRegexEmphasisModes, ThemeVariant } from '../theme/ThemeModels';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
-import { ThemePackRegistry } from '../theme/ThemePackRegistry';
+import { ThemeImageSlots, ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { AccountCommerceConfig } from '../account/AccountCommerceConfig';
 import { AccountApiError, ThemeCatalogItem, ThemeCatalogResponse,
   ThemeEntitlement } from '../account/AccountCommerceModels';
@@ -610,11 +612,18 @@ struct ThemeSettingsPage {
     Column({ space: AppSpacing.XS }) {
       Stack({ alignContent: Alignment.BottomStart }) {
         if (this.themeHasBookCover(theme)) {
-          Image(this.themeCoverSet(theme)[index % this.themeCoverSet(theme).length])
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Fill)
-            .draggable(false)
+          if (this.themeCoverCrop(theme, index)) {
+            ThemeCroppedImage({ src: this.themeCoverSet(theme)[index % this.themeCoverSet(theme).length],
+              crop: this.themeCoverCrop(theme, index) as ThemeImageCrop })
+              .width('100%')
+              .height('100%')
+          } else {
+            Image(this.themeCoverSet(theme)[index % this.themeCoverSet(theme).length])
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Fill)
+              .draggable(false)
+          }
           Image(ThemeAssetRegistry.themeShelfFrame(theme.book.shelfFrameAssetId))
             .width('100%')
             .height('100%')
@@ -1632,7 +1641,14 @@ struct ThemeSettingsPage {
         darkMode: this.variantDark()
       })
       Row({ space: AppSpacing.LG }) {
-        if (this.themeHasBookCover(entry.theme)) {
+        if (this.themeHasBookCover(entry.theme) && this.themeCoverCrop(entry.theme, 0)) {
+          ThemeCroppedImage({ src: ThemeAssetRegistry.themeBookCover(entry.theme.book.coverAssetId),
+            crop: this.themeCoverCrop(entry.theme, 0) as ThemeImageCrop })
+            .width(72)
+            .aspectRatio(STORE_BOOK_COVER_RATIO)
+            .borderRadius(entry.theme.radius.small)
+            .clip(true)
+        } else if (this.themeHasBookCover(entry.theme)) {
           Image(ThemeAssetRegistry.themeBookCover(entry.theme.book.coverAssetId))
             .width(72)
             .aspectRatio(STORE_BOOK_COVER_RATIO)
@@ -3522,6 +3538,12 @@ struct ThemeSettingsPage {
 
   themeCoverSet(theme: ThemePack): ResourceStr[] {
     return ThemeAssetRegistry.themeBookCovers(theme.book.coverAssetId);
+  }
+
+  /** 主题包动图封面取景记下的显示区域。 */
+  themeCoverCrop(theme: ThemePack, index: number): ThemeImageCrop | null {
+    const covers = this.themeCoverSet(theme);
+    return covers.length > 0 ? ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, covers[index % covers.length]) : null;
   }
 
   themeRegexPreviewBackground(theme: ThemePack): TextBackgroundStyle {

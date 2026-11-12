@@ -82,9 +82,11 @@ my-theme/
 | | `search`、`searchSelected` | 旧版本应用底栏“搜索”页签的图标。本应用读包时照收但不显示；旧版本应用要求有 `search` 才肯导入，应用和桌面编辑器导出时缺了就用 `explore`（与 `exploreSelected`）的图标补上。 |
 | | `labels` | 写 `hidden` 时底栏只显示图标，不显示“书架”等文字。 |
 | `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 8 张，书架按书轮播）、书架边框 SVG、分组文件夹插画。 |
+| | `coverCrops`、`shelfFolderCrop` | 可选的显示区域（见下文“显示区域”）：`coverCrops` 是数组，按 `image` 对应到某张封面；`shelfFolderCrop` 对应文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
 | `bubble` | `frame`、`cap` | 强调气泡的边框 SVG（可选）与端饰 SVG（必填）。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。 |
 | `homeBackdrop` | `light` / `dark` | 书架、发现和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
+| | `lightCrop` / `darkCrop` | 可选的显示区域，对应同一模式的背景图。 |
 | `logo` | | 主题标识，SVG 或位图，显示在方案卡片的角标处。 |
 | `preview` | | 预览图位图，显示在主题页的方案卡片上；省略时卡片显示启动封面。 |
 | `radius` | `small`、`medium`、`large`、`card`、`button`、`bubble` | 圆角，0 到 48。 |
@@ -127,6 +129,19 @@ my-theme/
   }
 }
 ```
+
+### 显示区域
+
+封面、文件夹插画和首页背景可以只显示图里的一块，图片文件不改。应用内编辑器给 GIF / 动态 WebP 取景时就这样记录，重新裁剪编码会只剩第一帧。
+
+```json
+{ "image": "assets/cover_03.gif", "x": 120, "y": 0, "width": 450, "height": 660, "imageWidth": 800, "imageHeight": 900 }
+```
+
+- `image` 是它所属的素材，必须和素材位当前的图一致；对不上的区域（换了图、删了封面后留下的）读包和导出时都会丢掉。
+- `x`、`y`、`width`、`height` 是相对 `imageWidth` × `imageHeight` 的像素，只看比例，可以按缩小后的图来量；区域要落在图内、宽高为正，否则整个包导入失败。
+- 显示时区域等比放大到盖满素材位、居中，区域比例和素材位不同时裁掉区域两边多出的部分。
+- 旧版本应用不认这些字段，显示整张图。
 
 ## 素材规范
 

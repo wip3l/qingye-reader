@@ -2,6 +2,9 @@ import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 import { HexColor } from '../../utils/HexColor';
 import { AnimatedImagePolicy } from '../../utils/AnimatedImagePolicy';
+import { ThemeImageSlots } from '../../theme/ThemePackRegistry';
+import { ThemeImageCrop } from '../../theme/share/ThemePackageFormat';
+import { ThemeCroppedImage } from '../theme/ThemeCroppedImage';
 
 /**
  * 首页页签顶部的主题背景图：放在页面根部最底层，不随列表滚动，向下淡成页面底色。
@@ -33,6 +36,12 @@ export struct HomeThemeBackdrop {
     return AnimatedImagePolicy.display(getContext(this), image);
   }
 
+  /** 主题包动图背景取景时记下的显示区域。 */
+  backdropCrop(): ThemeImageCrop | null {
+    return ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, ThemeRuntime.homeBackdrop(this.appDarkMode),
+      this.appDarkMode);
+  }
+
   build() {
     if (ThemeRuntime.homeBackdrop(this.appDarkMode)) {
       if (this.visibleHeight > 0) {
@@ -59,13 +68,20 @@ export struct HomeThemeBackdrop {
 
   @Builder
   layers() {
-    Image(this.backdropImage())
-      .width('100%')
-      .aspectRatio(ThemeAssetRegistry.HOME_BACKDROP_ASPECT)
-      .objectFit(ImageFit.Cover)
-      // 书架开合、分组展开的截图都要带上背景，异步加载会截到空白。
-      .syncLoad(true)
-      .opacity(this.strength)
+    if (this.backdropCrop()) {
+      ThemeCroppedImage({ src: this.backdropImage(), crop: this.backdropCrop() as ThemeImageCrop, syncLoad: true })
+        .width('100%')
+        .aspectRatio(ThemeAssetRegistry.HOME_BACKDROP_ASPECT)
+        .opacity(this.strength)
+    } else {
+      Image(this.backdropImage())
+        .width('100%')
+        .aspectRatio(ThemeAssetRegistry.HOME_BACKDROP_ASPECT)
+        .objectFit(ImageFit.Cover)
+        // 书架开合、分组展开的截图都要带上背景，异步加载会截到空白。
+        .syncLoad(true)
+        .opacity(this.strength)
+    }
     Column()
       .width('100%')
       .height('100%')

@@ -1,5 +1,6 @@
 import { ThemeIds } from './ThemeModels';
 import { InstalledThemePack, ThemePackRegistry } from './ThemePackRegistry';
+import { ThemeImageCrop } from './share/ThemePackageFormat';
 import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 
 export class ThemeAssetRegistry {
@@ -518,6 +519,16 @@ export class ThemeAssetRegistry {
   }
 
   static readonly HOME_BACKDROP_ASPECT: number = 1080 / 1350;
+
+  /**
+   * 主题包素材的显示区域（动图取景）。src 可以是 AnimatedImagePolicy 换出来的第一帧静图，按原图查。
+   * 内置主题和没有区域的素材返回 null，照常整张显示。
+   */
+  static imageCrop(slot: string, src: ResourceStr | null | undefined, darkMode: boolean = false): ThemeImageCrop | null {
+    if (typeof src !== 'string' || !src) return null;
+    return ThemePackRegistry.imageCrop(slot, src, darkMode) ||
+      ThemePackRegistry.imageCrop(slot, AnimatedImagePolicy.originalOf(src), darkMode);
+  }
 
   static themeBookCover(assetId: string): ResourceStr {
     const covers = ThemeAssetRegistry.themeBookCovers(assetId);

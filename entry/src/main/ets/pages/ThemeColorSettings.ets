@@ -19,12 +19,12 @@ import {
 } from '../theme/ThemeModels';
 import { ThemeAccessPolicy } from '../account/ThemeAccessPolicy';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
-import { InstalledThemePack, ThemePackRegistry } from '../theme/ThemePackRegistry';
+import { InstalledThemePack, ThemeImageSlots, ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { StartupCoverImageStore } from '../utils/StartupCoverImageStore';
 import { SchemeAssetResult, SchemeAssetService, SchemeFontOption } from '../utils/SchemeAssetService';
 import { SchemePreviewImageStore } from '../utils/SchemePreviewImageStore';
-import { packReaderBackgroundId, ThemePackageLimits } from '../theme/share/ThemePackageFormat';
+import { packReaderBackgroundId, ThemeImageCrop, ThemePackageLimits } from '../theme/share/ThemePackageFormat';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -37,6 +37,7 @@ import { CustomThemePreview } from '../components/theme/CustomThemePreview';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ThemeCropRequest, ThemeImageCropper } from '../components/theme/ThemeImageCropper';
+import { ThemeCroppedImage } from '../components/theme/ThemeCroppedImage';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { TtsPanelThemeStyles } from '../theme/TtsPanelThemeStyles';
 import { HexColor } from '../utils/HexColor';
@@ -73,6 +74,8 @@ interface AssetSlotOptions {
   onTap: () => void;
   rotation?: number;
   icon?: boolean;
+  // 动图取景记下的显示区域，按区域显示缩略图。
+  crop?: ThemeImageCrop | null;
 }
 
 interface CoverTileOptions {
@@ -159,6 +162,12 @@ function editorCard(color: string) {
   .clip(true)
 }
 
+/** 取景结果：要导入的文件，以及动图取景记下的显示区域（静图已经裁进文件，为 null）。 */
+class FramedImage {
+  path: string = '';
+  crop: ThemeImageCrop | null = null;
+}
+
 @Entry
 @Component
 struct ThemeColorSettingsPage {
@@ -228,6 +237,8 @@ struct ThemeColorSettingsPage {
   @State showShelfLayoutMenu: boolean = false;
   private schemeId: string = '';
   private cropResolve: ((result: string) => void) | null = null;
+  // 动图取景交回的显示区域；frameImage 读走后清空。
+  private cropArea: ThemeImageCrop | null = null;
   private draftSettings: AppThemeSettings = new AppThemeSettings();
   private saveQueue: Promise<void> = Promise.resolve();
   private settingsLoaded: boolean = false;
@@ -273,6 +284,10 @@ struct ThemeColorSettingsPage {
         ThemeImageCropper({
           request: this.cropRequest,
           onDone: (path: string) => this.finishCrop(path),
+          onArea: (crop: ThemeImageCrop) => {
+            this.cropArea = crop;
+            this.finishCrop(this.cropRequest.uri);
+          },
           onOriginal: () => this.finishCrop(this.cropRequest.uri),
           onCancel: () => this.finishCrop('')
         })
@@ -2181,7 +2196,8 @@ struct ThemeColorSettingsPage {
         this.assetSlot({ label: '书架边框', image: this.shelfFrameImage(), state: this.shelfPartState(false),
           slotWidth: 50, slotHeight: 74, onTap: () => this.tapShelfPart(false) })
         this.assetSlot({ label: '分组文件夹', image: this.shelfFolderImage(), state: this.shelfPartState(true),
-          slotWidth: 50, slotHeight: 74, onTap: () => this.tapShelfPart(true) })
+          slotWidth: 50, slotHeight: 74, onTap: () => this.tapShelfPart(true),
+          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.FOLDER, this.shelfFolderImage()) })
         Text('边框是 SVG，与封面同比例、中心透明；文件夹是 450 × 660 位图')
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
@@ -2201,11 +2217,18 @@ struct ThemeColorSettingsPage {
   @Builder
   coverTile($$: CoverTileOptions) {
     Stack({ alignContent: Alignment.TopEnd }) {
-      Image($$.uri)
-        .width('100%')
-        .height('100%')
-        .objectFit(ImageFit.Cover)
-        .draggable(false)
+      if (ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, $$.uri)) {
+        ThemeCroppedImage({ src: $$.uri,
+          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, $$.uri) as ThemeImageCrop })
+          .width('100%')
+          .height('100%')
+      } else {
+        Image($$.uri)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .draggable(false)
+      }
       Text(`${$$.index + 1}`)
         .fontSize(AppFontSize.MICRO)
         .fontColor('#FFFFFF')
@@ -2265,11 +2288,12 @@ struct ThemeColorSettingsPage {
       if (!(await this.ensureAdvanced())) return;
       const uris = await SchemeAssetService.pickImages(getContext(this), 1);
       if (uris.length === 0) return;
-      const path = await this.cropImage(uris[0], '封面取景', 450, 660, 450, false);
-      if (!path) return;
+      const framed = await this.frameImage(uris[0], '封面取景', 450, 660, 450, false);
+      if (!framed) return;
       await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-        SchemeAssetService.replaceCover(getContext(this), this.schemeId, index, path), 'book', true, true, '封面已替换');
-      this.discardCropFile(path, uris[0]);
+        SchemeAssetService.replaceCover(getContext(this), this.schemeId, index, framed.path, framed.crop), 'book',
+        true, true, '封面已替换');
+      this.discardCropFile(framed.path, uris[0]);
     } else if (action === 1) {
       await this.moveCover(index, 0);
     } else if (action === 2) {
@@ -2301,7 +2325,8 @@ struct ThemeColorSettingsPage {
     Row({ space: AppSpacing.XL }) {
       this.assetSlot({ label: '4 : 5', image: this.homeBackdropImage(),
         state: this.ownHomeBackdrop() ? 'own' : (ThemeColorSettingsPage.hasImage(this.homeBackdropImage()) ? 'inherit' : 'empty'),
-        slotWidth: 64, slotHeight: 80, onTap: () => this.tapHomeBackdrop() })
+        slotWidth: 64, slotHeight: 80, onTap: () => this.tapHomeBackdrop(),
+        crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.homeBackdropImage(), this.selectedMode === 'dark') })
       Text('书架、发现和我的页顶部共用，画面放上半部分，向下自动淡成页面底色。浅色、深色各一张，互不借用')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
@@ -2595,7 +2620,12 @@ struct ThemeColorSettingsPage {
   assetSlot($$: AssetSlotOptions) {
     Column({ space: AppSpacing.XS }) {
       Stack({ alignContent: Alignment.BottomStart }) {
-        if ($$.state !== 'empty' && ThemeColorSettingsPage.hasImage($$.image)) {
+        if ($$.state !== 'empty' && ThemeColorSettingsPage.hasImage($$.image) && $$.crop) {
+          ThemeCroppedImage({ src: $$.image, crop: $$.crop as ThemeImageCrop })
+            .width('100%')
+            .height('100%')
+            .opacity($$.state === 'own' ? 1 : 0.5)
+        } else if ($$.state !== 'empty' && ThemeColorSettingsPage.hasImage($$.image)) {
           Image($$.image)
             .width($$.icon ? '60%' : '100%')
             .height($$.icon ? '60%' : '100%')
@@ -2687,9 +2717,12 @@ struct ThemeColorSettingsPage {
 
   // ---- 取景 ----
 
-  /** 打开取景层，返回裁好的文件路径；选“用原图”返回原 URI，取消返回空串。 */
+  /**
+   * 打开取景层，返回裁好的文件路径；选“用原图”返回原 URI，取消返回空串。
+   * areaOnly 时不裁文件、返回原 URI，框住的区域放在 cropArea。
+   */
   cropImage(uri: string, title: string, ratioWidth: number, ratioHeight: number, maxWidth: number, png: boolean,
-    index: number = 0, total: number = 1): Promise<string> {
+    index: number = 0, total: number = 1, areaOnly: boolean = false): Promise<string> {
     return new Promise<string>((resolve: (result: string) => void) => {
       const request = new ThemeCropRequest();
       request.uri = uri;
@@ -2700,6 +2733,7 @@ struct ThemeColorSettingsPage {
       request.png = png;
       request.index = index;
       request.total = total;
+      request.areaOnly = areaOnly;
       this.cropResolve = resolve;
       this.cropRequest = request;
       this.cropVisible = true;
@@ -2707,18 +2741,26 @@ struct ThemeColorSettingsPage {
   }
 
   /**
-   * 动图不进取景层：取景会重新编码成单帧 PNG / JPEG，动画就没了。是动图时按原图使用并返回原地址，
-   * 超过播放上限的拒收并返回 null；不是动图返回空串，照常取景。
+   * 素材位取景。静图裁成新文件；动图文件原样使用，取景只记下显示区域（重新编码会只剩第一帧），
+   * 超过播放上限的动图拒收。取消或拒收时返回 null。
    */
-  async animatedOriginal(uri: string): Promise<string | null> {
+  async frameImage(uri: string, title: string, ratioWidth: number, ratioHeight: number, maxWidth: number,
+    png: boolean, index: number = 0, total: number = 1): Promise<FramedImage | null> {
     const oversize = await AnimatedImagePolicy.oversizeAnimatedMessage(uri);
     if (oversize) {
       HdsFeedback.showToast(oversize);
       return null;
     }
-    if (!(await AnimatedImagePolicy.isAnimated(uri))) return '';
-    HdsFeedback.showToast('动图不裁剪，按原图使用');
-    return uri;
+    const animated = await AnimatedImagePolicy.isAnimated(uri);
+    this.cropArea = null;
+    const path = await this.cropImage(uri, title, ratioWidth, ratioHeight, maxWidth, png, index, total, animated);
+    const crop = this.cropArea;
+    this.cropArea = null;
+    if (!path) return null;
+    const result = new FramedImage();
+    result.path = path;
+    result.crop = animated ? crop : null;
+    return result;
   }
 
   finishCrop(result: string): void {
@@ -3185,16 +3227,16 @@ struct ThemeColorSettingsPage {
     if (picked.length === 0) return;
     // 一张张取景；取消的那张跳过。
     const uris: string[] = [];
+    const crops: Array<ThemeImageCrop | null> = [];
     for (let index = 0; index < picked.length; index++) {
-      const animated = await this.animatedOriginal(picked[index]);
-      if (animated === null) continue;
-      const path = animated ||
-        await this.cropImage(picked[index], '封面取景', 450, 660, 450, false, index, picked.length);
-      if (path) uris.push(path);
+      const framed = await this.frameImage(picked[index], '封面取景', 450, 660, 450, false, index, picked.length);
+      if (!framed) continue;
+      uris.push(framed.path);
+      crops.push(framed.crop);
     }
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.addCovers(getContext(this), this.schemeId, uris, this.sourceThemeId('book')),
+      SchemeAssetService.addCovers(getContext(this), this.schemeId, uris, this.sourceThemeId('book'), crops),
       'book', true, true, `已加入 ${uris.length} 张封面`);
     for (let index = 0; index < uris.length; index++) this.discardCropFile(uris[index], '');
   }
@@ -3210,14 +3252,13 @@ struct ThemeColorSettingsPage {
   async uploadShelfFolder(): Promise<void> {
     const picked = await SchemeAssetService.pickImages(getContext(this), 1);
     if (picked.length === 0) return;
-    const animated = await this.animatedOriginal(picked[0]);
-    if (animated === null) return;
-    const path = animated || await this.cropImage(picked[0], '文件夹插画取景', 450, 660, 450, true);
-    if (!path) return;
+    const framed = await this.frameImage(picked[0], '文件夹插画取景', 450, 660, 450, true);
+    if (!framed) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.setShelfFolder(getContext(this), this.schemeId, path, this.sourceThemeId('book')),
+      SchemeAssetService.setShelfFolder(getContext(this), this.schemeId, framed.path, this.sourceThemeId('book'),
+        framed.crop),
       'book', true, true, '文件夹插画已更新');
-    this.discardCropFile(path, picked[0]);
+    this.discardCropFile(framed.path, picked[0]);
   }
 
   modeLabel(): string {
@@ -3308,15 +3349,13 @@ struct ThemeColorSettingsPage {
     const dark = this.selectedMode === 'dark';
     const picked = await SchemeAssetService.pickImages(getContext(this), 1);
     if (picked.length === 0) return;
-    const animated = await this.animatedOriginal(picked[0]);
-    if (animated === null) return;
-    const path = animated || await this.cropImage(picked[0], '首页背景取景', 1080, 1350, 1080, false);
-    if (!path) return;
+    const framed = await this.frameImage(picked[0], '首页背景取景', 1080, 1350, 1080, false);
+    if (!framed) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.setHomeBackdrop(getContext(this), this.schemeId, path, dark,
-        this.sourceThemeId('homeBackdrop')),
+      SchemeAssetService.setHomeBackdrop(getContext(this), this.schemeId, framed.path, dark,
+        this.sourceThemeId('homeBackdrop'), framed.crop),
       'homeBackdrop', !dark, dark, `${dark ? '深色' : '浅色'}首页背景已更新`);
-    this.discardCropFile(path, picked[0]);
+    this.discardCropFile(framed.path, picked[0]);
   }
 
   async clearHomeBackdrop(): Promise<void> {

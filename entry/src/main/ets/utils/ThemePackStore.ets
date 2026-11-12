@@ -259,11 +259,15 @@ export class ThemePackStore {
     parts.navigation = source.navigation || null;
     parts.book = source.book || null;
     if (parts.book && !Array.isArray(parts.book.covers)) parts.book.covers = [];
+    if (parts.book && !Array.isArray(parts.book.coverCrops)) parts.book.coverCrops = [];
+    if (parts.book && !parts.book.shelfFolderCrop) parts.book.shelfFolderCrop = null;
     parts.startupLight = source.startupLight || null;
     parts.startupDark = source.startupDark || null;
     parts.bubble = source.bubble || null;
     parts.homeBackdropLight = source.homeBackdropLight || '';
     parts.homeBackdropDark = source.homeBackdropDark || '';
+    parts.homeBackdropLightCrop = source.homeBackdropLightCrop || null;
+    parts.homeBackdropDarkCrop = source.homeBackdropDarkCrop || null;
     parts.logo = source.logo || '';
     parts.preview = source.preview || '';
     parts.radius = source.radius || null;

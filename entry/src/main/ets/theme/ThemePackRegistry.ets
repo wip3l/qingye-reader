@@ -3,11 +3,20 @@ import {
   packageIdOfThemeId,
   packReaderBackgroundId,
   packThemeId,
+  findImageCrop,
+  ThemeImageCrop,
   ThemePackageCredits,
   ThemePackageParts,
   ThemePackageVariantParts
 } from './share/ThemePackageFormat';
 import { ThemePack, ThemeVariant } from './ThemeModels';
+
+/** 带显示区域的素材位，见 ThemePackRegistry.imageCrop。 */
+export class ThemeImageSlots {
+  static readonly COVER: string = 'cover';
+  static readonly FOLDER: string = 'folder';
+  static readonly BACKDROP: string = 'backdrop';
+}
 
 /** 安装在本机的主题包落盘记录（theme_packs/<packageId>/pack.json）：素材引用是包目录下的相对路径。 */
 export class ThemePackRecord {
@@ -86,6 +95,11 @@ export class InstalledThemePack {
   bubbleCap: string = '';
   homeBackdropLight: string = '';
   homeBackdropDark: string = '';
+  // 显示区域（动图取景）；image 已换成本机地址，和上面的素材地址对得上。
+  coverCrops: ThemeImageCrop[] = [];
+  shelfFolderCrop: ThemeImageCrop | null = null;
+  homeBackdropLightCrop: ThemeImageCrop | null = null;
+  homeBackdropDarkCrop: ThemeImageCrop | null = null;
   logo: string = '';
   preview: string = '';
   appFont: string = '';
@@ -173,6 +187,44 @@ export class ThemePackRegistry {
     ThemePackRegistry.bump();
   }
 
+  /**
+   * 已安装主题包里某张图的显示区域。slot 是 ThemeImageSlots 之一，src 是素材的本机地址；没有区域时返回 null。
+   * 首页背景两种模式可能用同一张图、各取各的区域，优先取 darkMode 对应的那条。
+   */
+  static imageCrop(slot: string, src: string, darkMode: boolean = false): ThemeImageCrop | null {
+    if (!src) return null;
+    let found: ThemeImageCrop | null = null;
+    ThemePackRegistry.packs.forEach((pack: InstalledThemePack) => {
+      if (found) return;
+      if (slot === ThemeImageSlots.COVER) {
+        found = findImageCrop(pack.coverCrops, src);
+      } else if (slot === ThemeImageSlots.FOLDER) {
+        if (pack.shelfFolderCrop && pack.shelfFolderCrop.image === src) found = pack.shelfFolderCrop;
+      } else if (slot === ThemeImageSlots.BACKDROP) {
+        const first = darkMode ? pack.homeBackdropDarkCrop : pack.homeBackdropLightCrop;
+        const second = darkMode ? pack.homeBackdropLightCrop : pack.homeBackdropDarkCrop;
+        if (first && first.image === src) found = first;
+        else if (second && second.image === src) found = second;
+      }
+    });
+    return found;
+  }
+
+  private static resolveCrop(crop: ThemeImageCrop | null, uri: (value: string) => string): ThemeImageCrop | null {
+    if (!crop) return null;
+    const image = uri(crop.image);
+    if (!image) return null;
+    const resolved = new ThemeImageCrop();
+    resolved.image = image;
+    resolved.x = crop.x;
+    resolved.y = crop.y;
+    resolved.width = crop.width;
+    resolved.height = crop.height;
+    resolved.imageWidth = crop.imageWidth;
+    resolved.imageHeight = crop.imageHeight;
+    return resolved;
+  }
+
   private static bump(): void {
     AppStorage.setOrCreate(ThemePackRegistry.STORAGE_REVISION,
       (AppStorage.get<number>(ThemePackRegistry.STORAGE_REVISION) || 0) + 1);
@@ -242,6 +294,12 @@ export class ThemePackRegistry {
       }
       installed.shelfFrame = uri(parts.book.shelfFrame);
       installed.shelfFolder = uri(parts.book.shelfFolder);
+      for (const cover of parts.book.covers) {
+        const crop = ThemePackRegistry.resolveCrop(findImageCrop(parts.book.coverCrops, cover), uri);
+        if (crop) installed.coverCrops.push(crop);
+      }
+      installed.shelfFolderCrop = parts.book.shelfFolderCrop && parts.book.shelfFolderCrop.image === parts.book.shelfFolder ?
+        ThemePackRegistry.resolveCrop(parts.book.shelfFolderCrop, uri) : null;
       if (installed.covers.length > 0) pack.book.coverAssetId = themeId;
       if (installed.shelfFrame) pack.book.shelfFrameAssetId = themeId;
       if (installed.shelfFolder) pack.book.shelfFolderAssetId = themeId;
@@ -270,6 +328,12 @@ export class ThemePackRegistry {
     // 本机旧版记录里没有这两个字段。
     installed.homeBackdropLight = uri(parts.homeBackdropLight || '');
     installed.homeBackdropDark = uri(parts.homeBackdropDark || '');
+    const lightCrop = parts.homeBackdropLightCrop || null;
+    const darkCrop = parts.homeBackdropDarkCrop || null;
+    installed.homeBackdropLightCrop = lightCrop && lightCrop.image === parts.homeBackdropLight ?
+      ThemePackRegistry.resolveCrop(lightCrop, uri) : null;
+    installed.homeBackdropDarkCrop = darkCrop && darkCrop.image === parts.homeBackdropDark ?
+      ThemePackRegistry.resolveCrop(darkCrop, uri) : null;
     installed.logo = uri(parts.logo);
     installed.preview = uri(parts.preview);
     installed.appFont = uri(parts.appFont);

@@ -3,6 +3,7 @@ import fs from '@ohos.file.fs';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
+import { ThemeImageCrop } from '../../theme/share/ThemePackageFormat';
 
 /** 一次取景：素材槽的固定比例与输出上限。 */
 export class ThemeCropRequest {
@@ -17,6 +18,8 @@ export class ThemeCropRequest {
   // 连续取景多张时的第几张 / 共几张，只用于标题。
   index: number = 0;
   total: number = 1;
+  // 动图：不裁文件，只把框住的区域交给 onArea（重新编码会只剩第一帧）。
+  areaOnly: boolean = false;
 }
 
 /**
@@ -30,6 +33,7 @@ export struct ThemeImageCropper {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   onDone: (path: string) => void = (_path: string): void => {};
+  onArea: (crop: ThemeImageCrop) => void = (_crop: ThemeImageCrop): void => {};
   onOriginal: () => void = (): void => {};
   onCancel: () => void = (): void => {};
   @State private pixelMap: PixelMap | undefined = undefined;
@@ -138,7 +142,8 @@ export struct ThemeImageCropper {
       )
 
       Column({ space: AppSpacing.MD }) {
-        Text(`双指缩放、拖动图片，框内保存为 ${this.request.ratioWidth} : ${this.request.ratioHeight}`)
+        Text(this.request.areaOnly ? '双指缩放、拖动图片，动图原样保存、只显示框内部分' :
+          `双指缩放、拖动图片，框内保存为 ${this.request.ratioWidth} : ${this.request.ratioHeight}`)
           .fontSize(AppFontSize.CAPTION)
           .fontColor('#C9CED4')
           .textAlign(TextAlign.Center)
@@ -289,6 +294,19 @@ export struct ThemeImageCropper {
       const height = Math.max(1, Math.min(this.imageHeight, Math.round(this.frameHeight() / scale)));
       const x = Math.max(0, Math.min(this.imageWidth - width, Math.round((this.frameLeft() - this.imageLeft()) / scale)));
       const y = Math.max(0, Math.min(this.imageHeight - height, Math.round((this.frameTop() - this.imageTop()) / scale)));
+      if (this.request.areaOnly) {
+        // 坐标按解码出的工作图记，显示时只看比例。image 由调用方存进素材包后填上。
+        const crop = new ThemeImageCrop();
+        crop.x = x;
+        crop.y = y;
+        crop.width = width;
+        crop.height = height;
+        crop.imageWidth = this.imageWidth;
+        crop.imageHeight = this.imageHeight;
+        this.releasePixelMap();
+        this.onArea(crop);
+        return;
+      }
       await pixelMap.crop({ x: x, y: y, size: { width: width, height: height } });
       const shrink = Math.min(1, this.request.maxWidth / width);
       if (shrink < 1) await pixelMap.scale(shrink, shrink);

@@ -58,6 +58,24 @@ function statusBar(darkContent: boolean): HTMLElement {
     h('span', {}, '9:41'), h('span', { class: 'sb-icons' }, h('i'), h('i'), h('b')));
 }
 
+/**
+ * 动图取景记下的显示区域（book.coverCrops、book.shelfFolderCrop、homeBackdrop.lightCrop / darkCrop）换成 CSS，
+ * 效果同应用的 ThemeCroppedImage：区域等比盖满、居中、裁掉多余。区域不属于这张图时返回空串。
+ */
+function cropStyle(crop: any, ref: string): string {
+  if (!crop || !ref || crop.image !== ref) return '';
+  const { x, y, width, height, imageWidth, imageHeight } = crop;
+  if (!(imageWidth > 0 && imageHeight > 0 && width > 0 && height > 0)) return '';
+  const pct = (value: number, total: number): string => `${Math.max(0, value / total * 100).toFixed(4)}%`;
+  return `object-fit:cover;object-view-box:inset(${pct(y, imageHeight)} ${pct(imageWidth - x - width, imageWidth)} ` +
+    `${pct(imageHeight - y - height, imageHeight)} ${pct(x, imageWidth)});`;
+}
+
+function coverCropStyle(book: any, ref: string): string {
+  const crops: any[] = Array.isArray(book.coverCrops) ? book.coverCrops : [];
+  return cropStyle(crops.find((crop) => crop && crop.image === ref), ref);
+}
+
 const BOOKS: [string, string][] = [['山海拾遗', '读到 12%'], ['夜航船', '读到 58%'], ['长安客', '未读'], ['北窗', '读到 3%'], ['雾港来信', '更新 2 章']];
 
 function coverTile(index: number, title: string): HTMLElement {
@@ -66,7 +84,8 @@ function coverTile(index: number, title: string): HTMLElement {
   const frame = assetUrl(book.shelfFrame);
   const tile = h('div', { class: 'bk', 'data-sec': 'book' });
   if (covers.length) {
-    tile.append(h('img', { class: 'cv', src: assetUrl(covers[index % covers.length]), alt: '' }), h('div', { class: 'ttl' }, title));
+    const ref = covers[index % covers.length];
+    tile.append(h('img', { class: 'cv', src: assetUrl(ref), alt: '', style: coverCropStyle(book, ref) }), h('div', { class: 'ttl' }, title));
   } else if (usesBaseArt()) {
     tile.append(placeholder(`沿用「${baseTheme().name}」封面`, 'fill'));
   } else {
@@ -90,12 +109,14 @@ function navIcon(key: string, selected: boolean): HTMLElement {
  * 高度和不透明度取各页传给组件的值，渐变停点照搬组件。浅深色不互相借用。
  */
 function homeBackdrop(mode: Mode, e: Effective, visibleHeight: number, strength: number): HTMLElement | null {
-  const url = assetUrl((project().parts.homeBackdrop || {})[mode]);
+  const parts = project().parts.homeBackdrop || {};
+  const url = assetUrl(parts[mode]);
   if (!url) return null;
+  const crop = cropStyle(parts[`${mode}Crop`], parts[mode]);
   const stops = mode === 'dark' ? [[0.25, 0], [0.55, 38], [0.9, 70], [1, 100]] : [[0.1, 0], [0.3, 38], [0.85, 72], [1, 100]];
   const gradient = stops.map(([a, at]) => `color-mix(in srgb, ${e.c.pageColor} ${Math.round(a * 100)}%, transparent) ${at}%`).join(', ');
   return h('div', { class: 'hbg', 'data-sec': 'homeBackdrop', style: visibleHeight ? `height:${visibleHeight}px` : 'aspect-ratio:4 / 5' },
-    h('img', { src: url, alt: '', style: `opacity:${strength}` }), h('i', { style: `background:linear-gradient(${gradient})` }));
+    h('img', { src: url, alt: '', style: `opacity:${strength};${crop}` }), h('i', { style: `background:linear-gradient(${gradient})` }));
 }
 
 /** 首页三个页签共用的骨架：背景、状态栏、内容、底栏（当前页签用选中态图标）。 */
@@ -119,8 +140,9 @@ function homeScreen(mode: Mode, e: Effective, tab: number, cls: string, backdrop
 }
 
 function folderArt(): HTMLElement {
-  const folder = assetUrl((project().parts.book || {}).shelfFolder);
-  if (folder) return h('img', { class: 'cv', src: folder, alt: '' });
+  const book = project().parts.book || {};
+  const folder = assetUrl(book.shelfFolder);
+  if (folder) return h('img', { class: 'cv', src: folder, alt: '', style: cropStyle(book.shelfFolderCrop, book.shelfFolder) });
   return usesBaseArt() ? placeholder(`沿用「${baseTheme().name}」文件夹`, 'fill') : h('div', { class: 'plain folder' }, h('b', {}, '分组'));
 }
 

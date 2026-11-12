@@ -9,13 +9,15 @@ import {
   isPackThemeId,
   NAVIGATION_ICON_KEYS,
   packThemeId,
+  ThemeImageCrop,
   ThemePackageAssetKinds,
   ThemePackageBook,
   ThemePackageBubble,
   ThemePackageLimits,
   ThemePackageNavigation,
   ThemePackageTtsPanel,
-  ThemePackageVariantParts
+  ThemePackageVariantParts,
+  tidyImageCrops
 } from '../theme/share/ThemePackageFormat';
 import { AppThemeSettings, AppThemeSettingsStore } from './AppThemeSettingsStore';
 import { ReaderCustomFontData, ReaderCustomFontItem } from '../core/reader/ReaderSettingsModels';
@@ -102,16 +104,40 @@ export class SchemeAssetService {
     return scheme.packageId && ThemePackRegistry.getByPackageId(scheme.packageId) ? scheme.packageId : '';
   }
 
-  static async addCovers(context: Context, schemeId: string, uris: string[], baseTheme: string): Promise<SchemeAssetResult> {
+  /** crops 与 uris 一一对应：动图取景记下的显示区域，没有时为 null。 */
+  static async addCovers(context: Context, schemeId: string, uris: string[], baseTheme: string,
+    crops: Array<ThemeImageCrop | null> = []): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const book = record.parts.book || new ThemePackageBook();
-      for (const uri of uris) {
+      for (let index = 0; index < uris.length; index++) {
         if (book.covers.length >= ThemePackageLimits.MAX_COVERS) break;
-        const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '封面');
+        const path = await ThemePackStore.importAsset(context, record.packageId, uris[index], SchemeAssetService.IMAGE, '封面');
         if (!book.covers.includes(path)) book.covers.push(path);
+        SchemeAssetService.setCoverCrop(book, path, index < crops.length ? crops[index] : null);
       }
       record.parts.book = book;
     });
+  }
+
+  /** 把显示区域挂到 image 这张素材上；crop 为 null 时返回 null（显示整张图）。 */
+  private static attachCrop(crop: ThemeImageCrop | null, image: string): ThemeImageCrop | null {
+    if (!crop || !image) return null;
+    const attached = new ThemeImageCrop();
+    attached.image = image;
+    attached.x = crop.x;
+    attached.y = crop.y;
+    attached.width = crop.width;
+    attached.height = crop.height;
+    attached.imageWidth = crop.imageWidth;
+    attached.imageHeight = crop.imageHeight;
+    return attached;
+  }
+
+  private static setCoverCrop(book: ThemePackageBook, image: string, crop: ThemeImageCrop | null): void {
+    const crops = (book.coverCrops || []).filter((item: ThemeImageCrop): boolean => item.image !== image);
+    const attached = SchemeAssetService.attachCrop(crop, image);
+    if (attached) crops.push(attached);
+    book.coverCrops = crops;
   }
 
   static async setShelfFrame(context: Context, schemeId: string, uri: string, baseTheme: string): Promise<SchemeAssetResult> {
@@ -122,10 +148,12 @@ export class SchemeAssetService {
     });
   }
 
-  static async setShelfFolder(context: Context, schemeId: string, uri: string, baseTheme: string): Promise<SchemeAssetResult> {
+  static async setShelfFolder(context: Context, schemeId: string, uri: string, baseTheme: string,
+    crop: ThemeImageCrop | null = null): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const book = record.parts.book || new ThemePackageBook();
       book.shelfFolder = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '文件夹插画');
+      book.shelfFolderCrop = SchemeAssetService.attachCrop(crop, book.shelfFolder);
       record.parts.book = book;
     });
   }
@@ -283,11 +311,16 @@ export class SchemeAssetService {
 
   /** 首页背景：浅色、深色各一张，互不借用。 */
   static async setHomeBackdrop(context: Context, schemeId: string, uri: string, darkMode: boolean,
-    baseTheme: string): Promise<SchemeAssetResult> {
+    baseTheme: string, crop: ThemeImageCrop | null = null): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '首页背景');
-      if (darkMode) record.parts.homeBackdropDark = path;
-      else record.parts.homeBackdropLight = path;
+      if (darkMode) {
+        record.parts.homeBackdropDark = path;
+        record.parts.homeBackdropDarkCrop = SchemeAssetService.attachCrop(crop, path);
+      } else {
+        record.parts.homeBackdropLight = path;
+        record.parts.homeBackdropLightCrop = SchemeAssetService.attachCrop(crop, path);
+      }
     });
   }
 
@@ -323,13 +356,15 @@ export class SchemeAssetService {
   // ---- 逐个管理的素材 ----
 
   /** 替换第 index 张封面。 */
-  static async replaceCover(context: Context, schemeId: string, index: number, uri: string): Promise<SchemeAssetResult> {
+  static async replaceCover(context: Context, schemeId: string, index: number, uri: string,
+    crop: ThemeImageCrop | null = null): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
       const book = record.parts.book;
       if (!book || index < 0 || index >= book.covers.length) throw new Error('这张封面已不存在');
       const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '封面');
       if (book.covers.includes(path)) throw new Error('这张图已经在封面里了');
       book.covers[index] = path;
+      SchemeAssetService.setCoverCrop(book, path, crop);
     });
   }
 
@@ -510,8 +545,15 @@ export class SchemeAssetService {
       } else {
         const source = fromDark ? parts.homeBackdropDark : parts.homeBackdropLight;
         if (!source) throw new Error('这个模式还没有首页背景');
-        if (fromDark) parts.homeBackdropLight = source;
-        else parts.homeBackdropDark = source;
+        const crop = SchemeAssetService.attachCrop(
+          (fromDark ? parts.homeBackdropDarkCrop : parts.homeBackdropLightCrop) || null, source);
+        if (fromDark) {
+          parts.homeBackdropLight = source;
+          parts.homeBackdropLightCrop = crop;
+        } else {
+          parts.homeBackdropDark = source;
+          parts.homeBackdropDarkCrop = crop;
+        }
       }
     });
   }
@@ -600,6 +642,8 @@ export class SchemeAssetService {
     }
     try {
       await mutate(record);
+      // 换图、删封面后留下的旧区域清掉。
+      tidyImageCrops(record.parts);
     } catch (e) {
       // 新建的包还没登记到方案上，失败就整个清掉；已有的包只清掉这次写进去的多余文件。
       if (created) ThemePackStore.uninstall(context, record.packageId);

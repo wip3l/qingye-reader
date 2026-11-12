@@ -101,6 +101,46 @@ test('switching background mode drops the other mode\'s images from the export',
   assert.equal(theme.parts.light.reader.backgroundMode, 'none');
 });
 
+test('display areas for animated images survive export and follow their image', async () => {
+  const entries = handWritten();
+  const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));
+  const area = (image) => ({ image, x: 10, y: 20, width: 300, height: 440, imageWidth: 450, imageHeight: 660 });
+  theme.parts.book.coverCrops = [area('assets/c2.png')];
+  theme.parts.book.shelfFolder = 'assets/c1.jpg';
+  theme.parts.book.shelfFolderCrop = area('assets/c1.jpg');
+  theme.parts.homeBackdrop.lightCrop = { image: 'assets/home.jpg', x: 0, y: 100, width: 1080, height: 1250, imageWidth: 1080, imageHeight: 1350 };
+  entries['night-garden/theme.json'] = json(theme);
+  const { project, problems } = await io.loadProject(io.readZip(zipSync(entries)));
+  assert.deepEqual(problems, []);
+  assert.deepEqual(project.parts.book.coverCrops, [area('assets/c2.png')]);
+  assert.equal(project.parts.homeBackdrop.lightCrop.y, 100);
+
+  let parts = JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts;
+  assert.deepEqual(parts.book.coverCrops, [area('assets/c2.png')]);
+  assert.deepEqual(parts.book.shelfFolderCrop, area('assets/c1.jpg'));
+  assert.equal(parts.homeBackdrop.lightCrop.height, 1250);
+
+  // 换掉或删掉那张图后，它的区域不再写进包，也不会把旧图带进去。
+  project.parts.book.covers = ['assets/c1.jpg'];
+  project.parts.book.shelfFolder = 'assets/start.jpg';
+  project.parts.homeBackdrop.light = 'assets/start.jpg';
+  const files = await io.exportFiles(project);
+  parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.equal(parts.book.coverCrops, undefined);
+  assert.equal(parts.book.shelfFolderCrop, undefined);
+  assert.equal(parts.homeBackdrop.lightCrop, undefined);
+  assert.equal(files.has('assets/c2.png'), false);
+});
+
+test('a display area outside its image is rejected like the app would', async () => {
+  const entries = handWritten();
+  const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));
+  theme.parts.book.coverCrops = [{ image: 'assets/c2.png', x: 300, y: 0, width: 300, height: 440, imageWidth: 450, imageHeight: 660 }];
+  entries['night-garden/theme.json'] = json(theme);
+  const { problems } = await io.loadProject(io.readZip(zipSync(entries)));
+  assert.equal(problems.some((problem) => String(problem.message || problem).includes('coverCrops')), true);
+});
+
 test('navigation takes bitmap icons, selected icons and an icons-only bar', async () => {
   const entries = handWritten();
   const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));

@@ -32,6 +32,8 @@ export class AnimatedImagePolicy {
   private static readonly STILL_MAX_EDGE: number = 1440;
 
   private static entries: Map<string, AnimatedImageEntry> = new Map();
+  // 静图地址 → 原动图地址：按原图查东西（比如主题素材的显示区域）时用。
+  private static stillOrigins: Map<string, string> = new Map();
   private static probing: Set<string> = new Set();
   private static revisionTimer: number = -1;
   private static settingsRevision: number = 0;
@@ -81,7 +83,9 @@ export class AnimatedImagePolicy {
     const stamp = `${stat.size}:${stat.mtime}`;
     const entry = AnimatedImagePolicy.entries.get(path);
     if (entry && entry.stamp === stamp) {
-      return entry.animated && entry.still ? entry.still : src;
+      if (!entry.animated || !entry.still) return src;
+      AnimatedImagePolicy.stillOrigins.set(entry.still, src);
+      return entry.still;
     }
     if (!AnimatedImagePolicy.mayBeAnimated(path)) {
       const known = new AnimatedImageEntry();
@@ -91,6 +95,11 @@ export class AnimatedImagePolicy {
     }
     AnimatedImagePolicy.probe(context, path, stamp);
     return src;
+  }
+
+  /** display 换成静图时，静图对应的原地址；不是换出来的静图原样返回。 */
+  static originalOf(src: string): string {
+    return AnimatedImagePolicy.stillOrigins.get(src) || src;
   }
 
   /**

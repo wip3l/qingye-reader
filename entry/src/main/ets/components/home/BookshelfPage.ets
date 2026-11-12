@@ -53,6 +53,9 @@ import { ShelfCategoryMaterial } from './ShelfCategoryMaterial';
 import { SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
 import { AppThemeSettingsStore } from '../../utils/AppThemeSettingsStore';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
+import { ThemeImageSlots } from '../../theme/ThemePackRegistry';
+import { ThemeImageCrop } from '../../theme/share/ThemePackageFormat';
+import { ThemeCroppedImage } from '../theme/ThemeCroppedImage';
 import { ThemeBookCoverSettings } from '../../utils/ThemeBookCoverSettings';
 import { CoverDimSettings } from '../../utils/CoverDimSettings';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
@@ -1971,7 +1974,13 @@ export struct BookshelfPage {
     Stack({ alignContent: Alignment.TopStart }) {
       ForEach(this.tileGroupFlyers, (flyer: TileGroupFlyer) => {
         Stack() {
-          if (flyer.cover) {
+          if (flyer.cover && flyer.fill && this.themeImageCrop(ThemeImageSlots.COVER, flyer.cover)) {
+            ThemeCroppedImage({ src: flyer.cover,
+              crop: this.themeImageCrop(ThemeImageSlots.COVER, flyer.cover) as ThemeImageCrop,
+              syncLoad: this.coverSyncLoadable(flyer.cover) })
+              .width('100%')
+              .height('100%')
+          } else if (flyer.cover) {
             Image(flyer.cover)
               .width('100%')
               .height('100%')
@@ -5148,7 +5157,12 @@ export struct BookshelfPage {
         Stack({ alignContent: Alignment.TopStart }) {
           this.shelfHardcoverBack(this.shelfTileHardcoverWidth(), this.shelfTileHardcoverHeight())
           Stack({ alignContent: Alignment.TopStart }) {
-            if (this.shouldUseThemeBookCover()) {
+            if (this.shouldUseThemeBookCover() && this.themeImageCrop(ThemeImageSlots.FOLDER, this.activeThemeShelfFolder())) {
+              ThemeCroppedImage({ src: this.activeThemeShelfFolder(),
+                crop: this.themeImageCrop(ThemeImageSlots.FOLDER, this.activeThemeShelfFolder()) as ThemeImageCrop })
+                .width('100%')
+                .height('100%')
+            } else if (this.shouldUseThemeBookCover()) {
               Image(this.activeThemeShelfFolder())
                 .width('100%')
                 .height('100%')
@@ -5320,7 +5334,12 @@ export struct BookshelfPage {
   @Builder
   shelfFolderPreview(previewBooks: Book[], elementId: string) {
       Stack() {
-        if (this.shouldUseThemeBookCover()) {
+        if (this.shouldUseThemeBookCover() && this.themeImageCrop(ThemeImageSlots.FOLDER, this.activeThemeShelfFolder())) {
+          ThemeCroppedImage({ src: this.activeThemeShelfFolder(),
+            crop: this.themeImageCrop(ThemeImageSlots.FOLDER, this.activeThemeShelfFolder()) as ThemeImageCrop })
+            .width('100%')
+            .height('100%')
+        } else if (this.shouldUseThemeBookCover()) {
           Image(this.activeThemeShelfFolder())
             .width('100%')
             .height('100%')
@@ -6336,7 +6355,20 @@ export struct BookshelfPage {
     idScope: string = '', radius: number = 8, spineInset: number = -1, syncDecode: boolean = false) {
     Stack() {
       if (this.shouldUseThemeBookCover()) {
-        if (this.activeThemeBookCovers(book).length === 1 || !animateCovers) {
+        if ((this.activeThemeBookCovers(book).length === 1 || !animateCovers) &&
+          this.themeImageCrop(ThemeImageSlots.COVER, this.activeThemeBookCovers(book)[0])) {
+          // 主题包动图封面取景时只记了显示区域，按区域画。
+          ThemeCroppedImage({ src: this.activeThemeBookCovers(book)[0],
+            crop: this.themeImageCrop(ThemeImageSlots.COVER, this.activeThemeBookCovers(book)[0]) as ThemeImageCrop,
+            syncLoad: syncDecode || !this.tileGroupAwaitCovers,
+            onLoaded: () => this.tileGroupPendingCovers.delete(book.bookUrl),
+            onFailed: () => this.tileGroupPendingCovers.delete(book.bookUrl) })
+            .width(width)
+            .height(height)
+            .onAppear(() => {
+              if (this.tileGroupAwaitCovers && !syncDecode) this.tileGroupPendingCovers.add(book.bookUrl);
+            })
+        } else if (this.activeThemeBookCovers(book).length === 1 || !animateCovers) {
           Image(this.activeThemeBookCovers(book)[0])
             .width(width)
             .height(height)
@@ -6352,22 +6384,38 @@ export struct BookshelfPage {
         } else {
           Swiper() {
             ForEach(this.activeThemeBookCovers(book), (cover: ResourceStr, index: number) => {
-              Image(cover)
-                .width(width)
-                .height(height)
-                .objectFit(ImageFit.Fill)
-                // 返回书架后进度变了的卡片会整体重建，封面异步加载会先空一帧；本地封面同步解码，让关书动画落地后无缝。
-                // 打开分组时改后台解码，分组页等开头显示的第一张解码完再浮起。
-                .syncLoad(!this.tileGroupAwaitCovers)
-                .onAppear(() => {
-                  if (this.tileGroupAwaitCovers && index === 0) this.tileGroupPendingCovers.add(`${book.bookUrl}#theme`);
-                })
-                .onComplete(() => {
-                  if (index === 0) this.tileGroupPendingCovers.delete(`${book.bookUrl}#theme`);
-                })
-                .onError(() => {
-                  if (index === 0) this.tileGroupPendingCovers.delete(`${book.bookUrl}#theme`);
-                })
+              if (this.themeImageCrop(ThemeImageSlots.COVER, cover)) {
+                ThemeCroppedImage({ src: cover, crop: this.themeImageCrop(ThemeImageSlots.COVER, cover) as ThemeImageCrop,
+                  syncLoad: !this.tileGroupAwaitCovers,
+                  onLoaded: () => {
+                    if (index === 0) this.tileGroupPendingCovers.delete(`${book.bookUrl}#theme`);
+                  },
+                  onFailed: () => {
+                    if (index === 0) this.tileGroupPendingCovers.delete(`${book.bookUrl}#theme`);
+                  } })
+                  .width(width)
+                  .height(height)
+                  .onAppear(() => {
+                    if (this.tileGroupAwaitCovers && index === 0) this.tileGroupPendingCovers.add(`${book.bookUrl}#theme`);
+                  })
+              } else {
+                Image(cover)
+                  .width(width)
+                  .height(height)
+                  .objectFit(ImageFit.Fill)
+                  // 返回书架后进度变了的卡片会整体重建，封面异步加载会先空一帧；本地封面同步解码，让关书动画落地后无缝。
+                  // 打开分组时改后台解码，分组页等开头显示的第一张解码完再浮起。
+                  .syncLoad(!this.tileGroupAwaitCovers)
+                  .onAppear(() => {
+                    if (this.tileGroupAwaitCovers && index === 0) this.tileGroupPendingCovers.add(`${book.bookUrl}#theme`);
+                  })
+                  .onComplete(() => {
+                    if (index === 0) this.tileGroupPendingCovers.delete(`${book.bookUrl}#theme`);
+                  })
+                  .onError(() => {
+                    if (index === 0) this.tileGroupPendingCovers.delete(`${book.bookUrl}#theme`);
+                  })
+              }
             }, (_cover: ResourceStr, index: number) => `${book.bookUrl}_theme_${index}`)
           }
           .width(width)
@@ -6524,6 +6572,11 @@ export struct BookshelfPage {
 
   activeThemeShelfFrame(): ResourceStr {
     return ThemeBookCoverSettings.frame(this.appDarkMode);
+  }
+
+  /** 主题包动图封面、文件夹插画取景时记下的显示区域；没有时按原来的方式整张显示。 */
+  themeImageCrop(slot: string, src: ResourceStr): ThemeImageCrop | null {
+    return ThemeAssetRegistry.imageCrop(slot, src, this.appDarkMode);
   }
 
   activeThemeShelfFolder(): ResourceStr {

@@ -189,10 +189,29 @@ export const NAVIGATION_ICON_KEYS: string[] = [
   'listen', 'footprint', 'listenSelected', 'footprintSelected'
 ];
 
+/**
+ * 位图素材的显示区域：图片文件不改，显示时把 (x, y, width, height) 这块放大铺满素材位，多出来的部分裁掉。
+ * 动图取景用它保住动画（重新编码只能存单帧）。坐标是相对 imageWidth × imageHeight 的像素，只看比例，
+ * 所以按任意缩放的同一张图都能用。image 是它所属的素材引用，跟素材位当前的图对不上时整条作废。
+ * 旧版本应用不认这些字段，显示整张图。
+ */
+export class ThemeImageCrop {
+  image: string = '';
+  x: number = 0;
+  y: number = 0;
+  width: number = 0;
+  height: number = 0;
+  imageWidth: number = 0;
+  imageHeight: number = 0;
+}
+
 export class ThemePackageBook {
   covers: string[] = [];
   shelfFrame: string = '';
   shelfFolder: string = '';
+  // 按 image 对应到 covers 里的某一张；本机旧记录里没有这两个字段。
+  coverCrops: ThemeImageCrop[] = [];
+  shelfFolderCrop: ThemeImageCrop | null = null;
 }
 
 export class ThemePackageStartup {
@@ -220,6 +239,9 @@ export class ThemePackageParts {
   // 首页三个页签顶部的背景图；只写了一种模式时另一种模式不显示背景。
   homeBackdropLight: string = '';
   homeBackdropDark: string = '';
+  // 包里写在 homeBackdrop.lightCrop / darkCrop；本机旧记录里没有。
+  homeBackdropLightCrop: ThemeImageCrop | null = null;
+  homeBackdropDarkCrop: ThemeImageCrop | null = null;
   logo: string = '';
   preview: string = '';
   radius: Record<string, number> | null = null;
@@ -915,6 +937,76 @@ function decodeStartup(record: Record<string, Object> | null, manifest: ThemePac
   return result;
 }
 
+/** 区域落在图内、宽高为正。允许半个像素的取整误差。 */
+export function isValidImageCrop(crop: ThemeImageCrop | null | undefined): boolean {
+  if (!crop || typeof crop.image !== 'string' || !crop.image) return false;
+  const values = [crop.x, crop.y, crop.width, crop.height, crop.imageWidth, crop.imageHeight];
+  if (values.some((value: number): boolean => typeof value !== 'number' || !isFinite(value))) return false;
+  if (crop.imageWidth <= 0 || crop.imageHeight <= 0 || crop.imageWidth > 100000 || crop.imageHeight > 100000) return false;
+  if (crop.width <= 0 || crop.height <= 0 || crop.x < 0 || crop.y < 0) return false;
+  return crop.x + crop.width <= crop.imageWidth + 0.5 && crop.y + crop.height <= crop.imageHeight + 0.5;
+}
+
+/** 在一组区域里找属于 image 的那条。 */
+export function findImageCrop(crops: ThemeImageCrop[] | null | undefined, image: string): ThemeImageCrop | null {
+  if (!image || !Array.isArray(crops)) return null;
+  for (const crop of crops) {
+    if (crop && crop.image === image) return crop;
+  }
+  return null;
+}
+
+/**
+ * 去掉对不上素材位当前图片的区域（换了图、删了封面之后留下的），补齐本机旧记录缺的字段。
+ * 解码、导出和编辑器改完素材后都走一遍。
+ */
+export function tidyImageCrops(parts: ThemePackageParts): void {
+  const keep = (crop: ThemeImageCrop | null | undefined, image: string): ThemeImageCrop | null =>
+    crop && image && crop.image === image && isValidImageCrop(crop) ? crop : null;
+  if (parts.book) {
+    const book = parts.book;
+    const crops: ThemeImageCrop[] = [];
+    for (const cover of book.covers) {
+      const crop = keep(findImageCrop(book.coverCrops, cover), cover);
+      if (crop) crops.push(crop);
+    }
+    book.coverCrops = crops;
+    book.shelfFolderCrop = keep(book.shelfFolderCrop, book.shelfFolder);
+  }
+  parts.homeBackdropLightCrop = keep(parts.homeBackdropLightCrop, parts.homeBackdropLight || '');
+  parts.homeBackdropDarkCrop = keep(parts.homeBackdropDarkCrop, parts.homeBackdropDark || '');
+}
+
+function decodeImageCrop(value: Object | undefined, manifest: ThemePackageManifest, label: string): ThemeImageCrop | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error(`主题包的${label} 需要是对象`);
+  const record = value as Record<string, Object>;
+  const crop = new ThemeImageCrop();
+  crop.image = partAssetRef(record, 'image', manifest, [ThemePackageAssetKinds.IMAGE], label);
+  crop.x = numberField(record, 'x');
+  crop.y = numberField(record, 'y');
+  crop.width = numberField(record, 'width');
+  crop.height = numberField(record, 'height');
+  crop.imageWidth = numberField(record, 'imageWidth');
+  crop.imageHeight = numberField(record, 'imageHeight');
+  if (!isValidImageCrop(crop)) {
+    throw new Error(`主题包的${label} 需要 image、落在 imageWidth × imageHeight 之内的 x、y、width、height`);
+  }
+  return crop;
+}
+
+function encodeImageCrop(crop: ThemeImageCrop): Record<string, Object> {
+  const record: Record<string, Object> = {};
+  record['image'] = crop.image;
+  record['x'] = crop.x;
+  record['y'] = crop.y;
+  record['width'] = crop.width;
+  record['height'] = crop.height;
+  record['imageWidth'] = crop.imageWidth;
+  record['imageHeight'] = crop.imageHeight;
+  return record;
+}
+
 export function decodeParts(record: Record<string, Object>, manifest: ThemePackageManifest): ThemePackageParts {
   const parts = new ThemePackageParts();
   const light = objectField(record, 'light');
@@ -959,6 +1051,17 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
     }
     parts.book.shelfFrame = partAssetRef(book, 'shelfFrame', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.book');
     parts.book.shelfFolder = partAssetRef(book, 'shelfFolder', manifest, [ThemePackageAssetKinds.IMAGE], 'parts.book');
+    const coverCrops = book['coverCrops'];
+    if (coverCrops !== undefined) {
+      if (!Array.isArray(coverCrops) || coverCrops.length > ThemePackageLimits.MAX_COVERS) {
+        throw new Error(`主题包的 parts.book.coverCrops 最多 ${ThemePackageLimits.MAX_COVERS} 条`);
+      }
+      for (let i = 0; i < coverCrops.length; i++) {
+        const crop = decodeImageCrop((coverCrops as Object[])[i], manifest, `parts.book.coverCrops[${i}]`);
+        if (crop) parts.book.coverCrops.push(crop);
+      }
+    }
+    parts.book.shelfFolderCrop = decodeImageCrop(book['shelfFolderCrop'], manifest, 'parts.book.shelfFolderCrop');
     if (parts.book.covers.length === 0 && !parts.book.shelfFrame && !parts.book.shelfFolder) {
       parts.book = null;
     }
@@ -988,6 +1091,8 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
     if (!parts.homeBackdropLight && !parts.homeBackdropDark) {
       throw new Error('主题包的 parts.homeBackdrop 至少要有 light 或 dark');
     }
+    parts.homeBackdropLightCrop = decodeImageCrop(homeBackdrop['lightCrop'], manifest, 'parts.homeBackdrop.lightCrop');
+    parts.homeBackdropDarkCrop = decodeImageCrop(homeBackdrop['darkCrop'], manifest, 'parts.homeBackdrop.darkCrop');
   }
   parts.logo = partAssetRef(record, 'logo', manifest, [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE],
     'parts');
@@ -1013,6 +1118,7 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
       throw new Error('主题包清单已损坏');
     }
   }
+  tidyImageCrops(parts);
   return parts;
 }
 
@@ -1043,7 +1149,23 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     }
     record['navigation'] = navigation as Object;
   }
-  if (parts.book) record['book'] = JSON.parse(JSON.stringify(parts.book)) as Object;
+  if (parts.book) {
+    const book: Record<string, Object> = {};
+    book['covers'] = parts.book.covers.slice();
+    if (parts.book.shelfFrame) book['shelfFrame'] = parts.book.shelfFrame;
+    if (parts.book.shelfFolder) book['shelfFolder'] = parts.book.shelfFolder;
+    const coverCrops: Record<string, Object>[] = [];
+    for (const cover of parts.book.covers) {
+      const crop = findImageCrop(parts.book.coverCrops, cover);
+      if (isValidImageCrop(crop)) coverCrops.push(encodeImageCrop(crop as ThemeImageCrop));
+    }
+    if (coverCrops.length > 0) book['coverCrops'] = coverCrops;
+    const folderCrop = parts.book.shelfFolderCrop;
+    if (folderCrop && folderCrop.image === parts.book.shelfFolder && isValidImageCrop(folderCrop)) {
+      book['shelfFolderCrop'] = encodeImageCrop(folderCrop);
+    }
+    record['book'] = book;
+  }
   if (parts.startupLight || parts.startupDark) {
     const startup: Record<string, Object> = {};
     if (parts.startupLight) startup['light'] = JSON.parse(JSON.stringify(parts.startupLight)) as Object;
@@ -1055,6 +1177,14 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     const homeBackdrop: Record<string, Object> = {};
     if (parts.homeBackdropLight) homeBackdrop['light'] = parts.homeBackdropLight;
     if (parts.homeBackdropDark) homeBackdrop['dark'] = parts.homeBackdropDark;
+    const lightCrop = parts.homeBackdropLightCrop;
+    if (lightCrop && lightCrop.image === parts.homeBackdropLight && isValidImageCrop(lightCrop)) {
+      homeBackdrop['lightCrop'] = encodeImageCrop(lightCrop);
+    }
+    const darkCrop = parts.homeBackdropDarkCrop;
+    if (darkCrop && darkCrop.image === parts.homeBackdropDark && isValidImageCrop(darkCrop)) {
+      homeBackdrop['darkCrop'] = encodeImageCrop(darkCrop);
+    }
     record['homeBackdrop'] = homeBackdrop;
   }
   if (parts.logo) record['logo'] = parts.logo;
@@ -1131,6 +1261,13 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
     copy.book.covers = copy.book.covers.map((cover: string): string => swap(cover));
     copy.book.shelfFrame = swap(copy.book.shelfFrame);
     copy.book.shelfFolder = swap(copy.book.shelfFolder);
+    // 本机旧记录里没有这两个字段。
+    copy.book.coverCrops = (copy.book.coverCrops || []).map((crop: ThemeImageCrop): ThemeImageCrop => {
+      crop.image = swap(crop.image);
+      return crop;
+    });
+    if (copy.book.shelfFolderCrop) copy.book.shelfFolderCrop.image = swap(copy.book.shelfFolderCrop.image);
+    else copy.book.shelfFolderCrop = null;
   }
   for (const startup of [copy.startupLight, copy.startupDark]) {
     if (startup) startup.image = swap(startup.image);
@@ -1141,6 +1278,10 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
   }
   copy.homeBackdropLight = swap(copy.homeBackdropLight || '');
   copy.homeBackdropDark = swap(copy.homeBackdropDark || '');
+  if (copy.homeBackdropLightCrop) copy.homeBackdropLightCrop.image = swap(copy.homeBackdropLightCrop.image);
+  else copy.homeBackdropLightCrop = null;
+  if (copy.homeBackdropDarkCrop) copy.homeBackdropDarkCrop.image = swap(copy.homeBackdropDarkCrop.image);
+  else copy.homeBackdropDarkCrop = null;
   copy.logo = swap(copy.logo);
   copy.preview = swap(copy.preview);
   copy.appFont = swap(copy.appFont);

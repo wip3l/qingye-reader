@@ -1,4 +1,7 @@
 import { ThemePack, ThemeVariant } from '../../theme/ThemeModels';
+import { ThemeImageSlots } from '../../theme/ThemePackRegistry';
+import { ThemeImageCrop } from '../../theme/share/ThemePackageFormat';
+import { ThemeCroppedImage } from './ThemeCroppedImage';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { HexColor } from '../../utils/HexColor';
@@ -107,10 +110,18 @@ export struct CustomThemePreview {
   @Builder
   homeBackdropLayer() {
     Stack({ alignContent: Alignment.Top }) {
-      Image(this.homeBackdrop() as ResourceStr)
-        .width('100%')
-        .aspectRatio(ThemeAssetRegistry.HOME_BACKDROP_ASPECT)
-        .objectFit(ImageFit.Cover)
+      if (ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.homeBackdrop(), this.previewDark)) {
+        ThemeCroppedImage({ src: this.homeBackdrop() as ResourceStr,
+          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.homeBackdrop(),
+            this.previewDark) as ThemeImageCrop })
+          .width('100%')
+          .aspectRatio(ThemeAssetRegistry.HOME_BACKDROP_ASPECT)
+      } else {
+        Image(this.homeBackdrop() as ResourceStr)
+          .width('100%')
+          .aspectRatio(ThemeAssetRegistry.HOME_BACKDROP_ASPECT)
+          .objectFit(ImageFit.Cover)
+      }
       Column()
         .width('100%')
         .height('100%')
@@ -155,7 +166,12 @@ export struct CustomThemePreview {
   @Builder
   coverTile(name: string, index: number, coverWidth: number) {
     Stack() {
-      if (this.coverResource(index)) {
+      if (ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, this.coverResource(index))) {
+        ThemeCroppedImage({ src: this.coverResource(index),
+          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, this.coverResource(index)) as ThemeImageCrop })
+          .width('100%')
+          .height('100%')
+      } else if (this.coverResource(index)) {
         Image(this.coverResource(index))
           .width('100%')
           .height('100%')

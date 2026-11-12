@@ -8,6 +8,10 @@ import { SearchBookShelfHelper } from '../../utils/SearchBookShelfHelper';
 import { ThemeBookCoverSettings } from '../../utils/ThemeBookCoverSettings';
 import { CoverDimSettings } from '../../utils/CoverDimSettings';
 import { PreparedResultCover } from '../../utils/ResultCoverPreparation';
+import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
+import { ThemeImageSlots } from '../../theme/ThemePackRegistry';
+import { ThemeImageCrop } from '../../theme/share/ThemePackageFormat';
+import { ThemeCroppedImage } from '../theme/ThemeCroppedImage';
 
 /** 所有书籍展示入口共用书架的封面选择规则和多图轮播。 */
 @Component
@@ -250,18 +254,34 @@ export struct BookCover {
     return CoverDimSettings.opacity(this.appDarkMode, this.darkCoverDim, this.darkCoverDimLevel);
   }
 
+  /** 主题包动图封面取景时记下的显示区域。 */
+  themeCrop(url: ResourceStr): ThemeImageCrop | null {
+    return this.themeCover ? ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, url, this.appDarkMode) : null;
+  }
+
   @Builder
   coverImage(url: ResourceStr) {
-    Image(url)
-      // Prepared result images are small, validated local files; first paint must contain the image.
-      .syncLoad(this.preparedSelection !== null)
-      .width('100%')
-      .height('100%')
-      .objectFit(this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
-      .sourceSize({ width: this.decodeWidth, height: this.decodeHeight })
-      .borderRadius(this.cornerRadius)
-      .onComplete(() => this.markLoaded(url))
-      .onError(() => this.markFailed(url))
+    if (this.themeCrop(url)) {
+      ThemeCroppedImage({ src: url, crop: this.themeCrop(url) as ThemeImageCrop,
+        syncLoad: this.preparedSelection !== null,
+        onLoaded: () => this.markLoaded(url),
+        onFailed: () => this.markFailed(url) })
+        .width('100%')
+        .height('100%')
+        .borderRadius(this.cornerRadius)
+        .clip(true)
+    } else {
+      Image(url)
+        // Prepared result images are small, validated local files; first paint must contain the image.
+        .syncLoad(this.preparedSelection !== null)
+        .width('100%')
+        .height('100%')
+        .objectFit(this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
+        .sourceSize({ width: this.decodeWidth, height: this.decodeHeight })
+        .borderRadius(this.cornerRadius)
+        .onComplete(() => this.markLoaded(url))
+        .onError(() => this.markFailed(url))
+    }
   }
 
   build() {

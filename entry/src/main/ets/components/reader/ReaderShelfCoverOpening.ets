@@ -1,5 +1,9 @@
 import { FrameCallback } from '@kit.ArkUI';
 import { CoverDimSettings } from '../../utils/CoverDimSettings';
+import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
+import { ThemeImageSlots } from '../../theme/ThemePackRegistry';
+import { ThemeImageCrop } from '../../theme/share/ThemePackageFormat';
+import { ThemeCroppedImage } from '../theme/ThemeCroppedImage';
 
 /** 书架点开书时交给阅读页的封面外观与位置，只在进程内经 AppStorage 传递。 */
 export interface ShelfOpeningCover {
@@ -149,9 +153,25 @@ export struct ReaderShelfCoverOpening {
     return CoverDimSettings.opacity(this.appDarkMode, this.darkCoverDim, this.darkCoverDimLevel);
   }
 
+  /** 主题包动图封面取景时记下的显示区域。 */
+  themeCrop(): ThemeImageCrop | null {
+    return this.cover.themeCover ?
+      ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, this.cover.cover, this.appDarkMode) : null;
+  }
+
+  /** 书架上这枚封面的宽高比：整页非等比缩成封面时，区域按它排才和书架上一致。 */
+  shelfCoverAspect(): number {
+    return this.cover.boundsHeight > 0 ? this.cover.boundsWidth / this.cover.boundsHeight : 0;
+  }
+
   build() {
     Stack() {
-      if (this.cover.cover) {
+      if (this.cover.cover && this.themeCrop()) {
+        ThemeCroppedImage({ src: this.cover.cover, crop: this.themeCrop() as ThemeImageCrop, syncLoad: true,
+          boxAspect: this.shelfCoverAspect() })
+          .width('100%')
+          .height('100%')
+      } else if (this.cover.cover) {
         Image(this.cover.cover)
           .width('100%')
           .height('100%')

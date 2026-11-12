@@ -551,6 +551,20 @@ export function normalizedParts(parts: Json): Json {
     if (bgMode !== 'image' && !reader.image) delete reader.imageFit;
     if (reader.imageFit === 'cover' && Object.keys(strip(reader)).length === 1) delete reader.imageFit;
   }
+  // 动图取景的显示区域只对它记下的那张图有效：换了图、删了封面后留下的不写（也不带上旧图）。
+  const book = copy.book;
+  if (book && typeof book === 'object') {
+    const covers: Json[] = Array.isArray(book.covers) ? book.covers : [];
+    if (Array.isArray(book.coverCrops)) book.coverCrops = book.coverCrops.filter((crop: Json) => crop && covers.includes(crop.image));
+    if (book.shelfFolderCrop && book.shelfFolderCrop.image !== book.shelfFolder) delete book.shelfFolderCrop;
+  }
+  const backdrop = copy.homeBackdrop;
+  if (backdrop && typeof backdrop === 'object') {
+    for (const mode of ['light', 'dark']) {
+      const key = `${mode}Crop`;
+      if (backdrop[key] && backdrop[key].image !== backdrop[mode]) delete backdrop[key];
+    }
+  }
   const result = strip(copy);
   // 旧版本应用还有“搜索”页签，导入时要求四个导航图标都在：没给就用发现的图标顶上（应用导出时同样处理）。
   const nav = result.navigation;
