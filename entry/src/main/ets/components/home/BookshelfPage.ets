@@ -4937,10 +4937,19 @@ export struct BookshelfPage {
       .map((book: Book): string => `${book.bookUrl}:${this.getBookReadTime(book)}`).join('|');
   }
 
-  /** 书页条纹按像素宽度换算成渐变比例，三种纸色交替，重复铺满整个书页侧面。 */
-  shelfHardcoverPageStripes(width: number): Array<[ResourceColor, number]> {
+  /**
+   * 书页条纹按像素宽度换算成渐变比例，三种纸色交替，重复铺满整个书页侧面。
+   * 平放的书正对着书口，等宽的条纹太像栅格，换成一组疏密不匀的。
+   */
+  shelfHardcoverPageStripes(width: number, uneven: boolean = false): Array<[ResourceColor, number]> {
     const unit = 1 / Math.max(1, width);
     const colors = this.appDarkMode ? ['#D2C9B9', '#A99D88', '#C3B8A5'] : ['#F6EFE2', '#D9CDB7', '#EFE6D5'];
+    if (uneven) {
+      return [[colors[0], 0], [colors[0], unit * 1.2], [colors[1], unit * 1.2], [colors[1], unit * 1.6],
+        [colors[2], unit * 1.6], [colors[2], unit * 3], [colors[1], unit * 3], [colors[1], unit * 3.3],
+        [colors[0], unit * 3.3], [colors[0], unit * 4.3], [colors[2], unit * 4.3], [colors[2], unit * 5.2],
+        [colors[1], unit * 5.2], [colors[1], unit * 5.5]];
+    }
     return [[colors[0], 0], [colors[0], unit], [colors[1], unit], [colors[1], unit * 1.6],
       [colors[2], unit * 1.6], [colors[2], unit * 2.4]];
   }
@@ -4997,14 +5006,18 @@ export struct BookshelfPage {
     .hitTestBehavior(HitTestMode.None)
   }
 
-  /** angle 是侧转角度，depthRatio 是厚度占封面宽度的比例。继续阅读的大书 36°/0.24，网格与分组里的小书默认 24°/0.2。 */
+  /**
+   * angle 是侧转角度，depthRatio 是厚度占封面宽度的比例。继续阅读的大书 36°/0.24，网格与分组里的小书默认 24°/0.2。
+   * 关闭错落摆放时所有书都平放：封面正对，右边露出封面宽度 6% 的书页。
+   */
   shelfBookShape(coverWidth: number, coverHeight: number, angle: number, depthRatio: number): ShelfBookShape {
+    if (!this.bookshelfCompanionStagger) return ShelfBookPerspective.flat(coverWidth, coverHeight, 0.06);
     return ShelfBookPerspective.shape(coverWidth, coverHeight, angle, depthRatio, this.getUIContext().vp2px(1));
   }
 
   /** 书口上的书页：一层纸纹，再叠前后与上下两层明暗。靠封面的一头暗，往外渐亮。 */
   @Builder
-  shelfHardcoverPagesFace(width: number) {
+  shelfHardcoverPagesFace(width: number, uneven: boolean) {
     Stack({ alignContent: Alignment.TopStart }) {
       Column()
         .width('100%')
@@ -5012,7 +5025,7 @@ export struct BookshelfPage {
         .linearGradient({
           direction: GradientDirection.Right,
           repeating: true,
-          colors: this.shelfHardcoverPageStripes(width)
+          colors: this.shelfHardcoverPageStripes(width, uneven)
         })
       Column()
         .width('100%')
@@ -5033,19 +5046,18 @@ export struct BookshelfPage {
     .height('100%')
   }
 
-  /** 侧转立体书的书口：整面先铺硬壳色，书页缩进一圈盖在上面；贴着书底的接触投影挂在这一层。 */
+  /** 书口：整面先铺硬壳色，书页缩进一圈盖在上面；贴着书底的接触投影挂在这一层。侧转与平放共用，位置都取自 shelfBookShape。 */
   @Builder
   shelfHardcoverSide(coverWidth: number, coverHeight: number, angle: number, depthRatio: number) {
     Stack({ alignContent: Alignment.TopStart }) {
       Stack() {
-        this.shelfHardcoverPagesFace(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).depth -
-          this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).boardInset * 2)
+        this.shelfHardcoverPagesFace(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).pagesWidth,
+          this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).flat)
       }
-      .width(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).depth -
-        this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).boardInset * 2)
+      .width(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).pagesWidth)
       .height(coverHeight - this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).pageInset * 2)
       .position({
-        x: this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).boardInset,
+        x: this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).pagesX,
         y: this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).pageInset
       })
     }

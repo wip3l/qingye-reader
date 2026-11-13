@@ -9,8 +9,11 @@ export class ShelfBookShape {
   /** 封面面板变换前的排版位置：与投影后的封面水平居中对齐，开书动画量到的位置才落在看得见的封面上。 */
   coverX: number = 0;
   sideX: number = 0;
-  /** 书口面上，书页离封面、封底的距离（露出两块硬壳的厚度）。 */
-  boardInset: number = 0;
+  /** 书口面上书页的起点与宽度：侧转时两头各让出一块硬壳的厚度，平放时只在右边让出封底的飘口。 */
+  pagesX: number = 0;
+  pagesWidth: number = 0;
+  /** 平放（不侧转）的书：两个矩阵都是单位矩阵，书页纸纹用疏密不匀的那一套。 */
+  flat: boolean = false;
   /** 书页比硬壳上下各短的一截。 */
   pageInset: number = 0;
   coverMatrix: matrix4.Matrix4Transit = matrix4.identity();
@@ -56,12 +59,40 @@ export class ShelfBookPerspective {
     shape.depth = depth;
     shape.coverX = Math.round((edgeX - coverWidth) / 2);
     shape.sideX = Math.round(edgeX);
-    shape.boardInset = Math.max(1.5, coverWidth * 0.02);
+    shape.pagesX = Math.max(1.5, coverWidth * 0.02);
+    shape.pagesWidth = depth - shape.pagesX * 2;
     shape.pageInset = Math.max(2, Math.round(coverWidth * 0.025));
     shape.coverMatrix = ShelfBookPerspective.quad(coverWidth, coverHeight, shape.coverX,
       0, leftScale, edgeX, 1, density);
     shape.sideMatrix = ShelfBookPerspective.quad(depth, coverHeight, shape.sideX,
       edgeX, 1, stageWidth, backScale, density);
+
+    if (ShelfBookPerspective.cache.size > 512) ShelfBookPerspective.cache.clear();
+    ShelfBookPerspective.cache.set(key, shape);
+    return shape;
+  }
+
+  /**
+   * 平放的书：封面正对着，右边露出一截书页。封底与封面齐平，书页上下各缩一截、右边让出一线封底。
+   * 书口那块左端有 UNDERLAP 藏在封面下面，封面右上右下的圆角处透出的是封底的颜色。
+   */
+  static flat(coverWidth: number, coverHeight: number, pagesRatio: number): ShelfBookShape {
+    const key = `flat|${coverWidth}|${coverHeight}|${pagesRatio}`;
+    const cached = ShelfBookPerspective.cache.get(key);
+    if (cached) return cached;
+
+    const underlap = 4;
+    const pages = Math.max(4, Math.round(coverWidth * pagesRatio));
+    const overhang = Math.max(1.5, coverWidth * 0.016);
+    const shape = new ShelfBookShape();
+    shape.flat = true;
+    shape.stageWidth = Math.ceil(coverWidth + pages + overhang);
+    shape.depth = underlap + pages + overhang;
+    shape.coverX = 0;
+    shape.sideX = coverWidth - underlap;
+    shape.pagesX = underlap - 1;
+    shape.pagesWidth = pages + 1;
+    shape.pageInset = Math.max(2.5, coverWidth * 0.028);
 
     if (ShelfBookPerspective.cache.size > 512) ShelfBookPerspective.cache.clear();
     ShelfBookPerspective.cache.set(key, shape);
