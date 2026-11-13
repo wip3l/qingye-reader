@@ -134,6 +134,7 @@ export struct SettingsPage {
         .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
         .justifyContent(FlexAlign.Start)
       }
+      .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .width('100%')
       .height('100%')
