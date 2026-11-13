@@ -132,7 +132,7 @@ test('manifest validation: format, newer version, unknown features, asset rules'
   wrongKind.assets[0].kind = 'font';
   assert.throws(() => format.decodeManifest(JSON.stringify(wrongKind)), /损坏/);
   const tooBig = manifest();
-  tooBig.assets[0].size = 21 * 1024 * 1024;
+  tooBig.assets[0].size = 26 * 1024 * 1024;
   assert.throws(() => format.decodeManifest(JSON.stringify(tooBig)), /大小上限/);
   const idMismatch = manifest();
   idMismatch.assets[0].sha256 = sha('other');
@@ -492,6 +492,60 @@ test('v2 theme: parts survive an encode/decode round trip and ref mapping', () =
   // 格式 1 的包不认路径引用。
   const v1 = format.decodeManifest(JSON.stringify(manifestV1()));
   assert.equal(format.resolveAssetRef(v1, 'assets/x.png'), null);
+});
+
+test('v2 theme: dark covers are optional, fall back both ways and stay readable by older apps', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+  const area = image => ({ image, x: 10, y: 20, width: 300, height: 440, imageWidth: 450, imageHeight: 660 });
+
+  // 老主题包没有深色封面：两种模式都是 covers，导出也不多出字段。
+  const legacy = decode(partsJson());
+  assert.deepEqual(legacy.book.coversDark, []);
+  assert.deepEqual(format.bookCoversFor(legacy.book, true), legacy.book.covers);
+  assert.equal('coversDark' in format.encodeParts(legacy).book, false);
+  // 本机旧记录连字段都没有。
+  assert.deepEqual(format.bookCoversFor({ covers: ['a'] }, true), ['a']);
+  assert.deepEqual(format.partsAssetRefs({ book: { covers: ['a'], shelfFrame: '', shelfFolder: '' } }), ['a']);
+
+  const json = partsJson();
+  json.book.coversDark = ['assets/folder.jpg', 'assets/cover_02.jpg'];
+  json.book.coverCrops = [area('assets/cover_02.jpg')];
+  json.book.coverCropsDark = [area('assets/folder.jpg'), area('assets/startup.jpg')];
+  const parts = decode(json);
+  const paths = byPath(parts);
+  assert.deepEqual(format.bookCoversFor(paths.book, false), ['assets/cover_01.jpg', 'assets/cover_02.jpg']);
+  assert.deepEqual(format.bookCoversFor(paths.book, true), ['assets/folder.jpg', 'assets/cover_02.jpg']);
+  assert.deepEqual(paths.book.coverCrops, [area('assets/cover_02.jpg')]);
+  assert.deepEqual(paths.book.coverCropsDark, [area('assets/folder.jpg')], 'areas of images outside coversDark are dropped');
+  assert.deepEqual(format.describeParts(parts)[4], '封面 浅色 2 张、深色 2 张、书架边框、文件夹插画');
+  const exported = new format.ThemePackageTheme();
+  exported.parts = paths;
+  assert.deepEqual(format.decodeTheme(format.encodeTheme(exported), manifest).parts, parts);
+  const encoded = format.encodeParts(paths).book;
+  assert.deepEqual(encoded.covers, ['assets/cover_01.jpg', 'assets/cover_02.jpg'], 'older apps keep reading covers');
+  assert.deepEqual(encoded.coversDark, ['assets/folder.jpg', 'assets/cover_02.jpg']);
+
+  // 只有深色封面：浅色借用它；导出时写成 covers，旧版本应用也认得。
+  const onlyDark = partsJson();
+  onlyDark.book.coversDark = onlyDark.book.covers;
+  onlyDark.book.coverCropsDark = [area('assets/cover_01.jpg')];
+  onlyDark.book.covers = [];
+  const dark = byPath(decode(onlyDark));
+  assert.deepEqual(format.bookCoversFor(dark.book, false), ['assets/cover_01.jpg', 'assets/cover_02.jpg']);
+  assert.equal(format.bookHasNoCovers(dark.book), false);
+  const encodedDark = format.encodeParts(dark).book;
+  assert.deepEqual(encodedDark.covers, ['assets/cover_01.jpg', 'assets/cover_02.jpg']);
+  assert.equal('coversDark' in encodedDark, false);
+  assert.deepEqual(encodedDark.coverCrops, [area('assets/cover_01.jpg')]);
+  // 只剩深色封面的 book 不算空。
+  const bare = { coversDark: ['assets/cover_01.jpg'] };
+  assert.equal(decode({ book: bare, logo: 'assets/logo.svg' }).book.coversDark.length, 1);
+
+  const bad = partsJson();
+  bad.book.coversDark = Array(9).fill('assets/cover_01.jpg');
+  assert.throws(() => decode(bad), /coversDark 最多 8 张/);
 });
 
 test('scheme overrides travel in settings and are gated by scheme-overrides-v1', () => {

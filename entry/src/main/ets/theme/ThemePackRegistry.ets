@@ -87,6 +87,8 @@ export class InstalledThemePack {
   // 编辑器逐个上传导航图标时可能只有几张：缺的页签用基底主题的这套图标。
   navFallbackIconPackId: string = '';
   covers: string[] = [];
+  // 深色模式单独的一套封面；空着时深色也用 covers。
+  coversDark: string[] = [];
   shelfFrame: string = '';
   shelfFolder: string = '';
   startupLight: InstalledThemePackStartup | null = null;
@@ -97,6 +99,7 @@ export class InstalledThemePack {
   homeBackdropDark: string = '';
   // 显示区域（动图取景）；image 已换成本机地址，和上面的素材地址对得上。
   coverCrops: ThemeImageCrop[] = [];
+  coverCropsDark: ThemeImageCrop[] = [];
   shelfFolderCrop: ThemeImageCrop | null = null;
   homeBackdropLightCrop: ThemeImageCrop | null = null;
   homeBackdropDarkCrop: ThemeImageCrop | null = null;
@@ -120,6 +123,12 @@ export class InstalledThemePack {
 
   reader(darkMode: boolean): InstalledThemePackReader {
     return darkMode ? this.readerDark : this.readerLight;
+  }
+
+  /** 某个模式下显示的封面：没有深色那套就用 covers，只有深色那套时浅色也用它（同 bookCoversFor）。 */
+  coversFor(darkMode: boolean): string[] {
+    if (darkMode) return this.coversDark.length > 0 ? this.coversDark : this.covers;
+    return this.covers.length > 0 ? this.covers : this.coversDark;
   }
 
   startup(darkMode: boolean): InstalledThemePackStartup | null {
@@ -197,7 +206,9 @@ export class ThemePackRegistry {
     ThemePackRegistry.packs.forEach((pack: InstalledThemePack) => {
       if (found) return;
       if (slot === ThemeImageSlots.COVER) {
-        found = findImageCrop(pack.coverCrops, src);
+        // 同一张图可以同时在浅色和深色两套封面里，各取各的区域。
+        found = findImageCrop(darkMode ? pack.coverCropsDark : pack.coverCrops, src) ||
+          findImageCrop(darkMode ? pack.coverCrops : pack.coverCropsDark, src);
       } else if (slot === ThemeImageSlots.FOLDER) {
         if (pack.shelfFolderCrop && pack.shelfFolderCrop.image === src) found = pack.shelfFolderCrop;
       } else if (slot === ThemeImageSlots.BACKDROP) {
@@ -298,9 +309,16 @@ export class ThemePackRegistry {
         const crop = ThemePackRegistry.resolveCrop(findImageCrop(parts.book.coverCrops, cover), uri);
         if (crop) installed.coverCrops.push(crop);
       }
+      // 本机旧版记录里没有深色封面字段。
+      for (const cover of parts.book.coversDark || []) {
+        const resolved = uri(cover);
+        if (resolved) installed.coversDark.push(resolved);
+        const crop = ThemePackRegistry.resolveCrop(findImageCrop(parts.book.coverCropsDark, cover), uri);
+        if (crop) installed.coverCropsDark.push(crop);
+      }
       installed.shelfFolderCrop = parts.book.shelfFolderCrop && parts.book.shelfFolderCrop.image === parts.book.shelfFolder ?
         ThemePackRegistry.resolveCrop(parts.book.shelfFolderCrop, uri) : null;
-      if (installed.covers.length > 0) pack.book.coverAssetId = themeId;
+      if (installed.coversFor(false).length > 0) pack.book.coverAssetId = themeId;
       if (installed.shelfFrame) pack.book.shelfFrameAssetId = themeId;
       if (installed.shelfFolder) pack.book.shelfFolderAssetId = themeId;
     }

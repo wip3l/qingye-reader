@@ -554,8 +554,19 @@ export function normalizedParts(parts: Json): Json {
   // 动图取景的显示区域只对它记下的那张图有效：换了图、删了封面后留下的不写（也不带上旧图）。
   const book = copy.book;
   if (book && typeof book === 'object') {
+    // 只填了深色封面时写成 covers：应用里浅色本来就借用它，显示一样，旧版本应用也认得（应用导出时同样处理）。
+    if (!(Array.isArray(book.covers) && book.covers.length) && Array.isArray(book.coversDark) && book.coversDark.length) {
+      book.covers = book.coversDark;
+      book.coverCrops = book.coverCropsDark;
+      delete book.coversDark;
+      delete book.coverCropsDark;
+    }
     const covers: Json[] = Array.isArray(book.covers) ? book.covers : [];
     if (Array.isArray(book.coverCrops)) book.coverCrops = book.coverCrops.filter((crop: Json) => crop && covers.includes(crop.image));
+    const coversDark: Json[] = Array.isArray(book.coversDark) ? book.coversDark : [];
+    if (Array.isArray(book.coverCropsDark)) {
+      book.coverCropsDark = book.coverCropsDark.filter((crop: Json) => crop && coversDark.includes(crop.image));
+    }
     if (book.shelfFolderCrop && book.shelfFolderCrop.image !== book.shelfFolder) delete book.shelfFolderCrop;
   }
   const backdrop = copy.homeBackdrop;

@@ -140,9 +140,12 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'book', group: '素材', name: '书籍素材', screen: 'shelf',
-    desc: '书架按书轮播封面。封面是完整插画，不叠书名和作者。', fields: [
+    desc: '书架按书轮播封面。封面是完整插画，不叠书名和作者。深色模式可以单独给一套封面，不给就两种模式都用上面那套。', fields: [
       { g: '封面（最多 8 张，450 × 660）' },
       { k: 'book.covers', type: 'covers', target: [450, 660] },
+      { g: '深色封面（可选，最多 8 张）' },
+      { k: 'book.coversDark', type: 'covers', target: [450, 660],
+        hint: '空着时深色模式沿用上面那套。和上面张数相同、顺序对应时，同一本书切换深浅色还是同一幅画。旧版本应用只认上面那套' },
       { g: '书架' },
       { k: 'book.shelfFrame', label: '书架边框', type: 'asset', kinds: ['vector'], viewBox: [450, 660], spec: 'SVG，与封面同比例，中心透明' },
       { k: 'book.shelfFolder', label: '分组文件夹', type: 'asset', kinds: ['image'], target: [450, 660], spec: '450 × 660 位图' }

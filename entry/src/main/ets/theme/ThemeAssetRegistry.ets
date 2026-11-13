@@ -530,19 +530,27 @@ export class ThemeAssetRegistry {
       ThemePackRegistry.imageCrop(slot, AnimatedImagePolicy.originalOf(src), darkMode);
   }
 
-  static themeBookCover(assetId: string): ResourceStr {
-    const covers = ThemeAssetRegistry.themeBookCovers(assetId);
+  static themeBookCover(assetId: string, darkMode: boolean = false): ResourceStr {
+    const covers = ThemeAssetRegistry.themeBookCovers(assetId, darkMode);
     return covers.length > 0 ? covers[0] : '';
   }
 
-  static themeBookCovers(assetId: string): ResourceStr[] {
+  /**
+   * 主题封面。大多数主题只有一套，深浅色通用；有深色那套的主题（主题包的 coversDark、内置的两套专属主题）
+   * 在深色模式换成它。两套按相同序号一一对应时，同一本书切换模式后还是同一幅画。
+   */
+  static themeBookCovers(assetId: string, darkMode: boolean = false): ResourceStr[] {
     if (ThemePackRegistry.isPackId(assetId)) {
       const pack = ThemePackRegistry.get(assetId);
       const covers: ResourceStr[] = [];
       if (pack) {
-        for (const cover of pack.covers) covers.push(cover);
+        for (const cover of pack.coversFor(darkMode)) covers.push(cover);
       }
       return covers;
+    }
+    if (darkMode) {
+      const dark = ThemeAssetRegistry.builtinDarkBookCovers(assetId);
+      if (dark.length > 0) return dark;
     }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return [];
@@ -618,9 +626,9 @@ export class ThemeAssetRegistry {
         $r('app.media.theme_cover_letterpress_page_05'), $r('app.media.theme_cover_letterpress_page_06')
       ];
       case ThemeIds.OBSIDIAN_ARCHIVE: return [
-        $r('app.media.theme_cover_obsidian_archive_01'), $r('app.media.theme_cover_obsidian_archive_02'),
-        $r('app.media.theme_cover_obsidian_archive_03'), $r('app.media.theme_cover_obsidian_archive_04'),
-        $r('app.media.theme_cover_obsidian_archive_05'), $r('app.media.theme_cover_obsidian_archive_06')
+        $r('app.media.theme_cover_obsidian_archive_light_01'), $r('app.media.theme_cover_obsidian_archive_light_02'),
+        $r('app.media.theme_cover_obsidian_archive_light_03'), $r('app.media.theme_cover_obsidian_archive_light_04'),
+        $r('app.media.theme_cover_obsidian_archive_light_05'), $r('app.media.theme_cover_obsidian_archive_light_06')
       ];
       case ThemeIds.NEON_HARBOR: return [
         $r('app.media.theme_cover_neon_harbor_01'), $r('app.media.theme_cover_neon_harbor_02'),
@@ -628,14 +636,34 @@ export class ThemeAssetRegistry {
         $r('app.media.theme_cover_neon_harbor_05'), $r('app.media.theme_cover_neon_harbor_06')
       ];
       case ThemeIds.CELESTIAL_VAULT: return [
-        $r('app.media.theme_cover_celestial_vault_01'), $r('app.media.theme_cover_celestial_vault_02'),
-        $r('app.media.theme_cover_celestial_vault_03'), $r('app.media.theme_cover_celestial_vault_04'),
-        $r('app.media.theme_cover_celestial_vault_05'), $r('app.media.theme_cover_celestial_vault_06')
+        $r('app.media.theme_cover_celestial_vault_light_01'), $r('app.media.theme_cover_celestial_vault_light_02'),
+        $r('app.media.theme_cover_celestial_vault_light_03'), $r('app.media.theme_cover_celestial_vault_light_04'),
+        $r('app.media.theme_cover_celestial_vault_light_05'), $r('app.media.theme_cover_celestial_vault_light_06')
       ];
       default: return [
         $r('app.media.theme_cover_classic_blue_01'), $r('app.media.theme_cover_classic_blue_02'),
         $r('app.media.theme_cover_classic_blue_03'), $r('app.media.theme_cover_classic_blue_04')
       ];
+    }
+  }
+
+  /**
+   * 内置主题深色模式单独的那套封面；没有的主题返回空数组，深色沿用浅色那套。
+   * 与浅色那套按序号一一对应：同一幅画的夜色版。
+   */
+  private static builtinDarkBookCovers(assetId: string): ResourceStr[] {
+    switch ((assetId || '').trim().toLowerCase()) {
+      case ThemeIds.OBSIDIAN_ARCHIVE: return [
+        $r('app.media.theme_cover_obsidian_archive_01'), $r('app.media.theme_cover_obsidian_archive_02'),
+        $r('app.media.theme_cover_obsidian_archive_03'), $r('app.media.theme_cover_obsidian_archive_04'),
+        $r('app.media.theme_cover_obsidian_archive_05'), $r('app.media.theme_cover_obsidian_archive_06')
+      ];
+      case ThemeIds.CELESTIAL_VAULT: return [
+        $r('app.media.theme_cover_celestial_vault_01'), $r('app.media.theme_cover_celestial_vault_02'),
+        $r('app.media.theme_cover_celestial_vault_03'), $r('app.media.theme_cover_celestial_vault_04'),
+        $r('app.media.theme_cover_celestial_vault_05'), $r('app.media.theme_cover_celestial_vault_06')
+      ];
+      default: return [];
     }
   }
 

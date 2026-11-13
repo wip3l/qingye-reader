@@ -6497,7 +6497,7 @@ export struct BookshelfPage {
                     if (index === 0) this.tileGroupPendingCovers.delete(`${book.bookUrl}#theme`);
                   })
               }
-            }, (_cover: ResourceStr, index: number) => `${book.bookUrl}_theme_${index}`)
+            }, (cover: ResourceStr, index: number) => `${book.bookUrl}_theme_${index}_${this.themeCoverKey(cover)}`)
           }
           .width(width)
           .height(height)
@@ -6645,6 +6645,11 @@ export struct BookshelfPage {
 
   shouldUseThemeBookCover(): boolean {
     return ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeBookCoverEnabled);
+  }
+
+  /** 轮播项 key 里代表封面图本身的那段：深浅色各有一套封面的主题切换模式时，靠它让轮播换图。 */
+  themeCoverKey(cover: ResourceStr): string {
+    return typeof cover === 'string' ? cover : `${(cover as Resource).id}`;
   }
 
   themeBookCoverInterval(book: Book): number {

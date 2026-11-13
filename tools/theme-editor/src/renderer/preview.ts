@@ -71,21 +71,36 @@ function cropStyle(crop: any, ref: string): string {
     `${pct(imageHeight - y - height, imageHeight)} ${pct(x, imageWidth)});`;
 }
 
-function coverCropStyle(book: any, ref: string): string {
-  const crops: any[] = Array.isArray(book.coverCrops) ? book.coverCrops : [];
-  return cropStyle(crops.find((crop) => crop && crop.image === ref), ref);
+function coverCropStyle(crops: any, ref: string): string {
+  const list: any[] = Array.isArray(crops) ? crops : [];
+  return cropStyle(list.find((crop) => crop && crop.image === ref), ref);
+}
+
+/** 正在画的那块屏幕是浅色还是深色：renderScreen 一进来就设好，书架上的封面按它选浅色或深色那套。 */
+let screenMode: Mode = 'light';
+
+/**
+ * 某个模式下显示的封面和对应的显示区域，同应用的 bookCoversFor：深色优先用 coversDark，没有就用 covers；
+ * 只填了深色那套时浅色也用它。
+ */
+function coversFor(book: any, mode: Mode): { covers: string[]; crops: any } {
+  const usable = (list: any): string[] => (Array.isArray(list) ? list : []).filter((ref: string) => assetUrl(ref));
+  const light = usable(book.covers);
+  const dark = usable(book.coversDark);
+  const useDark = mode === 'dark' ? dark.length > 0 : light.length === 0;
+  return useDark ? { covers: dark, crops: book.coverCropsDark } : { covers: light, crops: book.coverCrops };
 }
 
 const BOOKS: [string, string][] = [['山海拾遗', '读到 12%'], ['夜航船', '读到 58%'], ['长安客', '未读'], ['北窗', '读到 3%'], ['雾港来信', '更新 2 章']];
 
 function coverTile(index: number, title: string): HTMLElement {
   const book = project().parts.book || {};
-  const covers: string[] = (book.covers || []).filter((ref: string) => assetUrl(ref));
+  const { covers, crops } = coversFor(book, screenMode);
   const frame = assetUrl(book.shelfFrame);
   const tile = h('div', { class: 'bk', 'data-sec': 'book' });
   if (covers.length) {
     const ref = covers[index % covers.length];
-    tile.append(h('img', { class: 'cv', src: assetUrl(ref), alt: '', style: coverCropStyle(book, ref) }), h('div', { class: 'ttl' }, title));
+    tile.append(h('img', { class: 'cv', src: assetUrl(ref), alt: '', style: coverCropStyle(crops, ref) }), h('div', { class: 'ttl' }, title));
   } else if (usesBaseArt()) {
     tile.append(placeholder(`沿用「${baseTheme().name}」封面`, 'fill'));
   } else {
@@ -378,7 +393,7 @@ export function describe(): string[] {
   if (has(p.light && p.light.emphasis) || has(p.dark && p.dark.emphasis) || (p.bubble && p.bubble.cap)) out.push('正文强调');
   if (p.ttsPanel && (has(p.ttsPanel.light) || has(p.ttsPanel.dark))) out.push('朗读面板');
   if (p.navigation && has(p.navigation)) out.push('导航图标');
-  if (p.book && ((p.book.covers || []).length || p.book.shelfFrame || p.book.shelfFolder)) out.push('书籍素材');
+  if (p.book && ((p.book.covers || []).length || (p.book.coversDark || []).length || p.book.shelfFrame || p.book.shelfFolder)) out.push('书籍素材');
   if (p.startup && ((p.startup.light && p.startup.light.image) || (p.startup.dark && p.startup.dark.image))) out.push('启动封面');
   if (p.homeBackdrop && (p.homeBackdrop.light || p.homeBackdrop.dark)) out.push('首页背景');
   if (p.logo) out.push('主题标识');
@@ -388,6 +403,7 @@ export function describe(): string[] {
 }
 
 export function renderScreen(mode: Mode): HTMLElement {
+  screenMode = mode;
   const e = effective(mode);
   const screen = S.ui.screen;
   const content = screen === 'reader' ? readerBody(e) : screen === 'tts' ? screenTts(e)

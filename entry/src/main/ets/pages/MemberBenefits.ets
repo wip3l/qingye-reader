@@ -378,7 +378,7 @@ struct MemberBenefitsPage {
   @Builder
   exclusiveThemeRow(themeId: string) {
     Row({ space: AppSpacing.MD }) {
-      Image(ThemeAssetRegistry.themeBookCovers(themeId)[0])
+      Image(ThemeAssetRegistry.themeBookCover(themeId, this.appDarkMode))
         .width(56).height(78).objectFit(ImageFit.Cover).borderRadius(6)
       Column({ space: AppSpacing.XXS }) {
         Text(BuiltinThemeRegistry.findById(themeId).name).fontSize(AppFontSize.BODY)

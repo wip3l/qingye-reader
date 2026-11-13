@@ -2126,21 +2126,44 @@ struct ThemeColorSettingsPage {
     return !!own && !!pack && !!pack.record.parts.book && this.currentSources().bookThemeId === own;
   }
 
+  /** 当前模式自己的那套封面：浅色是 covers，深色是 coversDark（空着表示深色沿用浅色那套）。 */
   ownCoverPaths(): string[] {
     const pack = this.ownPack();
     if (!this.ownBookActive() || !pack || !pack.record.parts.book) return [];
-    return pack.record.parts.book.covers.slice();
+    const book = pack.record.parts.book;
+    return (this.selectedMode === 'dark' ? (book.coversDark || []) : book.covers).slice();
   }
 
+  /** 当前模式没有自己的封面时淡显的几张：另一个模式上传的那套，或来源主题的封面。 */
   inheritedCovers(): ResourceStr[] {
-    return ThemeAssetRegistry.themeBookCovers(this.customPreviewTheme().book.coverAssetId).slice(0, 4);
+    return ThemeAssetRegistry.themeBookCovers(this.customPreviewTheme().book.coverAssetId,
+      this.selectedMode === 'dark').slice(0, 4);
+  }
+
+  /** 当前模式没有自己的封面、正借用另一个模式上传的那套。 */
+  borrowsOtherModeCovers(): boolean {
+    if (!this.ownBookActive() || this.ownCoverPaths().length > 0) return false;
+    return SchemeAssetService.coverCount(this.ownPackageId, this.selectedMode !== 'dark') > 0;
+  }
+
+  coverHint(): string {
+    if (this.ownCoverPaths().length > 0) {
+      return this.selectedMode === 'dark' ?
+        '和浅色封面张数相同、顺序对应时，同一本书切换深浅色还是同一幅画' : '';
+    }
+    if (this.borrowsOtherModeCovers()) {
+      return this.selectedMode === 'dark' ? '深色模式沿用浅色那套封面；在这里添加后，深色单独用一套' :
+        '浅色还没有自己的封面，暂用深色那套';
+    }
+    if (this.inheritedCovers().length === 0) return '';
+    return `淡显的是「${BuiltinThemeRegistry.findById(this.sourceThemeId('book')).name}」的封面，上传后换成自己的`;
   }
 
   @Builder
   bookSlots() {
     Column({ space: AppSpacing.SM }) {
       Row() {
-        Text(`封面 ${this.ownCoverPaths().length} / ${ThemePackageLimits.MAX_COVERS}`)
+        Text(`封面 · ${this.modeLabel()} ${this.ownCoverPaths().length} / ${ThemePackageLimits.MAX_COVERS}`)
           .fontSize(AppFontSize.BODY)
           .fontColor(this.primaryTextColor())
           .layoutWeight(1)
@@ -2155,7 +2178,7 @@ struct ThemeColorSettingsPage {
             ListItem() {
               this.coverTile({ index: index, uri: this.ownAssetUri(path) })
             }
-          }, (path: string, index: number) => `cover_${index}_${path}_${this.assetRevision}`)
+          }, (path: string, index: number) => `cover_${this.selectedMode}_${index}_${path}_${this.assetRevision}`)
             .onMove((from: number, to: number) => {
               this.moveCover(from, to);
             })
@@ -2170,7 +2193,8 @@ struct ThemeColorSettingsPage {
                 .opacity(0.5)
                 .draggable(false)
             }
-          }, (_cover: ResourceStr, index: number) => `inherited_cover_${index}_${this.assetRevision}`)
+          }, (_cover: ResourceStr, index: number) =>
+            `inherited_cover_${this.selectedMode}_${index}_${this.assetRevision}`)
         }
         if (this.ownCoverPaths().length < ThemePackageLimits.MAX_COVERS) {
           ListItem() {
@@ -2186,8 +2210,8 @@ struct ThemeColorSettingsPage {
       .height(84)
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.None)
-      if (this.ownCoverPaths().length === 0 && this.inheritedCovers().length > 0) {
-        Text(`淡显的是「${BuiltinThemeRegistry.findById(this.sourceThemeId('book')).name}」的封面，上传后换成自己的`)
+      if (this.coverHint()) {
+        Text(this.coverHint())
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
           .width('100%')
@@ -2209,6 +2233,9 @@ struct ThemeColorSettingsPage {
     }
     .width('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+    if (this.selectedMode === 'dark' && this.ownCoverPaths().length > 0) {
+      this.resetRow('移除深色封面，沿用浅色那套', () => this.clearDarkCovers())
+    }
     if (this.ownBookActive()) {
       this.resetRow('移除全部上传的书籍素材', () => this.clearBookAssets())
     }
@@ -2217,9 +2244,10 @@ struct ThemeColorSettingsPage {
   @Builder
   coverTile($$: CoverTileOptions) {
     Stack({ alignContent: Alignment.TopEnd }) {
-      if (ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, $$.uri)) {
+      if (ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, $$.uri, this.selectedMode === 'dark')) {
         ThemeCroppedImage({ src: $$.uri,
-          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, $$.uri) as ThemeImageCrop })
+          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, $$.uri,
+            this.selectedMode === 'dark') as ThemeImageCrop })
           .width('100%')
           .height('100%')
       } else {
@@ -2280,9 +2308,12 @@ struct ThemeColorSettingsPage {
   }
 
   async tapCover(index: number): Promise<void> {
+    // 菜单和取景期间用户可能切换浅色/深色，操作的那套封面以点开时为准。
+    const dark = this.selectedMode === 'dark';
+    const name = `${dark ? '深色' : '浅色'} · 第 ${index + 1} 张封面`;
     const choice = index > 0 ?
-      await this.slotMenu(`第 ${index + 1} 张封面`, '替换这张', '移到第一张', '删除这张') :
-      await this.slotMenu('第 1 张封面', '替换这张', '删除这张');
+      await this.slotMenu(name, '替换这张', '移到第一张', '删除这张') :
+      await this.slotMenu(name, '替换这张', '删除这张');
     const action = index > 0 ? choice : (choice === 1 ? 2 : choice);
     if (action === 0) {
       if (!(await this.ensureAdvanced())) return;
@@ -2291,21 +2322,26 @@ struct ThemeColorSettingsPage {
       const framed = await this.frameImage(uris[0], '封面取景', 450, 660, 450, false);
       if (!framed) return;
       await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-        SchemeAssetService.replaceCover(getContext(this), this.schemeId, index, framed.path, framed.crop), 'book',
-        true, true, '封面已替换');
+        SchemeAssetService.replaceCover(getContext(this), this.schemeId, index, framed.path, framed.crop, dark),
+        'book', true, true, '封面已替换');
       this.discardCropFile(framed.path, uris[0]);
     } else if (action === 1) {
-      await this.moveCover(index, 0);
+      await this.moveCover(index, 0, dark);
     } else if (action === 2) {
       await this.runAssetClear((): Promise<SchemeAssetResult> =>
-        SchemeAssetService.removeCover(getContext(this), this.schemeId, index), 'book');
+        SchemeAssetService.removeCover(getContext(this), this.schemeId, index, dark), 'book');
     }
   }
 
-  async moveCover(from: number, to: number): Promise<void> {
+  async moveCover(from: number, to: number, dark: boolean = this.selectedMode === 'dark'): Promise<void> {
     if (from === to) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.moveCover(getContext(this), this.schemeId, from, to), '', false, false, '');
+      SchemeAssetService.moveCover(getContext(this), this.schemeId, from, to, dark), '', false, false, '');
+  }
+
+  async clearDarkCovers(): Promise<void> {
+    await this.runAssetClear((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.clearDarkCovers(getContext(this), this.schemeId), 'book');
   }
 
   ownHomeBackdrop(): boolean {
@@ -2858,6 +2894,10 @@ struct ThemeColorSettingsPage {
         for (let index = 0; index < parts.book.covers.length; index++) {
           await check(parts.book.covers[index], `第 ${index + 1} 张封面`, 450, 660, 'home');
         }
+        const darkCovers = parts.book.coversDark || [];
+        for (let index = 0; index < darkCovers.length; index++) {
+          await check(darkCovers[index], `深色第 ${index + 1} 张封面`, 450, 660, 'home');
+        }
         await check(parts.book.shelfFolder, '文件夹插画', 450, 660, 'home');
       }
       await check(parts.homeBackdropLight, '浅色首页背景', 1080, 1350, 'home');
@@ -3218,9 +3258,11 @@ struct ThemeColorSettingsPage {
   }
 
   async uploadCovers(): Promise<void> {
-    const room = ThemePackageLimits.MAX_COVERS - SchemeAssetService.coverCount(this.ownPackageId);
+    // 加进当前所选模式的那套封面；选图、取景期间切换了模式也以点“添加”时为准。
+    const dark = this.selectedMode === 'dark';
+    const room = ThemePackageLimits.MAX_COVERS - SchemeAssetService.coverCount(this.ownPackageId, dark);
     if (room <= 0) {
-      HdsFeedback.showToast(`封面最多 ${ThemePackageLimits.MAX_COVERS} 张，请先移除`);
+      HdsFeedback.showToast(`${dark ? '深色' : '浅色'}封面最多 ${ThemePackageLimits.MAX_COVERS} 张，请先移除`);
       return;
     }
     const picked = await SchemeAssetService.pickImages(getContext(this), room);
@@ -3236,8 +3278,8 @@ struct ThemeColorSettingsPage {
     }
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.addCovers(getContext(this), this.schemeId, uris, this.sourceThemeId('book'), crops),
-      'book', true, true, `已加入 ${uris.length} 张封面`);
+      SchemeAssetService.addCovers(getContext(this), this.schemeId, uris, this.sourceThemeId('book'), crops, dark),
+      'book', true, true, `已加入 ${uris.length} 张${dark ? '深色' : '浅色'}封面`);
     for (let index = 0; index < uris.length; index++) this.discardCropFile(uris[index], '');
   }
 

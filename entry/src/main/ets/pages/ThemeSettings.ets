@@ -1642,14 +1642,14 @@ struct ThemeSettingsPage {
       })
       Row({ space: AppSpacing.LG }) {
         if (this.themeHasBookCover(entry.theme) && this.themeCoverCrop(entry.theme, 0)) {
-          ThemeCroppedImage({ src: ThemeAssetRegistry.themeBookCover(entry.theme.book.coverAssetId),
+          ThemeCroppedImage({ src: this.themeCoverSet(entry.theme)[0],
             crop: this.themeCoverCrop(entry.theme, 0) as ThemeImageCrop })
             .width(72)
             .aspectRatio(STORE_BOOK_COVER_RATIO)
             .borderRadius(entry.theme.radius.small)
             .clip(true)
         } else if (this.themeHasBookCover(entry.theme)) {
-          Image(ThemeAssetRegistry.themeBookCover(entry.theme.book.coverAssetId))
+          Image(this.themeCoverSet(entry.theme)[0])
             .width(72)
             .aspectRatio(STORE_BOOK_COVER_RATIO)
             .borderRadius(entry.theme.radius.small)
@@ -3536,14 +3536,16 @@ struct ThemeSettingsPage {
       this.themeEmphasisContext(theme, this.activeVariant(theme).regexEmphasis.emphasisMode), false);
   }
 
+  /** 预览里的主题封面跟着预览的深浅色走：有深色那套封面的主题切到深色时换成它。 */
   themeCoverSet(theme: ThemePack): ResourceStr[] {
-    return ThemeAssetRegistry.themeBookCovers(theme.book.coverAssetId);
+    return ThemeAssetRegistry.themeBookCovers(theme.book.coverAssetId, this.variantDark());
   }
 
   /** 主题包动图封面取景记下的显示区域。 */
   themeCoverCrop(theme: ThemePack, index: number): ThemeImageCrop | null {
     const covers = this.themeCoverSet(theme);
-    return covers.length > 0 ? ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, covers[index % covers.length]) : null;
+    return covers.length > 0 ?
+      ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, covers[index % covers.length], this.variantDark()) : null;
   }
 
   themeRegexPreviewBackground(theme: ThemePack): TextBackgroundStyle {

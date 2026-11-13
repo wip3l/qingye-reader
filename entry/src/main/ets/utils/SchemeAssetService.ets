@@ -6,6 +6,7 @@ import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ThemePackRegistry, ThemePackRecord } from '../theme/ThemePackRegistry';
 import { ThemeIds } from '../theme/ThemeModels';
 import {
+  bookHasNoCovers,
   isPackThemeId,
   NAVIGATION_ICON_KEYS,
   packThemeId,
@@ -104,19 +105,30 @@ export class SchemeAssetService {
     return scheme.packageId && ThemePackRegistry.getByPackageId(scheme.packageId) ? scheme.packageId : '';
   }
 
-  /** crops 与 uris 一一对应：动图取景记下的显示区域，没有时为 null。 */
+  /**
+   * crops 与 uris 一一对应：动图取景记下的显示区域，没有时为 null。
+   * dark 为 true 时加进深色模式单独的那套封面（没有这套时深色沿用浅色的）。
+   */
   static async addCovers(context: Context, schemeId: string, uris: string[], baseTheme: string,
-    crops: Array<ThemeImageCrop | null> = []): Promise<SchemeAssetResult> {
+    crops: Array<ThemeImageCrop | null> = [], dark: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const book = record.parts.book || new ThemePackageBook();
+      const covers = SchemeAssetService.coverList(book, dark);
       for (let index = 0; index < uris.length; index++) {
-        if (book.covers.length >= ThemePackageLimits.MAX_COVERS) break;
+        if (covers.length >= ThemePackageLimits.MAX_COVERS) break;
         const path = await ThemePackStore.importAsset(context, record.packageId, uris[index], SchemeAssetService.IMAGE, '封面');
-        if (!book.covers.includes(path)) book.covers.push(path);
-        SchemeAssetService.setCoverCrop(book, path, index < crops.length ? crops[index] : null);
+        if (!covers.includes(path)) covers.push(path);
+        SchemeAssetService.setCoverCrop(book, path, index < crops.length ? crops[index] : null, dark);
       }
       record.parts.book = book;
     });
+  }
+
+  /** 浅色（也是默认）或深色那套封面的列表本身；本机旧记录里没有深色字段，补上。 */
+  private static coverList(book: ThemePackageBook, dark: boolean): string[] {
+    if (!dark) return book.covers;
+    if (!Array.isArray(book.coversDark)) book.coversDark = [];
+    return book.coversDark;
   }
 
   /** 把显示区域挂到 image 这张素材上；crop 为 null 时返回 null（显示整张图）。 */
@@ -133,11 +145,14 @@ export class SchemeAssetService {
     return attached;
   }
 
-  private static setCoverCrop(book: ThemePackageBook, image: string, crop: ThemeImageCrop | null): void {
-    const crops = (book.coverCrops || []).filter((item: ThemeImageCrop): boolean => item.image !== image);
+  private static setCoverCrop(book: ThemePackageBook, image: string, crop: ThemeImageCrop | null,
+    dark: boolean = false): void {
+    const crops = ((dark ? book.coverCropsDark : book.coverCrops) || [])
+      .filter((item: ThemeImageCrop): boolean => item.image !== image);
     const attached = SchemeAssetService.attachCrop(crop, image);
     if (attached) crops.push(attached);
-    book.coverCrops = crops;
+    if (dark) book.coverCropsDark = crops;
+    else book.coverCrops = crops;
   }
 
   static async setShelfFrame(context: Context, schemeId: string, uri: string, baseTheme: string): Promise<SchemeAssetResult> {
@@ -355,36 +370,52 @@ export class SchemeAssetService {
 
   // ---- 逐个管理的素材 ----
 
-  /** 替换第 index 张封面。 */
+  /** 替换第 index 张封面；dark 指深色那套。 */
   static async replaceCover(context: Context, schemeId: string, index: number, uri: string,
-    crop: ThemeImageCrop | null = null): Promise<SchemeAssetResult> {
+    crop: ThemeImageCrop | null = null, dark: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
       const book = record.parts.book;
-      if (!book || index < 0 || index >= book.covers.length) throw new Error('这张封面已不存在');
+      const covers = book ? SchemeAssetService.coverList(book, dark) : [];
+      if (!book || index < 0 || index >= covers.length) throw new Error('这张封面已不存在');
       const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '封面');
-      if (book.covers.includes(path)) throw new Error('这张图已经在封面里了');
-      book.covers[index] = path;
-      SchemeAssetService.setCoverCrop(book, path, crop);
+      if (covers.includes(path)) throw new Error('这张图已经在封面里了');
+      covers[index] = path;
+      SchemeAssetService.setCoverCrop(book, path, crop, dark);
     });
   }
 
   /** 删掉第 index 张封面；封面、边框、文件夹都没了时整节清掉。 */
-  static async removeCover(context: Context, schemeId: string, index: number): Promise<SchemeAssetResult> {
+  static async removeCover(context: Context, schemeId: string, index: number,
+    dark: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
       const book = record.parts.book;
-      if (!book || index < 0 || index >= book.covers.length) return;
-      book.covers.splice(index, 1);
+      const covers = book ? SchemeAssetService.coverList(book, dark) : [];
+      if (!book || index < 0 || index >= covers.length) return;
+      covers.splice(index, 1);
       SchemeAssetService.tidyBook(record);
     });
   }
 
   /** 调整轮播顺序：把 from 位置的封面挪到 to。 */
-  static async moveCover(context: Context, schemeId: string, from: number, to: number): Promise<SchemeAssetResult> {
+  static async moveCover(context: Context, schemeId: string, from: number, to: number,
+    dark: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
       const book = record.parts.book;
-      if (!book || from === to || from < 0 || to < 0 || from >= book.covers.length || to >= book.covers.length) return;
-      const moved = book.covers.splice(from, 1)[0];
-      book.covers.splice(to, 0, moved);
+      const covers = book ? SchemeAssetService.coverList(book, dark) : [];
+      if (!book || from === to || from < 0 || to < 0 || from >= covers.length || to >= covers.length) return;
+      const moved = covers.splice(from, 1)[0];
+      covers.splice(to, 0, moved);
+    });
+  }
+
+  /** 去掉深色那套封面，深色模式回到沿用浅色封面。 */
+  static async clearDarkCovers(context: Context, schemeId: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const book = record.parts.book;
+      if (!book) return;
+      book.coversDark = [];
+      book.coverCropsDark = [];
+      SchemeAssetService.tidyBook(record);
     });
   }
 
@@ -404,7 +435,7 @@ export class SchemeAssetService {
 
   private static tidyBook(record: ThemePackRecord): void {
     const book = record.parts.book;
-    if (book && book.covers.length === 0 && !book.shelfFrame && !book.shelfFolder) record.parts.book = null;
+    if (book && bookHasNoCovers(book) && !book.shelfFrame && !book.shelfFolder) record.parts.book = null;
   }
 
   /**
@@ -720,9 +751,12 @@ export class SchemeAssetService {
     return !!pack && !!pack.homeBackdrop(darkMode);
   }
 
-  static coverCount(packageId: string): number {
+  /** 方案自己上传的封面张数；dark 数深色那套（0 表示深色沿用浅色的）。 */
+  static coverCount(packageId: string, dark: boolean = false): number {
     const pack = ThemePackRegistry.getByPackageId(packageId);
-    return pack && pack.record.parts.book ? pack.record.parts.book.covers.length : 0;
+    const book = pack ? pack.record.parts.book : null;
+    if (!book) return 0;
+    return dark ? (book.coversDark || []).length : book.covers.length;
   }
 
   static baseThemeOf(packageId: string): string {

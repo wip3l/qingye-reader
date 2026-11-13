@@ -207,11 +207,32 @@ export class ThemeImageCrop {
 
 export class ThemePackageBook {
   covers: string[] = [];
+  // 深色模式单独的一套封面，可选：空着时深色也用 covers。旧版本应用不认这个字段，两种模式都显示 covers。
+  coversDark: string[] = [];
   shelfFrame: string = '';
   shelfFolder: string = '';
   // 按 image 对应到 covers 里的某一张；本机旧记录里没有这两个字段。
   coverCrops: ThemeImageCrop[] = [];
+  // 同上，对应 coversDark。
+  coverCropsDark: ThemeImageCrop[] = [];
   shelfFolderCrop: ThemeImageCrop | null = null;
+}
+
+/**
+ * 某个模式下实际显示的封面：深色优先用 coversDark，没有就用 covers（老主题包都是这样）；
+ * 只给了深色封面时浅色也用它，免得一种模式有主题封面、另一种没有。
+ */
+export function bookCoversFor(book: ThemePackageBook | null | undefined, dark: boolean): string[] {
+  if (!book) return [];
+  const light: string[] = Array.isArray(book.covers) ? book.covers : [];
+  const night: string[] = Array.isArray(book.coversDark) ? book.coversDark : [];
+  if (dark) return night.length > 0 ? night : light;
+  return light.length > 0 ? light : night;
+}
+
+/** 两套封面都没有。 */
+export function bookHasNoCovers(book: ThemePackageBook | null | undefined): boolean {
+  return bookCoversFor(book, false).length === 0;
 }
 
 export class ThemePackageStartup {
@@ -965,12 +986,17 @@ export function tidyImageCrops(parts: ThemePackageParts): void {
     crop && image && crop.image === image && isValidImageCrop(crop) ? crop : null;
   if (parts.book) {
     const book = parts.book;
-    const crops: ThemeImageCrop[] = [];
-    for (const cover of book.covers) {
-      const crop = keep(findImageCrop(book.coverCrops, cover), cover);
-      if (crop) crops.push(crop);
-    }
-    book.coverCrops = crops;
+    const tidy = (covers: string[], source: ThemeImageCrop[]): ThemeImageCrop[] => {
+      const crops: ThemeImageCrop[] = [];
+      for (const cover of covers) {
+        const crop = keep(findImageCrop(source, cover), cover);
+        if (crop) crops.push(crop);
+      }
+      return crops;
+    };
+    if (!Array.isArray(book.coversDark)) book.coversDark = [];
+    book.coverCrops = tidy(book.covers, book.coverCrops);
+    book.coverCropsDark = tidy(book.coversDark, book.coverCropsDark);
     book.shelfFolderCrop = keep(book.shelfFolderCrop, book.shelfFolder);
   }
   parts.homeBackdropLightCrop = keep(parts.homeBackdropLightCrop, parts.homeBackdropLight || '');
@@ -1037,32 +1063,42 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
   const book = objectField(record, 'book');
   if (book) {
     parts.book = new ThemePackageBook();
-    const covers = book['covers'];
-    if (covers !== undefined) {
+    const decodeCovers = (key: string): string[] => {
+      const refs: string[] = [];
+      const covers = book[key];
+      if (covers === undefined) return refs;
       if (!Array.isArray(covers) || covers.length > ThemePackageLimits.MAX_COVERS) {
-        throw new Error(`主题包的 parts.book.covers 最多 ${ThemePackageLimits.MAX_COVERS} 张`);
+        throw new Error(`主题包的 parts.book.${key} 最多 ${ThemePackageLimits.MAX_COVERS} 张`);
       }
       for (let i = 0; i < covers.length; i++) {
         const holder: Record<string, Object> = {};
         holder['cover'] = (covers as Object[])[i];
-        const ref = partAssetRef(holder, 'cover', manifest, [ThemePackageAssetKinds.IMAGE], `parts.book.covers[${i}]`);
-        if (ref) parts.book.covers.push(ref);
+        const ref = partAssetRef(holder, 'cover', manifest, [ThemePackageAssetKinds.IMAGE], `parts.book.${key}[${i}]`);
+        if (ref) refs.push(ref);
       }
-    }
+      return refs;
+    };
+    const decodeCoverCrops = (key: string): ThemeImageCrop[] => {
+      const crops: ThemeImageCrop[] = [];
+      const source = book[key];
+      if (source === undefined) return crops;
+      if (!Array.isArray(source) || source.length > ThemePackageLimits.MAX_COVERS) {
+        throw new Error(`主题包的 parts.book.${key} 最多 ${ThemePackageLimits.MAX_COVERS} 条`);
+      }
+      for (let i = 0; i < source.length; i++) {
+        const crop = decodeImageCrop((source as Object[])[i], manifest, `parts.book.${key}[${i}]`);
+        if (crop) crops.push(crop);
+      }
+      return crops;
+    };
+    parts.book.covers = decodeCovers('covers');
+    parts.book.coversDark = decodeCovers('coversDark');
     parts.book.shelfFrame = partAssetRef(book, 'shelfFrame', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.book');
     parts.book.shelfFolder = partAssetRef(book, 'shelfFolder', manifest, [ThemePackageAssetKinds.IMAGE], 'parts.book');
-    const coverCrops = book['coverCrops'];
-    if (coverCrops !== undefined) {
-      if (!Array.isArray(coverCrops) || coverCrops.length > ThemePackageLimits.MAX_COVERS) {
-        throw new Error(`主题包的 parts.book.coverCrops 最多 ${ThemePackageLimits.MAX_COVERS} 条`);
-      }
-      for (let i = 0; i < coverCrops.length; i++) {
-        const crop = decodeImageCrop((coverCrops as Object[])[i], manifest, `parts.book.coverCrops[${i}]`);
-        if (crop) parts.book.coverCrops.push(crop);
-      }
-    }
+    parts.book.coverCrops = decodeCoverCrops('coverCrops');
+    parts.book.coverCropsDark = decodeCoverCrops('coverCropsDark');
     parts.book.shelfFolderCrop = decodeImageCrop(book['shelfFolderCrop'], manifest, 'parts.book.shelfFolderCrop');
-    if (parts.book.covers.length === 0 && !parts.book.shelfFrame && !parts.book.shelfFolder) {
+    if (bookHasNoCovers(parts.book) && !parts.book.shelfFrame && !parts.book.shelfFolder) {
       parts.book = null;
     }
   }
@@ -1151,15 +1187,26 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
   }
   if (parts.book) {
     const book: Record<string, Object> = {};
-    book['covers'] = parts.book.covers.slice();
+    // 只有深色封面时写成 covers：显示效果一样（浅色本来就借用它），旧版本应用也认得。
+    const onlyDark = parts.book.covers.length === 0;
+    const covers = bookCoversFor(parts.book, false);
+    const coversDark: string[] = onlyDark ? [] : (parts.book.coversDark || []);
+    const encodeCrops = (list: string[], source: ThemeImageCrop[]): Record<string, Object>[] => {
+      const crops: Record<string, Object>[] = [];
+      for (const cover of list) {
+        const crop = findImageCrop(source, cover);
+        if (isValidImageCrop(crop)) crops.push(encodeImageCrop(crop as ThemeImageCrop));
+      }
+      return crops;
+    };
+    book['covers'] = covers.slice();
+    if (coversDark.length > 0) book['coversDark'] = coversDark.slice();
     if (parts.book.shelfFrame) book['shelfFrame'] = parts.book.shelfFrame;
     if (parts.book.shelfFolder) book['shelfFolder'] = parts.book.shelfFolder;
-    const coverCrops: Record<string, Object>[] = [];
-    for (const cover of parts.book.covers) {
-      const crop = findImageCrop(parts.book.coverCrops, cover);
-      if (isValidImageCrop(crop)) coverCrops.push(encodeImageCrop(crop as ThemeImageCrop));
-    }
+    const coverCrops = encodeCrops(covers, onlyDark ? parts.book.coverCropsDark : parts.book.coverCrops);
     if (coverCrops.length > 0) book['coverCrops'] = coverCrops;
+    const coverCropsDark = encodeCrops(coversDark, parts.book.coverCropsDark);
+    if (coverCropsDark.length > 0) book['coverCropsDark'] = coverCropsDark;
     const folderCrop = parts.book.shelfFolderCrop;
     if (folderCrop && folderCrop.image === parts.book.shelfFolder && isValidImageCrop(folderCrop)) {
       book['shelfFolderCrop'] = encodeImageCrop(folderCrop);
@@ -1221,6 +1268,8 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
   }
   if (parts.book) {
     for (const cover of parts.book.covers) add(cover);
+    // 本机旧版记录里没有深色封面字段。
+    for (const cover of parts.book.coversDark || []) add(cover);
     add(parts.book.shelfFrame);
     add(parts.book.shelfFolder);
   }
@@ -1259,13 +1308,16 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
   }
   if (copy.book) {
     copy.book.covers = copy.book.covers.map((cover: string): string => swap(cover));
+    copy.book.coversDark = (copy.book.coversDark || []).map((cover: string): string => swap(cover));
     copy.book.shelfFrame = swap(copy.book.shelfFrame);
     copy.book.shelfFolder = swap(copy.book.shelfFolder);
     // 本机旧记录里没有这两个字段。
-    copy.book.coverCrops = (copy.book.coverCrops || []).map((crop: ThemeImageCrop): ThemeImageCrop => {
+    const swapCrop = (crop: ThemeImageCrop): ThemeImageCrop => {
       crop.image = swap(crop.image);
       return crop;
-    });
+    };
+    copy.book.coverCrops = (copy.book.coverCrops || []).map(swapCrop);
+    copy.book.coverCropsDark = (copy.book.coverCropsDark || []).map(swapCrop);
     if (copy.book.shelfFolderCrop) copy.book.shelfFolderCrop.image = swap(copy.book.shelfFolderCrop.image);
     else copy.book.shelfFolderCrop = null;
   }
@@ -1308,7 +1360,10 @@ export function describeParts(parts: ThemePackageParts): string[] {
   if (parts.navigation) items.push('导航图标');
   if (parts.book) {
     const book: string[] = [];
-    if (parts.book.covers.length > 0) book.push(`封面 ${parts.book.covers.length} 张`);
+    const lightCovers = bookCoversFor(parts.book, false).length;
+    const darkCovers = parts.book.covers.length > 0 ? (parts.book.coversDark || []).length : 0;
+    if (lightCovers > 0 && darkCovers > 0) book.push(`封面 浅色 ${lightCovers} 张、深色 ${darkCovers} 张`);
+    else if (lightCovers > 0) book.push(`封面 ${lightCovers} 张`);
     if (parts.book.shelfFrame) book.push('书架边框');
     if (parts.book.shelfFolder) book.push('文件夹插画');
     items.push(book.join('、'));

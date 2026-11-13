@@ -459,13 +459,15 @@ function renderSlot(f: Field, path: string, ref: string, id: string): HTMLElemen
 }
 
 function renderCovers(f: Field): HTMLElement {
-  const covers: string[] = (getPath('book.covers') || []) as string[];
+  // 浅色（默认）那套 book.covers 和深色那套 book.coversDark 共用这一个格子列表。
+  const listPath = f.k as string;
+  const covers: string[] = (getPath(listPath) || []) as string[];
   const grid = h('div', { class: 'covers' });
   covers.forEach((ref, i) => {
     const asset = project().assets.get(ref);
     const warning = asset ? sizeWarning(f, asset) : '缺失';
     const move = (delta: number): void => commit(() => {
-      const list = getPath('book.covers') as string[];
+      const list = getPath(listPath) as string[];
       const [item] = list.splice(i, 1);
       list.splice(i + delta, 0, item);
     });
@@ -475,13 +477,13 @@ function renderCovers(f: Field): HTMLElement {
         i > 0 ? h('button', { onclick: () => move(-1), 'aria-label': '前移' }, '‹') : null,
         i < covers.length - 1 ? h('button', { onclick: () => move(1), 'aria-label': '后移' }, '›') : null,
         asset && warning ? h('button', { onclick: () => cropAsset(ref, f.target as [number, number]), title: '裁成 450×660' }, '裁') : null,
-        h('button', { onclick: () => commit(() => (getPath('book.covers') as string[]).splice(i, 1)), 'aria-label': '移除' }, '×'))));
+        h('button', { onclick: () => commit(() => (getPath(listPath) as string[]).splice(i, 1)), 'aria-label': '移除' }, '×'))));
   });
   const addCovers = (files: File[]): void => {
-    const room = 8 - ((getPath('book.covers') || []) as string[]).length;
+    const room = 8 - ((getPath(listPath) || []) as string[]).length;
     ingestMany(files.slice(0, room), { kinds: ['image'], target: f.target }, (refs) => commit(() => {
-      if (!Array.isArray(getPath('book.covers'))) setPath('book.covers', []);
-      (getPath('book.covers') as string[]).push(...refs);
+      if (!Array.isArray(getPath(listPath))) setPath(listPath, []);
+      (getPath(listPath) as string[]).push(...refs);
     }));
   };
   if (covers.length < 8) {
@@ -489,7 +491,9 @@ function renderCovers(f: Field): HTMLElement {
     grid.append(add);
   }
   acceptDrop(grid, addCovers);
-  return h('div', { class: 'covers-wrap' }, grid, h('div', { class: 'hint' }, `${covers.length}/8 张 · 可以一次拖入多张 · ‹ › 调整顺序`));
+  return h('div', { class: 'covers-wrap' }, grid,
+    h('div', { class: 'hint' }, `${covers.length}/8 张 · 可以一次拖入多张 · ‹ › 调整顺序`),
+    f.hint ? h('div', { class: 'hint' }, f.hint) : null);
 }
 
 /** 应用导出的方案包里保留的 settings / layout / emphasis / fonts：只读展示，可以整节移除。 */

@@ -158,7 +158,7 @@ export struct CustomThemePreview {
   }
 
   coverResource(index: number): ResourceStr {
-    const covers = ThemeAssetRegistry.themeBookCovers(this.themePack.book.coverAssetId);
+    const covers = ThemeAssetRegistry.themeBookCovers(this.themePack.book.coverAssetId, this.previewDark);
     return covers.length > 0 ? covers[index % covers.length] : '';
   }
 
@@ -166,9 +166,10 @@ export struct CustomThemePreview {
   @Builder
   coverTile(name: string, index: number, coverWidth: number) {
     Stack() {
-      if (ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, this.coverResource(index))) {
+      if (ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, this.coverResource(index), this.previewDark)) {
         ThemeCroppedImage({ src: this.coverResource(index),
-          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, this.coverResource(index)) as ThemeImageCrop })
+          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, this.coverResource(index),
+            this.previewDark) as ThemeImageCrop })
           .width('100%')
           .height('100%')
       } else if (this.coverResource(index)) {

@@ -265,7 +265,8 @@ export class RecentReadCardDataProvider {
       if (themeSettings.themeBookCoverEnabled) {
         const theme = themeSettings.themeId === ThemeIds.CUSTOM ?
           AppThemeSettingsStore.customTheme(themeSettings, darkMode) : BuiltinThemeRegistry.findById(themeSettings.themeId);
-        const themeCovers = ThemeBookCoverSettings.coversForAsset(book, theme.book.coverAssetId, coverSettings.coverMode);
+        const themeCovers = ThemeBookCoverSettings.coversForAsset(book, theme.book.coverAssetId, darkMode,
+          coverSettings.coverMode);
         if (themeCovers.length > 0) raw = themeCovers[0];
       }
     } catch (error) {

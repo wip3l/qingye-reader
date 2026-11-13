@@ -82,7 +82,8 @@ my-theme/
 | | `search`、`searchSelected` | 旧版本应用底栏“搜索”页签的图标。本应用读包时照收但不显示；旧版本应用要求有 `search` 才肯导入，应用和桌面编辑器导出时缺了就用 `explore`（与 `exploreSelected`）的图标补上。 |
 | | `labels` | 写 `hidden` 时底栏只显示图标，不显示“书架”等文字。 |
 | `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 8 张，书架按书轮播）、书架边框 SVG、分组文件夹插画。 |
-| | `coverCrops`、`shelfFolderCrop` | 可选的显示区域（见下文“显示区域”）：`coverCrops` 是数组，按 `image` 对应到某张封面；`shelfFolderCrop` 对应文件夹插画。 |
+| | `coversDark` | 可选：深色模式单独的一套封面（最多 8 张）。不写时深色模式也用 `covers`。和 `covers` 张数相同、顺序对应时，同一本书切换深浅色落在同一序号上，适合放同一幅画的两个版本。旧版本应用会忽略，两种模式都显示 `covers`，所以 `covers` 要始终写。 |
+| | `coverCrops`、`coverCropsDark`、`shelfFolderCrop` | 可选的显示区域（见下文“显示区域”）：`coverCrops` 是数组，按 `image` 对应到 `covers` 里的某张封面；`coverCropsDark` 同理，对应 `coversDark`；`shelfFolderCrop` 对应文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
 | `bubble` | `frame`、`cap` | 强调气泡的边框 SVG（可选）与端饰 SVG（必填）。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。 |
 | `homeBackdrop` | `light` / `dark` | 书架、发现和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
@@ -151,7 +152,7 @@ my-theme/
 | 阅读整图 `image` | PNG / JPG / WebP | 竖屏位图，按 `imageFit` 铺满或包含；浅色与深色各一张。 |
 | 朗读面板 `artwork` | SVG 或位图 | 720 × 520，透明底或完整插画；下半部分会渐隐到 `surfaceColor`。 |
 | 导航图标 | SVG 或 PNG / WebP | SVG 用 `viewBox="0 0 24 24"`、单色纯黑填充，应用按主题色着色（选中为强调色）；位图取 96 × 96 透明底，按原色显示在 24 × 24 vp 的位置，选中与否要靠选中态图标区分。旧版本应用只接受 SVG，带位图图标的包在旧版本上无法导入。 |
-| 封面 `covers` | JPG / PNG | 450 × 660，完整插画，不叠加书名或作者。 |
+| 封面 `covers`、`coversDark` | JPG / PNG | 450 × 660，完整插画，不叠加书名或作者。深色那套的亮部要克制。 |
 | 书架边框 `shelfFrame` | SVG | 与封面同比例，中心透明，只画外框和角花。 |
 | 文件夹插画 `shelfFolder` | JPG / PNG | 450 × 660。 |
 | 启动封面 `image` | JPG / PNG | 841 × 1870 竖屏，底部约 1/5 会叠加文案，不放主体。 |
@@ -173,6 +174,7 @@ my-theme/
 
 - 比当前应用新的 `formatVersion`，或 `requires` 里有应用不认识的能力，导入时提示更新应用。
 - 没写的部件按 `baseTheme` 显示，所以只带配色的小包也能完整使用。
+- 只有 `covers` 的主题包（此前制作的都是这样）照常使用，浅色、深色显示同一套封面。只写了 `coversDark` 时浅色模式也用它；应用和桌面编辑器导出这种包时会把它写成 `covers`。
 - 用户在编辑器里把包内部件换成内置主题的部件是允许的；再导出时，包内素材会随新包一起打出去，并在 `credits` 里保留原作者信息。
 - 同一个 `packageId` 再次导入时原位更新：用户的阅读排版和强调规则保留并合并，素材和配色换成新版本。
 - 方案设置会随云同步到用户的其他设备，素材不会；另一台设备上会提示“主题包素材不在这台设备上”，重新导入同一个包即可恢复。

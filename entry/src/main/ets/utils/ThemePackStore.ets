@@ -260,6 +260,8 @@ export class ThemePackStore {
     parts.book = source.book || null;
     if (parts.book && !Array.isArray(parts.book.covers)) parts.book.covers = [];
     if (parts.book && !Array.isArray(parts.book.coverCrops)) parts.book.coverCrops = [];
+    if (parts.book && !Array.isArray(parts.book.coversDark)) parts.book.coversDark = [];
+    if (parts.book && !Array.isArray(parts.book.coverCropsDark)) parts.book.coverCropsDark = [];
     if (parts.book && !parts.book.shelfFolderCrop) parts.book.shelfFolderCrop = null;
     parts.startupLight = source.startupLight || null;
     parts.startupDark = source.startupDark || null;

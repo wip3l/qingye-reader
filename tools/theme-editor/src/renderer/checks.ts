@@ -116,6 +116,11 @@ export function editorIssues(): Issue[] {
     }
   }
   if (p.parts.bubble && p.parts.bubble.frame && !p.parts.bubble.cap) add('error', 'bubble.cap', '包内气泡有边框时还需要端饰');
+  const bookCovers = ((p.parts.book && p.parts.book.covers) || []).length;
+  const bookCoversDark = ((p.parts.book && p.parts.book.coversDark) || []).length;
+  if (bookCovers > 0 && bookCoversDark > 0 && bookCovers !== bookCoversDark) {
+    add('warn', 'book.coversDark', `深色封面 ${bookCoversDark} 张、默认封面 ${bookCovers} 张：张数不同时，同一本书切换深浅色会换成另一幅画`);
+  }
 
   for (const { field } of assetFields()) {
     if (!field.k) continue;

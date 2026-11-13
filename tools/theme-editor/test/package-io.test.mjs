@@ -132,6 +132,46 @@ test('display areas for animated images survive export and follow their image', 
   assert.equal(files.has('assets/c2.png'), false);
 });
 
+test('dark covers are a separate optional list with their own display areas', async () => {
+  const entries = handWritten();
+  const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));
+  const area = (image) => ({ image, x: 10, y: 20, width: 300, height: 440, imageWidth: 450, imageHeight: 660 });
+  theme.parts.book.coversDark = ['assets/d1.jpg', 'assets/c2.png'];
+  theme.parts.book.coverCropsDark = [area('assets/d1.jpg')];
+  entries['night-garden/theme.json'] = json(theme);
+  entries['night-garden/assets/d1.jpg'] = jpg(450, 660, 9);
+  const { project, problems } = await io.loadProject(io.readZip(zipSync(entries)));
+  assert.deepEqual(problems, []);
+  assert.deepEqual(project.parts.book.covers, ['assets/c1.jpg', 'assets/c2.png']);
+  assert.deepEqual(project.parts.book.coversDark, ['assets/d1.jpg', 'assets/c2.png']);
+
+  let files = await io.exportFiles(project);
+  let parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.book.coversDark, ['assets/d1.jpg', 'assets/c2.png']);
+  assert.deepEqual(parts.book.coverCropsDark, [area('assets/d1.jpg')]);
+  assert.equal(files.has('assets/d1.jpg'), true);
+
+  // 删掉深色那张图后，它的区域和文件都不再进包；清空深色那套就回到老主题包的写法。
+  project.parts.book.coversDark = ['assets/c2.png'];
+  files = await io.exportFiles(project);
+  parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.equal(parts.book.coverCropsDark, undefined);
+  assert.equal(files.has('assets/d1.jpg'), false);
+  project.parts.book.coversDark = [];
+  parts = JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts;
+  assert.equal(parts.book.coversDark, undefined);
+  assert.deepEqual(parts.book.covers, ['assets/c1.jpg', 'assets/c2.png']);
+});
+
+test('a package with only dark covers is written as plain covers for older apps', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  project.parts.book.coversDark = project.parts.book.covers;
+  project.parts.book.covers = [];
+  const parts = JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts;
+  assert.deepEqual(parts.book.covers, ['assets/c1.jpg', 'assets/c2.png']);
+  assert.equal(parts.book.coversDark, undefined);
+});
+
 test('a display area outside its image is rejected like the app would', async () => {
   const entries = handWritten();
   const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));
