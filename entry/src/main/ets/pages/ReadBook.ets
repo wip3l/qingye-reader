@@ -1013,7 +1013,7 @@ struct ReadBookPage {
   @StorageLink('readerLandscapeDoublePage') @Watch('onReaderLandscapeDoublePageChanged') readerLandscapeDoublePage: boolean = false;
   @StorageLink('readerScreenOrientation') @Watch('onReaderScreenOrientationChanged') readerScreenOrientation: string =
     ReaderSettingsStore.SCREEN_ORIENTATION_SYSTEM;
-  @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
+  @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,2,3,1,2,2,2,2';
   @StorageProp('readerVolumeTurnScope') @Watch('updateVolumeKeySubscription') readerVolumeTurnScope: number = 0;
   @StorageProp('readerSmartKeyTurnScope') @Watch('updateVolumeKeySubscription') readerSmartKeyTurnScope: number = 0;
   @StorageProp('readerSmartKeyTurnSupported') @Watch('updateVolumeKeySubscription') readerSmartKeyTurnSupported: boolean = false;
@@ -12382,7 +12382,7 @@ struct ReadBookPage {
   }
 
   readerTapZoneActionsList(): number[] {
-    const fallback = [3, 3, 3, 3, 1, 2, 2, 2, 2];
+    const fallback = [3, 3, 2, 3, 1, 2, 2, 2, 2];
     const parts = (this.readerTapZoneActions || '').split(',');
     const result: number[] = [];
     for (let i = 0; i < 9; i++) {

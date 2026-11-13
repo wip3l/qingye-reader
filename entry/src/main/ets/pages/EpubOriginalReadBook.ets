@@ -100,7 +100,7 @@ const ZOOM_KEY = 'epubOriginalZoom';
 /** 本书用什么字体代替书里的字体、替换范围（取值见 EpubOriginalFont）。 */
 const READER_FONT_KEY = 'epubOriginalReaderFont';
 const READER_FONT_SCOPE_KEY = 'epubOriginalFontScope';
-const DEFAULT_TAP_ZONES: number[] = [3, 3, 3, 3, 1, 2, 2, 2, 2];
+const DEFAULT_TAP_ZONES: number[] = [3, 3, 2, 3, 1, 2, 2, 2, 2];
 const POSITION_KEY = 'epubOriginalPosition';
 /** 与普通阅读器共用的章内字符偏移（见 ReadBook 的 READER_PROGRESS_OFFSET_KEY）。 */
 const NATIVE_OFFSET_KEY = 'readProgressCharOffsetV2';
@@ -362,7 +362,7 @@ struct EpubOriginalReadBookPage {
   @StorageLink('readerMarginRight') @Watch('onReaderChromeChanged') readerMarginRight: number = 18;
   @StorageLink('readerMarginTop') @Watch('onReaderChromeChanged') readerMarginTop: number = 18;
   @StorageLink('readerMarginBottom') @Watch('onReaderChromeChanged') readerMarginBottom: number = 18;
-  @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
+  @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,2,3,1,2,2,2,2';
   /** 应用的阅读字体文件；空串表示系统字体。 */
   @StorageLink('readerFontFilePath') @Watch('onReaderFontChanged') readerFontFilePath: string = '';
   @StorageLink('readerFontSourceName') readerFontSourceName: string = '系统默认';

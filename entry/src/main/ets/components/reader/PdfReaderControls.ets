@@ -106,7 +106,7 @@ export struct PdfReaderControls {
    */
   @Prop alignedLayout: boolean = false;
   @Prop pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
-  @Prop tapZoneActions: string = '3,3,3,3,1,2,2,2,2';
+  @Prop tapZoneActions: string = '3,3,2,3,1,2,2,2,2';
   @Prop tapZoneSummary: string = '';
   @Prop volumeTurnPage: boolean = false;
   @Prop smartKeyTurnPage: boolean = false;

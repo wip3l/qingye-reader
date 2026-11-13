@@ -62,7 +62,7 @@ import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
 } from '../components/reader/ReaderSnapshotPageTurn';
 
-const DEFAULT_TAP_ZONES: number[] = [3, 3, 3, 3, 1, 2, 2, 2, 2];
+const DEFAULT_TAP_ZONES: number[] = [3, 3, 2, 3, 1, 2, 2, 2, 2];
 /** 截图翻页层截的是这一层：PDF 页面加角标与书签角。 */
 const PDF_PAGE_SURFACE_ID = 'pdf_page_surface';
 /** 翻页时跳到目标页后，等页码回报的上限与再给渲染留的时间。 */
@@ -79,7 +79,7 @@ struct PdfReadBookPage {
   @StorageProp('aiTrialOpen') @Watch('refreshAiAccess') aiTrialOpen: boolean = false;
   @StorageLink('launchShortcutNonce') @Watch('onShortcut') shortcutNonce: number = 0;
   // 与书籍共用：点击区域、智控键支持；音量键、智控键开关与翻页动画在打开时从阅读设置读。
-  @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
+  @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,2,3,1,2,2,2,2';
   @StorageProp('readerSmartKeyTurnSupported') @Watch('updateTurnKeys') smartKeySupported: boolean = false;
   // 按键翻页按阅读类型生效，这里只看 PDF 一类。
   @StorageProp('readerVolumeTurnScope') @Watch('updateTurnKeys') volumeTurnScope: number = 0;

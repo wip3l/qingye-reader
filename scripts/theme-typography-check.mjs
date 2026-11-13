@@ -325,7 +325,7 @@ const tests = {
     const reloaded = await h.settings.reload({});
     assert.equal(reloaded.fontSize, 24, 'typography carried over without switchThemeProfile');
     assert.equal(reloaded.pageTurnMode, 2);
-    assert.equal(reloaded.tapZoneActions, '3,3,3,3,1,2,2,2,2');
+    assert.equal(reloaded.tapZoneActions, '3,3,2,3,1,2,2,2,2');
     assert.equal(JSON.parse(h.disk.get('readerThemeProfileV1_warm-paper')).fontSize, 24,
       'the carried settings are saved into the theme');
 

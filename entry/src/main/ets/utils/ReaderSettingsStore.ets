@@ -36,7 +36,7 @@ export class ReaderSettings {
   pageTurnAnimationType: number = 1;
   landscapeDoublePage: boolean = false;
   screenOrientation: string = 'system';
-  tapZoneActions: string = '3,3,3,3,1,2,2,2,2';
+  tapZoneActions: string = '3,3,2,3,1,2,2,2,2';
   longPressSelectText: boolean = true;
   eyeTurnEnabled: boolean = false;
   eyeTurnPortraitCalibration: string = '';
@@ -395,7 +395,7 @@ export class ReaderSettingsStore {
       await ReaderSettingsStore.getString(
         store,
         ReaderSettingsStore.KEY_TAP_ZONE_ACTIONS,
-        AppStorage.get<string>(ReaderSettingsStore.KEY_TAP_ZONE_ACTIONS) || '3,3,3,3,1,2,2,2,2'
+        AppStorage.get<string>(ReaderSettingsStore.KEY_TAP_ZONE_ACTIONS) || '3,3,2,3,1,2,2,2,2'
       )
     );
     settings.longPressSelectText = await ReaderSettingsStore.getBoolean(
@@ -1889,7 +1889,7 @@ export class ReaderSettingsStore {
   }
 
   private static normalizeTapZoneActions(actions: string): string {
-    const fallback = [3, 3, 3, 3, 1, 2, 2, 2, 2];
+    const fallback = [3, 3, 2, 3, 1, 2, 2, 2, 2];
     const parts = (actions || '').split(',');
     const result: number[] = [];
     for (let i = 0; i < 9; i++) {

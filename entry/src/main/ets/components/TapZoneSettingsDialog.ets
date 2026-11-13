@@ -9,7 +9,7 @@ import { AppSpacing } from '../theme/AppSpacing';
  */
 @Component
 export struct TapZoneSettingsDialogContent {
-  @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,3,3,1,2,2,2,2';
+  @StorageLink('readerTapZoneActions') readerTapZoneActions: string = '3,3,2,3,1,2,2,2,2';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   onDone: () => void = (): void => {
@@ -40,7 +40,7 @@ export struct TapZoneSettingsDialogContent {
   }
 
   normalizeActions(actions: string): string {
-    const fallback = [3, 3, 3, 3, 1, 2, 2, 2, 2];
+    const fallback = [3, 3, 2, 3, 1, 2, 2, 2, 2];
     const parts = (actions || '').split(',');
     const result: number[] = [];
     for (let i = 0; i < 9; i++) {
@@ -146,7 +146,7 @@ export struct TapZoneSettingsDialogContent {
           .backgroundColor(this.inputColor())
           .fontColor(this.primaryTextColor())
           .onClick(() => {
-            this.saveActions('3,3,3,3,1,2,2,2,2');
+            this.saveActions('3,3,2,3,1,2,2,2,2');
           })
 
         Button('完成')
