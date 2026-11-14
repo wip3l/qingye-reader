@@ -115,7 +115,7 @@ struct VideoPlayerPage {
   @State episodeCount: number = 0;
   @State videoUrl: string = '';
   @State statusText: string = '正在加载...';
-  @State isPlaying: boolean = false;
+  @State @Watch('syncKeepScreenOn') isPlaying: boolean = false;
   @State positionSec: number = 0;
   @State durationSec: number = 0;
   @State speed: number = 1;
@@ -134,12 +134,12 @@ struct VideoPlayerPage {
   @State seeking: boolean = false;
   @State nativeAttempts: VideoNativeAttempt[] = [];
   @State webAttempts: VideoWebAttempt[] = [];
-  @State webMode: boolean = false;
+  @State @Watch('syncKeepScreenOn') webMode: boolean = false;
   @State webFullscreen: boolean = false;
   @State webStatus: string = '';
   @State videoPageUrl: string = '';
-  @State playbackFailed: boolean = false;
-  @State playbackReady: boolean = false;
+  @State @Watch('syncKeepScreenOn') playbackFailed: boolean = false;
+  @State @Watch('syncKeepScreenOn') playbackReady: boolean = false;
   @State resumeNotice: string = '';
   @State resumeSeekPending: boolean = false;
   @State resumeFailedSec: number = -1;
@@ -183,6 +183,8 @@ struct VideoPlayerPage {
   private retried: boolean = false;
   private lastSavedSec: number = -1;
   private playerPageVisible: boolean = false;
+  private keepScreenOnApplied: boolean = false;
+  private keepScreenOnSerial: number = 0;
   private orientationSerial: number = 0;
   private manualLandscapeRequested: boolean = false;
   // 从书架带开书动画进来时，书架那层“正在打开书籍”要等这里通知才会收起，否则返回后一直转圈。
@@ -214,6 +216,7 @@ struct VideoPlayerPage {
     this.saveProgress(true);
     this.stopPlayback();
     ReaderTtsFloatingSession.resumeAfterOtherAudio();
+    this.syncKeepScreenOn();
     this.leaveImmersive();
     this.requestShelfCloseAnimation();
   }
@@ -221,6 +224,7 @@ struct VideoPlayerPage {
   onPageShow(): void {
     this.playerPageVisible = true;
     this.enterImmersive();
+    this.syncKeepScreenOn();
     this.applyPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED);
     for (const attempt of this.webAttempts) {
       if (attempt.attached) {
@@ -241,6 +245,9 @@ struct VideoPlayerPage {
     this.pauseWeb();
     this.clearHideTimer();
     this.saveProgress(true);
+    // 返回上一页时，上一页的 onPageShow 在这里之后、本页 aboutToDisappear 之前；在这里交还常亮，
+    // 才不会把阅读页按亮屏时间设置刚开启的常亮又关掉。
+    this.syncKeepScreenOn();
   }
 
   onBackPress(): boolean {
@@ -284,7 +291,6 @@ struct VideoPlayerPage {
       if (!this.playerPageVisible) return;
       mainWindow.setWindowLayoutFullScreen(true);
       mainWindow.setWindowSystemBarEnable([]);
-      mainWindow.setWindowKeepScreenOn(true);
     }).catch((error: Error): void => {
       console.warn('[VideoPlayer] enter immersive failed:', error.message);
     });
@@ -294,13 +300,30 @@ struct VideoPlayerPage {
     const dark = this.appDarkMode;
     window.getLastWindow(getContext(this)).then((mainWindow: window.Window): void => {
       if (this.playerPageVisible) return;
-      mainWindow.setWindowKeepScreenOn(false);
       mainWindow.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED).catch((error: Error): void => {
         console.warn('[VideoPlayer] restore orientation failed:', error.message);
       });
       syncSystemBars(getContext(this), dark, ThemeRuntime.pageColor(dark));
     }).catch((error: Error): void => {
       console.warn('[VideoPlayer] leave immersive failed:', error.message);
+    });
+  }
+
+  /**
+   * 播放中（含首次加载、网页播放）保持屏幕常亮，暂停、播完、出错或页面隐藏时交还系统息屏。
+   * 网页播放拿不到播放状态，页面可见时一直常亮。
+   */
+  private syncKeepScreenOn(): void {
+    const wanted = this.playerPageVisible &&
+      (this.webMode || this.isPlaying || (!this.playbackReady && !this.playbackFailed));
+    if (wanted === this.keepScreenOnApplied) return;
+    this.keepScreenOnApplied = wanted;
+    const serial = ++this.keepScreenOnSerial;
+    window.getLastWindow(getContext(this)).then((mainWindow: window.Window): Promise<void> | undefined => {
+      if (serial !== this.keepScreenOnSerial) return undefined;
+      return mainWindow.setWindowKeepScreenOn(wanted);
+    }).catch((error: Error): void => {
+      console.warn('[VideoPlayer] keep screen on failed:', error.message);
     });
   }
 
