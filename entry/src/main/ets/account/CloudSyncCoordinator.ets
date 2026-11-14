@@ -1493,7 +1493,7 @@ export class CloudSyncCoordinator {
     payload.loginUrl = source.loginUrl || '';
     payload.loginUi = source.loginUi || '';
     payload.loginCheckJs = source.loginCheckJs || '';
-    payload.loginHeader = CloudSyncCoordinator.sanitizeBookSourceHeader(source.loginHeader);
+    payload.loginHeader = CloudSyncCoordinator.loginHeaderForSync(source.loginHeader);
     payload.bookUrlPattern = source.bookUrlPattern || '';
     payload.searchUrl = source.searchUrl || '';
     payload.exploreUrl = source.exploreUrl || '';
@@ -1538,8 +1538,11 @@ export class CloudSyncCoordinator {
     source.loginUrl = payload.loginUrl || '';
     source.loginUi = payload.loginUi || '';
     source.loginCheckJs = payload.loginCheckJs || '';
-    source.loginHeader = CloudSyncCoordinator.mergeLocalSensitiveHeaders(
-      payload.loginHeader || '', existing?.loginHeader || '');
+    // 登录状态（登录密钥、登录表单里的账号密码与脚本运行状态）只属于本机：已有的书源一律保留本机的，
+    // 云端旧密钥不能盖掉本机刚登录拿到的新密钥，也不能清空本机保存的账号。
+    source.loginHeader = existing ? (existing.loginHeader || '') :
+      CloudSyncCoordinator.loginHeaderForSync(payload.loginHeader || '');
+    source.loginInfo = existing?.loginInfo || '';
     source.rawSourceJson = existing?.rawSourceJson || '';
     source.bookUrlPattern = payload.bookUrlPattern || '';
     source.searchUrl = payload.searchUrl || '';
@@ -1571,6 +1574,22 @@ export class CloudSyncCoordinator {
     source.concurrentRate = payload.concurrentRate || '';
     source.enabledCookieJar = payload.enabledCookieJar !== false;
     return source;
+  }
+
+  /**
+   * 登录密钥只在是请求头 JSON 时同步其中的非敏感字段。书源常把登录接口返回的令牌原样存成字符串，
+   * 它是本机这次登录的凭据：同步出去会让别的设备用上本机的会话，改密码后旧令牌还会被拉回来。
+   */
+  private static loginHeaderForSync(raw: string): string {
+    const value = (raw || '').trim();
+    if (!value.startsWith('{')) return '';
+    try {
+      const parsed = JSON.parse(value) as Record<string, Object>;
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') return '';
+    } catch (e) {
+      return '';
+    }
+    return CloudSyncCoordinator.sanitizeBookSourceHeader(value);
   }
 
   private static sanitizeBookSourceHeader(raw: string): string {

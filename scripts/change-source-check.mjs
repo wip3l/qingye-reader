@@ -69,6 +69,7 @@ function harness(disk = new Map()) {
     AppStorage: { setOrCreate() {} }, getContext: () => ({}),
     SearchExploreSettingsStore: { getSearchConcurrency: () => 6 },
     SearchBookShelfHelper: { isNavigationResult: () => false },
+    BookIdentity: { keyOfUrl: (url, origin) => origin + '|' + url, keyOfSearchBook: b => b.origin + '|' + b.bookUrl },
     SearchChineseScriptRuntime: { forSearch: async () => null, saveHints: async () => {} },
     HdsFeedback: { showToast: text => events.push(text) }
   });
@@ -110,6 +111,22 @@ function harness(disk = new Map()) {
   assert.equal(restarted.searchCount, 0, 'reopening B must reuse history');
   assert.deepEqual(Array.from(next.results, b => b.origin).sort(), ['A', 'C']);
   next.requestClose(); await restarted.Cache.flush({});
+}
+
+// The current source is searched too: an aggregated source's other sites stay, only the book being read is hidden,
+// including the search address the detail page rewrote during the switch.
+{
+  const h = harness();
+  const panel = new h.Dialog(); panel.targetBook = h.old;
+  panel.aboutToAppear(); await drain();
+  const kept = panel.filterResults([book('A'), book('A', { bookUrl: '/a-site2' }), book('B')], '/a', 'A');
+  assert.deepEqual(Array.from(kept, b => b.bookUrl), ['/a-site2', '/b']);
+  panel.currentBookAliases = ['/a-search'];
+  assert.deepEqual(Array.from(panel.filterResults([book('A', { bookUrl: '/a-search' })], '/a', 'A')), []);
+  panel.requestClose(); await h.Cache.flush({});
+  const dialogSource = readEtsModule('components/BookChangeSourceDialog.ets');
+  assert(!dialogSource.includes('excludeSourceUrls'), 'change source must search the current source too');
+  assert(/maxResultsPerSource: MAX_RESULTS_PER_SOURCE/.test(dialogSource));
 }
 
 // Different authors/media stay separate; empty/partial refresh retains old candidates, expired entries remain usable.

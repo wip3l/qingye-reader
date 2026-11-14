@@ -12,12 +12,19 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { SearchChineseScriptRuntime } from '../core/book/SearchChineseScriptRuntime';
+import { BookIdentity } from '../utils/BookIdentity';
 
 class ChangeSourceGroupOption {
   name: string = '';
-  /** 组内可搜的启用书源数，不含当前书源。 */
+  /** 组内可搜的启用书源数（含当前书源：聚合书源里别的子站也能换）。 */
   count: number = 0;
 }
+
+/**
+ * 每个书源最多给几条候选。聚合书源一次搜索会返回多个子站的同名书，各占一条；
+ * 普通书源同名不同作者的书也不会挤掉要找的那本。
+ */
+const MAX_RESULTS_PER_SOURCE: number = 5;
 
 const SCOPE_ALL: string = SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_ALL;
 const SCOPE_GROUP: string = SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_GROUP;
@@ -62,11 +69,13 @@ export struct BookChangeSourceDialog {
   @State showHidden: boolean = false;
   @State hiddenCount: number = 0;
   @State scopeNotice: string = '';
-  /** 过滤掉当前书源与其他类型后的全部候选；results 是按范围筛过的显示列表。 */
+  /** 过滤掉当前这本与其他类型后的全部候选；results 是按范围筛过的显示列表。 */
   private allResults: SearchBook[] = [];
   private sourceGroupOf: Map<string, string> = new Map<string, string>();
   private scopeSearchTimer: number = -1;
   private cacheKey: string = '';
+  /** 同书源下指向当前这本的其他地址（换源时被详情改写前的搜索地址）。 */
+  private currentBookAliases: string[] = [];
   private bookRevision: number = 0;
   private cacheContext: Context | null = null;
   private activeSwitch: BookSourceSwitchTask | null = null;
@@ -94,6 +103,7 @@ export struct BookChangeSourceDialog {
     this.bookRevision = BookSourceSwitchTask.revisionOf(this.targetBook);
     this.results = [];
     this.allResults = [];
+    this.currentBookAliases = [];
     this.hiddenCount = 0;
     this.showHidden = false;
     this.tempAll = false;
@@ -116,15 +126,13 @@ export struct BookChangeSourceDialog {
     try {
       await BookSourceGroupStore.loadOrder(context);
       const sources = await AppDatabase.getInstance().getEnabledBookSourcesForSearch();
-      const origin = this.targetBook?.origin || '';
       const counts = new Map<string, number>();
       const groupOf = new Map<string, string>();
       for (const source of sources) {
         const url = source.bookSourceUrl || '';
         const group = SourcePickerKit.groupLabel(source.bookSourceGroup);
         if (url) groupOf.set(url, group);
-        // 只有当前书源的分组也算存在，记住的范围不能因此被清掉，只是个数为 0。
-        counts.set(group, (counts.get(group) || 0) + (url && url === origin ? 0 : 1));
+        counts.set(group, (counts.get(group) || 0) + 1);
       }
       this.sourceGroupOf = groupOf;
       this.groupOptions = SourcePickerKit.sortGroups(Array.from(counts.keys())).map((name: string) => {
@@ -155,6 +163,7 @@ export struct BookChangeSourceDialog {
       const cached = await ChangeSourceResultCache.load(getContext(this), book);
       if (!this.isSessionActive(sessionId)) return;
       this.cacheKey = cached.key;
+      this.currentBookAliases = ChangeSourceResultCache.sameBookUrls(cached, book.origin, book.bookUrl);
       const db = AppDatabase.getInstance();
       const available = await Promise.all(cached.results.map(async (item: SearchBook): Promise<boolean> => {
         const source = await db.getBookSource(item.origin);
@@ -232,9 +241,8 @@ export struct BookChangeSourceDialog {
       }, {
         exactMatch: true,
         leanResult: true,
-        excludeSourceUrls: [target.origin],
         mediaCategory: BookTypeSupport.mediaCategoryOf(target),
-        maxResultsPerSource: 1,
+        maxResultsPerSource: MAX_RESULTS_PER_SOURCE,
         maxTotalResults: 60,
         stopAfterResults: 20,
         maxCandidatesPerSource: 32,
@@ -463,9 +471,14 @@ export struct BookChangeSourceDialog {
     const seen = new Set<string>();
     // 历史结果可能是旧版本不分类型时存下的，这里同样按原书类型过滤。
     const category = BookTypeSupport.mediaCategoryOf(this.targetBook);
+    // 只去掉正在读的这一本；同一书源（尤其聚合书源的其他子站）的同名书照常给出。
+    // 按书籍身份比对，聚合书源轮换接口主机后也认得出是同一本。
+    const currentKey = BookIdentity.keyOfUrl(currentBookUrl, currentOrigin);
     for (const result of results) {
       if (!result.bookUrl || SearchBookShelfHelper.isNavigationResult(result) ||
-        (result.origin === currentOrigin) ||
+        (result.origin === currentOrigin && (result.bookUrl === currentBookUrl ||
+          this.currentBookAliases.includes(result.bookUrl) ||
+          BookIdentity.keyOfSearchBook(result) === currentKey)) ||
         BookTypeSupport.mediaCategoryOf(result) !== category) continue;
       const key = `${result.origin || ''}\n${result.bookUrl}`;
       if (seen.has(key)) continue;

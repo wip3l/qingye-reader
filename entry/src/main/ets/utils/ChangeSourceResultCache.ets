@@ -7,6 +7,11 @@ export class ChangeSourceCacheSnapshot {
   updatedAt: number = 0;
   searched: boolean = false;
   results: SearchBook[] = [];
+  /**
+   * 换源时详情页可能改写书籍地址：搜索结果里的地址与入库后的地址不同，却是同一本。
+   * 每项为“origin、搜索地址、入库地址”三段以换行连接，换源面板据此不把当前这本当成同书源的另一个候选。
+   */
+  renamed: string[] = [];
 }
 
 class ChangeSourceCacheEntry extends ChangeSourceCacheSnapshot {
@@ -78,6 +83,7 @@ export class ChangeSourceResultCache {
     snapshot.updatedAt = entry.updatedAt;
     snapshot.searched = entry.searched;
     snapshot.results = entry.results.map((item: SearchBook): SearchBook => ChangeSourceResultCache.cloneSearchBook(item));
+    snapshot.renamed = Array.isArray(entry.renamed) ? entry.renamed.slice() : [];
     return snapshot;
   }
 
@@ -89,6 +95,27 @@ export class ChangeSourceResultCache {
     if (searched) entry.updatedAt = Date.now();
     ChangeSourceResultCache.touch(entry);
     ChangeSourceResultCache.schedule(context);
+  }
+
+  /** 记下搜索结果地址被详情改写成了入库地址（同一本书）。 */
+  static rememberRename(context: Context, key: string, origin: string, searchUrl: string, bookUrl: string): void {
+    if (!origin || !searchUrl || !bookUrl || searchUrl === bookUrl) return;
+    const entry = ChangeSourceResultCache.entries.find((item: ChangeSourceCacheEntry): boolean => item.key === key);
+    if (!entry) return;
+    const record = `${origin}\n${searchUrl}\n${bookUrl}`;
+    const previous = Array.isArray(entry.renamed) ? entry.renamed : [];
+    entry.renamed = [record].concat(previous.filter((value: string): boolean => value !== record)).slice(0, 50);
+    ChangeSourceResultCache.schedule(context);
+  }
+
+  /** 与 origin + bookUrl 指同一本书的其他地址（换源时被详情改写前的搜索地址）。 */
+  static sameBookUrls(snapshot: ChangeSourceCacheSnapshot, origin: string, bookUrl: string): string[] {
+    const urls: string[] = [];
+    for (const record of snapshot.renamed || []) {
+      const parts = record.split('\n');
+      if (parts.length === 3 && parts[0] === origin && parts[2] === bookUrl && !urls.includes(parts[1])) urls.push(parts[1]);
+    }
+    return urls;
   }
 
   static rememberSwitch(context: Context, key: string, book: Book): void {

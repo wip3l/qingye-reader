@@ -67,6 +67,7 @@ export class BookSourceSwitchTask {
       // Bind aliases before the commit boundary, including rewritten detail URLs/metadata.
       ChangeSourceResultCache.rememberSwitch(context, key, oldBook || target);
       ChangeSourceResultCache.rememberSwitch(context, key, fullBook);
+      ChangeSourceResultCache.rememberRename(context, key, fullBook.origin, candidate.bookUrl, fullBook.bookUrl);
       await op.stage('保存换规则记录', 5000, () => ChangeSourceResultCache.flush(context));
       op.beginCommit();
       progress('正在保存切换结果…');
