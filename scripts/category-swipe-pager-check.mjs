@@ -306,7 +306,7 @@ let gridOffset = 0;
 let scrollCalls = 0;
 Object.assign(grid, {
   drainCoverQueue() {}, pendingCovers: new Map(), coverGeneration: 0,
-  layoutMode: 'grid', userScrollOnly: true, gridPageActive: true, gridHeaderCollapse: 56,
+  layoutMode: 'grid', userScrollOnly: true, gridPageActive: true, gridHeaderCollapse: () => 56,
   gridAlignTimer: -1, gridUserScrolled: false, restoredScroll: false, initialScrollOffset: 0,
   scroller: {
     currentOffset: () => ({ yOffset: gridOffset }),
@@ -318,7 +318,7 @@ grid.onGridPageActiveChanged();
 assert.equal(scrollCalls, 0, 'initial alignment waits for the List to mount');
 flush();
 assert.equal(gridOffset, 56, 'a new category starts below the collapsed header without a blank gap');
-grid.gridHeaderCollapse = 20;
+grid.gridHeaderCollapse = () => 20;
 flush();
 assert.equal(scrollCalls, 1, 'header scrolling alone never queues another alignment');
 gridOffset = 240;

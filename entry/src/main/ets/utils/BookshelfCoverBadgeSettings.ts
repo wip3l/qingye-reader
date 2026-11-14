@@ -21,9 +21,19 @@ export class BookshelfCoverBadgeSettings {
     }).join('|');
   }
 
+  /** 按配置串记下拆好的四角：书架每个封面的角标组件建一次要取几十次，不必每次重新规整。 */
+  private static parsedCorners: Map<string, string[][]> = new Map<string, string[][]>();
+
   static items(raw: string, corner: number): string[] {
-    return (BookshelfCoverBadgeSettings.normalize(raw).split('|')[corner] || '').split(',')
-      .filter((item: string): boolean => item.length > 0);
+    const key = typeof raw === 'string' ? raw : '';
+    let corners = BookshelfCoverBadgeSettings.parsedCorners.get(key);
+    if (!corners) {
+      corners = BookshelfCoverBadgeSettings.normalize(raw).split('|').map((part: string): string[] =>
+        part.split(',').filter((item: string): boolean => item.length > 0));
+      if (BookshelfCoverBadgeSettings.parsedCorners.size > 32) BookshelfCoverBadgeSettings.parsedCorners.clear();
+      BookshelfCoverBadgeSettings.parsedCorners.set(key, corners);
+    }
+    return (corners[corner] || []).slice();
   }
 
   static move(raw: string, corner: number, selected: string[]): string {

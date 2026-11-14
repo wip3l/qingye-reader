@@ -83,7 +83,7 @@ export class CoverGallerySettings {
     ignoreEmptyCoverOnly: boolean = false
   ): string[] {
     const selectedAlbumId = CoverGallerySettings.selectedAlbumId(darkMode, lightAlbumId, darkAlbumId);
-    const albums = CoverGallerySettings.parseAlbums(albumsRaw);
+    const albums = CoverGallerySettings.cachedAlbums(albumsRaw);
     const album = CoverGallerySettings.getAlbum(albums, selectedAlbumId);
     // “仅忽略空封面”：书自带封面就只用它，没有封面才落到图集。
     const emptyOnly = ignoreSourceCover && ignoreEmptyCoverOnly;
@@ -146,7 +146,32 @@ export class CoverGallerySettings {
     if (applyScope !== 'books') {
       return true;
     }
-    return CoverGallerySettings.parseTargetBooks(targetBooksRaw).includes(bookUrl);
+    return CoverGallerySettings.cachedTargetBooks(targetBooksRaw).includes(bookUrl);
+  }
+
+  /**
+   * 书架每本书取封面都要解析一次图集设置，一个格子要取好几次；按原始字符串记住上次的解析结果。
+   * 只给本类只读使用（applyCoverMode 总是返回新数组），对外的 parseAlbums 仍每次返回新对象，调用方可以放心改。
+   */
+  private static albumsMemoRaw: string | null = null;
+  private static albumsMemo: CoverAlbum[] = [];
+  private static targetBooksMemoRaw: string | null = null;
+  private static targetBooksMemo: string[] = [];
+
+  private static cachedAlbums(raw: string): CoverAlbum[] {
+    if (raw !== CoverGallerySettings.albumsMemoRaw) {
+      CoverGallerySettings.albumsMemo = CoverGallerySettings.parseAlbums(raw);
+      CoverGallerySettings.albumsMemoRaw = raw;
+    }
+    return CoverGallerySettings.albumsMemo;
+  }
+
+  private static cachedTargetBooks(raw: string): string[] {
+    if (raw !== CoverGallerySettings.targetBooksMemoRaw) {
+      CoverGallerySettings.targetBooksMemo = CoverGallerySettings.parseTargetBooks(raw);
+      CoverGallerySettings.targetBooksMemoRaw = raw;
+    }
+    return CoverGallerySettings.targetBooksMemo;
   }
 
   /** 封面模式：sequence 轮播全部、random 每小时换一张、fixed 每本书固定一张（书架上的书按加入先后的序号轮流分，见 ShelfCoverSlots；其余按书算哈希）。 */

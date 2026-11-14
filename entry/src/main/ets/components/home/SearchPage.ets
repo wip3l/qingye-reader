@@ -779,7 +779,7 @@ export struct SearchPage {
         topPadding: this.searchResultTopPadding(),
         userScrollOnly: this.usesSearchCategoryPager(),
         gridPageActive: this.isActive && (!category || category === this.effectiveSearchCategory()),
-        gridHeaderCollapse: this.searchHeaderCollapseValue(),
+        gridHeaderCollapse: (): number => this.searchHeaderCollapseValue(),
         bottomPadding: this.resultListBottomInset(),
         onOpenBook: (book: SearchBook) => {
           this.openSearchBookOrGroup(book);

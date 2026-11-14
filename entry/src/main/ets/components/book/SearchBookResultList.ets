@@ -143,10 +143,19 @@ export struct SearchBookResultList {
   /** 分类翻页的顶栏只响应真实纵向滚动，忽略新页布局、回顶等产生的空闲滚动回调。 */
   @Prop userScrollOnly: boolean = false;
   @Prop @Watch('onGridPageActiveChanged') gridPageActive: boolean = true;
-  /** 只在分类进入时对齐滚动位置，不参与列表尺寸计算或逐帧布局。 */
-  @Prop gridHeaderCollapse: number = 0;
+  /**
+   * 顶栏当前收起量，只在分类进入时对齐滚动位置时现取，不参与列表尺寸计算或逐帧布局。
+   * 传取值函数而不是 @Prop：顶栏收起的每一帧都改这个数，作 @Prop 时父组件每帧都要把整份参数（含 books 等数组）重新求值、
+   * 深拷贝一遍，滑动中主线程每次多花 4–8ms。
+   */
+  gridHeaderCollapse: () => number = (): number => 0;
   private gridAlignTimer: number = -1;
   private gridUserScrolled: boolean = false;
+  /**
+   * 列表正在滚动（拖动或惯性）。这时新建的格子封面改后台解码（见 BookCover.syncDecode），不在滑动的帧里同步解图；
+   * 只在建格子时读一次，不是状态变量，滚动开始和停止不引起重建。
+   */
+  private listScrolling: boolean = false;
   /**
    * 分类翻页里，换页时新页的对齐滚动会唤出滚动条、旧页的滚动条也还没淡出，两条都会跟着页面横滑。
    * 所以只在当前页被手动滚动过之后才显示，离开当前页立即隐藏。
@@ -230,7 +239,7 @@ export struct SearchBookResultList {
   alignGridToHeader(): void {
     if (!this.gridPageActive) return;
     const offset = this.scroller.currentOffset().yOffset;
-    const target = Math.max(this.userScrollOnly ? this.gridHeaderCollapse : 0,
+    const target = Math.max(this.userScrollOnly ? this.gridHeaderCollapse() : 0,
       this.restoredScroll ? 0 : this.initialScrollOffset);
     this.restoredScroll = true;
     if (offset < target) {
@@ -499,6 +508,8 @@ export struct SearchBookResultList {
       }
     }
     .lanes(BookTileLayout.columnCount(this.gridViewportWidth), BookTileLayout.columnGap(this.gridViewportWidth))
+    // 多列时按行预建：上下各多建三行，封面在滑进屏幕前就解码好。
+    .cachedCount(3)
     .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     .width('100%')
     .layoutWeight(1)
@@ -521,7 +532,11 @@ export struct SearchBookResultList {
       this.markUserScrolled();
       this.onListScroll(delta, this.scroller.currentOffset().yOffset);
     })
+    .onScrollStart(() => {
+      this.listScrolling = true;
+    })
     .onScrollStop(() => {
+      this.listScrolling = false;
       if (this.userScrollOnly && !this.gridUserScrolled) return;
       this.gridUserScrolled = false;
       this.onListScrollStop(this.scroller.currentOffset().yOffset);
@@ -684,7 +699,11 @@ export struct SearchBookResultList {
       this.markUserScrolled();
       this.onListScroll(delta, this.scroller.currentOffset().yOffset);
     })
+    .onScrollStart(() => {
+      this.listScrolling = true;
+    })
     .onScrollStop(() => {
+      this.listScrolling = false;
       if (this.userScrollOnly && !this.gridUserScrolled) return;
       this.gridUserScrolled = false;
       this.onListScrollStop(this.scroller.currentOffset().yOffset);
@@ -1194,6 +1213,7 @@ export struct SearchBookResultList {
       coverUrl: this.resultBook(key).coverUrl, name: this.resultBook(key).name, author: this.resultBook(key).author,
       useBookshelfCover: this.useBookshelfCoverGallery,
       placeholderColor: this.cardColor, cornerRadius: radius, decodeWidth, decodeHeight,
+      syncDecode: !this.listScrolling,
       onReadyCover: (url: ResourceStr): void => {
         if (this.readyCoverUrls.get(key) !== url) this.readyCoverUrls.set(key, url);
       }

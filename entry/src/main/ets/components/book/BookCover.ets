@@ -28,6 +28,11 @@ export struct BookCover {
   @Prop cornerRadius: number = 6;
   @Prop decodeWidth: number = 360;
   @Prop decodeHeight: number = 480;
+  /**
+   * 已准备好的封面（preparedSelection）是否同步解码。默认同步，第一帧就带图；列表滑动中新建的格子传 false，
+   * 解码放到后台线程，不占滑动的帧，图到了再淡入（预加载的格子在滑进屏幕前通常已经解码完）。
+   */
+  @Prop syncDecode: boolean = true;
   @StorageProp('appDarkMode') @Watch('refreshCovers') appDarkMode: boolean = false;
   @StorageProp('bookshelfCoverAlbums') @Watch('refreshCovers') albums: string = '';
   @StorageProp('bookshelfLightCoverAlbumId') @Watch('refreshCovers') lightAlbum: string = '';
@@ -52,10 +57,12 @@ export struct BookCover {
   @State interval: number = 3500;
   @State activeIndex: number = 0;
   @State loadedRevision: number = 0;
+  @State decodedRevision: number = 0;
   private shelfBook: Book | null = null;
   /** shelfBook 是哪本书查来的：同一本书再查时先沿用它。 */
   private shelfBookKey: string = '';
   private loadedUrls: Set<string> = new Set();
+  private decodedUrls: Set<string> = new Set();
   private requestSerial: number = 0;
   private mounted: boolean = false;
   private coverLoadSerial: number = 0;
@@ -255,6 +262,23 @@ export struct BookCover {
     return CoverDimSettings.opacity(this.appDarkMode, this.darkCoverDim, this.darkCoverDimLevel);
   }
 
+  preparedSync(): boolean {
+    return this.preparedSelection !== null && this.syncDecode;
+  }
+
+  /** 后台解码完成的地址：淡入只看这里。loadedUrls 对已准备的首图是提前记上的，不代表已经解码。 */
+  isDecoded(url: ResourceStr): boolean {
+    return this.decodedRevision >= 0 && this.decodedUrls.has(JSON.stringify(url));
+  }
+
+  markDecoded(url: ResourceStr): void {
+    const key = JSON.stringify(url);
+    if (this.decodedUrls.has(key)) return;
+    if (this.decodedUrls.size > 200) this.decodedUrls.clear();
+    this.decodedUrls.add(key);
+    this.decodedRevision++;
+  }
+
   /** 主题包动图封面取景时记下的显示区域。 */
   themeCrop(url: ResourceStr): ThemeImageCrop | null {
     return this.themeCover ? ThemeAssetRegistry.imageCrop(ThemeImageSlots.COVER, url, this.appDarkMode) : null;
@@ -264,7 +288,7 @@ export struct BookCover {
   coverImage(url: ResourceStr) {
     if (this.themeCrop(url)) {
       ThemeCroppedImage({ src: url, crop: this.themeCrop(url) as ThemeImageCrop,
-        syncLoad: this.preparedSelection !== null,
+        syncLoad: this.preparedSync(),
         onLoaded: () => this.markLoaded(url),
         onFailed: () => this.markFailed(url) })
         .width('100%')
@@ -274,14 +298,20 @@ export struct BookCover {
     } else {
       Image(url)
         // Prepared result images are small, validated local files; first paint must contain the image.
-        .syncLoad(this.preparedSelection !== null)
+        .syncLoad(this.preparedSync())
         .width('100%')
         .height('100%')
         .objectFit(this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
         .sourceSize({ width: this.decodeWidth, height: this.decodeHeight })
         .borderRadius(this.cornerRadius)
-        .onComplete(() => this.markLoaded(url))
+        .onComplete(() => {
+          this.markDecoded(url);
+          this.markLoaded(url);
+        })
         .onError(() => this.markFailed(url))
+        // 后台解码的图到了再淡入；同步解码的第一帧就带图，不淡入。
+        .opacity(this.preparedSelection === null || this.syncDecode || this.isDecoded(url) ? 1 : 0)
+        .animation({ duration: 150, curve: Curve.EaseOut })
     }
   }
 
@@ -289,7 +319,7 @@ export struct BookCover {
     Stack() {
       if (!this.isActiveCoverReady() && this.preparedSelection?.firstImage) {
         Image(this.preparedSelection.firstImage)
-          .syncLoad(true)
+          .syncLoad(this.syncDecode)
           .width('100%')
           .height('100%')
           .sourceSize({ width: this.decodeWidth, height: this.decodeHeight })
@@ -348,7 +378,7 @@ export struct BookCover {
       }
       if (this.themeFrame) {
         Image(this.themeFrame)
-          .syncLoad(this.preparedSelection !== null)
+          .syncLoad(this.preparedSync())
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Fill)

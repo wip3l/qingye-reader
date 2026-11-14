@@ -640,6 +640,8 @@ export struct BookshelfPage {
   private localBookIntroMigrationGeneration: number = 0;
   private shelfComponentActive: boolean = false;
   private shelfUpdateAcknowledgedAt: Map<string, number> = new Map();
+  /** 陪伴布局每本书高矮、侧转、斜靠取值用的种子，按书的地址记（见 shelfBookJitterSeed）。 */
+  private shelfJitterSeeds: Map<string, number> = new Map();
 
   private readonly shelfCoverLocate = (bookUrl: string): ShelfOpeningCover | null => this.locateShelfCover(bookUrl);
   /** 首页根节点整张截图（含标签栏），阅读页放大、缩回时垫在后面；被盖住的页面照样能离屏截图。 */
@@ -5365,10 +5367,15 @@ export struct BookshelfPage {
   /** 按书的地址取一个固定的数，同一本书每次都是同样的高矮和倾斜，刷新书架时不会跳。 */
   shelfBookJitterSeed(book: Book): number {
     const key = book.bookUrl || book.name || '';
+    // 建一本书的格子要取十来次（高矮、侧转、厚度、斜靠各几处），按地址记下来，不必每次逐字算。
+    const cached = this.shelfJitterSeeds.get(key);
+    if (cached !== undefined) return cached;
     let hash = 0;
     for (let index = 0; index < key.length; index++) {
       hash = (hash * 31 + key.charCodeAt(index)) | 0;
     }
+    if (this.shelfJitterSeeds.size > 2048) this.shelfJitterSeeds.clear();
+    this.shelfJitterSeeds.set(key, Math.abs(hash));
     return Math.abs(hash);
   }
 

@@ -1517,7 +1517,7 @@ export struct ExplorePage {
         topPadding: this.exploreResultTopPadding(),
         userScrollOnly: this.usesExploreCategoryPager(),
         gridPageActive: this.isActive && this.isCurrentExplorePage(key),
-        gridHeaderCollapse: this.exploreHeaderCollapseValue(),
+        gridHeaderCollapse: (): number => this.exploreHeaderCollapseValue(),
         bottomPadding: this.resultListBottomInset(),
         onOpenBook: (book: SearchBook) => {
           this.openSearchBookDetail(book);
