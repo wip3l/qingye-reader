@@ -31,6 +31,9 @@ export interface Field {
   when?: (mode: Mode) => boolean;
 }
 
+/** 应用“书架布局”的四个选项（键同应用的 bookshelfLayoutMode）；陪伴是新装应用的默认值。预览的布局切换和按布局的书架背景都用它。 */
+export const SHELF_LAYOUTS: [string, string][] = [['companion', '陪伴'], ['tile', '平铺'], ['loose', '宽松'], ['compact', '紧凑']];
+
 export interface Section {
   id: string;
   group: string;
@@ -149,7 +152,7 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'book', group: '素材', name: '书籍素材', screen: 'shelf',
-    desc: '书架按书轮播封面。封面是完整插画，不叠书名和作者。深色模式可以单独给一套封面，不给就两种模式都用上面那套。', fields: [
+    desc: '书架按书轮播封面。封面是完整插画，不叠书名和作者。深色模式可以单独给一套封面和一张文件夹插画，不给就两种模式都用默认的。', fields: [
       { g: '封面（最多 8 张，450 × 660）' },
       { k: 'book.covers', type: 'covers', target: [450, 660] },
       { g: '深色封面（可选，最多 8 张）' },
@@ -157,7 +160,9 @@ export const SECTIONS: Section[] = [
         hint: '空着时深色模式沿用上面那套。和上面张数相同、顺序对应时，同一本书切换深浅色还是同一幅画。旧版本应用只认上面那套' },
       { g: '书架' },
       { k: 'book.shelfFrame', label: '书架边框', type: 'asset', kinds: ['vector'], viewBox: [450, 660], spec: 'SVG，与封面同比例，中心透明' },
-      { k: 'book.shelfFolder', label: '分组文件夹', type: 'asset', kinds: ['image'], target: [450, 660], spec: '450 × 660 位图' }
+      { k: 'book.shelfFolder', label: '分组文件夹', type: 'asset', kinds: ['image'], target: [450, 660], spec: '450 × 660 位图' },
+      { k: 'book.shelfFolderDark', label: '分组文件夹 · 深色（可选）', type: 'asset', kinds: ['image'], target: [450, 660], spec: '450 × 660 位图',
+        hint: '空着时深色模式沿用上面那张。旧版本应用只认上面那张' }
     ]
   },
   {
@@ -171,10 +176,16 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'homeBackdrop', group: '素材', name: '首页背景', screen: 'shelf', modal: true,
-    desc: '书架、发现和我的页顶部的背景，不随列表滚动，向下自动淡成页面底色。浅色、深色各做一张；只做一种时另一种模式不显示背景。', fields: [
+    desc: '书架、发现和我的页顶部的背景，不随列表滚动，向下自动淡成页面底色。浅色、深色各做一张；只做一种时另一种模式不显示背景。书架的四种布局还可以各配一张，不配就用通用那张。', fields: [
       { g: '背景图' },
-      { k: 'homeBackdrop.{m}', label: '背景图', type: 'asset', kinds: ['image'], target: [1080, 1350],
-        spec: '1080 × 1350（4:5），画面放在上半部分；比例不同时居中裁成 4:5' }
+      { k: 'homeBackdrop.{m}', label: '背景图（通用）', type: 'asset', kinds: ['image'], target: [1080, 1350],
+        spec: '1080 × 1350（4:5），画面放在上半部分；比例不同时居中裁成 4:5' },
+      { g: '按书架布局（可选）' },
+      ...SHELF_LAYOUTS.map(([key, label]): Field => ({
+        k: `shelfBackdrop.${key}.{m}`, label, type: 'asset', kinds: ['image'], target: [1080, 1350],
+        spec: '空着时沿用通用背景',
+        hint: key === 'compact' ? '只在书架页、用这种布局时显示；发现、我的页始终用通用那张。旧版本应用只认通用那张' : undefined
+      }))
     ]
   },
   {
@@ -218,8 +229,6 @@ export const SECTIONS: Section[] = [
 
 export const SCREENS: [string, string][] = [['shelf', '书架'], ['explore', '发现'], ['mine', '我的'],
   ['reader', '阅读'], ['tts', '朗读'], ['startup', '启动'], ['card', '主题卡片']];
-/** 应用“书架布局”的四个选项；陪伴是新装应用的默认值。 */
-export const SHELF_LAYOUTS: [string, string][] = [['companion', '陪伴'], ['tile', '平铺'], ['loose', '宽松'], ['compact', '紧凑']];
 /** 预览底栏的第四个页签，与应用“其他设置 › 底栏”的三个值一致。 */
 export const EXTRA_TAB_CHOICES: [string, string][] = [['none', '三页签'], ...EXTRA_NAV_TABS];
 

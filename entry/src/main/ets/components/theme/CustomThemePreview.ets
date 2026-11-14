@@ -103,19 +103,25 @@ export struct CustomThemePreview {
     return this.previewDark ? this.themePack.dark : this.themePack.light;
   }
 
+  /** 书架画面按所选书架布局取背景（主题可以按布局单独配图），发现、我的用通用那张。 */
+  backdropShelfLayout(): string {
+    return this.scene === 'explore' || this.scene === 'mine' ? '' : this.shelfLayout;
+  }
+
   homeBackdrop(): ResourceStr | null {
     return this.homeBackdropThemeId ?
-      ThemeAssetRegistry.homeBackdrop(this.homeBackdropThemeId, this.previewDark) : null;
+      ThemeAssetRegistry.homeBackdrop(this.homeBackdropThemeId, this.previewDark, this.backdropShelfLayout()) : null;
   }
 
   /** 首页背景：贴顶铺满宽度，和首页一样向下淡成页面底色。 */
   @Builder
   homeBackdropLayer() {
     Stack({ alignContent: Alignment.Top }) {
-      if (ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.homeBackdrop(), this.previewDark)) {
+      if (ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.homeBackdrop(), this.previewDark,
+        this.backdropShelfLayout())) {
         ThemeCroppedImage({ src: this.homeBackdrop() as ResourceStr,
           crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.homeBackdrop(),
-            this.previewDark) as ThemeImageCrop })
+            this.previewDark, this.backdropShelfLayout()) as ThemeImageCrop })
           .width('100%')
           .aspectRatio(ThemeAssetRegistry.HOME_BACKDROP_ASPECT)
       } else {

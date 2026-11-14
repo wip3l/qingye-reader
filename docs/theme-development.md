@@ -183,7 +183,7 @@ BuiltinThemeRegistry.register(theme);
 | 朗读/有声书面板背景 | `tts_panel_<id>_light.svg` / `_dark.svg` | `viewBox="0 0 720 520"`，透明底 | `TtsPanelThemeStyles.resolve()` |
 | 主题封面 | `theme_cover_<id>_NN`；浅深各一套的主题另有 `theme_cover_<id>_light_NN` | 450 × 660 JPG；内置主题封面均为即梦位图 | `themeBookCovers()` |
 | 书架边框 | `theme_frame_<id>.svg` | 中心透明，只画外框和角花 | `themeShelfFrame()` |
-| 分组文件夹插画 | `theme_folder_art_<id>.jpg` | 450 × 660 | `themeShelfFolder()` |
+| 分组文件夹插画 | `theme_folder_art_<id>.jpg`；浅深各一张的主题另有 `theme_folder_art_<id>_light.jpg` | 450 × 660 | `themeShelfFolder()` |
 | 主题标识 | `theme_logo_<id>.svg` | `viewBox="0 0 64 64"` | `themeLogo()` |
 | 启动封面 | `theme_startup_<id>` | 841 × 1870 JPG 竖屏插画；底部约 1/5 叠加文案，不放主体 | `startupBackground()` |
 | 首页背景（可选） | `home_bg_<id>_light.jpg` / `_dark.jpg` | 1080 × 1350 JPG；画面集中在上部，下半部分接近纯底色 | `homeBackdrop()` |
@@ -232,11 +232,14 @@ BuiltinThemeRegistry.register(theme);
 
 自定义主题通过部件来源 `ThemeComponentSourceIds.homeBackdropThemeId` 选择背景来自哪个主题（`ThemeRuntime.homeBackdropThemeId()`），选没有背景图的主题即不显示。该字段是后加的，旧方案里为空，读取时回退到 `startupThemeId`。主题包的 `parts.homeBackdrop` 只取对应模式的那一张，浅深色不互相借用。
 
+主题包还可以按书架布局分别配图（`parts.shelfBackdrop.<布局>`，布局取值同 `bookshelfLayoutMode`）。书架页的 `HomeThemeBackdrop` 带着 `shelfLayout` 取图，`ThemeRuntime.homeBackdrop(darkMode, shelfLayout)` → `ThemeAssetRegistry.homeBackdrop()` 先找这种布局的专属图，没有再用通用那张；书架上判断“有没有背景”（`shelfSurfaceColor()`、顶栏磨砂的显隐）也要带上布局。冷启动骨架 `FastBookshelfShell`、分组页和分组开合时垫的背景层用同一张。其他页签不传布局，始终用通用那张。内置主题四种布局共用一张。应用内编辑器在“首页背景”下有四个布局格子（`SchemeAssetService.setHomeBackdrop` / `clearHomeBackdrop` 的 `shelfLayout` 参数、`copyShelfBackdropToOtherLayouts()`）；上传时“首页背景”来源还是内置主题的话记在 `ThemePackRecord.homeBackdropFallbackLight / Dark`（只在本机），包里没有通用那张时通用背景接着用它，移除全部背景后来源也退回它。
+
 ### 主题封面与书架边框
 
 1. 添加封面、边框和文件夹插画资源。封面底图是完整插画，不叠加书名或作者。
 2. 在 `themeBookCovers()`、`themeShelfFrame()` 和 `themeShelfFolder()` 中增加映射。同一个 `coverAssetId` 可以映射多张封面，书架会按书籍稳定打乱并轮播；`themeBookCover()` 返回其中第一张。
    封面默认浅深色共用一套。要让深色模式换一套，在 `builtinDarkBookCovers()` 里给这个主题返回深色那套（曜金藏书、星穹御藏是这样：`theme_cover_<id>_light_NN` 用于浅色，`theme_cover_<id>_NN` 用于深色），`themeBookCovers(assetId, darkMode)` 在深色模式优先取它。两套张数相同、按序号一一对应，起始序号只由书决定，所以同一本书切换模式后还是同一幅画。主题包对应的字段是 `parts.book.coversDark`，没有时深色沿用 `covers`（`InstalledThemePack.coversFor()`）。
+   文件夹插画同理：`themeShelfFolder(assetId, darkMode)` 里给这个主题按模式返回两张（两套专属主题 `_light` 那张用于浅色），主题包字段是 `parts.book.shelfFolderDark`（`InstalledThemePack.shelfFolderFor()`）。
 3. 配置 `theme.book.coverAssetId`、`shelfFrameAssetId` 和 `shelfFolderAssetId`。
 
 是否启用主题封面由 `appThemeBookCoverEnabled` 持久化；是否套用主题排版由 `appThemeApplyLayoutEnabled` 持久化。
@@ -264,7 +267,7 @@ BuiltinThemeRegistry.register(theme);
 
 编辑器里上传的封面、书架边框、文件夹插画、导航图标、朗读面板插画、首页背景、气泡端饰与边框、阅读角饰或整图背景由 `utils/SchemeAssetService.ets` 收进方案自己的素材包：`theme_packs/custom-<随机>/`，与导入的主题包同一套存储（`ThemePackStore.importAsset()` 负责嗅探类型、限大小、SVG 自包含检查并按内容哈希命名），同样注册为 `pack:<packageId>`，方案的 `packageId` 指向它。上传后编辑器把对应部件来源（封面与图标两种模式一起，面板插画和首页背景按当前模式）指向这个包；包内气泡通过方案的强调覆盖 `bubbleStyle` 生效；阅读背景素材写进 `parts.light/dark.reader`，方案只把 `customLight/DarkReaderBackgroundAssetId` 指向 `pack:<id>:light/dark`，阅读来源主题与文字色不变。第一次上传时该部件原来所选的主题记为包的 `baseTheme`，没上传的那部分素材继续取自它；移除后来源退回 `baseTheme`，所有部件都移掉时整个包卸载、方案解绑。方案本身由主题包安装而来时直接写进那个包。导出时按格式 2 随包打出去（`packageId` 就是这个包的 ID，不算混搭），删除方案时由 `cleanupImportedFiles()` 一并清理。
 
-编辑器按素材槽逐个管理：封面可单张替换、删除和调整顺序（`replaceCover` / `removeCover` / `moveCover`），封面区跟着编辑器的浅色 / 深色切换，深色下加的封面进 `coversDark`（这几个方法的 `dark` 参数），`clearDarkCovers()` 去掉深色那套、回到沿用浅色封面，书架边框、文件夹、气泡边框、主题标识（`parts.logo`）各自可移除，浅深色分开的阅读背景素材、朗读面板和首页背景可以 `copyToOtherMode()` 复制到另一种模式。朗读面板三色只在这个模式已有自传插画时可改（直接改 `parts.ttsPanelLight/Dark`）；整图铺放改 `parts.light/dark.reader.imageFit`。阅读底色、正文、页眉页脚与内容明暗是方案设置里的 `customLight/DarkReader*`，换阅读来源时整组重置为来源主题的值。
+编辑器按素材槽逐个管理：封面可单张替换、删除和调整顺序（`replaceCover` / `removeCover` / `moveCover`），封面区跟着编辑器的浅色 / 深色切换，深色下加的封面进 `coversDark`（这几个方法的 `dark` 参数），`clearDarkCovers()` 去掉深色那套、回到沿用浅色封面，文件夹插画的格子同样跟着模式（`setShelfFolder` / `clearShelfFolder` 的 `dark` 参数，深色那张进 `shelfFolderDark`），书架边框、文件夹、气泡边框、主题标识（`parts.logo`）各自可移除，浅深色分开的阅读背景素材、朗读面板和首页背景可以 `copyToOtherMode()` 复制到另一种模式。朗读面板三色只在这个模式已有自传插画时可改（直接改 `parts.ttsPanelLight/Dark`）；整图铺放改 `parts.light/dark.reader.imageFit`。阅读底色、正文、页眉页脚与内容明暗是方案设置里的 `customLight/DarkReader*`，换阅读来源时整组重置为来源主题的值。
 
 导航图标可以逐个上传，`parts.navigation` 在本机允许只有几张：`InstalledThemePack.hasAnyNavigation()` 为真时底栏就用包里的图标，缺的页签取 `ThemePackRecord.navFallbackIconPackId`（第一次上传时导航来源主题的内置图标包，只存在本机 `pack.json`，不进包格式）。“听”“足迹”两个页签的图标可以不传，同样回退到它。主题包格式仍要求书架、发现、我的三个普通图标齐全，所以 `ThemePackageService.packParts()` 导出时丢掉没传齐的 `navigation`。
 

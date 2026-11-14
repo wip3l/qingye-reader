@@ -4,10 +4,13 @@ import {
   packReaderBackgroundId,
   packThemeId,
   findImageCrop,
+  findShelfBackdrop,
   normalizeOrnamentScale,
+  shelfBackdropFor,
   ThemeImageCrop,
   ThemePackageCredits,
   ThemePackageParts,
+  ThemePackageShelfBackdrop,
   ThemePackageVariantParts
 } from './share/ThemePackageFormat';
 import { ThemePack, ThemeVariant } from './ThemeModels';
@@ -32,6 +35,10 @@ export class ThemePackRecord {
   parts: ThemePackageParts = new ThemePackageParts();
   // 只在本机：编辑器逐个上传导航图标时，没传的页签用这套内置图标（第一次上传时导航来源主题的图标）。
   navFallbackIconPackId: string = '';
+  // 只在本机：编辑器只给某种书架布局传了背景、没传通用首页背景时，通用那张继续用这套内置主题的
+  // （上传时“首页背景”来源所选的主题），浅色、深色各记各的。
+  homeBackdropFallbackLight: string = '';
+  homeBackdropFallbackDark: string = '';
 }
 
 export class InstalledThemePackReader {
@@ -95,16 +102,24 @@ export class InstalledThemePack {
   coversDark: string[] = [];
   shelfFrame: string = '';
   shelfFolder: string = '';
+  // 深色模式单独的文件夹插画；空着时深色也用 shelfFolder。
+  shelfFolderDark: string = '';
   startupLight: InstalledThemePackStartup | null = null;
   startupDark: InstalledThemePackStartup | null = null;
   bubbleFrame: string = '';
   bubbleCap: string = '';
   homeBackdropLight: string = '';
   homeBackdropDark: string = '';
+  // 按书架布局分别给的背景，素材和区域都已换成本机地址。
+  shelfBackdrops: ThemePackageShelfBackdrop[] = [];
+  // 包里没有通用首页背景时接着用的内置主题（见 ThemePackRecord）。
+  homeBackdropFallbackLight: string = '';
+  homeBackdropFallbackDark: string = '';
   // 显示区域（动图取景）；image 已换成本机地址，和上面的素材地址对得上。
   coverCrops: ThemeImageCrop[] = [];
   coverCropsDark: ThemeImageCrop[] = [];
   shelfFolderCrop: ThemeImageCrop | null = null;
+  shelfFolderCropDark: ThemeImageCrop | null = null;
   homeBackdropLightCrop: ThemeImageCrop | null = null;
   homeBackdropDarkCrop: ThemeImageCrop | null = null;
   logo: string = '';
@@ -135,12 +150,32 @@ export class InstalledThemePack {
     return this.covers.length > 0 ? this.covers : this.coversDark;
   }
 
+  /** 某个模式下显示的文件夹插画，规则同封面（同 bookFolderFor）。 */
+  shelfFolderFor(darkMode: boolean): string {
+    return darkMode ? (this.shelfFolderDark || this.shelfFolder) : (this.shelfFolder || this.shelfFolderDark);
+  }
+
   startup(darkMode: boolean): InstalledThemePackStartup | null {
     return (darkMode ? this.startupDark : this.startupLight) || this.startupLight || this.startupDark;
   }
 
   homeBackdrop(darkMode: boolean): string {
     return darkMode ? this.homeBackdropDark : this.homeBackdropLight;
+  }
+
+  /** 某种书架布局专属的背景；没有时为空串。 */
+  shelfBackdrop(layout: string, darkMode: boolean): string {
+    return shelfBackdropFor(this.shelfBackdrops, layout, darkMode);
+  }
+
+  hasShelfBackdrop(darkMode: boolean): boolean {
+    return this.shelfBackdrops.some((item: ThemePackageShelfBackdrop): boolean => !!(darkMode ? item.dark : item.light));
+  }
+
+  /** 包里没有通用首页背景时接着用哪套内置主题的；没记或包里有通用那张时为空串。 */
+  homeBackdropFallback(darkMode: boolean): string {
+    if (this.homeBackdrop(darkMode)) return '';
+    return darkMode ? this.homeBackdropFallbackDark : this.homeBackdropFallbackLight;
   }
 
   ttsPanel(darkMode: boolean): InstalledThemePackTtsPanel | null {
@@ -204,17 +239,29 @@ export class ThemePackRegistry {
    * 已安装主题包里某张图的显示区域。slot 是 ThemeImageSlots 之一，src 是素材的本机地址；没有区域时返回 null。
    * 首页背景两种模式可能用同一张图、各取各的区域，优先取 darkMode 对应的那条。
    */
-  static imageCrop(slot: string, src: string, darkMode: boolean = false): ThemeImageCrop | null {
+  static imageCrop(slot: string, src: string, darkMode: boolean = false, shelfLayout: string = ''): ThemeImageCrop | null {
     if (!src) return null;
     let found: ThemeImageCrop | null = null;
     ThemePackRegistry.packs.forEach((pack: InstalledThemePack) => {
       if (found) return;
+      // 书架页按布局取的背景：同一张图可以既是通用背景又是某个布局的专属图，先看这个布局自己记的区域。
+      if (slot === ThemeImageSlots.BACKDROP && shelfLayout) {
+        const item = findShelfBackdrop(pack.shelfBackdrops, shelfLayout);
+        const own = item ? (darkMode ? item.darkCrop : item.lightCrop) : null;
+        if (item && (darkMode ? item.dark : item.light) === src) {
+          found = own && own.image === src ? own : null;
+          return;
+        }
+      }
       if (slot === ThemeImageSlots.COVER) {
         // 同一张图可以同时在浅色和深色两套封面里，各取各的区域。
         found = findImageCrop(darkMode ? pack.coverCropsDark : pack.coverCrops, src) ||
           findImageCrop(darkMode ? pack.coverCrops : pack.coverCropsDark, src);
       } else if (slot === ThemeImageSlots.FOLDER) {
-        if (pack.shelfFolderCrop && pack.shelfFolderCrop.image === src) found = pack.shelfFolderCrop;
+        const first = darkMode ? pack.shelfFolderCropDark : pack.shelfFolderCrop;
+        const second = darkMode ? pack.shelfFolderCrop : pack.shelfFolderCropDark;
+        if (first && first.image === src) found = first;
+        else if (second && second.image === src) found = second;
       } else if (slot === ThemeImageSlots.BACKDROP) {
         const first = darkMode ? pack.homeBackdropDarkCrop : pack.homeBackdropLightCrop;
         const second = darkMode ? pack.homeBackdropLightCrop : pack.homeBackdropDarkCrop;
@@ -322,9 +369,14 @@ export class ThemePackRegistry {
       }
       installed.shelfFolderCrop = parts.book.shelfFolderCrop && parts.book.shelfFolderCrop.image === parts.book.shelfFolder ?
         ThemePackRegistry.resolveCrop(parts.book.shelfFolderCrop, uri) : null;
+      // 本机旧版记录里没有深色文件夹插画字段。
+      installed.shelfFolderDark = uri(parts.book.shelfFolderDark || '');
+      const folderCropDark = parts.book.shelfFolderCropDark;
+      installed.shelfFolderCropDark = folderCropDark && folderCropDark.image === parts.book.shelfFolderDark ?
+        ThemePackRegistry.resolveCrop(folderCropDark, uri) : null;
       if (installed.coversFor(false).length > 0) pack.book.coverAssetId = themeId;
       if (installed.shelfFrame) pack.book.shelfFrameAssetId = themeId;
-      if (installed.shelfFolder) pack.book.shelfFolderAssetId = themeId;
+      if (installed.shelfFolderFor(false)) pack.book.shelfFolderAssetId = themeId;
     }
     if (parts.startupLight) {
       installed.startupLight = new InstalledThemePackStartup();
@@ -356,6 +408,20 @@ export class ThemePackRegistry {
       ThemePackRegistry.resolveCrop(lightCrop, uri) : null;
     installed.homeBackdropDarkCrop = darkCrop && darkCrop.image === parts.homeBackdropDark ?
       ThemePackRegistry.resolveCrop(darkCrop, uri) : null;
+    // 本机旧版记录里没有按布局的背景。
+    for (const item of parts.shelfBackdrops || []) {
+      const resolved = new ThemePackageShelfBackdrop();
+      resolved.layout = item.layout;
+      resolved.light = uri(item.light || '');
+      resolved.dark = uri(item.dark || '');
+      resolved.lightCrop = item.lightCrop && item.lightCrop.image === item.light ?
+        ThemePackRegistry.resolveCrop(item.lightCrop, uri) : null;
+      resolved.darkCrop = item.darkCrop && item.darkCrop.image === item.dark ?
+        ThemePackRegistry.resolveCrop(item.darkCrop, uri) : null;
+      if (resolved.light || resolved.dark) installed.shelfBackdrops.push(resolved);
+    }
+    installed.homeBackdropFallbackLight = record.homeBackdropFallbackLight || '';
+    installed.homeBackdropFallbackDark = record.homeBackdropFallbackDark || '';
     installed.logo = uri(parts.logo);
     installed.preview = uri(parts.preview);
     installed.appFont = uri(parts.appFont);

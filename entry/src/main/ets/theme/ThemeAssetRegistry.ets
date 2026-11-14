@@ -2,6 +2,7 @@ import { ThemeIds } from './ThemeModels';
 import { InstalledThemePack, ThemePackRegistry } from './ThemePackRegistry';
 import { ThemeImageCrop } from './share/ThemePackageFormat';
 import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
+import { ThemeAccessPolicy } from '../account/ThemeAccessPolicy';
 
 export class ThemeAssetRegistry {
   static readonly BACKGROUND_PAPER_LIGHT: string = 'paper-light';
@@ -519,12 +520,19 @@ export class ThemeAssetRegistry {
   /**
    * 首页三个页签顶部的主题背景图（宽高比 HOME_BACKDROP_ASPECT，画面集中在上部、向下淡成纯底色）；没有的主题返回 null。
    * 主题包只取对应模式那一张，深浅色不互相借用：浅色图放进深色模式会是一大块亮斑。
+   * 主题包还可以按书架布局分别给图（parts.shelfBackdrop）；内置主题四种布局共用一张。
    */
-  static homeBackdrop(themeId: string, darkMode: boolean = false): ResourceStr | null {
+  static homeBackdrop(themeId: string, darkMode: boolean = false, shelfLayout: string = ''): ResourceStr | null {
     if (ThemePackRegistry.isPackId(themeId)) {
       const pack = ThemePackRegistry.get(themeId);
-      const image = pack ? pack.homeBackdrop(darkMode) : '';
-      return image || null;
+      if (!pack) return null;
+      // shelfLayout 只有书架页会传：这种布局有专属图就用它，没有再用通用那张。
+      const image = (shelfLayout ? pack.shelfBackdrop(shelfLayout, darkMode) : '') || pack.homeBackdrop(darkMode);
+      if (image) return image;
+      // 编辑器里只传了某种布局的图：通用那张接着用原来所选内置主题的（权益过期后不再借用）。
+      const fallback = pack.homeBackdropFallback(darkMode);
+      return fallback && !ThemePackRegistry.isPackId(fallback) && ThemeAccessPolicy.hasThemeAccess(fallback) ?
+        ThemeAssetRegistry.homeBackdrop(fallback, darkMode) : null;
     }
     // 两套超级会员专属主题的背景带一段循环动图（*_anim.webp，首尾帧相同的 6 秒视频转成）；
     // “播放动图”关闭时退回同一画面的静图。
@@ -552,10 +560,11 @@ export class ThemeAssetRegistry {
    * 主题包素材的显示区域（动图取景）。src 可以是 AnimatedImagePolicy 换出来的第一帧静图，按原图查。
    * 内置主题和没有区域的素材返回 null，照常整张显示。
    */
-  static imageCrop(slot: string, src: ResourceStr | null | undefined, darkMode: boolean = false): ThemeImageCrop | null {
+  static imageCrop(slot: string, src: ResourceStr | null | undefined, darkMode: boolean = false,
+    shelfLayout: string = ''): ThemeImageCrop | null {
     if (typeof src !== 'string' || !src) return null;
-    return ThemePackRegistry.imageCrop(slot, src, darkMode) ||
-      ThemePackRegistry.imageCrop(slot, AnimatedImagePolicy.originalOf(src), darkMode);
+    return ThemePackRegistry.imageCrop(slot, src, darkMode, shelfLayout) ||
+      ThemePackRegistry.imageCrop(slot, AnimatedImagePolicy.originalOf(src), darkMode, shelfLayout);
   }
 
   static themeBookCover(assetId: string, darkMode: boolean = false): ResourceStr {
@@ -724,10 +733,11 @@ export class ThemeAssetRegistry {
     }
   }
 
-  static themeShelfFolder(assetId: string): ResourceStr {
+  /** 分组文件夹插画。和封面一样默认浅深色共用；有深色那张的主题（主题包的 shelfFolderDark、两套专属主题）深色模式换成它。 */
+  static themeShelfFolder(assetId: string, darkMode: boolean = false): ResourceStr {
     if (ThemePackRegistry.isPackId(assetId)) {
       const pack = ThemePackRegistry.get(assetId);
-      return pack ? pack.shelfFolder : '';
+      return pack ? pack.shelfFolderFor(darkMode) : '';
     }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return '';
@@ -746,9 +756,11 @@ export class ThemeAssetRegistry {
       case ThemeIds.AZURE_MECHA: return $r('app.media.theme_folder_art_azure_mecha');
       case ThemeIds.STARWISH_MAGIC: return $r('app.media.theme_folder_art_starwish_magic');
       case ThemeIds.LETTERPRESS_PAGE: return $r('app.media.theme_folder_art_letterpress_page');
-      case ThemeIds.OBSIDIAN_ARCHIVE: return $r('app.media.theme_folder_art_obsidian_archive');
+      case ThemeIds.OBSIDIAN_ARCHIVE: return darkMode ? $r('app.media.theme_folder_art_obsidian_archive') :
+        $r('app.media.theme_folder_art_obsidian_archive_light');
       case ThemeIds.NEON_HARBOR: return $r('app.media.theme_folder_art_neon_harbor');
-      case ThemeIds.CELESTIAL_VAULT: return $r('app.media.theme_folder_art_celestial_vault');
+      case ThemeIds.CELESTIAL_VAULT: return darkMode ? $r('app.media.theme_folder_art_celestial_vault') :
+        $r('app.media.theme_folder_art_celestial_vault_light');
       default: return $r('app.media.theme_folder_art_classic_blue');
     }
   }

@@ -6,17 +6,21 @@ import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ThemePackRegistry, ThemePackRecord } from '../theme/ThemePackRegistry';
 import { ThemeIds } from '../theme/ThemeModels';
 import {
-  bookHasNoCovers,
+  bookIsEmpty,
+  findShelfBackdrop,
   isPackThemeId,
   NAVIGATION_ICON_KEYS,
   normalizeOrnamentScale,
+  normalizeShelfBackdropLayout,
   packThemeId,
+  SHELF_BACKDROP_LAYOUTS,
   ThemeImageCrop,
   ThemePackageAssetKinds,
   ThemePackageBook,
   ThemePackageBubble,
   ThemePackageLimits,
   ThemePackageNavigation,
+  ThemePackageShelfBackdrop,
   ThemePackageTtsPanel,
   ThemePackageVariantParts,
   tidyImageCrops
@@ -164,12 +168,19 @@ export class SchemeAssetService {
     });
   }
 
+  /** dark 为 true 时设的是深色模式单独的那张（没有时深色沿用浅色的）。 */
   static async setShelfFolder(context: Context, schemeId: string, uri: string, baseTheme: string,
-    crop: ThemeImageCrop | null = null): Promise<SchemeAssetResult> {
+    crop: ThemeImageCrop | null = null, dark: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const book = record.parts.book || new ThemePackageBook();
-      book.shelfFolder = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '文件夹插画');
-      book.shelfFolderCrop = SchemeAssetService.attachCrop(crop, book.shelfFolder);
+      const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '文件夹插画');
+      if (dark) {
+        book.shelfFolderDark = path;
+        book.shelfFolderCropDark = SchemeAssetService.attachCrop(crop, path);
+      } else {
+        book.shelfFolder = path;
+        book.shelfFolderCrop = SchemeAssetService.attachCrop(crop, path);
+      }
       record.parts.book = book;
     });
   }
@@ -350,12 +361,27 @@ export class SchemeAssetService {
     });
   }
 
-  /** 首页背景：浅色、深色各一张，互不借用。 */
+  /**
+   * 首页背景：浅色、深色各一张，互不借用。shelfLayout 给了书架布局（companion / tile / loose / compact）时，
+   * 设的是那种布局专属的那张，只在书架页用这种布局时显示；不给就是各页签通用的那张。
+   */
   static async setHomeBackdrop(context: Context, schemeId: string, uri: string, darkMode: boolean,
-    baseTheme: string, crop: ThemeImageCrop | null = null): Promise<SchemeAssetResult> {
+    baseTheme: string, crop: ThemeImageCrop | null = null, shelfLayout: string = ''): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
-      const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '首页背景');
-      if (darkMode) {
+      const layout = normalizeShelfBackdropLayout(shelfLayout);
+      const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE,
+        layout ? '书架背景' : '首页背景');
+      SchemeAssetService.rememberHomeBackdropFallback(record, baseTheme, darkMode);
+      if (layout) {
+        const item = SchemeAssetService.shelfBackdropEntry(record, layout);
+        if (darkMode) {
+          item.dark = path;
+          item.darkCrop = SchemeAssetService.attachCrop(crop, path);
+        } else {
+          item.light = path;
+          item.lightCrop = SchemeAssetService.attachCrop(crop, path);
+        }
+      } else if (darkMode) {
         record.parts.homeBackdropDark = path;
         record.parts.homeBackdropDarkCrop = SchemeAssetService.attachCrop(crop, path);
       } else {
@@ -365,11 +391,73 @@ export class SchemeAssetService {
     });
   }
 
-  static async clearHomeBackdrop(context: Context, schemeId: string, darkMode: boolean): Promise<SchemeAssetResult> {
+  /** 移除通用首页背景，或（给了 shelfLayout 时）某种书架布局专属的那张，后者移除后回到沿用通用背景。 */
+  static async clearHomeBackdrop(context: Context, schemeId: string, darkMode: boolean,
+    shelfLayout: string = ''): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
-      if (darkMode) record.parts.homeBackdropDark = '';
-      else record.parts.homeBackdropLight = '';
+      const layout = normalizeShelfBackdropLayout(shelfLayout);
+      if (layout) {
+        // 两种模式都空了的条目由 tidyImageCrops 清掉。
+        const item = findShelfBackdrop(record.parts.shelfBackdrops, layout);
+        if (item && darkMode) {
+          item.dark = '';
+          item.darkCrop = null;
+        } else if (item) {
+          item.light = '';
+          item.lightCrop = null;
+        }
+      } else if (darkMode) {
+        record.parts.homeBackdropDark = '';
+        record.parts.homeBackdropDarkCrop = null;
+      } else {
+        record.parts.homeBackdropLight = '';
+        record.parts.homeBackdropLightCrop = null;
+      }
     });
+  }
+
+  /** 把某种书架布局这个模式的专属背景（连同显示区域）也给其余三种布局用。 */
+  static async copyShelfBackdropToOtherLayouts(context: Context, schemeId: string, shelfLayout: string,
+    darkMode: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const source = findShelfBackdrop(record.parts.shelfBackdrops, normalizeShelfBackdropLayout(shelfLayout));
+      const image = source ? (darkMode ? source.dark : source.light) : '';
+      if (!source || !image) throw new Error('这种布局还没有单独的背景');
+      const crop = darkMode ? source.darkCrop : source.lightCrop;
+      for (const layout of SHELF_BACKDROP_LAYOUTS) {
+        if (layout === source.layout) continue;
+        const item = SchemeAssetService.shelfBackdropEntry(record, layout);
+        if (darkMode) {
+          item.dark = image;
+          item.darkCrop = SchemeAssetService.attachCrop(crop, image);
+        } else {
+          item.light = image;
+          item.lightCrop = SchemeAssetService.attachCrop(crop, image);
+        }
+      }
+    });
+  }
+
+  private static shelfBackdropEntry(record: ThemePackRecord, layout: string): ThemePackageShelfBackdrop {
+    if (!Array.isArray(record.parts.shelfBackdrops)) record.parts.shelfBackdrops = [];
+    let item = findShelfBackdrop(record.parts.shelfBackdrops, layout);
+    if (!item) {
+      item = new ThemePackageShelfBackdrop();
+      item.layout = layout;
+      record.parts.shelfBackdrops.push(item);
+    }
+    return item;
+  }
+
+  /**
+   * 上传背景时“首页背景”来源还是内置主题的话记下它：上传后来源改指方案自己的素材包，
+   * 包里没有通用那张（只传了某种布局的）或以后把它移除时，通用背景接着用这套主题的，而不是突然没了。
+   */
+  private static rememberHomeBackdropFallback(record: ThemePackRecord, sourceThemeId: string, darkMode: boolean): void {
+    if (!sourceThemeId || isPackThemeId(sourceThemeId)) return;
+    const themeId = BuiltinThemeRegistry.normalizeBuiltinId(sourceThemeId);
+    if (darkMode) record.homeBackdropFallbackDark = themeId;
+    else record.homeBackdropFallbackLight = themeId;
   }
 
   static async setBubbleCap(context: Context, schemeId: string, uri: string, baseTheme: string): Promise<SchemeAssetResult> {
@@ -452,16 +540,24 @@ export class SchemeAssetService {
     });
   }
 
-  static async clearShelfFolder(context: Context, schemeId: string): Promise<SchemeAssetResult> {
+  /** 移除文件夹插画；dark 为 true 时只去掉深色那张，深色回到沿用浅色的。 */
+  static async clearShelfFolder(context: Context, schemeId: string, dark: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
-      if (record.parts.book) record.parts.book.shelfFolder = '';
+      const book = record.parts.book;
+      if (book && dark) {
+        book.shelfFolderDark = '';
+        book.shelfFolderCropDark = null;
+      } else if (book) {
+        book.shelfFolder = '';
+        book.shelfFolderCrop = null;
+      }
       SchemeAssetService.tidyBook(record);
     });
   }
 
   private static tidyBook(record: ThemePackRecord): void {
     const book = record.parts.book;
-    if (book && bookHasNoCovers(book) && !book.shelfFrame && !book.shelfFolder) record.parts.book = null;
+    if (book && bookIsEmpty(book)) record.parts.book = null;
   }
 
   /**
@@ -737,7 +833,7 @@ export class SchemeAssetService {
     const parts = record.parts;
     return !!(parts.light || parts.dark || parts.ttsPanelLight || parts.ttsPanelDark || parts.navigation ||
       parts.book || parts.startupLight || parts.startupDark || parts.bubble || parts.homeBackdropLight ||
-      parts.homeBackdropDark || parts.logo || parts.preview ||
+      parts.homeBackdropDark || (parts.shelfBackdrops || []).length > 0 || parts.logo || parts.preview ||
       parts.radius || parts.appFont || parts.appFontFamily);
   }
 
@@ -785,6 +881,19 @@ export class SchemeAssetService {
   static hasHomeBackdrop(packageId: string, darkMode: boolean): boolean {
     const pack = ThemePackRegistry.getByPackageId(packageId);
     return !!pack && !!pack.homeBackdrop(darkMode);
+  }
+
+  /** 方案自己给这种书架布局、这个模式单独传了背景。 */
+  static hasShelfBackdrop(packageId: string, shelfLayout: string, darkMode: boolean): boolean {
+    const pack = ThemePackRegistry.getByPackageId(packageId);
+    return !!pack && !!pack.shelfBackdrop(shelfLayout, darkMode);
+  }
+
+  /** 上传背景前“首页背景”来源所选的内置主题；移除全部背景后来源退回它。没记时为空串。 */
+  static homeBackdropFallbackOf(packageId: string, darkMode: boolean): string {
+    const pack = ThemePackRegistry.getByPackageId(packageId);
+    if (!pack) return '';
+    return (darkMode ? pack.record.homeBackdropFallbackDark : pack.record.homeBackdropFallbackLight) || '';
   }
 
   /** 方案自己上传的封面张数；dark 数深色那套（0 表示深色沿用浅色的）。 */

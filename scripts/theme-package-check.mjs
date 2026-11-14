@@ -569,6 +569,107 @@ test('v2 theme: dark covers are optional, fall back both ways and stay readable 
   assert.throws(() => decode(bad), /coversDark 最多 8 张/);
 });
 
+test('v2 theme: the dark folder illustration follows the same rules as dark covers', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+  const area = image => ({ image, x: 10, y: 20, width: 300, height: 440, imageWidth: 450, imageHeight: 660 });
+
+  // 老主题包：深色沿用 shelfFolder，导出不多出字段；本机旧记录没有这个字段。
+  const legacy = byPath(decode(partsJson()));
+  assert.equal(legacy.book.shelfFolderDark, '');
+  assert.equal(format.bookFolderFor(legacy.book, true), 'assets/folder.jpg');
+  assert.equal('shelfFolderDark' in format.encodeParts(legacy).book, false);
+  assert.equal(format.bookFolderFor({ covers: [], shelfFolder: 'a' }, true), 'a');
+
+  const json = partsJson();
+  json.book.shelfFolderDark = 'assets/startup.jpg';
+  json.book.shelfFolderCrop = area('assets/folder.jpg');
+  json.book.shelfFolderCropDark = area('assets/startup.jpg');
+  const parts = decode(json);
+  const paths = byPath(parts);
+  assert.equal(format.bookFolderFor(paths.book, false), 'assets/folder.jpg');
+  assert.equal(format.bookFolderFor(paths.book, true), 'assets/startup.jpg');
+  assert.deepEqual(paths.book.shelfFolderCropDark, area('assets/startup.jpg'));
+  assert.equal(format.describeParts(parts)[4], '封面 2 张、书架边框、文件夹插画（浅色、深色）');
+  const exported = new format.ThemePackageTheme();
+  exported.parts = paths;
+  assert.deepEqual(format.decodeTheme(format.encodeTheme(exported), manifest).parts, parts);
+  const encoded = format.encodeParts(paths).book;
+  assert.equal(encoded.shelfFolder, 'assets/folder.jpg', 'older apps keep reading shelfFolder');
+  assert.equal(encoded.shelfFolderDark, 'assets/startup.jpg');
+  assert.deepEqual(encoded.shelfFolderCropDark, area('assets/startup.jpg'));
+  // 区域记的不是深色那张图：读包时丢掉。
+  const stale = partsJson();
+  stale.book.shelfFolderDark = 'assets/startup.jpg';
+  stale.book.shelfFolderCropDark = area('assets/folder.jpg');
+  assert.equal(decode(stale).book.shelfFolderCropDark, null);
+
+  // 只有深色那张：浅色借用它，导出时写成 shelfFolder；只带这一张的 book 不算空。
+  const onlyDark = { book: { shelfFolderDark: 'assets/folder.jpg', shelfFolderCropDark: area('assets/folder.jpg') }, logo: 'assets/logo.svg' };
+  const dark = byPath(decode(onlyDark));
+  assert.equal(format.bookIsEmpty(dark.book), false);
+  assert.equal(format.bookFolderFor(dark.book, false), 'assets/folder.jpg');
+  const encodedDark = format.encodeParts(dark).book;
+  assert.equal(encodedDark.shelfFolder, 'assets/folder.jpg');
+  assert.equal('shelfFolderDark' in encodedDark, false);
+  assert.deepEqual(encodedDark.shelfFolderCrop, area('assets/folder.jpg'));
+  assert.equal(format.partsAssetRefs(dark).includes('assets/folder.jpg'), true);
+});
+
+test('v2 theme: shelf layouts can each have their own backdrop beside the shared one', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+  const area = image => ({ image, x: 0, y: 100, width: 1080, height: 1250, imageWidth: 1080, imageHeight: 1350 });
+
+  // 老主题包：没有按布局的背景，四种布局都落到通用那张，导出不多出字段。
+  const legacy = byPath(decode(partsJson()));
+  assert.deepEqual(legacy.shelfBackdrops, []);
+  assert.equal(format.shelfBackdropFor(legacy.shelfBackdrops, 'companion', false), '');
+  assert.equal('shelfBackdrop' in format.encodeParts(legacy), false);
+  assert.equal(format.shelfBackdropFor(undefined, 'tile', true), '', 'records saved before this field existed');
+
+  const json = partsJson();
+  json.homeBackdrop = { light: 'assets/startup.jpg' };
+  json.shelfBackdrop = {
+    compact: { dark: 'assets/folder.jpg' },
+    companion: { light: 'assets/cover_01.jpg', dark: 'assets/cover_02.jpg', lightCrop: area('assets/cover_01.jpg'), darkCrop: area('assets/cover_01.jpg') },
+    grid: { light: 'assets/cover_01.jpg' }
+  };
+  const parts = decode(json);
+  const paths = byPath(parts);
+  assert.deepEqual(paths.shelfBackdrops.map(item => item.layout), ['companion', 'compact'], 'fixed layout order, unknown layouts ignored');
+  assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, 'companion', false), 'assets/cover_01.jpg');
+  assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, 'companion', true), 'assets/cover_02.jpg');
+  // 浅色、深色互不借用；没配的布局和模式返回空串，由调用方退回通用背景。
+  assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, 'compact', false), '');
+  assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, 'compact', true), 'assets/folder.jpg');
+  assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, 'tile', false), '');
+  assert.equal(format.shelfBackdropFor(paths.shelfBackdrops, 'whatever', false), '');
+  assert.deepEqual(paths.shelfBackdrops[0].lightCrop, area('assets/cover_01.jpg'));
+  assert.equal(paths.shelfBackdrops[0].darkCrop, null, 'an area recorded for another image is dropped');
+  assert.equal(format.describeParts(parts).includes('书架背景（陪伴、紧凑布局）'), true);
+  assert.equal(format.partsAssetRefs(paths).includes('assets/cover_02.jpg'), true);
+
+  const exported = new format.ThemePackageTheme();
+  exported.parts = paths;
+  assert.deepEqual(format.decodeTheme(format.encodeTheme(exported), manifest).parts, parts);
+  const encoded = format.encodeParts(paths);
+  assert.deepEqual(encoded.homeBackdrop, { light: 'assets/startup.jpg' }, 'older apps keep reading the shared backdrop');
+  assert.deepEqual(encoded.shelfBackdrop, {
+    companion: { light: 'assets/cover_01.jpg', dark: 'assets/cover_02.jpg', lightCrop: area('assets/cover_01.jpg') },
+    compact: { dark: 'assets/folder.jpg' }
+  });
+
+  // 只有布局专属图、没有通用背景的包也能读：旧版本应用不认识 shelfBackdrop，整节忽略。
+  const only = decode({ shelfBackdrop: { loose: { light: 'assets/folder.jpg' } } });
+  assert.equal(only.homeBackdropLight, '');
+  assert.equal(only.shelfBackdrops.length, 1);
+  assert.throws(() => decode({ shelfBackdrop: { tile: {} }, logo: 'assets/logo.svg' }), /shelfBackdrop\.tile 至少要有 light 或 dark/);
+  assert.throws(() => decode({ shelfBackdrop: { tile: { light: 'assets/frame.svg' } } }), /./, 'vector files are not accepted');
+});
+
 test('scheme overrides travel in settings and are gated by scheme-overrides-v1', () => {
   assert.equal(format.ThemePackageFeatures.KNOWN.includes('scheme-overrides-v1'), true);
   const m = format.decodeManifest(JSON.stringify(manifestV1({ requires: ['custom-scheme-v1', 'scheme-overrides-v1'] })));

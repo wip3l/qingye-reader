@@ -9,10 +9,12 @@ export struct FastBookshelfShell {
   @Prop statusBarHeight: number = 0;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
+  @StorageProp('bookshelfLayoutMode') bookshelfLayoutMode: string = 'companion';
 
   build() {
     Column() {
-      HomeThemeBackdrop()
+      // 骨架要和随后出现的书架用同一张背景：布局是持久化的，冷启动时已经在 AppStorage 里。
+      HomeThemeBackdrop({ shelfLayout: this.bookshelfLayoutMode })
         .position({ x: 0, y: 0 })
       Row() {
         Text('书架')

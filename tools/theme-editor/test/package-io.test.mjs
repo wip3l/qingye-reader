@@ -167,9 +167,78 @@ test('a package with only dark covers is written as plain covers for older apps'
   const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
   project.parts.book.coversDark = project.parts.book.covers;
   project.parts.book.covers = [];
+  project.parts.book.shelfFolderDark = 'assets/start.jpg';
   const parts = JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts;
   assert.deepEqual(parts.book.covers, ['assets/c1.jpg', 'assets/c2.png']);
   assert.equal(parts.book.coversDark, undefined);
+  assert.equal(parts.book.shelfFolder, 'assets/start.jpg');
+  assert.equal(parts.book.shelfFolderDark, undefined);
+});
+
+test('the dark folder illustration is optional and keeps its own display area', async () => {
+  const entries = handWritten();
+  const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));
+  const area = (image) => ({ image, x: 10, y: 20, width: 300, height: 440, imageWidth: 450, imageHeight: 660 });
+  theme.parts.book.shelfFolder = 'assets/c1.jpg';
+  theme.parts.book.shelfFolderDark = 'assets/fd.jpg';
+  theme.parts.book.shelfFolderCropDark = area('assets/fd.jpg');
+  entries['night-garden/theme.json'] = json(theme);
+  entries['night-garden/assets/fd.jpg'] = jpg(450, 660, 8);
+  const { project, problems } = await io.loadProject(io.readZip(zipSync(entries)));
+  assert.deepEqual(problems, []);
+  assert.equal(project.parts.book.shelfFolderDark, 'assets/fd.jpg');
+
+  let files = await io.exportFiles(project);
+  let parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.equal(parts.book.shelfFolder, 'assets/c1.jpg');
+  assert.equal(parts.book.shelfFolderDark, 'assets/fd.jpg');
+  assert.deepEqual(parts.book.shelfFolderCropDark, area('assets/fd.jpg'));
+
+  // 换掉深色那张后旧区域不再写进包；移除后回到老主题包的写法，文件也不再进包。
+  project.parts.book.shelfFolderDark = 'assets/c2.png';
+  parts = JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts;
+  assert.equal(parts.book.shelfFolderCropDark, undefined);
+  project.parts.book.shelfFolderDark = '';
+  files = await io.exportFiles(project);
+  parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.equal(parts.book.shelfFolderDark, undefined);
+  assert.equal(files.has('assets/fd.jpg'), false);
+});
+
+test('shelf layouts can each carry their own backdrop next to the shared one', async () => {
+  const entries = handWritten();
+  const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));
+  const area = (image) => ({ image, x: 0, y: 100, width: 1080, height: 1250, imageWidth: 1080, imageHeight: 1350 });
+  theme.parts.shelfBackdrop = {
+    companion: { light: 'assets/sc.jpg', dark: 'assets/home.jpg', lightCrop: area('assets/sc.jpg') },
+    compact: { dark: 'assets/sc.jpg' }
+  };
+  entries['night-garden/theme.json'] = json(theme);
+  entries['night-garden/assets/sc.jpg'] = jpg(1080, 1350, 7);
+  const { project, problems } = await io.loadProject(io.readZip(zipSync(entries)));
+  assert.deepEqual(problems, []);
+  assert.equal(project.parts.shelfBackdrop.companion.light, 'assets/sc.jpg');
+  assert.equal(project.parts.shelfBackdrop.compact.dark, 'assets/sc.jpg');
+  assert.equal(project.parts.homeBackdrop.light, 'assets/home.jpg');
+
+  let files = await io.exportFiles(project);
+  let parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.shelfBackdrop.companion, { light: 'assets/sc.jpg', dark: 'assets/home.jpg', lightCrop: area('assets/sc.jpg') });
+  assert.deepEqual(parts.shelfBackdrop.compact, { dark: 'assets/sc.jpg' });
+  assert.equal(parts.homeBackdrop.light, 'assets/home.jpg', 'the shared backdrop stays where older apps read it');
+
+  // 只配布局专属图、不配通用背景也能导出；换图后旧区域不再写进包，全部移除后这一节和文件都不进包。
+  project.parts.homeBackdrop = {};
+  project.parts.shelfBackdrop.companion.light = 'assets/start.jpg';
+  files = await io.exportFiles(project);
+  parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.equal(parts.homeBackdrop, undefined);
+  assert.equal(parts.shelfBackdrop.companion.lightCrop, undefined);
+  project.parts.shelfBackdrop = { companion: { light: '', dark: '' }, compact: {} };
+  files = await io.exportFiles(project);
+  parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.equal(parts.shelfBackdrop, undefined);
+  assert.equal(files.has('assets/sc.jpg'), false);
 });
 
 test('a display area outside its image is rejected like the app would', async () => {

@@ -24,7 +24,13 @@ import { AccountSessionStore } from '../account/AccountSessionStore';
 import { StartupCoverImageStore } from '../utils/StartupCoverImageStore';
 import { SchemeAssetResult, SchemeAssetService, SchemeFontOption } from '../utils/SchemeAssetService';
 import { SchemePreviewImageStore } from '../utils/SchemePreviewImageStore';
-import { packReaderBackgroundId, ThemeImageCrop, ThemePackageLimits } from '../theme/share/ThemePackageFormat';
+import {
+  packReaderBackgroundId,
+  SHELF_BACKDROP_LAYOUT_NAMES,
+  SHELF_BACKDROP_LAYOUTS,
+  ThemeImageCrop,
+  ThemePackageLimits
+} from '../theme/share/ThemePackageFormat';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -2317,10 +2323,11 @@ struct ThemeColorSettingsPage {
       Row({ space: AppSpacing.XL }) {
         this.assetSlot({ label: '书架边框', image: this.shelfFrameImage(), state: this.shelfPartState(false),
           slotWidth: 50, slotHeight: 74, onTap: () => this.tapShelfPart(false) })
-        this.assetSlot({ label: '分组文件夹', image: this.shelfFolderImage(), state: this.shelfPartState(true),
-          slotWidth: 50, slotHeight: 74, onTap: () => this.tapShelfPart(true),
-          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.FOLDER, this.shelfFolderImage()) })
-        Text('边框是 SVG，与封面同比例、中心透明；文件夹是 450 × 660 位图')
+        this.assetSlot({ label: '分组文件夹', image: this.shelfFolderImage(),
+          state: this.shelfPartState(true), slotWidth: 50, slotHeight: 74, onTap: () => this.tapShelfPart(true),
+          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.FOLDER, this.shelfFolderImage(),
+            this.selectedMode === 'dark') })
+        Text(this.shelfPartHint())
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
           .layoutWeight(1)
@@ -2376,16 +2383,33 @@ struct ThemeColorSettingsPage {
     return id ? ThemeAssetRegistry.themeShelfFrame(id) : '';
   }
 
+  /** 当前所选模式下的文件夹插画：深色没有自己那张时就是浅色的（反过来也一样）。 */
   shelfFolderImage(): ResourceStr {
     const id = this.customPreviewTheme().book.shelfFolderAssetId;
-    return id ? ThemeAssetRegistry.themeShelfFolder(id) : '';
+    return id ? ThemeAssetRegistry.themeShelfFolder(id, this.selectedMode === 'dark') : '';
+  }
+
+  /** 方案自己上传的、属于当前模式的那张文件夹插画（包内相对路径）。 */
+  ownShelfFolderPath(): string {
+    const pack = this.ownPack();
+    const book = pack ? pack.record.parts.book : null;
+    if (!this.ownBookActive() || !book) return '';
+    return (this.selectedMode === 'dark' ? book.shelfFolderDark : book.shelfFolder) || '';
   }
 
   shelfPartState(folder: boolean): string {
     const pack = this.ownPack();
     const book = pack ? pack.record.parts.book : null;
-    if (this.ownBookActive() && book && (folder ? book.shelfFolder : book.shelfFrame)) return 'own';
+    if (folder ? !!this.ownShelfFolderPath() : (this.ownBookActive() && !!book && !!book.shelfFrame)) return 'own';
     return ThemeColorSettingsPage.hasImage(folder ? this.shelfFolderImage() : this.shelfFrameImage()) ? 'inherit' : 'empty';
+  }
+
+  shelfPartHint(): string {
+    const base = '边框是 SVG，与封面同比例、中心透明；文件夹是 450 × 660 位图';
+    // 格子很窄，放不下“浅色 / 深色”，哪种模式用哪张写在这段说明里。
+    if (this.selectedMode !== 'dark') return `${base}，切到深色可以再传一张只在深色模式用的`;
+    return this.ownShelfFolderPath() ? `${base}。深色模式用的是单独上传的这张` :
+      `${base}。深色模式还没有单独的文件夹图，沿用浅色那张`;
   }
 
   async tapShelfPart(folder: boolean): Promise<void> {
@@ -2395,12 +2419,15 @@ struct ThemeColorSettingsPage {
       else await this.uploadShelfFrame();
       return;
     }
-    const choice = await this.slotMenu(folder ? '分组文件夹' : '书架边框', '替换', '移除');
+    // 菜单期间用户可能切换浅色/深色，文件夹插画操作的是点开时那个模式的那张。
+    const dark = this.selectedMode === 'dark';
+    const choice = await this.slotMenu(folder ? `${dark ? '深色' : '浅色'} · 分组文件夹` : '书架边框', '替换',
+      folder && dark ? '移除，沿用浅色那张' : '移除');
     if (choice === 0) {
-      await this.replaceGuarded(() => folder ? this.uploadShelfFolder() : this.uploadShelfFrame());
+      await this.replaceGuarded(() => folder ? this.uploadShelfFolder(dark) : this.uploadShelfFrame());
     } else if (choice === 1) {
       await this.runAssetClear((): Promise<SchemeAssetResult> => folder ?
-        SchemeAssetService.clearShelfFolder(getContext(this), this.schemeId) :
+        SchemeAssetService.clearShelfFolder(getContext(this), this.schemeId, dark) :
         SchemeAssetService.clearShelfFrame(getContext(this), this.schemeId), 'book');
     }
   }
@@ -2454,21 +2481,93 @@ struct ThemeColorSettingsPage {
     return image === null ? '' : image;
   }
 
+  /** 方案自己给这种书架布局、当前模式单独传了背景，且“首页背景”来源指着方案自己的素材包。 */
+  ownShelfBackdrop(layout: string): boolean {
+    const own = this.ownThemeId();
+    return !!own && this.currentSources().homeBackdropThemeId === own &&
+      SchemeAssetService.hasShelfBackdrop(this.ownPackageId, layout, this.selectedMode === 'dark');
+  }
+
+  /** 书架用这种布局时实际显示的背景：专属那张，没有就是通用那张。 */
+  shelfBackdropImage(layout: string): ResourceStr {
+    const image = ThemeAssetRegistry.homeBackdrop(this.currentSources().homeBackdropThemeId,
+      this.selectedMode === 'dark', layout);
+    return image === null ? '' : image;
+  }
+
+  shelfBackdropState(layout: string): string {
+    if (this.ownShelfBackdrop(layout)) return 'own';
+    return ThemeColorSettingsPage.hasImage(this.shelfBackdropImage(layout)) ? 'inherit' : 'empty';
+  }
+
+  @Builder
+  shelfBackdropSlot(layout: string, label: string) {
+    this.assetSlot({ label: label, image: this.shelfBackdropImage(layout), state: this.shelfBackdropState(layout),
+      slotWidth: 52, slotHeight: 65, onTap: () => this.tapShelfBackdrop(layout),
+      crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.shelfBackdropImage(layout),
+        this.selectedMode === 'dark', layout) })
+  }
+
   @Builder
   homeBackdropSlot() {
-    Row({ space: AppSpacing.XL }) {
-      this.assetSlot({ label: '4 : 5', image: this.homeBackdropImage(),
-        state: this.ownHomeBackdrop() ? 'own' : (ThemeColorSettingsPage.hasImage(this.homeBackdropImage()) ? 'inherit' : 'empty'),
-        slotWidth: 64, slotHeight: 80, onTap: () => this.tapHomeBackdrop(),
-        crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.homeBackdropImage(), this.selectedMode === 'dark') })
-      Text('书架、发现和我的页顶部共用，画面放上半部分，向下自动淡成页面底色。浅色、深色各一张，互不借用')
+    Column({ space: AppSpacing.MD }) {
+      Row({ space: AppSpacing.XL }) {
+        this.assetSlot({ label: '通用 4 : 5', image: this.homeBackdropImage(),
+          state: this.ownHomeBackdrop() ? 'own' : (ThemeColorSettingsPage.hasImage(this.homeBackdropImage()) ? 'inherit' : 'empty'),
+          slotWidth: 64, slotHeight: 80, onTap: () => this.tapHomeBackdrop(),
+          crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.homeBackdropImage(), this.selectedMode === 'dark') })
+        Text('书架、发现和我的页顶部共用，画面放上半部分，向下自动淡成页面底色。浅色、深色各一张，互不借用')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+      Text('按书架布局 · 可选')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
-        .layoutWeight(1)
+        .width('100%')
+      Row() {
+        this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[0], SHELF_BACKDROP_LAYOUT_NAMES[0])
+        this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[1], SHELF_BACKDROP_LAYOUT_NAMES[1])
+        this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[2], SHELF_BACKDROP_LAYOUT_NAMES[2])
+        this.shelfBackdropSlot(SHELF_BACKDROP_LAYOUTS[3], SHELF_BACKDROP_LAYOUT_NAMES[3])
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween)
+      Text('只在书架页生效：书架用哪种布局就显示哪一张，没单独上传的布局用上面那张通用背景')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
     }
     .width('100%')
-    .alignItems(VerticalAlign.Top)
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+  }
+
+  shelfLayoutName(layout: string): string {
+    return SHELF_BACKDROP_LAYOUT_NAMES[SHELF_BACKDROP_LAYOUTS.indexOf(layout)] || '';
+  }
+
+  async tapShelfBackdrop(layout: string): Promise<void> {
+    // 菜单、选图和取景期间用户可能切换浅色/深色，操作的是点开时那个模式的那张。
+    const dark = this.selectedMode === 'dark';
+    const name = this.shelfLayoutName(layout);
+    if (!this.ownShelfBackdrop(layout)) {
+      if (!(await this.ensureAdvanced())) return;
+      await this.uploadHomeBackdrop(layout, dark);
+      return;
+    }
+    const choice = await this.slotMenu(`${dark ? '深色' : '浅色'} · ${name}布局背景`, '替换', '其他布局也用这张',
+      '移除，沿用通用背景');
+    if (choice === 0) {
+      await this.replaceGuarded(() => this.uploadHomeBackdrop(layout, dark));
+    } else if (choice === 1) {
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.copyShelfBackdropToOtherLayouts(getContext(this), this.schemeId, layout, dark),
+        'homeBackdrop', !dark, dark, `四种布局的${dark ? '深色' : '浅色'}书架背景已换成同一张`);
+    } else if (choice === 2) {
+      await this.clearHomeBackdrop(layout, dark);
+    }
   }
 
   async tapHomeBackdrop(): Promise<void> {
@@ -2997,9 +3096,15 @@ struct ThemeColorSettingsPage {
           await check(darkCovers[index], `深色第 ${index + 1} 张封面`, 450, 660, 'home');
         }
         await check(parts.book.shelfFolder, '文件夹插画', 450, 660, 'home');
+        await check(parts.book.shelfFolderDark || '', '深色文件夹插画', 450, 660, 'home');
       }
       await check(parts.homeBackdropLight, '浅色首页背景', 1080, 1350, 'home');
       await check(parts.homeBackdropDark, '深色首页背景', 1080, 1350, 'home');
+      for (const item of parts.shelfBackdrops || []) {
+        const name = this.shelfLayoutName(item.layout);
+        await check(item.light, `浅色${name}布局书架背景`, 1080, 1350, 'home');
+        await check(item.dark, `深色${name}布局书架背景`, 1080, 1350, 'home');
+      }
       if (parts.ttsPanelLight) await check(parts.ttsPanelLight.artwork, '浅色面板插画', 720, 520, 'reading');
       if (parts.ttsPanelDark) await check(parts.ttsPanelDark.artwork, '深色面板插画', 720, 520, 'reading');
     }
@@ -3296,7 +3401,7 @@ struct ThemeColorSettingsPage {
     const parts = pack.record.parts;
     if (category === 'navigation') return !!parts.navigation;
     if (category === 'book') return !!parts.book;
-    if (category === 'homeBackdrop') return !!(dark ? parts.homeBackdropDark : parts.homeBackdropLight);
+    if (category === 'homeBackdrop') return !!(dark ? parts.homeBackdropDark : parts.homeBackdropLight) || pack.hasShelfBackdrop(dark);
     return false;
   }
 
@@ -3329,9 +3434,10 @@ struct ThemeColorSettingsPage {
     }
   }
 
-  async runAssetClear(action: () => Promise<SchemeAssetResult>, category: string): Promise<void> {
+  async runAssetClear(action: () => Promise<SchemeAssetResult>, category: string,
+    fallbackThemeId: string = ''): Promise<void> {
     const previous = this.ownThemeId();
-    const fallback = SchemeAssetService.baseThemeOf(this.ownPackageId);
+    const fallback = fallbackThemeId || SchemeAssetService.baseThemeOf(this.ownPackageId);
     try {
       await this.onSettingChanged();
       const result = await action();
@@ -3389,15 +3495,16 @@ struct ThemeColorSettingsPage {
       'book', true, true, '书架边框已更新');
   }
 
-  async uploadShelfFolder(): Promise<void> {
+  /** 上传到当前所选模式的那张；选图、取景期间切换了模式也以开始时为准。 */
+  async uploadShelfFolder(dark: boolean = this.selectedMode === 'dark'): Promise<void> {
     const picked = await SchemeAssetService.pickImages(getContext(this), 1);
     if (picked.length === 0) return;
     const framed = await this.frameImage(picked[0], '文件夹插画取景', 450, 660, 450, true);
     if (!framed) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setShelfFolder(getContext(this), this.schemeId, framed.path, this.sourceThemeId('book'),
-        framed.crop),
-      'book', true, true, '文件夹插画已更新');
+        framed.crop, dark),
+      'book', true, true, `${dark ? '深色' : '浅色'}文件夹插画已更新`);
     this.discardCropFile(framed.path, picked[0]);
   }
 
@@ -3485,23 +3592,28 @@ struct ThemeColorSettingsPage {
     this.discardCropFile(path, picked[0]);
   }
 
-  async uploadHomeBackdrop(): Promise<void> {
-    const dark = this.selectedMode === 'dark';
+  /** shelfLayout 为空是各页签通用的那张，否则是书架那种布局专属的那张。 */
+  async uploadHomeBackdrop(shelfLayout: string = '', dark: boolean = this.selectedMode === 'dark'): Promise<void> {
     const picked = await SchemeAssetService.pickImages(getContext(this), 1);
     if (picked.length === 0) return;
-    const framed = await this.frameImage(picked[0], '首页背景取景', 1080, 1350, 1080, false);
+    const name = shelfLayout ? `${this.shelfLayoutName(shelfLayout)}布局书架背景` : '首页背景';
+    const framed = await this.frameImage(picked[0], `${name}取景`, 1080, 1350, 1080, false);
     if (!framed) return;
+    // 来源还是内置主题时记下它（见 SchemeAssetService.rememberHomeBackdropFallback），所以要传点开时那个模式的来源。
+    const source = this.sourceValueFor(dark ? this.darkSources : this.lightSources, 'homeBackdrop');
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.setHomeBackdrop(getContext(this), this.schemeId, framed.path, dark,
-        this.sourceThemeId('homeBackdrop'), framed.crop),
-      'homeBackdrop', !dark, dark, `${dark ? '深色' : '浅色'}首页背景已更新`);
+      SchemeAssetService.setHomeBackdrop(getContext(this), this.schemeId, framed.path, dark, source, framed.crop,
+        shelfLayout),
+      'homeBackdrop', !dark, dark, `${dark ? '深色' : '浅色'}${name}已更新`);
     this.discardCropFile(framed.path, picked[0]);
   }
 
-  async clearHomeBackdrop(): Promise<void> {
-    const dark = this.selectedMode === 'dark';
+  async clearHomeBackdrop(shelfLayout: string = '', dark: boolean = this.selectedMode === 'dark'): Promise<void> {
+    // 这个模式的背景全移掉后，来源退回上传前所选的主题，而不是素材包的基底主题。
+    const fallback = SchemeAssetService.homeBackdropFallbackOf(this.ownPackageId, dark);
     await this.runAssetClear((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.clearHomeBackdrop(getContext(this), this.schemeId, dark), 'homeBackdrop');
+      SchemeAssetService.clearHomeBackdrop(getContext(this), this.schemeId, dark, shelfLayout), 'homeBackdrop',
+      fallback);
   }
 
   async uploadBubbleCap(): Promise<void> {

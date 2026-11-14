@@ -123,8 +123,10 @@ function navIcon(key: string, selected: boolean): HTMLElement {
  * 首页背景（HomeThemeBackdrop）：贴顶、4:5 铺满宽度，向下淡成页面底色。书架整张显示；发现、我的只衬标题区，
  * 高度和不透明度取各页传给组件的值，渐变停点照搬组件。浅深色不互相借用。
  */
-function homeBackdrop(mode: Mode, e: Effective, visibleHeight: number, strength: number): HTMLElement | null {
-  const parts = project().parts.homeBackdrop || {};
+function homeBackdrop(mode: Mode, e: Effective, visibleHeight: number, strength: number, shelfLayout = ''): HTMLElement | null {
+  // 书架画面传当前布局：这种布局单独配了图就用它，否则和其他页签一样用通用那张（同应用的 homeBackdrop）。
+  const shelf = shelfLayout ? (project().parts.shelfBackdrop || {})[shelfLayout] || {} : {};
+  const parts = assetUrl(shelf[mode]) ? shelf : project().parts.homeBackdrop || {};
   const url = assetUrl(parts[mode]);
   if (!url) return null;
   const crop = cropStyle(parts[`${mode}Crop`], parts[mode]);
@@ -156,8 +158,15 @@ function homeScreen(mode: Mode, e: Effective, tab: number, cls: string, backdrop
 
 function folderArt(): HTMLElement {
   const book = project().parts.book || {};
-  const folder = assetUrl(book.shelfFolder);
-  if (folder) return h('img', { class: 'cv', src: folder, alt: '', style: cropStyle(book.shelfFolderCrop, book.shelfFolder) });
+  // 同应用的 bookFolderFor：深色优先用深色那张，没有就用默认的；只填了深色那张时浅色也用它。
+  const light = assetUrl(book.shelfFolder) ? book.shelfFolder : '';
+  const dark = assetUrl(book.shelfFolderDark) ? book.shelfFolderDark : '';
+  const useDark = screenMode === 'dark' ? !!dark : !light;
+  const ref = useDark ? dark : light;
+  if (ref) {
+    return h('img', { class: 'cv', src: assetUrl(ref), alt: '',
+      style: cropStyle(useDark ? book.shelfFolderCropDark : book.shelfFolderCrop, ref) });
+  }
   return usesBaseArt() ? placeholder(`沿用「${baseTheme().name}」文件夹`, 'fill') : h('div', { class: 'plain folder' }, h('b', {}, '分组'));
 }
 
@@ -245,7 +254,7 @@ function shelfCompanion(): HTMLElement[] {
 function screenShelf(mode: Mode, e: Effective): HTMLElement {
   const layout = S.ui.shelfLayout;
   const content = layout === 'companion' ? shelfCompanion() : layout === 'tile' ? shelfTile() : shelfList(layout === 'loose');
-  return homeScreen(mode, e, 0, `shelf shelf-${layout}`, homeBackdrop(mode, e, 0, 1), ...content);
+  return homeScreen(mode, e, 0, `shelf shelf-${layout}`, homeBackdrop(mode, e, 0, 1, layout), ...content);
 }
 
 function screenExplore(mode: Mode, e: Effective): HTMLElement {
@@ -398,9 +407,10 @@ export function describe(): string[] {
   if (has(p.light && p.light.emphasis) || has(p.dark && p.dark.emphasis) || (p.bubble && p.bubble.cap)) out.push('正文强调');
   if (p.ttsPanel && (has(p.ttsPanel.light) || has(p.ttsPanel.dark))) out.push('朗读面板');
   if (p.navigation && has(p.navigation)) out.push('导航图标');
-  if (p.book && ((p.book.covers || []).length || (p.book.coversDark || []).length || p.book.shelfFrame || p.book.shelfFolder)) out.push('书籍素材');
+  if (p.book && ((p.book.covers || []).length || (p.book.coversDark || []).length || p.book.shelfFrame || p.book.shelfFolder || p.book.shelfFolderDark)) out.push('书籍素材');
   if (p.startup && ((p.startup.light && p.startup.light.image) || (p.startup.dark && p.startup.dark.image))) out.push('启动封面');
   if (p.homeBackdrop && (p.homeBackdrop.light || p.homeBackdrop.dark)) out.push('首页背景');
+  if (Object.values(p.shelfBackdrop || {}).some((entry: any) => entry && (entry.light || entry.dark))) out.push('书架背景');
   if (p.logo) out.push('主题标识');
   if (p.typography && (p.typography.appFont || p.typography.appFontFamily)) out.push('界面字体');
   if (p.radius && Object.keys(p.radius).some((k) => typeof p.radius[k] === 'number')) out.push('圆角');

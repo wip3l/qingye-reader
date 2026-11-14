@@ -131,6 +131,8 @@ export class ThemePackStore {
     record.installedAt = parsed.installedAt || 0;
     record.credits = parsed.credits || null;
     record.navFallbackIconPackId = parsed.navFallbackIconPackId || '';
+    record.homeBackdropFallbackLight = parsed.homeBackdropFallbackLight || '';
+    record.homeBackdropFallbackDark = parsed.homeBackdropFallbackDark || '';
     record.parts = ThemePackStore.normalizeParts(parsed.parts);
     return record;
   }
@@ -263,6 +265,8 @@ export class ThemePackStore {
     if (parts.book && !Array.isArray(parts.book.coversDark)) parts.book.coversDark = [];
     if (parts.book && !Array.isArray(parts.book.coverCropsDark)) parts.book.coverCropsDark = [];
     if (parts.book && !parts.book.shelfFolderCrop) parts.book.shelfFolderCrop = null;
+    if (parts.book && !parts.book.shelfFolderDark) parts.book.shelfFolderDark = '';
+    if (parts.book && !parts.book.shelfFolderCropDark) parts.book.shelfFolderCropDark = null;
     parts.startupLight = source.startupLight || null;
     parts.startupDark = source.startupDark || null;
     parts.bubble = source.bubble || null;
@@ -270,6 +274,7 @@ export class ThemePackStore {
     parts.homeBackdropDark = source.homeBackdropDark || '';
     parts.homeBackdropLightCrop = source.homeBackdropLightCrop || null;
     parts.homeBackdropDarkCrop = source.homeBackdropDarkCrop || null;
+    parts.shelfBackdrops = Array.isArray(source.shelfBackdrops) ? source.shelfBackdrops : [];
     parts.logo = source.logo || '';
     parts.preview = source.preview || '';
     parts.radius = source.radius || null;

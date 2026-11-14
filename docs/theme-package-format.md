@@ -83,10 +83,12 @@ my-theme/
 | | `labels` | 写 `hidden` 时底栏只显示图标，不显示“书架”等文字。 |
 | `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 8 张，书架按书轮播）、书架边框 SVG、分组文件夹插画。 |
 | | `coversDark` | 可选：深色模式单独的一套封面（最多 8 张）。不写时深色模式也用 `covers`。和 `covers` 张数相同、顺序对应时，同一本书切换深浅色落在同一序号上，适合放同一幅画的两个版本。旧版本应用会忽略，两种模式都显示 `covers`，所以 `covers` 要始终写。 |
-| | `coverCrops`、`coverCropsDark`、`shelfFolderCrop` | 可选的显示区域（见下文“显示区域”）：`coverCrops` 是数组，按 `image` 对应到 `covers` 里的某张封面；`coverCropsDark` 同理，对应 `coversDark`；`shelfFolderCrop` 对应文件夹插画。 |
+| | `shelfFolderDark` | 可选：深色模式单独的文件夹插画。不写时深色模式也用 `shelfFolder`。旧版本应用会忽略，两种模式都显示 `shelfFolder`。 |
+| | `coverCrops`、`coverCropsDark`、`shelfFolderCrop`、`shelfFolderCropDark` | 可选的显示区域（见下文“显示区域”）：`coverCrops` 是数组，按 `image` 对应到 `covers` 里的某张封面；`coverCropsDark` 同理，对应 `coversDark`；`shelfFolderCrop`、`shelfFolderCropDark` 分别对应两张文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
 | `bubble` | `frame`、`cap` | 强调气泡的边框 SVG（可选）与端饰 SVG（必填）。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。 |
 | `homeBackdrop` | `light` / `dark` | 书架、发现和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
+| `shelfBackdrop` | `companion` / `tile` / `loose` / `compact` | 可选：按书架布局（陪伴、平铺、宽松、紧凑）分别给的背景，每种布局下写 `light` / `dark`（及可选的 `lightCrop` / `darkCrop`）。只在书架页、用这种布局时显示，没写的布局或模式用 `homeBackdrop` 那张；发现、我的等页签始终用 `homeBackdrop`。浅色、深色互不借用。旧版本应用会忽略这一节。 |
 | | `lightCrop` / `darkCrop` | 可选的显示区域，对应同一模式的背景图。 |
 | `logo` | | 主题标识，SVG 或位图，显示在方案卡片的角标处。 |
 | `preview` | | 预览图位图，显示在主题页的方案卡片上；省略时卡片显示启动封面。 |
@@ -125,6 +127,7 @@ my-theme/
     "startup": { "light": { "image": "assets/startup.jpg", "title": "夜花园", "subtitle": "月下翻页" } },
     "bubble": { "cap": "assets/bubble_cap.svg" },
     "homeBackdrop": { "light": "assets/home_light.jpg", "dark": "assets/home_dark.jpg" },
+    "shelfBackdrop": { "companion": { "light": "assets/home_companion_light.jpg", "dark": "assets/home_companion_dark.jpg" } },
     "logo": "assets/logo.svg",
     "radius": { "card": 14, "button": 22 }
   }
@@ -156,7 +159,7 @@ my-theme/
 | 书架边框 `shelfFrame` | SVG | 与封面同比例，中心透明，只画外框和角花。 |
 | 文件夹插画 `shelfFolder` | JPG / PNG | 450 × 660。 |
 | 启动封面 `image` | JPG / PNG | 841 × 1870 竖屏，底部约 1/5 会叠加文案，不放主体。 |
-| 首页背景 `homeBackdrop` | JPG / PNG / WebP | 1080 × 1350（4:5），贴顶铺满宽度，比例不同时居中裁成 4:5。画面放在上部约四成，应用会叠渐变向下淡成页面底色；不要放文字，深色图的亮部要克制。 |
+| 首页背景 `homeBackdrop`、书架背景 `shelfBackdrop` | JPG / PNG / WebP | 1080 × 1350（4:5），贴顶铺满宽度，比例不同时居中裁成 4:5。画面放在上部约四成，应用会叠渐变向下淡成页面底色；不要放文字，深色图的亮部要克制。 |
 | 气泡边框 `frame` / 端饰 `cap` | SVG | 端饰为正方形小图，按字号缩放，右端自动旋转 180°。 |
 | 主题标识 `logo` | SVG | `viewBox="0 0 64 64"`。 |
 | 字体 `appFont` | TTF / OTF / TTC | 请确认字体允许再分发。 |
@@ -174,7 +177,8 @@ my-theme/
 
 - 比当前应用新的 `formatVersion`，或 `requires` 里有应用不认识的能力，导入时提示更新应用。
 - 没写的部件按 `baseTheme` 显示，所以只带配色的小包也能完整使用。
-- 只有 `covers` 的主题包（此前制作的都是这样）照常使用，浅色、深色显示同一套封面。只写了 `coversDark` 时浅色模式也用它；应用和桌面编辑器导出这种包时会把它写成 `covers`。
+- 没有 `shelfBackdrop` 的主题包（此前制作的都是这样）四种书架布局都用 `homeBackdrop`。只写 `shelfBackdrop`、不写 `homeBackdrop` 也可以，但旧版本应用上就没有背景，所以通用那张建议始终保留。
+- 只有 `covers`、`shelfFolder` 的主题包（此前制作的都是这样）照常使用，浅色、深色显示同一套封面和同一张文件夹插画。只写了 `coversDark` 或 `shelfFolderDark` 时浅色模式也用它；应用和桌面编辑器导出这种包时会把它写成 `covers`、`shelfFolder`。
 - 用户在编辑器里把包内部件换成内置主题的部件是允许的；再导出时，包内素材会随新包一起打出去，并在 `credits` 里保留原作者信息。
 - 同一个 `packageId` 再次导入时原位更新：用户的阅读排版和强调规则保留并合并，素材和配色换成新版本。
 - 方案设置会随云同步到用户的其他设备，素材不会；另一台设备上会提示“主题包素材不在这台设备上”，重新导入同一个包即可恢复。

@@ -19,6 +19,12 @@ export struct HomeThemeBackdrop {
   @Prop visibleHeight: number = 0;
   /** 图片不透明度：书架最强，搜索、发现弱一些，免得和结果列表抢。 */
   @Prop strength: number = 1;
+  /** 书架页传当前书架布局：主题按布局单独配了背景时用那一张；其他页签不传，用通用背景。 */
+  @Prop shelfLayout: string = '';
+
+  themeBackdrop(): ResourceStr | null {
+    return ThemeRuntime.homeBackdrop(this.appDarkMode, this.shelfLayout);
+  }
 
   // 浅色只轻压一层底色；深色图里的金线更亮，压得重一些才不刺眼。
   gradientColors(): Array<[ResourceColor, number]> {
@@ -31,19 +37,19 @@ export struct HomeThemeBackdrop {
 
   /** 背景是动图时由 AnimatedImagePolicy 决定播放还是只显示第一帧。 */
   backdropImage(): ResourceStr {
-    const image = ThemeRuntime.homeBackdrop(this.appDarkMode) as ResourceStr;
+    const image = this.themeBackdrop() as ResourceStr;
     if (typeof image !== 'string' || this.animatedImageRevision < 0) return image;
     return AnimatedImagePolicy.display(getContext(this), image);
   }
 
   /** 主题包动图背景取景时记下的显示区域。 */
   backdropCrop(): ThemeImageCrop | null {
-    return ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, ThemeRuntime.homeBackdrop(this.appDarkMode),
-      this.appDarkMode);
+    return ThemeAssetRegistry.imageCrop(ThemeImageSlots.BACKDROP, this.themeBackdrop(), this.appDarkMode,
+      this.shelfLayout);
   }
 
   build() {
-    if (ThemeRuntime.homeBackdrop(this.appDarkMode)) {
+    if (this.themeBackdrop()) {
       if (this.visibleHeight > 0) {
         Stack({ alignContent: Alignment.Top }) {
           this.layers()

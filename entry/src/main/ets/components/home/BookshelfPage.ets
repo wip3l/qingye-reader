@@ -1705,7 +1705,7 @@ export struct BookshelfPage {
       // 主题背景图垫在最底层，不占布局、不随列表滚动；下面的列表和网格要用 shelfSurfaceColor 透出它。
       // 分组开合期间由 tileGroupBackgroundLayer 垫着，这里不画。
       if (!this.tileGroupBareBody) {
-        HomeThemeBackdrop()
+        HomeThemeBackdrop({ shelfLayout: this.bookshelfLayoutMode })
           .position({ x: 0, y: 0 })
       }
 
@@ -1807,7 +1807,7 @@ export struct BookshelfPage {
       HeaderBackdrop({ backdropHeight: this.shelfHeaderBackdropHeight(),
         statusBarHeight: this.statusBarHeight,
         backdropColor: ThemeRuntime.topBarColor(this.appDarkMode),
-        reveal: ThemeRuntime.homeBackdrop(this.appDarkMode) ? this.shelfHeaderBackdropReveal : 1 })
+        reveal: this.shelfHasThemeBackdrop() ? this.shelfHeaderBackdropReveal : 1 })
         .width('100%')
         .position({ x: 0, y: 0 })
         .zIndex(3)
@@ -1892,7 +1892,7 @@ export struct BookshelfPage {
   tileGroupPageBody() {
     Column() {
       if (!this.tileGroupBareBody) {
-        HomeThemeBackdrop()
+        HomeThemeBackdrop({ shelfLayout: this.bookshelfLayoutMode })
           .position({ x: 0, y: 0 })
       }
 
@@ -1951,7 +1951,7 @@ export struct BookshelfPage {
       HeaderBackdrop({ backdropHeight: this.statusBarHeight + 56,
         statusBarHeight: this.statusBarHeight,
         backdropColor: ThemeRuntime.topBarColor(this.appDarkMode),
-        reveal: ThemeRuntime.homeBackdrop(this.appDarkMode) ? this.tileGroupBackdropReveal : 1 })
+        reveal: this.shelfHasThemeBackdrop() ? this.tileGroupBackdropReveal : 1 })
         .width('100%')
         .position({ x: 0, y: 0 })
         .zIndex(3)
@@ -1973,7 +1973,7 @@ export struct BookshelfPage {
   @Builder
   tileGroupBackgroundLayer() {
     Column() {
-      HomeThemeBackdrop()
+      HomeThemeBackdrop({ shelfLayout: this.bookshelfLayoutMode })
         .position({ x: 0, y: 0 })
     }
     .width('100%')
@@ -6768,7 +6768,8 @@ export struct BookshelfPage {
   }
 
   activeThemeShelfFolder(): ResourceStr {
-    return ThemeAssetRegistry.themeShelfFolder(ThemeRuntime.bookTokens(this.appDarkMode).shelfFolderAssetId);
+    return ThemeAssetRegistry.themeShelfFolder(ThemeRuntime.bookTokens(this.appDarkMode).shelfFolderAssetId,
+      this.appDarkMode);
   }
 
   /** Image 能直接加载的封面地址；加密的书源封面在解密完成前为空。 */
@@ -11065,7 +11066,12 @@ export struct BookshelfPage {
   }
 
   shelfSurfaceColor(): string {
-    return ThemeRuntime.homeSurfaceColor(this.appDarkMode);
+    return ThemeRuntime.homeSurfaceColor(this.appDarkMode, this.bookshelfLayoutMode);
+  }
+
+  /** 书架页（含分组页）当前有没有主题背景：主题可以按书架布局单独配图，所以要带上当前布局问。 */
+  shelfHasThemeBackdrop(): boolean {
+    return !!ThemeRuntime.homeBackdrop(this.appDarkMode, this.bookshelfLayoutMode);
   }
 
   cardColor(): string {

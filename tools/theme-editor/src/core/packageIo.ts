@@ -89,6 +89,7 @@ export function emptyParts(): Json {
     startup: { light: {}, dark: {} },
     bubble: {},
     homeBackdrop: {},
+    shelfBackdrop: {},
     logo: '',
     preview: '',
     radius: {},
@@ -581,7 +582,26 @@ export function normalizedParts(parts: Json): Json {
     if (Array.isArray(book.coverCropsDark)) {
       book.coverCropsDark = book.coverCropsDark.filter((crop: Json) => crop && coversDark.includes(crop.image));
     }
+    // 文件夹插画同理：只填了深色那张时写成 shelfFolder。
+    if (!book.shelfFolder && book.shelfFolderDark) {
+      book.shelfFolder = book.shelfFolderDark;
+      book.shelfFolderCrop = book.shelfFolderCropDark;
+      delete book.shelfFolderDark;
+      delete book.shelfFolderCropDark;
+    }
     if (book.shelfFolderCrop && book.shelfFolderCrop.image !== book.shelfFolder) delete book.shelfFolderCrop;
+    if (book.shelfFolderCropDark && book.shelfFolderCropDark.image !== book.shelfFolderDark) delete book.shelfFolderCropDark;
+  }
+  // 按书架布局的背景（shelfBackdrop.<布局>.light / dark）同样只留和当前图对得上的显示区域。
+  const shelfBackdrop = copy.shelfBackdrop;
+  if (shelfBackdrop && typeof shelfBackdrop === 'object') {
+    for (const entry of Object.values(shelfBackdrop) as Json[]) {
+      if (!entry || typeof entry !== 'object') continue;
+      for (const mode of ['light', 'dark']) {
+        const key = `${mode}Crop`;
+        if (entry[key] && entry[key].image !== entry[mode]) delete entry[key];
+      }
+    }
   }
   const backdrop = copy.homeBackdrop;
   if (backdrop && typeof backdrop === 'object') {

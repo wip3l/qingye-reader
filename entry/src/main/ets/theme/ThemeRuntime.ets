@@ -144,10 +144,13 @@ export class ThemeRuntime {
       ThemeRuntime.KEY_LIGHT_PAGE_COLOR, fallback);
   }
 
-  /** 首页三个页签顶部的主题背景图；当前主题（自定义方案按“首页背景”来源）没有或用户在“外观”里关掉时为 null。 */
-  static homeBackdrop(darkMode: boolean): ResourceStr | null {
+  /**
+   * 首页三个页签顶部的主题背景图；当前主题（自定义方案按“首页背景”来源）没有或用户在“外观”里关掉时为 null。
+   * shelfLayout 只有书架页传（当前书架布局）：主题给这种布局单独配了图就用它，否则和其他页签一样用通用那张。
+   */
+  static homeBackdrop(darkMode: boolean, shelfLayout: string = ''): ResourceStr | null {
     if (AppStorage.get<boolean>(ThemeRuntime.KEY_HOME_BACKDROP_ENABLED) === false) return null;
-    return ThemeAssetRegistry.homeBackdrop(ThemeRuntime.homeBackdropThemeId(darkMode), darkMode);
+    return ThemeAssetRegistry.homeBackdrop(ThemeRuntime.homeBackdropThemeId(darkMode), darkMode, shelfLayout);
   }
 
   static homeBackdropThemeId(darkMode: boolean): string {
@@ -158,8 +161,8 @@ export class ThemeRuntime {
   }
 
   /** 首页列表、滚动区等铺满整页的层：有主题背景图时透明，让页面根部铺的背景透上来。 */
-  static homeSurfaceColor(darkMode: boolean): string {
-    return ThemeRuntime.homeBackdrop(darkMode) ? '#00000000' : ThemeRuntime.pageColor(darkMode);
+  static homeSurfaceColor(darkMode: boolean, shelfLayout: string = ''): string {
+    return ThemeRuntime.homeBackdrop(darkMode, shelfLayout) ? '#00000000' : ThemeRuntime.pageColor(darkMode);
   }
 
   static cardColor(darkMode: boolean): string {

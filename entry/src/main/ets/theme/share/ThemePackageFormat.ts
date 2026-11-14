@@ -241,11 +241,14 @@ export class ThemePackageBook {
   coversDark: string[] = [];
   shelfFrame: string = '';
   shelfFolder: string = '';
+  // 深色模式单独的文件夹插画，可选：空着时深色也用 shelfFolder。旧版本应用不认，两种模式都显示 shelfFolder。
+  shelfFolderDark: string = '';
   // 按 image 对应到 covers 里的某一张；本机旧记录里没有这两个字段。
   coverCrops: ThemeImageCrop[] = [];
   // 同上，对应 coversDark。
   coverCropsDark: ThemeImageCrop[] = [];
   shelfFolderCrop: ThemeImageCrop | null = null;
+  shelfFolderCropDark: ThemeImageCrop | null = null;
 }
 
 /**
@@ -263,6 +266,60 @@ export function bookCoversFor(book: ThemePackageBook | null | undefined, dark: b
 /** 两套封面都没有。 */
 export function bookHasNoCovers(book: ThemePackageBook | null | undefined): boolean {
   return bookCoversFor(book, false).length === 0;
+}
+
+/** 某个模式下显示的文件夹插画，规则同封面：深色优先用 shelfFolderDark，没有就用 shelfFolder；只给了深色那张时浅色也用它。 */
+export function bookFolderFor(book: ThemePackageBook | null | undefined, dark: boolean): string {
+  if (!book) return '';
+  const light = book.shelfFolder || '';
+  const night = book.shelfFolderDark || '';
+  if (dark) return night || light;
+  return light || night;
+}
+
+/** 封面、边框、文件夹插画一样都没有：整节可以去掉。 */
+export function bookIsEmpty(book: ThemePackageBook | null | undefined): boolean {
+  return !book || (bookHasNoCovers(book) && !book.shelfFrame && !bookFolderFor(book, false));
+}
+
+/** 书架的四种布局，取值同应用的 bookshelfLayoutMode。 */
+export const SHELF_BACKDROP_LAYOUTS: string[] = ['companion', 'tile', 'loose', 'compact'];
+
+/**
+ * 某种书架布局专属的首页背景（包里写在 shelfBackdrop.<布局>）：只在书架页、用这种布局时显示，
+ * 没写的模式沿用通用首页背景。浅色、深色互不借用。旧版本应用不认这一节，书架照旧显示通用那张。
+ */
+export class ThemePackageShelfBackdrop {
+  layout: string = '';
+  light: string = '';
+  dark: string = '';
+  lightCrop: ThemeImageCrop | null = null;
+  darkCrop: ThemeImageCrop | null = null;
+}
+
+/** 与 SHELF_BACKDROP_LAYOUTS 一一对应的名称。 */
+export const SHELF_BACKDROP_LAYOUT_NAMES: string[] = ['陪伴', '平铺', '宽松', '紧凑'];
+
+/** 认得的书架布局原样返回，其余（含空）返回空串。 */
+export function normalizeShelfBackdropLayout(layout: string | null | undefined): string {
+  const value = (layout || '').trim().toLowerCase();
+  return SHELF_BACKDROP_LAYOUTS.includes(value) ? value : '';
+}
+
+export function findShelfBackdrop(list: ThemePackageShelfBackdrop[] | null | undefined,
+  layout: string): ThemePackageShelfBackdrop | null {
+  if (!layout || !Array.isArray(list)) return null;
+  for (const item of list) {
+    if (item && item.layout === layout) return item;
+  }
+  return null;
+}
+
+/** 某种布局、某个模式的专属背景；没有时返回空串（由调用方退回通用首页背景）。 */
+export function shelfBackdropFor(list: ThemePackageShelfBackdrop[] | null | undefined, layout: string,
+  dark: boolean): string {
+  const item = findShelfBackdrop(list, normalizeShelfBackdropLayout(layout));
+  return item ? ((dark ? item.dark : item.light) || '') : '';
 }
 
 export class ThemePackageStartup {
@@ -293,6 +350,8 @@ export class ThemePackageParts {
   // 包里写在 homeBackdrop.lightCrop / darkCrop；本机旧记录里没有。
   homeBackdropLightCrop: ThemeImageCrop | null = null;
   homeBackdropDarkCrop: ThemeImageCrop | null = null;
+  // 按书架布局分别给的背景，每种布局最多一条；本机旧记录里没有。
+  shelfBackdrops: ThemePackageShelfBackdrop[] = [];
   logo: string = '';
   preview: string = '';
   radius: Record<string, number> | null = null;
@@ -1033,9 +1092,25 @@ export function tidyImageCrops(parts: ThemePackageParts): void {
     book.coverCrops = tidy(book.covers, book.coverCrops);
     book.coverCropsDark = tidy(book.coversDark, book.coverCropsDark);
     book.shelfFolderCrop = keep(book.shelfFolderCrop, book.shelfFolder);
+    if (!book.shelfFolderDark) book.shelfFolderDark = '';
+    book.shelfFolderCropDark = keep(book.shelfFolderCropDark, book.shelfFolderDark);
   }
   parts.homeBackdropLightCrop = keep(parts.homeBackdropLightCrop, parts.homeBackdropLight || '');
   parts.homeBackdropDarkCrop = keep(parts.homeBackdropDarkCrop, parts.homeBackdropDark || '');
+  // 按固定的布局顺序留下有图的条目，同一布局只留第一条。
+  const shelf: ThemePackageShelfBackdrop[] = [];
+  for (const layout of SHELF_BACKDROP_LAYOUTS) {
+    const item = findShelfBackdrop(parts.shelfBackdrops, layout);
+    if (!item || (!item.light && !item.dark)) continue;
+    const tidy = new ThemePackageShelfBackdrop();
+    tidy.layout = layout;
+    tidy.light = item.light || '';
+    tidy.dark = item.dark || '';
+    tidy.lightCrop = keep(item.lightCrop, tidy.light);
+    tidy.darkCrop = keep(item.darkCrop, tidy.dark);
+    shelf.push(tidy);
+  }
+  parts.shelfBackdrops = shelf;
 }
 
 function decodeImageCrop(value: Object | undefined, manifest: ThemePackageManifest, label: string): ThemeImageCrop | null {
@@ -1130,10 +1205,14 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
     parts.book.coversDark = decodeCovers('coversDark');
     parts.book.shelfFrame = partAssetRef(book, 'shelfFrame', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.book');
     parts.book.shelfFolder = partAssetRef(book, 'shelfFolder', manifest, [ThemePackageAssetKinds.IMAGE], 'parts.book');
+    parts.book.shelfFolderDark = partAssetRef(book, 'shelfFolderDark', manifest, [ThemePackageAssetKinds.IMAGE],
+      'parts.book');
     parts.book.coverCrops = decodeCoverCrops('coverCrops');
     parts.book.coverCropsDark = decodeCoverCrops('coverCropsDark');
     parts.book.shelfFolderCrop = decodeImageCrop(book['shelfFolderCrop'], manifest, 'parts.book.shelfFolderCrop');
-    if (bookHasNoCovers(parts.book) && !parts.book.shelfFrame && !parts.book.shelfFolder) {
+    parts.book.shelfFolderCropDark = decodeImageCrop(book['shelfFolderCropDark'], manifest,
+      'parts.book.shelfFolderCropDark');
+    if (bookIsEmpty(parts.book)) {
       parts.book = null;
     }
   }
@@ -1168,6 +1247,25 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
   parts.logo = partAssetRef(record, 'logo', manifest, [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE],
     'parts');
   parts.preview = partAssetRef(record, 'preview', manifest, [ThemePackageAssetKinds.IMAGE], 'parts');
+  const shelfBackdrop = objectField(record, 'shelfBackdrop');
+  if (shelfBackdrop) {
+    const image: string[] = [ThemePackageAssetKinds.IMAGE];
+    for (const layout of SHELF_BACKDROP_LAYOUTS) {
+      const entry = objectField(shelfBackdrop, layout);
+      if (!entry) continue;
+      const label = `parts.shelfBackdrop.${layout}`;
+      const item = new ThemePackageShelfBackdrop();
+      item.layout = layout;
+      item.light = partAssetRef(entry, 'light', manifest, image, label);
+      item.dark = partAssetRef(entry, 'dark', manifest, image, label);
+      if (!item.light && !item.dark) {
+        throw new Error(`主题包的 ${label} 至少要有 light 或 dark`);
+      }
+      item.lightCrop = decodeImageCrop(entry['lightCrop'], manifest, `${label}.lightCrop`);
+      item.darkCrop = decodeImageCrop(entry['darkCrop'], manifest, `${label}.darkCrop`);
+      parts.shelfBackdrops.push(item);
+    }
+  }
   const radius = objectField(record, 'radius');
   if (radius) {
     const result: Record<string, number> = {};
@@ -1237,14 +1335,23 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     book['covers'] = covers.slice();
     if (coversDark.length > 0) book['coversDark'] = coversDark.slice();
     if (parts.book.shelfFrame) book['shelfFrame'] = parts.book.shelfFrame;
-    if (parts.book.shelfFolder) book['shelfFolder'] = parts.book.shelfFolder;
+    // 文件夹插画同理：只有深色那张时写成 shelfFolder。
+    const onlyDarkFolder = !parts.book.shelfFolder;
+    const shelfFolder = bookFolderFor(parts.book, false);
+    const shelfFolderDark = onlyDarkFolder ? '' : (parts.book.shelfFolderDark || '');
+    if (shelfFolder) book['shelfFolder'] = shelfFolder;
+    if (shelfFolderDark) book['shelfFolderDark'] = shelfFolderDark;
     const coverCrops = encodeCrops(covers, onlyDark ? parts.book.coverCropsDark : parts.book.coverCrops);
     if (coverCrops.length > 0) book['coverCrops'] = coverCrops;
     const coverCropsDark = encodeCrops(coversDark, parts.book.coverCropsDark);
     if (coverCropsDark.length > 0) book['coverCropsDark'] = coverCropsDark;
-    const folderCrop = parts.book.shelfFolderCrop;
-    if (folderCrop && folderCrop.image === parts.book.shelfFolder && isValidImageCrop(folderCrop)) {
+    const folderCrop = onlyDarkFolder ? parts.book.shelfFolderCropDark : parts.book.shelfFolderCrop;
+    if (folderCrop && folderCrop.image === shelfFolder && isValidImageCrop(folderCrop)) {
       book['shelfFolderCrop'] = encodeImageCrop(folderCrop);
+    }
+    const folderCropDark = parts.book.shelfFolderCropDark;
+    if (shelfFolderDark && folderCropDark && folderCropDark.image === shelfFolderDark && isValidImageCrop(folderCropDark)) {
+      book['shelfFolderCropDark'] = encodeImageCrop(folderCropDark);
     }
     record['book'] = book;
   }
@@ -1269,6 +1376,22 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     }
     record['homeBackdrop'] = homeBackdrop;
   }
+  const shelfBackdrop: Record<string, Object> = {};
+  for (const layout of SHELF_BACKDROP_LAYOUTS) {
+    const item = findShelfBackdrop(parts.shelfBackdrops, layout);
+    if (!item || (!item.light && !item.dark)) continue;
+    const entry: Record<string, Object> = {};
+    if (item.light) entry['light'] = item.light;
+    if (item.dark) entry['dark'] = item.dark;
+    if (item.lightCrop && item.lightCrop.image === item.light && isValidImageCrop(item.lightCrop)) {
+      entry['lightCrop'] = encodeImageCrop(item.lightCrop);
+    }
+    if (item.darkCrop && item.darkCrop.image === item.dark && isValidImageCrop(item.darkCrop)) {
+      entry['darkCrop'] = encodeImageCrop(item.darkCrop);
+    }
+    shelfBackdrop[layout] = entry;
+  }
+  if (Object.keys(shelfBackdrop).length > 0) record['shelfBackdrop'] = shelfBackdrop;
   if (parts.logo) record['logo'] = parts.logo;
   if (parts.preview) record['preview'] = parts.preview;
   if (parts.radius) record['radius'] = parts.radius;
@@ -1307,6 +1430,7 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
     for (const cover of parts.book.coversDark || []) add(cover);
     add(parts.book.shelfFrame);
     add(parts.book.shelfFolder);
+    add(parts.book.shelfFolderDark || '');
   }
   for (const startup of [parts.startupLight, parts.startupDark]) {
     if (startup) add(startup.image);
@@ -1318,6 +1442,10 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
   // 本机旧版记录里没有这两个字段。
   add(parts.homeBackdropLight || '');
   add(parts.homeBackdropDark || '');
+  for (const item of parts.shelfBackdrops || []) {
+    add(item.light || '');
+    add(item.dark || '');
+  }
   add(parts.logo);
   add(parts.preview);
   add(parts.appFont);
@@ -1346,6 +1474,7 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
     copy.book.coversDark = (copy.book.coversDark || []).map((cover: string): string => swap(cover));
     copy.book.shelfFrame = swap(copy.book.shelfFrame);
     copy.book.shelfFolder = swap(copy.book.shelfFolder);
+    copy.book.shelfFolderDark = swap(copy.book.shelfFolderDark || '');
     // 本机旧记录里没有这两个字段。
     const swapCrop = (crop: ThemeImageCrop): ThemeImageCrop => {
       crop.image = swap(crop.image);
@@ -1355,6 +1484,8 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
     copy.book.coverCropsDark = (copy.book.coverCropsDark || []).map(swapCrop);
     if (copy.book.shelfFolderCrop) copy.book.shelfFolderCrop.image = swap(copy.book.shelfFolderCrop.image);
     else copy.book.shelfFolderCrop = null;
+    if (copy.book.shelfFolderCropDark) copy.book.shelfFolderCropDark.image = swap(copy.book.shelfFolderCropDark.image);
+    else copy.book.shelfFolderCropDark = null;
   }
   for (const startup of [copy.startupLight, copy.startupDark]) {
     if (startup) startup.image = swap(startup.image);
@@ -1369,6 +1500,15 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
   else copy.homeBackdropLightCrop = null;
   if (copy.homeBackdropDarkCrop) copy.homeBackdropDarkCrop.image = swap(copy.homeBackdropDarkCrop.image);
   else copy.homeBackdropDarkCrop = null;
+  copy.shelfBackdrops = (copy.shelfBackdrops || []).map((item: ThemePackageShelfBackdrop): ThemePackageShelfBackdrop => {
+    item.light = swap(item.light || '');
+    item.dark = swap(item.dark || '');
+    if (item.lightCrop) item.lightCrop.image = swap(item.lightCrop.image);
+    else item.lightCrop = null;
+    if (item.darkCrop) item.darkCrop.image = swap(item.darkCrop.image);
+    else item.darkCrop = null;
+    return item;
+  });
   copy.logo = swap(copy.logo);
   copy.preview = swap(copy.preview);
   copy.appFont = swap(copy.appFont);
@@ -1400,7 +1540,8 @@ export function describeParts(parts: ThemePackageParts): string[] {
     if (lightCovers > 0 && darkCovers > 0) book.push(`封面 浅色 ${lightCovers} 张、深色 ${darkCovers} 张`);
     else if (lightCovers > 0) book.push(`封面 ${lightCovers} 张`);
     if (parts.book.shelfFrame) book.push('书架边框');
-    if (parts.book.shelfFolder) book.push('文件夹插画');
+    if (parts.book.shelfFolder && parts.book.shelfFolderDark) book.push('文件夹插画（浅色、深色）');
+    else if (bookFolderFor(parts.book, false)) book.push('文件夹插画');
     items.push(book.join('、'));
   }
   if (parts.startupLight || parts.startupDark) items.push('启动封面');
@@ -1411,6 +1552,11 @@ export function describeParts(parts: ThemePackageParts): string[] {
     if (parts.homeBackdropDark) modes.push('深色');
     items.push(`首页背景（${modes.join('、')}）`);
   }
+  const shelfLayouts: string[] = [];
+  for (const item of parts.shelfBackdrops || []) {
+    if (item.light || item.dark) shelfLayouts.push(SHELF_BACKDROP_LAYOUT_NAMES[SHELF_BACKDROP_LAYOUTS.indexOf(item.layout)] || '');
+  }
+  if (shelfLayouts.length > 0) items.push(`书架背景（${shelfLayouts.join('、')}布局）`);
   if (parts.logo) items.push('主题标识');
   if (parts.radius) items.push('圆角');
   if (parts.appFont || parts.appFontFamily) items.push('界面字体');
