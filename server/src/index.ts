@@ -88,6 +88,14 @@ import { registerCloudFileRoutes } from './cloudFileRoutes.js';
 import { createObsStore } from './cloudObjectStore.js';
 import { registerComicColorModelRoutes } from './comicColorModelRoutes.js';
 import { registerLotteryRoutes } from './lotteryRoutes.js';
+import {
+  AccountAuthError,
+  cancelAccountDeletion,
+  grantHuaweiWelcome,
+  purgeDueAccountDeletions,
+  registerAccountAuthRoutes
+} from './accountAuth.js';
+import { recoveryCodeHasher } from './accountCredentials.js';
 
 interface AuthenticatedRequest extends FastifyRequest {
   userId?: string;
@@ -171,8 +179,8 @@ app.setErrorHandler((error, _request, reply) => {
     void reply.status(413).send({ code: 'REQUEST_TOO_LARGE', message: '上传内容过大，请缩小文件后重试' });
     return;
   }
-  if (error instanceof ApiError || error instanceof MembershipError) {
-    const retryAfter = error instanceof ApiError ? error.retryAfter : 0;
+  if (error instanceof ApiError || error instanceof MembershipError || error instanceof AccountAuthError) {
+    const retryAfter = error instanceof ApiError || error instanceof AccountAuthError ? error.retryAfter : 0;
     if (retryAfter > 0) reply.header('Retry-After', String(retryAfter));
     void reply.status(error.statusCode).send({ code: error.code, message: error.message,
       ...(retryAfter > 0 ? { retryAfter } : {}) });
@@ -251,6 +259,20 @@ registerProfileRoutes(app, {
   account: snapshot
 });
 
+registerAccountAuthRoutes(app, {
+  db: pool,
+  transaction: inTransaction,
+  authenticate,
+  userId: requiredUserId,
+  sessionId: request => (request as AuthenticatedRequest).sessionId || '',
+  issueSession,
+  account: snapshot,
+  limit: (scope, subject, maxPerMinute) => enforceAccountRateLimit(subject, scope, maxPerMinute),
+  exchangeHuawei: exchangeHuaweiAuthorizationCode,
+  recoveryHasher: recoveryCodeHasher(config.sessionSecret),
+  authRateLimitPerMinute: config.http.authRateLimitPerMinute
+});
+
 app.post<{ Body: AuthBody }>('/v1/auth/huawei', {
   bodyLimit: 16 * 1024,
   config: { rateLimit: { max: config.http.authRateLimitPerMinute, timeWindow: 60_000 } }
@@ -260,6 +282,7 @@ app.post<{ Body: AuthBody }>('/v1/auth/huawei', {
     throw new ApiError(400, 'INVALID_AUTHORIZATION_CODE', '缺少华为账号授权码');
   }
   const huaweiUser = await exchangeHuaweiAuthorizationCode(code);
+  let deletionCancelled = false;
   const account = await inTransaction(async (client) => {
     const userResult = await client.query<{ id: string }>(
       `INSERT INTO app_users (
@@ -291,35 +314,14 @@ app.post<{ Body: AuthBody }>('/v1/auth/huawei', {
        ON CONFLICT (user_id) DO NOTHING`,
       [userId]
     );
-    const wallet = await client.query<{ balance: string }>(
-      'SELECT balance FROM point_wallets WHERE user_id = $1 FOR UPDATE',
-      [userId]
-    );
-    const oldBalance = Number(wallet.rows[0]!.balance);
-    const idempotencyKey = `welcome:${userId}`;
-    const granted = await client.query(
-       `INSERT INTO point_ledger (
-          user_id, delta, balance_after, reason, reference_id, idempotency_key
-        ) VALUES ($1, 300, $2, 'WELCOME_GRANT', $4, $3)
-        ON CONFLICT (idempotency_key) DO NOTHING
-        RETURNING id`,
-      [userId, oldBalance + 300, idempotencyKey, userId]
-    );
-    if (granted.rowCount === 1) {
-      await client.query(
-        `UPDATE point_wallets
-         SET balance = balance + 300,
-             promo_balance = promo_balance + 300,
-             updated_at = now()
-         WHERE user_id = $1`,
-        [userId]
-      );
-    }
+    await grantHuaweiWelcome(client, userId, huaweiUser.openID!);
+    deletionCancelled = await cancelAccountDeletion(client, userId);
     return snapshot(client, userId);
   });
   return {
     sessionToken: await issueSession(account.userId, request.ip),
-    account
+    account,
+    deletionCancelled
   };
 });
 
@@ -1340,6 +1342,17 @@ const securityMaintenanceTimer = setInterval(
   6 * 60 * 60 * 1000
 );
 securityMaintenanceTimer.unref();
+const runAccountDeletionPurge = async () => {
+  try {
+    const purged = await purgeDueAccountDeletions(inTransaction);
+    if (purged > 0) app.log.info({ purged }, 'purged accounts after deletion grace period');
+  } catch (error) {
+    app.log.error(error, 'failed to purge deleted accounts');
+  }
+};
+void runAccountDeletionPurge();
+const accountDeletionTimer = setInterval(() => void runAccountDeletionPurge(), 60 * 60 * 1000);
+accountDeletionTimer.unref();
 const runIapReconciliation = async () => {
   try {
     const result = await reconcileIapOrders();

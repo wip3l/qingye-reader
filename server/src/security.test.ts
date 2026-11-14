@@ -39,6 +39,7 @@ test('production global limiter and error handler return numeric 429 retry guida
   const sandbox = vm.createContext({ app, rateLimit, AccountRateLimitError,
     config: { http: { globalRateLimitPerMinute: 2 } },
     ApiError: class extends Error {}, MembershipError: class extends Error {}, SyncApiError: class extends Error {},
+    AccountAuthError: class extends Error {},
     Error });
   await vm.runInContext(registration, sandbox);
   vm.runInContext(handler, sandbox);
