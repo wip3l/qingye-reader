@@ -18,6 +18,8 @@ export class ReaderEyeTurnViewState {
   cueProgress: number = 0;
   /** 停留够久、正在等待抬眼确认；页脚换成“抬眼翻页”。 */
   cueArmed: boolean = false;
+  /** 新版识别模型：校准三步改为正文中央/正文顶部/屏幕上沿以外，页脚提示改为“上看翻页”。 */
+  modelMode: boolean = false;
 
   static readonly PHASE_COUNT: number = 3;
   static readonly PREVIEW_TOP_VP: number = 18;
@@ -28,13 +30,29 @@ export class ReaderEyeTurnViewState {
   }
 
   targetLabel(): string {
+    if (this.modelMode) {
+      if (this.calibrationStep === 0) return '正文中央';
+      if (this.calibrationStep === 1) return '正文顶部';
+      return '屏幕上沿以外';
+    }
     if (this.calibrationStep === 0) return '中央';
     if (this.calibrationStep === 1) return '底部';
     return '顶部';
   }
 
+  /** The model's last step has no on-screen target: the reader looks past the top edge of the screen. */
+  aboveScreenStep(): boolean {
+    return this.modelMode && this.calibrationStep === 2;
+  }
+
   instruction(): string {
+    if (this.aboveScreenStep()) return '第 3/3 步：视线越过屏幕上沿，看向手机上方';
     return `第 ${this.calibrationStep + 1}/3 步：注视${this.targetLabel()}目标点`;
+  }
+
+  /** 页脚提示文字：旧版是看底部后抬眼，新版是看向屏幕上方。 */
+  cueLabel(): string {
+    return this.modelMode ? '上看翻页' : '抬眼翻页';
   }
 
   previewHint(): string {
@@ -66,6 +84,7 @@ export class ReaderEyeTurnViewState {
     // Keep both targets clear of the system bars so they stay visible and reachable.
     const top = 4 + Math.max(0, statusBarHeight);
     const bottom = Math.max(top, overlayHeight - 28 - Math.max(0, navBarHeight));
+    // -2 (above the screen edge) has no dot; clamping keeps the geometry valid if it is ever asked for.
     const progress = Math.max(0, Math.min(1, (this.calibrationTargetY + 1) / 2));
     return top + (bottom - top) * progress;
   }

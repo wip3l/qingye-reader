@@ -46,6 +46,10 @@ export class ReaderSettings {
   eyeTurnNextEnabled: boolean = true;
   eyeTurnPreviousDwellMs: number = 850;
   eyeTurnNextDwellMs: number = 650;
+  // 新版识别模型（人脸关键点）：独立开关与独立校准，关掉即回到旧版亮度识别，旧校准不受影响。
+  eyeTurnModelEnabled: boolean = false;
+  eyeTurnModelPortraitCalibration: string = '';
+  eyeTurnModelLandscapeCalibration: string = '';
   screenTimeoutMinutes: number = -1;
   // 保留旧字段用于读取已有主题配置，以及兼容旧版本降级读取。
   keepScreenOn: boolean = true;
@@ -144,6 +148,9 @@ export class ReaderSettingsStore {
   static readonly KEY_EYE_TURN_NEXT_ENABLED: string = 'readerEyeTurnNextEnabled';
   static readonly KEY_EYE_TURN_PREVIOUS_DWELL_MS: string = 'readerEyeTurnPreviousDwellMs';
   static readonly KEY_EYE_TURN_NEXT_DWELL_MS: string = 'readerEyeTurnNextDwellMs';
+  static readonly KEY_EYE_TURN_MODEL_ENABLED: string = 'readerEyeTurnModelEnabled';
+  static readonly KEY_EYE_TURN_MODEL_PORTRAIT_CALIBRATION: string = 'readerEyeTurnModelPortraitCalibration';
+  static readonly KEY_EYE_TURN_MODEL_LANDSCAPE_CALIBRATION: string = 'readerEyeTurnModelLandscapeCalibration';
   static readonly KEY_SCREEN_TIMEOUT_MINUTES: string = 'readerScreenTimeoutMinutes';
   static readonly KEY_KEEP_SCREEN_ON: string = 'readerKeepScreenOn';
   static readonly KEY_EXTEND_TO_STATUS_BAR: string = 'readerExtendToStatusBar';
@@ -428,6 +435,15 @@ export class ReaderSettingsStore {
       store, ReaderSettingsStore.KEY_EYE_TURN_PREVIOUS_DWELL_MS, 850, 'eyeTurnDwell');
     settings.eyeTurnNextDwellMs = await ReaderSettingsStore.getNumber(
       store, ReaderSettingsStore.KEY_EYE_TURN_NEXT_DWELL_MS, 650, 'eyeTurnDwell');
+    settings.eyeTurnModelEnabled = await ReaderSettingsStore.getBoolean(
+      store, ReaderSettingsStore.KEY_EYE_TURN_MODEL_ENABLED,
+      AppStorage.get<boolean>(ReaderSettingsStore.KEY_EYE_TURN_MODEL_ENABLED) ?? false);
+    settings.eyeTurnModelPortraitCalibration = await ReaderSettingsStore.getString(
+      store, ReaderSettingsStore.KEY_EYE_TURN_MODEL_PORTRAIT_CALIBRATION,
+      AppStorage.get<string>(ReaderSettingsStore.KEY_EYE_TURN_MODEL_PORTRAIT_CALIBRATION) || '');
+    settings.eyeTurnModelLandscapeCalibration = await ReaderSettingsStore.getString(
+      store, ReaderSettingsStore.KEY_EYE_TURN_MODEL_LANDSCAPE_CALIBRATION,
+      AppStorage.get<string>(ReaderSettingsStore.KEY_EYE_TURN_MODEL_LANDSCAPE_CALIBRATION) || '');
     const legacyKeepScreenOn = await ReaderSettingsStore.getBoolean(
       store,
       ReaderSettingsStore.KEY_KEEP_SCREEN_ON,
@@ -787,6 +803,26 @@ export class ReaderSettingsStore {
       settings.eyeTurnPreviousDwellMs);
     await store.put(ReaderSettingsStore.KEY_EYE_TURN_NEXT_DWELL_MS,
       settings.eyeTurnNextDwellMs);
+    await ReaderSettingsStore.persistActiveThemeProfile(store, settings);
+    await store.flush();
+  }
+
+  static async saveEyeTurnModelSettings(context: Context, enabled: boolean, portraitCalibration: string,
+    landscapeCalibration: string): Promise<void> {
+    const settings = ReaderSettingsStore.cachedSettings || ReaderSettingsStore.fromStorage();
+    settings.eyeTurnModelEnabled = enabled === true;
+    settings.eyeTurnModelPortraitCalibration = portraitCalibration || '';
+    settings.eyeTurnModelLandscapeCalibration = landscapeCalibration || '';
+    ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(settings);
+    ReaderSettingsStore.applyEyeTurnToStorage(settings);
+    const store = await preferences.getPreferences(context, ReaderSettingsStore.STORE_NAME);
+    await store.put(ReaderSettingsStore.KEY_EYE_TURN_MODEL_ENABLED, settings.eyeTurnModelEnabled);
+    await store.put(ReaderSettingsStore.KEY_EYE_TURN_MODEL_PORTRAIT_CALIBRATION,
+      settings.eyeTurnModelPortraitCalibration);
+    await store.put(ReaderSettingsStore.KEY_EYE_TURN_MODEL_LANDSCAPE_CALIBRATION,
+      settings.eyeTurnModelLandscapeCalibration);
+    // Reader settings load from the active theme profile when one exists, so it must carry the change too; without
+    // this the switch and calibration came back off after reopening the reader.
     await ReaderSettingsStore.persistActiveThemeProfile(store, settings);
     await store.flush();
   }
@@ -1162,6 +1198,8 @@ export class ReaderSettingsStore {
       settings.eyeTurnPreviousDwellMs,
       settings.eyeTurnNextDwellMs
     );
+    await ReaderSettingsStore.saveEyeTurnModelSettings(context, settings.eyeTurnModelEnabled,
+      settings.eyeTurnModelPortraitCalibration, settings.eyeTurnModelLandscapeCalibration);
     await ReaderSettingsStore.saveTapZoneActions(context, settings.tapZoneActions);
     await ReaderSettingsStore.savePreloadEnabled(context, settings.preloadEnabled);
     await ReaderSettingsStore.savePreloadChapterCount(context, settings.preloadChapterCount);
@@ -1287,6 +1325,11 @@ export class ReaderSettingsStore {
       settings.eyeTurnPreviousDwellMs);
     AppStorage.setOrCreate(ReaderSettingsStore.KEY_EYE_TURN_NEXT_DWELL_MS,
       settings.eyeTurnNextDwellMs);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_EYE_TURN_MODEL_ENABLED, settings.eyeTurnModelEnabled);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_EYE_TURN_MODEL_PORTRAIT_CALIBRATION,
+      settings.eyeTurnModelPortraitCalibration);
+    AppStorage.setOrCreate(ReaderSettingsStore.KEY_EYE_TURN_MODEL_LANDSCAPE_CALIBRATION,
+      settings.eyeTurnModelLandscapeCalibration);
   }
 
   private static applyLayoutToStorage(settings: ReaderSettings): void {
@@ -1414,6 +1457,9 @@ export class ReaderSettingsStore {
     target.eyeTurnNextEnabled = source.eyeTurnNextEnabled;
     target.eyeTurnPreviousDwellMs = source.eyeTurnPreviousDwellMs;
     target.eyeTurnNextDwellMs = source.eyeTurnNextDwellMs;
+    target.eyeTurnModelEnabled = source.eyeTurnModelEnabled;
+    target.eyeTurnModelPortraitCalibration = source.eyeTurnModelPortraitCalibration;
+    target.eyeTurnModelLandscapeCalibration = source.eyeTurnModelLandscapeCalibration;
     target.screenTimeoutMinutes = source.screenTimeoutMinutes;
     target.keepScreenOn = source.keepScreenOn;
     target.preloadEnabled = source.preloadEnabled;
@@ -2009,6 +2055,9 @@ export class ReaderSettingsStore {
       typeof source.eyeTurnPreviousDwellMs === 'number' ? source.eyeTurnPreviousDwellMs : 850);
     settings.eyeTurnNextDwellMs = ReaderSettingsStore.normalizeEyeTurnDwell(
       typeof source.eyeTurnNextDwellMs === 'number' ? source.eyeTurnNextDwellMs : 650);
+    settings.eyeTurnModelEnabled = source.eyeTurnModelEnabled === true;
+    settings.eyeTurnModelPortraitCalibration = source.eyeTurnModelPortraitCalibration || '';
+    settings.eyeTurnModelLandscapeCalibration = source.eyeTurnModelLandscapeCalibration || '';
     settings.screenTimeoutMinutes = ReaderSettingsStore.normalizeScreenTimeoutMinutes(
       typeof source.screenTimeoutMinutes === 'number' ?
         source.screenTimeoutMinutes :
@@ -2160,6 +2209,11 @@ export class ReaderSettingsStore {
       AppStorage.get<number>(ReaderSettingsStore.KEY_EYE_TURN_PREVIOUS_DWELL_MS) ?? 850);
     settings.eyeTurnNextDwellMs = ReaderSettingsStore.normalizeEyeTurnDwell(
       AppStorage.get<number>(ReaderSettingsStore.KEY_EYE_TURN_NEXT_DWELL_MS) ?? 650);
+    settings.eyeTurnModelEnabled = AppStorage.get<boolean>(ReaderSettingsStore.KEY_EYE_TURN_MODEL_ENABLED) ?? false;
+    settings.eyeTurnModelPortraitCalibration =
+      AppStorage.get<string>(ReaderSettingsStore.KEY_EYE_TURN_MODEL_PORTRAIT_CALIBRATION) || '';
+    settings.eyeTurnModelLandscapeCalibration =
+      AppStorage.get<string>(ReaderSettingsStore.KEY_EYE_TURN_MODEL_LANDSCAPE_CALIBRATION) || '';
     const legacyKeepScreenOn = AppStorage.get<boolean>(ReaderSettingsStore.KEY_KEEP_SCREEN_ON) ?? true;
     settings.screenTimeoutMinutes = ReaderSettingsStore.normalizeScreenTimeoutMinutes(
       AppStorage.get<number>(ReaderSettingsStore.KEY_SCREEN_TIMEOUT_MINUTES) ??

@@ -6,6 +6,10 @@ export class ReaderEyeCalibrationPoint {
   targetY: number = 0;
   phase: number = 0;
   confidence: number = 0;
+  // New model (face mesh) calibration samples.
+  meshIris: number = Number.NaN;
+  meshOpen: number = Number.NaN;
+  capturedAt: number = 0;
 }
 export class ReaderEyeCalibrationFit {
   slope: number = 0;

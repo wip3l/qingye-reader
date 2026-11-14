@@ -150,6 +150,9 @@ struct SettingsPage {
   @StorageLink('readerEyeTurnNextEnabled') readerEyeTurnNextEnabled: boolean = true;
   @StorageLink('readerEyeTurnPreviousDwellMs') readerEyeTurnPreviousDwellMs: number = 850;
   @StorageLink('readerEyeTurnNextDwellMs') readerEyeTurnNextDwellMs: number = 650;
+  @StorageLink('readerEyeTurnModelEnabled') readerEyeTurnModelEnabled: boolean = false;
+  @StorageLink('readerEyeTurnModelPortraitCalibration') readerEyeTurnModelPortraitCalibration: string = '';
+  @StorageLink('readerEyeTurnModelLandscapeCalibration') readerEyeTurnModelLandscapeCalibration: string = '';
   @StorageLink('readerPreloadEnabled') readerPreloadEnabled: boolean = true;
   @StorageLink('readerAiProcessingIndicatorEnabled') readerAiProcessingIndicatorEnabled: boolean = true;
   @StorageLink('readerPreloadChapterCount') readerPreloadChapterCount: number = 1;
@@ -776,7 +779,7 @@ struct SettingsPage {
       })
       SettingSwitchRow({
         title: '眼动翻页（beta）',
-        description: '看到页底后向上看即翻页；摄像头图像仅在本机处理',
+        description: '向上看即翻页；摄像头图像仅在本机处理',
         isOn: this.readerEyeTurnEnabled,
         showDivider: this.readerEyeTurnEnabled,
         onChange: (value: boolean) => {
@@ -784,6 +787,15 @@ struct SettingsPage {
         }
       })
       if (this.readerEyeTurnEnabled) {
+        SettingSwitchRow({
+          title: '新版识别模型（beta）',
+          description: '识别更稳，不怕暗光和眼镜；开启后看向屏幕上沿以外翻页，耗电略多',
+          isOn: this.readerEyeTurnModelEnabled,
+          showDivider: true,
+          onChange: (value: boolean) => {
+            this.setReaderEyeTurnModelEnabled(value);
+          }
+        })
         this.eyeTurnCalibrationStatusItem()
       }
     }
@@ -1147,6 +1159,9 @@ struct SettingsPage {
     this.readerEyeTurnNextEnabled = settings.eyeTurnNextEnabled;
     this.readerEyeTurnPreviousDwellMs = settings.eyeTurnPreviousDwellMs;
     this.readerEyeTurnNextDwellMs = settings.eyeTurnNextDwellMs;
+    this.readerEyeTurnModelEnabled = settings.eyeTurnModelEnabled;
+    this.readerEyeTurnModelPortraitCalibration = settings.eyeTurnModelPortraitCalibration;
+    this.readerEyeTurnModelLandscapeCalibration = settings.eyeTurnModelLandscapeCalibration;
     this.readerPreloadEnabled = settings.preloadEnabled;
     this.readerAiProcessingIndicatorEnabled = settings.aiProcessingIndicatorEnabled;
     this.readerPreloadChapterCount = settings.preloadChapterCount;
@@ -2241,9 +2256,22 @@ struct SettingsPage {
   }
 
   readerEyeCalibrationSummary(): string {
-    const portrait = this.readerEyeTurnPortraitCalibration ? '已校准' : '未校准';
-    const landscape = this.readerEyeTurnLandscapeCalibration ? '已校准' : '未校准';
-    return `竖屏 ${portrait} · 横屏 ${landscape}`;
+    // The old heuristic and the new model keep separate calibrations; show the one in use.
+    const model = this.readerEyeTurnModelEnabled;
+    const portrait = (model ? this.readerEyeTurnModelPortraitCalibration : this.readerEyeTurnPortraitCalibration) ?
+      '已校准' : '未校准';
+    const landscape = (model ? this.readerEyeTurnModelLandscapeCalibration : this.readerEyeTurnLandscapeCalibration) ?
+      '已校准' : '未校准';
+    return `${model ? '新版模型 · ' : ''}竖屏 ${portrait} · 横屏 ${landscape}`;
+  }
+
+  setReaderEyeTurnModelEnabled(enabled: boolean): void {
+    this.readerEyeTurnModelEnabled = enabled;
+    ReaderSettingsStore.saveEyeTurnModelSettings(getContext(this), enabled,
+      this.readerEyeTurnModelPortraitCalibration, this.readerEyeTurnModelLandscapeCalibration)
+      .catch((error: Error): void => {
+        console.warn('保存眼动翻页新版模型设置失败:', error.message);
+      });
   }
 
   setReaderScreenTimeoutMinutes(minutes: number): void {

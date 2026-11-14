@@ -5,6 +5,12 @@ import { ArEyeSignal, ArEyeTurnHost } from './ArEyeTypes';
 import { ReaderEyeCalibrationPoint } from './ReaderEyeModels';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { ReaderEyeTurnViewState } from './ReaderEyeTurnViewState';
+import {
+  buildGazeUpCalibration,
+  encodeGazeUpCalibration,
+  GazeUpCalibrationOutcome,
+  GazeUpSample
+} from './GazeUpDetector';
 
 const CALIBRATION_HOLD_MS: number = 1500;
 const CALIBRATION_PHASE_COUNT: number = ReaderEyeTurnViewState.PHASE_COUNT;
@@ -25,6 +31,12 @@ export interface ReaderEyeTurnHost {
   // stored calibration for one orientation, empty when the reader has not calibrated it
   calibration: (landscape: boolean) => string;
   setCalibration: (landscape: boolean, raw: string) => void;
+  // New model (face mesh): its own switch and calibration slots, so switching back keeps the old calibration.
+  modelEnabled: () => boolean;
+  setModelEnabled: (enabled: boolean) => void;
+  modelCalibration: (landscape: boolean) => string;
+  setModelCalibration: (landscape: boolean, raw: string) => void;
+  saveModelSettings: () => void;
   nextDwellMs: () => number;
   saveSettings: () => void;
   pageVisible: () => boolean;
@@ -115,9 +127,34 @@ export class ReaderEyeTurnCoordinator {
     return width > 0 && height > 0 ? width > height : false;
   }
 
-  /** True when the reader has calibrated at least one orientation. */
+  /** True when the reader has calibrated at least one orientation for the active recognition mode. */
   hasStoredCalibration(): boolean {
+    if (this.host.modelEnabled()) return !!(this.host.modelCalibration(false) || this.host.modelCalibration(true));
     return !!(this.host.calibration(false) || this.host.calibration(true));
+  }
+
+  /** Turns the new recognition model on or off; the camera keeps running and only the signal source changes. */
+  setModelEnabled(enabled: boolean): void {
+    this.host.setModelEnabled(enabled);
+    this.host.saveModelSettings();
+    this.state.modelMode = enabled;
+    if (this.state.showCalibration) this.cancelCalibration();
+    if (this.host.enabled()) this.configure();
+  }
+
+  private onModelUnavailable(): void {
+    if (!this.host.modelEnabled()) return;
+    this.host.setModelEnabled(false);
+    this.host.saveModelSettings();
+    this.state.modelMode = false;
+    HdsFeedback.showToast('新版识别模型不可用，已改用旧版识别');
+    this.configure();
+  }
+
+  private modelCalibrationRaw(): string {
+    const landscape = this.isLandscape();
+    // An empty value is fine: the controller then uses measured defaults.
+    return this.host.modelCalibration(landscape) || this.host.modelCalibration(!landscape);
   }
 
   private calibrationRaw(): string {
@@ -156,6 +193,9 @@ export class ReaderEyeTurnCoordinator {
       }
     );
     this.controller.setCueListener((progress: number, armed: boolean): void => this.state.setCue(progress, armed));
+    this.state.modelMode = this.host.modelEnabled();
+    this.controller.configureModel(this.host.modelEnabled(), this.modelCalibrationRaw(),
+      (): void => this.onModelUnavailable());
   }
 
   onSurfaceLoaded(surfaceId: string): void {
@@ -341,6 +381,17 @@ export class ReaderEyeTurnCoordinator {
     const phaseElapsed = capturedAt - phaseStartedAt;
     // The reader aims before tapping, so the whole window is usable.
     if (phaseElapsed < 0 || phaseElapsed > CALIBRATION_HOLD_MS) return;
+    if (this.state.modelMode) {
+      if (!sample.meshAvailable) return;
+      const point = new ReaderEyeCalibrationPoint();
+      point.phase = this.state.calibrationStep;
+      point.meshIris = sample.meshIris;
+      point.meshOpen = sample.meshOpen;
+      point.confidence = sample.meshPresence;
+      point.capturedAt = capturedAt;
+      this.calibrationPoints.push(point);
+      return;
+    }
     if (!sample.eyeAvailable) return;
     const point = new ReaderEyeCalibrationPoint();
     point.score = sample.rawScore;
@@ -396,12 +447,15 @@ export class ReaderEyeTurnCoordinator {
     this.clearCalibrationTimer();
     const nextStep = this.state.calibrationStep + 1;
     if (nextStep >= CALIBRATION_PHASE_COUNT) {
-      this.finishCalibrationFromFixation();
+      if (this.state.modelMode) this.finishModelCalibration();
+      else this.finishCalibrationFromFixation();
       return;
     }
     this.state.calibrationStep = nextStep;
-    this.state.calibrationTargetY = nextStep === 1 ? 1 : -1;
-    this.state.status = `请看向${this.state.targetLabel()}目标点，然后点击「开始采样」`;
+    // Old heuristic: centre, bottom, top. Model: centre, text top, above the screen edge (-2, drawn as an arrow).
+    this.state.calibrationTargetY = this.state.modelMode ? (nextStep === 1 ? -1 : -2) : (nextStep === 1 ? 1 : -1);
+    this.state.status = this.state.aboveScreenStep() ? '点击「开始采样」后，把视线移到屏幕上沿以外并保持住' :
+      `请看向${this.state.targetLabel()}目标点，然后点击「开始采样」`;
   }
 
   /**
@@ -483,6 +537,35 @@ export class ReaderEyeTurnCoordinator {
     this.configure();
     this.host.saveSettings();
     HdsFeedback.showToast('眼动翻页校准完成');
+  }
+
+  /** Model calibration: the threshold sits between the text top and the above-the-screen fixation. */
+  private finishModelCalibration(): void {
+    const phase = (index: number): GazeUpSample[] => this.calibrationPoints
+      .filter((point: ReaderEyeCalibrationPoint): boolean => point.phase === index)
+      .map((point: ReaderEyeCalibrationPoint): GazeUpSample => ({
+        iris: point.meshIris,
+        open: point.meshOpen,
+        presence: point.confidence,
+        at: point.capturedAt
+      }));
+    const outcome: GazeUpCalibrationOutcome = buildGazeUpCalibration(phase(0), phase(1), phase(2));
+    const calibration = outcome.calibration;
+    if (!calibration) {
+      this.failCalibration(outcome.error);
+      return;
+    }
+    console.info(`[EyeTurn] model calibration base=${calibration.baseIris.toFixed(4)}/${calibration.baseOpen.toFixed(3)} ` +
+      `span=${calibration.irisSpan.toFixed(4)}/${calibration.openSpan.toFixed(3)} ` +
+      `weights=${calibration.irisWeight}/${calibration.openWeight} threshold=${calibration.threshold.toFixed(2)}`);
+    this.host.setModelCalibration(this.calibrationLandscape, encodeGazeUpCalibration(calibration));
+    this.state.showCalibration = false;
+    this.state.calibrationSessionActive = false;
+    this.controller.setCalibrationMode(false);
+    this.state.status = '眼动翻页已就绪';
+    this.configure();
+    this.host.saveModelSettings();
+    HdsFeedback.showToast('新版模型校准完成');
   }
 
   private static median(values: number[]): number {

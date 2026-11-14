@@ -42,6 +42,7 @@ jobs:
       - run: node --experimental-strip-types scripts/trial-read-shelf-check.mjs
       - run: node --experimental-strip-types scripts/reported-regressions-check.mjs
       - run: node --experimental-strip-types scripts/select-font-check.mjs
+      - run: node --experimental-strip-types scripts/eye-turn-gaze-up-check.mjs
       - run: node scripts/mimo-reading-check.mjs
       - run: node scripts/mimo-settings-check.mjs
       - run: node scripts/mimo-voices-check.mjs

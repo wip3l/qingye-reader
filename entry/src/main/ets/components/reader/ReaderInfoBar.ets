@@ -188,6 +188,8 @@ export struct ReaderInfoBarRow {
   @Prop cueProgress: number = 0;
   @Prop cueArmed: boolean = false;
   @Prop cueColor: string = '#0A59F7';
+  /** 提示文字：旧版“抬眼翻页”，新版识别模型“上看翻页”。 */
+  @Prop cueText: string = '抬眼翻页';
 
   private hasLeft(): boolean {
     return !!this.leftText || this.leftBattery >= 0;
@@ -205,6 +207,7 @@ export struct ReaderInfoBarRow {
   centerCueView() {
     Row() {
       ReaderEyeTurnFillHint({
+        text: this.cueText,
         progress: this.cueProgress,
         armed: this.cueArmed,
         textSize: this.textSize,

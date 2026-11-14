@@ -1029,6 +1029,9 @@ struct ReadBookPage {
   @StorageLink('readerEyeTurnNextEnabled') readerEyeTurnNextEnabled: boolean = true;
   @StorageLink('readerEyeTurnPreviousDwellMs') readerEyeTurnPreviousDwellMs: number = 850;
   @StorageLink('readerEyeTurnNextDwellMs') readerEyeTurnNextDwellMs: number = 650;
+  @StorageLink('readerEyeTurnModelEnabled') readerEyeTurnModelEnabled: boolean = false;
+  @StorageLink('readerEyeTurnModelPortraitCalibration') readerEyeTurnModelPortraitCalibration: string = '';
+  @StorageLink('readerEyeTurnModelLandscapeCalibration') readerEyeTurnModelLandscapeCalibration: string = '';
   @StorageLink('readerScreenTimeoutMinutes') readerScreenTimeoutMinutes: number =
     ReaderSettingsStore.SCREEN_TIMEOUT_ALWAYS_ON;
   @StorageLink('readerExtendToStatusBar') @Watch('onReaderExtendToStatusBarChanged') readerExtendToStatusBar: boolean = false;
@@ -9020,6 +9023,9 @@ struct ReadBookPage {
     this.readerEyeTurnNextEnabled = settings.eyeTurnNextEnabled;
     this.readerEyeTurnPreviousDwellMs = settings.eyeTurnPreviousDwellMs || 850;
     this.readerEyeTurnNextDwellMs = settings.eyeTurnNextDwellMs || 650;
+    this.readerEyeTurnModelEnabled = settings.eyeTurnModelEnabled;
+    this.readerEyeTurnModelPortraitCalibration = settings.eyeTurnModelPortraitCalibration || '';
+    this.readerEyeTurnModelLandscapeCalibration = settings.eyeTurnModelLandscapeCalibration || '';
     this.readerScreenTimeoutMinutes = settings.screenTimeoutMinutes;
     this.applyReaderScreenTimeout();
     this.readerExtendToStatusBar = settings.extendToStatusBar;
@@ -11662,7 +11668,8 @@ struct ReadBookPage {
         textOpacity: this.getReaderInfoBarConfig().footerOpacity / 100,
         cueProgress: this.readerEyeTurnFooterCueProgress(),
         cueArmed: this.readerEyeTurnFooterCueArmed(),
-        cueColor: this.accentColor()
+        cueColor: this.accentColor(),
+        cueText: this.eyeTurnState.cueLabel()
       })
     }
     .width('100%')
@@ -13099,12 +13106,18 @@ struct ReadBookPage {
     }
 
     ReaderSettingGroup({ title: '眼动', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
-      this.readerSwitchSettingItem('眼动翻页（beta）', '看到页底后向上看即翻页；摄像头图像仅在本机处理',
+      // Builder arguments are passed by value and do not refresh, so this text covers both recognition modes.
+      this.readerSwitchSettingItem('眼动翻页（beta）', '向上看即翻页；摄像头图像仅在本机处理',
         this.readerEyeTurnEnabled, (checked: boolean) => {
           this.eyeTurn().setEnabled(checked);
         })
 
       if (this.readerEyeTurnEnabled) {
+        this.readerSwitchSettingItem('新版识别模型（beta）',
+          '识别更稳，不怕暗光和眼镜；开启后看向屏幕上沿以外翻页，耗电略多',
+          this.readerEyeTurnModelEnabled, (checked: boolean) => {
+            this.eyeTurn().setModelEnabled(checked);
+          })
         this.readerEyeTurnCalibrationSettingItem()
       }
     }
@@ -13485,6 +13498,7 @@ struct ReadBookPage {
       (this.eyeTurnState.cueArmed || this.eyeTurnState.cueProgress > 0)) {
       Row() {
         ReaderEyeTurnFillHint({
+          text: this.eyeTurnState.cueLabel(),
           progress: this.eyeTurnState.cueProgress,
           armed: this.eyeTurnState.cueArmed,
           textSize: READER_EYE_TURN_CUE_HINT_SIZE,
@@ -13583,6 +13597,17 @@ struct ReadBookPage {
           if (landscape) this.readerEyeTurnLandscapeCalibration = raw;
           else this.readerEyeTurnPortraitCalibration = raw;
         },
+        modelEnabled: (): boolean => this.readerEyeTurnModelEnabled,
+        setModelEnabled: (enabled: boolean): void => {
+          this.readerEyeTurnModelEnabled = enabled;
+        },
+        modelCalibration: (landscape: boolean): string =>
+          landscape ? this.readerEyeTurnModelLandscapeCalibration : this.readerEyeTurnModelPortraitCalibration,
+        setModelCalibration: (landscape: boolean, raw: string): void => {
+          if (landscape) this.readerEyeTurnModelLandscapeCalibration = raw;
+          else this.readerEyeTurnModelPortraitCalibration = raw;
+        },
+        saveModelSettings: (): void => this.saveReaderEyeTurnModelSettings(),
         nextDwellMs: (): number => this.readerEyeTurnNextDwellMs,
         saveSettings: (): void => this.saveReaderEyeTurnSettings(),
         pageVisible: (): boolean => this.readerPageVisible,
@@ -13798,6 +13823,14 @@ struct ReadBookPage {
     this.scheduleReaderTextSelectionClear();
     this.clearReaderV2SelectionOverlay();
     this.setReaderTextSelectionActive(false);
+  }
+
+  saveReaderEyeTurnModelSettings(): void {
+    ReaderSettingsStore.saveEyeTurnModelSettings(getContext(this), this.readerEyeTurnModelEnabled,
+      this.readerEyeTurnModelPortraitCalibration, this.readerEyeTurnModelLandscapeCalibration)
+      .catch((error: Error): void => {
+        console.warn('[EyeTurn] save model settings failed:', error.message);
+      });
   }
 
   saveReaderEyeTurnSettings(): void {

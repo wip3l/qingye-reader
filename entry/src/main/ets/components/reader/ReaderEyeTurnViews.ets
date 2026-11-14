@@ -24,7 +24,7 @@ export struct ReaderEyeTurnCalibrationSettingItem {
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.textColor)
         Text(this.state.arFaceActive ? 'AR 自动校准 · 无需手动校准' :
-          `${this.landscape() ? '横屏' : '竖屏'} · ${this.state.status}`)
+          `${this.state.modelMode ? '新版模型 · ' : ''}${this.landscape() ? '横屏' : '竖屏'} · ${this.state.status}`)
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor)
           .margin({ top: AppSpacing.XS })
@@ -173,7 +173,20 @@ export struct ReaderEyeCalibrationPanel {
       .border({ width: 1, color: '#70FFFFFF' })
       .hitTestBehavior(HitTestMode.None)
 
-      if (this.state.calibrationSessionActive && this.state.calibrationStep >= 0 &&
+      if (this.state.calibrationSessionActive && this.state.aboveScreenStep()) {
+        // New model, last step: no dot on screen — an arrow at the top edge points past it.
+        Column({ space: AppSpacing.XS }) {
+          SymbolGlyph($r('sys.symbol.chevron_up'))
+            .fontSize(28)
+            .fontColor([this.accentColor])
+          Text('看向屏幕上沿以外')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.accentColor)
+        }
+        .width('100%')
+        .position({ x: 0, y: Math.max(4, this.statusBarHeight + 4) })
+        .hitTestBehavior(HitTestMode.None)
+      } else if (this.state.calibrationSessionActive && this.state.calibrationStep >= 0 &&
         this.state.calibrationStep < ReaderEyeTurnViewState.PHASE_COUNT) {
         Row()
           .width(24)

@@ -3,6 +3,13 @@ import { image } from '@kit.ImageKit';
 import { faceDetector } from '@kit.CoreVisionKit';
 import { abilityAccessCtrl, common, PermissionRequestResult, Permissions } from '@kit.AbilityKit';
 import lazy { FaceEyeLandmarks, FaceEyeSample } from '@legado/aiengine';
+import {
+  defaultGazeUpCalibration,
+  GazeUpCalibration,
+  GazeUpDetector,
+  GazeUpResult,
+  parseGazeUpCalibration
+} from './GazeUpDetector';
 
 export class EyeTurnCalibration {
   version: number = 1;
@@ -219,6 +226,11 @@ export class EyeTurnSample {
   eyeAvailable: boolean = false;
   confidence: number = 0;
   capturedAt: number = 0;
+  // Face-mesh measurement (new model); only filled while the model mode is on.
+  meshAvailable: boolean = false;
+  meshIris: number = Number.NaN;
+  meshOpen: number = Number.NaN;
+  meshPresence: number = 0;
 }
 
 export type EyeTurnStatusCallback = (status: string) => void;
@@ -227,6 +239,7 @@ export type EyeTurnRequestCallback = (direction: number) => void;
 export type EyeTurnAvailabilityCallback = () => boolean;
 /** 翻页提示的显示进度：progress 0–1 是注视底部的停留进度（按 0.1 取整），armed 表示已在等待抬眼确认。 */
 export type EyeTurnCueCallback = (progress: number, armed: boolean) => void;
+export type EyeTurnModelUnavailableCallback = () => void;
 
 /**
  * Reader-only, fully local eye-turn runtime.
@@ -243,6 +256,10 @@ export class EyeTurnController {
   // the extra crop and inference per frame stretched sampling from ~120 ms to ~300-450 ms, so a brief upward glance
   // produced a single low sample and the two-sample confirm never fired.
   private static readonly FACE_MESH_SHADOW: boolean = false;
+  // In model mode the next frame is requested right after the previous one finishes; face detection, crop and
+  // inference already take 100-200 ms, so a long fixed interval would make a short upward glance a single sample.
+  private static readonly MODEL_FRAME_INTERVAL_MS: number = 40;
+  private static readonly MODEL_MISSING_FRAME_INTERVAL_MS: number = 200;
   private static readonly TURN_COOLDOWN_MS: number = 700;
   // How long an ignored prompt stays before it is dropped (the reader must visit the
   // bottom again to raise it).
@@ -325,6 +342,13 @@ export class EyeTurnController {
   private lastCueArmed: boolean = false;
   private faceMesh: FaceEyeLandmarks | null = null;
   private faceMeshLoading: boolean = false;
+  private faceMeshFailed: boolean = false;
+  // New model mode: the face mesh drives a "look above the screen" gesture instead of the eye-band heuristic.
+  private modelMode: boolean = false;
+  private gazeDetector: GazeUpDetector = new GazeUpDetector(defaultGazeUpCalibration());
+  private modelCueProgress: number = 0;
+  private onModelUnavailable: EyeTurnModelUnavailableCallback = (): void => {};
+  private abilityContext: common.UIAbilityContext | null = null;
 
   static async requestPermission(context: common.UIAbilityContext): Promise<boolean> {
     const manager = abilityAccessCtrl.createAtManager();
@@ -351,6 +375,29 @@ export class EyeTurnController {
     this.onTurn = onTurn;
     this.canTurn = canTurn;
     this.resetDwellState();
+  }
+
+  /**
+   * Switches between the eye-band heuristic (off) and the face-mesh model (on). The two keep separate calibrations;
+   * an empty or invalid model calibration falls back to measured defaults. If the model cannot load on this device
+   * `onUnavailable` runs once and the controller returns to the heuristic.
+   */
+  configureModel(enabled: boolean, calibrationRaw: string, onUnavailable: EyeTurnModelUnavailableCallback): void {
+    this.onModelUnavailable = onUnavailable;
+    const parsed: GazeUpCalibration | null = parseGazeUpCalibration(calibrationRaw);
+    const calibration: GazeUpCalibration = parsed || defaultGazeUpCalibration();
+    this.gazeDetector.setCalibration(calibration);
+    const wasModel = this.modelMode;
+    this.modelMode = enabled && !this.faceMeshFailed;
+    console.info(`[EyeTurn] model mode=${this.modelMode} calibrated=${parsed !== null} ` +
+      `threshold=${calibration.threshold.toFixed(2)}`);
+    if (this.modelMode !== wasModel) this.resetDwellState();
+    if (this.modelMode && this.abilityContext) this.loadFaceMesh(this.abilityContext);
+    if (enabled && this.faceMeshFailed) onUnavailable();
+  }
+
+  isModelMode(): boolean {
+    return this.modelMode;
   }
 
   /** 阅读页的翻页提示按它显示：状态文字会被眨眼等瞬时丢帧打断，提示不能跟着闪。 */
@@ -434,6 +481,7 @@ export class EyeTurnController {
       console.info(`[EyeTurn] camera started ${this.surfaceWidth}x${this.surfaceHeight} ` +
         `(front camera session running; the system camera indicator should be visible now)`);
       this.resetDwellState();
+      this.abilityContext = context;
       this.loadFaceMesh(context);
       this.onStatus(this.calibration ? '请注视屏幕中央' : '需要校准眼动翻页');
       this.scheduleFrame(serial, 260);
@@ -538,6 +586,7 @@ export class EyeTurnController {
       // visibly centred in the preview can therefore carry 35-45 degrees of yaw/roll. Reject only genuinely
       // side-on frames; calibration already maps the device-specific pitch axis and confidence remains enforced.
       const maximumRotation = this.calibrationMode ? 62 : 58;
+      const modelMode = this.modelMode;
       if (!face) {
         this.reportTrackingStatus('未检测到面部，请将手机保持在面部正前方');
         this.probeNoSignal('no face detected in frame');
@@ -550,10 +599,16 @@ export class EyeTurnController {
         this.consumeNoFace();
         return;
       }
-      if (Math.abs(face.pose.yaw) > maximumRotation || Math.abs(face.pose.roll) > maximumRotation) {
+      // The model finds the face orientation itself, so in-plane roll (often 40-55 degrees in sensor coordinates)
+      // is only a problem for the eye-band heuristic; a side-on face (yaw) is rejected in both modes.
+      if (Math.abs(face.pose.yaw) > maximumRotation || (!modelMode && Math.abs(face.pose.roll) > maximumRotation)) {
         this.reportTrackingStatus('请将手机摆正并正对屏幕');
         this.probeNoSignal(`bad pose yaw=${face.pose.yaw.toFixed(0)} roll=${face.pose.roll.toFixed(0)}`);
         this.consumeNoFace();
+        return;
+      }
+      if (modelMode) {
+        await this.processModelFrame(pixelMap, face, capturedAt);
         return;
       }
       // Pixel-buffer reading is not implemented consistently by every camera driver. It refines the score when
@@ -603,22 +658,92 @@ export class EyeTurnController {
 
   /** The model loads once per controller and is kept across camera restarts (page turns, foreground changes). */
   private loadFaceMesh(context: common.UIAbilityContext): void {
-    if (!EyeTurnController.FACE_MESH_SHADOW || this.faceMesh || this.faceMeshLoading) return;
+    if (!(EyeTurnController.FACE_MESH_SHADOW || this.modelMode)) return;
+    if (this.faceMesh || this.faceMeshLoading || this.faceMeshFailed) return;
     this.faceMeshLoading = true;
     FaceEyeLandmarks.create(context).then((mesh: FaceEyeLandmarks | null): void => {
       this.faceMesh = mesh;
       this.faceMeshLoading = false;
       this.probe(mesh ? 'face mesh ready' : 'face mesh unavailable');
+      if (!mesh) this.handleModelUnavailable();
     }).catch((error: Error): void => {
       this.faceMeshLoading = false;
       this.probe(`face mesh load failed: ${error.message}`);
+      this.handleModelUnavailable();
     });
+  }
+
+  private handleModelUnavailable(): void {
+    this.faceMeshFailed = true;
+    if (!this.modelMode) return;
+    this.modelMode = false;
+    this.resetDwellState();
+    this.onModelUnavailable();
+  }
+
+  /** Model mode: one face-mesh measurement feeds either the calibration session or the gaze-up gesture. */
+  private async processModelFrame(pixelMap: image.PixelMap, face: faceDetector.Face, capturedAt: number):
+    Promise<void> {
+    const mesh = this.faceMesh;
+    if (!mesh) {
+      this.reportTrackingStatus('正在加载新版识别模型');
+      this.reportRuntimeStatus('正在加载新版识别模型');
+      this.nextFrameDelayMs = EyeTurnController.MODEL_MISSING_FRAME_INTERVAL_MS;
+      return;
+    }
+    const result: FaceEyeSample | null =
+      await mesh.estimate(pixelMap, face.rect.left, face.rect.top, face.rect.width, face.rect.height);
+    if (!result || result.metrics.presence < 0.5 || result.metrics.eyes === 0) {
+      // Includes the first frames while the model tries the four camera orientations.
+      this.reportTrackingStatus('正在识别眼睛，请正对屏幕');
+      this.consumeNoFace();
+      return;
+    }
+    const metrics = result.metrics;
+    this.missingFrameCount = 0;
+    this.nextFrameDelayMs = EyeTurnController.MODEL_FRAME_INTERVAL_MS;
+    const sample = new EyeTurnSample();
+    sample.pitch = face.pose.pitch;
+    sample.confidence = face.probability;
+    sample.capturedAt = capturedAt;
+    sample.meshAvailable = true;
+    sample.meshIris = metrics.irisOffset;
+    sample.meshOpen = metrics.openness;
+    sample.meshPresence = metrics.presence;
+    this.reportTrackingStatus('已检测到视线，准备采样');
+    this.onSample(sample);
+    if (this.calibrationMode) return;
+    const gaze: GazeUpResult = this.gazeDetector.push({
+      iris: metrics.irisOffset,
+      open: metrics.openness,
+      presence: metrics.presence,
+      at: capturedAt
+    });
+    this.modelCueProgress = gaze.progress;
+    const now = Date.now();
+    if (now - this.lastDiagAt >= 400 || gaze.turn) {
+      this.lastDiagAt = now;
+      this.probe(`model score=${Number.isFinite(gaze.score) ? gaze.score.toFixed(2) : 'warmup'} ` +
+        `iris=${metrics.irisOffset.toFixed(4)} open=${metrics.openness.toFixed(3)} p=${metrics.presence.toFixed(2)} ` +
+        `rot=${result.rotation} crop=${result.cropMs}ms prep=${result.prepMs}ms infer=${result.inferMs}ms ` +
+        `turn=${gaze.turn}`);
+    }
+    this.reportRuntimeStatus(this.gazeDetector.baselineReady() ? '眼动已就绪' : '请注视正文');
+    if (gaze.turn) {
+      const allowed = this.canTurn();
+      this.probe(`model turn request available=${allowed}`);
+      if (allowed) {
+        this.reportRuntimeStatus('已翻下一页');
+        this.onTurn(1);
+      }
+    }
+    this.reportCue();
   }
 
   /** Logs the face-mesh gaze next to the eye-band value for the same frame; never affects the gesture. */
   private async probeFaceMesh(pixelMap: image.PixelMap, face: faceDetector.Face, sample: EyeTurnSample): Promise<void> {
     const mesh = this.faceMesh;
-    if (!mesh) return;
+    if (!EyeTurnController.FACE_MESH_SHADOW || !mesh) return;
     const result: FaceEyeSample | null =
       await mesh.estimate(pixelMap, face.rect.left, face.rect.top, face.rect.width, face.rect.height);
     if (!result) return;
@@ -774,6 +899,13 @@ export class EyeTurnController {
 
   private consumeNoFace(): void {
     this.missingFrameCount++;
+    if (this.modelMode) {
+      this.nextFrameDelayMs = EyeTurnController.MODEL_MISSING_FRAME_INTERVAL_MS;
+      this.modelCueProgress = this.calibrationMode ? 0 : this.gazeDetector.pushMissing().progress;
+      this.reportRuntimeStatus('未检测到面部');
+      this.reportCue();
+      return;
+    }
     this.nextFrameDelayMs = EyeTurnController.MISSING_FRAME_INTERVAL_MS;
     this.reportRuntimeStatus('未检测到面部');
     // A blink, a page-turn animation or one blurred camera frame must not erase an otherwise stable dwell. Core
@@ -789,9 +921,12 @@ export class EyeTurnController {
   private reportCue(): void {
     // 短暂丢帧（眨眼、模糊帧）不收起提示，与停留计时的容忍度一致。
     const tracking = this.missingFrameCount <= EyeTurnController.MAX_TRANSIENT_MISSING_FRAMES;
-    const armed = tracking && this.nextConfirmArmed;
+    const armed = tracking && this.nextConfirmArmed && !this.modelMode;
     let progress = 0;
-    if (armed) {
+    if (this.modelMode) {
+      // Model mode has no armed stage: the cue fills as the gaze rises towards the threshold, then through the hold.
+      progress = tracking && !this.calibrationMode ? this.modelCueProgress : 0;
+    } else if (armed) {
       progress = 1;
     } else if (tracking && this.currentZone === 1 && this.zoneStartedAt > 0 && Date.now() >= this.cooldownUntil) {
       const ratio = (Date.now() - this.zoneStartedAt) / Math.max(1, this.nextDwellMs);
@@ -969,6 +1104,8 @@ export class EyeTurnController {
   }
 
   private resetDwellState(): void {
+    this.gazeDetector.reset();
+    this.modelCueProgress = 0;
     this.smoothedScore = Number.NaN;
     this.currentZone = 0;
     this.nextConfirmArmed = false;
