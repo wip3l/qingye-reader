@@ -632,6 +632,10 @@ export struct SearchBookResultList {
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
+    // 展开屏一屏三四十格、上下还各预建三行，滑动时渲染服务每帧逐个重画封面、圆角裁切、投影与文字，
+    // 单帧 12ms 左右，悬浮底栏取模糊底图前还得先把这些全部提交一遍。整格缓存成一张图后真机降到 7ms 左右，
+    // 投影也在缓存里；封面解码完淡入、角标变化时渲染服务会自己重建。
+    .renderGroup(true)
     .onClick(() => {
       this.onOpenBook(this.resultBook(key));
     })
