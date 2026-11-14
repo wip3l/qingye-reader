@@ -380,3 +380,15 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+==========================================================================
+9. MediaPipe Face Landmarker model (face_landmarks_detector, float16)
+==========================================================================
+
+Project: https://github.com/google-ai-edge/mediapipe
+License: Apache License 2.0 (full text in section 3)
+Copyright 2023 The MediaPipe Authors
+
+The face landmark model is converted to the MindSpore Lite format and used
+on device to estimate gaze direction for eye-movement page turning. Camera
+frames are processed locally and never leave the device.

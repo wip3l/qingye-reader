@@ -49,6 +49,13 @@
 - 固定上游来源、权重和转换参数见 [model.json](harmony-book-ai-engine/aiengine/src/main/resources/rawfile/comic-colorizer/model.json)。
 - 上游仓库 MIT 声明及完整许可随模型保存在 [LICENSE](harmony-book-ai-engine/aiengine/src/main/resources/rawfile/comic-colorizer/LICENSE)，由 AI HAR 合并到 HAP。
 
+## MediaPipe 人脸关键点模型
+
+- 上游：MediaPipe Face Landmarker v1（float16），作者：The MediaPipe Authors
+- 许可证：Apache-2.0
+- 用途：转换为 MindSpore Lite 格式，在设备上估计视线方向，用于眼动翻页；相机画面只在本机处理。
+- 来源、转换参数与 SHA-256 见 [model.json](harmony-book-ai-engine/aiengine/src/main/resources/rawfile/face-landmarks/model.json)，声明见 [LICENSE](harmony-book-ai-engine/aiengine/src/main/resources/rawfile/face-landmarks/LICENSE)，由 AI HAR 合并到 HAP。
+
 ## 完整许可文本
 
 为确保源码和二进制发行均携带必要声明，MIT 与 Apache-2.0 的完整许可文本统一存放于：
