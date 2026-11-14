@@ -112,7 +112,7 @@ function openChromePanel(h) {
       ${method(source, 'private commit').replace('private ', '')}
       ${method(source, 'private notifyChanged').replace('private ', '')}
       ${method(source, 'private setInfoColor').replace('private ', '')}
-      ${['stepperValue', 'isOffsetStepper', 'isShrinkStepper', 'isOpacityStepper', 'stepperMin',
+      ${['stepperValue', 'isOffsetStepper', 'isShrinkStepper', 'isHeaderInset', 'isLeftInset', 'isOpacityStepper', 'stepperMin',
         'stepperMax', 'stepperText', 'stepBy', 'canStep'].map(name =>
         method(source, `private ${name}`).replace('private ', '')).join('\n')}
       buildOptions() { ${calls.join('\n')} }
@@ -302,11 +302,11 @@ const tests = {
     assert.equal(loaded.textColor(true, false, '#CCCCCC'), '#CCCCCC');
     assert.equal(loaded.textColor(false, false, '#808080'), '#808080');
   },
-  async 'header and footer shrink step independently through zero and persist after reload'() {
+  async 'header and footer side insets step independently through zero and persist after reload'() {
     const h = harness();
     let panel = openChromePanel(h);
-    const header = panel.constructor.STEPPER_HEADER_SHRINK;
-    const footer = panel.constructor.STEPPER_FOOTER_SHRINK;
+    const header = panel.constructor.STEPPER_HEADER_INSET_LEFT;
+    const footer = panel.constructor.STEPPER_FOOTER_INSET_RIGHT;
     for (const field of [header, footer]) {
       assert.equal(panel.stepperValue(field), 0);
       assert.equal(panel.canStep(field, -1), true);
@@ -315,27 +315,31 @@ const tests = {
     panel.stepBy(header, -1);
     panel.stepBy(footer, 1);
     let loaded = h.Config.parse((await h.settings.reload({})).readerInfoBarConfig);
-    assert.equal(loaded.headerShrink, -1);
-    assert.equal(loaded.footerShrink, 1);
+    assert.equal(loaded.headerInsetLeft, -1);
+    assert.equal(loaded.footerInsetRight, 1);
+    assert.equal(loaded.headerInsetRight, 0);
+    assert.equal(loaded.footerInsetLeft, 0);
     panel = openChromePanel(h);
     assert.equal(panel.stepperText(header), '-1');
     assert.equal(panel.stepperText(footer), '1');
     panel.stepBy(header, 1);
     panel.stepBy(header, 1);
     loaded = h.Config.parse((await h.settings.reload({})).readerInfoBarConfig);
-    assert.equal(loaded.headerShrink, 1);
-    assert.equal(loaded.footerShrink, 1);
+    assert.equal(loaded.headerInsetLeft, 1);
+    assert.equal(loaded.footerInsetRight, 1);
+    assert.equal(loaded.headerInsetRight, 0);
+    assert.equal(loaded.footerInsetLeft, 0);
     const extreme = new h.Config();
-    extreme.headerShrink = -350;
-    extreme.footerShrink = 350;
+    extreme.headerInsetLeft = -350;
+    extreme.footerInsetRight = 350;
     panel.commit(extreme);
     assert.equal(panel.canStep(header, -1), false);
     assert.equal(panel.canStep(footer, 1), false);
     panel.stepBy(header, -1);
     panel.stepBy(footer, 1);
     loaded = h.Config.parse((await h.settings.reload({})).readerInfoBarConfig);
-    assert.equal(loaded.headerShrink, -350);
-    assert.equal(loaded.footerShrink, 350);
+    assert.equal(loaded.headerInsetLeft, -350);
+    assert.equal(loaded.footerInsetRight, 350);
   },
   async 'legacy keep-indent switch is ignored when restoring preferences'() {
     for (const keep of [false, true]) {

@@ -357,6 +357,8 @@ export struct ReaderHeaderFooterEditor {
   @State private styleFooter: boolean = true;
   /** 紧凑布局：正在选内容的位置，-1 为没有。 */
   @State private slotMenu: number = -1;
+  /** 紧凑面板“位置与内缩”一行当前选中的项，页眉页脚共用。 */
+  @State private geometryTarget: number = 0;
 
   private static readonly SLOT_HEADER_LEFT: number = 0;
   private static readonly SLOT_HEADER_CENTER: number = 1;
@@ -370,8 +372,13 @@ export struct ReaderHeaderFooterEditor {
   private static readonly STEPPER_FOOTER_OFFSET: number = 3;
   private static readonly STEPPER_FOOTER_FONT_SIZE: number = 4;
   private static readonly STEPPER_FOOTER_OPACITY: number = 5;
-  private static readonly STEPPER_HEADER_SHRINK: number = 6;
-  private static readonly STEPPER_FOOTER_SHRINK: number = 7;
+  private static readonly STEPPER_HEADER_INSET_LEFT: number = 6;
+  private static readonly STEPPER_HEADER_INSET_RIGHT: number = 7;
+  private static readonly STEPPER_FOOTER_INSET_LEFT: number = 8;
+  private static readonly STEPPER_FOOTER_INSET_RIGHT: number = 9;
+  private static readonly GEOMETRY_LEFT: number = 0;
+  private static readonly GEOMETRY_OFFSET: number = 1;
+  private static readonly GEOMETRY_RIGHT: number = 2;
 
   private config(): ReaderInfoBarConfig {
     return ReaderInfoBarConfig.parse(this.readerInfoBarConfig) ?? new ReaderInfoBarConfig();
@@ -417,8 +424,7 @@ export struct ReaderHeaderFooterEditor {
     if (field === ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET) {
       return ReaderInfoBarConfig.clampOffsetToInset(config.footerOffset, this.footerBaseInset);
     }
-    if (field === ReaderHeaderFooterEditor.STEPPER_HEADER_SHRINK) return config.headerShrink;
-    if (field === ReaderHeaderFooterEditor.STEPPER_FOOTER_SHRINK) return config.footerShrink;
+    if (this.isShrinkStepper(field)) return config.sideInset(this.isHeaderInset(field), this.isLeftInset(field));
     if (field === ReaderHeaderFooterEditor.STEPPER_HEADER_OPACITY) return config.headerOpacity;
     if (field === ReaderHeaderFooterEditor.STEPPER_FOOTER_OPACITY) return config.footerOpacity;
     return field === ReaderHeaderFooterEditor.STEPPER_HEADER_FONT_SIZE ?
@@ -464,9 +470,43 @@ export struct ReaderHeaderFooterEditor {
       field === ReaderHeaderFooterEditor.STEPPER_FOOTER_OPACITY;
   }
 
+  /** 左、右内缩共四个步进项。 */
   private isShrinkStepper(field: number): boolean {
-    return field === ReaderHeaderFooterEditor.STEPPER_HEADER_SHRINK ||
-      field === ReaderHeaderFooterEditor.STEPPER_FOOTER_SHRINK;
+    return field >= ReaderHeaderFooterEditor.STEPPER_HEADER_INSET_LEFT &&
+      field <= ReaderHeaderFooterEditor.STEPPER_FOOTER_INSET_RIGHT;
+  }
+
+  private isHeaderInset(field: number): boolean {
+    return field === ReaderHeaderFooterEditor.STEPPER_HEADER_INSET_LEFT ||
+      field === ReaderHeaderFooterEditor.STEPPER_HEADER_INSET_RIGHT;
+  }
+
+  private isLeftInset(field: number): boolean {
+    return field === ReaderHeaderFooterEditor.STEPPER_HEADER_INSET_LEFT ||
+      field === ReaderHeaderFooterEditor.STEPPER_FOOTER_INSET_LEFT;
+  }
+
+  /** 紧凑面板里“位置与内缩”一行：选中项对应的步进项。 */
+  private geometryField(header: boolean, target: number): number {
+    if (target === ReaderHeaderFooterEditor.GEOMETRY_OFFSET) {
+      return header ? ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET : ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET;
+    }
+    if (target === ReaderHeaderFooterEditor.GEOMETRY_RIGHT) {
+      return header ? ReaderHeaderFooterEditor.STEPPER_HEADER_INSET_RIGHT :
+        ReaderHeaderFooterEditor.STEPPER_FOOTER_INSET_RIGHT;
+    }
+    return header ? ReaderHeaderFooterEditor.STEPPER_HEADER_INSET_LEFT :
+      ReaderHeaderFooterEditor.STEPPER_FOOTER_INSET_LEFT;
+  }
+
+  private geometryName(target: number): string {
+    if (target === ReaderHeaderFooterEditor.GEOMETRY_OFFSET) return '位置';
+    return target === ReaderHeaderFooterEditor.GEOMETRY_RIGHT ? '右侧内缩' : '左侧内缩';
+  }
+
+  private geometryShortName(target: number): string {
+    if (target === ReaderHeaderFooterEditor.GEOMETRY_OFFSET) return '位置';
+    return target === ReaderHeaderFooterEditor.GEOMETRY_RIGHT ? '右' : '左';
   }
 
   private stepperText(field: number): string {
@@ -483,12 +523,9 @@ export struct ReaderHeaderFooterEditor {
     } else if (field === ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET) {
       config.footerOffset = ReaderInfoBarConfig.clampOffsetToInset(
         this.stepperValue(field) + direction * ReaderInfoBarConfig.OFFSET_STEP, this.footerBaseInset);
-    } else if (field === ReaderHeaderFooterEditor.STEPPER_HEADER_SHRINK) {
-      config.headerShrink = ReaderInfoBarConfig.clampShrink(
-        config.headerShrink + direction * ReaderInfoBarConfig.SHRINK_STEP);
-    } else if (field === ReaderHeaderFooterEditor.STEPPER_FOOTER_SHRINK) {
-      config.footerShrink = ReaderInfoBarConfig.clampShrink(
-        config.footerShrink + direction * ReaderInfoBarConfig.SHRINK_STEP);
+    } else if (this.isShrinkStepper(field)) {
+      config.setSideInset(this.isHeaderInset(field), this.isLeftInset(field),
+        this.stepperValue(field) + direction * ReaderInfoBarConfig.SHRINK_STEP);
     } else if (field === ReaderHeaderFooterEditor.STEPPER_HEADER_OPACITY) {
       config.headerOpacity = ReaderInfoBarConfig.clampOpacity(
         config.headerOpacity + direction * ReaderInfoBarConfig.OPACITY_STEP);
@@ -604,7 +641,8 @@ export struct ReaderHeaderFooterEditor {
       this.stepperItem('页眉字号', ReaderHeaderFooterEditor.STEPPER_HEADER_FONT_SIZE)
       this.stepperItem('页眉不透明度', ReaderHeaderFooterEditor.STEPPER_HEADER_OPACITY)
       this.stepperItem('页眉位置', ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET)
-      this.stepperItem('页眉收缩', ReaderHeaderFooterEditor.STEPPER_HEADER_SHRINK)
+      this.stepperItem('页眉左侧内缩', ReaderHeaderFooterEditor.STEPPER_HEADER_INSET_LEFT)
+      this.stepperItem('页眉右侧内缩', ReaderHeaderFooterEditor.STEPPER_HEADER_INSET_RIGHT)
       this.headerDividerSwitch()
     }
 
@@ -618,7 +656,8 @@ export struct ReaderHeaderFooterEditor {
       this.stepperItem('页脚字号', ReaderHeaderFooterEditor.STEPPER_FOOTER_FONT_SIZE)
       this.stepperItem('页脚不透明度', ReaderHeaderFooterEditor.STEPPER_FOOTER_OPACITY)
       this.stepperItem('页脚位置', ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET)
-      this.stepperItem('页脚收缩', ReaderHeaderFooterEditor.STEPPER_FOOTER_SHRINK)
+      this.stepperItem('页脚左侧内缩', ReaderHeaderFooterEditor.STEPPER_FOOTER_INSET_LEFT)
+      this.stepperItem('页脚右侧内缩', ReaderHeaderFooterEditor.STEPPER_FOOTER_INSET_RIGHT)
       this.footerDividerSwitch()
     }
 
@@ -656,10 +695,7 @@ export struct ReaderHeaderFooterEditor {
             this.stepperCell('字号', ReaderHeaderFooterEditor.STEPPER_FOOTER_FONT_SIZE)
             this.stepperCell('不透明度', ReaderHeaderFooterEditor.STEPPER_FOOTER_OPACITY)
           }
-          Row({ space: 14 }) {
-            this.stepperCell('位置', ReaderHeaderFooterEditor.STEPPER_FOOTER_OFFSET)
-            this.stepperCell('收缩', ReaderHeaderFooterEditor.STEPPER_FOOTER_SHRINK)
-          }
+          this.geometryRow(false)
           this.footerDividerSwitch()
         }
         .width('100%')
@@ -672,10 +708,7 @@ export struct ReaderHeaderFooterEditor {
             this.stepperCell('字号', ReaderHeaderFooterEditor.STEPPER_HEADER_FONT_SIZE)
             this.stepperCell('不透明度', ReaderHeaderFooterEditor.STEPPER_HEADER_OPACITY)
           }
-          Row({ space: 14 }) {
-            this.stepperCell('位置', ReaderHeaderFooterEditor.STEPPER_HEADER_OFFSET)
-            this.stepperCell('收缩', ReaderHeaderFooterEditor.STEPPER_HEADER_SHRINK)
-          }
+          this.geometryRow(true)
           this.headerDividerSwitch()
         }
         .width('100%')
@@ -783,6 +816,76 @@ export struct ReaderHeaderFooterEditor {
     }
     .constraintSize({ maxHeight: 336 })
     .scrollBar(BarState.Off)
+  }
+
+  /**
+   * 位置、左侧内缩、右侧内缩合在一行：点数值标签选中一项，右边一对加减按钮调整选中项。
+   * 选中项、数值与可用状态都在这里直接读取，按值传入的只有固定的页眉/页脚与方向。
+   */
+  @Builder
+  geometryRow(header: boolean) {
+    Column() {
+      Text('位置与内缩')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor)
+        .width('100%')
+        .margin({ bottom: AppSpacing.XS })
+      Row({ space: 6 }) {
+        this.geometryChip(header, ReaderHeaderFooterEditor.GEOMETRY_LEFT)
+        this.geometryChip(header, ReaderHeaderFooterEditor.GEOMETRY_OFFSET)
+        this.geometryChip(header, ReaderHeaderFooterEditor.GEOMETRY_RIGHT)
+        Row({ space: 8 }) {
+          this.geometryStepButton($r('sys.symbol.minus'), header, -1)
+          this.geometryStepButton($r('sys.symbol.plus'), header, 1)
+        }
+        .margin({ left: 6 })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .padding({ top: 8, bottom: 8 })
+  }
+
+  @Builder
+  geometryChip(header: boolean, target: number) {
+    Text(`${this.geometryShortName(target)} ${this.stepperText(this.geometryField(header, target))}`)
+      .fontSize(AppFontSize.BODY)
+      .fontColor(this.geometryTarget === target ? this.accentColor : this.textColor)
+      .maxLines(1)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .textAlign(TextAlign.Center)
+      .layoutWeight(1)
+      .height(34)
+      .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
+      .borderRadius(9)
+      .backgroundColor(this.geometryTarget === target ? ThemeRuntime.accentSurfaceColor(this.dark) :
+        (this.dark ? '#14FFFFFF' : '#0A000000'))
+      .border({ width: 1, color: this.geometryTarget === target ? this.accentColor : Color.Transparent })
+      .accessibilityText(`${header ? '页眉' : '页脚'}${this.geometryName(target)}：` +
+        `${this.stepperText(this.geometryField(header, target))}`)
+      .accessibilitySelected(this.geometryTarget === target)
+      .onClick(() => {
+        this.geometryTarget = target;
+      })
+  }
+
+  @Builder
+  geometryStepButton(icon: Resource, header: boolean, direction: number) {
+    ImmersiveBackButton({
+      icon: icon,
+      accessibilityLabel: `${direction < 0 ? '减小' : '增大'}${this.geometryName(this.geometryTarget)}`,
+      iconColor: this.dark ? '#FFFFFFFF' : '#FF202124',
+      disabledIconColor: this.subTextColor,
+      darkMode: this.dark,
+      buttonEnabled: this.canStep(this.geometryField(header, this.geometryTarget), direction),
+      buttonSize: 34,
+      containerWidth: 34,
+      containerHeight: 34,
+      startInset: 0,
+      compactLayout: true,
+      onBack: (): void => this.stepBy(this.geometryField(header, this.geometryTarget), direction)
+    })
   }
 
   // 两列并排用的步进器：标题在上。数值与可用状态同样直接从配置读取。

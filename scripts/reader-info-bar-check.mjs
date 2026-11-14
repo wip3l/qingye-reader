@@ -160,7 +160,7 @@ const editorSource = readFileSync(new URL(
   '../entry/src/main/ets/components/reader/ReaderLayoutSettings.ets', import.meta.url), 'utf8');
 const editorBody = editorSource.slice(editorSource.indexOf('export struct ReaderHeaderFooterEditor'));
 const editorConstants = editorBody.match(/  private static readonly [^\n]+/g).join('\n');
-const editorMethods = ['config', 'stepperValue', 'isOffsetStepper', 'isShrinkStepper', 'isOpacityStepper',
+const editorMethods = ['config', 'stepperValue', 'isOffsetStepper', 'isShrinkStepper', 'isHeaderInset', 'isLeftInset', 'isOpacityStepper',
   'stepperMin', 'stepperMax', 'canStep', 'stepBy'].map(name =>
   editorBody.match(new RegExp(`  private ${name}\\([^]*?\\n  \\}`))[0]).join('\n');
 const Editor = Function('ReaderInfoBarConfig', stripTypeScriptTypes(
@@ -248,10 +248,15 @@ for (const extend of [false, true]) {
   }
 }
 
-// 左右收缩：旧配置保持位置，正负值分别内收、外扩，且页眉页脚互不影响。
+// 左右内缩：旧版左右共用的收缩值同时作为两侧初值，正负值分别内收、外扩，且页眉页脚互不影响。
 const shrinkConfig = Config.parse(JSON.stringify({ headerShrink: 12, footerShrink: -8 }));
-equal(Config.parse('{}').headerShrink, 0, '旧配置页眉收缩默认为 0');
-equal(Config.parse('{}').footerShrink, 0, '旧配置页脚收缩默认为 0');
+for (const header of [true, false]) {
+  for (const left of [true, false]) {
+    equal(Config.parse('{}').sideInset(header, left), 0, '没有内缩设置时默认为 0');
+    equal(shrinkConfig.sideInset(header, left), header ? 12 : -8, '旧收缩值同时作为左右两侧的内缩');
+  }
+}
+check(!('headerShrink' in JSON.parse(shrinkConfig.serialize())), '新配置不再保存旧的共用收缩值');
 equal(shrinkConfig.copy().serialize(), shrinkConfig.serialize(), '收缩正负值保存与复制后保持不变');
 equal(shrinkConfig.layoutIdentity(), base.layoutIdentity(), '左右收缩不影响正文分页');
 equal(base.sidePadding(true, true, 18, 20, 400), 28, '零收缩沿用固定边距');
@@ -264,9 +269,20 @@ equal(shrinkConfig.sidePadding(true, true, 18, 20, 400), 30, '内收叠加正文
 equal(shrinkConfig.sidePadding(true, false, 18, 20, 400), 32, '内收叠加正文右边距');
 equal(shrinkConfig.sidePadding(false, true, 18, 20, 400), 10, '外扩扣减正文左边距');
 equal(shrinkConfig.sidePadding(false, false, 18, 20, 400), 12, '外扩扣减正文右边距');
+// 左右各自内缩：只动一侧时另一侧保持原边距，新字段优先于旧的共用值。
+const oneSide = Config.parse(JSON.stringify({ headerShrink: 5, headerInsetLeft: 12, footerInsetRight: -8 }));
+equal(oneSide.sidePadding(true, true, 18, 20, 400), 40, '页眉只有左侧内缩');
+equal(oneSide.sidePadding(true, false, 18, 20, 400), 33, '页眉右侧缺省时沿用旧的共用值');
+equal(oneSide.sidePadding(false, true, 18, 20, 400), 28, '页脚左侧保持原边距');
+equal(oneSide.sidePadding(false, false, 18, 20, 400), 20, '页脚只有右侧外扩');
+equal(oneSide.copy().serialize(), oneSide.serialize(), '左右内缩保存与复制后保持不变');
+equal(oneSide.layoutIdentity(), base.layoutIdentity(), '左右内缩不影响正文分页');
+oneSide.setSideInset(true, false, 999);
+equal(oneSide.sideInset(true, false), 350, '设置内缩时限制在上限');
+equal(oneSide.sideInset(true, true), 12, '设置右侧不改变左侧');
 const extremes = Config.parse(JSON.stringify({ headerShrink: 999, footerShrink: -999 }));
-equal(extremes.headerShrink, 350, '收缩上限为 350');
-equal(extremes.footerShrink, -350, '收缩下限为 -350');
+equal(extremes.sideInset(true, true), 350, '内缩上限为 350');
+equal(extremes.sideInset(false, false), -350, '内缩下限为 -350');
 for (const width of [80, 200, 400, 1000]) {
   const left = extremes.sidePadding(true, true, 18, 20, width);
   const right = extremes.sidePadding(true, false, 18, 20, width);

@@ -132,9 +132,14 @@ export class ReaderInfoBarConfig {
   headerOffset: number = 0;
   /** 页脚相对默认位置的偏移（vp），正数向上，负数向屏幕底端。 */
   footerOffset: number = 0;
-  /** 左右两侧在原有边距基础上的收缩距离（vp），负数向外扩展。 */
-  headerShrink: number = 0;
-  footerShrink: number = 0;
+  /** 仅用于读取旧版左右共用的收缩值；新配置使用下面左右各自的内缩。 */
+  headerShrink?: number;
+  footerShrink?: number;
+  /** 左、右两侧各自在原有边距基础上的内缩距离（vp），负数向外扩展。 */
+  headerInsetLeft: number = 0;
+  headerInsetRight: number = 0;
+  footerInsetLeft: number = 0;
+  footerInsetRight: number = 0;
   headerDivider: boolean = false;
   footerDivider: boolean = false;
   progressBar: string = ReaderInfoProgressBar.NONE;
@@ -197,8 +202,10 @@ export class ReaderInfoBarConfig {
       config.followMargin = source.followMargin === true;
       config.headerOffset = ReaderInfoBarConfig.clampOffset(source.headerOffset);
       config.footerOffset = ReaderInfoBarConfig.clampOffset(source.footerOffset);
-      config.headerShrink = ReaderInfoBarConfig.clampShrink(source.headerShrink);
-      config.footerShrink = ReaderInfoBarConfig.clampShrink(source.footerShrink);
+      config.headerInsetLeft = ReaderInfoBarConfig.clampShrink(source.headerInsetLeft ?? source.headerShrink);
+      config.headerInsetRight = ReaderInfoBarConfig.clampShrink(source.headerInsetRight ?? source.headerShrink);
+      config.footerInsetLeft = ReaderInfoBarConfig.clampShrink(source.footerInsetLeft ?? source.footerShrink);
+      config.footerInsetRight = ReaderInfoBarConfig.clampShrink(source.footerInsetRight ?? source.footerShrink);
       config.headerDivider = source.headerDivider === true;
       config.footerDivider = source.footerDivider === true;
       config.progressBar = ReaderInfoProgressBar.VALUES.indexOf(source.progressBar) >= 0 ?
@@ -276,13 +283,25 @@ export class ReaderInfoBarConfig {
     return Math.max(ReaderInfoBarConfig.SHRINK_MIN, Math.min(Math.round(value), ReaderInfoBarConfig.SHRINK_MAX));
   }
 
-  /** 左右对称收缩；向外最多到屏幕边缘，向内仍保留可显示文字的宽度。 */
+  sideInset(header: boolean, left: boolean): number {
+    if (header) return left ? this.headerInsetLeft : this.headerInsetRight;
+    return left ? this.footerInsetLeft : this.footerInsetRight;
+  }
+
+  setSideInset(header: boolean, left: boolean, value: number): void {
+    const inset = ReaderInfoBarConfig.clampShrink(value);
+    if (header && left) this.headerInsetLeft = inset;
+    else if (header) this.headerInsetRight = inset;
+    else if (left) this.footerInsetLeft = inset;
+    else this.footerInsetRight = inset;
+  }
+
+  /** 左右各自内缩；向外最多到屏幕边缘，向内仍保留可显示文字的宽度。 */
   sidePadding(header: boolean, left: boolean, marginLeft: number, marginRight: number, width: number): number {
-    const shrink = header ? this.headerShrink : this.footerShrink;
     const baseLeft = this.followMargin ? marginLeft : ReaderInfoBarConfig.FIXED_SIDE_PADDING;
     const baseRight = this.followMargin ? marginRight : ReaderInfoBarConfig.FIXED_SIDE_PADDING;
-    const insetLeft = Math.max(0, baseLeft + shrink);
-    const insetRight = Math.max(0, baseRight + shrink);
+    const insetLeft = Math.max(0, baseLeft + this.sideInset(header, true));
+    const insetRight = Math.max(0, baseRight + this.sideInset(header, false));
     const total = insetLeft + insetRight;
     // 视口尚未测量时先使用设置值；测量后限制极端收缩，兼容分屏和横屏。
     const allowedTotal = width > 0 ? Math.max(0, width - Math.min(width, 96)) : total;
