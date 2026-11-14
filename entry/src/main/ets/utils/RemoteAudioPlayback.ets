@@ -2,7 +2,7 @@ import { audio } from '@kit.AudioKit';
 import { media } from '@kit.MediaKit';
 import fs from '@ohos.file.fs';
 import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
-import { TtsAudioSession, TtsAudioSessionHintListener } from './TtsAudioSession';
+import { TtsAudioSession, TtsAudioSessionHintListener, TtsOutputLostListener } from './TtsAudioSession';
 
 // 和朗读共用应用的音频会话（两者不会同时播放）：借它让系统把“停止”改成“暂停”，并收到会话级通知。
 const AUDIO_SESSION_OWNER: string = 'audiobook';
@@ -47,6 +47,15 @@ export class RemoteAudioPlayback {
     const player = this.player;
     if (player) this.handleInterruptHint(player, this.generation, hint, audio.InterruptForceType.INTERRUPT_FORCE,
       'session');
+  };
+  // 耳机断开：按用户暂停处理。系统这时也会发永久停止，不拦住就会被当成打断、几秒后用外放接着播。
+  private readonly outputLostListener: TtsOutputLostListener = (): void => {
+    if (this.userPaused || !this.player) return;
+    if (this.state !== 'playing' && this.state !== 'loading' && !this.interruptPaused) return;
+    console.info(`[AudioBook] output device lost, pausing: state=${this.state}`);
+    this.pause().catch((error: Error) => {
+      console.warn('[AudioBook] pause after output lost failed:', error);
+    });
   };
 
   bookUrl: string = '';
@@ -350,6 +359,7 @@ export class RemoteAudioPlayback {
     this.resetSeek();
     this.clearSleepTimer();
     TtsAudioSession.removeHintListener(this.sessionHintListener);
+    TtsAudioSession.removeOutputLostListener(this.outputLostListener);
     TtsAudioSession.release(AUDIO_SESSION_OWNER);
     await this.releasePlayer();
     this.bookUrl = '';
@@ -363,6 +373,7 @@ export class RemoteAudioPlayback {
 
   private async acquireAudioSession(): Promise<void> {
     TtsAudioSession.addHintListener(this.sessionHintListener);
+    TtsAudioSession.addOutputLostListener(this.outputLostListener);
     await TtsAudioSession.acquire(AUDIO_SESSION_OWNER);
   }
 

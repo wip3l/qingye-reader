@@ -339,6 +339,8 @@ export class TtsAvAudioPlayer {
     }
     if (hint === audio.InterruptHint.INTERRUPT_HINT_RESUME) {
       if (!this.interruptPaused || this.paused) return;
+      // 耳机刚断开：界面那边（ReaderTtsMediaSession）会按暂停处理，这里不能先用外放接着读。
+      if (TtsAudioSession.outputLostRecently()) return;
       const revision = ++this.interruptRevision;
       this.resumeAfterInterrupt(player, generation, revision).catch((error: Error) => {
         console.warn('[TTS] av interrupt resume failed:', error);
