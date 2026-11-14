@@ -553,7 +553,8 @@ export struct CustomThemePreview {
       ReaderThemeBackground({
         surfaceColor: this.variant().reader.backgroundColor,
         backgroundAssetId: this.variant().reader.backgroundAssetId,
-        compact: !this.expanded
+        compact: !this.expanded,
+        decorationSignature: ThemeAssetRegistry.readerDecorationSignature(this.variant().reader.backgroundAssetId)
       })
       Column({ space: AppSpacing.MD }) {
         Row() {

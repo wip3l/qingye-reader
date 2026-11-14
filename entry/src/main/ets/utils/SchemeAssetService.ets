@@ -9,6 +9,7 @@ import {
   bookHasNoCovers,
   isPackThemeId,
   NAVIGATION_ICON_KEYS,
+  normalizeOrnamentScale,
   packThemeId,
   ThemeImageCrop,
   ThemePackageAssetKinds,
@@ -174,8 +175,8 @@ export class SchemeAssetService {
   }
 
   /**
-   * 阅读背景角饰：左上或右下一张图（SVG 或位图）。只上传了一张时另一角用同一张旋转 180°，
-   * 记录里也写成两张，导出后能通过格式校验。
+   * 阅读背景角饰：左上、右下各一张图（SVG 或位图），可以只传其中一张，另一角就空着。
+   * 两张记成同一个素材表示右下角用左上角那张旋转 180°（setReaderTrailingMirror）。
    */
   static async setReaderOrnament(context: Context, schemeId: string, uri: string, trailing: boolean,
     darkMode: boolean, baseTheme: string): Promise<SchemeAssetResult> {
@@ -183,18 +184,43 @@ export class SchemeAssetService {
       const variant = SchemeAssetService.variantOf(record, darkMode);
       const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK,
         trailing ? '右下角饰' : '左上角饰');
+      if (variant.reader.backgroundMode !== 'ornaments') {
+        variant.reader.leading = '';
+        variant.reader.trailing = '';
+      }
       if (trailing) {
         variant.reader.trailing = path;
-        if (!variant.reader.leading) variant.reader.leading = path;
       } else {
-        // 右下角没单独传过（为空或就是旧的左上角那张）时跟着换。
-        const mirrored = !variant.reader.trailing || variant.reader.trailing === variant.reader.leading;
+        // 右下角原本是左上角那张旋转的，换左上角时跟着换。
+        const mirrored = !!variant.reader.trailing && variant.reader.trailing === variant.reader.leading;
         variant.reader.leading = path;
         if (mirrored) variant.reader.trailing = path;
       }
       variant.reader.image = '';
       variant.reader.backgroundMode = 'ornaments';
       SchemeAssetService.storeVariant(record, darkMode, variant);
+    });
+  }
+
+  /** 右下角改用左上角那张旋转 180°。 */
+  static async setReaderTrailingMirror(context: Context, schemeId: string, darkMode: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const variant = darkMode ? record.parts.dark : record.parts.light;
+      if (!variant || variant.reader.backgroundMode !== 'ornaments' || !variant.reader.leading) {
+        throw new Error('请先上传左上角饰');
+      }
+      variant.reader.trailing = variant.reader.leading;
+    });
+  }
+
+  /** 左上（trailing 为 false）或右下角饰的显示大小倍数（0.5–2）。 */
+  static async setReaderOrnamentScale(context: Context, schemeId: string, darkMode: boolean, trailing: boolean,
+    scale: number): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const variant = darkMode ? record.parts.dark : record.parts.light;
+      if (!variant || variant.reader.backgroundMode !== 'ornaments') throw new Error('请先上传角饰');
+      if (trailing) variant.reader.trailingScale = normalizeOrnamentScale(scale);
+      else variant.reader.leadingScale = normalizeOrnamentScale(scale);
     });
   }
 
@@ -491,15 +517,25 @@ export class SchemeAssetService {
     return `${name}${key.endsWith('Selected') ? '选中' : ''}图标`;
   }
 
-  /** 移除右下角饰：恢复成左上角那张旋转 180°；移除左上角饰或整图：这个模式的背景素材全部清掉。 */
+  /**
+   * 移除一角的角饰：另一角还有自己的图就只清这一角；左上角被移除时，跟着它旋转的右下角一起清掉。
+   * 两角都空了或移除整图时，这个模式的背景素材全部清掉。
+   */
   static async clearReaderSlot(context: Context, schemeId: string, darkMode: boolean,
     slot: string): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
       const variant = darkMode ? record.parts.dark : record.parts.light;
       if (!variant) return;
-      if (slot === 'trailing' && variant.reader.leading) {
-        variant.reader.trailing = variant.reader.leading;
-        return;
+      const reader = variant.reader;
+      if (reader.backgroundMode === 'ornaments') {
+        if (slot === 'trailing' && reader.leading) {
+          reader.trailing = '';
+          return;
+        }
+        if (slot === 'leading' && reader.trailing && reader.trailing !== reader.leading) {
+          reader.leading = '';
+          return;
+        }
       }
       SchemeAssetService.storeVariant(record, darkMode, null);
     });

@@ -370,16 +370,17 @@ function renderField(f: Field): HTMLElement {
     row.append(renderColor(f, path, value || '', id));
   } else if (f.type === 'range') {
     const base = baseValue(path);
-    const current = typeof value === 'number' ? value : base;
+    const current = typeof value === 'number' ? value : (typeof base === 'number' ? base : (f.fallback ?? 0));
     const out = h('output', {}, String(current));
     const range = h('input', {
-      id, type: 'range', min: f.min, max: f.max, value: current,
+      id, type: 'range', min: f.min, max: f.max, step: f.step ?? 1, value: current,
       oninput: (event: Event) => { const v = +(event.target as HTMLInputElement).value; out.textContent = String(v); liveSet(path, v); },
       onchange: () => finishLive()
     });
     row.append(h('div', { class: 'range' }, range, out, typeof value === 'number'
-      ? h('button', { class: 'inherit', title: '清空，沿用基底主题', onclick: () => setField(key, '') }, '沿用')
-      : h('span', { class: 'inherit muted' }, '沿用')));
+      ? h('button', { class: 'inherit', title: f.resetLabel ? `清空，恢复${f.resetLabel}` : '清空，沿用基底主题',
+        onclick: () => setField(key, '') }, f.resetLabel || '沿用')
+      : h('span', { class: 'inherit muted' }, f.resetLabel || '沿用')));
   } else if (f.type === 'asset') {
     row.append(renderSlot(f, path, value || '', id));
   }

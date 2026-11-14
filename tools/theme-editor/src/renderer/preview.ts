@@ -301,9 +301,14 @@ function readerBody(e: Effective): HTMLElement {
     const url = assetUrl(r.image);
     if (url) s.append(h('img', { class: 'bgimg', src: url, style: `object-fit:${r.imageFit === 'fill' ? 'fill' : r.imageFit}`, alt: '' }));
   } else if (r.source === 'pack' && r.mode === 'ornaments') {
-    const style = `width:${ORNAMENT}px;height:${ORNAMENT}px`;
-    if (assetUrl(r.leading)) s.append(h('img', { class: 'orn l', src: assetUrl(r.leading), style: `${style};left:${ORNAMENT_INSET}px;top:${ORNAMENT_INSET}px`, alt: '' }));
-    if (assetUrl(r.trailing)) s.append(h('img', { class: 'orn t', src: assetUrl(r.trailing), style: `${style};right:${ORNAMENT_INSET}px;bottom:${ORNAMENT_INSET}px`, alt: '' }));
+    // 同 ReaderThemeDecorationLayout.size：倍数乘在默认尺寸上，最大到短边 0.8；两角同一张图时右下角旋转 180°。
+    const sized = (scale: number): string => {
+      const size = scale === 1 ? ORNAMENT : Math.min(ORNAMENT * scale, PHONE_W * 0.8);
+      return `width:${size}px;height:${size}px`;
+    };
+    const mirrored = !!r.leading && r.trailing === r.leading;
+    if (assetUrl(r.leading)) s.append(h('img', { class: 'orn l', src: assetUrl(r.leading), style: `${sized(r.leadingScale)};left:${ORNAMENT_INSET}px;top:${ORNAMENT_INSET}px`, alt: '' }));
+    if (assetUrl(r.trailing)) s.append(h('img', { class: 'orn t', src: assetUrl(r.trailing), style: `${sized(r.trailingScale)};right:${ORNAMENT_INSET}px;bottom:${ORNAMENT_INSET}px${mirrored ? ';transform:rotate(180deg)' : ''}`, alt: '' }));
   } else if (r.source === 'base-art') {
     const style = `width:${ORNAMENT}px;height:${ORNAMENT}px`;
     s.append(h('div', { class: 'orn-ph', style: `${style};left:${ORNAMENT_INSET}px;top:${ORNAMENT_INSET}px` }, `「${baseTheme().name}」角饰`));

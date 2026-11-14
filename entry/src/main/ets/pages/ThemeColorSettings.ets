@@ -19,7 +19,7 @@ import {
 } from '../theme/ThemeModels';
 import { ThemeAccessPolicy } from '../account/ThemeAccessPolicy';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
-import { InstalledThemePack, ThemeImageSlots, ThemePackRegistry } from '../theme/ThemePackRegistry';
+import { InstalledThemePack, InstalledThemePackReader, ThemeImageSlots, ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { StartupCoverImageStore } from '../utils/StartupCoverImageStore';
 import { SchemeAssetResult, SchemeAssetService, SchemeFontOption } from '../utils/SchemeAssetService';
@@ -201,6 +201,9 @@ struct ThemeColorSettingsPage {
   @StorageLink('installedThemePacksRevision') installedPacksRevision: number = 0;
   // 素材上传/移除只改包与草稿，不改其他状态；靠它让预览和上传行重绘。
   @State assetRevision: number = 0;
+  // 拖动左上/右下“角饰大小”时的实时百分比；松手保存完回到 -1，改读主题包里的值。
+  @State leadingScaleDrag: number = -1;
+  @State trailingScaleDrag: number = -1;
   @State appFontFamily: string = '';
   @State fontLibrary: SchemeFontOption[] = [];
   @State radiusOverride: ThemeRadiusOverrides = new ThemeRadiusOverrides();
@@ -1618,11 +1621,11 @@ struct ThemeColorSettingsPage {
     return own && this.readerAssetId().startsWith(`${own}:`) ? this.readerAssetMode() : '';
   }
 
-  ownPackVariantTrailingSeparate(): boolean {
+  /** 方案自传的角饰（这个模式用的是自传角饰时），否则为 null。 */
+  ownOrnamentReader(): InstalledThemePackReader | null {
+    if (this.ownReaderMode() !== 'ornaments') return null;
     const pack = this.ownPack();
-    if (!pack) return false;
-    const reader = pack.reader(this.selectedMode === 'dark');
-    return reader.mode === 'ornaments' && !!reader.trailing && reader.trailing !== reader.leading;
+    return pack ? pack.reader(this.selectedMode === 'dark') : null;
   }
 
   readerSlotState(slot: string): string {
@@ -1632,12 +1635,82 @@ struct ThemeColorSettingsPage {
       if (mode === 'image') return 'own';
       return ThemeColorSettingsPage.hasImage(ThemeAssetRegistry.readerBackground(id)) ? 'inherit' : 'empty';
     }
-    if (slot === 'trailing') {
-      if (mode === 'ornaments' && this.ownPackVariantTrailingSeparate()) return 'own';
-      return ThemeColorSettingsPage.hasImage(ThemeAssetRegistry.readerBackgroundTrailingDecoration(id)) ? 'inherit' : 'empty';
+    // 自传角饰可以只有一角，空着的那角显示成待上传。
+    const own = this.ownOrnamentReader();
+    if (own) return (slot === 'trailing' ? own.trailing : own.leading) ? 'own' : 'empty';
+    const image = slot === 'trailing' ? ThemeAssetRegistry.readerBackgroundTrailingDecoration(id) :
+      ThemeAssetRegistry.readerBackgroundDecoration(id);
+    return ThemeColorSettingsPage.hasImage(image) ? 'inherit' : 'empty';
+  }
+
+  readerOrnamentScalePercent(trailing: boolean): number {
+    const drag = trailing ? this.trailingScaleDrag : this.leadingScaleDrag;
+    if (drag >= 0) return drag;
+    // 主题包记录不是状态变量：读 assetRevision，保存后才会重新取值。
+    if (this.assetRevision < 0) return 100;
+    const own = this.ownOrnamentReader();
+    if (!own) return 100;
+    return Math.round((trailing ? own.trailingScale : own.leadingScale) * 100);
+  }
+
+  /** 这一角有自传的图时才能调大小。 */
+  readerOrnamentScalable(trailing: boolean): boolean {
+    if (this.assetRevision < 0) return false;
+    const own = this.ownOrnamentReader();
+    return !!own && !!(trailing ? own.trailing : own.leading);
+  }
+
+  setOrnamentScaleDrag(trailing: boolean, percent: number): void {
+    if (trailing) this.trailingScaleDrag = percent;
+    else this.leadingScaleDrag = percent;
+  }
+
+  async setReaderOrnamentScale(trailing: boolean, percent: number): Promise<void> {
+    this.setOrnamentScaleDrag(trailing, Math.round(percent));
+    try {
+      if (!(await this.ensureAdvanced())) return;
+      const dark = this.selectedMode === 'dark';
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setReaderOrnamentScale(getContext(this), this.schemeId, dark, trailing, percent / 100),
+        '', false, false, '');
+    } finally {
+      this.setOrnamentScaleDrag(trailing, -1);
     }
-    if (mode === 'ornaments') return 'own';
-    return ThemeColorSettingsPage.hasImage(ThemeAssetRegistry.readerBackgroundDecoration(id)) ? 'inherit' : 'empty';
+  }
+
+  @Builder
+  ornamentScaleRow(trailing: boolean) {
+    Column({ space: AppSpacing.XS }) {
+      Row() {
+        Text(trailing ? '右下角饰大小' : '左上角饰大小')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.primaryTextColor())
+          .layoutWeight(1)
+        Text(this.readerOrnamentScalable(trailing) ? `${this.readerOrnamentScalePercent(trailing)}%` :
+          (trailing ? '上传右下角饰后可调' : '上传左上角饰后可调'))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+      }
+      .width('100%')
+      Slider({ value: this.readerOrnamentScalePercent(trailing), min: 50, max: 200, step: 10,
+        style: SliderStyle.OutSet })
+        .id(trailing ? 'theme_editor_reader_trailing_scale' : 'theme_editor_reader_leading_scale')
+        .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+        .width('100%')
+        .enabled(this.readerOrnamentScalable(trailing))
+        .selectedColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .accessibilityText(trailing ? '右下角饰大小' : '左上角饰大小')
+        .onChange((value: number, mode: SliderChangeMode) => {
+          if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+            this.setReaderOrnamentScale(trailing, value);
+          } else {
+            this.setOrnamentScaleDrag(trailing, Math.round(value));
+          }
+        })
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .opacity(this.readerOrnamentScalable(trailing) ? 1 : 0.45)
   }
 
   @Builder
@@ -1661,13 +1734,15 @@ struct ThemeColorSettingsPage {
           onTap: () => this.tapReaderSlot('image') })
       }
       .width('100%')
-      Text('不单独传右下角饰时，用左上角那张旋转 180°；整图会替换角饰')
+      Text('角饰可以只传左上或右下一张，也可以两张都传；右下角也能直接用左上角那张旋转 180°。整图会替换角饰')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .width('100%')
     }
     .width('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+    this.ornamentScaleRow(false)
+    this.ornamentScaleRow(true)
     Column() {
       SettingRow({ title: '整图铺放', description: this.ownReaderMode() === 'image' ? '整图背景在阅读页上的铺法' : '上传整图后可选',
         showDivider: !!this.ownReaderMode() }) {
@@ -1723,24 +1798,39 @@ struct ThemeColorSettingsPage {
   async tapReaderSlot(slot: string): Promise<void> {
     const dark = this.selectedMode === 'dark';
     const other = dark ? '浅色' : '深色';
+    const own = this.ownOrnamentReader();
     if (this.readerSlotState(slot) !== 'own') {
       if (!(await this.ensureAdvanced())) return;
-      if (slot === 'image') await this.uploadReaderImage();
-      else await this.uploadReaderOrnament(slot === 'trailing');
+      if (slot === 'image') {
+        await this.uploadReaderImage();
+      } else if (slot === 'trailing' && own && own.leading) {
+        // 已有左上角饰：右下角可以单独上传，也可以直接用左上角那张旋转。
+        const choice = await this.slotMenu(`${this.modeLabel()} · 右下角饰`, '上传图片', '用左上角那张旋转 180°');
+        if (choice === 0) await this.uploadReaderOrnament(true);
+        else if (choice === 1) await this.mirrorReaderTrailing();
+      } else {
+        await this.uploadReaderOrnament(slot === 'trailing');
+      }
       return;
     }
-    if (slot === 'trailing') {
-      const choice = await this.slotMenu(`${this.modeLabel()} · 右下角饰`, '替换', '移除，改用左上角那张旋转');
-      if (choice === 0) await this.replaceGuarded(() => this.uploadReaderOrnament(true));
-      else if (choice === 1) await this.clearReaderSlot('trailing');
-      return;
+    const copyLabel = `${other}模式也用这套`;
+    let actions: string[] = [];
+    if (slot === 'image') {
+      actions = ['替换', copyLabel, '移除整图背景'];
+    } else if (slot === 'trailing') {
+      const mirrored = !!own && !!own.leading && own.trailing === own.leading;
+      actions = ['替换', mirrored || !own || !own.leading ? copyLabel : '改用左上角那张旋转', '移除右下角饰'];
+    } else {
+      actions = ['替换', copyLabel, '移除左上角饰'];
     }
-    const name = slot === 'image' ? '整图背景' : '角饰';
-    const choice = await this.slotMenu(`${this.modeLabel()} · ${name}`, '替换', `${other}模式也用这套`,
-      `移除${name}`);
-    if (choice === 0) {
-      await this.replaceGuarded(() => slot === 'image' ? this.uploadReaderImage() : this.uploadReaderOrnament(false));
-    } else if (choice === 1) {
+    const name = slot === 'image' ? '整图背景' : (slot === 'trailing' ? '右下角饰' : '左上角饰');
+    const choice = await this.slotMenu(`${this.modeLabel()} · ${name}`, actions[0], actions[1], actions[2]);
+    if (choice < 0) return;
+    const action = actions[choice];
+    if (action === '替换') {
+      await this.replaceGuarded(() => slot === 'image' ? this.uploadReaderImage() :
+        this.uploadReaderOrnament(slot === 'trailing'));
+    } else if (action === copyLabel) {
       await this.runAssetUpload((): Promise<SchemeAssetResult> =>
         SchemeAssetService.copyToOtherMode(getContext(this), this.schemeId, 'reader', dark), '', false, false, '');
       if (this.ownPackageId) {
@@ -1748,9 +1838,17 @@ struct ThemeColorSettingsPage {
         this.setReaderBackgroundAssetFor(!dark, packReaderBackgroundId(this.ownPackageId, !dark));
         HdsFeedback.showToast(`${other}模式的阅读背景已换成同一套`);
       }
-    } else if (choice === 2) {
+    } else if (action === '改用左上角那张旋转') {
+      await this.mirrorReaderTrailing();
+    } else {
       await this.clearReaderSlot(slot);
     }
+  }
+
+  async mirrorReaderTrailing(): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setReaderTrailingMirror(getContext(this), this.schemeId, dark), '', false, false, '');
   }
 
   async clearReaderSlot(slot: string): Promise<void> {

@@ -1,6 +1,7 @@
 // 生效令牌：包里填了的用包里的，没填的回退到基底主题（规则与 ThemePackRegistry 拼装主题时一致）。
 import data from '../core/builtinThemes.json';
 import { S, project, type Mode } from './state.ts';
+import { normalizeOrnamentScale } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 
 export interface BaseVariant {
   colors: Record<string, string>;
@@ -61,6 +62,8 @@ export interface Effective {
     /** pack：包里的角饰/整图；base-art：沿用基底主题的背景素材（编辑器里画占位）；none：只有底色。 */
     source: 'pack' | 'base-art' | 'none';
     mode: string; leading: string; trailing: string; image: string; imageFit: string;
+    /** 左上、右下角饰各自的大小倍数，格式层夹在 0.5–2。 */
+    leadingScale: number; trailingScale: number;
   };
   e: { mode: string; bubble: 'pack' | string; color: string; textColor: string };
   radius: Record<string, number>;
@@ -86,7 +89,9 @@ export function effective(mode: Mode): Effective {
     textColor: r.textColor || bv.reader.textColor,
     subTextColor: r.subTextColor || bv.reader.subTextColor,
     contentTone: r.contentTone || bv.reader.contentTone,
-    source, mode: bgMode, leading: r.leading || '', trailing: r.trailing || '', image: r.image || '', imageFit: r.imageFit || 'cover'
+    source, mode: bgMode, leading: r.leading || '', trailing: r.trailing || '', image: r.image || '', imageFit: r.imageFit || 'cover',
+    leadingScale: normalizeOrnamentScale(typeof v.reader?.leadingScale === 'number' ? v.reader.leadingScale : 1),
+    trailingScale: normalizeOrnamentScale(typeof v.reader?.trailingScale === 'number' ? v.reader.trailingScale : 1)
   };
   const em = filled(v.emphasis);
   const packBubble = !!(p.bubble && p.bubble.cap);

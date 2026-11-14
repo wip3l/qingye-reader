@@ -540,6 +540,16 @@ function strip(value: Json): Json {
  * 写进 theme.json 的 parts：去掉空值；背景方式切换后残留的另一种素材不写；
  * 一个字段都没填的朗读面板、启动封面不写（填了一部分的照写，让格式层报出缺什么）。
  */
+/** 角饰模式只填了一角：要声明 reader-single-corner-v1（老版本应用会提示先更新，而不是报“缺图”）。 */
+function usesSingleCorner(parts: Json): boolean {
+  return ['light', 'dark'].some((mode) => {
+    const reader = parts[mode] && parts[mode].reader;
+    if (!reader) return false;
+    const bgMode = reader.backgroundMode || (reader.image ? 'image' : (reader.leading || reader.trailing ? 'ornaments' : ''));
+    return bgMode === 'ornaments' && !reader.leading !== !reader.trailing;
+  });
+}
+
 export function normalizedParts(parts: Json): Json {
   const copy = JSON.parse(JSON.stringify(parts || {}));
   for (const mode of ['light', 'dark']) {
@@ -547,6 +557,10 @@ export function normalizedParts(parts: Json): Json {
     if (!reader) continue;
     const bgMode = reader.backgroundMode || '';
     if (bgMode === 'image' || bgMode === 'none') { delete reader.leading; delete reader.trailing; }
+    const ornaments = bgMode === 'ornaments' || (!bgMode && !reader.image && (reader.leading || reader.trailing));
+    for (const key of ['leadingScale', 'trailingScale']) {
+      if (!ornaments || typeof reader[key] !== 'number' || reader[key] === 1) delete reader[key];
+    }
     if (bgMode === 'ornaments' || bgMode === 'none') delete reader.image;
     if (bgMode !== 'image' && !reader.image) delete reader.imageFit;
     if (reader.imageFit === 'cover' && Object.keys(strip(reader)).length === 1) delete reader.imageFit;
@@ -610,6 +624,7 @@ export async function buildFiles(project: EditorProject): Promise<FileMap> {
   }
   const requires = new Set<string>([ThemePackageFeatures.CUSTOM_SCHEME]);
   if (Object.keys(parts).length) requires.add(ThemePackageFeatures.THEME_PARTS);
+  if (usesSingleCorner(parts)) requires.add(ThemePackageFeatures.READER_SINGLE_CORNER);
   if (project.layout) requires.add(ThemePackageFeatures.READER_LAYOUT);
   if (project.emphasis) requires.add(ThemePackageFeatures.EMPHASIS_RULES);
   if (hasFont) requires.add(ThemePackageFeatures.FONTS);

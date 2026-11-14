@@ -66,8 +66,9 @@ export function editorIssues(): Issue[] {
   for (const mode of MODES) {
     const L = LABEL[mode];
     const reader = (p.parts[mode] && p.parts[mode].reader) || {};
-    if (reader.backgroundMode === 'ornaments' && (!reader.leading || !reader.trailing)) {
-      add('error', `${mode}.reader.${reader.leading ? 'trailing' : 'leading'}`, `${L}阅读页：角饰模式要左上和右下两张图`);
+    // 角饰可以只有一角（导出时自动声明 reader-single-corner-v1），两角都空才不行。
+    if (reader.backgroundMode === 'ornaments' && !reader.leading && !reader.trailing) {
+      add('error', `${mode}.reader.leading`, `${L}阅读页：角饰模式至少要左上或右下一张图`);
     }
     if (reader.backgroundMode === 'image' && !reader.image) add('error', `${mode}.reader.image`, `${L}阅读页：整图模式需要一张图`);
     const e = effective(mode);

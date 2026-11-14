@@ -47,6 +47,7 @@ import {
   packageIdOfThemeId,
   packThemeId,
   partsAssetRefs,
+  partsUseSingleCorner,
   pickLayout,
   QYTHEME_EXTENSION,
   remapFonts,
@@ -309,6 +310,9 @@ export class ThemePackageService {
       manifest.requires = [ThemePackageFeatures.CUSTOM_SCHEME, ThemePackageFeatures.READER_LAYOUT];
       if (bundled) {
         manifest.requires.push(ThemePackageFeatures.THEME_PARTS);
+        if (partsUseSingleCorner(bundled.record.parts)) {
+          manifest.requires.push(ThemePackageFeatures.READER_SINGLE_CORNER);
+        }
         manifest.version = bundled.version;
         if (!manifest.description) manifest.description = bundled.description;
         manifest.baseTheme = bundled.baseTheme;

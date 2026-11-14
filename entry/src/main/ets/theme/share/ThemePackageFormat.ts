@@ -26,13 +26,16 @@ export class ThemePackageFeatures {
   static readonly THEME_PARTS: string = 'theme-parts-v1';
   // 方案自己覆盖的完整配色与强调气泡（customLightPalette 等字段）；老版本不认得这些字段，导入会少颜色。
   static readonly SCHEME_OVERRIDES: string = 'scheme-overrides-v1';
+  // 角饰模式只有左上或只有右下一张图；老版本要求两张都在，导入会直接报错，所以只在用到时写进 requires。
+  static readonly READER_SINGLE_CORNER: string = 'reader-single-corner-v1';
   static readonly KNOWN: string[] = [
     ThemePackageFeatures.CUSTOM_SCHEME,
     ThemePackageFeatures.READER_LAYOUT,
     ThemePackageFeatures.EMPHASIS_RULES,
     ThemePackageFeatures.FONTS,
     ThemePackageFeatures.THEME_PARTS,
-    ThemePackageFeatures.SCHEME_OVERRIDES
+    ThemePackageFeatures.SCHEME_OVERRIDES,
+    ThemePackageFeatures.READER_SINGLE_CORNER
   ];
 }
 
@@ -135,10 +138,37 @@ export class ThemePackagePartReader {
   contentTone: string = '';
   // 'ornaments'：左上、右下角饰；'image'：整图背景；'none'：只有底色；空：沿用基底主题。
   backgroundMode: string = '';
+  // 角饰可以只有一张（另一角空着，需要 reader-single-corner-v1）；两张是同一个素材时右下角旋转 180° 显示。
   leading: string = '';
   trailing: string = '';
   image: string = '';
   imageFit: string = 'cover';
+  // 左上、右下角饰各自的显示大小，相对默认尺寸（短边 × 0.36，夹在 112–260vp）的倍数；
+  // 老版本不认得这两个字段，按 1 显示。
+  leadingScale: number = 1;
+  trailingScale: number = 1;
+}
+
+export const READER_ORNAMENT_SCALE_MIN: number = 0.5;
+export const READER_ORNAMENT_SCALE_MAX: number = 2;
+
+/** 缺省、0 或非法值都当 1；其余夹在 0.5–2，保留两位小数。 */
+export function normalizeOrnamentScale(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !isFinite(value) || value <= 0) return 1;
+  const clamped = Math.max(READER_ORNAMENT_SCALE_MIN, Math.min(READER_ORNAMENT_SCALE_MAX, value));
+  return Math.round(clamped * 100) / 100;
+}
+
+/** 角饰模式只填了左上或右下其中一张。 */
+export function readerHasSingleCorner(reader: ThemePackagePartReader | null | undefined): boolean {
+  if (!reader || reader.backgroundMode !== 'ornaments') return false;
+  return !reader.leading !== !reader.trailing;
+}
+
+export function partsUseSingleCorner(parts: ThemePackageParts | null | undefined): boolean {
+  if (!parts) return false;
+  return (!!parts.light && readerHasSingleCorner(parts.light.reader)) ||
+    (!!parts.dark && readerHasSingleCorner(parts.dark.reader));
 }
 
 export class ThemePackagePartEmphasis {
@@ -902,16 +932,21 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
     result.reader.image = partAssetRef(reader, 'image', manifest, [ThemePackageAssetKinds.IMAGE], readerLabel);
     const fit = stringField(reader, 'imageFit').trim();
     result.reader.imageFit = fit === 'contain' || fit === 'fill' ? fit : 'cover';
-    if (mode === 'ornaments' && (!result.reader.leading || !result.reader.trailing)) {
-      throw new Error(`主题包的${readerLabel} 角饰模式需要 leading 和 trailing 两张图`);
-    }
+    result.reader.leadingScale = normalizeOrnamentScale(numberField(reader, 'leadingScale'));
+    result.reader.trailingScale = normalizeOrnamentScale(numberField(reader, 'trailingScale'));
     if (mode === 'image' && !result.reader.image) {
       throw new Error(`主题包的${readerLabel} 整图模式需要 image`);
     }
     if (!mode && (result.reader.leading || result.reader.trailing || result.reader.image)) {
       result.reader.backgroundMode = result.reader.image ? 'image' : 'ornaments';
-      if (result.reader.backgroundMode === 'ornaments' && (!result.reader.leading || !result.reader.trailing)) {
-        throw new Error(`主题包的${readerLabel} 角饰模式需要 leading 和 trailing 两张图`);
+    }
+    if (result.reader.backgroundMode === 'ornaments') {
+      if (!result.reader.leading && !result.reader.trailing) {
+        throw new Error(`主题包的${readerLabel} 角饰模式至少要有 leading 或 trailing 一张图`);
+      }
+      if (readerHasSingleCorner(result.reader) &&
+        !manifest.requires.includes(ThemePackageFeatures.READER_SINGLE_CORNER)) {
+        throw new Error(`主题包的${readerLabel} 只有一张角饰时 requires 要包含 ${ThemePackageFeatures.READER_SINGLE_CORNER}`);
       }
     }
   }

@@ -3,7 +3,16 @@
  * self-drawn page raster so both put the ornaments at the same spot. All values are vp.
  */
 export class ReaderThemeDecorationLayout {
-  static size(viewportWidth: number, viewportHeight: number, compact: boolean): number {
+  /** scale 是主题包设的角饰大小倍数，乘在默认尺寸上，最大不超过短边的 0.8（缩略预览 0.9）。 */
+  static size(viewportWidth: number, viewportHeight: number, compact: boolean, scale: number = 1): number {
+    const base = ReaderThemeDecorationLayout.baseSize(viewportWidth, viewportHeight, compact);
+    if (!(scale > 0) || scale === 1) return base;
+    const shortEdge = viewportWidth <= 0 || viewportHeight <= 0 ? (compact ? 58 : 480) :
+      Math.min(viewportWidth, viewportHeight);
+    return Math.min(base * scale, shortEdge * (compact ? 0.9 : 0.8));
+  }
+
+  private static baseSize(viewportWidth: number, viewportHeight: number, compact: boolean): number {
     const fallback = compact ? 42 : 156;
     if (viewportWidth <= 0 || viewportHeight <= 0) return fallback;
     const shortEdge = Math.min(viewportWidth, viewportHeight);

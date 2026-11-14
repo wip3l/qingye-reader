@@ -240,9 +240,24 @@ test('export reports the same errors the app would', async () => {
   project.parts.navigation.mine = '';
   await assert.rejects(io.exportFiles(project), /parts\.navigation 需要 bookshelf、explore、mine/);
   project.parts.navigation.mine = 'assets/n4.svg';
+  // 只有一角的角饰照样能导出，清单自动声明 reader-single-corner-v1；两角都空才报错。
   project.parts.light.reader.trailing = '';
-  await assert.rejects(io.exportFiles(project), /角饰模式需要 leading 和 trailing/);
+  project.parts.light.reader.leadingScale = 1.4;
+  project.parts.light.reader.trailingScale = 1;
+  const single = await io.exportFiles(project);
+  assert.ok(JSON.parse(strFromU8(single.get('manifest.json'))).requires.includes('reader-single-corner-v1'));
+  const singleReader = JSON.parse(strFromU8(single.get('theme.json'))).parts.light.reader;
+  assert.equal(singleReader.leadingScale, 1.4);
+  assert.equal('trailingScale' in singleReader, false);
+  const leading = project.parts.light.reader.leading;
+  project.parts.light.reader.leading = '';
+  await assert.rejects(io.exportFiles(project), /至少要有 leading 或 trailing/);
+  project.parts.light.reader.leading = leading;
   project.parts.light.reader.trailing = 'assets/br.svg';
+  delete project.parts.light.reader.leadingScale;
+  delete project.parts.light.reader.trailingScale;
+  const both = await io.exportFiles(project);
+  assert.ok(!JSON.parse(strFromU8(both.get('manifest.json'))).requires.includes('reader-single-corner-v1'));
   project.manifest.packageId = 'bad id';
   await assert.rejects(io.exportFiles(project), /packageId/);
 });

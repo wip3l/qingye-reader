@@ -430,7 +430,28 @@ test('v2 theme: parts resolve by path, settings optional, kinds and required fie
   assert.equal(format.encodeParts(decodedExtra).navigation.listen, decodedExtra.navigation.listen);
   assert.equal(decodedWithoutSearch.navigation.listen, '');
   broken(j => { j.light.colors.pageColor = 'red'; }, /颜色/);
-  broken(j => { j.light.reader.trailing = ''; }, /leading 和 trailing/);
+  broken(j => { j.light.reader.trailing = ''; j.light.reader.leading = ''; }, /至少要有 leading 或 trailing/);
+  // 只有一张角饰要声明 reader-single-corner-v1，老版本不认得这个功能会提示先更新。
+  broken(j => { j.light.reader.trailing = ''; }, /reader-single-corner-v1/);
+  const singleManifest = withAssets(manifestV2({ requires: ['custom-scheme-v1', 'reader-layout-v1', 'theme-parts-v1',
+    'reader-single-corner-v1'] }), PARTS_FILES);
+  const onlyTrailing = partsJson();
+  onlyTrailing.light.reader.leading = '';
+  onlyTrailing.light.reader.trailingScale = 1.5;
+  onlyTrailing.light.reader.leadingScale = 0.7;
+  const decodedSingle = format.decodeTheme(JSON.stringify({ parts: onlyTrailing }), singleManifest).parts;
+  assert.equal(decodedSingle.light.reader.leading, '');
+  assert.match(decodedSingle.light.reader.trailing, /^qytheme-asset:[0-9a-f]{24}$/);
+  assert.equal(decodedSingle.light.reader.trailingScale, 1.5);
+  assert.equal(decodedSingle.light.reader.leadingScale, 0.7);
+  assert.equal(format.partsUseSingleCorner(decodedSingle), true);
+  assert.equal(format.partsUseSingleCorner(parts), false);
+  // 两角大小缺省按 1，超出范围夹到 0.5–2。
+  assert.equal(parts.light.reader.leadingScale, 1);
+  assert.equal(parts.light.reader.trailingScale, 1);
+  assert.equal(format.normalizeOrnamentScale(9), 2);
+  assert.equal(format.normalizeOrnamentScale(0.1), 0.5);
+  assert.equal(format.normalizeOrnamentScale(undefined), 1);
   broken(j => { j.ttsPanel.light.glowColor = ''; }, /artwork、skyColor/);
   broken(j => { j.radius.card = 99; }, /0 到 48/);
   broken(j => { j.book.covers = Array(9).fill('assets/cover_01.jpg'); }, /最多 8 张/);

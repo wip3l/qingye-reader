@@ -203,6 +203,7 @@ BuiltinThemeRegistry.register(theme);
 可选的调整点：
 
 - `readerBackgroundTrailingRotation()`：有独立右下角图案时返回 0；只有未登记右下角图案的资源才回退为左上角装饰旋转 180°。
+- 主题包的角饰可以只有一角（空着的那角不画，用 `readerBackgroundHasOrnaments()` 判断有没有角饰），左上、右下各自的大小由 `readerBackgroundOrnamentScale(assetId, trailing)` 给出的倍数乘在 `ReaderThemeDecorationLayout.size()` 上；内置背景倍数恒为 1。
 
 装饰锚定在左上和右下的正方形区域，使用 `ImageFit.Contain`。不要把内置主题改回 `Cover` 全屏壁纸，`theme-framework-check` 会检查这一点。旧版 `reader_bg_*` 仅作为兼容资源保留。
 

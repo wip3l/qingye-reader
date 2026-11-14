@@ -12,6 +12,10 @@ export interface Field {
   options?: [string, string][];
   max?: number;
   min?: number;
+  /** range：步长（默认 1）、没填时显示的值、清空按钮的字样（默认“沿用”）。 */
+  step?: number;
+  fallback?: number;
+  resetLabel?: string;
   alpha?: boolean;
   hint?: string;
   /** 素材允许的类型：image / vector / font。 */
@@ -99,9 +103,14 @@ export const SECTIONS: Section[] = [
       { k: '{m}.reader.backgroundMode', label: '背景方式', type: 'select',
         options: [['', '沿用基底'], ['ornaments', '角饰'], ['image', '整图'], ['none', '只有底色']] },
       { k: '{m}.reader.leading', label: '左上角饰', type: 'asset', kinds: ['vector', 'image'], square: true, target: [480, 480],
-        viewBox: [480, 480], spec: 'SVG（viewBox 0 0 480 480）或正方形透明底位图', when: (m) => mode(m, 'reader.backgroundMode') === 'ornaments' },
+        viewBox: [480, 480], spec: 'SVG（viewBox 0 0 480 480）或正方形透明底位图；可只传左上或右下一角', when: (m) => mode(m, 'reader.backgroundMode') === 'ornaments' },
       { k: '{m}.reader.trailing', label: '右下角饰', type: 'asset', kinds: ['vector', 'image'], square: true, target: [480, 480],
-        viewBox: [480, 480], spec: '与左上角同一场景的另一幅图，别直接镜像', when: (m) => mode(m, 'reader.backgroundMode') === 'ornaments' },
+        viewBox: [480, 480], spec: '与左上角同一场景的另一幅图；选和左上角同一张素材时旋转 180° 显示', when: (m) => mode(m, 'reader.backgroundMode') === 'ornaments' },
+      { k: '{m}.reader.leadingScale', label: '左上角饰大小', type: 'range', min: 0.5, max: 2, step: 0.1, fallback: 1, resetLabel: '默认',
+        hint: '相对默认尺寸（屏幕短边 × 0.36，夹在 112–260vp）的倍数；最大不超过短边的 0.8',
+        when: (m) => mode(m, 'reader.backgroundMode') === 'ornaments' },
+      { k: '{m}.reader.trailingScale', label: '右下角饰大小', type: 'range', min: 0.5, max: 2, step: 0.1, fallback: 1, resetLabel: '默认',
+        when: (m) => mode(m, 'reader.backgroundMode') === 'ornaments' },
       { k: '{m}.reader.image', label: '整图', type: 'asset', kinds: ['image'], spec: '竖屏位图 PNG / JPG / WebP',
         when: (m) => mode(m, 'reader.backgroundMode') === 'image' },
       { k: '{m}.reader.imageFit', label: '铺放', type: 'select', options: [['cover', '铺满裁切'], ['contain', '完整包含'], ['fill', '拉伸']],

@@ -4,6 +4,7 @@ import {
   packReaderBackgroundId,
   packThemeId,
   findImageCrop,
+  normalizeOrnamentScale,
   ThemeImageCrop,
   ThemePackageCredits,
   ThemePackageParts,
@@ -40,6 +41,9 @@ export class InstalledThemePackReader {
   trailing: string = '';
   image: string = '';
   imageFit: string = 'cover';
+  // 左上、右下角饰各自的显示大小倍数（0.5–2）。
+  leadingScale: number = 1;
+  trailingScale: number = 1;
 }
 
 export class InstalledThemePackTtsPanel {
@@ -397,6 +401,8 @@ export class ThemePackRegistry {
       reader.trailing = uri(readerParts.trailing || '');
       reader.image = uri(readerParts.image || '');
       reader.imageFit = readerParts.imageFit || 'cover';
+      reader.leadingScale = normalizeOrnamentScale(readerParts.leadingScale);
+      reader.trailingScale = normalizeOrnamentScale(readerParts.trailingScale);
       if (mode === 'none') {
         variant.reader.backgroundAssetId = '';
       } else if (mode === 'ornaments' || mode === 'image') {

@@ -262,7 +262,8 @@ export class ThemeAssetRegistry {
     const pack = ThemeAssetRegistry.packReader(assetId);
     if (pack) {
       const reader = pack.reader(ThemeAssetRegistry.packReaderDark(assetId));
-      return reader.mode === 'ornaments' ? (reader.trailing || reader.leading) : '';
+      // 主题包可以只有左上或只有右下一张角饰；空着的那角不画。
+      return reader.mode === 'ornaments' ? reader.trailing : '';
     }
     switch (ThemeAssetRegistry.normalizeBackgroundAssetId(assetId)) {
       case ThemeAssetRegistry.BACKGROUND_PAPER_LIGHT:
@@ -344,7 +345,34 @@ export class ThemeAssetRegistry {
 
   static readerBackgroundTrailingRotation(assetId: string): number {
     const trailing = ThemeAssetRegistry.readerBackgroundTrailingDecoration(assetId);
-    return trailing === ThemeAssetRegistry.readerBackgroundDecoration(assetId) ? 180 : 0;
+    return trailing && trailing === ThemeAssetRegistry.readerBackgroundDecoration(assetId) ? 180 : 0;
+  }
+
+  /** 左上、右下至少有一张角饰。 */
+  static readerBackgroundHasOrnaments(assetId: string): boolean {
+    return !!ThemeAssetRegistry.readerBackgroundDecoration(assetId) ||
+      !!ThemeAssetRegistry.readerBackgroundTrailingDecoration(assetId);
+  }
+
+  /**
+   * 角饰的当前内容（左上|右下|大小）。主题包素材改了但背景 ID 没变时，预览靠它判断要不要重画：
+   * ReaderThemeBackground 的属性都没变就不会重新取图和尺寸。
+   */
+  static readerDecorationSignature(assetId: string): string {
+    if (!ThemeAssetRegistry.packReader(assetId)) return '';
+    return `${ThemeAssetRegistry.readerBackgroundDecoration(assetId)}|` +
+      `${ThemeAssetRegistry.readerBackgroundTrailingDecoration(assetId)}|` +
+      `${ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, false)}|` +
+      `${ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, true)}`;
+  }
+
+  /** 左上（trailing 为 false）或右下角饰的显示大小倍数：主题包自己设的，内置背景一律 1。 */
+  static readerBackgroundOrnamentScale(assetId: string, trailing: boolean): number {
+    const pack = ThemeAssetRegistry.packReader(assetId);
+    if (!pack) return 1;
+    const reader = pack.reader(ThemeAssetRegistry.packReaderDark(assetId));
+    if (reader.mode !== 'ornaments') return 1;
+    return trailing ? reader.trailingScale : reader.leadingScale;
   }
 
   /** selected 为 true 时优先取选中态图标：主题包和星穹御藏有选中态，其余内置图标包没有。 */

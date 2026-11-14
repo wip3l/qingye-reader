@@ -23177,19 +23177,29 @@ ${leading}` : leading;
         spreadWidthPx, spec.heightPx, spec.scale, paperOriginX);
       if (!background) return null;
       spec.background = background;
-    } else if (assetId && ThemeAssetRegistry.readerBackgroundDecoration(assetId)) {
+    } else if (assetId && ThemeAssetRegistry.readerBackgroundHasOrnaments(assetId)) {
       const viewportWidth = this.getPageTurnWidth();
       const viewportHeight = this.getReaderBackgroundViewportHeight();
-      const sizePx = vp2px(ReaderThemeDecorationLayout.size(viewportWidth, viewportHeight, false));
+      // 左上、右下角饰各自有大小倍数。
+      const leadingPx = vp2px(ReaderThemeDecorationLayout.size(viewportWidth, viewportHeight, false,
+        ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, false)));
+      const trailingPx = vp2px(ReaderThemeDecorationLayout.size(viewportWidth, viewportHeight, false,
+        ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, true)));
       const insetPx = vp2px(ReaderThemeDecorationLayout.inset(viewportWidth, viewportHeight, false));
-      const leading = ReaderRasterAssets.backgroundDecoration(host, assetId, sizePx);
-      const trailing = ReaderRasterAssets.backgroundTrailingDecoration(host, assetId, sizePx);
-      if (!leading || !trailing) return null;
-      spec.decorations.push(new ReaderRasterImage(leading, paperOriginX + insetPx, insetPx,
-        paperOriginX + insetPx + sizePx, insetPx + sizePx, 0, true));
-      spec.decorations.push(new ReaderRasterImage(trailing, paperOriginX + spreadWidthPx - insetPx - sizePx,
-        spec.heightPx - insetPx - sizePx, paperOriginX + spreadWidthPx - insetPx, spec.heightPx - insetPx,
-        ThemeAssetRegistry.readerBackgroundTrailingRotation(assetId), true));
+      // 主题包可以只有一角的角饰：空着的那角不画，有图却解不出来才退回截图。
+      if (ThemeAssetRegistry.readerBackgroundDecoration(assetId)) {
+        const leading = ReaderRasterAssets.backgroundDecoration(host, assetId, leadingPx);
+        if (!leading) return null;
+        spec.decorations.push(new ReaderRasterImage(leading, paperOriginX + insetPx, insetPx,
+          paperOriginX + insetPx + leadingPx, insetPx + leadingPx, 0, true));
+      }
+      if (ThemeAssetRegistry.readerBackgroundTrailingDecoration(assetId)) {
+        const trailing = ReaderRasterAssets.backgroundTrailingDecoration(host, assetId, trailingPx);
+        if (!trailing) return null;
+        spec.decorations.push(new ReaderRasterImage(trailing, paperOriginX + spreadWidthPx - insetPx - trailingPx,
+          spec.heightPx - insetPx - trailingPx, paperOriginX + spreadWidthPx - insetPx, spec.heightPx - insetPx,
+          ThemeAssetRegistry.readerBackgroundTrailingRotation(assetId), true));
+      }
     }
     for (const entry of entries) {
       const page = entry.layout;
