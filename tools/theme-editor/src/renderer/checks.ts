@@ -1,5 +1,5 @@
 // 编辑中的问题：先做编辑器自己的检查（能精确指到字段），没有错误时再把整包交给应用格式层严格校验。
-import { buildFiles, formatSize, usedAssetPaths, verifyFiles } from '../core/packageIo.ts';
+import { buildFiles, formatSize, MAX_ASSETS, usedAssetPaths, verifyFiles } from '../core/packageIo.ts';
 import { getPath, mp, project, type Mode } from './state.ts';
 import { assetFields, SECTIONS, sectionOfPath, type Field } from './sections.ts';
 import { contrast, isColor } from './colors.ts';
@@ -146,7 +146,7 @@ export function editorIssues(): Issue[] {
   const used = usedAssetPaths(p);
   let total = 0;
   for (const ref of used) total += p.assets.get(ref)?.bytes.length || 0;
-  if (used.length > 48) add('error', null, `素材超过 48 个（现在 ${used.length} 个）`, 'assets');
+  if (used.length > MAX_ASSETS) add('error', null, `素材超过 ${MAX_ASSETS} 个（现在 ${used.length} 个）`, 'assets');
   if (total > 78 * 1024 * 1024) add('error', null, `素材合计 ${formatSize(total)}，整包会超过 80 MB`, 'assets');
   return out;
 }

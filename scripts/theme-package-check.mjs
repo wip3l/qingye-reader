@@ -454,7 +454,25 @@ test('v2 theme: parts resolve by path, settings optional, kinds and required fie
   assert.equal(format.normalizeOrnamentScale(undefined), 1);
   broken(j => { j.ttsPanel.light.glowColor = ''; }, /artwork、skyColor/);
   broken(j => { j.radius.card = 99; }, /0 到 48/);
-  broken(j => { j.book.covers = Array(9).fill('assets/cover_01.jpg'); }, /最多 8 张/);
+  broken(j => { j.book.covers = Array(17).fill('assets/cover_01.jpg'); }, /最多 16 张/);
+  // 超过老版本的 8 张要声明 book-covers-16-v1，老版本不认得这个功能会提示先更新。
+  broken(j => { j.book.covers = Array(9).fill('assets/cover_01.jpg'); }, /book-covers-16-v1/);
+  const manyCoversManifest = withAssets(manifestV2({ requires: ['custom-scheme-v1', 'theme-parts-v1', 'book-covers-16-v1'] }), PARTS_FILES);
+  const manyCovers = partsJson();
+  manyCovers.book.covers = Array(16).fill('assets/cover_01.jpg');
+  const decodedManyCovers = format.decodeTheme(JSON.stringify({ parts: manyCovers }), manyCoversManifest).parts;
+  assert.equal(decodedManyCovers.book.covers.length, 16);
+  assert.equal(format.partsUseManyCovers(decodedManyCovers), true);
+  assert.equal(format.partsUseManyCovers(parts), false);
+  // 深色那套老版本不读：超过 8 张不用声明；只有深色那套时它会写成 covers，要声明。
+  const manyDark = partsJson();
+  manyDark.book.coversDark = Array(16).fill('assets/cover_02.jpg');
+  const decodedManyDark = format.decodeTheme(JSON.stringify({ parts: manyDark }), manifest).parts;
+  assert.equal(format.partsUseManyCovers(decodedManyDark), false);
+  decodedManyDark.book.covers = [];
+  assert.equal(format.partsUseManyCovers(decodedManyDark), true);
+  assert.equal(format.ThemePackageLimits.MAX_COVERS, 16);
+  assert.equal(format.ThemePackageFeatures.KNOWN.includes('book-covers-16-v1'), true);
   broken(j => { j.logo = 'assets/missing.svg'; }, /不存在/);
   broken(j => { j.bubble = { frame: 'assets/frame.svg' }; }, /需要 cap/);
   // 没有 parts 也没有 settings 不行；parts 需要清单声明 theme-parts-v1。
@@ -565,8 +583,8 @@ test('v2 theme: dark covers are optional, fall back both ways and stay readable 
   assert.equal(decode({ book: bare, logo: 'assets/logo.svg' }).book.coversDark.length, 1);
 
   const bad = partsJson();
-  bad.book.coversDark = Array(9).fill('assets/cover_01.jpg');
-  assert.throws(() => decode(bad), /coversDark 最多 8 张/);
+  bad.book.coversDark = Array(17).fill('assets/cover_01.jpg');
+  assert.throws(() => decode(bad), /coversDark 最多 16 张/);
 });
 
 test('v2 theme: the dark folder illustration follows the same rules as dark covers', () => {

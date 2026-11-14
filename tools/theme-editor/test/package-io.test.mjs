@@ -175,6 +175,29 @@ test('a package with only dark covers is written as plain covers for older apps'
   assert.equal(parts.book.shelfFolderDark, undefined);
 });
 
+test('more than 8 covers export with the feature flag older apps need to see', async () => {
+  const entries = handWritten();
+  for (let i = 0; i < 16; i++) entries[`night-garden/assets/k${i}.jpg`] = jpg(450, 660, 20 + i);
+  const { project } = await io.loadProject(io.readZip(zipSync(entries)));
+  const requiresOf = async () => JSON.parse(strFromU8((await io.exportFiles(project)).get('manifest.json'))).requires;
+  assert.equal(io.MAX_COVERS, 16);
+  // 8 张以内和以前一样，不多声明；深色那套旧版本应用不读，放满也不用声明。
+  project.parts.book.covers = Array.from({ length: 8 }, (_, i) => `assets/k${i}.jpg`);
+  project.parts.book.coversDark = Array.from({ length: 16 }, (_, i) => `assets/k${i}.jpg`);
+  assert.equal((await requiresOf()).includes('book-covers-16-v1'), false);
+  project.parts.book.covers = Array.from({ length: 16 }, (_, i) => `assets/k${i}.jpg`);
+  assert.equal((await requiresOf()).includes('book-covers-16-v1'), true);
+  const again = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(again.problems, []);
+  assert.equal(again.project.parts.book.covers.length, 16);
+  // 只填了深色那套时它会写成 covers，超过 8 张同样要声明。
+  project.parts.book.covers = [];
+  assert.equal((await requiresOf()).includes('book-covers-16-v1'), true);
+  // 一套超过 16 张导出时由格式层拦下。
+  project.parts.book.covers = Array.from({ length: 17 }, (_, i) => `assets/k${i % 16}.jpg`);
+  await assert.rejects(io.exportFiles(project).then((files) => io.verifyFiles(files)), /最多 16 张/);
+});
+
 test('the dark folder illustration is optional and keeps its own display area', async () => {
   const entries = handWritten();
   const theme = JSON.parse(strFromU8(entries['night-garden/theme.json']));

@@ -46,7 +46,7 @@ my-theme/
 | `version` | 否 | 作者自定的版本号，最多 32 个字符。 |
 | `description` | 否 | 一句话说明，最多 120 个字符，显示在主题详情。 |
 | `baseTheme` | 否 | 包里没写的部件回退到哪个内置主题，默认 `plain-default`。内置主题 ID 见主题开发指南。选付费主题时，导入的人没有那套主题，基底会换成 `plain-default`（导入预览里会列出）；要所有人看到一样的效果，就用 `plain-default` 或把部件都写进包里。`obsidian-archive`、`celestial-vault` 这类专属主题不要作基底。 |
-| `requires` | 是 | 至少包含 `custom-scheme-v1`；带 `parts` 时必须包含 `theme-parts-v1`；带字体文件时包含 `fonts-v1`；带 `layout` 时包含 `reader-layout-v1`；带 `emphasis` 时包含 `emphasis-rules-v3`；阅读页角饰只有左上或右下一张时包含 `reader-single-corner-v1`。 |
+| `requires` | 是 | 至少包含 `custom-scheme-v1`；带 `parts` 时必须包含 `theme-parts-v1`；带字体文件时包含 `fonts-v1`；带 `layout` 时包含 `reader-layout-v1`；带 `emphasis` 时包含 `emphasis-rules-v3`；阅读页角饰只有左上或右下一张时包含 `reader-single-corner-v1`；`covers` 超过 8 张时包含 `book-covers-16-v1`。 |
 | `assets` | 否 | 可以不写：应用导入时枚举 `assets/` 目录。写了就按 `[{ "path": "assets/x.png", "sha256": "...", "size": 123 }]` 登记，`sha256` 和 `size` 可省略，写了会核对。 |
 | `credits` | 否 | 再导出的混搭方案记录原主题包：`{ "packageId", "name", "author" }`。手写包不用填。 |
 
@@ -81,8 +81,8 @@ my-theme/
 | | `listen`、`footprint`（及 `listenSelected`、`footprintSelected`） | 可选第四个页签“听”“足迹”的图标（其他设置 › 底栏里开启），可以不写；没写时这个页签用基底主题的图标。旧版本应用会忽略。 |
 | | `search`、`searchSelected` | 旧版本应用底栏“搜索”页签的图标。本应用读包时照收但不显示；旧版本应用要求有 `search` 才肯导入，应用和桌面编辑器导出时缺了就用 `explore`（与 `exploreSelected`）的图标补上。 |
 | | `labels` | 写 `hidden` 时底栏只显示图标，不显示“书架”等文字。 |
-| `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 8 张，书架按书轮播）、书架边框 SVG、分组文件夹插画。 |
-| | `coversDark` | 可选：深色模式单独的一套封面（最多 8 张）。不写时深色模式也用 `covers`。和 `covers` 张数相同、顺序对应时，同一本书切换深浅色落在同一序号上，适合放同一幅画的两个版本。旧版本应用会忽略，两种模式都显示 `covers`，所以 `covers` 要始终写。 |
+| `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 16 张，书架按书轮播；超过 8 张时 `requires` 要包含 `book-covers-16-v1`，旧版本应用最多只收 8 张）、书架边框 SVG、分组文件夹插画。 |
+| | `coversDark` | 可选：深色模式单独的一套封面（最多 16 张）。不写时深色模式也用 `covers`。和 `covers` 张数相同、顺序对应时，同一本书切换深浅色落在同一序号上，适合放同一幅画的两个版本。旧版本应用会忽略，两种模式都显示 `covers`，所以 `covers` 要始终写。 |
 | | `shelfFolderDark` | 可选：深色模式单独的文件夹插画。不写时深色模式也用 `shelfFolder`。旧版本应用会忽略，两种模式都显示 `shelfFolder`。 |
 | | `coverCrops`、`coverCropsDark`、`shelfFolderCrop`、`shelfFolderCropDark` | 可选的显示区域（见下文“显示区域”）：`coverCrops` 是数组，按 `image` 对应到 `covers` 里的某张封面；`coverCropsDark` 同理，对应 `coversDark`；`shelfFolderCrop`、`shelfFolderCropDark` 分别对应两张文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
@@ -167,7 +167,7 @@ my-theme/
 限制：
 
 - SVG 必须自包含：不得出现 `<script>`、`<image>`、`<use>`、`<filter>`、`<foreignObject>`、`href=`、`url(`，单个不超过 1 MB。
-- 位图单个不超过 25 MB，字体单个不超过 40 MB，素材总数不超过 48 个，整包不超过 80 MB，解压后不超过 160 MB。
+- 位图单个不超过 25 MB，字体单个不超过 40 MB，素材总数不超过 64 个，整包不超过 80 MB，解压后不超过 160 MB。
 - 文件扩展名必须与实际格式一致（按文件头识别），`jpeg` 按 `jpg` 处理。
 - 素材只能放在 `assets/` 一层，文件名 `[A-Za-z0-9][A-Za-z0-9_-]*`。
 

@@ -47,6 +47,7 @@ import {
   packageIdOfThemeId,
   packThemeId,
   partsAssetRefs,
+  partsUseManyCovers,
   partsUseSingleCorner,
   pickLayout,
   QYTHEME_EXTENSION,
@@ -312,6 +313,9 @@ export class ThemePackageService {
         manifest.requires.push(ThemePackageFeatures.THEME_PARTS);
         if (partsUseSingleCorner(bundled.record.parts)) {
           manifest.requires.push(ThemePackageFeatures.READER_SINGLE_CORNER);
+        }
+        if (partsUseManyCovers(bundled.record.parts)) {
+          manifest.requires.push(ThemePackageFeatures.BOOK_COVERS_16);
         }
         manifest.version = bundled.version;
         if (!manifest.description) manifest.description = bundled.description;

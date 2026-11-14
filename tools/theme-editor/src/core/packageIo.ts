@@ -629,6 +629,16 @@ export function normalizedParts(parts: Json): Json {
 const OVERRIDE_SETTING_KEYS: string[] = ['customLightPalette', 'customDarkPalette', 'customLightEmphasis',
   'customDarkEmphasis', 'customRadius', 'customLightStartupText', 'customDarkStartupText', 'customAppFontFamily'];
 
+/** 封面一套最多几张、整包最多几个素材：编辑器界面和检查用应用格式层的同一组上限。 */
+export const MAX_COVERS: number = ThemePackageLimits.MAX_COVERS;
+export const MAX_ASSETS: number = ThemePackageLimits.MAX_ASSETS;
+
+/** covers 超过老版本的 8 张：要声明 book-covers-16-v1（老版本应用会提示先更新，而不是报“最多 8 张”）。 */
+function usesManyCovers(parts: Json): boolean {
+  const covers = parts.book && parts.book.covers;
+  return Array.isArray(covers) && covers.length > ThemePackageLimits.LEGACY_MAX_COVERS;
+}
+
 export async function buildFiles(project: EditorProject): Promise<FileMap> {
   const parts = normalizedParts(project.parts);
   const used = usedAssetPaths(project);
@@ -645,6 +655,7 @@ export async function buildFiles(project: EditorProject): Promise<FileMap> {
   const requires = new Set<string>([ThemePackageFeatures.CUSTOM_SCHEME]);
   if (Object.keys(parts).length) requires.add(ThemePackageFeatures.THEME_PARTS);
   if (usesSingleCorner(parts)) requires.add(ThemePackageFeatures.READER_SINGLE_CORNER);
+  if (usesManyCovers(parts)) requires.add(ThemePackageFeatures.BOOK_COVERS_16);
   if (project.layout) requires.add(ThemePackageFeatures.READER_LAYOUT);
   if (project.emphasis) requires.add(ThemePackageFeatures.EMPHASIS_RULES);
   if (hasFont) requires.add(ThemePackageFeatures.FONTS);

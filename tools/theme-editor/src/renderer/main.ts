@@ -2,7 +2,7 @@
 import './styles.css';
 import {
   exportFiles, exportZip, formatSize, loadProject, makeAsset, newProject, readZip, safeAssetPath, serializeDraft,
-  deserializeDraft, usedAssetPaths, type EditorAsset, type EditorProject, type FileMap
+  deserializeDraft, usedAssetPaths, MAX_COVERS, type EditorAsset, type EditorProject, type FileMap
 } from '../core/packageIo.ts';
 import { $, assetUrl, getPath, h, mp, project, S, setPath, toast, type Mode } from './state.ts';
 import { SECTIONS, SCREENS, SHELF_LAYOUTS, EXTRA_TAB_CHOICES, section, assetFields, type Field } from './sections.ts';
@@ -481,19 +481,19 @@ function renderCovers(f: Field): HTMLElement {
         h('button', { onclick: () => commit(() => (getPath(listPath) as string[]).splice(i, 1)), 'aria-label': '移除' }, '×'))));
   });
   const addCovers = (files: File[]): void => {
-    const room = 8 - ((getPath(listPath) || []) as string[]).length;
+    const room = MAX_COVERS - ((getPath(listPath) || []) as string[]).length;
     ingestMany(files.slice(0, room), { kinds: ['image'], target: f.target }, (refs) => commit(() => {
       if (!Array.isArray(getPath(listPath))) setPath(listPath, []);
       (getPath(listPath) as string[]).push(...refs);
     }));
   };
-  if (covers.length < 8) {
+  if (covers.length < MAX_COVERS) {
     const add = h('button', { class: 'c add', title: '添加封面（可多选）', onclick: () => pickFiles(['image'], true, addCovers) }, '+');
     grid.append(add);
   }
   acceptDrop(grid, addCovers);
   return h('div', { class: 'covers-wrap' }, grid,
-    h('div', { class: 'hint' }, `${covers.length}/8 张 · 可以一次拖入多张 · ‹ › 调整顺序`),
+    h('div', { class: 'hint' }, `${covers.length}/${MAX_COVERS} 张 · 可以一次拖入多张 · ‹ › 调整顺序`),
     f.hint ? h('div', { class: 'hint' }, f.hint) : null);
 }
 

@@ -28,6 +28,8 @@ export class ThemePackageFeatures {
   static readonly SCHEME_OVERRIDES: string = 'scheme-overrides-v1';
   // 角饰模式只有左上或只有右下一张图；老版本要求两张都在，导入会直接报错，所以只在用到时写进 requires。
   static readonly READER_SINGLE_CORNER: string = 'reader-single-corner-v1';
+  // covers 超过 8 张（现在最多 16 张）；老版本最多收 8 张，多了导入直接报错，所以只在用到时写进 requires。
+  static readonly BOOK_COVERS_16: string = 'book-covers-16-v1';
   static readonly KNOWN: string[] = [
     ThemePackageFeatures.CUSTOM_SCHEME,
     ThemePackageFeatures.READER_LAYOUT,
@@ -35,7 +37,8 @@ export class ThemePackageFeatures {
     ThemePackageFeatures.FONTS,
     ThemePackageFeatures.THEME_PARTS,
     ThemePackageFeatures.SCHEME_OVERRIDES,
-    ThemePackageFeatures.READER_SINGLE_CORNER
+    ThemePackageFeatures.READER_SINGLE_CORNER,
+    ThemePackageFeatures.BOOK_COVERS_16
   ];
 }
 
@@ -47,14 +50,18 @@ export class ThemePackageLimits {
   static readonly MAX_FONT_BYTES: number = 40 * 1024 * 1024;
   static readonly MAX_VECTOR_BYTES: number = 1024 * 1024;
   static readonly MAX_JSON_BYTES: number = 1024 * 1024;
-  static readonly MAX_ASSETS: number = 48;
-  static readonly MAX_ZIP_ENTRIES: number = 64;
+  // 封面从 8 张放宽到 16 张（浅色、深色各一套）时一并放宽：两套都放满也还装得下其余部件的素材。
+  static readonly MAX_ASSETS: number = 64;
+  static readonly MAX_ZIP_ENTRIES: number = 80;
   static readonly MAX_RULES: number = 200;
   static readonly MAX_NAME_LENGTH: number = 24;
   static readonly MAX_AUTHOR_LENGTH: number = 24;
   static readonly MAX_DESCRIPTION_LENGTH: number = 120;
   static readonly MAX_VERSION_LENGTH: number = 32;
-  static readonly MAX_COVERS: number = 8;
+  // 浅色（covers）和深色（coversDark）各自的上限。
+  static readonly MAX_COVERS: number = 16;
+  // 老版本应用的封面上限：covers 超过它时清单要声明 book-covers-16-v1。
+  static readonly LEGACY_MAX_COVERS: number = 8;
   static readonly MAX_STARTUP_TEXT_LENGTH: number = 40;
 }
 
@@ -266,6 +273,14 @@ export function bookCoversFor(book: ThemePackageBook | null | undefined, dark: b
 /** 两套封面都没有。 */
 export function bookHasNoCovers(book: ThemePackageBook | null | undefined): boolean {
   return bookCoversFor(book, false).length === 0;
+}
+
+/**
+ * 写进包的 covers 超过老版本的 8 张上限（只有深色那套时它会写成 covers，一并算）：导出时清单要声明
+ * book-covers-16-v1，老版本会提示先更新应用。coversDark 老版本不读，多少张都不用声明。
+ */
+export function partsUseManyCovers(parts: ThemePackageParts | null | undefined): boolean {
+  return !!parts && !!parts.book && bookCoversFor(parts.book, false).length > ThemePackageLimits.LEGACY_MAX_COVERS;
 }
 
 /** 某个模式下显示的文件夹插画，规则同封面：深色优先用 shelfFolderDark，没有就用 shelfFolder；只给了深色那张时浅色也用它。 */
@@ -1203,6 +1218,11 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
     };
     parts.book.covers = decodeCovers('covers');
     parts.book.coversDark = decodeCovers('coversDark');
+    if (parts.book.covers.length > ThemePackageLimits.LEGACY_MAX_COVERS &&
+      !manifest.requires.includes(ThemePackageFeatures.BOOK_COVERS_16)) {
+      throw new Error(`主题包的 parts.book.covers 超过 ${ThemePackageLimits.LEGACY_MAX_COVERS} 张时 requires 要包含 ` +
+        ThemePackageFeatures.BOOK_COVERS_16);
+    }
     parts.book.shelfFrame = partAssetRef(book, 'shelfFrame', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.book');
     parts.book.shelfFolder = partAssetRef(book, 'shelfFolder', manifest, [ThemePackageAssetKinds.IMAGE], 'parts.book');
     parts.book.shelfFolderDark = partAssetRef(book, 'shelfFolderDark', manifest, [ThemePackageAssetKinds.IMAGE],
