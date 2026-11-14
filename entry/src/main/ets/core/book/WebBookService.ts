@@ -1510,7 +1510,12 @@ export class WebBookService {
         const marker = ReaderActionMarker.create('神评论', url, '神评论');
         return marker ? `${marker}\n` : '';
       });
-    value = value.replace(/<p\b[^>]*>([\s\S]*?)<comment\b([^>]*)\/?>([\s\S]*?)<\/p>/gi,
+    // One paragraph only: neither side may run past a <p>/<div> boundary. A source that rewrites
+    // `<p>甲</p><p>乙<comment/></p>` into `<div rs-native>甲</p><p>乙<comment></div></p>` would otherwise have the
+    // div's closing tag eaten here, and the rs-native pass below would then pair that div with the next
+    // paragraph's end and carry the bubble off after it.
+    value = value.replace(new RegExp('<p\\b[^>]*>((?:(?!<\\/?(?:p|div)\\b)[\\s\\S])*?)<comment\\b([^>]*)\\/?>' +
+      '((?:(?!<\\/?(?:p|div)\\b)[\\s\\S])*?)<\\/p>', 'gi'),
       (_all: string, before: string, attrs: string, after: string): string => {
         const text = this.decodeHtmlEntities(`${before || ''}${after || ''}`.replace(/<[^>]+>/g, '')).trim();
         const marker = this.readerActionMarkerFromCommentAttributes(attrs || '');
@@ -1520,18 +1525,26 @@ export class WebBookService {
     return value.replace(/<(div|span)\b[^>]*\brs-native\b[^>]*>([\s\S]*?)<\/\1>/gi,
       (_all: string, _tagName: string, inner: string): string => {
         // Clickable images inside the paragraph (hot-comment cards) were already turned into
-        // action markers; keep them after the paragraph and its comment bubble.
+        // action markers; keep them after the paragraph and its comment bubble. A count bubble that is
+        // already a marker belongs to the text before it and stays where it is.
         const cards: string[] = [];
         let rest = inner || '';
         let card = ReaderActionMarker.findFirst(rest);
         while (card) {
-          cards.push(card.marker);
-          rest = rest.substring(0, card.start) + rest.substring(card.end);
-          card = ReaderActionMarker.findFirst(rest, card.start);
+          if (/^(?:热评|章评|神评论)$/.test(card.data.title || '')) {
+            cards.push(card.marker);
+            rest = rest.substring(0, card.start) + rest.substring(card.end);
+            card = ReaderActionMarker.findFirst(rest, card.start);
+          } else {
+            card = ReaderActionMarker.findFirst(rest, card.end);
+          }
         }
         const comment = /<comment\b([^>]*)>/i.exec(rest);
+        // The block can hold more than one paragraph (see above); their boundaries stay line breaks and the
+        // bubble follows the last one, the paragraph it was written into.
         const text = this.decodeHtmlEntities(rest.replace(/<comment\b[^>]*>/gi, '')
-          .replace(/<[^>]+>/g, '')).trim();
+          .replace(/<\/p>|<br\s*\/?>|<p\b[^>]*>/gi, '\n')
+          .replace(/<[^>]+>/g, '')).replace(/[^\S\n]*\n\s*/g, '\n').trim();
         const marker = comment ? this.readerActionMarkerFromCommentAttributes(comment[1] || '') : '';
         const lines = cards.map((item: string): string => `${item}\n`).join('');
         if (!text && !marker) return lines;

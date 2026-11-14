@@ -216,6 +216,23 @@ assert.equal(actions(convert(`<p>段<img src="data:image/svg+xml;base64,${square
 assert.equal(actions(convert(`段<img onClick="java.startBrowser('${page}1')" src="data:image/svg+xml;base64,${squareBubble}">`))[0]
   .label, '段评 8');
 
+// A source whose paragraph rewrite leaves the closing </p> behind, on content that has every paragraph on one
+// line: a paragraph without comments ends up inside the same rs-native block as the next one. Each bubble stays
+// on the paragraph it was written into, and the paragraphs stay separate lines.
+const oneLine = [
+  '<div rs-native>回禀道：</p><p>“先前几次。”<comment count="4" onPress="java.showReadingBrowser(\'' + page + '4\',\'段评\')"></div></p>',
+  '<div rs-native>“好生固执。”<comment count="1" onPress="java.showReadingBrowser(\'' + page + '1\',\'段评\')"></div></p>',
+  godCard(longCard),
+  '<div rs-native>没有评论</p><p>最后一段。<comment count="8" onPress="java.showReadingBrowser(\'' + page + '8\',\'段评\')"></div></p>'
+].join('');
+const oneLineOut = convert(oneLine).replace(/<\/(?:p|div)>/g, '\n').replace(/<[^>]+>/g, '');
+const oneLineRows = oneLineOut.split('\n').filter(line => line.trim()).map(line => {
+  const found = actions(line);
+  return `${Marker.strip(line).trim()}${found.length ? `[${found[0].label}]` : ''}`;
+});
+assert.deepEqual(oneLineRows, ['回禀道：', '“先前几次。”[段评 4]', '“好生固执。”[段评 1]', '[热评]', '没有评论',
+  '最后一段。[段评 8]']);
+
 // Markers without a hot comment stay byte-identical to the old format.
 assert.equal(Marker.create('段评 3', 'https://a.example/x', '段评'),
   `${Marker.PREFIX}${encodeURIComponent(JSON.stringify({ label: '段评 3', url: 'https://a.example/x', title: '段评' }))}]]`);
