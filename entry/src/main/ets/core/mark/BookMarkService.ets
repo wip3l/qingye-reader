@@ -4,6 +4,7 @@ import { appDb } from '../../model/data/AppDatabase';
 import { BookMark, BookMarkRules, BookMarkStatus, BookMarkTags } from '../../model/book/BookMark';
 import { BookIdentity } from '../../utils/BookIdentity';
 import { BookDisplayHelper } from '../../utils/BookDisplayHelper';
+import { Context } from '@kit.AbilityKit';
 
 /**
  * 书籍标记的读写入口。页面都走这里，保存后递增 AppStorage 的 bookMarkRevision，
@@ -114,6 +115,47 @@ export class BookMarkService {
     } catch (error) {
       console.warn('加入书架时同步标记标签失败:', error);
     }
+  }
+
+  /**
+   * 补齐书架标签：书架上同一部作品的书还没有自己的标签、标记里有标签时，把标记的标签写过去。
+   * 打通之前保存的标记、加入书架时没走到 carryTagsToShelfBook 的书、被旧的书籍快照写回空标签的书都靠这里补上。
+   * 书架上已经有标签的书不动（书架上改过的以书架为准，见 syncTagsFromShelf）。只传 mark 时只补这一部作品。
+   */
+  static async fillMissingShelfTags(only: BookMark | null = null): Promise<number> {
+    try {
+      const marks = only ? [only] : await appDb.getAllBookMarks();
+      const tagged = new Map<string, BookMark>();
+      for (const mark of marks) {
+        if (mark.workKey && mark.categories.length > 0) tagged.set(mark.workKey, mark);
+      }
+      if (tagged.size === 0) return 0;
+      let changed = 0;
+      for (const book of await BookMarkService.shelfBooks()) {
+        const mark = tagged.get(BookIdentity.markKeyOf(book));
+        if (!mark || BookMarkService.shelfCustomTags(book).length > 0) continue;
+        book.customTag = BookMarkService.composeCustomTag(book, mark.categories);
+        await appDb.updateBook(book, true, 'book_mark_tags_fill');
+        changed++;
+      }
+      if (changed > 0) AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      return changed;
+    } catch (error) {
+      console.warn('补齐书架标签失败:', error);
+      return 0;
+    }
+  }
+
+  private static startupFillDone: boolean = false;
+
+  /** 每次启动补一遍（每个进程只跑一次）。 */
+  static fillMissingShelfTagsOnce(context: Context): void {
+    if (BookMarkService.startupFillDone) return;
+    BookMarkService.startupFillDone = true;
+    appDb.init(context).then((): Promise<number> => BookMarkService.fillMissingShelfTags())
+      .then((count: number): void => {
+        if (count > 0) console.info(`书架标签已按标记补齐 ${count} 本`);
+      }).catch((error: Error): void => console.warn('启动时补齐书架标签失败:', error));
   }
 
   /** 书架“自定义标签”保存后调用：这部作品有标记时，把标记的标签改成书架上的。没有标记不新建。 */

@@ -34,6 +34,7 @@ import { HomeTabBarSettingsStore } from '../utils/HomeTabBarSettingsStore';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { AudioSheetTransition, AUDIO_SHEET_ENTER_DURATION, AUDIO_SHEET_EXIT_DURATION } from '../utils/AudioSheetTransition';
+import { BookMarkService } from '../core/mark/BookMarkService';
 
 @Entry
 @Component
@@ -168,6 +169,8 @@ struct Index {
       this.stageRuntimeController);
     hilog.info(0x0000, 'testTag', 'StartupTrace Index aboutToAppear %{public}d', Date.now());
     this.syncHomeSystemBars();
+    // 书籍标记的标签补到书架上还没有标签的同一部作品；放在首屏之后，不占冷启动。
+    setTimeout((): void => BookMarkService.fillMissingShelfTagsOnce(getContext(this)), 3000);
     this.openPendingShortcut();
     // 冷启动时小艺等入口先写好搜索词。Tabs 还没建，控制器切页签会被忽略，直接以发现页签为初始页并打开搜索层，
     // 搜索层首次挂载时自己取走搜索词。

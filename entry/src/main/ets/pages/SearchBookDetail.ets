@@ -1777,6 +1777,8 @@ struct SearchBookDetailPage {
       await AppDatabase.getInstance().initWithContext(getContext(this));
       const mark = await AppDatabase.getInstance().getBookMark(key);
       if (version === this.markLoadVersion) this.bookMark = mark;
+      // 书架上这本还没有标签时把标记的标签补过去（打通之前保存的、被旧快照写回空的）。
+      if (mark && mark.categories.length > 0) await BookMarkService.fillMissingShelfTags(mark);
     } catch (error) {
       console.warn('读取书籍标记失败:', error);
     }
