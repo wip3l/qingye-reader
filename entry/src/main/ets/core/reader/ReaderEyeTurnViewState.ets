@@ -14,12 +14,17 @@ export class ReaderEyeTurnViewState {
   overlayHeight: number = 0;
   arHostMounted: boolean = false;
   arFaceActive: boolean = false;
+  /** 注视底部的停留进度 0–1，驱动页脚上方那条主题色细线。 */
+  cueProgress: number = 0;
+  /** 停留够久、正在等待抬眼确认；页脚换成“抬眼翻页”。 */
+  cueArmed: boolean = false;
 
   static readonly PHASE_COUNT: number = 3;
   static readonly PREVIEW_TOP_VP: number = 18;
 
-  promptVisible(): boolean {
-    return (this.status || '').indexOf('向上看，翻下一页') >= 0;
+  setCue(progress: number, armed: boolean): void {
+    if (this.cueProgress !== progress) this.cueProgress = progress;
+    if (this.cueArmed !== armed) this.cueArmed = armed;
   }
 
   targetLabel(): string {

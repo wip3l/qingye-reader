@@ -155,6 +155,7 @@ export class ReaderEyeTurnCoordinator {
         return allowed;
       }
     );
+    this.controller.setCueListener((progress: number, armed: boolean): void => this.state.setCue(progress, armed));
   }
 
   onSurfaceLoaded(surfaceId: string): void {
@@ -182,6 +183,7 @@ export class ReaderEyeTurnCoordinator {
 
   /** Stops the signal source and frees the camera; the page calls this whenever it leaves the foreground. */
   release(reason: string): void {
+    this.state.setCue(0, false);
     this.stopArHost();
     this.controller.stop().catch((error: Error): void => {
       console.warn(`[EyeTurn] ${reason} failed:`, error.message);

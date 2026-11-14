@@ -207,6 +207,8 @@ export type EyeTurnStatusCallback = (status: string) => void;
 export type EyeTurnSampleCallback = (sample: EyeTurnSample) => void;
 export type EyeTurnRequestCallback = (direction: number) => void;
 export type EyeTurnAvailabilityCallback = () => boolean;
+/** 翻页提示的显示进度：progress 0–1 是注视底部的停留进度（按 0.1 取整），armed 表示已在等待抬眼确认。 */
+export type EyeTurnCueCallback = (progress: number, armed: boolean) => void;
 
 /**
  * Reader-only, fully local eye-turn runtime.
@@ -295,6 +297,9 @@ export class EyeTurnController {
   private onSample: EyeTurnSampleCallback = (_sample: EyeTurnSample): void => {};
   private onTurn: EyeTurnRequestCallback = (_direction: number): void => {};
   private canTurn: EyeTurnAvailabilityCallback = (): boolean => false;
+  private onCue: EyeTurnCueCallback = (_progress: number, _armed: boolean): void => {};
+  private lastCueProgress: number = 0;
+  private lastCueArmed: boolean = false;
 
   static async requestPermission(context: common.UIAbilityContext): Promise<boolean> {
     const manager = abilityAccessCtrl.createAtManager();
@@ -321,6 +326,13 @@ export class EyeTurnController {
     this.onTurn = onTurn;
     this.canTurn = canTurn;
     this.resetDwellState();
+  }
+
+  /** 阅读页的翻页提示按它显示：状态文字会被眨眼等瞬时丢帧打断，提示不能跟着闪。 */
+  setCueListener(onCue: EyeTurnCueCallback): void {
+    this.onCue = onCue;
+    this.lastCueProgress = -1;
+    this.reportCue();
   }
 
   submitExternalScore(score: number, confidence: number = 1): void {
@@ -680,6 +692,24 @@ export class EyeTurnController {
     this.zoneSampleCount = 0;
     this.zoneStartedAt = 0;
     this.smoothedScore = Number.NaN;
+    this.reportCue();
+  }
+
+  private reportCue(): void {
+    // 短暂丢帧（眨眼、模糊帧）不收起提示，与停留计时的容忍度一致。
+    const tracking = this.missingFrameCount <= EyeTurnController.MAX_TRANSIENT_MISSING_FRAMES;
+    const armed = tracking && this.nextConfirmArmed;
+    let progress = 0;
+    if (armed) {
+      progress = 1;
+    } else if (tracking && this.currentZone === 1 && this.zoneStartedAt > 0 && Date.now() >= this.cooldownUntil) {
+      const ratio = (Date.now() - this.zoneStartedAt) / Math.max(1, this.nextDwellMs);
+      progress = Math.max(0, Math.min(1, Math.round(ratio * 10) / 10));
+    }
+    if (progress === this.lastCueProgress && armed === this.lastCueArmed) return;
+    this.lastCueProgress = progress;
+    this.lastCueArmed = armed;
+    this.onCue(progress, armed);
   }
 
   private reportTrackingStatus(status: string): void {
@@ -718,11 +748,17 @@ export class EyeTurnController {
   }
 
   private consumeScore(rawScore: number): void {
-    if (!this.calibration || this.calibrationMode) return;
+    const calibration = this.calibration;
+    if (!calibration || this.calibrationMode) return;
+    this.consumeCalibratedScore(rawScore, calibration);
+    this.reportCue();
+  }
+
+  private consumeCalibratedScore(rawScore: number, calibration: EyeTurnCalibration): void {
     this.scoreWindow.push(rawScore);
     if (this.scoreWindow.length > EyeTurnController.SCORE_MEDIAN_WINDOW) this.scoreWindow.shift();
     const filteredScore = this.medianScore(this.scoreWindow);
-    if (!this.baselineReady && this.calibration.absolute) {
+    if (!this.baselineReady && calibration.absolute) {
       // An absolute calibration already defines where zero is (the top fixation), so the
       // startup baseline must not drag the reading position back to the centre.
       this.baselineReady = true;
@@ -858,6 +894,7 @@ export class EyeTurnController {
     this.runtimeCenterOffset = 0;
     this.nextFrameDelayMs = EyeTurnController.FRAME_INTERVAL_MS;
     this.lastRuntimeStatus = '';
+    this.reportCue();
   }
 
   private async releaseCamera(): Promise<void> {

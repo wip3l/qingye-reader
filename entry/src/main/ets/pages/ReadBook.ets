@@ -247,7 +247,7 @@ import {
 } from '../core/reader/ReaderInfoBarModel';
 import { ReaderInfoBarClock } from '../core/reader/ReaderInfoBarClock';
 import { ScreenCornerInset, ScreenCornerOffset } from '../utils/ScreenCornerInset';
-import { ReaderInfoBarRow } from '../components/reader/ReaderInfoBar';
+import { ReaderEyeTurnFillHint, ReaderInfoBarRow } from '../components/reader/ReaderInfoBar';
 import { EpubChapterPlanner } from '../core/book/EpubChapterPlanner';
 import { EpubConvertResult, EpubHeading } from '../core/book/EpubHtmlConverter';
 import { EpubNoteLink } from '../core/book/EpubNoteLink';
@@ -273,6 +273,9 @@ const READER_PAGINATION_BUSY_RETRY_DELAY_MS = 48;
 const READER_IDLE_PAGINATION_BURST_MS = 10;
 const READER_IDLE_PAGINATION_GAP_MS = 16;
 const READER_DOUBLE_PAGE_DIVIDER_WIDTH = 1;
+// 眼动翻页提示：无页脚时提示文字的字号、设置面板上沿小胶囊的高度。
+const READER_EYE_TURN_CUE_HINT_SIZE = 12;
+const READER_EYE_TURN_SETTINGS_PILL_HEIGHT = 26;
 // Unfolded book-style foldables are held slightly taller than wide, so "width > height" alone never
 // enables the spread there. Near-square viewports that are wide enough for two readable leaves also count;
 // tablet portrait (~0.6–0.7) and split-screen halves stay single.
@@ -3991,8 +3994,7 @@ struct ReadBookPage {
         .hitTestBehavior(HitTestMode.None)
         .bindSheet($$this.showReaderNoteSheet, this.readerNoteContent(true), this.readerNoteSheetOptions())
 
-      if (this.readerEyeTurnEnabled && this.readerInitialPageReady && !this.eyeTurnState.showCalibration &&
-        !this.showMenu && !this.showToc && !this.showReaderCommentPanel) {
+      if (this.readerEyeTurnCueAllowed()) {
         this.readerEyeTurnPrompt()
       }
 
@@ -11657,7 +11659,10 @@ struct ReadBookPage {
         rightBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().footerRight),
         textSize: this.getReaderInfoBarConfig().footerFontSize,
         textColor: this.getReaderInfoBarConfig().textColor(false, this.appDarkMode, this.getSubTextColor()),
-        textOpacity: this.getReaderInfoBarConfig().footerOpacity / 100
+        textOpacity: this.getReaderInfoBarConfig().footerOpacity / 100,
+        cueProgress: this.readerEyeTurnFooterCueProgress(),
+        cueArmed: this.readerEyeTurnFooterCueArmed(),
+        cueColor: this.accentColor()
       })
     }
     .width('100%')
@@ -13420,32 +13425,80 @@ struct ReadBookPage {
     })
   }
 
-  readerEyeTurnPromptTop(): number {
-    const viewportHeight = this.pageViewHeight > 0 ? this.pageViewHeight : 720;
-    return Math.max(48, viewportHeight - this.getReaderContentBottomReserve() -
-      this.getEffectiveReaderMarginBottom() - 48);
+  /** 眼动翻页提示可以出现的场合；菜单、目录、段评和校准打开时都不显示。 */
+  readerEyeTurnCueAllowed(): boolean {
+    return this.readerEyeTurnEnabled && this.readerInitialPageReady && !this.eyeTurnState.showCalibration &&
+      !this.showMenu && !this.showToc && !this.showReaderCommentPanel;
+  }
+
+  /** 页脚中间槽位显示“抬眼翻页”填色提示；设置面板会挡住页脚，那时改用面板上沿的小胶囊。 */
+  readerEyeTurnFooterCueActive(): boolean {
+    return !this.showSettings && this.readerEyeTurnCueAllowed();
+  }
+
+  readerEyeTurnFooterCueProgress(): number {
+    return this.readerEyeTurnFooterCueActive() ? this.eyeTurnState.cueProgress : 0;
+  }
+
+  readerEyeTurnFooterCueArmed(): boolean {
+    return this.readerEyeTurnFooterCueActive() && this.eyeTurnState.cueArmed;
+  }
+
+  /** 没有页脚可换字（页脚关闭、漫画）时，提示单独放在底部手势条上方。 */
+  readerEyeTurnUsesFooter(): boolean {
+    return this.readerFooterEnabled && !this.isReaderComicModeActive();
   }
 
   @Builder
   readerEyeTurnPrompt() {
-    if (this.eyeTurnState.promptVisible()) {
+    if (this.showSettings) {
+      if (this.eyeTurnState.cueArmed) {
+        // 设置面板挡住了页脚：在面板上沿给一个小胶囊，调灵敏度时仍能看到状态。
+        Row() {
+          Row({ space: 2 }) {
+            SymbolGlyph($r('sys.symbol.chevron_up'))
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor([ThemeRuntime.onAccentColor()])
+            Text('抬眼翻页')
+              .fontSize(AppFontSize.CAPTION)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeRuntime.onAccentColor())
+          }
+          .height(READER_EYE_TURN_SETTINGS_PILL_HEIGHT)
+          .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+          .borderRadius(READER_EYE_TURN_SETTINGS_PILL_HEIGHT / 2)
+          .backgroundColor(this.accentColor())
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .position({ x: 0, y: '100%' })
+        .translate({
+          y: -(this.readerSettingsPanelHeight() + this.readerFloatingPanelBottomInset() +
+          READER_EYE_TURN_SETTINGS_PILL_HEIGHT + AppSpacing.SM)
+        })
+        // Above the reader settings panel so the cue stays visible while the eye-turn status is being watched.
+        .zIndex(95)
+        .hitTestBehavior(HitTestMode.None)
+        .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+      }
+    } else if (!this.readerEyeTurnUsesFooter() &&
+      (this.eyeTurnState.cueArmed || this.eyeTurnState.cueProgress > 0)) {
       Row() {
-        Text('向上看，翻下一页')
-          .fontSize(AppFontSize.BODY)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#F8FFFFFF')
-          .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
-          .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor('#B35C7569')
-          .shadow({ radius: 12, color: '#45000000', offsetX: 0, offsetY: 4 })
+        ReaderEyeTurnFillHint({
+          progress: this.eyeTurnState.cueProgress,
+          armed: this.eyeTurnState.cueArmed,
+          textSize: READER_EYE_TURN_CUE_HINT_SIZE,
+          baseColor: this.getSubTextColor(),
+          fillColor: this.accentColor()
+        })
       }
       .width('100%')
       .justifyContent(FlexAlign.Center)
-      .position({ x: 0, y: this.readerEyeTurnPromptTop() })
-      // Above the reader settings panel (zIndex 90) so the prompt stays visible while the
-      // eye-turn settings status is being watched.
-      .zIndex(95)
+      .position({ x: 0, y: '100%' })
+      .translate({ y: -(Math.max(6, this.getReaderGestureIndicatorLift()) + READER_EYE_TURN_CUE_HINT_SIZE) })
       .hitTestBehavior(HitTestMode.None)
+      .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: 4 }))
+        .animation({ duration: 200, curve: Curve.EaseOut }))
     }
   }
 
