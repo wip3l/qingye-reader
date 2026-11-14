@@ -1,7 +1,8 @@
 import { BookCoverResolver } from '../../utils/BookCoverResolver';
 import { fileUri } from '../../platform/FileUri';
-import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
-import { avSession } from '@kit.AVSessionKit';
+import { common, WantAgent } from '@kit.AbilityKit';
+import { avSession } from '../../platform/MediaSession';
+import { createLaunchAgent } from '../../platform/LaunchAgent';
 import { audio } from '@kit.AudioKit';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
@@ -232,15 +233,7 @@ export class ReaderTtsMediaSession {
   }
 
   private async createWantAgent(): Promise<WantAgent> {
-    return await wantAgent.getWantAgent({
-      wants: [{
-        bundleName: this.host.abilityContext().abilityInfo.bundleName,
-        abilityName: 'EntryAbility'
-      }],
-      actionType: wantAgent.OperationType.START_ABILITY,
-      requestCode: 1001,
-      actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
-    });
+    return await createLaunchAgent(this.host.abilityContext(), 1001);
   }
 
   // ---------------------------------------------------------------- AVSession

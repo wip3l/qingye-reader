@@ -1,6 +1,7 @@
 package io.legado.read;
 
 import android.os.Bundle;
+import android.view.KeyEvent;
 
 import ohos.stage.ability.adapter.StageActivity;
 
@@ -11,6 +12,9 @@ public class EntryEntryAbilityActivity extends StageActivity {
     private SystemBridge systemBridge;
     private CookieBridge cookieBridge;
     private SecretBridge secretBridge;
+    private TtsBridge ttsBridge;
+    private MediaBridge mediaBridge;
+    private KeyBridge keyBridge;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -20,5 +24,15 @@ public class EntryEntryAbilityActivity extends StageActivity {
         systemBridge = new SystemBridge(this, getBridgeManager());
         cookieBridge = new CookieBridge(this, getBridgeManager());
         secretBridge = new SecretBridge(this, getBridgeManager());
+        ttsBridge = new TtsBridge(this, getBridgeManager());
+        mediaBridge = new MediaBridge(this, getBridgeManager());
+        keyBridge = new KeyBridge(this, getBridgeManager());
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        // 阅读页开了音量键翻页时，音量键交给 ArkTS，不调系统音量。
+        if (keyBridge != null && keyBridge.handle(event)) return true;
+        return super.dispatchKeyEvent(event);
     }
 }

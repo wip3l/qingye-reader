@@ -1,5 +1,5 @@
 import { common } from '@kit.AbilityKit';
-import { avSession } from '@kit.AVSessionKit';
+import { avSession } from '../../platform/MediaSession';
 import { SystemTtsReader, TtsChunk, TtsReadOptions } from '../../utils/SystemTtsReader';
 import { TtsVoicePicker } from '../../utils/TtsVoicePicker';
 import { ReaderTtsFloatingSession } from '../../utils/ReaderTtsFloatingSession';

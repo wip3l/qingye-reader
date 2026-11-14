@@ -18,6 +18,11 @@
 | `SystemInsets.ts` | 返回 `null`，安全区由避让区接口决定 | 经 `SystemBridge.java` 读状态栏、导航栏高度（ArkUI-X 的避让区接口返回全 0） |
 | `Cookies.ts` | `AppCookies` 即内核 `CookieStore`，不装端口 | 经 `CookieBridge.java` 读写安卓 `CookieManager`，并作为 Cookie 端口装进内核 |
 | `KeystoreCipher.ts` | HUKS 的 AES-256-CBC | 经 `SecretBridge.java` 用安卓密钥库，参数相同 |
+| `SpeechKit.ts` | 转出 `textToSpeech` | 替身：经 `TtsBridge.java` 用安卓系统朗读合成 WAV，按鸿蒙引擎的 onStart/onData/onComplete 回调 PCM |
+| `MediaSession.ts` | 转出 `avSession` | 替身：经 `MediaBridge.java` 用安卓 `MediaSession`，锁屏、耳机、通知栏命令回调回来 |
+| `BackgroundTasks.ts` | 转出 `backgroundTaskManager` | 长时任务对应前台服务 `PlaybackService`（通知栏播放控件） |
+| `LaunchAgent.ts` | `wantAgent.getWantAgent` 拉起 EntryAbility | 返回占位对象（拉起意图由 `PlaybackService` 设置） |
+| `KeyConsumer.ts` | 转出 `inputConsumer` | 经 `KeyBridge.java` 在 Activity 的 `dispatchKeyEvent` 里接管按键（音量键翻页） |
 
 原生桥都在 `android/project/app/src/main/java/io/legado/read/` 下，在 `EntryEntryAbilityActivity.onCreate` 里注册；
 返回值约定为 JSON 字符串，失败时带 `error` 字段（`CookieBridge` 返回纯字符串，供同步调用）。
@@ -56,6 +61,10 @@
 - **隐藏的 Web 运行环境**（书源脚本用的 1×1 `Web`）要设 `.focusable(false)`：安卓上 Web 拿到焦点会吞掉返回键。
 - **沉浸光感**：安卓上没有系统材质，`ImmersiveMaterialRuntime.effectiveLevel` 把跟随系统/高档按弱档（实色底）画。
 - **握姿、智控键**：安卓上关闭，设置页不显示握姿开关。
+- **朗读与听书**：音频焦点在 `MediaBridge` 里处理：来电、其它应用播放时发 pause 命令，短暂失去焦点结束后发 play 续播。
+  离线朗读（sherpa-onnx）在安卓上还没有实现。
+- **打包时的插件库**：ace 按 ArkTS 编译产出的 `module_collection.json` 决定打进哪些插件库，增量编译时它只列重编的文件，
+  会漏库（首选项、数据库等整个模块为空）。构建脚本每次清掉 ArkTS 编译缓存做全量编译，并检查清单是否完整。
 - **书源内核**：内核分支 `arkuix-compat` 把 ArkUI-X 缺失接口改成了运行时取用。子模块指针还没指向它时，构建脚本
   做同样的文本改写；指过去之后脚本会跳过，届时删掉 `patchEngine` 那一段。
 

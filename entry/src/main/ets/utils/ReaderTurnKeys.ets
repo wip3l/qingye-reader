@@ -1,4 +1,4 @@
-import { inputConsumer, KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { inputConsumer, KeyEvent as InputKeyEvent } from '../platform/KeyConsumer';
 import { KeyCode, Action } from '../platform/InputKeys';
 import { SmartControlKey } from './SmartControlKey';
 

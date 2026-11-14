@@ -5,7 +5,7 @@ import fs from '@ohos.file.fs';
 import image from '@ohos.multimedia.image';
 import { window } from '@kit.ArkUI';
 import { Book, BookChapter, Bookmark } from '@legado/sourceengine';
-import { inputConsumer, KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { inputConsumer, KeyEvent as InputKeyEvent } from '../platform/KeyConsumer';
 import { KeyCode, Action } from '../platform/InputKeys';
 import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKeyboard';
 import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';

@@ -23,13 +23,13 @@ import { NativeSourceService, HttpClient, Book, BookChapter, Bookmark, BookSourc
 import { router, window, promptAction, RectShape } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
-import { inputConsumer, KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { inputConsumer, KeyEvent as InputKeyEvent } from '../platform/KeyConsumer';
 import { KeyCode, Action } from '../platform/InputKeys';
 import { SmartControlKey } from '../utils/SmartControlKey';
 import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKeyboard';
 import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';
 import { ReaderKeyboardCaptureDialog } from '../components/reader/ReaderKeyboardCaptureDialog';
-import lazy { avSession } from '@kit.AVSessionKit';
+import lazy { avSession } from '../platform/MediaSession';
 import lazy { motion } from '@kit.MultimodalAwarenessKit';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';

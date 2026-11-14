@@ -388,6 +388,12 @@ const quickJsLib = buildQuickJs();
 step('安装依赖（ohpm）');
 run(ohpm, ['install'], { cwd: GEN, capture: true, shell: process.platform === 'win32' });
 
+// ace 按 ArkTS 编译产出的 module_collection.json 决定打进哪些插件库（首选项、数据库、网络等）。
+// 增量编译时这个文件只列本次重编的源文件，没列到的模块的库就漏打，运行时整个模块是空的。
+// 所以每次都清掉 ArkTS 编译缓存做全量编译；跨平台警告数也只有全量编译时才完整。
+const arkTsCache = path.join(GEN, 'entry', 'build', 'default', 'cache', 'default', 'default@CompileArkTS');
+fs.rmSync(arkTsCache, { recursive: true, force: true });
+
 step('ace build apk（ArkTS 编译 + 首次打包）');
 const aceLog = path.join(OUT, 'ace-build.log');
 const ace = run(process.execPath, [aceTools, 'build', 'apk', '--target-platform', ABIS[abi].ace], {
@@ -403,6 +409,16 @@ if (ace.status !== 0 || !/APK file built successfully/.test(aceOutput)) {
   fail(`ace build 失败，完整日志见 ${path.relative(REPO, aceLog)}`);
 }
 step(`ArkTS 编译通过；尚未收进 platform/ 的跨平台警告 ${crossPlatformWarnings} 处`);
+
+// 兜底：模块清单若只覆盖少数源文件，说明又走了增量编译，打出来的包会缺库。
+const moduleCollection = path.join(arkTsCache, 'esmodule', 'release', 'module_collection.json');
+const collectedFiles = fs.existsSync(moduleCollection) ?
+  Object.keys(JSON.parse(fs.readFileSync(moduleCollection, 'utf8'))).length : 0;
+const sourceFiles = entrySources.length;
+// 只有引用了系统模块的文件才会列出（全量编译时约占一半），远低于此就是增量编译的结果。
+if (collectedFiles < sourceFiles / 4) {
+  fail(`module_collection.json 只列了 ${collectedFiles} 个源文件（共 ${sourceFiles} 个），插件库会漏打，请删掉 ${path.relative(REPO, GEN)} 后重试`);
+}
 
 // ace 每次都会重置 app/libs，自己编的库和它漏拷的库要在它之后补上，再重新打包。
 const libDir = path.join(shell, 'app', 'libs', abi);
