@@ -380,7 +380,7 @@ struct SettingsPage {
         .width('100%')
         .layoutWeight(1)
         .align(Alignment.TopStart)
-        .scrollBar(BarState.Auto)
+        .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
         Text('框内滑动调整 · 实时预览')
           .fontSize(AppFontSize.CAPTION)

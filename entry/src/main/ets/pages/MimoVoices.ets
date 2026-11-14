@@ -456,6 +456,7 @@ struct MimoVoicesPage {
           ListItem() { Row().height(this.navBarHeight + 88).hitTestBehavior(HitTestMode.None) }
         }
       }.width('100%').layoutWeight(1).cachedCount(3)
+      .scrollBar(BarState.Off)
     }.height('100%').width('100%').constraintSize({ maxWidth: 760 })
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG,
       bottom: this.screen === 'library' ? 0 : AppSpacing.XL })

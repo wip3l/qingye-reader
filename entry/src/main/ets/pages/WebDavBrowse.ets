@@ -274,6 +274,7 @@ struct WebDavBrowsePage {
             }
           }, (entry: WebDavEntry) => `${entry.relativePath}_${entry.etag}_${entry.lastModified}`)
         }
+        .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
         .width('100%')
         .layoutWeight(1)

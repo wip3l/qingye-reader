@@ -199,6 +199,7 @@ struct ExploreSourceSortPage {
             .height(Math.max(20, this.navBarHeight + 12))
         }
       }
+      .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .width('100%')
       .layoutWeight(1)

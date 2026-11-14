@@ -60,6 +60,7 @@ export struct PageScaffold {
           })
         }
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .scrollBar(BarState.Off)
         .width('100%')
         .height('100%')
         .align(Alignment.TopStart)

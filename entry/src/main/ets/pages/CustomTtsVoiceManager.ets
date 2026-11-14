@@ -717,7 +717,7 @@ struct CustomTtsVoiceManagerPage {
             ListItem() { this.speakerRow(sid) }
           }, (sid: number): string => `${sid}:${this.speakerSheetBase()?.importedSids.includes(sid)}:` +
             `${this.speakerPreviewSid === sid}:${this.speakerPreviewPlaying}`)
-        }.width('100%').layoutWeight(1).scrollBar(BarState.Auto)
+        }.width('100%').layoutWeight(1).scrollBar(BarState.Off)
           .padding({ bottom: this.navBarHeight })
       } else {
         Text('这个模型已删除').fontSize(AppFontSize.BODY).fontColor(this.subTextColor())
@@ -2333,6 +2333,7 @@ struct CustomTtsVoiceManagerPage {
         }
         .width('100%')
       }
+      .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .width('100%')
       .height(420)

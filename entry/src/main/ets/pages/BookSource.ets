@@ -678,6 +678,7 @@ struct BookSourcePage {
               }
             }, (spacerKey: string) => `${spacerKey}_bottom`)
             }
+            .scrollBar(BarState.Off)
             .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
             .width('100%')
             .height('100%')
@@ -1187,7 +1188,7 @@ struct BookSourcePage {
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
         .width('100%')
         .constraintSize({ maxHeight: 240 })
-        .scrollBar(BarState.Auto)
+        .scrollBar(BarState.Off)
       }
 
       Row() {
@@ -1308,7 +1309,7 @@ struct BookSourcePage {
           .backgroundColor(this.inputColor())
           .borderRadius(ThemeRuntime.mediumRadius())
           .margin({ bottom: AppSpacing.XL })
-          .scrollBar(BarState.Auto)
+          .scrollBar(BarState.Off)
         }
 
         if (this.checkTlsTrustHosts.length > 0) {
@@ -1807,6 +1808,7 @@ struct BookSourcePage {
         }
         .width('100%')
       }
+      .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .width('100%')
       // 系统对话框超高会直接裁掉底部，且自适应高度的 Column 里 flexShrink 不生效，
@@ -2402,7 +2404,7 @@ struct BookSourcePage {
       }
       .width('100%')
       .constraintSize({ maxHeight: 360 })
-      .scrollBar(BarState.Auto)
+      .scrollBar(BarState.Off)
 
       if (this.importSourceGroupNames(this.pendingImportSources).length > 0) {
         Row() {
@@ -3003,6 +3005,7 @@ struct BookSourcePage {
         }
         .width('100%')
       }
+      .scrollBar(BarState.Off)
       .width('100%')
       .constraintSize({ maxHeight: Math.max(88,
         Math.min(264, ImmersiveMaterialRuntime.popupMenuMaxHeight() - 148)) })

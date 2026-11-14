@@ -407,6 +407,7 @@ struct OpdsBrowsePage {
           .height(Math.max(12, this.navBarHeight))
       }
     }
+    .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     .width('100%')
     .layoutWeight(1)
@@ -634,6 +635,7 @@ struct OpdsBrowsePage {
       }
       .width('100%')
     }
+    .scrollBar(BarState.Off)
     .width('100%')
     .constraintSize({ maxHeight: 460 })
     .padding(AppSpacing.XXL)

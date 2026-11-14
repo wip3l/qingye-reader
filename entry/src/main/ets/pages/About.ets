@@ -491,7 +491,7 @@ struct AboutPage {
     }
     .width('100%')
     .constraintSize({ maxHeight: Math.max(120, this.viewportHeight * 0.82) })
-    .scrollBar(BarState.Auto)
+    .scrollBar(BarState.Off)
   }
 
   build() {

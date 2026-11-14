@@ -78,6 +78,7 @@ struct LocalBookSettingsPage {
             }
           }, (book: Book) => book.bookUrl)
         }
+        .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
         .width('100%')
         .layoutWeight(1)

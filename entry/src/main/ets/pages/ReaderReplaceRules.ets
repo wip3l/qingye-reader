@@ -614,6 +614,7 @@ struct ReaderReplaceRulesPage {
             }
           }, (spacerKey: string) => spacerKey)
         }
+        .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
         .layoutWeight(1)
         .width('100%')
@@ -1078,6 +1079,7 @@ struct ReaderReplaceRulesPage {
       .width('100%')
       .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG })
     }
+    .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     .layoutWeight(1)
     .width('100%')

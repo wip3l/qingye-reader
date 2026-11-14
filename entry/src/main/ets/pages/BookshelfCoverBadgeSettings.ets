@@ -222,6 +222,7 @@ struct BookshelfCoverBadgeSettingsPage {
       }
       .width('100%').padding({ left: 24, right: 24, top: 16, bottom: 16 + this.navBarHeight })
     }.width('100%').height('100%')
+    .scrollBar(BarState.Off)
   }
 
   pickerSheetOptions(): SheetOptions {

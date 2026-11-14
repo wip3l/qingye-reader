@@ -2205,6 +2205,7 @@ struct AccountCenterPage {
           }
         }, (product: RechargeProduct) => product.productId)
       }
+      .scrollBar(BarState.Off)
       .columnsTemplate(this.rechargeColumnsTemplate())
       .columnsGap(AppSpacing.MD)
       .rowsGap(AppSpacing.MD)

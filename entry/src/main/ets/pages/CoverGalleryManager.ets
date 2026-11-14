@@ -89,6 +89,7 @@ struct CoverGalleryManagerPage {
         .width('100%')
         .padding({ bottom: 32 + this.navBarHeight })
       }
+      .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .width('100%')
       .height('100%')
@@ -1117,7 +1118,7 @@ struct CoverGalleryManagerPage {
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
         .layoutWeight(1)
         .scrollable(ScrollDirection.Vertical)
-        .scrollBar(BarState.Auto)
+        .scrollBar(BarState.Off)
       } else {
         Column() {
           Text('当前图集还没有图片。')

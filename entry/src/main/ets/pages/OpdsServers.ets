@@ -212,6 +212,7 @@ struct OpdsServersPage {
               .padding({ top: AppSpacing.XL, bottom: AppSpacing.XL })
           }
         }
+        .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
         .width('100%')
         .layoutWeight(1)

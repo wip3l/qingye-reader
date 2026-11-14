@@ -1797,6 +1797,7 @@ export struct ReaderFontSettingsEditor {
       Scroll() {
         ReaderTypographyPreview({ config: this.typographyPreviewConfig(true) })
       }.width('100%').layoutWeight(1)
+        .scrollBar(BarState.Off)
         .onAreaChange((_oldArea: Area, area: Area) => {
           const height = Number(area.height);
           if (height > 0 && Math.abs(height - this.titleReadingPreviewHeight) > 0.5) this.titleReadingPreviewHeight = height;
