@@ -4285,7 +4285,7 @@ export struct BookshelfPage {
     const cacheKey = `${mode}_${viewKey}_${this.shelfBaseGroupId()}_${this.isBookMultiSelect ? '1' : '0'}_` +
       `${this.shouldShowLatestExpandedTileBook() ? latestBookUrls : ''}_` +
       `${books.map((book: Book) => `${book.bookUrl}:${book.name}:${book.author}:${this.getBookReadTime(book)}:${this.getBookAddTime(book)}:` +
-        `${BookshelfSortHelper.getBookUpdateTime(book)}:${book.group}:${book.isPinned ? '1' : '0'}`).join('|')}_` +
+        `${this.shelfUpdateSortTime(book)}:${book.group}:${book.isPinned ? '1' : '0'}`).join('|')}_` +
       `${this.shelfGroups.map((group: BookGroup) => `${group.groupId}:${group.groupName}:${group.pinned ? '1' : '0'}`).join('|')}`;
     if (cacheKey === this.shelfTileEntriesCacheKey) {
       return this.shelfTileEntriesCache;
@@ -4301,7 +4301,7 @@ export struct BookshelfPage {
       entry.book = book;
       entry.readTime = this.getBookReadTime(book);
       entry.addTime = this.getBookAddTime(book);
-      entry.updateTime = BookshelfSortHelper.getBookUpdateTime(book);
+      entry.updateTime = this.shelfUpdateSortTime(book);
       entry.name = this.normalizeBookName(book.name);
       entry.pinned = book.isPinned;
       entry.originalOrder = index;
@@ -4318,7 +4318,7 @@ export struct BookshelfPage {
       entry.readTime = this.latestTileGroupReadTime(groupBooks);
       entry.addTime = this.latestTileGroupAddTime(groupBooks);
       entry.updateTime = groupBooks.reduce((latest: number, book: Book): number =>
-        Math.max(latest, BookshelfSortHelper.getBookUpdateTime(book)), 0);
+        Math.max(latest, this.shelfUpdateSortTime(book)), 0);
       entry.name = this.normalizeBookName(group.groupName);
       // 置顶分组和置顶书籍同属最前一档，档内按当前排序方式排。
       entry.pinned = group.pinned === true;
@@ -4372,6 +4372,13 @@ export struct BookshelfPage {
       (mode === 'recentAdd' ? b.addTime - a.addTime : b.readTime - a.readTime);
     if (timeDiff !== 0) {
       return timeDiff;
+    }
+    if (mode === 'recentUpdate') {
+      // 与 sortBooks 一致：都没有未读更新（或同一批查到更新）的按最近阅读、再按加入时间排。
+      const readDiff = b.readTime - a.readTime || b.addTime - a.addTime;
+      if (readDiff !== 0) {
+        return readDiff;
+      }
     }
     const nameDiff = a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin');
     return nameDiff !== 0 ? nameDiff : a.originalOrder - b.originalOrder;
@@ -6088,6 +6095,11 @@ export struct BookshelfPage {
 
   hasShelfBookUpdate(book: Book): boolean {
     return book.getVariable(SHELF_UPDATE_BADGE_VARIABLE) === '1';
+  }
+
+  /** “最近更新”排序用的时间：只有还带更新角标的书才算，读过新章节后归 0，回到按最近阅读排的那一段。 */
+  shelfUpdateSortTime(book: Book): number {
+    return this.hasShelfBookUpdate(book) ? Math.max(1, BookshelfSortHelper.getBookUpdateTime(book)) : 0;
   }
 
   acknowledgeShelfBookUpdate(book: Book, deferVisual: boolean = false): void {
@@ -10640,8 +10652,9 @@ export struct BookshelfPage {
         return this.compareBookName(a, b);
       }
       if (mode === 'recentUpdate') {
-        return BookshelfSortHelper.getBookUpdateTime(b) - BookshelfSortHelper.getBookUpdateTime(a) ||
-          this.compareBookName(a, b);
+        // 带更新角标的在前、按查到更新的时间排；其余（以及同一批查到更新的）按最近阅读排。
+        return this.shelfUpdateSortTime(b) - this.shelfUpdateSortTime(a) ||
+          BookshelfSortHelper.compareRecentRead(a, b) || this.compareBookName(a, b);
       }
       return this.getBookAddTime(b) - this.getBookAddTime(a);
     });
