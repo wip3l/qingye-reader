@@ -1043,6 +1043,7 @@ struct ReadBookPage {
   @StorageLink('readerQuickJumpMode') readerQuickJumpMode: string = 'chapter';
   @StorageLink('readerQuickJumpExpanded') readerQuickJumpExpanded: boolean = false;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
+  @StorageLink('readerScrollTapTurn') readerScrollTapTurn: boolean = false;
   @StorageProp('readerPageTurnHapticsScope') readerPageTurnHapticsScope: number = 0;
   @StorageLink('readerHeaderEnabled') @Watch('onReaderChromeChanged') readerHeaderEnabled: boolean = false;
   @StorageLink('readerFooterEnabled') @Watch('onReaderChromeChanged') readerFooterEnabled: boolean = true;
@@ -9028,6 +9029,7 @@ struct ReadBookPage {
     this.readerUseBrightnessQuickAction = settings.useBrightnessQuickAction;
     this.readerQuickJumpMode = ReaderQuickJumpModel.normalizeMode(settings.quickJumpMode);
     this.readerQuickBookmarkEnabled = settings.quickBookmarkEnabled;
+    this.readerScrollTapTurn = settings.scrollTapTurn;
     this.readerHeaderEnabled = settings.readerHeaderEnabled;
     this.readerFooterEnabled = settings.readerFooterEnabled;
     this.readerInfoBarConfigRaw = settings.readerInfoBarConfig;
@@ -12979,6 +12981,14 @@ struct ReadBookPage {
 
       if (this.readerPageTurnMode === 2) {
         this.readerTapZoneSettingItem()
+      } else if (this.readerPageTurnMode === 3) {
+        this.readerSwitchSettingItem('点击翻屏', '按点击区域动作上下翻一屏；关闭时点击正文只呼出菜单',
+          this.readerScrollTapTurn, (checked: boolean) => {
+            this.setReaderScrollTapTurn(checked);
+          })
+        if (this.readerScrollTapTurn) {
+          this.readerTapZoneSettingItem()
+        }
       }
     }
 
@@ -13832,6 +13842,14 @@ struct ReadBookPage {
       console.error('保存预缓存章节数失败:', e);
     });
     this.preloadReaderContentLater();
+    this.saveReadConfig();
+  }
+
+  setReaderScrollTapTurn(enabled: boolean): void {
+    this.readerScrollTapTurn = enabled;
+    ReaderSettingsStore.saveScrollTapTurn(getContext(this), enabled).catch((e: Error) => {
+      console.error('保存滚动阅读点击翻屏设置失败:', e);
+    });
     this.saveReadConfig();
   }
 
@@ -16779,8 +16797,33 @@ ${leading}` : leading;
     if (this.consumeSuppressedReaderTapClick()) return;
     if (Date.now() >= this.readerComicSuppressClickUntil &&
       !this.showMenu && !this.showToc && !this.showSettings) {
-      this.showMenu = true;
+      const action = this.continuousReaderTapAction(globalX, globalY);
+      if (action === 2) {
+        this.turnNext();
+      } else if (action === 3) {
+        this.turnPrev();
+      } else if (action === 1) {
+        this.showMenu = true;
+      }
     }
+  }
+
+  /**
+   * 滚动阅读短按正文对应的动作（0 无、1 菜单、2 下一屏、3 上一屏）。
+   * 只有打开“点击翻屏”才按九宫格走；自动滚动和朗读中保持点击呼出菜单，免得和它们自己的滚动抢位置。
+   */
+  continuousReaderTapAction(globalX: number, globalY: number): number {
+    if (!this.readerScrollTapTurn || this.readerPageTurnMode !== 3 || this.readerAutoScrollActive ||
+      this.isTtsSpeaking) {
+      return 1;
+    }
+    const width = Math.max(1, this.pageViewWidth || this.getPageTurnWidth());
+    const height = Math.max(1, this.pageViewHeight || this.getPageTurnHeight());
+    const zone = this.getTapZoneIndex(globalX - this.readerTapLayerGlobalX,
+      globalY - this.readerTapLayerGlobalY, width, height);
+    const actions = this.readerTapZoneActionsList();
+    // 九宫格里一个“菜单”都没有时，正中一格保底呼出菜单。
+    return zone === 4 && !actions.includes(1) ? 1 : actions[zone];
   }
 
   cancelContinuousReaderSelectionTimer(): void {

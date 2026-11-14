@@ -154,6 +154,7 @@ struct SettingsPage {
   @StorageLink('readerAiProcessingIndicatorEnabled') readerAiProcessingIndicatorEnabled: boolean = true;
   @StorageLink('readerPreloadChapterCount') readerPreloadChapterCount: number = 1;
   @StorageLink('readerQuickBookmarkEnabled') readerQuickBookmarkEnabled: boolean = true;
+  @StorageLink('readerScrollTapTurn') readerScrollTapTurn: boolean = false;
   @StorageProp('readerPageTurnHapticsScope') readerPageTurnHapticsScope: number = 0;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
@@ -556,6 +557,14 @@ struct SettingsPage {
     this.sectionTitle('阅读通用')
     Column() {
       this.tapZoneSettingItem()
+      SettingSwitchRow({
+        title: '滚动阅读时点击翻屏',
+        description: '按点击区域动作上下翻一屏；关闭时点击正文只呼出菜单',
+        isOn: this.readerScrollTapTurn,
+        onChange: (value: boolean) => {
+          this.setReaderScrollTapTurn(value);
+        }
+      })
       this.selectItem('屏幕方向', '阅读时的屏幕方向',
         this.screenOrientationOptions(), this.screenOrientationSelectedIndex(), (index: number) => {
           this.setReaderScreenOrientationByIndex(index);
@@ -1142,6 +1151,7 @@ struct SettingsPage {
     this.readerAiProcessingIndicatorEnabled = settings.aiProcessingIndicatorEnabled;
     this.readerPreloadChapterCount = settings.preloadChapterCount;
     this.readerQuickBookmarkEnabled = settings.quickBookmarkEnabled;
+    this.readerScrollTapTurn = settings.scrollTapTurn;
     this.readerFontFamily = settings.fontFamily || '';
     this.readerFontFilePath = settings.fontFilePath || '';
     this.readerFontSourceName = settings.fontSourceName || '系统默认';
@@ -2267,6 +2277,13 @@ struct SettingsPage {
     ReaderSettingsStore.saveAiProcessingIndicatorEnabled(getContext(this), enabled).catch((error: Error): void => {
       console.error('保存 AI 处理标识设置失败:', error);
       HdsFeedback.showToast('AI处理标识设置保存失败');
+    });
+  }
+
+  setReaderScrollTapTurn(enabled: boolean): void {
+    this.readerScrollTapTurn = enabled;
+    ReaderSettingsStore.saveScrollTapTurn(getContext(this), enabled).catch((e: Error) => {
+      console.error('保存滚动阅读点击翻屏设置失败:', e);
     });
   }
 
