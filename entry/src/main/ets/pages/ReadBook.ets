@@ -5281,11 +5281,13 @@ struct ReadBookPage {
   async applyTxtTocRuleSelection(ref: string): Promise<void> {
     if (!this.book || !this.canSelectTxtCharset()) return;
     const targetBook: Book = this.book;
-    if (ref === LocalBookService.getTxtTocRuleRef(targetBook)) {
-      this.showTxtTocRuleDialog = false;
-      return;
-    }
     try {
+      // 规则没换、内容也没改过才算没事可做；规则被改过时同一条规则也要重新分章。
+      if (ref === LocalBookService.getTxtTocRuleRef(targetBook) &&
+        !(await LocalBookService.txtTocRuleOutdated(getContext(this), targetBook))) {
+        this.showTxtTocRuleDialog = false;
+        return;
+      }
       await this.saveReadingProgress();
       this.stopTtsReading();
       await LocalBookService.setTxtTocRule(getContext(this), targetBook, ref);

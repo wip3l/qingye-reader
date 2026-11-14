@@ -141,6 +141,16 @@ export class TxtTocRules {
     return rule.kind === TxtTocRules.KIND_WORDS ? `${rule.name} · ${TxtTocRules.wordsLabel(wordsPerChapter)}` : rule.name;
   }
 
+  /**
+   * 自定义规则内容的指纹，解析时记在书上：之后规则被改过或删掉，指纹就对不上，书内可以重新分章。
+   * 内置规则不会变，返回空串。
+   */
+  static signature(resolved: TxtTocResolvedRule): string {
+    const rule = resolved.rule;
+    if (rule.builtin) return '';
+    return `${rule.pattern}\n${rule.maxTitleLength}\n${rule.ignoreCase ? 1 : 0}`;
+  }
+
   static newCustomRule(): TxtTocRule {
     const rule = new TxtTocRule();
     rule.id = `${TxtTocRules.CUSTOM_PREFIX}${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;

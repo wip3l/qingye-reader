@@ -42,6 +42,8 @@ export struct ReaderTxtTocRuleDialogContent {
   @State private previewLoading: boolean = false;
   @State private previewError: string = '';
   @State private applying: boolean = false;
+  /** 当前规则在分章之后被改过或删掉：选中它也能再应用一次。 */
+  @State private currentOutdated: boolean = false;
   private previewToken: number = 0;
 
   aboutToAppear(): void {
@@ -53,6 +55,11 @@ export struct ReaderTxtTocRuleDialogContent {
 
   private async loadRules(): Promise<void> {
     const settings = await TxtTocRuleStore.load(getContext(this));
+    try {
+      this.currentOutdated = await LocalBookService.txtTocRuleOutdated(getContext(this), this.book);
+    } catch (e) {
+      this.currentOutdated = false;
+    }
     const rows: TxtTocRuleRowItem[] = [];
     let customHeaderShown = false;
     for (const rule of TxtTocRuleStore.allRules(settings)) {
@@ -77,7 +84,13 @@ export struct ReaderTxtTocRuleDialogContent {
   }
 
   private isDraftCurrent(): boolean {
-    return this.draftRef() === this.currentRef;
+    return this.draftRef() === this.currentRef && !this.currentOutdated;
+  }
+
+  private applyLabel(): string {
+    if (this.applying) return '正在重新解析…';
+    if (this.isDraftCurrent()) return '正在使用';
+    return this.draftRef() === this.currentRef ? '重新分章' : '应用';
   }
 
   private draftRule(): TxtTocRule | null {
@@ -183,7 +196,7 @@ export struct ReaderTxtTocRuleDialogContent {
             .fontSize(AppFontSize.TITLE)
             .fontWeight(FontWeight.Bold)
             .fontColor(this.textColor())
-          Text(`当前：${this.currentRuleName()}`)
+          Text(`当前：${this.currentRuleName()}${this.currentOutdated ? '（规则已修改，可重新分章）' : ''}`)
             .fontSize(AppFontSize.CAPTION)
             .fontColor(this.subTextColor())
             .maxLines(1)
@@ -256,7 +269,7 @@ export struct ReaderTxtTocRuleDialogContent {
           .backgroundColor(ThemeRuntime.hairlineColor(this.appDarkMode))
           .enabled(!this.applying)
           .onClick(() => this.onManageRules())
-        Button(this.applying ? '正在重新解析…' : this.isDraftCurrent() ? '正在使用' : '应用')
+        Button(this.applyLabel())
           .layoutWeight(1)
           .height(42)
           .fontColor(ThemeRuntime.onAccentColor())

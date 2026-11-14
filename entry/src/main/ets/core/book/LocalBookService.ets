@@ -18,6 +18,7 @@ import { PdfBookService } from './pdf/PdfBookService';
 import { LocalArchiveImport } from './LocalArchiveImport';
 import { TxtChapterMatcher, TxtTocResolvedRule, TxtTocRules } from './TxtTocRules';
 import { TxtTocRuleStore } from '../../utils/TxtTocRuleStore';
+import { ReadBookEngine } from './ReadBookEngine';
 
 
 export class LocalBookExportResult {
@@ -153,6 +154,8 @@ export class LocalBookService {
   private static readonly LOCAL_INTRO_TARGET_LENGTH: number = 96;
   /** 本书用的目录规则引用（见 TxtTocRules.ref），空串表示智能识别。 */
   static readonly TXT_TOC_RULE_KEY: string = 'localTocRule';
+  /** 解析时所用自定义规则的指纹（见 TxtTocRules.signature）；内置规则或旧版本解析的书为空。 */
+  static readonly TXT_TOC_RULE_SIGNATURE_KEY: string = 'localTocRuleSig';
   private static readonly TXT_TOC_SHORT_KEY: string = 'localTocShortChapters';
   private static readonly TXT_TOC_COUNT_KEY: string = 'localTocChapterCount';
   private static readonly TXT_TOC_HINT_DISMISSED_KEY: string = 'localTocHintDismissed';
@@ -278,6 +281,15 @@ export class LocalBookService {
   static getTxtTocRuleRef(book: Book | null): string {
     if (!book || !LocalBookService.isLocalTxtBook(book)) return '';
     return book.getVariable(LocalBookService.TXT_TOC_RULE_KEY) || '';
+  }
+
+  /** 这本书分章用的自定义规则之后被改过或删掉了：目录还是旧规则切的，可以按现在的规则重新分章。 */
+  static async txtTocRuleOutdated(context: Context, book: Book | null): Promise<boolean> {
+    if (!book || !LocalBookService.isLocalTxtBook(book)) return false;
+    const parsedWith = book.getVariable(LocalBookService.TXT_TOC_RULE_SIGNATURE_KEY) || '';
+    if (!parsedWith) return false;
+    const resolved = await TxtTocRuleStore.resolve(context, LocalBookService.getTxtTocRuleRef(book));
+    return TxtTocRules.signature(resolved) !== parsedWith;
   }
 
   /**
@@ -954,6 +966,7 @@ export class LocalBookService {
     LocalBookService.migrateEpubProgress(book, oldChapterPath, oldChapterContent, epub);
     await appDb.updateBook(book);
     await LocalBookService.persistEpubChapters(book.bookUrl, chapters);
+    ReadBookEngine.discardSession(book.bookUrl);
   }
 
   // 章节与正文在一个事务里写入：导入时已经转换过的正文直接进缓存，打开章节时不必再转换一遍。
@@ -1076,8 +1089,9 @@ export class LocalBookService {
     remapProgress: boolean = false): Promise<void> {
     const charsetOverride = LocalBookService.getTxtCharsetOverride(book);
     book.charset = charsetOverride || await LocalBookService.detectTextFileCharset(localPath);
-    const matcher = new TxtChapterMatcher(
-      await TxtTocRuleStore.resolve(context, LocalBookService.getTxtTocRuleRef(book)));
+    const resolvedRule = await TxtTocRuleStore.resolve(context, LocalBookService.getTxtTocRuleRef(book));
+    const matcher = new TxtChapterMatcher(resolvedRule);
+    book.putVariable(LocalBookService.TXT_TOC_RULE_SIGNATURE_KEY, TxtTocRules.signature(resolvedRule));
     const previousChapterCount = Math.max(book.totalChapterNum,
       await appDb.getBookChapterCount(book.bookUrl));
     const previousChapterIndex = Math.max(0, book.durChapterIndex);
@@ -1111,6 +1125,7 @@ export class LocalBookService {
     }
     book.putVariable('localParserVersion', LocalBookService.TXT_PARSER_VERSION);
     await appDb.updateBook(book);
+    ReadBookEngine.discardSession(book.bookUrl);
   }
 
   /** 重新解析前的阅读位置在全书正文里的字符位置（按缓存正文的字数累加）；读不到时返回 -1。 */

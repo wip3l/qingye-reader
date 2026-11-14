@@ -126,7 +126,7 @@ export class ReadBookEngine {
       if (this.book?.bookUrl === book.bookUrl) this.applyLatestBookState(book);
       return;
     }
-    if (this.canReuseBookSession(book)) {
+    if (this.canReuseBookSession(book) && await this.storedCatalogMatchesSession(book.bookUrl)) {
       await this.reuseBookSession(book, sourceHint);
       ReaderOpenTrace.mark(book.bookUrl, 'engine-session-reused',
         `chapters=${this.chapters.length} memory=${this.chapterCache.size}`);
@@ -196,8 +196,36 @@ export class ReadBookEngine {
     return this.source;
   }
 
+  /**
+   * 本地书重新解析（换目录规则、换字符编码、解析器升级）后章节和正文整体换新。
+   * 共享实例里留着的这本书的会话必须丢掉，否则 openBook 会直接复用旧目录和旧正文，要重启应用才看得到新结果。
+   */
+  static discardSession(bookUrl: string): void {
+    const live = ReadBookEngine.inst;
+    if (!live || !bookUrl || live.book?.bookUrl !== bookUrl) return;
+    live.bookGeneration++;
+    live.clearCurrentBookMemoryCache();
+    live.chapters = [];
+  }
+
   private canReuseBookSession(book: Book): boolean {
     return !!book.bookUrl && this.book?.bookUrl === book.bookUrl && this.chapters.length > 0;
+  }
+
+  /**
+   * 书架刷新等后台任务用各自的引擎实例把库里的目录换新，碰不到这里保留的会话。
+   * 章数对不上就不复用，按库里的目录重新打开；临时的通用目录本来就不落库，不参与比较。
+   */
+  private async storedCatalogMatchesSession(bookUrl: string): Promise<boolean> {
+    try {
+      const storedCount = await appDb.getBookChapterCount(bookUrl);
+      if (storedCount <= 0 || storedCount === this.chapters.length) return true;
+      return this.chapters.some((chapter: BookChapter): boolean =>
+        BookUrlResolver.getVariableJson(chapter.variable, WebBookService.GENERIC_TOC_FALLBACK_KEY) === 'true');
+    } catch (e) {
+      console.warn('[RE] compare stored catalog failed:', e);
+      return true;
+    }
   }
 
   private async reuseBookSession(book: Book, sourceHint: BookSource | null): Promise<void> {
