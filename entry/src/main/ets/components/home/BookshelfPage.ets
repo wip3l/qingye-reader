@@ -409,6 +409,11 @@ export struct BookshelfPage {
   @State shelfReorderCurtainOpacity: number = 1;
   /** 关书回到书架到挪位动画结束；期间不在 loadBooks 里放掉按住的阅读时间。 */
   private shelfReturnMotionActive: boolean = false;
+  /**
+   * 最近从书架点开的书。读完回来它的卡片会因进度变化整体重建，封面后台解码要空一两帧；这一本改成同步解码。
+   * 只限这一本：整屏都同步解码会在滚动时堵主线程。
+   */
+  private shelfLastOpenedBookUrl: string = '';
   private tileGroupPendingBack: boolean = false;
   /** 已开始但还没切过去的目标分组（-1 表示没有）；兜底收尾时直接切过去，不让点击落空。 */
   private tileGroupPendingTarget: number = -1;
@@ -5794,6 +5799,7 @@ export struct BookshelfPage {
       return;
     }
     this.cloudBookOpenRequest++;
+    this.shelfLastOpenedBookUrl = book.bookUrl;
     if (this.bookshelfBookOpenAnimation) {
       AppStorage.setOrCreate<number>(SHELF_BOOK_MOTION_UNTIL_KEY,
         Date.now() + SHELF_COVER_OPEN_START_CAP + SHELF_COVER_OPEN_DURATION + SHELF_BOOK_MOTION_SETTLE);
@@ -6296,6 +6302,10 @@ export struct BookshelfPage {
     if (to && travels) {
       this.tileGroupFlyProgress = 0;
       this.tileGroupFlyers = [this.makeShelfReorderFlyer(current, from, to)];
+    } else {
+      // 位置没变（多半本来就排在最前）就没有飞行封面顶替它：趁截图还盖着先把封面放出来，
+      // 否则截图淡出时露出的是一本没有封面的空书，淡完才补上。
+      this.tileGroupHiddenCovers = [];
     }
     AppStorage.setOrCreate<number>('shelfReturnRefreshNonce', Date.now());
     // 首页盖图在刷新通知后 120ms 揭开，揭开时下面就是这张一模一样的截图，再开始飞。
@@ -6685,10 +6695,12 @@ export struct BookshelfPage {
           .height(height)
           .objectFit(imageFit)
           // 分组开合时新建的封面同步解码：陪伴布局的书底板和书页先画出来，封面晚一两帧就是一本空书一闪。
-          .syncLoad(this.shelfCoverSyncLoad(this.imageCover(this.getShelfCover(book, animateCovers)), syncDecode))
+          .syncLoad(this.shelfCoverSyncLoad(this.imageCover(this.getShelfCover(book, animateCovers)),
+            syncDecode || book.bookUrl === this.shelfLastOpenedBookUrl))
           // 打开分组时分组页的封面在后台解码，解码完才淡入（见 afterTileGroupCoversReady）。
           .onAppear(() => this.noteTileGroupCoverMounted(book, this.imageCover(this.getShelfCover(book, animateCovers)),
-            this.shelfCoverSyncLoad(this.imageCover(this.getShelfCover(book, animateCovers)), syncDecode)))
+            this.shelfCoverSyncLoad(this.imageCover(this.getShelfCover(book, animateCovers)),
+            syncDecode || book.bookUrl === this.shelfLastOpenedBookUrl)))
           .onComplete(() => this.tileGroupPendingCovers.delete(book.bookUrl))
           .onError(() => this.tileGroupPendingCovers.delete(book.bookUrl))
       } else {
