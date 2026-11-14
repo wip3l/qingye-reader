@@ -565,6 +565,9 @@ export struct BookshelfPage {
   /** 书架设置“错落摆放”：关闭后陪伴网格里的书一样大、全部立正。 */
   @StorageLink('bookshelfCompanionStagger') @Watch('onCompanionStaggerChanged')
   bookshelfCompanionStagger: boolean = true;
+  /** 书架设置“封面阴影”：关闭后陪伴布局的书不再投下阴影，封面也去掉斜向打光，书脊与压槽保留。 */
+  @StorageLink('bookshelfCompanionCoverShadow') @Watch('onCompanionStaggerChanged')
+  bookshelfCompanionCoverShadow: boolean = true;
   /** 书架设置“阅读小记”：关闭后陪伴布局不显示阅读小记卡片。 */
   @StorageLink('bookshelfCompanionReadingNote') bookshelfCompanionReadingNote: boolean = true;
   /** 陪伴布局左上角问候语：time 内置按时段，custom 用户自写两行（可含占位符），off 不显示。 */
@@ -741,6 +744,7 @@ export struct BookshelfPage {
       this.bookshelfTypeCategoryEnabled = settings.typeCategoryEnabled;
       this.bookshelfShowAllTypeTab = settings.showAllTypeTab;
       this.bookshelfCompanionStagger = settings.companionStagger;
+      this.bookshelfCompanionCoverShadow = settings.companionCoverShadow;
       this.bookshelfCompanionReadingNote = settings.companionReadingNote;
       this.bookshelfGreetingMode = settings.greetingMode;
       this.bookshelfGreetingTitle = settings.greetingTitle;
@@ -779,7 +783,7 @@ export struct BookshelfPage {
     this.reloadShelfDataSources(true);
   }
 
-  // 书的高矮、斜靠和分组叠法都跟着开关变；渲染键带上开关值，重建数据源让已有的书和分组按新样式重画。
+  // 书的高矮、斜靠、分组叠法与投影都跟着“错落摆放”“封面阴影”变；渲染键带上开关值，重建数据源让已有的书和分组按新样式重画。
   onCompanionStaggerChanged(): void {
     this.reloadShelfDataSources(true);
   }
@@ -1388,7 +1392,7 @@ export struct BookshelfPage {
       `${book.totalChapterNum}_${book.getVariable('readStarted')}_` +
       `badges_${book.getVariable('shelfHasUpdate')}_${book.origin}_${book.originName}_` +
       `${progressChapterIndex}_${progressPageCount}_cover_${this.shelfCoverRenderVersions.get(book.bookUrl) || 0}_` +
-      `stagger_${this.bookshelfCompanionStagger ? '1' : '0'}`;
+      `stagger_${this.bookshelfCompanionStagger ? '1' : '0'}_shadow_${this.bookshelfCompanionCoverShadow ? '1' : '0'}`;
   }
 
   openCustomNetworkCoverDialog(): void {
@@ -4602,7 +4606,8 @@ export struct BookshelfPage {
           .padding({ bottom: this.shelfTileRowGap() - this.shelfTileGridRowGap(this.shelfBooksForPage(pageKey), pageKey) })
         }, (entry: ShelfTileSortEntry) => entry.book ?
           this.shelfBookRenderKey(entry.book, entry.key) :
-          `${entry.key}_stagger_${this.bookshelfCompanionStagger ? '1' : '0'}_pin_${entry.pinned ? '1' : '0'}`)
+          `${entry.key}_stagger_${this.bookshelfCompanionStagger ? '1' : '0'}_` +
+            `shadow_${this.bookshelfCompanionCoverShadow ? '1' : '0'}_pin_${entry.pinned ? '1' : '0'}`)
       } else {
         LazyForEach(this.shelfTileBookDataSource(pageKey), (book: Book) => {
           GridItem() {
@@ -5040,24 +5045,29 @@ export struct BookshelfPage {
     return Math.max(2, Math.round(coverWidth * 0.03));
   }
 
-  /** 封面面板上的打光：斜向明暗、高光带、书脊阴影、压槽与顶边亮线，盖在封面图或分组拼图上面。 */
+  /**
+   * 封面面板上的打光：斜向明暗、高光带、书脊阴影、压槽与顶边亮线，盖在封面图或分组拼图上面。
+   * 关闭“封面阴影”时去掉斜向明暗与高光带，封面颜色接近原图；书脊与压槽保留，仍看得出是精装书。
+   */
   @Builder
   shelfHardcoverCoverLight(coverWidth: number) {
     Stack({ alignContent: Alignment.TopStart }) {
-      Column()
-        .width('100%')
-        .height('100%')
-        .linearGradient({
-          angle: 118,
-          colors: [['#3DFFFFFF', 0], ['#00FFFFFF', 0.34], ['#00000000', 0.6], ['#42000000', 1]]
-        })
-      Column()
-        .width('100%')
-        .height('100%')
-        .linearGradient({
-          angle: 104,
-          colors: [['#00FFFFFF', 0.4], ['#1FFFFFFF', 0.47], ['#00FFFFFF', 0.54]]
-        })
+      if (this.bookshelfCompanionCoverShadow) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .linearGradient({
+            angle: 118,
+            colors: [['#3DFFFFFF', 0], ['#00FFFFFF', 0.34], ['#00000000', 0.6], ['#42000000', 1]]
+          })
+        Column()
+          .width('100%')
+          .height('100%')
+          .linearGradient({
+            angle: 104,
+            colors: [['#00FFFFFF', 0.4], ['#1FFFFFFF', 0.47], ['#00FFFFFF', 0.54]]
+          })
+      }
       Column()
         .width(this.shelfHardcoverSpineWidth(coverWidth))
         .height('100%')
@@ -5081,6 +5091,21 @@ export struct BookshelfPage {
     .width('100%')
     .height('100%')
     .hitTestBehavior(HitTestMode.None)
+  }
+
+  /** 封面面板的落地投影：大而淡，按封面宽度缩放。关闭“封面阴影”时不投影。 */
+  shelfHardcoverCoverShadow(coverWidth: number): ShadowOptions {
+    if (!this.bookshelfCompanionCoverShadow) return { radius: 0, color: Color.Transparent };
+    return {
+      radius: Math.round(coverWidth * 0.19), color: this.appDarkMode ? '#99000000' : '#5250341A',
+      offsetX: Math.round(coverWidth * 0.085), offsetY: Math.round(coverWidth * 0.115)
+    };
+  }
+
+  /** 书口贴着书底的接触投影。关闭“封面阴影”时不投影。 */
+  shelfHardcoverSideShadow(): ShadowOptions {
+    if (!this.bookshelfCompanionCoverShadow) return { radius: 0, color: Color.Transparent };
+    return { radius: 6, color: '#47000000', offsetX: 3, offsetY: 4 };
   }
 
   /**
@@ -5142,7 +5167,7 @@ export struct BookshelfPage {
     .height(coverHeight)
     .position({ x: this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).sideX, y: 0 })
     .backgroundColor(this.shelfHardcoverBoardColor())
-    .shadow({ radius: 6, color: '#47000000', offsetX: 3, offsetY: 4 })
+    .shadow(this.shelfHardcoverSideShadow())
     .scale({ x: 1, y: 1, centerX: 0, centerY: 0 })
     .transform(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).sideMatrix)
   }
@@ -5172,8 +5197,7 @@ export struct BookshelfPage {
       .border({ width: selected ? 2 : 0, color: this.accentColor() })
       .backgroundColor(this.shelfHardcoverBoardColor())
       .clip(true)
-      .shadow({ radius: Math.round(coverWidth * 0.19), color: this.appDarkMode ? '#99000000' : '#5250341A',
-        offsetX: Math.round(coverWidth * 0.085), offsetY: Math.round(coverWidth * 0.115) })
+      .shadow(this.shelfHardcoverCoverShadow(coverWidth))
       .scale({ x: 1, y: 1, centerX: 0, centerY: 0 })
       .transform(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).coverMatrix)
     }
@@ -5255,8 +5279,7 @@ export struct BookshelfPage {
       .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 3, bottomRight: 3 })
       .backgroundColor(this.shelfHardcoverBoardColor())
       .clip(true)
-      .shadow({ radius: Math.round(this.shelfFolderBookWidth() * 0.19), color: this.appDarkMode ? '#99000000' : '#5250341A',
-        offsetX: Math.round(this.shelfFolderBookWidth() * 0.085), offsetY: Math.round(this.shelfFolderBookWidth() * 0.115) })
+      .shadow(this.shelfHardcoverCoverShadow(this.shelfFolderBookWidth()))
       .scale({ x: 1, y: 1, centerX: 0, centerY: 0 })
       .transform(this.shelfBookShape(this.shelfFolderBookWidth(), this.shelfFolderBookHeight(), 24, 0.2).coverMatrix)
     }
@@ -5307,8 +5330,7 @@ export struct BookshelfPage {
           .borderRadius({ topLeft: 2, bottomLeft: 2, topRight: 3, bottomRight: 3 })
           .backgroundColor(this.shelfHardcoverBoardColor())
           .clip(true)
-          .shadow({ radius: Math.round(this.shelfTileHardcoverWidth() * 0.19), color: this.appDarkMode ? '#99000000' : '#5250341A',
-            offsetX: Math.round(this.shelfTileHardcoverWidth() * 0.085), offsetY: Math.round(this.shelfTileHardcoverWidth() * 0.115) })
+          .shadow(this.shelfHardcoverCoverShadow(this.shelfTileHardcoverWidth()))
           .scale({ x: 1, y: 1, centerX: 0, centerY: 0 })
           .transform(this.shelfBookShape(this.shelfTileHardcoverWidth(), this.shelfTileHardcoverHeight(), 24, 0.2).coverMatrix)
         }

@@ -26,6 +26,8 @@ export class BookshelfDisplaySettings {
   showAllTypeTab: boolean = true;
   // 陪伴布局网格里的书高矮不一、少数斜靠；关闭后一样大、全部立正。
   companionStagger: boolean = true;
+  // 陪伴布局书本的投影与封面斜向打光；关闭后书本不再投下阴影，书脊与压槽保留。
+  companionCoverShadow: boolean = true;
   // 陪伴布局问候与书架之间的“阅读小记”卡片。
   companionReadingNote: boolean = true;
   // 陪伴布局左上角问候语：time 按时段的内置文案，custom 用下面两行（可含占位符），off 不显示。
@@ -57,6 +59,7 @@ export class BookshelfDisplaySettingsStore {
   private static readonly KEY_TYPE_CATEGORY_ENABLED: string = 'bookshelfTypeCategoryEnabled';
   private static readonly KEY_SHOW_ALL_TYPE_TAB: string = 'bookshelfShowAllTypeTab';
   private static readonly KEY_COMPANION_STAGGER: string = 'bookshelfCompanionStagger';
+  private static readonly KEY_COMPANION_COVER_SHADOW: string = 'bookshelfCompanionCoverShadow';
   private static readonly KEY_COMPANION_READING_NOTE: string = 'bookshelfCompanionReadingNote';
   private static readonly KEY_GREETING_MODE: string = 'bookshelfGreetingMode';
   private static readonly KEY_GREETING_TITLE: string = 'bookshelfGreetingTitle';
@@ -112,6 +115,8 @@ export class BookshelfDisplaySettingsStore {
       store, BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB, true);
     settings.companionStagger = await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_COMPANION_STAGGER, true);
+    settings.companionCoverShadow = await BookshelfDisplaySettingsStore.getBoolean(
+      store, BookshelfDisplaySettingsStore.KEY_COMPANION_COVER_SHADOW, true);
     settings.companionReadingNote = await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_COMPANION_READING_NOTE, true);
     settings.greetingMode = BookshelfDisplaySettingsStore.normalizeGreetingMode(
@@ -160,6 +165,7 @@ export class BookshelfDisplaySettingsStore {
     await store.put(BookshelfDisplaySettingsStore.KEY_TYPE_CATEGORY_ENABLED, settings.typeCategoryEnabled !== false);
     await store.put(BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB, settings.showAllTypeTab !== false);
     await store.put(BookshelfDisplaySettingsStore.KEY_COMPANION_STAGGER, settings.companionStagger !== false);
+    await store.put(BookshelfDisplaySettingsStore.KEY_COMPANION_COVER_SHADOW, settings.companionCoverShadow !== false);
     await store.put(BookshelfDisplaySettingsStore.KEY_COMPANION_READING_NOTE, settings.companionReadingNote !== false);
     await store.put(BookshelfDisplaySettingsStore.KEY_GREETING_MODE, settings.greetingMode);
     await store.put(BookshelfDisplaySettingsStore.KEY_GREETING_TITLE, settings.greetingTitle);
@@ -219,6 +225,8 @@ export class BookshelfDisplaySettingsStore {
       settings.typeCategoryEnabled !== false);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB, settings.showAllTypeTab !== false);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_COMPANION_STAGGER, settings.companionStagger !== false);
+    AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_COMPANION_COVER_SHADOW,
+      settings.companionCoverShadow !== false);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_COMPANION_READING_NOTE,
       settings.companionReadingNote !== false);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_GREETING_MODE, settings.greetingMode);
@@ -254,6 +262,8 @@ export class BookshelfDisplaySettingsStore {
     settings.showAllTypeTab = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_SHOW_ALL_TYPE_TAB) ?? true;
     settings.companionStagger =
       AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_COMPANION_STAGGER) ?? true;
+    settings.companionCoverShadow =
+      AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_COMPANION_COVER_SHADOW) ?? true;
     settings.companionReadingNote =
       AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_COMPANION_READING_NOTE) ?? true;
     settings.greetingMode = BookshelfDisplaySettingsStore.normalizeGreetingMode(
@@ -333,6 +343,7 @@ export class BookshelfDisplaySettingsStore {
     settings.typeCategoryEnabled = source.typeCategoryEnabled !== false;
     settings.showAllTypeTab = source.showAllTypeTab !== false;
     settings.companionStagger = source.companionStagger !== false;
+    settings.companionCoverShadow = source.companionCoverShadow !== false;
     settings.companionReadingNote = source.companionReadingNote !== false;
     settings.greetingMode = BookshelfDisplaySettingsStore.normalizeGreetingMode(source.greetingMode);
     settings.greetingTitle = source.greetingTitle || '';

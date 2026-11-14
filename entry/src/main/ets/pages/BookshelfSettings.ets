@@ -49,6 +49,7 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfTypeCategoryEnabled') bookshelfTypeCategoryEnabled: boolean = true;
   @StorageLink('bookshelfShowAllTypeTab') bookshelfShowAllTypeTab: boolean = true;
   @StorageLink('bookshelfCompanionStagger') bookshelfCompanionStagger: boolean = true;
+  @StorageLink('bookshelfCompanionCoverShadow') bookshelfCompanionCoverShadow: boolean = true;
   @StorageLink('bookshelfCompanionReadingNote') bookshelfCompanionReadingNote: boolean = true;
   @StorageLink('bookshelfGreetingMode') bookshelfGreetingMode: string = 'time';
   @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
@@ -166,6 +167,17 @@ struct BookshelfSettingsPage {
         showDivider: false,
         onChange: (value: boolean) => {
           this.bookshelfCompanionStagger = value;
+          this.onDisplaySettingChanged();
+        }
+      })
+      this.itemDivider()
+      SettingSwitchRow({
+        title: '封面阴影',
+        description: '书本落在书架上的投影；关闭后书本不再有阴影',
+        isOn: this.bookshelfCompanionCoverShadow,
+        showDivider: false,
+        onChange: (value: boolean) => {
+          this.bookshelfCompanionCoverShadow = value;
           this.onDisplaySettingChanged();
         }
       })
@@ -495,6 +507,7 @@ struct BookshelfSettingsPage {
       this.bookshelfTypeCategoryEnabled = settings.typeCategoryEnabled;
       this.bookshelfShowAllTypeTab = settings.showAllTypeTab;
       this.bookshelfCompanionStagger = settings.companionStagger;
+      this.bookshelfCompanionCoverShadow = settings.companionCoverShadow;
       this.bookshelfCompanionReadingNote = settings.companionReadingNote;
       this.bookshelfGreetingMode = settings.greetingMode;
       this.bookshelfGreetingTitle = settings.greetingTitle;
@@ -686,6 +699,7 @@ struct BookshelfSettingsPage {
     settings.typeCategoryEnabled = this.bookshelfTypeCategoryEnabled;
     settings.showAllTypeTab = this.bookshelfShowAllTypeTab;
     settings.companionStagger = this.bookshelfCompanionStagger;
+    settings.companionCoverShadow = this.bookshelfCompanionCoverShadow;
     settings.companionReadingNote = this.bookshelfCompanionReadingNote;
     settings.greetingMode = this.bookshelfGreetingMode;
     settings.greetingTitle = this.bookshelfGreetingTitle;
