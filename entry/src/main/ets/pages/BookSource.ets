@@ -45,6 +45,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../components/common/HeaderBackdrop';
 import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
+import { saveDocuments, selectDocuments, writeTextFile } from '../platform/Files';
 
 const BOOK_SOURCE_IMPORT_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
 const BOOK_SOURCE_IMPORT_MAX_FILES = 50;
@@ -6547,7 +6548,7 @@ struct BookSourcePage {
       const options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
       options.maxSelectNumber = BOOK_SOURCE_IMPORT_MAX_FILES;
       options.fileSuffixFilters = ['JSON|.json', '文本|.txt'];
-      const pickerResult: Array<string> = await new picker.DocumentViewPicker().select(options);
+      const pickerResult: Array<string> = await selectDocuments(getContext(this), options);
 
       if (!pickerResult || pickerResult.length === 0) {
         return;
@@ -6674,12 +6675,11 @@ struct BookSourcePage {
       return;
     }
 
-    let file: fs.File | null = null;
     try {
       const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
       options.newFileNames = [`qingye-book-source-${this.exportTimestamp()}.json`];
       options.fileSuffixChoices = ['JSON 文件|.json'];
-      const result = await new picker.DocumentViewPicker(getContext(this)).save(options);
+      const result = await saveDocuments(getContext(this), options);
       if (!result || result.length === 0) {
         return;
       }
@@ -6694,23 +6694,13 @@ struct BookSourcePage {
       }
       const exported = selected.map((source: BookSource): Object => this.bookSourceExportObject(source));
       const json = JSON.stringify(exported, null, 2);
-      const bytes = new util.TextEncoder().encodeInto(json);
-      file = await fs.open(result[0], fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
-      await fs.write(file.fd, bytes.buffer, { offset: 0, length: bytes.byteLength });
-      await fs.close(file);
-      file = null;
+      await writeTextFile(getContext(this), result[0], json);
       HdsFeedback.showToast(`已导出 ${selected.length} 个书源`);
     } catch (e) {
       console.error('导出书源失败:', e);
       const message = e instanceof Error ? e.message : String(e);
       HdsFeedback.showToast(`导出失败: ${message}`);
     } finally {
-      if (file) {
-        try {
-          await fs.close(file);
-        } catch (_) {
-        }
-      }
       this.isBatchOperating = false;
       this.batchOperationText = '正在操作书源...';
     }

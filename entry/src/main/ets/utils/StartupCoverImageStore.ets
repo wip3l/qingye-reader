@@ -2,6 +2,7 @@ import { Context } from '@kit.AbilityKit';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
 import { fileUri } from '../platform/FileUri';
+import { copyFile, selectImages } from '../platform/Files';
 
 export class StartupCoverImageStore {
   static async pickAndSave(context: Context, schemeId: string, darkMode: boolean): Promise<string> {
@@ -10,11 +11,8 @@ export class StartupCoverImageStore {
   }
 
   static async pickSource(context: Context): Promise<string> {
-    const options: picker.PhotoSelectOptions = new picker.PhotoSelectOptions();
-    options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
-    options.maxSelectNumber = 1;
-    const result = await new picker.PhotoViewPicker(context).select(options);
-    return result && result.photoUris.length > 0 ? result.photoUris[0] : '';
+    const photoUris = await selectImages(context, 1);
+    return photoUris.length > 0 ? photoUris[0] : '';
   }
 
   /** source 可以是相册 URI，也可以是取景后缓存目录里的文件路径。 */
@@ -30,7 +28,7 @@ export class StartupCoverImageStore {
     if (source.startsWith('/')) {
       fs.copyFileSync(source, path);
     } else {
-      await fs.copy(source, fileUri.getUriFromPath(path));
+      await copyFile(source, fileUri.getUriFromPath(path));
     }
     return fileUri.getUriFromPath(path);
   }

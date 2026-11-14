@@ -73,6 +73,7 @@ import {
   ThemePackageTheme
 } from './ThemePackageFormat';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from './ZipEntryInspector';
+import { copyFile, saveDocuments, selectDocuments } from '../../platform/Files';
 
 class CustomFontRecord {
   familyName: string = '';
@@ -442,11 +443,11 @@ export class ThemePackageService {
   static async saveToFile(context: Context, result: ThemeExportResult): Promise<boolean> {
     const options = new picker.DocumentSaveOptions();
     options.newFileNames = [result.fileName];
-    const uris = await new picker.DocumentViewPicker(context).save(options);
+    const uris = await saveDocuments(context, options);
     if (!uris || uris.length === 0) {
       return false;
     }
-    await fs.copy(fileUri.getUriFromPath(result.zipPath), uris[0]);
+    await copyFile(fileUri.getUriFromPath(result.zipPath), uris[0]);
     return true;
   }
 
@@ -482,7 +483,7 @@ export class ThemePackageService {
     const options = new picker.DocumentSelectOptions();
     options.maxSelectNumber = 1;
     options.fileSuffixFilters = [`主题包|${QYTHEME_EXTENSION}`];
-    const result = await new picker.DocumentViewPicker(context).select(options);
+    const result = await selectDocuments(context, options);
     return result && result.length > 0 ? result[0] : '';
   }
 
@@ -501,7 +502,7 @@ export class ThemePackageService {
         fs.copyFileSync(sourcePath, zipPath);
       } else {
         const copySource = uri.startsWith('/') ? fileUri.getUriFromPath(uri) : uri;
-        await fs.copy(copySource, fileUri.getUriFromPath(zipPath));
+        await copyFile(copySource, fileUri.getUriFromPath(zipPath));
       }
       const size = fs.statSync(zipPath).size;
       if (size > ThemePackageLimits.MAX_PACKAGE_BYTES) {

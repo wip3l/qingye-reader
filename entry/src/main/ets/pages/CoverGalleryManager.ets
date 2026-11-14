@@ -18,6 +18,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../components/common/HeaderBackdrop';
+import { copyFile, saveDocuments, selectDocuments, selectImages } from '../platform/Files';
 
 class CoverGalleryExportResult {
   zipPath: string = '';
@@ -374,15 +375,12 @@ struct CoverGalleryManagerPage {
       return;
     }
     try {
-      const options: picker.PhotoSelectOptions = new picker.PhotoSelectOptions();
-      options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
-      options.maxSelectNumber = 50;
-      const result = await new picker.PhotoViewPicker(getContext(this)).select(options);
-      if (!result || result.photoUris.length === 0) {
+      const photoUris = await selectImages(getContext(this), 50);
+      if (photoUris.length === 0) {
         return;
       }
-      await this.addCoversToAlbum(album.id, result.photoUris);
-      HdsFeedback.showToast(`已导入 ${result.photoUris.length} 张图片`);
+      await this.addCoversToAlbum(album.id, photoUris);
+      HdsFeedback.showToast(`已导入 ${photoUris.length} 张图片`);
     } catch (e) {
       console.error('导入图集图片失败:', e);
       HdsFeedback.showToast('导入图片失败');
@@ -399,7 +397,7 @@ struct CoverGalleryManagerPage {
       const options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
       options.fileSuffixFilters = ['ZIP 压缩包|.zip'];
       options.maxSelectNumber = 1;
-      const result = await new picker.DocumentViewPicker(getContext(this)).select(options);
+      const result = await selectDocuments(getContext(this), options);
       if (!result || result.length === 0) {
         return;
       }
@@ -430,13 +428,13 @@ struct CoverGalleryManagerPage {
       const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
       options.newFileNames = [`${this.safeFileName(album.name)}.zip`];
       options.fileSuffixChoices = ['ZIP 压缩包|.zip'];
-      const result = await new picker.DocumentViewPicker(getContext(this)).save(options);
+      const result = await saveDocuments(getContext(this), options);
       if (!result || result.length === 0) {
         return;
       }
       HdsFeedback.showToast('正在导出图集...');
       const exportResult = await this.createAlbumZip(album);
-      await fs.copy(fileUri.getUriFromPath(exportResult.zipPath), result[0]);
+      await copyFile(fileUri.getUriFromPath(exportResult.zipPath), result[0]);
       HdsFeedback.showToast(`已导出 ${exportResult.imageCount} 张图片`);
     } catch (e) {
       console.error('导出图集压缩包失败:', e);
@@ -458,7 +456,7 @@ struct CoverGalleryManagerPage {
       const destUri = fileUri.getUriFromPath(destPath);
       try {
         const copySource = source.startsWith('/') ? fileUri.getUriFromPath(source) : source;
-        await fs.copy(copySource, destUri);
+        await copyFile(copySource, destUri);
         savedUris.push(destUri);
       } catch (e) {
         console.warn('复制图集图片失败，使用原始路径:', e);
@@ -500,7 +498,7 @@ struct CoverGalleryManagerPage {
       const destPath = `${imageDir}/${fileName}`;
       try {
         const copySource = source.startsWith('/') ? fileUri.getUriFromPath(source) : source;
-        await fs.copy(copySource, fileUri.getUriFromPath(destPath));
+        await copyFile(copySource, fileUri.getUriFromPath(destPath));
         copiedCount++;
       } catch (e) {
         console.warn('复制待导出的图集图片失败:', e);
@@ -524,7 +522,7 @@ struct CoverGalleryManagerPage {
     const outDir = `${zipDir}/out`;
     await this.ensureDir(zipDir);
     await this.ensureDir(outDir);
-    await fs.copy(zipUri, fileUri.getUriFromPath(zipPath));
+    await copyFile(zipUri, fileUri.getUriFromPath(zipPath));
     await zlib.decompressFile(zipPath, outDir);
     return await this.findImages(outDir);
   }

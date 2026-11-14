@@ -63,6 +63,7 @@ import {
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
+import { compareText } from '../platform/TextCompare';
 
 const STORE_BOOK_COVER_RATIO = 46 / 64;
 const SHELF_BOOK_TITLES: string[] = ['长夜', '山海', '雾中', '北窗', '星河', '归途'];
@@ -2439,7 +2440,7 @@ struct ThemeSettingsPage {
   sortedOwnedEntries(sort: string): ThemeListEntry[] {
     const entries = this.ownedThemeEntries();
     if (sort === 'name') {
-      entries.sort((a: ThemeListEntry, b: ThemeListEntry): number => a.theme.name.localeCompare(b.theme.name, 'zh'));
+      entries.sort((a: ThemeListEntry, b: ThemeListEntry): number => compareText(a.theme.name, b.theme.name, 'zh'));
       return entries;
     }
     const rank = (entry: ThemeListEntry): number => {

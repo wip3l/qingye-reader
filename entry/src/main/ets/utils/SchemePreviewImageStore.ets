@@ -2,18 +2,16 @@ import { Context } from '@kit.AbilityKit';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
 import { fileUri } from '../platform/FileUri';
+import { copyFile, selectImages } from '../platform/Files';
 
 /** 自定义方案卡片的预览图：本机文件，不同步；导出时随包打出去。 */
 export class SchemePreviewImageStore {
   static readonly DIR_NAME: string = 'theme_previews';
 
   static async pickAndSave(context: Context, schemeId: string): Promise<string> {
-    const options: picker.PhotoSelectOptions = new picker.PhotoSelectOptions();
-    options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
-    options.maxSelectNumber = 1;
-    const result = await new picker.PhotoViewPicker(context).select(options);
-    if (!result || result.photoUris.length === 0) return '';
-    return SchemePreviewImageStore.saveFrom(context, schemeId, result.photoUris[0]);
+    const photoUris = await selectImages(context, 1);
+    if (photoUris.length === 0) return '';
+    return SchemePreviewImageStore.saveFrom(context, schemeId, photoUris[0]);
   }
 
   /** source 可以是相册 URI，也可以是取景后缓存目录里的文件路径。 */
@@ -28,7 +26,7 @@ export class SchemePreviewImageStore {
     if (source.startsWith('/')) {
       fs.copyFileSync(source, path);
     } else {
-      await fs.copy(source, fileUri.getUriFromPath(path));
+      await copyFile(source, fileUri.getUriFromPath(path));
     }
     return fileUri.getUriFromPath(path);
   }

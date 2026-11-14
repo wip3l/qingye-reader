@@ -12,6 +12,7 @@
 | `FileUri.ts` | 转出 `fileUri` | 路径与 `file://` 地址互转的本地实现 |
 | `InputKeys.ts` | 转出 `KeyCode`、`Action` | 数值一致的枚举 |
 | `PlatformInfo.ts` | `ANDROID = false` | `ANDROID = true` |
+| `Files.ts` | 选择器、保存面板、`fs.copy` 原样调用 | 经原生文件桥（`FileBridge.java`）读写 `content://` 地址 |
 
 规则：
 
@@ -23,6 +24,22 @@
 - `PlatformInfo.ANDROID` 只用来关掉安卓上没有的系统能力，不用它分叉业务逻辑。
 - 给 `platform/` 加符号时，两份实现要一起补。
 - `HdsTabs` 是例外：它带专属属性，转一手导出后编译器认不出，使用处直接从 `@kit.UIDesignKit` 引入。这些分支都在 `ImmersiveMaterialRuntime.supportsHdsTabs()` 为真时才走，安卓构建脚本会把它们改写成普通 `Tabs` 以通过编译。
+
+### 选文件、存文件
+
+共用代码不直接调 `DocumentViewPicker`、`PhotoViewPicker` 和 `fs.copy`，改用 `platform/Files` 的
+`selectDocuments`、`selectImages`、`saveDocuments`、`copyFile`、`writeTextFile`。
+
+- 安卓的选择器返回 `content://` 地址，ArkUI-X 的 `fs` 打不开。安卓实现选完后经文件桥把每个文件复制到
+  `<cacheDir>/picked/<批次>/<序号>/<原文件名>`，返回沙箱路径，文件名和后缀保持原样。所以选文件的结果要按
+  “以 `/` 开头的是沙箱路径，其余是地址”对待，现有的 `uri.startsWith('/') ? getUriFromPath(uri) : uri` 写法正好适用。
+  缓存里的副本一天后清掉，要长期保留的应自己再复制一份。
+- `fileSuffixFilters` 照鸿蒙写法给。ArkUI-X 的安卓选择器会把每项过滤条件猜成一个 MIME 类型，猜不出就整类变灰，
+  所以安卓实现不交给选择器过滤，选完再按后缀筛掉不符合的。
+- 安卓上没有 `PhotoViewPicker`，`selectImages` 用文档选择器按图片类型选。
+- 写往保存地址：`copyFile(沙箱路径, 地址)`，或用 `writeTextFile` 直接写文本。
+- 原生侧在 `android/project/app/src/main/java/io/legado/read/FileBridge.java`，桥名 `io.legado.read/file`，
+  在 `EntryEntryAbilityActivity.onCreate` 里注册。ArkTS 发起的调用由 ArkUI-X 放在后台线程执行。
 
 ## 构建
 

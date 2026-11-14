@@ -1,3 +1,5 @@
+import { compareText } from '../../platform/TextCompare';
+
 /**
  * 书籍标记：用户给一部作品的评分、阅读状态、标签和短评，当作阅读记录。
  * 标签存在 categories 字段里（列名沿用），和书架标签是同一套，见 BookMarkTags。
@@ -169,7 +171,7 @@ export class BookMarkRules {
       }
     }
     return Array.from(counts.keys()).sort((a: string, b: string): number =>
-      (counts.get(b) || 0) - (counts.get(a) || 0) || a.localeCompare(b, 'zh-Hans-CN'));
+      (counts.get(b) || 0) - (counts.get(a) || 0) || compareText(a, b, 'zh-Hans-CN'));
   }
 }
 

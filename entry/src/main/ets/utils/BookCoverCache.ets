@@ -5,6 +5,7 @@ import http from '@ohos.net.http';
 import { HttpClient, SourceCoverLoader, SourceCoverUrl } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { CoverUrlNormalizer } from './CoverUrlNormalizer';
+import { copyFile } from '../platform/Files';
 
 export class BookCoverCache {
   private static resolvedCoverUris: Map<string, string> = new Map();
@@ -290,7 +291,7 @@ export class BookCoverCache {
     }
     try {
       const source = raw.startsWith('/') ? fileUri.getUriFromPath(raw) : raw;
-      await fs.copy(source, fileUri.getUriFromPath(path));
+      await copyFile(source, fileUri.getUriFromPath(path));
       return await BookCoverCache.existsAsync(path) ? path : '';
     } catch (e) {
       console.warn('复制书籍封面到缓存失败:', e);

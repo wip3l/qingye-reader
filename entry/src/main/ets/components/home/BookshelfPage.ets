@@ -79,6 +79,8 @@ import { CloudDownloadQueue } from '../../account/CloudDownloadQueue';
 import { PopupMenuAction } from '../common/PopupMenuAction';
 import { ReaderHaptics } from '../../utils/ReaderHaptics';
 import { BookMarkService } from '../../core/mark/BookMarkService';
+import { copyFile, selectDocuments } from '../../platform/Files';
+import { compareText } from '../../platform/TextCompare';
 
 const SHELF_FULL_TEXT_CACHE_NOTIFICATION_INTERVAL_MS: number = 5000;
 /** 有声书同时下载的章数。 */
@@ -1319,7 +1321,7 @@ export struct BookshelfPage {
       const options = new picker.DocumentSelectOptions();
       options.maxSelectNumber = 1;
       options.fileSuffixFilters = ['图片|.jpg,.jpeg,.png,.webp,.gif,.bmp,.heic,.heif'];
-      const result = await new picker.DocumentViewPicker(getContext(this)).select(options);
+      const result = await selectDocuments(getContext(this), options);
       if (!result || result.length === 0 || !result[0]) return;
       const source = result[0];
       // 动图原样复制、书架上照常播放；太大的拒收，免得一屏解码拖慢书架。
@@ -1339,7 +1341,7 @@ export struct BookshelfPage {
       const match = /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.exec(decodeURIComponent(source));
       const ext = match ? `.${match[1].toLowerCase()}` : '.jpg';
       const destUri = fileUri.getUriFromPath(`${dir}/${Date.now()}${ext}`);
-      await fs.copy(source, destUri);
+      await copyFile(source, destUri);
       const previousCover = current.customCoverUrl;
       current.customCoverUrl = destUri;
       await db.updateBook(current);
@@ -4430,7 +4432,7 @@ export struct BookshelfPage {
       return a.pinned ? -1 : 1;
     }
     if (mode === 'name') {
-      const nameDiff = a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin');
+      const nameDiff = compareText(a.name, b.name, 'zh-Hans-CN-u-co-pinyin');
       return nameDiff !== 0 ? nameDiff : a.originalOrder - b.originalOrder;
     }
     const timeDiff = mode === 'recentUpdate' ? b.updateTime - a.updateTime :
@@ -4445,7 +4447,7 @@ export struct BookshelfPage {
         return readDiff;
       }
     }
-    const nameDiff = a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin');
+    const nameDiff = compareText(a.name, b.name, 'zh-Hans-CN-u-co-pinyin');
     return nameDiff !== 0 ? nameDiff : a.originalOrder - b.originalOrder;
   }
 
@@ -7529,7 +7531,7 @@ export struct BookshelfPage {
       options.push(option);
     });
     options.sort((a: ShelfFilterOption, b: ShelfFilterOption) => b.count !== a.count ? b.count - a.count :
-      a.label.localeCompare(b.label, 'zh-Hans-CN-u-co-pinyin'));
+      compareText(a.label, b.label, 'zh-Hans-CN-u-co-pinyin'));
     return options;
   }
 
@@ -10861,7 +10863,7 @@ export struct BookshelfPage {
   compareBookName(a: Book, b: Book): number {
     const nameA = this.normalizeBookName(a.name);
     const nameB = this.normalizeBookName(b.name);
-    const nameDiff = nameA.localeCompare(nameB, 'zh-Hans-CN-u-co-pinyin');
+    const nameDiff = compareText(nameA, nameB, 'zh-Hans-CN-u-co-pinyin');
     if (nameDiff !== 0) {
       return nameDiff;
     }

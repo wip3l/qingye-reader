@@ -32,6 +32,7 @@ import { CustomThemeScheme, CustomThemeSchemeStore } from './CustomThemeSchemeSt
 import { ThemePackStore } from './ThemePackStore';
 import { CustomThemeQuota } from '../account/CustomThemeQuota';
 import { ReaderSettingsStore } from './ReaderSettingsStore';
+import { selectDocuments, selectImages } from '../platform/Files';
 
 /** 字体库里的一款字体，供编辑器的界面字体下拉使用。 */
 export class SchemeFontOption {
@@ -58,11 +59,8 @@ export class SchemeAssetService {
   static readonly NAVIGATION_TABS: string[] = ['bookshelf', 'explore', 'mine', 'listen', 'footprint'];
 
   static async pickImages(context: Context, max: number): Promise<string[]> {
-    const options = new picker.PhotoSelectOptions();
-    options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
-    options.maxSelectNumber = max;
-    const result = await new picker.PhotoViewPicker(context).select(options);
-    return result && result.photoUris ? result.photoUris.slice(0, max) : [];
+    const photoUris = await selectImages(context, max);
+    return photoUris.slice(0, max);
   }
 
   /** 导航图标与主题标识：SVG 跟主题色着色，PNG / WebP 保持原色。 */
@@ -70,7 +68,7 @@ export class SchemeAssetService {
     const options = new picker.DocumentSelectOptions();
     options.maxSelectNumber = max;
     options.fileSuffixFilters = ['图标|.svg,.png,.webp'];
-    const result = await new picker.DocumentViewPicker(context).select(options);
+    const result = await selectDocuments(context, options);
     return result ? result.slice(0, max) : [];
   }
 
@@ -78,7 +76,7 @@ export class SchemeAssetService {
     const options = new picker.DocumentSelectOptions();
     options.maxSelectNumber = max;
     options.fileSuffixFilters = ['SVG|.svg'];
-    const result = await new picker.DocumentViewPicker(context).select(options);
+    const result = await selectDocuments(context, options);
     return result ? result.slice(0, max) : [];
   }
 

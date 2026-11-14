@@ -19,6 +19,7 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { NativeSourceService, NativeCommentPage, HttpClient, ReaderActionMarker, ReaderActionData } from '@legado/sourceengine';
 import { NativeCommentPageView } from '../components/NativeCommentPageView';
+import { saveDocuments, writeTextFile } from '../platform/Files';
 
 class BookSourceDebugExportReport {
   reportVersion: number = 1;
@@ -701,13 +702,12 @@ struct BookSourceDebugPage {
       return;
     }
     if (this.exporting) return;
-    let file: fs.File | null = null;
     this.exporting = true;
     try {
       const options: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
       options.newFileNames = [`qingye-book-source-debug-${this.exportTimestamp()}.json`];
       options.fileSuffixChoices = ['JSON 文件|.json'];
-      const result = await new picker.DocumentViewPicker(getContext(this)).save(options);
+      const result = await saveDocuments(getContext(this), options);
       if (!result || result.length === 0) return;
       const session = JSON.parse(JSON.stringify(this.session)) as BookSourceDebugSession;
       session.sourceUrl = BookSourceDebugRedactor.url(session.sourceUrl);
@@ -720,19 +720,12 @@ struct BookSourceDebugPage {
       report.summary = this.reportSummary();
       report.session = session;
       const json = JSON.stringify(report, null, 2);
-      const bytes = new util.TextEncoder().encodeInto(json);
-      file = await fs.open(result[0], fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
-      await fs.write(file.fd, bytes.buffer, { offset: 0, length: bytes.byteLength });
-      await fs.close(file);
-      file = null;
+      await writeTextFile(getContext(this), result[0], json);
       HdsFeedback.showToast('调试报告已导出');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error || '未知错误');
       HdsFeedback.showToast(`导出失败：${message}`);
     } finally {
-      if (file) {
-        try { await fs.close(file); } catch (_) {}
-      }
       this.exporting = false;
     }
   }

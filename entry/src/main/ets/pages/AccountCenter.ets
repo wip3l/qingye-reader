@@ -33,6 +33,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
+import { selectImages } from '../platform/Files';
 
 class BenefitCompareRow {
   title: string;
@@ -409,14 +410,11 @@ struct AccountCenterPage {
     let file: fs.File | null = null;
     let source: image.ImageSource | null = null;
     try {
-      const options: picker.PhotoSelectOptions = new picker.PhotoSelectOptions();
-      options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
-      options.maxSelectNumber = 1;
-      const result = await new picker.PhotoViewPicker(this.context).select(options);
-      if (!result || result.photoUris.length === 0) {
+      const photoUris = await selectImages(this.context, 1);
+      if (photoUris.length === 0) {
         return;
       }
-      const uri = result.photoUris[0];
+      const uri = photoUris[0];
       file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
       source = image.createImageSource(file.fd);
       const info = await source.getImageInfo();

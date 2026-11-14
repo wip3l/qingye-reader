@@ -30,6 +30,7 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow } from '../components/common/SettingRow';
 import { LocalTtsModel, LocalTtsModels } from '../utils/localtts/LocalTtsModels';
 import { LocalTtsSelection } from '../utils/localtts/LocalTtsSelection';
+import { selectDocuments } from '../platform/Files';
 
 interface TtsSettingsVoiceSelectOption extends SelectOption {
   key: string;
@@ -844,7 +845,7 @@ struct TtsSettingsPage {
       const options: picker.DocumentSelectOptions = new picker.DocumentSelectOptions();
       options.maxSelectNumber = 1;
       options.fileSuffixFilters = ['JSON|.json', '文本|.txt'];
-      const result: Array<string> = await new picker.DocumentViewPicker().select(options);
+      const result: Array<string> = await selectDocuments(getContext(this), options);
       if (!result || result.length === 0) {
         return;
       }

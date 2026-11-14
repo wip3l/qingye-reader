@@ -20,6 +20,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
+import { selectDocuments } from '../platform/Files';
 
 @Entry
 @Component
@@ -818,7 +819,7 @@ struct WebDavBrowsePage {
       const options = new picker.DocumentSelectOptions();
       options.selectMode = picker.DocumentSelectMode.FILE;
       options.maxSelectNumber = 20;
-      selected = await new picker.DocumentViewPicker(getContext(this)).select(options);
+      selected = await selectDocuments(getContext(this), options);
     } catch (error) {
       const message = this.message(error);
       if (!message.toLowerCase().includes('cancel')) {

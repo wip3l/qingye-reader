@@ -17,6 +17,7 @@ import { AppDatabase } from '../model/data/AppDatabase';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { MembershipIcons } from '../account/MembershipIcons';
+import { selectDocuments } from '../platform/Files';
 
 class LocalCloudFile {
   name: string = '';
@@ -435,7 +436,7 @@ struct CloudFilesPage {
     try {
       const options = new picker.DocumentSelectOptions(); options.maxSelectNumber = 1;
       options.fileSuffixFilters = kind === 'BOOK' ? ['书籍|.txt,.epub,.mobi,.pdf'] : ['字体|.ttf,.otf,.ttc'];
-      const picked = await new picker.DocumentViewPicker(this.context).select(options);
+      const picked = await selectDocuments(this.context, options);
       if (!picked.length) return;
       const name = decodeURIComponent(picked[0].split('/').pop() || '云文件').replace(/[\\/\x00-\x1f]/g, '_');
       await CloudFileClient.stage(this.context, picked[0], name, kind);
