@@ -243,13 +243,15 @@ export class ReaderSettingsStore {
       // 排版不跟随主题时，不经 switchThemeProfile 换来的主题（试用、会员到期回退、同步来的主题，
       // 或主题 ID 已换、档案还没切时被别处读到）也沿用刚才那套排版，不读档案里各主题的旧排版。
       // 冷启动没有缓存时，从上次在用的档案取。
+      // 翻页、点按区域、眼动翻页等阅读设置所有主题共用，只有排版可以跟随主题。不经 switchThemeProfile 换来的
+      // 主题也要沿用上一套的阅读设置；排版不跟随时连排版一起沿用。冷启动没有缓存时，从上次在用的档案取。
       const follows = await ReaderSettingsStore.readTypographyFollowsTheme(store);
-      if (!previousSettings && !follows) {
+      if (!previousSettings) {
         previousSettings = await ReaderSettingsStore.loadRememberedProfile(store, activeThemeId);
       }
-      const carried = previousSettings !== null && !follows;
+      const carried = previousSettings !== null;
       if (carried && previousSettings) {
-        ReaderSettingsStore.copyTypography(previousSettings, profile);
+        if (!follows) ReaderSettingsStore.copyTypography(previousSettings, profile);
         ReaderSettingsStore.copyReadingBehavior(previousSettings, profile);
       }
       // AI 处理标识是阅读通用设置，不随主题档案切换。
@@ -259,7 +261,6 @@ export class ReaderSettingsStore {
         store, ReaderSettingsStore.KEY_QUICK_JUMP_MODE, 'chapter'));
       await ReaderSettingsStore.readGlobalFontSettings(store, profile);
       ReaderSettingsStore.normalizeGlobalFontMode(profile);
-      await ReaderSettingsStore.applyThemePageTurnDefault(store, activeThemeId, profile);
       ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(profile);
       ReaderSettingsStore.cachedThemeId = activeThemeId;
       if (carried) {
@@ -544,7 +545,6 @@ export class ReaderSettingsStore {
     ReaderSettingsStore.normalizeGlobalFontMode(settings);
     // 旧版顶层键要迁进正在用的主题档案，主题还没恢复时不知道是哪一套，等恢复后的那次读取再迁。
     if (provisional) return settings;
-    await ReaderSettingsStore.applyThemePageTurnDefault(store, activeThemeId, settings);
     ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(settings);
     ReaderSettingsStore.cachedThemeId = activeThemeId;
     await ReaderSettingsStore.persistThemeProfile(store, activeThemeId, settings);
@@ -586,15 +586,16 @@ export class ReaderSettingsStore {
       next.lightThemeIndex = ReaderThemeHelper.APP_THEME_INDEX;
       next.darkThemeIndex = ReaderThemeHelper.APP_THEME_INDEX;
       next.themeIndex = ReaderThemeHelper.APP_THEME_INDEX;
-    } else if (!await ReaderSettingsStore.readTypographyFollowsTheme(store)) {
-      // 排版不跟随主题：目标主题只换阅读背景，排版和翻页、点按区域等阅读设置都沿用当前这套。
-      ReaderSettingsStore.copyTypography(current, next);
+    } else {
+      // 阅读设置所有主题共用，始终沿用当前这套；排版不跟随主题时排版也沿用，目标主题只换阅读背景。
+      if (!await ReaderSettingsStore.readTypographyFollowsTheme(store)) {
+        ReaderSettingsStore.copyTypography(current, next);
+      }
       ReaderSettingsStore.copyReadingBehavior(current, next);
     }
     next.quickJumpMode = current.quickJumpMode;
     next.aiProcessingIndicatorEnabled = current.aiProcessingIndicatorEnabled;
     ReaderSettingsStore.copyGlobalFontSettings(current, next);
-    await ReaderSettingsStore.applyThemePageTurnDefault(store, nextId, next);
     await ReaderSettingsStore.persistThemeProfile(store, nextId, next);
     ReaderSettingsStore.cachedSettings = ReaderSettingsStore.clone(next);
     ReaderSettingsStore.cachedThemeId = nextId;
@@ -1443,6 +1444,11 @@ export class ReaderSettingsStore {
    * 息屏与常亮、预加载、菜单快捷按钮、快速书签、夜间插图，以及旧版页眉页脚内容字段。
    * 排版不跟随主题时这些也所有主题共用；阅读背景（主题序号与自定义配色）始终跟着主题走。
    */
+  /**
+   * 阅读设置：所有主题共用，换主题（以及不经 switchThemeProfile 换来的主题）时始终从当前这套带过去。
+   * 档案仍整份保存 ReaderSettings，这些字段在各档案里的旧值不再生效。页眉页脚显示什么由 readerInfoBarConfig
+   * 决定，它属于排版；下面的旧页眉页脚模式只在没有该配置时兜底。
+   */
   private static copyReadingBehavior(source: ReaderSettings, target: ReaderSettings): void {
     target.pageTurnMode = source.pageTurnMode;
     target.pageTurnAnimationType = source.pageTurnAnimationType;
@@ -1616,22 +1622,6 @@ export class ReaderSettingsStore {
 
   private static themeProfileKey(themeId: string): string {
     return `${ReaderSettingsStore.THEME_PROFILE_PREFIX}${ReaderSettingsStore.normalizeThemeProfileId(themeId)}`;
-  }
-
-  // Upgrade this theme once, including existing profiles. Later manual animation choices remain intact.
-  private static async applyThemePageTurnDefault(store: preferences.Preferences, themeId: string,
-    settings: ReaderSettings): Promise<void> {
-    if (ReaderSettingsStore.normalizeThemeProfileId(themeId) !== 'obsidian-archive') return;
-    // 排版不跟随主题时翻页动画是所有主题共用的选择，不拿主题预设覆盖；标记不写，重新打开跟随后仍会升级一次。
-    if (!await ReaderSettingsStore.readTypographyFollowsTheme(store)) return;
-    const key = 'readerObsidian3DDefaultV1';
-    if (await store.get(key, false) === true) return;
-    // Vertical paging cannot render a horizontal page curl; use the normal horizontal mode for this preset.
-    if (settings.pageTurnMode === 0) settings.pageTurnMode = 2;
-    settings.pageTurnAnimationType = ReaderSettingsStore.PAGE_TURN_ANIMATION_3D;
-    await store.put(ReaderSettingsStore.themeProfileKey(themeId), JSON.stringify(ReaderSettingsStore.clone(settings)));
-    await store.put(key, true);
-    await store.flush();
   }
 
   private static async rememberActiveProfile(store: preferences.Preferences, profileId: string): Promise<void> {

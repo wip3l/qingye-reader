@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { projectRoot } from './lib/ets-module-staging.mjs';
 
 // 排版跟随主题：每套主题的阅读档案各记一份排版，切换即取回；关闭跟随时所有主题共用当前排版。
+// 翻页、点按区域、眼动翻页等阅读设置不论开关如何都所有主题共用。
 
 const read = file => fs.readFileSync(`${projectRoot}/entry/src/main/ets/${file}`, 'utf8');
 const compile = text => stripTypeScriptTypes(text.replace(/^import .*;\r?\n/gm, '')
@@ -283,6 +284,67 @@ const tests = {
     const again = await h.settings.switchThemeProfile({}, 'classic-blue', 'warm-paper');
     assert.equal(again.fontSize, 18);
     assert.equal(again.readerHeaderEnabled, false);
+  },
+
+  async 'with typography following the theme, reading settings are still shared by every theme'() {
+    const h = harness();
+    await h.settings.load({});
+    // warm-paper has its own typography and old, divergent reading settings in its profile.
+    const theirs = typography(h);
+    theirs.pageTurnMode = 0;
+    theirs.tapZoneActions = '1,1,1,1,1,1,1,1,1';
+    theirs.eyeTurnEnabled = false;
+    theirs.eyeTurnModelEnabled = false;
+    h.disk.set('readerThemeProfileV1_warm-paper', JSON.stringify(theirs));
+    await h.settings.savePageTurnMode({}, 2);
+    await h.settings.saveEyeTurnSettings({}, true, 'v4,old', '', false, true, 850, 650);
+    await h.settings.saveEyeTurnModelSettings({}, true, 'm1,cal', '');
+    h.values.set('appThemeId', 'warm-paper');
+    const next = await h.settings.switchThemeProfile({}, 'classic-blue', 'warm-paper');
+    assertTypography(next);
+    assert.equal(next.pageTurnMode, 2, 'page turning comes from the current settings');
+    assert.equal(next.tapZoneActions, '3,3,2,3,1,2,2,2,2');
+    assert.equal(next.eyeTurnEnabled, true, 'eye turning stays on after changing theme');
+    assert.equal(next.eyeTurnPortraitCalibration, 'v4,old');
+    assert.equal(next.eyeTurnModelEnabled, true);
+    assert.equal(next.eyeTurnModelPortraitCalibration, 'm1,cal');
+    assert.equal(JSON.parse(h.disk.get('readerThemeProfileV1_warm-paper')).eyeTurnModelEnabled, true,
+      'the shared reading settings are saved into the theme now in use');
+  },
+
+  async 'with typography following, a theme changed elsewhere or before a cold start keeps the reading settings'() {
+    const h = harness();
+    await h.settings.load({});
+    const theirs = typography(h);
+    theirs.pageTurnMode = 0;
+    theirs.eyeTurnEnabled = false;
+    h.disk.set('readerThemeProfileV1_warm-paper', JSON.stringify(theirs));
+    await h.settings.savePageTurnMode({}, 2);
+    await h.settings.saveEyeTurnSettings({}, true, '', '', false, true, 850, 650);
+    // Theme ID changed without switchThemeProfile (trial, membership fallback, sync); the reader reloads.
+    h.values.set('appThemeId', 'warm-paper');
+    const reloaded = await h.settings.reload({});
+    assertTypography(reloaded);
+    assert.equal(reloaded.pageTurnMode, 2);
+    assert.equal(reloaded.eyeTurnEnabled, true);
+
+    // Same change while the app was closed: the last used profile supplies the reading settings.
+    const h2 = harness();
+    await h2.settings.load({});
+    const other = typography(h2);
+    other.pageTurnMode = 0;
+    other.eyeTurnEnabled = false;
+    h2.disk.set('readerThemeProfileV1_warm-paper', JSON.stringify(other));
+    await h2.settings.savePageTurnMode({}, 2);
+    await h2.settings.saveEyeTurnSettings({}, true, '', '', false, true, 850, 650);
+    h2.values.set('appThemeId', 'warm-paper');
+    h2.settings.cachedSettings = null;
+    h2.settings.cachedThemeId = '';
+    h2.settings.rememberedProfileId = '';
+    const cold = await h2.settings.load({});
+    assertTypography(cold);
+    assert.equal(cold.pageTurnMode, 2);
+    assert.equal(cold.eyeTurnEnabled, true);
   },
 
   async 'with typography not following the theme every theme shares the current typography'() {

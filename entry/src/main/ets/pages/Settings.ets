@@ -3016,8 +3016,8 @@ struct SettingsPage {
       SettingSwitchRow({
         title: '排版跟随主题',
         description: this.typographyFollowsTheme ?
-          `每套主题各记一套排版和翻页等阅读设置，换主题一起换；当前记在「${this.typographyThemeName}」` :
-          '所有主题共用排版和翻页、点按区域等阅读设置，换主题只换阅读背景',
+          `每套主题各记一套排版，换主题一起换；翻页、点按区域等阅读设置所有主题共用。当前排版记在「${this.typographyThemeName}」` :
+          '所有主题共用排版，换主题只换阅读背景；翻页、点按区域等阅读设置始终共用',
         isOn: this.typographyFollowsTheme,
         onChange: (enabled: boolean): void => {
           this.setTypographyFollowsTheme(enabled);

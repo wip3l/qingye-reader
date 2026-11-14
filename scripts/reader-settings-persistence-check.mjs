@@ -240,9 +240,10 @@ const tests = {
     assert.equal((await h.settings.reload({})).longPressSelectText, false);
     h.values.set('appDarkMode', true);
     assert.equal((await h.settings.reload({})).longPressSelectText, false);
+    // Reading settings are shared by every theme: a legacy profile without the field does not reset it.
     h.disk.set('readerThemeProfileV1_legacy', JSON.stringify({ fontSize: 23 }));
     h.values.set('appThemeId', 'legacy');
-    assert.equal((await h.settings.switchThemeProfile({}, 'classic-blue', 'legacy')).longPressSelectText, true);
+    assert.equal((await h.settings.switchThemeProfile({}, 'classic-blue', 'legacy')).longPressSelectText, false);
     h.values.set('appThemeId', 'classic-blue');
     assert.equal((await h.settings.switchThemeProfile({}, 'legacy', 'classic-blue')).longPressSelectText, false);
     await h.settings.saveReadingInteractionSettings({}, -1, false, true);
@@ -640,31 +641,25 @@ const tests = {
     assert.equal(loaded.preloadEnabled, false);
     assert.equal(loaded.readerHeaderEnabled, true);
   },
-  async 'obsidian uses 3D once and preserves subsequent manual choices'() {
+  async 'a theme no longer changes page turning: obsidian keeps the current mode and animation'() {
+    // Page turning is a reading setting shared by every theme, so the former one-time 3D preset is gone.
     const h = harness();
     await h.settings.load({});
-    h.values.set('appThemeId', 'obsidian-archive');
-    let settings = await h.settings.switchThemeProfile({}, 'classic-blue', 'obsidian-archive');
-    assert.equal(settings.pageTurnAnimationType, 7);
-    assert.notEqual(settings.pageTurnMode, 0);
     await h.settings.savePageTurnAnimationType({}, 1);
-    settings = await h.settings.reload({});
-    assert.equal(settings.pageTurnAnimationType, 1);
-    h.values.set('appThemeId', 'classic-blue');
-    settings = await h.settings.switchThemeProfile({}, 'obsidian-archive', 'classic-blue');
-    assert.equal(settings.pageTurnAnimationType, 1);
-  },
-  async 'existing obsidian profile upgrades without altering typography'() {
-    const h = harness();
-    h.disk.set('readerThemeProfileV1_obsidian-archive', JSON.stringify({
-      pageTurnMode: 0, pageTurnAnimationType: 4, fontSize: 27
-    }));
     h.values.set('appThemeId', 'obsidian-archive');
-    const settings = await h.settings.reload({});
-    assert.equal(settings.pageTurnMode, 2);
-    assert.equal(settings.pageTurnAnimationType, 7);
-    assert.equal(settings.fontSize, 27);
-    assert.equal((await h.settings.reload({})).pageTurnAnimationType, 7);
+    const switched = await h.settings.switchThemeProfile({}, 'classic-blue', 'obsidian-archive');
+    assert.equal(switched.pageTurnAnimationType, 1);
+
+    const h2 = harness();
+    h2.disk.set('readerThemeProfileV1_obsidian-archive', JSON.stringify({
+      pageTurnMode: 2, pageTurnAnimationType: 4, fontSize: 27
+    }));
+    h2.values.set('appThemeId', 'obsidian-archive');
+    const reloaded = await h2.settings.reload({});
+    // The theme was reached without switchThemeProfile, so the reading settings come from the settings in use
+    // before (default animation 1) and the typography from the theme profile; nothing turns it into 3D.
+    assert.equal(reloaded.pageTurnAnimationType, 1);
+    assert.equal(reloaded.fontSize, 27);
   },
   async 'theme profiles remain independent after queued saves'() {
     const h = harness();
