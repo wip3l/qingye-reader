@@ -11471,7 +11471,11 @@ struct ReadBookPage {
     const engine = this.readerEngine();
     this.captureReaderContinuousAnchor();
     const continuous = this.usesReaderContinuousV2();
-    const stableVisibleProgress = this.canSaveReadingProgress() && (!continuous ||
+    // 页面不在屏幕上还在朗读时，滚动列表不会再滚到位，等待滚动恢复的标记永远清不掉；
+    // 这时朗读到的章节和句子就是权威位置，不能退回离屏前的旧章节。
+    const backgroundTts = !this.readerPageVisible &&
+      ReaderTtsFloatingSession.isOwner(this.ttsFloatingSessionOwnerId);
+    const stableVisibleProgress = this.canSaveReadingProgress() && (!continuous || backgroundTts ||
       (!this.readerComicScrollRestoring && !this.readerContinuousRestoreAnchor && this.readerTypographyRestoreOffset < 0));
     let chapterIndex = this.clampChapterIndex(this.currentChapterIndex);
     let pageIndex = Math.max(0, Math.min(this.currentPageIndex, Math.max(0, this.contentPages.length - 1)));
@@ -11480,6 +11484,16 @@ struct ReadBookPage {
       this.readerContinuousAnchor.sourceIdentity === this.readerContinuousSourceIdentity()) {
       characterOffset = this.readerContinuousAnchor.offset;
       pageIndex = this.readerContinuousAnchor.pageIndex;
+    }
+    const backgroundTtsOffset = backgroundTts ? this.backgroundTtsReadOffset(chapterIndex) : -1;
+    if (backgroundTtsOffset >= 0) {
+      characterOffset = backgroundTtsOffset;
+      // 后台只排出了前几页时，句子可能落在已排页面之后，页码保持原值，重新打开按字符位置恢复。
+      const lastKnownEnd = this.contentPageEnds.length > 0 ? this.contentPageEnds[this.contentPageEnds.length - 1] : 0;
+      if (backgroundTtsOffset < lastKnownEnd) {
+        const ttsPageIndex = this.findPageIndexByOffset(backgroundTtsOffset);
+        if (ttsPageIndex >= 0 && ttsPageIndex < this.contentPages.length) pageIndex = ttsPageIndex;
+      }
     }
     let progressPageCount = this.currentChapterProgressPageCount();
     let lastReadPageText = this.getShelfLastReadPageText(pageIndex);
@@ -15233,6 +15247,14 @@ ${leading}` : leading;
         console.warn('保存朗读句子位置失败:', error);
       });
     }, 3000);
+  }
+
+  /** 朗读正在读的句子在本章源文本里的起点；记录的不是这一章时返回 -1。 */
+  backgroundTtsReadOffset(chapterIndex: number): number {
+    if (!this.book || this.book.getVariable('ttsReadChapterIndex') !== `${chapterIndex}`) return -1;
+    const raw = this.book.getVariable('ttsReadOffsetStart');
+    const offset = raw ? Number(raw) : -1;
+    return Number.isFinite(offset) && offset >= 0 ? Math.round(offset) : -1;
   }
 
   flushTtsReadPosition(): void {
