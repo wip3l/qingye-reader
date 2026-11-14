@@ -551,7 +551,7 @@ export default class EntryAbility extends UIAbility {
     if (launchTarget === 'bookSource' && !WebParseSettingsStore.enabled()) {
       // 规则文件只在网页解析开启后接收。
       AppStorage.setOrCreate('pendingBookSourceImportUri', '');
-      HdsFeedback.showToast('未开启网页解析，无法打开这个文件');
+      HdsFeedback.showToast('请先在“我的 › 在线阅读”里开启网页解析');
       launchTarget = '';
     }
     if (launchTarget && this.mainWindowStage) {
@@ -704,7 +704,7 @@ export default class EntryAbility extends UIAbility {
       const raw = this.readExternalText(externalUri);
       this.webParseBootstrapPromise.finally(() => {
         if (!WebParseSettingsStore.enabled()) {
-          HdsFeedback.showToast('未开启网页解析，无法打开这个文件');
+          HdsFeedback.showToast('请先在“我的 › 在线阅读”里开启网页解析');
         } else if (raw) {
           ReadingContinuation.acceptRaw(this.context, raw);
         }

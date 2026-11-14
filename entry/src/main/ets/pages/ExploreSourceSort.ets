@@ -44,8 +44,8 @@ struct ExploreSourceSortPage {
       this.sources = this.applySavedOrder(enabledExploreSources);
       this.saveOrder(false);
     } catch (e) {
-      console.error('加载发现规则排序失败:', e);
-      HdsFeedback.showToast('加载规则失败');
+      console.error('加载发现书源排序失败:', e);
+      HdsFeedback.showToast('加载书源失败');
     } finally {
       this.isLoading = false;
     }
@@ -79,7 +79,7 @@ struct ExploreSourceSortPage {
 
   build() {
     Stack() {
-      PageScaffold({ title: '规则排序', scrollable: false, externalCollapse: this.headerCollapse, content: () => {
+      PageScaffold({ title: '书源排序', scrollable: false, externalCollapse: this.headerCollapse, content: () => {
         this.pageContent()
       } })
     }
@@ -106,10 +106,10 @@ struct ExploreSourceSortPage {
       .justifyContent(FlexAlign.Center)
     } else if (this.sources.length === 0) {
       Column() {
-        Text('暂无启用发现的规则')
+        Text('暂无启用发现的书源')
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.subTextColor())
-        Text('请先在解析规则中启用发现')
+        Text('请先在书源管理中启用发现')
           .fontSize(AppFontSize.BODY)
           .fontColor(this.subTextColor())
           .margin({ top: AppSpacing.MD })
@@ -136,7 +136,7 @@ struct ExploreSourceSortPage {
                 .textAlign(TextAlign.Center)
 
               Column() {
-                Text(source.bookSourceName || '未命名规则')
+                Text(source.bookSourceName || '未命名书源')
                   .fontSize(AppFontSize.BODY_LARGE)
                   .fontWeight(FontWeight.Bold)
                   .fontColor(this.primaryTextColor())
@@ -258,7 +258,7 @@ struct ExploreSourceSortPage {
         HdsFeedback.showToast('排序已保存');
       }
     }).catch((e: Error) => {
-      console.warn('保存发现规则排序失败:', e);
+      console.warn('保存发现书源排序失败:', e);
       if (showToast) {
         HdsFeedback.showToast('保存排序失败');
       }

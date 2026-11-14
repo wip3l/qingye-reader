@@ -154,7 +154,7 @@ struct DataSyncPage {
         })
         if (this.webParseEnabled) {
           SettingSwitchRow({
-            title: '解析规则',
+            title: '书源',
             description: '配置、分组、排序、启用和锁定状态；不含登录凭证。仅作为你的私有数据保存，不公开、不能分享',
             isOn: this.bookSourcesEnabled,
             onChange: (value: boolean) => {

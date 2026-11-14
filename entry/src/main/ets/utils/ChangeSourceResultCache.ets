@@ -49,7 +49,7 @@ export class ChangeSourceResultCache {
     try { await ChangeSourceResultCache.initialize(context); } catch (error) {
       ChangeSourceResultCache.ready = Promise.resolve();
       ChangeSourceResultCache.loaded = true;
-      console.warn('读取换规则缓存失败:', error);
+      console.warn('读取换源缓存失败:', error);
     }
     const alias = ChangeSourceResultCache.bookAlias(book);
     const key = BookTypeSupport.mediaCategoryOf(book) + '\n' + ChangeSourceResultCache.normalize(book.name) + '\n' + ChangeSourceResultCache.normalize(book.author);
@@ -166,7 +166,7 @@ export class ChangeSourceResultCache {
       const store = await preferences.getPreferences(context, ChangeSourceResultCache.STORE_NAME);
       await store.put('history_v3', raw);
       await store.flush();
-    }).catch((error: Error): void => { console.warn('保存换规则缓存失败:', error); });
+    }).catch((error: Error): void => { console.warn('保存换源缓存失败:', error); });
     return ChangeSourceResultCache.writeQueue;
   }
 

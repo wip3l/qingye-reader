@@ -140,11 +140,11 @@ export struct BookCatalogSheet {
       this.summaryBar()
 
       if (this.loadState === LOAD_LOADING) {
-        this.statusView(this.isEpisodic() ? '正在获取选集…' : '正在获取该规则的目录…', '')
+        this.statusView(this.isEpisodic() ? '正在获取选集…' : '正在获取该书源的目录…', '')
       } else if (this.loadState === LOAD_ERROR) {
         this.statusView(this.errorMessage || '目录加载失败', '重试')
       } else if (this.loadState === LOAD_EMPTY) {
-        this.statusView(this.errorMessage || '该规则未解析出章节', '重试')
+        this.statusView(this.errorMessage || '该书源未解析出章节', '重试')
       } else if (this.displayedCount === 0) {
         this.statusView(this.isEpisodic() ? '未找到匹配选集' : '未找到匹配章节', '')
       } else {
@@ -405,7 +405,7 @@ export struct BookCatalogSheet {
       if (!this.alive) return;
       if (!source) {
         this.loadState = LOAD_ERROR;
-        this.errorMessage = '该规则已被删除或未启用，无法获取目录';
+        this.errorMessage = '该书源已被删除或未启用，无法获取目录';
         return;
       }
 
@@ -416,7 +416,7 @@ export struct BookCatalogSheet {
       if (fetched.length === 0) {
         this.loadState = LOAD_EMPTY;
         this.errorMessage = AppStorage.get<string>('bookSourceStageLastError') ||
-          '该规则未解析出章节，可能需要在该规则中补充目录规则';
+          '该书源未解析出章节，可能需要在该书源中补充目录规则';
         return;
       }
 

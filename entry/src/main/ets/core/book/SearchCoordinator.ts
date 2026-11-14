@@ -251,7 +251,7 @@ export class SearchCoordinator {
       groupedSources.filter((source: BookSource): boolean => !excludedSourceUrls.has(source.bookSourceUrl || '')) :
       groupedSources;
     if (sources.length === 0) {
-      safeCallback({ done: 0, total: 0, results: [], finished: true, status: '没有符合设置的启用规则' });
+      safeCallback({ done: 0, total: 0, results: [], finished: true, status: '没有符合设置的启用书源' });
       return [];
     }
     const runtimeOwnerId = `search_${Date.now()}_${++SearchCoordinator.stageRuntimeOwnerSerial}`;
@@ -302,7 +302,7 @@ export class SearchCoordinator {
         deltaResults: validationOnly ? [] : deltaResults,
         finished: finished,
         status: verifyUrl ?
-          `已搜索 ${done}/${sources.length}，当前：${currentSourceLabel || '准备中'}，找到 ${displayResultCount} 本；有规则需要网页验证` :
+          `已搜索 ${done}/${sources.length}，当前：${currentSourceLabel || '准备中'}，找到 ${displayResultCount} 本；有书源需要网页验证` :
           `已搜索 ${done}/${sources.length}，当前：${currentSourceLabel || '准备中'}，找到 ${displayResultCount} 本`,
         needVerification: verifyUrl.length > 0,
         verificationUrl: verifyUrl,
@@ -318,7 +318,7 @@ export class SearchCoordinator {
         nextIndex++;
         if (sourceIndex >= sources.length) break;
 
-        currentSourceLabel = sources[sourceIndex].bookSourceName || `规则 ${sourceIndex + 1}`;
+        currentSourceLabel = sources[sourceIndex].bookSourceName || `书源 ${sourceIndex + 1}`;
         AppStorage.setOrCreate('searchLastSource', currentSourceLabel);
         AppStorage.setOrCreate('searchLastSourceIndex', sourceIndex + 1);
         // Books the source hands over while its script is still running go to the page right away; the final
@@ -337,7 +337,7 @@ export class SearchCoordinator {
         };
         const sourceResult = await this.searchSourceForScript(sources[sourceIndex], keyword, options, onPartial);
         if (sourceResult.books.length === 0 && sourceResult.reason && sourceResult.reason !== '未搜索到结果') {
-          this.lastFailureReason = `${sources[sourceIndex].bookSourceName || '规则'}：${sourceResult.reason}`;
+          this.lastFailureReason = `${sources[sourceIndex].bookSourceName || '书源'}：${sourceResult.reason}`;
         }
         const books = emittedKeys.size === 0 ? sourceResult.books :
           sourceResult.books.filter((book: SearchBook): boolean => !emittedKeys.has(this.searchBookKey(book)));
@@ -355,7 +355,7 @@ export class SearchCoordinator {
         const displayBooks = this.booksForDisplay(matchedBooks, categoryLimit, categoryCounts,
           Math.max(0, totalResultLimit - all.length));
         if (options.debugContext && !validationOnly) {
-          options.debugContext.addLog('info', `本规则纳入展示：${displayBooks.length + emittedKeys.size}`);
+          options.debugContext.addLog('info', `本书源纳入展示：${displayBooks.length + emittedKeys.size}`);
         }
 
         done++;
@@ -450,7 +450,7 @@ export class SearchCoordinator {
         abort.timedOut = true;
         console.warn(`[SC] source timed out after ${deadlineMs}ms of silence:`, source.bookSourceName);
         resolve(this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR,
-          `规则响应超时（超过 ${Math.round(deadlineMs / 1000)} 秒）`));
+          `书源响应超时（超过 ${Math.round(deadlineMs / 1000)} 秒）`));
       };
       timerId = setTimeout(check, deadlineMs);
     });
@@ -853,7 +853,7 @@ export class SearchCoordinator {
   private async searchNative(source: BookSource, keyword: string, options: SearchOptions,
     responseLimit: number, budget: SourceResultBudget, stopped: () => boolean,
     onPartial: ((books: SearchBook[]) => void) | null = null): Promise<SearchSourceResult> {
-    if (!source.searchUrl) return this.sourceResult([], BookSource.VALIDATION_FAILED, '该规则没有配置搜索');
+    if (!source.searchUrl) return this.sourceResult([], BookSource.VALIDATION_FAILED, '该书源没有配置搜索');
     const normalizedKeyword = this.normalizeSearchText(keyword);
     const seen = new Set<string>();
     const accept = (candidates: SearchBook[]): SearchBook[] => {
@@ -961,7 +961,7 @@ export class SearchCoordinator {
     }
     const executable = executableRules.join('\n');
     const hostCode = [source.jsLib || '', executable].join('\n');
-    if (hostCode.length > MAX_VALIDATION_CONFIG_CHARS) return '规则脚本配置过大';
+    if (hostCode.length > MAX_VALIDATION_CONFIG_CHARS) return '书源脚本配置过大';
     const usesScript = /(?:@js:|<js>|\bjava\.|\bsource\.|\bcache\.)/i.test(executable);
     const routed = BookSourceRuntimeRouter.decide(SourceRuntimeStage.SEARCH, hostCode);
     const unsupportedScript = usesScript && routed.runtime !== 'arkweb' ? ScriptCompatibility.unsupportedReason(hostCode) : '';

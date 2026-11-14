@@ -211,7 +211,7 @@ struct VerifyWebPage {
       this.url = 'about:blank';
       this.currentUrl = '';
       this.resolveBookSourceLoginUrl(initialUrl).catch((e: Error) => {
-        console.error('解析规则登录地址失败:', e);
+        console.error('解析书源登录地址失败:', e);
       });
       return;
     }
@@ -346,7 +346,7 @@ struct VerifyWebPage {
       const variableSaved = this.browserVariableDirty;
       await this.persistBrowserSourceVariable();
       if (variableSaved) {
-        this.showToastSafely('登录信息已保存到规则');
+        this.showToastSafely('登录信息已保存到书源');
       } else if (this.requireLoginCookie && !this.hasEffectiveBookSourceLoginCookie()) {
         this.showToastSafely('未检测到有效登录 Cookie，请正常登录后再点完成');
       }
@@ -395,8 +395,8 @@ struct VerifyWebPage {
         this.browserPayloadBaseUrl : undefined;
       this.controller.loadData(this.browserPayloadHtml, 'text/html', 'UTF-8', baseUrl, baseUrl);
     } catch (error) {
-      console.error('加载规则网页内容失败:', error);
-      this.showToastSafely('加载规则网页内容失败');
+      console.error('加载书源网页内容失败:', error);
+      this.showToastSafely('加载书源网页内容失败');
     } finally {
       AppStorage.setOrCreate('bookSourceBrowserPayloadToken', '');
       AppStorage.setOrCreate('bookSourceBrowserPayloadHtml', '');
@@ -416,7 +416,7 @@ struct VerifyWebPage {
       'setVariable:function(v){try{return b.putVariable(String(v));}catch(e){return false;}},' +
       'putVariable:function(v){try{return b.putVariable(String(v));}catch(e){return false;}}};})();';
     this.controller.runJavaScript(`${shim}\n${this.browserPayloadInjectJs}`).catch((error: Object): void => {
-      console.warn('注入规则网页脚本失败:', error);
+      console.warn('注入书源网页脚本失败:', error);
     });
   }
 
@@ -453,7 +453,7 @@ struct VerifyWebPage {
         BookSourceRuntimeSnapshotStore.invalidate(this.browserSourceUrl);
       }
     } catch (e) {
-      console.error('保存规则网页登录变量失败:', e);
+      console.error('保存书源网页登录变量失败:', e);
     }
   }
 
@@ -476,7 +476,7 @@ struct VerifyWebPage {
       this.confirmOnlineBookSourceImport(importUrl).catch((error: Object): void => {
         this.onlineBookSourceImportPending = false;
         const message = error instanceof Error ? error.message : String(error || '');
-        this.showToastSafely(message ? `打开规则更新失败：${message}` : '打开规则更新失败');
+        this.showToastSafely(message ? `打开书源更新失败：${message}` : '打开书源更新失败');
       });
     }
     return true;
@@ -526,8 +526,8 @@ struct VerifyWebPage {
     const hostMatch = importUrl.match(/^https?:\/\/([^/?#]+)/i);
     const host = hostMatch && hostMatch[1] ? hostMatch[1] : '远程服务器';
     const result = await promptAction.showDialog({
-      title: '更新规则',
-      message: `将从 ${host} 下载并更新规则。现有规则变量、登录状态和本地设置会保留。`,
+      title: '更新书源',
+      message: `将从 ${host} 下载并更新书源。现有书源变量、登录状态和本地设置会保留。`,
       buttons: [
         { text: '取消', color: this.subTextColor() },
         { text: '更新', color: this.accentColor() }
@@ -544,7 +544,7 @@ struct VerifyWebPage {
       this.browserAwaitCompleted = true;
       this.publishBrowserAwaitResult('', '');
     }
-    this.showToastSafely('正在下载并更新规则…');
+    this.showToastSafely('正在下载并更新书源…');
     this.backSafely();
   }
 
@@ -554,7 +554,7 @@ struct VerifyWebPage {
     try {
       this.controller.loadUrl(url);
     } catch (error) {
-      console.warn('规则网页桥接打开地址失败:', error);
+      console.warn('书源网页桥接打开地址失败:', error);
       this.showToastSafely('打开网页失败');
     }
   }
@@ -667,20 +667,20 @@ struct VerifyWebPage {
       if (source && loginUrl) {
         this.url = loginUrl;
         this.currentUrl = loginUrl;
-        this.title = `${source.bookSourceName || '规则'} 登录`;
+        this.title = `${source.bookSourceName || '书源'} 登录`;
         AppStorage.setOrCreate('pendingVerificationSourceUrl', source.bookSourceUrl || '');
         AppStorage.setOrCreate('pendingVerificationLoginUrl', loginUrl);
         setTimeout(() => {
           try {
             this.controller.loadUrl(loginUrl);
           } catch (e) {
-            console.warn('主动加载规则登录地址失败，将由 Web 组件状态刷新:', e);
+            console.warn('主动加载书源登录地址失败，将由 Web 组件状态刷新:', e);
           }
         }, 0);
         return;
       }
     } catch (e) {
-      console.error('解析规则登录地址失败:', e);
+      console.error('解析书源登录地址失败:', e);
     }
     await this.replaceToBookSourceEdit(bookSourceUrl);
   }
@@ -710,7 +710,7 @@ struct VerifyWebPage {
         }
       });
     } catch (e) {
-      console.error('跳转规则编辑页失败:', e);
+      console.error('跳转书源编辑页失败:', e);
     }
   }
 

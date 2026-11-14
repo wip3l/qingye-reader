@@ -49,7 +49,7 @@ struct Index {
   @StorageProp('homeTabBarFlatAutoHide') @Watch('onFlatAutoHideChanged') homeTabBarFlatAutoHide: boolean = false;
   /** 第四个页签：none / listen / footprint，放在发现和我的之间。 */
   @StorageProp('homeExtraTab') @Watch('onHomeExtraTabChanged') homeExtraTab: string = 'none';
-  /** 实验室 › 网页解析：关闭时没有发现页签和搜索层，后面的页签各往前挪一位。 */
+  /** 我的 › 在线阅读：网页解析关闭时没有发现页签和搜索层，后面的页签各往前挪一位。 */
   @StorageProp('webParseEnabled') @Watch('onWebParseEnabledChanged') webParseEnabled: boolean = false;
   /** 方案 B：由原生页签容器统一执行连续横移，不再叠加页面入场动画。 */
   static readonly TAB_SWITCH_DURATION: number = 320;
@@ -1240,7 +1240,7 @@ struct Index {
     return 1 + (this.webParseEnabled ? 1 : 0) + (this.extraTabId() ? 1 : 0);
   }
 
-  /** 开关一般在“我的 › 实验室”里改，回到首页时仍停在“我的”；发现页和搜索层随页签一起撤掉。 */
+  /** 开关一般在“我的 › 在线阅读”里改，回到首页时仍停在“我的”；发现页和搜索层随页签一起撤掉。 */
   onWebParseEnabledChanged(): void {
     this.clearHomeTabSwitch();
     if (!this.webParseEnabled) {

@@ -1161,7 +1161,7 @@ export struct BookshelfPage {
 
   openShelfChangeSource(book: Book): void {
     if (!book.name.trim() || LocalBookService.isLocalBook(book)) {
-      HdsFeedback.showToast('当前书籍不支持换规则');
+      HdsFeedback.showToast('当前书籍不支持换源');
       return;
     }
     this.shelfChangeSourceTarget = book;
@@ -1178,7 +1178,7 @@ export struct BookshelfPage {
     this.networkCoverTargetBook = book;
     this.networkCoverCandidates = [];
     this.networkCoverSearching = true;
-    this.networkCoverStatus = '正在从启用的规则中搜索...';
+    this.networkCoverStatus = '正在从启用的书源中搜索...';
     this.showNetworkCoverDialog = true;
     const token = this.networkCoverSearchToken;
     const coordinator = new SearchCoordinator(SearchExploreSettingsStore.getSearchConcurrency());
@@ -2050,7 +2050,7 @@ export struct BookshelfPage {
       autoCancel: true,
       onDismiss: (): void => { this.showShelfChangeSourceDialog = false; },
       maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
-      warnTag: '显示换规则弹窗失败:'
+      warnTag: '显示换源弹窗失败:'
     });
   }
 
@@ -2488,7 +2488,7 @@ export struct BookshelfPage {
         if (this.pendingActionBook) {
           if (this.hasShelfRefreshError(this.pendingActionBook) && !LocalBookService.isLocalBook(this.pendingActionBook)) {
             this.contextActionItem($r('sys.symbol.exclamationmark_circle'),
-              `检查失败：${this.shelfRefreshErrorReason(this.pendingActionBook)}，去换规则`, SHELF_REFRESH_ERROR_COLOR, () => {
+              `检查失败：${this.shelfRefreshErrorReason(this.pendingActionBook)}，去换源`, SHELF_REFRESH_ERROR_COLOR, () => {
                 if (this.pendingActionBook) {
                   const book = this.pendingActionBook;
                   this.closeBookActions();
@@ -2512,7 +2512,7 @@ export struct BookshelfPage {
               }
             })
           if (!LocalBookService.isLocalBook(this.pendingActionBook)) {
-            this.contextActionItem($r('sys.symbol.arrow_left_arrow_right'), '换规则', this.primaryTextColor(), () => {
+            this.contextActionItem($r('sys.symbol.arrow_left_arrow_right'), '换源', this.primaryTextColor(), () => {
               if (this.pendingActionBook) {
                 const book = this.pendingActionBook;
                 this.closeBookActions();
@@ -2739,7 +2739,7 @@ export struct BookshelfPage {
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .width('100%')
                   .margin({ top: AppSpacing.SM })
-                Text(candidate.originName || candidate.author || '启用规则')
+                Text(candidate.originName || candidate.author || '启用书源')
                   .fontSize(AppFontSize.MICRO)
                   .fontColor(this.subTextColor())
                   .maxLines(1)
@@ -9113,7 +9113,7 @@ export struct BookshelfPage {
 
   shelfRefreshErrorText(e: Error): string {
     const message = (e && e.message ? e.message : `${e}`).replace(/\s+/g, ' ').trim();
-    if (!message || message === 'undefined' || message === '[object Object]') return '规则出错';
+    if (!message || message === 'undefined' || message === '[object Object]') return '书源出错';
     return message.length > 24 ? `${message.substring(0, 24)}…` : message;
   }
 
@@ -9685,7 +9685,7 @@ export struct BookshelfPage {
       .hitTestBehavior(HitTestMode.None)
       .transition(TransitionEffect.OPACITY.combine(TransitionEffect.scale({ x: 0.4, y: 0.4 }))
         .animation({ duration: 240, curve: curves.springMotion(0.36, 0.7) }))
-      .accessibilityText('上次检查更新失败，长按可换规则')
+      .accessibilityText('上次检查更新失败，长按可换源')
   }
 
   @Builder
@@ -9780,7 +9780,7 @@ export struct BookshelfPage {
           .height(44)
         }, (item: ShelfRefreshActiveBook) => `active_${item.book.bookUrl}`)
         if (this.shelfRefreshFailures.length > 0) {
-          this.shelfRefreshSheetHeader(`失败 ${this.shelfRefreshFailures.length}`, '点一行去换规则')
+          this.shelfRefreshSheetHeader(`失败 ${this.shelfRefreshFailures.length}`, '点一行去换源')
           ForEach(this.shelfRefreshFailures, (item: ShelfRefreshFailure) => {
             Row({ space: AppSpacing.SM }) {
               this.shelfRefreshThumb(item.book)
@@ -9828,7 +9828,7 @@ export struct BookshelfPage {
         SymbolGlyph($r('sys.symbol.magnifyingglass'))
           .fontSize(18)
           .fontColor([this.subTextColor()])
-        TextInput({ text: this.shelfSearchKeyword, placeholder: '书名、作者、规则或标签' })
+        TextInput({ text: this.shelfSearchKeyword, placeholder: '书名、作者、书源或标签' })
           .key(SHELF_SEARCH_INPUT_KEY)
           .fontSize(AppFontSize.BODY)
           .fontColor(this.primaryTextColor())
@@ -10097,7 +10097,7 @@ export struct BookshelfPage {
     if (this.shelfFilterMenuPage === 'tag') {
       this.shelfFilterSubpage('标签', SHELF_FILTER_TAG_PREFIX, this.shelfTagFilterOptions(), '当前书架的书没有标签')
     } else if (this.shelfFilterMenuPage === 'origin') {
-      this.shelfFilterSubpage('规则', SHELF_FILTER_ORIGIN_PREFIX, this.shelfOriginFilterOptions(), '当前书架没有网络书籍')
+      this.shelfFilterSubpage('书源', SHELF_FILTER_ORIGIN_PREFIX, this.shelfOriginFilterOptions(), '当前书架没有网络书籍')
     } else {
       this.shelfFilterMainPage()
     }
@@ -10147,7 +10147,7 @@ export struct BookshelfPage {
         .color(ThemeRuntime.hairlineColor(this.appDarkMode))
         .margin({ left: 12, right: 12 })
       this.filterSubpageEntry('标签', 'tag', SHELF_FILTER_TAG_PREFIX)
-      this.filterSubpageEntry('规则', 'origin', SHELF_FILTER_ORIGIN_PREFIX)
+      this.filterSubpageEntry('书源', 'origin', SHELF_FILTER_ORIGIN_PREFIX)
 
       if (this.shelfFilterKeyList().length > 0) {
         Divider()

@@ -82,15 +82,15 @@ struct NativeSourceEditPage {
       await db.initWithContext(getContext(this));
       const source = await db.getBookSource(this.bookSourceUrl);
       if (!source || !NativeSourceService.isNative(source)) {
-        HdsFeedback.showToast('未找到该原生规则');
+        HdsFeedback.showToast('未找到该原生书源');
         router.back();
         return;
       }
       this.existing = source;
       this.definitionText = JSON.stringify(NativeSourceService.exportObject(source), null, 2);
     } catch (e) {
-      console.error('加载原生规则失败:', e);
-      HdsFeedback.showToast('加载规则失败');
+      console.error('加载原生书源失败:', e);
+      HdsFeedback.showToast('加载书源失败');
     }
   }
 
@@ -108,7 +108,7 @@ struct NativeSourceEditPage {
       this.problem = '';
       return source;
     } catch (e) {
-      this.problem = (e as Error).message || '规则定义不合法';
+      this.problem = (e as Error).message || '书源定义不合法';
       return null;
     }
   }
@@ -120,7 +120,7 @@ struct NativeSourceEditPage {
   async saveSource(): Promise<void> {
     if (this.isSaving) return;
     if (this.existing && this.existing.isLocked) {
-      HdsFeedback.showToast('锁定的规则不能修改，请先在解析规则中解锁');
+      HdsFeedback.showToast('锁定的书源不能修改，请先在书源管理中解锁');
       return;
     }
     const source = this.buildSource();
@@ -133,7 +133,7 @@ struct NativeSourceEditPage {
         await db.updateBookSource(source, this.existing.bookSourceUrl);
       } else {
         if (await db.getBookSource(source.bookSourceUrl)) {
-          this.problem = '已存在相同地址的规则，请修改 url 或先删除原规则';
+          this.problem = '已存在相同地址的书源，请修改 url 或先删除原书源';
           return;
         }
         await db.insertBookSource(source);
@@ -143,7 +143,7 @@ struct NativeSourceEditPage {
       HdsFeedback.showToast('已保存');
       router.back();
     } catch (e) {
-      console.error('保存原生规则失败:', e);
+      console.error('保存原生书源失败:', e);
       this.problem = `保存失败：${(e as Error).message || '未知错误'}`;
     } finally {
       this.isSaving = false;
@@ -157,7 +157,7 @@ struct NativeSourceEditPage {
           buttonSize: 40, containerWidth: 56, materialScale: 0.83, compactLayout: true,
           onBack: () => router.back() })
 
-        Text(this.bookSourceUrl ? '编辑原生规则' : '新建原生规则')
+        Text(this.bookSourceUrl ? '编辑原生书源' : '新建原生书源')
           .fontSize(AppFontSize.TITLE)
           .fontWeight(FontWeight.Bold)
           .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
@@ -194,13 +194,13 @@ struct NativeSourceEditPage {
           .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
       }
 
-      Text('原生规则不执行脚本：字段用选择器规则，以 = 开头写表达式，地址里用 {{ }} 插值。写法见规则开发文档的第一部分「原生规则」。')
+      Text('原生书源不执行脚本：字段用选择器规则，以 = 开头写表达式，地址里用 {{ }} 插值。写法见书源开发文档的第一部分「原生书源」。')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
         .width('100%')
         .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
 
-      TextArea({ text: this.definitionText, placeholder: '在此粘贴或编写原生规则定义（JSON）' })
+      TextArea({ text: this.definitionText, placeholder: '在此粘贴或编写原生书源定义（JSON）' })
         .layoutWeight(1)
         .width('100%')
         .fontSize(AppFontSize.BODY)

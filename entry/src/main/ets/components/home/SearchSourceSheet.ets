@@ -117,7 +117,7 @@ export struct SearchSourceSheet {
             .fontSize(AppFontSize.TITLE)
             .fontWeight(FontWeight.Bold)
             .fontColor(this.primaryTextColor())
-          Text(`已选 ${this.selectedCount()} / ${this.sources.length} 个规则`)
+          Text(`已选 ${this.selectedCount()} / ${this.sources.length} 个书源`)
             .fontSize(AppFontSize.CAPTION)
             .fontColor(this.subTextColor())
         }
@@ -455,11 +455,11 @@ export struct SearchSourceSheet {
   }
 
   emptyText(): string {
-    if (this.sources.length === 0) return '没有可搜索的规则';
+    if (this.sources.length === 0) return '没有可搜索的书源';
     if (this.activeKey === SearchSourceSheet.SELECTED_KEY) {
-      return this.keyword.trim() ? '已选规则里没有匹配的' : '还没有选择规则';
+      return this.keyword.trim() ? '已选书源里没有匹配的' : '还没有选择书源';
     }
-    return this.keyword.trim() ? '没有匹配的规则' : '这个分组没有规则';
+    return this.keyword.trim() ? '没有匹配的书源' : '这个分组没有书源';
   }
 
   visibleSelectedCount(): number {

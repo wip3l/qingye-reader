@@ -32,6 +32,8 @@ export struct SettingsPage {
   onHeaderCollapseChange: (progress: number) => void = () => {};
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('readStatsRecording') readStatsRecording: boolean = true;
+  @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
+  @StorageProp('webParseNoticePending') webParseNoticePending: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('accountLoggedIn') accountLoggedIn: boolean = false;
   @StorageLink('accountDisplayName') accountDisplayName: string = '';
@@ -84,6 +86,25 @@ export struct SettingsPage {
           .clip(true)
           .backgroundColor(this.glassCardColor())
 
+          // 在线阅读（网页解析开关）：关闭时只有这一行；开启后书源管理、搜索与发现直接摆在这里。
+          Column() {
+            this.menuItem($r('sys.symbol.worldclock'), '在线阅读', this.webParseEnabled, () => {
+              router.pushUrl({ url: 'pages/WebParseSettings' });
+            }, this.webParseEnabled ? (this.webParseNoticePending ? '待确认须知' : '已开启') : '未开启')
+            if (this.webParseEnabled) {
+              this.menuItem($r('sys.symbol.list_bullet'), '书源管理', true, () => {
+                router.pushUrl({ url: 'pages/BookSource' });
+              })
+              this.menuItem($r('sys.symbol.magnifyingglass'), '搜索与发现', false, () => {
+                router.pushUrl({ url: 'pages/SearchExploreSettings' });
+              })
+            }
+          }
+          .width('100%')
+          .borderRadius(ThemeRuntime.largeRadius())
+          .clip(true)
+          .backgroundColor(this.glassCardColor())
+
           Column() {
             this.menuItem($r('sys.symbol.book'), '阅读与收听', true, () => {
               router.pushUrl({ url: 'pages/Settings' });
@@ -100,7 +121,6 @@ export struct SettingsPage {
             this.menuItem($r('sys.symbol.gearshape'), '其他设置', true, () => {
               router.pushUrl({ url: 'pages/OtherSettings' });
             })
-            // 解析规则、搜索与发现等网页解析相关的入口都收在实验室里，不直接摆在这一页。
             this.menuItem($r('sys.symbol.lightbulb'), '实验室', false, () => {
               router.pushUrl({ url: 'pages/LabSettings' });
             })

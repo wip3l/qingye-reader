@@ -672,7 +672,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     try {
       await this.store.executeSql('UPDATE book_sources SET addedTime = customOrder + 1 WHERE addedTime <= 0');
     } catch (e) {
-      console.warn('补齐规则加入时间失败:', e);
+      console.warn('补齐书源加入时间失败:', e);
     }
   }
 
@@ -684,7 +684,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         `WHERE validationStatus = ${BookSource.VALIDATION_FAILED}`
       );
     } catch (e) {
-      console.warn('重置旧版规则校验失败状态失败:', e);
+      console.warn('重置旧版书源校验失败状态失败:', e);
     }
   }
 
@@ -2249,7 +2249,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
 
   /** 书源排序属于列表管理信息，不受书源内容锁定状态影响。 */
   async updateBookSourceOrders(bookSourceUrls: string[], position?: BookSourcePositionUpdate): Promise<void> {
-    if (!this.store) throw new Error('规则数据库未初始化');
+    if (!this.store) throw new Error('书源数据库未初始化');
     if (bookSourceUrls.length === 0) return;
     const transaction = await this.store.createTransaction();
     try {

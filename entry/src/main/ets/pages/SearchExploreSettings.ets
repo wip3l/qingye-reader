@@ -137,7 +137,7 @@ struct SearchExploreSettingsPage {
       })
       SettingSwitchRow({
         title: '简繁同搜',
-        description: '按规则的简繁用字自动转换关键词，结果按简体比对',
+        description: '按书源的简繁用字自动转换关键词，结果按简体比对',
         isOn: this.searchExploreSimpTradSearch,
         onChange: (value: boolean) => {
           this.searchExploreSimpTradSearch = value;
@@ -146,7 +146,7 @@ struct SearchExploreSettingsPage {
       })
       SettingSwitchRow({
         title: '显示搜索进度',
-        description: '搜索时显示已搜规则数和结果数',
+        description: '搜索时显示已搜书源数和结果数',
         isOn: this.searchExploreShowSearchProgress,
         onChange: (value: boolean) => {
           this.searchExploreShowSearchProgress = value;
@@ -155,14 +155,14 @@ struct SearchExploreSettingsPage {
       })
       SettingSwitchRow({
         title: '聚合同名结果',
-        description: '同名书合并为一条，点开查看各规则结果',
+        description: '同名书合并为一条，点开查看各书源结果',
         isOn: this.searchExploreAggregateResults,
         onChange: (value: boolean) => {
           this.searchExploreAggregateResults = value;
           this.onSettingChanged();
         }
       })
-      SettingRow({ title: '搜索并发数', description: '同时请求的规则数，搜书、换规则、找封面和搜索校验共用',
+      SettingRow({ title: '搜索并发数', description: '同时请求的书源数，搜书、换源、找封面和搜索校验共用',
         showDivider: false }) {
         this.concurrencyStepper()
       }

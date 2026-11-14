@@ -764,7 +764,7 @@ export class CloudSyncCoordinator {
       }
     }
 
-    // 网页解析关闭时规则不上传也不合并，和用户关掉“解析规则”同步范围一样处理；云端已有的数据保留。
+    // 网页解析关闭时书源不上传也不合并，和用户关掉“书源”同步范围一样处理；云端已有的数据保留。
     if (settings.bookSourcesEnabled && WebParseSettingsStore.enabled()) {
       const bookSources = await db.getBookSourcesForCloudSync();
       for (const source of bookSources) {
@@ -1758,7 +1758,7 @@ export class CloudSyncCoordinator {
       case 'reading_progress': return '阅读进度';
       case 'bookmark': return '书签';
       case 'book_annotation': return '划线';
-      case 'book_source': return '规则';
+      case 'book_source': return '书源';
       case 'reader_settings': return '阅读设置';
       case 'replace_rule': return '替换规则';
       case 'theme_settings': return '主题设置';

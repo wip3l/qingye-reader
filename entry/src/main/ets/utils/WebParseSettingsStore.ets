@@ -14,11 +14,14 @@ export class WebParseNoticeItem {
 }
 
 /**
- * “实验室 › 网页解析”总开关。关闭时应用只是本地阅读器：发现与搜索、解析规则、
- * 在线书籍及其缓存、相关设置项全部不出现，外部传入的规则也不接收。
+ * “我的 › 在线阅读”里的网页解析总开关。关闭时应用只是本地阅读器：发现与搜索、书源管理、
+ * 在线书籍及其缓存、相关设置项全部不出现，外部传入的书源也不接收。
+ *
+ * 叫法：关闭时也能看到的界面（开关说明、使用须知、关于、会员页）用中性的“规则”，
+ * 只有开启后才出现的界面用“书源”。新增文案按它在哪种状态下可见来选词。
  *
  * 默认关闭，首次打开要先同意使用须知；同意的须知版本和时间只记在本机。
- * 升级前已经添加过规则的用户保持开启，下次进入实验室时补看一次须知。
+ * 升级前已经添加过书源的用户保持开启，下次启动时补看一次须知。
  * AppStorage 只负责通知界面，开关值以这里的 Preferences 为准。
  */
 export class WebParseSettingsStore {
@@ -71,7 +74,7 @@ export class WebParseSettingsStore {
     const noticeVersion = Number(await store.get(WebParseSettingsStore.KEY_NOTICE_VERSION, 0)) || 0;
     let enabled = saved === true;
     if (typeof saved !== 'boolean') {
-      // 第一次运行带这个开关的版本：已经有规则的是老用户，保持可用；否则按新安装处理。
+      // 第一次运行带这个开关的版本：已经有书源的是老用户，保持可用；否则按新安装处理。
       enabled = await WebParseSettingsStore.hasExistingRules(context);
       if (revision !== WebParseSettingsStore.revision) return;
       await store.put(WebParseSettingsStore.KEY, enabled);
@@ -89,7 +92,7 @@ export class WebParseSettingsStore {
       await db.initWithContext(context);
       return await db.countBookSources() > 0;
     } catch (error) {
-      console.warn('检查已有解析规则失败:', error);
+      console.warn('检查已有书源失败:', error);
       return false;
     }
   }

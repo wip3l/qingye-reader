@@ -105,7 +105,7 @@ export class ComicImagePipeline {
       const definition = NativeSourceSpec.unpack(source.jsLib || '');
       const decode = definition?.content?.imageDecode;
       if (!decode || decode.script?.trim() !== spec.decodeScript || !definition?.js) {
-        throw new Error('content.imageDecode.script 与当前规则定义不一致，请重新加载正文');
+        throw new Error('content.imageDecode.script 与当前书源定义不一致，请重新加载正文');
       }
       const errors = NativeSourceSpec.validate(definition);
       if (errors.length) throw new Error(errors.join('; '));

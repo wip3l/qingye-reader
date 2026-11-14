@@ -18,18 +18,18 @@ export class SourceSwitchOperation {
     if (this.committing || this.stopped) return;
     this.stopped = true;
     this.cancelWork();
-    if (this.rejectWait) this.rejectWait(new Error('已取消换规则'));
+    if (this.rejectWait) this.rejectWait(new Error('已取消换源'));
   }
 
   check(): void {
-    if (this.stopped) throw new Error('已取消换规则');
+    if (this.stopped) throw new Error('已取消换源');
   }
 
   beginCommit(): void {
     this.check();
     if (Date.now() >= this.deadline) {
       this.cancel();
-      throw new Error('换规则超时，已保留原规则');
+      throw new Error('换源超时，已保留原书源');
     }
     this.committing = true;
   }
@@ -40,14 +40,14 @@ export class SourceSwitchOperation {
     const budget = Math.min(timeoutMs, this.deadline - started);
     if (budget <= 0) {
       this.cancel();
-      throw new Error(`${label}超时，已保留原规则`);
+      throw new Error(`${label}超时，已保留原书源`);
     }
     let timer = -1;
     const interrupted = new Promise<T>((_resolve, reject): void => {
       this.rejectWait = reject;
       timer = setTimeout((): void => {
         // Reject with the stage name before cancellation rejects the same wait.
-        reject(new Error(`${label}超时，已保留原规则`));
+        reject(new Error(`${label}超时，已保留原书源`));
         this.cancel();
       }, budget);
     });
@@ -56,7 +56,7 @@ export class SourceSwitchOperation {
       this.check();
       if (Date.now() - started >= budget) {
         this.cancel();
-        throw new Error(`${label}超时，已保留原规则`);
+        throw new Error(`${label}超时，已保留原书源`);
       }
       return value;
     } finally {

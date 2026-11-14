@@ -11,7 +11,7 @@ import { ReaderCacheBudget, ReaderCacheCleanup } from '../core/book/ReaderCacheB
 import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 
-/** 我的 › 其他设置：数据导入导出、缓存、交互。外观相关的在“外观”，试验性功能在“实验室”。 */
+/** 我的 › 其他设置：数据导入导出、缓存、交互。外观相关的在“外观”，在线阅读有自己的入口，试验性功能在“实验室”。 */
 @Entry
 @Component
 struct OtherSettingsPage {
@@ -56,7 +56,7 @@ struct OtherSettingsPage {
     Column() {
       SettingNavRow({
         title: '数据导入',
-        description: this.webParseEnabled ? '从备份文件导入规则、书架、进度、本地图书和设置' :
+        description: this.webParseEnabled ? '从备份文件导入书源、书架、进度、本地图书和设置' :
           '从备份文件导入书架、进度、本地图书和设置',
         onTap: () => {
           router.pushUrl({ url: 'pages/DataBackup', params: { mode: 'import' } });
@@ -64,7 +64,7 @@ struct OtherSettingsPage {
       })
       SettingNavRow({
         title: '数据导出',
-        description: this.webParseEnabled ? '将规则、书架、进度、本地图书和设置导出为备份' :
+        description: this.webParseEnabled ? '将书源、书架、进度、本地图书和设置导出为备份' :
           '将书架、进度、本地图书和设置导出为备份',
         showDivider: false,
         onTap: () => {

@@ -109,7 +109,7 @@ struct BookSourceDebugPage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      PageScaffold({ title: '规则调试', content: () => {
+      PageScaffold({ title: '书源调试', content: () => {
         this.pageContent()
       }, actions: () => {
         this.titleActions()
@@ -158,9 +158,9 @@ struct BookSourceDebugPage {
   @Builder
   sourceCard() {
     Column({ space: AppSpacing.XS }) {
-      Text(this.source.bookSourceName || '正在加载规则').fontSize(AppFontSize.SUBTITLE).fontWeight(FontWeight.Bold)
+      Text(this.source.bookSourceName || '正在加载书源').fontSize(AppFontSize.SUBTITLE).fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor()).width('100%')
-      Text(this.source.bookSourceUrl || this.sourceUrl || '未指定规则')
+      Text(this.source.bookSourceUrl || this.sourceUrl || '未指定书源')
         .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%').maxLines(2)
       Text(`状态：${this.status}`).fontSize(AppFontSize.BODY).fontColor(this.running ? ThemeRuntime.warningColor(this.appDarkMode) : this.accentColor())
         .width('100%')
@@ -347,9 +347,9 @@ struct BookSourceDebugPage {
         }
       }
       if (source) this.source = source;
-      else this.status = '找不到规则';
+      else this.status = '找不到书源';
     } catch (_) {
-      this.status = '加载规则失败';
+      this.status = '加载书源失败';
     }
   }
 
@@ -476,7 +476,7 @@ struct BookSourceDebugPage {
     }, { targetSources: [this.source], maxResultsPerSource: 1, maxTotalResults: 1,
       debugContext: debug });
     if (candidates.length === 0 && !this.source.enabledExplore) {
-      debug.addLog('error', '该规则未启用发现，完整链路无法自动取得候选书');
+      debug.addLog('error', '该书源未启用发现，完整链路无法自动取得候选书');
       return;
     }
     if (candidates.length > 0) {

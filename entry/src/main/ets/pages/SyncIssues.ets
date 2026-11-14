@@ -148,7 +148,7 @@ struct SyncIssuesPage {
         }
       } else if (this.issues.length === 0) {
         ListItem() {
-          Text('暂无同步问题。同步失败、云端拒收的数据（如超出限额的规则）以及本地书籍、字体上传失败都会记录在这里。')
+          Text('暂无同步问题。同步失败、云端拒收的数据（如超出限额的书源）以及本地书籍、字体上传失败都会记录在这里。')
             .fontSize(AppFontSize.BODY)
             .fontColor(this.subTextColor())
             .lineHeight(20)
@@ -254,7 +254,7 @@ struct SyncIssuesPage {
           .width('100%')
       }
       if (issue.sourceUrl) {
-        Text(`规则地址：${issue.sourceUrl}`)
+        Text(`书源地址：${issue.sourceUrl}`)
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
           .maxLines(2)
@@ -270,13 +270,13 @@ struct SyncIssuesPage {
       Row({ space: AppSpacing.SM }) {
         if (issue.sourceUrl) {
           if (this.sourceState(issue) === 'missing') {
-            Text('本机已没有这个规则')
+            Text('本机已没有这个书源')
               .fontSize(AppFontSize.CAPTION)
               .fontColor(this.subTextColor())
               .layoutWeight(1)
           } else {
-            this.cardButton('打开规则', this.accentColor(), () => this.openSource(issue))
-            this.cardButton('删除规则', ThemeRuntime.dangerColor(this.appDarkMode), () => this.confirmDeleteSource(issue))
+            this.cardButton('打开书源', this.accentColor(), () => this.openSource(issue))
+            this.cardButton('删除书源', ThemeRuntime.dangerColor(this.appDarkMode), () => this.confirmDeleteSource(issue))
             Blank()
           }
         } else {
@@ -322,7 +322,7 @@ struct SyncIssuesPage {
     const info = this.sourceInfo(issue);
     if (!info) return;
     if (info.locked) {
-      HdsFeedback.showToast('请先在解析规则中解锁规则');
+      HdsFeedback.showToast('请先在书源管理中解锁书源');
       return;
     }
     router.pushUrl({
@@ -335,11 +335,11 @@ struct SyncIssuesPage {
     const info = this.sourceInfo(issue);
     if (!info) return;
     if (info.locked) {
-      HdsFeedback.showToast('锁定的规则不能删除');
+      HdsFeedback.showToast('锁定的书源不能删除');
       return;
     }
     const result = await promptAction.showDialog({
-      title: '删除规则',
+      title: '删除书源',
       message: `确定从本机删除“${this.issueTarget(issue)}”吗？删除后不会再尝试上传它。`,
       buttons: [
         { text: '取消', color: this.subTextColor() },
@@ -353,10 +353,10 @@ struct SyncIssuesPage {
       await db.deleteBookSource(info.url);
       await ExploreResultCache.clearSource(getContext(this), info.url);
       this.sources = this.sources.filter((item: IssueSourceInfo) => item.url !== info.url);
-      HdsFeedback.showToast('规则已删除');
+      HdsFeedback.showToast('书源已删除');
     } catch (e) {
-      console.error('删除规则失败:', e);
-      HdsFeedback.showToast('删除规则失败');
+      console.error('删除书源失败:', e);
+      HdsFeedback.showToast('删除书源失败');
     }
   }
 
@@ -414,11 +414,11 @@ struct SyncIssuesPage {
 
   issueTarget(issue: CloudSyncIssue): string {
     const match = /“(.+)”/.exec(issue.title);
-    return match ? match[1] : '这个规则';
+    return match ? match[1] : '这个书源';
   }
 
   kindLabel(issue: CloudSyncIssue): string {
-    if (issue.kind === CloudSyncIssueStore.KIND_BOOK_SOURCE) return '规则';
+    if (issue.kind === CloudSyncIssueStore.KIND_BOOK_SOURCE) return '书源';
     if (issue.kind === CloudSyncIssueStore.KIND_REJECTED) return '云端拒收';
     if (issue.kind === CloudSyncIssueStore.KIND_FILE) return '文件同步';
     return '同步失败';

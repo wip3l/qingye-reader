@@ -54,7 +54,7 @@ export class BookCoverCache {
       const data = await SourceCoverLoader.load(BookCoverCache.sourceCoverHttp, source, raw);
       return data.byteLength > 0 ? data : null;
     } catch (e) {
-      console.warn('解密规则封面失败:', e instanceof Error ? e.message : String(e));
+      console.warn('解密书源封面失败:', e instanceof Error ? e.message : String(e));
       return null;
     }
   }

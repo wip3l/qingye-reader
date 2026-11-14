@@ -1436,7 +1436,7 @@ struct ReadBookPage {
           console.warn('恢复替换净化规则失败:', error);
         });
         this.reloadSourceInteractionsAfterPageShow().catch((error: Error) => {
-          console.warn('恢复规则交互设置失败:', error);
+          console.warn('恢复书源交互设置失败:', error);
         });
       }
     }
@@ -2316,8 +2316,8 @@ struct ReadBookPage {
       } else {
         this.updatePendingVerification();
         const c = this.chapters[chapterIndex];
-        loadedContent = this.verificationUrl ? `${c ? c.title : '当前章节'}\n\n该规则需要先完成网页验证。请点击右上角“更多操作”，选择“登录”，完成后返回，再从该菜单选择“重试”。` :
-          (c ? `${c.title}\n\n章节正文加载失败。请点击右上角“刷新本章”或“换规则”。` :
+        loadedContent = this.verificationUrl ? `${c ? c.title : '当前章节'}\n\n该书源需要先完成网页验证。请点击右上角“更多操作”，选择“登录”，完成后返回，再从该菜单选择“重试”。` :
+          (c ? `${c.title}\n\n章节正文加载失败。请点击右上角“刷新本章”或“换源”。` :
             '章节正文加载失败。请点击右上角“更多操作”，选择“重试”。');
         this.content = loadedContent;
       }
@@ -2408,8 +2408,8 @@ struct ReadBookPage {
         if (refreshSerial !== this.contentLoadSerial || chapterIndex !== this.currentChapterIndex) return;
         this.updatePendingVerification();
         const chapter = this.chapters[chapterIndex];
-        const loadedContent = this.verificationUrl ? `${chapter ? chapter.title : '当前章节'}\n\n该规则需要先完成网页验证。请点击右上角“更多操作”，选择“登录”，完成后返回，再从该菜单选择“重试”。` :
-          (chapter ? `${chapter.title}\n\n章节正文刷新失败。请再次点击右上角“刷新本章”或“换规则”。` :
+        const loadedContent = this.verificationUrl ? `${chapter ? chapter.title : '当前章节'}\n\n该书源需要先完成网页验证。请点击右上角“更多操作”，选择“登录”，完成后返回，再从该菜单选择“重试”。` :
+          (chapter ? `${chapter.title}\n\n章节正文刷新失败。请再次点击右上角“刷新本章”或“换源”。` :
             '章节正文刷新失败。请点击右上角“更多操作”，选择“重试”。');
         this.content = loadedContent;
         this.paginateContent(loadedContent);
@@ -4256,7 +4256,7 @@ struct ReadBookPage {
           })
         }
         if (this.book && !LocalBookService.isLocalBook(this.book)) {
-          this.readerRoundMenuButton($r('sys.symbol.arrow_left_arrow_right'), '换规则', () => {
+          this.readerRoundMenuButton($r('sys.symbol.arrow_left_arrow_right'), '换源', () => {
             this.openChangeSourceDialog();
           })
         }
@@ -5465,15 +5465,15 @@ struct ReadBookPage {
     const loginEntryUrl = this.verificationUrl || VerificationSupport.resolveBookSourceLoginUrl(source) ||
       VerificationSupport.pickVerificationUrl(source, source.bookSourceUrl);
     if (!loginEntryUrl || !/^https?:\/\//i.test(loginEntryUrl)) {
-      HdsFeedback.showToast('未找到可用的网页登录地址，请检查规则登录配置');
+      HdsFeedback.showToast('未找到可用的网页登录地址，请检查书源登录配置');
       return;
     }
-    VerificationSupport.requestVerification(loginEntryUrl, `${source.bookSourceName || '规则'} 登录`, source);
+    VerificationSupport.requestVerification(loginEntryUrl, `${source.bookSourceName || '书源'} 登录`, source);
     router.pushUrl({
       url: 'pages/VerifyWeb',
       params: {
         url: loginEntryUrl,
-        title: `${source.bookSourceName || '规则'} 登录`,
+        title: `${source.bookSourceName || '书源'} 登录`,
         requireLoginCookie: 'true'
       }
     });
@@ -10045,7 +10045,7 @@ struct ReadBookPage {
       autoCancel: true,
       onDismiss: (): void => { this.showChangeSourceDialog = false; },
       maskColor: ThemeRuntime.scrimColor(this.appDarkMode),
-      warnTag: '显示换规则弹窗失败:'
+      warnTag: '显示换源弹窗失败:'
     });
   }
 
@@ -16820,7 +16820,7 @@ ${leading}` : leading;
       return;
     }
     if (!action || !/^https?:\/\//i.test(action.url)) {
-      HdsFeedback.showToast('规则操作地址无效');
+      HdsFeedback.showToast('书源操作地址无效');
       return;
     }
     this.readerSourceActionOpenedAt = now;
@@ -16903,12 +16903,12 @@ ${leading}` : leading;
   async openReaderSourceScriptAction(source: BookSource, action: ReaderActionData, marker: string): Promise<void> {
     const code = ReaderActionMarker.sourceScript(action.url);
     if (!code || !this.book) {
-      HdsFeedback.showToast('规则操作无效');
+      HdsFeedback.showToast('书源操作无效');
       return;
     }
     const runtime = BookSourceStageWebRuntime.get();
     if (!await runtime.waitUntilAvailable(8000)) {
-      HdsFeedback.showToast('规则脚本运行环境未就绪');
+      HdsFeedback.showToast('书源脚本运行环境未就绪');
       return;
     }
     const request = new StageWebRuntimeRequest();
@@ -16931,7 +16931,7 @@ ${leading}` : leading;
       const result = await runtime.execute(request);
       const target = (result.requestedUrl || '').trim();
       if (!/^https?:\/\//i.test(target)) {
-        HdsFeedback.showToast('规则操作未返回有效地址');
+        HdsFeedback.showToast('书源操作未返回有效地址');
         this.readerSourceActionOpenedAt = 0;
         return;
       }
@@ -23979,9 +23979,9 @@ ${leading}` : leading;
     if (this.book.origin !== 'local') {
       this.updatePendingVerification();
       if (this.verificationUrl) {
-        text += '\n\n当前规则需要先完成网页验证。请点击右上角“更多操作”，选择“登录”，完成后返回，再从该菜单选择“重试”。';
+        text += '\n\n当前书源需要先完成网页验证。请点击右上角“更多操作”，选择“登录”，完成后返回，再从该菜单选择“重试”。';
       } else {
-        text += '\n\n当前规则暂未解析出目录。请点击右上角“更多操作”，选择“重试”重新获取，或在解析规则中为该规则补充目录规则。';
+        text += '\n\n当前书源暂未解析出目录。请点击右上角“更多操作”，选择“重试”重新获取，或在书源管理中为该书源补充目录规则。';
         const stageError = AppStorage.get<string>('bookSourceStageLastError') || '';
         if (stageError) text += `\n诊断：${stageError}`;
       }

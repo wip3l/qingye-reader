@@ -107,7 +107,7 @@ export struct BookChangeSourceDialog {
     this.hiddenCount = 0;
     this.showHidden = false;
     this.tempAll = false;
-    this.status = '正在读取历史换规则结果...';
+    this.status = '正在读取历史换源结果...';
     this.searching = true;
     this.switching = false;
     const sessionId = ++this.sessionId;
@@ -147,11 +147,11 @@ export struct BookChangeSourceDialog {
       this.scopeMode = scope.mode === SCOPE_GROUP && available.length > 0 ? SCOPE_GROUP : SCOPE_ALL;
       if (scope.mode === SCOPE_GROUP && available.length === 0) {
         const name = scope.groups.length === 1 ? `“${scope.groups[0]}”` : '';
-        this.scopeNotice = `上次选的分组${name}已不存在，已改为在全部规则中换规则`;
+        this.scopeNotice = `上次选的分组${name}已不存在，已改为在全部书源中换源`;
       }
       if (available.length !== scope.groups.length || this.scopeMode !== scope.mode) this.persistScope();
     } catch (e) {
-      console.warn('读取换规则范围失败:', e);
+      console.warn('读取换源范围失败:', e);
       this.scopeMode = SCOPE_ALL;
     }
   }
@@ -181,7 +181,7 @@ export struct BookChangeSourceDialog {
         return;
       }
     } catch (e) {
-      console.warn('读取换规则历史结果失败:', e);
+      console.warn('读取换源历史结果失败:', e);
     }
     if (this.isSessionActive(sessionId)) {
       this.search(sessionId);
@@ -193,7 +193,7 @@ export struct BookChangeSourceDialog {
     this.cancelActiveSearch();
     const sessionId = ++this.sessionId;
     this.searching = true;
-    this.status = '正在刷新可用规则...';
+    this.status = '正在刷新可用书源...';
     this.search(sessionId);
   }
 
@@ -219,7 +219,7 @@ export struct BookChangeSourceDialog {
     const coordinator = new SearchCoordinator(SearchExploreSettingsStore.getSearchConcurrency());
     this.activeCoordinator = coordinator;
     this.searching = true;
-    this.status = '正在搜索可用规则...';
+    this.status = '正在搜索可用书源...';
     try {
       // 简繁同搜：繁体站的同名书也能出现在换源列表里（书名折成简体比对）。
       const chineseScript = await SearchChineseScriptRuntime.forSearch(context);
@@ -253,14 +253,14 @@ export struct BookChangeSourceDialog {
       if (!this.isSessionActive(sessionId)) return;
       this.allResults = this.filterResults(results.concat(this.allResults), target.bookUrl, target.origin);
       this.applyScope();
-      this.status = this.results.length > 0 ? `搜索完成，找到 ${this.results.length} 个可切换规则` :
-        (this.isScoped() ? '搜索完成，所选分组内未找到' : '搜索完成，未找到可切换规则');
+      this.status = this.results.length > 0 ? `搜索完成，找到 ${this.results.length} 个可切换书源` :
+        (this.isScoped() ? '搜索完成，所选分组内未找到' : '搜索完成，未找到可切换书源');
       ChangeSourceResultCache.merge(context, this.cacheKey, results);
       ChangeSourceResultCache.flush(context);
     } catch (e) {
       if (!this.isSessionActive(sessionId)) return;
-      console.error('搜索换规则失败:', e);
-      this.status = '搜索换规则失败';
+      console.error('搜索换源失败:', e);
+      this.status = '搜索换源失败';
     } finally {
       if (this.activeCoordinator === coordinator) {
         this.activeCoordinator = null;
@@ -292,10 +292,10 @@ export struct BookChangeSourceDialog {
       if (this.isSessionActive(sessionId)) this.requestClose();
     } catch (error) {
       if (!this.isSessionActive(sessionId)) {
-        if (task.isCommitting()) HdsFeedback.showToast('换规则保存失败，已保留原规则');
+        if (task.isCommitting()) HdsFeedback.showToast('换源保存失败，已保留原书源');
         return;
       }
-      this.status = (error as Error).message || '切换规则失败，已保留原规则';
+      this.status = (error as Error).message || '切换书源失败，已保留原书源';
       HdsFeedback.showToast(this.status);
     } finally {
       if (this.activeSwitch === task) this.activeSwitch = null;
@@ -346,7 +346,7 @@ export struct BookChangeSourceDialog {
       if (this.scopeGroups.length === 0) {
         const fallback = this.defaultScopeGroup();
         if (!fallback) {
-          HdsFeedback.showToast('没有可选的规则分组');
+          HdsFeedback.showToast('没有可选的书源分组');
           return;
         }
         this.scopeGroups = [fallback];
@@ -432,7 +432,7 @@ export struct BookChangeSourceDialog {
     scope.mode = this.scopeMode;
     scope.groups = this.scopeGroups.slice();
     SearchExploreSettingsStore.saveChangeSourceScope(this.cacheContext || getContext(this), scope)
-      .catch((e: Error): void => { console.warn('保存换规则范围失败:', e); });
+      .catch((e: Error): void => { console.warn('保存换源范围失败:', e); });
   }
 
   clearScopeSearchTimer(): void {
@@ -451,7 +451,7 @@ export struct BookChangeSourceDialog {
   }
 
   scopeSummary(): string {
-    return this.isScoped() ? `${this.scopeSourceCount()} 个规则` : `全部 ${this.scopeSourceCount()} 个规则`;
+    return this.isScoped() ? `${this.scopeSourceCount()} 个书源` : `全部 ${this.scopeSourceCount()} 个书源`;
   }
 
   hiddenTip(): string {
@@ -493,7 +493,7 @@ export struct BookChangeSourceDialog {
       Row() {
         Column({ space: AppSpacing.XXS }) {
           Row({ space: AppSpacing.LG }) {
-            Text('换规则')
+            Text('换源')
               .fontSize(AppFontSize.TITLE)
               .fontWeight(FontWeight.Bold)
               .fontColor(this.primaryTextColor())
@@ -581,7 +581,7 @@ export struct BookChangeSourceDialog {
       if (this.searching && this.results.length === 0) {
         Column({ space: AppSpacing.MD }) {
           LoadingProgress().width(36).height(36)
-          Text('正在搜索可用规则...')
+          Text('正在搜索可用书源...')
             .fontSize(AppFontSize.BODY)
             .fontColor(this.subTextColor())
         }
@@ -593,7 +593,7 @@ export struct BookChangeSourceDialog {
           Text('所选分组里没有找到这本书')
             .fontSize(AppFontSize.BODY_LARGE)
             .fontColor(this.primaryTextColor())
-          Button('在全部规则中搜索')
+          Button('在全部书源中搜索')
             .height(36)
             .fontSize(AppFontSize.BODY)
             .borderRadius(18)
@@ -607,7 +607,7 @@ export struct BookChangeSourceDialog {
         .height(260)
         .justifyContent(FlexAlign.Center)
       } else if (this.results.length === 0) {
-        Text('暂无可切换规则')
+        Text('暂无可切换书源')
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.subTextColor())
           .width('100%')
@@ -645,7 +645,7 @@ export struct BookChangeSourceDialog {
                     .fontColor(this.subTextColor())
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  Text(`最新：${book.latestChapterTitle || '规则未提供'}`)
+                  Text(`最新：${book.latestChapterTitle || '书源未提供'}`)
                     .fontSize(AppFontSize.CAPTION)
                     .fontColor(this.subTextColor())
                     .maxLines(1)
@@ -733,7 +733,7 @@ export struct BookChangeSourceDialog {
           })
           .backgroundColor(this.isGroupChipSelected(option.name) ?
             ThemeRuntime.selectedFillColor(this.appDarkMode) : Color.Transparent)
-          .accessibilityText(`${option.name}，${option.count} 个规则`)
+          .accessibilityText(`${option.name}，${option.count} 个书源`)
           .accessibilitySelected(this.isGroupChipSelected(option.name))
           .onClick(() => this.toggleScopeGroup(option.name))
         }, (option: ChangeSourceGroupOption): string => `${option.name}|${option.count}`)

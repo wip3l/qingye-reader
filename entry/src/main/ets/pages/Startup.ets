@@ -96,7 +96,7 @@ struct StartupPage {
     if (this.hasPendingBookSourceImport() && !WebParseSettingsStore.enabled()) {
       // 规则文件只在网页解析开启后接收；没开启时丢掉这次请求，照常进首页。
       AppStorage.setOrCreate('pendingBookSourceImportUri', '');
-      HdsFeedback.showToast('未开启网页解析，无法打开这个文件');
+      HdsFeedback.showToast('请先在“我的 › 在线阅读”里开启网页解析');
     }
     if (this.hasPendingBookSourceImport()) {
       // Keep a real home route under the external-import page so Back returns to the app.

@@ -45,7 +45,7 @@ export class BookSourceGroupStore {
     try {
       await SearchExploreSettingsStore.renameChangeSourceGroup(context, oldName, newName);
     } catch (e) {
-      console.warn('同步换规则范围分组名失败:', e);
+      console.warn('同步换源范围分组名失败:', e);
     }
     return next;
   }

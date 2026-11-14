@@ -23,7 +23,7 @@ export class AboutContributor {
 export class AboutContent {
   static readonly INTRODUCTION: string = '—— 按自己的习惯，读自己喜欢的书。';
   static readonly PROJECT_DESCRIPTION: string =
-    '开源轻页是一个本地阅读工具。实验室里的网页解析默认关闭，开启后仅按用户自行添加且有合法使用权限的规则，在用户设备上访问并重新排版其指定的网页。';
+    '开源轻页是一个本地阅读工具。网页解析默认关闭，开启后仅按用户自行添加且有合法使用权限的规则，在用户设备上访问并重新排版其指定的网页。';
   static readonly COMPLIANCE_NOTICE: string =
     '本项目不内置、不托管、不分发任何小说正文、章节内容、封面图片或付费资源；不内置、不提供、不推荐任何解析规则，不提供规则订阅服务，也不维护或背书任何第三方内容站点。用户开启数据同步后，规则仅作为其私有数据保存，不公开、不能分享。';
   static readonly USAGE_NOTICE: string =

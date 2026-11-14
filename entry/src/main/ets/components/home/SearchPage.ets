@@ -365,7 +365,7 @@ export struct SearchPage {
       this.migrateLegacySearchSourceSelection();
       this.pruneSearchSourceSelection();
     } catch (e) {
-      console.warn('加载可搜索规则失败:', e);
+      console.warn('加载可搜索书源失败:', e);
       this.rebuildSearchSourceIndex([]);
       this.searchableSources = [];
     }
@@ -402,7 +402,7 @@ export struct SearchPage {
     try {
       await this.loadSearchableSources();
     } catch (e) {
-      console.warn('刷新可搜索规则失败:', e);
+      console.warn('刷新可搜索书源失败:', e);
     }
     // 修改自选时从记住的自选书源开始勾，没有自选过就从当前生效的范围开始。
     const custom = this.customSourceUrls();
@@ -521,15 +521,15 @@ export struct SearchPage {
     // 先读一次书源列表状态，书源重新加载后标签跟着刷新。
     const total = this.searchableSources.length;
     if (this.isAllSearchSourcesSelected()) {
-      return total > 0 ? `全部规则 · ${total}` : '全部规则';
+      return total > 0 ? `全部书源 · ${total}` : '全部书源';
     }
     const selected = this.effectiveSelectedSourceUrls();
-    if (selected.length === 0) return '未选择规则';
+    if (selected.length === 0) return '未选择书源';
     if (selected.length === 1) {
       const source = this.searchSourceList.find((item: BookSource): boolean => item.bookSourceUrl === selected[0]);
-      return source?.bookSourceName || '1 个规则';
+      return source?.bookSourceName || '1 个书源';
     }
-    return `${selected.length} 个规则 · ${this.selectedSourceGroupCount(selected)} 个分组`;
+    return `${selected.length} 个书源 · ${this.selectedSourceGroupCount(selected)} 个分组`;
   }
 
   migrateLegacySearchSourceSelection(): void {
@@ -808,7 +808,7 @@ export struct SearchPage {
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.subTextColor())
         if (this.searchResults.length === 0 && this.searchScopeMode() !== SEARCH_SCOPE_ALL && this.keyword.trim()) {
-          Text(`在全部规则中搜「${this.keyword.trim()}」`)
+          Text(`在全部书源中搜「${this.keyword.trim()}」`)
             .fontSize(AppFontSize.BODY)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.accentColor())
@@ -942,7 +942,7 @@ export struct SearchPage {
       if (this.verificationUrl) {
         this.searchStatusLink('去验证', '去网页验证', () => this.openVerification())
       } else if (this.searchScopeMode() !== SEARCH_SCOPE_ALL && this.keyword.trim()) {
-        this.searchStatusLink('搜全部规则', '在全部规则中搜索这个关键词', () => this.selectSearchScope(SEARCH_SCOPE_ALL))
+        this.searchStatusLink('搜全部书源', '在全部书源中搜索这个关键词', () => this.selectSearchScope(SEARCH_SCOPE_ALL))
       }
     }
     .width('100%')
@@ -969,16 +969,16 @@ export struct SearchPage {
   @Builder
   searchScopeMenu() {
     Column() {
-      PopupMenuAction($r('sys.symbol.square_grid_2x2'), '全部规则', this.searchScopeMenuColor(SEARCH_SCOPE_ALL),
+      PopupMenuAction($r('sys.symbol.square_grid_2x2'), '全部书源', this.searchScopeMenuColor(SEARCH_SCOPE_ALL),
         () => this.selectSearchScope(SEARCH_SCOPE_ALL), true,
         this.searchableSources.length > 0 ? `${this.searchableSources.length}` : '', this.secondaryTextColor())
       PopupMenuAction($r('sys.symbol.magnifyingglass'), this.currentScopeMenuLabel(),
         this.searchScopeMenuColor(SEARCH_SCOPE_SINGLE), () => this.selectSearchScope(SEARCH_SCOPE_SINGLE),
         this.searchScopeMode() === SEARCH_SCOPE_SINGLE || this.exploreSourceSearchable())
-      PopupMenuAction($r('sys.symbol.list_bullet'), '自选规则', this.searchScopeMenuColor(SEARCH_SCOPE_CUSTOM),
+      PopupMenuAction($r('sys.symbol.list_bullet'), '自选书源', this.searchScopeMenuColor(SEARCH_SCOPE_CUSTOM),
         () => this.selectSearchScope(SEARCH_SCOPE_CUSTOM), true,
         this.customSourceUrls().length > 0 ? `${this.customSourceUrls().length}` : '', this.secondaryTextColor())
-      PopupMenuAction($r('sys.symbol.square_and_pencil'), '修改自选规则', this.primaryTextColor(), () => {
+      PopupMenuAction($r('sys.symbol.square_and_pencil'), '修改自选书源', this.primaryTextColor(), () => {
         this.showSearchScopeMenu = false;
         this.openSearchSourcePicker();
       })
@@ -1004,11 +1004,11 @@ export struct SearchPage {
 
   currentScopeMenuLabel(): string {
     if (this.searchScopeMode() !== SEARCH_SCOPE_SINGLE) {
-      if (!this.exploreSourceUrl) return '当前规则（发现页未选规则）';
-      if (!this.exploreSourceSearchable()) return '当前规则不支持搜索';
+      if (!this.exploreSourceUrl) return '当前书源（发现页未选书源）';
+      if (!this.exploreSourceSearchable()) return '当前书源不支持搜索';
     }
     const name = this.currentScopeSourceName();
-    return name ? `仅 ${name}` : '当前规则';
+    return name ? `仅 ${name}` : '当前书源';
   }
 
   /** 记住的自选书源；旧版本只存了当前选择，那份也算自选。书源列表加载后去掉已失效的。 */
@@ -1050,11 +1050,11 @@ export struct SearchPage {
     if (index === SEARCH_SCOPE_SINGLE) {
       const url = this.exploreSourceUrl;
       if (!url) {
-        HdsFeedback.showToast('发现页还没有选择规则');
+        HdsFeedback.showToast('发现页还没有选择书源');
         return;
       }
       if (this.searchSourceUrlSet.size > 0 && !this.searchSourceUrlSet.has(url)) {
-        HdsFeedback.showToast('当前规则不支持搜索');
+        HdsFeedback.showToast('当前书源不支持搜索');
         return;
       }
       this.singleSourceSearchUrl = url;
@@ -1538,7 +1538,7 @@ export struct SearchPage {
       if (this.singleSourceSearchUrl) {
         const targetSource = await db.getBookSource(this.singleSourceSearchUrl);
         if (!targetSource) {
-          HdsFeedback.showToast('指定规则不存在或已被删除');
+          HdsFeedback.showToast('指定书源不存在或已被删除');
           restoreIdleState();
           this.clearSingleSourceSearch();
           return;
@@ -1551,7 +1551,7 @@ export struct SearchPage {
         }
         if (sessionId !== this.searchSessionId) return;
         if (this.isNoSearchSourcesSelected() || this.effectiveSelectedSourceUrls().length === 0) {
-          HdsFeedback.showToast('请先在搜索范围中选择规则');
+          HdsFeedback.showToast('请先在搜索范围中选择书源');
           restoreIdleState();
           return;
         }
@@ -1565,7 +1565,7 @@ export struct SearchPage {
       this.searchResultKeySet.clear();
       this.statusMessage = targetSources.length === 1 ?
         `正在通过 ${this.singleSourceSearchName || targetSources[0].bookSourceName} 搜索...` :
-        (targetSources.length > 1 ? `正在通过 ${targetSources.length} 个规则搜索...` : '正在搜索...');
+        (targetSources.length > 1 ? `正在通过 ${targetSources.length} 个书源搜索...` : '正在搜索...');
       const chineseScript = await SearchChineseScriptRuntime.forSearch(getContext(this));
       if (sessionId !== this.searchSessionId) return;
       this.scriptVariantText = chineseScript ? chineseScript.variants(keyword).other() : '';
@@ -1625,7 +1625,7 @@ export struct SearchPage {
             `搜索完成，共找到 ${allBooks.length} 个结果，聚合为 ${groupCount} 组` :
             `搜索完成，共找到 ${allBooks.length} 本书`) :
           (failureReason ? `搜索完成：${failureReason}` : '搜索完成，未找到相关书籍');
-        this.statusMessage = verifyUrl ? `${resultText}；有规则需要网页验证` : resultText;
+        this.statusMessage = verifyUrl ? `${resultText}；有书源需要网页验证` : resultText;
       }
     } catch (e) {
       if (sessionId !== this.searchSessionId || this.coordinator !== activeCoordinator) {

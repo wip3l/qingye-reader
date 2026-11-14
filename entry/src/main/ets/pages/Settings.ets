@@ -708,7 +708,7 @@ struct SettingsPage {
           }, 'settings_comment_card_style_select',
           ReaderCommentCardSettings.style(this.readerCommentCard) !== ReaderCommentCardSettings.STYLE_OFF)
         if (ReaderCommentCardSettings.style(this.readerCommentCard) !== ReaderCommentCardSettings.STYLE_OFF) {
-          this.selectItem('每页最多', '只限段评热评，规则自带的热评卡和本章说都会显示',
+          this.selectItem('每页最多', '只限段评热评，书源自带的热评卡和本章说都会显示',
             this.commentCardOptions(ReaderCommentCardSettings.MAX_LABELS),
             Math.max(0, ReaderCommentCardSettings.MAX_VALUES.indexOf(
               ReaderCommentCardSettings.maxPerPage(this.readerCommentCard))), (index: number) => {

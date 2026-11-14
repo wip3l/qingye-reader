@@ -79,7 +79,7 @@ export class SearchChineseScriptRuntime {
       await store.put(SearchChineseScriptRuntime.KEY_HINTS, JSON.stringify(entries));
       await store.flush();
     } catch (e) {
-      console.warn('[SearchScript] 保存规则用字失败:', e);
+      console.warn('[SearchScript] 保存书源用字失败:', e);
     }
   }
 
@@ -123,7 +123,7 @@ export class SearchChineseScriptRuntime {
         hints.set(url, script);
       }
     } catch (e) {
-      console.warn('[SearchScript] 读取规则用字失败:', e);
+      console.warn('[SearchScript] 读取书源用字失败:', e);
     }
     return hints;
   }

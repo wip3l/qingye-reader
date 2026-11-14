@@ -575,7 +575,7 @@ assert(bookSourcePage.includes('checkOptionsDialog()') &&
   'Book source validation must support immediate disable/delete actions per completed source');
 // 搜索框与搜索范围面板共用 SourcePickerKit 的 SourcePickerSearchField。
 assert(indexPage.includes('SourcePickerSearchField({') &&
-  sourcePickerKit.includes("SEARCH_PLACEHOLDER: string = '搜索规则名称、地址或分组'") &&
+  sourcePickerKit.includes("SEARCH_PLACEHOLDER: string = '搜索书源名称、地址或分组'") &&
   /struct SourcePickerSearchField[\s\S]*?TextInput\(/.test(sourcePickerKit) &&
   indexPage.includes('this.exploreSourcePickerContent()') &&
   !indexPage.includes('builder: this.exploreSourcePopup') &&

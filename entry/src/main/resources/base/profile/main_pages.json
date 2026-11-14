@@ -36,6 +36,7 @@
     "pages/OtherSettings",
     "pages/AppearanceSettings",
     "pages/LabSettings",
+    "pages/WebParseSettings",
     "pages/WebParseNotice",
     "pages/ScriptThreadProbe",
     "pages/DataBackup",
