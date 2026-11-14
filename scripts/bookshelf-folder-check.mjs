@@ -88,8 +88,8 @@ Object.assign(shelf, {
   shelfComponentActive: true, tileGroupAnimating: false, tileGroupHasOrigin: false,
   tileGroupOriginGroupId: 0, tileGroupOriginViewportKey: '', tileGroupOriginX: 0, tileGroupOriginY: 0,
   tileGroupLayerGroupId: 0, tileGroupPages: new Map(), tileGroupBaseGroupId: 0, tileGroupBackdropReveal: 0,
-  tileGroupShelfScale: 1, tileGroupPageScale: 1, tileGroupZoomX: 0, tileGroupZoomY: 0, tileGroupBareBody: false,
-  tileGroupMotionBackground: false, tileGroupShelfOpacity: 1, tileGroupPageOpacity: 1,
+  tileGroupShelfScale: 1, tileGroupPageScale: 1, tileGroupZoomX: 0, tileGroupZoomY: 0,
+  tileGroupShelfOpacity: 1, tileGroupPageOpacity: 1,
   tileGroupAwaitCovers: false, tileGroupPendingCovers: new Set(),
   tileGroupPendingBack: false, tileGroupPendingTarget: -1, tileGroupMotionGeneration: 0, tileGroupMotionWatchdog: -1,
   shelfCategoryPages: new Map(), shelfListScroller: null, shelfTileScroller: null,
@@ -150,8 +150,6 @@ shelf.openTileGroupPage(7, 'audio', 90, 220);
 assert.equal(shelf.tileGroupAnimating, true);
 assert.equal(shelf.showShelfGroupMenu || shelf.showShelfMoreMenu || shelf.showShelfFilterMenu, false);
 assert.deepEqual([shelf.tileGroupZoomX, shelf.tileGroupZoomY], [90, 255], 'zooms around the tapped folder');
-assert.equal(shelf.tileGroupBareBody, true, 'both layers leave the background to the static layer underneath');
-assert.equal(shelf.tileGroupMotionBackground, true);
 assert.deepEqual(warmed, [7], 'cached covers are swapped in before the group page is built');
 assert.equal(shelf.tileGroupLayerGroupId, 7, 'the group layer is mounted');
 assert.equal(groupLayerShown(), true);
@@ -175,8 +173,6 @@ assert.equal(shelf.activeShelfGroupId, 7, 'repeated taps cannot replace a runnin
 complete(420);
 assert.equal(shelf.tileGroupAnimating, false);
 assert.equal(shelfHidden(), true, 'once still, the shelf is hidden under the group page (kept, not destroyed)');
-assert.equal(shelf.tileGroupBareBody, false);
-assert.equal(shelf.tileGroupMotionBackground, false);
 assert.deepEqual([shelf.tileGroupShelfScale, shelf.tileGroupShelfOpacity], [1, 1], 'reset for the way back');
 
 // Return: the hidden shelf reappears (only laid out) slightly large, then both layers zoom; the group layer goes last.
@@ -314,6 +310,9 @@ assert.equal(shelf.tileGroupLayerGroupId, 0);
 assert.equal(shelf.shelfCoverSyncLoad('file://cover.jpg', true), true);
 assert.equal(shelf.shelfCoverSyncLoad('https://cdn/cover.jpg', true), false);
 
+// The backdrop is mounted once under both layers; remounting it around the motion made it flash.
+assert.doesNotMatch(source, /tileGroupBareBody|tileGroupMotionBackground|tileGroupBackgroundLayer/);
+assert.equal((source.match(/HomeThemeBackdrop\(/g) || []).length, 1, 'one shelf backdrop only');
 assert.doesNotMatch(source, /tileGroupCurtain|swapTileGroupPage|returnToTileGroupShelf|tileGroupRootPages|flyIntoTileGroup|TileGroupPreviewSource/);
 const index = fs.readFileSync(new URL('../entry/src/main/ets/pages/Index.ets', import.meta.url), 'utf8');
 assert.ok(index.includes("AppStorage.setOrCreate('bookshelfGroupBackRequest'"));

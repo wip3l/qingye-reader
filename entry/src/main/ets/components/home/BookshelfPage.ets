@@ -383,10 +383,6 @@ export struct BookshelfPage {
   /** 缩放中心（相对书架根节点，vp）。 */
   @State tileGroupZoomX: number = 0;
   @State tileGroupZoomY: number = 0;
-  /** 开合期间两层都不画底色和主题背景图（由 tileGroupBackgroundLayer 垫着）：缩放的只有内容，背景不动。 */
-  @State tileGroupBareBody: boolean = false;
-  /** 开合期间垫在最底下的页面背景（底色与主题背景图），书架或分组页淡出时露出的仍是同样的背景。 */
-  @State tileGroupMotionBackground: boolean = false;
   /** 打开分组时为真：分组页挂上的本地封面登记进 tileGroupPendingCovers，后台解码完移出，都解码完分组页才浮起。 */
   private tileGroupAwaitCovers: boolean = false;
   private tileGroupPendingCovers: Set<string> = new Set();
@@ -1604,9 +1600,9 @@ export struct BookshelfPage {
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
-      if (this.tileGroupMotionBackground) {
-        this.tileGroupBackgroundLayer()
-      }
+      // 底色与主题背景图只此一份、常驻最底层：书架和分组页两层都是透明的，开合时缩放淡出的只有内容。
+      // 早先开合前后在层里层外来回挂背景，每次重挂都要重新解码、取景先按拉伸排一帧、动图从头播，会闪一下。
+      this.shelfBackgroundLayer()
       // 书架一直在底下，分组页打开后藏起来（不排版、不拆）；分组页另成一层盖在上面。
       Stack() {
         this.shelfPageBody()
@@ -1706,14 +1702,8 @@ export struct BookshelfPage {
 
   @Builder
   shelfPageBody() {
+    // 底色和主题背景图由根部的 shelfBackgroundLayer 垫着；下面的列表和网格要用 shelfSurfaceColor 透出它。
     Column() {
-      // 主题背景图垫在最底层，不占布局、不随列表滚动；下面的列表和网格要用 shelfSurfaceColor 透出它。
-      // 分组开合期间由 tileGroupBackgroundLayer 垫着，这里不画。
-      if (!this.tileGroupBareBody) {
-        HomeThemeBackdrop({ shelfLayout: this.bookshelfLayoutMode })
-          .position({ x: 0, y: 0 })
-      }
-
       Column() {
       // 列表上滑时标题行收起：外层按收起量变矮并裁剪，标题行贴底上移并淡出。
       Stack({ alignContent: Alignment.Bottom }) {
@@ -1873,10 +1863,8 @@ export struct BookshelfPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.tileGroupBareBody ? Color.Transparent : this.pageColor())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     .onTouch((event: TouchEvent) => this.onShelfBodyTouch(event))
-    // 开合期间的背景由 tileGroupBackgroundLayer 负责。
   }
 
   onShelfBodyTouch(event: TouchEvent): void {
@@ -1896,11 +1884,6 @@ export struct BookshelfPage {
   @Builder
   tileGroupPageBody() {
     Column() {
-      if (!this.tileGroupBareBody) {
-        HomeThemeBackdrop({ shelfLayout: this.bookshelfLayoutMode })
-          .position({ x: 0, y: 0 })
-      }
-
       Column() {
         Row() {
           if (this.isBookMultiSelect) {
@@ -1969,14 +1952,13 @@ export struct BookshelfPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.tileGroupBareBody ? Color.Transparent : this.pageColor())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     .onTouch((event: TouchEvent) => this.onShelfBodyTouch(event))
   }
 
-  /** 和分组页一样的底色与主题背景图：书架或分组页整页淡出时，背景留在原处不跟着淡。 */
+  /** 书架与分组页共用的底色和主题背景图，排版与两层一致（同样只向底部延伸安全区）。 */
   @Builder
-  tileGroupBackgroundLayer() {
+  shelfBackgroundLayer() {
     Column() {
       HomeThemeBackdrop({ shelfLayout: this.bookshelfLayoutMode })
         .position({ x: 0, y: 0 })
@@ -1984,6 +1966,7 @@ export struct BookshelfPage {
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     .hitTestBehavior(HitTestMode.None)
     .accessibilityLevel('no-hide-descendants')
   }
@@ -3481,7 +3464,7 @@ export struct BookshelfPage {
   }
 
   /**
-   * 开合：两层都撤掉底色和主题背景图（由 tileGroupBackgroundLayer 垫着），缩放的只有内容。打开时在书架上面建分组页
+   * 开合：两层本来就不带底色和主题背景图（由 shelfBackgroundLayer 常驻垫着），缩放的只有内容。打开时在书架上面建分组页
    * （透明、停在起点），等这一屏封面解码完；返回时把藏着的书架显出来（只排版、不重建），等它画出来。然后两层一口气走完。
    * 建页时主线程堵着、动画也画不出帧（真机实测整段冻住），所以动画不提前开始。
    */
@@ -3489,8 +3472,6 @@ export struct BookshelfPage {
     const entering = groupId > 0;
     this.tileGroupZoomX = fromFolder ? this.tileGroupOriginX : this.contextViewportWidth / 2;
     this.tileGroupZoomY = fromFolder ? this.tileGroupOriginY : this.contextViewportHeight / 2;
-    this.tileGroupMotionBackground = true;
-    this.tileGroupBareBody = true;
     const run = (): void => {
       this.getUIContext().animateTo({
         duration: entering ? SHELF_GROUP_ZOOM_IN_DURATION : SHELF_GROUP_ZOOM_OUT_DURATION,
@@ -3705,8 +3686,6 @@ export struct BookshelfPage {
   clearTileGroupMotionLayers(): void {
     this.tileGroupShelfScale = 1;
     this.tileGroupPageScale = 1;
-    this.tileGroupBareBody = false;
-    this.tileGroupMotionBackground = false;
     this.tileGroupAwaitCovers = false;
     this.tileGroupPendingCovers.clear();
     this.tileGroupShelfOpacity = 1;
