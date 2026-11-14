@@ -266,6 +266,7 @@ import { KnockShare } from '../utils/KnockShare';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { READER_TURN_FRAME_RATE, applyReaderTurnFrameRate } from '../utils/ReaderTurnFrameRate';
+import { PlatformInfo } from '../platform/PlatformInfo';
 
 const READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT = 4;
 const READER_ADJACENT_PAGINATION_PREVIEW_PAGE_COUNT = 2;
@@ -13109,20 +13110,23 @@ struct ReadBookPage {
         })
     }
 
-    ReaderSettingGroup({ title: '眼动', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
-      // Builder arguments are passed by value and do not refresh, so this text covers both recognition modes.
-      this.readerSwitchSettingItem('眼动翻页（beta）', '向上看即翻页；摄像头图像仅在本机处理',
-        this.readerEyeTurnEnabled, (checked: boolean) => {
-          this.eyeTurn().setEnabled(checked);
-        })
-
-      if (this.readerEyeTurnEnabled) {
-        this.readerSwitchSettingItem('新版识别模型（beta）',
-          '识别更稳，不怕暗光和眼镜；开启后看向屏幕上沿以外翻页，耗电略多',
-          this.readerEyeTurnModelEnabled, (checked: boolean) => {
-            this.eyeTurn().setModelEnabled(checked);
+    // 安卓首版不带眼动翻页（EyeTurnController 在安卓上不启动）。
+    if (!PlatformInfo.ANDROID) {
+      ReaderSettingGroup({ title: '眼动', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+        // Builder arguments are passed by value and do not refresh, so this text covers both recognition modes.
+        this.readerSwitchSettingItem('眼动翻页（beta）', '向上看即翻页；摄像头图像仅在本机处理',
+          this.readerEyeTurnEnabled, (checked: boolean) => {
+            this.eyeTurn().setEnabled(checked);
           })
-        this.readerEyeTurnCalibrationSettingItem()
+
+        if (this.readerEyeTurnEnabled) {
+          this.readerSwitchSettingItem('新版识别模型（beta）',
+            '识别更稳，不怕暗光和眼镜；开启后看向屏幕上沿以外翻页，耗电略多',
+            this.readerEyeTurnModelEnabled, (checked: boolean) => {
+              this.eyeTurn().setModelEnabled(checked);
+            })
+          this.readerEyeTurnCalibrationSettingItem()
+        }
       }
     }
   }
