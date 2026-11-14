@@ -56,7 +56,7 @@ export class CloudTtsClient {
 
   async synthesize(voiceId: string, text: string, speed: number): Promise<CloudTtsAudio> {
     if (!AccountSessionStore.isLoggedIn()) {
-      throw new AccountApiError('请先登录华为账号后使用在线音色', 401, 'UNAUTHORIZED');
+      throw new AccountApiError('请先登录账号后使用在线音色', 401, 'UNAUTHORIZED');
     }
     if (!AccountCommerceConfig.isServerConfigured()) {
       throw new AccountApiError('在线朗读服务端尚未配置', 0, 'SERVER_NOT_CONFIGURED');

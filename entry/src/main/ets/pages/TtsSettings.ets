@@ -662,7 +662,7 @@ struct TtsSettingsPage {
   applyCloudVoice(voice: TtsVoiceInfo): void {
     if (!TtsVoiceCatalog.cloudEnabled(voice, this.ttsDisabledVoiceKeys)) return;
     if (!AccountSessionStore.isLoggedIn()) {
-      HdsFeedback.showToast('请先登录华为账号后使用云端音色');
+      HdsFeedback.showToast('请先登录账号后使用云端音色');
       return;
     }
     if (this.mimoEnabled) MimoStore.setEnabled(false);
@@ -1007,7 +1007,7 @@ struct TtsSettingsPage {
           .fontColor(this.subTextColor())
           .width('100%')
       } else {
-        Text('请先在“我的-账号与点数”登录华为账号，再返回这里兑换在线朗读字数。')
+        Text('请先在“我的-会员与账号”登录，再返回这里兑换在线朗读字数。')
           .fontSize(AppFontSize.CAPTION)
           .lineHeight(18)
           .fontColor(this.subTextColor())

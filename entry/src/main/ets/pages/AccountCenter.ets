@@ -111,15 +111,29 @@ struct AccountCenterPage {
   private pointsUsageDialogBuilder: CustomBuilder | undefined = undefined;
   private pointsUsageDialogId: number = -1;
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
+  /** 上次显示时是否已登录：从用户名登录页回来要补做登录后的刷新，申请注销后回来要清掉会员信息。 */
+  private shownLoggedIn: boolean = false;
 
   aboutToAppear(): void {
     this.membership = AccountSessionStore.account().membership || new MembershipSnapshot();
+    this.shownLoggedIn = AccountSessionStore.isLoggedIn();
     this.initialize();
     this.syncBars();
   }
 
   onPageShow(): void {
     this.syncBars();
+    const loggedIn = AccountSessionStore.isLoggedIn();
+    if (loggedIn && !this.shownLoggedIn) {
+      this.shownLoggedIn = true;
+      this.afterLogin();
+      return;
+    }
+    if (!loggedIn && this.shownLoggedIn) {
+      this.shownLoggedIn = false;
+      this.resetLoggedOutState();
+      return;
+    }
     // 从我的权益页领取礼包后返回，入口提示要跟着更新。
     if (this.accountLoggedIn) {
       this.membership = AccountSessionStore.account().membership || new MembershipSnapshot();
@@ -250,12 +264,10 @@ struct AccountCenterPage {
     this.loading = true;
     try {
       await HuaweiAccountService.login(this.context);
-      // 换设备登录后立即拉取云空间的书籍与字体，不必等回到前台或打开云空间页。
-      CloudAutoSync.schedule(this.context, 0);
-      HdsFeedback.showToast('登录成功，点数、会员和主题权益已同步');
-      await this.refreshMembership(false);
-      await this.loadIapProducts();
-      await this.recoverUnfinishedPurchases();
+      this.shownLoggedIn = true;
+      HdsFeedback.showToast(HuaweiAccountService.lastLoginCancelledDeletion ?
+        '登录成功，已撤销账号注销申请' : '登录成功，点数、会员和主题权益已同步');
+      await this.afterLogin();
     } catch (e) {
       const error = e as BusinessError;
       // 1001502012: the user dismissed the authorization sheet.
@@ -265,6 +277,26 @@ struct AccountCenterPage {
     } finally {
       this.loading = false;
     }
+  }
+
+  /** 登录成功后（华为账号或用户名登录页返回）拉取会员、内购商品与未完成订单。 */
+  async afterLogin(): Promise<void> {
+    // 换设备登录后立即拉取云空间的书籍与字体，不必等回到前台或打开云空间页。
+    CloudAutoSync.schedule(this.context, 0);
+    try {
+      await this.refreshMembership(false);
+      await this.loadIapProducts();
+      await this.recoverUnfinishedPurchases();
+    } catch (e) {
+      console.warn('登录后刷新账号失败:', e);
+    }
+  }
+
+  resetLoggedOutState(): void {
+    this.editingProfile = false;
+    this.membership = new MembershipSnapshot();
+    this.orders = [];
+    this.ordersExpanded = false;
   }
 
   async refreshAccount(): Promise<void> {
@@ -343,12 +375,10 @@ struct AccountCenterPage {
       return;
     }
     await HuaweiAccountService.logout(this.context);
+    this.shownLoggedIn = false;
     // 退出后字体下拉框不再显示云端未下载的字体。
     CloudAutoSync.schedule(this.context, 0);
-    this.editingProfile = false;
-    this.membership = new MembershipSnapshot();
-    this.orders = [];
-    this.ordersExpanded = false;
+    this.resetLoggedOutState();
     HdsFeedback.showToast('已退出登录');
   }
 
@@ -715,7 +745,7 @@ struct AccountCenterPage {
       return;
     }
     if (!this.accountLoggedIn) {
-      HdsFeedback.showToast('请先登录华为账号');
+      HdsFeedback.showToast('请先登录');
       return;
     }
     this.purchasingProductId = product.productId;
@@ -2221,6 +2251,15 @@ struct AccountCenterPage {
 
   @Builder
   accountActions() {
+    Column() {
+      this.serviceRow($r('sys.symbol.checkmark_shield'), '登录与账号安全', '华为账号、用户名密码、恢复码与注销', false, () => {
+        router.pushUrl({ url: 'pages/AccountSecurity' });
+      })
+    }
+    .width('100%')
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
     Text('退出登录')
       .width('100%')
       .height(48)
@@ -2247,6 +2286,24 @@ struct AccountCenterPage {
         .fontColor(this.subTextColor())
         .lineHeight(22)
         .width('100%')
+      Row() {
+        Text('不用华为账号？用用户名登录或注册')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.accentColor())
+          .layoutWeight(1)
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(16)
+          .fontColor([this.accentColor()])
+      }
+      .width('100%')
+      .padding({ top: AppSpacing.XS })
+      .onClick(() => {
+        if (!AccountCommerceConfig.isServerConfigured()) {
+          HdsFeedback.showToast('请先配置账号服务端地址');
+          return;
+        }
+        router.pushUrl({ url: 'pages/AccountPasswordLogin' });
+      })
     }
     .width('100%')
     .padding(AppSpacing.XL)
@@ -2266,7 +2323,7 @@ struct AccountCenterPage {
         .borderRadius(ThemeRuntime.mediumRadius())
         .backgroundColor(this.appDarkMode ? '#332216' : '#FFF3E8')
     } else {
-      Text('登录和购买表示你同意应用的用户协议、隐私政策与点数服务规则。登录时会获取华为账号的昵称和头像作为默认资料，昵称和头像保存到账号服务端并随账号同步；点数仅用于本应用数字内容，不支持转让或提现。')
+      Text('登录和购买表示你同意应用的用户协议、隐私政策与点数服务规则。华为账号登录时会获取昵称和头像作为默认资料，用户名注册只保存用户名和加密后的密码；昵称和头像保存到账号服务端并随账号同步；点数仅用于本应用数字内容，不支持转让或提现。')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .lineHeight(17)

@@ -404,7 +404,7 @@ export class CloudSyncCoordinator {
     automatic: boolean = false): Promise<CloudSyncRunResult> {
     await AccountSessionStore.load(context);
     if (!AccountSessionStore.isLoggedIn()) {
-      throw new Error('请先登录华为账号');
+      throw new Error('请先登录账号');
     }
     const userId = AccountSessionStore.account().userId;
     const sessionToken = AccountSessionStore.token();

@@ -332,7 +332,7 @@ export struct SettingsPage {
 
         Column({ space: AppSpacing.XS }) {
           Row({ space: AppSpacing.SM }) {
-            Text(this.accountLoggedIn ? this.accountDisplayName : '登录华为账号')
+            Text(this.accountLoggedIn ? this.accountDisplayName : '登录账号')
               .fontSize(AppFontSize.SUBTITLE)
               .fontWeight(FontWeight.Bold)
               .fontColor(this.nameColor())

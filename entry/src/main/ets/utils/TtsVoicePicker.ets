@@ -307,7 +307,7 @@ export class TtsVoicePicker {
 
   private useCloudVoice(voice: TtsVoiceInfo): boolean {
     if (!AccountSessionStore.isLoggedIn()) {
-      HdsFeedback.showToast('请先登录华为账号后使用在线音色');
+      HdsFeedback.showToast('请先登录账号后使用在线音色');
       return false;
     }
     this.leaveMimo();

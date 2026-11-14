@@ -54,7 +54,7 @@ struct SyncDevicesPage {
     try {
       await AccountSessionStore.load(getContext(this));
       if (!AccountSessionStore.isLoggedIn()) {
-        this.errorMessage = '请先登录华为账号';
+        this.errorMessage = '请先登录账号';
         return;
       }
       this.currentDeviceId = await CloudSyncStateStore.deviceId(getContext(this));

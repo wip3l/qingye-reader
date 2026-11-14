@@ -52,6 +52,39 @@ export class AccountSnapshot {
 export class HuaweiLoginResponse {
   sessionToken: string = '';
   account: AccountSnapshot = new AccountSnapshot();
+  /** 冷静期内登录会撤销注销申请。 */
+  deletionCancelled: boolean = false;
+}
+
+/** 用户名注册、密码登录、恢复码重设密码共用的响应。 */
+export class PasswordLoginResponse extends HuaweiLoginResponse {
+  /** 只有注册时返回，只显示这一次。 */
+  recoveryCodes: string[] = [];
+  /** 用恢复码重设密码后剩余的可用恢复码。 */
+  remainingRecoveryCodes: number = 0;
+}
+
+export class AccountLoginMethods {
+  username: string = '';
+  hasPassword: boolean = false;
+  huaweiBound: boolean = false;
+  recoveryCodesRemaining: number = 0;
+  deletionRequestedAt: number | null = null;
+}
+
+export class AccountCredentialResponse {
+  recoveryCodes: string[] = [];
+  loginMethods: AccountLoginMethods = new AccountLoginMethods();
+}
+
+export class HuaweiBindResponse {
+  welcomeGranted: boolean = false;
+  account: AccountSnapshot = new AccountSnapshot();
+  loginMethods: AccountLoginMethods = new AccountLoginMethods();
+}
+
+export class AccountDeletionResponse {
+  scheduledAt: number = 0;
 }
 
 export class SessionRenewResponse {

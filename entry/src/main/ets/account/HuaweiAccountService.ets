@@ -17,14 +17,37 @@ import { CloudSyncSettingsStore } from './CloudSyncSettingsStore';
 
 const DEFAULT_DISPLAY_NAME = '华为用户';
 
+/** 华为账号授权结果：授权码交给服务端换身份，昵称头像用来填默认资料。 */
+export class HuaweiAuthorization {
+  authorizationCode: string = '';
+  nickName: string = '';
+  avatarUri: string = '';
+}
+
 export class HuaweiAccountService {
   private static renewing: Promise<void> | null = null;
+  /** 最近一次登录是否撤销了冷静期内的注销申请，页面据此提示一次。 */
+  static lastLoginCancelledDeletion: boolean = false;
 
   static async initialize(context: Context): Promise<void> {
     await AccountSessionStore.load(context);
   }
 
   static async login(context: common.UIAbilityContext): Promise<AccountSnapshot> {
+    const authorization = await HuaweiAccountService.authorize(context);
+    const loginResponse: HuaweiLoginResponse = await AccountCommerceApi.login(authorization.authorizationCode);
+    if (!loginResponse.sessionToken || !loginResponse.account?.userId) {
+      throw new Error('账号服务返回的数据不完整');
+    }
+    HuaweiAccountService.lastLoginCancelledDeletion = loginResponse.deletionCancelled === true;
+    await AccountSessionStore.saveLogin(context, loginResponse);
+    await CloudSyncSettingsStore.load(context, AccountSessionStore.account().userId);
+    await HuaweiAccountService.seedProfile(context, authorization.nickName, authorization.avatarUri);
+    return AccountSessionStore.account();
+  }
+
+  /** 拉起华为账号授权，登录和给用户名账号绑定华为账号共用。 */
+  static async authorize(context: common.UIAbilityContext): Promise<HuaweiAuthorization> {
     // LoginWithHuaweiIDRequest only returns identifiers. The nickname and avatar are only
     // available through the authorization request with the profile scope.
     const request = new authentication.HuaweiIDProvider().createAuthorizationWithHuaweiIDRequest();
@@ -42,20 +65,16 @@ export class HuaweiAccountService {
     if (!authorizationCode) {
       throw new Error('华为账号未返回授权码');
     }
-    const loginResponse: HuaweiLoginResponse = await AccountCommerceApi.login(authorizationCode);
-    if (!loginResponse.sessionToken || !loginResponse.account?.userId) {
-      throw new Error('账号服务返回的数据不完整');
-    }
-    await AccountSessionStore.saveLogin(context, loginResponse);
-    await CloudSyncSettingsStore.load(context, AccountSessionStore.account().userId);
-    await HuaweiAccountService.seedProfile(
-      context, response.data?.nickName || '', response.data?.avatarUri || '');
-    return AccountSessionStore.account();
+    const result = new HuaweiAuthorization();
+    result.authorizationCode = authorizationCode;
+    result.nickName = response.data?.nickName || '';
+    result.avatarUri = response.data?.avatarUri || '';
+    return result;
   }
 
   // Fills the server profile from the Huawei account only while it still holds the defaults,
   // so a nickname or avatar the user edited in the app is never overwritten by a later login.
-  private static async seedProfile(context: Context, nickName: string, avatarUri: string): Promise<void> {
+  static async seedProfile(context: Context, nickName: string, avatarUri: string): Promise<void> {
     try {
       const account = AccountSessionStore.account();
       const huaweiName = nickName.trim().substring(0, 30);
@@ -182,7 +201,7 @@ export class HuaweiAccountService {
     expectedValidDays: number): Promise<AccountSnapshot> {
     await AccountSessionStore.load(context);
     if (!AccountSessionStore.isLoggedIn()) {
-      throw new Error('请先登录华为账号');
+      throw new Error('请先登录');
     }
     const snapshot = await AccountCommerceApi.redeemTheme(
       themeId, util.generateRandomUUID(), expectedPricePoints, expectedValidDays,
@@ -195,7 +214,7 @@ export class HuaweiAccountService {
     removeAvatar: boolean, avatarCrop: AvatarCrop | null = null): Promise<AccountSnapshot> {
     await AccountSessionStore.load(context);
     if (!AccountSessionStore.isLoggedIn()) {
-      throw new Error('请先登录华为账号');
+      throw new Error('请先登录');
     }
     const snapshot = await AccountCommerceApi.updateProfile(
       displayName, avatarBase64, removeAvatar, AccountSessionStore.token(), avatarCrop);
@@ -206,11 +225,17 @@ export class HuaweiAccountService {
   static async creditIapPurchase(context: Context, purchaseData: string): Promise<IapCreditResponse> {
     await AccountSessionStore.load(context);
     if (!AccountSessionStore.isLoggedIn()) {
-      throw new Error('请先登录华为账号');
+      throw new Error('请先登录');
     }
     const result = await AccountCommerceApi.creditIapPurchase(purchaseData, AccountSessionStore.token());
     await AccountSessionStore.updateSnapshot(context, result.account);
     return result;
+  }
+
+  /** 只清本机登录状态，不通知服务端（服务端已让会话失效时用，比如申请注销后）。 */
+  static async clearLocalSession(context: Context): Promise<void> {
+    await AccountSessionStore.clear(context);
+    await CloudSyncSettingsStore.load(context, '');
   }
 
   static async logout(context: Context): Promise<void> {

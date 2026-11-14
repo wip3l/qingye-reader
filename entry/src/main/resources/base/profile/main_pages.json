@@ -45,6 +45,8 @@
     "pages/ThemeSettings",
     "pages/ThemeTypographySettings",
     "pages/AccountCenter",
+    "pages/AccountPasswordLogin",
+    "pages/AccountSecurity",
     "pages/MemberBenefits",
     "pages/MemberSettings",
     "pages/DataSync",

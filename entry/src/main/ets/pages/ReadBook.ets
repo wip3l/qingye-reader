@@ -9659,7 +9659,7 @@ struct ReadBookPage {
   applyCloudTtsVoice(voice: TtsVoiceInfo, restartSpeaking: boolean): void {
     if (!TtsVoiceCatalog.cloudEnabled(voice, this.ttsDisabledVoiceKeys)) return;
     if (!AccountSessionStore.isLoggedIn()) {
-      HdsFeedback.showToast('请先登录华为账号后使用在线音色');
+      HdsFeedback.showToast('请先登录账号后使用在线音色');
       return;
     }
     if (restartSpeaking && MimoStore.load().enabled) MimoStore.setEnabled(false);

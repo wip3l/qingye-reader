@@ -6,9 +6,14 @@ import { MembershipCatalog, MembershipQuote, MembershipSnapshot, MembershipOrder
 import { SuperThemeClaimResponse } from './AccountCommerceModels';
 import {
   AccountApiError,
+  AccountCredentialResponse,
+  AccountDeletionResponse,
+  AccountLoginMethods,
   AvatarCrop,
   AccountSnapshot,
+  HuaweiBindResponse,
   HuaweiLoginResponse,
+  PasswordLoginResponse,
   IapCreditResponse,
   SessionRenewResponse,
   ThemeCatalogResponse,
@@ -98,6 +103,71 @@ export class AccountCommerceApi {
       JSON.stringify({ authorizationCode: authorizationCode }), '');
     const response = JSON.parse(value) as HuaweiLoginResponse;
     response.account = AccountCommerceApi.normalizeAccount(response.account);
+    return response;
+  }
+
+  static async registerWithPassword(username: string, password: string): Promise<PasswordLoginResponse> {
+    return AccountCommerceApi.passwordRequest('/v1/auth/register',
+      JSON.stringify({ username: username, password: password }));
+  }
+
+  static async loginWithPassword(username: string, password: string): Promise<PasswordLoginResponse> {
+    return AccountCommerceApi.passwordRequest('/v1/auth/password',
+      JSON.stringify({ username: username, password: password }));
+  }
+
+  static async recoverWithCode(username: string, recoveryCode: string,
+    newPassword: string): Promise<PasswordLoginResponse> {
+    return AccountCommerceApi.passwordRequest('/v1/auth/recover',
+      JSON.stringify({ username: username, recoveryCode: recoveryCode, newPassword: newPassword }));
+  }
+
+  private static async passwordRequest(path: string, body: string): Promise<PasswordLoginResponse> {
+    const value = await AccountCommerceApi.request(path, 'POST', body, '');
+    const response = JSON.parse(value) as PasswordLoginResponse;
+    response.account = AccountCommerceApi.normalizeAccount(response.account);
+    response.recoveryCodes = Array.isArray(response.recoveryCodes) ? response.recoveryCodes : [];
+    response.deletionCancelled = response.deletionCancelled === true;
+    response.remainingRecoveryCodes = Math.max(0, Math.floor(Number(response.remainingRecoveryCodes) || 0));
+    return response;
+  }
+
+  static async fetchLoginMethods(sessionToken: string): Promise<AccountLoginMethods> {
+    const value = await AccountCommerceApi.request('/v1/account/login-methods', 'GET', '', sessionToken);
+    return AccountCommerceApi.normalizeLoginMethods(JSON.parse(value) as AccountLoginMethods);
+  }
+
+  static async setPassword(username: string, newPassword: string, currentPassword: string,
+    sessionToken: string): Promise<AccountCredentialResponse> {
+    const value = await AccountCommerceApi.request('/v1/account/password', 'POST', JSON.stringify({
+      username: username, newPassword: newPassword, currentPassword: currentPassword
+    }), sessionToken);
+    return AccountCommerceApi.normalizeCredentialResponse(JSON.parse(value) as AccountCredentialResponse);
+  }
+
+  static async regenerateRecoveryCodes(currentPassword: string,
+    sessionToken: string): Promise<AccountCredentialResponse> {
+    const value = await AccountCommerceApi.request('/v1/account/recovery-codes', 'POST',
+      JSON.stringify({ currentPassword: currentPassword }), sessionToken);
+    return AccountCommerceApi.normalizeCredentialResponse(JSON.parse(value) as AccountCredentialResponse);
+  }
+
+  static async bindHuawei(authorizationCode: string, sessionToken: string): Promise<HuaweiBindResponse> {
+    const value = await AccountCommerceApi.request('/v1/account/huawei', 'POST',
+      JSON.stringify({ authorizationCode: authorizationCode }), sessionToken);
+    const response = JSON.parse(value) as HuaweiBindResponse;
+    response.welcomeGranted = response.welcomeGranted === true;
+    response.account = AccountCommerceApi.normalizeAccount(response.account);
+    response.loginMethods = AccountCommerceApi.normalizeLoginMethods(response.loginMethods);
+    return response;
+  }
+
+  static async requestAccountDeletion(currentPassword: string, sessionToken: string): Promise<AccountDeletionResponse> {
+    const value = await AccountCommerceApi.request('/v1/account/deletion', 'POST',
+      JSON.stringify({ currentPassword: currentPassword }), sessionToken);
+    const raw = JSON.parse(value) as AccountDeletionResponse;
+    const response = new AccountDeletionResponse();
+    response.scheduledAt = Math.max(0, Math.floor(Number(raw.scheduledAt) || 0));
     return response;
   }
 
@@ -357,6 +427,24 @@ export class AccountCommerceApi {
     result.memberThemeIds = account?.memberThemeIds || [];
     result.memberVerifiedAt = Date.now();
     result.entitlements = account?.entitlements || [];
+    return result;
+  }
+
+  private static normalizeLoginMethods(raw: AccountLoginMethods): AccountLoginMethods {
+    const result = new AccountLoginMethods();
+    result.username = typeof raw?.username === 'string' ? raw.username : '';
+    result.hasPassword = raw?.hasPassword === true;
+    result.huaweiBound = raw?.huaweiBound === true;
+    result.recoveryCodesRemaining = Math.max(0, Math.floor(Number(raw?.recoveryCodesRemaining) || 0));
+    const deletion = Number(raw?.deletionRequestedAt);
+    result.deletionRequestedAt = Number.isFinite(deletion) && deletion > 0 ? deletion : null;
+    return result;
+  }
+
+  private static normalizeCredentialResponse(raw: AccountCredentialResponse): AccountCredentialResponse {
+    const result = new AccountCredentialResponse();
+    result.recoveryCodes = Array.isArray(raw?.recoveryCodes) ? raw.recoveryCodes : [];
+    result.loginMethods = AccountCommerceApi.normalizeLoginMethods(raw?.loginMethods);
     return result;
   }
 

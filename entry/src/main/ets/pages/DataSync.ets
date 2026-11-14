@@ -191,14 +191,14 @@ struct DataSyncPage {
     Column() {
       this.actionItem('同步设备', '查看和管理当前账号下的设备', true, () => {
         if (!this.accountLoggedIn) {
-          HdsFeedback.showToast('请先登录华为账号');
+          HdsFeedback.showToast('请先登录账号');
           return;
         }
         router.pushUrl({ url: 'pages/SyncDevices' });
       })
       this.actionItem('同步问题', this.issueSummary(), true, () => {
         if (!this.accountLoggedIn) {
-          HdsFeedback.showToast('请先登录华为账号');
+          HdsFeedback.showToast('请先登录账号');
           return;
         }
         router.pushUrl({ url: 'pages/SyncIssues' });
@@ -254,7 +254,7 @@ struct DataSyncPage {
       .width('100%')
 
       if (!this.accountLoggedIn) {
-        Text('登录华为账号后，可跨设备同步书架、阅读进度和阅读设置；终身超级会员还可同步本地书籍和自定义字体。')
+        Text('登录账号后，可跨设备同步书架、阅读进度和阅读设置；终身超级会员还可同步本地书籍和自定义字体。')
           .fontSize(AppFontSize.BODY)
           .fontColor(this.subTextColor())
           .lineHeight(20)
@@ -366,7 +366,7 @@ struct DataSyncPage {
 
   async setCloudSyncEnabled(value: boolean): Promise<void> {
     if (value && !this.accountLoggedIn) {
-      HdsFeedback.showToast('请先登录华为账号');
+      HdsFeedback.showToast('请先登录账号');
       router.pushUrl({ url: 'pages/AccountCenter' });
       return;
     }
@@ -501,7 +501,7 @@ struct DataSyncPage {
 
   async confirmReloadFromCloud(): Promise<void> {
     if (!this.accountLoggedIn || !this.cloudSyncEnabled) {
-      HdsFeedback.showToast(this.accountLoggedIn ? '请先开启云同步' : '请先登录华为账号');
+      HdsFeedback.showToast(this.accountLoggedIn ? '请先开启云同步' : '请先登录账号');
       return;
     }
     const result = await promptAction.showDialog({
