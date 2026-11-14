@@ -26,6 +26,31 @@ function applyReaderRulesInTask(text: string, rulesJson: string, scopeText: stri
   const hasMarkers = (text || '').indexOf('[[LEGADO_') >= 0;
   let segments: string[] = hasMarkers ?
     (text || '').split(/(\[\[LEGADO_(?:READER_ACTION(?:_V[23])?|EPUB_IMAGE):[\s\S]*?\]\])/g) : [text || ''];
+  // For every action marker: whether its line holds nothing but markers. Compared before and after the rules,
+  // so a bubble whose paragraph a rule deleted goes with it (Android keeps the bubble inside the line as an
+  // <img>, where a whole-line rule removes both) instead of staying behind on a line of its own.
+  const markerAlone = (parts: string[]): boolean[] => {
+    const alone: boolean[] = [];
+    const blank = new RegExp('^[\\s' + String.fromCharCode(0x200B, 0x2060, 0xFEFF) + ']*$');
+    for (let si = 1; si < parts.length; si += 2) {
+      let hasText = false;
+      for (let left = si - 1; left >= 0 && !hasText; left -= 2) {
+        const part = parts[left] || '';
+        const cut = part.lastIndexOf('\n');
+        hasText = !blank.test(part.substring(cut + 1));
+        if (cut >= 0) break;
+      }
+      for (let right = si + 1; right < parts.length && !hasText; right += 2) {
+        const part = parts[right] || '';
+        const cut = part.indexOf('\n');
+        hasText = !blank.test(cut >= 0 ? part.substring(0, cut) : part);
+        if (cut >= 0) break;
+      }
+      alone.push(!hasText);
+    }
+    return alone;
+  };
+  const aloneBefore: boolean[] = hasMarkers ? markerAlone(segments) : [];
   const target = (scopeText || '').toLowerCase();
   const textHasCarriageReturn = (text || '').indexOf('\r') >= 0;
   // A regex running here still stalls the UI thread through shared-heap GC, so every rule gets a
@@ -135,6 +160,15 @@ function applyReaderRulesInTask(text: string, rulesJson: string, scopeText: stri
         segments = next;
       }
     } catch (_) {
+    }
+  }
+  if (hasMarkers) {
+    const aloneAfter = markerAlone(segments);
+    for (let index = 0; index < aloneAfter.length; index++) {
+      const si = index * 2 + 1;
+      if (aloneAfter[index] && !aloneBefore[index] && segments[si].startsWith('[[LEGADO_READER_ACTION')) {
+        segments[si] = '';
+      }
     }
   }
   return segments.join('');

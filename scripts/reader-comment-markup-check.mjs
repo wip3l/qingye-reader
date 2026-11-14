@@ -20,7 +20,7 @@ const compile = text => stripTypeScriptTypes(text, { mode: 'strip' });
 const names = ['convertReaderNativeActions', 'convertReaderNoteActions', 'convertReaderImageScriptActions',
   'readerActionMarkerFromClickableImage',
   'readerActionMarkerFromCommentAttributes', 'readerImageOptionString', 'readerDataImageLabel', 'readerDataImageText',
-  'readerDataImageHot', 'readerDataImageTexts', 'readerDataImageIsCard', 'readerActionLine',
+  'readerDataImageHot', 'readerDataImageTexts', 'readerDataImageIsCard', 'readerDataImageIsWide', 'readerActionLine',
   'decodeHtmlEntities'];
 const util = {
   Base64Helper: class { decodeSync(text) { return Uint8Array.from(Buffer.from(text, 'base64')); } },
@@ -141,6 +141,80 @@ assert.equal(Marker.strip(bareLines[2]).trim(), '');
 // A plain count bubble with 段评/条 wording is still a bubble.
 const worded = actions(convert(`<p>段<img src="data:image/svg+xml;base64,${svg('段评', '12条')},{'click':'x()'}"></p>`));
 assert.equal(worded[0].label, '段评');
+
+// An inline (TEXT) bubble with prose right after it stays where the source put it, as Android draws it; a
+// bubble at the end of its paragraph still ends the line.
+const bubble = (count, style) =>
+  `<img src="data:image/svg+xml;base64,${svg(count)},{'click':'para("${count}")','style':'${style}'}">`;
+const leading = convert(`${bubble('5', 'text')}他抬起头。\n第二段${bubble('8', 'TEXT')}\n第三段`).split('\n');
+assert.equal(Marker.strip(leading[0]), '他抬起头。', 'a leading inline bubble keeps its paragraph on the same line');
+assert.ok(Marker.has(leading[0]));
+assert.equal(leading.filter(line => Marker.has(line) && !Marker.strip(line).trim()).length, 0,
+  'no bubble is left alone on a line');
+assert.equal(Marker.strip(convert(`甲${bubble('1', 'line')}乙`)), '甲\n乙', 'a block-style bubble still breaks the line');
+
+// Purification rules run around the markers. A rule that deletes a paragraph takes its bubble with it; a card
+// that already stood alone, and bubbles of untouched paragraphs, stay.
+const preprocessor = fs.readFileSync(
+  `${projectRoot}/entry/src/main/ets/core/concurrency/ReaderContentPreprocessor.ets`, 'utf8').replace(/\r\n/g, '\n');
+const taskStart = preprocessor.indexOf('function applyReaderRulesInTask');
+const taskEnd = preprocessor.indexOf('\n}\n', taskStart);
+assert.ok(taskStart >= 0 && taskEnd > taskStart);
+const ruleContext = vm.createContext({
+  console,
+  JavaRegexCompat: { convert: (source, flags) => ({ source, flags }), convertReplacement: text => text },
+  BudgetedRegexReplace: class {
+    constructor(source, flags) { this.regex = new RegExp(source, `${flags}m`); }
+    replace(text, replacement) { return text.replace(this.regex, replacement); }
+  }
+});
+vm.runInContext(compile(preprocessor.slice(taskStart, taskEnd + 2)) +
+  '\nglobalThis.applyRules = applyReaderRulesInTask;', ruleContext);
+const m = label => Marker.create(label, 'https://a.example/x', '段评');
+const hotCard = Marker.create('热评', 'https://a.example/h', '热评', '写得好');
+const purified = ruleContext.applyRules(
+  `第一段${m('段评 1')}\n求月票求推荐${m('段评 5')}\n${hotCard}\n第二段${m('段评 8')}`,
+  JSON.stringify([{ pattern: '^.*求月票.*$', replacement: '', isRegex: true }]), '');
+assert.deepEqual(actions(purified).map(item => item.label), ['段评 1', '热评', '段评 8']);
+assert.equal(Marker.strip(purified).split('\n').filter(line => line.trim()).join('|'), '第一段|第二段');
+const untouched = `第一段${m('段评 1')}\n${m('段评 2')}\n第二段`;
+assert.equal(ruleContext.applyRules(untouched, JSON.stringify([{ pattern: '不存在', replacement: '' }]), ''),
+  untouched, 'a bubble that was already alone is not dropped');
+
+// iOS-style aggregate markup: paragraph bubbles are <comment> tags, hot comments are clickable SVG cards in a
+// (doubly wrapped) rs-native div. A long comment is one <text> with a tspan per line — thousands of characters
+// of markup — and must still be read as the card it is, not as “段评 <likes>” on a line of its own. A card whose
+// words cannot be read at all is told from a bubble by its shape (a wide strip).
+const rawSvg = body => Buffer.from(body).toString('base64');
+const longLines = Array.from({ length: 14 }, (_, index) =>
+  `<tspan x="12" dy="18" font-family="PingFang SC, sans-serif" font-size="14" fill="#333333">第${index}行评论内容很长很长很长</tspan>`);
+const longCard = rawSvg(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 300"><text x="12" y="20">${
+  longLines.join('')}</text><text x="330" y="280">5</text></svg>`);
+assert.ok(longLines.join('').length > 600);
+const pathCard = rawSvg('<svg xmlns="http://www.w3.org/2000/svg" width="360" height="72"><path d="M0 0h10"/>' +
+  '<text x="330" y="60">3</text></svg>');
+const squareBubble = rawSvg('<svg xmlns="http://www.w3.org/2000/svg" viewBox="-150 0 1224 1224"><path d="M0 0"/>' +
+  '<text x="460" y="650">8</text></svg>');
+const godCard = data => `<div rs-native><div rs-native><img onPress="java.showReadingBrowser('${page}9','段评')" ` +
+  `src="data:image/svg+xml;base64,${data}"></div></div>`;
+const aggregate = [
+  `<div rs-native>他点了点头。<comment count="8" onPress="java.showReadingBrowser('${page}9','番茄段评')"></div>`,
+  godCard(longCard), godCard(pathCard),
+  `<div rs-native>下一段。<comment count="10" onPress="java.showReadingBrowser('${page}10','番茄段评')"></div>`
+].join('\n');
+const aggregateOut = convert(aggregate);
+const aggregateActions = actions(aggregateOut);
+assert.deepEqual(aggregateActions.map(item => item.label), ['段评 8', '热评', '热评', '段评 10'],
+  'long and wordless cards are hot comments, never count bubbles');
+assert.match(aggregateActions[1].preview, /^第0行评论内容/);
+assert.equal(aggregateActions[1].likes, '5');
+assert.equal(aggregateOut.split('\n').filter(line => /^\s*$/.test(Marker.strip(line.replace(/<[^>]+>/g, ''))) &&
+  actions(line).some(item => /^段评/.test(item.label))).length, 0, 'no count bubble stands alone');
+// A small square bubble with only its number stays a count bubble, on either markup.
+assert.equal(actions(convert(`<p>段<img src="data:image/svg+xml;base64,${squareBubble},{'js':'x()','style':'text'}"></p>`))[0]
+  .label, '段评 8');
+assert.equal(actions(convert(`段<img onClick="java.startBrowser('${page}1')" src="data:image/svg+xml;base64,${squareBubble}">`))[0]
+  .label, '段评 8');
 
 // Markers without a hot comment stay byte-identical to the old format.
 assert.equal(Marker.create('段评 3', 'https://a.example/x', '段评'),
