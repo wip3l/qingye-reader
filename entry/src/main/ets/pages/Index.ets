@@ -70,6 +70,14 @@ struct Index {
   /** 换手或开始朗读后等系统底栏挪完再量位置。 */
   static readonly TTS_BAR_PROBE_DELAY: number = 600;
   static readonly TTS_BAR_PROBE_TOLERANCE: number = 8;
+  static readonly TTS_BAR_PROBE_RETRY_DELAY: number = 250;
+  /** 抬手后量底栏：系统按操作手换边多在触摸之后。 */
+  static readonly TTS_BAR_PROBE_TOUCH_DELAY: number = 300;
+  /** 开始朗读后第一次量：等伴生条那一帧排好，直接落到底栏那一侧。 */
+  static readonly TTS_BAR_PROBE_FIRST_DELAY: number = 32;
+  static readonly TTS_BAR_PROBE_SKIPPED: number = 0;
+  static readonly TTS_BAR_PROBE_MOVING: number = 1;
+  static readonly TTS_BAR_PROBE_SETTLED: number = 2;
   static readonly TTS_SHARED_MOTION_ID: string = 'home_tts_player';
   static readonly SEARCH_LAYER_FADE_DURATION: number = 200;
   private stageRuntimeController: webview.WebviewController = new webview.WebviewController();
@@ -550,8 +558,12 @@ struct Index {
     this.syncBottomBarCollapse(true);
     this.syncHomeHoldingHandTracking();
     if (this.globalTtsActive) {
-      // 底栏可能早就按握持手停在一侧了，开始朗读时还没收到握姿事件，量一次对齐。
-      this.scheduleGlobalTtsBarProbe();
+      // 底栏可能早就按握持手停在一侧了，开始朗读时还没收到握姿事件：先量一次直接落位，
+      // 量不准（底栏还在按新宽度重排）就隔一会儿再量，那时再平移。
+      this.scheduleGlobalTtsBarProbe(Index.TTS_BAR_PROBE_FIRST_DELAY, false, 0);
+      setTimeout((): void => {
+        if (this.globalTtsActive && this.globalTtsBarProbeTimer < 0) this.scheduleGlobalTtsBarProbe(0);
+      }, Index.TTS_BAR_PROBE_DELAY);
     } else {
       this.cancelGlobalTtsBarProbe();
     }
@@ -976,6 +988,9 @@ struct Index {
     .height('100%')
     .onTouch((event: TouchEvent): void => {
       if (event.type === TouchType.Down && this.shelfReturnBackdropShown) this.dropShelfReturnBackdropNow();
+      if ((event.type === TouchType.Up || event.type === TouchType.Cancel) && this.globalTtsActive) {
+        this.scheduleGlobalTtsBarProbe(Index.TTS_BAR_PROBE_TOUCH_DELAY);
+      }
     })
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       const width = typeof newValue.width === 'number' ? newValue.width : Number.parseFloat(`${newValue.width}`);
@@ -1120,11 +1135,18 @@ struct Index {
     return `home_immersive_tabs_${this.themeRevision}_${this.appDarkMode ? 'dark' : 'light'}_${this.extraTabId()}_${this.webParseEnabled ? 'web' : 'local'}`;
   }
 
-  scheduleGlobalTtsBarProbe(delay: number = Index.TTS_BAR_PROBE_DELAY): void {
+  /**
+   * @param animate 换边时伴生条是否平移过去；刚出现时直接落位，不从正中滑过去。
+   * @param retries 量到底栏正在挪（不在三个标准位置附近）时再量几次。
+   */
+  scheduleGlobalTtsBarProbe(delay: number = Index.TTS_BAR_PROBE_DELAY, animate: boolean = true,
+    retries: number = 2): void {
     if (this.globalTtsBarProbeTimer >= 0) clearTimeout(this.globalTtsBarProbeTimer);
     this.globalTtsBarProbeTimer = setTimeout((): void => {
       this.globalTtsBarProbeTimer = -1;
-      this.probeGlobalTtsBarSide();
+      if (this.probeGlobalTtsBarSide(animate) === Index.TTS_BAR_PROBE_MOVING && retries > 0) {
+        this.scheduleGlobalTtsBarProbe(Index.TTS_BAR_PROBE_RETRY_DELAY, animate, retries - 1);
+      }
     }, delay);
   }
 
@@ -1137,11 +1159,12 @@ struct Index {
    * 兜底：量系统底栏的实际位置，推断它停在哪一侧。系统换边的规则没公开（比如刚开始朗读时还没收到握姿事件，
    * 底栏可能早已停在一侧），握姿事件和系统的判断也可能不同步，以量到的为准。
    * 只认三个标准位置（左、中、右）附近的结果，量不到或对不上时只记日志、不改位置。
+   * 系统换边不一定伴随握姿事件（实测底栏收起时换手，握姿回调没来、系统却已把藏起的底栏挪到另一侧），
+   * 所以量位置是主依据：藏起时照样量（收起只往下移、横向位置不变），每次抬手后也量一次。
    */
-  probeGlobalTtsBarSide(): void {
-    if (!this.globalTtsActive || !this.globalTtsFollowsHand() || this.immersiveTabBarHidden ||
-      !this.shortcutRoutingActive) {
-      return;
+  probeGlobalTtsBarSide(animate: boolean = true): number {
+    if (!this.globalTtsActive || !this.globalTtsFollowsHand() || !this.shortcutRoutingActive) {
+      return Index.TTS_BAR_PROBE_SKIPPED;
     }
     try {
       const uiContext = this.getUIContext();
@@ -1153,7 +1176,7 @@ struct Index {
           this.globalTtsBarProbeMissLogged = true;
           hilog.warn(0x0000, 'HomeTtsGrip', 'probe: tab bar node not found (tabs=%{public}s)', tabsNode ? 'y' : 'n');
         }
-        return;
+        return Index.TTS_BAR_PROBE_SKIPPED;
       }
       const barX = barNode.getPositionToWindowWithTransform().x - rootNode.getPositionToWindowWithTransform().x;
       const barWidth = uiContext.px2vp(barNode.getMeasuredSize().width);
@@ -1174,18 +1197,25 @@ struct Index {
         'probe: barX=%{public}d barW=%{public}d rowW=%{public}d viewW=%{public}d side=%{public}d -> %{public}d (off %{public}d)',
         Math.round(barX), Math.round(barWidth), Math.round(rowWidth), Math.round(this.globalTtsViewportWidth),
         this.globalTtsHandSide, bestSide, Math.round(bestDistance));
+      // 宽度对不上多半是底栏还在按新宽度重排，位置对不上是正在换边，过一会儿再量。
       if (Math.abs(barWidth - rowWidth) > Index.TTS_BAR_PROBE_TOLERANCE ||
         bestDistance > Index.TTS_BAR_PROBE_TOLERANCE) {
-        return;
+        return Index.TTS_BAR_PROBE_MOVING;
       }
       // 三个位置重合（手机）时推不出握持手，保留原值。
       const ambiguous = Math.abs(this.globalTtsRowLeftFor(-1) - this.globalTtsRowLeftFor(1)) <= Index.TTS_BAR_PROBE_TOLERANCE;
-      if (ambiguous || bestSide === this.globalTtsHandSide) return;
-      uiContext.animateTo({ duration: 280, curve: Curve.Friction }, (): void => {
+      if (ambiguous || bestSide === this.globalTtsHandSide) return Index.TTS_BAR_PROBE_SETTLED;
+      if (animate) {
+        uiContext.animateTo({ duration: 280, curve: Curve.Friction }, (): void => {
+          this.globalTtsHandSide = bestSide;
+        });
+      } else {
         this.globalTtsHandSide = bestSide;
-      });
+      }
+      return Index.TTS_BAR_PROBE_SETTLED;
     } catch (error) {
       hilog.warn(0x0000, 'HomeTtsGrip', 'probe failed: %{public}s', `${error}`);
+      return Index.TTS_BAR_PROBE_SKIPPED;
     }
   }
 
