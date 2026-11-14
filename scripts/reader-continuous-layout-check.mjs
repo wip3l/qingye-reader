@@ -53,7 +53,7 @@ function fixture() {
     readerContinuousChapterOf: n => n < 0 ? 0 : n, readerContinuousV2ChunkText: (_index, text) => text,
     readerContinuousV2ChunkStart: index => index * 1800, readerContinuousSourceOf() { return this.sourceText; },
     readerContinuousEndsOf: () => new Array(100), hashText: s => s, readerPaginationSourceHash: s => s,
-    buildReaderV2Snapshot: () => { snapshotCalls++; return snapshot; }, readerV2HeadingHints: () => [], getChapterTitle: () => '', readerLayoutChapterTitle: () => '',
+    buildReaderV2Snapshot: () => { snapshotCalls++; return snapshot; }, readerV2HeadingHints: () => [], readerCommentDisplay: () => null, getChapterTitle: () => '', readerLayoutChapterTitle: () => '',
     buildReaderV2RegexStyles: () => [], toMeasureNonNegativePx: n => n * 2,
     readerComicPageDataSource: { itemAt: n => n === 0 ?
       { chapterIndex: 0, pageIndex: 0, text: 'first', isPage: () => true } : null },

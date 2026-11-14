@@ -211,7 +211,9 @@ try {
   assert.equal(chapterBlocks[4].card?.preview, '76条评论');
   assert.equal(document.actions.every(action => !action.chapter), true, 'paragraph and hot comments are not chapter entries');
   input.viewportHeightPx = 2000;
-  for (const style of [1, 2, 3]) {
+  input.commentChapterCard = true;
+  // The 本章说 card has its own switch and does not depend on the hot-comment style.
+  for (const style of [0, 1, 2, 3]) {
     input.commentCardStyle = style;
     const page = Paginator.paginate(Parser.parse(chapterSource, 0, '标题'), Snapshot.create(input)).pages[0];
     const chapterCards = cardsOf(page);
@@ -227,9 +229,47 @@ try {
     assert.equal(chapterCards[1].card.meta.text, '♥ 698  ›', 'a chapter hot comment shows its likes before the arrow');
     assert.equal(chapterCards[0].card.meta.text, '›');
   }
-  input.commentCardStyle = 0;
+  input.commentCardStyle = 1;
+  input.commentChapterCard = false;
   assert.equal(cardsOf(Paginator.paginate(Parser.parse(chapterSource, 0, '标题'), Snapshot.create(input)).pages[0])
-    .length, 0, 'off keeps the 本章说 bubble');
+    .length, 0, 'the bubble mode keeps the 本章说 bubble even with hot cards on');
+
+  // 段评气泡、热评卡片、本章说分别关闭：隐藏的入口不进显示文字，也不留下空段。
+  const show = (bubbles, hotCards, chapter) => ({ bubbles, hotCards, chapter });
+  const mixed = [...source.split('\n'), Marker.create('本章说', 'https://c.example/chapter', '本章说'),
+    `　　只有气泡的一段。${bubble(3)}`, `　　${bubble(7)}`,
+    `　　书源按钮。${Marker.create('打开', 'https://c.example/button', '打开')}`].join('\n');
+  const everything = Parser.parse(mixed, 0, '标题', [], null, show(true, true, true));
+  assert.equal(everything.displayText, Parser.parse(mixed, 0, '标题').displayText, 'all on parses as before');
+  const labels = doc => Array.from(doc.actions, action => action.label.replace(/[^0-9+一-鿿]/g, ''));
+  const sourceOf = (doc, text) => doc.sourceOffsetForDisplay(doc.displayText.indexOf(text));
+
+  const noBubbles = Parser.parse(mixed, 0, '标题', [], null, show(false, true, true));
+  assert.ok(!/\d/.test(noBubbles.displayText), 'no count bubble text is left');
+  assert.deepEqual(labels(noBubbles), ['', '', '本章说', '打开'], 'hot entries stay for their cards, other actions stay');
+  assert.ok(noBubbles.actions.slice(0, 2).every(action => action.displayStart === action.displayEnd));
+  assert.equal(noBubbles.blocks.find(block => block.text.includes('第一段')).trailingCard?.preview, '老周活不过这一章');
+  assert.ok(noBubbles.blocks.some(block => block.card?.preview === '这句台词好帅'), 'a source hot card is still a card');
+  assert.ok(noBubbles.blocks.every(block => block.title || block.card || /\S/.test(block.text.replace(/　/g, ''))),
+    'a paragraph that only held a bubble is dropped');
+  assert.equal(sourceOf(noBubbles, '只有气泡'), sourceOf(everything, '只有气泡'), 'source offsets are unchanged');
+  input.commentChapterCard = true;
+  const noBubblePage = Paginator.paginate(noBubbles, Snapshot.create(input)).pages[0];
+  assert.equal(cardsOf(noBubblePage).length, 3, 'hot card, source card and 本章说 card');
+  assert.equal(noBubblePage.fragments.reduce((sum, fragment) => sum + fragment.commentBubbleSegments.length, 0), 1,
+    'only the source button keeps a bubble');
+  assert.equal(new Set(noBubblePage.actions.map(area => area.actionId)).size, 4, 'three cards and the button are tappable');
+
+  const nothing = Parser.parse(mixed, 0, '标题', [], null, show(false, false, false));
+  assert.deepEqual(labels(nothing), ['打开'], 'only non-comment actions remain');
+  assert.ok(nothing.blocks.every(block => !block.card && !block.trailingCard));
+  assert.ok(!nothing.displayText.includes('本章说') && !/\d/.test(nothing.displayText));
+  assert.equal(nothing.blocks.length, 6, 'title, four paragraphs with text and the button; emptied paragraphs are gone');
+
+  const noChapter = Parser.parse(mixed, 0, '标题', [], null, show(true, true, false));
+  assert.ok(!labels(noChapter).includes('本章说') && labels(noChapter).includes('56'));
+  const noHot = Parser.parse(mixed, 0, '标题', [], null, show(false, false, true));
+  assert.deepEqual(labels(noHot), ['本章说', '打开'], 'with hot cards off a hot entry counts as a bubble');
 
   console.log('PASS: 本章说 cards, card paragraphs, off = unchanged layout, three styles, per-page cap, card moved to the next page, ' +
     'async parity, never spoken or copied');

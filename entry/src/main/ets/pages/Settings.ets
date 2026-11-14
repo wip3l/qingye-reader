@@ -701,25 +701,37 @@ struct SettingsPage {
     if (this.webParseEnabled) {
       this.sectionTitle('段评')
       Column() {
-        this.selectItem('热评卡片', '段评热评显示在段落下方，章末本章说显示为卡片；关闭后只显示气泡',
+        SettingSwitchRow({
+          title: '段评气泡',
+          description: '段落末尾的评论数气泡；关闭后不显示，热评卡片仍可点开评论',
+          isOn: ReaderCommentCardSettings.bubbles(this.readerCommentCard),
+          onChange: (checked: boolean): void => {
+            this.setReaderCommentCard(-1, -1, -1, checked ? 1 : 0, -1);
+          }
+        })
+        this.selectItem('热评卡片', '段评热评显示在段落下方；关闭后热评只算作段评气泡',
           this.commentCardOptions(ReaderCommentCardSettings.STYLE_LABELS),
           ReaderCommentCardSettings.style(this.readerCommentCard), (index: number) => {
-            this.setReaderCommentCard(index, -1, -1);
-          }, 'settings_comment_card_style_select',
-          ReaderCommentCardSettings.style(this.readerCommentCard) !== ReaderCommentCardSettings.STYLE_OFF)
+            this.setReaderCommentCard(index, -1, -1, -1, -1);
+          }, 'settings_comment_card_style_select')
         if (ReaderCommentCardSettings.style(this.readerCommentCard) !== ReaderCommentCardSettings.STYLE_OFF) {
-          this.selectItem('每页最多', '只限段评热评，书源自带的热评卡和本章说都会显示',
+          this.selectItem('每页最多', '只限段评热评，书源自带的热评卡总会显示',
             this.commentCardOptions(ReaderCommentCardSettings.MAX_LABELS),
             Math.max(0, ReaderCommentCardSettings.MAX_VALUES.indexOf(
               ReaderCommentCardSettings.maxPerPage(this.readerCommentCard))), (index: number) => {
-              this.setReaderCommentCard(-1, ReaderCommentCardSettings.MAX_VALUES[index] ?? -1, -1);
+              this.setReaderCommentCard(-1, ReaderCommentCardSettings.MAX_VALUES[index] ?? -1, -1, -1, -1);
             }, 'settings_comment_card_max_select')
           this.selectItem('卡片行数', '热评超出时末尾显示省略号',
             this.commentCardOptions(ReaderCommentCardSettings.LINE_LABELS),
             ReaderCommentCardSettings.lines(this.readerCommentCard) - 1, (index: number) => {
-              this.setReaderCommentCard(-1, -1, index + 1);
-            }, 'settings_comment_card_lines_select', false)
+              this.setReaderCommentCard(-1, -1, index + 1, -1, -1);
+            }, 'settings_comment_card_lines_select')
         }
+        this.selectItem('本章说', '章末的本章评论入口；选卡片时，单独成段的入口显示为整宽卡片',
+          this.commentCardOptions(ReaderCommentCardSettings.CHAPTER_LABELS),
+          ReaderCommentCardSettings.chapter(this.readerCommentCard), (index: number) => {
+            this.setReaderCommentCard(-1, -1, -1, -1, index);
+          }, 'settings_comment_chapter_select', false)
       }
       .width('calc(100% - 24vp)')
       .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -2099,15 +2111,17 @@ struct SettingsPage {
   }
 
   /** 传 -1 的项保持不变。 */
-  setReaderCommentCard(style: number, maxPerPage: number, lines: number): void {
+  setReaderCommentCard(style: number, maxPerPage: number, lines: number, bubbles: number, chapter: number): void {
     const current = this.readerCommentCard;
     const next = ReaderCommentCardSettings.encode(
       style >= 0 ? style : ReaderCommentCardSettings.style(current),
       maxPerPage >= 0 ? maxPerPage : ReaderCommentCardSettings.maxPerPage(current),
-      lines >= 0 ? lines : ReaderCommentCardSettings.lines(current));
+      lines >= 0 ? lines : ReaderCommentCardSettings.lines(current),
+      bubbles >= 0 ? bubbles === 1 : ReaderCommentCardSettings.bubbles(current),
+      chapter >= 0 ? chapter : ReaderCommentCardSettings.chapter(current));
     if (next === ReaderCommentCardSettings.normalize(current)) return;
     ReaderCommentCardSettings.save(getContext(this), next).catch((error: Error) => {
-      console.warn('保存热评卡片设置失败:', error);
+      console.warn('保存段评显示设置失败:', error);
     });
   }
 

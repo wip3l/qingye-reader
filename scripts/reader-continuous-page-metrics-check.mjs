@@ -77,7 +77,7 @@ Object.assign(p, {
     return { identity: 'font-20', capacity: 900 };
   },
   captureReaderContinuousAnchor() {},
-  buildReaderV2RegexStyles: () => [], readerV2HeadingHints: () => [],
+  buildReaderV2RegexStyles: () => [], readerV2HeadingHints: () => [], readerCommentDisplay: () => null,
   getChapterTitle: () => '测试章', readerLayoutChapterTitle: () => '测试章', clampChapterIndex: index => index,
   isLandscapeDoublePageActive: () => false,
   currentReaderPaginationResult: () => ({ complete: true }),

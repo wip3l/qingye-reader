@@ -272,11 +272,13 @@ export class ReaderV2Paginator {
       let cardWindow = 0;
       let cardsInWindow = 0;
       const cardsEnabled = session.snapshot.commentsEnabled && session.snapshot.commentCardStyle > 0;
+      const chapterCardsEnabled = session.snapshot.commentsEnabled && session.snapshot.commentChapterCard;
 
       while (session.blockIndex < session.document.blocks.length && !mustEndPage) {
         const imageBlock = session.document.blocks[session.blockIndex];
         const pendingCard = session.lineIndex < 0;
-        if (pendingCard || (cardsEnabled && imageBlock.card && session.lineIndex === 0)) {
+        if (pendingCard || (imageBlock.card && session.lineIndex === 0 &&
+          (imageBlock.card.chapter ? chapterCardsEnabled : cardsEnabled))) {
           // A hot-comment card: either a whole source card paragraph, or the card after a paragraph's last line.
           const action = pendingCard ? imageBlock.trailingCard : imageBlock.card;
           const windowIndex = session.continuous ?

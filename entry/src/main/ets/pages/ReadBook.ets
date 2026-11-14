@@ -107,6 +107,7 @@ import { ReaderTextConvert } from '../core/reader/ReaderTextConvert';
 import { ReaderTextConvertRuntime } from '../core/reader/ReaderTextConvertRuntime';
 import {
   ReaderV2Document,
+  ReaderV2CommentDisplay,
   ReaderV2DocumentParser,
   ReaderV2HeadingHint,
   ReaderV2SpeechText
@@ -17685,6 +17686,8 @@ ${leading}` : leading;
     input.commentHitSlopYPx = this.toMeasurePx(this.readerSourceActionHitSlopY);
     input.commentsEnabled = true;
     input.commentCardStyle = ReaderCommentCardSettings.style(this.readerCommentCard);
+    input.commentChapterCard =
+      ReaderCommentCardSettings.chapter(this.readerCommentCard) === ReaderCommentCardSettings.CHAPTER_CARD;
     input.commentCardMaxPerPage = ReaderCommentCardSettings.maxPerPage(this.readerCommentCard);
     input.commentCardLines = ReaderCommentCardSettings.lines(this.readerCommentCard);
     input.commentCardFontSizePx = this.toMeasureFontPx(Math.max(11, Math.round(this.readerFontSize * 0.82)));
@@ -17820,11 +17823,21 @@ ${leading}` : leading;
     return style;
   }
 
+  /** 段评气泡、热评卡片、本章说哪些要显示；隐藏的入口解析时就不进正文。 */
+  readerCommentDisplay(): ReaderV2CommentDisplay {
+    const display = new ReaderV2CommentDisplay();
+    display.bubbles = ReaderCommentCardSettings.bubbles(this.readerCommentCard);
+    display.hotCards = ReaderCommentCardSettings.style(this.readerCommentCard) !== ReaderCommentCardSettings.STYLE_OFF;
+    display.chapter = ReaderCommentCardSettings.chapter(this.readerCommentCard) !== ReaderCommentCardSettings.CHAPTER_OFF;
+    return display;
+  }
+
   createIncrementalReaderV2Pagination(source: string, chapterIndex: number,
     initialPageCount: number, registerSession: boolean = true): ReaderPaginationResult {
     const snapshot = this.buildReaderV2Snapshot();
     const document = ReaderV2DocumentParser.parse(source, chapterIndex, this.readerLayoutChapterTitle(chapterIndex),
-      this.readerV2HeadingHints(chapterIndex), ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw));
+      this.readerV2HeadingHints(chapterIndex), ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw),
+      this.readerCommentDisplay());
     const session = ReaderV2Paginator.start(document, snapshot, this.buildReaderV2RegexStyles(document));
     const result: ReaderPaginationResult = {
       source: source,
@@ -19948,7 +19961,7 @@ ${leading}` : leading;
       if (!valid()) return;
       const document = ReaderV2DocumentParser.parse(request.chunk, request.chapter,
         request.index === 0 ? this.readerLayoutChapterTitle(request.chapter) : '', this.readerV2HeadingHints(request.chapter),
-        ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw));
+        ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw), this.readerCommentDisplay());
       // Identical text can occur in different chunks. Their selection/progress maps still own different offsets.
       document.identity = `continuous_${request.key}`;
       const layout = await ReaderV2Paginator.layoutContinuousAsync(document, request.snapshot,
@@ -20198,7 +20211,7 @@ ${leading}` : leading;
         const document = ReaderV2DocumentParser.parse(this.readerContinuousMetricsSource,
           this.currentChapterIndex, this.readerLayoutChapterTitle(this.currentChapterIndex),
           this.readerV2HeadingHints(this.currentChapterIndex),
-          ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw));
+          ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw), this.readerCommentDisplay());
         session = ReaderV2Paginator.start(document, snapshot, this.buildReaderV2RegexStyles(document));
         this.readerContinuousMetricsSession = session;
       }

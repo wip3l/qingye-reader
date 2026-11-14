@@ -69,6 +69,8 @@ export class ReaderV2LayoutInput {
   commentsEnabled: boolean = true;
   /** 热评卡片：0 关闭，1 卡片，2 引文，3 挂件。见 ReaderCommentCardSettings。 */
   commentCardStyle: number = 0;
+  /** 单独成段的本章说入口画成整宽卡片，与热评卡片样式无关。 */
+  commentChapterCard: boolean = false;
   /** 每页最多几张段评热评卡，0 不限。 */
   commentCardMaxPerPage: number = 0;
   commentCardLines: number = 1;
@@ -117,6 +119,7 @@ export class ReaderV2LayoutSnapshot {
   commentHitSlopYPx: number = 12;
   commentsEnabled: boolean = true;
   commentCardStyle: number = 0;
+  commentChapterCard: boolean = false;
   commentCardMaxPerPage: number = 0;
   commentCardLines: number = 1;
   commentCardFontSizePx: number = 30;
@@ -179,6 +182,7 @@ export class ReaderV2LayoutSnapshot {
     snapshot.commentsEnabled = input.commentsEnabled;
     snapshot.commentCardStyle = input.commentCardStyle >= 0 && input.commentCardStyle <= 3 ?
       Math.round(input.commentCardStyle) : 0;
+    snapshot.commentChapterCard = input.commentChapterCard === true;
     snapshot.commentCardMaxPerPage = Math.max(0, Math.round(input.commentCardMaxPerPage));
     snapshot.commentCardLines = input.commentCardLines === 2 ? 2 : 1;
     snapshot.commentCardFontSizePx = Math.max(1, input.commentCardFontSizePx);
@@ -201,7 +205,7 @@ export class ReaderV2LayoutSnapshot {
       snapshot.letterSpacingPx, snapshot.textAlign, snapshot.noteColor, snapshot.commentFontSizePx, snapshot.commentBubbleSize, snapshot.commentBubble.identity(),
       snapshot.commentsEnabled ? 1 : 0, snapshot.regexEnabled ? 1 : 0,
       snapshot.commentCardStyle, snapshot.commentCardMaxPerPage, snapshot.commentCardLines,
-      snapshot.commentCardFontSizePx, snapshot.commentCardTagColor
+      snapshot.commentCardFontSizePx, snapshot.commentCardTagColor, snapshot.commentChapterCard ? 1 : 0
     ];
     const rounded = values.map((value: string | number): string =>
       typeof value === 'number' ? `${Math.round(value * 100) / 100}` : value).join('_');
