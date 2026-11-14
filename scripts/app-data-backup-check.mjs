@@ -28,7 +28,7 @@ function harness(t, nestedTarget = false) {
     fs.mkdirSync(filesDir, { recursive: true });
     fs.mkdirSync(tempDir, { recursive: true });
     const context = { filesDir, tempDir };
-    states.set(filesDir, { prefs: new Map(), books: new Map(), sources: [], addedTimes: new Map(), groups: [], bookmarks: [], annotations: [], keywords: [], readRecords: new Map() });
+    states.set(filesDir, { prefs: new Map(), books: new Map(), sources: [], addedTimes: new Map(), groups: [], bookmarks: [], annotations: [], bookMarks: [], keywords: [], readRecords: new Map() });
     return context;
   };
   const source = makeDevice('source');
@@ -52,6 +52,12 @@ function harness(t, nestedTarget = false) {
     },
     getAllBookmarks: async () => active.bookmarks,
     getAllBookAnnotations: async () => active.annotations,
+    getAllBookMarks: async () => active.bookMarks,
+    getBookMark: async key => active.bookMarks.find(mark => mark.workKey === key) || null,
+    saveBookMark: async value => {
+      active.bookMarks = active.bookMarks.filter(mark => mark.workKey !== value.workKey);
+      active.bookMarks.push(plain(value));
+    },
     getSearchKeywords: async () => active.keywords,
     getBook: async url => active.books.get(url),
     restoreBook: async book => active.books.set(book.bookUrl, book),
@@ -165,6 +171,7 @@ function harness(t, nestedTarget = false) {
     compile(readEtsModule('core/stats/AndroidReadRecordImport.ts')) + '\n' +
     compile(readEtsModule('utils/AndroidBackupJsonReader.ts')) + '\n' +
     compile(readEtsModule('utils/ReaderFontHelper.ets')) + '\n' +
+    compile(readEtsModule('model/book/BookMark.ts')) + '\n' +
     compile(readEtsModule('utils/AppDataBackupService.ets')) +
     '\nglobalThis.api = { AppDataBackupService, AppDataBackupSelection, Book, ReaderFontHelper, AndroidReadRecordImport, AndroidBackupJsonReader, MimoVoicePolicy };', sandbox);
   const { AppDataBackupService: service, AppDataBackupSelection: Selection, Book, ReaderFontHelper: fonts } = sandbox.api;
@@ -228,6 +235,14 @@ test('full export/import preserves themes, OPDS, fonts, books and reports missin
   h.from.bookmarks = [{ bookUrl: 'local://1', content: '书签正文' }];
   h.from.annotations = [{ bookUrl: 'local://1', quote: '划线原文' }, { bookUrl: 'local://missing', quote: '孤儿划线' }];
   h.from.keywords = [{ word: '测试', usage: 2 }];
+  // 标记不要求书在书架上；目标设备上那条更新过的保留目标设备的。
+  h.from.bookMarks = [
+    { workKey: 'novel|活着|余华', bookName: '活着', author: '余华', rating: 9, status: 3, categories: ['文学'],
+      review: '短评', createTime: 1, updateTime: 100, finishTime: 100 },
+    { workKey: 'novel|三体|刘慈欣', bookName: '三体', rating: 10, categories: [], review: '', createTime: 1, updateTime: 100 }
+  ];
+  h.to.bookMarks = [{ workKey: 'novel|三体|刘慈欣', bookName: '三体', rating: 6, categories: [], review: '本机更新',
+    createTime: 1, updateTime: 200 }];
   const selected = new h.Selection();
   selected.searchHistory = true;
   const backup = await h.service.createBackup(h.source, selected, 'password123');
@@ -246,6 +261,10 @@ test('full export/import preserves themes, OPDS, fonts, books and reports missin
   assert.equal(result.books, 1);
   assert.equal(result.bookmarks, 1);
   assert.equal(result.annotations, 1, 'annotations restore only for books present on the target');
+  assert.equal(result.bookMarks, 1, 'book marks restore without the book, newer local marks win');
+  assert.match(backup.summary(), /书籍标记 2/);
+  assert.equal(h.to.bookMarks.find(mark => mark.bookName === '三体').review, '本机更新');
+  assert.equal(h.to.bookMarks.find(mark => mark.bookName === '活着').finishTime, 100);
   assert.equal(result.progress, 2);
   assert.equal(result.settings, 15);
   assert.equal(h.to.prefs.get('immersive_light_settings').immersiveLightLevel, 'balanced');

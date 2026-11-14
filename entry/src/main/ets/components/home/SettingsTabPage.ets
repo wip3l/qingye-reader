@@ -67,9 +67,12 @@ export struct SettingsPage {
 
           Column() {
             this.syncMenuItem()
-            this.menuItem($r('sys.symbol.timer'), '阅读统计', false, () => {
+            this.menuItem($r('sys.symbol.timer'), '阅读统计', true, () => {
               router.pushUrl({ url: 'pages/ReadingStats' });
             }, this.readStatsRecording ? '' : '已暂停')
+            this.menuItem($r('sys.symbol.star'), '我的标记', false, () => {
+              router.pushUrl({ url: 'pages/BookMarkList' });
+            })
           }
           .width('100%')
           .borderRadius(ThemeRuntime.largeRadius())

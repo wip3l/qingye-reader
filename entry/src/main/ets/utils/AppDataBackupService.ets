@@ -19,6 +19,7 @@ import { AndroidBackupJsonReader } from './AndroidBackupJsonReader';
 import { MimoVoiceLibrary, MimoVoicePolicy } from '../core/mimo/MimoVoicePolicy';
 import { MimoStore } from './mimo/MimoStore';
 import { BookAnnotation } from '../model/reader/BookAnnotation';
+import { BookMark, BookMarkRules } from '../model/book/BookMark';
 
 export class AppDataBackupSelection {
   sources: boolean = true;
@@ -55,6 +56,8 @@ export class AppDataBackupManifest {
   bookmarks: Bookmark[] = [];
   /** 正文划线与笔记，随“书签”一项备份；旧备份没有这个字段。 */
   annotations: BookAnnotation[] = [];
+  /** 书籍标记（评分、分类、短评），随“书签”一项备份；旧备份没有这个字段。 */
+  bookMarks: BookMark[] = [];
   localBooks: Book[] = [];
   localFiles: Record<string, string> = {};
   skippedLocalBooks: string[] = [];
@@ -77,6 +80,9 @@ export class AppDataBackupExportResult {
     if (manifest.categories.includes('bookmarks')) parts.push(`书签 ${manifest.bookmarks.length}`);
     if (manifest.categories.includes('bookmarks') && manifest.annotations.length > 0) {
       parts.push(`划线 ${manifest.annotations.length}`);
+    }
+    if (manifest.categories.includes('bookmarks') && manifest.bookMarks.length > 0) {
+      parts.push(`书籍标记 ${manifest.bookMarks.length}`);
     }
     if (manifest.categories.includes('localBooks')) parts.push(`本地图书 ${manifest.localBooks.length}`);
     if (manifest.bookGroups.length > 0) parts.push(`书架分组 ${manifest.bookGroups.length}`);
@@ -103,6 +109,7 @@ export class AppDataBackupImportResult {
   readRecords: number = 0;
   bookmarks: number = 0;
   annotations: number = 0;
+  bookMarks: number = 0;
   settings: number = 0;
   httpTts: number = 0;
   replaceRules: number = 0;
@@ -119,6 +126,7 @@ export class AppDataBackupImportResult {
     if (this.readRecords > 0) parts.push(`阅读记录 ${this.readRecords}`);
     if (this.bookmarks > 0) parts.push(`书签 ${this.bookmarks}`);
     if (this.annotations > 0) parts.push(`划线 ${this.annotations}`);
+    if (this.bookMarks > 0) parts.push(`书籍标记 ${this.bookMarks}`);
     if (this.settings > 0) parts.push(`设置 ${this.settings}`);
     if (this.httpTts > 0) parts.push(`HTTP TTS ${this.httpTts}`);
     if (this.replaceRules > 0) parts.push(`替换规则 ${this.replaceRules}`);
@@ -261,6 +269,7 @@ export class AppDataBackupService {
       manifest.categories.push(AppDataBackupService.CATEGORY_BOOKMARKS);
       manifest.bookmarks = await db.getAllBookmarks();
       manifest.annotations = await db.getAllBookAnnotations();
+      manifest.bookMarks = await db.getAllBookMarks();
     }
 
     if (selection.localBooks) {
@@ -575,6 +584,15 @@ export class AppDataBackupService {
         if (!annotation.excerpt && !await db.getBook(annotation.bookUrl)) continue;
         await db.restoreBookAnnotation(annotation);
         result.annotations++;
+      }
+      // 标记按作品存，不要求书在书架上；本机那条更新过的保留本机的。
+      for (const raw of manifest.bookMarks || []) {
+        const mark = BookMarkRules.fromPlain(raw);
+        if (!mark) continue;
+        const local = await db.getBookMark(mark.workKey);
+        if (local && local.updateTime > mark.updateTime) continue;
+        await db.saveBookMark(mark);
+        result.bookMarks++;
       }
     }
 

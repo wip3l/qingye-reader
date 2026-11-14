@@ -51,6 +51,7 @@
     "pages/ReadingStats",
     "pages/ReadingStatsShare",
     "pages/ExcerptList",
+    "pages/BookMarkList",
     "pages/ExcerptShare",
     "pages/FootprintLayoutSettings",
     "pages/SyncDevices",

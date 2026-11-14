@@ -10,6 +10,7 @@ import { SearchExplorePendingBook } from './SearchExplorePendingBook';
 import { AppThemeSettingsStore } from './AppThemeSettingsStore';
 import { HdsFeedback } from './HdsFeedback';
 import { ShelfWorkDuplicatePrompt } from './ShelfWorkDuplicatePrompt';
+import { BookMarkService } from '../core/mark/BookMarkService';
 
 export class SearchBookShelfChange {
   requestKey: string = '';
@@ -148,6 +149,7 @@ export class SearchBookShelfHelper {
       existing.latestChapterTitle = BookFieldSanitizer.prefer(searchBook.latestChapterTitle, existing.latestChapterTitle);
       existing.wordCount = BookFieldSanitizer.prefer(searchBook.wordCount, existing.wordCount);
       SearchExplorePendingBook.clearPendingAddToShelf(existing);
+      await BookMarkService.carryTagsToShelfBook(existing);
       await db.updateBook(existing, true, 'search_result_explicit_add_existing');
       SearchBookShelfHelper.markShelfChanged();
       HdsFeedback.showToast('已在书架');
@@ -158,6 +160,7 @@ export class SearchBookShelfHelper {
     // 结果信息已足够入架；详情、目录和书源变量由首次阅读时补齐，避免收藏等待网络。
     const resolvedKey = BookIdentity.keyOfBook(book);
 
+    await BookMarkService.carryTagsToShelfBook(book);
     await db.insertBook(book, 'search_result_explicit_add');
     const shelfKey = resolvedKey || searchKey;
     SearchBookShelfHelper.markShelfChanged();

@@ -32,6 +32,10 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { KnockShare } from '../utils/KnockShare';
 import { AudioSheetTransition, AUDIO_SHEET_ENTER_DURATION, AUDIO_SHEET_EXIT_DURATION } from '../utils/AudioSheetTransition';
+import { BookMark, BookMarkRules, BookMarkStatus } from '../model/book/BookMark';
+import { BookMarkService } from '../core/mark/BookMarkService';
+import { BookMarkStars } from '../components/book/BookMarkStars';
+import { BookMarkSheet } from '../components/book/BookMarkSheet';
 
 @Entry
 @Component
@@ -102,6 +106,13 @@ struct SearchBookDetailPage {
   @State @Watch('syncChangeSourceDialog') showChangeSourcePanel: boolean = false;
   @State changeSourceTarget: Book | null = null;
   @State showCatalogSheet: boolean = false;
+  /** 这部作品的“我的标记”；没有标记时为 null。 */
+  @State bookMark: BookMark | null = null;
+  @State showMarkSheet: boolean = false;
+  @StorageProp('bookMarkRevision') @Watch('onBookMarkRevisionChanged') bookMarkRevision: number = 0;
+  private markDraft: BookMark = new BookMark();
+  private markCategories: string[] = [];
+  private markLoadVersion: number = 0;
   /** 正文滚动距离：顶栏底色与书名随之渐显。 */
   @State detailScrollY: number = 0;
   @State headerCollapse: number = 0;
@@ -150,6 +161,7 @@ struct SearchBookDetailPage {
       this.checkShelf().then((): void => {
         this.loadBookInfo();
         this.triggerAutoStartRead();
+        this.loadBookMark();
       });
     }
   }
@@ -166,6 +178,7 @@ struct SearchBookDetailPage {
       }
     });
     this.refreshChapterCount();
+    this.loadBookMark();
     // Some source runtimes need one UI turn after the detail route is mounted (especially when the
     // hidden Web transport is still attaching). Do not keep an empty first response cached forever.
     if (!this.intro && !this.isLoadingBookInfo && this.bookUrl && this.origin) {
@@ -310,6 +323,10 @@ struct SearchBookDetailPage {
               .strokeWidth(0.5)
               .color(ThemeRuntime.hairlineColor(this.appDarkMode))
 
+            if (this.name) {
+              this.detailMarkBlock()
+            }
+
             this.detailChapterRow()
             this.detailIntro()
           }
@@ -344,6 +361,8 @@ struct SearchBookDetailPage {
       .width('100%')
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      // 目录面板已绑在外层 Stack 上，一个组件只能绑一个半模态，标记面板挂在这一层。
+      .bindSheet($$this.showMarkSheet, this.markSheet(), this.markSheetOptions())
 
       HeaderBackdrop({ statusBarHeight: this.statusBarHeight, backdropHeight: this.statusBarHeight,
         backdropColor: ThemeRuntime.topBarColor(this.appDarkMode) })
@@ -647,6 +666,172 @@ struct SearchBookDetailPage {
     .onClick(() => onTap())
   }
 
+  /**
+   * 我的标记：没有标记时一排空星，点一下就打分保存；有标记后显示星级、状态、标签和短评。
+   * 点“编辑”、短评或下面那行文字打开标记面板。
+   */
+  @Builder
+  detailMarkBlock() {
+    Column({ space: AppSpacing.MD }) {
+      Row({ space: AppSpacing.MD }) {
+        Text('我的标记')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor())
+        if (this.bookMark && this.bookMark.status !== BookMarkStatus.NONE) {
+          Text(BookMarkStatus.label(this.bookMark.status))
+            .fontSize(AppFontSize.CAPTION)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.accentColor())
+            .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 1, bottom: 1 })
+            .borderRadius(10)
+            .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+        }
+        Blank()
+        if (this.bookMark) {
+          Text('编辑')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.accentColor())
+            .padding({ left: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
+            .onClick(() => {
+              this.openMarkSheet();
+            })
+        } else {
+          Text('轻点星星打分')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: AppSpacing.MD }) {
+        BookMarkStars({
+          rating: this.bookMark ? this.bookMark.rating : 0,
+          starSize: this.bookMark ? 22 : 30,
+          darkMode: this.appDarkMode,
+          emptyColor: ThemeRuntime.softFillColor(this.appDarkMode),
+          interactive: true,
+          onRate: (rating: number): void => {
+            this.rateFromDetail(rating);
+          }
+        })
+        if (this.bookMark) {
+          Text(this.bookMark.rating > 0 ?
+            `${BookMarkRules.ratingText(this.bookMark.rating)} · ${BookMarkRules.ratingLabel(this.bookMark.rating)}` :
+            '未打分')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.secondaryTextColor())
+          Blank()
+          Text(this.markDateText())
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+            .maxLines(1)
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      if (this.bookMark && this.bookMark.categories.length > 0) {
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.bookMark.categories, (name: string) => {
+            Text(name)
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.accentColor())
+              .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: 3, bottom: 3 })
+              .borderRadius(12)
+              .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+              .margin({ right: AppSpacing.SM, bottom: AppSpacing.SM })
+          }, (name: string) => name)
+        }
+        .width('100%')
+        .margin({ bottom: -AppSpacing.SM })
+      }
+
+      if (this.bookMark && this.bookMark.review.trim()) {
+        Text(this.bookMark.review.trim())
+          .fontSize(AppFontSize.BODY_LARGE)
+          .lineHeight(24)
+          .fontColor(this.primaryTextColor())
+          .maxLines(3)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .wordBreak(WordBreak.BREAK_WORD)
+          .width('100%')
+          .onClick(() => {
+            this.openMarkSheet();
+          })
+      } else {
+        Row({ space: AppSpacing.XXS }) {
+          Text(this.bookMark ? '写一句短评' : '加标签、写短评')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.accentColor())
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(13)
+            .fontColor([this.accentColor()])
+        }
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => {
+          this.openMarkSheet();
+        })
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(AppSpacing.LG)
+    .margin({ top: AppSpacing.LG, bottom: AppSpacing.SM })
+    .borderRadius(ThemeRuntime.largeRadius())
+    .backgroundColor(this.cardColor())
+    .border({ width: 0.5, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
+  }
+
+  private markDateText(): string {
+    const mark = this.bookMark;
+    if (!mark) return '';
+    const finished = mark.status === BookMarkStatus.READ && mark.finishTime > 0;
+    const date = new Date(finished ? mark.finishTime : mark.updateTime);
+    const label = `${date.getMonth() + 1}月${date.getDate()}日`;
+    const day = date.getFullYear() === new Date().getFullYear() ? label : `${date.getFullYear()}年${label}`;
+    return finished ? `${day}读完` : `${day}标记`;
+  }
+
+  @Builder
+  markSheet() {
+    BookMarkSheet({
+      initial: this.markDraft,
+      knownCategories: this.markCategories,
+      existing: this.bookMark !== null,
+      coverBookUrl: this.bookUrl,
+      coverOrigin: this.origin,
+      onSave: (mark: BookMark): void => {
+        this.saveMarkFromSheet(mark);
+      },
+      onDelete: (): void => {
+        this.deleteMarkFromSheet();
+      },
+      onClose: (): void => {
+        this.showMarkSheet = false;
+      }
+    })
+  }
+
+  markSheetOptions(): SheetOptions {
+    const options: SheetOptions = {
+      detents: ['78%', SheetSize.LARGE],
+      dragBar: true,
+      showClose: false,
+      backgroundColor: Color.Transparent,
+      blurStyle: BlurStyle.NONE,
+      borderWidth: 0,
+      radius: { topLeft: 28, topRight: 28, bottomLeft: 28, bottomRight: 28 },
+      shadow: { radius: 0, color: Color.Transparent },
+      onDisappear: () => {
+        this.showMarkSheet = false;
+      }
+    };
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, options,
+      this.appDarkMode, this.accentColor());
+  }
+
   /** 目录入口：“最新 · 章节名”，右侧总章数；目录是章节列表的唯一入口，没有最新章节名时也保留。 */
   @Builder
   detailChapterRow() {
@@ -821,6 +1006,7 @@ struct SearchBookDetailPage {
         existing.wordCount = BookFieldSanitizer.prefer(this.wordCount, existing.wordCount);
         existing.updateTime = BookFieldSanitizer.prefer(this.updateTime, existing.updateTime);
         SearchExplorePendingBook.clearPendingAddToShelf(existing);
+        await BookMarkService.carryTagsToShelfBook(existing);
         await db.updateBook(existing, true, 'explicit_add_existing');
         AppStorage.setOrCreate('shelfUpdateTime', Date.now());
         this.syncStateFromBook(existing);
@@ -886,6 +1072,7 @@ struct SearchBookDetailPage {
         resolvedExisting.updateTime = BookFieldSanitizer.prefer(book.updateTime, resolvedExisting.updateTime);
         resolvedExisting.wordCount = BookFieldSanitizer.prefer(book.wordCount, resolvedExisting.wordCount);
         SearchExplorePendingBook.clearPendingAddToShelf(resolvedExisting);
+        await BookMarkService.carryTagsToShelfBook(resolvedExisting);
         await db.updateBook(resolvedExisting, true, 'explicit_add_resolved_existing');
         AppStorage.setOrCreate('shelfUpdateTime', Date.now());
         this.syncStateFromBook(resolvedExisting);
@@ -898,6 +1085,7 @@ struct SearchBookDetailPage {
       const resolved = await this.resolveSameWorkBeforeShelf(book);
       if (resolved !== null) return resolved;
       SearchExplorePendingBook.clearPendingAddToShelf(book);
+      await BookMarkService.carryTagsToShelfBook(book);
       await db.insertBook(book, 'explicit_add_from_detail');
       this.syncStateFromBook(book);
 
@@ -1167,6 +1355,7 @@ struct SearchBookDetailPage {
           if (resolved !== null) return resolved;
         }
         SearchExplorePendingBook.clearPendingAddToShelf(pendingBook);
+        await BookMarkService.carryTagsToShelfBook(pendingBook);
         await db.updateBook(pendingBook, true, 'temporary_read_kept');
         this.syncStateFromBook(pendingBook);
         this.isInShelf = true;
@@ -1565,6 +1754,87 @@ struct SearchBookDetailPage {
     this.bookType = book.type || this.bookType;
     this.bookVariable = book.variable || this.bookVariable;
     this.bookInfoRenderVersion++;
+    // 书籍信息补齐后作者可能才有，作品键随之变化。
+    this.loadBookMark();
+  }
+
+  private onBookMarkRevisionChanged(): void {
+    this.loadBookMark();
+  }
+
+  private markKey(): string {
+    return this.name ? BookMarkService.keyOf(this.buildCurrentBook()) : '';
+  }
+
+  private async loadBookMark(): Promise<void> {
+    const version = ++this.markLoadVersion;
+    const key = this.markKey();
+    if (!key) {
+      this.bookMark = null;
+      return;
+    }
+    try {
+      await AppDatabase.getInstance().initWithContext(getContext(this));
+      const mark = await AppDatabase.getInstance().getBookMark(key);
+      if (version === this.markLoadVersion) this.bookMark = mark;
+    } catch (error) {
+      console.warn('读取书籍标记失败:', error);
+    }
+  }
+
+  private async rateFromDetail(rating: number): Promise<void> {
+    if (!this.markKey()) return;
+    try {
+      ++this.markLoadVersion;
+      const saved = await BookMarkService.rate(this.buildCurrentBook(), this.bookMark, rating);
+      this.bookMark = saved;
+      HdsFeedback.showToast(saved ? `已标记 · ${BookMarkRules.ratingText(saved.rating)} 星` : '已删除标记');
+    } catch (error) {
+      console.error('保存评分失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    }
+  }
+
+  private async openMarkSheet(): Promise<void> {
+    if (!this.markKey() || this.showMarkSheet) return;
+    try {
+      this.markCategories = await BookMarkService.knownTags();
+      this.markDraft = await BookMarkService.prepareDraft(this.buildCurrentBook(), this.bookMark);
+    } catch (error) {
+      console.warn('准备标记面板失败:', error);
+      return;
+    }
+    this.showMarkSheet = true;
+  }
+
+  private async saveMarkFromSheet(draft: BookMark): Promise<void> {
+    try {
+      ++this.markLoadVersion;
+      const existed = this.bookMark !== null;
+      const saved = await BookMarkService.save(draft);
+      this.bookMark = saved;
+      if (saved) {
+        HdsFeedback.showToast('标记已保存');
+      } else if (existed) {
+        HdsFeedback.showToast('已删除标记');
+      }
+    } catch (error) {
+      console.error('保存书籍标记失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    }
+  }
+
+  private async deleteMarkFromSheet(): Promise<void> {
+    const key = this.markDraft.workKey;
+    try {
+      ++this.markLoadVersion;
+      await BookMarkService.remove(key);
+      this.bookMark = null;
+      HdsFeedback.showToast('已删除标记');
+    } catch (error) {
+      console.error('删除书籍标记失败:', error);
+      HdsFeedback.showToast('删除失败，请重试');
+    }
   }
 
   /** 在 variable 里补上 tab，保留其余字段（目录等规则可能依赖它们）；不是 JSON 对象时返回空串。 */

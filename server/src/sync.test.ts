@@ -115,6 +115,19 @@ test('reader annotations are accepted as a sync entity type', () => {
   assert.equal((normalized.payload as Record<string, unknown>).note, '想法');
 });
 
+test('book marks are accepted as a sync entity type', () => {
+  const normalized = normalizeOperation({
+    opId: OP_ID,
+    entityType: 'book_mark',
+    entityId: 'mark_0123456789abcdef',
+    operation: 'upsert',
+    baseRevision: 0,
+    payload: { workKey: 'novel|活着|余华', bookName: '活着', rating: 9, categories: ['文学'], review: '短评' }
+  });
+  assert.equal(normalized.entityType, 'book_mark');
+  assert.equal((normalized.payload as Record<string, unknown>).review, '短评');
+});
+
 test('a "__proto__" payload key stays data after cleaning', () => {
   const normalized = normalizeOperation({
     opId: OP_ID,

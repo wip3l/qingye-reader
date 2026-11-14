@@ -78,6 +78,7 @@ import { CloudAutoSync } from '../../account/CloudAutoSync';
 import { CloudDownloadQueue } from '../../account/CloudDownloadQueue';
 import { PopupMenuAction } from '../common/PopupMenuAction';
 import { ReaderHaptics } from '../../utils/ReaderHaptics';
+import { BookMarkService } from '../../core/mark/BookMarkService';
 
 const SHELF_FULL_TEXT_CACHE_NOTIFICATION_INTERVAL_MS: number = 5000;
 /** 有声书同时下载的章数。 */
@@ -7174,6 +7175,8 @@ export struct BookshelfPage {
       .map(tag => `!${tag}`);
     book.customTag = BookDisplayHelper.joinTags([...customTags, ...hiddenTags]);
     await this.updateShelfBook(book);
+    // 标签和书籍标记共用一套：这部作品有标记时一并改掉。
+    await BookMarkService.syncTagsFromShelf(book);
     this.closeTagDialog();
     HdsFeedback.showToast('标签已保存');
   }

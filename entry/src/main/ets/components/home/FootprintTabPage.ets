@@ -18,6 +18,9 @@ import { ImmersiveMaterialSurface } from '../ImmersiveMaterialSurface';
 import { BookAnnotation } from '../../model/reader/BookAnnotation';
 import { FootprintLayout } from '../../utils/FootprintLayout';
 import { FootprintSettingsStore } from '../../utils/FootprintSettingsStore';
+import { BookMark, BookMarkRules, BookMarkStatus } from '../../model/book/BookMark';
+import { BookMarkService } from '../../core/mark/BookMarkService';
+import { BookMarkStars } from '../book/BookMarkStars';
 
 /** 本月日历的一格；day 为 0 是月初前的空位。level 0 没读，1~3 越大读得越久，-1 是还没到的日子。 */
 class FootprintDay {
@@ -37,6 +40,7 @@ export struct FootprintTabPage {
   static readonly HEADER_CONTROL_SIZE: number = 40;
   static readonly CHART_HEIGHT: number = 88;
   static readonly BOOKMARK_CARD_HEIGHT: number = 148;
+  static readonly MARK_CARD_HEIGHT: number = 158;
   /** 按设置里最多的条数取，显示时再截。 */
   static readonly EXCERPT_LOAD_LIMIT: number = 20;
   static readonly EXCERPT_CARD_HEIGHT: number = 168;
@@ -56,6 +60,10 @@ export struct FootprintTabPage {
   @State excerptsLoaded: boolean = false;
   /** 阅读页、我的摘录改了摘录后加一，这里重读最近摘录。 */
   @StorageProp('excerptRevision') @Watch('onExcerptRevision') excerptRevision: number = 0;
+  @State marks: BookMark[] = [];
+  @State marksLoaded: boolean = false;
+  /** 详情页、我的标记改了标记后加一，这里重读最近标记。 */
+  @StorageProp('bookMarkRevision') @Watch('onBookMarkRevision') bookMarkRevision: number = 0;
   @State loading: boolean = true;
   @State todayKey: string = '';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
@@ -97,9 +105,12 @@ export struct FootprintTabPage {
       const rows = await appDb.getReadStatsByDayRange(startKey, endKey, '', ownerId);
       const bookmarks = await appDb.getAllBookmarks();
       const excerpts = await appDb.getExcerptAnnotations(FootprintTabPage.EXCERPT_LOAD_LIMIT);
+      const marks = await appDb.getAllBookMarks(FootprintTabPage.EXCERPT_LOAD_LIMIT);
       if (!this.alive) return;
       this.excerpts = excerpts;
       this.excerptsLoaded = true;
+      this.marks = marks;
+      this.marksLoaded = true;
       this.ownerId = ownerId;
       this.summary = ReadStatsSummary.calculate(rows, 'week', now, now);
       this.lastWeekMs = ReadStatsSummary.calculate(rows, 'week', lastWeekAnchor, now).totalMs;
@@ -115,6 +126,23 @@ export struct FootprintTabPage {
 
   onExcerptRevision(): void {
     this.loadExcerpts();
+  }
+
+  onBookMarkRevision(): void {
+    this.loadMarks();
+  }
+
+  async loadMarks(): Promise<void> {
+    try {
+      await appDb.init(getContext(this));
+      const marks = await appDb.getAllBookMarks(FootprintTabPage.EXCERPT_LOAD_LIMIT);
+      if (this.alive) {
+        this.marks = marks;
+        this.marksLoaded = true;
+      }
+    } catch (error) {
+      console.warn('读取书籍标记失败:', error);
+    }
   }
 
   async loadExcerpts(): Promise<void> {
@@ -292,6 +320,26 @@ export struct FootprintTabPage {
             .height(FootprintTabPage.EXCERPT_CARD_HEIGHT)
           } else {
             this.excerptEmptyCard()
+          }
+        }
+      } else if (id === FootprintLayout.MARK) {
+        if (this.marksLoaded) {
+          this.sectionHeaderWithMore('我的标记', '全部', () => this.openMarks())
+          if (this.marks.length > 0) {
+            List({ space: AppSpacing.MD }) {
+              ForEach(this.marks.slice(0, this.layout().limit(FootprintLayout.MARK)), (mark: BookMark) => {
+                ListItem() {
+                  this.markCard(mark)
+                }
+              }, (mark: BookMark) => `${mark.workKey}|${mark.updateTime}`)
+            }
+            .listDirection(Axis.Horizontal)
+            .scrollBar(BarState.Off)
+            .edgeEffect(EdgeEffect.Spring)
+            .width('100%')
+            .height(FootprintTabPage.MARK_CARD_HEIGHT)
+          } else {
+            this.markEmptyCard()
           }
         }
       } else if (id === FootprintLayout.BOOKMARK) {
@@ -647,6 +695,106 @@ export struct FootprintTabPage {
     .onClick(() => this.openExcerpt(excerpt))
   }
 
+  /** 标记卡：小封面、书名和星级，下面是短评；没写短评时显示状态和标签。 */
+  @Builder
+  markCard(mark: BookMark) {
+    Column({ space: AppSpacing.SM }) {
+      Row({ space: AppSpacing.MD }) {
+        Stack() {
+          BookCover({
+            bookUrl: mark.bookUrl,
+            origin: mark.origin,
+            coverUrl: mark.coverUrl,
+            name: mark.bookName,
+            author: mark.author,
+            placeholderColor: this.accentColor(),
+            cornerRadius: 4,
+            decodeWidth: 96,
+            decodeHeight: 128
+          })
+        }
+        .width(40)
+        .height(54)
+        .borderRadius(4)
+        .clip(true)
+        Column({ space: AppSpacing.XS }) {
+          Text(mark.bookName)
+            .fontSize(AppFontSize.BODY)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.primaryTextColor())
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+          if (mark.rating > 0) {
+            BookMarkStars({
+              rating: mark.rating,
+              starSize: 12,
+              darkMode: this.appDarkMode,
+              emptyColor: ThemeRuntime.softFillColor(this.appDarkMode)
+            })
+          } else if (mark.status !== BookMarkStatus.NONE) {
+            Text(BookMarkStatus.label(mark.status))
+              .fontSize(AppFontSize.MICRO + 1)
+              .fontColor(this.accentColor())
+          }
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+
+      Text(this.markSnippet(mark))
+        .fontSize(AppFontSize.CAPTION)
+        .lineHeight(18)
+        .fontColor(this.subTextColor())
+        .maxLines(3)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .wordBreak(WordBreak.BREAK_WORD)
+        .width('100%')
+    }
+    .width(168)
+    .height(FootprintTabPage.MARK_CARD_HEIGHT)
+    .padding(AppSpacing.LG)
+    .borderRadius(ThemeRuntime.largeRadius())
+    .backgroundColor(this.cardColor())
+    .accessibilityGroup(true)
+    .accessibilityText(`${mark.bookName}，${mark.rating > 0 ?
+      `${BookMarkRules.ratingText(mark.rating)} 星` : '未打分'}，${this.markSnippet(mark)}`)
+    .onClick(() => {
+      BookMarkService.openDetail(mark);
+    })
+  }
+
+  markSnippet(mark: BookMark): string {
+    if (mark.review.trim()) return mark.review.trim();
+    const parts: string[] = [];
+    if (mark.rating > 0) parts.push(BookMarkRules.ratingLabel(mark.rating));
+    if (mark.rating > 0 && mark.status !== BookMarkStatus.NONE) parts.push(BookMarkStatus.label(mark.status));
+    if (mark.categories.length > 0) parts.push(mark.categories.join('、'));
+    return parts.join(' · ') || '还没写短评';
+  }
+
+  /** 还没有标记时告诉在哪里标。 */
+  @Builder
+  markEmptyCard() {
+    Row({ space: AppSpacing.LG }) {
+      SymbolGlyph($r('sys.symbol.star'))
+        .fontSize(24)
+        .fontColor([this.accentColor()])
+      Text('在书籍详情页点星星打分、写短评，标记过的书会收在这里')
+        .fontSize(AppFontSize.BODY)
+        .lineHeight(20)
+        .fontColor(this.subTextColor())
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .padding(AppSpacing.XL)
+    .borderRadius(ThemeRuntime.largeRadius())
+    .backgroundColor(this.cardColor())
+    .onClick(() => this.openMarks())
+  }
+
   /** 还没有摘录时告诉怎么收。 */
   @Builder
   excerptEmptyCard() {
@@ -847,6 +995,12 @@ export struct FootprintTabPage {
     } finally {
       this.openingShare = false;
     }
+  }
+
+  openMarks(): void {
+    router.pushUrl({ url: 'pages/BookMarkList' }).catch((error: Error) => {
+      console.error('打开我的标记失败:', error);
+    });
   }
 
   openExcerpts(): void {

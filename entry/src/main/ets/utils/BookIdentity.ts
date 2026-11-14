@@ -93,6 +93,18 @@ export class BookIdentity {
     return `${BookTypeSupport.mediaCategoryOf(book)}\n${name}\n${author}`;
   }
 
+  /**
+   * 书籍标记的作品键。和 workKeyOf 一样按媒体类型 + 规范化书名 + 作者，但本地书、作者缺失的书也给键：
+   * 标记是用户自己的记录，宁可偶尔把同名无作者的两本当成一部，也不能让这些书没法标记。
+   * 书名为空时返回空串。不含设备相关的地址，所以换设备同步后同一本书还能对上。
+   */
+  static markKeyOf(book: Book | SearchBook | null): string {
+    if (!book) return '';
+    const name = BookIdentity.normalizeWorkName(book.name);
+    if (!name) return '';
+    return `${BookTypeSupport.mediaCategoryOf(book)}\n${name}\n${BookIdentity.normalizeWorkAuthor(book.author)}`;
+  }
+
   static normalizeWorkName(name: string): string {
     return BookIdentity.normalizeWorkText(name)
       .replace(/^[《「『"“'‘<]+/, '')

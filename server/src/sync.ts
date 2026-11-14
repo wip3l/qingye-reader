@@ -105,6 +105,7 @@ const ALLOWED_ENTITY_TYPES = new Set([
   'reading_progress',
   'bookmark',
   'book_annotation',
+  'book_mark',
   'reader_settings',
   'replace_rule',
   'theme_settings',

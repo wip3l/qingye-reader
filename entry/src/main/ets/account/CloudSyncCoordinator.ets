@@ -28,6 +28,8 @@ import {
 } from './CloudSyncStateStore';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { BookAnnotation } from '../model/reader/BookAnnotation';
+import { BookMark, BookMarkRules } from '../model/book/BookMark';
+import { BookMarkService } from '../core/mark/BookMarkService';
 import { Book, BookGroup, BookInfoRule, BookListRule, BookSource, Bookmark, ContentRule, ExploreRule, ReadConfig, SearchRule, TocRule } from '@legado/sourceengine';
 import { ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { jsonbSafeJson } from '../utils/JsonbSafeText';
@@ -134,6 +136,25 @@ class BookAnnotationSyncPayload {
   excerpt: boolean = false;
   createTime: number = 0;
   updateTime: number = 0;
+}
+
+/** 书籍标记；按作品键识别（见 BookIdentity.markKeyOf），本地书不带本机路径。 */
+class BookMarkSyncPayload {
+  workKey: string = '';
+  bookName: string = '';
+  author: string = '';
+  bookUrl: string = '';
+  origin: string = '';
+  originName: string = '';
+  coverUrl: string = '';
+  bookType: number = 0;
+  rating: number = 0;
+  status: number = 0;
+  categories: string[] = [];
+  review: string = '';
+  createTime: number = 0;
+  updateTime: number = 0;
+  finishTime: number = 0;
 }
 
 class BookSourceSyncPayload {
@@ -262,6 +283,9 @@ export class CloudSyncCoordinator {
   private static annotationSyncUnsupportedUntil: number = 0;
   private static readonly ANNOTATION_SYNC_RETRY_MS: number = 6 * 60 * 60 * 1000;
   private static readonly ANNOTATION_ENTITY_TYPE: string = 'book_annotation';
+  /** 书籍标记比划线更晚加入服务端白名单，处理方式相同。 */
+  private static markSyncUnsupportedUntil: number = 0;
+  private static readonly MARK_ENTITY_TYPE: string = 'book_mark';
 
   static async syncNow(context: Context, conflictPolicy: string = 'cloud'): Promise<CloudSyncRunResult> {
     // An explicit refresh must not be satisfied by an in-flight statistics-only run.
@@ -444,14 +468,19 @@ export class CloudSyncCoordinator {
             try {
               response = await CloudSyncCoordinator.exchangeSyncWithRetry(request, userId, sessionToken);
             } catch (error) {
-              if (CloudSyncCoordinator.isAnnotationTypeRejected(error as Object, batch)) {
-                CloudSyncCoordinator.annotationSyncUnsupportedUntil =
-                  Date.now() + CloudSyncCoordinator.ANNOTATION_SYNC_RETRY_MS;
-                const isAnnotation = (operation: CloudSyncOperation): boolean =>
-                  operation.entityType === CloudSyncCoordinator.ANNOTATION_ENTITY_TYPE;
-                batch = batch.filter((operation: CloudSyncOperation) => !isAnnotation(operation));
-                remaining = remaining.filter((operation: CloudSyncOperation) => !isAnnotation(operation));
-                console.warn('同步服务暂不支持划线，划线留在本机稍后再传');
+              // 拒收信息不说是哪种类型。先去掉最新加入的标记重试，还被拒再去掉划线。
+              const rejectedType = CloudSyncCoordinator.rejectedOptionalType(error as Object, batch);
+              if (rejectedType) {
+                const retryAt = Date.now() + CloudSyncCoordinator.ANNOTATION_SYNC_RETRY_MS;
+                if (rejectedType === CloudSyncCoordinator.MARK_ENTITY_TYPE) {
+                  CloudSyncCoordinator.markSyncUnsupportedUntil = retryAt;
+                } else {
+                  CloudSyncCoordinator.annotationSyncUnsupportedUntil = retryAt;
+                }
+                const isRejected = (operation: CloudSyncOperation): boolean => operation.entityType === rejectedType;
+                batch = batch.filter((operation: CloudSyncOperation) => !isRejected(operation));
+                remaining = remaining.filter((operation: CloudSyncOperation) => !isRejected(operation));
+                console.warn(`同步服务暂不支持${CloudSyncCoordinator.entityTypeLabel(rejectedType)}，留在本机稍后再传`);
                 continue;
               }
               // The server rejects the whole request for one oversized item. Leave that item out
@@ -563,10 +592,18 @@ export class CloudSyncCoordinator {
     return Date.now() >= CloudSyncCoordinator.annotationSyncUnsupportedUntil;
   }
 
-  private static isAnnotationTypeRejected(error: Object, batch: CloudSyncOperation[]): boolean {
-    return error instanceof AccountApiError && error.errorCode === 'INVALID_ENTITY_TYPE' &&
-      batch.some((operation: CloudSyncOperation) =>
-        operation.entityType === CloudSyncCoordinator.ANNOTATION_ENTITY_TYPE);
+  private static markSyncAvailable(): boolean {
+    return Date.now() >= CloudSyncCoordinator.markSyncUnsupportedUntil;
+  }
+
+  /** 服务端拒收未知类型时，返回这批里该先撤下的可选类型（标记优先于划线）；不是这种错误返回空串。 */
+  private static rejectedOptionalType(error: Object, batch: CloudSyncOperation[]): string {
+    if (!(error instanceof AccountApiError) || error.errorCode !== 'INVALID_ENTITY_TYPE') return '';
+    const types = [CloudSyncCoordinator.MARK_ENTITY_TYPE, CloudSyncCoordinator.ANNOTATION_ENTITY_TYPE];
+    for (const type of types) {
+      if (batch.some((operation: CloudSyncOperation) => operation.entityType === type)) return type;
+    }
+    return '';
   }
 
   private static takeOperationBatch(remaining: CloudSyncOperation[]): CloudSyncOperation[] {
@@ -764,6 +801,20 @@ export class CloudSyncCoordinator {
       }
     }
 
+    // 标记按作品同步，本地书也同步（作品键不含本机路径）；本机路径不上传。
+    if (CloudSyncCoordinator.markSyncAvailable()) {
+      const marks = await db.getAllBookMarks();
+      for (const mark of marks) {
+        result.push(CloudSyncCoordinator.entity(
+          CloudSyncCoordinator.MARK_ENTITY_TYPE,
+          CloudSyncCoordinator.identity('mark', mark.workKey),
+          CloudSyncCoordinator.markPayload(mark),
+          mark.workKey,
+          mark.bookName
+        ));
+      }
+    }
+
     // 网页解析关闭时书源不上传也不合并，和用户关掉“书源”同步范围一样处理；云端已有的数据保留。
     if (settings.bookSourcesEnabled && WebParseSettingsStore.enabled()) {
       const bookSources = await db.getBookSourcesForCloudSync();
@@ -892,6 +943,9 @@ export class CloudSyncCoordinator {
       // 暂不同步划线时本机没有列出它们，不能当成已删除。
       if (entityType === CloudSyncCoordinator.ANNOTATION_ENTITY_TYPE &&
         !CloudSyncCoordinator.annotationSyncAvailable()) {
+        continue;
+      }
+      if (entityType === CloudSyncCoordinator.MARK_ENTITY_TYPE && !CloudSyncCoordinator.markSyncAvailable()) {
         continue;
       }
       // A local progress entity is retained when this device has not imported
@@ -1158,6 +1212,20 @@ export class CloudSyncCoordinator {
         entityState.localKey = CloudSyncCoordinator.annotationKey(annotationPayload.bookUrl,
           Math.floor(Number(annotationPayload.createTime) || 0));
       }
+    } else if (entityType === CloudSyncCoordinator.MARK_ENTITY_TYPE) {
+      const incoming = BookMarkRules.fromPlain(JSON.parse(raw) as BookMarkSyncPayload);
+      if (incoming) {
+        // 对方没带地址（本地书）时沿用本机记下的地址。
+        const local = await db.getBookMark(incoming.workKey);
+        if (local && !incoming.bookUrl) {
+          incoming.bookUrl = local.bookUrl;
+          incoming.origin = local.origin;
+          incoming.originName = local.originName;
+        }
+        await db.saveBookMark(incoming);
+        entityState.localKey = incoming.workKey;
+        BookMarkService.notifyChanged();
+      }
     } else if (entityType === 'book_source') {
       const sourcePayload = JSON.parse(raw) as BookSourceSyncPayload;
       const source = await CloudSyncCoordinator.bookSourceFromPayload(db, sourcePayload);
@@ -1318,6 +1386,18 @@ export class CloudSyncCoordinator {
         CloudSyncCoordinator.annotationKey(annotation.bookUrl, annotation.createTime)) === entityId)
         .map((annotation: BookAnnotation): number => annotation.id);
       await db.deleteBookAnnotationsById(ids);
+    } else if (entityType === CloudSyncCoordinator.MARK_ENTITY_TYPE) {
+      let workKey = entityState.localKey;
+      if (!workKey) {
+        const marks = await db.getAllBookMarks();
+        const matched = marks.find((mark: BookMark): boolean =>
+          CloudSyncCoordinator.identity('mark', mark.workKey) === entityId);
+        workKey = matched ? matched.workKey : '';
+      }
+      if (workKey) {
+        await db.deleteBookMark(workKey);
+        BookMarkService.notifyChanged();
+      }
     } else if (entityType === 'replace_rule') {
       const ruleId = Number(entityState.localKey || entityId.replace(/^rule_/, ''));
       const rules = await ReaderReplaceRuleStore.load(context, true);
@@ -1437,6 +1517,28 @@ export class CloudSyncCoordinator {
   private static bookmarkKey(bookmark: Bookmark): string {
     return `${bookmark.bookUrl}\n${bookmark.chapterIndex}\n${bookmark.pageIndex}\n` +
       `${bookmark.startPos}\n${bookmark.createTime}`;
+  }
+
+  private static markPayload(mark: BookMark): BookMarkSyncPayload {
+    const payload = new BookMarkSyncPayload();
+    payload.workKey = mark.workKey;
+    payload.bookName = mark.bookName;
+    payload.author = mark.author;
+    // 本地书的地址是本机路径，换台设备没有意义；只带网络地址。
+    const online = /^https?:\/\//i.test(mark.bookUrl) && !!mark.origin && mark.origin !== 'local';
+    payload.bookUrl = online ? mark.bookUrl : '';
+    payload.origin = online ? mark.origin : '';
+    payload.originName = online ? mark.originName : '';
+    payload.coverUrl = /^https?:\/\//i.test(mark.coverUrl) ? mark.coverUrl : '';
+    payload.bookType = mark.bookType;
+    payload.rating = mark.rating;
+    payload.status = mark.status;
+    payload.categories = mark.categories.slice();
+    payload.review = mark.review;
+    payload.createTime = mark.createTime;
+    payload.updateTime = mark.updateTime;
+    payload.finishTime = mark.finishTime;
+    return payload;
   }
 
   private static annotationKey(bookUrl: string, createTime: number): string {
@@ -1758,6 +1860,7 @@ export class CloudSyncCoordinator {
       case 'reading_progress': return '阅读进度';
       case 'bookmark': return '书签';
       case 'book_annotation': return '划线';
+      case 'book_mark': return '书籍标记';
       case 'book_source': return '书源';
       case 'reader_settings': return '阅读设置';
       case 'replace_rule': return '替换规则';
@@ -1818,7 +1921,8 @@ export class CloudSyncCoordinator {
       entityType === 'bookshelf_item' ||
       entityType === 'reading_progress' ||
       entityType === 'bookmark' ||
-      entityType === 'book_annotation') {
+      entityType === 'book_annotation' ||
+      entityType === 'book_mark') {
       return settings.readingDataEnabled;
     }
     if (entityType === 'reader_settings' ||

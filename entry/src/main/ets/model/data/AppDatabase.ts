@@ -8,6 +8,7 @@ import { Context } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
 import { CloudSyncChangeTracker } from '../../account/CloudSyncChangeTracker';
 import { BookAnnotation, BookAnnotationStyles } from '../reader/BookAnnotation';
+import { BookMark, BookMarkRules } from '../book/BookMark';
 import { BookIdentity } from '../../utils/BookIdentity';
 import { ReadStatsPendingUpload, ReadStatsSyncPayload, ReadStatsSyncChange,
   ReadStatsSyncAck } from '../../core/stats/ReadStatsSyncModels';
@@ -407,6 +408,27 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         note TEXT DEFAULT '',
         createTime INTEGER DEFAULT 0,
         updateTime INTEGER DEFAULT 0
+      )
+    `);
+
+    // 书籍标记按作品存（见 BookMark）；建表语句每次启动都会跑，所以新表不需要升库版本。
+    await this.store.executeSql(`
+      CREATE TABLE IF NOT EXISTS book_marks (
+        workKey TEXT PRIMARY KEY,
+        bookName TEXT DEFAULT '',
+        author TEXT DEFAULT '',
+        bookUrl TEXT DEFAULT '',
+        origin TEXT DEFAULT '',
+        originName TEXT DEFAULT '',
+        coverUrl TEXT DEFAULT '',
+        bookType INTEGER DEFAULT 0,
+        rating INTEGER DEFAULT 0,
+        status INTEGER DEFAULT 0,
+        categories TEXT DEFAULT '[]',
+        review TEXT DEFAULT '',
+        createTime INTEGER DEFAULT 0,
+        updateTime INTEGER DEFAULT 0,
+        finishTime INTEGER DEFAULT 0
       )
     `);
 
@@ -1439,6 +1461,93 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     annotation.createTime = resultSet.getLong(resultSet.getColumnIndex('createTime'));
     annotation.updateTime = resultSet.getLong(resultSet.getColumnIndex('updateTime'));
     return annotation;
+  }
+
+  async getBookMark(workKey: string): Promise<BookMark | null> {
+    if (!this.store || !workKey) return null;
+    const predicates = new relationalStore.RdbPredicates('book_marks');
+    predicates.equalTo('workKey', workKey);
+    const resultSet = await this.store.query(predicates, []);
+    try {
+      return resultSet.goToNextRow() ? this.resultSetToBookMark(resultSet) : null;
+    } finally {
+      resultSet.close();
+    }
+  }
+
+  /** 最近改动的在前；limit 为 0 时全部。 */
+  async getAllBookMarks(limit: number = 0): Promise<BookMark[]> {
+    const marks: BookMark[] = [];
+    if (!this.store) return marks;
+    const predicates = new relationalStore.RdbPredicates('book_marks');
+    predicates.orderByDesc('updateTime');
+    if (limit > 0) predicates.limitAs(limit);
+    const resultSet = await this.store.query(predicates, []);
+    try {
+      while (resultSet.goToNextRow()) {
+        marks.push(this.resultSetToBookMark(resultSet));
+      }
+    } finally {
+      resultSet.close();
+    }
+    return marks;
+  }
+
+  /** 新增或整条替换；备份恢复、云同步也走这里，传入的可能是普通对象，先规整。 */
+  async saveBookMark(source: BookMark): Promise<void> {
+    const mark = BookMarkRules.fromPlain(source);
+    if (!this.store || !mark) return;
+    await this.store.insert('book_marks', this.bookMarkBucket(mark),
+      relationalStore.ConflictResolution.ON_CONFLICT_REPLACE);
+    CloudSyncChangeTracker.markDataChanged();
+  }
+
+  async deleteBookMark(workKey: string): Promise<void> {
+    if (!this.store || !workKey) return;
+    const predicates = new relationalStore.RdbPredicates('book_marks');
+    predicates.equalTo('workKey', workKey);
+    await this.store.delete(predicates);
+    CloudSyncChangeTracker.markDataChanged();
+  }
+
+  private bookMarkBucket(mark: BookMark): relationalStore.ValuesBucket {
+    return {
+      workKey: mark.workKey,
+      bookName: mark.bookName,
+      author: mark.author,
+      bookUrl: mark.bookUrl,
+      origin: mark.origin,
+      originName: mark.originName,
+      coverUrl: mark.coverUrl,
+      bookType: mark.bookType,
+      rating: mark.rating,
+      status: mark.status,
+      categories: JSON.stringify(mark.categories),
+      review: mark.review,
+      createTime: mark.createTime,
+      updateTime: mark.updateTime,
+      finishTime: mark.finishTime
+    };
+  }
+
+  private resultSetToBookMark(resultSet: relationalStore.ResultSet): BookMark {
+    const mark = new BookMark();
+    mark.workKey = resultSet.getString(resultSet.getColumnIndex('workKey'));
+    mark.bookName = resultSet.getString(resultSet.getColumnIndex('bookName'));
+    mark.author = resultSet.getString(resultSet.getColumnIndex('author'));
+    mark.bookUrl = resultSet.getString(resultSet.getColumnIndex('bookUrl'));
+    mark.origin = resultSet.getString(resultSet.getColumnIndex('origin'));
+    mark.originName = resultSet.getString(resultSet.getColumnIndex('originName'));
+    mark.coverUrl = resultSet.getString(resultSet.getColumnIndex('coverUrl'));
+    mark.bookType = resultSet.getLong(resultSet.getColumnIndex('bookType'));
+    mark.rating = BookMarkRules.normalizeRating(resultSet.getLong(resultSet.getColumnIndex('rating')));
+    mark.status = resultSet.getLong(resultSet.getColumnIndex('status'));
+    mark.categories = BookMarkRules.parseCategories(resultSet.getString(resultSet.getColumnIndex('categories')));
+    mark.review = resultSet.getString(resultSet.getColumnIndex('review'));
+    mark.createTime = resultSet.getLong(resultSet.getColumnIndex('createTime'));
+    mark.updateTime = resultSet.getLong(resultSet.getColumnIndex('updateTime'));
+    mark.finishTime = resultSet.getLong(resultSet.getColumnIndex('finishTime'));
+    return mark;
   }
 
   async moveBookBookmarks(fromBookUrl: string, toBookUrl: string, bookName: string, bookAuthor: string): Promise<void> {

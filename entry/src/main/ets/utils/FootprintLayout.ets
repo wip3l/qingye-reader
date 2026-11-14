@@ -30,18 +30,20 @@ export class FootprintLayout {
   static readonly RANK: string = 'rank';
   static readonly EXCERPT: string = 'excerpt';
   static readonly BOOKMARK: string = 'bookmark';
+  static readonly MARK: string = 'mark';
   static readonly SECTIONS: FootprintSection[] = [
     new FootprintSection('week', '本周阅读', '总时长、和上周比、每日柱状图', [], ''),
     new FootprintSection('month', '本月日历', '每天读了多久', [], ''),
     new FootprintSection('rank', '读得最多', '本周阅读时长排行', [3, 5, 10], '本'),
     new FootprintSection('excerpt', '最近摘录', '横滑卡片', [5, 10, 20], '条'),
-    new FootprintSection('bookmark', '最近书签', '横滑卡片', [5, 10, 20], '个')
+    new FootprintSection('bookmark', '最近书签', '横滑卡片', [5, 10, 20], '个'),
+    new FootprintSection('mark', '我的标记', '最近打分、写短评的书，横滑卡片', [5, 10, 20], '本')
   ];
-  static readonly DEFAULT_LIMITS: Record<string, number> = { 'rank': 3, 'excerpt': 10, 'bookmark': 10 };
+  static readonly DEFAULT_LIMITS: Record<string, number> = { 'rank': 3, 'excerpt': 10, 'bookmark': 10, 'mark': 10 };
 
   order: string[] = FootprintLayout.SECTIONS.map((section: FootprintSection): string => section.id);
   hidden: string[] = [];
-  limits: Record<string, number> = { 'rank': 3, 'excerpt': 10, 'bookmark': 10 };
+  limits: Record<string, number> = { 'rank': 3, 'excerpt': 10, 'bookmark': 10, 'mark': 10 };
 
   static parse(raw: string | undefined | null): FootprintLayout {
     const layout = new FootprintLayout();
