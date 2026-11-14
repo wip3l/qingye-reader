@@ -1,4 +1,4 @@
-import { AnimatorResult, router, window } from '@kit.ArkUI';
+import { AnimatorResult, FrameNode, router, window } from '@kit.ArkUI';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { webview } from '@kit.ArkWeb';
@@ -65,6 +65,9 @@ struct Index {
   static readonly ACCESSORY_GAP: number = 8;
   static readonly ACCESSORY_SIDE_MARGIN: number = 16;
   static readonly ACCESSORY_MAX_WIDTH: number = 480;
+  /** 换手或开始朗读后等系统底栏挪完再量位置。 */
+  static readonly TTS_BAR_PROBE_DELAY: number = 600;
+  static readonly TTS_BAR_PROBE_TOLERANCE: number = 8;
   static readonly TTS_SHARED_MOTION_ID: string = 'home_tts_player';
   static readonly SEARCH_LAYER_FADE_DURATION: number = 200;
   private stageRuntimeController: webview.WebviewController = new webview.WebviewController();
@@ -144,9 +147,14 @@ struct Index {
   @State globalTtsViewportHeight: number = 720;
   /** 列表下滑后底栏藏起，伴生条落到底栏那一行、旁边留当前页签的圆钮；回到上方再分成两行。 */
   @State globalTtsBarMerged: boolean = false;
-  /** 握持手：-1 左手，1 右手，0 未知（按左手）。并成一行时页签圆钮放在握持手一侧。 */
+  /**
+   * 握持手：-1 左手，1 右手，0 未知。宽屏上系统把悬浮底栏推到握持手一侧，伴生条那一行跟着同一侧；
+   * 未知时按居中算（并成一行时页签圆钮按左手放），等量到底栏实际位置再纠正。
+   */
   @State globalTtsHandSide: number = 0;
   private homeHoldingHandSubscribed: boolean = false;
+  private globalTtsBarProbeTimer: number = -1;
+  private globalTtsBarProbeMissLogged: boolean = false;
   private homeHoldingHandCallback: (status: motion.HoldingHandStatus) => void =
     (status: motion.HoldingHandStatus): void => this.onHomeHoldingHandChanged(status);
   private globalTtsCatalogScroller: ListScroller = new ListScroller();
@@ -179,6 +187,8 @@ struct Index {
     this.syncHomeSystemBars();
     this.promptWebParseNotice();
     this.syncHomeHoldingHandTracking();
+    // 在别的页面时没订阅握姿，回来后底栏可能已换边。
+    if (this.globalTtsActive) this.scheduleGlobalTtsBarProbe();
     // ReadBook is pushed over the retained Index route. Its final progress notification can arrive while the
     // bookshelf component is covered, so the storage watcher may already have been consumed before the route is
     // visible again. Publish a strictly monotonic refresh revision on page-show to force the retained shelf to
@@ -223,6 +233,7 @@ struct Index {
     this.flatTabBarAnimator = null;
     this.shortcutRoutingActive = false;
     this.syncHomeHoldingHandTracking();
+    this.cancelGlobalTtsBarProbe();
     this.stageRuntimeDisappearing = true;
     if (this.stageRuntimeAttachRetryId >= 0) clearTimeout(this.stageRuntimeAttachRetryId);
     this.stageRuntimeAttachRetryId = -1;
@@ -389,6 +400,8 @@ struct Index {
         this.immersiveTabsController.applyHideAnimation(HdsAnimationMode.SCROLL_ANIMATION);
       } else {
         this.immersiveTabsController.applyShowAnimation(HdsAnimationMode.SCROLL_ANIMATION);
+        // 藏起期间系统可能已按握持手换了边，放出来后量一次。
+        if (this.globalTtsActive) this.scheduleGlobalTtsBarProbe();
       }
     } else if (this.homeTabBarFlatAutoHide) {
       // 和悬浮底栏同一套阈值：收起、展开分开，停在临界位置时不来回抖。
@@ -493,6 +506,12 @@ struct Index {
     // 伴生条出现或消失时重新套用底栏宽度和收起状态。
     this.syncBottomBarCollapse(true);
     this.syncHomeHoldingHandTracking();
+    if (this.globalTtsActive) {
+      // 底栏可能早就按握持手停在一侧了，开始朗读时还没收到握姿事件，量一次对齐。
+      this.scheduleGlobalTtsBarProbe();
+    } else {
+      this.cancelGlobalTtsBarProbe();
+    }
   }
 
   private syncHomeHoldingHandTracking(): void {
@@ -520,6 +539,8 @@ struct Index {
     if (status !== motion.HoldingHandStatus.LEFT_HAND_HELD &&
       status !== motion.HoldingHandStatus.RIGHT_HAND_HELD) return;
     const side = status === motion.HoldingHandStatus.LEFT_HAND_HELD ? -1 : 1;
+    // 系统同时在挪底栏，挪完再量一次，以实际位置为准。
+    this.scheduleGlobalTtsBarProbe();
     if (side === this.globalTtsHandSide) return;
     this.getUIContext().animateTo({ duration: 280, curve: Curve.Friction }, (): void => {
       this.globalTtsHandSide = side;
@@ -916,7 +937,11 @@ struct Index {
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       const width = typeof newValue.width === 'number' ? newValue.width : Number.parseFloat(`${newValue.width}`);
       const height = typeof newValue.height === 'number' ? newValue.height : Number.parseFloat(`${newValue.height}`);
-      if (Number.isFinite(width) && width > 0) this.globalTtsViewportWidth = width;
+      if (Number.isFinite(width) && width > 0 && Math.abs(width - this.globalTtsViewportWidth) > 0.5) {
+        this.globalTtsViewportWidth = width;
+        // 旋转、折叠屏开合后系统重新摆底栏。
+        if (this.globalTtsActive) this.scheduleGlobalTtsBarProbe();
+      }
       if (Number.isFinite(height) && height > 0) this.globalTtsViewportHeight = height;
     })
   }
@@ -1022,8 +1047,115 @@ struct Index {
       this.globalTtsViewportWidth - Index.ACCESSORY_SIDE_MARGIN * 2));
   }
 
+  /**
+   * 底栏这一行的左边。打开智感握姿时，宽屏上系统按握持手把悬浮底栏推到一侧，边距就是 barSideMargin，
+   * 所以这里用同一个边距、同一个握姿算出底栏位置，伴生条和并成一行的那一行都贴着它。
+   * 手机上底栏本来就是屏宽减两侧边距，三种结果相同。
+   */
   globalTtsRowLeft(): number {
-    return (this.globalTtsViewportWidth - this.globalTtsRowWidth()) / 2;
+    return this.globalTtsRowLeftFor(this.globalTtsHandSide);
+  }
+
+  globalTtsRowLeftFor(side: number): number {
+    const free = Math.max(0, this.globalTtsViewportWidth - this.globalTtsRowWidth());
+    if (!this.globalTtsFollowsHand() || side === 0) return free / 2;
+    return side < 0 ? Math.min(Index.ACCESSORY_SIDE_MARGIN, free / 2) :
+      Math.max(free / 2, free - Index.ACCESSORY_SIDE_MARGIN);
+  }
+
+  /** 系统悬浮底栏会不会跟手（平铺底栏不跟）。 */
+  globalTtsFollowsHand(): boolean {
+    return this.smartGripEnabled && this.useFloatingTabs();
+  }
+
+  /** 底栏宽度由我们定的时候（朗读中或关了自适应宽度）把侧边距也定下来，伴生条才能算准底栏贴边后的位置。 */
+  globalTtsTabBarSideMargin(): number | undefined {
+    return this.globalTtsTabBarWidth() === undefined ? undefined : Index.ACCESSORY_SIDE_MARGIN;
+  }
+
+  immersiveTabsKey(): string {
+    return `home_immersive_tabs_${this.themeRevision}_${this.appDarkMode ? 'dark' : 'light'}_${this.extraTabId()}_${this.webParseEnabled ? 'web' : 'local'}`;
+  }
+
+  scheduleGlobalTtsBarProbe(delay: number = Index.TTS_BAR_PROBE_DELAY): void {
+    if (this.globalTtsBarProbeTimer >= 0) clearTimeout(this.globalTtsBarProbeTimer);
+    this.globalTtsBarProbeTimer = setTimeout((): void => {
+      this.globalTtsBarProbeTimer = -1;
+      this.probeGlobalTtsBarSide();
+    }, delay);
+  }
+
+  cancelGlobalTtsBarProbe(): void {
+    if (this.globalTtsBarProbeTimer >= 0) clearTimeout(this.globalTtsBarProbeTimer);
+    this.globalTtsBarProbeTimer = -1;
+  }
+
+  /**
+   * 兜底：量系统底栏的实际位置，推断它停在哪一侧。系统换边的规则没公开（比如刚开始朗读时还没收到握姿事件，
+   * 底栏可能早已停在一侧），握姿事件和系统的判断也可能不同步，以量到的为准。
+   * 只认三个标准位置（左、中、右）附近的结果，量不到或对不上时只记日志、不改位置。
+   */
+  probeGlobalTtsBarSide(): void {
+    if (!this.globalTtsActive || !this.globalTtsFollowsHand() || this.immersiveTabBarHidden ||
+      !this.shortcutRoutingActive) {
+      return;
+    }
+    try {
+      const uiContext = this.getUIContext();
+      const tabsNode = uiContext.getFrameNodeById(this.immersiveTabsKey());
+      const rootNode = uiContext.getFrameNodeById('home_root');
+      const barNode = tabsNode ? Index.findFrameNodeByType(tabsNode, 'TabBar', 10) : null;
+      if (!barNode || !rootNode) {
+        if (!this.globalTtsBarProbeMissLogged) {
+          this.globalTtsBarProbeMissLogged = true;
+          hilog.warn(0x0000, 'HomeTtsGrip', 'probe: tab bar node not found (tabs=%{public}s)', tabsNode ? 'y' : 'n');
+        }
+        return;
+      }
+      const barX = barNode.getPositionToWindowWithTransform().x - rootNode.getPositionToWindowWithTransform().x;
+      const barWidth = uiContext.px2vp(barNode.getMeasuredSize().width);
+      const rowWidth = this.globalTtsRowWidth();
+      // 页签项左右对称排布，用中心推左边，不受系统内边距影响。
+      const barLeft = barX + barWidth / 2 - rowWidth / 2;
+      let bestSide = 0;
+      let bestDistance = Number.MAX_VALUE;
+      const sides: number[] = [-1, 0, 1];
+      for (const side of sides) {
+        const distance = Math.abs(barLeft - this.globalTtsRowLeftFor(side));
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestSide = side;
+        }
+      }
+      hilog.info(0x0000, 'HomeTtsGrip',
+        'probe: barX=%{public}d barW=%{public}d rowW=%{public}d viewW=%{public}d side=%{public}d -> %{public}d (off %{public}d)',
+        Math.round(barX), Math.round(barWidth), Math.round(rowWidth), Math.round(this.globalTtsViewportWidth),
+        this.globalTtsHandSide, bestSide, Math.round(bestDistance));
+      if (Math.abs(barWidth - rowWidth) > Index.TTS_BAR_PROBE_TOLERANCE ||
+        bestDistance > Index.TTS_BAR_PROBE_TOLERANCE) {
+        return;
+      }
+      // 三个位置重合（手机）时推不出握持手，保留原值。
+      const ambiguous = Math.abs(this.globalTtsRowLeftFor(-1) - this.globalTtsRowLeftFor(1)) <= Index.TTS_BAR_PROBE_TOLERANCE;
+      if (ambiguous || bestSide === this.globalTtsHandSide) return;
+      uiContext.animateTo({ duration: 280, curve: Curve.Friction }, (): void => {
+        this.globalTtsHandSide = bestSide;
+      });
+    } catch (error) {
+      hilog.warn(0x0000, 'HomeTtsGrip', 'probe failed: %{public}s', `${error}`);
+    }
+  }
+
+  static findFrameNodeByType(node: FrameNode, type: string, depth: number): FrameNode | null {
+    if (node.getNodeType() === type) return node;
+    if (depth <= 0) return null;
+    let child = node.getFirstChild();
+    while (child) {
+      const found = Index.findFrameNodeByType(child, type, depth - 1);
+      if (found) return found;
+      child = child.getNextSibling();
+    }
+    return null;
   }
 
   /** 悬浮底栏宽度：朗读时或关了“自适应宽度”都和伴生条同宽；否则交给系统按页签数决定。 */
@@ -1087,6 +1219,7 @@ struct Index {
     this.immersiveTabBarHidden = false;
     this.immersiveTabsController.applyShowAnimation(HdsAnimationMode.SCROLL_ANIMATION);
     this.setGlobalTtsBarMerged(false);
+    this.scheduleGlobalTtsBarProbe();
   }
 
   @Builder
@@ -1399,7 +1532,7 @@ struct Index {
         .tabBar(this.bottomTabBar(tabId, this.homeTabTitle(tabId), index))
       }, (tabId: string) => tabId)
     }
-    .key(`home_immersive_tabs_${this.themeRevision}_${this.appDarkMode ? 'dark' : 'light'}_${this.extraTabId()}_${this.webParseEnabled ? 'web' : 'local'}`)
+    .key(this.immersiveTabsKey())
     .barBackgroundColor(this.immersiveTabsBarBackgroundColor())
     .barMode(BarMode.Fixed)
     .barHeight(this.homeTabBarHidden() ? 0 : 56)
@@ -1419,6 +1552,7 @@ struct Index {
         maskHeight: 96
       },
       barWidth: this.globalTtsTabBarWidth(),
+      barSideMargin: this.globalTtsTabBarSideMargin(),
       adaptToHandedness: this.smartGripEnabled,
       thermoCtrl: true,
       barOpacity: this.homeTabBarHidden() ? 0 : 1
