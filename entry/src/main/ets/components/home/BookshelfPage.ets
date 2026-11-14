@@ -6791,7 +6791,16 @@ export struct BookshelfPage {
     return '#3978C5';
   }
 
+  /**
+   * 主题封面、书架边框、文件夹插画都从主题包注册表现查，不经过任何状态变量；编辑方案增删图片后注册表已换新，
+   * 不读 themeRevision 的话点“应用主题”回来书架不会重画，要重启才变。读它把这几处挂到主题重新发布上。
+   */
+  private themeAssetsLive(): boolean {
+    return this.themeRevision >= 0;
+  }
+
   activeThemeBookCovers(book: Book): ResourceStr[] {
+    if (!this.themeAssetsLive()) return [];
     const covers = ThemeBookCoverSettings.covers(book, this.appDarkMode, this.bookshelfCoverMode);
     if (this.animatedImageRevision < 0) return covers;
     const context = getContext(this);
@@ -6815,7 +6824,7 @@ export struct BookshelfPage {
   }
 
   shouldUseThemeBookCover(): boolean {
-    return ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeBookCoverEnabled);
+    return this.themeAssetsLive() && ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeBookCoverEnabled);
   }
 
   /** 轮播项 key 里代表封面图本身的那段：深浅色各有一套封面的主题切换模式时，靠它让轮播换图。 */
@@ -6828,15 +6837,18 @@ export struct BookshelfPage {
   }
 
   activeThemeShelfFrame(): ResourceStr {
+    if (!this.themeAssetsLive()) return '';
     return ThemeBookCoverSettings.frame(this.appDarkMode);
   }
 
   /** 主题包动图封面、文件夹插画取景时记下的显示区域；没有时按原来的方式整张显示。 */
   themeImageCrop(slot: string, src: ResourceStr): ThemeImageCrop | null {
+    if (!this.themeAssetsLive()) return null;
     return ThemeAssetRegistry.imageCrop(slot, src, this.appDarkMode);
   }
 
   activeThemeShelfFolder(): ResourceStr {
+    if (!this.themeAssetsLive()) return '';
     return ThemeAssetRegistry.themeShelfFolder(ThemeRuntime.bookTokens(this.appDarkMode).shelfFolderAssetId,
       this.appDarkMode);
   }
