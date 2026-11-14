@@ -1636,9 +1636,10 @@ struct ThemeColorSettingsPage {
     return own && this.readerAssetId().startsWith(`${own}:`) ? this.readerAssetMode() : '';
   }
 
-  /** 方案自传的角饰（这个模式用的是自传角饰时），否则为 null。 */
+  /** 方案自传的阅读背景（角饰模式，或可以叠角饰的整图模式），否则为 null。 */
   ownOrnamentReader(): InstalledThemePackReader | null {
-    if (this.ownReaderMode() !== 'ornaments') return null;
+    const mode = this.ownReaderMode();
+    if (mode !== 'ornaments' && mode !== 'image') return null;
     const pack = this.ownPack();
     return pack ? pack.reader(this.selectedMode === 'dark') : null;
   }
@@ -1749,7 +1750,7 @@ struct ThemeColorSettingsPage {
           onTap: () => this.tapReaderSlot('image') })
       }
       .width('100%')
-      Text('角饰可以只传左上或右下一张，也可以两张都传；右下角也能直接用左上角那张旋转 180°。整图会替换角饰')
+      Text('角饰可以只传左上或右下一张，也可以两张都传；右下角也能直接用左上角那张旋转 180°。传了整图时角饰叠在整图上面')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .width('100%')

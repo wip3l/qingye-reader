@@ -73,7 +73,7 @@ my-theme/
 | 节 | 字段 | 说明 |
 | --- | --- | --- |
 | `light` / `dark` | `colors` | 界面配色：`pageColor`、`cardColor`、`inputColor`、`primaryTextColor`、`subTextColor`、`dividerColor`、`accentColor`、`buttonColor`、`dangerColor`。可以只写一部分。 |
-| | `reader` | 阅读页：`backgroundColor`（必须是铺满任意尺寸的底色）、`textColor`、`subTextColor`、`contentTone`（`light` / `dark`，决定系统栏图标明暗）、`backgroundMode`（`ornaments` 角饰 / `image` 整图 / `none` 只有底色）。角饰模式填 `leading`（左上）与 `trailing`（右下）图片（SVG 或透明底位图），可以只填一张，另一角空着（此时 `requires` 要加 `reader-single-corner-v1`）；两项填同一个素材时右下角旋转 180° 显示；`leadingScale`、`trailingScale` 分别是左上、右下角饰的显示大小，相对默认尺寸（屏幕短边 × 0.36，夹在 112–260vp）的倍数，0.5–2，默认 1，最大不超过短边的 0.8，旧版本应用忽略这两项按 1 显示。整图模式填 `image` 和 `imageFit`（`cover` / `contain` / `fill`）。 |
+| | `reader` | 阅读页：`backgroundColor`（必须是铺满任意尺寸的底色）、`textColor`、`subTextColor`、`contentTone`（`light` / `dark`，决定系统栏图标明暗）、`backgroundMode`（`ornaments` 角饰 / `image` 整图 / `none` 只有底色）。角饰模式填 `leading`（左上）与 `trailing`（右下）图片（SVG 或透明底位图），可以只填一张，另一角空着（此时 `requires` 要加 `reader-single-corner-v1`）；两项填同一个素材时右下角旋转 180° 显示；`leadingScale`、`trailingScale` 分别是左上、右下角饰的显示大小，相对默认尺寸（屏幕短边 × 0.36，夹在 112–260vp）的倍数，0.5–2，默认 1，最大不超过短边的 0.8，旧版本应用忽略这两项按 1 显示。整图模式填 `image` 和 `imageFit`（`cover` / `contain` / `fill`），还可以同时填 `leading` / `trailing`（及两个大小），角饰叠在整图上面；旧版本应用只显示整图。 |
 | | `emphasis` | 正文强调：`mode`（`none` / `text` / `highlight` / `bubble`）、`bubbleStyle`（内置气泡 ID，见主题开发指南；包里带了 `bubble` 节时自动用包内气泡）、`color`、`textColor`（可带透明度）。 |
 | `ttsPanel` | `light` / `dark` | 朗读与有声书面板：`artwork`（720 × 520 的 SVG 或位图，贴顶等比缩放）、`skyColor`（插画背后的天空色）、`surfaceColor`（不透明的面板底色）、`glowColor`（带透明度的强调光）。四项都要写；只写一种模式时另一种模式沿用它。 |
 | `navigation` | `bookshelf`、`explore`、`mine` | 首页底栏的三个图标，缺一不可。SVG 按主题色着色，位图保持原色。 |

@@ -1,5 +1,5 @@
 import { ThemeIds } from './ThemeModels';
-import { InstalledThemePack, ThemePackRegistry } from './ThemePackRegistry';
+import { InstalledThemePack, InstalledThemePackReader, ThemePackRegistry } from './ThemePackRegistry';
 import { ThemeImageCrop } from './share/ThemePackageFormat';
 import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import { ThemeAccessPolicy } from '../account/ThemeAccessPolicy';
@@ -71,6 +71,11 @@ export class ThemeAssetRegistry {
   /** 主题包阅读背景（pack:<id>:light / :dark）对应的已安装包；不是主题包素材或缺包时返回 null。 */
   private static packReader(assetId: string): InstalledThemePack | null {
     return ThemePackRegistry.isPackId(assetId) ? ThemePackRegistry.get(assetId) : null;
+  }
+
+  /** 角饰模式和整图模式都可以带角饰；整图模式下角饰叠在整图上面。 */
+  private static packReaderHasOrnaments(reader: InstalledThemePackReader): boolean {
+    return reader.mode === 'ornaments' || reader.mode === 'image';
   }
 
   private static packReaderDark(assetId: string): boolean {
@@ -176,7 +181,7 @@ export class ThemeAssetRegistry {
     const pack = ThemeAssetRegistry.packReader(assetId);
     if (pack) {
       const reader = pack.reader(ThemeAssetRegistry.packReaderDark(assetId));
-      return reader.mode === 'ornaments' ? reader.leading : '';
+      return ThemeAssetRegistry.packReaderHasOrnaments(reader) ? reader.leading : '';
     }
     switch (ThemeAssetRegistry.normalizeBackgroundAssetId(assetId)) {
       case ThemeAssetRegistry.BACKGROUND_PAPER_LIGHT:
@@ -264,7 +269,7 @@ export class ThemeAssetRegistry {
     if (pack) {
       const reader = pack.reader(ThemeAssetRegistry.packReaderDark(assetId));
       // 主题包可以只有左上或只有右下一张角饰；空着的那角不画。
-      return reader.mode === 'ornaments' ? reader.trailing : '';
+      return ThemeAssetRegistry.packReaderHasOrnaments(reader) ? reader.trailing : '';
     }
     switch (ThemeAssetRegistry.normalizeBackgroundAssetId(assetId)) {
       case ThemeAssetRegistry.BACKGROUND_PAPER_LIGHT:
@@ -372,7 +377,7 @@ export class ThemeAssetRegistry {
     const pack = ThemeAssetRegistry.packReader(assetId);
     if (!pack) return 1;
     const reader = pack.reader(ThemeAssetRegistry.packReaderDark(assetId));
-    if (reader.mode !== 'ornaments') return 1;
+    if (!ThemeAssetRegistry.packReaderHasOrnaments(reader)) return 1;
     return trailing ? reader.trailingScale : reader.leadingScale;
   }
 

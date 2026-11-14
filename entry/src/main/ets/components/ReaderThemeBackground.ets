@@ -46,7 +46,9 @@ export struct ReaderThemeBackground {
           .syncLoad(true)
           .draggable(false)
           .hitTestBehavior(HitTestMode.None)
-      } else if (this.backgroundAssetId) {
+      }
+      // 主题包整图模式也可以带角饰，叠在整图上面；内置主题和自定义图片不会同时带素材键和图片。
+      if (this.backgroundAssetId) {
         this.builtinThemeDecoration()
       }
     }

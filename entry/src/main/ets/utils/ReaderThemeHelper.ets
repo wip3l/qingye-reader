@@ -71,14 +71,15 @@ export class ReaderThemeHelper {
 
   private static applicationTheme(darkMode: boolean): ReaderThemeItem {
     const assetId = ThemeRuntime.readerBackgroundAssetId(darkMode);
-    // 主题包的整图背景走用户图片的那条路（铺满、按填充方式裁切），角饰模式仍按素材键绘制。
+    // 主题包的整图背景走用户图片的那条路（铺满、按填充方式裁切）；素材键照样带上，
+    // 整图模式也可以有角饰，ReaderThemeBackground 和自绘纹理把角饰叠在整图上。
     const packImage = ThemeAssetRegistry.readerBackgroundImage(assetId);
     return ReaderThemeHelper.theme(
       '应用主题',
       ThemeRuntime.readerBackgroundColor(darkMode),
       ThemeRuntime.readerTextColor(darkMode),
       ThemeRuntime.readerSubTextColor(darkMode),
-      packImage ? '' : assetId,
+      assetId,
       ThemeRuntime.readerContentTone(darkMode),
       packImage ? ThemeAssetRegistry.readerBackgroundImageFit(assetId) : ThemeRuntime.readerBackgroundImageFit(darkMode),
       packImage

@@ -23257,7 +23257,9 @@ ${leading}` : leading;
         spreadWidthPx, spec.heightPx, spec.scale, paperOriginX);
       if (!background) return null;
       spec.background = background;
-    } else if (assetId && ThemeAssetRegistry.readerBackgroundHasOrnaments(assetId)) {
+    }
+    // 主题包整图模式也可以带角饰，叠在整图上面。
+    if (assetId && ThemeAssetRegistry.readerBackgroundHasOrnaments(assetId)) {
       const viewportWidth = this.getPageTurnWidth();
       const viewportHeight = this.getReaderBackgroundViewportHeight();
       // 左上、右下角饰各自有大小倍数。

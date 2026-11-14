@@ -279,7 +279,7 @@ BuiltinThemeRegistry.register(theme);
 
 - `ThemePackStore.loadInstalled()` 在 `EntryAbility` 读取主题设置之前把 `files/theme_packs/<packageId>/pack.json` 全部读入并注册到 `ThemePackRegistry`。记录里只存 parts 和素材的相对路径，每次启动按当前 `baseTheme` 重新拼出 `ThemePack`，基底主题改了也能跟上。基底主题的资源会整套随包生效，所以导入时 `restrictBaseTheme()` 与部件来源同一规则检查权益：导入方用不了的基底换成 `plain-default` 并列入预览的“已替换”。
 - `BuiltinThemeRegistry.findById()` 对 `pack:` ID 到注册表取主题；`normalizeBuiltinId()` 对 `pack:` ID 原样保留，缺包时只回退显示、不改写方案里的来源（同步到没装包的设备时方案不会被破坏）。`all()` 只返回内置主题，主题商店列表不会出现包。
-- `ThemeAssetRegistry` 的各个解析函数遇到 `pack:` ID 返回包目录里文件的 `file://` URI；阅读背景用 `pack:<packageId>:light` / `:dark` 作素材键，角饰模式与内置主题走同一条装饰路径，整图模式由 `ReaderThemeHelper` 转成用户图片的那条路径。`navigationIcon()`、`themeLogo()` 和 `TtsPanelThemeStyle.artwork` 因此是 `ResourceStr`。自绘翻页纹理的 `ReaderRasterAssets.media()` 对字符串来源改从文件解码。
+- `ThemeAssetRegistry` 的各个解析函数遇到 `pack:` ID 返回包目录里文件的 `file://` URI；阅读背景用 `pack:<packageId>:light` / `:dark` 作素材键，角饰模式与内置主题走同一条装饰路径，整图模式由 `ReaderThemeHelper` 转成用户图片的那条路径，同时保留素材键，整图模式带的角饰由 `ReaderThemeBackground` 和自绘纹理叠在整图上。`navigationIcon()`、`themeLogo()` 和 `TtsPanelThemeStyle.artwork` 因此是 `ResourceStr`。自绘翻页纹理的 `ReaderRasterAssets.media()` 对字符串来源改从文件解码。
 - 包内气泡的样式 ID 就是 `pack:<packageId>`：`ReaderRegexFontCodec.normalizeBubbleStyleId()` 原样保留，`ReaderRegexBubbleStyleResolver` 用统一的圆角预设配端饰，`ThemeAccessPolicy` 以“包已安装”为可用条件。
 - 访问策略：已安装的包随方案走，不另设权益，会员过期后已导入的方案照常使用；导出和导入主题包本身仍要求有效会员。
 - `CustomThemeScheme.packageId` 记录方案来自哪个包：同一个 `packageId` 再次导入时原位更新（可以更新正在使用的方案，导入后重新应用），删除或替换方案后 `ThemePackageService.cleanupImportedFiles()` 清掉没有方案再引用的包目录。

@@ -188,6 +188,7 @@ export class SchemeAssetService {
   /**
    * 阅读背景角饰：左上、右下各一张图（SVG 或位图），可以只传其中一张，另一角就空着。
    * 两张记成同一个素材表示右下角用左上角那张旋转 180°（setReaderTrailingMirror）。
+   * 已有整图时角饰叠在整图上面，模式仍记 image。
    */
   static async setReaderOrnament(context: Context, schemeId: string, uri: string, trailing: boolean,
     darkMode: boolean, baseTheme: string): Promise<SchemeAssetResult> {
@@ -195,7 +196,8 @@ export class SchemeAssetService {
       const variant = SchemeAssetService.variantOf(record, darkMode);
       const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK,
         trailing ? '右下角饰' : '左上角饰');
-      if (variant.reader.backgroundMode !== 'ornaments') {
+      const mode = variant.reader.backgroundMode;
+      if (mode !== 'ornaments' && mode !== 'image') {
         variant.reader.leading = '';
         variant.reader.trailing = '';
       }
@@ -207,8 +209,10 @@ export class SchemeAssetService {
         variant.reader.leading = path;
         if (mirrored) variant.reader.trailing = path;
       }
-      variant.reader.image = '';
-      variant.reader.backgroundMode = 'ornaments';
+      if (mode !== 'image') {
+        variant.reader.image = '';
+        variant.reader.backgroundMode = 'ornaments';
+      }
       SchemeAssetService.storeVariant(record, darkMode, variant);
     });
   }
@@ -217,7 +221,7 @@ export class SchemeAssetService {
   static async setReaderTrailingMirror(context: Context, schemeId: string, darkMode: boolean): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
       const variant = darkMode ? record.parts.dark : record.parts.light;
-      if (!variant || variant.reader.backgroundMode !== 'ornaments' || !variant.reader.leading) {
+      if (!variant || !SchemeAssetService.readerAllowsOrnaments(variant) || !variant.reader.leading) {
         throw new Error('请先上传左上角饰');
       }
       variant.reader.trailing = variant.reader.leading;
@@ -229,21 +233,30 @@ export class SchemeAssetService {
     scale: number): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
       const variant = darkMode ? record.parts.dark : record.parts.light;
-      if (!variant || variant.reader.backgroundMode !== 'ornaments') throw new Error('请先上传角饰');
+      if (!variant || !SchemeAssetService.readerAllowsOrnaments(variant)) throw new Error('请先上传角饰');
       if (trailing) variant.reader.trailingScale = normalizeOrnamentScale(scale);
       else variant.reader.leadingScale = normalizeOrnamentScale(scale);
     });
   }
 
-  /** 阅读背景整图：铺满（cover）。 */
+  /** 角饰模式和整图模式都可以带角饰（整图模式下角饰叠在整图上）。 */
+  private static readerAllowsOrnaments(variant: ThemePackageVariantParts): boolean {
+    const mode = variant.reader.backgroundMode;
+    return mode === 'ornaments' || mode === 'image';
+  }
+
+  /** 阅读背景整图：铺满（cover）。已有的角饰保留，叠在整图上面。 */
   static async setReaderImage(context: Context, schemeId: string, uri: string, darkMode: boolean,
     baseTheme: string): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const variant = SchemeAssetService.variantOf(record, darkMode);
       variant.reader.image = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.IMAGE, '阅读背景');
+      const mode = variant.reader.backgroundMode;
+      if (mode !== 'ornaments' && mode !== 'image') {
+        variant.reader.leading = '';
+        variant.reader.trailing = '';
+      }
       variant.reader.imageFit = 'cover';
-      variant.reader.leading = '';
-      variant.reader.trailing = '';
       variant.reader.backgroundMode = 'image';
       SchemeAssetService.storeVariant(record, darkMode, variant);
     });
@@ -615,7 +628,8 @@ export class SchemeAssetService {
 
   /**
    * 移除一角的角饰：另一角还有自己的图就只清这一角；左上角被移除时，跟着它旋转的右下角一起清掉。
-   * 两角都空了或移除整图时，这个模式的背景素材全部清掉。
+   * 整图模式下移除角饰只清角饰、整图保留；移除整图时还有角饰就退回角饰模式。
+   * 什么都不剩时，这个模式的背景素材全部清掉。
    */
   static async clearReaderSlot(context: Context, schemeId: string, darkMode: boolean,
     slot: string): Promise<SchemeAssetResult> {
@@ -623,7 +637,20 @@ export class SchemeAssetService {
       const variant = darkMode ? record.parts.dark : record.parts.light;
       if (!variant) return;
       const reader = variant.reader;
-      if (reader.backgroundMode === 'ornaments') {
+      if (reader.backgroundMode === 'image') {
+        if (slot === 'image') {
+          if (reader.leading || reader.trailing) {
+            reader.image = '';
+            reader.imageFit = 'cover';
+            reader.backgroundMode = 'ornaments';
+            return;
+          }
+        } else {
+          if (slot === 'trailing' || reader.trailing === reader.leading) reader.trailing = '';
+          if (slot === 'leading') reader.leading = '';
+          return;
+        }
+      } else if (reader.backgroundMode === 'ornaments') {
         if (slot === 'trailing' && reader.leading) {
           reader.trailing = '';
           return;

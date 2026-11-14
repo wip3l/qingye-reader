@@ -557,8 +557,10 @@ export function normalizedParts(parts: Json): Json {
     const reader = copy[mode] && copy[mode].reader;
     if (!reader) continue;
     const bgMode = reader.backgroundMode || '';
-    if (bgMode === 'image' || bgMode === 'none') { delete reader.leading; delete reader.trailing; }
-    const ornaments = bgMode === 'ornaments' || (!bgMode && !reader.image && (reader.leading || reader.trailing));
+    // 整图模式也可以带角饰（叠在整图上面），只有“只有底色”才去掉角饰。
+    if (bgMode === 'none') { delete reader.leading; delete reader.trailing; }
+    const ornaments = bgMode === 'ornaments' || bgMode === 'image' ||
+      (!bgMode && !reader.image && (reader.leading || reader.trailing));
     for (const key of ['leadingScale', 'trailingScale']) {
       if (!ornaments || typeof reader[key] !== 'number' || reader[key] === 1) delete reader[key];
     }

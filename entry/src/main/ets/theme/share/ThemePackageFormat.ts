@@ -143,7 +143,8 @@ export class ThemePackagePartReader {
   textColor: string = '';
   subTextColor: string = '';
   contentTone: string = '';
-  // 'ornaments'：左上、右下角饰；'image'：整图背景；'none'：只有底色；空：沿用基底主题。
+  // 'ornaments'：左上、右下角饰；'image'：整图背景（可再带角饰叠在上面，老版本只显示整图）；
+  // 'none'：只有底色；空：沿用基底主题。
   backgroundMode: string = '';
   // 角饰可以只有一张（另一角空着，需要 reader-single-corner-v1）；两张是同一个素材时右下角旋转 180° 显示。
   leading: string = '';
@@ -1547,7 +1548,9 @@ export function describeParts(parts: ThemePackageParts): string[] {
   const readerModes: string[] = [];
   for (const variant of [parts.light, parts.dark]) {
     if (variant && variant.reader.backgroundMode && variant.reader.backgroundMode !== 'none') {
-      readerModes.push(variant.reader.backgroundMode === 'image' ? '整图' : '角饰');
+      const reader = variant.reader;
+      readerModes.push(reader.backgroundMode !== 'image' ? '角饰' :
+        (reader.leading || reader.trailing ? '整图+角饰' : '整图'));
     }
   }
   if (readerModes.length > 0) items.push(`阅读背景（${readerModes.join('、')}）`);
