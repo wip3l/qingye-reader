@@ -22,9 +22,9 @@ const START_FAILED_CODE: number = -1;
  * 先只请求人脸/指纹；系统以参数错误拒绝时，带上锁屏密码再试一次（此时没有导航按钮）。
  */
 export class BiometricAuth {
-  private static readonly TRUST_LEVEL: userAuth.AuthTrustLevel = userAuth.AuthTrustLevel.ATL3;
-  private static readonly CANDIDATES: userAuth.UserAuthType[] =
-    [userAuth.UserAuthType.FACE, userAuth.UserAuthType.FINGERPRINT];
+  // 用取值函数而不是静态字段：静态初始化在模块加载时就会读系统枚举，系统没有这个模块时整页加载失败。
+  private static get TRUST_LEVEL(): userAuth.AuthTrustLevel { return userAuth.AuthTrustLevel.ATL3; }
+  private static get CANDIDATES(): userAuth.UserAuthType[] { return [userAuth.UserAuthType.FACE, userAuth.UserAuthType.FINGERPRINT]; }
 
   /** 当前已录入且可用的方式；未录入、被锁或设备不支持的都不算。 */
   static availableTypes(): userAuth.UserAuthType[] {

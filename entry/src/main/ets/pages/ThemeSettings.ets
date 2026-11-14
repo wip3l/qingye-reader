@@ -1,7 +1,7 @@
 import { MembershipBadge } from '../components/common/MembershipBadge';
 import { promptAction, router, SymbolGlyphModifier } from '@kit.ArkUI';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { common } from '@kit.AbilityKit';
 import { AppIconManager } from '../utils/AppIconManager';
 import { AppIconSettingsStore } from '../utils/AppIconSettingsStore';

@@ -2,7 +2,7 @@ import { router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import zlib from '@ohos.zlib';
 import { syncSystemBars } from '../utils/SystemBars';
 import { CoverAlbum, CoverGallerySettings } from '../utils/CoverGallerySettings';

@@ -1,6 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import preferences from '@ohos.data.preferences';
 import { Book, BookTypeSupport } from '@legado/sourceengine';
 import { AccountSessionStore } from './AccountSessionStore';

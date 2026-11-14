@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { promptAction, router } from '@kit.ArkUI';
-import { fileUri } from '@kit.CoreFileKit';
+import { fileUri } from '../platform/FileUri';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor } from '@kit.ArkData';
 import { ThemeRuntime } from '../theme/ThemeRuntime';

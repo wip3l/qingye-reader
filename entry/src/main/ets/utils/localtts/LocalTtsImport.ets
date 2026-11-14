@@ -1,5 +1,5 @@
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import picker from '@ohos.file.picker';
 import zlib from '@ohos.zlib';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from '../../theme/share/ZipEntryInspector';

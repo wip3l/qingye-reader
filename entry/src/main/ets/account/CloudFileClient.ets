@@ -1,7 +1,7 @@
 import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
 import http from '@ohos.net.http';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import preferences from '@ohos.data.preferences';
 import { util } from '@kit.ArkTS';
 import cryptoFramework from '@ohos.security.cryptoFramework';

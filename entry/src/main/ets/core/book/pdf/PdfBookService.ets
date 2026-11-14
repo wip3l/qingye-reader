@@ -1,5 +1,6 @@
 import { Context } from '@kit.AbilityKit';
-import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
+import { fileIo as fs } from '@kit.CoreFileKit';
+import { fileUri } from '../../../platform/FileUri';
 import { Book, BookChapter } from '@legado/sourceengine';
 import { appDb } from '../../../model/data/AppDatabase';
 import { PdfImportTask } from '../../concurrency/PdfImportTask';

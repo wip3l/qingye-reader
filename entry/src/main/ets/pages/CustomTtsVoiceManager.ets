@@ -17,7 +17,7 @@ import { AccountSessionStore } from '../account/AccountSessionStore';
 import { TtsVoiceInfo } from '../account/AccountCommerceModels';
 import { FormDraftStore } from '../utils/FormDraftStore';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ListDissolve } from '../utils/ListDissolve';

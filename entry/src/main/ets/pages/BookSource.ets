@@ -19,7 +19,7 @@ import { BookSourceGroupStore } from '../utils/BookSourceGroupStore';
 import { ResponsiveManagerListLayout } from '../utils/ResponsiveManagerListLayout';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { VirtualListScrollbar } from '../utils/VirtualListScrollbar';

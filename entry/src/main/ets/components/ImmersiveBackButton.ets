@@ -1,3 +1,4 @@
+// HdsTabs 带专属属性，编译器要求它直接从组件库引入；其余 HDS 符号走 platform/Hds。安卓构建会改写这一行。
 import { HdsTabs } from '@kit.UIDesignKit';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ThemeRuntime } from '../theme/ThemeRuntime';

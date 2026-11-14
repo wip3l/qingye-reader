@@ -1,5 +1,5 @@
 import { BookCoverResolver } from '../../utils/BookCoverResolver';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import { common, WantAgent, wantAgent } from '@kit.AbilityKit';
 import { avSession } from '@kit.AVSessionKit';
 import { audio } from '@kit.AudioKit';

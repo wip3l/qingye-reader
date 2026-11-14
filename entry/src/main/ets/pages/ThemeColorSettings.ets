@@ -52,7 +52,7 @@ import { HexColor } from '../utils/HexColor';
 import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 
 interface ThemeEditorSectionTitleOptions {
   title: string;

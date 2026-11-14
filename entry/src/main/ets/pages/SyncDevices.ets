@@ -1,6 +1,6 @@
 import { promptAction, router, SymbolGlyphModifier } from '@kit.ArkUI';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { AccountCommerceApi } from '../account/AccountCommerceApi';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { CloudSyncDevice } from '../account/CloudSyncModels';

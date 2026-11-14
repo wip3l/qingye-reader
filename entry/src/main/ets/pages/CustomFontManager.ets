@@ -5,7 +5,7 @@ import { ReaderSystemFontHelper } from '../utils/ReaderSystemFontHelper';
 import { ReaderFontBootstrap } from '../utils/ReaderFontBootstrap';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ListDissolve } from '../utils/ListDissolve';

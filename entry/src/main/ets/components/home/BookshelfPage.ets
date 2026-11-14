@@ -19,7 +19,7 @@ import { notificationManager } from '@kit.NotificationKit';
 import deviceInfo from '@ohos.deviceInfo';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import picker from '@ohos.file.picker';
 import { Book, BookChapter, BookGroup, SearchBook, BookTypeSupport, sleepMs } from '@legado/sourceengine';
 import { AppDatabase } from '../../model/data/AppDatabase';

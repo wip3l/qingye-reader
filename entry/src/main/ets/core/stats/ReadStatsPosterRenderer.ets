@@ -1,7 +1,8 @@
 import { common } from '@kit.AbilityKit';
 import { LengthMetricsUnit } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
-import { fileIo, fileUri } from '@kit.CoreFileKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { fileUri } from '../../platform/FileUri';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { BookCoverCache } from '../../utils/BookCoverCache';

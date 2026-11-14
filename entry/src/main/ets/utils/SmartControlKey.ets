@@ -1,4 +1,5 @@
-import { inputDevice, KeyCode } from '@kit.InputKit';
+import { inputDevice } from '@kit.InputKit';
+import { KeyCode } from '../platform/InputKeys';
 import deviceInfo from '@ohos.deviceInfo';
 
 /**

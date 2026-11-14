@@ -8,7 +8,7 @@ import {
   SnackBarMessageOptions,
   SnackBarOperationOptions,
   SnackBarOperationType
-} from '@kit.UIDesignKit';
+} from '../platform/Hds';
 
 /** Shows API 26+ immersive-light feedback and lets callers retain their Toast fallback. */
 export class HdsFeedback {

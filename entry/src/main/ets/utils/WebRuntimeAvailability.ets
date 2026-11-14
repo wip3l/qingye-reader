@@ -1,4 +1,5 @@
 import { webview } from '@kit.ArkWeb';
+import { PlatformInfo } from '../platform/PlatformInfo';
 
 /**
  * Whether the ArkWeb runtime exists in this process. The DevEco previewer and devices without the Web system
@@ -22,6 +23,8 @@ export class WebRuntimeAvailability {
   }
 
   private static probe(): boolean {
+    // 安卓上能力查询与下面的探测接口都没有实现，但 Web 组件可用（系统 WebView）。
+    if (PlatformInfo.ANDROID) return true;
     if (!canIUse('SystemCapability.Web.Webview.Core')) return false;
     try {
       // false is already the default, so this changes nothing where the runtime exists.

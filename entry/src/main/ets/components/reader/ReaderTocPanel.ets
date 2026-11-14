@@ -1,5 +1,5 @@
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../../platform/Hds';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { Book, BookChapter, Bookmark } from '@legado/sourceengine';
 import { AppDatabase } from '../../model/data/AppDatabase';

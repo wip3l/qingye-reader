@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
-import { fileUri } from '@kit.CoreFileKit';
+import { fileUri } from '../platform/FileUri';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { CollapsingHeader } from '../utils/CollapsingHeader';

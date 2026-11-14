@@ -1,5 +1,5 @@
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import image from '@ohos.multimedia.image';
 import { ReaderImageMarker } from '../book/ReaderImageMarker';
 

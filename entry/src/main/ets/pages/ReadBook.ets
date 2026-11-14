@@ -23,7 +23,8 @@ import { NativeSourceService, HttpClient, Book, BookChapter, Bookmark, BookSourc
 import { router, window, promptAction, RectShape } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
-import { inputConsumer, KeyCode, Action, KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { inputConsumer, KeyEvent as InputKeyEvent } from '@kit.InputKit';
+import { KeyCode, Action } from '../platform/InputKeys';
 import { SmartControlKey } from '../utils/SmartControlKey';
 import { ReaderKeyboard, ReaderKeyboardSettings } from '../core/reader/ReaderKeyboard';
 import { ReaderKeyboardSettingsStore } from '../utils/ReaderKeyboardSettingsStore';
@@ -33,12 +34,13 @@ import lazy { motion } from '@kit.MultimodalAwarenessKit';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import pasteboard from '@ohos.pasteboard';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import graphicsText from '@ohos.graphics.text';
 import { LengthMetrics } from '@ohos.arkui.node';
 import deviceInfo from '@ohos.deviceInfo';
 import display from '@ohos.display';
 import Animator, { AnimatorResult } from '@ohos.animator';
+// HdsTabs 带专属属性，编译器要求它直接从组件库引入；其余 HDS 符号走 platform/Hds。安卓构建会改写这一行。
 import { HdsTabs } from '@kit.UIDesignKit';
 import { AccountCommerceApi } from '../account/AccountCommerceApi';
 import { AccountSessionStore } from '../account/AccountSessionStore';

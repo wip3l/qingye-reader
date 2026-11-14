@@ -2,7 +2,7 @@ import { ReaderCacheCoordinator } from '../../core/book/ReaderCacheCoordinator';
 import { ReaderImageCache } from '../../core/book/ReaderImageCache';
 import { ReaderImageRecovery } from '../../core/book/ReaderImageRecovery';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import image from '@ohos.multimedia.image';
 import { LocalBookService } from '../../core/book/LocalBookService';
 import { ReaderComicColorSession, ComicColorCandidate } from '@legado/aiengine';

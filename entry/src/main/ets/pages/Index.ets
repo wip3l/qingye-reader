@@ -3,7 +3,9 @@ import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { webview } from '@kit.ArkWeb';
 import { WebRuntimeAvailability } from '../utils/WebRuntimeAvailability';
-import { HdsAnimationMode, HdsBarWidthRangeOptions, HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
+// HdsTabs 带专属属性，编译器要求它直接从组件库引入；其余 HDS 符号走 platform/Hds。安卓构建会改写这一行。
+import { HdsTabs } from '@kit.UIDesignKit';
+import { HdsAnimationMode, HdsBarWidthRangeOptions, HdsTabsController } from '../platform/Hds';
 import lazy { motion } from '@kit.MultimodalAwarenessKit';
 import { Book, BookChapter, BookSourceStageWebRuntime } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';

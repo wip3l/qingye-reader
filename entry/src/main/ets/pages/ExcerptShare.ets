@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
-import { fileUri } from '@kit.CoreFileKit';
+import { fileUri } from '../platform/FileUri';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { CollapsingHeader } from '../utils/CollapsingHeader';
 import { ExcerptPosterOptions, ExcerptPosterRenderer, ExcerptPosterSession,

@@ -1,6 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import http from '@ohos.net.http';
 import { HttpClient, SourceCoverLoader, SourceCoverUrl } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';

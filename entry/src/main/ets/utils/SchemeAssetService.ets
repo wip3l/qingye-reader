@@ -1,6 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import picker from '@ohos.file.picker';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ThemePackRegistry, ThemePackRecord } from '../theme/ThemePackRegistry';

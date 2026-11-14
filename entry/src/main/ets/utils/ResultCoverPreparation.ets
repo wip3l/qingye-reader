@@ -1,7 +1,7 @@
 import { Context } from '@kit.AbilityKit';
 import { image } from '@kit.ImageKit';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import { Book, SearchBook } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookService } from '../core/book/WebBookService';

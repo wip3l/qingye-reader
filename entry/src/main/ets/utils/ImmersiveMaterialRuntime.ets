@@ -1,6 +1,7 @@
 import deviceInfo from '@ohos.deviceInfo';
 import { display, uiMaterial } from '@kit.ArkUI';
-import { hdsMaterial } from '@kit.UIDesignKit';
+import { hdsMaterial } from '../platform/Hds';
+import { PlatformInfo } from '../platform/PlatformInfo';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 
 export interface ImmersiveSurfaceBorder {
@@ -139,6 +140,7 @@ export class ImmersiveMaterialRuntime {
   private static deviceLevelWeak: boolean | null = null;
 
   static supportsHds(): boolean {
+    if (PlatformInfo.ANDROID) return false;
     // ArkUI uiMaterial.ImmersiveMaterial is an API 26 feature. Keep this
     // capability separate from HDS tabs/material, which starts at API 23.
     if (deviceInfo.sdkApiVersion < 26) return false;
@@ -156,6 +158,7 @@ export class ImmersiveMaterialRuntime {
 
   /** HDS tabs/floating bars and HDS system materials start at HarmonyOS 6/API 23. */
   static supportsHdsTabs(): boolean {
+    if (PlatformInfo.ANDROID) return false;
     return deviceInfo.sdkApiVersion >= 23;
   }
 

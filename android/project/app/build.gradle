@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+// 版本号由 scripts/android/build-android.mjs 从 AppScope/app.json5 读出后经 -P 传入。
+def qingyeVersionCode = (project.findProperty('qingyeVersionCode') ?: '1') as Integer
+def qingyeVersionName = project.findProperty('qingyeVersionName') ?: '0.0.0'
+
+android {
+    compileSdkVersion 33
+    buildToolsVersion "30.0.3"
+
+    defaultConfig {
+        // 必须与 AppScope/app.json5 的 bundleName 一致，否则运行时找不到页面。
+        applicationId "io.legado.read"
+        minSdkVersion 26
+        targetSdkVersion 33
+        versionCode qingyeVersionCode
+        versionName qingyeVersionName
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['libs']
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+}
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
+}

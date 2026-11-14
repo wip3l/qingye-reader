@@ -1,4 +1,4 @@
-import { KeyCode } from '@kit.InputKit';
+import { KeyCode } from '../../platform/InputKeys';
 import { ReaderKeyboard } from '../../core/reader/ReaderKeyboard';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';

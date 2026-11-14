@@ -1,7 +1,7 @@
 import { Context } from '@kit.AbilityKit';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 
 /** 自定义方案卡片的预览图：本机文件，不同步；导出时随包打出去。 */
 export class SchemePreviewImageStore {

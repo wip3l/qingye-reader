@@ -1,6 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../../platform/FileUri';
 import picker from '@ohos.file.picker';
 import util from '@ohos.util';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';

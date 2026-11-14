@@ -1,4 +1,4 @@
-import { HdsColorPicker, HdsColorPickerOptions, HdsColorPickerTabType } from '@kit.UIDesignKit';
+import { HdsColorPicker, HdsColorPickerOptions, HdsColorPickerTabType } from '../platform/Hds';
 import { ColorCodePicker } from './ColorCodePicker';
 import { AppFontSize } from '../theme/AppFontSize';
 

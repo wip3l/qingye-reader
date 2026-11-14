@@ -1,6 +1,6 @@
 import { font, UIContext } from '@kit.ArkUI';
 import fs from '@ohos.file.fs';
-import fileUri from '@ohos.file.fileuri';
+import { fileUri } from '../platform/FileUri';
 import graphicsText from '@ohos.graphics.text';
 import { drawing } from '@kit.ArkGraphics2D';
 import { ReaderFontMetadata } from '../core/reader/ReaderFontMetadata';

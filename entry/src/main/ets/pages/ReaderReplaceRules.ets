@@ -8,7 +8,7 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { ResponsiveManagerListLayout } from '../utils/ResponsiveManagerListLayout';
 import { FormDraftStore } from '../utils/FormDraftStore';
 import deviceInfo from '@ohos.deviceInfo';
-import { HdsListItem, HdsSwipeActionOptions } from '@kit.UIDesignKit';
+import { HdsListItem, HdsSwipeActionOptions } from '../platform/Hds';
 import { SymbolGlyphModifier } from '@kit.ArkUI';
 import picker from '@ohos.file.picker';
 import fs from '@ohos.file.fs';
