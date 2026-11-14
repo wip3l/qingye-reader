@@ -611,7 +611,7 @@ struct ThemeTypographySettingsPage {
           title: '恢复默认排版',
           description: '字号、间距、边距与页眉页脚恢复默认，字体和强调规则保留',
           showDivider: false,
-          onTap: () => this.resetLayout()
+          onTap: () => this.confirmResetLayout()
         })
       }
       .width('calc(100% - 24vp)')
@@ -807,6 +807,24 @@ struct ThemeTypographySettingsPage {
       console.warn('读取当前阅读排版失败:', e);
       HdsFeedback.showToast('读取当前阅读排版失败');
     }
+  }
+
+  /** 恢复默认会一次清掉多项排版，容易误点，先确认。 */
+  async confirmResetLayout(): Promise<void> {
+    if (!this.loaded) return;
+    try {
+      const result = await promptAction.showDialog({
+        title: '恢复默认排版？',
+        message: '字号、间距、边距与页眉页脚会恢复默认，字体和强调规则保留。',
+        buttons: [{ text: '取消', color: this.subTextColor() },
+          { text: '恢复默认', color: ThemeRuntime.dangerColor(this.appDarkMode) }]
+      });
+      if (result.index !== 1) return;
+    } catch (e) {
+      console.warn('显示恢复默认排版确认失败:', e);
+      return;
+    }
+    this.resetLayout();
   }
 
   resetLayout(): void {
