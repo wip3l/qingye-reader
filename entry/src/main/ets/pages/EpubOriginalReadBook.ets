@@ -1009,14 +1009,21 @@ struct EpubOriginalReadBookPage {
     this.runInSlot(slot, `__legado.marks(${JSON.stringify(JSON.stringify(marks))})`);
   }
 
-  /** 网页选中文字后的系统菜单：最前面加“划线”“笔记”“摘录”。网页里菜单回调给的范围没有意义，选区由脚本取。 */
+  /**
+   * 网页选中文字后的系统菜单，顺序与小说阅读页一致：划线 · 复制 · 笔记 · 摘录 · 系统其余项。
+   * 网页里菜单回调给的范围没有意义，选区由脚本取。
+   */
   private annotationMenuOptions(slotId: number): EditMenuOptions {
     return {
       onCreateMenu: (items: TextMenuItem[]): TextMenuItem[] => {
-        const result = items.slice();
-        result.unshift({ id: TextMenuItemId.of(EPUB_EXCERPT_MENU_ID), content: '摘录' });
-        result.unshift({ id: TextMenuItemId.of(EPUB_ANNOTATE_NOTE_MENU_ID), content: '笔记' });
-        result.unshift({ id: TextMenuItemId.of(EPUB_ANNOTATE_MENU_ID), content: '划线' });
+        const result: TextMenuItem[] = [{ id: TextMenuItemId.of(EPUB_ANNOTATE_MENU_ID), content: '划线' }];
+        const copyItem = items.find((item: TextMenuItem) => item.id.equals(TextMenuItemId.COPY));
+        if (copyItem) result.push(copyItem);
+        result.push({ id: TextMenuItemId.of(EPUB_ANNOTATE_NOTE_MENU_ID), content: '笔记' });
+        result.push({ id: TextMenuItemId.of(EPUB_EXCERPT_MENU_ID), content: '摘录' });
+        for (const item of items) {
+          if (!item.id.equals(TextMenuItemId.COPY)) result.push(item);
+        }
         return result;
       },
       onMenuItemClick: (item: TextMenuItem, _range: TextRange): boolean => {

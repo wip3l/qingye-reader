@@ -18663,25 +18663,22 @@ ${leading}` : leading;
     return {
       onCreateMenu: (items: TextMenuItem[]): TextMenuItem[] => {
         // 正文节点只覆盖当前页或文本块，“全选”的范围不符合阅读场景的预期。
-        const menuItems = items.filter((menuItem: TextMenuItem) =>
-          !menuItem.id.equals(TextMenuItemId.SELECT_ALL));
-        const replaceItem: TextMenuItem = {
-          id: TextMenuItemId.of(READER_REPLACE_MENU_ITEM_ID),
-          content: '替换'
-        };
-        const copyIndex = menuItems.findIndex((menuItem: TextMenuItem) =>
-          menuItem.id.equals(TextMenuItemId.COPY));
-        if (copyIndex >= 0) {
-          menuItems.splice(copyIndex, 0, replaceItem);
-        } else {
-          menuItems.unshift(replaceItem);
-        }
+        // 顺序：划线 · 复制 · 笔记 · 摘录 · 系统其余项 · 替换。复制紧跟划线，免得窄屏时被挤进“更多”；
+        // 替换（建净化规则）用得少，放最后。电脑端自绘菜单与 EPUB 文件排版保持同样的顺序。
+        const rest = items.filter((menuItem: TextMenuItem) =>
+          !menuItem.id.equals(TextMenuItemId.SELECT_ALL) && !menuItem.id.equals(TextMenuItemId.COPY));
+        const copyItem = items.find((menuItem: TextMenuItem) => menuItem.id.equals(TextMenuItemId.COPY));
+        const menuItems: TextMenuItem[] = [];
         if (page) {
-          // 划线、笔记、摘录放在最前面。
-          menuItems.unshift({ id: TextMenuItemId.of(READER_EXCERPT_MENU_ITEM_ID), content: '摘录' });
-          menuItems.unshift({ id: TextMenuItemId.of(READER_ANNOTATE_NOTE_MENU_ITEM_ID), content: '笔记' });
-          menuItems.unshift({ id: TextMenuItemId.of(READER_ANNOTATE_MENU_ITEM_ID), content: '划线' });
+          menuItems.push({ id: TextMenuItemId.of(READER_ANNOTATE_MENU_ITEM_ID), content: '划线' });
         }
+        if (copyItem) menuItems.push(copyItem);
+        if (page) {
+          menuItems.push({ id: TextMenuItemId.of(READER_ANNOTATE_NOTE_MENU_ITEM_ID), content: '笔记' });
+          menuItems.push({ id: TextMenuItemId.of(READER_EXCERPT_MENU_ITEM_ID), content: '摘录' });
+        }
+        for (const menuItem of rest) menuItems.push(menuItem);
+        menuItems.push({ id: TextMenuItemId.of(READER_REPLACE_MENU_ITEM_ID), content: '替换' });
         return menuItems;
       },
       onMenuItemClick: (item: TextMenuItem, range: TextRange): boolean => {
@@ -18920,12 +18917,12 @@ ${leading}` : leading;
     Row({ space: 4 }) {
       Button('划线').fontColor(this.accentColor()).backgroundColor(Color.Transparent)
         .id('reader_selection_annotate').onClick(() => { this.createReaderAnnotationFromDesktopSelection(false); })
+      Button('复制').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)
+        .id('reader_selection_copy').onClick(() => { this.copyReaderDesktopSelection(); })
       Button('笔记').fontColor(this.accentColor()).backgroundColor(Color.Transparent)
         .id('reader_selection_annotate_note').onClick(() => { this.createReaderAnnotationFromDesktopSelection(true); })
       Button('摘录').fontColor(this.accentColor()).backgroundColor(Color.Transparent)
         .id('reader_selection_excerpt').onClick(() => { this.createReaderAnnotationFromDesktopSelection(false, true); })
-      Button('复制').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)
-        .id('reader_selection_copy').onClick(() => { this.copyReaderDesktopSelection(); })
       Button('替换').fontColor(this.getTextColor()).backgroundColor(Color.Transparent)
         .id('reader_selection_replace').onClick(() => {
         const text = this.readerDesktopSelectedText();
