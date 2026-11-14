@@ -72,6 +72,8 @@ export struct BookSourceStageRuntimeHost {
     if (this.mounted && WebRuntimeAvailability.isAvailable()) {
       Web({ src: 'about:blank', controller: this.controller })
         .width(1)
+        // 隐藏的脚本运行环境，不参与焦点；安卓上 Web 拿到焦点会吞掉返回键。
+        .focusable(false)
         .height(1)
         .opacity(0.01)
         .javaScriptAccess(true)

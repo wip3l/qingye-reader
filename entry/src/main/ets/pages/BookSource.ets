@@ -1,6 +1,7 @@
 import { SourceGroupSortList } from '../components/book/SourceGroupSortList';
 import { BookSourceExport } from '../utils/BookSourceExport';
-import { NativeSourceService, NativeSourceSpec, BookSource, SearchBook, BookListRule, SearchRule, ExploreRule, BookInfoRule, TocRule, ContentRule, HttpClient, HttpResponse, RawHttpTextClient, VerificationSupport, CookieStore, TlsTrustStore, BookSourceLoginItem, BookSourceScriptRunner, BookSourceLoginCrypto, BookSourceExecutionJournal, BookSourceRuntimeRouter, SourceRuntimeDecision, SourceRuntimeStage, AnalyzeUrl, sleepMs } from '@legado/sourceengine';
+import { NativeSourceService, NativeSourceSpec, BookSource, SearchBook, BookListRule, SearchRule, ExploreRule, BookInfoRule, TocRule, ContentRule, HttpClient, HttpResponse, RawHttpTextClient, VerificationSupport, TlsTrustStore, BookSourceLoginItem, BookSourceScriptRunner, BookSourceLoginCrypto, BookSourceExecutionJournal, BookSourceRuntimeRouter, SourceRuntimeDecision, SourceRuntimeStage, AnalyzeUrl, sleepMs } from '@legado/sourceengine';
+import { AppCookies } from '../platform/Cookies';
 import { router, promptAction } from '@kit.ArkUI';
 import { AppDatabase, BookSourcePositionUpdate } from '../model/data/AppDatabase';
 import { SearchCoordinator, SearchProgress, SearchSourceResult } from '../core/book/SearchCoordinator';
@@ -4152,7 +4153,7 @@ struct BookSourcePage {
       this.sourceUrlOrigin(String(source.bookSourceUrl || '').trim())
     ];
     for (const url of urls) {
-      if (url && this.hasLoginCookie(CookieStore.getCookie(url))) {
+      if (url && this.hasLoginCookie(AppCookies.getCookie(url))) {
         return true;
       }
     }
@@ -4973,7 +4974,7 @@ struct BookSourcePage {
     }
     if (step.pendingCookie) {
       this.snapshotLoginRuntimeCookie(step.pendingCookie);
-      this.loginRuntimeCookies[step.pendingCookie] = CookieStore.getCookie(step.pendingCookie);
+      this.loginRuntimeCookies[step.pendingCookie] = AppCookies.getCookie(step.pendingCookie);
       if (!this.loginRuntimeCookieUrls.includes(step.pendingCookie)) {
         this.loginRuntimeCookieUrls.push(step.pendingCookie);
       }
@@ -5027,7 +5028,7 @@ struct BookSourcePage {
       }
       this.loginRuntimeJournal.recordResponse(step.pendingAjax, response.body || '');
       for (const key of this.loginRuntimeCookieUrls) {
-        this.loginRuntimeCookies[key] = CookieStore.getCookie(key);
+        this.loginRuntimeCookies[key] = AppCookies.getCookie(key);
       }
       this.loginRuntimeStepRunning = false;
       this.continueLoginRuntime();
@@ -5215,24 +5216,24 @@ struct BookSourcePage {
       if (!this.loginRuntimeJournal.markOperationApplied('cookie', payload)) continue;
       this.snapshotLoginRuntimeCookie(operation.url);
       if (operation.operation === 'set') {
-        CookieStore.setCookies(operation.url, operation.value);
+        AppCookies.setCookies(operation.url, operation.value);
       } else if (operation.operation === 'replace') {
-        CookieStore.replaceCookies(operation.url, operation.value);
+        AppCookies.replaceCookies(operation.url, operation.value);
       } else if (operation.operation === 'remove') {
-        CookieStore.removeCookie(operation.url, operation.name || undefined);
+        AppCookies.removeCookie(operation.url, operation.name || undefined);
       }
-      this.loginRuntimeCookies[operation.url] = CookieStore.getCookie(operation.url);
+      this.loginRuntimeCookies[operation.url] = AppCookies.getCookie(operation.url);
       if (!this.loginRuntimeCookieUrls.includes(operation.url)) {
         this.loginRuntimeCookieUrls.push(operation.url);
       }
     }
-    if (operations.length > 0) CookieStore.saveAsync();
+    if (operations.length > 0) AppCookies.saveAsync();
   }
 
   snapshotLoginRuntimeCookie(url: string): void {
     const key = (url || '').trim();
     if (!key || this.loginRuntimeCookieSnapshots[key] !== undefined) return;
-    this.loginRuntimeCookieSnapshots[key] = CookieStore.getCookie(key);
+    this.loginRuntimeCookieSnapshots[key] = AppCookies.getCookie(key);
   }
 
   snapshotLoginRuntimeRequestCookie(requestUrl: string): void {
@@ -5251,11 +5252,11 @@ struct BookSourcePage {
   rollbackLoginRuntimeCookies(): void {
     const urls = Object.keys(this.loginRuntimeCookieSnapshots);
     for (const url of urls) {
-      CookieStore.removeCookie(url);
+      AppCookies.removeCookie(url);
       const snapshot = this.loginRuntimeCookieSnapshots[url] || '';
-      if (snapshot) CookieStore.setCookies(url, snapshot);
+      if (snapshot) AppCookies.setCookies(url, snapshot);
     }
-    CookieStore.saveSync();
+    AppCookies.saveSync();
   }
 
   suspendLoginRuntimeForBrowser(step: LoginRuntimeStep): void {
@@ -5300,10 +5301,10 @@ struct BookSourcePage {
     // observed before suspension so the resumed pass sees credentials created by the browser,
     // instead of the deliberately cleared pre-login snapshot.
     for (const url of this.loginRuntimeCookieUrls) {
-      this.loginRuntimeCookies[url] = CookieStore.getCookie(url);
+      this.loginRuntimeCookies[url] = AppCookies.getCookie(url);
     }
     if (browserUrl) {
-      this.loginRuntimeCookies[browserUrl] = CookieStore.getCookie(browserUrl);
+      this.loginRuntimeCookies[browserUrl] = AppCookies.getCookie(browserUrl);
       if (!this.loginRuntimeCookieUrls.includes(browserUrl)) this.loginRuntimeCookieUrls.push(browserUrl);
     }
     this.loginRuntimeJournal.recordResponse(`browser:${browserUrl}`, body);

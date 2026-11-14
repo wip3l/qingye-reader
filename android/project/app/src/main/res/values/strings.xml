@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">轻页</string>
+    <!-- build-android.mjs 会按 AppScope/resources/base/element/string.json 的 app_name 重写。 -->
+    <string name="app_name">开源轻页</string>
 </resources>

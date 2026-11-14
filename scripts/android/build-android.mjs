@@ -201,9 +201,20 @@ fs.copyFileSync(
   path.join(arkuixSdk, 'toolchains', 'ace_tools', 'templates', 'android', 'gradle', 'wrapper', 'gradle-wrapper.jar'),
   path.join(shell, 'gradle', 'wrapper', 'gradle-wrapper.jar'));
 write('.arkui-x/android/local.properties', `sdk.dir=${androidSdk.replace(/:/g, '\\:')}\n`);
-fs.mkdirSync(path.join(shell, 'app', 'src', 'main', 'res', 'drawable'), { recursive: true });
-fs.copyFileSync(path.join(REPO, 'AppScope', 'resources', 'base', 'media', 'foreground.png'),
-  path.join(shell, 'app', 'src', 'main', 'res', 'drawable', 'app_icon.png'));
+// 应用图标：鸿蒙分层图标的两层直接做安卓自适应图标（mipmap-anydpi-v26/ic_launcher.xml）的两层。
+const shellRes = path.join(shell, 'app', 'src', 'main', 'res');
+fs.rmSync(path.join(shellRes, 'drawable', 'app_icon.png'), { force: true });
+fs.mkdirSync(path.join(shellRes, 'drawable-nodpi'), { recursive: true });
+for (const [from, to] of [['background.png', 'ic_launcher_background.png'], ['foreground.png', 'ic_launcher_foreground.png']]) {
+  fs.copyFileSync(path.join(REPO, 'AppScope', 'resources', 'base', 'media', from), path.join(shellRes, 'drawable-nodpi', to));
+}
+// 应用名跟鸿蒙端一致。
+const appNameMatch = fs.readFileSync(path.join(REPO, 'AppScope', 'resources', 'base', 'element', 'string.json'), 'utf8')
+  .match(/"name"\s*:\s*"app_name"\s*,\s*"value"\s*:\s*"([^"]+)"/);
+if (!appNameMatch) fail('AppScope/resources/base/element/string.json 里没有 app_name');
+const xmlEscape = (value) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, "\\'");
+write('.arkui-x/android/app/src/main/res/values/strings.xml',
+  `<resources>\n    <string name="app_name">${xmlEscape(appNameMatch[1])}</string>\n</resources>\n`);
 const gradleAppId = (fs.readFileSync(path.join(shell, 'app', 'build.gradle'), 'utf8').match(/applicationId\s+"([^"]+)"/) || [])[1];
 if (gradleAppId !== bundleName) {
   fail(`android/project/app/build.gradle 的 applicationId（${gradleAppId}）必须等于 app.json5 的 bundleName（${bundleName}）`);
@@ -264,10 +275,14 @@ for (const file of entrySources) {
 step(`改写 HdsTabs：${hdsTabsFiles} 个文件`);
 
 // 书源内核里没有跨平台实现的接口：改成运行时动态取用，取不到就走原有的异常兜底。
-// 这些调用点之后应改为经 SourceEngineHost 注入，届时删掉这一段。
-function patchEngine(relative, replacements) {
+// 内核分支 arkuix-compat 已经把同样的写法做进源码；子模块指针更新到包含它的提交后，下面每个文件都会因为
+// 已有标记而跳过，届时删掉这一段。marker 是改写后才有的文字。
+let engineFilesPatched = 0;
+function patchEngine(relative, marker, replacements) {
   const file = path.join(GEN, 'harmony-book-source-engine', 'sourceengine', 'src', 'main', 'ets', relative);
   let text = fs.readFileSync(file, 'utf8');
+  if (text.includes(marker)) return;
+  engineFilesPatched++;
   for (const [from, to, all] of replacements) {
     if (!text.includes(from)) fail(`内核改写失效：${relative} 里找不到 “${from.slice(0, 60)}”，内核代码变了，请同步更新 build-android.mjs`);
     text = all ? text.split(from).join(to) : text.replace(from, to);
@@ -275,11 +290,11 @@ function patchEngine(relative, replacements) {
   fs.writeFileSync(file, text);
 }
 
-patchEngine('core/http/CookieStore.ts', [
+patchEngine('core/http/CookieStore.ts', 'const webCookieManager: any', [
   ['webview.WebCookieManager.', 'webCookieManager.', true],
   ['export class CookieStore {', 'const webCookieManager: any = webview.WebCookieManager;\n\nexport class CookieStore {']
 ]);
-patchEngine('core/http/HttpFinalUrlObserver.ts', [
+patchEngine('core/http/HttpFinalUrlObserver.ts', 'const httpDynamic: any', [
   ['export class HttpFinalUrlObserver {', 'const httpDynamic: any = http;\n\nexport class HttpFinalUrlObserver {'],
   ['new http.HttpInterceptorChain()', 'new httpDynamic.HttpInterceptorChain()'],
   ['const interceptor: http.HttpInterceptor = {', 'const interceptor: any = {'],
@@ -291,15 +306,16 @@ patchEngine('core/http/HttpFinalUrlObserver.ts', [
   ['async (_request: http.HttpRequestContext, _response: http.HttpResponse): Promise<boolean> => false',
     'async (_request: any, _response: any): Promise<boolean> => false']
 ]);
-patchEngine('core/http/HttpClient.ts', [
+patchEngine('core/http/HttpClient.ts', '(options as any).remoteValidation', [
   ["options.remoteValidation = 'skip';", "(options as any).remoteValidation = 'skip';"]
 ]);
-patchEngine('core/http/RawHttpTextClient.ts', [
+patchEngine('core/http/RawHttpTextClient.ts', '(connection as any).getAddressesByName', [
   ['await connection.getAddressesByName(target.host)', 'await (connection as any).getAddressesByName(target.host)']
 ]);
-patchEngine('core/nativesource/NativeSourceService.ts', [
+patchEngine('core/nativesource/NativeSourceService.ts', '(deviceInfo as any).ODID', [
   ["return deviceInfo.ODID || '';", "return (deviceInfo as any).ODID || '';"]
 ]);
+step(engineFilesPatched ? `改写书源内核：${engineFilesPatched} 个文件（内核尚未包含 arkuix-compat）` : '书源内核已包含 ArkUI-X 兼容写法，无需改写');
 
 // ---------- 4. QuickJS ----------
 

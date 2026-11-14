@@ -36,7 +36,7 @@ const context = vm.createContext({
   },
   AppDatabase: { getInstance: () => ({ updateBook: async book => saves.push(structuredClone(book)) }) },
   HdsFeedback: { showToast: text => notices.push(text) }, ReaderTtsFloatingSession: { pause: async () => {}, suspendForOtherAudio: async () => {}, resumeAfterOtherAudio: async () => {} },
-  CookieStore: { saveSync() {} },
+  AppCookies: { saveSync() {} },
   setTimeout: (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; },
   clearTimeout: id => timers.delete(id), CONTROLS_HIDE_DELAY_MS: 4000, SPEEDS: [1, 1.25, 1.75, 2, 0.75],
   DISPLAY_MODES: ['contain', 'none', 'cover', 'fill'],

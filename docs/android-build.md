@@ -13,6 +13,14 @@
 | `InputKeys.ts` | 转出 `KeyCode`、`Action` | 数值一致的枚举 |
 | `PlatformInfo.ts` | `ANDROID = false` | `ANDROID = true` |
 | `Files.ts` | 选择器、保存面板、`fs.copy` 原样调用 | 经原生文件桥（`FileBridge.java`）读写 `content://` 地址 |
+| `TextCompare.ts` | `localeCompare` 原样调用 | ICU 不认的区域标记逐级退回 |
+| `WindowBrightness.ts` | `setWindowBrightness` | 经 `SystemBridge.java` 改窗口亮度（ArkUI-X 不接受 -1“跟随系统”） |
+| `SystemInsets.ts` | 返回 `null`，安全区由避让区接口决定 | 经 `SystemBridge.java` 读状态栏、导航栏高度（ArkUI-X 的避让区接口返回全 0） |
+| `Cookies.ts` | `AppCookies` 即内核 `CookieStore`，不装端口 | 经 `CookieBridge.java` 读写安卓 `CookieManager`，并作为 Cookie 端口装进内核 |
+| `KeystoreCipher.ts` | HUKS 的 AES-256-CBC | 经 `SecretBridge.java` 用安卓密钥库，参数相同 |
+
+原生桥都在 `android/project/app/src/main/java/io/legado/read/` 下，在 `EntryEntryAbilityActivity.onCreate` 里注册；
+返回值约定为 JSON 字符串，失败时带 `error` 字段（`CookieBridge` 返回纯字符串，供同步调用）。
 
 规则：
 
@@ -40,6 +48,16 @@
 - 写往保存地址：`copyFile(沙箱路径, 地址)`，或用 `writeTextFile` 直接写文本。
 - 原生侧在 `android/project/app/src/main/java/io/legado/read/FileBridge.java`，桥名 `io.legado.read/file`，
   在 `EntryEntryAbilityActivity.onCreate` 里注册。ArkTS 发起的调用由 ArkUI-X 放在后台线程执行。
+
+### 其它安卓差异
+
+- **Cookie**：内核取 Cookie 一律经 `CookieStore.forSource`，装了端口就走端口。应用代码读写 Cookie 用 `AppCookies`，
+  不直接调 `CookieStore` 的静态方法，这样安卓上书源请求和网页组件（登录页、验证页）共用同一个 Cookie 库。
+- **隐藏的 Web 运行环境**（书源脚本用的 1×1 `Web`）要设 `.focusable(false)`：安卓上 Web 拿到焦点会吞掉返回键。
+- **沉浸光感**：安卓上没有系统材质，`ImmersiveMaterialRuntime.effectiveLevel` 把跟随系统/高档按弱档（实色底）画。
+- **握姿、智控键**：安卓上关闭，设置页不显示握姿开关。
+- **书源内核**：内核分支 `arkuix-compat` 把 ArkUI-X 缺失接口改成了运行时取用。子模块指针还没指向它时，构建脚本
+  做同样的文本改写；指过去之后脚本会跳过，届时删掉 `patchEngine` 那一段。
 
 ## 构建
 

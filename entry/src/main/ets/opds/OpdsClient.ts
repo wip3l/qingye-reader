@@ -1,7 +1,8 @@
 import http from '@ohos.net.http';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
-import { HttpClient, HttpRequest, CookieStore, digestHashHex, TlsTrustStore, HttpDigestChallenge, HttpAuth } from '@legado/sourceengine';
+import { HttpClient, HttpRequest, digestHashHex, TlsTrustStore, HttpDigestChallenge, HttpAuth } from '@legado/sourceengine';
+import { AppCookies } from '../platform/Cookies';
 import {
   OpdsEntry,
   OpdsFeed,
@@ -499,7 +500,7 @@ export class OpdsClient {
       'User-Agent': 'LegadoHarmony-OPDS/1.0'
     };
     if (authorization) headers['Authorization'] = authorization;
-    const cookie = CookieStore.getCookie(url);
+    const cookie = AppCookies.getCookie(url);
     if (cookie) headers['Cookie'] = cookie;
     return headers;
   }

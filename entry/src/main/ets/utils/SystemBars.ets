@@ -2,6 +2,8 @@ import { window } from '@kit.ArkUI';
 import { ConfigurationConstant } from '@kit.AbilityKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
+import { PlatformInfo } from '../platform/PlatformInfo';
+import { SystemInsetsPx, systemInsetsPx } from '../platform/SystemInsets';
 
 let safeAreaWindow: window.Window | undefined;
 let desktopWindow: window.Window | undefined;
@@ -110,7 +112,26 @@ export function syncSystemBars(context: Context, darkMode: boolean, backgroundCo
   });
 }
 
+/** 安卓：ArkUI-X 的避让区接口返回全 0，系统栏高度由平台层从原生窗口读取。 */
+function syncNativeSafeAreas(mainWindow: window.Window): void {
+  systemInsetsPx().then((insets: SystemInsetsPx | null) => {
+    if (!insets) return;
+    const uiContext = mainWindow.getUIContext();
+    AppStorage.setOrCreate('statusBarHeight', Math.max(uiContext.px2vp(insets.top),
+      AppStorage.get<number>('desktopTitleBarHeight') ?? 0));
+    const bottom = uiContext.px2vp(insets.bottom);
+    AppStorage.setOrCreate('navBarHeight', bottom);
+    AppStorage.setOrCreate('navIndicatorHeight', bottom);
+  }).catch((err: Error) => {
+    console.error('读取系统栏高度失败:', err);
+  });
+}
+
 export function syncSystemSafeAreas(mainWindow: window.Window): void {
+  if (PlatformInfo.ANDROID) {
+    syncNativeSafeAreas(mainWindow);
+    return;
+  }
   try {
     const systemArea = mainWindow.getWindowAvoidAreaIgnoringVisibility(window.AvoidAreaType.TYPE_SYSTEM);
     const navigationArea = mainWindow.getWindowAvoidAreaIgnoringVisibility(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);

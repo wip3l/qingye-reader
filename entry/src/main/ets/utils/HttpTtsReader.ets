@@ -2,7 +2,8 @@ import { router } from '@kit.ArkUI';
 import { util } from '@kit.ArkTS';
 import http from '@ohos.net.http';
 import fs from '@ohos.file.fs';
-import { HttpTTS, CookieStore, JsRuntime, sleepMs } from '@legado/sourceengine';
+import { HttpTTS, JsRuntime, sleepMs } from '@legado/sourceengine';
+import { AppCookies } from '../platform/Cookies';
 import { TtsAvAudioPlayer } from './TtsAvAudioPlayer';
 import { PcmPlaybackCue, TtsPcmAudioPlayer } from './TtsPcmAudioPlayer';
 import { HdsFeedback } from './HdsFeedback';
@@ -238,7 +239,7 @@ export class HttpTtsReader {
     try {
       const headers: Record<string, string> = this.copyHeaders(rule.headers);
       if (this.cookieEnabled(voice) && !this.hasHeader(headers, 'Cookie')) {
-        const cookie = CookieStore.getCookie(rule.url);
+        const cookie = AppCookies.getCookie(rule.url);
         if (cookie) {
           headers['Cookie'] = cookie;
         }
@@ -1060,8 +1061,8 @@ export class HttpTtsReader {
   private saveResponseCookies(url: string, headers: Record<string, string>): void {
     const setCookie = this.findHeader(headers, 'set-cookie');
     if (setCookie) {
-      CookieStore.setCookies(url, setCookie);
-      CookieStore.saveAsync();
+      AppCookies.setCookies(url, setCookie);
+      AppCookies.saveAsync();
     }
   }
 

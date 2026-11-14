@@ -225,6 +225,8 @@ export class ImmersiveMaterialRuntime {
    * 用带透明度的实色底加组件模糊，各机型都能画出来。设置页仍显示用户选的“跟随系统”。
    */
   static effectiveLevel(level: string): string {
+    // 安卓上没有系统沉浸材质，跟随系统/高档的半透明底会直接露出背景，按弱档画实色底；用户手选的均衡档保留。
+    if (PlatformInfo.ANDROID) return level === 'balanced' ? 'balanced' : 'weak';
     return level === 'adaptive' && ImmersiveMaterialRuntime.deviceMaterialWeak() ? 'balanced' : level;
   }
 

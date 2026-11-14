@@ -1,6 +1,7 @@
 import { inputDevice } from '@kit.InputKit';
 import { KeyCode } from '../platform/InputKeys';
 import deviceInfo from '@ohos.deviceInfo';
+import { PlatformInfo } from '../platform/PlatformInfo';
 
 /**
  * 智控键上滑/下滑（API 26 起可由前台应用通过 inputConsumer 接管）。
@@ -12,7 +13,8 @@ export class SmartControlKey {
 
   /** 上滑、下滑两个键值；旧系统没有这两个枚举值，返回空数组。 */
   static slideKeys(): Array<KeyCode> {
-    if (deviceInfo.sdkApiVersion < 26) return [];
+    // 安卓上没有智控键，也没有输入设备查询接口。
+    if (PlatformInfo.ANDROID || deviceInfo.sdkApiVersion < 26) return [];
     return [KeyCode.KEYCODE_FINGERPRINT_SLIDE_UP, KeyCode.KEYCODE_FINGERPRINT_SLIDE_DOWN];
   }
 
