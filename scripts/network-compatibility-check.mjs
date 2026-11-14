@@ -77,7 +77,9 @@ function fixture(api = 26) {
     RateLimitAcquireResult: { Acquired: 0, Cancelled: 1, RateLimited: 2 },
     BookSourceRateLimiter: { acquire: async (_source, _cancel, maxWait) => {
       state.rateWait = maxWait;
-      if (state.rateLimited) { await new Promise(resolve => setTimeout(resolve, maxWait)); return 2; }
+      // Node timers may fire ~1 ms early; wait just past the budget so the caller's deadline check has elapsed,
+      // as the real limiter only gives up after the request deadline.
+      if (state.rateLimited) { await new Promise(resolve => setTimeout(resolve, maxWait + 2)); return 2; }
       return 0;
     } }
   });
