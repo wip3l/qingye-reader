@@ -54,6 +54,8 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
   @StorageLink('bookshelfGreetingSubtitle') bookshelfGreetingSubtitle: string = '';
   @StorageLink('bookshelfCompanionSectionTitle') bookshelfCompanionSectionTitle: string = '';
+  @StorageLink('bookshelfAutoRefresh') bookshelfAutoRefresh: boolean = true;
+  @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
   @StorageProp('accountDisplayName') accountDisplayName: string = '';
   @StorageProp('shelfTodayReadMs') shelfTodayReadMs: number = 0;
   @StorageLink('bookshelfCoverAlbums') @Watch('onCoverAlbumsChanged') bookshelfCoverAlbums: string = '';
@@ -400,6 +402,27 @@ struct BookshelfSettingsPage {
     .clip(true)
     .backgroundColor(this.cardColor())
 
+    if (this.webParseEnabled) {
+      this.sectionTitle('书籍更新')
+      Column() {
+        SettingSwitchRow({
+          title: '自动获取更新',
+          description: '打开应用时在后台检查连载书籍的新章节；关闭后只在下拉书架时检查',
+          isOn: this.bookshelfAutoRefresh,
+          showDivider: false,
+          onChange: (value: boolean) => {
+            this.bookshelfAutoRefresh = value;
+            this.onDisplaySettingChanged();
+          }
+        })
+      }
+      .width('calc(100% - 24vp)')
+      .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+      .borderRadius(ThemeRuntime.cardRadius())
+      .clip(true)
+      .backgroundColor(this.cardColor())
+    }
+
     this.sectionTitle('隐私书架')
     Column() {
       this.privateShelfSwitchItem()
@@ -477,6 +500,7 @@ struct BookshelfSettingsPage {
       this.bookshelfGreetingTitle = settings.greetingTitle;
       this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
       this.bookshelfCompanionSectionTitle = settings.companionSectionTitle;
+      this.bookshelfAutoRefresh = settings.autoRefresh;
     } catch (e) {
       console.warn('重新加载书架显示设置失败:', e);
     }
@@ -667,6 +691,7 @@ struct BookshelfSettingsPage {
     settings.greetingTitle = this.bookshelfGreetingTitle;
     settings.greetingSubtitle = this.bookshelfGreetingSubtitle;
     settings.companionSectionTitle = this.bookshelfCompanionSectionTitle;
+    settings.autoRefresh = this.bookshelfAutoRefresh;
     BookshelfDisplaySettingsStore.applyToStorage(settings);
     BookshelfDisplaySettingsStore.save(getContext(this), settings).catch((e: Error) => {
       console.warn('保存书架显示设置失败:', e);

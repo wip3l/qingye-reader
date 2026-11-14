@@ -869,7 +869,17 @@ export struct BookshelfPage {
     bookshelfColdStartRefreshStarted = true;
     // Run once per process after the first local shelf snapshot is visible. The refresh deliberately
     // has no spinner or toast so cold startup remains responsive.
-    setTimeout(() => {
+    // 书架设置“自动获取更新”关闭时跳过（只在网页解析开启时显示，关闭网页解析时在线书本就不在书架上）。
+    setTimeout(async () => {
+      try {
+        const settings = await BookshelfDisplaySettingsStore.load(getContext(this));
+        if (!settings.autoRefresh) {
+          console.info('[ShelfRefresh] cold-start silent refresh skipped: auto refresh off');
+          return;
+        }
+      } catch (e) {
+        console.warn('[ShelfRefresh] read auto refresh setting failed:', e);
+      }
       console.info('[ShelfRefresh] cold-start silent refresh started');
       this.refreshBookshelfToc(true).then(() => {
         console.info('[ShelfRefresh] cold-start silent refresh finished');
