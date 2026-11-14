@@ -86,6 +86,16 @@ export class HdsTabsController extends TabsController {
 
   applyShowAnimation(mode?: HdsAnimationMode): void {
   }
+
+  // 以下三个只为与鸿蒙的 HdsTabsController 类型兼容（HdsTabs 用 import lazy 引入后要能编过），安卓上不会被调用。
+  bindScroller(_scroller: Scroller): void {
+  }
+
+  unbindScroller(_scroller: Scroller): void {
+  }
+
+  applyMiniBarStyle(_style?: Object): void {
+  }
 }
 
 export namespace hdsMaterial {

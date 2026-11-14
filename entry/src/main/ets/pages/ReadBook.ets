@@ -41,7 +41,8 @@ import deviceInfo from '@ohos.deviceInfo';
 import display from '@ohos.display';
 import Animator, { AnimatorResult } from '@ohos.animator';
 // HdsTabs 带专属属性，编译器要求它直接从组件库引入；其余 HDS 符号走 platform/Hds。安卓构建会改写这一行。
-import { HdsTabs } from '@kit.UIDesignKit';
+// 延迟加载：安卓上没有这个系统包，静态引用会在启动时终止进程；HdsTabs 只在 supportsHdsTabs() 为真时用到。
+import lazy { HdsTabs } from '@kit.UIDesignKit';
 import { AccountCommerceApi } from '../account/AccountCommerceApi';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { CloudSyncCoordinator } from '../account/CloudSyncCoordinator';

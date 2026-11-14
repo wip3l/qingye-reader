@@ -239,43 +239,16 @@ function listSources(dir, out = []) {
   return out;
 }
 
-/** 去掉形如 `\n  .name( ... )` 的整个属性调用，括号按配对计算。 */
-function stripAttribute(source, name) {
-  let text = source;
-  const pattern = new RegExp(`\\r?\\n[ \\t]*\\.${name}\\(`);
-  for (;;) {
-    const match = pattern.exec(text);
-    if (!match) return text;
-    let index = match.index + match[0].length;
-    let depth = 1;
-    while (depth > 0 && index < text.length) {
-      const ch = text[index];
-      if (ch === '(') depth++;
-      else if (ch === ')') depth--;
-      index++;
-    }
-    text = text.slice(0, match.index) + text.slice(index);
-  }
-}
-
-// HdsTabs 带专属属性，做不出同名替身。使用处都在 supportsHdsTabs() 为真的分支里，安卓上不会执行，
-// 这里只求能编过：换成普通 Tabs，去掉它没有的属性。
+// @kit.UIDesignKit 是鸿蒙的系统共享包，安卓上静态引用会在启动时终止进程。共用代码里只有 HdsTabs 直接从它引入
+// （带专属属性，转一手导出后编译器认不出），且一律用 `import lazy`：只在 supportsHdsTabs() 为真时才加载，安卓上不会。
+// 只用作类型的 `import type` 编译后不留痕迹，也允许。这里只检查，不改写：发现会在运行时加载的引用就停下。
 const entrySources = listSources(path.join(GEN, 'entry', 'src', 'main', 'ets'));
-let hdsTabsFiles = 0;
 for (const file of entrySources) {
   const source = fs.readFileSync(file, 'utf8');
-  if (!source.includes("'@kit.UIDesignKit'")) continue;
-  let text = source.replace(/^import\s*\{\s*HdsTabs\s*\}\s*from\s*'@kit\.UIDesignKit';?[ \t]*\r?\n/m, '');
-  text = text.replace(/\bHdsTabs\(/g, 'Tabs(');
-  text = stripAttribute(text, 'barFloatingStyle');
-  if (text.includes("'@kit.UIDesignKit'")) {
-    fail(`${path.relative(GEN, file)} 仍直接引用 @kit.UIDesignKit。除 HdsTabs 外的 HDS 符号请从 platform/Hds 引入，` +
-      '并在 android/overlay 的 Hds.ets 里补上同名替身');
+  if (/^\s*import\s+(?!lazy\b|type\b)[^;]*from\s*'@kit\.UIDesignKit'/m.test(source)) {
+    fail(`${path.relative(GEN, file)} 静态引用了 @kit.UIDesignKit：HdsTabs 请用 import lazy，其它 HDS 符号从 platform/Hds 引入`);
   }
-  fs.writeFileSync(file, text);
-  hdsTabsFiles++;
 }
-step(`改写 HdsTabs：${hdsTabsFiles} 个文件`);
 
 // 书源内核里没有跨平台实现的接口：改成运行时动态取用，取不到就走原有的异常兜底。
 // 内核分支 arkuix-compat 已经把同样的写法做进源码；子模块指针更新到包含它的提交后，下面每个文件都会因为

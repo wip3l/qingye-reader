@@ -4,7 +4,9 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { webview } from '@kit.ArkWeb';
 import { WebRuntimeAvailability } from '../utils/WebRuntimeAvailability';
 // HdsTabs 带专属属性，编译器要求它直接从组件库引入；其余 HDS 符号走 platform/Hds。安卓构建会改写这一行。
-import { HdsTabs } from '@kit.UIDesignKit';
+// 延迟加载：安卓上没有这个系统包，静态引用会在启动时终止进程；HdsTabs 只在 supportsHdsTabs() 为真时用到。
+import lazy { HdsTabs } from '@kit.UIDesignKit';
+import type { HdsBarWidthRangeOptions as KitBarWidthOptions, HdsTabsController as KitTabsController } from '@kit.UIDesignKit';
 import { HdsAnimationMode, HdsBarWidthRangeOptions, HdsTabsController } from '../platform/Hds';
 import lazy { motion } from '@kit.MultimodalAwarenessKit';
 import { Book, BookChapter, BookSourceStageWebRuntime } from '@legado/sourceengine';
@@ -1236,6 +1238,17 @@ struct Index {
   }
 
   /** 悬浮底栏宽度：朗读时或关了“自适应宽度”都和伴生条同宽；否则交给系统按页签数决定。 */
+  // HdsTabs 要的是系统包里的类型。platform/Hds 在鸿蒙上转出的就是它们，这两处转换不改变任何值；
+  // 安卓上 platform/Hds 是替身，类型对不上，但那里不会走到 HdsTabs 分支。
+  kitTabsController(): KitTabsController {
+    return this.immersiveTabsController as Object as KitTabsController;
+  }
+
+  kitTabBarWidth(): KitBarWidthOptions | undefined {
+    const width = this.globalTtsTabBarWidth();
+    return width === undefined ? undefined : width as Object as KitBarWidthOptions;
+  }
+
   globalTtsTabBarWidth(): HdsBarWidthRangeOptions | undefined {
     if (this.homeTabBarHidden()) return undefined;
     if (!this.globalTtsActive && this.homeTabBarFloatingAdaptive) return undefined;
@@ -1596,7 +1609,7 @@ struct Index {
 
   @Builder
   immersiveTabs() {
-    HdsTabs({ barPosition: BarPosition.End, index: this.currentIndex, controller: this.immersiveTabsController }) {
+    HdsTabs({ barPosition: BarPosition.End, index: this.currentIndex, controller: this.kitTabsController() }) {
       // 页签用 ForEach 按列表生成：三页签时若在“我的”前面留一个空的 if 分支，
       // 系统更新页签栏项时会错位一格，选中态图标和文字颜色对不上。
       ForEach(this.homeTabIds(), (tabId: string, index: number) => {
@@ -1628,7 +1641,7 @@ struct Index {
         maskColor: Color.Transparent,
         maskHeight: 96
       },
-      barWidth: this.globalTtsTabBarWidth(),
+      barWidth: this.kitTabBarWidth(),
       barSideMargin: this.globalTtsTabBarSideMargin(),
       adaptToHandedness: this.smartGripEnabled,
       thermoCtrl: true,

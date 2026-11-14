@@ -36,7 +36,7 @@
 - 静态字段初始化里不要读系统模块的枚举或常量，改用取值函数。模块加载时系统没有这个模块，整页会加载失败。
 - `PlatformInfo.ANDROID` 只用来关掉安卓上没有的系统能力，不用它分叉业务逻辑。
 - 给 `platform/` 加符号时，两份实现要一起补。
-- `HdsTabs` 是例外：它带专属属性，转一手导出后编译器认不出，使用处直接从 `@kit.UIDesignKit` 引入。这些分支都在 `ImmersiveMaterialRuntime.supportsHdsTabs()` 为真时才走，安卓构建脚本会把它们改写成普通 `Tabs` 以通过编译。
+- `HdsTabs` 是例外：它带专属属性，转一手导出后编译器认不出，使用处用 `import lazy { HdsTabs } from '@kit.UIDesignKit'` 直接引入，要系统包里的类型时用 `import type`。延迟加载的模块只在第一次用到时才加载，这些分支都在 `ImmersiveMaterialRuntime.supportsHdsTabs()` 为真时才走，安卓上不会加载这个包。构建脚本和 CI 检查都会拦下非延迟的引用。
 
 ### 选文件、存文件
 
@@ -82,7 +82,7 @@ node scripts/android/build-android.mjs --abi arm64-v8a
 
 1. 把 `AppScope`、`entry`、书源内核、QuickJS、AI 引擎的源码同步到 `build/android/project`，写入安卓用的构建配置和 `android/project` 里的安卓工程壳。
 2. 用 `android/overlay` 覆盖 `platform/`。
-3. 做只在安卓成立的改写：`HdsTabs` 换成 `Tabs`；书源内核里几处没有跨平台实现的接口改成运行时动态取用。
+3. 检查共用代码没有静态引用 `@kit.UIDesignKit`；内核还没包含 ArkUI-X 兼容写法时，把几处没有跨平台实现的接口改成运行时动态取用。
 4. 用 NDK 编译安卓版 `libquickjs.so`（QuickJS 源码首次构建时从 bellard.org 下载并校验）。
 5. 调 ArkUI-X 的 `ace build apk` 编译打包，补上自己编的库后再用 Gradle 重新打包。
 

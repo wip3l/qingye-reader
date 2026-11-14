@@ -107,6 +107,10 @@ for (const file of walk(ETS)) {
   for (const [pattern, label] of FORBIDDEN) {
     if (pattern.test(source)) problems.push(`${rel} 直接用了 ${label}`);
   }
+  // 系统共享包在安卓上一加载就终止进程：HdsTabs 只能 import lazy，类型用 import type，其它 HDS 符号从 platform/Hds 取。
+  if (/^\s*import\s+(?!lazy\b|type\b)[^;]*from\s*'@kit\.UIDesignKit'/m.test(source)) {
+    problems.push(`${rel} 静态引用了 @kit.UIDesignKit（HdsTabs 用 import lazy，其它从 platform/Hds 取）`);
+  }
   if (/from '@kit\.ShareKit'/.test(source) && !(ALLOWED.get(rel) || []).includes('@kit.ShareKit')) {
     problems.push(`${rel} 直接用了 @kit.ShareKit（用 platform/Share）`);
   }
