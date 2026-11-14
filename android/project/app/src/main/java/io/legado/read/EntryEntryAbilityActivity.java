@@ -15,6 +15,7 @@ public class EntryEntryAbilityActivity extends StageActivity {
     private TtsBridge ttsBridge;
     private MediaBridge mediaBridge;
     private KeyBridge keyBridge;
+    private BiometricBridge biometricBridge;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -27,6 +28,7 @@ public class EntryEntryAbilityActivity extends StageActivity {
         ttsBridge = new TtsBridge(this, getBridgeManager());
         mediaBridge = new MediaBridge(this, getBridgeManager());
         keyBridge = new KeyBridge(this, getBridgeManager());
+        biometricBridge = new BiometricBridge(this, getBridgeManager());
     }
 
     @Override
