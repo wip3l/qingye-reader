@@ -16,6 +16,7 @@ const sandbox = vm.createContext({ console, Date, px2vp: n => n / 2,
   LengthMetrics: { vp: n => n }, ScrollAlign: { START: 0 },
   setTimeout: fn => { timers.set(++timerId, fn); return timerId; }, clearTimeout: id => timers.delete(id),
   ReaderProgressCheckpoint: { canWrite: () => owner },
+  ReaderTtsFloatingSession: { isOwner: () => false },
   Book: { hasStartedReading: book => book.getVariable('readStarted') === '1' },
   AppDatabase: { getInstance: () => ({ updateBookReadingProgress: async (...args) => writes.push(args) }) },
   AppStorage: { setOrCreate() {} },
@@ -25,7 +26,7 @@ const sandbox = vm.createContext({ console, Date, px2vp: n => n / 2,
 const names = ['captureReaderContinuousAnchor', 'readerContinuousSourceIdentity', 'readerContinuousAnchorLineTop',
   'getReaderStableReflowOffset', 'restoreReaderTypographyOffsetIfAvailable', 'scheduleReaderComicScrollRestore',
   'savedReaderProgressOffset', 'saveReadingProgress', 'scheduleReaderComicProgressSave',
-  'clearReaderComicProgressSaveTimer', 'flushReadingProgressCheckpoint'];
+  'clearReaderComicProgressSaveTimer', 'flushReadingProgressCheckpoint', 'backgroundTtsReadOffset'];
 vm.runInContext(stripTypeScriptTypes(readEtsModule('core/reader/ReaderScrollAnchor.ts').replace(/^export /gm, '') +
   `\nclass Reader { ${names.map(method).join('\n')} }\nglobalThis.Reader = Reader; globalThis.Anchor = ReaderScrollAnchor;`), sandbox);
 const { Reader, Anchor } = sandbox;
