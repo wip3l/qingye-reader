@@ -11669,7 +11669,8 @@ struct ReadBookPage {
         cueProgress: this.readerEyeTurnFooterCueProgress(),
         cueArmed: this.readerEyeTurnFooterCueArmed(),
         cueColor: this.accentColor(),
-        cueText: this.eyeTurnState.cueLabel()
+        cueText: this.eyeTurnState.cueLabel(),
+        cueVisible: this.readerEyeTurnFooterCueActive() && this.eyeTurnState.cueVisible
       })
     }
     .width('100%')
@@ -13495,7 +13496,7 @@ struct ReadBookPage {
         .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
       }
     } else if (!this.readerEyeTurnUsesFooter() &&
-      (this.eyeTurnState.cueArmed || this.eyeTurnState.cueProgress > 0)) {
+      (this.eyeTurnState.cueVisible || this.eyeTurnState.cueArmed || this.eyeTurnState.cueProgress > 0)) {
       Row() {
         ReaderEyeTurnFillHint({
           text: this.eyeTurnState.cueLabel(),

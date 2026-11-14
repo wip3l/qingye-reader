@@ -190,13 +190,15 @@ export struct ReaderInfoBarRow {
   @Prop cueColor: string = '#0A59F7';
   /** 提示文字：旧版“抬眼翻页”，新版识别模型“上看翻页”。 */
   @Prop cueText: string = '抬眼翻页';
+  /** 没有进度时也显示提示（新版识别模型识别到人脸时常驻淡色提示）。 */
+  @Prop cueVisible: boolean = false;
 
   private hasLeft(): boolean {
     return !!this.leftText || this.leftBattery >= 0;
   }
 
   private showsCue(): boolean {
-    return this.cueArmed || this.cueProgress > 0;
+    return this.cueVisible || this.cueArmed || this.cueProgress > 0;
   }
 
   private hasCenter(): boolean {

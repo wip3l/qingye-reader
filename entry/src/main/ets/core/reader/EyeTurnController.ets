@@ -237,8 +237,11 @@ export type EyeTurnStatusCallback = (status: string) => void;
 export type EyeTurnSampleCallback = (sample: EyeTurnSample) => void;
 export type EyeTurnRequestCallback = (direction: number) => void;
 export type EyeTurnAvailabilityCallback = () => boolean;
-/** 翻页提示的显示进度：progress 0–1 是注视底部的停留进度（按 0.1 取整），armed 表示已在等待抬眼确认。 */
-export type EyeTurnCueCallback = (progress: number, armed: boolean) => void;
+/**
+ * 翻页提示：progress 0–1 是填色进度（按 0.1 取整），armed 表示旧版已在等待抬眼确认，visible 表示提示该显示。
+ * 旧版只在有进度或 armed 时显示；新版识别到人脸后常驻显示淡色提示，往上看时填色。
+ */
+export type EyeTurnCueCallback = (progress: number, armed: boolean, visible: boolean) => void;
 export type EyeTurnModelUnavailableCallback = () => void;
 
 /**
@@ -337,9 +340,12 @@ export class EyeTurnController {
   private onSample: EyeTurnSampleCallback = (_sample: EyeTurnSample): void => {};
   private onTurn: EyeTurnRequestCallback = (_direction: number): void => {};
   private canTurn: EyeTurnAvailabilityCallback = (): boolean => false;
-  private onCue: EyeTurnCueCallback = (_progress: number, _armed: boolean): void => {};
+  private onCue: EyeTurnCueCallback = (_progress: number, _armed: boolean, _visible: boolean): void => {};
   private lastCueProgress: number = 0;
   private lastCueArmed: boolean = false;
+  private lastCueVisible: boolean = false;
+  // Model mode: a face has been measured since the last reset, so the resting cue may show.
+  private modelTracking: boolean = false;
   private faceMesh: FaceEyeLandmarks | null = null;
   private faceMeshLoading: boolean = false;
   private faceMeshFailed: boolean = false;
@@ -701,6 +707,7 @@ export class EyeTurnController {
     }
     const metrics = result.metrics;
     this.missingFrameCount = 0;
+    this.modelTracking = true;
     this.nextFrameDelayMs = EyeTurnController.MODEL_FRAME_INTERVAL_MS;
     const sample = new EyeTurnSample();
     sample.pitch = face.pose.pitch;
@@ -725,7 +732,7 @@ export class EyeTurnController {
       this.lastDiagAt = now;
       this.probe(`model score=${Number.isFinite(gaze.score) ? gaze.score.toFixed(2) : 'warmup'} ` +
         `iris=${metrics.irisOffset.toFixed(4)} open=${metrics.openness.toFixed(3)} p=${metrics.presence.toFixed(2)} ` +
-        `rot=${result.rotation} crop=${result.cropMs}ms prep=${result.prepMs}ms infer=${result.inferMs}ms ` +
+        `rot=${result.rotation} crop=${result.cropMs}ms prep=${result.prepMs}ms infer=${result.inferMs}ms/${result.backend} ` +
         `turn=${gaze.turn}`);
     }
     this.reportRuntimeStatus(this.gazeDetector.baselineReady() ? '眼动已就绪' : '请注视正文');
@@ -932,10 +939,16 @@ export class EyeTurnController {
       const ratio = (Date.now() - this.zoneStartedAt) / Math.max(1, this.nextDwellMs);
       progress = Math.max(0, Math.min(1, Math.round(ratio * 10) / 10));
     }
-    if (progress === this.lastCueProgress && armed === this.lastCueArmed) return;
+    // Model mode cannot tell the middle of the page from its bottom, so the cue cannot wait for the end of the page
+    // as the old mode does; it stays visible (unfilled) while a face is tracked and fills as the gaze rises.
+    const visible = this.modelMode ?
+      tracking && this.modelTracking && !this.calibrationMode && this.gazeDetector.baselineReady() :
+      armed || progress > 0;
+    if (progress === this.lastCueProgress && armed === this.lastCueArmed && visible === this.lastCueVisible) return;
     this.lastCueProgress = progress;
     this.lastCueArmed = armed;
-    this.onCue(progress, armed);
+    this.lastCueVisible = visible;
+    this.onCue(progress, armed, visible);
   }
 
   private reportTrackingStatus(status: string): void {
@@ -1106,6 +1119,7 @@ export class EyeTurnController {
   private resetDwellState(): void {
     this.gazeDetector.reset();
     this.modelCueProgress = 0;
+    this.modelTracking = false;
     this.smoothedScore = Number.NaN;
     this.currentZone = 0;
     this.nextConfirmArmed = false;

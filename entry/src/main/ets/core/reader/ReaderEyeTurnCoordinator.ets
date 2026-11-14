@@ -192,7 +192,8 @@ export class ReaderEyeTurnCoordinator {
         return allowed;
       }
     );
-    this.controller.setCueListener((progress: number, armed: boolean): void => this.state.setCue(progress, armed));
+    this.controller.setCueListener((progress: number, armed: boolean, visible: boolean): void =>
+      this.state.setCue(progress, armed, visible));
     this.state.modelMode = this.host.modelEnabled();
     this.controller.configureModel(this.host.modelEnabled(), this.modelCalibrationRaw(),
       (): void => this.onModelUnavailable());
@@ -223,7 +224,7 @@ export class ReaderEyeTurnCoordinator {
 
   /** Stops the signal source and frees the camera; the page calls this whenever it leaves the foreground. */
   release(reason: string): void {
-    this.state.setCue(0, false);
+    this.state.setCue(0, false, false);
     this.stopArHost();
     this.controller.stop().catch((error: Error): void => {
       console.warn(`[EyeTurn] ${reason} failed:`, error.message);

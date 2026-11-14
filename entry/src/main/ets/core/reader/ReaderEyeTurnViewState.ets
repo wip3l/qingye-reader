@@ -18,15 +18,18 @@ export class ReaderEyeTurnViewState {
   cueProgress: number = 0;
   /** 停留够久、正在等待抬眼确认；页脚换成“抬眼翻页”。 */
   cueArmed: boolean = false;
+  /** 提示是否显示：旧版有进度或 armed 时显示；新版识别到人脸后常驻显示淡色提示。 */
+  cueVisible: boolean = false;
   /** 新版识别模型：校准三步改为正文中央/正文顶部/屏幕上沿以外，页脚提示改为“上看翻页”。 */
   modelMode: boolean = false;
 
   static readonly PHASE_COUNT: number = 3;
   static readonly PREVIEW_TOP_VP: number = 18;
 
-  setCue(progress: number, armed: boolean): void {
+  setCue(progress: number, armed: boolean, visible: boolean): void {
     if (this.cueProgress !== progress) this.cueProgress = progress;
     if (this.cueArmed !== armed) this.cueArmed = armed;
+    if (this.cueVisible !== visible) this.cueVisible = visible;
   }
 
   targetLabel(): string {
