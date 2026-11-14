@@ -48,6 +48,7 @@ import { StartupCoverTextStore } from '../utils/StartupCoverTextStore';
 import { BookSourceRuntimeStore, NativeSourceInteraction, SourceScriptNotice, TlsTrustStore } from '@legado/sourceengine';
 import { AppSourceInteraction } from '../utils/AppSourceInteraction';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { CrashReportStore } from '../utils/CrashReportStore';
 import { AppDatabase } from '../model/data/AppDatabase';
 import fs from '@ohos.file.fs';
 import { util } from '@kit.ArkTS';
@@ -88,6 +89,8 @@ export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onCreate');
     AppStorage.setOrCreate('startupT0', Date.now());
+    // 上次运行的闪退/卡死/被系统结束事件在订阅后由系统投递，越早订阅越早拿到。
+    CrashReportStore.start(this.context);
     this.networkBootstrapPromise = NetworkSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复网络设置失败:', error);
     });

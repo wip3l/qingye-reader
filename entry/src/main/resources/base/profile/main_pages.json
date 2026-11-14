@@ -72,6 +72,8 @@
     "pages/HelpTopic",
     "pages/About",
     "pages/OpenSourceLicenses",
+    "pages/CrashReports",
+    "pages/CrashReportDetail",
     "pages/VerifyWeb"
   ]
 }

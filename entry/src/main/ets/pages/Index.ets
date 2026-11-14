@@ -13,6 +13,7 @@ import { BookSourceAudioWebRuntimeHost } from '../components/BookSourceAudioWebR
 import { syncSystemSafeAreas, syncDesktopTitleBar } from '../utils/SystemBars';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { CrashReportStore } from '../utils/CrashReportStore';
 import { RecentReadShortcut } from '../utils/RecentReadShortcut';
 import { ReaderOpenTrace } from '../utils/ReaderOpenTrace';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
@@ -78,6 +79,9 @@ struct Index {
   private stageRuntimeAttachRetryId: number = -1;
   private shortcutRoutingActive: boolean = false;
   private webParseNoticePrompted: boolean = false;
+  /** 上次运行留下、还没提示过的崩溃记录 id；系统在启动后才投递事件，所以要监听变化。 */
+  @StorageLink('crashReportPendingNotice') @Watch('onCrashReportNoticeChanged') crashReportPendingNotice: string = '';
+  private crashReportPrompting: boolean = false;
   private cloudSyncDebounceTimer: number = -1;
   @State @Watch('onCurrentIndexChanged') currentIndex: number = 0;
   /** 发现页第一次打开后常驻，切走只停用不销毁，回来时直接显示已加载的分类和列表。 */
@@ -189,6 +193,7 @@ struct Index {
     hilog.info(0x0000, 'testTag', 'StartupTrace Index onPageShow %{public}d', Date.now());
     this.syncHomeSystemBars();
     this.promptWebParseNotice();
+    this.promptCrashReport();
     this.syncHomeHoldingHandTracking();
     // 在别的页面时没订阅握姿，回来后底栏可能已换边。
     if (this.globalTtsActive) this.scheduleGlobalTtsBarProbe();
@@ -210,6 +215,41 @@ struct Index {
       if (AppStorage.get<boolean>('webParseNoticePending') !== true || !this.shortcutRoutingActive) return;
       router.pushUrl({ url: 'pages/WebParseNotice', params: { mode: 'accept' } }).catch(() => {});
     }, 600);
+  }
+
+  onCrashReportNoticeChanged(): void {
+    this.promptCrashReport();
+  }
+
+  /** 上次闪退、卡死或在前台被系统结束：首页可见时提示一次，可直接打开那条记录；网页解析须知优先。 */
+  promptCrashReport(): void {
+    if (this.crashReportPrompting || !this.crashReportPendingNotice || !this.shortcutRoutingActive ||
+      AppStorage.get<boolean>('webParseNoticePending') === true) return;
+    this.crashReportPrompting = true;
+    setTimeout((): void => {
+      const id = this.crashReportPendingNotice;
+      const summary = id && this.shortcutRoutingActive ? CrashReportStore.summaryOf(id) : null;
+      if (summary === null) {
+        this.crashReportPrompting = false;
+        return;
+      }
+      CrashReportStore.clearPendingNotice();
+      const title = summary.kind === 'freeze' ? '轻页上次卡住后被关闭' :
+        (summary.kind === 'killed' ? '轻页上次在使用中被系统关闭' : '轻页上次意外退出了');
+      this.getUIContext().getPromptAction().showDialog({
+        title: title,
+        message: '本机留下了一条崩溃记录。方便的话，可以把它分享给开发者帮助找到原因；' +
+          '以后也能在“关于 › 交流与反馈 › 崩溃记录”里查看。',
+        buttons: [
+          { text: '知道了', color: ThemeRuntime.subTextColor(this.appDarkMode) },
+          { text: '查看记录', color: ThemeRuntime.accentColor(this.appDarkMode) }
+        ]
+      }).then((result) => {
+        if (result.index === 1) router.pushUrl({ url: 'pages/CrashReportDetail', params: { id: id } }).catch(() => {});
+      }).catch(() => {}).finally(() => {
+        this.crashReportPrompting = false;
+      });
+    }, 1200);
   }
 
   onAppDarkModeChanged(): void {
