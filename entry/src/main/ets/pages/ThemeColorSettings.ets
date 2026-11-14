@@ -4137,7 +4137,8 @@ struct ThemeColorSettingsPage {
       shelfLayout: this.previewShelfLayout,
       schemeName: this.schemeName,
       cardImagePath: this.previewImagePath,
-      logoThemeId: this.ownLogo() ? this.ownThemeId() : ''
+      logoThemeId: this.ownLogo() ? this.ownThemeId() : '',
+      assetRevision: this.assetRevision
     })
       .width('100%')
       .height('100%')

@@ -44,6 +44,8 @@ export struct CustomThemePreview {
   @Prop schemeName: string = '';
   @Prop cardImagePath: string = '';
   @Prop logoThemeId: string = '';
+  // 编辑器的素材版本：调角饰大小、换图时背景 ID 不变，靠它让阅读预览重新取角饰。
+  @Prop assetRevision: number = 0;
   // 底栏按“外观 › 底栏”里选的第四个页签画，和首页一致。
   @StorageProp('homeExtraTab') homeExtraTab: string = 'none';
 
@@ -554,7 +556,8 @@ export struct CustomThemePreview {
         surfaceColor: this.variant().reader.backgroundColor,
         backgroundAssetId: this.variant().reader.backgroundAssetId,
         compact: !this.expanded,
-        decorationSignature: ThemeAssetRegistry.readerDecorationSignature(this.variant().reader.backgroundAssetId)
+        decorationSignature: `${this.assetRevision}|` +
+          ThemeAssetRegistry.readerDecorationSignature(this.variant().reader.backgroundAssetId)
       })
       Column({ space: AppSpacing.MD }) {
         Row() {
