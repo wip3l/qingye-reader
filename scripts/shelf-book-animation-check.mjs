@@ -86,6 +86,17 @@ for (const page of ['ReadBook', 'PdfReadBook']) {
   assert.ok(storage.get('shelfBookMotionUntil') >= now + 500, `${page}: shelf refresh waits for the landing`);
   advance(1000); await Promise.resolve();
   assert.equal(landed, false); closeAnimation.onFinish(); await landing; assert.equal(landed, true);
+  // A leaning shelf book hands over the block its cover really occupies plus its lean: the page shrinks onto that
+  // block and turns by the same angle about its top-left corner, so nothing jumps when the shelf takes over.
+  const leanCloser = hostFor(source, ['closeIntoShelfCover']);
+  Object.assign(leanCloser, { shelfOpenLean: 0, getUIContext: () => ({ animateTo: (_options, change) => change() }) });
+  leanCloser.closeIntoShelfCover({ ...target, lean: 4, coverAspect: 0.735, cropImage: true });
+  assert.equal(leanCloser.shelfOpenLean, 4, `${page}: lands at the book's lean`);
+  assert.equal(leanCloser.shelfOpenScaleX, 0.25); assert.equal(leanCloser.shelfOpenTranslateX, 40);
+  assert.equal(leanCloser.shelfCoverCropAspect, 0.735, `${page}: the cover picture is cropped as on the unturned cover`);
+  assert.equal(closer.shelfOpenLean, 0, `${page}: upright covers do not turn`);
+  assert.match(source, /\.translate\(\{ x: this\.shelfOpenTranslateX, y: this\.shelfOpenTranslateY \}\)\s*\.rotate\(\{ angle: this\.shelfOpenLean, centerX: 0, centerY: 0 \}\)/,
+    `${page}: the lean turns the scaled page about its top-left corner`);
   const build = source.slice(source.indexOf('  build() {'), source.indexOf('  build() {') + 400);
   assert.match(build, /if \(this\.shelfMotionBackdrop\) \{\s*Image\(this\.shelfMotionBackdrop\)/, `${page}: the backdrop sits outside the scaled page root`);
 }
@@ -219,6 +230,44 @@ assert.equal(openingBackdropReleases, 0, 'the frame that may still draw it gets 
 advance(120); assert.equal(openingBackdropReleases, 1, 'the opening backdrop is released once');
 motion.prepareShelfOpening(); motion.readerExiting = true; motion.finishShelfOpening();
 assert.equal(motion.shelfMotionRasterized, true, 'leaving during the opening keeps the layer for the return flight');
+assert.equal(motion.shelfOpenScaleX, 1, 'the rectangle path is back at full size once the opening ends');
+motion.shelfOpeningCover.lean = -3;
+motion.shelfOpenAnimating = false; motion.prepareShelfOpening();
+assert.equal(motion.shelfOpenLean, -3, 'a leaning shelf book opens from its lean');
+assert.equal(motion.shelfOpenScaleX, 90 / 400);
+motion.finishShelfOpening(); assert.equal(motion.shelfOpenLean, 0, 'the page is upright after opening');
+
+// The corners the landing block is derived from are where the shelf really draws the cover: the same points the cover matrix maps
+// to, moved to the book's place in the window and leaned about the middle of the stage's bottom edge.
+const mapped = [];
+context.matrix4 = { identity: () => ({ setPolyToPoly(options) { mapped.push(options.dst); return this; } }) };
+const perspectiveSource = read('utils/ShelfBookPerspective.ets').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
+const Perspective = vm.runInContext(stripTypeScriptTypes(perspectiveSource) + '\nShelfBookPerspective', context);
+const turned = Perspective.shape(100, 136, 24, 0.2, 2);
+assert.equal(turned.coverQuad.length, 8);
+mapped[0].forEach((point, index) => {
+  assert.ok(Math.abs(point.x / 2 + turned.coverX - turned.coverQuad[index * 2]) < 1e-9, 'corner x matches the cover matrix');
+  assert.ok(Math.abs(point.y / 2 - turned.coverQuad[index * 2 + 1]) < 1e-9, 'corner y matches the cover matrix');
+});
+assert.ok(turned.coverQuad[1] > 0 && turned.coverQuad[3] === 0, 'the far (left) edge is shorter than the near one');
+const upright = Perspective.coverQuadInWindow(turned, 140, 30, 200, 0);
+assert.deepEqual(upright, turned.coverQuad.map((value, index) => value + (index % 2 === 0 ? 30 : 200)));
+const leaning = Perspective.coverQuadInWindow(turned, 140, 30, 200, 5);
+assert.ok(leaning[0] > upright[0] && leaning[2] > upright[2], 'a clockwise lean moves the top of the book to the right');
+assert.ok(Math.abs(leaning[4] - upright[4]) < 1 && Math.abs(leaning[6] - upright[6]) < 1, 'the bottom stays near the pivot line');
+assert.equal(Perspective.flat(100, 136, 0.06).coverQuad.length, 0, 'flat books keep the measured rectangle');
+// The landing block: as wide as the turned cover, as tall as the mean of its two vertical edges, top-left corner
+// where the leaning block's corner really is.
+const block = Perspective.coverLanding(upright, 0);
+assert.ok(Math.abs(block[0] - upright[0]) < 1e-9 && Math.abs(block[2] - (upright[2] - upright[0])) < 1e-9);
+assert.ok(block[1] > upright[3] && block[1] < upright[1], 'between the tops of the far and near edges');
+assert.ok(Math.abs(block[3] - ((upright[7] - upright[1]) + (upright[5] - upright[3])) / 2) < 1e-9);
+const leanBlock = Perspective.coverLanding(leaning, 5);
+assert.ok(Math.abs(leanBlock[2] - block[2]) < 1e-6 && Math.abs(leanBlock[3] - block[3]) < 1e-6, 'leaning keeps the size');
+const rad = 5 * Math.PI / 180;
+assert.ok(Math.abs(leanBlock[0] - ((leaning[0] + leaning[6]) / 2 + Math.sin(rad) * block[3] / 2)) < 1e-6 &&
+  Math.abs(leanBlock[1] - ((leaning[1] + leaning[7]) / 2 - Math.cos(rad) * block[3] / 2)) < 1e-6,
+  'the corner sits half a height up the leaning left edge');
 
 // Opening a book with an update badge must not rebuild the shelf inside the tap: the in-memory acknowledgement waits
 // for the open motion, and a reload that already cleared the badge makes it a no-op.

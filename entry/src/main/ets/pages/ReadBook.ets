@@ -8,7 +8,7 @@ import { READER_QUICK_JUMP_CAPSULE_HEIGHT, ReaderQuickJumpCapsule } from '../com
 import {
   ReaderShelfCoverOpening, SHELF_COVER_OPEN_ANGLE, SHELF_COVER_OPEN_DURATION, SHELF_COVER_OPEN_START_CAP,
   SHELF_COVER_CLOSE_DURATION, SHELF_COVER_FRAME_RATE, SHELF_BOOK_MOTION_UNTIL_KEY, SHELF_BOOK_MOTION_SETTLE,
-  detachedShelfSharedCoverId, shelfCoverCropAspect,
+  detachedShelfSharedCoverId, shelfCoverCropAspect, shelfCoverLean,
   SHELF_OPENING_BACKDROP_KEY, SHELF_OPENING_COVER_KEY, ShelfOpeningCover, ShelfOpeningFrameStarter,
   SHELF_COVER_MOTION_CURVE, SHELF_OPENING_PAGE_SNAPSHOT_KEY
 } from '../components/reader/ReaderShelfCoverOpening';
@@ -1221,6 +1221,8 @@ struct ReadBookPage {
   @State shelfOpenScaleY: number = 1;
   @State shelfOpenTranslateX: number = 0;
   @State shelfOpenTranslateY: number = 0;
+  /** 书架上的书斜靠时，整页缩到封面处的同时以左上角为轴转到同样的角度（度，顺时针为正）。 */
+  @State shelfOpenLean: number = 0;
   private shelfOpenAnimating: boolean = false;
   private shelfOpenStarted: boolean = false;
   private shelfOpenStartTimer: number = -1;
@@ -4039,6 +4041,7 @@ struct ReadBookPage {
     .expandSafeArea([SafeAreaType.SYSTEM], this.getReaderSafeAreaEdges())
     .scale({ x: this.shelfOpenScaleX, y: this.shelfOpenScaleY, centerX: 0, centerY: 0 })
     .translate({ x: this.shelfOpenTranslateX, y: this.shelfOpenTranslateY })
+    .rotate({ angle: this.shelfOpenLean, centerX: 0, centerY: 0 })
     .sharedTransition(this.shelfSharedCoverId, {
       duration: SHELF_COVER_OPEN_DURATION, curve: Curve.EaseInOut, type: SharedTransitionEffectType.Exchange
     })
@@ -20607,6 +20610,7 @@ ${leading}` : leading;
     this.shelfOpenScaleY = cover.boundsHeight / cover.windowHeight;
     this.shelfOpenTranslateX = cover.boundsX;
     this.shelfOpenTranslateY = cover.boundsY;
+    this.shelfOpenLean = shelfCoverLean(cover);
     this.shelfCoverAngle = 0;
     this.shelfCoverScaleX = 1;
     this.shelfCoverShade = 0;
@@ -20743,6 +20747,7 @@ ${leading}` : leading;
       this.shelfOpenScaleY = 1;
       this.shelfOpenTranslateX = 0;
       this.shelfOpenTranslateY = 0;
+      this.shelfOpenLean = 0;
       this.shelfCoverAngle = SHELF_COVER_OPEN_ANGLE;
       this.shelfCoverScaleX = 0;
       this.shelfCoverShade = 0.5;
@@ -20764,6 +20769,7 @@ ${leading}` : leading;
     this.shelfOpenScaleY = 1;
     this.shelfOpenTranslateX = 0;
     this.shelfOpenTranslateY = 0;
+    this.shelfOpenLean = 0;
     if (this.shelfCoverAngle === SHELF_COVER_OPEN_ANGLE) this.shelfCoverVisible = false;
     this.shelfCoverFillImage = false;
     if (this.shelfPendingSharedCoverId) {
@@ -20838,6 +20844,7 @@ ${leading}` : leading;
         this.shelfOpenScaleY = target.boundsHeight / target.windowHeight;
         this.shelfOpenTranslateX = target.boundsX;
         this.shelfOpenTranslateY = target.boundsY;
+        this.shelfOpenLean = shelfCoverLean(target);
         this.shelfCoverAngle = 0;
         this.shelfCoverScaleX = 1;
         this.shelfCoverShade = 0;

@@ -16,6 +16,11 @@ export class ShelfBookShape {
   flat: boolean = false;
   /** 书页比硬壳上下各短的一截。 */
   pageInset: number = 0;
+  /**
+   * 投影后封面的四个角，整本书舞台的坐标（vp），左上起顺时针共 8 个数；平放的书为空。
+   * 开书、关书动画据此算出整页要落到的那块（见 coverLanding）。
+   */
+  coverQuad: number[] = [];
   coverMatrix: matrix4.Matrix4Transit = matrix4.identity();
   sideMatrix: matrix4.Matrix4Transit = matrix4.identity();
 }
@@ -62,6 +67,13 @@ export class ShelfBookPerspective {
     shape.pagesX = Math.max(1.5, coverWidth * 0.02);
     shape.pagesWidth = depth - shape.pagesX * 2;
     shape.pageInset = Math.max(2, Math.round(coverWidth * 0.025));
+    const half = coverHeight / 2;
+    shape.coverQuad = [
+      0, half - half * leftScale,
+      edgeX, 0,
+      edgeX, coverHeight,
+      0, half + half * leftScale
+    ];
     shape.coverMatrix = ShelfBookPerspective.quad(coverWidth, coverHeight, shape.coverX,
       0, leftScale, edgeX, 1, density);
     shape.sideMatrix = ShelfBookPerspective.quad(depth, coverHeight, shape.sideX,
@@ -97,6 +109,49 @@ export class ShelfBookPerspective {
     if (ShelfBookPerspective.cache.size > 512) ShelfBookPerspective.cache.clear();
     ShelfBookPerspective.cache.set(key, shape);
     return shape;
+  }
+
+  /**
+   * 把封面四角从整本书舞台的坐标搬到窗口里。originX/originY 是舞台左上角在窗口里的位置，stageHeight 是舞台高度，
+   * lean 是整本书以舞台底边中点为轴斜靠的角度（顺时针为正，与 rotate 一致）。
+   */
+  static coverQuadInWindow(shape: ShelfBookShape, stageHeight: number, originX: number, originY: number,
+    lean: number): number[] {
+    const radians = lean * Math.PI / 180;
+    const sin = Math.sin(radians);
+    const cos = Math.cos(radians);
+    const pivotX = shape.stageWidth / 2;
+    const quad: number[] = [];
+    for (let index = 0; index + 1 < shape.coverQuad.length; index += 2) {
+      const dx = shape.coverQuad[index] - pivotX;
+      const dy = shape.coverQuad[index + 1] - stageHeight;
+      quad.push(originX + pivotX + dx * cos - dy * sin);
+      quad.push(originY + stageHeight + dx * sin + dy * cos);
+    }
+    return quad;
+  }
+
+  /**
+   * 开书、关书时整页落到的那块：与封面四边形最贴近的矩形（宽是上下两边中点的间距，高取左右两条边的平均，远的
+   * 那条边比它短一点、近的长一点，差不到封面高度的百分之几），斜靠的书这块跟着转。返回 [左上角 x, 左上角 y, 宽, 高]，
+   * 左上角是转过之后的位置，整页以它为轴转 lean 度即可对上。
+   *
+   * 不直接把整页变成四边形：带透视的矩阵交给系统后，在整窗缩到一本书这么大的幅度下画出来的形状不对（真机实测，
+   * 传入的四角正确、画出的上下边反向倾斜），而缩放、平移、平面旋转是可靠的。
+   */
+  static coverLanding(quad: number[], lean: number): number[] {
+    const leftX = (quad[0] + quad[6]) / 2;
+    const leftY = (quad[1] + quad[7]) / 2;
+    const rightX = (quad[2] + quad[4]) / 2;
+    const rightY = (quad[3] + quad[5]) / 2;
+    const width = Math.hypot(rightX - leftX, rightY - leftY);
+    const height = (Math.hypot(quad[6] - quad[0], quad[7] - quad[1]) +
+      Math.hypot(quad[4] - quad[2], quad[5] - quad[3])) / 2;
+    const radians = lean * Math.PI / 180;
+    const sin = Math.sin(radians);
+    const cos = Math.cos(radians);
+    // 从左边中点沿书的竖直方向往上走半个高度，就是这块矩形转过之后的左上角。
+    return [leftX + sin * height / 2, leftY - cos * height / 2, width, height];
   }
 
   /**

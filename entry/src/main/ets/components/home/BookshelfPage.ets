@@ -246,6 +246,8 @@ interface ShelfFullTextCacheTask {
 export struct BookshelfPage {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   /** 标题下方“全部 / 网络 / 本地”胶囊的高度。 */
+  /** 立体书舞台比封面高出的一截，留给书底的底板。斜靠以舞台底边中点为轴，算封面四角时要用同一个数。 */
+  static readonly SHELF_HARDCOVER_STAGE_PAD: number = 4;
   static readonly SCOPE_TABS_HEIGHT: number = 44;
   static readonly SCOPE_TABS_PADDING: number = 6;
   static readonly SCOPE_TAB_INDICATOR_WIDTH: number = 18;
@@ -5110,8 +5112,10 @@ export struct BookshelfPage {
       .scale({ x: 1, y: 1, centerX: 0, centerY: 0 })
       .transform(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).coverMatrix)
     }
+    // 整本书的舞台自己没有变换，继续阅读卡片里的书按它量位置再算封面四角（见 shelfOpeningCoverQuad）。
+    .id(`${this.shelfCoverElementId(book, idScope)}_stage`)
     .width(this.shelfBookShape(coverWidth, coverHeight, angle, depthRatio).stageWidth)
-    .height(coverHeight + 4)
+    .height(coverHeight + BookshelfPage.SHELF_HARDCOVER_STAGE_PAD)
   }
 
   /**
@@ -5576,6 +5580,8 @@ export struct BookshelfPage {
             this.shelfTileSelectMark(book)
           }
         }
+        // 格子没有变换：斜靠的书按它量位置，再按上面的排版参数算封面四角（见 shelfOpeningCoverQuad）。
+        .id(`${this.shelfCoverElementId(book, this.shelfCoverScope(pageKey, false))}_slot`)
         .width('100%')
         .height(this.shelfTileHardcoverHeight() + 4)
         // 书底下要留出底板与落地投影，书名不能压在投影上。
@@ -5964,9 +5970,83 @@ export struct BookshelfPage {
       opening.boundsHeight = ui.px2vp(picked.size.height);
       opening.windowWidth = ui.px2vp(windowRect.width);
       opening.windowHeight = ui.px2vp(windowRect.height);
+      this.applyShelfOpeningCoverLanding(ui, book, opening, pageKey, pickedLatest);
     } catch (error) {
       // LazyForEach 已回收源节点等情况：没有位置就由共享转场飞封面。
     }
+  }
+
+  /**
+   * 错落摆放的立体书：封面在窗口里是个侧转（网格里还斜靠）的四边形，按排版参数算出它的四个角（vp，左上起顺时针）。
+   * 按 id 量封面节点得到的是它变换前的那块，比侧转后的封面宽、位置也偏，关书落在那上面再换成书架上的书会跳一下。
+   * 锚点量的是自己没有变换的节点（网格里是书所在的格子，继续阅读卡片里是整本书的舞台），不依赖系统对变换后节点的
+   * 测量口径。平放的书和其他布局返回 undefined，沿用量到的矩形。
+   */
+  shelfOpeningCoverQuad(ui: UIContext, book: Book, pageKey: string, latest: boolean): number[] | undefined {
+    if (!this.isCompanionLayout() || !this.bookshelfCompanionStagger) return undefined;
+    const coverWidth = latest ? this.shelfCompanionCoverWidth() : this.shelfTileBookCoverWidth(book);
+    const coverHeight = latest ? this.shelfCompanionCoverHeight() : this.shelfTileBookCoverHeight(book);
+    const shape = latest ? this.shelfBookShape(coverWidth, coverHeight, 36, 0.24) :
+      this.shelfBookShape(coverWidth, coverHeight, this.shelfTileBookTurn(book), this.shelfTileBookDepth(book));
+    if (shape.flat || shape.coverQuad.length !== 8) return undefined;
+    const coverId = this.shelfCoverElementId(book, this.shelfCoverScope(pageKey, latest));
+    let anchor: componentUtils.ComponentInfo | undefined = undefined;
+    try {
+      anchor = ui.getComponentUtils().getRectangleById(`${coverId}${latest ? '_stage' : '_slot'}`);
+    } catch (error) {
+      return undefined;
+    }
+    if (!anchor || anchor.size.width <= 0 || anchor.size.height <= 0) return undefined;
+    let originX = ui.px2vp(anchor.windowOffset.x);
+    let originY = ui.px2vp(anchor.windowOffset.y);
+    let lean = 0;
+    if (!latest) {
+      // 与 shelfTileBook 里这本书在格子中的位置、斜靠一致。
+      originX += Math.round((this.shelfTileColumnWidth() - shape.stageWidth) / 2);
+      originY += this.shelfTileHardcoverHeight() - coverHeight;
+      lean = this.shelfTileBookLean(book);
+    }
+    return ShelfBookPerspective.coverQuadInWindow(shape, coverHeight + BookshelfPage.SHELF_HARDCOVER_STAGE_PAD,
+      originX, originY, lean);
+  }
+
+  /**
+   * 算得出四角、且四角都在窗口里、与量到的封面是同一处时，把 bounds 换成封面实际占的那块（斜靠的书带上角度），
+   * 并记下封面侧转前的宽高比，封面图的裁切才和书架上一致。
+   */
+  applyShelfOpeningCoverLanding(ui: UIContext, book: Book, opening: ShelfOpeningCover, pageKey: string,
+    latest: boolean): void {
+    const quad = this.shelfOpeningCoverQuad(ui, book, pageKey, latest);
+    if (!quad) return;
+    let minX = quad[0];
+    let maxX = quad[0];
+    let minY = quad[1];
+    let maxY = quad[1];
+    for (let index = 2; index < quad.length; index += 2) {
+      minX = Math.min(minX, quad[index]);
+      maxX = Math.max(maxX, quad[index]);
+      minY = Math.min(minY, quad[index + 1]);
+      maxY = Math.max(maxY, quad[index + 1]);
+    }
+    if (!(minX >= -1 && minY >= -1 && maxX <= opening.windowWidth + 1 && maxY <= opening.windowHeight + 1)) return;
+    // 锚点量错（比如节点还没排好）时四角会落到别处，这时宁可按量到的矩形缩放。
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    if (centerX < opening.boundsX - opening.boundsWidth || centerX > opening.boundsX + opening.boundsWidth * 2 ||
+      centerY < opening.boundsY - opening.boundsHeight || centerY > opening.boundsY + opening.boundsHeight * 2) {
+      return;
+    }
+    const lean = latest ? 0 : this.shelfTileBookLean(book);
+    const landing = ShelfBookPerspective.coverLanding(quad, lean);
+    if (landing[2] <= 0 || landing[3] <= 0) return;
+    opening.boundsX = landing[0];
+    opening.boundsY = landing[1];
+    opening.boundsWidth = landing[2];
+    opening.boundsHeight = landing[3];
+    opening.lean = lean;
+    const coverWidth = latest ? this.shelfCompanionCoverWidth() : this.shelfTileBookCoverWidth(book);
+    const coverHeight = latest ? this.shelfCompanionCoverHeight() : this.shelfTileBookCoverHeight(book);
+    opening.coverAspect = coverWidth / coverHeight;
   }
 
   /**

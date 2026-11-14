@@ -25,12 +25,30 @@ export interface ShelfOpeningCover {
   cropImage: boolean;
   /** 主题自带的书籍封面（不一定有书框）：深色模式调暗封面时不调暗，和书架一致。 */
   themeCover: boolean;
+  /**
+   * 书架上这本书是侧转、斜靠的立体书时：bounds 是封面投影后实际占的那块（宽是侧转后变窄的宽度），斜靠的书这块还绕
+   * 自己的左上角转了 lean 度（顺时针为正），boundsX/boundsY 是转过之后左上角的位置。整页缩到这块并转同样的角度。
+   */
+  lean?: number;
+  /** 立体书封面侧转前的宽高比：封面图按它裁切后再随 bounds 压窄，与书架上一致。没有时按 bounds 的比例。 */
+  coverAspect?: number;
+}
+
+/** 整页缩到封面时要转的角度：立着或平放的书为 0。 */
+export function shelfCoverLean(cover: ShelfOpeningCover | null): number {
+  return cover && cover.lean ? cover.lean : 0;
+}
+
+/** 封面图排版用的宽高比：立体书用侧转前的比例，其余用量到的 bounds。 */
+export function shelfCoverBoxAspect(cover: ShelfOpeningCover | null): number {
+  if (!cover) return 0;
+  if (cover.coverAspect && cover.coverAspect > 0) return cover.coverAspect;
+  return cover.boundsWidth > 0 && cover.boundsHeight > 0 ? cover.boundsWidth / cover.boundsHeight : 0;
 }
 
 /** 整页缩到这枚封面时封面图要还原的裁切比例：书架裁切显示时为封面宽高比，拉伸铺满时为 0。 */
 export function shelfCoverCropAspect(cover: ShelfOpeningCover | null): number {
-  return cover && cover.cropImage && cover.boundsWidth > 0 && cover.boundsHeight > 0 ?
-    cover.boundsWidth / cover.boundsHeight : 0;
+  return cover && cover.cropImage ? shelfCoverBoxAspect(cover) : 0;
 }
 
 export const SHELF_OPENING_COVER_KEY: string = 'shelfOpeningCover';
@@ -161,7 +179,7 @@ export struct ReaderShelfCoverOpening {
 
   /** 书架上这枚封面的宽高比：整页非等比缩成封面时，区域按它排才和书架上一致。 */
   shelfCoverAspect(): number {
-    return this.cover.boundsHeight > 0 ? this.cover.boundsWidth / this.cover.boundsHeight : 0;
+    return shelfCoverBoxAspect(this.cover);
   }
 
   build() {
