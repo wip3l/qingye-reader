@@ -21316,8 +21316,9 @@ ${leading}` : leading;
           // group per idle slice so large comics finish promptly without turning the whole chapter into one UI task.
           // 画面静止（没有翻页动画、手指没碰屏幕）时一次连排几页，排满预算再歇一帧；
           // 否则一页歇 64ms，长章节要好几秒才知道总页数。一有触摸或翻页就回到一页一歇。
+          // 朗读出声时不连排：PCM 输出的 writeData 回调在主线程上取数据，连排挤占主线程会让朗读断续。
           idleBurst = !!result.v2Session && !this.isReaderPaginationInteractionBusy() &&
-            !this.isReaderPageMotionActive();
+            !this.isReaderPageMotionActive() && !(this.isTtsSpeaking && !this.isTtsPaused);
           while (true) {
             const beforePageCount = result.pages.length;
             await this.appendReaderPaginationBatch(result, chapterIndex, imageOnlyPagination ? 8 : 1, 8, isCurrent);
