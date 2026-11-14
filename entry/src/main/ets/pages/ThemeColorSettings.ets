@@ -33,6 +33,8 @@ import {
 } from '../theme/share/ThemePackageFormat';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer, DeleteParticles } from '../components/common/DeleteParticles';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
@@ -207,6 +209,9 @@ struct ThemeColorSettingsPage {
   @StorageLink('installedThemePacksRevision') installedPacksRevision: number = 0;
   // 素材上传/移除只改包与草稿，不改其他状态；靠它让预览和上传行重绘。
   @State assetRevision: number = 0;
+  /** 正在消散的封面格子（模式_序号），见 ListDissolve。 */
+  @State dissolvingCoverKeys: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   // 拖动左上/右下“角饰大小”时的实时百分比；松手保存完回到 -1，改读主题包里的值。
   @State leadingScaleDrag: number = -1;
   @State trailingScaleDrag: number = -1;
@@ -301,7 +306,11 @@ struct ThemeColorSettingsPage {
           onCancel: () => this.finishCrop('')
         })
       }
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('theme_color_settings_root')
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
@@ -2375,6 +2384,11 @@ struct ThemeColorSettingsPage {
     .borderRadius(8)
     .clip(true)
     .accessibilityText(`第 ${$$.index + 1} 张封面`)
+    .opacity(ListDissolve.opacity(this.isCoverDissolving($$.index)))
+    .scale(ListDissolve.scale(this.isCoverDissolving($$.index)))
+    .blur(ListDissolve.blur(this.isCoverDissolving($$.index)))
+    .hitTestBehavior(this.isCoverDissolving($$.index) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.coverTileElementId(this.coverTileKey(this.selectedMode === 'dark' ? 'dark' : 'light', $$.index)))
     .onClick(() => this.tapCover($$.index))
   }
 
@@ -2453,9 +2467,35 @@ struct ThemeColorSettingsPage {
     } else if (action === 1) {
       await this.moveCover(index, 0, dark);
     } else if (action === 2) {
+      // 这张封面先散成颗粒（颜色取封面主色，等操作菜单退场再开始），再从方案里删掉；删完整排封面会重建。
+      const keys = [this.coverTileKey(dark ? 'dark' : 'light', index)];
+      const ui = this.getUIContext();
+      const colors = await DeleteParticles.pickColors(ui, this.coverTileElementId(keys[0]),
+        [this.currentAccentColor(), this.primaryTextColor(), this.subTextColor()]);
+      await ListDissolve.fadeOut(ui, keys, (key: string) => {
+        this.dissolvingCoverKeys = [...this.dissolvingCoverKeys, key];
+      }, ListDissolve.particles('theme_color_settings_root', colors,
+        (key: string): string => this.coverTileElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+        (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
       await this.runAssetClear((): Promise<SchemeAssetResult> =>
         SchemeAssetService.removeCover(getContext(this), this.schemeId, index, dark), 'book');
+      setTimeout(() => {
+        this.dissolvingCoverKeys = ListDissolve.without(this.dissolvingCoverKeys, keys);
+      }, ListDissolve.CLEAR_DELAY_MS);
     }
+  }
+
+  coverTileKey(mode: string, index: number): string {
+    return `${mode}_${index}`;
+  }
+
+  coverTileElementId(key: string): string {
+    return `theme_cover_tile_${key}`;
+  }
+
+  isCoverDissolving(index: number): boolean {
+    return this.dissolvingCoverKeys.length > 0 &&
+      this.dissolvingCoverKeys.indexOf(this.coverTileKey(this.selectedMode === 'dark' ? 'dark' : 'light', index)) >= 0;
   }
 
   async moveCover(from: number, to: number, dark: boolean = this.selectedMode === 'dark'): Promise<void> {

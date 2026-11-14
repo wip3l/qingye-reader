@@ -1,6 +1,8 @@
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
+import { ListDissolve } from '../../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../common/DeleteParticles';
 
 /** 手柄负责排序，卡片其余部分仍可正常滚动、编辑和删除。 */
 @Component
@@ -16,6 +18,10 @@ export struct SourceGroupSortList {
   @State draggingGroup: string = '';
   @State dragTranslation: number = 0;
   @State savingOrder: boolean = false;
+  /** 正在消散的分组名，见 ListDissolve。 */
+  @State dissolvingGroups: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
+  private dissolveInFlight: boolean = false;
   private scroller: Scroller = new Scroller();
   private dragStartIndex: number = -1;
   private dragStartScroll: number = 0;
@@ -34,7 +40,42 @@ export struct SourceGroupSortList {
   }
 
   syncGroups(): void {
-    if (!this.draggingGroup) this.orderedGroups = this.groups.slice();
+    if (this.draggingGroup) return;
+    // 只少了几项（删除分组、清除空分组）时，被删的行先消散再补位；改名、新增、排序直接换成新列表。
+    const removed = this.orderedGroups.filter((group: string): boolean => this.groups.indexOf(group) < 0);
+    if (removed.length === 0 || this.groups.length !== this.orderedGroups.length - removed.length) {
+      this.orderedGroups = this.groups.slice();
+      return;
+    }
+    if (!this.dissolveInFlight) this.dissolveRemoved(removed);
+  }
+
+  private async dissolveRemoved(removed: string[]): Promise<void> {
+    this.dissolveInFlight = true;
+    const ui = this.getUIContext();
+    // 删除是从确认框里点的，随后还有一个进度框，等它们退场再开始。
+    await ListDissolve.fadeOut(ui, removed, (group: string) => {
+      this.dissolvingGroups = [...this.dissolvingGroups, group];
+    }, ListDissolve.particles('source_group_sort_root', [ThemeRuntime.accentColor(this.appDarkMode),
+      ThemeRuntime.primaryTextColor(this.appDarkMode), ThemeRuntime.subTextColor(this.appDarkMode)],
+      (group: string): string => this.rowElementId(group), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }),
+      ListDissolve.AFTER_DIALOG_MS + ListDissolve.CLOSE_MS);
+    this.dissolveInFlight = false;
+    ListDissolve.commit(ui, () => {
+      // 消散期间列表可能又变过，补位时以最新的为准。
+      if (!this.draggingGroup) this.orderedGroups = this.groups.slice();
+    }, () => {
+      this.dissolvingGroups = ListDissolve.without(this.dissolvingGroups, removed);
+    });
+  }
+
+  private isDissolving(group: string): boolean {
+    return this.dissolvingGroups.length > 0 && this.dissolvingGroups.indexOf(group) >= 0;
+  }
+
+  private rowElementId(group: string): string {
+    return `source_group_row_${group}`;
   }
 
   beginDrag(group: string, event: GestureEvent): void {
@@ -108,6 +149,8 @@ export struct SourceGroupSortList {
   }
 
   build() {
+    // 分组列表在弹窗里，粒子层跟着放在组件内，页面根上的那层会被弹窗盖住。
+    Stack({ alignContent: Alignment.TopStart }) {
     Scroll(this.scroller) {
       Column({ space: AppSpacing.SM }) {
         ForEach(this.orderedGroups, (group: string) => {
@@ -168,6 +211,11 @@ export struct SourceGroupSortList {
             color: ThemeRuntime.accentColor(this.appDarkMode) })
           .translate({ y: this.draggingGroup === group ? this.dragTranslation : 0 })
           .zIndex(this.draggingGroup === group ? 1 : 0)
+          .opacity(ListDissolve.opacity(this.isDissolving(group)))
+          .scale(ListDissolve.scale(this.isDissolving(group)))
+          .blur(ListDissolve.blur(this.isDissolving(group)))
+          .hitTestBehavior(this.isDissolving(group) ? HitTestMode.None : HitTestMode.Default)
+          .id(this.rowElementId(group))
         }, (group: string): string => group)
       }
       .width('100%')
@@ -181,5 +229,12 @@ export struct SourceGroupSortList {
       this.viewportTop = Number(area.globalPosition.y);
       this.viewportHeight = Number(area.height);
     })
+
+    if (this.deleteParticleBursts.length > 0) {
+      DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+    }
+    }
+    .id('source_group_sort_root')
+    .width('100%')
   }
 }

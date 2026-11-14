@@ -6,6 +6,8 @@ import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
 import { ImmersiveBackButton } from '../ImmersiveBackButton';
+import { ListDissolve } from '../../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../common/DeleteParticles';
 import { SourceActionKind, SourceActionMenu, SourceActionRunner, SourceDeleteConfirm, SourceDeleteDialogParams,
   SourceGroupDialogParams, SourceGroupEditor, SourceGroupTag, SourcePickerKit, SourcePickerSearchField,
   SourceVariableDialogParams, SourceVariableEditor
@@ -71,6 +73,9 @@ export struct SearchSourceSheet {
   /** 勾选集合不是状态变量，改动后加一，让读到它的勾选框和计数跟着刷新。 */
   @State selectionVersion: number = 0;
   @State visibleCount: number = 0;
+  /** 正在消散的书源 URL，见 ListDissolve。 */
+  @State dissolvingUrls: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   private selected: Set<string> = new Set<string>();
   private searchTexts: string[] = [];
   private displayNames: string[] = [];
@@ -110,6 +115,8 @@ export struct SearchSourceSheet {
   }
 
   build() {
+    // 面板是半模态的内容，粒子层放在面板里；页面根上的那层在面板下面。
+    Stack({ alignContent: Alignment.TopStart }) {
     Column() {
       Row({ space: AppSpacing.LG }) {
         Column({ space: AppSpacing.XS }) {
@@ -165,6 +172,14 @@ export struct SearchSourceSheet {
 
       this.bottomBar()
     }
+    .width('100%')
+    .height('100%')
+
+    if (this.deleteParticleBursts.length > 0) {
+      DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+    }
+    }
+    .id('search_source_sheet_root')
     .width('100%')
     .height('100%')
   }
@@ -350,6 +365,11 @@ export struct SearchSourceSheet {
     .alignItems(VerticalAlign.Center)
     .accessibilityText(this.displayNames[index] || this.sources[index].bookSourceUrl)
     .accessibilitySelected(this.isSelected(this.sources[index].bookSourceUrl))
+    .opacity(ListDissolve.opacity(this.isSourceDissolving(this.sources[index].bookSourceUrl)))
+    .scale(ListDissolve.scale(this.isSourceDissolving(this.sources[index].bookSourceUrl)))
+    .blur(ListDissolve.blur(this.isSourceDissolving(this.sources[index].bookSourceUrl)))
+    .hitTestBehavior(this.isSourceDissolving(this.sources[index].bookSourceUrl) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.sourceRowElementId(this.sources[index].bookSourceUrl))
     .onClick(() => this.toggleSource(index))
     .bindContextMenu(this.sourceActionMenu(index), ResponseType.LongPress,
       ImmersiveMaterialRuntime.contextMenuOptions(this.immersiveLightLevel, this.accentColor(), () => {}))
@@ -529,10 +549,11 @@ export struct SearchSourceSheet {
     return result;
   }
 
-  refreshVisible(): void {
+  refreshVisible(keepScroll: boolean = false): void {
     this.visibleIndexes = this.scopeIndexes(this.activeKey);
     this.dataSource.replace(this.visibleIndexes);
     this.visibleCount = this.visibleIndexes.length;
+    if (keepScroll) return;
     try {
       this.listScroller.scrollToIndex(0);
     } catch (e) {
@@ -664,10 +685,34 @@ export struct SearchSourceSheet {
         (dialogParams: SourceDeleteDialogParams): CustomBuilder => (): void => {
           this.sourceDeleteDialog(dialogParams);
         }, (url: string): void => {
-        this.removeSource(url);
-        this.onSourcesChanged();
+        this.dissolveSource(url);
       });
     }
+  }
+
+  /** 删掉的书源那一行先消散，再从面板里移除；确认框刚关，等它退场再开始。 */
+  async dissolveSource(url: string): Promise<void> {
+    const keys = [url];
+    const ui = this.getUIContext();
+    await ListDissolve.fadeOut(ui, keys, (key: string) => {
+      this.dissolvingUrls = [...this.dissolvingUrls, key];
+    }, ListDissolve.particles('search_source_sheet_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
+      (key: string): string => this.sourceRowElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
+    ListDissolve.commit(ui, () => {
+      this.removeSource(url);
+    }, () => {
+      this.dissolvingUrls = ListDissolve.without(this.dissolvingUrls, keys);
+    });
+    this.onSourcesChanged();
+  }
+
+  isSourceDissolving(url: string): boolean {
+    return this.dissolvingUrls.length > 0 && this.dissolvingUrls.indexOf(url) >= 0;
+  }
+
+  sourceRowElementId(url: string): string {
+    return `search_source_row_${url}`;
   }
 
   /** 改了分组的书源就地换到新分组：左栏分组、计数与可见行跟着重算，原分组空了就回到“全部”。 */
@@ -706,7 +751,8 @@ export struct SearchSourceSheet {
     this.rebuildSourceTexts();
     this.computeMatches();
     this.recount();
-    this.refreshVisible();
+    // 留在原来的滚动位置，其余行原地补位。
+    this.refreshVisible(true);
   }
 
   done(): void {

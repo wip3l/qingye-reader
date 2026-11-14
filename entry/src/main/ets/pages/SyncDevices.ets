@@ -8,6 +8,8 @@ import { CloudSyncStateStore } from '../account/CloudSyncStateStore';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -25,6 +27,9 @@ struct SyncDevicesPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @State devices: CloudSyncDevice[] = [];
+  /** 正在消散的设备 id，见 ListDissolve。 */
+  @State dissolvingKeys: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   @State currentDeviceId: string = '';
   @State loading: boolean = true;
   @State errorMessage: string = '';
@@ -72,7 +77,11 @@ struct SyncDevicesPage {
         this.titleActions()
       } })
 
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('sync_devices_root')
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
@@ -251,6 +260,11 @@ struct SyncDevicesPage {
     .backgroundColor(this.cardColor())
     .borderRadius(ThemeRuntime.cardRadius())
     .alignItems(VerticalAlign.Center)
+    .opacity(ListDissolve.opacity(this.isDeviceDissolving(device)))
+    .scale(ListDissolve.scale(this.isDeviceDissolving(device)))
+    .blur(ListDissolve.blur(this.isDeviceDissolving(device)))
+    .hitTestBehavior(this.isDeviceDissolving(device) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.deviceCardElementId(device.deviceId))
   }
 
   private isCurrentDevice(device: CloudSyncDevice): boolean {
@@ -430,13 +444,36 @@ struct SyncDevicesPage {
     if (result.index !== 1) {
       return;
     }
+    const keys = [device.deviceId];
+    // 等确认框退场再消散，同时向服务端提交；提交失败时恢复原样。
+    const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingKeys = [...this.dissolvingKeys, key];
+    }, ListDissolve.particles('sync_devices_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
+      (key: string): string => this.deviceCardElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
     try {
       await AccountCommerceApi.revokeSyncDevice(device.deviceId, AccountSessionStore.token());
-      HdsFeedback.showToast('设备已移除');
-      this.devices = this.devices.filter((item: CloudSyncDevice) => item.deviceId !== device.deviceId);
     } catch (e) {
+      await fade;
+      this.dissolvingKeys = ListDissolve.without(this.dissolvingKeys, keys);
       HdsFeedback.showToast(e instanceof Error ? `移除失败：${e.message}` : '移除设备失败');
+      return;
     }
+    await fade;
+    ListDissolve.commit(this.getUIContext(), () => {
+      this.devices = this.devices.filter((item: CloudSyncDevice) => item.deviceId !== device.deviceId);
+    }, () => {
+      this.dissolvingKeys = ListDissolve.without(this.dissolvingKeys, keys);
+    });
+    HdsFeedback.showToast('设备已移除');
+  }
+
+  isDeviceDissolving(device: CloudSyncDevice): boolean {
+    return this.dissolvingKeys.length > 0 && this.dissolvingKeys.indexOf(device.deviceId) >= 0;
+  }
+
+  deviceCardElementId(key: string): string {
+    return `sync_device_card_${key}`;
   }
 
   timeText(timestamp: number): string {

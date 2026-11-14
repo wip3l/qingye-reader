@@ -12,6 +12,8 @@ import { appDb } from '../model/data/AppDatabase';
 import { BookAnnotation } from '../model/reader/BookAnnotation';
 import { Book } from '@legado/sourceengine';
 import { BookCover } from '../components/book/BookCover';
+import { ListDissolve } from '../utils/ListDissolve';
+import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 
 /** 摘录里出现过的一本书，书名筛选条用。 */
 class ExcerptBookChip {
@@ -38,6 +40,9 @@ struct ExcerptListPage {
   /** 打开“更多”菜单的那条摘录 id，0 是都没开。 */
   @State menuId: number = 0;
   @State shelfUrls: string[] = [];
+  /** 正在消散的摘录 id（字符串），见 ListDissolve。 */
+  @State dissolvingKeys: string[] = [];
+  @State deleteParticleBursts: DeleteParticleBurst[] = [];
   /** 书架上的书，封面按书架的规则取（自定义封面、书源封面、占位）。 */
   private shelfBooks: Map<string, Book> = new Map<string, Book>();
   private loadGeneration: number = 0;
@@ -113,7 +118,12 @@ struct ExcerptListPage {
           this.pageContent()
         }
       })
+
+      if (this.deleteParticleBursts.length > 0) {
+        DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+      }
     }
+    .id('excerpt_list_root')
     .width('100%')
     .height('100%')
   }
@@ -318,7 +328,20 @@ struct ExcerptListPage {
     .padding({ left: AppSpacing.XL, right: AppSpacing.SM, top: AppSpacing.LG, bottom: AppSpacing.MD })
     .borderRadius(ThemeRuntime.largeRadius())
     .backgroundColor(ThemeRuntime.cardColor(this.darkMode))
+    .opacity(ListDissolve.opacity(this.isDissolving(item)))
+    .scale(ListDissolve.scale(this.isDissolving(item)))
+    .blur(ListDissolve.blur(this.isDissolving(item)))
+    .hitTestBehavior(this.isDissolving(item) ? HitTestMode.None : HitTestMode.Default)
+    .id(this.cardElementId(`${item.id}`))
     .onClick(() => this.openInBook(item))
+  }
+
+  isDissolving(item: BookAnnotation): boolean {
+    return this.dissolvingKeys.length > 0 && this.dissolvingKeys.indexOf(`${item.id}`) >= 0;
+  }
+
+  cardElementId(key: string): string {
+    return `excerpt_card_${key}`;
   }
 
   /** 书在书架上就和书架一样取封面；删了的书只剩书名，画占位封面并压暗。 */
@@ -422,6 +445,14 @@ struct ExcerptListPage {
 
   /** 书还在书架上只去掉摘录标记、划线留着；书已删了就整条删掉，否则没处显示。 */
   async removeExcerpt(item: BookAnnotation): Promise<void> {
+    const keys = [`${item.id}`];
+    // 从“更多”菜单里点的，等菜单收起再开始消散。
+    const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
+      this.dissolvingKeys = [...this.dissolvingKeys, key];
+    }, ListDissolve.particles('excerpt_list_root', [ThemeRuntime.accentColor(this.darkMode),
+      ThemeRuntime.primaryTextColor(this.darkMode), ThemeRuntime.subTextColor(this.darkMode)],
+      (key: string): string => this.cardElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
+      (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
     try {
       await appDb.init(getContext(this));
       if (this.onShelf(item)) {
@@ -434,10 +465,17 @@ struct ExcerptListPage {
       }
     } catch (error) {
       console.error('移出摘录失败:', error);
+      await fade;
+      this.dissolvingKeys = ListDissolve.without(this.dissolvingKeys, keys);
       HdsFeedback.showToast('移出失败，请重试');
       return;
     }
-    this.applyItems(this.items.filter((entry: BookAnnotation): boolean => entry.id !== item.id));
+    await fade;
+    ListDissolve.commit(this.getUIContext(), () => {
+      this.applyItems(this.items.filter((entry: BookAnnotation): boolean => entry.id !== item.id));
+    }, () => {
+      this.dissolvingKeys = ListDissolve.without(this.dissolvingKeys, keys);
+    });
     ReaderAnnotationShare.notifyExcerptsChanged();
     HdsFeedback.showToast('已移出摘录');
   }

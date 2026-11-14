@@ -528,6 +528,8 @@ export struct BookshelfPage {
   /** 正在消散的书：卡片淡出、缩小、模糊，动画结束后才真正从列表里拿掉。 */
   @State shelfDissolvingUrls: string[] = [];
   @State shelfDissolveBursts: DeleteParticleBurst[] = [];
+  /** 正在消散的文件夹（删除分组时）。 */
+  @State shelfDissolvingGroupIds: number[] = [];
   @StorageLink('shelfUpdateTime') @Watch('onShelfChanged') shelfUpdateTime: number = 0;
   @StorageLink('bookshelfSortMode') sortMode: string = 'recentRead';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
@@ -3912,12 +3914,59 @@ export struct BookshelfPage {
   async deleteShelfBookGroup(): Promise<void> {
     const group = this.pendingDeleteBookGroup;
     if (!group) return;
-    const db = AppDatabase.getInstance();
-    await db.deleteBookGroup(group.groupId);
-    if (this.activeShelfGroupId === group.groupId) this.activeShelfGroupId = -1;
+    // 先关掉确认框露出书架，文件夹消散与删库同时进行；播完再重读，里面的书回到未分组。
     this.closeDeleteBookGroupDialog();
+    const dissolve = this.dissolveShelfGroupFolder(group.groupId);
+    try {
+      await AppDatabase.getInstance().deleteBookGroup(group.groupId);
+    } catch (e) {
+      console.error('删除分组失败:', e);
+      await dissolve;
+      this.shelfDissolvingGroupIds = this.shelfDissolvingGroupIds.filter((id: number) => id !== group.groupId);
+      HdsFeedback.showToast('删除分组失败');
+      return;
+    }
+    if (this.activeShelfGroupId === group.groupId) this.activeShelfGroupId = -1;
+    await dissolve;
     await this.loadBooks();
+    // 文件夹格子被拿掉时还会播一段系统默认的消失转场，消散状态等它结束再清（同 commitShelfBookRemoval）。
+    setTimeout(() => {
+      this.shelfDissolvingGroupIds = this.shelfDissolvingGroupIds.filter((id: number) => id !== group.groupId);
+    }, 600);
     HdsFeedback.showToast('分组已删除，书籍已移到未分组');
+  }
+
+  isShelfGroupDissolving(groupId: number): boolean {
+    return this.shelfDissolvingGroupIds.length > 0 && this.shelfDissolvingGroupIds.indexOf(groupId) >= 0;
+  }
+
+  /** 当前页上看得见这个文件夹时让它散成颗粒（颜色取文件夹画面的主色），等淡出完再返回；看不见就直接返回。 */
+  async dissolveShelfGroupFolder(groupId: number): Promise<void> {
+    // 等确认框退场，否则消散被遮罩挡住。
+    await sleepMs(240);
+    const elementId = this.tileGroupElementId(groupId, this.shelfPageKey());
+    const bounds = this.measureTileGroupRect(elementId);
+    if (!bounds || bounds.width < 4 || bounds.height < 4) return;
+    if (this.contextViewportWidth > 0 && (bounds.x + bounds.width <= 0 || bounds.x >= this.contextViewportWidth)) return;
+    if (this.contextViewportHeight > 0 && (bounds.y + bounds.height <= 0 || bounds.y >= this.contextViewportHeight)) return;
+    const ui = this.getUIContext();
+    const burst = new DeleteParticleBurst();
+    burst.x = bounds.x;
+    burst.y = bounds.y;
+    burst.width = bounds.width;
+    burst.height = bounds.height;
+    burst.id = DeleteParticles.newId();
+    burst.colors = await DeleteParticles.pickColors(ui, elementId,
+      this.appDarkMode ? ['#C8CCD2', '#8A9099', '#5F6670'] : ['#5F6670', '#9AA0A6', '#C4C8CE']);
+    burst.count = DeleteParticles.particleCount(burst.width, burst.height, 1);
+    this.shelfDissolveBursts = [...this.shelfDissolveBursts, burst];
+    ui.animateTo({ duration: DeleteParticles.FADE_MS, curve: Curve.EaseIn }, () => {
+      this.shelfDissolvingGroupIds = [...this.shelfDissolvingGroupIds, groupId];
+    });
+    setTimeout(() => {
+      this.shelfDissolveBursts = this.shelfDissolveBursts.filter((item: DeleteParticleBurst) => item.id !== burst.id);
+    }, DeleteParticles.LAYER_MS);
+    await sleepMs(DeleteParticles.FADE_MS);
   }
 
   async assignSelectedBooksToGroup(groupId: number): Promise<void> {
@@ -5534,6 +5583,10 @@ export struct BookshelfPage {
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
+    .opacity(this.isShelfGroupDissolving(group.groupId) ? 0 : 1)
+    .scale({ x: this.isShelfGroupDissolving(group.groupId) ? 0.9 : 1, y: this.isShelfGroupDissolving(group.groupId) ? 0.9 : 1 })
+    .blur(this.isShelfGroupDissolving(group.groupId) ? 16 : 0)
+    .hitTestBehavior(this.isShelfGroupDissolving(group.groupId) ? HitTestMode.None : HitTestMode.Default)
     .gesture(
       LongPressGesture({ repeat: false })
         .onAction((event: GestureEvent) => {

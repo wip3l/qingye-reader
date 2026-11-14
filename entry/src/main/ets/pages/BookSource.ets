@@ -3731,13 +3731,15 @@ struct BookSourcePage {
         source.bookSourceGroup = '';
         await db.updateBookSourceGroupMembership(source.bookSourceUrl, '');
       }
-      this.sourceGroups = await BookSourceGroupStore.remove(getContext(this), groupName, this.sourceGroups);
+      // 分组列表留到重读完再换：分组管理里被删的那行要等进度框退场后才消散（见 SourceGroupSortList）。
+      const groups = await BookSourceGroupStore.remove(getContext(this), groupName, this.sourceGroups);
       if (this.activeSourceGroup === groupName) {
         this.activeSourceGroup = '__ungrouped__';
       }
       this.showDeleteSourceGroupDialog = false;
       this.pendingSourceGroup = '';
       await this.loadSources();
+      if (this.sourceGroups.includes(groupName)) this.sourceGroups = groups;
       HdsFeedback.showToast('分组已删除，书源已移到未分组');
     } catch (e) {
       console.error('删除书源分组失败:', e);
