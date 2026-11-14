@@ -9,7 +9,7 @@ const support = fs.readFileSync(new URL('../entry/src/main/ets/core/book/VideoPl
 const attempts = file.slice(file.indexOf('class VideoNativeAttempt'), file.indexOf('interface VideoPlayerParams'));
 const methods = file.slice(file.indexOf('struct VideoPlayerPage {'), file.indexOf('  @Builder'))
   .replace('struct VideoPlayerPage', 'class VideoPlayerPage')
-  .replace(/@(State|StorageProp|StorageLink)(\([^\n]*?\))?\s+/g, '');
+  .replace(/@(State|StorageProp|StorageLink|Watch)(\([^\n]*?\))?\s+/g, '');
 const saves = [], notices = [], requests = [], timers = new Map();
 let nextTimer = 0;
 class MediaController {

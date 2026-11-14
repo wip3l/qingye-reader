@@ -18,24 +18,36 @@ const clean = file => read(file).replace(/^import .*;\r?\n/gm, '').replace(/^exp
 const Helper = compile(clean('utils/BookshelfSortHelper.ets') + '\nBookshelfSortHelper');
 const State = compile(clean('utils/BookshelfStateStore.ets') + '\nBookshelfStateStore');
 const shelfFile = 'components/home/BookshelfPage.ets';
-const Shelf = compile(`class Shelf { ${['sortBooks', 'compareTileRootEntry'].map(n => method(shelfFile, n)).join('\n')} }; Shelf`,
-  { BookshelfSortHelper: Helper });
+const Shelf = compile(`class Shelf { ${['sortBooks', 'compareTileRootEntry', 'hasShelfBookUpdate', 'shelfUpdateSortTime']
+  .map(n => method(shelfFile, n)).join('\n')} }; Shelf`,
+  { BookshelfSortHelper: Helper, SHELF_UPDATE_BADGE_VARIABLE: 'shelfHasUpdate' });
 const shelf = new Shelf();
 shelf.compareBookName = (a, b) => a.name.localeCompare(b.name);
+const shelfBook = (name, fields = {}, vars = {}) => ({
+  name, bookUrl: name, isPinned: false, ...fields, getVariable: key => vars[key] ?? '',
+});
+const badge = { shelfHasUpdate: '1' };
 const books = [
-  { name: 'old', confirmedChapterUpdateTime: 10, latestChapterTime: 999, lastCheckTime: 999, isPinned: false },
-  { name: 'new', confirmedChapterUpdateTime: 100, latestChapterTime: 100, isPinned: false },
-  { name: 'pinned', confirmedChapterUpdateTime: 1, isPinned: true },
-  { name: 'imported', latestChapterTime: 9999, lastCheckTime: 9999, isPinned: false },
+  shelfBook('old', { confirmedChapterUpdateTime: 10, latestChapterTime: 999, lastCheckTime: 999 }, badge),
+  shelfBook('new', { confirmedChapterUpdateTime: 100, latestChapterTime: 100 }, badge),
+  shelfBook('pinned', { confirmedChapterUpdateTime: 1, isPinned: true }),
+  shelfBook('readLong', { confirmedChapterUpdateTime: 999 }, { lastReadTime: '50' }),
+  shelfBook('readRecently', { latestChapterTime: 9999, lastCheckTime: 9999 }, { lastReadTime: '900' }),
 ];
 assert.equal(State.normalizeSortMode('recentUpdate'), 'recentUpdate');
 assert.equal(State.normalizeSortMode('bad'), 'recentRead');
-assert.deepEqual(Array.from(shelf.sortBooks(books, 'recentUpdate'), b => b.name), ['pinned', 'new', 'old', 'imported']);
+// 带未读更新角标的按查到更新的时间排在前面；读过新章节（没有角标）的回到按最近阅读排的那一段。
+assert.deepEqual(Array.from(shelf.sortBooks(books, 'recentUpdate'), b => b.name),
+  ['pinned', 'new', 'old', 'readRecently', 'readLong']);
 assert.equal(books[0].name, 'old', 'sorting does not mutate the source snapshot');
 assert(shelf.compareTileRootEntry({ updateTime: 100, pinned: false }, { updateTime: 10, pinned: false }, 'recentUpdate') < 0);
 assert(shelf.compareTileRootEntry({ updateTime: 1, pinned: true }, { updateTime: 100, pinned: false }, 'recentUpdate') < 0);
+assert(shelf.compareTileRootEntry({ updateTime: 0, readTime: 90, addTime: 0, pinned: false, name: 'b' },
+  { updateTime: 0, readTime: 10, addTime: 0, pinned: false, name: 'a' }, 'recentUpdate') < 0,
+  'groups without unread updates fall back to recent read');
 assert.equal(Helper.getBookUpdateTime({ confirmedChapterUpdateTime: Infinity, latestChapterTime: 999 }), 0);
-const sameBatch = [{ name: 'B', confirmedChapterUpdateTime: 500 }, { name: 'A', confirmedChapterUpdateTime: 500 }];
+const sameBatch = [shelfBook('B', { confirmedChapterUpdateTime: 500 }, { ...badge, lastReadTime: '10' }),
+  shelfBook('A', { confirmedChapterUpdateTime: 500 }, { ...badge, lastReadTime: '20' })];
 assert.deepEqual(Array.from(shelf.sortBooks(sameBatch, 'recentUpdate'), b => b.name), ['A', 'B']);
 assert.deepEqual(Array.from(shelf.sortBooks([...sameBatch].reverse(), 'recentUpdate'), b => b.name), ['A', 'B']);
 
