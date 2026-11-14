@@ -3,6 +3,7 @@ import { image } from '@kit.ImageKit';
 import { faceDetector } from '@kit.CoreVisionKit';
 import { abilityAccessCtrl, common, PermissionRequestResult, Permissions } from '@kit.AbilityKit';
 import lazy { FaceEyeLandmarks, FaceEyeSample } from '@legado/aiengine';
+import { PlatformInfo } from '../../platform/PlatformInfo';
 import {
   defaultGazeUpCalibration,
   GazeUpCalibration,
@@ -442,7 +443,8 @@ export class EyeTurnController {
   }
 
   async start(context: common.UIAbilityContext, surfaceId: string): Promise<void> {
-    if (!surfaceId) return;
+    // 安卓上没有端侧推理和相机流水线，首版不带眼动翻页（同步来的开关也不生效）。
+    if (!surfaceId || PlatformInfo.ANDROID) return;
     if (this.running && this.surfaceId === surfaceId) return;
     if (this.starting) return;
     this.starting = true;

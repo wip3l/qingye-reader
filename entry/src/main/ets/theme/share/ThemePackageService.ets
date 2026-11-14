@@ -1,7 +1,7 @@
 import { common, Context } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { bundleManager } from '@kit.AbilityKit';
-import { systemShare } from '@kit.ShareKit';
+import { shareFiles } from '../../platform/Share';
 import { uniformTypeDescriptor } from '@kit.ArkData';
 import fs from '@ohos.file.fs';
 import { fileUri } from '../../platform/FileUri';
@@ -462,16 +462,7 @@ export class ThemePackageService {
       utd = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(QYTHEME_EXTENSION, 'general.zip-archive');
     } catch (_) {
     }
-    const data = new systemShare.SharedData({
-      utd: utd,
-      uri: fileUri.getUriFromPath(sharePath),
-      title: result.fileName
-    });
-    const controller = new systemShare.ShareController(data);
-    await controller.show(context, {
-      previewMode: systemShare.SharePreviewMode.DEFAULT,
-      selectionMode: systemShare.SelectionMode.SINGLE
-    });
+    await shareFiles(context, [{ path: sharePath, utd: utd, title: result.fileName }], false);
   }
 
   static discardExport(result: ThemeExportResult | null): void {

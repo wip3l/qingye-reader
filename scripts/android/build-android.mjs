@@ -156,6 +156,9 @@ const MODULES = [
 ];
 syncDir('AppScope');
 for (const module of MODULES) syncDir(module.dir);
+// 安卓首版不带眼动翻页（EyeTurnController 在安卓上不启动），人脸关键点模型（约 7 MB）不打进包。
+const ANDROID_EXCLUDED_ASSETS = ['harmony-book-ai-engine/aiengine/src/main/resources/rawfile/face-landmarks'];
+for (const relative of ANDROID_EXCLUDED_ASSETS) fs.rmSync(path.join(GEN, relative), { recursive: true, force: true });
 fs.copyFileSync(path.join(REPO, 'oh-package.json5'), path.join(GEN, 'oh-package.json5'));
 
 const compatibleSdk = readJson5Field(path.join(REPO, 'build-profile.json5'), 'compatibleSdkVersion');

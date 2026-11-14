@@ -6,6 +6,17 @@ plugins {
 def qingyeVersionCode = (project.findProperty('qingyeVersionCode') ?: '1') as Integer
 def qingyeVersionName = project.findProperty('qingyeVersionName') ?: '0.0.0'
 
+// 正式签名从环境变量读，密钥不进仓库。四个都设了才用正式签名，否则退回调试签名（只适合自测）。
+def releaseStore = System.getenv('QINGYE_ANDROID_KEYSTORE')
+def releaseStorePassword = System.getenv('QINGYE_ANDROID_KEYSTORE_PASSWORD')
+def releaseKeyAlias = System.getenv('QINGYE_ANDROID_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('QINGYE_ANDROID_KEY_PASSWORD')
+def hasReleaseSigning = releaseStore && releaseStorePassword && releaseKeyAlias && releaseKeyPassword &&
+        file(releaseStore).exists()
+if (!hasReleaseSigning) {
+    logger.warn('未配置 QINGYE_ANDROID_KEYSTORE 等环境变量，release 包使用调试签名，不能发布')
+}
+
 android {
     compileSdkVersion 33
     buildToolsVersion "30.0.3"
@@ -19,9 +30,23 @@ android {
         versionName qingyeVersionName
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseStore)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+                enableV1Signing true
+                enableV2Signing true
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
+            // Java 代码只有几个原生桥，开混淆收益很小；规则已写在 proguard-rules.pro，真机验证后再开。
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }

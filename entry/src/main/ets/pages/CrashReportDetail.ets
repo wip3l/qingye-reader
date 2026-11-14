@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { promptAction, router } from '@kit.ArkUI';
 import { fileUri } from '../platform/FileUri';
-import { systemShare } from '@kit.ShareKit';
+import { shareFiles } from '../platform/Share';
 import { uniformTypeDescriptor } from '@kit.ArkData';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
@@ -119,12 +119,7 @@ struct CrashReportDetailPage {
       const path = CrashReportStore.exportText(context, this.reportId);
       const utd = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension('.txt',
         uniformTypeDescriptor.UniformDataType.PLAIN_TEXT);
-      const data = new systemShare.SharedData({ utd: utd, uri: fileUri.getUriFromPath(path) });
-      const controller = new systemShare.ShareController(data);
-      await controller.show(context, {
-        previewMode: systemShare.SharePreviewMode.DETAIL,
-        selectionMode: systemShare.SelectionMode.SINGLE
-      });
+      await shareFiles(context, [{ path: path, utd: utd }], true);
     } catch (error) {
       console.warn('分享崩溃记录失败:', error);
       HdsFeedback.showToast('分享失败，请稍后再试');

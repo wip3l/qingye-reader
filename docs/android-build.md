@@ -101,3 +101,18 @@ node scripts/android/build-android.mjs --abi arm64-v8a
 
 - `android/project/app/build.gradle` 的 `applicationId` 必须等于 `AppScope/app.json5` 的 `bundleName`，否则运行时找不到页面。
 - 安卓模拟器要用本机显卡渲染（`-gpu host`），软件渲染下打开阅读页模拟器会崩溃。
+
+## 发布
+
+- **签名**：设置环境变量 `QINGYE_ANDROID_KEYSTORE`（keystore 路径）、`QINGYE_ANDROID_KEYSTORE_PASSWORD`、
+  `QINGYE_ANDROID_KEY_ALIAS`、`QINGYE_ANDROID_KEY_PASSWORD` 后构建即用正式签名（V1 + V2）；缺任何一个都退回调试签名，
+  Gradle 会给出警告，这样的包不能发布。
+- **版本号**：`versionCode`、`versionName` 由构建脚本从 `AppScope/app.json5` 读取，与鸿蒙端一致。
+- **混淆**：`minifyEnabled` 暂未开启（Java 代码只有几个原生桥）。规则已写在 `proguard-rules.pro`：原生桥的公开方法由
+  ArkTS 按名字反射调用，必须保留。
+- **包体积**：arm64 约 102 MB，其中 ArkUI-X 引擎库 `libarkui_android.so` 压缩后约 36 MB。只发 arm64；眼动翻页用的人脸关键点
+  模型（约 7 MB）不打进安卓包。
+- **CI**：`.github/workflows/quality.yml` 跑 `scripts/android/platform-parity-check.mjs`，检查平台层两份实现一一对应、原生桥已注册、
+  共用代码没有绕过平台层直接调系统能力。完整的安卓构建需要 ArkUI-X SDK 和 DevEco Studio 工具链，目前只能在本机或自建构建机上跑。
+- **构建工具的绕过**（跟进 ArkUI-X 正式版后复查）：打 x86_64 包时补拷 `libhilog.so`；每次全量编译 ArkTS 以免插件库漏打；
+  `ace` 在 `useNormalizedOHMUrl` 下要求 `.arkui-x/ios` 目录存在。

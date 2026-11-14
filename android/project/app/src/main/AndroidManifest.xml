@@ -37,6 +37,13 @@
             </intent-filter>
         </activity>
 
+        <!-- 分享面板读取沙箱文件用（ShareBridge）。 -->
+        <provider
+            android:name=".ShareProvider"
+            android:authorities="io.legado.read.share"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <service
             android:name=".PlaybackService"
             android:exported="false"

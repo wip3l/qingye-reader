@@ -1,21 +1,18 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# 混淆规则。目前 release 没有开启 minifyEnabled（见 build.gradle），先把必须保留的类列好，开启时不会出错。
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# 原生桥：ArkTS 侧按方法名反射调用 BridgePlugin 子类的公开方法，名字不能改、方法不能删。
+-keep class * extends ohos.ace.adapter.capability.bridge.BridgePlugin {
+    public <methods>;
+}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# ArkUI-X 适配层经 JNI 和反射访问自己的类（含按类名查找的 <模块名><Ability 名>Activity）。
+-keep class ohos.** { *; }
+-keep class io.legado.read.EntryEntryAbilityActivity { *; }
+-keep class io.legado.read.MyApplication { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# 清单里声明的组件
+-keep class io.legado.read.PlaybackService
+-keep class io.legado.read.ShareProvider
+
+# 保留行号，方便看崩溃堆栈
+-keepattributes SourceFile,LineNumberTable
