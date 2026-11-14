@@ -3,7 +3,7 @@ import preferences from '@ohos.data.preferences';
 import { HexColor } from './HexColor';
 
 /**
- * 首页底栏设置：样式（悬浮/平铺）、平铺底栏的不透明度、磨砂与滑动收起、第四个页签（无/听/足迹），显式落盘；
+ * 首页底栏设置：样式（悬浮/平铺）、悬浮底栏是否自适应宽度、平铺底栏的不透明度、磨砂与滑动收起、第四个页签（无/听/足迹），显式落盘；
  * AppStorage 只负责通知界面。悬浮底栏要系统支持 HDS 页签，不支持时首页一律用平铺底栏，存的值不改。
  */
 export class HomeTabBarSettingsStore {
@@ -16,6 +16,11 @@ export class HomeTabBarSettingsStore {
   static readonly KEY_FLAT_FROSTED: string = 'homeTabBarFlatFrosted';
   /** 平铺底栏随列表上滑收起、回到上方再出来（和悬浮底栏一样）；默认关，底栏固定显示。 */
   static readonly KEY_FLAT_AUTO_HIDE: string = 'homeTabBarFlatAutoHide';
+  /**
+   * 悬浮底栏宽度随页签数变化（系统默认）；关掉后不论三项还是四项都和朗读伴生条同宽，
+   * 开始/停止朗读时底栏不再变宽变窄。默认开。
+   */
+  static readonly KEY_FLOATING_ADAPTIVE: string = 'homeTabBarFloatingAdaptive';
   static readonly STYLE_FLOATING: string = 'floating';
   static readonly STYLE_FLAT: string = 'flat';
   /** 早先短暂存在过的全透明样式，读到时迁成平铺 + 不透明度 0。 */
@@ -64,6 +69,7 @@ export class HomeTabBarSettingsStore {
       HomeTabBarSettingsStore.KEY_FLAT_OPACITY, HomeTabBarSettingsStore.FLAT_OPACITY_DEFAULT)));
     const frosted = (await store.get(HomeTabBarSettingsStore.KEY_FLAT_FROSTED, false)) === true;
     const autoHide = (await store.get(HomeTabBarSettingsStore.KEY_FLAT_AUTO_HIDE, false)) === true;
+    const floatingAdaptive = (await store.get(HomeTabBarSettingsStore.KEY_FLOATING_ADAPTIVE, true)) !== false;
     if (style === HomeTabBarSettingsStore.LEGACY_STYLE_TRANSPARENT) {
       opacity = 0;
       await store.put(HomeTabBarSettingsStore.KEY_STYLE, HomeTabBarSettingsStore.STYLE_FLAT);
@@ -77,6 +83,7 @@ export class HomeTabBarSettingsStore {
     AppStorage.setOrCreate(HomeTabBarSettingsStore.KEY_FLAT_OPACITY, opacity);
     AppStorage.setOrCreate(HomeTabBarSettingsStore.KEY_FLAT_FROSTED, frosted);
     AppStorage.setOrCreate(HomeTabBarSettingsStore.KEY_FLAT_AUTO_HIDE, autoHide);
+    AppStorage.setOrCreate(HomeTabBarSettingsStore.KEY_FLOATING_ADAPTIVE, floatingAdaptive);
   }
 
   static saveStyle(context: Context, style: string): Promise<void> {
@@ -100,6 +107,10 @@ export class HomeTabBarSettingsStore {
 
   static saveFlatAutoHide(context: Context, autoHide: boolean): Promise<void> {
     return HomeTabBarSettingsStore.save(context, HomeTabBarSettingsStore.KEY_FLAT_AUTO_HIDE, autoHide);
+  }
+
+  static saveFloatingAdaptive(context: Context, adaptive: boolean): Promise<void> {
+    return HomeTabBarSettingsStore.save(context, HomeTabBarSettingsStore.KEY_FLOATING_ADAPTIVE, adaptive);
   }
 
   private static save(context: Context, key: string, value: string | number | boolean): Promise<void> {

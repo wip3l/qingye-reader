@@ -37,6 +37,7 @@ struct AppearanceSettingsPage {
   @StorageProp('homeTabBarFlatOpacity') homeTabBarFlatOpacity: number = 100;
   @StorageProp('homeTabBarFlatFrosted') homeTabBarFlatFrosted: boolean = false;
   @StorageProp('homeTabBarFlatAutoHide') homeTabBarFlatAutoHide: boolean = false;
+  @StorageProp('homeTabBarFloatingAdaptive') homeTabBarFloatingAdaptive: boolean = true;
   /** 网页解析关闭时首页没有发现页签，示意条和说明跟着变。 */
   @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
   /** 拖动不透明度滑杆时的临时值，-1 表示没在拖。 */
@@ -140,6 +141,15 @@ struct AppearanceSettingsPage {
     Column() {
       SettingRow({ title: '底栏样式', description: this.tabBarStyleDescription() }) {
         this.tabBarStyleSelect()
+      }
+      if (!this.flatTabBarInUse()) {
+        SettingSwitchRow({
+          title: '自适应宽度',
+          description: this.homeTabBarFloatingAdaptive ? '底栏宽度随项目数变化，三项时更窄' :
+            '底栏两侧留出固定边距，和朗读伴生条一样宽',
+          isOn: this.homeTabBarFloatingAdaptive,
+          onChange: (value: boolean) => this.setFloatingAdaptive(value)
+        })
       }
       if (this.flatTabBarInUse()) {
         this.flatOpacityRow()
@@ -390,6 +400,14 @@ struct AppearanceSettingsPage {
     if (frosted === this.homeTabBarFlatFrosted) return;
     HomeTabBarSettingsStore.saveFlatFrosted(getContext(this), frosted).catch((error: Error) => {
       console.warn('保存底栏磨砂设置失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
+  }
+
+  setFloatingAdaptive(adaptive: boolean): void {
+    if (adaptive === this.homeTabBarFloatingAdaptive) return;
+    HomeTabBarSettingsStore.saveFloatingAdaptive(getContext(this), adaptive).catch((error: Error) => {
+      console.warn('保存底栏自适应宽度设置失败:', error);
       HdsFeedback.showToast('保存失败，请重试');
     });
   }

@@ -47,6 +47,7 @@ struct Index {
   @StorageProp('homeTabBarFlatFrosted') homeTabBarFlatFrosted: boolean = false;
   /** 平铺底栏滑动收起：打开后和悬浮底栏一样，列表上滑过阈值收起、回到上方再出来。 */
   @StorageProp('homeTabBarFlatAutoHide') @Watch('onFlatAutoHideChanged') homeTabBarFlatAutoHide: boolean = false;
+  @StorageProp('homeTabBarFloatingAdaptive') homeTabBarFloatingAdaptive: boolean = true;
   /** 第四个页签：none / listen / footprint，放在发现和我的之间。 */
   @StorageProp('homeExtraTab') @Watch('onHomeExtraTabChanged') homeExtraTab: string = 'none';
   /** 我的 › 在线阅读：网页解析关闭时没有发现页签和搜索层，后面的页签各往前挪一位。 */
@@ -1025,8 +1026,10 @@ struct Index {
     return (this.globalTtsViewportWidth - this.globalTtsRowWidth()) / 2;
   }
 
+  /** 悬浮底栏宽度：朗读时或关了“自适应宽度”都和伴生条同宽；否则交给系统按页签数决定。 */
   globalTtsTabBarWidth(): HdsBarWidthRangeOptions | undefined {
-    if (!this.globalTtsActive || this.homeTabBarHidden()) return undefined;
+    if (this.homeTabBarHidden()) return undefined;
+    if (!this.globalTtsActive && this.homeTabBarFloatingAdaptive) return undefined;
     const width = this.globalTtsRowWidth();
     const options: HdsBarWidthRangeOptions = { smallWidth: width, mediumWidth: width, largeWidth: width };
     return options;
