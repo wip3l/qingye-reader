@@ -45,6 +45,7 @@ import { BookshelfDisplaySettingsStore } from '../../utils/BookshelfDisplaySetti
 import { BookshelfStateStore } from '../../utils/BookshelfStateStore';
 import { SearchExplorePendingBook } from '../../utils/SearchExplorePendingBook';
 import { BookshelfSortHelper } from '../../utils/BookshelfSortHelper';
+import { ShelfCoverSlots } from '../../utils/ShelfCoverSlots';
 import { RecentReadCarousel } from './RecentReadCarousel';
 import { ShelfReadingNoteCard } from './ShelfReadingNoteCard';
 import { ShelfGreetingEditor } from './ShelfGreetingEditor';
@@ -790,8 +791,12 @@ export struct BookshelfPage {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
       await PrivateShelfStore.load(getContext(this));
-      const loadedBooks = SearchExplorePendingBook.filterShelfBooks(await db.getAllBooks());
+      const storedBooks = await db.getAllBooks();
+      const loadedBooks = SearchExplorePendingBook.filterShelfBooks(storedBooks);
       const loadedGroups = await db.getCustomBookGroups();
+      // 在书架首次显示前排好“固定”封面序号；暂时隐藏的网页书源书也算在内，免得开关一次就重新编号。
+      await ShelfCoverSlots.sync(getContext(this),
+        storedBooks.filter((book: Book) => !SearchExplorePendingBook.isPendingAddToShelf(book)));
       if (loadSerial !== this.shelfLoadSerial) return;
       if (!this.shelfStateRestored) {
         try {

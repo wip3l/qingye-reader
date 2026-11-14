@@ -1,5 +1,6 @@
 import { Book } from '@legado/sourceengine';
 import { BookDisplayHelper } from './BookDisplayHelper';
+import { ShelfCoverSlots } from './ShelfCoverSlots';
 
 export class CoverAlbum {
   id: string = '';
@@ -90,13 +91,13 @@ export class CoverGallerySettings {
     // 书架书都有 bookUrl；临时拼的书没有时退到书名作者，免得“固定”模式全部落到同一张。
     const seed = book.bookUrl || `${book.name}|${book.author}`;
     if (emptyOnly && sourceCovers.length > 0) {
-      return CoverGallerySettings.applyCoverMode(sourceCovers, coverMode, seed);
+      return CoverGallerySettings.applyCoverMode(sourceCovers, coverMode, seed, book);
     }
     if (!album || album.covers.length === 0 || !CoverGallerySettings.appliesToBook(book.bookUrl, applyScope, targetBooksRaw)) {
-      return CoverGallerySettings.applyCoverMode(sourceCovers, coverMode, seed);
+      return CoverGallerySettings.applyCoverMode(sourceCovers, coverMode, seed, book);
     }
     const covers = ignoreSourceCover ? album.covers : CoverGallerySettings.cleanCovers([...sourceCovers, ...album.covers]);
-    return CoverGallerySettings.applyCoverMode(covers, coverMode, seed);
+    return CoverGallerySettings.applyCoverMode(covers, coverMode, seed, book);
   }
 
   static parseTargetBooks(raw: string): string[] {
@@ -148,18 +149,20 @@ export class CoverGallerySettings {
     return CoverGallerySettings.parseTargetBooks(targetBooksRaw).includes(bookUrl);
   }
 
-  /** 封面模式：sequence 轮播全部、random 每小时换一张、fixed 每本书固定一张（按书算哈希，不随时间变）。 */
+  /** 封面模式：sequence 轮播全部、random 每小时换一张、fixed 每本书固定一张（书架上的书按加入先后的序号轮流分，见 ShelfCoverSlots；其余按书算哈希）。 */
   static isFixedMode(coverMode: string): boolean {
     return coverMode === 'fixed';
   }
 
-  private static applyCoverMode(covers: string[], coverMode: string, seed: string): string[] {
+  private static applyCoverMode(covers: string[], coverMode: string, seed: string, book: Book): string[] {
     const cleaned = CoverGallerySettings.cleanCovers(covers);
     if (cleaned.length <= 1) {
       return cleaned;
     }
     if (CoverGallerySettings.isFixedMode(coverMode)) {
-      return [cleaned[Math.abs(CoverGallerySettings.hashText(seed)) % cleaned.length]];
+      const slot = ShelfCoverSlots.slotOf(book);
+      const index = slot >= 0 ? slot : Math.abs(CoverGallerySettings.hashText(seed));
+      return [cleaned[index % cleaned.length]];
     }
     if (coverMode !== 'random') {
       return cleaned;

@@ -39,6 +39,7 @@ export struct BookCover {
   @StorageProp('bookshelfCoverMode') @Watch('refreshCovers') coverMode: string = 'sequence';
   @StorageProp('appThemeBookCoverEnabled') @Watch('refreshCovers') themeCoverEnabled: boolean = false;
   @StorageProp('themeRevision') @Watch('refreshCovers') themeRevision: number = 0;
+  @StorageProp('shelfCoverSlotRevision') @Watch('refreshCovers') shelfCoverSlotRevision: number = 0;
   @StorageProp('shelfUpdateTime') @Watch('onBookChanged') shelfUpdateTime: number = 0;
   @StorageProp('bookshelfDarkCoverDim') darkCoverDim: boolean = false;
   @StorageProp('bookshelfDarkCoverDimLevel') darkCoverDimLevel: number = 20;

@@ -2,6 +2,7 @@ import { Book } from '@legado/sourceengine';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { CoverGallerySettings } from './CoverGallerySettings';
+import { ShelfCoverSlots } from './ShelfCoverSlots';
 
 /** 各页面共用主题封面的顺序和轮播间隔。 */
 export class ThemeBookCoverSettings {
@@ -17,7 +18,7 @@ export class ThemeBookCoverSettings {
   }
 
   /**
-   * “固定”模式每本书只留轮播的首张，和静态载体（卡片、媒体信息）取的是同一张。
+   * “固定”模式每本书只留一张：书架上的书按加入先后的序号轮流分（见 ShelfCoverSlots），其余取轮播首张。
    * 起始序号只由书决定，浅深两套封面张数相同时同一本书在两种模式下落在同一序号上。
    */
   static coversForAsset(book: Book, assetId: string, darkMode: boolean,
@@ -26,7 +27,10 @@ export class ThemeBookCoverSettings {
     if (covers.length <= 1) return covers;
     const seed = ThemeBookCoverSettings.seed(book);
     const start = seed % covers.length;
-    if (CoverGallerySettings.isFixedMode(coverMode)) return [covers[start]];
+    if (CoverGallerySettings.isFixedMode(coverMode)) {
+      const slot = ShelfCoverSlots.slotOf(book);
+      return [covers[slot >= 0 ? slot % covers.length : start]];
+    }
     const result: ResourceStr[] = [];
     const direction = seed % 2 === 0 ? 1 : covers.length - 1;
     for (let index = 0; index < covers.length; index++) {
