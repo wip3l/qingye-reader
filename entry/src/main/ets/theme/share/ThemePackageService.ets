@@ -1179,6 +1179,16 @@ export class ThemePackageService {
           }
         }
       }
+      // 标题强调的气泡样式用不了时同样改回跟随（不另列提示）。
+      const title = record['title'];
+      if (title && typeof title === 'object') {
+        const titleRecord = title as Record<string, Object>;
+        const titleStyle = typeof titleRecord['bubbleStyle'] === 'string' ? titleRecord['bubbleStyle'] as string : '';
+        if (titleStyle && titleStyle !== 'emphasis' && !titleStyle.startsWith(`${ownThemeId}:`) &&
+          !ThemeAccessPolicy.canUseBubbleStyle(titleStyle)) {
+          titleRecord['bubbleStyle'] = '';
+        }
+      }
       const style = typeof record['bubbleStyle'] === 'string' ? record['bubbleStyle'] as string : '';
       if (!style || style === ownThemeId || ThemeAccessPolicy.canUseBubbleStyle(style)) continue;
       record['bubbleStyle'] = '';

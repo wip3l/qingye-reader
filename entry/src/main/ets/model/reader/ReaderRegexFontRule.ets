@@ -1,7 +1,8 @@
 import { ThemeAccessPolicy } from '../../account/ThemeAccessPolicy';
 import { ReaderFontWeight } from '../../core/reader/ReaderFontWeight';
 import { HexColor } from '../../utils/HexColor';
-import { isPackThemeId } from '../../theme/share/ThemePackageFormat';
+import { isPackThemeId, TITLE_BUBBLE_SAME_AS_EMPHASIS } from '../../theme/share/ThemePackageFormat';
+import { ThemeTitleEmphasisTokens } from '../../theme/ThemeModels';
 
 export class ReaderRegexFontRule {
   id: string = '';
@@ -136,7 +137,8 @@ export class ReaderRegexFontCodec {
 
   static normalizeEmphasisMode(mode: string, legacyEnabled: boolean = false): string {
     const value = (mode || '').trim();
-    if (value === 'inherit' || value === 'none' || value === 'custom') {
+    // theme 只出现在标题强调里：跟随主题设的标题强调（见 ReaderTitleEmphasis）。
+    if (value === 'inherit' || value === 'none' || value === 'custom' || value === ReaderTitleEmphasis.THEME) {
       return value;
     }
     if (value === 'text' || value === 'highlight' || value === 'bubble' || value === 'accent') {
@@ -220,6 +222,59 @@ export class ReaderRegexEmphasisContext {
   surfaceColor: string = '#FFFFFF';
   normalTextColor: string = '#1F1F1F';
   darkMode: boolean = false;
+}
+
+/** 一次标题强调要用的规则和上下文（交给 ReaderRegexBubbleStyleResolver.resolve）。 */
+export class ReaderTitleEmphasisPlan {
+  rule: ReaderRegexFontRule;
+  context: ReaderRegexEmphasisContext;
+
+  constructor(rule: ReaderRegexFontRule, context: ReaderRegexEmphasisContext) {
+    this.rule = rule;
+    this.context = context;
+  }
+}
+
+/**
+ * 标题强调的四个选项：theme 跟随主题设的标题强调（主题没设时标题沿用正则效果）、inherit 同正文强调、
+ * none 无强调、custom 自定义。阅读页和各处预览都走这里，保证同一套结果。
+ */
+export class ReaderTitleEmphasis {
+  static readonly THEME: string = 'theme';
+
+  /** 不画标题强调（标题沿用正则规则的效果）时返回 null。 */
+  static plan(rule: ReaderRegexFontRule, themeTitle: ThemeTitleEmphasisTokens | null,
+    base: ReaderRegexEmphasisContext): ReaderTitleEmphasisPlan | null {
+    const mode = (rule.emphasisMode || '').trim();
+    if (mode === 'none') return null;
+    if (mode !== ReaderTitleEmphasis.THEME) return new ReaderTitleEmphasisPlan(rule, base);
+    const themeMode = themeTitle ? (themeTitle.mode || '').trim() : '';
+    if (!themeTitle || (themeMode !== 'text' && themeMode !== 'highlight' && themeMode !== 'bubble')) return null;
+    const context = new ReaderRegexEmphasisContext();
+    context.inheritedMode = themeMode;
+    const style = (themeTitle.bubbleStyle || '').trim();
+    context.inheritedBubbleStyleId = !style || style === TITLE_BUBBLE_SAME_AS_EMPHASIS ? base.inheritedBubbleStyleId : style;
+    context.inheritedColor = themeTitle.color || base.inheritedColor;
+    context.inheritedTextColor = themeTitle.textColor || base.inheritedTextColor;
+    context.accentColor = base.accentColor;
+    context.surfaceColor = base.surfaceColor;
+    context.normalTextColor = base.normalTextColor;
+    context.darkMode = base.darkMode;
+    const follow = ReaderRegexFontCodec.cloneRule(rule);
+    follow.emphasisMode = 'inherit';
+    follow.bubbleStyleId = 'inherit';
+    return new ReaderTitleEmphasisPlan(follow, context);
+  }
+
+  /** 设置页“跟随主题”下面那行：当前主题给标题设了什么。 */
+  static describe(themeTitle: ThemeTitleEmphasisTokens | null): string {
+    const mode = themeTitle ? (themeTitle.mode || '').trim() : '';
+    if (mode === 'text') return '当前主题：仅文字色';
+    if (mode === 'highlight') return '当前主题：高亮底色';
+    if (mode === 'bubble') return '当前主题：气泡';
+    if (mode === 'none') return '当前主题：标题不强调';
+    return '当前主题没有设置，标题保持原样';
+  }
 }
 
 export class ReaderResolvedRegexEmphasis {

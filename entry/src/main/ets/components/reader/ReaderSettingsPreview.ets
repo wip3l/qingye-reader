@@ -13,7 +13,7 @@ import { ReaderInfoBarClock } from '../../core/reader/ReaderInfoBarClock';
 import { ReaderHorizontalMargin } from '../../core/reader/ReaderHorizontalMargin';
 import { ReaderTitleStyleCodec } from '../../model/reader/ReaderTitleStyle';
 import { ReaderRegexBubbleStyleResolver, ReaderRegexEmphasisContext, ReaderRegexFontCodec,
-  ReaderRegexFontRule, ReaderRegexLegacySettings } from '../../model/reader/ReaderRegexFontRule';
+  ReaderRegexFontRule, ReaderRegexLegacySettings, ReaderTitleEmphasis } from '../../model/reader/ReaderRegexFontRule';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 import { ThemePackRegistry } from '../../theme/ThemePackRegistry';
@@ -132,8 +132,8 @@ export struct ReaderSettingsPreview {
   }
 
   spanStyle(rule: ReaderRegexFontRule | null, fontSize: number, family: string,
-    fontWeight: number): ReaderV2SpanStyleRange {
-    const resolved = ReaderRegexBubbleStyleResolver.resolve(rule, this.emphasisContext());
+    fontWeight: number, context: ReaderRegexEmphasisContext | null = null): ReaderV2SpanStyleRange {
+    const resolved = ReaderRegexBubbleStyleResolver.resolve(rule, context || this.emphasisContext());
     const ui = this.getUIContext();
     const style = new ReaderV2SpanStyleRange();
     style.fontSizePx = ui.fp2px(fontSize);
@@ -227,11 +227,14 @@ export struct ReaderSettingsPreview {
         'preview:paragraph', '段评示例')).join('\n');
     config.document = ReaderV2DocumentParser.parse(SETTINGS_PREVIEW_TITLE + '\n' + body,
       0, SETTINGS_PREVIEW_TITLE, [], title);
-    if (title.emphasis.emphasisMode !== 'none') {
+    const titlePlan = ReaderTitleEmphasis.plan(title.emphasis, ThemeRuntime.titleEmphasisTokens(this.appDarkMode),
+      this.emphasisContext());
+    if (titlePlan) {
       for (const block of config.document.blocks) {
         if (!block.title) continue;
         const fontSize = this.settings.titleFontSize * (block.titleSegment > 0 ? title.secondaryScale : 1);
-        const style = this.spanStyle(title.emphasis, fontSize, input.titleFontFamily, this.settings.titleFontWeight);
+        const style = this.spanStyle(titlePlan.rule, fontSize, input.titleFontFamily, this.settings.titleFontWeight,
+          titlePlan.context);
         style.start = block.displayStart;
         style.end = block.displayEnd;
         style.repeatCaps = true;

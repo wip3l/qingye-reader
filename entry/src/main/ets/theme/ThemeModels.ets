@@ -112,6 +112,18 @@ export class ThemeColorOverrides {
   dangerColor: string = '';
 }
 
+/**
+ * 标题强调。mode 为空表示主题不设置（标题保持原样）；bubbleStyle 为 'emphasis' 时和正文强调用同一套气泡，
+ * pack:<id>:title 是主题包里的标题气泡（端饰与边框），空串按所选强调方式推导。方案覆盖里 mode 还可以是 'off'：
+ * 来源主题设了标题强调时强制改回不设置。
+ */
+export class ThemeTitleEmphasisTokens {
+  mode: string = '';
+  bubbleStyle: string = '';
+  color: string = '';
+  textColor: string = '';
+}
+
 /** 自定义方案对“强调气泡”来源的覆盖：mode / bubbleStyle / 颜色为空都表示跟随所选主题。 */
 export class ThemeEmphasisOverrides {
   mode: string = '';
@@ -120,6 +132,8 @@ export class ThemeEmphasisOverrides {
   textColor: string = '';
   // 段评气泡的逐项覆盖，字段为空跟随来源主题；本机旧设置里没有。
   comment: ThemePackageCommentBubble = new ThemePackageCommentBubble();
+  // 标题强调的逐项覆盖，字段为空跟随来源主题；本机旧设置里没有。
+  title: ThemeTitleEmphasisTokens = new ThemeTitleEmphasisTokens();
 }
 
 /** 自定义方案对圆角的逐项覆盖：-1 表示跟随所选主题。 */
@@ -205,6 +219,8 @@ export class ThemeRegexEmphasisTokens {
   emphasisTextColor: string = '#1B4168';
   // 段评气泡外观，空字段沿用气泡样式推出的样子（见 ReaderCommentBubbleStyles.resolveThemed）。
   commentBubble: ThemePackageCommentBubble = new ThemePackageCommentBubble();
+  // 标题强调，跟着强调气泡的来源走；内置主题都不设置。
+  title: ThemeTitleEmphasisTokens = new ThemeTitleEmphasisTokens();
 }
 
 export class ThemeVariant {

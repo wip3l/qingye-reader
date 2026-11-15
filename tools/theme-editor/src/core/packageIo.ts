@@ -13,7 +13,7 @@ import type { Zippable } from 'fflate';
 import {
   QYTHEME_ASSET_PREFIX, ThemePackageAsset, ThemePackageAssetKinds, ThemePackageFeatures, ThemePackageLimits,
   ThemePackageManifest, ThemePackageTheme, IMAGE_SETTING_KEYS, assetPathExtension, checkSvgSource, decodeManifest,
-  bubbleDarkDifference, bubbleFor, commentBubbleIsEmpty, decodeTheme, encodeBubble, encodeParts, findAssetByPath, isValidPackageId, kindForExtension, mapPartsAssetRefs, maxBytesForKind,
+  bubbleDarkDifference, bubbleFor, commentBubbleIsEmpty, titleBubbleDarkDifference, titleBubbleFor, decodeTheme, encodeBubble, encodeParts, findAssetByPath, isValidPackageId, kindForExtension, mapPartsAssetRefs, maxBytesForKind,
   packThemeId, partsUseBitmapCapOrShelfFrame, partsUseBubbleFrameFeature, replaceOwnPackIdWithSelf, sniffAssetExtension
 } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from '../../../../entry/src/main/ets/theme/share/ZipEntryInspector.ts';
@@ -81,8 +81,8 @@ export function mimeForExtension(ext: string): string {
 
 export function emptyParts(): Json {
   return {
-    light: { colors: {}, reader: {}, emphasis: {}, commentBubble: {} },
-    dark: { colors: {}, reader: {}, emphasis: {}, commentBubble: {} },
+    light: { colors: {}, reader: {}, emphasis: {}, commentBubble: {}, titleEmphasis: {} },
+    dark: { colors: {}, reader: {}, emphasis: {}, commentBubble: {}, titleEmphasis: {} },
     ttsPanel: { light: {}, dark: {} },
     navigation: {},
     navigationDark: {},
@@ -90,6 +90,8 @@ export function emptyParts(): Json {
     startup: { light: {}, dark: {} },
     bubble: {},
     bubbleDark: {},
+    titleBubble: {},
+    titleBubbleDark: {},
     homeBackdrop: {},
     shelfBackdrop: {},
     logo: '',
@@ -621,7 +623,7 @@ export function normalizedParts(parts: Json): Json {
     }
   }
   // 拉伸设置只跟着边框走：没有边框时不写；拉伸、每行两端、原色是缺省值，也不写。深色那套同样处理。
-  for (const key of ['bubble', 'bubbleDark']) {
+  for (const key of ['bubble', 'bubbleDark', 'titleBubble', 'titleBubbleDark']) {
     const bubble = copy[key];
     if (!bubble || typeof bubble !== 'object') continue;
     if (!bubble.frame) {
@@ -637,6 +639,10 @@ export function normalizedParts(parts: Json): Json {
   const darkBubble = bubbleDarkDifference(copy);
   copy.bubble = lightBubble ? encodeBubble(lightBubble) : {};
   copy.bubbleDark = darkBubble ? encodeBubble(darkBubble) : {};
+  const lightTitleBubble = titleBubbleFor(copy, false);
+  const darkTitleBubble = titleBubbleDarkDifference(copy);
+  copy.titleBubble = lightTitleBubble ? encodeBubble(lightTitleBubble) : {};
+  copy.titleBubbleDark = darkTitleBubble ? encodeBubble(darkTitleBubble) : {};
   // 段评圆角只对圆角形状有效。气泡图：没有图时拉伸设置不写；拉伸、裁掉尾巴、原色是缺省值，也不写；拉伸线只写左右。
   // 角标图、位置、大小只跟着“自定义图片”走。
   for (const mode of ['light', 'dark']) {

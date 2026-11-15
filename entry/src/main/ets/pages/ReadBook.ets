@@ -95,7 +95,8 @@ import {
   ReaderRegexFontCodec,
   ReaderRegexFontRule,
   ReaderRegexLegacySettings,
-  ReaderResolvedRegexEmphasis
+  ReaderResolvedRegexEmphasis,
+  ReaderTitleEmphasis
 } from '../model/reader/ReaderRegexFontRule';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ThemeRegexEmphasisModes } from '../theme/ThemeModels';
@@ -17923,13 +17924,16 @@ ${leading}` : leading;
 
   buildReaderV2TitleStyles(document: ReaderV2Document): ReaderV2SpanStyleRange[] {
     const settings: ReaderTitleStyleSettings = ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw);
-    if (settings.emphasis.emphasisMode === 'none') return [];
+    // 跟随主题时用主题设的标题强调；主题没设或选了无强调时不画，标题沿用正则规则的效果。
+    const plan = ReaderTitleEmphasis.plan(settings.emphasis, ThemeRuntime.titleEmphasisTokens(this.appDarkMode),
+      this.readerRegexEmphasisContext());
+    if (!plan) return [];
     const result: ReaderV2SpanStyleRange[] = [];
     for (const block of document.blocks) {
       if (!block.title) continue;
       const size = this.readerTitleFontSize * (block.titleSegment > 0 ? settings.secondaryScale : 1);
-      const style = this.buildReaderV2EmphasisTemplate(settings.emphasis, size,
-        this.getTitleReaderFontFamily(), this.readerTitleFontWeight);
+      const style = this.buildReaderV2EmphasisTemplate(plan.rule, size,
+        this.getTitleReaderFontFamily(), this.readerTitleFontWeight, plan.context);
       style.start = block.displayStart;
       style.end = block.displayEnd;
       style.repeatCaps = true;
@@ -17955,8 +17959,8 @@ ${leading}` : leading;
   }
 
   buildReaderV2EmphasisTemplate(rule: ReaderRegexFontRule | null, fontSize: number,
-    family: string, weight: number): ReaderV2SpanStyleRange {
-    const resolved = this.resolvedRegexEmphasis(rule);
+    family: string, weight: number, context: ReaderRegexEmphasisContext | null = null): ReaderV2SpanStyleRange {
+    const resolved = context ? ReaderRegexBubbleStyleResolver.resolve(rule, context) : this.resolvedRegexEmphasis(rule);
     const style = new ReaderV2SpanStyleRange();
     style.fontSizePx = this.toMeasureFontPx(fontSize);
     style.fontWeight = weight;

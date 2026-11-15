@@ -6,6 +6,7 @@ import {
   ThemeColorTokens,
   ThemeComponentSourceIds,
   ThemeEmphasisOverrides,
+  ThemeTitleEmphasisTokens,
   ThemeIds,
   ThemePack,
   ThemeRadiusOverrides,
@@ -556,6 +557,19 @@ export class AppThemeSettingsStore {
       }
       tokens.commentBubble = merged;
     }
+    const title = AppThemeSettingsStore.normalizeTitleEmphasis(override.title);
+    if (AppThemeSettingsStore.titleEmphasisOverridden(title)) {
+      // 同样换一个新对象。mode 为 off 时整组清空（来源主题设了标题强调、方案要不设置）。
+      const next = new ThemeTitleEmphasisTokens();
+      const base = tokens.title;
+      if (title.mode !== 'off') {
+        next.mode = title.mode || (base ? base.mode : '');
+        next.bubbleStyle = title.bubbleStyle || (base ? base.bubbleStyle : '');
+        next.color = title.color || (base ? base.color : '');
+        next.textColor = title.textColor || (base ? base.textColor : '');
+      }
+      tokens.title = next;
+    }
   }
 
   /**
@@ -585,7 +599,7 @@ export class AppThemeSettingsStore {
 
   static hasEmphasisOverride(override: ThemeEmphasisOverrides): boolean {
     return !!(override.mode || override.bubbleStyle || override.color || override.textColor) ||
-      !commentBubbleIsEmpty(override.comment);
+      !commentBubbleIsEmpty(override.comment) || AppThemeSettingsStore.titleEmphasisOverridden(override.title);
   }
 
   static hasRadiusOverride(radius: ThemeRadiusOverrides): boolean {
@@ -683,7 +697,25 @@ export class AppThemeSettingsStore {
     result.color = HexColor.parseAlpha(source.color || '');
     result.textColor = HexColor.parseAlpha(source.textColor || '');
     result.comment = normalizeCommentBubble(source.comment);
+    result.title = AppThemeSettingsStore.normalizeTitleEmphasis(source.title);
     return result;
+  }
+
+  /** 标题强调覆盖：mode 只收 off/none/text/highlight/bubble（off 表示强制不设置），颜色可带透明度。 */
+  static normalizeTitleEmphasis(source: ThemeTitleEmphasisTokens | null | undefined): ThemeTitleEmphasisTokens {
+    const result = new ThemeTitleEmphasisTokens();
+    if (!source || typeof source !== 'object') return result;
+    const mode = (source.mode || '').trim();
+    result.mode = mode === 'off' || mode === 'none' || mode === 'text' || mode === 'highlight' || mode === 'bubble' ?
+      mode : '';
+    result.bubbleStyle = (source.bubbleStyle || '').trim().substring(0, 80);
+    result.color = HexColor.parseAlpha(source.color || '');
+    result.textColor = HexColor.parseAlpha(source.textColor || '');
+    return result;
+  }
+
+  static titleEmphasisOverridden(source: ThemeTitleEmphasisTokens | null | undefined): boolean {
+    return !!source && !!(source.mode || source.bubbleStyle || source.color || source.textColor);
   }
 
   private static async putOverrides(store: preferences.Preferences, settings: AppThemeSettings): Promise<void> {

@@ -825,6 +825,49 @@ test('v2 theme: dark-mode bubble art, shelf frame, nav icons and comment bubbles
   assert.equal(decode(noNav).navigationDark, null);
 });
 
+test('title emphasis and title bubble: decode, per-mode fallback, refs, encode, pack:self', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+  const json = partsJson();
+  json.light.titleEmphasis = { mode: 'bubble', color: '#E9D3A8', textColor: '#5a3a1c' };
+  json.dark.titleEmphasis = { mode: 'highlight', bubbleStyle: 'emphasis' };
+  // 位图端饰和边框都收，不需要 bubble-frame-v1 / bitmap-cap-shelf-frame-v1。
+  json.titleBubble = { cap: 'assets/cover_01.jpg', frame: 'assets/cover_02.jpg', frameSlice: { left: 0.16, right: 0.16, top: 0.1, bottom: 0.1 } };
+  json.titleBubbleDark = { frame: 'assets/logo.svg' };
+  const parts = byPath(decode(json));
+  assert.deepEqual({ ...parts.light.titleEmphasis }, { mode: 'bubble', bubbleStyle: '', color: '#E9D3A8', textColor: '#5A3A1C' });
+  assert.equal(parts.dark.titleEmphasis.bubbleStyle, 'emphasis');
+  const night = format.titleBubbleFor(parts, true);
+  assert.equal(night.cap, 'assets/cover_01.jpg', 'dark keeps the light cap');
+  assert.equal(night.frame, 'assets/logo.svg');
+  assert.equal(format.titleBubbleFor(parts, false).frame, 'assets/cover_02.jpg');
+  assert.equal(format.partsAssetRefs(parts).includes('assets/cover_02.jpg'), true);
+  assert.equal(format.describeParts(parts).includes('标题强调与标题气泡（含深色）'), true);
+  const encoded = format.encodeParts(parts);
+  assert.deepEqual(encoded.light.titleEmphasis, { mode: 'bubble', color: '#E9D3A8', textColor: '#5A3A1C' });
+  assert.deepEqual(encoded.titleBubbleDark, { frame: 'assets/logo.svg' });
+  const exported = new format.ThemePackageTheme();
+  exported.parts = parts;
+  const again = byPath(format.decodeTheme(format.encodeTheme(exported), manifest).parts);
+  assert.equal(again.titleBubble.frame, 'assets/cover_02.jpg');
+  assert.equal(again.dark.titleEmphasis.mode, 'highlight');
+  // 旧包没有这几节：编码不多出字段。
+  const legacy = format.encodeParts(byPath(decode(partsJson())));
+  assert.equal('titleBubble' in legacy, false);
+  assert.equal('titleEmphasis' in legacy.light, false);
+  assert.throws(() => decode({ ...partsJson(), light: { titleEmphasis: { mode: 'glow' } } }), /titleEmphasis\.mode/);
+  // 样式 ID 与方案覆盖里的 pack:self。
+  assert.equal(format.packTitleBubbleStyleId('pack:demo'), 'pack:demo:title');
+  assert.equal(format.isPackTitleBubbleStyle('pack:demo:title'), true);
+  assert.equal(format.isPackTitleBubbleStyle('pack:demo'), false);
+  const settings = { customLightEmphasis: { title: { mode: 'bubble', bubbleStyle: 'pack:custom-0011aabb:title' } } };
+  format.replaceOwnPackIdWithSelf(settings, 'pack:custom-0011aabb');
+  assert.equal(settings.customLightEmphasis.title.bubbleStyle, 'pack:self:title');
+  format.replaceSelfPackId(settings, 'pack:demo-pack');
+  assert.equal(settings.customLightEmphasis.title.bubbleStyle, 'pack:demo-pack:title');
+});
+
 test('comment bubble image and custom ornament: decode, per-mode fallback, refs, encode, pack:self', () => {
   const manifest = withAssets(manifestV2(), PARTS_FILES);
   const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;

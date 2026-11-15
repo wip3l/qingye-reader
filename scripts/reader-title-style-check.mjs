@@ -119,7 +119,13 @@ try {
     ReaderV2PageLayout: Page, ReaderV2PageFragment: Fragment } = sandbox.titleApi;
   const defaults = Codec.decode('');
   assert.equal(defaults.mode, 'off');
-  assert.equal(defaults.emphasis.emphasisMode, 'none');
+  assert.equal(defaults.emphasis.emphasisMode, 'theme', 'title emphasis follows the theme by default');
+  // 旧数据：none 是旧默认值，读入时迁成 theme；inherit（旧“跟随主题”= 同正文强调）原样；新数据里的 none 是明确选的。
+  assert.equal(Codec.decode('{"emphasis":{"emphasisMode":"none"}}').emphasis.emphasisMode, 'theme');
+  assert.equal(Codec.decode('{"emphasis":{"emphasisMode":"inherit"}}').emphasis.emphasisMode, 'inherit');
+  assert.equal(Codec.decode('{"emphasisVersion":2,"emphasis":{"emphasisMode":"none"}}').emphasis.emphasisMode, 'none');
+  const explicitNone = new Settings(); explicitNone.emphasis.emphasisMode = 'none';
+  assert.equal(Codec.decode(Codec.encode(explicitNone)).emphasis.emphasisMode, 'none', 'an explicit none survives a round trip');
   assert.equal(defaults.alignment, 'center');
   assert.equal(defaults.marginTop, 0);
   assert.equal(defaults.marginBottom, 0);
@@ -141,7 +147,7 @@ try {
   assert.equal(Codec.decode('{"marginTop":12.7,"marginBottom":"bad"}').marginBottom, 0);
   for (const raw of ['{', 'null', '[]', '42', '{"mode":"invalid","emphasis":null}']) {
     assert.equal(Codec.decode(raw).mode, 'off');
-    assert.equal(Codec.decode(raw).emphasis.emphasisMode, 'none');
+    assert.equal(Codec.decode(raw).emphasis.emphasisMode, 'theme');
   }
   const title = '第七十四章：卖鸭蛋，卖粽子喽';
   const settings = new Settings();
@@ -299,6 +305,18 @@ try {
   reader.readerRegexFontEnabled = false;
   settings.emphasis.emphasisMode = 'none'; reader.readerTitleStyleRaw = Codec.encode(settings);
   assert.equal(reader.buildReaderV2RegexStyles(document).length, 0);
+  // 跟随主题：主题没设标题强调时标题保持原样；设了就按主题的标题强调画。
+  settings.emphasis.emphasisMode = 'theme'; reader.readerTitleStyleRaw = Codec.encode(settings);
+  sandbox.AppStorage.setOrCreate('themeLightTitleEmphasis', '');
+  assert.equal(reader.buildReaderV2RegexStyles(document).length, 0, 'a theme without title emphasis leaves titles plain');
+  sandbox.AppStorage.setOrCreate('themeLightTitleEmphasis', JSON.stringify({ mode: 'highlight', bubbleStyle: '',
+    color: '#FF2B6A60', textColor: '#FFFFFFFF' }));
+  const themedTitles = reader.buildReaderV2RegexStyles(document);
+  assert.equal(themedTitles.length, 2, 'both title segments use the theme title emphasis');
+  assert.equal(themedTitles[0].backgroundEnabled, true);
+  sandbox.AppStorage.setOrCreate('themeLightTitleEmphasis', JSON.stringify({ mode: 'none' }));
+  assert.equal(reader.buildReaderV2RegexStyles(document).length, 0, 'a theme can say titles get no emphasis');
+  sandbox.AppStorage.setOrCreate('themeLightTitleEmphasis', '');
   console.log('PASS: independent title emphasis, secondary size, transparent colors, and title/regex precedence');
 
   const input = new Input(); input.viewportWidthPx = 320; input.viewportHeightPx = 900;
@@ -520,7 +538,8 @@ ${'雨停的时候他把伞靠在门边问柜台后的老人这本账簿是谁�
       bodyPreviewFontFamily() { return ''; } titlePreviewFontFamily() { return ''; }
       previewFontFamily() { return ''; }
       regexEmphasisContext() { return this.readerRegexEmphasisContext(); }
-      ${['typographyPreviewConfig','typographyPreviewEmphasis','typographyPreviewRegexStyles'].map(fontMethod).join('\n')}
+      ${['typographyPreviewConfig','typographyPreviewContext','typographyPreviewEmphasis','typographyPreviewRegexStyles',
+        'titleEmphasisPlan'].map(fontMethod).join('\n')}
     }
     globalThis.previewApi = { FontPreviewHarness, ReaderTypographyPreviewNode, ReaderTypographyPreviewConfig,
       ReaderV2PageFrameNode };

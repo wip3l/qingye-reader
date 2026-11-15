@@ -76,6 +76,7 @@ my-theme/
 | | `reader` | 阅读页：`backgroundColor`（必须是铺满任意尺寸的底色）、`textColor`、`subTextColor`、`contentTone`（`light` / `dark`，决定系统栏图标明暗）、`backgroundMode`（`ornaments` 角饰 / `image` 整图 / `none` 只有底色）。角饰模式填 `leading`（左上）与 `trailing`（右下）图片（SVG 或透明底位图），可以只填一张，另一角空着（此时 `requires` 要加 `reader-single-corner-v1`）；两项填同一个素材时右下角旋转 180° 显示；`leadingScale`、`trailingScale` 分别是左上、右下角饰的显示大小，相对默认尺寸（屏幕短边 × 0.36，夹在 112–260vp）的倍数，0.5–2，默认 1，最大不超过短边的 0.8，旧版本应用忽略这两项按 1 显示。整图模式填 `image` 和 `imageFit`（`cover` / `contain` / `fill`），还可以同时填 `leading` / `trailing`（及两个大小），角饰叠在整图上面；旧版本应用只显示整图。 |
 | | `emphasis` | 正文强调：`mode`（`none` / `text` / `highlight` / `bubble`）、`bubbleStyle`（内置气泡 ID，见主题开发指南；包里带了 `bubble` 节时自动用包内气泡）、`color`、`textColor`（可带透明度）。 |
 | | `commentBubble` | 可选：段评气泡（含本章说）的外观，见下文“段评气泡”。旧版本应用会忽略。 |
+| | `titleEmphasis` | 可选：章节标题的强调，见下文“标题强调”。不写表示主题不设置，标题保持原样。旧版本应用会忽略。 |
 | `ttsPanel` | `light` / `dark` | 朗读与有声书面板：`artwork`（720 × 520 的 SVG 或位图，贴顶等比缩放）、`skyColor`（插画背后的天空色）、`surfaceColor`（不透明的面板底色）、`glowColor`（带透明度的强调光）。四项都要写；只写一种模式时另一种模式沿用它。 |
 | `navigation` | `bookshelf`、`explore`、`mine` | 首页底栏的三个图标，缺一不可。SVG 按主题色着色，位图保持原色。 |
 | | `bookshelfSelected`、`exploreSelected`、`mineSelected` | 选中态图标，可选；没写的页签选中时仍用普通图标。旧版本应用会忽略这几项。 |
@@ -90,6 +91,7 @@ my-theme/
 | | `coverCrops`、`coverCropsDark`、`shelfFolderCrop`、`shelfFolderCropDark` | 可选的显示区域（见下文“显示区域”）：`coverCrops` 是数组，按 `image` 对应到 `covers` 里的某张封面；`coverCropsDark` 同理，对应 `coversDark`；`shelfFolderCrop`、`shelfFolderCropDark` 分别对应两张文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
 | `bubble` | `frame`、`cap`、`frameSlice`、`frameRepeat`、`frameBreak`、`frameTint` | 强调气泡的端饰与边框（都是 SVG 或透明底位图），至少给一样；边框是位图或没有端饰时 `requires` 要包含 `bubble-frame-v1`，端饰是位图时（`bubbleDark` 里的也算）要包含 `bitmap-cap-shelf-frame-v1`，旧版本应用会提示先更新。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。边框的拉伸设置见下文“气泡边框”，旧版本应用忽略这些字段、也不画边框。 |
+| `titleBubble` / `titleBubbleDark` | 同 `bubble` | 可选：只给标题强调用的端饰与边框（标题气泡），深色那套按项沿用浅色，规则同 `bubbleDark`。素材 SVG、位图都收，不用声明 `requires`；旧版本应用会忽略。 |
 | `bubbleDark` | 同 `bubble` | 可选：深色模式单独的端饰与边框。端饰、边框各自沿用：深色没写的那一项用 `bubble` 的（边框连同它的拉伸设置）；某一项只在一种模式里有时，两种模式都用它。端饰按原色显示、边框不开 `frameTint` 时也是原色，浅色那套放在深色纸面上看不清时再给。位图边框不用另外声明 `bubble-frame-v1`。旧版本应用会忽略，两种模式都用 `bubble`。 |
 | `homeBackdrop` | `light` / `dark` | 书架、发现和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
 | `shelfBackdrop` | `companion` / `tile` / `loose` / `compact` | 可选：按书架布局（陪伴、平铺、宽松、紧凑）分别给的背景，每种布局下写 `light` / `dark`（及可选的 `lightCrop` / `darkCrop`）。只在书架页、用这种布局时显示，没写的布局或模式用 `homeBackdrop` 那张；发现、我的等页签始终用 `homeBackdrop`。浅色、深色互不借用。旧版本应用会忽略这一节。 |
@@ -175,6 +177,28 @@ my-theme/
 }
 ```
 
+### 标题强调
+
+`light.titleEmphasis`、`dark.titleEmphasis` 决定章节标题的强调，两种模式各写各的：
+
+- `mode`：`none`（明确不强调）、`text`（仅文字色）、`highlight`（高亮底色）、`bubble`（气泡）。整节不写表示主题不设置。
+- `bubbleStyle`：只对 `bubble` 有效。内置气泡样式 ID；`emphasis` 表示和正文强调用同一套样式与素材（含 `bubble` 节的端饰边框）；不写时，包里有 `titleBubble` 就用它，否则同 `emphasis`。
+- `color`、`textColor`：强调底色、文字色，可带透明度；不写时用正文强调的颜色。
+
+读者在阅读设置里把“标题强调”选为“跟随主题”（新装默认，旧的“无强调”也迁到这一项）时用主题的标题强调；主题不设置时标题沿用正则规则的效果。“同正文强调”始终和对话用同一套，不看这一节。标题分主副两行时每行各画一个气泡，单行太长折行时按边框的“换行处”设置。
+
+```json
+"light": { "titleEmphasis": { "mode": "bubble", "color": "#E9D3A8", "textColor": "#5A3A1C" } },
+"dark":  { "titleEmphasis": { "mode": "bubble", "color": "#3A3226", "textColor": "#F2DEAE" } },
+"titleBubble": {
+  "cap": "assets/title_cap.svg",
+  "frame": "assets/title_frame.png",
+  "frameSlice": { "left": 0.16, "right": 0.16, "top": 0.12, "bottom": 0.12 }
+}
+```
+
+应用导出的方案里，方案对标题强调的覆盖写在 `customLightEmphasis.title` / `customDarkEmphasis.title`（字段同上，`mode` 还可以是 `off`：来源主题设了标题强调、方案要改回不设置），方案自己的标题气泡写成 `pack:self:title`。
+
 ### 段评气泡
 
 `light.commentBubble`、`dark.commentBubble` 决定正文段评与本章说气泡的样子，两种模式各写各的。每个字段都可以不写，不写的沿用强调气泡样式推出来的样子：内置气泡样式有各自的段评配色；包内气泡（`bubble` 节）的段评用强调底色、文字色推导，和强调气泡对得上。书源设置了段评颜色时以书源为准。
@@ -231,6 +255,7 @@ my-theme/
 | 首页背景 `homeBackdrop`、书架背景 `shelfBackdrop` | 位图 | 1080 × 1350（4:5），贴顶铺满宽度，比例不同时居中裁成 4:5。画面放在上部约四成，应用会叠渐变向下淡成页面底色；不要放文字，深色图的亮部要克制。 |
 | 段评气泡图 `commentBubble.image` | SVG 或位图 | 整只气泡（含尾巴）的透明底横图，位图高 96–160 px 为宜；尾巴画在下方，文字区和拉伸线见上文“气泡图与角标图”。 |
 | 段评角标图 `commentBubble.ornamentImage` | SVG 或位图 | 正方形透明底小图，显示约为气泡高的 0.62 倍。 |
+| 标题气泡 `titleBubble.frame` / `cap` | SVG 或位图 | 同强调气泡的端饰与边框，按标题字号缩放；边框文字带对齐标题行。 |
 | 气泡边框 `frame` / 端饰 `cap` | SVG 或位图 | 端饰为正方形小图（位图要透明底，按原色显示），按字号缩放，右端自动旋转 180°。边框是横向长条，两端是花纹、中间可拉伸，见下文“气泡边框”。 |
 | 主题标识 `logo` | SVG 或位图 | SVG 用 `viewBox="0 0 64 64"`，位图取正方形透明底。 |
 | 字体 `appFont` | TTF / OTF / TTC | 请确认字体允许再分发。 |
@@ -254,6 +279,7 @@ my-theme/
 - 只有 `covers`、`shelfFrame`、`shelfFolder` 的主题包（此前制作的都是这样）照常使用，浅色、深色显示同一套封面、同一张书架边框和文件夹插画。只写了 `coversDark`、`shelfFrameDark` 或 `shelfFolderDark` 时浅色模式也用它；应用和桌面编辑器导出这种包时会把它写成 `covers`、`shelfFrame`、`shelfFolder`。
 - 没有 `bubbleDark` 的主题包两种模式用同一套端饰和边框。只写了 `bubbleDark` 时浅色也用它，导出时写成 `bubble`；`bubbleDark` 里和 `bubble` 相同的项导出时不重复写。
 - 没有 `commentBubble` 的主题包，段评气泡跟着强调气泡样式走；带包内气泡的主题包，段评按强调底色推导（此前是中性灰）。
+- 带标题强调和标题气泡的包在旧版本应用上照常导入，标题保持原样。
 - 带段评气泡图的包在旧版本应用上照常导入，段评按同一节里的 `shape`、颜色画；`ornament: "custom"` 在旧版本上按不写处理。
 - 用户在编辑器里把包内部件换成内置主题的部件是允许的；再导出时，包内素材会随新包一起打出去，并在 `credits` 里保留原作者信息。
 - 同一个 `packageId` 再次导入时原位更新：用户的阅读排版和强调规则保留并合并，素材和配色换成新版本。

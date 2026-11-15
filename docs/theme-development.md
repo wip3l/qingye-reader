@@ -90,7 +90,7 @@ entry/src/main/resources/base/media/
 | --- | --- |
 | `colors` | `pageColor`、`cardColor`、`inputColor`、`primaryTextColor`、`subTextColor`、`dividerColor`、`accentColor`、`buttonColor`、`dangerColor`。 |
 | `reader` | `backgroundColor`、`backgroundAssetId`、`backgroundImageFit`、`textColor`、`subTextColor`、`contentTone`（`light` / `dark`）。 |
-| `regexEmphasis` | `emphasisMode`、`bubbleStyle`、`emphasisColor`、`emphasisTextColor`，以及段评气泡外观 `commentBubble`（`ThemePackageCommentBubble`，字段为空时沿用气泡样式）。 |
+| `regexEmphasis` | `emphasisMode`、`bubbleStyle`、`emphasisColor`、`emphasisTextColor`，以及段评气泡外观 `commentBubble`（`ThemePackageCommentBubble`，字段为空时沿用气泡样式）和标题强调 `title`（`ThemeTitleEmphasisTokens`，`mode` 为空表示不设置；`ThemeRuntime.titleEmphasisTokens(dark)` 发布给阅读页，`ReaderTitleEmphasis.plan()` 把阅读设置的标题规则和它合成一次解析；`pack:<id>:title` 气泡样式取包里的 `titleBubble`）。 |
 
 有效值优先级：
 
@@ -261,7 +261,7 @@ BuiltinThemeRegistry.register(theme);
 
 ## 方案级覆盖
 
-自定义方案除了按部件选来源主题，还能逐项覆盖两组令牌，字段在 `AppThemeSettings` 里：`customLightPalette` / `customDarkPalette`（`ThemeColorOverrides`，页面、卡片、输入框、正副文字、分割线、危险色七项）和 `customLightEmphasis` / `customDarkEmphasis`（`ThemeEmphasisOverrides`，强调方式、气泡样式、强调底色与文字色，以及 `comment` 段评气泡的逐项覆盖；`comment.image` / `comment.ornamentImage` 只会是 `none` 或 `pack:<packageId>`，表示取方案素材包同一模式的气泡图与拉伸设置、角标图，素材本身存在包的 `light/dark.commentBubble` 里，导出时与 `bubbleStyle` 一样换成 `pack:self`）。空值表示跟随来源主题；`AppThemeSettingsStore.customTheme()` 在取完来源令牌后由 `applyOverrides()` 盖上去，强调色与按钮色仍是独立字段。同一套机制还有：`customAppFontFamily`（界面字体，取字体库里某款字体的 family，`applyOverrides()` 写进 `ThemePack.fontFamily`，`ReaderFontBootstrap.registerThemeFont()` 在应用方案时把它注册进字体表）、`customRadius`（`ThemeRadiusOverrides`，六档圆角逐项覆盖，-1 表示跟随）、`customLightStartupText` / `customDarkStartupText`（`ThemeStartupTextStyle`，启动封面主副标题的颜色与字号，空值与 0 表示默认）和 `customPreviewImagePath`（方案卡片预览图，本机文件，与启动封面图一样不同步、随包导出，存在 `files/theme_previews/`）。这些字段以 JSON 字符串持久化，随方案同步；导出时若有任何覆盖，清单 `requires` 加 `scheme-overrides-v1`，老版本应用会提示更新而不是丢掉颜色。导入时方案覆盖里用不了的气泡样式改回跟随，并列入预览提示。
+自定义方案除了按部件选来源主题，还能逐项覆盖两组令牌，字段在 `AppThemeSettings` 里：`customLightPalette` / `customDarkPalette`（`ThemeColorOverrides`，页面、卡片、输入框、正副文字、分割线、危险色七项）和 `customLightEmphasis` / `customDarkEmphasis`（`ThemeEmphasisOverrides`，强调方式、气泡样式、强调底色与文字色，以及 `comment` 段评气泡的逐项覆盖；`title` 标题强调的逐项覆盖（`mode` 为 `off` 时强制不设置，方案自己的标题气泡样式写 `pack:<id>:title`）；`comment.image` / `comment.ornamentImage` 只会是 `none` 或 `pack:<packageId>`，表示取方案素材包同一模式的气泡图与拉伸设置、角标图，素材本身存在包的 `light/dark.commentBubble` 里，导出时与 `bubbleStyle` 一样换成 `pack:self`）。空值表示跟随来源主题；`AppThemeSettingsStore.customTheme()` 在取完来源令牌后由 `applyOverrides()` 盖上去，强调色与按钮色仍是独立字段。同一套机制还有：`customAppFontFamily`（界面字体，取字体库里某款字体的 family，`applyOverrides()` 写进 `ThemePack.fontFamily`，`ReaderFontBootstrap.registerThemeFont()` 在应用方案时把它注册进字体表）、`customRadius`（`ThemeRadiusOverrides`，六档圆角逐项覆盖，-1 表示跟随）、`customLightStartupText` / `customDarkStartupText`（`ThemeStartupTextStyle`，启动封面主副标题的颜色与字号，空值与 0 表示默认）和 `customPreviewImagePath`（方案卡片预览图，本机文件，与启动封面图一样不同步、随包导出，存在 `files/theme_previews/`）。这些字段以 JSON 字符串持久化，随方案同步；导出时若有任何覆盖，清单 `requires` 加 `scheme-overrides-v1`，老版本应用会提示更新而不是丢掉颜色。导入时方案覆盖里用不了的气泡样式改回跟随，并列入预览提示。
 
 ## 方案自有素材包
 

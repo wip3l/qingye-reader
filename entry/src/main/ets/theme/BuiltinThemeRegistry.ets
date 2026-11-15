@@ -839,6 +839,14 @@ export class BuiltinThemeRegistry {
     variant.reader.backgroundImageFit = source.reader.backgroundImageFit || 'cover';
     variant.regexEmphasis.emphasisMode = source.regexEmphasis.emphasisMode || ThemeRegexEmphasisModes.BUBBLE;
     variant.regexEmphasis.commentBubble = normalizeCommentBubble(source.regexEmphasis.commentBubble);
+    // 本机旧数据和旧格式的主题没有标题强调。
+    const title = source.regexEmphasis.title;
+    if (title) {
+      variant.regexEmphasis.title.mode = title.mode || '';
+      variant.regexEmphasis.title.bubbleStyle = title.bubbleStyle || '';
+      variant.regexEmphasis.title.color = title.color || '';
+      variant.regexEmphasis.title.textColor = title.textColor || '';
+    }
     return variant;
   }
 }

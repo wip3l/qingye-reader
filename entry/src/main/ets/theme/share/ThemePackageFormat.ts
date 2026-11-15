@@ -428,6 +428,25 @@ export class ThemePackageVariantParts {
   emphasis: ThemePackagePartEmphasis = new ThemePackagePartEmphasis();
   // 本机旧记录里没有。
   commentBubble: ThemePackageCommentBubble | null = null;
+  /** 标题强调；null 表示主题不设置（标题保持原样）。本机旧记录里没有，旧版本应用不认。 */
+  titleEmphasis: ThemePackagePartEmphasis | null = null;
+}
+
+/** 标题强调的气泡样式写成它时，和正文强调用同一套样式与素材。 */
+export const TITLE_BUBBLE_SAME_AS_EMPHASIS: string = 'emphasis';
+/** 方案自己的标题气泡（包里 titleBubble 那套素材）作为气泡样式时的 ID 后缀：pack:<packageId>:title。 */
+export const PACK_TITLE_BUBBLE_SUFFIX: string = ':title';
+
+export function packTitleBubbleStyleId(packThemeIdValue: string): string {
+  return `${packThemeIdValue}${PACK_TITLE_BUBBLE_SUFFIX}`;
+}
+
+export function isPackTitleBubbleStyle(styleId: string): boolean {
+  return isPackThemeId(styleId) && styleId.endsWith(PACK_TITLE_BUBBLE_SUFFIX);
+}
+
+export function titleEmphasisIsEmpty(value: ThemePackagePartEmphasis | null | undefined): boolean {
+  return !value || !(value.mode || value.bubbleStyle || value.color || value.textColor);
 }
 
 export class ThemePackageTtsPanel {
@@ -681,8 +700,23 @@ function copyBubbleFrame(target: ThemePackageBubble, source: ThemePackageBubble)
  */
 export function bubbleFor(parts: ThemePackageParts | null | undefined, dark: boolean): ThemePackageBubble | null {
   if (!parts) return null;
-  const own = dark ? parts.bubbleDark : parts.bubble;
-  const other = dark ? parts.bubble : parts.bubbleDark;
+  return bubblePairFor(parts.bubble, parts.bubbleDark, dark);
+}
+
+/** 标题气泡（titleBubble / titleBubbleDark），规则同 bubbleFor。 */
+export function titleBubbleFor(parts: ThemePackageParts | null | undefined, dark: boolean): ThemePackageBubble | null {
+  if (!parts) return null;
+  return bubblePairFor(parts.titleBubble || null, parts.titleBubbleDark || null, dark);
+}
+
+export function titleBubbleDarkDifference(parts: ThemePackageParts | null | undefined): ThemePackageBubble | null {
+  return bubblePairDifference(titleBubbleFor(parts, false), titleBubbleFor(parts, true));
+}
+
+function bubblePairFor(lightBubble: ThemePackageBubble | null, darkBubble: ThemePackageBubble | null,
+  dark: boolean): ThemePackageBubble | null {
+  const own = dark ? darkBubble : lightBubble;
+  const other = dark ? lightBubble : darkBubble;
   const result = new ThemePackageBubble();
   result.cap = (own && own.cap) || (other && other.cap) || '';
   const frameSource = own && own.frame ? own : (other && other.frame ? other : null);
@@ -700,8 +734,10 @@ function sameBubbleFrame(a: ThemePackageBubble, b: ThemePackageBubble): boolean 
  * 写进包的深色气泡：只留与浅色不同的那几项（浅色写成 bubble，见 bubbleFor）。两种模式一样时为 null。
  */
 export function bubbleDarkDifference(parts: ThemePackageParts | null | undefined): ThemePackageBubble | null {
-  const light = bubbleFor(parts, false);
-  const dark = bubbleFor(parts, true);
+  return bubblePairDifference(bubbleFor(parts, false), bubbleFor(parts, true));
+}
+
+function bubblePairDifference(light: ThemePackageBubble | null, dark: ThemePackageBubble | null): ThemePackageBubble | null {
   if (!light || !dark) return null;
   const result = new ThemePackageBubble();
   if (dark.cap && dark.cap !== light.cap) result.cap = dark.cap;
@@ -750,6 +786,9 @@ export class ThemePackageParts {
   bubble: ThemePackageBubble | null = null;
   // 深色模式单独的气泡素材，可选；端饰、边框按项沿用 bubble（见 bubbleFor）。旧版本应用不认，两种模式都用 bubble。
   bubbleDark: ThemePackageBubble | null = null;
+  // 标题强调用的端饰与边框（标题气泡），深色那套按项沿用浅色（见 titleBubbleFor）。本机旧记录里没有，旧版本应用不认。
+  titleBubble: ThemePackageBubble | null = null;
+  titleBubbleDark: ThemePackageBubble | null = null;
   // 深色模式单独的导航图标，可选；没给的图标沿用 navigation，labels 只看 navigation。旧版本应用不认。
   navigationDark: ThemePackageNavigation | null = null;
   // 首页三个页签顶部的背景图；只写了一种模式时另一种模式不显示背景。
@@ -1313,6 +1352,10 @@ export function replaceSelfPackId(settings: Record<string, Object>, ownThemeId: 
       if (comment['image'] === PACK_SELF_THEME_ID) comment['image'] = ownThemeId;
       if (comment['ornamentImage'] === PACK_SELF_THEME_ID) comment['ornamentImage'] = ownThemeId;
     }
+    const title = override ? objectField(override, 'title') : null;
+    if (title && title['bubbleStyle'] === `${PACK_SELF_THEME_ID}${PACK_TITLE_BUBBLE_SUFFIX}`) {
+      title['bubbleStyle'] = `${ownThemeId}${PACK_TITLE_BUBBLE_SUFFIX}`;
+    }
   }
 }
 
@@ -1339,6 +1382,10 @@ export function replaceOwnPackIdWithSelf(settings: Record<string, Object>, ownTh
     if (comment) {
       if (comment['image'] === ownThemeId) comment['image'] = PACK_SELF_THEME_ID;
       if (comment['ornamentImage'] === ownThemeId) comment['ornamentImage'] = PACK_SELF_THEME_ID;
+    }
+    const title = override ? objectField(override, 'title') : null;
+    if (title && title['bubbleStyle'] === `${ownThemeId}${PACK_TITLE_BUBBLE_SUFFIX}`) {
+      title['bubbleStyle'] = `${PACK_SELF_THEME_ID}${PACK_TITLE_BUBBLE_SUFFIX}`;
     }
   }
 }
@@ -1439,6 +1486,20 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
     result.emphasis.color = colorField(emphasis, 'color', emphasisLabel, true);
     result.emphasis.textColor = colorField(emphasis, 'textColor', emphasisLabel, true);
   }
+  const title = objectField(record, 'titleEmphasis');
+  if (title) {
+    const titleLabel = `${label}.titleEmphasis`;
+    const mode = stringField(title, 'mode').trim();
+    if (mode && mode !== 'none' && mode !== 'text' && mode !== 'highlight' && mode !== 'bubble') {
+      throw new Error(`主题包的${titleLabel}.mode 只能是 none、text、highlight 或 bubble`);
+    }
+    const parsed = new ThemePackagePartEmphasis();
+    parsed.mode = mode;
+    parsed.bubbleStyle = limitChars(stringField(title, 'bubbleStyle').trim(), 40);
+    parsed.color = colorField(title, 'color', titleLabel, true);
+    parsed.textColor = colorField(title, 'textColor', titleLabel, true);
+    result.titleEmphasis = titleEmphasisIsEmpty(parsed) ? null : parsed;
+  }
   const comment = objectField(record, 'commentBubble');
   if (comment) {
     const commentLabel = `${label}.commentBubble`;
@@ -1486,14 +1547,15 @@ function bitmapCapShelfFrameKinds(manifest: ThemePackageManifest): string[] {
 }
 
 function decodeBubble(bubble: Record<string, Object>, manifest: ThemePackageManifest,
-  label: string = 'parts.bubble', darkVariant: boolean = false): ThemePackageBubble {
+  label: string = 'parts.bubble', darkVariant: boolean = false, anyArtwork: boolean = false): ThemePackageBubble {
   const result = new ThemePackageBubble();
-  // 认得 bubbleDark 的版本都会画位图边框，深色那套不用另外声明。
-  const frameFeature = darkVariant || manifest.requires.includes(ThemePackageFeatures.BUBBLE_FRAME);
+  // 认得 bubbleDark 的版本都会画位图边框，深色那套不用另外声明。标题气泡是新字段，旧版本整节忽略，素材类型不限。
+  const frameFeature = anyArtwork || darkVariant || manifest.requires.includes(ThemePackageFeatures.BUBBLE_FRAME);
   const frameKinds: string[] = frameFeature ? [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE] :
     [ThemePackageAssetKinds.VECTOR];
   result.frame = partAssetRef(bubble, 'frame', manifest, frameKinds, label);
-  result.cap = partAssetRef(bubble, 'cap', manifest, bitmapCapShelfFrameKinds(manifest), label);
+  result.cap = partAssetRef(bubble, 'cap', manifest, anyArtwork ?
+    [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE] : bitmapCapShelfFrameKinds(manifest), label);
   if (!result.cap && !(frameFeature && result.frame)) {
     throw new Error(frameFeature ? `主题包的 ${label} 至少要有 cap 或 frame` : `主题包的 ${label} 需要 cap`);
   }
@@ -1754,6 +1816,14 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
   if (bubbleDark) {
     parts.bubbleDark = decodeBubble(bubbleDark, manifest, 'parts.bubbleDark', true);
   }
+  const titleBubble = objectField(record, 'titleBubble');
+  if (titleBubble) {
+    parts.titleBubble = decodeBubble(titleBubble, manifest, 'parts.titleBubble', true, true);
+  }
+  const titleBubbleDark = objectField(record, 'titleBubbleDark');
+  if (titleBubbleDark) {
+    parts.titleBubbleDark = decodeBubble(titleBubbleDark, manifest, 'parts.titleBubbleDark', true, true);
+  }
   const homeBackdrop = objectField(record, 'homeBackdrop');
   if (homeBackdrop) {
     const image: string[] = [ThemePackageAssetKinds.IMAGE];
@@ -1819,6 +1889,15 @@ function encodeVariantParts(variant: ThemePackageVariantParts): Record<string, O
   record['emphasis'] = JSON.parse(JSON.stringify(variant.emphasis)) as Object;
   if (variant.commentBubble && !commentBubbleIsEmpty(variant.commentBubble)) {
     record['commentBubble'] = encodeCommentBubble(variant.commentBubble);
+  }
+  const title = variant.titleEmphasis;
+  if (title && !titleEmphasisIsEmpty(title)) {
+    const titleRecord: Record<string, Object> = {};
+    if (title.mode) titleRecord['mode'] = title.mode;
+    if (title.bubbleStyle) titleRecord['bubbleStyle'] = title.bubbleStyle;
+    if (title.color) titleRecord['color'] = title.color;
+    if (title.textColor) titleRecord['textColor'] = title.textColor;
+    record['titleEmphasis'] = titleRecord;
   }
   return record;
 }
@@ -1901,6 +1980,10 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
   if (lightBubble) record['bubble'] = encodeBubble(lightBubble);
   const darkBubble = bubbleDarkDifference(parts);
   if (darkBubble) record['bubbleDark'] = encodeBubble(darkBubble);
+  const lightTitleBubble = titleBubbleFor(parts, false);
+  if (lightTitleBubble) record['titleBubble'] = encodeBubble(lightTitleBubble);
+  const darkTitleBubble = titleBubbleDarkDifference(parts);
+  if (darkTitleBubble) record['titleBubbleDark'] = encodeBubble(darkTitleBubble);
   if (parts.homeBackdropLight || parts.homeBackdropDark) {
     const homeBackdrop: Record<string, Object> = {};
     if (parts.homeBackdropLight) homeBackdrop['light'] = parts.homeBackdropLight;
@@ -1984,7 +2067,7 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
   for (const startup of [parts.startupLight, parts.startupDark]) {
     if (startup) add(startup.image);
   }
-  for (const bubble of [parts.bubble, parts.bubbleDark]) {
+  for (const bubble of [parts.bubble, parts.bubbleDark, parts.titleBubble || null, parts.titleBubbleDark || null]) {
     if (!bubble) continue;
     add(bubble.frame);
     add(bubble.cap);
@@ -2063,6 +2146,17 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
   } else {
     copy.bubbleDark = null;
   }
+  // 本机旧记录里没有标题气泡。
+  for (const key of ['titleBubble', 'titleBubbleDark']) {
+    const holder = copy as Object as Record<string, ThemePackageBubble | null | undefined>;
+    const bubble = holder[key];
+    if (bubble) {
+      bubble.frame = swap(bubble.frame);
+      bubble.cap = swap(bubble.cap);
+    } else {
+      holder[key] = null;
+    }
+  }
   copy.homeBackdropLight = swap(copy.homeBackdropLight || '');
   copy.homeBackdropDark = swap(copy.homeBackdropDark || '');
   if (copy.homeBackdropLightCrop) copy.homeBackdropLightCrop.image = swap(copy.homeBackdropLightCrop.image);
@@ -2121,6 +2215,11 @@ export function describeParts(parts: ThemePackageParts): string[] {
   if (bubble) {
     const name = bubble.cap && bubble.frame ? '强调气泡端饰与边框' : (bubble.frame ? '强调气泡边框' : '强调气泡端饰');
     items.push(bubbleDarkDifference(parts) ? `${name}（含深色）` : name);
+  }
+  if ((parts.light && parts.light.titleEmphasis) || (parts.dark && parts.dark.titleEmphasis) || titleBubbleFor(parts, false)) {
+    const titleBubble = titleBubbleFor(parts, false);
+    items.push(titleBubble ? (titleBubbleDarkDifference(parts) ? '标题强调与标题气泡（含深色）' : '标题强调与标题气泡') :
+      '标题强调');
   }
   if ((parts.light && parts.light.commentBubble) || (parts.dark && parts.dark.commentBubble)) {
     items.push(commentBubbleHasImage(commentBubbleFor(parts, false)) || commentBubbleHasImage(commentBubbleFor(parts, true)) ?

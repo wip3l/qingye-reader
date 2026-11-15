@@ -187,6 +187,34 @@ export const SECTIONS: Section[] = [
     ]
   },
   {
+    id: 'title', group: '配色与阅读', name: '标题强调', screen: 'reader', modal: true,
+    desc: '章节标题的强调。读者在阅读设置里把标题强调选为“跟随主题”（新装默认）时用它；不设置时标题保持原样。旧版本应用忽略这一节。', fields: [
+      { g: '样式' },
+      { k: '{m}.titleEmphasis.mode', label: '强调方式', type: 'select',
+        options: [['', '不设置'], ['none', '无'], ['text', '仅文字色'], ['highlight', '高亮底色'], ['bubble', '气泡']],
+        hint: '不设置时主题不管标题；“无”表示主题明确不给标题加强调' },
+      { k: '{m}.titleEmphasis.bubbleStyle', label: '气泡样式', type: 'select',
+        options: [['', '自动（有标题气泡用它，否则同强调气泡）'], ['emphasis', '同强调气泡'], ...BUBBLES.map((b) => [b.id, b.label] as [string, string])],
+        hint: '同强调气泡：和正文强调用同一套样式与素材。主题专属气泡要导入的人拥有那套主题才能用',
+        when: (m) => mode(m, 'titleEmphasis.mode') === 'bubble' },
+      { k: '{m}.titleEmphasis.color', label: '底色', type: 'color', alpha: true,
+        hint: '不写时用正文强调的底色',
+        when: (m) => ['text', 'highlight', 'bubble'].includes(mode(m, 'titleEmphasis.mode')) },
+      { k: '{m}.titleEmphasis.textColor', label: '文字色', type: 'color', alpha: true, vs: '{m}.titleEmphasis.color',
+        when: (m) => ['text', 'highlight', 'bubble'].includes(mode(m, 'titleEmphasis.mode')) },
+      { g: '标题气泡 · 浅色' },
+      { k: 'titleBubble.cap', label: '端饰', type: 'asset', kinds: ['vector', 'image'], square: true,
+        spec: '正方形小图，SVG 或透明底位图，按标题字号缩放，右端自动旋转 180°' },
+      { k: 'titleBubble.frame', label: '边框', type: 'asset', kinds: ['vector', 'image'], frameStretch: true,
+        spec: '可选，SVG 或透明底 PNG / WebP，按行拉伸；只有边框时不画端饰',
+        hint: '传了标题气泡、气泡样式选“自动”时标题用它' },
+      { g: '标题气泡 · 深色（可选）' },
+      { k: 'titleBubbleDark.cap', label: '端饰', type: 'asset', kinds: ['vector', 'image'], square: true, spec: '空着时深色沿用浅色那张' },
+      { k: 'titleBubbleDark.frame', label: '边框', type: 'asset', kinds: ['vector', 'image'], frameStretch: true,
+        spec: '空着时深色沿用浅色那张（连同拉伸设置）' }
+    ]
+  },
+  {
     id: 'nav', group: '素材', name: '导航图标', screen: 'shelf',
     desc: '首页底栏。书架、发现、我的三个普通图标要么都给，要么都不给；“听”“足迹”是可选的第四个页签，可以不给（应用用基底主题的图标），旧版本应用会忽略。SVG 按主题色着色，位图（PNG / WebP）保持原色。选中态可选，没给的页签选中时仍用普通图标。', fields: [
       { g: '普通图标' },

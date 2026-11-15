@@ -625,44 +625,65 @@ export class SchemeAssetService {
 
   /** dark 为 true 时写进深色模式单独的那套（parts.bubbleDark），没传的那一项深色沿用浅色的。 */
   static async setBubbleCap(context: Context, schemeId: string, uri: string, baseTheme: string,
-    dark: boolean = false): Promise<SchemeAssetResult> {
+    dark: boolean = false, title: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
-      const bubble = SchemeAssetService.bubbleOf(record, dark) || new ThemePackageBubble();
+      const bubble = SchemeAssetService.bubbleOf(record, dark, title) || new ThemePackageBubble();
       bubble.cap = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK, '气泡端饰');
-      SchemeAssetService.storeBubble(record, dark, bubble);
+      SchemeAssetService.storeBubble(record, dark, bubble, title);
     });
   }
 
   /** 上传边框并一起存下拉伸区域页里定好的拉伸设置。 */
   static async setBubbleFrame(context: Context, schemeId: string, uri: string, baseTheme: string,
-    settings: ThemePackageBubble, dark: boolean = false): Promise<SchemeAssetResult> {
+    settings: ThemePackageBubble, dark: boolean = false, title: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
-      const bubble = SchemeAssetService.bubbleOf(record, dark) || new ThemePackageBubble();
+      const bubble = SchemeAssetService.bubbleOf(record, dark, title) || new ThemePackageBubble();
       bubble.frame = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK, '气泡边框');
       SchemeAssetService.copyFrameSettings(bubble, settings);
-      SchemeAssetService.storeBubble(record, dark, bubble);
+      SchemeAssetService.storeBubble(record, dark, bubble, title);
     });
   }
 
   /** 只改拉伸设置，边框素材不变。 */
   static async setBubbleFrameSettings(context: Context, schemeId: string,
-    settings: ThemePackageBubble, dark: boolean = false): Promise<SchemeAssetResult> {
+    settings: ThemePackageBubble, dark: boolean = false, title: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
-      const bubble = SchemeAssetService.bubbleOf(record, dark);
+      const bubble = SchemeAssetService.bubbleOf(record, dark, title);
       if (!bubble || !bubble.frame) throw new Error('气泡边框已不存在');
       SchemeAssetService.copyFrameSettings(bubble, settings);
     });
   }
 
-  private static bubbleOf(record: ThemePackRecord, dark: boolean): ThemePackageBubble | null {
+  /** title 为 true 时是标题气泡（parts.titleBubble / titleBubbleDark）。 */
+  private static bubbleOf(record: ThemePackRecord, dark: boolean, title: boolean = false): ThemePackageBubble | null {
+    if (title) return (dark ? record.parts.titleBubbleDark : record.parts.titleBubble) || null;
     return (dark ? record.parts.bubbleDark : record.parts.bubble) || null;
   }
 
   /** 端饰、边框都没有时整节记成 null。 */
-  private static storeBubble(record: ThemePackRecord, dark: boolean, bubble: ThemePackageBubble | null): void {
+  private static storeBubble(record: ThemePackRecord, dark: boolean, bubble: ThemePackageBubble | null,
+    title: boolean = false): void {
     const value = bubble && (bubble.cap || bubble.frame) ? bubble : null;
+    if (title) {
+      if (dark) record.parts.titleBubbleDark = value;
+      else record.parts.titleBubble = value;
+      return;
+    }
     if (dark) record.parts.bubbleDark = value;
     else record.parts.bubble = value;
+  }
+
+  /** 浅色、深色两套标题气泡一起清掉。 */
+  static async clearTitleBubble(context: Context, schemeId: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      record.parts.titleBubble = null;
+      record.parts.titleBubbleDark = null;
+    });
+  }
+
+  static hasTitleBubble(packageId: string): boolean {
+    const pack = ThemePackRegistry.getByPackageId(packageId);
+    return !!pack && !!(pack.record.parts.titleBubble || pack.record.parts.titleBubbleDark);
   }
 
   private static copyFrameSettings(target: ThemePackageBubble, settings: ThemePackageBubble): void {
@@ -681,12 +702,13 @@ export class SchemeAssetService {
   }
 
   /** 移除端饰；边框还在时保留边框，否则整节清掉。dark 为 true 时只动深色那套，深色回到沿用浅色的端饰。 */
-  static async clearBubbleCap(context: Context, schemeId: string, dark: boolean = false): Promise<SchemeAssetResult> {
+  static async clearBubbleCap(context: Context, schemeId: string, dark: boolean = false,
+    title: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
-      const bubble = SchemeAssetService.bubbleOf(record, dark);
+      const bubble = SchemeAssetService.bubbleOf(record, dark, title);
       if (!bubble) return;
       bubble.cap = '';
-      SchemeAssetService.storeBubble(record, dark, bubble);
+      SchemeAssetService.storeBubble(record, dark, bubble, title);
     });
   }
 
@@ -890,16 +912,17 @@ export class SchemeAssetService {
   }
 
   /** 移除边框和它的拉伸设置；端饰也没有时整节清掉。dark 为 true 时只动深色那套。 */
-  static async clearBubbleFrame(context: Context, schemeId: string, dark: boolean = false): Promise<SchemeAssetResult> {
+  static async clearBubbleFrame(context: Context, schemeId: string, dark: boolean = false,
+    title: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
-      const bubble = SchemeAssetService.bubbleOf(record, dark);
+      const bubble = SchemeAssetService.bubbleOf(record, dark, title);
       if (!bubble) return;
       bubble.frame = '';
       bubble.frameSlice = null;
       bubble.frameRepeat = '';
       bubble.frameBreak = '';
       bubble.frameTint = false;
-      SchemeAssetService.storeBubble(record, dark, bubble);
+      SchemeAssetService.storeBubble(record, dark, bubble, title);
     });
   }
 
@@ -1067,7 +1090,8 @@ export class SchemeAssetService {
   static hasAnyPart(record: ThemePackRecord): boolean {
     const parts = record.parts;
     return !!(parts.light || parts.dark || parts.ttsPanelLight || parts.ttsPanelDark || parts.navigation ||
-      parts.book || parts.startupLight || parts.startupDark || parts.bubble || parts.bubbleDark || parts.homeBackdropLight ||
+      parts.book || parts.startupLight || parts.startupDark || parts.bubble || parts.bubbleDark || parts.titleBubble ||
+      parts.titleBubbleDark || parts.homeBackdropLight ||
       parts.homeBackdropDark || (parts.shelfBackdrops || []).length > 0 || parts.logo || parts.preview ||
       parts.radius || parts.appFont || parts.appFontFamily);
   }

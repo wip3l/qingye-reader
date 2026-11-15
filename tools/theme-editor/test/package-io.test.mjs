@@ -543,6 +543,31 @@ test('comment bubble image and custom ornament export cleanly and round-trip', a
   assert.equal(again.project.parts.light.commentBubble.ornamentCorner, 'topLeft');
 });
 
+test('title emphasis and title bubble export cleanly and round-trip', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  project.assets.set('assets/title-frame.png', { path: 'assets/title-frame.png', bytes: png(320, 64), kind: 'image', ext: 'png', width: 320, height: 64 });
+  project.parts.light.titleEmphasis = { mode: 'bubble', bubbleStyle: '', color: '#E9D3A8', textColor: '#5A3A1C' };
+  project.parts.dark.titleEmphasis = { mode: 'bubble', color: '#3A3226' };
+  // 位图端饰和边框都收，不用声明新能力；深色和浅色一样的项不重复写。
+  project.parts.titleBubble = { cap: 'assets/c2.png', frame: 'assets/title-frame.png',
+    frameSlice: { left: 0.16, right: 0.16, top: 0.12, bottom: 0.12 }, frameRepeat: 'stretch', frameTint: false };
+  project.parts.titleBubbleDark = { cap: 'assets/c2.png' };
+  const files = await io.exportFiles(project);
+  const parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.light.titleEmphasis, { mode: 'bubble', color: '#E9D3A8', textColor: '#5A3A1C' });
+  assert.deepEqual(parts.dark.titleEmphasis, { mode: 'bubble', color: '#3A3226' });
+  assert.deepEqual(parts.titleBubble, { cap: 'assets/c2.png', frame: 'assets/title-frame.png',
+    frameSlice: { left: 0.16, right: 0.16, top: 0.12, bottom: 0.12 } });
+  assert.equal(parts.titleBubbleDark, undefined);
+  const manifest = JSON.parse(strFromU8(files.get('manifest.json')));
+  assert.ok(!manifest.requires.includes('bubble-frame-v1'));
+  assert.ok(!manifest.requires.includes('bitmap-cap-shelf-frame-v1'));
+  const again = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(again.problems, []);
+  assert.equal(again.project.parts.titleBubble.frame, 'assets/title-frame.png');
+  assert.equal(again.project.parts.light.titleEmphasis.textColor, '#5A3A1C');
+});
+
 test('an empty comment-bubble override from the app does not count as a scheme override', async () => {
   const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
   const empty = { mode: '', bubbleStyle: '', color: '', textColor: '',

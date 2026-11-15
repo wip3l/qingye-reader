@@ -54,7 +54,7 @@ export class ThemeAccessPolicy {
     const normalized = (styleId || '').trim();
     if (ThemePackRegistry.isPackId(normalized)) {
       const pack = ThemePackRegistry.get(normalized);
-      return !!pack && pack.hasBubble();
+      return !!pack && pack.hasBubbleForStyle(normalized);
     }
     const requiredThemeId = ThemeAccessPolicy.requiredThemeForBubbleStyle(styleId);
     return !requiredThemeId || ThemeAccessPolicy.hasThemeAccess(requiredThemeId);

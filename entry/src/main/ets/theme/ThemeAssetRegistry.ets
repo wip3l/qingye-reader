@@ -796,7 +796,7 @@ export class ThemeAssetRegistry {
   static regexBubbleFrame(styleId: string, darkMode: boolean = false): ResourceStr {
     if (ThemePackRegistry.isPackId(styleId)) {
       const pack = ThemePackRegistry.get(styleId);
-      return pack ? pack.bubble(darkMode).frame : '';
+      return pack ? pack.bubbleForStyle(styleId, darkMode).frame : '';
     }
     switch ((styleId || '').trim().toLowerCase()) {
       case 'classic-glass': return $r('app.media.regex_frame_classic_glass');
@@ -831,7 +831,7 @@ export class ThemeAssetRegistry {
   static regexBubbleCap(styleId: string, darkMode: boolean = false): ResourceStr {
     if (ThemePackRegistry.isPackId(styleId)) {
       const pack = ThemePackRegistry.get(styleId);
-      return pack ? pack.bubble(darkMode).cap : '';
+      return pack ? pack.bubbleForStyle(styleId, darkMode).cap : '';
     }
     switch ((styleId || '').trim().toLowerCase()) {
       case 'classic-glass': return $r('app.media.regex_cap_classic_glass');

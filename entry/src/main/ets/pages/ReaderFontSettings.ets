@@ -24,7 +24,9 @@ import {
   ReaderRegexFontCodec,
   ReaderRegexFontRule,
   ReaderRegexLegacySettings,
-  ReaderResolvedRegexEmphasis
+  ReaderResolvedRegexEmphasis,
+  ReaderTitleEmphasis,
+  ReaderTitleEmphasisPlan
 } from '../model/reader/ReaderRegexFontRule';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
@@ -1648,12 +1650,24 @@ export struct ReaderFontSettingsEditor {
   @Builder
   titleEmphasisSettings() {
     Column({ space: AppSpacing.MD }) {
-      this.titleGroupTitle('标题强调', '不受“正则字体”开关影响；选“无强调”时标题沿用正则规则的效果')
+      this.titleGroupTitle('标题强调', this.titleEmphasisHint())
       this.regexEmphasisSettings(-1, this.regexHighlightRefreshKey)
     }
     .width('calc(100% - 32vp)')
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
     .padding({ top: AppSpacing.XL, bottom: AppSpacing.LG })
+  }
+
+  /** 跟随主题时写出当前主题给标题设了什么。 */
+  titleEmphasisHint(): string {
+    const base = '不受“正则字体”开关影响。“跟随主题”用主题设的标题强调，“同正文强调”和对话用同一套；主题没设或选“无强调”时标题沿用正则规则的效果';
+    if (this.titleStyle.emphasis.emphasisMode !== ReaderTitleEmphasis.THEME) return base;
+    return `${base}。${ReaderTitleEmphasis.describe(ThemeRuntime.titleEmphasisTokens(this.appDarkMode))}`;
+  }
+
+  /** 标题强调的规则与上下文（跟随主题时换成主题的标题强调）；不画时返回 null。 */
+  titleEmphasisPlan(context: ReaderRegexEmphasisContext): ReaderTitleEmphasisPlan | null {
+    return ReaderTitleEmphasis.plan(this.titleStyle.emphasis, ThemeRuntime.titleEmphasisTokens(this.appDarkMode), context);
   }
 
   titlePreviewParts(): string[] {
@@ -1694,12 +1708,13 @@ export struct ReaderFontSettingsEditor {
       '清晨的风穿过长街，带来一阵粽叶的清香。街角的小摊刚刚支起，竹篮里整整齐齐地码着新煮好的粽子。\n' +
       indent + '“卖鸭蛋，卖粽子喽——”一声吆喝，把沉睡的小城轻轻唤醒。' : '';
     config.document = ReaderV2DocumentParser.parse(this.titlePreviewText + body, 0, this.titlePreviewText, [], this.titleStyle);
-    if (this.titleStyle.emphasis.emphasisMode !== 'none') {
+    const titlePlan = this.titleEmphasisPlan(this.typographyPreviewContext());
+    if (titlePlan) {
       for (const block of config.document.blocks) {
         if (!block.title) continue;
         const size = this.readerTitleFontSize * (block.titleSegment > 0 ? this.titleStyle.secondaryScale : 1);
-        const style = this.typographyPreviewEmphasis(this.titleStyle.emphasis, size,
-          input.titleFontFamily, this.readerTitleFontWeight);
+        const style = this.typographyPreviewEmphasis(titlePlan.rule, size,
+          input.titleFontFamily, this.readerTitleFontWeight, titlePlan.context);
         style.start = block.displayStart;
         style.end = block.displayEnd;
         style.repeatCaps = true;
@@ -1755,11 +1770,16 @@ export struct ReaderFontSettingsEditor {
     }
   }
 
-  typographyPreviewEmphasis(rule: ReaderRegexFontRule, size: number, family: string,
-    weight: number): ReaderV2SpanStyleRange {
+  typographyPreviewContext(): ReaderRegexEmphasisContext {
     const context = this.regexEmphasisContext();
     context.surfaceColor = ThemeRuntime.readerBackgroundColor(this.appDarkMode);
     context.normalTextColor = ThemeRuntime.readerTextColor(this.appDarkMode);
+    return context;
+  }
+
+  typographyPreviewEmphasis(rule: ReaderRegexFontRule, size: number, family: string,
+    weight: number, planned: ReaderRegexEmphasisContext | null = null): ReaderV2SpanStyleRange {
+    const context = planned || this.typographyPreviewContext();
     const resolved = ReaderRegexBubbleStyleResolver.resolve(rule, context);
     const uiContext = this.getUIContext();
     const style = new ReaderV2SpanStyleRange();
@@ -2005,6 +2025,12 @@ export struct ReaderFontSettingsEditor {
   }
 
   resolvedRegexEmphasis(index: number): ReaderResolvedRegexEmphasis {
+    if (index === -1) {
+      // 标题强调：跟随主题时按主题的标题强调；不画时返回“无”的结果。
+      const plan = this.titleEmphasisPlan(this.regexEmphasisContext());
+      if (!plan) return new ReaderResolvedRegexEmphasis();
+      return ReaderRegexBubbleStyleResolver.resolve(plan.rule, plan.context);
+    }
     return ReaderRegexBubbleStyleResolver.resolve(this.regexRuleAt(index), this.regexEmphasisContext());
   }
 
@@ -2116,7 +2142,11 @@ export struct ReaderFontSettingsEditor {
     });
   }
 
-  emphasisModeOptions(): SelectOption[] {
+  /** 正则规则三项；标题强调（rule -1）四项：跟随主题（标题）、同正文强调、无强调、自定义。 */
+  emphasisModeOptions(rule: number = 0): SelectOption[] {
+    if (rule === -1) {
+      return [{ value: '跟随主题' }, { value: '同正文强调' }, { value: '无强调' }, { value: '自定义' }];
+    }
     return [
       { value: '跟随主题' },
       { value: '无强调' },
@@ -2124,29 +2154,27 @@ export struct ReaderFontSettingsEditor {
     ];
   }
 
-  emphasisModeIndex(mode: string): number {
-    if (mode === 'none') {
-      return 1;
-    }
-    if (mode === 'custom' || mode === 'text' || mode === 'highlight' || mode === 'bubble') {
-      return 2;
-    }
-    return 0;
+  emphasisModeIds(rule: number = 0): string[] {
+    return rule === -1 ? [ReaderTitleEmphasis.THEME, 'inherit', 'none', 'custom'] : ['inherit', 'none', 'custom'];
   }
 
-  emphasisModeByIndex(index: number): string {
-    if (index === 1) {
-      return 'none';
-    }
-    if (index === 2) {
-      return 'custom';
-    }
-    return 'inherit';
+  emphasisModeIndex(mode: string, rule: number = 0): number {
+    const normalized = mode === 'text' || mode === 'highlight' || mode === 'bubble' ? 'custom' : mode;
+    return Math.max(0, this.emphasisModeIds(rule).indexOf(normalized));
   }
 
-  emphasisModeLabel(mode: string): string {
-    const options = this.emphasisModeOptions();
-    return String(options[this.emphasisModeIndex(mode)].value);
+  emphasisModeByIndex(index: number, rule: number = 0): string {
+    const ids = this.emphasisModeIds(rule);
+    return index >= 0 && index < ids.length ? ids[index] : ids[0];
+  }
+
+  isCustomEmphasisMode(mode: string): boolean {
+    return mode === 'custom' || mode === 'text' || mode === 'highlight' || mode === 'bubble';
+  }
+
+  emphasisModeLabel(mode: string, rule: number = 0): string {
+    const options = this.emphasisModeOptions(rule);
+    return String(options[this.emphasisModeIndex(mode, rule)].value);
   }
 
   bubbleStyleOptions(): SelectOption[] {
@@ -2224,9 +2252,9 @@ export struct ReaderFontSettingsEditor {
           .fontSize(AppFontSize.BODY_LARGE)
           .fontColor(this.primaryTextColor())
           .layoutWeight(1)
-        Select(this.emphasisModeOptions())
-          .selected(this.emphasisModeIndex(this.regexRuleAt(index).emphasisMode))
-          .value(this.emphasisModeLabel(this.regexRuleAt(index).emphasisMode))
+        Select(this.emphasisModeOptions(index))
+          .selected(this.emphasisModeIndex(this.regexRuleAt(index).emphasisMode, index))
+          .value(this.emphasisModeLabel(this.regexRuleAt(index).emphasisMode, index))
           .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
           .optionFont({ family: this.applicationFontFamily })
           .selectedOptionFont({ family: this.applicationFontFamily })
@@ -2247,14 +2275,14 @@ export struct ReaderFontSettingsEditor {
           .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
           .onSelect((selectedIndex: number) => {
             this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
-              target.emphasisMode = this.emphasisModeByIndex(selectedIndex);
+              target.emphasisMode = this.emphasisModeByIndex(selectedIndex, index);
             });
           })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      if (this.emphasisModeIndex(this.regexRuleAt(index).emphasisMode) === 2) {
+      if (this.isCustomEmphasisMode(this.regexRuleAt(index).emphasisMode)) {
         this.regexEmphasisToggle('设置文字色', this.regexRuleAt(index).customTextColorEnabled, (enabled: boolean) => {
           this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
             target.customTextColorEnabled = enabled;

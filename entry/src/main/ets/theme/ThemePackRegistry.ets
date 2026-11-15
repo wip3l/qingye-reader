@@ -16,6 +16,9 @@ import {
   normalizeCommentBubble,
   commentBubbleFor,
   COMMENT_IMAGE_NONE,
+  isPackTitleBubbleStyle,
+  packTitleBubbleStyleId,
+  titleBubbleFor,
   ThemePackageBubble,
   ThemePackageCredits,
   ThemePackageParts,
@@ -154,6 +157,9 @@ export class InstalledThemePack {
   startupDark: InstalledThemePackStartup | null = null;
   bubbleLight: InstalledThemePackBubble = new InstalledThemePackBubble();
   bubbleDark: InstalledThemePackBubble = new InstalledThemePackBubble();
+  // 标题强调用的端饰与边框，按 titleBubbleFor 补齐两种模式。
+  titleBubbleLight: InstalledThemePackBubble = new InstalledThemePackBubble();
+  titleBubbleDark: InstalledThemePackBubble = new InstalledThemePackBubble();
   homeBackdropLight: string = '';
   homeBackdropDark: string = '';
   // 按书架布局分别给的背景，素材和区域都已换成本机地址。
@@ -189,6 +195,24 @@ export class InstalledThemePack {
 
   bubble(darkMode: boolean): InstalledThemePackBubble {
     return darkMode ? this.bubbleDark : this.bubbleLight;
+  }
+
+  /** 标题气泡（titleBubble）有端饰或边框。 */
+  hasTitleBubble(): boolean {
+    return !!this.titleBubbleLight.cap || !!this.titleBubbleLight.frame;
+  }
+
+  titleBubble(darkMode: boolean): InstalledThemePackBubble {
+    return darkMode ? this.titleBubbleDark : this.titleBubbleLight;
+  }
+
+  /** 气泡样式 pack:<id>:title 用标题气泡，pack:<id> 用强调气泡。 */
+  bubbleForStyle(styleId: string, darkMode: boolean): InstalledThemePackBubble {
+    return isPackTitleBubbleStyle(styleId) ? this.titleBubble(darkMode) : this.bubble(darkMode);
+  }
+
+  hasBubbleForStyle(styleId: string): boolean {
+    return isPackTitleBubbleStyle(styleId) ? this.hasTitleBubble() : this.hasBubble();
   }
 
   shelfFrameFor(darkMode: boolean): string {
@@ -255,11 +279,14 @@ export class ThemePackRegistry {
   }
 
   /** 认得 pack:<id> 和 pack:<id>:light 这类带后缀的素材键。 */
-  /** 气泡样式是主题包且包里有边框时给出正文要画的边框；内置样式的横幅边框不逐行画，返回 null。 */
+  /**
+   * 气泡样式是主题包且包里有边框时给出正文要画的边框；内置样式的横幅边框不逐行画，返回 null。
+   * pack:<id>:title 取包里的标题气泡。
+   */
   static bubbleFrame(styleId: string, darkMode: boolean = false): ResolvedBubbleFrame | null {
     if (!ThemePackRegistry.isPackId(styleId)) return null;
     const pack = ThemePackRegistry.get(styleId);
-    const bubble = pack ? pack.bubble(darkMode) : null;
+    const bubble = pack ? pack.bubbleForStyle(styleId, darkMode) : null;
     if (!bubble || !bubble.frame) return null;
     const frame = new ResolvedBubbleFrame();
     frame.asset = bubble.frame;
@@ -476,6 +503,14 @@ export class ThemePackRegistry {
     // 本机旧版记录里没有深色气泡和拉伸设置字段，bubbleFor 都按缺省补齐。
     installed.bubbleLight = ThemePackRegistry.resolveBubble(bubbleFor(parts, false), uri);
     installed.bubbleDark = ThemePackRegistry.resolveBubble(bubbleFor(parts, true), uri);
+    installed.titleBubbleLight = ThemePackRegistry.resolveBubble(titleBubbleFor(parts, false), uri);
+    installed.titleBubbleDark = ThemePackRegistry.resolveBubble(titleBubbleFor(parts, true), uri);
+    // 包里有标题气泡、标题强调又没指定样式时用它。
+    if (installed.hasTitleBubble()) {
+      for (const variant of [pack.light, pack.dark]) {
+        if (!variant.regexEmphasis.title.bubbleStyle) variant.regexEmphasis.title.bubbleStyle = packTitleBubbleStyleId(themeId);
+      }
+    }
     if (installed.hasBubble()) {
       pack.light.regexEmphasis.bubbleStyle = themeId;
       pack.dark.regexEmphasis.bubbleStyle = themeId;
@@ -578,6 +613,14 @@ export class ThemePackRegistry {
       if (emphasis.bubbleStyle) variant.regexEmphasis.bubbleStyle = emphasis.bubbleStyle;
       if (emphasis.color) variant.regexEmphasis.emphasisColor = emphasis.color;
       if (emphasis.textColor) variant.regexEmphasis.emphasisTextColor = emphasis.textColor;
+    }
+    // 包写了标题强调就整组换成包的（没写的字段为空，不沿用基底主题）；本机旧记录里没有。
+    const title = source.titleEmphasis;
+    if (title) {
+      variant.regexEmphasis.title.mode = title.mode || '';
+      variant.regexEmphasis.title.bubbleStyle = title.bubbleStyle || '';
+      variant.regexEmphasis.title.color = title.color || '';
+      variant.regexEmphasis.title.textColor = title.textColor || '';
     }
   }
 

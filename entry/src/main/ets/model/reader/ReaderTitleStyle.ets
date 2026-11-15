@@ -1,15 +1,20 @@
 import { ReaderTitleSplit, ReaderTitleSplitSettings } from '../../core/reader/ReaderTitleSplit';
-import { ReaderRegexFontCodec, ReaderRegexFontRule } from './ReaderRegexFontRule';
+import { ReaderRegexFontCodec, ReaderRegexFontRule, ReaderTitleEmphasis } from './ReaderRegexFontRule';
 
 /** Shares emphasis semantics and theme entitlement checks with regex fonts. */
 export class ReaderTitleStyleSettings extends ReaderTitleSplitSettings {
   emphasis: ReaderRegexFontRule = new ReaderRegexFontRule();
+  /**
+   * 2：标题强调有“跟随主题”（theme，默认）。更早的数据里 none 是旧默认值、inherit 是旧的“跟随主题”（用正文强调）：
+   * 读入时 none 改成 theme（现有主题都不设标题强调，看起来不变），inherit 原样保留，现在叫“同正文强调”。
+   */
+  emphasisVersion: number = 2;
 
   constructor() {
     super();
     this.emphasis.id = 'reader_title_emphasis';
     this.emphasis.name = '标题强调';
-    this.emphasis.emphasisMode = 'none';
+    this.emphasis.emphasisMode = ReaderTitleEmphasis.THEME;
   }
 }
 
@@ -34,6 +39,8 @@ export class ReaderTitleStyleCodec {
         result.emphasis = ReaderRegexFontCodec.cloneRule(source.emphasis);
         result.emphasis.id = 'reader_title_emphasis';
         result.emphasis.pattern = '';
+        const version = typeof source.emphasisVersion === 'number' ? source.emphasisVersion : 1;
+        if (version < 2 && result.emphasis.emphasisMode === 'none') result.emphasis.emphasisMode = ReaderTitleEmphasis.THEME;
       }
     } catch (_) {
       return new ReaderTitleStyleSettings();

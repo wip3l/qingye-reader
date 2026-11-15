@@ -324,6 +324,32 @@ function emphasis(text: string, e: Effective, fontPx: number = 19): HTMLElement 
   return h('span', { class: e.e.mode === 'highlight' ? 'em-highlight' : 'em-text', 'data-sec': 'emphasis' }, text);
 }
 
+/**
+ * 章节标题按主题的标题强调画（相当于读者选了“跟随主题”）：颜色写进 --p-em / --p-em-text 盖住正文强调的；
+ * 气泡样式自动时有标题气泡就用它，否则和正文强调同一套。
+ */
+function titleEmphasis(text: string, e: Effective, fontPx: number): HTMLElement | string {
+  const t = e.title;
+  if (!t.mode || t.mode === 'none') return text;
+  const color = t.color || e.e.color;
+  const textColor = t.textColor || e.e.textColor;
+  let bubble = e.e.bubble;
+  let art = e.b;
+  if (t.mode === 'bubble') {
+    const style = t.bubbleStyle;
+    if ((!style && e.tb) || (style && style.endsWith(':title'))) {
+      bubble = 'pack';
+      art = e.tb;
+    } else if (style && style !== 'emphasis') {
+      bubble = style;
+      art = null;
+    }
+  }
+  const view = { ...e, e: { ...e.e, mode: t.mode, bubble, color, textColor }, b: art } as Effective;
+  return h('span', { class: 'title-em', 'data-sec': 'title', style: `--p-em:${cssColor(color)};--p-em-text:${cssColor(textColor)}` },
+    emphasis(text, view, fontPx));
+}
+
 /** 两色按比例混合（#RRGGBB / #AARRGGBB，忽略透明度），同应用 ReaderRegexBubbleStyleResolver.mix。 */
 function mixColor(base: string, over: string, ratio: number): string {
   const rgb = (hex: string): number[] => {
@@ -433,7 +459,8 @@ function readerBody(e: Effective): HTMLElement {
   const layout = p.layout || {};
   const fontSize = typeof layout.fontSize === 'number' && layout.fontSize >= 12 && layout.fontSize <= 40 ? layout.fontSize : 19;
   const margin = typeof layout.marginLeft === 'number' ? Math.max(8, Math.min(48, layout.marginLeft)) : 20;
-  const content = h('div', { class: 'content', style: `font-size:${fontSize}px;padding:6px ${margin}px` }, h('h2', {}, '第十七章 灯下'));
+  const content = h('div', { class: 'content', style: `font-size:${fontSize}px;padding:6px ${margin}px` },
+    h('h2', {}, titleEmphasis('第十七章 灯下', e, Math.round(fontSize * 1.3))));
   const p1 = h('p', {}, '船过石桥时，舱里的灯忽然暗了一下。老周把书合上，抬头看了看窗外的水色，');
   p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e, fontSize), commentBubble('23', e, fontSize));
   const p2 = h('p', {}, '阿遥没有应声，只把那页折了个角。她记得母亲说过，');

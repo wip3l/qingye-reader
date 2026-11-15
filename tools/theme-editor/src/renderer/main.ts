@@ -554,7 +554,7 @@ function openCommentDialog(ref: string, owner: string): void {
 
 /** owner 是边框所在的那一节（bubble 或 bubbleDark）；深色那张按深色的强调配色预览。 */
 function openFrameDialog(ref: string, owner: string = 'bubble'): void {
-  const e = effective(owner === 'bubbleDark' ? 'dark' : S.ui.mode).e;
+  const e = effective(owner === 'bubbleDark' || owner === 'titleBubbleDark' ? 'dark' : S.ui.mode).e;
   openFrameStretch(ref, getPath(owner) || {}, { text: e.textColor, bubble: e.color }, modal, (settings) => {
     commit(() => {
       const bubble = getPath(owner);

@@ -118,7 +118,8 @@ export function editorIssues(): Issue[] {
       add('warn', `navigation.${extra}`, `给了“${extra === 'listen' ? '听' : '足迹'}”的选中态，普通态会用基底主题的图标，两张可能对不上`);
     }
   }
-  for (const [owner, label] of [['bubble', '气泡边框'], ['bubbleDark', '深色气泡边框']] as [string, string][]) {
+  for (const [owner, label] of [['bubble', '气泡边框'], ['bubbleDark', '深色气泡边框'], ['titleBubble', '标题气泡边框'],
+    ['titleBubbleDark', '深色标题气泡边框']] as [string, string][]) {
     const bubble = p.parts[owner];
     const frame = bubble && bubble.frame;
     if (!frame) continue;
