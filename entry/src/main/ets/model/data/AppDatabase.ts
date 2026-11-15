@@ -486,6 +486,8 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       await this.setSchemaVersion(this.SCHEMA_VERSION);
     }
     await this.createIndexes();
+    // 不等：首次建要扫全表，用到这些索引的查询自己会等。
+    this.ensureContentIndexes();
   }
 
   private async createIndexes(): Promise<void> {
@@ -2875,6 +2877,42 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   private static readonly ONLINE_CONTENT_WHERE: string =
     "bookUrl NOT LIKE 'local://%' AND bookUrl NOT IN (SELECT bookUrl FROM books WHERE origin = 'local')";
 
+  private contentIndexStore: relationalStore.RdbStore | null = null;
+  private contentIndexTask: Promise<void> = Promise.resolve();
+
+  /**
+   * book_contents 的辅助索引。querySql 的结果集是懒执行的，查询在主线程 goToFirstRow/goToNextRow 时才真正跑。
+   * 这张表每行带整章正文，pinned、cacheDate、contentBytes 等列排在 content 后面，从表里取它们要把正文的溢出页
+   * 一并读出来；整表扫或按书扫时，页缓存一冷就是整段读盘，主线程卡满 6 秒被判 THREAD_BLOCK。
+   * - 两个部分索引：补算检查只看待补的行，补完即为空；
+   * - budget 覆盖索引：缓存统计、列出缓存、离线书只读索引；
+   * - book 覆盖索引：按书取各章缓存时间（每次读目录都要）、按章判断是否手动缓存，不碰正文。
+   * 首次在大表上建索引要扫全表，不放进 init 的等待链：打开数据库后在 RDB 线程上后台建，用到的查询先等它建完。
+   */
+  ensureContentIndexes(): Promise<void> {
+    const store = this.store;
+    if (!store) return Promise.resolve();
+    if (this.contentIndexStore !== store) {
+      this.contentIndexStore = store;
+      this.contentIndexTask = (async (): Promise<void> => {
+        // contentBytes 打头，规划器才会按 contentBytes<? 只查这个部分索引，而不是整扫 budget 覆盖索引。
+        await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_unsized ' +
+          'ON book_contents(contentBytes, bookUrl) WHERE contentBytes < 0');
+        await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_unindexed ' +
+          'ON book_contents(bookUrl) WHERE imagesIndexed = 0');
+        await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_budget ' +
+          'ON book_contents(pinned, bookUrl, contentBytes, accessDate, cacheDate, chapterIndex, cacheRevision)');
+        await store.executeSql('CREATE INDEX IF NOT EXISTS idx_book_contents_book ' +
+          'ON book_contents(bookUrl, chapterIndex, pinned, cacheDate)');
+      })().catch((e: Error): void => {
+        // 建不成就下次再试；查询照常进行，只是慢。
+        if (this.contentIndexStore === store) this.contentIndexStore = null;
+        console.warn('[AppDatabase] create book_contents index failed', e);
+      });
+    }
+    return this.contentIndexTask;
+  }
+
   /** 升级前写入的行没有字节数，分批补算；返回本批补了多少行，0 表示已补完。 */
   async backfillCachedContentBytes(batchSize: number = 400): Promise<number> {
     if (!this.store) return 0;
@@ -3000,10 +3038,17 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   async imagePaths(offlineOnly: boolean = false, protectedBooks: string[] = []): Promise<string[]> {
     if (!this.store) throw new Error('数据库未就绪');
     const marks = protectedBooks.map((): string => '?').join(',');
-    const rs = await this.store.querySql('SELECT DISTINCT r.path FROM reader_image_refs r JOIN book_contents c ' +
-      'ON c.bookUrl=r.bookUrl AND c.chapterIndex=r.chapterIndex' + (offlineOnly ?
-      ' WHERE (c.pinned=1 OR c.bookUrl LIKE \'local://%\' OR c.bookUrl IN (SELECT bookUrl FROM books WHERE origin=\'local\')' +
-      (marks ? ` OR c.bookUrl IN (${marks})` : '') + ')' : ''), offlineOnly ? protectedBooks : []);
+    let sql = 'SELECT DISTINCT r.path FROM reader_image_refs r JOIN book_contents c ' +
+      'ON c.bookUrl=r.bookUrl AND c.chapterIndex=r.chapterIndex';
+    if (offlineOnly) {
+      // 写成行值 IN 子查询：按 JOIN 写时规划器走主键索引回表取 pinned，要读正文溢出页；
+      // 子查询只扫 idx_book_contents_book 覆盖索引，不碰正文。
+      await this.ensureContentIndexes();
+      sql = 'SELECT DISTINCT r.path FROM reader_image_refs r WHERE (r.bookUrl, r.chapterIndex) IN ' +
+        '(SELECT c.bookUrl, c.chapterIndex FROM book_contents c WHERE c.pinned=1 OR c.bookUrl LIKE \'local://%\' OR ' +
+        'c.bookUrl IN (SELECT bookUrl FROM books WHERE origin=\'local\')' + (marks ? ` OR c.bookUrl IN (${marks})` : '') + ')';
+    }
+    const rs = await this.store.querySql(sql, offlineOnly ? protectedBooks : []);
     const paths: string[] = [];
     try { while (rs.goToNextRow()) paths.push(rs.getString(0)); } finally { rs.close(); }
     return paths;
@@ -3311,6 +3356,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   /** 有离线内容的在线书：下载过音频，或有手动缓存的正文/漫画。书架封面的"离线"标识用它。 */
   async getOfflineBookUrls(): Promise<string[]> {
     if (!this.store) return [];
+    await this.ensureContentIndexes();
     const rs = await this.store.querySql('SELECT DISTINCT bookUrl FROM audio_offline_files UNION ' +
       `SELECT DISTINCT bookUrl FROM book_contents WHERE pinned=1 AND ${AppDatabase.ONLINE_CONTENT_WHERE}`);
     const urls: string[] = [];
@@ -3329,6 +3375,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   async getBookChapterCacheDateMap(bookUrl: string): Promise<Map<number, number>> {
     const cacheDates: Map<number, number> = new Map();
     if (!this.store) return cacheDates;
+    await this.ensureContentIndexes();
     const predicates = new relationalStore.RdbPredicates('book_contents');
     predicates.equalTo('bookUrl', bookUrl);
     const resultSet = await this.store.querySql('SELECT c.chapterIndex,c.cacheDate FROM book_contents c WHERE c.bookUrl=? ' +
