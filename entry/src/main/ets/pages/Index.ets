@@ -1689,8 +1689,10 @@ struct Index {
       }, (tabId: string) => tabId)
     }
     .barMode(BarMode.Fixed)
-    // 第四个页签增减时整个重建，页签数和选中项才不会错位。
-    .key(`home_compat_tabs_${this.extraTabId()}_${this.webParseEnabled ? 'web' : 'local'}`)
+    // 第四个页签增减时整个重建，页签数和选中项才不会错位。主题重新发布、切深浅色也整个重建，和悬浮底栏一样：
+    // 书架、发现常驻不卸载，页面颜色、主题背景图大多从 ThemeRuntime 现取，不重建就一直是旧主题，要重启才变。
+    .key(`home_compat_tabs_${this.themeRevision}_${this.appDarkMode ? 'dark' : 'light'}_${this.extraTabId()}_` +
+      `${this.webParseEnabled ? 'web' : 'local'}`)
     .barHeight(this.homeTabBarHidden() ? 0 : this.compatTabBarHeight())
     .barOverlap(this.compatTabBarOverlap())
     .barBackgroundColor(HomeTabBarSettingsStore.flatBarColor(ThemeRuntime.cardColor(this.appDarkMode),

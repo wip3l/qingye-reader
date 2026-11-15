@@ -22,7 +22,9 @@ export struct HomeThemeBackdrop {
   /** 书架页传当前书架布局：主题按布局单独配了背景时用那一张；其他页签不传，用通用背景。 */
   @Prop shelfLayout: string = '';
 
+  /** 读 themeRevision：自定义方案之间切换时主题 ID 都是 custom，只有它会变，背景图才跟着换。 */
   themeBackdrop(): ResourceStr | null {
+    if (this.themeRevision < 0) return null;
     return ThemeRuntime.homeBackdrop(this.appDarkMode, this.shelfLayout);
   }
 
