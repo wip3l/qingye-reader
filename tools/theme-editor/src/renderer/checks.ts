@@ -2,7 +2,8 @@
 import { buildFiles, formatSize, MAX_ASSETS, usedAssetPaths, verifyFiles } from '../core/packageIo.ts';
 import { getPath, mp, project, type Mode } from './state.ts';
 import { assetFields, SECTIONS, sectionOfPath, type Field } from './sections.ts';
-import { contrast, isColor } from './colors.ts';
+import { contrast, isColor, luminance } from './colors.ts';
+import { frameLuminance } from './frameStretch.ts';
 import { BASE_EXCLUDED, effective, themeName, THEMES, ttsComplete } from './tokens.ts';
 
 export interface Issue {
@@ -116,11 +117,27 @@ export function editorIssues(): Issue[] {
       add('warn', `navigation.${extra}`, `给了“${extra === 'listen' ? '听' : '足迹'}”的选中态，普通态会用基底主题的图标，两张可能对不上`);
     }
   }
-  const bubbleFrame = p.parts.bubble && p.parts.bubble.frame;
-  if (bubbleFrame) {
-    const frameAsset = p.assets.get(bubbleFrame);
-    if (frameAsset && frameAsset.ext === 'jpg') add('warn', 'bubble.frame', '气泡边框是不透明的 JPG，正文里会露出底色，建议换透明底的 PNG 或 SVG');
-    if (!p.parts.bubble.frameSlice) add('warn', 'bubble.frame', '气泡边框的拉伸区域没调过，会按默认位置拉伸（左右各留图高的 0.6 倍）');
+  for (const [owner, label] of [['bubble', '气泡边框'], ['bubbleDark', '深色气泡边框']] as [string, string][]) {
+    const bubble = p.parts[owner];
+    const frame = bubble && bubble.frame;
+    if (!frame) continue;
+    const frameAsset = p.assets.get(frame);
+    if (frameAsset && frameAsset.ext === 'jpg') add('warn', `${owner}.frame`, `${label}是不透明的 JPG，正文里会露出底色，建议换透明底的 PNG 或 SVG`);
+    if (!bubble.frameSlice) add('warn', `${owner}.frame`, `${label}的拉伸区域没调过，会按默认位置拉伸（左右各留图高的 0.6 倍）`);
+  }
+  // 深色沿用浅色边框、又没开染色时，看浅色边框在深色纸面上是否还看得清（对比度按 3:1 估）。
+  const lightBubble = p.parts.bubble || {};
+  const darkBubble = p.parts.bubbleDark || {};
+  if (lightBubble.frame && !darkBubble.frame && lightBubble.frameTint !== true) {
+    const lum = frameLuminance(lightBubble.frame);
+    const paper = effective('dark').reader.backgroundColor;
+    if (lum >= 0 && isColor(paper, false)) {
+      const paperLum = luminance(paper);
+      const ratio = (Math.max(lum, paperLum) + 0.05) / (Math.min(lum, paperLum) + 0.05);
+      if (ratio < 3) {
+        add('warn', 'bubbleDark.frame', `深色模式沿用浅色气泡边框，和深色阅读底色的对比度只有 ${ratio.toFixed(1)}，可能看不清。可以上传深色边框，或打开“染成气泡底色”`);
+      }
+    }
   }
   const bookCovers = ((p.parts.book && p.parts.book.covers) || []).length;
   const bookCoversDark = ((p.parts.book && p.parts.book.coversDark) || []).length;
@@ -159,7 +176,7 @@ export function editorIssues(): Issue[] {
 /** 格式层报错里的字段路径 → 部件。 */
 function sectionOfMessage(message: string): string {
   const rules: [RegExp, string][] = [
-    [/parts\.(light|dark)\.colors/, 'colors'], [/parts\.(light|dark)\.reader/, 'reader'], [/parts\.(light|dark)\.emphasis|parts\.bubble/, 'emphasis'],
+    [/parts\.(light|dark)\.colors/, 'colors'], [/parts\.(light|dark)\.reader/, 'reader'], [/parts\.(light|dark)\.(emphasis|commentBubble)|parts\.bubble/, 'emphasis'],
     [/ttsPanel/, 'tts'], [/homeBackdrop|shelfBackdrop/, 'homeBackdrop'], [/navigation/, 'nav'], [/parts\.book/, 'book'], [/startup/, 'startup'], [/radius|typography/, 'shape'],
     [/logo|preview/, 'brand'], [/packageId|名称|清单/, 'meta']
   ];

@@ -140,7 +140,7 @@ export struct ReaderTypographyPreview {
       Stack({ alignContent: Alignment.TopStart }) {
         ForEach(this.capSegments, (segment: ReaderV2RegexBubbleSegment) => {
           ReaderV2RegexBubbleCapImages(segment, this.getUIContext())
-        }, (segment: ReaderV2RegexBubbleSegment) => `${segment.styleId}_${segment.rect.left}_${segment.rect.top}_` +
+        }, (segment: ReaderV2RegexBubbleSegment) => `${segment.styleId}_${segment.capDark ? 1 : 0}_${segment.rect.left}_${segment.rect.top}_` +
           `${segment.rect.right}_${segment.rect.bottom}_${segment.capSizePx}_${segment.leadingCapWidthPx}_` +
           `${segment.trailingCapWidthPx}_${segment.leading}_${segment.trailing}`)
       }

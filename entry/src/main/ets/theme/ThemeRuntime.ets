@@ -14,6 +14,7 @@ import {
   ThemeVariant
 } from './ThemeModels';
 import { HexColor } from '../utils/HexColor';
+import { commentBubbleIsEmpty, normalizeCommentBubble, ThemePackageCommentBubble } from './share/ThemePackageFormat';
 
 export class ThemeRuntime {
   static readonly KEY_THEME_ID: string = 'appThemeId';
@@ -65,6 +66,9 @@ export class ThemeRuntime {
   static readonly KEY_DARK_REGEX_EMPHASIS_COLOR: string = 'themeDarkRegexEmphasisColor';
   static readonly KEY_LIGHT_REGEX_EMPHASIS_TEXT_COLOR: string = 'themeLightRegexEmphasisTextColor';
   static readonly KEY_DARK_REGEX_EMPHASIS_TEXT_COLOR: string = 'themeDarkRegexEmphasisTextColor';
+  // 段评气泡外观（ThemePackageCommentBubble 的 JSON），空串表示全部沿用气泡样式。
+  static readonly KEY_LIGHT_COMMENT_BUBBLE: string = 'themeLightCommentBubble';
+  static readonly KEY_DARK_COMMENT_BUBBLE: string = 'themeDarkCommentBubble';
 
   static readonly KEY_RADIUS_SMALL: string = 'themeRadiusSmall';
   static readonly KEY_RADIUS_MEDIUM: string = 'themeRadiusMedium';
@@ -495,6 +499,19 @@ export class ThemeRuntime {
       fallback);
   }
 
+  /** 当前主题这个模式的段评气泡设置；没设时各字段为空。 */
+  static commentBubbleTokens(darkMode: boolean): ThemePackageCommentBubble {
+    const raw = AppStorage.get<string>(darkMode ? ThemeRuntime.KEY_DARK_COMMENT_BUBBLE :
+      ThemeRuntime.KEY_LIGHT_COMMENT_BUBBLE);
+    if (raw === undefined) return normalizeCommentBubble(ThemeRuntime.fallbackVariant(darkMode).regexEmphasis.commentBubble);
+    if (!raw) return new ThemePackageCommentBubble();
+    try {
+      return normalizeCommentBubble(JSON.parse(raw) as ThemePackageCommentBubble);
+    } catch (_) {
+      return new ThemePackageCommentBubble();
+    }
+  }
+
   static smallRadius(): number {
     if (ThemeRuntime.currentThemeId() === ThemeIds.CUSTOM) {
       return ThemeRuntime.customSourceTheme('radius').radius.small;
@@ -565,6 +582,8 @@ export class ThemeRuntime {
       fallback.regexEmphasis.emphasisMode);
     const bubbleStyle = ThemeRuntime.normalizeBubbleStyle(variant.regexEmphasis.bubbleStyle,
       fallback.regexEmphasis.bubbleStyle);
+    const comment = normalizeCommentBubble(variant.regexEmphasis.commentBubble);
+    const commentJson = commentBubbleIsEmpty(comment) ? '' : JSON.stringify(comment);
 
     if (darkMode) {
       ThemeRuntime.setString(ThemeRuntime.KEY_DARK_PAGE_COLOR, pageColor);
@@ -589,6 +608,7 @@ export class ThemeRuntime {
       ThemeRuntime.setString(ThemeRuntime.KEY_DARK_REGEX_BUBBLE_STYLE, bubbleStyle);
       ThemeRuntime.setString(ThemeRuntime.KEY_DARK_REGEX_EMPHASIS_COLOR, regexColor);
       ThemeRuntime.setString(ThemeRuntime.KEY_DARK_REGEX_EMPHASIS_TEXT_COLOR, regexTextColor);
+      ThemeRuntime.setString(ThemeRuntime.KEY_DARK_COMMENT_BUBBLE, commentJson);
       AppStorage.setOrCreate('appDarkAccentColor', accentColor);
       AppStorage.setOrCreate('appDarkButtonColor', buttonColor);
       return;
@@ -616,6 +636,7 @@ export class ThemeRuntime {
     ThemeRuntime.setString(ThemeRuntime.KEY_LIGHT_REGEX_BUBBLE_STYLE, bubbleStyle);
     ThemeRuntime.setString(ThemeRuntime.KEY_LIGHT_REGEX_EMPHASIS_COLOR, regexColor);
     ThemeRuntime.setString(ThemeRuntime.KEY_LIGHT_REGEX_EMPHASIS_TEXT_COLOR, regexTextColor);
+    ThemeRuntime.setString(ThemeRuntime.KEY_LIGHT_COMMENT_BUBBLE, commentJson);
     AppStorage.setOrCreate('appLightAccentColor', accentColor);
     AppStorage.setOrCreate('appLightButtonColor', buttonColor);
   }

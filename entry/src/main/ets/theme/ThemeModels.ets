@@ -1,3 +1,5 @@
+import { ThemePackageCommentBubble } from './share/ThemePackageFormat';
+
 export class ThemeIds {
   static readonly CUSTOM: string = 'custom';
   static readonly PLAIN_DEFAULT: string = 'plain-default';
@@ -116,6 +118,8 @@ export class ThemeEmphasisOverrides {
   bubbleStyle: string = '';
   color: string = '';
   textColor: string = '';
+  // 段评气泡的逐项覆盖，字段为空跟随来源主题；本机旧设置里没有。
+  comment: ThemePackageCommentBubble = new ThemePackageCommentBubble();
 }
 
 /** 自定义方案对圆角的逐项覆盖：-1 表示跟随所选主题。 */
@@ -199,6 +203,8 @@ export class ThemeRegexEmphasisTokens {
   bubbleStyle: string = ThemeBubbleStyles.QQ_SOFT;
   emphasisColor: string = '#D9ECFF';
   emphasisTextColor: string = '#1B4168';
+  // 段评气泡外观，空字段沿用气泡样式推出的样子（见 ReaderCommentBubbleStyles.resolveThemed）。
+  commentBubble: ThemePackageCommentBubble = new ThemePackageCommentBubble();
 }
 
 export class ThemeVariant {

@@ -1141,6 +1141,7 @@ export class ReaderV2Paginator {
         }
         const segment = new ReaderV2RegexBubbleSegment();
         segment.styleId = style.decorationStyleId;
+        segment.capDark = style.decorationDark;
         segment.text = fragmentText.substring(segmentStart, segmentEnd);
         segment.leading = style.repeatCaps || (style.start >= fragment.displayStart && segmentStart === localStart);
         segment.trailing = style.repeatCaps || (style.end <= fragment.displayEnd && segmentEnd === localEnd);

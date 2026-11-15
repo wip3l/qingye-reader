@@ -12,10 +12,14 @@ import {
   BubbleFrameBreak,
   BubbleFrameRepeat,
   bubbleFrameSliceOrDefault,
+  bubbleFor,
+  normalizeCommentBubble,
+  ThemePackageBubble,
   ThemePackageCredits,
   ThemePackageParts,
   ThemePackageShelfBackdrop,
-  ThemePackageVariantParts
+  ThemePackageVariantParts,
+  NAVIGATION_ICON_KEYS
 } from './share/ThemePackageFormat';
 import { ThemePack, ThemeVariant } from './ThemeModels';
 import { ImageFileSize } from '../utils/ImageFileSize';
@@ -75,6 +79,27 @@ export class InstalledThemePackTtsPanel {
   glowColor: string = '';
 }
 
+/** 某个模式下的包内气泡：素材已换成本机地址，端饰、边框已按 bubbleFor 补上另一种模式的。 */
+export class InstalledThemePackBubble {
+  frame: string = '';
+  cap: string = '';
+  // 边框的拉伸设置，原样来自所属那张边框（见 ThemePackageBubble）。
+  frameSlice: ThemePackageBubbleSlice | null = null;
+  frameRepeat: string = '';
+  frameBreak: string = '';
+  frameTint: boolean = false;
+  private aspectValue: number = 0;
+
+  /** 边框原图的宽 / 高，读不出来时按 3:1；第一次用到时才读文件头。 */
+  frameAspect(): number {
+    if (this.aspectValue <= 0 && this.frame) {
+      const aspect = ImageFileSize.aspect(this.frame);
+      this.aspectValue = aspect > 0 ? aspect : 3;
+    }
+    return this.aspectValue;
+  }
+}
+
 export class InstalledThemePackStartup {
   image: string = '';
   title: string = '';
@@ -110,25 +135,23 @@ export class InstalledThemePack {
   navListenSelected: string = '';
   navFootprintSelected: string = '';
   navHideLabels: boolean = false;
+  // 深色模式单独的图标（键同 NAVIGATION_ICON_KEYS），没给的沿用上面那些。
+  navDark: Map<string, string> = new Map<string, string>();
   // 编辑器逐个上传导航图标时可能只有几张：缺的页签用基底主题的这套图标。
   navFallbackIconPackId: string = '';
   covers: string[] = [];
   // 深色模式单独的一套封面；空着时深色也用 covers。
   coversDark: string[] = [];
   shelfFrame: string = '';
+  // 深色模式单独的书架边框；空着时深色也用 shelfFrame。
+  shelfFrameDark: string = '';
   shelfFolder: string = '';
   // 深色模式单独的文件夹插画；空着时深色也用 shelfFolder。
   shelfFolderDark: string = '';
   startupLight: InstalledThemePackStartup | null = null;
   startupDark: InstalledThemePackStartup | null = null;
-  bubbleFrame: string = '';
-  bubbleCap: string = '';
-  // 气泡边框的拉伸设置，原样来自 parts.bubble（见 ThemePackageBubble）。
-  bubbleFrameSlice: ThemePackageBubbleSlice | null = null;
-  bubbleFrameRepeat: string = '';
-  bubbleFrameBreak: string = '';
-  bubbleFrameTint: boolean = false;
-  private bubbleFrameAspectValue: number = 0;
+  bubbleLight: InstalledThemePackBubble = new InstalledThemePackBubble();
+  bubbleDark: InstalledThemePackBubble = new InstalledThemePackBubble();
   homeBackdropLight: string = '';
   homeBackdropDark: string = '';
   // 按书架布局分别给的背景，素材和区域都已换成本机地址。
@@ -157,18 +180,17 @@ export class InstalledThemePack {
     return !!this.navBookshelf || !!this.navExplore || !!this.navMine || !!this.navListen || !!this.navFootprint;
   }
 
-  /** 端饰和边框有一样就算包内气泡：只有边框时强调文字照样套边框，不画端饰。 */
+  /** 端饰和边框有一样就算包内气泡：只有边框时强调文字照样套边框，不画端饰。两种模式的素材互相补齐，看一种就够。 */
   hasBubble(): boolean {
-    return !!this.bubbleCap || !!this.bubbleFrame;
+    return !!this.bubbleLight.cap || !!this.bubbleLight.frame;
   }
 
-  /** 边框原图的宽 / 高，读不出来时按 3:1；第一次用到时才读文件头。 */
-  bubbleFrameAspect(): number {
-    if (this.bubbleFrameAspectValue <= 0 && this.bubbleFrame) {
-      const aspect = ImageFileSize.aspect(this.bubbleFrame);
-      this.bubbleFrameAspectValue = aspect > 0 ? aspect : 3;
-    }
-    return this.bubbleFrameAspectValue;
+  bubble(darkMode: boolean): InstalledThemePackBubble {
+    return darkMode ? this.bubbleDark : this.bubbleLight;
+  }
+
+  shelfFrameFor(darkMode: boolean): string {
+    return darkMode ? (this.shelfFrameDark || this.shelfFrame) : (this.shelfFrame || this.shelfFrameDark);
   }
 
   reader(darkMode: boolean): InstalledThemePackReader {
@@ -232,17 +254,18 @@ export class ThemePackRegistry {
 
   /** 认得 pack:<id> 和 pack:<id>:light 这类带后缀的素材键。 */
   /** 气泡样式是主题包且包里有边框时给出正文要画的边框；内置样式的横幅边框不逐行画，返回 null。 */
-  static bubbleFrame(styleId: string): ResolvedBubbleFrame | null {
+  static bubbleFrame(styleId: string, darkMode: boolean = false): ResolvedBubbleFrame | null {
     if (!ThemePackRegistry.isPackId(styleId)) return null;
     const pack = ThemePackRegistry.get(styleId);
-    if (!pack || !pack.bubbleFrame) return null;
+    const bubble = pack ? pack.bubble(darkMode) : null;
+    if (!bubble || !bubble.frame) return null;
     const frame = new ResolvedBubbleFrame();
-    frame.asset = pack.bubbleFrame;
-    frame.aspect = pack.bubbleFrameAspect();
-    frame.slice = bubbleFrameSliceOrDefault(pack.bubbleFrameSlice, frame.aspect);
-    frame.round = pack.bubbleFrameRepeat === BubbleFrameRepeat.ROUND;
-    frame.cut = pack.bubbleFrameBreak === BubbleFrameBreak.CUT;
-    frame.tint = pack.bubbleFrameTint;
+    frame.asset = bubble.frame;
+    frame.aspect = bubble.frameAspect();
+    frame.slice = bubbleFrameSliceOrDefault(bubble.frameSlice, frame.aspect);
+    frame.round = bubble.frameRepeat === BubbleFrameRepeat.ROUND;
+    frame.cut = bubble.frameBreak === BubbleFrameBreak.CUT;
+    frame.tint = bubble.frameTint;
     return frame;
   }
 
@@ -392,6 +415,14 @@ export class ThemePackRegistry {
       installed.navListenSelected = uri(parts.navigation.listenSelected || '');
       installed.navFootprintSelected = uri(parts.navigation.footprintSelected || '');
       installed.navHideLabels = parts.navigation.labels === 'hidden';
+      // 本机旧版记录里没有深色图标。
+      const navigationDark = parts.navigationDark ? parts.navigationDark as Object as Record<string, string> : null;
+      if (navigationDark) {
+        for (const key of NAVIGATION_ICON_KEYS) {
+          const resolved = uri(navigationDark[key] || '');
+          if (resolved) installed.navDark.set(key, resolved);
+        }
+      }
       installed.navFallbackIconPackId = record.navFallbackIconPackId || pack.navigation.iconPackId;
       if (installed.hasAnyNavigation()) pack.navigation.iconPackId = themeId;
     }
@@ -401,6 +432,7 @@ export class ThemePackRegistry {
         if (resolved) installed.covers.push(resolved);
       }
       installed.shelfFrame = uri(parts.book.shelfFrame);
+      installed.shelfFrameDark = uri(parts.book.shelfFrameDark || '');
       installed.shelfFolder = uri(parts.book.shelfFolder);
       for (const cover of parts.book.covers) {
         const crop = ThemePackRegistry.resolveCrop(findImageCrop(parts.book.coverCrops, cover), uri);
@@ -421,7 +453,7 @@ export class ThemePackRegistry {
       installed.shelfFolderCropDark = folderCropDark && folderCropDark.image === parts.book.shelfFolderDark ?
         ThemePackRegistry.resolveCrop(folderCropDark, uri) : null;
       if (installed.coversFor(false).length > 0) pack.book.coverAssetId = themeId;
-      if (installed.shelfFrame) pack.book.shelfFrameAssetId = themeId;
+      if (installed.shelfFrameFor(false)) pack.book.shelfFrameAssetId = themeId;
       if (installed.shelfFolderFor(false)) pack.book.shelfFolderAssetId = themeId;
     }
     if (parts.startupLight) {
@@ -437,18 +469,12 @@ export class ThemePackRegistry {
       installed.startupDark.subtitle = parts.startupDark.subtitle;
     }
     if (installed.startupLight || installed.startupDark) pack.startup.styleId = themeId;
-    if (parts.bubble) {
-      installed.bubbleFrame = uri(parts.bubble.frame);
-      installed.bubbleCap = uri(parts.bubble.cap);
-      // 本机旧版记录里没有拉伸设置字段。
-      installed.bubbleFrameSlice = parts.bubble.frameSlice || null;
-      installed.bubbleFrameRepeat = parts.bubble.frameRepeat || '';
-      installed.bubbleFrameBreak = parts.bubble.frameBreak || '';
-      installed.bubbleFrameTint = parts.bubble.frameTint === true;
-      if (installed.hasBubble()) {
-        pack.light.regexEmphasis.bubbleStyle = themeId;
-        pack.dark.regexEmphasis.bubbleStyle = themeId;
-      }
+    // 本机旧版记录里没有深色气泡和拉伸设置字段，bubbleFor 都按缺省补齐。
+    installed.bubbleLight = ThemePackRegistry.resolveBubble(bubbleFor(parts, false), uri);
+    installed.bubbleDark = ThemePackRegistry.resolveBubble(bubbleFor(parts, true), uri);
+    if (installed.hasBubble()) {
+      pack.light.regexEmphasis.bubbleStyle = themeId;
+      pack.dark.regexEmphasis.bubbleStyle = themeId;
     }
     // 本机旧版记录里没有这两个字段。
     installed.homeBackdropLight = uri(parts.homeBackdropLight || '');
@@ -488,6 +514,21 @@ export class ThemePackRegistry {
     }
     installed.pack = pack;
     return installed;
+  }
+
+  private static resolveBubble(source: ThemePackageBubble | null,
+    uri: (value: string) => string): InstalledThemePackBubble {
+    const bubble = new InstalledThemePackBubble();
+    if (!source) return bubble;
+    bubble.cap = uri(source.cap || '');
+    bubble.frame = uri(source.frame || '');
+    if (bubble.frame) {
+      bubble.frameSlice = source.frameSlice || null;
+      bubble.frameRepeat = source.frameRepeat || '';
+      bubble.frameBreak = source.frameBreak || '';
+      bubble.frameTint = source.frameTint === true;
+    }
+    return bubble;
   }
 
   private static applyVariant(variant: ThemeVariant, source: ThemePackageVariantParts | null,
@@ -534,5 +575,7 @@ export class ThemePackRegistry {
       if (emphasis.color) variant.regexEmphasis.emphasisColor = emphasis.color;
       if (emphasis.textColor) variant.regexEmphasis.emphasisTextColor = emphasis.textColor;
     }
+    // 本机旧版记录里没有。
+    if (source.commentBubble) variant.regexEmphasis.commentBubble = normalizeCommentBubble(source.commentBubble);
   }
 }

@@ -4,6 +4,13 @@ import graphicsText from '@ohos.graphics.text';
 import image from '@ohos.multimedia.image';
 import { ReaderV2Color } from './ReaderV2Style';
 import { ReaderCommentBubbleSize } from './ReaderCommentBubbleSize';
+import {
+  COMMENT_BUBBLE_DEFAULT_RADIUS,
+  commentBubbleIsEmpty,
+  isPackThemeId,
+  normalizeCommentBubble,
+  ThemePackageCommentBubble
+} from '../../theme/share/ThemePackageFormat';
 
 /**
  * Resolved look of a paragraph-comment / 本章说 bubble: a speech bubble with a tail whose shape, colours and small
@@ -125,6 +132,76 @@ export class ReaderCommentBubbleStyles {
       style.fill = 0;
       style.stroke = outline;
       style.text = outline;
+    }
+    return style;
+  }
+
+  /**
+   * The bubble a theme asks for: the emphasis-bubble style above, then the theme's own comment-bubble settings
+   * (empty fields keep what the style gives). A theme pack's own bubble has no entry in the table, so its comments
+   * take the emphasis bubble's fill, text and base colours instead of the plain grey.
+   */
+  static resolveThemed(styleId: string, dark: boolean, readerTextColor: string,
+    tokens: ThemePackageCommentBubble | null | undefined, emphasisFill: string, emphasisText: string,
+    emphasisBase: string): ReaderCommentBubbleStyle {
+    const style = ReaderCommentBubbleStyles.resolve(styleId, dark, readerTextColor);
+    const useEmphasisColors = (): void => {
+      style.fill = ReaderV2Color.parse(emphasisFill, style.fill);
+      style.text = ReaderV2Color.parse(emphasisText, style.text);
+      style.stroke = ReaderV2Color.parse(emphasisBase, style.stroke);
+    };
+    if (isPackThemeId(styleId)) {
+      style.styleId = 'pack';
+      style.cut = false;
+      style.radiusRatio = 0.3;
+      style.ornament = '';
+      useEmphasisColors();
+    }
+    const theme = normalizeCommentBubble(tokens);
+    if (commentBubbleIsEmpty(theme)) return style;
+    if (theme.shape === 'outline') {
+      const outline = ReaderCommentBubbleStyles.resolve('capsule', dark, readerTextColor);
+      style.styleId = outline.styleId;
+      style.cut = false;
+      style.radiusRatio = outline.radiusRatio;
+      style.fill = 0;
+      style.stroke = theme.stroke ? ReaderV2Color.parse(theme.stroke, outline.stroke) : outline.stroke;
+      style.text = theme.text ? ReaderV2Color.parse(theme.text, outline.text) : outline.text;
+      if (!theme.ornament) style.ornament = '';
+    } else {
+      if ((theme.shape || theme.fill) && style.styleId === 'capsule') {
+        // The default outline has no fill of its own: a solid shape starts from the emphasis colours.
+        style.styleId = 'themed';
+        useEmphasisColors();
+      }
+      if (theme.shape === 'pill') {
+        style.cut = false;
+        style.radiusRatio = 0.5;
+      } else if (theme.shape === 'rounded') {
+        style.cut = false;
+        style.radiusRatio = theme.radius >= 0 ? theme.radius : COMMENT_BUBBLE_DEFAULT_RADIUS;
+      } else if (theme.shape === 'cut') {
+        style.cut = true;
+      }
+      if (theme.fill) style.fill = ReaderV2Color.parse(theme.fill, style.fill);
+      if (theme.stroke) style.stroke = ReaderV2Color.parse(theme.stroke, style.stroke);
+      if (theme.text) style.text = ReaderV2Color.parse(theme.text, style.text);
+    }
+    if (theme.ornament === 'none') {
+      style.ornament = '';
+    } else if (theme.ornament && theme.ornament !== style.ornament) {
+      style.ornament = theme.ornament;
+      const visibleStroke = ((style.stroke >>> 24) & 0xFF) > 0 ? style.stroke : style.text;
+      style.ornamentColor = visibleStroke;
+      // Two-tone ornaments use the second colour for a small inner part: the fill reads as a cut-out.
+      style.ornamentAltColor = theme.ornament === 'paw' || theme.ornament === 'leaf' || theme.ornament === 'rose' ?
+        visibleStroke : style.fill;
+    }
+    if (theme.ornamentColor && style.ornament) {
+      style.ornamentColor = ReaderV2Color.parse(theme.ornamentColor, style.ornamentColor);
+      if (style.ornament === 'paw' || style.ornament === 'leaf' || style.ornament === 'rose') {
+        style.ornamentAltColor = style.ornamentColor;
+      }
     }
     return style;
   }

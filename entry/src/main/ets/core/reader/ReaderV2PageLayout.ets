@@ -25,6 +25,8 @@ export class ReaderV2SelectionRun {
 
 export class ReaderV2RegexBubbleSegment {
   styleId: string = '';
+  /** Use the theme pack's dark-mode cap. */
+  capDark: boolean = false;
   text: string = '';
   leading: boolean = false;
   trailing: boolean = false;

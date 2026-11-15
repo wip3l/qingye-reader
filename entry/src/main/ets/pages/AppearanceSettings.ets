@@ -466,7 +466,7 @@ struct AppearanceSettingsPage {
       Row() {
         ForEach(this.previewTabIds(), (tabId: string, index: number) => {
           Column() {
-            Image(ThemeAssetRegistry.navigationIcon(ThemeRuntime.iconPackId(), tabId, false))
+            Image(ThemeAssetRegistry.navigationIcon(ThemeRuntime.iconPackId(), tabId, false, this.appDarkMode))
               .width(20)
               .height(20)
               .fillColor(index === 0 ? this.accentColor() : this.subTextColor())

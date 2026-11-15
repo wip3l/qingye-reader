@@ -75,18 +75,22 @@ my-theme/
 | `light` / `dark` | `colors` | 界面配色：`pageColor`、`cardColor`、`inputColor`、`primaryTextColor`、`subTextColor`、`dividerColor`、`accentColor`、`buttonColor`、`dangerColor`。可以只写一部分。 |
 | | `reader` | 阅读页：`backgroundColor`（必须是铺满任意尺寸的底色）、`textColor`、`subTextColor`、`contentTone`（`light` / `dark`，决定系统栏图标明暗）、`backgroundMode`（`ornaments` 角饰 / `image` 整图 / `none` 只有底色）。角饰模式填 `leading`（左上）与 `trailing`（右下）图片（SVG 或透明底位图），可以只填一张，另一角空着（此时 `requires` 要加 `reader-single-corner-v1`）；两项填同一个素材时右下角旋转 180° 显示；`leadingScale`、`trailingScale` 分别是左上、右下角饰的显示大小，相对默认尺寸（屏幕短边 × 0.36，夹在 112–260vp）的倍数，0.5–2，默认 1，最大不超过短边的 0.8，旧版本应用忽略这两项按 1 显示。整图模式填 `image` 和 `imageFit`（`cover` / `contain` / `fill`），还可以同时填 `leading` / `trailing`（及两个大小），角饰叠在整图上面；旧版本应用只显示整图。 |
 | | `emphasis` | 正文强调：`mode`（`none` / `text` / `highlight` / `bubble`）、`bubbleStyle`（内置气泡 ID，见主题开发指南；包里带了 `bubble` 节时自动用包内气泡）、`color`、`textColor`（可带透明度）。 |
+| | `commentBubble` | 可选：段评气泡（含本章说）的外观，见下文“段评气泡”。旧版本应用会忽略。 |
 | `ttsPanel` | `light` / `dark` | 朗读与有声书面板：`artwork`（720 × 520 的 SVG 或位图，贴顶等比缩放）、`skyColor`（插画背后的天空色）、`surfaceColor`（不透明的面板底色）、`glowColor`（带透明度的强调光）。四项都要写；只写一种模式时另一种模式沿用它。 |
 | `navigation` | `bookshelf`、`explore`、`mine` | 首页底栏的三个图标，缺一不可。SVG 按主题色着色，位图保持原色。 |
 | | `bookshelfSelected`、`exploreSelected`、`mineSelected` | 选中态图标，可选；没写的页签选中时仍用普通图标。旧版本应用会忽略这几项。 |
 | | `listen`、`footprint`（及 `listenSelected`、`footprintSelected`） | 可选第四个页签“听”“足迹”的图标（其他设置 › 底栏里开启），可以不写；没写时这个页签用基底主题的图标。旧版本应用会忽略。 |
 | | `search`、`searchSelected` | 旧版本应用底栏“搜索”页签的图标。本应用读包时照收但不显示；旧版本应用要求有 `search` 才肯导入，应用和桌面编辑器导出时缺了就用 `explore`（与 `exploreSelected`）的图标补上。 |
 | | `labels` | 写 `hidden` 时底栏只显示图标，不显示“书架”等文字。 |
+| `navigationDark` | 同 `navigation` 的图标字段 | 可选：深色模式单独的图标，每一项都可以不写，没写的沿用 `navigation`；给了深色普通图标却没给深色选中态时，选中也用深色普通图标。没有 `navigation` 时整节不读，`labels` 只看 `navigation`。SVG 图标本来就按主题色着色，一般只有彩色位图才需要另给。旧版本应用会忽略。 |
 | `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 16 张，书架按书轮播；超过 8 张时 `requires` 要包含 `book-covers-16-v1`，旧版本应用最多只收 8 张）、书架边框 SVG、分组文件夹插画。 |
 | | `coversDark` | 可选：深色模式单独的一套封面（最多 16 张）。不写时深色模式也用 `covers`。和 `covers` 张数相同、顺序对应时，同一本书切换深浅色落在同一序号上，适合放同一幅画的两个版本。旧版本应用会忽略，两种模式都显示 `covers`，所以 `covers` 要始终写。 |
+| | `shelfFrameDark` | 可选：深色模式单独的书架边框 SVG。边框按原色显示，深色描边在深色书架上看不清时再给。不写时深色模式也用 `shelfFrame`。旧版本应用会忽略，两种模式都显示 `shelfFrame`。 |
 | | `shelfFolderDark` | 可选：深色模式单独的文件夹插画。不写时深色模式也用 `shelfFolder`。旧版本应用会忽略，两种模式都显示 `shelfFolder`。 |
 | | `coverCrops`、`coverCropsDark`、`shelfFolderCrop`、`shelfFolderCropDark` | 可选的显示区域（见下文“显示区域”）：`coverCrops` 是数组，按 `image` 对应到 `covers` 里的某张封面；`coverCropsDark` 同理，对应 `coversDark`；`shelfFolderCrop`、`shelfFolderCropDark` 分别对应两张文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
 | `bubble` | `frame`、`cap`、`frameSlice`、`frameRepeat`、`frameBreak`、`frameTint` | 强调气泡的端饰 SVG 与边框（SVG，或透明底 PNG / WebP），至少给一样；边框是位图或没有端饰时 `requires` 要包含 `bubble-frame-v1`，旧版本应用会提示先更新。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。边框的拉伸设置见下文“气泡边框”，旧版本应用忽略这些字段、也不画边框。 |
+| `bubbleDark` | 同 `bubble` | 可选：深色模式单独的端饰与边框。端饰、边框各自沿用：深色没写的那一项用 `bubble` 的（边框连同它的拉伸设置）；某一项只在一种模式里有时，两种模式都用它。端饰按原色显示、边框不开 `frameTint` 时也是原色，浅色那套放在深色纸面上看不清时再给。位图边框不用另外声明 `bubble-frame-v1`。旧版本应用会忽略，两种模式都用 `bubble`。 |
 | `homeBackdrop` | `light` / `dark` | 书架、发现和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
 | `shelfBackdrop` | `companion` / `tile` / `loose` / `compact` | 可选：按书架布局（陪伴、平铺、宽松、紧凑）分别给的背景，每种布局下写 `light` / `dark`（及可选的 `lightCrop` / `darkCrop`）。只在书架页、用这种布局时显示，没写的布局或模式用 `homeBackdrop` 那张；发现、我的等页签始终用 `homeBackdrop`。浅色、深色互不借用。旧版本应用会忽略这一节。 |
 | | `lightCrop` / `darkCrop` | 可选的显示区域，对应同一模式的背景图。 |
@@ -164,7 +168,25 @@ my-theme/
   "frame": "assets/bubble_frame.png",
   "frameSlice": { "left": 0.17, "right": 0.17, "top": 0.08, "bottom": 0.08 },
   "frameRepeat": "round"
+},
+"bubbleDark": {
+  "frame": "assets/bubble_frame_night.png",
+  "frameSlice": { "left": 0.18, "right": 0.18, "top": 0.08, "bottom": 0.08 }
 }
+```
+
+### 段评气泡
+
+`light.commentBubble`、`dark.commentBubble` 决定正文段评与本章说气泡的样子，两种模式各写各的。每个字段都可以不写，不写的沿用强调气泡样式推出来的样子：内置气泡样式有各自的段评配色；包内气泡（`bubble` 节）的段评用强调底色、文字色推导，和强调气泡对得上。书源设置了段评颜色时以书源为准。
+
+- `shape`：`outline` 透明底描边，颜色跟正文墨色；`pill` 胶囊；`rounded` 圆角；`cut` 切角。不认得的值按不写处理。
+- `radius`：圆角占气泡高的比例，0–0.5，只对 `rounded` 有效，默认 0.2。
+- `fill`、`stroke`、`text`：底色、描边、文字色，可带透明度。`outline` 不用 `fill`。
+- `ornament`：角上的小图形，取值 `none`（不画）、`star`、`sparkle`、`dot`、`moon`、`leaf`、`sprig`、`rose`、`paw`、`seal`、`diamond`、`pendant`、`scroll`、`cord`、`signal`、`frame`、`sketch`、`postcard`、`folio`；`ornamentColor` 是它的颜色，不写时用描边色。
+
+```json
+"light": { "commentBubble": { "shape": "rounded", "radius": 0.2, "fill": "#B98546", "text": "#FFF6E6", "ornament": "star" } },
+"dark":  { "commentBubble": { "fill": "#EBD3AE", "text": "#4A3423" } }
 ```
 
 ## 素材规范
@@ -176,7 +198,7 @@ my-theme/
 | 朗读面板 `artwork` | SVG 或位图 | 720 × 520，透明底或完整插画；下半部分会渐隐到 `surfaceColor`。 |
 | 导航图标 | SVG 或 PNG / WebP | SVG 用 `viewBox="0 0 24 24"`、单色纯黑填充，应用按主题色着色（选中为强调色）；位图取 96 × 96 透明底，按原色显示在 24 × 24 vp 的位置，选中与否要靠选中态图标区分。旧版本应用只接受 SVG，带位图图标的包在旧版本上无法导入。 |
 | 封面 `covers`、`coversDark` | JPG / PNG | 450 × 660，完整插画，不叠加书名或作者。深色那套的亮部要克制。 |
-| 书架边框 `shelfFrame` | SVG | 与封面同比例，中心透明，只画外框和角花。 |
+| 书架边框 `shelfFrame`、`shelfFrameDark` | SVG | 与封面同比例，中心透明，只画外框和角花；按原色显示。 |
 | 文件夹插画 `shelfFolder` | JPG / PNG | 450 × 660。 |
 | 启动封面 `image` | JPG / PNG | 841 × 1870 竖屏，底部约 1/5 会叠加文案，不放主体。 |
 | 首页背景 `homeBackdrop`、书架背景 `shelfBackdrop` | JPG / PNG / WebP | 1080 × 1350（4:5），贴顶铺满宽度，比例不同时居中裁成 4:5。画面放在上部约四成，应用会叠渐变向下淡成页面底色；不要放文字，深色图的亮部要克制。 |
@@ -198,7 +220,9 @@ my-theme/
 - 比当前应用新的 `formatVersion`，或 `requires` 里有应用不认识的能力，导入时提示更新应用。
 - 没写的部件按 `baseTheme` 显示，所以只带配色的小包也能完整使用。
 - 没有 `shelfBackdrop` 的主题包（此前制作的都是这样）四种书架布局都用 `homeBackdrop`。只写 `shelfBackdrop`、不写 `homeBackdrop` 也可以，但旧版本应用上就没有背景，所以通用那张建议始终保留。
-- 只有 `covers`、`shelfFolder` 的主题包（此前制作的都是这样）照常使用，浅色、深色显示同一套封面和同一张文件夹插画。只写了 `coversDark` 或 `shelfFolderDark` 时浅色模式也用它；应用和桌面编辑器导出这种包时会把它写成 `covers`、`shelfFolder`。
+- 只有 `covers`、`shelfFrame`、`shelfFolder` 的主题包（此前制作的都是这样）照常使用，浅色、深色显示同一套封面、同一张书架边框和文件夹插画。只写了 `coversDark`、`shelfFrameDark` 或 `shelfFolderDark` 时浅色模式也用它；应用和桌面编辑器导出这种包时会把它写成 `covers`、`shelfFrame`、`shelfFolder`。
+- 没有 `bubbleDark` 的主题包两种模式用同一套端饰和边框。只写了 `bubbleDark` 时浅色也用它，导出时写成 `bubble`；`bubbleDark` 里和 `bubble` 相同的项导出时不重复写。
+- 没有 `commentBubble` 的主题包，段评气泡跟着强调气泡样式走；带包内气泡的主题包，段评按强调底色推导（此前是中性灰）。
 - 用户在编辑器里把包内部件换成内置主题的部件是允许的；再导出时，包内素材会随新包一起打出去，并在 `credits` 里保留原作者信息。
 - 同一个 `packageId` 再次导入时原位更新：用户的阅读排版和强调规则保留并合并，素材和配色换成新版本。
 - 方案设置会随云同步到用户的其他设备，素材不会；另一台设备上会提示“主题包素材不在这台设备上”，重新导入同一个包即可恢复。
@@ -208,7 +232,7 @@ my-theme/
 
 1. 把文件夹压成 ZIP，改名为 `.qytheme`，用文件管理或聊天软件发到手机，用开源轻页打开，或在主题页点“导入”。
 2. 导入前的预览会列出包里有哪些部件；确认后在主题详情点“应用主题”。
-3. 浅色、深色、跟随系统各检查一次：首页导航图标与首页背景、书架封面与分组文件夹、阅读页背景与强调气泡、朗读面板、启动封面。
+3. 浅色、深色、跟随系统各检查一次：首页导航图标与首页背景、书架封面、书架边框与分组文件夹、阅读页背景、强调气泡与段评气泡、朗读面板、启动封面。
 4. 改动素材后保持 `packageId` 不变再次导入，确认走的是更新。
 
 仓库里 `node --experimental-strip-types scripts/theme-package-check.mjs` 覆盖格式校验的纯逻辑，可以在提交格式改动前运行。

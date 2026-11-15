@@ -12,6 +12,7 @@ import {
   ThemeVariant
 } from './ThemeModels';
 import { ThemePackRegistry } from './ThemePackRegistry';
+import { normalizeCommentBubble } from './share/ThemePackageFormat';
 
 export class BuiltinThemeRegistry {
   static readonly DEFAULT_THEME_ID: string = ThemeIds.PLAIN_DEFAULT;
@@ -837,6 +838,7 @@ export class BuiltinThemeRegistry {
     );
     variant.reader.backgroundImageFit = source.reader.backgroundImageFit || 'cover';
     variant.regexEmphasis.emphasisMode = source.regexEmphasis.emphasisMode || ThemeRegexEmphasisModes.BUBBLE;
+    variant.regexEmphasis.commentBubble = normalizeCommentBubble(source.regexEmphasis.commentBubble);
     return variant;
   }
 }

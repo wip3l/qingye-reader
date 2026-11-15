@@ -727,3 +727,78 @@ test('scheme overrides travel in settings and are gated by scheme-overrides-v1',
   assert.equal(decoded.customLightPalette.pageColor, '#F1F7F3');
   assert.equal(decoded.customDarkEmphasis.bubbleStyle, 'moon-halo');
 });
+
+test('v2 theme: dark-mode bubble art, shelf frame, nav icons and comment bubbles', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+
+  // 老主题包没有这些字段：深色沿用浅色，导出不多出字段。
+  const legacy = byPath(decode(partsJson()));
+  assert.equal(legacy.bubbleDark, null);
+  assert.equal(format.bubbleFor(legacy, true).cap, 'assets/cap.svg');
+  assert.equal(format.bookShelfFrameFor(legacy.book, true), 'assets/frame.svg');
+  const legacyEncoded = format.encodeParts(legacy);
+  assert.equal('bubbleDark' in legacyEncoded, false);
+  assert.equal('navigationDark' in legacyEncoded, false);
+  assert.equal('shelfFrameDark' in legacyEncoded.book, false);
+  assert.equal('commentBubble' in legacyEncoded.light, false);
+
+  // 深色只换边框（不用声明 bubble-frame-v1，位图也收），端饰按项沿用浅色。
+  const json = partsJson();
+  json.bubbleDark = { frame: 'assets/cover_01.jpg', frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 }, frameTint: true };
+  json.book.shelfFrameDark = 'assets/logo.svg';
+  json.navigationDark = { bookshelf: 'assets/cover_02.jpg', mineSelected: 'assets/logo.svg', labels: 'hidden' };
+  json.light.commentBubble = { shape: 'rounded', radius: 0.9, fill: '#FFB98546', text: '#fff6e6', ornament: 'star' };
+  json.dark.commentBubble = { shape: 'hexagon', ornament: 'sparkle', ornamentColor: '#F0D18F' };
+  const parts = byPath(decode(json));
+  const night = format.bubbleFor(parts, true);
+  assert.equal(night.cap, 'assets/cap.svg');
+  assert.equal(night.frame, 'assets/cover_01.jpg');
+  assert.equal(night.frameTint, true);
+  // 只有一种模式有边框时另一种也用它（同封面）。
+  assert.equal(format.bubbleFor(parts, false).frame, 'assets/cover_01.jpg');
+  assert.equal(format.bookShelfFrameFor(parts.book, true), 'assets/logo.svg');
+  assert.equal(format.bookShelfFrameFor(parts.book, false), 'assets/frame.svg');
+  assert.equal(parts.navigationDark.bookshelf, 'assets/cover_02.jpg');
+  assert.equal(parts.navigationDark.labels, '', 'labels only come from navigation');
+  assert.deepEqual({ ...parts.light.commentBubble },
+    { shape: 'rounded', radius: 0.5, fill: '#FFB98546', stroke: '', text: '#FFF6E6', ornament: 'star', ornamentColor: '' });
+  assert.equal(parts.dark.commentBubble.shape, '', 'unknown shapes fall back to the bubble style');
+  assert.equal(parts.dark.commentBubble.ornament, 'sparkle');
+  assert.equal(format.describeParts(parts).includes('段评气泡'), true);
+  assert.equal(format.partsAssetRefs(parts).includes('assets/logo.svg'), true);
+  assert.throws(() => decode({ ...partsJson(), light: { commentBubble: { fill: 'red' } } }), /commentBubble/);
+
+  const encoded = format.encodeParts(parts);
+  // 浅色那套借了深色的边框，写进 bubble；深色和浅色一样了，bubbleDark 不写。
+  assert.equal(encoded.bubble.frame, 'assets/cover_01.jpg');
+  assert.equal('bubbleDark' in encoded, false);
+  assert.equal(encoded.book.shelfFrameDark, 'assets/logo.svg');
+  assert.deepEqual(encoded.navigationDark, { bookshelf: 'assets/cover_02.jpg', mineSelected: 'assets/logo.svg' });
+  assert.deepEqual(encoded.dark.commentBubble, { ornament: 'sparkle', ornamentColor: '#F0D18F' });
+  // 浅色有自己的 SVG 边框时，深色的位图边框单独写，浅色那套不用声明 bubble-frame-v1。
+  parts.bubble = { ...parts.bubble, frame: 'assets/frame.svg', frameSlice: null, frameRepeat: '', frameBreak: '', frameTint: false };
+  const split = format.encodeParts(parts);
+  assert.deepEqual(split.bubble, { cap: 'assets/cap.svg', frame: 'assets/frame.svg' });
+  assert.deepEqual(split.bubbleDark, { frame: 'assets/cover_01.jpg', frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 }, frameTint: true });
+  assert.equal(format.partsUseBubbleFrameFeature(parts), false);
+
+  // 只有深色书架边框、只有深色气泡：导出写成浅色字段，老版本也认。
+  const onlyDark = byPath(decode(partsJson()));
+  onlyDark.book.shelfFrameDark = onlyDark.book.shelfFrame;
+  onlyDark.book.shelfFrame = '';
+  onlyDark.bubbleDark = onlyDark.bubble;
+  onlyDark.bubble = null;
+  const onlyEncoded = format.encodeParts(onlyDark);
+  assert.equal(onlyEncoded.book.shelfFrame, 'assets/frame.svg');
+  assert.equal('shelfFrameDark' in onlyEncoded.book, false);
+  assert.deepEqual(onlyEncoded.bubble, { cap: 'assets/cap.svg' });
+  assert.equal('bubbleDark' in onlyEncoded, false);
+
+  // 没有 navigation 时深色图标整节不读。
+  const noNav = partsJson();
+  delete noNav.navigation;
+  noNav.navigationDark = { bookshelf: 'assets/cover_02.jpg' };
+  assert.equal(decode(noNav).navigationDark, null);
+});

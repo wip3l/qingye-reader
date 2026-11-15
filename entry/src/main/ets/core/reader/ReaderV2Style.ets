@@ -21,6 +21,8 @@ export class ReaderV2SpanStyleRange {
   shadowOffsetYPx: number = 0;
   decorationEnabled: boolean = false;
   decorationStyleId: string = '';
+  /** Theme packs may ship a separate dark-mode cap; the page node picks the cap for this mode. */
+  decorationDark: boolean = false;
   decorationSizePx: number = 0;
   /** Chapter-title decorations are enclosed independently on every visual line. */
   repeatCaps: boolean = false;
@@ -115,9 +117,10 @@ export class ReaderV2BubbleFrame {
    * theme pack has one. Either alone is enough for the page node to paint the run.
    */
   static decorate(style: ReaderV2SpanStyleRange, enabled: boolean, styleId: string, hasCap: boolean,
-    capSizePx: number, frame: ResolvedBubbleFrame | null): void {
+    capSizePx: number, frame: ResolvedBubbleFrame | null, dark: boolean = false): void {
     style.decorationEnabled = enabled && (hasCap || !!frame);
     style.decorationStyleId = style.decorationEnabled ? styleId : '';
+    style.decorationDark = style.decorationEnabled && dark;
     style.decorationSizePx = style.decorationEnabled && hasCap ? capSizePx : 0;
     style.frameAsset = '';
     if (!style.decorationEnabled || !frame) return;

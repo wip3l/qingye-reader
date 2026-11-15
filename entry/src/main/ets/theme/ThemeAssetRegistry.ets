@@ -382,26 +382,43 @@ export class ThemeAssetRegistry {
   }
 
   /** selected 为 true 时优先取选中态图标：主题包和星穹御藏有选中态，其余内置图标包没有。 */
-  static navigationIcon(iconPackId: string, tabId: string, selected: boolean = false): ResourceStr {
+  static navigationIcon(iconPackId: string, tabId: string, selected: boolean = false,
+    darkMode: boolean = false): ResourceStr {
     const normalizedPackId = ThemeAssetRegistry.normalizeIconPackId(iconPackId);
     const normalizedTabId = ThemeAssetRegistry.normalizeTabId(tabId);
     if (ThemePackRegistry.isPackId(normalizedPackId)) {
       const pack = ThemePackRegistry.get(normalizedPackId);
       if (pack && pack.hasAnyNavigation()) {
+        let key = 'bookshelf';
         let normal = pack.navBookshelf;
         let active = pack.navBookshelfSelected;
         if (normalizedTabId === ThemeAssetRegistry.TAB_EXPLORE) {
+          key = 'explore';
           normal = pack.navExplore;
           active = pack.navExploreSelected;
         } else if (normalizedTabId === ThemeAssetRegistry.TAB_MINE) {
+          key = 'mine';
           normal = pack.navMine;
           active = pack.navMineSelected;
         } else if (normalizedTabId === ThemeAssetRegistry.TAB_LISTEN) {
+          key = 'listen';
           normal = pack.navListen;
           active = pack.navListenSelected;
         } else if (normalizedTabId === ThemeAssetRegistry.TAB_FOOTPRINT) {
+          key = 'footprint';
           normal = pack.navFootprint;
           active = pack.navFootprintSelected;
+        }
+        if (darkMode && pack.navDark.size > 0) {
+          // 深色那套的图标优先；给了深色普通图标却没给深色选中态时，选中也用深色普通图标，不借浅色的选中态。
+          const darkNormal = pack.navDark.get(key) || '';
+          const darkActive = pack.navDark.get(`${key}Selected`) || '';
+          if (darkNormal) {
+            normal = darkNormal;
+            active = darkActive;
+          } else if (darkActive) {
+            active = darkActive;
+          }
         }
         if (selected && active) return active;
         if (normal) return normal;
@@ -709,10 +726,11 @@ export class ThemeAssetRegistry {
     }
   }
 
-  static themeShelfFrame(assetId: string): ResourceStr {
+  /** darkMode 只影响主题包：包可以给深色模式单独一张书架边框。 */
+  static themeShelfFrame(assetId: string, darkMode: boolean = false): ResourceStr {
     if (ThemePackRegistry.isPackId(assetId)) {
       const pack = ThemePackRegistry.get(assetId);
-      return pack ? pack.shelfFrame : '';
+      return pack ? pack.shelfFrameFor(darkMode) : '';
     }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return '';
@@ -771,10 +789,11 @@ export class ThemeAssetRegistry {
     }
   }
 
-  static regexBubbleFrame(styleId: string): ResourceStr {
+  /** darkMode 只影响主题包：包可以给深色模式单独一套端饰和边框。 */
+  static regexBubbleFrame(styleId: string, darkMode: boolean = false): ResourceStr {
     if (ThemePackRegistry.isPackId(styleId)) {
       const pack = ThemePackRegistry.get(styleId);
-      return pack ? pack.bubbleFrame : '';
+      return pack ? pack.bubble(darkMode).frame : '';
     }
     switch ((styleId || '').trim().toLowerCase()) {
       case 'classic-glass': return $r('app.media.regex_frame_classic_glass');
@@ -800,14 +819,14 @@ export class ThemeAssetRegistry {
     }
   }
 
-  static hasRegexBubbleFrame(styleId: string): boolean {
-    return !!ThemeAssetRegistry.regexBubbleFrame(styleId);
+  static hasRegexBubbleFrame(styleId: string, darkMode: boolean = false): boolean {
+    return !!ThemeAssetRegistry.regexBubbleFrame(styleId, darkMode);
   }
 
-  static regexBubbleCap(styleId: string): ResourceStr {
+  static regexBubbleCap(styleId: string, darkMode: boolean = false): ResourceStr {
     if (ThemePackRegistry.isPackId(styleId)) {
       const pack = ThemePackRegistry.get(styleId);
-      return pack ? pack.bubbleCap : '';
+      return pack ? pack.bubble(darkMode).cap : '';
     }
     switch ((styleId || '').trim().toLowerCase()) {
       case 'classic-glass': return $r('app.media.regex_cap_classic_glass');
@@ -833,8 +852,8 @@ export class ThemeAssetRegistry {
     }
   }
 
-  static hasRegexBubbleCap(styleId: string): boolean {
-    return !!ThemeAssetRegistry.regexBubbleCap(styleId);
+  static hasRegexBubbleCap(styleId: string, darkMode: boolean = false): boolean {
+    return !!ThemeAssetRegistry.regexBubbleCap(styleId, darkMode);
   }
 
   static normalizeBackgroundAssetId(assetId: string): string {
@@ -917,8 +936,18 @@ export class ThemeAssetRegistry {
     if (normalizedPackId === ThemeAssetRegistry.ICON_PACK_CELESTIAL_VAULT) return true;
     if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
     const pack = ThemePackRegistry.get(normalizedPackId);
-    return !!pack && pack.hasAnyNavigation() && !!(pack.navBookshelfSelected || pack.navExploreSelected ||
-      pack.navMineSelected || pack.navListenSelected || pack.navFootprintSelected);
+    return !!pack && pack.hasAnyNavigation() && (!!(pack.navBookshelfSelected || pack.navExploreSelected ||
+      pack.navMineSelected || pack.navListenSelected || pack.navFootprintSelected) ||
+      ['bookshelfSelected', 'exploreSelected', 'mineSelected', 'listenSelected', 'footprintSelected']
+        .some((key: string): boolean => pack.navDark.has(key)));
+  }
+
+  /** 主题包带了深色模式单独的图标。 */
+  static navigationHasDarkIcons(iconPackId: string): boolean {
+    const normalizedPackId = ThemeAssetRegistry.normalizeIconPackId(iconPackId);
+    if (!ThemePackRegistry.isPackId(normalizedPackId)) return false;
+    const pack = ThemePackRegistry.get(normalizedPackId);
+    return !!pack && pack.hasAnyNavigation() && pack.navDark.size > 0;
   }
 
   /** 主题包要求底栏只显示图标。 */

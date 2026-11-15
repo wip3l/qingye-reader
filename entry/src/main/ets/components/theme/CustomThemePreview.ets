@@ -194,7 +194,7 @@ export struct CustomThemePreview {
           .height('100%')
       }
       if (this.themePack.book.shelfFrameAssetId) {
-        Image(ThemeAssetRegistry.themeShelfFrame(this.themePack.book.shelfFrameAssetId))
+        Image(ThemeAssetRegistry.themeShelfFrame(this.themePack.book.shelfFrameAssetId, this.previewDark))
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Fill)
@@ -466,7 +466,7 @@ export struct CustomThemePreview {
       ForEach(this.navigationTabs(), (tabId: string) => {
         Column({ space: 2 }) {
           Image(ThemeAssetRegistry.navigationIcon(this.themePack.navigation.iconPackId, tabId,
-            tabId === this.selectedTab()))
+            tabId === this.selectedTab(), this.previewDark))
             .width(this.hidesLabels() ? 26 : 20)
             .height(this.hidesLabels() ? 26 : 20)
             .fillColor(tabId === this.selectedTab() ? this.variant().colors.accentColor :
@@ -641,12 +641,12 @@ export struct CustomThemePreview {
   /** 方案的强调用的是包内气泡且包里有边框时给出边框；只在气泡模式下画。 */
   emphasisFrame(): ResolvedBubbleFrame | null {
     if (this.emphasisStyle().mode === 'none' || !this.emphasisStyle().bubbleDecorationEnabled) return null;
-    return ThemePackRegistry.bubbleFrame(this.variant().regexEmphasis.bubbleStyle);
+    return ThemePackRegistry.bubbleFrame(this.variant().regexEmphasis.bubbleStyle, this.previewDark);
   }
 
   emphasisCapUri(): string {
     if (!this.hasBubbleCap()) return '';
-    const cap = ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle);
+    const cap = ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle, this.previewDark);
     return typeof cap === 'string' ? cap : '';
   }
 
@@ -671,7 +671,7 @@ export struct CustomThemePreview {
           .fontColor(this.variant().reader.textColor)
       } else if (this.emphasisStyle().bubbleDecorationEnabled && this.hasBubbleCap()) {
         ContainerSpan() {
-          ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle))
+          ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle, this.previewDark))
             .width(this.readerFontSize())
             .height(this.readerFontSize())
             .objectFit(ImageFit.Contain)
@@ -679,7 +679,7 @@ export struct CustomThemePreview {
           Span('把时光，留给阅读')
             .fontColor(this.emphasisStyle().textColor)
             .textShadow(this.emphasisShadow())
-          ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle))
+          ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle, this.previewDark))
             .width(this.readerFontSize())
             .height(this.readerFontSize())
             .objectFit(ImageFit.Contain)
@@ -719,7 +719,7 @@ export struct CustomThemePreview {
   }
 
   hasBubbleCap(): boolean {
-    return ThemeAssetRegistry.hasRegexBubbleCap(this.variant().regexEmphasis.bubbleStyle);
+    return ThemeAssetRegistry.hasRegexBubbleCap(this.variant().regexEmphasis.bubbleStyle, this.previewDark);
   }
 
   emphasisBackground(): TextBackgroundStyle {

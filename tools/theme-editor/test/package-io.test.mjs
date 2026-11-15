@@ -467,3 +467,59 @@ test('a bitmap or cap-less bubble frame exports with bubble-frame-v1 and keeps i
   project.parts.bubble = { cap: 'assets/cap.svg', frame: '', frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 } };
   assert.deepEqual(JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts.bubble, { cap: 'assets/cap.svg' });
 });
+
+test('dark-mode bubble art, shelf frame, nav icons and comment bubbles round-trip', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  const add = (path, bytes, kind, ext, width, height) => project.assets.set(path, { path, bytes, kind, ext, width, height });
+  add('assets/cap-night.svg', svg('<circle cx="8" cy="8" r="6"/>', '0 0 16 16'), 'vector', 'svg', 16, 16);
+  add('assets/plaque-night.png', png(600, 160), 'image', 'png', 600, 160);
+  add('assets/frame-night.svg', svg('<rect x="4" y="4" width="442" height="652" fill="none" stroke="#fff"/>', '0 0 450 660'), 'vector', 'svg', 450, 660);
+  add('assets/n1-night.png', png(96, 96), 'image', 'png', 96, 96);
+  // 深色只换边框：端饰沿用浅色那张；和浅色同一张端饰时不重复写。
+  project.parts.bubble = { cap: 'assets/cap.svg', frame: 'assets/frame.svg' };
+  project.parts.bubbleDark = { cap: 'assets/cap.svg', frame: 'assets/plaque-night.png',
+    frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 }, frameTint: true };
+  project.parts.book.shelfFrameDark = 'assets/frame-night.svg';
+  project.parts.navigationDark = { bookshelf: 'assets/n1-night.png' };
+  project.parts.light.commentBubble = { shape: 'rounded', radius: 0.25, fill: '#FFB98546', text: '#FFFFF6E6', ornament: 'star' };
+  project.parts.dark.commentBubble = { shape: 'pill', radius: 0.4, fill: '#EBD3AE', ornament: 'bogus' };
+  const files = await io.exportFiles(project);
+  const parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.bubble, { cap: 'assets/cap.svg', frame: 'assets/frame.svg' });
+  assert.deepEqual(parts.bubbleDark, { frame: 'assets/plaque-night.png', frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 }, frameTint: true });
+  assert.equal(parts.book.shelfFrameDark, 'assets/frame-night.svg');
+  assert.deepEqual(parts.navigationDark, { bookshelf: 'assets/n1-night.png' });
+  assert.deepEqual(parts.light.commentBubble, { shape: 'rounded', radius: 0.25, fill: '#FFB98546', text: '#FFFFF6E6', ornament: 'star' });
+  // 圆角只跟着圆角形状写；不认得的角标在读包时按沿用处理。
+  assert.deepEqual(parts.dark.commentBubble, { shape: 'pill', fill: '#EBD3AE', ornament: 'bogus' });
+  // 深色那套是位图边框，但写成 bubble 的浅色那套是 SVG 边框加端饰，老版本照常能导入，不用声明 bubble-frame-v1。
+  assert.ok(!JSON.parse(strFromU8(files.get('manifest.json'))).requires.includes('bubble-frame-v1'));
+  const again = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(again.problems, []);
+  assert.equal(again.project.parts.bubbleDark.frame, 'assets/plaque-night.png');
+  assert.equal(again.project.parts.bubbleDark.cap || '', '');
+  assert.equal(again.project.parts.dark.commentBubble.shape, 'pill');
+  assert.equal(again.project.parts.dark.commentBubble.ornament || '', '');
+  assert.equal(again.project.parts.navigationDark.bookshelf, 'assets/n1-night.png');
+
+  // 只给了深色气泡和深色书架边框时，导出写成浅色字段（两种模式都用它，老版本也认）。
+  project.parts.bubble = {};
+  project.parts.bubbleDark = { cap: 'assets/cap-night.svg' };
+  project.parts.book.shelfFrame = '';
+  const only = JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts;
+  assert.deepEqual(only.bubble, { cap: 'assets/cap-night.svg' });
+  assert.equal(only.bubbleDark, undefined);
+  assert.equal(only.book.shelfFrame, 'assets/frame-night.svg');
+  assert.equal(only.book.shelfFrameDark, undefined);
+});
+
+test('an empty comment-bubble override from the app does not count as a scheme override', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  const empty = { mode: '', bubbleStyle: '', color: '', textColor: '',
+    comment: { shape: '', radius: -1, fill: '', stroke: '', text: '', ornament: '', ornamentColor: '' } };
+  project.settings = { customLightEmphasis: empty, customDarkEmphasis: empty };
+  const requires = async () => JSON.parse(strFromU8((await io.exportFiles(project)).get('manifest.json'))).requires;
+  assert.ok(!(await requires()).includes('scheme-overrides-v1'));
+  project.settings.customDarkEmphasis = { ...empty, comment: { ...empty.comment, shape: 'pill' } };
+  assert.ok((await requires()).includes('scheme-overrides-v1'));
+});

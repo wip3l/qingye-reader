@@ -231,7 +231,8 @@ function renderIssues(): void {
 
 // ---- 预览 ----
 
-setFrameReadyListener(() => { if (S.project) renderPreview(); });
+// 图片读完后预览和问题列表都可能变（边框比例、染色、深色下的对比度）。
+setFrameReadyListener(() => { if (S.project) { renderPreview(); renderIssues(); } });
 
 function renderPreview(): void {
   const box = $('#phones');
@@ -386,7 +387,7 @@ function renderField(f: Field): HTMLElement {
       : h('span', { class: 'inherit muted' }, f.resetLabel || '沿用')));
   } else if (f.type === 'asset') {
     row.append(renderSlot(f, path, value || '', id));
-    if (f.frameStretch && value) row.append(h('div', { class: 'hint frame-summary' }, frameSummary(value)));
+    if (f.frameStretch && value) row.append(h('div', { class: 'hint frame-summary' }, frameSummary(value, frameOwner(path))));
   }
   if (f.hint) row.append(h('div', { class: 'hint' }, f.hint));
   return row;
@@ -455,13 +456,13 @@ function renderSlot(f: Field, path: string, ref: string, id: string): HTMLElemen
     if (!f.frameStretch) { setField(path, newRef); return; }
     commit(() => {
       setPath(path, newRef);
-      const bubble = getPath('bubble');
+      const bubble = getPath(frameOwner(path));
       if (bubble) delete bubble.frameSlice;
     });
-    openFrameDialog(newRef);
+    openFrameDialog(newRef, frameOwner(path));
   };
   const actions = h('div', { class: 'acts' });
-  if (f.frameStretch && asset) actions.append(h('button', { onclick: () => openFrameDialog(ref) }, '拉伸区域…'));
+  if (f.frameStretch && asset) actions.append(h('button', { onclick: () => openFrameDialog(ref, frameOwner(path)) }, '拉伸区域…'));
   actions.append(h('button', { id, onclick: () => pickFiles(f.kinds || [], false, (files) => ingest(files[0], f, assign)) }, asset ? '替换' : '上传'));
   const library = [...p.assets.values()].filter((a) => (f.kinds || []).includes(a.kind) && a.path !== ref);
   if (library.length) actions.append(h('button', { onclick: () => pickFromLibrary(library, assign) }, '素材库'));
@@ -471,7 +472,7 @@ function renderSlot(f: Field, path: string, ref: string, id: string): HTMLElemen
   if (ref) {
     actions.append(h('button', { onclick: () => f.frameStretch ? commit(() => {
       setPath(path, '');
-      const bubble = getPath('bubble');
+      const bubble = getPath(frameOwner(path));
       if (bubble) clearFrameSettings(bubble);
     }) : setField(path, '') }, '移除'));
   }
@@ -480,9 +481,14 @@ function renderSlot(f: Field, path: string, ref: string, id: string): HTMLElemen
   return slot;
 }
 
+/** 边框字段所在的那一节：bubble.frame → bubble，bubbleDark.frame → bubbleDark。 */
+function frameOwner(path: string): string {
+  return path.substring(0, path.lastIndexOf('.')) || 'bubble';
+}
+
 /** 边框格子下面的一行概要：两端、文字行、拉伸方式。 */
-function frameSummary(ref: string): string {
-  const bubble = getPath('bubble') || {};
+function frameSummary(ref: string, owner: string = 'bubble'): string {
+  const bubble = getPath(owner) || {};
   const asset = project().assets.get(ref);
   const settings = frameSettingsOf(bubble, frameAspect(ref));
   const w = asset && asset.width ? asset.width : 0;
@@ -496,13 +502,14 @@ function frameSummary(ref: string): string {
     `${settings.tint ? '染成底色' : '原色'}${settings.touched ? '' : '（默认位置）'}`;
 }
 
-function openFrameDialog(ref: string): void {
-  const e = effective(S.ui.mode).e;
-  openFrameStretch(ref, getPath('bubble') || {}, { text: e.textColor, bubble: e.color }, modal, (settings) => {
+/** owner 是边框所在的那一节（bubble 或 bubbleDark）；深色那张按深色的强调配色预览。 */
+function openFrameDialog(ref: string, owner: string = 'bubble'): void {
+  const e = effective(owner === 'bubbleDark' ? 'dark' : S.ui.mode).e;
+  openFrameStretch(ref, getPath(owner) || {}, { text: e.textColor, bubble: e.color }, modal, (settings) => {
     commit(() => {
-      const bubble = getPath('bubble');
+      const bubble = getPath(owner);
       if (bubble && bubble.frame === ref) writeFrameSettings(bubble, settings);
-      else if (!bubble) { setPath('bubble.frame', ref); writeFrameSettings(getPath('bubble'), settings); }
+      else if (!bubble) { setPath(`${owner}.frame`, ref); writeFrameSettings(getPath(owner), settings); }
     });
     toast('边框拉伸区域已更新');
   });

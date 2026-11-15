@@ -626,7 +626,7 @@ struct ThemeSettingsPage {
               .objectFit(ImageFit.Fill)
               .draggable(false)
           }
-          Image(ThemeAssetRegistry.themeShelfFrame(theme.book.shelfFrameAssetId))
+          Image(ThemeAssetRegistry.themeShelfFrame(theme.book.shelfFrameAssetId, this.variantDark()))
             .width('100%')
             .height('100%')
             .objectFit(ImageFit.Fill)
@@ -688,12 +688,13 @@ struct ThemeSettingsPage {
   themeBubbleFrame(theme: ThemePack): ResolvedBubbleFrame | null {
     const style = this.themeRegexPreview(theme);
     if (style.mode === 'none' || !style.bubbleDecorationEnabled) return null;
-    return ThemePackRegistry.bubbleFrame(this.activeVariant(theme).regexEmphasis.bubbleStyle);
+    return ThemePackRegistry.bubbleFrame(this.activeVariant(theme).regexEmphasis.bubbleStyle, this.variantDark());
   }
 
   themeBubbleCapUri(theme: ThemePack): string {
     if (!this.themeHasRegexBubbleCap(theme)) return '';
-    const cap = ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle);
+    const cap = ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle,
+      this.variantDark());
     return typeof cap === 'string' ? cap : '';
   }
 
@@ -743,7 +744,8 @@ struct ThemeSettingsPage {
           Span(segment.text)
         } else if (this.themeHasRegexBubbleCap(theme)) {
           ContainerSpan() {
-            ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle))
+            ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle,
+              this.variantDark()))
               .width(fontSize)
               .height(fontSize)
               .objectFit(ImageFit.Contain)
@@ -751,7 +753,8 @@ struct ThemeSettingsPage {
             Span(segment.text)
               .fontColor(this.themeRegexPreview(theme).textColor)
               .textShadow(this.themeRegexPreviewShadow(theme))
-            ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle))
+            ImageSpan(ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle,
+              this.variantDark()))
               .width(fontSize)
               .height(fontSize)
               .objectFit(ImageFit.Contain)
@@ -1804,7 +1807,8 @@ struct ThemeSettingsPage {
       Row() {
         // 整套底栏图标都列出来，包括可选第四个页签“听”“足迹”。
         ForEach(['bookshelf', 'explore', 'listen', 'footprint', 'mine'], (tabId: string, index: number) => {
-          Image(ThemeAssetRegistry.navigationIcon(entry.theme.navigation.iconPackId, tabId, index === 0))
+          Image(ThemeAssetRegistry.navigationIcon(entry.theme.navigation.iconPackId, tabId, index === 0,
+            this.variantDark()))
             .width(ThemeAssetRegistry.navigationHidesLabels(entry.theme.navigation.iconPackId) ? 30 : 22)
             .height(ThemeAssetRegistry.navigationHidesLabels(entry.theme.navigation.iconPackId) ? 30 : 22)
             .fillColor(index === 0 ? this.activeVariant(entry.theme).colors.accentColor :
@@ -3428,7 +3432,8 @@ struct ThemeSettingsPage {
   }
 
   themeHasRegexBubbleCap(theme: ThemePack): boolean {
-    return ThemeAssetRegistry.hasRegexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle);
+    return ThemeAssetRegistry.hasRegexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle,
+      this.variantDark());
   }
 
   /** A custom scheme shows the panel background of the theme picked as its panel source. */
@@ -3563,8 +3568,10 @@ struct ThemeSettingsPage {
 
   /** The reader's comment bubble with its label baked in, cached per look, label and size. */
   commentBubbleImage(theme: ThemePack, label: string, fontSizeVp: number, dark: boolean): ReaderCommentBubbleImage | null {
-    const style = ReaderCommentBubbleStyles.resolve(this.themeCommentPreview(theme).bubbleStyleId, dark,
-      (dark ? theme.dark : theme.light).reader.textColor);
+    const preview = this.themeCommentPreview(theme);
+    const variant = dark ? theme.dark : theme.light;
+    const style = ReaderCommentBubbleStyles.resolveThemed(preview.bubbleStyleId, dark, variant.reader.textColor,
+      variant.regexEmphasis.commentBubble, preview.backgroundColor, preview.textColor, preview.emphasisColor);
     const pxPerVp = this.getUIContext().vp2px(1);
     const key = `${style.identity()}_${label}_${fontSizeVp}_${pxPerVp}`;
     const cached = this.commentBubbleImages.get(key);

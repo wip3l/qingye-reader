@@ -1,7 +1,7 @@
 // 生效令牌：包里填了的用包里的，没填的回退到基底主题（规则与 ThemePackRegistry 拼装主题时一致）。
 import data from '../core/builtinThemes.json';
 import { S, project, type Mode } from './state.ts';
-import { normalizeOrnamentScale } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
+import { bubbleFor, normalizeCommentBubble, normalizeOrnamentScale } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 
 export interface BaseVariant {
   colors: Record<string, string>;
@@ -56,6 +56,7 @@ const filled = (record: any): Record<string, any> => {
 export const ttsComplete = (t: any): boolean => !!(t && t.artwork && t.skyColor && t.surfaceColor && t.glowColor);
 
 export interface Effective {
+  mode: Mode;
   c: Record<string, string>;
   reader: {
     backgroundColor: string; textColor: string; subTextColor: string; contentTone: string;
@@ -66,6 +67,10 @@ export interface Effective {
     leadingScale: number; trailingScale: number;
   };
   e: { mode: string; bubble: 'pack' | string; color: string; textColor: string };
+  /** 这个模式实际用的包内气泡（端饰、边框按项补上另一种模式的，同应用的 bubbleFor）；没有时为 null。 */
+  b: any | null;
+  /** 这个模式的段评气泡设置，字段为空表示沿用气泡样式。 */
+  comment: { shape: string; radius: number; fill: string; stroke: string; text: string; ornament: string; ornamentColor: string };
   radius: Record<string, number>;
   tts: any | null;
   startup: any | null;
@@ -94,7 +99,8 @@ export function effective(mode: Mode): Effective {
     trailingScale: normalizeOrnamentScale(typeof v.reader?.trailingScale === 'number' ? v.reader.trailingScale : 1)
   };
   const em = filled(v.emphasis);
-  const packBubble = !!(p.bubble && (p.bubble.cap || p.bubble.frame));
+  const b = bubbleFor(p, mode === 'dark');
+  const packBubble = !!b;
   const e = {
     mode: em.mode || bv.emphasis.mode,
     bubble: packBubble ? 'pack' : (em.bubbleStyle || bv.emphasis.bubbleStyle),
@@ -108,7 +114,8 @@ export function effective(mode: Mode): Effective {
     : (ttsComplete(p.ttsPanel && p.ttsPanel[other]) ? p.ttsPanel[other] : null);
   const startup = p.startup && p.startup[mode] && p.startup[mode].image ? p.startup[mode]
     : (p.startup && p.startup[other] && p.startup[other].image ? p.startup[other] : null);
-  return { c, reader, e, radius, tts, startup };
+  const comment = normalizeCommentBubble(v.commentBubble);
+  return { mode, c, reader, e, b, comment, radius, tts, startup };
 }
 
 /** 字段的基底值，用作输入框里“沿用 …”的提示。 */

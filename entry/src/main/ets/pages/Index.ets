@@ -1815,7 +1815,9 @@ struct Index {
     // 第四个页签（听 / 足迹）也由图标包提供：内置主题各有一套，主题包没给时用基底主题的。
     const iconPackId = ThemeRuntime.iconPackId();
     const selected = ThemeAssetRegistry.navigationHasSelectedIcons(iconPackId) && this.homeTabIsActive(index);
-    return ThemeAssetRegistry.navigationIcon(iconPackId, tabId, selected);
+    // 同理，只有带深色图标的主题包才读深浅色，其余主题切换深浅色时不重设底栏。
+    const dark = ThemeAssetRegistry.navigationHasDarkIcons(iconPackId) && this.appDarkMode;
+    return ThemeAssetRegistry.navigationIcon(iconPackId, tabId, selected, dark);
   }
 
   navigationHidesLabels(): boolean {

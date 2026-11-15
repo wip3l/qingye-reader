@@ -13,7 +13,7 @@ import type { Zippable } from 'fflate';
 import {
   QYTHEME_ASSET_PREFIX, ThemePackageAsset, ThemePackageAssetKinds, ThemePackageFeatures, ThemePackageLimits,
   ThemePackageManifest, ThemePackageTheme, IMAGE_SETTING_KEYS, assetPathExtension, checkSvgSource, decodeManifest,
-  decodeTheme, encodeParts, findAssetByPath, isValidPackageId, kindForExtension, mapPartsAssetRefs, maxBytesForKind,
+  bubbleDarkDifference, bubbleFor, commentBubbleIsEmpty, decodeTheme, encodeBubble, encodeParts, findAssetByPath, isValidPackageId, kindForExtension, mapPartsAssetRefs, maxBytesForKind,
   packThemeId, partsUseBubbleFrameFeature, replaceOwnPackIdWithSelf, sniffAssetExtension
 } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from '../../../../entry/src/main/ets/theme/share/ZipEntryInspector.ts';
@@ -81,13 +81,15 @@ export function mimeForExtension(ext: string): string {
 
 export function emptyParts(): Json {
   return {
-    light: { colors: {}, reader: {}, emphasis: {} },
-    dark: { colors: {}, reader: {}, emphasis: {} },
+    light: { colors: {}, reader: {}, emphasis: {}, commentBubble: {} },
+    dark: { colors: {}, reader: {}, emphasis: {}, commentBubble: {} },
     ttsPanel: { light: {}, dark: {} },
     navigation: {},
+    navigationDark: {},
     book: { covers: [] },
     startup: { light: {}, dark: {} },
     bubble: {},
+    bubbleDark: {},
     homeBackdrop: {},
     shelfBackdrop: {},
     logo: '',
@@ -584,6 +586,12 @@ export function normalizedParts(parts: Json): Json {
     if (Array.isArray(book.coverCropsDark)) {
       book.coverCropsDark = book.coverCropsDark.filter((crop: Json) => crop && coversDark.includes(crop.image));
     }
+    // 书架边框同理：只填了深色那张时写成 shelfFrame；和浅色同一张时不写。
+    if (!book.shelfFrame && book.shelfFrameDark) {
+      book.shelfFrame = book.shelfFrameDark;
+      delete book.shelfFrameDark;
+    }
+    if (book.shelfFrameDark && book.shelfFrameDark === book.shelfFrame) delete book.shelfFrameDark;
     // 文件夹插画同理：只填了深色那张时写成 shelfFolder。
     if (!book.shelfFolder && book.shelfFolderDark) {
       book.shelfFolder = book.shelfFolderDark;
@@ -612,18 +620,31 @@ export function normalizedParts(parts: Json): Json {
       if (backdrop[key] && backdrop[key].image !== backdrop[mode]) delete backdrop[key];
     }
   }
-  // 拉伸设置只跟着边框走：没有边框时不写；拉伸、每行两端、原色是缺省值，也不写。
-  const bubble = copy.bubble;
-  if (bubble && typeof bubble === 'object') {
+  // 拉伸设置只跟着边框走：没有边框时不写；拉伸、每行两端、原色是缺省值，也不写。深色那套同样处理。
+  for (const key of ['bubble', 'bubbleDark']) {
+    const bubble = copy[key];
+    if (!bubble || typeof bubble !== 'object') continue;
     if (!bubble.frame) {
-      for (const key of ['frameSlice', 'frameRepeat', 'frameBreak', 'frameTint']) delete bubble[key];
+      for (const field of ['frameSlice', 'frameRepeat', 'frameBreak', 'frameTint']) delete bubble[field];
     } else {
       if (bubble.frameRepeat !== 'round') delete bubble.frameRepeat;
       if (bubble.frameBreak !== 'cut') delete bubble.frameBreak;
       if (bubble.frameTint !== true) delete bubble.frameTint;
     }
   }
+  // 浅色写成 bubble、深色只留不同的那几项（只填了深色时就写成 bubble），同应用导出。
+  const lightBubble = bubbleFor(copy, false);
+  const darkBubble = bubbleDarkDifference(copy);
+  copy.bubble = lightBubble ? encodeBubble(lightBubble) : {};
+  copy.bubbleDark = darkBubble ? encodeBubble(darkBubble) : {};
+  // 段评圆角只对圆角形状有效。
+  for (const mode of ['light', 'dark']) {
+    const comment = copy[mode] && copy[mode].commentBubble;
+    if (comment && typeof comment === 'object' && comment.shape !== 'rounded') delete comment.radius;
+  }
   const result = strip(copy);
+  // 没有导航图标时深色那套也不写。
+  if (!result.navigation) delete result.navigationDark;
   // 旧版本应用还有“搜索”页签，导入时要求四个导航图标都在：没给就用发现的图标顶上（应用导出时同样处理）。
   const nav = result.navigation;
   if (nav && nav.explore && !nav.search) {
@@ -637,6 +658,17 @@ export function normalizedParts(parts: Json): Json {
     if (!Object.keys(result.radius).length) delete result.radius;
   }
   return result;
+}
+
+/** 强调覆盖里的段评设置全空时（应用导出的方案总会带一份 radius: -1 的空设置）不算覆盖。 */
+function overrideValue(key: string, value: Json): Json {
+  if ((key === 'customLightEmphasis' || key === 'customDarkEmphasis') && value && typeof value === 'object' &&
+    commentBubbleIsEmpty(value.comment)) {
+    const rest = { ...value };
+    delete rest.comment;
+    return rest;
+  }
+  return value;
 }
 
 const OVERRIDE_SETTING_KEYS: string[] = ['customLightPalette', 'customDarkPalette', 'customLightEmphasis',
@@ -674,7 +706,7 @@ export async function buildFiles(project: EditorProject): Promise<FileMap> {
   if (project.emphasis) requires.add(ThemePackageFeatures.EMPHASIS_RULES);
   if (hasFont) requires.add(ThemePackageFeatures.FONTS);
   if (project.settings) {
-    const overrides = OVERRIDE_SETTING_KEYS.some((key) => !isEmptyValue(strip(project.settings[key])));
+    const overrides = OVERRIDE_SETTING_KEYS.some((key) => !isEmptyValue(strip(overrideValue(key, project.settings[key]))));
     if (overrides || project.manifest.requires.includes(ThemePackageFeatures.SCHEME_OVERRIDES)) {
       requires.add(ThemePackageFeatures.SCHEME_OVERRIDES);
     }

@@ -2,9 +2,10 @@
 // 阅读角饰尺寸取 ReaderThemeDecorationLayout（短边 × 0.36，夹在 112–260），朗读面板的分层取 TtsPanelThemeBackground。
 import { assetFontFamily, assetUrl, h, project, S, type Mode } from './state.ts';
 import { baseTheme, bubbleLabel, effective, GENERIC_BUBBLES, type Effective } from './tokens.ts';
-import { cssColor, luminance } from './colors.ts';
+import { cssColor, luminance, withAlpha } from './colors.ts';
 import { NAV_TABS, EXTRA_NAV_TABS } from './sections.ts';
 import { frameAspect, frameSettingsOf, frameSpanStyle } from './frameStretch.ts';
+import { bookShelfFrameFor } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 
 export const PHONE_W = 360;
 export const PHONE_H = 780;
@@ -97,7 +98,7 @@ const BOOKS: [string, string][] = [['山海拾遗', '读到 12%'], ['夜航船',
 function coverTile(index: number, title: string): HTMLElement {
   const book = project().parts.book || {};
   const { covers, crops } = coversFor(book, screenMode);
-  const frame = assetUrl(book.shelfFrame);
+  const frame = assetUrl(bookShelfFrameFor(book, screenMode === 'dark'));
   const tile = h('div', { class: 'bk', 'data-sec': 'book' });
   if (covers.length) {
     const ref = covers[index % covers.length];
@@ -114,7 +115,17 @@ function coverTile(index: number, title: string): HTMLElement {
 /** 底栏一个页签的图标：SVG 用遮罩按文字色着色，位图原样显示，和应用一致。 */
 function navIcon(key: string, selected: boolean): HTMLElement {
   const nav = project().parts.navigation || {};
-  const ref = (selected && nav[`${key}Selected`]) || nav[key] || '';
+  let normal = nav[key] || '';
+  let active = nav[`${key}Selected`] || '';
+  // 深色那套优先；给了深色普通图标却没给深色选中态时，选中也用深色普通图标（同应用 navigationIcon）。
+  const dark = screenMode === 'dark' && nav.bookshelf ? project().parts.navigationDark || {} : {};
+  if (dark[key]) {
+    normal = dark[key];
+    active = dark[`${key}Selected`] || '';
+  } else if (dark[`${key}Selected`]) {
+    active = dark[`${key}Selected`];
+  }
+  const ref = (selected && active) || normal || '';
   const url = assetUrl(ref);
   if (url && project().assets.get(ref)?.kind === 'image') return h('img', { class: 'ico', src: url, alt: '' });
   return h('i', { class: 'ico', style: `--m:url("${url || svgUrl(DEFAULT_NAV[key])}")` });
@@ -285,7 +296,7 @@ function screenMine(mode: Mode, e: Effective): HTMLElement {
 function emphasis(text: string, e: Effective, fontPx: number = 19): HTMLElement | string {
   if (e.e.mode === 'none') return text;
   if (e.e.mode === 'bubble') {
-    const bubble = project().parts.bubble || {};
+    const bubble = e.b || {};
     const span = h('span', { class: 'em-bubble', 'data-sec': 'emphasis' });
     if (e.e.bubble === 'pack') {
       const cap = assetUrl(bubble.cap);
@@ -310,6 +321,70 @@ function emphasis(text: string, e: Effective, fontPx: number = 19): HTMLElement 
     return span;
   }
   return h('span', { class: e.e.mode === 'highlight' ? 'em-highlight' : 'em-text', 'data-sec': 'emphasis' }, text);
+}
+
+/** 两色按比例混合（#RRGGBB / #AARRGGBB，忽略透明度），同应用 ReaderRegexBubbleStyleResolver.mix。 */
+function mixColor(base: string, over: string, ratio: number): string {
+  const rgb = (hex: string): number[] => {
+    const v = (hex || '').replace('#', '').slice(-6);
+    return [0, 2, 4].map((i) => parseInt(v.substring(i, i + 2), 16) || 0);
+  };
+  const a = rgb(base);
+  const b = rgb(over);
+  return '#' + a.map((x, i) => Math.round(x + (b[i] - x) * ratio).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+const COMMENT_ORNAMENT_GLYPH: Record<string, string> = {
+  star: '✦', sparkle: '✧', dot: '●', moon: '☾', leaf: '❦', sprig: '❧', rose: '✿', paw: '❁', seal: '■',
+  diamond: '◆', pendant: '◇', scroll: '❍', cord: '—', signal: '▮', frame: '▢', sketch: '✎', postcard: '✉', folio: '❖'
+};
+
+/**
+ * 段评气泡的近似样子：包里写了的颜色、形状、角标照写；没写时包内气泡按强调底色推导（同应用），
+ * 内置气泡样式的配色表不在编辑器里，用中性灰示意，应用内按样式显示。
+ */
+function commentBubble(count: string, e: Effective): HTMLElement {
+  const t = e.comment;
+  const dark = e.mode === 'dark';
+  const paper = e.reader.backgroundColor;
+  let fill = '#8A9099';
+  let stroke = '#6F757E';
+  let text = '#FFFFFF';
+  let radius = '0.5em';
+  let title = '段评气泡：跟随气泡样式（应用内按样式显示）';
+  if (e.e.bubble === 'pack') {
+    fill = mixColor(paper, e.e.color, dark ? 0.3 : 0.18);
+    stroke = e.e.color;
+    text = e.e.textColor;
+    radius = '0.3em';
+    title = '段评气泡：跟随包内气泡的强调配色';
+  } else if (e.e.bubble === 'capsule' && !t.shape) {
+    fill = 'transparent';
+    stroke = withAlpha(e.reader.textColor, dark ? 140 : 115);
+    text = stroke;
+    radius = '0.4em';
+  }
+  if (t.shape === 'outline') {
+    fill = 'transparent';
+    stroke = t.stroke || withAlpha(e.reader.textColor, dark ? 140 : 115);
+    text = t.text || stroke;
+    radius = '0.4em';
+  } else {
+    if (t.shape === 'pill') radius = '0.66em';
+    else if (t.shape === 'rounded') radius = `${(t.radius >= 0 ? t.radius : 0.2) * 1.32}em`;
+    else if (t.shape === 'cut') radius = '0';
+    if (t.fill) fill = t.fill;
+    if (t.stroke) stroke = t.stroke;
+    if (t.text) text = t.text;
+  }
+  if (t.shape || t.fill || t.stroke || t.text || t.ornament) title = '段评气泡（包里的设置）';
+  const span = h('span', {
+    class: `cmt${t.shape === 'cut' ? ' cut' : ''}`, 'data-sec': 'emphasis', title,
+    style: `background:${cssColor(fill)};border-color:${cssColor(stroke)};color:${cssColor(text)};border-radius:${radius}`
+  }, count);
+  const glyph = t.ornament && t.ornament !== 'none' ? COMMENT_ORNAMENT_GLYPH[t.ornament] : '';
+  if (glyph) span.append(h('i', { class: 'cmt-orn', style: `color:${cssColor(t.ornamentColor || stroke)}` }, glyph));
+  return span;
 }
 
 function readerBody(e: Effective): HTMLElement {
@@ -343,10 +418,11 @@ function readerBody(e: Effective): HTMLElement {
   const margin = typeof layout.marginLeft === 'number' ? Math.max(8, Math.min(48, layout.marginLeft)) : 20;
   const content = h('div', { class: 'content', style: `font-size:${fontSize}px;padding:6px ${margin}px` }, h('h2', {}, '第十七章 灯下'));
   const p1 = h('p', {}, '船过石桥时，舱里的灯忽然暗了一下。老周把书合上，抬头看了看窗外的水色，');
-  p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e, fontSize));
+  p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e, fontSize), commentBubble('23', e));
   const p2 = h('p', {}, '阿遥没有应声，只把那页折了个角。她记得母亲说过，');
   p2.append(emphasis('“夜里读书，读到哪儿就算到哪儿。”', e, fontSize), '水声一阵紧过一阵，像是有人在船底翻书。');
-  const p3 = h('p', {}, '岸上的灯笼一盏一盏亮起来，映在河面上，碎成许多小小的金色鳞片。她伸手去碰，只碰到了凉。');
+  const p3 = h('p', {}, '岸上的灯笼一盏一盏亮起来，映在河面上，碎成许多小小的金色鳞片。她伸手去碰，只碰到了凉。',
+    commentBubble('6', e));
   const p4 = h('p', {}, '老周又把书翻开，从折角的那一页读起。');
   content.append(p1, p2, p3, p4);
   s.append(content);
@@ -420,7 +496,7 @@ export function describe(): string[] {
   if (has(p.light && p.light.emphasis) || has(p.dark && p.dark.emphasis) || (p.bubble && p.bubble.cap)) out.push('正文强调');
   if (p.ttsPanel && (has(p.ttsPanel.light) || has(p.ttsPanel.dark))) out.push('朗读面板');
   if (p.navigation && has(p.navigation)) out.push('导航图标');
-  if (p.book && ((p.book.covers || []).length || (p.book.coversDark || []).length || p.book.shelfFrame || p.book.shelfFolder || p.book.shelfFolderDark)) out.push('书籍素材');
+  if (p.book && ((p.book.covers || []).length || (p.book.coversDark || []).length || p.book.shelfFrame || p.book.shelfFrameDark || p.book.shelfFolder || p.book.shelfFolderDark)) out.push('书籍素材');
   if (p.startup && ((p.startup.light && p.startup.light.image) || (p.startup.dark && p.startup.dark.image))) out.push('启动封面');
   if (p.homeBackdrop && (p.homeBackdrop.light || p.homeBackdrop.dark)) out.push('首页背景');
   if (Object.values(p.shelfBackdrop || {}).some((entry: any) => entry && (entry.light || entry.dark))) out.push('书架背景');

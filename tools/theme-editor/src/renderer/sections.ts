@@ -1,5 +1,11 @@
 // 左侧部件与检查器字段的定义，与 theme.json 的 parts 一一对应（见 docs/theme-package-format.md）。
 import { BUBBLES, baseThemeOptions } from './tokens.ts';
+import {
+  COMMENT_BUBBLE_ORNAMENT_NAMES,
+  COMMENT_BUBBLE_ORNAMENTS,
+  COMMENT_BUBBLE_SHAPE_NAMES,
+  COMMENT_BUBBLE_SHAPES
+} from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 import { getPath, type Mode } from './state.ts';
 
 export interface Field {
@@ -49,6 +55,9 @@ export interface Section {
 }
 
 const mode = (m: Mode, path: string): any => getPath(`${m}.${path}`);
+// 浅色或深色任一套有端饰或边框，强调就用包内气泡（同应用 bubbleFor）。
+const packBubble = (): boolean => !!(getPath('bubble.cap') || getPath('bubble.frame') || getPath('bubbleDark.cap') ||
+  getPath('bubbleDark.frame'));
 // 角饰模式和整图模式都可以带角饰（整图模式下叠在整图上面）。
 const ornamentsAllowed = (m: Mode): boolean => ['ornaments', 'image'].includes(mode(m, 'reader.backgroundMode'));
 
@@ -133,14 +142,33 @@ export const SECTIONS: Section[] = [
       { k: '{m}.emphasis.bubbleStyle', label: '气泡样式', type: 'select',
         options: [['', '沿用基底'], ...BUBBLES.map((b) => [b.id, b.label] as [string, string])],
         hint: '主题专属气泡要导入的人拥有那套主题才能用，否则应用换成通用样式',
-        when: (m) => !getPath('bubble.cap') && !getPath('bubble.frame') },
+        when: (m) => !packBubble() },
       { k: '{m}.emphasis.color', label: '底色', type: 'color', alpha: true,
         hint: '底色和文字色可带透明度，写成 #AARRGGBB（透明度在前）。网页和设计软件常用的 #RRGGBBAA 要把末两位挪到最前，例如 #9EC0D9B6 → #B69EC0D9' },
       { k: '{m}.emphasis.textColor', label: '文字色', type: 'color', alpha: true },
-      { g: '包内气泡（浅深共用）' },
+      { g: '包内气泡 · 浅色' },
       { k: 'bubble.cap', label: '端饰', type: 'asset', kinds: ['vector'], square: true, spec: '正方形小 SVG，按字号缩放，右端自动旋转 180°' },
       { k: 'bubble.frame', label: '边框', type: 'asset', kinds: ['vector', 'image'], frameStretch: true,
-        spec: '可选，SVG 或透明底 PNG / WebP，按行拉伸；只有边框时不画端饰' }
+        spec: '可选，SVG 或透明底 PNG / WebP，按行拉伸；只有边框时不画端饰' },
+      { g: '包内气泡 · 深色（可选）' },
+      { k: 'bubbleDark.cap', label: '端饰', type: 'asset', kinds: ['vector'], square: true, spec: '空着时深色沿用浅色那张' },
+      { k: 'bubbleDark.frame', label: '边框', type: 'asset', kinds: ['vector', 'image'], frameStretch: true,
+        spec: '空着时深色沿用浅色那张（连同拉伸设置）',
+        hint: '单色边框打开“染成气泡底色”就会跟着两种模式的底色变，可以不画第二张。只给了深色时两种模式都用它。旧版本应用只认浅色那套' },
+      { g: '段评气泡' },
+      { k: '{m}.commentBubble.shape', label: '形状', type: 'select',
+        options: [['', '跟随气泡样式'], ...COMMENT_BUBBLE_SHAPES.map((id, i) => [id, COMMENT_BUBBLE_SHAPE_NAMES[i]] as [string, string])],
+        hint: '段评与本章说的气泡。描边是透明底、颜色跟正文墨色；书源设置了段评颜色时以书源为准。旧版本应用忽略这一组' },
+      { k: '{m}.commentBubble.radius', label: '圆角', type: 'range', min: 0, max: 0.5, step: 0.01, fallback: 0.2, resetLabel: '默认',
+        hint: '占气泡高的比例，0.5 是全圆', when: (m) => mode(m, 'commentBubble.shape') === 'rounded' },
+      { k: '{m}.commentBubble.fill', label: '底色', type: 'color', alpha: true, when: (m) => mode(m, 'commentBubble.shape') !== 'outline' },
+      { k: '{m}.commentBubble.stroke', label: '描边', type: 'color', alpha: true },
+      { k: '{m}.commentBubble.text', label: '文字色', type: 'color', alpha: true, vs: '{m}.commentBubble.fill' },
+      { k: '{m}.commentBubble.ornament', label: '角标', type: 'select',
+        options: [['', '跟随气泡样式'], ...COMMENT_BUBBLE_ORNAMENTS.map((id, i) => [id, COMMENT_BUBBLE_ORNAMENT_NAMES[i]] as [string, string])],
+        hint: '应用内置的小图形；预览里用近似的符号示意' },
+      { k: '{m}.commentBubble.ornamentColor', label: '角标颜色', type: 'color', alpha: true,
+        when: (m) => !!mode(m, 'commentBubble.ornament') && mode(m, 'commentBubble.ornament') !== 'none' }
     ]
   },
   {
@@ -152,12 +180,19 @@ export const SECTIONS: Section[] = [
       ...NAV_ICON_TABS.map(([key, label]): Field => navIconField(`navigation.${key}Selected`, label)),
       { g: '底栏' },
       { k: 'navigation.labels', label: '文字', type: 'select', options: [['', '图标下显示文字'], ['hidden', '只显示图标']],
-        hint: '只显示图标时，图标本身要能认出是哪个页签' }
+        hint: '只显示图标时，图标本身要能认出是哪个页签' },
+      { g: '深色图标（可选）' },
+      ...NAV_ICON_TABS.map(([key, label]): Field => ({ ...navIconField(`navigationDark.${key}`, label),
+        spec: '空着时深色沿用上面那张。SVG 会按主题色着色，一般不用另给；彩色位图在深色底栏上太亮时再给' })),
+      { g: '深色选中态（可选）' },
+      ...NAV_ICON_TABS.map(([key, label]): Field => ({ ...navIconField(`navigationDark.${key}Selected`, label),
+        spec: '给了深色普通图标却没给这张时，选中也用深色普通图标',
+        hint: key === 'mine' ? '旧版本应用只认上面那套' : undefined }))
     ]
   },
   {
     id: 'book', group: '素材', name: '书籍素材', screen: 'shelf',
-    desc: '书架按书轮播封面。封面是完整插画，不叠书名和作者。深色模式可以单独给一套封面和一张文件夹插画，不给就两种模式都用默认的。', fields: [
+    desc: '书架按书轮播封面。封面是完整插画，不叠书名和作者。深色模式可以单独给一套封面、书架边框和文件夹插画，不给就两种模式都用默认的。', fields: [
       { g: '封面（最多 16 张，450 × 660）' },
       { k: 'book.covers', type: 'covers', target: [450, 660] },
       { g: '深色封面（可选，最多 16 张）' },
@@ -165,6 +200,8 @@ export const SECTIONS: Section[] = [
         hint: '空着时深色模式沿用上面那套。和上面张数相同、顺序对应时，同一本书切换深浅色还是同一幅画。旧版本应用只认上面那套；上面那套超过 8 张时，旧版本应用会提示先更新' },
       { g: '书架' },
       { k: 'book.shelfFrame', label: '书架边框', type: 'asset', kinds: ['vector'], viewBox: [450, 660], spec: 'SVG，与封面同比例，中心透明' },
+      { k: 'book.shelfFrameDark', label: '书架边框 · 深色（可选）', type: 'asset', kinds: ['vector'], viewBox: [450, 660], spec: 'SVG，与封面同比例，中心透明',
+        hint: '边框按原色显示，深色描边在深色书架上看不见时再给这张；空着时深色沿用上面那张。旧版本应用只认上面那张' },
       { k: 'book.shelfFolder', label: '分组文件夹', type: 'asset', kinds: ['image'], target: [450, 660], spec: '450 × 660 位图' },
       { k: 'book.shelfFolderDark', label: '分组文件夹 · 深色（可选）', type: 'asset', kinds: ['image'], target: [450, 660], spec: '450 × 660 位图',
         hint: '空着时深色模式沿用上面那张。旧版本应用只认上面那张' }

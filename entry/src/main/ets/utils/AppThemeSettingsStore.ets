@@ -17,6 +17,7 @@ import { ReaderSettings, ReaderSettingsStore } from './ReaderSettingsStore';
 import { ReaderThemeHelper, ReaderThemeItem } from './ReaderThemeHelper';
 import { CloudSyncChangeTracker } from '../account/CloudSyncChangeTracker';
 import { HexColor } from './HexColor';
+import { commentBubbleIsEmpty, normalizeCommentBubble } from '../theme/share/ThemePackageFormat';
 
 export class AppThemeSettings {
   themeId: string = '';
@@ -521,6 +522,19 @@ export class AppThemeSettingsStore {
     if (override.bubbleStyle) tokens.bubbleStyle = override.bubbleStyle;
     if (override.color) tokens.emphasisColor = override.color;
     if (override.textColor) tokens.emphasisTextColor = override.textColor;
+    const comment = normalizeCommentBubble(override.comment);
+    if (!commentBubbleIsEmpty(comment)) {
+      // 逐项盖在来源主题的段评设置上；换一个新对象，不改到来源主题。
+      const merged = normalizeCommentBubble(tokens.commentBubble);
+      if (comment.shape) merged.shape = comment.shape;
+      if (comment.radius >= 0) merged.radius = comment.radius;
+      if (comment.fill) merged.fill = comment.fill;
+      if (comment.stroke) merged.stroke = comment.stroke;
+      if (comment.text) merged.text = comment.text;
+      if (comment.ornament) merged.ornament = comment.ornament;
+      if (comment.ornamentColor) merged.ornamentColor = comment.ornamentColor;
+      tokens.commentBubble = merged;
+    }
   }
 
   static hasOverrides(settings: AppThemeSettings): boolean {
@@ -539,7 +553,8 @@ export class AppThemeSettingsStore {
   }
 
   static hasEmphasisOverride(override: ThemeEmphasisOverrides): boolean {
-    return !!(override.mode || override.bubbleStyle || override.color || override.textColor);
+    return !!(override.mode || override.bubbleStyle || override.color || override.textColor) ||
+      !commentBubbleIsEmpty(override.comment);
   }
 
   static hasRadiusOverride(radius: ThemeRadiusOverrides): boolean {
@@ -636,6 +651,7 @@ export class AppThemeSettingsStore {
     result.bubbleStyle = (source.bubbleStyle || '').trim().substring(0, 80);
     result.color = HexColor.parseAlpha(source.color || '');
     result.textColor = HexColor.parseAlpha(source.textColor || '');
+    result.comment = normalizeCommentBubble(source.comment);
     return result;
   }
 

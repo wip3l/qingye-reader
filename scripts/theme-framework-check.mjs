@@ -346,7 +346,7 @@ for (const [layout, builder] of [['immersiveTabs', 'bottomTabBar'], ['compatTabs
 }
 assert(indexPage.includes('BottomTabBarStyle.of(this.navigationIcon(tabId, index)') &&
   indexPage.includes('Image(this.navigationIcon(tabId, index))') &&
-  indexPage.includes('ThemeAssetRegistry.navigationIcon(iconPackId, tabId, selected)'),
+  indexPage.includes('ThemeAssetRegistry.navigationIcon(iconPackId, tabId, selected, dark)'),
   'Tab bar builders do not resolve themed navigation icons');
 // 可选的第四个页签（听 / 足迹）：每个内置图标包都有自己的一套，主题包缺图标时回退到基底主题。
 for (const fileName of fs.readdirSync(mediaRoot).filter(name => /^ic_theme_[a-z_]+_mine\.(svg|png)$/.test(name))) {

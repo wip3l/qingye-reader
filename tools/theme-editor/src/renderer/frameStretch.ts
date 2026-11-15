@@ -48,6 +48,45 @@ export function frameAspect(ref: string): number {
   return 0;
 }
 
+const luminances = new Map<string, number>();
+
+/**
+ * 边框不透明像素的平均相对亮度（0–1），用来提示“浅色边框放到深色纸面上看不清”。还没读到时返回 -1 并开始读，
+ * 读完通知重画；读不出来时也返回 -1。
+ */
+export function frameLuminance(ref: string): number {
+  const url = assetUrl(ref);
+  if (!url) return -1;
+  const known = luminances.get(url);
+  if (known !== undefined) return known;
+  const key = `lum|${url}`;
+  if (!pending.has(key)) {
+    pending.add(key);
+    load(url).then((img) => {
+      const w = Math.max(1, Math.min(240, img.naturalWidth || 240));
+      const hgt = Math.max(1, Math.round(w / Math.max(0.1, (img.naturalWidth || 300) / (img.naturalHeight || 100))));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = hgt;
+      const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+      ctx.drawImage(img, 0, 0, w, hgt);
+      const data = ctx.getImageData(0, 0, w, hgt).data;
+      const lin = (v: number): number => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+      let sum = 0;
+      let weight = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const a = data[i + 3] / 255;
+        if (a < 0.15) continue;
+        sum += a * (0.2126 * lin(data[i]) + 0.7152 * lin(data[i + 1]) + 0.0722 * lin(data[i + 2]));
+        weight += a;
+      }
+      luminances.set(url, weight > 0 ? sum / weight : -1);
+      onReady();
+    }).catch(() => luminances.set(url, -1)).finally(() => pending.delete(key));
+  }
+  return -1;
+}
+
 /** 染成气泡底色的图（只改不透明像素的颜色，保留透明度）；没读完时先用原图。 */
 function tintedUrl(url: string, color: string): string {
   const key = `${url}|${color}`;

@@ -15,6 +15,8 @@ export class ReaderWeightedTextSpan {
   style: text.TextStyle;
   weight: number = 0;
   capStyleId: string = '';
+  /** 主题包可以给深色模式单独一张端饰。 */
+  capDark: boolean = false;
   capSizePx: number = 0;
   repeatCaps: boolean = false;
   constructor(content: string, style: text.TextStyle) {
@@ -158,15 +160,16 @@ class ReaderWeightedTextNode extends FrameNode {
     if (span.capStyleId && !span.repeatCaps) builder.addPlaceholder(cap);
   }
 
-  private capImage(styleId: string): image.PixelMap | undefined {
-    const cached = ReaderWeightedTextNode.capImages.get(styleId);
+  private capImage(styleId: string, dark: boolean): image.PixelMap | undefined {
+    const key = `${styleId}|${dark ? 1 : 0}`;
+    const cached = ReaderWeightedTextNode.capImages.get(key);
     if (cached) return cached;
-    const resource = ThemeAssetRegistry.regexBubbleCap(styleId);
+    const resource = ThemeAssetRegistry.regexBubbleCap(styleId, dark);
     const host = this.context.getHostContext();
     if (typeof resource === 'string') {
       // 主题包的端饰是包目录里的 SVG 文件。
       const fromFile = resource ? ReaderRasterAssets.fileImage(resource, 96, 96) : null;
-      if (fromFile) ReaderWeightedTextNode.capImages.set(styleId, fromFile);
+      if (fromFile) ReaderWeightedTextNode.capImages.set(key, fromFile);
       return fromFile || undefined;
     }
     if (!host) return undefined;
@@ -175,7 +178,7 @@ class ReaderWeightedTextNode extends FrameNode {
       const source = image.createImageSource(bytes.buffer as ArrayBuffer);
       try {
         const bitmap = source.createPixelMapSync({ desiredSize: { width: 96, height: 96 } });
-        ReaderWeightedTextNode.capImages.set(styleId, bitmap);
+        ReaderWeightedTextNode.capImages.set(key, bitmap);
         return bitmap;
       } finally { source.release(); }
     } catch (_) { return undefined; }
@@ -196,7 +199,7 @@ class ReaderWeightedTextNode extends FrameNode {
         this.paintRepeatedCaps(context, span, start);
         continue;
       }
-      const bitmap = this.capImage(span.capStyleId);
+      const bitmap = this.capImage(span.capStyleId, span.capDark);
       for (let side = 0; side < 2; side++) {
         const box = placeholder < boxes.length ? boxes[placeholder].rect : undefined;
         placeholder++;
@@ -211,7 +214,7 @@ class ReaderWeightedTextNode extends FrameNode {
 
   private paintRepeatedCaps(context: DrawContext, span: ReaderWeightedTextSpan, start: number): void {
     if (!this.paragraph) return;
-    const bitmap = this.capImage(span.capStyleId);
+    const bitmap = this.capImage(span.capStyleId, span.capDark);
     if (!bitmap) return;
     for (const line of this.paragraph.getLineMetrics()) {
       const from = Math.max(start, line.startIndex);

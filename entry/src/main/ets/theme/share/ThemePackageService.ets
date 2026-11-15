@@ -28,6 +28,8 @@ import {
   assetPath,
   assetPathExtension,
   assetRef,
+  bubbleDarkDifference,
+  bubbleFor,
   checkSvgSource,
   decodeManifest,
   decodeTheme,
@@ -43,6 +45,7 @@ import {
   mapPartsAssetRefs,
   maxBytesForKind,
   mergeRules,
+  navigationIsEmpty,
   packageFileName,
   packageIdOfThemeId,
   packThemeId,
@@ -807,6 +810,12 @@ export class ThemePackageService {
     if (navigation && !(navigation.bookshelf && navigation.explore && navigation.mine)) {
       record.navigation = null;
     }
+    if (!record.navigation || navigationIsEmpty(record.navigationDark)) record.navigationDark = null;
+    // 深色气泡只带与浅色不同的那几项，素材清单也只收用得到的文件。
+    const lightBubble = bubbleFor(record, false);
+    const darkBubble = bubbleDarkDifference(record);
+    record.bubble = lightBubble;
+    record.bubbleDark = darkBubble;
     for (const relativePath of partsAssetRefs(record)) {
       const source = `${bundled.dir}/${relativePath}`;
       if (!ThemePackageService.exists(source)) {

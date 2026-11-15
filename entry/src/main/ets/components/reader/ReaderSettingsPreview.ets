@@ -154,8 +154,9 @@ export struct ReaderSettingsPreview {
     style.shadowOffsetXPx = ui.vp2px(Math.max(0, resolved.textShadowOffsetX));
     style.shadowOffsetYPx = ui.vp2px(Math.max(0, resolved.textShadowOffsetY));
     ReaderV2BubbleFrame.decorate(style, resolved.bubbleDecorationEnabled, resolved.bubbleStyleId,
-      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId),
-      ui.vp2px(Math.max(15, Math.min(22, fontSize * 0.72))), ThemePackRegistry.bubbleFrame(resolved.bubbleStyleId));
+      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId, this.darkMode),
+      ui.vp2px(Math.max(15, Math.min(22, fontSize * 0.72))),
+      ThemePackRegistry.bubbleFrame(resolved.bubbleStyleId, this.darkMode), this.darkMode);
     return style;
   }
 
@@ -211,7 +212,9 @@ export struct ReaderSettingsPreview {
     const bubbleContext = this.emphasisContext();
     bubbleContext.inheritedMode = 'bubble';
     const bubble = ReaderRegexBubbleStyleResolver.resolve(null, bubbleContext);
-    input.commentBubble = ReaderCommentBubbleStyles.resolve(bubble.bubbleStyleId, this.darkMode, this.readerTheme.textColor);
+    input.commentBubble = ReaderCommentBubbleStyles.resolveThemed(bubble.bubbleStyleId, this.darkMode,
+      this.readerTheme.textColor, ThemeRuntime.commentBubbleTokens(this.darkMode), bubble.backgroundColor,
+      bubble.textColor, bubble.emphasisColor);
     input.commentBubbleSize = this.settings.commentBubbleSize;
     input.commentFontSizePx = ui.fp2px(Math.max(10, this.settings.fontSize - 5));
     config.fontSizeVp = this.settings.fontSize;

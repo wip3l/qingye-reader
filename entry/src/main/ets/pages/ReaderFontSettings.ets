@@ -1780,8 +1780,9 @@ export struct ReaderFontSettingsEditor {
     style.shadowOffsetXPx = Math.max(1, uiContext.vp2px(Math.max(0, resolved.textShadowOffsetX)));
     style.shadowOffsetYPx = Math.max(1, uiContext.vp2px(Math.max(0, resolved.textShadowOffsetY)));
     ReaderV2BubbleFrame.decorate(style, resolved.bubbleDecorationEnabled, resolved.bubbleStyleId,
-      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId),
-      uiContext.vp2px(Math.max(15, Math.min(22, size * 0.72))), ThemePackRegistry.bubbleFrame(resolved.bubbleStyleId));
+      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId, this.appDarkMode),
+      uiContext.vp2px(Math.max(15, Math.min(22, size * 0.72))),
+      ThemePackRegistry.bubbleFrame(resolved.bubbleStyleId, this.appDarkMode), this.appDarkMode);
     return style;
   }
 
@@ -2071,7 +2072,7 @@ export struct ReaderFontSettingsEditor {
       return false;
     }
     const style = this.resolvedRegexEmphasis(index);
-    return style.bubbleDecorationEnabled && ThemeAssetRegistry.hasRegexBubbleCap(style.bubbleStyleId);
+    return style.bubbleDecorationEnabled && ThemeAssetRegistry.hasRegexBubbleCap(style.bubbleStyleId, this.appDarkMode);
   }
 
   regexPreviewBubbleStyleId(index: number): string {
@@ -2108,6 +2109,7 @@ export struct ReaderFontSettingsEditor {
       span.weight = slice.highlighted ? rule.fontWeight : this.readerFontWeight;
       if (this.shouldUseRegexPreviewDecoration(slice, index)) {
         span.capStyleId = this.regexPreviewBubbleStyleId(index);
+        span.capDark = this.appDarkMode;
         span.capSizePx = this.getUIContext().vp2px(this.regexPreviewBubbleCapSize(index));
       }
       return span;

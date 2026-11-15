@@ -17508,8 +17508,11 @@ ${leading}` : leading;
    * and corners from a source apply to decorated themes; the default outline stays consistent across sources.
    */
   readerCommentBubbleStyle(): ReaderCommentBubbleStyle {
-    const style = ReaderCommentBubbleStyles.resolve(this.readerCommentBubbleTheme().bubbleStyleId,
-      this.isReaderThemeDark(), this.getTextColor());
+    const theme = this.readerCommentBubbleTheme();
+    const style = ReaderCommentBubbleStyles.resolveThemed(theme.bubbleStyleId, this.isReaderThemeDark(),
+      this.getTextColor(), ThemeRuntime.commentBubbleTokens(this.isReaderThemeDark()), theme.backgroundColor,
+      theme.textColor,
+      theme.emphasisColor);
     // Compatibility sources often persist a solid fill and white label as their default settings.
     // Keep the default theme's transparent outline and ink colour as one coherent style.
     if (style.styleId === 'capsule') return style;
@@ -17900,6 +17903,7 @@ ${leading}` : leading;
         style.shadowOffsetYPx = template.shadowOffsetYPx;
         style.decorationEnabled = template.decorationEnabled;
         style.decorationStyleId = template.decorationStyleId;
+        style.decorationDark = template.decorationDark;
         style.decorationSizePx = template.decorationSizePx;
         ReaderV2BubbleFrame.copyFrame(style, template);
         result.push(style);
@@ -17971,9 +17975,11 @@ ${leading}` : leading;
     style.shadowRadiusPx = this.toMeasurePx(Math.max(0, resolved.textShadowRadius));
     style.shadowOffsetXPx = this.toMeasurePx(Math.max(0, resolved.textShadowOffsetX));
     style.shadowOffsetYPx = this.toMeasurePx(Math.max(0, resolved.textShadowOffsetY));
+    const bubbleDark = this.isReaderThemeDark();
     ReaderV2BubbleFrame.decorate(style, resolved.bubbleDecorationEnabled, resolved.bubbleStyleId,
-      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId),
-      this.toMeasurePx(Math.max(15, Math.min(22, fontSize * 0.72))), ThemePackRegistry.bubbleFrame(resolved.bubbleStyleId));
+      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId, bubbleDark),
+      this.toMeasurePx(Math.max(15, Math.min(22, fontSize * 0.72))),
+      ThemePackRegistry.bubbleFrame(resolved.bubbleStyleId, bubbleDark), bubbleDark);
     return style;
   }
 
@@ -19138,7 +19144,7 @@ ${leading}` : leading;
           ForEach(fragment.regexBubbleSegments, (segment: ReaderV2RegexBubbleSegment) => {
             this.readerV2RegexBubbleCaps(segment)
           }, (segment: ReaderV2RegexBubbleSegment) =>
-            `reader_v2_bubble_caps_${segment.styleId}_${segment.rect.left}_${segment.rect.top}_` +
+            `reader_v2_bubble_caps_${segment.styleId}_${segment.capDark ? 1 : 0}_${segment.rect.left}_${segment.rect.top}_` +
             `${segment.rect.right}_${segment.rect.bottom}_${segment.leading ? 'l' : ''}${segment.trailing ? 'r' : ''}`)
         }, (fragment: ReaderV2PageFragment) => `reader_v2_bubble_fragment_${fragment.blockId}_` +
           `${fragment.displayStart}_${fragment.displayEnd}`)
@@ -20665,7 +20671,7 @@ ${leading}` : leading;
         ForEach(fragment.regexBubbleSegments, (segment: ReaderV2RegexBubbleSegment) => {
           this.readerV2RegexBubbleCaps(segment)
         }, (segment: ReaderV2RegexBubbleSegment) =>
-          `reader_continuous_v2_caps_${segment.styleId}_${segment.rect.left}_${segment.rect.top}_` +
+          `reader_continuous_v2_caps_${segment.styleId}_${segment.capDark ? 1 : 0}_${segment.rect.left}_${segment.rect.top}_` +
           `${segment.rect.right}_${segment.rect.bottom}_${segment.leading ? 'l' : ''}${segment.trailing ? 'r' : ''}`)
       }, (fragment: ReaderV2PageFragment) => `reader_continuous_v2_bubble_${fragment.blockId}_` +
         `${fragment.displayStart}_${fragment.displayEnd}`)
@@ -23393,13 +23399,15 @@ ${leading}` : leading;
         for (const segment of fragment.regexBubbleSegments) {
           const capTop = offsetY + segment.rect.top + (segment.rect.height() - segment.capSizePx) / 2;
           if (segment.leading && segment.leadingCapWidthPx > 0.5) {
-            const cap = ReaderRasterAssets.regexBubbleCap(host, segment.styleId, segment.capSizePx);
+            const cap = ReaderRasterAssets.regexBubbleCap(host, segment.styleId, segment.capSizePx,
+              segment.capDark);
             if (!cap) return null;
             spec.caps.push(new ReaderRasterImage(cap, offsetX + segment.rect.left, capTop,
               offsetX + segment.rect.left + segment.capSizePx, capTop + segment.capSizePx, 0, true));
           }
           if (segment.trailing && segment.trailingCapWidthPx > 0.5) {
-            const cap = ReaderRasterAssets.regexBubbleCap(host, segment.styleId, segment.capSizePx);
+            const cap = ReaderRasterAssets.regexBubbleCap(host, segment.styleId, segment.capSizePx,
+              segment.capDark);
             if (!cap) return null;
             spec.caps.push(new ReaderRasterImage(cap, offsetX + segment.rect.right - segment.capSizePx, capTop,
               offsetX + segment.rect.right, capTop + segment.capSizePx, 180, true));

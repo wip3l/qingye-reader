@@ -309,6 +309,11 @@ img.ico { background: none; -webkit-mask: none; mask: none; object-fit: contain;
 .em-framed img.bcap { height: .95em; width: .95em; vertical-align: -0.1em; margin: 0 1px; }
 .em-framed img.bcap.r { transform: rotate(180deg); }
 .em-frame { color: inherit; }
+.cmt { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 2em; height: 1.32em;
+  padding: 0 .3em; margin-left: .25em; border: 1px solid transparent; font-size: .62em; line-height: 1; vertical-align: .15em;
+  text-indent: 0; font-family: system-ui, sans-serif; box-sizing: border-box; }
+.cmt.cut { clip-path: polygon(.34em 0, calc(100% - .34em) 0, 100% .34em, 100% calc(100% - .34em), calc(100% - .34em) 100%, .34em 100%, 0 calc(100% - .34em), 0 .34em); }
+.cmt-orn { position: absolute; right: -.35em; top: -.55em; font-size: .9em; font-style: normal; }
 
 /* 气泡边框拉伸区域对话框 */
 .fs-cols { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; }

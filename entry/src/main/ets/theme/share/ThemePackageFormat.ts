@@ -190,10 +190,88 @@ export class ThemePackagePartEmphasis {
   textColor: string = '';
 }
 
+/**
+ * 段评气泡（含本章说）的外观，写在每个模式自己的部件里。字段都可以空着：空着的沿用强调气泡样式推出来的样子。
+ * 书源设置了段评颜色时仍以书源为准。旧版本应用不认这一节，段评照旧跟强调气泡样式走。
+ */
+export class ThemePackageCommentBubble {
+  /** COMMENT_BUBBLE_SHAPES 之一；空串跟随强调气泡样式。 */
+  shape: string = '';
+  /** 圆角占气泡高的比例 0–0.5，只对 rounded 有效；负数用默认值。 */
+  radius: number = -1;
+  fill: string = '';
+  stroke: string = '';
+  text: string = '';
+  /** COMMENT_BUBBLE_ORNAMENTS 之一（'none' 表示不画）；空串跟随强调气泡样式。 */
+  ornament: string = '';
+  ornamentColor: string = '';
+}
+
+/** outline 是默认的透明描边（颜色跟正文墨色），其余三种是实心气泡。 */
+export const COMMENT_BUBBLE_SHAPES: string[] = ['outline', 'pill', 'rounded', 'cut'];
+export const COMMENT_BUBBLE_SHAPE_NAMES: string[] = ['描边', '胶囊', '圆角', '切角'];
+export const COMMENT_BUBBLE_DEFAULT_RADIUS: number = 0.2;
+export const COMMENT_BUBBLE_RADIUS_MAX: number = 0.5;
+/** 阅读页内置的小图形，与 ReaderCommentBubblePainter 画得出的一致。 */
+export const COMMENT_BUBBLE_ORNAMENTS: string[] = [
+  'none', 'star', 'sparkle', 'dot', 'moon', 'leaf', 'sprig', 'rose', 'paw', 'seal', 'diamond', 'pendant', 'scroll',
+  'cord', 'signal', 'frame', 'sketch', 'postcard', 'folio'
+];
+export const COMMENT_BUBBLE_ORNAMENT_NAMES: string[] = [
+  '无', '星', '小星', '圆点', '月', '叶', '枝', '花', '爪印', '印章', '菱形', '坠饰', '卷轴',
+  '绳结', '信号', '内框', '描影', '信封', '书签'
+];
+
+const COMMENT_BUBBLE_COLOR: RegExp = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+/** 不认得的形状、图形和颜色都清成空串（沿用），圆角夹到 0–0.5；读包、读本机设置和编辑器都走它。 */
+export function normalizeCommentBubble(source: ThemePackageCommentBubble | null | undefined): ThemePackageCommentBubble {
+  const result = new ThemePackageCommentBubble();
+  if (!source || typeof source !== 'object') return result;
+  const text = (value: string | undefined): string => typeof value === 'string' ? value.trim() : '';
+  const color = (value: string | undefined): string => {
+    const raw = text(value);
+    return COMMENT_BUBBLE_COLOR.test(raw) ? raw.toUpperCase() : '';
+  };
+  const shape = text(source.shape);
+  result.shape = COMMENT_BUBBLE_SHAPES.includes(shape) ? shape : '';
+  const radius = typeof source.radius === 'number' && isFinite(source.radius) ? source.radius : -1;
+  result.radius = radius < 0 ? -1 : Math.round(Math.min(COMMENT_BUBBLE_RADIUS_MAX, radius) * 100) / 100;
+  result.fill = color(source.fill);
+  result.stroke = color(source.stroke);
+  result.text = color(source.text);
+  const ornament = text(source.ornament);
+  result.ornament = COMMENT_BUBBLE_ORNAMENTS.includes(ornament) ? ornament : '';
+  result.ornamentColor = color(source.ornamentColor);
+  return result;
+}
+
+export function commentBubbleIsEmpty(source: ThemePackageCommentBubble | null | undefined): boolean {
+  const value = normalizeCommentBubble(source);
+  return !value.shape && value.radius < 0 && !value.fill && !value.stroke && !value.text && !value.ornament &&
+    !value.ornamentColor;
+}
+
+/** 只写设了的字段。 */
+export function encodeCommentBubble(source: ThemePackageCommentBubble): Record<string, Object> {
+  const value = normalizeCommentBubble(source);
+  const record: Record<string, Object> = {};
+  if (value.shape) record['shape'] = value.shape;
+  if (value.radius >= 0) record['radius'] = value.radius;
+  if (value.fill) record['fill'] = value.fill;
+  if (value.stroke) record['stroke'] = value.stroke;
+  if (value.text) record['text'] = value.text;
+  if (value.ornament) record['ornament'] = value.ornament;
+  if (value.ornamentColor) record['ornamentColor'] = value.ornamentColor;
+  return record;
+}
+
 export class ThemePackageVariantParts {
   colors: ThemePackagePartColors = new ThemePackagePartColors();
   reader: ThemePackagePartReader = new ThemePackagePartReader();
   emphasis: ThemePackagePartEmphasis = new ThemePackagePartEmphasis();
+  // 本机旧记录里没有。
+  commentBubble: ThemePackageCommentBubble | null = null;
 }
 
 export class ThemePackageTtsPanel {
@@ -231,6 +309,13 @@ export const NAVIGATION_ICON_KEYS: string[] = [
   'listen', 'footprint', 'listenSelected', 'footprintSelected'
 ];
 
+/** 一个图标都没有（labels 不算）。 */
+export function navigationIsEmpty(navigation: ThemePackageNavigation | null | undefined): boolean {
+  if (!navigation) return true;
+  const record = navigation as Object as Record<string, string>;
+  return !NAVIGATION_ICON_KEYS.some((key: string): boolean => !!record[key]);
+}
+
 /**
  * 位图素材的显示区域：图片文件不改，显示时把 (x, y, width, height) 这块放大铺满素材位，多出来的部分裁掉。
  * 动图取景用它保住动画（重新编码只能存单帧）。坐标是相对 imageWidth × imageHeight 的像素，只看比例，
@@ -252,6 +337,8 @@ export class ThemePackageBook {
   // 深色模式单独的一套封面，可选：空着时深色也用 covers。旧版本应用不认这个字段，两种模式都显示 covers。
   coversDark: string[] = [];
   shelfFrame: string = '';
+  // 深色模式单独的书架边框，可选，规则同文件夹插画。旧版本应用不认，两种模式都显示 shelfFrame。
+  shelfFrameDark: string = '';
   shelfFolder: string = '';
   // 深色模式单独的文件夹插画，可选：空着时深色也用 shelfFolder。旧版本应用不认，两种模式都显示 shelfFolder。
   shelfFolderDark: string = '';
@@ -297,9 +384,18 @@ export function bookFolderFor(book: ThemePackageBook | null | undefined, dark: b
   return light || night;
 }
 
+/** 某个模式下的书架边框，规则同文件夹插画。 */
+export function bookShelfFrameFor(book: ThemePackageBook | null | undefined, dark: boolean): string {
+  if (!book) return '';
+  const light = book.shelfFrame || '';
+  const night = book.shelfFrameDark || '';
+  if (dark) return night || light;
+  return light || night;
+}
+
 /** 封面、边框、文件夹插画一样都没有：整节可以去掉。 */
 export function bookIsEmpty(book: ThemePackageBook | null | undefined): boolean {
-  return !book || (bookHasNoCovers(book) && !book.shelfFrame && !bookFolderFor(book, false));
+  return !book || (bookHasNoCovers(book) && !bookShelfFrameFor(book, false) && !bookFolderFor(book, false));
 }
 
 /** 书架的四种布局，取值同应用的 bookshelfLayoutMode。 */
@@ -415,9 +511,51 @@ export function bubbleFrameSliceOrDefault(slice: ThemePackageBubbleSlice | null 
   return normalizeBubbleFrameSlice(slice) || defaultBubbleFrameSlice(aspect);
 }
 
-/** 气泡边框是位图，或只有边框没有端饰：导出时清单要声明 bubble-frame-v1。 */
+function copyBubbleFrame(target: ThemePackageBubble, source: ThemePackageBubble): void {
+  target.frame = source.frame;
+  target.frameSlice = source.frameSlice ? normalizeBubbleFrameSlice(source.frameSlice) : null;
+  target.frameRepeat = source.frameRepeat || '';
+  target.frameBreak = source.frameBreak || '';
+  target.frameTint = source.frameTint === true;
+}
+
+/**
+ * 某个模式下实际用的气泡素材：端饰、边框各自取这个模式的，没有就用另一种模式的（只给了一种模式时两种都用它）。
+ * 拉伸线、平铺、换行方式、染色跟着所属的那张边框走。两种模式都没有时返回 null。
+ */
+export function bubbleFor(parts: ThemePackageParts | null | undefined, dark: boolean): ThemePackageBubble | null {
+  if (!parts) return null;
+  const own = dark ? parts.bubbleDark : parts.bubble;
+  const other = dark ? parts.bubble : parts.bubbleDark;
+  const result = new ThemePackageBubble();
+  result.cap = (own && own.cap) || (other && other.cap) || '';
+  const frameSource = own && own.frame ? own : (other && other.frame ? other : null);
+  if (frameSource) copyBubbleFrame(result, frameSource);
+  return result.cap || result.frame ? result : null;
+}
+
+function sameBubbleFrame(a: ThemePackageBubble, b: ThemePackageBubble): boolean {
+  return a.frame === b.frame && JSON.stringify(normalizeBubbleFrameSlice(a.frameSlice)) ===
+    JSON.stringify(normalizeBubbleFrameSlice(b.frameSlice)) && (a.frameRepeat || '') === (b.frameRepeat || '') &&
+    (a.frameBreak || '') === (b.frameBreak || '') && (a.frameTint === true) === (b.frameTint === true);
+}
+
+/**
+ * 写进包的深色气泡：只留与浅色不同的那几项（浅色写成 bubble，见 bubbleFor）。两种模式一样时为 null。
+ */
+export function bubbleDarkDifference(parts: ThemePackageParts | null | undefined): ThemePackageBubble | null {
+  const light = bubbleFor(parts, false);
+  const dark = bubbleFor(parts, true);
+  if (!light || !dark) return null;
+  const result = new ThemePackageBubble();
+  if (dark.cap && dark.cap !== light.cap) result.cap = dark.cap;
+  if (dark.frame && !sameBubbleFrame(dark, light)) copyBubbleFrame(result, dark);
+  return result.cap || result.frame ? result : null;
+}
+
+/** 气泡边框是位图，或只有边框没有端饰：导出时清单要声明 bubble-frame-v1。看的是写成 bubble 的浅色那套。 */
 export function partsUseBubbleFrameFeature(parts: ThemePackageParts | null | undefined): boolean {
-  const bubble = parts ? parts.bubble : null;
+  const bubble = bubbleFor(parts, false);
   if (!bubble || !bubble.frame) return false;
   if (!bubble.cap) return true;
   const extension = assetPathExtension(bubble.frame) || fileExtensionOf(bubble.frame);
@@ -442,6 +580,10 @@ export class ThemePackageParts {
   startupLight: ThemePackageStartup | null = null;
   startupDark: ThemePackageStartup | null = null;
   bubble: ThemePackageBubble | null = null;
+  // 深色模式单独的气泡素材，可选；端饰、边框按项沿用 bubble（见 bubbleFor）。旧版本应用不认，两种模式都用 bubble。
+  bubbleDark: ThemePackageBubble | null = null;
+  // 深色模式单独的导航图标，可选；没给的图标沿用 navigation，labels 只看 navigation。旧版本应用不认。
+  navigationDark: ThemePackageNavigation | null = null;
   // 首页三个页签顶部的背景图；只写了一种模式时另一种模式不显示背景。
   homeBackdropLight: string = '';
   homeBackdropDark: string = '';
@@ -1119,18 +1261,35 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
     result.emphasis.color = colorField(emphasis, 'color', emphasisLabel, true);
     result.emphasis.textColor = colorField(emphasis, 'textColor', emphasisLabel, true);
   }
+  const comment = objectField(record, 'commentBubble');
+  if (comment) {
+    const commentLabel = `${label}.commentBubble`;
+    // 形状和图形不认得时按沿用处理（以后的版本可能加新样式）；颜色写错照样报错。
+    const parsed = new ThemePackageCommentBubble();
+    parsed.shape = stringField(comment, 'shape').trim();
+    parsed.radius = typeof comment['radius'] === 'number' ? numberField(comment, 'radius') : -1;
+    parsed.fill = colorField(comment, 'fill', commentLabel, true);
+    parsed.stroke = colorField(comment, 'stroke', commentLabel, true);
+    parsed.text = colorField(comment, 'text', commentLabel, true);
+    parsed.ornament = stringField(comment, 'ornament').trim();
+    parsed.ornamentColor = colorField(comment, 'ornamentColor', commentLabel, true);
+    const normalized = normalizeCommentBubble(parsed);
+    result.commentBubble = commentBubbleIsEmpty(normalized) ? null : normalized;
+  }
   return result;
 }
 
-function decodeBubble(bubble: Record<string, Object>, manifest: ThemePackageManifest): ThemePackageBubble {
+function decodeBubble(bubble: Record<string, Object>, manifest: ThemePackageManifest,
+  label: string = 'parts.bubble', darkVariant: boolean = false): ThemePackageBubble {
   const result = new ThemePackageBubble();
-  const frameFeature = manifest.requires.includes(ThemePackageFeatures.BUBBLE_FRAME);
+  // 认得 bubbleDark 的版本都会画位图边框，深色那套不用另外声明。
+  const frameFeature = darkVariant || manifest.requires.includes(ThemePackageFeatures.BUBBLE_FRAME);
   const frameKinds: string[] = frameFeature ? [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE] :
     [ThemePackageAssetKinds.VECTOR];
-  result.frame = partAssetRef(bubble, 'frame', manifest, frameKinds, 'parts.bubble');
-  result.cap = partAssetRef(bubble, 'cap', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.bubble');
+  result.frame = partAssetRef(bubble, 'frame', manifest, frameKinds, label);
+  result.cap = partAssetRef(bubble, 'cap', manifest, [ThemePackageAssetKinds.VECTOR], label);
   if (!result.cap && !(frameFeature && result.frame)) {
-    throw new Error(frameFeature ? '主题包的 parts.bubble 至少要有 cap 或 frame' : '主题包的 parts.bubble 需要 cap');
+    throw new Error(frameFeature ? `主题包的 ${label} 至少要有 cap 或 frame` : `主题包的 ${label} 需要 cap`);
   }
   const slice = objectField(bubble, 'frameSlice');
   if (slice) {
@@ -1309,6 +1468,16 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
     if (!parts.navigation.bookshelf || !parts.navigation.explore || !parts.navigation.mine) {
       throw new Error('主题包的 parts.navigation 需要 bookshelf、explore、mine 三个图标');
     }
+    // 深色那套每个图标都可选，没给的沿用上面这套；没有 navigation 时整节不读。
+    const navigationDark = objectField(record, 'navigationDark');
+    if (navigationDark) {
+      const dark = new ThemePackageNavigation();
+      const darkResult = dark as Object as Record<string, string>;
+      for (const key of NAVIGATION_ICON_KEYS) {
+        darkResult[key] = partAssetRef(navigationDark, key, manifest, icon, 'parts.navigationDark');
+      }
+      parts.navigationDark = navigationIsEmpty(dark) ? null : dark;
+    }
   }
   const book = objectField(record, 'book');
   if (book) {
@@ -1349,6 +1518,8 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
         ThemePackageFeatures.BOOK_COVERS_16);
     }
     parts.book.shelfFrame = partAssetRef(book, 'shelfFrame', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.book');
+    parts.book.shelfFrameDark = partAssetRef(book, 'shelfFrameDark', manifest, [ThemePackageAssetKinds.VECTOR],
+      'parts.book');
     parts.book.shelfFolder = partAssetRef(book, 'shelfFolder', manifest, [ThemePackageAssetKinds.IMAGE], 'parts.book');
     parts.book.shelfFolderDark = partAssetRef(book, 'shelfFolderDark', manifest, [ThemePackageAssetKinds.IMAGE],
       'parts.book');
@@ -1372,6 +1543,10 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
   const bubble = objectField(record, 'bubble');
   if (bubble) {
     parts.bubble = decodeBubble(bubble, manifest);
+  }
+  const bubbleDark = objectField(record, 'bubbleDark');
+  if (bubbleDark) {
+    parts.bubbleDark = decodeBubble(bubbleDark, manifest, 'parts.bubbleDark', true);
   }
   const homeBackdrop = objectField(record, 'homeBackdrop');
   if (homeBackdrop) {
@@ -1436,6 +1611,9 @@ function encodeVariantParts(variant: ThemePackageVariantParts): Record<string, O
   record['colors'] = JSON.parse(JSON.stringify(variant.colors)) as Object;
   record['reader'] = JSON.parse(JSON.stringify(variant.reader)) as Object;
   record['emphasis'] = JSON.parse(JSON.stringify(variant.emphasis)) as Object;
+  if (variant.commentBubble && !commentBubbleIsEmpty(variant.commentBubble)) {
+    record['commentBubble'] = encodeCommentBubble(variant.commentBubble);
+  }
   return record;
 }
 
@@ -1457,6 +1635,14 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
       if (!navigation.searchSelected) navigation.searchSelected = navigation.exploreSelected;
     }
     record['navigation'] = navigation as Object;
+    if (parts.navigationDark && !navigationIsEmpty(parts.navigationDark)) {
+      const dark: Record<string, Object> = {};
+      const source = parts.navigationDark as Object as Record<string, string>;
+      for (const key of NAVIGATION_ICON_KEYS) {
+        if (source[key]) dark[key] = source[key];
+      }
+      record['navigationDark'] = dark;
+    }
   }
   if (parts.book) {
     const book: Record<string, Object> = {};
@@ -1474,8 +1660,11 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     };
     book['covers'] = covers.slice();
     if (coversDark.length > 0) book['coversDark'] = coversDark.slice();
-    if (parts.book.shelfFrame) book['shelfFrame'] = parts.book.shelfFrame;
-    // 文件夹插画同理：只有深色那张时写成 shelfFolder。
+    // 书架边框、文件夹插画同理：只有深色那张时写成 shelfFrame / shelfFolder。
+    const shelfFrame = bookShelfFrameFor(parts.book, false);
+    const shelfFrameDark = parts.book.shelfFrame ? (parts.book.shelfFrameDark || '') : '';
+    if (shelfFrame) book['shelfFrame'] = shelfFrame;
+    if (shelfFrameDark && shelfFrameDark !== shelfFrame) book['shelfFrameDark'] = shelfFrameDark;
     const onlyDarkFolder = !parts.book.shelfFolder;
     const shelfFolder = bookFolderFor(parts.book, false);
     const shelfFolderDark = onlyDarkFolder ? '' : (parts.book.shelfFolderDark || '');
@@ -1501,7 +1690,11 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     if (parts.startupDark) startup['dark'] = JSON.parse(JSON.stringify(parts.startupDark)) as Object;
     record['startup'] = startup;
   }
-  if (parts.bubble) record['bubble'] = encodeBubble(parts.bubble);
+  // 浅色那套写成 bubble（只给了深色时就是深色那套），深色只写不同的那几项。
+  const lightBubble = bubbleFor(parts, false);
+  if (lightBubble) record['bubble'] = encodeBubble(lightBubble);
+  const darkBubble = bubbleDarkDifference(parts);
+  if (darkBubble) record['bubbleDark'] = encodeBubble(darkBubble);
   if (parts.homeBackdropLight || parts.homeBackdropDark) {
     const homeBackdrop: Record<string, Object> = {};
     if (parts.homeBackdropLight) homeBackdrop['light'] = parts.homeBackdropLight;
@@ -1564,20 +1757,26 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
     const navigation = parts.navigation as Object as Record<string, string>;
     for (const key of NAVIGATION_ICON_KEYS) add(navigation[key] || '');
   }
+  if (parts.navigationDark) {
+    const navigation = parts.navigationDark as Object as Record<string, string>;
+    for (const key of NAVIGATION_ICON_KEYS) add(navigation[key] || '');
+  }
   if (parts.book) {
     for (const cover of parts.book.covers) add(cover);
     // 本机旧版记录里没有深色封面字段。
     for (const cover of parts.book.coversDark || []) add(cover);
     add(parts.book.shelfFrame);
+    add(parts.book.shelfFrameDark || '');
     add(parts.book.shelfFolder);
     add(parts.book.shelfFolderDark || '');
   }
   for (const startup of [parts.startupLight, parts.startupDark]) {
     if (startup) add(startup.image);
   }
-  if (parts.bubble) {
-    add(parts.bubble.frame);
-    add(parts.bubble.cap);
+  for (const bubble of [parts.bubble, parts.bubbleDark]) {
+    if (!bubble) continue;
+    add(bubble.frame);
+    add(bubble.cap);
   }
   // 本机旧版记录里没有这两个字段。
   add(parts.homeBackdropLight || '');
@@ -1609,10 +1808,17 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
     const navigation = copy.navigation as Object as Record<string, string>;
     for (const key of NAVIGATION_ICON_KEYS) navigation[key] = swap(navigation[key] || '');
   }
+  if (copy.navigationDark) {
+    const navigation = copy.navigationDark as Object as Record<string, string>;
+    for (const key of NAVIGATION_ICON_KEYS) navigation[key] = swap(navigation[key] || '');
+  } else {
+    copy.navigationDark = null;
+  }
   if (copy.book) {
     copy.book.covers = copy.book.covers.map((cover: string): string => swap(cover));
     copy.book.coversDark = (copy.book.coversDark || []).map((cover: string): string => swap(cover));
     copy.book.shelfFrame = swap(copy.book.shelfFrame);
+    copy.book.shelfFrameDark = swap(copy.book.shelfFrameDark || '');
     copy.book.shelfFolder = swap(copy.book.shelfFolder);
     copy.book.shelfFolderDark = swap(copy.book.shelfFolderDark || '');
     // 本机旧记录里没有这两个字段。
@@ -1633,6 +1839,12 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
   if (copy.bubble) {
     copy.bubble.frame = swap(copy.bubble.frame);
     copy.bubble.cap = swap(copy.bubble.cap);
+  }
+  if (copy.bubbleDark) {
+    copy.bubbleDark.frame = swap(copy.bubbleDark.frame);
+    copy.bubbleDark.cap = swap(copy.bubbleDark.cap);
+  } else {
+    copy.bubbleDark = null;
   }
   copy.homeBackdropLight = swap(copy.homeBackdropLight || '');
   copy.homeBackdropDark = swap(copy.homeBackdropDark || '');
@@ -1674,22 +1886,27 @@ export function describeParts(parts: ThemePackageParts): string[] {
   }
   if (readerModes.length > 0) items.push(`阅读背景（${readerModes.join('、')}）`);
   if (parts.ttsPanelLight || parts.ttsPanelDark) items.push('朗读/有声书面板插画');
-  if (parts.navigation) items.push('导航图标');
+  if (parts.navigation) items.push(parts.navigationDark ? '导航图标（含深色）' : '导航图标');
   if (parts.book) {
     const book: string[] = [];
     const lightCovers = bookCoversFor(parts.book, false).length;
     const darkCovers = parts.book.covers.length > 0 ? (parts.book.coversDark || []).length : 0;
     if (lightCovers > 0 && darkCovers > 0) book.push(`封面 浅色 ${lightCovers} 张、深色 ${darkCovers} 张`);
     else if (lightCovers > 0) book.push(`封面 ${lightCovers} 张`);
-    if (parts.book.shelfFrame) book.push('书架边框');
+    if (parts.book.shelfFrame && parts.book.shelfFrameDark) book.push('书架边框（浅色、深色）');
+    else if (bookShelfFrameFor(parts.book, false)) book.push('书架边框');
     if (parts.book.shelfFolder && parts.book.shelfFolderDark) book.push('文件夹插画（浅色、深色）');
     else if (bookFolderFor(parts.book, false)) book.push('文件夹插画');
     items.push(book.join('、'));
   }
   if (parts.startupLight || parts.startupDark) items.push('启动封面');
-  if (parts.bubble) {
-    items.push(parts.bubble.cap && parts.bubble.frame ? '强调气泡端饰与边框' :
-      (parts.bubble.frame ? '强调气泡边框' : '强调气泡端饰'));
+  const bubble = bubbleFor(parts, false);
+  if (bubble) {
+    const name = bubble.cap && bubble.frame ? '强调气泡端饰与边框' : (bubble.frame ? '强调气泡边框' : '强调气泡端饰');
+    items.push(bubbleDarkDifference(parts) ? `${name}（含深色）` : name);
+  }
+  if ((parts.light && parts.light.commentBubble) || (parts.dark && parts.dark.commentBubble)) {
+    items.push('段评气泡');
   }
   if (parts.homeBackdropLight || parts.homeBackdropDark) {
     const modes: string[] = [];

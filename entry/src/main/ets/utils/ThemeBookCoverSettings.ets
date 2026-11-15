@@ -55,6 +55,6 @@ export class ThemeBookCoverSettings {
   }
 
   static frame(darkMode: boolean): ResourceStr {
-    return ThemeAssetRegistry.themeShelfFrame(ThemeRuntime.bookTokens(darkMode).shelfFrameAssetId);
+    return ThemeAssetRegistry.themeShelfFrame(ThemeRuntime.bookTokens(darkMode).shelfFrameAssetId, darkMode);
   }
 }

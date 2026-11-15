@@ -259,7 +259,9 @@ export class ThemePackStore {
     parts.ttsPanelLight = source.ttsPanelLight || null;
     parts.ttsPanelDark = source.ttsPanelDark || null;
     parts.navigation = source.navigation || null;
+    parts.navigationDark = source.navigationDark || null;
     parts.book = source.book || null;
+    if (parts.book && !parts.book.shelfFrameDark) parts.book.shelfFrameDark = '';
     if (parts.book && !Array.isArray(parts.book.covers)) parts.book.covers = [];
     if (parts.book && !Array.isArray(parts.book.coverCrops)) parts.book.coverCrops = [];
     if (parts.book && !Array.isArray(parts.book.coversDark)) parts.book.coversDark = [];
@@ -270,6 +272,7 @@ export class ThemePackStore {
     parts.startupLight = source.startupLight || null;
     parts.startupDark = source.startupDark || null;
     parts.bubble = source.bubble || null;
+    parts.bubbleDark = source.bubbleDark || null;
     parts.homeBackdropLight = source.homeBackdropLight || '';
     parts.homeBackdropDark = source.homeBackdropDark || '';
     parts.homeBackdropLightCrop = source.homeBackdropLightCrop || null;

@@ -11,8 +11,8 @@ export class ReaderRasterAssets {
   private static readonly MAX_ENTRIES: number = 32;
   private static readonly cache: Map<string, image.PixelMap> = new Map<string, image.PixelMap>();
 
-  static regexBubbleCap(host: Context, styleId: string, sizePx: number): image.PixelMap | null {
-    return ReaderRasterAssets.media(host, ThemeAssetRegistry.regexBubbleCap(styleId), sizePx, sizePx);
+  static regexBubbleCap(host: Context, styleId: string, sizePx: number, dark: boolean = false): image.PixelMap | null {
+    return ReaderRasterAssets.media(host, ThemeAssetRegistry.regexBubbleCap(styleId, dark), sizePx, sizePx);
   }
 
   static backgroundDecoration(host: Context, assetId: string, sizePx: number): image.PixelMap | null {
