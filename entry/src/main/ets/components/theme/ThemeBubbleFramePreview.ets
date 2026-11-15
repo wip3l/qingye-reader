@@ -60,7 +60,8 @@ export struct ThemeBubbleFramePreview {
       .backgroundColor(this.paperColor)
       .borderRadius(this.cornerRadius)
       .onReady(() => this.redraw())
-      .onAreaChange(() => this.redraw())
+      // 只在尺寸变化时重画。onAreaChange 连位置变化也回调，放进滚动页里每帧都会把整张样张重画一遍。
+      .onSizeChange(() => this.redraw())
   }
 
   releaseMaps(): void {

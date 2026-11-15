@@ -36,9 +36,10 @@ export struct ThemeCroppedImage {
     .width('100%')
     .height('100%')
     .clip(true)
-    .onAreaChange((_old: Area, area: Area) => {
-      this.boxWidth = Number(area.width);
-      this.boxHeight = Number(area.height);
+    // 只关心尺寸；onAreaChange 在滚动时每帧都回调。
+    .onSizeChange((_old: SizeOptions, size: SizeOptions) => {
+      this.boxWidth = Number(size.width);
+      this.boxHeight = Number(size.height);
     })
   }
 
