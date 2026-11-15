@@ -185,8 +185,8 @@ for (const themeName of ttsPanelThemeNames) {
 }
 assert(read('entry/src/main/ets/components/ReaderTtsPlayerPanel.ets').includes('TtsPanelThemeBackground('),
   'TTS player panel must draw the themed panel background');
-assert(themePage.includes('this.detailListenCard(entry)') &&
-  themePage.includes('TtsPanelThemeBackground({'),
+assert(themePage.includes("this.detailSceneCard(entry, 'listen')") &&
+  read('entry/src/main/ets/components/theme/ThemeDetailScene.ets').includes('TtsPanelThemeBackground({'),
   'Theme previews must include the TTS panel card');
 
 const themedIconFiles = fs.readdirSync(mediaRoot).filter(fileName => /^ic_theme_.*\.svg$/.test(fileName));
