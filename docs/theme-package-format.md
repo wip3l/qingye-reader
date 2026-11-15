@@ -46,7 +46,7 @@ my-theme/
 | `version` | 否 | 作者自定的版本号，最多 32 个字符。 |
 | `description` | 否 | 一句话说明，最多 120 个字符，显示在主题详情。 |
 | `baseTheme` | 否 | 包里没写的部件回退到哪个内置主题，默认 `plain-default`。内置主题 ID 见主题开发指南。选付费主题时，导入的人没有那套主题，基底会换成 `plain-default`（导入预览里会列出）；要所有人看到一样的效果，就用 `plain-default` 或把部件都写进包里。`obsidian-archive`、`celestial-vault` 这类专属主题不要作基底。 |
-| `requires` | 是 | 至少包含 `custom-scheme-v1`；带 `parts` 时必须包含 `theme-parts-v1`；带字体文件时包含 `fonts-v1`；带 `layout` 时包含 `reader-layout-v1`；带 `emphasis` 时包含 `emphasis-rules-v3`；阅读页角饰只有左上或右下一张时包含 `reader-single-corner-v1`；`covers` 超过 8 张时包含 `book-covers-16-v1`；气泡边框是位图或只有边框没有端饰时包含 `bubble-frame-v1`。 |
+| `requires` | 是 | 至少包含 `custom-scheme-v1`；带 `parts` 时必须包含 `theme-parts-v1`；带字体文件时包含 `fonts-v1`；带 `layout` 时包含 `reader-layout-v1`；带 `emphasis` 时包含 `emphasis-rules-v3`；阅读页角饰只有左上或右下一张时包含 `reader-single-corner-v1`；`covers` 超过 8 张时包含 `book-covers-16-v1`；气泡边框是位图或只有边框没有端饰时包含 `bubble-frame-v1`；气泡端饰或书架边框是位图时（深色那张也算）包含 `bitmap-cap-shelf-frame-v1`。 |
 | `assets` | 否 | 可以不写：应用导入时枚举 `assets/` 目录。写了就按 `[{ "path": "assets/x.png", "sha256": "...", "size": 123 }]` 登记，`sha256` 和 `size` 可省略，写了会核对。 |
 | `credits` | 否 | 再导出的混搭方案记录原主题包：`{ "packageId", "name", "author" }`。手写包不用填。 |
 
@@ -83,13 +83,13 @@ my-theme/
 | | `search`、`searchSelected` | 旧版本应用底栏“搜索”页签的图标。本应用读包时照收但不显示；旧版本应用要求有 `search` 才肯导入，应用和桌面编辑器导出时缺了就用 `explore`（与 `exploreSelected`）的图标补上。 |
 | | `labels` | 写 `hidden` 时底栏只显示图标，不显示“书架”等文字。 |
 | `navigationDark` | 同 `navigation` 的图标字段 | 可选：深色模式单独的图标，每一项都可以不写，没写的沿用 `navigation`；给了深色普通图标却没给深色选中态时，选中也用深色普通图标。没有 `navigation` 时整节不读，`labels` 只看 `navigation`。SVG 图标本来就按主题色着色，一般只有彩色位图才需要另给。旧版本应用会忽略。 |
-| `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 16 张，书架按书轮播；超过 8 张时 `requires` 要包含 `book-covers-16-v1`，旧版本应用最多只收 8 张）、书架边框 SVG、分组文件夹插画。 |
+| `book` | `covers`、`shelfFrame`、`shelfFolder` | 书籍封面数组（最多 16 张，书架按书轮播；超过 8 张时 `requires` 要包含 `book-covers-16-v1`，旧版本应用最多只收 8 张）、书架边框（SVG 或透明底位图；用位图时 `requires` 要包含 `bitmap-cap-shelf-frame-v1`，旧版本应用会提示先更新）、分组文件夹插画。 |
 | | `coversDark` | 可选：深色模式单独的一套封面（最多 16 张）。不写时深色模式也用 `covers`。和 `covers` 张数相同、顺序对应时，同一本书切换深浅色落在同一序号上，适合放同一幅画的两个版本。旧版本应用会忽略，两种模式都显示 `covers`，所以 `covers` 要始终写。 |
-| | `shelfFrameDark` | 可选：深色模式单独的书架边框 SVG。边框按原色显示，深色描边在深色书架上看不清时再给。不写时深色模式也用 `shelfFrame`。旧版本应用会忽略，两种模式都显示 `shelfFrame`。 |
+| | `shelfFrameDark` | 可选：深色模式单独的书架边框，格式要求同 `shelfFrame`（这张是位图也要声明 `bitmap-cap-shelf-frame-v1`）。边框按原色显示，深色描边在深色书架上看不清时再给。不写时深色模式也用 `shelfFrame`。旧版本应用会忽略，两种模式都显示 `shelfFrame`。 |
 | | `shelfFolderDark` | 可选：深色模式单独的文件夹插画。不写时深色模式也用 `shelfFolder`。旧版本应用会忽略，两种模式都显示 `shelfFolder`。 |
 | | `coverCrops`、`coverCropsDark`、`shelfFolderCrop`、`shelfFolderCropDark` | 可选的显示区域（见下文“显示区域”）：`coverCrops` 是数组，按 `image` 对应到 `covers` 里的某张封面；`coverCropsDark` 同理，对应 `coversDark`；`shelfFolderCrop`、`shelfFolderCropDark` 分别对应两张文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
-| `bubble` | `frame`、`cap`、`frameSlice`、`frameRepeat`、`frameBreak`、`frameTint` | 强调气泡的端饰 SVG 与边框（SVG，或透明底 PNG / WebP），至少给一样；边框是位图或没有端饰时 `requires` 要包含 `bubble-frame-v1`，旧版本应用会提示先更新。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。边框的拉伸设置见下文“气泡边框”，旧版本应用忽略这些字段、也不画边框。 |
+| `bubble` | `frame`、`cap`、`frameSlice`、`frameRepeat`、`frameBreak`、`frameTint` | 强调气泡的端饰与边框（都是 SVG 或透明底位图），至少给一样；边框是位图或没有端饰时 `requires` 要包含 `bubble-frame-v1`，端饰是位图时（`bubbleDark` 里的也算）要包含 `bitmap-cap-shelf-frame-v1`，旧版本应用会提示先更新。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。边框的拉伸设置见下文“气泡边框”，旧版本应用忽略这些字段、也不画边框。 |
 | `bubbleDark` | 同 `bubble` | 可选：深色模式单独的端饰与边框。端饰、边框各自沿用：深色没写的那一项用 `bubble` 的（边框连同它的拉伸设置）；某一项只在一种模式里有时，两种模式都用它。端饰按原色显示、边框不开 `frameTint` 时也是原色，浅色那套放在深色纸面上看不清时再给。位图边框不用另外声明 `bubble-frame-v1`。旧版本应用会忽略，两种模式都用 `bubble`。 |
 | `homeBackdrop` | `light` / `dark` | 书架、发现和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
 | `shelfBackdrop` | `companion` / `tile` / `loose` / `compact` | 可选：按书架布局（陪伴、平铺、宽松、紧凑）分别给的背景，每种布局下写 `light` / `dark`（及可选的 `lightCrop` / `darkCrop`）。只在书架页、用这种布局时显示，没写的布局或模式用 `homeBackdrop` 那张；发现、我的等页签始终用 `homeBackdrop`。浅色、深色互不借用。旧版本应用会忽略这一节。 |
@@ -193,22 +193,24 @@ my-theme/
 
 | 素材 | 格式 | 规格 |
 | --- | --- | --- |
-| 阅读角饰 `leading` / `trailing` | SVG 或 PNG / WebP | SVG 用 `viewBox="0 0 480 480"`，位图取正方形，都要透明底；左上角与右下角是同一场景的两幅图，正文区域不要放密集细节。 |
-| 阅读整图 `image` | PNG / JPG / WebP | 竖屏位图，按 `imageFit` 铺满或包含；浅色与深色各一张。 |
+| 阅读角饰 `leading` / `trailing` | SVG 或位图 | SVG 用 `viewBox="0 0 480 480"`，位图取正方形，都要透明底；左上角与右下角是同一场景的两幅图，正文区域不要放密集细节。 |
+| 阅读整图 `image` | 位图 | 竖屏位图，按 `imageFit` 铺满或包含；浅色与深色各一张。 |
 | 朗读面板 `artwork` | SVG 或位图 | 720 × 520，透明底或完整插画；下半部分会渐隐到 `surfaceColor`。 |
-| 导航图标 | SVG 或 PNG / WebP | SVG 用 `viewBox="0 0 24 24"`、单色纯黑填充，应用按主题色着色（选中为强调色）；位图取 96 × 96 透明底，按原色显示在 24 × 24 vp 的位置，选中与否要靠选中态图标区分。旧版本应用只接受 SVG，带位图图标的包在旧版本上无法导入。 |
-| 封面 `covers`、`coversDark` | JPG / PNG | 450 × 660，完整插画，不叠加书名或作者。深色那套的亮部要克制。 |
-| 书架边框 `shelfFrame`、`shelfFrameDark` | SVG | 与封面同比例，中心透明，只画外框和角花；按原色显示。 |
-| 文件夹插画 `shelfFolder` | JPG / PNG | 450 × 660。 |
-| 启动封面 `image` | JPG / PNG | 841 × 1870 竖屏，底部约 1/5 会叠加文案，不放主体。 |
-| 首页背景 `homeBackdrop`、书架背景 `shelfBackdrop` | JPG / PNG / WebP | 1080 × 1350（4:5），贴顶铺满宽度，比例不同时居中裁成 4:5。画面放在上部约四成，应用会叠渐变向下淡成页面底色；不要放文字，深色图的亮部要克制。 |
-| 气泡边框 `frame` / 端饰 `cap` | 边框 SVG / PNG / WebP，端饰 SVG | 端饰为正方形小图，按字号缩放，右端自动旋转 180°。边框是横向长条，两端是花纹、中间可拉伸，见下文“气泡边框”。 |
-| 主题标识 `logo` | SVG | `viewBox="0 0 64 64"`。 |
+| 导航图标 | SVG 或位图 | SVG 用 `viewBox="0 0 24 24"`、单色纯黑填充，应用按主题色着色（选中为强调色）；位图取 96 × 96 透明底，按原色显示在 24 × 24 vp 的位置，选中与否要靠选中态图标区分。旧版本应用只接受 SVG，带位图图标的包在旧版本上无法导入。 |
+| 封面 `covers`、`coversDark` | 位图 | 450 × 660，完整插画，不叠加书名或作者。深色那套的亮部要克制。 |
+| 书架边框 `shelfFrame`、`shelfFrameDark` | SVG 或位图 | SVG 用 `viewBox="0 0 450 660"`，位图取 450 × 660 透明底；与封面同比例，中心透明，只画外框和角花；按原色显示。 |
+| 文件夹插画 `shelfFolder` | 位图 | 450 × 660。 |
+| 启动封面 `image` | 位图 | 841 × 1870 竖屏，底部约 1/5 会叠加文案，不放主体。 |
+| 首页背景 `homeBackdrop`、书架背景 `shelfBackdrop` | 位图 | 1080 × 1350（4:5），贴顶铺满宽度，比例不同时居中裁成 4:5。画面放在上部约四成，应用会叠渐变向下淡成页面底色；不要放文字，深色图的亮部要克制。 |
+| 气泡边框 `frame` / 端饰 `cap` | SVG 或位图 | 端饰为正方形小图（位图要透明底，按原色显示），按字号缩放，右端自动旋转 180°。边框是横向长条，两端是花纹、中间可拉伸，见下文“气泡边框”。 |
+| 主题标识 `logo` | SVG 或位图 | SVG 用 `viewBox="0 0 64 64"`，位图取正方形透明底。 |
 | 字体 `appFont` | TTF / OTF / TTC | 请确认字体允许再分发。 |
+
+格式一栏只有三类：“位图”指 PNG / JPG / WebP / GIF / BMP，“SVG 或位图”两类都收，字体单列。每个素材位只规定收哪一类，不再细分后缀；应用内和桌面编辑器的选择器按同一规则列后缀。动图（GIF、动态 WebP）在封面、首页与书架背景上会播放，端饰、角饰这类先解码成位图再绘制的位置只取第一帧。
 
 限制：
 
-- SVG 必须自包含：不得出现 `<script>`、`<image>`、`<use>`、`<filter>`、`<foreignObject>`、`href=`、`url(`，单个不超过 1 MB。
+- SVG 必须自包含：不得出现 `<script>`、`<image>`、`<use>`、`<filter>`、`<foreignObject>`、`href=`、`url(`，单个不超过 5 MB。
 - 位图单个不超过 25 MB，字体单个不超过 40 MB，素材总数不超过 64 个，整包不超过 80 MB，解压后不超过 160 MB。
 - 文件扩展名必须与实际格式一致（按文件头识别），`jpeg` 按 `jpg` 处理。
 - 素材只能放在 `assets/` 一层，文件名 `[A-Za-z0-9][A-Za-z0-9_-]*`。

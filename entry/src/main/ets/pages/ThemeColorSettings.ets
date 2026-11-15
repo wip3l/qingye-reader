@@ -190,6 +190,11 @@ function editorCard(color: string) {
 }
 
 /** 取景结果：要导入的文件，以及动图取景记下的显示区域（静图已经裁进文件，为 null）。 */
+class PickedArtwork {
+  uri: string = '';
+  fromFile: boolean = false;
+}
+
 class FramedImage {
   path: string = '';
   crop: ThemeImageCrop | null = null;
@@ -2723,7 +2728,7 @@ struct ThemeColorSettingsPage {
   }
 
   bubbleSlotHint(): string {
-    const base = '端饰是正方形 SVG，放在强调文字两端，右端自动旋转。边框按行拉伸，上传后可调拉伸区域';
+    const base = '端饰是正方形 SVG 或透明底位图，放在强调文字两端，右端自动旋转。边框按行拉伸，上传后可调拉伸区域';
     if (this.selectedMode !== 'dark') return `${base}。切到深色可以再传只在深色模式用的`;
     if (!this.ownBubbleActive()) return base;
     const cap = this.ownBubbleItem(false) ? '端饰用单独上传的' : '端饰沿用浅色的';
@@ -3024,7 +3029,7 @@ struct ThemeColorSettingsPage {
     if (this.ownNavigationActive() && missing > 0) {
       return `还差 ${missing} 个普通图标：缺的先用基底主题的图标，传齐三个之前分享导出时不带导航图标`;
     }
-    return 'SVG 跟随主题色着色；PNG / WebP 保持原色。选中态没给的页签，选中时仍用普通图标。' +
+    return 'SVG 跟随主题色着色；位图（PNG、WebP、JPG、GIF）保持原色。选中态没给的页签，选中时仍用普通图标。' +
       '“听”“足迹”是可选的第四个页签，不传就用基底主题的图标';
   }
 
@@ -3065,7 +3070,7 @@ struct ThemeColorSettingsPage {
   }
 
   async uploadNavigationIcon(key: string): Promise<void> {
-    const uris = await SchemeAssetService.pickIconFiles(getContext(this), 1);
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setNavigationIcon(getContext(this), this.schemeId, key, uris[0], this.sourceThemeId('navigation')),
@@ -3267,7 +3272,7 @@ struct ThemeColorSettingsPage {
   }
 
   shelfPartHint(): string {
-    const base = '边框是 SVG，与封面同比例、中心透明；文件夹是 450 × 660 位图';
+    const base = '边框是 SVG 或透明底位图，与封面同比例、中心透明；文件夹是 450 × 660 位图';
     // 格子很窄，放不下“浅色 / 深色”，哪种模式用哪张写在这段说明里。
     if (this.selectedMode !== 'dark') return `${base}，切到深色可以各再传一张只在深色模式用的`;
     const frame = this.ownShelfFramePath() ? '边框用单独上传的这张' : '边框沿用浅色那张';
@@ -3547,7 +3552,7 @@ struct ThemeColorSettingsPage {
       this.assetSlot({ label: '预览图 3 : 4', image: this.previewImagePath,
         state: this.previewImagePath ? 'own' : 'empty', slotWidth: 54, slotHeight: 72,
         onTap: () => this.tapPreviewImage() })
-      Text('标识是卡片右上角和详情页名字旁的小图（正方形 SVG 或透明 PNG）。没有预览图时卡片显示启动封面')
+      Text('标识是卡片右上角和详情页名字旁的小图（正方形 SVG 或透明底位图）。没有预览图时卡片显示启动封面')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .layoutWeight(1)
@@ -3572,7 +3577,7 @@ struct ThemeColorSettingsPage {
   }
 
   async uploadLogo(): Promise<void> {
-    const uris = await SchemeAssetService.pickIconFiles(getContext(this), 1);
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setLogo(getContext(this), this.schemeId, uris[0], this.sourceThemeId('startup')),
@@ -4338,7 +4343,7 @@ struct ThemeColorSettingsPage {
 
   /** 上传到当前所选模式的那张；选图期间切换了模式也以开始时为准。 */
   async uploadShelfFrame(dark: boolean = this.selectedMode === 'dark'): Promise<void> {
-    const uris = await SchemeAssetService.pickSvgFiles(getContext(this), 1);
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setShelfFrame(getContext(this), this.schemeId, uris[0], this.sourceThemeId('book'), dark),
@@ -4380,10 +4385,29 @@ struct ThemeColorSettingsPage {
     this.onSettingChanged();
   }
 
+  /**
+   * “SVG 或位图”又常从相册取图的素材位（阅读角饰、朗读面板插画）：先问从图库选还是选文件，SVG 只能走文件。
+   * 返回选中的地址和是否来自文件选择器；取消时地址为空。
+   */
+  async pickGalleryOrFile(title: string): Promise<PickedArtwork> {
+    const picked = new PickedArtwork();
+    const choice = await this.slotMenu(title, '从图库选', '选文件（可选 SVG）');
+    if (choice === 0) {
+      const uris = await SchemeAssetService.pickImages(getContext(this), 1);
+      picked.uri = uris.length > 0 ? uris[0] : '';
+    } else if (choice === 1) {
+      const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
+      picked.uri = uris.length > 0 ? uris[0] : '';
+      picked.fromFile = true;
+    }
+    return picked;
+  }
+
   async uploadReaderOrnament(trailing: boolean): Promise<void> {
     const dark = this.selectedMode === 'dark';
-    const uris = await SchemeAssetService.pickImages(getContext(this), 1);
-    if (uris.length === 0) return;
+    const chosen = await this.pickGalleryOrFile(trailing ? '右下角饰' : '左上角饰');
+    if (!chosen.uri) return;
+    const uris = [chosen.uri];
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setReaderOrnament(getContext(this), this.schemeId, uris[0], trailing, dark,
         this.sourceThemeId('reader')), '', false, false, '');
@@ -4419,7 +4443,7 @@ struct ThemeColorSettingsPage {
   }
 
   async uploadNavigation(): Promise<void> {
-    const uris = await SchemeAssetService.pickIconFiles(getContext(this), SchemeAssetService.NAVIGATION_TABS.length);
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), SchemeAssetService.NAVIGATION_TABS.length);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setNavigation(getContext(this), this.schemeId, uris, this.sourceThemeId('navigation')),
@@ -4428,9 +4452,11 @@ struct ThemeColorSettingsPage {
 
   async uploadTtsArtwork(): Promise<void> {
     const dark = this.selectedMode === 'dark';
-    const picked = await SchemeAssetService.pickImages(getContext(this), 1);
-    if (picked.length === 0) return;
-    const path = await this.cropImage(picked[0], '面板插画取景', 720, 520, 720, true);
+    const chosen = await this.pickGalleryOrFile('面板插画');
+    if (!chosen.uri) return;
+    const picked = [chosen.uri];
+    // 选文件来的（多半是 SVG）按原样收，不过取景；图库来的照旧裁成 720 × 520。
+    const path = chosen.fromFile ? chosen.uri : await this.cropImage(picked[0], '面板插画取景', 720, 520, 720, true);
     if (!path) return;
     const scheme = new CustomThemeScheme();
     scheme.id = this.schemeId;
@@ -4468,7 +4494,7 @@ struct ThemeColorSettingsPage {
 
   /** dark 为 true 时传的是深色模式单独的那张；选图期间切换了模式也以开始时为准。 */
   async uploadBubbleCap(dark: boolean = this.selectedMode === 'dark'): Promise<void> {
-    const uris = await SchemeAssetService.pickSvgFiles(getContext(this), 1);
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
     if (uris.length === 0) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
       SchemeAssetService.setBubbleCap(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble'), dark),
@@ -4478,7 +4504,7 @@ struct ThemeColorSettingsPage {
   }
 
   async uploadBubbleFrame(dark: boolean = this.selectedMode === 'dark'): Promise<void> {
-    const uris = await SchemeAssetService.pickBubbleFrameFiles(getContext(this));
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
     if (uris.length === 0) return;
     // 换图时沿用原来的拉伸方式和颜色，拉伸线按新图重新给默认位置。深色第一次传时沿用浅色那张的设置。
     const previous = this.ownBubbleFrameSettings(dark);

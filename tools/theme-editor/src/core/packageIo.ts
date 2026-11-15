@@ -14,7 +14,7 @@ import {
   QYTHEME_ASSET_PREFIX, ThemePackageAsset, ThemePackageAssetKinds, ThemePackageFeatures, ThemePackageLimits,
   ThemePackageManifest, ThemePackageTheme, IMAGE_SETTING_KEYS, assetPathExtension, checkSvgSource, decodeManifest,
   bubbleDarkDifference, bubbleFor, commentBubbleIsEmpty, decodeTheme, encodeBubble, encodeParts, findAssetByPath, isValidPackageId, kindForExtension, mapPartsAssetRefs, maxBytesForKind,
-  packThemeId, partsUseBubbleFrameFeature, replaceOwnPackIdWithSelf, sniffAssetExtension
+  packThemeId, partsUseBitmapCapOrShelfFrame, partsUseBubbleFrameFeature, replaceOwnPackIdWithSelf, sniffAssetExtension
 } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from '../../../../entry/src/main/ets/theme/share/ZipEntryInspector.ts';
 
@@ -702,6 +702,7 @@ export async function buildFiles(project: EditorProject): Promise<FileMap> {
   if (usesSingleCorner(parts)) requires.add(ThemePackageFeatures.READER_SINGLE_CORNER);
   if (usesManyCovers(parts)) requires.add(ThemePackageFeatures.BOOK_COVERS_16);
   if (partsUseBubbleFrameFeature(parts)) requires.add(ThemePackageFeatures.BUBBLE_FRAME);
+  if (partsUseBitmapCapOrShelfFrame(parts)) requires.add(ThemePackageFeatures.BITMAP_CAP_SHELF_FRAME);
   if (project.layout) requires.add(ThemePackageFeatures.READER_LAYOUT);
   if (project.emphasis) requires.add(ThemePackageFeatures.EMPHASIS_RULES);
   if (hasFont) requires.add(ThemePackageFeatures.FONTS);

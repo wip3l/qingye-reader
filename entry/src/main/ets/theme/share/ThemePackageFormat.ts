@@ -33,6 +33,9 @@ export class ThemePackageFeatures {
   // 气泡边框用了位图（PNG / WebP / JPG），或只有边框没有端饰；老版本只收 SVG 边框且要求端饰，导入会直接报错，
   // 所以只在用到时写进 requires。拉伸设置（frameSlice 等）老版本会忽略，不用声明。
   static readonly BUBBLE_FRAME: string = 'bubble-frame-v1';
+  // 气泡端饰或书架边框用了位图（浅色、深色任意一张）；老版本这两处只收 SVG，导入会直接报错，
+  // 所以只在用到时写进 requires。
+  static readonly BITMAP_CAP_SHELF_FRAME: string = 'bitmap-cap-shelf-frame-v1';
   static readonly KNOWN: string[] = [
     ThemePackageFeatures.CUSTOM_SCHEME,
     ThemePackageFeatures.READER_LAYOUT,
@@ -42,7 +45,8 @@ export class ThemePackageFeatures {
     ThemePackageFeatures.SCHEME_OVERRIDES,
     ThemePackageFeatures.READER_SINGLE_CORNER,
     ThemePackageFeatures.BOOK_COVERS_16,
-    ThemePackageFeatures.BUBBLE_FRAME
+    ThemePackageFeatures.BUBBLE_FRAME,
+    ThemePackageFeatures.BITMAP_CAP_SHELF_FRAME
   ];
 }
 
@@ -52,7 +56,7 @@ export class ThemePackageLimits {
   /** 不小于 AnimatedImagePolicy.MAX_PLAY_BYTES，能上传播放的动图也能随主题包导出。 */
   static readonly MAX_IMAGE_BYTES: number = 25 * 1024 * 1024;
   static readonly MAX_FONT_BYTES: number = 40 * 1024 * 1024;
-  static readonly MAX_VECTOR_BYTES: number = 1024 * 1024;
+  static readonly MAX_VECTOR_BYTES: number = 5 * 1024 * 1024;
   static readonly MAX_JSON_BYTES: number = 1024 * 1024;
   // 封面从 8 张放宽到 16 张（浅色、深色各一套）时一并放宽：两套都放满也还装得下其余部件的素材。
   static readonly MAX_ASSETS: number = 64;
@@ -560,6 +564,18 @@ export function partsUseBubbleFrameFeature(parts: ThemePackageParts | null | und
   if (!bubble.cap) return true;
   const extension = assetPathExtension(bubble.frame) || fileExtensionOf(bubble.frame);
   return kindForExtension(extension) === ThemePackageAssetKinds.IMAGE;
+}
+
+/**
+ * 气泡端饰或书架边框是位图（浅色、深色任意一张）：导出时清单要声明 bitmap-cap-shelf-frame-v1。
+ * 认得深色那套字段的老版本同样只收 SVG，所以深色那张是位图也要声明。
+ */
+export function partsUseBitmapCapOrShelfFrame(parts: ThemePackageParts | null | undefined): boolean {
+  if (!parts) return false;
+  const bitmap = (path: string): boolean => !!path &&
+    kindForExtension(assetPathExtension(path) || fileExtensionOf(path)) === ThemePackageAssetKinds.IMAGE;
+  return (!!parts.bubble && bitmap(parts.bubble.cap)) || (!!parts.bubbleDark && bitmap(parts.bubbleDark.cap)) ||
+    (!!parts.book && (bitmap(parts.book.shelfFrame) || bitmap(parts.book.shelfFrameDark)));
 }
 
 function fileExtensionOf(path: string): string {
@@ -1279,6 +1295,12 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
   return result;
 }
 
+/** 气泡端饰、书架边框能用的素材：清单声明了 bitmap-cap-shelf-frame-v1 才收位图，否则只收 SVG。 */
+function bitmapCapShelfFrameKinds(manifest: ThemePackageManifest): string[] {
+  return manifest.requires.includes(ThemePackageFeatures.BITMAP_CAP_SHELF_FRAME) ?
+    [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE] : [ThemePackageAssetKinds.VECTOR];
+}
+
 function decodeBubble(bubble: Record<string, Object>, manifest: ThemePackageManifest,
   label: string = 'parts.bubble', darkVariant: boolean = false): ThemePackageBubble {
   const result = new ThemePackageBubble();
@@ -1287,7 +1309,7 @@ function decodeBubble(bubble: Record<string, Object>, manifest: ThemePackageMani
   const frameKinds: string[] = frameFeature ? [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE] :
     [ThemePackageAssetKinds.VECTOR];
   result.frame = partAssetRef(bubble, 'frame', manifest, frameKinds, label);
-  result.cap = partAssetRef(bubble, 'cap', manifest, [ThemePackageAssetKinds.VECTOR], label);
+  result.cap = partAssetRef(bubble, 'cap', manifest, bitmapCapShelfFrameKinds(manifest), label);
   if (!result.cap && !(frameFeature && result.frame)) {
     throw new Error(frameFeature ? `主题包的 ${label} 至少要有 cap 或 frame` : `主题包的 ${label} 需要 cap`);
   }
@@ -1517,9 +1539,9 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
       throw new Error(`主题包的 parts.book.covers 超过 ${ThemePackageLimits.LEGACY_MAX_COVERS} 张时 requires 要包含 ` +
         ThemePackageFeatures.BOOK_COVERS_16);
     }
-    parts.book.shelfFrame = partAssetRef(book, 'shelfFrame', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.book');
-    parts.book.shelfFrameDark = partAssetRef(book, 'shelfFrameDark', manifest, [ThemePackageAssetKinds.VECTOR],
-      'parts.book');
+    const shelfFrameKinds = bitmapCapShelfFrameKinds(manifest);
+    parts.book.shelfFrame = partAssetRef(book, 'shelfFrame', manifest, shelfFrameKinds, 'parts.book');
+    parts.book.shelfFrameDark = partAssetRef(book, 'shelfFrameDark', manifest, shelfFrameKinds, 'parts.book');
     parts.book.shelfFolder = partAssetRef(book, 'shelfFolder', manifest, [ThemePackageAssetKinds.IMAGE], 'parts.book');
     parts.book.shelfFolderDark = partAssetRef(book, 'shelfFolderDark', manifest, [ThemePackageAssetKinds.IMAGE],
       'parts.book');

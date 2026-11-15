@@ -502,6 +502,26 @@ test('v2 theme: parts resolve by path, settings optional, kinds and required fie
   assert.equal(usesFrame({ cap: '', frame: 'assets/f.svg' }), true);
   assert.equal(usesFrame({ cap: 'assets/c.svg', frame: '' }), false);
   assert.equal(format.ThemePackageFeatures.KNOWN.includes('bubble-frame-v1'), true);
+  // 端饰、书架边框用位图（深色那张也算）要声明 bitmap-cap-shelf-frame-v1，没声明时只收 SVG。
+  broken(j => { j.bubble = { cap: 'assets/cover_01.jpg' }; }, /需要SVG/);
+  broken(j => { j.book.shelfFrame = 'assets/cover_01.jpg'; }, /需要SVG/);
+  broken(j => { j.book.shelfFrameDark = 'assets/cover_01.jpg'; }, /需要SVG/);
+  const bitmapManifest = withAssets(manifestV2({ requires: ['custom-scheme-v1', 'reader-layout-v1', 'theme-parts-v1',
+    'bitmap-cap-shelf-frame-v1'] }), PARTS_FILES);
+  const bitmapParts = partsJson();
+  bitmapParts.bubble = { cap: 'assets/cover_01.jpg' };
+  bitmapParts.book.shelfFrame = 'assets/cover_02.jpg';
+  const decodedBitmap = format.decodeTheme(JSON.stringify({ parts: bitmapParts }), bitmapManifest).parts;
+  assert.match(decodedBitmap.bubble.cap, /^qytheme-asset:[0-9a-f]{24}$/);
+  assert.match(decodedBitmap.book.shelfFrame, /^qytheme-asset:[0-9a-f]{24}$/);
+  const usesBitmap = value => format.partsUseBitmapCapOrShelfFrame(value);
+  assert.equal(usesBitmap(parts), false);
+  assert.equal(usesBitmap({ bubble: { cap: 'assets/c.svg', frame: 'assets/f.png' } }), false);
+  assert.equal(usesBitmap({ bubble: { cap: 'assets/c.png' } }), true);
+  assert.equal(usesBitmap({ bubble: { cap: 'assets/c.svg' }, bubbleDark: { cap: 'assets/c.webp' } }), true);
+  assert.equal(usesBitmap({ book: { shelfFrame: 'assets/f.svg' } }), false);
+  assert.equal(usesBitmap({ book: { shelfFrame: 'assets/f.svg', shelfFrameDark: 'assets/f.gif' } }), true);
+  assert.equal(format.ThemePackageFeatures.KNOWN.includes('bitmap-cap-shelf-frame-v1'), true);
   // 默认拉伸线：上下贴边，左右各留图高 × 0.6、最多 30%。
   assert.deepEqual({ ...format.defaultBubbleFrameSlice(3.75) }, { left: 0.16, right: 0.16, top: 0, bottom: 0 });
   assert.deepEqual({ ...format.defaultBubbleFrameSlice(1) }, { left: 0.3, right: 0.3, top: 0, bottom: 0 });

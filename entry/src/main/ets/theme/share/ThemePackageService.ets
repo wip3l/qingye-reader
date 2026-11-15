@@ -52,6 +52,7 @@ import {
   partsAssetRefs,
   partsUseManyCovers,
   partsUseBubbleFrameFeature,
+  partsUseBitmapCapOrShelfFrame,
   partsUseSingleCorner,
   pickLayout,
   QYTHEME_EXTENSION,
@@ -323,6 +324,9 @@ export class ThemePackageService {
         }
         if (partsUseBubbleFrameFeature(bundled.record.parts)) {
           manifest.requires.push(ThemePackageFeatures.BUBBLE_FRAME);
+        }
+        if (partsUseBitmapCapOrShelfFrame(bundled.record.parts)) {
+          manifest.requires.push(ThemePackageFeatures.BITMAP_CAP_SHELF_FRAME);
         }
         manifest.version = bundled.version;
         if (!manifest.description) manifest.description = bundled.description;

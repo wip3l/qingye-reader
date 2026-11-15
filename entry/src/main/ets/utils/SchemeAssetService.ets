@@ -68,28 +68,14 @@ export class SchemeAssetService {
     return result && result.photoUris ? result.photoUris.slice(0, max) : [];
   }
 
-  /** 导航图标与主题标识：SVG 跟主题色着色，PNG / WebP 保持原色。 */
-  static async pickIconFiles(context: Context, max: number): Promise<string[]> {
+  /**
+   * 所有“SVG 或位图”的素材位（导航图标、主题标识、气泡端饰与边框、书架边框、阅读角饰、朗读面板插画）共用的
+   * 文件选择器，后缀与包格式认得的素材一致。SVG 在导航图标上跟主题色着色，位图一律保持原色。
+   */
+  static async pickArtworkFiles(context: Context, max: number): Promise<string[]> {
     const options = new picker.DocumentSelectOptions();
     options.maxSelectNumber = max;
-    options.fileSuffixFilters = ['图标|.svg,.png,.webp'];
-    const result = await new picker.DocumentViewPicker(context).select(options);
-    return result ? result.slice(0, max) : [];
-  }
-
-  /** 气泡边框：SVG 或透明底位图；白底 JPG 也能选，编辑器会提示正文里会露出底色。 */
-  static async pickBubbleFrameFiles(context: Context): Promise<string[]> {
-    const options = new picker.DocumentSelectOptions();
-    options.maxSelectNumber = 1;
-    options.fileSuffixFilters = ['边框|.svg,.png,.webp,.jpg,.jpeg'];
-    const result = await new picker.DocumentViewPicker(context).select(options);
-    return result ? result.slice(0, 1) : [];
-  }
-
-  static async pickSvgFiles(context: Context, max: number): Promise<string[]> {
-    const options = new picker.DocumentSelectOptions();
-    options.maxSelectNumber = max;
-    options.fileSuffixFilters = ['SVG|.svg'];
+    options.fileSuffixFilters = ['图片|.svg,.png,.webp,.jpg,.jpeg,.gif,.bmp'];
     const result = await new picker.DocumentViewPicker(context).select(options);
     return result ? result.slice(0, max) : [];
   }
@@ -177,7 +163,7 @@ export class SchemeAssetService {
     dark: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const book = record.parts.book || new ThemePackageBook();
-      const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.VECTOR, '书架边框');
+      const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK, '书架边框');
       if (dark) book.shelfFrameDark = path;
       else book.shelfFrame = path;
       record.parts.book = book;
@@ -494,7 +480,7 @@ export class SchemeAssetService {
     dark: boolean = false): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const bubble = SchemeAssetService.bubbleOf(record, dark) || new ThemePackageBubble();
-      bubble.cap = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.VECTOR, '气泡端饰');
+      bubble.cap = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK, '气泡端饰');
       SchemeAssetService.storeBubble(record, dark, bubble);
     });
   }
