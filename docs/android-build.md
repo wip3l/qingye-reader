@@ -62,7 +62,10 @@
 - **沉浸光感**：安卓上没有系统材质，`ImmersiveMaterialRuntime.effectiveLevel` 把跟随系统/高档按弱档（实色底）画。
 - **握姿、智控键**：安卓上关闭，设置页不显示握姿开关。
 - **朗读与听书**：音频焦点在 `MediaBridge` 里处理：来电、其它应用播放时发 pause 命令，短暂失去焦点结束后发 play 续播。
-  离线朗读（sherpa-onnx）在安卓上还没有实现。
+  离线朗读：鸿蒙上 sherpa_onnx 是只有鸿蒙原生库的 NAPI 包，安卓上整文件替换 `utils/localtts/LocalTtsEngine.ets`，经
+  `SherpaBridge.java` 用 sherpa-onnx 的安卓 Java 接口（版本与鸿蒙端一致）。构建脚本从 GitHub 发布页下载 jar 和原生库、按 sha256
+  校验后放进包里（只放目标架构的 `libsherpa-onnx-jni.so`、`libonnxruntime.so`，约 13 MB）。平台层之外的整文件替换只此一处，
+  登记在 `platform-parity-check.mjs` 的 `WHOLE_FILE_OVERLAYS` 里。
 - **打包时的插件库**：ace 按 ArkTS 编译产出的 `module_collection.json` 决定打进哪些插件库，增量编译时它只列重编的文件，
   会漏库（首选项、数据库等整个模块为空）。构建脚本每次清掉 ArkTS 编译缓存做全量编译，并检查清单是否完整。
 - **书源内核**：内核分支 `arkuix-compat` 有两个安卓相关提交：ArkUI-X 缺失接口改成运行时取用；QuickJS 脚本会话的调用结果
@@ -112,7 +115,7 @@ node scripts/android/build-android.mjs --abi arm64-v8a
 - **版本号**：`versionCode`、`versionName` 由构建脚本从 `AppScope/app.json5` 读取，与鸿蒙端一致。
 - **混淆**：`minifyEnabled` 暂未开启（Java 代码只有几个原生桥）。规则已写在 `proguard-rules.pro`：原生桥的公开方法由
   ArkTS 按名字反射调用，必须保留。
-- **包体积**：arm64 约 102 MB，其中 ArkUI-X 引擎库 `libarkui_android.so` 压缩后约 36 MB。只发 arm64；眼动翻页用的人脸关键点
+- **包体积**：arm64 约 113 MB（含离线朗读的原生库约 13 MB），其中 ArkUI-X 引擎库 `libarkui_android.so` 压缩后约 36 MB。只发 arm64；眼动翻页用的人脸关键点
   模型（约 7 MB）不打进安卓包。
 - **CI**：`.github/workflows/quality.yml` 跑 `scripts/android/platform-parity-check.mjs`，检查平台层两份实现一一对应、原生桥已注册、
   共用代码没有绕过平台层直接调系统能力。完整的安卓构建需要 ArkUI-X SDK 和 DevEco Studio 工具链，目前只能在本机或自建构建机上跑。

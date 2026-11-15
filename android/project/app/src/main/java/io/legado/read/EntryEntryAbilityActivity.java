@@ -17,6 +17,7 @@ public class EntryEntryAbilityActivity extends StageActivity {
     private KeyBridge keyBridge;
     private BiometricBridge biometricBridge;
     private ShareBridge shareBridge;
+    private SherpaBridge sherpaBridge;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -31,6 +32,7 @@ public class EntryEntryAbilityActivity extends StageActivity {
         keyBridge = new KeyBridge(this, getBridgeManager());
         biometricBridge = new BiometricBridge(this, getBridgeManager());
         shareBridge = new ShareBridge(this, getBridgeManager());
+        sherpaBridge = new SherpaBridge(this, getBridgeManager());
     }
 
     @Override

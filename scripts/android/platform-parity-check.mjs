@@ -14,6 +14,12 @@ const OVERLAY = path.join(REPO, 'android', 'overlay', 'entry', 'src', 'main', 'e
 const JAVA = path.join(REPO, 'android', 'project', 'app', 'src', 'main', 'java', 'io', 'legado', 'read');
 /** 只在安卓实现里存在的辅助文件。 */
 const OVERLAY_ONLY = new Set(['MediaBridgeClient.ts']);
+/**
+ * 平台层之外整文件替换的少数例外（相对 ets 目录）：鸿蒙实现牵涉线程、原生包等，拆进 platform/ 风险更大时才放这里。
+ * 两份文件的导出名同样要一致。
+ */
+const OVERLAY_ROOT = path.join(REPO, 'android', 'overlay', 'entry', 'src', 'main', 'ets');
+const WHOLE_FILE_OVERLAYS = ['utils/localtts/LocalTtsEngine.ets'];
 
 const problems = [];
 const read = (file) => fs.readFileSync(file, 'utf8');
@@ -52,6 +58,32 @@ for (const name of overlayFiles) {
     problems.push(`android/overlay 里的 platform/${name} 在主代码树里没有对应文件`);
   }
 }
+// 平台层之外的覆盖文件只能是登记过的例外
+function listOverlay(dir, out = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) listOverlay(full, out);
+    else out.push(path.relative(OVERLAY_ROOT, full).replace(/\\/g, '/'));
+  }
+  return out;
+}
+for (const rel of listOverlay(OVERLAY_ROOT)) {
+  if (!rel.startsWith('platform/') && !WHOLE_FILE_OVERLAYS.includes(rel)) {
+    problems.push(`android/overlay 里的 ${rel} 不在平台层，也没登记为整文件替换的例外`);
+  }
+}
+for (const rel of WHOLE_FILE_OVERLAYS) {
+  const harmonyFile = path.join(ETS, rel);
+  const androidFile = path.join(OVERLAY_ROOT, rel);
+  if (!fs.existsSync(harmonyFile) || !fs.existsSync(androidFile)) {
+    problems.push(`整文件替换 ${rel} 缺少鸿蒙或安卓实现`);
+    continue;
+  }
+  const android = exportedNames(read(androidFile));
+  for (const symbol of exportedNames(read(harmonyFile))) {
+    if (!android.has(symbol)) problems.push(`${rel} 导出了 ${symbol}，安卓实现里没有`);
+  }
+}
 
 // 2. 原生桥
 const javaFiles = fs.readdirSync(JAVA).filter((name) => name.endsWith('.java'));
@@ -61,11 +93,14 @@ for (const name of javaFiles) {
   if (match) javaBridges.set(match[1], name.replace(/\.java$/, ''));
 }
 const activity = read(path.join(JAVA, 'EntryEntryAbilityActivity.java'));
-for (const name of overlayFiles) {
-  for (const match of read(path.join(OVERLAY, name)).matchAll(/'(io\.legado\.read\/[\w-]+)'/g)) {
+const bridgeUsers = overlayFiles.map((name) => path.join(OVERLAY, name))
+  .concat(WHOLE_FILE_OVERLAYS.map((rel) => path.join(OVERLAY_ROOT, rel)));
+for (const file of bridgeUsers) {
+  const name = path.relative(OVERLAY_ROOT, file).replace(/\\/g, '/');
+  for (const match of read(file).matchAll(/'(io\.legado\.read\/[\w-]+)'/g)) {
     const cls = javaBridges.get(match[1]);
     if (!cls) {
-      problems.push(`platform/${name} 用到桥 ${match[1]}，没有对应的 Java 类`);
+      problems.push(`${name} 用到桥 ${match[1]}，没有对应的 Java 类`);
     } else if (!new RegExp(`new ${cls}\\(`).test(activity)) {
       problems.push(`${cls} 没有在 EntryEntryAbilityActivity.onCreate 里注册`);
     }

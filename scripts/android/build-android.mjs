@@ -29,6 +29,18 @@ const QJS_VERSION = '2024-01-13';
 const QJS_URL = `https://bellard.org/quickjs/quickjs-${QJS_VERSION}.tar.xz`;
 const QJS_SHA256 = '3c4bf8f895bfa54beb486c8d1218112771ecfc5ac3be1036851ef41568212e03';
 const ARKUIX_HVIGOR_PLUGIN = process.env.QINGYE_ARKUIX_HVIGOR_PLUGIN || '4.23.6';
+// 离线朗读：sherpa-onnx 的安卓 Java 接口和原生库，版本与鸿蒙端 entry/oh-package.json5 的 sherpa_onnx 一致。
+// 校验值取自 GitHub 发布页给出的 sha256。
+const SHERPA_VERSION = '1.13.3';
+const SHERPA_BASE = `https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}`;
+const SHERPA_FILES = {
+  jar: { name: `sherpa-onnx-v${SHERPA_VERSION}.jar`,
+    sha256: '4a1fabf547d5e3bb5c9b0ddfc767142692cabe658da84f16adfafd519149b082' },
+  libs: { name: `sherpa-onnx-v${SHERPA_VERSION}-android.tar.bz2`,
+    sha256: '04acacdb5eaa41d814e7792e7906168d147af6023faa9e9caf38b2f321b4cf52' }
+};
+/** libsherpa-onnx-jni.so 只依赖 libonnxruntime.so（另两个 c/cxx 接口库用不到）。 */
+const SHERPA_NATIVE_LIBS = ['libsherpa-onnx-jni.so', 'libonnxruntime.so'];
 
 const ABIS = {
   'arm64-v8a': { ace: 'arm64', hilogDir: 'android-arm64-release' },
@@ -359,6 +371,35 @@ function buildQuickJs() {
 
 const quickJsLib = buildQuickJs();
 
+/** 下载（有缓存）并校验 sherpa-onnx，解出目标架构用到的原生库。返回 { jar, libs: [路径] }。 */
+function prepareSherpa() {
+  const dir = path.join(CACHE, `sherpa-onnx-v${SHERPA_VERSION}-download`);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const file of Object.values(SHERPA_FILES)) {
+    const target = path.join(dir, file.name);
+    if (!fs.existsSync(target) || sha256(target) !== file.sha256) {
+      if (offline) fail(`离线模式下缺少 ${target}`);
+      step(`下载 ${file.name}`);
+      run('curl', ['-L', '--fail', '--noproxy', '*', '-sS', '-o', target, `${SHERPA_BASE}/${file.name}`]);
+    }
+    if (sha256(target) !== file.sha256) fail(`${target} 校验值不符，已中止`);
+  }
+  const extracted = path.join(dir, 'extract');
+  const libs = SHERPA_NATIVE_LIBS.map((name) => path.join(extracted, 'jniLibs', abi, name));
+  if (libs.some((lib) => !fs.existsSync(lib))) {
+    fs.mkdirSync(extracted, { recursive: true });
+    run('tar', ['-xjf', path.join(dir, SHERPA_FILES.libs.name).replace(/\\/g, '/'), '-C', extracted.replace(/\\/g, '/'),
+      ...SHERPA_NATIVE_LIBS.map((name) => `./jniLibs/${abi}/${name}`)]);
+  }
+  return { jar: path.join(dir, SHERPA_FILES.jar.name), libs };
+}
+
+const sherpa = prepareSherpa();
+// ace 自己会先跑一遍 Gradle 编 Java，SherpaBridge.java 要用到这个 jar，所以在 ace 之前放好。
+// 不放 app/libs：ace 每次都会清空那里。build.gradle 用 files('sherpa/sherpa-onnx.jar') 引入。
+fs.mkdirSync(path.join(shell, 'app', 'sherpa'), { recursive: true });
+fs.copyFileSync(sherpa.jar, path.join(shell, 'app', 'sherpa', 'sherpa-onnx.jar'));
+
 // ---------- 5. ArkTS 编译与打包 ----------
 
 step('安装依赖（ohpm）');
@@ -399,6 +440,8 @@ if (collectedFiles < sourceFiles / 4) {
 // ace 每次都会重置 app/libs，自己编的库和它漏拷的库要在它之后补上，再重新打包。
 const libDir = path.join(shell, 'app', 'libs', abi);
 fs.copyFileSync(quickJsLib, path.join(libDir, 'libquickjs.so'));
+// 离线朗读（SherpaBridge.java）的原生库；Java 接口在 ace 之前已放进 app/sherpa。
+for (const lib of sherpa.libs) fs.copyFileSync(lib, path.join(libDir, path.basename(lib)));
 const hilog = path.join(arkuixSdk, 'plugins', 'api', 'lib', 'hilog', ABIS[abi].hilogDir, 'libhilog.so');
 if (!fs.existsSync(path.join(libDir, 'libhilog.so')) && fs.existsSync(hilog)) {
   // ArkUI-X 26.0.0.28 打 x86_64 包时漏拷日志库，一用 hilog 就白屏。

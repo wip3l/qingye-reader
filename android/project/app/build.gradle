@@ -71,4 +71,6 @@ android {
 
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
+    // 离线朗读的 sherpa-onnx Java 接口，构建脚本下载校验后放进来（ace 会清空 libs，所以单独放）。
+    implementation files('sherpa/sherpa-onnx.jar')
 }

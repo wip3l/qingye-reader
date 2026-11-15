@@ -16,3 +16,6 @@
 
 # 保留行号，方便看崩溃堆栈
 -keepattributes SourceFile,LineNumberTable
+
+# sherpa-onnx：原生库经 JNI 按类名、字段名访问这些类。
+-keep class com.k2fsa.sherpa.onnx.** { *; }
