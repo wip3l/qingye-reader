@@ -11,7 +11,7 @@ import {
   ReaderV2RegexBubbleSegment,
   ReaderV2SelectionRun
 } from './ReaderV2PageLayout';
-import { ReaderV2SpanStyleRange } from './ReaderV2Style';
+import { ReaderV2BubbleFrame, ReaderV2SpanStyleRange } from './ReaderV2Style';
 import { ReaderCommentBubbleSize } from './ReaderCommentBubbleSize';
 import { ReaderCommentBubblePainter } from './ReaderCommentBubble';
 import { ReaderMixedPageLayout } from './ReaderMixedPageLayout';
@@ -662,6 +662,8 @@ export class ReaderV2Paginator {
       for (const bubble of fragment.regexBubbleSegments) {
         bubble.rect.top += shift;
         bubble.rect.bottom += shift;
+        bubble.frameRect.top += shift;
+        bubble.frameRect.bottom += shift;
       }
       for (const bubble of fragment.commentBubbleSegments) {
         bubble.rect.top += shift;
@@ -700,6 +702,8 @@ export class ReaderV2Paginator {
       for (const segment of fragment.regexBubbleSegments) {
         segment.rect.top += shiftPx;
         segment.rect.bottom += shiftPx;
+        segment.frameRect.top += shiftPx;
+        segment.frameRect.bottom += shiftPx;
       }
       for (const bubble of fragment.commentBubbleSegments) {
         bubble.rect.top += shiftPx;
@@ -787,8 +791,10 @@ export class ReaderV2Paginator {
     if (!block.title) return 0;
     let inset = 0;
     for (const style of styles) {
-      if (style.repeatCaps && style.decorationEnabled && style.start < block.displayEnd && style.end > block.displayStart) {
-        inset = Math.max(inset, style.decorationSizePx);
+      if (style.repeatCaps && ReaderV2BubbleFrame.decorates(style) && style.start < block.displayEnd &&
+        style.end > block.displayStart) {
+        inset = Math.max(inset, ReaderV2BubbleFrame.leadingReservation(style),
+          ReaderV2BubbleFrame.trailingReservation(style));
       }
     }
     return Math.min(width / 6, inset);
@@ -869,7 +875,7 @@ export class ReaderV2Paginator {
       if (styleEnd <= sliceStart || styleStart >= sliceEnd) continue;
       boundaries.push(Math.max(sliceStart, styleStart));
       boundaries.push(Math.min(sliceEnd, styleEnd));
-      if (style.decorationEnabled && style.decorationSizePx > 0) {
+      if (ReaderV2BubbleFrame.decorates(style)) {
         // Isolate the character that owns each decoration reservation. Letter spacing is applied after a
         // character, so the character immediately before the run owns the leading gap and the run's last
         // character owns the trailing gap. No synthetic text is inserted and source/selection offsets stay exact.
@@ -1020,15 +1026,16 @@ export class ReaderV2Paginator {
     const blockStart = block.displayStart;
     const blockEnd = block.displayStart + block.text.length;
     for (const style of regexStyles) {
-      if (style.repeatCaps || !style.decorationEnabled || style.decorationSizePx <= 0 || style.end <= blockStart ||
+      if (style.repeatCaps || !ReaderV2BubbleFrame.decorates(style) || style.end <= blockStart ||
         style.start >= blockEnd) continue;
       // The leading cap uses spacing after the preceding character. At a true paragraph boundary there is no
       // preceding glyph, so the painter clips that cap to the content edge instead of moving source offsets.
+      // A theme frame adds its end width inside the cap, so the text never sits under the frame's end pieces.
       if (style.start > blockStart && absoluteOffset === style.start - 1) {
-        reservation = Math.max(reservation, style.decorationSizePx);
+        reservation = Math.max(reservation, ReaderV2BubbleFrame.leadingReservation(style));
       }
       if (absoluteOffset === style.end - 1) {
-        reservation = Math.max(reservation, style.decorationSizePx);
+        reservation = Math.max(reservation, ReaderV2BubbleFrame.trailingReservation(style));
       }
     }
     return reservation;
@@ -1093,15 +1100,16 @@ export class ReaderV2Paginator {
     fragment.localEnd = last.endIndex;
     fragment.displayStart = current.block.displayStart + fragment.localStart;
     fragment.displayEnd = current.block.displayStart + fragment.localEnd;
-    ReaderV2Paginator.appendRegexDecorations(fragment, regexStyles);
+    ReaderV2Paginator.appendRegexDecorations(fragment, regexStyles, snapshot.viewport.left,
+      snapshot.viewport.right);
     return fragment;
   }
 
   private static appendRegexDecorations(fragment: ReaderV2PageFragment,
-    regexStyles: ReaderV2SpanStyleRange[]): void {
+    regexStyles: ReaderV2SpanStyleRange[], viewportLeft: number, viewportRight: number): void {
     if (!fragment.paragraph) return;
     for (const style of regexStyles) {
-      if (!style.decorationEnabled || !style.decorationStyleId || style.decorationSizePx <= 0 ||
+      if (!ReaderV2BubbleFrame.decorates(style) || !style.decorationStyleId ||
         style.end <= fragment.displayStart || style.start >= fragment.displayEnd) continue;
       const localStart = Math.max(0, style.start - fragment.displayStart);
       const localEnd = Math.min(fragment.localEnd - fragment.localStart, style.end - fragment.displayStart);
@@ -1152,6 +1160,13 @@ export class ReaderV2Paginator {
         segment.shadowOffsetYPx = style.shadowOffsetYPx;
         const textLeft = fragment.paragraphX + boxLeft;
         const textRight = fragment.paragraphX + boxRight;
+        if (style.frameAsset) {
+          const glyphCenterY = fragment.paragraphY + (boxTop + boxBottom) / 2;
+          ReaderV2Paginator.placeFramedSegment(segment, style, textLeft, textRight, glyphCenterY,
+            viewportLeft + 1, viewportRight - 1);
+          if (segment.rect.right > segment.rect.left) fragment.regexBubbleSegments.push(segment);
+          continue;
+        }
         const contentLeft = style.repeatCaps ? fragment.clipRect.left : fragment.paragraphX;
         const contentRight = fragment.clipRect.right;
         // Leading space is reserved on the preceding glyph, while trailing space is part of the decorated run's
@@ -1180,6 +1195,43 @@ export class ReaderV2Paginator {
         }
       }
     }
+  }
+
+  /**
+   * Line piece of a run that has a theme frame. Ends of the whole run sit in the space reserved by
+   * decorationReservationAfter (frame end inside, cap outside). At a line break the frame either draws both ends
+   * outward into the page margin, never reflowing the text, or is cut flat at the text edge.
+   */
+  private static placeFramedSegment(segment: ReaderV2RegexBubbleSegment, style: ReaderV2SpanStyleRange,
+    textLeft: number, textRight: number, centerY: number, limitLeft: number, limitRight: number): void {
+    const capW = style.decorationSizePx > 0 ? style.decorationSizePx : 0;
+    const leadW = ReaderV2BubbleFrame.leadPx(style);
+    const trailW = ReaderV2BubbleFrame.trailPx(style);
+    segment.frameLeadEnd = segment.leading || !style.frameCut;
+    segment.frameTrailEnd = segment.trailing || !style.frameCut;
+    let frameLeft = textLeft - (segment.frameLeadEnd ? leadW : 0);
+    // A run's real end already contains the cap + frame reservation in its last glyph advance.
+    let frameRight = segment.trailing && !style.repeatCaps ? textRight - capW :
+      textRight + (segment.frameTrailEnd ? trailW : 0);
+    const rectLeft = Math.max(limitLeft, frameLeft - (segment.leading ? capW : 0));
+    const rectRight = Math.min(limitRight, frameRight + (segment.trailing ? capW : 0));
+    frameLeft = Math.max(frameLeft, rectLeft);
+    frameRight = Math.min(frameRight, rectRight);
+    segment.leadingCapWidthPx = segment.leading ? Math.max(0, Math.min(capW, frameLeft - rectLeft)) : 0;
+    segment.trailingCapWidthPx = segment.trailing ? Math.max(0, Math.min(capW, rectRight - frameRight)) : 0;
+    const bandHalf = ReaderV2BubbleFrame.bandPx(style.fontSizePx) / 2;
+    const half = Math.max(bandHalf, capW / 2);
+    segment.frameRect = new ReaderV2Rect(frameLeft, centerY - bandHalf, frameRight, centerY + bandHalf);
+    segment.frameAsset = style.frameAsset;
+    segment.frameAspect = style.frameAspect;
+    segment.frameSliceLeft = style.frameSliceLeft;
+    segment.frameSliceRight = style.frameSliceRight;
+    segment.frameSliceTop = style.frameSliceTop;
+    segment.frameSliceBottom = style.frameSliceBottom;
+    segment.frameRound = style.frameRound;
+    segment.frameTint = style.frameTint;
+    segment.rect = frameRight > frameLeft ? new ReaderV2Rect(rectLeft, centerY - half, rectRight, centerY + half) :
+      new ReaderV2Rect();
   }
 
   private static finalizePageSelection(page: ReaderV2PageLayout): void {

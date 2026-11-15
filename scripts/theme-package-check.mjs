@@ -475,6 +475,36 @@ test('v2 theme: parts resolve by path, settings optional, kinds and required fie
   assert.equal(format.ThemePackageFeatures.KNOWN.includes('book-covers-16-v1'), true);
   broken(j => { j.logo = 'assets/missing.svg'; }, /不存在/);
   broken(j => { j.bubble = { frame: 'assets/frame.svg' }; }, /需要 cap/);
+  // 位图边框、只有边框没有端饰都要声明 bubble-frame-v1；拉伸设置原样读写，越界的夹住、不认得的丢掉。
+  broken(j => { j.bubble = { cap: 'assets/cap.svg', frame: 'assets/cover_01.jpg' }; }, /需要SVG/);
+  const frameManifest = withAssets(manifestV2({ requires: ['custom-scheme-v1', 'reader-layout-v1', 'theme-parts-v1',
+    'bubble-frame-v1'] }), PARTS_FILES);
+  const frameOnly = partsJson();
+  frameOnly.bubble = { frame: 'assets/cover_01.jpg', frameSlice: { left: 0.2, right: 0.9, top: 0.1, bottom: -1 },
+    frameRepeat: 'round', frameBreak: 'zigzag', frameTint: true };
+  const decodedFrame = format.decodeTheme(JSON.stringify({ parts: frameOnly }), frameManifest).parts;
+  assert.equal(decodedFrame.bubble.cap, '');
+  assert.match(decodedFrame.bubble.frame, /^qytheme-asset:[0-9a-f]{24}$/);
+  assert.deepEqual({ ...decodedFrame.bubble.frameSlice }, { left: 0.2, right: 0.49, top: 0.1, bottom: 0 });
+  assert.equal(decodedFrame.bubble.frameRepeat, 'round');
+  assert.equal(decodedFrame.bubble.frameBreak, '');
+  assert.equal(decodedFrame.bubble.frameTint, true);
+  assert.deepEqual(Object.keys(format.encodeParts(decodedFrame).bubble).sort(),
+    ['frame', 'frameRepeat', 'frameSlice', 'frameTint']);
+  assert.deepEqual(format.encodeParts(parts).bubble, { cap: parts.bubble.cap }, '没有边框时不写拉伸设置');
+  assert.equal(format.describeParts(decodedFrame).includes('强调气泡边框'), true);
+  broken(j => { j.bubble = {}; }, /需要 cap/);
+  assert.throws(() => format.decodeTheme(JSON.stringify({ parts: { ...partsJson(), bubble: {} } }), frameManifest),
+    /至少要有 cap 或 frame/);
+  const usesFrame = bubble => format.partsUseBubbleFrameFeature({ bubble });
+  assert.equal(usesFrame({ cap: 'assets/c.svg', frame: 'assets/f.svg' }), false);
+  assert.equal(usesFrame({ cap: 'assets/c.svg', frame: 'assets/f.png' }), true);
+  assert.equal(usesFrame({ cap: '', frame: 'assets/f.svg' }), true);
+  assert.equal(usesFrame({ cap: 'assets/c.svg', frame: '' }), false);
+  assert.equal(format.ThemePackageFeatures.KNOWN.includes('bubble-frame-v1'), true);
+  // 默认拉伸线：上下贴边，左右各留图高 × 0.6、最多 30%。
+  assert.deepEqual({ ...format.defaultBubbleFrameSlice(3.75) }, { left: 0.16, right: 0.16, top: 0, bottom: 0 });
+  assert.deepEqual({ ...format.defaultBubbleFrameSlice(1) }, { left: 0.3, right: 0.3, top: 0, bottom: 0 });
   // 没有 parts 也没有 settings 不行；parts 需要清单声明 theme-parts-v1。
   assert.throws(() => format.decodeTheme(JSON.stringify({}), manifest), /主题设置已损坏/);
   const noFeature = withAssets(manifestV2({ requires: ['custom-scheme-v1', 'reader-layout-v1'] }), PARTS_FILES);

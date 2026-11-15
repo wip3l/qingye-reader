@@ -5,7 +5,7 @@ import { ReaderThemeBackground } from '../ReaderThemeBackground';
 import { ImmersiveMaterialSurface } from '../ImmersiveMaterialSurface';
 import { ReaderTypographyPreview, ReaderTypographyPreviewConfig } from './ReaderTypographyPreview';
 import { ReaderV2DocumentParser } from '../../core/reader/ReaderV2Document';
-import { ReaderV2Color, ReaderV2SpanStyleRange } from '../../core/reader/ReaderV2Style';
+import { ReaderV2BubbleFrame, ReaderV2Color, ReaderV2SpanStyleRange } from '../../core/reader/ReaderV2Style';
 import { ReaderCommentBubbleStyles } from '../../core/reader/ReaderCommentBubble';
 import { ReaderInfoBarRow } from './ReaderInfoBar';
 import { ReaderInfoBarConfig, ReaderInfoBarContext, ReaderInfoBarText, ReaderInfoProgressBar } from '../../core/reader/ReaderInfoBarModel';
@@ -16,6 +16,7 @@ import { ReaderRegexBubbleStyleResolver, ReaderRegexEmphasisContext, ReaderRegex
   ReaderRegexFontRule, ReaderRegexLegacySettings } from '../../model/reader/ReaderRegexFontRule';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
+import { ThemePackRegistry } from '../../theme/ThemePackRegistry';
 
 const SETTINGS_PREVIEW_TITLE: string = '第一章 风起';
 const SETTINGS_PREVIEW_PARAGRAPHS: string[] = [
@@ -152,10 +153,9 @@ export struct ReaderSettingsPreview {
     style.shadowRadiusPx = ui.vp2px(Math.max(0, resolved.textShadowRadius));
     style.shadowOffsetXPx = ui.vp2px(Math.max(0, resolved.textShadowOffsetX));
     style.shadowOffsetYPx = ui.vp2px(Math.max(0, resolved.textShadowOffsetY));
-    style.decorationEnabled = resolved.bubbleDecorationEnabled &&
-      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId);
-    style.decorationStyleId = style.decorationEnabled ? resolved.bubbleStyleId : '';
-    style.decorationSizePx = style.decorationEnabled ? ui.vp2px(Math.max(15, Math.min(22, fontSize * 0.72))) : 0;
+    ReaderV2BubbleFrame.decorate(style, resolved.bubbleDecorationEnabled, resolved.bubbleStyleId,
+      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId),
+      ui.vp2px(Math.max(15, Math.min(22, fontSize * 0.72))), ThemePackRegistry.bubbleFrame(resolved.bubbleStyleId));
     return style;
   }
 

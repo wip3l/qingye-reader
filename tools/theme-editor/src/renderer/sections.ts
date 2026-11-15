@@ -28,6 +28,8 @@ export interface Field {
   /** 对比度参照的底色字段。 */
   vs?: string;
   icon?: boolean;
+  /** 气泡边框：上传后弹出拉伸区域对话框，格子里多一个“拉伸区域…”按钮和设置概要。 */
+  frameStretch?: boolean;
   when?: (mode: Mode) => boolean;
 }
 
@@ -131,13 +133,14 @@ export const SECTIONS: Section[] = [
       { k: '{m}.emphasis.bubbleStyle', label: '气泡样式', type: 'select',
         options: [['', '沿用基底'], ...BUBBLES.map((b) => [b.id, b.label] as [string, string])],
         hint: '主题专属气泡要导入的人拥有那套主题才能用，否则应用换成通用样式',
-        when: (m) => !getPath('bubble.cap') },
+        when: (m) => !getPath('bubble.cap') && !getPath('bubble.frame') },
       { k: '{m}.emphasis.color', label: '底色', type: 'color', alpha: true,
         hint: '底色和文字色可带透明度，写成 #AARRGGBB（透明度在前）。网页和设计软件常用的 #RRGGBBAA 要把末两位挪到最前，例如 #9EC0D9B6 → #B69EC0D9' },
       { k: '{m}.emphasis.textColor', label: '文字色', type: 'color', alpha: true },
       { g: '包内气泡（浅深共用）' },
       { k: 'bubble.cap', label: '端饰', type: 'asset', kinds: ['vector'], square: true, spec: '正方形小 SVG，按字号缩放，右端自动旋转 180°' },
-      { k: 'bubble.frame', label: '边框', type: 'asset', kinds: ['vector'], spec: '可选，SVG' }
+      { k: 'bubble.frame', label: '边框', type: 'asset', kinds: ['vector', 'image'], frameStretch: true,
+        spec: '可选，SVG 或透明底 PNG / WebP，按行拉伸；只有边框时不画端饰' }
     ]
   },
   {

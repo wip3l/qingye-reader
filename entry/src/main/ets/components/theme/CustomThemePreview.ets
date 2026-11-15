@@ -1,6 +1,7 @@
 import { ThemePack, ThemeVariant } from '../../theme/ThemeModels';
-import { ThemeImageSlots } from '../../theme/ThemePackRegistry';
-import { ThemeImageCrop } from '../../theme/share/ThemePackageFormat';
+import { ResolvedBubbleFrame, ThemeImageSlots, ThemePackRegistry } from '../../theme/ThemePackRegistry';
+import { BubbleFrameBreak, BubbleFrameRepeat, ThemeImageCrop, ThemePackageBubble } from '../../theme/share/ThemePackageFormat';
+import { ThemeBubbleFramePreview } from './ThemeBubbleFramePreview';
 import { ThemeCroppedImage } from './ThemeCroppedImage';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
@@ -612,6 +613,56 @@ export struct CustomThemePreview {
   /** 强调示例按方案实际的强调方式、气泡样式与端饰绘制，和主题详情页的阅读页预览同一套解析。 */
   @Builder
   emphasisSample() {
+    if (this.emphasisFrame()) {
+      // 包内气泡有边框：文字行内的 Span 画不出逐行拉伸的边框，改用和编辑器小样同一套画法。
+      ThemeBubbleFramePreview({
+        uri: this.emphasisFrame()?.asset ?? '',
+        capUri: this.emphasisCapUri(),
+        settings: this.emphasisFrameSettings(),
+        leadText: '她在扉页写下：',
+        emphasisText: '把时光，留给阅读',
+        textColor: this.emphasisStyle().textColor,
+        bubbleColor: this.emphasisStyle().backgroundColor,
+        paperColor: '#00000000',
+        normalTextColor: this.variant().reader.textColor,
+        fontSize: this.readerFontSize(),
+        lineHeight: this.readerFontSize() * 1.8,
+        fontFamily: this.themePack.typography.appFontFamily,
+        indentChars: 0,
+        paddingX: 0,
+        paddingY: 0,
+        cornerRadius: 0
+      })
+    } else {
+      this.emphasisTextSample()
+    }
+  }
+
+  /** 方案的强调用的是包内气泡且包里有边框时给出边框；只在气泡模式下画。 */
+  emphasisFrame(): ResolvedBubbleFrame | null {
+    if (this.emphasisStyle().mode === 'none' || !this.emphasisStyle().bubbleDecorationEnabled) return null;
+    return ThemePackRegistry.bubbleFrame(this.variant().regexEmphasis.bubbleStyle);
+  }
+
+  emphasisCapUri(): string {
+    if (!this.hasBubbleCap()) return '';
+    const cap = ThemeAssetRegistry.regexBubbleCap(this.variant().regexEmphasis.bubbleStyle);
+    return typeof cap === 'string' ? cap : '';
+  }
+
+  emphasisFrameSettings(): ThemePackageBubble {
+    const settings = new ThemePackageBubble();
+    const frame = this.emphasisFrame();
+    if (!frame) return settings;
+    settings.frameSlice = frame.slice;
+    settings.frameRepeat = frame.round ? BubbleFrameRepeat.ROUND : '';
+    settings.frameBreak = frame.cut ? BubbleFrameBreak.CUT : '';
+    settings.frameTint = frame.tint;
+    return settings;
+  }
+
+  @Builder
+  emphasisTextSample() {
     Text() {
       Span('她在扉页写下：')
         .fontColor(this.variant().reader.textColor)

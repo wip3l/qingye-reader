@@ -48,6 +48,7 @@ import {
   packThemeId,
   partsAssetRefs,
   partsUseManyCovers,
+  partsUseBubbleFrameFeature,
   partsUseSingleCorner,
   pickLayout,
   QYTHEME_EXTENSION,
@@ -316,6 +317,9 @@ export class ThemePackageService {
         }
         if (partsUseManyCovers(bundled.record.parts)) {
           manifest.requires.push(ThemePackageFeatures.BOOK_COVERS_16);
+        }
+        if (partsUseBubbleFrameFeature(bundled.record.parts)) {
+          manifest.requires.push(ThemePackageFeatures.BUBBLE_FRAME);
         }
         manifest.version = bundled.version;
         if (!manifest.description) manifest.description = bundled.description;

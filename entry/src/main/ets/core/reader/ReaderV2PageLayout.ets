@@ -45,6 +45,20 @@ export class ReaderV2RegexBubbleSegment {
   shadowRadiusPx: number = 0;
   shadowOffsetXPx: number = 0;
   shadowOffsetYPx: number = 0;
+  /** Theme-pack frame for this line piece; empty means the rounded background above is painted instead. */
+  frameAsset: string = '';
+  frameAspect: number = 3;
+  frameSliceLeft: number = 0;
+  frameSliceRight: number = 0;
+  frameSliceTop: number = 0;
+  frameSliceBottom: number = 0;
+  frameRound: boolean = false;
+  frameTint: boolean = false;
+  /** Frame box: x range covers the end pieces; top/bottom is the text band the slice lines align to. */
+  frameRect: ReaderV2Rect = new ReaderV2Rect();
+  /** Whether this piece draws its left / right end (false at a flat-cut line break). */
+  frameLeadEnd: boolean = false;
+  frameTrailEnd: boolean = false;
 }
 
 /** One line's piece of a paragraph-comment / 本章说 bubble; only the last piece carries the tail. */

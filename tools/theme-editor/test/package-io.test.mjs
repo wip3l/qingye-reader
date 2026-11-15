@@ -445,3 +445,25 @@ test('uploaded files are renamed to safe asset paths and checked', () => {
   assert.match(String(io.makeAsset('assets/x.svg', strToU8('<svg><script>1</script></svg>'))), /不允许的内容/);
   assert.match(String(io.makeAsset('assets/x.bin', strToU8('hello'))), /认不出/);
 });
+
+test('a bitmap or cap-less bubble frame exports with bubble-frame-v1 and keeps its stretch settings', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  project.assets.set('assets/plaque.png', { path: 'assets/plaque.png', bytes: png(600, 160), kind: 'image', ext: 'png', width: 600, height: 160 });
+  project.parts.bubble = { cap: '', frame: 'assets/plaque.png', frameSlice: { left: 0.17, right: 0.17, top: 0.08, bottom: 0.08 },
+    frameRepeat: 'round', frameBreak: 'full', frameTint: false };
+  const files = await io.exportFiles(project);
+  const manifest = JSON.parse(strFromU8(files.get('manifest.json')));
+  assert.ok(manifest.requires.includes('bubble-frame-v1'));
+  const bubble = JSON.parse(strFromU8(files.get('theme.json'))).parts.bubble;
+  assert.deepEqual(bubble, { frame: 'assets/plaque.png', frameSlice: { left: 0.17, right: 0.17, top: 0.08, bottom: 0.08 },
+    frameRepeat: 'round' });
+  const again = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(again.problems, []);
+  assert.equal(again.project.parts.bubble.frameSlice.left, 0.17);
+
+  // SVG 边框配端饰不用声明；去掉边框时拉伸设置也不写。
+  project.parts.bubble = { cap: 'assets/cap.svg', frame: 'assets/frame.svg', frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 } };
+  assert.ok(!JSON.parse(strFromU8((await io.exportFiles(project)).get('manifest.json'))).requires.includes('bubble-frame-v1'));
+  project.parts.bubble = { cap: 'assets/cap.svg', frame: '', frameSlice: { left: 0.2, right: 0.2, top: 0, bottom: 0 } };
+  assert.deepEqual(JSON.parse(strFromU8((await io.exportFiles(project)).get('theme.json'))).parts.bubble, { cap: 'assets/cap.svg' });
+});

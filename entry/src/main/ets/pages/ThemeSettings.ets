@@ -21,11 +21,13 @@ import { ThemeRecentStore } from '../utils/ThemeRecentStore';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
 import { TtsPanelThemeBackground } from '../components/TtsPanelThemeBackground';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
-import { ThemeImageCrop } from '../theme/share/ThemePackageFormat';
+import { BubbleFrameBreak, BubbleFrameRepeat, ThemeImageCrop, ThemePackageBubble } from '../theme/share/ThemePackageFormat';
+import { ThemeBubbleFramePreview } from '../components/theme/ThemeBubbleFramePreview';
+import { BubbleFramePreviewPart } from '../components/theme/BubbleFramePreviewPainter';
 import { ThemeCroppedImage } from '../components/theme/ThemeCroppedImage';
 import { SuperExclusiveThemes, ThemeIds, ThemePack, ThemeRegexEmphasisModes, ThemeVariant } from '../theme/ThemeModels';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
-import { ThemeImageSlots, ThemePackRegistry } from '../theme/ThemePackRegistry';
+import { ResolvedBubbleFrame, ThemeImageSlots, ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { AccountCommerceConfig } from '../account/AccountCommerceConfig';
 import { AccountApiError, ThemeCatalogItem, ThemeCatalogResponse,
   ThemeEntitlement } from '../account/AccountCommerceModels';
@@ -654,6 +656,83 @@ struct ThemeSettingsPage {
   /** 正文样张：对白套这套主题的强调样式，段评数画成主题的段评气泡。 */
   @Builder
   readerSampleText(theme: ThemePack, fontSize: number, lineHeight: number, maxLines: number) {
+    if (this.themeBubbleFrame(theme)) {
+      // 包内气泡有边框：文字行内的 Span 画不出逐行拉伸的边框，整张样张改用编辑器小样的画法。
+      // partsProvider 不是状态变量，换主题或深浅色时靠键重建组件。
+      ForEach([this.frameSampleKey(theme)], (_key: string) => {
+        ThemeBubbleFramePreview({
+          uri: this.themeBubbleFrame(theme)?.asset ?? '',
+          capUri: this.themeBubbleCapUri(theme),
+          settings: this.themeBubbleFrameSettings(theme),
+          textColor: this.themeRegexPreview(theme).textColor,
+          bubbleColor: this.themeRegexPreview(theme).backgroundColor,
+          paperColor: '#00000000',
+          normalTextColor: this.activeVariant(theme).reader.textColor,
+          fontSize: fontSize,
+          lineHeight: lineHeight,
+          fontFamily: theme.typography.appFontFamily,
+          indentChars: 0,
+          paddingX: 0,
+          paddingY: 0,
+          maxLines: maxLines,
+          cornerRadius: 0,
+          partsProvider: (): BubbleFramePreviewPart[] => this.frameSampleParts(theme, fontSize)
+        })
+      }, (key: string) => key)
+    } else {
+      this.readerSampleRichText(theme, fontSize, lineHeight, maxLines)
+    }
+  }
+
+  /** 这套主题的强调用的是包内气泡且包里有边框时给出边框；只在气泡模式下画。 */
+  themeBubbleFrame(theme: ThemePack): ResolvedBubbleFrame | null {
+    const style = this.themeRegexPreview(theme);
+    if (style.mode === 'none' || !style.bubbleDecorationEnabled) return null;
+    return ThemePackRegistry.bubbleFrame(this.activeVariant(theme).regexEmphasis.bubbleStyle);
+  }
+
+  themeBubbleCapUri(theme: ThemePack): string {
+    if (!this.themeHasRegexBubbleCap(theme)) return '';
+    const cap = ThemeAssetRegistry.regexBubbleCap(this.activeVariant(theme).regexEmphasis.bubbleStyle);
+    return typeof cap === 'string' ? cap : '';
+  }
+
+  themeBubbleFrameSettings(theme: ThemePack): ThemePackageBubble {
+    const settings = new ThemePackageBubble();
+    const frame = this.themeBubbleFrame(theme);
+    if (!frame) return settings;
+    settings.frameSlice = frame.slice;
+    settings.frameRepeat = frame.round ? BubbleFrameRepeat.ROUND : '';
+    settings.frameBreak = frame.cut ? BubbleFrameBreak.CUT : '';
+    settings.frameTint = frame.tint;
+    return settings;
+  }
+
+  frameSampleKey(theme: ThemePack): string {
+    return `reader_frame_sample_${theme.id}_${this.activeVariant(theme).reader.contentTone}_` +
+      `${this.activeVariant(theme).regexEmphasis.bubbleStyle}`;
+  }
+
+  /** 样张分段：对白套边框，段评数换成主题的段评气泡图（与文字版样张一样前面空一格）。 */
+  frameSampleParts(theme: ThemePack, fontSize: number): BubbleFramePreviewPart[] {
+    const dark = this.activeVariant(theme).reader.contentTone === 'dark';
+    const parts: BubbleFramePreviewPart[] = [];
+    for (const segment of READER_PREVIEW_SEGMENTS) {
+      if (!segment.comment) {
+        parts.push(new BubbleFramePreviewPart(segment.text, segment.emphasis));
+        continue;
+      }
+      const image = this.commentBubbleImage(theme, segment.text, fontSize * 0.85, dark);
+      if (!image) continue;
+      parts.push(new BubbleFramePreviewPart(' ', false));
+      parts.push(BubbleFramePreviewPart.inlineImage(image.pixelMap, this.commentBubbleImageWidth(image),
+        this.commentBubbleImageHeight(image)));
+    }
+    return parts;
+  }
+
+  @Builder
+  readerSampleRichText(theme: ThemePack, fontSize: number, lineHeight: number, maxLines: number) {
     Text() {
       ForEach(READER_PREVIEW_SEGMENTS, (segment: ReaderPreviewSegment) => {
         if (segment.comment) {

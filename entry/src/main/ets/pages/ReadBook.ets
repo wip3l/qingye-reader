@@ -101,6 +101,7 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ThemeRegexEmphasisModes } from '../theme/ThemeModels';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
+import { ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import { ReaderContentPreprocessor } from '../core/concurrency/ReaderContentPreprocessor';
 import { ReaderTextConvert } from '../core/reader/ReaderTextConvert';
@@ -128,7 +129,7 @@ import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { ReaderAnnotationLayer, ReaderAnnotationLayerMode } from '../components/reader/ReaderAnnotationLayer';
 import { ReaderAnnotationShare } from '../utils/ReaderAnnotationShare';
 import { ReaderV2PaginationSession, ReaderV2Paginator } from '../core/reader/ReaderV2Paginator';
-import { ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2Style';
+import { ReaderV2BubbleFrame, ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2Style';
 import { ReaderCommentBubbleStyle, ReaderCommentBubbleStyles } from '../core/reader/ReaderCommentBubble';
 import { ReaderCommentBubbleSize } from '../core/reader/ReaderCommentBubbleSize';
 import { ReaderV2PageNodeController } from '../core/reader/ReaderV2RenderNode';
@@ -17900,6 +17901,7 @@ ${leading}` : leading;
         style.decorationEnabled = template.decorationEnabled;
         style.decorationStyleId = template.decorationStyleId;
         style.decorationSizePx = template.decorationSizePx;
+        ReaderV2BubbleFrame.copyFrame(style, template);
         result.push(style);
       }
     }
@@ -17969,11 +17971,9 @@ ${leading}` : leading;
     style.shadowRadiusPx = this.toMeasurePx(Math.max(0, resolved.textShadowRadius));
     style.shadowOffsetXPx = this.toMeasurePx(Math.max(0, resolved.textShadowOffsetX));
     style.shadowOffsetYPx = this.toMeasurePx(Math.max(0, resolved.textShadowOffsetY));
-    style.decorationEnabled = resolved.bubbleDecorationEnabled &&
-      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId);
-    style.decorationStyleId = style.decorationEnabled ? resolved.bubbleStyleId : '';
-    style.decorationSizePx = style.decorationEnabled ?
-      this.toMeasurePx(Math.max(15, Math.min(22, fontSize * 0.72))) : 0;
+    ReaderV2BubbleFrame.decorate(style, resolved.bubbleDecorationEnabled, resolved.bubbleStyleId,
+      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId),
+      this.toMeasurePx(Math.max(15, Math.min(22, fontSize * 0.72))), ThemePackRegistry.bubbleFrame(resolved.bubbleStyleId));
     return style;
   }
 

@@ -46,7 +46,7 @@ my-theme/
 | `version` | 否 | 作者自定的版本号，最多 32 个字符。 |
 | `description` | 否 | 一句话说明，最多 120 个字符，显示在主题详情。 |
 | `baseTheme` | 否 | 包里没写的部件回退到哪个内置主题，默认 `plain-default`。内置主题 ID 见主题开发指南。选付费主题时，导入的人没有那套主题，基底会换成 `plain-default`（导入预览里会列出）；要所有人看到一样的效果，就用 `plain-default` 或把部件都写进包里。`obsidian-archive`、`celestial-vault` 这类专属主题不要作基底。 |
-| `requires` | 是 | 至少包含 `custom-scheme-v1`；带 `parts` 时必须包含 `theme-parts-v1`；带字体文件时包含 `fonts-v1`；带 `layout` 时包含 `reader-layout-v1`；带 `emphasis` 时包含 `emphasis-rules-v3`；阅读页角饰只有左上或右下一张时包含 `reader-single-corner-v1`；`covers` 超过 8 张时包含 `book-covers-16-v1`。 |
+| `requires` | 是 | 至少包含 `custom-scheme-v1`；带 `parts` 时必须包含 `theme-parts-v1`；带字体文件时包含 `fonts-v1`；带 `layout` 时包含 `reader-layout-v1`；带 `emphasis` 时包含 `emphasis-rules-v3`；阅读页角饰只有左上或右下一张时包含 `reader-single-corner-v1`；`covers` 超过 8 张时包含 `book-covers-16-v1`；气泡边框是位图或只有边框没有端饰时包含 `bubble-frame-v1`。 |
 | `assets` | 否 | 可以不写：应用导入时枚举 `assets/` 目录。写了就按 `[{ "path": "assets/x.png", "sha256": "...", "size": 123 }]` 登记，`sha256` 和 `size` 可省略，写了会核对。 |
 | `credits` | 否 | 再导出的混搭方案记录原主题包：`{ "packageId", "name", "author" }`。手写包不用填。 |
 
@@ -86,7 +86,7 @@ my-theme/
 | | `shelfFolderDark` | 可选：深色模式单独的文件夹插画。不写时深色模式也用 `shelfFolder`。旧版本应用会忽略，两种模式都显示 `shelfFolder`。 |
 | | `coverCrops`、`coverCropsDark`、`shelfFolderCrop`、`shelfFolderCropDark` | 可选的显示区域（见下文“显示区域”）：`coverCrops` 是数组，按 `image` 对应到 `covers` 里的某张封面；`coverCropsDark` 同理，对应 `coversDark`；`shelfFolderCrop`、`shelfFolderCropDark` 分别对应两张文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
-| `bubble` | `frame`、`cap` | 强调气泡的边框 SVG（可选）与端饰 SVG（必填）。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。 |
+| `bubble` | `frame`、`cap`、`frameSlice`、`frameRepeat`、`frameBreak`、`frameTint` | 强调气泡的端饰 SVG 与边框（SVG，或透明底 PNG / WebP），至少给一样；边框是位图或没有端饰时 `requires` 要包含 `bubble-frame-v1`，旧版本应用会提示先更新。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。边框的拉伸设置见下文“气泡边框”，旧版本应用忽略这些字段、也不画边框。 |
 | `homeBackdrop` | `light` / `dark` | 书架、发现和我的页顶部的背景图（位图）。只写一种模式时，另一种模式不显示背景。旧版本应用会忽略这一节。 |
 | `shelfBackdrop` | `companion` / `tile` / `loose` / `compact` | 可选：按书架布局（陪伴、平铺、宽松、紧凑）分别给的背景，每种布局下写 `light` / `dark`（及可选的 `lightCrop` / `darkCrop`）。只在书架页、用这种布局时显示，没写的布局或模式用 `homeBackdrop` 那张；发现、我的等页签始终用 `homeBackdrop`。浅色、深色互不借用。旧版本应用会忽略这一节。 |
 | | `lightCrop` / `darkCrop` | 可选的显示区域，对应同一模式的背景图。 |
@@ -147,6 +147,26 @@ my-theme/
 - 显示时区域等比放大到盖满素材位、居中，区域比例和素材位不同时裁掉区域两边多出的部分。
 - 旧版本应用不认这些字段，显示整张图。
 
+### 气泡边框
+
+正文里每一行强调文字各画一段边框：边框图按比例缩放到文字行的高度，两端花纹保持原样，中间按这段文字的长度拉长或平铺。
+
+- 文字带高度是强调文字字号的 1.36 倍，以文字中线为准。
+- `frameSlice`：四条拉伸线，都是占原图宽或高的比例（0–0.49）。`left` / `right` 是左右两端不拉伸的宽度；`top` / `bottom` 是文字带上下留在外面的高度，线外的部分照样画出来（阴影、出头的花纹）。省略时上下贴图边，左右各留“图高 × 0.6”，最多占图宽的 30%。
+- `frameRepeat`：`stretch`（默认）中段拉伸；`round` 中段整块重复，略微压缩或拉宽，花纹不会停在半块上。
+- `frameBreak`：`full`（默认）换行处每一行都画两端，换行处的端头画进页边距、不会让文字重新换行；`cut` 换行处不画端头，边框在断开处平切。
+- `frameTint`：`true` 时把边框染成强调设置里的气泡底色（浅深色各用各的），适合单色线稿；默认保留原色。
+- 整段强调文字的首尾会按端头宽度把前后文字推开；有端饰时端饰画在边框外侧。
+- 用边框时不再画强调底色的圆角背景。不透明的图（JPG、不带透明通道的 PNG）会在正文里露出底色。
+
+```json
+"bubble": {
+  "frame": "assets/bubble_frame.png",
+  "frameSlice": { "left": 0.17, "right": 0.17, "top": 0.08, "bottom": 0.08 },
+  "frameRepeat": "round"
+}
+```
+
 ## 素材规范
 
 | 素材 | 格式 | 规格 |
@@ -160,7 +180,7 @@ my-theme/
 | 文件夹插画 `shelfFolder` | JPG / PNG | 450 × 660。 |
 | 启动封面 `image` | JPG / PNG | 841 × 1870 竖屏，底部约 1/5 会叠加文案，不放主体。 |
 | 首页背景 `homeBackdrop`、书架背景 `shelfBackdrop` | JPG / PNG / WebP | 1080 × 1350（4:5），贴顶铺满宽度，比例不同时居中裁成 4:5。画面放在上部约四成，应用会叠渐变向下淡成页面底色；不要放文字，深色图的亮部要克制。 |
-| 气泡边框 `frame` / 端饰 `cap` | SVG | 端饰为正方形小图，按字号缩放，右端自动旋转 180°。 |
+| 气泡边框 `frame` / 端饰 `cap` | 边框 SVG / PNG / WebP，端饰 SVG | 端饰为正方形小图，按字号缩放，右端自动旋转 180°。边框是横向长条，两端是花纹、中间可拉伸，见下文“气泡边框”。 |
 | 主题标识 `logo` | SVG | `viewBox="0 0 64 64"`。 |
 | 字体 `appFont` | TTF / OTF / TTC | 请确认字体允许再分发。 |
 

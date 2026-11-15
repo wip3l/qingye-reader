@@ -14,7 +14,7 @@ import {
   QYTHEME_ASSET_PREFIX, ThemePackageAsset, ThemePackageAssetKinds, ThemePackageFeatures, ThemePackageLimits,
   ThemePackageManifest, ThemePackageTheme, IMAGE_SETTING_KEYS, assetPathExtension, checkSvgSource, decodeManifest,
   decodeTheme, encodeParts, findAssetByPath, isValidPackageId, kindForExtension, mapPartsAssetRefs, maxBytesForKind,
-  packThemeId, replaceOwnPackIdWithSelf, sniffAssetExtension
+  packThemeId, partsUseBubbleFrameFeature, replaceOwnPackIdWithSelf, sniffAssetExtension
 } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from '../../../../entry/src/main/ets/theme/share/ZipEntryInspector.ts';
 
@@ -612,6 +612,17 @@ export function normalizedParts(parts: Json): Json {
       if (backdrop[key] && backdrop[key].image !== backdrop[mode]) delete backdrop[key];
     }
   }
+  // 拉伸设置只跟着边框走：没有边框时不写；拉伸、每行两端、原色是缺省值，也不写。
+  const bubble = copy.bubble;
+  if (bubble && typeof bubble === 'object') {
+    if (!bubble.frame) {
+      for (const key of ['frameSlice', 'frameRepeat', 'frameBreak', 'frameTint']) delete bubble[key];
+    } else {
+      if (bubble.frameRepeat !== 'round') delete bubble.frameRepeat;
+      if (bubble.frameBreak !== 'cut') delete bubble.frameBreak;
+      if (bubble.frameTint !== true) delete bubble.frameTint;
+    }
+  }
   const result = strip(copy);
   // 旧版本应用还有“搜索”页签，导入时要求四个导航图标都在：没给就用发现的图标顶上（应用导出时同样处理）。
   const nav = result.navigation;
@@ -658,6 +669,7 @@ export async function buildFiles(project: EditorProject): Promise<FileMap> {
   if (Object.keys(parts).length) requires.add(ThemePackageFeatures.THEME_PARTS);
   if (usesSingleCorner(parts)) requires.add(ThemePackageFeatures.READER_SINGLE_CORNER);
   if (usesManyCovers(parts)) requires.add(ThemePackageFeatures.BOOK_COVERS_16);
+  if (partsUseBubbleFrameFeature(parts)) requires.add(ThemePackageFeatures.BUBBLE_FRAME);
   if (project.layout) requires.add(ThemePackageFeatures.READER_LAYOUT);
   if (project.emphasis) requires.add(ThemePackageFeatures.EMPHASIS_RULES);
   if (hasFont) requires.add(ThemePackageFeatures.FONTS);

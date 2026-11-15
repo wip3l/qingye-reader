@@ -94,7 +94,7 @@ export function effective(mode: Mode): Effective {
     trailingScale: normalizeOrnamentScale(typeof v.reader?.trailingScale === 'number' ? v.reader.trailingScale : 1)
   };
   const em = filled(v.emphasis);
-  const packBubble = !!(p.bubble && p.bubble.cap);
+  const packBubble = !!(p.bubble && (p.bubble.cap || p.bubble.frame));
   const e = {
     mode: em.mode || bv.emphasis.mode,
     bubble: packBubble ? 'pack' : (em.bubbleStyle || bv.emphasis.bubbleStyle),

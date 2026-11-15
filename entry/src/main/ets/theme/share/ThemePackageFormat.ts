@@ -30,6 +30,9 @@ export class ThemePackageFeatures {
   static readonly READER_SINGLE_CORNER: string = 'reader-single-corner-v1';
   // covers 超过 8 张（现在最多 16 张）；老版本最多收 8 张，多了导入直接报错，所以只在用到时写进 requires。
   static readonly BOOK_COVERS_16: string = 'book-covers-16-v1';
+  // 气泡边框用了位图（PNG / WebP / JPG），或只有边框没有端饰；老版本只收 SVG 边框且要求端饰，导入会直接报错，
+  // 所以只在用到时写进 requires。拉伸设置（frameSlice 等）老版本会忽略，不用声明。
+  static readonly BUBBLE_FRAME: string = 'bubble-frame-v1';
   static readonly KNOWN: string[] = [
     ThemePackageFeatures.CUSTOM_SCHEME,
     ThemePackageFeatures.READER_LAYOUT,
@@ -38,7 +41,8 @@ export class ThemePackageFeatures {
     ThemePackageFeatures.THEME_PARTS,
     ThemePackageFeatures.SCHEME_OVERRIDES,
     ThemePackageFeatures.READER_SINGLE_CORNER,
-    ThemePackageFeatures.BOOK_COVERS_16
+    ThemePackageFeatures.BOOK_COVERS_16,
+    ThemePackageFeatures.BUBBLE_FRAME
   ];
 }
 
@@ -344,9 +348,87 @@ export class ThemePackageStartup {
   subtitle: string = '';
 }
 
+/**
+ * 气泡边框的拉伸线，都是占原图宽或高的比例：left / right 是两端不拉伸的宽度，top / bottom 是文字行上下
+ * 留在外面的高度。阅读页把 top–bottom 之间对齐强调文字那一行，线外的部分照样画出；left–right 之间是中段，
+ * 按长度拉伸或平铺，两端按比例缩放保持原样。
+ */
+export class ThemePackageBubbleSlice {
+  left: number = 0;
+  right: number = 0;
+  top: number = 0;
+  bottom: number = 0;
+}
+
+export class BubbleFrameRepeat {
+  static readonly STRETCH: string = 'stretch';
+  static readonly ROUND: string = 'round';
+}
+
+export class BubbleFrameBreak {
+  /** 换行处每行都画两端。 */
+  static readonly FULL: string = 'full';
+  /** 换行处不画端头，边框在断开处平切。 */
+  static readonly CUT: string = 'cut';
+}
+
 export class ThemePackageBubble {
   frame: string = '';
   cap: string = '';
+  // 以下四项只对边框有效；缺省时用 bubbleFrameSliceOrDefault 的位置、拉伸、每行两端、保留原色。
+  frameSlice: ThemePackageBubbleSlice | null = null;
+  frameRepeat: string = '';
+  frameBreak: string = '';
+  /** 染成气泡底色（强调设置里的底色，浅深各用各的）。 */
+  frameTint: boolean = false;
+}
+
+/** 拉伸线每一项允许的范围：两端合起来、上下合起来都不能吃掉整张图。 */
+export const BUBBLE_FRAME_SLICE_MAX: number = 0.49;
+
+/**
+ * 没设拉伸线时的默认位置：上下贴图边，左右各留“图高 × 0.6”，最多各占图宽的 30%。aspect 是原图宽 / 高。
+ */
+export function defaultBubbleFrameSlice(aspect: number): ThemePackageBubbleSlice {
+  const slice = new ThemePackageBubbleSlice();
+  const ratio = aspect > 0 && isFinite(aspect) ? aspect : 3;
+  const end = Math.min(0.6 / ratio, 0.3);
+  slice.left = end;
+  slice.right = end;
+  return slice;
+}
+
+export function normalizeBubbleFrameSlice(slice: ThemePackageBubbleSlice | null | undefined): ThemePackageBubbleSlice | null {
+  if (!slice) return null;
+  const clamp = (value: number): number =>
+    typeof value === 'number' && isFinite(value) ? Math.max(0, Math.min(BUBBLE_FRAME_SLICE_MAX, value)) : 0;
+  const result = new ThemePackageBubbleSlice();
+  result.left = Math.round(clamp(slice.left) * 10000) / 10000;
+  result.right = Math.round(clamp(slice.right) * 10000) / 10000;
+  result.top = Math.round(clamp(slice.top) * 10000) / 10000;
+  result.bottom = Math.round(clamp(slice.bottom) * 10000) / 10000;
+  return result;
+}
+
+export function bubbleFrameSliceOrDefault(slice: ThemePackageBubbleSlice | null | undefined,
+  aspect: number): ThemePackageBubbleSlice {
+  return normalizeBubbleFrameSlice(slice) || defaultBubbleFrameSlice(aspect);
+}
+
+/** 气泡边框是位图，或只有边框没有端饰：导出时清单要声明 bubble-frame-v1。 */
+export function partsUseBubbleFrameFeature(parts: ThemePackageParts | null | undefined): boolean {
+  const bubble = parts ? parts.bubble : null;
+  if (!bubble || !bubble.frame) return false;
+  if (!bubble.cap) return true;
+  const extension = assetPathExtension(bubble.frame) || fileExtensionOf(bubble.frame);
+  return kindForExtension(extension) === ThemePackageAssetKinds.IMAGE;
+}
+
+function fileExtensionOf(path: string): string {
+  const match = /\.([A-Za-z0-9]{2,5})$/.exec(path || '');
+  if (!match) return '';
+  const extension = match[1].toLowerCase();
+  return extension === 'jpeg' ? 'jpg' : extension;
 }
 
 /** 主题包自带的部件。素材字段存 qytheme-asset:<id> 引用；为空或为 null 的部件回退到基底主题。 */
@@ -1040,6 +1122,48 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
   return result;
 }
 
+function decodeBubble(bubble: Record<string, Object>, manifest: ThemePackageManifest): ThemePackageBubble {
+  const result = new ThemePackageBubble();
+  const frameFeature = manifest.requires.includes(ThemePackageFeatures.BUBBLE_FRAME);
+  const frameKinds: string[] = frameFeature ? [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE] :
+    [ThemePackageAssetKinds.VECTOR];
+  result.frame = partAssetRef(bubble, 'frame', manifest, frameKinds, 'parts.bubble');
+  result.cap = partAssetRef(bubble, 'cap', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.bubble');
+  if (!result.cap && !(frameFeature && result.frame)) {
+    throw new Error(frameFeature ? '主题包的 parts.bubble 至少要有 cap 或 frame' : '主题包的 parts.bubble 需要 cap');
+  }
+  const slice = objectField(bubble, 'frameSlice');
+  if (slice) {
+    const parsed = new ThemePackageBubbleSlice();
+    parsed.left = numberField(slice, 'left');
+    parsed.right = numberField(slice, 'right');
+    parsed.top = numberField(slice, 'top');
+    parsed.bottom = numberField(slice, 'bottom');
+    result.frameSlice = normalizeBubbleFrameSlice(parsed);
+  }
+  const repeat = stringField(bubble, 'frameRepeat');
+  result.frameRepeat = repeat === BubbleFrameRepeat.ROUND || repeat === BubbleFrameRepeat.STRETCH ? repeat : '';
+  const lineBreak = stringField(bubble, 'frameBreak');
+  result.frameBreak = lineBreak === BubbleFrameBreak.CUT || lineBreak === BubbleFrameBreak.FULL ? lineBreak : '';
+  result.frameTint = bubble['frameTint'] === true;
+  return result;
+}
+
+/** 只写用到的字段；没有边框时拉伸设置也不写。 */
+export function encodeBubble(bubble: ThemePackageBubble): Record<string, Object> {
+  const record: Record<string, Object> = {};
+  if (bubble.cap) record['cap'] = bubble.cap;
+  if (bubble.frame) {
+    record['frame'] = bubble.frame;
+    const slice = normalizeBubbleFrameSlice(bubble.frameSlice);
+    if (slice) record['frameSlice'] = JSON.parse(JSON.stringify(slice)) as Object;
+    if (bubble.frameRepeat === BubbleFrameRepeat.ROUND) record['frameRepeat'] = BubbleFrameRepeat.ROUND;
+    if (bubble.frameBreak === BubbleFrameBreak.CUT) record['frameBreak'] = BubbleFrameBreak.CUT;
+    if (bubble.frameTint) record['frameTint'] = true;
+  }
+  return record;
+}
+
 function decodeTtsPanel(record: Record<string, Object> | null, manifest: ThemePackageManifest,
   label: string): ThemePackageTtsPanel | null {
   if (!record) return null;
@@ -1247,12 +1371,7 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
   }
   const bubble = objectField(record, 'bubble');
   if (bubble) {
-    parts.bubble = new ThemePackageBubble();
-    parts.bubble.frame = partAssetRef(bubble, 'frame', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.bubble');
-    parts.bubble.cap = partAssetRef(bubble, 'cap', manifest, [ThemePackageAssetKinds.VECTOR], 'parts.bubble');
-    if (!parts.bubble.cap) {
-      throw new Error('主题包的 parts.bubble 需要 cap');
-    }
+    parts.bubble = decodeBubble(bubble, manifest);
   }
   const homeBackdrop = objectField(record, 'homeBackdrop');
   if (homeBackdrop) {
@@ -1382,7 +1501,7 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     if (parts.startupDark) startup['dark'] = JSON.parse(JSON.stringify(parts.startupDark)) as Object;
     record['startup'] = startup;
   }
-  if (parts.bubble) record['bubble'] = JSON.parse(JSON.stringify(parts.bubble)) as Object;
+  if (parts.bubble) record['bubble'] = encodeBubble(parts.bubble);
   if (parts.homeBackdropLight || parts.homeBackdropDark) {
     const homeBackdrop: Record<string, Object> = {};
     if (parts.homeBackdropLight) homeBackdrop['light'] = parts.homeBackdropLight;
@@ -1568,7 +1687,10 @@ export function describeParts(parts: ThemePackageParts): string[] {
     items.push(book.join('、'));
   }
   if (parts.startupLight || parts.startupDark) items.push('启动封面');
-  if (parts.bubble) items.push('强调气泡端饰');
+  if (parts.bubble) {
+    items.push(parts.bubble.cap && parts.bubble.frame ? '强调气泡端饰与边框' :
+      (parts.bubble.frame ? '强调气泡边框' : '强调气泡端饰'));
+  }
   if (parts.homeBackdropLight || parts.homeBackdropDark) {
     const modes: string[] = [];
     if (parts.homeBackdropLight) modes.push('浅色');

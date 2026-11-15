@@ -386,6 +386,40 @@ try {
     'the title reserves horizontal room for both caps instead of painting them over the glyphs');
   console.log('PASS: paged/continuous geometry, exact title gap, cache invalidation and complete per-line title bubbles');
 
+  // 主题包边框：文字带高度是字号的 1.36 倍；标题每行都画两端，正文整段首尾留位，平切时换行处不画端头。
+  const Style = decorated[0].constructor;
+  const frameFields = { decorationSizePx: 0, frameAsset: 'file://frame.png', frameAspect: 4, frameSliceLeft: 0.2,
+    frameSliceRight: 0.25, frameSliceTop: 0.1, frameSliceBottom: 0.1 };
+  const framedTitles = decorated.map(item => Object.assign(new Style(item.start, item.end), item, frameFields));
+  const titleFrames = Paginator.layoutContinuous(document, snapshot, framedTitles).fragments
+    .flatMap(fragment => fragment.regexBubbleSegments);
+  assert(titleFrames.length >= 2);
+  for (const frame of titleFrames) {
+    assert(Math.abs(frame.frameRect.bottom - frame.frameRect.top - frame.fontSizePx * 1.36) < 0.01);
+    assert(frame.frameLeadEnd && frame.frameTrailEnd && frame.leadingCapWidthPx === 0);
+    assert(frame.frameRect.left >= 0 && frame.frameRect.right <= input.viewportWidthPx);
+    assert.equal(frame.frameAsset, 'file://frame.png');
+  }
+  const longDoc = Parser.parse(`${title}
+${'雨停的时候他把伞靠在门边问柜台后的老人这本账簿是谁送来的'.repeat(3)}`,
+    0, title, [], settings);
+  const body = longDoc.blocks.find(block => !block.title && block.text.length > 60);
+  assert(body, 'fixture has a long body paragraph');
+  const run = Object.assign(new Style(body.displayStart + 4, body.displayStart + 58), decorated[0], frameFields,
+    { start: body.displayStart + 4, end: body.displayStart + 58, repeatCaps: false, frameCut: true });
+  const bodyFrames = Paginator.layoutContinuous(longDoc, snapshot, [run]).fragments
+    .flatMap(fragment => fragment.regexBubbleSegments);
+  assert(bodyFrames.length >= 2, 'the framed run wraps');
+  assert(bodyFrames[0].leading && bodyFrames[0].frameLeadEnd && !bodyFrames[0].frameTrailEnd);
+  assert(bodyFrames.at(-1).trailing && bodyFrames.at(-1).frameTrailEnd && !bodyFrames.at(-1).frameLeadEnd);
+  const lead = run.fontSizePx * 1.36 / 0.8 * 0.2 * 4;
+  const plain = Paginator.layoutContinuous(longDoc, snapshot, [Object.assign(new Style(run.start, run.end), run,
+    { frameAsset: '' })]);
+  assert.equal(plain.fragments.flatMap(fragment => fragment.regexBubbleSegments).length, 0,
+    'without a frame or cap the run stays a native text background');
+  assert(lead > 10 && bodyFrames[0].frameRect.right - bodyFrames[0].frameRect.left > lead);
+  console.log('PASS: theme frames align to a fixed text band, enclose title lines and cut flat at body line breaks');
+
   const singleInput = new Input();
   singleInput.viewportWidthPx = 320; singleInput.viewportHeightPx = 900;
   singleInput.titleFontSizePx = 22; singleInput.titleSecondaryScale = 1.5; singleInput.titleLineGapPx = 16;

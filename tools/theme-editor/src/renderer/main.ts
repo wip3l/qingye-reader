@@ -11,6 +11,7 @@ import { editorIssues, sizeWarning, strictIssue, type Issue } from './checks.ts'
 import { alphaOf, contrast, darkDraft, isColor, withAlpha } from './colors.ts';
 import { baseThemeOptions, baseValue, effective, themeName } from './tokens.ts';
 import { browserApi } from './browserApi.ts';
+import { clearFrameSettings, frameAspect, frameSettingsOf, openFrameStretch, setFrameReadyListener, writeFrameSettings } from './frameStretch.ts';
 
 interface Result<T> { ok: boolean; value?: T; error?: string }
 interface OpenedTarget { path: string; name: string; kind: 'zip' | 'folder'; bytes?: Uint8Array; files?: [string, Uint8Array][] }
@@ -230,6 +231,8 @@ function renderIssues(): void {
 
 // ---- 预览 ----
 
+setFrameReadyListener(() => { if (S.project) renderPreview(); });
+
 function renderPreview(): void {
   const box = $('#phones');
   box.replaceChildren();
@@ -383,6 +386,7 @@ function renderField(f: Field): HTMLElement {
       : h('span', { class: 'inherit muted' }, f.resetLabel || '沿用')));
   } else if (f.type === 'asset') {
     row.append(renderSlot(f, path, value || '', id));
+    if (f.frameStretch && value) row.append(h('div', { class: 'hint frame-summary' }, frameSummary(value)));
   }
   if (f.hint) row.append(h('div', { class: 'hint' }, f.hint));
   return row;
@@ -446,17 +450,62 @@ function renderSlot(f: Field, path: string, ref: string, id: string): HTMLElemen
     h('b', {}, asset ? ref.substring(7) : (ref ? `${ref.substring(7)}（缺失）` : '拖入文件，或点“上传”')),
     asset ? `${asset.width ? `${asset.width}×${asset.height} · ` : ''}${KIND_LABEL[asset.kind]} · ${formatSize(asset.bytes.length)}` : (f.spec || ''));
   if (warning) meta.append(h('span', { class: 'warnline' }, warning));
-  const actions = h('div', { class: 'acts' },
-    h('button', { id, onclick: () => pickFiles(f.kinds || [], false, (files) => ingest(files[0], f, (newRef) => setField(path, newRef))) }, asset ? '替换' : '上传'));
+  // 气泡边框换图时拉伸线按新图重新给默认位置，随后弹出拉伸区域对话框。
+  const assign = (newRef: string): void => {
+    if (!f.frameStretch) { setField(path, newRef); return; }
+    commit(() => {
+      setPath(path, newRef);
+      const bubble = getPath('bubble');
+      if (bubble) delete bubble.frameSlice;
+    });
+    openFrameDialog(newRef);
+  };
+  const actions = h('div', { class: 'acts' });
+  if (f.frameStretch && asset) actions.append(h('button', { onclick: () => openFrameDialog(ref) }, '拉伸区域…'));
+  actions.append(h('button', { id, onclick: () => pickFiles(f.kinds || [], false, (files) => ingest(files[0], f, assign)) }, asset ? '替换' : '上传'));
   const library = [...p.assets.values()].filter((a) => (f.kinds || []).includes(a.kind) && a.path !== ref);
-  if (library.length) actions.append(h('button', { onclick: () => pickFromLibrary(library, (picked) => setField(path, picked)) }, '素材库'));
+  if (library.length) actions.append(h('button', { onclick: () => pickFromLibrary(library, assign) }, '素材库'));
   if (asset && asset.kind === 'image' && f.target && warning) {
     actions.append(h('button', { title: `居中裁成 ${f.target[0]}×${f.target[1]}`, onclick: () => cropAsset(ref, f.target as [number, number]) }, '裁剪'));
   }
-  if (ref) actions.append(h('button', { onclick: () => setField(path, '') }, '移除'));
+  if (ref) {
+    actions.append(h('button', { onclick: () => f.frameStretch ? commit(() => {
+      setPath(path, '');
+      const bubble = getPath('bubble');
+      if (bubble) clearFrameSettings(bubble);
+    }) : setField(path, '') }, '移除'));
+  }
   const slot = h('div', { class: `slot${warning ? ' warned' : ''}` }, assetThumb(asset, ref, f.icon), meta, actions);
-  acceptDrop(slot, (files) => ingest(files[0], f, (newRef) => setField(path, newRef)));
+  acceptDrop(slot, (files) => ingest(files[0], f, assign));
   return slot;
+}
+
+/** 边框格子下面的一行概要：两端、文字行、拉伸方式。 */
+function frameSummary(ref: string): string {
+  const bubble = getPath('bubble') || {};
+  const asset = project().assets.get(ref);
+  const settings = frameSettingsOf(bubble, frameAspect(ref));
+  const w = asset && asset.width ? asset.width : 0;
+  const hh = asset && asset.height ? asset.height : 0;
+  const { left, right, top, bottom } = settings.slice;
+  const ends = w ? `左端 ${Math.round(left * w)} px · 右端 ${Math.round(right * w)} px` :
+    `左端 ${Math.round(left * 100)}% · 右端 ${Math.round(right * 100)}%`;
+  const band = hh ? `文字行 ${Math.round(top * hh)}–${Math.round((1 - bottom) * hh)} px` :
+    `文字行占图高 ${Math.round((1 - top - bottom) * 100)}%`;
+  return `拉伸：${ends} · ${band} · 中段${settings.round ? '平铺' : '拉伸'} · ${settings.cut ? '断开平切' : '每行两端'} · ` +
+    `${settings.tint ? '染成底色' : '原色'}${settings.touched ? '' : '（默认位置）'}`;
+}
+
+function openFrameDialog(ref: string): void {
+  const e = effective(S.ui.mode).e;
+  openFrameStretch(ref, getPath('bubble') || {}, { text: e.textColor, bubble: e.color }, modal, (settings) => {
+    commit(() => {
+      const bubble = getPath('bubble');
+      if (bubble && bubble.frame === ref) writeFrameSettings(bubble, settings);
+      else if (!bubble) { setPath('bubble.frame', ref); writeFrameSettings(getPath('bubble'), settings); }
+    });
+    toast('边框拉伸区域已更新');
+  });
 }
 
 function renderCovers(f: Field): HTMLElement {

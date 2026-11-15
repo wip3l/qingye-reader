@@ -18,6 +18,9 @@ import {
   ThemePackageAssetKinds,
   ThemePackageBook,
   ThemePackageBubble,
+  BubbleFrameBreak,
+  BubbleFrameRepeat,
+  normalizeBubbleFrameSlice,
   ThemePackageLimits,
   ThemePackageNavigation,
   ThemePackageShelfBackdrop,
@@ -72,6 +75,15 @@ export class SchemeAssetService {
     options.fileSuffixFilters = ['图标|.svg,.png,.webp'];
     const result = await new picker.DocumentViewPicker(context).select(options);
     return result ? result.slice(0, max) : [];
+  }
+
+  /** 气泡边框：SVG 或透明底位图；白底 JPG 也能选，编辑器会提示正文里会露出底色。 */
+  static async pickBubbleFrameFiles(context: Context): Promise<string[]> {
+    const options = new picker.DocumentSelectOptions();
+    options.maxSelectNumber = 1;
+    options.fileSuffixFilters = ['边框|.svg,.png,.webp,.jpg,.jpeg'];
+    const result = await new picker.DocumentViewPicker(context).select(options);
+    return result ? result.slice(0, 1) : [];
   }
 
   static async pickSvgFiles(context: Context, max: number): Promise<string[]> {
@@ -481,17 +493,47 @@ export class SchemeAssetService {
     });
   }
 
-  static async setBubbleFrame(context: Context, schemeId: string, uri: string, baseTheme: string): Promise<SchemeAssetResult> {
+  /** 上传边框并一起存下拉伸区域页里定好的拉伸设置。 */
+  static async setBubbleFrame(context: Context, schemeId: string, uri: string, baseTheme: string,
+    settings: ThemePackageBubble): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const bubble = record.parts.bubble || new ThemePackageBubble();
-      bubble.frame = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.VECTOR, '气泡边框');
+      bubble.frame = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK, '气泡边框');
+      SchemeAssetService.copyFrameSettings(bubble, settings);
       record.parts.bubble = bubble;
     });
+  }
+
+  /** 只改拉伸设置，边框素材不变。 */
+  static async setBubbleFrameSettings(context: Context, schemeId: string,
+    settings: ThemePackageBubble): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const bubble = record.parts.bubble;
+      if (!bubble || !bubble.frame) throw new Error('气泡边框已不存在');
+      SchemeAssetService.copyFrameSettings(bubble, settings);
+    });
+  }
+
+  private static copyFrameSettings(target: ThemePackageBubble, settings: ThemePackageBubble): void {
+    target.frameSlice = normalizeBubbleFrameSlice(settings.frameSlice);
+    target.frameRepeat = settings.frameRepeat === BubbleFrameRepeat.ROUND ? BubbleFrameRepeat.ROUND : '';
+    target.frameBreak = settings.frameBreak === BubbleFrameBreak.CUT ? BubbleFrameBreak.CUT : '';
+    target.frameTint = settings.frameTint === true;
   }
 
   static async clearBubble(context: Context, schemeId: string): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
       record.parts.bubble = null;
+    });
+  }
+
+  /** 移除端饰；边框还在时保留边框，否则整节清掉。 */
+  static async clearBubbleCap(context: Context, schemeId: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const bubble = record.parts.bubble;
+      if (!bubble) return;
+      bubble.cap = '';
+      if (!bubble.frame) record.parts.bubble = null;
     });
   }
 
@@ -692,9 +734,17 @@ export class SchemeAssetService {
     });
   }
 
+  /** 移除边框和它的拉伸设置；端饰也没有时整节清掉。 */
   static async clearBubbleFrame(context: Context, schemeId: string): Promise<SchemeAssetResult> {
     return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
-      if (record.parts.bubble) record.parts.bubble.frame = '';
+      const bubble = record.parts.bubble;
+      if (!bubble) return;
+      bubble.frame = '';
+      bubble.frameSlice = null;
+      bubble.frameRepeat = '';
+      bubble.frameBreak = '';
+      bubble.frameTint = false;
+      if (!bubble.cap) record.parts.bubble = null;
     });
   }
 

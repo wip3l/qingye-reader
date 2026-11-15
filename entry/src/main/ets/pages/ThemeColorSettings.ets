@@ -29,6 +29,7 @@ import {
   SHELF_BACKDROP_LAYOUT_NAMES,
   SHELF_BACKDROP_LAYOUTS,
   ThemeImageCrop,
+  ThemePackageBubble,
   ThemePackageLimits
 } from '../theme/share/ThemePackageFormat';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
@@ -45,6 +46,8 @@ import { CustomThemePreview } from '../components/theme/CustomThemePreview';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ThemeCropRequest, ThemeImageCropper } from '../components/theme/ThemeImageCropper';
+import { BubbleFrameStretchRequest, ThemeBubbleFrameStretcher } from '../components/theme/ThemeBubbleFrameStretcher';
+import { ThemeBubbleFramePreview } from '../components/theme/ThemeBubbleFramePreview';
 import { ThemeCroppedImage } from '../components/theme/ThemeCroppedImage';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { TtsPanelThemeStyles } from '../theme/TtsPanelThemeStyles';
@@ -243,6 +246,8 @@ struct ThemeColorSettingsPage {
   @State schemeDescription: string = '';
   @State cropRequest: ThemeCropRequest = new ThemeCropRequest();
   @State cropVisible: boolean = false;
+  @State frameStretchRequest: BubbleFrameStretchRequest = new BubbleFrameStretchRequest();
+  @State frameStretchVisible: boolean = false;
   @State checksExpanded: boolean = false;
   // 素材尺寸类建议要读图片，异步算好放这里；颜色类建议随状态即时算。
   @State assetIssues: ThemeEditorIssue[] = [];
@@ -251,6 +256,7 @@ struct ThemeColorSettingsPage {
   @State showShelfLayoutMenu: boolean = false;
   private schemeId: string = '';
   private cropResolve: ((result: string) => void) | null = null;
+  private frameStretchResolve: ((settings: ThemePackageBubble | null) => void) | null = null;
   // 动图取景交回的显示区域；frameImage 读走后清空。
   private cropArea: ThemeImageCrop | null = null;
   private draftSettings: AppThemeSettings = new AppThemeSettings();
@@ -282,6 +288,10 @@ struct ThemeColorSettingsPage {
       this.finishCrop('');
       return true;
     }
+    if (this.frameStretchVisible) {
+      this.finishFrameStretch(null);
+      return true;
+    }
     this.handleBack();
     return true;
   }
@@ -304,6 +314,13 @@ struct ThemeColorSettingsPage {
           },
           onOriginal: () => this.finishCrop(this.cropRequest.uri),
           onCancel: () => this.finishCrop('')
+        })
+      }
+      if (this.frameStretchVisible) {
+        ThemeBubbleFrameStretcher({
+          request: this.frameStretchRequest,
+          onDone: (settings: ThemePackageBubble) => this.finishFrameStretch(settings),
+          onCancel: () => this.finishFrameStretch(null)
         })
       }
       if (this.deleteParticleBursts.length > 0) {
@@ -1889,13 +1906,14 @@ struct ThemeColorSettingsPage {
   bubbleSlots() {
     Row({ space: AppSpacing.XL }) {
       this.assetSlot({ label: '端饰', image: this.bubbleCapImage(),
-        state: this.ownBubbleActive() ? 'own' : (ThemeColorSettingsPage.hasImage(this.bubbleCapImage()) ? 'inherit' : 'empty'),
+        state: this.ownBubbleActive() && !!this.ownPack()?.bubbleCap ? 'own' :
+          (ThemeColorSettingsPage.hasImage(this.bubbleCapImage()) ? 'inherit' : 'empty'),
         slotWidth: 56, slotHeight: 56, onTap: () => this.tapBubbleSlot(false) })
       this.assetSlot({ label: '边框', image: this.bubbleFrameImage(),
         state: this.ownBubbleActive() && !!this.ownPack()?.bubbleFrame ? 'own' :
           (ThemeColorSettingsPage.hasImage(this.bubbleFrameImage()) ? 'inherit' : 'empty'),
         slotWidth: 56, slotHeight: 56, onTap: () => this.tapBubbleSlot(true) })
-      Text('正方形 SVG 端饰放在强调文字两端，右端自动旋转；边框可选')
+      Text('端饰是正方形 SVG，放在强调文字两端，右端自动旋转。边框按行拉伸，上传后可调拉伸区域')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor())
         .layoutWeight(1)
@@ -1903,6 +1921,23 @@ struct ThemeColorSettingsPage {
     .width('100%')
     .alignItems(VerticalAlign.Top)
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+    if (this.ownBubbleFrameUri()) {
+      Column({ space: AppSpacing.XS }) {
+        Text('预览').fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+        ThemeBubbleFramePreview({
+          uri: this.ownBubbleFrameUri(),
+          capUri: this.ownPack()?.bubbleCap ?? '',
+          settings: this.ownBubbleFrameSettings(),
+          textColor: this.effectiveEmphasis().emphasisTextColor,
+          bubbleColor: this.effectiveEmphasis().emphasisColor,
+          paperColor: this.currentReader().backgroundColor,
+          normalTextColor: this.currentReader().textColor
+        })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.LG })
+    }
   }
 
   bubbleCapImage(): ResourceStr {
@@ -1910,31 +1945,69 @@ struct ThemeColorSettingsPage {
     return ThemeAssetRegistry.hasRegexBubbleCap(style) ? ThemeAssetRegistry.regexBubbleCap(style) : '';
   }
 
+  /** 只有主题包的边框会在正文里逐行画出；内置样式的横幅边框不画，这里也不显示。 */
   bubbleFrameImage(): ResourceStr {
     const style = this.effectiveEmphasis().bubbleStyle;
-    return ThemeAssetRegistry.hasRegexBubbleFrame(style) ? ThemeAssetRegistry.regexBubbleFrame(style) : '';
+    return ThemePackRegistry.isPackId(style) && ThemeAssetRegistry.hasRegexBubbleFrame(style) ?
+      ThemeAssetRegistry.regexBubbleFrame(style) : '';
+  }
+
+  /** 方案自己的边框（正在使用时）；卡片里的预览只看它。 */
+  ownBubbleFrameUri(): string {
+    const pack = this.ownPack();
+    return this.assetRevision >= 0 && this.ownBubbleActive() && pack ? pack.bubbleFrame : '';
+  }
+
+  ownBubbleFrameSettings(): ThemePackageBubble {
+    const settings = new ThemePackageBubble();
+    const pack = this.ownPack();
+    if (!pack || this.assetRevision < 0) return settings;
+    settings.frameSlice = pack.bubbleFrameSlice;
+    settings.frameRepeat = pack.bubbleFrameRepeat;
+    settings.frameBreak = pack.bubbleFrameBreak;
+    settings.frameTint = pack.bubbleFrameTint;
+    return settings;
   }
 
   async tapBubbleSlot(frame: boolean): Promise<void> {
     const pack = this.ownPack();
-    const own = this.ownBubbleActive() && (!frame || (!!pack && !!pack.bubbleFrame));
+    const own = this.ownBubbleActive() && !!pack && (frame ? !!pack.bubbleFrame : !!pack.bubbleCap);
     if (!own) {
       if (!(await this.ensureAdvanced())) return;
       if (frame) await this.uploadBubbleFrame();
       else await this.uploadBubbleCap();
       return;
     }
-    const choice = await this.slotMenu(frame ? '气泡边框' : '气泡端饰', '替换', frame ? '移除边框' : '移除端饰和边框');
-    if (choice === 0) {
-      await this.replaceGuarded(() => frame ? this.uploadBubbleFrame() : this.uploadBubbleCap());
-    } else if (choice === 1) {
-      if (frame) {
-        await this.runAssetClear((): Promise<SchemeAssetResult> =>
-          SchemeAssetService.clearBubbleFrame(getContext(this), this.schemeId), '');
-      } else {
-        await this.clearBubbleAssets();
+    if (frame) {
+      const choice = await this.slotMenu('气泡边框', '调整拉伸区域', '替换', '移除边框');
+      if (choice === 0) {
+        await this.replaceGuarded(() => this.adjustBubbleFrame());
+      } else if (choice === 1) {
+        await this.replaceGuarded(() => this.uploadBubbleFrame());
+      } else if (choice === 2) {
+        await this.clearBubblePart(true);
       }
+      return;
     }
+    const choice = await this.slotMenu('气泡端饰', '替换', '移除端饰');
+    if (choice === 0) {
+      await this.replaceGuarded(() => this.uploadBubbleCap());
+    } else if (choice === 1) {
+      await this.clearBubblePart(false);
+    }
+  }
+
+  /** 移除端饰或边框；两样都没了时整个包内气泡清掉，强调样式退回所选主题。 */
+  async clearBubblePart(frame: boolean): Promise<void> {
+    const pack = this.ownPack();
+    const other = !!pack && (frame ? !!pack.bubbleCap : !!pack.bubbleFrame);
+    if (!other) {
+      await this.clearBubbleAssets();
+      return;
+    }
+    await this.runAssetClear((): Promise<SchemeAssetResult> => frame ?
+      SchemeAssetService.clearBubbleFrame(getContext(this), this.schemeId) :
+      SchemeAssetService.clearBubbleCap(getContext(this), this.schemeId), '');
   }
 
   ownTtsPanel(): boolean {
@@ -3668,15 +3741,50 @@ struct ThemeColorSettingsPage {
   }
 
   async uploadBubbleFrame(): Promise<void> {
-    if (!SchemeAssetService.hasBubble(this.ownPackageId)) {
-      HdsFeedback.showToast('请先上传气泡端饰');
-      return;
-    }
-    const uris = await SchemeAssetService.pickSvgFiles(getContext(this), 1);
+    const uris = await SchemeAssetService.pickBubbleFrameFiles(getContext(this));
     if (uris.length === 0) return;
+    // 换图时沿用原来的拉伸方式和颜色，拉伸线按新图重新给默认位置。
+    const previous = this.ownBubbleFrameSettings();
+    previous.frameSlice = null;
+    const settings = await this.stretchBubbleFrame(uris[0], previous);
+    if (!settings) return;
     await this.runAssetUpload((): Promise<SchemeAssetResult> =>
-      SchemeAssetService.setBubbleFrame(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble')),
-      '', false, false, '气泡边框已更新');
+      SchemeAssetService.setBubbleFrame(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble'),
+        settings), '', false, false, '');
+    if (this.ownThemeId()) this.applyPackBubbleStyle(this.ownThemeId());
+    HdsFeedback.showToast('气泡边框已更新');
+  }
+
+  async adjustBubbleFrame(): Promise<void> {
+    const uri = this.ownBubbleFrameUri();
+    if (!uri) return;
+    const settings = await this.stretchBubbleFrame(uri, this.ownBubbleFrameSettings());
+    if (!settings) return;
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setBubbleFrameSettings(getContext(this), this.schemeId, settings),
+      '', false, false, '拉伸区域已更新');
+  }
+
+  /** 打开拉伸区域页；点“使用”交回设置，取消返回 null。 */
+  stretchBubbleFrame(uri: string, settings: ThemePackageBubble): Promise<ThemePackageBubble | null> {
+    return new Promise<ThemePackageBubble | null>((resolve: (result: ThemePackageBubble | null) => void) => {
+      const request = new BubbleFrameStretchRequest();
+      const emphasis = this.effectiveEmphasis();
+      request.uri = uri;
+      request.settings = settings;
+      request.textColor = emphasis.emphasisTextColor;
+      request.bubbleColor = emphasis.emphasisColor;
+      this.frameStretchResolve = resolve;
+      this.frameStretchRequest = request;
+      this.frameStretchVisible = true;
+    });
+  }
+
+  finishFrameStretch(settings: ThemePackageBubble | null): void {
+    const resolve = this.frameStretchResolve;
+    this.frameStretchResolve = null;
+    this.frameStretchVisible = false;
+    if (resolve) resolve(settings);
   }
 
   /** 包内气泡通过方案的强调覆盖生效，浅深两种模式一起指过去，颜色仍跟来源主题。 */

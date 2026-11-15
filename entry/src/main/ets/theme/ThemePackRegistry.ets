@@ -8,18 +8,33 @@ import {
   normalizeOrnamentScale,
   shelfBackdropFor,
   ThemeImageCrop,
+  ThemePackageBubbleSlice,
+  BubbleFrameBreak,
+  BubbleFrameRepeat,
+  bubbleFrameSliceOrDefault,
   ThemePackageCredits,
   ThemePackageParts,
   ThemePackageShelfBackdrop,
   ThemePackageVariantParts
 } from './share/ThemePackageFormat';
 import { ThemePack, ThemeVariant } from './ThemeModels';
+import { ImageFileSize } from '../utils/ImageFileSize';
 
 /** 带显示区域的素材位，见 ThemePackRegistry.imageCrop。 */
 export class ThemeImageSlots {
   static readonly COVER: string = 'cover';
   static readonly FOLDER: string = 'folder';
   static readonly BACKDROP: string = 'backdrop';
+}
+
+/** 正文要画的气泡边框：素材地址与已换成具体值的拉伸设置（缺省都已补上）。 */
+export class ResolvedBubbleFrame {
+  asset: string = '';
+  aspect: number = 3;
+  slice: ThemePackageBubbleSlice = new ThemePackageBubbleSlice();
+  round: boolean = false;
+  cut: boolean = false;
+  tint: boolean = false;
 }
 
 /** 安装在本机的主题包落盘记录（theme_packs/<packageId>/pack.json）：素材引用是包目录下的相对路径。 */
@@ -108,6 +123,12 @@ export class InstalledThemePack {
   startupDark: InstalledThemePackStartup | null = null;
   bubbleFrame: string = '';
   bubbleCap: string = '';
+  // 气泡边框的拉伸设置，原样来自 parts.bubble（见 ThemePackageBubble）。
+  bubbleFrameSlice: ThemePackageBubbleSlice | null = null;
+  bubbleFrameRepeat: string = '';
+  bubbleFrameBreak: string = '';
+  bubbleFrameTint: boolean = false;
+  private bubbleFrameAspectValue: number = 0;
   homeBackdropLight: string = '';
   homeBackdropDark: string = '';
   // 按书架布局分别给的背景，素材和区域都已换成本机地址。
@@ -136,8 +157,18 @@ export class InstalledThemePack {
     return !!this.navBookshelf || !!this.navExplore || !!this.navMine || !!this.navListen || !!this.navFootprint;
   }
 
+  /** 端饰和边框有一样就算包内气泡：只有边框时强调文字照样套边框，不画端饰。 */
   hasBubble(): boolean {
-    return !!this.bubbleCap;
+    return !!this.bubbleCap || !!this.bubbleFrame;
+  }
+
+  /** 边框原图的宽 / 高，读不出来时按 3:1；第一次用到时才读文件头。 */
+  bubbleFrameAspect(): number {
+    if (this.bubbleFrameAspectValue <= 0 && this.bubbleFrame) {
+      const aspect = ImageFileSize.aspect(this.bubbleFrame);
+      this.bubbleFrameAspectValue = aspect > 0 ? aspect : 3;
+    }
+    return this.bubbleFrameAspectValue;
   }
 
   reader(darkMode: boolean): InstalledThemePackReader {
@@ -200,6 +231,21 @@ export class ThemePackRegistry {
   }
 
   /** 认得 pack:<id> 和 pack:<id>:light 这类带后缀的素材键。 */
+  /** 气泡样式是主题包且包里有边框时给出正文要画的边框；内置样式的横幅边框不逐行画，返回 null。 */
+  static bubbleFrame(styleId: string): ResolvedBubbleFrame | null {
+    if (!ThemePackRegistry.isPackId(styleId)) return null;
+    const pack = ThemePackRegistry.get(styleId);
+    if (!pack || !pack.bubbleFrame) return null;
+    const frame = new ResolvedBubbleFrame();
+    frame.asset = pack.bubbleFrame;
+    frame.aspect = pack.bubbleFrameAspect();
+    frame.slice = bubbleFrameSliceOrDefault(pack.bubbleFrameSlice, frame.aspect);
+    frame.round = pack.bubbleFrameRepeat === BubbleFrameRepeat.ROUND;
+    frame.cut = pack.bubbleFrameBreak === BubbleFrameBreak.CUT;
+    frame.tint = pack.bubbleFrameTint;
+    return frame;
+  }
+
   static get(themeId: string): InstalledThemePack | null {
     const packageId = packageIdOfThemeId(themeId);
     return packageId ? (ThemePackRegistry.packs.get(packageId) || null) : null;
@@ -394,6 +440,11 @@ export class ThemePackRegistry {
     if (parts.bubble) {
       installed.bubbleFrame = uri(parts.bubble.frame);
       installed.bubbleCap = uri(parts.bubble.cap);
+      // 本机旧版记录里没有拉伸设置字段。
+      installed.bubbleFrameSlice = parts.bubble.frameSlice || null;
+      installed.bubbleFrameRepeat = parts.bubble.frameRepeat || '';
+      installed.bubbleFrameBreak = parts.bubble.frameBreak || '';
+      installed.bubbleFrameTint = parts.bubble.frameTint === true;
       if (installed.hasBubble()) {
         pack.light.regexEmphasis.bubbleStyle = themeId;
         pack.dark.regexEmphasis.bubbleStyle = themeId;

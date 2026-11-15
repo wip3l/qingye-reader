@@ -4,6 +4,7 @@ import { assetFontFamily, assetUrl, h, project, S, type Mode } from './state.ts'
 import { baseTheme, bubbleLabel, effective, GENERIC_BUBBLES, type Effective } from './tokens.ts';
 import { cssColor, luminance } from './colors.ts';
 import { NAV_TABS, EXTRA_NAV_TABS } from './sections.ts';
+import { frameAspect, frameSettingsOf, frameSpanStyle } from './frameStretch.ts';
 
 export const PHONE_W = 360;
 export const PHONE_H = 780;
@@ -281,15 +282,24 @@ function screenMine(mode: Mode, e: Effective): HTMLElement {
     group(['书源管理', '同步与备份', '帮助']));
 }
 
-function emphasis(text: string, e: Effective): HTMLElement | string {
+function emphasis(text: string, e: Effective, fontPx: number = 19): HTMLElement | string {
   if (e.e.mode === 'none') return text;
   if (e.e.mode === 'bubble') {
     const bubble = project().parts.bubble || {};
     const span = h('span', { class: 'em-bubble', 'data-sec': 'emphasis' });
     if (e.e.bubble === 'pack') {
       const cap = assetUrl(bubble.cap);
-      const frame = assetUrl(bubble.frame);
-      if (frame) span.style.cssText = `background-image:url("${frame}");background-size:100% 100%`;
+      const frameStyle = bubble.frame ?
+        frameSpanStyle(bubble.frame, frameSettingsOf(bubble, frameAspect(bubble.frame)), fontPx, e.e.color) : '';
+      if (frameStyle) {
+        // 同应用：边框按行画在文字外面，端饰在边框外侧。
+        const framed = h('span', { class: 'em-frame', style: frameStyle }, text);
+        const wrap = h('span', { class: 'em-framed', 'data-sec': 'emphasis', style: `color:${cssColor(e.e.textColor)}` });
+        if (cap) wrap.append(h('img', { class: 'bcap', src: cap, alt: '' }));
+        wrap.append(framed);
+        if (cap) wrap.append(h('img', { class: 'bcap r', src: cap, alt: '' }));
+        return wrap;
+      }
       if (cap) span.append(h('img', { class: 'bcap', src: cap, alt: '' }));
       span.append(text);
       if (cap) span.append(h('img', { class: 'bcap r', src: cap, alt: '' }));
@@ -333,9 +343,9 @@ function readerBody(e: Effective): HTMLElement {
   const margin = typeof layout.marginLeft === 'number' ? Math.max(8, Math.min(48, layout.marginLeft)) : 20;
   const content = h('div', { class: 'content', style: `font-size:${fontSize}px;padding:6px ${margin}px` }, h('h2', {}, '第十七章 灯下'));
   const p1 = h('p', {}, '船过石桥时，舱里的灯忽然暗了一下。老周把书合上，抬头看了看窗外的水色，');
-  p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e));
+  p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e, fontSize));
   const p2 = h('p', {}, '阿遥没有应声，只把那页折了个角。她记得母亲说过，');
-  p2.append(emphasis('“夜里读书，读到哪儿就算到哪儿。”', e), '水声一阵紧过一阵，像是有人在船底翻书。');
+  p2.append(emphasis('“夜里读书，读到哪儿就算到哪儿。”', e, fontSize), '水声一阵紧过一阵，像是有人在船底翻书。');
   const p3 = h('p', {}, '岸上的灯笼一盏一盏亮起来，映在河面上，碎成许多小小的金色鳞片。她伸手去碰，只碰到了凉。');
   const p4 = h('p', {}, '老周又把书翻开，从折角的那一页读起。');
   content.append(p1, p2, p3, p4);

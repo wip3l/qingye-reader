@@ -6,7 +6,7 @@ import { ReaderFontWeightStepper } from '../components/reader/ReaderFontWeightSt
 import { ReaderWeightedText, ReaderWeightedTextSpan } from '../components/reader/ReaderWeightedText';
 import { ReaderTypographyPreview, ReaderTypographyPreviewConfig } from '../components/reader/ReaderTypographyPreview';
 import { ReaderV2DocumentParser } from '../core/reader/ReaderV2Document';
-import { ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2Style';
+import { ReaderV2BubbleFrame, ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2Style';
 import { ReaderParagraphIndent } from '../core/reader/ReaderParagraphIndent';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
@@ -31,6 +31,7 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { ListDissolve } from '../utils/ListDissolve';
 import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
+import { ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { ThemeAccessPolicy } from '../account/ThemeAccessPolicy';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -1778,9 +1779,9 @@ export struct ReaderFontSettingsEditor {
     style.shadowRadiusPx = Math.max(1, uiContext.vp2px(Math.max(0, resolved.textShadowRadius)));
     style.shadowOffsetXPx = Math.max(1, uiContext.vp2px(Math.max(0, resolved.textShadowOffsetX)));
     style.shadowOffsetYPx = Math.max(1, uiContext.vp2px(Math.max(0, resolved.textShadowOffsetY)));
-    style.decorationEnabled = resolved.bubbleDecorationEnabled && ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId);
-    style.decorationStyleId = style.decorationEnabled ? resolved.bubbleStyleId : '';
-    style.decorationSizePx = style.decorationEnabled ? uiContext.vp2px(Math.max(15, Math.min(22, size * 0.72))) : 0;
+    ReaderV2BubbleFrame.decorate(style, resolved.bubbleDecorationEnabled, resolved.bubbleStyleId,
+      ThemeAssetRegistry.hasRegexBubbleCap(resolved.bubbleStyleId),
+      uiContext.vp2px(Math.max(15, Math.min(22, size * 0.72))), ThemePackRegistry.bubbleFrame(resolved.bubbleStyleId));
     return style;
   }
 

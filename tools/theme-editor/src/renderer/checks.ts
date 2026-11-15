@@ -116,7 +116,12 @@ export function editorIssues(): Issue[] {
       add('warn', `navigation.${extra}`, `给了“${extra === 'listen' ? '听' : '足迹'}”的选中态，普通态会用基底主题的图标，两张可能对不上`);
     }
   }
-  if (p.parts.bubble && p.parts.bubble.frame && !p.parts.bubble.cap) add('error', 'bubble.cap', '包内气泡有边框时还需要端饰');
+  const bubbleFrame = p.parts.bubble && p.parts.bubble.frame;
+  if (bubbleFrame) {
+    const frameAsset = p.assets.get(bubbleFrame);
+    if (frameAsset && frameAsset.ext === 'jpg') add('warn', 'bubble.frame', '气泡边框是不透明的 JPG，正文里会露出底色，建议换透明底的 PNG 或 SVG');
+    if (!p.parts.bubble.frameSlice) add('warn', 'bubble.frame', '气泡边框的拉伸区域没调过，会按默认位置拉伸（左右各留图高的 0.6 倍）');
+  }
   const bookCovers = ((p.parts.book && p.parts.book.covers) || []).length;
   const bookCoversDark = ((p.parts.book && p.parts.book.coversDark) || []).length;
   if (bookCovers > 0 && bookCoversDark > 0 && bookCovers !== bookCoversDark) {
