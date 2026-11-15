@@ -70,6 +70,8 @@ struct Index {
   /** 换手或开始朗读后等系统底栏挪完再量位置。 */
   static readonly TTS_BAR_PROBE_DELAY: number = 600;
   static readonly TTS_BAR_PROBE_TOLERANCE: number = 8;
+  static readonly TTS_BAR_SEARCH_MAX_DEPTH: number = 10;
+  static readonly TTS_BAR_SEARCH_MAX_NODES: number = 300;
   static readonly TTS_BAR_PROBE_RETRY_DELAY: number = 250;
   /** 抬手后量底栏：系统按操作手换边多在触摸之后。 */
   static readonly TTS_BAR_PROBE_TOUCH_DELAY: number = 300;
@@ -168,6 +170,8 @@ struct Index {
   private homeHoldingHandSubscribed: boolean = false;
   private globalTtsBarProbeTimer: number = -1;
   private globalTtsBarProbeMissLogged: boolean = false;
+  /** 上次找到的系统底栏节点 uniqueId；底栏重建后按 uniqueId 取不到，再重新找。 */
+  private globalTtsBarNodeId: number = -1;
   private homeHoldingHandCallback: (status: motion.HoldingHandStatus) => void =
     (status: motion.HoldingHandStatus): void => this.onHomeHoldingHandChanged(status);
   private globalTtsCatalogScroller: ListScroller = new ListScroller();
@@ -1168,9 +1172,16 @@ struct Index {
     }
     try {
       const uiContext = this.getUIContext();
-      const tabsNode = uiContext.getFrameNodeById(this.immersiveTabsKey());
       const rootNode = uiContext.getFrameNodeById('home_root');
-      const barNode = tabsNode ? Index.findFrameNodeByType(tabsNode, 'TabBar', 10) : null;
+      let barNode: FrameNode | null = this.globalTtsBarNodeId >= 0 ?
+        uiContext.getFrameNodeByUniqueId(this.globalTtsBarNodeId) : null;
+      if (barNode && barNode.getNodeType() !== 'TabBar') barNode = null;
+      let tabsNode: FrameNode | null = null;
+      if (!barNode) {
+        tabsNode = uiContext.getFrameNodeById(this.immersiveTabsKey());
+        barNode = tabsNode ? Index.findTabBarNode(tabsNode) : null;
+        this.globalTtsBarNodeId = barNode ? barNode.getUniqueId() : -1;
+      }
       if (!barNode || !rootNode) {
         if (!this.globalTtsBarProbeMissLogged) {
           this.globalTtsBarProbeMissLogged = true;
@@ -1219,14 +1230,28 @@ struct Index {
     }
   }
 
-  static findFrameNodeByType(node: FrameNode, type: string, depth: number): FrameNode | null {
-    if (node.getNodeType() === type) return node;
-    if (depth <= 0) return null;
-    let child = node.getFirstChild();
-    while (child) {
-      const found = Index.findFrameNodeByType(child, type, depth - 1);
-      if (found) return found;
-      child = child.getNextSibling();
+  /**
+   * 在页签容器里找系统底栏。按层广度优先，不进 Swiper/TabContent：那下面是各页签的整页内容
+   * （书架、发现结果），底栏排在它后面，深度优先会先把整页内容走一遍，书多时主线程卡死数秒。
+   * 另设节点数上限兜底。
+   */
+  static findTabBarNode(tabsNode: FrameNode): FrameNode | null {
+    let level: FrameNode[] = [tabsNode];
+    let visited = 0;
+    for (let depth = 0; depth <= Index.TTS_BAR_SEARCH_MAX_DEPTH && level.length > 0; depth++) {
+      const next: FrameNode[] = [];
+      for (const node of level) {
+        const type = node.getNodeType();
+        if (type === 'TabBar') return node;
+        if (++visited > Index.TTS_BAR_SEARCH_MAX_NODES) return null;
+        if (type === 'Swiper' || type === 'TabContent') continue;
+        let child = node.getFirstChild();
+        while (child) {
+          next.push(child);
+          child = child.getNextSibling();
+        }
+      }
+      level = next;
     }
     return null;
   }
