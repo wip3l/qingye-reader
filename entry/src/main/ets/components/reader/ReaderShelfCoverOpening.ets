@@ -152,6 +152,9 @@ export struct ReaderShelfCoverOpening {
    */
   @Prop cropAspect: number = 0;
   @State imageAspect: number = 0;
+  /** 这一层自己的尺寸（vp），量到之前用书架交来的窗口尺寸。 */
+  @State layerWidth: number = 0;
+  @State layerHeight: number = 0;
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('bookshelfDarkCoverDim') darkCoverDim: boolean = false;
   @StorageProp('bookshelfDarkCoverDimLevel') darkCoverDimLevel: number = 20;
@@ -180,6 +183,46 @@ export struct ReaderShelfCoverOpening {
   /** 书架上这枚封面的宽高比：整页非等比缩成封面时，区域按它排才和书架上一致。 */
   shelfCoverAspect(): number {
     return shelfCoverBoxAspect(this.cover);
+  }
+
+  /**
+   * 书框按书架封面的比例排的那块高度（宽同这一层）。内置书框是不带 preserveAspectRatio 的 SVG，ImageFit.Fill
+   * 拉不动它：直接铺满整屏时按自身比例居中，上下留空，整页再非等比缩成封面后书框又扁又偏。所以先按封面比例画，
+   * 再纵向拉到整层，缩成封面时正好是书架上的样子。量不到时返回 0，退回铺满。
+   */
+  frameBoxHeight(): number {
+    const width = this.layerWidth > 0 ? this.layerWidth : this.cover.windowWidth;
+    const aspect = this.shelfCoverAspect();
+    return width > 0 && aspect > 0 ? width / aspect : 0;
+  }
+
+  frameScaleY(): number {
+    const height = this.layerHeight > 0 ? this.layerHeight : this.cover.windowHeight;
+    const boxHeight = this.frameBoxHeight();
+    return boxHeight > 0 && height > 0 ? height / boxHeight : 1;
+  }
+
+  @Builder
+  frameLayer() {
+    if (this.frameBoxHeight() > 0) {
+      Image(this.cover.frame)
+        .width('100%')
+        .height(this.frameBoxHeight())
+        .position({ x: 0, y: 0 })
+        .scale({ x: 1, y: this.frameScaleY(), centerX: 0, centerY: 0 })
+        .objectFit(ImageFit.Fill)
+        .syncLoad(true)
+        .draggable(false)
+        .visibility(this.showFrame ? Visibility.Visible : Visibility.Hidden)
+    } else {
+      Image(this.cover.frame)
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Fill)
+        .syncLoad(true)
+        .draggable(false)
+        .visibility(this.showFrame ? Visibility.Visible : Visibility.Hidden)
+    }
   }
 
   build() {
@@ -221,13 +264,7 @@ export struct ReaderShelfCoverOpening {
           .opacity(this.dimOpacity())
       }
       if (this.cover.frame) {
-        Image(this.cover.frame)
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Fill)
-          .syncLoad(true)
-          .draggable(false)
-          .visibility(this.showFrame ? Visibility.Visible : Visibility.Hidden)
+        this.frameLayer()
       }
       // 书脊的折痕阴影。
       Column()
@@ -245,6 +282,10 @@ export struct ReaderShelfCoverOpening {
     .width('100%')
     .height('100%')
     .clip(true)
+    .onAreaChange((_old: Area, area: Area) => {
+      this.layerWidth = Number(area.width);
+      this.layerHeight = Number(area.height);
+    })
     .backgroundColor(this.cover.color)
     // 用系统默认视距：真机上自定义视距几乎看不出透视，默认值下外边缘转向眼前时明显变高。
     .rotate({ x: 0, y: 1, z: 0, angle: this.angle, centerX: 0, centerY: '50%' })
