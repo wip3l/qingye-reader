@@ -2174,7 +2174,8 @@ export class SystemTtsReader {
    * the requested range has nothing following it, so only that one still drops the comma.
    */
   private normalizeChunkForSpeech(text: string, protectTailPause: boolean = true): string {
-    const normalized = this.normalizeMathNotationForSpeech(this.replaceUnsafeSpeechCharacters(text || ''))
+    const normalized = this.stripDecorativeSpeechSymbols(
+      this.normalizeMathNotationForSpeech(this.replaceUnsafeSpeechCharacters(text || '')))
       .replace(/\r\n/g, '\n')
       .replace(/\s*\n+\s*/g, '。')
       .replace(/[ \t]{2,}/g, ' ')
@@ -2288,7 +2289,7 @@ export class SystemTtsReader {
             (denominator.length > 1 && denominator.charAt(0) === '0') ? match :
             `${numerator} over ${denominator}`;
         });
-      result = result.replace(/(\d+)\s*[×*]\s*(\d+)/g,
+      result = result.replace(/(\d+)\s*[×*＊]\s*(\d+)/g,
         (_match: string, left: string, right: string): string => `${left} times ${right}`);
       result = result.replace(/(\d+)\s*[÷]\s*(\d+)/g,
         (_match: string, left: string, right: string): string => `${left} divided by ${right}`);
@@ -2314,13 +2315,24 @@ export class SystemTtsReader {
         }
         return `${denominator}分之${numerator}`;
       });
-    result = result.replace(/(\d+)\s*[×*]\s*(\d+)/g,
+    result = result.replace(/(\d+)\s*[×*＊]\s*(\d+)/g,
       (_match: string, left: string, right: string): string => `${left}乘以${right}`);
     result = result.replace(/(\d+)\s*[÷]\s*(\d+)/g,
       (_match: string, left: string, right: string): string => `${left}除以${right}`);
     result = result.replace(/(\d+)\s*=\s*(\d+)/g,
       (_match: string, left: string, right: string): string => `${left}等于${right}`);
     return result;
+  }
+
+  /**
+   * Drop marker symbols that have no spoken meaning in prose: a "*" before a paragraph (scene
+   * break), "**强调**", "※注" or "★" bullets. The system engine skips them silently, but custom
+   * online/offline voices read them out as "星号". Runs after math normalization so "3*4" has
+   * already become "3乘以4". Only applied to the synthesizer text; chunk offsets are untouched.
+   */
+  private stripDecorativeSpeechSymbols(text: string): string {
+    if (!text) return '';
+    return text.replace(/[*＊※★☆◆◇■□●◎▲△▼▽♦♢❖✦✧]+/g, '');
   }
 
   /**

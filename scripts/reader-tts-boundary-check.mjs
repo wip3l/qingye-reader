@@ -15,7 +15,7 @@ const names = [
   'isTrimChar', 'isHighSurrogate', 'safeHardCutIndex', 'snapPageBreakOffset',
   'splitCloudFocusChunks', 'appendFocusChunk', 'cloudFocusChunkForSpeechRange',
   'buildProsodyCloudCues', 'normalizeChunkForSpeechWithMap', 'normalizeChunkForSpeech',
-  'normalizeMathNotationForSpeech', 'replaceUnsafeSpeechCharacters'
+  'normalizeMathNotationForSpeech', 'replaceUnsafeSpeechCharacters', 'stripDecorativeSpeechSymbols'
 ];
 const methods = names.map(name => {
   const start = source.indexOf(`  private ${name}(`);
@@ -95,6 +95,15 @@ for (let offset = 24; offset < 30; offset++) {
   checkRanges(pageText, reader.splitCloudFocusChunks({ text: pageText, start: 100, end: 100 + pageText.length }), 100);
 }
 reader.optionFocusBreakOffsets = [];
+
+// Marker symbols must not reach custom voices, which read them out as "星号"; math stays spoken.
+assert.equal(reader.normalizeChunkForSpeech('*时间不早，该吃晚饭了。'), '时间不早，该吃晚饭了。');
+assert.equal(reader.normalizeChunkForSpeech('他**真的**来了，※注：★重点'), '他真的来了，注：重点');
+assert.equal(reader.normalizeChunkForSpeech('3*4与5＊6'), '3乘以4与5乘以6');
+assert.equal(reader.normalizeChunkForSpeech('3 * 4'), '3乘以4');
+const markerMap = reader.normalizeChunkForSpeechWithMap('*时间不早。');
+assert.equal(markerMap.text, '时间不早。');
+assert.deepEqual(Array.from(markerMap.sourceToSpeechOffsets.slice(0, 3)), [0, 0, 1]);
 
 // Old server timings may end anywhere inside a punctuation run. Adjacent mappings
 // must still be contiguous; punctuation-only timing ranges may disappear.
