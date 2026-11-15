@@ -12,6 +12,7 @@ import { alphaOf, contrast, darkDraft, isColor, withAlpha } from './colors.ts';
 import { baseThemeOptions, baseValue, effective, themeName } from './tokens.ts';
 import { browserApi } from './browserApi.ts';
 import { clearFrameSettings, frameAspect, frameSettingsOf, openFrameStretch, setFrameReadyListener, writeFrameSettings } from './frameStretch.ts';
+import { clearCommentImageSettings, commentImageSettingsOf, commentOverhangWarning, openCommentStretch, writeCommentImageSettings } from './commentStretch.ts';
 
 interface Result<T> { ok: boolean; value?: T; error?: string }
 interface OpenedTarget { path: string; name: string; kind: 'zip' | 'folder'; bytes?: Uint8Array; files?: [string, Uint8Array][] }
@@ -388,6 +389,11 @@ function renderField(f: Field): HTMLElement {
   } else if (f.type === 'asset') {
     row.append(renderSlot(f, path, value || '', id));
     if (f.frameStretch && value) row.append(h('div', { class: 'hint frame-summary' }, frameSummary(value, frameOwner(path))));
+    if (f.commentStretch && value) {
+      row.append(h('div', { class: 'hint frame-summary' }, commentSummary(value, frameOwner(path))));
+      const warning = commentOverhangWarning(commentImageSettingsOf(getPath(frameOwner(path)), frameAspect(value)).text);
+      if (warning) row.append(h('div', { class: 'hint warnline' }, warning));
+    }
   }
   if (f.hint) row.append(h('div', { class: 'hint' }, f.hint));
   return row;
@@ -453,6 +459,16 @@ function renderSlot(f: Field, path: string, ref: string, id: string): HTMLElemen
   if (warning) meta.append(h('span', { class: 'warnline' }, warning));
   // 气泡边框换图时拉伸线按新图重新给默认位置，随后弹出拉伸区域对话框。
   const assign = (newRef: string): void => {
+    if (f.commentStretch) {
+      // 换图时文字区和拉伸线按新图重新给默认位置，随后弹出对话框。
+      commit(() => {
+        setPath(path, newRef);
+        const comment = getPath(frameOwner(path));
+        if (comment) { delete comment.imageSlice; delete comment.imageText; }
+      });
+      openCommentDialog(newRef, frameOwner(path));
+      return;
+    }
     if (!f.frameStretch) { setField(path, newRef); return; }
     commit(() => {
       setPath(path, newRef);
@@ -463,6 +479,7 @@ function renderSlot(f: Field, path: string, ref: string, id: string): HTMLElemen
   };
   const actions = h('div', { class: 'acts' });
   if (f.frameStretch && asset) actions.append(h('button', { onclick: () => openFrameDialog(ref, frameOwner(path)) }, '拉伸区域…'));
+  if (f.commentStretch && asset) actions.append(h('button', { onclick: () => openCommentDialog(ref, frameOwner(path)) }, '文字区与拉伸线…'));
   actions.append(h('button', { id, onclick: () => pickFiles(f.kinds || [], false, (files) => ingest(files[0], f, assign)) }, asset ? '替换' : '上传'));
   const library = [...p.assets.values()].filter((a) => (f.kinds || []).includes(a.kind) && a.path !== ref);
   if (library.length) actions.append(h('button', { onclick: () => pickFromLibrary(library, assign) }, '素材库'));
@@ -474,7 +491,11 @@ function renderSlot(f: Field, path: string, ref: string, id: string): HTMLElemen
       setPath(path, '');
       const bubble = getPath(frameOwner(path));
       if (bubble) clearFrameSettings(bubble);
-    }) : setField(path, '') }, '移除'));
+    }) : (f.commentStretch ? commit(() => {
+      setPath(path, '');
+      const comment = getPath(frameOwner(path));
+      if (comment) clearCommentImageSettings(comment);
+    }) : setField(path, '')) }, '移除'));
   }
   const slot = h('div', { class: `slot${warning ? ' warned' : ''}` }, assetThumb(asset, ref, f.icon), meta, actions);
   acceptDrop(slot, (files) => ingest(files[0], f, assign));
@@ -500,6 +521,35 @@ function frameSummary(ref: string, owner: string = 'bubble'): string {
     `文字行占图高 ${Math.round((1 - top - bottom) * 100)}%`;
   return `拉伸：${ends} · ${band} · 中段${settings.round ? '平铺' : '拉伸'} · ${settings.cut ? '断开平切' : '每行两端'} · ` +
     `${settings.tint ? '染成底色' : '原色'}${settings.touched ? '' : '（默认位置）'}`;
+}
+
+/** 段评气泡图格子下面的一行概要：两端、文字区、中段、换行与颜色。owner 是 light/dark.commentBubble。 */
+function commentSummary(ref: string, owner: string): string {
+  const settings = commentImageSettingsOf(getPath(owner), frameAspect(ref));
+  const asset = project().assets.get(ref);
+  const w = asset && asset.width ? asset.width : 0;
+  const pct = (v: number): string => `${Math.round(v * 100)}%`;
+  const ends = w ? `左端 ${Math.round(settings.slice.left * w)} px · 右端 ${Math.round(settings.slice.right * w)} px` :
+    `左端 ${pct(settings.slice.left)} · 右端 ${pct(settings.slice.right)}`;
+  return `${ends} · 文字区占图高 ${pct(1 - settings.text.top - settings.text.bottom)} · 中段${settings.round ? '平铺' : '拉伸'} · ` +
+    `${settings.full ? '折行画整图' : '折行裁掉尾巴'} · ${settings.tint ? '染成底色' : '原色'}${settings.touched ? '' : '（默认位置）'}`;
+}
+
+function openCommentDialog(ref: string, owner: string): void {
+  const mode: Mode = owner.startsWith('dark') ? 'dark' : 'light';
+  const e = effective(mode);
+  const fill = e.comment.fill || e.e.color;
+  const text = e.comment.text || e.e.textColor;
+  openCommentStretch(ref, getPath(owner) || {}, {
+    paper: e.reader.backgroundColor, ink: e.reader.textColor, text, fill, label: mode === 'dark' ? '深色 · ' : '浅色 · '
+  }, modal, (settings) => {
+    commit(() => {
+      const comment = getPath(owner);
+      if (comment && comment.image === ref) writeCommentImageSettings(comment, settings);
+      else if (!comment) { setPath(`${owner}.image`, ref); writeCommentImageSettings(getPath(owner), settings); }
+    });
+    toast('文字区与拉伸线已更新');
+  });
 }
 
 /** owner 是边框所在的那一节（bubble 或 bubbleDark）；深色那张按深色的强调配色预览。 */

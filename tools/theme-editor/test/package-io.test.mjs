@@ -513,6 +513,36 @@ test('dark-mode bubble art, shelf frame, nav icons and comment bubbles round-tri
   assert.equal(only.book.shelfFrameDark, undefined);
 });
 
+test('comment bubble image and custom ornament export cleanly and round-trip', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  project.assets.set('assets/talk.png', { path: 'assets/talk.png', bytes: png(300, 132), kind: 'image', ext: 'png', width: 300, height: 132 });
+  project.parts.light.commentBubble = {
+    shape: 'rounded', radius: 0.2, fill: '#B98546', text: '#4A3423',
+    image: 'assets/talk.png', imageSlice: { left: 0.28, right: 0.22, top: 0.3, bottom: 0.3 },
+    imageText: { left: 0.1, right: 0.1, top: 0.14, bottom: 0.3 }, imageRepeat: 'stretch', imageBreak: 'cut', imageTint: false,
+    ornament: 'custom', ornamentImage: 'assets/cap.svg', ornamentCorner: 'topLeft', ornamentSize: 1.2
+  };
+  // 深色没用自定义角标时，留下的角标图不写；没有气泡图时拉伸设置不写。
+  project.parts.dark.commentBubble = { text: '#F2DEAE', ornament: 'star', ornamentImage: 'assets/logo.svg', imageTint: true };
+  const files = await io.exportFiles(project);
+  const parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.light.commentBubble, {
+    shape: 'rounded', radius: 0.2, fill: '#B98546', text: '#4A3423', image: 'assets/talk.png',
+    imageSlice: { left: 0.28, right: 0.22 }, imageText: { left: 0.1, right: 0.1, top: 0.14, bottom: 0.3 },
+    ornament: 'custom', ornamentImage: 'assets/cap.svg', ornamentCorner: 'topLeft', ornamentSize: 1.2
+  });
+  assert.deepEqual(parts.dark.commentBubble, { text: '#F2DEAE', ornament: 'star' });
+  assert.ok(files.has('assets/talk.png'));
+  // 不用声明新能力：旧版本应用照常导入，按形状画。
+  const manifest = JSON.parse(strFromU8(files.get('manifest.json')));
+  assert.ok(!manifest.requires.some((item) => item.includes('comment')));
+  const again = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(again.problems, []);
+  assert.equal(again.project.parts.light.commentBubble.image, 'assets/talk.png');
+  assert.equal(again.project.parts.light.commentBubble.imageText.top, 0.14);
+  assert.equal(again.project.parts.light.commentBubble.ornamentCorner, 'topLeft');
+});
+
 test('an empty comment-bubble override from the app does not count as a scheme override', async () => {
   const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
   const empty = { mode: '', bubbleStyle: '', color: '', textColor: '',

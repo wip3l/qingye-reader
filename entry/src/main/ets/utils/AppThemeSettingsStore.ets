@@ -17,7 +17,15 @@ import { ReaderSettings, ReaderSettingsStore } from './ReaderSettingsStore';
 import { ReaderThemeHelper, ReaderThemeItem } from './ReaderThemeHelper';
 import { CloudSyncChangeTracker } from '../account/CloudSyncChangeTracker';
 import { HexColor } from './HexColor';
-import { commentBubbleIsEmpty, normalizeCommentBubble } from '../theme/share/ThemePackageFormat';
+import {
+  COMMENT_IMAGE_NONE,
+  commentBubbleHasImage,
+  commentBubbleIsEmpty,
+  copyCommentImage,
+  isPackThemeId,
+  normalizeCommentBubble,
+  ThemePackageCommentBubble
+} from '../theme/share/ThemePackageFormat';
 
 export class AppThemeSettings {
   themeId: string = '';
@@ -495,8 +503,8 @@ export class AppThemeSettingsStore {
   static applyOverrides(theme: ThemePack, settings: AppThemeSettings): void {
     AppThemeSettingsStore.applyPaletteOverride(theme.light.colors, settings.customLightPalette);
     AppThemeSettingsStore.applyPaletteOverride(theme.dark.colors, settings.customDarkPalette);
-    AppThemeSettingsStore.applyEmphasisOverride(theme.light.regexEmphasis, settings.customLightEmphasis);
-    AppThemeSettingsStore.applyEmphasisOverride(theme.dark.regexEmphasis, settings.customDarkEmphasis);
+    AppThemeSettingsStore.applyEmphasisOverride(theme.light.regexEmphasis, settings.customLightEmphasis, false);
+    AppThemeSettingsStore.applyEmphasisOverride(theme.dark.regexEmphasis, settings.customDarkEmphasis, true);
     if (settings.customAppFontFamily) theme.typography.appFontFamily = settings.customAppFontFamily;
     const radius = settings.customRadius;
     if (radius.small >= 0) theme.radius.small = radius.small;
@@ -517,7 +525,8 @@ export class AppThemeSettingsStore {
     if (override.dangerColor) colors.dangerColor = override.dangerColor;
   }
 
-  private static applyEmphasisOverride(tokens: ThemeRegexEmphasisTokens, override: ThemeEmphasisOverrides): void {
+  private static applyEmphasisOverride(tokens: ThemeRegexEmphasisTokens, override: ThemeEmphasisOverrides,
+    darkMode: boolean): void {
     if (override.mode) tokens.emphasisMode = override.mode;
     if (override.bubbleStyle) tokens.bubbleStyle = override.bubbleStyle;
     if (override.color) tokens.emphasisColor = override.color;
@@ -533,8 +542,30 @@ export class AppThemeSettingsStore {
       if (comment.text) merged.text = comment.text;
       if (comment.ornament) merged.ornament = comment.ornament;
       if (comment.ornamentColor) merged.ornamentColor = comment.ornamentColor;
+      if (comment.ornamentCorner) merged.ornamentCorner = comment.ornamentCorner;
+      if (comment.ornamentSize >= 0) merged.ornamentSize = comment.ornamentSize;
+      if (comment.image === COMMENT_IMAGE_NONE) {
+        copyCommentImage(merged, new ThemePackageCommentBubble());
+      } else if (isPackThemeId(comment.image)) {
+        const packComment = AppThemeSettingsStore.packCommentBubble(comment.image, darkMode);
+        if (commentBubbleHasImage(packComment)) copyCommentImage(merged, packComment);
+        else copyCommentImage(merged, new ThemePackageCommentBubble());
+      }
+      if (isPackThemeId(comment.ornamentImage)) {
+        merged.ornamentImage = AppThemeSettingsStore.packCommentBubble(comment.ornamentImage, darkMode).ornamentImage;
+      }
       tokens.commentBubble = merged;
     }
+  }
+
+  /**
+   * 方案覆盖里 pack:<id> 指向的那个包这个模式的段评设置（素材已是本机 URI）。包不在这台设备上时
+   * findById 回到默认主题，取出来没有图片，段评按形状画。
+   */
+  private static packCommentBubble(packThemeId: string, darkMode: boolean): ThemePackageCommentBubble {
+    const pack = BuiltinThemeRegistry.findById(packThemeId);
+    if (pack.id !== packThemeId) return new ThemePackageCommentBubble();
+    return normalizeCommentBubble((darkMode ? pack.dark : pack.light).regexEmphasis.commentBubble);
   }
 
   static hasOverrides(settings: AppThemeSettings): boolean {

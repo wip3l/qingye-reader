@@ -3,7 +3,8 @@ import { buildFiles, formatSize, MAX_ASSETS, usedAssetPaths, verifyFiles } from 
 import { getPath, mp, project, type Mode } from './state.ts';
 import { assetFields, SECTIONS, sectionOfPath, type Field } from './sections.ts';
 import { contrast, isColor, luminance } from './colors.ts';
-import { frameLuminance } from './frameStretch.ts';
+import { frameAspect, frameLuminance } from './frameStretch.ts';
+import { commentImageSettingsOf, commentOverhangWarning } from './commentStretch.ts';
 import { BASE_EXCLUDED, effective, themeName, THEMES, ttsComplete } from './tokens.ts';
 
 export interface Issue {
@@ -138,6 +139,16 @@ export function editorIssues(): Issue[] {
         add('warn', 'bubbleDark.frame', `深色模式沿用浅色气泡边框，和深色阅读底色的对比度只有 ${ratio.toFixed(1)}，可能看不清。可以上传深色边框，或打开“染成气泡底色”`);
       }
     }
+  }
+  // 段评气泡图：不透明 JPG、文字区上下超出太多（可能压到上下行）。
+  for (const mode of MODES) {
+    const comment = p.parts[mode] && p.parts[mode].commentBubble;
+    const image = comment && comment.image;
+    if (!image) continue;
+    const imageAsset = p.assets.get(image);
+    if (imageAsset && imageAsset.ext === 'jpg') add('warn', `${mode}.commentBubble.image`, `${LABEL[mode]}段评气泡图是不透明的 JPG，正文里会露出方形底色`);
+    const reach = commentOverhangWarning(commentImageSettingsOf(comment, frameAspect(image)).text);
+    if (reach) add('warn', `${mode}.commentBubble.image`, `${LABEL[mode]}段评气泡图：${reach}`);
   }
   const bookCovers = ((p.parts.book && p.parts.book.covers) || []).length;
   const bookCoversDark = ((p.parts.book && p.parts.book.coversDark) || []).length;

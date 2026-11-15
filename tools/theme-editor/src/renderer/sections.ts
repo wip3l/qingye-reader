@@ -36,6 +36,8 @@ export interface Field {
   icon?: boolean;
   /** 气泡边框：上传后弹出拉伸区域对话框，格子里多一个“拉伸区域…”按钮和设置概要。 */
   frameStretch?: boolean;
+  /** 段评气泡图：上传后弹出文字区与拉伸线对话框，格子里多一个“文字区与拉伸线…”按钮和设置概要。 */
+  commentStretch?: boolean;
   when?: (mode: Mode) => boolean;
 }
 
@@ -157,6 +159,9 @@ export const SECTIONS: Section[] = [
         spec: '空着时深色沿用浅色那张（连同拉伸设置）',
         hint: '单色边框打开“染成气泡底色”就会跟着两种模式的底色变，可以不画第二张。只给了深色时两种模式都用它。旧版本应用只认浅色那套' },
       { g: '段评气泡' },
+      { k: '{m}.commentBubble.image', label: '气泡图', type: 'asset', kinds: ['vector', 'image'], commentStretch: true,
+        spec: '整只气泡（含尾巴）的透明底横图，位图高 96–160 px 为宜；上传后调文字区和拉伸线',
+        hint: '写了气泡图时形状、圆角、描边不生效，底色只在染色时用；下面的形状和颜色留给旧版本应用回退。深色空着时沿用浅色那张' },
       { k: '{m}.commentBubble.shape', label: '形状', type: 'select',
         options: [['', '跟随气泡样式'], ...COMMENT_BUBBLE_SHAPES.map((id, i) => [id, COMMENT_BUBBLE_SHAPE_NAMES[i]] as [string, string])],
         hint: '段评与本章说的气泡。描边是透明底、颜色跟正文墨色；书源设置了段评颜色时以书源为准。旧版本应用忽略这一组' },
@@ -167,8 +172,17 @@ export const SECTIONS: Section[] = [
       { k: '{m}.commentBubble.text', label: '文字色', type: 'color', alpha: true, vs: '{m}.commentBubble.fill' },
       { k: '{m}.commentBubble.ornament', label: '角标', type: 'select',
         options: [['', '跟随气泡样式'], ...COMMENT_BUBBLE_ORNAMENTS.map((id, i) => [id, COMMENT_BUBBLE_ORNAMENT_NAMES[i]] as [string, string])],
-        hint: '应用内置的小图形；预览里用近似的符号示意' },
+        hint: '应用内置的小图形（预览里用近似的符号示意），或选“自定义图片”传一张。旧版本应用把“自定义图片”当成跟随' },
+      { k: '{m}.commentBubble.ornamentImage', label: '角标图', type: 'asset', kinds: ['vector', 'image'], square: true,
+        spec: '正方形透明底小图，显示约为气泡高的 0.62 倍；深色空着时沿用浅色那张',
+        when: (m) => mode(m, 'commentBubble.ornament') === 'custom' },
+      { k: '{m}.commentBubble.ornamentCorner', label: '角标位置', type: 'select',
+        options: [['', '右上'], ['topLeft', '左上'], ['bottomRight', '右下']],
+        when: (m) => mode(m, 'commentBubble.ornament') === 'custom' },
+      { k: '{m}.commentBubble.ornamentSize', label: '角标大小', type: 'range', min: 0.5, max: 1.5, step: 0.05, fallback: 1,
+        resetLabel: '默认', when: (m) => mode(m, 'commentBubble.ornament') === 'custom' },
       { k: '{m}.commentBubble.ornamentColor', label: '角标颜色', type: 'color', alpha: true,
+        hint: '自定义图片：写了颜色时整张染成这个颜色，不写按原色',
         when: (m) => !!mode(m, 'commentBubble.ornament') && mode(m, 'commentBubble.ornament') !== 'none' }
     ]
   },

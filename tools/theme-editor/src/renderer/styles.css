@@ -379,3 +379,14 @@ img.ico { background: none; -webkit-mask: none; mask: none; object-fit: contain;
 .detail .apply { background: var(--p-button); color: #fff; border-radius: var(--p-r-button); padding: 9px; text-align: center; font-size: 13px; margin-top: 4px; }
 .detail .chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .detail .chips i { font-style: normal; background: var(--p-input); border-radius: 10px; padding: 1px 9px; }
+
+/* 段评气泡图：外层留出左右超出的位置并把整张图竖直居中，图用 border-image 只拉伸两条线之间（同应用）。 */
+.cmt-img { position: relative; display: inline-block; vertical-align: middle; line-height: 1; text-indent: 0; }
+.cmt-skin { position: absolute; box-sizing: border-box; border-style: solid; border-color: transparent; pointer-events: none; }
+.cmt-text { position: relative; display: inline-flex; align-items: center; justify-content: center; font-family: var(--f-ui); font-weight: 500; white-space: nowrap; }
+.cmt-orn-img { position: absolute; pointer-events: none; object-fit: contain; }
+.cmt .cmt-orn-img { position: absolute; }
+.cs-text { position: absolute; border: 2px solid #F0A04B; background: rgba(240, 160, 75, .12); border-radius: 2px; pointer-events: none; z-index: 1; }
+.cs-h { position: absolute; z-index: 3; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: #F0A04B; border: 2px solid #fff; cursor: move; touch-action: none; }
+.cs-sample { margin: 0; border-radius: 6px; padding: 10px 12px; font-family: var(--f-display); font-size: 15px; line-height: 2.2; }
+.cs-sample.small { font-size: 12px; line-height: 2.4; }

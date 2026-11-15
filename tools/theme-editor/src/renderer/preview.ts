@@ -4,8 +4,9 @@ import { assetFontFamily, assetUrl, h, project, S, type Mode } from './state.ts'
 import { baseTheme, bubbleLabel, effective, GENERIC_BUBBLES, type Effective } from './tokens.ts';
 import { cssColor, luminance, withAlpha } from './colors.ts';
 import { NAV_TABS, EXTRA_NAV_TABS } from './sections.ts';
-import { frameAspect, frameSettingsOf, frameSpanStyle } from './frameStretch.ts';
-import { bookShelfFrameFor } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
+import { frameAspect, frameSettingsOf, frameSpanStyle, tintedUrl } from './frameStretch.ts';
+import { commentImageSettingsOf, imageBubble } from './commentStretch.ts';
+import { bookShelfFrameFor, commentBubbleHasImage } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 
 export const PHONE_W = 360;
 export const PHONE_H = 780;
@@ -343,7 +344,7 @@ const COMMENT_ORNAMENT_GLYPH: Record<string, string> = {
  * 段评气泡的近似样子：包里写了的颜色、形状、角标照写；没写时包内气泡按强调底色推导（同应用），
  * 内置气泡样式的配色表不在编辑器里，用中性灰示意，应用内按样式显示。
  */
-function commentBubble(count: string, e: Effective): HTMLElement {
+function commentBubble(count: string, e: Effective, fontSize = 19): HTMLElement {
   const t = e.comment;
   const dark = e.mode === 'dark';
   const paper = e.reader.backgroundColor;
@@ -378,12 +379,28 @@ function commentBubble(count: string, e: Effective): HTMLElement {
     if (t.text) text = t.text;
   }
   if (t.shape || t.fill || t.stroke || t.text || t.ornament) title = '段评气泡（包里的设置）';
+  const customOrnament = t.ornament === 'custom' && t.ornamentImage ?
+    { ref: t.ornamentImage, corner: t.ornamentCorner, size: t.ornamentSize, tint: t.ornamentColor } : null;
+  if (commentBubbleHasImage(t)) {
+    // 同应用：段评字号比正文小 5，气泡大小默认 80%。
+    const bubbleFont = Math.max(10, fontSize - 5) * 0.8;
+    const imageFill = t.fill || (e.e.bubble === 'capsule' ? e.e.color : fill);
+    return imageBubble(t.image, commentImageSettingsOf(t, frameAspect(t.image)), count, bubbleFont, text, imageFill, true,
+      customOrnament);
+  }
   const span = h('span', {
     class: `cmt${t.shape === 'cut' ? ' cut' : ''}`, 'data-sec': 'emphasis', title,
     style: `background:${cssColor(fill)};border-color:${cssColor(stroke)};color:${cssColor(text)};border-radius:${radius}`
   }, count);
   const glyph = t.ornament && t.ornament !== 'none' ? COMMENT_ORNAMENT_GLYPH[t.ornament] : '';
   if (glyph) span.append(h('i', { class: 'cmt-orn', style: `color:${cssColor(t.ornamentColor || stroke)}` }, glyph));
+  if (customOrnament && assetUrl(customOrnament.ref)) {
+    span.append(h('img', { class: 'cmt-orn-img', alt: '',
+      src: customOrnament.tint ? tintedUrl(assetUrl(customOrnament.ref), customOrnament.tint) : assetUrl(customOrnament.ref),
+      style: `width:${0.62 * (customOrnament.size > 0 ? customOrnament.size : 1) * 1.32}em;height:auto;` +
+        `${customOrnament.corner === 'topLeft' ? 'left:-.3em' : 'right:-.3em'};` +
+        `${customOrnament.corner === 'bottomRight' ? 'bottom:-.3em' : 'top:-.45em'}` }));
+  }
   return span;
 }
 
@@ -418,11 +435,11 @@ function readerBody(e: Effective): HTMLElement {
   const margin = typeof layout.marginLeft === 'number' ? Math.max(8, Math.min(48, layout.marginLeft)) : 20;
   const content = h('div', { class: 'content', style: `font-size:${fontSize}px;padding:6px ${margin}px` }, h('h2', {}, '第十七章 灯下'));
   const p1 = h('p', {}, '船过石桥时，舱里的灯忽然暗了一下。老周把书合上，抬头看了看窗外的水色，');
-  p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e, fontSize), commentBubble('23', e));
+  p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e, fontSize), commentBubble('23', e, fontSize));
   const p2 = h('p', {}, '阿遥没有应声，只把那页折了个角。她记得母亲说过，');
   p2.append(emphasis('“夜里读书，读到哪儿就算到哪儿。”', e, fontSize), '水声一阵紧过一阵，像是有人在船底翻书。');
   const p3 = h('p', {}, '岸上的灯笼一盏一盏亮起来，映在河面上，碎成许多小小的金色鳞片。她伸手去碰，只碰到了凉。',
-    commentBubble('6', e));
+    commentBubble('6', e, fontSize));
   const p4 = h('p', {}, '老周又把书翻开，从折角的那一页读起。');
   content.append(p1, p2, p3, p4);
   s.append(content);

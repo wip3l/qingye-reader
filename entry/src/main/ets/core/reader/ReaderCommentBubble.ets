@@ -4,9 +4,16 @@ import graphicsText from '@ohos.graphics.text';
 import image from '@ohos.multimedia.image';
 import { ReaderV2Color } from './ReaderV2Style';
 import { ReaderCommentBubbleSize } from './ReaderCommentBubbleSize';
+import { ReaderRasterAssets } from './ReaderRasterAssets';
+import { ImageFileSize } from '../../utils/ImageFileSize';
 import {
   COMMENT_BUBBLE_DEFAULT_RADIUS,
+  CommentImageBreak,
+  CommentImageRepeat,
+  commentBubbleHasImage,
   commentBubbleIsEmpty,
+  commentImageSliceOrDefault,
+  commentImageTextOrDefault,
   isPackThemeId,
   normalizeCommentBubble,
   ThemePackageCommentBubble
@@ -29,10 +36,37 @@ export class ReaderCommentBubbleStyle {
   ornament: string = '';
   ornamentColor: number = 0;
   ornamentAltColor: number = 0;
+  /** Theme bubble image (local URI); empty draws the shape above. */
+  image: string = '';
+  /** Image width / height. */
+  imageAspect: number = 3;
+  /** Horizontal stretch lines as fractions of the image width. */
+  sliceLeft: number = 0;
+  sliceRight: number = 0;
+  /** Text box insets as fractions of the image width (left / right) and height (top / bottom). */
+  textLeft: number = 0;
+  textRight: number = 0;
+  textTop: number = 0;
+  textBottom: number = 0;
+  imageRound: boolean = false;
+  /** A wrapped bubble's earlier pieces stop at the text box bottom, so only the last piece shows the tail. */
+  imageCut: boolean = true;
+  imageTint: boolean = false;
+  /** ornament === 'custom': the theme's own ornament image, at ornamentCorner, scaled by ornamentSize. */
+  ornamentImage: string = '';
+  ornamentCorner: string = '';
+  ornamentSize: number = 1;
+  ornamentTint: boolean = false;
 
   identity(): string {
-    return `${this.styleId}_${this.cut ? 1 : 0}_${this.radiusRatio}_${Math.round(this.radiusPx * 100) / 100}_` +
+    const base = `${this.styleId}_${this.cut ? 1 : 0}_${this.radiusRatio}_${Math.round(this.radiusPx * 100) / 100}_` +
       `${this.fill}_${this.stroke}_${this.text}_${this.ornament}_${this.ornamentColor}_${this.ornamentAltColor}`;
+    const image = this.image ? `_${this.image}_${this.imageAspect}_${this.sliceLeft}_${this.sliceRight}_` +
+      `${this.textLeft}_${this.textRight}_${this.textTop}_${this.textBottom}_${this.imageRound ? 1 : 0}` +
+      `${this.imageCut ? 1 : 0}${this.imageTint ? 1 : 0}` : '';
+    const ornament = this.ornamentImage ?
+      `_${this.ornamentImage}_${this.ornamentCorner}_${this.ornamentSize}_${this.ornamentTint ? 1 : 0}` : '';
+    return base + image + ornament;
   }
 }
 
@@ -203,6 +237,35 @@ export class ReaderCommentBubbleStyles {
         style.ornamentAltColor = style.ornamentColor;
       }
     }
+    if (commentBubbleHasImage(theme)) {
+      style.styleId = 'image';
+      style.image = theme.image;
+      const aspect = ImageFileSize.aspect(theme.image);
+      style.imageAspect = aspect > 0 ? aspect : 3;
+      const slice = commentImageSliceOrDefault(theme, style.imageAspect);
+      const box = commentImageTextOrDefault(theme, style.imageAspect);
+      style.sliceLeft = slice.left;
+      style.sliceRight = slice.right;
+      style.textLeft = box.left;
+      style.textRight = box.right;
+      style.textTop = box.top;
+      style.textBottom = box.bottom;
+      style.imageRound = theme.imageRepeat === CommentImageRepeat.ROUND;
+      style.imageCut = theme.imageBreak !== CommentImageBreak.FULL;
+      style.imageTint = theme.imageTint;
+      // An outline-derived style has no fill of its own; tint from the emphasis colour instead.
+      if (style.imageTint && ((style.fill >>> 24) & 0xFF) === 0) style.fill = ReaderV2Color.parse(emphasisFill, 0xFF8A9099);
+    }
+    if (style.ornament === 'custom') {
+      if (theme.ornamentImage) {
+        style.ornamentImage = theme.ornamentImage;
+        style.ornamentCorner = theme.ornamentCorner;
+        style.ornamentSize = theme.ornamentSize > 0 ? theme.ornamentSize : 1;
+        style.ornamentTint = !!theme.ornamentColor;
+      } else {
+        style.ornament = '';
+      }
+    }
     return style;
   }
 }
@@ -226,9 +289,26 @@ export class ReaderCommentBubblePainter {
     return fontSizePx * 1.32;
   }
 
-  /** Distance from the bubble body's bottom to the tail tip, shared by painting and alignment. */
+  /**
+   * Distance from the bubble body's bottom to the tail tip, shared by painting and alignment. For an image bubble it
+   * is how much more the image reaches below the text box than above it (negative when it reaches further up), so
+   * centring body + this value centres the whole image on the line.
+   */
   static tailHeightFor(bodyHeight: number, style: ReaderCommentBubbleStyle): number {
+    if (style.image) {
+      const insets = ReaderCommentBubblePainter.imageInsets(bodyHeight, style);
+      return insets[3] - insets[1];
+    }
     return bodyHeight * (style.ornament === 'folio' ? 0.26 : (style.styleId === 'capsule' ? 0.13 : 0.3));
+  }
+
+  /** How far an image bubble reaches beyond its text box, in px: [left, top, right, bottom]. Zero for shapes. */
+  static imageInsets(bodyHeight: number, style: ReaderCommentBubbleStyle): number[] {
+    if (!style.image) return [0, 0, 0, 0];
+    const fullHeight = bodyHeight / Math.max(0.02, 1 - style.textTop - style.textBottom);
+    const fullWidth = fullHeight * Math.max(0.05, style.imageAspect);
+    return [style.textLeft * fullWidth, style.textTop * fullHeight, style.textRight * fullWidth,
+      style.textBottom * fullHeight];
   }
 
   /** Room ornaments and the tail may use outside the bubble rect, as a fraction of its height. */
@@ -240,6 +320,19 @@ export class ReaderCommentBubblePainter {
     const w = right - left;
     const h = bottom - top;
     if (w <= 0 || h <= 0) return;
+    if (style.image && ReaderCommentBubblePainter.paintImage(canvas, left, top, right, bottom, style, tail)) {
+      if (style.ornament === 'custom') {
+        const insets = ReaderCommentBubblePainter.imageInsets(h, style);
+        ReaderCommentBubblePainter.paintOrnamentImage(canvas, left - insets[0], top - insets[1], right + insets[2],
+          bottom, h, style);
+      } else if (style.ornament) {
+        const plain = new drawing.Path();
+        plain.addRoundRect(new drawing.RoundRect({ left: left, top: top, right: right, bottom: bottom }, h * 0.3,
+          h * 0.3));
+        ReaderCommentBubblePainter.paintOrnament(canvas, left, top, right, bottom, plain, style);
+      }
+      return;
+    }
     const body = ReaderCommentBubblePainter.bodyPath(left, top, right, bottom, style, tail);
 
     ReaderCommentBubblePainter.fillPath(canvas, body, style.fill);
@@ -251,11 +344,122 @@ export class ReaderCommentBubblePainter {
       canvas.drawPath(body);
       canvas.detachPen();
     }
-    ReaderCommentBubblePainter.paintOrnament(canvas, left, top, right, bottom, body, style);
+    if (style.ornament === 'custom') {
+      ReaderCommentBubblePainter.paintOrnamentImage(canvas, left, top, right, bottom, h, style);
+    } else {
+      ReaderCommentBubblePainter.paintOrnament(canvas, left, top, right, bottom, body, style);
+    }
+  }
+
+  /**
+   * The theme's bubble image around the text box (left..right × top..bottom): scaled so the text box height matches,
+   * the ends keep their proportions and the middle stretches or tiles. A piece of a wrapped bubble without the tail
+   * stops at the text box bottom when imageCut. False when the image cannot be decoded, so the shape is drawn.
+   */
+  private static paintImage(canvas: drawing.Canvas, left: number, top: number, right: number, bottom: number,
+    style: ReaderCommentBubbleStyle, tail: boolean): boolean {
+    const h = bottom - top;
+    const insets = ReaderCommentBubblePainter.imageInsets(h, style);
+    const fullHeight = h + insets[1] + insets[3];
+    const fullWidth = fullHeight * Math.max(0.05, style.imageAspect);
+    const bitmap = ReaderRasterAssets.fileImage(style.image, fullWidth, fullHeight);
+    if (!bitmap) return false;
+    const sourceWidth = Math.max(1, Math.round(fullWidth));
+    const sourceHeight = Math.max(1, Math.round(fullHeight));
+    const dstLeft = left - insets[0];
+    const dstRight = right + insets[2];
+    const dstTop = top - insets[1];
+    const dstBottom = dstTop + fullHeight;
+    const width = dstRight - dstLeft;
+    if (width <= 0.5) return true;
+    let leadWidth = style.sliceLeft * fullWidth;
+    let trailWidth = style.sliceRight * fullWidth;
+    if (leadWidth + trailWidth > width) {
+      const shrink = width / (leadWidth + trailWidth);
+      leadWidth *= shrink;
+      trailWidth *= shrink;
+    }
+    const leadSource = style.sliceLeft * sourceWidth;
+    const trailSource = style.sliceRight * sourceWidth;
+    const middleSource = Math.max(0, sourceWidth - leadSource - trailSource);
+    const clip = !tail && style.imageCut;
+    if (clip) {
+      canvas.save();
+      canvas.clipRect({ left: dstLeft - 1, top: dstTop - 1, right: dstRight + 1, bottom: bottom });
+    }
+    const sampling = new drawing.SamplingOptions(drawing.FilterMode.FILTER_MODE_LINEAR);
+    const brush = new drawing.Brush();
+    brush.setAntiAlias(true);
+    if (style.imageTint) {
+      brush.setColorFilter(drawing.ColorFilter.createBlendModeColorFilter(
+        ReaderCommentBubblePainter.color(style.fill), drawing.BlendMode.SRC_IN));
+    }
+    canvas.attachBrush(brush);
+    const piece = (srcLeft: number, srcRight: number, pieceLeft: number, pieceRight: number): void => {
+      if (srcRight - srcLeft <= 0.01 || pieceRight - pieceLeft <= 0.01) return;
+      canvas.drawImageRectWithSrc(bitmap, { left: srcLeft, top: 0, right: srcRight, bottom: sourceHeight },
+        { left: pieceLeft, top: dstTop, right: pieceRight, bottom: dstBottom }, sampling,
+        drawing.SrcRectConstraint.STRICT);
+    };
+    // Half a pixel of overlap hides the seams between pieces.
+    if (leadWidth > 0) piece(0, leadSource, dstLeft, dstLeft + leadWidth + 0.5);
+    if (trailWidth > 0) piece(sourceWidth - trailSource, sourceWidth, dstRight - trailWidth - 0.5, dstRight);
+    const middleLeft = dstLeft + leadWidth;
+    const middleWidth = width - leadWidth - trailWidth;
+    if (middleWidth > 0.5 && middleSource > 0.01) {
+      if (!style.imageRound) {
+        piece(leadSource, leadSource + middleSource, middleLeft, middleLeft + middleWidth);
+      } else {
+        const tileWidth = middleSource * fullWidth / sourceWidth;
+        const count = Math.max(1, Math.round(middleWidth / Math.max(1, tileWidth)));
+        const step = middleWidth / count;
+        for (let index = 0; index < count; index++) {
+          const tileLeft = middleLeft + index * step;
+          piece(leadSource, leadSource + middleSource, tileLeft,
+            index === count - 1 ? middleLeft + middleWidth : tileLeft + step + 0.5);
+        }
+      }
+    }
+    canvas.detachBrush();
+    if (clip) canvas.restore();
+    return true;
+  }
+
+  /** Size of a custom ornament image in px: 0.62 × the bubble height at 100%. */
+  static ornamentImageSize(bodyHeight: number, style: ReaderCommentBubbleStyle): number {
+    return bodyHeight * 0.62 * (style.ornamentSize > 0 ? style.ornamentSize : 1);
+  }
+
+  /** The theme's ornament image centred near a corner of the given rect; SVG / bitmap tinted when a colour is set. */
+  private static paintOrnamentImage(canvas: drawing.Canvas, left: number, top: number, right: number,
+    bottom: number, bodyHeight: number, style: ReaderCommentBubbleStyle): void {
+    if (!style.ornamentImage) return;
+    const size = ReaderCommentBubblePainter.ornamentImageSize(bodyHeight, style);
+    const aspect = ImageFileSize.aspect(style.ornamentImage);
+    const width = aspect > 1 ? size : size * (aspect > 0 ? aspect : 1);
+    const height = aspect > 1 ? size / aspect : size;
+    const bitmap = ReaderRasterAssets.fileImage(style.ornamentImage, width, height);
+    if (!bitmap) return;
+    const inset = size * 0.12;
+    const cx = style.ornamentCorner === 'topLeft' ? left + inset : right - inset;
+    const cy = style.ornamentCorner === 'bottomRight' ? bottom - inset : top + inset;
+    const brush = new drawing.Brush();
+    brush.setAntiAlias(true);
+    if (style.ornamentTint) {
+      brush.setColorFilter(drawing.ColorFilter.createBlendModeColorFilter(
+        ReaderCommentBubblePainter.color(style.ornamentColor), drawing.BlendMode.SRC_IN));
+    }
+    canvas.attachBrush(brush);
+    canvas.drawImageRectWithSrc(bitmap,
+      { left: 0, top: 0, right: Math.max(1, Math.round(width)), bottom: Math.max(1, Math.round(height)) },
+      { left: cx - width / 2, top: cy - height / 2, right: cx + width / 2, bottom: cy + height / 2 },
+      new drawing.SamplingOptions(drawing.FilterMode.FILTER_MODE_LINEAR), drawing.SrcRectConstraint.STRICT);
+    canvas.detachBrush();
   }
 
   /** Renders the bubble and its label into a transparent bitmap with room for the ornament and tail. */
-  static renderLabel(style: ReaderCommentBubbleStyle, label: string, fontSizePx: number): ReaderCommentBubbleImage | null {
+  static renderLabel(style: ReaderCommentBubbleStyle, label: string, fontSizePx: number,
+    tail: boolean = true): ReaderCommentBubbleImage | null {
     try {
       const textStyle: graphicsText.TextStyle = {
         fontSize: ReaderCommentBubbleSize.labelFontSize(label, fontSizePx),
@@ -277,6 +481,28 @@ export class ReaderCommentBubblePainter {
       const w = ReaderCommentBubbleSize.isCount(label) ? ReaderCommentBubbleSize.countWidth(fontSizePx, style.styleId) :
         Math.max(h, textWidth + padX * 2);
       const margin = Math.ceil(h * ReaderCommentBubblePainter.OVERHANG_RATIO);
+      if (style.image) {
+        // The image's own reach plus room for a corner ornament; top and bottom grow by the same amount so the
+        // bitmap's centre is the image's centre, as the reader aligns it.
+        const insets = ReaderCommentBubblePainter.imageInsets(h, style);
+        const extra = Math.ceil(style.ornament ? Math.max(margin, ReaderCommentBubblePainter.ornamentImageSize(h, style) * 0.5) :
+          2);
+        const padLeft = Math.ceil(insets[0] + extra);
+        const padTop = Math.ceil(insets[1] + extra);
+        const imageWidth = Math.ceil(w + padLeft + insets[2] + extra);
+        const imageHeight = Math.ceil(h + padTop + insets[3] + extra);
+        const imageOptions: image.InitializationOptions = {
+          size: { width: imageWidth, height: imageHeight },
+          pixelFormat: image.PixelMapFormat.RGBA_8888,
+          alphaType: image.AlphaType.PREMUL,
+          editable: true
+        };
+        const imageMap = image.createPixelMapSync(new ArrayBuffer(imageWidth * imageHeight * 4), imageOptions);
+        const imageCanvas = new drawing.Canvas(imageMap);
+        ReaderCommentBubblePainter.paint(imageCanvas, padLeft, padTop, padLeft + w, padTop + h, style, tail);
+        paragraph.paint(imageCanvas, padLeft + (w - textWidth) / 2, padTop + (h - textHeight) / 2);
+        return new ReaderCommentBubbleImage(imageMap, imageWidth, imageHeight);
+      }
       const width = Math.ceil(w + margin * 2);
       // ImageSpan centres the whole bitmap: include the tail below the body so previews match the reader.
       const height = Math.ceil(h + ReaderCommentBubblePainter.tailHeightFor(h, style) + margin * 2);
@@ -288,7 +514,7 @@ export class ReaderCommentBubblePainter {
       };
       const pixelMap = image.createPixelMapSync(new ArrayBuffer(width * height * 4), options);
       const canvas = new drawing.Canvas(pixelMap);
-      ReaderCommentBubblePainter.paint(canvas, margin, margin, margin + w, margin + h, style, true);
+      ReaderCommentBubblePainter.paint(canvas, margin, margin, margin + w, margin + h, style, tail);
       paragraph.paint(canvas, margin + (w - textWidth) / 2, margin + (h - textHeight) / 2);
       return new ReaderCommentBubbleImage(pixelMap, width, height);
     } catch (error) {
@@ -368,6 +594,7 @@ export class ReaderCommentBubblePainter {
 
   private static paintOrnament(canvas: drawing.Canvas, left: number, top: number, right: number, bottom: number,
     body: drawing.Path, style: ReaderCommentBubbleStyle): void {
+    if (!style.ornament || style.ornament === 'custom') return;
     const h = bottom - top;
     const main = style.ornamentColor;
     const alt = style.ornamentAltColor;

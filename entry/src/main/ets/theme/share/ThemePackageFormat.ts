@@ -206,9 +206,31 @@ export class ThemePackageCommentBubble {
   fill: string = '';
   stroke: string = '';
   text: string = '';
-  /** COMMENT_BUBBLE_ORNAMENTS 之一（'none' 表示不画）；空串跟随强调气泡样式。 */
+  /** COMMENT_BUBBLE_ORNAMENTS 之一（'none' 表示不画，'custom' 用 ornamentImage）；空串跟随强调气泡样式。 */
   ornament: string = '';
   ornamentColor: string = '';
+  /**
+   * 气泡图：整只气泡（含尾巴）的一张透明底图片。包里是素材引用；运行时是本机 URI。'none' 表示这个模式不用图片
+   * （另一模式的图不沿用过来）。方案覆盖里只会是 'none' 或 pack:<packageId>（取那个包同一模式的气泡图与拉伸设置）。
+   * 写了图片时形状、圆角、描边不再生效，底色只在 imageTint 时用来染色。旧版本应用不认，照旧画形状。
+   */
+  image: string = '';
+  /** 左右拉伸线（占图宽的比例 0–0.49）；只用 left / right，图片按比例缩放，竖直方向不拉伸。null 用默认位置。 */
+  imageSlice: ThemePackageBubbleSlice | null = null;
+  /** 文字区离四边的比例；文字区的高度对齐气泡高（字号 × 1.32）。null 用默认位置。 */
+  imageText: ThemePackageBubbleSlice | null = null;
+  /** 中间部分：空串拉伸，'round' 平铺。 */
+  imageRepeat: string = '';
+  /** 气泡折到两行时前一段：空串裁到文字区底边（不画尾巴），'full' 画整图。 */
+  imageBreak: string = '';
+  /** 整张图染成底色（fill，没写时用推导出的底色）。 */
+  imageTint: boolean = false;
+  /** ornament 为 'custom' 时的角标图；方案覆盖里同样写 pack:<packageId>。 */
+  ornamentImage: string = '';
+  /** 'topLeft' / 'bottomRight'；空串是右上。 */
+  ornamentCorner: string = '';
+  /** 角标大小倍数 0.5–1.5；负数为 1。 */
+  ornamentSize: number = -1;
 }
 
 /** outline 是默认的透明描边（颜色跟正文墨色），其余三种是实心气泡。 */
@@ -219,12 +241,72 @@ export const COMMENT_BUBBLE_RADIUS_MAX: number = 0.5;
 /** 阅读页内置的小图形，与 ReaderCommentBubblePainter 画得出的一致。 */
 export const COMMENT_BUBBLE_ORNAMENTS: string[] = [
   'none', 'star', 'sparkle', 'dot', 'moon', 'leaf', 'sprig', 'rose', 'paw', 'seal', 'diamond', 'pendant', 'scroll',
-  'cord', 'signal', 'frame', 'sketch', 'postcard', 'folio'
+  'cord', 'signal', 'frame', 'sketch', 'postcard', 'folio', 'custom'
 ];
 export const COMMENT_BUBBLE_ORNAMENT_NAMES: string[] = [
   '无', '星', '小星', '圆点', '月', '叶', '枝', '花', '爪印', '印章', '菱形', '坠饰', '卷轴',
-  '绳结', '信号', '内框', '描影', '信封', '书签'
+  '绳结', '信号', '内框', '描影', '信封', '书签', '自定义图片'
 ];
+/** 自定义角标图的位置；空串（右上）不写进包。 */
+export const COMMENT_ORNAMENT_CORNERS: string[] = ['topLeft', 'topRight', 'bottomRight'];
+export const COMMENT_ORNAMENT_CORNER_NAMES: string[] = ['左上', '右上', '右下'];
+export const COMMENT_ORNAMENT_SIZE_MIN: number = 0.5;
+export const COMMENT_ORNAMENT_SIZE_MAX: number = 1.5;
+/** 气泡图在文字区上方、下方最多超出气泡高的比例；超过时编辑器提示可能压到上下行。 */
+export const COMMENT_IMAGE_OVERHANG_TOP: number = 0.38;
+export const COMMENT_IMAGE_OVERHANG_BOTTOM: number = 0.6;
+export const COMMENT_IMAGE_NONE: string = 'none';
+export class CommentImageRepeat {
+  static readonly ROUND: string = 'round';
+}
+export class CommentImageBreak {
+  static readonly FULL: string = 'full';
+}
+
+/** 这份段评设置用的是气泡图（不是 'none'、也不是空串）。 */
+export function commentBubbleHasImage(source: ThemePackageCommentBubble | null | undefined): boolean {
+  return !!source && typeof source.image === 'string' && !!source.image && source.image !== COMMENT_IMAGE_NONE;
+}
+
+/** 默认拉伸线：左右各“图高 × 0.6”，最多各占图宽的 30%（和强调气泡边框一样）。aspect 是图宽 / 图高。 */
+export function defaultCommentImageSlice(aspect: number): ThemePackageBubbleSlice {
+  const slice = new ThemePackageBubbleSlice();
+  const ratio = aspect > 0 && isFinite(aspect) ? aspect : 3;
+  const end = Math.round(Math.min(0.6 / ratio, 0.3) * 100) / 100;
+  slice.left = end;
+  slice.right = end;
+  return slice;
+}
+
+/** 默认文字区：左右各“图高 × 0.35”最多 25%，上 12%、下 20%（尾巴一般画在下方）。 */
+export function defaultCommentImageText(aspect: number): ThemePackageBubbleSlice {
+  const box = new ThemePackageBubbleSlice();
+  const ratio = aspect > 0 && isFinite(aspect) ? aspect : 3;
+  const end = Math.round(Math.min(0.35 / ratio, 0.25) * 100) / 100;
+  box.left = end;
+  box.right = end;
+  box.top = 0.12;
+  box.bottom = 0.2;
+  return box;
+}
+
+export function commentImageSliceOrDefault(source: ThemePackageCommentBubble, aspect: number): ThemePackageBubbleSlice {
+  const slice = normalizeBubbleFrameSlice(source.imageSlice);
+  if (!slice) return defaultCommentImageSlice(aspect);
+  slice.top = 0;
+  slice.bottom = 0;
+  return slice;
+}
+
+export function commentImageTextOrDefault(source: ThemePackageCommentBubble, aspect: number): ThemePackageBubbleSlice {
+  return normalizeBubbleFrameSlice(source.imageText) || defaultCommentImageText(aspect);
+}
+
+/** 文字区上方、下方超出气泡高的比例 [上, 下]；编辑器用它提示可能压到上下行。 */
+export function commentImageOverhang(text: ThemePackageBubbleSlice): number[] {
+  const body = Math.max(0.02, 1 - text.top - text.bottom);
+  return [text.top / body, text.bottom / body];
+}
 
 const COMMENT_BUBBLE_COLOR: RegExp = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
@@ -247,13 +329,65 @@ export function normalizeCommentBubble(source: ThemePackageCommentBubble | null 
   const ornament = text(source.ornament);
   result.ornament = COMMENT_BUBBLE_ORNAMENTS.includes(ornament) ? ornament : '';
   result.ornamentColor = color(source.ornamentColor);
+  // 素材引用、本机 URI、'none' 或 pack:<id>，都原样保留；读包时已经校验过引用。
+  result.image = limitChars(text(source.image), 2000);
+  if (result.image && result.image !== COMMENT_IMAGE_NONE) {
+    result.imageSlice = normalizeBubbleFrameSlice(source.imageSlice);
+    if (result.imageSlice) {
+      result.imageSlice.top = 0;
+      result.imageSlice.bottom = 0;
+    }
+    result.imageText = normalizeBubbleFrameSlice(source.imageText);
+    result.imageRepeat = source.imageRepeat === CommentImageRepeat.ROUND ? CommentImageRepeat.ROUND : '';
+    result.imageBreak = source.imageBreak === CommentImageBreak.FULL ? CommentImageBreak.FULL : '';
+    result.imageTint = source.imageTint === true;
+  }
+  result.ornamentImage = limitChars(text(source.ornamentImage), 2000);
+  const corner = text(source.ornamentCorner);
+  result.ornamentCorner = corner === 'topLeft' || corner === 'bottomRight' ? corner : '';
+  const size = typeof source.ornamentSize === 'number' && isFinite(source.ornamentSize) ? source.ornamentSize : -1;
+  result.ornamentSize = size < 0 ? -1 : Math.round(Math.max(COMMENT_ORNAMENT_SIZE_MIN,
+    Math.min(COMMENT_ORNAMENT_SIZE_MAX, size)) * 20) / 20;
   return result;
 }
 
 export function commentBubbleIsEmpty(source: ThemePackageCommentBubble | null | undefined): boolean {
   const value = normalizeCommentBubble(source);
   return !value.shape && value.radius < 0 && !value.fill && !value.stroke && !value.text && !value.ornament &&
-    !value.ornamentColor;
+    !value.ornamentColor && !value.image && !value.ornamentImage && !value.ornamentCorner && value.ornamentSize < 0;
+}
+
+/** 气泡图与它的拉伸设置（image 起的六项）从 source 抄到 target。 */
+export function copyCommentImage(target: ThemePackageCommentBubble, source: ThemePackageCommentBubble): void {
+  target.image = source.image || '';
+  target.imageSlice = source.imageSlice ? normalizeBubbleFrameSlice(source.imageSlice) : null;
+  target.imageText = source.imageText ? normalizeBubbleFrameSlice(source.imageText) : null;
+  target.imageRepeat = source.imageRepeat || '';
+  target.imageBreak = source.imageBreak || '';
+  target.imageTint = source.imageTint === true;
+}
+
+/**
+ * 包里某个模式实际用的段评设置：气泡图、角标图各自取这个模式的，没有就用另一种模式的（只给了一种模式时两种都用），
+ * 这个模式写了 'none' 时不沿用。其余字段只看这个模式。两种模式都没有任何设置时返回 null。
+ */
+export function commentBubbleFor(parts: ThemePackageParts | null | undefined,
+  dark: boolean): ThemePackageCommentBubble | null {
+  if (!parts) return null;
+  const ownVariant = dark ? parts.dark : parts.light;
+  const otherVariant = dark ? parts.light : parts.dark;
+  const own = ownVariant && ownVariant.commentBubble ? normalizeCommentBubble(ownVariant.commentBubble) : null;
+  const other = otherVariant && otherVariant.commentBubble ? normalizeCommentBubble(otherVariant.commentBubble) : null;
+  if (!own && !other) return null;
+  const result = own || new ThemePackageCommentBubble();
+  if (!result.image && other && commentBubbleHasImage(other)) copyCommentImage(result, other);
+  if (!result.ornamentImage && other && other.ornamentImage) {
+    result.ornamentImage = other.ornamentImage;
+    if (!result.ornament && other.ornament === 'custom') result.ornament = 'custom';
+    if (!result.ornamentCorner) result.ornamentCorner = other.ornamentCorner;
+    if (result.ornamentSize < 0) result.ornamentSize = other.ornamentSize;
+  }
+  return commentBubbleIsEmpty(result) ? null : result;
 }
 
 /** 只写设了的字段。 */
@@ -267,6 +401,24 @@ export function encodeCommentBubble(source: ThemePackageCommentBubble): Record<s
   if (value.text) record['text'] = value.text;
   if (value.ornament) record['ornament'] = value.ornament;
   if (value.ornamentColor) record['ornamentColor'] = value.ornamentColor;
+  if (value.image) {
+    record['image'] = value.image;
+    if (value.image !== COMMENT_IMAGE_NONE) {
+      if (value.imageSlice) {
+        const slice: Record<string, Object> = {};
+        slice['left'] = value.imageSlice.left;
+        slice['right'] = value.imageSlice.right;
+        record['imageSlice'] = slice;
+      }
+      if (value.imageText) record['imageText'] = JSON.parse(JSON.stringify(value.imageText)) as Object;
+      if (value.imageRepeat) record['imageRepeat'] = value.imageRepeat;
+      if (value.imageBreak) record['imageBreak'] = value.imageBreak;
+      if (value.imageTint) record['imageTint'] = true;
+    }
+  }
+  if (value.ornamentImage) record['ornamentImage'] = value.ornamentImage;
+  if (value.ornamentCorner) record['ornamentCorner'] = value.ornamentCorner;
+  if (value.ornamentSize >= 0) record['ornamentSize'] = value.ornamentSize;
   return record;
 }
 
@@ -1156,6 +1308,11 @@ export function replaceSelfPackId(settings: Record<string, Object>, ownThemeId: 
   for (const key of ['customLightEmphasis', 'customDarkEmphasis']) {
     const override = objectField(settings, key);
     if (override && override['bubbleStyle'] === PACK_SELF_THEME_ID) override['bubbleStyle'] = ownThemeId;
+    const comment = override ? objectField(override, 'comment') : null;
+    if (comment) {
+      if (comment['image'] === PACK_SELF_THEME_ID) comment['image'] = ownThemeId;
+      if (comment['ornamentImage'] === PACK_SELF_THEME_ID) comment['ornamentImage'] = ownThemeId;
+    }
   }
 }
 
@@ -1178,6 +1335,11 @@ export function replaceOwnPackIdWithSelf(settings: Record<string, Object>, ownTh
   for (const key of ['customLightEmphasis', 'customDarkEmphasis']) {
     const override = objectField(settings, key);
     if (override && override['bubbleStyle'] === ownThemeId) override['bubbleStyle'] = PACK_SELF_THEME_ID;
+    const comment = override ? objectField(override, 'comment') : null;
+    if (comment) {
+      if (comment['image'] === ownThemeId) comment['image'] = PACK_SELF_THEME_ID;
+      if (comment['ornamentImage'] === ownThemeId) comment['ornamentImage'] = PACK_SELF_THEME_ID;
+    }
   }
 }
 
@@ -1289,6 +1451,28 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
     parsed.text = colorField(comment, 'text', commentLabel, true);
     parsed.ornament = stringField(comment, 'ornament').trim();
     parsed.ornamentColor = colorField(comment, 'ornamentColor', commentLabel, true);
+    // 气泡图与角标图：SVG 或位图；旧版本应用不认这些字段，照旧画形状，所以不用声明 requires。
+    const artwork: string[] = [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE];
+    parsed.image = stringField(comment, 'image').trim() === COMMENT_IMAGE_NONE ? COMMENT_IMAGE_NONE :
+      partAssetRef(comment, 'image', manifest, artwork, commentLabel);
+    const readBox = (key: string): ThemePackageBubbleSlice | null => {
+      const box = objectField(comment, key);
+      if (!box) return null;
+      const parsedBox = new ThemePackageBubbleSlice();
+      parsedBox.left = typeof box['left'] === 'number' ? numberField(box, 'left') : 0;
+      parsedBox.right = typeof box['right'] === 'number' ? numberField(box, 'right') : 0;
+      parsedBox.top = typeof box['top'] === 'number' ? numberField(box, 'top') : 0;
+      parsedBox.bottom = typeof box['bottom'] === 'number' ? numberField(box, 'bottom') : 0;
+      return parsedBox;
+    };
+    parsed.imageSlice = readBox('imageSlice');
+    parsed.imageText = readBox('imageText');
+    parsed.imageRepeat = stringField(comment, 'imageRepeat').trim();
+    parsed.imageBreak = stringField(comment, 'imageBreak').trim();
+    parsed.imageTint = comment['imageTint'] === true;
+    parsed.ornamentImage = partAssetRef(comment, 'ornamentImage', manifest, artwork, commentLabel);
+    parsed.ornamentCorner = stringField(comment, 'ornamentCorner').trim();
+    parsed.ornamentSize = typeof comment['ornamentSize'] === 'number' ? numberField(comment, 'ornamentSize') : -1;
     const normalized = normalizeCommentBubble(parsed);
     result.commentBubble = commentBubbleIsEmpty(normalized) ? null : normalized;
   }
@@ -1770,6 +1954,11 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
     add(variant.reader.leading);
     add(variant.reader.trailing);
     add(variant.reader.image);
+    const comment = variant.commentBubble;
+    if (comment) {
+      if (comment.image && comment.image !== COMMENT_IMAGE_NONE) add(comment.image);
+      add(comment.ornamentImage || '');
+    }
   }
   for (const tts of [parts.ttsPanelLight, parts.ttsPanelDark]) {
     if (tts) add(tts.artwork);
@@ -1822,6 +2011,12 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
     variant.reader.leading = swap(variant.reader.leading);
     variant.reader.trailing = swap(variant.reader.trailing);
     variant.reader.image = swap(variant.reader.image);
+    const comment = variant.commentBubble;
+    if (comment) {
+      // 本机旧记录里没有这两个字段。
+      if (comment.image && comment.image !== COMMENT_IMAGE_NONE) comment.image = swap(comment.image);
+      comment.ornamentImage = swap(comment.ornamentImage || '');
+    }
   }
   for (const tts of [copy.ttsPanelLight, copy.ttsPanelDark]) {
     if (tts) tts.artwork = swap(tts.artwork);
@@ -1928,7 +2123,8 @@ export function describeParts(parts: ThemePackageParts): string[] {
     items.push(bubbleDarkDifference(parts) ? `${name}（含深色）` : name);
   }
   if ((parts.light && parts.light.commentBubble) || (parts.dark && parts.dark.commentBubble)) {
-    items.push('段评气泡');
+    items.push(commentBubbleHasImage(commentBubbleFor(parts, false)) || commentBubbleHasImage(commentBubbleFor(parts, true)) ?
+      '段评气泡（含气泡图）' : '段评气泡');
   }
   if (parts.homeBackdropLight || parts.homeBackdropDark) {
     const modes: string[] = [];

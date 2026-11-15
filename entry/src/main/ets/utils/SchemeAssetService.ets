@@ -7,6 +7,13 @@ import { ThemePackRegistry, ThemePackRecord } from '../theme/ThemePackRegistry';
 import { ThemeIds } from '../theme/ThemeModels';
 import {
   bookIsEmpty,
+  COMMENT_IMAGE_NONE,
+  commentBubbleIsEmpty,
+  CommentImageBreak,
+  CommentImageRepeat,
+  copyCommentImage,
+  normalizeCommentBubble,
+  ThemePackageCommentBubble,
   findShelfBackdrop,
   isPackThemeId,
   NAVIGATION_ICON_KEYS,
@@ -18,6 +25,7 @@ import {
   ThemePackageAssetKinds,
   ThemePackageBook,
   ThemePackageBubble,
+  ThemePackageBubbleSlice,
   BubbleFrameBreak,
   BubbleFrameRepeat,
   normalizeBubbleFrameSlice,
@@ -276,11 +284,151 @@ export class SchemeAssetService {
     return new ThemePackageVariantParts();
   }
 
-  /** 编辑器只往变体里写阅读背景，所以清掉背景就等于清掉整个变体。 */
+  /**
+   * 编辑器往变体里写阅读背景和段评气泡素材：清掉背景时变体只留下段评那一节（没有就整个清掉）。
+   */
   private static storeVariant(record: ThemePackRecord, darkMode: boolean,
     variant: ThemePackageVariantParts | null): void {
-    if (darkMode) record.parts.dark = variant;
-    else record.parts.light = variant;
+    const existing = darkMode ? record.parts.dark : record.parts.light;
+    let value = variant;
+    if (!value && existing && existing.commentBubble && !commentBubbleIsEmpty(existing.commentBubble)) {
+      value = new ThemePackageVariantParts();
+      value.commentBubble = existing.commentBubble;
+    }
+    if (darkMode) record.parts.dark = value;
+    else record.parts.light = value;
+  }
+
+  // ---- 段评气泡图与角标图：写在素材包这个模式的 commentBubble 里，方案覆盖用 pack:<id> 指过来 ----
+
+  /** 上传段评气泡图，连同拉伸页里定好的文字区、拉伸线和换行方式一起存。 */
+  static async setCommentImage(context: Context, schemeId: string, uri: string, baseTheme: string,
+    settings: ThemePackageCommentBubble, dark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      const comment = SchemeAssetService.commentOf(record, dark);
+      comment.image = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK,
+        '段评气泡图');
+      SchemeAssetService.copyCommentImageSettings(comment, settings);
+      SchemeAssetService.storeComment(record, dark, comment);
+    });
+  }
+
+  /**
+   * 只改气泡图的拉伸设置、平铺与染色。这个模式没有自己的图（沿用另一模式那张）时，先把那张记到这个模式，
+   * 这样改动只影响这个模式。
+   */
+  static async setCommentImageSettings(context: Context, schemeId: string, settings: ThemePackageCommentBubble,
+    dark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const comment = SchemeAssetService.commentOf(record, dark);
+      if (!comment.image || comment.image === COMMENT_IMAGE_NONE) {
+        const other = SchemeAssetService.commentOf(record, !dark);
+        if (!other.image || other.image === COMMENT_IMAGE_NONE) throw new Error('段评气泡图已不存在');
+        copyCommentImage(comment, other);
+      }
+      SchemeAssetService.copyCommentImageSettings(comment, settings);
+      SchemeAssetService.storeComment(record, dark, comment);
+    });
+  }
+
+  /** 移除这个模式自己的气泡图（另一模式的不动）。 */
+  static async clearCommentImage(context: Context, schemeId: string, dark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const comment = SchemeAssetService.commentOf(record, dark);
+      copyCommentImage(comment, new ThemePackageCommentBubble());
+      SchemeAssetService.storeComment(record, dark, comment);
+    });
+  }
+
+  /** “另一模式也用这张”：气泡图与拉伸设置照抄到另一种模式（同一个素材文件）。 */
+  static async copyCommentImageToOtherMode(context: Context, schemeId: string,
+    fromDark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const source = SchemeAssetService.commentOf(record, fromDark);
+      if (!source.image || source.image === COMMENT_IMAGE_NONE) throw new Error('这个模式还没有气泡图');
+      const target = SchemeAssetService.commentOf(record, !fromDark);
+      copyCommentImage(target, source);
+      SchemeAssetService.storeComment(record, !fromDark, target);
+    });
+  }
+
+  static async setCommentOrnament(context: Context, schemeId: string, uri: string, baseTheme: string,
+    dark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      const comment = SchemeAssetService.commentOf(record, dark);
+      comment.ornamentImage = await ThemePackStore.importAsset(context, record.packageId, uri,
+        SchemeAssetService.ARTWORK, '段评角标图');
+      comment.ornament = 'custom';
+      SchemeAssetService.storeComment(record, dark, comment);
+    });
+  }
+
+  static async clearCommentOrnament(context: Context, schemeId: string, dark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const comment = SchemeAssetService.commentOf(record, dark);
+      comment.ornamentImage = '';
+      if (comment.ornament === 'custom') comment.ornament = '';
+      SchemeAssetService.storeComment(record, dark, comment);
+    });
+  }
+
+  static async copyCommentOrnamentToOtherMode(context: Context, schemeId: string,
+    fromDark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const source = SchemeAssetService.commentOf(record, fromDark);
+      if (!source.ornamentImage) throw new Error('这个模式还没有角标图');
+      const target = SchemeAssetService.commentOf(record, !fromDark);
+      target.ornamentImage = source.ornamentImage;
+      target.ornament = 'custom';
+      SchemeAssetService.storeComment(record, !fromDark, target);
+    });
+  }
+
+  /** 这个模式自己的段评设置（不含另一模式沿用过来的）。 */
+  private static commentOf(record: ThemePackRecord, dark: boolean): ThemePackageCommentBubble {
+    const variant = dark ? record.parts.dark : record.parts.light;
+    return normalizeCommentBubble(variant ? variant.commentBubble : null);
+  }
+
+  /** 段评空了而变体里也没有别的东西时整个变体清掉。 */
+  private static storeComment(record: ThemePackRecord, dark: boolean, comment: ThemePackageCommentBubble): void {
+    const existing = dark ? record.parts.dark : record.parts.light;
+    const empty = commentBubbleIsEmpty(comment);
+    if (!existing) {
+      if (empty) return;
+      const variant = new ThemePackageVariantParts();
+      variant.commentBubble = normalizeCommentBubble(comment);
+      if (dark) record.parts.dark = variant;
+      else record.parts.light = variant;
+      return;
+    }
+    existing.commentBubble = empty ? null : normalizeCommentBubble(comment);
+    if (empty && SchemeAssetService.variantHasNothingElse(existing)) {
+      if (dark) record.parts.dark = null;
+      else record.parts.light = null;
+    }
+  }
+
+  private static variantHasNothingElse(variant: ThemePackageVariantParts): boolean {
+    const colors = variant.colors;
+    if (colors.pageColor || colors.cardColor || colors.inputColor || colors.primaryTextColor || colors.subTextColor ||
+      colors.dividerColor || colors.accentColor || colors.buttonColor || colors.dangerColor) return false;
+    const reader = variant.reader;
+    if (reader.backgroundMode || reader.backgroundColor || reader.textColor || reader.subTextColor ||
+      reader.contentTone || reader.leading || reader.trailing || reader.image) return false;
+    const emphasis = variant.emphasis;
+    return !(emphasis.mode || emphasis.bubbleStyle || emphasis.color || emphasis.textColor);
+  }
+
+  private static copyCommentImageSettings(target: ThemePackageCommentBubble,
+    settings: ThemePackageCommentBubble): void {
+    target.imageSlice = settings.imageSlice ? JSON.parse(JSON.stringify(settings.imageSlice)) as ThemePackageBubbleSlice :
+      null;
+    target.imageText = settings.imageText ? JSON.parse(JSON.stringify(settings.imageText)) as ThemePackageBubbleSlice :
+      null;
+    target.imageRepeat = settings.imageRepeat === CommentImageRepeat.ROUND ? CommentImageRepeat.ROUND : '';
+    target.imageBreak = settings.imageBreak === CommentImageBreak.FULL ? CommentImageBreak.FULL : '';
+    target.imageTint = settings.imageTint === true;
   }
 
   static readerMode(packageId: string, darkMode: boolean): string {

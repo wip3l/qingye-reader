@@ -637,10 +637,28 @@ export function normalizedParts(parts: Json): Json {
   const darkBubble = bubbleDarkDifference(copy);
   copy.bubble = lightBubble ? encodeBubble(lightBubble) : {};
   copy.bubbleDark = darkBubble ? encodeBubble(darkBubble) : {};
-  // 段评圆角只对圆角形状有效。
+  // 段评圆角只对圆角形状有效。气泡图：没有图时拉伸设置不写；拉伸、裁掉尾巴、原色是缺省值，也不写；拉伸线只写左右。
+  // 角标图、位置、大小只跟着“自定义图片”走。
   for (const mode of ['light', 'dark']) {
     const comment = copy[mode] && copy[mode].commentBubble;
-    if (comment && typeof comment === 'object' && comment.shape !== 'rounded') delete comment.radius;
+    if (!comment || typeof comment !== 'object') continue;
+    if (comment.shape !== 'rounded') delete comment.radius;
+    if (!comment.image) {
+      for (const field of ['imageSlice', 'imageText', 'imageRepeat', 'imageBreak', 'imageTint']) delete comment[field];
+    } else {
+      if (comment.imageRepeat !== 'round') delete comment.imageRepeat;
+      if (comment.imageBreak !== 'full') delete comment.imageBreak;
+      if (comment.imageTint !== true) delete comment.imageTint;
+      if (comment.imageSlice && typeof comment.imageSlice === 'object') {
+        comment.imageSlice = { left: comment.imageSlice.left, right: comment.imageSlice.right };
+      }
+    }
+    if (comment.ornament !== 'custom') {
+      delete comment.ornamentImage;
+      delete comment.ornamentCorner;
+      delete comment.ornamentSize;
+    }
+    if (typeof comment.ornamentSize === 'number' && comment.ornamentSize < 0) delete comment.ornamentSize;
   }
   const result = strip(copy);
   // 没有导航图标时深色那套也不写。

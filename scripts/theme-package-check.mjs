@@ -783,7 +783,9 @@ test('v2 theme: dark-mode bubble art, shelf frame, nav icons and comment bubbles
   assert.equal(parts.navigationDark.bookshelf, 'assets/cover_02.jpg');
   assert.equal(parts.navigationDark.labels, '', 'labels only come from navigation');
   assert.deepEqual({ ...parts.light.commentBubble },
-    { shape: 'rounded', radius: 0.5, fill: '#FFB98546', stroke: '', text: '#FFF6E6', ornament: 'star', ornamentColor: '' });
+    { shape: 'rounded', radius: 0.5, fill: '#FFB98546', stroke: '', text: '#FFF6E6', ornament: 'star', ornamentColor: '',
+      image: '', imageSlice: null, imageText: null, imageRepeat: '', imageBreak: '', imageTint: false, ornamentImage: '',
+      ornamentCorner: '', ornamentSize: -1 });
   assert.equal(parts.dark.commentBubble.shape, '', 'unknown shapes fall back to the bubble style');
   assert.equal(parts.dark.commentBubble.ornament, 'sparkle');
   assert.equal(format.describeParts(parts).includes('段评气泡'), true);
@@ -821,4 +823,74 @@ test('v2 theme: dark-mode bubble art, shelf frame, nav icons and comment bubbles
   delete noNav.navigation;
   noNav.navigationDark = { bookshelf: 'assets/cover_02.jpg' };
   assert.equal(decode(noNav).navigationDark, null);
+});
+
+test('comment bubble image and custom ornament: decode, per-mode fallback, refs, encode, pack:self', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+  const json = partsJson();
+  json.light.commentBubble = {
+    shape: 'rounded', fill: '#B98546', text: '#4A3423',
+    image: 'assets/cover_01.jpg', imageSlice: { left: 0.28, right: 0.7, top: 0.3, bottom: 0.3 },
+    imageText: { left: 0.1, right: 0.1, top: 0.14, bottom: 0.3 }, imageRepeat: 'round', imageBreak: 'full', imageTint: true,
+    ornament: 'custom', ornamentImage: 'assets/logo.svg', ornamentCorner: 'bottomRight', ornamentSize: 3
+  };
+  json.dark.commentBubble = { text: '#F2DEAE' };
+  const parts = byPath(decode(json));
+  const light = parts.light.commentBubble;
+  assert.equal(light.image, 'assets/cover_01.jpg');
+  assert.deepEqual({ ...light.imageSlice }, { left: 0.28, right: 0.49, top: 0, bottom: 0 }, 'only left / right stretch lines');
+  assert.deepEqual({ ...light.imageText }, { left: 0.1, right: 0.1, top: 0.14, bottom: 0.3 });
+  assert.equal(light.imageRepeat, 'round');
+  assert.equal(light.imageBreak, 'full');
+  assert.equal(light.imageTint, true);
+  assert.equal(light.ornament, 'custom');
+  assert.equal(light.ornamentCorner, 'bottomRight');
+  assert.equal(light.ornamentSize, 1.5, 'size is clamped to 0.5–1.5');
+  // 深色没给图：气泡图与角标图沿用浅色，深色自己的文字色保留。
+  const night = format.commentBubbleFor(parts, true);
+  assert.equal(night.image, 'assets/cover_01.jpg');
+  assert.equal(night.ornamentImage, 'assets/logo.svg');
+  assert.equal(night.ornament, 'custom');
+  assert.equal(night.text, '#F2DEAE');
+  // 'none' 不沿用另一模式的图。
+  parts.dark.commentBubble = { ...parts.dark.commentBubble, image: 'none' };
+  assert.equal(format.commentBubbleHasImage(format.commentBubbleFor(parts, true)), false);
+  assert.equal(format.partsAssetRefs(parts).includes('assets/cover_01.jpg'), true);
+  assert.equal(format.partsAssetRefs(parts).includes('none'), false);
+  assert.equal(format.describeParts(parts).includes('段评气泡（含气泡图）'), true);
+  const encoded = format.encodeParts(parts);
+  assert.deepEqual(encoded.light.commentBubble.imageSlice, { left: 0.28, right: 0.49 });
+  assert.equal(encoded.light.commentBubble.ornamentSize, 1.5);
+  assert.equal(encoded.dark.commentBubble.image, 'none');
+  assert.equal('imageSlice' in encoded.dark.commentBubble, false);
+  // 往返。
+  const exported = new format.ThemePackageTheme();
+  exported.parts = parts;
+  const again = byPath(format.decodeTheme(format.encodeTheme(exported), manifest).parts);
+  assert.deepEqual({ ...again.light.commentBubble }, { ...parts.light.commentBubble,
+    imageSlice: { ...parts.light.commentBubble.imageSlice }, imageText: { ...parts.light.commentBubble.imageText } });
+  // 引用不存在的素材、字体当图片都报错；不认得的角标位置按右上。
+  assert.throws(() => decode({ ...partsJson(), light: { commentBubble: { image: 'assets/missing.png' } } }), /commentBubble\.image/);
+  const odd = decode({ ...partsJson(), light: { commentBubble: { ornament: 'custom', ornamentImage: 'assets/logo.svg', ornamentCorner: 'middle' } } });
+  assert.equal(odd.light.commentBubble.ornamentCorner, '');
+  // 默认拉伸线与文字区、上下超出比例。
+  assert.deepEqual({ ...format.defaultCommentImageSlice(2) }, { left: 0.3, right: 0.3, top: 0, bottom: 0 });
+  assert.deepEqual({ ...format.defaultCommentImageText(2.5) }, { left: 0.14, right: 0.14, top: 0.12, bottom: 0.2 });
+  const [up, down] = format.commentImageOverhang({ left: 0, right: 0, top: 0.14, bottom: 0.3 });
+  assert.equal(Math.round(up * 100), 25);
+  assert.equal(Math.round(down * 100), 54);
+  // 方案覆盖里的 pack:<id> 导出写成 pack:self，导入换回来。
+  const settings = { customLightEmphasis: { comment: { image: 'pack:custom-0011aabb', ornamentImage: 'pack:custom-0011aabb' } },
+    customDarkEmphasis: { comment: { image: 'none' } } };
+  format.replaceOwnPackIdWithSelf(settings, 'pack:custom-0011aabb');
+  assert.equal(settings.customLightEmphasis.comment.image, 'pack:self');
+  assert.equal(settings.customLightEmphasis.comment.ornamentImage, 'pack:self');
+  assert.equal(settings.customDarkEmphasis.comment.image, 'none');
+  format.replaceSelfPackId(settings, 'pack:demo-pack');
+  assert.equal(settings.customLightEmphasis.comment.image, 'pack:demo-pack');
+  // 旧数据里的覆盖只有颜色：不算有图。
+  assert.equal(format.commentBubbleIsEmpty({ image: 'none' }), false);
+  assert.equal(format.commentBubbleIsEmpty({}), true);
 });

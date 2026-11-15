@@ -14,6 +14,8 @@ import {
   bubbleFrameSliceOrDefault,
   bubbleFor,
   normalizeCommentBubble,
+  commentBubbleFor,
+  COMMENT_IMAGE_NONE,
   ThemePackageBubble,
   ThemePackageCredits,
   ThemePackageParts,
@@ -388,6 +390,8 @@ export class ThemePackRegistry {
 
     ThemePackRegistry.applyVariant(pack.light, parts.light, installed.readerLight, record.packageId, false, uri);
     ThemePackRegistry.applyVariant(pack.dark, parts.dark, installed.readerDark, record.packageId, true, uri);
+    ThemePackRegistry.applyCommentBubble(pack.light, parts, false, uri);
+    ThemePackRegistry.applyCommentBubble(pack.dark, parts, true, uri);
 
     if (parts.ttsPanelLight) {
       installed.ttsLight = new InstalledThemePackTtsPanel();
@@ -575,7 +579,18 @@ export class ThemePackRegistry {
       if (emphasis.color) variant.regexEmphasis.emphasisColor = emphasis.color;
       if (emphasis.textColor) variant.regexEmphasis.emphasisTextColor = emphasis.textColor;
     }
-    // 本机旧版记录里没有。
-    if (source.commentBubble) variant.regexEmphasis.commentBubble = normalizeCommentBubble(source.commentBubble);
+  }
+
+  /**
+   * 段评设置按模式取（气泡图、角标图只给了一种模式时两种都用，见 commentBubbleFor），素材换成本机 URI。
+   * 本机旧版记录里没有这一节，这时沿用基底主题的。
+   */
+  private static applyCommentBubble(variant: ThemeVariant, parts: ThemePackageParts, darkMode: boolean,
+    uri: (value: string) => string): void {
+    const comment = commentBubbleFor(parts, darkMode);
+    if (!comment) return;
+    if (comment.image && comment.image !== COMMENT_IMAGE_NONE) comment.image = uri(comment.image);
+    comment.ornamentImage = uri(comment.ornamentImage);
+    variant.regexEmphasis.commentBubble = normalizeCommentBubble(comment);
   }
 }

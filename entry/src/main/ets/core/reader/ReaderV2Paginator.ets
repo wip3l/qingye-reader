@@ -768,7 +768,8 @@ export class ReaderV2Paginator {
       graphicsText.FontCollection.getGlobalInstance());
     const safeStart = Math.max(0, Math.min(block.text.length, sliceStart));
     const safeEnd = Math.max(safeStart, Math.min(block.text.length, sliceEnd));
-    const boundaries = ReaderV2Paginator.styleBoundaries(document, block, regexStyles, safeStart, safeEnd);
+    const boundaries = ReaderV2Paginator.styleBoundaries(document, block, regexStyles, safeStart, safeEnd,
+      !!snapshot.commentBubble.image);
     for (let index = 0; index < boundaries.length - 1; index++) {
       const start = boundaries[index];
       const end = boundaries[index + 1];
@@ -848,7 +849,7 @@ export class ReaderV2Paginator {
 
   private static styleBoundaries(document: ReaderV2Document, block: ReaderV2Block,
     regexStyles: ReaderV2SpanStyleRange[], sliceStart: number = 0,
-    sliceEnd: number = block.text.length): number[] {
+    sliceEnd: number = block.text.length, imageBubble: boolean = false): number[] {
     const boundaries: number[] = [sliceStart, sliceEnd];
     const absoluteSliceStart = block.displayStart + sliceStart;
     const absoluteSliceEnd = block.displayStart + sliceEnd;
@@ -861,12 +862,16 @@ export class ReaderV2Paginator {
       if (actionEnd <= sliceStart || actionStart >= sliceEnd) continue;
       boundaries.push(Math.max(sliceStart, actionStart));
       boundaries.push(Math.min(sliceEnd, actionEnd));
+      // Isolate the side pads: count labels reserve their fixed width there, and an image bubble reserves the room
+      // its artwork reaches beyond the text box (after the gap's last character and after the last pad).
+      const pads: number[] = [];
       if (ReaderCommentBubbleSize.isCount(action.label)) {
-        // Isolate the existing non-breaking side pads; only these reserve the extra fixed-width space.
-        for (const offset of [action.bubbleStart, action.bubbleStart + 1, action.displayEnd - 1]) {
-          const localOffset = offset - block.displayStart;
-          if (localOffset > sliceStart && localOffset < sliceEnd) boundaries.push(localOffset);
-        }
+        pads.push(action.bubbleStart, action.bubbleStart + 1, action.displayEnd - 1);
+      }
+      if (imageBubble) pads.push(action.bubbleStart - 1, action.bubbleStart, action.displayEnd - 1);
+      for (const offset of pads) {
+        const localOffset = offset - block.displayStart;
+        if (localOffset > sliceStart && localOffset < sliceEnd) boundaries.push(localOffset);
       }
     }
     for (const style of regexStyles) {
@@ -914,6 +919,7 @@ export class ReaderV2Paginator {
         const bodyCenter = ReaderV2Paginator.commentTextCenter(base, '国', snapshot);
         const scale = ReaderCommentBubbleSize.scale(action.label, snapshot.commentBubbleSize);
         const bubbleFontSize = snapshot.commentFontSizePx * scale;
+        const imageReserve = ReaderV2Paginator.commentImageReserve(snapshot, scale);
         base.fontSize = ReaderCommentBubbleSize.labelFontSize(action.label, bubbleFontSize);
         base.letterSpacing = ReaderCommentBubbleSize.isCount(action.label) ? 0 : snapshot.letterSpacingPx * scale;
         let countPadding = 0;
@@ -937,6 +943,8 @@ export class ReaderV2Paginator {
         if (absoluteOffset === action.bubbleStart || absoluteOffset === action.displayEnd - 1) {
           base.letterSpacing += countPadding;
         }
+        if (absoluteOffset === action.bubbleStart - 1) base.letterSpacing += imageReserve[0];
+        if (absoluteOffset === action.displayEnd - 1) base.letterSpacing += imageReserve[1];
         // The bubble behind the label is painted by the page node, not as a text background.
         base.color = ReaderV2Paginator.graphicsColor(snapshot.commentBubble.text);
         return base;
@@ -1271,7 +1279,8 @@ export class ReaderV2Paginator {
     const result: ReaderV2SelectionRun[] = [];
     const safeStart = Math.max(0, Math.min(block.text.length, sliceStart));
     const safeEnd = Math.max(safeStart, Math.min(block.text.length, sliceEnd));
-    const boundaries = ReaderV2Paginator.styleBoundaries(document, block, regexStyles, safeStart, safeEnd);
+    const boundaries = ReaderV2Paginator.styleBoundaries(document, block, regexStyles, safeStart, safeEnd,
+      !!snapshot.commentBubble.image);
     for (let index = 0; index < boundaries.length - 1; index++) {
       const start = boundaries[index];
       const end = boundaries[index + 1];
@@ -1377,6 +1386,19 @@ export class ReaderV2Paginator {
    * One bubble piece per visual line the label occupies. The height comes from the comment font rather than the
    * glyph boxes so counts, CJK labels and padding spaces all get the same bubble height.
    */
+  /**
+   * Letter spacing [before, after] an image bubble so the artwork's left and right reach does not cover the
+   * neighbouring text; the bubble rect already spans inflateX on each side. Zero for shape bubbles.
+   */
+  private static commentImageReserve(snapshot: ReaderV2LayoutSnapshot, scale: number): number[] {
+    const style = snapshot.commentBubble;
+    if (!style.image) return [0, 0];
+    const height = ReaderCommentBubblePainter.heightFor(snapshot.commentFontSizePx) * scale;
+    const insets = ReaderCommentBubblePainter.imageInsets(height, style);
+    const inflateX = snapshot.commentFontSizePx * 0.18 * scale;
+    return [Math.max(0, insets[0] - inflateX), Math.max(0, insets[2] - inflateX)];
+  }
+
   private static appendCommentBubble(fragment: ReaderV2PageFragment, action: ReaderV2InlineAction,
     snapshot: ReaderV2LayoutSnapshot): void {
     if (!fragment.paragraph) return;
@@ -1418,6 +1440,12 @@ export class ReaderV2Paginator {
     }
     if (pieces.length === 0) return;
     pieces[pieces.length - 1].tail = action.displayEnd <= fragment.displayEnd;
+    if (pieces[pieces.length - 1].tail) {
+      // The last pad's trailing spacing reserves room after an image bubble; keep it outside the text box.
+      const last = pieces[pieces.length - 1];
+      const reserve = ReaderV2Paginator.commentImageReserve(snapshot, scale)[1];
+      last.rect.right = Math.max(last.rect.left + 1, last.rect.right - reserve);
+    }
     for (const piece of pieces) fragment.commentBubbleSegments.push(piece);
   }
 

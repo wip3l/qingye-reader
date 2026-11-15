@@ -1167,6 +1167,18 @@ export class ThemePackageService {
       const override = settings[key];
       if (!override || typeof override !== 'object') continue;
       const record = override as Record<string, Object>;
+      // 段评气泡图、角标图指向的包（不是这个包自己、这台设备也没装）取不到素材：改回跟随。
+      const comment = record['comment'];
+      if (comment && typeof comment === 'object') {
+        const commentRecord = comment as Record<string, Object>;
+        for (const field of ['image', 'ornamentImage']) {
+          const value = commentRecord[field];
+          if (typeof value === 'string' && isPackThemeId(value) && value !== ownThemeId &&
+            !ThemePackRegistry.has(value)) {
+            commentRecord[field] = '';
+          }
+        }
+      }
       const style = typeof record['bubbleStyle'] === 'string' ? record['bubbleStyle'] as string : '';
       if (!style || style === ownThemeId || ThemeAccessPolicy.canUseBubbleStyle(style)) continue;
       record['bubbleStyle'] = '';

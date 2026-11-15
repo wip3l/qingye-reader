@@ -17,6 +17,11 @@ const tinted = new Map<string, string>();
 const pending = new Set<string>();
 let onReady: () => void = () => {};
 export function setFrameReadyListener(listener: () => void): void { onReady = listener; }
+export function getFrameReadyListener(): () => void { return onReady; }
+
+export function loadImage(url: string): Promise<HTMLImageElement> {
+  return load(url);
+}
 
 function load(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -88,7 +93,7 @@ export function frameLuminance(ref: string): number {
 }
 
 /** 染成气泡底色的图（只改不透明像素的颜色，保留透明度）；没读完时先用原图。 */
-function tintedUrl(url: string, color: string): string {
+export function tintedUrl(url: string, color: string): string {
   const key = `${url}|${color}`;
   const done = tinted.get(key);
   if (done) return done;
@@ -114,7 +119,7 @@ function tintedUrl(url: string, color: string): string {
 }
 
 /** 应用的颜色是 #AARRGGBB（透明度在前）。 */
-function cssArgb(color: string): string {
+export function cssArgb(color: string): string {
   const hex = (color || '').replace('#', '');
   if (hex.length === 8) return `#${hex.slice(2)}${hex.slice(0, 2)}`;
   return color || '#000000';

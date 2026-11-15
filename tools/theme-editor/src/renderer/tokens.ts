@@ -1,7 +1,9 @@
 // 生效令牌：包里填了的用包里的，没填的回退到基底主题（规则与 ThemePackRegistry 拼装主题时一致）。
 import data from '../core/builtinThemes.json';
 import { S, project, type Mode } from './state.ts';
-import { bubbleFor, normalizeCommentBubble, normalizeOrnamentScale } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
+import {
+  bubbleFor, commentBubbleFor, normalizeCommentBubble, normalizeOrnamentScale, type ThemePackageCommentBubble
+} from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 
 export interface BaseVariant {
   colors: Record<string, string>;
@@ -69,8 +71,8 @@ export interface Effective {
   e: { mode: string; bubble: 'pack' | string; color: string; textColor: string };
   /** 这个模式实际用的包内气泡（端饰、边框按项补上另一种模式的，同应用的 bubbleFor）；没有时为 null。 */
   b: any | null;
-  /** 这个模式的段评气泡设置，字段为空表示沿用气泡样式。 */
-  comment: { shape: string; radius: number; fill: string; stroke: string; text: string; ornament: string; ornamentColor: string };
+  /** 这个模式的段评气泡设置（气泡图、角标图只给了一种模式时两种都用，同应用 commentBubbleFor），字段为空表示沿用气泡样式。 */
+  comment: ThemePackageCommentBubble;
   radius: Record<string, number>;
   tts: any | null;
   startup: any | null;
@@ -114,7 +116,7 @@ export function effective(mode: Mode): Effective {
     : (ttsComplete(p.ttsPanel && p.ttsPanel[other]) ? p.ttsPanel[other] : null);
   const startup = p.startup && p.startup[mode] && p.startup[mode].image ? p.startup[mode]
     : (p.startup && p.startup[other] && p.startup[other].image ? p.startup[other] : null);
-  const comment = normalizeCommentBubble(v.commentBubble);
+  const comment = commentBubbleFor(p, mode === 'dark') || normalizeCommentBubble(v.commentBubble);
   return { mode, c, reader, e, b, comment, radius, tts, startup };
 }
 

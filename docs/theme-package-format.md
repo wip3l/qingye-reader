@@ -182,11 +182,38 @@ my-theme/
 - `shape`：`outline` 透明底描边，颜色跟正文墨色；`pill` 胶囊；`rounded` 圆角；`cut` 切角。不认得的值按不写处理。
 - `radius`：圆角占气泡高的比例，0–0.5，只对 `rounded` 有效，默认 0.2。
 - `fill`、`stroke`、`text`：底色、描边、文字色，可带透明度。`outline` 不用 `fill`。
-- `ornament`：角上的小图形，取值 `none`（不画）、`star`、`sparkle`、`dot`、`moon`、`leaf`、`sprig`、`rose`、`paw`、`seal`、`diamond`、`pendant`、`scroll`、`cord`、`signal`、`frame`、`sketch`、`postcard`、`folio`；`ornamentColor` 是它的颜色，不写时用描边色。
+- `ornament`：角上的小图形，取值 `none`（不画）、`star`、`sparkle`、`dot`、`moon`、`leaf`、`sprig`、`rose`、`paw`、`seal`、`diamond`、`pendant`、`scroll`、`cord`、`signal`、`frame`、`sketch`、`postcard`、`folio`，或 `custom`（用 `ornamentImage`）；`ornamentColor` 是它的颜色，不写时用描边色。
 
 ```json
 "light": { "commentBubble": { "shape": "rounded", "radius": 0.2, "fill": "#B98546", "text": "#FFF6E6", "ornament": "star" } },
 "dark":  { "commentBubble": { "fill": "#EBD3AE", "text": "#4A3423" } }
+```
+
+#### 气泡图与角标图
+
+想让段评气泡长成自己画的样子，可以给一张整只气泡的图（尾巴、花边都画在图里），再给一张角标图代替内置小图形：
+
+- `image`：气泡图，SVG 或位图，透明底。写了它，`shape`、`radius`、`stroke` 不再生效；`fill` 只在 `imageTint` 时用来染色。写 `"none"` 表示这个模式不用图片（不沿用另一模式的图）。
+- `imageText`：文字区离图片四边的比例 `{ left, right, top, bottom }`。文字区的高度对齐正文里气泡的高度（段评字号 × 1.32），整张图按这个比例缩放。不写时左右各“图高 × 0.35”（最多 25%）、上 12%、下 20%。
+- `imageSlice`：左右两条拉伸线 `{ left, right }`，比例 0–0.49。文字变长时只拉伸两线之间的部分，两端不变形；竖直方向不拉伸。不写时左右各“图高 × 0.6”，最多 30%。
+- `imageRepeat`：中间部分 `stretch` 拉伸（默认）或 `round` 平铺。
+- `imageBreak`：气泡被折到两行时，前一行那段 `cut` 裁到文字区底边、不画尾巴（默认），或 `full` 画整图。
+- `imageTint`：`true` 时整张图染成 `fill`（适合单色剪影图）。书源自带段评颜色时，图片气泡只在染色时吃书源底色，文字色以书源为准。
+- `ornamentImage`：`ornament` 为 `custom` 时的角标图，SVG 或位图；写了 `ornamentColor` 时整张染成该色，否则按原色。`ornamentCorner` 取 `topLeft`、`topRight`（默认）、`bottomRight`；`ornamentSize` 是大小倍数 0.5–1.5，默认 1（约为气泡高的 0.62）。
+
+图片在文字区左右多出的部分，排版时会用字距留出来，不压前后文字；上方多出超过气泡高的 38%、下方超过 60% 时可能压到上下行，编辑器会提示。只有一种模式写了 `image` 或 `ornamentImage` 时，另一种模式也用它。旧版本应用不认这些字段，照旧按 `shape` 等字段画，所以建议同时写一组形状和颜色作为回退，不需要声明 `requires`。
+
+```json
+"light": {
+  "commentBubble": {
+    "shape": "rounded", "fill": "#B98546", "text": "#4A3423",
+    "image": "assets/comment_bubble.png",
+    "imageText":  { "left": 0.1, "right": 0.1, "top": 0.14, "bottom": 0.3 },
+    "imageSlice": { "left": 0.28, "right": 0.22 },
+    "ornament": "custom", "ornamentImage": "assets/comment_mark.svg", "ornamentCorner": "topRight"
+  }
+},
+"dark": { "commentBubble": { "image": "assets/comment_bubble_night.png", "text": "#F2DEAE" } }
 ```
 
 ## 素材规范
@@ -202,6 +229,8 @@ my-theme/
 | 文件夹插画 `shelfFolder` | 位图 | 450 × 660。 |
 | 启动封面 `image` | 位图 | 841 × 1870 竖屏，底部约 1/5 会叠加文案，不放主体。 |
 | 首页背景 `homeBackdrop`、书架背景 `shelfBackdrop` | 位图 | 1080 × 1350（4:5），贴顶铺满宽度，比例不同时居中裁成 4:5。画面放在上部约四成，应用会叠渐变向下淡成页面底色；不要放文字，深色图的亮部要克制。 |
+| 段评气泡图 `commentBubble.image` | SVG 或位图 | 整只气泡（含尾巴）的透明底横图，位图高 96–160 px 为宜；尾巴画在下方，文字区和拉伸线见上文“气泡图与角标图”。 |
+| 段评角标图 `commentBubble.ornamentImage` | SVG 或位图 | 正方形透明底小图，显示约为气泡高的 0.62 倍。 |
 | 气泡边框 `frame` / 端饰 `cap` | SVG 或位图 | 端饰为正方形小图（位图要透明底，按原色显示），按字号缩放，右端自动旋转 180°。边框是横向长条，两端是花纹、中间可拉伸，见下文“气泡边框”。 |
 | 主题标识 `logo` | SVG 或位图 | SVG 用 `viewBox="0 0 64 64"`，位图取正方形透明底。 |
 | 字体 `appFont` | TTF / OTF / TTC | 请确认字体允许再分发。 |
@@ -225,6 +254,7 @@ my-theme/
 - 只有 `covers`、`shelfFrame`、`shelfFolder` 的主题包（此前制作的都是这样）照常使用，浅色、深色显示同一套封面、同一张书架边框和文件夹插画。只写了 `coversDark`、`shelfFrameDark` 或 `shelfFolderDark` 时浅色模式也用它；应用和桌面编辑器导出这种包时会把它写成 `covers`、`shelfFrame`、`shelfFolder`。
 - 没有 `bubbleDark` 的主题包两种模式用同一套端饰和边框。只写了 `bubbleDark` 时浅色也用它，导出时写成 `bubble`；`bubbleDark` 里和 `bubble` 相同的项导出时不重复写。
 - 没有 `commentBubble` 的主题包，段评气泡跟着强调气泡样式走；带包内气泡的主题包，段评按强调底色推导（此前是中性灰）。
+- 带段评气泡图的包在旧版本应用上照常导入，段评按同一节里的 `shape`、颜色画；`ornament: "custom"` 在旧版本上按不写处理。
 - 用户在编辑器里把包内部件换成内置主题的部件是允许的；再导出时，包内素材会随新包一起打出去，并在 `credits` 里保留原作者信息。
 - 同一个 `packageId` 再次导入时原位更新：用户的阅读排版和强调规则保留并合并，素材和配色换成新版本。
 - 方案设置会随云同步到用户的其他设备，素材不会；另一台设备上会提示“主题包素材不在这台设备上”，重新导入同一个包即可恢复。
