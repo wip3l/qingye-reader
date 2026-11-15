@@ -20,6 +20,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
+import { ThemeModeSwitch } from '../components/theme/ThemeModeSwitch';
 import {
   ReaderHeaderFooterEditor,
   ReaderTypographyField,
@@ -72,7 +73,6 @@ class TypographyPreviewFit {
 
 const TOOLBAR_CONTROL_HEIGHT: number = 40;
 const MODE_SWITCH_WIDTH: number = 152;
-const MODE_SWITCH_INSET: number = 4;
 const FULL_PREVIEW_BUTTON_WIDTH: number = 112;
 const PREVIEW_BOOK_NAME: string = '长街灯火';
 const PREVIEW_AUTHOR: string = '佚名';
@@ -248,7 +248,16 @@ struct ThemeTypographySettingsPage {
   @Builder
   previewToolbar() {
     Row({ space: AppSpacing.MD }) {
-      this.previewModeSwitch()
+      ThemeModeSwitch({
+        selectedDark: this.previewDark,
+        darkMode: this.appDarkMode,
+        accentColor: this.accentColor(),
+        subTextColor: this.subTextColor(),
+        fallbackColor: this.cardColor(),
+        switchWidth: MODE_SWITCH_WIDTH,
+        switchHeight: TOOLBAR_CONTROL_HEIGHT,
+        onChange: (dark: boolean) => this.setPreviewDark(dark)
+      })
 
       Blank()
         .layoutWeight(1)
@@ -279,64 +288,6 @@ struct ThemeTypographySettingsPage {
     .width('100%')
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.XS })
     .alignItems(VerticalAlign.Center)
-  }
-
-  /**
-   * 浅色/深色预览切换：沉浸光感胶囊底板上两段等宽选项，选中项下面垫一块滑动的强调色底。
-   * 选中状态在 builder 里直接读 previewDark，不经参数按值传入，点按后立即刷新。
-   */
-  @Builder
-  previewModeSwitch() {
-    ImmersiveMaterialSurface({
-      surfaceWidth: MODE_SWITCH_WIDTH,
-      surfaceHeight: TOOLBAR_CONTROL_HEIGHT,
-      darkMode: this.appDarkMode,
-      fallbackColor: this.cardColor(),
-      glowColor: this.accentGlowColor()
-    }) {
-      Stack({ alignContent: Alignment.Start }) {
-        Row()
-          .width(this.modeOptionWidth() - MODE_SWITCH_INSET * 2)
-          .height(TOOLBAR_CONTROL_HEIGHT - MODE_SWITCH_INSET * 2)
-          .borderRadius((TOOLBAR_CONTROL_HEIGHT - MODE_SWITCH_INSET * 2) / 2)
-          .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
-          .translate({ x: MODE_SWITCH_INSET + (this.previewDark ? this.modeOptionWidth() : 0) })
-          .animation({ duration: 280, curve: Curve.Friction })
-          .hitTestBehavior(HitTestMode.None)
-        Row() {
-          this.previewModeOption(false)
-          this.previewModeOption(true)
-        }
-        .width('100%')
-        .height('100%')
-      }
-      .width('100%')
-      .height('100%')
-    }
-  }
-
-  @Builder
-  previewModeOption(dark: boolean) {
-    Row({ space: AppSpacing.XS }) {
-      SymbolGlyph(dark ? $r('sys.symbol.moon') : $r('sys.symbol.sun_max'))
-        .fontSize(15)
-        .fontColor([this.previewDark === dark ? this.accentColor() : this.subTextColor()])
-      Text(dark ? '深色' : '浅色')
-        .fontSize(AppFontSize.BODY)
-        .fontWeight(this.previewDark === dark ? FontWeight.Medium : FontWeight.Regular)
-        .fontColor(this.previewDark === dark ? this.accentColor() : this.subTextColor())
-        .animation({ duration: 180, curve: Curve.Friction })
-    }
-    .width(this.modeOptionWidth())
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .accessibilityText(dark ? '预览深色模式' : '预览浅色模式')
-    .accessibilitySelected(this.previewDark === dark)
-    .onClick(() => this.setPreviewDark(dark))
-  }
-
-  modeOptionWidth(): number {
-    return MODE_SWITCH_WIDTH / 2;
   }
 
   accentGlowColor(): string {

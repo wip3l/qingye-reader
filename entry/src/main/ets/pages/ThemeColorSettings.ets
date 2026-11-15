@@ -55,6 +55,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow } from '../components/common/SettingRow';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { ThemeModeSwitch } from '../components/theme/ThemeModeSwitch';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { CustomThemePreview } from '../components/theme/CustomThemePreview';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
@@ -102,6 +103,9 @@ interface AssetSlotOptions {
   // 动图取景记下的显示区域，按区域显示缩略图。
   crop?: ThemeImageCrop | null;
 }
+
+/** 顶栏浅色/深色开关的宽度：比排版页窄一些，给标题和“完成”留位置。 */
+const HEADER_MODE_SWITCH_WIDTH: number = 128;
 
 interface CoverTileOptions {
   index: number;
@@ -1164,31 +1168,18 @@ struct ThemeColorSettingsPage {
   /** 顶栏里的浅色/深色开关：切的是正在编辑和预览的那一套，不改应用当前的显示模式。 */
   @Builder
   modeToggle() {
-    Row({ space: 2 }) {
-      this.modeCell('light', $r('sys.symbol.sun_max'), '浅色模式')
-      this.modeCell('dark', $r('sys.symbol.moon'), '深色模式')
-    }
-    .height(ImmersiveHeaderAction.SIZE)
-    .padding(2)
-    .borderRadius(ImmersiveHeaderAction.SIZE / 2)
-    .backgroundColor(this.cardColor())
-  }
-
-  @Builder
-  modeCell(mode: string, icon: Resource, label: string) {
-    Stack({ alignContent: Alignment.Center }) {
-      SymbolGlyph(icon)
-        .fontSize(16)
-        .fontColor([this.selectedMode === mode ? ThemeRuntime.accentColor(this.appDarkMode) : this.subTextColor()])
-    }
-    .width(34)
-    .height('100%')
-    .borderRadius(ImmersiveHeaderAction.SIZE / 2)
-    .backgroundColor(this.selectedMode === mode ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) : Color.Transparent)
-    .accessibilityText(`编辑${label}`)
-    .accessibilitySelected(this.selectedMode === mode)
-    .onClick(() => {
-      this.selectedMode = mode;
+    ThemeModeSwitch({
+      selectedDark: this.selectedMode === 'dark',
+      darkMode: this.appDarkMode,
+      accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+      subTextColor: this.subTextColor(),
+      fallbackColor: this.cardColor(),
+      switchWidth: HEADER_MODE_SWITCH_WIDTH,
+      switchHeight: ImmersiveHeaderAction.SIZE,
+      accessibilityPrefix: '编辑',
+      onChange: (dark: boolean) => {
+        this.selectedMode = dark ? 'dark' : 'light';
+      }
     })
   }
 

@@ -16,6 +16,7 @@ import { CustomThemeScheme, CustomThemeSchemeStore } from '../utils/CustomThemeS
 import { SchemeAssetService } from '../utils/SchemeAssetService';
 import { BuiltinThemeRegistry } from '../theme/BuiltinThemeRegistry';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { ThemeModeSwitch } from '../components/theme/ThemeModeSwitch';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { ThemeRecentStore } from '../utils/ThemeRecentStore';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
@@ -25,7 +26,7 @@ import { BubbleFrameBreak, BubbleFrameRepeat, ThemeImageCrop, ThemePackageBubble
 import { ThemeBubbleFramePreview } from '../components/theme/ThemeBubbleFramePreview';
 import { BubbleFramePreviewPart } from '../components/theme/BubbleFramePreviewPainter';
 import { ThemeCroppedImage } from '../components/theme/ThemeCroppedImage';
-import { SuperExclusiveThemes, ThemeIds, ThemePack, ThemeRegexEmphasisModes, ThemeVariant } from '../theme/ThemeModels';
+import { SuperExclusiveThemes, ThemeIds, ThemePack, ThemeColorTokens, ThemeRegexEmphasisModes, ThemeVariant } from '../theme/ThemeModels';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ResolvedBubbleFrame, ThemeImageSlots, ThemePackRegistry } from '../theme/ThemePackRegistry';
 import { AccountCommerceConfig } from '../account/AccountCommerceConfig';
@@ -90,6 +91,7 @@ const DETAIL_READER_LINES = 7;
 const DETAIL_READER_FONT_SIZE = 15;
 const DETAIL_READER_LINE_HEIGHT = 27;
 const DETAIL_SCRIM = '#59000000';
+const DETAIL_MODE_SWITCH_WIDTH: number = 128;
 
 /** 主题库的一个风格分组；没归进任何组的主题（如后加的内置主题包）落到“更多”。 */
 class ThemeStoreGroup {
@@ -1609,35 +1611,31 @@ struct ThemeSettingsPage {
     .alignItems(VerticalAlign.Center)
   }
 
+  /** 浅色/深色预览开关：颜色取正在预览的那套主题，叠在预览画面上也协调。 */
   @Builder
   detailModeToggle() {
-    Row({ space: 2 }) {
-      this.detailModeCell(false, $r('sys.symbol.sun_max'))
-      this.detailModeCell(true, $r('sys.symbol.moon'))
-    }
-    .height(ImmersiveHeaderAction.SIZE)
-    .padding(3)
-    .borderRadius(ImmersiveHeaderAction.SIZE / 2)
-    .backgroundColor(DETAIL_SCRIM)
+    ThemeModeSwitch({
+      selectedDark: this.detailDark,
+      darkMode: this.detailDark,
+      accentColor: this.detailColors().accentColor,
+      subTextColor: this.detailColors().subTextColor,
+      fallbackColor: this.detailColors().cardColor,
+      switchWidth: DETAIL_MODE_SWITCH_WIDTH,
+      switchHeight: ImmersiveHeaderAction.SIZE,
+      onChange: (dark: boolean) => {
+        this.detailDark = dark;
+      }
+    })
   }
 
-  @Builder
-  detailModeCell(dark: boolean, icon: Resource) {
-    Stack({ alignContent: Alignment.Center }) {
-      SymbolGlyph(icon)
-        .fontSize(16)
-        .fontColor([this.detailDark === dark ? '#242320' : '#FFFFFF'])
-    }
-    .width(34)
-    .height('100%')
-    .borderRadius(ImmersiveHeaderAction.SIZE / 2)
-    .backgroundColor(this.detailDark === dark ? '#FFFFFF' : Color.Transparent)
-    .accessibilityText(`预览${dark ? '深色' : '浅色'}`)
-    .accessibilityRole(AccessibilityRoleType.BUTTON)
-    .accessibilitySelected(this.detailDark === dark)
-    .onClick(() => {
-      this.detailDark = dark;
-    })
+  detailColors(): ThemeColorTokens {
+    const entries = this.currentDetailEntries();
+    if (entries.length > 0) return this.activeVariant(entries[0].theme).colors;
+    const colors = new ThemeColorTokens();
+    colors.accentColor = ThemeRuntime.accentColor(this.detailDark);
+    colors.subTextColor = ThemeRuntime.subTextColor(this.detailDark);
+    colors.cardColor = ThemeRuntime.cardColor(this.detailDark);
+    return colors;
   }
 
   @Builder
