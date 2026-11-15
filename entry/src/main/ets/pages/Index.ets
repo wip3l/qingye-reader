@@ -1170,6 +1170,8 @@ struct Index {
     if (!this.globalTtsActive || !this.globalTtsFollowsHand() || !this.shortcutRoutingActive) {
       return Index.TTS_BAR_PROBE_SKIPPED;
     }
+    // 三个位置重合（手机等窄屏）时量了也推不出握持手，直接不找底栏节点，免得查找逻辑出问题时拖累主线程。
+    if (this.globalTtsSidesCoincide()) return Index.TTS_BAR_PROBE_SETTLED;
     try {
       const uiContext = this.getUIContext();
       const rootNode = uiContext.getFrameNodeById('home_root');
@@ -1213,9 +1215,7 @@ struct Index {
         bestDistance > Index.TTS_BAR_PROBE_TOLERANCE) {
         return Index.TTS_BAR_PROBE_MOVING;
       }
-      // 三个位置重合（手机）时推不出握持手，保留原值。
-      const ambiguous = Math.abs(this.globalTtsRowLeftFor(-1) - this.globalTtsRowLeftFor(1)) <= Index.TTS_BAR_PROBE_TOLERANCE;
-      if (ambiguous || bestSide === this.globalTtsHandSide) return Index.TTS_BAR_PROBE_SETTLED;
+      if (bestSide === this.globalTtsHandSide) return Index.TTS_BAR_PROBE_SETTLED;
       if (animate) {
         uiContext.animateTo({ duration: 280, curve: Curve.Friction }, (): void => {
           this.globalTtsHandSide = bestSide;
@@ -1228,6 +1228,11 @@ struct Index {
       hilog.warn(0x0000, 'HomeTtsGrip', 'probe failed: %{public}s', `${error}`);
       return Index.TTS_BAR_PROBE_SKIPPED;
     }
+  }
+
+  /** 伴生条贴左、居中、贴右三个位置是否重合（屏宽只容得下一条时），重合时握持手无从推断。 */
+  globalTtsSidesCoincide(): boolean {
+    return Math.abs(this.globalTtsRowLeftFor(-1) - this.globalTtsRowLeftFor(1)) <= Index.TTS_BAR_PROBE_TOLERANCE;
   }
 
   /**
