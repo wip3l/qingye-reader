@@ -47,6 +47,15 @@ save('regex_cap_gilded_orbit',24,24,
   '<path d="M8 5.5H14V15.5L11 13.5 8 15.5Z" fill="#292620"/>'+
   '<path d="M17 3L21 7H17Z" fill="#F1DEB4"/>'+
   star(11,9.5,2.5,'#F1DEB4'));
+// 深色模式的强调底色是深褐，端饰改成亮金书签、象牙内页，边框的金线也提亮。
+save('regex_frame_gilded_orbit_dark',96,48,
+  '<path d="M10 3H82L94 15V38L86 45H14L2 33V11Z" fill="none" stroke="#DCC088" stroke-width="1.2"/>'+
+  '<path d="M8 29V13L14 8H77M19 40H82L88 35V20M82 3V15H94" fill="none" stroke="#F4E3BF" stroke-width="1"/>');
+save('regex_cap_gilded_orbit_dark',24,24,
+  '<path d="M5 3H17V21L11 17 5 21Z" fill="#E0C489"/>'+
+  '<path d="M8 5.5H14V15.5L11 13.5 8 15.5Z" fill="#F7E8C5"/>'+
+  '<path d="M17 3L21 7H17Z" fill="#B8975A"/>'+
+  star(11,9.5,2.5,'#30291E'));
 // A coherent 24-vp folio family: open leaves, folded compass, quill lens, reader ex libris.
 // Monochrome paths are tinted by both native and compatibility tab bars.
 const nav={

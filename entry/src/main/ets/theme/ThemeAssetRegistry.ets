@@ -726,7 +726,7 @@ export class ThemeAssetRegistry {
     }
   }
 
-  /** darkMode 只影响主题包：包可以给深色模式单独一张书架边框。 */
+  /** 默认浅深色共用一张；主题包的 shelfFrameDark 和两套超级会员专属主题在深色模式换另一张。 */
   static themeShelfFrame(assetId: string, darkMode: boolean = false): ResourceStr {
     if (ThemePackRegistry.isPackId(assetId)) {
       const pack = ThemePackRegistry.get(assetId);
@@ -750,9 +750,12 @@ export class ThemeAssetRegistry {
       case ThemeIds.STARWISH_MAGIC: return $r('app.media.theme_frame_starwish_magic');
       case ThemeIds.LETTERPRESS_PAGE: return $r('app.media.theme_frame_letterpress_page');
       // 两套超级会员专属主题的边框是透明 WebP 位图（金属质感），其余内置主题是 SVG。
-      case ThemeIds.OBSIDIAN_ARCHIVE: return $r('app.media.theme_frame_obsidian_archive');
+      // 浅金细线在象牙底上发虚、午夜蓝珐琅在深底上看不见，所以各有一张给另一种模式的配色。
+      case ThemeIds.OBSIDIAN_ARCHIVE: return darkMode ? $r('app.media.theme_frame_obsidian_archive') :
+        $r('app.media.theme_frame_obsidian_archive_light');
       case ThemeIds.NEON_HARBOR: return $r('app.media.theme_frame_neon_harbor');
-      case ThemeIds.CELESTIAL_VAULT: return $r('app.media.theme_frame_celestial_vault');
+      case ThemeIds.CELESTIAL_VAULT: return darkMode ? $r('app.media.theme_frame_celestial_vault_dark') :
+        $r('app.media.theme_frame_celestial_vault');
       default: return $r('app.media.theme_frame_classic_blue');
     }
   }
@@ -789,7 +792,7 @@ export class ThemeAssetRegistry {
     }
   }
 
-  /** darkMode 只影响主题包：包可以给深色模式单独一套端饰和边框。 */
+  /** 默认浅深色共用；主题包的 bubbleDark 和两套超级会员专属主题的气泡在深色模式换另一套端饰和边框。 */
   static regexBubbleFrame(styleId: string, darkMode: boolean = false): ResourceStr {
     if (ThemePackRegistry.isPackId(styleId)) {
       const pack = ThemePackRegistry.get(styleId);
@@ -812,9 +815,11 @@ export class ThemeAssetRegistry {
       case 'mecha-comm': return $r('app.media.regex_frame_mecha_comm');
       case 'starwish-ribbon': return $r('app.media.regex_frame_starwish_ribbon');
       case 'pencil-mark': return $r('app.media.regex_frame_pencil_mark');
-      case 'gilded-orbit': return $r('app.media.regex_frame_gilded_orbit');
+      case 'gilded-orbit': return darkMode ? $r('app.media.regex_frame_gilded_orbit_dark') :
+        $r('app.media.regex_frame_gilded_orbit');
       case 'harbor-postcard': return $r('app.media.regex_frame_harbor_postcard');
-      case 'celestial-orbit': return $r('app.media.regex_frame_celestial_orbit');
+      case 'celestial-orbit': return darkMode ? $r('app.media.regex_frame_celestial_orbit_dark') :
+        $r('app.media.regex_frame_celestial_orbit');
       default: return '';
     }
   }
@@ -845,9 +850,11 @@ export class ThemeAssetRegistry {
       case 'mecha-comm': return $r('app.media.regex_cap_mecha_comm');
       case 'starwish-ribbon': return $r('app.media.regex_cap_starwish_ribbon');
       case 'pencil-mark': return $r('app.media.regex_cap_pencil_mark');
-      case 'gilded-orbit': return $r('app.media.regex_cap_gilded_orbit');
+      case 'gilded-orbit': return darkMode ? $r('app.media.regex_cap_gilded_orbit_dark') :
+        $r('app.media.regex_cap_gilded_orbit');
       case 'harbor-postcard': return $r('app.media.regex_cap_harbor_postcard');
-      case 'celestial-orbit': return $r('app.media.regex_cap_celestial_orbit');
+      case 'celestial-orbit': return darkMode ? $r('app.media.regex_cap_celestial_orbit_dark') :
+        $r('app.media.regex_cap_celestial_orbit');
       default: return '';
     }
   }
