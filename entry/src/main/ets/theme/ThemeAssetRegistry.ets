@@ -731,6 +731,7 @@ export class ThemeAssetRegistry {
       case ThemeIds.AZURE_MECHA: return $r('app.media.theme_frame_azure_mecha');
       case ThemeIds.STARWISH_MAGIC: return $r('app.media.theme_frame_starwish_magic');
       case ThemeIds.LETTERPRESS_PAGE: return $r('app.media.theme_frame_letterpress_page');
+      // 两套超级会员专属主题的边框是透明 WebP 位图（金属质感），其余内置主题是 SVG。
       case ThemeIds.OBSIDIAN_ARCHIVE: return $r('app.media.theme_frame_obsidian_archive');
       case ThemeIds.NEON_HARBOR: return $r('app.media.theme_frame_neon_harbor');
       case ThemeIds.CELESTIAL_VAULT: return $r('app.media.theme_frame_celestial_vault');

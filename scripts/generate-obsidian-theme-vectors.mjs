@@ -33,8 +33,8 @@ for(const mode of ['light','dark']) {
   save(`tts_panel_obsidian_archive_${mode}`,720,520,
     `<g fill="none" stroke="${gold}" opacity="0.32" stroke-width="1.5"><path d="M40 280V130A96 96 0 0 1 232 130V250M50 276V132A86 86 0 0 1 222 132V246"/><path d="M414 246Q515 140 680 190M440 264Q535 183 700 220"/><path d="M80 278Q151 247 210 279L210 301Q147 272 80 301ZM210 279Q260 250 314 271V296Q258 277 210 301"/><path d="M85 320H650"/><circle cx="556" cy="96" r="31"/><circle cx="556" cy="96" r="42"/></g>${star(352,80,7,gold)}${star(633,145,5,gold)}${star(398,200,4,gold)}`);
 }
-save('theme_frame_obsidian_archive',450,660,
-  '<g fill="none" stroke="#C5AA73"><rect x="6" y="6" width="438" height="648" rx="10" stroke-width="2" opacity="0.65"/><path d="M16 70V16H70M380 16H434V70M434 590V644H380M70 644H16V590" stroke-width="1" opacity="0.55"/></g>'+star(225,12,4,'#D6B878')+star(225,648,4,'#D6B878'));
+// 书架封面边框 theme_frame_obsidian_archive 已改为位图（透明 WebP），不再由本脚本生成；
+// 这里若再写出同名 SVG 会和位图资源重名。
 save('theme_logo_obsidian_archive',64,64,
   '<rect x="3" y="3" width="58" height="58" rx="15" fill="#191B1F"/><g fill="none" stroke="#D6B878" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 40Q22 36 32 42Q42 36 52 40V48Q41 44 32 50Q23 44 12 48Z"/><path d="M32 42V50M32 26C19 10 8 23 17 31C24 38 37 17 45 19C58 22 46 44 32 26"/></g>');
 // Foil bookplate: chamfered corners and an inset rule, rather than a generic rounded pill.
