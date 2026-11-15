@@ -15,6 +15,7 @@ import { ThemeStartupCover } from '../ThemeStartupCover';
 import { TtsPanelThemeBackground } from '../TtsPanelThemeBackground';
 import { BookCover } from '../book/BookCover';
 import { HomeTabBarSettingsStore } from '../../utils/HomeTabBarSettingsStore';
+import { ThemeDetailScene } from './ThemeDetailScene';
 import {
   ReaderRegexBubbleStyleResolver,
   ReaderRegexEmphasisContext,
@@ -51,6 +52,9 @@ export struct CustomThemePreview {
   @Prop assetRevision: number = 0;
   // 底栏按“外观 › 底栏”里选的第四个页签画，和首页一致。
   @StorageProp('homeExtraTab') homeExtraTab: string = 'none';
+  // 预览框自己的尺寸：书架实景按真实大小排好再整体缩小，需要知道要填满多大。
+  @State boxWidth: number = 0;
+  @State boxHeight: number = 0;
 
   build() {
     Stack() {
@@ -75,6 +79,8 @@ export struct CustomThemePreview {
         this.ttsPreview()
       } else if (this.scene === 'card') {
         this.cardPreview()
+      } else if (this.scene !== 'explore' && this.scene !== 'mine') {
+        this.shelfScene()
       } else {
         if (this.homeBackdrop()) {
           this.homeBackdropLayer()
@@ -82,10 +88,8 @@ export struct CustomThemePreview {
         Column({ space: AppSpacing.MD }) {
           if (this.scene === 'explore') {
             this.explorePreview()
-          } else if (this.scene === 'mine') {
-            this.minePreview()
           } else {
-            this.bookshelfPreview()
+            this.minePreview()
           }
           this.navigationBar()
         }
@@ -100,6 +104,41 @@ export struct CustomThemePreview {
     .borderRadius(this.themePack.radius.card)
     .clip(true)
     .accessibilityText(`${this.previewDark ? '深色' : '浅色'}主题效果预览`)
+    .onAreaChange((_oldArea: Area, newArea: Area) => {
+      this.boxWidth = Number(newArea.width);
+      this.boxHeight = Number(newArea.height);
+    })
+  }
+
+  /** 小预览里书架实景缩到一半：按两倍大的画布排版，能看到顶栏、头几本书和底栏。 */
+  shelfSceneScale(): number {
+    return this.expanded ? 1 : 0.5;
+  }
+
+  /**
+   * 书架画面用主题详情那套实景（四种布局的版式、字号、间距都按真实书架画），不另画一套示意。
+   * 先按 1/缩放 倍的画布排好，再以左上角为中心整体缩小填满预览框。
+   */
+  @Builder
+  shelfScene() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.boxWidth > 0 && this.boxHeight > 0) {
+        ThemeDetailScene({
+          themePack: this.themePack,
+          previewDark: this.previewDark,
+          scene: 'shelf',
+          shelfLayout: this.shelfLayout,
+          homeBackdropThemeId: this.homeBackdropThemeId
+        })
+          .width(this.boxWidth / this.shelfSceneScale())
+          .height(this.boxHeight / this.shelfSceneScale())
+          .scale({ x: this.shelfSceneScale(), y: this.shelfSceneScale(), centerX: 0, centerY: 0 })
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .clip(true)
+    .hitTestBehavior(HitTestMode.None)
   }
 
   variant(): ThemeVariant {
@@ -219,122 +258,6 @@ export struct CustomThemePreview {
   }
 
   @Builder
-  progressBar(percent: number) {
-    Stack({ alignContent: Alignment.Start }) {
-      Column()
-        .width(`${percent}%`)
-        .height('100%')
-        .borderRadius(2)
-        .backgroundColor(this.variant().colors.accentColor)
-    }
-    .width('100%')
-    .height(4)
-    .borderRadius(2)
-    .backgroundColor(this.variant().colors.dividerColor)
-  }
-
-  coverScale(): number {
-    return this.expanded ? 1.3 : 1;
-  }
-
-  @Builder
-  bookshelfPreview() {
-    Column({ space: AppSpacing.MD }) {
-      if (this.shelfLayout === 'tile') {
-        this.titleRow('书架', '最近阅读')
-        Row({ space: AppSpacing.LG }) {
-          ForEach(['山野来信', '长夜微光', '人间草木', '海上来客'], (name: string, index: number) => {
-            Column({ space: AppSpacing.XS }) {
-              this.coverTile(name, index, 52 * this.coverScale())
-              this.smallText(name, this.variant().colors.primaryTextColor)
-            }
-            .layoutWeight(1)
-          }, (name: string) => name)
-        }
-        .width('100%')
-      } else if (this.shelfLayout === 'loose') {
-        this.titleRow('书架', '')
-        ForEach(['山野来信', '长夜微光'], (name: string, index: number) => {
-          Row({ space: AppSpacing.LG }) {
-            this.coverTile(name, index, 40 * this.coverScale())
-            Column({ space: AppSpacing.XS }) {
-              Text(name)
-                .fontFamily(this.themePack.typography.appFontFamily)
-                .fontSize(AppFontSize.BODY)
-                .fontColor(this.variant().colors.primaryTextColor)
-              this.smallText(index === 0 ? '读到第十二章 · 38%' : '读到第三章 · 9%', this.variant().colors.subTextColor)
-              this.progressBar(index === 0 ? 38 : 9)
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-          }
-          .width('100%')
-          .padding(AppSpacing.MD)
-          .borderRadius(this.themePack.radius.card)
-          .backgroundColor(this.variant().colors.cardColor)
-        }, (name: string) => name)
-      } else if (this.shelfLayout === 'compact') {
-        this.titleRow('书架', '')
-        Column() {
-          ForEach(['山野来信', '长夜微光', '人间草木'], (name: string, index: number) => {
-            Row({ space: AppSpacing.MD }) {
-              this.coverTile(name, index, 22 * this.coverScale())
-              Text(name)
-                .fontFamily(this.themePack.typography.appFontFamily)
-                .fontSize(AppFontSize.CAPTION)
-                .fontColor(this.variant().colors.primaryTextColor)
-                .layoutWeight(1)
-              this.smallText(index === 0 ? '38%' : (index === 1 ? '9%' : '72%'), this.variant().colors.subTextColor)
-            }
-            .width('100%')
-            .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
-            .border({ width: { bottom: index < 2 ? 1 : 0 }, color: this.variant().colors.dividerColor })
-          }, (name: string) => name)
-        }
-        .width('100%')
-        .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
-        .borderRadius(this.themePack.radius.card)
-        .backgroundColor(this.variant().colors.cardColor)
-      } else {
-        Column({ space: AppSpacing.XXS }) {
-          this.titleRow('下午好', '')
-          this.smallText('今天读了 24 分钟', this.variant().colors.subTextColor)
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-        Row({ space: AppSpacing.LG }) {
-          this.coverTile('山野来信', 0, 40 * this.coverScale())
-          Column({ space: AppSpacing.XS }) {
-            this.smallText('继续阅读', this.variant().colors.accentColor)
-            Text('山野来信')
-              .fontFamily(this.themePack.typography.appFontFamily)
-              .fontSize(AppFontSize.BODY)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(this.variant().colors.primaryTextColor)
-            this.progressBar(38)
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-        }
-        .width('100%')
-        .padding(AppSpacing.MD)
-        .borderRadius(this.themePack.radius.card)
-        .backgroundColor(this.variant().colors.cardColor)
-        Row({ space: AppSpacing.MD }) {
-          ForEach(['长夜微光', '人间草木', '海上来客', '雪国'], (name: string, index: number) => {
-            this.coverTile(name, index + 1, 32 * this.coverScale())
-          }, (name: string) => name)
-        }
-        .width('100%')
-      }
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .alignItems(HorizontalAlign.Start)
-    .clip(true)
-  }
-
-  @Builder
   chip(label: string, active: boolean) {
     Text(label)
       .fontFamily(this.themePack.typography.appFontFamily)
@@ -349,7 +272,7 @@ export struct CustomThemePreview {
   @Builder
   bookRow(name: string, index: number, detail: string) {
     Row({ space: AppSpacing.MD }) {
-      this.coverTile(name, index, 28 * this.coverScale())
+      this.coverTile(name, index, this.expanded ? 36 : 28)
       Column({ space: AppSpacing.XXS }) {
         Text(name)
           .fontFamily(this.themePack.typography.appFontFamily)

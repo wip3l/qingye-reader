@@ -10,6 +10,7 @@ import { AppSpacing } from '../../theme/AppSpacing';
 import { TtsPanelThemeBackground } from '../TtsPanelThemeBackground';
 import { BookCover } from '../book/BookCover';
 import { HomeTabBarSettingsStore } from '../../utils/HomeTabBarSettingsStore';
+import { BookTileLayout } from '../../utils/BookTileLayout';
 
 /** 实景预览里的示例书：固定内容，不读用户书架，没拥有的主题也能看。 */
 class SceneBook {
@@ -67,6 +68,8 @@ export struct ThemeDetailScene {
   @Prop bottomInset: number = 0;
   // 底栏按“外观 › 底栏”里选的第四个页签画，和首页一致。
   @StorageProp('homeExtraTab') homeExtraTab: string = 'none';
+  // 画面自己的宽度：平铺网格和书架一样按宽度定列数，宽屏多排几列而不是把封面放大。
+  @State sceneWidth: number = 360;
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
@@ -78,6 +81,10 @@ export struct ThemeDetailScene {
     }
     .width('100%')
     .height('100%')
+    .onAreaChange((_oldArea: Area, newArea: Area) => {
+      const width = Number(newArea.width);
+      if (width > 0 && Math.abs(width - this.sceneWidth) >= 1) this.sceneWidth = width;
+    })
     .backgroundColor(this.variant().colors.pageColor)
     .clip(true)
     .accessibilityGroup(true)
@@ -121,12 +128,14 @@ export struct ThemeDetailScene {
               this.looseCard(book, index)
             }, (book: SceneBook) => `loose_${book.name}`)
           } else if (this.shelfLayout === 'tile') {
-            this.tileGrid(0, 9)
+            this.tileGrid(0, 3)
           } else {
             this.companionGreeting()
             this.companionHero(SCENE_BOOKS[0])
+            this.companionDots()
+            this.companionNote()
             this.companionSectionHeader()
-            this.tileGrid(1, 7)
+            this.tileGrid(1, 2)
           }
         }
         .width('100%')
@@ -181,11 +190,14 @@ export struct ThemeDetailScene {
   @Builder
   shelfHeader() {
     Row({ space: 10 }) {
-      Text('书架')
-        .fontFamily(this.font())
-        .fontSize(AppFontSize.TITLE)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.variant().colors.primaryTextColor)
+      // 陪伴布局的顶栏左侧不显示标题，问候语就是标题。
+      if (this.shelfLayout !== 'companion') {
+        Text('书架')
+          .fontFamily(this.font())
+          .fontSize(AppFontSize.TITLE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.variant().colors.primaryTextColor)
+      }
       Blank()
       if (this.shelfLayout === 'companion') {
         this.headerButton($r('sys.symbol.folder'))
@@ -455,18 +467,34 @@ export struct ThemeDetailScene {
     .alignItems(HorizontalAlign.Start)
   }
 
+  tileColumns(): number {
+    return BookTileLayout.columnCount(this.sceneWidth);
+  }
+
+  tileColumnsTemplate(): string {
+    return new Array<string>(this.tileColumns()).fill('1fr').join(' ');
+  }
+
+  /** 从第 from 本起排满 rows 行；示例书不够时从头接着排。 */
+  tileIndexes(from: number, rows: number): number[] {
+    const indexes: number[] = [];
+    for (let offset = 0; offset < rows * this.tileColumns(); offset++) indexes.push(from + offset);
+    return indexes;
+  }
+
+  /** from、rows 只传固定值：列数在里面读状态，宽度变了格子数才会跟着变。 */
   @Builder
-  tileGrid(from: number, to: number) {
+  tileGrid(from: number, rows: number) {
     Grid() {
-      ForEach(SCENE_BOOKS.slice(from, to), (book: SceneBook, index: number) => {
+      ForEach(this.tileIndexes(from, rows), (index: number) => {
         GridItem() {
-          this.tileBook(book, from + index)
+          this.tileBook(SCENE_BOOKS[index % SCENE_BOOKS.length], index)
         }
-      }, (book: SceneBook) => `tile_${book.name}`)
+      }, (index: number) => `tile_${index}`)
     }
     .width('100%')
-    .columnsTemplate('1fr 1fr 1fr')
-    .columnsGap(AppSpacing.XL)
+    .columnsTemplate(this.tileColumnsTemplate())
+    .columnsGap(BookTileLayout.columnGap(this.sceneWidth))
     .rowsGap(AppSpacing.XL)
     .scrollBar(BarState.Off)
     .enableScrollInteraction(false)
@@ -559,10 +587,118 @@ export struct ThemeDetailScene {
     .padding({ left: AppSpacing.XS, right: AppSpacing.XS, top: AppSpacing.XS, bottom: AppSpacing.XL })
   }
 
+  /** 继续阅读轮播下面的圆点。 */
+  @Builder
+  companionDots() {
+    Row({ space: 5 }) {
+      Row()
+        .width(16)
+        .height(5)
+        .borderRadius(3)
+        .backgroundColor(this.variant().colors.accentColor)
+      Row()
+        .width(5)
+        .height(5)
+        .borderRadius(3)
+        .backgroundColor(HexColor.withOpacity(this.variant().colors.subTextColor, 0.4))
+      Row()
+        .width(5)
+        .height(5)
+        .borderRadius(3)
+        .backgroundColor(HexColor.withOpacity(this.variant().colors.subTextColor, 0.4))
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  noteBarHeights(): number[] {
+    return [22, 15, 6, 32, 16, 26, 25];
+  }
+
+  /** 阅读小记卡片：今日阅读时长和近七天的柱子。 */
+  @Builder
+  companionNote() {
+    Column({ space: AppSpacing.MD }) {
+      Row({ space: AppSpacing.SM }) {
+        SymbolGlyph($r('sys.symbol.book_pages'))
+          .fontSize(18)
+          .fontColor([this.variant().colors.accentColor])
+        Text('阅读小记')
+          .fontFamily(this.font())
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.variant().colors.accentColor)
+        Blank()
+        Text('阅读统计')
+          .fontFamily(this.font())
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.variant().colors.subTextColor)
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(12)
+          .fontColor([this.variant().colors.subTextColor])
+      }
+      .width('100%')
+      Row({ space: AppSpacing.LG }) {
+        Column({ space: AppSpacing.XS }) {
+          Text('今日阅读')
+            .fontFamily(this.font())
+            .fontSize(AppFontSize.MICRO)
+            .fontColor(this.variant().colors.subTextColor)
+          Row({ space: AppSpacing.XS }) {
+            Text('24')
+              .fontFamily(this.font())
+              .fontSize(AppFontSize.HEADLINE)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.variant().colors.accentColor)
+            Text('分钟')
+              .fontFamily(this.font())
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.variant().colors.subTextColor)
+          }
+          .alignItems(VerticalAlign.Bottom)
+        }
+        .alignItems(HorizontalAlign.Start)
+        Row()
+          .width(0.5)
+          .height(48)
+          .backgroundColor(this.variant().colors.dividerColor)
+        Column({ space: AppSpacing.SM }) {
+          Row({ space: 4 }) {
+            ForEach(this.noteBarHeights(), (barHeight: number, index: number) => {
+              Row()
+                .width(16)
+                .height(barHeight)
+                .borderRadius(4)
+                .backgroundColor(index === 6 ? this.variant().colors.accentColor :
+                  HexColor.withOpacity(this.variant().colors.accentColor, 0.28))
+            }, (barHeight: number, index: number) => `note_bar_${index}`)
+          }
+          .height(32)
+          .alignItems(VerticalAlign.Bottom)
+          Text('近 7 天 3小时48分 · 已连续读了 22 天')
+            .fontFamily(this.font())
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.variant().colors.subTextColor)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Bottom)
+    }
+    .width('100%')
+    .padding(AppSpacing.XL)
+    .borderRadius(this.themePack.radius.card)
+    .backgroundColor(this.variant().colors.cardColor)
+    .margin({ bottom: AppSpacing.SM })
+  }
+
   @Builder
   companionSectionHeader() {
     Row() {
-      Text('我的书架')
+      Text('书架里，还有故事')
         .fontFamily(this.font())
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)

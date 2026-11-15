@@ -6406,6 +6406,9 @@ struct ThemeColorSettingsPage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
+        if (this.previewScene === 'bookshelf') {
+          this.shelfLayoutButton(false)
+        }
         this.issuesBadge()
         ImmersiveHeaderAction({ label: '放大', accessibilityLabel: '放大主题预览',
           onTap: () => { this.fullPreview = true; } })
@@ -6453,10 +6456,14 @@ struct ThemeColorSettingsPage {
         this.sceneCell('朗读', 'tts', $r('sys.symbol.earphone'))
         this.sceneCell('启动', 'startup', $r('sys.symbol.picture'))
         this.sceneCell('卡片', 'card', $r('sys.symbol.rectangle_3_group'))
-        // 补一个空格位，两行格子等宽对齐。
-        Blank()
-          .layoutWeight(1)
-          .height(52)
+        // 最后一格：看书架时是布局切换，其他画面留空，两行格子等宽对齐。
+        if (this.previewScene === 'bookshelf') {
+          this.shelfLayoutCell()
+        } else {
+          Blank()
+            .layoutWeight(1)
+            .height(52)
+        }
       }
       .width('100%')
     }
@@ -6495,7 +6502,40 @@ struct ThemeColorSettingsPage {
     return '陪伴';
   }
 
-  /** 书架画面右上角的布局按钮：沉浸光感胶囊，点开弹出菜单选四种书架布局。 */
+  /** 放大预览底部画面格里的布局切换：点开弹出菜单选四种书架布局。 */
+  @Builder
+  shelfLayoutCell() {
+    Column({ space: AppSpacing.XXS }) {
+      SymbolGlyph($r('sys.symbol.square_grid_2x2'))
+        .fontSize(20)
+        .fontColor([this.primaryTextColor()])
+      Row({ space: 2 }) {
+        Text(this.shelfLayoutLabel(this.previewShelfLayout))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.primaryTextColor())
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(10)
+          .fontColor([this.subTextColor()])
+      }
+    }
+    .layoutWeight(1)
+    .height(52)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(ThemeRuntime.mediumRadius())
+    .border({ width: 1, color: ThemeRuntime.dividerColor(this.appDarkMode) })
+    .accessibilityGroup(true)
+    .accessibilityText(`书架布局：${this.shelfLayoutLabel(this.previewShelfLayout)}，点按切换`)
+    .onClick(() => {
+      this.showShelfLayoutMenu = true;
+    })
+    .bindPopup(this.showShelfLayoutMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+      this.shelfLayoutMenuContent()
+    }, Placement.TopRight, this.appDarkMode, ThemeRuntime.accentColor(this.appDarkMode), () => {
+      this.showShelfLayoutMenu = false;
+    }))
+  }
+
+  /** 预览标题行里的布局按钮（不盖在画面上）：沉浸光感胶囊，点开弹出菜单选四种书架布局。 */
   @Builder
   shelfLayoutButton(expanded: boolean) {
     Column() {
@@ -6526,7 +6566,7 @@ struct ThemeColorSettingsPage {
         })
       }
     }
-    .margin(AppSpacing.SM)
+    .margin({ right: AppSpacing.SM })
     .bindPopup(this.showShelfLayoutMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
       this.shelfLayoutMenuContent()
     }, Placement.BottomRight, this.appDarkMode, ThemeRuntime.accentColor(this.appDarkMode), () => {
@@ -6554,9 +6594,6 @@ struct ThemeColorSettingsPage {
     Stack({ alignContent: Alignment.TopEnd }) {
       if (this.assetRevision >= 0) {
         this.previewSurfaceContent(expanded)
-      }
-      if (this.previewScene === 'bookshelf') {
-        this.shelfLayoutButton(expanded)
       }
     }
     .width('100%')
