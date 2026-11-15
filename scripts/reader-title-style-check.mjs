@@ -242,7 +242,7 @@ try {
       titleLineBox() { return 22; } bodyLineBox() { return 20; }
       titleFontFamily() { return ''; } bodyFontFamily() { return ''; }
       paragraphText(index) { return PREVIEW_PARAGRAPHS[index]; } measureLines() { return 1; }
-      ${['titleLayout','titlePreviewAlignment','computeFit'].map(themeMethod).join('\n')}
+      ${['titleLayout','titlePreviewAlignment','computeFit','computeTitleFit'].map(themeMethod).join('\n')}
     } globalThis.ThemeTitlePreviewChecks = ThemeTitlePreviewChecks;`), sandbox);
   const themePreview = new sandbox.ThemeTitlePreviewChecks();
   const plainFit = themePreview.computeFit(false);
@@ -255,8 +255,16 @@ try {
   assert.equal(themePreview.computeFit(false).titleLines, 0);
   assert.equal(themePreview.computeFit(false).paragraphCount, 0);
   themePreview.draft.titleStyleRaw = JSON.stringify({singlePage:true});
-  assert.equal(themePreview.computeFit(false).titleLines, 1);
-  assert.equal(themePreview.computeFit(false).paragraphCount, 0, 'theme title page never shows body prose');
+  assert.equal(themePreview.computeFit(false).titleLines, 0, 'the body page of a single-page title has no title');
+  assert.equal(themePreview.computeFit(false).paragraphCount, 9, 'the body page starts prose at the page top');
+  assert.equal(themePreview.computeTitleFit(false).titleLines, 1);
+  assert.equal(themePreview.computeTitleFit(false).paragraphCount, 0, 'theme title page never shows body prose');
+  themePreview.draft.titleStyleRaw = JSON.stringify({singlePage:true,marginTop:400});
+  assert.equal(themePreview.computeTitleFit(true).titleTop, 158, 'an oversized top margin still keeps the title on the page');
+  themePreview.bodyLimit = full => full ? 720 : 180;
+  themePreview.draft.titleStyleRaw = JSON.stringify({singlePage:true,marginTop:200});
+  assert.equal(themePreview.computeTitleFit(true).titleTop, 200);
+  assert.equal(themePreview.computeTitleFit(false).titleTop, 50, 'the window scales the title offset to its own height');
   console.log('PASS: theme preview alignment and visible-body fitting account for both title margins');
 
   const chapter = `${title}\n第一段正文。\n第二段正文。`;
