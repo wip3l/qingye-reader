@@ -56,6 +56,7 @@ import { ReaderCommentWebTheme } from '../core/reader/ReaderCommentWebTheme';
 import { NativeCommentPage } from '@legado/sourceengine';
 import { NativeCommentPageView } from '../components/NativeCommentPageView';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { bookmarkPreviewText } from '../utils/BookmarkPreviewText';
 import { RecentReadShortcut } from '../utils/RecentReadShortcut';
 import { RecentReadCardUpdater } from '../utils/RecentReadCardUpdater';
 // 本文件 lazy 导入的模块开书时用不到（朗读、眼动翻页、WebDAV、媒体会话、握姿感知），第一次用到时才同步加载，
@@ -9313,8 +9314,7 @@ struct ReadBookPage {
   }
 
   bookmarkContentPreview(pageIndex: number): string {
-    const text = this.getPageText(pageIndex).replace(/\s+/g, ' ').trim();
-    return text.length > 90 ? `${text.substring(0, 90)}…` : text;
+    return bookmarkPreviewText(this.getPageText(pageIndex), 90);
   }
 
   async deleteBookmark(bookmark: Bookmark): Promise<void> {

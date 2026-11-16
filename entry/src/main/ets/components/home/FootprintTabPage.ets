@@ -7,6 +7,7 @@ import { ReadStatsBar, ReadStatsRank, ReadStatsSummary } from '../../core/stats/
 import { ReadStatsPosterSession, ReadStatsPosterSnapshot } from '../../core/stats/ReadStatsPosterModel';
 import { AccountSessionStore } from '../../account/AccountSessionStore';
 import { HdsFeedback } from '../../utils/HdsFeedback';
+import { bookmarkPreviewText } from '../../utils/BookmarkPreviewText';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
@@ -906,7 +907,7 @@ export struct FootprintTabPage {
         .fontWeight(FontWeight.Bold)
         .fontColor(this.accentTint('80'))
         .height(26)
-      Text(bookmark.content || bookmark.chapterName || '书签')
+      Text(bookmarkPreviewText(bookmark.content) || bookmark.chapterName || '书签')
         .fontSize(AppFontSize.BODY)
         .lineHeight(20)
         .fontColor(this.primaryTextColor())

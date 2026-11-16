@@ -4,6 +4,7 @@ import { SymbolGlyphModifier } from '@kit.ArkUI';
 import { Book, BookChapter, Bookmark } from '@legado/sourceengine';
 import { AppDatabase } from '../../model/data/AppDatabase';
 import { HdsFeedback } from '../../utils/HdsFeedback';
+import { bookmarkPreviewText } from '../../utils/BookmarkPreviewText';
 import { ListDissolve, ListDissolveParticles } from '../../utils/ListDissolve';
 import { DeleteParticleBurst, DeleteParticleLayer } from '../common/DeleteParticles';
 import { BookCover } from '../book/BookCover';
@@ -1594,7 +1595,7 @@ export struct ReaderTocPanel {
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor)
       }
-      Text(bookmark.content || '已保存阅读位置')
+      Text(bookmarkPreviewText(bookmark.content) || '已保存阅读位置')
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.subTextColor)
         .maxLines(2)
