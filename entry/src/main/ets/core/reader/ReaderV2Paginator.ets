@@ -1186,11 +1186,15 @@ export class ReaderV2Paginator {
         return base;
       }
     }
+    const numberLead = block.titleLead && snapshot.chapterHead.numberColor !== 0;
     for (const style of regexStyles) {
       if (absoluteOffset < style.start || absoluteOffset >= style.end) continue;
       if (style.fontSizePx > 0) base.fontSize = style.fontSizePx;
       if (style.fontFamily) base.fontFamilies = [style.fontFamily];
-      if (style.colorEnabled || style.color !== 0) base.color = ReaderV2Paginator.graphicsColor(style.color);
+      // 主题的序号行颜色优先于标题强调和正则规则的文字色（与主题预览一致），背景、阴影等仍照常。
+      if ((style.colorEnabled || style.color !== 0) && !numberLead) {
+        base.color = ReaderV2Paginator.graphicsColor(style.color);
+      }
       if (style.backgroundEnabled && !style.decorationEnabled) {
         base.backgroundRect = {
           color: ReaderV2Paginator.graphicsColor(style.backgroundColor),
