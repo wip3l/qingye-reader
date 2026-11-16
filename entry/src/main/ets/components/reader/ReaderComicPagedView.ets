@@ -75,6 +75,8 @@ export struct ReaderComicPagedView {
   @Prop superResolution: boolean = false;
   /** 本书繁→简。 */
   @Prop textConvert: boolean = false;
+  /** 去白边（ReaderComicTrimMode 的取值）。 */
+  @Prop trimMode: string = 'off';
   @Prop surfaceColor: string = '#000000';
   /** 翻页动画里纸张的底色，必须不透明：背景跟随主题时 surfaceColor 是透明色，绘制器会把它当成黑色。 */
   @Prop paperColor: string = '#000000';
@@ -218,6 +220,14 @@ export struct ReaderComicPagedView {
       result.push(page);
     }
     return this.rightToLeft ? result.reverse() : result;
+  }
+
+  /** 双页并排时同一跨页里另一页的图片标记；单页或另一页不是图片时为空串。 */
+  private spreadPartnerMarker(chapterIndex: number, pageIndex: number, spreadPages: number): string {
+    if (spreadPages !== 2) return '';
+    const first = Math.floor(pageIndex / 2) * 2;
+    const partner = (this.chapterPages(chapterIndex)[pageIndex === first ? first + 1 : first] || '').trim();
+    return LocalBookService.isEpubImageMarker(partner) ? partner : '';
   }
 
   /** 越出本章的那一格能否直接显示相邻章节。 */
@@ -826,6 +836,8 @@ export struct ReaderComicPagedView {
         retryKey: `${chapterIndex}_${pageIndex}`,
         superResolution: this.superResolution,
         textConvert: this.textConvert,
+        trimMode: this.trimMode,
+        trimPartner: this.spreadPartnerMarker(chapterIndex, pageIndex, spreadPages),
         retryRegistry: this.retryRegistry,
         processing: this.processing,
         onDenied: (): void => this.onImageDenied(chapterIndex)

@@ -7,6 +7,7 @@ import { AppSpacing } from '../../theme/AppSpacing';
 import {
   ReaderComicBackground,
   ReaderComicFit,
+  ReaderComicTrimMode,
   ReaderComicMode,
   ReaderComicOption
 } from '../../core/reader/ReaderComicSettings';
@@ -279,6 +280,7 @@ export struct ReaderComicDisplaySettingsPanel {
   @Prop surface: string = ReaderComicBackground.BLACK;
   @Prop pageGap: number = 0;
   @Prop fit: string = ReaderComicFit.WIDTH;
+  @Prop trim: string = ReaderComicTrimMode.OFF;
   @Prop infoBar: boolean = true;
   @Prop doubleTapZoom: boolean = true;
   /** 「AI超分」开关的保存值。 */
@@ -295,6 +297,7 @@ export struct ReaderComicDisplaySettingsPanel {
   onBackgroundChange: (value: string) => void = () => {};
   onPageGapChange: (value: number) => void = () => {};
   onFitChange: (value: string) => void = () => {};
+  onTrimChange: (value: string) => void = () => {};
   onInfoBarChange: (checked: boolean) => void = () => {};
   onDoubleTapZoomChange: (checked: boolean) => void = () => {};
   onSuperResolutionChange: (checked: boolean) => void = () => {};
@@ -432,6 +435,17 @@ export struct ReaderComicDisplaySettingsPanel {
         selected: this.fit,
         colors: this.colors,
         onSelect: (value: string): void => this.onFitChange(value)
+      })
+      ReaderComicOptionGroup({
+        title: '去白边',
+        options: [
+          new ReaderComicOption(ReaderComicTrimMode.OFF, '关闭'),
+          new ReaderComicOption(ReaderComicTrimMode.SIDES, '只裁左右'),
+          new ReaderComicOption(ReaderComicTrimMode.ALL, '四边')
+        ],
+        selected: this.trim,
+        colors: this.colors,
+        onSelect: (value: string): void => this.onTrimChange(value)
       })
 
       this.superResolutionRow()

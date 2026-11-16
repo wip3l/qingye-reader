@@ -195,6 +195,7 @@ import { ScreenTimeoutStepper } from '../components/common/ScreenTimeoutStepper'
 import {
   ReaderComicBackground,
   ReaderComicFit,
+  ReaderComicTrimMode,
   ReaderComicMode,
   ReaderComicSettings,
   ReaderComicSettingsStore
@@ -2911,6 +2912,7 @@ struct ReadBookPage {
         hintColor: this.readerComicSurfaceHintColor(),
         pageGap: this.readerComicSettings.pageGap,
         fitScreen: this.readerComicSettings.fit === ReaderComicFit.SCREEN,
+        trimMode: this.readerComicSettings.trim,
         doubleTapZoom: this.readerComicSettings.doubleTapZoom,
         autoScrollActive: this.readerAutoScrollActive,
         onAutoScrollToggle: (): void => this.toggleReaderAutoScroll(),
@@ -2990,6 +2992,7 @@ struct ReadBookPage {
         doubleTapZoom: this.readerComicSettings.doubleTapZoom,
         superResolution: this.isReaderComicSuperResolutionActive(),
         textConvert: this.isReaderComicTextConvertActive(),
+        trimMode: this.readerComicSettings.trim,
         surfaceColor: this.readerComicSurfaceColor(),
         paperColor: this.readerComicWindowColor(),
         textColor: this.readerComicSurfaceTextColor(),
@@ -3624,6 +3627,7 @@ struct ReadBookPage {
       surface: this.readerComicSettings.background,
       pageGap: this.readerComicSettings.pageGap,
       fit: this.readerComicSettings.fit,
+      trim: this.readerComicSettings.trim,
       infoBar: this.readerComicSettings.infoBar,
       doubleTapZoom: this.readerComicSettings.doubleTapZoom,
       superResolution: this.readerComicSettings.superResolution,
@@ -3645,6 +3649,11 @@ struct ReadBookPage {
       onFitChange: (value: string): void => {
         this.updateReaderComicSettings((settings: ReaderComicSettings): void => {
           settings.fit = ReaderComicFit.normalize(value);
+        });
+      },
+      onTrimChange: (value: string): void => {
+        this.updateReaderComicSettings((settings: ReaderComicSettings): void => {
+          settings.trim = ReaderComicTrimMode.normalize(value);
         });
       },
       onInfoBarChange: (checked: boolean): void => {
