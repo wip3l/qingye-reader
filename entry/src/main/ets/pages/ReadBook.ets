@@ -310,6 +310,13 @@ const READER_EXCERPT_MENU_ITEM_ID: string = 'reader_excerpt';
 const READER_ANNOTATION_MARKER_PREFIX: string = 'reader-annotation:';
 
 /** 一章的划线在该章当前文本里的位置；文本或划线数据变了就重算。 */
+/** 镜像阅读页翻页后让后台朗读页换到的位置；连续翻页时只保留最后一次。 */
+interface TtsFloatingPositionRequest {
+  chapterIndex: number;
+  pageIndex: number;
+  sourceOffset: number;
+}
+
 class ReaderAnnotationChapterRanges {
   source: string = '';
   version: number = -1;
@@ -743,6 +750,8 @@ struct ReadBookPage {
   private ttsChapterSwitching: boolean = false;
   private ttsChapterAdvanceError: string = '';
   private ttsLastMediaChapterCommandAt: number = 0;
+  private ttsFloatingPositionQueued: TtsFloatingPositionRequest | null = null;
+  private ttsFloatingPositionRun: Promise<void> | null = null;
   private ttsTextStartOffset: number = 0;
   // The speech engine reports completion independently from the reader's page state. Keep the expected source
   // tail so a premature onFinished callback cannot advance to the next chapter while trailing chunks are pending.
@@ -15496,20 +15505,57 @@ struct ReadBookPage {
     }
   }
 
-  async playPositionFromFloatingSession(targetChapterIndex: number, targetPageIndex: number,
+  /**
+   * 镜像阅读页（或朗读目录）让本页换位置朗读。上一次还在换（重新加载章节要零点几秒）时不能丢掉新请求：
+   * 镜像会在这个 Promise 完成后按本页正在读的句子对齐画面，丢掉的话本页还在读上一次的位置，
+   * 镜像就被拽回那一页。连续翻页时只换到最后一次的位置，全部换完才完成。
+   */
+  playPositionFromFloatingSession(targetChapterIndex: number, targetPageIndex: number,
     targetSourceOffset: number = -1): Promise<void> {
+    this.ttsFloatingPositionQueued = {
+      chapterIndex: targetChapterIndex,
+      pageIndex: targetPageIndex,
+      sourceOffset: targetSourceOffset
+    };
+    if (!this.ttsFloatingPositionRun) {
+      const run = this.drainTtsFloatingPositionQueue();
+      this.ttsFloatingPositionRun = run;
+      run.finally(() => {
+        if (this.ttsFloatingPositionRun === run) this.ttsFloatingPositionRun = null;
+      }).catch(() => {});
+    }
+    return this.ttsFloatingPositionRun;
+  }
+
+  private async drainTtsFloatingPositionQueue(): Promise<void> {
+    while (this.ttsFloatingPositionQueued) {
+      // 媒体控件的上一章/下一章正在换章时，等它换完再按最新位置换。
+      const waitStartedAt = Date.now();
+      while (this.ttsChapterSwitching && Date.now() - waitStartedAt < 8000) {
+        await sleepMs(50);
+      }
+      const request = this.ttsFloatingPositionQueued;
+      this.ttsFloatingPositionQueued = null;
+      if (!request) break;
+      await this.applyTtsFloatingPosition(request.chapterIndex, request.pageIndex, request.sourceOffset);
+    }
+  }
+
+  private async applyTtsFloatingPosition(targetChapterIndex: number, targetPageIndex: number,
+    targetSourceOffset: number): Promise<void> {
     const normalizedChapterIndex = this.clampChapterIndex(targetChapterIndex);
     const normalizedPageIndex = Math.max(0, Math.round(targetPageIndex));
-    if (normalizedChapterIndex === this.currentChapterIndex && normalizedPageIndex === this.currentPageIndex) {
+    // 后台页往往只排出了前几页，页码会被压到已排的最后一页；带了字符位置时不能按页码判断“已经在这里”。
+    if (targetSourceOffset < 0 && normalizedChapterIndex === this.currentChapterIndex &&
+      normalizedPageIndex === this.currentPageIndex) {
       return;
     }
     const sourceChapterIndex = this.currentChapterIndex;
     const sourcePageIndex = this.currentPageIndex;
-    const now = Date.now();
-    if (this.ttsChapterSwitching || now - this.ttsLastMediaChapterCommandAt < 500) {
+    if (this.ttsChapterSwitching) {
       return;
     }
-    this.ttsLastMediaChapterCommandAt = now;
+    this.ttsLastMediaChapterCommandAt = Date.now();
     this.ttsChapterSwitching = true;
     try {
       const shouldResume = this.isTtsSpeaking || this.ttsReader?.isSpeaking() ||
