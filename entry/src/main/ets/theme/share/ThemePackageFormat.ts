@@ -452,8 +452,8 @@ export function titleEmphasisIsEmpty(value: ThemePackagePartEmphasis | null | un
 }
 
 /**
- * 章首装饰：章节标题旁的饰图，和分段标题第一段（“第十二章”那一行）的颜色。写在每个模式自己的部件里，
- * 字段都可以空着。旧版本应用不认这一节，标题照旧显示。
+ * 章首装饰：章节标题旁的饰图、分段标题第一段（“第十二章”那一行）的颜色，和正文首字（放大占几行，可垫印章图）。
+ * 写在每个模式自己的部件里，字段都可以空着。旧版本应用不认这一节，标题和正文照旧显示。
  */
 export class ThemePackageChapterHead {
   /**
@@ -467,6 +467,26 @@ export class ThemePackageChapterHead {
   scale: number = 1;
   /** 分段标题第一段的颜色（可带透明度）；空串和标题同色。读者没开标题分段时不生效。 */
   numberColor: string = '';
+  /**
+   * 正文首字占几行：0 不处理，2 或 3。这个模式没设时沿用另一种模式的整套首字设置（行数、印章图、字占比，
+   * 颜色没另写时也跟着），见 chapterHeadFor。
+   */
+  dropCapLines: number = 0;
+  /** 首字底下的印章图（包里是素材引用，运行时是本机 URI）；空串只放大不垫图。 */
+  dropCapImage: string = '';
+  /** 首字颜色（可带透明度）；空串和正文同色。 */
+  dropCapColor: string = '';
+  /** 垫印章图时字高占印章边长的比例 0.4–0.9。 */
+  dropCapRatio: number = DROP_CAP_RATIO_DEFAULT;
+}
+
+export const DROP_CAP_RATIO_DEFAULT: number = 0.62;
+export const DROP_CAP_RATIO_MIN: number = 0.4;
+export const DROP_CAP_RATIO_MAX: number = 0.9;
+
+export function normalizeDropCapRatio(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !isFinite(value) || value <= 0) return DROP_CAP_RATIO_DEFAULT;
+  return Math.round(Math.max(DROP_CAP_RATIO_MIN, Math.min(DROP_CAP_RATIO_MAX, value)) * 100) / 100;
 }
 
 /** side：贴版心左边、上下居中于整组标题；top / bottom：在标题上方、下方单独占一行，跟着标题的对齐方式。 */
@@ -483,11 +503,20 @@ export function normalizeChapterHead(value: ThemePackageChapterHead | null | und
   result.scale = normalizeOrnamentScale(value.scale);
   result.numberColor = typeof value.numberColor === 'string' && HEX_COLOR.test(value.numberColor) ?
     value.numberColor.toUpperCase() : '';
+  // 本机旧记录里没有首字这几项。只写了印章图没写行数时按 2 行。
+  result.dropCapImage = typeof value.dropCapImage === 'string' ? value.dropCapImage : '';
+  // 桌面编辑器的工程里行数可能是字符串。
+  const capLines = Number(value.dropCapLines);
+  result.dropCapLines = capLines === 3 ? 3 : (capLines === 2 || result.dropCapImage ? 2 : 0);
+  result.dropCapColor = typeof value.dropCapColor === 'string' && HEX_COLOR.test(value.dropCapColor) ?
+    value.dropCapColor.toUpperCase() : '';
+  result.dropCapRatio = normalizeDropCapRatio(value.dropCapRatio);
   return result;
 }
 
 export function chapterHeadIsEmpty(value: ThemePackageChapterHead | null | undefined): boolean {
-  return !value || !(value.image || value.numberColor);
+  return !value || !(value.image || value.numberColor || value.dropCapLines > 0 || value.dropCapImage ||
+    value.dropCapColor);
 }
 
 /**
@@ -508,6 +537,13 @@ export function chapterHeadFor(parts: ThemePackageParts | null | undefined, dark
     result.scale = imageSource.scale;
   }
   result.numberColor = own.numberColor;
+  const capSource = own.dropCapLines > 0 ? own : (other.dropCapLines > 0 ? other : null);
+  if (capSource) {
+    result.dropCapLines = capSource.dropCapLines;
+    result.dropCapImage = capSource.dropCapImage;
+    result.dropCapRatio = capSource.dropCapRatio;
+    result.dropCapColor = own.dropCapColor || capSource.dropCapColor;
+  }
   return chapterHeadIsEmpty(result) ? null : result;
 }
 
@@ -1575,6 +1611,12 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
     parsed.placement = placement === 'top' || placement === 'bottom' ? placement : '';
     parsed.scale = normalizeOrnamentScale(numberField(head, 'scale'));
     parsed.numberColor = colorField(head, 'numberColor', headLabel, true);
+    parsed.dropCapImage = partAssetRef(head, 'dropCapImage', manifest,
+      [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE], headLabel);
+    const capLines = numberField(head, 'dropCapLines');
+    parsed.dropCapLines = capLines === 3 ? 3 : (capLines === 2 || parsed.dropCapImage ? 2 : 0);
+    parsed.dropCapColor = colorField(head, 'dropCapColor', headLabel, true);
+    parsed.dropCapRatio = normalizeDropCapRatio(numberField(head, 'dropCapRatio'));
     result.chapterHead = chapterHeadIsEmpty(parsed) ? null : parsed;
   }
   const comment = objectField(record, 'commentBubble');
@@ -1985,6 +2027,14 @@ function encodeVariantParts(variant: ThemePackageVariantParts): Record<string, O
       if (head.scale !== 1) headRecord['scale'] = head.scale;
     }
     if (head.numberColor) headRecord['numberColor'] = head.numberColor;
+    if (head.dropCapLines > 0) {
+      headRecord['dropCapLines'] = head.dropCapLines;
+      if (head.dropCapImage) {
+        headRecord['dropCapImage'] = head.dropCapImage;
+        if (head.dropCapRatio !== DROP_CAP_RATIO_DEFAULT) headRecord['dropCapRatio'] = head.dropCapRatio;
+      }
+    }
+    if (head.dropCapColor) headRecord['dropCapColor'] = head.dropCapColor;
     record['chapterHead'] = headRecord;
   }
   return record;
@@ -2130,7 +2180,10 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
       if (comment.image && comment.image !== COMMENT_IMAGE_NONE) add(comment.image);
       add(comment.ornamentImage || '');
     }
-    if (variant.chapterHead) add(variant.chapterHead.image || '');
+    if (variant.chapterHead) {
+      add(variant.chapterHead.image || '');
+      add(variant.chapterHead.dropCapImage || '');
+    }
   }
   for (const tts of [parts.ttsPanelLight, parts.ttsPanelDark]) {
     if (tts) add(tts.artwork);
@@ -2190,8 +2243,12 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
       comment.ornamentImage = swap(comment.ornamentImage || '');
     }
     // 本机旧记录里没有章首装饰。
-    if (variant.chapterHead) variant.chapterHead.image = swap(variant.chapterHead.image || '');
-    else variant.chapterHead = null;
+    if (variant.chapterHead) {
+      variant.chapterHead.image = swap(variant.chapterHead.image || '');
+      variant.chapterHead.dropCapImage = swap(variant.chapterHead.dropCapImage || '');
+    } else {
+      variant.chapterHead = null;
+    }
   }
   for (const tts of [copy.ttsPanelLight, copy.ttsPanelDark]) {
     if (tts) tts.artwork = swap(tts.artwork);
@@ -2318,8 +2375,12 @@ export function describeParts(parts: ThemePackageParts): string[] {
   if (lightHead || darkHead) {
     const hasImage = !!((lightHead && lightHead.image) || (darkHead && darkHead.image));
     const hasColor = !!((lightHead && lightHead.numberColor) || (darkHead && darkHead.numberColor));
-    items.push(hasImage && hasColor ? '章首装饰（标题饰图、序号行颜色）' :
-      (hasImage ? '章首装饰（标题饰图）' : '章首装饰（序号行颜色）'));
+    const hasCap = !!((lightHead && lightHead.dropCapLines > 0) || (darkHead && darkHead.dropCapLines > 0));
+    const names: string[] = [];
+    if (hasImage) names.push('标题饰图');
+    if (hasColor) names.push('序号行颜色');
+    if (hasCap) names.push('正文首字');
+    items.push(`章首装饰（${names.join('、')}）`);
   }
   if ((parts.light && parts.light.commentBubble) || (parts.dark && parts.dark.commentBubble)) {
     items.push(commentBubbleHasImage(commentBubbleFor(parts, false)) || commentBubbleHasImage(commentBubbleFor(parts, true)) ?

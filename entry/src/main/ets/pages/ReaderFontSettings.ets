@@ -1396,7 +1396,7 @@ export struct ReaderFontSettingsEditor {
       Row({ space: AppSpacing.LG }) {
         Column({ space: AppSpacing.XS }) {
           Text('章首装饰').fontSize(AppFontSize.BODY_LARGE).fontColor(this.primaryTextColor())
-          Text(`显示主题带的标题饰图和序号行颜色。${
+          Text(`显示主题带的标题饰图、序号行颜色和正文首字。${
             ReaderChapterHead.describe(ThemeRuntime.chapterHeadTokens(this.appDarkMode))}`)
             .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
         }.layoutWeight(1).alignItems(HorizontalAlign.Start)

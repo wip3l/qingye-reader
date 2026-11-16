@@ -833,11 +833,12 @@ test('chapter head: decode, per-mode fallback, refs, encode, pack:self', () => {
   json.light.chapterHead = { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#8d8478' };
   json.dark.chapterHead = { numberColor: '#99FFFFFF', placement: 'bottom' };
   const parts = byPath(decode(json));
+  const noCap = { dropCapLines: 0, dropCapImage: '', dropCapColor: '', dropCapRatio: 0.62 };
   assert.deepEqual({ ...parts.light.chapterHead },
-    { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#8D8478' });
+    { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#8D8478', ...noCap });
   // 深色没写饰图：沿用浅色那张和它的位置、大小，颜色用自己的；自己写的位置没有图可跟，不生效。
   const night = format.chapterHeadFor(parts, true);
-  assert.deepEqual({ ...night }, { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#99FFFFFF' });
+  assert.deepEqual({ ...night }, { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#99FFFFFF', ...noCap });
   assert.equal(format.partsAssetRefs(parts).includes('assets/logo.svg'), true);
   assert.equal(format.describeParts(parts).includes('章首装饰（标题饰图、序号行颜色）'), true);
   const encoded = format.encodeParts(parts);
@@ -860,6 +861,27 @@ test('chapter head: decode, per-mode fallback, refs, encode, pack:self', () => {
   assert.equal(format.chapterHeadFor(legacy, false), null);
   assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { image: 'assets/missing.png' } } }), /chapterHead\.image/);
   assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { numberColor: 'red' } } }), /chapterHead\.numberColor/);
+  // 正文首字：行数 2 或 3，只写了印章图时按 2 行；字占比夹在 0.4–0.9；深色没设时沿用浅色整套，颜色可以另写。
+  const capJson = partsJson();
+  capJson.light.chapterHead = { dropCapLines: 3, dropCapImage: 'assets/logo.svg', dropCapColor: '#b5402f', dropCapRatio: 0.95 };
+  capJson.dark.chapterHead = { dropCapColor: '#FFE0A0' };
+  const cap = byPath(decode(capJson));
+  assert.equal(cap.light.chapterHead.dropCapLines, 3);
+  assert.equal(cap.light.chapterHead.dropCapRatio, 0.9);
+  assert.equal(format.partsAssetRefs(cap).includes('assets/logo.svg'), true);
+  const capNight = format.chapterHeadFor(cap, true);
+  assert.deepEqual([capNight.dropCapLines, capNight.dropCapImage, capNight.dropCapRatio, capNight.dropCapColor],
+    [3, 'assets/logo.svg', 0.9, '#FFE0A0']);
+  assert.equal(format.describeParts(cap).includes('章首装饰（正文首字）'), true);
+  const capEncoded = format.encodeParts(cap);
+  assert.deepEqual(capEncoded.light.chapterHead,
+    { dropCapLines: 3, dropCapImage: 'assets/logo.svg', dropCapRatio: 0.9, dropCapColor: '#B5402F' });
+  assert.deepEqual(capEncoded.dark.chapterHead, { dropCapColor: '#FFE0A0' });
+  assert.equal(decode({ ...partsJson(), light: { chapterHead: { dropCapImage: 'assets/logo.svg' } } }).light.chapterHead.dropCapLines, 2);
+  assert.deepEqual(format.encodeParts(byPath(decode({ ...partsJson(), light: { chapterHead: { dropCapLines: 2, dropCapRatio: 0.62 } } }))).light.chapterHead,
+    { dropCapLines: 2 });
+  assert.equal(decode({ ...partsJson(), light: { chapterHead: { dropCapLines: 7 } } }).light.chapterHead, null);
+  assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { dropCapLines: 2, dropCapColor: 'red' } } }), /chapterHead\.dropCapColor/);
   // 方案覆盖里的 pack:self。
   const settings = { customLightEmphasis: { chapterHead: 'pack:self' }, customDarkEmphasis: { chapterHead: 'none' } };
   format.replaceSelfPackId(settings, 'pack:demo');

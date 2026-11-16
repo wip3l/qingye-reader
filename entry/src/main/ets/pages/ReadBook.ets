@@ -768,6 +768,7 @@ struct ReadBookPage {
   private readerContinuousV2Controllers: Map<string, ReaderV2PageNodeController> =
     new Map<string, ReaderV2PageNodeController>();
   private readerV2SelectionExtraGaps: Map<string, number> = new Map<string, number>();
+  private readerDropCapPlaceholder: image.PixelMap | null = null;
   private readerV2SelectionShownHostVersion: number = -1;
   private readerV2ImageBitmaps: ReaderImageBitmapCache = new ReaderImageBitmapCache();
   private readerNightImages: ReaderNightImageCache = new ReaderNightImageCache();
@@ -19640,8 +19641,14 @@ ${leading}` : leading;
         });
         runStart += run.text.length;
       }
-      const paragraphLength = fragment.selectionPageEnd - fragment.selectionPageStart +
-        (fragment.selectionBreakAfter ? 1 : 0);
+      // 首段回到整行的那一截和前一截是同一段，段落样式由前一截带上。
+      if (fragment.blockContinuation) continue;
+      const continuation = fragmentIndex + 1 < page.fragments.length && page.fragments[fragmentIndex + 1].blockContinuation ?
+        page.fragments[fragmentIndex + 1] : null;
+      const paragraphEnd = continuation || fragment;
+      const paragraphLength = paragraphEnd.selectionPageEnd - fragment.selectionPageStart +
+        (paragraphEnd.selectionBreakAfter ? 1 : 0);
+      const gapIndex = continuation ? fragmentIndex + 1 : fragmentIndex;
       if (paragraphLength > 0) {
         styles.push({
           start: fragment.selectionPageStart,
@@ -19649,11 +19656,11 @@ ${leading}` : leading;
           styledKey: StyledStringKey.PARAGRAPH_STYLE,
           styledValue: new ParagraphStyle({
             textAlign: fragment.title ? this.readerTitleTextAlignValue(snapshot.titleAlignment) : this.readerTextAlignValue(),
-            // 标题左边让给章首饰图的宽度，选字层跟着缩进，和画出来的字对齐。
-            leadingMargin: LengthMetrics.px(fragment.leadReservePx),
+            // 标题左边让给章首饰图的宽度，选字层跟着缩进，和画出来的字对齐；首段只有绕着首字的前几行缩进。
+            leadingMargin: this.readerV2SelectionLeadingMargin(fragment),
             wordBreak: WordBreak.BREAK_WORD,
             paragraphSpacing: LengthMetrics.px(exactGaps ?
-              this.readerV2SelectionGapAfterPx(page, fragmentIndex, extraGapPx) : snapshot.paragraphSpacingPx)
+              this.readerV2SelectionGapAfterPx(page, gapIndex, extraGapPx) : snapshot.paragraphSpacingPx)
           })
         });
       }
@@ -20040,6 +20047,24 @@ ${leading}` : leading;
     return matchedFragment ? 2 : 0;
   }
 
+  // 选字层段落的左缩进：标题让给章首饰图的宽度每行都缩；首段让给首字的宽度只缩前几行，
+  // 用一张透明占位图表示首字占的那块（系统按占位图的高度决定缩进哪几行）。
+  readerV2SelectionLeadingMargin(fragment: ReaderV2PageFragment): LengthMetrics | LeadingMarginPlaceholder {
+    if (fragment.dropCapSpanPx <= 0) return LengthMetrics.px(fragment.leadReservePx);
+    if (!this.readerDropCapPlaceholder) {
+      try {
+        this.readerDropCapPlaceholder = image.createPixelMapSync(new ArrayBuffer(4), { size: { width: 1, height: 1 } });
+      } catch (error) {
+        console.warn('创建首字占位图失败:', error);
+        return LengthMetrics.px(0);
+      }
+    }
+    return {
+      pixelMap: this.readerDropCapPlaceholder,
+      size: [`${fragment.leadReservePx}px`, `${fragment.dropCapSpanPx}px`]
+    };
+  }
+
   // Vertical gap the layout left between this text fragment and the next one, images in between included.
   readerV2SelectionGapAfterPx(page: ReaderV2PageLayout, fragmentIndex: number, extraGapPx: number): number {
     const fragment = page.fragments[fragmentIndex];
@@ -20061,7 +20086,7 @@ ${leading}` : leading;
     const controller = this.readerSelectableTextController(key);
     let paragraphCount = 0;
     for (const fragment of page.fragments) {
-      if (fragment.paragraph) paragraphCount++;
+      if (fragment.paragraph && !fragment.blockContinuation) paragraphCount++;
     }
     if (!this.readerV2SelectionExtraGaps.has(page.identity)) {
       const extraGapPx = paragraphCount > 1 ? (page.selectionHeight - nativeHeightPx) / (paragraphCount - 1) : 0;

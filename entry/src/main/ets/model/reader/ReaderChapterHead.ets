@@ -21,16 +21,22 @@ export class ReaderChapterHead {
       }
     }
     if (tokens.numberColor) style.numberColor = ReaderV2Color.parse(tokens.numberColor, 0);
+    if (tokens.dropCapLines >= 2) {
+      style.capLines = tokens.dropCapLines === 3 ? 3 : 2;
+      // 印章图读不出来时只放大。
+      if (tokens.dropCapImage && ImageFileSize.aspect(tokens.dropCapImage) > 0) style.capImage = tokens.dropCapImage;
+      if (tokens.dropCapColor) style.capColor = ReaderV2Color.parse(tokens.dropCapColor, 0);
+      style.capRatio = tokens.dropCapRatio > 0 ? tokens.dropCapRatio : 0.62;
+    }
     return style;
   }
 
   /** 设置页的说明：当前主题带了什么。 */
   static describe(tokens: ThemePackageChapterHead | null | undefined): string {
-    const image = !!tokens && !!tokens.image;
-    const color = !!tokens && !!tokens.numberColor;
-    if (image && color) return '当前主题带了标题饰图和序号行颜色';
-    if (image) return '当前主题带了标题饰图';
-    if (color) return '当前主题带了序号行颜色（开了标题分段才看得出）';
-    return '当前主题没有章首装饰';
+    const names: string[] = [];
+    if (tokens && tokens.image) names.push('标题饰图');
+    if (tokens && tokens.numberColor) names.push('序号行颜色（开了标题分段才看得出）');
+    if (tokens && tokens.dropCapLines >= 2) names.push('正文首字');
+    return names.length > 0 ? `当前主题带了${names.join('、')}` : '当前主题没有章首装饰';
   }
 }

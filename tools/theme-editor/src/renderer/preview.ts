@@ -9,6 +9,8 @@ import { commentImageSettingsOf, imageBubble } from './commentStretch.ts';
 import { bookShelfFrameFor, commentBubbleHasImage } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 
 export const PHONE_W = 360;
+/** 预览正文的行高倍数，同 styles.css 的 .reader .content。 */
+const READER_LINE_HEIGHT = 1.8;
 export const PHONE_H = 780;
 const ORNAMENT = Math.max(112, Math.min(260, PHONE_W * 0.36));
 const ORNAMENT_INSET = Math.max(8, Math.min(22, PHONE_W * 0.025));
@@ -455,6 +457,21 @@ function chapterTitle(e: Effective, fontPx: number, columnWidth: number): HTMLEl
   return wrap;
 }
 
+/**
+ * 正文首字：方框高 = (行数 − 1) × 行距 + 1.04 个字号（同应用 ReaderV2Paginator.resolveDropCap），浮在段落左上角；
+ * 垫印章图时字高按字占比，只放大时字撑满方框。没设首字时返回 null。
+ */
+function dropCap(char: string, e: Effective, fontPx: number): HTMLElement | null {
+  const head = e.head;
+  if (!head || head.dropCapLines < 2) return null;
+  const box = (head.dropCapLines - 1) * fontPx * READER_LINE_HEIGHT + fontPx * 1.04;
+  const url = assetUrl(head.dropCapImage);
+  const size = url ? box * (head.dropCapRatio > 0 ? head.dropCapRatio : 0.62) : box / 1.04;
+  const style = `width:${box}px;height:${box}px;font-size:${size}px;margin-top:${fontPx * (READER_LINE_HEIGHT - 1.04) / 2}px;` +
+    (head.dropCapColor ? `color:${cssColor(head.dropCapColor)};` : '') + (url ? `background-image:url("${url}")` : '');
+  return h('span', { class: 'drop-cap', 'data-sec': 'chapterHead', style }, char);
+}
+
 function readerBody(e: Effective): HTMLElement {
   const r = e.reader;
   const p = project();
@@ -486,7 +503,10 @@ function readerBody(e: Effective): HTMLElement {
   const margin = typeof layout.marginLeft === 'number' ? Math.max(8, Math.min(48, layout.marginLeft)) : 20;
   const content = h('div', { class: 'content', style: `font-size:${fontSize}px;padding:6px ${margin}px` },
     chapterTitle(e, Math.round(fontSize * 1.3), PHONE_W - margin * 2));
-  const p1 = h('p', {}, '船过石桥时，舱里的灯忽然暗了一下。老周把书合上，抬头看了看窗外的水色，');
+  const p1 = h('p', {});
+  const cap = dropCap('船', e, fontSize);
+  if (cap) p1.append(cap);
+  p1.append(`${cap ? '' : '船'}过石桥时，舱里的灯忽然暗了一下。老周把书合上，抬头看了看窗外的水色，`);
   p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e, fontSize), commentBubble('23', e, fontSize));
   const p2 = h('p', {}, '阿遥没有应声，只把那页折了个角。她记得母亲说过，');
   p2.append(emphasis('“夜里读书，读到哪儿就算到哪儿。”', e, fontSize), '水声一阵紧过一阵，像是有人在船底翻书。');

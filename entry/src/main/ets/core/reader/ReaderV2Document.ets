@@ -147,6 +147,24 @@ export class ReaderV2Document {
   regexRanges: ReaderV2RegexRange[] = [];
   identity: string = '';
 
+  private dropCapBlock: number = -2;
+
+  /**
+   * 正文首字所在的块：紧跟章节标题的第一个普通文字段；标题后面是图片、小标题、热评卡，或这份文档没有
+   * 标题（滚动阅读里一章的后几截）时为 -1。
+   */
+  dropCapBlockIndex(): number {
+    if (this.dropCapBlock !== -2) return this.dropCapBlock;
+    let index = -1;
+    for (let cursor = 0; cursor < this.blocks.length; cursor++) {
+      if (this.blocks[cursor].title) index = cursor + 1;
+      else if (index >= 0) break;
+    }
+    const block = index >= 0 && index < this.blocks.length ? this.blocks[index] : null;
+    this.dropCapBlock = block && !block.image && !block.card && block.headingLevel === 0 && !block.title ? index : -1;
+    return this.dropCapBlock;
+  }
+
   /** 章节标题占几块（不分段 1 块，分段 2 块，没有标题 0）。 */
   titleBlockCount(): number {
     let count = 0;

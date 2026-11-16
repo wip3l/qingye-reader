@@ -4,6 +4,7 @@ import { ReaderV2Block, ReaderV2Document, ReaderV2InlineAction } from './ReaderV
 import { ReaderV2LayoutSnapshot, ReaderV2Rect } from './ReaderV2LayoutSnapshot';
 import {
   ReaderV2ActionHitArea,
+  ReaderV2PageDecoration,
   ReaderV2PageFragment,
   ReaderV2PageLayout,
   ReaderV2PageSet,
@@ -25,12 +26,19 @@ class ReaderV2MeasuredBlock {
   block: ReaderV2Block;
   paragraph: graphicsText.Paragraph;
   lineCount: number;
+  /** The paragraph covers block.text[sliceStart, sliceEnd); line indices are relative to sliceStart. */
+  sliceStart: number = 0;
+  sliceEnd: number = 0;
+  /** Width the slice was laid out at and its left offset inside the column (drop-cap lines are narrower). */
+  widthPx: number = 0;
+  leadPx: number = 0;
   private lines: Map<number, graphicsText.LineMetrics> = new Map<number, graphicsText.LineMetrics>();
 
   constructor(block: ReaderV2Block, paragraph: graphicsText.Paragraph) {
     this.block = block;
     this.paragraph = paragraph;
     this.lineCount = paragraph.getLineCount();
+    this.sliceEnd = block.text.length;
   }
 
   line(index: number): graphicsText.LineMetrics {
@@ -43,6 +51,25 @@ class ReaderV2MeasuredBlock {
     this.lines.set(index, metric);
     return metric;
   }
+}
+
+/**
+ * 正文首字的排法：首字单独画在段落左上角的方框里（不属于任何片段），首段拆成两截——绕着方框排的前
+ * lines 行（宽度让出 reservePx），和回到整行宽度的其余部分。两截都是同一块的切片，和跨页拆段是同一套机制。
+ */
+class ReaderV2DropCapPlan {
+  blockIndex: number = -1;
+  char: string = '';
+  /** 首字之后第一个字、两截的分界在块内的下标；splitAt 等于块长时没有第二截。 */
+  bodyStart: number = 0;
+  splitAt: number = 0;
+  lines: number = 2;
+  /** 行与行的基线间距。 */
+  pitchPx: number = 0;
+  boxPx: number = 0;
+  /** 方框上边相对第一行行框顶边的偏移。 */
+  boxTopPx: number = 0;
+  reservePx: number = 0;
 }
 
 /** A page transaction suspends here until the system has laid out its next paragraph asynchronously. */
@@ -88,6 +115,10 @@ export class ReaderV2PaginationSession {
   chapterHead: ReaderV2ChapterHeadMetrics = new ReaderV2ChapterHeadMetrics();
   titleMarginTopPx: number = 0;
   titleMarginBottomPx: number = 0;
+  /** 正文首字：解析过一次后不再变（null 表示这一章不做）；dropPart 是首段当前排到第几截。 */
+  dropCap: ReaderV2DropCapPlan | null = null;
+  dropCapResolved: boolean = false;
+  dropPart: number = 0;
   private blockStyles: ReaderV2SpanStyleRange[] = [];
   private blockStylesIndex: number = -1;
 
@@ -207,6 +238,7 @@ export class ReaderV2Paginator {
     const lineIndex = session.lineIndex;
     const pageIndex = session.pageIndex;
     const measuredBlock = session.measuredBlock;
+    const dropPart = session.dropPart;
     const cache = new ReaderV2ParagraphCache();
     session.paragraphCache = cache;
     const restore = (): void => {
@@ -214,6 +246,7 @@ export class ReaderV2Paginator {
       session.lineIndex = lineIndex;
       session.pageIndex = pageIndex;
       session.measuredBlock = measuredBlock;
+      session.dropPart = dropPart;
     };
     try {
       while (!session.cancelled && isCurrent()) {
@@ -274,6 +307,8 @@ export class ReaderV2Paginator {
       let mustEndPage = false;
       let previousWasImage = false;
       let titlePageBoundary = false;
+      // Top of the drop-cap paragraph's first line when its wrapped lines were placed on this page.
+      let dropLeadTop = Number.NaN;
       // Index of the first hit area each fragment contributed, so fragments can be moved with their areas.
       const fragmentActionStarts: number[] = [];
       // Paragraph hot-comment cards placed in the current page (or, while scrolling, the current screen height).
@@ -441,19 +476,26 @@ export class ReaderV2Paginator {
 
         let current = session.measuredBlock;
         if (!current || current.block !== session.document.blocks[session.blockIndex]) {
-          current = ReaderV2Paginator.measureBlock(session.document, session.document.blocks[session.blockIndex],
-            session.snapshot, session.currentBlockStyles(), session.width, session.paragraphCache);
+          current = ReaderV2Paginator.measureCurrent(session);
           session.measuredBlock = current;
         }
         if (current.lineCount === 0) {
           session.blockIndex++;
           session.lineIndex = 0;
+          session.dropPart = 0;
           session.measuredBlock = null;
           continue;
         }
 
-        const startsNewBlock = session.lineIndex === 0;
+        const drop = session.dropCap && session.dropCap.blockIndex === session.blockIndex ? session.dropCap : null;
+        // The second slice of a drop-cap paragraph continues the same paragraph: no paragraph gap before it.
+        const dropRest = !!drop && session.dropPart === 1;
+        const startsNewBlock = session.lineIndex === 0 && !dropRest;
         let spacing = startsNewBlock ? ReaderV2Paginator.blockSpacingBefore(session, hasContent, previousWasImage) : 0;
+        if (dropRest && session.lineIndex === 0 && !Number.isNaN(dropLeadTop) && drop) {
+          // Keep the paragraph's own line pitch across the two slices.
+          spacing = Math.max(0, dropLeadTop + drop.lines * drop.pitchPx - y);
+        }
         const firstLine = current.line(session.lineIndex);
         if (!hasContent && !topInkGuardApplied) {
           // A zero user margin places the first logical line box on the page boundary. Some fonts (notably the
@@ -469,7 +511,12 @@ export class ReaderV2Paginator {
           // Keep at least one line on a short viewport even when the requested title margin is larger.
           spacing = Math.min(spacing, Math.max(0, columnBottom - y - firstLineHeight));
         }
-        if (hasContent && y + spacing + firstLineHeight > columnBottom + 0.01) {
+        // The drop cap and the lines wrapped around it stay together on one page.
+        const dropLead = !!drop && session.dropPart === 0 && session.lineIndex === 0;
+        const requiredHeight = dropLead && drop ? Math.max(firstLineHeight, drop.boxTopPx + drop.boxPx,
+          ReaderV2Paginator.lineBottom(current.line(Math.min(drop.lines, current.lineCount) - 1)) -
+          firstLine.topHeight) : firstLineHeight;
+        if (hasContent && y + spacing + requiredHeight > columnBottom + 0.01) {
           // Paragraph spacing belongs to the next block. It is never consumed as invisible page-tail space.
           break;
         }
@@ -506,6 +553,15 @@ export class ReaderV2Paginator {
         fragment.fixedGapBefore = startsNewBlock && hasContent &&
           ((current.block.title && session.titleMarginTopPx > 0) ||
             (!current.block.title && !!previous && previous.title && session.titleMarginBottomPx > 0));
+        if (dropLead && drop) {
+          fragment.dropCapTopPx = drop.boxTopPx;
+          fragment.dropCapBoxPx = drop.boxPx;
+          fragment.dropCapSpanPx = (drop.lines - 1) * drop.pitchPx + firstLineHeight * 0.5;
+          dropLeadTop = y;
+        } else if (dropRest && fragmentFirstLine === 0 && !Number.isNaN(dropLeadTop)) {
+          fragment.blockContinuation = true;
+          fragment.fixedGapBefore = true;
+        }
         fragmentActionStarts.push(page.actions.length);
         page.fragments.push(fragment);
         ReaderV2Paginator.appendActionAreas(page, fragment, session.document.actions, session.snapshot);
@@ -516,6 +572,17 @@ export class ReaderV2Paginator {
         y += fragmentBottom - paragraphLineTop;
 
         if (session.lineIndex >= current.lineCount) {
+          if (drop && session.dropPart === 0) {
+            if (drop.splitAt < current.block.text.length) {
+              session.dropPart = 1;
+              session.lineIndex = 0;
+              session.measuredBlock = null;
+              continue;
+            }
+            // A paragraph shorter than the drop cap: the next block starts below the cap.
+            if (!Number.isNaN(dropLeadTop)) y = Math.max(y, dropLeadTop + drop.boxTopPx + drop.boxPx);
+          }
+          session.dropPart = 0;
           if (cardsEnabled && current.block.trailingCard) {
             session.lineIndex = -1;
             continue;
@@ -549,6 +616,7 @@ export class ReaderV2Paginator {
       if (page.decorations.length === 0) {
         ReaderV2ChapterHeadLayout.place(page, session.snapshot, session.chapterHead, column);
       }
+      ReaderV2Paginator.placeDropCap(page, session, column);
       page.sourceStart = session.document.sourceOffsetForDisplay(page.displayStart);
       page.sourceEnd = session.document.sourceOffsetForDisplay(page.displayEnd);
       page.identity = `${session.document.identity}_${session.snapshot.identity}_${session.pageIndex}_` +
@@ -805,6 +873,136 @@ export class ReaderV2Paginator {
     if (paragraphCache) throw new ReaderV2PendingLayout(cacheKey, paragraph, layoutWidth);
     paragraph.layoutSync(layoutWidth);
     return paragraph;
+  }
+
+  /** The paragraph to lay lines out from at the session cursor: the whole block, or one slice of the drop-cap paragraph. */
+  private static measureCurrent(session: ReaderV2PaginationSession): ReaderV2MeasuredBlock {
+    const block = session.document.blocks[session.blockIndex];
+    const plan = ReaderV2Paginator.dropCapPlan(session);
+    if (!plan) {
+      session.dropPart = 0;
+      return ReaderV2Paginator.measureBlock(session.document, block, session.snapshot, session.currentBlockStyles(),
+        session.width, session.paragraphCache);
+    }
+    return session.dropPart === 0 ?
+      ReaderV2Paginator.measureSlice(session, block, plan.bodyStart, plan.splitAt, session.width - plan.reservePx,
+        plan.reservePx) :
+      ReaderV2Paginator.measureSlice(session, block, plan.splitAt, block.text.length, session.width, 0);
+  }
+
+  private static measureSlice(session: ReaderV2PaginationSession, block: ReaderV2Block, start: number, end: number,
+    width: number, lead: number): ReaderV2MeasuredBlock {
+    const paragraph = ReaderV2Paginator.buildParagraph(session.document, block, session.snapshot,
+      session.currentBlockStyles(), width, start, end, false, session.paragraphCache);
+    const measured = new ReaderV2MeasuredBlock(block, paragraph);
+    measured.sliceStart = start;
+    measured.sliceEnd = end;
+    measured.widthPx = width;
+    measured.leadPx = lead;
+    return measured;
+  }
+
+  /** 汉字（含扩展 A 区和兼容区）才做首字；引号、数字、字母、标点开头的段落保持原样。 */
+  private static readonly DROP_CAP_CHAR: RegExp = /[\u3400-\u9FFF\uF900-\uFAFF]/;
+  /** 汉字字框相对基线的上、下范围占字号的比例。 */
+  private static readonly EM_ASCENT: number = 0.92;
+  private static readonly EM_DESCENT: number = 0.12;
+
+  /**
+   * 当前块是首字段落时返回排法，否则 null。第一次用到时量出行距并定下两截的分界；量的过程中遇到要等的
+   * 异步排版会原样抛出，下次重来（已排好的段落在缓存里）。
+   */
+  private static dropCapPlan(session: ReaderV2PaginationSession): ReaderV2DropCapPlan | null {
+    const head = session.snapshot.chapterHead;
+    if (head.capLines < 2 || session.blockIndex !== session.document.dropCapBlockIndex()) return null;
+    if (session.dropCapResolved) return session.dropCap;
+    const plan = ReaderV2Paginator.resolveDropCap(session);
+    session.dropCap = plan;
+    session.dropCapResolved = true;
+    return plan;
+  }
+
+  private static resolveDropCap(session: ReaderV2PaginationSession): ReaderV2DropCapPlan | null {
+    const block = session.document.blocks[session.blockIndex];
+    const text = block.text;
+    let capStart = 0;
+    while (capStart < text.length && (text[capStart] === ' ' || text[capStart] === '\u3000' || text[capStart] === '\t')) {
+      capStart++;
+    }
+    const bodyStart = capStart + 1;
+    if (bodyStart >= text.length || !ReaderV2Paginator.DROP_CAP_CHAR.test(text[capStart])) return null;
+    // 首字上挂着段评气泡、注释编号时不做。
+    const actionIndex = ReaderV2Paginator.firstActionWhoseEndExceeds(session.document.actions, block.displayStart);
+    if (actionIndex < session.document.actions.length &&
+      session.document.actions[actionIndex].displayStart < block.displayStart + bodyStart) return null;
+    const snapshot = session.snapshot;
+    const styles = session.currentBlockStyles();
+    const full = ReaderV2Paginator.measureBlock(session.document, block, snapshot, styles, session.width,
+      session.paragraphCache);
+    if (full.lineCount === 0) return null;
+    const firstLine = full.line(0);
+    const plan = new ReaderV2DropCapPlan();
+    plan.blockIndex = session.blockIndex;
+    plan.char = text[capStart];
+    plan.bodyStart = bodyStart;
+    plan.lines = snapshot.chapterHead.capLines === 3 ? 3 : 2;
+    plan.pitchPx = full.lineCount > 1 ? full.line(1).topHeight - firstLine.topHeight :
+      firstLine.height + snapshot.lineSpacingPx;
+    const font = snapshot.fontSizePx;
+    plan.boxPx = (plan.lines - 1) * plan.pitchPx + font * (ReaderV2Paginator.EM_ASCENT + ReaderV2Paginator.EM_DESCENT);
+    plan.boxTopPx = firstLine.baseline - firstLine.topHeight - font * ReaderV2Paginator.EM_ASCENT;
+    plan.reservePx = plan.boxPx + font * 0.3;
+    // 版心太窄、方框占掉一半以上时不做。
+    if (plan.pitchPx <= 0 || plan.reservePx > session.width * 0.5) return null;
+    const narrow = ReaderV2Paginator.buildParagraph(session.document, block, snapshot, styles,
+      session.width - plan.reservePx, bodyStart, text.length, false, session.paragraphCache);
+    const narrowLines = narrow.getLineCount();
+    if (narrowLines > plan.lines) {
+      const boundary = narrow.getLineMetrics(plan.lines - 1);
+      plan.splitAt = boundary ? Math.min(text.length, bodyStart + boundary.endIndex) : text.length;
+    } else {
+      plan.splitAt = text.length;
+    }
+    return plan;
+  }
+
+  /** 把首字画到绕排那一截第一行的左上角；片段位置已定（页底对齐之后）。 */
+  private static placeDropCap(page: ReaderV2PageLayout, session: ReaderV2PaginationSession, column: ReaderV2Rect): void {
+    const plan = session.dropCap;
+    if (!plan) return;
+    const lead = page.fragments.find((fragment: ReaderV2PageFragment): boolean => fragment.dropCapBoxPx > 0);
+    if (!lead) return;
+    const snapshot = session.snapshot;
+    const head = snapshot.chapterHead;
+    const box = lead.dropCapBoxPx;
+    const top = lead.paragraphY + lead.dropCapTopPx;
+    const fontPx = head.capImage ? box * Math.max(0.4, Math.min(0.9, head.capRatio)) :
+      box / (ReaderV2Paginator.EM_ASCENT + ReaderV2Paginator.EM_DESCENT);
+    const style = ReaderV2Paginator.baseTextStyle(new ReaderV2Block('drop_cap', plan.char, 0, 1, 0, 1, true), snapshot);
+    style.fontSize = fontPx;
+    style.letterSpacing = 0;
+    if (head.capColor !== 0) style.color = ReaderV2Paginator.graphicsColor(head.capColor);
+    const builder = new graphicsText.ParagraphBuilder({
+      textStyle: style,
+      align: graphicsText.TextAlign.LEFT,
+      textDirection: graphicsText.TextDirection.LTR,
+      includeFontPadding: true
+    }, graphicsText.FontCollection.getGlobalInstance());
+    builder.pushStyle(style);
+    builder.addText(plan.char);
+    builder.popStyle();
+    const glyph = builder.build();
+    glyph.layoutSync(Math.max(1, box * 3));
+    const line = glyph.getLineMetrics(0);
+    const decoration = new ReaderV2PageDecoration();
+    decoration.image = head.capImage;
+    decoration.rect = new ReaderV2Rect(column.left, top, column.left + box, top + box);
+    decoration.glyph = glyph;
+    decoration.glyphX = column.left + (box - (line ? line.width : fontPx)) / 2;
+    // 字框（基线上 0.92、下 0.12 个字号）的中心对到方框中心。
+    const baselineY = top + box / 2 + fontPx * (ReaderV2Paginator.EM_ASCENT - ReaderV2Paginator.EM_DESCENT) / 2;
+    decoration.glyphY = baselineY - (line ? line.baseline : fontPx * ReaderV2Paginator.EM_ASCENT);
+    page.decorations.push(decoration);
   }
 
   /** 章首饰图在标题左侧时，标题每一行左边让出的宽度。 */
@@ -1095,30 +1293,35 @@ export class ReaderV2Paginator {
     // A page-local paragraph contains no neighbouring lines, so a small ink bleed is safe and layout-neutral.
     // A block that fits on the page whole is the common case: its measured paragraph already is that
     // page-local paragraph, so laying the same text out a second time is skipped.
+    // Line indices are relative to the measured slice (the whole block except for a drop-cap paragraph).
+    const sliceStart = current.sliceStart + first.startIndex;
+    const sliceEnd = current.sliceStart + last.endIndex;
+    const layoutWidth = current.widthPx > 0 ? current.widthPx : width;
     const wholeBlock = firstLine === 0 && lastLine === current.lineCount - 1 &&
-      first.startIndex === 0 && last.endIndex === current.block.text.length;
+      first.startIndex === 0 && sliceEnd === current.sliceEnd;
     fragment.paragraph = wholeBlock ? current.paragraph :
-      ReaderV2Paginator.buildParagraph(document, current.block, snapshot, regexStyles, width,
-        first.startIndex, last.endIndex, false, paragraphCache);
+      ReaderV2Paginator.buildParagraph(document, current.block, snapshot, regexStyles, layoutWidth,
+        sliceStart, sliceEnd, false, paragraphCache);
     fragment.selectionRuns = ReaderV2Paginator.buildSelectionRuns(document, current.block, snapshot, regexStyles,
-      first.startIndex, last.endIndex);
-    let runOffset = current.block.displayStart + first.startIndex;
+      sliceStart, sliceEnd);
+    let runOffset = current.block.displayStart + sliceStart;
     const needsOutline = fragment.selectionRuns.some((run: ReaderV2SelectionRun): boolean => {
       const requested = ReaderV2Paginator.requestedWeightAt(document, current.block, runOffset, snapshot, regexStyles);
       runOffset += run.text.length;
       return ReaderFontWeight.isStatic(run.fontFamily) && requested > ReaderFontWeight.DEFAULT;
     });
     if (needsOutline) {
-      const outline = ReaderV2Paginator.buildParagraph(document, current.block, snapshot, regexStyles, width,
-        first.startIndex, last.endIndex, true, paragraphCache);
+      const outline = ReaderV2Paginator.buildParagraph(document, current.block, snapshot, regexStyles, layoutWidth,
+        sliceStart, sliceEnd, true, paragraphCache);
       fragment.fontStrokes = ReaderFontStroke.build(outline, snapshot.fontWeight,
         (offset: number): graphicsText.TextStyle => ReaderV2Paginator.styleAt(document, current.block,
-          current.block.displayStart + first.startIndex + offset, snapshot, regexStyles),
+          current.block.displayStart + sliceStart + offset, snapshot, regexStyles),
         (offset: number): number => ReaderV2Paginator.requestedWeightAt(document, current.block,
-          current.block.displayStart + first.startIndex + offset, snapshot, regexStyles));
+          current.block.displayStart + sliceStart + offset, snapshot, regexStyles));
     }
     fragment.titleContinuation = current.block.title && current.block.titleSegment > 0;
-    fragment.leadReservePx = ReaderV2Paginator.titleLeadReserve(document, current.block, snapshot, width);
+    fragment.leadReservePx = current.leadPx > 0 ? current.leadPx :
+      ReaderV2Paginator.titleLeadReserve(document, current.block, snapshot, width);
     fragment.paragraphX = x + fragment.leadReservePx +
       ReaderV2Paginator.titleDecorationInset(current.block, regexStyles, width);
     fragment.paragraphY = y;
@@ -1131,10 +1334,10 @@ export class ReaderV2Paginator {
     const bottomInkBleedPx = lastLocal ? ReaderV2Paginator.lineBottomInkGuard(lastLocal) : 1;
     let strokeBleed = 0;
     for (const stroke of fragment.fontStrokes) strokeBleed = Math.max(strokeBleed, stroke.pen.getWidth() / 2 + 1);
-    fragment.clipRect = new ReaderV2Rect(x - strokeBleed, y - topInkBleedPx - strokeBleed, x + width + strokeBleed,
-      y + paragraphLineBottom - paragraphLineTop + bottomInkBleedPx + strokeBleed);
-    fragment.localStart = first.startIndex;
-    fragment.localEnd = last.endIndex;
+    fragment.clipRect = new ReaderV2Rect(x + current.leadPx - strokeBleed, y - topInkBleedPx - strokeBleed,
+      x + width + strokeBleed, y + paragraphLineBottom - paragraphLineTop + bottomInkBleedPx + strokeBleed);
+    fragment.localStart = sliceStart;
+    fragment.localEnd = sliceEnd;
     fragment.displayStart = current.block.displayStart + fragment.localStart;
     fragment.displayEnd = current.block.displayStart + fragment.localEnd;
     ReaderV2Paginator.appendRegexDecorations(fragment, regexStyles, snapshot.viewport.left,
@@ -1284,7 +1487,7 @@ export class ReaderV2Paginator {
         fragment.selectionPageEnd = text.length;
         continue;
       }
-      if (last) {
+      if (last && !fragment.blockContinuation) {
         text += '\n';
         last.selectionBreakAfter = true;
       }

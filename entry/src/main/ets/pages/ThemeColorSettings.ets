@@ -60,6 +60,7 @@ import {
   CHAPTER_HEAD_PLACEMENTS,
   chapterHeadIsEmpty,
   normalizeChapterHead,
+  normalizeDropCapRatio,
   normalizeOrnamentScale,
   ThemePackageChapterHead
 } from '../theme/share/ThemePackageFormat';
@@ -104,6 +105,8 @@ import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import fileUri from '@ohos.file.fileuri';
+
+const DROP_CAP_LINE_NAMES: string[] = ['不处理', '占 2 行', '占 3 行'];
 
 interface ThemeEditorSectionTitleOptions {
   title: string;
@@ -282,6 +285,7 @@ struct ThemeColorSettingsPage {
   @State leadingScaleDrag: number = -1;
   @State trailingScaleDrag: number = -1;
   @State chapterHeadScaleDrag: number = -1;
+  @State dropCapRatioDrag: number = -1;
   @State appFontFamily: string = '';
   @State fontLibrary: SchemeFontOption[] = [];
   @State radiusOverride: ThemeRadiusOverrides = new ThemeRadiusOverrides();
@@ -887,7 +891,10 @@ struct ThemeColorSettingsPage {
     if (key === 'chapterHead') {
       if (this.currentEmphasis().chapterHead === CHAPTER_HEAD_NONE) return '不显示';
       const head = this.effectiveChapterHead();
-      if (head.image) return CHAPTER_HEAD_PLACEMENT_NAMES[Math.max(0, CHAPTER_HEAD_PLACEMENTS.indexOf(head.placement || 'side'))];
+      const parts: string[] = [];
+      if (head.image) parts.push(CHAPTER_HEAD_PLACEMENT_NAMES[Math.max(0, CHAPTER_HEAD_PLACEMENTS.indexOf(head.placement || 'side'))]);
+      if (head.dropCapLines > 0) parts.push(head.dropCapImage ? '首字印章' : '首字放大');
+      if (parts.length > 0) return parts.join(' · ');
       return head.numberColor ? '序号行颜色' : '未设置';
     }
     if (key === 'typoBody') return `字号 ${this.readerProfile.fontSize} · 行距 ${this.readerProfile.lineHeight}`;
@@ -2619,6 +2626,90 @@ struct ThemeColorSettingsPage {
     })
     if (this.ownChapterHeadNumberColor()) {
       this.resetRow('序号行改回和标题同色', () => this.setChapterHeadNumberColor(''))
+    }
+    SettingRow({ title: '正文首字', description: '每章第一段的第一个字放大，后面的字绕着它排；开头是引号、数字、字母时这一章不处理' }) {
+      Select(this.dropCapLineOptions())
+        .id('theme_editor_drop_cap_lines')
+        .width('44%')
+        .selected(this.dropCapLineIndex())
+        .value(DROP_CAP_LINE_NAMES[this.dropCapLineIndex()])
+        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+        .optionFont({ family: this.applicationFontFamily })
+        .selectedOptionFont({ family: this.applicationFontFamily })
+        .fontColor(this.subTextColor())
+        .backgroundColor(Color.Transparent)
+        .arrowPosition(ArrowPosition.END)
+        .padding({ left: 0, right: 0 })
+        .borderRadius(16)
+        .border({ width: 0 })
+        .optionBgColor(Color.Transparent)
+        .divider(null)
+        .optionFontColor(this.primaryTextColor())
+        .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+        .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+        .menuBackgroundBlurStyle(BlurStyle.NONE)
+        .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+        .onSelect((index: number) => this.setDropCapLines(index))
+    }
+    if (this.effectiveChapterHead().dropCapLines > 0) {
+      Row({ space: AppSpacing.XL }) {
+        this.assetSlot({ label: '首字印章', image: this.dropCapSlotImage(),
+          state: this.dropCapSlotState(),
+          slotWidth: 56, slotHeight: 56, onTap: () => this.tapDropCapSlot() })
+        Text(this.dropCapHint())
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+      ThemeColorOption({
+        title: '首字颜色',
+        description: this.effectiveChapterHead().dropCapColor ? '自定义' : '和正文同色',
+        color: this.effectiveChapterHead().dropCapColor || this.commentPreviewTextColor(this.selectedMode === 'dark'),
+        allowAlpha: true,
+        appDarkMode: this.appDarkMode,
+        cardColor: this.cardColor(),
+        primaryTextColor: this.primaryTextColor(),
+        accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+        onColorChange: (color: string) => {
+          this.setDropCapColor(color);
+        }
+      })
+      if (this.effectiveChapterHead().dropCapColor) {
+        this.resetRow('首字改回和正文同色', () => this.setDropCapColor(''))
+      }
+      if (this.effectiveChapterHead().dropCapImage) {
+        Column({ space: AppSpacing.XS }) {
+          Row() {
+            Text('字在印章里的大小')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.primaryTextColor())
+              .layoutWeight(1)
+            Text(`${this.dropCapRatioPercent()}%`)
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+          }
+          .width('100%')
+          Slider({ value: this.dropCapRatioPercent(), min: 40, max: 90, step: 2, style: SliderStyle.OutSet })
+            .id('theme_editor_drop_cap_ratio')
+            .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+            .width('100%')
+            .selectedColor(ThemeRuntime.accentColor(this.appDarkMode))
+            .accessibilityText('字在印章里的大小')
+            .onChange((value: number, mode: SliderChangeMode) => {
+              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                this.setDropCapRatio(value);
+              } else {
+                this.dropCapRatioDrag = Math.round(value);
+              }
+            })
+        }
+        .width('100%')
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+      }
     }
     if (this.currentEmphasis().chapterHead === CHAPTER_HEAD_NONE) {
       this.resetRow('恢复为所选主题的章首装饰', () => this.setChapterHeadOverride(''))
@@ -6305,6 +6396,104 @@ struct ThemeColorSettingsPage {
       else this.lightEmphasis = next;
     }
     if (changed) this.onSettingChanged();
+  }
+
+  // 正文首字：行数、颜色、字占比和印章图都写在方案素材包这个模式的 chapterHead 里。
+
+  dropCapLineOptions(): SelectOption[] {
+    return DROP_CAP_LINE_NAMES.map((name: string): SelectOption => ({ value: name }));
+  }
+
+  dropCapLineIndex(): number {
+    const lines = this.effectiveChapterHead().dropCapLines;
+    return lines === 3 ? 2 : (lines === 2 ? 1 : 0);
+  }
+
+  dropCapRatioPercent(): number {
+    if (this.dropCapRatioDrag >= 0) return this.dropCapRatioDrag;
+    return Math.round(this.effectiveChapterHead().dropCapRatio * 100);
+  }
+
+  dropCapSlotImage(): string {
+    const own = this.ownChapterHead().dropCapImage;
+    if (own && this.currentEmphasis().chapterHead === this.ownThemeId()) return this.ownAssetUri(own) || own;
+    return this.effectiveChapterHead().dropCapImage;
+  }
+
+  dropCapSlotState(): string {
+    if (this.assetRevision >= 0 && SchemeAssetService.hasOwnDropCapImage(this.ownPackageId,
+      this.selectedMode === 'dark')) return 'own';
+    return this.dropCapSlotImage() ? 'inherit' : 'empty';
+  }
+
+  dropCapHint(): string {
+    const base = '垫在首字底下的一张图，字画在正中：正方形、中间留空的 SVG 或透明底位图。不传就只把字放大';
+    if (this.selectedMode !== 'dark') return base;
+    return '深色模式没单独设首字时沿用浅色那套。浅色的印章在深色纸面上看不清时，单独上传一张';
+  }
+
+  /** 首字的三项设置一起存；没改的项沿用当前生效的值。 */
+  async saveDropCap(lines: number, color: string, ratio: number): Promise<void> {
+    if (!(await this.ensureAdvanced())) return;
+    const dark = this.selectedMode === 'dark';
+    const previous = this.ownThemeId();
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setChapterHeadDropCap(getContext(this), this.schemeId, this.sourceThemeId('bubble'), dark,
+        lines, color, ratio), '', false, false, '');
+    this.syncChapterHeadOverride(previous);
+  }
+
+  async setDropCapLines(index: number): Promise<void> {
+    if (index < 0 || index > 2 || index === this.dropCapLineIndex()) return;
+    const head = this.effectiveChapterHead();
+    await this.saveDropCap(index === 0 ? 0 : index + 1, head.dropCapColor, head.dropCapRatio);
+  }
+
+  async setDropCapColor(color: string): Promise<void> {
+    const head = this.effectiveChapterHead();
+    const normalized = color ? HexColor.normalizeAlpha(color, '') : '';
+    if ((color && !normalized) || normalized === head.dropCapColor || head.dropCapLines === 0) return;
+    await this.saveDropCap(head.dropCapLines, normalized, head.dropCapRatio);
+  }
+
+  async setDropCapRatio(percent: number): Promise<void> {
+    this.dropCapRatioDrag = Math.round(percent);
+    try {
+      const head = this.effectiveChapterHead();
+      if (head.dropCapLines === 0) return;
+      await this.saveDropCap(head.dropCapLines, head.dropCapColor, normalizeDropCapRatio(percent / 100));
+    } finally {
+      this.dropCapRatioDrag = -1;
+    }
+  }
+
+  async tapDropCapSlot(): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    if (!(await this.ensureAdvanced())) return;
+    if (!SchemeAssetService.hasOwnDropCapImage(this.ownPackageId, dark)) {
+      await this.uploadDropCapImage(dark);
+      return;
+    }
+    const items: string[] = ['替换', '移除印章，只放大首字'];
+    const choice = await this.slotMenuItems(`${dark ? '深色' : '浅色'} · 首字印章`, items);
+    if (choice === 0) {
+      await this.uploadDropCapImage(dark);
+    } else if (choice === 1) {
+      const previous = this.ownThemeId();
+      await this.runAssetClear((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.clearChapterHeadDropCapImage(getContext(this), this.schemeId, dark), '');
+      this.syncChapterHeadOverride(previous);
+    }
+  }
+
+  async uploadDropCapImage(dark: boolean): Promise<void> {
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
+    if (uris.length === 0) return;
+    const previous = this.ownThemeId();
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setChapterHeadDropCapImage(getContext(this), this.schemeId, uris[0],
+        this.sourceThemeId('bubble'), dark), '', false, false, `${dark ? '深色' : ''}首字印章已更新`);
+    this.syncChapterHeadOverride(previous);
   }
 
   async tapChapterHeadSlot(): Promise<void> {

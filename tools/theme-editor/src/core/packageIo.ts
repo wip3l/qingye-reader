@@ -478,6 +478,11 @@ function mergeParts(source: Json): Json {
     }
   };
   merge(parts, source);
+  // 首字行数在界面上是下拉，按字符串存。
+  for (const mode of ['light', 'dark']) {
+    const head = parts[mode] && parts[mode].chapterHead;
+    if (head && typeof head.dropCapLines === 'number') head.dropCapLines = head.dropCapLines > 0 ? String(head.dropCapLines) : '';
+  }
   return parts;
 }
 
@@ -628,6 +633,12 @@ export function normalizedParts(parts: Json): Json {
     if (!head || typeof head !== 'object') continue;
     if (!head.image || (head.placement !== 'top' && head.placement !== 'bottom')) delete head.placement;
     if (!head.image || typeof head.scale !== 'number' || head.scale === 1) delete head.scale;
+    // 首字：不处理时印章图、字占比不写；字占比只跟着印章图走，0.62 是缺省值。
+    // 编辑器里下拉存的是字符串，写进包时换回数字。
+    const capLines = Number(head.dropCapLines) === 3 ? 3 : (Number(head.dropCapLines) === 2 ? 2 : 0);
+    if (capLines) head.dropCapLines = capLines;
+    else { delete head.dropCapLines; delete head.dropCapImage; delete head.dropCapColor; }
+    if (!head.dropCapImage || typeof head.dropCapRatio !== 'number' || head.dropCapRatio === 0.62) delete head.dropCapRatio;
   }
   // 拉伸设置只跟着边框走：没有边框时不写；拉伸、每行两端、原色是缺省值，也不写。深色那套同样处理。
   for (const key of ['bubble', 'bubbleDark', 'titleBubble', 'titleBubbleDark']) {

@@ -68,16 +68,18 @@ export class ReaderV2PagePainter {
       const width = rect.right - rect.left;
       const height = rect.bottom - rect.top;
       if (width <= 0.5 || height <= 0.5) continue;
-      const bitmap = ReaderRasterAssets.fileImage(decoration.image, width, height);
-      if (!bitmap) continue;
-      const brush = new drawing.Brush();
-      brush.setAntiAlias(true);
-      canvas.attachBrush(brush);
-      canvas.drawImageRectWithSrc(bitmap,
-        { left: 0, top: 0, right: Math.max(1, Math.round(width)), bottom: Math.max(1, Math.round(height)) },
-        { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
-        new drawing.SamplingOptions(drawing.FilterMode.FILTER_MODE_LINEAR), drawing.SrcRectConstraint.STRICT);
-      canvas.detachBrush();
+      const bitmap = decoration.image ? ReaderRasterAssets.fileImage(decoration.image, width, height) : null;
+      if (bitmap) {
+        const brush = new drawing.Brush();
+        brush.setAntiAlias(true);
+        canvas.attachBrush(brush);
+        canvas.drawImageRectWithSrc(bitmap,
+          { left: 0, top: 0, right: Math.max(1, Math.round(width)), bottom: Math.max(1, Math.round(height)) },
+          { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+          new drawing.SamplingOptions(drawing.FilterMode.FILTER_MODE_LINEAR), drawing.SrcRectConstraint.STRICT);
+        canvas.detachBrush();
+      }
+      if (decoration.glyph) decoration.glyph.paint(canvas, decoration.glyphX, decoration.glyphY);
     }
   }
 

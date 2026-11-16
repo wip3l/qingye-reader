@@ -493,6 +493,65 @@ export class SchemeAssetService {
     });
   }
 
+  /**
+   * 正文首字占几行（0 不处理）、颜色和字占比。这个模式原来沿用另一模式的首字时，先把那套（印章图、字占比、
+   * 颜色）记到这个模式，这样改动只影响这个模式；改成不处理时这个模式的印章图一并去掉。
+   */
+  static async setChapterHeadDropCap(context: Context, schemeId: string, baseTheme: string, dark: boolean,
+    lines: number, color: string, ratio: number): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      const head = SchemeAssetService.chapterHeadOf(record, dark);
+      if (lines <= 0) {
+        head.dropCapLines = 0;
+        head.dropCapImage = '';
+        head.dropCapColor = '';
+      } else {
+        if (head.dropCapLines === 0) {
+          const other = SchemeAssetService.chapterHeadOf(record, !dark);
+          if (other.dropCapLines > 0) head.dropCapImage = other.dropCapImage;
+        }
+        head.dropCapLines = lines === 3 ? 3 : 2;
+        head.dropCapColor = color;
+        head.dropCapRatio = ratio;
+      }
+      SchemeAssetService.storeChapterHead(record, dark, head);
+    });
+  }
+
+  /** 上传首字印章图；还没开首字时按占 2 行打开。 */
+  static async setChapterHeadDropCapImage(context: Context, schemeId: string, uri: string, baseTheme: string,
+    dark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      const head = SchemeAssetService.chapterHeadOf(record, dark);
+      if (head.dropCapLines === 0) {
+        const other = SchemeAssetService.chapterHeadOf(record, !dark);
+        head.dropCapLines = other.dropCapLines > 0 ? other.dropCapLines : 2;
+        if (other.dropCapLines > 0) {
+          head.dropCapRatio = other.dropCapRatio;
+          if (!head.dropCapColor) head.dropCapColor = other.dropCapColor;
+        }
+      }
+      head.dropCapImage = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK,
+        '首字印章图');
+      SchemeAssetService.storeChapterHead(record, dark, head);
+    });
+  }
+
+  /** 移除这个模式的首字印章图，首字改成只放大。 */
+  static async clearChapterHeadDropCapImage(context: Context, schemeId: string, dark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const head = SchemeAssetService.chapterHeadOf(record, dark);
+      if (head.dropCapLines === 0) {
+        // 沿用另一模式那套时，先把行数记到这个模式，不然去掉图之后又沿用回那张。
+        const other = SchemeAssetService.chapterHeadOf(record, !dark);
+        head.dropCapLines = other.dropCapLines;
+        head.dropCapColor = other.dropCapColor;
+      }
+      head.dropCapImage = '';
+      SchemeAssetService.storeChapterHead(record, dark, head);
+    });
+  }
+
   /** 素材包这个模式实际用的章首装饰（饰图沿用另一模式的也算），素材是包内相对路径；没有时为 null。 */
   static chapterHead(packageId: string, dark: boolean): ThemePackageChapterHead | null {
     const pack = packageId ? ThemePackRegistry.getByPackageId(packageId) : null;
@@ -504,6 +563,13 @@ export class SchemeAssetService {
     const pack = packageId ? ThemePackRegistry.getByPackageId(packageId) : null;
     if (!pack) return false;
     return !!SchemeAssetService.chapterHeadOf(pack.record, dark).image;
+  }
+
+  /** 这个模式自己有没有传首字印章图。 */
+  static hasOwnDropCapImage(packageId: string, dark: boolean): boolean {
+    const pack = packageId ? ThemePackRegistry.getByPackageId(packageId) : null;
+    if (!pack) return false;
+    return !!SchemeAssetService.chapterHeadOf(pack.record, dark).dropCapImage;
   }
 
   /** 这个模式自己的章首装饰（不含另一模式沿用过来的）。 */

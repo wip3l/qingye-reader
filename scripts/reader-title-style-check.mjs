@@ -380,6 +380,68 @@ try {
     'body starts below a bottom ornament');
   console.log('PASS: chapter-head ornament reserves its space beside, above or below the title and tints the number line');
 
+  // 正文首字：首字单独画，首段拆成绕着它的前几行和回到整行的其余部分；两截之间没有段间距，也不多出换行。
+  // 假排版引擎：汉字宽 = 字号，行高 = 字号 × 1.2 + 行距，基线在行顶下 0.8 个字号。
+  {
+  const capInput = new Input(); capInput.viewportWidthPx = 320; capInput.viewportHeightPx = 900;
+  capInput.fontSizePx = 20; capInput.titleFontSizePx = 22; capInput.lineSpacingPx = 10; capInput.paragraphSpacingPx = 30;
+  const capSnapshot = (lines, image = '') => {
+    capInput.chapterHead = Object.assign(new HeadStyle(), { capLines: lines, capImage: image, capColor: 0xFFB5402F });
+    const result = Snapshot.create(capInput);
+    capInput.chapterHead = new HeadStyle();
+    return result;
+  };
+  const capBody = '\u3000\u3000' + '傍晚的风从垭口灌进来晒谷场上的竹匾被掀得直响'.repeat(3);
+  const capDocument = () => Parser.parse(`第一章\n${capBody}\n第二段文字。`, 0, '第一章', [], new Settings());
+  const plainLayout = Paginator.layoutContinuous(capDocument(), Snapshot.create(capInput), []);
+  assert.equal(plainLayout.fragments.length, 3);
+  assert.equal(plainLayout.decorations.length, 0);
+  const capLayout = Paginator.layoutContinuous(capDocument(), capSnapshot(2), []);
+  assert.equal(capLayout.fragments.length, 4, 'title, wrapped lines, full-width rest, next paragraph');
+  const [, lead, rest, nextParagraph] = capLayout.fragments;
+  const pitch = 20 * 1.2 + 10, capBox = pitch + 20 * 1.04, capReserve = capBox + 20 * 0.3;
+  assert.equal(lead.localStart, 3, 'the wrapped slice starts after the indent and the cap');
+  assert(Math.abs(lead.leadReservePx - capReserve) < 0.01 && Math.abs(lead.paragraphX - plainLayout.fragments[1].paragraphX - capReserve) < 0.01);
+  assert.equal(lead.paragraph.getLineCount(), 2, 'exactly the configured number of lines wrap around the cap');
+  assert.equal(lead.paragraph.getLineMetrics(0).endIndex, Math.floor((320 - capReserve) / 20));
+  assert.equal(rest.localStart, lead.localEnd, 'the rest continues where the wrapped lines end');
+  assert.equal(rest.localEnd, capBody.length);
+  assert.equal(rest.paragraphX, plainLayout.fragments[1].paragraphX, 'the rest uses the full width');
+  assert(Math.abs(rest.paragraphY - (lead.paragraphY + 2 * pitch)) < 0.01, 'line pitch is kept across the two slices');
+  assert.equal(rest.blockContinuation, true);
+  assert.equal(lead.selectionBreakAfter, false, 'no line break inside the paragraph for the selection layer');
+  assert.equal(capLayout.selectionText.split('\n').length, 3);
+  assert(nextParagraph.paragraphY - (rest.paragraphY + rest.paragraphHeight) >= 30 - 0.01, 'paragraph spacing resumes after it');
+  assert.equal(capLayout.decorations.length, 1);
+  const capRect = capLayout.decorations[0].rect;
+  assert(Math.abs(capRect.right - capRect.left - capBox) < 0.01 && Math.abs(capRect.bottom - capRect.top - capBox) < 0.01);
+  assert(Math.abs(capRect.top - (lead.paragraphY + 20 * 0.8 - 20 * 0.92)) < 0.01, 'the box starts at the first line\'s em top');
+  assert.equal(capLayout.decorations[0].glyph.text, '傍');
+  assert.equal(capLayout.decorations[0].image, '');
+  assert.equal(Paginator.layoutContinuous(capDocument(), capSnapshot(3, 'file://seal.png'), []).fragments[1].paragraph.getLineCount(), 3);
+  assert.equal(Paginator.layoutContinuous(capDocument(), capSnapshot(3, 'file://seal.png'), []).decorations[0].image, 'file://seal.png');
+  // 首段比首字矮：下一段从首字底边之后开始。
+  const shortLayout = Paginator.layoutContinuous(Parser.parse('第一章\n\u3000\u3000风起了。\n第二段文字。', 0, '第一章', [], new Settings()),
+    capSnapshot(3), []);
+  assert.equal(shortLayout.fragments.length, 3, 'a short paragraph has no full-width rest');
+  assert(shortLayout.fragments[2].paragraphY >= shortLayout.decorations[0].rect.bottom - 0.01);
+  // 开头是引号、标题后先是图片、没有标题的文档：不做首字。
+  for (const source of ['第一章\n\u3000\u3000“来了。”他说完就走了，风从垭口灌进来。', '\u3000\u3000傍晚的风从垭口灌进来。\n第二段。']) {
+    const skipped = Paginator.layoutContinuous(Parser.parse(source, 0, '第一章', [], new Settings()), capSnapshot(2), []);
+    assert.equal(skipped.decorations.length, 0, source);
+    assert.equal(skipped.fragments.every(fragment => fragment.leadReservePx === 0), true);
+  }
+  // 页底放不下首字连同绕排的几行时，整体挪到下一页。
+  capInput.viewportHeightPx = 22 * 1.2 + 30 + pitch + 8;
+  const capPages = Paginator.paginate(capDocument(), capSnapshot(2), []);
+  capInput.viewportHeightPx = 900;
+  assert.equal(capPages.pages[0].fragments.length, 1, 'only the title stays on the first page');
+  assert.equal(capPages.pages[0].decorations.length, 0);
+  assert.equal(capPages.pages[1].fragments[0].dropCapBoxPx > 0, true);
+  assert.equal(capPages.pages[1].decorations.length, 1);
+  console.log('PASS: drop cap splits the first paragraph around the cap, keeps it together and skips unsuitable openings');
+  }
+
   for (const alignment of ['left','center','right']) {
     input.titleAlignment = alignment;
     input.titleMarginTopPx = 24; input.titleMarginBottomPx = 36;

@@ -146,6 +146,8 @@ export function editorIssues(): Issue[] {
     const head = p.parts[mode] && p.parts[mode].chapterHead;
     const headAsset = head && head.image ? p.assets.get(head.image) : null;
     if (headAsset && headAsset.ext === 'jpg') add('warn', `${mode}.chapterHead.image`, `${LABEL[mode]}标题饰图是不透明的 JPG，标题旁会露出方形底色`);
+    const capAsset = head && head.dropCapImage ? p.assets.get(head.dropCapImage) : null;
+    if (capAsset && capAsset.ext === 'jpg') add('warn', `${mode}.chapterHead.dropCapImage`, `${LABEL[mode]}首字印章图是不透明的 JPG，纸面上会露出方形底色`);
   }
   // 段评气泡图：不透明 JPG、文字区上下超出太多（可能压到上下行）。
   for (const mode of MODES) {

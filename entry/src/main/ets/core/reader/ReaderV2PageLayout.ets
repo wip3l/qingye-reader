@@ -76,8 +76,15 @@ export class ReaderV2PageFragment {
   titleContinuation: boolean = false;
   titleEnd: boolean = false;
   fixedGapBefore: boolean = false;
-  /** 标题片段左边让给章首饰图的宽度；段落已排在 paragraphX（含这段宽度）之后。 */
+  /** 标题片段左边让给章首饰图、或首段前几行让给首字的宽度；段落已排在 paragraphX（含这段宽度）之后。 */
   leadReservePx: number = 0;
+  /** 首段绕着首字排的那一截的第一行：首字方框的上边相对本片段顶边的偏移、方框边长；0 表示不是。 */
+  dropCapTopPx: number = 0;
+  dropCapBoxPx: number = 0;
+  /** 让出 leadReservePx 的行高范围（从片段顶边起），选字层按它缩进前几行。 */
+  dropCapSpanPx: number = 0;
+  /** 同一段在本页紧接着上一个片段继续（首段绕排之后回到整行的那一截）：两个片段之间没有换行。 */
+  blockContinuation: boolean = false;
   blockId: string = '';
   blockIndex: number = 0;
   paragraph: graphicsText.Paragraph | null = null;
@@ -104,10 +111,17 @@ export class ReaderV2PageFragment {
   card: ReaderV2CommentCard | null = null;
 }
 
-/** 画在正文底下的主题图片（章首饰图），按 rect 拉伸。 */
+/**
+ * 画在正文底下的主题装饰：章首饰图（image 按 rect 拉伸），或正文首字（可选的印章图加放大的那个字）。
+ * 首字不属于任何文字片段，选字、划线、朗读高亮都不经过它。
+ */
 export class ReaderV2PageDecoration {
   image: string = '';
   rect: ReaderV2Rect = new ReaderV2Rect();
+  /** 首字的字形，画在 (glyphX, glyphY)。 */
+  glyph: graphicsText.Paragraph | null = null;
+  glyphX: number = 0;
+  glyphY: number = 0;
 }
 
 /** 一条划线落在本页的部分，偏移是本页所属文档的显示偏移（与片段 displayStart 同一坐标）。 */

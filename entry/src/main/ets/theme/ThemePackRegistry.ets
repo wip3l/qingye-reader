@@ -646,6 +646,7 @@ export class ThemePackRegistry {
     const head = chapterHeadFor(parts, darkMode);
     if (!head) return;
     head.image = uri(head.image);
+    head.dropCapImage = uri(head.dropCapImage);
     variant.regexEmphasis.chapterHead = head;
   }
 }
