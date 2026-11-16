@@ -49,6 +49,8 @@ export struct FootprintTabPage {
   static readonly LEVEL_STEPS_MS: number[] = [20 * 60000, 60 * 60000];
   @Prop statusBarHeight: number = 0;
   @Prop navBarHeight: number = 0;
+  /** 底栏没开足迹页签时，足迹以独立页打开（pages/Footprint），标题前加返回钮。 */
+  @Prop showBack: boolean = false;
   onHeaderCollapseChange: (progress: number) => void = () => {};
   @State headerCollapse: number = 0;
   @State headerBackdropReveal: number = 0;
@@ -247,6 +249,9 @@ export struct FootprintTabPage {
 
       Column() {
         Row({ space: 10 }) {
+          if (this.showBack) {
+            this.headerButton($r('sys.symbol.chevron_left'), '返回', () => router.back())
+          }
           Text('足迹')
             .fontSize(AppFontSize.DISPLAY)
             .fontWeight(FontWeight.Bold)
@@ -259,7 +264,7 @@ export struct FootprintTabPage {
         .width('100%')
         .height(56 + this.statusBarHeight)
         .alignItems(VerticalAlign.Center)
-        .padding({ left: AppSpacing.XL, right: AppSpacing.LG, top: this.statusBarHeight })
+        .padding({ left: this.showBack ? AppSpacing.LG : AppSpacing.XL, right: AppSpacing.LG, top: this.statusBarHeight })
         .opacity(CollapsingHeader.contentOpacity(this.headerCollapse))
         .hitTestBehavior(CollapsingHeader.acceptsTouch(this.headerCollapse) ? HitTestMode.Default : HitTestMode.None)
       }

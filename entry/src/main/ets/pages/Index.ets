@@ -409,11 +409,13 @@ struct Index {
   /** 其他页面（如使用说明里的“去搜索”）退回首页时要求切到指定页签。 */
   onHomeTabRequested(): void {
     const requested = AppStorage.get<number>('homeTabRequestIndex') ?? -1;
-    if (requested < 0 || requested > 2) {
+    if (requested < 0 || requested > 3) {
       return;
     }
-    // 请求方按书架/发现/我的三个页签编号，“我的”在有第四个页签时顺延。
-    const index = requested === 2 ? this.mineTabIndex() : (requested === 1 ? this.exploreTabIndex() : requested);
+    // 请求方按书架/发现/我的三个页签编号，“我的”在有第四个页签时顺延；3 = 足迹页签（请求方先确认底栏开了足迹）。
+    if (requested === 3 && this.extraTabId() !== HomeTabBarSettingsStore.EXTRA_FOOTPRINT) return;
+    const index = requested === 3 ? this.extraTabIndex() :
+      (requested === 2 ? this.mineTabIndex() : (requested === 1 ? this.exploreTabIndex() : requested));
     if (index < 0) return;
     this.bookshelfMultiSelectActive = false;
     this.selectHomeTab(index);
