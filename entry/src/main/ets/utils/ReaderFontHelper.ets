@@ -300,8 +300,20 @@ export class ReaderFontHelper {
     }
   }
 
+  /**
+   * 文件名可能已经解码过（如“字体_100%.ttf”），再解码会抛 URIError。解码失败时原样返回，
+   * 选择器 URI、库里存的路径和来源名都走这里。
+   */
+  static safeDecodeURIComponent(value: string): string {
+    try {
+      return decodeURIComponent(value);
+    } catch (e) {
+      return value;
+    }
+  }
+
   static fileNameFromPath(path: string): string {
-    const decoded = decodeURIComponent(path || '');
+    const decoded = ReaderFontHelper.safeDecodeURIComponent(path || '');
     const index = Math.max(decoded.lastIndexOf('/'), decoded.lastIndexOf('\\'));
     return index >= 0 ? decoded.substring(index + 1) : decoded || 'font';
   }
