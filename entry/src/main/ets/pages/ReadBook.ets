@@ -1,3 +1,4 @@
+import { firstGestureFinger } from '../utils/GestureFingers';
 import { ReaderQuickJumpModel } from '../core/reader/ReaderQuickJumpModel';
 import { HomeRoute } from '../utils/HomeRoute';
 import { ReaderBrightnessControl } from '../components/reader/ReaderBrightnessControl';
@@ -4650,8 +4651,7 @@ struct ReadBookPage {
     .gesture(
       LongPressGesture({ duration: 600, repeat: false })
         .onAction((event: GestureEvent) => this.handleReaderDayNightLongPress(
-          event.fingerList.length > 0 ? event.fingerList[0].globalX : -1,
-          event.fingerList.length > 0 ? event.fingerList[0].globalY : -1))
+          firstGestureFinger(event)?.globalX ?? -1, firstGestureFinger(event)?.globalY ?? -1))
     )
   }
 
@@ -4913,8 +4913,7 @@ struct ReadBookPage {
     .gesture(
       LongPressGesture({ duration: 600, repeat: false })
         .onAction((event: GestureEvent) => this.handleReaderDayNightLongPress(
-          event.fingerList.length > 0 ? event.fingerList[0].globalX : -1,
-          event.fingerList.length > 0 ? event.fingerList[0].globalY : -1))
+          firstGestureFinger(event)?.globalX ?? -1, firstGestureFinger(event)?.globalY ?? -1))
     )
   }
 
@@ -17048,8 +17047,8 @@ ${leading}` : leading;
       Number.isFinite(this.readerContinuousPointerGlobalX) && Number.isFinite(this.readerContinuousPointerGlobalY)) {
       return [this.readerContinuousPointerGlobalX, this.readerContinuousPointerGlobalY];
     }
-    if (event.fingerList && event.fingerList.length > 0) {
-      const finger = event.fingerList[0];
+    const finger = firstGestureFinger(event);
+    if (finger) {
       const x = Number(finger.globalX);
       const y = Number(finger.globalY);
       if (Number.isFinite(x) && Number.isFinite(y)) return [x, y];
@@ -23348,11 +23347,11 @@ ${leading}` : leading;
   // 3D 仿真单双页拖动时把手指位置交给绘制器，纸张抓取点跟随手指。手势层与卷曲画布都铺满阅读页，
   // 手指的组件内坐标可以直接当作画布坐标。上一页还在自动翻完时不接管，免得半途的折页跳到新手指处。
   updateReaderCurlFinger(event: GestureEvent): void {
-    if (!this.is3DPageTurnAnimation() || this.isPageTurning || !event ||
-      !event.fingerList || event.fingerList.length === 0) {
+    const finger = firstGestureFinger(event);
+    if (!this.is3DPageTurnAnimation() || this.isPageTurning || !finger) {
       return;
     }
-    this.readerEmulationFlipPainter.dragCorner(event.fingerList[0].localX, event.fingerList[0].localY);
+    this.readerEmulationFlipPainter.dragCorner(finger.localX, finger.localY);
   }
 
   captureReaderCurlStartRegion(event: GestureEvent): void {
@@ -23360,10 +23359,11 @@ ${leading}` : leading;
       return;
     }
     this.readerCurlStartRegion = ReaderEmulationFlipRegion.MIDDLE;
-    if (!this.is3DPageTurnAnimation() || !event || !event.fingerList || event.fingerList.length === 0) {
+    const finger = firstGestureFinger(event);
+    if (!this.is3DPageTurnAnimation() || !finger) {
       return;
     }
-    const localY = event.fingerList[0].localY;
+    const localY = finger.localY;
     const height = this.getPageTurnHeight();
     // 上/下部起手抓页角折过去；中部起手抓右边缘与手指同高处，折线随手指上下倾斜。
     if (localY < height / 3) {

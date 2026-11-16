@@ -28,6 +28,7 @@ const sandbox = vm.createContext({ console, setTimeout, clearTimeout, setInterva
 vm.runInContext(compile(readEtsModule('core/reader/ReaderPageTurnAnimation.ts')) +
   '\nglobalThis.Animation = ReaderPageTurnAnimation;', sandbox);
 vm.runInContext(compile(readEtsModule('core/reader/ReaderComicProcessing.ts')), sandbox);
+vm.runInContext(compile(readEtsModule('utils/GestureFingers.ets')), sandbox);
 vm.runInContext(compile(readEtsModule('core/reader/ReaderComicSettings.ets')) +
   '\nglobalThis.Settings = ReaderComicSettings;', sandbox);
 const src = readEtsModule('components/reader/ReaderComicPagedView.ets');
@@ -212,7 +213,7 @@ for (const rtl of [false,true]) for (const direction of [-1,1]) {
 }
 
 const zoom = make(A.THREE_D, false, true), zv = zoom.view;
-zv.applyZoom(2,0,0); zv.handlePanStart({fingerList: [{localX:320,localY:700}]});
+zv.applyZoom(2,0,0); zv.handlePanStart({fingerList: [undefined, {localX:320,localY:700}]});
 zv.handlePanUpdate({offsetX:-80,offsetY:10,fingerList:[{localX:240,localY:710}]});
 zv.handlePanEnd({velocityX:0});
 assert.equal(zv.emulationPainter.fingers.length, 0, 'Zoomed-image panning must not pull a paper corner');

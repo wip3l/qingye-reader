@@ -1,3 +1,4 @@
+import { firstGestureFinger } from '../utils/GestureFingers';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { ImmersiveBackButton } from './ImmersiveBackButton';
@@ -221,16 +222,13 @@ export struct ColorCodePicker {
   }
 
   private handlePickerAreaGesture(event: GestureEvent): void {
-    if (event.fingerList.length > 0) {
-      const finger = event.fingerList[0];
-      this.updateSaturationAndBrightness(finger.localX, finger.localY);
-    }
+    const finger = firstGestureFinger(event);
+    if (finger) this.updateSaturationAndBrightness(finger.localX, finger.localY);
   }
 
   private handleHueGesture(event: GestureEvent): void {
-    if (event.fingerList.length > 0) {
-      this.updateHue(event.fingerList[0].localY);
-    }
+    const finger = firstGestureFinger(event);
+    if (finger) this.updateHue(finger.localY);
   }
 
   private pickerIndicatorX(): number {

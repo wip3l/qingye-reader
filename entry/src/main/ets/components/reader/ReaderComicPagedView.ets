@@ -1,3 +1,4 @@
+import { firstGestureFinger } from '../../utils/GestureFingers';
 import { LocalBookService } from '../../core/book/LocalBookService';
 import { image } from '@kit.ImageKit';
 import { AnimatorResult } from '@kit.ArkUI';
@@ -751,9 +752,9 @@ export struct ReaderComicPagedView {
   }
 
   private updateCurlFinger(event: GestureEvent): void {
-    if (this.animationType !== ReaderPageTurnAnimation.THREE_D || !event.fingerList ||
-      event.fingerList.length === 0) return;
-    this.emulationPainter.dragCorner(event.fingerList[0].localX, event.fingerList[0].localY);
+    const finger = firstGestureFinger(event);
+    if (this.animationType !== ReaderPageTurnAnimation.THREE_D || !finger) return;
+    this.emulationPainter.dragCorner(finger.localX, finger.localY);
   }
 
   private handlePanUpdate(event: GestureEvent): void {
