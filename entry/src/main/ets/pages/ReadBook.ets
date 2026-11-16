@@ -6884,7 +6884,7 @@ struct ReadBookPage {
         this.toggleTtsReading();
       },
       onClose: (): void => {
-        this.stopTtsReading();
+        this.stopTtsReadingAtSpokenPosition();
       }
     })
       .position({ x: 0, y: 0 })
@@ -12237,7 +12237,7 @@ struct ReadBookPage {
         this.ttsFloatingSessionOwnerId, this.ttsSleepTimerMinutes, remaining);
       if (remaining <= 0) {
         this.clearTtsSleepTimer();
-        this.stopTtsReading();
+        this.stopTtsReadingAtSpokenPosition();
         // 本页自己打开的朗读面板不跟随会话状态，定时停止后要主动收起，否则停在“正在准备”的空面板上。
         if (this.showTtsQuickPlayer) this.closeTtsQuickPlayer();
         HdsFeedback.showToast('朗读定时结束，已停止朗读');
@@ -13702,7 +13702,7 @@ struct ReadBookPage {
       onSleepTimerChange: (minutes: number): void => this.setTtsSleepTimer(minutes),
       onToggleReading: (): void => {
         if (this.isTtsSpeaking || this.ttsReader?.isSpeaking()) {
-          this.stopTtsReading();
+          this.stopTtsReadingAtSpokenPosition();
         } else {
           this.toggleTtsReading();
         }
@@ -14503,7 +14503,7 @@ struct ReadBookPage {
    * 否则听书紧接着建会话会报"session is existed"，晚到的释放还会停掉它刚申请的后台许可。
    */
   async stopTtsFloatingSession(): Promise<void> {
-    this.stopTtsReading();
+    this.stopTtsReadingAtSpokenPosition();
     if (!this.readerPageVisible) {
       this.ttsReader?.shutdown();
     }
@@ -14764,6 +14764,58 @@ struct ReadBookPage {
       MimoStore.setEnabled(false);
       await this.startTtsReadingFromCurrentPosition(false);
     }
+  }
+
+  /** 用户（或定时）主动结束朗读：先把阅读页落到正在读的句子，再停。 */
+  stopTtsReadingAtSpokenPosition(): void {
+    this.settleReaderOnSpokenPosition();
+    this.stopTtsReading();
+  }
+
+  /**
+   * 后台朗读换章时页码归 0，后台又不补排分页，句子跑到已排页面之后时页面翻不过去；回到前台若是暂停状态，
+   * 没有新句子把页面带过去。停止只清高亮的话露出来的就是章首，之后的保存还会把章首写进进度。
+   * 这里按朗读句子的字符位置定页：已排到就直接翻过去，没排到就交给按偏移恢复，在落页之前的保存都用这个偏移。
+   */
+  settleReaderOnSpokenPosition(): void {
+    if (!this.book || this.contentPages.length === 0 || this.usesReaderContinuousV2() ||
+      this.isReaderComicModeActive()) return;
+    if (!this.isTtsSpeaking && !this.isTtsPaused && this.ttsReader?.isSpeaking() !== true) return;
+    const sourceLength = (this.pagedContentText || this.getPagedSourceText()).length;
+    const spoken = this.readerV2TtsSourceStart >= 0 ? this.readerV2TtsSourceStart :
+      this.backgroundTtsReadOffset(this.currentChapterIndex);
+    if (spoken < 0 || sourceLength <= 0) return;
+    const offset = Math.max(0, Math.min(Math.round(spoken), sourceLength));
+    const lastKnownEnd = this.contentPageEnds.length > 0 ? this.contentPageEnds[this.contentPageEnds.length - 1] : 0;
+    if (offset < lastKnownEnd || this.isCurrentReaderPaginationComplete()) {
+      const target = this.normalizeReaderSpreadPageIndex(this.findPageIndexByOffset(offset));
+      if (target >= 0 && target < this.contentPages.length && target !== this.currentPageIndex) {
+        this.finishPageTurnAnimation();
+        this.currentPageIndex = target;
+        this.syncCurrentPageText();
+      }
+      this.readerProgressRestoreConfirmed = true;
+    } else {
+      this.readerTypographyRestoreOffset = offset;
+      this.readerProgressRestoreConfirmed = false;
+      this.readerProgressAnchorChapterIndex = this.currentChapterIndex;
+      this.readerProgressAnchorPageIndex = this.currentPageIndex;
+      this.readerProgressAnchorOffset = offset;
+      this.readerProgressAnchorPageCount = this.currentChapterProgressPageCount();
+      this.readerProgressAnchorPageText = this.getShelfLastReadPageText(this.currentPageIndex);
+      this.readerProgressAnchorPageImage = this.getShelfLastReadPageImage(this.currentPageIndex);
+      if (this.readerPageVisible) this.resumeCurrentReaderPaginationCompletion();
+    }
+    console.info(`[TTS] stop settled on spoken offset=${offset},page=${this.currentPageIndex},` +
+      `laidOutEnd=${lastKnownEnd},restorePending=${this.readerTypographyRestoreOffset >= 0}`);
+    // 此刻仍是会话主人：页面不在屏幕上时按朗读句子保存，在屏幕上时按刚落到的页（或上面的偏移锚点）保存。
+    if (this.ttsProgressSaveTimerId >= 0) {
+      clearTimeout(this.ttsProgressSaveTimerId);
+      this.ttsProgressSaveTimerId = -1;
+    }
+    this.saveReadingProgress(!this.readerPageVisible).catch((error: Error) => {
+      console.warn('停止朗读时保存句子位置失败:', error);
+    });
   }
 
   stopTtsReading(userCancelled: boolean = true): void {
@@ -15144,7 +15196,7 @@ struct ReadBookPage {
             this.toggleTtsReading();
           }
         },
-        onStop: (): void => this.stopTtsReading(),
+        onStop: (): void => this.stopTtsReadingAtSpokenPosition(),
         onPlayNext: (): void => {
           this.playNextChapterFromMediaSession();
         },
@@ -15641,6 +15693,14 @@ ${leading}` : leading;
       this.ttsChapterSwitching) return;
     if (!this.ttsLastFocusChunk && !this.restorePersistedTtsFocus()) return;
     if (!this.ttsLastFocusChunk) return;
+    // 后台只排出了前几页时，句子落在已排页面之后会被算成最后一个已排页（常常是章首），再用它保存就把
+    // 后台按句子存下的进度覆盖掉了。这时不动页也不保存，分页补到那里后由 syncActiveTtsFocusAfterPagination 跟上。
+    const focusOffset = this.readerV2TtsSourceOffset(this.ttsLastFocusChunk.start);
+    const lastKnownEnd = this.contentPageEnds.length > 0 ? this.contentPageEnds[this.contentPageEnds.length - 1] : 0;
+    if (focusOffset >= lastKnownEnd && !this.isCurrentReaderPaginationComplete()) {
+      console.info(`[TTS] resume focus waits for pagination: offset=${focusOffset},laidOutEnd=${lastKnownEnd}`);
+      return;
+    }
     const pageIndex = this.resolveTtsChunkPageIndex(this.ttsLastFocusChunk);
     if (pageIndex < 0 || pageIndex >= this.contentPages.length) {
       return;
