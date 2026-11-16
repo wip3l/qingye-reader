@@ -452,7 +452,7 @@ export function titleEmphasisIsEmpty(value: ThemePackagePartEmphasis | null | un
 }
 
 /**
- * 章首装饰：章节标题旁的饰图、分段标题第一段（“第十二章”那一行）的颜色，和正文首字（放大占几行，可垫印章图）。
+ * 章首装饰：章节标题旁的饰图、分段标题第一段（“第十二章”那一行）的颜色，和首字装饰（放大占几行，可垫印章图）。
  * 写在每个模式自己的部件里，字段都可以空着。旧版本应用不认这一节，标题和正文照旧显示。
  */
 export class ThemePackageChapterHead {
@@ -468,7 +468,7 @@ export class ThemePackageChapterHead {
   /** 分段标题第一段的颜色（可带透明度）；空串和标题同色。读者没开标题分段时不生效。 */
   numberColor: string = '';
   /**
-   * 正文首字占几行：0 不处理，2 或 3。这个模式没设时沿用另一种模式的整套首字设置（行数、印章图、字占比，
+   * 首字装饰占几行：0 不处理，2 或 3。这个模式没设时沿用另一种模式的整套首字设置（行数、印章图、字占比，
    * 颜色没另写时也跟着），见 chapterHeadFor。
    */
   dropCapLines: number = 0;
@@ -2379,7 +2379,7 @@ export function describeParts(parts: ThemePackageParts): string[] {
     const names: string[] = [];
     if (hasImage) names.push('标题饰图');
     if (hasColor) names.push('序号行颜色');
-    if (hasCap) names.push('正文首字');
+    if (hasCap) names.push('首字装饰');
     items.push(`章首装饰（${names.join('、')}）`);
   }
   if ((parts.light && parts.light.commentBubble) || (parts.dark && parts.dark.commentBubble)) {

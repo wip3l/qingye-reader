@@ -1,4 +1,5 @@
 import { WebParseSettingsStore } from '../utils/WebParseSettingsStore';
+import { ReaderRasterAssets } from '../core/reader/ReaderRasterAssets';
 import { AppAiHost } from '../utils/AppAiHost';
 import { AiAccessPolicy } from '../account/AiAccessPolicy';
 import { ComicColorizer } from '@legado/aiengine';
@@ -88,6 +89,7 @@ export default class EntryAbility extends UIAbility {
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onCreate');
+    ReaderRasterAssets.bindContext(this.context);
     AppStorage.setOrCreate('startupT0', Date.now());
     // 上次运行的闪退/卡死/被系统结束事件在订阅后由系统投递，越早订阅越早拿到。
     CrashReportStore.start(this.context);

@@ -54,7 +54,7 @@ class ReaderV2MeasuredBlock {
 }
 
 /**
- * 正文首字的排法：首字单独画在段落左上角的方框里（不属于任何片段），首段拆成两截——绕着方框排的前
+ * 首字装饰的排法：首字单独画在段落左上角的方框里（不属于任何片段），首段拆成两截——绕着方框排的前
  * lines 行（宽度让出 reservePx），和回到整行宽度的其余部分。两截都是同一块的切片，和跨页拆段是同一套机制。
  */
 class ReaderV2DropCapPlan {
@@ -115,7 +115,7 @@ export class ReaderV2PaginationSession {
   chapterHead: ReaderV2ChapterHeadMetrics = new ReaderV2ChapterHeadMetrics();
   titleMarginTopPx: number = 0;
   titleMarginBottomPx: number = 0;
-  /** 正文首字：解析过一次后不再变（null 表示这一章不做）；dropPart 是首段当前排到第几截。 */
+  /** 首字装饰：解析过一次后不再变（null 表示这一章不做）；dropPart 是首段当前排到第几截。 */
   dropCap: ReaderV2DropCapPlan | null = null;
   dropCapResolved: boolean = false;
   dropPart: number = 0;
@@ -907,6 +907,8 @@ export class ReaderV2Paginator {
   /** 汉字字框相对基线的上、下范围占字号的比例。 */
   private static readonly EM_ASCENT: number = 0.92;
   private static readonly EM_DESCENT: number = 0.12;
+  /** 首字方框相对文字行上下范围各收进的量，占字号的比例。 */
+  private static readonly DROP_CAP_INSET: number = 0.05;
 
   /**
    * 当前块是首字段落时返回排法，否则 null。第一次用到时量出行距并定下两截的分界；量的过程中遇到要等的
@@ -949,8 +951,17 @@ export class ReaderV2Paginator {
     plan.pitchPx = full.lineCount > 1 ? full.line(1).topHeight - firstLine.topHeight :
       firstLine.height + snapshot.lineSpacingPx;
     const font = snapshot.fontSizePx;
-    plan.boxPx = (plan.lines - 1) * plan.pitchPx + font * (ReaderV2Paginator.EM_ASCENT + ReaderV2Paginator.EM_DESCENT);
-    plan.boxTopPx = firstLine.baseline - firstLine.topHeight - font * ReaderV2Paginator.EM_ASCENT;
+    // 方框的上下边取第一行文字实际占的范围（和朗读高亮、选区用的是同一个范围），再各收进一点贴近字面。
+    // 行距不为零时行度量里的基线不能直接当字的位置用，按它算方框会整体偏低。
+    const inkRects = full.paragraph.getRectsForRange({ start: capStart, end: bodyStart },
+      graphicsText.RectWidthStyle.TIGHT, graphicsText.RectHeightStyle.TIGHT);
+    if (inkRects.length === 0) return null;
+    const inkTop = inkRects[0].rect.top - firstLine.topHeight;
+    const inkHeight = inkRects[0].rect.bottom - inkRects[0].rect.top;
+    const inset = font * ReaderV2Paginator.DROP_CAP_INSET;
+    if (inkHeight <= inset * 4) return null;
+    plan.boxPx = (plan.lines - 1) * plan.pitchPx + inkHeight - inset * 2;
+    plan.boxTopPx = inkTop + inset;
     plan.reservePx = plan.boxPx + font * 0.3;
     // 版心太窄、方框占掉一半以上时不做。
     if (plan.pitchPx <= 0 || plan.reservePx > session.width * 0.5) return null;

@@ -10,6 +10,53 @@ import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
 export class ReaderRasterAssets {
   private static readonly MAX_ENTRIES: number = 32;
   private static readonly cache: Map<string, image.PixelMap> = new Map<string, image.PixelMap>();
+  /** 内置主题随应用安装的图片写成 media:<资源名>，和主题包的本机文件走同一套解码与缓存。 */
+  static readonly MEDIA_PREFIX: string = 'media:';
+  private static appContext: Context | null = null;
+  private static readonly aspects: Map<string, number> = new Map<string, number>();
+
+  /** 应用启动时登记一次，之后按资源名取内置图片不需要调用方再传上下文。 */
+  static bindContext(context: Context): void {
+    ReaderRasterAssets.appContext = context;
+  }
+
+  private static mediaBytes(source: string): ArrayBuffer | null {
+    const context = ReaderRasterAssets.appContext;
+    if (!context) return null;
+    const bytes = context.resourceManager.getMediaByNameSync(source.substring(ReaderRasterAssets.MEDIA_PREFIX.length));
+    return bytes.buffer as ArrayBuffer;
+  }
+
+  /** 图片的宽 / 高（本机文件或 media:<资源名>）；读不出来时返回 0。同一张图只读一次。 */
+  static imageAspect(source: string): number {
+    if (!source) return 0;
+    const cached = ReaderRasterAssets.aspects.get(source);
+    if (cached !== undefined) return cached;
+    let aspect = 0;
+    if (source.startsWith(ReaderRasterAssets.MEDIA_PREFIX)) {
+      try {
+        const bytes = ReaderRasterAssets.mediaBytes(source);
+        if (bytes) {
+          const decoder = image.createImageSource(bytes);
+          try {
+            const size = decoder.getImageInfoSync().size;
+            aspect = size.width > 0 && size.height > 0 ? size.width / size.height : 0;
+          } finally {
+            decoder.release();
+          }
+        }
+      } catch (error) {
+        console.warn('[ReaderRaster] read media size failed:', error);
+      }
+      // 上下文还没登记时先不记，等登记后再读。
+      if (aspect <= 0 && !ReaderRasterAssets.appContext) return 0;
+    } else {
+      const size = ReaderRasterAssets.fileImageSize(source);
+      aspect = size ? size.width / size.height : 0;
+    }
+    ReaderRasterAssets.aspects.set(source, aspect);
+    return aspect;
+  }
 
   static regexBubbleCap(host: Context, styleId: string, sizePx: number, dark: boolean = false): image.PixelMap | null {
     return ReaderRasterAssets.media(host, ThemeAssetRegistry.regexBubbleCap(styleId, dark), sizePx, sizePx);
@@ -53,6 +100,23 @@ export class ReaderRasterAssets {
     const key = `${uri}_${width}x${height}`;
     const cached = ReaderRasterAssets.cache.get(key);
     if (cached) return cached;
+    if (uri.startsWith(ReaderRasterAssets.MEDIA_PREFIX)) {
+      try {
+        const bytes = ReaderRasterAssets.mediaBytes(uri);
+        if (!bytes) return null;
+        const source = image.createImageSource(bytes);
+        try {
+          const bitmap = source.createPixelMapSync({ desiredSize: { width: width, height: height } });
+          ReaderRasterAssets.remember(key, bitmap);
+          return bitmap;
+        } finally {
+          source.release();
+        }
+      } catch (error) {
+        console.warn('[ReaderRaster] decode media failed:', error);
+        return null;
+      }
+    }
     let file: fs.File | null = null;
     try {
       file = fs.openSync(uri, fs.OpenMode.READ_ONLY);

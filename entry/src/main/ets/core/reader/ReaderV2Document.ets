@@ -150,7 +150,7 @@ export class ReaderV2Document {
   private dropCapBlock: number = -2;
 
   /**
-   * 正文首字所在的块：紧跟章节标题的第一个普通文字段；标题后面是图片、小标题、热评卡，或这份文档没有
+   * 首字装饰所在的块：紧跟章节标题的第一个普通文字段；标题后面是图片、小标题、热评卡，或这份文档没有
    * 标题（滚动阅读里一章的后几截）时为 -1。
    */
   dropCapBlockIndex(): number {

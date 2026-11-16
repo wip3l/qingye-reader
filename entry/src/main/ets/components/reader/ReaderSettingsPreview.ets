@@ -207,7 +207,8 @@ export struct ReaderSettingsPreview {
     input.titleMarginTopPx = ui.vp2px(title.marginTop);
     input.titleMarginBottomPx = ui.vp2px(title.marginBottom);
     input.titleSinglePage = title.singlePage;
-    input.chapterHead = ReaderChapterHead.style(ThemeRuntime.chapterHeadTokens(this.appDarkMode), title.decoration);
+    input.chapterHead = ReaderChapterHead.style(ThemeRuntime.chapterHeadTokens(this.appDarkMode), title.decoration,
+      title.dropCap);
     input.textColor = ReaderV2Color.parse(this.readerTheme.textColor, 0xFF202124);
     input.regexEnabled = this.settings.regexFontEnabled;
     input.styleIdentity = `settings_preview_${this.revision}`;

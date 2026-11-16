@@ -12,7 +12,7 @@ import {
   ThemeVariant
 } from './ThemeModels';
 import { ThemePackRegistry } from './ThemePackRegistry';
-import { normalizeChapterHead, normalizeCommentBubble } from './share/ThemePackageFormat';
+import { normalizeChapterHead, normalizeCommentBubble, ThemePackageChapterHead } from './share/ThemePackageFormat';
 
 export class BuiltinThemeRegistry {
   static readonly DEFAULT_THEME_ID: string = ThemeIds.PLAIN_DEFAULT;
@@ -581,6 +581,11 @@ export class BuiltinThemeRegistry {
         '#D6B878', '#80613C', '#E79086'),
       BuiltinThemeRegistry.reader('#1C1C1B', 'obsidian-archive-dark', '#DED6C8', '#AEA492', 'dark'),
       BuiltinThemeRegistry.regex(ThemeBubbleStyles.GILDED_ORBIT, '#463B2A', '#F4E3BF'));
+    // 章首装饰：装饰艺术风的书签挂饰（浅色曜黑漆面、深色象牙漆面）和同款藏书印牌。
+    theme.light.regexEmphasis.chapterHead = BuiltinThemeRegistry.chapterHead('obsidian_archive_light', 1.6,
+      '#A07C3A', '#E2C98F', 0.56);
+    theme.dark.regexEmphasis.chapterHead = BuiltinThemeRegistry.chapterHead('obsidian_archive_dark', 1.6,
+      '#C9AE74', '#2A2622', 0.56);
     theme.radius = BuiltinThemeRegistry.radius(6, 12, 20, 14, 18, 7);
     theme.readerLayout = BuiltinThemeRegistry.readerLayout(21, 14, 8, 25, 25, 26, 26);
     theme.glass = BuiltinThemeRegistry.glass(20, 16, 92, 86, 48, 24, 14, 3);
@@ -602,6 +607,11 @@ export class BuiltinThemeRegistry {
         '#D8BB7A', '#8A6D38', '#E79086'),
       BuiltinThemeRegistry.reader('#10162A', 'celestial-vault-dark', '#DCD6C8', '#A39D8D', 'dark'),
       BuiltinThemeRegistry.regex(ThemeBubbleStyles.CELESTIAL_ORBIT, '#2C3866', '#F4E3BF'));
+    // 章首装饰：浑天仪星杖（浅色午夜蓝珐琅、深色象牙珐琅）和同款星象徽章。
+    theme.light.regexEmphasis.chapterHead = BuiltinThemeRegistry.chapterHead('celestial_vault_light', 1.6,
+      '#A07C3A', '#EAD9A8', 0.54);
+    theme.dark.regexEmphasis.chapterHead = BuiltinThemeRegistry.chapterHead('celestial_vault_dark', 1.6,
+      '#C9B27A', '#1F2A4A', 0.54);
     theme.radius = BuiltinThemeRegistry.radius(6, 12, 20, 14, 22, 9);
     theme.readerLayout = BuiltinThemeRegistry.readerLayout(21, 14, 8, 25, 25, 26, 26);
     theme.glass = BuiltinThemeRegistry.glass(20, 16, 92, 86, 48, 24, 14, 3);
@@ -795,6 +805,23 @@ export class BuiltinThemeRegistry {
       source.radius.card, source.radius.button, source.radius.bubble);
     theme.glass = BuiltinThemeRegistry.cloneGlass(source.glass || new ThemeGlassTokens());
     return theme;
+  }
+
+  /**
+   * 内置主题的章首装饰：标题饰图 theme_chapter_head_<key>、首字印章 theme_drop_cap_<key>（都在 media 里，
+   * 写成 media:<资源名>，见 ThemeAssetRegistry.chapterArtwork），饰图在标题左侧，首字占两行。
+   */
+  private static chapterHead(key: string, scale: number, numberColor: string, dropCapColor: string,
+    dropCapRatio: number): ThemePackageChapterHead {
+    const head = new ThemePackageChapterHead();
+    head.image = `media:theme_chapter_head_${key}`;
+    head.scale = scale;
+    head.numberColor = numberColor;
+    head.dropCapLines = 2;
+    head.dropCapImage = `media:theme_drop_cap_${key}`;
+    head.dropCapColor = dropCapColor;
+    head.dropCapRatio = dropCapRatio;
+    return head;
   }
 
   private static cloneGlass(source: ThemeGlassTokens): ThemeGlassTokens {

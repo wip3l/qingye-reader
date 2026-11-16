@@ -112,7 +112,7 @@ export class ReaderV2PageFragment {
 }
 
 /**
- * 画在正文底下的主题装饰：章首饰图（image 按 rect 拉伸），或正文首字（可选的印章图加放大的那个字）。
+ * 画在正文底下的主题装饰：章首饰图（image 按 rect 拉伸），或首字装饰（可选的印章图加放大的那个字）。
  * 首字不属于任何文字片段，选字、划线、朗读高亮都不经过它。
  */
 export class ReaderV2PageDecoration {

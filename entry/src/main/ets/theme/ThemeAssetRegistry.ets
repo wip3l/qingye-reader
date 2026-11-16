@@ -349,6 +349,24 @@ export class ThemeAssetRegistry {
     }
   }
 
+  /**
+   * 章首装饰的图片（标题饰图、首字印章）给界面上的 Image 用：内置主题的 media:<资源名> 换成资源，
+   * 主题包的本机地址原样返回。新增内置图时这里和 BuiltinThemeRegistry.chapterHead 一起加。
+   */
+  static chapterArtwork(source: string): ResourceStr {
+    switch (source) {
+      case 'media:theme_chapter_head_obsidian_archive_light': return $r('app.media.theme_chapter_head_obsidian_archive_light');
+      case 'media:theme_chapter_head_obsidian_archive_dark': return $r('app.media.theme_chapter_head_obsidian_archive_dark');
+      case 'media:theme_drop_cap_obsidian_archive_light': return $r('app.media.theme_drop_cap_obsidian_archive_light');
+      case 'media:theme_drop_cap_obsidian_archive_dark': return $r('app.media.theme_drop_cap_obsidian_archive_dark');
+      case 'media:theme_chapter_head_celestial_vault_light': return $r('app.media.theme_chapter_head_celestial_vault_light');
+      case 'media:theme_chapter_head_celestial_vault_dark': return $r('app.media.theme_chapter_head_celestial_vault_dark');
+      case 'media:theme_drop_cap_celestial_vault_light': return $r('app.media.theme_drop_cap_celestial_vault_light');
+      case 'media:theme_drop_cap_celestial_vault_dark': return $r('app.media.theme_drop_cap_celestial_vault_dark');
+      default: return source;
+    }
+  }
+
   static readerBackgroundTrailingRotation(assetId: string): number {
     const trailing = ThemeAssetRegistry.readerBackgroundTrailingDecoration(assetId);
     return trailing && trailing === ThemeAssetRegistry.readerBackgroundDecoration(assetId) ? 180 : 0;

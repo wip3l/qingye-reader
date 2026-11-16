@@ -17941,7 +17941,8 @@ ${leading}` : leading;
     input.titleMarginTopPx = this.toMeasureNonNegativePx(titleStyle.marginTop);
     input.titleMarginBottomPx = this.toMeasureNonNegativePx(titleStyle.marginBottom);
     input.titleSinglePage = titleStyle.singlePage;
-    input.chapterHead = ReaderChapterHead.style(ThemeRuntime.chapterHeadTokens(this.appDarkMode), titleStyle.decoration);
+    input.chapterHead = ReaderChapterHead.style(ThemeRuntime.chapterHeadTokens(this.appDarkMode), titleStyle.decoration,
+      titleStyle.dropCap);
     input.lineSpacingPx = this.toMeasureNonNegativePx(this.readerLineHeight);
     input.paragraphSpacingPx = this.toMeasureNonNegativePx(this.readerParagraphSpacing);
     input.letterSpacingPx = this.toMeasureFontOffsetPx(this.getReaderAdaptiveLetterSpacing(forPageMetrics));

@@ -861,7 +861,7 @@ test('chapter head: decode, per-mode fallback, refs, encode, pack:self', () => {
   assert.equal(format.chapterHeadFor(legacy, false), null);
   assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { image: 'assets/missing.png' } } }), /chapterHead\.image/);
   assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { numberColor: 'red' } } }), /chapterHead\.numberColor/);
-  // 正文首字：行数 2 或 3，只写了印章图时按 2 行；字占比夹在 0.4–0.9；深色没设时沿用浅色整套，颜色可以另写。
+  // 首字装饰：行数 2 或 3，只写了印章图时按 2 行；字占比夹在 0.4–0.9；深色没设时沿用浅色整套，颜色可以另写。
   const capJson = partsJson();
   capJson.light.chapterHead = { dropCapLines: 3, dropCapImage: 'assets/logo.svg', dropCapColor: '#b5402f', dropCapRatio: 0.95 };
   capJson.dark.chapterHead = { dropCapColor: '#FFE0A0' };
@@ -872,7 +872,7 @@ test('chapter head: decode, per-mode fallback, refs, encode, pack:self', () => {
   const capNight = format.chapterHeadFor(cap, true);
   assert.deepEqual([capNight.dropCapLines, capNight.dropCapImage, capNight.dropCapRatio, capNight.dropCapColor],
     [3, 'assets/logo.svg', 0.9, '#FFE0A0']);
-  assert.equal(format.describeParts(cap).includes('章首装饰（正文首字）'), true);
+  assert.equal(format.describeParts(cap).includes('章首装饰（首字装饰）'), true);
   const capEncoded = format.encodeParts(cap);
   assert.deepEqual(capEncoded.light.chapterHead,
     { dropCapLines: 3, dropCapImage: 'assets/logo.svg', dropCapRatio: 0.9, dropCapColor: '#B5402F' });

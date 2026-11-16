@@ -90,7 +90,7 @@ entry/src/main/resources/base/media/
 | --- | --- |
 | `colors` | `pageColor`、`cardColor`、`inputColor`、`primaryTextColor`、`subTextColor`、`dividerColor`、`accentColor`、`buttonColor`、`dangerColor`。 |
 | `reader` | `backgroundColor`、`backgroundAssetId`、`backgroundImageFit`、`textColor`、`subTextColor`、`contentTone`（`light` / `dark`）。 |
-| `regexEmphasis` | `emphasisMode`、`bubbleStyle`、`emphasisColor`、`emphasisTextColor`，以及段评气泡外观 `commentBubble`（`ThemePackageCommentBubble`，字段为空时沿用气泡样式）和标题强调 `title`（`ThemeTitleEmphasisTokens`，`mode` 为空表示不设置；`ThemeRuntime.titleEmphasisTokens(dark)` 发布给阅读页，`ReaderTitleEmphasis.plan()` 把阅读设置的标题规则和它合成一次解析；`pack:<id>:title` 气泡样式取包里的 `titleBubble`），还有章首装饰 `chapterHead`（`ThemePackageChapterHead`：标题饰图的本机地址、位置、大小和序号行颜色；`ThemeRuntime.chapterHeadTokens(dark)` 发布给阅读页，`ReaderChapterHead.style()` 换成排版用的样式，饰图的尺寸与位置在 `ReaderV2ChapterHeadLayout`；正文首字由 `ReaderV2Paginator` 把首段拆成绕排和整行两截、首字作为页面装饰单独画）。 |
+| `regexEmphasis` | `emphasisMode`、`bubbleStyle`、`emphasisColor`、`emphasisTextColor`，以及段评气泡外观 `commentBubble`（`ThemePackageCommentBubble`，字段为空时沿用气泡样式）和标题强调 `title`（`ThemeTitleEmphasisTokens`，`mode` 为空表示不设置；`ThemeRuntime.titleEmphasisTokens(dark)` 发布给阅读页，`ReaderTitleEmphasis.plan()` 把阅读设置的标题规则和它合成一次解析；`pack:<id>:title` 气泡样式取包里的 `titleBubble`），还有章首装饰 `chapterHead`（`ThemePackageChapterHead`：标题饰图的本机地址、位置、大小和序号行颜色；`ThemeRuntime.chapterHeadTokens(dark)` 发布给阅读页，`ReaderChapterHead.style()` 换成排版用的样式，饰图的尺寸与位置在 `ReaderV2ChapterHeadLayout`；首字装饰由 `ReaderV2Paginator` 把首段拆成绕排和整行两截、首字作为页面装饰单独画）。 |
 
 有效值优先级：
 

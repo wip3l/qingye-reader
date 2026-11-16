@@ -2627,7 +2627,7 @@ struct ThemeColorSettingsPage {
     if (this.ownChapterHeadNumberColor()) {
       this.resetRow('序号行改回和标题同色', () => this.setChapterHeadNumberColor(''))
     }
-    SettingRow({ title: '正文首字', description: '每章第一段的第一个字放大，后面的字绕着它排；开头是引号、数字、字母时这一章不处理' }) {
+    SettingRow({ title: '首字装饰', description: '每章第一段的第一个字放大，后面的字绕着它排；开头是引号、数字、字母时这一章不处理' }) {
       Select(this.dropCapLineOptions())
         .id('theme_editor_drop_cap_lines')
         .width('44%')
@@ -6312,16 +6312,16 @@ struct ThemeColorSettingsPage {
     return normalizeChapterHead(this.effectiveEmphasis().chapterHead);
   }
 
-  chapterHeadSlotImage(): string {
+  chapterHeadSlotImage(): ResourceStr {
     const own = this.ownChapterHead().image;
     if (own) return this.ownAssetUri(own) || own;
-    return this.effectiveChapterHead().image;
+    return ThemeAssetRegistry.chapterArtwork(this.effectiveChapterHead().image);
   }
 
   chapterHeadSlotState(): string {
     if (this.assetRevision >= 0 && SchemeAssetService.hasOwnChapterHeadImage(this.ownPackageId,
       this.selectedMode === 'dark')) return 'own';
-    return this.chapterHeadSlotImage() ? 'inherit' : 'empty';
+    return this.effectiveChapterHead().image || this.ownChapterHead().image ? 'inherit' : 'empty';
   }
 
   /** 饰图来自方案自己的素材包时才能调位置和大小。 */
@@ -6398,7 +6398,7 @@ struct ThemeColorSettingsPage {
     if (changed) this.onSettingChanged();
   }
 
-  // 正文首字：行数、颜色、字占比和印章图都写在方案素材包这个模式的 chapterHead 里。
+  // 首字装饰：行数、颜色、字占比和印章图都写在方案素材包这个模式的 chapterHead 里。
 
   dropCapLineOptions(): SelectOption[] {
     return DROP_CAP_LINE_NAMES.map((name: string): SelectOption => ({ value: name }));
@@ -6414,16 +6414,16 @@ struct ThemeColorSettingsPage {
     return Math.round(this.effectiveChapterHead().dropCapRatio * 100);
   }
 
-  dropCapSlotImage(): string {
+  dropCapSlotImage(): ResourceStr {
     const own = this.ownChapterHead().dropCapImage;
     if (own && this.currentEmphasis().chapterHead === this.ownThemeId()) return this.ownAssetUri(own) || own;
-    return this.effectiveChapterHead().dropCapImage;
+    return ThemeAssetRegistry.chapterArtwork(this.effectiveChapterHead().dropCapImage);
   }
 
   dropCapSlotState(): string {
     if (this.assetRevision >= 0 && SchemeAssetService.hasOwnDropCapImage(this.ownPackageId,
       this.selectedMode === 'dark')) return 'own';
-    return this.dropCapSlotImage() ? 'inherit' : 'empty';
+    return this.effectiveChapterHead().dropCapImage ? 'inherit' : 'empty';
   }
 
   dropCapHint(): string {

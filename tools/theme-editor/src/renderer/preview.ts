@@ -458,7 +458,7 @@ function chapterTitle(e: Effective, fontPx: number, columnWidth: number): HTMLEl
 }
 
 /**
- * 正文首字：方框高 = (行数 − 1) × 行距 + 1.04 个字号（同应用 ReaderV2Paginator.resolveDropCap），浮在段落左上角；
+ * 首字装饰：方框高 = (行数 − 1) × 行距 + 1.04 个字号（同应用 ReaderV2Paginator.resolveDropCap），浮在段落左上角；
  * 垫印章图时字高按字占比，只放大时字撑满方框。没设首字时返回 null。
  */
 function dropCap(char: string, e: Effective, fontPx: number): HTMLElement | null {

@@ -41,7 +41,7 @@ export class ReaderV2ChapterHeadStyle {
   scale: number = 1;
   /** 分段标题第一段的颜色（ARGB）；0 表示和标题同色。 */
   numberColor: number = 0;
-  /** 正文首字占几行：0 不处理，2 或 3。 */
+  /** 首字装饰占几行：0 不处理，2 或 3。 */
   capLines: number = 0;
   /** 首字底下的印章图文件；空串只放大。 */
   capImage: string = '';

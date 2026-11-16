@@ -216,7 +216,7 @@ export const SECTIONS: Section[] = [
   },
   {
     id: 'chapterHead', group: '配色与阅读', name: '章首装饰', screen: 'reader', modal: true,
-    desc: '画在每章标题旁的饰图、分段标题第一段（“第十二章”那一行）的颜色，和正文首字。读者可以在阅读设置的标题里关掉。旧版本应用忽略这一节。', fields: [
+    desc: '画在每章标题旁的饰图、分段标题第一段（“第十二章”那一行）的颜色，和首字装饰。读者可以在阅读设置的标题里关掉。旧版本应用忽略这一节。', fields: [
       { g: '标题饰图' },
       { k: '{m}.chapterHead.image', label: '饰图', type: 'asset', kinds: ['vector', 'image'],
         spec: 'SVG 或透明底位图。放左侧适合竖长的图，放上方、下方适合横长的花纹',
@@ -231,7 +231,7 @@ export const SECTIONS: Section[] = [
       { g: '序号行' },
       { k: '{m}.chapterHead.numberColor', label: '序号行颜色', type: 'color', alpha: true, vs: '{m}.reader.backgroundColor',
         hint: '不写时和标题同色。读者开了标题分段才看得出' },
-      { g: '正文首字' },
+      { g: '首字装饰' },
       { k: '{m}.chapterHead.dropCapLines', label: '首字', type: 'select',
         options: [['', '不处理'], ['2', '占 2 行'], ['3', '占 3 行']],
         hint: '每章第一段的第一个字放大，后面的字绕着它排。开头是引号、数字、字母时这一章不处理。深色不处理时沿用浅色那套' },

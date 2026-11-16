@@ -494,7 +494,7 @@ export class SchemeAssetService {
   }
 
   /**
-   * 正文首字占几行（0 不处理）、颜色和字占比。这个模式原来沿用另一模式的首字时，先把那套（印章图、字占比、
+   * 首字装饰占几行（0 不处理）、颜色和字占比。这个模式原来沿用另一模式的首字时，先把那套（印章图、字占比、
    * 颜色）记到这个模式，这样改动只影响这个模式；改成不处理时这个模式的印章图一并去掉。
    */
   static async setChapterHeadDropCap(context: Context, schemeId: string, baseTheme: string, dark: boolean,

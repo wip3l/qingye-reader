@@ -416,6 +416,7 @@ export struct ReaderFontSettingsEditor {
           this.readerFontWeight = value;
           this.saveSettings();
         } })
+      this.bodyDropCapItem()
       if (!this.embedded) {
         this.bodyPreviewItem()
       }
@@ -1015,6 +1016,28 @@ export struct ReaderFontSettingsEditor {
     .alignItems(VerticalAlign.Center)
   }
 
+  /** 首字装饰开关。设置和标题样式存在一起（随主题排版走），入口放在正文这一组。 */
+  @Builder
+  bodyDropCapItem() {
+    Row({ space: AppSpacing.LG }) {
+      Column({ space: AppSpacing.XS }) {
+        Text('首字装饰').fontSize(AppFontSize.BODY_LARGE).fontColor(this.primaryTextColor())
+        Text(`每章第一个字按主题放大，可垫印章。${
+          ReaderChapterHead.describeDropCap(ThemeRuntime.chapterHeadTokens(this.appDarkMode))}`)
+          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      AdaptiveSwitch({ isOn: this.titleStyle.dropCap !== ReaderChapterDecoration.OFF,
+        onChange: (checked: boolean) => this.updateTitleSplit('dropCap',
+          checked ? ReaderChapterDecoration.THEME : ReaderChapterDecoration.OFF) })
+    }
+    .width('calc(100% - 32vp)')
+    .constraintSize({ minHeight: 64 })
+    .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
+    .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
+    .alignItems(VerticalAlign.Center)
+  }
+
   @Builder
   bodyFontSizeStepper() {
     Row({ space: AppSpacing.MD }) {
@@ -1395,9 +1418,9 @@ export struct ReaderFontSettingsEditor {
       }.width('100%').constraintSize({ minHeight: 56 })
       Row({ space: AppSpacing.LG }) {
         Column({ space: AppSpacing.XS }) {
-          Text('章首装饰').fontSize(AppFontSize.BODY_LARGE).fontColor(this.primaryTextColor())
-          Text(`显示主题带的标题饰图、序号行颜色和正文首字。${
-            ReaderChapterHead.describe(ThemeRuntime.chapterHeadTokens(this.appDarkMode))}`)
+          Text('标题装饰').fontSize(AppFontSize.BODY_LARGE).fontColor(this.primaryTextColor())
+          Text(`显示主题给标题配的饰图和序号行颜色。${
+            ReaderChapterHead.describeTitle(ThemeRuntime.chapterHeadTokens(this.appDarkMode))}`)
             .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
         }.layoutWeight(1).alignItems(HorizontalAlign.Start)
         AdaptiveSwitch({ isOn: this.titleStyle.decoration !== ReaderChapterDecoration.OFF,
@@ -1651,6 +1674,7 @@ export struct ReaderFontSettingsEditor {
     else if (field === 'marginBottom') next.marginBottom = ReaderTitleSplit.normalizeMargin(Number(content));
     else if (field === 'singlePage') next.singlePage = content === 'true';
     else if (field === 'decoration') next.decoration = ReaderChapterDecoration.normalize(content);
+    else if (field === 'dropCap') next.dropCap = ReaderChapterDecoration.normalize(content);
     this.titleStyle = next;
     this.saveSettings();
   }
@@ -1702,7 +1726,8 @@ export struct ReaderFontSettingsEditor {
     input.titleMarginTopPx = context.vp2px(this.titleStyle.marginTop);
     input.titleMarginBottomPx = context.vp2px(this.titleStyle.marginBottom);
     input.titleSinglePage = withBody && this.titleStyle.singlePage;
-    input.chapterHead = ReaderChapterHead.style(ThemeRuntime.chapterHeadTokens(this.appDarkMode), this.titleStyle.decoration);
+    input.chapterHead = ReaderChapterHead.style(ThemeRuntime.chapterHeadTokens(this.appDarkMode), this.titleStyle.decoration,
+      this.titleStyle.dropCap);
     input.lineSpacingPx = context.vp2px(layout.lineHeight);
     input.paragraphSpacingPx = context.vp2px(layout.paragraphSpacing);
     input.letterSpacingPx = context.fp2px(layout.letterSpacing);

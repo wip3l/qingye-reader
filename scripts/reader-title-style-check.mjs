@@ -380,7 +380,7 @@ try {
     'body starts below a bottom ornament');
   console.log('PASS: chapter-head ornament reserves its space beside, above or below the title and tints the number line');
 
-  // 正文首字：首字单独画，首段拆成绕着它的前几行和回到整行的其余部分；两截之间没有段间距，也不多出换行。
+  // 首字装饰：首字单独画，首段拆成绕着它的前几行和回到整行的其余部分；两截之间没有段间距，也不多出换行。
   // 假排版引擎：汉字宽 = 字号，行高 = 字号 × 1.2 + 行距，基线在行顶下 0.8 个字号。
   {
   const capInput = new Input(); capInput.viewportWidthPx = 320; capInput.viewportHeightPx = 900;
@@ -399,7 +399,7 @@ try {
   const capLayout = Paginator.layoutContinuous(capDocument(), capSnapshot(2), []);
   assert.equal(capLayout.fragments.length, 4, 'title, wrapped lines, full-width rest, next paragraph');
   const [, lead, rest, nextParagraph] = capLayout.fragments;
-  const pitch = 20 * 1.2 + 10, capBox = pitch + 20 * 1.04, capReserve = capBox + 20 * 0.3;
+  const pitch = 20 * 1.2 + 10, capBox = pitch + 20 * 1.2 - 20 * 0.05 * 2, capReserve = capBox + 20 * 0.3;
   assert.equal(lead.localStart, 3, 'the wrapped slice starts after the indent and the cap');
   assert(Math.abs(lead.leadReservePx - capReserve) < 0.01 && Math.abs(lead.paragraphX - plainLayout.fragments[1].paragraphX - capReserve) < 0.01);
   assert.equal(lead.paragraph.getLineCount(), 2, 'exactly the configured number of lines wrap around the cap');
@@ -415,7 +415,8 @@ try {
   assert.equal(capLayout.decorations.length, 1);
   const capRect = capLayout.decorations[0].rect;
   assert(Math.abs(capRect.right - capRect.left - capBox) < 0.01 && Math.abs(capRect.bottom - capRect.top - capBox) < 0.01);
-  assert(Math.abs(capRect.top - (lead.paragraphY + 20 * 0.8 - 20 * 0.92)) < 0.01, 'the box starts at the first line\'s em top');
+  assert(Math.abs(capRect.top - (lead.paragraphY + 20 * 0.05)) < 0.01, 'the box starts just inside the first line\'s text band');
+  assert(Math.abs(capRect.bottom - (lead.paragraphY + pitch + 20 * 1.2 - 20 * 0.05)) < 0.01, 'and ends just inside the last wrapped line\'s');
   assert.equal(capLayout.decorations[0].glyph.text, '傍');
   assert.equal(capLayout.decorations[0].image, '');
   assert.equal(Paginator.layoutContinuous(capDocument(), capSnapshot(3, 'file://seal.png'), []).fragments[1].paragraph.getLineCount(), 3);
