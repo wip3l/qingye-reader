@@ -238,7 +238,8 @@ import {
 import { ReaderPageTextureCache, ReaderPageTextureLease } from '../core/reader/ReaderPageTextureCache';
 import { ReaderPageTexturePair } from '../core/reader/ReaderPageTexturePair';
 import {
-  ReaderPageRasterizer, ReaderPageRasterSpec, ReaderRasterImage, ReaderRasterPage, ReaderRasterPageRequest
+  ReaderPageRasterizer, ReaderPageRasterSpec, ReaderRasterImage, ReaderRasterPage, ReaderRasterPageRequest,
+  ReaderRasterRect, ReaderRasterText
 } from '../core/reader/ReaderPageRasterizer';
 import { ReaderRasterAssets } from '../core/reader/ReaderRasterAssets';
 import { ReaderThemeDecorationLayout } from '../core/reader/ReaderThemeDecorationLayout';
@@ -312,6 +313,15 @@ const READER_PAGE_3D_HURRY_DURATION = 180;
 // 卷页直接带真实正文；没赶上（网络慢、加载失败）就用“正在加载”提示页照常卷过去，不把纸停在半空。
 const READER_CROSS_CHAPTER_PREVIEW_GRACE_MS = 160;
 const READER_CURL_REGION_UNSET = -1;
+// 页眉页脚的节点 id 前缀：盖在页面上的那份，以及单页仿真翻页时垫在卷页下面的目标页那份。
+const READER_INFO_HEADER_ID = 'reader_info_header';
+const READER_INFO_FOOTER_ID = 'reader_info_footer';
+const READER_INFO_HEADER_INCOMING_ID = 'reader_info_header_incoming';
+const READER_INFO_FOOTER_INCOMING_ID = 'reader_info_footer_incoming';
+// 自绘翻页纹理里要不要画页眉页脚：不画、画当前页的、画目标页的。
+const READER_RASTER_INFO_NONE = 0;
+const READER_RASTER_INFO_CURRENT = 1;
+const READER_RASTER_INFO_INCOMING = 2;
 // 一次拖动的意图：越过点击阈值时按方向判定一次，之后不再在翻页与下拉书签之间切换。
 const READER_PAN_INTENT_NONE = 0;
 const READER_PAN_INTENT_TURN = 1;
@@ -810,6 +820,13 @@ struct ReadBookPage {
     new CanvasRenderingContext2D(new RenderingContextSettings(true));
   private readerPageCurlFront: image.PixelMap | null = null;
   private readerPageCurlFrontLease: ReaderPageTextureLease | null = null;
+  // 本次卷页的正面纹理画进了页眉页脚。只有自绘纹理会画；截图兜底的纹理没有，页眉页脚照旧盖在卷页上面。
+  // 只在 readerPageCurlSnapshotReady 变化的同一任务里改，跟着它的重建一起生效。
+  private readerPageCurlFrontHasInfoBars: boolean = false;
+  // 已画进页眉页脚的预热纹理键；截图兜底生成同一键的纹理时移除。
+  private readerInfoBarTextureKeys: Set<string> = new Set<string>();
+  // 最近一次 buildPageRasterSpec 是否完整收集到了页眉页脚。
+  private readerLastRasterInfoBars: boolean = false;
   private readerPageTextureCache: ReaderPageTextureCache = new ReaderPageTextureCache();
   private readerPageTextureWarmSerial: number = 0;
   private readerPageCurlBack: image.PixelMap | null = null;
@@ -2764,7 +2781,7 @@ struct ReadBookPage {
           // 父 Column 的 None 不会屏蔽子节点；占位不拦截正文的长按选择。
           .hitTestBehavior(HitTestMode.None)
         if (this.readerFooterEnabled && !this.isReaderComicModeActive()) {
-          this.readerBottomInfoBar()
+          this.readerBottomInfoBar('', false)
         }
       }
       .width('100%')
@@ -3818,12 +3835,15 @@ struct ReadBookPage {
             Column() {
               Blank()
                 .layoutWeight(1)
+                .id(`${READER_INFO_FOOTER_ID}_spacer`)
               if (this.readerFooterEnabled) {
-                this.readerBottomInfoBar()
+                this.readerBottomInfoBar(READER_INFO_FOOTER_ID, false)
               }
             }
             .width('100%')
             .height('100%')
+            // 单页仿真翻页时页脚已画进卷页纹理，跟着纸翻；这层藏起，目标页的页脚垫在卷页下面。
+            .opacity(this.readerInfoBarsRideCurl() ? 0 : 1)
             .hitTestBehavior(HitTestMode.None)
           }
           .width('100%')
@@ -3854,11 +3874,12 @@ struct ReadBookPage {
       // 页眉放在全屏层，负位置可以越过正文安全区，且不会被正文容器裁掉。
       if (this.shouldRenderPrimaryReaderContent() && this.isReaderHeaderVisible()) {
         Column() {
-          this.readerHeaderInfoBar()
+          this.readerHeaderInfoBar(READER_INFO_HEADER_ID, false)
         }
         .width('100%')
         .height('100%')
-        .opacity(this.readerInitialPageReady ? 1 : 0)
+        // 单页仿真翻页时页眉同页脚一样画进卷页纹理。
+        .opacity(this.readerInitialPageReady && !this.readerInfoBarsRideCurl() ? 1 : 0)
         .hitTestBehavior(HitTestMode.None)
       }
 
@@ -7166,18 +7187,57 @@ struct ReadBookPage {
     return this.readerKnownPageCountKey === key ? this.readerKnownPageStarts[page] : -1;
   }
 
-  getReaderInfoSlotText(item: string): string {
-    return ReaderInfoBarText.leading(item, this.getReaderInfoBarContext());
+  getReaderInfoSlotText(item: string, incoming: boolean = false): string {
+    return ReaderInfoBarText.leading(item, this.readerInfoBarContextFor(incoming));
   }
 
-  getReaderInfoSlotBattery(item: string): number {
-    return ReaderInfoBarText.battery(item, this.getReaderInfoBarContext());
+  getReaderInfoSlotBattery(item: string, incoming: boolean = false): number {
+    return ReaderInfoBarText.battery(item, this.readerInfoBarContextFor(incoming));
   }
 
-  getReaderInfoProgressValue(): number {
-    const context = this.getReaderInfoBarContext();
+  getReaderInfoProgressValue(incoming: boolean = false): number {
+    return this.readerInfoProgressValueOf(this.readerInfoBarContextFor(incoming));
+  }
+
+  readerInfoProgressValueOf(context: ReaderInfoBarContext): number {
     return this.getReaderInfoBarConfig().progressScope === ReaderInfoProgressBar.SCOPE_BOOK ?
       ReaderInfoBarText.bookPercent(context) : ReaderInfoBarText.chapterPercent(context);
+  }
+
+  /**
+   * 页眉页脚的取值。incoming 为翻页中的目标页（单页仿真翻页时垫在卷页下面的那份页眉页脚）：
+   * 同章只换页码与本章进度；跨章用目标章已有的分页，还没排完时页数显示“…”，与翻过去后页脚的口径一致。
+   */
+  readerInfoBarContextFor(incoming: boolean): ReaderInfoBarContext {
+    const context = this.getReaderInfoBarContext();
+    if (!incoming || this.pageSlideDirection === 0) return context;
+    const chapterIndex = this.clampChapterIndex(this.pageTurnIncomingChapterIndex);
+    const pageIndex = Math.max(0, this.pageTurnIncomingPageIndex);
+    if (chapterIndex === context.chapterIndex) {
+      if (pageIndex === context.pageIndex) return context;
+      context.pageIndex = pageIndex;
+      if (context.chapterProgressRatio >= 0) {
+        const chapterSource = this.pagedContentText;
+        const ends = this.contentPageEnds;
+        const end = ends.length > 0 ? ends[Math.max(0, Math.min(ends.length - 1, pageIndex))] : 0;
+        context.chapterProgressRatio = chapterSource && end > 0 && end < chapterSource.length ?
+          end / chapterSource.length : -1;
+      }
+      return context;
+    }
+    context.chapterIndex = chapterIndex;
+    context.chapterTitle = this.getChapterTitle(chapterIndex);
+    context.pageIndex = pageIndex;
+    context.chapterProgressRatio = -1;
+    const source = this.pageTurnIncomingDocumentSource;
+    const pagination = source ? this.getCachedReaderPagination(chapterIndex, source) : null;
+    context.pageCount = pagination ? pagination.pages.length : 0;
+    context.pageCountPending = !pagination || pagination.complete !== true;
+    if (pagination && context.pageCountPending && pageIndex < pagination.ends.length) {
+      const end = pagination.ends[pageIndex];
+      if (end > 0 && end < source.length) context.chapterProgressRatio = end / source.length;
+    }
+    return context;
   }
 
   getReaderInfoBarSidePadding(header: boolean, left: boolean): number {
@@ -11633,48 +11693,60 @@ struct ReadBookPage {
     }
   }
 
+  /**
+   * 页眉页脚的进度条或分隔线。idPrefix 非空时节点 id 为 `<前缀>_accent`，翻页纹理按它取位置；
+   * incoming 为垫在卷页下面的目标页那份，进度按目标页算。
+   */
   @Builder
-  readerInfoBarAccentLine(progress: boolean) {
+  readerInfoBarAccentLine(progress: boolean, idPrefix: string, incoming: boolean) {
     if (progress) {
-      Progress({ value: this.getReaderInfoProgressValue(), total: 100, type: ProgressType.Linear })
+      Progress({ value: this.getReaderInfoProgressValue(incoming), total: 100, type: ProgressType.Linear })
         .width('100%')
         .height(2)
         .color(this.accentColor())
         .backgroundColor(this.readerChapterTrackColor())
+        .id(idPrefix ? `${idPrefix}_accent` : '')
     } else {
       Row()
         .width('100%')
         .height(0.5)
         .backgroundColor(this.getSubTextColor())
         .opacity(0.35)
+        .id(idPrefix ? `${idPrefix}_accent` : '')
     }
   }
 
+  /**
+   * 页脚。idPrefix 非空时根节点 id 为前缀本身、槽位为 `<前缀>_left|center|right`，翻页纹理按它们取位置；
+   * incoming 为单页仿真翻页时垫在卷页下面的目标页页脚：文字按目标页算，不显示眼动提示，也不回报高度。
+   */
   @Builder
-  readerBottomInfoBar() {
+  readerBottomInfoBar(idPrefix: string, incoming: boolean) {
     Column({ space: 3 }) {
       if (this.getReaderInfoBarConfig().progressBar === ReaderInfoProgressBar.FOOTER) {
-        this.readerInfoBarAccentLine(true)
+        this.readerInfoBarAccentLine(true, idPrefix, incoming)
       } else if (this.getReaderInfoBarConfig().footerDivider) {
-        this.readerInfoBarAccentLine(false)
+        this.readerInfoBarAccentLine(false, idPrefix, incoming)
       }
       ReaderInfoBarRow({
-        leftText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().footerLeft),
-        centerText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().footerCenter),
-        rightText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().footerRight),
-        leftBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().footerLeft),
-        centerBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().footerCenter),
-        rightBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().footerRight),
+        leftText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().footerLeft, incoming),
+        centerText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().footerCenter, incoming),
+        rightText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().footerRight, incoming),
+        leftBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().footerLeft, incoming),
+        centerBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().footerCenter, incoming),
+        rightBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().footerRight, incoming),
         textSize: this.getReaderInfoBarConfig().footerFontSize,
         textColor: this.getReaderInfoBarConfig().textColor(false, this.appDarkMode, this.getSubTextColor()),
         textOpacity: this.getReaderInfoBarConfig().footerOpacity / 100,
-        cueProgress: this.readerEyeTurnFooterCueProgress(),
-        cueArmed: this.readerEyeTurnFooterCueArmed(),
+        cueProgress: incoming ? 0 : this.readerEyeTurnFooterCueProgress(),
+        cueArmed: incoming ? false : this.readerEyeTurnFooterCueArmed(),
         cueColor: this.accentColor(),
         cueText: this.eyeTurnState.cueLabel(),
-        cueVisible: this.readerEyeTurnFooterCueActive() && this.eyeTurnState.cueVisible
+        cueVisible: !incoming && this.readerEyeTurnFooterCueActive() && this.eyeTurnState.cueVisible,
+        idPrefix: idPrefix
       })
     }
+    .id(idPrefix)
     .width('100%')
     .padding({
       left: this.getReaderInfoBarSidePadding(false, true),
@@ -11687,24 +11759,26 @@ struct ReadBookPage {
     .translate({ y: this.getReaderBottomInfoBarVisualOffsetY() })
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
     .onAreaChange((_oldValue: Area, newValue: Area) => {
-      this.rememberReaderBottomInfoBarHeight(newValue);
+      if (!incoming) this.rememberReaderBottomInfoBarHeight(newValue);
     })
   }
 
+  /** 页眉；idPrefix 与 incoming 的含义同 readerBottomInfoBar。 */
   @Builder
-  readerHeaderInfoBar() {
+  readerHeaderInfoBar(idPrefix: string, incoming: boolean) {
     Column({ space: 3 }) {
       Row() {
         ReaderInfoBarRow({
-          leftText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().headerLeft),
-          centerText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().headerCenter),
-          rightText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().headerRight),
-          leftBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().headerLeft),
-          centerBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().headerCenter),
-          rightBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().headerRight),
+          leftText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().headerLeft, incoming),
+          centerText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().headerCenter, incoming),
+          rightText: this.getReaderInfoSlotText(this.getReaderInfoBarConfig().headerRight, incoming),
+          leftBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().headerLeft, incoming),
+          centerBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().headerCenter, incoming),
+          rightBattery: this.getReaderInfoSlotBattery(this.getReaderInfoBarConfig().headerRight, incoming),
           textSize: this.getReaderInfoBarConfig().headerFontSize,
           textColor: this.getReaderInfoBarConfig().textColor(true, this.appDarkMode, this.getSubTextColor()),
-          textOpacity: this.getReaderInfoBarConfig().headerOpacity / 100
+          textOpacity: this.getReaderInfoBarConfig().headerOpacity / 100,
+          idPrefix: idPrefix
         })
       }
       .width('100%')
@@ -11713,11 +11787,12 @@ struct ReadBookPage {
       .alignItems(VerticalAlign.Top)
 
       if (this.getReaderInfoBarConfig().progressBar === ReaderInfoProgressBar.HEADER) {
-        this.readerInfoBarAccentLine(true)
+        this.readerInfoBarAccentLine(true, idPrefix, incoming)
       } else if (this.getReaderInfoBarConfig().headerDivider) {
-        this.readerInfoBarAccentLine(false)
+        this.readerInfoBarAccentLine(false, idPrefix, incoming)
       }
     }
+    .id(idPrefix)
     .width('100%')
     .padding({
       top: this.getReaderHeaderOverlayTopInset(),
@@ -15963,6 +16038,10 @@ ${leading}` : leading;
       // Until both textures are ready the stable current surface below remains the only visible正文.
       .opacity(this.readerPageCurlSnapshotReady ? 1 : 0)
 
+      // 只有画面上那个模拟层需要目标页的页眉页脚；另一个表面里再建一份会撞上同样的节点 id。
+      if (surfaceRole === 'overlay') {
+        this.readerCurlDestinationInfoBars()
+      }
     }
     .width('100%')
     .height('100%')
@@ -16033,6 +16112,38 @@ ${leading}` : leading;
     .height('100%')
     .backgroundColor(Color.Transparent)
     .clip(true)
+  }
+
+  /**
+   * 单页仿真翻页时目标页的页眉页脚：当前页的页眉页脚已画进卷页纹理跟着纸翻，这份垫在卷页下面，
+   * 随翻开露出来。位置与盖在页面上的那份一致：页眉本在全屏层、从屏幕顶端起算，这里扣回正文区顶部的内边距。
+   */
+  @Builder
+  readerCurlDestinationInfoBars() {
+    Stack() {
+      if (this.isReaderHeaderVisible()) {
+        Column() {
+          this.readerHeaderInfoBar(READER_INFO_HEADER_INCOMING_ID, true)
+        }
+        .width('100%')
+        .height('100%')
+        .position({ x: 0, y: -this.getReaderTopSafePadding() })
+      }
+      if (this.readerFooterEnabled) {
+        Column() {
+          Blank()
+            .layoutWeight(1)
+            .id(`${READER_INFO_FOOTER_INCOMING_ID}_spacer`)
+          this.readerBottomInfoBar(READER_INFO_FOOTER_INCOMING_ID, true)
+        }
+        .width('100%')
+        .height('100%')
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .opacity(this.readerInfoBarsRideCurl() ? 1 : 0)
+    .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
@@ -23170,6 +23281,15 @@ ${leading}` : leading;
     return this.isSimulationPageTurnAnimation() || this.is3DPageTurnAnimation();
   }
 
+  /**
+   * 单页仿真/3D 仿真翻页中、卷页画布已接手时，页眉页脚由卷页纹理带着翻（背面跟正文一样反着透出来），
+   * 盖在页面上的那层藏起，目标页的页眉页脚垫在卷页下面。双页的页眉页脚横跨两页，仍盖在上面不动。
+   */
+  readerInfoBarsRideCurl(): boolean {
+    return this.readerPageCurlSnapshotReady && this.readerPageCurlFrontHasInfoBars &&
+      this.usesReaderPageCurlCanvas() && !this.isLandscapeDoublePageActive() && this.shouldRenderSlidingPageTurn();
+  }
+
   // 对应官方示例 initPanPositionX：按手指落点决定卷曲从上角/下角/中部开始。
   // 折页背面的纸张底色：取主题背景色；背景图主题的背景色常为全透明，此时退回白纸避免透出下层。
   readerFlapPaperColor(color: string): string {
@@ -23251,8 +23371,33 @@ ${leading}` : leading;
       `${this.ttsHighlightRenderVersion}_${this.themeRevision}_${this.getPageTurnWidth()}_` +
       `${this.getPageTurnHeight()}_${this.readerPageCurlSnapshotScale()}_${this.readerV2ImageBitmapVersion}_` +
       `${this.readerNightImageModeActive()}_${this.readerInfoTimeText}_${this.readerInfoBatteryPercent}_${this.currentReaderInfoBarLayoutIdentity()}_` +
+      `${this.readerInfoBarTextureSignature()}_` +
       `${this.getReaderPageContentTopPadding()}_${this.navBarHeight}_${this.readerExtendToStatusBar}_` +
       `${this.isLandscapeDoublePageActive() ? direction : 0}`;
+  }
+
+  /** 纹理里页眉页脚的内容：总页数排出来、进度变化这类不换页也会变的文字都要让纹理键跟着变。 */
+  readerInfoBarTextureSignature(): string {
+    if (!this.readerHeaderEnabled && !this.readerFooterEnabled) return '';
+    const config = this.getReaderInfoBarConfig();
+    const context = this.getReaderInfoBarContext();
+    const items: string[] = [config.headerLeft, config.headerCenter, config.headerRight, config.footerLeft,
+      config.footerCenter, config.footerRight];
+    let signature = `${Math.round(this.readerInfoProgressValueOf(context) * 10)}`;
+    for (const item of items) {
+      signature += `|${ReaderInfoBarText.leading(item, context)}`;
+    }
+    return signature;
+  }
+
+  /** 记下某个预热纹理键的纹理是否画进了页眉页脚。 */
+  markReaderInfoBarTexture(key: string, hasInfoBars: boolean): void {
+    if (!hasInfoBars) {
+      this.readerInfoBarTextureKeys.delete(key);
+      return;
+    }
+    if (this.readerInfoBarTextureKeys.size >= 32) this.readerInfoBarTextureKeys.clear();
+    this.readerInfoBarTextureKeys.add(key);
   }
 
   scheduleReaderPageTextureWarmup(): void {
@@ -23326,7 +23471,8 @@ ${leading}` : leading;
    * artwork still decoding); the caller then falls back to componentSnapshot.
    */
   buildPageRasterSpec(surfaceId: string, entries: ReaderRasterPageRequest[],
-    paperOriginX: number): ReaderPageRasterSpec | null {
+    paperOriginX: number, infoBars: number = READER_RASTER_INFO_NONE): ReaderPageRasterSpec | null {
+    this.readerLastRasterInfoBars = false;
     const ui = this.getUIContext();
     let surfaceLeft = 0;
     let surfaceTop = 0;
@@ -23419,7 +23565,144 @@ ${leading}` : leading;
         }
       }
     }
+    if (infoBars !== READER_RASTER_INFO_NONE) {
+      const incoming = infoBars === READER_RASTER_INFO_INCOMING;
+      // 目标页的离屏副本放在模拟层左边两个页宽处，页眉页脚却在模拟层原位，原点要挪回去。
+      const originX = surfaceLeft + (incoming ? vp2px(this.getPageTurnWidth() * 2) : 0);
+      this.readerLastRasterInfoBars = this.collectReaderInfoBarRaster(spec, originX, surfaceTop, incoming);
+      if (!this.readerLastRasterInfoBars) {
+        spec.infoRects = [];
+        spec.infoTexts = [];
+      }
+    }
     return spec;
+  }
+
+  /** 节点的窗口坐标矩形 [left, top, width, height]（px）；节点不在或还没布局时为 null。 */
+  readerNodeWindowRect(id: string): number[] | null {
+    try {
+      const rect = this.getUIContext().getComponentUtils().getRectangleById(id);
+      if (rect.size.width <= 0 || rect.size.height <= 0) return null;
+      return [rect.windowOffset.x, rect.windowOffset.y, rect.size.width, rect.size.height];
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * 把页眉页脚画进翻页纹理。位置取实时节点：incoming 取垫在卷页下面的目标页那份，否则取盖在页面上的那份；
+   * originX/originY 是纹理左上角的窗口坐标（px）。有节点还没布局好就返回 false，调用方整份不画，
+   * 页眉页脚继续盖在卷页上面。
+   */
+  collectReaderInfoBarRaster(spec: ReaderPageRasterSpec, originX: number, originY: number,
+    incoming: boolean): boolean {
+    if (this.isLandscapeDoublePageActive() || this.isReaderComicModeActive()) return false;
+    if (this.isReaderHeaderVisible()) {
+      const prefix = incoming ? READER_INFO_HEADER_INCOMING_ID : READER_INFO_HEADER_ID;
+      // 页眉没有位移变换，节点坐标就是画面位置。
+      if (!this.readerNodeWindowRect(prefix) ||
+        !this.collectReaderInfoBarRow(spec, prefix, true, incoming, -originX, -originY)) {
+        return false;
+      }
+    }
+    if (this.readerFooterEnabled) {
+      const prefix = incoming ? READER_INFO_FOOTER_INCOMING_ID : READER_INFO_FOOTER_ID;
+      const footer = this.readerNodeWindowRect(prefix);
+      const spacer = this.readerNodeWindowRect(`${prefix}_spacer`);
+      if (!footer || !spacer) return false;
+      // 页脚靠 translate 抬到手势条上方，节点坐标里算不算这段位移因平台而异。它在布局上紧接着占位 Blank，
+      // 画面位置 = Blank 底边 + 位移；子节点相对页脚根节点的偏移两种口径下都一样。
+      const visualTop = spacer[1] + spacer[3] + vp2px(this.getReaderBottomInfoBarVisualOffsetY());
+      if (!this.collectReaderInfoBarRow(spec, prefix, false, incoming, -originX,
+        visualTop - footer[1] - originY)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** 一行页眉或页脚：三个槽位的文字与电池，以及进度条或分隔线。dx/dy 把节点窗口坐标换成纹理坐标。 */
+  collectReaderInfoBarRow(spec: ReaderPageRasterSpec, prefix: string, header: boolean, incoming: boolean,
+    dx: number, dy: number): boolean {
+    const config = this.getReaderInfoBarConfig();
+    const context = this.readerInfoBarContextFor(incoming);
+    const color = config.textColor(header, this.appDarkMode, this.getSubTextColor());
+    const opacity = (header ? config.headerOpacity : config.footerOpacity) / 100;
+    const textSize = header ? config.headerFontSize : config.footerFontSize;
+    const fontSizePx = fp2px(textSize);
+    // 页眉页脚的 Text 没设字体，用的是应用字体，与正文的全局字体同源。
+    const family = this.getReaderFontFamily();
+    const families: string[] = family ? [family] : [];
+    const items: string[] = header ? [config.headerLeft, config.headerCenter, config.headerRight] :
+      [config.footerLeft, config.footerCenter, config.footerRight];
+    const sides: string[] = ['left', 'center', 'right'];
+    for (let index = 0; index < sides.length; index++) {
+      const slot = `${prefix}_${sides[index]}`;
+      const text = ReaderInfoBarText.leading(items[index], context);
+      const battery = ReaderInfoBarText.battery(items[index], context);
+      if (text) {
+        const rect = this.readerNodeWindowRect(`${slot}_text`);
+        if (!rect) {
+          // 眼动翻页提示占着中间槽位时那里没有文字节点，提示不画进纹理。
+          if (index === 1) continue;
+          return false;
+        }
+        spec.infoTexts.push(new ReaderRasterText(text, rect[0] + dx, rect[1] + dy, rect[2], rect[3], fontSizePx,
+          color, opacity, families));
+      }
+      if (battery >= 0) {
+        const box = this.readerNodeWindowRect(`${slot}_battery`);
+        const label = this.readerNodeWindowRect(`${slot}_battery_text`);
+        if (!box || !label) {
+          if (index === 1) continue;
+          return false;
+        }
+        this.collectReaderBatteryRaster(spec, box[0] + dx, box[1] + dy, box[2], box[3], battery, textSize, color,
+          opacity);
+        spec.infoTexts.push(new ReaderRasterText(`${battery}%`, label[0] + dx, label[1] + dy, label[2], label[3],
+          fontSizePx, color, opacity, families));
+      }
+    }
+    const progress = config.progressBar === (header ? ReaderInfoProgressBar.HEADER : ReaderInfoProgressBar.FOOTER);
+    if (progress || (header ? config.headerDivider : config.footerDivider)) {
+      const rect = this.readerNodeWindowRect(`${prefix}_accent`);
+      if (!rect) return false;
+      const left = rect[0] + dx;
+      const top = rect[1] + dy;
+      if (progress) {
+        // 线性 Progress：圆头轨道，按进度从左填充。
+        const radius = rect[3] / 2;
+        spec.infoRects.push(new ReaderRasterRect(left, top, left + rect[2], top + rect[3], radius,
+          this.readerChapterTrackColor(), 1));
+        const fill = rect[2] * Math.max(0, Math.min(100, this.readerInfoProgressValueOf(context))) / 100;
+        if (fill > 0.5) {
+          spec.infoRects.push(new ReaderRasterRect(left, top, left + fill, top + rect[3], radius,
+            this.accentColor(), 1));
+        }
+      } else {
+        spec.infoRects.push(new ReaderRasterRect(left, top, left + rect[2], top + rect[3], 0,
+          this.getSubTextColor(), 0.35));
+      }
+    }
+    return true;
+  }
+
+  /** 与 ReaderInfoBarSlot 的电池一致：1vp 描边圆角框、内缩 1vp 的电量条，右侧一个小凸头。 */
+  collectReaderBatteryRaster(spec: ReaderPageRasterSpec, left: number, top: number, width: number, height: number,
+    battery: number, textSize: number, color: string, opacity: number): void {
+    const border = vp2px(1);
+    spec.infoRects.push(new ReaderRasterRect(left, top, left + width, top + height, vp2px(2.5), color, opacity,
+      border));
+    const inset = border + vp2px(1);
+    const levelWidth = Math.max(0, width - inset * 2) * Math.max(0, Math.min(100, battery)) / 100;
+    if (levelWidth > 0.5) {
+      spec.infoRects.push(new ReaderRasterRect(left + inset, top + inset, left + inset + levelWidth,
+        top + height - inset, vp2px(1), color, opacity));
+    }
+    const nubHeight = vp2px(textSize * 0.3);
+    const nubTop = top + (height - nubHeight) / 2;
+    spec.infoRects.push(new ReaderRasterRect(left + width, nubTop, left + width + vp2px(1.5), nubTop + nubHeight,
+      vp2px(0.5), color, opacity));
   }
 
   /** The custom theme background placed like ReaderThemeBackground's Image (cover/contain/fill, centred). */
@@ -23456,7 +23739,8 @@ ${leading}` : leading;
         `${controllerPrefix}_${doublePage ? (index === 0 ? 'left' : 'right') : 'single'}`,
         doublePage && index === 1 ? vp2px(this.getReaderDoublePageRightOrigin()) : 0));
     }
-    return this.buildPageRasterSpec(this.currentReaderSnapshotComponentId(), entries, 0);
+    return this.buildPageRasterSpec(this.currentReaderSnapshotComponentId(), entries, 0,
+      doublePage ? READER_RASTER_INFO_NONE : READER_RASTER_INFO_CURRENT);
   }
 
   /**
@@ -23481,7 +23765,7 @@ ${leading}` : leading;
       this.pageTurnIncomingDocumentSource);
     if (!page) return null;
     return this.buildPageRasterSpec('reader_page_curl_back_single',
-      [new ReaderRasterPageRequest(page, 'overlay_simulation_back_single', 0)], 0);
+      [new ReaderRasterPageRequest(page, 'overlay_simulation_back_single', 0)], 0, READER_RASTER_INFO_INCOMING);
   }
 
   /** The settled page drawn by the app itself, or null when componentSnapshot must be used. */
@@ -23514,6 +23798,9 @@ ${leading}` : leading;
     if (!stillWanted()) throw new Error('settled page changed before its snapshot');
     // Draw the page ourselves whenever the raster covers everything on it; RenderService is only asked when not.
     const raster = this.rasterSettledPageTexture();
+    // 单页的纹理键与方向无关；双页不画页眉页脚，两个方向都按没有记。
+    const textureKey = this.readerSettledTextureKey(1);
+    this.markReaderInfoBarTexture(textureKey, !!raster && this.readerLastRasterInfoBars);
     if (raster) return raster;
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -23669,6 +23956,7 @@ ${leading}` : leading;
     const snapshotScale = this.readerPageCurlSnapshotScale();
     const needsBack = this.readerPageCurlNeedsBackSnapshot();
     let front: image.PixelMap | null = frontLease ? frontLease.bitmap : null;
+    let frontInfoBars = cachedFront && this.readerInfoBarTextureKeys.has(textureKey);
     let back: image.PixelMap | null = null;
     let lastError = '';
     const capture = (id: string): Promise<image.PixelMap | null> => snapshot.get(id, {
@@ -23684,7 +23972,10 @@ ${leading}` : leading;
     // in the same task that publishes the simulation subtree, and the component IDs become available on a following
     // render frame, so transient 100001 failures are retried; a texture that already succeeded is kept meanwhile.
     for (let attempt = 0; attempt < 24; attempt++) {
-      if (!front) front = this.rasterSettledPageTexture();
+      if (!front) {
+        front = this.rasterSettledPageTexture();
+        frontInfoBars = !!front && this.readerLastRasterInfoBars;
+      }
       if (needsBack && !back) back = this.rasterIncomingPageTexture();
       const requests: Promise<image.PixelMap | null>[] = [
         front ? Promise.resolve<image.PixelMap | null>(front) : capture(this.currentReaderSnapshotComponentId()),
@@ -23738,6 +24029,7 @@ ${leading}` : leading;
     this.prepareReaderPageCurlPalette();
     this.readerPageCurlFront = front;
     this.readerPageCurlFrontLease = frontLease;
+    this.readerPageCurlFrontHasInfoBars = frontInfoBars;
     this.readerPageCurlBack = back;
     this.readerPageCurlSnapshotHeight = snapshotHeight;
     this.readerPageCurlCapturePending = false;
@@ -23860,6 +24152,7 @@ ${leading}` : leading;
     this.readerPageCurlCaptureSerial++;
     this.readerPageCurlCapturePending = false;
     this.readerPageCurlCaptureKey = '';
+    this.readerPageCurlFrontHasInfoBars = false;
     this.readerPageCurlSnapshotReady = false;
     this.readerPageCurlPaperColor = '#FFFFFF';
     this.readerPageCurlDark = false;
