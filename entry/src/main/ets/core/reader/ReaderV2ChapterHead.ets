@@ -97,10 +97,29 @@ export class ReaderV2ChapterHeadLayout {
     } else {
       if (!first || !last) return;
       top = (first.paragraphY + last.paragraphY + last.paragraphHeight - metrics.heightPx) / 2;
+      left = ReaderV2ChapterHeadLayout.sideLeft(page, column, metrics);
     }
     const decoration = new ReaderV2PageDecoration();
     decoration.image = head.image;
     decoration.rect = new ReaderV2Rect(left, top, left + metrics.widthPx, top + metrics.heightPx);
     page.decorations.push(decoration);
+  }
+
+  /**
+   * 左侧饰图紧贴标题文字：标题段落排在“版心左边 + 让出宽度（+ 标题气泡端饰）”之后，居中 / 靠右时文字在段落里
+   * 还有一段偏移，饰图跟着最宽那行左移同样的距离。这样靠左时贴版心，居中时饰图连标题整组居中，靠右时整组靠右。
+   */
+  private static sideLeft(page: ReaderV2PageLayout, column: ReaderV2Rect, metrics: ReaderV2ChapterHeadMetrics): number {
+    let shift = Number.POSITIVE_INFINITY;
+    for (const fragment of page.fragments) {
+      if (!fragment.title || !fragment.paragraph) continue;
+      const count = fragment.paragraph.getLineCount();
+      for (let i = 0; i < count; i++) {
+        const line = fragment.paragraph.getLineMetrics(i);
+        if (line && line.width > 0.5) shift = Math.min(shift, line.left);
+      }
+    }
+    if (!Number.isFinite(shift) || shift <= 0) return column.left;
+    return Math.min(column.left + shift, column.right - metrics.widthPx);
   }
 }
