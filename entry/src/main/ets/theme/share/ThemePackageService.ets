@@ -43,6 +43,7 @@ import {
   isPackThemeId,
   kindForExtension,
   mapPartsAssetRefs,
+  maxAssetsFor,
   maxBytesForKind,
   mergeRules,
   navigationIsEmpty,
@@ -66,6 +67,7 @@ import {
   sniffAssetExtension,
   SourceRestriction,
   THEME_SOURCE_FIELDS,
+  tooManyAssetsMessage,
   ThemePackageAsset,
   ThemePackageAssetKinds,
   ThemePackageCredits,
@@ -427,6 +429,9 @@ export class ThemePackageService {
       }
       if (manifest.assets.length > ThemePackageLimits.MAX_ASSETS) {
         throw new Error('主题素材过多，无法导出');
+      }
+      if (manifest.assets.length > ThemePackageLimits.LEGACY_MAX_ASSETS) {
+        manifest.requires.push(ThemePackageFeatures.ASSETS_128);
       }
 
       ThemePackageService.writeText(`${pkgDir}/manifest.json`, encodeManifest(manifest));
@@ -1098,8 +1103,8 @@ export class ThemePackageService {
       }
       let asset = findAssetByPath(manifest, name);
       if (!asset) {
-        if (manifest.assets.length >= ThemePackageLimits.MAX_ASSETS) {
-          throw new Error('主题包素材数量超出上限');
+        if (manifest.assets.length >= maxAssetsFor(manifest.requires)) {
+          throw new Error(tooManyAssetsMessage(manifest.assets.length + 1, manifest.requires));
         }
         asset = new ThemePackageAsset();
         asset.path = name;

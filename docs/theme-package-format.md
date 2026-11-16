@@ -46,7 +46,7 @@ my-theme/
 | `version` | 否 | 作者自定的版本号，最多 32 个字符。 |
 | `description` | 否 | 一句话说明，最多 120 个字符，显示在主题详情。 |
 | `baseTheme` | 否 | 包里没写的部件回退到哪个内置主题，默认 `plain-default`。内置主题 ID 见主题开发指南。选付费主题时，导入的人没有那套主题，基底会换成 `plain-default`（导入预览里会列出）；要所有人看到一样的效果，就用 `plain-default` 或把部件都写进包里。`obsidian-archive`、`celestial-vault` 这类专属主题不要作基底。 |
-| `requires` | 是 | 至少包含 `custom-scheme-v1`；带 `parts` 时必须包含 `theme-parts-v1`；带字体文件时包含 `fonts-v1`；带 `layout` 时包含 `reader-layout-v1`；带 `emphasis` 时包含 `emphasis-rules-v3`；阅读页角饰只有左上或右下一张时包含 `reader-single-corner-v1`；`covers` 超过 8 张时包含 `book-covers-16-v1`；气泡边框是位图或只有边框没有端饰时包含 `bubble-frame-v1`；气泡端饰或书架边框是位图时（深色那张也算）包含 `bitmap-cap-shelf-frame-v1`。 |
+| `requires` | 是 | 至少包含 `custom-scheme-v1`；带 `parts` 时必须包含 `theme-parts-v1`；带字体文件时包含 `fonts-v1`；带 `layout` 时包含 `reader-layout-v1`；带 `emphasis` 时包含 `emphasis-rules-v3`；阅读页角饰只有左上或右下一张时包含 `reader-single-corner-v1`；`covers` 超过 8 张时包含 `book-covers-16-v1`；气泡边框是位图或只有边框没有端饰时包含 `bubble-frame-v1`；气泡端饰或书架边框是位图时（深色那张也算）包含 `bitmap-cap-shelf-frame-v1`；素材超过 64 个时包含 `assets-128-v1`（旧版本应用最多只收 64 个）。 |
 | `assets` | 否 | 可以不写：应用导入时枚举 `assets/` 目录。写了就按 `[{ "path": "assets/x.png", "sha256": "...", "size": 123 }]` 登记，`sha256` 和 `size` 可省略，写了会核对。 |
 | `credits` | 否 | 再导出的混搭方案记录原主题包：`{ "packageId", "name", "author" }`。手写包不用填。 |
 
@@ -292,7 +292,7 @@ my-theme/
 限制：
 
 - SVG 必须自包含：不得出现 `<script>`、`<image>`、`<use>`、`<filter>`、`<foreignObject>`、`href=`、`url(`，单个不超过 5 MB。
-- 位图单个不超过 25 MB，字体单个不超过 40 MB，素材总数不超过 64 个，整包不超过 80 MB，解压后不超过 160 MB。
+- 位图单个不超过 25 MB，字体单个不超过 40 MB，素材总数不超过 128 个（超过 64 个时 `requires` 要包含 `assets-128-v1`），整包不超过 80 MB，解压后不超过 160 MB。
 - 文件扩展名必须与实际格式一致（按文件头识别），`jpeg` 按 `jpg` 处理。
 - 素材只能放在 `assets/` 一层，文件名 `[A-Za-z0-9][A-Za-z0-9_-]*`。
 

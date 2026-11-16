@@ -329,6 +329,17 @@ test('v2 manifest: assets optional, packageId charset, credits and description k
   assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ assets: [{ path: 'assets/a.png', kind: 'font' }] }))), /损坏/);
   assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ assets: [{ path: 'assets/f.ttf' }] }))), /损坏/,
     'fonts need the fonts-v1 feature');
+  // 素材最多 128 个；超过老版本的 64 个要声明 assets-128-v1，老版本不认得这个功能会提示先更新。
+  const manyAssets = (count) => Array.from({ length: count }, (_, i) => ({ path: `assets/a${i}.png` }));
+  const v2Base = manifestV2().requires;
+  assert.equal(format.decodeManifest(JSON.stringify(manifestV2({ assets: manyAssets(64) }))).assets.length, 64);
+  assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ assets: manyAssets(65) }))), /assets-128-v1/);
+  const v2Many = manifestV2({ requires: [...v2Base, 'assets-128-v1'], assets: manyAssets(128) });
+  assert.equal(format.decodeManifest(JSON.stringify(v2Many)).assets.length, 128);
+  assert.throws(() => format.decodeManifest(JSON.stringify(manifestV2({ requires: [...v2Base, 'assets-128-v1'],
+    assets: manyAssets(129) }))), /数量超出上限/);
+  assert.equal(format.ThemePackageLimits.MAX_ASSETS, 128);
+  assert.equal(format.ThemePackageFeatures.KNOWN.includes('assets-128-v1'), true);
   assert.equal(format.assetPathExtension('assets/Cover_01.jpeg'), 'jpg');
   assert.equal(format.assetPathExtension('assets/sub/a.png'), '');
 });

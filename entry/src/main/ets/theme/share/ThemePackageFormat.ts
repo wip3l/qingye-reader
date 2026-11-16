@@ -36,6 +36,8 @@ export class ThemePackageFeatures {
   // 气泡端饰或书架边框用了位图（浅色、深色任意一张）；老版本这两处只收 SVG，导入会直接报错，
   // 所以只在用到时写进 requires。
   static readonly BITMAP_CAP_SHELF_FRAME: string = 'bitmap-cap-shelf-frame-v1';
+  // 素材超过 64 个（现在最多 128 个）；老版本最多收 64 个，多了导入直接报错，所以只在用到时写进 requires。
+  static readonly ASSETS_128: string = 'assets-128-v1';
   static readonly KNOWN: string[] = [
     ThemePackageFeatures.CUSTOM_SCHEME,
     ThemePackageFeatures.READER_LAYOUT,
@@ -46,7 +48,8 @@ export class ThemePackageFeatures {
     ThemePackageFeatures.READER_SINGLE_CORNER,
     ThemePackageFeatures.BOOK_COVERS_16,
     ThemePackageFeatures.BUBBLE_FRAME,
-    ThemePackageFeatures.BITMAP_CAP_SHELF_FRAME
+    ThemePackageFeatures.BITMAP_CAP_SHELF_FRAME,
+    ThemePackageFeatures.ASSETS_128
   ];
 }
 
@@ -58,9 +61,12 @@ export class ThemePackageLimits {
   static readonly MAX_FONT_BYTES: number = 40 * 1024 * 1024;
   static readonly MAX_VECTOR_BYTES: number = 5 * 1024 * 1024;
   static readonly MAX_JSON_BYTES: number = 1024 * 1024;
-  // 封面从 8 张放宽到 16 张（浅色、深色各一套）时一并放宽：两套都放满也还装得下其余部件的素材。
-  static readonly MAX_ASSETS: number = 64;
-  static readonly MAX_ZIP_ENTRIES: number = 80;
+  // 素材总数上限。超过 LEGACY_MAX_ASSETS 时清单要声明 assets-128-v1。
+  static readonly MAX_ASSETS: number = 128;
+  // 老版本应用的素材上限。
+  static readonly LEGACY_MAX_ASSETS: number = 64;
+  // 素材之外还有 manifest.json、theme.json 和目录条目，留出余量。
+  static readonly MAX_ZIP_ENTRIES: number = 144;
   static readonly MAX_RULES: number = 200;
   static readonly MAX_NAME_LENGTH: number = 24;
   static readonly MAX_AUTHOR_LENGTH: number = 24;
@@ -71,6 +77,20 @@ export class ThemePackageLimits {
   // 老版本应用的封面上限：covers 超过它时清单要声明 book-covers-16-v1。
   static readonly LEGACY_MAX_COVERS: number = 8;
   static readonly MAX_STARTUP_TEXT_LENGTH: number = 40;
+}
+
+/** 这份清单允许的素材个数：声明了 assets-128-v1 才放到 128 个，否则按老版本的 64 个。 */
+export function maxAssetsFor(requires: string[]): number {
+  return requires.includes(ThemePackageFeatures.ASSETS_128) ? ThemePackageLimits.MAX_ASSETS :
+    ThemePackageLimits.LEGACY_MAX_ASSETS;
+}
+
+/** 素材数量超出时的提示：超过 64 个没声明 assets-128-v1 要单独说明。 */
+export function tooManyAssetsMessage(count: number, requires: string[]): string {
+  if (count <= ThemePackageLimits.MAX_ASSETS && !requires.includes(ThemePackageFeatures.ASSETS_128)) {
+    return `主题包素材超过 ${ThemePackageLimits.LEGACY_MAX_ASSETS} 个时 requires 要包含 ${ThemePackageFeatures.ASSETS_128}`;
+  }
+  return '主题包素材数量超出上限';
 }
 
 export class ThemePackageAssetKinds {
@@ -1235,8 +1255,11 @@ export function decodeManifest(text: string): ThemePackageManifest {
     manifest.assetsDeclared = false;
     return manifest;
   }
-  if (!Array.isArray(assets) || assets.length > ThemePackageLimits.MAX_ASSETS) {
-    throw new Error('主题包素材数量超出上限');
+  if (!Array.isArray(assets)) {
+    throw new Error('主题包清单已损坏');
+  }
+  if (assets.length > maxAssetsFor(manifest.requires)) {
+    throw new Error(tooManyAssetsMessage(assets.length, manifest.requires));
   }
   const ids = new Set<string>();
   const paths = new Set<string>();

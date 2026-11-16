@@ -13,8 +13,8 @@ import type { Zippable } from 'fflate';
 import {
   QYTHEME_ASSET_PREFIX, ThemePackageAsset, ThemePackageAssetKinds, ThemePackageFeatures, ThemePackageLimits,
   ThemePackageManifest, ThemePackageTheme, IMAGE_SETTING_KEYS, assetPathExtension, checkSvgSource, decodeManifest,
-  bubbleDarkDifference, bubbleFor, commentBubbleIsEmpty, titleBubbleDarkDifference, titleBubbleFor, decodeTheme, encodeBubble, encodeParts, findAssetByPath, isValidPackageId, kindForExtension, mapPartsAssetRefs, maxBytesForKind,
-  packThemeId, partsUseBitmapCapOrShelfFrame, partsUseBubbleFrameFeature, replaceOwnPackIdWithSelf, sniffAssetExtension
+  bubbleDarkDifference, bubbleFor, commentBubbleIsEmpty, titleBubbleDarkDifference, titleBubbleFor, decodeTheme, encodeBubble, encodeParts, findAssetByPath, isValidPackageId, kindForExtension, mapPartsAssetRefs, maxAssetsFor, maxBytesForKind,
+  packThemeId, partsUseBitmapCapOrShelfFrame, partsUseBubbleFrameFeature, replaceOwnPackIdWithSelf, sniffAssetExtension, tooManyAssetsMessage
 } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 import { ZipEntryInfo, ZipEntryInspector, ZipInspectLimits } from '../../../../entry/src/main/ets/theme/share/ZipEntryInspector.ts';
 
@@ -300,7 +300,9 @@ async function collectAssets(files: FileMap, manifest: ThemePackageManifest): Pr
     if (data.length <= 0 || data.length > maxBytesForKind(kind)) throw new Error('主题包素材超出大小上限');
     let asset = findAssetByPath(manifest, name);
     if (!asset) {
-      if (manifest.assets.length >= ThemePackageLimits.MAX_ASSETS) throw new Error('主题包素材数量超出上限');
+      if (manifest.assets.length >= maxAssetsFor(manifest.requires)) {
+        throw new Error(tooManyAssetsMessage(manifest.assets.length + 1, manifest.requires));
+      }
       asset = new ThemePackageAsset();
       asset.path = name;
       asset.kind = kind;
@@ -745,6 +747,7 @@ export async function buildFiles(project: EditorProject): Promise<FileMap> {
   if (usesManyCovers(parts)) requires.add(ThemePackageFeatures.BOOK_COVERS_16);
   if (partsUseBubbleFrameFeature(parts)) requires.add(ThemePackageFeatures.BUBBLE_FRAME);
   if (partsUseBitmapCapOrShelfFrame(parts)) requires.add(ThemePackageFeatures.BITMAP_CAP_SHELF_FRAME);
+  if (assets.length > ThemePackageLimits.LEGACY_MAX_ASSETS) requires.add(ThemePackageFeatures.ASSETS_128);
   if (project.layout) requires.add(ThemePackageFeatures.READER_LAYOUT);
   if (project.emphasis) requires.add(ThemePackageFeatures.EMPHASIS_RULES);
   if (hasFont) requires.add(ThemePackageFeatures.FONTS);
