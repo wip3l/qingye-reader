@@ -23774,8 +23774,8 @@ ${leading}` : leading;
   }
 
   readerPageCurlSnapshotScale(): number {
-    // 整页 2080x3120 截图逐个网格三角形采样会在平板上卡住 ArkUI 线程数秒；比例与文件排版、PDF 的截图翻页共用。
-    return ReaderPageTurnAnimation.snapshotScale(this.is3DPageTurnAnimation() ? ReaderPageTurnAnimation.THREE_D :
+    // 仿真整页 2080x3120 逐个网格三角形采样会在平板上卡住 ArkUI 线程数秒，仍按截图比例；3D 仿真自绘纹理用原尺寸。
+    return ReaderPageTurnAnimation.curlTextureScale(this.is3DPageTurnAnimation() ? ReaderPageTurnAnimation.THREE_D :
       ReaderPageTurnAnimation.SIMULATION);
   }
 

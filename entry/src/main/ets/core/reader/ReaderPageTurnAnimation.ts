@@ -32,6 +32,16 @@ export class ReaderPageTurnAnimation {
     return 1;
   }
 
+  /**
+   * 正文阅读页卷页纹理的比例。纹理由应用自绘（截图只剩兜底），没有离屏渲染与回读开销；3D 仿真每帧只贴两次图，
+   * 用原尺寸让起翻和翻动中的正文与静止时一样清晰。仿真仍按网格三角形逐块贴图，保持截图比例。
+   * 文件排版、PDF 的截图翻页仍用 snapshotScale。
+   */
+  static curlTextureScale(type: number): number {
+    if (type === this.THREE_D) return 1;
+    return this.snapshotScale(type);
+  }
+
   static normalize(value: number): number {
     const rounded = Math.round(value);
     return this.types().includes(rounded) ? rounded : this.SLIDE;
