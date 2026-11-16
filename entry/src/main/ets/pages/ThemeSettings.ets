@@ -215,6 +215,41 @@ class ThemeListEntry {
   }
 }
 
+/**
+ * 详情 Swiper 的页：只建当前页和相邻页。每页一整套实景预览，用 ForEach 时“已拥有 20 套”会在点开的那一帧
+ * 把 20 页全部建出并测量，真机点完要 700ms 才出详情。
+ * 每项是“选择键 + 页键”：页键里带方案修订号、深浅和权益修订号，变了才重建那一页（按值传给 @Builder 的条目不会自己刷新）。
+ */
+class ThemeDetailPageSource implements IDataSource {
+  private pages: string[] = [];
+  private listeners: DataChangeListener[] = [];
+
+  static selectKey(page: string): string {
+    const separator = page.indexOf('|');
+    return separator < 0 ? page : page.substring(0, separator);
+  }
+
+  totalCount(): number { return this.pages.length; }
+  getData(index: number): string { return this.pages[index]; }
+
+  registerDataChangeListener(listener: DataChangeListener): void {
+    if (!this.listeners.includes(listener)) this.listeners.push(listener);
+  }
+
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    const index = this.listeners.indexOf(listener);
+    if (index >= 0) this.listeners.splice(index, 1);
+  }
+
+  replace(pages: string[]): void {
+    if (pages.length === this.pages.length && pages.every((page: string, index: number) => page === this.pages[index])) {
+      return;
+    }
+    this.pages = pages.slice();
+    for (const listener of this.listeners) listener.onDataReloaded();
+  }
+}
+
 @Entry
 @Component
 struct ThemeSettingsPage {
@@ -245,7 +280,7 @@ struct ThemeSettingsPage {
   @StorageLink('readerDarkThemeIndex') readerDarkThemeIndex: number = 0;
   @StorageLink('accountLoggedIn') accountLoggedIn: boolean = false;
   @StorageLink('accountPoints') accountPoints: number = 0;
-  @StorageLink('accountEntitlementsRevision') @Watch('refreshCustomSchemeLimit')
+  @StorageLink('accountEntitlementsRevision') @Watch('onEntitlementsChanged')
   accountEntitlementsRevision: number = 0;
   @StorageLink('themeTrialThemeId') trialThemeId: string = '';
   @StorageLink('themeTrialEndsAt') trialEndsAt: number = 0;
@@ -267,7 +302,11 @@ struct ThemeSettingsPage {
   @State detailIndex: number = 0;
   @State detailLabel: string = '';
   // 详情页可单独切浅色 / 深色预览，不改应用的深浅色。
-  @State detailDark: boolean = false;
+  @State @Watch('syncDetailPages') detailDark: boolean = false;
+  private detailPageSource: ThemeDetailPageSource = new ThemeDetailPageSource();
+  // 相邻页每页建出加测量约 25ms，入场动画（260ms）结束后才预建，免得滑入时掉帧。
+  @State detailCachedCount: number = 0;
+  private detailCacheTimer: number = -1;
   // 正在看的那一页已经滑过大图：顶栏换成实底，按钮不压在预览卡上。
   @State detailTopSolid: boolean = false;
   // 各页的滚动位置（键同 detailKeys），左右换页后顶栏按新一页的位置取实底或透明。
@@ -277,7 +316,7 @@ struct ThemeSettingsPage {
   // 放大到全屏看的画面（shelf / reader / listen），空串表示没有放大。
   @State detailFullScene: string = '';
   @State detailPartsOpen: boolean = false;
-  @State customSchemes: CustomThemeScheme[] = [];
+  @State @Watch('syncDetailPages') customSchemes: CustomThemeScheme[] = [];
   /** 正在消散的自定义方案 id，见 ListDissolve。 */
   @State dissolvingSchemeIds: string[] = [];
   @State deleteParticleBursts: DeleteParticleBurst[] = [];
@@ -351,6 +390,7 @@ struct ThemeSettingsPage {
   }
 
   aboutToDisappear(): void {
+    clearTimeout(this.detailCacheTimer);
     if (this.showThemeImportDialog) {
       ThemePackageService.discardImport(this.importPreview);
     }
@@ -372,6 +412,11 @@ struct ThemeSettingsPage {
 
   refreshCustomSchemeLimit(): void {
     this.customSchemeLimit = CustomThemeQuota.current();
+  }
+
+  onEntitlementsChanged(): void {
+    this.refreshCustomSchemeLimit();
+    this.syncDetailPages();
   }
 
   customSchemeAuthor(customSchemeId: string): string {
@@ -1538,15 +1583,15 @@ struct ThemeSettingsPage {
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {
         Swiper() {
-          ForEach(this.detailKeys, (key: string) => {
-            this.detailPage(this.resolveEntry(key))
-          }, (key: string) => `detail_${this.themeEntryKey(this.resolveEntry(key))}`)
+          LazyForEach(this.detailPageSource, (page: string) => {
+            this.detailPage(this.resolveEntry(ThemeDetailPageSource.selectKey(page)))
+          }, (page: string) => `detail_${page}`)
         }
         .index(this.detailIndex)
         .indicator(false)
         .loop(false)
         .duration(280)
-        .cachedCount(1)
+        .cachedCount(this.detailCachedCount)
         .disableSwipe(this.detailKeys.length <= 1)
         .onChange((index: number) => {
           this.detailIndex = index;
@@ -2850,7 +2895,28 @@ struct ThemeSettingsPage {
     this.detailFullScene = '';
     this.detailShelfLayout = this.currentShelfLayout();
     this.detailPartsOpen = false;
+    this.detailCachedCount = 0;
     this.detailOpen = true;
+    this.syncDetailPages();
+    clearTimeout(this.detailCacheTimer);
+    this.detailCacheTimer = setTimeout(() => {
+      this.detailCacheTimer = -1;
+      if (this.detailOpen) this.detailCachedCount = 1;
+    }, 320);
+  }
+
+  /** 把 detailKeys 换成带页键的详情页列表；页键语义同 themeEntryKey，但不必为每一项现算整套方案主题。 */
+  syncDetailPages(): void {
+    if (!this.detailOpen) return;
+    const dark = this.variantDark() ? 'dark' : 'light';
+    this.detailPageSource.replace(this.detailKeys.map((key: string): string => {
+      let revision = 0;
+      if (key.startsWith('scheme:')) {
+        const scheme = CustomThemeSchemeStore.find(this.customSchemes, key.substring('scheme:'.length));
+        revision = scheme ? scheme.revision : -1;
+      }
+      return `${key}|${revision}_${dark}_${this.accountEntitlementsRevision}`;
+    }));
   }
 
   closeDetail(): void {
