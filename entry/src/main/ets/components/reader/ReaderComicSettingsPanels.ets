@@ -436,23 +436,21 @@ export struct ReaderComicDisplaySettingsPanel {
         colors: this.colors,
         onSelect: (value: string): void => this.onFitChange(value)
       })
-      ReaderComicOptionGroup({
-        title: '去白边',
-        options: [
-          new ReaderComicOption(ReaderComicTrimMode.OFF, '关闭'),
-          new ReaderComicOption(ReaderComicTrimMode.SIDES, '只裁左右'),
-          new ReaderComicOption(ReaderComicTrimMode.ALL, '四边')
-        ],
-        selected: this.trim,
-        colors: this.colors,
-        onSelect: (value: string): void => this.onTrimChange(value)
-      })
-
       this.superResolutionRow()
 
       this.colorRow()
 
       this.textConvertRow()
+
+      ReaderSettingSwitchRow({
+        title: '去白边',
+        description: '裁掉图片四周的白边或黑边，画面更大、页与页贴得更紧；条漫长图只裁左右',
+        checked: this.trim !== ReaderComicTrimMode.OFF,
+        textColor: this.colors.textColor,
+        subTextColor: this.colors.subTextColor,
+        onChange: (checked: boolean): void =>
+          this.onTrimChange(checked ? ReaderComicTrimMode.ALL : ReaderComicTrimMode.OFF)
+      })
 
       ReaderSettingSwitchRow({
         title: '双击缩放',

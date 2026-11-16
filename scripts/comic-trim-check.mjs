@@ -142,7 +142,7 @@ assert.deepEqual(ReaderComicTrimDetect.sampleSize(200, 300), [200, 300]);
 {
   const context = vm.createContext({ console, vp2px: x => x, px2vp: x => x, ComicTrimRect,
     ReaderComicProcessing: { owner: () => 1 },
-    ReaderComicTrimMode: { OFF: 'off', SIDES: 'sides', ALL: 'all', normalize: v => v },
+    ReaderComicTrimMode: { OFF: 'off', ALL: 'all', normalize: v => v },
     ImageFit: { Contain: 'contain', Fill: 'fill' } });
   let body = readEtsModule('components/reader/ReaderComicView.ets').split('export struct ReaderComicImageItem {')[1]
     .split('\n  build() {')[0];
@@ -162,10 +162,8 @@ assert.deepEqual(ReaderComicTrimDetect.sampleSize(200, 300), [200, 300]);
   close(item.layerShiftY(), item.fullHeight() * (0.15 - 0.05) / 2, 'top-left of the crop lands at the frame origin');
   assert.equal(item.layerFit(true), 'fill');
 
-  // 只裁左右、长条图都不动上下。
-  item.trimMode = 'sides';
-  assert.deepEqual([...item.activeCut()], [0.1, 0, 0.1, 0]);
-  item.trimMode = 'all';
+  assert.deepEqual([...item.activeCut()], [0.1, 0.05, 0.1, 0.15], 'pages are trimmed on all four sides');
+  // 长条图不动上下。
   item.ratio = 3;
   assert.deepEqual([...item.activeCut()], [0.1, 0, 0.1, 0], 'long strips keep their top and bottom');
 

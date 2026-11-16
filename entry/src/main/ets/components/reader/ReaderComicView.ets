@@ -394,12 +394,12 @@ export struct ReaderComicImageItem {
 
   /**
    * 当前生效的裁剪 [左, 上, 右, 下]（占原图的比例），不裁时为 null。
-   * “只裁左右”和条漫长图（高超过宽两倍，多是一页切成的几段）不裁上下，免得切断相接的画面。
+   * 条漫长图（高超过宽两倍，多是一页切成的几段）不裁上下，免得切断相接的画面。
    */
   private activeCut(): number[] | null {
     const rect = this.trimRect;
     if (!rect || this.ratio <= 0) return null;
-    const sidesOnly = this.trimMode === ReaderComicTrimMode.SIDES || this.ratio > 2;
+    const sidesOnly = this.ratio > 2;
     const top = sidesOnly ? 0 : rect.top;
     const bottom = sidesOnly ? 0 : rect.bottom;
     if (rect.left <= 0 && rect.right <= 0 && top <= 0 && bottom <= 0) return null;

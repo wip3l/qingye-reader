@@ -55,7 +55,6 @@ struct ComicSettingsPage {
   private static readonly BACKGROUNDS: string[] =
     [ReaderComicBackground.BLACK, ReaderComicBackground.WHITE, ReaderComicBackground.THEME];
   private static readonly FITS: string[] = [ReaderComicFit.WIDTH, ReaderComicFit.SCREEN];
-  private static readonly TRIMS: string[] = [ReaderComicTrimMode.OFF, ReaderComicTrimMode.SIDES, ReaderComicTrimMode.ALL];
 
   onPageShow(): void {
     this.pageVisible = true;
@@ -146,13 +145,16 @@ struct ComicSettingsPage {
             next.fit = ComicSettingsPage.FITS[index] || ReaderComicFit.WIDTH;
           });
         }, 'comic_settings_fit_select')
-      this.selectItem('去白边', '裁掉图片四周的白边或黑边，画面更大；条漫长图只裁左右',
-        [{ value: '关闭' }, { value: '只裁左右' }, { value: '四边都裁' }],
-        Math.max(0, ComicSettingsPage.TRIMS.indexOf(this.settings.trim)), (index: number) => {
+      SettingSwitchRow({
+        title: '去白边',
+        description: '裁掉图片四周的白边或黑边，画面更大、页与页贴得更紧；条漫长图只裁左右',
+        isOn: this.settings.trim !== ReaderComicTrimMode.OFF,
+        onChange: (value: boolean) => {
           this.update((next: ReaderComicSettings): void => {
-            next.trim = ComicSettingsPage.TRIMS[index] || ReaderComicTrimMode.OFF;
+            next.trim = value ? ReaderComicTrimMode.ALL : ReaderComicTrimMode.OFF;
           });
-        }, 'comic_settings_trim_select')
+        }
+      })
       SettingSwitchRow({
         title: '双击缩放',
         description: '双击放大到 2 倍，再双击还原；关闭后单击响应更快',

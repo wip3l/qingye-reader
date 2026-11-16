@@ -48,13 +48,12 @@ export class ReaderComicFit {
 /** 去白边：裁掉漫画图四周的纯白（或纯黑）空白，检测见 ReaderComicTrimDetect。 */
 export class ReaderComicTrimMode {
   static readonly OFF: string = 'off';
-  /** 只裁左右。 */
-  static readonly SIDES: string = 'sides';
   /** 四边都裁；条漫长图仍只裁左右。 */
   static readonly ALL: string = 'all';
 
+  /** 早先的“只裁左右”（'sides'）几乎看不出效果，已并入开启。 */
   static normalize(value: string): string {
-    return value === ReaderComicTrimMode.SIDES || value === ReaderComicTrimMode.ALL ? value : ReaderComicTrimMode.OFF;
+    return value === 'sides' || value === ReaderComicTrimMode.ALL ? ReaderComicTrimMode.ALL : ReaderComicTrimMode.OFF;
   }
 }
 
