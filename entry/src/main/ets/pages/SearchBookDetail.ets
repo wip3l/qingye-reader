@@ -109,6 +109,8 @@ struct SearchBookDetailPage {
   /** 这部作品的“我的标记”；没有标记时为 null。 */
   @State bookMark: BookMark | null = null;
   @State showMarkSheet: boolean = false;
+  /** 标记面板正在专注写短评，面板拉到最高档。 */
+  @State markSheetFocused: boolean = false;
   @StorageProp('bookMarkRevision') @Watch('onBookMarkRevisionChanged') bookMarkRevision: number = 0;
   private markDraft: BookMark = new BookMark();
   private markCategories: string[] = [];
@@ -810,13 +812,22 @@ struct SearchBookDetailPage {
       },
       onClose: (): void => {
         this.showMarkSheet = false;
+      },
+      onFocusModeChange: (focused: boolean): void => {
+        this.markSheetFocused = focused;
       }
     })
   }
 
+  /**
+   * 写短评时拉到最高档、键盘收起回到默认档；RESIZE_ONLY 让面板压缩高度让出键盘，
+   * 面板内容据此把短评框撑到键盘顶边。
+   */
   markSheetOptions(): SheetOptions {
     const options: SheetOptions = {
       detents: ['78%', SheetSize.LARGE],
+      detentSelection: this.markSheetFocused ? SheetSize.LARGE : '78%',
+      keyboardAvoidMode: SheetKeyboardAvoidMode.RESIZE_ONLY,
       dragBar: true,
       showClose: false,
       backgroundColor: Color.Transparent,
@@ -826,6 +837,7 @@ struct SearchBookDetailPage {
       shadow: { radius: 0, color: Color.Transparent },
       onDisappear: () => {
         this.showMarkSheet = false;
+        this.markSheetFocused = false;
       }
     };
     return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, options,
