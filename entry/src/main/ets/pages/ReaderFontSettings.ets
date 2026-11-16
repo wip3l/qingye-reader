@@ -2048,81 +2048,6 @@ export struct ReaderFontSettingsEditor {
     return ReaderRegexBubbleStyleResolver.resolve(this.regexRuleAt(index), this.regexEmphasisContext());
   }
 
-  regexPreviewTextColor(highlighted: boolean, index: number): string {
-    return highlighted ? this.resolvedRegexEmphasis(index).textColor : this.primaryTextColor();
-  }
-
-  regexPreviewBackgroundStyle(highlighted: boolean, index: number): TextBackgroundStyle {
-    const style = this.resolvedRegexEmphasis(index);
-    if (!highlighted || !style.backgroundEnabled) {
-      return {};
-    }
-    return {
-      color: style.backgroundColor,
-      radius: {
-        topLeft: style.radiusTopLeft,
-        topRight: style.radiusTopRight,
-        bottomLeft: style.radiusBottomLeft,
-        bottomRight: style.radiusBottomRight
-      }
-    };
-  }
-
-  regexPreviewTextShadow(highlighted: boolean, index: number): ShadowOptions | ShadowOptions[] {
-    const style = this.resolvedRegexEmphasis(index);
-    if (!highlighted) {
-      return { radius: 0, color: '#00000000', offsetX: 0, offsetY: 0 };
-    }
-    if (style.textShadows.length > 0) {
-      return style.textShadows;
-    }
-    return {
-      radius: style.textShadowRadius,
-      color: style.textShadowColor,
-      offsetX: style.textShadowOffsetX,
-      offsetY: style.textShadowOffsetY
-    };
-  }
-
-  regexPreviewDecoration(highlighted: boolean, index: number): DecorationStyleInterface {
-    if (!highlighted) {
-      return { type: TextDecorationType.None };
-    }
-    const style = this.resolvedRegexEmphasis(index);
-    if (!style.decorationEnabled) {
-      return { type: TextDecorationType.None };
-    }
-    return {
-      type: TextDecorationType.Underline,
-      color: style.decorationColor,
-      style: this.regexDecorationStyle(style.decorationStyleId)
-    };
-  }
-
-  regexDecorationStyle(styleId: string): TextDecorationStyle {
-    if (styleId === 'double') return TextDecorationStyle.DOUBLE;
-    if (styleId === 'dotted') return TextDecorationStyle.DOTTED;
-    if (styleId === 'dashed') return TextDecorationStyle.DASHED;
-    if (styleId === 'wavy') return TextDecorationStyle.WAVY;
-    return TextDecorationStyle.SOLID;
-  }
-
-  shouldUseRegexPreviewDecoration(slice: ReaderRegexPreviewSlice, index: number): boolean {
-    if (!slice.highlighted) {
-      return false;
-    }
-    const style = this.resolvedRegexEmphasis(index);
-    return style.bubbleDecorationEnabled && ThemeAssetRegistry.hasRegexBubbleCap(style.bubbleStyleId, this.appDarkMode);
-  }
-
-  regexPreviewBubbleStyleId(index: number): string {
-    return this.resolvedRegexEmphasis(index).bubbleStyleId;
-  }
-
-  regexPreviewBubbleCapSize(index: number): number {
-    return Math.max(15, Math.min(22, this.regexRuleAt(index).fontSize * 0.72));
-  }
-
   @Builder
   regexRulePreviewItem(index: number, refreshKey: number) {
     Column({ space: AppSpacing.SM }) {
@@ -2130,30 +2055,50 @@ export struct ReaderFontSettingsEditor {
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .width('100%')
-      ReaderWeightedText({ spans: this.weightedRegexPreviewSpans(index, refreshKey),
-        weight: this.readerFontWeight, maxLines: 3 })
-      .width('100%')
+      ReaderTypographyPreview({ config: this.regexRulePreviewConfig(index, refreshKey) })
+        .width('100%')
     }
     .width('100%')
     .padding({ top: AppSpacing.XS, bottom: AppSpacing.XXS })
   }
 
-  weightedRegexPreviewSpans(index: number, refreshKey: number): ReaderWeightedTextSpan[] {
+  /**
+   * 规则预览走阅读页同一套排版与绘制（ReaderTypographyPreview），主题包的边框、端饰和正文里一致；
+   * 只是颜色按设置卡片取，和卡片底色相配。
+   */
+  regexRulePreviewConfig(index: number, refreshKey: number): ReaderTypographyPreviewConfig {
+    const config = new ReaderTypographyPreviewConfig();
+    const layout = this.previewLayoutSettings;
+    const uiContext = this.getUIContext();
+    const input = config.input;
+    input.fontSizePx = uiContext.fp2px(this.readerFontSize);
+    input.fontWeight = this.readerFontWeight;
+    input.lineSpacingPx = uiContext.vp2px(layout.lineHeight);
+    input.letterSpacingPx = uiContext.fp2px(layout.letterSpacing);
+    input.textAlign = 'left';
+    input.bodyFontFamily = this.bodyPreviewFontFamily();
+    input.titleFontFamily = this.titlePreviewFontFamily();
+    input.textColor = ReaderV2Color.parse(this.primaryTextColor(), 0xFF202124);
+    input.commentsEnabled = false;
+    config.fontSizeVp = this.readerFontSize;
+    const slices = this.regexPreviewSlices(index, refreshKey);
+    const text = slices.map((slice: ReaderRegexPreviewSlice): string => slice.text).join('');
+    config.document = ReaderV2DocumentParser.parse(text, 0, '', [], null);
+    if (config.document.displayText !== text) return config;
     const rule = this.regexRuleAt(index);
-    return this.regexPreviewSlices(index, refreshKey).map((slice: ReaderRegexPreviewSlice): ReaderWeightedTextSpan => {
-      const span = ReaderWeightedTextSpan.create(this.getUIContext(), slice.text,
-        slice.highlighted ? rule.fontSize : this.readerFontSize,
-        slice.highlighted ? this.previewFontFamily(rule.fontMode, rule.fontFamily) : this.bodyPreviewFontFamily(),
-        this.regexPreviewTextColor(slice.highlighted, index), 0, 0,
-        slice.highlighted ? this.resolvedRegexEmphasis(index) : undefined);
-      span.weight = slice.highlighted ? rule.fontWeight : this.readerFontWeight;
-      if (this.shouldUseRegexPreviewDecoration(slice, index)) {
-        span.capStyleId = this.regexPreviewBubbleStyleId(index);
-        span.capDark = this.appDarkMode;
-        span.capSizePx = this.getUIContext().vp2px(this.regexPreviewBubbleCapSize(index));
-      }
-      return span;
-    });
+    const emphasisContext = this.regexEmphasisContext();
+    let offset = 0;
+    for (const slice of slices) {
+      const start = offset;
+      offset += slice.text.length;
+      if (!slice.highlighted) continue;
+      const style = this.typographyPreviewEmphasis(rule, rule.fontSize,
+        this.previewFontFamily(rule.fontMode, rule.fontFamily), rule.fontWeight, emphasisContext);
+      style.start = start;
+      style.end = offset;
+      config.styles.push(style);
+    }
+    return config;
   }
 
   /** 正则规则三项；标题强调（rule -1）四项：跟随主题（标题）、同正文强调、无强调、自定义。 */
