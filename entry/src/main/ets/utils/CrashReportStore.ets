@@ -36,6 +36,10 @@ export class CrashReportStore {
   private static readonly MAX_LOG_FILES: number = 2;
   private static readonly CRASH_KILL_REASON: RegExp = /^(JsError|CppCrash|NativeCrash|AppCrash|AppFreeze)$/i;
   private static readonly BENIGN_KILL_REASON: RegExp = /upgrade|install|clear|force.?stop|by.?user/i;
+  /** 卡死后系统结束进程时附带的 APP_KILLED（实测 reason 为 ThreadBlock6S），堆栈在同一次运行的 APP_FREEZE 里。 */
+  private static readonly FREEZE_KILL_REASON: RegExp = /block|freeze|lifecycle.?timeout/i;
+  /** 卡死日志要十几秒才生成，APP_FREEZE 常比 APP_KILLED 晚到；这段时间内先不为后者弹提示。 */
+  private static readonly FREEZE_PAIR_WAIT_MS: number = 40000;
   private static dir: string = '';
   private static started: boolean = false;
   private static writeChain: Promise<void> = Promise.resolve();
@@ -100,6 +104,9 @@ export class CrashReportStore {
       '==== 事件详情 ====',
       record.detail
     ];
+    if (summary.kind === 'killed' && CrashReportStore.FREEZE_KILL_REASON.test(summary.title)) {
+      lines.push('', '说明：这条记录不含堆栈，无法定位卡在哪里。同一次卡死的“卡死”记录会在重新打开应用后一分钟内出现，请分享那一条。');
+    }
     if (record.stack) {
       lines.push('', '==== 调用栈 ====', record.stack);
     }
@@ -178,6 +185,10 @@ export class CrashReportStore {
     const id = `${kind}-${time}`;
     CrashReportStore.ensureDir();
     if (fileIo.accessSync(CrashReportStore.jsonPath(id))) return;
+    // 卡死的两条事件按同一次运行配对，只留带堆栈的“卡死”：先到的“被系统结束”等对方来了就删，后到的直接不记。
+    const runId = CrashReportStore.textOf(params['app_running_unique_id']);
+    const freezeKill = kind === 'killed' && CrashReportStore.FREEZE_KILL_REASON.test(CrashReportStore.textOf(params['reason']));
+    if (freezeKill && CrashReportStore.sameRunIds('freeze', runId).length > 0) return;
 
     const foreground = params['foreground'] === true;
     const hasLog = await CrashReportStore.copyExternalLogs(id, params['external_log']);
@@ -220,9 +231,38 @@ export class CrashReportStore {
       hilog: CrashReportStore.stringsOf(params['hilog'])
     };
     CrashReportStore.writeText(CrashReportStore.jsonPath(id), JSON.stringify(record));
+    if (kind === 'freeze') {
+      for (const paired of CrashReportStore.sameRunIds('killed', runId)) CrashReportStore.remove(paired);
+    }
     CrashReportStore.trim();
+    if (freezeKill) {
+      setTimeout((): void => {
+        if (fileIo.accessSync(CrashReportStore.jsonPath(id))) CrashReportStore.postNotice(id);
+      }, CrashReportStore.FREEZE_PAIR_WAIT_MS);
+      return;
+    }
+    CrashReportStore.postNotice(id);
+  }
+
+  private static postNotice(id: string): void {
     CrashReportStore.writeText(`${CrashReportStore.dir}/${CrashReportStore.NOTICE_FILE}`, id);
     AppStorage.setOrCreate(CrashReportStore.KEY_PENDING_NOTICE, id);
+  }
+
+  /** 同一次运行（app_running_unique_id）留下的某类记录；“被系统结束”只认卡死附带的那种。 */
+  private static sameRunIds(kind: CrashReportKind, runId: string): string[] {
+    const result: string[] = [];
+    if (!runId) return result;
+    const marker = `"app_running_unique_id": "${runId}"`;
+    for (const name of CrashReportStore.listFiles()) {
+      if (!name.startsWith(`${kind}-`) || !name.endsWith('.json')) continue;
+      const id = name.substring(0, name.length - 5);
+      const record = CrashReportStore.readRecord(id);
+      if (record === null || !record.detail.includes(marker)) continue;
+      if (kind === 'killed' && !CrashReportStore.FREEZE_KILL_REASON.test(record.summary.title)) continue;
+      result.push(id);
+    }
+    return result;
   }
 
   /**
