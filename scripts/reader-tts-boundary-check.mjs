@@ -9,7 +9,8 @@ const source = fs.readFileSync(new URL('../entry/src/main/ets/utils/SystemTtsRea
 const names = [
   'splitText', 'splitCustomText', 'appendCustomTextRange', 'splitSystemText',
   'splitSystemChunksAtPageBreaks', 'appendAbsoluteTextChunk', 'splitCloudText',
-  'findLastCloudBreak', 'findFirstCloudBreak', 'isCloudBreak', 'extendTtsBreak',
+  'findLastCloudBreak', 'findFirstCloudBreak', 'isCloudBreakAt', 'isEllipsisInsideSentence',
+  'isCloudBreak', 'extendTtsBreak',
   'isClosingPunctuationAt', 'isClosingPunctuation', 'findSentenceBreak',
   'isStrongSentenceEnd', 'isWeakSentenceEnd', 'isSentenceEnd', 'isNumericDecimalPoint',
   'isTrimChar', 'isHighSurrogate', 'safeHardCutIndex', 'snapPageBreakOffset',
@@ -47,6 +48,19 @@ const second = '云果儿也没睡呢，坐在自己床上玩七巧板呢，见�
 const third = '云桃捏了下云果儿的鼻子，“有，那是留给你的。”';
 const screenshot = `${first}\n　　${second}\n　　${third}`;
 assert.deepEqual(Array.from(reader.splitText(screenshot, 64), item => item.text), [first, second, third]);
+
+// An ellipsis followed by more words is a pause inside the sentence: never end a chunk there.
+const hesitation = '以后玉帝陛下偷偷摸去瑶池宫，却见一位位女仙舞刀弄枪、披甲戴盔……\n　　“小神……明白。”\n　　' +
+  '李长寿低头应了句，只感觉一阵头疼。';
+for (const chunks of [reader.splitSystemText(hesitation, []), reader.splitCustomText(hesitation, 64),
+  reader.splitCloudText(hesitation)]) {
+  checkRanges(hesitation, chunks);
+  for (const chunk of chunks) assert.doesNotMatch(chunk.text, /小神…+$/u, 'ellipsis inside a quote is not a chunk end');
+}
+assert.equal(reader.isEllipsisInsideSentence('盔……\n', 1), false, 'paragraph-final ellipsis still ends');
+assert.equal(reader.isEllipsisInsideSentence('神……”', 1), false, 'ellipsis before a closing quote still ends');
+assert.equal(reader.isEllipsisInsideSentence('Wait...what', 5), true, 'ASCII ellipsis inside a sentence');
+assert.equal(reader.isEllipsisInsideSentence('Done.Next', 4), false, 'a single full stop is not an ellipsis');
 
 const paths = [
   ['custom', text => reader.splitCustomText(text, 64)],

@@ -2973,7 +2973,7 @@ export class SystemTtsReader {
 
   private findLastCloudBreak(text: string, from: number, to: number, strong: boolean): number {
     for (let index = Math.min(text.length, to) - 1; index >= from; index--) {
-      if (this.isCloudBreak(text.charAt(index), strong) && !this.isNumericDecimalPoint(text, index)) {
+      if (this.isCloudBreakAt(text, index, strong)) {
         return index + 1;
       }
     }
@@ -2982,11 +2982,39 @@ export class SystemTtsReader {
 
   private findFirstCloudBreak(text: string, from: number, to: number, strong: boolean): number {
     for (let index = Math.max(0, from); index < Math.min(text.length, to); index++) {
-      if (this.isCloudBreak(text.charAt(index), strong) && !this.isNumericDecimalPoint(text, index)) {
+      if (this.isCloudBreakAt(text, index, strong)) {
         return index + 1;
       }
     }
     return -1;
+  }
+
+  /**
+   * An ellipsis followed directly by more words ("“小神……明白。”") is a hesitation inside one
+   * sentence, not its end. Breaking there sent "“小神……" and "明白。”" as two utterances: the
+   * first closed with falling pitch, the second started cold, which listeners hear as a stutter
+   * or a swallowed word. Such an ellipsis only counts as a weak break.
+   */
+  private isCloudBreakAt(text: string, index: number, strong: boolean): boolean {
+    const value = text.charAt(index);
+    if (this.isNumericDecimalPoint(text, index)) return false;
+    if (this.isEllipsisInsideSentence(text, index)) return !strong;
+    return this.isCloudBreak(value, strong);
+  }
+
+  private isEllipsisInsideSentence(text: string, index: number): boolean {
+    const value = text.charAt(index);
+    if (value !== '…' && value !== '.') return false;
+    let runStart = index;
+    while (runStart > 0 && (text.charAt(runStart - 1) === '…' || text.charAt(runStart - 1) === '.')) runStart--;
+    let runEnd = index + 1;
+    while (runEnd < text.length && (text.charAt(runEnd) === '…' || text.charAt(runEnd) === '.')) runEnd++;
+    // A single "." is an ordinary full stop; only "…" or ".." and longer runs are ellipses.
+    if (value === '.' && runEnd - runStart < 2) return false;
+    if (runEnd >= text.length) return false;
+    const next = text.charAt(runEnd);
+    return !this.isTrimChar(next) && !this.isClosingPunctuationAt(text, runEnd) && !this.isSentenceEnd(next) &&
+      next !== '—' && next !== '–';
   }
 
   private isCloudBreak(value: string, strong: boolean): boolean {
@@ -3075,6 +3103,10 @@ export class SystemTtsReader {
         return i + 1;
       }
       if (this.isNumericDecimalPoint(text, i)) {
+        continue;
+      }
+      if (this.isEllipsisInsideSentence(text, i)) {
+        if (weakCandidate < 0) weakCandidate = i + 1;
         continue;
       }
       if (this.isStrongSentenceEnd(value)) {
