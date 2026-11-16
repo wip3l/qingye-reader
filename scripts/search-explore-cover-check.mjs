@@ -6,7 +6,10 @@ import { stripTypeScriptTypes } from 'node:module';
 import { projectRoot } from './lib/ets-module-staging.mjs';
 
 const read = file => fs.readFileSync(`${projectRoot}/entry/src/main/ets/${file}`, 'utf8');
+const readyTimers = [];
+const flushReady = () => readyTimers.splice(0).forEach(fn => fn());
 const context = vm.createContext({ console, Book: class { customCoverUrl = ''; },
+  setTimeout: fn => readyTimers.push(fn), clearTimeout: () => {},
   ThemeRuntime: { bookTokens: dark => ({ coverAssetId: dark ? 'dark' : 'light', shelfFrameAssetId: 'frame' }) },
   ThemeAssetRegistry: { themeBookCovers: id => [{ id: `${id}-1` }, { id: `${id}-2` }], themeShelfFrame: () => ({ id: 'frame' }) }
 });
@@ -29,7 +32,7 @@ Object.assign(cover, {
   ignoreSource: false, coverMode: 'sequence', lightAlbum: 'light', darkAlbum: 'dark',
   albums: JSON.stringify([{ id: 'light', covers: ['light-1.jpg', 'light-2.jpg'] }, { id: 'dark', covers: ['dark.jpg'] }]),
   covers: [], displayCovers: [], coverLoadSerial: 0, retryTimers: new Map(), retryCounts: new Map(), activeIndex: 0, loadedRevision: 0, loadedUrls: new Set(), mounted: true,
-  imageCover: raw => raw, onReadyCover() {}
+  imageCover: raw => raw, readyTimer: -1, readyPending: '', readyNotified: null, onReadyCover() {}
 });
 const list = () => Array.from(cover.rawCoverList());
 assert.deepEqual(list(), ['source.jpg', 'light-1.jpg', 'light-2.jpg'], 'source and album follow shelf ordering');
@@ -59,12 +62,16 @@ cover.ignoreSource = false; cover.darkAlbum = 'dark';
 const ready = [];
 cover.onReadyCover = url => ready.push(url);
 cover.refreshCovers();
+flushReady();
 assert.equal(ready.at(-1), '');
 cover.markLoaded('custom-1.jpg');
+flushReady();
 assert.equal(ready.at(-1), 'custom-1.jpg');
 cover.activeIndex = 1; cover.notifyReadyCover();
+flushReady();
 assert.equal(ready.at(-1), '', 'unloaded next slide does not reuse previous backdrop');
 cover.markLoaded('custom-2.jpg');
+flushReady();
 assert.equal(ready.at(-1), 'custom-2.jpg');
 cover.useBookshelfCover = false; cover.refreshCovers();
 assert.equal(cover.activeIndex, 0, 'switch resets carousel selection');
@@ -78,6 +85,7 @@ assert(cover.covers.every(item => item.id.startsWith('dark-')), 'theme covers ov
 assert.equal(cover.themeFrame.id, 'frame');
 assert(cover.interval >= 3200 && cover.interval <= 4880);
 cover.markLoaded(cover.covers[0]);
+flushReady();
 assert.equal(ready.at(-1).id, cover.covers[0].id, 'theme Resource covers drive backdrop too');
 cover.themeCoverEnabled = false;
 cover.refreshCovers();

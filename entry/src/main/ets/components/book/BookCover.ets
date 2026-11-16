@@ -68,6 +68,11 @@ export struct BookCover {
   private coverLoadSerial: number = 0;
   private retryCounts: Map<number, number> = new Map();
   private retryTimers: Map<number, number> = new Map();
+  /** 上次按哪份已准备封面刷新的，见 onPreparedSelectionChanged。 */
+  private preparedApplied: string = '';
+  private readyNotified: ResourceStr | null = null;
+  private readyPending: ResourceStr = '';
+  private readyTimer: number = -1;
   onReadyCover: (url: ResourceStr) => void = (_url: ResourceStr): void => {};
 
   aboutToAppear(): void {
@@ -80,6 +85,8 @@ export struct BookCover {
     this.requestSerial++;
     this.coverLoadSerial++;
     this.clearCoverRetries();
+    if (this.readyTimer >= 0) clearTimeout(this.readyTimer);
+    this.readyTimer = -1;
   }
 
   onBookChanged(): void {
@@ -142,6 +149,7 @@ export struct BookCover {
       this.onPreparedSelectionChanged();
       return;
     }
+    this.preparedApplied = '';
     const themeCover = this.useBookshelfCover && ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeCoverEnabled);
     const covers: ResourceStr[] = themeCover ? ThemeBookCoverSettings.covers(this.coverBook(), this.appDarkMode, this.coverMode) : this.rawCoverList();
     this.themeFrame = themeCover ? ThemeBookCoverSettings.frame(this.appDarkMode) : '';
@@ -157,6 +165,11 @@ export struct BookCover {
   onPreparedSelectionChanged(): void {
     const prepared = this.preparedSelection;
     if (!prepared) return;
+    // 对象类型的 @Prop 每次父组件刷新都是一份新拷贝，内容没变也会走到这里。结果列表里任何一本的封面准备好，
+    // 在场的每个封面都会被刷新一遍；照做的话要重置封面列表（轮播随之重建）、取消并重启进行中的下载。
+    const applied = JSON.stringify([prepared.firstImage, prepared.covers, prepared.frame, prepared.interval, prepared.themeCover]);
+    if (applied === this.preparedApplied) return;
+    this.preparedApplied = applied;
     this.themeFrame = prepared.frame;
     this.themeCover = prepared.themeCover;
     this.interval = prepared.interval;
@@ -243,8 +256,21 @@ export struct BookCover {
     return this.loadedRevision >= 0 && this.loadedUrls.has(JSON.stringify(this.activeCover()));
   }
 
+  /**
+   * 回调一律延后到当前任务之后再发，且只在变化时发。这里常在父组件刷新本组件参数的过程中被调到（@Prop 变化 →
+   * @Watch），同步回调时父组件在自己的渲染里读写状态：读，会把这个封面节点记成那个状态的依赖；写，又把它标脏。
+   * 框架在一次重绘里循环处理到没有脏节点为止，两个封面对同一个键报出不同结果时就永远停不下来，主线程卡死被系统结束。
+   */
   notifyReadyCover(): void {
-    if (this.mounted) this.onReadyCover(this.isActiveCoverReady() ? this.activeCover() : '');
+    if (!this.mounted) return;
+    this.readyPending = this.isActiveCoverReady() ? this.activeCover() : '';
+    if (this.readyTimer >= 0) return;
+    this.readyTimer = setTimeout((): void => {
+      this.readyTimer = -1;
+      if (!this.mounted || this.readyPending === this.readyNotified) return;
+      this.readyNotified = this.readyPending;
+      this.onReadyCover(this.readyPending);
+    }, 0);
   }
 
   markLoaded(url: ResourceStr): void {
