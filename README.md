@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.6.019`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.6.020`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -247,7 +247,7 @@ qingye-reader/
 ├── harmony-book-ai-engine/           # 子模块：AI 引擎（着色、OCR、翻译、超分与模型）；会员权益，私有仓库，不在本仓库开源
 ├── docs/                             # 开发文档与使用说明书网站（docs/manual）
 ├── scripts/                          # 构建前与架构回归检查
-└── tools/theme-editor/               # 轻页主题编辑器：制作 .qytheme 主题包的 Windows 桌面程序（Electron）
+└── tools/theme-editor/               # 轻页主题编辑器：制作 .qytheme 主题包，Windows 桌面版（Electron）与网页版共用一套界面
 ```
 
 主要模块：
@@ -295,8 +295,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.6.019` |
-| `versionCode` / `buildVersion` | `4060019` |
+| `versionName` | `4.6.020` |
+| `versionCode` / `buildVersion` | `4060020` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`VIBRATE`（翻页震感）、`DETECT_GESTURE`（握姿感知）、`ACCESS_BIOMETRIC`（隐私书架指纹或人脸解锁）、`CAMERA`（仅在用户启用眼动翻页时请求） |
 
@@ -418,7 +418,7 @@ for f in harmony-book-source-engine/scripts/*-check.mjs; do node --experimental-
 - [书源内核接入说明](https://github.com/wip3l/harmony-book-source-engine/blob/main/sourceengine/README.md)：HAR 入口、宿主必须接入的部分与可选宿主端口
 - [主题开发指南](docs/theme-development.md)
 - [主题包开发指南](docs/theme-package-format.md)
-- [轻页主题编辑器](tools/theme-editor/README.md)：可视化制作、预览和导出主题包的桌面程序，开发与打包方式
+- [轻页主题编辑器](tools/theme-editor/README.md)：可视化制作、预览和导出主题包的桌面程序与网页版（[在线使用](https://wip3l.github.io/qingye-reader/theme-editor/)，手机、平板可用、可离线），开发与打包方式
 
 ## 合规与免责声明
 
