@@ -1,0 +1,56 @@
+# GitHub Pages：使用说明书放站点根目录，主题编辑器网页版放 /theme-editor/。
+# 仓库 Settings › Pages 的 Source 需选 “GitHub Actions”。
+name: pages
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/manual/**
+      - tools/theme-editor/**
+      - entry/src/main/ets/theme/**
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/theme-editor/package-lock.json
+      - name: Build theme editor
+        working-directory: tools/theme-editor
+        env:
+          # 网页版用不到 Electron 本体，跳过它的二进制下载。
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: |
+          npm ci --replace-registry-host=always --registry=https://registry.npmjs.org/
+          npm test
+          npm run build
+      - name: Assemble site
+        run: |
+          mkdir -p _site/theme-editor
+          cp -r docs/manual/. _site/
+          cp -r tools/theme-editor/dist/renderer/. _site/theme-editor/
+          touch _site/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

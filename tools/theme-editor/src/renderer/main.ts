@@ -20,7 +20,8 @@ interface RecentItem { path: string; name: string; kind: string; time: number; e
 interface EditorApi {
   openDialog(folder: boolean): Promise<Result<OpenedTarget | null>>;
   openPath(target: string): Promise<Result<OpenedTarget>>;
-  saveFile(target: string | null, defaultName: string, bytes: Uint8Array): Promise<Result<string | null>>;
+  /** how 只在浏览器里有用：'share' 走系统分享面板，其余下载。 */
+  saveFile(target: string | null, defaultName: string, bytes: Uint8Array, how?: 'share' | 'download'): Promise<Result<string | null>>;
   exportFolder(name: string, files: [string, Uint8Array][]): Promise<Result<string | null>>;
   recent(): Promise<Result<RecentItem[]>>;
   forgetRecent(target: string): Promise<Result<void>>;
@@ -34,6 +35,32 @@ interface EditorApi {
 }
 declare global { interface Window { editorApi?: EditorApi } }
 const api: EditorApi = window.editorApi || browserApi();
+/** 直接在浏览器里打开（网页版）：没有文件夹读写，也不能写回原文件。 */
+const isWeb = !window.editorApi;
+document.documentElement.classList.toggle('web', isWeb);
+
+// 网页版的三档布局，与 styles.css 的断点一致：窄屏单栏三页签，中屏部件列表收成抽屉。
+const narrowMq = window.matchMedia('(max-width: 720px)');
+const midMq = window.matchMedia('(max-width: 1100px)');
+const touchMq = window.matchMedia('(pointer: coarse)');
+type Pane = 'nav' | 'stage' | 'insp';
+
+function setPane(pane: Pane): void {
+  $('#editor').dataset.pane = pane;
+  document.querySelectorAll('#mtabs button').forEach((b) => b.setAttribute('aria-pressed', (b as HTMLElement).dataset.p === pane ? 'true' : 'false'));
+  // 预览页签刚显示，读尺寸会同步排版，直接按新尺寸缩放手机。
+  if (pane === 'stage' && S.project) { fitPhones(); revealScreenButton(); }
+}
+
+function setDrawer(open: boolean): void {
+  $('#body').classList.toggle('nav-open', open);
+  $('#btn-parts').setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+/** 窄屏只放得下一台手机，固定“只看当前”。 */
+function previewLayout(): 'both' | 'one' {
+  return narrowMq.matches ? 'one' : S.ui.layout;
+}
 
 async function call<T>(promise: Promise<Result<T>>): Promise<T> {
   const result = await promise;
@@ -182,6 +209,8 @@ function renderNav(): void {
 
 function selectSection(id: string, focus?: string | null): void {
   S.ui.section = id;
+  setDrawer(false);
+  if (narrowMq.matches) setPane('insp');
   const s = section(id);
   if (s.screen) S.ui.screen = s.screen;
   if (focus) {
@@ -217,6 +246,9 @@ function renderIssues(): void {
   ($('#btn-export') as HTMLButtonElement).disabled = errors > 0;
   ($('#btn-folder') as HTMLButtonElement).disabled = errors > 0;
   ($('#btn-save') as HTMLButtonElement).disabled = errors > 0;
+  const tab = document.querySelector('#mtabs button[data-p="insp"]');
+  if (tab) tab.replaceChildren('设置', errors ? h('span', { class: 'badge' }, String(errors)) : '');
+  if (!list.length) box.classList.remove('open');
   if (S.doc.problems.length) {
     box.append(h('div', { class: 'loadnote' }, `打开时没通过应用的校验：${S.doc.problems[0]}。改好后即可导出。`));
   }
@@ -227,7 +259,7 @@ function renderIssues(): void {
   box.append(h('div', { class: 'sum' },
     errors ? h('span', { class: 'e' }, `${errors} 个错误`) : null, warns ? h('span', { class: 'w' }, `${warns} 个提示`) : null));
   box.append(h('ul', {}, ...list.map((i) => h('li', { class: i.level },
-    h('button', { onclick: () => selectSection(i.section, i.focus) }, i.text)))));
+    h('button', { onclick: (event: Event) => { event.stopPropagation(); box.classList.remove('open'); selectSection(i.section, i.focus); } }, i.text)))));
 }
 
 // ---- 预览 ----
@@ -238,7 +270,7 @@ setFrameReadyListener(() => { if (S.project) { renderPreview(); renderIssues(); 
 function renderPreview(): void {
   const box = $('#phones');
   box.replaceChildren();
-  const both = S.ui.layout === 'both';
+  const both = previewLayout() === 'both';
   const modes: Mode[] = both ? ['light', 'dark'] : [S.ui.mode];
   for (const mode of modes) {
     const phone = renderScreen(mode);
@@ -273,16 +305,33 @@ function renderPreview(): void {
     onclick: () => { S.ui.extraTab = id as typeof S.ui.extraTab; renderPreview(); }
   }, label)));
   document.querySelectorAll('#layout-seg button').forEach((b) => b.setAttribute('aria-pressed', (b as HTMLElement).dataset.l === S.ui.layout ? 'true' : 'false'));
+  // 只看一台时给出浅深切换，不用回到设置里去切。
+  $('#mode-seg').replaceChildren(...(both ? [] : (['light', 'dark'] as Mode[]).map((m) => h('button', {
+    'aria-pressed': S.ui.mode === m ? 'true' : 'false', onclick: () => { S.ui.mode = m; render(); }
+  }, MODE_LABEL[m]))));
+  revealScreenButton();
+}
+
+/** 窄屏画面按钮一行横向滚动，把当前画面滚进可见范围（预览页签隐藏时量不到，切过去再滚一次）。 */
+function revealScreenButton(): void {
+  if (!narrowMq.matches) return;
+  const on = $('#screens').querySelector('[aria-pressed="true"]') as HTMLElement | null;
+  const bar = on ? on.closest('.stagebar') as HTMLElement : null;
+  if (!on || !bar || !bar.clientWidth) return;
+  const left = on.getBoundingClientRect().left - bar.getBoundingClientRect().left + bar.scrollLeft;
+  bar.scrollLeft = Math.max(0, left - bar.clientWidth / 2 + on.offsetWidth / 2);
 }
 
 function fitPhones(): void {
   const box = $('#phones');
   const cols = box.querySelectorAll('.phonebox');
   if (!cols.length) return;
-  const gap = 28;
-  const availW = (box.clientWidth - 32 - (cols.length - 1) * gap) / cols.length;
+  if (!box.clientWidth) return;
+  const gap = narrowMq.matches ? 12 : 28;
+  const pad = narrowMq.matches ? 20 : 32;
+  const availW = (box.clientWidth - pad - (cols.length - 1) * gap) / cols.length;
   // 去掉上下内边距与手机上方的“浅色 · 正在编辑”一行。
-  const availH = box.clientHeight - 32 - 34;
+  const availH = box.clientHeight - pad - 34;
   const scale = Math.max(0.35, Math.min(1, availW / (PHONE_W + 14), availH / (PHONE_H + 14)));
   cols.forEach((col) => {
     const phone = col.firstElementChild as HTMLElement;
@@ -696,7 +745,9 @@ function generateDark(): void {
 function pickFiles(kinds: string[], multiple: boolean, done: (files: File[]) => void): void {
   const input = h('input', { type: 'file', multiple: multiple || null }) as HTMLInputElement;
   const accept: Record<string, string> = { image: '.png,.jpg,.jpeg,.webp,.gif,.bmp', vector: '.svg', font: '.ttf,.otf,.ttc' };
-  input.accept = kinds.map((k) => accept[k]).join(',');
+  // 手机的文件选择框常认不出 .svg、.ttf，按后缀过滤会把文件变灰；触屏上只给纯图片槽位限定 image/*，读进来后再认格式。
+  if (!touchMq.matches) input.accept = kinds.map((k) => accept[k]).join(',');
+  else if (kinds.length === 1 && kinds[0] === 'image') input.accept = 'image/*';
   input.onchange = () => { if (input.files && input.files.length) done([...input.files]); };
   input.click();
 }
@@ -833,6 +884,8 @@ function setProject(p: EditorProject, doc: Partial<typeof S.doc>): void {
   S.ui.section = 'meta';
   S.ui.screen = 'card';
   api.setDirty(S.doc.dirty);
+  setDrawer(false);
+  setPane('stage');
   showEditor();
   render();
 }
@@ -883,7 +936,7 @@ function packageFileName(): string {
   return `${name}.qytheme`;
 }
 
-async function save(saveAs: boolean): Promise<void> {
+async function save(saveAs: boolean, how?: 'share' | 'download'): Promise<void> {
   if (!S.project) return;
   if (allIssues().some((i) => i.level === 'error')) {
     toast('还有错误没改完，先看底部的问题条', 'error');
@@ -891,7 +944,7 @@ async function save(saveAs: boolean): Promise<void> {
   }
   try {
     const zip = await exportZip(project());
-    const path = await call(api.saveFile(saveAs ? null : S.doc.filePath, packageFileName(), zip));
+    const path = await call(api.saveFile(saveAs ? null : S.doc.filePath, packageFileName(), zip, how));
     if (!path) return;
     S.doc.filePath = path;
     S.doc.fileName = path.split(/[\\/]/).pop() || path;
@@ -901,7 +954,7 @@ async function save(saveAs: boolean): Promise<void> {
     api.setDirty(false);
     await call(api.clearDraft());
     render();
-    toast(`已保存 ${S.doc.fileName}（${formatSize(zip.length)}）`);
+    toast(`${isWeb ? (how === 'share' ? '已分享' : '已下载') : '已保存'} ${S.doc.fileName}（${formatSize(zip.length)}）`);
   } catch (error) {
     toast(`保存失败：${(error as Error).message}`, 'error');
   }
@@ -934,11 +987,38 @@ async function showExport(): Promise<void> {
     h('div', { class: 'side' }, h('div', { class: 'tree' }, tree),
       h('div', { class: 'note' }, `${names.length} 个素材 · 解压后约 ${formatSize(total)}`, h('br'), `requires：${requires}`, h('br'), '已用应用的格式层解码一遍：通过')),
     h('div', { class: 'main' }, tabs, pre));
-  const close = modal('导出主题包', body, [
+  const buttons: [string, () => void, boolean?][] = isWeb ? [
+    ['取消', () => close()],
+    ...(canShareFiles() ? [['分享…', async () => { close(); await save(true, 'share'); }] as [string, () => void]] : []),
+    ['下载 .qytheme', async () => { close(); await save(true, 'download'); }, true]
+  ] : [
     ['取消', () => close()],
     ['导出为文件夹…', async () => { close(); await exportFolder(files); }],
     ['另存为 .qytheme…', async () => { close(); await save(true); }, true]
-  ]);
+  ];
+  const close = modal('导出主题包', body, buttons);
+}
+
+/** 浏览器能否把文件交给系统分享面板（手机上可直接存到文件管理或发给别人）。 */
+function canShareFiles(): boolean {
+  try {
+    return touchMq.matches && typeof navigator.canShare === 'function' &&
+      navigator.canShare({ files: [new File([new Uint8Array(1)], 'a.qytheme', { type: 'application/zip' })] });
+  } catch (_) {
+    return false;
+  }
+}
+
+/** 窄屏标题栏放不下的操作。 */
+function showMoreMenu(): void {
+  const item = (title: string, desc: string, action: () => void): HTMLElement =>
+    h('button', { onclick: () => { close(); action(); } }, h('b', {}, title), h('span', {}, desc));
+  const close = modal('更多', h('div', { class: 'menu-list' },
+    item('新建主题', '选一个内置主题作基底', () => newDocument()),
+    item('打开主题包…', '.qytheme 或 .zip', () => openFromDialog(false)),
+    isWeb ? null : item('保存', '写回当前主题包', () => save(false)),
+    item('导出主题包…', '查看包内容后下载或分享', () => showExport())),
+  [['关闭', () => close()]]);
 }
 
 async function exportFolder(prepared?: FileMap): Promise<void> {
@@ -995,11 +1075,12 @@ async function showWelcome(): Promise<void> {
   const actions = h('div', { class: 'choice' },
     h('button', { onclick: () => newDocument() }, h('b', {}, '新建主题'), h('span', {}, '选一个内置主题作基底，从配色开始改')),
     h('button', { onclick: () => openFromDialog(false) }, h('b', {}, '打开主题包…'), h('span', {}, '.qytheme 或 .zip，应用导出的和手写的都行')),
-    h('button', { onclick: () => openFromDialog(true) }, h('b', {}, '打开主题文件夹…'), h('span', {}, '含 manifest.json、theme.json 和 assets/ 的文件夹')));
+    isWeb ? null : h('button', { onclick: () => openFromDialog(true) }, h('b', {}, '打开主题文件夹…'), h('span', {}, '含 manifest.json、theme.json 和 assets/ 的文件夹')));
   const body = h('div', { class: 'welcome-inner' },
     h('h1', {}, '轻页主题编辑器'),
     h('p', { class: 'lead' }, '为开源轻页制作 .qytheme 主题包：上传素材、调配色，浅色和深色同时预览，导出后在手机上导入即可使用。'),
-    actions);
+    actions,
+    isWeb ? h('p', { class: 'lead small' }, '网页版：文件只在这台设备上处理，不会上传；没导出的编辑会自动存成草稿。') : null);
   try {
     const draft = await call(api.loadDraft());
     if (draft) {
@@ -1035,6 +1116,21 @@ function bindChrome(): void {
   $('#btn-save').onclick = () => save(false);
   $('#btn-folder').onclick = () => exportFolder();
   $('#btn-export').onclick = () => showExport();
+  $('#btn-more').onclick = () => showMoreMenu();
+  $('#btn-parts').onclick = () => setDrawer(!$('#body').classList.contains('nav-open'));
+  $('#scrim').onclick = () => setDrawer(false);
+  $('#mtabs').addEventListener('click', (event) => {
+    const b = (event.target as HTMLElement).closest('button') as HTMLElement | null;
+    if (b && b.dataset.p) setPane(b.dataset.p as Pane);
+  });
+  // 窄屏问题条默认一行，点概要展开或收起。
+  $('#issues').addEventListener('click', (event) => {
+    if (!narrowMq.matches || (event.target as HTMLElement).closest('li')) return;
+    $('#issues').classList.toggle('open');
+  });
+  const relayout = (): void => { setDrawer(false); if (S.project) renderPreview(); };
+  narrowMq.addEventListener('change', relayout);
+  midMq.addEventListener('change', relayout);
   $('#layout-seg').addEventListener('click', (event) => {
     const b = (event.target as HTMLElement).closest('button') as HTMLElement | null;
     if (b && b.dataset.l) {
@@ -1067,10 +1163,20 @@ function bindChrome(): void {
   window.addEventListener('resize', () => { if (S.project) fitPhones(); });
   window.setInterval(saveDraft, 15000);
   window.addEventListener('beforeunload', () => { void saveDraft(); });
+  // 手机浏览器切到后台后可能直接回收页面，等不到 beforeunload。
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void saveDraft(); });
+}
+
+/** 网页版离线可用：只在 https 或本机地址下注册（Electron 的 file:// 不注册）。 */
+function registerServiceWorker(): void {
+  if (!isWeb || !('serviceWorker' in navigator)) return;
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return;
+  navigator.serviceWorker.register('./sw.js').catch(() => undefined);
 }
 
 async function start(): Promise<void> {
   bindChrome();
+  registerServiceWorker();
   try {
     const launch = await call(api.launchFile());
     if (launch) {

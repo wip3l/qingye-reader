@@ -396,3 +396,92 @@ img.ico { background: none; -webkit-mask: none; mask: none; object-fit: contain;
 .cs-h { position: absolute; z-index: 3; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: #F0A04B; border: 2px solid #fff; cursor: move; touch-action: none; }
 .cs-sample { margin: 0; border-radius: 6px; padding: 10px 12px; font-family: var(--f-display); font-size: 15px; line-height: 2.2; }
 .cs-sample.small { font-size: 12px; line-height: 2.4; }
+
+/* ---- 网页版：平板与手机布局 ----
+   宽于 1100px 是三栏；720–1100px 部件列表收成左侧抽屉；窄于 720px 单栏，底部“部件 / 预览 / 设置”三个页签切换。
+   浏览器里没有的桌面功能（打开/导出文件夹、写回原文件）带 desktop-only，由 html.web 隐藏。 */
+@supports (height: 100dvh) { html, body { height: 100dvh; } }
+.web .desktop-only { display: none !important; }
+.only-mid, .only-narrow, .scrim { display: none; }
+#mode-seg:empty { display: none; }
+
+@media (max-width: 1100px) {
+  .only-mid { display: inline-block; }
+  .body { grid-template-columns: minmax(0, 1fr) 340px; position: relative; }
+  .nav { position: absolute; left: 0; top: 0; bottom: 0; width: 240px; z-index: 20; transform: translateX(-100%); transition: transform .2s ease; box-shadow: 0 0 24px rgba(0,0,0,.18); }
+  .body.nav-open .nav { transform: none; }
+  .body.nav-open .scrim { display: block; position: absolute; inset: 0; z-index: 19; background: rgba(10,15,12,.3); }
+}
+
+@media (max-width: 720px) {
+  .only-mid, .hide-narrow { display: none !important; }
+  .only-narrow { display: inline-block; }
+  .titlebar { gap: 4px; padding: 6px 8px; }
+  .titlebar .file { margin-left: 4px; font-size: 12px; }
+  .titlebar .file span { display: none; }
+  .body { display: block; position: relative; }
+  .body > .nav, .body > .stage, .body > .insp { position: absolute; inset: 0; display: none; width: auto; transform: none; transition: none; box-shadow: none; border: 0; }
+  #editor[data-pane="nav"] .body > .nav { display: flex; }
+  #editor[data-pane="stage"] .body > .stage { display: flex; }
+  #editor[data-pane="insp"] .body > .insp { display: flex; }
+  .body.nav-open .scrim { display: none; }
+  .nav .legend { margin-top: 12px; }
+  .stagebar { flex-wrap: nowrap; overflow-x: auto; padding: 6px 8px; gap: 6px; scrollbar-width: none; }
+  .stagebar::-webkit-scrollbar { display: none; }
+  .stagebar .spacer { display: none; }
+  #mode-seg { order: -1; }
+  .phones { padding: 10px; gap: 12px; }
+  .insp header { padding: 10px 12px 8px; }
+  .fields { padding: 10px 12px 24px; }
+  .f { grid-template-columns: 76px minmax(0, 1fr); }
+  .slot { flex-wrap: wrap; }
+  .slot .acts { max-width: none; flex-basis: 100%; justify-content: flex-start; }
+  .covers { grid-template-columns: repeat(3, 1fr); }
+  /* 问题条只留一行概要，点一下展开。 */
+  .issues { max-height: 38px; overflow: hidden; padding: 6px 10px; cursor: pointer; }
+  .issues.open { max-height: 40vh; overflow: auto; }
+  .issues .sum::after { content: "展开"; margin-left: 6px; font-weight: 400; color: var(--muted); font-size: 12px; }
+  .issues.open .sum::after { content: "收起"; }
+  .issues .sum.okmsg::after { content: none; }
+  .mtabs { display: flex; border-top: 1px solid var(--line); background: var(--sunk); padding-bottom: env(safe-area-inset-bottom); }
+  .mtabs button { flex: 1; border: 0; background: none; padding: 10px 0 11px; color: var(--muted); font-size: 13px; position: relative; }
+  .mtabs button[aria-pressed="true"] { color: var(--accent); font-weight: 600; }
+  .mtabs button[aria-pressed="true"]::before { content: ""; position: absolute; left: 30%; right: 30%; top: 0; height: 2px; border-radius: 1px; background: var(--accent); }
+  .mtabs .badge { display: inline-block; min-width: 16px; margin-left: 4px; padding: 0 4px; border-radius: 8px; background: var(--err); color: #fff; font-size: 10px; line-height: 16px; font-weight: 600; }
+  .toast { bottom: 96px; max-width: calc(100vw - 32px); }
+  .welcome { padding: 32px 16px; }
+  .welcome h1 { font-size: 26px; }
+  dialog.dlg { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); max-width: none; }
+  .dlg header, .dlg .content, .dlg footer { padding-left: 14px; padding-right: 14px; }
+  .dlg footer { flex-wrap: wrap; }
+  .cols, .fs-cols { grid-template-columns: minmax(0, 1fr); }
+  .tree { max-height: 180px; }
+  pre.json { max-height: 260px; }
+  .fs-stage { padding: 22px 24px; }
+  .fs-nums { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .menu-list { display: grid; gap: 6px; }
+  .menu-list button { text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 12px 14px; font-size: 14px; display: grid; gap: 2px; }
+  .menu-list span { color: var(--muted); font-size: 12px; }
+}
+
+/* 触屏：放大可点区域；输入框用 16px 字，免得浏览器聚焦时自动放大页面。 */
+@media (pointer: coarse) {
+  .tb { padding: 6px 12px; }
+  .tb.small { padding: 4px 10px; }
+  .seg button { padding: 6px 12px; }
+  .nav button { padding: 10px 10px; }
+  .slot .acts button { padding: 5px 10px; font-size: 12px; }
+  .covers .c-acts button { padding: 2px 7px; line-height: 20px; font-size: 13px; }
+  .issues li button { padding: 4px 12px; }
+  .inherit { padding: 4px 6px; font-size: 12px; }
+  .f input[type=text], .f select, .f textarea, .fs-nums input, .fs-side select { font-size: 16px; padding: 6px 8px; }
+  .color input[type=text] { font-size: 15px; }
+  .color input[type=color] { width: 38px; height: 34px; }
+  .color input.alpha { width: 72px; }
+  .fs-g.v { width: 34px; margin-left: -17px; }
+  .fs-g.v::after { left: 16px; }
+  .fs-g.h { height: 34px; margin-top: -17px; }
+  .fs-g.h::after { top: 16px; }
+  .cs-h { width: 24px; height: 24px; margin: -12px 0 0 -12px; }
+}
+.welcome .lead.small { font-size: 12px; }
