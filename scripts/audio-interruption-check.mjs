@@ -54,6 +54,10 @@ function fixture(kind) {
     async stop() { this.state = stopped; },
     async release() { this.state = pcm ? 'STATE_RELEASED' : 'released'; },
     off() {},
+    // PcmOutput 的直连形态：播放器只认这几个额外成员。
+    threaded: false,
+    setHold() {},
+    async shutdown() { this.state = pcm ? 'STATE_RELEASED' : 'released'; },
   };
   player[pcm ? 'renderer' : 'player'] = native;
   if (!pcm) player.state = 'playing';

@@ -3,6 +3,7 @@ import { audio } from '@kit.AudioKit';
 import { media } from '@kit.MediaKit';
 import preferences from '@ohos.data.preferences';
 import deviceInfo from '@ohos.deviceInfo';
+import { PcmOutput } from './PcmOutput';
 
 interface TrackedAvPlayer {
   kind: string;
@@ -35,7 +36,7 @@ export class PlaybackLoudnessGain {
   private static readonly APPLY_WAIT_MS: number = 1500;
   private static context: Context | null = null;
   private static writes: Promise<void> = Promise.resolve();
-  private static renderers: audio.AudioRenderer[] = [];
+  private static renderers: PcmOutput[] = [];
   private static avPlayers: TrackedAvPlayer[] = [];
 
   static async load(context: Context): Promise<void> {
@@ -90,7 +91,7 @@ export class PlaybackLoudnessGain {
   }
 
   /** 朗读的 PCM 输出。新建的渲染器处于 prepared，可以直接设置。 */
-  static trackRenderer(renderer: audio.AudioRenderer): void {
+  static trackRenderer(renderer: PcmOutput): void {
     PlaybackLoudnessGain.pruneRenderers();
     if (!PlaybackLoudnessGain.renderers.includes(renderer)) PlaybackLoudnessGain.renderers.push(renderer);
     PlaybackLoudnessGain.markSupported(PlaybackLoudnessGain.TTS, true);
@@ -98,7 +99,7 @@ export class PlaybackLoudnessGain {
     if (gain > 0) PlaybackLoudnessGain.applyRenderer(renderer, gain);
   }
 
-  static untrackRenderer(renderer: audio.AudioRenderer): void {
+  static untrackRenderer(renderer: PcmOutput): void {
     PlaybackLoudnessGain.renderers = PlaybackLoudnessGain.renderers.filter(item => item !== renderer);
   }
 
@@ -141,7 +142,7 @@ export class PlaybackLoudnessGain {
     }
   }
 
-  private static applyRenderer(renderer: audio.AudioRenderer, gain: number): void {
+  private static applyRenderer(renderer: PcmOutput, gain: number): void {
     try {
       PlaybackLoudnessGain.settle(renderer.setLoudnessGain(gain), PlaybackLoudnessGain.TTS);
     } catch (error) {

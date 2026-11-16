@@ -2,7 +2,8 @@
   "apiType": "stageMode",
   "buildOption": {
     "sourceOption": {
-      "workers": ["./src/main/ets/workers/ComicColorWorker.ets", "./src/main/ets/workers/LocalTtsWorker.ets"]
+      "workers": ["./src/main/ets/workers/ComicColorWorker.ets", "./src/main/ets/workers/LocalTtsWorker.ets",
+        "./src/main/ets/workers/PcmOutputWorker.ets"]
     }
   },
   "buildOptionSet": [

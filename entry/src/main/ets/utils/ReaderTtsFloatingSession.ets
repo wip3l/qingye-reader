@@ -288,10 +288,11 @@ export class ReaderTtsFloatingSession {
     if (!ReaderTtsFloatingSession.isOwner(ownerId)) {
       return;
     }
-    if (AppStorage.get<ResourceStr>('globalTtsCover') !== cover) {
+    // 主题封面、书框是 $r() 资源，每次取都是新对象：按引用比会每秒重写一次，订阅它的页面跟着刷新。
+    if (!ReaderTtsFloatingSession.sameResource(AppStorage.get<ResourceStr>('globalTtsCover'), cover)) {
       AppStorage.setOrCreate<ResourceStr>('globalTtsCover', cover);
     }
-    if (AppStorage.get<ResourceStr>('globalTtsCoverFrame') !== coverFrame) {
+    if (!ReaderTtsFloatingSession.sameResource(AppStorage.get<ResourceStr>('globalTtsCoverFrame'), coverFrame)) {
       AppStorage.setOrCreate<ResourceStr>('globalTtsCoverFrame', coverFrame);
     }
     if (AppStorage.get<string>('globalTtsContent') !== content) {
@@ -335,6 +336,12 @@ export class ReaderTtsFloatingSession {
     }
     // These fields are StorageLink-backed and update their consumers directly. Bumping the
     // global revision for every audio position tick rebuilt the capsule once per second.
+  }
+
+  private static sameResource(current: ResourceStr | undefined, next: ResourceStr): boolean {
+    if (current === next) return true;
+    if (current === undefined || typeof current === 'string' || typeof next === 'string') return false;
+    return JSON.stringify(current) === JSON.stringify(next);
   }
 
   static updateTimer(ownerId: string, timerMinutes: number, timerRemainingSeconds: number): void {
