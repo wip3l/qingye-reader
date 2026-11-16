@@ -284,14 +284,19 @@ struct NativeSourceSettingsPage {
   }
 
   async logout(): Promise<void> {
-    if (!this.source) return;
-    NativeSourceService.logout(this.source);
+    if (!this.source || this.busy) return;
+    this.busy = true;
+    this.loginStatus = '正在退出…';
     try {
+      await NativeSourceService.logout(this.source);
       await this.saveCredential('', '');
     } catch (e) {
       if (this.disposed) return;
-      console.warn('清除登录凭据失败:', e);
+      console.warn('退出登录未完全完成:', e);
+    } finally {
+      this.busy = false;
     }
+    if (this.disposed) return;
     this.refreshLoginState();
     this.loadActions();
     HdsFeedback.showToast('已退出登录');
