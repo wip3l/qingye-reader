@@ -67,6 +67,7 @@ export const READER_FONT_SECTION_BODY: number = 1;
 
 /** 共用规则控件时，编辑页草稿用的下标（-1 已被标题强调占用）。 */
 const EDITING_REGEX_RULE_INDEX: number = -2;
+const TITLE_PREVIEW_BOX_ID: string = 'reader_title_preview_box';
 
 class ReaderBubbleStyleOption {
   styleId: string = '';
@@ -86,6 +87,9 @@ export struct ReaderFontSettingsEditor {
   @State ownFontSection: number = READER_FONT_SECTION_BODY;
   @State editorWidth: number = 0;
   private pageScroller: Scroller = new Scroller();
+  // 标题预览框的真实高度；滚出屏幕时冻结在这个高度（0 为不冻结）。
+  private titlePreviewHeight: number = 0;
+  @State titlePreviewFrozenHeight: number = 0;
   private customFontPreviewFamilies: Map<string, string> = new Map<string, string>();
   onStylePreviewChanged: (settings: ReaderSettings) => void = (_settings: ReaderSettings): void => {};
   onCloseReady: (close: () => void) => void = (_close: () => void): void => {};
@@ -1911,7 +1915,19 @@ export struct ReaderFontSettingsEditor {
       }.width('100%').padding({ top: AppSpacing.XXL, bottom: AppSpacing.XXL })
         .backgroundColor(ThemeRuntime.readerBackgroundColor(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
-        // 边距、第二段字号、行距等一改预览就变高变矮；页面跟着滚同样的距离，下面正在拖的滑动条才不会上下跳。
+        .id(TITLE_PREVIEW_BOX_ID)
+        // 边距、第二段字号、行距等一改预览就变高变矮，会把下面的设置项顶上顶下。
+        // 预览整个滚出屏幕时冻结高度，拖下面的滑动条页面纹丝不动；滚回来再按真实高度补滚动。
+        .height(this.titlePreviewFrozenHeight > 0 ? this.titlePreviewFrozenHeight : 'auto')
+        .clip(true)
+        .onVisibleAreaChange([0.0], (isExpanding: boolean, ratio: number) => {
+          if (isExpanding) {
+            this.titlePreviewFrozenHeight = 0;
+          } else if (ratio <= 0 && this.titlePreviewHeight > 0) {
+            this.titlePreviewFrozenHeight = this.titlePreviewHeight;
+          }
+        })
+        .onDisAppear(() => { this.titlePreviewFrozenHeight = 0; })
         .onSizeChange((previous: SizeOptions, current: SizeOptions) => {
           this.keepContentBelowPreview(previous, current);
         })
@@ -1926,15 +1942,22 @@ export struct ReaderFontSettingsEditor {
     .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
   }
 
+  /** 预览上沿已在顶栏后面时，预览变高多少页面就往下滚多少，看着的设置项留在原处。 */
   keepContentBelowPreview(previous: SizeOptions, current: SizeOptions): void {
     if (this.embedded) return;
     const oldHeight = Number(previous.height ?? 0);
     const newHeight = Number(current.height ?? 0);
+    if (this.titlePreviewFrozenHeight <= 0 && newHeight > 0) this.titlePreviewHeight = newHeight;
     // 刚出现或换了宽度（旋转、分屏）时不算“内容变高”，不补滚动。
     if (oldHeight <= 0 || newHeight <= 0 || Math.abs(Number(previous.width ?? 0) - Number(current.width ?? 0)) >= 1) return;
     const delta = newHeight - oldHeight;
     if (Math.abs(delta) < 0.5 || this.pageScroller.currentOffset().yOffset <= 0) return;
-    this.pageScroller.scrollBy(0, delta);
+    const uiContext = this.getUIContext();
+    const box = uiContext.getComponentUtils().getRectangleById(TITLE_PREVIEW_BOX_ID);
+    const headerBottom = uiContext.vp2px((AppStorage.get<number>('statusBarHeight') ?? 0) + PageScaffold.BAR_HEIGHT);
+    if (box.windowOffset.y >= headerBottom) return;
+    // 滑动条拖动时的改动带着系统隐式动画，不包一层 0 时长动画的话滚动会被放慢成“先跳再滑回”。
+    uiContext.animateTo({ duration: 0 }, () => { this.pageScroller.scrollBy(0, delta); });
   }
 
   previewFontFamily(mode: string, family: string): string {
