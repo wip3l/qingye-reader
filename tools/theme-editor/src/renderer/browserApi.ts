@@ -13,8 +13,8 @@ function pick(accept: string): Promise<File | null> {
   });
 }
 
-function download(name: string, bytes: Uint8Array): void {
-  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/zip' }));
+function download(name: string, bytes: Uint8Array, type = 'application/zip'): void {
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }));
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
@@ -116,6 +116,10 @@ export function browserApi(): any {
       return { ok: true, value: name };
     },
     exportFolder: () => fail('浏览器里不能导出文件夹，请用桌面程序'),
+    async saveImage(name: string, bytes: Uint8Array) {
+      download(name, bytes, 'image/png');
+      return { ok: true, value: name };
+    },
     recent: () => ok([]),
     forgetRecent: () => ok(undefined),
     async saveDraft(bytes: Uint8Array) {

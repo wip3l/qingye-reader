@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('editorApi', {
   openPath: (target) => ipcRenderer.invoke('open-path', target),
   saveFile: (target, defaultName, bytes) => ipcRenderer.invoke('save-file', target, defaultName, bytes),
   exportFolder: (name, files) => ipcRenderer.invoke('export-folder', name, files),
+  saveImage: (defaultName, bytes) => ipcRenderer.invoke('save-image', defaultName, bytes),
   recent: () => ipcRenderer.invoke('recent'),
   forgetRecent: (target) => ipcRenderer.invoke('forget-recent', target),
   saveDraft: (bytes) => ipcRenderer.invoke('save-draft', bytes),

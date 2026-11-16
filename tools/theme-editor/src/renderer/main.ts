@@ -7,6 +7,7 @@ import {
 import { $, assetUrl, getPath, h, mp, project, S, setPath, toast, type Mode } from './state.ts';
 import { SECTIONS, SCREENS, SHELF_LAYOUTS, EXTRA_TAB_CHOICES, section, assetFields, type Field } from './sections.ts';
 import { renderScreen, PHONE_H, PHONE_W } from './preview.ts';
+import { exportScreenshotBoard } from './snapshot.ts';
 import { editorIssues, sizeWarning, strictIssue, type Issue } from './checks.ts';
 import { alphaOf, contrast, darkDraft, isColor, withAlpha } from './colors.ts';
 import { baseThemeOptions, baseValue, effective, themeName } from './tokens.ts';
@@ -23,6 +24,8 @@ interface EditorApi {
   /** how 只在浏览器里有用：'share' 走系统分享面板，其余下载。 */
   saveFile(target: string | null, defaultName: string, bytes: Uint8Array, how?: 'share' | 'download'): Promise<Result<string | null>>;
   exportFolder(name: string, files: [string, Uint8Array][]): Promise<Result<string | null>>;
+  /** 存一张图片：桌面版弹另存为，网页版下载。 */
+  saveImage(defaultName: string, bytes: Uint8Array): Promise<Result<string | null>>;
   recent(): Promise<Result<RecentItem[]>>;
   forgetRecent(target: string): Promise<Result<void>>;
   saveDraft(bytes: Uint8Array): Promise<Result<void>>;
@@ -1018,7 +1021,8 @@ function showMoreMenu(): void {
     item('新建主题', '选一个内置主题作基底', () => newDocument()),
     item('打开主题包…', '.qytheme 或 .zip', () => openFromDialog(false)),
     isWeb ? null : item('保存', '写回当前主题包', () => save(false)),
-    item('导出主题包…', '查看包内容后下载或分享', () => showExport())),
+    item('导出主题包…', '查看包内容后下载或分享', () => showExport()),
+    item('导出截图', '所有画面的浅色、深色预览拼成一张图', () => exportScreenshots())),
   [['关闭', () => close()]]);
 }
 
@@ -1030,6 +1034,32 @@ async function exportFolder(prepared?: FileMap): Promise<void> {
     if (dir) toast(`已导出到 ${dir}`);
   } catch (error) {
     toast(`导出失败：${(error as Error).message}`, 'error');
+  }
+}
+
+let shooting = false;
+
+/** 一键导出所有画面的预览截图，拼成一张 PNG。 */
+async function exportScreenshots(): Promise<void> {
+  if (!S.project || shooting) return;
+  shooting = true;
+  const button = $('#btn-shots') as HTMLButtonElement;
+  button.disabled = true;
+  try {
+    const board = await exportScreenshotBoard((done, total) => {
+      button.textContent = `截图 ${done}/${total}`;
+      // 窄屏从“更多”菜单进来，标题栏按钮是隐藏的，进度改用提示条。
+      if (narrowMq.matches) toast(`正在截图 ${done}/${total}`);
+    });
+    const name = `${packageFileName().replace(/\.qytheme$/, '')}-预览.png`;
+    const path = await call(api.saveImage(name, board.bytes));
+    if (path) toast(`${isWeb ? '已下载' : '已保存'} ${path.split(/[\\/]/).pop()}（${board.width} × ${board.height}，${formatSize(board.bytes.length)}）`);
+  } catch (error) {
+    toast(`截图失败：${(error as Error).message}`, 'error');
+  } finally {
+    shooting = false;
+    button.disabled = false;
+    button.textContent = '导出截图';
   }
 }
 
@@ -1117,6 +1147,7 @@ function bindChrome(): void {
   $('#btn-save').onclick = () => save(false);
   $('#btn-folder').onclick = () => exportFolder();
   $('#btn-export').onclick = () => showExport();
+  $('#btn-shots').onclick = () => exportScreenshots();
   $('#btn-more').onclick = () => showMoreMenu();
   $('#btn-parts').onclick = () => setDrawer(!$('#body').classList.contains('nav-open'));
   $('#scrim').onclick = () => setDrawer(false);
