@@ -54,7 +54,7 @@ AI 处理位于图片下载、解密和重排之后。含透明或半透明像�
 ### 漫画与正文图片
 
 - 漫画阅读先返回完整图片清单，再逐张下载、解密和显示。`content.script` 只需返回原始地址列表，不要在生成清单时处理整章图片；请求头、解密参数、索引与尺寸会保留到后续加载。
-- 图片解密分别验证标准算法、`ivPrefixBytes:16` 和 `imageDecode.script`；内容条带乱序而文件可正常解码时，设置 `content.imageDecode.processPlainImages: true` 并用 `image.reorderStrips(bytes, options)`。
+- 图片解密分别验证标准算法、`ivPrefixBytes:16` 和 `imageDecode.script`；内容条带乱序而文件可正常解码时，设置 `content.imageDecode.processPlainImages: true` 并用 `image.reorderStrips(bytes, options)`。图文（文本类型）正文里的 `<img>` 插图同样套用 `content.imageDecode`：宿主把插图改写成“地址,{选项}”，带上解密参数、`mediaHeaders` 与图片序号，书源不必手拼地址选项；已带选项的地址和段评控件保持原样，没有插图的章节不求值密钥。
 - 单张图片失败只影响这一张，原位显示原因；含失败图片的章节不写入正文缓存。`data:` 内嵌图片也按 `imageDecode` 处理。
 - 漫画 OCR、繁→简、着色与超分都在原图下载、解密与重排之后由本机处理，书源不需要新增字段。
 
@@ -157,7 +157,7 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 | 原生脚本界面交互 | 启动时通过 `NativeSourceInteraction.setHandler(new AppSourceInteraction(...))` 安装提示、发现缓存失效和网页处理器；`ui.toast` 显示书源名称与消息，`ui.refreshExplore` 清除该源发现缓存 |
 | 原生网页交互 | `browser.verify` 沿用内置验证页，点“完成”返回 HTML 并保存 Cookie；搜索和发现只提示“去验证”。`browser.open` 打开网页但不等待结果；`browser.render` 使用内核网页抓取宿主 |
 | 设置页脚本 | 动作按钮运行中显示状态并防止重复执行；动态选项获取失败时保留静态选项并显示原因；成功加载后若原值不在新列表中，会选中第一项并标记待保存 |
-| 封面解密 `coverDecode` | 已接入：封面下载时识别 `SourceCoverUrl` 标记，从数据库取该书源后调用 `SourceCoverLoader` 解密并缓存到本地；书架、搜索与发现结果、详情页、听书页、目录面板、阅读统计、桌面卡片和朗读媒体卡片都显示解密后的封面，解密完成前显示占位。局域网阅读的封面接口同样转发解密后的图片。解密结果按封面地址缓存，书源改了 `coverDecode` 参数后，已缓存的封面不会自动重新解密 |
+| 封面解密 `coverDecode` | 已接入：封面下载时识别 `SourceCoverUrl` 标记，从数据库取该书源后调用 `SourceCoverLoader` 解密并缓存到本地；书架、搜索与发现结果、详情页、听书页、目录面板、阅读统计、桌面卡片和朗读媒体卡片都显示解密后的封面，解密完成前显示占位。局域网阅读的封面接口同样转发解密后的图片。解密结果按封面地址缓存，书源改了 `coverDecode` 参数后，已缓存的封面不会自动重新解密。`coverDecode` 的算法可写 `AES/CBC/NoPadding`，导入校验与解码器一致 |
 | 正文图片解密 | 漫画图片与正文插图下载后按 `content.imageDecode` 解密：支持标准算法、`ivPrefixBytes:16`、`keyEncoding`，以及在后台 QuickJS 里运行的 `imageDecode.script` 字节脚本；脚本结果按书源、脚本代码、配置和图片地址缓存，翻章或退出阅读时会取消未完成的解密 |
 | 封面请求头 `coverHeaders` | 带请求头的封面经应用下载并缓存，请求头参与缓存标识 |
 | 兼容脚本提示 `java.toast` | 详情、目录、正文阶段的提示显示为应用内提示，同一书源的同一条提示 15 秒内只显示一次；原生脚本使用 `ui.toast` |
