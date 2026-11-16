@@ -16,6 +16,8 @@ import { TtsPanelThemeBackground } from '../TtsPanelThemeBackground';
 import { BookCover } from '../book/BookCover';
 import { HomeTabBarSettingsStore } from '../../utils/HomeTabBarSettingsStore';
 import { ThemeDetailScene } from './ThemeDetailScene';
+import { ThemeChapterHeadSampleMetrics, ThemeChapterHeadTitle, ThemeDropCapParagraph } from './ThemeChapterHeadSample';
+import { normalizeChapterHead, ThemePackageChapterHead } from '../../theme/share/ThemePackageFormat';
 import {
   ReaderRegexBubbleStyleResolver,
   ReaderRegexEmphasisContext,
@@ -23,6 +25,8 @@ import {
   ReaderResolvedRegexEmphasis,
   ReaderTitleEmphasis
 } from '../../model/reader/ReaderRegexFontRule';
+
+const READER_SAMPLE_BODY = '清晨的薄雾漫过山谷，窗外的树叶还带着昨夜的雨。远处，风把林间的消息，轻轻送到了窗前。';
 
 /** 只读的方案预览；始终使用传入的草稿，不发布全局主题令牌。 */
 @Component
@@ -484,7 +488,26 @@ export struct CustomThemePreview {
   /** 示意正文的段首缩进：方案有自己的排版时按它的缩进字符数，否则两个字。 */
   readerSampleText(): string {
     const indent = this.useReaderProfile ? Math.max(0, Math.min(4, Math.round(this.readerSettings.paragraphIndent))) : 2;
-    return '　'.repeat(indent) + '清晨的薄雾漫过山谷，窗外的树叶还带着昨夜的雨。远处，风把林间的消息，轻轻送到了窗前。';
+    return '　'.repeat(indent) + READER_SAMPLE_BODY;
+  }
+
+  readerBodyFontFamily(): string {
+    return this.useReaderProfile && this.readerSettings.bodyFontMode !== 'device' && this.readerSettings.bodyFontFamily ?
+      this.readerSettings.bodyFontFamily : this.themePack.typography.appFontFamily;
+  }
+
+  readerLineHeight(): number {
+    return this.readerFontSize() + (this.useReaderProfile ?
+      this.readerSettings.lineHeight : this.themePack.readerLayout.lineHeight) * 0.65;
+  }
+
+  readerLetterSpacing(): number {
+    return this.useReaderProfile ? this.readerSettings.letterSpacing : this.themePack.readerLayout.letterSpacing;
+  }
+
+  /** 方案这个模式的章首装饰（标题饰图、序号行颜色、首字）；没设时各字段为空。 */
+  chapterHead(): ThemePackageChapterHead {
+    return normalizeChapterHead(this.variant().regexEmphasis.chapterHead);
   }
 
   readerSampleAlign(): TextAlign {
@@ -517,20 +540,42 @@ export struct CustomThemePreview {
           }
           .width('100%')
         }
-        this.titleSample()
-        Text(this.readerSampleText())
-          .textAlign(this.readerSampleAlign())
-          .fontFamily(this.useReaderProfile && this.readerSettings.bodyFontMode !== 'device' &&
-            this.readerSettings.bodyFontFamily ? this.readerSettings.bodyFontFamily : this.themePack.typography.appFontFamily)
-          .fontSize(this.readerFontSize())
-          .lineHeight(this.readerFontSize() + (this.useReaderProfile ?
-            this.readerSettings.lineHeight : this.themePack.readerLayout.lineHeight) * 0.65)
-          .letterSpacing(this.useReaderProfile ? this.readerSettings.letterSpacing :
-            this.themePack.readerLayout.letterSpacing)
-          .fontColor(this.variant().reader.textColor)
-          .width('100%')
-          .maxLines(this.expanded ? 12 : 3)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        // 章首装饰按方案自己的画（相当于读者开着“标题装饰”和“首字装饰”）。
+        ThemeChapterHeadTitle({
+          head: this.chapterHead(),
+          numberText: '第十二章',
+          titleSize: this.readerFontSize() + 2,
+          fontFamily: this.themePack.typography.appFontFamily,
+          titleWeight: FontWeight.Medium
+        }) {
+          this.titleSample()
+        }
+        if (ThemeChapterHeadSampleMetrics.dropCapApplies(this.chapterHead(), READER_SAMPLE_BODY)) {
+          ThemeDropCapParagraph({
+            text: READER_SAMPLE_BODY,
+            head: this.chapterHead(),
+            fontSize: this.readerFontSize(),
+            lineHeight: this.readerLineHeight(),
+            fontFamily: this.readerBodyFontFamily(),
+            textColor: this.variant().reader.textColor,
+            letterSpacing: this.readerLetterSpacing(),
+            textAlign: this.readerSampleAlign(),
+            maxLines: this.expanded ? 12 : 3,
+            capFontFamily: this.themePack.typography.appFontFamily,
+            capFontWeight: FontWeight.Medium
+          })
+        } else {
+          Text(this.readerSampleText())
+            .textAlign(this.readerSampleAlign())
+            .fontFamily(this.readerBodyFontFamily())
+            .fontSize(this.readerFontSize())
+            .lineHeight(this.readerLineHeight())
+            .letterSpacing(this.readerLetterSpacing())
+            .fontColor(this.variant().reader.textColor)
+            .width('100%')
+            .maxLines(this.expanded ? 12 : 3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
         this.emphasisSample()
       }
       .width('100%')

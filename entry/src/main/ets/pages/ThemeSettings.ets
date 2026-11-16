@@ -22,7 +22,19 @@ import { ThemeRecentStore } from '../utils/ThemeRecentStore';
 import { ReaderThemeBackground } from '../components/ReaderThemeBackground';
 import { ThemeDetailScene } from '../components/theme/ThemeDetailScene';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
-import { BubbleFrameBreak, BubbleFrameRepeat, ThemeImageCrop, ThemePackageBubble } from '../theme/share/ThemePackageFormat';
+import {
+  BubbleFrameBreak,
+  BubbleFrameRepeat,
+  normalizeChapterHead,
+  ThemeImageCrop,
+  ThemePackageBubble,
+  ThemePackageChapterHead
+} from '../theme/share/ThemePackageFormat';
+import {
+  ThemeChapterHeadSampleMetrics,
+  ThemeChapterHeadTitle,
+  ThemeDropCapParagraph
+} from '../components/theme/ThemeChapterHeadSample';
 import { ThemeBubbleFramePreview } from '../components/theme/ThemeBubbleFramePreview';
 import { BubbleFramePreviewPart } from '../components/theme/BubbleFramePreviewPainter';
 import { ThemeCroppedImage } from '../components/theme/ThemeCroppedImage';
@@ -169,6 +181,12 @@ const READER_PREVIEW_SEGMENTS: ReaderPreviewSegment[] = [
     '\n\u3000\u3000很多年以后，她仍记得那个雨夜：一盏灯，一本书，一个不催她的人。' +
     '\n\u3000\u3000而那行小小的批注，她后来也照着写了一遍，留给下一个翻开这本书的人。')
 ];
+
+// 主题设了首字装饰时，第一段（不带缩进、去掉段末的段评数）单独画成首字段落，样张从第二段接着画。
+const READER_PREVIEW_LEAD = '雨停的时候，檐下还挂着水珠。她把灯芯拨亮了些，翻开那本旧书。';
+const READER_PREVIEW_REST: ReaderPreviewSegment[] = READER_PREVIEW_SEGMENTS.slice(2).map(
+  (segment: ReaderPreviewSegment, index: number): ReaderPreviewSegment => index === 0 ?
+    new ReaderPreviewSegment(segment.text.substring(1), segment.emphasis, segment.comment) : segment);
 
 /** User choice from the "apply theme" prompt. */
 class ThemeApplyChoice {
@@ -640,11 +658,11 @@ struct ThemeSettingsPage {
   /** 书架上的一本书：主题带封面套装就轮着用套装和书籍边框，否则用主题色块。 */
   /** 正文样张：对白套这套主题的强调样式，段评数画成主题的段评气泡。 */
   @Builder
-  readerSampleText(theme: ThemePack, fontSize: number, lineHeight: number, maxLines: number) {
+  readerSampleText(theme: ThemePack, fontSize: number, lineHeight: number, maxLines: number, rest: boolean) {
     if (this.themeBubbleFrame(theme)) {
       // 包内气泡有边框：文字行内的 Span 画不出逐行拉伸的边框，整张样张改用编辑器小样的画法。
       // partsProvider 不是状态变量，换主题或深浅色时靠键重建组件。
-      ForEach([this.frameSampleKey(theme)], (_key: string) => {
+      ForEach([this.frameSampleKey(theme, rest)], (_key: string) => {
         ThemeBubbleFramePreview({
           uri: this.themeBubbleFrame(theme)?.asset ?? '',
           capUri: this.themeBubbleCapUri(theme),
@@ -661,11 +679,11 @@ struct ThemeSettingsPage {
           paddingY: 0,
           maxLines: maxLines,
           cornerRadius: 0,
-          partsProvider: (): BubbleFramePreviewPart[] => this.frameSampleParts(theme, fontSize)
+          partsProvider: (): BubbleFramePreviewPart[] => this.frameSampleParts(theme, fontSize, rest)
         })
       }, (key: string) => key)
     } else {
-      this.readerSampleRichText(theme, fontSize, lineHeight, maxLines)
+      this.readerSampleRichText(theme, fontSize, lineHeight, maxLines, rest)
     }
   }
 
@@ -694,16 +712,21 @@ struct ThemeSettingsPage {
     return settings;
   }
 
-  frameSampleKey(theme: ThemePack): string {
+  frameSampleKey(theme: ThemePack, rest: boolean): string {
     return `reader_frame_sample_${theme.id}_${this.activeVariant(theme).reader.contentTone}_` +
-      `${this.activeVariant(theme).regexEmphasis.bubbleStyle}`;
+      `${this.activeVariant(theme).regexEmphasis.bubbleStyle}_${rest ? 'rest' : 'all'}`;
+  }
+
+  /** 样张的分段：rest 为真时从第二段开始（第一段画成了首字段落）。 */
+  previewSegments(rest: boolean): ReaderPreviewSegment[] {
+    return rest ? READER_PREVIEW_REST : READER_PREVIEW_SEGMENTS;
   }
 
   /** 样张分段：对白套边框，段评数换成主题的段评气泡图（与文字版样张一样前面空一格）。 */
-  frameSampleParts(theme: ThemePack, fontSize: number): BubbleFramePreviewPart[] {
+  frameSampleParts(theme: ThemePack, fontSize: number, rest: boolean): BubbleFramePreviewPart[] {
     const dark = this.activeVariant(theme).reader.contentTone === 'dark';
     const parts: BubbleFramePreviewPart[] = [];
-    for (const segment of READER_PREVIEW_SEGMENTS) {
+    for (const segment of this.previewSegments(rest)) {
       if (!segment.comment) {
         parts.push(new BubbleFramePreviewPart(segment.text, segment.emphasis));
         continue;
@@ -718,9 +741,9 @@ struct ThemeSettingsPage {
   }
 
   @Builder
-  readerSampleRichText(theme: ThemePack, fontSize: number, lineHeight: number, maxLines: number) {
+  readerSampleRichText(theme: ThemePack, fontSize: number, lineHeight: number, maxLines: number, rest: boolean) {
     Text() {
-      ForEach(READER_PREVIEW_SEGMENTS, (segment: ReaderPreviewSegment) => {
+      ForEach(this.previewSegments(rest), (segment: ReaderPreviewSegment) => {
         if (segment.comment) {
           Span(' ')
           this.commentBubbleSpan(theme, segment.text, fontSize * 0.85,
@@ -755,7 +778,8 @@ struct ThemeSettingsPage {
           }
           .textBackgroundStyle(this.themeRegexPreviewBackground(theme))
         }
-      }, (_segment: ReaderPreviewSegment, index: number) => `reader_preview_${theme.id}_${index}`)
+      }, (_segment: ReaderPreviewSegment, index: number) =>
+        `reader_preview_${theme.id}_${rest ? 'rest' : 'all'}_${index}`)
     }
     .fontSize(fontSize)
     .lineHeight(lineHeight)
@@ -1891,18 +1915,45 @@ struct ThemeSettingsPage {
         }
         .width('100%')
         .height(DETAIL_READER_BAR_HEIGHT)
-        Text('第十二章 灯下')
-          .fontSize(DETAIL_READER_TITLE_SIZE)
-          .fontWeight(FontWeight.Bold)
-          .fontFamily(theme.typography.appFontFamily)
-          .fontColor(this.activeVariant(theme).reader.textColor)
-          .height(DETAIL_READER_TITLE_HEIGHT)
-          .width('100%')
+        // 章首装饰按主题自己的画（相当于读者开着“标题装饰”和“首字装饰”）。
         Column() {
-          this.readerSampleText(theme, DETAIL_READER_FONT_SIZE, DETAIL_READER_LINE_HEIGHT, this.detailReaderLines(full))
+          ThemeChapterHeadTitle({
+            head: this.detailChapterHead(theme),
+            numberText: '第十二章',
+            titleSize: DETAIL_READER_TITLE_SIZE,
+            fontFamily: theme.typography.appFontFamily,
+            titleWeight: FontWeight.Bold
+          }) {
+            Text(ThemeChapterHeadSampleMetrics.showsNumber(this.detailChapterHead(theme), '第十二章') ?
+              '灯下' : '第十二章 灯下')
+              .fontSize(DETAIL_READER_TITLE_SIZE)
+              .fontWeight(FontWeight.Bold)
+              .fontFamily(theme.typography.appFontFamily)
+              .fontColor(this.activeVariant(theme).reader.textColor)
+              .width('100%')
+          }
         }
         .width('100%')
-        .height(this.detailReaderLines(full) * DETAIL_READER_LINE_HEIGHT)
+        .height(this.detailReaderTitleHeight(theme))
+        .justifyContent(FlexAlign.Center)
+        Column() {
+          if (this.detailDropCap(theme)) {
+            ThemeDropCapParagraph({
+              text: READER_PREVIEW_LEAD,
+              head: this.detailChapterHead(theme),
+              fontSize: DETAIL_READER_FONT_SIZE,
+              lineHeight: DETAIL_READER_LINE_HEIGHT,
+              fontFamily: theme.typography.appFontFamily,
+              textColor: this.activeVariant(theme).reader.textColor,
+              capFontFamily: theme.typography.appFontFamily,
+              capFontWeight: FontWeight.Bold
+            })
+          }
+          this.readerSampleText(theme, DETAIL_READER_FONT_SIZE, DETAIL_READER_LINE_HEIGHT,
+            this.detailReaderLines(theme, full), this.detailDropCap(theme))
+        }
+        .width('100%')
+        .height(this.detailReaderLines(theme, full) * DETAIL_READER_LINE_HEIGHT)
         .alignItems(HorizontalAlign.Start)
         .clip(true)
         Blank()
@@ -2819,11 +2870,28 @@ struct ThemeSettingsPage {
   }
 
   /** 阅读页实景里正文能放下的整行数：卡片或屏幕的高度减去页眉、标题、页脚和上下留白。 */
-  detailReaderLines(full: boolean): number {
+  detailReaderLines(theme: ThemePack, full: boolean): number {
     const height = full ? this.contextViewportHeight - this.statusBarHeight - this.navBarHeight :
       (this.contextViewportWidth - AppSpacing.LG * 2) / DETAIL_SCENE_RATIO;
-    const fixed = AppSpacing.MD * 2 + DETAIL_READER_BAR_HEIGHT * 2 + DETAIL_READER_TITLE_HEIGHT + AppSpacing.MD;
+    const fixed = AppSpacing.MD * 2 + DETAIL_READER_BAR_HEIGHT * 2 + this.detailReaderTitleHeight(theme) +
+      AppSpacing.MD;
     return Math.max(4, Math.floor((height - fixed) / DETAIL_READER_LINE_HEIGHT));
+  }
+
+  /** 这套主题当前深浅模式的章首装饰；没设时各字段为空。 */
+  detailChapterHead(theme: ThemePack): ThemePackageChapterHead {
+    return normalizeChapterHead(this.activeVariant(theme).regexEmphasis.chapterHead);
+  }
+
+  detailDropCap(theme: ThemePack): boolean {
+    return ThemeChapterHeadSampleMetrics.dropCapApplies(this.detailChapterHead(theme), READER_PREVIEW_LEAD);
+  }
+
+  /** 标题区高度：平时 72，饰图放大或画成分段标题放不下时按估出的高度加上下留白。 */
+  detailReaderTitleHeight(theme: ThemePack): number {
+    const estimate = ThemeChapterHeadSampleMetrics.estimateHeight(this.detailChapterHead(theme),
+      DETAIL_READER_TITLE_SIZE, '第十二章');
+    return Math.max(DETAIL_READER_TITLE_HEIGHT, Math.ceil(estimate + AppSpacing.LG));
   }
 
   resolveEntry(key: string): ThemeListEntry {
