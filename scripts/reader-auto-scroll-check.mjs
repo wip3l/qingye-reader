@@ -22,15 +22,20 @@ const names = ['startReaderAutoScroll', 'toggleReaderAutoScroll', 'pauseReaderAu
   'cancelContinuousReaderSelectionTimer', 'shouldShowReaderAutoScrollCapsule',
   'shouldShowReaderSessionQuickActions', 'shouldShowTtsMiniPlayer', 'shouldShowGlobalTtsMiniPlayer',
   'readerAutoScrollCapsuleLeft', 'readerAutoScrollCapsuleTop',
-  'clampTtsMiniPlayerPositionX', 'clampTtsMiniPlayerPositionY'];
+  'clampTtsMiniPlayerPositionX', 'clampTtsMiniPlayerPositionY',
+  'readerAutoScrollSessionOffset', 'setReaderAutoScrollMode', 'resetReaderBlinds', 'publishReaderBlindsColumn',
+  'handleReaderBlindsTap', 'runReaderTapLayerAction', 'commitReaderTapAction', 'advanceReaderBlinds'];
 let now = 1000;
 let id = 0;
 const timers = new Map();
 const persisted = [];
 let storedSpeed = 20;
+let storedMode = 'scroll';
 const sandbox = vm.createContext({
   console, Date: { now: () => now },
-  getContext: () => ({}), px2vp: n => n / 2,
+  getContext: () => ({}), px2vp: n => n / 2, vp2px: n => n * 2,
+  READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT: 4,
+  ReaderPageRasterizer: { parseColor: () => ({ alpha: 255, red: 0, green: 0, blue: 0 }) },
   LengthMetrics: { vp: n => n }, ScrollAlign: { START: 0 },
   setInterval: fn => { timers.set(++id, fn); return id; },
   clearInterval: value => timers.delete(value),
@@ -43,8 +48,12 @@ const sandbox = vm.createContext({
   HdsFeedback: { showToast() {} },
   ReaderTtsFloatingSession: { pause: async () => {}, isOwner: () => false },
   preferences: { getPreferences: async () => ({
-    get: async () => storedSpeed,
-    put: async (_key, value) => { await Promise.resolve(); storedSpeed = value; persisted.push(value); },
+    get: async key => key === 'mode' ? storedMode : storedSpeed,
+    put: async (key, value) => {
+      await Promise.resolve();
+      if (key === 'mode') { storedMode = value; return; }
+      storedSpeed = value; persisted.push(value);
+    },
     flush: async () => {},
   }) },
 });
@@ -82,6 +91,7 @@ function fixture() {
     readerAutoScrollSettingsLoaded: true, readerAutoScrollAnchor: -1,
     readerAutoScrollWaitingSince: 0, readerAutoScrollTimer: -1, readerAutoScrollClock: new Clock(),
     readerAutoScrollTapTimer: -1, readerAutoScrollTapAt: 0,
+    readerBlinds: { ensureColumns() {}, columns: [] }, readerBlindsSurfaces: new Map(),
     readerContinuousSelectionTimerId: -1, readerContinuousSelectionMoved: false, readerTapSlop: 12,
     readerAutoScrollPositionX: -1, readerAutoScrollPositionY: -1,
     readerHoldingHandSide: 0, readerAutoScrollManuallyPositioned: false,
@@ -438,4 +448,66 @@ gestures.handlePinchStart({ pinchCenterX: 0, pinchCenterY: 0 });
 assert.equal(pauses, 3, 'long press, zoomed pan and pinch all pause');
 assert.match(comicView, /interactionLayer\(this.doubleTapZoom \|\| this.autoScrollActive\)/,
   'auto-scroll double tap remains enabled when zoom preference is off');
-console.log('PASS reader auto-scroll: novel/comic sessions, screen speed, image readiness, mode restore, lifecycle, chapter boundaries and gestures');
+// Blinds mode: paged layout stays as it is, scroll readers temporarily get pages, taps wait for a double tap.
+assert.equal(await Store.loadMode({}), 'scroll', 'mode defaults to smooth scrolling');
+function blindsFixture(turnMode) {
+  const p = fixture();
+  Object.assign(p, {
+    readerAutoScrollActive: false, readerAutoScrollMode: 'blinds', readerPageTurnMode: turnMode,
+    readerBlinds: { ensureColumns() {}, columns: [] }, readerBlindsSurfaces: new Map(),
+    accentColor: () => '#336699', pageRenderVersion: 0, isReaderInteractiveActionActive: () => false,
+  });
+  return p;
+}
+p = blindsFixture(1);
+await p.startReaderAutoScroll();
+assert.equal(p.readerAutoScrollBlindsSession, true);
+assert.deepEqual(p.reflows, [], 'blinds keeps the current paged layout');
+assert.equal(p.isReaderNovelContinuousScrollModeActive(), false);
+assert.equal(p.readerEffectivePageTurnMode(), 1, 'blinds keeps the reader page-turn mode');
+p.stopReaderAutoScroll();
+assert.deepEqual(p.reflows, [], 'leaving blinds in paged mode needs no reflow');
+assert.equal(p.readerAutoScrollBlindsSession, false);
+
+p = blindsFixture(3);
+await p.startReaderAutoScroll();
+assert.deepEqual(p.reflows, [960], 'scroll readers switch to pages at the first visible line');
+assert.equal(p.readerAutoScrollAnchor, -1, 'paged layout restores through pagination, not a scroll anchor');
+assert.equal(p.readerEffectivePageTurnMode(), 2, 'temporary pages use horizontal paging');
+assert.equal(p.readerPageTurnMode, 3, 'temporary pages never rewrite the preference');
+p.stopReaderAutoScroll();
+assert.deepEqual(p.reflows, [960, 480], 'exit returns to scroll layout at the reached page');
+assert.equal(p.readerEffectivePageTurnMode(), 3);
+
+p = blindsFixture(1); p.readerAutoScrollMode = 'scroll';
+await p.startReaderAutoScroll();
+p.pauseReaderAutoScroll('已暂停');
+p.setReaderAutoScrollMode('blinds');
+assert.equal(p.readerAutoScrollBlindsSession, true, 'switching mode mid-session changes the session');
+assert.deepEqual(p.reflows, [480, 480], 'switch to blinds returns to pages at the pending scroll anchor');
+p.setReaderAutoScrollMode('scroll');
+assert.deepEqual(p.reflows, [480, 480, 480]);
+assert.equal(p.readerAutoScrollAnchor, 480, 'switch back to smooth scrolling anchors the paged position');
+await new Promise(resolve => setImmediate(resolve));
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(storedMode, 'scroll', 'mode is remembered');
+p.stopReaderAutoScroll(false);
+
+p = blindsFixture(2);
+await p.startReaderAutoScroll();
+const tapActions = [];
+p.turnNext = () => tapActions.push('next');
+p.turnPrev = () => tapActions.push('prev');
+p.commitReaderTapAction(2);
+assert.deepEqual(tapActions, [], 'blinds waits for a possible double tap');
+fireTimer(p.readerAutoScrollTapTimer);
+assert.deepEqual(tapActions, ['next'], 'single tap keeps its zone action');
+assert.equal(p.readerAutoScrollPaused, false, 'manual page turn keeps blinds running');
+p.runReaderTapLayerAction(1); now += 120; p.runReaderTapLayerAction(1);
+assert.equal(p.readerAutoScrollPaused, true, 'double tap pauses blinds');
+assert.notEqual(p.showMenu, true, 'double tap never opens the menu');
+assert.equal(p.readerAutoScrollTapTimer, -1);
+p.stopReaderAutoScroll(false);
+assert.equal(timers.size, 0, 'blinds sessions release timers');
+
+console.log('PASS reader auto-scroll: novel/comic sessions, blinds mode, screen speed, image readiness, mode restore, lifecycle, chapter boundaries and gestures');

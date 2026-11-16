@@ -190,7 +190,7 @@ export class ReaderPageRasterizer {
     return image.createPixelMapSync(new ArrayBuffer(width * height * 4), options);
   }
 
-  private static drawImage(canvas: drawing.Canvas, item: ReaderRasterImage, sampling: drawing.SamplingOptions): void {
+  static drawImage(canvas: drawing.Canvas, item: ReaderRasterImage, sampling: drawing.SamplingOptions): void {
     let left = item.left;
     let top = item.top;
     let right = item.right;
