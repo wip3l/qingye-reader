@@ -20,7 +20,11 @@ export class TtsAudioSession {
   private static manager: audio.AudioSessionManager | null = null;
   private static routingManager: audio.AudioRoutingManager | null = null;
   private static owners: Set<string> = new Set<string>();
+  /** AppStorage 键：与其他应用同时播放。落盘在 AudioBookSettingsStore。 */
+  static readonly MIX_WITH_OTHERS_KEY: string = 'audioMixWithOthers';
   private static activationPromise: Promise<void> | null = null;
+  // 当前这次激活用的是不是混音模式；没激活过为 null。
+  private static activatedMix: boolean | null = null;
   private static deactivateTimerId: number = -1;
   private static configured: boolean = false;
   private static hintListeners: Set<TtsAudioSessionHintListener> = new Set<TtsAudioSessionHintListener>();
@@ -36,31 +40,67 @@ export class TtsAudioSession {
     if (!owner) return;
     TtsAudioSession.owners.add(owner);
     TtsAudioSession.cancelPendingDeactivate();
+    await TtsAudioSession.ensureActivated();
+  }
+
+  /** “与其他应用同时播放”改了以后调用：正在播放（有 owner）就按新模式重新激活，没在播放的下次出声时生效。 */
+  static refreshConcurrencyMode(): void {
+    if (TtsAudioSession.owners.size === 0) return;
+    TtsAudioSession.ensureActivated().catch(() => {
+    });
+  }
+
+  private static mixWithOthers(): boolean {
+    return AppStorage.get<boolean>(TtsAudioSession.MIX_WITH_OTHERS_KEY) === true;
+  }
+
+  /**
+   * 默认独占（开播时暂停别的应用，别的应用出声时自己被暂停）；用户开了“与其他应用同时播放”则混音，
+   * 游戏、视频的声音不再打断朗读，来电和语音通话仍按系统规则打断。
+   * 已激活但模式与设置不符时先停用再激活，策略只在激活时传入。
+   */
+  private static async ensureActivated(): Promise<void> {
     const manager = TtsAudioSession.getManager();
     if (!manager) return;
+    // 上一次激活还没完成时先等它，再按当前设置比对，避免切换开关时落在旧模式上。
+    while (TtsAudioSession.activationPromise) {
+      await TtsAudioSession.activationPromise;
+    }
+    const mix = TtsAudioSession.mixWithOthers();
+    let activated = false;
     try {
-      if (manager.isAudioSessionActivated()) return;
+      activated = manager.isAudioSessionActivated();
     } catch (_) {
     }
-    if (!TtsAudioSession.activationPromise) {
-      TtsAudioSession.configure(manager);
-      const strategy: audio.AudioSessionStrategy = {
-        concurrencyMode: audio.AudioConcurrencyMode.CONCURRENCY_PAUSE_OTHERS
-      };
-      const activation = manager.activateAudioSession(strategy);
-      TtsAudioSession.activationPromise = activation;
-      activation.then(() => {
-        console.info('[TTS] audio session activated: mode=PAUSE_OTHERS');
-      }).catch((error: Error) => {
-        console.warn('[TTS] activate audio session failed:', error);
-      }).finally(() => {
-        if (TtsAudioSession.activationPromise === activation) {
-          TtsAudioSession.activationPromise = null;
-        }
-      });
+    if (activated && TtsAudioSession.activatedMix === mix) return;
+    TtsAudioSession.configure(manager);
+    const activation = TtsAudioSession.activate(manager, mix, activated);
+    TtsAudioSession.activationPromise = activation;
+    await activation;
+    if (TtsAudioSession.activationPromise === activation) {
+      TtsAudioSession.activationPromise = null;
     }
-    await TtsAudioSession.activationPromise?.catch(() => {
-    });
+  }
+
+  private static async activate(manager: audio.AudioSessionManager, mix: boolean, reactivate: boolean): Promise<void> {
+    if (reactivate) {
+      try {
+        await manager.deactivateAudioSession();
+      } catch (error) {
+        console.warn('[TTS] deactivate audio session before mode change failed:', error);
+      }
+    }
+    const strategy: audio.AudioSessionStrategy = {
+      concurrencyMode: mix ? audio.AudioConcurrencyMode.CONCURRENCY_MIX_WITH_OTHERS :
+        audio.AudioConcurrencyMode.CONCURRENCY_PAUSE_OTHERS
+    };
+    try {
+      await manager.activateAudioSession(strategy);
+      TtsAudioSession.activatedMix = mix;
+      console.info(`[TTS] audio session activated: mode=${mix ? 'MIX_WITH_OTHERS' : 'PAUSE_OTHERS'}`);
+    } catch (error) {
+      console.warn('[TTS] activate audio session failed:', error);
+    }
   }
 
   static release(owner: string): void {

@@ -11,6 +11,7 @@ import { promptAction, router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ReaderNavIndicatorStore } from '../utils/ReaderNavIndicatorStore';
+import { AudioBookSettingsStore } from '../utils/AudioBookSettingsStore';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ReaderThemeHelper, ReaderThemeItem } from '../utils/ReaderThemeHelper';
 import { ReaderCustomThemeData, ReaderCustomThemeHelper, ReaderCustomThemeScheme } from '../utils/ReaderCustomThemeHelper';
@@ -131,6 +132,7 @@ struct SettingsPage {
   @StorageProp('readerSmartKeyTurnScope') readerSmartKeyTurnScope: number = 0;
   @StorageProp('readerSmartKeyTurnSupported') readerSmartKeyTurnSupported: boolean = false;
   @StorageProp('audioBookAutoPlay') audioBookAutoPlay: boolean = true;
+  @StorageProp('audioMixWithOthers') audioMixWithOthers: boolean = false;
   /** 有声书、段评、预缓存只对网页解析的内容有意义，开关关闭时不显示。 */
   @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
   @StorageProp('ttsSpeed') ttsSpeed: number = 1;
@@ -548,6 +550,25 @@ struct SettingsPage {
         showDivider: false,
         onTap: () => {
           router.pushUrl({ url: 'pages/TtsSettings' });
+        }
+      })
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+
+    this.sectionTitle('收听')
+    Column() {
+      SettingSwitchRow({
+        title: '与其他应用同时播放',
+        description: '朗读和有声书不再被游戏、视频的声音打断，开始播放时也不暂停其他应用；来电和语音通话仍会暂停',
+        isOn: this.audioMixWithOthers,
+        showDivider: false,
+        onChange: (value: boolean) => {
+          AudioBookSettingsStore.saveMixWithOthers(getContext(this), value)
+            .catch((error: Error) => console.warn('保存同时播放失败:', error));
         }
       })
     }
