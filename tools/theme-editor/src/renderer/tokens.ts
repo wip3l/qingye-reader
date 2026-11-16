@@ -26,8 +26,8 @@ export const THEMES: BaseTheme[] = (data as any).themes;
 export const BUBBLES: { id: string; label: string }[] = (data as any).bubbles;
 export const GENERIC_BUBBLES = ['qq-soft', 'qq-solid', 'capsule', 'paper', 'neon'];
 export const FREE_THEME_ID = 'plain-default';
-/** 不能作基底的主题：曜金藏书是终身超级会员领取型，不面向主题作者。 */
-export const BASE_EXCLUDED = ['obsidian-archive'];
+/** 不能作基底的主题：曜金藏书、星穹御藏是终身超级会员领取型（应用里的“超级会员专属”分组），不面向主题作者。 */
+export const BASE_EXCLUDED = ['obsidian-archive', 'celestial-vault'];
 
 /** 基底主题下拉：默认主题在前；其余付费主题导入者没有时，应用把基底换回默认主题。 */
 export function baseThemeOptions(): [string, string][] {
