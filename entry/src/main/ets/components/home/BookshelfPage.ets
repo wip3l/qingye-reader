@@ -302,6 +302,8 @@ export struct BookshelfPage {
   @Prop navBarHeight: number = 0;
   @Link isBookMultiSelect: boolean;
   @Link @Watch('onActiveShelfGroupChanged') activeShelfGroupId: number;
+  /** 首页每次“进入书架”（切回书架页签、从别的页面返回首页）加一，沉浸书架据此收起顶栏和底栏。 */
+  @Prop @Watch('onShelfEnterTick') shelfEnterTick: number = 0;
   @StorageLink('appThemeBookCoverEnabled') themeBookCoverEnabled: boolean = false;
   @StorageLink('appThemeId') appThemeId: string = AppThemeSettingsStore.DEFAULT_THEME_ID;
   @StorageLink('appCustomBaseThemeId') appCustomBaseThemeId: string = AppThemeSettingsStore.DEFAULT_THEME_ID;
@@ -571,6 +573,8 @@ export struct BookshelfPage {
   bookshelfCompanionCoverShadow: boolean = true;
   /** 书架设置“阅读小记”：关闭后陪伴布局不显示阅读小记卡片。 */
   @StorageLink('bookshelfCompanionReadingNote') bookshelfCompanionReadingNote: boolean = true;
+  /** 书架设置“沉浸书架”：进入书架时按钮行和底栏收起，手指往下滑才出现，往上滑在列表顶部也收起。 */
+  @StorageLink('bookshelfImmersive') @Watch('onShelfImmersiveChanged') bookshelfImmersive: boolean = false;
   /** 陪伴布局左上角问候语：time 内置按时段，custom 用户自写两行（可含占位符），off 不显示。 */
   @StorageLink('bookshelfGreetingMode') bookshelfGreetingMode: string = 'time';
   @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
@@ -715,6 +719,9 @@ export struct BookshelfPage {
     // are retained.  Replacing them here (and forcing a reload) prevents a retained list/grid
     // from continuing to render the books from the previous group.
     this.reloadShelfDataSources(true, !tileGroupMove);
+    // 分组页的标题栏不收起，沉浸时底栏另记一份收起量；进分组页先收起，回到书架换回书架的收起量。
+    this.tileGroupBarCollapse = this.shelfImmersiveActive() ? CollapsingHeader.DISTANCE : 0;
+    this.reportShelfBarCollapse();
     if (this.shelfStateRestored) {
       BookshelfStateStore.saveActiveGroupId(getContext(this), this.activeShelfGroupId).catch((e: Error) => {
         console.warn('保存书架分组状态失败:', e);
@@ -753,6 +760,11 @@ export struct BookshelfPage {
       this.bookshelfGreetingTitle = settings.greetingTitle;
       this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
       this.bookshelfCompanionSectionTitle = settings.companionSectionTitle;
+      // 记住打开分组只在冷启动时读一次，这里只放进 AppStorage，免得长按改问候语等按内存值保存时把它冲掉。
+      AppStorage.setOrCreate('bookshelfRememberGroup', settings.rememberGroup);
+      this.bookshelfImmersive = settings.immersive;
+      // 书架挂载（冷启动）时直接从收起状态开始；书还没读出来时 shelfHeaderCollapseValue 为 0，读出来后首帧就是收起的。
+      if (settings.immersive) this.collapseShelfChromeForImmersive(false);
     } catch (e) {
       console.warn('恢复书架显示设置失败:', e);
     }
@@ -829,17 +841,31 @@ export struct BookshelfPage {
         storedBooks.filter((book: Book) => !SearchExplorePendingBook.isPendingAddToShelf(book)));
       if (loadSerial !== this.shelfLoadSerial) return;
       if (!this.shelfStateRestored) {
+        let rememberGroup = false;
         try {
-          this.activeShelfGroupId = await BookshelfStateStore.loadActiveGroupId(getContext(this));
+          rememberGroup = (await BookshelfDisplaySettingsStore.load(getContext(this))).rememberGroup;
         } catch (e) {
-          console.warn('恢复书架分组状态失败:', e);
+          console.warn('读取记住打开分组设置失败:', e);
         }
-        try {
-          // 在首帧书架出现前恢复，分类页直接停在上次的类型；该类型暂时没书时由 activeShelfTypeTab 回退显示。
-          const typeTab = await BookshelfStateStore.loadTypeTab(getContext(this));
-          if (BookshelfPage.TYPE_TAB_IDS.indexOf(typeTab) >= 0) this.shelfTypeTab = typeTab;
-        } catch (e) {
-          console.warn('恢复书架分类状态失败:', e);
+        if (rememberGroup) {
+          try {
+            this.activeShelfGroupId = await BookshelfStateStore.loadActiveGroupId(getContext(this));
+          } catch (e) {
+            console.warn('恢复书架分组状态失败:', e);
+          }
+          try {
+            // 在首帧书架出现前恢复，分类页直接停在上次的类型；该类型暂时没书时由 activeShelfTypeTab 回退显示。
+            const typeTab = await BookshelfStateStore.loadTypeTab(getContext(this));
+            if (BookshelfPage.TYPE_TAB_IDS.indexOf(typeTab) >= 0) this.shelfTypeTab = typeTab;
+          } catch (e) {
+            console.warn('恢复书架分类状态失败:', e);
+          }
+        } else {
+          // “记住打开分组”关闭：每次冷启动都从书架首页开始（不在分组里、分类停在“全部”或第一个分类）。
+          // 同时把记录改成首页，之后再打开开关时不会跳回很久以前的分组；运行期间照常记录。
+          this.shelfTypeTab = 'all';
+          BookshelfStateStore.saveActiveGroupId(getContext(this), 0).catch((): void => {});
+          BookshelfStateStore.saveTypeTab(getContext(this), 'all').catch((): void => {});
         }
         if (loadSerial !== this.shelfLoadSerial) return;
         this.shelfStateRestored = true;
@@ -1629,6 +1655,12 @@ export struct BookshelfPage {
   // 顶栏毛玻璃按列表实际滚动距离显现，见 CollapsingHeader.backdropReveal。
   @State shelfHeaderBackdropReveal: number = 0;
   onHeaderCollapseChange: (progress: number) => void = () => {};
+  /** 沉浸书架时分组页底栏的收起量（分组页标题栏不收起），0 到 CollapsingHeader.DISTANCE。 */
+  private tileGroupBarCollapse: number = 0;
+  /** 关书动画期间进入书架，收起推迟到挪位结束。 */
+  private shelfImmersivePendingCollapse: boolean = false;
+  /** 沉浸时顶部下拉多远放出按钮行和底栏，比刷新阈值小得多。 */
+  private static readonly IMMERSIVE_REVEAL_PULL: number = 12;
   private shelfListScroller: ListScroller = new ListScroller();
   private shelfTileScroller: Scroller = new Scroller();
 
@@ -2198,6 +2230,7 @@ export struct BookshelfPage {
             if (pageKey !== this.shelfPageKey()) return;
             this.shelfRefreshPullOffset = offset;
             this.trackShelfRefreshPullOffset(offset);
+            this.revealShelfChromeOnPull(offset);
           })
           .onRefreshing(() => {
             if (pageKey === this.shelfPageKey()) this.onShelfPullRefresh();
@@ -4033,15 +4066,107 @@ export struct BookshelfPage {
     const reveal = CollapsingHeader.backdropReveal(offset);
     if (reveal !== this.shelfHeaderBackdropReveal) this.shelfHeaderBackdropReveal = reveal;
     if (this.shelfCategoryAnimating) return;
-    const next = CollapsingHeader.next(this.shelfHeaderCollapse, delta, offset);
+    const next = CollapsingHeader.next(this.shelfHeaderCollapse, delta, this.shelfCollapseOffset(offset));
     if (next !== this.shelfHeaderCollapse) {
       this.shelfHeaderCollapse = next;
     }
   }
 
+  /**
+   * 收起量的上限按列表滚动距离算：在顶部时标题行收不起来。沉浸书架不受这个限制，在顶部往上推也收起，
+   * 所以按已滚过整段收起距离处理。
+   */
+  shelfCollapseOffset(offset: number): number {
+    return this.shelfImmersiveActive() ? Math.max(offset, CollapsingHeader.DISTANCE) : offset;
+  }
+
+  /** 沉浸书架生效：多选和书架内搜索时顶栏照常固定显示。 */
+  shelfImmersiveActive(): boolean {
+    return this.bookshelfImmersive && !this.isBookMultiSelect && !this.shelfSearchActive;
+  }
+
+  onShelfEnterTick(): void {
+    if (!this.shelfImmersiveActive()) return;
+    // 关书缩回、挪位期间书架上盖着截图，等揭开后再收，免得栏在盖图揭开那一下闪出来又滑走。
+    if (this.shelfReturnMotionActive) {
+      this.shelfImmersivePendingCollapse = true;
+      return;
+    }
+    this.collapseShelfChromeForImmersive(true);
+  }
+
+  onShelfImmersiveChanged(): void {
+    if (this.bookshelfImmersive) return;
+    // 关掉沉浸后标题行回到按滚动距离收起的规则：在顶部附近的直接展开。
+    this.shelfImmersivePendingCollapse = false;
+    this.tileGroupBarCollapse = 0;
+    const page = this.shelfCategoryPage(this.shelfPageKey());
+    const offset = Math.max(0, this.isTileLayout() ? page.tileOffset : page.listOffset);
+    if (this.shelfHeaderCollapse > offset) {
+      animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => {
+        this.shelfHeaderCollapse = Math.min(this.shelfHeaderCollapse, offset);
+      });
+    }
+    this.reportShelfBarCollapse();
+  }
+
+  /** 进入书架时收起按钮行和底栏（底栏跟着标题行的收起量走）。 */
+  collapseShelfChromeForImmersive(animated: boolean): void {
+    this.shelfImmersivePendingCollapse = false;
+    if (this.isTileGroupPage()) {
+      this.tileGroupBarCollapse = CollapsingHeader.DISTANCE;
+      this.reportShelfBarCollapse();
+      return;
+    }
+    if (this.shelfHeaderCollapse >= CollapsingHeader.DISTANCE) return;
+    if (animated) {
+      animateTo({ duration: 250, curve: Curve.FastOutSlowIn }, () => {
+        this.shelfHeaderCollapse = CollapsingHeader.DISTANCE;
+      });
+    } else {
+      this.shelfHeaderCollapse = CollapsingHeader.DISTANCE;
+    }
+  }
+
+  /** 沉浸时在列表顶部往下拉：先把按钮行和底栏放出来，继续拉到原来的距离照常刷新。 */
+  revealShelfChromeOnPull(offset: number): void {
+    if (!this.shelfImmersiveActive() || offset < BookshelfPage.IMMERSIVE_REVEAL_PULL) return;
+    if (this.shelfHeaderCollapse <= 0) return;
+    animateTo({ duration: 220, curve: Curve.FastOutSlowIn }, () => {
+      this.shelfHeaderCollapse = 0;
+    });
+  }
+
+  /** 沉浸时分组页的滚动：标题栏不动，只收放底栏。 */
+  onTileGroupBarScroll(delta: number, offset: number): void {
+    if (!this.shelfImmersiveActive()) return;
+    const next = CollapsingHeader.next(this.tileGroupBarCollapse, delta, Math.max(offset, CollapsingHeader.DISTANCE));
+    if (next === this.tileGroupBarCollapse) return;
+    this.tileGroupBarCollapse = next;
+    this.reportShelfBarCollapse();
+  }
+
+  onTileGroupBarScrollStop(): void {
+    if (!this.shelfImmersiveActive()) return;
+    const target = CollapsingHeader.settle(this.tileGroupBarCollapse, CollapsingHeader.DISTANCE);
+    if (target === this.tileGroupBarCollapse) return;
+    this.tileGroupBarCollapse = target;
+    this.reportShelfBarCollapse();
+  }
+
+  /**
+   * 书架标题行的高度变化会经 onAreaChange 报给首页；分组页那一层和进出分组页时高度不变，这里补报一次。
+   * 非沉浸时分组页沿用书架的收起量（和以前一样）。
+   */
+  reportShelfBarCollapse(): void {
+    const value = this.isTileGroupPage() && this.shelfImmersiveActive() ? this.tileGroupBarCollapse :
+      this.shelfHeaderCollapseValue();
+    this.onHeaderCollapseChange(value / CollapsingHeader.DISTANCE);
+  }
+
   onShelfListScrollStop(offset: number): void {
     if (this.shelfCategoryAnimating) return;
-    const target = CollapsingHeader.settle(this.shelfHeaderCollapse, offset);
+    const target = CollapsingHeader.settle(this.shelfHeaderCollapse, this.shelfCollapseOffset(offset));
     if (target !== this.shelfHeaderCollapse) {
       animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => {
         this.shelfHeaderCollapse = target;
@@ -4646,6 +4771,7 @@ export struct BookshelfPage {
           // 分组页的标题栏不收起，只让毛玻璃按滚动显现。
           const reveal = CollapsingHeader.backdropReveal(page.tileOffset);
           if (reveal !== this.tileGroupBackdropReveal) this.tileGroupBackdropReveal = reveal;
+          this.onTileGroupBarScroll(delta, page.tileOffset);
         } else {
           this.onShelfListScroll(delta, page.tileOffset);
         }
@@ -4654,6 +4780,8 @@ export struct BookshelfPage {
     .onScrollStop(() => {
       if (!this.tileGroupAnimating && pageKey === this.shelfPageKey() && !this.isTileGroupPageKey(pageKey)) {
         this.onShelfListScrollStop(this.shelfTileScrollerForPage(pageKey).currentOffset().yOffset);
+      } else if (!this.tileGroupAnimating && pageKey === this.shelfPageKey()) {
+        this.onTileGroupBarScrollStop();
       }
     })
     .onAreaChange((_oldValue: Area, newValue: Area) => {
@@ -6276,6 +6404,14 @@ export struct BookshelfPage {
           AppStorage.setOrCreate<number>('shelfReturnRefreshNonce', Date.now());
           BookshelfSortHelper.releaseReadTimes();
           this.shelfReturnMotionActive = false;
+          if (this.shelfImmersivePendingCollapse) {
+            // 首页盖图在刷新通知后约 120ms 揭开，揭开后再收。
+            setTimeout((): void => {
+              if (this.shelfImmersivePendingCollapse && !this.shelfReturnMotionActive && this.shelfImmersiveActive()) {
+                this.collapseShelfChromeForImmersive(true);
+              }
+            }, BookshelfPage.SHELF_RETURN_QUICK_REFRESH + 80);
+          }
         });
     };
     // This notification arrives after the cover has closed, immediately before router.back().

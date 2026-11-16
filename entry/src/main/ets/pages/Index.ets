@@ -50,6 +50,12 @@ struct Index {
   /** 平铺底栏滑动收起：打开后和悬浮底栏一样，列表上滑过阈值收起、回到上方再出来。 */
   @StorageProp('homeTabBarFlatAutoHide') @Watch('onFlatAutoHideChanged') homeTabBarFlatAutoHide: boolean = false;
   @StorageProp('homeTabBarFloatingAdaptive') homeTabBarFloatingAdaptive: boolean = true;
+  /** 书架设置“沉浸书架”：书架页签上的底栏（悬浮或平铺）跟着书架按钮行收起，进入书架时先收起。 */
+  @StorageProp('bookshelfImmersive') @Watch('onFlatAutoHideChanged') bookshelfImmersive: boolean = false;
+  /** 每次进入书架加一，交给书架组件收起按钮行和底栏。 */
+  @State shelfEnterTick: number = 0;
+  /** 首页因为推了别的页面而隐藏（不是应用退到后台），回来时算一次“进入书架”。 */
+  private homeHiddenByRoute: boolean = false;
   /** 第四个页签：none / listen / footprint，放在发现和我的之间。 */
   @StorageProp('homeExtraTab') @Watch('onHomeExtraTabChanged') homeExtraTab: string = 'none';
   /** 我的 › 在线阅读：网页解析关闭时没有发现页签和搜索层，后面的页签各往前挪一位。 */
@@ -216,7 +222,10 @@ struct Index {
     if (this.currentIndex === 0) {
       const previousShelfUpdate = AppStorage.get<number>('shelfUpdateTime') || 0;
       AppStorage.setOrCreate('shelfUpdateTime', Math.max(Date.now(), previousShelfUpdate + 1));
+      // 从阅读页、设置页等返回书架；应用从后台切回来不算。
+      if (this.homeHiddenByRoute) this.shelfEnterTick++;
     }
+    this.homeHiddenByRoute = false;
   }
 
   /** 网页解析开着但当前版本的须知还没同意（升级用户或须知改版）：每次启动提醒一次，同意或关闭后不再出现。 */
@@ -279,6 +288,7 @@ struct Index {
 
   onPageHide(): void {
     this.shortcutRoutingActive = false;
+    this.homeHiddenByRoute = Number(router.getLength()) > 1;
     this.syncHomeHoldingHandTracking();
   }
 
@@ -426,6 +436,7 @@ struct Index {
     if (this.currentIndex === this.exploreTabIndex()) {
       this.exploreTabMounted = true;
     }
+    if (this.currentIndex === 0) this.shelfEnterTick++;
     // 书架保留列表与滚动位置，底栏沿用该页的收起进度；重建的第四个页签和“我的”重置。
     if (this.currentIndex > 0 && this.currentIndex !== this.exploreTabIndex()) {
       this.tabHeaderCollapseProgress[this.currentIndex] = 0;
@@ -460,7 +471,7 @@ struct Index {
         // 藏起期间系统可能已按握持手换了边，放出来后量一次。
         if (this.globalTtsActive) this.scheduleGlobalTtsBarProbe();
       }
-    } else if (this.homeTabBarFlatAutoHide) {
+    } else if (this.flatTabBarAutoHides()) {
       // 和悬浮底栏同一套阈值：收起、展开分开，停在临界位置时不来回抖。
       const threshold = !resetImmersiveState && this.flatTabBarHidden ? 0.25 : 0.5;
       this.setFlatTabBarHidden(this.bottomBarCollapseProgress >= threshold, resetImmersiveState);
@@ -1458,7 +1469,12 @@ struct Index {
 
   /** 滑动收起时底栏也盖在页面上，滑走后底下露出的是页面内容而不是一条空白。 */
   compatTabBarOverlap(): boolean {
-    return this.compatTabBarTranslucent() || this.homeTabBarFlatAutoHide;
+    return this.compatTabBarTranslucent() || this.flatTabBarAutoHides();
+  }
+
+  /** 平铺底栏当前页签是否随滚动收起：打开了“滑动收起”，或在书架页签上且打开了沉浸书架。 */
+  flatTabBarAutoHides(): boolean {
+    return this.homeTabBarFlatAutoHide || (this.bookshelfImmersive && this.currentIndex === 0);
   }
 
   extraTabId(): string {
@@ -1600,6 +1616,7 @@ struct Index {
           navBarHeight: this.navBarHeight,
           isBookMultiSelect: $bookshelfMultiSelectActive,
           activeShelfGroupId: $bookshelfActiveGroupId,
+          shelfEnterTick: this.shelfEnterTick,
           onHeaderCollapseChange: (progress: number) => this.onTabHeaderCollapseChange(0, progress)
         })
       } else {

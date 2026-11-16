@@ -56,6 +56,8 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfGreetingSubtitle') bookshelfGreetingSubtitle: string = '';
   @StorageLink('bookshelfCompanionSectionTitle') bookshelfCompanionSectionTitle: string = '';
   @StorageLink('bookshelfAutoRefresh') bookshelfAutoRefresh: boolean = true;
+  @StorageLink('bookshelfImmersive') bookshelfImmersive: boolean = false;
+  @StorageLink('bookshelfRememberGroup') bookshelfRememberGroup: boolean = false;
   @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
   @StorageProp('accountDisplayName') accountDisplayName: string = '';
   @StorageProp('shelfTodayReadMs') shelfTodayReadMs: number = 0;
@@ -251,6 +253,36 @@ struct BookshelfSettingsPage {
       showDivider: false,
       onChange: (value: boolean) => {
         this.bookshelfBookOpenAnimation = value;
+        this.onDisplaySettingChanged();
+      }
+    })
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+
+    this.sectionTitle('进入书架')
+    Column() {
+    SettingSwitchRow({
+      title: '沉浸书架',
+      description: '进入书架时隐藏顶部按钮和底栏，向下滑动时出现',
+      isOn: this.bookshelfImmersive,
+      showDivider: false,
+      onChange: (value: boolean) => {
+        this.bookshelfImmersive = value;
+        this.onDisplaySettingChanged();
+      }
+    })
+    this.itemDivider()
+    SettingSwitchRow({
+      title: '记住打开分组',
+      description: '重新打开应用时回到上次所在的文件夹和分类；关闭后每次从书架首页开始',
+      isOn: this.bookshelfRememberGroup,
+      showDivider: false,
+      onChange: (value: boolean) => {
+        this.bookshelfRememberGroup = value;
         this.onDisplaySettingChanged();
       }
     })
@@ -514,6 +546,8 @@ struct BookshelfSettingsPage {
       this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
       this.bookshelfCompanionSectionTitle = settings.companionSectionTitle;
       this.bookshelfAutoRefresh = settings.autoRefresh;
+      this.bookshelfImmersive = settings.immersive;
+      this.bookshelfRememberGroup = settings.rememberGroup;
     } catch (e) {
       console.warn('重新加载书架显示设置失败:', e);
     }
@@ -706,6 +740,8 @@ struct BookshelfSettingsPage {
     settings.greetingSubtitle = this.bookshelfGreetingSubtitle;
     settings.companionSectionTitle = this.bookshelfCompanionSectionTitle;
     settings.autoRefresh = this.bookshelfAutoRefresh;
+    settings.immersive = this.bookshelfImmersive;
+    settings.rememberGroup = this.bookshelfRememberGroup;
     BookshelfDisplaySettingsStore.applyToStorage(settings);
     BookshelfDisplaySettingsStore.save(getContext(this), settings).catch((e: Error) => {
       console.warn('保存书架显示设置失败:', e);

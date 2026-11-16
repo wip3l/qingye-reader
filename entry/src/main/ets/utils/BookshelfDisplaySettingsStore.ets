@@ -38,6 +38,10 @@ export class BookshelfDisplaySettings {
   companionSectionTitle: string = '';
   // 打开应用后在后台检查书架上连载书的新章节；关闭后只在下拉书架时检查。属于网页解析的设置项。
   autoRefresh: boolean = true;
+  // 沉浸书架：进入书架时收起顶部按钮行和底栏，手指往下滑才出现。
+  immersive: boolean = false;
+  // 冷启动时回到上次所在的分组和书籍分类；关闭后每次都从书架首页开始。
+  rememberGroup: boolean = false;
 }
 
 export class BookshelfDisplaySettingsStore {
@@ -66,6 +70,8 @@ export class BookshelfDisplaySettingsStore {
   private static readonly KEY_GREETING_SUBTITLE: string = 'bookshelfGreetingSubtitle';
   private static readonly KEY_COMPANION_SECTION_TITLE: string = 'bookshelfCompanionSectionTitle';
   private static readonly KEY_AUTO_REFRESH: string = 'bookshelfAutoRefresh';
+  private static readonly KEY_IMMERSIVE: string = 'bookshelfImmersive';
+  private static readonly KEY_REMEMBER_GROUP: string = 'bookshelfRememberGroup';
   static readonly DEFAULT_COMPANION_SECTION_TITLE: string = '书架里，还有故事';
   static readonly COMPANION_SECTION_TITLE_MAX_LENGTH: number = 20;
   // 4.4.956 起书架默认使用“陪伴”布局：升级后把已有设置统一改一次，之后用户自己改的布局不再动。
@@ -129,6 +135,10 @@ export class BookshelfDisplaySettingsStore {
       store, BookshelfDisplaySettingsStore.KEY_COMPANION_SECTION_TITLE, '');
     settings.autoRefresh = await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_AUTO_REFRESH, true);
+    settings.immersive = await BookshelfDisplaySettingsStore.getBoolean(
+      store, BookshelfDisplaySettingsStore.KEY_IMMERSIVE, false);
+    settings.rememberGroup = await BookshelfDisplaySettingsStore.getBoolean(
+      store, BookshelfDisplaySettingsStore.KEY_REMEMBER_GROUP, false);
     if (!(await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_COMPANION_LAYOUT_MIGRATED, false))) {
       settings.layoutMode = 'companion';
@@ -172,6 +182,8 @@ export class BookshelfDisplaySettingsStore {
     await store.put(BookshelfDisplaySettingsStore.KEY_GREETING_SUBTITLE, settings.greetingSubtitle);
     await store.put(BookshelfDisplaySettingsStore.KEY_COMPANION_SECTION_TITLE, settings.companionSectionTitle);
     await store.put(BookshelfDisplaySettingsStore.KEY_AUTO_REFRESH, settings.autoRefresh !== false);
+    await store.put(BookshelfDisplaySettingsStore.KEY_IMMERSIVE, settings.immersive === true);
+    await store.put(BookshelfDisplaySettingsStore.KEY_REMEMBER_GROUP, settings.rememberGroup === true);
     await store.flush();
     BookshelfDisplaySettingsStore.cachedSettings = BookshelfDisplaySettingsStore.clone(settings);
     CloudSyncChangeTracker.markApplicationPreferenceChanged();
@@ -234,6 +246,8 @@ export class BookshelfDisplaySettingsStore {
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_GREETING_SUBTITLE, settings.greetingSubtitle);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_COMPANION_SECTION_TITLE, settings.companionSectionTitle);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_AUTO_REFRESH, settings.autoRefresh !== false);
+    AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_IMMERSIVE, settings.immersive === true);
+    AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_REMEMBER_GROUP, settings.rememberGroup === true);
   }
 
   static fromStorage(): BookshelfDisplaySettings {
@@ -273,6 +287,8 @@ export class BookshelfDisplaySettingsStore {
     settings.companionSectionTitle =
       AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_COMPANION_SECTION_TITLE) ?? '';
     settings.autoRefresh = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_AUTO_REFRESH) ?? true;
+    settings.immersive = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_IMMERSIVE) ?? false;
+    settings.rememberGroup = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_REMEMBER_GROUP) ?? false;
     return settings;
   }
 
@@ -350,6 +366,8 @@ export class BookshelfDisplaySettingsStore {
     settings.greetingSubtitle = source.greetingSubtitle || '';
     settings.companionSectionTitle = source.companionSectionTitle || '';
     settings.autoRefresh = source.autoRefresh !== false;
+    settings.immersive = source.immersive === true;
+    settings.rememberGroup = source.rememberGroup === true;
     return settings;
   }
 }
