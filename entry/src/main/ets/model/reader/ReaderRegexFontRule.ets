@@ -256,6 +256,8 @@ export class ReaderTitleEmphasis {
     context.inheritedBubbleStyleId = !style || style === TITLE_BUBBLE_SAME_AS_EMPHASIS ? base.inheritedBubbleStyleId : style;
     context.inheritedColor = themeTitle.color || base.inheritedColor;
     context.inheritedTextColor = themeTitle.textColor || base.inheritedTextColor;
+    // 主题给“仅文字色”标题明确填了文字色就照填的用，不再按对比度退回底色。
+    if (themeMode === 'text' && themeTitle.textColor) context.inheritedColor = themeTitle.textColor;
     context.accentColor = base.accentColor;
     context.surfaceColor = base.surfaceColor;
     context.normalTextColor = base.normalTextColor;
@@ -375,7 +377,8 @@ export class ReaderRegexBubbleStyleResolver {
     }
 
     if (result.mode === 'text') {
-      result.textColor = result.emphasisColor;
+      result.textColor = ReaderRegexBubbleStyleResolver.textOnlyColor(
+        configuredColor ? '' : context.inheritedTextColor, result.emphasisColor, context);
       return result;
     }
     if (result.mode === 'highlight') {
@@ -720,6 +723,39 @@ export class ReaderRegexBubbleStyleResolver {
       `${ReaderRegexBubbleStyleResolver.componentToHex(green)}` +
       `${ReaderRegexBubbleStyleResolver.componentToHex(blue)}`;
     return HexColor.alpha(second) < 255 ? HexColor.withOpacity(rgb, HexColor.alpha(second) / 255) : rgb;
+  }
+
+  /**
+   * “仅文字色”的字色：优先用强调文字色（编辑器里显示的就是它）。很多主题的强调文字色是给高亮/气泡
+   * 底色配的浅色字，直接放到页面底上会看不清，这时退回强调底色（旧行为）。
+   */
+  static textOnlyColor(textColor: string, emphasisColor: string, context: ReaderRegexEmphasisContext): string {
+    const preferred = (textColor || '').trim();
+    if (!preferred) return emphasisColor;
+    const text = ReaderRegexBubbleStyleResolver.normalizeColor(preferred, emphasisColor);
+    const surface = ReaderRegexBubbleStyleResolver.normalizeColor(
+      context.surfaceColor,
+      context.darkMode ? '#111318' : '#FFFFFF'
+    );
+    const textContrast = ReaderRegexBubbleStyleResolver.contrastRatio(text, surface);
+    if (textContrast >= 3) return text;
+    return textContrast >= ReaderRegexBubbleStyleResolver.contrastRatio(emphasisColor, surface) ? text : emphasisColor;
+  }
+
+  /** WCAG 对比度（只看 RGB，不算透明度）。 */
+  static contrastRatio(first: string, second: string): number {
+    const a = ReaderRegexBubbleStyleResolver.relativeLuminance(first);
+    const b = ReaderRegexBubbleStyleResolver.relativeLuminance(second);
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  }
+
+  private static relativeLuminance(value: string): number {
+    const color = HexColor.rgb(ReaderRegexBubbleStyleResolver.normalizeColor(value, '#000000'));
+    const linear = (start: number): number => {
+      const channel = ReaderRegexBubbleStyleResolver.channel(color, start) / 255;
+      return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * linear(1) + 0.7152 * linear(3) + 0.0722 * linear(5);
   }
 
   static contrastTextColor(backgroundColor: string): string {

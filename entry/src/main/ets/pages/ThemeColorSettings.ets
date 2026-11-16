@@ -2491,7 +2491,8 @@ struct ThemeColorSettingsPage {
           .onSelect((index: number) => this.setTitleStyle(index))
       }
     }
-    if (this.titleHasColors()) {
+    // 仅文字色只用文字色，底色行藏起来免得误调。
+    if (this.titleHasColors() && this.effectiveTitle().mode !== 'text') {
       ThemeColorOption({
         title: '强调底色',
         description: this.titleDescription(this.currentEmphasis().title.color),
@@ -2505,6 +2506,8 @@ struct ThemeColorSettingsPage {
           this.setTitleColor(false, color);
         }
       })
+    }
+    if (this.titleHasColors()) {
       ThemeColorOption({
         title: '强调文字色',
         description: this.titleDescription(this.currentEmphasis().title.textColor),

@@ -92,3 +92,34 @@ assert.equal(hex.withOpacity('#1280FF', 1), '#FF1280FF');
 assert.equal(resolver.withAlpha('#80123456', 128), '#40123456');
 assert.equal(codec.decode(JSON.stringify([{id:'old',pattern:'x'}]))[0].fontWeight, 400);
 console.log('PASS: independent rule weights and ARGB colors survive codec, reader rendering and bubble effects');
+
+// “仅文字色”：优先用强调文字色；它在阅读底上看不清时退回强调底色；标题明确填的文字色总是照用。
+{
+  const Context = vm.runInContext('ReaderRegexEmphasisContext', sandbox);
+  const Title = vm.runInContext('ReaderTitleEmphasis', sandbox);
+  const context = (textColor) => {
+    const c = new Context();
+    c.inheritedMode = 'text';
+    c.inheritedColor = '#FBE3CB';
+    c.inheritedTextColor = textColor;
+    c.surfaceColor = '#FFF8F0';
+    return c;
+  };
+  const follow = new Rule();
+  follow.emphasisMode = 'inherit';
+  assert.equal(resolver.resolve(follow, context('#8C3A12'), false).textColor, '#8C3A12');
+  assert.equal(resolver.resolve(follow, context(''), false).textColor, '#FBE3CB');
+  const darkInk = context('#FFFFFF');
+  darkInk.inheritedColor = '#8C3A12';
+  assert.equal(resolver.resolve(follow, darkInk, false).textColor, '#8C3A12', 'unreadable text color falls back');
+
+  const titleRule = new Rule();
+  titleRule.emphasisMode = 'theme';
+  const base = context('#FFFFFF');
+  base.inheritedColor = '#8C3A12';
+  const plan = Title.plan(titleRule, { mode: 'text', bubbleStyle: '', color: '', textColor: '#FFF1E0' }, base);
+  assert.equal(resolver.resolve(plan.rule, plan.context, false).textColor, '#FFF1E0', 'explicit title text color wins');
+  const inherited = Title.plan(titleRule, { mode: 'text', bubbleStyle: '', color: '#FBE3CB', textColor: '' }, context('#8C3A12'));
+  assert.equal(resolver.resolve(inherited.rule, inherited.context, false).textColor, '#8C3A12');
+}
+console.log('PASS: text-only emphasis uses the emphasis text color and falls back to the fill only when unreadable');

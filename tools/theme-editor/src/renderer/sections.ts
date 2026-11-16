@@ -32,7 +32,8 @@ export interface Field {
   square?: boolean;
   viewBox?: [number, number];
   /** 对比度参照的底色字段。 */
-  vs?: string;
+  /** 对比度参照的颜色路径；可按当前模式的设置换参照。 */
+  vs?: string | ((mode: Mode) => string);
   icon?: boolean;
   /** 气泡边框：上传后弹出拉伸区域对话框，格子里多一个“拉伸区域…”按钮和设置概要。 */
   frameStretch?: boolean;
@@ -199,8 +200,10 @@ export const SECTIONS: Section[] = [
         when: (m) => mode(m, 'titleEmphasis.mode') === 'bubble' },
       { k: '{m}.titleEmphasis.color', label: '底色', type: 'color', alpha: true,
         hint: '不写时用正文强调的底色',
-        when: (m) => ['text', 'highlight', 'bubble'].includes(mode(m, 'titleEmphasis.mode')) },
-      { k: '{m}.titleEmphasis.textColor', label: '文字色', type: 'color', alpha: true, vs: '{m}.titleEmphasis.color',
+        when: (m) => ['highlight', 'bubble'].includes(mode(m, 'titleEmphasis.mode')) },
+      { k: '{m}.titleEmphasis.textColor', label: '文字色', type: 'color', alpha: true,
+        vs: (m) => mode(m, 'titleEmphasis.mode') === 'text' ? '{m}.reader.backgroundColor' : '{m}.titleEmphasis.color',
+        hint: '仅文字色：不写时用正文强调的文字色，它在阅读底上看不清时退回正文强调的底色',
         when: (m) => ['text', 'highlight', 'bubble'].includes(mode(m, 'titleEmphasis.mode')) },
       { g: '标题气泡 · 浅色' },
       { k: 'titleBubble.cap', label: '端饰', type: 'asset', kinds: ['vector', 'image'], square: true,

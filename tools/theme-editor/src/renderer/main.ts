@@ -478,7 +478,8 @@ function renderColor(f: Field, path: string, value: string, id: string): HTMLEle
   }
   if (f.vs) {
     const fg = value || base;
-    const bg = getPath(mp(f.vs)) || baseValue(mp(f.vs));
+    const vsPath = mp(typeof f.vs === 'function' ? f.vs(S.ui.mode) : f.vs);
+    const bg = getPath(vsPath) || baseValue(vsPath);
     if (isColor(fg, false) && isColor(bg, false)) {
       const ratio = contrast(fg, bg);
       wrap.append(h('span', { class: `ratio ${ratio >= 4.5 ? 'good' : 'bad'}`, title: '与底色的对比度，正文建议不低于 4.5' }, ratio.toFixed(1)));
