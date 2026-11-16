@@ -2314,6 +2314,7 @@ export struct ReaderFontSettingsEditor {
             accentColor: this.accentColor(),
             optionTitle: '文字颜色',
             directSelection: true,
+            rowDivider: true,
             onColorChange: (value: string) => {
               this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
                 target.customTextColor = this.normalizeColorInput(value, target.customTextColor || this.accentColor());
@@ -2340,6 +2341,7 @@ export struct ReaderFontSettingsEditor {
             accentColor: this.accentColor(),
             optionTitle: '高亮色块颜色',
             directSelection: true,
+            rowDivider: true,
             onColorChange: (value: string) => {
               this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
                 target.customHighlightColor = this.normalizeColorInput(value,
@@ -2401,6 +2403,7 @@ export struct ReaderFontSettingsEditor {
             accentColor: this.accentColor(),
             optionTitle: '强调气泡颜色',
             directSelection: true,
+            rowDivider: true,
             onColorChange: (value: string) => {
               this.updateRegexRule(index, (target: ReaderRegexFontRule) => {
                 target.customBubbleColor = this.normalizeColorInput(value,

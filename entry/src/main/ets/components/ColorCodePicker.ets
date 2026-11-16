@@ -11,10 +11,16 @@ class HsvColor {
   value: number = 0;
 }
 
+class ThemePaletteColor {
+  label: string = '';
+  color: string = '';
+}
+
 @Component
 export struct ColorCodePicker {
   @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  @StorageProp('themeRevision') themeRevision: number = 0;
   @Prop value: string = '#007DFF';
   @Prop placeholder: string = '#007DFF';
   @Prop appDarkMode: boolean = false;
@@ -26,6 +32,8 @@ export struct ColorCodePicker {
   @Prop optionTitle: string = '';
   @Prop hideOptionTrigger: boolean = false;
   @Prop colorMode: string = '';
+  /** 颜色行底部画一条和相邻设置行一样的分隔线。 */
+  @Prop rowDivider: boolean = false;
   @State pickerVisible: boolean = false;
   @State draftColor: string = '#007DFF';
   @State hue: number = 210;
@@ -33,8 +41,8 @@ export struct ColorCodePicker {
   @State colorBrightness: number = 100;
   @State originalColor: string = '#007DFF';
   @State pickerAreaWidth: number = 260;
-  @State pickerAreaHeight: number = 290;
-  @State hueAreaHeight: number = 290;
+  @State pickerAreaHeight: number = 240;
+  @State hueAreaHeight: number = 240;
   @State showPresetColors: boolean = false;
   onColorChange: (color: string) => void = (_color: string): void => {};
   onColorModeChange: (mode: string) => void = (_mode: string): void => {};
@@ -239,20 +247,66 @@ export struct ColorCodePicker {
     return this.clamp(ratio * this.hueAreaHeight - 3, -1, this.hueAreaHeight - 5);
   }
 
+  // 颜色都取当前主题；读 themeRevision 让切换主题后跟着重绘。
   private pageColor(): string {
-    return this.appDarkMode ? '#191B1F' : '#FFFFFF';
+    return this.themeRevision >= 0 ? ThemeRuntime.cardColor(this.appDarkMode) : '';
   }
 
   private inputColor(): string {
-    return this.appDarkMode ? '#24272D' : '#F0F2F5';
+    return this.themeRevision >= 0 ? ThemeRuntime.inputColor(this.appDarkMode) : '';
   }
 
   private primaryTextColor(): string {
-    return this.appDarkMode ? '#F2F3F5' : '#1F1F1F';
+    return this.themeRevision >= 0 ? ThemeRuntime.primaryTextColor(this.appDarkMode) : '';
   }
 
   private subTextColor(): string {
-    return this.appDarkMode ? '#8A8F98' : '#888888';
+    return this.themeRevision >= 0 ? ThemeRuntime.subTextColor(this.appDarkMode) : '';
+  }
+
+  private swatchBorderColor(): string {
+    return this.appDarkMode ? '#55FFFFFF' : '#24000000';
+  }
+
+  /** 取色面板顶部“主题配色”一排：当前主题的几种颜色，点一下直接取用。 */
+  private themePaletteColors(): ThemePaletteColor[] {
+    if (this.themeRevision < 0) {
+      return [];
+    }
+    const dark = this.appDarkMode;
+    const entries: string[][] = [
+      ['强调', ThemeRuntime.accentColor(dark)],
+      ['按钮', ThemeRuntime.buttonColor(dark)],
+      ['正文', ThemeRuntime.primaryTextColor(dark)],
+      ['次要', ThemeRuntime.subTextColor(dark)],
+      ['页面', ThemeRuntime.pageColor(dark)],
+      ['卡片', ThemeRuntime.cardColor(dark)],
+      ['危险', ThemeRuntime.dangerColor(dark)]
+    ];
+    return entries.map((entry: string[]): ThemePaletteColor => {
+      const item = new ThemePaletteColor();
+      item.label = entry[0];
+      item.color = HexColor.rgb(entry[1]);
+      return item;
+    });
+  }
+
+  private applyPaletteColor(color: string): void {
+    this.draftColor = this.allowAlpha ? HexColor.withOpacity(color, this.colorOpacity / 100) : color;
+    this.updateHsvFromColor(this.draftColor);
+  }
+
+  private isDraftRgb(color: string): boolean {
+    return HexColor.rgb(this.draftColor).toUpperCase() === color.toUpperCase();
+  }
+
+  private triggerFollowsDefault(): boolean {
+    return this.allowEmpty && this.value.trim() === '';
+  }
+
+  private triggerLabel(): string {
+    return this.triggerFollowsDefault() ? this.emptyOptionLabel :
+      this.normalizeColor(this.value, this.placeholder).toUpperCase();
   }
 
   private colorModeIndex(): number {
@@ -321,7 +375,7 @@ export struct ColorCodePicker {
               .height(28)
               .borderRadius(14)
               .backgroundColor(this.normalizeColor(this.value, this.placeholder))
-              .border({ width: 2, color: this.appDarkMode ? '#55FFFFFF' : '#22000000' })
+              .border({ width: 2, color: this.swatchBorderColor() })
               .onClick(() => {
                 this.openPicker();
               })
@@ -342,22 +396,39 @@ export struct ColorCodePicker {
               this.openPicker();
             })
         } else {
-          Row() {
+          // 和相邻设置行同样的透明底与左右对齐；右侧色值胶囊用主题浅填充，“跟随”状态染强调色。
+          Row({ space: AppSpacing.SM }) {
             Text(this.optionTitle)
               .fontSize(AppFontSize.BODY_LARGE)
               .fontColor(this.primaryTextColor())
               .layoutWeight(1)
-            Row()
-              .width(30)
-              .height(30)
-              .borderRadius(15)
-              .backgroundColor(this.normalizeColor(this.value, this.placeholder))
-              .border({ width: 2, color: this.appDarkMode ? '#55FFFFFF' : '#22000000' })
+            Row({ space: 6 }) {
+              Text(this.triggerLabel())
+                .fontSize(AppFontSize.CAPTION)
+                .fontFamily('monospace')
+                .fontColor(this.triggerFollowsDefault() ? this.accentColor : this.subTextColor())
+                .maxLines(1)
+              Row()
+                .width(20)
+                .height(20)
+                .borderRadius(10)
+                .backgroundColor(this.normalizeColor(this.value, this.placeholder))
+                .border({ width: 1.5, color: this.swatchBorderColor() })
+            }
+            .height(30)
+            .padding({ left: 10, right: 5 })
+            .borderRadius(15)
+            .backgroundColor(this.triggerFollowsDefault() ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) :
+              ThemeRuntime.softFillColor(this.appDarkMode))
+            .alignItems(VerticalAlign.Center)
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(16)
+              .fontColor([this.subTextColor()])
           }
           .width('100%')
-          .height(60)
-          .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-          .backgroundColor(this.pageColor())
+          .constraintSize({ minHeight: 60 })
+          .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
+          .border({ width: { bottom: this.rowDivider ? 0.5 : 0 }, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
           .alignItems(VerticalAlign.Center)
           .onClick(() => {
             this.openPicker();
@@ -387,7 +458,7 @@ export struct ColorCodePicker {
     }
       .width('100%')
       .bindSheet($$this.pickerVisible, this.colorPickerSheet(), {
-        height: this.allowAlpha ? 740 : 650,
+        height: this.allowAlpha ? 760 : 670,
         dragBar: true,
         showClose: false,
         backgroundColor: this.pageColor(),
@@ -401,7 +472,7 @@ export struct ColorCodePicker {
   colorPickerSheet() {
     Column({ space: AppSpacing.XL }) {
       Row({ space: AppSpacing.LG }) {
-        Text('选择颜色')
+        Text(this.optionTitle || '选择颜色')
           .fontSize(AppFontSize.HEADLINE)
           .fontWeight(FontWeight.Bold)
           .fontColor(this.primaryTextColor())
@@ -441,6 +512,38 @@ export struct ColorCodePicker {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
+      Column({ space: AppSpacing.SM }) {
+        Text('主题配色')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+        Row() {
+          ForEach(this.themePaletteColors(), (item: ThemePaletteColor) => {
+            Column({ space: 4 }) {
+              Row()
+                .width(28)
+                .height(28)
+                .borderRadius(14)
+                .backgroundColor(item.color)
+                .border({ width: 1.5, color: this.swatchBorderColor() })
+                .outline({ width: this.isDraftRgb(item.color) ? 2 : 0, color: this.accentColor, radius: 16,
+                  style: OutlineStyle.SOLID })
+              Text(item.label)
+                .fontSize(AppFontSize.CAPTION)
+                .fontColor(this.subTextColor())
+            }
+            .padding(3)
+            .onClick(() => {
+              this.applyPaletteColor(item.color);
+            })
+            .accessibilityText(`主题${item.label}色`)
+          }, (item: ThemePaletteColor) => `${item.label}${item.color}`)
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.SpaceBetween)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+
       Row({ space: AppSpacing.LG }) {
         Stack({ alignContent: Alignment.TopStart }) {
           Row()
@@ -470,11 +573,11 @@ export struct ColorCodePicker {
             .position({ x: this.pickerIndicatorX(), y: this.pickerIndicatorY() })
             .hitTestBehavior(HitTestMode.None)
         }
-        .height(290)
+        .height(240)
         .layoutWeight(1)
-        .borderRadius(6)
+        .borderRadius(14)
         .clip(true)
-        .border({ width: 1, color: this.appDarkMode ? '#44FFFFFF' : '#22000000' })
+        .border({ width: 1, color: this.swatchBorderColor() })
         .onAreaChange((_oldValue: Area, newValue: Area) => {
           this.updatePickerAreaSize(newValue);
         })
@@ -514,8 +617,8 @@ export struct ColorCodePicker {
             .hitTestBehavior(HitTestMode.None)
         }
         .width(38)
-        .height(290)
-        .borderRadius(4)
+        .height(240)
+        .borderRadius(10)
         .clip(false)
         .onAreaChange((_oldValue: Area, newValue: Area) => {
           this.updateHueAreaSize(newValue);
@@ -541,24 +644,26 @@ export struct ColorCodePicker {
         Row()
           .width(48)
           .height(36)
-          .borderRadius(4)
+          .borderRadius(10)
           .backgroundColor(this.originalColor)
-          .border({ width: 1, color: this.appDarkMode ? '#44FFFFFF' : '#22000000' })
+          .border({ width: 1, color: this.swatchBorderColor() })
         Text('→')
           .fontSize(AppFontSize.TITLE)
           .fontColor(this.subTextColor())
         Row()
           .width(48)
           .height(36)
-          .borderRadius(4)
+          .borderRadius(10)
           .backgroundColor(this.draftColor)
-          .border({ width: 1, color: this.appDarkMode ? '#44FFFFFF' : '#22000000' })
+          .border({ width: 1, color: this.swatchBorderColor() })
         TextInput({ text: this.draftColor, placeholder: this.allowAlpha ? '#AARRGGBB' : '#RRGGBB' })
           .height(40)
           .fontSize(AppFontSize.SUBTITLE)
+          .fontFamily('monospace')
           .fontColor(this.primaryTextColor())
-          .backgroundColor(Color.Transparent)
-          .borderRadius(ThemeRuntime.mediumRadius())
+          .placeholderColor(this.subTextColor())
+          .backgroundColor(this.inputColor())
+          .borderRadius(12)
           .layoutWeight(1)
           .onChange((text: string) => {
             if (this.allowAlpha ? !!HexColor.parseAlpha(text) : !!HexColor.parse(text)) {
@@ -605,7 +710,7 @@ export struct ColorCodePicker {
               .padding(0)
               .backgroundColor(color)
               .border({ width: this.draftColor === color ? 3 : 1,
-                color: this.draftColor === color ? this.primaryTextColor() : '#22000000' })
+                color: this.draftColor === color ? this.primaryTextColor() : this.swatchBorderColor() })
               .margin({ right: AppSpacing.MD, bottom: AppSpacing.SM })
               .onClick(() => {
                 this.draftColor = this.allowAlpha ? HexColor.withOpacity(color, this.colorOpacity / 100) : color;
@@ -619,16 +724,16 @@ export struct ColorCodePicker {
       Row({ space: AppSpacing.LG }) {
         Button('预置颜色')
           .height(42)
-          .fontColor(this.accentColor)
-          .backgroundColor(Color.Transparent)
+          .fontColor(this.primaryTextColor())
+          .backgroundColor(ThemeRuntime.softFillColor(this.appDarkMode))
           .layoutWeight(1)
           .onClick(() => {
             this.showPresetColors = !this.showPresetColors;
           })
         Button('确认')
           .height(42)
-          .fontColor(this.accentColor)
-          .backgroundColor(Color.Transparent)
+          .fontColor(ThemeRuntime.onAccentColor(HexColor.rgb(this.accentColor)))
+          .backgroundColor(this.accentColor)
           .layoutWeight(1)
           .onClick(() => {
             this.commitDraftColor();
