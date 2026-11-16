@@ -57,6 +57,7 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfCompanionSectionTitle') bookshelfCompanionSectionTitle: string = '';
   @StorageLink('bookshelfAutoRefresh') bookshelfAutoRefresh: boolean = true;
   @StorageLink('bookshelfImmersive') bookshelfImmersive: boolean = false;
+  @StorageLink('bookshelfImmersiveButtons') bookshelfImmersiveButtons: string = 'pull';
   @StorageLink('bookshelfRememberGroup') bookshelfRememberGroup: boolean = false;
   @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
   @StorageProp('accountDisplayName') accountDisplayName: string = '';
@@ -275,6 +276,15 @@ struct BookshelfSettingsPage {
         this.onDisplaySettingChanged();
       }
     })
+    if (this.bookshelfImmersive) {
+      this.itemDivider()
+      this.selectItem('顶部按钮', '下拉显示：在书架顶部下拉时出现，几秒后收起；只留菜单按钮：右上角一个按钮收进全部操作',
+        this.immersiveButtonsOptions(), this.immersiveButtonsSelectedIndex(),
+        (index: number) => {
+          this.bookshelfImmersiveButtons = index === 1 ? 'menu' : 'pull';
+          this.onDisplaySettingChanged();
+        })
+    }
     this.itemDivider()
     SettingSwitchRow({
       title: '记住打开分组',
@@ -547,6 +557,7 @@ struct BookshelfSettingsPage {
       this.bookshelfCompanionSectionTitle = settings.companionSectionTitle;
       this.bookshelfAutoRefresh = settings.autoRefresh;
       this.bookshelfImmersive = settings.immersive;
+      this.bookshelfImmersiveButtons = settings.immersiveButtons;
       this.bookshelfRememberGroup = settings.rememberGroup;
     } catch (e) {
       console.warn('重新加载书架显示设置失败:', e);
@@ -741,6 +752,7 @@ struct BookshelfSettingsPage {
     settings.companionSectionTitle = this.bookshelfCompanionSectionTitle;
     settings.autoRefresh = this.bookshelfAutoRefresh;
     settings.immersive = this.bookshelfImmersive;
+    settings.immersiveButtons = this.bookshelfImmersiveButtons;
     settings.rememberGroup = this.bookshelfRememberGroup;
     BookshelfDisplaySettingsStore.applyToStorage(settings);
     BookshelfDisplaySettingsStore.save(getContext(this), settings).catch((e: Error) => {
@@ -949,6 +961,14 @@ struct BookshelfSettingsPage {
 
   scopeOptions(): SelectOption[] {
     return [{ value: '全部应用' }, { value: '指定书籍' }];
+  }
+
+  immersiveButtonsOptions(): SelectOption[] {
+    return [{ value: '下拉显示' }, { value: '只留菜单按钮' }];
+  }
+
+  immersiveButtonsSelectedIndex(): number {
+    return this.bookshelfImmersiveButtons === 'menu' ? 1 : 0;
   }
 
   greetingModeOptions(): SelectOption[] {

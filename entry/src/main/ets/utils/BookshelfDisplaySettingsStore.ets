@@ -40,6 +40,8 @@ export class BookshelfDisplaySettings {
   autoRefresh: boolean = true;
   // 沉浸书架：进入书架时收起顶部按钮行和底栏，手指往下滑才出现。
   immersive: boolean = false;
+  // 沉浸时的顶部按钮：pull 只在顶部下拉时出现、几秒后收起；menu 右上角只留一个菜单按钮。
+  immersiveButtons: string = 'pull';
   // 冷启动时回到上次所在的分组和书籍分类；关闭后每次都从书架首页开始。
   rememberGroup: boolean = false;
 }
@@ -71,6 +73,7 @@ export class BookshelfDisplaySettingsStore {
   private static readonly KEY_COMPANION_SECTION_TITLE: string = 'bookshelfCompanionSectionTitle';
   private static readonly KEY_AUTO_REFRESH: string = 'bookshelfAutoRefresh';
   private static readonly KEY_IMMERSIVE: string = 'bookshelfImmersive';
+  private static readonly KEY_IMMERSIVE_BUTTONS: string = 'bookshelfImmersiveButtons';
   private static readonly KEY_REMEMBER_GROUP: string = 'bookshelfRememberGroup';
   static readonly DEFAULT_COMPANION_SECTION_TITLE: string = '书架里，还有故事';
   static readonly COMPANION_SECTION_TITLE_MAX_LENGTH: number = 20;
@@ -137,6 +140,8 @@ export class BookshelfDisplaySettingsStore {
       store, BookshelfDisplaySettingsStore.KEY_AUTO_REFRESH, true);
     settings.immersive = await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_IMMERSIVE, false);
+    settings.immersiveButtons = BookshelfDisplaySettingsStore.normalizeImmersiveButtons(
+      await BookshelfDisplaySettingsStore.getString(store, BookshelfDisplaySettingsStore.KEY_IMMERSIVE_BUTTONS, 'pull'));
     settings.rememberGroup = await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_REMEMBER_GROUP, false);
     if (!(await BookshelfDisplaySettingsStore.getBoolean(
@@ -183,6 +188,8 @@ export class BookshelfDisplaySettingsStore {
     await store.put(BookshelfDisplaySettingsStore.KEY_COMPANION_SECTION_TITLE, settings.companionSectionTitle);
     await store.put(BookshelfDisplaySettingsStore.KEY_AUTO_REFRESH, settings.autoRefresh !== false);
     await store.put(BookshelfDisplaySettingsStore.KEY_IMMERSIVE, settings.immersive === true);
+    await store.put(BookshelfDisplaySettingsStore.KEY_IMMERSIVE_BUTTONS,
+      BookshelfDisplaySettingsStore.normalizeImmersiveButtons(settings.immersiveButtons));
     await store.put(BookshelfDisplaySettingsStore.KEY_REMEMBER_GROUP, settings.rememberGroup === true);
     await store.flush();
     BookshelfDisplaySettingsStore.cachedSettings = BookshelfDisplaySettingsStore.clone(settings);
@@ -247,6 +254,8 @@ export class BookshelfDisplaySettingsStore {
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_COMPANION_SECTION_TITLE, settings.companionSectionTitle);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_AUTO_REFRESH, settings.autoRefresh !== false);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_IMMERSIVE, settings.immersive === true);
+    AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_IMMERSIVE_BUTTONS,
+      BookshelfDisplaySettingsStore.normalizeImmersiveButtons(settings.immersiveButtons));
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_REMEMBER_GROUP, settings.rememberGroup === true);
   }
 
@@ -288,6 +297,8 @@ export class BookshelfDisplaySettingsStore {
       AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_COMPANION_SECTION_TITLE) ?? '';
     settings.autoRefresh = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_AUTO_REFRESH) ?? true;
     settings.immersive = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_IMMERSIVE) ?? false;
+    settings.immersiveButtons = BookshelfDisplaySettingsStore.normalizeImmersiveButtons(
+      AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_IMMERSIVE_BUTTONS) ?? 'pull');
     settings.rememberGroup = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_REMEMBER_GROUP) ?? false;
     return settings;
   }
@@ -315,6 +326,10 @@ export class BookshelfDisplaySettingsStore {
       return value;
     }
     return 'tile';
+  }
+
+  static normalizeImmersiveButtons(value: string): string {
+    return value === 'menu' ? 'menu' : 'pull';
   }
 
   static normalizeGreetingMode(value: string): string {
@@ -367,6 +382,7 @@ export class BookshelfDisplaySettingsStore {
     settings.companionSectionTitle = source.companionSectionTitle || '';
     settings.autoRefresh = source.autoRefresh !== false;
     settings.immersive = source.immersive === true;
+    settings.immersiveButtons = BookshelfDisplaySettingsStore.normalizeImmersiveButtons(source.immersiveButtons);
     settings.rememberGroup = source.rememberGroup === true;
     return settings;
   }

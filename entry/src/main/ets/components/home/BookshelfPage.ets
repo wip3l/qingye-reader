@@ -357,7 +357,7 @@ export struct BookshelfPage {
   /** 筛选条件（FILTER_GROUPS 里的键）逗号分隔，同样只在本次运行内保留。 */
   @StorageLink('bookshelfFilterKeys') shelfFilterKeys: string = '';
   /** 书架搜索栏是否展开、框里的原始输入；同样只在本次运行内保留，主页返回键会先收起它。 */
-  @StorageLink('bookshelfSearchActive') shelfSearchActive: boolean = false;
+  @StorageLink('bookshelfSearchActive') @Watch('onShelfSearchActiveChanged') shelfSearchActive: boolean = false;
   @StorageLink('bookshelfSearchKeyword') @Watch('onShelfSearchKeywordChanged') shelfSearchKeyword: string = '';
   /** 实际参与筛选的关键词（转小写、空白归一），输入停顿后才从 shelfSearchKeyword 同步过来。 */
   @State shelfAppliedSearchKeyword: string = '';
@@ -575,6 +575,15 @@ export struct BookshelfPage {
   @StorageLink('bookshelfCompanionReadingNote') bookshelfCompanionReadingNote: boolean = true;
   /** 书架设置“沉浸书架”：进入书架时按钮行和底栏收起，手指往下滑才出现，往上滑在列表顶部也收起。 */
   @StorageLink('bookshelfImmersive') @Watch('onShelfImmersiveChanged') bookshelfImmersive: boolean = false;
+  /** 沉浸时的顶部按钮：pull 只在顶部下拉时出现、几秒后收起；menu 右上角只留一个菜单按钮。 */
+  @StorageLink('bookshelfImmersiveButtons') @Watch('onShelfImmersiveButtonsChanged') bookshelfImmersiveButtons: string = 'pull';
+  /** 下拉显示时按钮行下方的自动收起倒计时细线：1 为刚出现，缩到 0 时收起。 */
+  @State shelfAutoHideProgress: number = 0;
+  @State shelfAutoHideLineVisible: boolean = false;
+  /** 只留菜单按钮时，滚动中按钮变淡。 */
+  @State shelfSoloMenuScrolling: boolean = false;
+  /** 只留菜单按钮时的一级菜单。 */
+  @State showShelfSoloMenu: boolean = false;
   /** 陪伴布局左上角问候语：time 内置按时段，custom 用户自写两行（可含占位符），off 不显示。 */
   @StorageLink('bookshelfGreetingMode') bookshelfGreetingMode: string = 'time';
   @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
@@ -681,6 +690,11 @@ export struct BookshelfPage {
   aboutToDisappear(): void {
     this.shelfComponentActive = false;
     this.stopShelfRefreshTicker();
+    this.stopShelfAutoHide();
+    if (this.shelfSoloDimTimer >= 0) {
+      clearTimeout(this.shelfSoloDimTimer);
+      this.shelfSoloDimTimer = -1;
+    }
     ShelfCoverLocator.unregister(this.shelfCoverLocate);
     this.discardShelfOpeningBackdrop();
     this.cancelTileGroupMotion();
@@ -762,6 +776,7 @@ export struct BookshelfPage {
       this.bookshelfCompanionSectionTitle = settings.companionSectionTitle;
       // 记住打开分组只在冷启动时读一次，这里只放进 AppStorage，免得长按改问候语等按内存值保存时把它冲掉。
       AppStorage.setOrCreate('bookshelfRememberGroup', settings.rememberGroup);
+      this.bookshelfImmersiveButtons = settings.immersiveButtons;
       this.bookshelfImmersive = settings.immersive;
       // 书架挂载（冷启动）时直接从收起状态开始；书还没读出来时 shelfHeaderCollapseValue 为 0，读出来后首帧就是收起的。
       if (settings.immersive) this.collapseShelfChromeForImmersive(false);
@@ -883,6 +898,8 @@ export struct BookshelfPage {
         this.activeShelfGroupId = 0;
       }
       this.applyShelfScope();
+      // 只留菜单按钮时标题行高度不变，书读出来后补报一次底栏状态（冷启动时底栏已收起）。
+      if (this.shelfImmersiveActive()) this.reportShelfBarCollapse();
       this.reloadShelfDataSources(forceDataSourceReload);
       this.refreshOfflineBookUrls();
       this.refreshShelfCoverCache(this.books);
@@ -1661,6 +1678,15 @@ export struct BookshelfPage {
   private shelfImmersivePendingCollapse: boolean = false;
   /** 沉浸时顶部下拉多远放出按钮行和底栏，比刷新阈值小得多。 */
   private static readonly IMMERSIVE_REVEAL_PULL: number = 12;
+  /** 沉浸时底栏的收起量，0 到 CollapsingHeader.DISTANCE；按钮行另算，往回滑只放出底栏。 */
+  private shelfBarCollapse: number = 0;
+  private shelfAutoHideTimer: number = -1;
+  private shelfAutoHideStartTimer: number = -1;
+  private shelfSoloDimTimer: number = -1;
+  /** 下拉显示的按钮行停留多久没碰就收起。 */
+  private static readonly IMMERSIVE_AUTO_HIDE_MS: number = 4000;
+  /** 一级菜单收起后再弹二级菜单的间隔，两个气泡挂在同一个按钮上，太快会互相打断。 */
+  private static readonly SOLO_MENU_SWAP_DELAY: number = 160;
   private shelfListScroller: ListScroller = new ListScroller();
   private shelfTileScroller: Scroller = new Scroller();
 
@@ -1779,9 +1805,9 @@ export struct BookshelfPage {
               .fontSize(AppFontSize.DISPLAY)
               .fontWeight(FontWeight.Bold)
               .fontColor(this.primaryTextColor())
-          } else if (!this.isCompanionLayout()) {
+          } else if (!this.shelfSoloMenuMode() && !this.isCompanionLayout()) {
             this.shelfGroupSwitcher()
-          } else if (this.shelfBaseGroupId() === -1) {
+          } else if (!this.shelfSoloMenuMode() && this.shelfBaseGroupId() === -1) {
             // 陪伴布局左上角不放标题，分组改由右侧图标切换；只有“未分组”没有单独的分组页，留个名字说明当前在看什么。
             Text(this.shelfGroupTitle())
               .fontSize(AppFontSize.TITLE)
@@ -1797,6 +1823,9 @@ export struct BookshelfPage {
               accessibilityLabel: '退出多选',
               onTap: () => this.exitBookMultiSelect()
             })
+          } else if (this.shelfSoloMenuMode()) {
+            Blank()
+            this.shelfSoloMenuButton()
           } else {
             Blank()
 
@@ -1818,15 +1847,40 @@ export struct BookshelfPage {
           top: this.statusBarHeight
         })
         .alignItems(VerticalAlign.Center)
-        .opacity(CollapsingHeader.contentOpacity(this.shelfHeaderCollapseValue()))
+        .opacity(this.shelfSoloMenuMode() ? (this.shelfSoloMenuScrolling ? 0.35 : 1) :
+          CollapsingHeader.contentOpacity(this.shelfHeaderCollapseValue()))
         .hitTestBehavior(CollapsingHeader.acceptsTouch(this.shelfHeaderCollapseValue()) ? HitTestMode.Default : HitTestMode.None)
         // 标题栏里的按钮各自响应单击，双击只在空白处和标题文字上生效。
         .gesture(TapGesture({ count: 2 }).onAction(() => this.toggleShelfPrivateByHeaderDoubleTap()))
+        .onTouch((event: TouchEvent) => {
+          // 下拉显示的按钮行被碰到就重新计时。
+          if (event.type === TouchType.Down && this.shelfAutoHideLineVisible && this.shelfImmersivePullMode()) {
+            this.startShelfAutoHide();
+          }
+        })
+
+        if (this.shelfAutoHideLineVisible && this.shelfImmersivePullMode()) {
+          Row()
+            .width(`calc(100% - ${AppSpacing.XL * 2}vp)`)
+            .height(2)
+            .borderRadius(1)
+            .backgroundColor(this.accentColor())
+            .opacity(0.5 * CollapsingHeader.contentOpacity(this.shelfHeaderCollapseValue()))
+            .scale({ x: this.shelfAutoHideProgress, centerX: 0 })
+            .margin({ bottom: 2 })
+            .hitTestBehavior(HitTestMode.None)
+            .accessibilityLevel('no')
+        }
       }
       .width('100%')
       .height(56 + this.statusBarHeight - this.shelfHeaderCollapseValue())
       .clip(!this.shelfCategoryAnimating)
       .onAreaChange((_oldArea: Area, newArea: Area) => {
+        // 沉浸时底栏和按钮行分开收放，底栏按自己的收起量报。
+        if (this.shelfImmersiveActive()) {
+          this.reportShelfBarCollapse();
+          return;
+        }
         this.onHeaderCollapseChange((56 + this.statusBarHeight - Number(newArea.height)) /
           CollapsingHeader.DISTANCE);
       })
@@ -1856,6 +1910,8 @@ export struct BookshelfPage {
           top: this.statusBarHeight + 56 +
             (this.shelfSearchActive ? BookshelfPage.SEARCH_BAR_HEIGHT + AppSpacing.MD : 0),
           buttonTop: this.statusBarHeight + 8,
+          // 只留菜单按钮时没有分类按钮，收起状态不画按钮底板。
+          collapsedButton: !this.shelfSoloMenuMode(),
           darkMode: this.appDarkMode, surfaceColor: this.cardColor(), accentColor: this.accentGlowColor(),
           touching: this.shelfScopeTabsTouching && this.shelfCategoryExpanded,
           touchX: this.shelfScopeTabsTouchX, touchY: this.shelfScopeTabsTouchY
@@ -4066,23 +4122,54 @@ export struct BookshelfPage {
     const reveal = CollapsingHeader.backdropReveal(offset);
     if (reveal !== this.shelfHeaderBackdropReveal) this.shelfHeaderBackdropReveal = reveal;
     if (this.shelfCategoryAnimating) return;
-    const next = CollapsingHeader.next(this.shelfHeaderCollapse, delta, this.shelfCollapseOffset(offset));
+    if (this.shelfImmersiveActive()) {
+      this.onShelfImmersiveScroll(delta, offset);
+      return;
+    }
+    const next = CollapsingHeader.next(this.shelfHeaderCollapse, delta, offset);
     if (next !== this.shelfHeaderCollapse) {
       this.shelfHeaderCollapse = next;
     }
   }
 
   /**
-   * 收起量的上限按列表滚动距离算：在顶部时标题行收不起来。沉浸书架不受这个限制，在顶部往上推也收起，
-   * 所以按已滚过整段收起距离处理。
+   * 沉浸时的滚动。收起量不受列表顶部限制（在顶部往上推也收起），所以按已滚过整段收起距离算。
+   * 底栏上滑收起、往回滑放出；按钮行只跟着上滑收起，往回滑不出来，要在顶部下拉（revealShelfChromeOnPull）。
+   * 只留菜单按钮时按钮行不收，滚动中变淡。
    */
-  shelfCollapseOffset(offset: number): number {
-    return this.shelfImmersiveActive() ? Math.max(offset, CollapsingHeader.DISTANCE) : offset;
+  onShelfImmersiveScroll(delta: number, offset: number): void {
+    const cap = Math.max(offset, CollapsingHeader.DISTANCE);
+    const bar = CollapsingHeader.next(this.shelfBarCollapse, delta, cap);
+    if (bar !== this.shelfBarCollapse) {
+      this.shelfBarCollapse = bar;
+      this.reportShelfBarCollapse();
+    }
+    if (this.bookshelfImmersiveButtons === 'menu') {
+      this.markShelfSoloScrolling();
+      return;
+    }
+    if (delta > 0) {
+      const next = CollapsingHeader.next(this.shelfHeaderCollapse, delta, cap);
+      if (next !== this.shelfHeaderCollapse) {
+        this.shelfHeaderCollapse = next;
+        this.stopShelfAutoHide();
+      }
+    }
   }
 
   /** 沉浸书架生效：多选和书架内搜索时顶栏照常固定显示。 */
   shelfImmersiveActive(): boolean {
     return this.bookshelfImmersive && !this.isBookMultiSelect && !this.shelfSearchActive;
+  }
+
+  /** 沉浸且顶部按钮为“下拉显示”。 */
+  shelfImmersivePullMode(): boolean {
+    return this.shelfImmersiveActive() && this.bookshelfImmersiveButtons !== 'menu';
+  }
+
+  /** 沉浸且顶部按钮为“只留菜单按钮”；分组页那一层有自己的标题栏，不算。 */
+  shelfSoloMenuMode(): boolean {
+    return this.shelfImmersiveActive() && this.bookshelfImmersiveButtons === 'menu' && !this.isTileGroupPage();
   }
 
   onShelfEnterTick(): void {
@@ -4099,7 +4186,10 @@ export struct BookshelfPage {
     if (this.bookshelfImmersive) return;
     // 关掉沉浸后标题行回到按滚动距离收起的规则：在顶部附近的直接展开。
     this.shelfImmersivePendingCollapse = false;
+    this.stopShelfAutoHide();
+    this.showShelfSoloMenu = false;
     this.tileGroupBarCollapse = 0;
+    this.shelfBarCollapse = 0;
     const page = this.shelfCategoryPage(this.shelfPageKey());
     const offset = Math.max(0, this.isTileLayout() ? page.tileOffset : page.listOffset);
     if (this.shelfHeaderCollapse > offset) {
@@ -4110,31 +4200,123 @@ export struct BookshelfPage {
     this.reportShelfBarCollapse();
   }
 
-  /** 进入书架时收起按钮行和底栏（底栏跟着标题行的收起量走）。 */
+  onShelfImmersiveButtonsChanged(): void {
+    this.showShelfSoloMenu = false;
+    if (!this.shelfImmersiveActive()) return;
+    this.collapseShelfChromeForImmersive(true);
+  }
+
+  onShelfSearchActiveChanged(): void {
+    if (this.shelfSearchActive) {
+      // 搜索时顶栏固定显示（只留菜单按钮时换回完整按钮行）。
+      this.stopShelfAutoHide();
+      this.showShelfSoloMenu = false;
+      if (this.bookshelfImmersive && this.shelfHeaderCollapse > 0) {
+        animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => {
+          this.shelfHeaderCollapse = 0;
+        });
+      }
+      return;
+    }
+    if (this.shelfImmersivePullMode() && this.shelfHeaderCollapse === 0) this.startShelfAutoHide();
+  }
+
+  /** 进入书架时收起底栏；下拉显示同时收起按钮行，只留菜单按钮时按钮行（那一个圆钮）保持显示。 */
   collapseShelfChromeForImmersive(animated: boolean): void {
     this.shelfImmersivePendingCollapse = false;
+    this.stopShelfAutoHide();
     if (this.isTileGroupPage()) {
       this.tileGroupBarCollapse = CollapsingHeader.DISTANCE;
       this.reportShelfBarCollapse();
       return;
     }
-    if (this.shelfHeaderCollapse >= CollapsingHeader.DISTANCE) return;
-    if (animated) {
-      animateTo({ duration: 250, curve: Curve.FastOutSlowIn }, () => {
-        this.shelfHeaderCollapse = CollapsingHeader.DISTANCE;
-      });
-    } else {
-      this.shelfHeaderCollapse = CollapsingHeader.DISTANCE;
+    this.shelfBarCollapse = CollapsingHeader.DISTANCE;
+    const headerTarget = this.bookshelfImmersiveButtons === 'menu' ? 0 : CollapsingHeader.DISTANCE;
+    if (this.shelfHeaderCollapse !== headerTarget) {
+      if (animated) {
+        animateTo({ duration: 250, curve: Curve.FastOutSlowIn }, () => {
+          this.shelfHeaderCollapse = headerTarget;
+        });
+      } else {
+        this.shelfHeaderCollapse = headerTarget;
+      }
     }
+    this.reportShelfBarCollapse();
   }
 
-  /** 沉浸时在列表顶部往下拉：先把按钮行和底栏放出来，继续拉到原来的距离照常刷新。 */
+  /** 沉浸时在列表顶部往下拉：先放出底栏（下拉显示还放出按钮行并开始倒计时），继续拉到原来的距离照常刷新。 */
   revealShelfChromeOnPull(offset: number): void {
     if (!this.shelfImmersiveActive() || offset < BookshelfPage.IMMERSIVE_REVEAL_PULL) return;
-    if (this.shelfHeaderCollapse <= 0) return;
+    if (this.shelfBarCollapse > 0) {
+      this.shelfBarCollapse = 0;
+      this.reportShelfBarCollapse();
+    }
+    if (this.bookshelfImmersiveButtons === 'menu' || this.shelfHeaderCollapse <= 0) return;
     animateTo({ duration: 220, curve: Curve.FastOutSlowIn }, () => {
       this.shelfHeaderCollapse = 0;
     });
+    this.startShelfAutoHide();
+  }
+
+  /**
+   * 下拉显示的按钮行自动收起：细线 4 秒缩到头时收起。碰按钮行重新计时；到点时开着它的菜单就再等一轮。
+   */
+  startShelfAutoHide(): void {
+    this.stopShelfAutoHide();
+    this.shelfAutoHideLineVisible = true;
+    animateTo({ duration: 0 }, () => {
+      this.shelfAutoHideProgress = 1;
+    });
+    // 下一帧再开始缩短，免得和上面置满合成一次赋值。
+    this.shelfAutoHideStartTimer = setTimeout((): void => {
+      this.shelfAutoHideStartTimer = -1;
+      animateTo({ duration: BookshelfPage.IMMERSIVE_AUTO_HIDE_MS, curve: Curve.Linear }, () => {
+        this.shelfAutoHideProgress = 0;
+      });
+    }, 16);
+    this.shelfAutoHideTimer = setTimeout((): void => {
+      this.shelfAutoHideTimer = -1;
+      if (!this.shelfComponentActive || !this.shelfImmersivePullMode() || this.shelfHeaderCollapse > 0) {
+        this.stopShelfAutoHide();
+        return;
+      }
+      if (this.showShelfGroupMenu || this.showShelfFilterMenu || this.showShelfMoreMenu) {
+        this.startShelfAutoHide();
+        return;
+      }
+      this.stopShelfAutoHide();
+      animateTo({ duration: 250, curve: Curve.FastOutSlowIn }, () => {
+        this.shelfHeaderCollapse = CollapsingHeader.DISTANCE;
+      });
+    }, BookshelfPage.IMMERSIVE_AUTO_HIDE_MS);
+  }
+
+  stopShelfAutoHide(): void {
+    if (this.shelfAutoHideTimer >= 0) {
+      clearTimeout(this.shelfAutoHideTimer);
+      this.shelfAutoHideTimer = -1;
+    }
+    if (this.shelfAutoHideStartTimer >= 0) {
+      clearTimeout(this.shelfAutoHideStartTimer);
+      this.shelfAutoHideStartTimer = -1;
+    }
+    if (this.shelfAutoHideLineVisible) this.shelfAutoHideLineVisible = false;
+  }
+
+  /** 只留菜单按钮时滚动中把圆钮调淡，停下 300ms 后恢复。 */
+  markShelfSoloScrolling(): void {
+    if (!this.shelfSoloMenuScrolling) {
+      animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+        this.shelfSoloMenuScrolling = true;
+      });
+    }
+    if (this.shelfSoloDimTimer >= 0) clearTimeout(this.shelfSoloDimTimer);
+    this.shelfSoloDimTimer = setTimeout((): void => {
+      this.shelfSoloDimTimer = -1;
+      animateTo({ duration: 250, curve: Curve.EaseOut }, () => {
+        this.shelfSoloMenuScrolling = false;
+      });
+    }, 300);
   }
 
   /** 沉浸时分组页的滚动：标题栏不动，只收放底栏。 */
@@ -4155,18 +4337,36 @@ export struct BookshelfPage {
   }
 
   /**
-   * 书架标题行的高度变化会经 onAreaChange 报给首页；分组页那一层和进出分组页时高度不变，这里补报一次。
-   * 非沉浸时分组页沿用书架的收起量（和以前一样）。
+   * 报给首页的底栏收起量。非沉浸时就是标题行的收起量（平时由标题行 onAreaChange 报，进出分组页时补报，
+   * 分组页沿用书架的值，和以前一样）；沉浸时底栏单独记，书架和分组页各一份，没有书时不收。
    */
   reportShelfBarCollapse(): void {
-    const value = this.isTileGroupPage() && this.shelfImmersiveActive() ? this.tileGroupBarCollapse :
-      this.shelfHeaderCollapseValue();
+    let value = this.shelfHeaderCollapseValue();
+    if (this.shelfImmersiveActive()) {
+      value = this.isTileGroupPage() ? this.tileGroupBarCollapse :
+        (!this.isLoading && this.books.length > 0 ? this.shelfBarCollapse : 0);
+    }
     this.onHeaderCollapseChange(value / CollapsingHeader.DISTANCE);
   }
 
   onShelfListScrollStop(offset: number): void {
     if (this.shelfCategoryAnimating) return;
-    const target = CollapsingHeader.settle(this.shelfHeaderCollapse, this.shelfCollapseOffset(offset));
+    if (this.shelfImmersiveActive()) {
+      const bar = CollapsingHeader.settle(this.shelfBarCollapse, CollapsingHeader.DISTANCE);
+      if (bar !== this.shelfBarCollapse) {
+        this.shelfBarCollapse = bar;
+        this.reportShelfBarCollapse();
+      }
+      // 下拉显示：按钮行停在半截时直接收起（往上滑就收回）。
+      if (this.bookshelfImmersiveButtons !== 'menu' && this.shelfHeaderCollapse > 0 &&
+        this.shelfHeaderCollapse < CollapsingHeader.DISTANCE) {
+        animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => {
+          this.shelfHeaderCollapse = CollapsingHeader.DISTANCE;
+        });
+      }
+      return;
+    }
+    const target = CollapsingHeader.settle(this.shelfHeaderCollapse, offset);
     if (target !== this.shelfHeaderCollapse) {
       animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => {
         this.shelfHeaderCollapse = target;
@@ -4193,6 +4393,8 @@ export struct BookshelfPage {
   }
 
   shelfHeaderBackdropHeight(): number {
+    // 只留菜单按钮时标题行只剩一个自带底板的圆钮，顶栏不铺磨砂，内容一直透到状态栏下。
+    if (this.shelfSoloMenuMode()) return this.statusBarHeight;
     // 搜索框的底边不包含下面的间距和沉浸光感分类栏。
     return this.statusBarHeight + 56 - this.shelfHeaderCollapseValue() +
       (this.shelfSearchActive ? BookshelfPage.SEARCH_BAR_HEIGHT : 0);
@@ -10724,6 +10926,148 @@ export struct BookshelfPage {
    * 书架和分组页的标题栏各有一个；只有当前那一层的按钮挂菜单，免得两处同时弹出。
    * @Builder 按值传参不随状态刷新，所以只传固定的“属于哪一层”，当前在哪一层在这里现读。
    */
+  /**
+   * 沉浸书架“只留菜单按钮”：右上角一个圆钮，点开一级菜单（分组、分类栏、筛选、布局、排序）；
+   * 选分组、筛选、布局、排序时收起一级菜单，再在同一个按钮上弹出原来那几个按钮的菜单。有筛选时亮红点。
+   */
+  @Builder
+  shelfSoloMenuButton() {
+    Row() {
+      Row() {
+        Row() {
+          Stack({ alignContent: Alignment.TopEnd }) {
+            this.shelfHeaderCircleButton($r('sys.symbol.more'), this.showShelfSoloMenu, this.shelfSoloMenuAccessibilityText(),
+              () => {
+                this.showShelfSoloMenu = !this.showShelfSoloMenu;
+                this.showShelfGroupMenu = false;
+                this.showShelfFilterMenu = false;
+                this.showShelfMoreMenu = false;
+              })
+            if (this.shelfFilterKeyList().length > 0) {
+              Row()
+                .width(9)
+                .height(9)
+                .borderRadius(4.5)
+                .backgroundColor(ThemeRuntime.dangerColor(this.appDarkMode))
+                .border({ width: 1.5, color: this.cardColor() })
+                .margin({ top: 3, right: 3 })
+                .hitTestBehavior(HitTestMode.None)
+            }
+          }
+          .width(BookshelfPage.HEADER_CONTROL_SIZE)
+          .height(BookshelfPage.HEADER_CONTROL_SIZE)
+          .bindPopup(this.showShelfSoloMenu, this.shelfMenuPopupOptions((): void => {
+            this.shelfSoloDropdown()
+          }, Placement.BottomRight, () => {
+            this.showShelfSoloMenu = false;
+          }))
+        }
+        .bindPopup(this.showShelfMoreMenu && this.shelfSoloMenuMode(), this.shelfMenuPopupOptions((): void => {
+          this.shelfMoreDropdown()
+        }, Placement.BottomRight, () => {
+          this.showShelfMoreMenu = false;
+        }))
+      }
+      .bindPopup(this.showShelfFilterMenu && this.shelfSoloMenuMode(), this.shelfMenuPopupOptions((): void => {
+        this.shelfFilterDropdown()
+      }, Placement.BottomRight, () => {
+        this.showShelfFilterMenu = false;
+        this.shelfFilterMenuPage = '';
+      }))
+    }
+    .bindPopup(this.showShelfGroupMenu && this.shelfSoloMenuMode(), this.shelfMenuPopupOptions((): void => {
+      this.shelfGroupDropdown()
+    }, Placement.BottomRight, () => {
+      this.showShelfGroupMenu = false;
+    }))
+  }
+
+  shelfSoloMenuAccessibilityText(): string {
+    const count = this.shelfFilterKeyList().length;
+    return count > 0 ? `书架操作，已筛选 ${count} 项` : '书架操作';
+  }
+
+  @Builder
+  shelfSoloDropdown() {
+    Column({ space: AppSpacing.XXS }) {
+      this.shelfSoloMenuItem('分组', this.shelfBaseGroupId() === 0 ? '全部书籍' : this.shelfGroupTitle(),
+        $r('sys.symbol.folder'), false, true, (): void => this.openShelfMenuFromSolo('group'))
+      if (this.bookshelfTypeCategoryEnabled) {
+        this.shelfSoloMenuItem('分类栏', this.shelfCategoryExpanded ? '已展开' : '已收起',
+          $r('sys.symbol.square_stack_3d'), false, false, (): void => {
+            this.showShelfSoloMenu = false;
+            this.toggleShelfCategory();
+          })
+      }
+      Divider()
+        .strokeWidth(0.5)
+        .color(ThemeRuntime.hairlineColor(this.appDarkMode))
+        .margin({ top: AppSpacing.XXS, bottom: AppSpacing.XXS, left: 12, right: 12 })
+      this.shelfSoloMenuItem('筛选',
+        this.shelfFilterKeyList().length > 0 ? `已筛选 ${this.shelfFilterKeyList().length} 项` : '未筛选',
+        $r('sys.symbol.funnel'), this.shelfFilterKeyList().length > 0, true, (): void => this.openShelfMenuFromSolo('filter'))
+      this.shelfSoloMenuItem('布局', this.shelfLayoutModeLabel(), $r('sys.symbol.square_grid_2x2'), false, true,
+        (): void => this.openShelfMenuFromSolo('layout'))
+      this.shelfSoloMenuItem('排序', this.sortModeLabel(), $r('sys.symbol.text_arrow_up_and_down'), false, true,
+        (): void => this.openShelfMenuFromSolo('sort'))
+    }
+    .width(224)
+    .padding(BookshelfPage.MENU_PADDING)
+  }
+
+  @Builder
+  shelfSoloMenuItem(label: string, value: string, icon: Resource, highlight: boolean, chevron: boolean,
+    action: () => void) {
+    Row({ space: AppSpacing.SM }) {
+      SymbolGlyph(icon)
+        .fontSize(18)
+        .fontColor([this.primaryTextColor()])
+      Text(label)
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontColor(this.primaryTextColor())
+        .layoutWeight(1)
+      Text(value)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(highlight ? this.accentColor() : this.subTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .constraintSize({ maxWidth: 96 })
+      if (chevron) {
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(12)
+          .fontColor([this.subTextColor()])
+      }
+    }
+    .width('100%')
+    .height(BookshelfPage.MENU_ITEM_HEIGHT)
+    .padding({ left: 12, right: 12 })
+    .borderRadius(this.shelfMenuItemRadius())
+    .accessibilityText(`${label}：${value}`)
+    .onClick(() => action())
+  }
+
+  /** 从一级菜单进分组、筛选、布局、排序：先收一级菜单，稍后在同一个圆钮上弹出对应菜单。 */
+  openShelfMenuFromSolo(page: string): void {
+    this.showShelfSoloMenu = false;
+    setTimeout((): void => {
+      if (!this.shelfComponentActive || !this.shelfSoloMenuMode()) return;
+      if (page === 'group') {
+        this.showShelfGroupMenu = true;
+      } else if (page === 'filter') {
+        this.shelfFilterMenuPage = '';
+        this.showShelfFilterMenu = true;
+      } else {
+        this.shelfMoreMenuPage = page;
+        this.showShelfMoreMenu = true;
+      }
+    }, BookshelfPage.SOLO_MENU_SWAP_DELAY);
+  }
+
+  shelfLayoutModeLabel(): string {
+    return this.isCompanionLayout() ? '陪伴' : (this.bookshelfLayoutMode === 'tile' ? '平铺' :
+      (this.bookshelfLayoutMode === 'loose' ? '宽松' : '紧凑'));
+  }
+
   @Builder
   shelfMoreButton(onGroupLayer: boolean) {
     Row() {
@@ -10772,8 +11116,7 @@ export struct BookshelfPage {
         this.sortDropdownItem('最近更新', 'recentUpdate')
         this.sortDropdownItem('名称', 'name')
       } else {
-        this.shelfMoreMenuItem('布局', this.isCompanionLayout() ? '陪伴' : (this.bookshelfLayoutMode === 'tile' ? '平铺' :
-          (this.bookshelfLayoutMode === 'loose' ? '宽松' : '紧凑')), $r('sys.symbol.square_grid_2x2'), 'layout')
+        this.shelfMoreMenuItem('布局', this.shelfLayoutModeLabel(), $r('sys.symbol.square_grid_2x2'), 'layout')
         this.shelfMoreMenuItem('排序', this.sortModeLabel(), $r('sys.symbol.text_arrow_up_and_down'), 'sort')
       }
     }
