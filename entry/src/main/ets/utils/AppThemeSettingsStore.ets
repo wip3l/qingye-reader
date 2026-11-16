@@ -19,12 +19,15 @@ import { ReaderThemeHelper, ReaderThemeItem } from './ReaderThemeHelper';
 import { CloudSyncChangeTracker } from '../account/CloudSyncChangeTracker';
 import { HexColor } from './HexColor';
 import {
+  CHAPTER_HEAD_NONE,
   COMMENT_IMAGE_NONE,
   commentBubbleHasImage,
   commentBubbleIsEmpty,
   copyCommentImage,
   isPackThemeId,
+  normalizeChapterHead,
   normalizeCommentBubble,
+  ThemePackageChapterHead,
   ThemePackageCommentBubble
 } from '../theme/share/ThemePackageFormat';
 
@@ -570,6 +573,21 @@ export class AppThemeSettingsStore {
       }
       tokens.title = next;
     }
+    // 章首装饰整套换：'none' 清空，pack:<id> 取那个包这个模式的（包不在这台设备上时等于没有）。
+    const head = AppThemeSettingsStore.normalizeChapterHeadOverride(override.chapterHead);
+    if (head === CHAPTER_HEAD_NONE) {
+      tokens.chapterHead = new ThemePackageChapterHead();
+    } else if (head) {
+      const pack = BuiltinThemeRegistry.findById(head);
+      tokens.chapterHead = pack.id === head ?
+        normalizeChapterHead((darkMode ? pack.dark : pack.light).regexEmphasis.chapterHead) : new ThemePackageChapterHead();
+    }
+  }
+
+  /** 只收空串、'none' 和 pack:<id>。 */
+  static normalizeChapterHeadOverride(value: string | null | undefined): string {
+    const text = typeof value === 'string' ? value.trim() : '';
+    return text === CHAPTER_HEAD_NONE || isPackThemeId(text) ? text.substring(0, 80) : '';
   }
 
   /**
@@ -599,7 +617,8 @@ export class AppThemeSettingsStore {
 
   static hasEmphasisOverride(override: ThemeEmphasisOverrides): boolean {
     return !!(override.mode || override.bubbleStyle || override.color || override.textColor) ||
-      !commentBubbleIsEmpty(override.comment) || AppThemeSettingsStore.titleEmphasisOverridden(override.title);
+      !commentBubbleIsEmpty(override.comment) || AppThemeSettingsStore.titleEmphasisOverridden(override.title) ||
+      !!AppThemeSettingsStore.normalizeChapterHeadOverride(override.chapterHead);
   }
 
   static hasRadiusOverride(radius: ThemeRadiusOverrides): boolean {
@@ -698,6 +717,7 @@ export class AppThemeSettingsStore {
     result.textColor = HexColor.parseAlpha(source.textColor || '');
     result.comment = normalizeCommentBubble(source.comment);
     result.title = AppThemeSettingsStore.normalizeTitleEmphasis(source.title);
+    result.chapterHead = AppThemeSettingsStore.normalizeChapterHeadOverride(source.chapterHead);
     return result;
   }
 

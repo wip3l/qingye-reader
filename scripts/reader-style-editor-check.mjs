@@ -164,7 +164,11 @@ try {
   Object.assign(sandbox, { ReaderActionMarker: modules.ReaderActionMarker, EpubNoteLink: modules.EpubNoteLink,
     ReaderImageMarker: modules.ReaderImageMarker, ReaderInfoBarContext: modules.ReaderInfoBarContext,
     ReaderInfoBarClock: { timeText: () => '10:30', batteryPercent: () => 80 },
-    CooperativeScheduler: { reportSynchronousOperation() {} } });
+    CooperativeScheduler: { reportSynchronousOperation() {} },
+    // 这里比的是预览与阅读页的文字样式，主题不带章首装饰。
+    ReaderChapterHead: { style: () => ({ image: '', aspect: 1, placement: 'side', scale: 1, numberColor: 0,
+      identity: () => '' }) } });
+  if (sandbox.ThemeRuntime && !sandbox.ThemeRuntime.chapterHeadTokens) sandbox.ThemeRuntime.chapterHeadTokens = () => null;
   const readerSource = read('pages/ReadBook.ets');
   const typographySource = read('components/reader/ReaderTypographyPreview.ets');
   const configStart = typographySource.indexOf('export class ReaderTypographyPreviewConfig');

@@ -299,6 +299,10 @@ img.ico { background: none; -webkit-mask: none; mask: none; object-fit: contain;
 .reader .rhead { position: relative; z-index: 2; padding: 2px 20px; font-size: 11px; color: var(--p-rsub); }
 .reader .content { position: relative; z-index: 2; line-height: 1.8; }
 .reader .content h2 { font-size: 1.25em; margin: 10px 0 14px; }
+.reader .content .chapter-head { display: flex; align-items: center; gap: .45em; margin: 10px 0 14px; }
+.reader .content .chapter-head.top, .reader .content .chapter-head.bottom { flex-direction: column; align-items: flex-start; gap: .35em; }
+.reader .content .chapter-head h2 { margin: 0; flex: 1; min-width: 0; }
+.reader .content .chapter-head img { flex: none; width: auto; object-fit: contain; }
 .reader .content p { margin: 0 0 .5em; text-indent: 2em; }
 .reader .rfoot { position: absolute; bottom: 12px; z-index: 2; display: flex; justify-content: space-between; font-size: 11px; color: var(--p-rsub); }
 .em-text { color: var(--p-em-text); }

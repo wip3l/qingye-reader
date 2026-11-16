@@ -141,6 +141,12 @@ export function editorIssues(): Issue[] {
       }
     }
   }
+  // 标题饰图：不透明 JPG 会在纸面上露出方形底色。
+  for (const mode of MODES) {
+    const head = p.parts[mode] && p.parts[mode].chapterHead;
+    const headAsset = head && head.image ? p.assets.get(head.image) : null;
+    if (headAsset && headAsset.ext === 'jpg') add('warn', `${mode}.chapterHead.image`, `${LABEL[mode]}标题饰图是不透明的 JPG，标题旁会露出方形底色`);
+  }
   // 段评气泡图：不透明 JPG、文字区上下超出太多（可能压到上下行）。
   for (const mode of MODES) {
     const comment = p.parts[mode] && p.parts[mode].commentBubble;
@@ -189,6 +195,7 @@ export function editorIssues(): Issue[] {
 function sectionOfMessage(message: string): string {
   const rules: [RegExp, string][] = [
     [/parts\.(light|dark)\.colors/, 'colors'], [/parts\.(light|dark)\.reader/, 'reader'], [/parts\.(light|dark)\.(emphasis|commentBubble)|parts\.bubble/, 'emphasis'],
+    [/parts\.(light|dark)\.chapterHead/, 'chapterHead'],
     [/ttsPanel/, 'tts'], [/homeBackdrop|shelfBackdrop/, 'homeBackdrop'], [/navigation/, 'nav'], [/parts\.book/, 'book'], [/startup/, 'startup'], [/radius|typography/, 'shape'],
     [/logo|preview/, 'brand'], [/packageId|名称|清单/, 'meta']
   ];

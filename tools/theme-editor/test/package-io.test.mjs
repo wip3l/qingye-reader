@@ -568,6 +568,30 @@ test('title emphasis and title bubble export cleanly and round-trip', async () =
   assert.equal(again.project.parts.light.titleEmphasis.textColor, '#5A3A1C');
 });
 
+test('chapter head exports only what is set and round-trips', async () => {
+  const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
+  project.assets.set('assets/staff.png', { path: 'assets/staff.png', bytes: png(96, 320), kind: 'image', ext: 'png', width: 96, height: 320 });
+  // 标题左侧、1 倍是缺省值，不写；没有饰图的模式只留序号行颜色。
+  project.parts.light.chapterHead = { image: 'assets/staff.png', placement: '', scale: 1, numberColor: '#8D8478' };
+  project.parts.dark.chapterHead = { image: '', placement: 'top', scale: 1.5, numberColor: '#99FFFFFF' };
+  let files = await io.exportFiles(project);
+  let parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.light.chapterHead, { image: 'assets/staff.png', numberColor: '#8D8478' });
+  assert.deepEqual(parts.dark.chapterHead, { numberColor: '#99FFFFFF' });
+  assert.ok(files.has('assets/staff.png'));
+  project.parts.light.chapterHead = { image: 'assets/staff.png', placement: 'bottom', scale: 1.4 };
+  project.parts.dark.chapterHead = {};
+  files = await io.exportFiles(project);
+  parts = JSON.parse(strFromU8(files.get('theme.json'))).parts;
+  assert.deepEqual(parts.light.chapterHead, { image: 'assets/staff.png', placement: 'bottom', scale: 1.4 });
+  assert.equal(parts.dark && parts.dark.chapterHead, undefined);
+  const again = await io.loadProject(io.readZip(await io.exportZip(project)));
+  assert.deepEqual(again.problems, []);
+  assert.equal(again.project.parts.light.chapterHead.image, 'assets/staff.png');
+  assert.equal(again.project.parts.light.chapterHead.placement, 'bottom');
+  assert.equal(again.project.parts.light.chapterHead.scale, 1.4);
+});
+
 test('an empty comment-bubble override from the app does not count as a scheme override', async () => {
   const { project } = await io.loadProject(io.readZip(zipSync(handWritten())));
   const empty = { mode: '', bubbleStyle: '', color: '', textColor: '',

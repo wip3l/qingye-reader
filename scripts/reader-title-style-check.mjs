@@ -98,7 +98,7 @@ try {
     }
   });
   vm.runInContext(['core/reader/ReaderV2Document.ets','core/reader/ReaderV2LayoutSnapshot.ets',
-    'core/reader/ReaderV2PageLayout.ets','core/reader/ReaderV2Paginator.ets']
+    'core/reader/ReaderV2PageLayout.ets','core/reader/ReaderV2ChapterHead.ets','core/reader/ReaderV2Paginator.ets']
     .map(file => compile(read(file))).join('\n') + '\n' + compile(`
     class TitleReader extends ReaderHarness {
       readerTitleFontSize = 22;
@@ -109,7 +109,7 @@ try {
       getRegexTextSlices() { return this.testSlices || []; }
       ${method('buildReaderV2RegexStyles')}
     }
-    globalThis.titleApi = { ReaderTitleSplit, ReaderTitleStyleCodec, ReaderTitleStyleSettings,
+    globalThis.titleApi = { ReaderV2ChapterHeadStyle, ReaderTitleSplit, ReaderTitleStyleCodec, ReaderTitleStyleSettings,
       ReaderV2DocumentParser, ReaderV2SpeechText, ReaderV2Paginator, ReaderV2LayoutSnapshot,
       ReaderV2LayoutInput, ReaderV2PageLayout, ReaderV2PageFragment, TitleReader };
   `), sandbox);
@@ -340,6 +340,46 @@ try {
   assert.equal(page.fragments[1].paragraphY, 0, 'page-bottom distribution must not expand the title gap');
   assert.equal(page.fragments[2].paragraphY, 6);
 
+  // 章首饰图：左侧时标题每行让出饰图的宽度、饰图上下居中于标题组；上方、下方时算进标题的上、下边距。
+  const HeadStyle = sandbox.titleApi.ReaderV2ChapterHeadStyle;
+  const withHead = (placement, scale) => {
+    input.chapterHead = Object.assign(new HeadStyle(), { image: 'file://head.png', aspect: 0.5, placement, scale,
+      numberColor: 0xFF8D8478 });
+    const headSnapshot = Snapshot.create(input);
+    input.chapterHead = new HeadStyle();
+    return [headSnapshot, Paginator.layoutContinuous(document, headSnapshot, [])];
+  };
+  assert.equal(continuous.decorations.length, 0, 'no ornament without a theme image');
+  const [sideSnapshot, side] = withHead('side', 1);
+  assert.notEqual(sideSnapshot.identity, snapshot.identity, 'the ornament is part of the layout identity');
+  const nominal = 22 * 1.25 + 16 + 22 * 1.5 * 1.25;
+  const sideWidth = nominal * 0.5;
+  assert.equal(side.decorations.length, 1);
+  const sideRect = side.decorations[0].rect;
+  assert(Math.abs(sideRect.right - sideRect.left - sideWidth) < 0.01 && Math.abs(sideRect.bottom - sideRect.top - nominal) < 0.01);
+  assert.equal(sideRect.left, sideSnapshot.columnRects[0].left, 'the side ornament hugs the column edge');
+  const reserve = sideWidth + 22 * 0.35;
+  assert(Math.abs(side.fragments[0].paragraphX - first.paragraphX - reserve) < 0.01, 'title lines start after the ornament');
+  assert(Math.abs(side.fragments[1].leadReservePx - reserve) < 0.01);
+  assert.equal(side.fragments[2].paragraphX, continuous.fragments[2].paragraphX, 'body text keeps the full width');
+  const groupCentre = (side.fragments[0].paragraphY + side.fragments[1].paragraphY + side.fragments[1].paragraphHeight) / 2;
+  assert(Math.abs((sideRect.top + sideRect.bottom) / 2 - groupCentre) < 0.01, 'vertically centred on the title group');
+  assert.equal(Paginator.baseTextStyle(document.blocks[0], sideSnapshot).color.red, 0x8D, 'number line takes the theme colour');
+  assert.equal(Paginator.baseTextStyle(document.blocks[1], sideSnapshot).color.red,
+    Paginator.baseTextStyle(document.blocks[1], snapshot).color.red, 'the main title line keeps the text colour');
+  const [, top] = withHead('top', 2);
+  const topHeight = 22 * 0.9 * 2, topGap = 22 * 0.3;
+  assert(Math.abs(top.fragments[0].paragraphY - first.paragraphY - topHeight - topGap) < 0.01, 'room above the title');
+  assert(Math.abs(top.decorations[0].rect.bottom - (top.fragments[0].paragraphY - topGap)) < 0.01);
+  assert.equal(top.fragments[0].paragraphX, first.paragraphX, 'no side reserve for a top ornament');
+  const [, bottom] = withHead('bottom', 1);
+  const bottomTitleEnd = bottom.fragments[1].paragraphY + bottom.fragments[1].paragraphHeight;
+  assert(Math.abs(bottom.decorations[0].rect.top - bottomTitleEnd - topGap) < 0.01);
+  assert(bottom.fragments[2].paragraphY - bottomTitleEnd >=
+    continuous.fragments[2].paragraphY - (second.paragraphY + second.paragraphHeight) + 22 * 0.9 + topGap - 0.01,
+    'body starts below a bottom ornament');
+  console.log('PASS: chapter-head ornament reserves its space beside, above or below the title and tints the number line');
+
   for (const alignment of ['left','center','right']) {
     input.titleAlignment = alignment;
     input.titleMarginTopPx = 24; input.titleMarginBottomPx = 36;
@@ -520,6 +560,9 @@ ${'雨停的时候他把伞靠在门边问柜台后的老人这本账簿是谁�
     setMeasuredSize(size) { this.measuredSize = size; }
     setLayoutPosition() {}
   };
+  // 设置页预览这里只看标题排版，主题不带章首装饰。
+  sandbox.ReaderChapterHead = { style: () => new sandbox.titleApi.ReaderV2ChapterHeadStyle() };
+  if (sandbox.ThemeRuntime && !sandbox.ThemeRuntime.chapterHeadTokens) sandbox.ThemeRuntime.chapterHeadTokens = () => null;
   const renderSource = read('core/reader/ReaderV2RenderNode.ets');
   const previewSource = read('components/reader/ReaderTypographyPreview.ets');
   vm.runInContext(compile(read('core/reader/ReaderParagraphIndent.ts')) + '\n' +

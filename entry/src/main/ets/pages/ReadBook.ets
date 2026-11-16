@@ -260,6 +260,7 @@ import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { ReaderTitleStyleCodec, ReaderTitleStyleSettings } from '../model/reader/ReaderTitleStyle';
+import { ReaderChapterHead } from '../model/reader/ReaderChapterHead';
 import { CloudAutoSync } from '../account/CloudAutoSync';
 import { PopupMenuAction } from '../components/common/PopupMenuAction';
 import { KnockShare } from '../utils/KnockShare';
@@ -17939,6 +17940,7 @@ ${leading}` : leading;
     input.titleMarginTopPx = this.toMeasureNonNegativePx(titleStyle.marginTop);
     input.titleMarginBottomPx = this.toMeasureNonNegativePx(titleStyle.marginBottom);
     input.titleSinglePage = titleStyle.singlePage;
+    input.chapterHead = ReaderChapterHead.style(ThemeRuntime.chapterHeadTokens(this.appDarkMode), titleStyle.decoration);
     input.lineSpacingPx = this.toMeasureNonNegativePx(this.readerLineHeight);
     input.paragraphSpacingPx = this.toMeasureNonNegativePx(this.readerParagraphSpacing);
     input.letterSpacingPx = this.toMeasureFontOffsetPx(this.getReaderAdaptiveLetterSpacing(forPageMetrics));
@@ -19647,6 +19649,8 @@ ${leading}` : leading;
           styledKey: StyledStringKey.PARAGRAPH_STYLE,
           styledValue: new ParagraphStyle({
             textAlign: fragment.title ? this.readerTitleTextAlignValue(snapshot.titleAlignment) : this.readerTextAlignValue(),
+            // 标题左边让给章首饰图的宽度，选字层跟着缩进，和画出来的字对齐。
+            leadingMargin: LengthMetrics.px(fragment.leadReservePx),
             wordBreak: WordBreak.BREAK_WORD,
             paragraphSpacing: LengthMetrics.px(exactGaps ?
               this.readerV2SelectionGapAfterPx(page, fragmentIndex, extraGapPx) : snapshot.paragraphSpacingPx)

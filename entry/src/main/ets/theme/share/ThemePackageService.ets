@@ -1179,6 +1179,11 @@ export class ThemePackageService {
           }
         }
       }
+      // 章首装饰指向的包同理。
+      const head = record['chapterHead'];
+      if (typeof head === 'string' && isPackThemeId(head) && head !== ownThemeId && !ThemePackRegistry.has(head)) {
+        record['chapterHead'] = '';
+      }
       // 标题强调的气泡样式用不了时同样改回跟随（不另列提示）。
       const title = record['title'];
       if (title && typeof title === 'object') {

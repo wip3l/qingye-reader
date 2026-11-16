@@ -430,6 +430,8 @@ export class ThemePackageVariantParts {
   commentBubble: ThemePackageCommentBubble | null = null;
   /** 标题强调；null 表示主题不设置（标题保持原样）。本机旧记录里没有，旧版本应用不认。 */
   titleEmphasis: ThemePackagePartEmphasis | null = null;
+  // 章首装饰，整节不写表示这个模式不设置；本机旧记录里没有。
+  chapterHead: ThemePackageChapterHead | null = null;
 }
 
 /** 标题强调的气泡样式写成它时，和正文强调用同一套样式与素材。 */
@@ -447,6 +449,66 @@ export function isPackTitleBubbleStyle(styleId: string): boolean {
 
 export function titleEmphasisIsEmpty(value: ThemePackagePartEmphasis | null | undefined): boolean {
   return !value || !(value.mode || value.bubbleStyle || value.color || value.textColor);
+}
+
+/**
+ * 章首装饰：章节标题旁的饰图，和分段标题第一段（“第十二章”那一行）的颜色。写在每个模式自己的部件里，
+ * 字段都可以空着。旧版本应用不认这一节，标题照旧显示。
+ */
+export class ThemePackageChapterHead {
+  /**
+   * 饰图：包里是素材引用，运行时是本机 URI。这个模式没写时沿用另一种模式的那张（连同位置和大小，
+   * 见 chapterHeadFor）。
+   */
+  image: string = '';
+  /** CHAPTER_HEAD_PLACEMENTS 之一；空串是标题左侧。 */
+  placement: string = '';
+  /** 饰图大小倍数 0.5–2。左侧时 1 表示和整组标题一样高，上方、下方时 1 表示约一个标题字高。 */
+  scale: number = 1;
+  /** 分段标题第一段的颜色（可带透明度）；空串和标题同色。读者没开标题分段时不生效。 */
+  numberColor: string = '';
+}
+
+/** side：贴版心左边、上下居中于整组标题；top / bottom：在标题上方、下方单独占一行，跟着标题的对齐方式。 */
+export const CHAPTER_HEAD_PLACEMENTS: string[] = ['side', 'top', 'bottom'];
+export const CHAPTER_HEAD_PLACEMENT_NAMES: string[] = ['标题左侧', '标题上方', '标题下方'];
+/** 方案覆盖里表示“不用章首装饰”（来源主题带了也不显示）。 */
+export const CHAPTER_HEAD_NONE: string = 'none';
+
+export function normalizeChapterHead(value: ThemePackageChapterHead | null | undefined): ThemePackageChapterHead {
+  const result = new ThemePackageChapterHead();
+  if (!value || typeof value !== 'object') return result;
+  result.image = typeof value.image === 'string' ? value.image : '';
+  result.placement = value.placement === 'top' || value.placement === 'bottom' ? value.placement : '';
+  result.scale = normalizeOrnamentScale(value.scale);
+  result.numberColor = typeof value.numberColor === 'string' && HEX_COLOR.test(value.numberColor) ?
+    value.numberColor.toUpperCase() : '';
+  return result;
+}
+
+export function chapterHeadIsEmpty(value: ThemePackageChapterHead | null | undefined): boolean {
+  return !value || !(value.image || value.numberColor);
+}
+
+/**
+ * 某个模式下实际用的章首装饰：饰图取这个模式的，没有就用另一种模式的（位置、大小跟着那张图）；
+ * 序号行颜色各模式用各的。什么都没有时返回 null。
+ */
+export function chapterHeadFor(parts: ThemePackageParts | null | undefined, dark: boolean): ThemePackageChapterHead | null {
+  if (!parts) return null;
+  const ownVariant = dark ? parts.dark : parts.light;
+  const otherVariant = dark ? parts.light : parts.dark;
+  const own = normalizeChapterHead(ownVariant ? ownVariant.chapterHead : null);
+  const other = normalizeChapterHead(otherVariant ? otherVariant.chapterHead : null);
+  const result = new ThemePackageChapterHead();
+  const imageSource = own.image ? own : (other.image ? other : null);
+  if (imageSource) {
+    result.image = imageSource.image;
+    result.placement = imageSource.placement;
+    result.scale = imageSource.scale;
+  }
+  result.numberColor = own.numberColor;
+  return chapterHeadIsEmpty(result) ? null : result;
 }
 
 export class ThemePackageTtsPanel {
@@ -1356,6 +1418,7 @@ export function replaceSelfPackId(settings: Record<string, Object>, ownThemeId: 
     if (title && title['bubbleStyle'] === `${PACK_SELF_THEME_ID}${PACK_TITLE_BUBBLE_SUFFIX}`) {
       title['bubbleStyle'] = `${ownThemeId}${PACK_TITLE_BUBBLE_SUFFIX}`;
     }
+    if (override && override['chapterHead'] === PACK_SELF_THEME_ID) override['chapterHead'] = ownThemeId;
   }
 }
 
@@ -1387,6 +1450,7 @@ export function replaceOwnPackIdWithSelf(settings: Record<string, Object>, ownTh
     if (title && title['bubbleStyle'] === `${ownThemeId}${PACK_TITLE_BUBBLE_SUFFIX}`) {
       title['bubbleStyle'] = `${PACK_SELF_THEME_ID}${PACK_TITLE_BUBBLE_SUFFIX}`;
     }
+    if (override && override['chapterHead'] === ownThemeId) override['chapterHead'] = PACK_SELF_THEME_ID;
   }
 }
 
@@ -1499,6 +1563,19 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
     parsed.color = colorField(title, 'color', titleLabel, true);
     parsed.textColor = colorField(title, 'textColor', titleLabel, true);
     result.titleEmphasis = titleEmphasisIsEmpty(parsed) ? null : parsed;
+  }
+  const head = objectField(record, 'chapterHead');
+  if (head) {
+    const headLabel = `${label}.chapterHead`;
+    // 位置不认得时按标题左侧处理（以后的版本可能加新位置）；颜色、素材写错照样报错。
+    const parsed = new ThemePackageChapterHead();
+    parsed.image = partAssetRef(head, 'image', manifest,
+      [ThemePackageAssetKinds.VECTOR, ThemePackageAssetKinds.IMAGE], headLabel);
+    const placement = stringField(head, 'placement').trim();
+    parsed.placement = placement === 'top' || placement === 'bottom' ? placement : '';
+    parsed.scale = normalizeOrnamentScale(numberField(head, 'scale'));
+    parsed.numberColor = colorField(head, 'numberColor', headLabel, true);
+    result.chapterHead = chapterHeadIsEmpty(parsed) ? null : parsed;
   }
   const comment = objectField(record, 'commentBubble');
   if (comment) {
@@ -1899,6 +1976,17 @@ function encodeVariantParts(variant: ThemePackageVariantParts): Record<string, O
     if (title.textColor) titleRecord['textColor'] = title.textColor;
     record['titleEmphasis'] = titleRecord;
   }
+  const head = variant.chapterHead ? normalizeChapterHead(variant.chapterHead) : null;
+  if (head && !chapterHeadIsEmpty(head)) {
+    const headRecord: Record<string, Object> = {};
+    if (head.image) {
+      headRecord['image'] = head.image;
+      if (head.placement) headRecord['placement'] = head.placement;
+      if (head.scale !== 1) headRecord['scale'] = head.scale;
+    }
+    if (head.numberColor) headRecord['numberColor'] = head.numberColor;
+    record['chapterHead'] = headRecord;
+  }
   return record;
 }
 
@@ -2042,6 +2130,7 @@ export function partsAssetRefs(parts: ThemePackageParts): string[] {
       if (comment.image && comment.image !== COMMENT_IMAGE_NONE) add(comment.image);
       add(comment.ornamentImage || '');
     }
+    if (variant.chapterHead) add(variant.chapterHead.image || '');
   }
   for (const tts of [parts.ttsPanelLight, parts.ttsPanelDark]) {
     if (tts) add(tts.artwork);
@@ -2100,6 +2189,9 @@ export function mapPartsAssetRefs(parts: ThemePackageParts, map: (ref: string) =
       if (comment.image && comment.image !== COMMENT_IMAGE_NONE) comment.image = swap(comment.image);
       comment.ornamentImage = swap(comment.ornamentImage || '');
     }
+    // 本机旧记录里没有章首装饰。
+    if (variant.chapterHead) variant.chapterHead.image = swap(variant.chapterHead.image || '');
+    else variant.chapterHead = null;
   }
   for (const tts of [copy.ttsPanelLight, copy.ttsPanelDark]) {
     if (tts) tts.artwork = swap(tts.artwork);
@@ -2220,6 +2312,14 @@ export function describeParts(parts: ThemePackageParts): string[] {
     const titleBubble = titleBubbleFor(parts, false);
     items.push(titleBubble ? (titleBubbleDarkDifference(parts) ? '标题强调与标题气泡（含深色）' : '标题强调与标题气泡') :
       '标题强调');
+  }
+  const lightHead = chapterHeadFor(parts, false);
+  const darkHead = chapterHeadFor(parts, true);
+  if (lightHead || darkHead) {
+    const hasImage = !!((lightHead && lightHead.image) || (darkHead && darkHead.image));
+    const hasColor = !!((lightHead && lightHead.numberColor) || (darkHead && darkHead.numberColor));
+    items.push(hasImage && hasColor ? '章首装饰（标题饰图、序号行颜色）' :
+      (hasImage ? '章首装饰（标题饰图）' : '章首装饰（序号行颜色）'));
   }
   if ((parts.light && parts.light.commentBubble) || (parts.dark && parts.dark.commentBubble)) {
     items.push(commentBubbleHasImage(commentBubbleFor(parts, false)) || commentBubbleHasImage(commentBubbleFor(parts, true)) ?

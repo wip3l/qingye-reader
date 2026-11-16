@@ -81,8 +81,8 @@ export function mimeForExtension(ext: string): string {
 
 export function emptyParts(): Json {
   return {
-    light: { colors: {}, reader: {}, emphasis: {}, commentBubble: {}, titleEmphasis: {} },
-    dark: { colors: {}, reader: {}, emphasis: {}, commentBubble: {}, titleEmphasis: {} },
+    light: { colors: {}, reader: {}, emphasis: {}, commentBubble: {}, titleEmphasis: {}, chapterHead: {} },
+    dark: { colors: {}, reader: {}, emphasis: {}, commentBubble: {}, titleEmphasis: {}, chapterHead: {} },
     ttsPanel: { light: {}, dark: {} },
     navigation: {},
     navigationDark: {},
@@ -621,6 +621,13 @@ export function normalizedParts(parts: Json): Json {
       const key = `${mode}Crop`;
       if (backdrop[key] && backdrop[key].image !== backdrop[mode]) delete backdrop[key];
     }
+  }
+  // 章首装饰：位置和大小只跟着饰图走；标题左侧、1 倍是缺省值，不写。
+  for (const mode of ['light', 'dark']) {
+    const head = copy[mode] && copy[mode].chapterHead;
+    if (!head || typeof head !== 'object') continue;
+    if (!head.image || (head.placement !== 'top' && head.placement !== 'bottom')) delete head.placement;
+    if (!head.image || typeof head.scale !== 'number' || head.scale === 1) delete head.scale;
   }
   // 拉伸设置只跟着边框走：没有边框时不写；拉伸、每行两端、原色是缺省值，也不写。深色那套同样处理。
   for (const key of ['bubble', 'bubbleDark', 'titleBubble', 'titleBubbleDark']) {

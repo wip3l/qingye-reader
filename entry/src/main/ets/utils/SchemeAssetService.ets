@@ -36,6 +36,12 @@ import {
   ThemePackageVariantParts,
   tidyImageCrops
 } from '../theme/share/ThemePackageFormat';
+import {
+  chapterHeadFor,
+  chapterHeadIsEmpty,
+  normalizeChapterHead,
+  ThemePackageChapterHead
+} from '../theme/share/ThemePackageFormat';
 import { AppThemeSettings, AppThemeSettingsStore } from './AppThemeSettingsStore';
 import { ReaderCustomFontData, ReaderCustomFontItem } from '../core/reader/ReaderSettingsModels';
 import { ReaderFontHelper } from './ReaderFontHelper';
@@ -285,15 +291,21 @@ export class SchemeAssetService {
   }
 
   /**
-   * 编辑器往变体里写阅读背景和段评气泡素材：清掉背景时变体只留下段评那一节（没有就整个清掉）。
+   * 编辑器往变体里写阅读背景、段评气泡素材和章首装饰：清掉背景时变体只留下段评和章首装饰两节
+   * （都没有就整个清掉）。
    */
   private static storeVariant(record: ThemePackRecord, darkMode: boolean,
     variant: ThemePackageVariantParts | null): void {
     const existing = darkMode ? record.parts.dark : record.parts.light;
     let value = variant;
-    if (!value && existing && existing.commentBubble && !commentBubbleIsEmpty(existing.commentBubble)) {
-      value = new ThemePackageVariantParts();
-      value.commentBubble = existing.commentBubble;
+    if (!value && existing) {
+      const keepComment = !!existing.commentBubble && !commentBubbleIsEmpty(existing.commentBubble);
+      const keepHead = !chapterHeadIsEmpty(existing.chapterHead);
+      if (keepComment || keepHead) {
+        value = new ThemePackageVariantParts();
+        if (keepComment) value.commentBubble = existing.commentBubble;
+        if (keepHead) value.chapterHead = existing.chapterHead;
+      }
     }
     if (darkMode) record.parts.dark = value;
     else record.parts.light = value;
@@ -410,6 +422,7 @@ export class SchemeAssetService {
   }
 
   private static variantHasNothingElse(variant: ThemePackageVariantParts): boolean {
+    if (!chapterHeadIsEmpty(variant.chapterHead)) return false;
     const colors = variant.colors;
     if (colors.pageColor || colors.cardColor || colors.inputColor || colors.primaryTextColor || colors.subTextColor ||
       colors.dividerColor || colors.accentColor || colors.buttonColor || colors.dangerColor) return false;
@@ -418,6 +431,106 @@ export class SchemeAssetService {
       reader.contentTone || reader.leading || reader.trailing || reader.image) return false;
     const emphasis = variant.emphasis;
     return !(emphasis.mode || emphasis.bubbleStyle || emphasis.color || emphasis.textColor);
+  }
+
+  // ---- 章首装饰：写在素材包这个模式的 chapterHead 里，方案覆盖用 pack:<id> 指过来 ----
+
+  /** 上传标题饰图。这个模式原来沿用另一模式那张时，位置和大小接着用那张的。 */
+  static async setChapterHeadImage(context: Context, schemeId: string, uri: string, baseTheme: string,
+    dark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      const head = SchemeAssetService.chapterHeadOf(record, dark);
+      if (!head.image) {
+        const other = SchemeAssetService.chapterHeadOf(record, !dark);
+        if (other.image) {
+          head.placement = other.placement;
+          head.scale = other.scale;
+        }
+      }
+      head.image = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK,
+        '标题饰图');
+      SchemeAssetService.storeChapterHead(record, dark, head);
+    });
+  }
+
+  /**
+   * 改饰图的位置和大小。这个模式没有自己的图（沿用另一模式那张）时，先把那张记到这个模式，
+   * 这样改动只影响这个模式。
+   */
+  static async setChapterHeadLayout(context: Context, schemeId: string, dark: boolean, placement: string,
+    scale: number): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const head = SchemeAssetService.chapterHeadOf(record, dark);
+      if (!head.image) {
+        const other = SchemeAssetService.chapterHeadOf(record, !dark);
+        if (!other.image) throw new Error('标题饰图已不存在');
+        head.image = other.image;
+      }
+      head.placement = placement;
+      head.scale = scale;
+      SchemeAssetService.storeChapterHead(record, dark, head);
+    });
+  }
+
+  /** 序号行颜色；空串改回和标题同色。 */
+  static async setChapterHeadNumberColor(context: Context, schemeId: string, baseTheme: string, dark: boolean,
+    color: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
+      const head = SchemeAssetService.chapterHeadOf(record, dark);
+      head.numberColor = color;
+      SchemeAssetService.storeChapterHead(record, dark, head);
+    });
+  }
+
+  /** 移除这个模式自己的标题饰图（另一模式的不动）。 */
+  static async clearChapterHeadImage(context: Context, schemeId: string, dark: boolean): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const head = SchemeAssetService.chapterHeadOf(record, dark);
+      head.image = '';
+      head.placement = '';
+      head.scale = 1;
+      SchemeAssetService.storeChapterHead(record, dark, head);
+    });
+  }
+
+  /** 素材包这个模式实际用的章首装饰（饰图沿用另一模式的也算），素材是包内相对路径；没有时为 null。 */
+  static chapterHead(packageId: string, dark: boolean): ThemePackageChapterHead | null {
+    const pack = packageId ? ThemePackRegistry.getByPackageId(packageId) : null;
+    return pack ? chapterHeadFor(pack.record.parts, dark) : null;
+  }
+
+  /** 这个模式自己有没有传标题饰图。 */
+  static hasOwnChapterHeadImage(packageId: string, dark: boolean): boolean {
+    const pack = packageId ? ThemePackRegistry.getByPackageId(packageId) : null;
+    if (!pack) return false;
+    return !!SchemeAssetService.chapterHeadOf(pack.record, dark).image;
+  }
+
+  /** 这个模式自己的章首装饰（不含另一模式沿用过来的）。 */
+  private static chapterHeadOf(record: ThemePackRecord, dark: boolean): ThemePackageChapterHead {
+    const variant = dark ? record.parts.dark : record.parts.light;
+    return normalizeChapterHead(variant ? variant.chapterHead : null);
+  }
+
+  /** 章首装饰空了而变体里也没有别的东西时整个变体清掉。 */
+  private static storeChapterHead(record: ThemePackRecord, dark: boolean, head: ThemePackageChapterHead): void {
+    const existing = dark ? record.parts.dark : record.parts.light;
+    const normalized = normalizeChapterHead(head);
+    const empty = chapterHeadIsEmpty(normalized);
+    if (!existing) {
+      if (empty) return;
+      const variant = new ThemePackageVariantParts();
+      variant.chapterHead = normalized;
+      if (dark) record.parts.dark = variant;
+      else record.parts.light = variant;
+      return;
+    }
+    existing.chapterHead = empty ? null : normalized;
+    if (empty && SchemeAssetService.variantHasNothingElse(existing) &&
+      (!existing.commentBubble || commentBubbleIsEmpty(existing.commentBubble))) {
+      if (dark) record.parts.dark = null;
+      else record.parts.light = null;
+    }
   }
 
   private static copyCommentImageSettings(target: ThemePackageCommentBubble,

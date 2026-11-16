@@ -215,6 +215,25 @@ export const SECTIONS: Section[] = [
     ]
   },
   {
+    id: 'chapterHead', group: '配色与阅读', name: '章首装饰', screen: 'reader', modal: true,
+    desc: '画在每章标题旁的饰图，和分段标题第一段（“第十二章”那一行）的颜色。读者可以在阅读设置的标题里关掉。旧版本应用忽略这一节。', fields: [
+      { g: '标题饰图' },
+      { k: '{m}.chapterHead.image', label: '饰图', type: 'asset', kinds: ['vector', 'image'],
+        spec: 'SVG 或透明底位图。放左侧适合竖长的图，放上方、下方适合横长的花纹',
+        hint: '深色空着时沿用浅色那张（连同位置和大小）' },
+      { k: '{m}.chapterHead.placement', label: '位置', type: 'select',
+        options: [['', '标题左侧'], ['top', '标题上方'], ['bottom', '标题下方']],
+        hint: '左侧：贴版心左边、上下对齐整组标题，标题在剩下的宽度里按读者的对齐方式排。上方、下方：单独占一行，跟着标题的对齐方式',
+        when: (m) => !!mode(m, 'chapterHead.image') },
+      { k: '{m}.chapterHead.scale', label: '大小', type: 'range', min: 0.5, max: 2, step: 0.1, fallback: 1, resetLabel: '默认',
+        hint: '左侧时 1 表示和整组标题一样高（最宽占版心的 30%）；上方、下方时 1 表示约一个标题字高',
+        when: (m) => !!mode(m, 'chapterHead.image') },
+      { g: '序号行' },
+      { k: '{m}.chapterHead.numberColor', label: '序号行颜色', type: 'color', alpha: true, vs: '{m}.reader.backgroundColor',
+        hint: '不写时和标题同色。读者开了标题分段才看得出' }
+    ]
+  },
+  {
     id: 'nav', group: '素材', name: '导航图标', screen: 'shelf',
     desc: '首页底栏。书架、发现、我的三个普通图标要么都给，要么都不给；“听”“足迹”是可选的第四个页签，可以不给（应用用基底主题的图标），旧版本应用会忽略。SVG 按主题色着色，位图（PNG / WebP）保持原色。选中态可选，没给的页签选中时仍用普通图标。', fields: [
       { g: '普通图标' },

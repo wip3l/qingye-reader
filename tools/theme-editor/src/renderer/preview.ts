@@ -430,6 +430,31 @@ function commentBubble(count: string, e: Effective, fontSize = 19): HTMLElement 
   return span;
 }
 
+/**
+ * 章节标题连同章首饰图，尺寸同应用 ReaderV2ChapterHeadLayout：左侧时高 = 一行标题的行框（字号 × 1.25）× 倍数、
+ * 最宽占版心 30%；上方、下方时高 = 字号 × 0.9 × 倍数。序号行颜色要读者开了标题分段才生效，预览里染在“第十七章”上示意。
+ */
+function chapterTitle(e: Effective, fontPx: number, columnWidth: number): HTMLElement {
+  const head = e.head;
+  // 标题强调会给整个标题换文字色，这时序号行颜色不单独示意。
+  const plain = !e.title.mode || e.title.mode === 'none';
+  const title = h('h2', {}, head && head.numberColor && plain ?
+    h('span', {}, h('span', { style: `color:${cssColor(head.numberColor)}` }, '第十七章'), ' 灯下') :
+    titleEmphasis('第十七章 灯下', e, fontPx));
+  const url = head ? assetUrl(head.image) : '';
+  if (!head || !url) return title;
+  const scale = head.scale > 0 ? head.scale : 1;
+  const wrap = h('div', { class: `chapter-head ${head.placement || 'side'}`, 'data-sec': 'chapterHead' });
+  if (head.placement === 'top' || head.placement === 'bottom') {
+    const img = h('img', { src: url, alt: '', style: `height:${fontPx * 0.9 * scale}px;max-width:100%` });
+    if (head.placement === 'top') wrap.append(img, title);
+    else wrap.append(title, img);
+    return wrap;
+  }
+  wrap.append(h('img', { src: url, alt: '', style: `height:${fontPx * 1.25 * scale}px;max-width:${columnWidth * 0.3}px` }), title);
+  return wrap;
+}
+
 function readerBody(e: Effective): HTMLElement {
   const r = e.reader;
   const p = project();
@@ -460,7 +485,7 @@ function readerBody(e: Effective): HTMLElement {
   const fontSize = typeof layout.fontSize === 'number' && layout.fontSize >= 12 && layout.fontSize <= 40 ? layout.fontSize : 19;
   const margin = typeof layout.marginLeft === 'number' ? Math.max(8, Math.min(48, layout.marginLeft)) : 20;
   const content = h('div', { class: 'content', style: `font-size:${fontSize}px;padding:6px ${margin}px` },
-    h('h2', {}, titleEmphasis('第十七章 灯下', e, Math.round(fontSize * 1.3))));
+    chapterTitle(e, Math.round(fontSize * 1.3), PHONE_W - margin * 2));
   const p1 = h('p', {}, '船过石桥时，舱里的灯忽然暗了一下。老周把书合上，抬头看了看窗外的水色，');
   p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e, fontSize), commentBubble('23', e, fontSize));
   const p2 = h('p', {}, '阿遥没有应声，只把那页折了个角。她记得母亲说过，');

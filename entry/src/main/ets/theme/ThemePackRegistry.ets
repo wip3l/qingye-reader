@@ -19,6 +19,7 @@ import {
   isPackTitleBubbleStyle,
   packTitleBubbleStyleId,
   titleBubbleFor,
+  chapterHeadFor,
   ThemePackageBubble,
   ThemePackageCredits,
   ThemePackageParts,
@@ -419,6 +420,8 @@ export class ThemePackRegistry {
     ThemePackRegistry.applyVariant(pack.dark, parts.dark, installed.readerDark, record.packageId, true, uri);
     ThemePackRegistry.applyCommentBubble(pack.light, parts, false, uri);
     ThemePackRegistry.applyCommentBubble(pack.dark, parts, true, uri);
+    ThemePackRegistry.applyChapterHead(pack.light, parts, false, uri);
+    ThemePackRegistry.applyChapterHead(pack.dark, parts, true, uri);
 
     if (parts.ttsPanelLight) {
       installed.ttsLight = new InstalledThemePackTtsPanel();
@@ -635,5 +638,14 @@ export class ThemePackRegistry {
     if (comment.image && comment.image !== COMMENT_IMAGE_NONE) comment.image = uri(comment.image);
     comment.ornamentImage = uri(comment.ornamentImage);
     variant.regexEmphasis.commentBubble = normalizeCommentBubble(comment);
+  }
+
+  /** 章首装饰按模式取（饰图只给了一种模式时两种都用，见 chapterHeadFor），素材换成本机 URI。 */
+  private static applyChapterHead(variant: ThemeVariant, parts: ThemePackageParts, darkMode: boolean,
+    uri: (value: string) => string): void {
+    const head = chapterHeadFor(parts, darkMode);
+    if (!head) return;
+    head.image = uri(head.image);
+    variant.regexEmphasis.chapterHead = head;
   }
 }

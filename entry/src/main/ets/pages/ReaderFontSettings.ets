@@ -1,7 +1,8 @@
 import { router } from '@kit.ArkUI';
 import { text } from '@kit.ArkGraphics2D';
 import { ReaderTitleSplit } from '../core/reader/ReaderTitleSplit';
-import { ReaderTitleStyleCodec, ReaderTitleStyleSettings } from '../model/reader/ReaderTitleStyle';
+import { ReaderChapterDecoration, ReaderTitleStyleCodec, ReaderTitleStyleSettings } from '../model/reader/ReaderTitleStyle';
+import { ReaderChapterHead } from '../model/reader/ReaderChapterHead';
 import { ReaderFontWeightStepper } from '../components/reader/ReaderFontWeightStepper';
 import { ReaderWeightedText, ReaderWeightedTextSpan } from '../components/reader/ReaderWeightedText';
 import { ReaderTypographyPreview, ReaderTypographyPreviewConfig } from '../components/reader/ReaderTypographyPreview';
@@ -1392,6 +1393,17 @@ export struct ReaderFontSettingsEditor {
         AdaptiveSwitch({ isOn: this.titleStyle.singlePage,
           onChange: (checked: boolean) => this.updateTitleSplit('singlePage', `${checked}`) })
       }.width('100%').constraintSize({ minHeight: 56 })
+      Row({ space: AppSpacing.LG }) {
+        Column({ space: AppSpacing.XS }) {
+          Text('章首装饰').fontSize(AppFontSize.BODY_LARGE).fontColor(this.primaryTextColor())
+          Text(`显示主题带的标题饰图和序号行颜色。${
+            ReaderChapterHead.describe(ThemeRuntime.chapterHeadTokens(this.appDarkMode))}`)
+            .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+        AdaptiveSwitch({ isOn: this.titleStyle.decoration !== ReaderChapterDecoration.OFF,
+          onChange: (checked: boolean) => this.updateTitleSplit('decoration',
+            checked ? ReaderChapterDecoration.THEME : ReaderChapterDecoration.OFF) })
+      }.width('100%').constraintSize({ minHeight: 56 })
       this.titleMarginSlider('上边距', true)
       this.titleMarginSlider('下边距', false)
     }
@@ -1638,6 +1650,7 @@ export struct ReaderFontSettingsEditor {
     else if (field === 'marginTop') next.marginTop = ReaderTitleSplit.normalizeMargin(Number(content));
     else if (field === 'marginBottom') next.marginBottom = ReaderTitleSplit.normalizeMargin(Number(content));
     else if (field === 'singlePage') next.singlePage = content === 'true';
+    else if (field === 'decoration') next.decoration = ReaderChapterDecoration.normalize(content);
     this.titleStyle = next;
     this.saveSettings();
   }
@@ -1689,6 +1702,7 @@ export struct ReaderFontSettingsEditor {
     input.titleMarginTopPx = context.vp2px(this.titleStyle.marginTop);
     input.titleMarginBottomPx = context.vp2px(this.titleStyle.marginBottom);
     input.titleSinglePage = withBody && this.titleStyle.singlePage;
+    input.chapterHead = ReaderChapterHead.style(ThemeRuntime.chapterHeadTokens(this.appDarkMode), this.titleStyle.decoration);
     input.lineSpacingPx = context.vp2px(layout.lineHeight);
     input.paragraphSpacingPx = context.vp2px(layout.paragraphSpacing);
     input.letterSpacingPx = context.fp2px(layout.letterSpacing);

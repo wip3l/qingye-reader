@@ -76,6 +76,8 @@ export class ReaderV2PageFragment {
   titleContinuation: boolean = false;
   titleEnd: boolean = false;
   fixedGapBefore: boolean = false;
+  /** 标题片段左边让给章首饰图的宽度；段落已排在 paragraphX（含这段宽度）之后。 */
+  leadReservePx: number = 0;
   blockId: string = '';
   blockIndex: number = 0;
   paragraph: graphicsText.Paragraph | null = null;
@@ -100,6 +102,12 @@ export class ReaderV2PageFragment {
   commentBubbleSegments: ReaderV2CommentBubbleSegment[] = [];
   /** 热评卡片段：paragraph 为 null，卡片坐标相对 paragraphX / paragraphY。 */
   card: ReaderV2CommentCard | null = null;
+}
+
+/** 画在正文底下的主题图片（章首饰图），按 rect 拉伸。 */
+export class ReaderV2PageDecoration {
+  image: string = '';
+  rect: ReaderV2Rect = new ReaderV2Rect();
 }
 
 /** 一条划线落在本页的部分，偏移是本页所属文档的显示偏移（与片段 displayStart 同一坐标）。 */
@@ -130,6 +138,7 @@ export class ReaderV2PageLayout implements ReaderPaginationBoundary {
   contentRect: ReaderV2Rect = new ReaderV2Rect();
   fragments: ReaderV2PageFragment[] = [];
   actions: ReaderV2ActionHitArea[] = [];
+  decorations: ReaderV2PageDecoration[] = [];
   identity: string = '';
   selectionText: string = '';
   selectionX: number = 0;

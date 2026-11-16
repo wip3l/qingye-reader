@@ -12,6 +12,7 @@ import { ReaderInfoBarConfig, ReaderInfoBarContext, ReaderInfoBarText, ReaderInf
 import { ReaderInfoBarClock } from '../../core/reader/ReaderInfoBarClock';
 import { ReaderHorizontalMargin } from '../../core/reader/ReaderHorizontalMargin';
 import { ReaderTitleStyleCodec } from '../../model/reader/ReaderTitleStyle';
+import { ReaderChapterHead } from '../../model/reader/ReaderChapterHead';
 import { ReaderRegexBubbleStyleResolver, ReaderRegexEmphasisContext, ReaderRegexFontCodec,
   ReaderRegexFontRule, ReaderRegexLegacySettings, ReaderTitleEmphasis } from '../../model/reader/ReaderRegexFontRule';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
@@ -206,6 +207,7 @@ export struct ReaderSettingsPreview {
     input.titleMarginTopPx = ui.vp2px(title.marginTop);
     input.titleMarginBottomPx = ui.vp2px(title.marginBottom);
     input.titleSinglePage = title.singlePage;
+    input.chapterHead = ReaderChapterHead.style(ThemeRuntime.chapterHeadTokens(this.appDarkMode), title.decoration);
     input.textColor = ReaderV2Color.parse(this.readerTheme.textColor, 0xFF202124);
     input.regexEnabled = this.settings.regexFontEnabled;
     input.styleIdentity = `settings_preview_${this.revision}`;

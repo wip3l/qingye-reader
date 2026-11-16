@@ -12,7 +12,7 @@ import {
   ThemeVariant
 } from './ThemeModels';
 import { ThemePackRegistry } from './ThemePackRegistry';
-import { normalizeCommentBubble } from './share/ThemePackageFormat';
+import { normalizeChapterHead, normalizeCommentBubble } from './share/ThemePackageFormat';
 
 export class BuiltinThemeRegistry {
   static readonly DEFAULT_THEME_ID: string = ThemeIds.PLAIN_DEFAULT;
@@ -847,6 +847,7 @@ export class BuiltinThemeRegistry {
       variant.regexEmphasis.title.color = title.color || '';
       variant.regexEmphasis.title.textColor = title.textColor || '';
     }
+    variant.regexEmphasis.chapterHead = normalizeChapterHead(source.regexEmphasis.chapterHead);
     return variant;
   }
 }

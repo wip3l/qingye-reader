@@ -55,6 +55,15 @@ import {
   ThemePackageLimits
 } from '../theme/share/ThemePackageFormat';
 import {
+  CHAPTER_HEAD_NONE,
+  CHAPTER_HEAD_PLACEMENT_NAMES,
+  CHAPTER_HEAD_PLACEMENTS,
+  chapterHeadIsEmpty,
+  normalizeChapterHead,
+  normalizeOrnamentScale,
+  ThemePackageChapterHead
+} from '../theme/share/ThemePackageFormat';
+import {
   ReaderCommentBubbleImage,
   ReaderCommentBubblePainter,
   ReaderCommentBubbleStyle,
@@ -272,6 +281,7 @@ struct ThemeColorSettingsPage {
   // 拖动左上/右下“角饰大小”时的实时百分比；松手保存完回到 -1，改读主题包里的值。
   @State leadingScaleDrag: number = -1;
   @State trailingScaleDrag: number = -1;
+  @State chapterHeadScaleDrag: number = -1;
   @State appFontFamily: string = '';
   @State fontLibrary: SchemeFontOption[] = [];
   @State radiusOverride: ThemeRadiusOverrides = new ThemeRadiusOverrides();
@@ -873,6 +883,12 @@ struct ThemeColorSettingsPage {
     if (key === 'comment') return this.commentShapeLabel();
     if (key === 'title') {
       return this.effectiveTitle().mode === 'bubble' ? this.titleStyleLabel(this.effectiveTitleStyle()) : this.titleModeLabel();
+    }
+    if (key === 'chapterHead') {
+      if (this.currentEmphasis().chapterHead === CHAPTER_HEAD_NONE) return '不显示';
+      const head = this.effectiveChapterHead();
+      if (head.image) return CHAPTER_HEAD_PLACEMENT_NAMES[Math.max(0, CHAPTER_HEAD_PLACEMENTS.indexOf(head.placement || 'side'))];
+      return head.numberColor ? '序号行颜色' : '未设置';
     }
     if (key === 'typoBody') return `字号 ${this.readerProfile.fontSize} · 行距 ${this.readerProfile.lineHeight}`;
     if (key === 'typoBars') {
@@ -1774,6 +1790,14 @@ struct ThemeColorSettingsPage {
     }
     .editorCard(this.cardColor())
     Column() {
+      this.groupHeader('chapterHead', '章首装饰', 'split')
+      if (this.openGroup === 'chapterHead') {
+        this.componentSourceRow('bubble', '跟强调气泡一起取自')
+        this.chapterHeadGroupRows()
+      }
+    }
+    .editorCard(this.cardColor())
+    Column() {
       this.groupHeader('comment', '段评气泡', 'split')
       if (this.openGroup === 'comment') {
         this.commentGroupRows()
@@ -2507,6 +2531,100 @@ struct ThemeColorSettingsPage {
     .width('100%')
     .alignItems(VerticalAlign.Top)
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+  }
+
+  // ---- 章首装饰：标题饰图、序号行颜色，浅色、深色各一套，素材和设置在方案素材包的 chapterHead，
+  // 强调覆盖的 chapterHead 指向素材包 ----
+
+  @Builder
+  chapterHeadGroupRows() {
+    Row({ space: AppSpacing.XL }) {
+      this.assetSlot({ label: '标题饰图', image: this.chapterHeadSlotImage(),
+        state: this.chapterHeadSlotState(),
+        slotWidth: 56, slotHeight: 56, onTap: () => this.tapChapterHeadSlot() })
+      Text(this.chapterHeadHint())
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+    if (this.chapterHeadAdjustable()) {
+      SettingRow({ title: '饰图位置', description: '左侧时贴版心左边、上下对齐整组标题；上方、下方时单独占一行' }) {
+        Select(this.chapterHeadPlacementOptions())
+          .id('theme_editor_chapter_head_placement')
+          .width('44%')
+          .selected(this.chapterHeadPlacementIndex())
+          .value(CHAPTER_HEAD_PLACEMENT_NAMES[this.chapterHeadPlacementIndex()])
+          .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+          .optionFont({ family: this.applicationFontFamily })
+          .selectedOptionFont({ family: this.applicationFontFamily })
+          .fontColor(this.subTextColor())
+          .backgroundColor(Color.Transparent)
+          .arrowPosition(ArrowPosition.END)
+          .padding({ left: 0, right: 0 })
+          .borderRadius(16)
+          .border({ width: 0 })
+          .optionBgColor(Color.Transparent)
+          .divider(null)
+          .optionFontColor(this.primaryTextColor())
+          .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+          .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
+          .menuBackgroundBlurStyle(BlurStyle.NONE)
+          .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
+          .onSelect((index: number) => this.setChapterHeadPlacement(index))
+      }
+      Column({ space: AppSpacing.XS }) {
+        Row() {
+          Text('饰图大小')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.primaryTextColor())
+            .layoutWeight(1)
+          Text(`${this.chapterHeadScalePercent()}%`)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+        }
+        .width('100%')
+        Slider({ value: this.chapterHeadScalePercent(), min: 50, max: 200, step: 10, style: SliderStyle.OutSet })
+          .id('theme_editor_chapter_head_scale')
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+          .width('100%')
+          .selectedColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .accessibilityText('标题饰图大小')
+          .onChange((value: number, mode: SliderChangeMode) => {
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.setChapterHeadScale(value);
+            } else {
+              this.chapterHeadScaleDrag = Math.round(value);
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+    }
+    ThemeColorOption({
+      title: '序号行颜色',
+      description: this.chapterHeadNumberDescription(),
+      color: this.chapterHeadNumberColor(),
+      allowAlpha: true,
+      appDarkMode: this.appDarkMode,
+      cardColor: this.cardColor(),
+      primaryTextColor: this.primaryTextColor(),
+      accentColor: ThemeRuntime.accentColor(this.appDarkMode),
+      onColorChange: (color: string) => {
+        this.setChapterHeadNumberColor(color);
+      }
+    })
+    if (this.ownChapterHeadNumberColor()) {
+      this.resetRow('序号行改回和标题同色', () => this.setChapterHeadNumberColor(''))
+    }
+    if (this.currentEmphasis().chapterHead === CHAPTER_HEAD_NONE) {
+      this.resetRow('恢复为所选主题的章首装饰', () => this.setChapterHeadOverride(''))
+    } else if (!this.currentEmphasis().chapterHead && !chapterHeadIsEmpty(this.sourceChapterHead())) {
+      this.resetRow('不显示所选主题的章首装饰', () => this.setChapterHeadOverride(CHAPTER_HEAD_NONE))
+    }
   }
 
   // ---- 段评气泡（含本章说），浅色、深色各一套，存在强调覆盖的 comment 里 ----
@@ -6081,6 +6199,190 @@ struct ThemeColorSettingsPage {
         }, mode);
       }
     }
+  }
+
+  // ---- 章首装饰 ----
+
+  /** 来源主题自己的章首装饰（不含方案覆盖）。 */
+  sourceChapterHead(dark: boolean = this.selectedMode === 'dark'): ThemePackageChapterHead {
+    const sources = dark ? this.darkSources : this.lightSources;
+    const theme = BuiltinThemeRegistry.findById(sources.bubbleThemeId);
+    return normalizeChapterHead((dark ? theme.dark : theme.light).regexEmphasis.chapterHead);
+  }
+
+  /** 方案素材包这个模式实际用的章首装饰（素材是包内相对路径）；主题包记录不是状态变量，读 assetRevision 刷新。 */
+  ownChapterHead(dark: boolean = this.selectedMode === 'dark'): ThemePackageChapterHead {
+    if (this.assetRevision < 0) return new ThemePackageChapterHead();
+    return SchemeAssetService.chapterHead(this.ownPackageId, dark) || new ThemePackageChapterHead();
+  }
+
+  /** 当前模式生效的章首装饰（来源主题 + 方案覆盖），饰图是本机地址。 */
+  effectiveChapterHead(): ThemePackageChapterHead {
+    return normalizeChapterHead(this.effectiveEmphasis().chapterHead);
+  }
+
+  chapterHeadSlotImage(): string {
+    const own = this.ownChapterHead().image;
+    if (own) return this.ownAssetUri(own) || own;
+    return this.effectiveChapterHead().image;
+  }
+
+  chapterHeadSlotState(): string {
+    if (this.assetRevision >= 0 && SchemeAssetService.hasOwnChapterHeadImage(this.ownPackageId,
+      this.selectedMode === 'dark')) return 'own';
+    return this.chapterHeadSlotImage() ? 'inherit' : 'empty';
+  }
+
+  /** 饰图来自方案自己的素材包时才能调位置和大小。 */
+  chapterHeadAdjustable(): boolean {
+    return !!this.ownChapterHead().image && this.currentEmphasis().chapterHead === this.ownThemeId();
+  }
+
+  chapterHeadHint(): string {
+    if (this.currentEmphasis().chapterHead === CHAPTER_HEAD_NONE) return '已设为不显示所选主题的章首装饰。上传一张图会改用你自己的';
+    const base = '画在每章标题旁的一张图：SVG 或透明底位图。放左侧适合竖长的图，放上方、下方适合横长的花纹';
+    if (this.selectedMode !== 'dark') return `${base}。切到深色可以再传只在深色模式用的`;
+    return '深色模式没传时沿用浅色那张。浅色的图在深色纸面上看不清时，单独上传一张';
+  }
+
+  chapterHeadPlacementOptions(): SelectOption[] {
+    return CHAPTER_HEAD_PLACEMENT_NAMES.map((name: string): SelectOption => ({ value: name }));
+  }
+
+  chapterHeadPlacementIndex(): number {
+    return Math.max(0, CHAPTER_HEAD_PLACEMENTS.indexOf(this.ownChapterHead().placement || 'side'));
+  }
+
+  chapterHeadScalePercent(): number {
+    if (this.chapterHeadScaleDrag >= 0) return this.chapterHeadScaleDrag;
+    return Math.round(this.ownChapterHead().scale * 100);
+  }
+
+  ownChapterHeadNumberColor(): string {
+    return this.currentEmphasis().chapterHead === this.ownThemeId() ? this.ownChapterHead().numberColor : '';
+  }
+
+  /** 色块上显示的颜色：没设时是标题本来的颜色。 */
+  chapterHeadNumberColor(): string {
+    return this.effectiveChapterHead().numberColor || this.commentPreviewTextColor(this.selectedMode === 'dark');
+  }
+
+  chapterHeadNumberDescription(): string {
+    const hint = '分段标题第一段（“第十二章”那一行）的颜色，读者开了标题分段才看得出';
+    return this.effectiveChapterHead().numberColor ? hint : `${hint}。现在和标题同色`;
+  }
+
+  /** 只改这个模式的覆盖：空串跟随所选主题，none 不显示。 */
+  setChapterHeadOverride(value: string): void {
+    if (this.advancedLocked()) return;
+    const dark = this.selectedMode === 'dark';
+    const next = AppThemeSettingsStore.normalizeEmphasis(dark ? this.darkEmphasis : this.lightEmphasis);
+    if (next.chapterHead === value) return;
+    this.rememberChange();
+    next.chapterHead = value;
+    if (dark) this.darkEmphasis = next;
+    else this.lightEmphasis = next;
+    this.onSettingChanged();
+  }
+
+  /**
+   * 素材包里的章首装饰变了之后，两种模式的覆盖跟着对齐：包里这个模式有就指向素材包，
+   * 没有了而覆盖还指着素材包的改回跟随所选主题。
+   */
+  syncChapterHeadOverride(previousThemeId: string): void {
+    const own = this.ownThemeId();
+    let changed = false;
+    for (const dark of [false, true]) {
+      const next = AppThemeSettingsStore.normalizeEmphasis(dark ? this.darkEmphasis : this.lightEmphasis);
+      const has = !!own && !!SchemeAssetService.chapterHead(this.ownPackageId, dark);
+      const pointsAtPack = !!next.chapterHead && (next.chapterHead === own || next.chapterHead === previousThemeId);
+      const target = has ? own : (pointsAtPack ? '' : next.chapterHead);
+      if (next.chapterHead === target) continue;
+      if (!changed) this.rememberChange();
+      changed = true;
+      next.chapterHead = target;
+      if (dark) this.darkEmphasis = next;
+      else this.lightEmphasis = next;
+    }
+    if (changed) this.onSettingChanged();
+  }
+
+  async tapChapterHeadSlot(): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    if (!(await this.ensureAdvanced())) return;
+    if (!SchemeAssetService.hasOwnChapterHeadImage(this.ownPackageId, dark)) {
+      await this.uploadChapterHeadImage(dark);
+      return;
+    }
+    const items: string[] = ['替换', dark ? '移除，沿用浅色的饰图' : '移除饰图'];
+    const choice = await this.slotMenuItems(`${dark ? '深色' : '浅色'} · 标题饰图`, items);
+    if (choice === 0) {
+      await this.uploadChapterHeadImage(dark);
+    } else if (choice === 1) {
+      const previous = this.ownThemeId();
+      await this.runAssetClear((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.clearChapterHeadImage(getContext(this), this.schemeId, dark), '');
+      this.syncChapterHeadOverride(previous);
+    }
+  }
+
+  async uploadChapterHeadImage(dark: boolean): Promise<void> {
+    const uris = await SchemeAssetService.pickArtworkFiles(getContext(this), 1);
+    if (uris.length === 0) return;
+    const previous = this.ownThemeId();
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setChapterHeadImage(getContext(this), this.schemeId, uris[0], this.sourceThemeId('bubble'),
+        dark), '', false, false, `${dark ? '深色' : ''}标题饰图已更新`);
+    this.syncChapterHeadOverride(previous);
+  }
+
+  async setChapterHeadPlacement(index: number): Promise<void> {
+    if (index < 0 || index >= CHAPTER_HEAD_PLACEMENTS.length || index === this.chapterHeadPlacementIndex()) return;
+    if (!(await this.ensureAdvanced())) return;
+    const dark = this.selectedMode === 'dark';
+    const placement = index === 0 ? '' : CHAPTER_HEAD_PLACEMENTS[index];
+    const scale = this.ownChapterHead(dark).scale;
+    const previous = this.ownThemeId();
+    await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setChapterHeadLayout(getContext(this), this.schemeId, dark, placement, scale),
+      '', false, false, '');
+    this.syncChapterHeadOverride(previous);
+  }
+
+  async setChapterHeadScale(percent: number): Promise<void> {
+    this.chapterHeadScaleDrag = Math.round(percent);
+    try {
+      if (!(await this.ensureAdvanced())) return;
+      const dark = this.selectedMode === 'dark';
+      const placement = this.ownChapterHead(dark).placement;
+      const previous = this.ownThemeId();
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setChapterHeadLayout(getContext(this), this.schemeId, dark, placement,
+          normalizeOrnamentScale(percent / 100)), '', false, false, '');
+      this.syncChapterHeadOverride(previous);
+    } finally {
+      this.chapterHeadScaleDrag = -1;
+    }
+  }
+
+  /** 空串改回和标题同色。来源主题带的章首装饰不会被带进素材包：设了自己的颜色后整套改用素材包的。 */
+  async setChapterHeadNumberColor(color: string): Promise<void> {
+    const dark = this.selectedMode === 'dark';
+    const normalized = color ? HexColor.normalizeAlpha(color, '') : '';
+    if (color && !normalized) return;
+    if (normalized === this.ownChapterHeadNumberColor()) return;
+    if (!(await this.ensureAdvanced())) return;
+    const previous = this.ownThemeId();
+    if (normalized) {
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setChapterHeadNumberColor(getContext(this), this.schemeId, this.sourceThemeId('bubble'),
+          dark, normalized), '', false, false, '');
+    } else {
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setChapterHeadNumberColor(getContext(this), this.schemeId, '', dark, ''),
+        '', false, false, '');
+    }
+    this.syncChapterHeadOverride(previous);
   }
 
   // ---- 界面字体 ----

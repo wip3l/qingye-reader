@@ -25,6 +25,7 @@ export class ReaderV2PagePainter {
     // keyed independently from this FrameNode, so a forward/back turn could update the glyph page first while
     // leaving the old page's bubble rectangles mounted. Painting both layers here also removes dozens of
     // Row/Image nodes from simulation snapshots on dialogue-heavy chapters.
+    ReaderV2PagePainter.drawDecorations(canvas, page);
     for (const fragment of page.fragments) {
       for (const segment of fragment.regexBubbleSegments) {
         ReaderV2PagePainter.drawRegexBubble(canvas, segment);
@@ -58,6 +59,26 @@ export class ReaderV2PagePainter {
       canvas.restore();
     }
     if (hasAnnotations) ReaderV2AnnotationPainter.paintLines(canvas, page);
+  }
+
+  /** Theme artwork under the text (chapter-head ornament). An image that cannot be decoded is skipped. */
+  private static drawDecorations(canvas: drawing.Canvas, page: ReaderV2PageLayout): void {
+    for (const decoration of page.decorations) {
+      const rect = decoration.rect;
+      const width = rect.right - rect.left;
+      const height = rect.bottom - rect.top;
+      if (width <= 0.5 || height <= 0.5) continue;
+      const bitmap = ReaderRasterAssets.fileImage(decoration.image, width, height);
+      if (!bitmap) continue;
+      const brush = new drawing.Brush();
+      brush.setAntiAlias(true);
+      canvas.attachBrush(brush);
+      canvas.drawImageRectWithSrc(bitmap,
+        { left: 0, top: 0, right: Math.max(1, Math.round(width)), bottom: Math.max(1, Math.round(height)) },
+        { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        new drawing.SamplingOptions(drawing.FilterMode.FILTER_MODE_LINEAR), drawing.SrcRectConstraint.STRICT);
+      canvas.detachBrush();
+    }
   }
 
   // Brush.setColor(number) only exists from API 18; the colour-object overload works on every supported API.

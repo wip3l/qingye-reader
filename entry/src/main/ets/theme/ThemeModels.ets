@@ -1,4 +1,4 @@
-import { ThemePackageCommentBubble } from './share/ThemePackageFormat';
+import { ThemePackageChapterHead, ThemePackageCommentBubble } from './share/ThemePackageFormat';
 
 export class ThemeIds {
   static readonly CUSTOM: string = 'custom';
@@ -134,6 +134,8 @@ export class ThemeEmphasisOverrides {
   comment: ThemePackageCommentBubble = new ThemePackageCommentBubble();
   // 标题强调的逐项覆盖，字段为空跟随来源主题；本机旧设置里没有。
   title: ThemeTitleEmphasisTokens = new ThemeTitleEmphasisTokens();
+  // 章首装饰：空串跟随来源主题，'none' 不用，pack:<id> 用那个主题包这个模式的整套章首装饰；本机旧设置里没有。
+  chapterHead: string = '';
 }
 
 /** 自定义方案对圆角的逐项覆盖：-1 表示跟随所选主题。 */
@@ -221,6 +223,8 @@ export class ThemeRegexEmphasisTokens {
   commentBubble: ThemePackageCommentBubble = new ThemePackageCommentBubble();
   // 标题强调，跟着强调气泡的来源走；内置主题都不设置。
   title: ThemeTitleEmphasisTokens = new ThemeTitleEmphasisTokens();
+  // 章首装饰（标题饰图、序号行颜色），同样跟着强调气泡的来源走；内置主题都不设置。饰图是本机 URI。
+  chapterHead: ThemePackageChapterHead = new ThemePackageChapterHead();
 }
 
 export class ThemeVariant {

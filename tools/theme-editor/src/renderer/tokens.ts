@@ -2,7 +2,8 @@
 import data from '../core/builtinThemes.json';
 import { S, project, type Mode } from './state.ts';
 import {
-  bubbleFor, commentBubbleFor, normalizeCommentBubble, normalizeOrnamentScale, titleBubbleFor, type ThemePackageCommentBubble
+  bubbleFor, chapterHeadFor, commentBubbleFor, normalizeCommentBubble, normalizeOrnamentScale, titleBubbleFor,
+  type ThemePackageChapterHead, type ThemePackageCommentBubble
 } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 
 export interface BaseVariant {
@@ -76,6 +77,8 @@ export interface Effective {
   /** 这个模式的标题强调（mode 为空表示不设置）与标题气泡（按 titleBubbleFor 补齐另一种模式的）。 */
   title: { mode: string; bubbleStyle: string; color: string; textColor: string };
   tb: any | null;
+  /** 这个模式的章首装饰（饰图只给了一种模式时两种都用，同应用 chapterHeadFor）；没有时为 null。 */
+  head: ThemePackageChapterHead | null;
   radius: Record<string, number>;
   tts: any | null;
   startup: any | null;
@@ -123,7 +126,8 @@ export function effective(mode: Mode): Effective {
   const te = filled(v.titleEmphasis);
   const title = { mode: te.mode || '', bubbleStyle: te.bubbleStyle || '', color: te.color || '', textColor: te.textColor || '' };
   const tb = titleBubbleFor(p, mode === 'dark');
-  return { mode, c, reader, e, b, comment, title, tb, radius, tts, startup };
+  const head = chapterHeadFor(p, mode === 'dark');
+  return { mode, c, reader, e, b, comment, title, tb, head, radius, tts, startup };
 }
 
 /** 字段的基底值，用作输入框里“沿用 …”的提示。 */

@@ -98,6 +98,8 @@ export class ReaderV2Block {
   title: boolean = false;
   /** 0 is the original/first title segment, 1 is the enlarged second segment. */
   titleSegment: number = 0;
+  /** 分段标题的第一段（“第十二章”那一行）。 */
+  titleLead: boolean = false;
   /** 1-6 表示章内小标题，0 表示普通段落。 */
   headingLevel: number = 0;
   image: ReaderV2ImageRef | null = null;
@@ -144,6 +146,16 @@ export class ReaderV2Document {
   offsets: ReaderV2OffsetSegment[] = [];
   regexRanges: ReaderV2RegexRange[] = [];
   identity: string = '';
+
+  /** 章节标题占几块（不分段 1 块，分段 2 块，没有标题 0）。 */
+  titleBlockCount(): number {
+    let count = 0;
+    for (const block of this.blocks) {
+      if (block.title) count++;
+      else if (count > 0) break;
+    }
+    return count;
+  }
 
   sourceOffsetForDisplay(displayOffset: number): number {
     const target = Math.max(0, Math.min(this.displayText.length, displayOffset));
@@ -457,6 +469,7 @@ export class ReaderV2DocumentParser {
       const second = new ReaderV2Block(`${block.id}_title_second`, block.text.substring(cut),
         boundary, block.displayEnd, sourceBoundary, block.sourceEnd, true);
       second.titleSegment = 1;
+      first.titleLead = true;
       blocks.push(first, second);
     }
     document.blocks = blocks;

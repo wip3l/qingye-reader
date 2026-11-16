@@ -825,6 +825,50 @@ test('v2 theme: dark-mode bubble art, shelf frame, nav icons and comment bubbles
   assert.equal(decode(noNav).navigationDark, null);
 });
 
+test('chapter head: decode, per-mode fallback, refs, encode, pack:self', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+  const json = partsJson();
+  json.light.chapterHead = { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#8d8478' };
+  json.dark.chapterHead = { numberColor: '#99FFFFFF', placement: 'bottom' };
+  const parts = byPath(decode(json));
+  assert.deepEqual({ ...parts.light.chapterHead },
+    { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#8D8478' });
+  // 深色没写饰图：沿用浅色那张和它的位置、大小，颜色用自己的；自己写的位置没有图可跟，不生效。
+  const night = format.chapterHeadFor(parts, true);
+  assert.deepEqual({ ...night }, { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#99FFFFFF' });
+  assert.equal(format.partsAssetRefs(parts).includes('assets/logo.svg'), true);
+  assert.equal(format.describeParts(parts).includes('章首装饰（标题饰图、序号行颜色）'), true);
+  const encoded = format.encodeParts(parts);
+  assert.deepEqual(encoded.light.chapterHead, { image: 'assets/logo.svg', placement: 'top', scale: 1.5, numberColor: '#8D8478' });
+  assert.deepEqual(encoded.dark.chapterHead, { numberColor: '#99FFFFFF' });
+  const exported = new format.ThemePackageTheme();
+  exported.parts = parts;
+  const again = byPath(format.decodeTheme(format.encodeTheme(exported), manifest).parts);
+  assert.equal(again.light.chapterHead.image, 'assets/logo.svg');
+  assert.equal(again.dark.chapterHead.numberColor, '#99FFFFFF');
+  // 缺省值不写；不认得的位置按标题左侧；大小夹在 0.5–2。
+  const plain = decode({ ...partsJson(), light: { chapterHead: { image: 'assets/logo.svg', placement: 'corner', scale: 9 } } });
+  assert.equal(plain.light.chapterHead.placement, '');
+  assert.equal(plain.light.chapterHead.scale, 2);
+  assert.deepEqual(format.encodeParts(byPath(decode({ ...partsJson(), light: { chapterHead: { image: 'assets/logo.svg' } } }))).light.chapterHead,
+    { image: 'assets/logo.svg' });
+  // 旧包没有这一节：编码不多出字段，取值为 null。
+  const legacy = byPath(decode(partsJson()));
+  assert.equal('chapterHead' in format.encodeParts(legacy).light, false);
+  assert.equal(format.chapterHeadFor(legacy, false), null);
+  assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { image: 'assets/missing.png' } } }), /chapterHead\.image/);
+  assert.throws(() => decode({ ...partsJson(), light: { chapterHead: { numberColor: 'red' } } }), /chapterHead\.numberColor/);
+  // 方案覆盖里的 pack:self。
+  const settings = { customLightEmphasis: { chapterHead: 'pack:self' }, customDarkEmphasis: { chapterHead: 'none' } };
+  format.replaceSelfPackId(settings, 'pack:demo');
+  assert.equal(settings.customLightEmphasis.chapterHead, 'pack:demo');
+  assert.equal(settings.customDarkEmphasis.chapterHead, 'none');
+  format.replaceOwnPackIdWithSelf(settings, 'pack:demo');
+  assert.equal(settings.customLightEmphasis.chapterHead, 'pack:self');
+});
+
 test('title emphasis and title bubble: decode, per-mode fallback, refs, encode, pack:self', () => {
   const manifest = withAssets(manifestV2(), PARTS_FILES);
   const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;

@@ -19,6 +19,7 @@ import { ReaderFontWeight } from './ReaderFontWeight';
 import { ReaderFontStroke } from './ReaderFontStroke';
 import { EpubNoteLink } from '../book/EpubNoteLink';
 import { ReaderV2CommentCardLayout } from './ReaderV2CommentCard';
+import { ReaderV2ChapterHeadLayout, ReaderV2ChapterHeadMetrics } from './ReaderV2ChapterHead';
 
 class ReaderV2MeasuredBlock {
   block: ReaderV2Block;
@@ -83,6 +84,10 @@ export class ReaderV2PaginationSession {
   imageOnly: boolean = false;
   /** 滚动阅读：整份文档排成一页，不受页高限制。 */
   continuous: boolean = false;
+  /** 章首饰图占的空间；标题上下边距已把它要的那部分加进去。 */
+  chapterHead: ReaderV2ChapterHeadMetrics = new ReaderV2ChapterHeadMetrics();
+  titleMarginTopPx: number = 0;
+  titleMarginBottomPx: number = 0;
   private blockStyles: ReaderV2SpanStyleRange[] = [];
   private blockStylesIndex: number = -1;
 
@@ -110,6 +115,9 @@ export class ReaderV2PaginationSession {
     this.pageSet.documentIdentity = document.identity;
     this.pageSet.layoutIdentity = snapshot.identity;
     this.width = snapshot.columnRects.length > 0 ? snapshot.columnRects[0].width() : 0;
+    this.chapterHead = ReaderV2ChapterHeadLayout.metrics(snapshot, document.titleBlockCount(), this.width);
+    this.titleMarginTopPx = snapshot.titleMarginTopPx + this.chapterHead.extraTopPx;
+    this.titleMarginBottomPx = snapshot.titleMarginBottomPx + this.chapterHead.extraBottomPx;
     this.pageSet.complete = document.blocks.length === 0 || snapshot.columnRects.length === 0;
     this.imageOnly = document.blocks.length > 0 &&
       document.blocks.every((block: ReaderV2Block): boolean => !!block.image);
@@ -355,6 +363,7 @@ export class ReaderV2Paginator {
                 page.fragments.push(fragment);
               }
               page.actions.push(...titlePage.actions);
+              page.decorations.push(...titlePage.decorations);
               y = titleTop + column.height();
               hasContent = true;
               topInkGuardApplied = true;
@@ -369,7 +378,7 @@ export class ReaderV2Paginator {
           const followsTitle = session.blockIndex > 0 && session.document.blocks[session.blockIndex - 1].title;
           const gap = hasContent && !(followsTitle && session.snapshot.titleSinglePage) ?
             ReaderV2Paginator.imageGap(session.snapshot) +
-            (followsTitle ? session.snapshot.titleMarginBottomPx : 0) : 0;
+            (followsTitle ? session.titleMarginBottomPx : 0) : 0;
           const remaining = columnBottom - y - gap;
           const natural = ReaderMixedPageLayout.naturalBoxForSize(imageBlock.image.width, imageBlock.image.height,
             session.width, column.height(), session.snapshot.imagePxPerVp);
@@ -403,7 +412,7 @@ export class ReaderV2Paginator {
             }
           }
           const imageFragment = new ReaderV2PageFragment();
-          imageFragment.fixedGapBefore = hasContent && followsTitle && session.snapshot.titleMarginBottomPx > 0;
+          imageFragment.fixedGapBefore = hasContent && followsTitle && session.titleMarginBottomPx > 0;
           imageFragment.blockId = imageBlock.id;
           imageFragment.blockIndex = session.blockIndex;
           imageFragment.imageSource = imageBlock.image.source;
@@ -495,8 +504,8 @@ export class ReaderV2Paginator {
           session.snapshot, session.currentBlockStyles(), session.width, session.paragraphCache);
         const previous = session.blockIndex > 0 ? session.document.blocks[session.blockIndex - 1] : null;
         fragment.fixedGapBefore = startsNewBlock && hasContent &&
-          ((current.block.title && session.snapshot.titleMarginTopPx > 0) ||
-            (!current.block.title && !!previous && previous.title && session.snapshot.titleMarginBottomPx > 0));
+          ((current.block.title && session.titleMarginTopPx > 0) ||
+            (!current.block.title && !!previous && previous.title && session.titleMarginBottomPx > 0));
         fragmentActionStarts.push(page.actions.length);
         page.fragments.push(fragment);
         ReaderV2Paginator.appendActionAreas(page, fragment, session.document.actions, session.snapshot);
@@ -532,9 +541,13 @@ export class ReaderV2Paginator {
         page.contentBottomPx = Math.max(page.contentBottomPx, y);
       }
       const lastFragment = page.fragments[page.fragments.length - 1];
-      if (lastFragment.titleEnd && !session.snapshot.titleSinglePage && session.snapshot.titleMarginBottomPx > 0) {
+      if (lastFragment.titleEnd && !session.snapshot.titleSinglePage && session.titleMarginBottomPx > 0) {
         page.contentBottomPx = Math.min(columnBottom, Math.max(page.contentBottomPx,
-          lastFragment.paragraphY + lastFragment.paragraphHeight + session.snapshot.titleMarginBottomPx));
+          lastFragment.paragraphY + lastFragment.paragraphHeight + session.titleMarginBottomPx));
+      }
+      // 单独成页的标题已在自己的排版里放好饰图（那里的字号可能缩过）。
+      if (page.decorations.length === 0) {
+        ReaderV2ChapterHeadLayout.place(page, session.snapshot, session.chapterHead, column);
       }
       page.sourceStart = session.document.sourceOffsetForDisplay(page.displayStart);
       page.sourceEnd = session.document.sourceOffsetForDisplay(page.displayEnd);
@@ -555,10 +568,10 @@ export class ReaderV2Paginator {
     if (block.title && block.titleSegment > 0) return hasContent ? snapshot.titleLineGapPx : 0;
     const paragraphGap = hasContent ? Math.max(snapshot.paragraphSpacingPx,
       previousWasImage ? ReaderV2Paginator.imageGap(snapshot) : 0) : 0;
-    if (block.title) return paragraphGap + snapshot.titleMarginTopPx;
+    if (block.title) return paragraphGap + session.titleMarginTopPx;
     const previous = session.blockIndex > 0 ? session.document.blocks[session.blockIndex - 1] : null;
     if (snapshot.titleSinglePage && previous && previous.title) return 0;
-    return paragraphGap + (hasContent && previous && previous.title ? snapshot.titleMarginBottomPx : 0);
+    return paragraphGap + (hasContent && previous && previous.title ? session.titleMarginBottomPx : 0);
   }
 
   /** Isolate the complete title group; its source ranges remain those of the original document. */
@@ -624,6 +637,7 @@ export class ReaderV2Paginator {
     snapshot.titleAlignment = source.titleAlignment;
     snapshot.titleMarginTopPx = source.titleMarginTopPx * scale;
     snapshot.titleMarginBottomPx = source.titleMarginBottomPx * scale;
+    snapshot.chapterHead = source.chapterHead;
     snapshot.letterSpacingPx = source.letterSpacingPx * scale;
     snapshot.textAlign = source.textAlign;
     snapshot.bodyFontFamily = source.bodyFontFamily;
@@ -673,6 +687,10 @@ export class ReaderV2Paginator {
     for (const action of page.actions) {
       action.rect.top += shift;
       action.rect.bottom += shift;
+    }
+    for (const decoration of page.decorations) {
+      decoration.rect.top += shift;
+      decoration.rect.bottom += shift;
     }
   }
 
@@ -782,10 +800,18 @@ export class ReaderV2Paginator {
     }
     const paragraph = builder.build();
     ReaderV2Paginator.onWorkMeasured?.('paragraph-build', Date.now() - startedAt);
-    const layoutWidth = Math.max(1, width - ReaderV2Paginator.titleDecorationInset(block, regexStyles, width) * 2);
+    const layoutWidth = Math.max(1, width - ReaderV2Paginator.titleLeadReserve(document, block, snapshot, width) -
+      ReaderV2Paginator.titleDecorationInset(block, regexStyles, width) * 2);
     if (paragraphCache) throw new ReaderV2PendingLayout(cacheKey, paragraph, layoutWidth);
     paragraph.layoutSync(layoutWidth);
     return paragraph;
+  }
+
+  /** 章首饰图在标题左侧时，标题每一行左边让出的宽度。 */
+  private static titleLeadReserve(document: ReaderV2Document, block: ReaderV2Block,
+    snapshot: ReaderV2LayoutSnapshot, width: number): number {
+    if (!block.title || !snapshot.chapterHead.image) return 0;
+    return ReaderV2ChapterHeadLayout.metrics(snapshot, document.titleBlockCount(), width).reservePx;
   }
 
   private static titleDecorationInset(block: ReaderV2Block, styles: ReaderV2SpanStyleRange[], width: number): number {
@@ -839,7 +865,8 @@ export class ReaderV2Paginator {
       fontFamilies: [heading ? snapshot.titleFontFamily : snapshot.bodyFontFamily],
       fontWeight: ReaderV2Paginator.bodyFontWeight(weight),
       fontVariations: [{ axis: 'wght', value: weight }],
-      color: ReaderV2Paginator.graphicsColor(snapshot.textColor),
+      color: ReaderV2Paginator.graphicsColor(block.titleLead && snapshot.chapterHead.numberColor !== 0 ?
+        snapshot.chapterHead.numberColor : snapshot.textColor),
       halfLeading: false,
       heightOnly: true,
       heightScale: 1,
@@ -1091,7 +1118,9 @@ export class ReaderV2Paginator {
           current.block.displayStart + first.startIndex + offset, snapshot, regexStyles));
     }
     fragment.titleContinuation = current.block.title && current.block.titleSegment > 0;
-    fragment.paragraphX = x + ReaderV2Paginator.titleDecorationInset(current.block, regexStyles, width);
+    fragment.leadReservePx = ReaderV2Paginator.titleLeadReserve(document, current.block, snapshot, width);
+    fragment.paragraphX = x + fragment.leadReservePx +
+      ReaderV2Paginator.titleDecorationInset(current.block, regexStyles, width);
     fragment.paragraphY = y;
     fragment.paragraphHeight = paragraphLineBottom - paragraphLineTop;
     const localCount = fragment.paragraph.getLineCount();

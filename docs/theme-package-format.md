@@ -77,6 +77,7 @@ my-theme/
 | | `emphasis` | 正文强调：`mode`（`none` / `text` / `highlight` / `bubble`）、`bubbleStyle`（内置气泡 ID，见主题开发指南；包里带了 `bubble` 节时自动用包内气泡）、`color`、`textColor`（可带透明度）。 |
 | | `commentBubble` | 可选：段评气泡（含本章说）的外观，见下文“段评气泡”。旧版本应用会忽略。 |
 | | `titleEmphasis` | 可选：章节标题的强调，见下文“标题强调”。不写表示主题不设置，标题保持原样。旧版本应用会忽略。 |
+| | `chapterHead` | 可选：章首装饰（标题旁的饰图、序号行颜色），见下文“章首装饰”。旧版本应用会忽略。 |
 | `ttsPanel` | `light` / `dark` | 朗读与有声书面板：`artwork`（720 × 520 的 SVG 或位图，贴顶等比缩放）、`skyColor`（插画背后的天空色）、`surfaceColor`（不透明的面板底色）、`glowColor`（带透明度的强调光）。四项都要写；只写一种模式时另一种模式沿用它。 |
 | `navigation` | `bookshelf`、`explore`、`mine` | 首页底栏的三个图标，缺一不可。SVG 按主题色着色，位图保持原色。 |
 | | `bookshelfSelected`、`exploreSelected`、`mineSelected` | 选中态图标，可选；没写的页签选中时仍用普通图标。旧版本应用会忽略这几项。 |
@@ -198,6 +199,24 @@ my-theme/
 ```
 
 应用导出的方案里，方案对标题强调的覆盖写在 `customLightEmphasis.title` / `customDarkEmphasis.title`（字段同上，`mode` 还可以是 `off`：来源主题设了标题强调、方案要改回不设置），方案自己的标题气泡写成 `pack:self:title`。
+
+### 章首装饰
+
+`light.chapterHead`、`dark.chapterHead` 给每章的标题加一张饰图，并可以单独给序号行上色。字段都可以不写：
+
+- `image`：饰图，SVG 或透明底位图。只写了一种模式时另一种模式沿用它（连同 `placement`、`scale`）。
+- `placement`：`side`（缺省，标题左侧）、`top`（标题上方）、`bottom`（标题下方）。左侧时饰图贴版心左边、上下居中于整组标题，标题在剩下的宽度里按读者设的对齐方式排；上方、下方时饰图单独占一行，左右跟着标题的对齐方式。
+- `scale`：大小倍数 0.5–2，缺省 1。左侧时 1 表示和整组标题一样高（按每段标题一行估算，宽度最多占版心的 30%）；上方、下方时 1 表示约 0.9 个标题字高。
+- `numberColor`：分段标题第一段（“第十二章”那一行）的颜色，可带透明度；不写时和标题同色。读者在阅读设置里开了标题分段才生效，各模式写各的。
+
+竖长的图适合放左侧，横长的花纹适合放上方或下方。饰图在标题单独成页、滚动阅读和仿真翻页里都会画。读者可以在阅读设置的标题一栏关掉“章首装饰”。
+
+```json
+"light": { "chapterHead": { "image": "assets/title_staff.png", "numberColor": "#8D8478" } },
+"dark":  { "chapterHead": { "image": "assets/title_staff_dark.png", "numberColor": "#857D70" } }
+```
+
+应用导出的方案里，方案对章首装饰的选择写在 `customLightEmphasis.chapterHead` / `customDarkEmphasis.chapterHead`：不写表示跟随强调气泡的来源主题，`none` 表示不显示，`pack:self` 表示用这个包自己的。
 
 ### 段评气泡
 
