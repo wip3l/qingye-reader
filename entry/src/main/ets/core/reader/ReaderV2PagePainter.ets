@@ -5,6 +5,7 @@ import { ReaderFontStroke } from './ReaderFontStroke';
 import { ReaderCommentBubblePainter } from './ReaderCommentBubble';
 import { ReaderV2AnnotationPainter } from './ReaderV2AnnotationPainter';
 import { ReaderV2CommentCardPainter } from './ReaderV2CommentCard';
+import { ReaderV2RulingPainter } from './ReaderV2RulingPainter';
 import { ReaderRasterAssets } from './ReaderRasterAssets';
 import {
   ReaderV2PageFragment,
@@ -40,6 +41,8 @@ export class ReaderV2PagePainter {
       }
       if (fragment.card) ReaderV2CommentCardPainter.paint(canvas, fragment.card, fragment.paragraphX, fragment.paragraphY);
     }
+    // 文字划线在气泡底色之上、字形之下；划线笔记的线最后画，盖在它上面。
+    if (page.ruling) ReaderV2RulingPainter.paint(canvas, page);
     const hasAnnotations = page.annotationMarks.length > 0;
     for (const fragment of page.fragments) {
       if (!fragment.paragraph) continue;

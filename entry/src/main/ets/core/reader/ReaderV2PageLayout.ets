@@ -4,6 +4,7 @@ import { ReaderV2Rect } from './ReaderV2LayoutSnapshot';
 import { ReaderCommentBubbleStyle } from './ReaderCommentBubble';
 import { ReaderFontStrokeRun } from './ReaderFontStroke';
 import { ReaderV2CommentCard } from './ReaderV2CommentCard';
+import { ReaderTextRulingSpec } from './ReaderTextRuling';
 
 /** Minimal native Text span metadata used by the transparent system-selection layer. */
 export class ReaderV2SelectionRun {
@@ -106,6 +107,8 @@ export class ReaderV2PageFragment {
   imageSource: string = '';
   imageRect: ReaderV2Rect = new ReaderV2Rect();
   regexBubbleSegments: ReaderV2RegexBubbleSegment[] = [];
+  /** 正则字体命中的正文区间（显示偏移，成对的 [开始, 结束)），“仅正则字体”文字划线用；标题样式不在其中。 */
+  regexRanges: number[] = [];
   commentBubbleSegments: ReaderV2CommentBubbleSegment[] = [];
   /** 热评卡片段：paragraph 为 null，卡片坐标相对 paragraphX / paragraphY。 */
   card: ReaderV2CommentCard | null = null;
@@ -164,6 +167,8 @@ export class ReaderV2PageLayout implements ReaderPaginationBoundary {
   /** 划线由阅读页按当前划线数据填入；annotationStamp 记填入时的数据版本，版本变了重新填。 */
   annotationMarks: ReaderV2AnnotationMark[] = [];
   annotationStamp: string = '';
+  /** 正文文字划线，与划线一起由阅读页填入（版本并在 annotationStamp 里）；null 为不画。 */
+  ruling: ReaderTextRulingSpec | null = null;
 
   actionAt(x: number, y: number, slopX: number, slopY: number): ReaderV2ActionHitArea | null {
     // Later actions win where expanded hit slop overlaps, which matches visual painting order.

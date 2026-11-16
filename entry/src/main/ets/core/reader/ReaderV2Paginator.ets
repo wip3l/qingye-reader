@@ -1357,7 +1357,31 @@ export class ReaderV2Paginator {
     fragment.displayEnd = current.block.displayStart + fragment.localEnd;
     ReaderV2Paginator.appendRegexDecorations(fragment, regexStyles, snapshot.viewport.left,
       snapshot.viewport.right);
+    if (!fragment.title) fragment.regexRanges = ReaderV2Paginator.regexRangesIn(fragment, regexStyles);
     return fragment;
+  }
+
+  /** 落在片段里的正则字体区间（显示偏移），给“仅正则字体”文字划线用；标题强调（repeatCaps）不算。 */
+  private static regexRangesIn(fragment: ReaderV2PageFragment, regexStyles: ReaderV2SpanStyleRange[]): number[] {
+    const hits: number[][] = [];
+    for (const style of regexStyles) {
+      if (style.repeatCaps || style.end <= fragment.displayStart || style.start >= fragment.displayEnd) continue;
+      const start = Math.max(fragment.displayStart, style.start);
+      const end = Math.min(fragment.displayEnd, style.end);
+      if (end > start) hits.push([start, end]);
+    }
+    if (hits.length === 0) return [];
+    hits.sort((left: number[], right: number[]): number => left[0] - right[0]);
+    // 相邻或重叠的命中并成一段：半透明的线不会叠深，两条规则交界处也不断开。
+    const ranges: number[] = [];
+    for (const hit of hits) {
+      if (ranges.length >= 2 && hit[0] <= ranges[ranges.length - 1]) {
+        ranges[ranges.length - 1] = Math.max(ranges[ranges.length - 1], hit[1]);
+      } else {
+        ranges.push(hit[0], hit[1]);
+      }
+    }
+    return ranges;
   }
 
   private static appendRegexDecorations(fragment: ReaderV2PageFragment,

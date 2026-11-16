@@ -128,6 +128,9 @@ import { ReaderV2AnnotationPainter } from '../core/reader/ReaderV2AnnotationPain
 import { BookAnnotation, BookAnnotationAnchor, BookAnnotationRange,
   BookAnnotationStyles } from '../model/reader/BookAnnotation';
 import { ReaderAnnotationSettings, ReaderAnnotationSettingsStore } from '../utils/ReaderAnnotationSettingsStore';
+import { ReaderTextRulingStore } from '../utils/ReaderTextRulingStore';
+import { ReaderTextRuling, ReaderTextRulingSettings, ReaderTextRulingSpec } from '../core/reader/ReaderTextRuling';
+import { AdaptiveColorPicker } from '../components/AdaptiveColorPicker';
 import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { ReaderAnnotationLayer, ReaderAnnotationLayerMode } from '../components/reader/ReaderAnnotationLayer';
 import { ReaderAnnotationShare } from '../utils/ReaderAnnotationShare';
@@ -945,6 +948,11 @@ struct ReadBookPage {
   private readerAnnotationResolved: Map<number, ReaderAnnotationChapterRanges> =
     new Map<number, ReaderAnnotationChapterRanges>();
   private readerAnnotationSettings: ReaderAnnotationSettings = new ReaderAnnotationSettings();
+  // 正文文字划线（排版设置 › 文字）：解析好的参数随划线一起填进页对象，版本并在 readerAnnotationStamp 里。
+  @State private readerTextRuling: ReaderTextRulingSettings = new ReaderTextRulingSettings();
+  private readerTextRulingVersion: number = 0;
+  private readerTextRulingSpecKey: string = '';
+  private readerTextRulingSpecValue: ReaderTextRulingSpec | null = null;
   private readerAnnotationActive: BookAnnotation | null = null;
   @State private readerAnnotationMode: string = '';
   @State private readerAnnotationColor: string = BookAnnotationStyles.DEFAULT_COLOR;
@@ -1412,6 +1420,7 @@ struct ReadBookPage {
       // 开书只读朗读设置。音色列表要枚举系统音色、拉云端目录，还会加载整个朗读引擎，留到打开朗读面板、
       // 设置面板或开始朗读时再取。
       this.loadTtsSettingsAndVoices(false);
+      this.loadReaderTextRuling();
       if (this.bookUrl) {
         await this.loadBook();
         this.loadBookmarks().catch((error: Error) => {
@@ -13230,9 +13239,183 @@ struct ReadBookPage {
       })
     }
 
+    this.readerTextRulingGroup()
+
     ReaderSettingGroup({ title: '段评', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
       this.readerTypographyField(ReaderTypographyField.COMMENT_BUBBLE_SIZE, false, false, '正文里段评气泡的大小')
     }
+  }
+
+  /** 排版设置 › 文字 › 文字划线。改动只重画正文，不重新分页。 */
+  @Builder
+  readerTextRulingGroup() {
+    ReaderSettingGroup({ title: '文字划线', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
+      ReaderSettingSwitchRow({
+        title: '正文划线', description: '像信纸一样在正文下画线，标题不画',
+        checked: this.readerTextRuling.enabled, textColor: this.readerPanelTextColor(),
+        subTextColor: this.readerPanelSubTextColor(),
+        onChange: (checked: boolean) => {
+          this.updateReaderTextRuling((settings: ReaderTextRulingSettings): void => {
+            settings.enabled = checked;
+          });
+        }
+      })
+
+      if (this.readerTextRuling.enabled) {
+        ReaderSettingSegmentRow({
+          title: '划在哪些字下',
+          labels: ReaderTextRuling.TARGET_LABELS,
+          selected: Math.max(0, ReaderTextRuling.TARGETS.indexOf(this.readerTextRuling.target)),
+          dark: this.isReaderThemeDark(),
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          onSelect: (index: number): void => this.updateReaderTextRuling((settings: ReaderTextRulingSettings): void => {
+            settings.target = ReaderTextRuling.TARGETS[index] ?? 'all';
+          })
+        })
+        if (this.readerTextRuling.target === 'regex') {
+          Text(this.readerRegexFontEnabled ? '只在正则字体规则命中的文字下画，长度按文字' :
+            '“正则字体”未启用，现在不会画线。可在阅读字体 › 正则字体里开启')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.readerPanelSubTextColor())
+            .width('100%')
+        } else {
+          ReaderSettingSegmentRow({
+            title: '长度',
+            labels: ReaderTextRuling.SCOPE_LABELS,
+            selected: Math.max(0, ReaderTextRuling.SCOPES.indexOf(this.readerTextRuling.scope)),
+            dark: this.isReaderThemeDark(),
+            textColor: this.readerPanelTextColor(),
+            subTextColor: this.readerPanelSubTextColor(),
+            onSelect: (index: number): void => this.updateReaderTextRuling((settings: ReaderTextRulingSettings): void => {
+              settings.scope = ReaderTextRuling.SCOPES[index] ?? 'row';
+            })
+          })
+        }
+        ReaderSettingSegmentRow({
+          title: '线型',
+          labels: ReaderTextRuling.STYLE_LABELS,
+          selected: Math.max(0, ReaderTextRuling.STYLES.indexOf(this.readerTextRuling.style)),
+          dark: this.isReaderThemeDark(),
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          onSelect: (index: number): void => this.updateReaderTextRuling((settings: ReaderTextRulingSettings): void => {
+            settings.style = ReaderTextRuling.STYLES[index] ?? 'dotted';
+          })
+        })
+        ReaderSettingSegmentRow({
+          title: '位置',
+          labels: ReaderTextRuling.POSITION_LABELS,
+          selected: Math.max(0, ReaderTextRuling.POSITIONS.indexOf(this.readerTextRuling.position)),
+          dark: this.isReaderThemeDark(),
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          onSelect: (index: number): void => this.updateReaderTextRuling((settings: ReaderTextRulingSettings): void => {
+            settings.position = ReaderTextRuling.POSITIONS[index] ?? 'gap';
+          })
+        })
+        ReaderSettingSegmentRow({
+          title: '颜色',
+          labels: ReaderTextRuling.COLOR_MODE_LABELS,
+          selected: Math.max(0, ReaderTextRuling.COLOR_MODES.indexOf(this.readerTextRuling.colorMode)),
+          dark: this.isReaderThemeDark(),
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          onSelect: (index: number): void => this.updateReaderTextRuling((settings: ReaderTextRulingSettings): void => {
+            settings.colorMode = ReaderTextRuling.COLOR_MODES[index] ?? 'text';
+          })
+        })
+        if (this.readerTextRuling.colorMode === 'custom') {
+          this.readerTextRulingColorRow()
+        }
+        Row({ space: 14 }) {
+          ReaderSettingStepperItem({
+            title: '浓淡（%）',
+            cell: true,
+            value: this.readerTextRuling.opacity,
+            minValue: ReaderTextRuling.MIN_OPACITY,
+            maxValue: ReaderTextRuling.MAX_OPACITY,
+            stepValue: 10,
+            dark: this.isReaderThemeDark(),
+            textColor: this.readerPanelTextColor(),
+            subTextColor: this.readerPanelSubTextColor(),
+            inputColor: this.readerSolidPanelColor(),
+            onChange: (value: number): void => this.updateReaderTextRuling((settings: ReaderTextRulingSettings): void => {
+              settings.opacity = value;
+            })
+          })
+            .layoutWeight(1)
+          ReaderSettingStepperItem({
+            title: '粗细',
+            cell: true,
+            value: this.readerTextRuling.thickness,
+            minValue: ReaderTextRuling.MIN_THICKNESS,
+            maxValue: ReaderTextRuling.MAX_THICKNESS,
+            dark: this.isReaderThemeDark(),
+            textColor: this.readerPanelTextColor(),
+            subTextColor: this.readerPanelSubTextColor(),
+            inputColor: this.readerSolidPanelColor(),
+            onChange: (value: number): void => this.updateReaderTextRuling((settings: ReaderTextRulingSettings): void => {
+              settings.thickness = value;
+            })
+          })
+            .layoutWeight(1)
+        }
+        .width('100%')
+      }
+    }
+  }
+
+  /** 自定义划线颜色：浅色、深色模式各存一份，空=跟随正文文字色（同页眉页脚颜色的做法）。 */
+  @Builder
+  readerTextRulingColorRow() {
+    Stack() {
+      Row() {
+        Column() {
+          Text(this.appDarkMode ? '自定义颜色（深色模式）' : '自定义颜色（浅色模式）')
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontColor(this.readerPanelTextColor())
+          Text(ReaderTextRuling.customColor(this.readerTextRuling, this.appDarkMode) ? '浅色、深色模式各存一份' :
+            '未设置时跟随正文文字色')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.readerPanelSubTextColor())
+            .margin({ top: AppSpacing.XS })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        Row()
+          .width(30)
+          .height(30)
+          .borderRadius(15)
+          .backgroundColor(ReaderTextRuling.customColor(this.readerTextRuling, this.appDarkMode) || this.getTextColor())
+          .border({ width: 2, color: this.isReaderThemeDark() ? '#55FFFFFF' : '#22000000' })
+          .margin({ left: 12 })
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 56 })
+      .alignItems(VerticalAlign.Center)
+      .hitTestBehavior(HitTestMode.None)
+
+      AdaptiveColorPicker({
+        value: ReaderTextRuling.customColor(this.readerTextRuling, this.appDarkMode),
+        placeholder: this.getTextColor(),
+        appDarkMode: this.isReaderThemeDark(),
+        accentColor: this.accentColor(),
+        optionTitle: '划线颜色',
+        hideOptionTrigger: true,
+        allowEmpty: true,
+        emptyOptionLabel: '跟随文字色',
+        onColorChange: (color: string) => {
+          const dark = this.appDarkMode;
+          this.updateReaderTextRuling((settings: ReaderTextRulingSettings): void => {
+            if (dark) settings.colorDark = (color || '').trim();
+            else settings.color = (color || '').trim();
+          });
+        }
+      })
+        .accessibilityText('划线颜色')
+    }
+    .width('100%')
   }
 
   @Builder
@@ -18720,7 +18903,52 @@ ${leading}` : leading;
   }
 
   readerAnnotationStamp(): string {
-    return `${this.readerAnnotationVersion}_${this.readerAnnotationShowNoteDot ? 1 : 0}`;
+    return `${this.readerAnnotationVersion}_${this.readerAnnotationShowNoteDot ? 1 : 0}_` +
+      ReaderTextRuling.stamp(this.readerTextRulingSpec());
+  }
+
+  // ---------------------------------------------------------------- 文字划线
+
+  loadReaderTextRuling(): void {
+    ReaderTextRulingStore.load(getContext(this)).then((settings: ReaderTextRulingSettings): void => {
+      const wasEnabled = this.readerTextRuling.enabled;
+      this.readerTextRuling = settings;
+      this.readerTextRulingVersion++;
+      // 关着的（默认）不重画，开书时不多做一次整页重建。
+      if (settings.enabled || wasEnabled) this.refreshReaderPageDecorations();
+    }).catch((error: Error) => {
+      console.warn('读取文字划线设置失败:', error);
+    });
+  }
+
+  updateReaderTextRuling(mutate: (settings: ReaderTextRulingSettings) => void): void {
+    const next = ReaderTextRuling.copy(this.readerTextRuling);
+    mutate(next);
+    this.readerTextRuling = ReaderTextRuling.copy(next);
+    this.readerTextRulingVersion++;
+    ReaderTextRulingStore.save(getContext(this), this.readerTextRuling).catch((): void => {});
+    this.refreshReaderPageDecorations();
+  }
+
+  /**
+   * 交给绘制器的划线参数，关闭时为 null。颜色按当前阅读主题的文字色/应用强调色/本模式的自定义色解析，
+   * 换主题、日夜切换后键变了就重算，页对象的版本串随之变化而重新填入。
+   */
+  readerTextRulingSpec(): ReaderTextRulingSpec | null {
+    const settings = this.readerTextRuling;
+    if (!settings.enabled) return null;
+    const dark = this.appDarkMode;
+    const textColor = this.getTextColor();
+    const accent = settings.colorMode === 'accent' ? this.accentColor() : '';
+    const custom = settings.colorMode === 'custom' ? ReaderTextRuling.customColor(settings, dark) : '';
+    const key = `${this.readerTextRulingVersion}_${textColor}_${accent}_${custom}`;
+    if (key === this.readerTextRulingSpecKey) return this.readerTextRulingSpecValue;
+    const textArgb = ReaderV2Color.parse(textColor, 0xFF202124);
+    const base = settings.colorMode === 'accent' ? ReaderV2Color.parse(accent, textArgb) :
+      (settings.colorMode === 'custom' ? ReaderV2Color.parse(custom, textArgb) : textArgb);
+    this.readerTextRulingSpecKey = key;
+    this.readerTextRulingSpecValue = ReaderTextRuling.spec(settings, base, this.toMeasurePx(1));
+    return this.readerTextRulingSpecValue;
   }
 
   /** 一章的划线在该章当前文本里的位置（按原文重新定位，找不到的不在其中）。 */
@@ -18745,6 +18973,7 @@ ${leading}` : leading;
     source: string, chunkStart: number): void {
     const stamp = this.readerAnnotationStamp();
     if (page.annotationStamp === stamp) return;
+    page.ruling = this.readerTextRulingSpec();
     if (this.readerAnnotations.length === 0) {
       page.annotationMarks = [];
       page.annotationStamp = stamp;
@@ -18777,6 +19006,11 @@ ${leading}` : leading;
   onReaderAnnotationsChanged(): void {
     this.readerAnnotationVersion++;
     this.readerAnnotationResolved.clear();
+    this.refreshReaderPageDecorations();
+  }
+
+  /** 划线或文字划线变了：按新版本重新填页对象、重画常驻页，丢掉已截好的翻页纹理。不重新分页。 */
+  refreshReaderPageDecorations(): void {
     if (this.usesReaderContinuousV2()) {
       for (const entry of this.readerContinuousV2Layouts.entries()) {
         const layout = entry[1];

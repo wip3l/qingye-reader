@@ -18,6 +18,7 @@ const reportedErrors = [];
 const sandbox = vm.createContext({ console: { ...console, error: (...args) => reportedErrors.push(args) }, px2vp: n => n / 2,
   setTimeout: fn => { timers.set(++timerId, fn); return timerId; }, clearTimeout: id => timers.delete(id),
   ReaderTitleStyleCodec: { decode: () => ({}) },
+  ReaderTextRuling: { stamp: spec => spec ? 'on' : 'off' },
   ReaderV2DocumentParser: { parse: chunk => ({ chunk }) },
   ReaderV2Paginator: { layoutContinuousAsync: (document, snapshot, valid) => {
     // The fourth parameter is the validity callback in the production signature.
@@ -49,6 +50,7 @@ function fixture() {
     readerContinuousV2Layouts: new Map(), readerContinuousV2Documents: new Map(),
     readerContinuousV2Sources: new Map(), readerContinuousV2Controllers: new Map(), readerPageVisible: true,
     readerAnnotations: [], readerAnnotationVersion: 0, readerAnnotationShowNoteDot: false,
+    readerTextRulingSpec: () => null,
     sourceText: 'chapter', usesReaderContinuousV2: () => true,
     readerContinuousChapterOf: n => n < 0 ? 0 : n, readerContinuousV2ChunkText: (_index, text) => text,
     readerContinuousV2ChunkStart: index => index * 1800, readerContinuousSourceOf() { return this.sourceText; },
