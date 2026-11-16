@@ -31,7 +31,8 @@ export struct PageScaffold {
   @Prop collapsible: boolean = true;
   @Prop externalCollapse: number = 0;
   @State headerCollapse: number = 0;
-  private scroller: Scroller = new Scroller();
+  /** 页面需要自己调整滚动位置时（例如上方内容变高后保持下方不动）传入自己的 Scroller。 */
+  scroller: Scroller = new Scroller();
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;

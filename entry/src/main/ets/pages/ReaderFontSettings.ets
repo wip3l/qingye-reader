@@ -85,6 +85,7 @@ export struct ReaderFontSettingsEditor {
   @Prop fontSection: number = -1;
   @State ownFontSection: number = READER_FONT_SECTION_BODY;
   @State editorWidth: number = 0;
+  private pageScroller: Scroller = new Scroller();
   private customFontPreviewFamilies: Map<string, string> = new Map<string, string>();
   onStylePreviewChanged: (settings: ReaderSettings) => void = (_settings: ReaderSettings): void => {};
   onCloseReady: (close: () => void) => void = (_close: () => void): void => {};
@@ -266,7 +267,8 @@ export struct ReaderFontSettingsEditor {
       if (this.embedded) {
         this.pageContent()
       } else {
-        PageScaffold({ title: this.draftMode ? '主题阅读字体' : '阅读字体', onBack: () => this.closeReaderFontSettings(), content: () => {
+        PageScaffold({ title: this.draftMode ? '主题阅读字体' : '阅读字体', scroller: this.pageScroller,
+          onBack: () => this.closeReaderFontSettings(), content: () => {
           this.pageContent()
         } })
       }
@@ -1909,6 +1911,10 @@ export struct ReaderFontSettingsEditor {
       }.width('100%').padding({ top: AppSpacing.XXL, bottom: AppSpacing.XXL })
         .backgroundColor(ThemeRuntime.readerBackgroundColor(this.appDarkMode))
         .borderRadius(ThemeRuntime.mediumRadius())
+        // 边距、第二段字号、行距等一改预览就变高变矮；页面跟着滚同样的距离，下面正在拖的滑动条才不会上下跳。
+        .onSizeChange((previous: SizeOptions, current: SizeOptions) => {
+          this.keepContentBelowPreview(previous, current);
+        })
       if (this.titlePreviewEditingAt === 'preview') {
         this.titlePreviewEditor()
       }
@@ -1918,6 +1924,17 @@ export struct ReaderFontSettingsEditor {
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
     .backgroundColor(Color.Transparent)
     .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
+  }
+
+  keepContentBelowPreview(previous: SizeOptions, current: SizeOptions): void {
+    if (this.embedded) return;
+    const oldHeight = Number(previous.height ?? 0);
+    const newHeight = Number(current.height ?? 0);
+    // 刚出现或换了宽度（旋转、分屏）时不算“内容变高”，不补滚动。
+    if (oldHeight <= 0 || newHeight <= 0 || Math.abs(Number(previous.width ?? 0) - Number(current.width ?? 0)) >= 1) return;
+    const delta = newHeight - oldHeight;
+    if (Math.abs(delta) < 0.5 || this.pageScroller.currentOffset().yOffset <= 0) return;
+    this.pageScroller.scrollBy(0, delta);
   }
 
   previewFontFamily(mode: string, family: string): string {
