@@ -75,6 +75,12 @@ export class ShelfCoverSlots {
     }
   }
 
+  /** 桌面卡片进程里没人调 sync，出数据前从存储重读，卡片上的固定封面才和书架一致。 */
+  static async reload(context: Context): Promise<void> {
+    ShelfCoverSlots.loading = ShelfCoverSlots.load(context);
+    await ShelfCoverSlots.loading;
+  }
+
   private static ensureLoaded(context: Context): Promise<void> {
     if (!ShelfCoverSlots.loading) ShelfCoverSlots.loading = ShelfCoverSlots.load(context);
     return ShelfCoverSlots.loading;

@@ -8,6 +8,8 @@ import {
 } from '../utils/RecentReadCardData';
 import { RecentReadCardUpdater } from '../utils/RecentReadCardUpdater';
 import { RecentReadFormStore } from '../utils/RecentReadFormStore';
+import { ShelfCoverSlots } from '../utils/ShelfCoverSlots';
+import { ThemePackStore } from '../utils/ThemePackStore';
 
 export default class RecentReadFormAbility extends FormExtensionAbility {
   private formDimensions: Map<string, number> = new Map();
@@ -109,6 +111,14 @@ export default class RecentReadFormAbility extends FormExtensionAbility {
   }
 
   private async buildData(dimension: number): Promise<RecentReadCardData> {
+    // 卡片进程不走 EntryAbility 的启动加载：不先注册主题包，自制主题（pack:<id>）查不到就退回默认主题，
+    // 主题封面整个丢掉；固定封面序号不读也会和书架上不是同一张。
+    try {
+      await ThemePackStore.reloadInstalled(this.context);
+    } catch (e) {
+      console.warn('卡片加载主题包失败:', e);
+    }
+    await ShelfCoverSlots.reload(this.context);
     return RecentReadCardDataProvider.load(this.context, dimension, this.isDarkMode());
   }
 

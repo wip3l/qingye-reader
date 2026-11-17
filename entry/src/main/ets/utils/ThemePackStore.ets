@@ -60,6 +60,15 @@ export class ThemePackStore {
     return count;
   }
 
+  /**
+   * 桌面卡片跑在单独的进程里，不经过 EntryAbility 的冷启动加载，每次出数据前整份重读：
+   * 应用里新装、改过或删掉的包要同步过来。清空和重读之间没有 await，并发的卡片更新看不到半份注册表。
+   */
+  static async reloadInstalled(context: Context): Promise<number> {
+    ThemePackRegistry.clear();
+    return ThemePackStore.loadInstalled(context);
+  }
+
   static isLoaded(): boolean {
     return ThemePackStore.loaded;
   }
