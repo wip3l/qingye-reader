@@ -1,7 +1,7 @@
 import { ReaderImageReferences } from './ReaderImageReferences';
 import { ReaderCacheCoordinator } from './ReaderCacheCoordinator';
 import { ReaderImageCache } from './ReaderImageCache';
-import { Book, BookChapter, BookSource, SearchBook, ReaderActionMarker, BookUrlResolver, BookTypeSupport } from '@legado/sourceengine';
+import { Book, BookChapter, BookSource, SearchBook, ReaderActionMarker, BookUrlResolver, BookTypeSupport, SourceEngineHost } from '@legado/sourceengine';
 import { AudioDownloadTask, AudioOfflineStore } from './AudioOfflineStore';
 import { AudioOfflinePolicy } from './AudioOfflinePolicy';
 import { AudioUrlResolver } from './AudioUrlResolver';
@@ -84,7 +84,7 @@ export class ReadBookEngine {
   /** 渐进加载中、等图片补完再写缓存的各章正文；刷新本章后旧版本补完也不再写入。 */
   private deferredChapterTexts: Map<number, Promise<string>> = new Map();
 
-  private constructor() { this.webBook = new WebBookService(); }
+  private constructor(webBook: WebBookService = new WebBookService()) { this.webBook = webBook; }
 
   static get(): ReadBookEngine {
     if (!ReadBookEngine.inst) {
@@ -97,6 +97,11 @@ export class ReadBookEngine {
 
   static createBackgroundWorker(): ReadBookEngine {
     return new ReadBookEngine();
+  }
+
+  /** 书架检查更新用：目录分页有一页没取到就整本算失败，保留库里原目录，不拿半截目录覆盖。 */
+  static createShelfRefreshWorker(): ReadBookEngine {
+    return new ReadBookEngine(new WebBookService(null, false, true));
   }
 
   /**
@@ -430,7 +435,7 @@ export class ReadBookEngine {
       } else {
         this.book.latestChapterTitle = this.book.latestChapterTitle || oldLatestChapter;
         this.book.tocUrl = this.book.tocUrl || oldTocUrl;
-        this.lastTocRefreshError = '没有取到目录';
+        this.lastTocRefreshError = SourceEngineHost.getError(sessionSource) || '没有取到目录';
         console.warn('[RE] refreshToc returned no chapters, keep existing chapters:', this.chapters.length);
       }
     } finally {

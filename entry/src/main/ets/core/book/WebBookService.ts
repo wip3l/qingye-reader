@@ -28,11 +28,25 @@ export class WebBookService {
 
   private preparationCancelled: (() => boolean) | null;
   private requireCompleteCatalog: boolean;
+  /**
+   * 书架检查更新用：目录分页有一页取不到（请求失败或要网页验证）就整体失败，不返回半截目录。
+   * 半截目录会被当成新目录写进库，最新章节反而退回到中间某章。比换源的完整模式宽松：字段规则
+   * 报错、分页地址循环照旧容忍，免得个别规则小毛病让这本书每次检查都失败。
+   */
+  private requireAllCatalogPages: boolean;
 
-  constructor(preparationCancelled: (() => boolean) | null = null, requireCompleteCatalog: boolean = false) {
+  constructor(preparationCancelled: (() => boolean) | null = null, requireCompleteCatalog: boolean = false,
+    requireAllCatalogPages: boolean = false) {
     this.http = new HttpClient(10000);
     this.preparationCancelled = preparationCancelled;
     this.requireCompleteCatalog = requireCompleteCatalog;
+    this.requireAllCatalogPages = requireAllCatalogPages;
+  }
+
+  /** 目录分页没取全：换源模式与书架检查模式各自抛出对应说明，其余调用方照旧保留已取到的部分。 */
+  private rejectIncompleteCatalog(switchMessage: string, refreshMessage: string): void {
+    if (this.requireCompleteCatalog) throw new Error(switchMessage);
+    if (this.requireAllCatalogPages) throw new Error(refreshMessage);
   }
 
   private checkPreparation(): void {
@@ -445,7 +459,7 @@ export class WebBookService {
     for (let page = 0; page < 1000; page++) {
       this.checkPreparation();
       if (!currentResp.success || !currentResp.body) {
-        if (this.requireCompleteCatalog) throw new Error('目录分页加载失败，已保留原书源');
+        this.rejectIncompleteCatalog('目录分页加载失败，已保留原书源', `目录第 ${page + 1} 页加载失败`);
         break;
       }
       const pageKey = this.urlWithoutFragment(currentResp.url || currentUrl);
@@ -458,7 +472,7 @@ export class WebBookService {
       const pageChapters = await parsePage(currentResp, currentUrl, page === 0);
       this.checkPreparation();
       if (pageChapters === null) {
-        if (this.requireCompleteCatalog) throw new Error('目录需要网页验证，已保留原书源');
+        this.rejectIncompleteCatalog('目录需要网页验证，已保留原书源', '目录需要网页验证');
         break;
       }
       if (page === 0 && !tocRule.nextTocUrl && hasStageRule && pageChapters.length > 0) {
@@ -507,13 +521,14 @@ export class WebBookService {
           seenPageUrls.add(this.urlWithoutFragment(batchUrls[index]));
           this.checkPreparation();
           if (!listedResp || !listedResp.success || !listedResp.body) {
-            if (this.requireCompleteCatalog) throw new Error('目录分页加载失败，已保留原书源');
+            this.rejectIncompleteCatalog('目录分页加载失败，已保留原书源',
+              `目录第 ${seenPageUrls.size} 页加载失败`);
             continue;
           }
           const listedChapters = await parsePage(listedResp, batchUrls[index], false);
           this.checkPreparation();
           if (listedChapters === null) {
-            if (this.requireCompleteCatalog) throw new Error('目录需要网页验证，已保留原书源');
+            this.rejectIncompleteCatalog('目录需要网页验证，已保留原书源', '目录需要网页验证');
             stopped = true;
             break;
           }

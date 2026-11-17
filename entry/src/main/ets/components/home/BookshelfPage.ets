@@ -9503,7 +9503,7 @@ export struct BookshelfPage {
       };
       const runWorker = async (): Promise<void> => {
         // 每路一个引擎：引擎持有当前书的目录与会话，不能在两本书之间共用。
-        let engine = ReadBookEngine.createBackgroundWorker();
+        let engine = ReadBookEngine.createShelfRefreshWorker();
         engine.chapterUpdateBatchTime = refreshStartedAt;
         while (pending.length > 0) {
           const shelfBook = takeNext();
@@ -9519,7 +9519,7 @@ export struct BookshelfPage {
             const result = await this.runShelfRefreshBook(engine, db, shelfBook, refreshStartedAt);
             if (result.abandoned) {
               // 旧引擎可能还卡在这本书上，丢给它自己跑完，这一路换新的。
-              engine = ReadBookEngine.createBackgroundWorker();
+              engine = ReadBookEngine.createShelfRefreshWorker();
               engine.chapterUpdateBatchTime = refreshStartedAt;
             }
             if (result.error) {
@@ -9686,7 +9686,12 @@ export struct BookshelfPage {
     const beforeChapterCount = freshBook.totalChapterNum;
     const hadPendingUpdate = this.hasShelfBookUpdate(freshBook);
     await engine.openBook(freshBook);
+    if (!engine.source) throw new Error('书源不存在或已删除');
     await engine.refreshToc();
+    // 没取到目录时引擎保留旧目录、不报错；这里要算作失败标出原因，不能当成“检查过、没有新章节”。
+    if (engine.lastTocRefreshError || engine.chapters.length === 0) {
+      throw new Error(engine.lastTocRefreshError || '没有取到目录');
+    }
     const refreshedBook = await db.getBook(shelfBook.bookUrl);
     if (!refreshedBook) return null;
     refreshedBook.lastCheckTime = Date.now();
