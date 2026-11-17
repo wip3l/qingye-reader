@@ -22,23 +22,19 @@ export class ReaderPageTurnAnimation {
   }
 
   /**
-   * 卷页动画用的页面截图比例。截图交给 Canvas 每帧贴图，整页原尺寸截图的离屏渲染与回读会落在翻页起始帧，
-   * 贴图填充也随像素数增长。仿真 0.42 在高密度屏上移动中仍清晰；3D 仿真每帧只画两次贴图，0.6 折中正文清晰与回读开销。
+   * 卷页动画用的页面截图/纹理比例（正文自绘纹理、文件排版与 PDF 的截图共用）。
+   * 仿真按网格三角形逐块贴图，像素数直接决定每帧填充量，0.42 在高密度屏上移动中仍清晰。
+   * 3D 仿真每帧只贴两次图，用原尺寸让起翻和翻动中的正文与静止时一样清晰；文件排版、PDF 的截图
+   * 当前页多半已预截或沿用上次翻页的目标页，原尺寸只让翻动中现截的目标页多花些渲染服务回读时间
+   * （文件排版实测单次截图约 17→27ms，纸色占位多停一两帧，翻动中掉帧与 0.6 无可分辨差别）。
    * 平移、推页、淡入、叠页直接显示截图本身，保持原尺寸。
    */
   static snapshotScale(type: number): number {
-    if (type === this.THREE_D) return 0.6;
     if (type === this.SIMULATION) return 0.42;
     return 1;
   }
 
-  /**
-   * 正文阅读页卷页纹理的比例。纹理由应用自绘（截图只剩兜底），没有离屏渲染与回读开销；3D 仿真每帧只贴两次图，
-   * 用原尺寸让起翻和翻动中的正文与静止时一样清晰。仿真仍按网格三角形逐块贴图，保持截图比例。
-   * 文件排版、PDF 的截图翻页仍用 snapshotScale。
-   */
   static curlTextureScale(type: number): number {
-    if (type === this.THREE_D) return 1;
     return this.snapshotScale(type);
   }
 
