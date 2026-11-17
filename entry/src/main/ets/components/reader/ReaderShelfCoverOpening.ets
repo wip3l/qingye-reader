@@ -32,6 +32,8 @@ export interface ShelfOpeningCover {
   lean?: number;
   /** 立体书封面侧转前的宽高比：封面图按它裁切后再随 bounds 压窄，与书架上一致。没有时按 bounds 的比例。 */
   coverAspect?: number;
+  /** 书架上这枚主题封面没有底色（平铺布局关了“显示书籍边框”）：翻开时不垫底色、不画书脊折痕。 */
+  frameless?: boolean;
 }
 
 /** 整页缩到封面时要转的角度：立着或平放的书为 0。 */
@@ -266,18 +268,22 @@ export struct ReaderShelfCoverOpening {
       if (this.cover.frame) {
         this.frameLayer()
       }
-      // 书脊的折痕阴影。
-      Column()
-        .width(18)
-        .height('100%')
-        .position({ x: 0, y: 0 })
-        .linearGradient({ angle: 90, colors: [['#55000000', 0], ['#00000000', 1]] })
-      // 转向侧面时背光变暗。
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#000000')
-        .opacity(this.shade)
+      // 书脊的折痕阴影；透明底的封面没有书皮，画上去只是一道脏印。
+      if (!this.cover.frameless || !this.cover.themeCover) {
+        Column()
+          .width(18)
+          .height('100%')
+          .position({ x: 0, y: 0 })
+          .linearGradient({ angle: 90, colors: [['#55000000', 0], ['#00000000', 1]] })
+      }
+      // 转向侧面时背光变暗；透明底的封面不压暗，否则转动时露出一块黑色方框。
+      if (!this.cover.frameless || !this.cover.themeCover) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#000000')
+          .opacity(this.shade)
+      }
     }
     .width('100%')
     .height('100%')

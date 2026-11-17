@@ -571,6 +571,8 @@ export struct BookshelfPage {
   /** 书架设置“封面阴影”：关闭后陪伴布局的书不再投下阴影，封面也去掉斜向打光，书脊与压槽保留。 */
   @StorageLink('bookshelfCompanionCoverShadow') @Watch('onCompanionStaggerChanged')
   bookshelfCompanionCoverShadow: boolean = true;
+  /** 书架设置“显示书籍边框”：关闭后平铺布局的封面没有描边、投影与底色，透明底的主题封面直接放在书架上。 */
+  @StorageLink('bookshelfTileCoverFrame') @Watch('onCompanionStaggerChanged') bookshelfTileCoverFrame: boolean = true;
   /** 书架设置“阅读小记”：关闭后陪伴布局不显示阅读小记卡片。 */
   @StorageLink('bookshelfCompanionReadingNote') bookshelfCompanionReadingNote: boolean = true;
   /** 书架设置“沉浸书架”：进入书架时按钮行和底栏收起，手指往下滑才出现，往上滑在列表顶部也收起。 */
@@ -770,6 +772,7 @@ export struct BookshelfPage {
       this.bookshelfCompanionStagger = settings.companionStagger;
       this.bookshelfCompanionCoverShadow = settings.companionCoverShadow;
       this.bookshelfCompanionReadingNote = settings.companionReadingNote;
+      this.bookshelfTileCoverFrame = settings.tileCoverFrame;
       this.bookshelfGreetingMode = settings.greetingMode;
       this.bookshelfGreetingTitle = settings.greetingTitle;
       this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
@@ -1438,7 +1441,8 @@ export struct BookshelfPage {
       `${book.totalChapterNum}_${book.getVariable('readStarted')}_` +
       `badges_${book.getVariable('shelfHasUpdate')}_${book.origin}_${book.originName}_` +
       `${progressChapterIndex}_${progressPageCount}_cover_${this.shelfCoverRenderVersions.get(book.bookUrl) || 0}_` +
-      `stagger_${this.bookshelfCompanionStagger ? '1' : '0'}_shadow_${this.bookshelfCompanionCoverShadow ? '1' : '0'}`;
+      `stagger_${this.bookshelfCompanionStagger ? '1' : '0'}_shadow_${this.bookshelfCompanionCoverShadow ? '1' : '0'}_` +
+      `frame_${this.bookshelfTileCoverFrame ? '1' : '0'}`;
   }
 
   openCustomNetworkCoverDialog(): void {
@@ -4937,7 +4941,8 @@ export struct BookshelfPage {
         }, (entry: ShelfTileSortEntry) => entry.book ?
           this.shelfBookRenderKey(entry.book, entry.key) :
           `${entry.key}_stagger_${this.bookshelfCompanionStagger ? '1' : '0'}_` +
-            `shadow_${this.bookshelfCompanionCoverShadow ? '1' : '0'}_pin_${entry.pinned ? '1' : '0'}`)
+            `shadow_${this.bookshelfCompanionCoverShadow ? '1' : '0'}_frame_${this.bookshelfTileCoverFrame ? '1' : '0'}_` +
+            `pin_${entry.pinned ? '1' : '0'}`)
       } else {
         LazyForEach(this.shelfTileBookDataSource(pageKey), (book: Book) => {
           GridItem() {
@@ -5745,6 +5750,18 @@ export struct BookshelfPage {
     return Math.round(this.shelfTileBookCoverWidth(book) / 0.735);
   }
 
+  /** 平铺封面的圆角：不显示边框时收小一点，普通封面看起来更像一张书皮。 */
+  shelfTileCoverRadius(): number {
+    return this.bookshelfTileCoverFrame ? 8 : 6;
+  }
+
+  /** 平铺封面与分组文件夹的投影，跟“显示书籍边框”一起关掉。 */
+  shelfTileFrameShadow(): ShadowOptions {
+    if (!this.bookshelfTileCoverFrame) return { radius: 0, color: Color.Transparent };
+    return { radius: ThemeRuntime.glassShadowRadius(), color: this.glassShadowColor(),
+      offsetX: ThemeRuntime.glassShadowOffsetX(), offsetY: ThemeRuntime.glassShadowOffsetY() };
+  }
+
   shelfHardcoverBoardColor(): string {
     return this.appDarkMode ? '#17120F' : '#3B332B';
   }
@@ -5880,11 +5897,10 @@ export struct BookshelfPage {
       .id(elementId)
       .width('100%')
       .aspectRatio(0.735)
-      .borderRadius(7)
+      .borderRadius(this.bookshelfTileCoverFrame ? 7 : 6)
       .clip(true)
-      .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
-      .shadow({ radius: ThemeRuntime.glassShadowRadius(), color: this.glassShadowColor(),
-        offsetX: ThemeRuntime.glassShadowOffsetX(), offsetY: ThemeRuntime.glassShadowOffsetY() })
+      .border({ width: this.bookshelfTileCoverFrame ? ThemeRuntime.glassBorderWidth() : 0, color: this.glassBorderColor() })
+      .shadow(this.shelfTileFrameShadow())
 
   }
 
@@ -6019,7 +6035,8 @@ export struct BookshelfPage {
         .margin({ bottom: AppSpacing.SM })
       } else {
       Stack({ alignContent: Alignment.TopStart }) {
-        this.coverView(book, '100%', '100%', ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false))
+        this.coverView(book, '100%', '100%', ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false),
+          this.shelfTileCoverRadius(), -1, false, this.bookshelfTileCoverFrame)
 
         if (this.isBookMultiSelect) {
           this.shelfTileSelectMark(book)
@@ -6028,13 +6045,13 @@ export struct BookshelfPage {
       }
       .width('100%')
       .aspectRatio(0.735)
+      // 不显示边框时只在多选选中时描主题色边，否则看不出选了哪本。
       .border({
-        width: this.isBookSelected(book.bookUrl) ? 2 : ThemeRuntime.glassBorderWidth(),
+        width: this.isBookSelected(book.bookUrl) ? 2 : (this.bookshelfTileCoverFrame ? ThemeRuntime.glassBorderWidth() : 0),
         color: this.isBookSelected(book.bookUrl) ? this.accentColor() : this.glassBorderColor()
       })
-      .borderRadius(8)
-      .shadow({ radius: ThemeRuntime.glassShadowRadius(), color: this.glassShadowColor(),
-        offsetX: ThemeRuntime.glassShadowOffsetX(), offsetY: ThemeRuntime.glassShadowOffsetY() })
+      .borderRadius(this.shelfTileCoverRadius())
+      .shadow(this.shelfTileFrameShadow())
       }
 
       Row({ space: AppSpacing.XS }) {
@@ -6356,7 +6373,8 @@ export struct BookshelfPage {
       const covers = this.activeThemeBookCovers(book);
       opening.cover = covers.length > 0 ? covers[0] : '';
       opening.frame = this.activeThemeShelfFrame();
-      opening.color = this.inputColor();
+      // 平铺布局不显示边框时书架格子里的主题封面没有底色，翻开的封面也不垫，不然起步那一帧闪出一块灰。
+      opening.color = opening.frameless ? '#00000000' : this.inputColor();
       opening.themeCover = true;
     } else {
       const covers = this.getShelfCoverList(book);
@@ -6400,6 +6418,8 @@ export struct BookshelfPage {
       }
       if (!picked) return;
       opening.cropImage = this.shelfCoverCropsImage(book, pageKey, pickedLatest);
+      // 上次阅读置顶卡片里的封面不受“显示书籍边框”影响。
+      opening.frameless = !pickedLatest && this.bookshelfLayoutMode === 'tile' && !this.bookshelfTileCoverFrame;
       opening.boundsX = ui.px2vp(picked.windowOffset.x);
       opening.boundsY = ui.px2vp(picked.windowOffset.y);
       opening.boundsWidth = ui.px2vp(picked.size.width);
@@ -6976,7 +6996,8 @@ export struct BookshelfPage {
 
   @Builder
   coverView(book: Book, width: Length, height: Length, imageFit: ImageFit, animateCovers: boolean = true, measure: boolean = true,
-    idScope: string = '', radius: number = 8, spineInset: number = -1, syncDecode: boolean = false) {
+    idScope: string = '', radius: number = 8, spineInset: number = -1, syncDecode: boolean = false,
+    backdrop: boolean = true) {
     Stack() {
       if (this.shouldUseThemeBookCover()) {
         if ((this.activeThemeBookCovers(book).length === 1 || !animateCovers) &&
@@ -7144,7 +7165,8 @@ export struct BookshelfPage {
     .height(height)
     .borderRadius(radius)
     .clip(true)
-    .backgroundColor(this.inputColor())
+    // 平铺布局关掉“显示书籍边框”时不垫底色，透明底的主题封面直接露出书架背景。
+    .backgroundColor(backdrop ? this.inputColor() : Color.Transparent)
     .grayscale(CloudAutoSync.isPlaceholder(book) ? 1 : 0)
     .opacity(measure && this.tileGroupHiddenCovers.length > 0 && this.tileGroupHiddenCovers.includes(book.bookUrl) ? 0 :
       (CloudAutoSync.isPlaceholder(book) ? 0.6 : 1))

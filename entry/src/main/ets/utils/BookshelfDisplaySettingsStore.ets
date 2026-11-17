@@ -30,6 +30,8 @@ export class BookshelfDisplaySettings {
   companionCoverShadow: boolean = true;
   // 陪伴布局问候与书架之间的“阅读小记”卡片。
   companionReadingNote: boolean = true;
+  // 平铺布局封面的描边、投影与底色；关闭后封面直接放在书架上，透明底的主题封面不再有灰色卡片。
+  tileCoverFrame: boolean = true;
   // 陪伴布局左上角问候语：time 按时段的内置文案，custom 用下面两行（可含占位符），off 不显示。
   greetingMode: string = 'time';
   greetingTitle: string = '';
@@ -67,6 +69,7 @@ export class BookshelfDisplaySettingsStore {
   private static readonly KEY_COMPANION_STAGGER: string = 'bookshelfCompanionStagger';
   private static readonly KEY_COMPANION_COVER_SHADOW: string = 'bookshelfCompanionCoverShadow';
   private static readonly KEY_COMPANION_READING_NOTE: string = 'bookshelfCompanionReadingNote';
+  private static readonly KEY_TILE_COVER_FRAME: string = 'bookshelfTileCoverFrame';
   private static readonly KEY_GREETING_MODE: string = 'bookshelfGreetingMode';
   private static readonly KEY_GREETING_TITLE: string = 'bookshelfGreetingTitle';
   private static readonly KEY_GREETING_SUBTITLE: string = 'bookshelfGreetingSubtitle';
@@ -128,6 +131,8 @@ export class BookshelfDisplaySettingsStore {
       store, BookshelfDisplaySettingsStore.KEY_COMPANION_COVER_SHADOW, true);
     settings.companionReadingNote = await BookshelfDisplaySettingsStore.getBoolean(
       store, BookshelfDisplaySettingsStore.KEY_COMPANION_READING_NOTE, true);
+    settings.tileCoverFrame = await BookshelfDisplaySettingsStore.getBoolean(
+      store, BookshelfDisplaySettingsStore.KEY_TILE_COVER_FRAME, true);
     settings.greetingMode = BookshelfDisplaySettingsStore.normalizeGreetingMode(
       await BookshelfDisplaySettingsStore.getString(store, BookshelfDisplaySettingsStore.KEY_GREETING_MODE, 'time'));
     settings.greetingTitle = await BookshelfDisplaySettingsStore.getString(
@@ -182,6 +187,7 @@ export class BookshelfDisplaySettingsStore {
     await store.put(BookshelfDisplaySettingsStore.KEY_COMPANION_STAGGER, settings.companionStagger !== false);
     await store.put(BookshelfDisplaySettingsStore.KEY_COMPANION_COVER_SHADOW, settings.companionCoverShadow !== false);
     await store.put(BookshelfDisplaySettingsStore.KEY_COMPANION_READING_NOTE, settings.companionReadingNote !== false);
+    await store.put(BookshelfDisplaySettingsStore.KEY_TILE_COVER_FRAME, settings.tileCoverFrame !== false);
     await store.put(BookshelfDisplaySettingsStore.KEY_GREETING_MODE, settings.greetingMode);
     await store.put(BookshelfDisplaySettingsStore.KEY_GREETING_TITLE, settings.greetingTitle);
     await store.put(BookshelfDisplaySettingsStore.KEY_GREETING_SUBTITLE, settings.greetingSubtitle);
@@ -248,6 +254,7 @@ export class BookshelfDisplaySettingsStore {
       settings.companionCoverShadow !== false);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_COMPANION_READING_NOTE,
       settings.companionReadingNote !== false);
+    AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_TILE_COVER_FRAME, settings.tileCoverFrame !== false);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_GREETING_MODE, settings.greetingMode);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_GREETING_TITLE, settings.greetingTitle);
     AppStorage.setOrCreate(BookshelfDisplaySettingsStore.KEY_GREETING_SUBTITLE, settings.greetingSubtitle);
@@ -289,6 +296,7 @@ export class BookshelfDisplaySettingsStore {
       AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_COMPANION_COVER_SHADOW) ?? true;
     settings.companionReadingNote =
       AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_COMPANION_READING_NOTE) ?? true;
+    settings.tileCoverFrame = AppStorage.get<boolean>(BookshelfDisplaySettingsStore.KEY_TILE_COVER_FRAME) ?? true;
     settings.greetingMode = BookshelfDisplaySettingsStore.normalizeGreetingMode(
       AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_GREETING_MODE) ?? 'time');
     settings.greetingTitle = AppStorage.get<string>(BookshelfDisplaySettingsStore.KEY_GREETING_TITLE) ?? '';
@@ -376,6 +384,7 @@ export class BookshelfDisplaySettingsStore {
     settings.companionStagger = source.companionStagger !== false;
     settings.companionCoverShadow = source.companionCoverShadow !== false;
     settings.companionReadingNote = source.companionReadingNote !== false;
+    settings.tileCoverFrame = source.tileCoverFrame !== false;
     settings.greetingMode = BookshelfDisplaySettingsStore.normalizeGreetingMode(source.greetingMode);
     settings.greetingTitle = source.greetingTitle || '';
     settings.greetingSubtitle = source.greetingSubtitle || '';
