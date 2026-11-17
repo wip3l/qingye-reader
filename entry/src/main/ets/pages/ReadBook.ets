@@ -3866,8 +3866,7 @@ struct ReadBookPage {
             // remain those of the first mounted page, and long-press handles appear on another line.
             ForEach(this.currentReaderV2SelectionSurfaceKeys(this.readerV2NativeSelectionHostVersion),
               (_selectionKey: string) => {
-              this.readerCurrentV2SelectionSurface(this.readerV2NativeSelectionHostVersion,
-                this.readerV2NativeSelectionOffsetX, this.readerV2NativeSelectionOffsetY)
+              this.readerCurrentV2SelectionSurface(this.readerV2NativeSelectionHostVersion)
             }, (selectionKey: string) => selectionKey)
             // Legacy rich text is keyed by page; V2 updates its retained node in place. Keep the simulation
             // overlay outside both paths so the destination can settle behind the captured leaf without
@@ -9529,6 +9528,12 @@ struct ReadBookPage {
     this.readerPaginationCache.clear();
     this.pageTurnPreviewKey = '';
     this.registerStyledCustomReaderFonts();
+    // 滚动阅读的块排版按“章+块+文字”复用、不比对字体，只清分页缓存时已挂载的块一直是旧字体，
+    // 要重开书才变。和其他排版设置一样整体作废，列表按新排版代次重建并回到原阅读位置。
+    if (this.usesReaderContinuousV2() && !this.readerEntryInitializing && this.content) {
+      this.readerTypographyRestoreOffset = this.getReaderStableReflowOffset();
+      this.invalidateReaderTypographyLayout();
+    }
     this.refreshReaderTextRender();
     this.paginateContent(this.content);
     this.preloadNextChapterPaginationLater();
@@ -20051,14 +20056,14 @@ ${leading}` : leading;
   }
 
   @Builder
-  readerCurrentV2SelectionSurface(_hostVersion: number, offsetX: number, offsetY: number) {
+  readerCurrentV2SelectionSurface(_hostVersion: number) {
     Column() {
       if (this.isLandscapeDoublePageActive()) {
         Row() {
           Stack({ alignContent: Alignment.TopStart }) {
             this.readerV2NativeSelectionPage(
               `${this.currentReaderSurfaceIndex() === 0 ? 'current_primary' : 'current_alternate'}_left`,
-              this.currentChapterIndex, this.currentPageIndex, this.pagedContentText, offsetX, offsetY)
+              this.currentChapterIndex, this.currentPageIndex, this.pagedContentText)
           }
           .width(this.getReaderPageColumnWidth())
           .height('100%')
@@ -20068,7 +20073,7 @@ ${leading}` : leading;
           Stack({ alignContent: Alignment.TopStart }) {
             this.readerV2NativeSelectionPage(
               `${this.currentReaderSurfaceIndex() === 0 ? 'current_primary' : 'current_alternate'}_right`,
-              this.currentChapterIndex, this.currentPageIndex + 1, this.pagedContentText, offsetX, offsetY)
+              this.currentChapterIndex, this.currentPageIndex + 1, this.pagedContentText)
           }
           .width(this.getReaderPageColumnWidth())
           .height('100%')
@@ -20079,7 +20084,7 @@ ${leading}` : leading;
       } else {
         this.readerV2NativeSelectionPage(
           `${this.currentReaderSurfaceIndex() === 0 ? 'current_primary' : 'current_alternate'}_single`,
-          this.currentChapterIndex, this.currentPageIndex, this.pagedContentText, offsetX, offsetY)
+          this.currentChapterIndex, this.currentPageIndex, this.pagedContentText)
       }
     }
     .width('100%')
@@ -20498,8 +20503,7 @@ ${leading}` : leading;
   }
 
   @Builder
-  readerV2NativeSelectionPage(role: string, chapterIndex: number, pageIndex: number, source: string,
-    offsetX: number, offsetY: number) {
+  readerV2NativeSelectionPage(role: string, chapterIndex: number, pageIndex: number, source: string) {
     if (this.readerLongPressSelectText && chapterIndex === this.readerV2NativeSelectionChapterIndex &&
       pageIndex === this.readerV2NativeSelectionPageIndex && role === this.readerV2NativeSelectionRole &&
       this.readerV2Page(chapterIndex, pageIndex, source)) {
@@ -20510,7 +20514,7 @@ ${leading}` : leading;
         Stack({ alignContent: Alignment.TopStart }) {
           this.readerV2NativeSelectionText(role, chapterIndex, pageIndex,
             this.readerV2Page(chapterIndex, pageIndex, source) as ReaderV2PageLayout,
-            this.readerV2NativeSelectionFragmentIndex, offsetX, offsetY)
+            this.readerV2NativeSelectionFragmentIndex)
         }
         .width('100%')
         .height('100%')
@@ -20548,7 +20552,7 @@ ${leading}` : leading;
   // so handles stay on the painted glyphs however many paragraphs the selection is dragged across.
   @Builder
   readerV2NativeSelectionText(role: string, chapterIndex: number, pageIndex: number,
-    page: ReaderV2PageLayout, fragmentIndex: number, offsetX: number, offsetY: number) {
+    page: ReaderV2PageLayout, fragmentIndex: number) {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.isReaderDesktopSelection()) {
         // Only a geometry anchor is needed here; desktop handles and clipboard share our range.
@@ -20609,7 +20613,10 @@ ${leading}` : leading;
     }
     .width(px2vp(page.selectionWidth))
     .height(px2vp(Math.max(1, page.selectionHeight)))
-    .position({ x: px2vp(page.selectionX + offsetX), y: px2vp(page.selectionY + offsetY) })
+    // 校准偏移要在这里直接读状态：按值传进 @Builder 的参数不会随状态刷新，校准算出的偏移就永远用不上，
+    // 系统手柄停在未校准的位置（滚动模式一块正文跨很多行，偏差尤其明显）。
+    .position({ x: px2vp(page.selectionX + this.readerV2NativeSelectionOffsetX),
+      y: px2vp(page.selectionY + this.readerV2NativeSelectionOffsetY) })
     .id('reader_selection_host')
     .onAreaChange(() => this.refreshReaderSelectionHandles())
     .hitTestBehavior(HitTestMode.None)
@@ -21578,8 +21585,7 @@ ${leading}` : leading;
         if (this.readerContinuousV2OwnsSelection(index, text, this.readerV2NativeSelectionHostVersion)) {
           this.readerV2NativeSelectionText(READER_V2_CONTINUOUS_ROLE, this.currentChapterIndex, index,
             this.readerContinuousV2Layout(index, text) as ReaderV2PageLayout,
-            this.readerV2NativeSelectionFragmentIndex, this.readerV2NativeSelectionOffsetX,
-            this.readerV2NativeSelectionOffsetY)
+            this.readerV2NativeSelectionFragmentIndex)
         }
       }
     }
