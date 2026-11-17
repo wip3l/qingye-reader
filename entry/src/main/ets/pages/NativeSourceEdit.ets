@@ -6,6 +6,7 @@ import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { BookSourceExport } from '../utils/BookSourceExport';
 import { ExploreResultCache } from '../utils/ExploreResultCache';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -87,7 +88,7 @@ struct NativeSourceEditPage {
         return;
       }
       this.existing = source;
-      this.definitionText = JSON.stringify(NativeSourceService.exportObject(source), null, 2);
+      this.definitionText = JSON.stringify(BookSourceExport.nativeObject(source), null, 2);
     } catch (e) {
       console.error('加载原生书源失败:', e);
       HdsFeedback.showToast('加载书源失败');
