@@ -120,6 +120,13 @@ export struct ReaderTocPanel {
   @State private databaseChapterCount: number = 0;
   @State private listViewportHeight: number = 0;
   @State private firstVisibleGlobalIndex: number = 0;
+  /** 第一行在当前列表（收起后的列表或搜索结果）里的下标，“去顶部/去底部”按它判断方向。 */
+  @State private firstVisibleListIndex: number = 0;
+  /**
+   * 按钮方向：1 去底部、-1 去顶部、0 还没手动滑过（按位置判断）。手指上滑变去底部、下滑变去顶部；
+   * 只认手指拖动，程序定位和松手后的惯性、回弹不改方向。
+   */
+  @State private edgeJumpDirection: number = 0;
   @State private visibleItemCount: number = 1;
   @State private scrollbarDragging: boolean = false;
   @State private scrollbarDragOffset: number = 0;
@@ -616,6 +623,7 @@ export struct ReaderTocPanel {
   private updateScrollbarPosition(start: number, end: number): void {
     const localStart = Math.max(0, start);
     this.firstVisibleGlobalIndex = this.globalIndex(localStart);
+    this.firstVisibleListIndex = this.isSearchActive() ? localStart : this.windowStart + localStart;
     this.visibleItemCount = Math.max(1, end - start + 1);
   }
 
@@ -764,6 +772,55 @@ export struct ReaderTocPanel {
         if (requestSerial === this.positionRequestSerial) this.positioning = false;
       }
     }, 0);
+  }
+
+  // ---------------------------------------------------------------- 去顶部 / 去底部
+
+  /** 当前列表的行数：搜索时是结果数，否则是收起后的列表。 */
+  private edgeJumpTotal(): number {
+    return this.isSearchActive() ? this.searchChapterIndexes.length : this.displayCount();
+  }
+
+  /** 列表超过约 3 屏才显示；拖滚动条、搜索框还没出结果时不显示。 */
+  private shouldShowEdgeJump(): boolean {
+    if (this.listViewportHeight <= 0 || this.scrollbarDragging) return false;
+    if (this.searchVisible && !this.searchResultActive) return false;
+    return this.edgeJumpTotal() > Math.max(1, this.visibleItemCount) * 3;
+  }
+
+  /**
+   * 手指上滑过就去底部、下滑过就去顶部；还没滑过时第一屏中点在前半段去底部，否则去顶部。
+   * 顶部、底部指列表在屏幕上的两端，倒序时顶部是最新章。
+   */
+  private edgeJumpGoesDown(): boolean {
+    if (this.edgeJumpDirection !== 0) return this.edgeJumpDirection > 0;
+    return this.firstVisibleListIndex + this.visibleItemCount / 2 < this.edgeJumpTotal() / 2;
+  }
+
+  private trackEdgeJumpDirection(delta: number, state: ScrollState): void {
+    if (state !== ScrollState.Scroll || Math.abs(delta) < 1) return;
+    const direction = delta > 0 ? 1 : -1;
+    if (direction !== this.edgeJumpDirection) this.edgeJumpDirection = direction;
+  }
+
+  private jumpToListEdge(toBottom: boolean): void {
+    // 到了一端，按钮换成回另一端。
+    this.edgeJumpDirection = toBottom ? -1 : 1;
+    if (this.isSearchActive()) {
+      const count = this.searchChapterIndexes.length;
+      if (count === 0) return;
+      try {
+        this.tocScroller.scrollToIndex(toBottom ? count - 1 : 0, false, toBottom ? ScrollAlign.END : ScrollAlign.START);
+      } catch (e) {
+        console.warn('目录搜索结果去顶部/底部失败:', e);
+      }
+      return;
+    }
+    const count = this.displayCount();
+    if (count === 0) return;
+    // 和拖滚动条一样直接换窗口再定位，不经过中间的章节。
+    const target = this.canonicalAtDisplayIndex(toBottom ? count - 1 : 0);
+    this.scrollToChapter(target, toBottom ? ScrollAlign.END : ScrollAlign.START, false);
   }
 
   private nearestSearchResultIndex(targetIndex: number): number {
@@ -1416,16 +1473,43 @@ export struct ReaderTocPanel {
       .height('100%')
       .scrollBar(BarState.Off)
       .onScrollIndex((start: number, end: number) => this.updateScrollbarPosition(start, end))
+      .onDidScroll((delta: number, state: ScrollState) => this.trackEdgeJumpDirection(delta, state))
       .onReachStart(() => this.loadPreviousPage())
       .onReachEnd(() => this.loadNextPage())
 
       this.virtualScrollbar()
+      this.edgeJumpButton()
     }
     .layoutWeight(1)
     .width('100%')
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       this.listViewportHeight = Number(newValue.height);
     })
+  }
+
+  @Builder
+  edgeJumpButton() {
+    if (this.shouldShowEdgeJump()) {
+      ImmersiveBackButton({
+        icon: this.edgeJumpGoesDown() ? $r('sys.symbol.arrow_down_to_line') : $r('sys.symbol.arrow_up_to_line'),
+        iconOffsetX: 0,
+        iconSize: 20,
+        iconColor: this.accentColor,
+        darkMode: this.dark,
+        buttonSize: 40,
+        containerWidth: 40,
+        containerHeight: 40,
+        startInset: 0,
+        materialScale: 0.83,
+        compactLayout: true,
+        accessibilityLabel: this.edgeJumpGoesDown() ? '去底部' : '去顶部',
+        onBack: () => this.jumpToListEdge(this.edgeJumpGoesDown())
+      })
+        // 让出右侧 24vp 宽的滚动条触控区。
+        .position({ right: 28, bottom: AppSpacing.LG })
+        .zIndex(11)
+        .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.FastOutSlowIn }))
+    }
   }
 
   @Builder
