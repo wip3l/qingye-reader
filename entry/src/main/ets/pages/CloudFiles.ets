@@ -7,6 +7,9 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { CloudFileClient } from '../account/CloudFileClient';
 import { CloudAutoSync } from '../account/CloudAutoSync';
+import { CloudThemeSync } from '../account/CloudThemeSync';
+import { AppThemeSettingsStore } from '../utils/AppThemeSettingsStore';
+import { CustomThemeSchemeStore } from '../utils/CustomThemeSchemeStore';
 import { CloudFontImport } from '../account/CloudFontImport';
 import { CloudFileItem, CloudFileSummary, CloudUploadTask } from '../account/CloudFileModels';
 import { HdsFeedback } from '../utils/HdsFeedback';
@@ -44,6 +47,9 @@ struct CloudFilesPage {
   @State pendingName: string = '';
   @State localFiles: LocalCloudFile[] = [];
   @State localShown: number = 30;
+  /** 自定义主题的云端文件（主题包与方案图片），合成一行显示。 */
+  @State themeFiles: CloudFileItem[] = [];
+  @State themeCount: number = 0;
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
   aboutToAppear(): void {
     syncSystemBars(this.context, this.dark, ThemeRuntime.pageColor(this.dark)); this.refresh();
@@ -97,7 +103,10 @@ struct CloudFilesPage {
       }
       .width('100%')
       .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
-      if (this.summary.configured && this.files.length === 0) {
+      if (this.themeFiles.length > 0) {
+        this.themeRow()
+      }
+      if (this.summary.configured && this.files.length === 0 && this.themeFiles.length === 0) {
         Text('云端还没有文件')
           .fontSize(AppFontSize.BODY)
           .fontColor(ThemeRuntime.subTextColor(this.dark))
@@ -116,7 +125,7 @@ struct CloudFilesPage {
           .padding(AppSpacing.LG)
           .onClick(() => { this.more() })
       }
-      Text('此处管理书籍和字体文件。同步配置通过数据同步自动保存，无需在这里上传；其占用计入共用的 1GB 空间。每个北京时间自然月有 1GB 文件下载额度，每月1日零点重置，未用不结转。短时重试复用下载授权，过期后重新下载会再次计量。上传中和待清理的文件仍占用空间。')
+      Text('此处管理书籍、字体和自定义主题文件。同步配置通过数据同步自动保存，无需在这里上传；其占用计入共用的 1GB 空间。每个北京时间自然月有 1GB 文件下载额度，每月1日零点重置，未用不结转。短时重试复用下载授权，过期后重新下载会再次计量。上传中和待清理的文件仍占用空间。')
         .fontSize(AppFontSize.CAPTION)
         .lineHeight(18)
         .fontColor(ThemeRuntime.subTextColor(this.dark))
@@ -140,7 +149,7 @@ struct CloudFilesPage {
             .fontSize(AppFontSize.BODY_LARGE)
             .fontWeight(FontWeight.Bold)
             .fontColor(MembershipIcons.cardTextColor(this.dark))
-          Text(this.summary.eligible ? '书籍 · 字体' : '需要有效的终身超级会员')
+          Text(this.summary.eligible ? '书籍 · 字体 · 自定义主题' : '需要有效的终身超级会员')
             .fontSize(AppFontSize.CAPTION)
             .fontColor(MembershipIcons.cardSubTextColor(this.dark))
         }
@@ -383,6 +392,87 @@ struct CloudFilesPage {
     .id(this.fileCardElementId(file.id))
   }
 
+  @Builder
+  themeRow() {
+    Row({ space: AppSpacing.LG }) {
+      Stack({ alignContent: Alignment.Center }) {
+        SymbolGlyph($r('sys.symbol.paintpalette'))
+          .fontSize(22)
+          .fontColor([ThemeRuntime.accentColor(this.dark)])
+      }
+      .width(40)
+      .height(40)
+      .borderRadius(20)
+      .backgroundColor(ThemeRuntime.inputColor(this.dark))
+      Column({ space: AppSpacing.XXS }) {
+        Text('自定义主题')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(ThemeRuntime.primaryTextColor(this.dark))
+        Text(`${this.themeCount} 套 · ${this.formatBytes(this.themeBytes())}`)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(ThemeRuntime.subTextColor(this.dark))
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      SymbolGlyph($r('sys.symbol.trash'))
+        .fontSize(20)
+        .fontColor([ThemeRuntime.subTextColor(this.dark)])
+        .opacity(!this.busy ? 1 : 0.35)
+        .accessibilityText('删除自定义主题的云端副本')
+        .onClick(() => {
+          if (!this.busy) this.removeThemes();
+        })
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.LG, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.largeRadius())
+    .backgroundColor(ThemeRuntime.cardColor(this.dark))
+  }
+
+  themeBytes(): number {
+    let total = 0;
+    for (const file of this.themeFiles) total += file.bytes;
+    return total;
+  }
+
+  /** 读全部云端文件里的自定义主题；按本机方案折算套数，本机没有的主题包各算一套。 */
+  async loadThemeFiles(): Promise<void> {
+    const files = (await CloudFileClient.listAll()).filter((file: CloudFileItem) =>
+      file.kind === CloudThemeSync.KIND && file.state !== 'DELETING');
+    const keys = new Set<string>(files.map((file: CloudFileItem) => CloudThemeSync.themeKey(file.meta)));
+    let count = 0;
+    const counted = new Set<string>();
+    try {
+      const settings = await AppThemeSettingsStore.load(this.context);
+      for (const scheme of await CustomThemeSchemeStore.load(this.context, settings)) {
+        const own = [`scheme:${scheme.id}`].concat(CloudThemeSync.schemePackageIds(scheme).map((id: string) => `pack:${id}`));
+        if (!own.some((key: string) => keys.has(key))) continue;
+        count++;
+        for (const key of own) counted.add(key);
+      }
+    } catch (e) {
+      console.warn('[CloudFiles] read schemes failed:', (e as Error).message);
+    }
+    keys.forEach((key: string) => {
+      if (key.startsWith('pack:') && !counted.has(key)) count++;
+    });
+    this.themeFiles = files;
+    this.themeCount = count;
+  }
+
+  async removeThemes(): Promise<void> {
+    const answer = await promptAction.showDialog({ title: '删除云端的自定义主题',
+      message: '只删除自定义主题的云端副本，各设备上的主题保留；之后改动主题时会重新上传。',
+      buttons: [{ text: '取消', color: ThemeRuntime.subTextColor(this.dark) }, { text: '删除', color: ThemeRuntime.accentColor(this.dark) }] });
+    if (answer.index !== 1) return;
+    this.busy = true; this.error = ''; this.progress = '正在删除自定义主题的云端副本…';
+    try {
+      for (const file of this.themeFiles) await CloudFileClient.remove(file.id);
+      HdsFeedback.showToast('已删除自定义主题的云端副本');
+    } catch (error) { this.error = (error as Error).message; }
+    finally { this.busy = false; await this.refresh(true); }
+  }
+
   fileCardElementId(id: string): string {
     return `cloud_file_card_${encodeURIComponent(id)}`;
   }
@@ -417,6 +507,7 @@ struct CloudFilesPage {
         this.files = list.files.filter((file: CloudFileItem) => file.kind === 'BOOK' || file.kind === 'FONT');
         this.nextCursor = list.nextCursor;
         await CloudFontImport.saveNames(this.context, this.context.filesDir, list.files);
+        await this.loadThemeFiles();
         CloudAutoSync.schedule(this.context);
       }
     } catch (error) { if (!this.error) this.error = (error as Error).message; }

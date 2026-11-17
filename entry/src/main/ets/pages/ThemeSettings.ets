@@ -61,6 +61,7 @@ import {
 } from '../core/reader/ReaderCommentBubble';
 import { StartupCoverTextStore } from '../utils/StartupCoverTextStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { CloudThemeSync } from '../account/CloudThemeSync';
 import { ListDissolve } from '../utils/ListDissolve';
 import { DeleteParticleBurst, DeleteParticleLayer } from '../components/common/DeleteParticles';
 import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
@@ -288,6 +289,10 @@ struct ThemeSettingsPage {
   @StorageLink('activeCustomThemeSchemeRevision') activeCustomSchemeRevision: number = 0;
   @StorageLink('customThemeSchemesRevision') @Watch('onCustomThemeSchemesRevisionChanged')
   customThemeSchemesRevision: number = 0;
+  // 云同步装好主题包、或云端可下载的包变了：方案卡片和详情跟着换。
+  @StorageLink('cloudRemoteThemePacksRaw') @Watch('onCloudThemePacksChanged') cloudRemoteThemePacksRaw: string = '[]';
+  @StorageLink('installedThemePacksRevision') @Watch('onCloudThemePacksChanged')
+  installedThemePacksRevision: number = 0;
   @StorageLink('startupCoverTextsRevision') startupCoverTextsRevision: number = 0;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
@@ -410,6 +415,11 @@ struct ThemeSettingsPage {
     this.refreshCustomSchemes();
   }
 
+  onCloudThemePacksChanged(): void {
+    this.refreshCustomSchemes();
+    this.syncDetailPages();
+  }
+
   refreshCustomSchemeLimit(): void {
     this.customSchemeLimit = CustomThemeQuota.current();
   }
@@ -425,11 +435,27 @@ struct ThemeSettingsPage {
     return scheme ? scheme.author : '';
   }
 
-  /** 方案由主题包安装而来，但本机没有这个包的素材（换设备同步过来、或目录被清掉）。 */
+  /** 方案用到的主题包本机没有（换设备同步过来、或目录被清掉）。 */
   customSchemePackMissing(customSchemeId: string): boolean {
     if (!customSchemeId) return false;
     const scheme = CustomThemeSchemeStore.find(this.customSchemes, customSchemeId);
-    return !!scheme && !!scheme.packageId && !ThemePackRegistry.getByPackageId(scheme.packageId);
+    return !!scheme && CloudThemeSync.schemePackageIds(scheme).some((id: string): boolean =>
+      !ThemePackRegistry.getByPackageId(id));
+  }
+
+  /** 缺的主题包在云端，应用或打开时会下载。读 cloudRemoteThemePacksRaw 让界面随之刷新。 */
+  customSchemeInCloud(customSchemeId: string): boolean {
+    if (!customSchemeId || this.cloudRemoteThemePacksRaw === '[]') return false;
+    return CloudThemeSync.remotePacksOf(CustomThemeSchemeStore.find(this.customSchemes, customSchemeId)).length > 0;
+  }
+
+  /** 打开方案详情时在后台把云端的素材包取回来，装好后详情自动换成真实素材。 */
+  prefetchSchemePacks(customSchemeId: string): void {
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, customSchemeId);
+    if (!scheme || !this.customSchemePackMissing(customSchemeId)) return;
+    CloudThemeSync.ensureSchemePacks(getContext(this), scheme).catch((e: Error) => {
+      console.warn('下载云端主题素材失败:', e.message);
+    });
   }
 
   /** 主题分享 Beta 导出和导入都只对会员开放。 */
@@ -1260,10 +1286,20 @@ struct ThemeSettingsPage {
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .flexShrink(1)
+              if (this.customSchemeInCloud(entry.customSchemeId)) {
+                Text('云端')
+                  .fontSize(AppFontSize.MICRO)
+                  .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
+                  .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: 1, bottom: 1 })
+                  .borderRadius(ThemeRuntime.smallRadius())
+                  .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+                  .flexShrink(0)
+              }
             }
             Text(this.themeRowSubtitle(entry))
               .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.customSchemePackMissing(entry.customSchemeId) ?
+              .fontColor(this.customSchemePackMissing(entry.customSchemeId) &&
+                !this.customSchemeInCloud(entry.customSchemeId) ?
                 ThemeRuntime.dangerColor(this.appDarkMode) : this.subTextColor())
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1784,7 +1820,11 @@ struct ThemeSettingsPage {
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.activeVariant(entry.theme).colors.subTextColor)
           .maxLines(2)
-        if (this.customSchemePackMissing(entry.customSchemeId)) {
+        if (this.customSchemeInCloud(entry.customSchemeId)) {
+          Text('这套方案的素材在云端，正在下载；下载完成前按默认样式显示。')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.activeVariant(entry.theme).colors.subTextColor)
+        } else if (this.customSchemePackMissing(entry.customSchemeId)) {
           Text('这套方案的主题包素材不在这台设备上，正按默认样式显示；重新导入同一个主题包即可恢复。')
             .fontSize(AppFontSize.CAPTION)
             .fontColor(this.activeVariant(entry.theme).colors.dangerColor)
@@ -2180,6 +2220,14 @@ struct ThemeSettingsPage {
       if (unavailableStartupTheme) {
         HdsFeedback.showToast(`方案使用的主题「${unavailableStartupTheme}」尚未获取或已过期`);
         return;
+      }
+      if (this.customSchemePackMissing(customScheme.id)) {
+        if (this.customSchemeInCloud(customScheme.id)) HdsFeedback.showToast('正在下载云端的主题素材…');
+        try {
+          await CloudThemeSync.ensureSchemePacks(getContext(this), customScheme);
+        } catch (e) {
+          HdsFeedback.showToast(`主题素材下载失败：${(e as Error).message}`);
+        }
       }
     }
     if (ThemeTrialManager.isActive()) {
@@ -2764,6 +2812,7 @@ struct ThemeSettingsPage {
 
   themeRowSubtitle(entry: ThemeListEntry): string {
     if (entry.customSchemeId) {
+      if (this.customSchemeInCloud(entry.customSchemeId)) return '素材在云端 · 应用或打开时下载';
       if (this.customSchemePackMissing(entry.customSchemeId)) return '主题包素材不在这台设备上';
       if (this.isCustomSchemePending(entry.theme, entry.customSchemeId)) return '有改动 · 待应用';
       return this.schemeSourcesSummary(entry.customSchemeId);
@@ -2869,6 +2918,7 @@ struct ThemeSettingsPage {
 
   /** 打开竖向详情，左右滑动在 context 指的那组主题里切换；不在组里时只看这一项。 */
   openDetailFor(entry: ThemeListEntry, context: string, label: string): void {
+    if (entry.customSchemeId) this.prefetchSchemePacks(entry.customSchemeId);
     const keys = this.detailContextEntries(context).map((item: ThemeListEntry): string => this.entrySelectKey(item));
     const key = this.entrySelectKey(entry);
     const index = keys.indexOf(key);
@@ -2880,6 +2930,7 @@ struct ThemeSettingsPage {
   }
 
   openSchemeDetail(schemeId: string): void {
+    this.prefetchSchemePacks(schemeId);
     const keys = this.schemeEntries().map((item: ThemeListEntry): string => this.entrySelectKey(item));
     const index = keys.indexOf(`scheme:${schemeId}`);
     this.openDetail(index < 0 ? [`scheme:${schemeId}`] : keys, Math.max(0, index), '我的方案');
@@ -2915,7 +2966,7 @@ struct ThemeSettingsPage {
         const scheme = CustomThemeSchemeStore.find(this.customSchemes, key.substring('scheme:'.length));
         revision = scheme ? scheme.revision : -1;
       }
-      return `${key}|${revision}_${dark}_${this.accountEntitlementsRevision}`;
+      return `${key}|${revision}_${dark}_${this.accountEntitlementsRevision}_${this.installedThemePacksRevision}`;
     }));
   }
 

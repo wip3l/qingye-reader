@@ -8,7 +8,9 @@ import { CloudSyncSettingsStore } from './CloudSyncSettingsStore';
 import { CloudSyncIssueStore } from './CloudSyncIssueStore';
 import { CloudFileClient } from './CloudFileClient';
 import { CloudFontImport } from './CloudFontImport';
-import { CloudFileItem, CloudFileMeta, CloudTombstone } from './CloudFileModels';
+import { CloudFileItem, CloudFileMeta, CloudTombstone, CloudUploadJob } from './CloudFileModels';
+import { CloudThemeSync } from './CloudThemeSync';
+import { CloudThemeChange } from './CloudThemeChange';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { LocalBookService } from '../core/book/LocalBookService';
 import { ReaderFontHelper } from '../utils/ReaderFontHelper';
@@ -47,17 +49,8 @@ class LocalFontData {
   fonts: LocalFontRef[] = [];
 }
 
-class UploadJob {
-  path: string = '';
-  name: string = '';
-  kind: string = '';
-  meta: CloudFileMeta | null = null;
-  manifestHash: string = '';
-  key: string = '';
-}
-
 /**
- * 终身超级会员的字体与本地书籍云同步，用户无感：
+ * 终身超级会员的字体、本地书籍与自定义主题云同步，用户无感（主题的规则见 CloudThemeSync）：
  * - 本机新增的自定义字体、加入书架的本地书籍自动上传；
  * - 删除字体、移出书架时删除云端文件，并留下删除标记，其他设备据此一并移除；
  * - 其他设备上，未下载的云端字体出现在字体下拉框（置灰），未下载的书籍以占位书出现在书架（置灰），
@@ -77,6 +70,7 @@ export class CloudAutoSync {
   private static timer: number = -1;
   /** 本次运行期间上传失败（如空间不足）的内容，不在每次对账时反复重试。 */
   private static failedUploads: Set<string> = new Set<string>();
+  private static listeningThemes: boolean = false;
 
   static isPlaceholder(book: Book | null): boolean {
     return !!book && book.getVariable(CloudAutoSync.PLACEHOLDER_KEY) === '1';
@@ -99,6 +93,11 @@ export class CloudAutoSync {
 
   /** 合并短时间内的多次触发；正在运行时安排一次补跑。 */
   static schedule(context: Context, delayMs: number = 2000): void {
+    if (!CloudAutoSync.listeningThemes) {
+      CloudAutoSync.listeningThemes = true;
+      // 编辑主题时会连着改好几次，稍等一会儿再对账。
+      CloudThemeChange.listen(() => CloudAutoSync.schedule(context, 5000));
+    }
     if (CloudAutoSync.timer >= 0) clearTimeout(CloudAutoSync.timer);
     CloudAutoSync.timer = setTimeout(() => {
       CloudAutoSync.timer = -1;
@@ -106,7 +105,7 @@ export class CloudAutoSync {
         console.warn('[CloudAutoSync] reconcile failed:', error.message);
         const message = error.message || '文件同步失败';
         CloudAutoSync.recordIssue(context, AccountSessionStore.account().userId, `file-run:${message}`,
-          '本地书籍与字体同步失败', message);
+          '本地书籍、字体与自定义主题同步失败', message);
       });
     }, delayMs);
   }
@@ -275,14 +274,18 @@ export class CloudAutoSync {
     const userId = AccountSessionStore.account().userId;
     if (!userId || !AccountSessionStore.isLoggedIn() || AccountSessionStore.activeMembershipSku() !== 'SUPER_LIFETIME') {
       CloudAutoSync.publishRemoteFonts([]);
+      CloudThemeSync.clearRemote();
       return;
     }
     await CloudAutoSync.loadSettings(context, userId);
     if (!CloudAutoSync.scopeEnabled(userId, 'FONT')) CloudAutoSync.publishRemoteFonts([]);
-    if (!CloudAutoSync.scopeEnabled(userId, 'FONT') && !CloudAutoSync.scopeEnabled(userId, 'BOOK')) return;
+    if (!CloudAutoSync.scopeEnabled(userId, CloudThemeSync.KIND)) CloudThemeSync.clearRemote();
+    if (!CloudAutoSync.scopeEnabled(userId, 'FONT') && !CloudAutoSync.scopeEnabled(userId, 'BOOK') &&
+      !CloudAutoSync.scopeEnabled(userId, CloudThemeSync.KIND)) return;
     const summary = await CloudFileClient.summary();
     if (!summary.configured || !summary.eligible) {
       CloudAutoSync.publishRemoteFonts([]);
+      CloudThemeSync.clearRemote();
       return;
     }
     let files = (await CloudFileClient.listAll()).filter((file: CloudFileItem) => file.state === 'READY');
@@ -290,14 +293,23 @@ export class CloudAutoSync {
     const removed = await CloudAutoSync.flushRemovals(context, userId, files);
     files = files.filter((file: CloudFileItem) => !removed.has(file.id));
     if (AccountSessionStore.account().userId !== userId) return;
-    const uploads: UploadJob[] = [];
+    const uploads: CloudUploadJob[] = [];
     if (CloudAutoSync.scopeEnabled(userId, 'FONT')) {
       await CloudAutoSync.syncFonts(context, files, tombstones, uploads);
     }
     if (CloudAutoSync.scopeEnabled(userId, 'BOOK')) {
       await CloudAutoSync.syncBooks(context, files, tombstones, uploads);
     }
-    await CloudAutoSync.runUploads(context, userId, uploads);
+    const themes = CloudAutoSync.scopeEnabled(userId, CloudThemeSync.KIND);
+    if (themes) {
+      await CloudThemeSync.sync(context, userId, files, tombstones, uploads);
+    }
+    try {
+      const uploaded = await CloudAutoSync.runUploads(context, userId, uploads);
+      if (themes) await CloudThemeSync.recordUploaded(context, userId, uploaded);
+    } finally {
+      if (themes) CloudThemeSync.cleanupStaging(context);
+    }
   }
 
   private static async loadSettings(context: Context, userId: string): Promise<void> {
@@ -311,11 +323,12 @@ export class CloudAutoSync {
       AccountSessionStore.activeMembershipSku() !== 'SUPER_LIFETIME' ||
       CloudSyncSettingsStore.currentAccountId() !== userId) return false;
     const settings = CloudSyncSettingsStore.current();
+    if (kind === CloudThemeSync.KIND) return settings.customThemesEnabled;
     return kind === 'BOOK' ? settings.localBooksEnabled : kind === 'FONT' && settings.customFontsEnabled;
   }
 
   private static async syncFonts(context: Context, files: CloudFileItem[], tombstones: CloudTombstone[],
-    uploads: UploadJob[]): Promise<void> {
+    uploads: CloudUploadJob[]): Promise<void> {
     const cloudFonts = files.filter((file: CloudFileItem) => file.kind === 'FONT');
     const fontTombs = tombstones.filter((tomb: CloudTombstone) => tomb.kind === 'FONT');
     const linked = new Set<string>();
@@ -342,7 +355,7 @@ export class CloudAutoSync {
         if (tomb.reason === 'REMOVED') CloudAutoSync.removeLocalFont(context, font);
         continue;
       }
-      const job = new UploadJob();
+      const job = new CloudUploadJob();
       job.path = font.filePath;
       job.name = CloudFontImport.uploadName(font.sourceName, font.filePath);
       job.kind = 'FONT';
@@ -366,7 +379,7 @@ export class CloudAutoSync {
   }
 
   private static async syncBooks(context: Context, files: CloudFileItem[], tombstones: CloudTombstone[],
-    uploads: UploadJob[]): Promise<void> {
+    uploads: CloudUploadJob[]): Promise<void> {
     const db = AppDatabase.getInstance();
     await db.initWithContext(context);
     const cloudBooks = files.filter((file: CloudFileItem) => file.kind === 'BOOK' &&
@@ -431,7 +444,7 @@ export class CloudAutoSync {
       // Private-shelf books stay on the device.
       if (book.isPrivate || !path || !LocalBookService.exists(path)) continue;
       const format = LocalBookService.formatOf(book);
-      const job = new UploadJob();
+      const job = new CloudUploadJob();
       job.path = path;
       job.name = `${LocalBookService.sanitizeFileName(book.name).slice(0, 180)}.${format}`;
       job.kind = 'BOOK';
@@ -526,40 +539,49 @@ export class CloudAutoSync {
     }
   }
 
-  private static async runUploads(context: Context, userId: string, uploads: UploadJob[]): Promise<void> {
-    if (uploads.length === 0 || CloudFileClient.isTransferring()) return;
+  /** 逐个上传，返回成功的 job.key。 */
+  private static async runUploads(context: Context, userId: string, uploads: CloudUploadJob[]): Promise<string[]> {
+    const done: string[] = [];
+    if (uploads.length === 0 || CloudFileClient.isTransferring()) return done;
     const pending = await CloudFileClient.pending(context);
-    if (pending && !pending.auto) return; // A manual upload is waiting for the user; leave it alone.
+    if (pending && !pending.auto) return done; // A manual upload is waiting for the user; leave it alone.
     if (pending) {
-      if (!CloudAutoSync.scopeEnabled(userId, pending.kind)) return;
+      if (!CloudAutoSync.scopeEnabled(userId, pending.kind)) return done;
       try {
         await CloudFileClient.upload(context, () => {});
       } catch (e) {
         console.warn('[CloudAutoSync] resume upload failed:', (e as Error).message);
-        return;
+        return done;
       }
     }
-    let uploaded = false;
     for (const job of uploads) {
       if (!CloudAutoSync.scopeEnabled(userId, job.kind)) continue;
       if (CloudAutoSync.failedUploads.has(job.key) || AccountSessionStore.account().userId !== userId) continue;
       try {
         await CloudFileClient.stage(context, job.path, job.name, job.kind, job.meta, true, job.manifestHash);
         await CloudFileClient.upload(context, () => {});
-        uploaded = true;
+        done.push(job.key);
       } catch (e) {
         const message = (e as Error).message || '';
         console.warn('[CloudAutoSync] upload failed:', job.name, message);
         CloudAutoSync.failedUploads.add(job.key);
-        const label = job.kind === 'FONT' ? `字体“${job.meta?.fontName || job.name}”` :
-          `本地书籍“${job.meta?.title || job.name}”`;
-        CloudAutoSync.recordIssue(context, userId, `file:${job.key}`, `${label}未能上传`, message || '上传失败');
+        const full = message.includes('云空间不足');
+        let title = '';
+        if (job.kind === CloudThemeSync.KIND) {
+          title = full ? '自定义主题未上传：云空间不足' : `自定义主题“${job.label || job.name}”未能上传`;
+        } else {
+          const label = job.kind === 'FONT' ? `字体“${job.meta?.fontName || job.name}”` :
+            `本地书籍“${job.meta?.title || job.name}”`;
+          title = `${label}未能上传`;
+        }
+        CloudAutoSync.recordIssue(context, userId, `file:${job.key}`, title, message || '上传失败');
         // Keep the staged task for the next run only if it is resumable; a full space must be freed first.
         try { await CloudFileClient.cancelUpload(context); } catch (cancelError) { /* retried next run */ }
-        if (message.includes('云空间不足')) break;
+        if (full) break;
       }
     }
-    if (uploaded) AppStorage.setOrCreate(CloudAutoSync.STORAGE_REVISION, Date.now());
+    if (done.length > 0) AppStorage.setOrCreate(CloudAutoSync.STORAGE_REVISION, Date.now());
+    return done;
   }
 
   private static recordIssue(context: Context, userId: string, key: string, title: string, message: string): void {

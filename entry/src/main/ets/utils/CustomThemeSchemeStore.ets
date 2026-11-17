@@ -3,6 +3,7 @@ import preferences from '@ohos.data.preferences';
 import { ThemeIds } from '../theme/ThemeModels';
 import { AppThemeSettings, AppThemeSettingsStore } from './AppThemeSettingsStore';
 import { CloudSyncChangeTracker } from '../account/CloudSyncChangeTracker';
+import { CloudThemeChange } from '../account/CloudThemeChange';
 import { CustomThemeQuota } from '../account/CustomThemeQuota';
 import { ReaderSettingsStore } from './ReaderSettingsStore';
 import { ThemePackRegistry } from '../theme/ThemePackRegistry';
@@ -309,6 +310,7 @@ export class CustomThemeSchemeStore {
     const revision = (AppStorage.get<number>(CustomThemeSchemeStore.STORAGE_REVISION) || 0) + 1;
     AppStorage.setOrCreate(CustomThemeSchemeStore.STORAGE_REVISION, revision);
     CloudSyncChangeTracker.markPreferenceChanged();
+    CloudThemeChange.notify();
     await ReaderSettingsStore.deleteProfile(context, ReaderSettingsStore.profileIdFor(ThemeIds.CUSTOM, schemeId));
     return true;
   }
@@ -400,7 +402,34 @@ export class CustomThemeSchemeStore {
     const revision = (AppStorage.get<number>(CustomThemeSchemeStore.STORAGE_REVISION) || 0) + 1;
     AppStorage.setOrCreate(CustomThemeSchemeStore.STORAGE_REVISION, revision);
     CloudSyncChangeTracker.markPreferenceChanged();
+    CloudThemeChange.notify();
     CustomThemeSchemeStore.syncPackNames(context, schemes);
+  }
+
+  /**
+   * 云同步下载的启动封面和预览图：只改本机图片路径，不算方案改动（这些路径本来就不进数据同步）。
+   * 方案不在了返回 false。
+   */
+  static async setLocalImages(
+    context: Context,
+    legacySettings: AppThemeSettings,
+    schemeId: string,
+    lightStartup: string,
+    darkStartup: string,
+    preview: string
+  ): Promise<boolean> {
+    const schemes = await CustomThemeSchemeStore.load(context, legacySettings);
+    const scheme = CustomThemeSchemeStore.find(schemes, schemeId);
+    if (!scheme) return false;
+    scheme.settings.customLightStartupImagePath = lightStartup;
+    scheme.settings.customDarkStartupImagePath = darkStartup;
+    scheme.settings.customPreviewImagePath = preview;
+    const store = await preferences.getPreferences(context, CustomThemeSchemeStore.STORE_NAME);
+    await store.put(CustomThemeSchemeStore.KEY_SCHEMES, CustomThemeSchemeStore.encode(schemes));
+    await store.flush();
+    AppStorage.setOrCreate(CustomThemeSchemeStore.STORAGE_REVISION,
+      (AppStorage.get<number>(CustomThemeSchemeStore.STORAGE_REVISION) || 0) + 1);
+    return true;
   }
 
   static async replaceFromSync(
@@ -461,6 +490,7 @@ export class CustomThemeSchemeStore {
       CustomThemeSchemeStore.STORAGE_REVISION,
       (AppStorage.get<number>(CustomThemeSchemeStore.STORAGE_REVISION) || 0) + 1
     );
+    CloudThemeChange.notify();
   }
 
   private static createScheme(

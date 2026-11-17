@@ -404,7 +404,7 @@ struct MemberBenefitsPage {
 
   cloudSpaceText(): string {
     if (!this.isSuperMember()) return '终身超级会员专享';
-    if (!this.cloudSummary) return '书籍、字体与同步配置共用 1GB';
+    if (!this.cloudSummary) return '书籍、字体、自定义主题与同步配置共用 1GB';
     if (!this.cloudSummary.configured) return '云空间服务尚未启用';
     return `已用 ${this.formatBytes(this.cloudSummary.usedBytes)} / 1GB · 本月下载 ` +
       `${this.formatBytes(this.cloudSummary.downloadBytes)}`;
@@ -438,6 +438,7 @@ struct MemberBenefitsPage {
       if (this.isSuperMember()) {
         this.benefitRow($r('sys.symbol.textformat'), '上传字体云端同步', '导入即上传，换机可选', true, undefined)
         this.benefitRow($r('sys.symbol.book_pages'), '本地书籍云端同步', '加入书架即上传', true, undefined)
+        this.benefitRow($r('sys.symbol.paintpalette'), '自定义主题云同步', '素材与启动封面自动上传，换机自动恢复', true, undefined)
         this.benefitRow($r('sys.symbol.arrow_down'), '每月下载额度', '每月 1GB · 云空间下载', true, undefined)
       }
       this.benefitRow($r('sys.symbol.paintpalette'), '会员主题库', '现有及新增会员主题，可直接应用', true, () => {

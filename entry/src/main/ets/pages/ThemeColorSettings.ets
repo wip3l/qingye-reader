@@ -73,6 +73,7 @@ import {
 import { ReaderRegexBubbleStyleResolver, ReaderRegexEmphasisContext } from '../model/reader/ReaderRegexFontRule';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { HdsFeedback } from '../utils/HdsFeedback';
+import { CloudThemeSync } from '../account/CloudThemeSync';
 import { ListDissolve } from '../utils/ListDissolve';
 import { DeleteParticleBurst, DeleteParticleLayer, DeleteParticles } from '../components/common/DeleteParticles';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -522,6 +523,15 @@ struct ThemeColorSettingsPage {
       }
       if (!scheme) {
         return;
+      }
+      // 素材包还在云端时先下载：在缺包的方案上改素材会建出一个残缺的包，再同步回去就覆盖了云端的完整版本。
+      if (CloudThemeSync.remotePacksOf(scheme).length > 0) {
+        HdsFeedback.showToast('正在下载云端的主题素材…');
+      }
+      try {
+        await CloudThemeSync.ensureSchemePacks(getContext(this), scheme);
+      } catch (e) {
+        HdsFeedback.showToast(`主题素材下载失败：${(e as Error).message}`);
       }
       this.schemeName = scheme.name;
       this.schemeAuthor = scheme.author;
