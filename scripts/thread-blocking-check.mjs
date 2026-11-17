@@ -29,8 +29,8 @@ const paginator = read('entry/src/main/ets/core/reader/ReaderV2Paginator.ets');
 
 assert(scheduler.includes('DEFAULT_UI_SLICE_MS: number = 6'),
   'Cooperative scheduler must keep the UI work slice below one frame');
-assert(/setTimeout\(resolve,\s*[01]\)/.test(scheduler),
-  'Cooperative scheduler must yield back to the event loop');
+assert(scheduler.includes('enqueueYield(1)') && scheduler.includes('queue.splice(index, 1)[0]'),
+  'Cooperative scheduler must yield back to the event loop through one shared queue');
 assert(scheduler.includes('CooperativeCancellationToken') && scheduler.includes('throwIfCancelled'),
   'Long-running rule work must remain cancellable');
 

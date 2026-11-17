@@ -17,6 +17,17 @@ import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { BookAnnotation, BookAnnotationStyles } from '../../model/reader/BookAnnotation';
 import { TocVolumeFold } from '../../core/reader/TocVolumeFold';
 
+/** 目录刷新的结果，由阅读页比对刷新前后的目录得出。 */
+export interface ReaderTocRefreshOutcome {
+  ok: boolean;
+  /** 失败原因，ok 为 false 时有值。 */
+  message: string;
+  added: number;
+  changed: boolean;
+}
+
+const TOC_REFRESH_NOTE_MS: number = 2500;
+
 const TOC_WINDOW_PAGE_SIZE = 72;
 const TOC_SCROLLBAR_DRAG_UPDATE_INTERVAL_MS = 90;
 const TOC_SEARCH_INPUT_KEY = 'tocChapterSearchInput';
@@ -82,7 +93,13 @@ export struct ReaderTocPanel {
   onJumpToBookmark: (bookmark: Bookmark) => void = (_bookmark: Bookmark): void => {
   };
   /** 重新抓取目录；完成后面板自己恢复定位或重做搜索。 */
-  onRefreshToc: () => Promise<void> = (): Promise<void> => Promise.resolve();
+  onRefreshToc: () => Promise<ReaderTocRefreshOutcome> = (): Promise<ReaderTocRefreshOutcome> =>
+    Promise.resolve({ ok: true, message: '', added: 0, changed: false } as ReaderTocRefreshOutcome);
+  @State tocRefreshing: boolean = false;
+  /** 章数位置临时显示的刷新状态或结果；空串时显示“共 N 章”。 */
+  @State private tocRefreshNote: string = '';
+  @State private tocRefreshNoteColor: string = '';
+  private tocRefreshNoteTimer: number = -1;
   onLoadBookmarks: () => void = (): void => {
   };
   /** 本地 TXT 显示"目录规则"按钮。 */
@@ -178,6 +195,10 @@ export struct ReaderTocPanel {
   aboutToDisappear(): void {
     this.searchRequestSerial++;
     this.positionRequestSerial++;
+    if (this.tocRefreshNoteTimer >= 0) {
+      clearTimeout(this.tocRefreshNoteTimer);
+      this.tocRefreshNoteTimer = -1;
+    }
     if (this.scrollbarUpdateTimer >= 0) {
       clearTimeout(this.scrollbarUpdateTimer);
       this.scrollbarUpdateTimer = -1;
@@ -467,8 +488,33 @@ export struct ReaderTocPanel {
   }
 
   private async refreshToc(): Promise<void> {
+    // 刷新期间再点不重复发起：连点会叠出几次整本目录解析，主线程被占满后卡死。
+    if (this.tocRefreshing) return;
+    this.tocRefreshing = true;
+    this.showTocRefreshNote('正在刷新目录…', this.accentColor, false);
+    let outcome: ReaderTocRefreshOutcome = { ok: false, message: '未知错误', added: 0, changed: false };
+    try {
+      outcome = await this.runRefreshToc();
+    } catch (e) {
+      outcome = { ok: false, message: e instanceof Error ? e.message : String(e), added: 0, changed: false };
+    } finally {
+      this.tocRefreshing = false;
+    }
+    if (!outcome.ok) {
+      this.showTocRefreshNote(`刷新失败：${outcome.message || '未知错误'}`, ThemeRuntime.dangerColor(this.dark), true);
+    } else if (outcome.added > 0) {
+      this.showTocRefreshNote(`目录已更新 · 新增 ${outcome.added} 章`, ThemeRuntime.successColor(this.dark), true);
+    } else if (outcome.changed) {
+      this.showTocRefreshNote(`目录已更新 · 共 ${this.chapters.length} 章`, ThemeRuntime.successColor(this.dark), true);
+    } else {
+      this.showTocRefreshNote('目录没有变化', this.subTextColor, true);
+    }
+  }
+
+  private async runRefreshToc(): Promise<ReaderTocRefreshOutcome> {
     const searchQuery = this.searchQuery;
-    await this.onRefreshToc();
+    const outcome = await this.onRefreshToc();
+    if (!outcome.ok) return outcome;
     this.databaseChapterCount = this.chapters.length;
     if (this.searchVisible && this.searchResultActive && searchQuery.trim()) {
       await this.submitSearch();
@@ -476,7 +522,22 @@ export struct ReaderTocPanel {
       this.setWindowAround(this.currentChapterIndex, ScrollAlign.CENTER);
       this.scrollToCurrentChapter(false);
     }
-    HdsFeedback.showToast('目录已刷新');
+    return outcome;
+  }
+
+  /** 在章数位置显示一句状态；autoClear 时停留一会儿后换回“共 N 章”。 */
+  private showTocRefreshNote(text: string, color: string, autoClear: boolean): void {
+    if (this.tocRefreshNoteTimer >= 0) {
+      clearTimeout(this.tocRefreshNoteTimer);
+      this.tocRefreshNoteTimer = -1;
+    }
+    this.tocRefreshNote = text;
+    this.tocRefreshNoteColor = color;
+    if (!autoClear) return;
+    this.tocRefreshNoteTimer = setTimeout(() => {
+      this.tocRefreshNoteTimer = -1;
+      this.tocRefreshNote = '';
+    }, TOC_REFRESH_NOTE_MS);
   }
 
   private titleColor(chapter: BookChapter, index: number): string {
@@ -1207,6 +1268,17 @@ export struct ReaderTocPanel {
             .fontSize(AppFontSize.BODY)
             .fontColor(this.subTextColor)
             .margin({ left: AppSpacing.SM })
+        } else if (this.tocRefreshNote) {
+          Text(this.tocRefreshNote)
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.tocRefreshNoteColor || this.subTextColor)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: 190 })
+            .margin({ left: AppSpacing.SM })
+            .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+            .height(34)
+            .accessibilityText(this.tocRefreshNote)
         } else {
           Text(`共 ${this.chapters.length} 章`)
             .fontSize(AppFontSize.BODY)
@@ -1273,7 +1345,8 @@ export struct ReaderTocPanel {
           startInset: 0,
           materialScale: 0.7,
           compactLayout: true,
-          accessibilityLabel: '刷新目录',
+          accessibilityLabel: this.tocRefreshing ? '正在刷新目录' : '刷新目录',
+          iconSpinning: this.tocRefreshing,
           onBack: () => {
             this.refreshToc();
           }

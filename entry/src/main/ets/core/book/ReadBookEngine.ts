@@ -61,6 +61,11 @@ export class ReadBookEngine {
   private preloadBackwardCount: number = 0;
   private chapterPreloads: Map<number, ReaderChapterPreloadTask> = new Map();
   private bookGeneration: number = 0;
+  /** 正在进行的目录刷新：同一本书、同样参数的重复调用共用这一次，不并发解析、不并发删表重插。 */
+  private tocRefreshTask: Promise<void> | null = null;
+  private tocRefreshKey: string = '';
+  /** 最近一次目录刷新没取到章节时的原因；取到了或还没刷新过为空。抛错的失败由调用方自己接住。 */
+  lastTocRefreshError: string = '';
   private sourceInteractionIdentity: string = '';
   private openBookTask: Promise<void> | null = null;
   private openBookTaskUrl: string = '';
@@ -326,6 +331,24 @@ export class ReadBookEngine {
   /** staleCatalog：现有目录已知不可用（坏链接），和没有目录一样允许通用目录兜底。 */
   async refreshToc(expectedGeneration: number = this.bookGeneration, staleCatalog: boolean = false): Promise<void> {
     if (!this.book || !this.source) return;
+    const key = `${expectedGeneration}|${this.book.bookUrl}|${staleCatalog ? 1 : 0}`;
+    if (this.tocRefreshTask && this.tocRefreshKey === key) return this.tocRefreshTask;
+    this.lastTocRefreshError = '';
+    const task = this.runRefreshToc(expectedGeneration, staleCatalog);
+    this.tocRefreshTask = task;
+    this.tocRefreshKey = key;
+    try {
+      await task;
+    } finally {
+      if (this.tocRefreshTask === task) {
+        this.tocRefreshTask = null;
+        this.tocRefreshKey = '';
+      }
+    }
+  }
+
+  private async runRefreshToc(expectedGeneration: number, staleCatalog: boolean): Promise<void> {
+    if (!this.book || !this.source) return;
     const sessionBook = this.book;
     const sessionSource = this.source;
     const sessionBookUrl = sessionBook.bookUrl;
@@ -407,6 +430,7 @@ export class ReadBookEngine {
       } else {
         this.book.latestChapterTitle = this.book.latestChapterTitle || oldLatestChapter;
         this.book.tocUrl = this.book.tocUrl || oldTocUrl;
+        this.lastTocRefreshError = '没有取到目录';
         console.warn('[RE] refreshToc returned no chapters, keep existing chapters:', this.chapters.length);
       }
     } finally {

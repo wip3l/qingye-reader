@@ -4122,7 +4122,6 @@ struct EpubOriginalReadBookPage {
       },
       onJumpToBookmark: (bookmark: Bookmark): void => { this.openBookmark(bookmark); },
       // 本地书的目录来自书里的导航文件，没有可刷新的远端。
-      onRefreshToc: (): Promise<void> => Promise.resolve(),
       onLoadBookmarks: (): void => { this.loadBookmarks(); },
       onShowBookmarkActions: (bookmark: Bookmark, globalX: number, globalY: number): void =>
         this.openBookmarkActions(bookmark, globalX, globalY),

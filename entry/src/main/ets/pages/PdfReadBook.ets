@@ -1376,7 +1376,6 @@ struct PdfReadBookPage {
         this.menuVisible = false;
         this.goTo(bookmark.chapterIndex);
       },
-      onRefreshToc: (): Promise<void> => Promise.resolve(),
       onLoadBookmarks: (): void => { this.loadBookmarks(); },
       onShowBookmarkActions: (bookmark: Bookmark, globalX: number, globalY: number): void =>
         this.openBookmarkActions(bookmark, globalX, globalY)

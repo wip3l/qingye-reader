@@ -24,7 +24,26 @@ export struct ImmersiveBackButton {
   @Prop accessibilityLabel: string = '返回';
   @Prop buttonEnabled: boolean = true;
   @Prop disabledIconColor: ResourceColor = '#999999';
+  /** 图标持续旋转（例如刷新进行中）；只转图标，按钮底座不动。 */
+  @Prop @Watch('onIconSpinningChange') iconSpinning: boolean = false;
+  @State private iconSpinAngle: number = 0;
   onBack: () => void = () => {};
+
+  aboutToAppear(): void {
+    if (this.iconSpinning) this.onIconSpinningChange();
+  }
+
+  onIconSpinningChange(): void {
+    if (this.iconSpinning) {
+      this.getUIContext().animateTo({ duration: 900, curve: Curve.Linear, iterations: -1 }, () => {
+        this.iconSpinAngle = 360;
+      });
+    } else {
+      this.getUIContext().animateTo({ duration: 0 }, () => {
+        this.iconSpinAngle = 0;
+      });
+    }
+  }
 
   build() {
     Stack() {
@@ -134,6 +153,7 @@ export struct ImmersiveBackButton {
           .fontWeight(FontWeight.Medium)
           .fontColor([this.buttonEnabled ? this.iconColor : this.disabledIconColor])
           .translate({ x: this.iconOffsetX })
+          .rotate({ angle: this.iconSpinAngle })
       }
     }
     .width('100%')

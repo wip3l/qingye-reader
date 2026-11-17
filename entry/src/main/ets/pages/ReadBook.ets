@@ -181,7 +181,7 @@ import { ReaderTxtTocRuleDialogContent } from '../components/reader/ReaderTxtToc
 import { TxtTocRules } from '../core/book/TxtTocRules';
 import { TxtTocRuleStore } from '../utils/TxtTocRuleStore';
 import { ReaderLayoutElementSettingsPanel } from '../components/reader/ReaderLayoutElementSettingsPanel';
-import { ReaderTocPanel, ReaderTocPanelController } from '../components/reader/ReaderTocPanel';
+import { ReaderTocPanel, ReaderTocPanelController, ReaderTocRefreshOutcome } from '../components/reader/ReaderTocPanel';
 import { ReaderFloatingMaterialBar, ReaderMaterialPanel } from '../components/reader/ReaderFloatingMaterialBar';
 import { ReaderChromeMotion } from '../components/reader/ReaderChromeMotion';
 import { ReaderContinuousDataSource, ReaderScrollItem, ReaderScrollSegment } from '../core/reader/ReaderDataSources';
@@ -2196,12 +2196,27 @@ struct ReadBookPage {
     return /["']?webView["']?\s*:\s*(?:true|["']true["']|1)(?:\s*[,}])?/i.test(serialized);
   }
 
-  async retryFetchChapters() {
+  /** 目录面板的刷新：比对刷新前后的目录，告诉面板是新增、有改动、没变化还是失败。 */
+  async refreshTocFromPanel(): Promise<ReaderTocRefreshOutcome> {
+    const before = this.chapters;
+    const error = await this.retryFetchChapters();
+    if (error) return { ok: false, message: error, added: 0, changed: false };
+    const after = this.chapters;
+    let changed = before.length !== after.length;
+    for (let i = 0; !changed && i < after.length; i++) {
+      changed = before[i].title !== after[i].title || before[i].url !== after[i].url;
+    }
+    return { ok: true, message: '', added: Math.max(0, after.length - before.length), changed: changed };
+  }
+
+  /** 重新取目录并载入正文；失败时返回原因（取到了返回空串），已经自己处理好界面。 */
+  async retryFetchChapters(): Promise<string> {
     try {
       const engine = this.readerEngine();
       await engine.refreshToc();
       this.book = engine.book || this.book;
       this.chapters = engine.chapters;
+      const emptyReason = engine.lastTocRefreshError;
       if (this.chapters.length > 0) {
         this.loadStatus = '';
         await this.loadContent();
@@ -2210,11 +2225,14 @@ struct ReadBookPage {
         this.setReaderContent(this.buildBookPreview());
         this.isLoading = false;
       }
+      return emptyReason;
     } catch (e) {
       console.error('重试获取目录失败:', e);
       this.updatePendingVerification();
       this.setReaderContent(this.buildBookPreview());
       this.isLoading = false;
+      const message = e instanceof Error ? e.message : String(e);
+      return message.split('\n')[0].trim() || '未知错误';
     }
   }
 
@@ -5007,7 +5025,7 @@ struct ReadBookPage {
         onJumpToBookmark: (bookmark: Bookmark): void => {
           this.jumpToBookmark(bookmark);
         },
-        onRefreshToc: (): Promise<void> => this.retryFetchChapters(),
+        onRefreshToc: (): Promise<ReaderTocRefreshOutcome> => this.refreshTocFromPanel(),
         showTocRuleButton: this.canSelectTxtCharset(),
         tocRuleHint: this.readerTocRuleHint(),
         onOpenTocRules: (): void => this.openTxtTocRuleDialog(),
