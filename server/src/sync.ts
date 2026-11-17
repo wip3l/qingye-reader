@@ -118,6 +118,11 @@ const ALLOWED_ENTITY_TYPES = new Set([
 const DEVICE_KINDS = new Set(['phone', 'tablet', '2in1', 'foldable', 'unknown']);
 const MAX_OPERATIONS = 100;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
+// All custom theme schemes travel as one entity (images go through cloud files), so the payload
+// grows with every scheme the user keeps.
+// Bounded like the largest book sources: a conflict acknowledgement echoes the payload into a
+// 2 MiB response, so a single entity must stay under half of it.
+const MAX_THEME_SCHEMES_PAYLOAD_BYTES = 960 * 1024;
 const MAX_BOOK_SOURCE_PAYLOAD_BYTES = 512 * 1024;
 // Technical ceiling for permanent super members. A conflict acknowledgement echoes the remote
 // payload and must stay below half of the 2 MiB response budget, so this is not unbounded.
@@ -412,7 +417,8 @@ export function normalizeOperation(source: SyncOperationBody,
     }
     payload = jsonbSafe(source.payload);
     const serialized = JSON.stringify(payload);
-    const maxPayloadBytes = entityType === 'book_source' ? maxBookSourceBytes : MAX_PAYLOAD_BYTES;
+    const maxPayloadBytes = entityType === 'book_source' ? maxBookSourceBytes :
+      entityType === 'custom_theme_schemes' ? MAX_THEME_SCHEMES_PAYLOAD_BYTES : MAX_PAYLOAD_BYTES;
     payloadBytes = Buffer.byteLength(serialized, 'utf8');
     if (maxPayloadBytes !== null && payloadBytes > maxPayloadBytes) {
       throw new SyncApiError(413, 'SYNC_PAYLOAD_TOO_LARGE',

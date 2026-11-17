@@ -69,6 +69,20 @@ test('book source payloads may exceed the default 64KB limit', () => {
   assert.equal(normalized.entityType, 'book_source');
 });
 
+test('custom theme schemes may grow to 960KB', () => {
+  const scheme = (size: number) => ({
+    opId: OP_ID,
+    entityType: 'custom_theme_schemes',
+    entityId: 'global',
+    operation: 'upsert' as const,
+    baseRevision: 0,
+    payload: { schemes: 'x'.repeat(size) }
+  });
+  assert.equal(normalizeOperation(scheme(900 * 1024)).entityType, 'custom_theme_schemes');
+  assert.throws(() => normalizeOperation(scheme(970 * 1024)), (error: unknown) =>
+    error instanceof SyncApiError && error.message === '单项同步数据不能超过 960KB');
+});
+
 test('non-book-source payloads keep the 64KB limit', () => {
   assert.throws(() => normalizeOperation({
     opId: OP_ID,

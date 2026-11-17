@@ -271,6 +271,7 @@ export class CloudSyncCoordinator {
   // operation envelope while staying well below the server's 2 MiB request limit.
   private static readonly MAX_BATCH_BYTES: number = 768 * 1024;
   private static readonly MAX_EXCHANGE_PAGES: number = 1000;
+  private static readonly MIN_BOOK_SOURCE_LIMIT_BYTES: number = 512 * 1024;
   private static readonly MAX_RATE_LIMIT_RETRIES: number = 3;
   private static protectedLocalBooksDuringSync: number = 0;
   private static protectedLocalBookEntityIdsDuringSync: Set<string> = new Set<string>();
@@ -1825,7 +1826,10 @@ export class CloudSyncCoordinator {
       sized.push(new OversizedSyncItem(operation, entity, encoder.encodeInto(entity.payloadJson).byteLength,
         message, false));
     }
-    const result = sized.filter((item: OversizedSyncItem) => limitBytes > 0 && item.bytes > limitBytes);
+    // 服务端书源上限从来不低于 512KB（终身超级会员 960KB），报更小的上限说的是批里的其他数据，
+    // 书源再大也不是这次的原因，不能跟着跳过。
+    const result = sized.filter((item: OversizedSyncItem) => limitBytes > 0 && item.bytes > limitBytes &&
+      (item.entity.entityType !== 'book_source' || limitBytes >= CloudSyncCoordinator.MIN_BOOK_SOURCE_LIMIT_BYTES));
     if (result.length === 0 && sized.length > 0) {
       // Limit unknown or every item measured under it: the largest item is the cause, certainly
       // so when the batch holds only that one item.
