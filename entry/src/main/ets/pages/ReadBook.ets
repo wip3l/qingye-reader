@@ -20,7 +20,7 @@ import { ReaderPageTurnAnimation } from '../core/reader/ReaderPageTurnAnimation'
 import { ReaderScreenScrollMotion } from '../core/reader/ReaderScreenScrollMotion';
 import displaySync from '@ohos.graphics.displaySync';
 import { ThemeBookCoverSettings } from '../utils/ThemeBookCoverSettings';
-import { NativeSourceService, HttpClient, Book, BookChapter, Bookmark, BookSource, HttpTTS, BookTypeSupport, VerificationSupport, ReaderActionData, ReaderActionMarker, ReaderActionMatch, BookSourceStageWebRuntime, StageWebRuntimeRequest, WebBookFetchRuntime, SourceRuntimeStage, CooperativeScheduler, sleepMs } from '@legado/sourceengine';
+import { NativeSourceService, HttpClient, Book, BookChapter, Bookmark, BookSource, HttpTTS, BookTypeSupport, VerificationSupport, ReaderActionData, ReaderActionMarker, ReaderActionMatch, BookSourceStageWebRuntime, StageWebRuntimeRequest, WebBookFetchRuntime, SourceRuntimeStage, CooperativeScheduler, sleepMs, SourceEngineHost } from '@legado/sourceengine';
 import { router, window, promptAction, RectShape } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
@@ -2413,7 +2413,7 @@ struct ReadBookPage {
         this.updatePendingVerification();
         const c = this.chapters[chapterIndex];
         loadedContent = this.verificationUrl ? `${c ? c.title : '当前章节'}\n\n该书源需要先完成网页验证。请点击右上角“更多操作”，选择“登录”，完成后返回，再从该菜单选择“重试”。` :
-          (c ? `${c.title}\n\n章节正文加载失败。请点击右上角“刷新本章”或“换源”。` :
+          (c ? `${c.title}\n\n章节正文加载失败。${this.sourceDefectHint(engine.source)}请点击右上角“刷新本章”或“换源”。` :
             '章节正文加载失败。请点击右上角“更多操作”，选择“重试”。');
         this.content = loadedContent;
       }
@@ -2505,7 +2505,7 @@ struct ReadBookPage {
         this.updatePendingVerification();
         const chapter = this.chapters[chapterIndex];
         const loadedContent = this.verificationUrl ? `${chapter ? chapter.title : '当前章节'}\n\n该书源需要先完成网页验证。请点击右上角“更多操作”，选择“登录”，完成后返回，再从该菜单选择“重试”。` :
-          (chapter ? `${chapter.title}\n\n章节正文刷新失败。请再次点击右上角“刷新本章”或“换源”。` :
+          (chapter ? `${chapter.title}\n\n章节正文刷新失败。${this.sourceDefectHint(this.readerEngine().source)}请再次点击右上角“刷新本章”或“换源”。` :
             '章节正文刷新失败。请点击右上角“更多操作”，选择“重试”。');
         this.content = loadedContent;
         this.paginateContent(loadedContent);
@@ -7484,6 +7484,16 @@ struct ReadBookPage {
       .replace(/^上次(?:阅读|閱讀)[\s:：，,。]*/g, '')
       .trim();
     return cleaned || original;
+  }
+
+  /**
+   * 书源自身的毛病（脚本给出的网页地址是 undefined 之类）写进失败页，让读者知道刷新没用、该换源。
+   * 只认这一类明确的书源错误，网络失败等原因照旧只给通用提示。
+   */
+  sourceDefectHint(source: BookSource | null): string {
+    const error = source ? (SourceEngineHost.getError(source) || '').trim() : '';
+    const match = error.match(/网页地址无效：[^\n]*/);
+    return match ? `${match[0]}。` : '';
   }
 
   updatePendingVerification(): void {

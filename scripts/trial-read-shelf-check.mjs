@@ -31,7 +31,7 @@ function harness() {
     } },
     BookIdentity: { keyOfBook: book => `${book.origin}|${book.bookUrl}` },
     CloudSyncChangeTracker: { markDataChanged() {}, markReadingProgressChanged() {} },
-    WebBookService: class {},
+    WebBookService: class { setSourceInteraction() { return this; } },
     BookSourceInteractionPostProcessor: { interactionCacheIdentity: () => 'source-settings' },
     ReaderOpenTrace: { mark() {} },
     // 试读流程针对在线书，按网页解析已开启来跑。

@@ -127,7 +127,8 @@ export class ResultCoverPreparation {
     try {
       const source = await AppDatabase.getInstance().getBookSource(book.origin);
       if (!source || !(source.bookInfoRule.coverUrl || '').trim()) return book;
-      return await new WebBookService().getBookInfo(source, book);
+      // 给搜索、发现结果补封面是后台工作，不弹验证网页。
+      return await new WebBookService().setSourceInteraction((): boolean => false).getBookInfo(source, book);
     } catch (_) {
       // A failed details request has no usable cover; it must not leave the result hidden forever.
       return book;

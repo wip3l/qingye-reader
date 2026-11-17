@@ -129,7 +129,8 @@ export class ExploreReadingValidator {
     try {
       const book = this.toBook(candidate.book, source);
       if (onStage) onStage(`书籍详情 ${candidateIndex + 1}/${candidateCount}`);
-      const service = new WebBookService();
+      // 批量校验不弹验证网页，书源要验证时记为失败并留下「去验证」。
+      const service = new WebBookService().setSourceInteraction((): boolean => false);
       const fullBook = await service.getBookInfo(source, book);
       if (this.cancelled) return this.temporary(result, '校验已取消');
       result.bookName = fullBook.name || result.bookName;

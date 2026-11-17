@@ -34,6 +34,11 @@ export class WebBookService {
    * 报错、分页地址循环照旧容忍，免得个别规则小毛病让这本书每次检查都失败。
    */
   private requireAllCatalogPages: boolean;
+  /**
+   * 原生书源的详情、目录、正文脚本这次能不能弹出网页（browser.verify / browser.open）。默认可以；书架检查更新、
+   * 缓存下载、预加载、搜索结果补封面等后台调用设为不行，书源要验证时改走「去验证」，不打断用户。
+   */
+  private sourceInteraction: () => boolean = (): boolean => true;
 
   constructor(preparationCancelled: (() => boolean) | null = null, requireCompleteCatalog: boolean = false,
     requireAllCatalogPages: boolean = false) {
@@ -47,6 +52,12 @@ export class WebBookService {
   private rejectIncompleteCatalog(switchMessage: string, refreshMessage: string): void {
     if (this.requireCompleteCatalog) throw new Error(switchMessage);
     if (this.requireAllCatalogPages) throw new Error(refreshMessage);
+  }
+
+  /** 见 sourceInteraction。返回自身便于链式创建。 */
+  setSourceInteraction(allowed: () => boolean): WebBookService {
+    this.sourceInteraction = allowed;
+    return this;
   }
 
   private checkPreparation(): void {
@@ -85,7 +96,8 @@ export class WebBookService {
     const video = new VideoPlaybackSource();
     try {
       if (NativeSourceService.isNative(source)) {
-        const result = await NativeSourceService.getVideoContent(source, this.http, book, chapter, cancelled);
+        const result = await NativeSourceService.getVideoContent(source, this.http, book, chapter, cancelled,
+          this.sourceInteraction);
         if (cancelled()) return video;
         video.url = VideoPlaybackSupport.httpUrl(result.text);
         video.pageUrl = VideoPlaybackSupport.httpUrl(result.videoPage || '');
@@ -114,7 +126,8 @@ export class WebBookService {
     if (NativeSourceService.isNative(source)) {
       // 原生书源不经过脚本引擎，也不套用兼容书源的各类兜底修补。
       try {
-        return await NativeSourceService.getBookInfo(source, this.http, book, debugContext, (): boolean => this.isPreparationCancelled());
+        return await NativeSourceService.getBookInfo(source, this.http, book, debugContext,
+          (): boolean => this.isPreparationCancelled(), this.sourceInteraction);
       } catch (e) {
         console.warn('[WS] native book info failed:', source.bookSourceName, (e as Error).message);
         SourceEngineHost.setError(source, (e as Error).message || '详情解析失败');
@@ -353,7 +366,8 @@ export class WebBookService {
     if (NativeSourceService.isNative(source)) {
       try {
         const nativeChapters = await NativeSourceService.getChapterList(source, this.http, book,
-          maxChapters > 0 ? Math.max(1, Math.round(maxChapters)) : 0, debugContext, (): boolean => this.isPreparationCancelled(), this.requireCompleteCatalog);
+          maxChapters > 0 ? Math.max(1, Math.round(maxChapters)) : 0, debugContext, (): boolean => this.isPreparationCancelled(),
+          this.requireCompleteCatalog, this.sourceInteraction);
         if (nativeChapters.length === 0) {
           SourceEngineHost.setError(source, '目录规则没有匹配到章节');
         }
@@ -707,14 +721,16 @@ export class WebBookService {
   /**
    * imageRequest 决定正文图片的调度优先级，以及是否先返回待加载标记，见 ReaderImageRequest。
    * nextChapterUrl 是目录里下一章的地址：“正文下一页”翻到它就停，不把后面的章节拼进本章。
+   * sourceInteraction 给出时代替本实例的设置，用于同一阅读引擎里区分当前章与预加载的邻章。
    */
   async getContent(source: BookSource, book: Book, chapter: BookChapter,
     shouldCancel: (() => boolean) | null = null,
     debugContext: BookSourceDebugContext | null = null,
     imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT,
-    nextChapterUrl: string = ''): Promise<string> {
+    nextChapterUrl: string = '', sourceInteraction: (() => boolean) | null = null): Promise<string> {
     if (NativeSourceService.isNative(source)) {
-      return await this.getNativeContent(source, book, chapter, shouldCancel, debugContext, imageRequest);
+      return await this.getNativeContent(source, book, chapter, shouldCancel, debugContext, imageRequest,
+        sourceInteraction ?? this.sourceInteraction);
     }
     // `ruleContent.audioUrl` is the dedicated media-address rule of an audio source. It takes
     // precedence over `content`, which remains the fallback when it yields nothing.
@@ -733,11 +749,12 @@ export class WebBookService {
 
   private async getNativeContent(source: BookSource, book: Book, chapter: BookChapter,
     shouldCancel: (() => boolean) | null, debugContext: BookSourceDebugContext | null = null,
-    imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT): Promise<string> {
+    imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT,
+    sourceInteraction: (() => boolean) | null = null): Promise<string> {
     SourceEngineHost.setError(source, '');
     try {
       const result = await NativeSourceService.getContent(source, this.http, book, chapter,
-        (): boolean => this.contentRequestCanceled(shouldCancel), debugContext);
+        (): boolean => this.contentRequestCanceled(shouldCancel), debugContext, sourceInteraction ?? this.sourceInteraction);
       if (this.contentRequestCanceled(shouldCancel)) return '';
       if (result.kind === 'audio' || result.kind === 'video') return result.text.trim();
       if (result.kind === 'images' && result.images.length > 0) {

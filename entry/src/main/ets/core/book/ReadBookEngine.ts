@@ -84,7 +84,10 @@ export class ReadBookEngine {
   /** 渐进加载中、等图片补完再写缓存的各章正文；刷新本章后旧版本补完也不再写入。 */
   private deferredChapterTexts: Map<number, Promise<string>> = new Map();
 
-  private constructor(webBook: WebBookService = new WebBookService()) { this.webBook = webBook; }
+  private constructor(webBook: WebBookService = new WebBookService()) {
+    // 只有阅读页的共享实例能让原生书源弹出验证网页；书架检查更新、缓存下载、后台朗读的实例改走「去验证」。
+    this.webBook = webBook.setSourceInteraction((): boolean => this.foregroundReader);
+  }
 
   static get(): ReadBookEngine {
     if (!ReadBookEngine.inst) {
@@ -749,8 +752,10 @@ export class ReadBookEngine {
     try {
       let text = '';
       try {
+        // 预加载的邻章、缓存全文不弹验证网页，只有读者正停在这一章时才弹。
         text = await this.webBook.getContent(sessionSource, sessionBook, chapter, shouldCancel, null, imageRequest,
-          nextChapterUrl);
+          nextChapterUrl, (): boolean => !background && this.foregroundReader && this.curIdx === idx &&
+            this.book === sessionBook);
       } catch (e) {
         if (cached && this.isCurrentBookSession(generation, sessionBookUrl) && !shouldCancel?.()) return cached;
         throw e;

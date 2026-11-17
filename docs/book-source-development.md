@@ -157,7 +157,7 @@ Node 检查使用替身，不会验证真机 QuickJS、系统网页控件或实�
 | 原生 HTTP 与诊断 | 支持响应头/可用性标记/请求编号、严格批量失败与对象式条件重试；复制/导出包含前置性能摘要，目录调试可选最多 3000 章 |
 | 漫画媒体自定义头 | 允许合法自定义头；API 22+ 且拦截可用时逐跳下载，同 origin 保留、跨 origin 移除；音频播放器内部的跳转不走这套逐跳策略 |
 | 原生脚本界面交互 | 启动时通过 `NativeSourceInteraction.setHandler(new AppSourceInteraction(...))` 安装提示、发现缓存失效和网页处理器；`ui.toast` 显示书源名称与消息，`ui.refreshExplore` 清除该源发现缓存 |
-| 原生网页交互 | `browser.verify` 沿用内置验证页，点“完成”返回 HTML 并保存 Cookie；搜索和发现只提示“去验证”。`browser.open` 打开网页但不等待结果；`browser.render` 使用内核网页抓取宿主 |
+| 原生网页交互 | `browser.verify` 沿用内置验证页，点“完成”返回 HTML 并保存 Cookie；搜索和发现只提示“去验证”，书架检查更新、预加载、缓存下载等后台加载以及用户刚取消验证后的 10 分钟内也一样；地址为 `undefined`/`null` 时直接报“网页地址无效”。`browser.open` 打开网页但不等待结果，后台加载时跳过；`browser.render` 使用内核网页抓取宿主 |
 | 设置页脚本 | 动作按钮运行中显示状态并防止重复执行；动态选项获取失败时保留静态选项并显示原因；成功加载后若原值不在新列表中，会选中第一项并标记待保存 |
 | 封面解密 `coverDecode` | 已接入：封面下载时识别 `SourceCoverUrl` 标记，从数据库取该书源后调用 `SourceCoverLoader` 解密并缓存到本地；书架、搜索与发现结果、详情页、听书页、目录面板、阅读统计、桌面卡片和朗读媒体卡片都显示解密后的封面，解密完成前显示占位。局域网阅读的封面接口同样转发解密后的图片。解密结果按封面地址缓存，书源改了 `coverDecode` 参数后，已缓存的封面不会自动重新解密。`coverDecode` 的算法可写 `AES/CBC/NoPadding`，导入校验与解码器一致 |
 | 正文图片解密 | 漫画图片与正文插图下载后按 `content.imageDecode` 解密：支持标准算法、`ivPrefixBytes:16`、`keyEncoding`，以及在后台 QuickJS 里运行的 `imageDecode.script` 字节脚本；脚本结果按书源、脚本代码、配置和图片地址缓存，翻章或退出阅读时会取消未完成的解密 |

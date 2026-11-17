@@ -68,7 +68,7 @@ const engineDb = {
   updateBook: async () => {}, deleteBookChapters: async () => {}, insertBookChapters: async () => {},
 };
 const Engine = compile(clean('core/book/ReadBookEngine.ts') + '\nReadBookEngine', {
-  WebBookService: class {}, BookChapterUpdate: Updates, appDb: engineDb,
+  WebBookService: class { setSourceInteraction() { return this; } }, BookChapterUpdate: Updates, appDb: engineDb,
   BookUrlResolver: { getVariableJson: value => value }, console: { log() {}, warn() {} },
 });
 const engine = Engine.createBackgroundWorker();
