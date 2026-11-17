@@ -54,6 +54,22 @@ export class WebBookService {
     if (this.requireAllCatalogPages) throw new Error(refreshMessage);
   }
 
+  /** 网页书源目录每读完一页回报（已读页数、已得章数）；换源用来显示进度。原生书源不回报。 */
+  private catalogProgress: ((pages: number, chapters: number) => void) | null = null;
+
+  setCatalogProgress(listener: ((pages: number, chapters: number) => void) | null): void {
+    this.catalogProgress = listener;
+  }
+
+  private reportCatalogProgress(pages: number, chapters: number): void {
+    if (!this.catalogProgress) return;
+    try {
+      this.catalogProgress(pages, chapters);
+    } catch (error) {
+      console.warn('[WS] catalog progress listener failed:', (error as Error).message);
+    }
+  }
+
   /** 见 sourceInteraction。返回自身便于链式创建。 */
   setSourceInteraction(allowed: () => boolean): WebBookService {
     this.sourceInteraction = allowed;
@@ -495,6 +511,7 @@ export class WebBookService {
         if (!lastError) return pageChapters;
       }
       appendChapters(pageChapters);
+      this.reportCatalogProgress(seenPageUrls.size, chapters.length);
       // A later page produced chapters: a diagnostic left by an empty earlier attempt is no longer the outcome.
       if (page > 0 && pageChapters.length > 0) SourceEngineHost.setError(source, '');
       if (chapterLimit > 0 && chapters.length >= chapterLimit) break;
@@ -547,6 +564,7 @@ export class WebBookService {
             break;
           }
           appendChapters(listedChapters);
+          this.reportCatalogProgress(seenPageUrls.size, chapters.length);
           if (listedChapters.length > 0) SourceEngineHost.setError(source, '');
           if (chapterLimit > 0 && chapters.length >= chapterLimit) {
             stopped = true;

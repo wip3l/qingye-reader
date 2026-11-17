@@ -5,6 +5,7 @@ import { ChangeSourceResultCache } from '../../utils/ChangeSourceResultCache';
 import { CoverUrlNormalizer } from '../../utils/CoverUrlNormalizer';
 import { WebBookService } from './WebBookService';
 import { SourceSwitchOperation } from './SourceSwitchOperation';
+import { ChapterPositionMatcher } from './ChapterPositionMatcher';
 
 /** Owns preparation and commit independently of the dialog's lifetime. */
 export class BookSourceSwitchTask {
@@ -55,11 +56,17 @@ export class BookSourceSwitchTask {
       if (BookTypeSupport.mediaCategoryOf(fullBook) !== BookTypeSupport.mediaCategoryOf(target)) {
         throw new Error('新源书籍类型与原书不同，已保留原书源');
       }
-      progress('正在加载新源完整目录…');
+      progress('正在加载新源目录…');
+      this.service.setCatalogProgress((pages: number, chapterCount: number): void => {
+        if (!op.isCancelled()) progress(`正在加载新源目录：已读 ${pages} 页 · ${chapterCount} 章`);
+      });
       const chapters = await op.stage('加载新源目录', 60000, () => this.service.getChapterList(source, fullBook, 0, false));
+      this.service.setCatalogProgress(null);
       if (chapters.length === 0) throw new Error(SourceEngineHost.getError(source) || '新书源目录为空，已保留原书源');
       fullBook.totalChapterNum = chapters.length;
-      const safeIndex = Math.max(0, Math.min((oldBook || target).durChapterIndex, chapters.length - 1));
+      const previous = oldBook || target;
+      const safeIndex = ChapterPositionMatcher.match(previous.durChapterIndex, previous.durChapterTitle,
+        previous.totalChapterNum, chapters);
       fullBook.durChapterIndex = safeIndex;
       fullBook.durChapterTitle = chapters[safeIndex].title;
       fullBook.latestChapterTitle = chapters[chapters.length - 1].title;

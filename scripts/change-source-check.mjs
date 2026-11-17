@@ -35,12 +35,14 @@ function harness(disk = new Map()) {
   class WebBookService {
     constructor(cancelled) { this.cancelled = cancelled; }
     cancelPendingRequests() { events.push('cancel-work'); }
+    setCatalogProgress(listener) { this.catalogProgress = listener; }
     async getBookInfo(_source, next) {
       events.push('detail'); if (detailGate) await detailGate.promise;
       return Object.assign(next, { name: '测试书完整版', author: '作者 著', bookUrl: next.bookUrl + '/detail' });
     }
     async getChapterList() {
       events.push('toc'); if (tocGate) await tocGate.promise;
+      this.catalogProgress?.(1, 2);
       return [{ title: '第一章', url: '/chapter' }, { title: '第二章', url: '/chapter2' }];
     }
   }
@@ -83,13 +85,58 @@ function harness(disk = new Map()) {
   }
   const Cache = load('utils/ChangeSourceResultCache.ets', 'ChangeSourceResultCache');
   const Operation = load('core/book/SourceSwitchOperation.ts', 'SourceSwitchOperation');
+  const Matcher = load('core/book/ChapterPositionMatcher.ts', 'ChapterPositionMatcher');
   const Task = load('core/book/BookSourceSwitchTask.ets', 'BookSourceSwitchTask');
   const Dialog = load('components/BookChangeSourceDialog.ets', 'BookChangeSourceDialog', true);
-  return { Cache, Operation, Task, Dialog, events, writes, disk, old, get searchCount() { return searchCount; },
+  return { Cache, Operation, Matcher, Task, Dialog, events, writes, disk, old, get searchCount() { return searchCount; },
     holdDetail() { return detailGate = deferred(); }, holdToc() { return tocGate = deferred(); },
     holdCommit() { return commitGate = deferred(); }, holdSearch() { return searchGate = deferred(); },
     holdWrite() { return beforeWrite = deferred(); }, holdRead() { return beforeRead = deferred(); },
     failCommit() { failCommit = true; } };
+}
+
+// The new catalog's reading position follows the chapter title, not the bare index.
+{
+  const { Matcher } = harness();
+  const titles = list => list.map(title => ({ title }));
+  // An extra notice in front shifts every chapter by one.
+  assert.equal(Matcher.match(2, '第三章 风起', 10, titles(['公告', '第一章 开端', '第二章 相遇', '第三章 风起', '第四章'])), 3);
+  // Same chapter written with different numerals and spacing.
+  assert.equal(Matcher.match(4, '第十二章　夜雨', 20, titles(['第8章', '第9章', '第10章', '第11章', '请假条', '第12章 夜雨', '第13章'])), 5);
+  // Only the number survives when the other source drops chapter names.
+  assert.equal(Matcher.match(1, '第一百零五章 归来', 200, titles(['第104章', '第105章', '第106章'])), 1);
+  assert.equal(Matcher.match(0, '第一百零五章 归来', 3, titles(['第103章', '第104章', '第105章'])), 2);
+  // Volumes restarting at chapter one: the nearest equal title wins.
+  const volumes = titles(['第一卷', '第一章 起', '第二章 承', '第二卷', '第一章 起', '第二章 承']);
+  assert.equal(Matcher.match(5, '第二章 承', 6, volumes), 5);
+  assert.equal(Matcher.match(2, '第二章 承', 6, volumes), 2);
+  // Nothing recognisable: keep the clamped index.
+  assert.equal(Matcher.match(3, '番外', 4, titles(['甲', '乙'])), 1);
+  assert.equal(Matcher.match(3, '', 4, titles(['第一章', '第二章'])), 1);
+  // Far outside the window, a unique full-title match is still taken; duplicates are not.
+  const far = titles(Array.from({ length: 80 }, (_, i) => `第${i + 1}章`));
+  far[70] = { title: '尾声 再见' };
+  assert.equal(Matcher.match(5, '尾声 再见', 80, far), 70);
+  far[71] = { title: '尾声 再见' };
+  assert.equal(Matcher.match(5, '尾声 再见', 80, far), 5);
+  assert.equal(Matcher.parseNumber('二〇二三'), 2023);
+  assert.equal(Matcher.parseNumber('一千零二十'), 1020);
+  assert.equal(Matcher.parseNumber('十二'), 12);
+  assert.equal(Matcher.parseNumber('三万零五'), 30005);
+  assert.equal(Matcher.chapterNumber('０３２ 回家'), 32);
+}
+
+// The switch reports catalog progress and maps the position by title.
+{
+  const h = harness();
+  h.old.durChapterIndex = 3;
+  h.old.durChapterTitle = '第一章';
+  const labels = [];
+  const task = new h.Task(false);
+  const next = await task.run({}, 'key', h.old, book('B'), null, label => labels.push(label), () => {});
+  assert(labels.includes('正在加载新源目录：已读 1 页 · 2 章'), labels.join('|'));
+  assert.equal(next.durChapterIndex, 0);
+  assert.equal(next.durChapterTitle, '第一章');
 }
 
 // Partial results survive immediate A -> B selection, changed metadata/URL, disposal and restart.
