@@ -7814,6 +7814,10 @@ struct ReadBookPage {
     if (BookTypeSupport.isImage(this.book)) {
       return true;
     }
+    // 书籍已声明媒体类型（且不是漫画）时以声明为准，书源类型、书源名、分组都不再参与判断。
+    if (this.book && this.book.origin !== 'local' && BookTypeSupport.hasDeclaredMedia(this.book.variable)) {
+      return false;
+    }
     // Legado's "full" imageStyle only controls how inline illustrations fill the
     // reader width. Text sources such as 神魔小说 use it as well, so it must not
     // switch the whole book to the continuous comic renderer.
