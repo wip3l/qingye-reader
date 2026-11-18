@@ -34,9 +34,11 @@ class JournalRow {
  * 我的标记：在书籍详情页打过分、加过标签或写过短评的书，按作品一条。
  * 三种布局，在顶栏的布局按钮里选并记住上次用的（BookMarkListViewStore，默认读书手账）：
  * - 读书手账：按标记月份分段，写了短评的书以短评为正文；按评分排序时改为按星级分段。点一条进详情页。
- * - 卡片列表：一本书一张卡，封面在左，短评全文排在封面下方。点一条进详情页。
+ * - 卡片列表：改版前的排法，一本书一张卡、封面在左，短评全文显示。点一条进详情页，右上角“更多”或长按出菜单。
  * - 封面墙：多列封面，点一本在底部浮出小卡看日期、标签和短评，再从小卡进详情页。
- * 状态页签、标签行随内容一起滚动；搜索、排序、管理标签在顶栏按钮里。长按一本书弹出操作菜单。
+ * 读书手账和封面墙：状态页签、标签行随内容一起滚动；搜索、排序、管理标签在顶栏按钮里。
+ * 卡片列表整页沿用改版前的样子：统计、搜索框、状态与标签胶囊、排序行固定在列表上方，顶栏只留布局按钮。
+ * 三种布局长按一本书都弹出操作菜单。
  * 标签的重命名、删除在“管理标签”面板里，同时改到书架上（标签和书架标签是同一套，见 BookMarkService）。
  */
 @Entry
@@ -58,6 +60,8 @@ struct BookMarkListPage {
   @State showSearch: boolean = false;
   @State showMoreMenu: boolean = false;
   @State showViewMenu: boolean = false;
+  /** 卡片列表里打开“更多”菜单的那条标记的作品键。 */
+  @State menuKey: string = '';
   /** 封面墙里底部小卡正在显示的那本书的作品键。 */
   @State peekKey: string = '';
   @State listWidth: number = 0;
@@ -219,6 +223,7 @@ struct BookMarkListPage {
     if (this.viewMode === value) return;
     this.viewMode = value;
     this.peekKey = '';
+    if (value !== BookMarkListViewStore.LIST && this.keyword) this.showSearch = true;
     BookMarkListViewStore.save(getContext(this), value);
   }
 
@@ -275,6 +280,7 @@ struct BookMarkListPage {
             }, Placement.Bottom, this.darkMode, ThemeRuntime.accentColor(this.darkMode), (): void => {
               this.showViewMenu = false;
             }))
+        if (this.viewMode !== BookMarkListViewStore.LIST) {
         ImmersiveHeaderAction({
           icon: $r('sys.symbol.magnifyingglass'),
           tint: this.showSearch ? ThemeRuntime.accentColor(this.darkMode) : '',
@@ -296,6 +302,7 @@ struct BookMarkListPage {
             }, Placement.BottomRight, this.darkMode, ThemeRuntime.accentColor(this.darkMode), (): void => {
               this.showMoreMenu = false;
             }))
+        }
       }
       .margin({ right: AppSpacing.XL })
     }
@@ -371,16 +378,26 @@ struct BookMarkListPage {
   @Builder
   pageContent() {
     Stack({ alignContent: Alignment.Bottom }) {
-      Column({ space: AppSpacing.SM }) {
+      Column({ space: this.viewMode === BookMarkListViewStore.LIST ? AppSpacing.MD : AppSpacing.SM }) {
         if (this.loaded && this.items.length === 0) {
           this.emptyState('还没有标记过书', '在书籍详情页点星星打分，或者加标签、写短评，标记过的书会收在这里。')
         } else if (this.loaded) {
-          if (this.showSearch) {
-            this.searchField()
+          if (this.viewMode === BookMarkListViewStore.LIST) {
+            this.classicStatsRow()
+            this.searchField(false)
+            this.classicStatusChips()
+            if (this.categories.length > 0) {
+              this.classicCategoryChips()
+            }
+            this.classicSortRow()
+          } else if (this.showSearch) {
+            this.searchField(true)
           }
           List({ space: AppSpacing.MD }) {
-            ListItem() {
-              this.filterHeader()
+            if (this.viewMode !== BookMarkListViewStore.LIST) {
+              ListItem() {
+                this.filterHeader()
+              }
             }
             if (this.visibleItems().length === 0) {
               ListItem() {
@@ -508,8 +525,9 @@ struct BookMarkListPage {
     })
   }
 
+  /** autoFocus：从顶栏搜索按钮点开时直接聚焦；卡片列表里常驻的搜索框不抢焦点。 */
   @Builder
-  searchField() {
+  searchField(autoFocus: boolean) {
     Row({ space: AppSpacing.SM }) {
       SymbolGlyph($r('sys.symbol.magnifyingglass'))
         .fontSize(18)
@@ -523,7 +541,7 @@ struct BookMarkListPage {
         .backgroundColor(Color.Transparent)
         .caretColor(ThemeRuntime.accentColor(this.darkMode))
         .padding({ left: 0, right: 0 })
-        .defaultFocus(true)
+        .defaultFocus(autoFocus)
         .onChange((value: string) => {
           this.keyword = value;
         })
@@ -642,79 +660,255 @@ struct BookMarkListPage {
         () => {}))
   }
 
-  /** 卡片列表的一本书：封面在左，右边是书名、作者、星级和标签；短评全文排在封面下方，占满卡片宽度。 */
+  // ---- 卡片列表沿用的改版前顶部：统计、状态胶囊、标签胶囊（含“全部标签”“管理”）、排序行 ----
+
+  readCount(): number {
+    return this.items.filter((item: BookMark): boolean => item.status === BookMarkStatus.READ).length;
+  }
+
   @Builder
-  listCard(item: BookMark) {
-    Column({ space: AppSpacing.MD }) {
-      Row({ space: AppSpacing.LG }) {
-        this.cover(item, 60, 80, 180, 240)
-        Column({ space: AppSpacing.XS }) {
-          Row({ space: AppSpacing.SM }) {
-            Text(item.bookName)
-              .fontSize(AppFontSize.BODY_LARGE)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-            Text(this.dateText(item))
-              .fontSize(AppFontSize.MICRO + 1)
-              .fontColor(ThemeRuntime.subTextColor(this.darkMode))
-              .maxLines(1)
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-
-          if (item.author) {
-            Text(item.author)
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(ThemeRuntime.subTextColor(this.darkMode))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-          Row({ space: AppSpacing.SM }) {
-            this.ratingLine(item, 14)
-            if (item.rating > 0) {
-              Text(BookMarkRules.ratingText(item.rating))
-                .fontSize(AppFontSize.CAPTION)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
-                .fontFeature('"tnum" 1')
-              Text(BookMarkRules.ratingLabel(item.rating))
-                .fontSize(AppFontSize.CAPTION)
-                .fontColor(ThemeRuntime.subTextColor(this.darkMode))
-            }
-          }
-          .alignItems(VerticalAlign.Center)
-
-          if (item.categories.length > 0) {
-            Text(this.tagLine(item))
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(ThemeRuntime.subTextColor(this.darkMode))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
-
-      if (item.review.trim()) {
-        Text(item.review.trim())
-          .fontSize(AppFontSize.BODY)
-          .lineHeight(23)
-          .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
-          .wordBreak(WordBreak.BREAK_WORD)
-          .width('100%')
-          .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
-          .borderRadius(ThemeRuntime.mediumRadius())
-          .backgroundColor(ThemeRuntime.inputColor(this.darkMode))
-      }
+  classicStatsRow() {
+    Row({ space: AppSpacing.XXXL }) {
+      this.classicStatCell('已标记', 'all')
+      this.classicStatCell('读过', 'read')
+      this.classicStatCell('平均星级', 'average')
     }
     .width('100%')
-    .padding(AppSpacing.LG)
+    .padding({ left: AppSpacing.SM, right: AppSpacing.SM, bottom: AppSpacing.XS })
+  }
+
+  /** 数值在 builder 里按状态算：按值传入的参数不会随列表变化刷新。 */
+  @Builder
+  classicStatCell(label: string, kind: string) {
+    Column({ space: 2 }) {
+      Text(kind === 'all' ? `${this.items.length}` : kind === 'read' ? `${this.readCount()}` :
+        (this.averageText() || '–'))
+        .fontSize(AppFontSize.SUBTITLE + 2)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
+        .fontFeature('"tnum" 1')
+      Text(label)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+    }
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  classicStatusChips() {
+    Row({ space: AppSpacing.SM }) {
+      ForEach([0, BookMarkStatus.WANT, BookMarkStatus.READING, BookMarkStatus.READ], (value: number) => {
+        Text(value === 0 ? '全部' : BookMarkStatus.label(value))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.statusFilter === value ? Color.White : ThemeRuntime.primaryTextColor(this.darkMode))
+          .height(32)
+          .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+          .borderRadius(16)
+          .backgroundColor(this.statusFilter === value ? ThemeRuntime.accentColor(this.darkMode) :
+            ThemeRuntime.cardColor(this.darkMode))
+          .onClick(() => {
+            this.statusFilter = value;
+          })
+      }, (value: number) => `${value}`)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  classicCategoryChips() {
+    List({ space: AppSpacing.SM }) {
+      ListItem() {
+        this.classicCategoryChip('', '全部标签')
+      }
+      ForEach(this.categories, (name: string) => {
+        ListItem() {
+          this.classicCategoryChip(name, name)
+        }
+      }, (name: string) => name)
+      ListItem() {
+        Row({ space: AppSpacing.XS }) {
+          SymbolGlyph($r('sys.symbol.square_and_pencil'))
+            .fontSize(14)
+            .fontColor([ThemeRuntime.accentColor(this.darkMode)])
+          Text('管理')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(ThemeRuntime.accentColor(this.darkMode))
+        }
+        .height(32)
+        .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+        .borderRadius(16)
+        .backgroundColor(ThemeRuntime.cardColor(this.darkMode))
+        .accessibilityText('管理标签')
+        .onClick(() => {
+          this.renamingCategory = '';
+          this.showCategorySheet = true;
+        })
+      }
+    }
+    .listDirection(Axis.Horizontal)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .width('100%')
+    .height(32)
+  }
+
+  @Builder
+  classicCategoryChip(name: string, label: string) {
+    Text(label)
+      .fontSize(AppFontSize.CAPTION)
+      .fontColor(this.categoryFilter === name ? ThemeRuntime.accentColor(this.darkMode) :
+        ThemeRuntime.primaryTextColor(this.darkMode))
+      .maxLines(1)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .constraintSize({ maxWidth: 160 })
+      .height(32)
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+      .borderRadius(16)
+      .border({ width: 1, color: this.categoryFilter === name ? ThemeRuntime.accentColor(this.darkMode) :
+        Color.Transparent })
+      .backgroundColor(this.categoryFilter === name ? ThemeRuntime.accentSurfaceColor(this.darkMode) :
+        ThemeRuntime.cardColor(this.darkMode))
+      .onClick(() => {
+        this.categoryFilter = name;
+      })
+  }
+
+  @Builder
+  classicSortRow() {
+    Row() {
+      Text(`${this.visibleItems().length} 本`)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+        .layoutWeight(1)
+      Row({ space: AppSpacing.XS }) {
+        Text(this.sortMode === SORT_RATING ? '评分从高到低' : '最近标记')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
+        SymbolGlyph($r('sys.symbol.sort'))
+          .fontSize(13)
+          .fontColor([ThemeRuntime.subTextColor(this.darkMode)])
+      }
+      .padding({ left: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
+      .accessibilityText(`排序：${this.sortMode === SORT_RATING ? '评分从高到低' : '最近标记'}，点按切换`)
+      .onClick(() => {
+        this.sortMode = this.sortMode === SORT_RATING ? SORT_RECENT : SORT_RATING;
+      })
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.SM, right: AppSpacing.XS })
+  }
+
+  /**
+   * 卡片列表的一本书，沿用改版前的排法：封面在左，右边依次是书名与“更多”、作者、星级/状态/日期、标签、短评。
+   * 短评全文显示。
+   */
+  @Builder
+  listCard(item: BookMark) {
+    Row({ space: AppSpacing.LG }) {
+      this.cover(item, 52, 70, 132, 176)
+
+      Column({ space: AppSpacing.XS }) {
+        Row({ space: AppSpacing.SM }) {
+          Text(item.bookName)
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(ThemeRuntime.primaryTextColor(this.darkMode))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          Stack() {
+            SymbolGlyph($r('sys.symbol.dot_grid_1x2'))
+              .fontSize(16)
+              .fontColor([ThemeRuntime.subTextColor(this.darkMode)])
+          }
+          .width(28)
+          .height(24)
+          .accessibilityText('更多操作')
+          .onClick(() => {
+            this.menuKey = this.menuKey === item.workKey ? '' : item.workKey;
+          })
+          .bindPopup(this.menuKey === item.workKey, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+            (): void => {
+              this.itemMenu(item);
+            }, Placement.BottomRight, this.darkMode, ThemeRuntime.accentColor(this.darkMode), () => {
+              if (this.menuKey === item.workKey) this.menuKey = '';
+            }))
+        }
+        .width('100%')
+
+        if (item.author) {
+          Text(item.author)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+
+        Row({ space: AppSpacing.SM }) {
+          if (item.rating > 0) {
+            BookMarkStars({
+              rating: item.rating,
+              starSize: 13,
+              darkMode: this.darkMode,
+              emptyColor: ThemeRuntime.softFillColor(this.darkMode)
+            })
+            Text(BookMarkRules.ratingLabel(item.rating))
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+          } else {
+            Text('未打分')
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+          }
+          if (item.status !== BookMarkStatus.NONE) {
+            Text(BookMarkStatus.label(item.status))
+              .fontSize(AppFontSize.MICRO + 1)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(ThemeRuntime.accentColor(this.darkMode))
+              .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: 1, bottom: 1 })
+              .borderRadius(8)
+              .backgroundColor(ThemeRuntime.accentSurfaceColor(this.darkMode))
+          }
+          Blank()
+          Text(this.dateText(item, false))
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+            .maxLines(1)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        if (item.categories.length > 0) {
+          Flex({ wrap: FlexWrap.Wrap }) {
+            ForEach(item.categories, (name: string) => {
+              Text(name)
+                .fontSize(AppFontSize.MICRO + 1)
+                .fontColor(ThemeRuntime.accentColor(this.darkMode))
+                .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: 1, bottom: 1 })
+                .borderRadius(8)
+                .backgroundColor(ThemeRuntime.accentSurfaceColor(this.darkMode))
+                .margin({ right: AppSpacing.XS, top: AppSpacing.XXS })
+            }, (name: string) => name)
+          }
+          .width('100%')
+        }
+
+        if (item.review.trim()) {
+          Text(item.review.trim())
+            .fontSize(AppFontSize.BODY)
+            .lineHeight(20)
+            .fontColor(ThemeRuntime.subTextColor(this.darkMode))
+            .wordBreak(WordBreak.BREAK_WORD)
+            .width('100%')
+            .margin({ top: AppSpacing.XXS })
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .padding({ left: AppSpacing.LG, right: AppSpacing.SM, top: AppSpacing.LG, bottom: AppSpacing.LG })
     .borderRadius(ThemeRuntime.largeRadius())
     .backgroundColor(ThemeRuntime.cardColor(this.darkMode))
     .onClick(() => {
@@ -944,10 +1138,12 @@ struct BookMarkListPage {
   itemMenu(item: BookMark) {
     Column() {
       PopupMenuAction($r('sys.symbol.doc_text'), '查看详情', ThemeRuntime.primaryTextColor(this.darkMode), () => {
+        this.menuKey = '';
         ContextMenu.close();
         BookMarkService.openDetail(item);
       })
       PopupMenuAction($r('sys.symbol.trash'), '删除标记', ThemeRuntime.dangerColor(this.darkMode), () => {
+        this.menuKey = '';
         ContextMenu.close();
         this.confirmDelete(item);
       })
@@ -1165,12 +1361,13 @@ struct BookMarkListPage {
     }
   }
 
-  dateText(item: BookMark): string {
+  /** withStatus 为 false 时不带“在读 · ”这类状态前缀（卡片列表另有状态胶囊）。 */
+  dateText(item: BookMark, withStatus: boolean = true): string {
     const finished = item.status === BookMarkStatus.READ && item.finishTime > 0;
     const date = new Date(finished ? item.finishTime : item.updateTime);
     const label = `${date.getMonth() + 1}月${date.getDate()}日`;
     const day = date.getFullYear() === new Date().getFullYear() ? label : `${date.getFullYear()}年${label}`;
     if (finished) return `${day}读完`;
-    return item.status !== BookMarkStatus.NONE ? `${BookMarkStatus.label(item.status)} · ${day}` : day;
+    return withStatus && item.status !== BookMarkStatus.NONE ? `${BookMarkStatus.label(item.status)} · ${day}` : day;
   }
 }
