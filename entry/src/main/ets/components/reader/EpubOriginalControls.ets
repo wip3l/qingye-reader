@@ -672,8 +672,9 @@ export struct EpubOriginalControls {
       thumbColor: this.solidPanelColor(),
       onChange: (value: number, persist: boolean): void => this.onBrightnessChange(value, persist)
     })
-      .position({ x: Math.max(0, this.viewportWidth - ReaderBrightnessControl.WIDTH - 12), y: this.brightnessTop() })
-      .transition(ReaderChromeMotion.side(ReaderBrightnessControl.WIDTH + 12))
+      .position({ x: ReaderBrightnessControl.left(this.viewportWidth, this.holdingHandSide < 0),
+        y: this.brightnessTop() })
+      .transition(ReaderChromeMotion.side(ReaderBrightnessControl.WIDTH + 12, this.holdingHandSide < 0))
   }
 
   @Builder

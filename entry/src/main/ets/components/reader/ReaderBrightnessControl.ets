@@ -4,6 +4,13 @@ import { AppFontSize } from '../../theme/AppFontSize';
 @Component
 export struct ReaderBrightnessControl {
   static readonly WIDTH: number = 48;
+  static readonly EDGE_GAP: number = 12;
+
+  /** 亮度条的左边：默认贴右边，智感握姿识别到左手握持（onLeft）时贴左边。 */
+  static left(viewportWidth: number, onLeft: boolean): number {
+    return onLeft ? ReaderBrightnessControl.EDGE_GAP :
+      Math.max(0, viewportWidth - ReaderBrightnessControl.WIDTH - ReaderBrightnessControl.EDGE_GAP);
+  }
   @Prop value: number = -1;
   @Prop lastManualValue: number = 50;
   @Prop panelHeight: number = 280;

@@ -5655,10 +5655,10 @@ struct ReadBookPage {
         this.readerBrightnessSession.set(value, persist);
       }
     })
-      .position({ x: Math.max(0, (this.pageViewWidth > 0 ? this.pageViewWidth : 360) -
-        ReaderBrightnessControl.WIDTH - 12),
+      .position({ x: ReaderBrightnessControl.left(this.pageViewWidth > 0 ? this.pageViewWidth : 360,
+        this.readerHoldingHandSide < 0),
         y: this.readerBrightnessControlTop() })
-      .transition(ReaderChromeMotion.side(ReaderBrightnessControl.WIDTH + 12))
+      .transition(ReaderChromeMotion.side(ReaderBrightnessControl.WIDTH + 12, this.readerHoldingHandSide < 0))
   }
 
   @Builder

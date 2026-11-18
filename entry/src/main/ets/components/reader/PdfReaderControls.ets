@@ -75,6 +75,8 @@ export struct PdfReaderControls {
   @Prop brightnessValue: number = -1;
   @Prop lastManualBrightness: number = 50;
   @Prop brightnessReady: boolean = false;
+  /** 智感握姿：-1 左手、1 右手、0 未知（亮度条按默认靠右）。 */
+  @Prop holdingHandSide: number = 0;
   @State viewportWidth: number = 360;
   @State viewportHeight: number = 720;
   @State jumpText: string = '';
@@ -293,8 +295,9 @@ export struct PdfReaderControls {
       thumbColor: this.solidPanelColor(),
       onChange: (value: number, persist: boolean): void => this.onBrightnessChange(value, persist)
     })
-      .position({ x: Math.max(0, this.viewportWidth - ReaderBrightnessControl.WIDTH - 12), y: this.brightnessTop() })
-      .transition(ReaderChromeMotion.side(ReaderBrightnessControl.WIDTH + 12))
+      .position({ x: ReaderBrightnessControl.left(this.viewportWidth, this.holdingHandSide < 0),
+        y: this.brightnessTop() })
+      .transition(ReaderChromeMotion.side(ReaderBrightnessControl.WIDTH + 12, this.holdingHandSide < 0))
   }
 
   @Builder

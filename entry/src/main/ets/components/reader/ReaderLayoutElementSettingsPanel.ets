@@ -96,7 +96,7 @@ export struct ReaderLayoutElementSettingsPanel {
           this.save();
         })
       }
-      this.toggleRow('使用快速亮度组件', '唤出阅读菜单时，在右侧显示亮度条', this.readerUseBrightnessQuickAction,
+      this.toggleRow('使用快速亮度组件', '唤出阅读菜单时，在侧边显示亮度条', this.readerUseBrightnessQuickAction,
         (enabled: boolean) => {
           this.readerUseBrightnessQuickAction = enabled;
           this.save();

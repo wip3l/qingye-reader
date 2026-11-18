@@ -57,6 +57,7 @@ import { ReaderTurnKeys } from '../utils/ReaderTurnKeys';
 import { ReaderScreenTimeout } from '../utils/ReaderScreenTimeout';
 import { TapZoneSettingsDialogContent } from '../components/TapZoneSettingsDialog';
 import { ReaderHaptics } from '../utils/ReaderHaptics';
+import { HoldingHandTracker } from '../utils/HoldingHandTracker';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import {
   ReaderSnapshotPageTurn, ReaderSnapshotTurnController, ReaderSnapshotTurnHost
@@ -129,6 +130,15 @@ struct PdfReadBookPage {
   @State failed: boolean = false;
   @State @Watch('onMenuVisibleChange') menuVisible: boolean = false;
   @StorageProp('readerHideNavIndicator') @Watch('applySystemBars') readerHideNavIndicator: boolean = false;
+  /** 智感握姿（其他设置里的总开关）：左手握持时亮度条移到左边，与其它阅读页一致。 */
+  @StorageProp('smartGripEnabled') @Watch('onSmartGripEnabledChanged') smartGripEnabled: boolean = true;
+  @State holdingHandSide: number = 0;
+  private holdingHand: HoldingHandTracker = new HoldingHandTracker((side: number): void => {
+    if (!this.smartGripEnabled || !this.visible || side === this.holdingHandSide) return;
+    this.getUIContext().animateTo({ duration: 280, curve: Curve.Friction }, (): void => {
+      this.holdingHandSide = side;
+    });
+  });
   @State activePanel: string = '';
   @State jumpInput: string = '';
   @State searchInput: string = '';
@@ -203,6 +213,15 @@ struct PdfReadBookPage {
   private shelfOpeningPageSnapshotTimer: number = -1;
   private customizedPreferences: Set<string> = new Set<string>();
 
+  private onSmartGripEnabledChanged(): void {
+    if (!this.smartGripEnabled) {
+      this.holdingHand.stop();
+      this.holdingHandSide = 0;
+    } else if (this.visible) {
+      this.holdingHand.start();
+    }
+  }
+
   aboutToAppear(): void {
     this.alive = true;
     const params = this.getUIContext().getRouter().getParams() as Record<string, string>;
@@ -229,6 +248,7 @@ struct PdfReadBookPage {
     this.visible = true;
     KnockShare.attachBook(this.owner, getContext(this), (): Book | null => this.book);
     this.activateBrightness();
+    if (this.smartGripEnabled) this.holdingHand.start();
     AiAccessPolicy.refresh(); this.refreshAiAccess();
     this.applySystemBars();
     this.updateTurnKeys();
@@ -241,6 +261,7 @@ struct PdfReadBookPage {
   onPageHide(): void {
     KnockShare.detach(this.owner);
     this.visible = false; this.previewIndex = -1;
+    this.holdingHand.stop();
     this.showLayoutElements = false;
     this.showTapZones = false;
     this.brightnessSession.deactivate();
@@ -257,6 +278,7 @@ struct PdfReadBookPage {
     KnockShare.detach(this.owner);
     this.flushAndSyncProgress();
     this.alive = false; this.generation++; this.searchGeneration++;
+    this.holdingHand.stop();
     this.showLayoutElements = false;
     this.showTapZones = false;
     this.brightnessSession.deactivate();
@@ -1490,7 +1512,7 @@ struct PdfReadBookPage {
         onSearch: (): void => { this.search(); },
         onSearchStep: (direction: number): void => { this.searchNext(direction); },
         brightnessValue: this.brightnessValue, lastManualBrightness: this.lastManualBrightness,
-        brightnessReady: this.brightnessReady,
+        brightnessReady: this.brightnessReady, holdingHandSide: this.holdingHandSide,
         onBrightnessChange: (value: number, persist: boolean): void => { this.setBrightness(value, persist); },
         onLayoutElements: (): void => { this.setPanel(''); this.showLayoutElements = true; },
         alignedLayout: true, pageTurnAnimation: this.pageTurnAnimation,
