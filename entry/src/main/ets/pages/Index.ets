@@ -1,5 +1,4 @@
 import { AnimatorResult, FrameNode, router, window } from '@kit.ArkUI';
-import { deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { webview } from '@kit.ArkWeb';
 import { WebRuntimeAvailability } from '../utils/WebRuntimeAvailability';
@@ -1669,9 +1668,7 @@ struct Index {
     .barMode(BarMode.Fixed)
     .barHeight(this.homeTabBarHidden() ? 0 : 56)
     .barOverlap(true)
-    // Desktop already clips the entire window to its native outline. A second 30vp
-    // content radius cuts away the header backdrop inside the smaller window corners.
-    .borderRadius(deviceInfo.deviceType === '2in1' ? 0 : 30)
+    // 不加圆角：屏幕/窗口的圆角由系统裁，内容再裁一层会在截图和圆角较小的屏上把顶部背景两角切掉。
     .clip(true)
     .barFloatingStyle({
       systemMaterialEffect: {
