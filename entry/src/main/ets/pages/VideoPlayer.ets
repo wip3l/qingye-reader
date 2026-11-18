@@ -14,6 +14,8 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { VideoPlaybackSource, VideoPlaybackSupport } from '../core/book/VideoPlaybackSupport';
 import { VideoAvSession, VideoAvSessionListener } from '../utils/VideoAvSession';
+import { MixedVideoChapter } from '../core/book/MixedVideoChapter';
+import { MixedVideoProgress } from '../utils/MixedVideoProgress';
 
 /** 每次尝试创建独立实例，让旧组件回调携带旧编号。 */
 class VideoNativeAttempt {
@@ -175,6 +177,8 @@ struct VideoPlayerPage {
   private book: Book | null = null;
   private source: BookSource | null = null;
   private chapters: BookChapter[] = [];
+  // 图文书里的视频章：选集只列视频章，进度记在 MixedVideoProgress，不改书的阅读进度，也不重开阅读引擎。
+  private mixed: boolean = false;
   private loadSerial: number = 0;
   private hideTimerId: number = -1;
   private boostPulseTimerId: number = -1;
@@ -361,6 +365,11 @@ struct VideoPlayerPage {
         this.statusText = '对应的书源已被删除';
         return;
       }
+      this.mixed = MixedVideoChapter.isMixedBook(stored);
+      if (this.mixed) {
+        await this.loadMixedBook(stored, requestedIndex, serial);
+        return;
+      }
       // 选集沿用阅读引擎的目录加载与缓存；首次打开时由它去取并保存。
       const engine = ReadBookEngine.get();
       await engine.openBook(stored);
@@ -382,6 +391,30 @@ struct VideoPlayerPage {
       console.warn('[VideoPlayer] load failed:', (e as Error).message);
       this.statusText = `加载失败：${(e as Error).message || '未知错误'}`;
     }
+  }
+
+  /**
+   * 图文书里的视频章：从阅读页进来时阅读引擎正开着这本书，直接用它的目录（不能重开，会打断阅读页的会话）；
+   * 否则读库里的目录。requestedIndex 是章节序号，换算成视频章列表里的位置。
+   */
+  private async loadMixedBook(stored: Book, requestedIndex: number, serial: number): Promise<void> {
+    const engine = ReadBookEngine.get();
+    const all: BookChapter[] = engine.book && engine.book.bookUrl === stored.bookUrl && engine.chapters.length > 0 ?
+      engine.chapters.slice() : await AppDatabase.getInstance().getBookChapters(stored.bookUrl);
+    if (serial !== this.loadSerial) return;
+    this.book = stored;
+    this.chapters = all.filter((chapter: BookChapter): boolean => BookChapter.isVideoChapter(chapter));
+    this.episodeCount = this.chapters.length;
+    this.episodeData.replace(this.chapters.map((chapter: BookChapter): string => chapter.title || ''));
+    if (this.chapters.length === 0) {
+      this.statusText = '这本书没有视频章节';
+      return;
+    }
+    const position = Math.max(0, this.chapters.findIndex((chapter: BookChapter): boolean =>
+      chapter.index === requestedIndex));
+    const resume = await MixedVideoProgress.get(getContext(this), stored.bookUrl, this.chapters[position].url);
+    if (serial !== this.loadSerial) return;
+    await this.playEpisode(position, resume);
   }
 
   /** isReload：卡住或暂停太久后重新取地址，沿用本集的重试额度与网页地址。 */
@@ -420,9 +453,11 @@ struct VideoPlayerPage {
     this.showControls = true;
     this.seeking = false;
     this.recoveryFromSec = isRetry || isReload ? this.positionSec : -1;
-    book.durChapterIndex = target;
-    book.durChapterTitle = chapter.title;
-    book.durChapterPos = Math.floor(this.positionSec);
+    if (!this.mixed) {
+      book.durChapterIndex = target;
+      book.durChapterTitle = chapter.title;
+      book.durChapterPos = Math.floor(this.positionSec);
+    }
     this.lastSavedSec = -1;
     this.saveProgress(true);
     this.statusText = '正在获取播放地址...';
@@ -723,7 +758,17 @@ struct VideoPlayerPage {
     // 恢复跳转没成功（或等用户按播放再跳）时，实际位置追上已存进度前不覆盖它，免得卡住退出再进就从头播。
     const holdSec = Math.max(this.resumeFailedSec, this.deferredResumeSec);
     const held = holdSec >= 0 && !(this.pendingSeekSec >= 0) && second < holdSec - 3;
-    if (!this.webMode && this.playbackReady && !this.resumeSeekPending && !held) book.durChapterPos = second;
+    const reliable = !this.webMode && this.playbackReady && !this.resumeSeekPending && !held;
+    if (this.mixed) {
+      const chapter = this.chapters[this.episodeIndex];
+      if (reliable && chapter) {
+        MixedVideoProgress.put(getContext(this), book.bookUrl, chapter.url, second).catch((error: Error): void => {
+          console.warn('[VideoPlayer] save mixed progress failed:', error.message);
+        });
+      }
+      return;
+    }
+    if (reliable) book.durChapterPos = second;
     book.durChapterTime = Date.now();
     AppDatabase.getInstance().updateBook(book, false).catch((error: Error): void => {
       console.warn('[VideoPlayer] save progress failed:', error.message);

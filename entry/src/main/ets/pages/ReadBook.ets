@@ -22,6 +22,7 @@ import displaySync from '@ohos.graphics.displaySync';
 import { ThemeBookCoverSettings } from '../utils/ThemeBookCoverSettings';
 import { NativeSourceService, HttpClient, Book, BookChapter, Bookmark, BookSource, HttpTTS, BookTypeSupport, VerificationSupport, ReaderActionData, ReaderActionMarker, ReaderActionMatch, BookSourceStageWebRuntime, StageWebRuntimeRequest, WebBookFetchRuntime, SourceRuntimeStage, CooperativeScheduler, sleepMs, SourceEngineHost } from '@legado/sourceengine';
 import { router, window, promptAction, RectShape } from '@kit.ArkUI';
+import { MixedVideoChapter } from '../core/book/MixedVideoChapter';
 import { webview } from '@kit.ArkWeb';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { inputConsumer, KeyCode, Action, KeyEvent as InputKeyEvent } from '@kit.InputKit';
@@ -5021,6 +5022,11 @@ struct ReadBookPage {
         onJumpToChapter: (chapterIndex: number): void => {
           this.showToc = false;
           this.showMenu = false;
+          // 在目录里点图文书的视频章就是要看：直接进播放页，阅读位置不动。
+          if (MixedVideoChapter.isMixedVideo(this.book, this.chapters[chapterIndex])) {
+            this.openMixedVideoChapter(chapterIndex);
+            return;
+          }
           this.jumpToReaderPositionKeepingTts(chapterIndex, 0);
         },
         onJumpToBookmark: (bookmark: Bookmark): void => {
@@ -17806,6 +17812,19 @@ ${leading}` : leading;
     return this.usesReaderContinuousV2() ? this.readerContinuousV2ActionAtPoint(globalX, globalY) : '';
   }
 
+  /** 图文书里的视频章进播放页；返回后回到阅读页原来的位置。 */
+  openMixedVideoChapter(chapterIndex: number): void {
+    const book = this.book;
+    if (!book || chapterIndex < 0) return;
+    router.pushUrl({
+      url: 'pages/VideoPlayer',
+      params: { bookUrl: book.bookUrl, chapterIndex: `${chapterIndex}`, shelfBookOpening: 'false' }
+    }).catch((error: Error) => {
+      this.readerSourceActionOpenedAt = 0;
+      HdsFeedback.showToast(`打开播放页失败：${error.message || '路由跳转异常'}`);
+    });
+  }
+
   openReaderSourceAction(marker: string, tapX: number = -1, tapY: number = -1): void {
     if (marker.startsWith(READER_ANNOTATION_MARKER_PREFIX)) {
       this.openReaderAnnotationById(Number(marker.substring(READER_ANNOTATION_MARKER_PREFIX.length)));
@@ -17818,6 +17837,12 @@ ${leading}` : leading;
       // 本地 EPUB 没有书源，注释在书源判断之前处理。
       this.readerSourceActionOpenedAt = now;
       this.openReaderEpubNote(action, tapX, tapY);
+      return;
+    }
+    if (action && MixedVideoChapter.isPlayAction(action.url)) {
+      // 图文书里视频章卡片上的“播放视频”。
+      this.readerSourceActionOpenedAt = now;
+      this.openMixedVideoChapter(MixedVideoChapter.chapterIndexOf(action.url));
       return;
     }
     const source = this.currentReaderSource();

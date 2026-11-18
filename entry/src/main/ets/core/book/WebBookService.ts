@@ -6,6 +6,7 @@ import { SourceEngineHost, Book, BookChapter, BookSource, ContentRule, HttpClien
 import { util } from '@kit.ArkTS';
 import { BookSourceDataUrlSupport } from './BookSourceDataUrlSupport';
 import { ReaderImageMarker } from './ReaderImageMarker';
+import { MixedVideoChapter } from './MixedVideoChapter';
 import { ComicImagePipeline, ComicImageTiming } from './ComicImagePipeline';
 import { ReaderImageRequest, ReaderImageScheduler } from './ReaderImageScheduler';
 import { ReaderImageResults } from './ReaderImageResults';
@@ -770,6 +771,8 @@ export class WebBookService {
     imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT,
     sourceInteraction: (() => boolean) | null = null): Promise<string> {
     SourceEngineHost.setError(source, '');
+    // 图文书里的视频章只给阅读页一张播放卡片，不请求网络；调试页照常取，方便核对 video 规则。
+    if (!debugContext && MixedVideoChapter.isMixedVideo(book, chapter)) return MixedVideoChapter.cardText(chapter);
     try {
       const result = await NativeSourceService.getContent(source, this.http, book, chapter,
         (): boolean => this.contentRequestCanceled(shouldCancel), debugContext, sourceInteraction ?? this.sourceInteraction);
