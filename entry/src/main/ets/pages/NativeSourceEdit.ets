@@ -1,5 +1,5 @@
 import { router } from '@kit.ArkUI';
-import { BookSource, NativeSourceService } from '@legado/sourceengine';
+import { BookSource, NativeSourceService, NativeSourceSpec } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
@@ -63,6 +63,9 @@ struct NativeSourceEditPage {
   @State bookSourceUrl: string = '';
   @State definitionText: string = '';
   @State problem: string = '';
+  // 不拦截导入的写法提示（例如纯数字 rate 让并发失效、不支持的伪类）；保存前先给用户看一次。
+  @State warnings: string[] = [];
+  private warnedText: string = '';
   @State isSaving: boolean = false;
   private existing: BookSource | null = null;
 
@@ -107,15 +110,23 @@ struct NativeSourceEditPage {
     try {
       const source = NativeSourceService.importObject(parsed, this.existing);
       this.problem = '';
+      this.warnings = NativeSourceSpec.warningsOf(parsed);
       return source;
     } catch (e) {
       this.problem = (e as Error).message || '书源定义不合法';
+      this.warnings = [];
       return null;
     }
   }
 
   checkDefinition(): void {
-    if (this.buildSource()) HdsFeedback.showToast('校验通过');
+    if (!this.buildSource()) return;
+    if (this.warnings.length > 0) {
+      this.warnedText = this.definitionText;
+      HdsFeedback.showToast(`校验通过，有 ${this.warnings.length} 条提示`);
+    } else {
+      HdsFeedback.showToast('校验通过');
+    }
   }
 
   async saveSource(): Promise<void> {
@@ -126,6 +137,12 @@ struct NativeSourceEditPage {
     }
     const source = this.buildSource();
     if (!source) return;
+    // 有提示且用户还没看过这份内容的提示时，先停一次；再点保存就照常保存。
+    if (this.warnings.length > 0 && this.warnedText !== this.definitionText) {
+      this.warnedText = this.definitionText;
+      HdsFeedback.showToast(`有 ${this.warnings.length} 条提示，确认无误后再点一次保存`);
+      return;
+    }
     this.isSaving = true;
     try {
       const db = AppDatabase.getInstance();
@@ -191,6 +208,14 @@ struct NativeSourceEditPage {
         Text(this.problem)
           .fontSize(AppFontSize.BODY)
           .fontColor(ThemeRuntime.dangerColor(this.appDarkMode))
+          .width('100%')
+          .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
+      }
+
+      if (!this.problem && this.warnings.length > 0) {
+        Text(this.warnings.map((item: string): string => `提示：${item}`).join('\n'))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(ThemeRuntime.warningColor(this.appDarkMode))
           .width('100%')
           .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
       }

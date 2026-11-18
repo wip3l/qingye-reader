@@ -485,7 +485,9 @@ export struct ExplorePage {
       const merged = this.mergeExploreBooks(this.books, nextBooks);
       const addedCount = merged.length - this.books.length;
       if (nextBooks.length === 0 || addedCount === 0) {
-        const notice = this.coordinator.getNoticeMessage();
+        // 第 2 页以后返回 404/410：站点分页到头了（例如分类固定 10 页），按“已加载全部”处理，不提示失败。
+        const notice = this.isPastLastPageNotice(this.coordinator.getNoticeMessage()) ? '' :
+          this.coordinator.getNoticeMessage();
         // Network/verification failures should remain retryable; a genuinely empty or duplicate
         // next page means the source has reached its end (or does not implement pagination).
         this.hasMoreExploreBooks = nextBooks.length === 0 && this.isRetryableExploreNotice(notice);
@@ -522,6 +524,10 @@ export struct ExplorePage {
       }
     }
     return merged;
+  }
+
+  isPastLastPageNotice(notice: string): boolean {
+    return /HTTP\s*(?:404|410)(?!\d)/i.test(notice || '');
   }
 
   isRetryableExploreNotice(notice: string): boolean {

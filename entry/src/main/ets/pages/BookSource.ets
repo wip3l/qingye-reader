@@ -120,6 +120,8 @@ class BookSourceCheckUiUpdate {
 class BookSourceImportParseResult {
   sources: BookSource[] = [];
   nativeProblem: string = '';
+  // 导入成功但写法会静默失效的提示，只列第一份书源的第一条。
+  nativeWarning: string = '';
 }
 
 // 头部里类型分段和兼容书源提示条的高度，列表顶部避让按它们计算。
@@ -6582,6 +6584,7 @@ struct BookSourcePage {
     const sources: BookSource[] = [];
     const failedFiles: string[] = [];
     let nativeProblem = '';
+    let nativeWarning = '';
     for (const uri of uris) {
       const name = this.importFileDisplayName(uri);
       try {
@@ -6593,6 +6596,9 @@ struct BookSourcePage {
         const result = this.parseImportSources(content);
         if (result.nativeProblem) {
           nativeProblem = result.nativeProblem;
+        }
+        if (result.nativeWarning && !nativeWarning) {
+          nativeWarning = result.nativeWarning;
         }
         if (result.sources.length === 0 && !result.nativeProblem) {
           failedFiles.push(`${name}（无有效书源）`);
@@ -6615,6 +6621,9 @@ struct BookSourcePage {
     }
     if (nativeProblem) {
       notices.push(`原生书源未导入，${nativeProblem}`);
+    }
+    if (nativeWarning) {
+      notices.push(`提示：${nativeWarning}`);
     }
     if (notices.length > 0) {
       HdsFeedback.showToast(notices.join('\n'));
@@ -7107,6 +7116,8 @@ struct BookSourcePage {
       if (result.nativeProblem) {
         HdsFeedback.showToast(`原生书源未导入，${result.nativeProblem}`);
         if (result.sources.length === 0) return;
+      } else if (result.nativeWarning) {
+        HdsFeedback.showToast(`提示：${result.nativeWarning}`);
       }
       await this.presentImportedSources(result.sources);
     } catch (e) {
@@ -7144,6 +7155,11 @@ struct BookSourcePage {
         // 原生书源在导入时就完成整份校验，写法有误的直接给出原因，不留到使用时才失败。
         try {
           result.sources.push(NativeSourceService.importObject(item));
+          const warnings = NativeSourceSpec.warningsOf(item);
+          if (warnings.length > 0 && !result.nativeWarning) {
+            result.nativeWarning = `${String(item['name'] || '原生书源')}：${warnings[0]}` +
+              (warnings.length > 1 ? `（另有 ${warnings.length - 1} 条，可在编辑页「校验」查看）` : '');
+          }
         } catch (e) {
           result.nativeProblem = `${String(item['name'] || '原生书源')}：${(e as Error).message || '定义不合法'}`;
         }
