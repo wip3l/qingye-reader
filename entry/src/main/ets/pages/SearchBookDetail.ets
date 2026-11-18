@@ -36,6 +36,7 @@ import { BookMark, BookMarkRules, BookMarkStatus } from '../model/book/BookMark'
 import { BookMarkService } from '../core/mark/BookMarkService';
 import { BookMarkStars } from '../components/book/BookMarkStars';
 import { BookMarkSheet } from '../components/book/BookMarkSheet';
+import { BookReadStatsCard } from '../components/book/BookReadStatsCard';
 
 @Entry
 @Component
@@ -115,6 +116,8 @@ struct SearchBookDetailPage {
   private markDraft: BookMark = new BookMark();
   private markCategories: string[] = [];
   private markLoadVersion: number = 0;
+  /** 每次回到详情页加一，阅读统计卡片据此重读。 */
+  @State readStatsRefreshToken: number = 0;
   /** 正文滚动距离：顶栏底色与书名随之渐显。 */
   @State detailScrollY: number = 0;
   @State headerCollapse: number = 0;
@@ -181,6 +184,7 @@ struct SearchBookDetailPage {
     });
     this.refreshChapterCount();
     this.loadBookMark();
+    this.readStatsRefreshToken++;
     // Some source runtimes need one UI turn after the detail route is mounted (especially when the
     // hidden Web transport is still attaching). Do not keep an empty first response cached forever.
     if (!this.intro && !this.isLoadingBookInfo && this.bookUrl && this.origin) {
@@ -328,6 +332,16 @@ struct SearchBookDetailPage {
             if (this.name) {
               this.detailMarkBlock()
             }
+
+            BookReadStatsCard({
+              bookUrl: this.bookUrl,
+              bookName: this.name,
+              author: this.author,
+              refreshToken: this.readStatsRefreshToken,
+              chapterUnit: BookTypeSupport.isVideo(this.detailTypeProbe()) ||
+                BookTypeSupport.isAudio(this.detailTypeProbe()) ? '集' :
+                LocalBookService.isPdfBook(this.detailTypeProbe()) ? '页' : '章'
+            })
 
             this.detailChapterRow()
             this.detailIntro()
