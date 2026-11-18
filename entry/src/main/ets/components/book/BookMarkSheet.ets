@@ -372,7 +372,7 @@ export struct BookMarkSheet {
   statusSection() {
     this.sectionLabel('阅读状态', 'status')
     Row({ space: 3 }) {
-      ForEach([BookMarkStatus.WANT, BookMarkStatus.READING, BookMarkStatus.READ], (value: number) => {
+      ForEach(BookMarkStatus.ALL, (value: number) => {
         Text(BookMarkStatus.label(value))
           .fontSize(AppFontSize.BODY)
           .fontWeight(this.status === value ? FontWeight.Medium : FontWeight.Normal)

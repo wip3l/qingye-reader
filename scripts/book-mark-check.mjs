@@ -92,6 +92,10 @@ test('plain objects from backup or sync are normalised', () => {
   const read = BookMarkRules.fromPlain({ workKey: 'k', bookName: '书', status: 3, finishTime: 99 });
   assert.equal(read.finishTime, 99);
   assert.equal(BookMarkStatus.label(read.status), '读过');
+  const dropped = BookMarkRules.fromPlain({ workKey: 'k', bookName: '书', status: 4, finishTime: 99 });
+  assert.equal(dropped.status, BookMarkStatus.DROPPED);
+  assert.equal(BookMarkStatus.label(dropped.status), '弃读');
+  assert.equal(dropped.finishTime, 0, 'dropped books keep no finish time');
 });
 
 test('known categories are ordered by use, then by name', () => {

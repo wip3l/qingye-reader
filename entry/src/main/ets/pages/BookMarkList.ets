@@ -454,11 +454,21 @@ struct BookMarkListPage {
   @Builder
   filterHeader() {
     Column({ space: AppSpacing.MD }) {
-      Row({ space: AppSpacing.XL }) {
-        ForEach([0, BookMarkStatus.WANT, BookMarkStatus.READING, BookMarkStatus.READ], (value: number) => {
-          this.statusTab(value)
-        }, (value: number) => `${value}`)
-        Blank()
+      Row({ space: AppSpacing.MD }) {
+        // 五个页签加均分在窄屏放不下，页签部分可以横向滑动，均分固定在右侧。
+        Scroll() {
+          Row({ space: AppSpacing.XL }) {
+            ForEach([0, ...BookMarkStatus.ALL], (value: number) => {
+              this.statusTab(value)
+            }, (value: number) => `${value}`)
+          }
+          .alignItems(VerticalAlign.Bottom)
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .align(Alignment.BottomStart)
+        .layoutWeight(1)
         if (this.averageText()) {
           Row({ space: AppSpacing.XS }) {
             Text('均分')
@@ -697,7 +707,7 @@ struct BookMarkListPage {
   @Builder
   classicStatusChips() {
     Row({ space: AppSpacing.SM }) {
-      ForEach([0, BookMarkStatus.WANT, BookMarkStatus.READING, BookMarkStatus.READ], (value: number) => {
+      ForEach([0, ...BookMarkStatus.ALL], (value: number) => {
         Text(value === 0 ? '全部' : BookMarkStatus.label(value))
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.statusFilter === value ? Color.White : ThemeRuntime.primaryTextColor(this.darkMode))
@@ -935,7 +945,7 @@ struct BookMarkListPage {
     .padding({ bottom: AppSpacing.XS })
   }
 
-  /** 封面墙的一格：想读、在读贴在封面左上角，写过短评的右上角有笔形记号；点按在底部小卡里看这本书。 */
+  /** 封面墙的一格：想读、在读、弃读贴在封面左上角，写过短评的右上角有笔形记号；点按在底部小卡里看这本书。 */
   @Builder
   wallCell(item: BookMark) {
     Column({ space: AppSpacing.XS }) {
@@ -952,7 +962,7 @@ struct BookMarkListPage {
           decodeWidth: 240,
           decodeHeight: 320
         })
-        if (item.status === BookMarkStatus.WANT || item.status === BookMarkStatus.READING) {
+        if (item.status !== BookMarkStatus.NONE && item.status !== BookMarkStatus.READ) {
           Text(BookMarkStatus.label(item.status))
             .fontSize(AppFontSize.MICRO)
             .fontWeight(FontWeight.Medium)
