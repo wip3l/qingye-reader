@@ -13,6 +13,7 @@ import { MembershipIcons } from '../../account/MembershipIcons';
 import { AppThemeModeStore } from '../../utils/AppThemeModeStore';
 import { AppColorModeApplier } from '../../utils/AppColorModeApplier';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
+import { SettingsSearchLayer } from './SettingsSearchLayer';
 
 class ThemeModeOption {
   mode: string = '';
@@ -46,6 +47,8 @@ export struct SettingsPage {
   @StorageLink('cloudSyncPendingCount') cloudSyncPendingCount: number = 0;
   @StorageLink('cloudSyncStatus') cloudSyncStatus: string = CloudSyncSettingsStore.STATUS_DISABLED;
   @StorageLink('appThemeMode') appThemeMode: string = 'system';
+  /** 设置搜索层是否打开；首页据此收起底栏、让返回键先关掉它。 */
+  @StorageLink('mineSearchActive') mineSearchActive: boolean = false;
   @State showThemeModeMenu: boolean = false;
   private readonly themeModeOptions: ThemeModeOption[] = [
     { mode: 'light', label: '浅色', icon: $r('sys.symbol.sun_max') },
@@ -62,6 +65,8 @@ export struct SettingsPage {
           Row()
             .width('100%')
             .height(56 + this.statusBarHeight)
+
+          this.searchEntry()
 
           this.accountSummaryCard()
 
@@ -208,11 +213,43 @@ export struct SettingsPage {
         this.onHeaderCollapseChange((56 + this.statusBarHeight - Number(newArea.height)) /
           CollapsingHeader.DISTANCE);
       })
+
+      if (this.mineSearchActive) {
+        SettingsSearchLayer({ statusBarHeight: this.statusBarHeight, navBarHeight: this.navBarHeight })
+          .transition(TransitionEffect.OPACITY.combine(TransitionEffect.translate({ y: 16 }))
+            .animation({ duration: 220, curve: Curve.FastOutSlowIn }))
+      }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(this.pageColor())
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+  }
+
+  /** 标题下的搜索栏：点开设置搜索层。 */
+  @Builder
+  searchEntry() {
+    Row({ space: AppSpacing.MD }) {
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(18)
+        .fontColor([this.subTextColor()])
+      Text('搜索设置，如 字号、息屏、音量键')
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.subTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(40)
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(20)
+    .backgroundColor(this.glassCardColor())
+    .alignItems(VerticalAlign.Center)
+    .accessibilityText('搜索设置')
+    .onClick(() => {
+      this.mineSearchActive = true;
+    })
   }
 
   @Builder

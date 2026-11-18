@@ -1,4 +1,5 @@
 import { READER_FONT_SECTION_BODY, READER_FONT_SECTION_LABELS, ReaderFontSettingsEditor } from './ReaderFontSettings';
+import { SettingsFocus } from '../utils/SettingsFocus';
 import { MaterialSegmentTabs } from '../components/common/MaterialSegmentTabs';
 import { ReaderMaterialPanel } from '../components/reader/ReaderFloatingMaterialBar';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
@@ -176,12 +177,21 @@ struct SettingsPage {
   /** 第一层（空串）放阅读通用设置及小说、漫画、PDF 分类入口；SECTION_NOVEL 为小说子页。 */
   private section: string = '';
   private static readonly SECTION_NOVEL: string = 'novel';
+  /** 设置搜索要求打开的样式面板分组，首次 onPageShow 时打开；-1 表示没有。 */
+  private pendingStyleGroup: number = -1;
 
   // 设置和字体只在 onPageShow 里读：首次进入时它紧跟 aboutToAppear 执行，两处都读会把同样的活做两遍。
   aboutToAppear() {
     ReaderInputScopes.load(getContext(this));
     const params = router.getParams() as Record<string, string> | undefined;
     this.section = params?.['section'] === SettingsPage.SECTION_NOVEL ? SettingsPage.SECTION_NOVEL : '';
+    // 设置搜索直接打开小说样式面板的某一组（排版/页眉页脚/阅读字体/阅读背景）。
+    const group = Number(params?.['group'] ?? '');
+    if (this.isNovelSection() && params?.['group'] !== undefined && group >= 0 && group <= 3) {
+      this.pendingStyleGroup = group;
+      // 面板里的设置行在面板自己的滚动区里，先于 PageScaffold 登记。
+      SettingsFocus.bindScroller(this.novelSettingsScroller);
+    }
     SmartControlKey.detect();
   }
 
@@ -196,6 +206,11 @@ struct SettingsPage {
     else this.loadDoublePageScope();
     this.reloadCustomFonts();
     this.syncBars();
+    if (this.pendingStyleGroup >= 0) {
+      const group = this.pendingStyleGroup;
+      this.pendingStyleGroup = -1;
+      this.openNovelStyleEditor(group);
+    }
   }
 
   aboutToDisappear(): void {

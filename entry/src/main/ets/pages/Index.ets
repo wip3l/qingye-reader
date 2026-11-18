@@ -104,6 +104,8 @@ struct Index {
   @State exploreTabMounted: boolean = false;
   /** 发现页里的搜索层：点发现页搜索框或外部要求搜索时打开，取消/返回收起。 */
   @StorageLink('homeSearchActive') @Watch('onHomeSearchActiveChanged') homeSearchActive: boolean = false;
+  /** “我的”页的设置搜索层（SettingsSearchLayer）。 */
+  @StorageLink('mineSearchActive') mineSearchActive: boolean = false;
   /** 搜索层第一次打开后常驻，收起只隐藏，关键词与结果保留。 */
   @State searchLayerMounted: boolean = false;
   /** 搜索层淡出期间仍可见，淡完再隐藏，不再参与绘制。 */
@@ -405,7 +407,8 @@ struct Index {
 
   /** 书架多选和发现页的搜索层都是整页，底栏收起。 */
   homeTabBarHidden(): boolean {
-    return this.bookshelfMultiSelectActive || this.homeSearchLayerActive();
+    return this.bookshelfMultiSelectActive || this.homeSearchLayerActive() ||
+      (this.mineSearchActive && this.currentIndex === this.mineTabIndex());
   }
 
   onSearchHeaderCollapseChange(progress: number): void {
@@ -437,6 +440,8 @@ struct Index {
       this.exploreTabMounted = true;
     }
     if (this.currentIndex === 0) this.shelfEnterTick++;
+    // 离开“我的”时设置搜索层随页签一起撤掉。
+    if (this.currentIndex !== this.mineTabIndex() && this.mineSearchActive) this.mineSearchActive = false;
     // 书架保留列表与滚动位置，底栏沿用该页的收起进度；重建的第四个页签和“我的”重置。
     if (this.currentIndex > 0 && this.currentIndex !== this.exploreTabIndex()) {
       this.tabHeaderCollapseProgress[this.currentIndex] = 0;
@@ -626,6 +631,11 @@ struct Index {
     }
     if (this.showGlobalTtsPanel) {
       this.closeGlobalTtsPanel();
+      return true;
+    }
+    // “我的”页的设置搜索层开着时，返回键先收起它。
+    if (this.currentIndex === this.mineTabIndex() && this.mineSearchActive) {
+      this.mineSearchActive = false;
       return true;
     }
     // 发现页的搜索层开着时，返回键先收起它回到发现内容。
