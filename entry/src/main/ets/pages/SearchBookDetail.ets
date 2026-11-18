@@ -36,7 +36,10 @@ import { BookMark, BookMarkRules, BookMarkStatus } from '../model/book/BookMark'
 import { BookMarkService } from '../core/mark/BookMarkService';
 import { BookMarkStars } from '../components/book/BookMarkStars';
 import { BookMarkSheet } from '../components/book/BookMarkSheet';
-import { BookReadStatsCard } from '../components/book/BookReadStatsCard';
+import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
+import { BookReadStatsPanel } from '../components/book/BookReadStatsPanel';
+import { BookReadStatsLoader, BookReadStatsSnapshot } from '../core/stats/BookReadStatsLoader';
 
 @Entry
 @Component
@@ -116,8 +119,20 @@ struct SearchBookDetailPage {
   private markDraft: BookMark = new BookMark();
   private markCategories: string[] = [];
   private markLoadVersion: number = 0;
-  /** 每次回到详情页加一，阅读统计卡片据此重读。 */
-  @State readStatsRefreshToken: number = 0;
+  /** 操作行下面的页签：简介、统计（有阅读记录才有）、标记。每次进详情页都从简介开始。 */
+  static readonly TAB_INTRO: number = 0;
+  static readonly TAB_STATS: number = 1;
+  static readonly TAB_MARK: number = 2;
+  static readonly TAB_LABELS: string[] = ['简介', '统计', '标记'];
+  @State detailTabBarWidth: number = 0;
+  private static readonly TAB_BAR_PADDING: number = 8;
+  private static readonly TAB_INDICATOR_WIDTH: number = 18;
+  private static readonly TAB_SWITCH_DURATION: number = 240;
+  /** 新内容从哪边进来：1 从右、-1 从左；0 表示还没手动切过，首次显示不做动画。 */
+  private detailTabSlide: number = 0;
+  @State detailTab: number = 0;
+  @State readStats: BookReadStatsSnapshot = new BookReadStatsSnapshot();
+  private readStatsLoadVersion: number = 0;
   /** 正文滚动距离：顶栏底色与书名随之渐显。 */
   @State detailScrollY: number = 0;
   @State headerCollapse: number = 0;
@@ -167,6 +182,7 @@ struct SearchBookDetailPage {
         this.loadBookInfo();
         this.triggerAutoStartRead();
         this.loadBookMark();
+        this.loadReadStats();
       });
     }
   }
@@ -184,7 +200,7 @@ struct SearchBookDetailPage {
     });
     this.refreshChapterCount();
     this.loadBookMark();
-    this.readStatsRefreshToken++;
+    this.loadReadStats();
     // Some source runtimes need one UI turn after the detail route is mounted (especially when the
     // hidden Web transport is still attaching). Do not keep an empty first response cached forever.
     if (!this.intro && !this.isLoadingBookInfo && this.bookUrl && this.origin) {
@@ -304,47 +320,29 @@ struct SearchBookDetailPage {
             .width('100%')
             .margin({ top: AppSpacing.XL })
 
-            Divider()
-              .strokeWidth(0.5)
-              .color(ThemeRuntime.hairlineColor(this.appDarkMode))
-              .margin({ top: AppSpacing.XS })
+            this.detailTabBar()
 
-            Row() {
-              this.detailShelfAction()
-              this.detailActionItem($r('sys.symbol.list_bullet'),
-                BookTypeSupport.isVideo(this.detailTypeProbe()) ? '选集' : '目录', () => {
-                  this.openChapterList();
-                })
-              this.detailActionItem($r('sys.symbol.arrow_left_arrow_right'), '换源', () => {
-                this.showChangeSourcePrompt();
-              })
-              this.detailActionItem($r('sys.symbol.person'), '同作者', () => {
-                this.showAuthorSearchPrompt();
-              })
+            // 每个分支各包一层，切换时新内容带着淡入和位移进来。
+            if (this.activeDetailTab() === SearchBookDetailPage.TAB_STATS) {
+              Column() {
+                BookReadStatsPanel({ snapshot: this.readStats, chapterUnit: this.chapterUnit() })
+              }
+              .width('100%')
+              .transition(this.detailTabTransition())
+            } else if (this.activeDetailTab() === SearchBookDetailPage.TAB_MARK) {
+              Column() {
+                this.detailMarkBlock()
+              }
+              .width('100%')
+              .transition(this.detailTabTransition())
+            } else {
+              Column() {
+                this.detailChapterRow()
+                this.detailIntro()
+              }
+              .width('100%')
+              .transition(this.detailTabTransition())
             }
-            .width('100%')
-            .padding({ top: AppSpacing.LG, bottom: AppSpacing.LG })
-
-            Divider()
-              .strokeWidth(0.5)
-              .color(ThemeRuntime.hairlineColor(this.appDarkMode))
-
-            if (this.name) {
-              this.detailMarkBlock()
-            }
-
-            BookReadStatsCard({
-              bookUrl: this.bookUrl,
-              bookName: this.name,
-              author: this.author,
-              refreshToken: this.readStatsRefreshToken,
-              chapterUnit: BookTypeSupport.isVideo(this.detailTypeProbe()) ||
-                BookTypeSupport.isAudio(this.detailTypeProbe()) ? '集' :
-                LocalBookService.isPdfBook(this.detailTypeProbe()) ? '页' : '章'
-            })
-
-            this.detailChapterRow()
-            this.detailIntro()
           }
           .width('100%')
           .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: 64 + this.statusBarHeight,
@@ -499,6 +497,31 @@ struct SearchBookDetailPage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
+
+        // 书架与目录在顶栏右侧，和返回按钮同一种沉浸光感圆钮。同作者、换源分别是点作者行、书源行。
+        ImmersiveHeaderAction({
+          icon: this.isInShelf ? $r('sys.symbol.bookshelf_badge_checkmark_fill') :
+            $r('sys.symbol.bookshelf_badge_plus'),
+          tint: this.isInShelf ? this.accentColor() : '',
+          actionEnabled: !this.isSaving,
+          accessibilityLabel: this.isInShelf ? '已在书架，点按移出书架' : '加入书架',
+          onTap: (): void => {
+            if (this.isInShelf) {
+              this.removeFromShelf();
+            } else {
+              this.addToShelf();
+            }
+          }
+        })
+          .margin({ left: AppSpacing.MD })
+        ImmersiveHeaderAction({
+          icon: $r('sys.symbol.list_bullet'),
+          accessibilityLabel: BookTypeSupport.isVideo(this.detailTypeProbe()) ? '选集' : '目录',
+          onTap: (): void => {
+            this.openChapterList();
+          }
+        })
+          .margin({ left: AppSpacing.MD })
       }
       .width('100%')
       .height(56 + this.statusBarHeight)
@@ -621,6 +644,9 @@ struct SearchBookDetailPage {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .flexShrink(1)
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(12)
+              .fontColor([this.subTextColor()])
           }
           .alignItems(VerticalAlign.Center)
           .margin({ top: AppSpacing.SM })
@@ -638,62 +664,141 @@ struct SearchBookDetailPage {
     .alignItems(VerticalAlign.Center)
   }
 
-  /** 书架操作直接读取 isInShelf，加入或移出后同步刷新按钮。 */
-  @Builder
-  detailShelfAction() {
-    Column({ space: AppSpacing.SM }) {
-      SymbolGlyph(this.isInShelf ? $r('sys.symbol.bookshelf_badge_checkmark_fill') : $r('sys.symbol.bookshelf'))
-        .fontSize(24)
-        .fontColor([this.isInShelf ? this.accentColor() : this.primaryTextColor()])
-      Text(this.isSaving ? (this.isInShelf ? '移出中' : '加入中') : (this.isInShelf ? '移出书架' : '加入书架'))
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.isInShelf ? this.accentColor() : this.secondaryTextColor())
-        .maxLines(1)
-    }
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.96 })
-    .accessibilityText(this.isInShelf ? '移出书架' : '加入书架')
-    .onClick(() => {
-      if (this.isSaving) return;
-      if (this.isInShelf) {
-        this.removeFromShelf();
-      } else {
-        this.addToShelf();
-      }
-    })
+  private hasReadStats(): boolean {
+    return this.readStats.stats.activeDays > 0;
   }
 
-  @Builder
-  detailActionItem(icon: Resource, label: string, onTap: () => void) {
-    Column({ space: AppSpacing.SM }) {
-      SymbolGlyph(icon)
-        .fontSize(24)
-        .fontColor([this.primaryTextColor()])
-      Text(label)
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.secondaryTextColor())
-        .maxLines(1)
+  /** 统计页签没有了（记录被删、换了一本书）或书名还没有时落回简介。 */
+  private activeDetailTab(): number {
+    if (this.detailTab === SearchBookDetailPage.TAB_STATS && !this.hasReadStats()) return SearchBookDetailPage.TAB_INTRO;
+    if (this.detailTab === SearchBookDetailPage.TAB_MARK && !this.name) return SearchBookDetailPage.TAB_INTRO;
+    return this.detailTab;
+  }
+
+  private chapterUnit(): string {
+    return BookTypeSupport.isVideo(this.detailTypeProbe()) || BookTypeSupport.isAudio(this.detailTypeProbe()) ? '集' :
+      LocalBookService.isPdfBook(this.detailTypeProbe()) ? '页' : '章';
+  }
+
+  private async loadReadStats(): Promise<void> {
+    const version = ++this.readStatsLoadVersion;
+    try {
+      const snapshot = await BookReadStatsLoader.load(getContext(this), this.bookUrl, this.name, this.author);
+      if (version === this.readStatsLoadVersion) this.readStats = snapshot;
+    } catch (error) {
+      console.warn('读取本书阅读统计失败:', error);
     }
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.96 })
-    .accessibilityText(label)
-    .onClick(() => onTap())
+  }
+
+  /** 分段条上依次有哪些页签：统计要有阅读记录，标记要有书名。 */
+  private detailTabs(): number[] {
+    const tabs: number[] = [SearchBookDetailPage.TAB_INTRO];
+    if (this.hasReadStats()) tabs.push(SearchBookDetailPage.TAB_STATS);
+    if (this.name) tabs.push(SearchBookDetailPage.TAB_MARK);
+    return tabs;
+  }
+
+  private selectDetailTab(tab: number): void {
+    const tabs = this.detailTabs();
+    const from = tabs.indexOf(this.activeDetailTab());
+    const to = tabs.indexOf(tab);
+    if (to < 0 || to === from) return;
+    this.detailTabSlide = to > from ? 1 : -1;
+    this.detailTab = tab;
   }
 
   /**
-   * 我的标记：没有标记时一排空星，点一下就打分保存；有标记后显示星级、状态、标签和短评。
+   * 页签内容的进场：朝切换方向滑入一小段并淡入。旧内容直接撤掉，不做退场，
+   * 否则新旧两块在同一列里上下叠着，页面高度会先撑开再缩回。
+   */
+  private detailTabTransition(): TransitionEffect {
+    if (this.detailTabSlide === 0) return TransitionEffect.IDENTITY;
+    return TransitionEffect.asymmetric(
+      TransitionEffect.OPACITY.combine(TransitionEffect.translate({ x: this.detailTabSlide * 28 }))
+        .animation({ duration: SearchBookDetailPage.TAB_SWITCH_DURATION, curve: Curve.Friction }),
+      TransitionEffect.IDENTITY);
+  }
+
+  /** 下划线左边距：在选中那一段里居中。 */
+  private detailTabIndicatorX(): number {
+    const tabs = this.detailTabs();
+    const inner = Math.max(0, this.detailTabBarWidth - SearchBookDetailPage.TAB_BAR_PADDING * 2);
+    const segment = inner / Math.max(1, tabs.length);
+    const index = Math.max(0, tabs.indexOf(this.activeDetailTab()));
+    return SearchBookDetailPage.TAB_BAR_PADDING + segment * index +
+      (segment - SearchBookDetailPage.TAB_INDICATOR_WIDTH) / 2;
+  }
+
+  /**
+   * 整宽的页签条，和书源管理页的格式切换条同一种样式：一块沉浸光感底板，选中项用强调色文字加一小段下划线。
+   * 有几个页签就等分成几段；材质底板要具体宽度，量外层这一行得到。下划线是同一条，切换时滑到新位置。
+   */
+  @Builder
+  detailTabBar() {
+    Row() {
+      if (this.detailTabBarWidth > 0) {
+        ImmersiveMaterialSurface({
+          surfaceWidth: this.detailTabBarWidth,
+          surfaceHeight: 44,
+          darkMode: this.appDarkMode,
+          fallbackColor: this.cardColor(),
+          glowColor: `#40${this.accentColor().substring(1)}`
+        }) {
+          Stack({ alignContent: Alignment.BottomStart }) {
+            Row() {
+              ForEach(this.detailTabs(), (tab: number) => {
+                Text(SearchBookDetailPage.TAB_LABELS[tab])
+                  .fontSize(AppFontSize.BODY_LARGE)
+                  .fontWeight(this.activeDetailTab() === tab ? FontWeight.Medium : FontWeight.Regular)
+                  .fontColor(this.activeDetailTab() === tab ? this.accentColor() : this.secondaryTextColor())
+                  .animation({ duration: SearchBookDetailPage.TAB_SWITCH_DURATION, curve: Curve.Friction })
+                  .textAlign(TextAlign.Center)
+                  .maxLines(1)
+                  .height('100%')
+                  .layoutWeight(1)
+                  .accessibilityText(SearchBookDetailPage.TAB_LABELS[tab])
+                  .accessibilitySelected(this.activeDetailTab() === tab)
+                  .onClick(() => {
+                    this.selectDetailTab(tab);
+                  })
+              }, (tab: number): string => `${tab}`)
+            }
+            .width('100%')
+            .height('100%')
+            .padding({ left: SearchBookDetailPage.TAB_BAR_PADDING, right: SearchBookDetailPage.TAB_BAR_PADDING })
+
+            Row()
+              .width(SearchBookDetailPage.TAB_INDICATOR_WIDTH)
+              .height(3)
+              .borderRadius(1.5)
+              .backgroundColor(this.accentColor())
+              .margin({ bottom: 6 })
+              .translate({ x: this.detailTabIndicatorX() })
+              .animation({ duration: SearchBookDetailPage.TAB_SWITCH_DURATION, curve: Curve.Friction })
+              .hitTestBehavior(HitTestMode.None)
+              .accessibilityLevel('no')
+          }
+          .width('100%')
+          .height('100%')
+        }
+      }
+    }
+    .width('100%')
+    .height(44)
+    .margin({ top: AppSpacing.SM })
+    .onSizeChange((_old: SizeOptions, next: SizeOptions) => {
+      this.detailTabBarWidth = Math.floor(Number(next.width ?? 0));
+    })
+  }
+
+  /**
+   * “标记”页签：没有标记时一排空星，点一下就打分保存；有标记后显示星级、状态、标签和完整短评。
    * 点“编辑”、短评或下面那行文字打开标记面板。
    */
   @Builder
   detailMarkBlock() {
     Column({ space: AppSpacing.MD }) {
       Row({ space: AppSpacing.MD }) {
-        Text('我的标记')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.primaryTextColor())
         if (this.bookMark && this.bookMark.status !== BookMarkStatus.NONE) {
           Text(BookMarkStatus.label(this.bookMark.status))
             .fontSize(AppFontSize.CAPTION)
@@ -769,8 +874,6 @@ struct SearchBookDetailPage {
           .fontSize(AppFontSize.BODY_LARGE)
           .lineHeight(24)
           .fontColor(this.primaryTextColor())
-          .maxLines(3)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
           .wordBreak(WordBreak.BREAK_WORD)
           .width('100%')
           .onClick(() => {
@@ -793,11 +896,7 @@ struct SearchBookDetailPage {
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding(AppSpacing.LG)
-    .margin({ top: AppSpacing.LG, bottom: AppSpacing.SM })
-    .borderRadius(ThemeRuntime.largeRadius())
-    .backgroundColor(this.cardColor())
-    .border({ width: 0.5, color: ThemeRuntime.hairlineColor(this.appDarkMode) })
+    .padding({ top: AppSpacing.XL })
   }
 
   private markDateText(): string {
@@ -1782,6 +1881,7 @@ struct SearchBookDetailPage {
     this.bookInfoRenderVersion++;
     // 书籍信息补齐后作者可能才有，作品键随之变化。
     this.loadBookMark();
+    this.loadReadStats();
   }
 
   private onBookMarkRevisionChanged(): void {
