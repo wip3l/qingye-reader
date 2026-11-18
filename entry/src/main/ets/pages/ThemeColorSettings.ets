@@ -137,6 +137,8 @@ interface AssetSlotOptions {
   onTap: () => void;
   rotation?: number;
   icon?: boolean;
+  // 书架边框这类中心透明的 SVG：不套 fillColor，否则透明的中心也会被填成一整块。
+  untinted?: boolean;
   // 动图取景记下的显示区域，按区域显示缩略图。
   crop?: ThemeImageCrop | null;
 }
@@ -1407,6 +1409,9 @@ struct ThemeColorSettingsPage {
   }
 
   customPreviewTheme(): ThemePack {
+    // 来源指向方案自己的素材包时，图片取自包注册表（不是状态变量）；读 assetRevision 让素材增删后跟着刷新。
+    const revision = this.assetRevision;
+    if (revision < 0) return BuiltinThemeRegistry.findById(this.customBaseThemeId);
     return AppThemeSettingsStore.customTheme(
       this.settingsFromState(),
       this.selectedMode === 'dark'
@@ -4622,7 +4627,7 @@ struct ThemeColorSettingsPage {
       }
       Row({ space: AppSpacing.XL }) {
         this.assetSlot({ label: '书架边框', image: this.shelfFrameImage(), state: this.shelfPartState(false),
-          slotWidth: 50, slotHeight: 74, onTap: () => this.tapShelfPart(false) })
+          slotWidth: 50, slotHeight: 74, untinted: true, onTap: () => this.tapShelfPart(false) })
         this.assetSlot({ label: '分组文件夹', image: this.shelfFolderImage(),
           state: this.shelfPartState(true), slotWidth: 50, slotHeight: 74, onTap: () => this.tapShelfPart(true),
           crop: ThemeAssetRegistry.imageCrop(ThemeImageSlots.FOLDER, this.shelfFolderImage(),
@@ -5140,6 +5145,8 @@ struct ThemeColorSettingsPage {
   // ---- 素材槽 ----
 
   ownPack(): InstalledThemePack | null {
+    // 主题包记录不是状态变量：读 assetRevision，只移掉包里某一项（包和来源都没变）时格子也会重新取值。
+    if (this.assetRevision < 0) return null;
     return this.ownPackageId ? ThemePackRegistry.getByPackageId(this.ownPackageId) : null;
   }
 
@@ -5163,6 +5170,14 @@ struct ThemeColorSettingsPage {
             .width('100%')
             .height('100%')
             .opacity($$.state === 'own' ? 1 : 0.5)
+        } else if ($$.state !== 'empty' && ThemeColorSettingsPage.hasImage($$.image) && $$.untinted) {
+          Image($$.image)
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+            .rotate({ angle: $$.rotation || 0 })
+            .opacity($$.state === 'own' ? 1 : 0.5)
+            .draggable(false)
         } else if ($$.state !== 'empty' && ThemeColorSettingsPage.hasImage($$.image)) {
           Image($$.image)
             .width($$.icon ? '60%' : '100%')
