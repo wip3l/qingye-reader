@@ -78,7 +78,8 @@ try {
     }
   });
   vm.runInContext(['core/reader/ReaderV2Document.ets', 'core/reader/ReaderV2LayoutSnapshot.ets',
-    'core/reader/ReaderV2CommentCard.ets', 'core/reader/ReaderV2PageLayout.ets', 'core/reader/ReaderV2Paginator.ets']
+    'core/reader/ReaderV2CommentCard.ets', 'core/reader/ReaderV2PageLayout.ets', 'core/reader/ReaderV2ChapterHead.ets',
+    'core/reader/ReaderV2Paginator.ets']
     .map(file => compile(read(file))).join('\n') + `
     globalThis.cardApi = { ReaderV2DocumentParser, ReaderV2SpeechText, ReaderV2Paginator, ReaderV2LayoutSnapshot,
       ReaderV2LayoutInput };`, sandbox);
@@ -149,6 +150,31 @@ try {
   }
   assert.equal(onPage.actions.find(area => area.rect.top >= cards[0].paragraphY - 0.01).actionId,
     onPage.actions.find(area => area.actionId === document.actions[0].id).actionId);
+
+  // Cards keep the same visible gap to the glyph ink above and below, whatever the line and paragraph spacing;
+  // stacked cards get their own gap.
+  for (const [lineSpacing, paragraphSpacing] of [[0, 0], [4, 30], [40, 2]]) {
+    input.lineSpacingPx = lineSpacing; input.paragraphSpacingPx = paragraphSpacing;
+    const stacked = ['标题', `　　上一段。${bubble(5, '第一条热评')}`, hotCard('第二条热评'), '　　下一段。'].join('\n');
+    const page = Paginator.paginate(Parser.parse(stacked, 0, '标题'), Snapshot.create(input)).pages[0];
+    const pair = cardsOf(page);
+    assert.equal(pair.length, 2);
+    const before = page.fragments[page.fragments.indexOf(pair[0]) - 1];
+    const after = page.fragments[page.fragments.indexOf(pair[1]) + 1];
+    const inkBottom = before.paragraphY + 20 * 0.8 + 20 * 0.12;
+    const inkTop = after.paragraphY + 20 * 0.8 - 20 * 0.88;
+    const gapAbove = pair[0].paragraphY - inkBottom;
+    const gapBelow = inkTop - (pair[1].paragraphY + pair[1].paragraphHeight);
+    const label = `line ${lineSpacing} paragraph ${paragraphSpacing}`;
+    assert.ok(Math.abs(gapAbove - gapBelow) < 0.01, `symmetric card gaps, ${label}: ${gapAbove} / ${gapBelow}`);
+    assert.ok(gapAbove >= 16 * 0.9 - 0.01, `card gap floor, ${label}`);
+    assert.ok(pair[0].paragraphY >= before.paragraphY + before.paragraphHeight - 0.01, `no overlap, ${label}`);
+    assert.ok(Math.abs(pair[1].paragraphY - pair[0].paragraphY - pair[0].paragraphHeight - 16 * 0.5) < 0.01,
+      `stacked card gap, ${label}`);
+    assert.ok(pair.every(fragment => fragment.fixedGapBefore) && after.fixedGapBefore,
+      'page-bottom alignment leaves card gaps alone');
+  }
+  input.lineSpacingPx = 0; input.paragraphSpacingPx = 10;
 
   // Every style lays out; the tag style points its tail at the count bubble.
   for (const style of [2, 3]) {

@@ -46,10 +46,20 @@ export class ReaderV2CommentCardLayout {
   static readonly CHAPTER_TAG_TEXT: string = '本章说';
   static readonly CHAPTER_FALLBACK_TEXT: string = '查看本章评论';
 
-  /** 卡片与上方段落的间距。 */
-  static gapBefore(snapshot: ReaderV2LayoutSnapshot): number {
+  /**
+   * 卡片与上下正文字面之间的留白。上下取同一个值：行框里的行距、字体留白都不算在内，
+   * 所以不随行距、段距的设置变得一边宽一边窄。
+   */
+  static edgeGap(snapshot: ReaderV2LayoutSnapshot): number {
+    const style = snapshot.commentCardStyle;
+    return snapshot.commentCardFontSizePx * (style === ReaderV2CommentCardLayout.STYLE_QUOTE ? 0.7 :
+      (style === ReaderV2CommentCardLayout.STYLE_TAG ? 0.6 : 0.9));
+  }
+
+  /** 连着的两张卡片之间的间距。 */
+  static stackGap(snapshot: ReaderV2LayoutSnapshot): number {
     return snapshot.commentCardFontSizePx * (snapshot.commentCardStyle === ReaderV2CommentCardLayout.STYLE_QUOTE ?
-      0.3 : 0.4);
+      0.35 : 0.5);
   }
 
   /**

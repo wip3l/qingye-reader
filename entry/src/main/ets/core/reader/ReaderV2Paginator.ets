@@ -314,6 +314,11 @@ export class ReaderV2Paginator {
       // Paragraph hot-comment cards placed in the current page (or, while scrolling, the current screen height).
       let cardWindow = 0;
       let cardsInWindow = 0;
+      // The fragment just placed is a comment card; cardEdgeGap is the visible gap that card group got above it.
+      let previousWasCard = false;
+      let cardEdgeGap = 0;
+      // Page y of the glyph ink bottom of the last text line placed, NaN when the previous fragment is not text.
+      let lastInkBottom = Number.NaN;
       const cardsEnabled = session.snapshot.commentsEnabled && session.snapshot.commentCardStyle > 0;
       const chapterCardsEnabled = session.snapshot.commentsEnabled && session.snapshot.commentChapterCard;
 
@@ -338,8 +343,19 @@ export class ReaderV2Paginator {
             session.measuredBlock = null;
             continue;
           }
-          const gap = !hasContent ? 0 : (pendingCard ? ReaderV2CommentCardLayout.gapBefore(session.snapshot) :
-            ReaderV2Paginator.blockSpacingBefore(session, hasContent, previousWasImage));
+          // Cards keep the same visible distance to the text above and below, measured from the glyph ink rather
+          // than the line box (whose trailing line spacing and font padding differ between the two sides).
+          let gap = 0;
+          if (previousWasCard) {
+            gap = ReaderV2CommentCardLayout.stackGap(session.snapshot);
+          } else if (hasContent) {
+            const edge = ReaderV2CommentCardLayout.edgeGap(session.snapshot);
+            const belowInk = Number.isNaN(lastInkBottom) ? 0 : Math.max(0, y - lastInkBottom);
+            gap = Math.max(0, edge - belowInk);
+            cardEdgeGap = belowInk + gap;
+          } else {
+            cardEdgeGap = ReaderV2CommentCardLayout.edgeGap(session.snapshot);
+          }
           const anchor = pendingCard ? ReaderV2Paginator.bubbleCenterX(page, action.id) - column.left : -1;
           const card = ReaderV2CommentCardLayout.build(action, session.snapshot, session.width,
             anchor >= 0 ? anchor : -1);
@@ -353,7 +369,7 @@ export class ReaderV2Paginator {
           cardFragment.blockIndex = session.blockIndex;
           cardFragment.card = card;
           // Keep a trailing card attached to its paragraph when the page bottom is aligned.
-          cardFragment.fixedGapBefore = pendingCard && hasContent;
+          cardFragment.fixedGapBefore = hasContent;
           cardFragment.paragraphX = column.left;
           cardFragment.paragraphY = top;
           cardFragment.paragraphHeight = card.height;
@@ -374,6 +390,8 @@ export class ReaderV2Paginator {
           hasContent = true;
           topInkGuardApplied = true;
           previousWasImage = false;
+          previousWasCard = true;
+          lastInkBottom = Number.NaN;
           y = top + card.height;
           session.blockIndex++;
           session.lineIndex = 0;
@@ -403,6 +421,8 @@ export class ReaderV2Paginator {
               hasContent = true;
               topInkGuardApplied = true;
               previousWasImage = false;
+              previousWasCard = false;
+              lastInkBottom = Number.NaN;
               continue;
             }
           }
@@ -466,6 +486,8 @@ export class ReaderV2Paginator {
           page.displayEnd = imageFragment.displayEnd;
           hasContent = true;
           previousWasImage = true;
+          previousWasCard = false;
+          lastInkBottom = Number.NaN;
           y = imageRect.bottom;
           session.blockIndex++;
           session.lineIndex = 0;
@@ -497,6 +519,14 @@ export class ReaderV2Paginator {
           spacing = Math.max(0, dropLeadTop + drop.lines * drop.pitchPx - y);
         }
         const firstLine = current.line(session.lineIndex);
+        const followsCard = previousWasCard && startsNewBlock && hasContent && !current.block.title;
+        if (followsCard) {
+          // Mirror the gap the card group has above it.
+          const inkTop = firstLine.baseline - firstLine.topHeight -
+            ReaderV2Paginator.blockFontSize(current.block, session.snapshot) *
+            ReaderV2Paginator.INK_ABOVE_BASELINE;
+          spacing = Math.max(0, cardEdgeGap - inkTop);
+        }
         if (!hasContent && !topInkGuardApplied) {
           // A zero user margin places the first logical line box on the page boundary. Some fonts (notably the
           // serif family used by several themes) paint one or two physical pixels above that logical box. The
@@ -552,7 +582,7 @@ export class ReaderV2Paginator {
         const previous = session.blockIndex > 0 ? session.document.blocks[session.blockIndex - 1] : null;
         fragment.fixedGapBefore = startsNewBlock && hasContent &&
           ((current.block.title && session.titleMarginTopPx > 0) ||
-            (!current.block.title && !!previous && previous.title && session.titleMarginBottomPx > 0));
+            (!current.block.title && !!previous && previous.title && session.titleMarginBottomPx > 0)) || followsCard;
         if (dropLead && drop) {
           fragment.dropCapTopPx = drop.boxTopPx;
           fragment.dropCapBoxPx = drop.boxPx;
@@ -569,6 +599,10 @@ export class ReaderV2Paginator {
         page.displayEnd = fragment.displayEnd;
         hasContent = true;
         previousWasImage = false;
+        previousWasCard = false;
+        lastInkBottom = y + current.line(fragmentLastLine).baseline - paragraphLineTop +
+          ReaderV2Paginator.blockFontSize(current.block, session.snapshot) *
+          ReaderV2Paginator.INK_BELOW_BASELINE;
         y += fragmentBottom - paragraphLineTop;
 
         if (session.lineIndex >= current.lineCount) {
@@ -580,7 +614,10 @@ export class ReaderV2Paginator {
               continue;
             }
             // A paragraph shorter than the drop cap: the next block starts below the cap.
-            if (!Number.isNaN(dropLeadTop)) y = Math.max(y, dropLeadTop + drop.boxTopPx + drop.boxPx);
+            if (!Number.isNaN(dropLeadTop) && dropLeadTop + drop.boxTopPx + drop.boxPx > y) {
+              y = dropLeadTop + drop.boxTopPx + drop.boxPx;
+              lastInkBottom = Number.NaN;
+            }
           }
           session.dropPart = 0;
           if (cardsEnabled && current.block.trailingCard) {
@@ -1057,6 +1094,14 @@ export class ReaderV2Paginator {
   private static bodyFontWeight(weight: number): graphicsText.FontWeight {
     // Static faces use the nearest SDK weight; the wght axis below preserves precise variable-font values.
     return ReaderV2Paginator.FONT_WEIGHTS[Math.max(0, Math.min(8, Math.round(weight / 100) - 1))];
+  }
+
+  /** 正文字面在基线上下各占字号的比例（汉字字身框）；热评卡片上下的留白按字面量，不按行框量。 */
+  private static readonly INK_ABOVE_BASELINE: number = 0.88;
+  private static readonly INK_BELOW_BASELINE: number = 0.12;
+
+  private static blockFontSize(block: ReaderV2Block, snapshot: ReaderV2LayoutSnapshot): number {
+    return ReaderV2Paginator.baseTextStyle(block, snapshot).fontSize ?? snapshot.fontSizePx;
   }
 
   private static baseTextStyle(block: ReaderV2Block, snapshot: ReaderV2LayoutSnapshot): graphicsText.TextStyle {
