@@ -22,6 +22,7 @@ export class LocalChapterContentLoader {
     if (segments.length === 0) {
       const path = EpubHtmlConverter.normalizePath(EpubHtmlConverter.withoutFragment((chapter.resourceUrl || '').trim()));
       if (!path) return '';
+      if (path.startsWith(`${extractRoot}/`) && this.isDirectory(path)) return this.loadImageDirectory(path);
       const whole = new EpubChapterSegment();
       whole.path = path;
       segments = [whole];
@@ -47,6 +48,32 @@ export class LocalChapterContentLoader {
       content = content ? `${content}\n\n${piece}` : piece;
     }
     return content;
+  }
+
+  /**
+   * CBZ 的章节是一个图片目录（见 LocalArchiveImport.extractComic），图片按序号命名，
+   * 按文件名排序即阅读顺序；拼接方式与导入时一致。
+   */
+  private static loadImageDirectory(dir: string): string {
+    let names: string[] = [];
+    try {
+      names = fs.listFileSync(dir);
+    } catch (e) {
+      console.warn('[LocalChapterContentLoader] list comic dir failed:', dir, e);
+      return '';
+    }
+    return names.filter((name: string): boolean => EpubHtmlConverter.isImagePath(name))
+      .sort()
+      .map((name: string): string => ReaderImageMarker.create(`${dir}/${name}`))
+      .join('\n\n');
+  }
+
+  private static isDirectory(path: string): boolean {
+    try {
+      return fs.statSync(path).isDirectory();
+    } catch (_) {
+      return false;
+    }
   }
 
   /** 按文档声明的编码读取 XHTML；未声明且不是合法 UTF-8 时按 GB18030 处理。 */

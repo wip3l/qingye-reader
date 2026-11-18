@@ -34,7 +34,27 @@ export class ZipSingleEntryParts {
   trailer: Uint8Array = new Uint8Array(0);
 }
 
+/** 纯图片包（CBZ）里的一章：同一个文件夹里的图片，按文件名自然顺序。 */
+export class ZipComicChapter {
+  /** 文件夹相对所有图片公共目录的路径，' / ' 连接；图片都在一个文件夹时为空。 */
+  title: string = '';
+  entries: ZipArchiveEntry[] = [];
+}
+
+export class ZipComicLayout {
+  chapters: ZipComicChapter[] = [];
+  /** 封面图：名叫 cover / 封面 / folder 的图片，没有就取第一章第一张。 */
+  cover: ZipArchiveEntry | null = null;
+}
+
 export type ZipNameDecoder = (bytes: Uint8Array, encoding: string) => string;
+
+const COMIC_IMAGE_FORMATS: string[] = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'avif'];
+const COMIC_COVER_STEMS: string[] = ['cover', '封面', 'folder'];
+const CHINESE_DIGITS: Record<string, number> = {
+  '〇': 0, '零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9
+};
+const CHINESE_UNITS: Record<string, number> = { '十': 10, '百': 100, '千': 1000 };
 
 const SIG_LOCAL = 0x04034b50;
 const SIG_CENTRAL = 0x02014b50;
@@ -133,6 +153,123 @@ export class ZipArchiveIndex {
       if (entry.name.startsWith('__MACOSX/') || ZipArchiveIndex.baseName(entry.name).startsWith('._')) return false;
       return formats.includes(ZipArchiveIndex.extensionOf(entry.name));
     });
+  }
+
+  /** 漫画图片条目：跳过目录、__MACOSX 和以点开头的隐藏文件或文件夹。 */
+  static imageEntries(entries: ZipArchiveEntry[]): ZipArchiveEntry[] {
+    return entries.filter((entry: ZipArchiveEntry): boolean => {
+      if (!entry.name || entry.name.endsWith('/') || entry.name.startsWith('__MACOSX/')) return false;
+      if (entry.name.split('/').some((part: string): boolean => part.startsWith('.'))) return false;
+      return COMIC_IMAGE_FORMATS.includes(ZipArchiveIndex.extensionOf(entry.name));
+    });
+  }
+
+  /**
+   * 纯图片包分章：一个文件夹一章，章和图都按自然顺序（2 在 10 前、第二话在第十话前）。
+   * 所有图片在同一个文件夹时整本一章；公共目录下直接放的图片（多是封面、扉页）排在最前，叫“卷首”。
+   */
+  static comicLayout(entries: ZipArchiveEntry[]): ZipComicLayout {
+    const images = ZipArchiveIndex.imageEntries(entries);
+    const layout = new ZipComicLayout();
+    if (images.length === 0) return layout;
+    const dirOf = (name: string): string => {
+      const index = name.lastIndexOf('/');
+      return index >= 0 ? name.substring(0, index) : '';
+    };
+    const groups = new Map<string, ZipArchiveEntry[]>();
+    for (const entry of images) {
+      const dir = dirOf(entry.name);
+      const group = groups.get(dir);
+      if (group) group.push(entry);
+      else groups.set(dir, [entry]);
+    }
+    const dirs = Array.from(groups.keys());
+    let common = dirs[0].split('/').filter((part: string): boolean => !!part);
+    for (const dir of dirs) {
+      const parts = dir.split('/').filter((part: string): boolean => !!part);
+      let same = 0;
+      while (same < common.length && same < parts.length && common[same] === parts[same]) same++;
+      common = common.slice(0, same);
+    }
+    const relative = (dir: string): string =>
+      dir.split('/').filter((part: string): boolean => !!part).slice(common.length).join(' / ');
+    dirs.sort((a: string, b: string): number => {
+      const x = relative(a);
+      const y = relative(b);
+      if (!x || !y) return x ? 1 : y ? -1 : 0;
+      return ZipArchiveIndex.naturalCompare(x, y);
+    });
+    for (const dir of dirs) {
+      const chapter = new ZipComicChapter();
+      chapter.title = dirs.length > 1 ? (relative(dir) || '卷首') : '';
+      chapter.entries = (groups.get(dir) as ZipArchiveEntry[]).sort((a: ZipArchiveEntry, b: ZipArchiveEntry): number =>
+        ZipArchiveIndex.naturalCompare(ZipArchiveIndex.baseName(a.name), ZipArchiveIndex.baseName(b.name)));
+      layout.chapters.push(chapter);
+    }
+    let coverDepth = Number.MAX_SAFE_INTEGER;
+    for (const chapter of layout.chapters) {
+      for (const entry of chapter.entries) {
+        const base = ZipArchiveIndex.baseName(entry.name);
+        const stem = base.substring(0, base.lastIndexOf('.')).toLowerCase();
+        const depth = entry.name.split('/').length;
+        if (COMIC_COVER_STEMS.includes(stem) && depth < coverDepth) {
+          layout.cover = entry;
+          coverDepth = depth;
+        }
+      }
+    }
+    if (!layout.cover) layout.cover = layout.chapters[0].entries[0];
+    return layout;
+  }
+
+  /** 自然顺序比较：数字段按数值比，“第十二话”这类中文数字也换成数值再比，其余按小写字符比。 */
+  static naturalCompare(a: string, b: string): number {
+    const x = ZipArchiveIndex.naturalChunks(a);
+    const y = ZipArchiveIndex.naturalChunks(b);
+    for (let i = 0; i < x.length && i < y.length; i++) {
+      const left = x[i];
+      const right = y[i];
+      const leftNumber = /^\d/.test(left);
+      const rightNumber = /^\d/.test(right);
+      if (leftNumber && rightNumber) {
+        const diff = Number(left) - Number(right);
+        if (diff !== 0) return diff;
+        if (left.length !== right.length) return left.length - right.length;
+        continue;
+      }
+      if (left !== right) return left < right ? -1 : 1;
+    }
+    if (x.length !== y.length) return x.length - y.length;
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
+
+  private static naturalChunks(value: string): string[] {
+    const toNumber = (match: string, digits: string): string => {
+      const number = ZipArchiveIndex.chineseNumber(digits);
+      return number < 0 ? match : match.replace(digits, `${number}`);
+    };
+    const normalized = value.toLowerCase()
+      .replace(/第([〇零一二两三四五六七八九十百千]+)/g, toNumber)
+      .replace(/([〇零一二两三四五六七八九十百千]+)(?=[话話章卷集回部篇册冊期])/g, toNumber);
+    return normalized.match(/\d+|\D+/g) || [];
+  }
+
+  /** 一万以内的中文数字；认不出时返回 -1。 */
+  private static chineseNumber(text: string): number {
+    let total = 0;
+    let digit = -1;
+    for (const char of text) {
+      if (char in CHINESE_DIGITS) {
+        digit = digit > 0 && CHINESE_DIGITS[char] === 0 ? digit : CHINESE_DIGITS[char];
+        continue;
+      }
+      const unit = CHINESE_UNITS[char];
+      if (!unit) return -1;
+      total += (digit < 0 ? 1 : digit) * unit;
+      digit = -1;
+    }
+    if (digit > 0) total += digit;
+    return total;
   }
 
   /** 不能导入的原因；能导入时为空串。 */

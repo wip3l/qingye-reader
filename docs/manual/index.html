@@ -203,7 +203,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
       <h2>快速上手</h2>
       <p>第一次打开时书架是空的。按下面的顺序走一遍，就能读到第一本书。</p>
       <ol class="steps">
-        <li><div><strong>导入本地书</strong><span class="d">打开 <span class="p">我的 › 书籍导入</span>，点“本地导入”，在系统文件选择器里选 TXT、EPUB、MOBI、PDF 或装着它们的 ZIP，一次可以选多个。</span></div></li>
+        <li><div><strong>导入本地书</strong><span class="d">打开 <span class="p">我的 › 书籍导入</span>，点“本地导入”，在系统文件选择器里选 TXT、EPUB、MOBI、PDF、CBZ 漫画或装着它们的 ZIP，一次可以选多个。</span></div></li>
         <li><div><strong>在书架找到它</strong><span class="d">导入完成后书会出现在书架上。书多了可以建分组、加标签，或用筛选和“搜索书架”快速找到。</span></div></li>
         <li><div><strong>开始阅读</strong><span class="d">点书籍封面打开。阅读时点屏幕中央呼出菜单，可以看目录、加书签、朗读和切换日夜模式。</span></div></li>
         <li><div><strong>调成顺眼的样子</strong><span class="d">菜单里点“Aa”调字号、行距、翻页方式、背景和字体；TXT 章节分得不对时在“更多操作 › 目录规则”里换一种分章方式。</span></div></li>
@@ -268,7 +268,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
         </ol>
         <ul>
           <li>文件会复制到应用内部，之后移动或删除原文件都不影响阅读。</li>
-          <li>也可以直接选 ZIP 压缩包，包里的 TXT、EPUB、MOBI、PDF 会逐本导入，其他文件忽略。加密的压缩包和 RAR、7Z 不支持。再导入同一个包会更新已有的书，不会重复添加。</li>
+          <li>也可以直接选 ZIP 压缩包，包里的 TXT、EPUB、MOBI、PDF 会逐本导入，其他文件忽略。包里只有图片时整包当一本漫画导入：一个文件夹算一章，按文件名顺序排列，名为 cover 或“封面”的图片当封面，没有就用第一张。加密的压缩包和 RAR、7Z 不支持。再导入同一个包会更新已有的书，不会重复添加。</li>
           <li>应用只读取你选中的文件，不会扫描公共目录。</li>
           <li>想把文件拿回来，在书架长按书籍选“保存源文件”。</li>
         </ul>
@@ -1226,7 +1226,7 @@ footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--lin
     <!-- ───────────── 常见问题 ───────────── -->
     <section id="faq">
       <h2>常见问题</h2>
-      <details><summary>导入失败或提示格式不支持</summary><p>支持 TXT、EPUB、未加密的 MOBI6 和 PDF，以及装着这些文件的 ZIP。带 DRM 的电子书、需要打开密码的 PDF、新版 Kindle 格式（AZW3/KF8）、加密的压缩包以及 RAR、7Z 都打不开。可以先在电脑上转成 EPUB 再导入。</p></details>
+      <details><summary>导入失败或提示格式不支持</summary><p>支持 TXT、EPUB、未加密的 MOBI6、PDF 和 CBZ 漫画，以及装着这些文件或纯图片的 ZIP。带 DRM 的电子书、需要打开密码的 PDF、新版 Kindle 格式（AZW3/KF8）、加密的压缩包以及 RAR、7Z 都打不开。可以先在电脑上转成 EPUB 再导入。</p></details>
       <details><summary>TXT 打开是乱码</summary><p>阅读菜单“更多操作 › 字符编码”，把自动识别改成对应的编码。中文旧文件通常选简体中文或繁体中文。</p></details>
       <details><summary>TXT 章节分得不对</summary><p>阅读菜单“更多操作 › 目录规则”，或目录页的尺子按钮，换一种规则，换之前可以预览分章结果。都不合适时，在 <span class="p">我的 › 阅读与收听 › 小说 › TXT 目录规则</span> 里写一条自己的规则；书里根本没有章节标题，就选按字数分章。</p></details>
       <details><summary>导入后把原文件删了还能读吗</summary><p>能。导入时文件已经复制进应用，原文件移动或删除都不影响。想把文件拿回来，在书架长按书籍选“保存源文件”。</p></details>
