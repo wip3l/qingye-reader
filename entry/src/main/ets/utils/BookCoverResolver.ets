@@ -20,7 +20,7 @@ export class BookCoverResolver {
   static first(book: Book | null, darkMode: boolean = AppStorage.get<boolean>('appDarkMode') || false,
     settings: CoverGallerySnapshot = CoverGalleryStore.snapshotFromStorage()): ResourceStr {
     if (!book) return '';
-    if (ThemeBookCoverSettings.enabled(darkMode, AppStorage.get<boolean>('appThemeBookCoverEnabled') || false)) {
+    if (ThemeBookCoverSettings.enabledFor(book, darkMode, AppStorage.get<boolean>('appThemeBookCoverEnabled') || false)) {
       return ThemeBookCoverSettings.covers(book, darkMode, settings.coverMode)[0] || '';
     }
     return BookCoverResolver.sourceCovers(book, darkMode, settings)[0] || '';

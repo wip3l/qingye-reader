@@ -1,6 +1,7 @@
 import { Book } from '@legado/sourceengine';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
+import { BookDisplayHelper } from './BookDisplayHelper';
 import { CoverGallerySettings } from './CoverGallerySettings';
 import { ShelfCoverSlots } from './ShelfCoverSlots';
 
@@ -9,6 +10,11 @@ export class ThemeBookCoverSettings {
   static enabled(darkMode: boolean, enabled: boolean): boolean {
     return enabled &&
       ThemeAssetRegistry.themeBookCovers(ThemeRuntime.bookTokens(darkMode).coverAssetId, darkMode).length > 0;
+  }
+
+  /** 这本书是否显示主题封面：单独设置了封面的书不被主题封面盖掉。 */
+  static enabledFor(book: Book | null | undefined, darkMode: boolean, enabled: boolean): boolean {
+    return !BookDisplayHelper.hasCustomCover(book) && ThemeBookCoverSettings.enabled(darkMode, enabled);
   }
 
   /** coverMode 传组件里的状态变量才会随设置刷新；不传时读当前存储。 */

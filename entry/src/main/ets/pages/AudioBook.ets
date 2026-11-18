@@ -1446,7 +1446,7 @@ struct AudioBookPage {
   }
 
   shouldUseThemeBookCover(): boolean {
-    return ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeBookCoverEnabled);
+    return ThemeBookCoverSettings.enabledFor(this.book, this.appDarkMode, this.themeBookCoverEnabled);
   }
 
   panelCover(): ResourceStr {

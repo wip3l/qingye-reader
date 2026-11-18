@@ -171,6 +171,11 @@ export class BookDisplayHelper {
     return CoverUrlNormalizer.normalize(book.coverUrl);
   }
 
+  /** 书有单独设置的封面（网络、本地上传或从图集选的）：它比图集、主题封面都优先。 */
+  static hasCustomCover(book: Book | null | undefined): boolean {
+    return !!book && BookDisplayHelper.decodeCoverList(book.customCoverUrl).length > 0;
+  }
+
   static getCoverList(book: Book): string[] {
     const customCovers = BookDisplayHelper.decodeCoverList(book.customCoverUrl);
     if (customCovers.length > 0) {

@@ -3,6 +3,7 @@ import fs from '@ohos.file.fs';
 import { Book } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { BookCoverCache } from './BookCoverCache';
+import { BookDisplayHelper } from './BookDisplayHelper';
 import { BookshelfSortHelper } from './BookshelfSortHelper';
 import { BookCoverResolver } from './BookCoverResolver';
 import { ThemeBookCoverSettings } from './ThemeBookCoverSettings';
@@ -262,7 +263,7 @@ export class RecentReadCardDataProvider {
     // 卡片扩展可在主页面尚未初始化时运行，主题从持久化设置读取。
     try {
       const themeSettings = await AppThemeSettingsStore.load(context);
-      if (themeSettings.themeBookCoverEnabled) {
+      if (themeSettings.themeBookCoverEnabled && !BookDisplayHelper.hasCustomCover(book)) {
         const theme = themeSettings.themeId === ThemeIds.CUSTOM ?
           AppThemeSettingsStore.customTheme(themeSettings, darkMode) : BuiltinThemeRegistry.findById(themeSettings.themeId);
         const themeCovers = ThemeBookCoverSettings.coversForAsset(book, theme.book.coverAssetId, darkMode,

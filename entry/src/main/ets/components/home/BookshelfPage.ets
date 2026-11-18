@@ -40,7 +40,7 @@ import { BookDisplayHelper } from '../../utils/BookDisplayHelper';
 import { BookTileLayout } from '../../utils/BookTileLayout';
 import { AnimatedImagePolicy } from '../../utils/AnimatedImagePolicy';
 import { BookCoverCache } from '../../utils/BookCoverCache';
-import { CoverGallerySettings } from '../../utils/CoverGallerySettings';
+import { CoverAlbum, CoverGallerySettings } from '../../utils/CoverGallerySettings';
 import { BookshelfDisplaySettingsStore } from '../../utils/BookshelfDisplaySettingsStore';
 import { BookshelfStateStore } from '../../utils/BookshelfStateStore';
 import { SearchExplorePendingBook } from '../../utils/SearchExplorePendingBook';
@@ -68,7 +68,8 @@ import { BookChangeSourceDialog } from '../../components/BookChangeSourceDialog'
 import { SystemDialogSession } from '../../utils/SystemDialogSession';
 import { ReaderOpenTrace } from '../../utils/ReaderOpenTrace';
 import { FullTextCacheCancelCoordinator, FullTextCacheCancelSignal } from '../../utils/FullTextCacheCancelCoordinator';
-import { ShelfCategoryPage, ShelfTileSortEntry, ShelfBookDataSource, ShelfTileEntryDataSource } from '../../core/book/ShelfDataSources';
+import { ShelfCategoryPage, ShelfTileSortEntry, ShelfBookDataSource, ShelfTileEntryDataSource,
+  GalleryCoverDataSource } from '../../core/book/ShelfDataSources';
 import { PrivateShelfStore } from '../../utils/PrivateShelfStore';
 import { BiometricAuth, BiometricAuthOutcome } from '../../utils/BiometricAuth';
 import { RecentReadCardUpdater } from '../../utils/RecentReadCardUpdater';
@@ -468,6 +469,15 @@ export struct BookshelfPage {
   @State networkCoverStatus: string = '';
   @State showCustomNetworkCoverDialog: boolean = false;
   @State customNetworkCoverUrl: string = '';
+  @State showGalleryCoverSheet: boolean = false;
+  @State galleryCoverTargetBook: Book | null = null;
+  @State galleryCoverAlbums: CoverAlbum[] = [];
+  @State galleryCoverAlbumId: string = '';
+  /** 这本书当前显示的图集图片：直接用图集时是图片地址，从图集复制过的单独封面记来源地址的哈希。 */
+  @State galleryCoverCurrentUri: string = '';
+  @State galleryCoverCurrentHash: string = '';
+  private galleryCoverSource: GalleryCoverDataSource = new GalleryCoverDataSource();
+  private galleryCoverApplying: boolean = false;
   @State pendingDeleteBook: Book | null = null;
   @State pendingActionBook: Book | null = null;
   @State @Watch('syncChangeSourceDialog') showShelfChangeSourceDialog: boolean = false;
@@ -1403,6 +1413,116 @@ export struct BookshelfPage {
     return `${getContext(this).filesDir}/book_covers`;
   }
 
+  /** 从图集选择：列出图集管理里导入的图片，默认打开当前配色在用的图集。 */
+  openGalleryCoverPicker(book: Book): void {
+    const albums = CoverGallerySettings.parseAlbums(this.bookshelfCoverAlbums);
+    const activeId = CoverGallerySettings.selectedAlbumId(this.appDarkMode, this.bookshelfLightCoverAlbumId,
+      this.bookshelfDarkCoverAlbumId);
+    const active = CoverGallerySettings.getAlbum(albums, activeId);
+    const firstFilled = albums.find((album: CoverAlbum): boolean => album.covers.length > 0);
+    const initial = active && active.covers.length > 0 ? active : (firstFilled || albums[0]);
+    this.galleryCoverTargetBook = book;
+    this.galleryCoverAlbums = albums;
+    this.galleryCoverCurrentHash = this.galleryCoverHashOfCustom(book.customCoverUrl || '');
+    const shown = BookDisplayHelper.hasCustomCover(book) ? [] : this.rawShelfCoverList(book);
+    this.galleryCoverCurrentUri = shown.length === 1 ? shown[0] : '';
+    this.selectGalleryCoverAlbum(initial ? initial.id : '');
+    this.showGalleryCoverSheet = true;
+  }
+
+  selectGalleryCoverAlbum(albumId: string): void {
+    this.galleryCoverAlbumId = albumId;
+    const album = CoverGallerySettings.getAlbum(this.galleryCoverAlbums, albumId);
+    this.galleryCoverSource.replace(album ? album.covers : []);
+  }
+
+  closeGalleryCoverPicker(): void {
+    this.showGalleryCoverSheet = false;
+    this.galleryCoverTargetBook = null;
+    this.galleryCoverAlbums = [];
+    this.galleryCoverAlbumId = '';
+    this.galleryCoverCurrentUri = '';
+    this.galleryCoverCurrentHash = '';
+    this.galleryCoverSource.replace([]);
+  }
+
+  galleryCoverSelectedCount(): number {
+    const album = CoverGallerySettings.getAlbum(this.galleryCoverAlbums, this.galleryCoverAlbumId);
+    return album ? album.covers.length : 0;
+  }
+
+  galleryCoverHasImages(): boolean {
+    return this.galleryCoverAlbums.some((album: CoverAlbum): boolean => album.covers.length > 0);
+  }
+
+  isGalleryCoverCurrent(uri: string): boolean {
+    if (this.galleryCoverCurrentHash) return this.galleryCoverHash(uri) === this.galleryCoverCurrentHash;
+    return !!this.galleryCoverCurrentUri && uri === this.galleryCoverCurrentUri;
+  }
+
+  /** 复制进 book_covers 的图集图片文件名带来源地址的哈希（album_<哈希>_<时间>），用来在弹层里标出“当前”。 */
+  galleryCoverHash(uri: string): string {
+    let hash = 17;
+    for (let index = 0; index < uri.length; index++) hash = (hash * 31 + uri.charCodeAt(index)) & 0x7FFFFFFF;
+    return hash.toString(36);
+  }
+
+  galleryCoverHashOfCustom(customCoverUrl: string): string {
+    const match = /\/album_([0-9a-z]+)_\d+\.[a-z]+$/i.exec(customCoverUrl);
+    return match ? match[1] : '';
+  }
+
+  openCoverGalleryManager(): void {
+    this.closeGalleryCoverPicker();
+    router.pushUrl({ url: 'pages/CoverGalleryManager' });
+  }
+
+  /** 选中的图集图片复制一份作单独封面：之后删图集或图集里的图，这本书的封面不受影响。 */
+  async applyGalleryCover(source: string): Promise<void> {
+    const target = this.galleryCoverTargetBook;
+    if (!target || !source || this.galleryCoverApplying) return;
+    this.galleryCoverApplying = true;
+    try {
+      const oversize = await AnimatedImagePolicy.oversizeAnimatedMessage(source);
+      if (oversize) {
+        HdsFeedback.showToast(oversize);
+        return;
+      }
+      const db = AppDatabase.getInstance();
+      const current = await db.getBook(target.bookUrl);
+      if (!current) {
+        HdsFeedback.showToast('书籍已不在书架中');
+        this.closeGalleryCoverPicker();
+        return;
+      }
+      const dir = this.localBookCoverDir();
+      if (!fs.accessSync(dir)) fs.mkdirSync(dir, true);
+      const match = /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.exec(decodeURIComponent(source));
+      const ext = match ? `.${match[1].toLowerCase()}` : '.jpg';
+      const destUri = fileUri.getUriFromPath(`${dir}/album_${this.galleryCoverHash(source)}_${Date.now()}${ext}`);
+      try {
+        await fs.copy(source.startsWith('/') ? fileUri.getUriFromPath(source) : source, destUri);
+      } catch (e) {
+        console.warn('复制图集封面失败:', e);
+        HdsFeedback.showToast('这张图片已不存在，请在图集管理里重新导入');
+        return;
+      }
+      const previousCover = current.customCoverUrl;
+      current.customCoverUrl = destUri;
+      await db.updateBook(current);
+      this.removeLocalBookCoverFile(previousCover, destUri);
+      this.applyShelfBookCoverState(current);
+      this.closeGalleryCoverPicker();
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      HdsFeedback.showToast('已使用图集封面');
+    } catch (e) {
+      console.error('使用图集封面失败:', e);
+      HdsFeedback.showToast('使用图集封面失败');
+    } finally {
+      this.galleryCoverApplying = false;
+    }
+  }
+
   /** 换掉或恢复封面后，删掉不再使用的本地上传封面文件。 */
   removeLocalBookCoverFile(previous: string, next: string): void {
     const prefix = `${fileUri.getUriFromPath(this.localBookCoverDir())}/`;
@@ -1779,6 +1899,13 @@ export struct BookshelfPage {
         .position({ x: 0, y: 0 })
         .hitTestBehavior(HitTestMode.None)
         .bindSheet(this.showBookGroupPicker, this.bookGroupPickerDialog(), this.bookGroupPickerSheetOptions())
+
+      Column()
+        .width(1)
+        .height(1)
+        .position({ x: 0, y: 0 })
+        .hitTestBehavior(HitTestMode.None)
+        .bindSheet(this.showGalleryCoverSheet, this.galleryCoverSheet(), this.galleryCoverSheetOptions())
 
       if (this.isBookMultiSelect) {
         this.bookMultiSelectBar()
@@ -2667,6 +2794,13 @@ export struct BookshelfPage {
                   }, 0);
                 }
               })
+              this.contextActionItem($r('sys.symbol.square_grid_2x2'), '从图集选择', this.primaryTextColor(), () => {
+                if (this.pendingActionBook) {
+                  const book = this.pendingActionBook;
+                  this.closeBookActions();
+                  this.openGalleryCoverPicker(book);
+                }
+              })
             }
             .width('100%')
             .padding({ left: 16 })
@@ -2900,6 +3034,150 @@ export struct BookshelfPage {
       onWillDismiss: (): void => this.closeNetworkCoverPicker(),
       onWillSpringBackWhenDismiss: (): void => {}
     }, this.appDarkMode, this.accentColor());
+  }
+
+  galleryCoverSheetOptions(): SheetOptions {
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, {
+      detents: ['72%', SheetSize.LARGE],
+      dragBar: true,
+      showClose: false,
+      scrollSizeMode: ScrollSizeMode.CONTINUOUS,
+      onWillDismiss: (): void => this.closeGalleryCoverPicker(),
+      onWillSpringBackWhenDismiss: (): void => {}
+    }, this.appDarkMode, this.accentColor());
+  }
+
+  /** 从图集选择：顶部图集胶囊、下面封面网格，点一张即用上；当前显示的那张描边标“当前”。 */
+  @Builder
+  galleryCoverSheet() {
+    Column() {
+      Row() {
+        Column() {
+          Text('从图集选择')
+            .fontSize(AppFontSize.SUBTITLE)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.primaryTextColor())
+          Text(`《${this.galleryCoverTargetBook?.name || ''}》`)
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.secondaryTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ top: 3 })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Button('取消')
+          .height(36)
+          .backgroundColor(this.inputColor())
+          .fontColor(this.primaryTextColor())
+          .onClick(() => this.closeGalleryCoverPicker())
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      if (!this.galleryCoverHasImages()) {
+        Column({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.square_grid_2x2'))
+            .fontSize(42)
+            .fontColor([this.subTextColor()])
+          Text('还没有图集图片')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.secondaryTextColor())
+          Text('在“书架设置 › 图集管理”里新建图集并导入图片后，就能在这里给单本书选封面。')
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor(this.subTextColor())
+            .textAlign(TextAlign.Center)
+          Button('去图集管理')
+            .height(36)
+            .fontSize(AppFontSize.CAPTION)
+            .backgroundColor(this.buttonColor())
+            .fontColor(ThemeRuntime.onAccentColor())
+            .margin({ top: AppSpacing.SM })
+            .onClick(() => this.openCoverGalleryManager())
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+        .justifyContent(FlexAlign.Center)
+      } else {
+        Scroll() {
+          Row({ space: AppSpacing.SM }) {
+            ForEach(this.galleryCoverAlbums, (album: CoverAlbum) => {
+              Row({ space: 4 }) {
+                Text(album.name)
+                  .fontSize(AppFontSize.CAPTION)
+                  .fontColor(album.id === this.galleryCoverAlbumId ? ThemeRuntime.onAccentColor() : this.primaryTextColor())
+                Text(`${album.covers.length}`)
+                  .fontSize(AppFontSize.MICRO)
+                  .fontColor(album.id === this.galleryCoverAlbumId ? ThemeRuntime.onAccentColor() : this.subTextColor())
+                  .opacity(album.id === this.galleryCoverAlbumId ? 0.8 : 1)
+              }
+              .height(30)
+              .padding({ left: 12, right: 12 })
+              .borderRadius(15)
+              .backgroundColor(album.id === this.galleryCoverAlbumId ? this.buttonColor() : this.inputColor())
+              .onClick(() => this.selectGalleryCoverAlbum(album.id))
+            }, (album: CoverAlbum) => album.id)
+          }
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .width('100%')
+        .margin({ top: AppSpacing.LG, bottom: 10 })
+
+        if (this.galleryCoverSelectedCount() === 0) {
+          Column() {
+            Text('这个图集还没有图片')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.secondaryTextColor())
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+        } else {
+          Grid() {
+            LazyForEach(this.galleryCoverSource, (cover: string) => {
+              GridItem() {
+                Stack({ alignContent: Alignment.TopEnd }) {
+                  Image(this.imageCover(cover))
+                    .width('100%')
+                    .height('100%')
+                    .objectFit(ImageFit.Cover)
+                    .borderRadius(7)
+                    .backgroundColor(this.inputColor())
+                  if (this.isGalleryCoverCurrent(cover)) {
+                    Text('当前')
+                      .fontSize(AppFontSize.MICRO)
+                      .fontColor(ThemeRuntime.onAccentColor())
+                      .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+                      .borderRadius(6)
+                      .backgroundColor(this.buttonColor())
+                      .margin({ top: 6, right: 6 })
+                  }
+                }
+                .width('100%')
+                .aspectRatio(0.72)
+                .borderRadius(9)
+                .padding(this.isGalleryCoverCurrent(cover) ? 2 : 0)
+                .border({ width: this.isGalleryCoverCurrent(cover) ? 2 : 0, color: this.accentColor() })
+                .onClick(() => this.applyGalleryCover(cover))
+              }
+            }, (cover: string) => `${this.galleryCoverAlbumId}|${cover}`)
+          }
+          .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+          .columnsTemplate(this.networkCoverColumnsTemplate())
+          .columnsGap(this.networkCoverColumnGap())
+          .rowsGap(this.networkCoverRowGap())
+          .layoutWeight(1)
+          .width('100%')
+        }
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: Math.max(this.navBarHeight, 12) + 12 })
   }
 
   /** 移动到分组：内容高度的半模态弹层。 */
@@ -6369,7 +6647,7 @@ export struct BookshelfPage {
       themeCover: false
     };
     this.measureShelfOpeningBounds(book, opening, touchX, touchY);
-    if (this.shouldUseThemeBookCover()) {
+    if (this.shouldUseThemeBookCoverFor(book)) {
       const covers = this.activeThemeBookCovers(book);
       opening.cover = covers.length > 0 ? covers[0] : '';
       opening.frame = this.activeThemeShelfFrame();
@@ -6520,7 +6798,7 @@ export struct BookshelfPage {
    */
   shelfCoverCropsImage(book: Book, pageKey: string, latest: boolean): boolean {
     if (latest) return true;
-    if (this.shouldUseThemeBookCover()) return false;
+    if (this.shouldUseThemeBookCoverFor(book)) return false;
     if (this.shouldShowLatestExpandedTileBook(pageKey) && !this.isLatestTileCardLarge() &&
       this.getLatestReadTileBooks(this.shelfBooksForPage(pageKey))
         .some((item: Book): boolean => item.bookUrl === book.bookUrl)) {
@@ -6761,7 +7039,7 @@ export struct BookshelfPage {
 
   makeShelfReorderFlyer(book: Book, from: SharedElementBounds, to: SharedElementBounds): TileGroupFlyer {
     const flyer = this.makeTileGroupFlyer(book, from, to);
-    if (this.shouldUseThemeBookCover()) {
+    if (this.shouldUseThemeBookCoverFor(book)) {
       const covers = this.activeThemeBookCovers(book);
       if (covers.length > 0) {
         flyer.cover = covers[0];
@@ -6999,7 +7277,7 @@ export struct BookshelfPage {
     idScope: string = '', radius: number = 8, spineInset: number = -1, syncDecode: boolean = false,
     backdrop: boolean = true) {
     Stack() {
-      if (this.shouldUseThemeBookCover()) {
+      if (this.shouldUseThemeBookCoverFor(book)) {
         if ((this.activeThemeBookCovers(book).length === 1 || !animateCovers) &&
           this.themeImageCrop(ThemeImageSlots.COVER, this.activeThemeBookCovers(book)[0])) {
           // 主题包动图封面取景时只记了显示区域，按区域画。
@@ -7117,7 +7395,7 @@ export struct BookshelfPage {
         .loop(true)
       }
       // 深色模式调暗封面：盖在图片上、角标和标记之下；主题封面不调暗。
-      if (!this.shouldUseThemeBookCover() && this.shelfCoverDimOpacity() > 0) {
+      if (!this.shouldUseThemeBookCoverFor(book) && this.shelfCoverDimOpacity() > 0) {
         this.shelfCoverDimLayer()
       }
       if (CloudAutoSync.isPlaceholder(book)) {
@@ -7221,6 +7499,11 @@ export struct BookshelfPage {
 
   shouldUseThemeBookCover(): boolean {
     return this.themeAssetsLive() && ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeBookCoverEnabled);
+  }
+
+  /** 单本书是否显示主题封面：单独设置了封面的书照常显示自己的封面（文件夹插画仍看 shouldUseThemeBookCover）。 */
+  shouldUseThemeBookCoverFor(book: Book): boolean {
+    return this.shouldUseThemeBookCover() && !BookDisplayHelper.hasCustomCover(book);
   }
 
   /** 轮播项 key 里代表封面图本身的那段：深浅色各有一套封面的主题切换模式时，靠它让轮播换图。 */

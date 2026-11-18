@@ -5,6 +5,7 @@ import fileUri from '@ohos.file.fileuri';
 import { Book, SearchBook } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookService } from '../core/book/WebBookService';
+import { BookDisplayHelper } from './BookDisplayHelper';
 import { BookIdentity } from './BookIdentity';
 import { BookCoverResolver } from './BookCoverResolver';
 import { CoverGallerySnapshot, CoverGalleryStore } from './CoverGalleryStore';
@@ -81,7 +82,13 @@ export class ResultCoverPreparation {
     let book = ResultCoverPreparation.bookOf(result);
     let candidates: ResourceStr[] = [];
     let frame: ResourceStr = '';
-    if (options.useBookshelf && ThemeBookCoverSettings.enabled(options.darkMode, options.themeEnabled)) {
+    // 书架上的同一本书单独设置过封面时，搜索/发现结果也只显示那张，不走主题封面和图集。
+    const customShelfBook = options.useBookshelf ?
+      await ResultCoverPreparation.shelfBookWithCustomCover(context, book) : null;
+    if (customShelfBook) {
+      book = customShelfBook;
+      candidates = BookCoverResolver.sourceCovers(book, options.darkMode, options.gallery);
+    } else if (options.useBookshelf && ThemeBookCoverSettings.enabled(options.darkMode, options.themeEnabled)) {
       candidates = ThemeBookCoverSettings.covers(book, options.darkMode, options.gallery.coverMode);
       frame = ThemeBookCoverSettings.frame(options.darkMode);
       prepared.themeCover = true;
@@ -120,6 +127,16 @@ export class ResultCoverPreparation {
       return ResultCoverPreparation.prepare(context, result, fallback);
     }
     return prepared;
+  }
+
+  private static async shelfBookWithCustomCover(context: Context, book: Book): Promise<Book | null> {
+    try {
+      await AppDatabase.getInstance().initWithContext(context);
+      const shelfBook = await SearchBookShelfHelper.findShelfBookByKey(BookIdentity.keyOfBook(book));
+      return shelfBook && BookDisplayHelper.hasCustomCover(shelfBook) ? shelfBook : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   private static async completeSourceCover(book: Book): Promise<Book> {

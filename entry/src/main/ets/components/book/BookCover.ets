@@ -150,7 +150,8 @@ export struct BookCover {
       return;
     }
     this.preparedApplied = '';
-    const themeCover = this.useBookshelfCover && ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeCoverEnabled);
+    const themeCover = this.useBookshelfCover &&
+      ThemeBookCoverSettings.enabledFor(this.coverBook(), this.appDarkMode, this.themeCoverEnabled);
     const covers: ResourceStr[] = themeCover ? ThemeBookCoverSettings.covers(this.coverBook(), this.appDarkMode, this.coverMode) : this.rawCoverList();
     this.themeFrame = themeCover ? ThemeBookCoverSettings.frame(this.appDarkMode) : '';
     this.themeCover = themeCover;

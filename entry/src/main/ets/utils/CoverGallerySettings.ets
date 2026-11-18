@@ -82,6 +82,11 @@ export class CoverGallerySettings {
     coverMode: string,
     ignoreEmptyCoverOnly: boolean = false
   ): string[] {
+    // 单独设置的封面最优先：不和图集混排、不被“忽略原始封面”丢掉，也不参与封面模式挑图。
+    const customCovers = BookDisplayHelper.decodeCoverList(book.customCoverUrl);
+    if (customCovers.length > 0) {
+      return CoverGallerySettings.cleanCovers(customCovers);
+    }
     const selectedAlbumId = CoverGallerySettings.selectedAlbumId(darkMode, lightAlbumId, darkAlbumId);
     const albums = CoverGallerySettings.cachedAlbums(albumsRaw);
     const album = CoverGallerySettings.getAlbum(albums, selectedAlbumId);

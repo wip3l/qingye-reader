@@ -55,4 +55,12 @@ export class SearchSourceIndexDataSource implements IDataSource {
   unregisterDataChangeListener(listener: DataChangeListener): void { const i = this.listeners.indexOf(listener); if (i >= 0) this.listeners.splice(i, 1); }
   replace(indexes: number[]): void { this.indexes = indexes.slice(); for (const listener of this.listeners) listener.onDataReloaded(); }
 }
+/** “从图集选择”弹层里当前图集的图片地址。 */
+export class GalleryCoverDataSource implements IDataSource {
+  private covers: string[] = []; private listeners: DataChangeListener[] = [];
+  totalCount(): number { return this.covers.length; } getData(index: number): string { return this.covers[index]; }
+  registerDataChangeListener(listener: DataChangeListener): void { if (!this.listeners.includes(listener)) this.listeners.push(listener); }
+  unregisterDataChangeListener(listener: DataChangeListener): void { const i = this.listeners.indexOf(listener); if (i >= 0) this.listeners.splice(i, 1); }
+  replace(covers: string[]): void { this.covers = covers.slice(); for (const listener of this.listeners) listener.onDataReloaded(); }
+}
 export class ExploreMetadataTask { book: SearchBook = new SearchBook(); loadVersion: number = 0; }
