@@ -245,7 +245,9 @@ export struct TtsCatalogSheet {
   @Builder
   catalogChapterList() {
     Stack({ alignContent: Alignment.TopEnd }) {
-      List({ space: 0, scroller: this.scroller }) {
+      // 半模态的内容在宿主把它打开之后才创建，宿主那时调 scrollToIndex 列表还没挂上，是空操作。
+      // 所以定位到当前章由这里负责：首次布局从当前章附近排起，挂上后再居中。
+      List({ space: 0, scroller: this.scroller, initialIndex: this.initialListIndex() }) {
         LazyForEach(this.source, (title: string, index: number) => {
           ListItem() {
             Row({ space: AppSpacing.MD }) {
@@ -290,6 +292,7 @@ export struct TtsCatalogSheet {
       .width('100%')
       .height('100%')
       .scrollBar(BarState.Off)
+      .onAppear(() => this.centerCurrentChapter())
       .onScrollIndex((start: number, end: number) => {
         this.firstVisibleIndex = Math.max(0, start);
         this.visibleItemCount = Math.max(1, end - start + 1);
@@ -346,6 +349,19 @@ export struct TtsCatalogSheet {
     const availableHeight = Math.max(1, viewport - 12);
     const minimumHeight = Math.min(280, availableHeight);
     return Math.min(availableHeight, Math.max(minimumHeight, viewport * 0.81));
+  }
+
+  /** 首次布局的起始行：当前章上方留两行，居中那一步没生效时当前章也在可见范围内。 */
+  private initialListIndex(): number {
+    if (this.count <= 0) return 0;
+    return Math.max(0, Math.min(this.count - 1, this.currentDisplayIndex - 2));
+  }
+
+  private centerCurrentChapter(): void {
+    if (this.count <= 0 || this.currentDisplayIndex < 0 || this.currentDisplayIndex >= this.count) return;
+    try {
+      this.scroller.scrollToIndex(this.currentDisplayIndex, false, ScrollAlign.CENTER);
+    } catch (_) {}
   }
 
   canonicalIndex(displayIndex: number): number {
