@@ -379,13 +379,24 @@ export struct BookCatalogSheet {
                 .width(18)
                 .textAlign(TextAlign.Center)
 
-              Text(chapter.title || `第${chapter.index + 1}${this.unitText()}`)
-                .fontSize(AppFontSize.BODY_LARGE)
-                .fontWeight(chapter.index === this.currentIndex ? FontWeight.Medium : FontWeight.Regular)
-                .fontColor(chapter.index === this.currentIndex ? this.accentColor() : this.primaryTextColor())
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .layoutWeight(1)
+              // 书源目录给了章节更新时间、字数时显示在章节名下方。
+              Column({ space: 2 }) {
+                Text(chapter.title || `第${chapter.index + 1}${this.unitText()}`)
+                  .fontSize(AppFontSize.BODY_LARGE)
+                  .fontWeight(chapter.index === this.currentIndex ? FontWeight.Medium : FontWeight.Regular)
+                  .fontColor(chapter.index === this.currentIndex ? this.accentColor() : this.primaryTextColor())
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                if (BookChapter.metaTextOf(chapter)) {
+                  Text(BookChapter.metaTextOf(chapter))
+                    .fontSize(AppFontSize.MICRO)
+                    .fontColor(this.subTextColor())
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
 
               if (chapter.cacheDate > 0) {
                 Text('已缓存')
