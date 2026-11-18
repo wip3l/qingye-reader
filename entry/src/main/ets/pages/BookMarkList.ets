@@ -130,11 +130,9 @@ struct BookMarkListPage {
     return this.items.filter((item: BookMark): boolean => item.status === status).length;
   }
 
+  /** 跟着当前状态页签算，不受标签和搜索影响；“全部”不算弃读的书。 */
   averageText(): string {
-    const rated = this.items.filter((item: BookMark): boolean => item.rating > 0);
-    if (rated.length === 0) return '';
-    const sum = rated.reduce((total: number, item: BookMark): number => total + item.rating, 0);
-    return (sum / rated.length / 2).toFixed(1);
+    return BookMarkRules.averageRatingText(this.items, this.statusFilter);
   }
 
   categoryCount(name: string): number {
@@ -482,7 +480,8 @@ struct BookMarkListPage {
           }
           .padding({ bottom: AppSpacing.SM })
           .accessibilityGroup(true)
-          .accessibilityText(`平均 ${this.averageText()} 星`)
+          .accessibilityText(
+            `${this.statusFilter === 0 ? '' : BookMarkStatus.label(this.statusFilter)}平均 ${this.averageText()} 星`)
         }
       }
       .width('100%')

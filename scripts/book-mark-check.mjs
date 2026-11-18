@@ -98,6 +98,17 @@ test('plain objects from backup or sync are normalised', () => {
   assert.equal(dropped.finishTime, 0, 'dropped books keep no finish time');
 });
 
+test('average rating follows the status filter and leaves dropped books out of all', () => {
+  const make = (status, rating) => Object.assign(new BookMark(), { status, rating });
+  const marks = [make(BookMarkStatus.READ, 10), make(BookMarkStatus.READ, 8), make(BookMarkStatus.WANT, 0),
+    make(BookMarkStatus.DROPPED, 2), make(BookMarkStatus.NONE, 6)];
+  assert.equal(BookMarkRules.averageRatingText(marks, 0), '4.0');
+  assert.equal(BookMarkRules.averageRatingText(marks, BookMarkStatus.READ), '4.5');
+  assert.equal(BookMarkRules.averageRatingText(marks, BookMarkStatus.DROPPED), '1.0');
+  assert.equal(BookMarkRules.averageRatingText(marks, BookMarkStatus.WANT), '');
+  assert.equal(BookMarkRules.averageRatingText([make(BookMarkStatus.DROPPED, 4)], 0), '');
+});
+
 test('known categories are ordered by use, then by name', () => {
   const make = categories => Object.assign(new BookMark(), { categories });
   assert.deepEqual([...BookMarkRules.collectCategories([make(['b', 'a']), make(['a']), make(['c'])])], ['a', 'b', 'c']);

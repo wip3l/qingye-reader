@@ -127,6 +127,22 @@ export class BookMarkRules {
     return '力荐';
   }
 
+  /**
+   * 某个状态下打过分的书的平均星级文字，没有打分的书返回空串。
+   * status 为 0 表示“全部”，不算弃读的书：弃读多半是读不下去，打的低分会把整体均分拉偏。
+   */
+  static averageRatingText(marks: BookMark[], status: number): string {
+    let sum = 0;
+    let count = 0;
+    for (const mark of marks) {
+      if (mark.rating <= 0) continue;
+      if (status === BookMarkStatus.NONE ? mark.status === BookMarkStatus.DROPPED : mark.status !== status) continue;
+      sum += mark.rating;
+      count++;
+    }
+    return count > 0 ? (sum / count / 2).toFixed(1) : '';
+  }
+
   /** “4.5”这样的星级文字。 */
   static ratingText(rating: number): string {
     return (BookMarkRules.normalizeRating(rating) / 2).toFixed(1);
