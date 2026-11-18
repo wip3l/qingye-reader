@@ -24,6 +24,7 @@ import { AudioBookAvSessionHolder } from '../utils/AudioBookMediaSession';
 import { ReaderCacheBudgetPolicy } from '../core/book/ReaderCacheBudgetPolicy';
 import { AudioStartTiming, RemoteAudioPlayback, RemoteAudioPlaybackListener } from '../utils/RemoteAudioPlayback';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
+import { PlaybackSpeed } from '../utils/PlaybackSpeed';
 import { BookCoverCache } from '../utils/BookCoverCache';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
@@ -134,6 +135,7 @@ struct AudioBookPage {
   private progressSaveTimerId: number = -1;
   private progressSaveQueue: Promise<void> = Promise.resolve();
   private sleepTimerId: number = -1;
+  private speedSaveTimerId: number = -1;
   private playbackRetryCount: number = 0;
   private chapterDataSource: CatalogTitleDataSource = new CatalogTitleDataSource();
   private chapterScroller: ListScroller = new ListScroller();
@@ -361,7 +363,7 @@ struct AudioBookPage {
       this.audioChapterControl($r('sys.symbol.arrow_left'), '上一章', -1)
       this.audioPlaybackControl()
       this.audioChapterControl($r('sys.symbol.arrow_right'), '下一章', 1)
-      this.audioPanelControl($r('sys.symbol.hourglass'), `${this.speed.toFixed(1)}x`, true,
+      this.audioPanelControl($r('sys.symbol.hourglass'), `${PlaybackSpeed.label(this.speed)}x`, true,
         () => this.audioOptionsPanel = this.audioOptionsPanel === 2 ? 0 : 2)
     }
     .width('100%')
@@ -596,11 +598,9 @@ struct AudioBookPage {
   @Builder
   speedSection() {
     Row({ space: AppSpacing.MD }) {
-      this.audioSpeedChip(0.8)
-      this.audioSpeedChip(1.0)
-      this.audioSpeedChip(1.2)
-      this.audioSpeedChip(1.5)
-      this.audioSpeedChip(2.0)
+      ForEach(PlaybackSpeed.PRESETS, (value: number) => {
+        this.audioSpeedChip(value)
+      }, (value: number) => value.toString())
     }
     .width('100%')
   }
@@ -620,7 +620,7 @@ struct AudioBookPage {
 
   @Builder
   audioSpeedChip(value: number) {
-    Text(`${value.toFixed(1)}x`)
+    Text(`${PlaybackSpeed.label(value)}x`)
       .fontSize(AppFontSize.CAPTION)
       .fontWeight(Math.abs(this.speed - value) < 0.01 ? FontWeight.Bold : FontWeight.Regular)
       .fontColor(Math.abs(this.speed - value) < 0.01 ? '#FFFFFF' : this.primaryTextColor())
@@ -1075,13 +1075,20 @@ struct AudioBookPage {
   }
 
   changeSpeed(value: number): void {
-    this.speed = value;
-    this.playback.setSpeed(value);
-    if (this.book) {
-      this.book.putVariable('audioSpeed', String(value));
-      this.queueBookStateSave(this.book).catch((error: Error) => {
-        console.warn('保存听书倍速失败:', error);
-      });
+    const speed = PlaybackSpeed.normalize(value);
+    this.speed = speed;
+    this.playback.setSpeed(speed);
+    const book = this.book;
+    if (book) {
+      book.putVariable('audioSpeed', String(speed));
+      // 拖动倍速滑条时每一格都会进来，合并成停手后的一次写库。
+      if (this.speedSaveTimerId >= 0) clearTimeout(this.speedSaveTimerId);
+      this.speedSaveTimerId = setTimeout(() => {
+        this.speedSaveTimerId = -1;
+        this.queueBookStateSave(book).catch((error: Error) => {
+          console.warn('保存听书倍速失败:', error);
+        });
+      }, 300);
     }
     this.updateFloatingSession();
   }
@@ -1426,7 +1433,7 @@ struct AudioBookPage {
 
   savedSpeed(book: Book): number {
     const value = Number(book.getVariable('audioSpeed') || 1);
-    return Number.isFinite(value) ? Math.max(0.5, Math.min(2.5, value)) : 1;
+    return PlaybackSpeed.normalize(value);
   }
 
   displayCover(): ResourceStr {

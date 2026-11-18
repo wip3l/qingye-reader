@@ -39,7 +39,8 @@ const context = vm.createContext({
     serializeCustomVoices: voices => JSON.stringify(voices), listAvailableVoices: async () => [] },
   AccountCommerceApi: { fetchTtsCatalog: async () => ({ voices: [] }) }
 });
-vm.runInContext(['utils/TtsVoiceAvailability.ts', 'utils/TtsVoiceCatalog.ets', 'utils/TtsSettingsStore.ets']
+vm.runInContext(['utils/PlaybackSpeed.ts', 'utils/TtsVoiceAvailability.ts', 'utils/TtsVoiceCatalog.ets',
+  'utils/TtsSettingsStore.ets']
   .map(name => compile(read(name))).join('\n'), context);
 const policy = vm.runInContext('TtsVoiceAvailability', context);
 const catalog = vm.runInContext('TtsVoiceCatalog', context);

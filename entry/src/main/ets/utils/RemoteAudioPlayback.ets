@@ -2,6 +2,7 @@ import { audio } from '@kit.AudioKit';
 import { media } from '@kit.MediaKit';
 import fs from '@ohos.file.fs';
 import { PlaybackLoudnessGain } from './PlaybackLoudnessGain';
+import { PlaybackSpeed } from './PlaybackSpeed';
 import { TtsAudioSession, TtsAudioSessionHintListener, TtsOutputLostListener } from './TtsAudioSession';
 
 // 和朗读共用应用的音频会话（两者不会同时播放）：借它让系统把“停止”改成“暂停”，并收到会话级通知。
@@ -395,7 +396,7 @@ export class RemoteAudioPlayback {
   }
 
   private normalizeSpeed(speed: number): number {
-    return Math.max(0.5, Math.min(2.5, speed || 1));
+    return PlaybackSpeed.normalize(speed);
   }
 
   private applySpeed(player: media.AVPlayer, speed: number): void {

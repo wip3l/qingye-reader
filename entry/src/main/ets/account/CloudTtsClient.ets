@@ -7,6 +7,7 @@ import { AccountSessionStore } from './AccountSessionStore';
 import { HttpTtsAudio } from '../utils/HttpTtsReader';
 import { sleepMs } from '@legado/sourceengine';
 import { PcmTimeStretch } from '../utils/PcmTimeStretch';
+import { PlaybackSpeed } from '../utils/PlaybackSpeed';
 
 class CloudTtsErrorBody {
   code: string = '';
@@ -201,7 +202,8 @@ export class CloudTtsClient {
     const dir = `${root}/${CloudTtsClient.CACHE_DIR_NAME}`;
     this.ensureDir(dir);
     const userId = AccountSessionStore.account().userId;
-    const key = `${CloudTtsClient.SEGMENTATION_VERSION}\n${userId}\n${voiceId}\n${speed.toFixed(1)}\n${text}`;
+    // 整十分位的倍速仍写一位小数，已有缓存继续命中；1.25 这类写两位，不和 1.3 撞同一个文件。
+    const key = `${CloudTtsClient.SEGMENTATION_VERSION}\n${userId}\n${voiceId}\n${PlaybackSpeed.label(speed)}\n${text}`;
     return `${dir}/${this.hashText(key)}.bin`;
   }
 

@@ -34,6 +34,7 @@ import { TapZoneSettingsDialogContent } from '../components/TapZoneSettingsDialo
 import { HexColor } from '../utils/HexColor';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { PlaybackSpeed } from '../utils/PlaybackSpeed';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow, SettingScopeRow, SettingSwitchRow } from '../components/common/SettingRow';
 import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
@@ -560,7 +561,7 @@ struct SettingsPage {
       SettingNavRow({
         title: '朗读',
         description: '音色、倍速、MiMo 朗读、在线朗读字数',
-        value: `${this.ttsSpeed.toFixed(1)}×`,
+        value: `${PlaybackSpeed.label(this.ttsSpeed)}×`,
         icon: $r('sys.symbol.speaker_wave_3'),
         showDivider: false,
         onTap: () => {

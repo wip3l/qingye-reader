@@ -6,6 +6,7 @@ import { Book, BookTypeSupport } from '@legado/sourceengine';
 import { appDb } from '../../model/data/AppDatabase';
 import { AudioOfflineStore } from '../../core/book/AudioOfflineStore';
 import { ReaderTtsFloatingSession } from '../../utils/ReaderTtsFloatingSession';
+import { PlaybackSpeed } from '../../utils/PlaybackSpeed';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { AppFontSize } from '../../theme/AppFontSize';
 import { AppSpacing } from '../../theme/AppSpacing';
@@ -31,8 +32,6 @@ export struct ListenTabPage {
   static readonly SHELF_COVER_SIZE: number = 104;
   static readonly HERO_COVER_WIDTH: number = 96;
   static readonly HERO_COVER_HEIGHT: number = 128;
-  /** 和播放面板的倍速档一致，点一下换到下一档。 */
-  static readonly SPEEDS: number[] = [0.8, 1.0, 1.2, 1.5, 2.0, 3.0];
   static readonly TIMER_MINUTES: number[] = [15, 30, 60, 90];
   @Prop statusBarHeight: number = 0;
   @Prop navBarHeight: number = 0;
@@ -661,15 +660,12 @@ export struct ListenTabPage {
   }
 
   speedLabel(): string {
-    const speed = Math.round((this.ttsSpeed || 1) * 100) / 100;
-    const oneDecimal = Math.abs(speed * 10 - Math.round(speed * 10)) < 0.001;
-    return `${speed.toFixed(oneDecimal ? 1 : 2)}×`;
+    return `${PlaybackSpeed.label(this.ttsSpeed || 1)}×`;
   }
 
+  /** 和播放面板的倍速快捷档一致，点一下换到下一档。 */
   nextSpeed(): number {
-    const speed = this.ttsSpeed || 1;
-    const next = ListenTabPage.SPEEDS.find((value: number): boolean => value > speed + 0.01);
-    return next ?? ListenTabPage.SPEEDS[0];
+    return PlaybackSpeed.nextPreset(this.ttsSpeed || 1);
   }
 
   timerRemainingMinutes(): number {

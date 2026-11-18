@@ -67,6 +67,7 @@ import { TtsCustomVoices, TtsVoiceOption } from '../utils/TtsVoiceModels';
 import { MimoStore } from '../utils/mimo/MimoStore';
 import { MimoVoiceChoice } from '../core/mimo/MimoVoicePolicy';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
+import { PlaybackSpeed } from '../utils/PlaybackSpeed';
 import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ReaderReplaceRule, ReaderReplaceRuleStore } from '../utils/ReaderReplaceRuleStore';
@@ -9997,7 +9998,7 @@ struct ReadBookPage {
   }
 
   applyTtsSpeed(value: number): void {
-    const nextSpeed = Math.max(0.5, Math.min(3, Math.round(value * 10) / 10));
+    const nextSpeed = PlaybackSpeed.normalize(value);
     if (Math.abs(this.ttsSpeed - nextSpeed) < 0.01) {
       return;
     }

@@ -7,6 +7,7 @@ import { HdsFeedback } from './HdsFeedback';
 import { LocalTtsModel, LocalTtsModels } from './localtts/LocalTtsModels';
 import { LocalTtsSelection } from './localtts/LocalTtsSelection';
 import { MimoStore } from './mimo/MimoStore';
+import { PlaybackSpeed } from './PlaybackSpeed';
 import { SystemTtsReader, TtsReadOptions } from './SystemTtsReader';
 import { TtsSettings, TtsSettingsStore } from './TtsSettingsStore';
 import { TtsVoiceCatalog } from './TtsVoiceCatalog';
@@ -166,7 +167,7 @@ export class TtsVoicePicker {
 
   /** 改语速（0.5–3）；连续拖动时合并成一次保存。返回是否真的变了。 */
   setSpeed(value: number): boolean {
-    const next = Math.max(0.5, Math.min(3, Math.round((value || 1) * 10) / 10));
+    const next = PlaybackSpeed.normalize(value);
     if (Math.abs(next - this.speed) < 0.01) return false;
     this.speed = next;
     AppStorage.setOrCreate('globalTtsSpeed', next);

@@ -9,6 +9,7 @@ import { AppSpacing } from '../theme/AppSpacing';
 import { TtsPanelThemeBackground } from './TtsPanelThemeBackground';
 import { ImmersiveMaterialSurface } from './ImmersiveMaterialSurface';
 import { PlaybackLoudnessGain } from '../utils/PlaybackLoudnessGain';
+import { PlaybackSpeed } from '../utils/PlaybackSpeed';
 
 /** 顶栏圆形按钮的尺寸。 */
 const PANEL_CONTROL_SIZE: number = 40;
@@ -104,6 +105,8 @@ export struct ReaderTtsPlayerPanel {
   @State optionsPanel: number = 0;
   /** 拖动增益滑条时只改显示，松手才下发；-1 表示没在拖。 */
   @State gainDraft: number = -1;
+  /** 拖动倍速滑条时的显示值；-1 表示没在拖。 */
+  @State speedDraft: number = -1;
   @State audioVoiceMenuRevision: number = 0;
   // 听书封面区实际分到的高度和其中章节名、状态行的高度。定时/倍速/增益面板展开后封面区变矮，
   // 封面按这些量出来的值缩小；否则屏幕矮的机型上内容溢出，音色下拉会压到进度条上。
@@ -580,32 +583,102 @@ export struct ReaderTtsPlayerPanel {
     .width('100%')
   }
 
+  /**
+   * 倍速：滑条 0.05 一格，两侧按钮微调，下面是快捷档。
+   * 朗读换倍速要从当前句重新合成，拖动中只改显示、松手才下发；有声书边拖边变速。
+   */
   @Builder
   speedOptions() {
-    Row({ space: AppSpacing.MD }) {
-      this.speedChip(0.8)
-      this.speedChip(1.0)
-      this.speedChip(1.2)
-      this.speedChip(1.5)
-      this.speedChip(2.0)
-      this.speedChip(3.0)
+    Column({ space: AppSpacing.SM }) {
+      Row() {
+        Text('倍速')
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor)
+          .layoutWeight(1)
+        Text(`${PlaybackSpeed.label(this.speedShown())}x`)
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.accentColor)
+      }
+      .width('100%')
+
+      Row({ space: AppSpacing.SM }) {
+        this.speedStepButton(-1)
+        Slider({
+          value: this.speedShown(),
+          min: PlaybackSpeed.MIN,
+          max: PlaybackSpeed.MAX,
+          step: PlaybackSpeed.STEP
+        })
+          .layoutWeight(1)
+          .selectedColor(this.accentColor)
+          .trackColor(ThemeRuntime.inputColor(this.darkMode))
+          .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+          .accessibilityText('倍速')
+          .onChange((value: number, mode: SliderChangeMode) => {
+            const speed = PlaybackSpeed.normalize(value);
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.speedDraft = -1;
+              this.commitSpeed(speed);
+            } else {
+              this.speedDraft = speed;
+              if (this.isAudio()) this.commitSpeed(speed);
+            }
+          })
+        this.speedStepButton(1)
+      }
+      .width('100%')
+
+      Row({ space: AppSpacing.SM }) {
+        ForEach(PlaybackSpeed.PRESETS, (value: number) => {
+          this.speedChip(value)
+        }, (value: number) => value.toString())
+      }
+      .width('100%')
     }
     .width('100%')
   }
 
+  /** direction：-1 减一格，1 加一格。可用状态在这里现读，倍速变化后立即刷新。 */
+  @Builder
+  speedStepButton(direction: number) {
+    Stack({ alignContent: Alignment.Center }) {
+      SymbolGlyph(direction < 0 ? $r('sys.symbol.minus') : $r('sys.symbol.plus'))
+        .fontSize(16)
+        .fontColor([this.speedStepEnabled(direction) ? this.primaryTextColor : this.subTextColor])
+    }
+    .width(30)
+    .height(30)
+    .borderRadius(15)
+    .backgroundColor(ThemeRuntime.softFillColor(this.darkMode))
+    .opacity(this.speedStepEnabled(direction) ? 1 : 0.5)
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.92 })
+    .accessibilityText(direction < 0 ? '降低倍速' : '提高倍速')
+    .onClick(() => {
+      if (!this.speedStepEnabled(direction)) return;
+      this.speedDraft = -1;
+      this.commitSpeed(PlaybackSpeed.normalize(this.globalTtsSpeed + direction * PlaybackSpeed.STEP));
+    })
+  }
+
   @Builder
   speedChip(value: number) {
-    Text(`${value.toFixed(1)}x`)
+    Text(`${PlaybackSpeed.label(value)}x`)
       .fontSize(AppFontSize.CAPTION)
-      .fontWeight(Math.abs(this.globalTtsSpeed - value) < 0.01 ? FontWeight.Bold : FontWeight.Regular)
-      .fontColor(Math.abs(this.globalTtsSpeed - value) < 0.01 ? ThemeRuntime.onAccentColor() : this.primaryTextColor)
+      .fontWeight(PlaybackSpeed.same(this.speedShown(), value) ? FontWeight.Bold : FontWeight.Regular)
+      .fontColor(PlaybackSpeed.same(this.speedShown(), value) ? ThemeRuntime.onAccentColor() : this.primaryTextColor)
       .textAlign(TextAlign.Center)
       .layoutWeight(1)
       .height(30)
       .borderRadius(ThemeRuntime.buttonRadius())
-      .backgroundColor(Math.abs(this.globalTtsSpeed - value) < 0.01 ? this.accentColor :
+      .backgroundColor(PlaybackSpeed.same(this.speedShown(), value) ? this.accentColor :
         (ThemeRuntime.softFillColor(this.darkMode)))
-      .onClick(() => ReaderTtsFloatingSession.setSpeed(value))
+      .accessibilityText(`倍速 ${PlaybackSpeed.label(value)}`)
+      .onClick(() => {
+        this.speedDraft = -1;
+        this.commitSpeed(value);
+      })
   }
 
   /** 音量增益：滑条到 24 dB，快捷档到 +12；朗读和有声书各存一个值。 */
@@ -962,6 +1035,20 @@ export struct ReaderTtsPlayerPanel {
     return forward ? this.globalTtsCanNext : this.globalTtsCanPrevious;
   }
 
+  speedShown(): number {
+    return this.speedDraft > 0 ? this.speedDraft : PlaybackSpeed.normalize(this.globalTtsSpeed);
+  }
+
+  speedStepEnabled(direction: number): boolean {
+    return direction < 0 ? this.globalTtsSpeed > PlaybackSpeed.MIN + 0.001 :
+      this.globalTtsSpeed < PlaybackSpeed.MAX - 0.001;
+  }
+
+  commitSpeed(value: number): void {
+    if (PlaybackSpeed.same(this.globalTtsSpeed, value)) return;
+    ReaderTtsFloatingSession.setSpeed(value);
+  }
+
   gainKind(): string {
     return this.isAudio() ? PlaybackLoudnessGain.AUDIO : PlaybackLoudnessGain.TTS;
   }
@@ -1007,7 +1094,7 @@ export struct ReaderTtsPlayerPanel {
       return this.globalTtsTimerMinutes > 0 ?
         `${Math.max(1, Math.ceil(this.globalTtsTimerRemainingSeconds / 60))}分` : '定时';
     }
-    if (kind === SECONDARY_SPEED) return `${this.globalTtsSpeed.toFixed(1)}x`;
+    if (kind === SECONDARY_SPEED) return `${PlaybackSpeed.label(this.globalTtsSpeed)}x`;
     if (kind === SECONDARY_GAIN) return this.gainSupported() && this.gainStored() > 0 ? `+${this.gainStored()}dB` : '增益';
     if (kind === SECONDARY_CATALOG) return '目录';
     if (kind === SECONDARY_DOWNLOAD) return '下载';
@@ -1032,6 +1119,7 @@ export struct ReaderTtsPlayerPanel {
     if (kind === SECONDARY_TIMER) {
       this.optionsPanel = this.optionsPanel === 1 ? 0 : 1;
     } else if (kind === SECONDARY_SPEED) {
+      this.speedDraft = -1;
       this.optionsPanel = this.optionsPanel === 2 ? 0 : 2;
     } else if (kind === SECONDARY_GAIN) {
       this.gainDraft = -1;

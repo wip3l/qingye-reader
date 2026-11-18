@@ -19,8 +19,8 @@ const sandbox = vm.createContext({
   TtsAudioSession: { acquire: async () => {}, release() {} },
   setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
 });
-for (const name of ['RemoteAudioPlayback', 'TtsAvAudioPlayer', 'TtsPcmAudioPlayer']) {
-  const source = readEtsModule(`utils/${name}.ets`).replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
+for (const name of ['PlaybackSpeed', 'RemoteAudioPlayback', 'TtsAvAudioPlayer', 'TtsPcmAudioPlayer']) {
+  const source = readEtsModule(`utils/${name}.${name === 'PlaybackSpeed' ? 'ts' : 'ets'}`).replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
   vm.runInContext(stripTypeScriptTypes(source) + `\nglobalThis.${name} = ${name};`, sandbox);
 }
 const tick = async () => { for (let i = 0; i < 25; i++) await Promise.resolve(); };

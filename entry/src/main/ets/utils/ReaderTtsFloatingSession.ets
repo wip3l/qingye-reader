@@ -1,4 +1,5 @@
 import { readStatsTracker } from '../core/stats/ReadStatsTracker';
+import { PlaybackSpeed } from './PlaybackSpeed';
 
 /**
  * 听书的离线下载信息，由听书页发布。书架胶囊打开的播放面板和目录靠它显示"下载"入口、
@@ -486,7 +487,7 @@ export class ReaderTtsFloatingSession {
   }
 
   static setSpeed(value: number): void {
-    const nextSpeed = Math.max(0.5, Math.min(3, Math.round((value || 1) * 10) / 10));
+    const nextSpeed = PlaybackSpeed.normalize(value);
     // The bookshelf retains its own host page. Publish the shared panel state before dispatching
     // to the hidden reader owner so every mounted instance updates in the same UI turn.
     AppStorage.setOrCreate('globalTtsSpeed', nextSpeed);
