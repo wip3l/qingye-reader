@@ -379,7 +379,7 @@ export class ThemeAssetRegistry {
   }
 
   /**
-   * 角饰的当前内容（左上|右下|大小）。主题包素材改了但背景 ID 没变时，预览靠它判断要不要重画：
+   * 角饰的当前内容（左上|右下|大小|边距）。主题包素材改了但背景 ID 没变时，预览靠它判断要不要重画：
    * ReaderThemeBackground 的属性都没变就不会重新取图和尺寸。
    */
   static readerDecorationSignature(assetId: string): string {
@@ -387,7 +387,9 @@ export class ThemeAssetRegistry {
     return `${ThemeAssetRegistry.readerBackgroundDecoration(assetId)}|` +
       `${ThemeAssetRegistry.readerBackgroundTrailingDecoration(assetId)}|` +
       `${ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, false)}|` +
-      `${ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, true)}`;
+      `${ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, true)}|` +
+      `${ThemeAssetRegistry.readerBackgroundOrnamentInset(assetId, false)}|` +
+      `${ThemeAssetRegistry.readerBackgroundOrnamentInset(assetId, true)}`;
   }
 
   /** 左上（trailing 为 false）或右下角饰的显示大小倍数：主题包自己设的，内置背景一律 1。 */
@@ -397,6 +399,15 @@ export class ThemeAssetRegistry {
     const reader = pack.reader(ThemeAssetRegistry.packReaderDark(assetId));
     if (!ThemeAssetRegistry.packReaderHasOrnaments(reader)) return 1;
     return trailing ? reader.trailingScale : reader.leadingScale;
+  }
+
+  /** 左上（trailing 为 false）或右下角饰离屏幕边缘的边距倍数（0 是贴边）：主题包自己设的，内置背景一律 1。 */
+  static readerBackgroundOrnamentInset(assetId: string, trailing: boolean): number {
+    const pack = ThemeAssetRegistry.packReader(assetId);
+    if (!pack) return 1;
+    const reader = pack.reader(ThemeAssetRegistry.packReaderDark(assetId));
+    if (!ThemeAssetRegistry.packReaderHasOrnaments(reader)) return 1;
+    return trailing ? reader.trailingInset : reader.leadingInset;
   }
 
   /** selected 为 true 时优先取选中态图标：主题包和星穹御藏有选中态，其余内置图标包没有。 */

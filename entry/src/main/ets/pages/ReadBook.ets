@@ -24358,19 +24358,24 @@ ${leading}` : leading;
         ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, false)));
       const trailingPx = vp2px(ReaderThemeDecorationLayout.size(viewportWidth, viewportHeight, false,
         ThemeAssetRegistry.readerBackgroundOrnamentScale(assetId, true)));
-      const insetPx = vp2px(ReaderThemeDecorationLayout.inset(viewportWidth, viewportHeight, false));
+      // 边距同样各有倍数，0 是贴着屏幕边缘。
+      const leadingInsetPx = vp2px(ReaderThemeDecorationLayout.inset(viewportWidth, viewportHeight, false,
+        ThemeAssetRegistry.readerBackgroundOrnamentInset(assetId, false)));
+      const trailingInsetPx = vp2px(ReaderThemeDecorationLayout.inset(viewportWidth, viewportHeight, false,
+        ThemeAssetRegistry.readerBackgroundOrnamentInset(assetId, true)));
       // 主题包可以只有一角的角饰：空着的那角不画，有图却解不出来才退回截图。
       if (ThemeAssetRegistry.readerBackgroundDecoration(assetId)) {
         const leading = ReaderRasterAssets.backgroundDecoration(host, assetId, leadingPx);
         if (!leading) return null;
-        spec.decorations.push(new ReaderRasterImage(leading, paperOriginX + insetPx, insetPx,
-          paperOriginX + insetPx + leadingPx, insetPx + leadingPx, 0, true));
+        spec.decorations.push(new ReaderRasterImage(leading, paperOriginX + leadingInsetPx, leadingInsetPx,
+          paperOriginX + leadingInsetPx + leadingPx, leadingInsetPx + leadingPx, 0, true));
       }
       if (ThemeAssetRegistry.readerBackgroundTrailingDecoration(assetId)) {
         const trailing = ReaderRasterAssets.backgroundTrailingDecoration(host, assetId, trailingPx);
         if (!trailing) return null;
-        spec.decorations.push(new ReaderRasterImage(trailing, paperOriginX + spreadWidthPx - insetPx - trailingPx,
-          spec.heightPx - insetPx - trailingPx, paperOriginX + spreadWidthPx - insetPx, spec.heightPx - insetPx,
+        spec.decorations.push(new ReaderRasterImage(trailing,
+          paperOriginX + spreadWidthPx - trailingInsetPx - trailingPx, spec.heightPx - trailingInsetPx - trailingPx,
+          paperOriginX + spreadWidthPx - trailingInsetPx, spec.heightPx - trailingInsetPx,
           ThemeAssetRegistry.readerBackgroundTrailingRotation(assetId), true));
       }
     }

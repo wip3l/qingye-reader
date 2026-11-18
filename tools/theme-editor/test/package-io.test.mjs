@@ -336,11 +336,16 @@ test('export reports the same errors the app would', async () => {
   project.parts.light.reader.trailing = '';
   project.parts.light.reader.leadingScale = 1.4;
   project.parts.light.reader.trailingScale = 1;
+  // 边距 0 是贴边要写出去，1 是默认不写。
+  project.parts.light.reader.leadingInset = 0;
+  project.parts.light.reader.trailingInset = 1;
   const single = await io.exportFiles(project);
   assert.ok(JSON.parse(strFromU8(single.get('manifest.json'))).requires.includes('reader-single-corner-v1'));
   const singleReader = JSON.parse(strFromU8(single.get('theme.json'))).parts.light.reader;
   assert.equal(singleReader.leadingScale, 1.4);
   assert.equal('trailingScale' in singleReader, false);
+  assert.equal(singleReader.leadingInset, 0);
+  assert.equal('trailingInset' in singleReader, false);
   const leading = project.parts.light.reader.leading;
   project.parts.light.reader.leading = '';
   await assert.rejects(io.exportFiles(project), /至少要有 leading 或 trailing/);
@@ -348,6 +353,8 @@ test('export reports the same errors the app would', async () => {
   project.parts.light.reader.trailing = 'assets/br.svg';
   delete project.parts.light.reader.leadingScale;
   delete project.parts.light.reader.trailingScale;
+  delete project.parts.light.reader.leadingInset;
+  delete project.parts.light.reader.trailingInset;
   const both = await io.exportFiles(project);
   assert.ok(!JSON.parse(strFromU8(both.get('manifest.json'))).requires.includes('reader-single-corner-v1'));
   project.manifest.packageId = 'bad id';

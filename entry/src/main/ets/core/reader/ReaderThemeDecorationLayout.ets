@@ -22,9 +22,11 @@ export class ReaderThemeDecorationLayout {
     return Math.max(112, Math.min(260, shortEdge * 0.36));
   }
 
-  static inset(viewportWidth: number, viewportHeight: number, compact: boolean): number {
-    if (compact) return 2;
+  /** scale 是主题包设的角饰边距倍数，乘在默认边距上；0 是贴着屏幕边缘。 */
+  static inset(viewportWidth: number, viewportHeight: number, compact: boolean, scale: number = 1): number {
+    const factor = scale >= 0 ? scale : 1;
+    if (compact) return 2 * factor;
     const shortEdge = viewportWidth <= 0 || viewportHeight <= 0 ? 480 : Math.min(viewportWidth, viewportHeight);
-    return Math.max(8, Math.min(22, shortEdge * 0.025));
+    return Math.max(8, Math.min(22, shortEdge * 0.025)) * factor;
   }
 }

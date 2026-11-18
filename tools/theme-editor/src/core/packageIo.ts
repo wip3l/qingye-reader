@@ -575,6 +575,10 @@ export function normalizedParts(parts: Json): Json {
     for (const key of ['leadingScale', 'trailingScale']) {
       if (!ornaments || typeof reader[key] !== 'number' || reader[key] === 1) delete reader[key];
     }
+    // 边距倍数同理：1 是默认不用写，0（贴边）要留着。
+    for (const key of ['leadingInset', 'trailingInset']) {
+      if (!ornaments || typeof reader[key] !== 'number' || reader[key] === 1) delete reader[key];
+    }
     if (bgMode === 'ornaments' || bgMode === 'none') delete reader.image;
     if (bgMode !== 'image' && !reader.image) delete reader.imageFit;
     if (reader.imageFit === 'cover' && Object.keys(strip(reader)).length === 1) delete reader.imageFit;

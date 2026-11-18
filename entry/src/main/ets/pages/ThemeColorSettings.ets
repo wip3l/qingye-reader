@@ -61,6 +61,7 @@ import {
   chapterHeadIsEmpty,
   normalizeChapterHead,
   normalizeDropCapRatio,
+  normalizeOrnamentInset,
   normalizeOrnamentScale,
   ThemePackageChapterHead
 } from '../theme/share/ThemePackageFormat';
@@ -287,6 +288,9 @@ struct ThemeColorSettingsPage {
   // 拖动左上/右下“角饰大小”时的实时百分比；松手保存完回到 -1，改读主题包里的值。
   @State leadingScaleDrag: number = -1;
   @State trailingScaleDrag: number = -1;
+  // “角饰边距”同理。
+  @State leadingInsetDrag: number = -1;
+  @State trailingInsetDrag: number = -1;
   @State chapterHeadScaleDrag: number = -1;
   @State dropCapRatioDrag: number = -1;
   @State appFontFamily: string = '';
@@ -3954,6 +3958,74 @@ struct ThemeColorSettingsPage {
     .opacity(this.readerOrnamentScalable(trailing) ? 1 : 0.45)
   }
 
+  readerOrnamentInsetPercent(trailing: boolean): number {
+    const drag = trailing ? this.trailingInsetDrag : this.leadingInsetDrag;
+    if (drag >= 0) return drag;
+    if (this.assetRevision < 0) return 100;
+    const own = this.ownOrnamentReader();
+    if (!own) return 100;
+    // 旧记录里没有这两个字段，按默认边距。
+    return Math.round(normalizeOrnamentInset(trailing ? own.trailingInset : own.leadingInset) * 100);
+  }
+
+  setOrnamentInsetDrag(trailing: boolean, percent: number): void {
+    if (trailing) this.trailingInsetDrag = percent;
+    else this.leadingInsetDrag = percent;
+  }
+
+  async setReaderOrnamentInset(trailing: boolean, percent: number): Promise<void> {
+    this.setOrnamentInsetDrag(trailing, Math.round(percent));
+    try {
+      if (!(await this.ensureAdvanced())) return;
+      const dark = this.selectedMode === 'dark';
+      await this.runAssetUpload((): Promise<SchemeAssetResult> =>
+        SchemeAssetService.setReaderOrnamentInset(getContext(this), this.schemeId, dark, trailing, percent / 100),
+        '', false, false, '');
+    } finally {
+      this.setOrnamentInsetDrag(trailing, -1);
+    }
+  }
+
+  ornamentInsetLabel(trailing: boolean): string {
+    if (!this.readerOrnamentScalable(trailing)) return trailing ? '上传右下角饰后可调' : '上传左上角饰后可调';
+    const percent = this.readerOrnamentInsetPercent(trailing);
+    return percent <= 0 ? '贴边' : `${percent}%`;
+  }
+
+  @Builder
+  ornamentInsetRow(trailing: boolean) {
+    Column({ space: AppSpacing.XS }) {
+      Row() {
+        Text(trailing ? '右下角饰边距' : '左上角饰边距')
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.primaryTextColor())
+          .layoutWeight(1)
+        Text(this.ornamentInsetLabel(trailing))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+      }
+      .width('100%')
+      Slider({ value: this.readerOrnamentInsetPercent(trailing), min: 0, max: 300, step: 10,
+        style: SliderStyle.OutSet })
+        .id(trailing ? 'theme_editor_reader_trailing_inset' : 'theme_editor_reader_leading_inset')
+        .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
+        .width('100%')
+        .enabled(this.readerOrnamentScalable(trailing))
+        .selectedColor(ThemeRuntime.accentColor(this.appDarkMode))
+        .accessibilityText(trailing ? '右下角饰边距' : '左上角饰边距')
+        .onChange((value: number, mode: SliderChangeMode) => {
+          if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+            this.setReaderOrnamentInset(trailing, value);
+          } else {
+            this.setOrnamentInsetDrag(trailing, Math.round(value));
+          }
+        })
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .opacity(this.readerOrnamentScalable(trailing) ? 1 : 0.45)
+  }
+
   @Builder
   readerSlots() {
     Column({ space: AppSpacing.MD }) {
@@ -3982,7 +4054,7 @@ struct ThemeColorSettingsPage {
     }
     .width('100%')
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
-    this.moreRow('reader', '角饰大小与整图铺放')
+    this.moreRow('reader', '角饰大小、边距与整图铺放')
     if (this.moreOpen('reader')) {
       this.readerMoreRows()
     }
@@ -3994,7 +4066,9 @@ struct ThemeColorSettingsPage {
   @Builder
   readerMoreRows() {
     this.ornamentScaleRow(false)
+    this.ornamentInsetRow(false)
     this.ornamentScaleRow(true)
+    this.ornamentInsetRow(true)
     Column() {
       SettingRow({ title: '整图铺放', description: this.ownReaderMode() === 'image' ? '整图背景在阅读页上的铺法' : '上传整图后可选',
         showDivider: !!this.ownReaderMode() }) {

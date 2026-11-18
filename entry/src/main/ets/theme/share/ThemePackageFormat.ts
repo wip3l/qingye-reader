@@ -183,10 +183,22 @@ export class ThemePackagePartReader {
   // 老版本不认得这两个字段，按 1 显示。
   leadingScale: number = 1;
   trailingScale: number = 1;
+  // 左上、右下角饰各自离屏幕边缘的距离，相对默认边距（短边 × 0.025，夹在 8–22vp）的倍数，0 是贴边；
+  // 老版本不认得这两个字段，按 1 显示。
+  leadingInset: number = 1;
+  trailingInset: number = 1;
 }
 
 export const READER_ORNAMENT_SCALE_MIN: number = 0.5;
 export const READER_ORNAMENT_SCALE_MAX: number = 2;
+export const READER_ORNAMENT_INSET_MAX: number = 3;
+
+/** 角饰边距倍数：缺省或非法值当 1，0 是贴边；其余夹在 0–3，保留两位小数。 */
+export function normalizeOrnamentInset(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !isFinite(value)) return 1;
+  const clamped = Math.max(0, Math.min(READER_ORNAMENT_INSET_MAX, value));
+  return Math.round(clamped * 100) / 100;
+}
 
 /** 缺省、0 或非法值都当 1；其余夹在 0.5–2，保留两位小数。 */
 export function normalizeOrnamentScale(value: number | null | undefined): number {
@@ -1581,6 +1593,9 @@ function decodeVariantParts(record: Record<string, Object>, manifest: ThemePacka
     result.reader.imageFit = fit === 'contain' || fit === 'fill' ? fit : 'cover';
     result.reader.leadingScale = normalizeOrnamentScale(numberField(reader, 'leadingScale'));
     result.reader.trailingScale = normalizeOrnamentScale(numberField(reader, 'trailingScale'));
+    // 0 是贴边，不能和“没写”混在一起，所以不走 numberField。
+    result.reader.leadingInset = normalizeOrnamentInset(reader['leadingInset'] as number | undefined);
+    result.reader.trailingInset = normalizeOrnamentInset(reader['trailingInset'] as number | undefined);
     if (mode === 'image' && !result.reader.image) {
       throw new Error(`主题包的${readerLabel} 整图模式需要 image`);
     }

@@ -488,8 +488,11 @@ function readerBody(e: Effective): HTMLElement {
       return `width:${size}px;height:${size}px`;
     };
     const mirrored = !!r.leading && r.trailing === r.leading;
-    if (assetUrl(r.leading)) s.append(h('img', { class: 'orn l', src: assetUrl(r.leading), style: `${sized(r.leadingScale)};left:${ORNAMENT_INSET}px;top:${ORNAMENT_INSET}px`, alt: '' }));
-    if (assetUrl(r.trailing)) s.append(h('img', { class: 'orn t', src: assetUrl(r.trailing), style: `${sized(r.trailingScale)};right:${ORNAMENT_INSET}px;bottom:${ORNAMENT_INSET}px${mirrored ? ';transform:rotate(180deg)' : ''}`, alt: '' }));
+    // 同 ReaderThemeDecorationLayout.inset：倍数乘在默认边距上，0 是贴边。
+    const li = ORNAMENT_INSET * r.leadingInset;
+    const ti = ORNAMENT_INSET * r.trailingInset;
+    if (assetUrl(r.leading)) s.append(h('img', { class: 'orn l', src: assetUrl(r.leading), style: `${sized(r.leadingScale)};left:${li}px;top:${li}px`, alt: '' }));
+    if (assetUrl(r.trailing)) s.append(h('img', { class: 'orn t', src: assetUrl(r.trailing), style: `${sized(r.trailingScale)};right:${ti}px;bottom:${ti}px${mirrored ? ';transform:rotate(180deg)' : ''}`, alt: '' }));
   }
   if (r.source === 'base-art') {
     const style = `width:${ORNAMENT}px;height:${ORNAMENT}px`;

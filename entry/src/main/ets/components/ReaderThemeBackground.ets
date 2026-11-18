@@ -87,6 +87,7 @@ export struct ReaderThemeBackground {
             .layoutWeight(1)
         }
         .width('100%')
+        .padding({ left: this.decorationInset(false), top: this.decorationInset(false) })
 
         Blank()
           .layoutWeight(1)
@@ -105,10 +106,10 @@ export struct ReaderThemeBackground {
           }
         }
         .width('100%')
+        .padding({ right: this.decorationInset(true), bottom: this.decorationInset(true) })
       }
       .width('100%')
       .height('100%')
-      .padding(this.decorationInset())
       .hitTestBehavior(HitTestMode.None)
     }
   }
@@ -148,10 +149,11 @@ export struct ReaderThemeBackground {
       this.compact, ThemeAssetRegistry.readerBackgroundOrnamentScale(this.backgroundAssetId, trailing));
   }
 
-  decorationInset(): Padding {
-    const inset = ReaderThemeDecorationLayout.inset(this.effectiveViewportWidth(), this.effectiveViewportHeight(),
-      this.compact);
-    return { left: inset, right: inset, top: inset, bottom: inset };
+  // 左上、右下角饰各自有边距倍数，0 是贴着屏幕边缘。
+  decorationInset(trailing: boolean): number {
+    if (this.decorationSignature.length < 0) return 0;
+    return ReaderThemeDecorationLayout.inset(this.effectiveViewportWidth(), this.effectiveViewportHeight(),
+      this.compact, ThemeAssetRegistry.readerBackgroundOrnamentInset(this.backgroundAssetId, trailing));
   }
 
   shortEdge(): number {

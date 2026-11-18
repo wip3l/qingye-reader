@@ -5,6 +5,7 @@ import {
   packThemeId,
   findImageCrop,
   findShelfBackdrop,
+  normalizeOrnamentInset,
   normalizeOrnamentScale,
   shelfBackdropFor,
   ThemeImageCrop,
@@ -76,6 +77,9 @@ export class InstalledThemePackReader {
   // 左上、右下角饰各自的显示大小倍数（0.5–2）。
   leadingScale: number = 1;
   trailingScale: number = 1;
+  // 左上、右下角饰各自的边距倍数（0–3，0 是贴边）。
+  leadingInset: number = 1;
+  trailingInset: number = 1;
 }
 
 export class InstalledThemePackTtsPanel {
@@ -603,6 +607,8 @@ export class ThemePackRegistry {
       reader.imageFit = readerParts.imageFit || 'cover';
       reader.leadingScale = normalizeOrnamentScale(readerParts.leadingScale);
       reader.trailingScale = normalizeOrnamentScale(readerParts.trailingScale);
+      reader.leadingInset = normalizeOrnamentInset(readerParts.leadingInset);
+      reader.trailingInset = normalizeOrnamentInset(readerParts.trailingInset);
       if (mode === 'none') {
         variant.reader.backgroundAssetId = '';
       } else if (mode === 'ornaments' || mode === 'image') {

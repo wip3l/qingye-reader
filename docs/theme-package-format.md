@@ -73,7 +73,7 @@ my-theme/
 | 节 | 字段 | 说明 |
 | --- | --- | --- |
 | `light` / `dark` | `colors` | 界面配色：`pageColor`、`cardColor`、`inputColor`、`primaryTextColor`、`subTextColor`、`dividerColor`、`accentColor`、`buttonColor`、`dangerColor`。可以只写一部分。 |
-| | `reader` | 阅读页：`backgroundColor`（必须是铺满任意尺寸的底色）、`textColor`、`subTextColor`、`contentTone`（`light` / `dark`，决定系统栏图标明暗）、`backgroundMode`（`ornaments` 角饰 / `image` 整图 / `none` 只有底色）。角饰模式填 `leading`（左上）与 `trailing`（右下）图片（SVG 或透明底位图），可以只填一张，另一角空着（此时 `requires` 要加 `reader-single-corner-v1`）；两项填同一个素材时右下角旋转 180° 显示；`leadingScale`、`trailingScale` 分别是左上、右下角饰的显示大小，相对默认尺寸（屏幕短边 × 0.36，夹在 112–260vp）的倍数，0.5–2，默认 1，最大不超过短边的 0.8，旧版本应用忽略这两项按 1 显示。整图模式填 `image` 和 `imageFit`（`cover` / `contain` / `fill`），还可以同时填 `leading` / `trailing`（及两个大小），角饰叠在整图上面；旧版本应用只显示整图。 |
+| | `reader` | 阅读页：`backgroundColor`（必须是铺满任意尺寸的底色）、`textColor`、`subTextColor`、`contentTone`（`light` / `dark`，决定系统栏图标明暗）、`backgroundMode`（`ornaments` 角饰 / `image` 整图 / `none` 只有底色）。角饰模式填 `leading`（左上）与 `trailing`（右下）图片（SVG 或透明底位图），可以只填一张，另一角空着（此时 `requires` 要加 `reader-single-corner-v1`）；两项填同一个素材时右下角旋转 180° 显示；`leadingScale`、`trailingScale` 分别是左上、右下角饰的显示大小，相对默认尺寸（屏幕短边 × 0.36，夹在 112–260vp）的倍数，0.5–2，默认 1，最大不超过短边的 0.8，旧版本应用忽略这两项按 1 显示；`leadingInset`、`trailingInset` 分别是左上、右下角饰离屏幕边缘的距离，相对默认边距（屏幕短边 × 0.025，夹在 8–22vp）的倍数，0–3，默认 1，填 0 时角饰贴着屏幕边缘，旧版本应用忽略这两项按默认边距显示。整图模式填 `image` 和 `imageFit`（`cover` / `contain` / `fill`），还可以同时填 `leading` / `trailing`（及各自的大小、边距），角饰叠在整图上面；旧版本应用只显示整图。 |
 | | `emphasis` | 正文强调：`mode`（`none` / `text` / `highlight` / `bubble`）、`bubbleStyle`（内置气泡 ID，见主题开发指南；包里带了 `bubble` 节时自动用包内气泡）、`color`、`textColor`（可带透明度）。 |
 | | `commentBubble` | 可选：段评气泡（含本章说）的外观，见下文“段评气泡”。旧版本应用会忽略。 |
 | | `titleEmphasis` | 可选：章节标题的强调，见下文“标题强调”。不写表示主题不设置，标题保持原样。旧版本应用会忽略。 |

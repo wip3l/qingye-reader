@@ -17,6 +17,7 @@ import {
   findShelfBackdrop,
   isPackThemeId,
   NAVIGATION_ICON_KEYS,
+  normalizeOrnamentInset,
   normalizeOrnamentScale,
   normalizeShelfBackdropLayout,
   packThemeId,
@@ -252,6 +253,17 @@ export class SchemeAssetService {
       if (!variant || !SchemeAssetService.readerAllowsOrnaments(variant)) throw new Error('请先上传角饰');
       if (trailing) variant.reader.trailingScale = normalizeOrnamentScale(scale);
       else variant.reader.leadingScale = normalizeOrnamentScale(scale);
+    });
+  }
+
+  /** 左上（trailing 为 false）或右下角饰离屏幕边缘的边距倍数（0–3，0 是贴边）。 */
+  static async setReaderOrnamentInset(context: Context, schemeId: string, darkMode: boolean, trailing: boolean,
+    inset: number): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, '', async (record: ThemePackRecord): Promise<void> => {
+      const variant = darkMode ? record.parts.dark : record.parts.light;
+      if (!variant || !SchemeAssetService.readerAllowsOrnaments(variant)) throw new Error('请先上传角饰');
+      if (trailing) variant.reader.trailingInset = normalizeOrnamentInset(inset);
+      else variant.reader.leadingInset = normalizeOrnamentInset(inset);
     });
   }
 

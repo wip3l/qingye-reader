@@ -2,7 +2,7 @@
 import data from '../core/builtinThemes.json';
 import { S, project, type Mode } from './state.ts';
 import {
-  bubbleFor, chapterHeadFor, commentBubbleFor, normalizeCommentBubble, normalizeOrnamentScale, titleBubbleFor,
+  bubbleFor, chapterHeadFor, commentBubbleFor, normalizeCommentBubble, normalizeOrnamentInset, normalizeOrnamentScale, titleBubbleFor,
   type ThemePackageChapterHead, type ThemePackageCommentBubble
 } from '../../../../entry/src/main/ets/theme/share/ThemePackageFormat.ts';
 
@@ -68,6 +68,8 @@ export interface Effective {
     mode: string; leading: string; trailing: string; image: string; imageFit: string;
     /** 左上、右下角饰各自的大小倍数，格式层夹在 0.5–2。 */
     leadingScale: number; trailingScale: number;
+    /** 左上、右下角饰各自的边距倍数，格式层夹在 0–3，0 是贴边。 */
+    leadingInset: number; trailingInset: number;
   };
   e: { mode: string; bubble: 'pack' | string; color: string; textColor: string };
   /** 这个模式实际用的包内气泡（端饰、边框按项补上另一种模式的，同应用的 bubbleFor）；没有时为 null。 */
@@ -104,7 +106,9 @@ export function effective(mode: Mode): Effective {
     contentTone: r.contentTone || bv.reader.contentTone,
     source, mode: bgMode, leading: r.leading || '', trailing: r.trailing || '', image: r.image || '', imageFit: r.imageFit || 'cover',
     leadingScale: normalizeOrnamentScale(typeof v.reader?.leadingScale === 'number' ? v.reader.leadingScale : 1),
-    trailingScale: normalizeOrnamentScale(typeof v.reader?.trailingScale === 'number' ? v.reader.trailingScale : 1)
+    trailingScale: normalizeOrnamentScale(typeof v.reader?.trailingScale === 'number' ? v.reader.trailingScale : 1),
+    leadingInset: normalizeOrnamentInset(v.reader?.leadingInset),
+    trailingInset: normalizeOrnamentInset(v.reader?.trailingInset)
   };
   const em = filled(v.emphasis);
   const b = bubbleFor(p, mode === 'dark');
