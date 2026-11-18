@@ -135,6 +135,21 @@ export class BookMarkRules {
     return 0;
   }
 
+  /** 读书手账按评分排序时的分段名：整星一档，半星归到下一档（4.5 星在“4 星”里）。 */
+  static ratingBand(rating: number): string {
+    const value = BookMarkRules.normalizeRating(rating);
+    if (value <= 0) return '未打分';
+    if (value === 1) return '半星';
+    return `${Math.floor(value / 2)} 星`;
+  }
+
+  /** 读书手账按最近标记排序时的分段名：今年只写月份，往年带年份。 */
+  static monthLabel(time: number, now: number): string {
+    const date = new Date(time);
+    const month = `${date.getMonth() + 1}月`;
+    return date.getFullYear() === new Date(now).getFullYear() ? month : `${date.getFullYear()}年${month}`;
+  }
+
   /** 备份、同步读回来的可能是普通对象，逐个字段规整；没有作品键或书名的返回 null。 */
   static fromPlain(source: Object | null | undefined): BookMark | null {
     if (!source || typeof source !== 'object') return null;

@@ -41,6 +41,14 @@ test('rating labels follow the five bands', () => {
     ['', '很差', '很差', '较差', '还行', '推荐', '推荐', '力荐', '力荐']);
 });
 
+test('journal sections: star bands put half stars in the lower band, months drop the current year', () => {
+  assert.deepEqual([0, 1, 2, 3, 8, 9, 10].map(v => BookMarkRules.ratingBand(v)),
+    ['未打分', '半星', '1 星', '1 星', '4 星', '4 星', '5 星']);
+  const now = new Date(2026, 10, 17).getTime();
+  assert.equal(BookMarkRules.monthLabel(new Date(2026, 10, 2).getTime(), now), '11月');
+  assert.equal(BookMarkRules.monthLabel(new Date(2025, 11, 20).getTime(), now), '2025年12月');
+});
+
 test('tags are cleaned, deduplicated, length- and count-limited', () => {
   const many = Array.from({ length: 14 }, (_, i) => `标签${i}`);
   assert.equal(BookMarkRules.normalizeCategories(many).length, 10);
