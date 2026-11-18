@@ -119,7 +119,10 @@ struct SearchBookDetailPage {
   private markDraft: BookMark = new BookMark();
   private markCategories: string[] = [];
   private markLoadVersion: number = 0;
-  /** 操作行下面的页签：简介、统计（有阅读记录才有）、标记。每次进详情页都从简介开始。 */
+  /**
+   * 操作行下面的页签：简介、统计（有阅读记录才有）、标记。进详情页默认从简介开始；
+   * 从我的标记、足迹的标记卡进来（参数 initialTab=mark）时直接显示标记。
+   */
   static readonly TAB_INTRO: number = 0;
   static readonly TAB_STATS: number = 1;
   static readonly TAB_MARK: number = 2;
@@ -173,6 +176,7 @@ struct SearchBookDetailPage {
       this.promptAddToShelfOnBackFromResult = params['promptAddToShelfOnBack'] === 'true';
       this.autoStartRead = params['autoStartRead'] === 'true';
       this.readerBookUrl = params['readerBookUrl'] || '';
+      if (params['initialTab'] === 'mark') this.detailTab = SearchBookDetailPage.TAB_MARK;
       // Both operations initialize/read the same AppDatabase instance. Starting them at the
       // same time can make getBookSource() observe the store before initialization has completed,
       // leaving the detail page with an empty intro until the reader opens the book again.
