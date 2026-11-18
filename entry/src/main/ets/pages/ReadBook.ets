@@ -11856,6 +11856,8 @@ struct ReadBookPage {
           await this.startTtsReadingFromCurrentPosition(false, false, -1, offset);
         } else {
           // Keep a paused player paused; its next Play starts from the new page.
+          // isTtsSpeaking keeps the mini player and the menu's read-aloud button on screen.
+          this.isTtsSpeaking = true;
           this.isTtsPaused = true;
           this.quickJumpPausedSpeechOffset = offset;
           this.quickJumpPausedSpeechSource = source;
@@ -14746,7 +14748,9 @@ struct ReadBookPage {
       this.pauseReaderAutoScroll('朗读中，已暂停');
     }
     if (this.isReaderComicModeActive()) return;
-    if (this.isTtsSpeaking || this.ttsReader?.isSpeaking()) {
+    // 暂停后翻过页或跳转过：引擎里已经没有暂停着的语音，会话只是挂着（悬浮条等照常显示），继续时走下面从当前位置开读。
+    const heldPausedWithoutSpeech = this.isTtsPaused && this.ttsReader?.isSpeaking() !== true;
+    if (!heldPausedWithoutSpeech && (this.isTtsSpeaking || this.ttsReader?.isSpeaking())) {
       try {
         if (this.isTtsPaused || this.ttsReader?.isPaused()) {
           this.isTtsPaused = false;
@@ -15148,6 +15152,27 @@ struct ReadBookPage {
     // Preserve the visible speaking/highlight state while the outgoing page animates. Clearing it
     // here used to rebuild the whole reader subtree immediately before the page-turn animation.
     this.ttsReader?.stop();
+  }
+
+  /**
+   * 暂停着翻页：引擎里那段暂停的语音属于旧位置，丢掉它但会话仍算暂停（悬浮条、媒体控件不变），
+   * 下一次“继续”走 startTtsReadingFromCurrentPosition 从当前页读起。与快速跳转保持暂停的做法一致。
+   */
+  holdPausedTtsForManualPageTurn(): void {
+    this.quickJumpPausedSpeechOffset = -1;
+    if (this.ttsReader?.isSpeaking() !== true) return;
+    this.stopTtsReaderForChapterSwitch();
+    // 会话仍在：isTtsSpeaking 决定悬浮朗读条和菜单里的朗读按钮是否显示。
+    this.isTtsSpeaking = true;
+    this.isTtsPaused = true;
+    this.updateTtsFloatingSession();
+  }
+
+  /** 暂停着翻页落定后，把朗读位置记到这一页页首；之后停止朗读不会把页面带回原来读到的句子。 */
+  settlePausedTtsOnVisiblePage(): void {
+    if (!this.isTtsPaused || this.ttsReader?.isSpeaking() === true) return;
+    if (this.isPageTurning || this.pageTurnQueue.hasPending() || !this.isReaderPageTurnPositionReadyForTts()) return;
+    this.syncTtsStateToVisiblePage();
   }
 
   scheduleTtsResumeAfterManualPageTurn(): void {
@@ -23344,11 +23369,16 @@ ${leading}` : leading;
     }
     const turnRequestStartedAt = Date.now();
     const resumeMirroredTtsAfterTurn = this.isMirroringActiveTtsForCurrentBook();
-    const resumeTtsAfterTurn = this.ttsManualPageTurnResumePending ||
-      this.isTtsSpeaking || this.ttsReader?.isSpeaking();
+    // 朗读已暂停时翻页不续播：保持暂停，等用户点继续再从翻到的这一页读起。
+    const holdPausedTtsAfterTurn = !resumeMirroredTtsAfterTurn && !this.ttsManualPageTurnResumePending &&
+      (this.isTtsPaused || this.ttsReader?.isPaused() === true);
+    const resumeTtsAfterTurn = !holdPausedTtsAfterTurn && (this.ttsManualPageTurnResumePending ||
+      this.isTtsSpeaking || this.ttsReader?.isSpeaking() === true);
     let ttsPrepareElapsed = 0;
     if (resumeMirroredTtsAfterTurn) {
       this.prepareMirroredTtsManualPageTurn();
+    } else if (holdPausedTtsAfterTurn) {
+      this.holdPausedTtsForManualPageTurn();
     } else if (resumeTtsAfterTurn) {
       // Stop only synthesis/audio. Do not synchronously refresh AVSession metadata or clear the
       // highlighted subtree before the visual turn; both operations are much more expensive than
@@ -23395,6 +23425,8 @@ ${leading}` : leading;
     this.runQueuedPageTurnLater();
     if (resumeMirroredTtsAfterTurn) {
       this.scheduleMirroredTtsResumeAfterManualPageTurn();
+    } else if (holdPausedTtsAfterTurn) {
+      this.settlePausedTtsOnVisiblePage();
     } else if (resumeTtsAfterTurn) {
       this.scheduleTtsResumeAfterManualPageTurn();
     }
@@ -23411,7 +23443,7 @@ ${leading}` : leading;
     this.mirroredTtsFocusSyncSerial++;
   }
 
-  scheduleMirroredTtsResumeAfterManualPageTurn(): void {
+  scheduleMirroredTtsResumeAfterManualPageTurn(retry: number = 0): void {
     if (!this.mirroredTtsManualTurnPending) return;
     if (this.mirroredTtsManualTurnTimerId >= 0) clearTimeout(this.mirroredTtsManualTurnTimerId);
     const serial = ++this.mirroredTtsManualTurnSerial;
@@ -23420,15 +23452,26 @@ ${leading}` : leading;
       if (serial !== this.mirroredTtsManualTurnSerial || !this.mirroredTtsManualTurnPending) return;
       if (this.isPageTurning || this.pageTurnQueue.hasPending() ||
         !this.isReaderPageTurnPositionReadyForTts()) {
-        this.scheduleMirroredTtsResumeAfterManualPageTurn();
+        this.scheduleMirroredTtsResumeAfterManualPageTurn(retry);
         return;
       }
       const chapterIndex = this.currentChapterIndex;
       const pageIndex = this.currentPageIndex;
       const pageStartOffset = this.getPageStartOffset(pageIndex);
-      ReaderTtsFloatingSession.jumpToPosition(chapterIndex, pageIndex, pageStartOffset)
-        .then(() => {
+      // 后台朗读已暂停：只把它的位置挪到这一页并保持暂停，点继续时从这里读；它正忙着换上一次位置时稍后重试。
+      const keepPaused = this.globalTtsPaused;
+      const move: Promise<boolean> = keepPaused ?
+        ReaderTtsFloatingSession.jumpToPreparedPosition(ReaderTtsFloatingSession.currentOwnerId(),
+          chapterIndex, pageStartOffset, false) :
+        ReaderTtsFloatingSession.jumpToPosition(chapterIndex, pageIndex, pageStartOffset).then(() => true);
+      move
+        .then((moved: boolean) => {
           if (serial !== this.mirroredTtsManualTurnSerial) return;
+          if (!moved && keepPaused && this.globalTtsPaused && retry < 40 &&
+            this.isMirroringActiveTtsForCurrentBook()) {
+            this.scheduleMirroredTtsResumeAfterManualPageTurn(retry + 1);
+            return;
+          }
           this.mirroredTtsManualTurnPending = false;
           this.syncMirroredTtsFocus()
             .then(() => this.scheduleCurrentTtsFocusRepublishAfterPageTurn())
