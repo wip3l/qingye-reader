@@ -19,6 +19,7 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { NativeSourceService, NativeCommentPage, HttpClient, ReaderActionMarker, ReaderActionData } from '@legado/sourceengine';
 import { NativeCommentPageView } from '../components/NativeCommentPageView';
+import { BookSourceStageRuntimeHost } from '../components/BookSourceStageRuntimeHost';
 
 class BookSourceDebugExportReport {
   reportVersion: number = 1;
@@ -114,6 +115,8 @@ struct BookSourceDebugPage {
       }, actions: () => {
         this.titleActions()
       } })
+      // 调试页是 push 上来的，下层页面的隐藏宿主不可用；不挂这个，@js 规则都会等到超时报“未就绪”。
+      BookSourceStageRuntimeHost()
     }
     .width('100%')
     .height('100%')
@@ -271,7 +274,8 @@ struct BookSourceDebugPage {
       Text(step.name).fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
           .layoutWeight(1)
         Text(`${step.status} · ${step.elapsedMs}ms`).fontSize(AppFontSize.CAPTION)
-          .fontColor(step.status === 'passed' ? ThemeRuntime.successColor(this.appDarkMode) : ThemeRuntime.dangerColor(this.appDarkMode))
+          .fontColor(step.status === 'passed' ? ThemeRuntime.successColor(this.appDarkMode) :
+            (step.status === 'warning' ? ThemeRuntime.warningColor(this.appDarkMode) : ThemeRuntime.dangerColor(this.appDarkMode)))
       }.width('100%')
       if (step.error) Text(`错误：${step.error}`).fontSize(12).fontColor(ThemeRuntime.dangerColor(this.appDarkMode)).width('100%')
         .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
@@ -391,7 +395,13 @@ struct BookSourceDebugPage {
         await this.runFullDebug(debug);
       }
       this.collectDebugLinks(debug.session);
-      debug.finish(this.session.steps.some((step: BookSourceDebugStep): boolean => step.status === 'passed') ? 'passed' : 'failed');
+      // 链路走到的最后一步决定成败（完整链路里搜索无结果会改走发现，前面的失败不算整次失败）；
+      // 其余步骤有失败或告警时整次记为告警。
+      const steps = debug.session.steps;
+      const last = steps.length > 0 ? steps[steps.length - 1] : null;
+      const lastOk = !!last && (last.status === 'passed' || last.status === 'warning');
+      debug.finish(!lastOk ? 'failed' :
+        (steps.every((step: BookSourceDebugStep): boolean => step.status === 'passed') ? 'passed' : 'warning'));
       this.publishSession(debug);
     } catch (error) {
       debug.addLog('error', error instanceof Error ? error.message : String(error));
