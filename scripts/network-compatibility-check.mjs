@@ -410,4 +410,16 @@ console.log('network-compatibility-check: transports, final headers, managed ret
   const host=new f.NativeHost({bookSourceUrl:'https://source.example'},client,()=>false);
   assert.equal(host.cookieGet(request().url,'cf_clearance'),'fixture');
 }
+// GET/HEAD must not pass extraData: the system HTTP module appends a GET's string extraData to the URL, so an
+// empty string turned "/s?q=a" into "/s?q=a&" on device. POST still sends its body.
+for (const binary of [false, true]) {
+  const f = fixture(); const client = new f.HttpClient();
+  const execute = req => binary ? client.executeBinary(req) : client.execute(req);
+  f.replies.push({}); await execute(request('https://source.example/s?q=%D7%DC'));
+  assert.equal('extraData' in f.calls.at(-1), false, 'GET must not carry extraData');
+  f.replies.push({}); await execute({ ...request('https://source.example/s?q=1'), method: 'HEAD' });
+  assert.equal('extraData' in f.calls.at(-1), false, 'HEAD must not carry extraData');
+  f.replies.push({}); await execute({ ...request(), method: 'POST', body: 'q=1' });
+  assert.equal(f.calls.at(-1).extraData, 'q=1', 'POST keeps its body');
+}
 console.log('Partition-aware request cookie / explicit-header / UA casing checks passed.');
