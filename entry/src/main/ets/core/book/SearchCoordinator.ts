@@ -543,7 +543,7 @@ export class SearchCoordinator {
     js.setVar('page', String(this.currentPage));
 
     const searchSerial = this.searchSerial;
-    const au = new AnalyzeUrl(source, this.http)
+    const au = new AnalyzeUrl(source, this.http).trustSourceAuthoredUrl()
       .setCancelCheck((): boolean => stopped() || searchSerial !== this.searchSerial,
         SEARCH_RATE_LIMIT_MAX_WAIT_MS);
     const onPartialBody = partial.listener ? (text: string): void => {

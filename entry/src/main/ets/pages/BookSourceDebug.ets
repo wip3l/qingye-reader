@@ -254,9 +254,12 @@ struct BookSourceDebugPage {
       if (this.session.steps.length === 0 && this.session.logs.length === 0) {
         Text('运行后显示请求、规则匹配和错误详情').fontSize(AppFontSize.BODY).fontColor(this.subTextColor()).width('100%')
       }
+      // 步骤对象在运行中被原地改写（补请求、规则、结束状态），键里带上这些量，卡片才会跟着重画；
+      // 只用阶段+开始时间时，运行中先渲染出的卡片会一直停在 running · 0ms。
       ForEach(this.session.steps, (step: BookSourceDebugStep) => {
         this.stepView(step)
-      }, (step: BookSourceDebugStep) => `${step.stage}_${step.startedAt}`)
+      }, (step: BookSourceDebugStep) => `${step.stage}_${step.startedAt}_${step.status}_${step.elapsedMs}_` +
+        `${step.requests.length}_${step.rules.length}_${Object.keys(step.outputs).length}_${step.error.length}`)
       ForEach(this.session.logs, (log: BookSourceDebugLog) => {
         Text(`[${log.level}] ${log.message}`).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width('100%')
           .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
@@ -484,7 +487,10 @@ struct BookSourceDebugPage {
       this.status = progress.status;
       this.collectDebugLinks(debug.session);
     }, { targetSources: [this.source], maxResultsPerSource: 1, maxTotalResults: 1,
-      debugContext: debug });
+      debugContext: debug, onSourceComplete: async (_source, result) => {
+        // 完整链路搜索无结果会改走发现，失败原因要先记下来，否则只剩“有效记录 0”看不出卡在哪。
+        if (result.books.length === 0) debug.addLog('error', `搜索失败：${result.reason || '未搜索到结果'}`);
+      } });
     if (candidates.length === 0 && !this.source.enabledExplore) {
       debug.addLog('error', '该书源未启用发现，完整链路无法自动取得候选书');
       return;

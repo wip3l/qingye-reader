@@ -176,7 +176,7 @@ export class ExploreCoordinator {
     }
     try {
       VerificationSupport.clearVerification();
-      const au = new AnalyzeUrl(source, this.http).setCancelCheck(cancelled);
+      const au = new AnalyzeUrl(source, this.http).trustSourceAuthoredUrl().setCancelCheck(cancelled);
       const reqUrl = await this.buildUrl(source, entry.url, page, debugContext);
       if (cancelled()) return [];
       if (!reqUrl || /^\s*@?js:/i.test(reqUrl) ||
