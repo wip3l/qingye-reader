@@ -14,6 +14,7 @@ import { AppThemeModeStore } from '../../utils/AppThemeModeStore';
 import { AppColorModeApplier } from '../../utils/AppColorModeApplier';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
 import { SettingsSearchLayer } from './SettingsSearchLayer';
+import { ImmersiveMaterialSurface } from '../ImmersiveMaterialSurface';
 
 class ThemeModeOption {
   mode: string = '';
@@ -50,6 +51,9 @@ export struct SettingsPage {
   /** 设置搜索层是否打开；首页据此收起底栏、让返回键先关掉它。 */
   @StorageLink('mineSearchActive') mineSearchActive: boolean = false;
   @State showThemeModeMenu: boolean = false;
+  /** 搜索栏的实测宽度；沉浸光感底板要具体数值。 */
+  @State searchEntryWidth: number = 0;
+  private static readonly SEARCH_ENTRY_HEIGHT: number = 40;
   private readonly themeModeOptions: ThemeModeOption[] = [
     { mode: 'light', label: '浅色', icon: $r('sys.symbol.sun_max') },
     { mode: 'dark', label: '深色', icon: $r('sys.symbol.moon') },
@@ -226,26 +230,43 @@ export struct SettingsPage {
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
-  /** 标题下的搜索栏：点开设置搜索层。 */
+  /** 标题下的搜索栏：沉浸光感胶囊（与搜索层里的输入框同款），点开设置搜索层。悬浮栏材质只接受具体宽度，先量出行宽。 */
   @Builder
   searchEntry() {
-    Row({ space: AppSpacing.MD }) {
-      SymbolGlyph($r('sys.symbol.magnifyingglass'))
-        .fontSize(18)
-        .fontColor([this.subTextColor()])
-      Text('搜索设置，如 字号、息屏、音量键')
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.subTextColor())
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(1)
+    Row() {
+      if (this.searchEntryWidth > 0) {
+        ImmersiveMaterialSurface({
+          surfaceWidth: this.searchEntryWidth,
+          surfaceHeight: SettingsPage.SEARCH_ENTRY_HEIGHT,
+          darkMode: this.appDarkMode,
+          fallbackColor: this.glassCardColor(),
+          glowColor: `#40${this.accentColor().substring(1)}`
+        }) {
+          Row({ space: AppSpacing.MD }) {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(18)
+              .fontColor([this.subTextColor()])
+            Text('搜索设置，如 字号、息屏、音量键')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.subTextColor())
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .height('100%')
+          .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+          .alignItems(VerticalAlign.Center)
+        }
+      }
     }
     .width('100%')
-    .height(40)
-    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
-    .borderRadius(20)
-    .backgroundColor(this.glassCardColor())
-    .alignItems(VerticalAlign.Center)
+    .height(SettingsPage.SEARCH_ENTRY_HEIGHT)
+    .onAreaChange((_oldValue: Area, newValue: Area) => {
+      const width = Math.floor(Number(newValue.width));
+      if (Number.isFinite(width) && width > 0 && width !== this.searchEntryWidth) this.searchEntryWidth = width;
+    })
+    .accessibilityGroup(true)
     .accessibilityText('搜索设置')
     .onClick(() => {
       this.mineSearchActive = true;
