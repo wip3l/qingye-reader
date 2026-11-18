@@ -214,7 +214,11 @@ struct BookSourcePage {
   @State @Watch('syncImportUrlDialog') showImportUrlDialog: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showImportSourceSelectionDialog: boolean = false;
   @State pendingImportSources: BookSource[] = [];
-  @State selectedImportSourceUrls: string[] = [];
+  // 导入选择弹窗：一次可能几千个书源，列表懒加载，勾选状态放 Set 按地址查。
+  // Set 本身不被观察，改动后递增 importSelectionRevision，读勾选状态的地方都经过它才会刷新。
+  private importSourceDataSource: BookSourceListDataSource = new BookSourceListDataSource();
+  private importSelectedUrls: Set<string> = new Set<string>();
+  @State importSelectionRevision: number = 0;
   // 导入时是否沿用书源文件里的分组；一次导入（含一次多选的多个文件）只问一次，本页内记住上次的选择。
   @State importKeepSourceGroups: boolean = true;
   @State selectionMode: boolean = false;
@@ -2340,7 +2344,7 @@ struct BookSourcePage {
         .width('100%')
         .textAlign(TextAlign.Center)
 
-      Text(`共 ${this.pendingImportSources.length} 个书源，已选择 ${this.selectedImportSourceUrls.length} 个`)
+      Text(`共 ${this.pendingImportSources.length} 个书源，已选择 ${this.importSelectedCount()} 个`)
         .fontSize(AppFontSize.BODY)
         .fontColor(this.secondaryTextColor())
         .width('100%')
@@ -2365,9 +2369,9 @@ struct BookSourcePage {
       }
       .width('100%')
 
-      Scroll() {
-        Column({ space: AppSpacing.SM }) {
-          ForEach(this.pendingImportSources, (source: BookSource) => {
+      List({ space: AppSpacing.SM }) {
+        LazyForEach(this.importSourceDataSource, (source: BookSource) => {
+          ListItem() {
             Row() {
               Toggle({ type: ToggleType.Checkbox, isOn: this.isImportSourceSelected(source) })
                 .selectedColor(this.buttonColor())
@@ -2398,12 +2402,12 @@ struct BookSourcePage {
             .padding({ left: AppSpacing.SM, right: AppSpacing.SM, top: AppSpacing.MD, bottom: AppSpacing.MD })
             .borderRadius(ThemeRuntime.mediumRadius())
             .backgroundColor(this.inputColor())
-          }, (source: BookSource) => source.bookSourceUrl)
-        }
-        .width('100%')
+          }
+        }, (source: BookSource) => source.bookSourceUrl)
       }
       .width('100%')
       .constraintSize({ maxHeight: 360 })
+      .cachedCount(4)
       .scrollBar(BarState.Off)
 
       if (this.importSourceGroupNames(this.pendingImportSources).length > 0) {
@@ -2448,7 +2452,7 @@ struct BookSourcePage {
           .layoutWeight(1)
           .height(42)
           .borderRadius(ThemeRuntime.buttonRadius())
-          .enabled(this.selectedImportSourceUrls.length > 0 && !this.isImporting)
+          .enabled(this.importSelectedCount() > 0 && !this.isImporting)
           .backgroundColor(this.buttonColor())
           .fontColor(ThemeRuntime.onAccentColor())
           .onClick(() => this.confirmImportSourceSelection())
@@ -7172,7 +7176,9 @@ struct BookSourcePage {
     // unexpectedly add every source to the local database.
     if (sources.length > 1) {
       this.pendingImportSources = sources;
-      this.selectedImportSourceUrls = sources.map((source: BookSource) => source.bookSourceUrl);
+      this.importSourceDataSource.replace(sources, true);
+      this.importSelectedUrls = new Set<string>(sources.map((source: BookSource) => source.bookSourceUrl));
+      this.importSelectionRevision++;
       this.openImportSourceSelectionDialog();
       return;
     }
@@ -7292,40 +7298,48 @@ struct BookSourcePage {
     await this.loadSources();
   }
 
+  /** 读 importSelectionRevision 让调用处随勾选变化刷新；按地址查 Set，不随书源数变慢。 */
   isImportSourceSelected(source: BookSource): boolean {
-    return this.selectedImportSourceUrls.includes(source.bookSourceUrl);
+    return this.importSelectionRevision >= 0 && this.importSelectedUrls.has(source.bookSourceUrl);
+  }
+
+  importSelectedCount(): number {
+    return this.importSelectionRevision >= 0 ? this.importSelectedUrls.size : 0;
   }
 
   setImportSourceSelected(source: BookSource, selected: boolean): void {
+    const url = source.bookSourceUrl;
+    if (selected === this.importSelectedUrls.has(url)) return;
     if (selected) {
-      if (!this.isImportSourceSelected(source)) {
-        this.selectedImportSourceUrls = this.selectedImportSourceUrls.concat([source.bookSourceUrl]);
-      }
-      return;
+      this.importSelectedUrls.add(url);
+    } else {
+      this.importSelectedUrls.delete(url);
     }
-    this.selectedImportSourceUrls = this.selectedImportSourceUrls.filter((url: string) => url !== source.bookSourceUrl);
+    this.importSelectionRevision++;
   }
 
   areAllImportSourcesSelected(): boolean {
-    return this.pendingImportSources.length > 0 &&
-      this.selectedImportSourceUrls.length === this.pendingImportSources.length;
+    return this.pendingImportSources.length > 0 && this.importSelectedCount() === this.pendingImportSources.length;
   }
 
   selectAllImportSources(selected: boolean): void {
-    this.selectedImportSourceUrls = selected ?
-      this.pendingImportSources.map((source: BookSource) => source.bookSourceUrl) : [];
+    this.importSelectedUrls = selected ?
+      new Set<string>(this.pendingImportSources.map((source: BookSource) => source.bookSourceUrl)) : new Set<string>();
+    this.importSelectionRevision++;
   }
 
   cancelImportSourceSelection(): void {
     this.showImportSourceSelectionDialog = false;
     this.pendingImportSources = [];
-    this.selectedImportSourceUrls = [];
+    this.importSourceDataSource.replace([], true);
+    this.importSelectedUrls = new Set<string>();
+    this.importSelectionRevision++;
   }
 
   async confirmImportSourceSelection(): Promise<void> {
-    if (this.selectedImportSourceUrls.length === 0 || this.isImporting) return;
+    if (this.importSelectedUrls.size === 0 || this.isImporting) return;
     const selected = this.pendingImportSources.filter((source: BookSource) =>
-      this.selectedImportSourceUrls.includes(source.bookSourceUrl));
+      this.importSelectedUrls.has(source.bookSourceUrl));
     if (selected.length === 0) return;
     this.isImporting = true;
     try {
