@@ -37,6 +37,10 @@ interface ExploreUrlItem {
   action?: string;
 }
 
+// The result-list rule runs synchronously on the main thread; past this budget its remaining per-element JS is
+// skipped and the page fails with a notice, well before the 6-second freeze kill (AnalyzeRule.setDeadline).
+const EXPLORE_LIST_RULE_DEADLINE_MS = 3000;
+
 class ExplorePlatformSelector {
   labels: string[] = [];
   values: string[] = [];
@@ -233,8 +237,13 @@ export class ExploreCoordinator {
         exploreRule.bookList || '', SourceRuntimeStage.EXPLORE, '', 8 * 1024 * 1024,
         16 * 1024 * 1024, encodedVariables);
       const typedItems = stageItems === null ?
-        rule.execute(exploreRule.bookList || '', RuleExecutionTarget.ELEMENTS) :
+        rule.setDeadline(EXPLORE_LIST_RULE_DEADLINE_MS).execute(exploreRule.bookList || '', RuleExecutionTarget.ELEMENTS) :
         stageItems.map((item: string): RuleValue => RuleValue.fromExternal(item));
+      if (rule.deadlineExceeded()) {
+        this.noticeMessage = `发现列表规则执行超过 ${EXPLORE_LIST_RULE_DEADLINE_MS / 1000} 秒，已停止（规则对每条结果运行的脚本过慢）`;
+        console.warn('[ExploreCoordinator] list rule over main-thread budget:', source.bookSourceName);
+        return [];
+      }
       const items = typedItems.map((item: RuleValue): string => item.asString());
       if (items.length === 0) this.noticeMessage = '发现接口已有响应，但列表规则未匹配到内容';
       console.info('[ExploreCoordinator] parsed list:', source.bookSourceName, 'rule:', exploreRule.bookList, 'count:', items.length);

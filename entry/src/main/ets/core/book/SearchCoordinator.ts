@@ -34,6 +34,9 @@ const MAX_SEARCH_CONCURRENCY = 12;
 const SEARCH_RATE_LIMIT_MAX_WAIT_MS = 60000;
 // Overall budget for one source: request, scripts and result parsing together.
 const SEARCH_SOURCE_TIMEOUT_MS = 60000;
+// The result-list rule runs synchronously on the main thread and cannot yield midway. Past this budget its remaining
+// per-element JS is skipped and the source fails, well before the 6-second freeze kill (AnalyzeRule.setDeadline).
+const SEARCH_LIST_RULE_DEADLINE_MS = 2000;
 
 /** Tells an abandoned source run that its result is no longer wanted. */
 class SearchSourceAbort {
@@ -52,6 +55,8 @@ interface ParsedSearchBooks {
   books: SearchBook[];
   itemCount: number;
   cancelled: boolean;
+  /** The list rule ran out of its main-thread budget; the partial list was dropped. */
+  listRuleTimedOut: boolean;
 }
 
 /**
@@ -607,6 +612,10 @@ export class SearchCoordinator {
     if (parsed.cancelled) {
       return this.sourceResult([], BookSource.VALIDATION_TEMPORARY_ERROR, '校验已取消');
     }
+    if (parsed.listRuleTimedOut && partial.emitted.length === 0) {
+      return this.sourceResult([], BookSource.VALIDATION_FAILED,
+        `搜索列表规则执行超过 ${SEARCH_LIST_RULE_DEADLINE_MS / 1000} 秒，已跳过（规则对每条结果运行的脚本过慢）`);
+    }
     if (parsed.books.length > 0 || partial.emitted.length > 0) {
       if (debugContext) {
         debugContext.setOutput('resultCount', String(partial.emitted.length + parsed.books.length));
@@ -641,7 +650,7 @@ export class SearchCoordinator {
   private async parseSearchBooks(source: BookSource, keyword: string, options: SearchOptions, stopped: () => boolean,
     body: string, baseUrl: string, encodedVariables: Record<string, string>, budget: SourceResultBudget,
     debugContext: BookSourceDebugContext | null, seenBookKeys: Set<string>): Promise<ParsedSearchBooks> {
-    const parsed: ParsedSearchBooks = { books: [], itemCount: 0, cancelled: false };
+    const parsed: ParsedSearchBooks = { books: [], itemCount: 0, cancelled: false, listRuleTimedOut: false };
     const searchRule = source.searchRule;
     const rule = new AnalyzeRule(body, baseUrl);
     this.seedSourceVariables(rule.getContext(), source);
@@ -660,8 +669,14 @@ export class SearchCoordinator {
       return parsed;
     }
     const allTypedItems = stageItems === null ?
-      rule.execute(searchRule.bookList || '', RuleExecutionTarget.ELEMENTS) :
+      rule.setDeadline(SEARCH_LIST_RULE_DEADLINE_MS).execute(searchRule.bookList || '', RuleExecutionTarget.ELEMENTS) :
       stageItems.map((item: string): RuleValue => RuleValue.fromExternal(item));
+    if (rule.deadlineExceeded()) {
+      console.warn('[SC] list rule over main-thread budget, source skipped:', source.bookSourceName,
+        `${SEARCH_LIST_RULE_DEADLINE_MS}ms`);
+      parsed.listRuleTimedOut = true;
+      return parsed;
+    }
     // A per-type search reads further down the list, so an aggregated source's later types are reached at all.
     const candidateLimit = this.normalizedLimit(options.maxCandidatesPerSource,
       options.leanResult === true ? 60 : options.maxResultsPerCategory !== undefined ? 200 : 120, 1, 200);
