@@ -28,7 +28,7 @@
 | 项目 | 信息 |
 | --- | --- |
 | 应用包名 | `io.legado.read` |
-| 当前版本 | `4.6.027`（以 `AppScope/app.json5` 为准） |
+| 当前版本 | `4.6.028`（以 `AppScope/app.json5` 为准） |
 | 支持设备 | `phone`、`tablet`、`2in1`、`pc` |
 | 最低 / 目标 API | HarmonyOS 6.0.0（API 20）/ API 26 |
 | 开源协议 | GPL-3.0 |
@@ -296,8 +296,8 @@ qingye-reader/
 | 配置 | 值 |
 | --- | --- |
 | 主模块 / 入口 Ability | `entry` / `EntryAbility` |
-| `versionName` | `4.6.027` |
-| `versionCode` / `buildVersion` | `4060027` |
+| `versionName` | `4.6.028` |
+| `versionCode` / `buildVersion` | `4060028` |
 | `minAPIVersion` / `targetAPIVersion` | `20` / `26` |
 | 权限 | `INTERNET`、`GET_NETWORK_INFO`、`KEEP_BACKGROUND_RUNNING`、`VIBRATE`（翻页震感）、`DETECT_GESTURE`（握姿感知）、`ACCESS_BIOMETRIC`（隐私书架指纹或人脸解锁）、`CAMERA`（仅在用户启用眼动翻页时请求） |
 
