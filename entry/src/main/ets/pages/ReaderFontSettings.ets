@@ -1630,7 +1630,7 @@ export struct ReaderFontSettingsEditor {
           () => secondary ? this.titleStyle.secondaryScale > 0.5 : this.titleStyle.lineGap > 0,
           () => this.adjustTitleSplit(secondary, -1))
         Slider({ value: secondary ? this.titleStyle.secondaryScale : this.titleStyle.lineGap,
-          min: secondary ? 0.5 : 0, max: secondary ? 2 : 40, step: secondary ? 0.1 : 1 })
+          min: secondary ? 0.5 : 0, max: secondary ? 3 : 40, step: secondary ? 0.1 : 1 })
           .layoutWeight(1)
           .selectedColor(this.accentColor())
           .blockColor(this.accentColor())
@@ -1641,7 +1641,7 @@ export struct ReaderFontSettingsEditor {
           })
           .accessibilityText(label)
         this.fontSizeStepButton($r('sys.symbol.plus'), `增大${label}`,
-          () => secondary ? this.titleStyle.secondaryScale < 2 : this.titleStyle.lineGap < 40,
+          () => secondary ? this.titleStyle.secondaryScale < 3 : this.titleStyle.lineGap < 40,
           () => this.adjustTitleSplit(secondary, 1))
       }.width('100%')
     }.width('100%').padding({ top: AppSpacing.XS })

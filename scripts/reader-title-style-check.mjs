@@ -174,7 +174,7 @@ try {
   settings.emphasis.emphasisMode = 'custom';
   settings.emphasis.customTextColorEnabled = true; settings.emphasis.customTextColor = '#00123456';
   assert.equal(Codec.decode(Codec.encode(settings)).emphasis.customTextColor, '#00123456');
-  assert.equal(Codec.decode('{"secondaryScale":99,"lineGap":-10}').secondaryScale, 2);
+  assert.equal(Codec.decode('{"secondaryScale":99,"lineGap":-10}').secondaryScale, 3);
   assert.equal(Codec.decode('{"secondaryScale":99,"lineGap":-10}').lineGap, 0);
   console.log('PASS: defaults, corrupt settings, all split modes, Unicode, invalid/missing/empty matches and ARGB round trip');
 
