@@ -603,7 +603,8 @@ struct CoverSettingsPage {
   }
 
   customCoverBooks(): Book[] {
-    return this.books.filter((book: Book) => BookDisplayHelper.hasCustomCover(book));
+    // 列的是设置过单独封面的书，图取不到的也在内，方便在这里改掉。
+    return this.books.filter((book: Book) => BookDisplayHelper.decodeCoverList(book.customCoverUrl).length > 0);
   }
 
   /** 预览最多四本：一本单独设置过封面的、两本有封面的、一本没封面的，不够再用其余的书补。 */

@@ -42,6 +42,8 @@ export struct BookCover {
   @StorageProp('bookshelfCoverReplaceAlbum') @Watch('refreshCovers') replaceAlbum: boolean = false;
   @StorageProp('bookshelfCoverAlbumMix') @Watch('refreshCovers') albumMix: boolean = false;
   @StorageProp('bookshelfCoverFallback') @Watch('refreshCovers') fallback: string = 'text';
+  /** 有封面地址被确认取不到（或又取到了）：重新取图。 */
+  @StorageProp('coverFailureRevision') @Watch('refreshCovers') coverFailureRevision: number = 0;
   @StorageProp('bookshelfCoverMode') @Watch('refreshCovers') coverMode: string = 'sequence';
   @StorageProp('appThemeBookCoverEnabled') @Watch('refreshCovers') themeCoverEnabled: boolean = false;
   @StorageProp('themeRevision') @Watch('refreshCovers') themeRevision: number = 0;
@@ -248,6 +250,10 @@ export struct BookCover {
     this.displayCovers = this.displayCovers.map((value: ResourceStr, position: number): ResourceStr =>
       position === index ? '' : value);
     this.notifyReadyCover();
+    const raw = this.covers[index];
+    if (typeof raw === 'string' && raw && !/^https?:\/\//i.test(raw)) {
+      BookCoverCache.checkLocalCover(getContext(this), raw).catch((): void => {});
+    }
     this.scheduleCoverRetry(index, this.coverLoadSerial, true);
   }
 

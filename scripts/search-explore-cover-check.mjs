@@ -15,7 +15,7 @@ const context = vm.createContext({ console, Book: class { customCoverUrl = ''; }
   ThemeRuntime: { bookTokens: dark => ({ coverAssetId: dark ? 'dark' : 'light', shelfFrameAssetId: 'frame' }) },
   ThemeAssetRegistry: { themeBookCovers: id => [{ id: `${id}-1` }, { id: `${id}-2` }], themeShelfFrame: () => ({ id: 'frame' }) }
 });
-for (const file of ['utils/CoverUrlNormalizer.ts', 'utils/BookDisplayHelper.ets', 'utils/CoverGallerySettings.ets', 'utils/ThemeBookCoverSettings.ets']) {
+for (const file of ['utils/CoverUrlNormalizer.ts', 'utils/CoverFailures.ts', 'utils/BookDisplayHelper.ets', 'utils/CoverGallerySettings.ets', 'utils/ThemeBookCoverSettings.ets']) {
   const source = read(file).replace(/^import .*;\r?\n/gm, '').replace(/export class /g, 'class ');
   vm.runInContext(stripTypeScriptTypes(source), context);
 }
@@ -73,6 +73,35 @@ cover.fallback = 'album';
 assert.deepEqual(list(), ['dark.jpg'], 'album only fills in for coverless books');
 cover.shelfBook = plainBook;
 assert.deepEqual(list(), ['shelf-source.jpg'], 'the fallback leaves books with a cover alone');
+// 封面地址在、图取不到：当作没有封面走兜底；记录过期或取到后恢复原封面。
+const failures = vm.runInContext('CoverFailures', context);
+const day = 24 * 60 * 60 * 1000;
+assert.equal(failures.mark('shelf-source.jpg'), true);
+assert.equal(failures.mark('shelf-source.jpg'), false, 'marking again is not a change');
+assert.deepEqual(list(), ['dark.jpg'], 'a cover that cannot be fetched falls back like a missing one');
+cover.shelfBook = customBook;
+assert.deepEqual(list(), ['custom-1.jpg', 'custom-2.jpg']);
+failures.mark('custom-1.jpg');
+assert.deepEqual(list(), ['custom-2.jpg'], 'only the unusable per-book cover is dropped');
+failures.mark('custom-2.jpg');
+assert.deepEqual(list(), ['dark.jpg'], 'no usable per-book or own cover: fallback');
+assert.equal(vm.runInContext('BookDisplayHelper', context).hasCustomCover(customBook), false);
+assert.equal(vm.runInContext('BookDisplayHelper', context).decodeCoverList(customBook.customCoverUrl).length, 2,
+  'the editing list still shows every configured cover');
+const saved = failures.serialize();
+assert.equal(failures.has('shelf-source.jpg', Date.now() + 3 * day), false, 'records expire so the cover is retried');
+const urls = ['shelf-source.jpg', 'custom-1.jpg', 'custom-2.jpg'];
+for (const url of urls) assert.equal(failures.clear(url), true);
+failures.load(saved, Date.now() + 3 * day);
+assert.equal(failures.has('custom-1.jpg'), false, 'expired records are dropped on load');
+failures.load(saved);
+assert.equal(failures.has('custom-1.jpg'), true, 'records survive a restart');
+failures.load('not json');
+assert.equal(failures.has('custom-1.jpg'), true, 'a broken file keeps what is already known');
+for (const url of urls) assert.equal(failures.clear(url), true);
+assert.deepEqual(list(), ['custom-1.jpg', 'custom-2.jpg'], 'a cover that loads again is used again');
+cover.shelfBook = plainBook;
+assert.deepEqual(list(), ['shelf-source.jpg']);
 cover.fallback = 'theme';
 cover.refreshCovers();
 assert.equal(cover.themeCover, false, 'theme fallback leaves books with a cover alone');

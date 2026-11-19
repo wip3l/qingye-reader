@@ -461,6 +461,23 @@ test('Android history attaches to the shelf book across simplified/traditional t
   }
 });
 
+test('Android covers that only exist on the old phone are not carried over', async t => {
+  const h = harness(t);
+  const shelf = (n, coverUrl, customCoverUrl) => ({ bookUrl: `https://book/${n}`, name: `书${n}`, author: '作者',
+    origin: 'https://source', type: 8, durChapterIndex: 0, durChapterPos: 0, variable: 'null', coverUrl, customCoverUrl });
+  const archive = await androidFixture(h, { 'bookshelf.json': [
+    shelf(1, 'https://img/1.jpg', '/storage/emulated/0/Pictures/cover.jpg'),
+    shelf(2, 'https://img/2.jpg', 'content://media/external/images/media/42'),
+    shelf(3, 'file:///storage/emulated/0/a.png', 'https://img/custom.jpg')
+  ] });
+  const session = await h.service.prepareImport(h.target, archive, '');
+  await h.service.importBackup(h.target, session, h.selection('bookshelf'));
+  const covers = n => [h.to.books.get(`https://book/${n}`).coverUrl, h.to.books.get(`https://book/${n}`).customCoverUrl];
+  assert.deepEqual(covers(1), ['https://img/1.jpg', '']);
+  assert.deepEqual(covers(2), ['https://img/2.jpg', '']);
+  assert.deepEqual(covers(3), ['', 'https://img/custom.jpg']);
+});
+
 test('history-only backups work without adding shelf placeholders; deselecting progress leaves history untouched', async t => {
   const h = harness(t);
   const archive = await androidFixture(h, { 'readRecordDetail.json': [androidDetail] });

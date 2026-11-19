@@ -628,6 +628,8 @@ export struct BookshelfPage {
   @StorageLink('bookshelfCoverReplaceAlbum') @Watch('onShelfCoverSettingsChanged') bookshelfCoverReplaceAlbum: boolean = false;
   @StorageLink('bookshelfCoverAlbumMix') @Watch('onShelfCoverSettingsChanged') bookshelfCoverAlbumMix: boolean = false;
   @StorageLink('bookshelfCoverFallback') @Watch('onShelfCoverSettingsChanged') bookshelfCoverFallback: string = 'text';
+  /** 有封面地址被确认取不到（或又取到了）：重新取图，取不到的书改用兜底封面。 */
+  @StorageProp('coverFailureRevision') @Watch('onCoverFailureRevision') coverFailureRevision: number = 0;
   @StorageLink('bookshelfCoverMode') @Watch('onShelfCoverSettingsChanged') bookshelfCoverMode: string = 'sequence';
   @StorageProp('bookshelfDarkCoverDim') bookshelfDarkCoverDim: boolean = false;
   @StorageProp('bookshelfDarkCoverDimLevel') bookshelfDarkCoverDimLevel: number = 20;
@@ -859,6 +861,11 @@ export struct BookshelfPage {
     if (!this.privateShelfEnabled && this.shelfScope === 'private') {
       this.setShelfPage(this.shelfTypeTab);
     }
+  }
+
+  /** 不清已解析好的封面，只让读封面的地方重算一遍：取不到的那几本换成兜底，其余不闪。 */
+  onCoverFailureRevision(): void {
+    this.shelfCoverMap = new Map(this.shelfCoverMap);
   }
 
   onShelfCoverSettingsChanged(): void {
@@ -1778,7 +1785,12 @@ export struct BookshelfPage {
     for (let i = 0; i < covers.length; i++) {
       if (revision !== this.shelfCoverCacheRevision) return new Map();
       const raw = covers[i];
-      if (!raw || (!raw.startsWith('http://') && !raw.startsWith('https://'))) continue;
+      if (!raw) continue;
+      if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+        // 本地封面直接交给 Image；文件不在本机（如安卓备份带来的路径）时记为取不到，改用兜底。
+        await BookCoverCache.checkLocalCover(context, raw);
+        continue;
+      }
       const key = this.shelfCoverKey(book, i);
       if (this.shelfCoverMap.get(key) && this.shelfCoverRawUrls.get(key) === raw) continue;
       try {

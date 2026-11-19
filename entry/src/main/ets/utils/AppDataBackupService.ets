@@ -775,6 +775,11 @@ export class AppDataBackupService {
     return result;
   }
 
+  /** 安卓手机上的本地封面（自己选的图、content:// 地址）在本机读不到，不带过来，书按没有这张封面处理。 */
+  private static androidPortableCover(cover: string): string {
+    return /^\s*(\/|file:|content:)/i.test(cover) ? '' : cover;
+  }
+
   /** 书架上书源不在本机的网络书本数：导入后据此提示自动换源。 */
   static async countBooksWithoutSource(context: Context): Promise<number> {
     const db = AppDatabase.getInstance();
@@ -1091,8 +1096,10 @@ export class AppDataBackupService {
     book.kind = AppDataBackupService.limitedStringValue(raw['kind'], 4096);
     book.status = AppDataBackupService.limitedStringValue(raw['status'], 4096);
     book.customTag = AppDataBackupService.limitedStringValue(raw['customTag'], 4096);
-    book.coverUrl = AppDataBackupService.limitedStringValue(raw['coverUrl'], 16384);
-    book.customCoverUrl = AppDataBackupService.limitedStringValue(raw['customCoverUrl'], 16384);
+    book.coverUrl = AppDataBackupService.androidPortableCover(
+      AppDataBackupService.limitedStringValue(raw['coverUrl'], 16384));
+    book.customCoverUrl = AppDataBackupService.androidPortableCover(
+      AppDataBackupService.limitedStringValue(raw['customCoverUrl'], 16384));
     book.intro = AppDataBackupService.limitedStringValue(raw['intro'], 65536);
     book.customIntro = AppDataBackupService.limitedStringValue(raw['customIntro'], 65536);
     book.charset = AppDataBackupService.limitedStringValue(raw['charset'], 128);

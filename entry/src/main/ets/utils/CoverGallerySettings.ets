@@ -90,7 +90,7 @@ export class CoverGallerySettings {
     fallback: string
   ): string[] {
     // 单独设置的封面最优先：不和图集混排，也不参与封面模式挑图。
-    const customCovers = BookDisplayHelper.decodeCoverList(book.customCoverUrl);
+    const customCovers = BookDisplayHelper.usableCustomCovers(book);
     if (customCovers.length > 0) {
       return CoverGallerySettings.cleanCovers(customCovers);
     }

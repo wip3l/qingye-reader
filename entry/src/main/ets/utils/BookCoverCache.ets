@@ -5,6 +5,8 @@ import http from '@ohos.net.http';
 import { HttpClient, SourceCoverLoader, SourceCoverUrl } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { CoverUrlNormalizer } from './CoverUrlNormalizer';
+import { CoverFailures } from './CoverFailures';
+import { CoverFailureStore } from './CoverFailureStore';
 
 export class BookCoverCache {
   private static resolvedCoverUris: Map<string, string> = new Map();
@@ -119,8 +121,14 @@ export class BookCoverCache {
         BookCoverCache.resolvedCoverUris.set(raw, resolved);
         return resolved;
       }
+      // 下载前先看有没有网：没网时的失败不算这个地址取不到。
+      const online = CoverFailureStore.online();
       const path = await BookCoverCache.downloadCover(context, raw);
-      if (!path) return SourceCoverUrl.isEncoded(raw) ? '' : raw;
+      if (!path) {
+        if (online) CoverFailureStore.markFailed(context, raw);
+        return SourceCoverUrl.isEncoded(raw) ? '' : raw;
+      }
+      CoverFailureStore.markLoaded(context, raw);
       const resolved = fileUri.getUriFromPath(path);
       BookCoverCache.resolvedCoverUris.set(raw, resolved);
       return resolved;
@@ -133,7 +141,25 @@ export class BookCoverCache {
     if (copiedPath) {
       return fileUri.getUriFromPath(copiedPath);
     }
+    if (BookCoverCache.isForeignLocalCover(raw, localPath)) CoverFailureStore.markFailed(context, raw);
     return raw;
+  }
+
+  /**
+   * 本机读不到的本地封面：绝对路径上没有文件，或是别的系统的 content:// 地址（多见于从安卓备份带过来的自定义封面）。
+   * 其余写法的地址（应用沙箱 URI、媒体库 URI、data: 等）这里判断不了存不存在，不下结论。
+   */
+  private static isForeignLocalCover(raw: string, localPath: string): boolean {
+    return raw.startsWith('content://') || localPath.startsWith('/');
+  }
+
+  /** 不经下载的本地封面显示不出来时调用：确认文件确实不在，就记为取不到。 */
+  static async checkLocalCover(context: Context, raw: string): Promise<void> {
+    if (!raw || raw.startsWith('http://') || raw.startsWith('https://') || CoverFailures.has(raw)) return;
+    const localPath = BookCoverCache.localPathFromUri(raw);
+    if (!BookCoverCache.isForeignLocalCover(raw, localPath)) return;
+    if (localPath && await BookCoverCache.existsAsync(localPath)) return;
+    CoverFailureStore.markFailed(context, raw);
   }
 
   static async prepareCoverFile(context: Context, raw: string): Promise<string> {
