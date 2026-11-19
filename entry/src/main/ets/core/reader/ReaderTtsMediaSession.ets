@@ -38,6 +38,9 @@ export interface ReaderTtsMediaHost {
   onStop: () => void;
   onPlayNext: () => void;
   onPlayPrevious: () => void;
+  /** 快进/快退（耳机、通知栏）。不提供时不注册，系统控件照旧只有上一章/下一章。 */
+  onSkipForward?: () => void;
+  onSkipBackward?: () => void;
   onSetSpeed: (speed: number) => void;
 }
 
@@ -282,6 +285,10 @@ export class ReaderTtsMediaSession {
     session.on('stop', () => this.host.onStop());
     session.on('playNext', () => this.host.onPlayNext());
     session.on('playPrevious', () => this.host.onPlayPrevious());
+    const skipForward = this.host.onSkipForward;
+    const skipBackward = this.host.onSkipBackward;
+    if (skipForward) session.on('fastForward', () => skipForward());
+    if (skipBackward) session.on('rewind', () => skipBackward());
     session.on('setSpeed', (speed: number) => this.host.onSetSpeed(speed));
   }
 
@@ -291,6 +298,8 @@ export class ReaderTtsMediaSession {
     try { session.off('stop'); } catch (_) {}
     try { session.off('playNext'); } catch (_) {}
     try { session.off('playPrevious'); } catch (_) {}
+    try { session.off('fastForward'); } catch (_) {}
+    try { session.off('rewind'); } catch (_) {}
     try { session.off('setSpeed'); } catch (_) {}
   }
 

@@ -36,6 +36,11 @@ export class ReaderTtsFloatingSession {
   private static timerExtendAction: ((minutes: number) => void) | null = null;
   private static voiceAction: (() => void) | null = null;
   private static audioSeekAction: ((positionMs: number) => void) | null = null;
+  private static audioSkipAction: ((headSeconds: number, tailSeconds: number) => void) | null = null;
+  private static audioSeekByAction: ((deltaMs: number) => void) | null = null;
+  private static audioSkipUndoAction: (() => void) | null = null;
+  private static sentenceStepAction: ((direction: number, paragraph: boolean) => void) | null = null;
+  private static sentenceTapAction: ((panelOffset: number, beforeLength: number) => void) | null = null;
   // Chapter catalog for the floating panel. Both reader modes publish one: the
   // audio mode from the book source, the TTS mode from the loaded chapters.
   private static catalogTitleLabels: string[] = [];
@@ -52,8 +57,11 @@ export class ReaderTtsFloatingSession {
   static attach(ownerId: string, bookUrl: string, bookName: string, chapterTitle: string,
     paused: boolean, toggleAction: () => Promise<void>, pausedState: () => boolean,
     stopAction: () => Promise<void> | void): void {
-    // 换了会话主人（例如从听书换成朗读）时，上一位发布的离线信息不再适用。
-    if (ReaderTtsFloatingSession.ownerId !== ownerId) ReaderTtsFloatingSession.audioOffline = null;
+    // 换了会话主人（例如从听书换成朗读）时，上一位发布的离线信息和逐句跳转不再适用。
+    if (ReaderTtsFloatingSession.ownerId !== ownerId) {
+      ReaderTtsFloatingSession.audioOffline = null;
+      ReaderTtsFloatingSession.clearSentenceControl();
+    }
     const previousBookUrl = ReaderTtsFloatingSession.isActive() ? AppStorage.get<string>('globalTtsBookUrl') || '' : '';
     if (!paused || ReaderTtsFloatingSession.ownerId !== ownerId) ReaderTtsFloatingSession.suspendedOwnerId = '';
     ReaderTtsFloatingSession.ownerId = ownerId;
@@ -204,6 +212,87 @@ export class ReaderTtsFloatingSession {
   static seekAudio(positionMs: number): void {
     const action = ReaderTtsFloatingSession.audioSeekAction;
     if (action) action(Math.max(0, positionMs || 0));
+  }
+
+  /**
+   * 听书的跳过片头片尾与前进/后退。秒数放进 AppStorage 给面板显示；
+   * 前进/后退按播放器的实时位置算，连点几下不会因为面板上的位置一秒才刷新一次而少走。
+   */
+  static configureAudioSkip(ownerId: string, headSeconds: number, tailSeconds: number,
+    skipAction: (headSeconds: number, tailSeconds: number) => void, seekByAction: (deltaMs: number) => void,
+    undoAction: () => void): void {
+    if (!ReaderTtsFloatingSession.isOwner(ownerId)) return;
+    ReaderTtsFloatingSession.audioSkipAction = skipAction;
+    ReaderTtsFloatingSession.audioSeekByAction = seekByAction;
+    ReaderTtsFloatingSession.audioSkipUndoAction = undoAction;
+    ReaderTtsFloatingSession.updateAudioSkip(ownerId, headSeconds, tailSeconds);
+  }
+
+  static updateAudioSkip(ownerId: string, headSeconds: number, tailSeconds: number): void {
+    if (!ReaderTtsFloatingSession.isOwner(ownerId)) return;
+    if (AppStorage.get<number>('globalTtsAudioSkipHead') !== headSeconds) {
+      AppStorage.setOrCreate('globalTtsAudioSkipHead', headSeconds);
+    }
+    if (AppStorage.get<number>('globalTtsAudioSkipTail') !== tailSeconds) {
+      AppStorage.setOrCreate('globalTtsAudioSkipTail', tailSeconds);
+    }
+  }
+
+  static setAudioSkip(headSeconds: number, tailSeconds: number): void {
+    const action = ReaderTtsFloatingSession.audioSkipAction;
+    if (action) action(headSeconds, tailSeconds);
+  }
+
+  static seekAudioBy(deltaMs: number): void {
+    const action = ReaderTtsFloatingSession.audioSeekByAction;
+    if (action) action(deltaMs);
+  }
+
+  /** 跳过后面板弹出的提示；undoLabel 为空时只有文字。序号变化时面板重新计时显示。 */
+  static showAudioSkipNotice(ownerId: string, text: string, undoLabel: string): void {
+    if (!ReaderTtsFloatingSession.isOwner(ownerId)) return;
+    AppStorage.setOrCreate('globalTtsAudioSkipNotice', text);
+    AppStorage.setOrCreate('globalTtsAudioSkipUndo', undoLabel);
+    const serial = AppStorage.get<number>('globalTtsAudioSkipNoticeSerial') || 0;
+    AppStorage.setOrCreate('globalTtsAudioSkipNoticeSerial', serial + 1);
+  }
+
+  static undoAudioSkip(): void {
+    const action = ReaderTtsFloatingSession.audioSkipUndoAction;
+    if (action) action();
+  }
+
+  /**
+   * 朗读的上一句/下一句（paragraph 为 true 时按段）和点正文跳读。只有能按原文位置重新开读的主人才配置；
+   * 面板按 globalTtsSentenceControl 决定显不显示这些入口。tapAction 收到点在面板文字（前文+当前句+后文）里的位置，
+   * 以及面板当时显示的前文长度，主人据此判断面板是否已刷新到最新一句。
+   */
+  static configureSentenceControl(ownerId: string, stepAction: (direction: number, paragraph: boolean) => void,
+    tapAction: (panelOffset: number, beforeLength: number) => void): void {
+    if (!ReaderTtsFloatingSession.isOwner(ownerId)) return;
+    ReaderTtsFloatingSession.sentenceStepAction = stepAction;
+    ReaderTtsFloatingSession.sentenceTapAction = tapAction;
+    if (AppStorage.get<boolean>('globalTtsSentenceControl') !== true) {
+      AppStorage.setOrCreate('globalTtsSentenceControl', true);
+    }
+  }
+
+  private static clearSentenceControl(): void {
+    ReaderTtsFloatingSession.sentenceStepAction = null;
+    ReaderTtsFloatingSession.sentenceTapAction = null;
+    if (AppStorage.get<boolean>('globalTtsSentenceControl') !== false) {
+      AppStorage.setOrCreate('globalTtsSentenceControl', false);
+    }
+  }
+
+  static stepSentence(direction: number, paragraph: boolean): void {
+    const action = ReaderTtsFloatingSession.sentenceStepAction;
+    if (action) action(direction, paragraph);
+  }
+
+  static jumpToPanelText(panelOffset: number, beforeLength: number): void {
+    const action = ReaderTtsFloatingSession.sentenceTapAction;
+    if (action) action(panelOffset, beforeLength);
   }
 
   static openVoice(): void {
@@ -574,6 +663,10 @@ export class ReaderTtsFloatingSession {
     ReaderTtsFloatingSession.timerExtendAction = null;
     ReaderTtsFloatingSession.voiceAction = null;
     ReaderTtsFloatingSession.audioSeekAction = null;
+    ReaderTtsFloatingSession.audioSkipAction = null;
+    ReaderTtsFloatingSession.audioSeekByAction = null;
+    ReaderTtsFloatingSession.audioSkipUndoAction = null;
+    ReaderTtsFloatingSession.clearSentenceControl();
     ReaderTtsFloatingSession.catalogTitleLabels = [];
     ReaderTtsFloatingSession.catalogCachedFlags = [];
     ReaderTtsFloatingSession.catalogCurrentIndex = 0;
@@ -592,6 +685,10 @@ export class ReaderTtsFloatingSession {
     AppStorage.setOrCreate('globalTtsVoiceCode', '');
     AppStorage.setOrCreate('globalTtsAudioPositionMs', 0);
     AppStorage.setOrCreate('globalTtsAudioDurationMs', 0);
+    AppStorage.setOrCreate('globalTtsAudioSkipHead', 0);
+    AppStorage.setOrCreate('globalTtsAudioSkipTail', 0);
+    AppStorage.setOrCreate('globalTtsAudioSkipNotice', '');
+    AppStorage.setOrCreate('globalTtsAudioSkipUndo', '');
     AppStorage.setOrCreate('globalTtsStatusText', '');
     AppStorage.setOrCreate('globalTtsBusy', false);
     AppStorage.setOrCreate<ResourceStr>('globalTtsCover', '');

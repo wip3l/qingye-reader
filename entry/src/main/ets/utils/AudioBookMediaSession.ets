@@ -92,6 +92,8 @@ export interface AudioBookMediaCommands {
   next: () => void;
   previous: () => void;
   seek: (time: number) => void;
+  /** 耳机、通知栏的快进快退：相对当前位置移动，负数后退。 */
+  seekBy: (deltaMs: number) => void;
   setSpeed: (speed: number) => void;
   keepAlive: () => Promise<void>;
   refreshMetadata: () => Promise<void>;

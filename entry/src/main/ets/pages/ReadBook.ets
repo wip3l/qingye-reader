@@ -68,6 +68,7 @@ import { TtsCustomVoices, TtsVoiceOption } from '../utils/TtsVoiceModels';
 import { MimoStore } from '../utils/mimo/MimoStore';
 import { MimoVoiceChoice } from '../core/mimo/MimoVoicePolicy';
 import { ReaderTtsFloatingSession } from '../utils/ReaderTtsFloatingSession';
+import { TtsSentenceNavigator } from '../utils/TtsSentenceNavigator';
 import { PlaybackSpeed } from '../utils/PlaybackSpeed';
 import { ReaderProgressCheckpoint } from '../utils/ReaderProgressCheckpoint';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
@@ -283,6 +284,10 @@ import { ReaderInputKind, ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { READER_TURN_FRAME_RATE, applyReaderTurnFrameRate } from '../utils/ReaderTurnFrameRate';
 
 const READER_CURRENT_PAGINATION_AHEAD_PAGE_COUNT = 4;
+/** 换到上一章时从最后一句开读的标记，传给 playPositionFromFloatingSession 的 sourceOffset。 */
+const TTS_LAST_SENTENCE_OFFSET = -2;
+/** 连点上一句/下一句时，这段时间内以上一次的目标为基准，不等朗读焦点追上来。 */
+const TTS_SENTENCE_NAV_HOLD_MS = 2000;
 const READER_ADJACENT_PAGINATION_PREVIEW_PAGE_COUNT = 2;
 const READER_PAGINATION_BATCH_DELAY_MS = 64;
 const READER_INTERACTIVE_PAGINATION_BATCH_DELAY_MS = 56;
@@ -787,6 +792,9 @@ struct ReadBookPage {
   private ttsSpeedSaveTimerId: number = -1;
   private ttsSpeedAvSessionTimerId: number = -1;
   private ttsSpeedRestartTimerId: number = -1;
+  private ttsSentenceNavTarget: number = -1;
+  private ttsSentenceNavAt: number = 0;
+  private ttsSentenceNavChapter: number = -1;
   private ttsSpeedRestartSerial: number = 0;
   private ttsSleepTimerId: number = -1;
   private ttsSleepTimerEndAt: number = 0;
@@ -7070,21 +7078,112 @@ struct ReadBookPage {
 
   ttsPanelTextBefore(): string {
     const source = this.ttsPanelOffsetSource();
-    const end = this.ttsPanelHighlightStart();
-    if (end <= 0) return '';
-    // Bound unusually long chapters without tying the panel to the reader's page size.
-    let start = Math.max(0, end - 4000);
-    if (start > 0 && /[\uDC00-\uDFFF]/.test(source.charAt(start))) start--;
-    return this.cleanTtsPanelSlice(source.substring(start, end), false);
+    const range = this.ttsPanelSliceRanges(source);
+    if (range[1] <= 0) return '';
+    return this.cleanTtsPanelSlice(source.substring(range[0], range[1]), false);
   }
 
   ttsPanelTextAfter(): string {
     const source = this.ttsPanelOffsetSource();
+    const range = this.ttsPanelSliceRanges(source);
+    return this.cleanTtsPanelSlice(source.substring(range[2], range[3]), false);
+  }
+
+  /**
+   * 面板文字从原文里取的范围：[前文起点, 前文终点（当前句起点）, 后文起点, 后文终点]。
+   * 前文最多 4000 字、后文最多 6000 字，长章节也不跟阅读页分页绑在一起；点正文跳读按同一范围换算位置。
+   */
+  ttsPanelSliceRanges(source: string): number[] {
+    const focusStart = this.ttsPanelHighlightStart();
     const focusEnd = this.ttsPanelHighlightEnd();
-    const start = focusEnd > this.ttsPanelHighlightStart() ? focusEnd : 0;
-    let end = Math.min(source.length, start + 6000);
-    if (end < source.length && /[\uDC00-\uDFFF]/.test(source.charAt(end))) end++;
-    return this.cleanTtsPanelSlice(source.substring(start, end), false);
+    let beforeStart = Math.max(0, focusStart - 4000);
+    if (beforeStart > 0 && /[\uDC00-\uDFFF]/.test(source.charAt(beforeStart))) beforeStart--;
+    const afterStart = focusEnd > focusStart ? focusEnd : 0;
+    let afterEnd = Math.min(source.length, afterStart + 6000);
+    if (afterEnd < source.length && /[\uDC00-\uDFFF]/.test(source.charAt(afterEnd))) afterEnd++;
+    return [beforeStart, Math.max(0, focusStart), afterStart, afterEnd];
+  }
+
+  /**
+   * 朗读面板的上一句/下一句，paragraph 为 true 时按段（长按）。目标在本章外就换章：
+   * 最后一句往后进下一章，第一句往前回上一章最后一句。连点时以上一次的目标为基准。
+   * 暂停中跳转会直接开始读。
+   */
+  stepTtsSentence(direction: number, paragraph: boolean): void {
+    if (this.ttsChapterSwitching || this.isReaderComicModeActive() || !this.ttsPanelHasChapterFocus()) return;
+    const source = this.ttsPanelOffsetSource();
+    const recent = this.ttsSentenceNavTarget >= 0 && this.ttsSentenceNavChapter === this.currentChapterIndex &&
+      Date.now() - this.ttsSentenceNavAt < TTS_SENTENCE_NAV_HOLD_MS;
+    const base = recent ? this.ttsSentenceNavTarget : this.readerV2TtsSourceStart;
+    let target = -1;
+    if (direction > 0) {
+      target = paragraph ? TtsSentenceNavigator.nextParagraphStart(source, base) :
+        TtsSentenceNavigator.nextSentenceStart(source, base);
+    } else {
+      target = paragraph ? TtsSentenceNavigator.previousParagraphStart(source, base) :
+        TtsSentenceNavigator.previousSentenceStart(source, base);
+    }
+    if (target >= 0) {
+      if (paragraph) HdsFeedback.showToast(direction > 0 ? '下一段' : '上一段');
+      this.restartTtsAtSourceOffset(target);
+      return;
+    }
+    this.ttsSentenceNavTarget = -1;
+    if (direction > 0) {
+      if (this.canPlayNextTtsChapter()) {
+        this.playNextChapterFromMediaSession().catch((error: Error) => console.warn('朗读下一句换章失败:', error));
+      }
+    } else if (this.canPlayPreviousTtsChapter()) {
+      this.playPositionFromFloatingSession(this.currentChapterIndex - 1, 0, TTS_LAST_SENTENCE_OFFSET)
+        .catch((error: Error) => console.warn('朗读上一句换章失败:', error));
+    }
+  }
+
+  /**
+   * 点朗读面板正文里的某一句，从那句开头读。panelOffset 是点在“前文+当前句+后文”里的位置，
+   * beforeLength 是面板当时显示的前文长度：和这里重新算的不一致说明面板还没刷新到最新一句，这次点按不处理。
+   */
+  jumpTtsToPanelOffset(panelOffset: number, beforeLength: number): void {
+    if (this.ttsChapterSwitching || this.isReaderComicModeActive() || !this.ttsPanelHasChapterFocus()) return;
+    const source = this.ttsPanelOffsetSource();
+    const range = this.ttsPanelSliceRanges(source);
+    const clean = (text: string): string => this.cleanTtsPanelSlice(text, false);
+    const before = range[1] > 0 ? clean(source.substring(range[0], range[1])) : '';
+    if (before.length !== beforeLength) return;
+    const current = clean(source.substring(range[1], range[2]));
+    let sourceOffset = -1;
+    if (panelOffset < before.length) {
+      sourceOffset = range[0] +
+        TtsSentenceNavigator.sourceOffsetForCleaned(source.substring(range[0], range[1]), panelOffset, clean);
+    } else if (panelOffset >= before.length + current.length) {
+      sourceOffset = range[2] + TtsSentenceNavigator.sourceOffsetForCleaned(source.substring(range[2], range[3]),
+        panelOffset - before.length - current.length, clean);
+    }
+    if (sourceOffset < 0) return;
+    const target = TtsSentenceNavigator.sentenceStartAt(source, sourceOffset);
+    if (target < 0 || (target >= range[1] && target < range[2])) return;
+    HdsFeedback.showToast('从这里开始朗读');
+    this.restartTtsAtSourceOffset(target);
+  }
+
+  /** 和实时改倍速一样：停掉当前语音，从本章原文的 offset 重新开读。 */
+  private restartTtsAtSourceOffset(offset: number): void {
+    this.ttsSentenceNavTarget = offset;
+    this.ttsSentenceNavAt = Date.now();
+    this.ttsSentenceNavChapter = this.currentChapterIndex;
+    if (this.ttsSpeedRestartTimerId >= 0) {
+      clearTimeout(this.ttsSpeedRestartTimerId);
+      this.ttsSpeedRestartTimerId = -1;
+    }
+    this.ttsSpeedRestartSerial++;
+    this.quickJumpPausedSpeechOffset = -1;
+    this.ttsAutoContinue = false;
+    this.ttsReadToken++;
+    this.ttsReader?.stop();
+    this.startTtsReadingFromCurrentPosition(false, false, -1, offset, true).catch((error: Error) => {
+      console.warn('朗读跳转失败:', error);
+      this.finishTtsReading();
+    });
   }
 
   ttsPanelHasChapterFocus(): boolean {
@@ -14694,6 +14793,9 @@ struct ReadBookPage {
     ReaderTtsFloatingSession.configurePreparedPositionControl(this.ttsFloatingSessionOwnerId,
       (chapterIndex: number, sourceOffset: number, resume: boolean): Promise<boolean> =>
         this.performReaderQuickJump(chapterIndex, -1, sourceOffset, true, resume));
+    ReaderTtsFloatingSession.configureSentenceControl(this.ttsFloatingSessionOwnerId,
+      (direction: number, paragraph: boolean): void => this.stepTtsSentence(direction, paragraph),
+      (panelOffset: number, beforeLength: number): void => this.jumpTtsToPanelOffset(panelOffset, beforeLength));
     ReaderTtsFloatingSession.configureCatalog(
       this.ttsFloatingSessionOwnerId,
       this.chapters.map((chapter: BookChapter) => chapter.title),
@@ -15481,6 +15583,9 @@ struct ReadBookPage {
         onPlayPrevious: (): void => {
           this.playPreviousChapterFromMediaSession();
         },
+        // 耳机、通知栏的快进/快退对应面板上的下一句/上一句。
+        onSkipForward: (): void => this.stepTtsSentence(1, false),
+        onSkipBackward: (): void => this.stepTtsSentence(-1, false),
         onSetSpeed: (speed: number): void => this.applyTtsSpeed(speed)
       });
     }
@@ -15674,8 +15779,13 @@ struct ReadBookPage {
       }
       if (shouldResume) {
         const sourceLength = (this.pagedContentText || this.getPagedSourceText()).length;
-        const resumeOffset = targetSourceOffset >= 0 ?
+        let resumeOffset = targetSourceOffset >= 0 ?
           Math.max(0, Math.min(Math.round(targetSourceOffset), sourceLength)) : -1;
+        // 朗读面板在本章第一句点“上一句”：回到上一章的最后一句。
+        if (switched && targetSourceOffset === TTS_LAST_SENTENCE_OFFSET) {
+          resumeOffset = TtsSentenceNavigator.lastSentenceStart(
+            this.ttsOffsetSanitizedText(this.pagedContentText || this.getPagedSourceText()));
+        }
         // A retained owner may have only the first cooperative pagination window while the visible
         // mirror already knows the target page. The absolute page start keeps speech on that exact
         // visible page without synchronously rebuilding every preceding native Paragraph.

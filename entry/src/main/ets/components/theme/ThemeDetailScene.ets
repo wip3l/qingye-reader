@@ -779,7 +779,6 @@ export struct ThemeDetailScene {
         Row() {
           this.listenSecondary($r('sys.symbol.timer'), '定时')
           this.listenSecondary($r('sys.symbol.hourglass'), '1.0x')
-          this.listenSecondary($r('sys.symbol.speaker_wave_3'), '增益')
           this.listenSecondary($r('sys.symbol.list_bullet'), '目录')
           this.listenSecondary($r('sys.symbol.stop_circle'), '停止')
         }
