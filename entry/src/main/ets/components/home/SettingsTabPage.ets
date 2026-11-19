@@ -50,6 +50,8 @@ export struct SettingsPage {
   @StorageLink('appThemeMode') appThemeMode: string = 'system';
   /** 设置搜索层是否打开；首页据此收起底栏、让返回键先关掉它。 */
   @StorageLink('mineSearchActive') mineSearchActive: boolean = false;
+  /** 外观设置里的“显示设置项搜索框”；关闭后标题下不放搜索栏。 */
+  @StorageProp('mineSearchEntryVisible') mineSearchEntryVisible: boolean = true;
   @State showThemeModeMenu: boolean = false;
   /** 搜索栏的实测宽度；沉浸光感底板要具体数值。 */
   @State searchEntryWidth: number = 0;
@@ -70,7 +72,9 @@ export struct SettingsPage {
             .width('100%')
             .height(56 + this.statusBarHeight)
 
-          this.searchEntry()
+          if (this.mineSearchEntryVisible) {
+            this.searchEntry()
+          }
 
           this.accountSummaryCard()
 

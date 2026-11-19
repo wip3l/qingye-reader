@@ -29,6 +29,7 @@ struct AppearanceSettingsPage {
   @StorageLink('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('homeBackdropEnabled') homeBackdropEnabled: boolean = true;
   @StorageProp('headerFrosted') headerFrosted: boolean = true;
+  @StorageProp('mineSearchEntryVisible') mineSearchEntryVisible: boolean = true;
   @StorageProp('immersiveThemeTint') immersiveThemeTint: boolean = false;
   @StorageProp('animatedImagesEnabled') animatedImagesEnabled: boolean = true;
   @StorageProp('homeTabBarStyle') homeTabBarStyle: string = 'floating';
@@ -82,10 +83,16 @@ struct AppearanceSettingsPage {
       SettingNavRow({
         title: '图标设置',
         description: '更换桌面图标',
-        showDivider: false,
         onTap: () => {
           router.pushUrl({ url: 'pages/AppIconSettings' });
         }
+      })
+      SettingSwitchRow({
+        title: '显示设置项搜索框',
+        description: '在“我的”页顶部显示搜索框，可搜索设置项和常见问题；关闭后不再显示',
+        isOn: this.mineSearchEntryVisible,
+        showDivider: false,
+        onChange: (value: boolean) => { this.setMineSearchEntryVisible(value); }
       })
     }
     .width('calc(100% - 24vp)')
@@ -299,6 +306,14 @@ struct AppearanceSettingsPage {
     if (this.headerFrosted === frosted) return;
     HomeBackdropSettingsStore.saveHeaderFrosted(getContext(this), frosted).catch((error: Error) => {
       console.warn('保存顶部磨砂设置失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    });
+  }
+
+  setMineSearchEntryVisible(visible: boolean): void {
+    if (this.mineSearchEntryVisible === visible) return;
+    HomeBackdropSettingsStore.saveMineSearchEntry(getContext(this), visible).catch((error: Error) => {
+      console.warn('保存设置项搜索框开关失败:', error);
       HdsFeedback.showToast('保存失败，请重试');
     });
   }
