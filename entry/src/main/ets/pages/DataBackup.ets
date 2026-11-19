@@ -667,6 +667,7 @@ struct DataBackupPage {
       await AppDataBackupService.discardImport(this.importSession);
       this.importSession = null;
       this.importReady = false;
+      if (result.books > 0) this.offerBatchSourceSwitch();
     } catch (e) {
       console.error('导入应用数据失败:', e);
       HdsFeedback.showToast(`导入失败：${e instanceof Error ? e.message : String(e)}`);
@@ -674,6 +675,28 @@ struct DataBackupPage {
       this.busy = false;
       this.busyText = '';
       this.busyProgress = 0;
+    }
+  }
+
+  /** 导入的书里有书源不在本机的：问一句要不要自动换源，换源在书架页后台进行。 */
+  async offerBatchSourceSwitch(): Promise<void> {
+    try {
+      const missing = await AppDataBackupService.countBooksWithoutSource(getContext(this));
+      if (missing <= 0) return;
+      const answer = await promptAction.showDialog({
+        title: `${missing} 本书的书源不在本机`,
+        message: '这些书暂时无法更新和阅读。可以在已启用的书源里自动找同名同作者的书并换过去，阅读进度按章名对位保留。',
+        buttons: [
+          { text: '稍后', color: this.subTextColor() },
+          { text: '自动换源', color: this.accentColor() }
+        ]
+      });
+      if (answer.index !== 1) return;
+      AppStorage.setOrCreate('shelfBatchSwitchRequest', Date.now());
+      HdsFeedback.showToast('已开始自动换源，回到书架可以看进度');
+    } catch (e) {
+      // 关掉对话框也会走到这里，当作“稍后”。
+      console.warn('自动换源提示未完成:', e);
     }
   }
 

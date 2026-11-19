@@ -6,13 +6,12 @@ import { ChangeSourceResultCache } from '../utils/ChangeSourceResultCache';
 import { ChangeSourceScope, SearchExploreSettingsStore } from '../utils/SearchExploreSettingsStore';
 import { BookSourceGroupStore } from '../utils/BookSourceGroupStore';
 import { SourcePickerKit } from './home/SourcePickerKit';
-import { SearchBookShelfHelper } from '../utils/SearchBookShelfHelper';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { SearchChineseScriptRuntime } from '../core/book/SearchChineseScriptRuntime';
-import { BookIdentity } from '../utils/BookIdentity';
+import { ChangeSourceCandidates } from '../core/book/ChangeSourceCandidates';
 import { AuthorFold, ChangeSourceAuthorMatch } from '../core/book/ChangeSourceAuthorMatch';
 
 class ChangeSourceGroupOption {
@@ -548,25 +547,9 @@ export struct BookChangeSourceDialog {
   }
 
   filterResults(results: SearchBook[], currentBookUrl: string, currentOrigin: string): SearchBook[] {
-    const filtered: SearchBook[] = [];
-    const seen = new Set<string>();
-    // 历史结果可能是旧版本不分类型时存下的，这里同样按原书类型过滤。
-    const category = BookTypeSupport.mediaCategoryOf(this.targetBook);
-    // 只去掉正在读的这一本；同一书源（尤其聚合书源的其他子站）的同名书照常给出。
-    // 按书籍身份比对，聚合书源轮换接口主机后也认得出是同一本。
-    const currentKey = BookIdentity.keyOfUrl(currentBookUrl, currentOrigin);
-    for (const result of results) {
-      if (!result.bookUrl || SearchBookShelfHelper.isNavigationResult(result) ||
-        (result.origin === currentOrigin && (result.bookUrl === currentBookUrl ||
-          this.currentBookAliases.includes(result.bookUrl) ||
-          BookIdentity.keyOfSearchBook(result) === currentKey)) ||
-        BookTypeSupport.mediaCategoryOf(result) !== category) continue;
-      const key = `${result.origin || ''}\n${result.bookUrl}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      filtered.push(result);
-    }
-    return filtered;
+    const target = this.targetBook;
+    if (!target || target.bookUrl !== currentBookUrl || target.origin !== currentOrigin) return [];
+    return ChangeSourceCandidates.filter(results, target, this.currentBookAliases);
   }
 
   build() {

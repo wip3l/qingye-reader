@@ -25,6 +25,7 @@ import { Book, BookChapter, BookGroup, SearchBook, BookTypeSupport, sleepMs } fr
 import { AppDatabase } from '../../model/data/AppDatabase';
 import { SearchCoordinator, SearchProgress } from '../../core/book/SearchCoordinator';
 import { ReadBookEngine } from '../../core/book/ReadBookEngine';
+import { BatchSourceSwitch, BatchSwitchItem } from '../../core/book/BatchSourceSwitch';
 import { AudioOfflineStore } from '../../core/book/AudioOfflineStore';
 import { ReaderCacheBudgetPolicy } from '../../core/book/ReaderCacheBudgetPolicy';
 import { AudioOfflineDownloadPrompt } from '../../utils/AudioOfflineDownloadPrompt';
@@ -105,6 +106,10 @@ const SHELF_REFRESH_ERROR_COLOR: string = '#E5484D';
 const SHELF_REFRESH_SECTION_ACTIVE: number = 0;
 const SHELF_REFRESH_SECTION_UPDATED: number = 1;
 const SHELF_REFRESH_SECTION_FAILED: number = 2;
+/** 批量自动换源时清单里的三段：正在找、已换、未找到。 */
+const SHELF_SWITCH_SECTION_ACTIVE: number = 3;
+const SHELF_SWITCH_SECTION_DONE: number = 4;
+const SHELF_SWITCH_SECTION_MISSING: number = 5;
 const SHELF_COVER_INITIAL_PREFETCH_COUNT: number = 16;
 const SHELF_COVER_UPDATE_BATCH_MS: number = 48;
 const SHELF_UPDATE_BADGE_VARIABLE: string = 'shelfHasUpdate';
@@ -531,6 +536,17 @@ export struct BookshelfPage {
   /** 检查进行中每秒更新一次，只有封面圆钮和清单里的已用秒数读它。 */
   @State shelfRefreshNow: number = 0;
   @State shelfRefreshSheetVisible: boolean = false;
+  /**
+   * 批量自动换源：借用检查更新的胶囊和清单。active 期间胶囊与清单显示换源内容，下一次检查更新开始时让回去。
+   * items 是执行器状态的副本，每次变化整份换新（行的 key 带状态与说明）。
+   */
+  @State batchSwitchActive: boolean = false;
+  @State batchSwitchRunning: boolean = false;
+  @State batchSwitchItems: BatchSwitchItem[] = [];
+  private batchSwitch: BatchSourceSwitch | null = null;
+  private batchSwitchSyncTimer: number = -1;
+  /** 导入备份后从数据备份页发来的“自动换源”请求（时间戳）。 */
+  @StorageLink('shelfBatchSwitchRequest') @Watch('onBatchSwitchRequest') shelfBatchSwitchRequest: number = 0;
   private shelfRefreshTicker: number = -1;
   /** 正在查的书各自的放弃入口：超时与清单里的“跳过”都走这里。 */
   private shelfRefreshCancels: Map<string, (reason: string) => void> = new Map();
@@ -702,6 +718,7 @@ export struct BookshelfPage {
 
   aboutToDisappear(): void {
     this.shelfComponentActive = false;
+    this.batchSwitch?.stop();
     this.stopShelfRefreshTicker();
     this.stopShelfAutoHide();
     if (this.shelfSoloDimTimer >= 0) {
@@ -2707,6 +2724,15 @@ export struct BookshelfPage {
               this.setSelectedBooksPrivate(this.shelfScope !== 'private');
             })
         }
+        // 选中的书里没有网络书籍时置灰且不可点。
+        this.contextActionItem($r('sys.symbol.arrow_left_arrow_right'), '自动换源',
+          this.selectedWebBooks().length > 0 ? this.primaryTextColor() : this.subTextColor(), () => {
+            const targets = this.selectedWebBooks();
+            if (targets.length === 0) return;
+            this.showMultiSelectMoreMenu = false;
+            this.exitBookMultiSelect();
+            this.startBatchSourceSwitch(targets);
+          })
         // 选中的书里没有本地书籍时置灰且不可点。
         this.contextActionItem($r('sys.symbol.arrow_right_up_and_square'), '保存源文件',
           this.selectedLocalBooks().length > 0 ? this.primaryTextColor() : this.subTextColor(), () => {
@@ -4140,6 +4166,11 @@ export struct BookshelfPage {
     this.showMultiSelectMoreMenu = false;
     this.closeBatchDeleteDialog();
     this.closeBatchExportDialog();
+  }
+
+  selectedWebBooks(): Book[] {
+    return this.allBooks.filter((book: Book) =>
+      this.selectedBookUrls.includes(book.bookUrl) && !LocalBookService.isLocalBook(book));
   }
 
   selectedLocalBooks(): Book[] {
@@ -9751,6 +9782,14 @@ export struct BookshelfPage {
   }
 
   async refreshBookshelfToc(silent: boolean = false): Promise<void> {
+    if (this.batchSwitchRunning) {
+      // 胶囊正被批量换源占着，换完再查。
+      if (!silent) {
+        this.showShelfRefreshCapsule();
+        this.bumpShelfRefreshCapsule();
+      }
+      return;
+    }
     if (this.shelfRefreshRunning) {
       if (!silent) {
         this.showShelfRefreshCapsule();
@@ -9780,6 +9819,8 @@ export struct BookshelfPage {
       return;
     }
     this.shelfRefreshRunning = true;
+    this.batchSwitchActive = false;
+    this.batchSwitchItems = [];
     this.shelfRefreshTotal = targets.length;
     this.shelfRefreshChecked = 0;
     this.shelfRefreshActive = [];
@@ -10025,7 +10066,120 @@ export struct BookshelfPage {
     return new ShelfRefreshUpdate(refreshedBook, newChapters, refreshedBook.latestChapterTitle || '');
   }
 
+  /** 带刷新失败标记的网络书：清单里“全部自动换源”的对象。 */
+  shelfRepairTargets(): Book[] {
+    return this.allBooks.filter((book: Book): boolean =>
+      !!book.bookUrl && !LocalBookService.isLocalBook(book) && this.hasShelfRefreshError(book));
+  }
+
+  /** 数据备份页导入完成后请求自动换源：书源不在本机的书，加上已标失败的书。 */
+  onBatchSwitchRequest(): void {
+    if (this.shelfBatchSwitchRequest <= 0) return;
+    this.shelfBatchSwitchRequest = 0;
+    const collect = async (): Promise<void> => {
+      await this.loadBooks();
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(getContext(this));
+      const known = await db.getBookSourceAddedTimes();
+      this.startBatchSourceSwitch(this.allBooks.filter((book: Book): boolean =>
+        !!book.bookUrl && !LocalBookService.isLocalBook(book) &&
+          (!known.has(book.origin) || this.hasShelfRefreshError(book))));
+    };
+    collect().catch((e: Error) => console.error('准备批量换源失败:', e));
+  }
+
+  /** 给一批书自动找新书源并换过去；进度在胶囊里，点开是清单。 */
+  async startBatchSourceSwitch(books: Book[]): Promise<void> {
+    if (this.batchSwitchRunning) {
+      HdsFeedback.showToast('正在自动换源');
+      return;
+    }
+    if (this.shelfRefreshRunning) {
+      HdsFeedback.showToast('正在检查更新，查完再换源');
+      return;
+    }
+    const targets = books.filter((book: Book): boolean => !!book.bookUrl && !LocalBookService.isLocalBook(book));
+    if (targets.length === 0) {
+      HdsFeedback.showToast('没有需要换源的网络书籍');
+      return;
+    }
+    const runner = new BatchSourceSwitch(getContext(this), targets, (): void => this.scheduleBatchSwitchSync(),
+      (previousUrl: string, _book: Book): void => {
+        this.shelfRefreshFailedUrls = this.shelfRefreshFailedUrls.filter((url: string): boolean => url !== previousUrl);
+        this.shelfRefreshFailures = this.shelfRefreshFailures.filter((item: ShelfRefreshFailure): boolean =>
+          item.book.bookUrl !== previousUrl);
+      });
+    this.batchSwitch = runner;
+    this.batchSwitchActive = true;
+    this.batchSwitchRunning = true;
+    this.shelfRefreshTotal = targets.length;
+    this.shelfRefreshChecked = 0;
+    this.syncBatchSwitchItems();
+    this.startShelfRefreshTicker();
+    this.showShelfRefreshCapsule();
+    try {
+      await runner.run();
+    } catch (e) {
+      console.error('批量换源失败:', e);
+    } finally {
+      this.batchSwitchRunning = false;
+      this.stopShelfRefreshTicker();
+      this.syncBatchSwitchItems();
+    }
+    try {
+      await this.loadBooks();
+    } catch (e) {
+      console.error('批量换源后重载书架失败:', e);
+    }
+    const switched = runner.count(BatchSwitchItem.SWITCHED);
+    const missing = runner.count(BatchSwitchItem.MISSING);
+    const left = runner.count(BatchSwitchItem.QUEUED);
+    this.finishShelfRefreshCapsule(switched > 0 ? `已换 ${switched} 本` : '没有换成',
+      `${missing > 0 ? ` · 未找到 ${missing}` : ''}${left > 0 ? ` · 未处理 ${left}` : ''}`);
+  }
+
+  stopBatchSourceSwitch(): void {
+    this.batchSwitch?.stop();
+  }
+
+  /** 执行器的进度回调很密（每搜完一个书源一次），合并成每 120ms 最多刷一次。 */
+  scheduleBatchSwitchSync(): void {
+    if (this.batchSwitchSyncTimer >= 0) return;
+    this.batchSwitchSyncTimer = setTimeout(() => {
+      this.batchSwitchSyncTimer = -1;
+      this.syncBatchSwitchItems();
+    }, 120);
+  }
+
+  syncBatchSwitchItems(): void {
+    const runner = this.batchSwitch;
+    if (!runner) return;
+    this.batchSwitchItems = runner.items.map((item: BatchSwitchItem): BatchSwitchItem => {
+      const copy = new BatchSwitchItem(item.book);
+      copy.state = item.state;
+      copy.detail = item.detail;
+      copy.startedAt = item.startedAt;
+      copy.switched = item.switched;
+      return copy;
+    });
+    this.shelfRefreshChecked = runner.count(BatchSwitchItem.SWITCHED) + runner.count(BatchSwitchItem.MISSING);
+  }
+
+  batchSwitchItemsOf(state: number): BatchSwitchItem[] {
+    return this.batchSwitchItems.filter((item: BatchSwitchItem): boolean => item.state === state);
+  }
+
+  /** 清单里点已换或未找到的书：打开换源面板，自己挑书源。 */
+  openBatchSwitchItem(item: BatchSwitchItem): void {
+    const url = (item.switched || item.book).bookUrl;
+    const book = this.allBooks.find((entry: Book): boolean => entry.bookUrl === url) || item.switched || item.book;
+    this.closeShelfRefreshSheet();
+    setTimeout(() => this.openShelfChangeSource(book), 0);
+  }
+
   async refreshLocalBooks(): Promise<void> {
+    if (this.batchSwitchRunning) return;
+    this.batchSwitchActive = false;
     this.shelfRefreshRunning = true;
     this.shelfRefreshTotal = 0;
     this.shelfRefreshChecked = 0;
@@ -10082,7 +10236,8 @@ export struct BookshelfPage {
     this.shelfRefreshCapsuleTimer = setTimeout(() => {
       this.shelfRefreshCapsuleTimer = -1;
       this.hideShelfRefreshCapsule();
-    }, this.shelfRefreshFailures.length > 0 || this.shelfRefreshUpdates.length > 0 ? 4000 : 2400);
+    }, this.shelfRefreshFailures.length > 0 || this.shelfRefreshUpdates.length > 0 || this.batchSwitchActive ?
+      4000 : 2400);
   }
 
   hideShelfRefreshCapsule(): void {
@@ -10305,6 +10460,10 @@ export struct BookshelfPage {
   /** 进度胶囊文字：检查中显示进度，完成或只刷本地书时显示 shelfRefreshCapsuleText。 */
   shelfRefreshCapsuleLabel(): string {
     if (this.shelfRefreshCapsuleDone || this.shelfRefreshTotal <= 0) return this.shelfRefreshCapsuleText;
+    if (this.batchSwitchActive) {
+      const switched = this.batchSwitchItemsOf(BatchSwitchItem.SWITCHED).length;
+      return `正在换源 ${this.shelfRefreshChecked}/${this.shelfRefreshTotal}${switched > 0 ? ` · 已换 ${switched}` : ''}`;
+    }
     return `检查更新 ${this.shelfRefreshChecked}/${this.shelfRefreshTotal}`;
   }
 
@@ -10381,7 +10540,8 @@ export struct BookshelfPage {
         }))
       .accessibilityText(this.shelfRefreshCapsuleLabel() +
         (this.shelfRefreshCapsuleDone ? this.shelfRefreshCapsuleSubText : ''))
-      .accessibilityDescription(this.shelfRefreshTotal > 0 ? '点按查看正在检查、有更新和失败的书' : '')
+      .accessibilityDescription(this.shelfRefreshTotal <= 0 ? '' :
+        (this.batchSwitchActive ? '点按查看正在找、已换和未找到的书' : '点按查看正在检查、有更新和失败的书'))
     }
     .width('100%')
     .justifyContent(FlexAlign.Center)
@@ -10505,19 +10665,51 @@ export struct BookshelfPage {
   }
 
   shelfRefreshSheetHeaderLeft(section: number): string {
+    if (section === SHELF_SWITCH_SECTION_ACTIVE) {
+      const queued = this.batchSwitchItemsOf(BatchSwitchItem.QUEUED).length;
+      if (!this.batchSwitchRunning) return `未处理 ${queued}`;
+      return `正在找 ${this.batchSwitchItemsOf(BatchSwitchItem.WORKING).length}${queued > 0 ? ` · 排队 ${queued}` : ''}`;
+    }
+    if (section === SHELF_SWITCH_SECTION_DONE) return `已换 ${this.batchSwitchItemsOf(BatchSwitchItem.SWITCHED).length}`;
+    if (section === SHELF_SWITCH_SECTION_MISSING) return `未找到 ${this.batchSwitchItemsOf(BatchSwitchItem.MISSING).length}`;
     if (section === SHELF_REFRESH_SECTION_FAILED) return `失败 ${this.shelfRefreshFailures.length}`;
     if (section === SHELF_REFRESH_SECTION_UPDATED) return `有更新 ${this.shelfRefreshUpdates.length}`;
     return `正在检查 ${this.shelfRefreshActive.length}`;
   }
 
   shelfRefreshSheetHeaderRight(section: number): string {
+    if (section === SHELF_SWITCH_SECTION_ACTIVE) return '';
+    if (section === SHELF_SWITCH_SECTION_DONE) return '点一行重新选源';
+    if (section === SHELF_SWITCH_SECTION_MISSING) return '点一行手动换源';
     if (section === SHELF_REFRESH_SECTION_FAILED) return '点一行去换源';
     if (section === SHELF_REFRESH_SECTION_UPDATED) return '点一行去读';
     return this.shelfRefreshRunning ? `排队 ${this.shelfRefreshQueuedCount()}` : '';
   }
 
+  /** 段标题右侧换成按钮时的文字：失败段是“全部自动换源”，换源进行中是“停止”；空串表示这一段没有按钮。 */
+  shelfRefreshSheetHeaderAction(section: number): string {
+    if (section === SHELF_REFRESH_SECTION_FAILED) return this.shelfRefreshRunning ? '' : '全部自动换源';
+    if (section === SHELF_SWITCH_SECTION_ACTIVE) return this.batchSwitchRunning ? '停止' : '';
+    return '';
+  }
+
+  onShelfRefreshSheetHeaderAction(section: number): void {
+    if (section === SHELF_SWITCH_SECTION_ACTIVE) {
+      this.stopBatchSourceSwitch();
+      return;
+    }
+    this.startBatchSourceSwitch(this.shelfRepairTargets());
+  }
+
   /** 上面还有别的段时画一条分隔线：进行中“有更新”排在“正在检查”下面，“失败”排在前两段下面。 */
   shelfRefreshSheetHeaderDivided(section: number): boolean {
+    if (section === SHELF_SWITCH_SECTION_DONE) {
+      return this.batchSwitchRunning || this.batchSwitchItemsOf(BatchSwitchItem.QUEUED).length > 0;
+    }
+    if (section === SHELF_SWITCH_SECTION_MISSING) {
+      return this.batchSwitchRunning || this.batchSwitchItemsOf(BatchSwitchItem.QUEUED).length > 0 ||
+        this.batchSwitchItemsOf(BatchSwitchItem.SWITCHED).length > 0;
+    }
     if (section === SHELF_REFRESH_SECTION_UPDATED) return this.shelfRefreshRunning;
     if (section === SHELF_REFRESH_SECTION_FAILED) return this.shelfRefreshRunning || this.shelfRefreshUpdates.length > 0;
     return false;
@@ -10531,9 +10723,20 @@ export struct BookshelfPage {
         .fontSize(AppFontSize.CAPTION)
         .fontColor(this.secondaryTextColor())
       Blank()
-      Text(this.shelfRefreshSheetHeaderRight(section))
-        .fontSize(AppFontSize.CAPTION)
-        .fontColor(this.secondaryTextColor())
+      if (this.shelfRefreshSheetHeaderAction(section)) {
+        Text(this.shelfRefreshSheetHeaderAction(section))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(section === SHELF_REFRESH_SECTION_FAILED ? Color.White : this.accentColor())
+          .padding({ left: 10, right: 10, top: 3, bottom: 3 })
+          .borderRadius(12)
+          .backgroundColor(section === SHELF_REFRESH_SECTION_FAILED ? this.accentColor() : Color.Transparent)
+          .border({ width: section === SHELF_REFRESH_SECTION_FAILED ? 0 : 1, color: this.glassBorderColor() })
+          .onClick(() => this.onShelfRefreshSheetHeaderAction(section))
+      } else {
+        Text(this.shelfRefreshSheetHeaderRight(section))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.secondaryTextColor())
+      }
     }
     .width('100%')
     .padding({ top: this.shelfRefreshSheetHeaderDivided(section) ? 8 : 4, bottom: 4 })
@@ -10551,6 +10754,68 @@ export struct BookshelfPage {
     setTimeout(() => this.openShelfBook(book, this.contextViewportWidth / 2, this.contextViewportHeight / 2), 0);
   }
 
+  @Builder
+  batchSwitchRow(item: BatchSwitchItem) {
+    Row({ space: AppSpacing.SM }) {
+      this.shelfRefreshThumb(item.switched || item.book)
+      Column() {
+        Text(item.book.name)
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.primaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(item.detail)
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(item.state === BatchSwitchItem.MISSING ? SHELF_REFRESH_ERROR_COLOR : this.secondaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      if (item.state === BatchSwitchItem.WORKING) {
+        Text(this.shelfRefreshElapsedText(item.startedAt))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.secondaryTextColor())
+          .fontFeature('"tnum" on')
+      } else if (item.state === BatchSwitchItem.MISSING) {
+        SymbolGlyph($r('sys.symbol.arrow_left_arrow_right'))
+          .fontSize(14)
+          .fontColor([this.secondaryTextColor()])
+      }
+    }
+    .width('100%')
+    .height(44)
+    .onClick(() => {
+      if (item.state === BatchSwitchItem.SWITCHED || item.state === BatchSwitchItem.MISSING) {
+        this.openBatchSwitchItem(item);
+      }
+    })
+    .accessibilityText(`${item.book.name}，${item.detail}`)
+  }
+
+  /** 批量自动换源的清单：正在找（可停止）、已换（点一行重新选源）、未找到（点一行手动换源）。 */
+  @Builder
+  batchSwitchSheetBody() {
+    if (this.batchSwitchRunning || this.batchSwitchItemsOf(BatchSwitchItem.QUEUED).length > 0) {
+      this.shelfRefreshSheetHeader(SHELF_SWITCH_SECTION_ACTIVE)
+    }
+    ForEach(this.batchSwitchItemsOf(BatchSwitchItem.WORKING), (item: BatchSwitchItem) => {
+      this.batchSwitchRow(item)
+    }, (item: BatchSwitchItem) => `working_${item.book.bookUrl}_${item.detail}`)
+    if (this.batchSwitchItemsOf(BatchSwitchItem.SWITCHED).length > 0) {
+      this.shelfRefreshSheetHeader(SHELF_SWITCH_SECTION_DONE)
+      ForEach(this.batchSwitchItemsOf(BatchSwitchItem.SWITCHED), (item: BatchSwitchItem) => {
+        this.batchSwitchRow(item)
+      }, (item: BatchSwitchItem) => `switched_${item.book.bookUrl}`)
+    }
+    if (this.batchSwitchItemsOf(BatchSwitchItem.MISSING).length > 0) {
+      this.shelfRefreshSheetHeader(SHELF_SWITCH_SECTION_MISSING)
+      ForEach(this.batchSwitchItemsOf(BatchSwitchItem.MISSING), (item: BatchSwitchItem) => {
+        this.batchSwitchRow(item)
+      }, (item: BatchSwitchItem) => `missing_${item.book.bookUrl}`)
+    }
+  }
+
   /**
    * 点胶囊展开的清单。进行中：正在查的书（查久了可跳过）、已查到新章节的书、失败的书；
    * 结束后“正在检查”整段收掉，有更新的书排最前（点一行去读），失败的书在后（点一行去换源）。
@@ -10559,6 +10824,9 @@ export struct BookshelfPage {
   shelfRefreshSheet() {
     Scroll() {
       Column() {
+        if (this.batchSwitchActive) {
+          this.batchSwitchSheetBody()
+        } else {
         if (this.shelfRefreshRunning) {
           this.shelfRefreshSheetHeader(SHELF_REFRESH_SECTION_ACTIVE)
           if (this.shelfRefreshActive.length === 0) {
@@ -10680,6 +10948,7 @@ export struct BookshelfPage {
               setTimeout(() => this.openShelfChangeSource(book), 0);
             })
           }, (item: ShelfRefreshFailure) => `failed_${item.book.bookUrl}`)
+        }
         }
       }
       .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })

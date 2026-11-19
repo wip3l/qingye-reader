@@ -88,8 +88,10 @@ function harness(disk = new Map()) {
   const Matcher = load('core/book/ChapterPositionMatcher.ts', 'ChapterPositionMatcher');
   const Task = load('core/book/BookSourceSwitchTask.ets', 'BookSourceSwitchTask');
   const AuthorMatch = load('core/book/ChangeSourceAuthorMatch.ts', 'ChangeSourceAuthorMatch');
+  const Policy = load('core/book/BatchSourceSwitchPolicy.ts', 'BatchSourceSwitchPolicy');
+  load('core/book/ChangeSourceCandidates.ets', 'ChangeSourceCandidates');
   const Dialog = load('components/BookChangeSourceDialog.ets', 'BookChangeSourceDialog', true);
-  return { Cache, Operation, Matcher, Task, AuthorMatch, Dialog, events, writes, disk, old, get searchCount() { return searchCount; },
+  return { Cache, Operation, Matcher, Task, AuthorMatch, Policy, Dialog, events, writes, disk, old, get searchCount() { return searchCount; },
     holdDetail() { return detailGate = deferred(); }, holdToc() { return tocGate = deferred(); },
     holdCommit() { return commitGate = deferred(); }, holdSearch() { return searchGate = deferred(); },
     holdWrite() { return beforeWrite = deferred(); }, holdRead() { return beforeRead = deferred(); },
@@ -138,6 +140,44 @@ function harness(disk = new Map()) {
   assert(labels.includes('正在加载新源目录：已读 1 页 · 2 章'), labels.join('|'));
   assert.equal(next.durChapterIndex, 0);
   assert.equal(next.durChapterTitle, '第一章');
+}
+
+// Batch switching prepares candidates without touching the shelf, then commits the chosen one from a fresh task.
+{
+  const h = harness();
+  const preparing = new h.Task(false, 30000);
+  const prepared = await preparing.prepare({}, 'key', h.old, book('B'), null, () => {});
+  preparing.release();
+  assert.equal(prepared.chapters.length, 2);
+  assert.equal(h.Task.revisionOf(h.old), 0, 'preparing alone must not count as a switch');
+  let delivered;
+  const next = await new h.Task(false).commit({}, prepared, () => {}, (switched, previousUrl) => {
+    delivered = [switched.origin, previousUrl];
+  }, 0);
+  assert.equal(next.origin, 'B');
+  assert.deepEqual(delivered, ['B', '/a']);
+  assert(h.Task.revisionOf({ origin: 'A', bookUrl: '/a' }) > 0);
+  // The book was switched meanwhile (by hand, or by an earlier commit): a stale prepared result is refused.
+  prepared.target = { origin: 'A', bookUrl: '/a' };
+  await assert.rejects(new h.Task(false).commit({}, prepared, () => {}, () => {}, 0), /已经换过源/);
+}
+
+// Batch policy: only confidently identified candidates, and the longest catalog that reaches the reading position.
+{
+  const { Policy: P } = harness();
+  const fold = text => text.replace(/貓/g, '猫').replace(/膩/g, '腻');
+  assert.deepEqual(Array.from(P.eligible('猫腻', ['貓膩', '', '别人', '猫腻 著'], fold)), [0, 3]);
+  assert.deepEqual(Array.from(P.eligible('猫腻', ['貓膩'])), [], 'without the dictionary a traditional name is not assumed equal');
+  // The shelf book has no author: accept only when the candidates cannot be two different books.
+  assert.deepEqual(Array.from(P.eligible('', ['', '猫腻', '貓膩'], fold)), [0, 1, 2]);
+  assert.deepEqual(Array.from(P.eligible('未知', ['猫腻', '别人'], fold)), []);
+  assert.equal(P.pick([120, 800, 800, 30], 100), 1);
+  assert.equal(P.pick([50, 100], 100), -1, 'a catalog ending at or before the reading position is not usable');
+  assert.equal(P.pick([1], 0), 0);
+  assert.equal(P.pick([], 0), -1);
+  assert.equal(P.enough(800, 800, 100), true);
+  assert.equal(P.enough(799, 800, 100), false);
+  assert.equal(P.enough(800, 0, 100), false, 'unknown old length: keep comparing candidates');
 }
 
 // Partial results survive immediate A -> B selection, changed metadata/URL, disposal and restart.
