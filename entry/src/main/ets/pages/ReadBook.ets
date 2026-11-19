@@ -119,7 +119,11 @@ import {
   ReaderV2HeadingHint,
   ReaderV2SpeechText
 } from '../core/reader/ReaderV2Document';
-import { ReaderV2LayoutInput, ReaderV2LayoutSnapshot } from '../core/reader/ReaderV2LayoutSnapshot';
+import {
+  ReaderV2ChapterHeadStyle,
+  ReaderV2LayoutInput,
+  ReaderV2LayoutSnapshot
+} from '../core/reader/ReaderV2LayoutSnapshot';
 import {
   ReaderV2AnnotationMark,
   ReaderV2PageFragment,
@@ -827,6 +831,14 @@ struct ReadBookPage {
   private readerNightImages: ReaderNightImageCache = new ReaderNightImageCache();
   private readerV2Controllers: Map<string, ReaderV2PageNodeController> =
     new Map<string, ReaderV2PageNodeController>();
+  // 提示页（章节名 + 一行“正在加载”之类的提示）排好的版面，键见 readerPlaceholderKey。
+  // 不进分页缓存：它不是这一章的内容，不能被当成分页结果、进度或持久分页。
+  private readerPlaceholderPages: Map<string, ReaderV2PageLayout> = new Map<string, ReaderV2PageLayout>();
+  /** 正在排或排不出来的提示页；排不出来的留在这里，那一页退回纯文本。 */
+  private readerPlaceholderPending: Map<string, boolean> = new Map<string, boolean>();
+  private readerPlaceholderControllers: Map<string, ReaderV2PageNodeController> =
+    new Map<string, ReaderV2PageNodeController>();
+  @State readerPlaceholderVersion: number = 0;
   private readerV2SelectionStyledTextCache: Map<string, MutableStyledString> =
     new Map<string, MutableStyledString>();
   private readerV2ActiveDocument: ReaderV2Document | null = null;
@@ -11027,6 +11039,7 @@ struct ReadBookPage {
     this.readerV2ActiveSnapshot = null;
     for (const controller of this.readerV2Controllers.values()) controller.updatePage(null);
     this.readerV2Controllers.clear();
+    this.clearReaderPlaceholderPages();
     const selectableKeys = Array.from(this.readerSelectableTextControllers.keys());
     for (const key of selectableKeys) {
       if (key.startsWith('reader_v2_native_page_')) this.readerSelectableTextControllers.delete(key);
@@ -11085,6 +11098,7 @@ struct ReadBookPage {
     this.readerV2ActiveSnapshot = null;
     for (const controller of this.readerV2Controllers.values()) controller.updatePage(null);
     this.readerV2Controllers.clear();
+    this.clearReaderPlaceholderPages();
     const selectableKeys = Array.from(this.readerSelectableTextControllers.keys());
     for (const key of selectableKeys) {
       if (key.startsWith('reader_v2_native_page_')) this.readerSelectableTextControllers.delete(key);
@@ -17074,7 +17088,7 @@ ${leading}` : leading;
         this.readerV2PageSurface(`simulation_incoming_${identity}`, this.pageTurnIncomingChapterIndex,
           pageIndex, this.pageTurnIncomingDocumentSource)
       } else {
-        this.readerPlainTextLeaf(text)
+        this.readerPlaceholderLeaf(`simulation_${identity}`, text, this.pageTurnIncomingChapterIndex)
       }
     }
     .width(halfWidth ? this.getReaderPageColumnWidth() : '100%')
@@ -17220,7 +17234,7 @@ ${leading}` : leading;
         this.readerBlindsPageSlot(`${controllerRole}_single`, this.currentPageIndex, false, 0)
       }
     } else {
-      this.readerPlainTextLeaf(text)
+      this.readerPlaceholderLeaf(controllerRole, text, this.currentChapterIndex)
     }
   }
 
@@ -17279,7 +17293,39 @@ ${leading}` : leading;
           this.pageTurnIncomingPageIndex, this.pageTurnIncomingDocumentSource)
       }
     } else {
-      this.readerPlainTextLeaf(this.getVisiblePageTurnIncomingText())
+      this.readerPlaceholderLeaf(controllerRole, this.getVisiblePageTurnIncomingText(),
+        this.pageTurnIncomingChapterIndex)
+    }
+  }
+
+  // 章节内容还没到时的提示页。“章节名 + 一行提示”按正式章首的排版画（标题样式、对齐、间距、章首装饰都一样），
+  // 内容到了以后标题留在原位，只有下面那行提示换成正文。排版是异步的，没排好的一两帧留空，不先闪一下纯文本。
+  // 其他形状的文字（没有章节名、已经是正文）照旧走纯文本。
+  @Builder
+  readerPlaceholderLeaf(role: string, text: string, chapterIndex: number) {
+    if (this.readerPlaceholderPage(text, chapterIndex, this.readerPlaceholderVersion)) {
+      Stack({ alignContent: Alignment.TopStart }) {
+        NodeContainer(this.readerPlaceholderController(role,
+          this.readerPlaceholderPage(text, chapterIndex, this.readerPlaceholderVersion)))
+          .width('100%')
+          .height('100%')
+          .hitTestBehavior(HitTestMode.None)
+        // 标题气泡的端饰和正式页一样由 ArkUI 叠在上面。
+        ForEach(this.readerPlaceholderFragments(text, chapterIndex), (fragment: ReaderV2PageFragment) => {
+          ForEach(fragment.regexBubbleSegments, (segment: ReaderV2RegexBubbleSegment) => {
+            this.readerV2RegexBubbleCaps(segment)
+          }, (segment: ReaderV2RegexBubbleSegment) =>
+            `reader_placeholder_caps_${segment.styleId}_${segment.capDark ? 1 : 0}_${segment.rect.left}_` +
+            `${segment.rect.top}_${segment.rect.right}_${segment.rect.bottom}`)
+        }, (fragment: ReaderV2PageFragment) => `reader_placeholder_fragment_${fragment.blockId}_` +
+          `${fragment.displayStart}_${fragment.displayEnd}`)
+      }
+      // 双页时版面只有一栏宽，放在左页。
+      .width(this.isLandscapeDoublePageActive() ? this.getReaderPageColumnWidth() : '100%')
+      .height('100%')
+      .hitTestBehavior(HitTestMode.None)
+    } else if (!this.readerPlaceholderLayoutPending(text, chapterIndex, this.readerPlaceholderVersion)) {
+      this.readerPlainTextLeaf(text)
     }
   }
 
@@ -17302,6 +17348,112 @@ ${leading}` : leading;
         bottom: this.getReaderContentBottomPadding()
       })
       .hitTestBehavior(HitTestMode.None)
+  }
+
+  /** 提示页文字里章节名后面的那一行提示；不是“章节名 + 一行提示”的形状时为空串。 */
+  readerPlaceholderHint(text: string, chapterIndex: number): string {
+    if (!text || !this.shouldUseReaderLayoutV2(text)) return '';
+    const title = this.getChapterTitle(chapterIndex).trim();
+    const prefix = `${title}\n\n`;
+    if (!title || !text.startsWith(prefix)) return '';
+    const hint = text.substring(prefix.length).trim();
+    return hint && hint.length <= 60 && hint.indexOf('\n') < 0 ? hint : '';
+  }
+
+  // 版面跟着视口、排版设置和配色变；每帧都会算一次，所以不走要对全文求哈希的分页缓存键。
+  readerPlaceholderKey(text: string, chapterIndex: number): string {
+    return `${chapterIndex}_${this.pageViewWidth}_${this.getReaderPaginationViewportHeight()}_` +
+      `${this.getReaderHeaderContentReserve()}_${this.getReaderV2BottomGuard()}_${this.readerExtendToStatusBar}_` +
+      `${this.isLandscapeDoublePageActive()}_${this.readerTypographyCacheIdentity()}_${this.appDarkMode}_` +
+      `${this.getTextColor()}_${this.getSubTextColor()}_${text}`;
+  }
+
+  /** 排好的提示页；还没排就在这里发起，排好后 readerPlaceholderVersion 变化带来重绘。 */
+  readerPlaceholderPage(text: string, chapterIndex: number, _version: number): ReaderV2PageLayout | null {
+    const hint = this.readerPlaceholderHint(text, chapterIndex);
+    if (!hint) return null;
+    const key = this.readerPlaceholderKey(text, chapterIndex);
+    const page = this.readerPlaceholderPages.get(key);
+    if (page) return page;
+    if (this.readerPlaceholderPending.has(key) || this.pageViewWidth <= 0 || this.pageViewHeight <= 0) return null;
+    if (this.readerPlaceholderPending.size > 12) this.readerPlaceholderPending.clear();
+    this.readerPlaceholderPending.set(key, true);
+    this.layoutReaderPlaceholderPage(hint, chapterIndex).then((layout: ReaderV2PageLayout | null): void => {
+      if (this.readerPlaceholderPending.get(key) !== true) return;
+      if (!layout) {
+        this.readerPlaceholderPending.set(key, false);
+      } else {
+        this.readerPlaceholderPending.delete(key);
+        this.readerPlaceholderPages.set(key, layout);
+        while (this.readerPlaceholderPages.size > 6) {
+          const oldest = this.readerPlaceholderPages.keys().next().value as string | undefined;
+          if (oldest === undefined) break;
+          this.readerPlaceholderPages.delete(oldest);
+        }
+      }
+      this.readerPlaceholderVersion++;
+    }).catch((): void => {
+      if (this.readerPlaceholderPending.get(key) !== true) return;
+      this.readerPlaceholderPending.set(key, false);
+      this.readerPlaceholderVersion++;
+    });
+    return null;
+  }
+
+  readerPlaceholderLayoutPending(text: string, chapterIndex: number, _version: number): boolean {
+    return !!this.readerPlaceholderHint(text, chapterIndex) &&
+      this.readerPlaceholderPending.get(this.readerPlaceholderKey(text, chapterIndex)) === true;
+  }
+
+  readerPlaceholderFragments(text: string, chapterIndex: number): ReaderV2PageFragment[] {
+    const page = this.readerPlaceholderPages.get(this.readerPlaceholderKey(text, chapterIndex));
+    return page ? page.fragments : READER_V2_NO_FRAGMENTS;
+  }
+
+  readerPlaceholderController(role: string, page: ReaderV2PageLayout | null): ReaderV2PageNodeController {
+    let controller = this.readerPlaceholderControllers.get(role);
+    if (!controller) {
+      controller = new ReaderV2PageNodeController();
+      this.readerPlaceholderControllers.set(role, controller);
+    }
+    controller.updatePage(page);
+    return controller;
+  }
+
+  clearReaderPlaceholderPages(): void {
+    this.readerPlaceholderPages.clear();
+    this.readerPlaceholderPending.clear();
+    for (const controller of this.readerPlaceholderControllers.values()) controller.updatePage(null);
+    this.readerPlaceholderControllers.clear();
+  }
+
+  private async layoutReaderPlaceholderPage(hint: string, chapterIndex: number): Promise<ReaderV2PageLayout | null> {
+    const source = this.buildPagedSourceText(chapterIndex, hint);
+    const snapshot = this.buildReaderV2Snapshot();
+    // 提示不是正文首段：不做首字装饰。其余章首设置原样保留，标题才会和正式页落在同一处。
+    const head = new ReaderV2ChapterHeadStyle();
+    head.image = snapshot.chapterHead.image;
+    head.aspect = snapshot.chapterHead.aspect;
+    head.placement = snapshot.chapterHead.placement;
+    head.scale = snapshot.chapterHead.scale;
+    head.numberColor = snapshot.chapterHead.numberColor;
+    snapshot.chapterHead = head;
+    snapshot.identity = `${snapshot.identity}_placeholder`;
+    const document = ReaderV2DocumentParser.parse(source, chapterIndex, this.readerLayoutChapterTitle(chapterIndex),
+      this.readerV2HeadingHints(chapterIndex), ReaderTitleStyleCodec.decode(this.readerTitleStyleRaw),
+      this.readerCommentDisplay());
+    const styles = this.buildReaderV2RegexStyles(document);
+    const hintStart = document.displayText.lastIndexOf(hint);
+    if (hintStart >= 0) {
+      const soft = new ReaderV2SpanStyleRange(hintStart, hintStart + hint.length);
+      soft.colorEnabled = true;
+      soft.color = ReaderV2Color.parse(this.getSubTextColor(), snapshot.textColor);
+      styles.push(soft);
+    }
+    const session = ReaderV2Paginator.start(document, snapshot, styles);
+    await ReaderV2Paginator.appendPageAsync(session);
+    session.cancelled = true;
+    return session.pageSet.pages.length > 0 ? session.pageSet.pages[0] : null;
   }
 
   currentReaderPageRenderIdentity(renderVersion: number = this.pageRenderVersion,
