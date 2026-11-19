@@ -302,8 +302,9 @@ export class ReaderReplaceRuleStore {
     if (!book) {
       return '';
     }
-    return `${book.name || ''}\n${book.author || ''}\n${book.originName || ''}\n` +
-      `${book.origin || ''}\n${book.bookUrl || ''}`.toLowerCase();
+    // 范围词在 scopeTokens 里已转小写，这里整串一起转，与正文净化（ReaderContentPreprocessor）的口径一致。
+    return (`${book.name || ''}\n${book.author || ''}\n${book.originName || ''}\n` +
+      `${book.origin || ''}\n${book.bookUrl || ''}`).toLowerCase();
   }
 
   private static scopeTokens(value: string): string[] {
