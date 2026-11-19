@@ -9,6 +9,7 @@ import { util } from '@kit.ArkTS';
 import { CloudSyncChangeTracker } from '../../account/CloudSyncChangeTracker';
 import { BookAnnotation, BookAnnotationStyles } from '../reader/BookAnnotation';
 import { BookMark, BookMarkRules } from '../book/BookMark';
+import { SourceGroupName } from '../../utils/SourceGroupName';
 import { BookIdentity } from '../../utils/BookIdentity';
 import { BookReadStatsRecord } from '../../core/stats/BookReadStats';
 import { ReadStatsPendingUpload, ReadStatsSyncPayload, ReadStatsSyncChange,
@@ -1941,7 +1942,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       bookSourceUrl: source.bookSourceUrl,
       bookSourceName: source.bookSourceName,
       bookSourceType: source.bookSourceType,
-      bookSourceGroup: source.bookSourceGroup,
+      bookSourceGroup: SourceGroupName.clean(source.bookSourceGroup),
       bookSourceComment: source.bookSourceComment,
       loginUrl: source.loginUrl,
       loginUi: source.loginUi,
@@ -2029,7 +2030,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       bookSourceUrl: source.bookSourceUrl,
       bookSourceName: source.bookSourceName,
       bookSourceType: source.bookSourceType,
-      bookSourceGroup: source.bookSourceGroup,
+      bookSourceGroup: SourceGroupName.clean(source.bookSourceGroup),
       bookSourceComment: source.bookSourceComment,
       loginUrl: source.loginUrl,
       loginUi: source.loginUi,
@@ -2167,7 +2168,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       bookSourceUrl: source.bookSourceUrl,
       bookSourceName: source.bookSourceName,
       bookSourceType: source.bookSourceType,
-      bookSourceGroup: source.bookSourceGroup,
+      bookSourceGroup: SourceGroupName.clean(source.bookSourceGroup),
       bookSourceComment: source.bookSourceComment,
       loginUrl: source.loginUrl,
       loginUi: source.loginUi,
@@ -2297,7 +2298,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         source.sourceFormat = this.getStringColumn(resultSet, 'jsLibHead') === NATIVE_SOURCE_JSLIB_HEAD ? 'native' : '';
         source.bookSourceUrl = resultSet.getString(resultSet.getColumnIndex('bookSourceUrl'));
         source.bookSourceName = resultSet.getString(resultSet.getColumnIndex('bookSourceName'));
-        source.bookSourceGroup = resultSet.getString(resultSet.getColumnIndex('bookSourceGroup'));
+        source.bookSourceGroup = SourceGroupName.clean(resultSet.getString(resultSet.getColumnIndex('bookSourceGroup')));
         source.loginUrl = resultSet.getString(resultSet.getColumnIndex('loginUrl'));
         source.loginUi = resultSet.getString(resultSet.getColumnIndex('loginUi'));
         source.loginCheckJs = resultSet.getString(resultSet.getColumnIndex('loginCheckJs'));
@@ -2323,7 +2324,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     if (!this.store) return;
     if (await this.isBookSourceLocked(bookSourceUrl)) return;
     const bucket: relationalStore.ValuesBucket = {};
-    if (fields['bookSourceGroup'] !== undefined) bucket['bookSourceGroup'] = fields['bookSourceGroup'];
+    if (fields['bookSourceGroup'] !== undefined) bucket['bookSourceGroup'] = SourceGroupName.clean(String(fields['bookSourceGroup']));
     if (fields['enabled'] !== undefined) bucket['enabled'] = fields['enabled'];
     if (fields['enabledExplore'] !== undefined) bucket['enabledExplore'] = fields['enabledExplore'];
     if (fields['customOrder'] !== undefined) bucket['customOrder'] = fields['customOrder'];
@@ -2401,7 +2402,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     if (!this.store || !bookSourceUrl) return;
     const predicates = new relationalStore.RdbPredicates('book_sources');
     predicates.equalTo('bookSourceUrl', bookSourceUrl);
-    await this.store.update({ bookSourceGroup: groupName, lastUpdateTime: Date.now() }, predicates);
+    await this.store.update({ bookSourceGroup: SourceGroupName.clean(groupName), lastUpdateTime: Date.now() }, predicates);
     CloudSyncChangeTracker.markBookSourceChanged();
   }
 
@@ -2523,7 +2524,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     source.bookSourceUrl = this.getStringColumn(resultSet, 'bookSourceUrl');
     source.bookSourceName = this.getStringColumn(resultSet, 'bookSourceName');
     source.bookSourceType = this.getLongColumn(resultSet, 'bookSourceType');
-    source.bookSourceGroup = this.getStringColumn(resultSet, 'bookSourceGroup');
+    source.bookSourceGroup = SourceGroupName.clean(this.getStringColumn(resultSet, 'bookSourceGroup'));
     source.bookSourceComment = this.getStringColumn(resultSet, 'bookSourceComment');
     source.loginUrl = this.getStringColumn(resultSet, 'loginUrl');
     source.loginUi = this.getStringColumn(resultSet, 'loginUi');

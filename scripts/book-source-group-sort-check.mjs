@@ -21,7 +21,8 @@ const context = vm.createContext({
     flush: async () => { if (failFlush) throw new Error('disk failure'); }
   }) }
 });
-const storeCode = read('utils/BookSourceGroupStore.ets').replace(/^import .*;\r?\n/gm, '').replace('export class', 'class');
+const groupNameCode = read('utils/SourceGroupName.ts').replace('export class', 'class');
+const storeCode = groupNameCode + read('utils/BookSourceGroupStore.ets').replace(/^import .*;\r?\n/gm, '').replace('export class', 'class');
 vm.runInContext(compile(`${storeCode}\nglobalThis.BookSourceGroupStore = BookSourceGroupStore;`), context);
 const store = context.BookSourceGroupStore;
 stored.set('groups', JSON.stringify(['漫画', '有声书', '网文', '旧空分组']));
@@ -29,6 +30,9 @@ stored.set('user_groups', JSON.stringify(['手动空分组']));
 stored.set('user_groups_ready', true);
 assert.deepEqual(plain(await store.load({}, ['网文', '漫画', '有声书', '新书源分组'])),
   ['漫画', '有声书', '网文', '手动空分组', '新书源分组']);
+// 只由不可见字符组成的分组名当作未分组，不进分组列表。
+assert.deepEqual(plain(await store.load({}, ['网文', '漫画', '有声书', '新书源分组', String.fromCharCode(0x200b),
+  String.fromCharCode(0x3164, 0x20, 0x2800)])), ['漫画', '有声书', '网文', '手动空分组', '新书源分组']);
 let groups = await store.reorder({}, ['网文', '有声书', '漫画', '手动空分组', '新书源分组']);
 // Simulate restart: no in-memory order, and sources arrive in a different order.
 appValues.clear();
@@ -130,7 +134,8 @@ for (const [path, hooks, initial, resultKey] of [
     { searchSourceList: [{ bookSourceUrl: 'a', bookSourceGroup: '听书' },
       { bookSourceUrl: 'b', bookSourceGroup: '网文' }], normalizeSourceGroup: source => source.bookSourceGroup }, 'sourceGroups'],
   ['components/home/ExplorePage.ets', ['onSourceGroupOrderChanged', 'buildExploreSourceGroups'],
-    { sourceOptions: [{ sourceGroup: '听书' }, { sourceGroup: '网文' }], exploreSourceGroupLabel: group => group }, 'exploreSourceGroups']
+    { sourceOptions: [{ sourceGroup: '听书' }, { sourceGroup: '网文' }], exploreSourceGroupLabel: group => group,
+      syncExploreSourceGroupsFromDb: () => {} },'exploreSourceGroups']
 ]) {
   context.SourcePickerKit = picker;
   const page = vm.runInContext(compile(`new (class { ${hooks.map(name => method(read(path), name)).join('\n')} })()`), context);
