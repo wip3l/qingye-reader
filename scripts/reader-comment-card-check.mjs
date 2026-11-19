@@ -161,8 +161,8 @@ try {
     assert.equal(pair.length, 2);
     const before = page.fragments[page.fragments.indexOf(pair[0]) - 1];
     const after = page.fragments[page.fragments.indexOf(pair[1]) + 1];
-    const inkBottom = before.paragraphY + 20 * 0.8 + 20 * 0.12;
-    const inkTop = after.paragraphY + 20 * 0.8 - 20 * 0.88;
+    const inkBottom = before.paragraphY + 20 * 1.1;
+    const inkTop = after.paragraphY + 20 * 0.1;
     const gapAbove = pair[0].paragraphY - inkBottom;
     const gapBelow = inkTop - (pair[1].paragraphY + pair[1].paragraphHeight);
     const label = `line ${lineSpacing} paragraph ${paragraphSpacing}`;

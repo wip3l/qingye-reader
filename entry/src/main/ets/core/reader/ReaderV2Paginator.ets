@@ -522,10 +522,8 @@ export class ReaderV2Paginator {
         const followsCard = previousWasCard && startsNewBlock && hasContent && !current.block.title;
         if (followsCard) {
           // Mirror the gap the card group has above it.
-          const inkTop = firstLine.baseline - firstLine.topHeight -
-            ReaderV2Paginator.blockFontSize(current.block, session.snapshot) *
-            ReaderV2Paginator.INK_ABOVE_BASELINE;
-          spacing = Math.max(0, cardEdgeGap - inkTop);
+          const ink = ReaderV2Paginator.lineInk(current, session.lineIndex, session.snapshot);
+          spacing = Math.max(0, cardEdgeGap - (ink ? ink.top - firstLine.topHeight : 0));
         }
         if (!hasContent && !topInkGuardApplied) {
           // A zero user margin places the first logical line box on the page boundary. Some fonts (notably the
@@ -600,9 +598,9 @@ export class ReaderV2Paginator {
         hasContent = true;
         previousWasImage = false;
         previousWasCard = false;
-        lastInkBottom = y + current.line(fragmentLastLine).baseline - paragraphLineTop +
-          ReaderV2Paginator.blockFontSize(current.block, session.snapshot) *
-          ReaderV2Paginator.INK_BELOW_BASELINE;
+        const lastInk = cardsEnabled || chapterCardsEnabled ?
+          ReaderV2Paginator.lineInk(current, fragmentLastLine, session.snapshot) : null;
+        lastInkBottom = lastInk ? y + lastInk.bottom - paragraphLineTop : Number.NaN;
         y += fragmentBottom - paragraphLineTop;
 
         if (session.lineIndex >= current.lineCount) {
@@ -1096,9 +1094,27 @@ export class ReaderV2Paginator {
     return ReaderV2Paginator.FONT_WEIGHTS[Math.max(0, Math.min(8, Math.round(weight / 100) - 1))];
   }
 
-  /** 正文字面在基线上下各占字号的比例（汉字字身框）；热评卡片上下的留白按字面量，不按行框量。 */
-  private static readonly INK_ABOVE_BASELINE: number = 0.88;
-  private static readonly INK_BELOW_BASELINE: number = 0.12;
+  /**
+   * 一行文字字面的上下边（段落坐标）。热评卡片上下的留白按它量，不按行框量：行框在段末带一份行距，
+   * 首尾行还有字体留白，两头不一样宽。行距不为零时行度量里的基线不能当字的位置用，所以取文字实际占的
+   * 范围，再按字号收到字身框。取不到时返回 null。
+   */
+  private static lineInk(measured: ReaderV2MeasuredBlock, lineIndex: number,
+    snapshot: ReaderV2LayoutSnapshot): ReaderV2Rect | null {
+    const line = measured.line(lineIndex);
+    const rects = measured.paragraph.getRectsForRange({ start: line.startIndex, end: line.endIndex },
+      graphicsText.RectWidthStyle.TIGHT, graphicsText.RectHeightStyle.TIGHT);
+    let top = Number.MAX_VALUE;
+    let bottom = -Number.MAX_VALUE;
+    for (const item of rects) {
+      if (item.rect.bottom <= item.rect.top) continue;
+      top = Math.min(top, item.rect.top);
+      bottom = Math.max(bottom, item.rect.bottom);
+    }
+    if (bottom <= top) return null;
+    const inset = Math.max(0, (bottom - top - ReaderV2Paginator.blockFontSize(measured.block, snapshot)) / 2);
+    return new ReaderV2Rect(0, top + inset, 0, bottom - inset);
+  }
 
   private static blockFontSize(block: ReaderV2Block, snapshot: ReaderV2LayoutSnapshot): number {
     return ReaderV2Paginator.baseTextStyle(block, snapshot).fontSize ?? snapshot.fontSizePx;

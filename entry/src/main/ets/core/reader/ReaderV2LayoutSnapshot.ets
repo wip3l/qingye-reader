@@ -237,7 +237,7 @@ export class ReaderV2LayoutSnapshot {
       snapshot.commentCardStyle, snapshot.commentCardMaxPerPage, snapshot.commentCardLines,
       snapshot.commentCardFontSizePx, snapshot.commentCardTagColor, snapshot.commentChapterCard ? 1 : 0,
       // 卡片上下留白的算法版本：改了排法就换一个值，让按排版标识存下来的分页结果失效。
-      'cardgap2'
+      'cardgap3'
     ];
     const rounded = values.map((value: string | number): string =>
       typeof value === 'number' ? `${Math.round(value * 100) / 100}` : value).join('_');
