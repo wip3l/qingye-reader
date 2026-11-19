@@ -14,6 +14,7 @@ import { CollapsingHeader } from '../../utils/CollapsingHeader';
 import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { BookCover } from '../book/BookCover';
+import { ReaderReplaceRuleStore } from '../../utils/ReaderReplaceRuleStore';
 
 class ListenBookItem {
   book: Book = new Book();
@@ -47,6 +48,8 @@ export struct ListenTabPage {
   @StorageProp('globalTtsBookName') ttsBookName: string = '';
   @StorageProp('globalTtsBookUrl') ttsBookUrl: string = '';
   @StorageProp('globalTtsChapterTitle') ttsChapterTitle: string = '';
+  @State titleRulesRevision: number = 0;
+  @StorageProp('readerReplaceRulesUpdateTime') @Watch('onTitleRulesChanged') titleRulesUpdateTime: number = 0;
   @StorageProp('globalTtsMode') ttsMode: string = '';
   @StorageProp('globalTtsProgress') ttsProgress: number = 0;
   @StorageProp('globalTtsCanPrevious') ttsCanPrevious: boolean = false;
@@ -78,6 +81,21 @@ export struct ListenTabPage {
   aboutToAppear(): void {
     this.alive = true;
     this.loadAudioBooks();
+    ReaderReplaceRuleStore.load(getContext(this)).then((): void => {
+      this.titleRulesRevision++;
+    }).catch((error: Error): void => {
+      console.warn('听书页载入替换净化规则失败:', error);
+    });
+  }
+
+  onTitleRulesChanged(): void {
+    this.titleRulesRevision++;
+  }
+
+  /** 章节名按替换净化规则显示，与阅读页、书架一致；读一次 revision，规则载入或改动后重算。 */
+  chapterTitle(book: Book): string {
+    const text = (book.durChapterTitle || '').trim();
+    return this.titleRulesRevision >= 0 ? ReaderReplaceRuleStore.displayTitle(text, book) : text;
   }
 
   aboutToDisappear(): void {
@@ -631,7 +649,7 @@ export struct ListenTabPage {
   heroSubtitle(): string {
     if (this.ttsActive) return this.ttsChapterTitle;
     const book = this.heroBook();
-    return book ? (book.durChapterTitle || book.author) : '';
+    return book ? (this.chapterTitle(book) || book.author) : '';
   }
 
   heroBadge(): string {
@@ -680,7 +698,7 @@ export struct ListenTabPage {
   audioProgressText(book: Book): string {
     if (!book.durChapterTime) return '未开始';
     if (book.totalChapterNum > 0) return `${Math.min(book.durChapterIndex + 1, book.totalChapterNum)}/${book.totalChapterNum} 集`;
-    return book.durChapterTitle || '已收听';
+    return this.chapterTitle(book) || '已收听';
   }
 
   openAudioBook(book: Book): void {

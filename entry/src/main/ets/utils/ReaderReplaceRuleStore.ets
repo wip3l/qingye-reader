@@ -48,6 +48,9 @@ export class ReaderReplaceRuleStore {
   private static titlePlanScope: string = '';
   private static titlePlan: ReaderTitleReplaceStep[] = [];
   private static titleResults: Map<string, string> = new Map<string, string>();
+  private static displayPlanRules: ReaderReplaceRule[] | null = null;
+  private static displayPlans: Map<string, ReaderTitleReplaceStep[]> = new Map<string, ReaderTitleReplaceStep[]>();
+  private static displayResults: Map<string, string> = new Map<string, string>();
   /** 内置“移除标题”：开启后正文顶部不排版章节名，顶栏、目录等处照常显示。 */
   static readonly BUILTIN_REMOVE_TITLE: string = 'removeChapterTitle';
   // 固定编号让多设备同步时是同一条；取远大于时间戳的值，避开导入规则自带的小编号。旧版客户端回传会丢掉
@@ -153,6 +156,53 @@ export class ReaderReplaceRuleStore {
       ReaderReplaceRuleStore.titleResults.clear();
     }
     ReaderReplaceRuleStore.titleResults.set(text, result);
+    return result;
+  }
+
+  /**
+   * 阅读页以外（书架等）显示章节名用：库里存的是书源原始章节名，这里按已载入的规则净化后再显示，
+   * 与阅读页看到的一致。规则还没载入时原样返回，调用方应先 load 一次并在载入后刷新。
+   * 书架一屏有很多本书，所以适用规则按书各记一份，不与阅读页的单书缓存共用。
+   */
+  static displayTitle(text: string, book: Book | null): string {
+    const rules = ReaderReplaceRuleStore.cachedRules;
+    if (!text || !rules || rules.length === 0) {
+      return text;
+    }
+    if (rules !== ReaderReplaceRuleStore.displayPlanRules) {
+      ReaderReplaceRuleStore.displayPlanRules = rules;
+      ReaderReplaceRuleStore.displayPlans.clear();
+      ReaderReplaceRuleStore.displayResults.clear();
+    }
+    const scope = ReaderReplaceRuleStore.bookScopeText(book);
+    let plan = ReaderReplaceRuleStore.displayPlans.get(scope);
+    if (plan === undefined) {
+      plan = ReaderReplaceRuleStore.buildTitlePlan(rules, book);
+      ReaderReplaceRuleStore.displayPlans.set(scope, plan);
+    }
+    if (plan.length === 0) {
+      return text;
+    }
+    const key = `${scope}\n\n${text}`;
+    const cached = ReaderReplaceRuleStore.displayResults.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    let result = text;
+    for (const step of plan) {
+      try {
+        result = step.regex ? result.replace(step.regex, step.replacement) :
+          result.split(step.plain).join(step.replacement);
+      } catch (error) {
+        console.warn(`替换净化规则无效: ${step.plain}`, error);
+      }
+    }
+    // 规则把章节名整个删空时退回原文，书架上不留空行。
+    result = result.trim() || text;
+    if (ReaderReplaceRuleStore.displayResults.size >= ReaderReplaceRuleStore.TITLE_RESULT_LIMIT) {
+      ReaderReplaceRuleStore.displayResults.clear();
+    }
+    ReaderReplaceRuleStore.displayResults.set(key, result);
     return result;
   }
 

@@ -38,6 +38,7 @@ import { HeaderBackdrop } from '../common/HeaderBackdrop';
 import { HomeThemeBackdrop } from './HomeThemeBackdrop';
 import { HdsFeedback } from '../../utils/HdsFeedback';
 import { BookDisplayHelper } from '../../utils/BookDisplayHelper';
+import { ReaderReplaceRuleStore } from '../../utils/ReaderReplaceRuleStore';
 import { BookTileLayout } from '../../utils/BookTileLayout';
 import { AnimatedImagePolicy } from '../../utils/AnimatedImagePolicy';
 import { BookCoverCache } from '../../utils/BookCoverCache';
@@ -580,6 +581,9 @@ export struct BookshelfPage {
   @StorageLink('bookshelfShowProgressBar') bookshelfShowProgressBar: boolean = false;
   @StorageLink('bookshelfShowLastReadTime') bookshelfShowLastReadTime: boolean = true;
   @StorageLink('bookshelfShowLastReadChapter') bookshelfShowLastReadChapter: boolean = false;
+  /** 替换净化规则载入或改动后加一，书架上按规则净化过的章节名跟着重算。 */
+  @State shelfTitleRulesRevision: number = 0;
+  @StorageProp('readerReplaceRulesUpdateTime') @Watch('onShelfTitleRulesChanged') shelfTitleRulesUpdateTime: number = 0;
   @StorageLink('bookshelfLayoutMode') bookshelfLayoutMode: string = 'companion';
   @StorageLink('bookshelfLastReadLeafMode') bookshelfLastReadLeafMode: string = 'adaptive';
   @StorageLink('bookshelfLastReadPinMode') @Watch('onLastReadPinModeChanged') bookshelfLastReadPinMode: string = 'large';
@@ -716,6 +720,22 @@ export struct BookshelfPage {
     this.reloadDisplaySettings();
     this.restoreShelfCategoryExpanded();
     this.restoreSortModeAndLoad();
+    ReaderReplaceRuleStore.load(getContext(this)).then((): void => {
+      this.shelfTitleRulesRevision++;
+    }).catch((error: Error): void => {
+      console.warn('书架载入替换净化规则失败:', error);
+    });
+  }
+
+  onShelfTitleRulesChanged(): void {
+    this.shelfTitleRulesRevision++;
+  }
+
+  /** 书架上显示的章节名：按替换净化规则处理书源原始章节名，与阅读页一致。 */
+  shelfChapterTitle(book: Book, title: string): string {
+    const text = (title || '').trim();
+    // 读一次 revision，规则载入或改动后重算。
+    return this.shelfTitleRulesRevision >= 0 ? ReaderReplaceRuleStore.displayTitle(text, book).trim() : text;
   }
 
   aboutToDisappear(): void {
@@ -4775,7 +4795,7 @@ export struct BookshelfPage {
    */
   getShelfUpdateLineText(book: Book): string {
     const timeText = BookDisplayHelper.getLastUpdateRelativeText(book);
-    const chapterText = (book.latestChapterTitle || '').trim();
+    const chapterText = this.shelfChapterTitle(book, book.latestChapterTitle);
     if (timeText && chapterText) {
       return `${timeText} · ${chapterText}`;
     }
@@ -4786,7 +4806,7 @@ export struct BookshelfPage {
   }
 
   getShelfLatestChapterTitle(book: Book): string {
-    return (book.latestChapterTitle || '').trim();
+    return this.shelfChapterTitle(book, book.latestChapterTitle);
   }
 
   /** 宽松布局的作者信息行：作者 · 书源 · 字数。书源已在封面角标上显示时不重复。 */
@@ -10075,7 +10095,8 @@ export struct BookshelfPage {
     await db.updateBook(refreshedBook);
     if (!hasNewUpdate) return null;
     const newChapters = beforeChapterCount > 0 ? Math.max(0, engine.chapters.length - beforeChapterCount) : 0;
-    return new ShelfRefreshUpdate(refreshedBook, newChapters, refreshedBook.latestChapterTitle || '');
+    return new ShelfRefreshUpdate(refreshedBook, newChapters,
+      ReaderReplaceRuleStore.displayTitle((refreshedBook.latestChapterTitle || '').trim(), refreshedBook));
   }
 
   /** 带刷新失败标记的网络书：清单里“全部自动换源”的对象。 */
@@ -12146,7 +12167,7 @@ export struct BookshelfPage {
     if (!Book.hasStartedReading(book)) {
       return '';
     }
-    return (book.durChapterTitle || '').trim();
+    return this.shelfChapterTitle(book, book.durChapterTitle);
   }
 
   getLastReadChapterText(book: Book): string {

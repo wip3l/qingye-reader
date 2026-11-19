@@ -13,6 +13,7 @@ import { CoverGallerySnapshot, CoverGalleryStore } from './CoverGalleryStore';
 import { SearchExplorePendingBook } from './SearchExplorePendingBook';
 import { PrivateShelfStore } from './PrivateShelfStore';
 import { AppThemeSettingsStore } from './AppThemeSettingsStore';
+import { ReaderReplaceRuleStore } from './ReaderReplaceRuleStore';
 
 export const RECENT_READ_FORM_NAME = 'RecentReadForm';
 /** 封面卡片与最近阅读卡片共用同一个 FormExtensionAbility 和同一份数据。 */
@@ -129,6 +130,12 @@ export class RecentReadCardDataProvider {
       console.warn('加载卡片封面图集设置失败:', e);
     }
     const accent = await RecentReadCardDataProvider.themeAccentColor(context, darkMode);
+    try {
+      // 章节名按替换净化规则显示，与阅读页、书架一致；每次重读，规则在别处改过也能跟上。
+      await ReaderReplaceRuleStore.load(context, true);
+    } catch (e) {
+      console.warn('加载卡片替换净化规则失败:', e);
+    }
     return await RecentReadCardDataProvider.fromBooks(context, books, dimension, darkMode, coverSettings, accent);
   }
 
@@ -182,7 +189,8 @@ export class RecentReadCardDataProvider {
     const item = new RecentReadCardBook();
     item.name = book.name || '未命名书籍';
     const started = Book.hasStartedReading(book);
-    item.chapter = started ? (book.durChapterTitle || '继续阅读') : '未读';
+    item.chapter = started ?
+      (ReaderReplaceRuleStore.displayTitle((book.durChapterTitle || '').trim(), book) || '继续阅读') : '未读';
     item.brief = started ? RecentReadCardDataProvider.chapterBrief(item.chapter) : '未读';
     item.progress = RecentReadCardDataProvider.progressText(book);
     item.percent = RecentReadCardDataProvider.progressPercent(book);
