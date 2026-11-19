@@ -31,11 +31,23 @@ export class ReaderReplaceRuleCheck {
   compatibilityNotes: string[] = [];
 }
 
+/** 一条已筛过范围、编译好的标题规则；regex 为空表示按普通文本替换 plain。 */
+class ReaderTitleReplaceStep {
+  regex: RegExp | null = null;
+  plain: string = '';
+  replacement: string = '';
+}
+
 export class ReaderReplaceRuleStore {
   static readonly UPDATE_TIME_KEY: string = 'readerReplaceRulesUpdateTime';
   private static readonly STORE_NAME: string = 'reader_replace_rules';
   private static readonly RULES_KEY: string = 'rulesV1';
   private static cachedRules: ReaderReplaceRule[] | null = null;
+  private static readonly TITLE_RESULT_LIMIT: number = 2000;
+  private static titlePlanRules: ReaderReplaceRule[] | null = null;
+  private static titlePlanScope: string = '';
+  private static titlePlan: ReaderTitleReplaceStep[] = [];
+  private static titleResults: Map<string, string> = new Map<string, string>();
   /** 内置“移除标题”：开启后正文顶部不排版章节名，顶栏、目录等处照常显示。 */
   static readonly BUILTIN_REMOVE_TITLE: string = 'removeChapterTitle';
   // 固定编号让多设备同步时是同一条；取远大于时间戳的值，避开导入规则自带的小编号。旧版客户端回传会丢掉
@@ -102,6 +114,71 @@ export class ReaderReplaceRuleStore {
 
   static applyTitle(text: string, rules: ReaderReplaceRule[], book: Book | null): string {
     return ReaderReplaceRuleStore.apply(text, rules, book, true);
+  }
+
+  /**
+   * 阅读页取章节名用。页眉页脚每次刷新（滚动阅读时随进度不断刷新）都要取章节名，逐次对全部规则
+   * 判断范围、编译正则会拖住主线程，所以按“规则列表 + 书籍”预先筛出适用的标题规则并编译好，
+   * 再按标题原文记住结果。规则列表按引用识别：调用方换规则时必须换一个新数组，不能原地修改。
+   */
+  static applyTitleCached(text: string, rules: ReaderReplaceRule[], book: Book | null): string {
+    if (!text || rules.length === 0) {
+      return text;
+    }
+    const scope = ReaderReplaceRuleStore.bookScopeText(book);
+    if (rules !== ReaderReplaceRuleStore.titlePlanRules || scope !== ReaderReplaceRuleStore.titlePlanScope) {
+      ReaderReplaceRuleStore.titlePlan = ReaderReplaceRuleStore.buildTitlePlan(rules, book);
+      ReaderReplaceRuleStore.titlePlanRules = rules;
+      ReaderReplaceRuleStore.titlePlanScope = scope;
+      ReaderReplaceRuleStore.titleResults.clear();
+    }
+    const plan = ReaderReplaceRuleStore.titlePlan;
+    if (plan.length === 0) {
+      return text;
+    }
+    const cached = ReaderReplaceRuleStore.titleResults.get(text);
+    if (cached !== undefined) {
+      return cached;
+    }
+    let result = text;
+    for (const step of plan) {
+      try {
+        result = step.regex ? result.replace(step.regex, step.replacement) :
+          result.split(step.plain).join(step.replacement);
+      } catch (error) {
+        console.warn(`替换净化规则无效: ${step.plain}`, error);
+      }
+    }
+    if (ReaderReplaceRuleStore.titleResults.size >= ReaderReplaceRuleStore.TITLE_RESULT_LIMIT) {
+      ReaderReplaceRuleStore.titleResults.clear();
+    }
+    ReaderReplaceRuleStore.titleResults.set(text, result);
+    return result;
+  }
+
+  private static buildTitlePlan(rules: ReaderReplaceRule[], book: Book | null): ReaderTitleReplaceStep[] {
+    const plan: ReaderTitleReplaceStep[] = [];
+    for (const sourceRule of rules) {
+      const rule = ReaderReplaceRuleStore.normalize(sourceRule);
+      if (!rule.enabled || !rule.pattern || !rule.applyToTitle ||
+        !ReaderReplaceRuleStore.matchesBookScope(rule, book)) {
+        continue;
+      }
+      const step = new ReaderTitleReplaceStep();
+      step.plain = rule.pattern;
+      step.replacement = rule.replacement;
+      if (rule.isRegex) {
+        try {
+          step.regex = JavaRegexCompat.compile(rule.pattern, 'g');
+          step.replacement = JavaRegexCompat.convertReplacement(rule.replacement);
+        } catch (error) {
+          console.warn(`替换净化规则无效: ${rule.name || rule.pattern}`, error);
+          continue;
+        }
+      }
+      plan.push(step);
+    }
+    return plan;
   }
 
   static applyContent(text: string, rules: ReaderReplaceRule[], book: Book | null): string {

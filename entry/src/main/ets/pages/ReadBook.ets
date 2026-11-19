@@ -7378,7 +7378,7 @@ struct ReadBookPage {
     if (this.chapters.length === 0) return '暂无目录';
     const chapter = this.chapters[this.clampChapterIndex(chapterIndex)];
     const title = chapter ? this.cleanChapterTitle(chapter.title) : '';
-    const replaced = ReaderReplaceRuleStore.applyTitle(title, this.readerReplaceRules, this.book);
+    const replaced = ReaderReplaceRuleStore.applyTitleCached(title, this.readerReplaceRules, this.book);
     // 读一次 revision，字典加载完成后标题跟着重算。
     return this.readerTextConvertRevision >= 0 && this.isReaderTextConvertActive() ?
       ReaderTextConvertRuntime.convertNow(replaced) : replaced;
