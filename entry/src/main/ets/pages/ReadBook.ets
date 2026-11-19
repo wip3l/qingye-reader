@@ -1963,9 +1963,13 @@ struct ReadBookPage {
     });
   }
 
-  /** 漫画与“正文扩展至状态栏”隐藏状态栏；底部小白条只在停留于正文时按开关收起。 */
+  /**
+   * 漫画与“正文扩展至状态栏”在停留于正文时隐藏状态栏，呼出菜单时显示出来（顶栏本来就按状态栏高度留白）；
+   * 底部小白条只在停留于正文时按开关收起。
+   */
   private applyReaderSystemBarsTo(mainWindow: window.Window): void {
-    applyReaderSystemBars(mainWindow, !(this.isReaderComicModeActive() || this.readerExtendToStatusBar),
+    applyReaderSystemBars(mainWindow,
+      this.showMenu || !(this.isReaderComicModeActive() || this.readerExtendToStatusBar),
       this.readerPageVisible && !this.showMenu);
   }
 
