@@ -4,6 +4,7 @@ import { ThemeAssetRegistry } from '../theme/ThemeAssetRegistry';
 import { BookDisplayHelper } from './BookDisplayHelper';
 import { CoverGallerySettings } from './CoverGallerySettings';
 import { ShelfCoverSlots } from './ShelfCoverSlots';
+import { CoverGallerySnapshot, CoverGalleryStore } from './CoverGalleryStore';
 
 /** 各页面共用主题封面的顺序和轮播间隔。 */
 export class ThemeBookCoverSettings {
@@ -12,9 +13,17 @@ export class ThemeBookCoverSettings {
       ThemeAssetRegistry.themeBookCovers(ThemeRuntime.bookTokens(darkMode).coverAssetId, darkMode).length > 0;
   }
 
-  /** 这本书是否显示主题封面：单独设置了封面的书不被主题封面盖掉。 */
-  static enabledFor(book: Book | null | undefined, darkMode: boolean, enabled: boolean): boolean {
-    return !BookDisplayHelper.hasCustomCover(book) && ThemeBookCoverSettings.enabled(darkMode, enabled);
+  /**
+   * 这本书是否显示主题封面。enabled 是“统一封面用主题封面”的开关：开着时除了单独设置过封面的书都用主题封面；
+   * 关着时只有“没有封面时用主题封面”且这本书确实取不到别的图才用。主题没有封面套装时都不用。
+   */
+  static enabledFor(book: Book | null | undefined, darkMode: boolean, enabled: boolean,
+    settings: CoverGallerySnapshot | null = null): boolean {
+    if (!book || BookDisplayHelper.hasCustomCover(book) || !ThemeBookCoverSettings.enabled(darkMode, true)) return false;
+    if (enabled) return true;
+    const fallback = settings ? settings.fallback : CoverGalleryStore.fallbackFromStorage();
+    if (fallback !== 'theme') return false;
+    return CoverGallerySettings.coversFor(book, darkMode, settings || CoverGalleryStore.snapshotFromStorage()).length === 0;
   }
 
   /** coverMode 传组件里的状态变量才会随设置刷新；不传时读当前存储。 */

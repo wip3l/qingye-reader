@@ -2,7 +2,8 @@ import { syncSystemBars } from '../utils/SystemBars';
 import { SearchExploreSettings, SearchExploreSettingsStore } from '../utils/SearchExploreSettingsStore';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { PageScaffold } from '../components/common/PageScaffold';
-import { SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
+import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
+import { SettingsFocus } from '../utils/SettingsFocus';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 
@@ -60,13 +61,12 @@ struct SearchExploreSettingsPage {
         }
       })
       if (this.searchExploreShowResultCover) {
-        SettingSwitchRow({
+        SettingNavRow({
           title: '使用书架封面',
-          description: '搜索、发现及书籍详情沿用书架的封面来源、适用范围和展示方式',
-          isOn: this.searchExploreUseBookshelfCoverGallery,
-          onChange: (value: boolean) => {
-            this.searchExploreUseBookshelfCoverGallery = value;
-            this.onSettingChanged();
+          description: '搜索、发现及书籍详情沿用书架的封面来源和显示方式，在封面设置里开关',
+          value: this.searchExploreUseBookshelfCoverGallery ? '已开启' : '未开启',
+          onTap: () => {
+            SettingsFocus.open('pages/CoverSettings', undefined, '搜索与发现也用这套封面');
           }
         })
       }

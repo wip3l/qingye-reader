@@ -1204,8 +1204,9 @@ struct ReadBookPage {
   @StorageLink('bookshelfDarkCoverAlbumId') @Watch('onTtsCoverSettingsChanged') bookshelfDarkCoverAlbumId: string = '';
   @StorageLink('bookshelfCoverApplyScope') @Watch('onTtsCoverSettingsChanged') bookshelfCoverApplyScope: string = 'all';
   @StorageLink('bookshelfCoverTargetBooks') @Watch('onTtsCoverSettingsChanged') bookshelfCoverTargetBooks: string = '';
-  @StorageLink('bookshelfIgnoreSourceCover') @Watch('onTtsCoverSettingsChanged') bookshelfIgnoreSourceCover: boolean = false;
-  @StorageLink('bookshelfIgnoreEmptyCoverOnly') @Watch('onTtsCoverSettingsChanged') bookshelfIgnoreEmptyCoverOnly: boolean = false;
+  @StorageLink('bookshelfCoverReplaceAlbum') @Watch('onTtsCoverSettingsChanged') bookshelfCoverReplaceAlbum: boolean = false;
+  @StorageLink('bookshelfCoverAlbumMix') @Watch('onTtsCoverSettingsChanged') bookshelfCoverAlbumMix: boolean = false;
+  @StorageLink('bookshelfCoverFallback') @Watch('onTtsCoverSettingsChanged') bookshelfCoverFallback: string = 'text';
   @StorageLink('bookshelfCoverMode') @Watch('onTtsCoverSettingsChanged') bookshelfCoverMode: string = 'sequence';
   @StorageLink('coverGalleryUpdateTime') @Watch('onTtsCoverSettingsChanged') coverGalleryUpdateTime: number = 0;
   @StorageLink('ttsPerson') ttsPerson: number = 0;
@@ -15824,9 +15825,10 @@ struct ReadBookPage {
       this.bookshelfDarkCoverAlbumId,
       this.bookshelfCoverApplyScope,
       this.bookshelfCoverTargetBooks,
-      this.bookshelfIgnoreSourceCover,
       this.bookshelfCoverMode,
-      this.bookshelfIgnoreEmptyCoverOnly
+      this.bookshelfCoverReplaceAlbum,
+      this.bookshelfCoverAlbumMix,
+      this.bookshelfCoverFallback
     );
     const displayCovers: string[] = [];
     const context = getContext(this);

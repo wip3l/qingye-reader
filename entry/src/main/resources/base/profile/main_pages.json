@@ -30,6 +30,7 @@
     "pages/CustomTtsVoiceManager",
     "pages/BookshelfSettings",
     "pages/BookshelfCoverBadgeSettings",
+    "pages/CoverSettings",
     "pages/LocalBookSettings",
     "pages/SearchExploreSettings",
     "pages/ExploreSourceSort",

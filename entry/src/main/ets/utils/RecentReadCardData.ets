@@ -263,7 +263,9 @@ export class RecentReadCardDataProvider {
     // 卡片扩展可在主页面尚未初始化时运行，主题从持久化设置读取。
     try {
       const themeSettings = await AppThemeSettingsStore.load(context);
-      if (themeSettings.themeBookCoverEnabled && !BookDisplayHelper.hasCustomCover(book)) {
+      // 统一封面用主题封面，或这本书没有封面且选了用主题封面兜底。
+      const themeFallback = coverSettings.fallback === 'theme' && covers.length === 0;
+      if ((themeSettings.themeBookCoverEnabled || themeFallback) && !BookDisplayHelper.hasCustomCover(book)) {
         const theme = themeSettings.themeId === ThemeIds.CUSTOM ?
           AppThemeSettingsStore.customTheme(themeSettings, darkMode) : BuiltinThemeRegistry.findById(themeSettings.themeId);
         const themeCovers = ThemeBookCoverSettings.coversForAsset(book, theme.book.coverAssetId, darkMode,

@@ -23,7 +23,8 @@ const IGNORED = new Map([
   ['WebParseSettings', ['请确认使用须知', '使用须知']],
   ['OtherSettings', ['删除离线音频？', '删除离线内容？', '其他设置']],
   ['DataSync', ['书源']],
-  ['BookshelfSettings', ['重置隐私书架']]
+  ['BookshelfSettings', ['重置隐私书架']],
+  ['CoverSettings', ['书籍自带封面']]
 ]);
 
 // 1. 路由页面存在

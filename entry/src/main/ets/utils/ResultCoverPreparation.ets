@@ -68,14 +68,6 @@ export class ResultCoverPreparation {
     return book;
   }
 
-  /** Custom albums take the direct path when applicable, even when source covers are also enabled. */
-  static albumCovers(book: Book, options: ResultCoverOptions): string[] {
-    const settings = options.gallery;
-    return CoverGallerySettings.getDisplayCoverList(book, options.darkMode, settings.albumsRaw,
-      settings.lightAlbumId, settings.darkAlbumId, settings.applyScope, settings.targetBooksRaw,
-      true, settings.coverMode);
-  }
-
   static async prepare(context: Context, result: SearchBook, options: ResultCoverOptions): Promise<PreparedResultCover> {
     const prepared = new PreparedResultCover();
     if (!options.showCover) return prepared;
@@ -94,17 +86,20 @@ export class ResultCoverPreparation {
       prepared.themeCover = true;
       prepared.interval = ThemeBookCoverSettings.interval(book);
     } else if (options.useBookshelf) {
-      const emptyOnly = options.gallery.ignoreSourceCover && options.gallery.ignoreEmptyCoverOnly;
-      // 仅忽略空封面时要先看书有没有自带封面，不能直接走图集。
-      candidates = emptyOnly ? [] : ResultCoverPreparation.albumCovers(book, options);
+      // 统一封面只用图集的书不必知道它有没有封面；其余情况（和自带封面轮播、只给没有封面的书兜底）要先把书源封面补上。
+      candidates = CoverGallerySettings.replaceOnlyAlbumCovers(book, options.darkMode, options.gallery);
       if (candidates.length === 0) {
         await AppDatabase.getInstance().initWithContext(context);
         const shelfBook = await SearchBookShelfHelper.findShelfBookByKey(BookIdentity.keyOfBook(book));
         if (shelfBook) book = shelfBook;
-        if (!book.coverUrl && !book.customCoverUrl && (!options.gallery.ignoreSourceCover || emptyOnly)) {
-          book = await ResultCoverPreparation.completeSourceCover(book);
-        }
+        if (!book.coverUrl && !book.customCoverUrl) book = await ResultCoverPreparation.completeSourceCover(book);
         candidates = BookCoverResolver.sourceCovers(book, options.darkMode, options.gallery);
+        if (candidates.length === 0 && ThemeBookCoverSettings.enabledFor(book, options.darkMode, false, options.gallery)) {
+          candidates = ThemeBookCoverSettings.covers(book, options.darkMode, options.gallery.coverMode);
+          frame = ThemeBookCoverSettings.frame(options.darkMode);
+          prepared.themeCover = true;
+          prepared.interval = ThemeBookCoverSettings.interval(book);
+        }
       }
     } else {
       if (!book.coverUrl) book = await ResultCoverPreparation.completeSourceCover(book);
@@ -120,7 +115,7 @@ export class ResultCoverPreparation {
       if (frame) prepared.frame = await ResultCoverPreparation.prepareImage(context, frame);
       return prepared;
     }
-    if (options.useBookshelf && candidates.length > 0 && !options.gallery.ignoreSourceCover) {
+    if (options.useBookshelf && candidates.length > 0 && (!options.gallery.replaceAlbum || options.gallery.albumMix)) {
       // A broken/missing custom image is not proof that the source book has no cover.
       const fallback = new ResultCoverOptions();
       fallback.darkMode = options.darkMode;

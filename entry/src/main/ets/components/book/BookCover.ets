@@ -39,8 +39,9 @@ export struct BookCover {
   @StorageProp('bookshelfDarkCoverAlbumId') @Watch('refreshCovers') darkAlbum: string = '';
   @StorageProp('bookshelfCoverApplyScope') @Watch('refreshCovers') applyScope: string = 'all';
   @StorageProp('bookshelfCoverTargetBooks') @Watch('refreshCovers') targetBooks: string = '';
-  @StorageProp('bookshelfIgnoreSourceCover') @Watch('refreshCovers') ignoreSource: boolean = false;
-  @StorageProp('bookshelfIgnoreEmptyCoverOnly') @Watch('refreshCovers') ignoreEmptyOnly: boolean = false;
+  @StorageProp('bookshelfCoverReplaceAlbum') @Watch('refreshCovers') replaceAlbum: boolean = false;
+  @StorageProp('bookshelfCoverAlbumMix') @Watch('refreshCovers') albumMix: boolean = false;
+  @StorageProp('bookshelfCoverFallback') @Watch('refreshCovers') fallback: string = 'text';
   @StorageProp('bookshelfCoverMode') @Watch('refreshCovers') coverMode: string = 'sequence';
   @StorageProp('appThemeBookCoverEnabled') @Watch('refreshCovers') themeCoverEnabled: boolean = false;
   @StorageProp('themeRevision') @Watch('refreshCovers') themeRevision: number = 0;
@@ -141,7 +142,8 @@ export struct BookCover {
     }
     const book = this.coverBook();
     return CoverGallerySettings.getDisplayCoverList(book, this.appDarkMode, this.albums,
-      this.lightAlbum, this.darkAlbum, this.applyScope, this.targetBooks, this.ignoreSource, this.coverMode, this.ignoreEmptyOnly);
+      this.lightAlbum, this.darkAlbum, this.applyScope, this.targetBooks, this.coverMode, this.replaceAlbum,
+      this.albumMix, this.fallback);
   }
 
   refreshCovers(): void {

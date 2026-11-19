@@ -609,8 +609,9 @@ export struct BookshelfPage {
   @StorageLink('bookshelfDarkCoverAlbumId') @Watch('onShelfCoverSettingsChanged') bookshelfDarkCoverAlbumId: string = '';
   @StorageLink('bookshelfCoverApplyScope') @Watch('onShelfCoverSettingsChanged') bookshelfCoverApplyScope: string = 'all';
   @StorageLink('bookshelfCoverTargetBooks') @Watch('onShelfCoverSettingsChanged') bookshelfCoverTargetBooks: string = '';
-  @StorageLink('bookshelfIgnoreSourceCover') @Watch('onShelfCoverSettingsChanged') bookshelfIgnoreSourceCover: boolean = false;
-  @StorageLink('bookshelfIgnoreEmptyCoverOnly') @Watch('onShelfCoverSettingsChanged') bookshelfIgnoreEmptyCoverOnly: boolean = false;
+  @StorageLink('bookshelfCoverReplaceAlbum') @Watch('onShelfCoverSettingsChanged') bookshelfCoverReplaceAlbum: boolean = false;
+  @StorageLink('bookshelfCoverAlbumMix') @Watch('onShelfCoverSettingsChanged') bookshelfCoverAlbumMix: boolean = false;
+  @StorageLink('bookshelfCoverFallback') @Watch('onShelfCoverSettingsChanged') bookshelfCoverFallback: string = 'text';
   @StorageLink('bookshelfCoverMode') @Watch('onShelfCoverSettingsChanged') bookshelfCoverMode: string = 'sequence';
   @StorageProp('bookshelfDarkCoverDim') bookshelfDarkCoverDim: boolean = false;
   @StorageProp('bookshelfDarkCoverDimLevel') bookshelfDarkCoverDimLevel: number = 20;
@@ -1751,9 +1752,10 @@ export struct BookshelfPage {
       this.bookshelfDarkCoverAlbumId,
       this.bookshelfCoverApplyScope,
       this.bookshelfCoverTargetBooks,
-      this.bookshelfIgnoreSourceCover,
       this.bookshelfCoverMode,
-      this.bookshelfIgnoreEmptyCoverOnly
+      this.bookshelfCoverReplaceAlbum,
+      this.bookshelfCoverAlbumMix,
+      this.bookshelfCoverFallback
     );
     const context = getContext(this);
     for (let i = 0; i < covers.length; i++) {
@@ -7501,9 +7503,13 @@ export struct BookshelfPage {
     return this.themeAssetsLive() && ThemeBookCoverSettings.enabled(this.appDarkMode, this.themeBookCoverEnabled);
   }
 
-  /** 单本书是否显示主题封面：单独设置了封面的书照常显示自己的封面（文件夹插画仍看 shouldUseThemeBookCover）。 */
+  /** 单本书是否显示主题封面：统一封面用主题封面时除单独设置过封面的书都用，否则只在没有封面时兜底（文件夹插画仍看 shouldUseThemeBookCover）。 */
   shouldUseThemeBookCoverFor(book: Book): boolean {
-    return this.shouldUseThemeBookCover() && !BookDisplayHelper.hasCustomCover(book);
+    if (!this.themeAssetsLive() || BookDisplayHelper.hasCustomCover(book)) return false;
+    if (this.themeBookCoverEnabled) return ThemeBookCoverSettings.enabled(this.appDarkMode, true);
+    // 只给没有封面的书用主题封面：这本书取不到别的图才用。
+    return this.bookshelfCoverFallback === 'theme' && ThemeBookCoverSettings.enabled(this.appDarkMode, true) &&
+      this.rawShelfCoverList(book).length === 0;
   }
 
   /** 轮播项 key 里代表封面图本身的那段：深浅色各有一套封面的主题切换模式时，靠它让轮播换图。 */
@@ -7587,9 +7593,10 @@ export struct BookshelfPage {
       this.bookshelfDarkCoverAlbumId,
       this.bookshelfCoverApplyScope,
       this.bookshelfCoverTargetBooks,
-      this.bookshelfIgnoreSourceCover,
       this.bookshelfCoverMode,
-      this.bookshelfIgnoreEmptyCoverOnly
+      this.bookshelfCoverReplaceAlbum,
+      this.bookshelfCoverAlbumMix,
+      this.bookshelfCoverFallback
     );
   }
 

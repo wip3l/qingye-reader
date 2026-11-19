@@ -21,6 +21,8 @@ export struct SettingRow {
   @Prop titleColor?: ResourceColor;
   /** 行首图标，用在作为入口的行上；普通设置项不传。 */
   @Prop icon?: Resource;
+  /** 行首的序号圆点，用在几行有先后顺序的地方（如封面来源的取用顺序）；不传不显示。 */
+  @Prop badge: string = '';
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
@@ -58,6 +60,18 @@ export struct SettingRow {
         .borderRadius(9)
         .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
         .margin({ right: AppSpacing.LG })
+      }
+      if (this.badge) {
+        Text(this.badge)
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeRuntime.accentColor(this.appDarkMode))
+          .textAlign(TextAlign.Center)
+          .width(22)
+          .height(22)
+          .borderRadius(11)
+          .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+          .margin({ right: AppSpacing.MD })
       }
       Column() {
         Row({ space: AppSpacing.XS }) {
@@ -131,6 +145,7 @@ export struct SettingNavRow {
   @Prop showDivider: boolean = true;
   @Prop titleColor?: ResourceColor;
   @Prop icon?: Resource;
+  @Prop badge: string = '';
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
   onTap: () => void = () => {
@@ -138,7 +153,7 @@ export struct SettingNavRow {
 
   build() {
     SettingRow({ title: this.title, minimumMembership: this.minimumMembership, description: this.description, showDivider: this.showDivider,
-      titleColor: this.titleColor, icon: this.icon, onTap: () => this.onTap() }) {
+      titleColor: this.titleColor, icon: this.icon, badge: this.badge, onTap: () => this.onTap() }) {
       Row({ space: AppSpacing.XS }) {
         if (this.value) {
           Text(this.value)

@@ -82,8 +82,9 @@ export struct SearchBookResultList {
   @StorageProp('bookshelfDarkCoverAlbumId') @Watch('onCoverSettingsChanged') darkCoverAlbum: string = '';
   @StorageProp('bookshelfCoverApplyScope') @Watch('onCoverSettingsChanged') coverScope: string = '';
   @StorageProp('bookshelfCoverTargetBooks') @Watch('onCoverSettingsChanged') coverTargets: string = '';
-  @StorageProp('bookshelfIgnoreSourceCover') @Watch('onCoverSettingsChanged') ignoreSourceCover: boolean = false;
-  @StorageProp('bookshelfIgnoreEmptyCoverOnly') @Watch('onCoverSettingsChanged') ignoreEmptyCoverOnly: boolean = false;
+  @StorageProp('bookshelfCoverReplaceAlbum') @Watch('onCoverSettingsChanged') coverReplaceAlbum: boolean = false;
+  @StorageProp('bookshelfCoverAlbumMix') @Watch('onCoverSettingsChanged') coverAlbumMix: boolean = false;
+  @StorageProp('bookshelfCoverFallback') @Watch('onCoverSettingsChanged') coverFallback: string = 'text';
   @StorageProp('bookshelfCoverMode') @Watch('onCoverSettingsChanged') coverMode: string = '';
   @StorageProp('shelfUpdateTime') @Watch('onCoverSettingsChanged') shelfRevision: number = 0;
   @State preparedCovers: Map<string, PreparedResultCover> = new Map<string, PreparedResultCover>();

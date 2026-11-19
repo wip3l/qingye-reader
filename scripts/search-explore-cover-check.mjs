@@ -8,7 +8,9 @@ import { projectRoot } from './lib/ets-module-staging.mjs';
 const read = file => fs.readFileSync(`${projectRoot}/entry/src/main/ets/${file}`, 'utf8');
 const readyTimers = [];
 const flushReady = () => readyTimers.splice(0).forEach(fn => fn());
-const context = vm.createContext({ console, Book: class { customCoverUrl = ''; },
+let storedCover = () => ({ fallback: 'text' });
+const context = vm.createContext({ console, Book: class { customCoverUrl = ''; }, CoverGallerySnapshot: class {},
+  CoverGalleryStore: { fallbackFromStorage: () => storedCover().fallback, snapshotFromStorage: () => storedCover() },
   setTimeout: fn => readyTimers.push(fn), clearTimeout: () => {},
   ThemeRuntime: { bookTokens: dark => ({ coverAssetId: dark ? 'dark' : 'light', shelfFrameAssetId: 'frame' }) },
   ThemeAssetRegistry: { themeBookCovers: id => [{ id: `${id}-1` }, { id: `${id}-2` }], themeShelfFrame: () => ({ id: 'frame' }) }
@@ -29,25 +31,32 @@ const cover = vm.runInContext(stripTypeScriptTypes(`({${[
 Object.assign(cover, {
   bookUrl: 'book-1', origin: 'source', coverUrl: 'source.jpg', shelfBook: null,
   useBookshelfCover: true, appDarkMode: false, applyScope: 'all', targetBooks: '', themeCoverEnabled: false,
-  ignoreSource: false, coverMode: 'sequence', lightAlbum: 'light', darkAlbum: 'dark',
+  replaceAlbum: true, albumMix: true, fallback: 'text', coverMode: 'sequence', lightAlbum: 'light', darkAlbum: 'dark',
   albums: JSON.stringify([{ id: 'light', covers: ['light-1.jpg', 'light-2.jpg'] }, { id: 'dark', covers: ['dark.jpg'] }]),
   covers: [], displayCovers: [], coverLoadSerial: 0, retryTimers: new Map(), retryCounts: new Map(), activeIndex: 0, loadedRevision: 0, loadedUrls: new Set(), mounted: true,
   imageCover: raw => raw, readyTimer: -1, readyPending: '', readyNotified: null, onReadyCover() {}
 });
+// 封面组件的设置来自全局存储，这里让存储读到的就是组件上的值。
+storedCover = () => ({ albumsRaw: cover.albums, lightAlbumId: cover.lightAlbum, darkAlbumId: cover.darkAlbum,
+  applyScope: cover.applyScope, targetBooksRaw: cover.targetBooks, coverMode: cover.coverMode,
+  replaceAlbum: cover.replaceAlbum, albumMix: cover.albumMix, fallback: cover.fallback });
 const list = () => Array.from(cover.rawCoverList());
 assert.deepEqual(list(), ['source.jpg', 'light-1.jpg', 'light-2.jpg'], 'source and album follow shelf ordering');
-cover.shelfBook = { bookUrl: 'book-1', coverUrl: 'shelf-source.jpg', customCoverUrl: '["custom-1.jpg","custom-2.jpg"]' };
-assert.deepEqual(list(), ['custom-1.jpg', 'custom-2.jpg', 'light-1.jpg', 'light-2.jpg'], 'use saved shelf custom covers');
-cover.ignoreSource = true;
-assert.deepEqual(list(), ['light-1.jpg', 'light-2.jpg']);
+const customBook = { bookUrl: 'book-1', coverUrl: 'shelf-source.jpg', customCoverUrl: '["custom-1.jpg","custom-2.jpg"]' };
+const plainBook = { bookUrl: 'book-1', coverUrl: 'shelf-source.jpg', customCoverUrl: '' };
+const coverlessBook = { bookUrl: 'book-1', coverUrl: '', customCoverUrl: '' };
+cover.shelfBook = customBook;
+assert.deepEqual(list(), ['custom-1.jpg', 'custom-2.jpg'], 'a per-book cover wins over the album');
+cover.shelfBook = plainBook;
+assert.deepEqual(list(), ['shelf-source.jpg', 'light-1.jpg', 'light-2.jpg'], 'own cover and album rotate together');
+cover.albumMix = false;
+assert.deepEqual(list(), ['light-1.jpg', 'light-2.jpg'], 'album replaces the own cover');
 cover.appDarkMode = true;
 assert.deepEqual(list(), ['dark.jpg']);
 cover.applyScope = 'books'; cover.targetBooks = '["other-book"]';
-assert.deepEqual(list(), [], 'respect scope and ignore-source together, no silent source fallback');
-cover.ignoreSource = false;
-assert.deepEqual(list(), ['custom-1.jpg', 'custom-2.jpg']);
-cover.targetBooks = '["book-1"]';
-assert.deepEqual(list(), ['custom-1.jpg', 'custom-2.jpg', 'dark.jpg']);
+assert.deepEqual(list(), ['shelf-source.jpg'], 'books outside the album scope keep their own cover');
+cover.targetBooks = '["book-1"]'; cover.albumMix = true;
+assert.deepEqual(list(), ['shelf-source.jpg', 'dark.jpg']);
 cover.coverMode = 'random';
 const random = list();
 assert.equal(random.length, 1);
@@ -55,10 +64,24 @@ assert.deepEqual(random, list(), 'random selection stable for same book/time');
 cover.useBookshelfCover = false;
 assert.deepEqual(list(), ['source.jpg'], 'switch off restores result source cover');
 cover.useBookshelfCover = true; cover.coverMode = 'sequence'; cover.darkAlbum = '';
-assert.deepEqual(list(), ['custom-1.jpg', 'custom-2.jpg'], 'missing album uses shelf source/custom rule');
-cover.ignoreSource = true;
-assert.deepEqual(list(), [], 'empty cover selection stays empty like shelf');
-cover.ignoreSource = false; cover.darkAlbum = 'dark';
+assert.deepEqual(list(), ['shelf-source.jpg'], 'missing album falls through to the own cover');
+cover.darkAlbum = 'dark'; cover.applyScope = 'all'; cover.replaceAlbum = false;
+assert.deepEqual(list(), ['shelf-source.jpg'], 'no unified cover: own cover');
+cover.shelfBook = coverlessBook;
+assert.deepEqual(list(), [], 'coverless book without a fallback shows the title placeholder');
+cover.fallback = 'album';
+assert.deepEqual(list(), ['dark.jpg'], 'album only fills in for coverless books');
+cover.shelfBook = plainBook;
+assert.deepEqual(list(), ['shelf-source.jpg'], 'the fallback leaves books with a cover alone');
+cover.fallback = 'theme';
+cover.refreshCovers();
+assert.equal(cover.themeCover, false, 'theme fallback leaves books with a cover alone');
+cover.shelfBook = coverlessBook;
+cover.refreshCovers();
+assert.equal(cover.themeCover, true, 'coverless book falls back to the theme cover');
+assert.equal(cover.themeFrame.id, 'frame');
+cover.fallback = 'text'; cover.replaceAlbum = true; cover.albumMix = true;
+cover.shelfBook = customBook;
 const ready = [];
 cover.onReadyCover = url => ready.push(url);
 cover.refreshCovers();
@@ -79,6 +102,9 @@ cover.themeCoverEnabled = true;
 cover.refreshCovers();
 assert.deepEqual(Array.from(cover.covers), ['source.jpg'], 'disabled setting does not apply theme covers');
 cover.useBookshelfCover = true;
+cover.refreshCovers();
+assert.deepEqual(Array.from(cover.covers), ['custom-1.jpg', 'custom-2.jpg'], 'a per-book cover wins over the theme cover');
+cover.shelfBook = plainBook;
 cover.refreshCovers();
 assert.equal(cover.covers.length, 2);
 assert(cover.covers.every(item => item.id.startsWith('dark-')), 'theme covers override source and gallery like shelf');
@@ -133,9 +159,9 @@ assert(!(await helper.getShelfLookup()).has('old-book'));
 // Static surfaces (media/cards/LAN) select from exactly the same gallery/theme rules.
 let themeEnabled = false;
 const settings = { albumsRaw: cover.albums, lightAlbumId: 'light', darkAlbumId: 'dark',
-  applyScope: 'all', targetBooksRaw: '', ignoreSourceCover: false, coverMode: 'sequence' };
+  applyScope: 'all', targetBooksRaw: '', replaceAlbum: true, albumMix: true, fallback: 'text', coverMode: 'sequence' };
 context.AppStorage = { get: key => key === 'appThemeBookCoverEnabled' ? themeEnabled : false };
-context.CoverGalleryStore = { snapshotFromStorage: () => settings };
+context.CoverGalleryStore = { snapshotFromStorage: () => settings, fallbackFromStorage: () => settings.fallback };
 let writes = 0, closed = 0, exists = false, failWrite = false, storedBytes;
 context.fs = {
   OpenMode: { CREATE: 1, WRITE_ONLY: 2, TRUNC: 4 },
@@ -148,13 +174,21 @@ vm.runInContext(stripTypeScriptTypes(read('utils/BookCoverResolver.ets')
   .replace(/^import .*;\r?\n/gm, '').replace(/export class /g, 'class ')), context);
 const resolver = vm.runInContext('BookCoverResolver', context);
 const nativeBook = { bookUrl: 'book-1', name: 'Book', author: 'Author', coverUrl: 'source.jpg', customCoverUrl: 'custom.jpg' };
+const nativePlain = { bookUrl: 'book-1', name: 'Book', author: 'Author', coverUrl: 'source.jpg', customCoverUrl: '' };
+const nativeCoverless = { bookUrl: 'book-1', name: 'Book', author: 'Author', coverUrl: '', customCoverUrl: '' };
 assert.equal(resolver.first(nativeBook, false), 'custom.jpg');
-settings.ignoreSourceCover = true;
-assert.equal(resolver.first(nativeBook, true), 'dark.jpg');
+settings.albumMix = false;
+assert.equal(resolver.first(nativePlain, true), 'dark.jpg');
 settings.applyScope = 'books'; settings.targetBooksRaw = '["other"]';
-assert.equal(resolver.first(nativeBook, false), '', 'static surfaces do not restore suppressed source covers');
+assert.equal(resolver.first(nativePlain, false), 'source.jpg', 'books outside the album scope keep their own cover');
+assert.equal(resolver.first(nativeCoverless, false), '');
+settings.fallback = 'theme';
+assert(resolver.first(nativeCoverless, true).id.startsWith('dark-'), 'static surfaces use the theme fallback too');
+assert.equal(resolver.first(nativePlain, true), 'source.jpg');
+settings.fallback = 'text';
 themeEnabled = true;
-assert(resolver.first(nativeBook, true).id.startsWith('dark-'));
+assert.equal(resolver.first(nativeBook, true), 'custom.jpg');
+assert(resolver.first(nativePlain, true).id.startsWith('dark-'));
 assert.equal(resolver.first(null, true), '');
 const fileContext = { cacheDir: '/cache', resourceManager: { getMediaContent: async () => new Uint8Array([9, 1, 2, 3, 9]).subarray(1, 4) } };
 assert.equal(await resolver.prepareFile(fileContext, ''), '');
@@ -180,6 +214,7 @@ assert(results.includes('this.resultCover(key, 6, 180, 240)'));
 assert(read('pages/SearchBookDetail.ets').includes('BookCover({'));
 assert(read('pages/SearchExploreSettings.ets').includes("title: '使用书架封面'"));
 assert(read('pages/SearchExploreSettings.ets').includes("@StorageLink('searchExploreUseBookshelfCoverGallery')"));
+assert(read('pages/CoverSettings.ets').includes("@StorageLink('searchExploreUseBookshelfCoverGallery')"));
 for (const path of ['components/reader/ReaderTocPanel.ets', 'components/TtsCatalogSheet.ets',
   'components/ReaderTtsPlayerPanel.ets', 'pages/ReadingStats.ets', 'pages/AudioBook.ets', 'pages/OpdsBrowse.ets']) {
   assert(read(path).includes('BookCover({'), `${path} uses the shared cover component`);

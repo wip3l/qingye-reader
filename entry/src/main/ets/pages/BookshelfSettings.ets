@@ -1,11 +1,7 @@
 import { router, promptAction } from '@kit.ArkUI';
-import { common } from '@kit.AbilityKit';
 import { syncSystemBars } from '../utils/SystemBars';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { Book } from '@legado/sourceengine';
-import { CoverAlbum, CoverGallerySettings } from '../utils/CoverGallerySettings';
-import { CoverGalleryStore, CoverGallerySnapshot } from '../utils/CoverGalleryStore';
-import { RecentReadCardUpdater } from '../utils/RecentReadCardUpdater';
 import { BookshelfDisplaySettingsStore } from '../utils/BookshelfDisplaySettingsStore';
 import { SearchExplorePendingBook } from '../utils/SearchExplorePendingBook';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
@@ -17,7 +13,6 @@ import { HdsFeedback } from '../utils/HdsFeedback';
 import { LocalBookService } from '../core/book/LocalBookService';
 import { BookDisplayHelper } from '../utils/BookDisplayHelper';
 import { BookCoverCache } from '../utils/BookCoverCache';
-import { AdaptiveSwitch } from '../components/AdaptiveSwitch';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { PageScaffold } from '../components/common/PageScaffold';
@@ -26,7 +21,6 @@ import { ShelfGreetingEditor } from '../components/home/ShelfGreetingEditor';
 import { ShelfSectionTitleEditor } from '../components/home/ShelfSectionTitleEditor';
 import { ShelfGreetingTemplate } from '../utils/ShelfGreetingTemplate';
 import { BookshelfSortHelper } from '../utils/BookshelfSortHelper';
-import { CoverDimSettings } from '../utils/CoverDimSettings';
 
 @Entry
 @Component
@@ -63,29 +57,11 @@ struct BookshelfSettingsPage {
   @StorageProp('webParseEnabled') webParseEnabled: boolean = false;
   @StorageProp('accountDisplayName') accountDisplayName: string = '';
   @StorageProp('shelfTodayReadMs') shelfTodayReadMs: number = 0;
-  @StorageLink('bookshelfCoverAlbums') @Watch('onCoverAlbumsChanged') bookshelfCoverAlbums: string = '';
-  @StorageLink('bookshelfLightCoverAlbumId') bookshelfLightCoverAlbumId: string = '';
-  @StorageLink('bookshelfDarkCoverAlbumId') bookshelfDarkCoverAlbumId: string = '';
-  @StorageLink('bookshelfCoverApplyScope') bookshelfCoverApplyScope: string = 'all';
-  @StorageLink('bookshelfCoverTargetBooks') bookshelfCoverTargetBooks: string = '';
-  @StorageLink('bookshelfIgnoreSourceCover') bookshelfIgnoreSourceCover: boolean = false;
-  @StorageLink('bookshelfIgnoreEmptyCoverOnly') bookshelfIgnoreEmptyCoverOnly: boolean = false;
-  @StorageLink('bookshelfCoverMode') bookshelfCoverMode: string = 'sequence';
-  @StorageLink('bookshelfDarkCoverDim') bookshelfDarkCoverDim: boolean = false;
-  @StorageLink('bookshelfDarkCoverDimLevel') bookshelfDarkCoverDimLevel: number = 20;
-  @StorageLink('coverGalleryUpdateTime') @Watch('onCoverGalleryUpdateTimeChanged') coverGalleryUpdateTime: number = 0;
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('appLightButtonColor') appLightButtonColor: string = '#007DFF';
   @StorageLink('appDarkButtonColor') appDarkButtonColor: string = '#3F8CFF';
 
-  @State albums: CoverAlbum[] = [];
-  @State albumSelectOptions: SelectOption[] = [{ value: '不使用图集' }];
-  @State books: Book[] = [];
-  @State targetBookUrls: string[] = [];
-  @State targetBooksLoading: boolean = false;
-  @State showTargetBookList: boolean = false;
-  @State settingsRenderTick: number = 0;
   @StorageLink('privateShelfEnabled') @Watch('onPrivateShelfEnabledChanged') privateShelfEnabled: boolean = false;
   @StorageLink('privateShelfHasPassword') privateShelfHasPassword: boolean = false;
   @StorageLink('privateShelfBiometric') @Watch('onPrivateShelfBiometricChanged') privateShelfBiometric: boolean = false;
@@ -103,10 +79,8 @@ struct BookshelfSettingsPage {
   private privatePasswordDialogSession: SystemDialogSession = new SystemDialogSession();
   private greetingEditorDialogSession: SystemDialogSession = new SystemDialogSession();
   private sectionTitleEditorDialogSession: SystemDialogSession = new SystemDialogSession();
-  private skipNextCoverGalleryReload: boolean = false;
 
   aboutToAppear(): void {
-    this.reloadCoverSettings();
     this.reloadDisplaySettings();
     this.reloadPrivateShelfSettings();
     this.syncBars();
@@ -117,7 +91,6 @@ struct BookshelfSettingsPage {
   }
 
   onPageShow(): void {
-    this.reloadCoverSettings();
     this.reloadDisplaySettings();
     this.syncBars();
   }
@@ -386,8 +359,6 @@ struct BookshelfSettingsPage {
         }
       })
     }
-    this.itemDivider()
-    this.navItem('封面标识', '配置四个角的类型、来源、更新、置顶和未读数', 'pages/BookshelfCoverBadgeSettings')
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -397,70 +368,7 @@ struct BookshelfSettingsPage {
 
     this.sectionTitle('封面')
     Column() {
-    this.navItem('图集管理', '新建、导入图片、重命名、预览', 'pages/CoverGalleryManager')
-    this.itemDivider()
-    this.albumSelectItem('浅色配色图集', '浅色模式下使用的封面图集', false)
-    this.itemDivider()
-    this.albumSelectItem('深色配色图集', '深色模式下使用的封面图集', true)
-    this.itemDivider()
-    this.selectItem('图集应用范围', '作用于全部书籍或指定书籍',
-      this.scopeOptions(), this.scopeSelectedIndex(), (index: number) => {
-        this.setCoverApplyScope(index === 1 ? 'books' : 'all');
-      })
-
-    if (this.showTargetBookList) {
-      this.itemDivider()
-      this.targetBooksPanel()
-    }
-    this.itemDivider()
-    this.selectItem('封面模式', '多张封面轮流显示、随机换一张或每本书固定一张',
-      this.modeOptions(), this.modeSelectedIndex(), (index: number) => {
-        this.bookshelfCoverMode = index === 2 ? 'fixed' : index === 1 ? 'random' : 'sequence';
-        this.onCoverSettingChanged();
-      })
-    this.itemDivider()
-    SettingSwitchRow({
-      title: '深色模式调暗封面',
-      description: '深色模式下降低封面亮度，夜里看书架不刺眼',
-      isOn: this.bookshelfDarkCoverDim,
-      showDivider: false,
-      onChange: (value: boolean) => {
-        this.bookshelfDarkCoverDim = value;
-        this.onCoverSettingChanged();
-      }
-    })
-    if (this.bookshelfDarkCoverDim) {
-      this.itemDivider()
-      this.selectItem('调暗程度', '封面亮的书多可以选强一些',
-        this.darkCoverDimOptions(), this.darkCoverDimSelectedIndex(), (index: number) => {
-          this.bookshelfDarkCoverDimLevel = CoverDimSettings.LEVELS[index] ?? CoverDimSettings.DEFAULT_LEVEL;
-          this.onCoverSettingChanged();
-        })
-    }
-    this.itemDivider()
-    SettingSwitchRow({
-      title: '忽略原始封面',
-      description: '书架封面只用应用内的封面图集',
-      isOn: this.bookshelfIgnoreSourceCover,
-      showDivider: false,
-      onChange: (value: boolean) => {
-        this.bookshelfIgnoreSourceCover = value;
-        this.onCoverSettingChanged();
-      }
-    })
-    if (this.bookshelfIgnoreSourceCover) {
-      this.itemDivider()
-      SettingSwitchRow({
-        title: '仅忽略空封面',
-        description: '书自带封面时照常显示，没有封面才用图集',
-        isOn: this.bookshelfIgnoreEmptyCoverOnly,
-        showDivider: false,
-        onChange: (value: boolean) => {
-          this.bookshelfIgnoreEmptyCoverOnly = value;
-          this.onCoverSettingChanged();
-        }
-      })
-    }
+    this.navItem('封面设置', '封面来源与先后顺序、图集、多张封面的显示方式、封面标识', 'pages/CoverSettings')
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -514,32 +422,6 @@ struct BookshelfSettingsPage {
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
     .backgroundColor(this.cardColor())
-  }
-
-  loadAlbums(): void {
-    this.syncAlbums(this.bookshelfCoverAlbums);
-  }
-
-  onCoverAlbumsChanged(): void {
-    this.loadAlbums();
-  }
-
-  onCoverGalleryUpdateTimeChanged(): void {
-    if (this.skipNextCoverGalleryReload) {
-      this.skipNextCoverGalleryReload = false;
-      return;
-    }
-    this.reloadCoverSettings();
-  }
-
-  async reloadCoverSettings(): Promise<void> {
-    try {
-      const snapshot = await CoverGalleryStore.load(getContext(this));
-      this.applySnapshot(snapshot);
-    } catch (e) {
-      console.warn('重新加载封面图集设置失败:', e);
-      this.loadAlbums();
-    }
   }
 
   async reloadDisplaySettings(): Promise<void> {
@@ -774,209 +656,6 @@ struct BookshelfSettingsPage {
     });
   }
 
-  applySnapshot(snapshot: CoverGallerySnapshot): void {
-    const localAlbumsRaw = this.bookshelfCoverAlbums;
-    const albumsRaw = this.hasAlbumPayload(snapshot.albumsRaw) || !this.hasAlbumPayload(localAlbumsRaw) ?
-      snapshot.albumsRaw : localAlbumsRaw;
-    this.bookshelfCoverAlbums = albumsRaw;
-    this.bookshelfLightCoverAlbumId = snapshot.lightAlbumId;
-    this.bookshelfDarkCoverAlbumId = snapshot.darkAlbumId;
-    this.bookshelfCoverApplyScope = snapshot.applyScope;
-    this.showTargetBookList = snapshot.applyScope === 'books';
-    this.bookshelfCoverTargetBooks = snapshot.targetBooksRaw;
-    this.targetBookUrls = CoverGallerySettings.parseTargetBooks(snapshot.targetBooksRaw);
-    this.bookshelfIgnoreSourceCover = snapshot.ignoreSourceCover;
-    this.bookshelfIgnoreEmptyCoverOnly = snapshot.ignoreEmptyCoverOnly;
-    this.bookshelfCoverMode = snapshot.coverMode;
-    this.bookshelfDarkCoverDim = snapshot.darkDim;
-    this.bookshelfDarkCoverDimLevel = snapshot.darkDimLevel;
-    this.syncAlbums(albumsRaw);
-    this.bumpSettingsRender();
-    if (this.showTargetBookList) {
-      this.loadBooks();
-    } else {
-      this.books = [];
-      this.targetBooksLoading = false;
-    }
-  }
-
-  async loadBooks(): Promise<void> {
-    this.targetBooksLoading = true;
-    this.bumpSettingsRender();
-    try {
-      const db = AppDatabase.getInstance();
-      await db.initWithContext(getContext(this));
-      this.books = PrivateShelfStore.publicBooks(
-        SearchExplorePendingBook.filterShelfBooks(await db.getAllBooks())).slice();
-    } catch (e) {
-      console.warn('加载书籍列表失败:', e);
-      this.books = [];
-    } finally {
-      this.targetBooksLoading = false;
-      this.bumpSettingsRender();
-    }
-  }
-
-  setCoverApplyScope(scope: string): void {
-    const nextScope = scope === 'books' ? 'books' : 'all';
-    this.showTargetBookList = nextScope === 'books';
-    this.bookshelfCoverApplyScope = nextScope;
-    this.bumpSettingsRender();
-    if (this.showTargetBookList) {
-      this.loadBooks();
-    } else {
-      this.books = [];
-      this.targetBooksLoading = false;
-    }
-    this.onCoverSettingChanged();
-  }
-
-  setThemeAlbum(dark: boolean, albumId: string): void {
-    if (dark) {
-      this.bookshelfDarkCoverAlbumId = albumId;
-    } else {
-      this.bookshelfLightCoverAlbumId = albumId;
-    }
-    this.onCoverSettingChanged();
-  }
-
-  toggleTargetBook(book: Book, selected: boolean): void {
-    this.toggleTargetBookUrl(book.bookUrl, selected);
-  }
-
-  toggleTargetBookUrl(bookUrl: string, selected: boolean): void {
-    if (!bookUrl) {
-      return;
-    }
-    const targets = this.targetBookUrls.slice();
-    if (selected && !targets.includes(bookUrl)) {
-      targets.push(bookUrl);
-    }
-    if (!selected) {
-      const index = targets.indexOf(bookUrl);
-      if (index >= 0) {
-        targets.splice(index, 1);
-      }
-    }
-    this.targetBookUrls = targets.slice();
-    this.bookshelfCoverTargetBooks = CoverGallerySettings.encodeTargetBooks(this.targetBookUrls);
-    this.bumpSettingsRender();
-    this.onCoverSettingChanged();
-  }
-
-  bumpSettingsRender(): void {
-    this.settingsRenderTick++;
-  }
-
-  onCoverSettingChanged(): void {
-    const snapshot = this.currentSnapshot();
-    CoverGalleryStore.applyToStorage(snapshot);
-    AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-    this.skipNextCoverGalleryReload = true;
-    AppStorage.setOrCreate('coverGalleryUpdateTime', Date.now());
-    CoverGalleryStore.save(getContext(this), snapshot).then(() => {
-      RecentReadCardUpdater.reload(getContext(this) as common.UIAbilityContext);
-    }).catch((e: Error) => {
-      console.warn('保存封面图集设置失败:', e);
-    });
-  }
-
-  currentSnapshot(): CoverGallerySnapshot {
-    const snapshot = new CoverGallerySnapshot();
-    snapshot.albumsRaw = this.bookshelfCoverAlbums;
-    snapshot.lightAlbumId = this.bookshelfLightCoverAlbumId;
-    snapshot.darkAlbumId = this.bookshelfDarkCoverAlbumId;
-    snapshot.applyScope = this.showTargetBookList ? 'books' : 'all';
-    snapshot.targetBooksRaw = this.bookshelfCoverTargetBooks;
-    snapshot.ignoreSourceCover = this.bookshelfIgnoreSourceCover;
-    snapshot.ignoreEmptyCoverOnly = this.bookshelfIgnoreEmptyCoverOnly;
-    snapshot.coverMode = this.bookshelfCoverMode;
-    snapshot.darkDim = this.bookshelfDarkCoverDim;
-    snapshot.darkDimLevel = CoverDimSettings.normalizeLevel(this.bookshelfDarkCoverDimLevel);
-    return snapshot;
-  }
-
-  isTargetBook(book: Book): boolean {
-    return this.isTargetBookUrl(book.bookUrl);
-  }
-
-  isTargetBookUrl(bookUrl: string): boolean {
-    return !!bookUrl && this.targetBookUrls.includes(bookUrl);
-  }
-
-  targetBookKey(book: Book): string {
-    const bookUrl = book.bookUrl || `${book.origin}_${book.name}_${book.author}`;
-    return `${bookUrl}_${this.settingsRenderTick}_${this.isTargetBookUrl(book.bookUrl) ? 'on' : 'off'}`;
-  }
-
-  modeOptions(): SelectOption[] {
-    return [{ value: '顺序' }, { value: '随机' }, { value: '固定' }];
-  }
-
-  modeSelectedIndex(): number {
-    if (this.bookshelfCoverMode === 'fixed') return 2;
-    return this.bookshelfCoverMode === 'random' ? 1 : 0;
-  }
-
-  darkCoverDimOptions(): SelectOption[] {
-    return CoverDimSettings.LEVELS.map((level: number, index: number): SelectOption => {
-      const option: SelectOption = { value: `${CoverDimSettings.LEVEL_NAMES[index]}（${level}%）` };
-      return option;
-    });
-  }
-
-  darkCoverDimSelectedIndex(): number {
-    return Math.max(0, CoverDimSettings.LEVELS.indexOf(CoverDimSettings.normalizeLevel(this.bookshelfDarkCoverDimLevel)));
-  }
-
-  albumOptions(): SelectOption[] {
-    return this.albumSelectOptions;
-  }
-
-  syncAlbums(raw: string): void {
-    this.albums = CoverGallerySettings.parseAlbums(raw);
-    const options: SelectOption[] = [{ value: '不使用图集' }];
-    for (const album of this.albums) {
-      options.push({ value: `${album.name}(${album.covers.length})` });
-    }
-    this.albumSelectOptions = options;
-  }
-
-  refreshAlbumOptionsForMenu(): void {
-    const latestRaw = AppStorage.get<string>('bookshelfCoverAlbums');
-    const raw = latestRaw !== undefined ? latestRaw : this.bookshelfCoverAlbums;
-    if (raw !== this.bookshelfCoverAlbums) {
-      this.bookshelfCoverAlbums = raw;
-    }
-    this.syncAlbums(raw);
-    this.bumpSettingsRender();
-  }
-
-  hasAlbumPayload(raw: string): boolean {
-    return (raw || '').trim().length > 0;
-  }
-
-  albumSelectedIndex(dark: boolean): number {
-    const selectedId = dark ? this.bookshelfDarkCoverAlbumId : this.bookshelfLightCoverAlbumId;
-    for (let i = 0; i < this.albums.length; i++) {
-      if (this.albums[i].id === selectedId) {
-        return i + 1;
-      }
-    }
-    return 0;
-  }
-
-  albumIdByIndex(index: number): string {
-    if (index <= 0 || index - 1 >= this.albums.length) {
-      return '';
-    }
-    return this.albums[index - 1].id;
-  }
-
-  scopeOptions(): SelectOption[] {
-    return [{ value: '全部应用' }, { value: '指定书籍' }];
-  }
-
   immersiveButtonsOptions(): SelectOption[] {
     return [{ value: '下拉显示' }, { value: '只留菜单按钮' }];
   }
@@ -1117,10 +796,6 @@ struct BookshelfSettingsPage {
       (this.bookshelfLastReadLeafMode === 'contentPreview' ? 1 : 2);
   }
 
-  scopeSelectedIndex(): number {
-    return this.showTargetBookList ? 1 : 0;
-  }
-
   optionValue(options: SelectOption[], index: number): ResourceStr {
     if (index >= 0 && index < options.length) {
       return options[index].value;
@@ -1201,108 +876,6 @@ struct BookshelfSettingsPage {
           onSelect(index);
         })
     }
-  }
-
-  @Builder
-  albumSelectItem(title: string, desc: string, dark: boolean) {
-    Row() {
-      Column() {
-        Text(title)
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.primaryTextColor())
-        Text(desc)
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
-          .margin({ top: AppSpacing.XS })
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-
-      Select(this.albumOptions())
-        .selected(this.albumSelectedIndex(dark))
-        .value(this.optionValue(this.albumOptions(), this.albumSelectedIndex(dark)))
-        .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
-        .optionFont({ family: this.applicationFontFamily })
-        .selectedOptionFont({ family: this.applicationFontFamily })
-        .fontColor(this.subTextColor())
-        .backgroundColor(Color.Transparent)
-        .arrowPosition(ArrowPosition.END)
-        .padding({ left: 0, right: 0 })
-        .borderRadius(16)
-        .border({ width: 0 })
-        .optionBgColor(Color.Transparent)
-        .divider(null)
-        .optionFontColor(this.primaryTextColor())
-        .selectedOptionFontColor(ThemeRuntime.accentColor(this.appDarkMode))
-        .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
-        .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
-        .menuBackgroundBlurStyle(BlurStyle.NONE)
-        .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
-        .onTouch((event: TouchEvent) => {
-          if (event.type === TouchType.Down) {
-            this.refreshAlbumOptionsForMenu();
-          }
-        })
-        .onSelect((index: number) => {
-          this.setThemeAlbum(dark, this.albumIdByIndex(index));
-        })
-    }
-    .width('calc(100% - 32vp)')
-    .constraintSize({ minHeight: 66 })
-    .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
-    .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
-    .backgroundColor(Color.Transparent)
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  targetBooksPanel() {
-    Column({ space: AppSpacing.XXS }) {
-      if (this.targetBooksLoading) {
-        Text('正在加载书籍...')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.subTextColor())
-          .width('100%')
-          .height(48)
-          .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-          .textAlign(TextAlign.Start)
-      } else if (this.books.length === 0) {
-        Text('暂无可选择书籍')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.subTextColor())
-          .width('100%')
-          .height(48)
-          .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-          .textAlign(TextAlign.Start)
-      } else {
-        ForEach(this.books, (book: Book) => {
-          Row() {
-            Text(book.name || '未命名书籍')
-              .fontSize(AppFontSize.BODY)
-              .fontColor(this.primaryTextColor())
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-            this.targetBookSwitch(book, this.isTargetBook(book))
-          }
-          .width('100%')
-          .height(48)
-          .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
-        }, (book: Book) => this.targetBookKey(book))
-      }
-    }
-    .width('100%')
-    .backgroundColor(this.cardColor())
-  }
-
-  @Builder
-  targetBookSwitch(book: Book, selected: boolean) {
-    AdaptiveSwitch({
-      isOn: selected,
-      onChange: (checked: boolean) => {
-        this.toggleTargetBook(book, checked);
-      }
-    })
   }
 
   // 取消关闭时开关要能弹回去，所以 isOn 绑定单独的 privateShelfSwitchOn 状态。

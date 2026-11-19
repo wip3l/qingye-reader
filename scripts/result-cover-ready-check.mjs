@@ -9,9 +9,11 @@ const context = vm.createContext({ ExploreRankStyle: { LAYOUT_RANK: 'rank', LIST
   SearchBook: class {}, Book: class { coverUrl = ''; customCoverUrl = ''; }, CoverGallerySnapshot: class {},
   BookIdentity: { keyOfBook: b => `${b.origin}:${b.bookUrl}` },
   CoverUrlNormalizer: { normalize: url => url || '' },
-  CoverGallerySettings: { getDisplayCoverList: (_book, _dark, albums, _light, _night, scope, targets) =>
-    scope === 'books' && targets !== 'book' ? [] : (albums ? ['album-a', 'album-b'] : []) },
+  CoverGallerySettings: { replaceOnlyAlbumCovers: (_book, _dark, gallery) =>
+    !gallery.replaceAlbum || gallery.albumMix || (gallery.applyScope === 'books' && gallery.targetBooksRaw !== 'book') ? [] :
+      (gallery.albumsRaw ? ['album-a', 'album-b'] : []) },
   ThemeBookCoverSettings: { enabled: (_dark, enabled) => enabled, covers: () => ['theme-a', 'theme-b'],
+    enabledFor: (_book, _dark, _enabled, gallery) => gallery.fallback === 'theme',
     frame: () => 'frame', interval: () => 3500 },
   AppDatabase: { getInstance: () => ({ initWithContext: async () => {}, getBookSource: async () => ({ bookInfoRule: { coverUrl: 'img' } }) }) },
   SearchBookShelfHelper: { findShelfBookByKey: async () => null,
@@ -20,7 +22,7 @@ const context = vm.createContext({ ExploreRankStyle: { LAYOUT_RANK: 'rank', LIST
   fs: { access: async () => true },
 });
 let details = 0, files = [], sourcesReleased = 0, pixelsReleased = 0;
-context.WebBookService = class { async getBookInfo(_source, book) { details++; return { ...book, coverUrl: 'detail-cover' }; } };
+context.WebBookService = class { setSourceInteraction() { return this; } async getBookInfo(_source, book) { details++; return { ...book, coverUrl: 'detail-cover' }; } };
 context.BookCoverResolver = { sourceCovers: b => b.coverUrl ? [b.coverUrl] : [],
   prepareFile: async (_ctx, cover) => { files.push(cover); return cover ? `/cache/${cover}` : ''; } };
 context.image = { createImageSource: path => ({
@@ -39,10 +41,10 @@ let ready = await prepare.prepare({}, book, opts);
 assert.equal(ready.firstImage, 'file:///cache/theme-a');
 assert.equal(ready.frame, 'file:///cache/frame');
 assert.equal(details, 0, 'theme cover never waits for source detail lookup');
-opts.themeEnabled = false; opts.gallery.albumsRaw = 'album';
+opts.themeEnabled = false; opts.gallery.albumsRaw = 'album'; opts.gallery.replaceAlbum = true;
 ready = await prepare.prepare({}, book, opts);
 assert.equal(ready.firstImage, 'file:///cache/album-a');
-assert.equal(details, 0, 'applicable custom album skips source fetch even if source covers are allowed');
+assert.equal(details, 0, 'an album that replaces every cover skips the source fetch');
 opts.gallery.applyScope = 'books'; opts.gallery.targetBooksRaw = 'other';
 ready = await prepare.prepare({}, book, opts);
 assert.equal(ready.firstImage, 'file:///cache/detail-cover');
@@ -52,21 +54,32 @@ const before = files.length;
 ready = await prepare.prepare({}, { ...book, coverUrl: 'broken' }, opts);
 assert.equal(ready.firstImage, '', 'a URL alone is insufficient: undecodable image becomes final fallback');
 assert.equal(files.length, before + 1);
-context.AppDatabase.getInstance = () => ({ getBookSource: async () => ({ bookInfoRule: { coverUrl: '' } }) });
+context.AppDatabase.getInstance = () => ({ initWithContext: async () => {}, getBookSource: async () => ({ bookInfoRule: { coverUrl: '' } }) });
 ready = await prepare.prepare({}, book, opts);
 assert.equal(ready.covers.length, 0);
 assert.equal(details, 1, 'no detail cover rule confirms absence without another network request');
 assert.equal(sourcesReleased, pixelsReleased + 1, 'decode failures release the source as well; bitmaps are not retained per result');
 const albumOptions = new Options();
 albumOptions.useBookshelf = true;
-context.CoverGallerySettings.getDisplayCoverList = () => ['broken-album'];
+context.CoverGallerySettings.replaceOnlyAlbumCovers = () => ['broken-album'];
 ready = await prepare.prepare({}, { ...book, coverUrl: 'source-fallback' }, albumOptions);
 assert.equal(ready.firstImage, 'file:///cache/source-fallback', 'broken album falls back to source when allowed');
-albumOptions.gallery.ignoreSourceCover = true;
+albumOptions.gallery.replaceAlbum = true;
 const previousFiles = files.length;
 ready = await prepare.prepare({}, { ...book, coverUrl: 'source-fallback' }, albumOptions);
 assert.equal(ready.firstImage, '');
-assert.ok(!files.slice(previousFiles).includes('source-fallback'), 'explicit ignore-source preference is respected');
+assert.ok(!files.slice(previousFiles).includes('source-fallback'), 'replace-with-album preference is respected');
+// 没有封面的书用主题封面兜底：先确认书源也给不出封面，再用主题封面和书框。
+const fallbackOptions = new Options();
+fallbackOptions.useBookshelf = true; fallbackOptions.gallery.fallback = 'theme';
+context.CoverGallerySettings.replaceOnlyAlbumCovers = () => [];
+ready = await prepare.prepare({}, book, fallbackOptions);
+assert.equal(ready.firstImage, 'file:///cache/theme-a', 'coverless result falls back to the theme cover');
+assert.equal(ready.themeCover, true);
+assert.equal(ready.frame, 'file:///cache/frame');
+ready = await prepare.prepare({}, { ...book, coverUrl: 'own-cover' }, fallbackOptions);
+assert.equal(ready.firstImage, 'file:///cache/own-cover', 'a book with its own cover keeps it');
+assert.equal(ready.themeCover, false);
 opts.showCover = false;
 const filesBeforeDisabled = files.length;
 await prepare.prepare({}, book, opts);

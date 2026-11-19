@@ -1067,7 +1067,7 @@ struct ThemeSettingsPage {
             Text('主题封面与书籍边框')
               .fontSize(AppFontSize.BODY_LARGE)
               .fontColor(this.primaryTextColor())
-            Text(this.themeBookCoverEnabled ? '书架使用主题封面和配套边框' : '保留每本书原有封面')
+            Text(this.themeBookCoverEnabled ? '书架使用主题封面和配套边框' : '保留每本书原有封面；可在封面设置里只给没有封面的书使用')
               .fontSize(AppFontSize.CAPTION)
               .fontColor(this.subTextColor())
           }
@@ -1082,8 +1082,27 @@ struct ThemeSettingsPage {
           })
         }
         .width('100%')
-        .height(62)
+        .constraintSize({ minHeight: 62 })
+        .padding({ left: AppSpacing.LG, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
+        Divider()
+          .strokeWidth(0.5)
+          .color(ThemeRuntime.dividerColor(this.appDarkMode))
+          .margin({ left: AppSpacing.LG })
+        Row() {
+          Text('更多封面设置')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.primaryTextColor())
+            .layoutWeight(1)
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(18)
+            .fontColor([this.subTextColor()])
+        }
+        .width('100%')
+        .height(48)
         .padding({ left: AppSpacing.LG, right: AppSpacing.MD })
+        .onClick(() => {
+          router.pushUrl({ url: 'pages/CoverSettings' });
+        })
       }
     }
     .width('100%')
