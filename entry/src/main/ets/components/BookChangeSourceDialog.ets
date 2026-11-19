@@ -13,6 +13,7 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { SearchChineseScriptRuntime } from '../core/book/SearchChineseScriptRuntime';
 import { BookIdentity } from '../utils/BookIdentity';
+import { AuthorFold, ChangeSourceAuthorMatch } from '../core/book/ChangeSourceAuthorMatch';
 
 class ChangeSourceGroupOption {
   name: string = '';
@@ -38,6 +39,8 @@ const SCOPE_SEARCH_DELAY_MS: number = 600;
  * 仅存在于搜索结果（未入库）时只把结果交给宿主页面，不落库。
  * 范围条：全部 / 组内（可多选分组），全局记住一份；改范围先按已有结果筛选，停手后再按新范围搜。
  * 组内搜不到可临时搜全部（不改记住的设置）；记住的分组都不在了自动退回全部并提示。
+ * 作者校验：作者与原书不同的候选（同名的另一本书）默认收起，状态行给出个数，点“显示”后排在列表最后并标出；
+ * 候选没给作者的照样显示，排在作者一致的后面。
  */
 @Component
 export struct BookChangeSourceDialog {
@@ -68,10 +71,17 @@ export struct BookChangeSourceDialog {
   /** 组内时临时显示其他分组的结果（历史候选里会有）。 */
   @State showHidden: boolean = false;
   @State hiddenCount: number = 0;
+  /** 这次打开里点了“显示”作者不同的候选。 */
+  @State showAuthorMismatch: boolean = false;
+  @State authorHiddenCount: number = 0;
   @State scopeNotice: string = '';
   /** 过滤掉当前这本与其他类型后的全部候选；results 是按范围筛过的显示列表。 */
   private allResults: SearchBook[] = [];
   private sourceGroupOf: Map<string, string> = new Map<string, string>();
+  /** 候选（origin|bookUrl|author）与原书作者的比对结果，按当前作者算一次缓存起来。 */
+  private authorRelationOf: Map<string, number> = new Map<string, number>();
+  /** authorRelationOf 是否按简繁折叠后算的。 */
+  private authorFoldUsed: boolean = false;
   private scopeSearchTimer: number = -1;
   private cacheKey: string = '';
   /** 同书源下指向当前这本的其他地址（换源时被详情改写前的搜索地址）。 */
@@ -106,6 +116,9 @@ export struct BookChangeSourceDialog {
     this.currentBookAliases = [];
     this.hiddenCount = 0;
     this.showHidden = false;
+    this.authorHiddenCount = 0;
+    this.showAuthorMismatch = false;
+    this.authorRelationOf = new Map<string, number>();
     this.tempAll = false;
     this.status = '正在读取历史换源结果...';
     this.searching = true;
@@ -169,6 +182,8 @@ export struct BookChangeSourceDialog {
         const source = await db.getBookSource(item.origin);
         return !!source && source.enabled;
       }));
+      if (!this.isSessionActive(sessionId)) return;
+      await this.prepareAuthorFold(cached.results);
       if (!this.isSessionActive(sessionId)) return;
       this.allResults = this.filterResults(
         cached.results.filter((_item: SearchBook, index: number): boolean => available[index]), book.bookUrl, book.origin);
@@ -322,18 +337,84 @@ export struct BookChangeSourceDialog {
     return this.scopeMode === SCOPE_GROUP && !this.tempAll && this.scopeGroups.length > 0;
   }
 
-  /** 按当前范围从 allResults 筛出显示列表，并记下被藏起来的个数。 */
+  /**
+   * 按当前范围和作者校验从 allResults 筛出显示列表，并记下两类被藏起来的个数。
+   * 显示顺序：作者一致 → 作者未知 → 作者不同（点了“显示”才有）。
+   */
   applyScope(): void {
-    if (!this.isScoped() || this.showHidden) {
-      this.results = this.allResults.slice();
-      this.hiddenCount = 0;
-      return;
-    }
+    const scoped = this.isScoped() && !this.showHidden;
     const groups = this.scopeGroups;
-    const visible = this.allResults.filter((book: SearchBook): boolean =>
-      groups.includes(this.sourceGroupOf.get(book.origin) || ''));
-    this.results = visible;
-    this.hiddenCount = this.allResults.length - visible.length;
+    const same: SearchBook[] = [];
+    const unknown: SearchBook[] = [];
+    const different: SearchBook[] = [];
+    let otherGroups = 0;
+    let authorHidden = 0;
+    for (const book of this.allResults) {
+      const relation = this.authorRelation(book);
+      const authorShown = relation !== ChangeSourceAuthorMatch.DIFFERENT || this.showAuthorMismatch;
+      if (scoped && !groups.includes(this.sourceGroupOf.get(book.origin) || '')) {
+        if (authorShown) otherGroups++;
+        continue;
+      }
+      if (!authorShown) {
+        authorHidden++;
+      } else if (relation === ChangeSourceAuthorMatch.SAME) {
+        same.push(book);
+      } else if (relation === ChangeSourceAuthorMatch.UNKNOWN) {
+        unknown.push(book);
+      } else {
+        different.push(book);
+      }
+    }
+    this.results = same.concat(unknown, different);
+    this.hiddenCount = otherGroups;
+    this.authorHiddenCount = authorHidden;
+  }
+
+  private authorFold(): AuthorFold {
+    const script = SearchChineseScriptRuntime.ready();
+    return script ? (text: string): string => script.fold(text) : null;
+  }
+
+  authorRelation(book: SearchBook): number {
+    const fold = this.authorFold();
+    // 简繁字典后加载好时，之前按原字算的结果作废重算。
+    if (!!fold !== this.authorFoldUsed) {
+      this.authorRelationOf.clear();
+      this.authorFoldUsed = !!fold;
+    }
+    const key = `${book.origin || ''}|${book.bookUrl}|${book.author || ''}`;
+    const cached = this.authorRelationOf.get(key);
+    if (cached !== undefined) return cached;
+    const relation = ChangeSourceAuthorMatch.compare(this.targetBook?.author || '', book.author || '', fold);
+    this.authorRelationOf.set(key, relation);
+    return relation;
+  }
+
+  /** 历史结果里有作者对不上的，先把简繁字典读进来，免得繁体站的同一作者被当成不同。 */
+  async prepareAuthorFold(results: SearchBook[]): Promise<void> {
+    if (!SearchChineseScriptRuntime.enabled() || SearchChineseScriptRuntime.ready()) return;
+    const author = this.targetBook?.author || '';
+    const mismatch = results.some((book: SearchBook): boolean =>
+      ChangeSourceAuthorMatch.compare(author, book.author || '') === ChangeSourceAuthorMatch.DIFFERENT);
+    if (mismatch) await SearchChineseScriptRuntime.forSearch(this.cacheContext || getContext(this));
+  }
+
+  revealAuthorMismatch(): void {
+    this.showAuthorMismatch = true;
+    this.applyScope();
+  }
+
+  authorTip(): string {
+    return this.authorHiddenCount > 0 && !this.showAuthorMismatch ? `；${this.authorHiddenCount} 个作者不同，` : '';
+  }
+
+  authorLink(): string {
+    return this.authorHiddenCount > 0 && !this.showAuthorMismatch ? '显示' : '';
+  }
+
+  isAuthorMismatch(book: SearchBook): boolean {
+    return this.authorRelation(book) === ChangeSourceAuthorMatch.DIFFERENT;
   }
 
   selectScopeMode(mode: string): void {
@@ -572,6 +653,10 @@ export struct BookChangeSourceDialog {
         Span(this.hiddenLink())
           .fontColor(this.accentColor())
           .onClick(() => this.revealHiddenResults())
+        Span(this.authorTip())
+        Span(this.authorLink())
+          .fontColor(this.accentColor())
+          .onClick(() => this.revealAuthorMismatch())
       }
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
@@ -640,11 +725,31 @@ export struct BookChangeSourceDialog {
                     }
                   }
                   .width('100%')
-                  Text(`作者：${book.author || '未知'}`)
-                    .fontSize(AppFontSize.CAPTION)
-                    .fontColor(this.subTextColor())
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  if (this.isAuthorMismatch(book)) {
+                    Row({ space: AppSpacing.XS }) {
+                      Text(`作者：${book.author}`)
+                        .fontSize(AppFontSize.CAPTION)
+                        .fontColor(ThemeRuntime.warningColor(this.appDarkMode))
+                        .maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                        .flexShrink(1)
+                      Text('作者不同')
+                        .fontSize(AppFontSize.MICRO)
+                        .fontColor(ThemeRuntime.warningColor(this.appDarkMode))
+                        .height(16)
+                        .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
+                        .borderRadius(4)
+                        .border({ width: 1, color: ThemeRuntime.warningColor(this.appDarkMode) })
+                        .flexShrink(0)
+                    }
+                    .width('100%')
+                  } else {
+                    Text(`作者：${book.author || '未知'}`)
+                      .fontSize(AppFontSize.CAPTION)
+                      .fontColor(this.subTextColor())
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  }
                   Text(`最新：${book.latestChapterTitle || '书源未提供'}`)
                     .fontSize(AppFontSize.CAPTION)
                     .fontColor(this.subTextColor())

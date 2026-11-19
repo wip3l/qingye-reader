@@ -69,10 +69,10 @@ function harness(disk = new Map()) {
     SourceEngineHost: { getError: () => '' },
     BookFieldSanitizer: { prefer: (a, b) => a || b }, CoverUrlNormalizer: { prefer: (a, b) => a || b },
     AppStorage: { setOrCreate() {} }, getContext: () => ({}),
-    SearchExploreSettingsStore: { getSearchConcurrency: () => 6 },
+    SearchExploreSettingsStore: { getSearchConcurrency: () => 6, CHANGE_SOURCE_SCOPE_ALL: 'all', CHANGE_SOURCE_SCOPE_GROUP: 'group' },
     SearchBookShelfHelper: { isNavigationResult: () => false },
     BookIdentity: { keyOfUrl: (url, origin) => origin + '|' + url, keyOfSearchBook: b => b.origin + '|' + b.bookUrl },
-    SearchChineseScriptRuntime: { forSearch: async () => null, saveHints: async () => {} },
+    SearchChineseScriptRuntime: { forSearch: async () => null, saveHints: async () => {}, ready: () => null, enabled: () => true },
     HdsFeedback: { showToast: text => events.push(text) }
   });
   function load(path, name, component = false) {
@@ -87,8 +87,9 @@ function harness(disk = new Map()) {
   const Operation = load('core/book/SourceSwitchOperation.ts', 'SourceSwitchOperation');
   const Matcher = load('core/book/ChapterPositionMatcher.ts', 'ChapterPositionMatcher');
   const Task = load('core/book/BookSourceSwitchTask.ets', 'BookSourceSwitchTask');
+  const AuthorMatch = load('core/book/ChangeSourceAuthorMatch.ts', 'ChangeSourceAuthorMatch');
   const Dialog = load('components/BookChangeSourceDialog.ets', 'BookChangeSourceDialog', true);
-  return { Cache, Operation, Matcher, Task, Dialog, events, writes, disk, old, get searchCount() { return searchCount; },
+  return { Cache, Operation, Matcher, Task, AuthorMatch, Dialog, events, writes, disk, old, get searchCount() { return searchCount; },
     holdDetail() { return detailGate = deferred(); }, holdToc() { return tocGate = deferred(); },
     holdCommit() { return commitGate = deferred(); }, holdSearch() { return searchGate = deferred(); },
     holdWrite() { return beforeWrite = deferred(); }, holdRead() { return beforeRead = deferred(); },
@@ -174,6 +175,62 @@ function harness(disk = new Map()) {
   const dialogSource = readEtsModule('components/BookChangeSourceDialog.ets');
   assert(!dialogSource.includes('excludeSourceUrls'), 'change source must search the current source too');
   assert(/maxResultsPerSource: MAX_RESULTS_PER_SOURCE/.test(dialogSource));
+}
+
+// Author check: normalized names match, placeholders stay undecided, same-title books by others are told apart.
+{
+  const { AuthorMatch: M } = harness();
+  const fold = text => text.replace(/貓/g, '猫').replace(/膩/g, '腻');
+  const cases = [
+    ['土豆豌豆', '土豆豌豆', M.SAME],
+    ['土豆豌豆', '作者：土豆豌豆 著', M.SAME],
+    ['土豆豌豆', '土豆豌豆（完结）', M.SAME],
+    ['土豆豌豆', '土豆豌豆/著', M.SAME],
+    ['作者 著', '作者', M.SAME],
+    ['Ｊ.Ｋ.Rowling', 'jk rowling', M.SAME],
+    ['土豆豌豆', '土豆豌豆工作室', M.SAME],
+    ['土豆豌豆', '锈迹斑斑的克雷恩', M.DIFFERENT],
+    ['唐', '唐家三少', M.DIFFERENT],
+    ['土豆豌豆', '', M.UNKNOWN],
+    ['土豆豌豆', '未知', M.UNKNOWN],
+    ['', '锈迹斑斑的克雷恩', M.UNKNOWN],
+  ];
+  for (const [a, b, expected] of cases) assert.equal(M.compare(a, b), expected, `${a} vs ${b}`);
+  assert.equal(M.compare('貓膩', '猫腻'), M.DIFFERENT, 'without the dictionary scripts differ');
+  assert.equal(M.compare('貓膩', '猫腻', fold), M.SAME);
+}
+
+// The panel hides other authors behind a status-line link, keeps unknown authors after matching ones,
+// and counts other-group results only among those it would show.
+{
+  const h = harness();
+  const target = book('A', { author: '土豆豌豆' });
+  const panel = new h.Dialog(); panel.targetBook = target;
+  panel.aboutToAppear(); await drain();
+  panel.allResults = [
+    book('X', { author: '锈迹斑斑的克雷恩' }), book('U', { author: '' }), book('B', { author: '土豆豌豆 著' }),
+    book('Y', { author: '锈迹斑斑的克雷恩' }), book('C', { author: '土豆豌豆' }), book('Z', { author: '别人' })
+  ];
+  panel.applyScope();
+  assert.deepEqual(Array.from(panel.results, b => b.origin), ['B', 'C', 'U']);
+  assert.equal(panel.authorHiddenCount, 3);
+  assert.equal(panel.authorTip(), '；3 个作者不同，');
+  assert.equal(panel.authorLink(), '显示');
+  panel.sourceGroupOf = new Map([['B', '女频'], ['C', '男频'], ['U', '女频'], ['X', '女频'], ['Y', '男频'], ['Z', '男频']]);
+  panel.scopeMode = 'group'; panel.scopeGroups = ['女频'];
+  assert(panel.isScoped());
+  panel.applyScope();
+  assert.deepEqual(Array.from(panel.results, b => b.origin), ['B', 'U']);
+  assert.equal(panel.hiddenCount, 1, 'other-group count skips other authors');
+  assert.equal(panel.authorHiddenCount, 1);
+  panel.revealAuthorMismatch();
+  assert.deepEqual(Array.from(panel.results, b => b.origin), ['B', 'U', 'X']);
+  assert.equal(panel.hiddenCount, 3);
+  assert.equal(panel.authorTip(), '');
+  assert(panel.isAuthorMismatch(panel.results[2]));
+  panel.revealHiddenResults();
+  assert.deepEqual(Array.from(panel.results, b => b.origin), ['B', 'C', 'U', 'X', 'Y', 'Z']);
+  panel.requestClose(); await h.Cache.flush({});
 }
 
 // Different authors/media stay separate; empty/partial refresh retains old candidates, expired entries remain usable.
