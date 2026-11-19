@@ -455,7 +455,12 @@ export struct BookshelfPage {
   @State showDeleteBookGroupDialog: boolean = false;
   @State pendingDeleteBookGroup: BookGroup | null = null;
   @State showBatchDeleteDialog: boolean = false;
-  @State isLoading: boolean = false;
+  /** 第一次读出书架之前为 true：这时还不知道有没有书，不能显示“暂无书籍”。 */
+  @State isLoading: boolean = true;
+  /** 第一次读书架超过半秒才显示“加载中”，读得快时不闪一下。 */
+  @State shelfLoadingHintVisible: boolean = false;
+  private shelfLoadingHintTimer: number = -1;
+  private shelfFirstLoadDone: boolean = false;
   @State showDeleteDialog: boolean = false;
   @State showActionDialog: boolean = false;
   /** 长按菜单里“单独设置封面”是否展开了二级选项。 */
@@ -720,6 +725,10 @@ export struct BookshelfPage {
     this.reloadDisplaySettings();
     this.restoreShelfCategoryExpanded();
     this.restoreSortModeAndLoad();
+    this.shelfLoadingHintTimer = setTimeout((): void => {
+      this.shelfLoadingHintTimer = -1;
+      if (this.isLoading) this.shelfLoadingHintVisible = true;
+    }, 500);
     ReaderReplaceRuleStore.load(getContext(this)).then((): void => {
       this.shelfTitleRulesRevision++;
     }).catch((error: Error): void => {
@@ -741,6 +750,10 @@ export struct BookshelfPage {
   aboutToDisappear(): void {
     this.shelfComponentActive = false;
     this.batchSwitch?.stop();
+    if (this.shelfLoadingHintTimer >= 0) {
+      clearTimeout(this.shelfLoadingHintTimer);
+      this.shelfLoadingHintTimer = -1;
+    }
     this.stopShelfRefreshTicker();
     this.stopShelfAutoHide();
     if (this.shelfSoloDimTimer >= 0) {
@@ -900,8 +913,9 @@ export struct BookshelfPage {
     if (!this.shelfReturnMotionActive && Number(router.getLength()) <= 1) BookshelfSortHelper.releaseReadTimes();
     // Returning from the reader refreshes shelf metadata. Do not cover an already-rendered shelf
     // with the initial loading placeholder; that one-frame replacement is perceived as a flash.
-    const needsInitialPlaceholder = this.allBooks.length === 0;
-    if (needsInitialPlaceholder) this.isLoading = true;
+    // 只有第一次读书架用占位；之后书架是空的也照常显示“暂无书籍”，重读时不来回切换。
+    const needsInitialPlaceholder = !this.shelfFirstLoadDone;
+    let keepPlaceholder = false;
     try {
       const db = AppDatabase.getInstance();
       await db.initWithContext(getContext(this));
@@ -945,6 +959,7 @@ export struct BookshelfPage {
       }
       // A query started before the click can finish during the flight. Keep the shared cover's node stable.
       if (this.shelfBookMotionDelay() > 0) {
+        keepPlaceholder = true;
         this.scheduleLoadBooks();
         return;
       }
@@ -966,7 +981,10 @@ export struct BookshelfPage {
     } catch (e) {
       if (loadSerial === this.shelfLoadSerial) console.error('加载书籍失败:', e);
     } finally {
-      if (needsInitialPlaceholder && loadSerial === this.shelfLoadSerial) this.isLoading = false;
+      if (needsInitialPlaceholder && !keepPlaceholder && loadSerial === this.shelfLoadSerial) {
+        this.shelfFirstLoadDone = true;
+        this.isLoading = false;
+      }
     }
   }
 
@@ -2113,13 +2131,15 @@ export struct BookshelfPage {
 
       if (this.isLoading) {
         Column() {
-          LoadingProgress()
-            .width(40)
-            .height(40)
-          Text('加载中...')
-            .fontSize(AppFontSize.BODY)
-            .fontColor(this.subTextColor())
-            .margin({ top: AppSpacing.MD })
+          if (this.shelfLoadingHintVisible) {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+            Text('加载中...')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.subTextColor())
+              .margin({ top: AppSpacing.MD })
+          }
         }
         .width('100%')
         .height('100%')

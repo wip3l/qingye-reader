@@ -31,11 +31,20 @@ export class ReaderReplaceRuleCheck {
   compatibilityNotes: string[] = [];
 }
 
-/** 一条已筛过范围、编译好的标题规则；regex 为空表示按普通文本替换 plain。 */
+/**
+ * 一条对标题生效的规则。规则列表换新时整理一次，各本书共用：范围词已拆好，正则到第一次用上才编译。
+ * 书架一屏有很多本书，不能每本书都把全部规则重新整理、编译一遍。
+ */
 class ReaderTitleReplaceStep {
-  regex: RegExp | null = null;
-  plain: string = '';
+  name: string = '';
+  pattern: string = '';
   replacement: string = '';
+  isRegex: boolean = false;
+  includes: string[] = [];
+  excludes: string[] = [];
+  regex: RegExp | null = null;
+  /** 正则编译不了：之后直接跳过，不逐次重试。 */
+  broken: boolean = false;
 }
 
 export class ReaderReplaceRuleStore {
@@ -43,6 +52,10 @@ export class ReaderReplaceRuleStore {
   private static readonly STORE_NAME: string = 'reader_replace_rules';
   private static readonly RULES_KEY: string = 'rulesV1';
   private static cachedRules: ReaderReplaceRule[] | null = null;
+  /** cachedRules 对应的落盘原文；强制重读时原文没变就沿用同一个数组，按数组引用记的标题缓存不作废。 */
+  private static cachedRaw: string | null = null;
+  private static titleStepsRules: ReaderReplaceRule[] | null = null;
+  private static titleSteps: ReaderTitleReplaceStep[] = [];
   private static readonly TITLE_RESULT_LIMIT: number = 2000;
   private static titlePlanRules: ReaderReplaceRule[] | null = null;
   private static titlePlanScope: string = '';
@@ -67,17 +80,23 @@ export class ReaderReplaceRuleStore {
     const store = await preferences.getPreferences(context, ReaderReplaceRuleStore.STORE_NAME);
     const value = await store.get(ReaderReplaceRuleStore.RULES_KEY, '');
     const raw = typeof value === 'string' ? value : '';
+    if (ReaderReplaceRuleStore.cachedRules && raw === ReaderReplaceRuleStore.cachedRaw) {
+      return ReaderReplaceRuleStore.cloneRules(ReaderReplaceRuleStore.cachedRules);
+    }
     const rules = ReaderReplaceRuleStore.decode(raw);
     ReaderReplaceRuleStore.cachedRules = ReaderReplaceRuleStore.cloneRules(rules);
+    ReaderReplaceRuleStore.cachedRaw = raw;
     return rules;
   }
 
   static async save(context: Context, rules: ReaderReplaceRule[]): Promise<void> {
     const normalized = ReaderReplaceRuleStore.withBuiltins(
       rules.map((rule: ReaderReplaceRule) => ReaderReplaceRuleStore.normalize(rule)));
+    const raw = JSON.stringify(normalized);
     ReaderReplaceRuleStore.cachedRules = ReaderReplaceRuleStore.cloneRules(normalized);
+    ReaderReplaceRuleStore.cachedRaw = raw;
     const store = await preferences.getPreferences(context, ReaderReplaceRuleStore.STORE_NAME);
-    await store.put(ReaderReplaceRuleStore.RULES_KEY, JSON.stringify(normalized));
+    await store.put(ReaderReplaceRuleStore.RULES_KEY, raw);
     await store.flush();
     AppStorage.setOrCreate(ReaderReplaceRuleStore.UPDATE_TIME_KEY, Date.now());
     CloudSyncChangeTracker.markPreferenceChanged();
@@ -145,12 +164,7 @@ export class ReaderReplaceRuleStore {
     }
     let result = text;
     for (const step of plan) {
-      try {
-        result = step.regex ? result.replace(step.regex, step.replacement) :
-          result.split(step.plain).join(step.replacement);
-      } catch (error) {
-        console.warn(`替换净化规则无效: ${step.plain}`, error);
-      }
+      result = ReaderReplaceRuleStore.runTitleStep(step, result);
     }
     if (ReaderReplaceRuleStore.titleResults.size >= ReaderReplaceRuleStore.TITLE_RESULT_LIMIT) {
       ReaderReplaceRuleStore.titleResults.clear();
@@ -190,12 +204,7 @@ export class ReaderReplaceRuleStore {
     }
     let result = text;
     for (const step of plan) {
-      try {
-        result = step.regex ? result.replace(step.regex, step.replacement) :
-          result.split(step.plain).join(step.replacement);
-      } catch (error) {
-        console.warn(`替换净化规则无效: ${step.plain}`, error);
-      }
+      result = ReaderReplaceRuleStore.runTitleStep(step, result);
     }
     // 规则把章节名整个删空时退回原文，书架上不留空行。
     result = result.trim() || text;
@@ -206,29 +215,61 @@ export class ReaderReplaceRuleStore {
     return result;
   }
 
+  /** 这本书适用的标题规则：从整理好的规则里按书籍范围挑，顺序不变。 */
   private static buildTitlePlan(rules: ReaderReplaceRule[], book: Book | null): ReaderTitleReplaceStep[] {
-    const plan: ReaderTitleReplaceStep[] = [];
+    const steps = ReaderReplaceRuleStore.titleStepsFor(rules);
+    if (steps.length === 0) {
+      return steps;
+    }
+    const target = ReaderReplaceRuleStore.bookScopeText(book);
+    return steps.filter((step: ReaderTitleReplaceStep): boolean =>
+      ReaderReplaceRuleStore.scopeMatches(step.includes, step.excludes, target));
+  }
+
+  /** 规则列表里对标题生效的规则，按数组引用记住，同一份规则只整理一次。 */
+  private static titleStepsFor(rules: ReaderReplaceRule[]): ReaderTitleReplaceStep[] {
+    if (rules === ReaderReplaceRuleStore.titleStepsRules) {
+      return ReaderReplaceRuleStore.titleSteps;
+    }
+    const steps: ReaderTitleReplaceStep[] = [];
     for (const sourceRule of rules) {
       const rule = ReaderReplaceRuleStore.normalize(sourceRule);
-      if (!rule.enabled || !rule.pattern || !rule.applyToTitle ||
-        !ReaderReplaceRuleStore.matchesBookScope(rule, book)) {
+      if (!rule.enabled || !rule.pattern || !rule.applyToTitle) {
         continue;
       }
       const step = new ReaderTitleReplaceStep();
-      step.plain = rule.pattern;
+      step.name = rule.name;
+      step.pattern = rule.pattern;
       step.replacement = rule.replacement;
-      if (rule.isRegex) {
-        try {
-          step.regex = JavaRegexCompat.compile(rule.pattern, 'g');
-          step.replacement = JavaRegexCompat.convertReplacement(rule.replacement);
-        } catch (error) {
-          console.warn(`替换净化规则无效: ${rule.name || rule.pattern}`, error);
-          continue;
-        }
-      }
-      plan.push(step);
+      step.isRegex = rule.isRegex;
+      step.includes = ReaderReplaceRuleStore.scopeTokens(rule.scope);
+      step.excludes = ReaderReplaceRuleStore.scopeTokens(rule.excludeScope);
+      steps.push(step);
     }
-    return plan;
+    ReaderReplaceRuleStore.titleStepsRules = rules;
+    ReaderReplaceRuleStore.titleSteps = steps;
+    return steps;
+  }
+
+  private static runTitleStep(step: ReaderTitleReplaceStep, text: string): string {
+    if (step.broken) {
+      return text;
+    }
+    try {
+      if (!step.isRegex) {
+        return text.split(step.pattern).join(step.replacement);
+      }
+      if (!step.regex) {
+        // 带 g 的正则各本书共用：String.replace 每次从头匹配，不受 lastIndex 影响。
+        step.regex = JavaRegexCompat.compile(step.pattern, 'g');
+        step.replacement = JavaRegexCompat.convertReplacement(step.replacement);
+      }
+      return text.replace(step.regex, step.replacement);
+    } catch (error) {
+      step.broken = true;
+      console.warn(`替换净化规则无效: ${step.name || step.pattern}`, error);
+      return text;
+    }
   }
 
   static applyContent(text: string, rules: ReaderReplaceRule[], book: Book | null): string {
@@ -338,14 +379,18 @@ export class ReaderReplaceRuleStore {
   }
 
   private static matchesBookScope(rule: ReaderReplaceRule, book: Book | null): boolean {
-    const target = ReaderReplaceRuleStore.bookScopeText(book);
-    const includes = ReaderReplaceRuleStore.scopeTokens(rule.scope);
+    return ReaderReplaceRuleStore.scopeMatches(ReaderReplaceRuleStore.scopeTokens(rule.scope),
+      ReaderReplaceRuleStore.scopeTokens(rule.excludeScope), ReaderReplaceRuleStore.bookScopeText(book));
+  }
+
+  /** includes、excludes 是 scopeTokens 拆好的范围词，target 是 bookScopeText 的结果。 */
+  private static scopeMatches(includes: string[], excludes: string[], target: string): boolean {
     if (includes.length > 0 && !includes.some((token: string) =>
       ReaderReplaceRuleStore.scopeTokenMatches(token, target))) {
       return false;
     }
-    const excludes = ReaderReplaceRuleStore.scopeTokens(rule.excludeScope);
-    return !excludes.some((token: string) => ReaderReplaceRuleStore.scopeTokenMatches(token, target));
+    return excludes.length === 0 ||
+      !excludes.some((token: string) => ReaderReplaceRuleStore.scopeTokenMatches(token, target));
   }
 
   private static bookScopeText(book: Book | null): string {
