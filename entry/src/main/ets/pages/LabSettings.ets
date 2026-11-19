@@ -66,7 +66,7 @@ struct LabSettingsPage {
     if (this.webParseEnabled) {
       this.sectionTitle('兼容与诊断')
       Column() {
-        SettingRow({ title: '图片下载并发', description: '默认 4 张；网络较快时可提高，图片站限流或加载不稳时调回 4 张' }) {
+        SettingRow({ title: '图片下载并发', description: '默认 4 张；网络快可调高，加载不稳时调回' }) {
           Select([{ value: '4 张' }, { value: '8 张' }, { value: '12 张' }])
             .selected(Math.max(0, [4, 8, 12].indexOf(this.readerImageConcurrency)))
             .value(`${this.readerImageConcurrency} 张`)
@@ -80,7 +80,7 @@ struct LabSettingsPage {
         }
         SettingSwitchRow({
           title: 'HTTP/1.1 兼容模式',
-          description: '网页连接反复出现传输错误时可尝试开启，对后续原生网络请求生效',
+          description: '网页连接反复出现传输错误时可尝试开启',
           isOn: this.networkForceHttp1,
           onChange: (value: boolean) => { this.saveHttpCompatibility(value); }
         })

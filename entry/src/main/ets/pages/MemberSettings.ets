@@ -55,7 +55,7 @@ struct MemberSettingsPage {
       })
       SettingSwitchRow({
         title: '会员设置外显',
-        description: '始终在功能名称后显示所需最低会员等级图标；关闭后，仅在等级不足时显示',
+        description: '始终显示功能所需的会员等级；关闭后仅等级不足时显示',
         isOn: this.settingsVisible,
         switchEnabled: !this.saving,
         showDivider: false,

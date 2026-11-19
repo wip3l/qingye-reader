@@ -579,7 +579,7 @@ struct SettingsPage {
     Column() {
       SettingSwitchRow({
         title: '与其他应用同时播放',
-        description: '朗读和有声书不再被游戏、视频的声音打断，开始播放时也不暂停其他应用；来电和语音通话仍会暂停',
+        description: '不被游戏、视频的声音打断，也不暂停其他应用；来电时仍暂停',
         isOn: this.audioMixWithOthers,
         showDivider: false,
         onChange: (value: boolean) => {
@@ -622,7 +622,7 @@ struct SettingsPage {
       }
       SettingScopeRow({
         title: '双翻页',
-        description: '横屏、折叠屏展开等宽屏下并排显示两页；漫画条漫与滚动阅读不生效',
+        description: '宽屏下并排显示两页；条漫与滚动阅读不生效',
         scope: this.doublePageScope(),
         labels: ReaderInputKind.LABELS,
         values: ReaderInputKind.VALUES,
@@ -664,7 +664,7 @@ struct SettingsPage {
       })
       SettingSwitchRow({
         title: '隐藏底部小白条',
-        description: '阅读正文时收起底部导航条，呼出菜单时恢复；小说、漫画、PDF 都生效',
+        description: '阅读时收起底部导航条，呼出菜单时恢复',
         isOn: this.readerHideNavIndicator,
         showDivider: false,
         onChange: (value: boolean) => {
@@ -683,7 +683,7 @@ struct SettingsPage {
     Column() {
       SettingSwitchRow({
         title: 'AI处理标识',
-        description: '显示 EPUB 插图、漫画和 PDF 的 AI 处理及超分提示',
+        description: '显示插图、漫画和 PDF 的 AI 处理与超分提示',
         isOn: this.readerAiProcessingIndicatorEnabled,
         showDivider: this.webParseEnabled,
         onChange: (enabled: boolean): void => this.setReaderAiProcessingIndicatorEnabled(enabled)
@@ -752,7 +752,7 @@ struct SettingsPage {
       Column() {
         SettingSwitchRow({
           title: '段评气泡',
-          description: '段落末尾的评论数气泡；关闭后不显示，热评卡片仍可点开评论',
+          description: '段落末尾的评论数气泡；关闭后热评卡片仍可点开',
           isOn: ReaderCommentCardSettings.bubbles(this.readerCommentCard),
           onChange: (checked: boolean): void => {
             this.setReaderCommentCard(-1, -1, -1, checked ? 1 : 0, -1);
@@ -776,7 +776,7 @@ struct SettingsPage {
               this.setReaderCommentCard(-1, -1, index + 1, -1, -1);
             }, 'settings_comment_card_lines_select')
         }
-        this.selectItem('本章说', '章末的本章评论入口；选卡片时，单独成段的入口显示为整宽卡片',
+        this.selectItem('本章说', '章末的本章评论入口；选卡片时显示为整宽卡片',
           this.commentCardOptions(ReaderCommentCardSettings.CHAPTER_LABELS),
           ReaderCommentCardSettings.chapter(this.readerCommentCard), (index: number) => {
             this.setReaderCommentCard(-1, -1, -1, -1, index);
@@ -826,7 +826,7 @@ struct SettingsPage {
       if (this.readerEyeTurnEnabled) {
         SettingSwitchRow({
           title: '新版识别模型（beta）',
-          description: '识别更稳，不怕暗光和眼镜；开启后看向屏幕上沿以外翻页，耗电略多',
+          description: '暗光、戴眼镜也稳；看向屏幕上沿以外翻页，略耗电',
           isOn: this.readerEyeTurnModelEnabled,
           showDivider: true,
           onChange: (value: boolean) => {

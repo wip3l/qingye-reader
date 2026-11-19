@@ -172,7 +172,7 @@ struct BookshelfSettingsPage {
       this.itemDivider()
       SettingSwitchRow({
         title: '阅读小记',
-        description: '在继续阅读下方显示今日时长、近 7 天和连续阅读天数',
+        description: '在继续阅读下方显示今日、近 7 天和连续天数',
         isOn: this.bookshelfCompanionReadingNote,
         showDivider: false,
         onChange: (value: boolean) => {
@@ -263,7 +263,7 @@ struct BookshelfSettingsPage {
     })
     if (this.bookshelfImmersive) {
       this.itemDivider()
-      this.selectItem('顶部按钮', '下拉显示：在书架顶部下拉时出现，几秒后收起；只留菜单按钮：右上角一个按钮收进全部操作',
+      this.selectItem('顶部按钮', '下拉时出现并自动收起，或只留右上角一个菜单按钮',
         this.immersiveButtonsOptions(), this.immersiveButtonsSelectedIndex(),
         (index: number) => {
           this.bookshelfImmersiveButtons = index === 1 ? 'menu' : 'pull';
@@ -273,7 +273,7 @@ struct BookshelfSettingsPage {
     this.itemDivider()
     SettingSwitchRow({
       title: '记住打开分组',
-      description: '重新打开应用时回到上次所在的文件夹和分类；关闭后每次从书架首页开始',
+      description: '重新打开应用时回到上次所在的文件夹和分类',
       isOn: this.bookshelfRememberGroup,
       showDivider: false,
       onChange: (value: boolean) => {
@@ -368,7 +368,7 @@ struct BookshelfSettingsPage {
 
     this.sectionTitle('封面')
     Column() {
-    this.navItem('封面设置', '封面来源与先后顺序、图集、多张封面的显示方式、封面标识', 'pages/CoverSettings')
+    this.navItem('封面设置', '封面来源与顺序、图集、显示方式、封面标识', 'pages/CoverSettings')
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -381,7 +381,7 @@ struct BookshelfSettingsPage {
       Column() {
         SettingSwitchRow({
           title: '自动获取更新',
-          description: '打开应用时在后台检查连载书籍的新章节；关闭后只在下拉书架时检查',
+          description: '打开应用时检查新章节；关闭后只在下拉时检查',
           isOn: this.bookshelfAutoRefresh,
           showDivider: false,
           onChange: (value: boolean) => {
@@ -883,7 +883,7 @@ struct BookshelfSettingsPage {
   privateShelfSwitchItem() {
     SettingSwitchRow({
       title: '隐私书架',
-      description: '双击书架顶部空白处进入，在隐私书架里双击返回；顶部不显示入口，关闭后隐私书籍仍隐藏',
+      description: '双击书架顶部空白处进出；关闭后隐私书籍仍隐藏',
       isOn: this.privateShelfSwitchOn,
       showDivider: false,
       onChange: (checked: boolean) => {
@@ -896,7 +896,7 @@ struct BookshelfSettingsPage {
   privateShelfBiometricItem() {
     SettingSwitchRow({
       title: '指纹或人脸解锁',
-      description: '进入隐私书架时先用系统指纹或人脸验证，未通过可改输密码',
+      description: '进入时先验证指纹或人脸，未通过可改输密码',
       isOn: this.privateShelfBiometricSwitchOn,
       showDivider: false,
       onChange: (checked: boolean) => {

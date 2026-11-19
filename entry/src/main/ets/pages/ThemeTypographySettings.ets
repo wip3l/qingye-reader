@@ -634,7 +634,7 @@ struct ThemeTypographySettingsPage {
         }
         SettingNavRow({
           title: '恢复默认排版',
-          description: '字号、间距、边距与页眉页脚恢复默认，字体和强调规则保留',
+          description: '排版与页眉页脚恢复默认，字体和强调规则保留',
           showDivider: false,
           onTap: () => this.confirmResetLayout()
         })

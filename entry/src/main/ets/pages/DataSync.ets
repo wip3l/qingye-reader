@@ -147,7 +147,7 @@ struct DataSyncPage {
         this.fileSyncRow('自定义主题', '同步自定义主题用到的图片、启动封面和预览图', 'THEME')
         SettingSwitchRow({
           title: '阅读数据',
-          description: this.webParseEnabled ? '在线书架、分组、排序、进度、书签和阅读统计；本地书同步进度与统计' :
+          description: this.webParseEnabled ? '书架、分组、进度、书签与统计；本地书只同步进度和统计' :
             '书架分组、排序、进度、书签和阅读统计',
           isOn: this.readingDataEnabled,
           onChange: (value: boolean) => {
@@ -157,7 +157,7 @@ struct DataSyncPage {
         if (this.webParseEnabled) {
           SettingSwitchRow({
             title: '书源',
-            description: '配置、分组、排序、启用和锁定状态；不含登录凭证。仅作为你的私有数据保存，不公开、不能分享',
+            description: '配置、分组和启用状态；不含登录凭证，仅自己可见',
             isOn: this.bookSourcesEnabled,
             onChange: (value: boolean) => {
               this.setBookSourcesEnabled(value);

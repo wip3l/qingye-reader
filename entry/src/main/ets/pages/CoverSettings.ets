@@ -224,7 +224,7 @@ struct CoverSettingsPage {
     Column() {
       SettingRow({
         title: '有多张封面时',
-        description: '轮流显示、每小时随机换一张，或每本书固定一张；主题封面和图集都适用',
+        description: '主题封面和图集都适用',
         showDivider: false
       })
       SettingSegment({
@@ -238,7 +238,7 @@ struct CoverSettingsPage {
       this.itemDivider()
       SettingSwitchRow({
         title: '深色模式调暗封面',
-        description: '深色模式下降低封面亮度，夜里看书架不刺眼；主题封面不调暗',
+        description: '深色模式下降低封面亮度；主题封面不调暗',
         isOn: this.bookshelfDarkCoverDim,
         showDivider: false,
         onChange: (value: boolean) => {

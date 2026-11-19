@@ -104,7 +104,7 @@ struct AudioBookSettingsPage {
     Column() {
       SettingSwitchRow({
         title: '打开时自动播放',
-        description: '关闭后打开有声书只停在上次听到的位置，点播放才开始',
+        description: '关闭后打开有声书不自动播放，停在上次位置',
         isOn: this.autoPlay,
         showDivider: false,
         onChange: (value: boolean): void => {
@@ -119,7 +119,7 @@ struct AudioBookSettingsPage {
     Column() {
       SettingNavRow({
         title: '边听边下',
-        description: '提前下载正在听的书后面几章，支持移动网络；听完自动删除',
+        description: '提前下载后面几章（含移动网络），听完自动删除',
         value: this.prefetchLabel(this.prefetchCount),
         onTap: (): void => {
           this.pickPrefetch().catch((error: Error) => console.warn('打开边听边下菜单失败:', error));
@@ -127,7 +127,7 @@ struct AudioBookSettingsPage {
       })
       SettingSwitchRow({
         title: '手动下载仅用 Wi-Fi',
-        description: '手动下载在移动网络下等待 Wi-Fi；关闭后用流量下载前会先确认。边听边下不受此限制',
+        description: '关闭后用流量下载前会先确认；边听边下不受限',
         isOn: this.wifiOnly,
         onChange: (value: boolean): void => {
           AudioOfflineSettingsStore.saveWifiOnly(this.context(), value)

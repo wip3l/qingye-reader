@@ -1918,7 +1918,7 @@ struct ThemeColorSettingsPage {
           SettingNavRow({ title: '套用当前阅读排版', description: '把正在使用的排版和字体复制到这套主题',
             onTap: () => this.copyCurrentTypography() })
         }
-        SettingNavRow({ title: '恢复默认排版', description: '字号、间距、边距与页眉页脚恢复默认，字体和强调规则保留',
+        SettingNavRow({ title: '恢复默认排版', description: '排版与页眉页脚恢复默认，字体和强调规则保留',
           onTap: () => this.confirmResetTypography() })
         SettingNavRow({ title: '整页预览', description: '按真实分页看一页正文，也可以在那里调整并保存',
           showDivider: false, onTap: () => this.openTypography() })
@@ -2580,7 +2580,7 @@ struct ThemeColorSettingsPage {
     .alignItems(VerticalAlign.Top)
     .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.LG, bottom: AppSpacing.LG })
     if (this.chapterHeadAdjustable()) {
-      SettingRow({ title: '饰图位置', description: '左侧时贴版心左边、上下对齐整组标题；上方、下方时单独占一行' }) {
+      SettingRow({ title: '饰图位置', description: '左侧时贴版心左边并对齐标题；上方、下方时单独一行' }) {
         Select(this.chapterHeadPlacementOptions())
           .id('theme_editor_chapter_head_placement')
           .width('44%')
@@ -2649,7 +2649,7 @@ struct ThemeColorSettingsPage {
     if (this.ownChapterHeadNumberColor()) {
       this.resetRow('序号行改回和标题同色', () => this.setChapterHeadNumberColor(''))
     }
-    SettingRow({ title: '首字装饰', description: '每章第一段的第一个字放大，后面的字绕着它排；开头是引号、数字、字母时这一章不处理' }) {
+    SettingRow({ title: '首字装饰', description: '每章首字放大、后文绕排；开头是引号、数字、字母时不处理' }) {
       Select(this.dropCapLineOptions())
         .id('theme_editor_drop_cap_lines')
         .width('44%')

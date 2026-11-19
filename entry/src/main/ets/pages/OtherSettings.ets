@@ -126,7 +126,7 @@ struct OtherSettingsPage {
     Column() {
       SettingSwitchRow({
         title: '智感握姿',
-        description: '根据左右手握持，自动调整导航栏和部分操作按钮的位置；需设备支持',
+        description: '按左右手握持调整导航栏和按钮位置；需设备支持',
         isOn: this.smartGripEnabled,
         showDivider: false,
         onChange: (value: boolean) => {

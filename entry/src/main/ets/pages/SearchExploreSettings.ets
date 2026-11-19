@@ -63,7 +63,7 @@ struct SearchExploreSettingsPage {
       if (this.searchExploreShowResultCover) {
         SettingNavRow({
           title: '使用书架封面',
-          description: '搜索、发现及书籍详情沿用书架的封面来源和显示方式，在封面设置里开关',
+          description: '搜索、发现和详情沿用书架封面；在封面设置里开关',
           value: this.searchExploreUseBookshelfCoverGallery ? '已开启' : '未开启',
           onTap: () => {
             SettingsFocus.open('pages/CoverSettings', undefined, '搜索与发现也用这套封面');
@@ -162,7 +162,7 @@ struct SearchExploreSettingsPage {
           this.onSettingChanged();
         }
       })
-      SettingRow({ title: '搜索并发数', description: '同时请求的书源数，搜书、换源、找封面和搜索校验共用',
+      SettingRow({ title: '搜索并发数', description: '同时请求的书源数；搜书、换源、找封面共用',
         showDivider: false }) {
         this.concurrencyStepper()
       }
