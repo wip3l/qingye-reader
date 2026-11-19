@@ -589,6 +589,20 @@ export class EpubOriginalReadAloud {
     HdsFeedback.showToast(`将在 ${minutes} 分钟后停止朗读`);
   }
 
+  /** 在剩余时间上加时，总时长一起加；没有进行中的定时就新开一个。 */
+  private extendSleepTimer(minutes: number): void {
+    if (minutes <= 0) return;
+    if (this.sleepTimer < 0 || this.sleepEndAt <= 0) {
+      this.setSleepTimer(minutes);
+      return;
+    }
+    this.sleepEndAt += minutes * 60 * 1000;
+    this.sleepMinutes += minutes;
+    this.sleepRemaining = Math.max(0, Math.ceil((this.sleepEndAt - Date.now()) / 1000));
+    ReaderTtsFloatingSession.updateTimer(this.ownerId, this.sleepMinutes, this.sleepRemaining);
+    HdsFeedback.showToast(`已延长 ${minutes} 分钟`);
+  }
+
   private clearSleepTimer(publish: boolean): void {
     if (this.sleepTimer >= 0) {
       clearInterval(this.sleepTimer);
@@ -612,6 +626,8 @@ export class EpubOriginalReadAloud {
       (): void => { this.playChapter(this.host.chapterIndex() + 1); },
       (value: number): void => this.setSpeed(value),
       (minutes: number): void => this.setSleepTimer(minutes));
+    ReaderTtsFloatingSession.configureTimerExtend(this.ownerId,
+      (minutes: number): void => this.extendSleepTimer(minutes));
     ReaderTtsFloatingSession.configureCatalog(this.ownerId, titles, this.host.chapterIndex(),
       (index: number): void => { this.playChapter(index); });
     this.publishVoices();

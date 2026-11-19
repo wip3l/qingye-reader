@@ -1103,14 +1103,32 @@ struct AudioBookPage {
     this.startSleepTimerUi();
   }
 
+  /** 在剩余时间上加时，总时长一起加；没有进行中的定时就新开一个。 */
+  extendSleepTimer(minutes: number): void {
+    if (minutes <= 0) return;
+    if (this.sleepMinutes <= 0 || this.playback.sleepRemainingSeconds() <= 0) {
+      this.setSleepTimer(minutes);
+      return;
+    }
+    this.playback.extendSleepTimer(minutes);
+    this.sleepMinutes += minutes;
+    this.sleepRemainingSeconds = this.playback.sleepRemainingSeconds();
+    ReaderTtsFloatingSession.updateTimer(this.floatingSessionOwnerId, this.sleepMinutes, this.sleepRemainingSeconds);
+    HdsFeedback.showToast(`已延长 ${minutes} 分钟`);
+  }
+
   startSleepTimerUi(): void {
     this.sleepTimerId = setInterval(() => {
       this.sleepRemainingSeconds = this.playback.sleepRemainingSeconds();
       if (this.sleepRemainingSeconds <= 0) {
         this.clearSleepTimer();
         this.sleepMinutes = 0;
+        ReaderTtsFloatingSession.updateTimer(this.floatingSessionOwnerId, 0, 0);
         HdsFeedback.showToast('定时停止已生效');
+        return;
       }
+      // 暂停时没有播放进度回调带着刷新，播放面板的分秒倒计时要靠这里每秒发布。
+      ReaderTtsFloatingSession.updateTimer(this.floatingSessionOwnerId, this.sleepMinutes, this.sleepRemainingSeconds);
     }, 1000);
   }
 
@@ -1297,6 +1315,8 @@ struct AudioBookPage {
       (value: number) => this.changeSpeed(value),
       (minutes: number) => this.setSleepTimer(minutes)
     );
+    ReaderTtsFloatingSession.configureTimerExtend(this.floatingSessionOwnerId,
+      (minutes: number) => this.extendSleepTimer(minutes));
     ReaderTtsFloatingSession.configureAudioControls(
       this.floatingSessionOwnerId,
       this.currentVoiceCode(),

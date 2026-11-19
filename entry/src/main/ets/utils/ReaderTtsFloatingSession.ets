@@ -32,6 +32,8 @@ export class ReaderTtsFloatingSession {
     resume: boolean) => Promise<boolean>) | null = null;
   private static speedAction: ((value: number) => void) | null = null;
   private static timerAction: ((minutes: number) => void) | null = null;
+  /** 在当前定时上加时；没有定时的会话由 extendTimer 退回成新开一个定时。 */
+  private static timerExtendAction: ((minutes: number) => void) | null = null;
   private static voiceAction: (() => void) | null = null;
   private static audioSeekAction: ((positionMs: number) => void) | null = null;
   // Chapter catalog for the floating panel. Both reader modes publish one: the
@@ -102,6 +104,13 @@ export class ReaderTtsFloatingSession {
     ReaderTtsFloatingSession.nextAction = nextAction;
     ReaderTtsFloatingSession.speedAction = speedAction;
     ReaderTtsFloatingSession.timerAction = timerAction;
+  }
+
+  static configureTimerExtend(ownerId: string, extendAction: (minutes: number) => void): void {
+    if (!ReaderTtsFloatingSession.isOwner(ownerId)) {
+      return;
+    }
+    ReaderTtsFloatingSession.timerExtendAction = extendAction;
   }
 
   static configurePositionControl(ownerId: string,
@@ -503,6 +512,24 @@ export class ReaderTtsFloatingSession {
     if (action) action(nextMinutes);
   }
 
+  /**
+   * 在剩余时间上再加几分钟。总时长一起加，播放面板的倒计时细环按“剩余 / 总时长”画，
+   * 加时后比例不会突然跳满。没有进行中的定时就当作新开一个。
+   */
+  static extendTimer(minutes: number): void {
+    const add = Math.max(1, Math.round(minutes || 0));
+    const current = AppStorage.get<number>('globalTtsTimerMinutes') || 0;
+    const extend = ReaderTtsFloatingSession.timerExtendAction;
+    if (current <= 0 || !extend) {
+      ReaderTtsFloatingSession.setTimer(add);
+      return;
+    }
+    const remaining = AppStorage.get<number>('globalTtsTimerRemainingSeconds') || 0;
+    AppStorage.setOrCreate('globalTtsTimerMinutes', current + add);
+    AppStorage.setOrCreate('globalTtsTimerRemainingSeconds', remaining + add * 60);
+    extend(add);
+  }
+
   static async stopOther(ownerId: string): Promise<void> {
     if (!ReaderTtsFloatingSession.isActive() || ReaderTtsFloatingSession.isOwner(ownerId)) {
       return;
@@ -544,6 +571,7 @@ export class ReaderTtsFloatingSession {
     ReaderTtsFloatingSession.preparedPositionAction = null;
     ReaderTtsFloatingSession.speedAction = null;
     ReaderTtsFloatingSession.timerAction = null;
+    ReaderTtsFloatingSession.timerExtendAction = null;
     ReaderTtsFloatingSession.voiceAction = null;
     ReaderTtsFloatingSession.audioSeekAction = null;
     ReaderTtsFloatingSession.catalogTitleLabels = [];

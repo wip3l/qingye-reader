@@ -23,6 +23,20 @@ const SECONDARY_GAIN: string = 'gain';
 const SECONDARY_CATALOG: string = 'catalog';
 const SECONDARY_STOP: string = 'stop';
 const SECONDARY_DOWNLOAD: string = 'download';
+/** 定时最后这么多秒按钮和状态行改用危险色，提醒快停了。 */
+const TIMER_WARN_SECONDS: number = 60;
+/** 定时面板“加时”一次加的分钟数。 */
+const TIMER_EXTEND_MINUTES: number = 15;
+
+/** 定时剩余时间：不足一小时 mm:ss，否则 h:mm:ss。 */
+function formatTimerRemaining(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(secs)}` : `${pad(minutes)}:${pad(secs)}`;
+}
 
 @Component
 export struct ReaderTtsPlayerPanel {
@@ -536,7 +550,7 @@ export struct ReaderTtsPlayerPanel {
   @Builder
   secondaryActions() {
     Row() {
-      this.secondaryItem(SECONDARY_TIMER)
+      this.timerItem()
       this.secondaryItem(SECONDARY_SPEED)
       this.secondaryItem(SECONDARY_GAIN)
       this.secondaryItem(SECONDARY_CATALOG)
@@ -570,17 +584,110 @@ export struct ReaderTtsPlayerPanel {
     .onClick(() => this.onSecondaryTap(kind))
   }
 
+  /**
+   * 定时按钮：开着定时时文字是分秒倒计时，图标外圈细环按“剩余 / 总时长”变短。
+   * 细环叠在图标的 22vp 占位外面，不改变这一格的高度，和同排其他按钮的文字保持对齐。
+   */
+  @Builder
+  timerItem() {
+    Column({ space: AppSpacing.XS }) {
+      Stack({ alignContent: Alignment.Center }) {
+        if (this.timerActive()) {
+          Progress({ value: this.timerRemainingShown(), total: this.timerTotalSeconds(), type: ProgressType.Ring })
+            .width(32)
+            .height(32)
+            .color(this.timerColor())
+            .backgroundColor(ThemeRuntime.hairlineColor(this.darkMode))
+            .style({ strokeWidth: 2 })
+            .hitTestBehavior(HitTestMode.None)
+        }
+        SymbolGlyph($r('sys.symbol.timer'))
+          .fontSize(this.timerActive() ? 17 : 22)
+          .fontColor([this.timerActive() ? this.timerColor() : this.secondaryColor(SECONDARY_TIMER, true)])
+      }
+      .width(22)
+      .height(22)
+      Text(this.secondaryLabel(SECONDARY_TIMER))
+        .fontSize(AppFontSize.CAPTION)
+        .fontWeight(this.timerActive() ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.timerActive() ? this.timerColor() : this.secondaryColor(SECONDARY_TIMER, false))
+        .fontFeature('"tnum" on')
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .height(56)
+    .justifyContent(FlexAlign.Center)
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.92 })
+    .accessibilityText(this.timerActive() ?
+      `定时，剩余 ${formatTimerRemaining(this.globalTtsTimerRemainingSeconds)}` : '定时')
+    .onClick(() => this.onSecondaryTap(SECONDARY_TIMER))
+  }
+
+  /** 开着定时时顶部一行显示剩余时间、几点停止，以及加时、关闭；下面的档位点哪个都从那一档重新计时。 */
   @Builder
   timerOptions() {
-    Row({ space: AppSpacing.SM }) {
-      this.timerChip(0, '关闭')
-      this.timerChip(15, '15分')
-      this.timerChip(30, '30分')
-      this.timerChip(60, '60分')
-      this.timerChip(90, '90分')
-      this.timerChip(120, '120分')
+    Column({ space: AppSpacing.SM }) {
+      if (this.timerActive()) {
+        this.timerStatusRow()
+      }
+      Row({ space: AppSpacing.SM }) {
+        this.timerChip(0, '关闭')
+        this.timerChip(15, '15分')
+        this.timerChip(30, '30分')
+        this.timerChip(60, '60分')
+        this.timerChip(90, '90分')
+        this.timerChip(120, '120分')
+      }
+      .width('100%')
     }
     .width('100%')
+  }
+
+  @Builder
+  timerStatusRow() {
+    Row({ space: AppSpacing.SM }) {
+      SymbolGlyph($r('sys.symbol.timer'))
+        .fontSize(18)
+        .fontColor([this.timerColor()])
+      Text('剩余')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor)
+      Text(formatTimerRemaining(this.globalTtsTimerRemainingSeconds))
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.timerWarning() ? this.timerColor() : this.primaryTextColor)
+        .fontFeature('"tnum" on')
+        .maxLines(1)
+      Text(`${this.timerEndClock()} 停止`)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor)
+        .fontFeature('"tnum" on')
+        .maxLines(1)
+        .layoutWeight(1)
+      this.timerStatusButton(`+${TIMER_EXTEND_MINUTES}分`, `延长 ${TIMER_EXTEND_MINUTES} 分钟`, true,
+        () => ReaderTtsFloatingSession.extendTimer(TIMER_EXTEND_MINUTES))
+      this.timerStatusButton('关闭', '关闭定时', false, () => ReaderTtsFloatingSession.setTimer(0))
+    }
+    .width('100%')
+    .height(44)
+    .padding({ left: AppSpacing.MD, right: AppSpacing.SM })
+    .borderRadius(ThemeRuntime.buttonRadius())
+    .backgroundColor(ThemeRuntime.softFillColor(this.darkMode))
+  }
+
+  @Builder
+  timerStatusButton(label: string, accessibility: string, accent: boolean, action: () => void) {
+    Text(label)
+      .fontSize(AppFontSize.CAPTION)
+      .fontWeight(accent ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(accent ? this.accentColor : this.subTextColor)
+      .height(30)
+      .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+      .borderRadius(15)
+      .backgroundColor(ThemeRuntime.cardColor(this.darkMode))
+      .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.92 })
+      .accessibilityText(accessibility)
+      .onClick(action)
   }
 
   /**
@@ -765,18 +872,20 @@ export struct ReaderTtsPlayerPanel {
       })
   }
 
+  /** 倒计时中档位都不高亮（剩余时间已不等于档位），没开定时时“关闭”高亮。 */
   @Builder
   timerChip(minutes: number, label: string) {
     Text(label)
       .fontSize(AppFontSize.CAPTION)
-      .fontWeight(this.globalTtsTimerMinutes === minutes ? FontWeight.Bold : FontWeight.Regular)
-      .fontColor(this.globalTtsTimerMinutes === minutes ? ThemeRuntime.onAccentColor() : this.primaryTextColor)
+      .fontWeight(this.timerChipSelected(minutes) ? FontWeight.Bold : FontWeight.Regular)
+      .fontColor(this.timerChipSelected(minutes) ? ThemeRuntime.onAccentColor() : this.primaryTextColor)
       .textAlign(TextAlign.Center)
       .layoutWeight(1)
       .height(30)
       .borderRadius(ThemeRuntime.buttonRadius())
-      .backgroundColor(this.globalTtsTimerMinutes === minutes ? this.accentColor :
+      .backgroundColor(this.timerChipSelected(minutes) ? this.accentColor :
         (ThemeRuntime.softFillColor(this.darkMode)))
+      .accessibilityText(minutes > 0 ? `定时 ${minutes} 分钟` : '关闭定时')
       .onClick(() => ReaderTtsFloatingSession.setTimer(minutes))
   }
 
@@ -1089,10 +1198,41 @@ export struct ReaderTtsPlayerPanel {
     return $r('sys.symbol.stop_circle');
   }
 
+  timerActive(): boolean {
+    return this.globalTtsTimerMinutes > 0 && this.globalTtsTimerRemainingSeconds > 0;
+  }
+
+  timerWarning(): boolean {
+    return this.timerActive() && this.globalTtsTimerRemainingSeconds <= TIMER_WARN_SECONDS;
+  }
+
+  timerColor(): ResourceColor {
+    return this.timerWarning() ? ThemeRuntime.dangerColor(this.darkMode) : this.accentColor;
+  }
+
+  /** 恢复的定时可能只知道剩余秒数，总时长取两者较大值，细环不会超过一圈。 */
+  timerTotalSeconds(): number {
+    return Math.max(1, this.globalTtsTimerMinutes * 60, this.globalTtsTimerRemainingSeconds);
+  }
+
+  timerRemainingShown(): number {
+    return Math.min(this.timerTotalSeconds(), Math.max(0, this.globalTtsTimerRemainingSeconds));
+  }
+
+  timerEndClock(): string {
+    const end = new Date(Date.now() + this.globalTtsTimerRemainingSeconds * 1000);
+    const hours = end.getHours();
+    const minutes = end.getMinutes();
+    return `${hours < 10 ? '0' : ''}${hours}:${minutes < 10 ? '0' : ''}${minutes}`;
+  }
+
+  timerChipSelected(minutes: number): boolean {
+    return minutes === 0 && !this.timerActive();
+  }
+
   secondaryLabel(kind: string): string {
     if (kind === SECONDARY_TIMER) {
-      return this.globalTtsTimerMinutes > 0 ?
-        `${Math.max(1, Math.ceil(this.globalTtsTimerRemainingSeconds / 60))}分` : '定时';
+      return this.timerActive() ? formatTimerRemaining(this.globalTtsTimerRemainingSeconds) : '定时';
     }
     if (kind === SECONDARY_SPEED) return `${PlaybackSpeed.label(this.globalTtsSpeed)}x`;
     if (kind === SECONDARY_GAIN) return this.gainSupported() && this.gainStored() > 0 ? `+${this.gainStored()}dB` : '增益';
