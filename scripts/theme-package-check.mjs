@@ -1023,3 +1023,15 @@ test('comment bubble image and custom ornament: decode, per-mode fallback, refs,
   assert.equal(format.commentBubbleIsEmpty({ image: 'none' }), false);
   assert.equal(format.commentBubbleIsEmpty({}), true);
 });
+
+test('installed pack record keeps every parts field when read back', async () => {
+  // 本机记录读回时逐个字段拷贝：ThemePackageParts 加了字段而这里没跟上，装好的包重启后就丢那一部分。
+  const { readFileSync } = await import('node:fs');
+  const store = readFileSync(path.join(projectRoot, 'entry', 'src', 'main', 'ets', 'utils', 'ThemePackStore.ets'), 'utf8');
+  const start = store.indexOf('private static normalizeParts(');
+  assert(start >= 0);
+  const body = store.substring(start, store.indexOf('\n  }\n', start));
+  for (const key of Object.keys(new format.ThemePackageParts())) {
+    assert(body.includes(`parts.${key} = `), `ThemePackStore.normalizeParts 漏了 ${key}`);
+  }
+});

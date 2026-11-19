@@ -298,6 +298,8 @@ export class ThemePackStore {
     parts.startupDark = source.startupDark || null;
     parts.bubble = source.bubble || null;
     parts.bubbleDark = source.bubbleDark || null;
+    parts.titleBubble = source.titleBubble || null;
+    parts.titleBubbleDark = source.titleBubbleDark || null;
     parts.homeBackdropLight = source.homeBackdropLight || '';
     parts.homeBackdropDark = source.homeBackdropDark || '';
     parts.homeBackdropLightCrop = source.homeBackdropLightCrop || null;

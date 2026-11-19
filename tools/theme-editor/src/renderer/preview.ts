@@ -506,8 +506,9 @@ function readerBody(e: Effective): HTMLElement {
   const margin = typeof layout.marginLeft === 'number' ? Math.max(8, Math.min(48, layout.marginLeft)) : 20;
   const content = h('div', { class: 'content', style: `font-size:${fontSize}px;padding:6px ${margin}px` },
     chapterTitle(e, Math.round(fontSize * 1.3), PHONE_W - margin * 2));
-  const p1 = h('p', {});
   const cap = dropCap('船', e, fontSize);
+  // 同应用：做首字的段落去掉段首缩进，绕排的几行都紧贴首字方框。
+  const p1 = h('p', cap ? { style: 'text-indent:0' } : {});
   if (cap) p1.append(cap);
   p1.append(`${cap ? '' : '船'}过石桥时，舱里的灯忽然暗了一下。老周把书合上，抬头看了看窗外的水色，`);
   p1.append(emphasis('“今晚风大，怕是要靠岸了。”', e, fontSize), commentBubble('23', e, fontSize));
