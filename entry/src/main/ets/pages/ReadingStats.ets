@@ -8,6 +8,7 @@ import { appDb, ReadStatsDeviceOption } from '../model/data/AppDatabase';
 import { readStatsTracker } from '../core/stats/ReadStatsTracker';
 import { ReadStatsDevice } from '../core/stats/ReadStatsDevice';
 import { ReadStatsSummary, ReadStatsRank, ReadStatsBar } from '../core/stats/ReadStatsSummary';
+import { ReadStatsFold } from '../core/stats/ReadStatsFold';
 import { AccountSessionStore } from '../account/AccountSessionStore';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { ListDissolve } from '../utils/ListDissolve';
@@ -184,10 +185,11 @@ struct ReadingStatsPage {
       if (deviceId && !devices.some((item: ReadStatsDeviceOption): boolean => item.deviceId === deviceId)) deviceId = '';
       const range = ReadStatsSummary.range(mode, anchor);
       const rows = await appDb.getReadStatsByDayRange(range.startKey, range.endKey, deviceId, ownerId);
+      const fold = await ReadStatsFold.load(getContext(this));
       if (!this.alive || version !== this.requestVersion || ownerId !== this.ownerId) return;
       this.devices = devices;
       this.selectedDevice = deviceId;
-      this.summary = ReadStatsSummary.calculate(rows, mode, anchor, Date.now());
+      this.summary = ReadStatsSummary.calculate(rows, mode, anchor, Date.now(), fold);
       this.source.update(this.summary.items);
     } catch (error) {
       if (!this.alive || version !== this.requestVersion) return;

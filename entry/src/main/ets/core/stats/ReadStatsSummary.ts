@@ -26,6 +26,79 @@ export class ReadStatsRank {
   rank: number = 0;
 }
 
+class ReadWorkEdition {
+  name: string = '';
+  author: string = '';
+  onShelf: boolean = false;
+}
+
+class ReadWorkTitleGroup {
+  authored: Set<string> = new Set<string>();
+  shelfWorks: Set<string> = new Set<string>();
+  looseKeys: string[] = [];
+}
+
+/**
+ * 把同一部作品的不同记录认到一起。记录键标识的是某个书源上的那一版，换源、换站后会变，
+ * 同一本书在不同站点还可能一个是简体书名、一个是繁体书名，所以比较前先统一全半角、空白和简繁。
+ */
+export class ReadWorkIdentity {
+  /** 书名或作者的比较写法；fold 是繁→简转换，没有字典时传 null，只统一全半角与空白。 */
+  static text(value: string, fold: ((text: string) => string) | null): string {
+    const normalized = (value || '').normalize('NFKC').trim().replace(/\s+/g, ' ');
+    return fold ? fold(normalized) : normalized;
+  }
+
+  static workKey(name: string, author: string): string {
+    return `work:${JSON.stringify([name, author])}`;
+  }
+
+  /**
+   * 记录键 → 作品标识。书名和作者都有的按“书名 + 作者”归并。
+   * 缺作者的记录只在不会认错时才并：同名的带作者作品最多一部，并且书架上同名的书恰好一本。
+   */
+  static resolve(rows: ReadStatsRow[], fold: ((text: string) => string) | null): Map<string, string> {
+    const editions = new Map<string, ReadWorkEdition>();
+    rows.forEach((row: ReadStatsRow): void => {
+      const name = ReadWorkIdentity.text(row.name, fold);
+      if (!name || name === '书名未留存') return;
+      const known = editions.get(row.bookKey);
+      if (known && !row.onShelf) return;
+      const edition = new ReadWorkEdition();
+      edition.name = name;
+      edition.author = ReadWorkIdentity.text(row.author, fold);
+      edition.onShelf = row.onShelf;
+      editions.set(row.bookKey, edition);
+    });
+    const identities = new Map<string, string>();
+    const titles = new Map<string, ReadWorkTitleGroup>();
+    editions.forEach((edition: ReadWorkEdition, bookKey: string): void => {
+      let group = titles.get(edition.name);
+      if (!group) {
+        group = new ReadWorkTitleGroup();
+        titles.set(edition.name, group);
+      }
+      if (edition.author) {
+        const work = ReadWorkIdentity.workKey(edition.name, edition.author);
+        identities.set(bookKey, work);
+        group.authored.add(work);
+        if (edition.onShelf) group.shelfWorks.add(work);
+      } else {
+        group.looseKeys.push(bookKey);
+        if (edition.onShelf) group.shelfWorks.add(`record:${bookKey}`);
+      }
+    });
+    titles.forEach((group: ReadWorkTitleGroup, name: string): void => {
+      if (group.looseKeys.length === 0 || group.authored.size > 1 || group.shelfWorks.size !== 1) return;
+      const target = group.authored.size === 1 ? Array.from(group.authored)[0] : `title:${name}`;
+      group.looseKeys.forEach((bookKey: string): void => {
+        identities.set(bookKey, target);
+      });
+    });
+    return identities;
+  }
+}
+
 export class ReadStatsSummary {
   totalMs: number = 0;
   activeDays: number = 0;
@@ -85,22 +158,16 @@ export class ReadStatsSummary {
     return `${Math.floor(minutes / 60)}小时${minutes % 60 ? `${minutes % 60}分` : ''}`;
   }
 
-  static calculate(rows: ReadStatsRow[], mode: string, anchor: number, now: number): ReadStatsSummary {
+  static calculate(rows: ReadStatsRow[], mode: string, anchor: number, now: number,
+    fold: ((text: string) => string) | null = null): ReadStatsSummary {
     const result = new ReadStatsSummary();
     const books = new Map<string, ReadStatsRank>();
     const dates = new Set<string>();
     const buckets = new Map<string, ReadStatsBar>();
     const range = ReadStatsSummary.range(mode, anchor);
-    // Record/sync keys identify a source edition. Ranking identifies the work when both title and author
-    // are known, so changing sources does not split its duration. Keep original keys for scoped deletion.
-    const identities = new Map<string, string>();
-    rows.forEach((row: ReadStatsRow): void => {
-      const name = (row.name || '').trim().replace(/\s+/g, ' ');
-      const author = (row.author || '').trim().replace(/\s+/g, ' ');
-      if (name && author && name !== '书名未留存' && (!identities.has(row.bookKey) || row.onShelf)) {
-        identities.set(row.bookKey, `work:${JSON.stringify([name, author])}`);
-      }
-    });
+    // Record/sync keys identify a source edition. Ranking identifies the work, so changing sources or
+    // script (简/繁) does not split its duration. Keep original keys for scoped deletion.
+    const identities = ReadWorkIdentity.resolve(rows, fold);
     let firstKey = '';
     rows.forEach((row: ReadStatsRow): void => {
       if (row.durationMs <= 0 || row.dayKey < range.startKey || row.dayKey > range.endKey) return;

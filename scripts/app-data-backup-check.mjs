@@ -137,6 +137,8 @@ function harness(t, nestedTarget = false) {
     AppStorage: { get: () => 'recentRead', setOrCreate() {} },
     AppDatabase: { getInstance: () => db },
     BookSourceGroupStore: { load: async () => {} },
+    // 真字典由 reading-stats-check 覆盖；这里只要能把夹具里的繁体书名折成简体。
+    ReadStatsFold: { load: async () => text => text.replace(/獸/g, '兽').replace(/種/g, '种').replace(/養/g, '养') },
     ReaderReplaceRuleStore: { load: async () => [], save: async () => {} },
     TtsSettingsStore: { load: async () => ({ customVoices: '' }), save: async () => {} },
     MimoStore: { reloadVoices() {} },
@@ -165,7 +167,9 @@ function harness(t, nestedTarget = false) {
     }
   });
   const statsEntry = readEtsModule('model/data/AppDatabase.ts').match(/export class ReadStatsEntry \{[\s\S]*?\n\}/)[0];
+  const workIdentity = readEtsModule('core/stats/ReadStatsSummary.ts').match(/export class ReadWorkIdentity \{[\s\S]*?\n\}/)[0];
   vm.runInContext(compile(readEtsModule('model/data/Book.ts')) + '\n' + compile(statsEntry) + '\n' +
+    compile(workIdentity) + '\n' +
     compile(readEtsModule('core/mimo/MimoPolicy.ts')) + '\n' +
     compile(readEtsModule('core/mimo/MimoVoicePolicy.ts').replace(/^export \{.*$/gm, '')) + '\n' +
     compile(readEtsModule('core/stats/AndroidReadRecordImport.ts')) + '\n' +
@@ -434,6 +438,27 @@ test('Android daily/session/total records count once, retain the exported date a
   await h.service.importBackup(h.target, session, selected);
   assert.equal(h.to.readRecords.size, 1);
   assert.equal([...h.to.readRecords.values()].reduce((sum, r) => sum + r.durationMs, 0), 49809);
+});
+
+test('Android history attaches to the shelf book across simplified/traditional titles and a missing author', async t => {
+  const shelfBook = { bookUrl: 'https://book/1', name: '穿越獸世種田養狼', author: '作者', origin: 'https://source', type: 8,
+    durChapterIndex: 0, durChapterPos: 0, variable: 'null' };
+  const history = { ...androidDetail, bookName: '穿越兽世种田养狼' };
+  for (const [books, detail, attached] of [
+    [[shelfBook], history, true],
+    [[shelfBook], { ...history, bookAuthor: '' }, true],
+    [[{ ...shelfBook, author: '' }], history, true],
+    [[shelfBook], { ...history, bookAuthor: '另一位作者' }, false],
+    [[shelfBook, { ...shelfBook, bookUrl: 'https://book/2', author: '别人' }], { ...history, bookAuthor: '' }, false],
+  ]) {
+    const h = harness(t);
+    const archive = await androidFixture(h, { 'bookshelf.json': books, 'readRecordDetail.json': [detail] });
+    const session = await h.service.prepareImport(h.target, archive, '');
+    await h.service.importBackup(h.target, session, h.selection('bookshelf', 'progress'));
+    const [record] = h.to.readRecords.values();
+    if (attached) assert.equal(record.bookUrl, 'https://book/1');
+    else assert.match(record.bookUrl, /^android-history:/);
+  }
 });
 
 test('history-only backups work without adding shelf placeholders; deselecting progress leaves history untouched', async t => {

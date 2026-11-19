@@ -62,6 +62,41 @@ test('ranking merges source editions with complete matching metadata and keeps d
   ], 'all', date(2026, 10, 20), date(2026, 10, 21));
   assert.equal(spaced.items.length, 2, 'normalization preserves meaningful word boundaries');
 });
+test('ranking merges simplified/traditional titles and attaches author-less records only when unambiguous', () => {
+  const engine = new URL('../harmony-book-ai-engine/aiengine/src/main/', import.meta.url);
+  const { ComicChineseDictionary: Dictionary } = load(new URL('ets/core/reader/ComicChineseDictionary.ts', engine),
+    {}, 'ComicChineseDictionary');
+  const raw = name => fs.readFileSync(new URL(`resources/rawfile/opencc/${name}`, engine), 'utf8');
+  const dictionary = new Dictionary(raw('TSCharacters.txt'), raw('TSPhrases.txt'));
+  const fold = text => dictionary.convertSameLength(text);
+  const at = [date(2026, 11, 18), date(2026, 11, 19)];
+  const imported = { ...row('2026-11-17', 9 * 3600000, 'legacy-import', 'android'),
+    name: '穿越兽世种田养狼', author: '土豆派豆', onShelf: false, bookUrl: 'android-history://x' };
+  const shelf = { ...row('2026-11-18', 35 * 60000, 'phone', 'shelf'),
+    name: '穿越獸世種田養狼', author: '土豆派豆', coverUrl: 'cover', bookUrl: 'shelf-url' };
+  for (const rows of [[imported, shelf], [shelf, imported]]) {
+    const merged = Summary.calculate(rows, 'all', ...at, fold);
+    assert.equal(merged.items.length, 1);
+    assert.equal(merged.items[0].name, '穿越獸世種田養狼', 'shows the shelf edition');
+    assert.equal(merged.items[0].bookUrl, 'shelf-url'); assert.equal(merged.items[0].coverUrl, 'cover');
+    assert.equal(merged.items[0].durationMs, 9 * 3600000 + 35 * 60000);
+    assert.deepEqual(Array.from(merged.items[0].recordBookKeys).sort(), ['android', 'shelf']);
+  }
+  assert.equal(Summary.calculate([imported, shelf], 'all', ...at).items.length, 2, 'no dictionary: compared as written');
+  assert.equal(Summary.calculate([{ ...imported, name: '北大硕士科举:震惊满朝' },
+    { ...shelf, name: '北大硕士科举：震惊满朝' }], 'all', ...at).items.length, 1, 'full-width punctuation folds without a dictionary');
+  // 一边没有作者：书架上同名的只有一本时并进去，两个方向都要成立。
+  assert.equal(Summary.calculate([{ ...imported, author: '' }, shelf], 'all', ...at, fold).items.length, 1);
+  assert.equal(Summary.calculate([imported, { ...shelf, author: '' }], 'all', ...at, fold).items.length, 1);
+  assert.equal(Summary.calculate([{ ...imported, author: '' }, { ...shelf, author: '' }], 'all', ...at, fold).items.length, 1);
+  // 认不准的保持分开：同名带作者的有两部、书架上同名两本、或没有一本在书架上。
+  assert.equal(Summary.calculate([{ ...imported, author: '' }, shelf,
+    { ...shelf, bookKey: 'other', author: '另一位作者', onShelf: false }], 'all', ...at, fold).items.length, 3);
+  assert.equal(Summary.calculate([{ ...imported, author: '' }, { ...shelf, author: '' },
+    { ...shelf, bookKey: 'shelf-2', author: '' }], 'all', ...at, fold).items.length, 3);
+  assert.equal(Summary.calculate([{ ...imported, author: '' },
+    { ...shelf, author: '', onShelf: false }], 'all', ...at, fold).items.length, 2);
+});
 test('calendar periods cover leap days, year crossings, and daylight saving days', () => {
   assert.equal(Summary.range('month', date(2024, 2, 29)).endKey, '2024-02-29');
   assert.equal(Summary.range('week', date(2026, 1, 1)).startKey, '2025-12-29');
