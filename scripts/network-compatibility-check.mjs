@@ -232,6 +232,8 @@ for (const binary of [false, true]) {
   const f = fixture(); const client = new f.HttpClient(); let release;
   f.state.webGate = new Promise(resolve => { release = resolve; });
   assert.match((await client.execute({...request(), useWebView:true, deadlineAt:Date.now()+50})).error, /2300028/);
+  // Node 定时器可能比 Date.now() 早约 1 毫秒触发：先等过截止时间再放行浏览器会话，才是“已过期”的情形。
+  await new Promise(resolve => setTimeout(resolve, 5));
   release(); await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(f.state.webRequests || 0, 0, 'expired request must not navigate after obtaining the browser session');
   const deadline = Date.now()+500;
