@@ -527,6 +527,10 @@ export default class EntryAbility extends UIAbility {
       lanReaderServer.start(this.context).catch((e: Error) => {
         hilog.warn(0x0000, 'testTag', 'Restart LAN reader failed: %{public}s', JSON.stringify(e));
       });
+    } else if (AppStorage.get<boolean>('lanReaderEnabled')) {
+      lanReaderServer.ensureBackgroundTask().catch((e: Error) => {
+        hilog.warn(0x0000, 'testTag', 'Renew LAN reader background task failed: %{public}s', JSON.stringify(e));
+      });
     }
     ThemeTrialManager.stopIfExpired();
     this.syncSystemColorMode(this.context.config);
