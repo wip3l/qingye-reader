@@ -324,7 +324,9 @@ assert(reader.includes('readerV2TtsHighlightRects(') && reader.includes('this.re
   'TTS highlight overlay is missing');
 assert(reader.includes('start >= displayText.length || regex.lastIndex >= displayText.length'),
   'Reader zero-length regex guard is missing');
-assert(regexSettings.includes('start >= text.length || regex.lastIndex >= text.length'),
+// 预览改用正文同一套排版后，零长度命中的写法是先判断到头再推进 lastIndex。
+assert(regexSettings.includes('if (start >= content.length) break;') &&
+  regexSettings.includes('regex.lastIndex = Math.max(regex.lastIndex + 1, start + 1)'),
   'Preview zero-length regex guard is missing');
 
 assert(readerThemes.includes('APP_THEME_INDEX: number = 4'), 'Reader app-theme compatibility index is missing');

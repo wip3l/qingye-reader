@@ -18,6 +18,7 @@ import { AppSpacing } from '../../theme/AppSpacing';
 @Component
 export struct ShelfGreetingEditor {
   @Prop appDarkMode: boolean = false;
+  @StorageProp('applicationFontFamily') applicationFontFamily: string = '';
   /** ShelfGreetingTemplate.serializeSlots 的结果。 */
   @Prop initialSlots: string = '';
   @Prop nickname: string = '';
@@ -276,7 +277,9 @@ export struct ShelfGreetingEditor {
             Select(this.hourOptions())
               .selected(Math.floor(this.selectedStart() / 60))
               .value(`${this.twoDigits(Math.floor(this.selectedStart() / 60))} 点`)
-              .font({ size: AppFontSize.BODY })
+              .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+              .optionFont({ family: this.applicationFontFamily })
+              .selectedOptionFont({ family: this.applicationFontFamily })
               .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
               .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
               .optionFontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
@@ -287,7 +290,9 @@ export struct ShelfGreetingEditor {
             Select(this.minuteOptions())
               .selected(Math.floor((this.selectedStart() % 60) / ShelfGreetingTemplate.SLOT_STEP))
               .value(`${this.twoDigits(this.selectedStart() % 60)} 分`)
-              .font({ size: AppFontSize.BODY })
+              .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
+              .optionFont({ family: this.applicationFontFamily })
+              .selectedOptionFont({ family: this.applicationFontFamily })
               .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
               .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
               .optionFontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
