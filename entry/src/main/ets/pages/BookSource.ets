@@ -235,6 +235,9 @@ struct BookSourcePage {
   /** 登录弹窗标题与底部按钮的实测高度（随字体缩放变化），用来给中间表单留出剩余高度。 */
   @State sourceLoginTitleHeight: number = 30;
   @State sourceLoginFooterHeight: number = 42;
+  /** 导入选择弹窗列表上方、下方两段的实测高度（随字体与显示缩放变化），用来给中间列表留出剩余高度。 */
+  @State importSelectionHeaderHeight: number = 110;
+  @State importSelectionFooterHeight: number = 110;
   @State loginRuntimeActive: boolean = false;
   @State @Watch('onSystemDialogFlagChanged') showSourceDeleteDialog: boolean = false;
   @State showSourceGroupToolsMenu: boolean = false;
@@ -2339,37 +2342,43 @@ struct BookSourcePage {
   @Builder
   importSourceSelectionDialogContent() {
     Column({ space: AppSpacing.LG }) {
-      Text('选择要导入的书源')
-        .fontSize(AppFontSize.SUBTITLE)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.primaryTextColor())
-        .width('100%')
-        .textAlign(TextAlign.Center)
+      Column({ space: AppSpacing.LG }) {
+        Text('选择要导入的书源')
+          .fontSize(AppFontSize.SUBTITLE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.primaryTextColor())
+          .width('100%')
+          .textAlign(TextAlign.Center)
 
-      Text(`共 ${this.pendingImportSources.length} 个书源，已选择 ${this.importSelectedCount()} 个`)
-        .fontSize(AppFontSize.BODY)
-        .fontColor(this.secondaryTextColor())
-        .width('100%')
-        .textAlign(TextAlign.Center)
-
-      Row() {
-        Toggle({ type: ToggleType.Checkbox, isOn: this.areAllImportSourcesSelected() })
-          .selectedColor(this.buttonColor())
-          .onChange((isOn: boolean) => {
-            // ArkUI may invoke onChange again while the controlled `isOn`
-            // value is being refreshed. Only handle a genuine user change;
-            // otherwise a single-item toggle could clear every selection.
-            if (isOn !== this.areAllImportSourcesSelected()) {
-              this.selectAllImportSources(isOn);
-            }
-          })
-        Text(this.areAllImportSourcesSelected() ? '取消全选' : '全选')
+        Text(`共 ${this.pendingImportSources.length} 个书源，已选择 ${this.importSelectedCount()} 个`)
           .fontSize(AppFontSize.BODY)
-          .fontColor(this.accentColor())
-          .margin({ left: AppSpacing.MD })
-        Blank().layoutWeight(1)
+          .fontColor(this.secondaryTextColor())
+          .width('100%')
+          .textAlign(TextAlign.Center)
+
+        Row() {
+          Toggle({ type: ToggleType.Checkbox, isOn: this.areAllImportSourcesSelected() })
+            .selectedColor(this.buttonColor())
+            .onChange((isOn: boolean) => {
+              // ArkUI may invoke onChange again while the controlled `isOn`
+              // value is being refreshed. Only handle a genuine user change;
+              // otherwise a single-item toggle could clear every selection.
+              if (isOn !== this.areAllImportSourcesSelected()) {
+                this.selectAllImportSources(isOn);
+              }
+            })
+          Text(this.areAllImportSourcesSelected() ? '取消全选' : '全选')
+            .fontSize(AppFontSize.BODY)
+            .fontColor(this.accentColor())
+            .margin({ left: AppSpacing.MD })
+          Blank().layoutWeight(1)
+        }
+        .width('100%')
       }
       .width('100%')
+      .onSizeChange((_oldValue: SizeOptions, newValue: SizeOptions) => {
+        this.importSelectionHeaderHeight = Number(newValue.height);
+      })
 
       List({ space: AppSpacing.SM }) {
         LazyForEach(this.importSourceDataSource, (source: BookSource) => {
@@ -2408,60 +2417,73 @@ struct BookSourcePage {
         }, (source: BookSource) => source.bookSourceUrl)
       }
       .width('100%')
-      .constraintSize({ maxHeight: 360 })
+      // 系统对话框超高会直接裁掉底部，所以按窗口高度减去上下两段的实测高度给列表定上限。
+      .constraintSize({ maxHeight: this.importSelectionListMaxHeight() })
       .cachedCount(4)
       .scrollBar(BarState.Off)
 
-      if (this.importSourceGroupNames(this.pendingImportSources).length > 0) {
-        Row() {
-          Toggle({ type: ToggleType.Checkbox, isOn: this.importKeepSourceGroups })
-            .selectedColor(this.buttonColor())
-            .onChange((isOn: boolean) => {
-              if (isOn !== this.importKeepSourceGroups) {
-                this.importKeepSourceGroups = isOn;
-              }
-            })
-          Column() {
-            Text('保留书源自带的分组')
-              .fontSize(AppFontSize.BODY)
-              .fontColor(this.primaryTextColor())
-            Text(this.importSourceGroupSummary(this.pendingImportSources))
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.subTextColor())
-              .maxLines(2)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .margin({ top: AppSpacing.XXS })
+      Column({ space: AppSpacing.LG }) {
+        if (this.importSourceGroupNames(this.pendingImportSources).length > 0) {
+          Row() {
+            Toggle({ type: ToggleType.Checkbox, isOn: this.importKeepSourceGroups })
+              .selectedColor(this.buttonColor())
+              .onChange((isOn: boolean) => {
+                if (isOn !== this.importKeepSourceGroups) {
+                  this.importKeepSourceGroups = isOn;
+                }
+              })
+            Column() {
+              Text('保留书源自带的分组')
+                .fontSize(AppFontSize.BODY)
+                .fontColor(this.primaryTextColor())
+              Text(this.importSourceGroupSummary(this.pendingImportSources))
+                .fontSize(AppFontSize.CAPTION)
+                .fontColor(this.subTextColor())
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ top: AppSpacing.XXS })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            .margin({ left: AppSpacing.MD })
           }
-          .alignItems(HorizontalAlign.Start)
-          .layoutWeight(1)
-          .margin({ left: AppSpacing.MD })
+          .width('100%')
+          .onClick(() => {
+            this.importKeepSourceGroups = !this.importKeepSourceGroups;
+          })
+        }
+
+        Row({ space: AppSpacing.MD }) {
+          Button('取消', { type: ButtonType.Normal })
+            .layoutWeight(1)
+            .height(42)
+            .borderRadius(ThemeRuntime.buttonRadius())
+            .backgroundColor(this.glassCardColor())
+            .fontColor(this.primaryTextColor())
+            .onClick(() => this.cancelImportSourceSelection())
+          Button('导入所选', { type: ButtonType.Normal })
+            .layoutWeight(1)
+            .height(42)
+            .borderRadius(ThemeRuntime.buttonRadius())
+            .enabled(this.importSelectedCount() > 0 && !this.isImporting)
+            .backgroundColor(this.buttonColor())
+            .fontColor(ThemeRuntime.onAccentColor())
+            .onClick(() => this.confirmImportSourceSelection())
         }
         .width('100%')
-        .onClick(() => {
-          this.importKeepSourceGroups = !this.importKeepSourceGroups;
-        })
-      }
-
-      Row({ space: AppSpacing.MD }) {
-        Button('取消', { type: ButtonType.Normal })
-          .layoutWeight(1)
-          .height(42)
-          .borderRadius(ThemeRuntime.buttonRadius())
-          .backgroundColor(this.glassCardColor())
-          .fontColor(this.primaryTextColor())
-          .onClick(() => this.cancelImportSourceSelection())
-        Button('导入所选', { type: ButtonType.Normal })
-          .layoutWeight(1)
-          .height(42)
-          .borderRadius(ThemeRuntime.buttonRadius())
-          .enabled(this.importSelectedCount() > 0 && !this.isImporting)
-          .backgroundColor(this.buttonColor())
-          .fontColor(ThemeRuntime.onAccentColor())
-          .onClick(() => this.confirmImportSourceSelection())
       }
       .width('100%')
+      .onSizeChange((_oldValue: SizeOptions, newValue: SizeOptions) => {
+        this.importSelectionFooterHeight = Number(newValue.height);
+      })
     }    .constraintSize({ maxWidth: 520 })
     .padding(AppSpacing.XXL)
+  }
+
+  importSelectionListMaxHeight(): number {
+    const available = ImmersiveMaterialRuntime.dialogContentMaxHeight() - AppSpacing.XXL * 2 -
+      this.importSelectionHeaderHeight - AppSpacing.LG - this.importSelectionFooterHeight - AppSpacing.LG;
+    return Math.max(96, Math.min(360, Math.floor(available)));
   }
 
 
