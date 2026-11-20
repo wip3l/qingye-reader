@@ -1,5 +1,6 @@
 import { SearchBook, BookTypeSupport } from '@legado/sourceengine';
 import { SearchChineseScriptRuntime } from '../core/book/SearchChineseScriptRuntime';
+import { ChangeSourceAuthorMatch } from '../core/book/ChangeSourceAuthorMatch';
 
 export class SearchResultGroupSnapshot {
   token: string = '';
@@ -91,7 +92,14 @@ export class SearchResultAggregationStore {
     const title = SearchResultAggregationStore.normalizeTitle(book.name);
     // A novel, its comic and its audiobook share a title but are different things to open, so
     // they never fold into one group.
-    if (title) return `title:${BookTypeSupport.mediaCategoryOf(book)}:${title}`;
+    // 同名不同作者是不同的书（一个常见书名能有二十来位作者），按“书名 + 作者”分组；作者写法按换源比对的
+    // 同一套规则规整（去掉“作者：”“著”、括号说明，简繁统一）。没给作者的同名结果另成一组，不并进任何一位作者。
+    if (title) {
+      const script = SearchChineseScriptRuntime.ready();
+      const author = ChangeSourceAuthorMatch.normalize(book.author || '',
+        script ? (text: string): string => script.fold(text) : null);
+      return `title:${BookTypeSupport.mediaCategoryOf(book)}:${title}|author:${author}`;
+    }
     return `item:${book.origin || ''}::${book.bookUrl || ''}`;
   }
 

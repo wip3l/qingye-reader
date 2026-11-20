@@ -68,6 +68,8 @@ class SourceResultBudget {
   private readonly perCategory: boolean;
   private readonly counts: Map<string, number> = new Map<string, number>();
   private total: number = 0;
+  /** 标了分站的结果已经收了多少；有这类结果的书源按分站分别计上限。 */
+  private sited: number = 0;
 
   constructor(limit: number, perCategory: boolean) {
     this.limit = limit;
@@ -76,6 +78,18 @@ class SourceResultBudget {
 
   /** Takes a slot for the book; false when its type (or the whole source) is already full. */
   take(book: SearchBook): boolean {
+    // 聚合书源给结果标了分站：每个分站各有一份上限（分类型计时再按类型分），整个书源不超过总上限。
+    const site = NativeSourceService.siteOf(book);
+    if (site) {
+      if (this.sited >= MAX_TOTAL_SEARCH_RESULTS) return false;
+      const key = this.perCategory ? `site:${site}:${book.mediaCategory || BookTypeSupport.mediaCategoryOf(book)}` :
+        `site:${site}`;
+      const taken = this.counts.get(key) || 0;
+      if (taken >= this.limit) return false;
+      this.counts.set(key, taken + 1);
+      this.sited++;
+      return true;
+    }
     if (!this.perCategory) {
       if (this.total >= this.limit) return false;
       this.total++;
@@ -90,6 +104,8 @@ class SourceResultBudget {
 
   /** True once no further book can be taken. Per-type budgets never count as full: a later book may be another type. */
   get full(): boolean {
+    // 按分站计的书源不算满：后面的结果可能属于另一个分站，收够总上限为止。
+    if (this.sited > 0) return this.sited >= MAX_TOTAL_SEARCH_RESULTS;
     return !this.perCategory && this.total >= this.limit;
   }
 }
@@ -885,6 +901,9 @@ export class SearchCoordinator {
         this.sanitizeSearchBook(book);
         book.mediaCategory = BookTypeSupport.mediaCategoryOf(book);
         if (!this.matchesMediaCategory(book, options)) continue;
+        // 聚合书源一次交回几百条、其中不少只是沾边：每源上限只数与关键词相关的，
+        // 否则排在后面的子站（哪怕书名完全一致）会被前面不相关的结果挤掉。校验只看有没有结果，不筛。
+        if (options.validationOnly !== true && this.filterSearchResults([book], keyword, options).length === 0) continue;
         if (!budget.take(book)) continue;
         books.push(book);
         if (budget.full) break;
