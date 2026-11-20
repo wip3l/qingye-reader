@@ -164,6 +164,7 @@ export class AppDataBackupService {
     'custom_theme_schemes',
     'immersive_light_settings',
     'opds_settings',
+    'read_stats_merges',
     'reader_replace_rules',
     'reader_settings',
     'search_explore_settings',

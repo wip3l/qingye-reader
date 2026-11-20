@@ -5,6 +5,7 @@ import { appDb, ReadStatsRow } from '../../model/data/AppDatabase';
 import { readStatsTracker } from '../../core/stats/ReadStatsTracker';
 import { ReadStatsBar, ReadStatsRank, ReadStatsSummary } from '../../core/stats/ReadStatsSummary';
 import { ReadStatsFold } from '../../core/stats/ReadStatsFold';
+import { ReadWorkMergeStore } from '../../utils/ReadWorkMergeStore';
 import { ReadStatsPosterSession, ReadStatsPosterSnapshot } from '../../core/stats/ReadStatsPosterModel';
 import { AccountSessionStore } from '../../account/AccountSessionStore';
 import { HdsFeedback } from '../../utils/HdsFeedback';
@@ -111,13 +112,14 @@ export struct FootprintTabPage {
       const excerpts = await appDb.getExcerptAnnotations(FootprintTabPage.EXCERPT_LOAD_LIMIT);
       const marks = await appDb.getAllBookMarks(FootprintTabPage.EXCERPT_LOAD_LIMIT);
       const fold = await ReadStatsFold.load(context);
+      const merges = await ReadWorkMergeStore.load(context);
       if (!this.alive) return;
       this.excerpts = excerpts;
       this.excerptsLoaded = true;
       this.marks = marks;
       this.marksLoaded = true;
       this.ownerId = ownerId;
-      this.summary = ReadStatsSummary.calculate(rows, 'week', now, now, fold);
+      this.summary = ReadStatsSummary.calculate(rows, 'week', now, now, fold, merges);
       this.lastWeekMs = ReadStatsSummary.calculate(rows, 'week', lastWeekAnchor, now).totalMs;
       this.monthDays = this.buildMonth(rows, month.startTs, now);
       this.monthTitle = `${new Date(now).getMonth() + 1} 月足迹`;
@@ -302,7 +304,7 @@ export struct FootprintTabPage {
           Column() {
             ForEach(this.summary.items.slice(0, this.layout().limit(FootprintLayout.RANK)), (item: ReadStatsRank) => {
               this.rankRow(item)
-            }, (item: ReadStatsRank) => item.bookKey)
+            }, (item: ReadStatsRank) => `${item.bookKey}:${item.name}:${item.durationMs}:${item.onShelf}`)
           }
           .width('100%')
           .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })

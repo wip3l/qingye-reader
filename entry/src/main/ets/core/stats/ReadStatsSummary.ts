@@ -24,6 +24,101 @@ export class ReadStatsRank {
   durationMs: number = 0;
   percent: number = 0;
   rank: number = 0;
+  /** 这一行代表的作品标识；手动合并出来的行是那一组的 main。 */
+  workKey: string = '';
+  /** 手动合并的组里一共几部作品，没合并过是 0。组里在当前时段没有记录的也算在内。 */
+  mergedWorks: number = 0;
+  /** 手动合并的行在当前时段有记录的各部作品，显示用的那部排第一。 */
+  editions: ReadStatsRank[] = [];
+}
+
+export class ReadWorkMergeMember {
+  work: string = '';
+  name: string = '';
+  author: string = '';
+}
+
+/** 用户手动认定的“这几部作品是同一部”，main 是排行里显示书名和封面的那一部。 */
+export class ReadWorkMergeGroup {
+  main: string = '';
+  members: ReadWorkMergeMember[] = [];
+}
+
+/**
+ * 手动合并只记作品标识之间的关系，不改阅读记录，拆开后各自的时长原样回来。
+ * 标识来自 ReadWorkIdentity（书名 + 作者），所以换源后关系仍然有效。
+ */
+export class ReadWorkMerges {
+  static parse(raw: string): ReadWorkMergeGroup[] {
+    const groups: ReadWorkMergeGroup[] = [];
+    let parsed: Object | null = null;
+    try { parsed = JSON.parse(raw || '[]') as Object; } catch (_) { return groups; }
+    if (!Array.isArray(parsed)) return groups;
+    const seen = new Set<string>();
+    (parsed as Object[]).forEach((value: Object): void => {
+      const source = value as ReadWorkMergeGroup;
+      if (!source || typeof source.main !== 'string' || !Array.isArray(source.members)) return;
+      const group = new ReadWorkMergeGroup();
+      source.members.forEach((item: ReadWorkMergeMember): void => {
+        if (!item || typeof item.work !== 'string' || !item.work || seen.has(item.work)) return;
+        seen.add(item.work);
+        const member = new ReadWorkMergeMember();
+        member.work = item.work;
+        member.name = typeof item.name === 'string' ? item.name : '';
+        member.author = typeof item.author === 'string' ? item.author : '';
+        group.members.push(member);
+      });
+      if (group.members.length < 2) return;
+      group.main = group.members.some((member: ReadWorkMergeMember): boolean => member.work === source.main) ?
+        source.main : group.members[0].work;
+      groups.push(group);
+    });
+    return groups;
+  }
+
+  static find(groups: ReadWorkMergeGroup[], work: string): ReadWorkMergeGroup | undefined {
+    return groups.find((group: ReadWorkMergeGroup): boolean =>
+      group.members.some((member: ReadWorkMergeMember): boolean => member.work === work));
+  }
+
+  /** 把 members 并成一组；其中已经属于别的组的，连同那一组一起并进来。 */
+  static combine(groups: ReadWorkMergeGroup[], members: ReadWorkMergeMember[], main: string): ReadWorkMergeGroup[] {
+    const merged = new ReadWorkMergeGroup();
+    const absorbed = new Set<ReadWorkMergeGroup>();
+    const add = (member: ReadWorkMergeMember): void => {
+      if (!member.work || merged.members.some((item: ReadWorkMergeMember): boolean => item.work === member.work)) return;
+      merged.members.push(member);
+    };
+    members.forEach((member: ReadWorkMergeMember): void => {
+      const old = ReadWorkMerges.find(groups, member.work);
+      if (old && !absorbed.has(old)) {
+        absorbed.add(old);
+        old.members.forEach(add);
+      }
+      add(member);
+    });
+    const rest = groups.filter((group: ReadWorkMergeGroup): boolean => !absorbed.has(group));
+    if (merged.members.length < 2) return rest;
+    merged.main = merged.members.some((member: ReadWorkMergeMember): boolean => member.work === main) ?
+      main : merged.members[0].work;
+    rest.push(merged);
+    return rest;
+  }
+
+  /** 从 main 那一组拆出 work；work 传空串整组拆开。剩下不足两部时这一组不再保留。 */
+  static remove(groups: ReadWorkMergeGroup[], main: string, work: string): ReadWorkMergeGroup[] {
+    const result: ReadWorkMergeGroup[] = [];
+    groups.forEach((group: ReadWorkMergeGroup): void => {
+      if (group.main !== main) { result.push(group); return; }
+      if (!work) return;
+      const next = new ReadWorkMergeGroup();
+      next.members = group.members.filter((member: ReadWorkMergeMember): boolean => member.work !== work);
+      if (next.members.length < 2) return;
+      next.main = group.main === work ? next.members[0].work : group.main;
+      result.push(next);
+    });
+    return result;
+  }
 }
 
 class ReadWorkEdition {
@@ -158,8 +253,68 @@ export class ReadStatsSummary {
     return `${Math.floor(minutes / 60)}小时${minutes % 60 ? `${minutes % 60}分` : ''}`;
   }
 
+  /**
+   * 把手动合并的作品收成一行。显示组里指定的那一部；它在当前时段没有记录时，退到书架上的、再退到时长最多的。
+   * 显示的那部不在书架而组里另有在架的，点按打开在架的那本。
+   */
+  private static applyMerges(books: Map<string, ReadStatsRank>, merges: ReadWorkMergeGroup[]): void {
+    merges.forEach((group: ReadWorkMergeGroup): void => {
+      const present: ReadStatsRank[] = [];
+      group.members.forEach((member: ReadWorkMergeMember): void => {
+        const item = books.get(member.work);
+        if (item) present.push(item);
+      });
+      if (present.length === 0) return;
+      present.sort((a: ReadStatsRank, b: ReadStatsRank): number => b.durationMs - a.durationMs);
+      const shelf = present.find((item: ReadStatsRank): boolean => item.onShelf);
+      const lead = books.get(group.main) || shelf || present[0];
+      const combined = new ReadStatsRank();
+      combined.bookKey = lead.bookKey;
+      combined.workKey = group.main;
+      combined.mergedWorks = group.members.length;
+      combined.name = lead.name;
+      combined.author = lead.author;
+      combined.bookUrl = lead.onShelf || !shelf ? lead.bookUrl : shelf.bookUrl;
+      combined.onShelf = !!shelf;
+      combined.editions = [lead, ...present.filter((item: ReadStatsRank): boolean => item !== lead)];
+      combined.editions.forEach((item: ReadStatsRank): void => {
+        combined.durationMs += item.durationMs;
+        if (!combined.coverUrl && item.coverUrl) combined.coverUrl = item.coverUrl;
+        item.recordBookKeys.forEach((key: string): void => {
+          if (!combined.recordBookKeys.includes(key)) combined.recordBookKeys.push(key);
+        });
+        books.delete(item.workKey);
+      });
+      books.set(group.main, combined);
+    });
+  }
+
+  /**
+   * 排行里书名相同（按归并写法比较）却分成几行的第一组，供“可能是同一本”的提示用；
+   * ignored 是用户点过“不是同一本”的书名。没有这样的书名时返回空数组。
+   */
+  static sameTitleItems(items: ReadStatsRank[], fold: ((text: string) => string) | null,
+    ignored: string[]): ReadStatsRank[] {
+    const titles = new Map<string, ReadStatsRank[]>();
+    for (const item of items) {
+      const title = ReadStatsSummary.titleKey(item.name, fold);
+      if (!title || ignored.includes(title)) continue;
+      const same = titles.get(title);
+      if (same) same.push(item); else titles.set(title, [item]);
+    }
+    for (const same of Array.from(titles.values())) {
+      if (same.length > 1) return same;
+    }
+    return [];
+  }
+
+  static titleKey(name: string, fold: ((text: string) => string) | null): string {
+    const title = ReadWorkIdentity.text(name, fold);
+    return title === '书名未留存' ? '' : title;
+  }
+
   static calculate(rows: ReadStatsRow[], mode: string, anchor: number, now: number,
-    fold: ((text: string) => string) | null = null): ReadStatsSummary {
+    fold: ((text: string) => string) | null = null, merges: ReadWorkMergeGroup[] = []): ReadStatsSummary {
     const result = new ReadStatsSummary();
     const books = new Map<string, ReadStatsRank>();
     const dates = new Set<string>();
@@ -179,6 +334,7 @@ export class ReadStatsSummary {
       if (!item) {
         item = new ReadStatsRank();
         item.bookKey = row.bookKey;
+        item.workKey = identity;
         item.bookUrl = row.bookUrl;
         item.name = row.name || '书名未留存';
         item.author = row.author;
@@ -206,7 +362,8 @@ export class ReadStatsSummary {
       bar.durationMs += row.durationMs;
     });
     result.activeDays = dates.size;
-    result.items = Array.from(books.values()).sort((a: ReadStatsRank, b: ReadStatsRank): number => b.durationMs - a.durationMs);
+    ReadStatsSummary.applyMerges(books, merges);
+    result.items =Array.from(books.values()).sort((a: ReadStatsRank, b: ReadStatsRank): number => b.durationMs - a.durationMs);
     result.items.forEach((item: ReadStatsRank, index: number): void => {
       item.rank = index + 1;
       item.percent = result.totalMs > 0 ? item.durationMs * 100 / result.totalMs : 0;
