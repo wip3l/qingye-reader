@@ -18,6 +18,7 @@ import { RecentReadShortcut, OPEN_BOOK_SHORTCUT_ACTION } from '../utils/RecentRe
 import { CoverGalleryStore } from '../utils/CoverGalleryStore';
 import { CoverFailureStore } from '../utils/CoverFailureStore';
 import { BookshelfDisplaySettingsStore } from '../utils/BookshelfDisplaySettingsStore';
+import { ShelfPreload } from '../utils/ShelfPreload';
 import { SearchExploreSettingsStore } from '../utils/SearchExploreSettingsStore';
 import { ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { AppThemeSettingsStore } from '../utils/AppThemeSettingsStore';
@@ -342,6 +343,8 @@ export default class EntryAbility extends UIAbility {
     }).catch((e: Error) => {
       hilog.warn(0x0000, 'testTag', 'Sync bookshelf display settings failed: %{public}s', JSON.stringify(e));
     });
+    // 书架数据尽早开始读，启动页结束时多半已经读好。
+    ShelfPreload.start(this.context);
     SearchExploreSettingsStore.load(this.context).then((settings) => {
       SearchExploreSettingsStore.applyToStorage(settings);
     }).catch((e: Error) => {

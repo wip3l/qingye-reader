@@ -48,6 +48,7 @@ import { BookshelfStateStore } from '../../utils/BookshelfStateStore';
 import { SearchExplorePendingBook } from '../../utils/SearchExplorePendingBook';
 import { BookshelfSortHelper } from '../../utils/BookshelfSortHelper';
 import { ShelfCoverSlots } from '../../utils/ShelfCoverSlots';
+import { ShelfPreload, ShelfSnapshot } from '../../utils/ShelfPreload';
 import { RecentReadCarousel } from './RecentReadCarousel';
 import { ShelfReadingNoteCard } from './ShelfReadingNoteCard';
 import { ShelfGreetingEditor } from './ShelfGreetingEditor';
@@ -726,8 +727,15 @@ export struct BookshelfPage {
     ReaderOpenSnapshotStore.prepare(getContext(this)).catch((): void => {});
     this.shelfAppliedSearchKeyword = BookshelfPage.normalizeShelfSearchText(this.shelfSearchKeyword);
     this.reloadDisplaySettings();
-    this.restoreShelfCategoryExpanded();
-    this.restoreSortModeAndLoad();
+    const snapshot = ShelfPreload.take();
+    if (snapshot) {
+      // 排序和分类栏展开状态已由预读（或上一个书架页实例）放进 AppStorage。
+      this.shelfCategoryExpandedRestored = true;
+      this.adoptShelfSnapshot(snapshot);
+    } else {
+      this.restoreShelfCategoryExpanded();
+      this.restoreSortModeAndLoad();
+    }
     this.shelfLoadingHintTimer = setTimeout((): void => {
       this.shelfLoadingHintTimer = -1;
       if (this.isLoading) this.shelfLoadingHintVisible = true;
@@ -967,21 +975,8 @@ export struct BookshelfPage {
         this.scheduleLoadBooks();
         return;
       }
-      // Commit the complete snapshot together. In particular, never expose a new expanded card while the retained
-      // LazyForEach data source still contains entries from the previous shelf generation.
-      this.allBooks = loadedBooks;
-      this.shelfGroups = loadedGroups;
-      if (this.activeShelfGroupId > 0 && !this.shelfGroups.some((group: BookGroup) => group.groupId === this.activeShelfGroupId)) {
-        this.activeShelfGroupId = 0;
-      }
-      this.applyShelfScope();
-      // 只留菜单按钮时标题行高度不变，书读出来后补报一次底栏状态（冷启动时底栏已收起）。
-      if (this.shelfImmersiveActive()) this.reportShelfBarCollapse();
-      this.reloadShelfDataSources(forceDataSourceReload);
-      this.refreshOfflineBookUrls();
-      this.refreshShelfCoverCache(this.books);
-      this.scheduleLocalBookIntroMigration(loadedBooks);
-      this.scheduleColdStartBookshelfRefresh(loadedBooks);
+      this.commitShelfData(loadedBooks, loadedGroups, forceDataSourceReload, false);
+      ShelfPreload.remember(storedBooks, loadedGroups);
     } catch (e) {
       if (loadSerial === this.shelfLoadSerial) console.error('加载书籍失败:', e);
     } finally {
@@ -990,6 +985,73 @@ export struct BookshelfPage {
         this.isLoading = false;
       }
     }
+  }
+
+  /**
+   * 把一份完整的书架数据换上去。mounting 为 true 表示正在书架页挂载（首页构建途中）：
+   * 这时不改首页持有的分组、不向首页汇报底栏，返回 false 说明还有这类事没做，要再照常读一遍。
+   */
+  private commitShelfData(loadedBooks: Book[], loadedGroups: BookGroup[], forceDataSourceReload: boolean,
+    mounting: boolean): boolean {
+    // Commit the complete snapshot together. In particular, never expose a new expanded card while the retained
+    // LazyForEach data source still contains entries from the previous shelf generation.
+    let settled = true;
+    this.allBooks = loadedBooks;
+    this.shelfGroups = loadedGroups;
+    if (this.activeShelfGroupId > 0 && !this.shelfGroups.some((group: BookGroup) => group.groupId === this.activeShelfGroupId)) {
+      if (mounting) {
+        settled = false;
+      } else {
+        this.activeShelfGroupId = 0;
+      }
+    }
+    this.applyShelfScope();
+    // 只留菜单按钮时标题行高度不变，书读出来后补报一次底栏状态（冷启动时底栏已收起）。
+    // 挂载时不用报：reloadDisplaySettings 读完设置会收起并汇报，那时书已经在了。
+    if (!mounting && this.shelfImmersiveActive()) this.reportShelfBarCollapse();
+    this.reloadShelfDataSources(forceDataSourceReload);
+    this.refreshOfflineBookUrls();
+    this.refreshShelfCoverCache(this.books);
+    this.scheduleLocalBookIntroMigration(loadedBooks);
+    this.scheduleColdStartBookshelfRefresh(loadedBooks);
+    return settled;
+  }
+
+  /** 书架页挂载时用现成的书架数据，第一帧就是书，不经过占位。 */
+  private adoptShelfSnapshot(snapshot: ShelfSnapshot): void {
+    if (snapshot.startup && snapshot.rememberGroup && snapshot.activeGroupId !== this.activeShelfGroupId) {
+      // 回到上次的分组要改首页持有的状态并连带汇报底栏，不能在首页构建途中做，晚一拍和书一起换上。
+      setTimeout((): void => {
+        if (!this.shelfComponentActive || this.shelfFirstLoadDone) return;
+        this.activeShelfGroupId = snapshot.activeGroupId;
+        this.applyShelfSnapshot(snapshot, false);
+      }, 0);
+      return;
+    }
+    this.applyShelfSnapshot(snapshot, true);
+  }
+
+  private applyShelfSnapshot(snapshot: ShelfSnapshot, mounting: boolean): void {
+    this.shelfLoadSerial++;
+    if (snapshot.startup) {
+      if (snapshot.rememberGroup) {
+        if (BookshelfPage.TYPE_TAB_IDS.indexOf(snapshot.typeTab) >= 0 && this.shelfTypeTab !== snapshot.typeTab) {
+          this.shelfTypeTab = snapshot.typeTab;
+        }
+      } else {
+        // “记住打开分组”关闭：每次冷启动都从书架首页开始，记录也改成首页（同 loadBooks）。
+        if (this.shelfTypeTab !== 'all') this.shelfTypeTab = 'all';
+        BookshelfStateStore.saveActiveGroupId(getContext(this), 0).catch((): void => {});
+        BookshelfStateStore.saveTypeTab(getContext(this), 'all').catch((): void => {});
+      }
+    }
+    this.shelfStateRestored = true;
+    const settled = this.commitShelfData(SearchExplorePendingBook.filterShelfBooks(snapshot.storedBooks),
+      snapshot.groups, false, mounting);
+    this.shelfFirstLoadDone = true;
+    this.isLoading = false;
+    // 不是刚读出来的（首页重建、从快捷方式开书后才回到书架）只是垫着，随后照常重读。
+    if (!snapshot.fresh || !settled) this.scheduleLoadBooks();
   }
 
   reloadShelfDataSources(force: boolean = false, invalidatePages: boolean = true): void {
