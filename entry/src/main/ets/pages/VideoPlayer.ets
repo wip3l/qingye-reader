@@ -1,3 +1,4 @@
+import { common } from '@kit.AbilityKit';
 import { router, window } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -16,6 +17,8 @@ import { VideoPlaybackSource, VideoPlaybackSupport } from '../core/book/VideoPla
 import { VideoAvSession, VideoAvSessionListener } from '../utils/VideoAvSession';
 import { MixedVideoChapter } from '../core/book/MixedVideoChapter';
 import { MixedVideoProgress } from '../utils/MixedVideoProgress';
+import { VideoListenSession, VideoListenSnapshot } from '../utils/VideoListenSession';
+import { BookCover } from '../components/book/BookCover';
 
 /** 每次尝试创建独立实例，让旧组件回调携带旧编号。 */
 class VideoNativeAttempt {
@@ -72,6 +75,16 @@ class EpisodeDataSource implements IDataSource {
 
 // Video 组件的 currentProgressRate 只接受 0.75、1、1.25、1.75、2 这几档，别的值不生效。
 const SPEEDS: number[] = [0.75, 1, 1.25, 1.75, 2];
+const SLEEP_TIMER_MINUTES: number[] = [15, 30, 45, 60, 90];
+
+/** 听视频时倍速可以随意调；回到画面时取最接近的一档，系统 Video 组件只认这几档。 */
+function nearestSpeed(value: number): number {
+  let best = 1;
+  for (const speed of SPEEDS) {
+    if (Math.abs(speed - value) < Math.abs(best - value)) best = speed;
+  }
+  return best;
+}
 const CONTROLS_HIDE_DELAY_MS: number = 4000;
 // 长按画面临时加速：按住 0.4 秒起效，松手恢复所选速度，不落库。
 // 一般升到 2×；按住往上滑超过 40vp 升到 3×，滑回来回到 2×。原本已选 2× 时直接用 3×。
@@ -147,6 +160,20 @@ struct VideoPlayerPage {
   @State resumeFailedSec: number = -1;
   @State avVideoWidth: number = 0;
   @State avVideoHeight: number = 0;
+  // 熄屏听视频：画面换成封面和控件，声音交给 VideoListenSession，锁屏或离开本页都继续。
+  // 下面这些都是共享播放会话发布的状态，听视频时就是这部剧的。
+  @State @Watch('syncKeepScreenOn') listening: boolean = false;
+  @StorageProp('videoListenBookUrl') @Watch('onListenBookChanged') listenBookUrl: string = '';
+  @StorageProp('videoListenEpisodeIndex') @Watch('onListenEpisodeChanged') listenEpisodeIndex: number = -1;
+  @StorageProp('globalTtsPaused') listenPaused: boolean = false;
+  @StorageProp('globalTtsBusy') listenBusy: boolean = false;
+  @StorageProp('globalTtsStatusText') listenStatus: string = '';
+  @StorageProp('globalTtsAudioPositionMs') @Watch('onListenPositionChanged') listenPositionMs: number = 0;
+  @StorageProp('globalTtsAudioDurationMs') listenDurationMs: number = 0;
+  @StorageProp('globalTtsSpeed') listenSpeed: number = 1;
+  @StorageProp('globalTtsTimerMinutes') listenTimerMinutes: number = 0;
+  @StorageProp('globalTtsTimerRemainingSeconds') listenTimerRemaining: number = 0;
+  @State listenSeekSec: number = -1;
   private controller: VideoController = new VideoController();
   private fullScreenHandler: FullScreenExitHandler | null = null;
   private activeAttemptId: number = 0;
@@ -194,6 +221,12 @@ struct VideoPlayerPage {
   // 从书架带开书动画进来时，书架那层“正在打开书籍”要等这里通知才会收起，否则返回后一直转圈。
   private openedWithShelfAnimation: boolean = false;
   private openedBookUrl: string = '';
+  // 当前这一集的书源请求头，转为听视频时一起交过去。
+  private videoHeaders: Record<string, string> = {};
+  // 听视频时最近报到的位置；会话被别处停掉后，按这里接着看。
+  private lastListenSec: number = 0;
+  // 正在从听视频切回画面，这期间会话停止的通知不当成被别处停掉。
+  private resumingWatch: boolean = false;
 
   aboutToAppear(): void {
     if (DISPLAY_MODES.indexOf(this.displayMode) < 0) this.displayMode = 'contain';
@@ -204,13 +237,22 @@ struct VideoPlayerPage {
     this.openedWithShelfAnimation = !!params && params.shelfBookOpening === 'true';
     this.openedBookUrl = bookUrl;
     // 视频出声前先让朗读/听书暂停，离开播放页时再接着播；等视频开播后再停就晚了，见 suspendForOtherAudio。
-    ReaderTtsFloatingSession.suspendForOtherAudio().catch((error: Error) => {
-      console.warn('[VideoPlayer] pause tts failed:', error.message);
-    });
+    // 正在听的就是这部剧时不暂停：加载完由 takeOverListening 接过位置，声音一直放到画面接上。
+    if (!VideoListenSession.get().isListening(bookUrl)) {
+      ReaderTtsFloatingSession.suspendForOtherAudio().catch((error: Error) => {
+        console.warn('[VideoPlayer] pause tts failed:', error.message);
+      });
+    }
     this.loadBook(bookUrl, requestedIndex);
   }
 
   aboutToDisappear(): void {
+    if (this.listening) {
+      VideoListenSession.get().setHost(null);
+      if (this.book && VideoListenSession.get().isListening(this.book.bookUrl)) {
+        HdsFeedback.showToast('声音继续在后台播放');
+      }
+    }
     this.playerPageVisible = false;
     this.orientationSerial++;
     this.loadSerial++;
@@ -318,7 +360,8 @@ struct VideoPlayerPage {
    * 网页播放拿不到播放状态，页面可见时一直常亮。
    */
   private syncKeepScreenOn(): void {
-    const wanted = this.playerPageVisible &&
+    // 听视频时交还息屏，用户可以直接锁屏。
+    const wanted = this.playerPageVisible && !this.listening &&
       (this.webMode || this.isPlaying || (!this.playbackReady && !this.playbackFailed));
     if (wanted === this.keepScreenOnApplied) return;
     this.keepScreenOnApplied = wanted;
@@ -382,6 +425,12 @@ struct VideoPlayerPage {
         this.statusText = AppStorage.get<string>('bookSourceStageLastError') || '没有取到选集';
         return;
       }
+      const listened = await this.takeOverListening(stored.bookUrl);
+      if (serial !== this.loadSerial) return;
+      if (listened) {
+        await this.playEpisode(listened.episodeIndex, listened.positionSec);
+        return;
+      }
       const sameEpisode = requestedIndex < 0 || requestedIndex === this.book.durChapterIndex;
       const index = requestedIndex >= 0 ? requestedIndex : this.book.durChapterIndex;
       // durChapterPos 对视频类书籍记的是播放到的秒数。
@@ -408,6 +457,12 @@ struct VideoPlayerPage {
     this.episodeData.replace(this.chapters.map((chapter: BookChapter): string => chapter.title || ''));
     if (this.chapters.length === 0) {
       this.statusText = '这本书没有视频章节';
+      return;
+    }
+    const listened = await this.takeOverListening(stored.bookUrl);
+    if (serial !== this.loadSerial) return;
+    if (listened) {
+      await this.playEpisode(listened.episodeIndex, listened.positionSec);
       return;
     }
     const position = Math.max(0, this.chapters.findIndex((chapter: BookChapter): boolean =>
@@ -490,6 +545,7 @@ struct VideoPlayerPage {
     this.statusText = '正在缓冲...';
     this.videoUrl = result.url;
     const headers = result.headers || {};
+    this.videoHeaders = headers;
     const attempt = new VideoNativeAttempt(++this.activeAttemptId, result.url);
     // 只有 User-Agent 时媒体服务器几乎不校验，仍用 Video 组件；有 Referer、Cookie 等才必须带上。
     if (Object.keys(headers).some((name: string): boolean => name.toLowerCase() !== 'user-agent')) {
@@ -744,13 +800,115 @@ struct VideoPlayerPage {
     this.openWebPlayback();
   }
 
+  /** 正在听这部剧：停掉声音，接过听到的集和位置，连播和倍速也跟着回来。 */
+  private async takeOverListening(bookUrl: string): Promise<VideoListenSnapshot | null> {
+    const snapshot = await VideoListenSession.get().takeOver(bookUrl);
+    if (!snapshot) return null;
+    this.speed = nearestSpeed(snapshot.speed);
+    this.autoNext = snapshot.autoNext;
+    return snapshot;
+  }
+
+  /** 网页播放拿不到声音，取地址或缓冲还没好时也没有可交出去的地址。 */
+  private canListen(): boolean {
+    return !this.webMode && !this.listening && !!this.videoUrl && !this.playbackFailed &&
+      this.nativeAttempts.length > 0 && !!this.book && !!this.source && this.chapters.length > 0;
+  }
+
+  private startListening(): void {
+    const book = this.book;
+    const source = this.source;
+    if (!this.canListen() || !book || !source) {
+      HdsFeedback.showToast('视频开始播放后才能转为听视频');
+      return;
+    }
+    const position = this.durablePositionSec();
+    const url = this.videoUrl;
+    const headers = this.videoHeaders;
+    this.saveProgress(true);
+    this.cancelResolve();
+    this.stopPlayback();
+    // 之后回到画面要重新取地址（听的时候可能已经换了集或地址过期）。
+    this.videoUrl = '';
+    this.statusText = '';
+    this.showEpisodes = false;
+    this.showControls = true;
+    this.listening = true;
+    this.lastListenSec = position;
+    this.listenSeekSec = -1;
+    if (this.manualLandscapeRequested) this.setLandscape(false);
+    const session = VideoListenSession.get();
+    session.start({
+      context: getContext(this) as common.UIAbilityContext,
+      book: book,
+      source: source,
+      chapters: this.chapters,
+      mixed: this.mixed,
+      episodeIndex: this.episodeIndex,
+      url: url,
+      headers: headers,
+      positionSec: position,
+      speed: this.speed,
+      autoNext: this.autoNext
+    }).then((): void => {
+      if (this.listening) session.setHost((): void => this.resumeWatching());
+    }).catch((error: Error): void => {
+      console.warn('[VideoPlayer] start listening failed:', error.message);
+    });
+    HdsFeedback.showToast('已转为听视频，可以锁屏');
+  }
+
+  private resumeWatching(): void {
+    const book = this.book;
+    if (!book || !this.listening || this.resumingWatch) return;
+    this.resumingWatch = true;
+    this.takeOverListening(book.bookUrl).then((snapshot: VideoListenSnapshot | null): void => {
+      this.resumingWatch = false;
+      this.listening = false;
+      if (snapshot) {
+        this.playEpisode(snapshot.episodeIndex, snapshot.positionSec);
+      } else {
+        this.playEpisode(this.episodeIndex, this.lastListenSec);
+      }
+    }).catch((error: Error): void => {
+      this.resumingWatch = false;
+      console.warn('[VideoPlayer] resume watching failed:', error.message);
+    });
+  }
+
+  /** 听视频被别处停掉（面板停止、开始听书或朗读）：回到画面的暂停状态，点播放从听到的位置接着看。 */
+  onListenBookChanged(): void {
+    if (!this.listening || this.resumingWatch) return;
+    const book = this.book;
+    if (book && this.listenBookUrl === book.bookUrl) return;
+    this.listening = false;
+    this.positionSec = this.lastListenSec;
+    this.durationSec = 0;
+    this.showControls = true;
+    this.statusText = '已停止听视频，点播放接着看';
+  }
+
+  onListenEpisodeChanged(): void {
+    if (!this.listening) return;
+    const index = this.listenEpisodeIndex;
+    if (index < 0 || index >= this.chapters.length || index === this.episodeIndex) return;
+    this.episodeIndex = index;
+    this.episodeTitle = this.chapters[index].title;
+    this.lastListenSec = 0;
+  }
+
+  onListenPositionChanged(): void {
+    if (this.listening && this.listenPositionMs > 0) this.lastListenSec = Math.floor(this.listenPositionMs / 1000);
+  }
+
   private backFromPlayer(): void {
     if (!this.onBackPress()) this.getUIContext().getRouter().back();
   }
 
   private saveProgress(force: boolean = false): void {
     const book = this.book;
-    if (!book || this.seeking) return;
+    // 听视频时进度由 VideoListenSession 记，这里的位置是转过去之前的，不能覆盖它。
+    if (!book || this.seeking || this.listening) return;
     const second = Math.floor(this.pendingSeekSec >= 0 ? this.pendingSeekSec : this.positionSec);
     // 播放中每 10 秒落一次库，切集、离开页面时立即保存。
     if (!force && Math.abs(second - this.lastSavedSec) < 10) return;
@@ -1059,6 +1217,11 @@ struct VideoPlayerPage {
   private selectSpeed(speed: number): void {
     if (SPEEDS.indexOf(speed) < 0) return;
     this.speed = speed;
+    if (this.listening) {
+      ReaderTtsFloatingSession.setSpeed(speed);
+      this.closeDisplayModes();
+      return;
+    }
     const session = this.currentSession();
     if (session) session.setSpeed(this.effectiveSpeed());
     this.closeDisplayModes();
@@ -1244,6 +1407,18 @@ struct VideoPlayerPage {
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
+        if (this.canListen()) {
+          Button({ type: ButtonType.Normal }) {
+            Row({ space: 2 }) {
+              SymbolGlyph($r('sys.symbol.earphone')).fontSize(18).fontColor([Color.White])
+              Text('听').fontSize(AppFontSize.BODY).fontColor(Color.White)
+            }
+          }
+            .playerIconButton()
+            .width(56)
+            .accessibilityText('熄屏听视频：只播声音，可以锁屏或离开播放页')
+            .onClick(() => this.startListening())
+        }
         Button({ type: ButtonType.Normal }) {
           Text(this.autoNext ? '连播 开' : '连播 关').fontSize(AppFontSize.BODY).fontColor(Color.White)
         }
@@ -1252,6 +1427,7 @@ struct VideoPlayerPage {
           .accessibilityText(this.autoNext ? '自动连播，已开启' : '自动连播，已关闭')
           .onClick(() => {
             this.autoNext = !this.autoNext;
+            if (this.listening) VideoListenSession.get().setAutoNext(this.autoNext);
             HdsFeedback.showToast(this.autoNext ? '已开启连播：本集结束后自动播放下一集' :
               '已关闭连播：本集结束后停止播放');
             this.scheduleHideControls();
@@ -1486,6 +1662,230 @@ struct VideoPlayerPage {
     }.width('100%').height('100%')
   }
 
+  private listenShownSec(): number {
+    return this.listenSeekSec >= 0 ? this.listenSeekSec : Math.max(0, this.listenPositionMs / 1000);
+  }
+
+  private listenStateText(): string {
+    if (this.listenStatus) return this.listenStatus;
+    if (this.listenBusy) return '正在缓冲…';
+    if (this.listenPaused) return '已暂停';
+    return '正在听视频 · 画面已关闭，可以锁屏';
+  }
+
+  private listenSpeedLabel(): string {
+    return `${Number(this.listenSpeed.toFixed(2))}×`;
+  }
+
+  private listenTimerLabel(): string {
+    if (this.listenTimerMinutes <= 0 || this.listenTimerRemaining <= 0) return '定时';
+    return `定时 ${this.formatTime(this.listenTimerRemaining)}`;
+  }
+
+  private listenTimerMenu(): MenuElement[] {
+    const items: MenuElement[] = SLEEP_TIMER_MINUTES.map((minutes: number): MenuElement => {
+      const item: MenuElement = {
+        value: `${minutes} 分钟后停止`,
+        action: (): void => ReaderTtsFloatingSession.setTimer(minutes)
+      };
+      return item;
+    });
+    if (this.listenTimerMinutes > 0) {
+      items.push({ value: '关闭定时', action: (): void => ReaderTtsFloatingSession.setTimer(0) });
+    }
+    return items;
+  }
+
+  private listenCoverWidth(): number {
+    const byHeight = (this.viewportHeight - this.statusBarHeight - this.navBarHeight - 380) * 0.75;
+    return Math.max(96, Math.min(200, this.viewportWidth * 0.5, byHeight));
+  }
+
+  /** 听视频画面：封面和集名居中，下面是进度、播放控制和倍速、定时、看画面。 */
+  @Builder
+  listenView() {
+    Stack({ alignContent: Alignment.Top }) {
+      Column({ space: AppSpacing.LG }) {
+        Stack() {
+          BookCover({
+            bookUrl: this.book ? this.book.bookUrl : '',
+            name: this.bookName,
+            placeholderColor: '#4A4F57',
+            cornerRadius: 14,
+            decodeWidth: 300,
+            decodeHeight: 400
+          })
+        }
+        .width(this.listenCoverWidth())
+        .height(this.listenCoverWidth() * 4 / 3)
+        .borderRadius(14)
+        .clip(true)
+        .shadow({ radius: 24, color: '#80000000', offsetX: 0, offsetY: 10 })
+
+        Column({ space: AppSpacing.XS }) {
+          Text(this.episodeTitle || `第${this.episodeIndex + 1}集`)
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .textAlign(TextAlign.Center)
+          Text(this.bookName)
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor('#B3FFFFFF')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .alignItems(HorizontalAlign.Center)
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+
+        Row({ space: AppSpacing.SM }) {
+          if (this.listenBusy) {
+            LoadingProgress().width(16).height(16).color(Color.White)
+          } else {
+            SymbolGlyph($r('sys.symbol.earphone')).fontSize(14).fontColor(['#CCFFFFFF'])
+          }
+          Text(this.listenStateText())
+            .fontSize(AppFontSize.CAPTION)
+            .fontColor('#E6FFFFFF')
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
+        .borderRadius(16)
+        .backgroundColor('#1FFFFFFF')
+        .constraintSize({ maxWidth: this.viewportWidth - AppSpacing.XL * 2 })
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .padding({ top: this.statusBarHeight + 64, bottom: this.navBarHeight + 220 })
+
+      this.topBar()
+      this.listenControls()
+    }
+    .width('100%')
+    .height('100%')
+    .linearGradient({ direction: GradientDirection.Bottom, colors: [['#FF24272D', 0], ['#FF111214', 0.7]] })
+  }
+
+  @Builder
+  listenControls() {
+    Column({ space: AppSpacing.MD }) {
+      Row({ space: AppSpacing.MD }) {
+        Text(this.formatTime(this.listenShownSec()))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor('#FFFFFF')
+        Slider({ value: this.listenShownSec(), min: 0, max: Math.max(1, this.listenDurationMs / 1000), step: 1 })
+          .sliderInteractionMode(SliderInteraction.SLIDE_AND_CLICK_UP)
+          .enabled(this.listenDurationMs > 0 && !this.listenBusy)
+          .accessibilityText('播放进度')
+          .layoutWeight(1)
+          .height(36)
+          .trackThickness(this.listenSeekSec >= 0 ? 6 : 3)
+          .blockSize(this.listenSeekSec >= 0 ? { width: 18, height: 18 } : { width: 12, height: 12 })
+          .trackColor('#55FFFFFF')
+          .selectedColor('#FFFFFF')
+          .blockColor('#FFFFFF')
+          .onChange((value: number, mode: SliderChangeMode) => {
+            if (mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving) {
+              this.listenSeekSec = value;
+              return;
+            }
+            this.listenSeekSec = -1;
+            ReaderTtsFloatingSession.seekAudio(value * 1000);
+          })
+        Text(this.formatTime(this.listenDurationMs / 1000))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor('#FFFFFF')
+      }
+      .width('100%')
+
+      Row({ space: AppSpacing.LG }) {
+        Button({ type: ButtonType.Normal }) {
+          SymbolGlyph($r('sys.symbol.backward_end_fill')).fontSize(22).fontColor([Color.White])
+        }
+          .playerIconButton().enabled(this.episodeIndex > 0)
+          .opacity(this.episodeIndex > 0 ? 1 : 0.4).accessibilityText('上一集')
+          .onClick(() => ReaderTtsFloatingSession.previous())
+        Button({ type: ButtonType.Normal }) {
+          Image($r('app.media.ic_video_rewind_15')).width(36).height(36).objectFit(ImageFit.Contain)
+        }
+          .playerIconButton().enabled(this.listenDurationMs > 0)
+          .opacity(this.listenDurationMs > 0 ? 1 : 0.4).accessibilityText('后退15秒')
+          .onClick(() => ReaderTtsFloatingSession.seekAudioBy(-15000))
+        Button({ type: ButtonType.Normal }) {
+          if (this.listenBusy) {
+            LoadingProgress().width(28).height(28).color(Color.White)
+          } else {
+            SymbolGlyph(this.listenPaused ? $r('sys.symbol.play_fill') : $r('sys.symbol.pause_fill'))
+              .fontSize(26).fontColor([Color.White])
+          }
+        }
+          .playerIconButton().width(54).height(54).borderRadius(27).backgroundColor('#33FFFFFF')
+          .accessibilityText(this.listenBusy ? '正在加载' : (this.listenPaused ? '播放' : '暂停'))
+          .onClick(() => {
+            if (this.listenBusy) return;
+            ReaderTtsFloatingSession.toggle().catch((error: Error) => {
+              console.warn('[VideoPlayer] toggle listening failed:', error.message);
+            });
+          })
+        Button({ type: ButtonType.Normal }) {
+          Image($r('app.media.ic_video_forward_15')).width(36).height(36).objectFit(ImageFit.Contain)
+        }
+          .playerIconButton().enabled(this.listenDurationMs > 0)
+          .opacity(this.listenDurationMs > 0 ? 1 : 0.4).accessibilityText('快进15秒')
+          .onClick(() => ReaderTtsFloatingSession.seekAudioBy(15000))
+        Button({ type: ButtonType.Normal }) {
+          SymbolGlyph($r('sys.symbol.forward_end_fill')).fontSize(22).fontColor([Color.White])
+        }
+          .playerIconButton().enabled(this.episodeIndex < this.episodeCount - 1)
+          .opacity(this.episodeIndex < this.episodeCount - 1 ? 1 : 0.4).accessibilityText('下一集')
+          .onClick(() => ReaderTtsFloatingSession.next())
+      }
+      .height(54)
+
+      Row({ space: AppSpacing.SM }) {
+        Text(this.listenSpeedLabel())
+          .fontSize(AppFontSize.BODY)
+          .fontColor(Color.White)
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+          .height(40)
+          .borderRadius(12)
+          .backgroundColor('#1FFFFFFF')
+          .accessibilityText(`播放速度，当前${this.listenSpeedLabel()}`)
+          .onClick(() => this.openPlaybackSpeeds())
+        Text(this.listenTimerLabel())
+          .fontSize(AppFontSize.BODY)
+          .fontColor(this.listenTimerMinutes > 0 ? '#8FD0FF' : '#FFFFFF')
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+          .height(40)
+          .borderRadius(12)
+          .backgroundColor('#1FFFFFFF')
+          .accessibilityText(this.listenTimerLabel())
+          .bindMenu(this.listenTimerMenu())
+        Text('看画面')
+          .fontSize(AppFontSize.BODY)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#16181B')
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+          .height(40)
+          .borderRadius(12)
+          .backgroundColor(Color.White)
+          .accessibilityText('看画面，从当前位置接着看')
+          .onClick(() => this.resumeWatching())
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.XL, bottom: this.navBarHeight + AppSpacing.LG })
+    .position({ left: 0, bottom: 0 })
+  }
+
   @Builder
   episodePanel() {
     Stack({ alignContent: Alignment.Bottom }) {
@@ -1521,8 +1921,13 @@ struct VideoPlayerPage {
                 .accessibilityText(`${title || `第${index + 1}集`}${index === this.episodeIndex ? '，正在播放' : ''}`)
                 .onClick(() => {
                   this.showEpisodes = false;
-                  if (index !== this.episodeIndex) this.playEpisode(index);
-                  else this.scheduleHideControls();
+                  if (this.listening) {
+                    if (index !== this.episodeIndex) VideoListenSession.get().playEpisode(index, 0);
+                  } else if (index !== this.episodeIndex) {
+                    this.playEpisode(index);
+                  } else {
+                    this.scheduleHideControls();
+                  }
                 })
             }
           }, (title: string, index: number): string => `${index}_${title}_${index === this.episodeIndex ? 'on' : 'off'}`)
@@ -1637,6 +2042,8 @@ struct VideoPlayerPage {
     Stack() {
       if (this.webMode) {
         this.webPlayback()
+      } else if (this.listening) {
+        this.listenView()
       } else {
         ForEach(this.nativeAttempts, (attempt: VideoNativeAttempt) => {
           if (attempt.session && attempt.surface) {

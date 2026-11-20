@@ -23,6 +23,8 @@ const SECONDARY_SPEED: string = 'speed';
 const SECONDARY_CATALOG: string = 'catalog';
 const SECONDARY_STOP: string = 'stop';
 const SECONDARY_SKIP: string = 'skip';
+// 听视频：回到播放页看画面。
+const SECONDARY_WATCH: string = 'watch';
 /** 跳过提示显示的时长。 */
 const SKIP_NOTICE_MS: number = 3000;
 /** 定时最后这么多秒按钮和状态行改用危险色，提醒快停了。 */
@@ -243,7 +245,7 @@ export struct ReaderTtsPlayerPanel {
           .fontColor(this.primaryTextColor)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(this.isAudio() ? (this.globalTtsChapterProgress || '正在听书') : '正在朗读')
+        Text(this.isAudio() ? (this.globalTtsChapterProgress || (this.isVideo() ? '正在听视频' : '正在听书')) : '正在朗读')
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor)
           .maxLines(1)
@@ -584,7 +586,7 @@ export struct ReaderTtsPlayerPanel {
     .height(56)
     .opacity(this.chapterEnabled(forward) ? 1 : 0.4)
     .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
-    .accessibilityText(forward ? '下一章' : '上一章')
+    .accessibilityText(forward ? (this.isVideo() ? '下一集' : '下一章') : (this.isVideo() ? '上一集' : '上一章'))
     .onClick(() => {
       if (!this.chapterEnabled(forward)) return;
       if (forward) {
@@ -651,7 +653,9 @@ export struct ReaderTtsPlayerPanel {
     Row() {
       this.timerItem()
       this.secondaryItem(SECONDARY_SPEED)
-      if (this.isAudio()) {
+      if (this.isVideo()) {
+        this.secondaryItem(SECONDARY_WATCH)
+      } else if (this.isAudio()) {
         this.secondaryItem(SECONDARY_SKIP)
       }
       this.secondaryItem(SECONDARY_CATALOG)
@@ -1289,8 +1293,13 @@ export struct ReaderTtsPlayerPanel {
     this.onClose();
   }
 
+  /** 听视频和听书用同一套界面：大封面、进度条、前进后退 15 秒。 */
   isAudio(): boolean {
-    return this.hostAudioPage || this.globalTtsMode === 'audio';
+    return this.hostAudioPage || this.globalTtsMode === 'audio' || this.globalTtsMode === 'video';
+  }
+
+  isVideo(): boolean {
+    return !this.hostAudioPage && this.globalTtsMode === 'video';
   }
 
   isPaused(): boolean {
@@ -1349,6 +1358,7 @@ export struct ReaderTtsPlayerPanel {
 
   /** 书源提供了多个音色，或简介里说明了音色代码时才显示音色下拉（里面有“自定义音色代码”）。 */
   showAudioVoiceRow(): boolean {
+    if (this.isVideo()) return false;
     return this.globalTtsVoiceRevision >= 0 &&
       (this.audioVoiceTitles().length > 1 || /音色/.test(this.hostIntro || this.globalTtsContent || ''));
   }
@@ -1438,6 +1448,7 @@ export struct ReaderTtsPlayerPanel {
     if (kind === SECONDARY_SPEED) return $r('sys.symbol.hourglass');
     if (kind === SECONDARY_CATALOG) return $r('sys.symbol.list_bullet');
     if (kind === SECONDARY_SKIP) return $r('sys.symbol.arrow_right_to_line');
+    if (kind === SECONDARY_WATCH) return $r('sys.symbol.video');
     return $r('sys.symbol.stop_circle');
   }
 
@@ -1486,7 +1497,8 @@ export struct ReaderTtsPlayerPanel {
       if (this.skipSeconds(false) > 0) return `片尾${AudioSkipRange.label(this.skipSeconds(false))}`;
       return '跳过';
     }
-    if (kind === SECONDARY_CATALOG) return '目录';
+    if (kind === SECONDARY_CATALOG) return this.isVideo() ? '选集' : '目录';
+    if (kind === SECONDARY_WATCH) return '看画面';
     return '停止';
   }
 
@@ -1515,6 +1527,9 @@ export struct ReaderTtsPlayerPanel {
       this.optionsPanel = this.optionsPanel === 4 ? 0 : 4;
     } else if (kind === SECONDARY_CATALOG) {
       this.onOpenCatalog();
+    } else if (kind === SECONDARY_WATCH) {
+      this.close();
+      ReaderTtsFloatingSession.watchVideo();
     } else {
       this.close();
       ReaderTtsFloatingSession.stop();

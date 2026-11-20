@@ -735,7 +735,8 @@ struct Index {
   private openGlobalTtsCatalogWithFreshCacheFlags(): void {
     const ownerId = ReaderTtsFloatingSession.currentOwnerId();
     const bookUrl = AppStorage.get<string>('globalTtsBookUrl') || '';
-    if (!ownerId || !bookUrl) {
+    // 听视频的选集没有缓存标记；图文书的选集只列视频章，按位置套全部章节的标记也对不上。
+    if (!ownerId || !bookUrl || this.globalTtsMode === 'video') {
       this.presentGlobalTtsCatalog();
       return;
     }
@@ -964,7 +965,7 @@ struct Index {
           onOpenCatalog: () => this.openGlobalTtsCatalog(),
           hostDownloadAvailable: this.globalAudioOffline() !== null,
           onOpenDownload: () => this.globalAudioOffline()?.openDownload(this.getUIContext()),
-          showOpenReader: this.globalTtsMode !== 'audio',
+          showOpenReader: this.globalTtsMode !== 'audio' && this.globalTtsMode !== 'video',
           onOpenReader: () => this.openGlobalTtsReader()
         })
       }

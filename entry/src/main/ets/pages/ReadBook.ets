@@ -6818,8 +6818,10 @@ struct ReadBookPage {
     this.globalTtsCatalogSource.replace(this.globalTtsCatalogReverseOrder ? titles.slice().reverse() : titles);
     // Re-snapshot at open time so the cache chip reflects chapters cached while this
     // session has been running, instead of the state at session publish time.
-    ReaderTtsFloatingSession.updateCatalogCachedFlags(
-      this.ttsFloatingSessionOwnerId, this.readerChapterCachedFlags());
+    if (this.globalTtsMode !== 'video') {
+      ReaderTtsFloatingSession.updateCatalogCachedFlags(
+        this.ttsFloatingSessionOwnerId, this.readerChapterCachedFlags());
+    }
     animateTo({ duration: 280, curve: Curve.Friction }, () => {
       this.showGlobalTtsCatalog = true;
     });
@@ -6969,8 +6971,10 @@ struct ReadBookPage {
   globalTtsMiniPlayer() {
     ReaderTtsCapsule({
       sharedMotionId: 'reader_tts_player',
-      title: this.globalTtsPaused ? '已暂停' : (this.globalTtsMode === 'audio' ? '听书中' : '朗读中'),
-      subtitle: this.globalTtsChapterProgress || (this.globalTtsMode === 'audio' ? '后台听书' : '后台朗读'),
+      title: this.globalTtsPaused ? '已暂停' : (this.globalTtsMode === 'audio' ? '听书中' :
+        (this.globalTtsMode === 'video' ? '听视频中' : '朗读中')),
+      subtitle: this.globalTtsChapterProgress || (this.globalTtsMode === 'audio' ? '后台听书' :
+        (this.globalTtsMode === 'video' ? '后台听视频' : '后台朗读')),
       paused: this.globalTtsPaused,
       playbackKey: `global_tts_capsule_playback_${this.globalTtsPaused}`,
       panelColor: this.readerPanelColor(),

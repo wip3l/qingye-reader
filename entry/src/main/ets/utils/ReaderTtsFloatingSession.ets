@@ -39,6 +39,7 @@ export class ReaderTtsFloatingSession {
   private static audioSkipAction: ((headSeconds: number, tailSeconds: number) => void) | null = null;
   private static audioSeekByAction: ((deltaMs: number) => void) | null = null;
   private static audioSkipUndoAction: (() => void) | null = null;
+  private static watchVideoAction: (() => void) | null = null;
   private static sentenceStepAction: ((direction: number, paragraph: boolean) => void) | null = null;
   private static sentenceTapAction: ((panelOffset: number, beforeLength: number) => void) | null = null;
   // Chapter catalog for the floating panel. Both reader modes publish one: the
@@ -60,6 +61,7 @@ export class ReaderTtsFloatingSession {
     // 换了会话主人（例如从听书换成朗读）时，上一位发布的离线信息和逐句跳转不再适用。
     if (ReaderTtsFloatingSession.ownerId !== ownerId) {
       ReaderTtsFloatingSession.audioOffline = null;
+      ReaderTtsFloatingSession.watchVideoAction = null;
       ReaderTtsFloatingSession.clearSentenceControl();
     }
     const previousBookUrl = ReaderTtsFloatingSession.isActive() ? AppStorage.get<string>('globalTtsBookUrl') || '' : '';
@@ -184,6 +186,25 @@ export class ReaderTtsFloatingSession {
     ReaderTtsFloatingSession.audioSeekAction = seekAction;
     AppStorage.setOrCreate('globalTtsMode', 'audio');
     AppStorage.setOrCreate('globalTtsVoiceCode', voiceCode || '默认');
+  }
+
+  /**
+   * 听视频：面板和伴生条按听书的样子显示进度与前进后退，另有“看画面”回到播放页；
+   * 没有音色、下载和跳过片头片尾。
+   */
+  static configureVideoControls(ownerId: string, seekAction: (positionMs: number) => void,
+    seekByAction: (deltaMs: number) => void, watchAction: () => void): void {
+    if (!ReaderTtsFloatingSession.isOwner(ownerId)) return;
+    ReaderTtsFloatingSession.audioSeekAction = seekAction;
+    ReaderTtsFloatingSession.audioSeekByAction = seekByAction;
+    ReaderTtsFloatingSession.watchVideoAction = watchAction;
+    AppStorage.setOrCreate('globalTtsMode', 'video');
+    AppStorage.setOrCreate('globalTtsVoiceCode', '');
+  }
+
+  static watchVideo(): void {
+    const action = ReaderTtsFloatingSession.watchVideoAction;
+    if (action) action();
   }
 
   static updateAudioProgress(ownerId: string, positionMs: number, durationMs: number): void {
@@ -666,6 +687,7 @@ export class ReaderTtsFloatingSession {
     ReaderTtsFloatingSession.audioSkipAction = null;
     ReaderTtsFloatingSession.audioSeekByAction = null;
     ReaderTtsFloatingSession.audioSkipUndoAction = null;
+    ReaderTtsFloatingSession.watchVideoAction = null;
     ReaderTtsFloatingSession.clearSentenceControl();
     ReaderTtsFloatingSession.catalogTitleLabels = [];
     ReaderTtsFloatingSession.catalogCachedFlags = [];

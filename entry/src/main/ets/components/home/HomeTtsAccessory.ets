@@ -52,9 +52,23 @@ export struct HomeTtsAccessory {
     Stack({ alignContent: Alignment.Bottom }) {
       Row({ space: AppSpacing.SM }) {
         Row({ space: AppSpacing.MD }) {
-          this.disc()
+          // 听视频：转动的封面不带标记，角标放在外面一层，不跟着转。
+          Stack({ alignContent: Alignment.BottomEnd }) {
+            this.disc()
+            if (this.isVideo()) {
+              Stack() {
+                SymbolGlyph($r('sys.symbol.play_fill')).fontSize(8).fontColor([Color.White])
+              }
+              .width(15)
+              .height(15)
+              .borderRadius(7.5)
+              .backgroundColor(this.accentColor)
+              .border({ width: 1.5, color: Color.White })
+              .offset({ x: 2, y: 2 })
+            }
+          }
           Column({ space: 1 }) {
-            Text(this.bookName || (this.isAudio() ? '听书' : '朗读'))
+            Text(this.bookName || (this.isVideo() ? '听视频' : (this.isAudio() ? '听书' : '朗读')))
               .fontSize(AppFontSize.BODY)
               .fontWeight(FontWeight.Medium)
               .fontColor(this.textColor)
@@ -220,13 +234,18 @@ export struct HomeTtsAccessory {
     });
   }
 
+  /** 听视频和听书一样按播放器进度显示进度线。 */
   isAudio(): boolean {
-    return this.mode === 'audio';
+    return this.mode === 'audio' || this.mode === 'video';
+  }
+
+  isVideo(): boolean {
+    return this.mode === 'video';
   }
 
   subtitle(): string {
     if (this.busy) return '加载中…';
-    const chapter = this.chapterTitle || (this.isAudio() ? '听书中' : '朗读中');
+    const chapter = this.chapterTitle || (this.isVideo() ? '听视频中' : (this.isAudio() ? '听书中' : '朗读中'));
     return this.paused ? `已暂停 · ${chapter}` : chapter;
   }
 

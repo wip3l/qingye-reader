@@ -654,8 +654,9 @@ export struct ListenTabPage {
 
   heroBadge(): string {
     if (!this.ttsActive) return '上次收听';
-    const state = this.ttsPaused ? '已暂停' : (this.ttsMode === 'audio' ? '收听中' : '朗读中');
-    return this.ttsMode !== 'audio' && this.ttsVoiceCode ? `${state} · ${this.ttsVoiceCode}` : state;
+    const state = this.ttsPaused ? '已暂停' :
+      (this.ttsMode === 'audio' ? '收听中' : (this.ttsMode === 'video' ? '听视频中' : '朗读中'));
+    return this.ttsMode !== 'audio' && this.ttsMode !== 'video' && this.ttsVoiceCode ? `${state} · ${this.ttsVoiceCode}` : state;
   }
 
   heroPercent(): number {

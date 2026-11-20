@@ -37,6 +37,8 @@ const context = vm.createContext({
   AppDatabase: { getInstance: () => ({ updateBook: async book => saves.push(structuredClone(book)) }) },
   HdsFeedback: { showToast: text => notices.push(text) }, ReaderTtsFloatingSession: { pause: async () => {}, suspendForOtherAudio: async () => {}, resumeAfterOtherAudio: async () => {} },
   CookieStore: { saveSync() {} },
+  // 熄屏听视频：测试里没有在听的剧，接过位置一律返回 null。
+  VideoListenSession: { get: () => ({ isListening: () => false, takeOver: async () => null, setHost() {}, setAutoNext() {}, playEpisode() {} }) },
   // 图文书里的视频章：测试里用 mixedTest 标记混排书，章节 type 为 video 的是视频章。
   MixedVideoChapter: { isMixedBook: book => !!(book && book.mixedTest) },
   BookChapter: { isVideoChapter: chapter => !!chapter && chapter.type === 'video' },
