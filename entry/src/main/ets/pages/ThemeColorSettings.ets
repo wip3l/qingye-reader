@@ -371,6 +371,8 @@ struct ThemeColorSettingsPage {
   private fontDraftRevision: number = -1;
 
   aboutToAppear(): void {
+    // 进来时编辑的那一套跟着应用当前的日夜模式：夜间看到的是深色，改的也应是深色
+    this.selectedMode = this.appDarkMode ? 'dark' : 'light';
     this.reloadSettings();
     this.syncBars();
   }
