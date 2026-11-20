@@ -19,7 +19,7 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingRow, SettingSwitchRow } from '../components/common/SettingRow';
 import { ShelfGreetingEditor } from '../components/home/ShelfGreetingEditor';
 import { ShelfSectionTitleEditor } from '../components/home/ShelfSectionTitleEditor';
-import { ShelfGreetingTemplate } from '../utils/ShelfGreetingTemplate';
+import { ShelfGreetingSlot, ShelfGreetingTemplate } from '../utils/ShelfGreetingTemplate';
 import { BookshelfSortHelper } from '../utils/BookshelfSortHelper';
 
 @Entry
@@ -49,6 +49,7 @@ struct BookshelfSettingsPage {
   @StorageLink('bookshelfGreetingMode') bookshelfGreetingMode: string = 'time';
   @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
   @StorageLink('bookshelfGreetingSubtitle') bookshelfGreetingSubtitle: string = '';
+  @StorageLink('bookshelfGreetingSlots') bookshelfGreetingSlots: string = '';
   @StorageLink('bookshelfCompanionSectionTitle') bookshelfCompanionSectionTitle: string = '';
   @StorageLink('bookshelfAutoRefresh') bookshelfAutoRefresh: boolean = true;
   @StorageLink('bookshelfImmersive') bookshelfImmersive: boolean = false;
@@ -449,6 +450,7 @@ struct BookshelfSettingsPage {
       this.bookshelfGreetingMode = settings.greetingMode;
       this.bookshelfGreetingTitle = settings.greetingTitle;
       this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
+      this.bookshelfGreetingSlots = settings.greetingSlots;
       this.bookshelfCompanionSectionTitle = settings.companionSectionTitle;
       this.bookshelfAutoRefresh = settings.autoRefresh;
       this.bookshelfImmersive = settings.immersive;
@@ -645,6 +647,7 @@ struct BookshelfSettingsPage {
     settings.greetingMode = this.bookshelfGreetingMode;
     settings.greetingTitle = this.bookshelfGreetingTitle;
     settings.greetingSubtitle = this.bookshelfGreetingSubtitle;
+    settings.greetingSlots = this.bookshelfGreetingSlots;
     settings.companionSectionTitle = this.bookshelfCompanionSectionTitle;
     settings.autoRefresh = this.bookshelfAutoRefresh;
     settings.immersive = this.bookshelfImmersive;
@@ -673,14 +676,22 @@ struct BookshelfSettingsPage {
     return this.bookshelfGreetingMode === 'off' ? 2 : 0;
   }
 
+  greetingSlots(): ShelfGreetingSlot[] {
+    return ShelfGreetingTemplate.parseSlots(
+      this.bookshelfGreetingSlots, this.bookshelfGreetingTitle, this.bookshelfGreetingSubtitle);
+  }
+
   greetingSummary(): string {
-    const lines = [this.bookshelfGreetingTitle, this.bookshelfGreetingSubtitle].filter((line: string) => !!line);
+    const slots = this.greetingSlots();
+    if (slots.length > 1) return `按时段写了 ${slots.length} 条`;
+    const lines = [slots[0].title, slots[0].subtitle].filter((line: string) => !!line);
     return lines.length > 0 ? lines.join(' / ') : '未填写，显示默认问候';
   }
 
   /** 切到自定义时若还没写过，先填入和内置一样的文案，书架上看起来不变，再打开编辑框。 */
   selectGreetingMode(mode: string): void {
-    if (mode === 'custom' && !this.bookshelfGreetingTitle && !this.bookshelfGreetingSubtitle) {
+    if (mode === 'custom' && !this.bookshelfGreetingSlots && !this.bookshelfGreetingTitle &&
+      !this.bookshelfGreetingSubtitle) {
       const draft = ShelfGreetingTemplate.defaultDraft(new Date().getHours());
       this.bookshelfGreetingTitle = draft[0];
       this.bookshelfGreetingSubtitle = draft[1];
@@ -702,10 +713,9 @@ struct BookshelfSettingsPage {
     } catch (e) {
       console.warn('读取最近阅读书籍失败:', e);
     }
-    const title = this.bookshelfGreetingTitle;
-    const subtitle = this.bookshelfGreetingSubtitle;
+    const slots = ShelfGreetingTemplate.serializeSlots(this.greetingSlots());
     this.greetingEditorDialogSession.open(this.getUIContext(), (): void => {
-      this.greetingEditorDialogContent(title, subtitle, readingBookName);
+      this.greetingEditorDialogContent(slots, readingBookName);
     }, {
       // 写到一半误触蒙层或返回键不能丢稿，只能点取消或保存关闭。
       autoCancel: false,
@@ -715,18 +725,18 @@ struct BookshelfSettingsPage {
   }
 
   @Builder
-  greetingEditorDialogContent(title: string, subtitle: string, readingBookName: string) {
+  greetingEditorDialogContent(slots: string, readingBookName: string) {
     ShelfGreetingEditor({
       appDarkMode: this.appDarkMode,
-      initialTitle: title,
-      initialSubtitle: subtitle,
+      initialSlots: slots,
       nickname: this.accountDisplayName,
       todayReadMs: this.shelfTodayReadMs,
       readingBookName: readingBookName,
-      onSave: (nextTitle: string, nextSubtitle: string): void => {
+      onSave: (nextSlots: string, nextTitle: string, nextSubtitle: string): void => {
         this.bookshelfGreetingMode = 'custom';
         this.bookshelfGreetingTitle = nextTitle;
         this.bookshelfGreetingSubtitle = nextSubtitle;
+        this.bookshelfGreetingSlots = nextSlots;
         this.onDisplaySettingChanged();
         this.greetingEditorDialogSession.close(this.getUIContext());
       },
@@ -734,6 +744,7 @@ struct BookshelfSettingsPage {
         this.bookshelfGreetingMode = 'time';
         this.bookshelfGreetingTitle = '';
         this.bookshelfGreetingSubtitle = '';
+        this.bookshelfGreetingSlots = '';
         this.onDisplaySettingChanged();
         this.greetingEditorDialogSession.close(this.getUIContext());
       },

@@ -52,7 +52,7 @@ import { RecentReadCarousel } from './RecentReadCarousel';
 import { ShelfReadingNoteCard } from './ShelfReadingNoteCard';
 import { ShelfGreetingEditor } from './ShelfGreetingEditor';
 import { ShelfSectionTitleEditor } from './ShelfSectionTitleEditor';
-import { ShelfGreetingTemplate, ShelfGreetingValues } from '../../utils/ShelfGreetingTemplate';
+import { ShelfGreetingSlot, ShelfGreetingTemplate, ShelfGreetingValues } from '../../utils/ShelfGreetingTemplate';
 import { CategorySwipePager } from './CategorySwipePager';
 import { ShelfCategoryMaterial } from './ShelfCategoryMaterial';
 import { SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
@@ -626,6 +626,9 @@ export struct BookshelfPage {
   @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
   @StorageLink('bookshelfGreetingSubtitle') bookshelfGreetingSubtitle: string = '';
   @StorageLink('bookshelfCompanionSectionTitle') bookshelfCompanionSectionTitle: string = '';
+  @StorageLink('bookshelfGreetingSlots') bookshelfGreetingSlots: string = '';
+  private greetingSlotsCacheKey: string = '';
+  private greetingSlotsCache: ShelfGreetingSlot[] = [];
   @StorageProp('accountDisplayName') accountDisplayName: string = '';
   /** 阅读小记读出的今日时长，问候语 {今日阅读} 直接用。 */
   @StorageProp('shelfTodayReadMs') shelfTodayReadMs: number = 0;
@@ -847,6 +850,7 @@ export struct BookshelfPage {
       // 书架挂载（冷启动）时直接从收起状态开始；书还没读出来时 shelfHeaderCollapseValue 为 0，读出来后首帧就是收起的。
       if (settings.immersive) this.collapseShelfChromeForImmersive(false);
     } catch (e) {
+      this.bookshelfGreetingSlots = settings.greetingSlots;
       console.warn('恢复书架显示设置失败:', e);
     }
   }
@@ -5583,7 +5587,18 @@ export struct BookshelfPage {
     values.nickname = this.accountDisplayName;
     values.todayReadMs = this.shelfTodayReadMs;
     values.readingBookName = this.shelfCompanionReadingBookName(pageKey);
-    return ShelfGreetingTemplate.customLines(this.bookshelfGreetingTitle, this.bookshelfGreetingSubtitle, values);
+    return ShelfGreetingTemplate.slotLines(this.shelfGreetingSlots(), values);
+  }
+
+  /** 自定义问候语的时段列表；这一帧里两行文字各取一次，设置没变就不重复解析。 */
+  shelfGreetingSlots(): ShelfGreetingSlot[] {
+    const key = `${this.bookshelfGreetingSlots}\u0000${this.bookshelfGreetingTitle}\u0000${this.bookshelfGreetingSubtitle}`;
+    if (key !== this.greetingSlotsCacheKey) {
+      this.greetingSlotsCacheKey = key;
+      this.greetingSlotsCache = ShelfGreetingTemplate.parseSlots(
+        this.bookshelfGreetingSlots, this.bookshelfGreetingTitle, this.bookshelfGreetingSubtitle);
+    }
+    return this.greetingSlotsCache;
   }
 
   /** 长按问候语直接改文案，不用进书架设置。 */
@@ -5612,13 +5627,12 @@ export struct BookshelfPage {
 
   openGreetingEditor(pageKey: string): void {
     if (this.isBookMultiSelect) return;
-    const custom = this.bookshelfGreetingMode === 'custom';
     const draft = ShelfGreetingTemplate.defaultDraft(new Date().getHours());
-    const title = custom ? this.bookshelfGreetingTitle : draft[0];
-    const subtitle = custom ? this.bookshelfGreetingSubtitle : draft[1];
+    const slots = ShelfGreetingTemplate.serializeSlots(this.bookshelfGreetingMode === 'custom' ?
+      this.shelfGreetingSlots() : [new ShelfGreetingSlot(0, draft[0], draft[1])]);
     const readingBookName = this.shelfCompanionReadingBookName(pageKey);
     this.greetingEditorDialogSession.open(this.getUIContext(), (): void => {
-      this.greetingEditorDialogContent(title, subtitle, readingBookName);
+      this.greetingEditorDialogContent(slots, readingBookName);
     }, {
       // 写到一半误触蒙层或返回键不能丢稿，只能点取消或保存关闭。
       autoCancel: false,
@@ -5628,23 +5642,24 @@ export struct BookshelfPage {
   }
 
   @Builder
-  greetingEditorDialogContent(title: string, subtitle: string, readingBookName: string) {
+  greetingEditorDialogContent(slots: string, readingBookName: string) {
     ShelfGreetingEditor({
       appDarkMode: this.appDarkMode,
-      initialTitle: title,
-      initialSubtitle: subtitle,
+      initialSlots: slots,
       nickname: this.accountDisplayName,
       todayReadMs: this.shelfTodayReadMs,
       readingBookName: readingBookName,
-      onSave: (nextTitle: string, nextSubtitle: string): void => this.saveGreeting('custom', nextTitle, nextSubtitle),
-      onSaveDefault: (): void => this.saveGreeting('time', '', ''),
+      onSave: (nextSlots: string, nextTitle: string, nextSubtitle: string): void =>
+        this.saveGreeting('custom', nextTitle, nextSubtitle, nextSlots),
+      onSaveDefault: (): void => this.saveGreeting('time', '', '', ''),
       onCancel: (): void => this.greetingEditorDialogSession.close(this.getUIContext())
     })
   }
+    values.minute = now.getMinutes();
 
-  saveGreeting(mode: string, title: string, subtitle: string): void {
+  saveGreeting(mode: string, title: string, subtitle: string, slots: string): void {
     this.greetingEditorDialogSession.close(this.getUIContext());
-    BookshelfDisplaySettingsStore.saveGreeting(getContext(this), mode, title, subtitle).catch((e: Error) => {
+    BookshelfDisplaySettingsStore.saveGreeting(getContext(this), mode, title, subtitle, slots).catch((e: Error) => {
       console.warn('保存问候语失败:', e);
       HdsFeedback.showToast('问候语保存失败');
     });

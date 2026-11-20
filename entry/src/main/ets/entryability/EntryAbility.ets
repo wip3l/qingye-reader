@@ -255,6 +255,7 @@ export default class EntryAbility extends UIAbility {
     PersistentStorage.persistProp('bookshelfGreetingTitle', '');
     PersistentStorage.persistProp('bookshelfGreetingSubtitle', '');
     PersistentStorage.persistProp('bookshelfCompanionSectionTitle', '');
+    PersistentStorage.persistProp('bookshelfGreetingSlots', '');
     PersistentStorage.persistProp('bookshelfCoverAlbums', '');
     PersistentStorage.persistProp('bookshelfLightCoverAlbumId', '');
     PersistentStorage.persistProp('bookshelfDarkCoverAlbumId', '');
