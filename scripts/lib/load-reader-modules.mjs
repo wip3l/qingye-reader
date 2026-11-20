@@ -34,6 +34,7 @@ const MODULES = [
   'core/reader/ReaderPageTurnQueue.ts',
   'core/reader/ReaderInfoBarModel.ts',
   'core/reader/ReaderContentSearchMatcher.ts',
+  'core/lan/LanReaderActions.ts',
 ];
 
 export async function loadReaderModules() {
