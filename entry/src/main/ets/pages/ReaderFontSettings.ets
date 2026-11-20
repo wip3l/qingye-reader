@@ -8,7 +8,8 @@ import { ReaderWeightedText, ReaderWeightedTextSpan } from '../components/reader
 import { ReaderTypographyPreview, ReaderTypographyPreviewConfig } from '../components/reader/ReaderTypographyPreview';
 import { ReaderV2DocumentParser } from '../core/reader/ReaderV2Document';
 import { ReaderV2BubbleFrame, ReaderV2Color, ReaderV2SpanStyleRange } from '../core/reader/ReaderV2Style';
-import { ReaderParagraphIndent } from '../core/reader/ReaderParagraphIndent';
+import { ReaderParagraphIndentMatcher } from '../core/reader/ReaderParagraphIndent';
+import { ReaderTextNormalizer } from '../core/reader/ReaderTextNormalizer';
 import { syncSystemBars } from '../utils/SystemBars';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ReaderFontHelper, ReaderFontItem } from '../utils/ReaderFontHelper';
@@ -1307,6 +1308,30 @@ export struct ReaderFontSettingsEditor {
         }
         .width('100%')
 
+        if (ReaderRegexScope.includesBody(this.editingRegexRule.scope)) {
+          Column({ space: AppSpacing.SM }) {
+            Text('段首缩进（字符）')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.subTextColor())
+              .width('100%')
+            SettingSegment({
+              labels: ['跟随全局', '0', '1', '2', '3', '4'],
+              selected: this.editingRegexRule.paragraphIndent + 1,
+              inset: false,
+              onSelect: (selected: number) => {
+                this.updateRegexRule(EDITING_REGEX_RULE_INDEX, (target: ReaderRegexFontRule) => {
+                  target.paragraphIndent = selected - 1;
+                });
+              }
+            })
+            Text('以命中文字开头的段落按这里的字符数缩进，其余段落不变。')
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+              .width('100%')
+          }
+          .width('100%')
+        }
+
         this.compactFontModeItem('字体类型', this.editingRegexRule.fontMode, this.editingRegexRule.fontFamily,
           (mode: string, family: string) => {
             this.updateRegexRule(EDITING_REGEX_RULE_INDEX, (target: ReaderRegexFontRule) => {
@@ -1780,10 +1805,10 @@ export struct ReaderFontSettingsEditor {
     input.commentsEnabled = false;
     config.fontSizeVp = this.readerFontSize;
     config.viewportHeightVp = this.titleReadingPreviewHeight;
-    const indent = '　'.repeat(ReaderParagraphIndent.normalize(layout.paragraphIndent));
-    const body = withBody ? '\n' + indent +
+    const body = withBody ? '\n' + this.previewIndentedBody(
       '清晨的风穿过长街，带来一阵粽叶的清香。街角的小摊刚刚支起，竹篮里整整齐齐地码着新煮好的粽子。\n' +
-      indent + '“卖鸭蛋，卖粽子喽——”一声吆喝，把沉睡的小城轻轻唤醒。' : '';
+      '“卖鸭蛋，卖粽子喽——”一声吆喝，把沉睡的小城轻轻唤醒。',
+      this.readerRegexFontEnabled ? this.regexRules : []) : '';
     config.document = ReaderV2DocumentParser.parse(this.titlePreviewText + body, 0, this.titlePreviewText, [], this.titleStyle);
     const titlePlan = this.titleEmphasisPlan(this.typographyPreviewContext());
     if (titlePlan) {
@@ -2034,7 +2059,7 @@ export struct ReaderFontSettingsEditor {
 
   regexPreviewText(rule: ReaderRegexFontRule): string {
     if (rule.name === '对话') {
-      return '他说：“你好。”她点头说：「走吧。」';
+      return '他说：“你好。”她点头说：「走吧。」\n“这就来。”她应了一声。';
     }
     if (rule.name === '关键字匹配') {
       return `这里包含${this.regexPreviewKeyword(rule.pattern)}，命中后会使用当前正则字体。`;
@@ -2067,6 +2092,13 @@ export struct ReaderFontSettingsEditor {
       return `第三章 ${this.regexPreviewKeyword(rule.pattern)}`;
     }
     return '第三章 重逢';
+  }
+
+  /** 预览正文按阅读页的办法加段首缩进：全局字符数，规则另设了缩进的段落用规则的。 */
+  previewIndentedBody(text: string, rules: ReaderRegexFontRule[]): string {
+    const matcher = new ReaderParagraphIndentMatcher(ReaderRegexFontCodec.indentOverrides(rules));
+    return text.split('\n').map((line: string): string => ReaderTextNormalizer.indentLine(line,
+      this.previewLayoutSettings.paragraphIndent, matcher.isEmpty() ? null : matcher)).join('\n');
   }
 
   previewTitleRanges(config: ReaderTypographyPreviewConfig): number[][] {
@@ -2163,8 +2195,8 @@ export struct ReaderFontSettingsEditor {
     config.fontSizeVp = this.readerFontSize;
     const rule = this.regexRuleAt(index);
     const title = this.regexPreviewTitle(rule);
-    config.document = ReaderV2DocumentParser.parse(`${title}\n${this.regexPreviewText(rule)}`, 0, title, [],
-      this.titleStyle);
+    config.document = ReaderV2DocumentParser.parse(
+      `${title}\n${this.previewIndentedBody(this.regexPreviewText(rule), [rule])}`, 0, title, [], this.titleStyle);
     const emphasisContext = this.regexEmphasisContext();
     const titlePlan = this.titleEmphasisPlan(emphasisContext);
     const titleInScope = ReaderRegexScope.includesTitle(rule.scope);

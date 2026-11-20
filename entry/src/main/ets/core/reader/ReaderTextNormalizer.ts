@@ -1,6 +1,6 @@
 import { ReaderActionMarker } from '@legado/sourceengine';
 import { ReaderImageMarker } from '../book/ReaderImageMarker';
-import { ReaderParagraphIndent } from './ReaderParagraphIndent';
+import { ReaderParagraphIndent, ReaderParagraphIndentMatcher } from './ReaderParagraphIndent';
 
 /**
  * 章节正文归一化（纯逻辑，不依赖 ArkUI）：换行与空白清理、软换行合并、段首缩进、重复标题剥离。
@@ -142,18 +142,21 @@ export class ReaderTextNormalizer {
     return prev.length < 48 && next.length < 48;
   }
 
-  static indentChapterBody(text: string, indentChars: number = ReaderParagraphIndent.DEFAULT): string {
+  /** matcher 给出按段落开头另设缩进的规则（正则字体规则的“段首缩进”）；没有时所有段落用 indentChars。 */
+  static indentChapterBody(text: string, indentChars: number = ReaderParagraphIndent.DEFAULT,
+    matcher: ReaderParagraphIndentMatcher | null = null): string {
     const normalized = ReaderTextNormalizer.normalizeChapterBody(text);
     if (!normalized) {
       return '';
     }
     return normalized
       .split('\n')
-      .map((line: string) => ReaderTextNormalizer.indentLine(line, indentChars))
+      .map((line: string) => ReaderTextNormalizer.indentLine(line, indentChars, matcher))
       .join('\n');
   }
 
-  static indentLine(line: string, indentChars: number = ReaderParagraphIndent.DEFAULT): string {
+  static indentLine(line: string, indentChars: number = ReaderParagraphIndent.DEFAULT,
+    matcher: ReaderParagraphIndentMatcher | null = null): string {
     if (!line || line.trim().length === 0) {
       return line;
     }
@@ -162,8 +165,9 @@ export class ReaderTextNormalizer {
     if (ReaderImageMarker.isMarker(trimmed)) {
       return trimmed;
     }
-    const indent = '　'.repeat(ReaderParagraphIndent.normalize(indentChars));
-    return `${indent}${line.replace(/^[　\s]+/g, '')}`;
+    const content = line.replace(/^[　\s]+/g, '');
+    const chars = matcher ? matcher.indentFor(content, indentChars) : indentChars;
+    return `${'　'.repeat(ReaderParagraphIndent.normalize(chars))}${content}`;
   }
 
   /**

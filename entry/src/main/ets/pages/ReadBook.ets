@@ -236,7 +236,7 @@ import {
   ReaderV2HighlightRect
 } from '../core/reader/ReaderPageModels';
 import { ReaderTextNormalizer } from '../core/reader/ReaderTextNormalizer';
-import { ReaderParagraphIndent } from '../core/reader/ReaderParagraphIndent';
+import { ReaderParagraphIndent, ReaderParagraphIndentMatcher } from '../core/reader/ReaderParagraphIndent';
 import { ReaderHorizontalMargin } from '../core/reader/ReaderHorizontalMargin';
 import { ReaderImageSizeResolver } from '../core/reader/ReaderImageSizeResolver';
 import { ReaderImageBitmapCache } from '../core/reader/ReaderImageBitmapCache';
@@ -855,6 +855,8 @@ struct ReadBookPage {
   private readerPaginationBottomFitTimerId: number = -1;
   private cachedRegexRulesKey: string = '';
   private cachedRegexRules: ReaderRegexFontRule[] = [];
+  private regexIndentMatcher: ReaderParagraphIndentMatcher | null = null;
+  private regexIndentMatcherRules: ReaderRegexFontRule[] | null = null;
   private adjacentPaginationPreloadSerial: number = 0;
   private previousPaginationPreloadSerial: number = 0;
   private adjacentPaginationPreloadActiveSerial: number = -1;
@@ -16028,7 +16030,18 @@ ${leading}` : leading;
   }
 
   buildIndentedChapterBody(text: string): string {
-    return ReaderTextNormalizer.indentChapterBody(text, this.readerParagraphIndent);
+    return ReaderTextNormalizer.indentChapterBody(text, this.readerParagraphIndent, this.readerRegexIndentMatcher());
+  }
+
+  /** 正则字体规则里另设了段首缩进的那些；规则列表换了才重新编译。没有时返回 null。 */
+  readerRegexIndentMatcher(): ReaderParagraphIndentMatcher | null {
+    if (!this.readerRegexFontEnabled) return null;
+    const rules = this.getRegexRules();
+    if (rules !== this.regexIndentMatcherRules || !this.regexIndentMatcher) {
+      this.regexIndentMatcherRules = rules;
+      this.regexIndentMatcher = new ReaderParagraphIndentMatcher(ReaderRegexFontCodec.indentOverrides(rules));
+    }
+    return this.regexIndentMatcher.isEmpty() ? null : this.regexIndentMatcher;
   }
 
   toMeasurePx(value: number): number {

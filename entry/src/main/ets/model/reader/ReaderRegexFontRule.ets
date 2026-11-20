@@ -1,5 +1,6 @@
 import { ThemeAccessPolicy } from '../../account/ThemeAccessPolicy';
 import { ReaderFontWeight } from '../../core/reader/ReaderFontWeight';
+import { ReaderParagraphIndentOverride } from '../../core/reader/ReaderParagraphIndent';
 import { HexColor } from '../../utils/HexColor';
 import { isPackThemeId, TITLE_BUBBLE_SAME_AS_EMPHASIS } from '../../theme/share/ThemePackageFormat';
 import { ThemeTitleEmphasisTokens } from '../../theme/ThemeModels';
@@ -14,6 +15,8 @@ export class ReaderRegexFontRule {
   fontWeight: number = 400;
   /** 作用范围，见 ReaderRegexScope；没有这个字段的旧规则按“全部”。 */
   scope: string = 'all';
+  /** 以命中文字开头的段落的段首缩进字符数（0～4）；-1 跟随全局。只对范围含正文的规则有效。 */
+  paragraphIndent: number = -1;
   emphasisMode: string = 'inherit';
   bubbleStyleId: string = 'inherit';
   emphasisColor: string = '';
@@ -154,6 +157,7 @@ export class ReaderRegexFontCodec {
       rule.fontSize = ReaderRegexFontCodec.normalizeFontSize(item.fontSize);
       rule.fontWeight = ReaderFontWeight.normalize(item.fontWeight);
       rule.scope = ReaderRegexScope.normalize(item.scope);
+      rule.paragraphIndent = ReaderRegexFontCodec.normalizeParagraphIndent(item.paragraphIndent);
       const legacyEmphasisMode = (item.emphasisMode || '').trim();
       rule.emphasisMode = ReaderRegexFontCodec.normalizeEmphasisMode(
         item.emphasisMode,
@@ -236,6 +240,23 @@ export class ReaderRegexFontCodec {
   static normalizeResolvedBubbleStyleId(styleId: string): string {
     const value = ReaderRegexFontCodec.normalizeBubbleStyleId(styleId);
     return value === 'inherit' ? 'qq-soft' : value;
+  }
+
+  static normalizeParagraphIndent(value: number): number {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.min(4, Math.round(value)) : -1;
+  }
+
+  /** 各规则另设的段首缩进，按规则顺序；交给 ReaderParagraphIndentMatcher。 */
+  static indentOverrides(rules: ReaderRegexFontRule[]): ReaderParagraphIndentOverride[] {
+    const result: ReaderParagraphIndentOverride[] = [];
+    for (const rule of rules) {
+      if (rule.paragraphIndent < 0 || !rule.pattern.trim() || !ReaderRegexScope.includesBody(rule.scope)) continue;
+      const item = new ReaderParagraphIndentOverride();
+      item.pattern = rule.pattern;
+      item.indent = rule.paragraphIndent;
+      result.push(item);
+    }
+    return result;
   }
 
   static normalizeFontMode(mode: string): string {
