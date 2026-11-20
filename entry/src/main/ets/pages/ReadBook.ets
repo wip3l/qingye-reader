@@ -99,6 +99,7 @@ import {
   ReaderRegexEmphasisContext,
   ReaderRegexFontCodec,
   ReaderRegexFontRule,
+  ReaderRegexScope,
   ReaderRegexLegacySettings,
   ReaderResolvedRegexEmphasis,
   ReaderTitleEmphasis
@@ -18705,7 +18706,7 @@ ${leading}` : leading;
     return style;
   }
 
-  getRegexTextSlices(text: string): ReadTextSlice[] {
+  getRegexTextSlices(text: string, titleRanges: number[][] = []): ReadTextSlice[] {
     const displayText = text || '';
     const rules = this.getRegexRules();
     if (!this.readerRegexFontEnabled || rules.length === 0) {
@@ -18743,7 +18744,9 @@ ${leading}` : leading;
             match = regex.exec(displayText);
             continue;
           }
-          if (!this.hasOverlappedRegexSlice(matched, start, end)) {
+          // 范围外的命中不占位，后面的规则还能用这段文字。
+          if (ReaderRegexScope.accepts(rule.scope, start, end, titleRanges) &&
+            !this.hasOverlappedRegexSlice(matched, start, end)) {
             const matchText = displayText.substring(start, end);
             matched.push({
               text: matchText,
@@ -19048,7 +19051,12 @@ ${leading}` : leading;
   buildReaderV2RegexStyles(document: ReaderV2Document): ReaderV2SpanStyleRange[] {
     if (!document.displayText) return [];
     const startedAt = Date.now();
-    const slices: ReadTextSlice[] = this.readerRegexFontEnabled ? this.getRegexTextSlices(document.displayText) : [];
+    const titleRanges: number[][] = [];
+    for (const block of document.blocks) {
+      if (block.title) titleRanges.push([block.displayStart, block.displayEnd]);
+    }
+    const slices: ReadTextSlice[] = this.readerRegexFontEnabled ?
+      this.getRegexTextSlices(document.displayText, titleRanges) : [];
     const titleStyles = this.buildReaderV2TitleStyles(document);
     const result: ReaderV2SpanStyleRange[] = titleStyles.slice();
     // Every hit of one rule shares the same resolved style. Resolving the theme emphasis per hit cost

@@ -12,6 +12,8 @@ import { AppSpacing } from '../../theme/AppSpacing';
 export struct SettingSegment {
   @Prop labels: string[] = [];
   @Prop selected: number = 0;
+  /** 放在已经留好左右边距的容器里时传 false：占满宽度、不带外边距。 */
+  @Prop inset: boolean = true;
   @StorageProp('appDarkMode') appDarkMode: boolean = false;
   @StorageProp('themeRevision') themeRevision: number = 0;
   onSelect: (index: number) => void = (_index: number) => {
@@ -39,9 +41,10 @@ export struct SettingSegment {
           })
       }, (label: string, index: number) => `${index}_${label}_${index === this.selected ? 1 : 0}_${this.appDarkMode ? 1 : 0}_${this.themeRevision}`)
     }
-    .width('calc(100% - 32vp)')
+    .width(this.inset ? 'calc(100% - 32vp)' : '100%')
     .padding(3)
-    .margin({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: AppSpacing.LG })
+    .margin({ left: this.inset ? AppSpacing.XL : 0, right: this.inset ? AppSpacing.XL : 0,
+      bottom: this.inset ? AppSpacing.LG : 0 })
     .borderRadius(10)
     .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
   }

@@ -12,6 +12,8 @@ export class ReaderRegexFontRule {
   fontFamily: string = '';
   fontSize: number = 20;
   fontWeight: number = 400;
+  /** 作用范围，见 ReaderRegexScope；没有这个字段的旧规则按“全部”。 */
+  scope: string = 'all';
   emphasisMode: string = 'inherit';
   bubbleStyleId: string = 'inherit';
   emphasisColor: string = '';
@@ -25,6 +27,55 @@ export class ReaderRegexFontRule {
   highlightColorEnabled: boolean = false;
   shadowColor: string = '';
   expanded: boolean = true;
+}
+
+/**
+ * 正则规则的作用范围：全部、只在章节标题里、只在正文里。阅读页和设置页预览都用 accepts 判断一次命中算不算数。
+ * 标题强调画出来时标题仍归标题强调，规则在标题里不显示。
+ */
+export class ReaderRegexScope {
+  static readonly ALL: string = 'all';
+  static readonly TITLE: string = 'title';
+  static readonly BODY: string = 'body';
+  static readonly IDS: string[] = ['all', 'title', 'body'];
+  static readonly LABELS: string[] = ['全部', '仅标题', '仅正文'];
+
+  static normalize(scope: string): string {
+    return scope === ReaderRegexScope.TITLE || scope === ReaderRegexScope.BODY ? scope : ReaderRegexScope.ALL;
+  }
+
+  static index(scope: string): number {
+    return Math.max(0, ReaderRegexScope.IDS.indexOf(ReaderRegexScope.normalize(scope)));
+  }
+
+  static includesTitle(scope: string): boolean {
+    return ReaderRegexScope.normalize(scope) !== ReaderRegexScope.BODY;
+  }
+
+  static includesBody(scope: string): boolean {
+    return ReaderRegexScope.normalize(scope) !== ReaderRegexScope.TITLE;
+  }
+
+  /** 规则列表里规则名后面的标注；全部时不标。 */
+  static badge(scope: string): string {
+    const value = ReaderRegexScope.normalize(scope);
+    return value === ReaderRegexScope.TITLE ? '标题' : value === ReaderRegexScope.BODY ? '正文' : '';
+  }
+
+  /** titles 是各标题块在显示文本里的 [起, 止) 区间。仅标题要求命中整个落在一个标题里，仅正文要求不碰标题。 */
+  static accepts(scope: string, start: number, end: number, titles: number[][]): boolean {
+    const value = ReaderRegexScope.normalize(scope);
+    if (value === ReaderRegexScope.ALL) return true;
+    let inside = false;
+    let touches = false;
+    for (const title of titles) {
+      if (start < title[1] && end > title[0]) {
+        touches = true;
+        if (start >= title[0] && end <= title[1]) inside = true;
+      }
+    }
+    return value === ReaderRegexScope.TITLE ? inside : !touches;
+  }
 }
 
 export class ReaderRegexFontRulesData {
@@ -102,6 +153,7 @@ export class ReaderRegexFontCodec {
       rule.fontFamily = item.fontFamily || '';
       rule.fontSize = ReaderRegexFontCodec.normalizeFontSize(item.fontSize);
       rule.fontWeight = ReaderFontWeight.normalize(item.fontWeight);
+      rule.scope = ReaderRegexScope.normalize(item.scope);
       const legacyEmphasisMode = (item.emphasisMode || '').trim();
       rule.emphasisMode = ReaderRegexFontCodec.normalizeEmphasisMode(
         item.emphasisMode,
