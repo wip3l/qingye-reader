@@ -195,6 +195,8 @@ export struct ExplorePage {
   private hasRestoredExploreSelection: boolean = false;
   private shelfStatusVersion: number = 0;
   private exploreLoadVersion: number = 0;
+  /** 筛选面板每点选一次加一，用来丢掉晚到的联动结果。 */
+  private exploreFilterDraftSeq: number = 0;
   private exploreContentLoadedAt: number = 0;
   private explorePage: number = 1;
   private exploreMetadataQueue: ExploreMetadataTask[] = [];
@@ -2531,10 +2533,12 @@ export struct ExplorePage {
   private refreshLinkedFilterDrafts(drafts: ExploreFilterGroup[]): void {
     const sourceUrl = this.selectedSourceUrl;
     if (!sourceUrl) return;
+    // 用序号判断结果是否过时：状态变量读回来的是代理对象，和传进来的数组比较永远不相等。
+    const seq = ++this.exploreFilterDraftSeq;
     this.coordinator.previewExploreFilters(sourceUrl, drafts).then((groups: ExploreFilterGroup[] | null) => {
       // 面板已关、换了书源，或用户又点了别的选项时，这次结果作废。
       if (!groups || !this.showExploreFilterPanel || this.selectedSourceUrl !== sourceUrl ||
-        this.exploreFilterDrafts !== drafts) return;
+        seq !== this.exploreFilterDraftSeq) return;
       this.exploreFilterDrafts = groups;
     }).catch((e: Error) => {
       console.warn('刷新联动筛选项失败:', e);
