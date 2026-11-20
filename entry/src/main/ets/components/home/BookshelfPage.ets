@@ -626,10 +626,10 @@ export struct BookshelfPage {
   @StorageLink('bookshelfGreetingMode') bookshelfGreetingMode: string = 'time';
   @StorageLink('bookshelfGreetingTitle') bookshelfGreetingTitle: string = '';
   @StorageLink('bookshelfGreetingSubtitle') bookshelfGreetingSubtitle: string = '';
-  @StorageLink('bookshelfCompanionSectionTitle') bookshelfCompanionSectionTitle: string = '';
   @StorageLink('bookshelfGreetingSlots') bookshelfGreetingSlots: string = '';
   private greetingSlotsCacheKey: string = '';
   private greetingSlotsCache: ShelfGreetingSlot[] = [];
+  @StorageLink('bookshelfCompanionSectionTitle') bookshelfCompanionSectionTitle: string = '';
   @StorageProp('accountDisplayName') accountDisplayName: string = '';
   /** 阅读小记读出的今日时长，问候语 {今日阅读} 直接用。 */
   @StorageProp('shelfTodayReadMs') shelfTodayReadMs: number = 0;
@@ -850,6 +850,7 @@ export struct BookshelfPage {
       this.bookshelfGreetingMode = settings.greetingMode;
       this.bookshelfGreetingTitle = settings.greetingTitle;
       this.bookshelfGreetingSubtitle = settings.greetingSubtitle;
+      this.bookshelfGreetingSlots = settings.greetingSlots;
       this.bookshelfCompanionSectionTitle = settings.companionSectionTitle;
       // 记住打开分组只在冷启动时读一次，这里只放进 AppStorage，免得长按改问候语等按内存值保存时把它冲掉。
       AppStorage.setOrCreate('bookshelfRememberGroup', settings.rememberGroup);
@@ -858,7 +859,6 @@ export struct BookshelfPage {
       // 书架挂载（冷启动）时直接从收起状态开始；书还没读出来时 shelfHeaderCollapseValue 为 0，读出来后首帧就是收起的。
       if (settings.immersive) this.collapseShelfChromeForImmersive(false);
     } catch (e) {
-      this.bookshelfGreetingSlots = settings.greetingSlots;
       console.warn('恢复书架显示设置失败:', e);
     }
   }
@@ -5647,6 +5647,7 @@ export struct BookshelfPage {
     if (this.bookshelfGreetingMode !== 'custom') return ShelfGreetingTemplate.defaultLines(now.getHours());
     const values = new ShelfGreetingValues();
     values.hour = now.getHours();
+    values.minute = now.getMinutes();
     values.date = now;
     values.nickname = this.accountDisplayName;
     values.todayReadMs = this.shelfTodayReadMs;
@@ -5719,7 +5720,6 @@ export struct BookshelfPage {
       onCancel: (): void => this.greetingEditorDialogSession.close(this.getUIContext())
     })
   }
-    values.minute = now.getMinutes();
 
   saveGreeting(mode: string, title: string, subtitle: string, slots: string): void {
     this.greetingEditorDialogSession.close(this.getUIContext());
