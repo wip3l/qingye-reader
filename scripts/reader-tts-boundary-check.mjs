@@ -13,7 +13,7 @@ const names = [
   'isCloudBreak', 'extendTtsBreak',
   'isClosingPunctuationAt', 'isClosingPunctuation', 'findSentenceBreak',
   'isStrongSentenceEnd', 'isWeakSentenceEnd', 'isSentenceEnd', 'isNumericDecimalPoint',
-  'isTrimChar', 'isHighSurrogate', 'safeHardCutIndex', 'snapPageBreakOffset',
+  'isTrimChar', 'isHighSurrogate', 'safeHardCutIndex', 'backOffHardCut', 'snapPageBreakOffset',
   'splitCloudFocusChunks', 'appendFocusChunk', 'cloudFocusChunkForSpeechRange',
   'buildProsodyCloudCues', 'normalizeChunkForSpeechWithMap', 'normalizeChunkForSpeech',
   'normalizeMathNotationForSpeech', 'replaceUnsafeSpeechCharacters', 'stripDecorativeSpeechSymbols'
@@ -56,6 +56,15 @@ for (const chunks of [reader.splitSystemText(hesitation, []), reader.splitCustom
   reader.splitCloudText(hesitation)]) {
   checkRanges(hesitation, chunks);
   for (const chunk of chunks) assert.doesNotMatch(chunk.text, /小神…+$/u, 'ellipsis inside a quote is not a chunk end');
+}
+// A long run with nowhere to cut (letters/digits only) must still advance: the hard cut used to
+// walk back to the chunk start and the split loop never ended.
+for (const run of ['a'.repeat(1200), '7'.repeat(1200), '哈'.repeat(30) + 'x'.repeat(1200) + '。']) {
+  const unbroken = `他念出那串编号：${run}\n　　然后合上了本子。`;
+  for (const chunks of [reader.splitSystemText(unbroken, []), reader.splitCustomText(unbroken, 64),
+    reader.splitCloudText(unbroken), reader.splitText(unbroken, 64)]) {
+    checkRanges(unbroken, chunks);
+  }
 }
 assert.equal(reader.isEllipsisInsideSentence('盔……\n', 1), false, 'paragraph-final ellipsis still ends');
 assert.equal(reader.isEllipsisInsideSentence('神……”', 1), false, 'ellipsis before a closing quote still ends');

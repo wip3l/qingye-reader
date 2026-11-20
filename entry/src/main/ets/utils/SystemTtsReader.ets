@@ -2774,7 +2774,7 @@ export class SystemTtsReader {
         end = this.findFirstCloudBreak(text, preferredEnd, limit, false);
       }
       if (end <= start) {
-        end = this.safeHardCutIndex(text, limit);
+        end = this.safeHardCutIndex(text, limit, start);
       }
       end = this.extendTtsBreak(text, end, text.length);
       this.appendAbsoluteTextChunk(chunks, text, start, end);
@@ -2941,7 +2941,7 @@ export class SystemTtsReader {
       }
       if (end <= start) {
         breakPath = 'hard';
-        end = this.safeHardCutIndex(text, limit);
+        end = this.safeHardCutIndex(text, limit, start);
       }
       end = this.extendTtsBreak(text, end, text.length);
       if (breakPath === 'weak' || breakPath === 'hard') {
@@ -3119,7 +3119,7 @@ export class SystemTtsReader {
     if (weakCandidate > 0) {
       return weakCandidate;
     }
-    return limit < text.length ? this.safeHardCutIndex(text, limit) : text.length;
+    return limit < text.length ? this.safeHardCutIndex(text, limit, start) : text.length;
   }
 
   private isStrongSentenceEnd(value: string): boolean {
@@ -3156,9 +3156,23 @@ export class SystemTtsReader {
    * A raw `start + maximumLength` cut can split a surrogate pair (emoji), split a value from
    * its unit ("3.5 米" / "80分" / "12%"), split an ASCII word, or leave a leading quote at the
    * head of the next chunk. Move the cut backwards until none of those apply.
+   *
+   * `floor` is where the current chunk starts. A window with no place to cut at all (60+
+   * letters/digits in a row: a hash, a serial number, a line of "hahaha") would walk the cut
+   * back to or past the chunk start, and the caller's `start = end` then never advances —
+   * the split loop spins forever on the main thread. In that case cut at the raw position.
    */
-  private safeHardCutIndex(text: string, index: number): number {
-    let cut = Math.max(1, Math.min(text.length, Math.round(index)));
+  private safeHardCutIndex(text: string, index: number, floor: number = 0): number {
+    const raw = Math.max(1, Math.min(text.length, Math.round(index)));
+    const cut = this.backOffHardCut(text, raw);
+    if (cut > floor) {
+      return cut;
+    }
+    return raw - 1 > floor && this.isHighSurrogate(text.charCodeAt(raw - 1)) ? raw - 1 : raw;
+  }
+
+  private backOffHardCut(text: string, raw: number): number {
+    let cut = raw;
     if (cut >= text.length) {
       return text.length;
     }
