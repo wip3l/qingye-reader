@@ -124,10 +124,13 @@ struct BookshelfSettingsPage {
           this.bookshelfLastReadPinMode = index === 0 ? 'off' : (index === 2 ? 'large' : 'medium');
           this.onDisplaySettingChanged();
         })
+    }
+    if (this.bookshelfLayoutMode !== 'companion') {
       this.itemDivider()
       SettingSwitchRow({
         title: '显示书籍边框',
-        description: '封面的描边、投影与底色；关闭后封面直接放在书架上',
+        description: this.bookshelfLayoutMode === 'tile' ? '封面的描边、投影与底色；关闭后封面直接放在书架上' :
+          '封面后面的底色；关闭后透明底的封面直接落在卡片上',
         isOn: this.bookshelfTileCoverFrame,
         showDivider: false,
         onChange: (value: boolean) => {

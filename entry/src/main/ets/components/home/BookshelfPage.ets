@@ -5595,13 +5595,15 @@ export struct BookshelfPage {
       .alignItems(HorizontalAlign.Start)
 
       Stack({ alignContent: Alignment.TopStart }) {
-        this.coverView(book, '100%', '100%', ImageFit.Cover, false, true, this.shelfCoverScope(pageKey, true))
+        this.coverView(book, '100%', '100%', ImageFit.Cover, false, true, this.shelfCoverScope(pageKey, true),
+          8, -1, false, this.bookshelfTileCoverFrame)
       }
       .height('100%')
       .aspectRatio(0.735)
       .borderRadius(6)
       .clip(true)
-      .border({ width: ThemeRuntime.glassBorderWidth(), color: this.glassBorderColor() })
+      // 关掉“显示书籍边框”时封面不描边、不垫底色，和下面格子里的封面一致。
+      .border({ width: this.bookshelfTileCoverFrame ? ThemeRuntime.glassBorderWidth() : 0, color: this.glassBorderColor() })
     }
     .width('100%')
     .height('100%')
@@ -6813,7 +6815,7 @@ export struct BookshelfPage {
       const covers = this.activeThemeBookCovers(book);
       opening.cover = covers.length > 0 ? covers[0] : '';
       opening.frame = this.activeThemeShelfFrame();
-      // 平铺布局不显示边框时书架格子里的主题封面没有底色，翻开的封面也不垫，不然起步那一帧闪出一块灰。
+      // 不显示边框时书架上的主题封面没有底色，翻开的封面也不垫，不然起步那一帧闪出一块灰。
       opening.color = opening.frameless ? '#00000000' : this.inputColor();
       opening.themeCover = true;
     } else {
@@ -6858,8 +6860,8 @@ export struct BookshelfPage {
       }
       if (!picked) return;
       opening.cropImage = this.shelfCoverCropsImage(book, pageKey, pickedLatest);
-      // 上次阅读置顶卡片里的封面不受“显示书籍边框”影响。
-      opening.frameless = !pickedLatest && this.bookshelfLayoutMode === 'tile' && !this.bookshelfTileCoverFrame;
+      // 平铺、宽松、紧凑和“继续阅读”卡片的封面都跟“显示书籍边框”；陪伴布局的精装书不受影响。
+      opening.frameless = this.bookshelfLayoutMode !== 'companion' && !this.bookshelfTileCoverFrame;
       opening.boundsX = ui.px2vp(picked.windowOffset.x);
       opening.boundsY = ui.px2vp(picked.windowOffset.y);
       opening.boundsWidth = ui.px2vp(picked.size.width);
@@ -7253,7 +7255,8 @@ export struct BookshelfPage {
         Row() {
           // 封面高度 = 信息块高度，顶部对齐书名行、底部对齐进度条底部。
           this.coverView(book, this.shelfCoverWidth(this.shelfCompactInfoHeight()),
-            this.shelfCompactInfoHeight(), ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false))
+            this.shelfCompactInfoHeight(), ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false),
+            8, -1, false, this.bookshelfTileCoverFrame)
 
           Column({ space: this.shelfRowSpace() }) {
             Row({ space: AppSpacing.SM }) {
@@ -7332,7 +7335,8 @@ export struct BookshelfPage {
         Row() {
           // 封面高度 = 信息块高度，顶部对齐书名行、底部对齐阅读进度行。
           this.coverView(book, this.shelfCoverWidth(this.shelfLooseInfoHeight()),
-            this.shelfLooseInfoHeight(), ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false))
+            this.shelfLooseInfoHeight(), ImageFit.Cover, true, true, this.shelfCoverScope(pageKey, false),
+            8, -1, false, this.bookshelfTileCoverFrame)
 
           // 分层排：书名和作者信息贴顶，最新章节标签（进度条关着时再加进度行）贴封面底边，空白只留在中间。
           // 高度预算（封面 93）：进度条开着 = 书名两行 40 + 6 + 信息行 16 + 标签 24 = 86；
@@ -7605,7 +7609,7 @@ export struct BookshelfPage {
     .height(height)
     .borderRadius(radius)
     .clip(true)
-    // 平铺布局关掉“显示书籍边框”时不垫底色，透明底的主题封面直接露出书架背景。
+    // 关掉“显示书籍边框”时不垫底色，透明底的主题封面直接露出书架背景或卡片。
     .backgroundColor(backdrop ? this.inputColor() : Color.Transparent)
     .grayscale(CloudAutoSync.isPlaceholder(book) ? 1 : 0)
     .opacity(measure && this.tileGroupHiddenCovers.length > 0 && this.tileGroupHiddenCovers.includes(book.bookUrl) ? 0 :
