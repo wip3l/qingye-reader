@@ -572,13 +572,31 @@ export class ExploreCoordinator {
       const variable = NativeSourceService.variableAfterSelect(source, title, selection);
       console.info('[ExploreCoordinator] native filter:', source.bookSourceName, `${title}=${selection}`,
         variable ? 'saved' : 'unchanged-or-invalid');
-      if (!variable) return false;
+      // 联动的筛选项：前一项（如模式）保存后，这一项换成了另一组选项，面板里旧的选择不再适用，跳过而不算失败。
+      if (!variable) {
+        return !NativeSourceService.filters(source).some((group): boolean =>
+          group.title === title && group.options.indexOf(selection) >= 0 && group.selected !== selection);
+      }
       await appDb.updateBookSourceVariable(sourceUrl, variable);
       selector.currentLabel = selection;
       this.clearExploreMenuCache();
       return true;
     }
     return await this.executeExploreSelector(source, selector, selection);
+  }
+
+  /**
+   * 筛选面板里的草稿会让原生书源的筛选项变成什么样（带显示条件的变量互相联动）；不保存。
+   * 不是原生书源或书源不在时返回 null，面板保持原样。
+   */
+  async previewExploreFilters(sourceUrl: string, drafts: ExploreFilterGroup[]): Promise<ExploreFilterGroup[] | null> {
+    const source = await appDb.getBookSource(sourceUrl);
+    if (!source || !NativeSourceService.isNative(source)) return null;
+    return NativeSourceService.filtersWith(source, drafts.map((draft: ExploreFilterGroup) => ({
+      title: draft.title, options: draft.options.slice(), selected: draft.selected
+    }))).map((group): ExploreFilterGroup => ({
+      title: group.title, options: group.options.slice(), selected: group.selected
+    }));
   }
 
   /** 原生书源的发现分类：筛选项来自定义里的变量，分类列表不经过脚本引擎。 */

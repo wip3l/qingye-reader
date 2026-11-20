@@ -2524,6 +2524,21 @@ export struct ExplorePage {
       });
     }
     this.exploreFilterDrafts = next;
+    this.refreshLinkedFilterDrafts(next);
+  }
+
+  /** 原生书源的筛选项可以互相联动（选了模式，源站换成那个模式的一组）：按草稿重新取一次要显示的项。 */
+  private refreshLinkedFilterDrafts(drafts: ExploreFilterGroup[]): void {
+    const sourceUrl = this.selectedSourceUrl;
+    if (!sourceUrl) return;
+    this.coordinator.previewExploreFilters(sourceUrl, drafts).then((groups: ExploreFilterGroup[] | null) => {
+      // 面板已关、换了书源，或用户又点了别的选项时，这次结果作废。
+      if (!groups || !this.showExploreFilterPanel || this.selectedSourceUrl !== sourceUrl ||
+        this.exploreFilterDrafts !== drafts) return;
+      this.exploreFilterDrafts = groups;
+    }).catch((e: Error) => {
+      console.warn('刷新联动筛选项失败:', e);
+    });
   }
 
   async applyExploreFilterDrafts(): Promise<void> {
@@ -2532,7 +2547,8 @@ export struct ExplorePage {
     for (const draft of drafts) {
       const applied = this.exploreFilters.find((filter: ExploreFilterGroup): boolean =>
         filter.title === draft.title);
-      if (applied && applied.selected !== draft.selected) changed.push(draft);
+      // 联动后才出现的项（草稿里有、原来没有）也要保存。
+      if (applied ? applied.selected !== draft.selected : true) changed.push(draft);
     }
     this.closeExploreFilterPanel();
     if (changed.length === 0 || this.isLoading || !this.selectedSourceUrl) return;

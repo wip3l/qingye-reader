@@ -174,6 +174,8 @@ struct NativeSourceSettingsPage {
       this.source.variable = variable;
       await ExploreResultCache.invalidateSources(getContext(this), [this.source.bookSourceUrl]);
       this.dirty = false;
+      // 带显示条件的变量：保存后按新值重新列一次（例如换了模式，源站换成那一组）。
+      this.items = NativeSourceService.varItems(this.source);
       HdsFeedback.showToast('已保存');
       this.loadActions();
     } catch (e) {
