@@ -199,6 +199,11 @@ export class SystemTtsReader {
   private systemAudioSessionOwner: string = '';
   private keepAudioOutputOnFinish: boolean = false;
   private pcmOutputReleaseTimerId: number = -1;
+  /**
+   * 连续朗读时本章最后一段已全部写进渲染器、但还没放完就报了完成（见 finishWhenQueued）。
+   * 下一章的语音直接排在这段尾巴后面；不再接着读时要先 drainQueuedTail 再停，免得切掉结尾。
+   */
+  private queuedTailPending: boolean = false;
 
   static async listAvailableVoices(): Promise<TtsVoiceOption[]> {
     try {
@@ -934,16 +939,61 @@ export class SystemTtsReader {
     return this.keepAudioOutputOnFinish && this.ttsPcmPlayType === 0;
   }
 
+  /**
+   * 连续朗读的本章最后一段已经全部写进渲染器：不等它放完，直接报完成，让调用方接着准备下一章。
+   *
+   * 熄屏后系统把这条流切到 offload 通道，会一次收下十来秒音频慢慢放。等放完才交接时，这段时间里应用一直
+   * 写不出数据，系统按“连续约 8 秒没写数据”判定应用无声（standby、all session mute），几秒后冻结进程，
+   * 下一章要等用户解锁才开始。现在下一章的语音紧接着写在尾巴后面，流里一直有数据。
+   * 返回 true 表示已经报了完成，调用方不必再 drain。
+   */
+  private finishWhenQueued(generation: number): boolean {
+    if (this.readGeneration !== generation || !this.active || !this.keepsPcmOutputOnFinish()) return false;
+    console.info(`[TTS] chapter audio fully queued, handing off before playback drains: ${this.audioDebugState()}`);
+    this.queuedTailPending = true;
+    this.finish(true);
+    return true;
+  }
+
+  /** 上一次完成时本章结尾还在渲染器里放（下一章还没接上）。 */
+  finishedWithQueuedTail(): boolean {
+    return this.queuedTailPending && !this.active;
+  }
+
+  /** 不再接着读时（读完最后一章、下一章打不开）先把排着的结尾放完，最多等 20 秒。 */
+  async drainQueuedTail(): Promise<void> {
+    if (!this.queuedTailPending || this.active) return;
+    const generation = this.readGeneration;
+    let timer = -1;
+    try {
+      await Promise.race([
+        this.pcmPlayer.drain(),
+        new Promise<void>((resolve: () => void): void => {
+          timer = setTimeout(resolve, 20000);
+        })
+      ]);
+    } catch (error) {
+      console.warn('[TTS] drain queued chapter tail failed:', error);
+    } finally {
+      if (timer >= 0) clearTimeout(timer);
+    }
+    if (this.readGeneration === generation) this.queuedTailPending = false;
+  }
+
   private schedulePcmOutputRelease(): void {
     this.cancelPendingPcmOutputRelease();
     console.info(`[TTS] keeping pcm output for chapter handoff: ${this.audioDebugState()}`);
     this.pcmOutputReleaseTimerId = setTimeout(() => {
       this.pcmOutputReleaseTimerId = -1;
-      if (!this.active) {
+      if (this.active) return;
+      const generation = this.readGeneration;
+      // 结尾可能还在放：放完再关，期间又开始读了就不关。
+      this.drainQueuedTail().then((): void => {
+        if (this.active || this.readGeneration !== generation) return;
         console.info('[TTS] releasing idle pcm output after chapter handoff grace period');
         this.pcmPlayer.stop();
         this.httpReader.stop();
-      }
+      });
     }, 15000);
   }
 
@@ -1650,6 +1700,7 @@ export class SystemTtsReader {
   private async finishSystemPcmPlayback(generation: number): Promise<void> {
     try {
       await this.systemLastWritePromise;
+      if (this.finishWhenQueued(generation)) return;
       await this.pcmPlayer.drain();
     } catch (error) {
       console.warn('[TTS] drain system pcm playback failed:', error);
@@ -1870,6 +1921,7 @@ export class SystemTtsReader {
         }
         this.clearSpeakWatchdog();
         if (this.chunkIndex >= this.chunks.length) {
+          if (this.ttsPcmPlayType === 0 && this.finishWhenQueued(generation)) return;
           try {
             await this.pcmPlayer.drain();
           } catch (error) {

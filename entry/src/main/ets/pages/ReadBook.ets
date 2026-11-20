@@ -15427,6 +15427,11 @@ struct ReadBookPage {
     }
     if (!advanced) {
       const errorMessage = this.ttsChapterAdvanceError;
+      // 本章结尾可能还排在渲染器里没放完（见 SystemTtsReader.finishWhenQueued），放完再停。
+      await this.ttsReader?.drainQueuedTail();
+      if (token !== this.ttsReadToken || !this.ttsAutoContinue) {
+        return;
+      }
       this.finishTtsReading();
       if (errorMessage) {
         HdsFeedback.showToast(errorMessage);
@@ -15438,6 +15443,8 @@ struct ReadBookPage {
 
   isTtsReadingAtExpectedEnd(): boolean {
     if (this.ttsReadingExpectedSourceEnd < 0) return true;
+    // 全部语音已写进渲染器才报的完成：结尾几句的提示点还没放到，但声音不会丢，不必重读。
+    if (this.ttsReader?.finishedWithQueuedTail() === true) return true;
     const chunk = this.ttsLastFocusChunk;
     if (!chunk) return false;
     const spokenEnd = this.readerV2TtsSourceOffset(chunk.end);

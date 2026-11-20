@@ -437,7 +437,9 @@ export class EpubOriginalReadAloud {
   private async onFinished(token: number): Promise<void> {
     if (token !== this.token || !this.autoContinue || this.switching) return;
     // 有的朗读通道会提前报完成：章末没确认念到就从最后一句重读，不吞掉没念的结尾。
-    if (this.expectedEnd >= 0 && this.spokenEnd < this.expectedEnd - 4) {
+    // 全部语音已写进渲染器才报的完成（见 SystemTtsReader.finishWhenQueued）：结尾还在放，不算提前完成。
+    const queuedTail = this.engine?.finishedWithQueuedTail() === true;
+    if (!queuedTail && this.expectedEnd >= 0 && this.spokenEnd < this.expectedEnd - 4) {
       if (this.tailRetries < TAIL_RETRIES) {
         this.tailRetries++;
         console.warn(`[EpubTts] finished before chapter tail: spoken=${this.spokenEnd}, expected=${this.expectedEnd}`);
@@ -454,6 +456,9 @@ export class EpubOriginalReadAloud {
   private async advance(token: number): Promise<void> {
     const next = this.chapter + 1;
     if (next >= this.host.chapterTitles().length) {
+      // 最后一章的结尾可能还排在渲染器里，放完再停。
+      await this.engine?.drainQueuedTail();
+      if (token !== this.token) return;
       this.finish(false);
       HdsFeedback.showToast('已读完最后一章');
       return;
@@ -469,6 +474,8 @@ export class EpubOriginalReadAloud {
     }
     if (token !== this.token) return;
     if (!opened) {
+      await this.engine?.drainQueuedTail();
+      if (token !== this.token) return;
       this.finish(false);
       HdsFeedback.showToast('下一章加载失败，朗读已停止');
       return;
