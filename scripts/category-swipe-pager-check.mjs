@@ -87,6 +87,9 @@ assert.equal(nativeChanges.length, changesBeforeDrag, 'native drag callbacks mus
 pager.selectNativeIndex(2);
 assert.equal(pager.selectedIndex, 2, 'reversed/settled drag reflects the final native page');
 
+// 聚合按书名加作者分组，作者归一化用真实的 ChangeSourceAuthorMatch。
+vm.runInContext(stripTypeScriptTypes(read('core/book/ChangeSourceAuthorMatch.ts')
+  .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '')), context);
 const storeSource = read('utils/SearchResultAggregationStore.ets')
   .replace(/^import .*;\r?\n/gm, '').replace(/export class /g, 'class ');
 vm.runInContext(stripTypeScriptTypes(storeSource), context);
