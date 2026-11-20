@@ -14817,7 +14817,8 @@ struct ReadBookPage {
       (panelOffset: number, beforeLength: number): void => this.jumpTtsToPanelOffset(panelOffset, beforeLength));
     ReaderTtsFloatingSession.configureCatalog(
       this.ttsFloatingSessionOwnerId,
-      this.chapters.map((chapter: BookChapter) => chapter.title),
+      // 与阅读页目录同一口径：章节名过替换净化和繁→简，朗读面板、书架胶囊打开的目录都用这份。
+      this.chapters.map((_chapter: BookChapter, index: number) => this.getChapterTitle(index)),
       this.currentChapterIndex,
       (index: number) => {
         this.playPositionFromFloatingSession(index, 0).catch(
