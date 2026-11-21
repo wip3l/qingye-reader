@@ -464,32 +464,42 @@ export struct ReaderFontSettingsEditor {
   @Builder
   regexFontSection() {
     this.sectionTitle('正则字体设置')
-    // 编辑器可能嵌在主题编辑器里、没有统一的根层，粒子层套在规则卡片外面（外层不裁切，颗粒能飘出卡片）。
-    Stack() {
+    // 开关和规则分成两张卡：规则是用户自己建的条目，和普通设置项分开才认得出来。
     Column() {
       this.regexEnableSwitchItem()
-      if (this.readerRegexFontEnabled) {
-        this.regexTemplateActions()
-        if (this.regexRules.length === 0) {
-          this.emptyRegexRule()
-        }
-        ForEach(this.regexRules, (rule: ReaderRegexFontRule, index: number) => {
-          this.regexRuleRow(rule, index)
-        }, (rule: ReaderRegexFontRule) => `${rule.id}|${rule.name}|${rule.pattern}|${rule.scope}`)
-      }
     }
-    .width('100%')
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
     .borderRadius(ThemeRuntime.cardRadius())
     .clip(true)
     .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
+    if (this.readerRegexFontEnabled) {
+      this.regexRulesGroupTitle()
+      // 编辑器可能嵌在主题编辑器里、没有统一的根层，粒子层套在规则卡片外面（外层不裁切，颗粒能飘出卡片）。
+      Stack() {
+        Column() {
+          if (this.regexRules.length === 0) {
+            this.emptyRegexRule()
+          }
+          // 键里带上“是否最后一行”：增删后上一条的分隔线要跟着重画。
+          ForEach(this.regexRules, (rule: ReaderRegexFontRule, index: number) => {
+            this.regexRuleRow(rule, index)
+          }, (rule: ReaderRegexFontRule, index: number) =>
+            `${rule.id}|${rule.name}|${rule.pattern}|${rule.scope}|${index === this.regexRules.length - 1}`)
+        }
+        .width('100%')
+        .borderRadius(ThemeRuntime.cardRadius())
+        .clip(true)
+        .backgroundColor(this.embedded ? Color.Transparent : this.cardColor())
 
-    if (this.deleteParticleBursts.length > 0) {
-      DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+        if (this.deleteParticleBursts.length > 0) {
+          DeleteParticleLayer({ bursts: this.deleteParticleBursts })
+        }
+      }
+      .id('reader_regex_rules_root')
+      .width('calc(100% - 24vp)')
+      .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
     }
-    }
-    .id('reader_regex_rules_root')
-    .width('calc(100% - 24vp)')
-    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
   }
 
   saveSettings(regexRules: ReaderRegexFontRule[] = this.regexRules): void {
@@ -1116,61 +1126,55 @@ export struct ReaderFontSettingsEditor {
     })
   }
 
+  /** 规则组标题：写明条数，右侧“新建”菜单里选模板，代替原来卡片里的三个按钮。 */
   @Builder
-  regexTemplateActions() {
-    Column({ space: AppSpacing.MD }) {
-      Text('添加规则')
-        .fontSize(AppFontSize.BODY_LARGE)
-        .fontColor(this.primaryTextColor())
-        .width('100%')
-      Row({ space: AppSpacing.MD }) {
-        Button('对话')
+  regexRulesGroupTitle() {
+    Row() {
+      Text(`我的规则 · ${this.regexRules.length}`)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.subTextColor())
+        .layoutWeight(1)
+      Row({ space: AppSpacing.XXS }) {
+        SymbolGlyph($r('sys.symbol.plus'))
+          .fontSize(16)
+          .fontColor([this.accentColor()])
+        Text('新建')
           .fontSize(AppFontSize.BODY)
-          .backgroundColor(this.inputColor())
-          .fontColor(this.primaryTextColor())
-          .onClick(() => {
-            this.addRegexRule('对话', '“[^”\\n]*”|「[^」\\n]*」|『[^』\\n]*』|"[^"\\n]*"');
-          })
-        Button('关键字匹配')
-          .fontSize(AppFontSize.BODY)
-          .backgroundColor(this.inputColor())
-          .fontColor(this.primaryTextColor())
-          .onClick(() => {
-            this.addRegexRule('关键字匹配', '关键词');
-          })
-        Button('空白规则')
-          .fontSize(AppFontSize.BODY)
-          .backgroundColor(this.inputColor())
-          .fontColor(this.primaryTextColor())
-          .onClick(() => {
-            this.addRegexRule('正则规则', '');
-          })
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.accentColor())
       }
-      .width('100%')
+      .height(32)
+      .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
+      .borderRadius(16)
+      .alignItems(VerticalAlign.Center)
+      .accessibilityText('新建规则')
+      .bindMenu([
+        { value: '对话', action: () => {
+          this.addRegexRule('对话', '“[^”\\n]*”|「[^」\\n]*」|『[^』\\n]*』|"[^"\\n]*"');
+        } },
+        { value: '关键字匹配', action: () => { this.addRegexRule('关键字匹配', '关键词'); } },
+        { value: '空白规则', action: () => { this.addRegexRule('正则规则', ''); } }
+      ])
     }
-    .width('calc(100% - 32vp)')
-    .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
-    .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
-    .backgroundColor(Color.Transparent)
-    .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.MD, top: AppSpacing.XL, bottom: AppSpacing.SM })
   }
 
   @Builder
   emptyRegexRule() {
-    Text('暂无正则规则')
+    Text('还没有规则，点右上角“新建”添加。')
       .fontSize(AppFontSize.BODY)
       .fontColor(this.subTextColor())
       .width('calc(100% - 32vp)')
-      .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
+      .padding({ left: 0, right: 0, top: AppSpacing.LG, bottom: AppSpacing.LG })
       .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
-      .backgroundColor(Color.Transparent)
-      .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
   }
 
   @Builder
   regexRuleRow(rule: ReaderRegexFontRule, index: number) {
     Row({ space: AppSpacing.MD }) {
-      Column({ space: AppSpacing.XS }) {
+      Column({ space: AppSpacing.XXS }) {
         Row({ space: AppSpacing.SM }) {
           Text(rule.name || `规则${index + 1}`)
             .fontSize(AppFontSize.BODY_LARGE)
@@ -1189,8 +1193,10 @@ export struct ReaderFontSettingsEditor {
           }
         }
         .width('100%')
+        // 正则用等宽字体，读起来像表达式，不像说明文字。
         Text(rule.pattern || '未设置正则表达式')
           .fontSize(AppFontSize.CAPTION)
+          .fontFamily(rule.pattern ? 'monospace' : this.applicationFontFamily)
           .fontColor(this.subTextColor())
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1205,7 +1211,7 @@ export struct ReaderFontSettingsEditor {
     .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
     .backgroundColor(Color.Transparent)
-    .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
+    .border({ width: { bottom: index < this.regexRules.length - 1 ? 0.5 : 0 }, color: this.settingsDividerColor() })
     .alignItems(VerticalAlign.Center)
     .opacity(ListDissolve.opacity(this.isRegexRuleDissolving(rule)))
     .scale(ListDissolve.scale(this.isRegexRuleDissolving(rule)))
@@ -2628,7 +2634,6 @@ export struct ReaderFontSettingsEditor {
     .padding({ left: 0, right: 0, top: AppSpacing.MD, bottom: AppSpacing.MD })
     .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
     .backgroundColor(Color.Transparent)
-    .border({ width: { bottom: 0.5 }, color: this.settingsDividerColor() })
     .alignItems(VerticalAlign.Center)
   }
 
