@@ -17,10 +17,13 @@ function method(source, name) {
   return source.slice(match.index, end + '\n  }'.length).replace('private ', '');
 }
 const compile = text => stripTypeScriptTypes(text, { mode: 'strip' });
+// File-level helper class of WebBookService (the parts of a 本章说 card).
+const chapterClass = /^class ReaderDataImageChapter \{[\s\S]*?\r?\n\}\r?\n/m.exec(service);
+assert(chapterClass, 'ReaderDataImageChapter');
 const names = ['convertReaderNativeActions', 'convertReaderNoteActions', 'convertReaderImageScriptActions',
   'readerActionMarkerFromClickableImage',
   'readerActionMarkerFromCommentAttributes', 'readerImageOptionString', 'readerDataImageLabel', 'readerDataImageText',
-  'readerDataImageHot', 'readerDataImageTexts', 'readerDataImageIsCard', 'readerDataImageIsWide', 'readerActionLine',
+  'readerDataImageHot', 'readerDataImageChapter', 'readerDataImageTexts', 'readerDataImageIsCard', 'readerDataImageIsWide', 'readerActionLine',
   'decodeHtmlEntities'];
 const util = {
   Base64Helper: class { decodeSync(text) { return Uint8Array.from(Buffer.from(text, 'base64')); } },
@@ -30,7 +33,7 @@ const BookUrlResolver = {
   resolve: (url, base) => { try { return new URL(url, base).href; } catch (_) { return url; } }
 };
 const context = vm.createContext({ util, BookUrlResolver });
-vm.runInContext(compile(markerSource.replace(/^export /gm, '') +
+vm.runInContext(compile(markerSource.replace(/^export /gm, '') + `\n${chapterClass[0]}` +
   `\nclass Converter {\n${names.map(name => method(service, name)).join('\n')}\n}\n`) +
   'globalThis.Converter = Converter; globalThis.ReaderActionMarker = ReaderActionMarker;', context);
 const converter = new context.Converter();
@@ -59,8 +62,10 @@ const ios = [
 const out = convert(ios);
 const found = actions(out);
 assert.deepEqual(found.map(item => item.label), ['段评 12', '热评', '章评']);
-assert.deepEqual(found.map(item => item.preview), ['', '写得真好', '906 条评论'],
+assert.deepEqual(found.map(item => item.preview), ['', '写得真好', '906条评论'],
   'hot and chapter cards carry their wording, the trailing arrow dropped');
+assert.equal(found[2].count, '906条评论', 'a 本章说 card count goes to the title row');
+assert.equal(found[2].hots.length, 0);
 assert.equal(found[0].url, 'https://reviews.example/reviews?bookId=1&chapterId=2&paragraphId=1');
 assert.equal(found[0].title, '段评', 'a <comment> bubble is a paragraph comment whatever the page path');
 assert.equal(found[2].url.endsWith('paragraphId=0'), true);
@@ -98,6 +103,18 @@ assert.equal(optionActions[1].preview, '写得真好');
 assert.equal(optionActions[1].likes, '22', 'the trailing number of a hot card is its like count');
 assert.equal(optionActions[2].preview, '76条评论');
 assert.equal(optionActions[2].likes, '', 'a 本章说 card number is not a like count');
+assert.equal(optionActions[2].count, '76条评论');
+assert.equal(optionActions[2].hots.length, 0, 'a bare number on a 本章说 card is not a comment either');
+
+// A 本章说 card that shows one comment: count, a short nickname line, then the wrapped comment lines.
+const chapterCard = `<img src="data:image/svg+xml;base64,${svg('本章说', '79 条评论', '凌啸绝顶21', '正如周海说的，',
+  '石膏里藏的东西才是关键…', '›')}" onClick="java.startBrowser('${page}0')"/>`;
+const chapterAction = actions(convert(chapterCard))[0];
+assert.equal(chapterAction.label, '章评');
+assert.equal(chapterAction.count, '79条评论');
+assert.deepEqual(Array.from(chapterAction.hots, hot => [hot.user, hot.text, hot.likes]),
+  [['凌啸绝顶21', '正如周海说的，石膏里藏的东西才是关键…', '']], 'nickname and comment are kept apart');
+assert.equal(chapterAction.preview, '正如周海说的，石膏里藏的东西才是关键…');
 
 // <note> inline cards; a server that wraps each line in rs-native can split a multi-line text attribute
 // across two divs. The whole tag becomes one action and nothing of it leaks into the paragraph text.

@@ -349,17 +349,25 @@ export class ReaderV2Paginator {
           if (previousWasCard) {
             gap = ReaderV2CommentCardLayout.stackGap(session.snapshot);
           } else if (hasContent) {
-            const edge = ReaderV2CommentCardLayout.edgeGap(session.snapshot);
+            const edge = ReaderV2CommentCardLayout.edgeGap(session.snapshot, action.chapter);
             const belowInk = Number.isNaN(lastInkBottom) ? 0 : Math.max(0, y - lastInkBottom);
             gap = Math.max(0, edge - belowInk);
             cardEdgeGap = belowInk + gap;
           } else {
-            cardEdgeGap = ReaderV2CommentCardLayout.edgeGap(session.snapshot);
+            cardEdgeGap = ReaderV2CommentCardLayout.edgeGap(session.snapshot, action.chapter);
           }
           const anchor = pendingCard ? ReaderV2Paginator.bubbleCenterX(page, action.id) - column.left : -1;
-          const card = ReaderV2CommentCardLayout.build(action, session.snapshot, session.width,
+          let card = ReaderV2CommentCardLayout.build(action, session.snapshot, session.width,
             anchor >= 0 ? anchor : -1);
           const top = y + gap;
+          if (action.chapter) {
+            // 本章说放不下时先少列几条热评，最后只留标题行；还放不下才整块挪到下一页。
+            let hotCount = Math.min(action.hots.length, ReaderV2CommentCardLayout.CHAPTER_MAX_HOTS);
+            while (hotCount > 0 && top + card.height > columnBottom + 0.01) {
+              hotCount--;
+              card = ReaderV2CommentCardLayout.build(action, session.snapshot, session.width, -1, hotCount);
+            }
+          }
           if (hasContent && top + card.height > columnBottom + 0.01) {
             mustEndPage = true;
             continue;

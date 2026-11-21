@@ -236,8 +236,8 @@ export class ReaderV2LayoutSnapshot {
       snapshot.commentsEnabled ? 1 : 0, snapshot.regexEnabled ? 1 : 0,
       snapshot.commentCardStyle, snapshot.commentCardMaxPerPage, snapshot.commentCardLines,
       snapshot.commentCardFontSizePx, snapshot.commentCardTagColor, snapshot.commentChapterCard ? 1 : 0,
-      // 卡片上下留白的算法版本：改了排法就换一个值，让按排版标识存下来的分页结果失效。
-      'cardgap3'
+      // 卡片排法的版本：改了卡片的留白或本章说的排法就换一个值，让按排版标识存下来的分页结果失效。
+      'cardgap3-chapter2'
     ];
     const rounded = values.map((value: string | number): string =>
       typeof value === 'number' ? `${Math.round(value * 100) / 100}` : value).join('_');

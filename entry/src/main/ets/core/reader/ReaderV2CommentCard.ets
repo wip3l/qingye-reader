@@ -36,21 +36,49 @@ export class ReaderV2CommentCard {
   meta: graphicsText.Paragraph | null = null;
   metaX: number = 0;
   metaY: number = 0;
+  /** 本章说：标题行中间的细线、各条热评与它们共用的颜色。 */
+  rule: ReaderV2Rect | null = null;
+  hots: ReaderV2ChapterHotRow[] = [];
+  lineColor: number = 0;
+  pillFill: number = 0;
+  iconColor: number = 0;
+}
+
+/** 本章说里的一条热评：左侧竖线、昵称、点赞胶囊与正文。坐标相对卡片左上角。 */
+export class ReaderV2ChapterHotRow {
+  bar: ReaderV2Rect = new ReaderV2Rect();
+  user: graphicsText.Paragraph | null = null;
+  userX: number = 0;
+  userY: number = 0;
+  pill: ReaderV2Rect | null = null;
+  icon: ReaderV2Rect = new ReaderV2Rect();
+  likes: graphicsText.Paragraph | null = null;
+  likesX: number = 0;
+  likesY: number = 0;
+  text: graphicsText.Paragraph | null = null;
+  textX: number = 0;
+  textY: number = 0;
 }
 
 export class ReaderV2CommentCardLayout {
   static readonly STYLE_CARD: number = 1;
   static readonly STYLE_QUOTE: number = 2;
   static readonly STYLE_TAG: number = 3;
+  /** 本章说：不画框，标题行细线分区，热评左侧一道竖线。 */
+  static readonly STYLE_CHAPTER: number = 4;
   static readonly TAG_TEXT: string = '热评';
   static readonly CHAPTER_TAG_TEXT: string = '本章说';
   static readonly CHAPTER_FALLBACK_TEXT: string = '查看本章评论';
+  static readonly CHAPTER_ALL_TEXT: string = '全部评论';
+  /** 本章说最多列出的热评条数；页面放不下时由分页逐条减少。 */
+  static readonly CHAPTER_MAX_HOTS: number = 2;
 
   /**
    * 卡片与上下正文字面之间的留白。上下取同一个值：行框里的行距、字体留白都不算在内，
-   * 所以不随行距、段距的设置变得一边宽一边窄。
+   * 所以不随行距、段距的设置变得一边宽一边窄。本章说没有外框，多留一些和正文分开。
    */
-  static edgeGap(snapshot: ReaderV2LayoutSnapshot): number {
+  static edgeGap(snapshot: ReaderV2LayoutSnapshot, chapter: boolean = false): number {
+    if (chapter) return snapshot.commentCardFontSizePx * 1.2;
     const style = snapshot.commentCardStyle;
     return snapshot.commentCardFontSizePx * (style === ReaderV2CommentCardLayout.STYLE_QUOTE ? 0.7 :
       (style === ReaderV2CommentCardLayout.STYLE_TAG ? 0.6 : 0.9));
@@ -66,10 +94,10 @@ export class ReaderV2CommentCardLayout {
    * tailAnchorX：挂件尖角要指向的段评气泡中心（相对卡片左边），-1 表示没有可指的气泡。
    */
   static build(action: ReaderV2InlineAction, snapshot: ReaderV2LayoutSnapshot, width: number,
-    tailAnchorX: number): ReaderV2CommentCard {
+    tailAnchorX: number, chapterHots: number = ReaderV2CommentCardLayout.CHAPTER_MAX_HOTS): ReaderV2CommentCard {
     const style = snapshot.commentCardStyle;
-    // 本章说不属于某一段，三种样式下都画成整宽卡片。
-    if (action.chapter) return ReaderV2CommentCardLayout.buildBoxed(action, snapshot, width, false, -1, true);
+    // 本章说不属于某一段，三种热评样式下都画成同一种章末区块。
+    if (action.chapter) return ReaderV2CommentCardLayout.buildChapter(action, snapshot, width, chapterHots);
     if (style === ReaderV2CommentCardLayout.STYLE_QUOTE) {
       return ReaderV2CommentCardLayout.buildQuote(action, snapshot, width);
     }
@@ -78,12 +106,10 @@ export class ReaderV2CommentCardLayout {
   }
 
   private static buildBoxed(action: ReaderV2InlineAction, snapshot: ReaderV2LayoutSnapshot, width: number,
-    attached: boolean, tailAnchorX: number, chapter: boolean = false): ReaderV2CommentCard {
+    attached: boolean, tailAnchorX: number): ReaderV2CommentCard {
     const card = new ReaderV2CommentCard();
     card.style = attached ? ReaderV2CommentCardLayout.STYLE_TAG : ReaderV2CommentCardLayout.STYLE_CARD;
-    card.chapter = chapter;
-    // 本章说用阅读主题的强调色，与段落热评的红色标签区分开。
-    const tagColor = chapter ? snapshot.noteColor : snapshot.commentCardTagColor;
+    const tagColor = snapshot.commentCardTagColor;
     const ink = snapshot.textColor;
     const f = snapshot.commentCardFontSizePx * (attached ? 0.92 : 1);
     const padX = f * (attached ? 0.55 : 0.7);
@@ -94,8 +120,8 @@ export class ReaderV2CommentCardLayout {
     card.radius = f * (attached ? 0.45 : 0.55);
 
     const tagFontSize = f * 0.72;
-    card.tag = ReaderV2CommentCardLayout.paragraph(chapter ? ReaderV2CommentCardLayout.CHAPTER_TAG_TEXT :
-      ReaderV2CommentCardLayout.TAG_TEXT, tagFontSize, tagColor, graphicsText.FontWeight.W700, [], 1, tagFontSize * 8);
+    card.tag = ReaderV2CommentCardLayout.paragraph(ReaderV2CommentCardLayout.TAG_TEXT, tagFontSize, tagColor,
+      graphicsText.FontWeight.W700, [], 1, tagFontSize * 8);
     const tagWidth = Math.ceil(card.tag.getLongestLine());
     const tagHeight = card.tag.getHeight();
     const chipPadX = f * 0.28;
@@ -105,21 +131,17 @@ export class ReaderV2CommentCardLayout {
     card.tagFill = ReaderV2CommentCardLayout.withAlpha(tagColor, 0x24);
 
     let metaWidth = 0;
-    // 本章说右侧是进入箭头，书源给了热评点赞数时放在箭头前。
-    const metaText = chapter ? (action.likes ? `♥ ${action.likes}  ›` : '›') : (action.likes ? `♥ ${action.likes}` : '');
-    if (metaText) {
-      const metaFontSize = f * (chapter && !action.likes ? 1.1 : 0.74);
-      card.meta = ReaderV2CommentCardLayout.paragraph(metaText, metaFontSize,
+    if (action.likes) {
+      const metaFontSize = f * 0.74;
+      card.meta = ReaderV2CommentCardLayout.paragraph(`♥ ${action.likes}`, metaFontSize,
         ReaderV2CommentCardLayout.withAlpha(ink, 0x99), graphicsText.FontWeight.W400, [], 1, metaFontSize * 12);
       metaWidth = Math.ceil(card.meta.getLongestLine());
     }
 
     const maxBoxWidth = attached ? width * 0.86 : width;
     const textRoom = Math.max(f * 2, maxBoxWidth - padX * 2 - chipWidth - gap - (metaWidth > 0 ? metaWidth + gap : 0));
-    card.text = ReaderV2CommentCardLayout.paragraph(
-      action.preview || (chapter ? ReaderV2CommentCardLayout.CHAPTER_FALLBACK_TEXT : ''), f,
-      chapter ? ReaderV2CommentCardLayout.withAlpha(ink, 0xCC) : ink, graphicsText.FontWeight.W400, [],
-      chapter ? 1 : snapshot.commentCardLines, textRoom);
+    card.text = ReaderV2CommentCardLayout.paragraph(action.preview, f, ink, graphicsText.FontWeight.W400, [],
+      snapshot.commentCardLines, textRoom);
     // 挂件按内容收窄；卡片始终占满版心宽度。
     const textWidth = attached ? Math.min(textRoom, Math.ceil(card.text.getLongestLine()) + 1) : textRoom;
     const textHeight = card.text.getHeight();
@@ -152,6 +174,103 @@ export class ReaderV2CommentCardLayout {
     }
     card.width = width;
     card.height = boxTop + boxHeight;
+    return card;
+  }
+
+  /**
+   * 本章说的章末区块：标题行“本章说 ——— 79条评论 ›”，下面最多 hotLimit 条热评，每条左侧一道竖线，
+   * 昵称与点赞胶囊一行、正文最多两行。不画外框，和正文融在一起；整块都是点按区域。
+   */
+  private static buildChapter(action: ReaderV2InlineAction, snapshot: ReaderV2LayoutSnapshot, width: number,
+    hotLimit: number): ReaderV2CommentCard {
+    const card = new ReaderV2CommentCard();
+    card.style = ReaderV2CommentCardLayout.STYLE_CHAPTER;
+    card.chapter = true;
+    const ink = snapshot.textColor;
+    const muted = ReaderV2CommentCardLayout.withAlpha(ink, 0x99);
+    const f = snapshot.commentCardFontSizePx;
+    card.lineColor = ReaderV2CommentCardLayout.withAlpha(ink, 0x29);
+    card.pillFill = ReaderV2CommentCardLayout.withAlpha(ink, 0x10);
+    card.iconColor = muted;
+
+    // 标题行：强调色的“本章说”，右侧条数与箭头，中间一条细线。
+    card.tag = ReaderV2CommentCardLayout.paragraph(ReaderV2CommentCardLayout.CHAPTER_TAG_TEXT, f * 1.04,
+      snapshot.noteColor, graphicsText.FontWeight.W700, [], 1, f * 8);
+    const hots = action.hots.slice(0, Math.max(0, Math.min(hotLimit, ReaderV2CommentCardLayout.CHAPTER_MAX_HOTS)));
+    const countText = action.count || (action.hots.length > 0 ? ReaderV2CommentCardLayout.CHAPTER_ALL_TEXT :
+      ReaderV2CommentCardLayout.CHAPTER_FALLBACK_TEXT);
+    card.meta = ReaderV2CommentCardLayout.paragraph(`${countText} ›`, f * 0.93, muted, graphicsText.FontWeight.W400,
+      [], 1, width * 0.6);
+    const tagWidth = Math.ceil(card.tag.getLongestLine());
+    const metaWidth = Math.ceil(card.meta.getLongestLine());
+    const headHeight = Math.max(card.tag.getHeight(), card.meta.getHeight());
+    card.tagX = 0;
+    card.tagY = (headHeight - card.tag.getHeight()) / 2;
+    card.metaX = Math.max(tagWidth, width - metaWidth);
+    card.metaY = (headHeight - card.meta.getHeight()) / 2;
+    const ruleGap = f * 0.75;
+    const ruleLeft = tagWidth + ruleGap;
+    const ruleRight = card.metaX - ruleGap;
+    const ruleWidth = Math.max(1, f * 0.07);
+    if (ruleRight - ruleLeft > f) {
+      card.rule = new ReaderV2Rect(ruleLeft, headHeight / 2 - ruleWidth / 2, ruleRight, headHeight / 2 + ruleWidth / 2);
+    }
+
+    const barWidth = Math.max(2, f * 0.15);
+    const contentX = barWidth + f * 0.75;
+    const contentWidth = Math.max(f * 2, width - contentX);
+    let y = headHeight;
+    for (const hot of hots) {
+      y += f * 0.7;
+      const row = new ReaderV2ChapterHotRow();
+      const top = y;
+      let rowHeight = 0;
+      let pillWidth = 0;
+      if (hot.likes) {
+        const likesSize = f * 0.85;
+        row.likes = ReaderV2CommentCardLayout.paragraph(hot.likes, likesSize, muted, graphicsText.FontWeight.W400, [], 1,
+          likesSize * 10);
+        const likesWidth = Math.ceil(row.likes.getLongestLine());
+        const likesHeight = row.likes.getHeight();
+        const padX = f * 0.55;
+        const iconSize = likesSize * 0.9;
+        const iconGap = f * 0.22;
+        const pillHeight = likesHeight + f * 0.16;
+        pillWidth = padX * 2 + iconSize + iconGap + likesWidth;
+        row.pill = new ReaderV2Rect(width - pillWidth, top, width, top + pillHeight);
+        row.icon = new ReaderV2Rect(row.pill.left + padX, top + (pillHeight - iconSize) / 2,
+          row.pill.left + padX + iconSize, top + (pillHeight + iconSize) / 2);
+        row.likesX = row.icon.right + iconGap;
+        row.likesY = top + (pillHeight - likesHeight) / 2;
+        rowHeight = pillHeight;
+      }
+      if (hot.user) {
+        const userRoom = Math.max(f * 2, contentWidth - (pillWidth > 0 ? pillWidth + f * 0.6 : 0));
+        row.user = ReaderV2CommentCardLayout.paragraph(hot.user, f * 0.93, muted, graphicsText.FontWeight.W400, [], 1,
+          userRoom);
+        const userHeight = row.user.getHeight();
+        if (userHeight > rowHeight && row.pill) {
+          // 胶囊跟昵称行竖直居中。
+          const shift = (userHeight - rowHeight) / 2;
+          row.pill = new ReaderV2Rect(row.pill.left, row.pill.top + shift, row.pill.right, row.pill.bottom + shift);
+          row.icon = new ReaderV2Rect(row.icon.left, row.icon.top + shift, row.icon.right, row.icon.bottom + shift);
+          row.likesY += shift;
+        }
+        row.userX = contentX;
+        row.userY = top + Math.max(0, (rowHeight - userHeight) / 2);
+        rowHeight = Math.max(rowHeight, userHeight);
+      }
+      const textTop = rowHeight > 0 ? top + rowHeight + f * 0.12 : top;
+      row.text = ReaderV2CommentCardLayout.paragraph(hot.text, f, ink, graphicsText.FontWeight.W400, [], 2, contentWidth);
+      row.textX = contentX;
+      row.textY = textTop;
+      y = textTop + row.text.getHeight();
+      row.bar = new ReaderV2Rect(0, top, barWidth, y);
+      card.hots.push(row);
+    }
+    card.box = new ReaderV2Rect(0, 0, width, y);
+    card.width = width;
+    card.height = y;
     return card;
   }
 
@@ -238,6 +357,11 @@ export class ReaderV2CommentCardPainter {
   static paint(canvas: drawing.Canvas, card: ReaderV2CommentCard, x: number, y: number): void {
     canvas.save();
     canvas.translate(x, y);
+    if (card.style === ReaderV2CommentCardLayout.STYLE_CHAPTER) {
+      ReaderV2CommentCardPainter.paintChapter(canvas, card);
+      canvas.restore();
+      return;
+    }
     if (card.style !== ReaderV2CommentCardLayout.STYLE_QUOTE) {
       ReaderV2CommentCardPainter.paintBox(canvas, card);
       if (card.tag) {
@@ -257,6 +381,57 @@ export class ReaderV2CommentCardPainter {
     if (card.text) card.text.paint(canvas, card.textX, card.textY);
     if (card.meta) card.meta.paint(canvas, card.metaX, card.metaY);
     canvas.restore();
+  }
+
+  private static thumbPath: drawing.Path | null = null;
+
+  /** 点赞图标：16×16 坐标里的竖起大拇指轮廓。 */
+  private static thumb(): drawing.Path {
+    if (!ReaderV2CommentCardPainter.thumbPath) {
+      const path = new drawing.Path();
+      path.buildFromSvgString('M5 7 L5 14 L2.5 14 L2.5 7 Z M5 7 L8 2 C9.2 2 9.8 2.8 9.6 3.9 L9.2 6 L12.8 6 ' +
+        'C13.7 6 14.3 6.8 14.1 7.7 L12.9 12.8 C12.7 13.5 12.1 14 11.4 14 L5 14');
+      ReaderV2CommentCardPainter.thumbPath = path;
+    }
+    return ReaderV2CommentCardPainter.thumbPath;
+  }
+
+  private static fillRect(canvas: drawing.Canvas, rect: ReaderV2Rect, color: number, radius: number): void {
+    const brush = new drawing.Brush();
+    brush.setAntiAlias(true);
+    brush.setColor(ReaderV2CommentCardLayout.color(color));
+    canvas.attachBrush(brush);
+    canvas.drawRoundRect(new drawing.RoundRect({ left: rect.left, top: rect.top, right: rect.right,
+      bottom: rect.bottom }, radius, radius));
+    canvas.detachBrush();
+  }
+
+  private static paintChapter(canvas: drawing.Canvas, card: ReaderV2CommentCard): void {
+    if (card.tag) card.tag.paint(canvas, card.tagX, card.tagY);
+    if (card.meta) card.meta.paint(canvas, card.metaX, card.metaY);
+    if (card.rule) ReaderV2CommentCardPainter.fillRect(canvas, card.rule, card.lineColor, 0);
+    for (const row of card.hots) {
+      ReaderV2CommentCardPainter.fillRect(canvas, row.bar, card.lineColor, row.bar.width() / 2);
+      if (row.user) row.user.paint(canvas, row.userX, row.userY);
+      if (row.pill) {
+        ReaderV2CommentCardPainter.fillRect(canvas, row.pill, card.pillFill, row.pill.height() / 2);
+        const size = row.icon.width();
+        canvas.save();
+        canvas.translate(row.icon.left, row.icon.top);
+        canvas.scale(size / 16, size / 16);
+        const pen = new drawing.Pen();
+        pen.setAntiAlias(true);
+        pen.setStrokeWidth(1.4);
+        pen.setJoinStyle(drawing.JoinStyle.ROUND_JOIN);
+        pen.setColor(ReaderV2CommentCardLayout.color(card.iconColor));
+        canvas.attachPen(pen);
+        canvas.drawPath(ReaderV2CommentCardPainter.thumb());
+        canvas.detachPen();
+        canvas.restore();
+      }
+      if (row.likes) row.likes.paint(canvas, row.likesX, row.likesY);
+      if (row.text) row.text.paint(canvas, row.textX, row.textY);
+    }
   }
 
   /** 圆角框；挂件在顶边开一个指向段评气泡的尖角，框和尖角是同一条轮廓，描边不断开。 */

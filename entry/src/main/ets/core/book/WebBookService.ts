@@ -2,7 +2,7 @@ import { ReaderImageRecovery } from './ReaderImageRecovery';
 import { appDb } from '../../model/data/AppDatabase';
 import { ReaderImageCache } from './ReaderImageCache';
 import { ReaderImageReferences } from './ReaderImageReferences';
-import { SourceEngineHost, Book, BookChapter, BookSource, ContentRule, HttpClient, HttpResponse, AnalyzeUrl, AnalyzeRule, RuleContext, VerificationSupport, EncodedSourceUrl, BookUrlResolver, BookFieldSanitizer, AjaxRuleCompat, JavaRegexCompat, JsRuntime, ScriptEngine, ScriptEngineContext, BookSourceRuntimeRouter, SourceRuntimeStage, BookSourceStageWebRuntime, StageWebRuntimeRequest, ReaderActionMarker, CookieStore, RuleExecutionService, RuleBatchExecutionRequest, RuleFieldRequest, CooperativeScheduler, RuleExecutionTarget, RuleValue, BookSourceDebugContext, LogText, NativeSourceService, NetworkErrorText } from '@legado/sourceengine';
+import { SourceEngineHost, Book, BookChapter, BookSource, ContentRule, HttpClient, HttpResponse, AnalyzeUrl, AnalyzeRule, RuleContext, VerificationSupport, EncodedSourceUrl, BookUrlResolver, BookFieldSanitizer, AjaxRuleCompat, JavaRegexCompat, JsRuntime, ScriptEngine, ScriptEngineContext, BookSourceRuntimeRouter, SourceRuntimeStage, BookSourceStageWebRuntime, StageWebRuntimeRequest, ReaderActionMarker, ReaderActionHot, CookieStore, RuleExecutionService, RuleBatchExecutionRequest, RuleFieldRequest, CooperativeScheduler, RuleExecutionTarget, RuleValue, BookSourceDebugContext, LogText, NativeSourceService, NetworkErrorText } from '@legado/sourceengine';
 import { util } from '@kit.ArkTS';
 import { BookSourceDataUrlSupport } from './BookSourceDataUrlSupport';
 import { ReaderImageMarker } from './ReaderImageMarker';
@@ -20,6 +20,21 @@ import { VideoPlaybackSource, VideoPlaybackSupport } from './VideoPlaybackSuppor
 class ContentPageData {
   content: string = '';
   nextUrl: string = '';
+}
+
+/** 书源自带的本章说图卡拆出的条数与那一条评论。 */
+class ReaderDataImageChapter {
+  count: string = '';
+  user: string = '';
+  text: string = '';
+
+  hots(): ReaderActionHot[] {
+    if (!this.text) return [];
+    const hot = new ReaderActionHot();
+    hot.user = this.user;
+    hot.text = this.text;
+    return [hot];
+  }
 }
 
 export class WebBookService {
@@ -1656,9 +1671,13 @@ export class WebBookService {
       const count = isChapterTail || isHot ? '' : this.readerDataImageLabel(texts);
       const kind = isChapterTail ? '章评' : (isHot ? '热评' : '段评');
       const label = count ? `段评 ${count}` : kind;
-      const hot = isHot || isChapterTail ? this.readerDataImageHot(texts) : ['', ''];
-      // 本章说卡面上的数字含义因书源而异，不当点赞数。
-      const marker = ReaderActionMarker.createSourceScript(label, action, kind, hot[0], isChapterTail ? '' : hot[1]);
+      const hot = isHot ? this.readerDataImageHot(texts) : ['', ''];
+      // 本章说卡面拆成条数与那一条评论；卡面上的数字含义因书源而异，不当点赞数。
+      const chapter = isChapterTail ? this.readerDataImageChapter(texts) : new ReaderDataImageChapter();
+      const marker = isChapterTail ?
+        ReaderActionMarker.createSourceScript(label, action, kind, chapter.text || chapter.count, '', chapter.count,
+          chapter.hots()) :
+        ReaderActionMarker.createSourceScript(label, action, kind, hot[0], hot[1]);
       // This data-image is an interaction control, not正文 artwork. If its imported click script exceeds the
       // bounded action budget, drop the control instead of passing the enormous base64/options tag into the
       // ordinary image pipeline (the latter can exhaust memory while opening the chapter).
@@ -1812,6 +1831,32 @@ export class WebBookService {
     return [text, likes];
   }
 
+  /**
+   * A 本章说 SVG card split into its parts: the comment count (“79 条评论” → “79条评论”) for the card's title row,
+   * and the one comment it shows — a short first line is the nickname, the remaining lines are the wrapped comment.
+   * Numbers on these cards mean different things per source, so none is read as a like count.
+   */
+  private readerDataImageChapter(texts: string[]): ReaderDataImageChapter {
+    const found = new ReaderDataImageChapter();
+    const parts: string[] = [];
+    for (const raw of texts) {
+      const text = raw.replace(/^(?:本章说|章评|章末评论)\s*/, '').replace(/[\s〉›>»]+$/, '').trim();
+      if (!text) continue;
+      const count = /^(?:共\s*)?(\d+(?:\.\d+)?[万wWkK千]?\+?)\s*(?:条评论|条|评论)$/.exec(text);
+      if (count && !found.count) {
+        found.count = `${count[1]}条评论`;
+        continue;
+      }
+      if (/^(?:\d+(?:\.\d+)?[kKwW万千]?\+?|99\+)$/.test(text)) continue;
+      parts.push(text);
+    }
+    if (parts.length >= 2 && parts[0].length <= 16 && !/[，。！？：；,.!?:;…]$/.test(parts[0])) {
+      found.user = parts.shift() as string;
+    }
+    found.text = parts.join('');
+    return found;
+  }
+
 
   /**
    * iOS-style Legado markup puts the action on the image itself:
@@ -1835,9 +1880,13 @@ export class WebBookService {
     const card = /热评|神评/.test(wording) ||
       this.readerDataImageIsCard(texts, '', this.readerDataImageIsWide(svg[1] || ''));
     const label = /本章说|章评|章末/.test(wording) ? '章评' : (card ? '热评' : (count ? `段评 ${count}` : '评论'));
-    const hot = label === '热评' || label === '章评' ? this.readerDataImageHot(texts) : ['', ''];
-    return ReaderActionMarker.create(label, url, label === '章评' ? '章评' : (label === '热评' ? '热评' : '段评'),
-      hot[0], label === '章评' ? '' : hot[1]);
+    if (label === '章评') {
+      const chapter = this.readerDataImageChapter(texts);
+      return ReaderActionMarker.create(label, url, '章评', chapter.text || chapter.count, '', chapter.count,
+        chapter.hots());
+    }
+    const hot = label === '热评' ? this.readerDataImageHot(texts) : ['', ''];
+    return ReaderActionMarker.create(label, url, label === '热评' ? '热评' : '段评', hot[0], hot[1]);
   }
 
   private readerActionMarkerFromCommentAttributes(attrs: string): string {
