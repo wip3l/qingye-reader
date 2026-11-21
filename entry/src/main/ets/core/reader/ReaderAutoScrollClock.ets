@@ -2,8 +2,13 @@
 export class ReaderAutoScrollClock {
   private lastFrame: number = -1;
 
+  static readonly MIN_SPEED: number = 6;
+  /** 速度上限（行/分钟）；漫画按每 20 行一屏换算，即 10 屏/分钟。 */
+  static readonly MAX_SPEED: number = 200;
+
   static normalizeSpeed(value: number): number {
-    return Number.isFinite(value) ? Math.max(6, Math.min(100, Math.round(value / 2) * 2)) : 20;
+    return Number.isFinite(value) ? Math.max(ReaderAutoScrollClock.MIN_SPEED,
+      Math.min(ReaderAutoScrollClock.MAX_SPEED, Math.round(value / 2) * 2)) : 20;
   }
 
   reset(): void {

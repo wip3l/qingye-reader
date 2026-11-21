@@ -1,3 +1,4 @@
+import { ReaderAutoScrollClock } from '../../core/reader/ReaderAutoScrollClock';
 import { ReaderMaterialPanel } from './ReaderFloatingMaterialBar';
 import { ThemeRuntime } from '../../theme/ThemeRuntime';
 import { ImmersiveMaterialRuntime } from '../../utils/ImmersiveMaterialRuntime';
@@ -199,20 +200,20 @@ export struct ReaderAutoScrollSpeedPanel {
             Text(`${this.comic ? this.speed / 20 : this.speed}`).fontSize(38).fontColor(this.textColor)
             Text(this.comic ? '屏 / 分钟' : '行 / 分钟').fontSize(12).fontColor(this.subTextColor)
           }.layoutWeight(1).justifyContent(FlexAlign.Center).alignItems(VerticalAlign.Bottom)
-          this.speedStep($r('sys.symbol.plus'), this.comic ? '每分钟加快零点一屏' : '每分钟加快两行', 2, this.speed < 100)
+          this.speedStep($r('sys.symbol.plus'), this.comic ? '每分钟加快零点一屏' : '每分钟加快两行', 2, this.speed < ReaderAutoScrollClock.MAX_SPEED)
         }.width('100%').margin({ top: 4 })
 
         Column() {
-          Slider({ value: this.speed, min: 6, max: 100, step: 2 })
+          Slider({ value: this.speed, min: ReaderAutoScrollClock.MIN_SPEED, max: ReaderAutoScrollClock.MAX_SPEED, step: 2 })
             .height(44).selectedColor(this.accentColor).blockColor(this.accentColor)
             .trackColor(this.controlColor)
             .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
-            .accessibilityText(this.comic ? '自动滚动速度，每分钟零点三至五屏' : '自动滚动速度，每分钟六至一百行')
+            .accessibilityText(this.comic ? '自动滚动速度，每分钟零点三至十屏' : '自动滚动速度，每分钟六至二百行')
             .onChange((speed: number) => this.onSpeed(speed))
           Row() {
             Text(this.comic ? '0.3 屏/分钟' : '6 行/分钟').fontSize(11).fontColor(this.subTextColor)
             Blank()
-            Text(this.comic ? '5 屏/分钟' : '100 行/分钟').fontSize(11).fontColor(this.subTextColor)
+            Text(this.comic ? '10 屏/分钟' : '200 行/分钟').fontSize(11).fontColor(this.subTextColor)
           }.width('100%')
         }.width('100%')
 
