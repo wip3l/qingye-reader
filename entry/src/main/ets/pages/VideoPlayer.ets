@@ -1777,7 +1777,9 @@ struct VideoPlayerPage {
         Text(this.formatTime(this.listenShownSec()))
           .fontSize(AppFontSize.CAPTION)
           .fontColor('#FFFFFF')
-        Slider({ value: this.listenShownSec(), min: 0, max: Math.max(1, this.listenDurationMs / 1000), step: 1 })
+        // 没有时长时上限是 1 秒，续播位置会被截成 1 并回调一次“拖动结束”，当成拖到第 1 秒去定位。
+        Slider({ value: this.listenDurationMs > 0 ? this.listenShownSec() : 0, min: 0,
+          max: Math.max(1, this.listenDurationMs / 1000), step: 1 })
           .sliderInteractionMode(SliderInteraction.SLIDE_AND_CLICK_UP)
           .enabled(this.listenDurationMs > 0 && !this.listenBusy)
           .accessibilityText('播放进度')
@@ -1789,6 +1791,10 @@ struct VideoPlayerPage {
           .selectedColor('#FFFFFF')
           .blockColor('#FFFFFF')
           .onChange((value: number, mode: SliderChangeMode) => {
+            if (this.listenDurationMs <= 0) {
+              this.listenSeekSec = -1;
+              return;
+            }
             if (mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving) {
               this.listenSeekSec = value;
               return;

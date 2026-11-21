@@ -330,8 +330,9 @@ export class VideoListenSession implements RemoteAudioPlaybackListener {
   }
 
   seekTo(positionMs: number): void {
-    if (!this.active || this.resolving) return;
-    const target = Math.max(0, this.durationMs > 0 ? Math.min(positionMs, this.durationMs) : positionMs);
+    // 还没拿到时长就是还在加载：这时的定位会顶掉续播目标，让声音从头放。
+    if (!this.active || this.resolving || this.durationMs <= 0) return;
+    const target = Math.max(0, Math.min(positionMs, this.durationMs));
     this.positionMs = target;
     this.playback.seek(target);
     this.saveProgress(true);
