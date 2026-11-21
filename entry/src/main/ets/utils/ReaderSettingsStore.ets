@@ -1866,7 +1866,7 @@ export class ReaderSettingsStore {
 
   private static normalizeVerticalMargin(margin: number): number {
     const value = Math.round(margin);
-    return Math.max(0, Math.min(value, 120));
+    return Math.max(0, Math.min(value, 360));
   }
 
   private static normalizeColor(color: string, fallback: string): string {

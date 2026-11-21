@@ -1793,7 +1793,7 @@ struct SettingsPage {
   }
 
   normalizeReaderVerticalMargin(value: number): number {
-    return Math.max(0, Math.min(Math.round(value), 120));
+    return Math.max(0, Math.min(Math.round(value), 360));
   }
 
   setReaderCommentBubbleSize(value: number): void {
