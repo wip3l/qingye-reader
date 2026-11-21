@@ -282,6 +282,8 @@ function buildEntries(): SettingsSearchEntry[] {
   push(NOVEL_INFO, '页眉页脚', '页脚内容', '页码、进度、时间、电量', '页码 时间 电量 进度', '', false);
   push(NOVEL_BG, '阅读背景', '背景图片', '用图片作为纸张背景', '壁纸 底图', '', false);
   push(NOVEL_BG, '阅读背景', '文字颜色', '正文文字颜色', '字体颜色', '', false);
+  push(NOVEL_BG, '阅读背景', '图片显示', '背景图裁切铺满、完整显示、拉伸或平铺', '裁切 裁剪 取景 平铺 拉伸 完整显示 填充',
+    '', false);
   return entries;
 }
 

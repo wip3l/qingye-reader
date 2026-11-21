@@ -333,7 +333,9 @@ assert(readerThemes.includes('APP_THEME_INDEX: number = 4'), 'Reader app-theme c
 assert(runtime.includes("KEY_THEME_REVISION"), 'Theme runtime revision broadcast is missing');
 assert(readerBackgroundComponent.includes('ThemeAssetRegistry.readerBackgroundDecoration'),
   'Responsive reader background decoration resolver is not connected');
-assert(reader.includes('ReaderThemeBackground({') && reader.includes('customImageFit: this.getBackgroundImageFit()'),
+assert(reader.includes('ReaderThemeBackground({') &&
+  reader.includes('customImageFit: this.currentReaderTheme().backgroundImageFit') &&
+  reader.includes('customImagePosition: this.currentReaderTheme().backgroundImagePosition'),
   'Reader root surface does not draw the responsive theme background');
 assert(readerBackgroundComponent.includes('.objectFit(ImageFit.Contain)') &&
   !readerBackgroundComponent.includes('.border('),

@@ -1,5 +1,6 @@
 import { ReaderThemeHelper } from './ReaderThemeHelper';
 import { HexColor } from './HexColor';
+import { ReaderBackgroundDisplay } from './ReaderBackgroundDisplay';
 
 export class ReaderCustomThemeScheme {
   id: string = '';
@@ -10,6 +11,9 @@ export class ReaderCustomThemeScheme {
   backgroundType: string = 'color';
   backgroundImageUri: string = '';
   backgroundImageFit: string = 'cover';
+  /** 见 ReaderBackgroundDisplay：裁切铺满时的取景位置、完整显示时空白处怎么填。 */
+  backgroundImagePosition: number = 50;
+  backgroundImageGap: string = 'blur';
 }
 
 export class ReaderCustomThemeData {
@@ -103,6 +107,7 @@ export class ReaderCustomThemeHelper {
     item.textColor = current.textColor;
     item.backgroundType = 'color';
     item.backgroundImageFit = current.backgroundImageFit;
+    item.backgroundImageGap = current.backgroundImageGap;
     data.schemes.push(item);
     ReaderCustomThemeHelper.select(data, darkMode, item.id);
     return item;
@@ -160,12 +165,12 @@ export class ReaderCustomThemeHelper {
     item.backgroundImageUri = (source.backgroundImageUri || '').trim();
     item.backgroundType = source.backgroundType === 'image' ||
       (!source.backgroundType && !!item.backgroundImageUri) ? 'image' : 'color';
-    item.backgroundImageFit = ReaderCustomThemeHelper.normalizeFit(source.backgroundImageFit);
+    item.backgroundImageFit = ReaderBackgroundDisplay.normalizeFit(source.backgroundImageFit);
+    item.backgroundImagePosition = ReaderBackgroundDisplay.normalizePosition(source.backgroundImagePosition);
+    // 旧数据没有这一项：完整显示原来是露出底色，保持不变。
+    item.backgroundImageGap = source.backgroundImageGap === undefined ? 'color' :
+      ReaderBackgroundDisplay.normalizeGap(source.backgroundImageGap);
     return item;
-  }
-
-  private static normalizeFit(fit: string): string {
-    return fit === 'contain' || fit === 'fill' ? fit : 'cover';
   }
 
   private static normalizeColor(color: string, fallback: string): string {

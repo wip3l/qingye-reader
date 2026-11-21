@@ -317,8 +317,9 @@ export struct ReaderSettingsPreview {
     Stack({ alignContent: Alignment.TopStart }) {
       ReaderThemeBackground({ surfaceColor: this.readerTheme.backgroundColor,
         backgroundAssetId: this.readerTheme.backgroundAssetId, customImage: this.readerTheme.backgroundImageUri,
-        customImageFit: this.readerTheme.backgroundImageFit === 'contain' ? ImageFit.Contain :
-          (this.readerTheme.backgroundImageFit === 'fill' ? ImageFit.Fill : ImageFit.Cover) })
+        customImageFit: this.readerTheme.backgroundImageFit,
+        customImagePosition: this.readerTheme.backgroundImagePosition,
+        customImageGap: this.readerTheme.backgroundImageGap })
       if (this.previewHeight > 0) {
         ReaderTypographyPreview({ config: this.config(pageIndex) })
           .width('100%')

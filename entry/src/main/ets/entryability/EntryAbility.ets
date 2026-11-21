@@ -8,6 +8,7 @@ import { ReaderCommentCardSettings } from '../utils/ReaderCommentCardSettings';
 import { SmartGripSettingsStore } from '../utils/SmartGripSettingsStore';
 import { ReaderNavIndicatorStore } from '../utils/ReaderNavIndicatorStore';
 import { FootprintSettingsStore } from '../utils/FootprintSettingsStore';
+import { ReaderBackgroundDisplayStore } from '../utils/ReaderBackgroundDisplay';
 import { HomeBackdropSettingsStore } from '../utils/HomeBackdropSettingsStore';
 import { AnimatedImagePolicy } from '../utils/AnimatedImagePolicy';
 import { HomeTabBarSettingsStore } from '../utils/HomeTabBarSettingsStore';
@@ -308,6 +309,9 @@ export default class EntryAbility extends UIAbility {
     });
     AnimatedImagePolicy.load(this.context).catch((error: Error) => {
       console.warn('恢复动图设置失败:', error);
+    });
+    ReaderBackgroundDisplayStore.load(this.context).catch((error: Error) => {
+      console.warn('恢复阅读背景显示方式失败:', error);
     });
     this.homeTabBarBootstrapPromise = HomeTabBarSettingsStore.load(this.context).catch((error: Error) => {
       console.warn('恢复底栏设置失败:', error);

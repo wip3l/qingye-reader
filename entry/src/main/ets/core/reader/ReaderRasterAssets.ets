@@ -14,6 +14,12 @@ export class ReaderRasterAssets {
   static readonly MEDIA_PREFIX: string = 'media:';
   private static appContext: Context | null = null;
   private static readonly aspects: Map<string, number> = new Map<string, number>();
+  private static readonly sizes: Map<string, image.Size | null> = new Map<string, image.Size | null>();
+  /** 阅读背景“完整显示”模糊垫底用的小图，单独缓存：界面上的 Image 正在显示它，不能被上面的缓存挤掉释放。 */
+  private static readonly backdrops: Map<string, image.PixelMap> = new Map<string, image.PixelMap>();
+  private static readonly MAX_BACKDROPS: number = 4;
+  /** 模糊垫底小图的宽（px），再大模糊后也看不出区别。 */
+  static readonly BACKDROP_WIDTH: number = 96;
 
   /** 应用启动时登记一次，之后按资源名取内置图片不需要调用方再传上下文。 */
   static bindContext(context: Context): void {
@@ -69,6 +75,57 @@ export class ReaderRasterAssets {
   static backgroundTrailingDecoration(host: Context, assetId: string, sizePx: number): image.PixelMap | null {
     return ReaderRasterAssets.media(host, ThemeAssetRegistry.readerBackgroundTrailingDecoration(assetId),
       sizePx, sizePx);
+  }
+
+  /** 本机图片文件的像素尺寸，同一张图只读一次；读不出来时为 null。 */
+  static imageSize(uri: string): image.Size | null {
+    if (!uri || uri.startsWith(ReaderRasterAssets.MEDIA_PREFIX)) return null;
+    if (ReaderRasterAssets.sizes.has(uri)) return ReaderRasterAssets.sizes.get(uri) ?? null;
+    const size = ReaderRasterAssets.fileImageSize(uri);
+    ReaderRasterAssets.sizes.set(uri, size);
+    return size;
+  }
+
+  /**
+   * 背景图第一帧缩成 BACKDROP_WIDTH 宽的小图，给“完整显示”的模糊垫底用。动图也只取第一帧，
+   * 免得同一张动图解两份。最近用过的排到最后，超出上限时释放最久没用的。
+   */
+  static backdropThumb(uri: string): image.PixelMap | null {
+    if (!uri) return null;
+    const cached = ReaderRasterAssets.backdrops.get(uri);
+    if (cached) {
+      ReaderRasterAssets.backdrops.delete(uri);
+      ReaderRasterAssets.backdrops.set(uri, cached);
+      return cached;
+    }
+    const size = ReaderRasterAssets.imageSize(uri);
+    if (!size) return null;
+    const width = Math.min(ReaderRasterAssets.BACKDROP_WIDTH, size.width);
+    const height = Math.max(1, Math.round(width * size.height / size.width));
+    let file: fs.File | null = null;
+    try {
+      file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
+      const source = image.createImageSource(file.fd);
+      try {
+        const bitmap = source.createPixelMapSync({ desiredSize: { width: width, height: height } });
+        if (ReaderRasterAssets.backdrops.size >= ReaderRasterAssets.MAX_BACKDROPS) {
+          const oldest = ReaderRasterAssets.backdrops.keys().next().value as string | undefined;
+          if (oldest !== undefined) {
+            ReaderRasterAssets.backdrops.get(oldest)?.release().catch((): void => {});
+            ReaderRasterAssets.backdrops.delete(oldest);
+          }
+        }
+        ReaderRasterAssets.backdrops.set(uri, bitmap);
+        return bitmap;
+      } finally {
+        source.release();
+      }
+    } catch (error) {
+      console.warn('[ReaderRaster] decode backdrop failed:', error);
+      return null;
+    } finally {
+      if (file) fs.closeSync(file);
+    }
   }
 
   /** Intrinsic pixel size of an image file (sandbox path or file:// URI); null when it cannot be read. */

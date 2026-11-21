@@ -96,6 +96,13 @@ export class ThemeAssetRegistry {
     return pack.reader(ThemeAssetRegistry.packReaderDark(assetId)).imageFit || 'cover';
   }
 
+  /** 整图阅读背景所属主题包的 themeId（读者改显示方式按它记）；不是主题包整图背景时为空串。 */
+  static readerBackgroundPackThemeId(assetId: string): string {
+    if (!ThemeAssetRegistry.readerBackgroundImage(assetId)) return '';
+    const pack = ThemeAssetRegistry.packReader(assetId);
+    return pack ? pack.themeId : '';
+  }
+
   static readerBackground(assetId: string): ResourceStr {
     const packImage = ThemeAssetRegistry.readerBackgroundImage(assetId);
     if (packImage) return packImage;

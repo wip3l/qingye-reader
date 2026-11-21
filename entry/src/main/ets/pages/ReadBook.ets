@@ -262,6 +262,8 @@ import {
   ReaderRasterRect, ReaderRasterText
 } from '../core/reader/ReaderPageRasterizer';
 import { ReaderRasterAssets } from '../core/reader/ReaderRasterAssets';
+import { ReaderBackgroundDisplay, ReaderBackgroundDisplayStore } from '../utils/ReaderBackgroundDisplay';
+import { ReaderBackgroundDisplayControl } from '../components/reader/ReaderBackgroundDisplayControl';
 import { ReaderThemeDecorationLayout } from '../core/reader/ReaderThemeDecorationLayout';
 import { ReaderContinuousLayoutRequest, ReaderContinuousLayoutState } from '../core/reader/ReaderContinuousLayoutRequest';
 import { ReaderContinuousLayoutHost } from '../components/reader/ReaderContinuousLayoutHost';
@@ -1210,6 +1212,8 @@ struct ReadBookPage {
   private readerThemeRevealDiameter: number = 0;
   @StorageLink('appThemeBookCoverEnabled') themeBookCoverEnabled: boolean = false;
   @StorageLink('themeRevision') @Watch('onReaderThemeChanged') themeRevision: number = 0;
+  // 读者改了主题包整图背景的显示方式（ReaderBackgroundDisplayStore）时递增，让当前主题重新解析。
+  @StorageProp('readerBackgroundDisplayRevision') readerBackgroundDisplayRevision: number = 0;
   @StorageLink('appLightAccentColor') appLightAccentColor: string = '#007DFF';
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @StorageLink('appLightButtonColor') appLightButtonColor: string = '#007DFF';
@@ -3863,7 +3867,9 @@ struct ReadBookPage {
         surfaceColor: this.getBackgroundColor(),
         backgroundAssetId: this.getBackgroundAssetId(),
         customImage: this.currentReaderTheme().backgroundImageUri,
-        customImageFit: this.getBackgroundImageFit(),
+        customImageFit: this.currentReaderTheme().backgroundImageFit,
+        customImagePosition: this.currentReaderTheme().backgroundImagePosition,
+        customImageGap: this.currentReaderTheme().backgroundImageGap,
         viewportWidthHint: this.pageViewWidth,
         viewportHeightHint: this.getReaderBackgroundViewportHeight()
       })
@@ -9269,17 +9275,6 @@ struct ReadBookPage {
     return this.currentReaderTheme().backgroundAssetId || '';
   }
 
-  getBackgroundImageFit(): ImageFit {
-    const fit = this.currentReaderTheme().backgroundImageFit;
-    if (fit === 'contain') {
-      return ImageFit.Contain;
-    }
-    if (fit === 'fill') {
-      return ImageFit.Fill;
-    }
-    return ImageFit.Cover;
-  }
-
   hasBackgroundImage(): boolean {
     return !!this.currentReaderTheme().backgroundImageUri || !!this.getBackgroundAssetId();
   }
@@ -9303,14 +9298,17 @@ struct ReadBookPage {
       custom.backgroundColor,
       custom.textColor,
       this.currentCustomThemeBackgroundImageUri(),
-      custom.backgroundImageFit
+      custom.backgroundImageFit,
+      custom.backgroundImagePosition,
+      custom.backgroundImageGap
     );
   }
 
   currentReaderTheme(): ReaderThemeItem {
     return this.readerThemeRenderCache.theme(this.appDarkMode, this.currentReaderThemeIndex(), this.themeRevision,
       this.readerCustomThemesRaw, this.readerLightCustomThemeBackgroundColor, this.readerLightCustomThemeTextColor,
-      this.readerDarkCustomThemeBackgroundColor, this.readerDarkCustomThemeTextColor);
+      this.readerDarkCustomThemeBackgroundColor, this.readerDarkCustomThemeTextColor,
+      this.readerBackgroundDisplayRevision);
   }
 
   currentCustomThemeBackgroundColor(): string {
@@ -13618,12 +13616,41 @@ struct ReadBookPage {
     ReaderSettingGroup({ title: '阅读背景', dark: this.isReaderThemeDark(), subTextColor: this.readerPanelSubTextColor() }) {
       this.readerThemeSwatches()
 
+      if (this.currentReaderThemeIndex() === ReaderThemeHelper.APP_THEME_INDEX &&
+        this.currentReaderTheme().backgroundDisplayKey) {
+        // 主题包整图背景：读者按这台设备的屏幕改显示方式，按主题记、只存本机。
+        ReaderBackgroundDisplayControl({
+          fit: this.currentReaderTheme().backgroundImageFit,
+          cropPosition: this.currentReaderTheme().backgroundImagePosition,
+          gap: this.currentReaderTheme().backgroundImageGap,
+          imageUri: this.currentReaderTheme().backgroundImageUri,
+          viewportWidth: this.getPageTurnWidth(),
+          viewportHeight: this.getReaderBackgroundViewportHeight(),
+          defaultFit: ReaderThemeHelper.packDefaultDisplay(this.getBackgroundAssetId()).fit,
+          overridden: this.readerBackgroundDisplayOverridden(),
+          hint: '按主题记住，只在这台设备上生效',
+          dark: this.isReaderThemeDark(),
+          textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
+          accentColor: this.accentColor(),
+          onChange: (display: ReaderBackgroundDisplay, commit: boolean): void => {
+            this.setReaderBackgroundDisplay(display, commit);
+          },
+          onReset: (): void => {
+            this.setReaderBackgroundDisplay(null, true);
+          }
+        })
+      }
+
       if (this.currentReaderThemeIndex() === ReaderThemeHelper.CUSTOM_THEME_INDEX) {
         ReaderCustomThemeEditor({
           dark: this.isReaderThemeDark(),
           textColor: this.readerPanelTextColor(),
+          subTextColor: this.readerPanelSubTextColor(),
           accentColor: this.accentColor(),
           menuColor: this.readerSolidPanelColor(),
+          viewportWidth: this.getPageTurnWidth(),
+          viewportHeight: this.getReaderBackgroundViewportHeight(),
           onChanged: (): void => {
             this.saveReadConfig();
           }
@@ -13655,6 +13682,25 @@ struct ReadBookPage {
       })
       ReaderNavIndicatorSwitchRow({ textColor: this.readerPanelTextColor(), subTextColor: this.readerPanelSubTextColor() })
     }
+  }
+
+  readerBackgroundDisplayOverridden(): boolean {
+    // 读一下 revision，让改动和恢复后这里跟着刷新。
+    return this.readerBackgroundDisplayRevision >= 0 &&
+      !!ReaderBackgroundDisplayStore.override(this.currentReaderTheme().backgroundDisplayKey);
+  }
+
+  /** display 为 null 时恢复主题默认；commit 为 false 是拖动取景途中，只预览不写盘。 */
+  setReaderBackgroundDisplay(display: ReaderBackgroundDisplay | null, commit: boolean): void {
+    const key = this.currentReaderTheme().backgroundDisplayKey;
+    if (!key) return;
+    if (display && !commit) {
+      ReaderBackgroundDisplayStore.preview(key, display);
+      return;
+    }
+    ReaderBackgroundDisplayStore.save(getContext(this), key, display).catch((error: Error) => {
+      console.warn('保存阅读背景显示方式失败:', error);
+    });
   }
 
   /** 阅读背景的一排圆点；主题多时横向滑动。 */
@@ -17076,7 +17122,9 @@ ${leading}` : leading;
       surfaceColor: this.getBackgroundColor(),
       backgroundAssetId: this.getBackgroundAssetId(),
       customImage: this.currentReaderTheme().backgroundImageUri,
-      customImageFit: this.getBackgroundImageFit(),
+      customImageFit: this.currentReaderTheme().backgroundImageFit,
+      customImagePosition: this.currentReaderTheme().backgroundImagePosition,
+      customImageGap: this.currentReaderTheme().backgroundImageGap,
       viewportWidthHint: this.getPageTurnWidth(),
       viewportHeightHint: this.getReaderBackgroundViewportHeight()
     })
@@ -17090,7 +17138,9 @@ ${leading}` : leading;
         surfaceColor: this.getBackgroundColor(),
         backgroundAssetId: this.getBackgroundAssetId(),
         customImage: this.currentReaderTheme().backgroundImageUri,
-        customImageFit: this.getBackgroundImageFit(),
+        customImageFit: this.currentReaderTheme().backgroundImageFit,
+        customImagePosition: this.currentReaderTheme().backgroundImagePosition,
+        customImageGap: this.currentReaderTheme().backgroundImageGap,
         viewportWidthHint: this.getPageTurnWidth(),
         viewportHeightHint: this.getReaderBackgroundViewportHeight()
       })
@@ -17217,7 +17267,9 @@ ${leading}` : leading;
       surfaceColor: this.getBackgroundColor(),
       backgroundAssetId: this.getBackgroundAssetId(),
       customImage: this.currentReaderTheme().backgroundImageUri,
-      customImageFit: this.getBackgroundImageFit(),
+      customImageFit: this.currentReaderTheme().backgroundImageFit,
+      customImagePosition: this.currentReaderTheme().backgroundImagePosition,
+      customImageGap: this.currentReaderTheme().backgroundImageGap,
       viewportWidthHint: this.pageViewWidth,
       viewportHeightHint: this.getReaderBackgroundViewportHeight()
     })
@@ -24565,7 +24617,8 @@ ${leading}` : leading;
 
   readerSettledTextureKey(direction: number): string {
     return `${this.currentChapterIndex}_${this.currentPageIndex}_${this.pageRenderVersion}_` +
-      `${this.ttsHighlightRenderVersion}_${this.themeRevision}_${this.getPageTurnWidth()}_` +
+      `${this.ttsHighlightRenderVersion}_${this.themeRevision}_${this.readerBackgroundDisplayRevision}_` +
+      `${this.getPageTurnWidth()}_` +
       `${this.getPageTurnHeight()}_${this.readerPageCurlSnapshotScale()}_${this.readerV2ImageBitmapVersion}_` +
       `${this.readerNightImageModeActive()}_${this.readerInfoTimeText}_${this.readerInfoBatteryPercent}_${this.currentReaderInfoBarLayoutIdentity()}_` +
       `${this.readerInfoBarTextureSignature()}_` +
@@ -24691,10 +24744,9 @@ ${leading}` : leading;
     const spreadWidthPx = vp2px(this.getPageTurnWidth());
     const assetId = this.getBackgroundAssetId();
     if (theme.backgroundImageUri) {
-      const background = this.rasterBackgroundImage(theme.backgroundImageUri, theme.backgroundImageFit,
-        spreadWidthPx, spec.heightPx, spec.scale, paperOriginX);
-      if (!background) return null;
-      spec.background = background;
+      const backgrounds = this.rasterBackgroundLayers(theme, spreadWidthPx, spec.heightPx, spec.scale, paperOriginX);
+      if (!backgrounds) return null;
+      spec.backgrounds = backgrounds;
     }
     // 主题包整图模式也可以带角饰，叠在整图上面。
     if (assetId && ThemeAssetRegistry.readerBackgroundHasOrnaments(assetId)) {
@@ -24908,23 +24960,65 @@ ${leading}` : leading;
   }
 
   /** The custom theme background placed like ReaderThemeBackground's Image (cover/contain/fill, centred). */
-  rasterBackgroundImage(uri: string, fit: string, spreadWidthPx: number, spreadHeightPx: number, scale: number,
-    originX: number): ReaderRasterImage | null {
-    const size = ReaderRasterAssets.fileImageSize(uri);
+  /**
+   * 整图背景画进自绘纹理的各层，和 ReaderThemeBackground 在屏幕上画的一致：完整显示时的模糊垫底、按取景偏移的
+   * 裁切铺满、拉伸、按原始像素大小从左上角平铺。坐标以整个跨页为准，originX 把右半页移到这张纸上。
+   */
+  rasterBackgroundLayers(theme: ReaderThemeItem, spreadWidthPx: number, spreadHeightPx: number, scale: number,
+    originX: number): ReaderRasterImage[] | null {
+    const uri = theme.backgroundImageUri;
+    const size = ReaderRasterAssets.imageSize(uri);
     if (!size) return null;
+    const fit = ReaderBackgroundDisplay.normalizeFit(theme.backgroundImageFit);
+    const aspect = size.width / size.height;
+    const layers: ReaderRasterImage[] = [];
+    if (fit === ReaderBackgroundDisplay.FIT_TILE) {
+      // 屏幕上按 px2vp(原始宽) 平铺，换回像素就是原始像素大小。
+      const tileWidth = size.width;
+      const tileHeight = size.height;
+      const bitmap = ReaderRasterAssets.fileImage(uri, tileWidth * scale, tileHeight * scale);
+      if (!bitmap) return null;
+      for (let top = 0; top < spreadHeightPx; top += tileHeight) {
+        for (let left = 0; left < spreadWidthPx; left += tileWidth) {
+          layers.push(new ReaderRasterImage(bitmap, originX + left, top, originX + left + tileWidth, top + tileHeight));
+        }
+      }
+      return layers;
+    }
+    if (fit === ReaderBackgroundDisplay.FIT_CONTAIN && theme.backgroundImageGap === ReaderBackgroundDisplay.GAP_BLUR) {
+      const thumb = ReaderRasterAssets.backdropThumb(uri);
+      if (thumb) {
+        // 同屏幕上的垫底：盖满跨页再放大 1.12 倍居中，模糊半径按 vp 换成像素（sigma 约为半径的一半）。
+        const cover = ReaderBackgroundDisplay.coverRect(aspect, spreadWidthPx, spreadHeightPx, 50);
+        const grow = 0.06;
+        const backdrop = new ReaderRasterImage(thumb, originX + cover[0] - cover[2] * grow, cover[1] - cover[3] * grow,
+          originX + cover[0] + cover[2] * (1 + grow), cover[1] + cover[3] * (1 + grow));
+        backdrop.blurSigma = vp2px(ReaderBackgroundDisplay.BLUR_RADIUS) / 2;
+        layers.push(backdrop);
+      }
+    }
+    let left = 0;
+    let top = 0;
     let width = spreadWidthPx;
     let height = spreadHeightPx;
-    if (fit === 'contain' || fit !== 'fill') {
-      const ratio = fit === 'contain' ? Math.min(spreadWidthPx / size.width, spreadHeightPx / size.height) :
-        Math.max(spreadWidthPx / size.width, spreadHeightPx / size.height);
+    if (fit === ReaderBackgroundDisplay.FIT_CONTAIN) {
+      const ratio = Math.min(spreadWidthPx / size.width, spreadHeightPx / size.height);
       width = size.width * ratio;
       height = size.height * ratio;
+      left = (spreadWidthPx - width) / 2;
+      top = (spreadHeightPx - height) / 2;
+    } else if (fit === ReaderBackgroundDisplay.FIT_COVER) {
+      const rect = ReaderBackgroundDisplay.coverRect(aspect, spreadWidthPx, spreadHeightPx,
+        theme.backgroundImagePosition);
+      left = rect[0];
+      top = rect[1];
+      width = rect[2];
+      height = rect[3];
     }
-    const left = originX + (spreadWidthPx - width) / 2;
-    const top = (spreadHeightPx - height) / 2;
     const bitmap = ReaderRasterAssets.fileImage(uri, width * scale, height * scale);
     if (!bitmap) return null;
-    return new ReaderRasterImage(bitmap, left, top, left + width, top + height, 0, false);
+    layers.push(new ReaderRasterImage(bitmap, originX + left, top, originX + left + width, top + height, 0, false));
+    return layers;
   }
 
   buildSettledPageRasterSpec(): ReaderPageRasterSpec | null {

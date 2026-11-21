@@ -15,6 +15,8 @@ import { ReaderNavIndicatorStore } from '../utils/ReaderNavIndicatorStore';
 import { AudioBookSettingsStore } from '../utils/AudioBookSettingsStore';
 import { ReaderSettings, ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { ReaderThemeHelper, ReaderThemeItem } from '../utils/ReaderThemeHelper';
+import { ReaderBackgroundDisplay, ReaderBackgroundDisplayStore } from '../utils/ReaderBackgroundDisplay';
+import { ReaderBackgroundDisplayControl } from '../components/reader/ReaderBackgroundDisplayControl';
 import { ReaderCustomThemeData, ReaderCustomThemeHelper, ReaderCustomThemeScheme } from '../utils/ReaderCustomThemeHelper';
 import { ReaderBackgroundImageStore } from '../utils/ReaderBackgroundImageStore';
 import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
@@ -63,6 +65,7 @@ struct SettingsPage {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
+  @StorageProp('readerBackgroundDisplayRevision') readerBackgroundDisplayRevision: number = 0;
   @StorageLink('readerFontWeight') readerFontWeight: number = 400;
   @StorageLink('readerTypographyFollowsTheme') typographyFollowsTheme: boolean = true;
   @State typographyThemeName: string = '';
@@ -2022,11 +2025,33 @@ struct SettingsPage {
     return current.backgroundType === 'image' ? current.backgroundImageUri : '';
   }
 
-  setCurrentCustomThemeImageFit(index: number): void {
-    const fits = ['cover', 'contain', 'fill'];
+  /** 拖动取景途中不保存，松手时再存。 */
+  setCurrentCustomThemeDisplay(display: ReaderBackgroundDisplay, commit: boolean): void {
+    if (!commit) return;
     const data = this.customThemeData();
-    ReaderCustomThemeHelper.selected(data, this.appDarkMode).backgroundImageFit = fits[index] || 'cover';
+    const current = ReaderCustomThemeHelper.selected(data, this.appDarkMode);
+    current.backgroundImageFit = display.fit;
+    current.backgroundImagePosition = display.position;
+    current.backgroundImageGap = display.gap;
     this.persistCustomThemeData(data);
+  }
+
+  /** 主题包整图背景的显示方式：display 为 null 时恢复主题默认；拖动取景途中只预览。 */
+  setAppThemeBackgroundDisplay(display: ReaderBackgroundDisplay | null, commit: boolean): void {
+    const key = this.currentReaderTheme().backgroundDisplayKey;
+    if (!key) return;
+    if (display && !commit) {
+      ReaderBackgroundDisplayStore.preview(key, display);
+      return;
+    }
+    ReaderBackgroundDisplayStore.save(getContext(this), key, display).catch((error: Error) => {
+      console.warn('保存阅读背景显示方式失败:', error);
+    });
+  }
+
+  appThemeBackgroundDisplayOverridden(): boolean {
+    return this.readerBackgroundDisplayRevision >= 0 &&
+      !!ReaderBackgroundDisplayStore.override(this.currentReaderTheme().backgroundDisplayKey);
   }
 
   saveReaderThemeSettings(): void {
@@ -2467,11 +2492,6 @@ struct SettingsPage {
     return options;
   }
 
-  customThemeFitSelectedIndex(): number {
-    const fit = this.currentCustomThemeScheme().backgroundImageFit;
-    return fit === 'contain' ? 1 : (fit === 'fill' ? 2 : 0);
-  }
-
   persistCustomThemeData(data: ReaderCustomThemeData): void {
     const selected = ReaderCustomThemeHelper.selected(data, this.appDarkMode);
     if (this.appDarkMode) {
@@ -2488,17 +2508,22 @@ struct SettingsPage {
   currentReaderThemes(): ReaderThemeItem[] {
     const custom = this.currentCustomThemeScheme();
     return ReaderThemeHelper.themes(this.appDarkMode, custom.backgroundColor, custom.textColor,
-      this.currentCustomThemeBackgroundImageUri(), custom.backgroundImageFit);
+      this.currentCustomThemeBackgroundImageUri(), custom.backgroundImageFit, custom.backgroundImagePosition,
+      custom.backgroundImageGap);
   }
 
   currentReaderTheme(): ReaderThemeItem {
-    return ReaderThemeHelper.themeAt(
+    const custom = this.currentCustomThemeScheme();
+    // 读一下 revision：主题包整图背景的显示方式改了以后预览跟着刷新。
+    return this.readerBackgroundDisplayRevision < 0 ? new ReaderThemeItem() : ReaderThemeHelper.themeAt(
       this.appDarkMode,
       this.currentReaderThemeIndex(),
-      this.currentCustomThemeBackgroundColor(),
-      this.currentCustomThemeTextColor(),
+      custom.backgroundColor,
+      custom.textColor,
       this.currentCustomThemeBackgroundImageUri(),
-      this.currentCustomThemeScheme().backgroundImageFit
+      custom.backgroundImageFit,
+      custom.backgroundImagePosition,
+      custom.backgroundImageGap
     );
   }
 
@@ -2712,6 +2737,29 @@ struct SettingsPage {
       }
       .width('100%')
 
+      if (this.currentReaderThemeIndex() === ReaderThemeHelper.APP_THEME_INDEX &&
+        this.currentReaderTheme().backgroundDisplayKey) {
+        ReaderBackgroundDisplayControl({
+          fit: this.currentReaderTheme().backgroundImageFit,
+          cropPosition: this.currentReaderTheme().backgroundImagePosition,
+          gap: this.currentReaderTheme().backgroundImageGap,
+          imageUri: this.currentReaderTheme().backgroundImageUri,
+          defaultFit: ReaderThemeHelper.packDefaultDisplay(this.currentReaderTheme().backgroundAssetId).fit,
+          overridden: this.appThemeBackgroundDisplayOverridden(),
+          hint: '按主题记住，只在这台设备上生效',
+          dark: this.appDarkMode,
+          textColor: this.primaryTextColor(),
+          subTextColor: this.subTextColor(),
+          accentColor: this.accentColor(),
+          onChange: (display: ReaderBackgroundDisplay, commit: boolean): void => {
+            this.setAppThemeBackgroundDisplay(display, commit);
+          },
+          onReset: (): void => {
+            this.setAppThemeBackgroundDisplay(null, true);
+          }
+        })
+      }
+
       if (this.currentReaderThemeIndex() === ReaderThemeHelper.CUSTOM_THEME_INDEX) {
         Column({ space: AppSpacing.MD }) {
           Row({ space: AppSpacing.MD }) {
@@ -2833,33 +2881,24 @@ struct SettingsPage {
                   .onClick(() => {
                     this.clearCurrentCustomThemeImage();
                   })
-                Select([{ value: '裁剪填充' }, { value: '完整显示' }, { value: '拉伸铺满' }])
-                  .selected(this.customThemeFitSelectedIndex())
-                  .value(['裁剪填充', '完整显示', '拉伸铺满'][this.customThemeFitSelectedIndex()])
-                  .font({ size: AppFontSize.BODY, family: this.applicationFontFamily })
-                  .optionFont({ family: this.applicationFontFamily })
-                  .selectedOptionFont({ family: this.applicationFontFamily })
-                  .fontColor(this.subTextColor())
-                  .backgroundColor(Color.Transparent)
-                  .arrowPosition(ArrowPosition.END)
-                  .padding({ left: 0, right: 0 })
-                  .borderRadius(16)
-                  .border({ width: 0 })
-                  .layoutWeight(1)
-                  .divider(null)
-                  .optionBgColor(Color.Transparent)
-                  .optionFontColor(this.primaryTextColor())
-                  .selectedOptionFontColor(this.accentColor())
-                  .selectedOptionBgColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
-                  .menuBackgroundColor(ThemeRuntime.dropdownPanelColor(this.appDarkMode))
-                  .menuBackgroundBlurStyle(BlurStyle.NONE)
-                  .attributeModifier(ImmersiveMaterialRuntime.selectMenuModifier(this.immersiveLightLevel))
-                  .onSelect((index: number) => {
-                    this.setCurrentCustomThemeImageFit(index);
-                  })
               }
             }
             .width('100%')
+            if (this.currentCustomThemeScheme().backgroundImageUri) {
+              ReaderBackgroundDisplayControl({
+                fit: this.currentCustomThemeScheme().backgroundImageFit,
+                cropPosition: this.currentCustomThemeScheme().backgroundImagePosition,
+                gap: this.currentCustomThemeScheme().backgroundImageGap,
+                imageUri: this.currentCustomThemeScheme().backgroundImageUri,
+                dark: this.appDarkMode,
+                textColor: this.primaryTextColor(),
+                subTextColor: this.subTextColor(),
+                accentColor: this.accentColor(),
+                onChange: (display: ReaderBackgroundDisplay, commit: boolean): void => {
+                  this.setCurrentCustomThemeDisplay(display, commit);
+                }
+              })
+            }
           }
           AdaptiveColorPicker({
             value: this.currentCustomThemeTextColor(),

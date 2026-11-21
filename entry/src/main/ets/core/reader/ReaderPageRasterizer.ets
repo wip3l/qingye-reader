@@ -16,6 +16,8 @@ export class ReaderRasterImage {
   rotation: number;
   /** Fit the bitmap inside the rect keeping its aspect ratio, centred (ArkUI ImageFit.Contain). */
   contain: boolean;
+  /** Gaussian blur sigma in surface pixels (the blurred backdrop behind a contained background image); 0 is sharp. */
+  blurSigma: number = 0;
 
   constructor(pixelMap: image.PixelMap, left: number, top: number, right: number, bottom: number,
     rotation: number = 0, contain: boolean = false) {
@@ -116,8 +118,11 @@ export class ReaderPageRasterSpec {
   heightPx: number = 0;
   scale: number = 1;
   paperColor: string = '#FFFFFF';
-  /** A custom theme background image already decoded at raster resolution, drawn exactly into its rect. */
-  background: ReaderRasterImage | null = null;
+  /**
+   * The whole-image background as drawn layers, bottom first: a blurred backdrop, the image itself, or one entry per
+   * tile. Each is already decoded at raster resolution and drawn exactly into its rect.
+   */
+  backgrounds: ReaderRasterImage[] = [];
   decorations: ReaderRasterImage[] = [];
   pages: ReaderRasterPage[] = [];
   images: ReaderRasterImage[] = [];
@@ -154,7 +159,13 @@ export class ReaderPageRasterizer {
       canvas.drawRect(0, 0, spec.widthPx, spec.heightPx);
       canvas.detachBrush();
       const sampling = new drawing.SamplingOptions(drawing.FilterMode.FILTER_MODE_LINEAR);
-      if (spec.background) ReaderPageRasterizer.drawImage(canvas, spec.background, sampling);
+      if (spec.backgrounds.length > 0) {
+        // Layers and tiles may run past the surface (a cropped cover, a scaled backdrop); keep them on the sheet.
+        canvas.save();
+        canvas.clipRect({ left: 0, top: 0, right: spec.widthPx, bottom: spec.heightPx });
+        for (const layer of spec.backgrounds) ReaderPageRasterizer.drawImage(canvas, layer, sampling);
+        canvas.restore();
+      }
       for (const decoration of spec.decorations) ReaderPageRasterizer.drawImage(canvas, decoration, sampling);
       for (const page of spec.pages) {
         canvas.save();
@@ -211,6 +222,16 @@ export class ReaderPageRasterizer {
       bottom = centerY + fitHeight / 2;
     }
     const rect: common2D.Rect = { left: left, top: top, right: right, bottom: bottom };
+    if (item.blurSigma > 0) {
+      // The blur is applied when the layer is restored, like ArkUI's content blur on the live Image.
+      const brush = new drawing.Brush();
+      brush.setImageFilter(drawing.ImageFilter.createBlurImageFilter(item.blurSigma, item.blurSigma,
+        drawing.TileMode.CLAMP));
+      canvas.saveLayer(rect, brush);
+      canvas.drawImageRect(item.pixelMap, rect, sampling);
+      canvas.restore();
+      return;
+    }
     if (item.rotation) {
       canvas.save();
       canvas.rotate(item.rotation, (left + right) / 2, (top + bottom) / 2);

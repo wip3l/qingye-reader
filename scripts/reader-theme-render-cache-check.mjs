@@ -20,14 +20,24 @@ const runtime = { readerBackgroundColor: dark => { themeCalls++; return dark ? '
   regexBubbleStyleFor: dark => { bubbleCalls++; return dark ? 'ink-brush' : 'warm-scroll'; } };
 const context = vm.createContext({ console, ThemeRuntime: runtime,
   ThemeAssetRegistry: { readerBackgroundImage: () => '' } });
-const modules = ['utils/HexColor.ts', 'utils/ReaderThemeHelper.ets', 'utils/ReaderCustomThemeHelper.ets',
+const modules = ['utils/HexColor.ts', 'utils/ReaderBackgroundDisplay.ets', 'utils/ReaderThemeHelper.ets', 'utils/ReaderCustomThemeHelper.ets',
   'utils/ReaderThemeRenderCache.ets'].map(name => read(name).replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, ''));
 const methods = ['currentReaderTheme', 'currentReaderThemeIndex', 'currentCustomThemeScheme', 'customThemeData',
   'themeRegexEmphasisMode', 'themeRegexBubbleStyleId'];
 vm.runInContext(stripTypeScriptTypes(modules.join('\n') + `\nclass Reader {
   ${methods.map(method).join('\n')}
 }; globalThis.Reader = Reader; globalThis.Cache = ReaderThemeRenderCache;
-globalThis.Helper = ReaderThemeHelper; globalThis.Custom = ReaderCustomThemeHelper;`), context);
+globalThis.Helper = ReaderThemeHelper; globalThis.Custom = ReaderCustomThemeHelper;
+globalThis.Display = ReaderBackgroundDisplay;`), context);
+// 裁切铺满的取景：只沿被裁的轴偏移，0 贴上/左、100 贴下/右；比例几乎一致时不裁。
+const Display = context.Display;
+assert.equal(Display.croppedAxis(9 / 16, 1000, 1125), 'v');
+assert.equal(Display.croppedAxis(9 / 16, 400, 880), 'h');
+assert.equal(Display.croppedAxis(9 / 16, 900, 1610), '');
+assert.equal(JSON.stringify(Display.coverRect(0.5, 100, 100, 0).map(v => v || 0)), JSON.stringify([0, 0, 100, 200]));
+assert.equal(JSON.stringify(Display.coverRect(0.5, 100, 100, 100).map(v => v || 0)), JSON.stringify([0, -100, 100, 200]));
+assert.equal(JSON.stringify(Display.coverRect(2, 100, 100, 100).map(v => v || 0)), JSON.stringify([-100, 0, 200, 100]));
+assert.equal(Display.of('stretch', Number.NaN, 'x').fit, 'cover');
 let parses = 0;
 const parse = context.Custom.parse;
 context.Custom.parse = (...args) => { parses++; return parse(...args); };
@@ -39,7 +49,8 @@ Object.assign(reader, { readerThemeRenderCache: new context.Cache(), appDarkMode
 function baseline() {
   const scheme = reader.currentCustomThemeScheme();
   return context.Helper.themeAt(reader.appDarkMode, reader.currentReaderThemeIndex(), scheme.backgroundColor,
-    scheme.textColor, scheme.backgroundType === 'image' ? scheme.backgroundImageUri : '', scheme.backgroundImageFit);
+    scheme.textColor, scheme.backgroundType === 'image' ? scheme.backgroundImageUri : '', scheme.backgroundImageFit,
+    scheme.backgroundImagePosition, scheme.backgroundImageGap);
 }
 for (const dark of [false, true]) for (const index of [0, 1, 2, 3, 4, -10, 99]) {
   reader.appDarkMode = dark; reader.readerLightThemeIndex = index; reader.readerDarkThemeIndex = index;
@@ -51,6 +62,17 @@ reader.readerCustomThemesRaw = JSON.stringify({ schemes: [{ id: 'photo', name: '
 reader.appDarkMode = false; reader.readerLightThemeIndex = 3;
 assert.equal(JSON.stringify(reader.currentReaderTheme()), JSON.stringify(baseline()));
 assert.equal(reader.currentReaderTheme().backgroundImageUri, 'file:///paper.png');
+// 没有空白处设置的旧方案保持露出底色；新写法的平铺、取景、模糊垫底原样带进主题。
+assert.equal(reader.currentReaderTheme().backgroundImageGap, 'color');
+reader.readerCustomThemesRaw = JSON.stringify({ schemes: [{ id: 'photo', name: 'paper', darkMode: false,
+  backgroundColor: '#112233', textColor: '#DDEEFF', backgroundType: 'image', backgroundImageUri: 'file:///paper.png',
+  backgroundImageFit: 'tile', backgroundImagePosition: 130, backgroundImageGap: 'blur' }], lightSelectedId: 'photo' });
+assert.deepEqual([reader.currentReaderTheme().backgroundImageFit, reader.currentReaderTheme().backgroundImagePosition,
+  reader.currentReaderTheme().backgroundImageGap], ['tile', 100, 'blur']);
+reader.readerCustomThemesRaw = JSON.stringify({ schemes: [{ id: 'photo', name: 'paper', darkMode: false,
+  backgroundColor: '#112233', textColor: '#DDEEFF', backgroundType: 'image',
+  backgroundImageUri: 'file:///paper.png', backgroundImageFit: 'contain' }], lightSelectedId: 'photo' });
+reader.currentReaderTheme();
 reader.themeRegexEmphasisMode(); reader.themeRegexBubbleStyleId();
 const before = [themeCalls, parses, modeCalls, bubbleCalls], retained = reader.currentReaderTheme();
 for (let update = 0; update < 1000; update++) {
