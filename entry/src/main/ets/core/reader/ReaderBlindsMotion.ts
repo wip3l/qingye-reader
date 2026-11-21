@@ -7,6 +7,8 @@
  *   让出来才翻出，两页的字永不重叠，交界处最多空出不到一行。
  * - 叶片先翻走、稍后再翻出，每片各记各的时刻；暂停、掉帧都不会让动画跳步。
  * - 双页时一栏读完再读下一栏（ReaderBlindsSpread）。
+ * - 手指上下拖动可以把阅读线往回挪（seek）：已翻走的叶片反向翻回本页，已翻出的下一页叶片反向收起；
+ *   拖动期间阅读线贴着手指（setFollow），松手后滑回叶片边界。
  */
 export class ReaderBlindsMotion {
   static readonly OUT_MS: number = 180;
@@ -26,6 +28,10 @@ export class ReaderBlindsMotion {
   private guideFrom: number = 0;
   private guideTo: number = 0;
   private guideAt: number = -1;
+  /** 正在反向翻回的叶片：序号 → 反向动画的起点时刻。动画放完后清掉。 */
+  private restoreOutAt: Map<number, number> = new Map<number, number>();
+  private restoreInAt: Map<number, number> = new Map<number, number>();
+  private following: boolean = false;
 
   /** 把各元素的上下边合并成按顶边排序、互不重叠的叶片。 */
   static mergeBands(intervals: number[][]): number[][] {
@@ -56,6 +62,9 @@ export class ReaderBlindsMotion {
     this.guideFrom = 0;
     this.guideTo = 0;
     this.guideAt = -1;
+    this.restoreOutAt.clear();
+    this.restoreInAt.clear();
+    this.following = false;
   }
 
   setNext(next: number[][]): void {
@@ -100,6 +109,24 @@ export class ReaderBlindsMotion {
     return Math.max(0, target - end);
   }
 
+  /** 把阅读线挪到 target（可往回挪）。下一页未知时不动。 */
+  seek(target: number, now: number): void {
+    if (this.next === null || !Number.isFinite(target)) return;
+    this.cursor = Math.max(0, Math.min(this.endY(), target));
+    this.update(now);
+  }
+
+  /** 拖动期间阅读线贴着手指画；结束时从手指位置滑回叶片边界。 */
+  setFollow(follow: boolean, now: number): void {
+    if (follow === this.following) return;
+    if (!follow) {
+      this.guideFrom = this.cursor;
+      this.guideTo = this.reveal();
+      this.guideAt = now;
+    }
+    this.following = follow;
+  }
+
   /** 阅读线落到的叶片边界：它以上是下一页，以下是本页。 */
   reveal(): number {
     let line = 0;
@@ -126,21 +153,44 @@ export class ReaderBlindsMotion {
     return this.shown;
   }
 
-  /** 本页第 index 片翻走的进度：0 还在，1 已经翻走。 */
+  /** 本页第 index 片翻走的进度：0 还在，1 已经翻走。反向翻回时从 1 回到 0（先等下一页那片收起）。 */
   outProgress(index: number, now: number): number {
-    if (index >= this.hidden) return 0;
-    return ReaderBlindsMotion.progress(now - this.hiddenAt[index], 0, ReaderBlindsMotion.OUT_MS);
+    if (index < this.hidden) {
+      return ReaderBlindsMotion.progress(now - this.hiddenAt[index], 0, ReaderBlindsMotion.OUT_MS);
+    }
+    const at = this.restoreOutAt.get(index);
+    if (at === undefined) return 0;
+    return 1 - ReaderBlindsMotion.progress(now - at, ReaderBlindsMotion.IN_DELAY_MS, ReaderBlindsMotion.OUT_MS);
   }
 
-  /** 下一页第 index 片翻出的进度：0 还没出来，1 已经立好。 */
+  /** 下一页第 index 片翻出的进度：0 还没出来，1 已经立好。反向收起时从 1 回到 0。 */
   inProgress(index: number, now: number): number {
-    if (index >= this.shown) return 0;
-    return ReaderBlindsMotion.progress(now - this.shownAt[index], ReaderBlindsMotion.IN_DELAY_MS,
-      ReaderBlindsMotion.IN_MS);
+    if (index < this.shown) {
+      return ReaderBlindsMotion.progress(now - this.shownAt[index], ReaderBlindsMotion.IN_DELAY_MS,
+        ReaderBlindsMotion.IN_MS);
+    }
+    const at = this.restoreInAt.get(index);
+    if (at === undefined) return 0;
+    return 1 - ReaderBlindsMotion.progress(now - at, 0, ReaderBlindsMotion.IN_MS);
+  }
+
+  /** 本页从这片起往下都是原样（没翻走也不在翻回途中），可以整块画。 */
+  outExtent(): number {
+    let extent = this.hidden;
+    for (const index of this.restoreOutAt.keys()) extent = Math.max(extent, index + 1);
+    return extent;
+  }
+
+  /** 下一页要逐片画到这片之前（含正在收起的叶片）。 */
+  inExtent(): number {
+    let extent = this.shown;
+    for (const index of this.restoreInAt.keys()) extent = Math.max(extent, index + 1);
+    return extent;
   }
 
   /** 阅读线的显示位置：跟着叶片翻动从旧边界滑到新边界。 */
   guideY(now: number): number {
+    if (this.following) return this.cursor;
     if (this.guideAt < 0) return this.guideTo;
     const t = ReaderBlindsMotion.progress(now - this.guideAt, 0, ReaderBlindsMotion.OUT_MS +
       ReaderBlindsMotion.IN_DELAY_MS);
@@ -149,6 +199,8 @@ export class ReaderBlindsMotion {
   }
 
   animating(now: number): boolean {
+    this.pruneRestores(now);
+    if (this.restoreOutAt.size > 0 || this.restoreInAt.size > 0) return true;
     const total = ReaderBlindsMotion.IN_DELAY_MS + ReaderBlindsMotion.IN_MS;
     for (let index = 0; index < this.hidden; index++) {
       if (now - this.hiddenAt[index] < ReaderBlindsMotion.OUT_MS) return true;
@@ -159,19 +211,47 @@ export class ReaderBlindsMotion {
     return this.guideAt >= 0 && now - this.guideAt < ReaderBlindsMotion.OUT_MS + ReaderBlindsMotion.IN_DELAY_MS;
   }
 
+  /**
+   * 按阅读线重算翻走/翻出的叶片数。往前越过的叶片开始翻，往回退出的叶片反向翻回；
+   * 翻到一半掉头时从当前进度接着反向，不跳帧。
+   */
   private update(now: number): void {
     const line = this.reveal();
-    let hidden = this.hidden;
-    while (hidden < this.current.length && this.current[hidden][1] <= line) {
-      this.hiddenAt.push(now);
-      hidden++;
-    }
+    let hidden = 0;
+    while (hidden < this.current.length && this.current[hidden][1] <= line) hidden++;
     const next = this.next || [];
-    let shown = this.shown;
-    while (shown < next.length && next[shown][1] <= line) {
-      this.shownAt.push(now);
-      shown++;
+    let shown = 0;
+    while (shown < next.length && next[shown][1] <= line) shown++;
+    const outMs = ReaderBlindsMotion.OUT_MS;
+    const inMs = ReaderBlindsMotion.IN_MS;
+    const delay = ReaderBlindsMotion.IN_DELAY_MS;
+    if (hidden > this.hidden) {
+      for (let index = this.hidden; index < hidden; index++) {
+        const progress = this.outProgress(index, now);
+        this.restoreOutAt.delete(index);
+        this.hiddenAt.push(now - progress * outMs);
+      }
+    } else if (hidden < this.hidden) {
+      for (let index = hidden; index < this.hidden; index++) {
+        const progress = this.outProgress(index, now);
+        if (progress > 0) this.restoreOutAt.set(index, progress >= 1 ? now : now - delay - (1 - progress) * outMs);
+      }
+      this.hiddenAt = this.hiddenAt.slice(0, hidden);
     }
+    if (shown > this.shown) {
+      for (let index = this.shown; index < shown; index++) {
+        const progress = this.inProgress(index, now);
+        this.restoreInAt.delete(index);
+        this.shownAt.push(progress > 0 ? now - delay - progress * inMs : now);
+      }
+    } else if (shown < this.shown) {
+      for (let index = shown; index < this.shown; index++) {
+        const progress = this.inProgress(index, now);
+        if (progress > 0) this.restoreInAt.set(index, now - (1 - progress) * inMs);
+      }
+      this.shownAt = this.shownAt.slice(0, shown);
+    }
+    this.pruneRestores(now);
     if (hidden !== this.hidden || shown !== this.shown) {
       this.guideFrom = this.guideY(now);
       this.guideTo = line;
@@ -179,6 +259,17 @@ export class ReaderBlindsMotion {
     }
     this.hidden = hidden;
     this.shown = shown;
+  }
+
+  private pruneRestores(now: number): void {
+    for (const entry of Array.from(this.restoreOutAt.entries())) {
+      if (now - entry[1] >= ReaderBlindsMotion.IN_DELAY_MS + ReaderBlindsMotion.OUT_MS) {
+        this.restoreOutAt.delete(entry[0]);
+      }
+    }
+    for (const entry of Array.from(this.restoreInAt.entries())) {
+      if (now - entry[1] >= ReaderBlindsMotion.IN_MS) this.restoreInAt.delete(entry[0]);
+    }
   }
 
   private static progress(elapsed: number, delay: number, duration: number): number {
@@ -205,6 +296,30 @@ export class ReaderBlindsSpread {
       rest = column.advance(rest, now);
       if (!(rest > 0)) return;
     }
+  }
+
+  /**
+   * 手指拖动：delta > 0 往下走（同 advance），< 0 往回挪，从已经走过的最后一栏往前退。
+   */
+  shift(delta: number, now: number): void {
+    if (!this.hasNext() || !Number.isFinite(delta)) return;
+    if (delta > 0) {
+      this.advance(delta, now);
+      return;
+    }
+    let rest = -delta;
+    for (let index = this.columns.length - 1; index >= 0 && rest > 0; index--) {
+      const column = this.columns[index];
+      const position = column.position();
+      if (position <= 0) continue;
+      const take = Math.min(rest, position);
+      column.seek(position - take, now);
+      rest -= take;
+    }
+  }
+
+  setFollow(follow: boolean, now: number): void {
+    for (const column of this.columns) column.setFollow(follow, now);
   }
 
   hasNext(): boolean {

@@ -18,7 +18,10 @@ const names = ['startReaderAutoScroll', 'toggleReaderAutoScroll', 'pauseReaderAu
   'restoreReaderAutoScrollAnchor', 'scrollReaderContinuousToSourceOffset', 'onReaderAutoScrollBackground',
   'readerComicEffectiveMode', 'isReaderComicPagedMode', 'readerComicAutoScrollImagesReady',
   'isReaderNovelContinuousScrollModeActive', 'readerEffectivePageTurnMode',
-  'cancelReaderAutoScrollTap', 'handleReaderAutoScrollTap', 'rememberContinuousReaderPointer',
+  'cancelReaderAutoScrollTap', 'handleReaderAutoScrollTap', 'holdReaderAutoScrollForDrag',
+  'releaseReaderAutoScrollDragHold', 'clearReaderAutoScrollDragHold', 'isReaderAutoScrollHeldByDrag',
+  'endReaderBlindsDrag', 'beginReaderBlindsDrag', 'updateReaderBlindsDrag', 'canDragReaderBlinds',
+  'readerBlindsOverlayVisible', 'rememberContinuousReaderPointer',
   'cancelContinuousReaderSelectionTimer', 'shouldShowReaderAutoScrollCapsule',
   'shouldShowReaderSessionQuickActions', 'shouldShowTtsMiniPlayer', 'shouldShowGlobalTtsMiniPlayer',
   'readerAutoScrollCapsuleLeft', 'readerAutoScrollCapsuleTop',
@@ -91,6 +94,8 @@ function fixture() {
     readerAutoScrollSettingsLoaded: true, readerAutoScrollAnchor: -1,
     readerAutoScrollWaitingSince: 0, readerAutoScrollTimer: -1, readerAutoScrollClock: new Clock(),
     readerAutoScrollTapTimer: -1, readerAutoScrollTapAt: 0,
+    readerAutoScrollDragHold: false, readerAutoScrollSettleSince: 0, readerAutoScrollSettleLastY: NaN,
+    readerAutoScrollSettleStill: 0,
     readerBlinds: { ensureColumns() {}, columns: [] }, readerBlindsSurfaces: new Map(),
     readerContinuousSelectionTimerId: -1, readerContinuousSelectionMoved: false, readerTapSlop: 12,
     readerAutoScrollPositionX: -1, readerAutoScrollPositionY: -1,
@@ -285,9 +290,29 @@ assert.equal(p.shortTaps, 0);
 
 p = fixture(); tap(p); touch(p, 0); touch(p, 1, 180, 350); touch(p, 2, 180, 350);
 assert.ok(p.inertiaStops > 0, 'touch down stops native inertia before a drag is recognized');
-assert.equal(p.readerAutoScrollPaused, true, 'dragging still pauses');
+assert.equal(p.readerAutoScrollPaused, false, 'dragging does not pause');
 assert.equal(p.readerAutoScrollTapTimer, -1, 'drag cancels pending tap');
 assert.equal(p.shortTaps, 0, 'drag cannot open the menu');
+
+// 拖动期间不推进，松手后等位置停稳再从拖到的位置接着滚。
+p = fixture(); p.readerAutoScrollAnchor = 480;
+touch(p, 0); touch(p, 1, 180, 350);
+assert.equal(p.readerAutoScrollDragHold, true, 'drag holds the motion');
+assert.equal(p.readerAutoScrollAnchor, -1, 'drag discards the pending start anchor');
+p.distance = 200;
+frame(p); frame(p);
+assert.equal(p.distance, 200, 'finger owns the position while dragging');
+touch(p, 2, 180, 350);
+assert.equal(p.readerAutoScrollDragHold, false);
+frame(p); p.distance = 260; frame(p); frame(p);
+assert.equal(p.distance, 260, 'fling after release is not overridden');
+for (let i = 0; i < 8; i++) frame(p);
+assert.ok(p.distance > 260, 'scrolling continues from the dragged position once settled');
+assert.equal(p.readerAutoScrollPaused, false);
+p = fixture(); p.holdReaderAutoScrollForDrag(); p.pauseReaderAutoScroll('已暂停');
+assert.equal(p.readerAutoScrollDragHold, false, 'pause clears a pending drag hold');
+p = fixture(); p.readerAutoScrollPaused = true; p.holdReaderAutoScrollForDrag();
+assert.equal(p.readerAutoScrollDragHold, false, 'paused sessions ignore drags');
 p = fixture(); touch(p, 0); now += 420; fireTimer(p.readerContinuousSelectionTimerId); touch(p, 2);
 assert.equal(p.readerAutoScrollPaused, true, 'long press pauses before selection');
 assert.equal(p.selections, 1);
@@ -428,9 +453,11 @@ registry.unregisterState('page', firstState);
 assert.equal(registry.imageState('page'), 0, 'unmounted images cannot count as ready');
 const gestures = new sandbox.ComicGestures();
 let toggles = 0, pauses = 0, zoomResets = 0;
+const holds = [];
 Object.assign(gestures, {
   autoScrollActive: true, touchDragged: false, pinching: false,
   onAutoScrollToggle: () => toggles++, onManualInteraction: () => pauses++,
+  onDragHold: holding => holds.push(holding),
   zoomed: () => true, resetZoom: () => zoomResets++, onPanStart() {},
   tapPoint: () => [0, 0], centerX: () => 0, centerY: () => 0,
   zoomScale: 1, zoomX: 0, zoomY: 0, scroller: { getItemIndex: () => -1 },
@@ -445,7 +472,8 @@ gestures.touchDragged = false; gestures.autoScrollActive = false; gestures.handl
 assert.equal(zoomResets, 1, 'normal zoom returns when the session ends');
 gestures.handleLongPress({}); gestures.handlePanStart();
 gestures.handlePinchStart({ pinchCenterX: 0, pinchCenterY: 0 });
-assert.equal(pauses, 3, 'long press, zoomed pan and pinch all pause');
+assert.equal(pauses, 2, 'long press and pinch pause');
+assert.deepEqual(holds, [true], 'zoomed pan holds instead of pausing');
 assert.match(comicView, /interactionLayer\(this.doubleTapZoom \|\| this.autoScrollActive\)/,
   'auto-scroll double tap remains enabled when zoom preference is off');
 // Blinds mode: paged layout stays as it is, scroll readers temporarily get pages, taps wait for a double tap.
@@ -509,5 +537,24 @@ assert.notEqual(p.showMenu, true, 'double tap never opens the menu');
 assert.equal(p.readerAutoScrollTapTimer, -1);
 p.stopReaderAutoScroll(false);
 assert.equal(timers.size, 0, 'blinds sessions release timers');
+
+// Vertical drag in blinds moves the reading line by the finger's distance (vp → layout px) and resumes on release.
+p = blindsFixture(2);
+await p.startReaderAutoScroll();
+const shifts = [], follows = [];
+p.readerBlinds = { ensureColumns() {}, columns: [], hasNext: () => true,
+  shift: delta => shifts.push(delta), setFollow: follow => follows.push(follow) };
+p.readerBlindsRenderVersion = p.pageRenderVersion = 0; p.pageSlideDirection = 0; p.pageTurnAnimating = false;
+assert.equal(p.canDragReaderBlinds(), true);
+p.beginReaderBlindsDrag(12); p.updateReaderBlindsDrag(30); p.updateReaderBlindsDrag(20);
+assert.deepEqual(shifts, [36, -20], 'relative drag shifts by the finger delta in layout pixels');
+assert.equal(p.readerBlindsDragging, true);
+p.endReaderBlindsDrag();
+assert.deepEqual(follows, [true, false], 'guide follows the finger only while dragging');
+assert.equal(p.readerAutoScrollPaused, false, 'releasing the line keeps blinds running');
+p.beginReaderBlindsDrag(0); p.pauseReaderAutoScroll('已暂停');
+assert.equal(p.readerBlindsDragging, false, 'pause releases a held line');
+assert.equal(p.canDragReaderBlinds(), false, 'paused blinds does not take vertical drags');
+p.stopReaderAutoScroll(false);
 
 console.log('PASS reader auto-scroll: novel/comic sessions, blinds mode, screen speed, image readiness, mode restore, lifecycle, chapter boundaries and gestures');

@@ -1074,6 +1074,8 @@ export struct ReaderComicView {
   @Prop autoScrollActive: boolean = false;
   onAutoScrollToggle: () => void = () => {};
   onManualInteraction: () => void = () => {};
+  /** 自动滚动中拖动画面：true 按住不推进，false 松手后从新位置继续。未放大时由 onPanStart/onPanEnd 处理。 */
+  onDragHold: (holding: boolean) => void = () => {};
   /** 漫画超分（会员功能）。 */
   @Prop superResolution: boolean = false;
   @Prop textConvert: boolean = false;
@@ -1306,7 +1308,7 @@ export struct ReaderComicView {
   }
 
   private handlePanStart(): void {
-    this.onManualInteraction();
+    // 拖动不再暂停自动滚动：松手后从拖到的位置接着滚。
     this.panInProgress = true;
     this.touchDragged = true;
     this.panLastX = 0;
@@ -1314,6 +1316,7 @@ export struct ReaderComicView {
     this.panResync = false;
     this.zoomPanActive = this.zoomed() || this.pinching;
     if (!this.zoomPanActive) this.onPanStart();
+    else this.onDragHold(true);
   }
 
   private handlePanUpdate(event: GestureEvent): void {
@@ -1346,6 +1349,7 @@ export struct ReaderComicView {
     if (!this.pinching && this.zoomed() && Math.abs(event.velocityY) > 120) {
       this.scroller.fling(event.velocityY / this.zoomScale);
     }
+    this.onDragHold(false);
   }
 
   private handlePanCancel(): void {
@@ -1353,6 +1357,7 @@ export struct ReaderComicView {
     this.panInProgress = false;
     this.zoomPanActive = false;
     if (!zoomPan) this.onPanCancel();
+    else this.onDragHold(false);
   }
 
   /**

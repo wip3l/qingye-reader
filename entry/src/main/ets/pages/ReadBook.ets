@@ -360,6 +360,8 @@ const READER_RASTER_INFO_INCOMING = 2;
 const READER_PAN_INTENT_NONE = 0;
 const READER_PAN_INTENT_TURN = 1;
 const READER_PAN_INTENT_BOOKMARK = 2;
+/** 百叶窗进行中竖向拖动：挪阅读线，不翻页。 */
+const READER_PAN_INTENT_BLINDS = 3;
 const READER_PROGRESS_OFFSET_KEY = 'readProgressCharOffsetV2';
 /** 注释超过这么多字或带图片就用半模态展示，不在点击处弹出。 */
 const READER_NOTE_POPUP_MAX_CHARS = 320;
@@ -653,7 +655,16 @@ struct ReadBookPage {
   private readerAutoScrollTapAt: number = 0;
   private readerAutoScrollTapX: number = 0;
   private readerAutoScrollTapY: number = 0;
+  /** 自动滚动进行中手指拖着正文：暂不推进，松手后从拖到的位置接着滚，不算暂停。 */
+  private readerAutoScrollDragHold: boolean = false;
+  /** 松手后等惯性停稳再接着滚；记下松手时刻、上一帧位置和连续未动的帧数。 */
+  private readerAutoScrollSettleSince: number = 0;
+  private readerAutoScrollSettleLastY: number = Number.NaN;
+  private readerAutoScrollSettleStill: number = 0;
   private readerBlinds: ReaderBlindsSpread = new ReaderBlindsSpread();
+  /** 百叶窗进行中手指竖向拖着阅读线（相对拖动：线按手指移动的距离走）。 */
+  private readerBlindsDragging: boolean = false;
+  private readerBlindsDragLastY: number = 0;
   private readerBlindsColumns: ReaderBlindsColumn[] = [];
   /** 百叶窗当前各栏对应的本页版面；版面对象换了（翻页、重排、换单双页）就从头开始。 */
   private readerBlindsLayouts: (ReaderV2PageLayout | null)[] = [];
@@ -3016,6 +3027,10 @@ struct ReadBookPage {
         autoScrollActive: this.readerAutoScrollActive,
         onAutoScrollToggle: (): void => this.toggleReaderAutoScroll(),
         onManualInteraction: (): void => this.pauseReaderAutoScroll('已暂停'),
+        onDragHold: (holding: boolean): void => {
+          if (holding) this.holdReaderAutoScrollForDrag();
+          else this.releaseReaderAutoScrollDragHold();
+        },
         superResolution: this.isReaderComicSuperResolutionActive(),
         textConvert: this.isReaderComicTextConvertActive(),
         interactive: this.isReaderComicInteractionEnabled(),
@@ -6227,8 +6242,64 @@ struct ReadBookPage {
     else this.startReaderAutoScroll();
   }
 
+  /** 拖动正文时按住自动滚动：位置交给手指，松手后从新位置继续（见 releaseReaderAutoScrollDragHold）。 */
+  holdReaderAutoScrollForDrag(): void {
+    this.cancelReaderAutoScrollTap();
+    if (!this.readerAutoScrollActive || this.readerAutoScrollPaused) return;
+    this.readerAutoScrollDragHold = true;
+    this.readerAutoScrollSettleSince = 0;
+    // 用户自己选了新位置，启动时待恢复的锚点作废，否则会被拉回去。
+    this.readerAutoScrollAnchor = -1;
+    this.readerAutoScrollWaitingSince = 0;
+    this.readerAutoScrollClock.reset();
+  }
+
+  /** 松手：先等列表惯性停稳（连续几帧位置不变），再从停下的位置接着滚。可重复调用。 */
+  releaseReaderAutoScrollDragHold(): void {
+    if (!this.readerAutoScrollDragHold && this.readerAutoScrollSettleSince === 0) return;
+    this.readerAutoScrollDragHold = false;
+    this.readerAutoScrollSettleSince = Date.now();
+    this.readerAutoScrollSettleLastY = Number.NaN;
+    this.readerAutoScrollSettleStill = 0;
+    this.readerAutoScrollClock.reset();
+  }
+
+  clearReaderAutoScrollDragHold(): void {
+    this.readerAutoScrollDragHold = false;
+    this.readerAutoScrollSettleSince = 0;
+  }
+
+  /** 拖动中或松手后惯性未停时返回 true；惯性最多等 3 秒。 */
+  isReaderAutoScrollHeldByDrag(now: number): boolean {
+    if (this.readerAutoScrollDragHold) return true;
+    if (this.readerAutoScrollSettleSince === 0) return false;
+    let y = Number.NaN;
+    try {
+      y = Number(this.readerComicScroller.currentOffset().yOffset);
+    } catch (error) {
+      console.warn('读取自动滚动位置失败:', error);
+    }
+    if (Number.isFinite(y) && Number.isFinite(this.readerAutoScrollSettleLastY) &&
+      Math.abs(y - this.readerAutoScrollSettleLastY) < 0.5) {
+      this.readerAutoScrollSettleStill++;
+    } else {
+      this.readerAutoScrollSettleStill = 0;
+    }
+    this.readerAutoScrollSettleLastY = y;
+    const elapsed = now - this.readerAutoScrollSettleSince;
+    // 惯性滚动在松手后的下一帧才开始，至少等 120ms 再按“连续 3 帧未动”判定停稳。
+    if ((elapsed >= 120 && this.readerAutoScrollSettleStill >= 3) || elapsed > 3000 || !Number.isFinite(y)) {
+      this.readerAutoScrollSettleSince = 0;
+      this.readerAutoScrollClock.reset();
+      return false;
+    }
+    return true;
+  }
+
   pauseReaderAutoScroll(status: string): void {
     this.cancelReaderAutoScrollTap();
+    this.clearReaderAutoScrollDragHold();
+    this.endReaderBlindsDrag();
     this.readerAutoScrollRequest++;
     if (this.readerAutoScrollTimer >= 0) clearInterval(this.readerAutoScrollTimer);
     this.readerAutoScrollTimer = -1;
@@ -6351,6 +6422,7 @@ struct ReadBookPage {
   }
 
   resetReaderBlinds(): void {
+    this.readerBlindsDragging = false;
     this.readerBlinds.ensureColumns(0);
     this.readerBlindsColumns = [];
     this.readerBlindsLayouts = [];
@@ -6493,10 +6565,12 @@ struct ReadBookPage {
 
   advanceReaderBlinds(now: number, ready: boolean): void {
     // 手动翻页（滑动、点按、音量键）进行中画布让给普通正文；翻完回到新页顶部接着走，不暂停。
-    const manual = !this.readerBlindsCommitting && (this.isPageTurning || this.readerPanActive ||
+    const dragging = this.readerBlindsDragging;
+    const manual = !this.readerBlindsCommitting && !dragging && (this.isPageTurning || this.readerPanActive ||
       this.pageSlideDirection !== 0 || this.pageTurnAnimating);
+    // 拖动阅读线期间位置交给手指，时钟不走；松手后从拖到的位置接着走。
     const delta = this.readerAutoScrollClock.advance(now, this.readerAutoScrollSpeed,
-      vp2px(this.getEffectiveReaderLineHeight()), ready && !manual && !this.readerBlindsCommitting);
+      vp2px(this.getEffectiveReaderLineHeight()), ready && !manual && !this.readerBlindsCommitting && !dragging);
     if (manual || this.readerBlindsCommitting) return;
     if (!ready || !this.syncReaderBlindsPages(now)) {
       if (this.readerAutoScrollActive && !this.readerAutoScrollPaused) this.waitReaderAutoScroll(now);
@@ -6504,7 +6578,7 @@ struct ReadBookPage {
     }
     this.readerAutoScrollWaitingSince = 0;
     if (this.readerAutoScrollStatus) this.readerAutoScrollStatus = '';
-    this.readerBlinds.advance(delta, now);
+    if (!dragging) this.readerBlinds.advance(delta, now);
     let flips = 0;
     for (const motion of this.readerBlinds.columns) flips += motion.hiddenCount() + motion.shownCount();
     if (flips !== this.readerBlindsFlipCount) {
@@ -6516,9 +6590,45 @@ struct ReadBookPage {
       this.readerBlinds.animating(now)) {
       for (const surface of this.readerBlindsSurfaces.values()) surface.redraw();
     }
-    if (this.readerBlinds.reachedEnd() && !this.readerBlinds.animating(now)) {
+    if (!dragging && this.readerBlinds.reachedEnd() && !this.readerBlinds.animating(now)) {
       this.commitReaderBlindsPage();
     }
+  }
+
+  /** 百叶窗进行中（未暂停、没在提交翻页、画布盖在正文上）才接竖向拖动。 */
+  canDragReaderBlinds(): boolean {
+    return this.readerAutoScrollActive && !this.readerAutoScrollPaused && this.readerAutoScrollBlindsSession &&
+      !this.isReaderComicModeActive() && !this.readerBlindsCommitting && this.readerBlindsOverlayVisible() &&
+      this.readerBlinds.hasNext();
+  }
+
+  beginReaderBlindsDrag(offsetY: number): void {
+    this.cancelReaderAutoScrollTap();
+    this.readerBlindsDragging = true;
+    this.readerBlindsDragLastY = offsetY;
+    this.readerBlinds.setFollow(true, Date.now());
+    this.readerBlindsDirtyUntil = Date.now() + 400;
+  }
+
+  /** offsetY 是手势累计位移（vp）；按这一帧的增量挪阅读线（版面像素）。 */
+  updateReaderBlindsDrag(offsetY: number): void {
+    if (!this.readerBlindsDragging) return;
+    const delta = offsetY - this.readerBlindsDragLastY;
+    this.readerBlindsDragLastY = offsetY;
+    if (Math.abs(delta) < 0.01) return;
+    const now = Date.now();
+    this.readerBlinds.shift(vp2px(delta), now);
+    this.readerBlindsDirtyUntil = now + 400;
+  }
+
+  endReaderBlindsDrag(): void {
+    if (!this.readerBlindsDragging) return;
+    const now = Date.now();
+    this.readerBlindsDragging = false;
+    this.readerBlinds.setFollow(false, now);
+    this.readerBlindsDirtyUntil = now + 400;
+    this.readerAutoScrollClock.reset();
+    for (const surface of this.readerBlindsSurfaces.values()) surface.redraw();
   }
 
   /** 下一页已经全部露出：无动画地翻过去，画面不变，百叶窗在新页上从顶部重新开始。 */
@@ -6626,6 +6736,11 @@ struct ReadBookPage {
         this.pauseReaderAutoScroll('翻页异常，已暂停');
         console.warn('百叶窗自动翻页失败:', error);
       }
+      return;
+    }
+    if (this.isReaderAutoScrollHeldByDrag(now)) {
+      this.readerAutoScrollClock.reset();
+      this.readerAutoScrollWaitingSince = 0;
       return;
     }
     const delta = this.readerAutoScrollClock.advance(now, this.readerAutoScrollSpeed,
@@ -8079,13 +8194,13 @@ struct ReadBookPage {
     // A small scroll must neither open the menu on Up nor become a long-press selection.
     this.readerContinuousSelectionMoved = true;
     this.cancelContinuousReaderSelectionTimer();
-    this.pauseReaderAutoScroll('已暂停');
     this.beginReaderComicPan();
     this.updateReaderComicPan(event);
   }
 
   beginReaderComicPan(): void {
     this.stopReaderComicScreenScroll();
+    this.holdReaderAutoScrollForDrag();
     if (this.readerComicChapterSwitching) return;
     this.readerComicPanLastOffsetY = 0;
     this.readerComicPanMoved = false;
@@ -8127,6 +8242,7 @@ struct ReadBookPage {
   }
 
   finishReaderComicPan(event: GestureEvent): void {
+    this.releaseReaderAutoScrollDragHold();
     if (this.readerComicChapterSwitching) return;
     const chapterDirection = this.readerComicBoundaryReady ? this.readerComicBoundaryDirection : 0;
     const hadBoundaryPull = this.readerComicBoundaryDirection !== 0;
@@ -8146,6 +8262,7 @@ struct ReadBookPage {
   }
 
   cancelReaderComicPan(): void {
+    this.releaseReaderAutoScrollDragHold();
     this.readerComicPanLastOffsetY = 0;
     this.readerComicPanMoved = false;
     this.readerComicBoundaryPullOriginY = 0;
@@ -12580,8 +12697,10 @@ struct ReadBookPage {
       })
       .parallelGesture(
         GestureGroup(GestureMode.Exclusive,
-          PanGesture({ direction: this.isVerticalPageTurnAnimation() ?
-            PanDirection.Vertical : PanDirection.Horizontal, distance: this.readerTapSlop })
+          // 百叶窗进行中竖向拖动用来挪阅读线，横向仍是翻页，所以两个方向都要识别。
+          PanGesture({ direction: this.readerAutoScrollBlindsSession ? PanDirection.All :
+            (this.isVerticalPageTurnAnimation() ? PanDirection.Vertical : PanDirection.Horizontal),
+            distance: this.readerTapSlop })
             .onActionStart((event: GestureEvent) => {
               this.handleReaderPanStart(event);
             })
@@ -12735,8 +12854,19 @@ struct ReadBookPage {
       }
       // 原先每帧都重新判断：斜向下的拖动先按翻页卷起/滑动了页面、准备了目标页，下移到 48vp 后又被
       // 下拉书签接管，翻页状态没有清理就直接置零，松手时还会切换书签而不是翻页。这里只判定一次。
-      this.readerPanIntent = this.isBookmarkPullDirection(offsetX, offsetY) ?
-        READER_PAN_INTENT_BOOKMARK : READER_PAN_INTENT_TURN;
+      if (Math.abs(offsetY) > Math.abs(offsetX) && this.canDragReaderBlinds()) {
+        this.readerPanIntent = READER_PAN_INTENT_BLINDS;
+        this.beginReaderBlindsDrag(offsetY);
+      } else {
+        this.readerPanIntent = this.isBookmarkPullDirection(offsetX, offsetY) ?
+          READER_PAN_INTENT_BOOKMARK : READER_PAN_INTENT_TURN;
+      }
+    }
+    if (this.readerPanIntent === READER_PAN_INTENT_BLINDS) {
+      this.readerTouchMoved = true;
+      this.suppressReaderTapClick = true;
+      this.updateReaderBlindsDrag(offsetY);
+      return;
     }
     if (this.readerPanIntent === READER_PAN_INTENT_BOOKMARK) {
       this.readerTouchMoved = true;
@@ -12764,6 +12894,12 @@ struct ReadBookPage {
     this.readerPanActive = false;
     this.readerEmulationFlipPainter.releaseCorner();
     this.deferReaderPaginationForInteraction();
+    if (this.readerPanIntent === READER_PAN_INTENT_BLINDS) {
+      this.readerTouchMoved = true;
+      this.suppressReaderTapClick = true;
+      this.endReaderBlindsDrag();
+      return;
+    }
     if (this.bookmarkPullActive) {
       this.readerTouchMoved = true;
       this.suppressReaderTapClick = true;
@@ -12801,6 +12937,11 @@ struct ReadBookPage {
     this.readerPanActive = false;
     this.readerEmulationFlipPainter.releaseCorner();
     this.deferReaderPaginationForInteraction();
+    if (this.readerPanIntent === READER_PAN_INTENT_BLINDS) {
+      this.suppressReaderTapClick = true;
+      this.endReaderBlindsDrag();
+      return;
+    }
     if (this.bookmarkPullActive) {
       this.suppressReaderTapClick = true;
       this.finishBookmarkPull(false);
@@ -12850,6 +12991,8 @@ struct ReadBookPage {
       this.readerTouchLastX = x;
       this.readerTouchLastY = y;
       this.readerTouchActive = true;
+      // 上一次拖阅读线如果没收到手势结束，新按下时先放开，免得百叶窗一直停着。
+      this.endReaderBlindsDrag();
       this.readerPanIntent = READER_PAN_INTENT_NONE;
       this.readerPageTurnGestureCommitted = false;
       this.readerGestureTurnGuardUntil = 0;
@@ -12932,6 +13075,7 @@ struct ReadBookPage {
       this.readerTouchLastY = y;
       this.readerTouchActive = false;
       this.deferReaderPaginationForInteraction();
+      if (this.readerPanIntent === READER_PAN_INTENT_BLINDS) this.endReaderBlindsDrag();
       if (this.isPageTurnAnimationEnabled()) {
         return;
       }
@@ -12972,8 +13116,8 @@ struct ReadBookPage {
   finishReaderHorizontalTouch(canCommitTap: boolean = true): void {
     const offsetX = this.readerTouchLastX - this.readerTouchStartX;
     const offsetY = this.readerTouchLastY - this.readerTouchStartY;
-    // 已判定为下拉书签的拖动由 PanGesture 收尾，触摸抬起不能再按横向位移补一次翻页。
-    if (this.readerPanIntent === READER_PAN_INTENT_BOOKMARK) {
+    // 已判定为下拉书签或拖百叶窗阅读线的拖动由 PanGesture 收尾，触摸抬起不能再按位移补一次翻页。
+    if (this.readerPanIntent === READER_PAN_INTENT_BOOKMARK || this.readerPanIntent === READER_PAN_INTENT_BLINDS) {
       this.suppressReaderTapClick = true;
       return;
     }
@@ -18048,11 +18192,13 @@ ${leading}` : leading;
        Math.abs(globalY - this.readerContinuousSelectionDownY) > this.readerTapSlop)) {
       this.readerContinuousSelectionMoved = true;
       this.cancelContinuousReaderSelectionTimer();
-      this.pauseReaderAutoScroll('已暂停');
+      this.holdReaderAutoScrollForDrag();
       return;
     }
     if (event.type === TouchType.Up) {
       this.cancelContinuousReaderSelectionTimer();
+      // 拖动手势结束会再放一次；这里兜住横向挪动等没有进入拖动手势的情况。
+      this.releaseReaderAutoScrollDragHold();
       const duration = Date.now() - this.readerContinuousSelectionDownAt;
       if (!this.readerContinuousSelectionMoved && duration < 380) {
         if (this.readerAutoScrollActive) this.handleReaderAutoScrollTap(globalX, globalY);
@@ -18064,6 +18210,7 @@ ${leading}` : leading;
       this.readerContinuousSelectionMoved = true;
       this.cancelContinuousReaderSelectionTimer();
       this.cancelReaderAutoScrollTap();
+      this.releaseReaderAutoScrollDragHold();
     }
   }
 

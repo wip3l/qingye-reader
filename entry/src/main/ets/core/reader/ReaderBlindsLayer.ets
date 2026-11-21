@@ -96,18 +96,20 @@ export class ReaderBlindsPainter {
     const flip = effect !== READER_BLINDS_EFFECT_FADE;
     const current = motion.currentBands();
     const next = motion.nextBands();
-    const hidden = motion.hiddenCount();
     const shown = motion.shownCount();
-    if (column.current && hidden < current.length) {
-      ReaderBlindsPainter.drawClipped(canvas, column.current, current[hidden][0], ReaderBlindsPainter.FAR,
+    // 往回拖时正在翻回的叶片也逐片画，整块只画它们以下原样的部分。
+    const outExtent = motion.outExtent();
+    const inExtent = motion.inExtent();
+    if (column.current && outExtent < current.length) {
+      ReaderBlindsPainter.drawClipped(canvas, column.current, current[outExtent][0], ReaderBlindsPainter.FAR,
         sampling);
-    } else if (column.current && current.length === 0 && shown === 0) {
+    } else if (column.current && current.length === 0 && inExtent === 0) {
       // 空白页（没有任何叶片）照常画，免得章首饰图之类没有行的内容在开始前就消失。
       ReaderBlindsPainter.drawClipped(canvas, column.current, -ReaderBlindsPainter.FAR, ReaderBlindsPainter.FAR,
         sampling);
     }
     if (column.current) {
-      for (let index = 0; index < hidden; index++) {
+      for (let index = 0; index < outExtent && index < current.length; index++) {
         const progress = motion.outProgress(index, now);
         if (progress >= 1) continue;
         ReaderBlindsPainter.drawFlip(canvas, column.current, current[index],
@@ -122,7 +124,7 @@ export class ReaderBlindsPainter {
         ReaderBlindsPainter.drawClipped(canvas, column.next, -ReaderBlindsPainter.FAR, next[settled - 1][1],
           sampling);
       }
-      for (let index = settled; index < shown; index++) {
+      for (let index = settled; index < inExtent && index < next.length; index++) {
         const progress = motion.inProgress(index, now);
         if (progress <= 0) continue;
         ReaderBlindsPainter.drawFlip(canvas, column.next, next[index], flip ? Math.sin(progress * Math.PI / 2) : 1,

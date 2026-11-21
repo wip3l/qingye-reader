@@ -100,4 +100,68 @@ assert.equal(s.reachedEnd(), true);
 s.ensureColumns(1);
 assert.equal(s.columns.length, 1, 'switching to single page drops the right column');
 
+// Dragging back: seek moves the line up, passed slats flip back in reverse, mid-flip reversals keep progress.
+{
+  const d = new Motion();
+  d.reset(current, next);
+  let t = 1000;
+  d.seek(130, t);
+  const hiddenBefore = d.hiddenCount();
+  const shownBefore = d.shownCount();
+  assert.ok(hiddenBefore >= 3 && shownBefore >= 2);
+  t += 1000;
+  d.seek(50, t);
+  assert.equal(d.position(), 50);
+  assert.equal(d.hiddenCount(), 1, 'only the title stays flipped above the dragged-back line');
+  assert.equal(d.shownCount(), 1);
+  assert.equal(d.outProgress(2, t), 1, 'a restored slat starts fully flipped');
+  assert.equal(d.inProgress(1, t), 1, 'a retracting next-page slat starts fully shown');
+  assert.ok(d.outExtent() >= hiddenBefore, 'restoring slats are painted one by one');
+  assert.ok(d.inExtent() >= shownBefore);
+  assert.equal(d.animating(t), true);
+  assert.equal(d.inProgress(1, t + Motion.IN_MS), 0, 'next-page slat retracts first');
+  assert.equal(d.outProgress(2, t + Motion.IN_DELAY_MS + Motion.OUT_MS), 0, 'current slat returns after it');
+  t += 2000;
+  assert.equal(d.animating(t), false);
+  assert.equal(d.outExtent(), 1, 'finished restores are dropped');
+  assert.equal(d.inExtent(), 1);
+  // Reverse halfway through a flip: the slat continues from where it was instead of jumping.
+  t += 1000;
+  d.seek(100, t);
+  const mid = t + Motion.OUT_MS / 2;
+  const half = d.outProgress(1, mid);
+  assert.ok(half > 0.4 && half < 0.6);
+  d.seek(50, mid);
+  assert.ok(Math.abs(d.outProgress(1, mid) - half) < 0.01, 'reversal keeps flip progress');
+  assert.ok(d.outProgress(1, mid + 30) < half, 'and then runs backward');
+  d.seek(-20, mid + 1);
+  assert.equal(d.position(), 0, 'cannot drag above the page top');
+  d.seek(9999, mid + 2);
+  assert.equal(d.position(), d.endY(), 'cannot drag past the end');
+  // Guide follows the finger while dragging, then eases back to the slat boundary.
+  d.reset(current, next);
+  d.setFollow(true, 0);
+  d.seek(80, 0);
+  assert.equal(d.guideY(0), 80, 'guide sticks to the finger');
+  d.setFollow(false, 0);
+  assert.equal(d.guideY(0), 80);
+  assert.equal(d.guideY(1000), d.reveal(), 'guide settles on the slat boundary after release');
+  const unknown = new Motion();
+  unknown.reset(current, null);
+  unknown.seek(60, 0);
+  assert.equal(unknown.position(), 0, 'unknown next page cannot be dragged');
+}
+// Spread drag: forward fills the left column first, backward empties the right column first.
+{
+  const s2 = new Spread();
+  s2.ensureColumns(2);
+  s2.columns[0].reset([[0, 30], [30, 60]], [[0, 30], [30, 60]]);
+  s2.columns[1].reset([[0, 30], [30, 60]], [[0, 30], [30, 60]]);
+  s2.shift(80, 0);
+  assert.deepEqual([s2.columns[0].position(), s2.columns[1].position()], [60, 20]);
+  s2.shift(-30, 0);
+  assert.deepEqual([s2.columns[0].position(), s2.columns[1].position()], [50, 0], 'back through the right column');
+  s2.shift(-500, 0);
+  assert.deepEqual([s2.columns[0].position(), s2.columns[1].position()], [0, 0]);
+}
 console.log('PASS reader blinds motion: slat merging, no overlap, per-slat flip timing, empty columns and spreads');
