@@ -29,6 +29,12 @@ export class TtsPcmAudioPlayer {
   private static readonly CLOCK_FALLBACK_DRAIN_GRACE_MS: number = 80;
   private static readonly TIMESTAMP_TAIL_DRAIN_GRACE_MS: number = 100;
   private static readonly RENDERER_DRAIN_MAX_WAIT_MS: number = 120;
+  private static readonly GAP_FILL_LEAD_MS: number = 200;
+  private static readonly GAP_FILL_MAX_MS: number = 15000;
+  private gapFillTimerId: number = -1;
+  private gapFillStartedAt: number = 0;
+  private gapFillFrames: number = 0;
+  private gapFillUntil: number = 0;
   private readonly audioSessionOwner: string = `tts_pcm_${Date.now()}_${Math.random()}`;
   private renderer: PcmOutput | null = null;
   private currentSampleRate: audio.AudioSamplingRate = audio.AudioSamplingRate.SAMPLE_RATE_16000;
@@ -82,7 +88,46 @@ export class TtsPcmAudioPlayer {
   }
 
   write(data: ArrayBuffer, sampleRate: number): Promise<void> {
+    this.stopGapFill();
     return this.enqueueWrite(data, sampleRate);
+  }
+
+  /**
+   * 章与章之间下一章的语音还没写来时，按实时速度往流里垫静音（最多领先 GAP_FILL_LEAD_MS）。
+   *
+   * 不走 offload 的通道（普通蓝牙耳机等）只预收零点几秒数据；流里一断数据，音频服务约 1 秒后把它转入
+   * 待机，系统随即判定应用“全部静音”（standby、all session mute），再过几秒就冻结进程，下一章要等解锁。
+   * 静音按帧计入时间线，下一章的提示点照常对齐；写入真正的语音、停止、暂停或 drain 时自动停，最多垫 maxMs。
+   */
+  startGapFill(maxMs: number = TtsPcmAudioPlayer.GAP_FILL_MAX_MS): void {
+    if (!this.renderer || this.paused || this.systemInterrupted) return;
+    this.gapFillUntil = Date.now() + Math.max(0, maxMs);
+    if (this.gapFillTimerId >= 0) return;
+    this.gapFillStartedAt = Date.now();
+    this.gapFillFrames = 0;
+    this.gapFillTimerId = setInterval((): void => this.tickGapFill(), 50);
+    this.tickGapFill();
+  }
+
+  stopGapFill(): void {
+    if (this.gapFillTimerId < 0) return;
+    clearInterval(this.gapFillTimerId);
+    this.gapFillTimerId = -1;
+    console.info(`[TTS] pcm gap fill stopped: frames=${this.gapFillFrames}`);
+  }
+
+  private tickGapFill(): void {
+    if (!this.renderer || this.paused || this.systemInterrupted || Date.now() > this.gapFillUntil) {
+      this.stopGapFill();
+      return;
+    }
+    const sampleRate = Math.max(1, this.queuedSampleRate || Number(this.currentSampleRate) || 16000);
+    const dueFrames = Math.round((Date.now() - this.gapFillStartedAt + TtsPcmAudioPlayer.GAP_FILL_LEAD_MS) *
+      sampleRate / 1000);
+    const frames = Math.min(dueFrames - this.gapFillFrames, Math.round(sampleRate * 0.3));
+    if (frames < Math.round(sampleRate * 0.02)) return;
+    this.gapFillFrames += frames;
+    this.enqueueWrite(new ArrayBuffer(frames * 2), sampleRate, undefined, true).catch((): void => {});
   }
 
   /**
@@ -100,6 +145,7 @@ export class TtsPcmAudioPlayer {
   }
 
   writeSegment(data: ArrayBuffer, sampleRate: number, onPlaybackStart: () => void): Promise<void> {
+    this.stopGapFill();
     return this.enqueueWrite(data, sampleRate, [{
       frameOffset: 0,
       callback: onPlaybackStart
@@ -107,11 +153,13 @@ export class TtsPcmAudioPlayer {
   }
 
   writeTimedSegment(data: ArrayBuffer, sampleRate: number, cues: PcmPlaybackCue[]): Promise<void> {
+    this.stopGapFill();
     return this.enqueueWrite(data, sampleRate, cues);
   }
 
+  /** filler：垫的静音，计入时间线但不算正文结尾（drain 不等它）。 */
   private enqueueWrite(data: ArrayBuffer, sampleRate: number,
-    cues?: PcmPlaybackCue[]): Promise<void> {
+    cues?: PcmPlaybackCue[], filler: boolean = false): Promise<void> {
     if (!data || data.byteLength === 0) {
       return this.writeChain;
     }
@@ -128,7 +176,7 @@ export class TtsPcmAudioPlayer {
     const startFrame = this.queuedFrames;
     const segmentFrames = Math.floor(audioData.byteLength / 2);
     this.queuedFrames += segmentFrames;
-    this.queuedContentEndFrame = this.queuedFrames;
+    if (!filler) this.queuedContentEndFrame = this.queuedFrames;
     if (cues && cues.length > 0) {
       const sortedCues = cues.slice().sort((left: PcmPlaybackCue, right: PcmPlaybackCue) =>
         left.frameOffset - right.frameOffset);
@@ -201,6 +249,7 @@ export class TtsPcmAudioPlayer {
   }
 
   async drain(): Promise<void> {
+    this.stopGapFill();
     await this.writeChain;
     await this.waitUntilResumed();
     const renderer = this.renderer;
@@ -317,6 +366,7 @@ export class TtsPcmAudioPlayer {
   }
 
   async pause(): Promise<void> {
+    this.stopGapFill();
     this.interruptRevision++;
     this.interruptResumeAllowed = false;
     if (this.paused) {
@@ -390,6 +440,7 @@ export class TtsPcmAudioPlayer {
   }
 
   stop(): void {
+    this.stopGapFill();
     this.playGeneration++;
     this.interruptRevision++;
     this.interruptResumeAllowed = false;

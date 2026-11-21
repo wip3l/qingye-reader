@@ -951,6 +951,8 @@ export class SystemTtsReader {
     if (this.readGeneration !== generation || !this.active || !this.keepsPcmOutputOnFinish()) return false;
     console.info(`[TTS] chapter audio fully queued, handing off before playback drains: ${this.audioDebugState()}`);
     this.queuedTailPending = true;
+    // 普通蓝牙等非 offload 通道只预收零点几秒：下一章合成出来之前垫静音，不让流断数据转入待机。
+    this.pcmPlayer.startGapFill();
     this.finish(true);
     return true;
   }
