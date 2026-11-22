@@ -16,11 +16,12 @@ class ParagraphBuilder {
   constructor(options) { this.options = options; this.runs = []; }
   pushStyle(style) { this.current = style; }
   addText(text) { this.runs.push({ text, style: this.current || this.options.textStyle }); }
+  addPlaceholder(span) { this.runs.push({ text: '\uFFFC', style: this.current || this.options.textStyle, placeholder: span }); }
   popStyle() {}
   build() {
     const options = this.options, runs = this.runs;
     return {
-      lines: [], chars: [], width: 0, text: runs.map(run => run.text).join(''),
+      lines: [], chars: [], width: 0, text: runs.map(run => run.text).join(''), placeholders: [],
       layout(width) { return new Promise(resolve => setTimeout(() => { this.layoutSync(width); resolve(); }, 0)); },
       layoutSync(width) {
         this.width = width;
@@ -32,15 +33,23 @@ class ParagraphBuilder {
             ascent: fontSize * 0.8, descent: fontSize * 0.2, baseline: top + fontSize * 0.8, x: 0 });
           top += height; start = offset; advance = 0; fontSize = 0;
         };
+        this.placeholders = [];
         for (const run of runs) for (const char of run.text) {
           const size = run.style.fontSize || 20;
-          const charWidth = size * (/[^\x00-\x7f]/.test(char) ? 1 : 0.5) + (run.style.letterSpacing || 0);
+          const charWidth = run.placeholder ? run.placeholder.width :
+            size * (/[^\x00-\x7f]/.test(char) ? 1 : 0.5) + (run.style.letterSpacing || 0);
           if (advance > 0 && advance + charWidth > width) finish();
+          if (run.placeholder) this.placeholders.push({ line: this.lines.length, x: advance, w: charWidth,
+            h: run.placeholder.height, top });
           this.chars.push({ start: offset, end: offset + char.length, x: advance, width: charWidth });
           offset += char.length; advance += charWidth; fontSize = Math.max(fontSize, size);
         }
         finish();
         if (options.maxLines && this.lines.length > options.maxLines) this.lines.length = options.maxLines;
+        this.placeholders = this.placeholders.filter(p => p.line < this.lines.length);
+      },
+      getRectsForPlaceholders() {
+        return this.placeholders.map(p => ({ rect: { left: p.x, right: p.x + p.w, top: p.top, bottom: p.top + p.h } }));
       },
       getLineCount() { return this.lines.length; },
       getLineMetrics(index) { return index === undefined ? this.lines : this.lines[index]; },
@@ -74,15 +83,17 @@ try {
       TextAlign: { CENTER: 'center', LEFT: 'left', RIGHT: 'right', JUSTIFY: 'justify' },
       TextDirection: { LTR: 0 }, WordBreak: { BREAK_WORD: 0 }, BreakStrategy: { GREEDY: 0 },
       RectWidthStyle: { TIGHT: 0 }, RectHeightStyle: { TIGHT: 0, MAX: 1 }, EllipsisMode: { END: 2 },
-      FontCollection: { getGlobalInstance: () => ({}) }, ParagraphBuilder
-    }
+      FontCollection: { getGlobalInstance: () => ({}) }, ParagraphBuilder,
+      PlaceholderAlignment: { CENTER_OF_ROW_BOX: 5 }, TextBaseline: { ALPHABETIC: 0 }
+    },
+    ReaderEmojiImages: { prepared: [], prepare(url, size) { this.prepared.push([url, size]); }, get() { return null; } }
   });
   vm.runInContext(['core/reader/ReaderV2Document.ets', 'core/reader/ReaderV2LayoutSnapshot.ets',
-    'core/reader/ReaderV2CommentCard.ets', 'core/reader/ReaderV2PageLayout.ets', 'core/reader/ReaderV2ChapterHead.ets',
+    'core/reader/ReaderCommentEmoji.ets', 'core/reader/ReaderV2CommentCard.ets', 'core/reader/ReaderV2PageLayout.ets', 'core/reader/ReaderV2ChapterHead.ets',
     'core/reader/ReaderV2Paginator.ets']
     .map(file => compile(read(file))).join('\n') + `
     globalThis.cardApi = { ReaderV2DocumentParser, ReaderV2SpeechText, ReaderV2Paginator, ReaderV2LayoutSnapshot,
-      ReaderV2LayoutInput, ReaderV2CommentCardLayout };`, sandbox);
+      ReaderV2LayoutInput, ReaderV2CommentCardLayout, ReaderCommentEmoji };`, sandbox);
   const { ReaderV2DocumentParser: Parser, ReaderV2SpeechText: Speech, ReaderV2Paginator: Paginator,
     ReaderV2LayoutSnapshot: Snapshot, ReaderV2LayoutInput: Input, ReaderV2CommentCardLayout: CardLayout } =
     sandbox.cardApi;
@@ -280,6 +291,32 @@ try {
     assert.equal(single.hots[0].likes.text, '12');
     assert.ok(single.hots[0].textY > single.hots[0].pill.top, 'without a nickname the likes pill keeps its row');
   }
+
+  // 表情：书源给了图片的代号排成占位并开始取图，没给的常见代号换成系统表情，其余保留原文。
+  const { ReaderCommentEmoji: Emoji } = sandbox.cardApi;
+  const pieceList = Emoji.pieces('好[吃瓜][吃瓜]妙[赞][不认识]', { '[吃瓜]': 'https://e.example/gua.png' });
+  assert.deepEqual(Array.from(pieceList, piece => [piece.text, piece.url]),
+    [['好', ''], ['[吃瓜]', 'https://e.example/gua.png'], ['[吃瓜]', 'https://e.example/gua.png'], ['妙👍[不认识]', '']]);
+  assert.deepEqual(Array.from(Emoji.pieces('[笑哭]', {}), piece => piece.text), ['😂'], 'no image → system emoji');
+  input.commentCardStyle = 1;
+  const emojiSource = ['标题', '　　正文。', Marker.create('本章说', 'https://c.example/chapter', '本章说', '', '', '79条评论',
+    [{ user: '甲', text: '匹夫素耕[吃瓜][吃瓜][吃瓜]', likes: '3' }], { '[吃瓜]': 'https://e.example/gua.png' })].join('\n');
+  const emojiAction = Parser.parse(emojiSource, 0, '标题').blocks.find(block => block.card)?.card;
+  assert.deepEqual(emojiAction.emojis, { '[吃瓜]': 'https://e.example/gua.png' });
+  sandbox.ReaderEmojiImages.prepared.length = 0;
+  const emojiCard = CardLayout.build(emojiAction, Snapshot.create(input), 600, -1);
+  const emojiRow = emojiCard.hots[0];
+  assert.equal(emojiRow.text.text, '匹夫素耕￼￼￼', 'emoji codes become placeholders');
+  assert.equal(emojiRow.textEmojis.length, 3);
+  assert.ok(emojiRow.textEmojis.every(slot => slot.url === 'https://e.example/gua.png' &&
+    Math.abs(slot.rect.width() - slot.rect.height()) < 0.01), 'square slots');
+  assert.ok(emojiRow.textEmojis[1].rect.left > emojiRow.textEmojis[0].rect.left);
+  assert.equal(sandbox.ReaderEmojiImages.prepared.length, 3, 'images are requested at layout time');
+  const plainCard = CardLayout.build(Parser.parse(['标题', '　　正文。', Marker.create('本章说', 'https://c.example/chapter',
+    '本章说', '', '', '', [{ user: '', text: '没给图[吃瓜]', likes: '' }])].join('\n'), 0, '标题')
+    .blocks.find(block => block.card).card, Snapshot.create(input), 600, -1);
+  assert.equal(plainCard.hots[0].text.text, '没给图🍉');
+  assert.equal(plainCard.hots[0].textEmojis.length, 0);
 
   // The last page shrinks the 本章说 block before moving it: two hot comments, then one, then the title row alone.
   input.commentCardStyle = 1;

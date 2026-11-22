@@ -3,6 +3,8 @@ import common2D from '@ohos.graphics.common2D';
 import graphicsText from '@ohos.graphics.text';
 import { ReaderV2InlineAction } from './ReaderV2Document';
 import { ReaderV2LayoutSnapshot, ReaderV2Rect } from './ReaderV2LayoutSnapshot';
+import { ReaderCommentEmoji, ReaderCommentEmojiPiece } from './ReaderCommentEmoji';
+import { ReaderEmojiImages } from './ReaderEmojiImages';
 
 /**
  * 段落下方的热评卡。坐标都相对所在片段的 paragraphX / paragraphY，页底对齐挪动片段时卡片跟着走。
@@ -33,6 +35,10 @@ export class ReaderV2CommentCard {
   text: graphicsText.Paragraph | null = null;
   textX: number = 0;
   textY: number = 0;
+  /** 热评文字里的表情图位置，相对 text 的左上角。 */
+  textEmojis: ReaderV2CardEmoji[] = [];
+  /** 表情图还没取到（或取不到）时画的浅色圆底。 */
+  emojiPlaceholder: number = 0;
   meta: graphicsText.Paragraph | null = null;
   metaX: number = 0;
   metaY: number = 0;
@@ -58,9 +64,34 @@ export class ReaderV2ChapterHotRow {
   text: graphicsText.Paragraph | null = null;
   textX: number = 0;
   textY: number = 0;
+  textEmojis: ReaderV2CardEmoji[] = [];
+}
+
+/** 文字里一个表情图的位置（相对所在段落的左上角）与图片地址。 */
+export class ReaderV2CardEmoji {
+  url: string = '';
+  rect: ReaderV2Rect = new ReaderV2Rect();
+
+  constructor(url: string, rect: ReaderV2Rect) {
+    this.url = url;
+    this.rect = rect;
+  }
+}
+
+/** 带表情的热评文字：排好的段落与其中各表情图的位置。 */
+class ReaderV2EmojiText {
+  paragraph: graphicsText.Paragraph;
+  emojis: ReaderV2CardEmoji[] = [];
+
+  constructor(paragraph: graphicsText.Paragraph) {
+    this.paragraph = paragraph;
+  }
 }
 
 export class ReaderV2CommentCardLayout {
+  /** 表情图边长相对字号；与带字体留白的行高相当，插进去不把行撑高。 */
+  static readonly EMOJI_SCALE: number = 1.15;
+
   static readonly STYLE_CARD: number = 1;
   static readonly STYLE_QUOTE: number = 2;
   static readonly STYLE_TAG: number = 3;
@@ -140,8 +171,11 @@ export class ReaderV2CommentCardLayout {
 
     const maxBoxWidth = attached ? width * 0.86 : width;
     const textRoom = Math.max(f * 2, maxBoxWidth - padX * 2 - chipWidth - gap - (metaWidth > 0 ? metaWidth + gap : 0));
-    card.text = ReaderV2CommentCardLayout.paragraph(action.preview, f, ink, graphicsText.FontWeight.W400, [],
-      snapshot.commentCardLines, textRoom);
+    card.emojiPlaceholder = ReaderV2CommentCardLayout.withAlpha(ink, 0x14);
+    const rich = ReaderV2CommentCardLayout.emojiParagraph(action.preview, action.emojis, f, ink,
+      graphicsText.FontWeight.W400, [], snapshot.commentCardLines, textRoom);
+    card.text = rich.paragraph;
+    card.textEmojis = rich.emojis;
     // 挂件按内容收窄；卡片始终占满版心宽度。
     const textWidth = attached ? Math.min(textRoom, Math.ceil(card.text.getLongestLine()) + 1) : textRoom;
     const textHeight = card.text.getHeight();
@@ -192,6 +226,7 @@ export class ReaderV2CommentCardLayout {
     card.lineColor = ReaderV2CommentCardLayout.withAlpha(ink, 0x29);
     card.pillFill = ReaderV2CommentCardLayout.withAlpha(ink, 0x10);
     card.iconColor = muted;
+    card.emojiPlaceholder = ReaderV2CommentCardLayout.withAlpha(ink, 0x14);
 
     // 标题行：强调色的“本章说”，右侧条数与箭头，中间一条细线。
     card.tag = ReaderV2CommentCardLayout.paragraph(ReaderV2CommentCardLayout.CHAPTER_TAG_TEXT, f * 1.04,
@@ -261,7 +296,10 @@ export class ReaderV2CommentCardLayout {
         rowHeight = Math.max(rowHeight, userHeight);
       }
       const textTop = rowHeight > 0 ? top + rowHeight + f * 0.12 : top;
-      row.text = ReaderV2CommentCardLayout.paragraph(hot.text, f, ink, graphicsText.FontWeight.W400, [], 2, contentWidth);
+      const rich = ReaderV2CommentCardLayout.emojiParagraph(hot.text, action.emojis, f, ink,
+        graphicsText.FontWeight.W400, [], 2, contentWidth);
+      row.text = rich.paragraph;
+      row.textEmojis = rich.emojis;
       row.textX = contentX;
       row.textY = textTop;
       y = textTop + row.text.getHeight();
@@ -290,8 +328,11 @@ export class ReaderV2CommentCardLayout {
     const quoteWidth = Math.ceil(card.quote.getLongestLine());
     const gap = f * 0.25;
     const textRoom = Math.max(f * 2, width - indent - quoteWidth - gap);
-    card.text = ReaderV2CommentCardLayout.paragraph(action.preview, f, muted, graphicsText.FontWeight.W400, family,
-      snapshot.commentCardLines, textRoom);
+    card.emojiPlaceholder = ReaderV2CommentCardLayout.withAlpha(ink, 0x14);
+    const rich = ReaderV2CommentCardLayout.emojiParagraph(action.preview, action.emojis, f, muted,
+      graphicsText.FontWeight.W400, family, snapshot.commentCardLines, textRoom);
+    card.text = rich.paragraph;
+    card.textEmojis = rich.emojis;
     const textHeight = card.text.getHeight();
     card.quoteX = indent;
     card.quoteY = -quoteFontSize * 0.12;
@@ -312,8 +353,52 @@ export class ReaderV2CommentCardLayout {
     return card;
   }
 
+  /**
+   * 热评文字：书源给了图片的表情代号排成与字等高的占位，没给的常见代号换成系统表情（见 ReaderCommentEmoji）。
+   * 占位大小固定，图片取没取到都不改排版；排版时就开始取图。
+   */
+  private static emojiParagraph(text: string, emojis: Record<string, string>, fontSize: number, color: number,
+    weight: graphicsText.FontWeight, families: string[], maxLines: number, width: number): ReaderV2EmojiText {
+    const pieces = ReaderCommentEmoji.pieces(text, emojis);
+    const plain = pieces.length === 1 && !pieces[0].url;
+    if (pieces.length === 0 || plain) {
+      return new ReaderV2EmojiText(ReaderV2CommentCardLayout.paragraph(plain ? pieces[0].text : text, fontSize, color,
+        weight, families, maxLines, width));
+    }
+    const size = Math.round(fontSize * ReaderV2CommentCardLayout.EMOJI_SCALE);
+    const urls: string[] = [];
+    const paragraph = ReaderV2CommentCardLayout.paragraph('', fontSize, color, weight, families, maxLines, width,
+      (builder: graphicsText.ParagraphBuilder): void => {
+        pieces.forEach((piece: ReaderCommentEmojiPiece): void => {
+          if (!piece.url) {
+            builder.addText(piece.text);
+            return;
+          }
+          builder.addPlaceholder({
+            width: size,
+            height: size,
+            align: graphicsText.PlaceholderAlignment.CENTER_OF_ROW_BOX,
+            baseline: graphicsText.TextBaseline.ALPHABETIC,
+            baselineOffset: 0
+          });
+          urls.push(piece.url);
+        });
+      });
+    const result = new ReaderV2EmojiText(paragraph);
+    // 放不下被省略号截掉的占位不返回位置，按顺序对应前面的那些。
+    const boxes = paragraph.getRectsForPlaceholders();
+    for (let i = 0; i < boxes.length && i < urls.length; i++) {
+      const box = boxes[i].rect;
+      if (box.right - box.left < 1 || box.bottom - box.top < 1) continue;
+      result.emojis.push(new ReaderV2CardEmoji(urls[i], new ReaderV2Rect(box.left, box.top, box.right, box.bottom)));
+      ReaderEmojiImages.prepare(urls[i], size);
+    }
+    return result;
+  }
+
   private static paragraph(text: string, fontSize: number, color: number, weight: graphicsText.FontWeight,
-    families: string[], maxLines: number, width: number): graphicsText.Paragraph {
+    families: string[], maxLines: number, width: number,
+    fill: ((builder: graphicsText.ParagraphBuilder) => void) | null = null): graphicsText.Paragraph {
     const textStyle: graphicsText.TextStyle = {
       fontSize: fontSize,
       fontWeight: weight,
@@ -331,7 +416,11 @@ export class ReaderV2CommentCardLayout {
       includeFontPadding: true
     }, graphicsText.FontCollection.getGlobalInstance());
     builder.pushStyle(textStyle);
-    builder.addText(text);
+    if (fill) {
+      fill(builder);
+    } else {
+      builder.addText(text);
+    }
     builder.popStyle();
     const paragraph = builder.build();
     paragraph.layoutSync(Math.max(1, width));
@@ -378,9 +467,48 @@ export class ReaderV2CommentCardPainter {
       }
     }
     if (card.quote) card.quote.paint(canvas, card.quoteX, card.quoteY);
-    if (card.text) card.text.paint(canvas, card.textX, card.textY);
+    if (card.text) {
+      card.text.paint(canvas, card.textX, card.textY);
+      ReaderV2CommentCardPainter.paintEmojis(canvas, card.textEmojis, card.textX, card.textY, card.emojiPlaceholder);
+    }
     if (card.meta) card.meta.paint(canvas, card.metaX, card.metaY);
     canvas.restore();
+  }
+
+  /** 表情图按比例放进占位里居中；还没取到或取不到时画一个浅色圆底占着。 */
+  private static paintEmojis(canvas: drawing.Canvas, emojis: ReaderV2CardEmoji[], x: number, y: number,
+    placeholder: number): void {
+    for (const emoji of emojis) {
+      const rect = emoji.rect;
+      const w = rect.width();
+      const h = rect.height();
+      const bitmap = ReaderEmojiImages.get(emoji.url, Math.max(w, h));
+      if (!bitmap) {
+        const brush = new drawing.Brush();
+        brush.setAntiAlias(true);
+        brush.setColor(ReaderV2CommentCardLayout.color(placeholder));
+        canvas.attachBrush(brush);
+        canvas.drawCircle(x + rect.left + w / 2, y + rect.top + h / 2, Math.min(w, h) * 0.42);
+        canvas.detachBrush();
+        continue;
+      }
+      let bw = w;
+      let bh = h;
+      try {
+        const size = bitmap.getImageInfoSync().size;
+        if (size.width > 0 && size.height > 0) {
+          const scale = Math.min(w / size.width, h / size.height);
+          bw = size.width * scale;
+          bh = size.height * scale;
+        }
+      } catch (_) {
+        // 读不到尺寸就铺满占位。
+      }
+      const left = x + rect.left + (w - bw) / 2;
+      const top = y + rect.top + (h - bh) / 2;
+      canvas.drawImageRect(bitmap, { left: left, top: top, right: left + bw, bottom: top + bh },
+        new drawing.SamplingOptions(drawing.FilterMode.FILTER_MODE_LINEAR));
+    }
   }
 
   private static thumbPath: drawing.Path | null = null;
@@ -430,7 +558,10 @@ export class ReaderV2CommentCardPainter {
         canvas.restore();
       }
       if (row.likes) row.likes.paint(canvas, row.likesX, row.likesY);
-      if (row.text) row.text.paint(canvas, row.textX, row.textY);
+      if (row.text) {
+        row.text.paint(canvas, row.textX, row.textY);
+        ReaderV2CommentCardPainter.paintEmojis(canvas, row.textEmojis, row.textX, row.textY, card.emojiPlaceholder);
+      }
     }
   }
 

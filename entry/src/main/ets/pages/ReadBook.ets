@@ -262,6 +262,7 @@ import {
   ReaderRasterRect, ReaderRasterText
 } from '../core/reader/ReaderPageRasterizer';
 import { ReaderRasterAssets } from '../core/reader/ReaderRasterAssets';
+import { ReaderEmojiImages } from '../core/reader/ReaderEmojiImages';
 import { ReaderBackgroundDisplay, ReaderBackgroundDisplayStore } from '../utils/ReaderBackgroundDisplay';
 import { ReaderBackgroundDisplayControl } from '../components/reader/ReaderBackgroundDisplayControl';
 import { ReaderThemeDecorationLayout } from '../core/reader/ReaderThemeDecorationLayout';
@@ -737,6 +738,8 @@ struct ReadBookPage {
   private readerComicProgressSaveTimerId: number = -1;
   private readerPagedProgressSaveTimerId: number = -1;
   private readerSafeAreaRepaginateTimerId: number = -1;
+  /** 热评表情图接连取好时合并成一次重画。 */
+  private readerEmojiRepaintTimerId: number = -1;
   private readerComicPanLastOffsetY: number = 0;
   private readerComicPanMoved: boolean = false;
   /** 点击翻屏的逐帧滚动：曲线、跟屏幕刷新同步的帧回调（不可用时退回定时器）。 */
@@ -1382,6 +1385,7 @@ struct ReadBookPage {
   async aboutToAppear() {
     ReaderInputScopes.load(getContext(this));
     this.readerEntryAlive = true;
+    ReaderEmojiImages.bind(getContext(this).cacheDir, (): void => this.scheduleReaderEmojiRepaint());
     // Fixed-layout documents must not acquire text/TTS sessions or warm chapter content.
     const formatParams = router.getParams() as Record<string, string>;
     // The shelf routes PDFs itself and marks text books checked. Skipping the lookup keeps the entry setup
@@ -1712,6 +1716,11 @@ struct ReadBookPage {
 
   aboutToDisappear() {
     KnockShare.detach(this.ttsFloatingSessionOwnerId);
+    ReaderEmojiImages.bind('', null);
+    if (this.readerEmojiRepaintTimerId >= 0) {
+      clearTimeout(this.readerEmojiRepaintTimerId);
+      this.readerEmojiRepaintTimerId = -1;
+    }
     this.hideReaderTextConvertPrompt();
     if (this.readerSafeAreaRepaginateTimerId >= 0) {
       clearTimeout(this.readerSafeAreaRepaginateTimerId);
@@ -19660,6 +19669,22 @@ ${leading}` : leading;
   }
 
   /** 划线数据变了：重新填页对象、重画常驻页，丢掉已截好的翻页纹理。 */
+  /** 热评里的表情图取好了：重画常驻页、丢掉已截好的翻页纹理。不重新分页（占位大小不变）。 */
+  scheduleReaderEmojiRepaint(): void {
+    if (this.readerEmojiRepaintTimerId >= 0) return;
+    this.readerEmojiRepaintTimerId = setTimeout((): void => {
+      this.readerEmojiRepaintTimerId = -1;
+      if (!this.readerEntryAlive) return;
+      if (this.usesReaderContinuousV2()) {
+        for (const controller of this.readerContinuousV2Controllers.values()) controller.repaint();
+      } else if (this.shouldUseReaderLayoutV2(this.pagedContentText)) {
+        this.refreshCurrentReaderV2RetainedPages(true);
+        this.readerPageTextureCache.clear();
+        this.scheduleReaderPageTextureWarmup();
+      }
+    }, 150);
+  }
+
   onReaderAnnotationsChanged(): void {
     this.readerAnnotationVersion++;
     this.readerAnnotationResolved.clear();

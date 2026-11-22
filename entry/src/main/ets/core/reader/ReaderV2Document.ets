@@ -47,6 +47,8 @@ export class ReaderV2InlineAction {
   /** 本章说的评论条数文字（如“79条评论”）与热评列表。 */
   count: string = '';
   hots: ReaderActionHot[] = [];
+  /** 热评文字里表情代号的图片地址（书源提供），卡片把代号画成图片。 */
+  emojis: Record<string, string> = {};
 
   constructor(id: string, marker: string, label: string, data: ReaderActionData,
     displayStart: number, displayEnd: number, sourceStart: number, sourceEnd: number) {
@@ -60,6 +62,7 @@ export class ReaderV2InlineAction {
     this.note = EpubNoteLink.isNote(this.url);
     this.preview = this.note ? '' : (data.preview || '');
     this.likes = this.preview ? (data.likes || '') : '';
+    if (!this.note && data.emojis) this.emojis = data.emojis;
     const rawLabel = data.label || '';
     this.chapter = !this.note && (/本章说|章评|章末/.test(rawLabel) ||
       (/^(?:本章说|章评)/.test(data.title || '') && !/(?:99\+|\d+)\s*$/.test(rawLabel)));
