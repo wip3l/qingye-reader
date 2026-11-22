@@ -359,8 +359,8 @@ struct EpubOriginalReadBookPage {
   @State pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   // 横竖屏分开设置翻页动画：两份都留着，视口变化时按宽高重新挑。
   @State pageTurnAnimationSplit: boolean = false;
-  private portraitPageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
-  private landscapePageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  @State portraitPageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  @State landscapePageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   // 四侧边距与普通阅读页共用（排版里的左/右/上/下边距），点击区域也是同一个设置。
   @StorageLink('readerMarginLeft') @Watch('onReaderChromeChanged') readerMarginLeft: number = 18;
   @StorageLink('readerMarginRight') @Watch('onReaderChromeChanged') readerMarginRight: number = 18;
@@ -2638,12 +2638,6 @@ struct EpubOriginalReadBookPage {
     return ReaderPageTurnAnimation.usesLandscape(this.pageTurnAnimationSplit, this.viewWidth, this.viewHeight);
   }
 
-  /** 面板里改的是当前方向那份，标题跟着说明。 */
-  private pageTurnAnimationTitle(): string {
-    if (!this.pageTurnAnimationSplit) return '翻页动画';
-    return this.pageTurnAnimationUsesLandscape() ? '翻页动画 · 横屏' : '翻页动画 · 竖屏';
-  }
-
   private syncPageTurnAnimationForViewport(): void {
     const value = this.pageTurnAnimationUsesLandscape() ?
       this.landscapePageTurnAnimation : this.portraitPageTurnAnimation;
@@ -2652,22 +2646,37 @@ struct EpubOriginalReadBookPage {
     this.turnController.invalidate();
   }
 
-  private setPageTurnAnimation(type: number): void {
+  /** 与普通阅读页同一组设置：landscape 为 true 时改横屏那份，否则改竖屏（未分开时即唯一一份）。 */
+  private setPageTurnAnimation(type: number, landscape: boolean): void {
     const value = ReaderPageTurnAnimation.normalize(type);
-    if (value === this.pageTurnAnimation) return;
-    this.pageTurnAnimation = value;
-    this.turnController.invalidate();
-    if (this.pageTurnAnimationUsesLandscape()) {
+    if (landscape) {
+      if (value === this.landscapePageTurnAnimation) return;
       this.landscapePageTurnAnimation = value;
-      ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), true, value).catch((error: Error): void => {
-        console.warn('[EpubOriginal] save landscape page turn animation failed:', error);
-      });
+      ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), this.pageTurnAnimationSplit, value)
+        .catch((error: Error): void => {
+          console.warn('[EpubOriginal] save landscape page turn animation failed:', error);
+        });
     } else {
+      if (value === this.portraitPageTurnAnimation) return;
       this.portraitPageTurnAnimation = value;
       ReaderSettingsStore.savePageTurnAnimationType(getContext(this), value).catch((error: Error): void => {
         console.warn('[EpubOriginal] save page turn animation failed:', error);
       });
     }
+    this.syncPageTurnAnimationForViewport();
+    this.schedulePrewarm();
+  }
+
+  // 打开时横屏先沿用竖屏那份动画，之后各改各的。
+  private setPageTurnAnimationSplit(enabled: boolean): void {
+    if (enabled === this.pageTurnAnimationSplit) return;
+    if (enabled) this.landscapePageTurnAnimation = this.portraitPageTurnAnimation;
+    this.pageTurnAnimationSplit = enabled;
+    ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), enabled, this.landscapePageTurnAnimation)
+      .catch((error: Error): void => {
+        console.warn('[EpubOriginal] save page turn animation split failed:', error);
+      });
+    this.syncPageTurnAnimationForViewport();
     this.schedulePrewarm();
   }
 
@@ -4342,10 +4351,15 @@ struct EpubOriginalReadBookPage {
         smartKeySupported: this.smartKeySupported,
         onVolumeTurnChange: (enabled: boolean): void => { this.setVolumeTurnPage(enabled); },
         onSmartKeyTurnChange: (enabled: boolean): void => { this.setSmartKeyTurnPage(enabled); },
-        pageTurnAnimation: this.pageTurnAnimation,
-        pageTurnAnimationTitle: this.pageTurnAnimationTitle(),
+        portraitPageTurnAnimation: this.portraitPageTurnAnimation,
+        landscapePageTurnAnimation: this.landscapePageTurnAnimation,
+        pageTurnAnimationSplit: this.pageTurnAnimationSplit,
+        pageTurnAnimationLandscapeNow: this.pageTurnAnimationUsesLandscape(),
+        onPageTurnAnimationSplitChange: (enabled: boolean): void => { this.setPageTurnAnimationSplit(enabled); },
         headerBaseInset: ReaderInfoBarConfig.headerBaseInset(this.readerExtendToStatusBar, this.statusBarHeight),
-        onPageTurnAnimationChange: (type: number): void => { this.setPageTurnAnimation(type); },
+        onPageTurnAnimationChange: (type: number, landscape: boolean): void => {
+          this.setPageTurnAnimation(type, landscape);
+        },
         margins: [this.readerMarginLeft, this.readerMarginRight, this.readerMarginTop, this.readerMarginBottom],
         onMarginsChange: (left: number, right: number, top: number, bottom: number): void => {
           this.saveMargins(left, right, top, bottom);

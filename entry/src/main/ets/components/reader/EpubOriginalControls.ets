@@ -77,9 +77,11 @@ export struct EpubOriginalControls {
   /** 翻页震感按阅读类型存；这里的开关只改小说一类。 */
   @StorageProp('readerPageTurnHapticsScope') pageTurnHapticsScope: number = 0;
   /** 翻页动画，与普通阅读页共用。 */
-  @Prop pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
-  /** 横竖屏分开设置时写成“翻页动画 · 横屏/竖屏”，说明改的是哪一份。 */
-  @Prop pageTurnAnimationTitle: string = '翻页动画';
+  // 与普通阅读页同一组设置：未分开时只用竖屏那份；分开后两行各改各的，当前方向那行标“当前”。
+  @Prop portraitPageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  @Prop landscapePageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  @Prop pageTurnAnimationSplit: boolean = false;
+  @Prop pageTurnAnimationLandscapeNow: boolean = false;
   /** 页眉默认位置（状态栏下方或屏幕顶端），页眉页脚设置里的位置步进以它为基准。 */
   @Prop headerBaseInset: number = 0;
   /** 四侧边距：左、右、上、下，与普通阅读页共用。 */
@@ -126,7 +128,9 @@ export struct EpubOriginalControls {
   onStep: (direction: number) => void = (_direction: number): void => {};
   onPagedChange: (paged: boolean) => void = (_paged: boolean): void => {};
   onZoomChange: (zoom: number) => void = (_zoom: number): void => {};
-  onPageTurnAnimationChange: (type: number) => void = (_type: number): void => {};
+  onPageTurnAnimationChange: (type: number, landscape: boolean) => void =
+    (_type: number, _landscape: boolean): void => {};
+  onPageTurnAnimationSplitChange: (enabled: boolean) => void = (_enabled: boolean): void => {};
   onMarginsChange: (left: number, right: number, top: number, bottom: number) => void =
     (_left: number, _right: number, _top: number, _bottom: number): void => {};
   onTapZones: () => void = (): void => {};
@@ -745,18 +749,37 @@ export struct EpubOriginalControls {
       if (this.paged) {
         // 与普通阅读页同一个设置、同一组选项；文件排版用截图播放同样的动画。
         ReaderSettingChipRow({
-          title: this.pageTurnAnimationTitle,
+          title: this.pageTurnAnimationSplit ?
+            (this.pageTurnAnimationLandscapeNow ? '竖屏翻页动画' : '竖屏翻页动画 · 当前') : '翻页动画',
           labels: ReaderPageTurnAnimation.labels(),
-          selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.pageTurnAnimation)),
+          selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.portraitPageTurnAnimation)),
           dark: this.darkMode,
           textColor: ThemeRuntime.primaryTextColor(this.darkMode),
           subTextColor: ThemeRuntime.subTextColor(this.darkMode),
           accentColor: ThemeRuntime.accentColor(this.darkMode),
           onSelect: (index: number): void => {
             const types = ReaderPageTurnAnimation.types();
-            if (index >= 0 && index < types.length) this.onPageTurnAnimationChange(types[index]);
+            if (index >= 0 && index < types.length) this.onPageTurnAnimationChange(types[index], false);
           }
         })
+        if (this.pageTurnAnimationSplit) {
+          ReaderSettingChipRow({
+            title: this.pageTurnAnimationLandscapeNow ? '横屏翻页动画 · 当前' : '横屏翻页动画',
+            labels: ReaderPageTurnAnimation.labels(),
+            selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.landscapePageTurnAnimation)),
+            dark: this.darkMode,
+            textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+            subTextColor: ThemeRuntime.subTextColor(this.darkMode),
+            accentColor: ThemeRuntime.accentColor(this.darkMode),
+            onSelect: (index: number): void => {
+              const types = ReaderPageTurnAnimation.types();
+              if (index >= 0 && index < types.length) this.onPageTurnAnimationChange(types[index], true);
+            }
+          })
+        }
+        ReaderSettingSwitchRow({ title: '横竖屏分开设置', description: '横屏双页更适合仿真，竖屏可以继续用平移',
+          checked: this.pageTurnAnimationSplit, textColor: ThemeRuntime.primaryTextColor(this.darkMode),
+          subTextColor: ThemeRuntime.subTextColor(this.darkMode), onChange: this.onPageTurnAnimationSplitChange })
       }
       ReaderSettingActionRow({ title: '点击区域动作', description: this.tapZoneSummary,
         actionText: '配置', textColor: ThemeRuntime.primaryTextColor(this.darkMode),

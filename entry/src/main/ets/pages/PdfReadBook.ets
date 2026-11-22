@@ -89,8 +89,8 @@ struct PdfReadBookPage {
   @State pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   // 横竖屏分开设置翻页动画：两份都留着，视口变化时按宽高重新挑。
   @State pageTurnAnimationSplit: boolean = false;
-  private portraitPageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
-  private landscapePageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  @State portraitPageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  @State landscapePageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   /** PDF 自己的全局设置：夜间页面（原样 / 调暗 / 反色）与页码角标。 */
   @State nightMode: string = ReaderPdfSettings.NIGHT_ORIGINAL;
   @State pageBadge: boolean = true;
@@ -1022,12 +1022,6 @@ struct PdfReadBookPage {
     return ReaderPageTurnAnimation.usesLandscape(this.pageTurnAnimationSplit, this.viewWidth, this.viewHeight);
   }
 
-  /** 面板里改的是当前方向那份，标题跟着说明。 */
-  private pageTurnAnimationTitle(): string {
-    if (!this.pageTurnAnimationSplit) return '翻页动画';
-    return this.pageTurnAnimationUsesLandscape() ? '翻页动画 · 横屏' : '翻页动画 · 竖屏';
-  }
-
   private syncPageTurnAnimationForViewport(): void {
     const value = this.pageTurnAnimationUsesLandscape() ?
       this.landscapePageTurnAnimation : this.portraitPageTurnAnimation;
@@ -1036,22 +1030,36 @@ struct PdfReadBookPage {
     this.turnController.invalidate();
   }
 
-  private setPageTurnAnimation(type: number): void {
+  /** 与普通阅读页同一组设置：landscape 为 true 时改横屏那份，否则改竖屏（未分开时即唯一一份）。 */
+  private setPageTurnAnimation(type: number, landscape: boolean): void {
     const value = ReaderPageTurnAnimation.normalize(type);
-    if (value === this.pageTurnAnimation) return;
-    this.pageTurnAnimation = value;
-    this.turnController.invalidate();
-    if (this.pageTurnAnimationUsesLandscape()) {
+    if (landscape) {
+      if (value === this.landscapePageTurnAnimation) return;
       this.landscapePageTurnAnimation = value;
-      ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), true, value).catch((error: Error): void => {
-        console.warn('[PDF] save landscape page turn animation failed:', error);
-      });
+      ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), this.pageTurnAnimationSplit, value)
+        .catch((error: Error): void => {
+          console.warn('[PDF] save landscape page turn animation failed:', error);
+        });
     } else {
+      if (value === this.portraitPageTurnAnimation) return;
       this.portraitPageTurnAnimation = value;
       ReaderSettingsStore.savePageTurnAnimationType(getContext(this), value).catch((error: Error): void => {
         console.warn('[PDF] save page turn animation failed:', error);
       });
     }
+    this.syncPageTurnAnimationForViewport();
+  }
+
+  // 打开时横屏先沿用竖屏那份动画，之后各改各的。
+  private setPageTurnAnimationSplit(enabled: boolean): void {
+    if (enabled === this.pageTurnAnimationSplit) return;
+    if (enabled) this.landscapePageTurnAnimation = this.portraitPageTurnAnimation;
+    this.pageTurnAnimationSplit = enabled;
+    ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), enabled, this.landscapePageTurnAnimation)
+      .catch((error: Error): void => {
+        console.warn('[PDF] save page turn animation split failed:', error);
+      });
+    this.syncPageTurnAnimationForViewport();
   }
 
   // ---- 夜间页面与页码角标：PDF 自己的全局设置（ReaderPdfSettings） ----
@@ -1549,13 +1557,19 @@ struct PdfReadBookPage {
         brightnessReady: this.brightnessReady, holdingHandSide: this.holdingHandSide,
         onBrightnessChange: (value: number, persist: boolean): void => { this.setBrightness(value, persist); },
         onLayoutElements: (): void => { this.setPanel(''); this.showLayoutElements = true; },
-        alignedLayout: true, pageTurnAnimation: this.pageTurnAnimation,
-        pageTurnAnimationTitle: this.pageTurnAnimationTitle(),
+        alignedLayout: true,
+        portraitPageTurnAnimation: this.portraitPageTurnAnimation,
+        landscapePageTurnAnimation: this.landscapePageTurnAnimation,
+        pageTurnAnimationSplit: this.pageTurnAnimationSplit,
+        pageTurnAnimationLandscapeNow: this.pageTurnAnimationUsesLandscape(),
+        onPageTurnAnimationSplitChange: (enabled: boolean): void => { this.setPageTurnAnimationSplit(enabled); },
         tapZoneActions: this.tapZoneActions().join(','), tapZoneSummary: this.tapZoneSummary(),
         volumeTurnPage: this.volumeTurnOn(), smartKeyTurnPage: this.smartKeyTurnOn(),
         smartKeySupported: this.smartKeySupported, pdfNightMode: this.nightMode, pageBadge: this.pageBadge,
         bookmarkedPage: this.isPageBookmarked(),
-        onPageTurnAnimationChange: (type: number): void => { this.setPageTurnAnimation(type); },
+        onPageTurnAnimationChange: (type: number, landscape: boolean): void => {
+          this.setPageTurnAnimation(type, landscape);
+        },
         onTapZones: (): void => { this.openTapZones(); },
         onVolumeTurnChange: (enabled: boolean): void => { this.setVolumeTurnPage(enabled); },
         onSmartKeyTurnChange: (enabled: boolean): void => { this.setSmartKeyTurnPage(enabled); },
