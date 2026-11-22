@@ -1,5 +1,6 @@
 import { ReaderCacheCoordinator } from '../../core/book/ReaderCacheCoordinator';
 import { ReaderImageReferences } from '../../core/book/ReaderImageReferences';
+import { CachedChapterAssignment, CachedChapterRealign, CachedChapterRow, ChapterBookmarkSlot } from '../../core/book/CachedChapterRealign';
 import relationalStore from '@ohos.data.relationalStore';
 import fs from '@ohos.file.fs';
 import { Book, BookChapter, BookSource, BookGroup, Bookmark, SearchKeyword, ExploreRule, TocRule, ContentRule,
@@ -2793,18 +2794,187 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     return lengths;
   }
 
-  async getCachedChapterContent(bookUrl: string, chapterIndex: number): Promise<string> {
+  /**
+   * 传入 expected 时核对这一行记下的章节地址/章名：对不上（目录挪过、用的是临时通用目录）就当没缓存，
+   * 免得把别的章节正文配到这一章的标题下。
+   */
+  async getCachedChapterContent(bookUrl: string, chapterIndex: number,
+    expected: BookChapter | null = null): Promise<string> {
     if (!this.store) return '';
     const predicates = new relationalStore.RdbPredicates('book_contents');
     predicates.equalTo('bookUrl', bookUrl);
     predicates.equalTo('chapterIndex', chapterIndex);
-    const resultSet = await this.store.query(predicates, ['content']);
+    const resultSet = await this.store.query(predicates, expected ? ['content', 'chapterUrl', 'chapterName'] : ['content']);
     try {
       if (!resultSet.goToFirstRow()) return '';
+      if (expected && !CachedChapterRealign.matches(resultSet.getString(resultSet.getColumnIndex('chapterUrl')) || '',
+        resultSet.getString(resultSet.getColumnIndex('chapterName')) || '', expected)) {
+        console.warn('[AppDatabase] cached content belongs to another chapter, ignore:', chapterIndex);
+        return '';
+      }
       return resultSet.getString(resultSet.getColumnIndex('content')) || '';
     } finally {
       resultSet.close();
     }
+  }
+
+  /**
+   * 目录换新后把已缓存正文挪到新序号，规则见 CachedChapterRealign；对不上的行连同图片引用一起删掉。
+   * 挪动先换成负数临时序号再翻回来，避开 (bookUrl, chapterIndex) 主键冲突。
+   */
+  async realignCachedChapterContents(bookUrl: string, chapters: BookChapter[]): Promise<void> {
+    if (!this.store || !bookUrl) return;
+    await ReaderCacheCoordinator.run(async (): Promise<void> => {
+      if (!this.store) return;
+      const transaction = await this.store.createTransaction();
+      try {
+        const rows: CachedChapterRow[] = [];
+        const rs = await transaction.querySql(
+          'SELECT chapterIndex,chapterUrl,chapterName FROM book_contents WHERE bookUrl=?', [bookUrl]);
+        try {
+          while (rs.goToNextRow()) {
+            rows.push({ index: rs.getLong(0), url: rs.getString(1) || '', title: rs.getString(2) || '' });
+          }
+        } finally {
+          rs.close();
+        }
+        const plan = CachedChapterRealign.plan(rows, chapters);
+        if (plan.isUnchanged()) {
+          await transaction.commit();
+          return;
+        }
+        for (const index of plan.drops) {
+          for (const table of ['book_contents', 'reader_image_refs']) {
+            await transaction.execute('DELETE FROM ' + table + ' WHERE bookUrl=? AND chapterIndex=?', [bookUrl, index]);
+          }
+        }
+        let moved = false;
+        for (const item of plan.assignments) {
+          if (item.from === item.to) continue;
+          moved = true;
+          // cacheRevision 跟着加一：容量清理按 (序号, 版本) 删行，不能删到挪进来的另一章。
+          await transaction.execute('UPDATE book_contents SET chapterIndex=?,cacheRevision=cacheRevision+1 ' +
+            'WHERE bookUrl=? AND chapterIndex=?', [-1 - item.to, bookUrl, item.from]);
+          await transaction.execute('UPDATE reader_image_refs SET chapterIndex=? WHERE bookUrl=? AND chapterIndex=?',
+            [-1 - item.to, bookUrl, item.from]);
+        }
+        if (moved) {
+          for (const table of ['book_contents', 'reader_image_refs']) {
+            await transaction.execute('UPDATE ' + table + ' SET chapterIndex=-1-chapterIndex WHERE bookUrl=? AND chapterIndex<0',
+              [bookUrl]);
+          }
+        }
+        for (const item of plan.assignments) {
+          if (!item.relabel) continue;
+          await transaction.execute('UPDATE book_contents SET chapterUrl=?,chapterName=? WHERE bookUrl=? AND chapterIndex=?',
+            [item.url, item.title, bookUrl, item.to]);
+        }
+        await transaction.commit();
+        console.info('[AppDatabase] realigned cached chapters:', bookUrl, 'moved',
+          plan.assignments.filter(item => item.from !== item.to).length, 'dropped', plan.drops.length);
+      } catch (e) {
+        await transaction.rollback();
+        throw e as Error;
+      }
+    });
+  }
+
+  /**
+   * 目录换新后书签、划线跟着章节挪，章名换成新目录里的。两张表只记了章名，对位规则见 CachedChapterRealign.markRows。
+   * 对不上的留在原处、不删：这是用户自己记下的东西。书签挪过去会撞上同页书签时也留在原处。返回是否改了库。
+   */
+  async realignChapterMarks(bookUrl: string, previous: BookChapter[], chapters: BookChapter[]): Promise<boolean> {
+    if (!this.store || !bookUrl || chapters.length === 0) return false;
+    const transaction = await this.store.createTransaction();
+    let changed = false;
+    try {
+      const titles: Map<number, string> = new Map();
+      const bookmarks: ChapterBookmarkSlot[] = [];
+      const bookmarkNames: Map<number, string> = new Map();
+      const bookmarkRows = await transaction.querySql(
+        'SELECT id,chapterIndex,chapterName,pageIndex FROM bookmarks WHERE bookUrl=?', [bookUrl]);
+      try {
+        while (bookmarkRows.goToNextRow()) {
+          const index = bookmarkRows.getLong(1);
+          const name = bookmarkRows.getString(2) || '';
+          bookmarks.push({ id: bookmarkRows.getLong(0), index: index, page: bookmarkRows.getLong(3) });
+          bookmarkNames.set(bookmarkRows.getLong(0), name);
+          if (!titles.has(index)) titles.set(index, name);
+        }
+      } finally {
+        bookmarkRows.close();
+      }
+      const annotationNames: Map<number, string> = new Map();
+      const annotationRows = await transaction.querySql(
+        'SELECT DISTINCT chapterIndex,chapterName FROM book_annotations WHERE bookUrl=?', [bookUrl]);
+      try {
+        while (annotationRows.goToNextRow()) {
+          const index = annotationRows.getLong(0);
+          const name = annotationRows.getString(1) || '';
+          if (!annotationNames.has(index)) annotationNames.set(index, name);
+          if (!titles.has(index)) titles.set(index, name);
+        }
+      } finally {
+        annotationRows.close();
+      }
+      const assignments: Map<number, CachedChapterAssignment> = new Map();
+      if (titles.size > 0) {
+        for (const item of CachedChapterRealign.plan(CachedChapterRealign.markRows(titles, previous), chapters).assignments) {
+          assignments.set(item.from, item);
+        }
+      }
+
+      // 划线没有唯一约束，按章挪；先换成负数临时序号，免得 A→B、B→C 连着挪时被挪两次。
+      let annotationMoved = false;
+      for (const item of assignments.values()) {
+        if (!annotationNames.has(item.from)) continue;
+        if (item.from !== item.to) {
+          await transaction.execute('UPDATE book_annotations SET chapterIndex=?,chapterName=? WHERE bookUrl=? AND chapterIndex=?',
+            [-1 - item.to, item.title, bookUrl, item.from]);
+          annotationMoved = true;
+          changed = true;
+        } else if (item.title !== annotationNames.get(item.from)) {
+          await transaction.execute('UPDATE book_annotations SET chapterName=? WHERE bookUrl=? AND chapterIndex=?',
+            [item.title, bookUrl, item.from]);
+          changed = true;
+        }
+      }
+      if (annotationMoved) {
+        await transaction.execute('UPDATE book_annotations SET chapterIndex=-1-chapterIndex WHERE bookUrl=? AND chapterIndex<0',
+          [bookUrl]);
+      }
+
+      const indexMap: Map<number, number> = new Map();
+      assignments.forEach((item: CachedChapterAssignment): void => {
+        if (item.from !== item.to) indexMap.set(item.from, item.to);
+      });
+      const moves = CachedChapterRealign.bookmarkMoves(bookmarks, indexMap);
+      for (const slot of bookmarks) {
+        const item = assignments.get(slot.index);
+        if (!item) continue;
+        const next = moves.get(slot.id);
+        if (next !== undefined) {
+          await transaction.execute('UPDATE bookmarks SET chapterIndex=?,chapterName=? WHERE id=?', [-1 - next, item.title, slot.id]);
+          changed = true;
+        } else if (item.from === item.to && item.title !== bookmarkNames.get(slot.id)) {
+          await transaction.execute('UPDATE bookmarks SET chapterName=? WHERE id=?', [item.title, slot.id]);
+          changed = true;
+        }
+      }
+      if (moves.size > 0) {
+        await transaction.execute('UPDATE bookmarks SET chapterIndex=-1-chapterIndex WHERE bookUrl=? AND chapterIndex<0',
+          [bookUrl]);
+      }
+      await transaction.commit();
+    } catch (e) {
+      await transaction.rollback();
+      throw e as Error;
+    }
+    if (changed) {
+      console.info('[AppDatabase] realigned bookmarks/annotations:', bookUrl);
+      CloudSyncChangeTracker.markDataChanged();
+    }
+    return changed;
   }
 
   /**

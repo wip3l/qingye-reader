@@ -66,6 +66,8 @@ export class ReadBookEngine {
   private tocRefreshKey: string = '';
   /** 最近一次目录刷新没取到章节时的原因；取到了或还没刷新过为空。抛错的失败由调用方自己接住。 */
   lastTocRefreshError: string = '';
+  /** 目录刷新把书签/划线挪到新序号时加一；阅读页据此重读，不必每次刷新都重读。 */
+  chapterMarksRevision: number = 0;
   private sourceInteractionIdentity: string = '';
   private openBookTask: Promise<void> | null = null;
   private openBookTaskUrl: string = '';
@@ -430,6 +432,24 @@ export class ReadBookEngine {
           await appDb.deleteBookChapters(targetBook.bookUrl);
           if (!this.isCurrentBookSession(expectedGeneration, sessionBookUrl)) return;
           await appDb.insertBookChapters(chapters);
+          // 正文按序号存：目录前面增删几章后要跟着挪，否则第 N 章读到的是旧目录第 N 章的正文。
+          try {
+            await appDb.realignCachedChapterContents(targetBook.bookUrl, chapters);
+          } catch (e) {
+            console.warn('[RE] realign cached chapters failed, drop them:', e);
+            // 删也失败时读正文那一步还会按章节地址核对，不会配错章。
+            await appDb.deleteBookCachedContent(targetBook.bookUrl).catch((err: Error): void => {
+              console.warn('[RE] drop cached chapters failed:', err);
+            });
+          }
+          // 书签、划线同样按序号存；离线音频在 syncChapterCacheDates 里按地址/章名对位。
+          try {
+            if (await appDb.realignChapterMarks(targetBook.bookUrl, previousChapters, chapters)) {
+              this.chapterMarksRevision++;
+            }
+          } catch (e) {
+            console.warn('[RE] realign bookmarks/annotations failed:', e);
+          }
           if (!this.isCurrentBookSession(expectedGeneration, sessionBookUrl)) return;
           await this.syncChapterCacheDates(expectedGeneration, sessionBookUrl);
           if (!this.isCurrentBookSession(expectedGeneration, sessionBookUrl)) return;
@@ -691,7 +711,7 @@ export class ReadBookEngine {
     const chapter = this.chapters[idx];
     // “正文下一页”翻到下一章就停，见 WebBookService.getContent。
     const nextChapterUrl = this.chapters[idx + 1]?.url || '';
-    const saved = await appDb.getCachedChapterContent(sessionBookUrl, idx);
+    const saved = await appDb.getCachedChapterContent(sessionBookUrl, idx, chapter);
     let cached = ReaderImageCache.normalize(saved);
     const releaseImages = ReaderImageCache.retainText(cached);
     try {

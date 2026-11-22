@@ -2258,9 +2258,15 @@ struct ReadBookPage {
   async retryFetchChapters(): Promise<string> {
     try {
       const engine = this.readerEngine();
+      const marksRevision = engine.chapterMarksRevision;
       await engine.refreshToc();
       this.book = engine.book || this.book;
       this.chapters = engine.chapters;
+      if (engine.chapterMarksRevision !== marksRevision) {
+        // 目录挪动后书签、划线已在库里换到新序号，内存里的旧列表要重读，否则会画到别的章节上。
+        this.loadBookmarks().catch((error: Error) => console.warn('读取书签失败:', error));
+        this.loadReaderAnnotations().catch((error: Error) => console.warn('读取划线失败:', error));
+      }
       const emptyReason = engine.lastTocRefreshError;
       if (this.chapters.length > 0) {
         this.loadStatus = '';
