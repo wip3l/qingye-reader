@@ -429,8 +429,9 @@ export struct TtsCatalogSheet {
 
   endScrollbarDrag(event: GestureEvent): void {
     if (!this.scrollbarDragging) return;
-    this.scrollToPointer(this.scrollbarPointerY(event));
+    // 先结束拖动再定位，松手这一下不受拖动节流影响。
     this.scrollbarDragging = false;
+    this.scrollToPointer(this.scrollbarPointerY(event));
   }
 
   cancelScrollbarDrag(): void {
@@ -447,8 +448,10 @@ export struct TtsCatalogSheet {
     const offset = VirtualListScrollbar.clampThumbOffset(this.listViewportHeight, thumbLength,
       pointerY - this.pointerAnchor);
     this.dragOffset = offset;
-    const targetIndex = VirtualListScrollbar.firstVisibleIndex(this.listViewportHeight, thumbLength,
-      this.count, this.visibleItemCount, offset);
+    // 滑块到底时最后一行贴底，否则按首行定位。
+    const atEnd = VirtualListScrollbar.reachesEnd(this.listViewportHeight, thumbLength, offset);
+    const targetIndex = atEnd ? this.count - 1 : VirtualListScrollbar.firstVisibleIndex(this.listViewportHeight,
+      thumbLength, this.count, this.visibleItemCount, offset);
     this.firstVisibleIndex = targetIndex;
     const now = Date.now();
     if (this.scrollbarDragging && now - this.lastScrollbarScrollAt < CATALOG_SCROLLBAR_MIN_SCROLL_INTERVAL_MS) {
@@ -456,7 +459,7 @@ export struct TtsCatalogSheet {
     }
     this.lastScrollbarScrollAt = now;
     try {
-      this.scroller.scrollToIndex(targetIndex, false, ScrollAlign.START);
+      this.scroller.scrollToIndex(targetIndex, false, atEnd ? ScrollAlign.END : ScrollAlign.START);
     } catch (_) {}
   }
 }

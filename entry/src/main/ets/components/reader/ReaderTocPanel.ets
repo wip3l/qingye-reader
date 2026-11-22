@@ -165,6 +165,7 @@ export struct ReaderTocPanel {
   private searchRequestSerial: number = 0;
   private scrollbarPointerAnchor: number = 0;
   private scrollbarPendingIndex: number = -1;
+  private scrollbarPendingAtEnd: boolean = false;
   private scrollbarUpdateTimer: number = -1;
   private tocScroller: Scroller = new Scroller();
   private bookmarkScroller: ListScroller = new ListScroller();
@@ -772,8 +773,10 @@ export struct ReaderTocPanel {
       pointerY - this.scrollbarPointerAnchor);
     this.scrollbarDragOffset = offset;
     const total = this.scrollbarTotal();
-    const targetIndex = VirtualListScrollbar.firstVisibleIndex(this.listViewportHeight, thumbLength,
-      total, this.visibleItemCount, offset);
+    const atEnd = VirtualListScrollbar.reachesEnd(this.listViewportHeight, thumbLength, offset);
+    this.scrollbarPendingAtEnd = atEnd;
+    const targetIndex = atEnd ? total - 1 : VirtualListScrollbar.firstVisibleIndex(this.listViewportHeight,
+      thumbLength, total, this.visibleItemCount, offset);
     const targetChapterIndex = this.scrollbarFolded() ? this.canonicalAtDisplayIndex(targetIndex) :
       (this.reverseOrder ? total - 1 - targetIndex : targetIndex);
     this.firstVisibleGlobalIndex = targetChapterIndex;
@@ -807,12 +810,15 @@ export struct ReaderTocPanel {
 
   private applyScrollbarTarget(targetIndex: number): void {
     if (targetIndex < 0) return;
+    // 滑块到底时最后一行贴底，否则按首行定位。
+    const align = this.scrollbarPendingAtEnd ? ScrollAlign.END : ScrollAlign.START;
     if (this.isSearchActive()) {
-      const localIndex = this.nearestSearchResultIndex(targetIndex);
+      const localIndex = this.scrollbarPendingAtEnd ? this.searchChapterIndexes.length - 1 :
+        this.nearestSearchResultIndex(targetIndex);
       if (localIndex < 0) return;
       this.firstVisibleGlobalIndex = this.searchChapterIndexes[localIndex] ?? targetIndex;
       try {
-        this.tocScroller.scrollToIndex(localIndex, false, ScrollAlign.START);
+        this.tocScroller.scrollToIndex(localIndex, false, align);
       } catch (e) {
         console.warn('拖动目录滚动条定位搜索结果失败:', e);
       }
@@ -822,11 +828,11 @@ export struct ReaderTocPanel {
     const target = Math.max(0, Math.min(targetIndex, this.chapters.length - 1));
     const requestSerial = ++this.positionRequestSerial;
     this.positioning = true;
-    const localIndex = this.setWindowAround(target, ScrollAlign.START);
+    const localIndex = this.setWindowAround(target, align);
     setTimeout(() => {
       if (requestSerial !== this.positionRequestSerial) return;
       try {
-        this.tocScroller.scrollToIndex(localIndex, false, ScrollAlign.START);
+        this.tocScroller.scrollToIndex(localIndex, false, align);
       } catch (e) {
         console.warn('拖动目录滚动条定位章节失败:', e);
       } finally {

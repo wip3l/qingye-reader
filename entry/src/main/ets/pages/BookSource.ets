@@ -288,6 +288,7 @@ struct BookSourcePage {
   private sourceListScroller: Scroller = new Scroller();
   private sourceScrollbarPointerAnchor: number = 0;
   private sourceScrollbarPendingIndex: number = -1;
+  private sourceScrollbarPendingAtEnd: boolean = false;
   private sourceScrollbarUpdateTimer: number = -1;
   private hasShownOnce: boolean = false;
   private sourceOrderSaving: boolean = false;
@@ -2231,14 +2232,18 @@ struct BookSourcePage {
     const offset = VirtualListScrollbar.clampThumbOffset(viewportHeight, thumbLength,
       pointerY - this.sourceScrollbarPointerAnchor);
     this.sourceScrollbarDragOffset = offset;
-    const targetIndex = VirtualListScrollbar.firstVisibleIndex(viewportHeight, thumbLength,
-      this.sources.length, this.sourceVisibleItemCount, offset);
+    // 滑块到底时直接滚到列表底部，否则按首行定位。
+    const atEnd = VirtualListScrollbar.reachesEnd(viewportHeight, thumbLength, offset);
+    const targetIndex = atEnd ? Math.max(0, this.sources.length - 1) :
+      VirtualListScrollbar.firstVisibleIndex(viewportHeight, thumbLength,
+        this.sources.length, this.sourceVisibleItemCount, offset);
     this.sourceFirstVisibleIndex = targetIndex;
-    this.queueSourceScrollbarTarget(targetIndex);
+    this.queueSourceScrollbarTarget(targetIndex, atEnd);
   }
 
-  queueSourceScrollbarTarget(targetIndex: number): void {
+  queueSourceScrollbarTarget(targetIndex: number, atEnd: boolean = false): void {
     this.sourceScrollbarPendingIndex = targetIndex;
+    this.sourceScrollbarPendingAtEnd = atEnd;
     if (this.sourceScrollbarUpdateTimer >= 0) return;
     this.sourceScrollbarUpdateTimer = setTimeout(() => {
       this.sourceScrollbarUpdateTimer = -1;
@@ -2247,6 +2252,10 @@ struct BookSourcePage {
       if (pending < 0 || this.sources.length === 0) return;
       const target = Math.max(0, Math.min(pending, this.sources.length - 1));
       try {
+        if (this.sourceScrollbarPendingAtEnd) {
+          this.sourceListScroller.scrollEdge(Edge.Bottom);
+          return;
+        }
         // 顶部 spacer 按列数占满一整行，源条目索引与 ListItem 索引相差一个列数。
         this.sourceListScroller.scrollToIndex(target + this.sourceListLaneCount(), false, ScrollAlign.START);
       } catch (e) {
