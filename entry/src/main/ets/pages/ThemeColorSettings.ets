@@ -2737,7 +2737,8 @@ struct ThemeColorSettingsPage {
     }
     if (this.currentEmphasis().chapterHead === CHAPTER_HEAD_NONE) {
       this.resetRow('恢复为所选主题的章首装饰', () => this.setChapterHeadOverride(''))
-    } else if (!this.currentEmphasis().chapterHead && !chapterHeadIsEmpty(this.sourceChapterHead())) {
+    } else if (!this.currentEmphasis().chapterHead && !this.chapterHeadFromOwnPack() &&
+      !chapterHeadIsEmpty(this.sourceChapterHead())) {
       this.resetRow('不显示所选主题的章首装饰', () => this.setChapterHeadOverride(CHAPTER_HEAD_NONE))
     }
   }
@@ -6428,9 +6429,20 @@ struct ThemeColorSettingsPage {
     return this.effectiveChapterHead().image || this.ownChapterHead().image ? 'inherit' : 'empty';
   }
 
+  /**
+   * 当前模式生效的章首装饰取自方案自己的素材包：覆盖明确指向它，或者没覆盖而强调气泡来源就是它。
+   * 后一种常见于导入的主题包、桌面编辑器做的包（章首装饰只写在包里，覆盖是空的）。
+   */
+  chapterHeadFromOwnPack(): boolean {
+    const own = this.ownThemeId();
+    if (!own) return false;
+    const override = this.currentEmphasis().chapterHead;
+    return override === own || (!override && this.currentSources().bubbleThemeId === own);
+  }
+
   /** 饰图来自方案自己的素材包时才能调位置和大小。 */
   chapterHeadAdjustable(): boolean {
-    return !!this.ownChapterHead().image && this.currentEmphasis().chapterHead === this.ownThemeId();
+    return !!this.ownChapterHead().image && this.chapterHeadFromOwnPack();
   }
 
   chapterHeadHint(): string {
@@ -6454,7 +6466,7 @@ struct ThemeColorSettingsPage {
   }
 
   ownChapterHeadNumberColor(): string {
-    return this.currentEmphasis().chapterHead === this.ownThemeId() ? this.ownChapterHead().numberColor : '';
+    return this.chapterHeadFromOwnPack() ? this.ownChapterHead().numberColor : '';
   }
 
   /** 色块上显示的颜色：没设时是标题本来的颜色。 */
@@ -6520,7 +6532,7 @@ struct ThemeColorSettingsPage {
 
   dropCapSlotImage(): ResourceStr {
     const own = this.ownChapterHead().dropCapImage;
-    if (own && this.currentEmphasis().chapterHead === this.ownThemeId()) return this.ownAssetUri(own) || own;
+    if (own && this.chapterHeadFromOwnPack()) return this.ownAssetUri(own) || own;
     return ThemeAssetRegistry.chapterArtwork(this.effectiveChapterHead().dropCapImage);
   }
 
