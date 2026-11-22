@@ -1,5 +1,5 @@
 import { Context } from '@kit.AbilityKit';
-import { Book, SearchBook, BookTypeSupport } from '@legado/sourceengine';
+import { Book, BookSource, SearchBook, BookTypeSupport } from '@legado/sourceengine';
 import { AppDatabase } from '../../model/data/AppDatabase';
 import { ChangeSourceCacheSnapshot, ChangeSourceResultCache } from '../../utils/ChangeSourceResultCache';
 import { SearchExploreSettingsStore } from '../../utils/SearchExploreSettingsStore';
@@ -10,6 +10,7 @@ import { BookSourceSwitchTask, PreparedSourceSwitch } from './BookSourceSwitchTa
 import { ChangeSourceCandidates } from './ChangeSourceCandidates';
 import { SearchChineseScriptRuntime } from './SearchChineseScriptRuntime';
 import { SearchCoordinator, SearchProgress } from './SearchCoordinator';
+import { SourceFormProfile } from './SourceFormProfile';
 
 /** 批量换源里的一本书和它当前的状态。 */
 export class BatchSwitchItem {
@@ -55,6 +56,8 @@ export class BatchSourceSwitch {
   private enabledSources: Set<string> = new Set();
   private scopeGroups: string[] = [];
   private scopeSourceCount: number = 0;
+  /** 范围内的启用书源，按形态挑书源时用。 */
+  private scopeSources: BookSource[] = [];
 
   constructor(context: Context, books: Book[], onChanged: () => void,
     onSwitched: (previousUrl: string, book: Book) => void) {
@@ -81,6 +84,7 @@ export class BatchSourceSwitch {
   async run(): Promise<void> {
     try {
       await this.loadScope();
+      await SourceFormProfile.load();
       const script = await SearchChineseScriptRuntime.forSearch(this.context);
       this.fold = script ? (text: string): string => script.fold(text) : null;
       const queue = this.items.slice();
@@ -113,6 +117,14 @@ export class BatchSourceSwitch {
     }
     this.scopeGroups = inScope > 0 ? groups.slice() : [];
     this.scopeSourceCount = inScope > 0 ? inScope : this.enabledSources.size;
+    this.scopeSources = sources.filter((source: BookSource): boolean => !!source.bookSourceUrl &&
+      (this.scopeGroups.length === 0 || this.scopeGroups.includes(SourcePickerKit.groupLabel(source.bookSourceGroup))));
+  }
+
+  /** 只搜可能出这本书形态的书源；一个都挑不出来时照旧搜全部。 */
+  private sourcesFor(book: Book): BookSource[] | undefined {
+    const kept = SourceFormProfile.split(this.scopeSources, [BookTypeSupport.mediaCategoryOf(book)]).kept;
+    return kept.length > 0 && kept.length < this.scopeSources.length ? kept : undefined;
   }
 
   private update(item: BatchSwitchItem, state: number, detail: string): void {
@@ -228,6 +240,7 @@ export class BatchSourceSwitch {
       stopAfterResults: 16,
       maxCandidatesPerSource: 32,
       sourceGroups: this.scopeGroups.slice(),
+      targetSources: this.sourcesFor(book),
       chineseScript: SearchChineseScriptRuntime.ready() || undefined
     }).then((): void => {}).catch((e: Error): void => console.warn('批量换源搜索失败:', book.name, e));
     try {

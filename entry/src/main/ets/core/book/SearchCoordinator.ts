@@ -5,6 +5,7 @@ import { BookSourceMetadataSupport } from './BookSourceMetadataSupport';
 import { BookSourceStageRuleSupport } from './BookSourceStageRuleSupport';
 import { SearchChineseScript, SearchKeywordVariants, SearchSourcePlan } from './SearchChineseScript';
 import { SourceHostQueue } from './SourceHostQueue';
+import { SourceFormProfile } from './SourceFormProfile';
 
 export interface SearchProgress {
   done: number;
@@ -194,6 +195,11 @@ export interface SearchOptions {
   maxResultsPerCategory?: number;
   /** Keeps only results of this media category (novel, comic, audio, video), e.g. when changing a book's source. */
   mediaCategory?: string;
+  /**
+   * Keeps results of any of these media categories; takes precedence over mediaCategory. With maxResultsPerCategory
+   * the search ends early once each of these categories is full, not all four.
+   */
+  mediaCategories?: string[];
   stopAfterResults?: number;
   maxCandidatesPerSource?: number;
   debugContext?: BookSourceDebugContext;
@@ -305,7 +311,9 @@ export class SearchCoordinator {
     const resultBudgetSpent = (): boolean => {
       if (validationOnly) return false;
       if (categoryLimit > 0) {
-        return BookTypeSupport.MEDIA_CATEGORIES.every((category: string): boolean =>
+        const budgetCategories = options.mediaCategories && options.mediaCategories.length > 0 ?
+          options.mediaCategories : BookTypeSupport.MEDIA_CATEGORIES;
+        return budgetCategories.every((category: string): boolean =>
           (categoryCounts.get(category) || 0) >= categoryLimit);
       }
       return stopAfterResults > 0 && all.length >= stopAfterResults;
@@ -887,6 +895,7 @@ export class SearchCoordinator {
       if (options.leanResult) this.stripLeanFieldValues(book);
       this.sanitizeSearchBook(book);
       book.mediaCategory = BookTypeSupport.mediaCategoryOf(book);
+      if (book.name && book.bookUrl) SourceFormProfile.note(source.bookSourceUrl || '', book.mediaCategory);
       if (!this.matchesMediaCategory(book, options)) continue;
       const bookKey = `${book.origin || ''}::${book.bookUrl || ''}`;
       if (book.name && book.bookUrl && !seenBookKeys.has(bookKey)) {
@@ -931,6 +940,7 @@ export class SearchCoordinator {
         if (options.leanResult) this.stripLeanFieldValues(book);
         this.sanitizeSearchBook(book);
         book.mediaCategory = BookTypeSupport.mediaCategoryOf(book);
+        if (book.name && book.bookUrl) SourceFormProfile.note(source.bookSourceUrl || '', book.mediaCategory);
         if (!this.matchesMediaCategory(book, options)) continue;
         // 聚合书源一次交回几百条、其中不少只是沾边：每源上限只数与关键词相关的，
         // 否则排在后面的子站（哪怕书名完全一致）会被前面不相关的结果挤掉。校验只看有没有结果，不筛。
@@ -1413,7 +1423,7 @@ export class SearchCoordinator {
   }
 
   private filterSearchResults(allResults: SearchBook[], keyword: string, options: SearchOptions): SearchBook[] {
-    const results = options.mediaCategory ?
+    const results = options.mediaCategory || (options.mediaCategories && options.mediaCategories.length > 0) ?
       allResults.filter((book: SearchBook): boolean => this.matchesMediaCategory(book, options)) : allResults;
     const normalizedKeyword = this.normalizeSearchText(keyword);
     if (!normalizedKeyword) return results;
@@ -1433,6 +1443,9 @@ export class SearchCoordinator {
   }
 
   private matchesMediaCategory(book: SearchBook, options: SearchOptions): boolean {
+    if (options.mediaCategories && options.mediaCategories.length > 0) {
+      return options.mediaCategories.includes(BookTypeSupport.mediaCategoryOf(book));
+    }
     return !options.mediaCategory || BookTypeSupport.mediaCategoryOf(book) === options.mediaCategory;
   }
 

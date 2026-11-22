@@ -30,10 +30,14 @@ export class SearchExploreSettings {
   exploreResultLayout: string = 'list';
 }
 
-/** 换源面板记住的搜索范围：mode 为 all（全部启用书源）或 group（只搜 groups 里的分组）。 */
+/**
+ * 换源面板记住的搜索范围：mode 为 all（全部启用书源）或 group（只搜 groups 里的分组）。
+ * forms 是除本书形态外还要一起找的形态（novel / comic / audio / video），全局一份。
+ */
 export class ChangeSourceScope {
   mode: string = 'all';
   groups: string[] = [];
+  forms: string[] = [];
 }
 
 export class SearchExploreSettingsStore {
@@ -61,6 +65,8 @@ export class SearchExploreSettingsStore {
   // 换源范围单独读写，不进 SearchExploreSettings：设置页整份保存时不会把面板里刚改的范围盖回旧值。
   static readonly KEY_CHANGE_SOURCE_SCOPE_MODE: string = 'changeSourceScopeMode';
   static readonly KEY_CHANGE_SOURCE_SCOPE_GROUPS: string = 'changeSourceScopeGroups';
+  static readonly KEY_CHANGE_SOURCE_FORMS: string = 'changeSourceForms';
+  static readonly CHANGE_SOURCE_FORMS: string[] = ['novel', 'comic', 'audio', 'video'];
   static readonly CHANGE_SOURCE_SCOPE_ALL: string = 'all';
   static readonly CHANGE_SOURCE_SCOPE_GROUP: string = 'group';
   private static readonly STORE_NAME: string = 'search_explore_settings';
@@ -206,6 +212,8 @@ export class SearchExploreSettingsStore {
       store, SearchExploreSettingsStore.KEY_CHANGE_SOURCE_SCOPE_MODE, SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_ALL);
     const raw = await SearchExploreSettingsStore.getString(store, SearchExploreSettingsStore.KEY_CHANGE_SOURCE_SCOPE_GROUPS, '');
     scope.groups = SearchExploreSettingsStore.decodeGroups(raw);
+    scope.forms = SearchExploreSettingsStore.decodeForms(
+      await SearchExploreSettingsStore.getString(store, SearchExploreSettingsStore.KEY_CHANGE_SOURCE_FORMS, ''));
     scope.mode = mode === SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_GROUP && scope.groups.length > 0 ?
       SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_GROUP : SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_ALL;
     SearchExploreSettingsStore.changeSourceScope = SearchExploreSettingsStore.cloneChangeSourceScope(scope);
@@ -215,6 +223,7 @@ export class SearchExploreSettingsStore {
   static async saveChangeSourceScope(context: Context, scope: ChangeSourceScope): Promise<void> {
     const next = SearchExploreSettingsStore.cloneChangeSourceScope(scope);
     next.groups = SearchExploreSettingsStore.decodeGroups(JSON.stringify(next.groups));
+    next.forms = SearchExploreSettingsStore.decodeForms(JSON.stringify(next.forms));
     if (next.mode !== SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_GROUP || next.groups.length === 0) {
       next.mode = SearchExploreSettingsStore.CHANGE_SOURCE_SCOPE_ALL;
     }
@@ -223,6 +232,7 @@ export class SearchExploreSettingsStore {
     await store.put(SearchExploreSettingsStore.KEY_CHANGE_SOURCE_SCOPE_MODE, next.mode);
     // 选“全部”时分组照留，下次切回组内直接沿用。
     await store.put(SearchExploreSettingsStore.KEY_CHANGE_SOURCE_SCOPE_GROUPS, JSON.stringify(next.groups));
+    await store.put(SearchExploreSettingsStore.KEY_CHANGE_SOURCE_FORMS, JSON.stringify(next.forms));
     await store.flush();
   }
 
@@ -241,7 +251,13 @@ export class SearchExploreSettingsStore {
     const scope = new ChangeSourceScope();
     scope.mode = source.mode;
     scope.groups = source.groups.slice();
+    scope.forms = source.forms.slice();
     return scope;
+  }
+
+  private static decodeForms(raw: string): string[] {
+    return SearchExploreSettingsStore.decodeGroups(raw).filter((form: string): boolean =>
+      SearchExploreSettingsStore.CHANGE_SOURCE_FORMS.includes(form));
   }
 
   private static decodeGroups(raw: string): string[] {

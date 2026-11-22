@@ -20,11 +20,15 @@ function harness(disk = new Map()) {
   const events = [], writes = [];
   let detailGate, tocGate, commitGate, searchGate, beforeWrite, beforeRead;
   let failCommit = false, searchCount = 0;
+  // 按形态挑书源：formSplit 决定哪些跳过，searchFound 按搜索参数给结果，enabledList 是启用书源。
+  let formSplit = null, searchFound = null, enabledList = null, scopeForms = [];
+  const searchOptions = [];
   const old = book('A');
   const db = {
     initWithContext: async () => {},
     getBook: async () => old,
     getBookSource: async origin => ({ enabled: origin !== 'disabled', bookSourceUrl: origin }),
+    getEnabledBookSourcesForSearch: async () => { if (!enabledList) throw new Error('no db'); return enabledList; },
     commitBookSourceSwitch: async (_url, next) => {
       events.push('commit-start');
       if (commitGate) await commitGate.promise;
@@ -48,9 +52,10 @@ function harness(disk = new Map()) {
   }
   class SearchCoordinator {
     cancel() { events.push('cancel-search'); searchGate?.resolve([]); }
-    async search(_name, callback) {
+    async search(_name, callback, options) {
       searchCount++;
-      const found = [book('B'), book('C')];
+      searchOptions.push(options);
+      const found = searchFound ? searchFound(options) : [book('B'), book('C')];
       callback({ deltaResults: found, finished: false, status: '搜索中' });
       if (searchGate) await searchGate.promise;
       callback({ results: found, finished: true, status: '完成' });
@@ -69,7 +74,16 @@ function harness(disk = new Map()) {
     SourceEngineHost: { getError: () => '' },
     BookFieldSanitizer: { prefer: (a, b) => a || b }, CoverUrlNormalizer: { prefer: (a, b) => a || b },
     AppStorage: { setOrCreate() {} }, getContext: () => ({}),
-    SearchExploreSettingsStore: { getSearchConcurrency: () => 6, CHANGE_SOURCE_SCOPE_ALL: 'all', CHANGE_SOURCE_SCOPE_GROUP: 'group' },
+    SearchExploreSettingsStore: { getSearchConcurrency: () => 6, CHANGE_SOURCE_SCOPE_ALL: 'all', CHANGE_SOURCE_SCOPE_GROUP: 'group',
+      CHANGE_SOURCE_FORMS: ['novel', 'comic', 'audio', 'video'],
+      loadChangeSourceScope: async () => ({ mode: 'all', groups: [], forms: scopeForms.slice() }),
+      saveChangeSourceScope: async scope => { scopeForms = scope.forms.slice(); } },
+    ChangeSourceScope: class { constructor() { this.mode = 'all'; this.groups = []; this.forms = []; } },
+    BookSourceGroupStore: { loadOrder: async () => {} },
+    SourcePickerKit: { groupLabel: group => group || '未分组', sortGroups: groups => groups },
+    SourceFormProfile: { load: async () => {}, isAlways: () => false, alwaysCount: () => 0, setAlways() {}, clearAlways() {},
+      split: (sources, forms) => formSplit ? formSplit(sources, forms) : { kept: sources, skipped: [] } },
+    SourceFormJudge: { label: form => ({ comic: '漫画', audio: '有声书', video: '短剧' })[form] || '小说' },
     SearchBookShelfHelper: { isNavigationResult: () => false },
     BookIdentity: { keyOfUrl: (url, origin) => origin + '|' + url, keyOfSearchBook: b => b.origin + '|' + b.bookUrl },
     SearchChineseScriptRuntime: { forSearch: async () => null, saveHints: async () => {}, ready: () => null, enabled: () => true },
@@ -95,7 +109,9 @@ function harness(disk = new Map()) {
     holdDetail() { return detailGate = deferred(); }, holdToc() { return tocGate = deferred(); },
     holdCommit() { return commitGate = deferred(); }, holdSearch() { return searchGate = deferred(); },
     holdWrite() { return beforeWrite = deferred(); }, holdRead() { return beforeRead = deferred(); },
-    failCommit() { failCommit = true; } };
+    failCommit() { failCommit = true; },
+    searchOptions, setFormSplit(fn) { formSplit = fn; }, setSearchFound(fn) { searchFound = fn; },
+    setEnabled(list) { enabledList = list; }, setScopeForms(forms) { scopeForms = forms; } };
 }
 
 // The new catalog's reading position follows the chapter title, not the bare index.
@@ -446,6 +462,82 @@ function webHarness(strict = true) {
   gate.resolve({ values: [{ value: '/next' }], errors: [], contextValues: [] });
   await assert.rejects(work, /已取消/);
   assert.equal(h.service.activeRuleOwners.size, 0);
+}
+
+// Source form judge: learned results beat declarations, declarations beat names, unknown sources are searched.
+{
+  const Judge = (() => {
+    const context = vm.createContext({});
+    const source = readEtsModule('core/book/SourceFormJudge.ts').replace(/export /g, '');
+    vm.runInContext(stripTypeScriptTypes(source) + '\nglobalThis.J = { SourceFormJudge, SourceFormFacts, SourceFormTally };', context);
+    return context.J;
+  })();
+  const { SourceFormJudge: J, SourceFormFacts: Facts, SourceFormTally: Tally } = Judge;
+  const facts = (extra = {}) => Object.assign(new Facts(), extra);
+  const tally = (novel, comic, audio, video) => Object.assign(new Tally(), { novel, comic, audio, video });
+  assert.equal(J.judge(facts(), ['novel']).search, true, 'nothing known: search it');
+  const drama = J.judge(facts({ tally: tally(0, 0, 0, 41) }), ['novel']);
+  assert.equal(drama.search, false);
+  assert.equal(drama.reason, '近 41 条结果都是短剧');
+  assert.equal(J.judge(facts({ tally: tally(0, 0, 0, 41) }), ['novel', 'video']).search, true, 'ticked forms are searched');
+  assert.equal(J.judge(facts({ tally: tally(30, 25, 5, 40) }), ['audio']).search, true, 'aggregate sources stay');
+  assert.equal(J.judge(facts({ tally: tally(99, 0, 0, 1) }), ['video']).search, false, 'one stray result is noise');
+  assert.equal(J.judge(facts({ tally: tally(0, 0, 0, 5) }), ['novel']).search, true, 'too few samples to decide');
+  assert.equal(J.judge(facts({ tally: tally(0, 0, 0, 5), declared: 'comic', declaredBy: 'type' }), ['novel']).reason,
+    '书源类型标为漫画');
+  assert.equal(J.judge(facts({ declared: 'comic', declaredBy: 'rule' }), ['novel']).reason, '正文取的是图片，按漫画书源算');
+  assert.equal(J.judge(facts({ declared: 'audio', declaredBy: 'type' }), ['audio']).search, true);
+  assert.equal(J.judge(facts({ tally: tally(40, 0, 0, 0), declared: 'comic', declaredBy: 'rule' }), ['novel']).search, true,
+    'a misread image rule loses to what the source actually returned');
+  assert.equal(J.judge(facts({ name: '某某短剧' }), ['novel']).reason, '名称或分组含“短剧”');
+  assert.equal(J.judge(facts({ name: '漫画小说网' }), ['novel']).search, true, 'mixed names decide nothing');
+  assert.equal(J.judge(facts({ name: '听书站', group: '漫画' }), ['novel']).search, true);
+  assert.equal(J.judge(facts({ name: '某某短剧', always: true }), ['novel']).search, true, 'always-search wins');
+}
+
+// The panel searches only the kept sources, lists ticked forms in their own sections and falls back to the
+// skipped sources when the kept ones have nothing of the book's own form.
+{
+  const h = harness();
+  const src = url => ({ bookSourceUrl: url, bookSourceName: url, bookSourceGroup: '' });
+  h.setEnabled([src('B'), src('C'), src('D'), src('M')]);
+  h.setScopeForms(['comic']);
+  h.setFormSplit(sources => ({
+    kept: sources.filter(s => s.bookSourceUrl !== 'D'),
+    skipped: sources.filter(s => s.bookSourceUrl === 'D').map(source => ({ source, reason: '近 41 条结果都是短剧' }))
+  }));
+  h.setSearchFound(() => [book('B'), book('M', { type: 1 })]);
+  const panel = new h.Dialog(); panel.targetBook = h.old;
+  panel.aboutToAppear(); await drain();
+  assert.deepEqual(Array.from(panel.extraForms), ['comic']);
+  const options = h.searchOptions[0];
+  assert.deepEqual(Array.from(options.mediaCategories), ['text', 'comic']);
+  assert.deepEqual(Array.from(options.targetSources, s => s.bookSourceUrl), ['B', 'C', 'M']);
+  assert.equal(options.maxResultsPerCategory, 20);
+  assert.deepEqual(Array.from(panel.results, b => b.origin), ['B']);
+  assert.deepEqual(Array.from(panel.otherRows, r => r.book ? r.book.origin : 'header:' + r.form), ['header:comic', 'M']);
+  assert.equal(panel.skipTip(), '；按形态跳过 1 个书源，');
+  // Unticking drops the other-form results right away and remembers the choice.
+  panel.toggleForm('comic');
+  assert.equal(panel.otherRows.length, 0);
+  assert.deepEqual(Array.from(panel.extraForms), []);
+  panel.requestClose(); await h.Cache.flush({});
+
+  const f = harness();
+  f.setEnabled([src('B'), src('D')]);
+  f.setFormSplit(sources => ({
+    kept: sources.filter(s => s.bookSourceUrl !== 'D'),
+    skipped: sources.filter(s => s.bookSourceUrl === 'D').map(source => ({ source, reason: '书源类型标为有声书' }))
+  }));
+  f.setSearchFound(options => options.targetSources[0].bookSourceUrl === 'D' ? [book('D')] : []);
+  const fallback = new f.Dialog(); fallback.targetBook = f.old;
+  fallback.aboutToAppear(); await drain();
+  assert.equal(f.searchOptions.length, 2, 'nothing found among kept sources: search the skipped ones');
+  assert.deepEqual(Array.from(f.searchOptions[1].targetSources, s => s.bookSourceUrl), ['D']);
+  assert.deepEqual(Array.from(fallback.results, b => b.origin), ['D']);
+  assert.equal(fallback.skipTip(), '；跳过的 1 个书源也搜过了，');
+  assert.equal(fallback.searching, false);
+  fallback.requestClose(); await f.Cache.flush({});
 }
 
 console.log('Change-source cache, lifecycle, deadlines, commit, pagination and rule cancellation checks passed.');

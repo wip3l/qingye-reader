@@ -67,6 +67,7 @@ import { NetworkSettingsStore } from '../utils/NetworkSettingsStore';
 import { AudioOfflineSettingsStore } from '../utils/AudioOfflineSettingsStore';
 import { AudioBookSettingsStore } from '../utils/AudioBookSettingsStore';
 import { PlaybackLoudnessGain } from '../utils/PlaybackLoudnessGain';
+import { SourceFormProfile } from '../core/book/SourceFormProfile';
 import { ReaderInputScopes } from '../utils/ReaderInputScopes';
 import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { syncDesktopTitleBar, releaseSystemBarListeners } from '../utils/SystemBars';
@@ -108,6 +109,7 @@ export default class EntryAbility extends UIAbility {
     PlaybackLoudnessGain.load(this.context.getApplicationContext()).catch((error: Error) => {
       console.warn('恢复音量增益设置失败:', error);
     });
+    SourceFormProfile.bindContext(this.context.getApplicationContext());
     AppStorage.setOrCreate('appCacheDir', this.context.cacheDir);
     AppStorage.setOrCreate('appFilesDir', this.context.filesDir);
     AppIntentActions.install(this.context);
