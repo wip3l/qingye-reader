@@ -1530,10 +1530,13 @@ export class WebBookService {
     }
 
     let value = content || '';
+    value = await this.inlineRemoteSvgControls(source, value, baseUrl, cancelled);
     value = this.convertReaderNativeActions(source, value, baseUrl);
     value = value.replace(/<(?:img|image)\b[^>]*>/gi, (tag: string): string => {
       const images = this.collectReaderImageUrls([tag], baseUrl, false);
-      return images.length > 0 ? `\n\n${ReaderImageMarker.create(images[0])}\n\n` : ' ';
+      if (images.length === 0) return ' ';
+      const icon = this.readerInlineIconSize(tag);
+      return `\n\n${ReaderImageMarker.create(images[0], icon[0], icon[1])}\n\n`;
     });
     value = value.replace(/!\[[^\]]*\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g,
       (_all: string, rawUrl: string): string => {
@@ -1655,7 +1658,10 @@ export class WebBookService {
       const clickMarker = this.readerActionMarkerFromClickableImage(tag);
       if (clickMarker) return this.readerActionLine(clickMarker);
       const data = /data:image\/[A-Za-z0-9.+-]+;base64,([A-Za-z0-9+/=]+),(\{[\s\S]*\})/i.exec(tag);
-      if (!data || !data[2]) return tag;
+      if (!data || !data[2]) {
+        const remote = this.readerRemoteBubbleAction(tag, offset, whole);
+        return remote === null ? tag : remote;
+      }
       const action = this.readerImageOptionString(data[2], 'click') ||
         this.readerImageOptionString(data[2], 'js');
       if (!action) return tag;
@@ -1700,6 +1706,134 @@ export class WebBookService {
     const card = !!data && /^(?:热评|章评)$/.test(data.title || '');
     if (card) return `\n${marker}\n`;
     return inline ? marker : `${marker}\n`;
+  }
+
+  /**
+   * A paragraph-comment badge served by the source's own server:
+   * `<img src='https://…/bubble.svg?…&n=12,{"click":"…","style":"text"}'>`. It is the same control as the
+   * data-image bubble, only fetched remotely, so it becomes the same 段评 action instead of a picture: drawn as one,
+   * the SVG's declared size stretched it over half a page and its `<text>` count did not render. The count is the
+   * number the source appended to the address. Returns null when the tag is no such badge, '' when its script
+   * exceeds the action budget (the control is dropped, as for data-image bubbles).
+   */
+  private readerRemoteBubbleAction(tag: string, offset: number, whole: string): string | null {
+    const value = this.decodeHtmlEntities(this.findReaderImageAttribute(tag)).trim();
+    if (!value || /^data:/i.test(value)) return null;
+    const optionIndex = this.readerImageOptionIndex(value);
+    if (optionIndex < 0) return null;
+    const options = value.substring(optionIndex + 1).trim();
+    if (!/^text$/i.test(this.readerImageOptionString(options, 'style'))) return null;
+    const action = this.readerImageOptionString(options, 'click') || this.readerImageOptionString(options, 'js');
+    if (!action) return null;
+    const count = /[=\/](\d{1,7})$/.exec(value.substring(0, optionIndex).trim());
+    const marker = ReaderActionMarker.createSourceScript(count ? `段评 ${count[1]}` : '段评', action, '段评');
+    if (!marker) return '';
+    const inline = /^[^\S\n]*[^\s<]/.test(whole.substring(offset + tag.length, offset + tag.length + 16));
+    return this.readerActionLine(marker, inline);
+  }
+
+  /**
+   * Layout size (vp) for an image that is an icon in the line rather than an illustration: a `style:"text"` image
+   * the source draws inside the text, or one sized at most 64×64 px by its own attributes or inline style. Without
+   * a size the paginator treats an image as a full-page illustration, so a stray badge took half a page.
+   */
+  private readerInlineIconSize(tag: string): number[] {
+    const value = this.decodeHtmlEntities(this.findReaderImageAttribute(tag)).trim();
+    const optionIndex = this.readerImageOptionIndex(value);
+    if (optionIndex >= 0 && /^text$/i.test(this.readerImageOptionString(value.substring(optionIndex + 1).trim(),
+      'style'))) {
+      return [WebBookService.INLINE_ICON_VP, WebBookService.INLINE_ICON_VP];
+    }
+    const length = (name: string): number => {
+      const css = new RegExp(`(?:^|[;\\s"'])${name}\\s*:\\s*(\\d+(?:\\.\\d+)?)px`, 'i')
+        .exec(/\bstyle\s*=\s*(["'])([\s\S]*?)\1/i.exec(tag)?.[2] || '');
+      const attr = new RegExp(`\\s${name}\\s*=\\s*["']?(\\d+(?:\\.\\d+)?)(?:px)?["']?(?=[\\s/>])`, 'i').exec(tag);
+      return Number((css && css[1]) || (attr && attr[1]) || 0);
+    };
+    const width = length('width');
+    const height = length('height');
+    return width > 0 && height > 0 && width <= 64 && height <= 64 ? [Math.max(1, width), Math.max(1, height)] :
+      [0, 0];
+  }
+
+  private static readonly INLINE_ICON_VP: number = 24;
+  private static readonly REMOTE_SVG_CONTROL_LIMIT: number = 8;
+  /** Remote control address → its SVG as base64, '' when the address served something else. */
+  private static readonly remoteSvgControls: Map<string, string> = new Map<string, string>();
+
+  /**
+   * Clickable cards a source serves as remote SVGs (`<img src='https://…/hot.svg,{"click":"…","style":"full"}'>`:
+   * hot comment, 本章说, author's words). Their words are SVG `<text>`, which does not render, so drawn as pictures
+   * they were blank boxes. Fetch each one (at most a few per chapter) and, when it really is an SVG, inline it as
+   * the data-image card it stands for; convertReaderImageScriptActions then reads its wording and turns it into the
+   * matching card. Anything else, or a failed fetch, stays an ordinary image.
+   */
+  private async inlineRemoteSvgControls(source: BookSource, content: string, baseUrl: string,
+    cancelled: () => boolean): Promise<string> {
+    if (!/<img\b/i.test(content || '') || !/\b(?:click|js)\b/.test(content)) return content;
+    const pending = new Map<string, string[]>();
+    const urls: string[] = [];
+    for (const tag of content.match(/<img\b[^>]*>/gi) || []) {
+      if (pending.has(tag)) continue;
+      const value = this.decodeHtmlEntities(this.findReaderImageAttribute(tag)).trim();
+      if (!value || /^data:/i.test(value)) continue;
+      const optionIndex = this.readerImageOptionIndex(value);
+      if (optionIndex < 0) continue;
+      const options = value.substring(optionIndex + 1).trim();
+      // Badges (style text) need no fetch: readerRemoteBubbleAction reads their count from the address.
+      if (/^text$/i.test(this.readerImageOptionString(options, 'style'))) continue;
+      if (!this.readerImageOptionString(options, 'click') && !this.readerImageOptionString(options, 'js')) continue;
+      const url = BookUrlResolver.resolve(value.substring(0, optionIndex).trim(), baseUrl);
+      if (!/^https?:\/\//i.test(url)) continue;
+      if (!urls.includes(url)) {
+        if (urls.length >= WebBookService.REMOTE_SVG_CONTROL_LIMIT) continue;
+        urls.push(url);
+      }
+      pending.set(tag, [url, options]);
+    }
+    if (pending.size === 0) return content;
+    const svgs = new Map<string, string>();
+    await Promise.all(urls.map(async (url: string): Promise<void> => {
+      svgs.set(url, await this.fetchRemoteSvgControl(source, url));
+    }));
+    if (cancelled()) return content;
+    return content.replace(/<img\b[^>]*>/gi, (tag: string): string => {
+      const item = pending.get(tag);
+      const encoded = item ? svgs.get(item[0]) || '' : '';
+      if (!item || !encoded) return tag;
+      // Entity-encode what would end the tag or its attribute; option reading decodes entities again.
+      const options = item[1].replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      return `<img src='data:image/svg+xml;base64,${encoded},${options}'/>`;
+    });
+  }
+
+  private async fetchRemoteSvgControl(source: BookSource, url: string): Promise<string> {
+    const cached = WebBookService.remoteSvgControls.get(url);
+    if (cached !== undefined) return cached;
+    try {
+      const analyzer = new AnalyzeUrl(source, this.http);
+      analyzer.parse(url);
+      const response = await this.http.execute({
+        ...analyzer.buildRequest(),
+        connectTimeout: 5000,
+        readTimeout: 8000,
+        maxResponseBytes: 256 * 1024
+      });
+      if (!response.success) return '';
+      const body = (response.body || '').trim();
+      const isSvg = /^(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE[^>]*>\s*)?<svg\b/i.test(body) &&
+        /<\/svg>$/i.test(body);
+      const encoded = isSvg ? new util.Base64Helper().encodeToStringSync(new util.TextEncoder().encodeInto(body)) : '';
+      if (WebBookService.remoteSvgControls.size >= 128) {
+        const oldest = WebBookService.remoteSvgControls.keys().next().value as string;
+        WebBookService.remoteSvgControls.delete(oldest);
+      }
+      WebBookService.remoteSvgControls.set(url, encoded);
+      return encoded;
+    } catch (_) {
+      return '';
+    }
   }
 
   /**
@@ -1910,7 +2044,9 @@ export class WebBookService {
     cancelled: () => boolean = (): boolean => false,
     imageRequest: ReaderImageRequest = ReaderImageRequest.DEFAULT): Promise<string> {
     if (!content || !content.includes(ReaderImageMarker.PREFIX)) return content;
-    const pattern = new RegExp(`${this.escapeRegex(ReaderImageMarker.PREFIX)}([^\\]]+)` +
+    // The encoded source never contains "|" (encodeURIComponent escapes it), so a size given at marker creation
+    // (an inline icon, see readerInlineIconSize) is captured apart and carried onto the processed marker.
+    const pattern = new RegExp(`${this.escapeRegex(ReaderImageMarker.PREFIX)}([^\\]|]+)(?:\\|(\\d{1,6})x(\\d{1,6}))?` +
       `${this.escapeRegex(ReaderImageMarker.SUFFIX)}`, 'g');
     const values: string[] = [];
     let match: RegExpExecArray | null;
@@ -1969,9 +2105,10 @@ export class WebBookService {
       Promise.all(jobs).then((): void => {
         if (!stop()) report('渐进');
       });
-      return content.replace(pattern, (_all: string, encoded: string): string => {
+      return content.replace(pattern, (_all: string, encoded: string, width?: string, height?: string): string => {
         try {
-          return ReaderImageMarker.create(ReaderImageMarker.pendingSource(decodeURIComponent(encoded)));
+          return ReaderImageMarker.create(ReaderImageMarker.pendingSource(decodeURIComponent(encoded)),
+            Number(width || 0), Number(height || 0));
         } catch (_) {
           return _all;
         }
@@ -1985,10 +2122,10 @@ export class WebBookService {
         resolved[value] = await processImage(value, index, cancelled);
       })));
     report('整章');
-    return content.replace(pattern, (_all: string, encoded: string): string => {
+    return content.replace(pattern, (_all: string, encoded: string, width?: string, height?: string): string => {
       try {
         const raw = decodeURIComponent(encoded);
-        return ReaderImageMarker.create(resolved[raw] || raw);
+        return ReaderImageMarker.create(resolved[raw] || raw, Number(width || 0), Number(height || 0));
       } catch (_) {
         return _all;
       }

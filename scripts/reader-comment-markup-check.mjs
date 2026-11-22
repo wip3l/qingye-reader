@@ -24,19 +24,36 @@ const names = ['convertReaderNativeActions', 'convertReaderNoteActions', 'conver
   'readerActionMarkerFromClickableImage',
   'readerActionMarkerFromCommentAttributes', 'readerImageOptionString', 'readerDataImageLabel', 'readerDataImageText',
   'readerDataImageHot', 'readerDataImageChapter', 'readerDataImageTexts', 'readerDataImageIsCard', 'readerDataImageIsWide', 'readerActionLine',
-  'decodeHtmlEntities'];
+  'decodeHtmlEntities', 'readerRemoteBubbleAction', 'readerInlineIconSize', 'inlineRemoteSvgControls',
+  'fetchRemoteSvgControl', 'findReaderImageAttribute', 'readerImageOptionIndex'];
 const util = {
   Base64Helper: class { decodeSync(text) { return Uint8Array.from(Buffer.from(text, 'base64')); } },
-  TextDecoder: { create: () => ({ decodeWithStream: bytes => Buffer.from(bytes).toString('utf8') }) }
+  TextDecoder: { create: () => ({ decodeWithStream: bytes => Buffer.from(bytes).toString('utf8') }) },
+  TextEncoder: class { encodeInto(text) { return Uint8Array.from(Buffer.from(text, 'utf8')); } }
 };
+util.Base64Helper.prototype.encodeToStringSync = bytes => Buffer.from(bytes).toString('base64');
 const BookUrlResolver = {
   resolve: (url, base) => { try { return new URL(url, base).href; } catch (_) { return url; } }
 };
-const context = vm.createContext({ util, BookUrlResolver });
+// Remote SVG controls: requests go to a fake server keyed by address.
+const served = new Map();
+const requested = [];
+class AnalyzeUrl {
+  parse(url) { this.url = url; }
+  buildRequest() { return { url: this.url, method: 'GET', headers: {} }; }
+}
+const WebBookService = { INLINE_ICON_VP: 24, REMOTE_SVG_CONTROL_LIMIT: 8, remoteSvgControls: new Map() };
+const context = vm.createContext({ util, BookUrlResolver, AnalyzeUrl, WebBookService });
 vm.runInContext(compile(markerSource.replace(/^export /gm, '') + `\n${chapterClass[0]}` +
   `\nclass Converter {\n${names.map(name => method(service, name)).join('\n')}\n}\n`) +
   'globalThis.Converter = Converter; globalThis.ReaderActionMarker = ReaderActionMarker;', context);
 const converter = new context.Converter();
+converter.http = {
+  execute: async request => {
+    requested.push(request.url);
+    return served.has(request.url) ? { success: true, body: served.get(request.url) } : { success: false, body: '' };
+  }
+};
 const Marker = context.ReaderActionMarker;
 const convert = (text, base = '') => converter.convertReaderNativeActions(null, text, base);
 const actions = text => {
@@ -250,6 +267,60 @@ const oneLineRows = oneLineOut.split('\n').filter(line => line.trim()).map(line 
 assert.deepEqual(oneLineRows, ['回禀道：', '“先前几次。”[段评 4]', '“好生固执。”[段评 1]', '[热评]', '没有评论',
   '最后一段。[段评 8]']);
 
+// Server-drawn controls (a source that serves its badge and cards as remote SVGs): the badge is
+// `img_base + count` with a style:"text" click option at the end of its paragraph, the cards style:"full".
+// The badge becomes a 段评 action with the count from its address and needs no request; a clickable card that
+// really is an SVG is fetched once and read like a data-image card; a raster card stays a picture.
+const panel = 'zlOpenPanel(\\"http://zl.example/panel/review?p=';
+const badge = n => ` <img src='http://zl.example/bubble.svg?s=a&amp;n=${n},{"click":"${panel}${n}\\")","style":"text"}' ` +
+  `style='display:inline-block;vertical-align:middle'/>`;
+const remoteHtml = [
+  `<p><img src='http://zl.example/hot.svg?c=1,{"click":"${panel}0\\")","style":"full"}' style='display:block;width:100%'/></p>`,
+  `<p>玄灵大陆，金乌皇朝，开元城。${badge(12)}</p>`,
+  '<p>没有评论的一段。</p>',
+  `<p>又一段${badge(3)}</p>`,
+  `<p><img src='http://zl.example/discuss.svg?c=1,{"click":"${panel}x\\")","style":"full"}' style='display:block'/></p>`,
+  `<p><img src='http://zl.example/author.png,{"click":"${panel}a\\")","style":"full"}' style='display:block'/></p>`,
+  `<p style='line-height:0'><img src='http://zl.example/warm?c=1' style='display:block;width:1px;height:1px'/></p>`
+].join('\n');
+served.set('http://zl.example/hot.svg?c=1', `<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" ` +
+  'viewBox="0 0 360 90"><text x="1" y="1">热评</text><text x="1" y="2">书友乙</text><text x="1" y="3">这章不错</text>' +
+  '<text x="1" y="4">9</text></svg>');
+served.set('http://zl.example/discuss.svg?c=1', '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 60">' +
+  '<text x="1" y="1">本章说</text><text x="1" y="2">40条评论 〉</text></svg>');
+served.set('http://zl.example/author.png', '\u0089PNG\r\n\u001a\n...');
+const inlined = await converter.inlineRemoteSvgControls(null, remoteHtml, 'http://zl.example/api/v1/chapter', () => false);
+assert.deepEqual(requested.sort(), ['http://zl.example/author.png', 'http://zl.example/discuss.svg?c=1',
+  'http://zl.example/hot.svg?c=1'], 'only clickable cards are fetched, badges and plain images are not');
+const remoteOut = convert(inlined);
+const remoteActions = actions(remoteOut);
+assert.deepEqual(remoteActions.map(item => item.label), ['热评', '段评 12', '段评 3', '章评']);
+assert.equal(Marker.sourceScript(remoteActions[1].url), 'zlOpenPanel("http://zl.example/panel/review?p=12")');
+assert.equal(remoteActions[0].preview, '书友乙 这章不错');
+assert.equal(remoteActions[3].count, '40条评论');
+const remoteRows = remoteOut.replace(/<\/p>/g, '\n').split('\n').map(line => line.replace(/<p[^>]*>/g, ''))
+  .filter(line => line.trim() && !/<img/.test(line)).map(line => {
+    const found = actions(line);
+    return `${Marker.strip(line).trim()}${found.length ? `[${found[0].label}]` : ''}`;
+  });
+assert.deepEqual(remoteRows, ['[热评]', '玄灵大陆，金乌皇朝，开元城。[段评 12]', '没有评论的一段。', '又一段[段评 3]', '[章评]'],
+  'each badge stays at the end of its own paragraph');
+assert.match(remoteOut, /author\.png/, 'a raster card is left to the image pipeline');
+// A second chapter reuses what was fetched.
+requested.length = 0;
+await converter.inlineRemoteSvgControls(null, remoteHtml, 'http://zl.example/api/v1/chapter', () => false);
+assert.deepEqual(requested, []);
+
+// Images that are icons get a small layout size instead of the full-page fallback.
+assert.deepEqual(Array.from(converter.readerInlineIconSize(
+  `<img src='http://x.example/i.png,{"style":"text"}'>`)), [24, 24]);
+assert.deepEqual(Array.from(converter.readerInlineIconSize(
+  `<img src='http://zl.example/warm' style='display:block;width:1px;height:1px'/>`)), [1, 1]);
+assert.deepEqual(Array.from(converter.readerInlineIconSize('<img src="a.png" width="20" height="18">')), [20, 18]);
+assert.deepEqual(Array.from(converter.readerInlineIconSize(
+  `<img src='a.png' style='display:block;max-width:100%;width:100%'/>`)), [0, 0]);
+assert.deepEqual(Array.from(converter.readerInlineIconSize('<img src="a.png" width="600" height="400">')), [0, 0]);
+
 // Markers without a hot comment stay byte-identical to the old format.
 assert.equal(Marker.create('段评 3', 'https://a.example/x', '段评'),
   `${Marker.PREFIX}${encodeURIComponent(JSON.stringify({ label: '段评 3', url: 'https://a.example/x', title: '段评' }))}]]`);
@@ -258,4 +329,4 @@ assert.equal(withHot.preview, '好 看');
 assert.equal(withHot.likes, '1.2k');
 
 console.log('reader-comment-markup-check: iOS bubbles/hot/chapter cards, notes, option cards, plain pictures and ' +
-  'Android options passed');
+  'Android options, remote SVG controls passed');
