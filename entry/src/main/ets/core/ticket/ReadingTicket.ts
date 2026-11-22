@@ -9,6 +9,13 @@ export class TicketStatsRow {
   durationMs: number = 0;
 }
 
+/** 借书卡上的一行：某天读了多久、到那天为止一共读了多久。 */
+export class TicketDay {
+  dayKey: string = '';
+  durationMs: number = 0;
+  cumulativeMs: number = 0;
+}
+
 /**
  * 票夹里的一张票：由“我的标记”和阅读统计现算出来，不单独存。
  * 只有读过、在读、弃读的书有票；想读和只打分没选状态的没有。
@@ -38,6 +45,8 @@ export class ReadingTicket {
   monthKey: string = '';
   /** 同月里的先后，新的在前。 */
   sortTime: number = 0;
+  /** 最近几天有记录的日子，旧的在前（借书卡每天一行）。 */
+  log: TicketDay[] = [];
 }
 
 export class TicketMedia {
@@ -70,6 +79,8 @@ export class TicketMedia {
 export class ReadingTicketRules {
   /** 有票的状态，也是票夹筛选页签的顺序。 */
   static readonly STATUSES: number[] = [BookMarkStatus.READ, BookMarkStatus.READING, BookMarkStatus.DROPPED];
+  /** 借书卡最多列几天。 */
+  static readonly LOG_DAYS: number = 6;
 
   static hasTicket(mark: BookMark): boolean {
     return ReadingTicketRules.STATUSES.includes(mark.status);
@@ -165,7 +176,13 @@ export class ReadingTicketRules {
     const keys = Array.from(days.keys()).filter((key: string): boolean => (days.get(key) || 0) > 0).sort();
     keys.forEach((key: string): void => {
       ticket.totalMs += days.get(key) || 0;
+      const day = new TicketDay();
+      day.dayKey = key;
+      day.durationMs = days.get(key) || 0;
+      day.cumulativeMs = ticket.totalMs;
+      ticket.log.push(day);
     });
+    ticket.log = ticket.log.slice(Math.max(0, ticket.log.length - ReadingTicketRules.LOG_DAYS));
     ticket.activeDays = keys.length;
     const firstKey = keys.length > 0 ? keys[0] : '';
     const lastKey = keys.length > 0 ? keys[keys.length - 1] : '';
@@ -303,6 +320,51 @@ export class ReadingTicketRules {
       levels.push(ms > 0 && max > 0 ? Math.max(1, Math.min(4, Math.ceil(ms / max * 4))) : 0);
     });
     return levels;
+  }
+
+  /** 车票上的日期：11月03日。 */
+  static monthDayText(dayKey: string): string {
+    return dayKey ? `${dayKey.substring(5, 7)}月${dayKey.substring(8, 10)}日` : '';
+  }
+
+  /** 车票到达站：读过=读完（有声书听完），在读=途中，弃读=下车。返回 [站名, 小字]。 */
+  static arrivalText(status: number, bookType: number): string[] {
+    if (status === BookMarkStatus.READ) return [TicketMedia.of(bookType) === TicketMedia.AUDIO ? '听完' : '读完', '到达'];
+    if (status === BookMarkStatus.READING) return ['……', '途中'];
+    return ['下车', '中途'];
+  }
+
+  /** 车票左上角票号：读过 A0042，其余写“在途”“已下车”。 */
+  static trainNumberText(ticket: ReadingTicket): string {
+    if (ticket.number > 0) return `A${String(ticket.number).padStart(4, '0')}`;
+    return ticket.status === BookMarkStatus.READING ? '在途' : '已下车';
+  }
+
+  /**
+   * 车票右下角的装饰二维码，size×size 格，true 为深色。三个角是定位框，其余由书名定，同一本书每次一样。
+   */
+  static qrCells(seed: string, size: number = 9): boolean[] {
+    const random = ReadingTicketRules.barcode(seed, size * size);
+    const far = size - 4;
+    const cells: boolean[] = [];
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        // 左上、右上、左下各留 4×4 区域：3×3 空心方框加一圈留白。
+        const left = x <= 3;
+        const right = x >= far;
+        const top = y <= 3;
+        const bottom = y >= far;
+        if ((left && top) || (right && top) || (left && bottom)) {
+          const lx = left ? x : x - far - 1;
+          const ly = top ? y : y - far - 1;
+          const inBox = lx >= 0 && lx <= 2 && ly >= 0 && ly <= 2;
+          cells.push(inBox && !(lx === 1 && ly === 1));
+        } else {
+          cells.push(random[y * size + x] !== 2);
+        }
+      }
+    }
+    return cells;
   }
 
   /** 条码的线宽（1~3），由书名定，同一本书每次一样。 */

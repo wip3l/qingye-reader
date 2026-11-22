@@ -193,3 +193,41 @@ test('footprint “recent tickets” is hidden by default and for layouts saved 
   assert.equal(shown.isVisible('ticket'), true);
   assert.equal(shown.isDefault(), false);
 });
+
+test('borrow-card log keeps the last six days with running totals', () => {
+  const days = new Map();
+  for (let d = 1; d <= 8; d++) days.set(`2026-11-0${d}`, d * 60000);
+  const ticket = ReadingTicketRules.compose(mark({ workKey: 'l', status: BookMarkStatus.READING }), days, 0);
+  deepEqual(ticket.log.map(day => day.dayKey),
+    ['2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08']);
+  assert.equal(ticket.log[0].durationMs, 3 * 60000);
+  assert.equal(ticket.log[0].cumulativeMs, 6 * 60000);
+  assert.equal(ticket.log[5].cumulativeMs, ticket.totalMs);
+});
+
+test('train ticket texts', () => {
+  assert.equal(ReadingTicketRules.monthDayText('2026-11-03'), '11月03日');
+  assert.equal(ReadingTicketRules.monthDayText(''), '');
+  deepEqual(ReadingTicketRules.arrivalText(BookMarkStatus.READ, 8), ['读完', '到达']);
+  deepEqual(ReadingTicketRules.arrivalText(BookMarkStatus.READ, 32), ['听完', '到达']);
+  deepEqual(ReadingTicketRules.arrivalText(BookMarkStatus.READING, 8), ['……', '途中']);
+  deepEqual(ReadingTicketRules.arrivalText(BookMarkStatus.DROPPED, 8), ['下车', '中途']);
+  assert.equal(ReadingTicketRules.trainNumberText({ number: 42, status: BookMarkStatus.READ }), 'A0042');
+  assert.equal(ReadingTicketRules.trainNumberText({ number: 0, status: BookMarkStatus.READING }), '在途');
+});
+
+test('qr grid has three hollow finder boxes and is stable per book', () => {
+  const cells = ReadingTicketRules.qrCells('novel\u0001活着\u0001余华', 9);
+  assert.equal(cells.length, 81);
+  const at = (x, y) => cells[y * 9 + x];
+  for (const [ox, oy] of [[0, 0], [6, 0], [0, 6]]) {
+    for (let y = 0; y < 3; y++) {
+      for (let x = 0; x < 3; x++) assert.equal(at(ox + x, oy + y), !(x === 1 && y === 1), `${ox},${oy}:${x},${y}`);
+    }
+  }
+  // 定位框外留一圈白。
+  assert.equal(at(3, 0), false);
+  assert.equal(at(5, 2), false);
+  assert.equal(at(0, 5), false);
+  deepEqual(cells, ReadingTicketRules.qrCells('novel\u0001活着\u0001余华', 9));
+});

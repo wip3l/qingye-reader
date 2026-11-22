@@ -1,6 +1,6 @@
 import { BookCover } from '../book/BookCover';
 import { BookMarkStatus } from '../../model/book/BookMark';
-import { ReadingTicket, ReadingTicketRules, TicketMedia } from '../../core/ticket/ReadingTicket';
+import { ReadingTicket, ReadingTicketRules, TicketDay, TicketMedia } from '../../core/ticket/ReadingTicket';
 import { ReadingTicketBack } from '../../core/ticket/ReadingTicketLoader';
 import { TicketAlbumStore } from '../../utils/TicketAlbumStore';
 
@@ -21,6 +21,20 @@ const STAMP_READING: string = '#2E5F9A';
 const STAMP_DROPPED: string = '#7D7D7D';
 const COVER_PLACEHOLDER: string = '#8C7B65';
 const HEAT_COLORS: string[] = ['#ECE5D6', '#E3C99A', '#D4A865', '#BB8236', '#8F5A1C'];
+const BORROW_PAPER: string = '#EAD7A6';
+const BORROW_RULE: string = '#8B6A35';
+const BORROW_LINE: string = '#C4A56F';
+const BORROW_CELL: string = '#B08D55';
+const BORROW_LABEL: string = '#6D5229';
+const BORROW_TEXT: string = '#2C2112';
+const BORROW_BROWN: string = '#4A3518';
+const BORROW_DATE: string = '#5A2D82';
+const TRAIN_INK: string = '#13283A';
+const TRAIN_SUB: string = '#46606F';
+const TRAIN_RED: string = '#C0392B';
+/** 借书卡每行日期戳的歪斜角度，按行轮换，看起来像手盖的。 */
+const STAMP_TILTS: number[] = [-2.5, 1.5, -1, 2.5, -2, 1, -1.5];
+const QR_SIZE: number = 9;
 
 function stampColor(status: number): string {
   if (status === BookMarkStatus.READ) return STAMP_READ;
@@ -49,6 +63,10 @@ export struct ReadingTicketCard {
   build() {
     if (this.ticketStyle === TicketAlbumStore.STYLE_MOVIE) {
       this.movieTicket()
+    } else if (this.ticketStyle === TicketAlbumStore.STYLE_BORROW) {
+      this.borrowCard()
+    } else if (this.ticketStyle === TicketAlbumStore.STYLE_TRAIN) {
+      this.trainTicket()
     } else {
       this.libraryCard()
     }
@@ -427,6 +445,360 @@ export struct ReadingTicketCard {
     .rotate({ angle: 12 })
     .opacity(0.88)
     .hitTestBehavior(HitTestMode.None)
+  }
+
+  // ---------- 借书卡 ----------
+
+  /** 固定七行：有记录的日子旧的在前；读过的书读完那天红字“读完”（那天没记录就补一行），其余留空行。 */
+  private borrowRows(): TicketDay[] {
+    const rows = this.ticket.log.slice();
+    const finishKey = this.ticket.status === BookMarkStatus.READ ? this.ticket.endDayKey : '';
+    if (finishKey && !rows.some((day: TicketDay): boolean => day.dayKey === finishKey)) {
+      if (rows.length >= ReadingTicketRules.LOG_DAYS) rows.shift();
+      const finish = new TicketDay();
+      finish.dayKey = finishKey;
+      rows.push(finish);
+    }
+    while (rows.length < 7) rows.push(new TicketDay());
+    return rows.slice(0, 7);
+  }
+
+  private isFinishRow(day: TicketDay): boolean {
+    return !!day.dayKey && this.ticket.status === BookMarkStatus.READ && day.dayKey === this.ticket.endDayKey;
+  }
+
+  private hairline(): number {
+    return Math.max(0.5, this.u(1));
+  }
+
+  @Builder
+  borrowCard() {
+    Stack({ alignContent: Alignment.BottomEnd }) {
+      Column() {
+        Circle()
+          .width(this.u(16))
+          .height(this.u(16))
+          .fill(this.notchColor)
+        Text('借书卡')
+          .fontSize(this.u(20))
+          .fontWeight(FontWeight.Bolder)
+          .letterSpacing(this.u(14))
+          .fontColor(BORROW_BROWN)
+          .margin({ top: this.u(4), bottom: this.u(10), left: this.u(14) })
+        Column() {
+          this.borrowMeta('书名', this.ticket.bookName, false)
+          this.borrowMeta('著者', this.ticket.author || '佚名', false)
+          this.borrowMeta('卡号', ReadingTicketRules.numberText(this.ticket) || '—', true)
+        }
+        .width('100%')
+        .border({ width: this.u(1.5), color: BORROW_RULE })
+
+        Column() {
+          Row() {
+            this.borrowHead('日期')
+            this.borrowHead('时长')
+            this.borrowHead('累计')
+          }
+          .width('100%')
+          .border({ width: { bottom: this.u(1.5) }, color: BORROW_RULE })
+          ForEach(this.borrowRows(), (day: TicketDay, index: number) => {
+            this.borrowLine(day, index)
+          }, (day: TicketDay, index: number) => `${index}:${day.dayKey}:${day.durationMs}`)
+        }
+        .width('100%')
+        .margin({ top: this.u(10) })
+        .border({ width: this.u(1.5), color: BORROW_RULE })
+
+        Row() {
+          Text(this.ticket.activeDays > 0 ?
+            `共 ${this.ticket.activeDays} 日 · ${ReadingTicketRules.durationValue(this.ticket.totalMs).join(' ').trim()}` :
+            '没有阅读记录')
+            .fontSize(this.u(11.5))
+            .fontColor(BORROW_BROWN)
+            .fontFeature('"tnum" 1')
+          Blank()
+          Text(ReadingTicketRules.ratingText(this.ticket.rating))
+            .fontSize(this.u(11.5))
+            .fontColor(BORROW_BROWN)
+        }
+        .width('100%')
+        .margin({ top: this.u(9) })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+      .padding({ left: this.u(16), right: this.u(16), top: this.u(12), bottom: this.u(18) })
+
+      Column() {
+        this.circleStamp(this.u(62), this.u(14))
+      }
+      .margin({ right: this.u(22), bottom: this.u(40) })
+      .hitTestBehavior(HitTestMode.None)
+    }
+    .width(this.cardWidth)
+    .backgroundColor(BORROW_PAPER)
+    .borderRadius(this.u(2))
+    .shadow({ radius: this.u(18), color: '#29281E0F', offsetY: this.u(6) })
+  }
+
+  @Builder
+  borrowLine(day: TicketDay, index: number) {
+    Row() {
+      Text(day.dayKey ? ReadingTicketRules.shortDate(day.dayKey) : '')
+        .fontSize(this.u(11.5))
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.isFinishRow(day) ? STAMP_READ : BORROW_DATE)
+        .fontFeature('"tnum" 1')
+        .rotate({ angle: STAMP_TILTS[index % STAMP_TILTS.length] })
+        .textAlign(TextAlign.Center)
+        .layoutWeight(1)
+      Text(day.durationMs > 0 ? ReadingTicketRules.durationValue(day.durationMs).join(' ').trim() : '')
+        .fontSize(this.u(11.5))
+        .fontColor(BORROW_TEXT)
+        .fontFeature('"tnum" 1')
+        .textAlign(TextAlign.Center)
+        .layoutWeight(1)
+        .height('100%')
+        .border({ width: { left: this.hairline(), right: this.hairline() }, color: BORROW_LINE })
+      Text(this.isFinishRow(day) ? '读完' :
+        (day.cumulativeMs > 0 ? ReadingTicketRules.durationValue(day.cumulativeMs).join(' ').trim() : ''))
+        .fontSize(this.u(11))
+        .fontWeight(this.isFinishRow(day) ? FontWeight.Bold : FontWeight.Regular)
+        .fontColor(this.isFinishRow(day) ? STAMP_READ : BORROW_BROWN)
+        .fontFeature('"tnum" 1')
+        .textAlign(TextAlign.Center)
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(this.u(25))
+    .border({ width: { top: index === 0 ? 0 : this.hairline() }, color: BORROW_LINE })
+  }
+
+  @Builder
+  borrowMeta(label: string, value: string, last: boolean) {
+    Row() {
+      Text(label)
+        .fontSize(this.u(12))
+        .letterSpacing(this.u(2.5))
+        .fontColor(BORROW_LABEL)
+        .padding({ left: this.u(8), right: this.u(8) })
+        .height('100%')
+        .border({ width: { right: this.hairline() }, color: BORROW_CELL })
+      Text(value)
+        .fontSize(this.u(13))
+        .fontWeight(FontWeight.Bold)
+        .fontColor(BORROW_TEXT)
+        .fontFeature('"tnum" 1')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .padding({ left: this.u(8), right: this.u(8) })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(this.u(28))
+    .border({ width: { bottom: last ? 0 : this.hairline() }, color: BORROW_CELL })
+  }
+
+  @Builder
+  borrowHead(label: string) {
+    Text(label)
+      .fontSize(this.u(11))
+      .letterSpacing(this.u(2))
+      .fontColor(BORROW_LABEL)
+      .textAlign(TextAlign.Center)
+      .padding({ top: this.u(4), bottom: this.u(4) })
+      .layoutWeight(1)
+  }
+
+  // ---------- 车票 ----------
+
+  /** 车票：开读站到读完站，车次 = 第几本读完，票价位写时长，右下角装饰二维码。 */
+  @Builder
+  trainTicket() {
+    Stack({ alignContent: Alignment.BottomEnd }) {
+      // 底纹：浅色斜纹。
+      Column()
+        .width('100%')
+        .height('100%')
+        .linearGradient({
+          angle: 45,
+          repeating: true,
+          colors: [['#2EFFFFFF', 0], ['#2EFFFFFF', 0.008], ['#00FFFFFF', 0.008], ['#00FFFFFF', 0.026]]
+        })
+      Column() {
+        Row() {
+          Text(ReadingTicketRules.trainNumberText(this.ticket))
+            .fontSize(this.u(12))
+            .fontWeight(FontWeight.Medium)
+            .fontColor(TRAIN_RED)
+            .fontFeature('"tnum" 1')
+          Blank()
+          Text(this.ticket.originName ? `${this.ticket.originName} 检票口` : '')
+            .fontSize(this.u(11))
+            .fontColor(TRAIN_SUB)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: this.u(170) })
+        }
+        .width('100%')
+
+        Row() {
+          this.trainStation('开读', '出发')
+          Column({ space: this.u(2) }) {
+            Text(this.ticket.number > 0 ? `第${this.ticket.number}次` :
+              (this.ticket.status === BookMarkStatus.READING ? '进行中' : '未到站'))
+              .fontSize(this.u(12))
+              .fontWeight(FontWeight.Medium)
+              .fontColor(TRAIN_INK)
+              .fontFeature('"tnum" 1')
+            Stack({ alignContent: Alignment.End }) {
+              Column()
+                .width(this.u(60))
+                .height(Math.max(0.5, this.u(1.5)))
+                .backgroundColor(TRAIN_INK)
+              Column()
+                .width(this.u(7))
+                .height(this.u(7))
+                .border({ width: { top: Math.max(0.5, this.u(1.5)), right: Math.max(0.5, this.u(1.5)) },
+                  color: TRAIN_INK })
+                .rotate({ angle: 45 })
+                .margin({ right: this.u(1) })
+            }
+            .width(this.u(62))
+            .height(this.u(10))
+          }
+          .padding({ left: this.u(6), right: this.u(6) })
+          this.trainStation(ReadingTicketRules.arrivalText(this.ticket.status, this.ticket.bookType)[0],
+            ReadingTicketRules.arrivalText(this.ticket.status, this.ticket.bookType)[1])
+        }
+        .width('100%')
+        .margin({ top: this.u(8) })
+
+        Row() {
+          this.trainDate(this.ticket.startDayKey)
+          this.trainDate(this.ticket.endDayKey)
+        }
+        .width('100%')
+        .margin({ top: this.u(2) })
+
+        Row({ space: this.u(10) }) {
+          Column() {
+            this.cover('100%', '100%', this.u(2))
+          }
+          .width(this.u(40))
+          .height(this.u(54))
+          Column({ space: this.u(2) }) {
+            Text(this.ticket.bookName)
+              .fontSize(this.u(15))
+              .fontWeight(FontWeight.Bold)
+              .fontColor(TRAIN_INK)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(`${this.ticket.author || '佚名'} · ${this.ticket.activeDays > 0 ? this.ticket.activeDays : '—'} 天 · ` +
+              ReadingTicketRules.ratingText(this.ticket.rating))
+              .fontSize(this.u(11))
+              .fontColor('#3B5566')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+        }
+        .width('100%')
+        .margin({ top: this.u(12) })
+
+        Row() {
+          Column({ space: this.u(1) }) {
+            Row({ space: this.u(2) }) {
+              Text(ReadingTicketRules.durationValue(this.ticket.totalMs)[0])
+                .fontSize(this.u(18))
+                .fontWeight(FontWeight.Medium)
+                .fontColor(TRAIN_INK)
+                .fontFeature('"tnum" 1')
+              Text(ReadingTicketRules.durationValue(this.ticket.totalMs)[1])
+                .fontSize(this.u(11))
+                .fontColor(TRAIN_INK)
+            }
+            .alignItems(VerticalAlign.Bottom)
+            Text('仅供纪念 · 开源轻页')
+              .fontSize(this.u(9.5))
+              .fontColor(TRAIN_SUB)
+          }
+          .alignItems(HorizontalAlign.Start)
+          Blank()
+          this.qrCode()
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Bottom)
+        .margin({ top: this.u(10) })
+        .padding({ top: this.u(8) })
+        .border({ width: { top: this.hairline() }, color: '#5913283A', style: BorderStyle.Dashed })
+      }
+      .width('100%')
+      .padding({ left: this.u(16), right: this.u(16), top: this.u(12), bottom: this.u(12) })
+
+      Column() {
+        this.circleStamp(this.u(56), this.u(13))
+      }
+      .margin({ right: this.u(74), bottom: this.u(14) })
+      .hitTestBehavior(HitTestMode.None)
+    }
+    .width(this.cardWidth)
+    .borderRadius(this.u(10))
+    .clip(true)
+    .linearGradient({ angle: 135, colors: [['#CFE6EA', 0], ['#B9D8E6', 0.55], ['#C9DFF0', 1]] })
+    .shadow({ radius: this.u(18), color: '#29281E0F', offsetY: this.u(6) })
+  }
+
+  @Builder
+  trainStation(name: string, caption: string) {
+    Column() {
+      Text(name)
+        .fontSize(this.u(22))
+        .fontWeight(FontWeight.Bolder)
+        .letterSpacing(this.u(3))
+        .fontColor(TRAIN_INK)
+      Text(caption)
+        .fontSize(this.u(10))
+        .letterSpacing(this.u(2))
+        .fontColor(TRAIN_SUB)
+    }
+    .layoutWeight(1)
+  }
+
+  @Builder
+  trainDate(dayKey: string) {
+    Text(ReadingTicketRules.monthDayText(dayKey) || '—')
+      .fontSize(this.u(13))
+      .fontWeight(FontWeight.Medium)
+      .fontColor(TRAIN_INK)
+      .fontFeature('"tnum" 1')
+      .textAlign(TextAlign.Center)
+      .layoutWeight(1)
+  }
+
+  private qrRows(): boolean[][] {
+    const cells = ReadingTicketRules.qrCells(this.ticket.workKey || this.ticket.bookName, QR_SIZE);
+    const rows: boolean[][] = [];
+    for (let i = 0; i < cells.length; i += QR_SIZE) rows.push(cells.slice(i, i + QR_SIZE));
+    return rows;
+  }
+
+  @Builder
+  qrCode() {
+    Column() {
+      ForEach(this.qrRows(), (cells: boolean[], row: number) => {
+        Row() {
+          ForEach(cells, (dark: boolean, col: number) => {
+            Column()
+              .width(this.u(4))
+              .height(this.u(4))
+              .backgroundColor(dark ? TRAIN_INK : Color.Transparent)
+          }, (dark: boolean, col: number) => `${row}:${col}:${dark}`)
+        }
+      }, (cells: boolean[], row: number) => `${row}:${cells.join(',')}`)
+    }
+    .padding(this.u(3))
+    .backgroundColor(Color.White)
   }
 }
 

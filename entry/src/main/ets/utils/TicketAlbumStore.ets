@@ -8,8 +8,10 @@ import preferences from '@ohos.data.preferences';
 export class TicketAlbumStore {
   static readonly STYLE_CARD: string = 'card';
   static readonly STYLE_MOVIE: string = 'movie';
-  static readonly STYLES: string[] = ['card', 'movie'];
-  static readonly STYLE_NAMES: string[] = ['藏书卡', '电影票'];
+  static readonly STYLE_BORROW: string = 'borrow';
+  static readonly STYLE_TRAIN: string = 'train';
+  static readonly STYLES: string[] = ['card', 'movie', 'borrow', 'train'];
+  static readonly STYLE_NAMES: string[] = ['藏书卡', '电影票', '借书卡', '车票'];
   private static readonly STORE_NAME: string = 'ticket_album';
   private static readonly KEY_STYLE: string = 'style';
   private static readonly KEY_SINGLE: string = 'single';

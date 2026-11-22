@@ -242,7 +242,10 @@ struct TicketDetailPage {
               .fontWeight(this.ticketStyle === style ? FontWeight.Bold : FontWeight.Regular)
               .fontColor(this.ticketStyle === style ? ThemeRuntime.accentColor(this.darkMode) :
                 ThemeRuntime.subTextColor(this.darkMode))
-              .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: 6, bottom: 6 })
+              .textAlign(TextAlign.Center)
+              .maxLines(1)
+              .layoutWeight(1)
+              .padding({ top: 6, bottom: 6 })
               .borderRadius(14)
               .backgroundColor(this.ticketStyle === style ? ThemeRuntime.accentSurfaceColor(this.darkMode) :
                 ThemeRuntime.cardColor(this.darkMode))
@@ -253,6 +256,7 @@ struct TicketDetailPage {
               })
           }, (style: string) => style)
         }
+        .width('100%')
 
         Row({ space: AppSpacing.MD }) {
           this.actionButton($r('sys.symbol.save'), '保存图片', () => {
