@@ -51,8 +51,17 @@ export class ListDissolve {
   /**
    * 依次把 keys 交给 add 加进消散数组（批量时错开一点），同时在看得见的卡片上喷粒子，等最后一项淡出完再返回。
    * add 里要给数组赋新值，状态变化才会被观察到。delayMs 用于等确认框退场。
+   * 项数可能上千的列表改用 fadeOutBatch：逐个 add 时每次复制整个状态数组，总量是平方级，会卡死主线程。
    */
   static async fadeOut(ui: UIContext, keys: string[], add: (key: string) => void,
+    particles?: ListDissolveParticles, delayMs: number = 0): Promise<void> {
+    await ListDissolve.fadeOutBatch(ui, keys, (batch: string[]) => {
+      for (const key of batch) add(key);
+    }, particles, delayMs);
+  }
+
+  /** 同 fadeOut，但每一步把这一步的所有 key 一次交给 addKeys，最多调用 MAX_STAGGER_STEPS + 1 次。 */
+  static async fadeOutBatch(ui: UIContext, keys: string[], addKeys: (keys: string[]) => void,
     particles?: ListDissolveParticles, delayMs: number = 0): Promise<void> {
     if (keys.length === 0) return;
     if (delayMs > 0) await ListDissolve.sleep(delayMs);
@@ -62,13 +71,13 @@ export class ListDissolve {
     for (let index = 0; index < Math.min(keys.length, lastStep); index++) {
       const key = keys[index];
       ui.animateTo({ duration: ListDissolve.FADE_MS, delay: index * ListDissolve.STAGGER_MS, curve: Curve.EaseIn }, () => {
-        add(key);
+        addKeys([key]);
       });
     }
     if (keys.length > lastStep) {
       const rest = keys.slice(lastStep);
       ui.animateTo({ duration: ListDissolve.FADE_MS, delay: lastStep * ListDissolve.STAGGER_MS, curve: Curve.EaseIn }, () => {
-        for (const key of rest) add(key);
+        addKeys(rest);
       });
     }
     const steps = Math.min(keys.length - 1, lastStep);
@@ -83,7 +92,9 @@ export class ListDissolve {
 
   /** 从数组里去掉这些 key，返回新数组。 */
   static without(current: string[], keys: string[]): string[] {
-    return current.filter((key: string) => keys.indexOf(key) < 0);
+    if (keys.length === 0) return current.slice();
+    const removed = new Set<string>(keys);
+    return current.filter((key: string) => !removed.has(key));
   }
 
   /** 页面按 read/write 读写自己的颗粒数组状态，生成喷粒子配置。 */

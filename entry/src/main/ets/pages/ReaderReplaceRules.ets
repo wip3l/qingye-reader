@@ -1752,8 +1752,8 @@ struct ReaderReplaceRulesPage {
   async dissolveRulesAndSave(ids: number[], next: ReaderReplaceRule[]): Promise<boolean> {
     const keys = ids.map((id: number) => `${id}`);
     // 单条和批量删除都从确认框里点，等它退场再开始。
-    const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
-      this.dissolvingRuleKeys = [...this.dissolvingRuleKeys, key];
+    const fade = ListDissolve.fadeOutBatch(this.getUIContext(), keys, (batch: string[]) => {
+      this.dissolvingRuleKeys = this.dissolvingRuleKeys.concat(batch);
     }, this.ruleDeleteParticles(), ListDissolve.AFTER_DIALOG_MS);
     try {
       await ReaderReplaceRuleStore.save(getContext(this), next);

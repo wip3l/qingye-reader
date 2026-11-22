@@ -166,6 +166,8 @@ struct BookSourcePage {
   @State visibleSources: BookSource[] = [];
   /** 正在消散的书源 URL，见 ListDissolve。 */
   @State dissolvingSourceUrls: string[] = [];
+  /** dissolvingSourceUrls 的普通集合副本：批量删除时可能上千项，查找和追加都走它，不去逐项读状态代理。 */
+  private dissolvingSourceSet: Set<string> = new Set<string>();
   @State deleteParticleBursts: DeleteParticleBurst[] = [];
   private sourceDeleteInFlight: boolean = false;
   private sourceListDataSource: BookSourceListDataSource = new BookSourceListDataSource();
@@ -5538,7 +5540,13 @@ struct BookSourcePage {
   }
 
   isSourceDissolving(source: BookSource): boolean {
-    return this.dissolvingSourceUrls.length > 0 && this.dissolvingSourceUrls.indexOf(source.bookSourceUrl) >= 0;
+    // 读 length 是为了让条目依赖这个状态，判定本身查集合。
+    return this.dissolvingSourceUrls.length > 0 && this.dissolvingSourceSet.has(source.bookSourceUrl);
+  }
+
+  private setDissolvingSourceUrls(next: string[]): void {
+    this.dissolvingSourceSet = new Set<string>(next);
+    this.dissolvingSourceUrls = next;
   }
 
   /**
@@ -5548,14 +5556,14 @@ struct BookSourcePage {
   async dissolveSources(urls: string[], work?: () => Promise<void>): Promise<void> {
     const ui = this.getUIContext();
     // 三个入口都是从弹窗里确认的（删除确认、批量进度、校验结果），等弹窗退场再开始。
-    const fade = ListDissolve.fadeOut(ui, urls, (url: string) => {
-      this.dissolvingSourceUrls = [...this.dissolvingSourceUrls, url];
+    const fade = ListDissolve.fadeOutBatch(ui, urls, (batch: string[]) => {
+      this.setDissolvingSourceUrls(Array.from(this.dissolvingSourceSet).concat(batch));
     }, this.sourceDeleteParticles(), ListDissolve.AFTER_DIALOG_MS);
     try {
       if (work) await work();
     } catch (e) {
       await fade;
-      this.dissolvingSourceUrls = ListDissolve.without(this.dissolvingSourceUrls, urls);
+      this.setDissolvingSourceUrls(ListDissolve.without(Array.from(this.dissolvingSourceSet), urls));
       throw e as Error;
     }
     await fade;
@@ -5566,7 +5574,7 @@ struct BookSourcePage {
       this.sources = this.sources.filter((item: BookSource) => !removed.has(item.bookSourceUrl));
       this.visibleSources = this.visibleSources.filter((item: BookSource) => !removed.has(item.bookSourceUrl));
     }, () => {
-      this.dissolvingSourceUrls = ListDissolve.without(this.dissolvingSourceUrls, urls);
+      this.setDissolvingSourceUrls(ListDissolve.without(Array.from(this.dissolvingSourceSet), urls));
     });
   }
 
