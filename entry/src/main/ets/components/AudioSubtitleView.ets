@@ -7,7 +7,7 @@ import { AudioOfflineStore } from '../core/book/AudioOfflineStore';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
-import { LengthMetrics } from '@kit.ArkUI';
+import { LengthMetrics, router } from '@kit.ArkUI';
 
 /** 播放位置刷新间隔：字幕切行比面板进度条（每秒一次）更跟手。 */
 const POSITION_POLL_MS = 250;
@@ -208,7 +208,13 @@ export struct AudioSubtitleView {
   statusBox() {
     // 字幕区最少约 140vp，每种状态的内容都控制在这个高度以内。
     Column({ space: AppSpacing.SM }) {
-      if (this.phase === AudioSubtitleService.NEEDS_MODEL) {
+      if (this.phase === AudioSubtitleService.MEMBER_REQUIRED) {
+        this.statusTitle('AI 字幕为会员专享')
+        this.statusText('在手机上把听到的内容转成文字，不上传音频')
+        this.primaryButton('了解会员', () => {
+          router.pushUrl({ url: 'pages/MemberBenefits' }).catch((error: Error) => console.warn('打开会员权益失败:', error));
+        })
+      } else if (this.phase === AudioSubtitleService.NEEDS_MODEL) {
         this.statusTitle('开启 AI 字幕')
         this.statusText(`本机识别，不上传音频 · 约 ${SubtitleModelStore.totalLabel()}`)
         if (this.modelError) this.statusText(this.modelError, true)

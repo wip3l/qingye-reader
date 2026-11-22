@@ -417,6 +417,8 @@ struct MemberBenefitsPage {
       this.benefitRow($r('sys.symbol.picture'), 'AI超分', '支持低清漫画与 PDF 扫描页；在阅读设置的漫画、PDF 分类中开启', true, undefined)
       this.benefitRow($r('sys.symbol.picture'), 'AI着色', '漫画阅读 → 画面设置 → AI着色', true, undefined)
       this.benefitRow($r('sys.symbol.textformat'), 'AI翻译', '漫画对白繁→简；日→中、韩→中即将推出', true, undefined)
+      this.benefitRow($r('sys.symbol.speaker_wave_2'), 'AI 字幕', '听书时在手机上把音频识别成字幕；听书面板封面下方切到“字幕”',
+        true, undefined)
       if (this.webParseEnabled) {
         this.benefitRow($r('sys.symbol.arrow_2_circlepath'), '大体积配置同步', this.largeSourceSyncText(), true, undefined)
       }

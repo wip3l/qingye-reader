@@ -122,7 +122,7 @@ export class SubtitleModelStore {
     return AppStorage.get<number>(SubtitleModelStore.RECEIVED_KEY) || 0;
   }
 
-  /** 下载缺的文件，可续传。已有下载在进行时等它结束。 */
+  /** 下载缺的文件，可续传。已有下载在进行时等它结束。会员判断由调用方先做。 */
   static download(): Promise<void> {
     if (SubtitleModelStore.running) return SubtitleModelStore.running;
     SubtitleModelStore.cancelled = false;

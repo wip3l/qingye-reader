@@ -1,4 +1,4 @@
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { SettingNavRow, SettingSwitchRow } from '../components/common/SettingRow';
@@ -32,6 +32,8 @@ struct AudioBookSettingsPage {
   @StorageProp('subtitleModelReceived') subtitleModelReceived: number = 0;
   @StorageProp('subtitleModelError') subtitleModelError: string = '';
   @State subtitleImporting: string = '';
+  // 只为会员档位变化时重算界面；是否有效以账号快照按服务端时间推算为准。
+  @StorageProp('accountMembershipSku') membershipSku: string = '';
 
   aboutToAppear(): void {
     SubtitleModelStore.refresh();
@@ -106,8 +108,19 @@ struct AudioBookSettingsPage {
     }
   }
 
+  private subtitleMember(): boolean {
+    return this.membershipSku !== undefined && AudioSubtitleService.memberAllowed();
+  }
+
+  private openMemberBenefits(): void {
+    router.pushUrl({ url: 'pages/MemberBenefits' }).catch((error: Error) => console.warn('打开会员权益失败:', error));
+  }
+
   private subtitleModelDescription(): string {
     if (this.subtitleImporting) return this.subtitleImporting;
+    if (!this.subtitleMember() && this.subtitleModelState !== SubtitleModelStore.INSTALLED) {
+      return `会员专享 · 模型约 ${SubtitleModelStore.totalLabel()}，本地识别，不上传音频`;
+    }
     if (this.subtitleModelState === SubtitleModelStore.DOWNLOADING) {
       const total = SubtitleModelStore.totalBytes();
       return `正在下载 ${Math.round(this.subtitleModelReceived / 1024 / 1024)} / ${SubtitleModelStore.totalLabel()}` +
@@ -122,7 +135,9 @@ struct AudioBookSettingsPage {
 
   private subtitleModelAction(): string {
     if (this.subtitleModelState === SubtitleModelStore.DOWNLOADING) return '取消';
-    return this.subtitleModelState === SubtitleModelStore.INSTALLED ? '删除' : '下载';
+    // 会员到期后仍可删除已下载的模型释放空间。
+    if (this.subtitleModelState === SubtitleModelStore.INSTALLED) return '删除';
+    return this.subtitleMember() ? '下载' : '开通会员';
   }
 
   async onSubtitleModelTap(): Promise<void> {
@@ -149,6 +164,10 @@ struct AudioBookSettingsPage {
       HdsFeedback.showToast('已删除字幕模型');
       return;
     }
+    if (!this.subtitleMember()) {
+      this.openMemberBenefits();
+      return;
+    }
     if (AudioOfflineStore.network() === 'cellular') {
       try {
         const result = await prompt.showDialog({
@@ -169,6 +188,10 @@ struct AudioBookSettingsPage {
     if (this.subtitleImporting) return;
     if (this.subtitleModelState === SubtitleModelStore.DOWNLOADING) {
       HdsFeedback.showToast('模型正在下载，请先取消下载');
+      return;
+    }
+    if (!this.subtitleMember()) {
+      this.openMemberBenefits();
       return;
     }
     try {
@@ -253,6 +276,7 @@ struct AudioBookSettingsPage {
     Column() {
       SettingNavRow({
         title: '识别模型',
+        minimumMembership: 'MONTHLY',
         description: this.subtitleModelDescription(),
         value: this.subtitleImporting ? '' : this.subtitleModelAction(),
         onTap: (): void => {
@@ -261,6 +285,7 @@ struct AudioBookSettingsPage {
       })
       SettingSwitchRow({
         title: '提前识别下一章',
+        minimumMembership: 'MONTHLY',
         description: '当前章识别完后，接着处理已下载的下一章开头',
         isOn: this.subtitlePrefetchNext,
         onChange: (value: boolean): void => {
@@ -270,6 +295,7 @@ struct AudioBookSettingsPage {
       })
       SettingNavRow({
         title: '导入模型文件',
+        minimumMembership: 'MONTHLY',
         description: '网络不好时，选择在别处下载好的识别模型、tokens.txt 和标点模型（可多选）',
         value: '选择',
         showDivider: false,
@@ -280,7 +306,7 @@ struct AudioBookSettingsPage {
     }.width('calc(100% - 24vp)').margin({ left: AppSpacing.LG, right: AppSpacing.LG })
       .borderRadius(ThemeRuntime.cardRadius()).clip(true).backgroundColor(ThemeRuntime.cardColor(this.darkMode))
 
-    Text('字幕在听书面板封面下方的“字幕”页签里显示，识别全在手机上完成。在线章节会先按边听边下取本章音频，听过后自动删除。')
+    Text('AI 字幕为会员专享，在听书面板封面下方的“字幕”页签里显示，识别全在手机上完成。在线章节会先按边听边下取本章音频，听过后自动删除。')
       .fontSize(AppFontSize.CAPTION).fontColor(ThemeRuntime.subTextColor(this.darkMode)).width('100%')
       .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.XXL })
   }

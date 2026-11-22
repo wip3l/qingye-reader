@@ -11,6 +11,7 @@ import { RemoteAudioPlayback } from '../RemoteAudioPlayback';
 import { AudioPrefetch } from '../AudioPrefetch';
 import { AudioBookSettingsStore } from '../AudioBookSettingsStore';
 import { SubtitleModelStore } from './SubtitleModelStore';
+import { AccountSessionStore } from '../../account/AccountSessionStore';
 
 /** 每段识别 16 秒，前后各多解 1 秒给边界的字补上下文。 */
 const CHUNK_MS = 16000;
@@ -94,6 +95,8 @@ export class AudioSubtitleService {
   static readonly REVISION_KEY: string = 'audioSubtitleRevision';
   /** 没有字幕需要的东西时：idle 不在听书。 */
   static readonly IDLE: string = 'idle';
+  /** 不是会员（或会员已到期）：AI 字幕为会员专享。 */
+  static readonly MEMBER_REQUIRED: string = 'memberRequired';
   static readonly NEEDS_MODEL: string = 'needsModel';
   static readonly MODEL: string = 'model';
   static readonly AUDIO: string = 'audio';
@@ -126,6 +129,11 @@ export class AudioSubtitleService {
   private audioCancelled: boolean = false;
   private loadConfirmed: boolean = false;
   private backgroundSince: number = 0;
+
+  /** AI 字幕与 AI 超分、着色一样，任一档有效会员都能用。以账号快照按服务端时间推算为准。 */
+  static memberAllowed(): boolean {
+    return AccountSessionStore.activeMembershipSku() !== '';
+  }
 
   static get(): AudioSubtitleService {
     if (!AudioSubtitleService.instance) AudioSubtitleService.instance = new AudioSubtitleService();
@@ -188,8 +196,12 @@ export class AudioSubtitleService {
     this.tick();
   }
 
-  /** 下载模型；下完自动开始识别。 */
+  /** 下载模型；下完自动开始识别。只有会员能下。 */
   downloadModel(): void {
+    if (!AudioSubtitleService.memberAllowed()) {
+      this.publish(AudioSubtitleService.MEMBER_REQUIRED, '');
+      return;
+    }
     this.publish(AudioSubtitleService.MODEL, '');
     SubtitleModelStore.download().then((): void => {
       this.failedKey = '';
@@ -253,6 +265,13 @@ export class AudioSubtitleService {
     const key = this.playingKey();
     if (!key) {
       this.publish(AudioSubtitleService.IDLE, '');
+      return;
+    }
+    if (!AudioSubtitleService.memberAllowed()) {
+      // 会员到期时停下识别、释放模型；已识别的缓存保留，续费后直接显示。
+      if (this.job) this.switchAway();
+      if (this.thread && !this.inFlight) this.releaseWorker();
+      this.publish(AudioSubtitleService.MEMBER_REQUIRED, '');
       return;
     }
     if (SubtitleModelStore.isDownloading()) {

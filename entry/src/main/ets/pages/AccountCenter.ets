@@ -1425,6 +1425,7 @@ struct AccountCenterPage {
       new BenefitCompareRow('在线朗读优先排队', '高峰期优先', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('AI超分', '增强低清漫画与 PDF 扫描页', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('AI着色', '借助AI为黑白漫画着色', ['—', '✓', '✓', '✓', '✓']),
+      new BenefitCompareRow('AI 字幕', '听书时本机把音频识别成字幕', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('AI翻译', '漫画对白繁→简；日→中、韩→中即将推出', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('功能尝鲜', '新功能优先试用', ['—', '✓', '✓', '✓', '✓']),
       new BenefitCompareRow('自定义主题方案', '最多保存套数',
