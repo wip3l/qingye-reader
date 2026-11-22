@@ -22,6 +22,8 @@ export class ThemeIds {
   static readonly OBSIDIAN_ARCHIVE: string = 'obsidian-archive';
   static readonly NEON_HARBOR: string = 'neon-harbor';
   static readonly CELESTIAL_VAULT: string = 'celestial-vault';
+  /** 晨雾：光晕背景与玻璃卡片，和默认主题一样免费。 */
+  static readonly MORNING_MIST: string = 'morning-mist';
 }
 
 /**

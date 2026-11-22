@@ -124,6 +124,10 @@
       {
         "name": "theme_celestial_vault",
         "icon": "$media:ic_app_theme_celestial_vault"
+      },
+      {
+        "name": "theme_morning_mist",
+        "icon": "$media:ic_app_theme_morning_mist"
       }
     ]
   }

@@ -1,0 +1,97 @@
+{
+  "generatedBy": "dreamina-canvas",
+  "canvas": "deb9f6b0-56ec-4420-8034-9d89f19deaea",
+  "model": "seedream_4.7",
+  "items": {
+    "a_home_light": {
+      "title": "paper-note-v1-home-bg-light",
+      "nodeId": "node_y08vkehpqh",
+      "resourceId": "f85271b4-787d-4c90-a942-18da6b36250d",
+      "asset": "home_bg_plain_default_light.jpg + tts_panel_plain_default_light.jpg"
+    },
+    "a_home_dark": {
+      "title": "paper-note-v1-home-bg-dark",
+      "nodeId": "node_stnjdhm0bk",
+      "resourceId": "005a002f-d29c-48f0-bfa2-1f39603912b0",
+      "asset": "home_bg_plain_default_dark.jpg + tts_panel_plain_default_dark.jpg"
+    },
+    "a_cover_01": {
+      "title": "paper-note-v1-cover-01",
+      "nodeId": "node_vy0620ftar",
+      "resourceId": "d5b7ee56-f889-43e3-aff3-a84513fbbc23",
+      "asset": "theme_cover_plain_default_01.jpg"
+    },
+    "a_cover_02": {
+      "title": "paper-note-v1-cover-02",
+      "nodeId": "node_v1c789nntv",
+      "resourceId": "2e055cfe-b7fb-4c46-9d71-f744b2faf648",
+      "asset": "theme_cover_plain_default_02.jpg"
+    },
+    "a_cover_03": {
+      "title": "paper-note-v1-cover-03",
+      "nodeId": "node_g09hy3jh5j",
+      "resourceId": "588310d9-4186-421a-b99f-344b34ed9026",
+      "asset": "theme_cover_plain_default_03.jpg"
+    },
+    "a_cover_04": {
+      "title": "paper-note-v1-cover-04",
+      "nodeId": "node_evmzbtswet",
+      "resourceId": "fa04395f-b2fd-4250-ac52-9be150e31ee0",
+      "asset": "theme_cover_plain_default_04.jpg"
+    },
+    "a_folder": {
+      "title": "paper-note-v1-folder",
+      "nodeId": "node_9p7qdca9b0",
+      "resourceId": "2cffe176-2e99-43a1-b849-2fcca80c769c",
+      "asset": "theme_folder_art_plain_default.jpg"
+    },
+    "b_home_light": {
+      "title": "morning-mist-v1-home-bg-light",
+      "nodeId": "node_49exaheg96",
+      "resourceId": "88a8609f-9f08-453b-83e1-6bb1c18b81bd",
+      "asset": "home_bg_morning_mist_light.jpg + tts_panel_morning_mist_light.jpg"
+    },
+    "b_home_dark": {
+      "title": "morning-mist-v1-home-bg-dark",
+      "nodeId": "node_gg66z6706p",
+      "resourceId": "fa0a1226-150a-4b08-95d6-d1581dd43c73",
+      "asset": "home_bg_morning_mist_dark.jpg + tts_panel_morning_mist_dark.jpg (sharp darkened)"
+    },
+    "b_cover_01": {
+      "title": "morning-mist-v1-cover-01",
+      "nodeId": "node_g87k0fxvzc",
+      "resourceId": "30d17b8c-5c65-45e7-b4a4-e5deb74fae91",
+      "asset": "theme_cover_morning_mist_01.jpg"
+    },
+    "b_cover_02": {
+      "title": "morning-mist-v1-cover-02",
+      "nodeId": "node_h9q6sn8v8e",
+      "resourceId": "e744d923-a048-44b5-b5e2-1b13e2b7cf24",
+      "asset": "theme_cover_morning_mist_02.jpg"
+    },
+    "b_cover_03": {
+      "title": "morning-mist-v1-cover-03",
+      "nodeId": "node_x033n8tp43",
+      "resourceId": "ad7a8b83-8c46-495c-a418-fbd8a1d5b8c0",
+      "asset": "theme_cover_morning_mist_03.jpg"
+    },
+    "b_cover_04": {
+      "title": "morning-mist-v1-cover-04",
+      "nodeId": "node_vb17kqg4xk",
+      "resourceId": "5b3b5cbb-4d04-4f6e-8779-cfc313422696",
+      "asset": "theme_cover_morning_mist_04.jpg"
+    },
+    "b_folder": {
+      "title": "morning-mist-v1-folder",
+      "nodeId": "node_29hrncvyn9",
+      "resourceId": "4aa18d98-f4c3-4e03-8e78-a109c57be7bb",
+      "asset": "theme_folder_art_morning_mist.jpg"
+    },
+    "b_startup": {
+      "title": "morning-mist-v1-startup",
+      "nodeId": "node_ykva5n3ynr",
+      "resourceId": "dbd00a6d-8b3b-46df-aca0-df4045adfba5",
+      "asset": "theme_startup_morning_mist.jpg"
+    }
+  }
+}

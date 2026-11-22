@@ -86,8 +86,11 @@ const pages = JSON.parse(read('entry/src/main/resources/base/profile/main_pages.
 const expectedThemes = [
   'classic-blue', 'warm-paper', 'forest-mist', 'ink-wash', 'neon-night', 'sword-frost',
   'qingluan-water', 'cat-pipi', 'azure-mecha', 'starwish-magic', 'letterpress-page', 'obsidian-archive', 'neon-harbor',
-  'celestial-vault'
+  'celestial-vault', 'morning-mist'
 ];
+// 晨雾和默认主题（素笺）一样免费，不进服务端主题目录。
+assert(/static isFree\(themeId: string\)[\s\S]*?ThemeIds\.MORNING_MIST/.test(registry),
+  'Morning Mist must be a free builtin theme');
 for (const themeId of expectedThemes) {
   assert(models.includes(`'${themeId}'`), `Theme id is missing from ThemeModels: ${themeId}`);
   assert(registry.includes(`ThemeIds.`), 'Builtin registry is not using stable ThemeIds');
@@ -162,13 +165,13 @@ for (const name of ['paper', 'forest', 'ink', 'neon', 'strawberry', 'crimson', '
 const ttsPanelThemeNames = [
   'plain_default', 'classic_blue', 'warm_paper', 'forest_mist', 'ink_wash', 'neon_night', 'strawberry_cream',
   'crimson_archive', 'plum_tea', 'rose_letter', 'moon_crane', 'sword_frost', 'qingluan_water', 'cat_pipi',
-  'azure_mecha', 'starwish_magic', 'letterpress_page', 'neon_harbor'
+  'azure_mecha', 'starwish_magic', 'letterpress_page', 'neon_harbor', 'morning_mist'
 ];
 const ttsPanelStyles = read('entry/src/main/ets/theme/TtsPanelThemeStyles.ets');
 for (const themeName of ttsPanelThemeNames) {
   for (const mode of ['light', 'dark']) {
     const resourceName = `tts_panel_${themeName}_${mode}`;
-    if (themeName === 'neon_harbor') {
+    if (['neon_harbor', 'plain_default', 'morning_mist'].includes(themeName)) {
       const dimensions = jpegDimensions(path.join(mediaRoot, `${resourceName}.jpg`));
       assert(dimensions.width === 720 && dimensions.height === 520, `Invalid TTS bitmap dimensions: ${resourceName}`);
       assert(ttsPanelStyles.includes(`app.media.${resourceName}`), `Unmapped TTS bitmap: ${resourceName}`);
@@ -216,6 +219,21 @@ const swordFrostJpegs = [
   'theme_cover_sword_frost_05.jpg', 'theme_cover_sword_frost_06.jpg',
   'theme_folder_art_sword_frost.jpg'
 ];
+// 默认主题（素笺）与晨雾的即梦位图；默认主题走系统启动页，没有启动封面。
+for (const [fileName, width, height] of [
+  ...['plain_default', 'morning_mist'].flatMap(name => [
+    ...Array.from({ length: 4 }, (_, i) => [`theme_cover_${name}_0${i + 1}.jpg`, 450, 660]),
+    [`theme_folder_art_${name}.jpg`, 450, 660]
+  ]),
+  ['theme_startup_morning_mist.jpg', 841, 1870],
+  ...['plain_default', 'morning_mist'].flatMap(name => [
+    [`home_bg_${name}_light.jpg`, 1080, 1350],
+    [`home_bg_${name}_dark.jpg`, 1080, 1350]
+  ])
+]) {
+  const dimensions = jpegDimensions(path.join(mediaRoot, fileName));
+  assert(dimensions.width === width && dimensions.height === height, `Invalid theme artwork dimensions: ${fileName}`);
+}
 for (const fileName of ['theme_startup_neon_harbor.jpg', 'theme_folder_art_neon_harbor.jpg',
   ...Array.from({ length: 6 }, (_, i) => `theme_cover_neon_harbor_0${i + 1}.jpg`)]) {
   const dimensions = jpegDimensions(path.join(mediaRoot, fileName));

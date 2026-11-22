@@ -61,12 +61,13 @@ entry/src/main/resources/base/media/
 
 | ID | 说明 |
 | --- | --- |
-| `plain-default` | 默认主题，`BuiltinThemeRegistry.DEFAULT_THEME_ID`，也是所有令牌的回退来源。 |
+| `plain-default` | 默认主题“素笺”，`BuiltinThemeRegistry.DEFAULT_THEME_ID`，也是所有令牌的回退来源。暖白纸底、墨蓝强调，带封面、文件夹、书架边框、首页背景、听书面板位图和章首饰图 `theme_chapter_head_plain_default_*`；启动走系统启动页，没有启动封面。 |
+| `morning-mist` | 晨雾：免费的内置主题，有封面、文件夹、书架边框、启动封面、首页背景和听书面板位图。默认主题与晨雾的听书面板都取自各自首页背景的上部，素材记录见 [生成记录](../scripts/assets/default-theme-refresh-generation.json)。 |
 | `classic-blue`、`warm-paper`、`forest-mist`、`ink-wash`、`neon-night`、`strawberry-cream`、`crimson-archive`、`plum-tea`、`rose-letter`、`moon-crane` | 内置主题。 |
 | `sword-frost`、`qingluan-water`、`cat-pipi`、`azure-mecha`、`starwish-magic`、`letterpress-page` | 带整套位图资源的主题，`theme-framework-check` 会逐个校验其资源文件和尺寸。 |
 | `custom` | 自定义主题，不是独立的主题包：`BuiltinThemeRegistry.customTheme()` 以某个内置主题为基底克隆，再由 `ThemeComponentSourceIds` 按浅色、深色分别指定各部件来自哪个主题。 |
 
-`BuiltinThemeRegistry.isFree()` 只对 `plain-default` 返回 `true`。
+`BuiltinThemeRegistry.isFree()` 对 `plain-default`、`morning-mist` 返回 `true`；免费主题不进服务端 `theme_catalog`。
 
 ## ThemePack 字段
 

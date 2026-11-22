@@ -83,7 +83,8 @@ export class BuiltinThemeRegistry {
 
   static isFree(themeId: string): boolean {
     const normalized = (themeId || '').trim();
-    return normalized === ThemeIds.PLAIN_DEFAULT || normalized === BuiltinThemeRegistry.DEFAULT_THEME_ID;
+    return normalized === ThemeIds.PLAIN_DEFAULT || normalized === BuiltinThemeRegistry.DEFAULT_THEME_ID ||
+      normalized === ThemeIds.MORNING_MIST;
   }
 
   /** 主题包 ID（pack:<packageId>）原样保留：缺包时由 findById 回退，不把方案里的来源改写掉。 */
@@ -138,6 +139,7 @@ export class BuiltinThemeRegistry {
   private static createThemes(): ThemePack[] {
     const themes: ThemePack[] = [];
     themes.push(BuiltinThemeRegistry.plainDefault());
+    themes.push(BuiltinThemeRegistry.morningMist());
     themes.push(BuiltinThemeRegistry.strawberryCream());
     themes.push(BuiltinThemeRegistry.crimsonArchive());
     themes.push(BuiltinThemeRegistry.plumTea());
@@ -160,31 +162,62 @@ export class BuiltinThemeRegistry {
     return themes;
   }
 
+  /**
+   * 默认主题“素笺”：暖白纸底、墨蓝强调，首页顶部一幅淡彩线描，章首一枝细枝。启动仍走系统启动页
+   * （EntryAbility 对默认主题直接进首页，冷启动最快），所以没有启动封面。它也是所有令牌的回退来源。
+   */
   private static plainDefault(): ThemePack {
     const theme = BuiltinThemeRegistry.theme(
       ThemeIds.PLAIN_DEFAULT,
-      '默认主题',
-      '无纹理、低装饰、清晰耐看的基础主题',
+      '素笺',
+      '默认主题。暖白纸页，墨蓝淡彩，远山一枝，安静得像一页信笺',
       'sans-serif',
       'classic'
     );
     theme.light = BuiltinThemeRegistry.variant(
-      BuiltinThemeRegistry.colors('#F7F7F7', '#FFFFFF', '#F0F0F0', '#202124', '#73777F', '#E2E2E2',
-        '#4A5F7E', '#435673', '#C93F3F'),
-      BuiltinThemeRegistry.reader('#FAFAFA', '', '#262626', '#777777', 'light'),
-      BuiltinThemeRegistry.regex(ThemeBubbleStyles.CAPSULE, '#E7E9EC', '#34383D')
+      BuiltinThemeRegistry.colors('#F5F3EE', '#FFFFFF', '#ECE8E0', '#1E2227', '#6A6E75', '#E3DED4',
+        '#2E5A88', '#2E5A88', '#C0433C'),
+      BuiltinThemeRegistry.reader('#F6F3EC', '', '#2B2A28', '#8A867E', 'light'),
+      BuiltinThemeRegistry.regex(ThemeBubbleStyles.CAPSULE, '#DCE5EF', '#1F3F63')
     );
     theme.dark = BuiltinThemeRegistry.variant(
-      BuiltinThemeRegistry.colors('#111111', '#1B1B1B', '#262626', '#F0F0F0', '#A0A0A0', '#343434',
-        '#9DB1CF', '#62748F', '#E86A6A'),
-      BuiltinThemeRegistry.reader('#161616', '', '#E1E1E1', '#9A9A9A', 'dark'),
-      BuiltinThemeRegistry.regex(ThemeBubbleStyles.CAPSULE, '#34383D', '#E4E7EB')
+      BuiltinThemeRegistry.colors('#121316', '#1B1D21', '#25282D', '#ECEAE5', '#A3A19C', '#2E3036',
+        '#8DB0D9', '#4A73A3', '#E57A72'),
+      BuiltinThemeRegistry.reader('#17181A', '', '#DCD9D2', '#8E8B85', 'dark'),
+      BuiltinThemeRegistry.regex(ThemeBubbleStyles.CAPSULE, '#2A3644', '#E6EEF8')
     );
-    theme.book.coverAssetId = '';
-    theme.book.shelfFrameAssetId = '';
-    theme.book.shelfFolderAssetId = '';
-    theme.radius = BuiltinThemeRegistry.radius(6, 12, 20, 12, 24, 8);
-    theme.readerLayout = BuiltinThemeRegistry.readerLayout(20, 12, 0, 18, 18, 18, 18);
+    theme.light.regexEmphasis.chapterHead = BuiltinThemeRegistry.imageChapterHead('plain_default_light', 1.2, '#2E5A88');
+    theme.dark.regexEmphasis.chapterHead = BuiltinThemeRegistry.imageChapterHead('plain_default_dark', 1.2, '#8DB0D9');
+    theme.radius = BuiltinThemeRegistry.radius(6, 12, 20, 16, 22, 7);
+    theme.readerLayout = BuiltinThemeRegistry.readerLayout(20, 14, 4, 22, 22, 22, 22);
+    theme.glass = BuiltinThemeRegistry.glass(20, 16, 90, 80, 50, 22, 16, 4);
+    return theme;
+  }
+
+  /** 晨雾：雾白底上的蓝桃薄荷光晕，面板更通透。免费。 */
+  private static morningMist(): ThemePack {
+    const theme = BuiltinThemeRegistry.theme(
+      ThemeIds.MORNING_MIST,
+      '晨雾',
+      '晨光穿过薄雾，蓝、桃与薄荷色的光晕轻轻浮在书页上方',
+      'sans-serif',
+      'rounded'
+    );
+    theme.light = BuiltinThemeRegistry.variant(
+      BuiltinThemeRegistry.colors('#F2F3F7', '#FFFFFF', '#E8EAF1', '#1B1E2B', '#626879', '#E1E4EC',
+        '#5562E8', '#5562E8', '#D9485F'),
+      BuiltinThemeRegistry.reader('#F7F8FB', '', '#262A36', '#8A90A0', 'light'),
+      BuiltinThemeRegistry.regex(ThemeBubbleStyles.QQ_SOFT, '#E3E5FB', '#2C3290')
+    );
+    theme.dark = BuiltinThemeRegistry.variant(
+      BuiltinThemeRegistry.colors('#0E1016', '#1A1D28', '#242838', '#ECEEF6', '#A0A6BA', '#2A2E3D',
+        '#8F99FF', '#5C66D6', '#F07A8C'),
+      BuiltinThemeRegistry.reader('#12141B', '', '#DADDE8', '#8A90A4', 'dark'),
+      BuiltinThemeRegistry.regex(ThemeBubbleStyles.QQ_SOFT, '#2B2F55', '#EEF0FF')
+    );
+    theme.radius = BuiltinThemeRegistry.radius(8, 14, 22, 20, 24, 10);
+    theme.readerLayout = BuiltinThemeRegistry.readerLayout(20, 13, 4, 22, 22, 22, 22);
+    theme.glass = BuiltinThemeRegistry.glass(28, 20, 70, 62, 80, 14, 24, 6);
     return theme;
   }
 
@@ -821,6 +854,15 @@ export class BuiltinThemeRegistry {
     head.dropCapImage = `media:theme_drop_cap_${key}`;
     head.dropCapColor = dropCapColor;
     head.dropCapRatio = dropCapRatio;
+    return head;
+  }
+
+  /** 只有标题饰图、不带首字装饰的章首（饰图 theme_chapter_head_<key>，写成 media:<资源名>）。 */
+  private static imageChapterHead(key: string, scale: number, numberColor: string): ThemePackageChapterHead {
+    const head = new ThemePackageChapterHead();
+    head.image = `media:theme_chapter_head_${key}`;
+    head.scale = scale;
+    head.numberColor = numberColor;
     return head;
   }
 

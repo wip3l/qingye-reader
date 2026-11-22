@@ -370,6 +370,8 @@ export class ThemeAssetRegistry {
       case 'media:theme_chapter_head_celestial_vault_dark': return $r('app.media.theme_chapter_head_celestial_vault_dark');
       case 'media:theme_drop_cap_celestial_vault_light': return $r('app.media.theme_drop_cap_celestial_vault_light');
       case 'media:theme_drop_cap_celestial_vault_dark': return $r('app.media.theme_drop_cap_celestial_vault_dark');
+      case 'media:theme_chapter_head_plain_default_light': return $r('app.media.theme_chapter_head_plain_default_light');
+      case 'media:theme_chapter_head_plain_default_dark': return $r('app.media.theme_chapter_head_plain_default_dark');
       default: return source;
     }
   }
@@ -504,6 +506,8 @@ export class ThemeAssetRegistry {
         return $r('app.media.theme_logo_custom');
       case ThemeIds.PLAIN_DEFAULT:
         return $r('app.media.theme_logo_plain_default');
+      case ThemeIds.MORNING_MIST:
+        return $r('app.media.theme_logo_morning_mist');
       case ThemeIds.WARM_PAPER:
         return $r('app.media.theme_logo_warm_paper');
       case ThemeIds.FOREST_MIST:
@@ -553,6 +557,7 @@ export class ThemeAssetRegistry {
       return $r('app.media.theme_startup_classic_blue');
     }
     switch ((themeId || '').trim().toLowerCase()) {
+      case ThemeIds.MORNING_MIST: return $r('app.media.theme_startup_morning_mist');
       case ThemeIds.WARM_PAPER: return $r('app.media.theme_startup_warm_paper');
       case ThemeIds.FOREST_MIST: return $r('app.media.theme_startup_forest_mist');
       case ThemeIds.INK_WASH: return $r('app.media.theme_startup_ink_wash');
@@ -608,6 +613,10 @@ export class ThemeAssetRegistry {
             $r('app.media.home_bg_celestial_vault_light_anim');
         }
         return darkMode ? $r('app.media.home_bg_celestial_vault_dark') : $r('app.media.home_bg_celestial_vault_light');
+      case ThemeIds.PLAIN_DEFAULT:
+        return darkMode ? $r('app.media.home_bg_plain_default_dark') : $r('app.media.home_bg_plain_default_light');
+      case ThemeIds.MORNING_MIST:
+        return darkMode ? $r('app.media.home_bg_morning_mist_dark') : $r('app.media.home_bg_morning_mist_light');
       default: return null;
     }
   }
@@ -649,6 +658,14 @@ export class ThemeAssetRegistry {
     }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return [];
+      case ThemeIds.PLAIN_DEFAULT: return [
+        $r('app.media.theme_cover_plain_default_01'), $r('app.media.theme_cover_plain_default_02'),
+        $r('app.media.theme_cover_plain_default_03'), $r('app.media.theme_cover_plain_default_04')
+      ];
+      case ThemeIds.MORNING_MIST: return [
+        $r('app.media.theme_cover_morning_mist_01'), $r('app.media.theme_cover_morning_mist_02'),
+        $r('app.media.theme_cover_morning_mist_03'), $r('app.media.theme_cover_morning_mist_04')
+      ];
       case ThemeIds.WARM_PAPER: return [
         $r('app.media.theme_cover_warm_paper_01'), $r('app.media.theme_cover_warm_paper_02'),
         $r('app.media.theme_cover_warm_paper_03'), $r('app.media.theme_cover_warm_paper_04')
@@ -770,6 +787,8 @@ export class ThemeAssetRegistry {
     }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return '';
+      case ThemeIds.PLAIN_DEFAULT: return $r('app.media.theme_frame_plain_default');
+      case ThemeIds.MORNING_MIST: return $r('app.media.theme_frame_morning_mist');
       case ThemeIds.WARM_PAPER: return $r('app.media.theme_frame_warm_paper');
       case ThemeIds.FOREST_MIST: return $r('app.media.theme_frame_forest_mist');
       case ThemeIds.INK_WASH: return $r('app.media.theme_frame_ink_wash');
@@ -804,6 +823,8 @@ export class ThemeAssetRegistry {
     }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return '';
+      case ThemeIds.PLAIN_DEFAULT: return $r('app.media.theme_folder_art_plain_default');
+      case ThemeIds.MORNING_MIST: return $r('app.media.theme_folder_art_morning_mist');
       case ThemeIds.WARM_PAPER: return $r('app.media.theme_folder_art_warm_paper');
       case ThemeIds.FOREST_MIST: return $r('app.media.theme_folder_art_forest_mist');
       case ThemeIds.INK_WASH: return $r('app.media.theme_folder_art_ink_wash');

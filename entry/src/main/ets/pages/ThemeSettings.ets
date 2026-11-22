@@ -136,8 +136,8 @@ const THEME_STORE_GROUPS: ThemeStoreGroup[] = [
     ThemeIds.AZURE_MECHA, ThemeIds.NEON_HARBOR]),
   new ThemeStoreGroup('纸本质感', [ThemeIds.LETTERPRESS_PAGE, ThemeIds.WARM_PAPER,
     ThemeIds.ROSE_LETTER, ThemeIds.CRIMSON_ARCHIVE]),
-  new ThemeStoreGroup('清爽日常', [ThemeIds.PLAIN_DEFAULT, ThemeIds.CLASSIC_BLUE, ThemeIds.FOREST_MIST,
-    ThemeIds.NEON_NIGHT])
+  new ThemeStoreGroup('清爽日常', [ThemeIds.PLAIN_DEFAULT, ThemeIds.MORNING_MIST,
+    ThemeIds.CLASSIC_BLUE, ThemeIds.FOREST_MIST, ThemeIds.NEON_NIGHT])
 ];
 
 /** 方案详情“方案组成”的一行：部件名和它取自哪套主题。 */

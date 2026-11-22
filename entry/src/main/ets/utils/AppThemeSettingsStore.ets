@@ -777,17 +777,17 @@ export class AppThemeSettingsStore {
    * 其他用户自选的颜色保持不动。
    */
   private static upgradeLegacyPlainDefaultColors(settings: AppThemeSettings, defaults: AppThemeSettings): void {
-    // 第二组是开发中短暂用过的蓝色，测试机上可能已保存。
-    if (['#5B6573', '#3366CC'].includes(settings.lightAccentColor.toUpperCase())) {
+    // 第二组是开发中短暂用过的蓝色，测试机上可能已保存；第三组是默认主题改成“留白”之前的石板蓝。
+    if (['#5B6573', '#3366CC', '#4A5F7E'].includes(settings.lightAccentColor.toUpperCase())) {
       settings.lightAccentColor = defaults.lightAccentColor;
     }
-    if (['#AAB2BD', '#8FB5F0'].includes(settings.darkAccentColor.toUpperCase())) {
+    if (['#AAB2BD', '#8FB5F0', '#9DB1CF'].includes(settings.darkAccentColor.toUpperCase())) {
       settings.darkAccentColor = defaults.darkAccentColor;
     }
-    if (['#505967', '#2D5DB8'].includes(settings.lightButtonColor.toUpperCase())) {
+    if (['#505967', '#2D5DB8', '#435673'].includes(settings.lightButtonColor.toUpperCase())) {
       settings.lightButtonColor = defaults.lightButtonColor;
     }
-    if (['#737D8A', '#3F72C2'].includes(settings.darkButtonColor.toUpperCase())) {
+    if (['#737D8A', '#3F72C2', '#62748F'].includes(settings.darkButtonColor.toUpperCase())) {
       settings.darkButtonColor = defaults.darkButtonColor;
     }
   }
