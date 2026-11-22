@@ -121,7 +121,8 @@ export class ReaderCommentWebTheme {
       canvas.textContent=canvasCss(dark);
       (document.head||root).appendChild(canvas);
       // 宿主弹层的拖动条区域取网页顶部的实际底色。页面自带的深浅色按钮怎么实现都不要紧：
-      // 点击或根节点属性变化后重新取色，延迟复查以等过渡动画结束。反色兜底时取色是反色前的值，直接用深色。
+      // 点击或根节点属性变化后逐帧取色，跟着页面的过渡动画一起渐变，过渡结束才停。
+      // 只在固定时刻取色会取到过渡半途的灰色，最终色要晚一拍才到。反色兜底时取色是反色前的值，直接用深色。
       var report=function(color){
         var host=window.LegadoCommentHost;
         if(host&&typeof host.surfaceColor==='function')host.surfaceColor(color);
@@ -155,7 +156,28 @@ export class ReaderCommentWebTheme {
           report(color);
         };
         window.__LEGADO_SURFACE_COLOR__='';
-        var later=function(){sync();setTimeout(sync,120);setTimeout(sync,450);};
+        var animating=function(){
+          if(typeof document.getAnimations!=='function')return false;
+          var list=document.getAnimations();
+          for(var i=0;i<list.length;i++){if(list[i].playState==='running')return true;}
+          return false;
+        };
+        // 触发后先等一小段让过渡开始；能查动画时有过渡在跑就继续跟，最多两秒，免得常驻的转圈动画让它一直跑。
+        var grace=typeof document.getAnimations==='function'?250:600;
+        var following=false,armed=false,quietUntil=-1,stopAt=-1;
+        var step=function(ts){
+          sync();
+          if(armed){armed=false;quietUntil=Math.max(quietUntil,ts+grace);stopAt=ts+2000;}
+          if(animating())quietUntil=Math.max(quietUntil,ts+80);
+          if(ts<quietUntil&&ts<stopAt){requestAnimationFrame(step);return;}
+          following=false;quietUntil=-1;
+        };
+        var later=function(){
+          sync();armed=true;
+          if(!following){following=true;requestAnimationFrame(step);}
+          // 网页不可见时帧回调会停，留一次延迟复查兜底。
+          setTimeout(sync,450);
+        };
         later();
         if(!window.__LEGADO_SURFACE_WATCH__){
           window.__LEGADO_SURFACE_WATCH__=true;

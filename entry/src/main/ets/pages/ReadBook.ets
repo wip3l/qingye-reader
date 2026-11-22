@@ -4292,8 +4292,8 @@ struct ReadBookPage {
 
   updateReaderCommentPanelSurface(color: string): void {
     if (!this.showReaderCommentPanel || !/^#[0-9a-fA-F]{6}$/.test(color)) return;
+    // 页面切换深浅色时网页逐帧上报过渡中的颜色，这里不打日志。
     if (this.readerCommentPanelSurface === color) return;
-    console.info(`评论面板顶部底色：${color}`);
     this.readerCommentPanelSurface = color;
   }
 

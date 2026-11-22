@@ -133,7 +133,19 @@ for (const dark of [false, true]) {
 }
 {
   // Each open starts from the app scheme; the reader may then use the page's own theme button and the sheet follows.
-  const reports = [], styles = new Map(), timers = [], observers = [], clicks = [];
+  const reports = [], styles = new Map(), timers = [], observers = [], clicks = [], frames = [];
+  let frameTime = 0, transitions = 0;
+  // Runs queued animation frames at 60 Hz; onFrame lets a test move the page's transition along.
+  const flushFrames = (onFrame = () => {}) => {
+    let count = 0;
+    while (frames.length) {
+      assert(++count < 400, 'surface follow loop must stop');
+      frameTime += 16;
+      onFrame(frameTime);
+      for (const fn of frames.splice(0)) fn(frameTime);
+    }
+    return count;
+  };
   const classes = new Set();
   let headerColor = 'rgb(255, 255, 255)';
   const body = { nodeType: 1, parentElement: null, classList: {
@@ -154,9 +166,10 @@ for (const dark of [false, true]) {
     getElementById: id => id === 'themeToggle' ? {} : (styles.get(id) ?? null),
     createElement: () => ({ remove() { styles.delete(this.id); } }),
     elementFromPoint: () => label,
+    getAnimations: () => Array.from({ length: transitions }, () => ({ playState: 'running' })),
     addEventListener: (type, fn, capture) => { assert.equal(type, 'click'); assert.equal(capture, true); clicks.push(fn); } };
   const context = vm.createContext({ window, document, localStorage: { setItem() {} }, location: { href: 'about:blank' },
-    CustomEvent: class {}, requestAnimationFrame: fn => fn(), setTimeout: fn => timers.push(fn),
+    CustomEvent: class {}, requestAnimationFrame: fn => frames.push(fn), setTimeout: fn => timers.push(fn),
     getComputedStyle: node => ({ backgroundColor: node === header ? headerColor : 'rgba(0, 0, 0, 0)' }),
     MutationObserver: class { constructor(fn) { this.fn = fn; } observe(target) { observers.push({ target, fn: this.fn }); } } });
   vm.runInContext(`window.__LEGADO_COMMENT_INLINE__=true;`, context);
@@ -165,18 +178,36 @@ for (const dark of [false, true]) {
   assert.equal(styles.get('legado-theme-lock'), undefined, 'page theme button stays usable');
   assert.deepEqual(observers.map(item => item.target), [root, body], 'root and body attributes are watched');
   assert.equal(clicks.length, 1);
+  flushFrames();
   for (const fn of timers.splice(0)) fn();
-  // The reader taps the page's own theme button: the painted colour changes after a transition.
+  // The reader taps the page's own theme button: the painted colour fades over a 300 ms transition.
   window.toggleCmtTheme();
   assert.equal(pageToggles, 1, 'page theme switch still works');
   clicks[0]();
-  headerColor = 'rgb(43, 43, 43)';
+  const start = frameTime;
+  transitions = 1;
+  flushFrames(now => {
+    const t = Math.min(1, (now - start) / 300);
+    const channel = Math.round(255 + (43 - 255) * t);
+    headerColor = `rgb(${channel}, ${channel}, ${channel})`;
+    if (t >= 1) transitions = 0;
+  });
+  assert(reports.length > 8, 'the drag bar follows the transition frame by frame');
+  assert.equal(reports.at(-1), '#2b2b2b', 'it lands on the final colour without waiting for a late recheck');
   for (const fn of timers.splice(0)) fn();
-  assert.deepEqual(reports, ['#ffffff', '#2b2b2b'], 'delayed recheck catches the manual switch');
+  assert.equal(reports.at(-1), '#2b2b2b');
+  reports.splice(1, reports.length - 2);
+  assert.deepEqual(reports, ['#ffffff', '#2b2b2b'], 'manual switch reaches the host');
   assert.match(styles.get('legado-comment-canvas').textContent, /#131313/, 'root canvas follows the page');
   observers[1].fn();
+  assert(flushFrames() < 30, 'with no transition running the loop stops after the short grace period');
   for (const fn of timers.splice(0)) fn();
   assert.deepEqual(reports, ['#ffffff', '#2b2b2b'], 'unchanged colour does not repeat reports');
+  // A page with an endless spinner animation must not keep the loop alive forever.
+  transitions = 1;
+  clicks[0]();
+  assert(flushFrames() <= 130, 'follow loop is capped at about two seconds');
+  transitions = 0;
   // The app switches to dark while the sheet is open: the page already is dark, so it is left alone.
   vm.runInContext(ReaderCommentWebTheme.apply(true, true), context);
   assert.equal(pageToggles, 1);
