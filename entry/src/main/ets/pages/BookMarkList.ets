@@ -1,3 +1,4 @@
+import { router } from '@kit.ArkUI';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
@@ -265,6 +266,15 @@ struct BookMarkListPage {
   pageActions() {
     if (this.items.length > 0) {
       Row({ space: AppSpacing.MD }) {
+        ImmersiveHeaderAction({
+          icon: $r('sys.symbol.coupon'),
+          accessibilityLabel: '票夹',
+          onTap: (): void => {
+            router.pushUrl({ url: 'pages/TicketAlbum' }).catch((error: Error) => {
+              console.warn('打开票夹失败:', error.message);
+            });
+          }
+        })
         ImmersiveHeaderAction({
           icon: this.viewIcon(),
           accessibilityLabel: '切换布局',

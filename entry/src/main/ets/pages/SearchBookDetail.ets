@@ -35,6 +35,11 @@ import { AudioSheetTransition, AUDIO_SHEET_ENTER_DURATION, AUDIO_SHEET_EXIT_DURA
 import { BookMark, BookMarkRules, BookMarkStatus } from '../model/book/BookMark';
 import { BookMarkService } from '../core/mark/BookMarkService';
 import { BookMarkStars } from '../components/book/BookMarkStars';
+import { TicketStubRow } from '../components/ticket/TicketStubRow';
+import { TicketIssueOverlay } from '../components/ticket/TicketIssueOverlay';
+import { ReadingTicket, ReadingTicketRules } from '../core/ticket/ReadingTicket';
+import { ReadingTicketLoader } from '../core/ticket/ReadingTicketLoader';
+import { TicketAlbumStore } from '../utils/TicketAlbumStore';
 import { BookMarkSheet } from '../components/book/BookMarkSheet';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
@@ -113,6 +118,9 @@ struct SearchBookDetailPage {
   /** 这部作品的“我的标记”；没有标记时为 null。 */
   @State bookMark: BookMark | null = null;
   @State showMarkSheet: boolean = false;
+  /** 刚标成读过、正在出的那张票；null 时不显示出票层。 */
+  @State issueTicket: ReadingTicket | null = null;
+  @State issueTicketStyle: string = TicketAlbumStore.STYLE_CARD;
   /** 标记面板正在专注写短评，面板拉到最高档。 */
   @State markSheetFocused: boolean = false;
   @StorageProp('bookMarkRevision') @Watch('onBookMarkRevisionChanged') bookMarkRevision: number = 0;
@@ -417,6 +425,21 @@ struct SearchBookDetailPage {
       })
 
       BookSourceStageRuntimeHost()
+
+      if (this.issueTicket) {
+        TicketIssueOverlay({
+          ticket: this.issueTicket as ReadingTicket,
+          ticketStyle: this.issueTicketStyle,
+          onOpen: (): void => {
+            const ticket = this.issueTicket;
+            if (!ticket) return;
+            router.pushUrl({ url: 'pages/TicketDetail', params: { workKey: ticket.workKey, fromDetail: 'true' } });
+          },
+          onClose: (): void => {
+            this.issueTicket = null;
+          }
+        })
+      }
     }
     .width('100%')
     .height('100%')
@@ -896,6 +919,15 @@ struct SearchBookDetailPage {
         .onClick(() => {
           this.openMarkSheet();
         })
+      }
+
+      if (this.bookMark && ReadingTicketRules.hasTicket(this.bookMark as BookMark)) {
+        TicketStubRow({
+          mark: this.bookMark as BookMark,
+          markKey: `${(this.bookMark as BookMark).workKey}|${(this.bookMark as BookMark).status}|` +
+            `${(this.bookMark as BookMark).updateTime}`
+        })
+          .margin({ top: AppSpacing.XS })
       }
     }
     .width('100%')
@@ -1943,9 +1975,12 @@ struct SearchBookDetailPage {
     try {
       ++this.markLoadVersion;
       const existed = this.bookMark !== null;
+      const wasRead = this.bookMark !== null && this.bookMark.status === BookMarkStatus.READ;
       const saved = await BookMarkService.save(draft);
       this.bookMark = saved;
-      if (saved) {
+      if (saved && !wasRead && saved.status === BookMarkStatus.READ) {
+        await this.issueReadTicket(saved);
+      } else if (saved) {
         HdsFeedback.showToast('标记已保存');
       } else if (existed) {
         HdsFeedback.showToast('已删除标记');
@@ -1953,6 +1988,28 @@ struct SearchBookDetailPage {
     } catch (error) {
       console.error('保存书籍标记失败:', error);
       HdsFeedback.showToast('保存失败，请重试');
+    }
+  }
+
+  /** 刚标成读过：出票动画开着就出票，关着只提示收进了票夹。 */
+  private async issueReadTicket(mark: BookMark): Promise<void> {
+    try {
+      const context = getContext(this);
+      await TicketAlbumStore.load(context);
+      const ticket = await ReadingTicketLoader.loadOne(context, mark);
+      if (!ticket) {
+        HdsFeedback.showToast('标记已保存');
+        return;
+      }
+      if (TicketAlbumStore.issueAnimation()) {
+        this.issueTicketStyle = TicketAlbumStore.currentStyle();
+        this.issueTicket = ticket;
+      } else {
+        HdsFeedback.showToast(ticket.number > 0 ? `标记已保存 · 第 ${ticket.number} 张票已收进票夹` : '标记已保存');
+      }
+    } catch (error) {
+      console.warn('出票失败:', error);
+      HdsFeedback.showToast('标记已保存');
     }
   }
 

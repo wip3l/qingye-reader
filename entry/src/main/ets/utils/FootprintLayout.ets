@@ -31,19 +31,25 @@ export class FootprintLayout {
   static readonly EXCERPT: string = 'excerpt';
   static readonly BOOKMARK: string = 'bookmark';
   static readonly MARK: string = 'mark';
+  static readonly TICKET: string = 'ticket';
   static readonly SECTIONS: FootprintSection[] = [
     new FootprintSection('week', '本周阅读', '总时长、和上周比、每日柱状图', [], ''),
     new FootprintSection('month', '本月日历', '每天读了多久', [], ''),
     new FootprintSection('rank', '读得最多', '本周阅读时长排行', [3, 5, 10], '本'),
     new FootprintSection('excerpt', '最近摘录', '横滑卡片', [5, 10, 20], '条'),
     new FootprintSection('bookmark', '最近书签', '横滑卡片', [5, 10, 20], '个'),
-    new FootprintSection('mark', '我的标记', '最近打分、写短评的书，横滑卡片', [5, 10, 20], '本')
+    new FootprintSection('mark', '我的标记', '最近打分、写短评的书，横滑卡片', [5, 10, 20], '本'),
+    new FootprintSection('ticket', '最近的票', '票夹里最近的票，横滑卡片', [5, 10, 20], '张')
   ];
-  static readonly DEFAULT_LIMITS: Record<string, number> = { 'rank': 3, 'excerpt': 10, 'bookmark': 10, 'mark': 10 };
+  static readonly DEFAULT_LIMITS: Record<string, number> = {
+    'rank': 3, 'excerpt': 10, 'bookmark': 10, 'mark': 10, 'ticket': 10
+  };
+  /** 默认不显示的块；以前存过的设置里没有它时也按不显示处理，打开过一次就跟普通块一样。 */
+  static readonly DEFAULT_HIDDEN: string[] = ['ticket'];
 
   order: string[] = FootprintLayout.SECTIONS.map((section: FootprintSection): string => section.id);
-  hidden: string[] = [];
-  limits: Record<string, number> = { 'rank': 3, 'excerpt': 10, 'bookmark': 10, 'mark': 10 };
+  hidden: string[] = FootprintLayout.DEFAULT_HIDDEN.slice();
+  limits: Record<string, number> = { 'rank': 3, 'excerpt': 10, 'bookmark': 10, 'mark': 10, 'ticket': 10 };
 
   static parse(raw: string | undefined | null): FootprintLayout {
     const layout = new FootprintLayout();
@@ -52,6 +58,8 @@ export class FootprintLayout {
       const value = JSON.parse(raw) as FootprintLayout;
       const known = FootprintLayout.SECTIONS.map((section: FootprintSection): string => section.id);
       const order: string[] = [];
+      const savedOrder: string[] = Array.isArray(value.order) ?
+        value.order.map((id: string): string => String(id)) : [];
       if (Array.isArray(value.order)) {
         for (const id of value.order) {
           if (known.includes(String(id)) && !order.includes(String(id))) order.push(String(id));
@@ -64,6 +72,9 @@ export class FootprintLayout {
       layout.order = order;
       layout.hidden = Array.isArray(value.hidden) ?
         value.hidden.map((id: string): string => String(id)).filter((id: string): boolean => known.includes(id)) : [];
+      for (const id of FootprintLayout.DEFAULT_HIDDEN) {
+        if (!savedOrder.includes(id) && !layout.hidden.includes(id)) layout.hidden.push(id);
+      }
       for (const section of FootprintLayout.SECTIONS) {
         if (section.limits.length === 0) continue;
         const limit = value.limits ? Number(value.limits[section.id]) : NaN;
@@ -101,7 +112,8 @@ export class FootprintLayout {
 
   isDefault(): boolean {
     const defaults = new FootprintLayout();
-    return this.order.join(',') === defaults.order.join(',') && this.hidden.length === 0 &&
+    return this.order.join(',') === defaults.order.join(',') &&
+      this.hidden.slice().sort().join(',') === defaults.hidden.slice().sort().join(',') &&
       FootprintLayout.SECTIONS.every((section: FootprintSection): boolean =>
         this.limit(section.id) === defaults.limit(section.id));
   }

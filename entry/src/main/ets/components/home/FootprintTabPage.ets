@@ -24,6 +24,10 @@ import { FootprintSettingsStore } from '../../utils/FootprintSettingsStore';
 import { BookMark, BookMarkRules, BookMarkStatus } from '../../model/book/BookMark';
 import { BookMarkService } from '../../core/mark/BookMarkService';
 import { BookMarkStars } from '../book/BookMarkStars';
+import { ReadingTicketCard } from '../ticket/ReadingTicketCard';
+import { ReadingTicket } from '../../core/ticket/ReadingTicket';
+import { ReadingTicketLoader } from '../../core/ticket/ReadingTicketLoader';
+import { TicketAlbumStore } from '../../utils/TicketAlbumStore';
 
 /** 本月日历的一格；day 为 0 是月初前的空位。level 0 没读，1~3 越大读得越久，-1 是还没到的日子。 */
 class FootprintDay {
@@ -76,7 +80,11 @@ export struct FootprintTabPage {
   @StorageProp('readStatsRecording') readStatsRecording: boolean = true;
   /** 本月日历卡收起与否，在 EntryAbility 里持久化。 */
   @StorageLink('footprintMonthCollapsed') monthCollapsed: boolean = false;
-  @StorageProp('footprintLayout') layoutRaw: string = '';
+  @StorageProp('footprintLayout') @Watch('onLayoutChanged') layoutRaw: string = '';
+  /** “最近的票”：默认不显示，打开这块才读。 */
+  @State tickets: ReadingTicket[] = [];
+  @State ticketsLoaded: boolean = false;
+  @State ticketStyle: string = TicketAlbumStore.STYLE_CARD;
   private scroller: Scroller = new Scroller();
   private alive: boolean = false;
   private ownerId: string = '';
@@ -129,6 +137,7 @@ export struct FootprintTabPage {
     } finally {
       if (this.alive) this.loading = false;
     }
+    this.loadTickets();
   }
 
   onExcerptRevision(): void {
@@ -137,6 +146,38 @@ export struct FootprintTabPage {
 
   onBookMarkRevision(): void {
     this.loadMarks();
+    this.loadTickets();
+  }
+
+  onLayoutChanged(): void {
+    if (!this.ticketsLoaded) this.loadTickets();
+  }
+
+  async loadTickets(): Promise<void> {
+    if (!this.layout().isVisible(FootprintLayout.TICKET)) return;
+    try {
+      const context = getContext(this);
+      await TicketAlbumStore.load(context);
+      const tickets = await ReadingTicketLoader.loadAll(context);
+      if (!this.alive) return;
+      this.ticketStyle = TicketAlbumStore.currentStyle();
+      this.tickets = tickets;
+      this.ticketsLoaded = true;
+    } catch (error) {
+      console.warn('读取最近的票失败:', error);
+    }
+  }
+
+  openTicketAlbum(): void {
+    router.pushUrl({ url: 'pages/TicketAlbum' }).catch((error: Error) => {
+      console.error('打开票夹失败:', error);
+    });
+  }
+
+  openTicket(ticket: ReadingTicket): void {
+    router.pushUrl({ url: 'pages/TicketDetail', params: { workKey: ticket.workKey } }).catch((error: Error) => {
+      console.error('打开票根失败:', error);
+    });
   }
 
   async loadMarks(): Promise<void> {
@@ -350,6 +391,47 @@ export struct FootprintTabPage {
             .height(FootprintTabPage.MARK_CARD_HEIGHT)
           } else {
             this.markEmptyCard()
+          }
+        }
+      } else if (id === FootprintLayout.TICKET) {
+        if (this.ticketsLoaded) {
+          this.sectionHeaderWithMore('最近的票', '票夹', () => this.openTicketAlbum())
+          if (this.tickets.length > 0) {
+            Scroll() {
+              Row({ space: AppSpacing.MD }) {
+                ForEach(this.tickets.slice(0, this.layout().limit(FootprintLayout.TICKET)), (ticket: ReadingTicket) => {
+                  Column() {
+                    ReadingTicketCard({
+                      ticket: ticket,
+                      ticketStyle: this.ticketStyle,
+                      cardWidth: 120,
+                      notchColor: ThemeRuntime.pageColor(this.appDarkMode),
+                      thumbnail: true
+                    })
+                  }
+                  .accessibilityGroup(true)
+                  .accessibilityText(`${ticket.bookName}的票`)
+                  .onClick(() => this.openTicket(ticket))
+                }, (ticket: ReadingTicket) =>
+                  `${ticket.workKey}|${ticket.status}|${ticket.number}|${ticket.totalMs}|${ticket.rating}|${this.ticketStyle}`)
+              }
+              .alignItems(VerticalAlign.Top)
+              .padding({ top: AppSpacing.XS, bottom: AppSpacing.LG })
+            }
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .edgeEffect(EdgeEffect.Spring)
+            .width('100%')
+            .align(Alignment.TopStart)
+          } else {
+            Text('把书标成“读过”“在读”或“弃读”，就会在这里出一张票。')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+              .width('100%')
+              .padding(AppSpacing.LG)
+              .borderRadius(ThemeRuntime.largeRadius())
+              .backgroundColor(this.cardColor())
+              .onClick(() => this.openTicketAlbum())
           }
         }
       } else if (id === FootprintLayout.BOOKMARK) {

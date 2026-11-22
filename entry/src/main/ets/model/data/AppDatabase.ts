@@ -13,6 +13,7 @@ import { BookMark, BookMarkRules } from '../book/BookMark';
 import { SourceGroupName } from '../../utils/SourceGroupName';
 import { BookIdentity } from '../../utils/BookIdentity';
 import { BookReadStatsRecord } from '../../core/stats/BookReadStats';
+import { TicketStatsRow } from '../../core/ticket/ReadingTicket';
 import { ReadStatsPendingUpload, ReadStatsSyncPayload, ReadStatsSyncChange,
   ReadStatsSyncAck } from '../../core/stats/ReadStatsSyncModels';
 
@@ -3824,6 +3825,37 @@ export class AppDatabase implements BookSourceRuntimePersistence {
       resultSet.close();
     }
     return records;
+  }
+
+  /**
+   * 票夹用：所有阅读记录按（书的地址, 日子）合计，带上书架或统计里登记的书名作者，
+   * 由 ReadingTicketRules.build 按作品归并到各条标记。所有设备合计，不排除隐私书（与详情页统计一致）。
+   */
+  async getTicketStatsRows(ownerId: string): Promise<TicketStatsRow[]> {
+    const rows: TicketStatsRow[] = [];
+    if (!this.store) return rows;
+    await this.readStatsWriteTask;
+    const resultSet = await this.store.querySql(`SELECT r.bookUrl, r.dayKey, SUM(r.durationMs) AS durationMs,
+      COALESCE(NULLIF(b.name, ''), m.name, '') AS name, COALESCE(NULLIF(b.author, ''), m.author, '') AS author
+      FROM read_stats_records r
+      LEFT JOIN books b ON b.bookUrl = r.bookUrl
+      LEFT JOIN read_stats_books m ON m.bookUrl = r.bookUrl
+      WHERE r.deletedAt = 0 AND (r.ownerId = '' OR r.ownerId = ?)
+      GROUP BY r.bookUrl, r.dayKey`, [ownerId]);
+    try {
+      while (resultSet.goToNextRow()) {
+        const row = new TicketStatsRow();
+        row.bookUrl = resultSet.getString(0);
+        row.dayKey = resultSet.getString(1);
+        row.durationMs = resultSet.getLong(2);
+        row.name = resultSet.getString(3) || '';
+        row.author = resultSet.getString(4) || '';
+        rows.push(row);
+      }
+    } finally {
+      resultSet.close();
+    }
+    return rows;
   }
 
   /** 这本书的划线数量：[全部, 写了想法的, 收进摘录的]。 */

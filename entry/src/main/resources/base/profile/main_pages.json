@@ -55,6 +55,8 @@
     "pages/ReadingStatsShare",
     "pages/ExcerptList",
     "pages/BookMarkList",
+    "pages/TicketAlbum",
+    "pages/TicketDetail",
     "pages/ExcerptShare",
     "pages/FootprintLayoutSettings",
     "pages/Footprint",

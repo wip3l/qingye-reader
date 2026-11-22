@@ -83,8 +83,11 @@ export struct SettingsPage {
             this.menuItem($r('sys.symbol.timer'), '阅读统计', true, () => {
               router.pushUrl({ url: 'pages/ReadingStats' });
             }, this.readStatsRecording ? '' : '已暂停')
-            this.menuItem($r('sys.symbol.star'), '我的标记', false, () => {
+            this.menuItem($r('sys.symbol.star'), '我的标记', true, () => {
               router.pushUrl({ url: 'pages/BookMarkList' });
+            })
+            this.menuItem($r('sys.symbol.coupon'), '票夹', false, () => {
+              router.pushUrl({ url: 'pages/TicketAlbum' });
             })
           }
           .width('100%')

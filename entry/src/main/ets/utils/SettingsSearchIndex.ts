@@ -233,6 +233,7 @@ const NAVS: Nav[] = [
   ['我的', '数据同步', '多设备同步书架、进度和设置', '云端 备份 多设备', 'pages/DataSync', undefined, false],
   ['我的', '阅读统计', '按日、周、月查看阅读时长和书籍排行', '时长 统计 排行', 'pages/ReadingStats', undefined, false],
   ['我的', '我的标记', '打分、状态、标签与短评', '评分 短评 想读 弃读', 'pages/BookMarkList', undefined, false],
+  ['我的', '票夹', '读过、在读、弃读的书各一张票，可存图分享', '票根 藏书卡 电影票 读完 出票', 'pages/TicketAlbum', undefined, false],
   ['我的', '书籍导入', '本地文件、WebDAV、OPDS、局域网传书', '导入 本地 txt epub 传书', 'pages/BookImport', undefined, false],
   ['我的', '在线阅读', '网页解析开关', '网页解析 书源 联网', 'pages/WebParseSettings', undefined, false],
   ['我的', '书源管理', '导入、分组、校验书源', '书源 源', 'pages/BookSource', undefined, true],
