@@ -450,7 +450,7 @@ assert(!themeColorPage.includes("'pages/AppIconSettings'") &&
 // 主题页“我的”只露几套已拥有主题，自定义方案紧跟其后，不会被大量已拥有主题挤到下面。
 const mineContent = themePage.match(/  mineContent\(\) \{[\s\S]*?\n  \}\n/)?.[0] || '';
 assert(mineContent.indexOf('this.ownedPreviewEntries()') >= 0 &&
-  mineContent.indexOf('this.ownedPreviewEntries()') < mineContent.indexOf('this.schemeEntries()') &&
+  mineContent.indexOf('this.ownedPreviewEntries()') < mineContent.indexOf('this.schemePreviewEntries()') &&
   themePage.includes('.slice(0, OWNED_PREVIEW_COUNT)') &&
   themePage.includes("url: 'pages/ThemeColorSettings'"),
   'Theme page does not expose the custom theme before builtin themes');

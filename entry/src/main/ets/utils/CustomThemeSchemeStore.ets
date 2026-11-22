@@ -20,6 +20,38 @@ export class CustomThemeScheme {
   packageId: string = '';
   // 方案说明：编辑器里填写或随主题包导入，分享导出时写进清单。
   description: string = '';
+  // 主题页“我的方案”的置顶、排序与筛选用，随方案一起云同步。
+  pinned: boolean = false;
+  // 毫秒时间戳；旧方案没有时从 ID 里的时间戳推出，修改时间缺省等于创建时间。
+  createdAt: number = 0;
+  updatedAt: number = 0;
+  // 由主题包导入而来（筛选“导入”）；旧方案按 ID 的 _import 后缀推断。
+  imported: boolean = false;
+}
+
+/** 置顶、时间、来源这些不随方案内容变化的信息，改名、保存时原样带过去。 */
+class SchemeMeta {
+  pinned: boolean = false;
+  createdAt: number = 0;
+  updatedAt: number = 0;
+  imported: boolean = false;
+
+  static of(scheme: CustomThemeScheme, touch: boolean): SchemeMeta {
+    const meta = new SchemeMeta();
+    meta.pinned = scheme.pinned;
+    meta.createdAt = scheme.createdAt;
+    meta.updatedAt = touch ? Date.now() : scheme.updatedAt;
+    meta.imported = scheme.imported;
+    return meta;
+  }
+
+  static fresh(imported: boolean): SchemeMeta {
+    const meta = new SchemeMeta();
+    meta.createdAt = Date.now();
+    meta.updatedAt = meta.createdAt;
+    meta.imported = imported;
+    return meta;
+  }
 }
 
 export class CustomThemeSchemeStore {
@@ -40,7 +72,11 @@ export class CustomThemeSchemeStore {
         'custom_1',
         '自定义主题 1',
         legacySettings,
-        1
+        1,
+        '',
+        '',
+        '',
+        SchemeMeta.fresh(false)
       );
       schemes.push(migrated);
       await store.put(CustomThemeSchemeStore.KEY_SCHEMES, CustomThemeSchemeStore.encode(schemes));
@@ -111,7 +147,8 @@ export class CustomThemeSchemeStore {
           schemes[index].revision + 1,
           schemes[index].author,
           schemes[index].packageId,
-          schemes[index].description
+          schemes[index].description,
+          SchemeMeta.of(schemes[index], true)
         );
         replaced = true;
         break;
@@ -149,7 +186,11 @@ export class CustomThemeSchemeStore {
       `custom_${Date.now()}_${sequence}`,
       `自定义主题 ${sequence}`,
       initial,
-      1
+      1,
+      '',
+      '',
+      '',
+      SchemeMeta.fresh(false)
     );
     schemes.push(scheme);
     await CustomThemeSchemeStore.persistSchemes(context, schemes);
@@ -179,7 +220,7 @@ export class CustomThemeSchemeStore {
       uniqueName = `${baseName} ${sequence}`;
     }
     const scheme = CustomThemeSchemeStore.createScheme(`custom_${Date.now()}_${schemes.length + 1}`, uniqueName,
-      settings, 1, author, packageId, description);
+      settings, 1, author, packageId, description, SchemeMeta.fresh(false));
     schemes.push(scheme);
     await CustomThemeSchemeStore.persistSchemes(context, schemes);
     return CustomThemeSchemeStore.cloneScheme(scheme);
@@ -204,7 +245,8 @@ export class CustomThemeSchemeStore {
         schemes[index].revision,
         author,
         schemes[index].packageId,
-        description
+        description,
+        SchemeMeta.of(schemes[index], true)
       );
       await CustomThemeSchemeStore.persistSchemes(context, schemes);
       return true;
@@ -231,7 +273,8 @@ export class CustomThemeSchemeStore {
         schemes[index].revision,
         schemes[index].author,
         packageId,
-        schemes[index].description
+        schemes[index].description,
+        SchemeMeta.of(schemes[index], true)
       );
       changed = true;
       break;
@@ -267,7 +310,8 @@ export class CustomThemeSchemeStore {
           schemes[index].revision,
           schemes[index].author,
           schemes[index].packageId,
-          schemes[index].description
+          schemes[index].description,
+          SchemeMeta.of(schemes[index], true)
         );
         renamed = true;
         break;
@@ -347,7 +391,8 @@ export class CustomThemeSchemeStore {
       replaceIndex >= 0 ? schemes[replaceIndex].revision + 1 : 1,
       author,
       packageId,
-      description
+      description,
+      replaceIndex >= 0 ? CustomThemeSchemeStore.importedMeta(schemes[replaceIndex]) : SchemeMeta.fresh(true)
     );
     if (replaceIndex >= 0) {
       schemes[replaceIndex] = scheme;
@@ -356,6 +401,46 @@ export class CustomThemeSchemeStore {
     }
     await CustomThemeSchemeStore.persistSchemes(context, schemes);
     return CustomThemeSchemeStore.cloneScheme(scheme);
+  }
+
+  private static importedMeta(replaced: CustomThemeScheme): SchemeMeta {
+    const meta = SchemeMeta.of(replaced, true);
+    meta.imported = true;
+    return meta;
+  }
+
+  /** 置顶或取消置顶几套方案；不算方案改动，修改时间不变。 */
+  static async setPinned(
+    context: Context,
+    legacySettings: AppThemeSettings,
+    schemeIds: string[],
+    pinned: boolean
+  ): Promise<boolean> {
+    const schemes = await CustomThemeSchemeStore.load(context, legacySettings);
+    let changed = false;
+    for (const scheme of schemes) {
+      if (schemeIds.indexOf(scheme.id) < 0 || scheme.pinned === pinned) continue;
+      scheme.pinned = pinned;
+      changed = true;
+    }
+    if (!changed) return false;
+    await CustomThemeSchemeStore.persistSchemes(context, schemes);
+    return true;
+  }
+
+  /** 手动排序：按给定 ID 顺序重排方案列表，没列到的保持原顺序跟在后面。列表顺序本身随云同步。 */
+  static async reorder(context: Context, legacySettings: AppThemeSettings, orderedIds: string[]): Promise<void> {
+    const schemes = await CustomThemeSchemeStore.load(context, legacySettings);
+    const ordered: CustomThemeScheme[] = [];
+    for (const id of orderedIds) {
+      const scheme = CustomThemeSchemeStore.find(schemes, id);
+      if (scheme && ordered.indexOf(scheme) < 0) ordered.push(scheme);
+    }
+    for (const scheme of schemes) {
+      if (ordered.indexOf(scheme) < 0) ordered.push(scheme);
+    }
+    if (ordered.every((scheme: CustomThemeScheme, index: number): boolean => scheme === schemes[index])) return;
+    await CustomThemeSchemeStore.persistSchemes(context, ordered);
   }
 
   /** 由带素材的主题包安装而来的方案；同一个包只对应一套。 */
@@ -469,7 +554,8 @@ export class CustomThemeSchemeStore {
         item.revision || 1,
         item.author || '',
         item.packageId || (localScheme ? localScheme.packageId : ''),
-        item.description || ''
+        item.description || '',
+        CustomThemeSchemeStore.syncedMeta(item, localScheme)
       ));
     }
     if (schemes.length === 0) {
@@ -493,6 +579,32 @@ export class CustomThemeSchemeStore {
     CloudThemeChange.notify();
   }
 
+  /** 云端来的方案：旧客户端上传的没有这些字段，置顶和时间沿用本机的。 */
+  private static syncedMeta(item: CustomThemeScheme, local: CustomThemeScheme | null): SchemeMeta {
+    const meta = local ? SchemeMeta.of(local, false) : new SchemeMeta();
+    if (typeof item.pinned === 'boolean') meta.pinned = item.pinned;
+    if (typeof item.imported === 'boolean') meta.imported = item.imported;
+    if (typeof item.createdAt === 'number' && item.createdAt > 0) meta.createdAt = item.createdAt;
+    if (typeof item.updatedAt === 'number' && item.updatedAt > 0) meta.updatedAt = item.updatedAt;
+    return meta;
+  }
+
+  /** 读回存储时的元信息：缺的字段按 ID 推断。 */
+  private static decodedMeta(item: CustomThemeScheme): SchemeMeta {
+    const meta = new SchemeMeta();
+    meta.pinned = item.pinned === true;
+    meta.createdAt = typeof item.createdAt === 'number' ? item.createdAt : 0;
+    meta.updatedAt = typeof item.updatedAt === 'number' ? item.updatedAt : 0;
+    meta.imported = typeof item.imported === 'boolean' ? item.imported : item.id.endsWith('_import');
+    return meta;
+  }
+
+  /** 方案 ID 形如 custom_<毫秒时间戳>_...，取出来当旧方案的创建时间；最早迁移的 custom_1 取不到，返回 0。 */
+  private static idTime(id: string): number {
+    const match = /^custom_(\d{12,})/.exec(id);
+    return match ? Number(match[1]) : 0;
+  }
+
   private static createScheme(
     id: string,
     name: string,
@@ -500,7 +612,8 @@ export class CustomThemeSchemeStore {
     revision: number,
     author: string = '',
     packageId: string = '',
-    description: string = ''
+    description: string = '',
+    meta: SchemeMeta = new SchemeMeta()
   ): CustomThemeScheme {
     const scheme = new CustomThemeScheme();
     scheme.id = id;
@@ -510,6 +623,10 @@ export class CustomThemeSchemeStore {
     scheme.author = typeof author === 'string' ? author : '';
     scheme.packageId = typeof packageId === 'string' ? packageId : '';
     scheme.description = typeof description === 'string' ? description : '';
+    scheme.pinned = meta.pinned === true;
+    scheme.imported = meta.imported === true;
+    scheme.createdAt = meta.createdAt > 0 ? meta.createdAt : CustomThemeSchemeStore.idTime(id);
+    scheme.updatedAt = meta.updatedAt > 0 ? meta.updatedAt : scheme.createdAt;
     return scheme;
   }
 
@@ -548,7 +665,8 @@ export class CustomThemeSchemeStore {
           item.revision || 1,
           item.author || '',
           item.packageId || '',
-          item.description || ''
+          item.description || '',
+          CustomThemeSchemeStore.decodedMeta(item)
         ));
       }
       return schemes;
@@ -567,6 +685,6 @@ export class CustomThemeSchemeStore {
 
   private static cloneScheme(source: CustomThemeScheme): CustomThemeScheme {
     return CustomThemeSchemeStore.createScheme(source.id, source.name, source.settings, source.revision,
-      source.author, source.packageId, source.description);
+      source.author, source.packageId, source.description, SchemeMeta.of(source, false));
   }
 }

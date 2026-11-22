@@ -78,10 +78,18 @@ import {
 } from '../theme/share/ThemePackageService';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
-import { PopupMenuAction } from '../components/common/PopupMenuAction';
+import { PopupMenuAction, PopupMenuHeader } from '../components/common/PopupMenuAction';
 
 // “我的”页已拥有区只露这么多套，其余进“全部”列表，免得把方案挤到很下面。
 const OWNED_PREVIEW_COUNT = 8;
+// “我的”页方案区露出的套数（置顶优先），其余进“我的方案”全部页。
+const SCHEME_PREVIEW_COUNT = 4;
+// 方案到这么多套才在全部页给搜索框。
+const SCHEME_SEARCH_MIN = 8;
+const SCHEME_SORTS: string[] = ['recent', 'modified', 'created', 'name', 'manual'];
+const SCHEME_FILTERS: string[] = ['all', 'self', 'import'];
+// 置顶的侧滑底色和名称旁的图钉：和应用（强调色）、删除（红）分开，各主题下都看得清。
+const SCHEME_PIN_COLOR = '#F2A11B';
 const OWNED_TILE_WIDTH = 88;
 const OWNED_TILE_HEIGHT = 124;
 const ROW_THUMB_WIDTH = 44;
@@ -301,6 +309,22 @@ struct ThemeSettingsPage {
   @State ownedListOpen: boolean = false;
   @State ownedSort: string = 'recent';
   @State recentThemeIds: string[] = [];
+  // 主题与方案最近一次应用的时间，键同 ThemeRecentStore；改了就加 recentUseRevision 让列表重排。
+  private recentUseTimes: Map<string, number> = new Map<string, number>();
+  @State recentUseRevision: number = 0;
+  // “我的方案”全部页：排序存本机；筛选、搜索和整理状态关页就清掉。
+  @State schemeListOpen: boolean = false;
+  @State schemeSort: string = 'recent';
+  @State schemeFilter: string = 'all';
+  @State schemeQuery: string = '';
+  @State schemeSortMenuOpen: boolean = false;
+  @State schemeOrganizing: boolean = false;
+  @State schemeSelected: string[] = [];
+  // 整理模式里两段（置顶 / 其他）的方案 ID：onMove 要求拖动时当场改数据，松手再写回存储。
+  @State schemeOrderPinned: string[] = [];
+  @State schemeOrderRest: string[] = [];
+  // 批量删除时要删的方案；单个删除仍用 actionCustomSchemeId。
+  @State deleteSchemeIds: string[] = [];
   // 竖向详情页：detailKeys 是同一列表里可左右滑动的项（theme:<主题 ID> 或 scheme:<方案 ID>）。
   @State detailOpen: boolean = false;
   @State detailKeys: string[] = [];
@@ -599,6 +623,18 @@ struct ThemeSettingsPage {
       this.closeDetail();
       return true;
     }
+    if (this.schemeListOpen && this.schemeSortMenuOpen) {
+      this.schemeSortMenuOpen = false;
+      return true;
+    }
+    if (this.schemeListOpen && this.schemeOrganizing) {
+      this.stopSchemeOrganize();
+      return true;
+    }
+    if (this.schemeListOpen) {
+      this.closeSchemeList();
+      return true;
+    }
     if (this.ownedListOpen) {
       this.ownedListOpen = false;
       return true;
@@ -616,6 +652,10 @@ struct ThemeSettingsPage {
 
       if (this.ownedListOpen) {
         this.ownedListOverlay()
+      }
+
+      if (this.schemeListOpen) {
+        this.schemeListOverlay()
       }
 
       if (this.detailOpen) {
@@ -1009,13 +1049,42 @@ struct ThemeSettingsPage {
       .width('100%')
       .padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
       if (this.customSchemes.length > 0) {
-        List() {
-          ForEach(this.schemeEntries(), (entry: ThemeListEntry, index: number) => {
-            this.swipeThemeItem(entry, 'schemes', '我的方案', index > 0)
-          }, (entry: ThemeListEntry) => `scheme_row_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
+        Column() {
+          List() {
+            ForEach(this.schemePreviewEntries(), (entry: ThemeListEntry, index: number) => {
+              this.swipeThemeItem(entry, 'schemes', '我的方案', index > 0)
+            }, (entry: ThemeListEntry) => `scheme_row_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
+          }
+          .themeCardList(this.cardColor())
+          Divider()
+            .strokeWidth(0.5)
+            .color(ThemeRuntime.dividerColor(this.appDarkMode))
+          Row({ space: AppSpacing.XXS }) {
+            Text(`查看全部 ${this.customSchemes.length} 套`)
+              .fontSize(AppFontSize.BODY)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.primaryTextColor())
+              .layoutWeight(1)
+            Text(`按${this.schemeSortLabel(this.schemeSort)}`)
+              .fontSize(AppFontSize.CAPTION)
+              .fontColor(this.subTextColor())
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(16)
+              .fontColor([this.subTextColor()])
+          }
+          .width('100%')
+          .height(48)
+          .padding({ left: AppSpacing.LG, right: AppSpacing.MD })
+          .accessibilityGroup(true)
+          .accessibilityText(`查看全部 ${this.customSchemes.length} 套方案，可排序、置顶和整理`)
+          .accessibilityRole(AccessibilityRoleType.BUTTON)
+          .onClick(() => this.openSchemeList())
         }
-        .themeCardList(this.cardColor())
-        Text('左滑可应用或删除，长按还可复制、设置排版、重命名或分享')
+        .width('100%')
+        .borderRadius(ThemeRuntime.cardRadius())
+        .backgroundColor(this.cardColor())
+        .clip(true)
+        Text(`置顶的排在最前，其余按“${this.schemeSortLabel(this.schemeSort)}”；左滑可置顶、应用或删除`)
           .fontSize(AppFontSize.MICRO)
           .fontColor(this.subTextColor())
           .padding({ left: AppSpacing.XXS })
@@ -1297,6 +1366,12 @@ struct ThemeSettingsPage {
               if (SuperExclusiveThemes.has(entry.theme.id)) {
                 MembershipBadge({ sku: 'SUPER_LIFETIME' })
               }
+              if (context === 'schemes' && this.schemePinned(entry.customSchemeId)) {
+                SymbolGlyph($r('sys.symbol.pin'))
+                  .fontSize(13)
+                  .fontColor([SCHEME_PIN_COLOR])
+                  .accessibilityText('已置顶')
+              }
               Text(entry.theme.name)
                 .fontSize(AppFontSize.BODY_LARGE)
                 .fontWeight(FontWeight.Medium)
@@ -1344,16 +1419,29 @@ struct ThemeSettingsPage {
     .opacity(ListDissolve.opacity(this.isSchemeRowDissolving(entry, context)))
     .scale(ListDissolve.scale(this.isSchemeRowDissolving(entry, context)))
     .blur(ListDissolve.blur(this.isSchemeRowDissolving(entry, context)))
-    .id(context === 'schemes' && entry.customSchemeId ? this.schemeRowElementId(entry.customSchemeId) : '')
+    .id(this.schemeRowIdFor(entry.customSchemeId, context))
   }
 
   schemeRowElementId(schemeId: string): string {
     return `theme_scheme_row_${encodeURIComponent(schemeId)}`;
   }
 
-  /** 只有“我的方案”列表里的那一行消散，其他列表里同一方案的预览不动。 */
+  /**
+   * 方案行的组件 ID（删除时按它找位置放粒子）。全部页盖在“我的”页上面时两处都有同一套方案，
+   * ID 只给看得见的那一处：全部页开着给全部页的行，否则给“我的”页的行。
+   */
+  schemeRowIdFor(schemeId: string, context: string): string {
+    if (!schemeId || !this.isSchemeRowContext(context)) return '';
+    return (context === 'schemes') === !this.schemeListOpen ? this.schemeRowElementId(schemeId) : '';
+  }
+
+  isSchemeRowContext(context: string): boolean {
+    return context === 'schemes' || context === 'scheme-list' || context === 'scheme-organize';
+  }
+
+  /** 只有“我的方案”里的那一行消散（“我的”页或全部页），其他列表里同一方案的预览不动。 */
   isSchemeRowDissolving(entry: ThemeListEntry, context: string): boolean {
-    return context === 'schemes' && !!entry.customSchemeId && this.dissolvingSchemeIds.length > 0 &&
+    return this.isSchemeRowContext(context) && !!entry.customSchemeId && this.dissolvingSchemeIds.length > 0 &&
       this.dissolvingSchemeIds.indexOf(entry.customSchemeId) >= 0;
   }
 
@@ -1401,6 +1489,15 @@ struct ThemeSettingsPage {
 
   themeRowSwipeActions(entry: ThemeListEntry): HdsSwipeActionOptions {
     const options: HdsSwipeActionOptions = { icons: [] };
+    if (entry.customSchemeId) {
+      const pinned = this.schemePinned(entry.customSchemeId);
+      options.icons?.push({ icon: new SymbolGlyphModifier($r('sys.symbol.pin')),
+        backgroundColor: SCHEME_PIN_COLOR,
+        iconOptions: { accessibilityText: `${pinned ? '取消置顶' : '置顶'}「${entry.theme.name}」` },
+        onAction: () => {
+          this.setSchemesPinned([entry.customSchemeId], !pinned);
+        } });
+    }
     if (this.themeRowCanApply(entry)) {
       options.icons?.push({ icon: new SymbolGlyphModifier($r('sys.symbol.checkmark')),
         backgroundColor: this.accentColor(), iconOptions: { accessibilityText: `应用「${entry.theme.name}」` },
@@ -1422,6 +1519,12 @@ struct ThemeSettingsPage {
   @Builder
   themeRowFallbackSwipeActions(entry: ThemeListEntry) {
     Row() {
+      if (entry.customSchemeId) {
+        this.swipeButton($r('sys.symbol.pin'), this.schemePinned(entry.customSchemeId) ? '取消置顶' : '置顶',
+          SCHEME_PIN_COLOR, () => {
+            this.setSchemesPinned([entry.customSchemeId], !this.schemePinned(entry.customSchemeId));
+          })
+      }
       if (this.themeRowCanApply(entry)) {
         this.swipeButton($r('sys.symbol.checkmark'), '应用', this.accentColor(), () => {
           this.selectTheme(entry.theme.id, entry.customSchemeId);
@@ -1630,6 +1733,478 @@ struct ThemeSettingsPage {
     .transition(TransitionEffect.translate({ x: 48 })
       .combine(TransitionEffect.opacity(0))
       .animation({ duration: 240, curve: Curve.Friction }))
+  }
+
+  /**
+   * “我的方案”全部页：顶栏、搜索（方案多时）、排序与筛选，下面分“置顶 / 其他”两段。
+   * 平时行可左滑、长按（同“我的”页）；整理模式换成可多选、可长按拖动的列表，底部是批量操作。
+   */
+  @Builder
+  schemeListOverlay() {
+    Stack({ alignContent: Alignment.Bottom }) {
+      Column() {
+        this.schemeListTopBar()
+        if (this.customSchemes.length >= SCHEME_SEARCH_MIN) {
+          this.schemeSearchField()
+        }
+        this.schemeListControls()
+        if (this.schemeOrganizing) {
+          this.schemeOrganizeList()
+        } else {
+          this.schemeBrowseList()
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ top: this.statusBarHeight })
+      if (this.schemeOrganizing) {
+        this.schemeOrganizeBar()
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.pageColor())
+    .transition(TransitionEffect.translate({ x: 48 })
+      .combine(TransitionEffect.opacity(0))
+      .animation({ duration: 240, curve: Curve.Friction }))
+  }
+
+  @Builder
+  schemeListTopBar() {
+    Row({ space: AppSpacing.SM }) {
+      // 顶栏两侧的按钮都用沉浸光感材质，和返回按钮、详情页“更多”一致。
+      if (this.schemeOrganizing) {
+        ImmersiveHeaderAction({ label: '完成', onTap: () => this.stopSchemeOrganize() })
+        Text(this.schemeSelected.length > 0 ? `已选 ${this.schemeSelected.length} 项` : '选择方案')
+          .fontSize(AppFontSize.SUBTITLE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.primaryTextColor())
+          .textAlign(TextAlign.Center)
+          .layoutWeight(1)
+        ImmersiveHeaderAction({
+          label: this.schemeSelected.length > 0 &&
+            this.schemeSelected.length === this.schemeOrderPinned.length + this.schemeOrderRest.length ? '全不选' : '全选',
+          tint: this.accentColor(),
+          onTap: () => this.toggleSelectAllSchemes()
+        })
+      } else {
+        this.immersiveBack(() => this.closeSchemeList())
+        Text('我的方案')
+          .fontSize(AppFontSize.TITLE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.primaryTextColor())
+          .layoutWeight(1)
+        Text(`${this.customSchemes.length}/${this.customSchemeLimit}`)
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+        ImmersiveHeaderAction({ label: '整理', onTap: () => this.startSchemeOrganize() })
+      }
+    }
+    .width('100%')
+    .height(56)
+    .padding({ left: this.schemeOrganizing ? AppSpacing.LG : 0, right: AppSpacing.LG })
+  }
+
+  @Builder
+  schemeSearchField() {
+    Row({ space: AppSpacing.SM }) {
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(16)
+        .fontColor([this.subTextColor()])
+      TextInput({ placeholder: '搜索方案名称或作者', text: this.schemeQuery })
+        .layoutWeight(1)
+        .height(40)
+        .padding(0)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.primaryTextColor())
+        .placeholderColor(this.subTextColor())
+        .backgroundColor(Color.Transparent)
+        .enterKeyType(EnterKeyType.Search)
+        .onChange((value: string) => {
+          this.schemeQuery = value;
+          this.syncSchemeOrganizeOrder();
+        })
+      if (this.schemeQuery) {
+        SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+          .fontSize(16)
+          .fontColor([this.subTextColor()])
+          .accessibilityText('清空搜索')
+          .onClick(() => {
+            this.schemeQuery = '';
+            this.syncSchemeOrganizeOrder();
+          })
+      }
+    }
+    .height(40)
+    .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: AppSpacing.SM })
+    .borderRadius(20)
+    .backgroundColor(ThemeRuntime.inputColor(this.appDarkMode))
+  }
+
+  @Builder
+  schemeListControls() {
+    Row({ space: AppSpacing.SM }) {
+      Row({ space: AppSpacing.XXS }) {
+        SymbolGlyph($r('sys.symbol.sort'))
+          .fontSize(16)
+          .fontColor([this.primaryTextColor()])
+        Text(this.schemeSortLabel(this.schemeSort))
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor())
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(12)
+          .fontColor([this.subTextColor()])
+      }
+      .height(32)
+      .padding({ right: AppSpacing.XS })
+      .accessibilityGroup(true)
+      .accessibilityText(`排序：${this.schemeSortLabel(this.schemeSort)}`)
+      .accessibilityRole(AccessibilityRoleType.BUTTON)
+      .onClick(() => {
+        this.schemeSortMenuOpen = !this.schemeSortMenuOpen;
+      })
+      .bindPopup(this.schemeSortMenuOpen, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+        (): void => {
+          this.schemeSortMenu()
+        }, Placement.BottomLeft, this.appDarkMode, this.accentColor(), () => {
+          this.schemeSortMenuOpen = false;
+        }))
+      Blank()
+      ForEach(SCHEME_FILTERS, (filter: string) => {
+        Text(`${this.schemeFilterLabel(filter)} ${this.schemeFilterCount(filter)}`)
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.schemeFilter === filter ? ThemeRuntime.onAccentColor(this.accentColor()) :
+            this.primaryTextColor())
+          .backgroundColor(this.schemeFilter === filter ? this.accentColor() :
+            ThemeRuntime.inputColor(this.appDarkMode))
+          .height(30)
+          .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+          .borderRadius(15)
+          .accessibilityRole(AccessibilityRoleType.BUTTON)
+          .accessibilitySelected(this.schemeFilter === filter)
+          .onClick(() => this.setSchemeFilter(filter))
+      }, (filter: string) => `scheme_filter_${filter}_${this.schemeFilter === filter}_${this.schemeFilterCount(filter)}`)
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG, bottom: AppSpacing.SM })
+  }
+
+  schemeFilterCount(filter: string): number {
+    return this.customSchemes.filter((scheme: CustomThemeScheme): boolean =>
+      this.schemeMatchesFilter(scheme, filter)).length;
+  }
+
+  /** 全部页当前筛选、搜索下置顶段或其他段的套数（只数不建条目，便宜）。 */
+  schemeListCount(pinned: boolean): number {
+    const query = this.schemeQuery.trim().toLowerCase();
+    return this.customSchemes.filter((scheme: CustomThemeScheme): boolean => scheme.pinned === pinned &&
+      this.schemeMatchesFilter(scheme, this.schemeFilter) &&
+      (!query || scheme.name.toLowerCase().includes(query) || scheme.author.toLowerCase().includes(query))).length;
+  }
+
+  @Builder
+  schemeSortMenu() {
+    Column() {
+      PopupMenuHeader('排序方式', this.subTextColor())
+      ForEach(SCHEME_SORTS, (sort: string) => {
+        Row({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.checkmark'))
+            .fontSize(18)
+            .width(22)
+            .fontColor([this.accentColor()])
+            .opacity(this.schemeSort === sort ? 1 : 0)
+          Text(this.schemeSortLabel(sort))
+            .fontSize(AppFontSize.BODY_LARGE)
+            .fontColor(this.schemeSort === sort ? this.accentColor() : this.primaryTextColor())
+            .layoutWeight(1)
+          if (sort === 'manual') {
+            Text('可拖动')
+              .fontSize(AppFontSize.MICRO)
+              .fontColor(this.subTextColor())
+          }
+        }
+        .width('100%')
+        .height(44)
+        .padding({ left: 12, right: 12 })
+        .borderRadius(ImmersiveMaterialRuntime.POPUP_MENU_RADIUS - ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+        .stateStyles({
+          normal: {
+            .backgroundColor(Color.Transparent)
+          },
+          pressed: {
+            .backgroundColor('#1A808080')
+          }
+        })
+        .accessibilityRole(AccessibilityRoleType.BUTTON)
+        .accessibilitySelected(this.schemeSort === sort)
+        .onClick(() => this.setSchemeSort(sort))
+      }, (sort: string) => `scheme_sort_${sort}_${this.schemeSort === sort}`)
+    }
+    .width(176)
+    .padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+
+  @Builder
+  schemeSectionLabel(label: string, count: number, pinned: boolean) {
+    Row({ space: AppSpacing.XS }) {
+      if (pinned) {
+        SymbolGlyph($r('sys.symbol.pin'))
+          .fontSize(12)
+          .fontColor([SCHEME_PIN_COLOR])
+      }
+      Text(`${label} · ${count}`)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XXS, top: AppSpacing.MD, bottom: AppSpacing.SM })
+  }
+
+  @Builder
+  schemeEmptyHint() {
+    Text(this.schemeQuery.trim() ? `没有找到与“${this.schemeQuery.trim()}”相关的方案` : '这一类下还没有方案')
+      .fontSize(AppFontSize.BODY)
+      .fontColor(this.subTextColor())
+      .width('100%')
+      .textAlign(TextAlign.Center)
+      .padding({ top: 64, bottom: 64 })
+  }
+
+  @Builder
+  schemeBrowseList() {
+    Scroll() {
+      Column() {
+        if (this.schemeListCount(true) + this.schemeListCount(false) === 0) {
+          this.schemeEmptyHint()
+        }
+        if (this.schemeListCount(true) > 0) {
+          this.schemeSectionLabel('置顶', this.schemeListCount(true), true)
+          List() {
+            ForEach(this.schemeListEntries(true), (entry: ThemeListEntry, index: number) => {
+              this.swipeThemeItem(entry, 'scheme-list', '我的方案', index > 0)
+            }, (entry: ThemeListEntry) => `scheme_list_pin_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
+          }
+          .themeCardList(this.cardColor())
+        }
+        if (this.schemeListCount(false) > 0) {
+          this.schemeSectionLabel(this.schemeListCount(true) > 0 ? '其他方案' : '全部方案',
+            this.schemeListCount(false), false)
+          List() {
+            ForEach(this.schemeListEntries(false), (entry: ThemeListEntry, index: number) => {
+              this.swipeThemeItem(entry, 'scheme-list', '我的方案', index > 0)
+            }, (entry: ThemeListEntry) => `scheme_list_rest_${this.themeEntryKey(entry)}_${this.themeRowState(entry)}`)
+          }
+          .themeCardList(this.cardColor())
+        }
+        Text('向左滑可置顶、应用或删除；长按还可编辑、复制、重命名或分享')
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(this.subTextColor())
+          .width('100%')
+          .padding({ left: AppSpacing.XXS, top: AppSpacing.SM })
+      }
+      .width('100%')
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG,
+        bottom: Math.max(AppSpacing.XXL, this.navBarHeight + AppSpacing.LG) })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .align(Alignment.TopStart)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
+  schemeEntryById(schemeId: string): ThemeListEntry {
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, schemeId);
+    return scheme ? new ThemeListEntry(this.customTheme(scheme), scheme.id) :
+      new ThemeListEntry(BuiltinThemeRegistry.findById(ThemeIds.PLAIN_DEFAULT), schemeId);
+  }
+
+  schemeOrganizeKey(prefix: string, schemeId: string): string {
+    const entry = this.schemeEntryById(schemeId);
+    return `${prefix}_${schemeId}_${this.schemeSelected.indexOf(schemeId) >= 0}_${this.schemeDragEnabled()}_` +
+      `${this.themeRowState(entry)}_${entry.theme.name}`;
+  }
+
+  /**
+   * 整理模式：每套方案一张独立小卡片，点按选中；能拖动时长按卡片抬起，上下拖动换位置（List 挤压让位、
+   * 边缘自动滚动），松手写回。置顶与其他两段各自排，不能互相拖过去。
+   */
+  @Builder
+  schemeOrganizeList() {
+    List({ space: AppSpacing.SM }) {
+      if (this.schemeOrderPinned.length + this.schemeOrderRest.length === 0) {
+        ListItem() {
+          this.schemeEmptyHint()
+        }
+      }
+      if (this.schemeOrderPinned.length > 0) {
+        ListItem() {
+          this.schemeSectionLabel('置顶', this.schemeOrderPinned.length, true)
+        }
+        ForEach(this.schemeOrderPinned, (schemeId: string) => {
+          ListItem() {
+            this.schemeOrganizeRow(this.schemeEntryById(schemeId))
+          }
+        }, (schemeId: string) => this.schemeOrganizeKey('scheme_org_pin', schemeId))
+          .onMove(this.schemeDragEnabled() ?
+            (from: number, to: number) => this.moveSchemeDuringDrag(true, from, to) : undefined, {
+            onDrop: (_index: number) => {
+              this.commitSchemeOrder();
+            }
+          })
+      }
+      if (this.schemeOrderRest.length > 0) {
+        ListItem() {
+          this.schemeSectionLabel(this.schemeOrderPinned.length > 0 ? '其他方案' : '全部方案',
+            this.schemeOrderRest.length, false)
+        }
+        ForEach(this.schemeOrderRest, (schemeId: string) => {
+          ListItem() {
+            this.schemeOrganizeRow(this.schemeEntryById(schemeId))
+          }
+        }, (schemeId: string) => this.schemeOrganizeKey('scheme_org_rest', schemeId))
+          .onMove(this.schemeDragEnabled() ?
+            (from: number, to: number) => this.moveSchemeDuringDrag(false, from, to) : undefined, {
+            onDrop: (_index: number) => {
+              this.commitSchemeOrder();
+            }
+          })
+      }
+      ListItem() {
+        Column() {
+          Text(!this.schemeDragEnabled() ? '筛选或搜索时不能拖动排序' : this.schemeSort === 'manual' ?
+            '长按方案上下拖动可调整顺序' : '长按方案上下拖动可调整顺序，松手后改为“手动排序”')
+            .fontSize(AppFontSize.MICRO)
+            .fontColor(this.subTextColor())
+            .width('100%')
+            .padding({ left: AppSpacing.XXS })
+          Row()
+            .height(this.navBarHeight + 96)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+
+  @Builder
+  schemeOrganizeRow(entry: ThemeListEntry) {
+    Row({ space: AppSpacing.MD }) {
+      Stack() {
+        if (this.schemeSelected.indexOf(entry.customSchemeId) >= 0) {
+          SymbolGlyph($r('sys.symbol.checkmark'))
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor([ThemeRuntime.onAccentColor(this.accentColor())])
+        }
+      }
+      .width(22)
+      .height(22)
+      .borderRadius(11)
+      .border({ width: this.schemeSelected.indexOf(entry.customSchemeId) >= 0 ? 0 : 1.5, color: this.subTextColor() })
+      .backgroundColor(this.schemeSelected.indexOf(entry.customSchemeId) >= 0 ? this.accentColor() : Color.Transparent)
+      Stack() {
+        this.swatchArt(entry)
+      }
+      .width(ROW_THUMB_WIDTH)
+      .height(ROW_THUMB_HEIGHT)
+      .borderRadius(6)
+      .clip(true)
+      Column({ space: 2 }) {
+        Text(entry.theme.name)
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontWeight(FontWeight.Medium)
+          .fontFamily(entry.theme.typography.appFontFamily)
+          .fontColor(this.primaryTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.themeRowSubtitle(entry))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      if (this.schemeIsActive(entry.customSchemeId)) {
+        Text('使用中')
+          .fontSize(AppFontSize.CAPTION)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.accentColor())
+      }
+      if (this.schemeDragEnabled()) {
+        SymbolGlyph($r('sys.symbol.line_3_horizontal'))
+          .fontSize(20)
+          .fontColor([this.subTextColor()])
+      }
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.MD, right: AppSpacing.LG, top: AppSpacing.SM, bottom: AppSpacing.SM })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .backgroundColor(this.cardColor())
+    .opacity(ListDissolve.opacity(this.isSchemeRowDissolving(entry, 'scheme-organize')))
+    .scale(ListDissolve.scale(this.isSchemeRowDissolving(entry, 'scheme-organize')))
+    .blur(ListDissolve.blur(this.isSchemeRowDissolving(entry, 'scheme-organize')))
+    .id(this.schemeRowIdFor(entry.customSchemeId, 'scheme-organize'))
+    .accessibilityGroup(true)
+    .accessibilityText(`${entry.theme.name}，${this.schemeSelected.indexOf(entry.customSchemeId) >= 0 ? '已选中' : '未选中'}`)
+    .onClick(() => this.toggleSchemeSelected(entry.customSchemeId))
+  }
+
+  @Builder
+  schemeOrganizeBar() {
+    Column() {
+      Divider()
+        .strokeWidth(0.5)
+        .color(ThemeRuntime.dividerColor(this.appDarkMode))
+      Row() {
+        this.schemeBarAction($r('sys.symbol.pin'), this.selectedSchemesAllPinned() ? '取消置顶' : '置顶',
+          this.schemeSelected.length > 0, this.primaryTextColor(), () => {
+            this.batchPinSelectedSchemes();
+          })
+        this.schemeBarAction($r('sys.symbol.share'), '分享', this.schemeSelected.length === 1,
+          this.primaryTextColor(), () => {
+            this.requestThemeExport(this.schemeSelected[0]);
+          })
+        this.schemeBarAction($r('sys.symbol.trash'), '删除', this.schemeSelected.length > 0,
+          ThemeRuntime.dangerColor(this.appDarkMode), () => {
+            this.requestDeleteSelectedSchemes();
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceAround)
+      .padding({ top: AppSpacing.SM, bottom: Math.max(AppSpacing.SM, this.navBarHeight) + AppSpacing.XS })
+    }
+    .width('100%')
+    .backgroundColor(this.cardColor())
+    .transition(TransitionEffect.translate({ y: 96 }).animation({ duration: 220, curve: Curve.Friction }))
+  }
+
+  @Builder
+  schemeBarAction(icon: Resource, label: string, enabled: boolean, color: string, action: () => void) {
+    Column({ space: AppSpacing.XXS }) {
+      SymbolGlyph(icon)
+        .fontSize(22)
+        .fontColor([color])
+      Text(label)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(color)
+    }
+    .width(80)
+    .padding({ top: AppSpacing.XS, bottom: AppSpacing.XS })
+    .opacity(enabled ? 1 : 0.35)
+    .enabled(enabled)
+    .accessibilityGroup(true)
+    .accessibilityText(label)
+    .accessibilityRole(AccessibilityRoleType.BUTTON)
+    .onClick(action)
   }
 
   /** 竖向详情：同一列表里左右滑动切换，每页整页用这套主题（深浅色可单独切换预览）的配色。 */
@@ -2192,6 +2767,7 @@ struct ThemeSettingsPage {
       const schemes = await CustomThemeSchemeStore.load(getContext(this), settings);
       if (serial === this.customSchemeRefreshSerial) {
         this.customSchemes = schemes;
+        this.syncSchemeOrganizeOrder();
       }
       const follows = await ReaderSettingsStore.typographyFollowsTheme(getContext(this));
       const summaries = new Map<string, string>();
@@ -2293,7 +2869,9 @@ struct ThemeSettingsPage {
       this.appThemeId = settings.themeId;
       this.themeBookCoverEnabled = settings.themeBookCoverEnabled;
       if (themeId !== ThemeIds.CUSTOM) {
-        this.recentThemeIds = await ThemeRecentStore.record(getContext(this), themeId);
+        await this.recordRecentUse(themeId);
+      } else if (customScheme) {
+        await this.recordRecentUse(ThemeRecentStore.schemeKey(customScheme.id));
       }
       const readerSettings = await ReaderSettingsStore.switchThemeProfile(getContext(this), previousProfileId,
         ReaderSettingsStore.profileIdFor(settings.themeId, customScheme ? customScheme.id : ''));
@@ -2790,12 +3368,13 @@ struct ThemeSettingsPage {
     return entries;
   }
 
+  /** 全部方案按当前排序（置顶在前），“我的”页、详情左右切换都用这个顺序。 */
   schemeEntries(): ThemeListEntry[] {
-    const entries: ThemeListEntry[] = [];
-    for (const scheme of this.customSchemes) {
-      entries.push(new ThemeListEntry(this.customTheme(scheme), scheme.id));
-    }
-    return entries;
+    return this.schemeEntriesOf(this.sortedSchemes(false));
+  }
+
+  schemePreviewEntries(): ThemeListEntry[] {
+    return this.schemeEntries().slice(0, SCHEME_PREVIEW_COUNT);
   }
 
   entrySelectKey(entry: ThemeListEntry): string {
@@ -2804,6 +3383,269 @@ struct ThemeSettingsPage {
 
   async loadRecentThemes(): Promise<void> {
     this.recentThemeIds = await ThemeRecentStore.load(getContext(this));
+    this.recentUseTimes = await ThemeRecentStore.loadTimes(getContext(this));
+    this.recentUseRevision++;
+    const sort = await ThemeRecentStore.loadSchemeSort(getContext(this));
+    if (SCHEME_SORTS.indexOf(sort) >= 0) this.schemeSort = sort;
+  }
+
+  async recordRecentUse(key: string): Promise<void> {
+    this.recentThemeIds = await ThemeRecentStore.record(getContext(this), key);
+    this.recentUseTimes = await ThemeRecentStore.loadTimes(getContext(this));
+    this.recentUseRevision++;
+  }
+
+  schemeSortLabel(sort: string): string {
+    if (sort === 'modified') return '最近修改';
+    if (sort === 'created') return '创建时间';
+    if (sort === 'name') return '名称';
+    if (sort === 'manual') return '手动排序';
+    return '最近使用';
+  }
+
+  schemeFilterLabel(filter: string): string {
+    if (filter === 'self') return '自建';
+    if (filter === 'import') return '导入';
+    return '全部';
+  }
+
+  schemeMatchesFilter(scheme: CustomThemeScheme, filter: string): boolean {
+    if (filter === 'self') return !scheme.imported;
+    if (filter === 'import') return scheme.imported;
+    return true;
+  }
+
+  schemeIsActive(schemeId: string): boolean {
+    return this.appThemeId === ThemeIds.CUSTOM && this.activeCustomSchemeId === schemeId;
+  }
+
+  schemeUsedAt(schemeId: string): number {
+    return this.recentUseRevision >= 0 ? (this.recentUseTimes.get(ThemeRecentStore.schemeKey(schemeId)) || 0) : 0;
+  }
+
+  /**
+   * 按当前排序排好的方案，置顶的在前。filtered 为 true 时再套上全部页的筛选和搜索。
+   * 最近使用：正在用的最前，其余按应用时间，没用过的按创建时间新的在前；手动就是存储里的顺序。
+   */
+  sortedSchemes(filtered: boolean): CustomThemeScheme[] {
+    const query = filtered ? this.schemeQuery.trim().toLowerCase() : '';
+    const list = this.customSchemes.filter((scheme: CustomThemeScheme): boolean =>
+      (!filtered || this.schemeMatchesFilter(scheme, this.schemeFilter)) &&
+        (!query || scheme.name.toLowerCase().includes(query) || scheme.author.toLowerCase().includes(query)));
+    const position = new Map<string, number>();
+    this.customSchemes.forEach((scheme: CustomThemeScheme, index: number) => position.set(scheme.id, index));
+    const sort = this.schemeSort;
+    list.sort((a: CustomThemeScheme, b: CustomThemeScheme): number => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      if (sort === 'recent') {
+        const activeA = this.schemeIsActive(a.id) ? 1 : 0;
+        const activeB = this.schemeIsActive(b.id) ? 1 : 0;
+        if (activeA !== activeB) return activeB - activeA;
+        const used = this.schemeUsedAt(b.id) - this.schemeUsedAt(a.id);
+        if (used !== 0) return used;
+        return b.createdAt - a.createdAt;
+      }
+      if (sort === 'modified') return b.updatedAt - a.updatedAt;
+      if (sort === 'created') return b.createdAt - a.createdAt;
+      if (sort === 'name') return a.name.localeCompare(b.name, 'zh');
+      return (position.get(a.id) || 0) - (position.get(b.id) || 0);
+    });
+    return list;
+  }
+
+  schemeEntriesOf(schemes: CustomThemeScheme[]): ThemeListEntry[] {
+    return schemes.map((scheme: CustomThemeScheme): ThemeListEntry =>
+      new ThemeListEntry(this.customTheme(scheme), scheme.id));
+  }
+
+  /** 全部页筛选后的方案，分成置顶和其他两段。 */
+  schemeListEntries(pinned: boolean): ThemeListEntry[] {
+    return this.schemeEntriesOf(this.sortedSchemes(true)
+      .filter((scheme: CustomThemeScheme): boolean => scheme.pinned === pinned));
+  }
+
+  schemePinned(schemeId: string): boolean {
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, schemeId);
+    return !!scheme && scheme.pinned;
+  }
+
+  /** 行第二行跟着排序带一句时间，看得出为什么排在这；名称和手动排序不带。 */
+  schemeSortMeta(schemeId: string): string {
+    const scheme = CustomThemeSchemeStore.find(this.customSchemes, schemeId);
+    if (!scheme) return '';
+    if (this.schemeSort === 'recent') {
+      if (this.schemeIsActive(schemeId)) return '';
+      const usedAt = this.schemeUsedAt(schemeId);
+      return usedAt > 0 ? `${this.relativeTime(usedAt)}用过` : '还没用过';
+    }
+    if (this.schemeSort === 'modified') {
+      return scheme.updatedAt > 0 ? `${this.relativeTime(scheme.updatedAt)}修改` : '';
+    }
+    if (this.schemeSort === 'created') {
+      return scheme.createdAt > 0 ? `${this.calendarDate(scheme.createdAt)}创建` : '';
+    }
+    return '';
+  }
+
+  relativeTime(at: number): string {
+    const minutes = Math.floor((Date.now() - at) / 60000);
+    if (minutes < 1) return '刚刚';
+    if (minutes < 60) return `${minutes} 分钟前`;
+    if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} 小时前`;
+    const days = Math.floor(minutes / (24 * 60));
+    if (days === 1) return '昨天';
+    if (days < 7) return `${days} 天前`;
+    return this.calendarDate(at);
+  }
+
+  calendarDate(at: number): string {
+    const date = new Date(at);
+    const sameYear = date.getFullYear() === new Date().getFullYear();
+    return `${sameYear ? '' : `${date.getFullYear()}年`}${date.getMonth() + 1}月${date.getDate()}日`;
+  }
+
+  setSchemeSort(sort: string): void {
+    this.schemeSortMenuOpen = false;
+    if (this.schemeSort === sort) return;
+    this.schemeSort = sort;
+    this.syncSchemeOrganizeOrder();
+    ThemeRecentStore.saveSchemeSort(getContext(this), sort);
+  }
+
+  setSchemeFilter(filter: string): void {
+    this.schemeFilter = filter;
+    this.syncSchemeOrganizeOrder();
+  }
+
+  openSchemeList(): void {
+    this.schemeFilter = 'all';
+    this.schemeQuery = '';
+    this.schemeOrganizing = false;
+    this.schemeSelected = [];
+    this.schemeListOpen = true;
+  }
+
+  closeSchemeList(): void {
+    this.schemeListOpen = false;
+    this.schemeOrganizing = false;
+    this.schemeSortMenuOpen = false;
+    this.schemeSelected = [];
+  }
+
+  startSchemeOrganize(): void {
+    this.schemeSelected = [];
+    this.schemeOrganizing = true;
+    this.syncSchemeOrganizeOrder();
+  }
+
+  stopSchemeOrganize(): void {
+    this.schemeOrganizing = false;
+    this.schemeSelected = [];
+  }
+
+  /** 整理模式里两段的顺序跟着当前排序、筛选和方案列表重建；选中的项里删掉已经不在的。 */
+  syncSchemeOrganizeOrder(): void {
+    const sorted = this.sortedSchemes(true);
+    this.schemeOrderPinned = sorted.filter((item: CustomThemeScheme): boolean => item.pinned)
+      .map((item: CustomThemeScheme): string => item.id);
+    this.schemeOrderRest = sorted.filter((item: CustomThemeScheme): boolean => !item.pinned)
+      .map((item: CustomThemeScheme): string => item.id);
+    const visible = [...this.schemeOrderPinned, ...this.schemeOrderRest];
+    if (this.schemeSelected.some((id: string): boolean => visible.indexOf(id) < 0)) {
+      this.schemeSelected = this.schemeSelected.filter((id: string): boolean => visible.indexOf(id) >= 0);
+    }
+  }
+
+  /** 筛选或搜索时只看到一部分方案，拖动会把看不到的挤乱，所以只在看全部时允许。 */
+  schemeDragEnabled(): boolean {
+    return this.schemeOrganizing && this.schemeFilter === 'all' && !this.schemeQuery.trim();
+  }
+
+  toggleSchemeSelected(schemeId: string): void {
+    if (this.schemeSelected.indexOf(schemeId) >= 0) {
+      this.schemeSelected = this.schemeSelected.filter((id: string): boolean => id !== schemeId);
+    } else {
+      this.schemeSelected = [...this.schemeSelected, schemeId];
+    }
+  }
+
+  toggleSelectAllSchemes(): void {
+    const visible = [...this.schemeOrderPinned, ...this.schemeOrderRest];
+    this.schemeSelected = this.schemeSelected.length === visible.length ? [] : visible;
+  }
+
+  selectedSchemesAllPinned(): boolean {
+    return this.schemeSelected.length > 0 &&
+      this.schemeSelected.every((id: string): boolean => this.schemePinned(id));
+  }
+
+  moveSchemeDuringDrag(pinned: boolean, from: number, to: number): void {
+    const ids = pinned ? [...this.schemeOrderPinned] : [...this.schemeOrderRest];
+    if (from < 0 || from >= ids.length || to < 0 || to >= ids.length) return;
+    const moved = ids.splice(from, 1);
+    ids.splice(to, 0, moved[0]);
+    if (pinned) {
+      this.schemeOrderPinned = ids;
+    } else {
+      this.schemeOrderRest = ids;
+    }
+  }
+
+  /** 松手后写回：拖动时看到的就是全部方案，顺序整个存下，排序换成“手动排序”。 */
+  async commitSchemeOrder(): Promise<void> {
+    const ordered = [...this.schemeOrderPinned, ...this.schemeOrderRest];
+    const before = this.sortedSchemes(true).map((item: CustomThemeScheme): string => item.id);
+    if (ordered.join('\n') === before.join('\n')) return;
+    const switched = this.schemeSort !== 'manual';
+    this.schemeSort = 'manual';
+    ThemeRecentStore.saveSchemeSort(getContext(this), 'manual');
+    try {
+      const settings = await AppThemeSettingsStore.load(getContext(this));
+      await CustomThemeSchemeStore.reorder(getContext(this), settings, ordered);
+      await this.refreshCustomSchemes();
+      if (switched) HdsFeedback.showToast('已改为手动排序');
+    } catch (e) {
+      console.error('保存方案顺序失败:', e);
+      HdsFeedback.showToast('保存顺序失败，请稍后重试');
+      this.syncSchemeOrganizeOrder();
+    }
+  }
+
+  async setSchemesPinned(schemeIds: string[], pinned: boolean): Promise<void> {
+    if (schemeIds.length === 0) return;
+    try {
+      const settings = await AppThemeSettingsStore.load(getContext(this));
+      await CustomThemeSchemeStore.setPinned(getContext(this), settings, schemeIds, pinned);
+      await this.refreshCustomSchemes();
+      const one = schemeIds.length === 1 ? CustomThemeSchemeStore.find(this.customSchemes, schemeIds[0]) : null;
+      if (pinned) {
+        HdsFeedback.showToast(one ? `已置顶「${one.name}」` : `已置顶 ${schemeIds.length} 套方案`);
+      } else {
+        HdsFeedback.showToast(one ? `已取消置顶「${one.name}」` : `已取消置顶 ${schemeIds.length} 套方案`);
+      }
+    } catch (e) {
+      console.error('置顶方案失败:', e);
+      HdsFeedback.showToast('操作失败，请稍后重试');
+    }
+  }
+
+  async batchPinSelectedSchemes(): Promise<void> {
+    const ids = [...this.schemeSelected];
+    const pin = !this.selectedSchemesAllPinned();
+    this.schemeSelected = [];
+    await this.setSchemesPinned(ids, pin);
+  }
+
+  requestDeleteSelectedSchemes(): void {
+    const ids = [...this.schemeSelected];
+    if (ids.length === 0) return;
+    if (ids.length >= this.customSchemes.length) {
+      HdsFeedback.showToast('至少需要保留一套自定义主题');
+      return;
+    }
+    this.deleteSchemeIds = ids;
+    this.actionCustomSchemeId = '';
+    this.showDeleteCustomThemeDialog = true;
   }
 
   /** 已拥有主题：recent 按最近应用排（当前主题最前，没用过的保持原顺序），name 按名称。 */
@@ -2834,7 +3676,9 @@ struct ThemeSettingsPage {
       if (this.customSchemeInCloud(entry.customSchemeId)) return '素材在云端 · 应用或打开时下载';
       if (this.customSchemePackMissing(entry.customSchemeId)) return '主题包素材不在这台设备上';
       if (this.isCustomSchemePending(entry.theme, entry.customSchemeId)) return '有改动 · 待应用';
-      return this.schemeSourcesSummary(entry.customSchemeId);
+      const meta = this.schemeSortMeta(entry.customSchemeId);
+      const sources = this.schemeSourcesSummary(entry.customSchemeId);
+      return meta ? `${meta} · ${sources}` : sources;
     }
     return this.themeAccessLabel(entry.theme.id);
   }
@@ -2920,6 +3764,7 @@ struct ThemeSettingsPage {
     if (context === 'owned') return this.sortedOwnedEntries('recent');
     if (context === 'owned-list') return this.sortedOwnedEntries(this.ownedSort);
     if (context === 'schemes') return this.schemeEntries();
+    if (context === 'scheme-list') return this.schemeEntriesOf(this.sortedSchemes(true));
     const groups = this.storeGroups();
     if (context.startsWith('group:')) {
       const title = context.substring('group:'.length);
@@ -3231,6 +4076,13 @@ struct ThemeSettingsPage {
   @Builder
   customSchemeActionItems() {
     Column() {
+      this.contextActionItem($r('sys.symbol.pin'), this.schemePinned(this.actionCustomSchemeId) ? '取消置顶' : '置顶',
+        this.primaryTextColor(), () => {
+          const schemeId = this.actionCustomSchemeId;
+          const pin = !this.schemePinned(schemeId);
+          this.closeCustomThemeActions();
+          this.setSchemesPinned([schemeId], pin);
+        })
       this.contextActionItem($r('sys.symbol.paintpalette'), '编辑', this.primaryTextColor(), () => {
         const schemeId = this.actionCustomSchemeId;
         this.closeCustomThemeActions();
@@ -3337,7 +4189,10 @@ struct ThemeSettingsPage {
         .fontSize(AppFontSize.SUBTITLE)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
-      Text(`确定删除「${this.actionCustomScheme()?.name || '该方案'}」吗？此操作无法撤销。`)
+      Text(this.deleteSchemeIds.length > 1 ? `确定删除选中的 ${this.deleteSchemeIds.length} 套方案吗？此操作无法撤销。` :
+        `确定删除「${(this.deleteSchemeIds.length === 1 ?
+          CustomThemeSchemeStore.find(this.customSchemes, this.deleteSchemeIds[0]) :
+          this.actionCustomScheme())?.name || '该方案'}」吗？此操作无法撤销。`)
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .width('100%')
@@ -3652,6 +4507,7 @@ struct ThemeSettingsPage {
       HdsFeedback.showToast('至少需要保留一套自定义主题');
       return;
     }
+    this.deleteSchemeIds = [];
     this.actionCustomSchemeId = schemeId;
     this.showDeleteCustomThemeDialog = true;
   }
@@ -3659,59 +4515,72 @@ struct ThemeSettingsPage {
   closeDeleteCustomThemeDialog(): void {
     this.showDeleteCustomThemeDialog = false;
     this.actionCustomSchemeId = '';
+    this.deleteSchemeIds = [];
   }
 
   async confirmDeleteCustomTheme(): Promise<void> {
-    const schemeId = this.actionCustomSchemeId;
+    const schemeIds = this.deleteSchemeIds.length > 0 ? [...this.deleteSchemeIds] : [this.actionCustomSchemeId];
     this.showDeleteCustomThemeDialog = false;
-    await this.deleteCustomThemeScheme(schemeId);
+    this.deleteSchemeIds = [];
+    await this.deleteCustomThemeSchemes(schemeIds);
   }
 
-  async deleteCustomThemeScheme(schemeId: string): Promise<void> {
-    const scheme = CustomThemeSchemeStore.find(this.customSchemes, schemeId);
-    if (!scheme) return;
-    if (this.customSchemes.length <= 1) {
+  /** 删除一套或几套方案（全部页整理模式可多选）；至少留一套，正在用的先换回默认主题。 */
+  async deleteCustomThemeSchemes(requested: string[]): Promise<void> {
+    const schemeIds = requested.filter((id: string): boolean => !!CustomThemeSchemeStore.find(this.customSchemes, id));
+    if (schemeIds.length === 0) return;
+    if (this.customSchemes.length - schemeIds.length < 1) {
       HdsFeedback.showToast('至少需要保留一套自定义主题');
       return;
     }
+    const firstName = CustomThemeSchemeStore.find(this.customSchemes, schemeIds[0])?.name || '';
     try {
-      if (this.appThemeId === ThemeIds.CUSTOM && this.activeCustomSchemeId === schemeId) {
+      if (this.appThemeId === ThemeIds.CUSTOM && schemeIds.indexOf(this.activeCustomSchemeId) >= 0) {
         await this.selectTheme(ThemeIds.PLAIN_DEFAULT, '', false);
         if (this.appThemeId === ThemeIds.CUSTOM) {
           return;
         }
       }
-      // 从确认框里删除：等它退场后这一行消散，与删方案同时进行；播完在补位动画里拿掉，再重读方案。
-      const keys = [schemeId];
+      // 从确认框里删除：等它退场后这些行消散，与删方案同时进行；播完在补位动画里拿掉，再重读方案。
+      const keys = [...schemeIds];
       const fade = ListDissolve.fadeOut(this.getUIContext(), keys, (key: string) => {
         this.dissolvingSchemeIds = [...this.dissolvingSchemeIds, key];
       }, ListDissolve.particles('theme_settings_root', [this.accentColor(), this.primaryTextColor(), this.subTextColor()],
         (key: string): string => this.schemeRowElementId(key), (): DeleteParticleBurst[] => this.deleteParticleBursts,
         (bursts: DeleteParticleBurst[]): void => { this.deleteParticleBursts = bursts; }), ListDissolve.AFTER_DIALOG_MS);
       const settings = await AppThemeSettingsStore.load(getContext(this));
-      const deleted = await CustomThemeSchemeStore.delete(getContext(this), settings, schemeId);
+      const deletedIds: string[] = [];
+      for (const schemeId of schemeIds) {
+        if (await CustomThemeSchemeStore.delete(getContext(this), settings, schemeId)) deletedIds.push(schemeId);
+      }
       await fade;
-      if (!deleted) {
-        this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, keys);
+      if (deletedIds.length < keys.length) {
+        this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds,
+          keys.filter((id: string): boolean => deletedIds.indexOf(id) < 0));
+      }
+      if (deletedIds.length === 0) {
         HdsFeedback.showToast('删除失败，至少需要保留一套方案');
         return;
       }
       ListDissolve.commit(this.getUIContext(), () => {
-        this.customSchemes = this.customSchemes.filter((item: CustomThemeScheme) => item.id !== schemeId);
+        this.customSchemes = this.customSchemes.filter((item: CustomThemeScheme) => deletedIds.indexOf(item.id) < 0);
+        this.schemeSelected = this.schemeSelected.filter((id: string): boolean => deletedIds.indexOf(id) < 0);
+        this.syncSchemeOrganizeOrder();
       }, () => {
-        this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, keys);
+        this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, deletedIds);
       });
       this.actionCustomSchemeId = '';
-      if (this.detailOpen && this.detailKeys.indexOf(`scheme:${schemeId}`) >= 0) {
+      if (this.detailOpen && deletedIds.some((id: string): boolean => this.detailKeys.indexOf(`scheme:${id}`) >= 0)) {
         this.closeDetail();
       }
       await new Promise<void>((resolve: () => void) => { setTimeout(resolve, ListDissolve.CLOSE_MS); });
       await this.refreshCustomSchemes();
       await ThemePackageService.cleanupImportedFiles(getContext(this));
-      HdsFeedback.showToast(`已删除「${scheme.name}」`);
+      HdsFeedback.showToast(deletedIds.length === 1 && schemeIds.length === 1 ? `已删除「${firstName}」` :
+        `已删除 ${deletedIds.length} 套方案`);
     } catch (e) {
       console.error('删除自定义主题失败:', e);
-      this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, [schemeId]);
+      this.dissolvingSchemeIds = ListDissolve.without(this.dissolvingSchemeIds, schemeIds);
       HdsFeedback.showToast('删除失败，请稍后重试');
     }
   }
@@ -3752,12 +4621,15 @@ struct ThemeSettingsPage {
   }
 
   /** 行尾状态；也拼进列表键里，状态一变就重建这一行，侧滑跟着收起、按钮跟着变。 */
+  /** 行的状态键：拼进列表键里，状态一变（含方案置顶、排序带的时间）就重建这一行，侧滑跟着收起。 */
   themeRowState(entry: ThemeListEntry): string {
+    const scheme = entry.customSchemeId ?
+      `_${this.schemePinned(entry.customSchemeId) ? 'pin' : ''}_${this.schemeSortMeta(entry.customSchemeId)}` : '';
     if (this.applyingThemeId === (entry.customSchemeId || entry.theme.id) &&
-      !this.isSelected(entry.theme, entry.customSchemeId)) return 'applying';
+      !this.isSelected(entry.theme, entry.customSchemeId)) return `applying${scheme}`;
     if (!entry.customSchemeId && this.isTrialTheme(entry.theme.id)) return 'trial';
-    if (this.isSelected(entry.theme, entry.customSchemeId)) return 'selected';
-    return this.isCustomSchemePending(entry.theme, entry.customSchemeId) ? 'pending' : 'idle';
+    if (this.isSelected(entry.theme, entry.customSchemeId)) return `selected${scheme}`;
+    return `${this.isCustomSchemePending(entry.theme, entry.customSchemeId) ? 'pending' : 'idle'}${scheme}`;
   }
 
   isTrialTheme(themeId: string): boolean {
