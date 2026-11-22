@@ -614,16 +614,8 @@ export struct ReadingTicketCard {
   /** 车票：开读站到读完站，车次 = 第几本读完，票价位写时长，右下角装饰二维码。 */
   @Builder
   trainTicket() {
+    // 不能用 100% 高的子组件铺底纹：Stack 没有定高，放进列表会被撑到可视区那么高。斜纹画在内容层自己的背景上。
     Stack({ alignContent: Alignment.BottomEnd }) {
-      // 底纹：浅色斜纹。
-      Column()
-        .width('100%')
-        .height('100%')
-        .linearGradient({
-          angle: 45,
-          repeating: true,
-          colors: [['#2EFFFFFF', 0], ['#2EFFFFFF', 0.008], ['#00FFFFFF', 0.008], ['#00FFFFFF', 0.026]]
-        })
       Column() {
         Row() {
           Text(ReadingTicketRules.trainNumberText(this.ticket))
@@ -735,6 +727,11 @@ export struct ReadingTicketCard {
       }
       .width('100%')
       .padding({ left: this.u(16), right: this.u(16), top: this.u(12), bottom: this.u(12) })
+      .linearGradient({
+        angle: 45,
+        repeating: true,
+        colors: [['#2EFFFFFF', 0], ['#2EFFFFFF', 0.008], ['#00FFFFFF', 0.008], ['#00FFFFFF', 0.026]]
+      })
 
       Column() {
         this.circleStamp(this.u(56), this.u(13))
@@ -802,64 +799,146 @@ export struct ReadingTicketCard {
   }
 }
 
-/** 票的背面：短评、一条摘录、截至读完那天的 28 天阅读日历。高度跟正面一致。 */
+/** 背面各块的尺寸：先扣掉日历、页脚和留白，剩下的高度再分给短评和摘录。 */
+class TicketBackLayout {
+  height: number = 0;
+  padTop: number = 0;
+  padBottom: number = 0;
+  space: number = 0;
+  columns: number = 7;
+  textAreaHeight: number = 0;
+  reviewLines: number = 1;
+  quoteLines: number = 0;
+}
+
+/**
+ * 票的背面：短评、一条摘录、截至读完那天的 28 天阅读日历。高度始终跟正面一样，
+ * 短评、摘录长了按剩下的行数截断，不会把卡片撑长；横向的票（车票）日历排成两行 14 格。
+ */
 @Component
 export struct ReadingTicketBackFace {
   @Prop ticket: ReadingTicket = new ReadingTicket();
   @Prop back: ReadingTicketBack = new ReadingTicketBack();
   @Prop cardWidth: number = DESIGN_WIDTH;
+  /** 正面量到的高度；0 时按竖向票的常见比例。 */
   @Prop cardHeight: number = 0;
 
   private u(value: number): number {
     return value * this.cardWidth / DESIGN_WIDTH;
   }
 
-  private weeks(): number[][] {
+  private reviewText(): string {
+    return this.ticket.review.trim() || '还没写短评。在书籍详情的“标记”里写一句，背面就会出现。';
+  }
+
+  /** 按每行能放几个字粗估要几行；英文和数字按半个字算，换行符另起一行。 */
+  private estimateLines(text: string, fontSize: number, width: number): number {
+    const perLine = Math.max(1, Math.floor(width / fontSize));
+    let lines = 0;
+    text.split('\n').forEach((part: string): void => {
+      let units = 0;
+      for (let i = 0; i < part.length; i++) units += part.charCodeAt(i) < 128 ? 0.55 : 1;
+      lines += Math.max(1, Math.ceil(units / perLine));
+    });
+    return lines;
+  }
+
+  private layout(): TicketBackLayout {
+    const layout = new TicketBackLayout();
+    const height = this.cardHeight > 0 ? this.cardHeight : this.cardWidth * 1.45;
+    const landscape = height < this.cardWidth;
+    layout.height = height;
+    layout.columns = landscape ? 14 : 7;
+    layout.padTop = this.u(landscape ? 14 : 22);
+    layout.padBottom = this.u(landscape ? 12 : 18);
+    layout.space = this.u(landscape ? 8 : 12);
+    const innerWidth = this.cardWidth - this.u(40);
+    const gap = this.u(landscape ? 3 : 4);
+    const cell = (innerWidth - gap * (layout.columns - 1)) / layout.columns;
+    const rows = Math.ceil(28 / layout.columns);
+    const gridHeight = rows * cell + (rows - 1) * gap;
+    const headingHeight = this.u(16);
+    const footerHeight = this.u(16);
+    layout.textAreaHeight = Math.max(0, height - layout.padTop - layout.padBottom - headingHeight - gridHeight -
+      footerHeight - layout.space * 3);
+
+    const reviewLine = this.u(24);
+    const quoteLine = this.u(22);
+    const head = headingHeight + this.u(6);
+    const reviewNeed = this.estimateLines(this.reviewText(), this.u(14), innerWidth);
+    const reviewMax = Math.max(1, Math.floor((layout.textAreaHeight - head) / reviewLine));
+    layout.reviewLines = Math.min(reviewNeed, reviewMax);
+    if (this.back.quote) {
+      const quoteNeed = this.estimateLines(this.back.quote, this.u(13), innerWidth - this.u(13));
+      const quoteHead = this.u(10) + head;
+      // 摘录至少留两行；放不下就只显示短评。
+      const reviewRoom = Math.floor((layout.textAreaHeight - head - quoteHead - 2 * quoteLine) / reviewLine);
+      if (reviewRoom >= 1) {
+        layout.reviewLines = Math.min(reviewNeed, reviewRoom);
+        const quoteRoom = Math.floor((layout.textAreaHeight - head - layout.reviewLines * reviewLine - quoteHead) /
+          quoteLine);
+        layout.quoteLines = Math.max(0, Math.min(quoteNeed, quoteRoom));
+        if (layout.quoteLines < Math.min(2, quoteNeed)) layout.quoteLines = 0;
+      }
+    }
+    return layout;
+  }
+
+  private weeks(columns: number): number[][] {
     const cells = this.back.calendar.length > 0 ? this.back.calendar : new Array<number>(28).fill(0);
     const rows: number[][] = [];
-    for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
+    for (let i = 0; i < cells.length; i += columns) rows.push(cells.slice(i, i + columns));
     return rows;
   }
 
   build() {
-    Column({ space: this.u(12) }) {
-      this.heading('短评')
-      Text(this.ticket.review.trim() || '还没写短评。在书籍详情的“标记”里写一句，背面就会出现。')
-        .fontSize(this.u(14))
-        .lineHeight(this.u(24))
-        .fontColor(this.ticket.review.trim() ? BACK_TEXT : MOVIE_LABEL)
-        .maxLines(6)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-      if (this.back.quote) {
-        this.heading('摘录')
-        Text(this.back.quote)
-          .fontSize(this.u(13))
-          .lineHeight(this.u(22))
-          .fontColor('#4A4436')
-          .maxLines(5)
+    Column({ space: this.layout().space }) {
+      Column({ space: this.u(6) }) {
+        this.heading('短评')
+        Text(this.reviewText())
+          .fontSize(this.u(14))
+          .lineHeight(this.u(24))
+          .fontColor(this.ticket.review.trim() ? BACK_TEXT : MOVIE_LABEL)
+          .maxLines(this.layout().reviewLines)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
-          .padding({ left: this.u(10) })
-          .border({ width: { left: this.u(3) }, color: '#C9B48A' })
+        if (this.layout().quoteLines > 0) {
+          Column() {
+            this.heading('摘录')
+          }
+          .margin({ top: this.u(10) })
+          Text(this.back.quote)
+            .fontSize(this.u(13))
+            .lineHeight(this.u(22))
+            .fontColor('#4A4436')
+            .maxLines(this.layout().quoteLines)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .padding({ left: this.u(10) })
+            .border({ width: { left: this.u(3) }, color: '#C9B48A' })
+        }
       }
+      .width('100%')
+      .height(this.layout().textAreaHeight)
+      .alignItems(HorizontalAlign.Start)
+      .clip(true)
+
       this.heading(`阅读日历 · 截至 ${ReadingTicketRules.shortDate(this.back.calendarEndKey)}`)
-      Column({ space: this.u(4) }) {
-        ForEach(this.weeks(), (week: number[], row: number) => {
-          Row({ space: this.u(4) }) {
+      Column({ space: this.u(this.layout().columns > 7 ? 3 : 4) }) {
+        ForEach(this.weeks(this.layout().columns), (week: number[], row: number) => {
+          Row({ space: this.u(this.layout().columns > 7 ? 3 : 4) }) {
             ForEach(week, (level: number, col: number) => {
               Column()
                 .layoutWeight(1)
                 .aspectRatio(1)
-                .borderRadius(this.u(3))
+                .borderRadius(this.u(this.layout().columns > 7 ? 2 : 3))
                 .backgroundColor(HEAT_COLORS[Math.max(0, Math.min(4, level))])
             }, (level: number, col: number) => `${row}:${col}:${level}`)
           }
           .width('100%')
-        }, (week: number[], row: number) => `${row}:${week.join('')}`)
+        }, (week: number[], row: number) => `${week.length}:${row}:${week.join('')}`)
       }
       .width('100%')
-      Blank()
       Row() {
         Text(`划线 ${this.back.annotationCount} 条`)
           .fontSize(this.u(11))
@@ -871,13 +950,15 @@ export struct ReadingTicketBackFace {
           .fontFeature('"tnum" 1')
       }
       .width('100%')
+      .height(this.u(16))
     }
     .width(this.cardWidth)
-    .constraintSize({ minHeight: this.cardHeight })
-    .padding({ left: this.u(20), right: this.u(20), top: this.u(22), bottom: this.u(18) })
+    .height(this.layout().height)
+    .padding({ left: this.u(20), right: this.u(20), top: this.layout().padTop, bottom: this.layout().padBottom })
     .alignItems(HorizontalAlign.Start)
     .backgroundColor(BACK_PAPER)
     .borderRadius(this.u(6))
+    .clip(true)
     .shadow({ radius: this.u(18), color: '#29281E0F', offsetY: this.u(6) })
   }
 
@@ -888,5 +969,6 @@ export struct ReadingTicketBackFace {
       .fontWeight(FontWeight.Bold)
       .letterSpacing(this.u(2.5))
       .fontColor(MOVIE_LABEL)
+      .height(this.u(16))
   }
 }
