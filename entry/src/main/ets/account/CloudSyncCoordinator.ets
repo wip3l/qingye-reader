@@ -30,7 +30,7 @@ import { AppDatabase } from '../model/data/AppDatabase';
 import { BookAnnotation } from '../model/reader/BookAnnotation';
 import { BookMark, BookMarkRules } from '../model/book/BookMark';
 import { BookMarkService } from '../core/mark/BookMarkService';
-import { Book, BookGroup, BookInfoRule, BookListRule, BookSource, Bookmark, ContentRule, ExploreRule, ReadConfig, SearchRule, TocRule } from '@legado/sourceengine';
+import { Book, BookGroup, BookInfoRule, BookTypeSupport, BookListRule, BookSource, Bookmark, ContentRule, ExploreRule, ReadConfig, SearchRule, TocRule } from '@legado/sourceengine';
 import { ReaderSettingsStore } from '../utils/ReaderSettingsStore';
 import { jsonbSafeJson } from '../utils/JsonbSafeText';
 import { ReaderPreferencesSync, ReaderPreferencesSyncPayload } from './ReaderPreferencesSync';
@@ -70,6 +70,11 @@ class BookshelfSyncPayload {
   customIntro: string = '';
   charset: string = '';
   type: number = 0;
+  /**
+   * 视频（短剧）没有 type 位，只靠书籍变量里的 tab=video 认出来，而书籍变量整体不上云。
+   * 这里单独带上这一项；旧版本上传的记录没有这个字段，缺省时不动本机的书籍变量。
+   */
+  mediaTab?: string;
   groupName: string = '';
   isPinned: boolean = false;
   latestChapterTitle: string = '';
@@ -704,6 +709,7 @@ export class CloudSyncCoordinator {
       shelf.customIntro = book.customIntro;
       shelf.charset = book.charset;
       shelf.type = book.type;
+      if (BookTypeSupport.isVideo(book)) shelf.mediaTab = BookTypeSupport.CATEGORY_VIDEO;
       shelf.groupName = groupNames[String(book.group)] || '';
       shelf.isPinned = book.isPinned;
       shelf.latestChapterTitle = book.latestChapterTitle;
@@ -1469,6 +1475,9 @@ export class CloudSyncCoordinator {
     book.customIntro = payload.customIntro || '';
     book.charset = payload.charset || '';
     book.type = Math.floor(Number(payload.type) || 0);
+    if (payload.mediaTab === BookTypeSupport.CATEGORY_VIDEO && !BookTypeSupport.isVideo(book)) {
+      book.putVariable('tab', BookTypeSupport.CATEGORY_VIDEO);
+    }
     book.isPinned = payload.isPinned === true;
     book.latestChapterTitle = payload.latestChapterTitle || '';
     book.updateTime = payload.updateTime || '';

@@ -5296,6 +5296,7 @@ export struct BookshelfPage {
               accentColor: this.accentColor(),
               secondaryColor: this.subTextColor(),
               itemWidthRatio: 1,
+              slotRadius: 0,
               renderKey: (book: Book): string => this.shelfBookRenderKey(book, `companion_card_${pageKey}`),
               cardContent: (book: Book) => {
                 this.shelfCompanionHeroCard(book, pageKey)
