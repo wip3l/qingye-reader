@@ -2931,8 +2931,8 @@ struct ThemeSettingsPage {
       // 默认沿用当前排版，不让调好的字号和页眉页脚在换主题时意外丢失。
       this.applyDialogApplyLayout = false;
     }
-    // 主题带封面时默认勾选“应用主题封面”，不再沿用上次的选择。
-    this.applyDialogApplyCover = this.applyDialogHasCover;
+    // 主题带封面时默认勾选“应用主题封面”，不再沿用上次的选择；默认主题例外，默认保留书的原封面。
+    this.applyDialogApplyCover = this.applyDialogHasCover && theme.id !== ThemeIds.PLAIN_DEFAULT;
     // 桌面图标默认不随主题更换，由用户主动打开。
     this.applyDialogApplyIcon = false;
     this.showThemeApplyDialog = true;
