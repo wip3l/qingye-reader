@@ -4,6 +4,7 @@ import { image } from '@kit.ImageKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { PageScaffold } from '../components/common/PageScaffold';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { MaterialUnderlineTabs } from '../components/common/MaterialUnderlineTabs';
 import { ReadingTicketBackFace, ReadingTicketCard } from '../components/ticket/ReadingTicketCard';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
@@ -235,28 +236,14 @@ struct TicketDetailPage {
           .fontSize(AppFontSize.CAPTION)
           .fontColor(ThemeRuntime.subTextColor(this.darkMode))
 
-        Row({ space: AppSpacing.SM }) {
-          ForEach(TicketAlbumStore.STYLES, (style: string) => {
-            Text(TicketAlbumStore.styleName(style))
-              .fontSize(AppFontSize.BODY)
-              .fontWeight(this.ticketStyle === style ? FontWeight.Bold : FontWeight.Regular)
-              .fontColor(this.ticketStyle === style ? ThemeRuntime.accentColor(this.darkMode) :
-                ThemeRuntime.subTextColor(this.darkMode))
-              .textAlign(TextAlign.Center)
-              .maxLines(1)
-              .layoutWeight(1)
-              .padding({ top: 6, bottom: 6 })
-              .borderRadius(14)
-              .backgroundColor(this.ticketStyle === style ? ThemeRuntime.accentSurfaceColor(this.darkMode) :
-                ThemeRuntime.cardColor(this.darkMode))
-              .accessibilitySelected(this.ticketStyle === style)
-              .onClick(() => {
-                this.ticketStyle = style;
-                if (this.showBack) this.flip();
-              })
-          }, (style: string) => style)
-        }
-        .width('100%')
+        MaterialUnderlineTabs({
+          labels: TicketAlbumStore.STYLE_NAMES,
+          selectedIndex: Math.max(0, TicketAlbumStore.STYLES.indexOf(this.ticketStyle)),
+          onSelect: (index: number): void => {
+            this.ticketStyle = TicketAlbumStore.STYLES[index];
+            if (this.showBack) this.flip();
+          }
+        })
 
         Row({ space: AppSpacing.MD }) {
           this.actionButton($r('sys.symbol.save'), '保存图片', () => {

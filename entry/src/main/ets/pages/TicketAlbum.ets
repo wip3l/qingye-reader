@@ -3,6 +3,7 @@ import { PageScaffold } from '../components/common/PageScaffold';
 import { PopupMenuHeader } from '../components/common/PopupMenuAction';
 import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { ReadingTicketCard } from '../components/ticket/ReadingTicketCard';
+import { MaterialUnderlineTabs } from '../components/common/MaterialUnderlineTabs';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
@@ -308,36 +309,16 @@ struct TicketAlbumPage {
     .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.SM })
   }
 
-  /** 票面样式：强调色文字加短下划线，与书源管理页的格式切换条一致。 */
+  /** 票面样式：沉浸光感切换条，与书架顶部的类型分类栏同款。 */
   @Builder
   styleTabs() {
-    Row() {
-      ForEach(TicketAlbumStore.STYLES, (style: string) => {
-        Column({ space: 4 }) {
-          Text(TicketAlbumStore.styleName(style))
-            .fontSize(AppFontSize.BODY_LARGE)
-            .fontWeight(this.ticketStyle === style ? FontWeight.Bold : FontWeight.Regular)
-            .fontColor(this.ticketStyle === style ? ThemeRuntime.accentColor(this.darkMode) :
-              ThemeRuntime.subTextColor(this.darkMode))
-          Column()
-            .width(18)
-            .height(3)
-            .borderRadius(2)
-            .backgroundColor(this.ticketStyle === style ? ThemeRuntime.accentColor(this.darkMode) : Color.Transparent)
-        }
-        .layoutWeight(1)
-        .padding({ top: AppSpacing.SM, bottom: AppSpacing.XS })
-        .accessibilityGroup(true)
-        .accessibilityText(`${TicketAlbumStore.styleName(style)}样式`)
-        .accessibilitySelected(this.ticketStyle === style)
-        .onClick(() => {
-          this.selectStyle(style);
-        })
-      }, (style: string) => style)
-    }
-    .width('100%')
-    .borderRadius(14)
-    .backgroundColor(ThemeRuntime.cardColor(this.darkMode))
+    MaterialUnderlineTabs({
+      labels: TicketAlbumStore.STYLE_NAMES,
+      selectedIndex: Math.max(0, TicketAlbumStore.STYLES.indexOf(this.ticketStyle)),
+      onSelect: (index: number): void => {
+        this.selectStyle(TicketAlbumStore.STYLES[index]);
+      }
+    })
   }
 
   @Builder
