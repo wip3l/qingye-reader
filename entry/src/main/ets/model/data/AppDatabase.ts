@@ -132,6 +132,8 @@ export class ReadStatsRow {
   dayKey: string = '';
   bookUrl: string = '';
   durationMs: number = 0;
+  /** 这一天这本书最后一次阅读的时间；旧版迁移来的记录可能是 0。 */
+  lastReadAt: number = 0;
 }
 
 export class ReadStatsDeviceOption {
@@ -3758,7 +3760,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     await this.readStatsWriteTask;
     // 游客历史继续在本机展示，但不改成当前账号所有，也不自动上传。
     const resultSet = await this.store.querySql(`SELECT r.dayKey, r.bookUrl, r.bookKey,
-      r.deviceId, MAX(r.deviceName) AS deviceName, SUM(r.durationMs) AS durationMs,
+      r.deviceId, MAX(r.deviceName) AS deviceName, SUM(r.durationMs) AS durationMs, MAX(r.lastReadAt) AS lastReadAt,
       COALESCE(NULLIF(b.name, ''), m.name, '') AS name,
       COALESCE(b.author, m.author, '') AS author,
       COALESCE(NULLIF(b.customCoverUrl, ''), b.coverUrl, m.coverUrl, '') AS coverUrl,
@@ -3784,6 +3786,7 @@ export class AppDatabase implements BookSourceRuntimePersistence {
         row.author = this.getStringColumn(resultSet, 'author');
         row.coverUrl = this.getStringColumn(resultSet, 'coverUrl');
         row.onShelf = this.getLongColumn(resultSet, 'onShelf') === 1;
+        row.lastReadAt = this.getLongColumn(resultSet, 'lastReadAt');
         rows.push(row);
       }
     } finally {

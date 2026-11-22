@@ -146,6 +146,45 @@ test('manual merges fold works into one row without touching records and split r
   assert.equal(S.calculate(rows, 'all', ...at, null, groups).items.length, 3);
 });
 
+test('ranking sorts by recent reading, read days or title and keeps duration ranks', () => {
+  const { ReadStatsSummary: S, ReadWorkMerges: Merges, ReadWorkIdentity: Identity } =
+    load('core/stats/ReadStatsSummary.ts', {}, 'ReadStatsSummary,ReadWorkMerges,ReadWorkIdentity');
+  const at = (key, h, m) => { const [y, mo, d] = key.split('-').map(Number); return date(y, mo, d, h, m); };
+  const read = (key, minutes, book, h = 9, m = 0) => ({ ...row(key, minutes * 60000, 'phone', book),
+    name: book, author: '作者', lastReadAt: at(key, h, m) });
+  const rows = [read('2026-11-16', 300, '宿命之环'), read('2026-11-17', 60, '宿命之环'), read('2026-11-18', 60, '宿命之环'),
+    read('2026-11-22', 30, '道诡异仙', 17, 40), read('2026-11-21', 30, '道诡异仙', 23, 30),
+    read('2026-11-22', 90, '赤心巡天', 8, 5), { ...read('2026-11-19', 20, '沧元图'), lastReadAt: 0 }];
+  const week = S.calculate(rows, 'week', date(2026, 11, 22), date(2026, 11, 22, 18, 2));
+  const names = (sort, mode = 'week', items = week.items) => Array.from(S.sortItems(items, sort, mode), item => item.name);
+  assert.deepEqual(names('duration'), ['宿命之环', '赤心巡天', '道诡异仙', '沧元图']);
+  assert.deepEqual(names('recent'), ['道诡异仙', '赤心巡天', '沧元图', '宿命之环']);
+  assert.deepEqual(names('days'), ['宿命之环', '道诡异仙', '赤心巡天', '沧元图'], 'ties fall back to the duration rank');
+  assert.deepEqual(names('title'), ['沧元图', '赤心巡天', '道诡异仙', '宿命之环'], 'titles follow pinyin');
+  assert.deepEqual(names('unknown'), names('duration'));
+  assert.deepEqual(names('days', 'day'), names('duration', 'day'), 'day view has no read-day ordering');
+  assert.equal(S.effectiveSort('days', 'day'), 'duration');
+  assert.deepEqual(Array.from(week.items, item => item.rank), [1, 2, 3, 4], 'sorting copies the list');
+  const by = name => week.items.find(item => item.name === name);
+  assert.equal(by('宿命之环').readDays, 3);
+  assert.equal(by('道诡异仙').lastReadAt, at('2026-11-22', 17, 40));
+  const now = date(2026, 11, 22, 18, 2);
+  assert.equal(S.recentLabel(by('道诡异仙'), 'week', now), '今天 17:40');
+  assert.equal(S.recentLabel(by('道诡异仙'), 'day', now), '17:40');
+  assert.equal(S.recentLabel({ ...by('道诡异仙'), lastDayKey: '2026-11-21', lastReadAt: at('2026-11-21', 23, 30) }, 'week', now), '昨天 23:30');
+  assert.equal(S.recentLabel(by('宿命之环'), 'week', now), '11月18日');
+  assert.equal(S.recentLabel(by('沧元图'), 'week', now), '11月19日', 'old records without a time show the date');
+  assert.equal(S.recentLabel(by('沧元图'), 'day', now), '', 'day view without a time falls back to the share');
+  assert.equal(S.recentLabel(by('宿命之环'), 'year', date(2027, 1, 3)), '2026年11月18日');
+  const member = name => ({ work: Identity.workKey(name, '作者'), name, author: '作者' });
+  const merged = S.calculate(rows, 'week', date(2026, 11, 22), now, null,
+    Merges.combine([], [member('宿命之环'), member('道诡异仙')], member('宿命之环').work));
+  const group = merged.items.find(item => item.mergedWorks === 2);
+  assert(group, 'merged row exists');
+  assert.equal(group.readDays, 5, 'merged rows union their read days');
+  assert.equal(group.lastReadAt, at('2026-11-22', 17, 40), 'merged rows keep the latest read');
+});
+
 test('calendar periods cover leap days, year crossings, and daylight saving days', () => {
   assert.equal(Summary.range('month', date(2024, 2, 29)).endKey, '2024-02-29');
   assert.equal(Summary.range('week', date(2026, 1, 1)).startKey, '2025-12-29');
@@ -230,6 +269,16 @@ test('legacy migration is resumable, preserves totals, snapshots and tombstones'
   await h.db.migrateReadStats();
   assert.equal((await h.query()).length, 1);
   assert.equal(h.sql.prepare('SELECT COUNT(*) AS n FROM read_stats_records').get().n, 2);
+});
+test('day rows carry the latest read time across records of that day', async t => {
+  const h = await database(t);
+  h.book('book', '书'); await h.db.migrateReadStats();
+  await h.db.addReadStats([h.entry({ lastReadAt: date(2026,10,26,9) }), h.entry({ lastReadAt: date(2026,10,26,21,30) }),
+    h.entry({ deviceId: 'tablet', lastReadAt: date(2026,10,26,22) })]);
+  const rows = await h.query('phone');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].durationMs, 120000);
+  assert.equal(rows[0].lastReadAt, date(2026,10,26,21,30));
 });
 test('record retries are idempotent, account/device scopes isolate and deletion stays scoped', async t => {
   const h = await database(t);h.book('book','原名');await h.db.migrateReadStats();

@@ -8,7 +8,7 @@ import { appDb, ReadStatsDeviceOption } from '../model/data/AppDatabase';
 import { readStatsTracker } from '../core/stats/ReadStatsTracker';
 import { ReadStatsDevice } from '../core/stats/ReadStatsDevice';
 import { ReadStatsSummary, ReadStatsRank, ReadStatsBar, ReadWorkMergeGroup, ReadWorkMergeMember,
-  ReadWorkMerges } from '../core/stats/ReadStatsSummary';
+  ReadWorkMerges, READ_STATS_SORTS, READ_STATS_SORT_LABELS } from '../core/stats/ReadStatsSummary';
 import { ReadWorkMergeStore } from '../utils/ReadWorkMergeStore';
 import { ReadStatsFold } from '../core/stats/ReadStatsFold';
 import { AccountSessionStore } from '../account/AccountSessionStore';
@@ -82,6 +82,9 @@ struct ReadingStatsPage {
   @State selectedBar: string = '';
   @State showItemActionMenu: boolean = false;
   @State showMoreMenu: boolean = false;
+  /** 书籍排行的排序依据，见 READ_STATS_SORTS；“日”视图下按天数会退回按时长，见 ReadStatsSummary.effectiveSort。 */
+  @State sortKey: string = 'duration';
+  @State showSortMenu: boolean = false;
   @StorageProp('readStatsRecording') statsRecording: boolean = true;
   @StorageProp('readStatsCountListening') statsCountListening: boolean = true;
   @State actionBookKey: string = '';
@@ -133,6 +136,7 @@ struct ReadingStatsPage {
   onBackPress(): boolean {
     if (this.showRecordSheet) { this.showRecordSheet = false; return true; }
     if (this.showMoreMenu) { this.showMoreMenu = false; return true; }
+    if (this.showSortMenu) { this.showSortMenu = false; return true; }
     if (!this.showItemActionMenu) return false;
     this.showItemActionMenu = false;
     return true;
@@ -148,6 +152,7 @@ struct ReadingStatsPage {
       const store = await preferences.getPreferences(context, 'reading_stats_view');
       const mode = await store.get('mode', 'week');
       const device = await store.get(`device:${this.ownerId}`, '');
+      const sort = await store.get('sort', 'duration');
       const localId = await ReadStatsDevice.id(context);
       if (!this.alive || initialization !== this.initializationVersion) return;
       const currentOwner = AccountSessionStore.isLoggedIn() ? AccountSessionStore.account().userId : '';
@@ -155,6 +160,7 @@ struct ReadingStatsPage {
       this.localDeviceId = localId;
       this.mode = typeof mode === 'string' && STATS_MODES.includes(mode) ? mode : 'week';
       this.selectedDevice = typeof device === 'string' ? device : '';
+      this.sortKey = typeof sort === 'string' && READ_STATS_SORTS.includes(sort) ? sort : 'duration';
       this.viewReady = true;
       await this.loadStats();
     } catch (error) {
@@ -175,6 +181,37 @@ struct ReadingStatsPage {
       await store.flush();
     });
     try { await this.selectionWrite; } catch (error) { console.warn('保存统计筛选失败:', error); }
+  }
+  private chooseSort(sort: string): void {
+    this.showSortMenu = false;
+    if (sort === this.sortKey) return;
+    this.sortKey = sort;
+    this.source.update(this.rankedItems());
+    this.selectionWrite = this.selectionWrite.catch(() => {}).then(async (): Promise<void> => {
+      const store = await preferences.getPreferences(getContext(this), 'reading_stats_view');
+      await store.put('sort', sort);
+      await store.flush();
+    });
+    this.selectionWrite.catch((error: Error) => { console.warn('保存排行排序失败:', error); });
+  }
+  private shownSort(): string { return ReadStatsSummary.effectiveSort(this.sortKey, this.mode); }
+  private rankedItems(): ReadStatsRank[] {
+    return ReadStatsSummary.sortItems(this.summary.items, this.sortKey, this.mode);
+  }
+  /** 第二行右侧：按时长排显示占比，按最近阅读、阅读天数排显示排序依据。 */
+  private rowMetric(item: ReadStatsRank): string {
+    const sort = this.shownSort();
+    if (sort === 'recent') {
+      const label = ReadStatsSummary.recentLabel(item, this.mode, Date.now());
+      if (label) return label;
+    } else if (sort === 'days') {
+      return `读了 ${item.readDays} 天`;
+    }
+    return item.percent < 1 ? '<1%' : `${Math.round(item.percent)}%`;
+  }
+  private rowMetricHighlighted(): boolean {
+    const sort = this.shownSort();
+    return sort === 'recent' || sort === 'days';
   }
   /** quiet 为 true 时原位重读：不清空列表、不显示加载中，删除记录补位后用，避免列表整个闪一下。 */
   async loadStats(quiet: boolean = false): Promise<void> {
@@ -216,7 +253,7 @@ struct ReadingStatsPage {
       this.summary = ReadStatsSummary.calculate(rows, mode, anchor, Date.now(), fold, merges);
       this.sameTitleRows = ReadStatsSummary.sameTitleItems(this.summary.items, fold, ignoredTitles);
       this.mergeRevision++;
-      this.source.update(this.summary.items);
+      this.source.update(this.rankedItems());
     } catch (error) {
       if (!this.alive || version !== this.requestVersion) return;
       this.errorMessage = '读取统计失败，请重试';
@@ -389,7 +426,15 @@ struct ReadingStatsPage {
       Row() {
         Text('书籍排行').fontSize(AppFontSize.BODY_LARGE).fontWeight(FontWeight.Medium).fontColor(this.primaryTextColor())
         Blank()
-        Text('按阅读时长').fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+        Row({ space: AppSpacing.XS }) {
+          Text(`按${READ_STATS_SORT_LABELS[READ_STATS_SORTS.indexOf(this.shownSort())]}`)
+            .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+          SymbolGlyph($r('sys.symbol.chevron_down')).fontSize(12).fontColor([this.subTextColor()])
+        }.height(32).padding({ left: AppSpacing.SM }).accessibilityText('书籍排行排序')
+          .onClick((): void => { this.showSortMenu = !this.showSortMenu; })
+          .bindPopup(this.showSortMenu, ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel,
+            (): void => { this.sortMenu(); }, Placement.BottomRight, this.appDarkMode, this.accentColor(),
+            (): void => { this.showSortMenu = false; }))
       }.width('100%').padding({ top: AppSpacing.SM, bottom: AppSpacing.LG })
       if (this.loading) {
         Row({ space: AppSpacing.MD }) {
@@ -412,6 +457,36 @@ struct ReadingStatsPage {
         this.sameTitleHint()
       }
     }.width('100%').padding({ top: AppSpacing.LG })
+  }
+  @Builder
+  sortMenu() {
+    Column() {
+      ForEach(READ_STATS_SORTS, (sort: string, index: number) => {
+        this.sortMenuRow(sort, READ_STATS_SORT_LABELS[index])
+      }, (sort: string): string => sort)
+    }.width(200).padding(ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+  }
+  /** 选中状态在这里读 this.sortKey，不靠传值。 */
+  @Builder
+  sortMenuRow(sort: string, label: string) {
+    Row({ space: 10 }) {
+      Column({ space: 2 }) {
+        Text(label).fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.shownSort() === sort ? this.accentColor() : this.primaryTextColor())
+          .fontWeight(this.shownSort() === sort ? FontWeight.Medium : FontWeight.Normal)
+        if (sort === 'days' && this.mode === 'day') {
+          Text('“日”视图下都是 1 天').fontSize(AppFontSize.MICRO).fontColor(this.subTextColor())
+        }
+      }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+      if (this.shownSort() === sort) {
+        SymbolGlyph($r('sys.symbol.checkmark')).fontSize(16).fontColor([this.accentColor()])
+      }
+    }.width('100%').constraintSize({ minHeight: 44 }).padding({ left: 12, right: 12 })
+      .borderRadius(ImmersiveMaterialRuntime.POPUP_MENU_RADIUS - ImmersiveMaterialRuntime.POPUP_MENU_PADDING)
+      .stateStyles({ normal: { .backgroundColor(Color.Transparent) }, pressed: { .backgroundColor('#1A808080') } })
+      .opacity(sort === 'days' && this.mode === 'day' ? 0.38 : 1)
+      .enabled(!(sort === 'days' && this.mode === 'day'))
+      .onClick((): void => this.chooseSort(sort))
   }
   /** 书名相同却分成几行时提示一次合并；点叉记住这个书名不是同一本，不再提示。 */
   @Builder
@@ -698,7 +773,10 @@ struct ReadingStatsPage {
   @Builder
   bookRow(item: ReadStatsRank) {
     Row({ space: AppSpacing.MD }) {
-      Text(`${item.rank}`.padStart(2, '0')).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width(22)
+      // 只有按时长排才是名次；其他排序不显示数字，免得被看成名次。
+      if (this.shownSort() === 'duration') {
+        Text(`${item.rank}`.padStart(2, '0')).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor()).width(22)
+      }
       BookCover({ bookUrl: item.bookUrl, name: item.name, author: item.author,
         coverUrl: item.coverUrl, placeholderColor: this.accentColor() }).width(40).height(56)
       Column({ space: AppSpacing.SM }) {
@@ -715,7 +793,9 @@ struct ReadingStatsPage {
           if (item.mergedWorks > 0) {
             this.recordChip(`已合并 ${item.mergedWorks} 条`)
           }
-          Text(item.percent < 1 ? '<1%' : `${Math.round(item.percent)}%`).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor())
+          Text(this.rowMetric(item)).fontSize(AppFontSize.CAPTION)
+            .fontColor(this.rowMetricHighlighted() ? this.accentColor() : this.subTextColor())
+            .fontWeight(this.rowMetricHighlighted() ? FontWeight.Medium : FontWeight.Normal)
         }.width('100%')
         Stack({ alignContent: Alignment.Start }) {
           Row().width('100%').height(3).backgroundColor(this.softColor())
@@ -968,7 +1048,7 @@ struct ReadingStatsPage {
             .margin({ left: AppSpacing.XL, right: AppSpacing.XL })
             .swipeAction({ end: { builder: (): void => { this.deleteSwipeButton(item) } }, edgeEffect: SwipeEdgeEffect.Spring })
         }
-      }, (item: ReadStatsRank): string => item.bookKey ? `${item.bookKey}:${item.durationMs}:${item.percent}:${item.rank}:${item.name}:${item.onShelf}:${item.mergedWorks}` : 'header')
+      }, (item: ReadStatsRank): string => item.bookKey ? `${item.bookKey}:${item.durationMs}:${item.percent}:${item.rank}:${item.name}:${item.onShelf}:${item.mergedWorks}:${this.shownSort()}` : 'header')
       ListItem() {
         Row().width('100%').height(this.navBarHeight + AppSpacing.XXL).hitTestBehavior(HitTestMode.None)
       }

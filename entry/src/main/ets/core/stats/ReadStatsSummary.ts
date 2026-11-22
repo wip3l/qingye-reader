@@ -30,7 +30,17 @@ export class ReadStatsRank {
   mergedWorks: number = 0;
   /** 手动合并的行在当前时段有记录的各部作品，显示用的那部排第一。 */
   editions: ReadStatsRank[] = [];
+  /** 当前时段里读过这本书的日期，readDays 是它的个数。 */
+  readDayKeys: string[] = [];
+  readDays: number = 0;
+  /** 当前时段里最后读这本书的那天和时间；时间取不到（旧记录）时是 0，只看日期。 */
+  lastDayKey: string = '';
+  lastReadAt: number = 0;
 }
+
+/** 书籍排行的排序依据，存进 reading_stats_view 的 sort。 */
+export const READ_STATS_SORTS: string[] = ['duration', 'recent', 'days', 'title'];
+export const READ_STATS_SORT_LABELS: string[] = ['阅读时长', '最近阅读', '阅读天数', '书名'];
 
 export class ReadWorkMergeMember {
   work: string = '';
@@ -279,6 +289,7 @@ export class ReadStatsSummary {
       combined.editions = [lead, ...present.filter((item: ReadStatsRank): boolean => item !== lead)];
       combined.editions.forEach((item: ReadStatsRank): void => {
         combined.durationMs += item.durationMs;
+        ReadStatsSummary.noteRead(combined, item.readDayKeys, item.lastDayKey, item.lastReadAt);
         if (!combined.coverUrl && item.coverUrl) combined.coverUrl = item.coverUrl;
         item.recordBookKeys.forEach((key: string): void => {
           if (!combined.recordBookKeys.includes(key)) combined.recordBookKeys.push(key);
@@ -306,6 +317,61 @@ export class ReadStatsSummary {
       if (same.length > 1) return same;
     }
     return [];
+  }
+
+  private static noteRead(item: ReadStatsRank, dayKeys: string[], dayKey: string, readAt: number): void {
+    dayKeys.forEach((key: string): void => {
+      if (!item.readDayKeys.includes(key)) item.readDayKeys.push(key);
+    });
+    if (dayKey > item.lastDayKey) {
+      item.lastDayKey = dayKey;
+      item.lastReadAt = readAt;
+    } else if (dayKey === item.lastDayKey && readAt > item.lastReadAt) {
+      item.lastReadAt = readAt;
+    }
+  }
+
+  /** “日”视图里每本都只读了 1 天，按天数排没有意义，退回按时长。 */
+  static effectiveSort(sort: string, mode: string): string {
+    if (!READ_STATS_SORTS.includes(sort) || (sort === 'days' && mode === 'day')) return 'duration';
+    return sort;
+  }
+
+  /** 排行按 sort 重排后的新数组；rank 仍是按时长的名次，同分时按名次。 */
+  static sortItems(items: ReadStatsRank[], sort: string, mode: string): ReadStatsRank[] {
+    const key = ReadStatsSummary.effectiveSort(sort, mode);
+    const byRank = (a: ReadStatsRank, b: ReadStatsRank): number => a.rank - b.rank;
+    const sorted = items.slice();
+    if (key === 'recent') {
+      sorted.sort((a: ReadStatsRank, b: ReadStatsRank): number => {
+        if (a.lastDayKey !== b.lastDayKey) return a.lastDayKey < b.lastDayKey ? 1 : -1;
+        return b.lastReadAt - a.lastReadAt || byRank(a, b);
+      });
+    } else if (key === 'days') {
+      sorted.sort((a: ReadStatsRank, b: ReadStatsRank): number => b.readDays - a.readDays || byRank(a, b));
+    } else if (key === 'title') {
+      sorted.sort((a: ReadStatsRank, b: ReadStatsRank): number =>
+        a.name.localeCompare(b.name, 'zh-Hans-CN-u-co-pinyin') || byRank(a, b));
+    } else {
+      sorted.sort(byRank);
+    }
+    return sorted;
+  }
+
+  /** 按最近阅读排序时行里显示的时间：日视图只写时刻，今天、昨天带时刻，更早的只写日期。 */
+  static recentLabel(item: ReadStatsRank, mode: string, now: number): string {
+    if (!item.lastDayKey) return '';
+    const time = item.lastReadAt > 0 ? new Date(item.lastReadAt) : undefined;
+    const clock = time ? `${ReadStatsSummary.pad(time.getHours())}:${ReadStatsSummary.pad(time.getMinutes())}` : '';
+    if (mode === 'day') return clock;
+    const today = new Date(now);
+    const day = ReadStatsSummary.dayDate(item.lastDayKey);
+    const diff = Math.round((Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) -
+      Date.UTC(day.getFullYear(), day.getMonth(), day.getDate())) / 86400000);
+    if (diff === 0) return clock ? `今天 ${clock}` : '今天';
+    if (diff === 1) return clock ? `昨天 ${clock}` : '昨天';
+    const date = `${day.getMonth() + 1}月${day.getDate()}日`;
+    return day.getFullYear() === today.getFullYear() ? date : `${day.getFullYear()}年${date}`;
   }
 
   static titleKey(name: string, fold: ((text: string) => string) | null): string {
@@ -351,6 +417,7 @@ export class ReadStatsSummary {
       if (row.coverUrl && (row.onShelf || !item.coverUrl)) item.coverUrl = row.coverUrl;
       item.onShelf = item.onShelf || row.onShelf;
       item.durationMs += row.durationMs;
+      ReadStatsSummary.noteRead(item, [row.dayKey], row.dayKey, row.lastReadAt || 0);
       const key = mode === 'all' ? row.dayKey.substring(0, 4) :
         mode === 'year' ? row.dayKey.substring(0, 7) : row.dayKey;
       let bar = buckets.get(key);
@@ -366,6 +433,7 @@ export class ReadStatsSummary {
     result.items =Array.from(books.values()).sort((a: ReadStatsRank, b: ReadStatsRank): number => b.durationMs - a.durationMs);
     result.items.forEach((item: ReadStatsRank, index: number): void => {
       item.rank = index + 1;
+      item.readDays = item.readDayKeys.length;
       item.percent = result.totalMs > 0 ? item.durationMs * 100 / result.totalMs : 0;
     });
     const first = mode === 'all' ? ReadStatsSummary.dayDate(firstKey || ReadStatsSummary.dayKey(now)) : new Date(range.startTs);
