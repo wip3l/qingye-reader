@@ -392,3 +392,29 @@ Copyright 2023 The MediaPipe Authors
 The face landmark model is converted to the MindSpore Lite format and used
 on device to estimate gaze direction for eye-movement page turning. Camera
 frames are processed locally and never leave the device.
+
+==========================================================================
+10. sherpa-onnx Zipformer CTC Chinese ASR model (int8, 2025-07-03)
+    (downloaded on demand, not bundled)
+==========================================================================
+
+Model: csukuangfj/sherpa-onnx-zipformer-ctc-zh-int8-2025-07-03
+Project: https://github.com/k2-fsa/sherpa-onnx (icefall Zipformer CTC)
+License: Apache License 2.0 (full text in section 3)
+Copyright (c) Xiaomi Corporation and the k2-fsa authors
+
+Used for on-device AI subtitles of audiobooks. Audio is recognized locally and
+never leaves the device.
+
+==========================================================================
+11. CT-Transformer punctuation model (zh-en, vocab272727, int8)
+    (downloaded on demand, not bundled)
+==========================================================================
+
+Original model: iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch
+  (https://modelscope.cn/models/iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch)
+Author: Alibaba DAMO Academy / FunASR (https://github.com/modelscope/FunASR)
+License: Apache License 2.0 (full text in section 3)
+ONNX int8 export: sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8
+
+Used to add punctuation to the AI subtitles of audiobooks on device.

@@ -36,6 +36,8 @@ tmp/
 # ohpm 为模块依赖生成的链接目录
 /entry/oh_modules/
 /entry/.test/
+# 原生模块的 CMake 中间目录
+/entry/.cxx/
 /entry/src/ohosTest/resources/rawfile/reader-font-fixture.ttf
 /.hvigor
 /.appanalyzer

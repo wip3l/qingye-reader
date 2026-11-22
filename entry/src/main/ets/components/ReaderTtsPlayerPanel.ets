@@ -11,6 +11,8 @@ import { ImmersiveMaterialSurface } from './ImmersiveMaterialSurface';
 import { PlaybackLoudnessGain } from '../utils/PlaybackLoudnessGain';
 import { PlaybackSpeed } from '../utils/PlaybackSpeed';
 import { AudioSkipRange } from '../utils/AudioSkipRange';
+import { AudioBookSettingsStore } from '../utils/AudioBookSettingsStore';
+import { AudioSubtitleView } from './AudioSubtitleView';
 
 /** 顶栏圆形按钮的尺寸。 */
 const PANEL_CONTROL_SIZE: number = 40;
@@ -18,6 +20,14 @@ const PANEL_CONTROL_SIZE: number = 40;
 const AUDIO_COVER_MIN_HEIGHT: number = 72;
 /** 听书音色下拉框的高度，与 audioVoiceSelect 一致。 */
 const AUDIO_VOICE_ROW_HEIGHT: number = 44;
+/** 听书“简介 | 字幕”切换条的高度。 */
+const SUBTITLE_TABS_HEIGHT: number = 30;
+/** 选“字幕”时字幕区至少留这么高（约 5 行），封面按剩下的空间缩小。 */
+const SUBTITLE_AREA_MIN_HEIGHT: number = 140;
+/** 切换“简介 | 字幕”时封面缩放的时长。 */
+const SUBTITLE_SWITCH_MS: number = 300;
+/** 听书进度滑条的高度：够手指拖动，不带系统默认的上下留白。 */
+const AUDIO_PROGRESS_HEIGHT: number = 28;
 const SECONDARY_TIMER: string = 'timer';
 const SECONDARY_SPEED: string = 'speed';
 const SECONDARY_CATALOG: string = 'catalog';
@@ -77,7 +87,7 @@ export struct ReaderTtsPlayerPanel {
   // 这段时间面板仍显示这本书和加载/失败提示，而不是朗读模式的占位文字。
   @Prop hostAudioPage: boolean = false;
   @Prop hostBookName: string = '';
-  @Prop hostBookUrl: string = '';
+  @Prop @Watch('onSubtitleBookChanged') hostBookUrl: string = '';
   @Prop hostChapterTitle: string = '';
   @Prop hostIntro: string = '';
   @Prop hostCover: ResourceStr = '';
@@ -91,7 +101,7 @@ export struct ReaderTtsPlayerPanel {
   onSelectHostVoice: (index: number) => void = () => {};
 
   @StorageLink('globalTtsPaused') globalTtsPaused: boolean = false;
-  @StorageProp('globalTtsBookUrl') globalTtsBookUrl: string = '';
+  @StorageProp('globalTtsBookUrl') @Watch('onSubtitleBookChanged') globalTtsBookUrl: string = '';
   @State readyBookCover: ResourceStr = '';
   @StorageLink('globalTtsBookName') globalTtsBookName: string = '';
   @StorageLink('globalTtsChapterTitle') globalTtsChapterTitle: string = '';
@@ -143,9 +153,12 @@ export struct ReaderTtsPlayerPanel {
   private readingViewportHeight: number = 0;
   private textUpdateTimer: number = -1;
   @State skipNoticeVisible: boolean = false;
+  /** 听书封面下面显示字幕（true）还是简介。 */
+  @State subtitleTab: boolean = false;
   private skipNoticeTimer: number = -1;
 
   aboutToAppear(): void {
+    this.onSubtitleBookChanged();
     this.scrollToCurrentSentence(false);
   }
 
@@ -245,10 +258,11 @@ export struct ReaderTtsPlayerPanel {
           .fontColor(this.primaryTextColor)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(this.isAudio() ? (this.globalTtsChapterProgress || (this.isVideo() ? '正在听视频' : '正在听书')) : '正在朗读')
+        Text(this.headerSubtitle())
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor)
           .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .layoutWeight(1)
       .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
@@ -297,34 +311,50 @@ export struct ReaderTtsPlayerPanel {
       .shadow({ radius: 24, color: this.darkMode ? '#73000000' : '#40000000', offsetX: 0, offsetY: 10 })
       .margin({ top: AppSpacing.SM })
 
-      Text(this.hostChapterTitle || this.globalTtsChapterTitle || '正在获取章节…')
-        .fontSize(AppFontSize.SUBTITLE)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.primaryTextColor)
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.Center)
-        .margin({ top: AppSpacing.SM })
-        .onAreaChange((_oldArea: Area, area: Area): void => {
-          const height = Math.ceil(Number(area.height));
-          if (this.audioHeroTitleHeight !== height) this.audioHeroTitleHeight = height;
-        })
+      // 看字幕时章节名挪到顶栏第二行，把高度让给字幕。
+      if (!this.chapterInHeader()) {
+        Text(this.audioChapterTitle())
+          .fontSize(AppFontSize.SUBTITLE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.primaryTextColor)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Center)
+          .margin({ top: AppSpacing.SM })
+          .onAreaChange((_oldArea: Area, area: Area): void => {
+            const height = Math.ceil(Number(area.height));
+            if (this.audioHeroTitleHeight !== height) this.audioHeroTitleHeight = height;
+          })
+      }
+
+      if (this.subtitleAvailable()) {
+        this.subtitleTabs()
+      }
 
       // 跳过片头片尾的提示叠在简介底部：放在简介区域里面，撤回按钮才点得到，也不挤动下面的进度条。
       Stack({ alignContent: Alignment.Bottom }) {
-        Scroll() {
-          Text(this.globalTtsContent || this.hostIntro || '暂无书籍简介')
-            .fontSize(AppFontSize.BODY)
-            .lineHeight(22)
-            .fontColor(this.subTextColor)
-            .copyOption(CopyOptions.LocalDevice)
-            .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
-            .width('100%')
+        if (this.subtitleAvailable() && this.subtitleTab) {
+          AudioSubtitleView({
+            darkMode: this.darkMode,
+            accentColor: this.accentColor,
+            primaryTextColor: this.primaryTextColor,
+            subTextColor: this.subTextColor
+          })
+        } else {
+          Scroll() {
+            Text(this.globalTtsContent || this.hostIntro || '暂无书籍简介')
+              .fontSize(AppFontSize.BODY)
+              .lineHeight(22)
+              .fontColor(this.subTextColor)
+              .copyOption(CopyOptions.LocalDevice)
+              .textSelectable(TextSelectableMode.SELECTABLE_FOCUSABLE)
+              .width('100%')
+          }
+          .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+          .width('100%')
+          .height('100%')
+          .scrollBar(BarState.Off)
         }
-        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-        .width('100%')
-        .height('100%')
-        .scrollBar(BarState.Off)
 
         if (this.skipNoticeVisible && this.globalTtsAudioSkipNotice) {
           this.skipNotice()
@@ -332,6 +362,8 @@ export struct ReaderTtsPlayerPanel {
       }
       .layoutWeight(1)
       .width('100%')
+      // 内容比分到的高度多时裁掉，不压到下面的进度条。
+      .clip(true)
 
       if (this.statusText()) {
         Column() {
@@ -358,6 +390,37 @@ export struct ReaderTtsPlayerPanel {
       const height = Math.floor(Number(area.height));
       if (this.audioHeroHeight !== height) this.audioHeroHeight = height;
     })
+  }
+
+  /** 听书封面下面的“简介 | 字幕”切换。选了哪个按书记住。 */
+  @Builder
+  subtitleTabs() {
+    Row({ space: AppSpacing.XXS }) {
+      this.subtitleTabItem('简介', false)
+      this.subtitleTabItem('字幕', true)
+    }
+    .height(SUBTITLE_TABS_HEIGHT)
+    .padding(3)
+    .borderRadius(SUBTITLE_TABS_HEIGHT / 2)
+    .backgroundColor(ThemeRuntime.softFillColor(this.darkMode))
+  }
+
+  @Builder
+  subtitleTabItem(label: string, subtitle: boolean) {
+    Text(label)
+      .fontSize(AppFontSize.CAPTION)
+      .fontWeight(this.subtitleTab === subtitle ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.subtitleTab === subtitle ? this.primaryTextColor : this.subTextColor)
+      .height('100%')
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+      .borderRadius((SUBTITLE_TABS_HEIGHT - 6) / 2)
+      .backgroundColor(this.subtitleTab === subtitle ? ThemeRuntime.cardColor(this.darkMode) : Color.Transparent)
+      .shadow(this.subtitleTab === subtitle ?
+        { radius: 4, color: this.darkMode ? '#40000000' : '#1A000000', offsetX: 0, offsetY: 1 } :
+        { radius: 0, color: Color.Transparent })
+      .accessibilityText(subtitle ? 'AI 字幕' : '书籍简介')
+      .accessibilitySelected(this.subtitleTab === subtitle)
+      .onClick(() => this.selectSubtitleTab(subtitle))
   }
 
   /** 朗读：当前朗读文字放在玻璃卡片里，上下文浅色，当前句高亮并自动居中。 */
@@ -1261,12 +1324,20 @@ export struct ReaderTtsPlayerPanel {
 
   @Builder
   audioProgress() {
-    Column({ space: AppSpacing.XXS }) {
+    // 时间放在滑条两端，整条只占一行高度，省下的空间留给封面和字幕。
+    Row({ space: AppSpacing.MD }) {
+      Text(this.formatAudioDuration(this.globalTtsAudioPositionMs))
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor)
+        .fontFeature('"tnum" on')
+        .constraintSize({ minWidth: 34 })
+        .textAlign(TextAlign.Start)
       // 还不知道总时长（缓冲中，或关了自动播放、还没点播放）时进度条留空、不能拖，左边照样显示已听到的位置。
       Slider({ value: this.globalTtsAudioDurationMs > 0 ? this.globalTtsAudioPositionMs : 0, min: 0,
         max: Math.max(1, this.globalTtsAudioDurationMs), step: 1000 })
         .sliderInteractionMode(SliderInteraction.SLIDE_ONLY)
-        .width('100%')
+        .layoutWeight(1)
+        .height(AUDIO_PROGRESS_HEIGHT)
         .showTips(true)
         .enabled(this.globalTtsAudioDurationMs > 0)
         .selectedColor(this.accentColor)
@@ -1277,15 +1348,15 @@ export struct ReaderTtsPlayerPanel {
             ReaderTtsFloatingSession.seekAudio(value);
           }
         })
-      Row() {
-        Text(this.formatAudioDuration(this.globalTtsAudioPositionMs)).fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor)
-        Blank()
-        Text(this.globalTtsAudioDurationMs > 0 ? this.formatAudioDuration(this.globalTtsAudioDurationMs) : '--:--')
-          .fontSize(AppFontSize.CAPTION).fontColor(this.subTextColor)
-      }
-      .width('100%')
+      Text(this.globalTtsAudioDurationMs > 0 ? this.formatAudioDuration(this.globalTtsAudioDurationMs) : '--:--')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor)
+        .fontFeature('"tnum" on')
+        .constraintSize({ minWidth: 34 })
+        .textAlign(TextAlign.End)
     }
     .width('100%')
+    .alignItems(VerticalAlign.Center)
   }
 
   close(): void {
@@ -1300,6 +1371,44 @@ export struct ReaderTtsPlayerPanel {
 
   isVideo(): boolean {
     return !this.hostAudioPage && this.globalTtsMode === 'video';
+  }
+
+  audioChapterTitle(): string {
+    return this.hostChapterTitle || this.globalTtsChapterTitle || '正在获取章节…';
+  }
+
+  /** 听书选了“字幕”页签时，章节名放在顶栏第二行。 */
+  chapterInHeader(): boolean {
+    return this.subtitleAvailable() && this.subtitleTab;
+  }
+
+  /** 顶栏第二行：章节进度；看字幕时接上章节名（“8/1699 · 007 全区封锁”）。 */
+  headerSubtitle(): string {
+    if (!this.isAudio()) return '正在朗读';
+    const progress = this.globalTtsChapterProgress || (this.isVideo() ? '正在听视频' : '正在听书');
+    if (!this.chapterInHeader()) return progress;
+    const title = this.hostChapterTitle || this.globalTtsChapterTitle;
+    if (!title) return progress;
+    return this.globalTtsChapterProgress ? `${this.globalTtsChapterProgress.replace(/章$/, '')} · ${title}` : title;
+  }
+
+  /** 字幕只给有声书：听视频时没有这个页签。 */
+  subtitleAvailable(): boolean {
+    return this.isAudio() && !this.isVideo() && !!this.coverBookUrl();
+  }
+
+  selectSubtitleTab(subtitle: boolean): void {
+    if (this.subtitleTab === subtitle) return;
+    // 封面高度由 subtitleTab 算出，放进动画里切换，封面会平滑缩小/放大。
+    this.getUIContext().animateTo({ duration: SUBTITLE_SWITCH_MS, curve: Curve.Friction }, () => {
+      this.subtitleTab = subtitle;
+    });
+    AudioBookSettingsStore.saveSubtitleTab(getContext(this), this.coverBookUrl(), subtitle)
+      .catch((error: Error) => console.warn('保存字幕页签失败:', error));
+  }
+
+  onSubtitleBookChanged(): void {
+    this.subtitleTab = AudioBookSettingsStore.subtitleTab(this.coverBookUrl());
   }
 
   isPaused(): boolean {
@@ -1329,6 +1438,7 @@ export struct ReaderTtsPlayerPanel {
 
   /**
    * 听书大封面的高度：优先用 coverHeight()，封面区放不下时扣掉章节名、状态行、音色下拉和间距后缩小。
+   * 选了“字幕”时再给字幕区留出 SUBTITLE_AREA_MIN_HEIGHT，封面跟着变小。
    * 封面区是 layoutWeight 分到的高度，不随封面大小变化，所以不会来回触发布局。
    */
   audioCoverHeight(): number {
@@ -1336,10 +1446,14 @@ export struct ReaderTtsPlayerPanel {
     if (this.audioHeroHeight <= 0) return preferred;
     const hasStatus = !!this.statusText();
     const hasVoice = this.showAudioVoiceRow();
-    // 子项间距：封面、章节名、简介、[状态行]、[音色]；再加封面和章节名各自的上边距。
-    const gaps = AppSpacing.MD * (2 + (hasStatus ? 1 : 0) + (hasVoice ? 1 : 0)) + AppSpacing.SM * 2;
-    const fixed = this.audioHeroTitleHeight + (hasStatus ? this.audioHeroStatusHeight : 0) +
-      (hasVoice ? AUDIO_VOICE_ROW_HEIGHT : 0) + gaps;
+    const hasTabs = this.subtitleAvailable();
+    const hasTitle = !this.chapterInHeader();
+    // 子项间距：封面、[章节名]、[简介/字幕切换]、简介、[状态行]、[音色]；再加封面和章节名各自的上边距。
+    const gaps = AppSpacing.MD * (1 + (hasTitle ? 1 : 0) + (hasTabs ? 1 : 0) + (hasStatus ? 1 : 0) +
+      (hasVoice ? 1 : 0)) + AppSpacing.SM * (hasTitle ? 2 : 1);
+    const fixed = (hasTitle ? this.audioHeroTitleHeight : 0) + (hasStatus ? this.audioHeroStatusHeight : 0) +
+      (hasVoice ? AUDIO_VOICE_ROW_HEIGHT : 0) + (hasTabs ? SUBTITLE_TABS_HEIGHT : 0) + gaps +
+      (hasTabs && this.subtitleTab ? SUBTITLE_AREA_MIN_HEIGHT : 0);
     return Math.max(AUDIO_COVER_MIN_HEIGHT, Math.min(preferred, Math.floor(this.audioHeroHeight - fixed)));
   }
 

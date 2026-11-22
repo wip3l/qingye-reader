@@ -102,6 +102,18 @@ export class RemoteAudioPlayback {
     this.movieUsage = false;
   }
 
+  /** 当前音频地址用的请求头副本。字幕取本章音频时沿用，免得书源再解析一遍地址。 */
+  mediaHeadersSnapshot(): Record<string, string> {
+    const copy: Record<string, string> = {};
+    for (const key of Object.keys(this.mediaHeaders)) copy[key] = this.mediaHeaders[key];
+    return copy;
+  }
+
+  /** 听视频借用播放器时为 true：这时播的不是有声书，字幕不跟。 */
+  isMovieUsage(): boolean {
+    return this.claimedListener !== null;
+  }
+
   private eventTarget(): RemoteAudioPlaybackListener | null {
     return this.claimedListener || this.listener;
   }

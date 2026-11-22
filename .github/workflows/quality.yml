@@ -57,6 +57,7 @@ jobs:
       - run: node scripts/log-policy-check.mjs
       - run: node scripts/build-help-data.mjs --check
       - run: node --experimental-strip-types scripts/settings-search-index-check.mjs
+      - run: node --experimental-strip-types scripts/audio-subtitle-text-check.mjs
       - run: npm --prefix harmony-book-ai-engine test
       - run: node --experimental-strip-types scripts/ai-host-runtime-check.mjs
       - run: node --experimental-strip-types scripts/reader-cache-budget-check.mjs

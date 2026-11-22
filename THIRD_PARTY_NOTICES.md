@@ -56,6 +56,12 @@
 - 用途：转换为 MindSpore Lite 格式，在设备上估计视线方向，用于眼动翻页；相机画面只在本机处理。
 - 来源、转换参数与 SHA-256 见 [model.json](harmony-book-ai-engine/aiengine/src/main/resources/rawfile/face-landmarks/model.json)，声明见 [LICENSE](harmony-book-ai-engine/aiengine/src/main/resources/rawfile/face-landmarks/LICENSE)，由 AI HAR 合并到 HAP。
 
+## 听书 AI 字幕模型（按需下载，不随安装包分发）
+
+- 语音识别：sherpa-onnx 中文 Zipformer CTC int8（2025-07-03），作者：Xiaomi Corporation and the k2-fsa authors，许可证：Apache-2.0
+- 标点：CT-Transformer zh-en vocab272727 int8，原始模型来自阿里达摩院 FunASR（ModelScope `iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch`），许可证：Apache-2.0
+- 用途：在设备上把有声书音频识别成字幕并加标点，音频不上传。下载来源、版本与 SHA-256 固定在 `entry/src/main/ets/utils/subtitle/SubtitleModelStore.ets`。
+
 ## 完整许可文本
 
 为确保源码和二进制发行均携带必要声明，MIT 与 Apache-2.0 的完整许可文本统一存放于：

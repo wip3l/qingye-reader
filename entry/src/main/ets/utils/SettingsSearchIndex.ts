@@ -127,6 +127,9 @@ const ROWS: Row[] = [
   [AUDIO, '离线下载', '边听边下', '提前下载正在听的书后面几章；听完自动删除', '缓存 预下载'],
   [AUDIO, '离线下载', '手动下载仅用 Wi-Fi', '手动下载在移动网络下等待 Wi-Fi', '流量 wifi 移动网络'],
   [AUDIO, '离线下载', '离线音频上限', '超出后先删最早的边听边下章节', '空间 存储'],
+  [AUDIO, 'AI 字幕', '识别模型', '听书字幕的本地识别模型，下载或删除', '字幕 语音识别 模型'],
+  [AUDIO, 'AI 字幕', '提前识别下一章', '当前章识别完后接着处理已下载的下一章开头', '字幕 预识别'],
+  [AUDIO, 'AI 字幕', '导入模型文件', '网络不好时选择下载好的字幕模型文件', '字幕 导入'],
 
   [TTS, '', '朗读音色', '当前朗读使用的声音', '声音 发音人 语音'],
   [TTS, '', '音色管理', '离线音色 / 系统音色 / 云端音色 / 自定义音色', '离线朗读 声音'],
@@ -244,7 +247,7 @@ const NAVS: Nav[] = [
   ['阅读与收听', '小说', '排版、背景、翻页', '', 'pages/Settings', { section: 'novel' }, false],
   ['阅读与收听', '漫画', '阅读方式、画面、AI 超分/着色/翻译', '', 'pages/ComicSettings', undefined, false],
   ['阅读与收听', 'PDF', '连续滚动、单双页、页面适配、AI 超分', '', 'pages/PdfSettings', undefined, false],
-  ['阅读与收听', '有声书', '自动播放、边听边下、离线下载', '听书', 'pages/AudioBookSettings', undefined, false],
+  ['阅读与收听', '有声书', '自动播放、边听边下、离线下载、AI 字幕', '听书', 'pages/AudioBookSettings', undefined, false],
   ['阅读与收听', '朗读', '音色、倍速、MiMo 朗读、在线朗读字数', '听书 tts 语速 倍速', 'pages/TtsSettings', undefined, false],
   ['阅读与收听 › 小说', '排版', '字号、间距、边距、气泡大小', '版式 间距 边距', 'pages/Settings',
     { section: 'novel', group: '0' }, false],

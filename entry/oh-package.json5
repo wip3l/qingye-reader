@@ -11,6 +11,7 @@
     "@devzeng/quickjs": "file:../harmony-book-source-engine/quickjs",
     "@legado/sourceengine": "file:../harmony-book-source-engine/sourceengine",
     "@legado/aiengine": "file:../harmony-book-ai-engine/aiengine",
-    "sherpa_onnx": "1.13.3"
+    "sherpa_onnx": "1.13.3",
+    "libsubtitle_audio.so": "file:./src/main/cpp/types/libsubtitle_audio"
   }
 }

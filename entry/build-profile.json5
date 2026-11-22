@@ -3,7 +3,11 @@
   "buildOption": {
     "sourceOption": {
       "workers": ["./src/main/ets/workers/ComicColorWorker.ets", "./src/main/ets/workers/LocalTtsWorker.ets",
-        "./src/main/ets/workers/PcmOutputWorker.ets"]
+        "./src/main/ets/workers/PcmOutputWorker.ets", "./src/main/ets/workers/AudioSubtitleWorker.ets"]
+    },
+    "externalNativeOptions": {
+      "path": "./src/main/cpp/CMakeLists.txt",
+      "abiFilters": ["arm64-v8a", "x86_64"]
     }
   },
   "buildOptionSet": [
