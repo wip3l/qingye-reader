@@ -42,4 +42,12 @@ export class ReaderPageTurnAnimation {
     const rounded = Math.round(value);
     return this.types().includes(rounded) ? rounded : this.SLIDE;
   }
+
+  /**
+   * 横竖屏分开设置翻页动画时，阅读区宽大于高就用横屏那份（分屏、平板、折叠屏展开同样按宽高判断）。
+   * 普通阅读页、文件排版和 PDF 共用这一判断；翻页方式不分横竖屏。
+   */
+  static usesLandscape(split: boolean, width: number, height: number): boolean {
+    return split && height > 0 && width > height;
+  }
 }

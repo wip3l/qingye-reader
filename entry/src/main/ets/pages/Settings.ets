@@ -125,6 +125,8 @@ struct SettingsPage {
   @StorageLink('readerBodyFontFamily') readerBodyFontFamily: string = '';
   @StorageLink('readerPageTurnMode') readerPageTurnMode: number = 1;
   @StorageLink('readerPageTurnAnimationType') readerPageTurnAnimationType: number = ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE;
+  @StorageLink('readerPageTurnAnimationSplit') readerPageTurnAnimationSplit: boolean = false;
+  @StorageLink('readerLandscapePageTurnAnimationType') readerLandscapePageTurnAnimationType: number = ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE;
   @StorageLink('readerLandscapeDoublePage') readerLandscapeDoublePage: boolean = false;
   // 漫画、PDF 的双翻页存在各自的设置里，这里只在第一层显示时读出来拼成“双翻页”那一行的类型位。
   @State comicDualPage: boolean = true;
@@ -809,6 +811,23 @@ struct SettingsPage {
             this.setReaderPageTurnAnimationType(index);
           }, 'settings_page_turn_animation_select_vertical')
       }
+      if (this.readerPageTurnMode === 2 || this.readerPageTurnMode === 0) {
+        if (this.readerPageTurnAnimationSplit) {
+          this.selectItem('横屏翻页动画', '阅读区宽大于高时的切换效果；上一项用于竖屏',
+            this.pageTurnAnimationOptions(), this.pageTurnAnimationSelectedIndex(this.readerLandscapePageTurnAnimationType),
+            (index: number) => {
+              this.setReaderLandscapePageTurnAnimationType(index);
+            }, 'settings_page_turn_animation_select_landscape')
+        }
+        SettingSwitchRow({
+          title: '横竖屏分开设置',
+          description: '打开后横屏单独选翻页动画，翻页方式仍然共用',
+          isOn: this.readerPageTurnAnimationSplit,
+          onChange: (value: boolean) => {
+            this.setReaderPageTurnAnimationSplit(value);
+          }
+        })
+      }
       SettingSwitchRow({
         title: '快速添加书签',
         description: '下拉正文添加或删除当前页书签',
@@ -1183,6 +1202,8 @@ struct SettingsPage {
     this.customThemeNameDraft = this.currentCustomThemeScheme().name;
     this.readerPageTurnMode = settings.pageTurnMode;
     this.readerPageTurnAnimationType = settings.pageTurnAnimationType;
+    this.readerPageTurnAnimationSplit = settings.pageTurnAnimationSplit;
+    this.readerLandscapePageTurnAnimationType = settings.landscapePageTurnAnimationType;
     this.readerLandscapeDoublePage = settings.landscapeDoublePage;
     this.readerScreenOrientation = settings.screenOrientation;
     this.readerTapZoneActions = settings.tapZoneActions;
@@ -1671,9 +1692,9 @@ struct SettingsPage {
     return types;
   }
 
-  pageTurnAnimationSelectedIndex(): number {
+  pageTurnAnimationSelectedIndex(type: number = this.readerPageTurnAnimationType): number {
     const types = this.pageTurnAnimationTypes();
-    const value = this.normalizePageTurnAnimationType(this.readerPageTurnAnimationType);
+    const value = this.normalizePageTurnAnimationType(type);
     for (let i = 0; i < types.length; i++) {
       if (types[i] === value) {
         return i;
@@ -2082,6 +2103,15 @@ struct SettingsPage {
           console.error('降级上下滑动翻页动画失败:', e);
         });
     }
+    if (mode === 0 && (Math.round(this.readerLandscapePageTurnAnimationType) ===
+      ReaderSettingsStore.PAGE_TURN_ANIMATION_SIMULATION ||
+      Math.round(this.readerLandscapePageTurnAnimationType) === ReaderSettingsStore.PAGE_TURN_ANIMATION_3D)) {
+      this.readerLandscapePageTurnAnimationType = ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK;
+      ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), this.readerPageTurnAnimationSplit,
+        this.readerLandscapePageTurnAnimationType).catch((e: Error) => {
+          console.error('降级横屏上下滑动翻页动画失败:', e);
+        });
+    }
     ReaderSettingsStore.savePageTurnMode(getContext(this), mode).catch((e: Error) => {
       console.error('保存翻页方式失败:', e);
     });
@@ -2094,6 +2124,31 @@ struct SettingsPage {
     ReaderSettingsStore.savePageTurnAnimationType(getContext(this), this.readerPageTurnAnimationType).catch((e: Error) => {
       console.error('保存翻页动画失败:', e);
     });
+  }
+
+  setReaderLandscapePageTurnAnimationType(index: number): void {
+    const types = this.pageTurnAnimationTypes();
+    const type = index >= 0 && index < types.length ? types[index] : ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE;
+    this.readerLandscapePageTurnAnimationType = this.normalizePageTurnAnimationType(type);
+    ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), this.readerPageTurnAnimationSplit,
+      this.readerLandscapePageTurnAnimationType).catch((e: Error) => {
+        console.error('保存横屏翻页动画失败:', e);
+      });
+  }
+
+  // 打开时横屏先沿用竖屏那份动画，之后各改各的。
+  setReaderPageTurnAnimationSplit(enabled: boolean): void {
+    if (this.readerPageTurnAnimationSplit === enabled) {
+      return;
+    }
+    if (enabled) {
+      this.readerLandscapePageTurnAnimationType = this.normalizePageTurnAnimationType(this.readerPageTurnAnimationType);
+    }
+    this.readerPageTurnAnimationSplit = enabled;
+    ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), enabled,
+      this.readerLandscapePageTurnAnimationType).catch((e: Error) => {
+        console.error('保存横竖屏分开设置翻页动画失败:', e);
+      });
   }
 
   doublePageScope(): number {

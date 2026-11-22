@@ -85,7 +85,12 @@ struct PdfReadBookPage {
   // 按键翻页按阅读类型生效，这里只看 PDF 一类。
   @StorageProp('readerVolumeTurnScope') @Watch('updateTurnKeys') volumeTurnScope: number = 0;
   @StorageProp('readerSmartKeyTurnScope') @Watch('updateTurnKeys') smartKeyTurnScope: number = 0;
+  /** 与普通阅读页共用的翻页动画；这里是当前方向实际用的那份。 */
   @State pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  // 横竖屏分开设置翻页动画：两份都留着，视口变化时按宽高重新挑。
+  @State pageTurnAnimationSplit: boolean = false;
+  private portraitPageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  private landscapePageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   /** PDF 自己的全局设置：夜间页面（原样 / 调暗 / 反色）与页码角标。 */
   @State nightMode: string = ReaderPdfSettings.NIGHT_ORIGINAL;
   @State pageBadge: boolean = true;
@@ -958,7 +963,10 @@ struct PdfReadBookPage {
 
   /** 普通阅读页的翻页、按键、亮屏时间设置；直接从书架打开 PDF 时普通阅读页还没读过。 */
   private applyReaderSettings(settings: ReaderSettings): void {
-    this.pageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.pageTurnAnimationType);
+    this.portraitPageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.pageTurnAnimationType);
+    this.landscapePageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.landscapePageTurnAnimationType);
+    this.pageTurnAnimationSplit = settings.pageTurnAnimationSplit;
+    this.syncPageTurnAnimationForViewport();
     if (settings.tapZoneActions) this.readerTapZoneActions = settings.tapZoneActions;
     this.screenTimeout.setMinutes(settings.screenTimeoutMinutes);
     this.screenTimeout.apply(this.getUIContext().getHostContext(), this.visible);
@@ -1010,14 +1018,40 @@ struct PdfReadBookPage {
       .catch((error: Error): void => console.error('[PDF] save smart key turn failed:', error));
   }
 
+  private pageTurnAnimationUsesLandscape(): boolean {
+    return ReaderPageTurnAnimation.usesLandscape(this.pageTurnAnimationSplit, this.viewWidth, this.viewHeight);
+  }
+
+  /** 面板里改的是当前方向那份，标题跟着说明。 */
+  private pageTurnAnimationTitle(): string {
+    if (!this.pageTurnAnimationSplit) return '翻页动画';
+    return this.pageTurnAnimationUsesLandscape() ? '翻页动画 · 横屏' : '翻页动画 · 竖屏';
+  }
+
+  private syncPageTurnAnimationForViewport(): void {
+    const value = this.pageTurnAnimationUsesLandscape() ?
+      this.landscapePageTurnAnimation : this.portraitPageTurnAnimation;
+    if (value === this.pageTurnAnimation) return;
+    this.pageTurnAnimation = value;
+    this.turnController.invalidate();
+  }
+
   private setPageTurnAnimation(type: number): void {
     const value = ReaderPageTurnAnimation.normalize(type);
     if (value === this.pageTurnAnimation) return;
     this.pageTurnAnimation = value;
     this.turnController.invalidate();
-    ReaderSettingsStore.savePageTurnAnimationType(getContext(this), value).catch((error: Error): void => {
-      console.warn('[PDF] save page turn animation failed:', error);
-    });
+    if (this.pageTurnAnimationUsesLandscape()) {
+      this.landscapePageTurnAnimation = value;
+      ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), true, value).catch((error: Error): void => {
+        console.warn('[PDF] save landscape page turn animation failed:', error);
+      });
+    } else {
+      this.portraitPageTurnAnimation = value;
+      ReaderSettingsStore.savePageTurnAnimationType(getContext(this), value).catch((error: Error): void => {
+        console.warn('[PDF] save page turn animation failed:', error);
+      });
+    }
   }
 
   // ---- 夜间页面与页码角标：PDF 自己的全局设置（ReaderPdfSettings） ----
@@ -1516,6 +1550,7 @@ struct PdfReadBookPage {
         onBrightnessChange: (value: number, persist: boolean): void => { this.setBrightness(value, persist); },
         onLayoutElements: (): void => { this.setPanel(''); this.showLayoutElements = true; },
         alignedLayout: true, pageTurnAnimation: this.pageTurnAnimation,
+        pageTurnAnimationTitle: this.pageTurnAnimationTitle(),
         tapZoneActions: this.tapZoneActions().join(','), tapZoneSummary: this.tapZoneSummary(),
         volumeTurnPage: this.volumeTurnOn(), smartKeyTurnPage: this.smartKeyTurnOn(),
         smartKeySupported: this.smartKeySupported, pdfNightMode: this.nightMode, pageBadge: this.pageBadge,
@@ -1573,6 +1608,7 @@ struct PdfReadBookPage {
         if (!this.closing) {
           this.viewWidth = Number(after.width) || this.viewWidth;
           this.viewHeight = Number(after.height) || this.viewHeight;
+          this.syncPageTurnAnimationForViewport();
         }
         // Same spread rule as the text reader (wider than tall, or near-square and ≥600vp such as an
         // unfolded foldable); very wide portrait windows keep the original 840vp allowance.

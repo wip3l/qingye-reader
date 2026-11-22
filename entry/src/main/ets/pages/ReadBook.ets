@@ -1124,6 +1124,8 @@ struct ReadBookPage {
   @StorageLink('readerCustomThemesRaw') @Watch('onReaderThemeChanged') readerCustomThemesRaw: string = '';
   @StorageLink('readerPageTurnMode') readerPageTurnMode: number = 1;
   @StorageLink('readerPageTurnAnimationType') @Watch('onReaderPageTurnAnimationChanged') readerPageTurnAnimationType: number = ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE;
+  @StorageLink('readerPageTurnAnimationSplit') @Watch('onReaderPageTurnAnimationChanged') readerPageTurnAnimationSplit: boolean = false;
+  @StorageLink('readerLandscapePageTurnAnimationType') @Watch('onReaderPageTurnAnimationChanged') readerLandscapePageTurnAnimationType: number = ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE;
   @StorageLink('readerLandscapeDoublePage') @Watch('onReaderLandscapeDoublePageChanged') readerLandscapeDoublePage: boolean = false;
   @StorageLink('readerScreenOrientation') @Watch('onReaderScreenOrientationChanged') readerScreenOrientation: string =
     ReaderSettingsStore.SCREEN_ORIENTATION_SYSTEM;
@@ -9214,8 +9216,13 @@ struct ReadBookPage {
       // remap this source offset only when the replacement pagination session is complete.
       this.readerTypographyRestoreOffset = readingOffset;
     }
+    const previousPageTurnAnimation = this.effectivePageTurnAnimationType();
     this.pageViewWidth = width;
     this.pageViewHeight = height;
+    if (this.effectivePageTurnAnimationType() !== previousPageTurnAnimation) {
+      // 横竖屏分开设置翻页动画时转屏换了一种动画：先收掉旧动画留下的翻页层，再按新视口分页。
+      this.resetSlidePageEffect();
+    }
     if (this.usesReaderContinuousV2()) {
       // Cached chunks own a native width snapshot. The first measured area (or a resized window) must
       // invalidate both those snapshots and retained List hosts, even when chunk text is unchanged.
@@ -9759,6 +9766,8 @@ struct ReadBookPage {
     this.readerCustomThemesRaw = settings.customThemesRaw || '';
     this.readerPageTurnMode = settings.pageTurnMode;
     this.readerPageTurnAnimationType = settings.pageTurnAnimationType;
+    this.readerPageTurnAnimationSplit = settings.pageTurnAnimationSplit;
+    this.readerLandscapePageTurnAnimationType = settings.landscapePageTurnAnimationType;
     this.readerLandscapeDoublePage = settings.landscapeDoublePage;
     this.readerScreenOrientation = settings.screenOrientation;
     this.readerTapZoneActions = settings.tapZoneActions;
@@ -14021,7 +14030,8 @@ struct ReadBookPage {
 
       if (this.readerPageTurnMode === 2 || this.readerPageTurnMode === 0) {
         ReaderSettingChipRow({
-          title: '翻页动画',
+          title: this.readerPageTurnAnimationSplit ?
+            (this.readerPageTurnAnimationUsesLandscape() ? '竖屏翻页动画' : '竖屏翻页动画 · 当前') : '翻页动画',
           labels: ReaderPageTurnAnimation.labels(this.readerPageTurnMode === 2),
           selected: this.pageTurnAnimationSelectedIndex(),
           dark: this.isReaderThemeDark(),
@@ -14030,6 +14040,22 @@ struct ReadBookPage {
           accentColor: this.accentColor(),
           onSelect: (index: number): void => this.setReaderPageTurnAnimationType(index)
         })
+        if (this.readerPageTurnAnimationSplit) {
+          ReaderSettingChipRow({
+            title: this.readerPageTurnAnimationUsesLandscape() ? '横屏翻页动画 · 当前' : '横屏翻页动画',
+            labels: ReaderPageTurnAnimation.labels(this.readerPageTurnMode === 2),
+            selected: this.pageTurnAnimationSelectedIndex(this.readerLandscapePageTurnAnimationType),
+            dark: this.isReaderThemeDark(),
+            textColor: this.readerPanelTextColor(),
+            subTextColor: this.readerPanelSubTextColor(),
+            accentColor: this.accentColor(),
+            onSelect: (index: number): void => this.setReaderLandscapePageTurnAnimationType(index)
+          })
+        }
+        this.readerSwitchSettingItem('横竖屏分开设置', '横屏双页更适合仿真，竖屏可以继续用平移',
+          this.readerPageTurnAnimationSplit, (checked: boolean) => {
+            this.setReaderPageTurnAnimationSplit(checked);
+          })
       }
 
       if (this.readerPageTurnMode === 2) {
@@ -14380,9 +14406,9 @@ struct ReadBookPage {
     return ReaderPageTurnAnimation.types(this.readerPageTurnMode === 2);
   }
 
-  pageTurnAnimationSelectedIndex(): number {
+  pageTurnAnimationSelectedIndex(type: number = this.readerPageTurnAnimationType): number {
     const types = this.pageTurnAnimationTypes();
-    const value = this.normalizePageTurnAnimationType(this.readerPageTurnAnimationType);
+    const value = this.normalizePageTurnAnimationType(type);
     for (let i = 0; i < types.length; i++) {
       if (types[i] === value) {
         return i;
@@ -14727,6 +14753,16 @@ struct ReadBookPage {
           console.error('降级上下滑动翻页动画失败:', e);
         });
     }
+    if (mode === 0 && (Math.round(this.readerLandscapePageTurnAnimationType) ===
+      ReaderSettingsStore.PAGE_TURN_ANIMATION_SIMULATION ||
+      Math.round(this.readerLandscapePageTurnAnimationType) === ReaderSettingsStore.PAGE_TURN_ANIMATION_3D)) {
+      this.readerLandscapePageTurnAnimationType = ReaderSettingsStore.PAGE_TURN_ANIMATION_STACK;
+      this.resetSlidePageEffect();
+      ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), this.readerPageTurnAnimationSplit,
+        this.readerLandscapePageTurnAnimationType).catch((e: Error) => {
+          console.error('降级横屏上下滑动翻页动画失败:', e);
+        });
+    }
     ReaderSettingsStore.savePageTurnMode(getContext(this), mode).catch((e: Error) => {
       console.error('保存翻页方式失败:', e);
     });
@@ -14745,6 +14781,35 @@ struct ReadBookPage {
     ReaderSettingsStore.savePageTurnAnimationType(getContext(this), this.readerPageTurnAnimationType).catch((e: Error) => {
       console.error('保存翻页动画失败:', e);
     });
+    this.saveReadConfig();
+  }
+
+  setReaderLandscapePageTurnAnimationType(index: number): void {
+    const types = this.pageTurnAnimationTypes();
+    const type = index >= 0 && index < types.length ? types[index] : ReaderSettingsStore.PAGE_TURN_ANIMATION_SLIDE;
+    this.readerLandscapePageTurnAnimationType = this.normalizePageTurnAnimationType(type);
+    this.resetSlidePageEffect();
+    ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), this.readerPageTurnAnimationSplit,
+      this.readerLandscapePageTurnAnimationType).catch((e: Error) => {
+        console.error('保存横屏翻页动画失败:', e);
+      });
+    this.saveReadConfig();
+  }
+
+  // 打开时横屏先沿用竖屏那份动画，之后各改各的；关闭后横竖屏都用竖屏那份。
+  setReaderPageTurnAnimationSplit(enabled: boolean): void {
+    if (this.readerPageTurnAnimationSplit === enabled) {
+      return;
+    }
+    if (enabled) {
+      this.readerLandscapePageTurnAnimationType = this.normalizePageTurnAnimationType(this.readerPageTurnAnimationType);
+    }
+    this.readerPageTurnAnimationSplit = enabled;
+    this.resetSlidePageEffect();
+    ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), enabled,
+      this.readerLandscapePageTurnAnimationType).catch((e: Error) => {
+        console.error('保存横竖屏分开设置翻页动画失败:', e);
+      });
     this.saveReadConfig();
   }
 
@@ -14767,7 +14832,7 @@ struct ReadBookPage {
   }
 
   isPageTurnAnimationEnabled(): boolean {
-    return this.normalizePageTurnAnimationType(this.readerPageTurnAnimationType) !== ReaderSettingsStore.PAGE_TURN_ANIMATION_NONE;
+    return this.effectivePageTurnAnimationType() !== ReaderSettingsStore.PAGE_TURN_ANIMATION_NONE;
   }
 
   saveReaderLayoutSettings(): void {
@@ -24615,7 +24680,17 @@ ${leading}` : leading;
 
   // 3D 仿真在单页与左右双页下都走卷曲画布管线；双页时由 ReaderEmulationFlipPainter 处理半页纸的卷起与落地。
   effectivePageTurnAnimationType(): number {
-    return this.normalizePageTurnAnimationType(this.readerPageTurnAnimationType);
+    return this.normalizePageTurnAnimationType(this.readerActivePageTurnAnimationType());
+  }
+
+  readerPageTurnAnimationUsesLandscape(): boolean {
+    return ReaderPageTurnAnimation.usesLandscape(this.readerPageTurnAnimationSplit, this.pageViewWidth,
+      this.pageViewHeight);
+  }
+
+  readerActivePageTurnAnimationType(): number {
+    return this.readerPageTurnAnimationUsesLandscape() ?
+      this.readerLandscapePageTurnAnimationType : this.readerPageTurnAnimationType;
   }
 
   isStackPageTurnAnimation(): boolean {

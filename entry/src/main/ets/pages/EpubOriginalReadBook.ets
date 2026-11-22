@@ -355,8 +355,12 @@ struct EpubOriginalReadBookPage {
   /** 与普通阅读页相同：关闭时阅读中显示状态栏，页眉排在状态栏下面；打开时隐藏状态栏。 */
   @StorageProp('readerExtendToStatusBar') @Watch('onReaderChromeChanged') readerExtendToStatusBar: boolean = false;
   @StorageProp('readerHideNavIndicator') @Watch('applySystemBars') readerHideNavIndicator: boolean = false;
-  /** 翻页动画与普通阅读页共用（平移、推页、淡入、叠页、仿真、3D 仿真）。 */
+  /** 翻页动画与普通阅读页共用（平移、推页、淡入、叠页、仿真、3D 仿真）；这里是当前方向实际用的那份。 */
   @State pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  // 横竖屏分开设置翻页动画：两份都留着，视口变化时按宽高重新挑。
+  @State pageTurnAnimationSplit: boolean = false;
+  private portraitPageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  private landscapePageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
   // 四侧边距与普通阅读页共用（排版里的左/右/上/下边距），点击区域也是同一个设置。
   @StorageLink('readerMarginLeft') @Watch('onReaderChromeChanged') readerMarginLeft: number = 18;
   @StorageLink('readerMarginRight') @Watch('onReaderChromeChanged') readerMarginRight: number = 18;
@@ -863,7 +867,10 @@ struct EpubOriginalReadBookPage {
         ReaderQuickJumpModel.normalizeMode(settings.quickJumpMode));
       this.screenTimeoutMinutes = ReaderSettingsStore.normalizeScreenTimeoutMinutes(settings.screenTimeoutMinutes);
       this.applyScreenTimeout();
-      this.pageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.pageTurnAnimationType);
+      this.portraitPageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.pageTurnAnimationType);
+      this.landscapePageTurnAnimation = ReaderPageTurnAnimation.normalize(settings.landscapePageTurnAnimationType);
+      this.pageTurnAnimationSplit = settings.pageTurnAnimationSplit;
+      this.syncPageTurnAnimationForViewport();
       if (settings.tapZoneActions) this.readerTapZoneActions = settings.tapZoneActions;
       // 直接从书架进来时普通阅读页没读过字体列表。
       if (!this.readerCustomFontsRaw && settings.customFontsRaw) {
@@ -2627,14 +2634,40 @@ struct EpubOriginalReadBookPage {
     }, 450);
   }
 
+  private pageTurnAnimationUsesLandscape(): boolean {
+    return ReaderPageTurnAnimation.usesLandscape(this.pageTurnAnimationSplit, this.viewWidth, this.viewHeight);
+  }
+
+  /** 面板里改的是当前方向那份，标题跟着说明。 */
+  private pageTurnAnimationTitle(): string {
+    if (!this.pageTurnAnimationSplit) return '翻页动画';
+    return this.pageTurnAnimationUsesLandscape() ? '翻页动画 · 横屏' : '翻页动画 · 竖屏';
+  }
+
+  private syncPageTurnAnimationForViewport(): void {
+    const value = this.pageTurnAnimationUsesLandscape() ?
+      this.landscapePageTurnAnimation : this.portraitPageTurnAnimation;
+    if (value === this.pageTurnAnimation) return;
+    this.pageTurnAnimation = value;
+    this.turnController.invalidate();
+  }
+
   private setPageTurnAnimation(type: number): void {
     const value = ReaderPageTurnAnimation.normalize(type);
     if (value === this.pageTurnAnimation) return;
     this.pageTurnAnimation = value;
     this.turnController.invalidate();
-    ReaderSettingsStore.savePageTurnAnimationType(getContext(this), value).catch((error: Error): void => {
-      console.warn('[EpubOriginal] save page turn animation failed:', error);
-    });
+    if (this.pageTurnAnimationUsesLandscape()) {
+      this.landscapePageTurnAnimation = value;
+      ReaderSettingsStore.savePageTurnAnimationSplit(getContext(this), true, value).catch((error: Error): void => {
+        console.warn('[EpubOriginal] save landscape page turn animation failed:', error);
+      });
+    } else {
+      this.portraitPageTurnAnimation = value;
+      ReaderSettingsStore.savePageTurnAnimationType(getContext(this), value).catch((error: Error): void => {
+        console.warn('[EpubOriginal] save page turn animation failed:', error);
+      });
+    }
     this.schedulePrewarm();
   }
 
@@ -4310,6 +4343,7 @@ struct EpubOriginalReadBookPage {
         onVolumeTurnChange: (enabled: boolean): void => { this.setVolumeTurnPage(enabled); },
         onSmartKeyTurnChange: (enabled: boolean): void => { this.setSmartKeyTurnPage(enabled); },
         pageTurnAnimation: this.pageTurnAnimation,
+        pageTurnAnimationTitle: this.pageTurnAnimationTitle(),
         headerBaseInset: ReaderInfoBarConfig.headerBaseInset(this.readerExtendToStatusBar, this.statusBarHeight),
         onPageTurnAnimationChange: (type: number): void => { this.setPageTurnAnimation(type); },
         margins: [this.readerMarginLeft, this.readerMarginRight, this.readerMarginTop, this.readerMarginBottom],
@@ -4427,6 +4461,7 @@ struct EpubOriginalReadBookPage {
       if (this.closing) return;
       this.viewWidth = Number(after.width) || this.viewWidth;
       this.viewHeight = Number(after.height) || this.viewHeight;
+      this.syncPageTurnAnimationForViewport();
     })
       if (this.themeRevealSnapshot) {
         // 按切换序号重建：连续点按时换上新截图，旧动画的结束回调按序号作废。

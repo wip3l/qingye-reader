@@ -78,6 +78,8 @@ export struct EpubOriginalControls {
   @StorageProp('readerPageTurnHapticsScope') pageTurnHapticsScope: number = 0;
   /** 翻页动画，与普通阅读页共用。 */
   @Prop pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  /** 横竖屏分开设置时写成“翻页动画 · 横屏/竖屏”，说明改的是哪一份。 */
+  @Prop pageTurnAnimationTitle: string = '翻页动画';
   /** 页眉默认位置（状态栏下方或屏幕顶端），页眉页脚设置里的位置步进以它为基准。 */
   @Prop headerBaseInset: number = 0;
   /** 四侧边距：左、右、上、下，与普通阅读页共用。 */
@@ -743,7 +745,7 @@ export struct EpubOriginalControls {
       if (this.paged) {
         // 与普通阅读页同一个设置、同一组选项；文件排版用截图播放同样的动画。
         ReaderSettingChipRow({
-          title: '翻页动画',
+          title: this.pageTurnAnimationTitle,
           labels: ReaderPageTurnAnimation.labels(),
           selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.pageTurnAnimation)),
           dark: this.darkMode,

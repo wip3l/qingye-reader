@@ -108,6 +108,8 @@ export struct PdfReaderControls {
    */
   @Prop alignedLayout: boolean = false;
   @Prop pageTurnAnimation: number = ReaderPageTurnAnimation.SLIDE;
+  /** 横竖屏分开设置时写成“翻页动画 · 横屏/竖屏”，说明改的是哪一份。 */
+  @Prop pageTurnAnimationTitle: string = '翻页动画';
   @Prop tapZoneActions: string = '3,3,2,3,1,2,2,2,2';
   @Prop tapZoneSummary: string = '';
   @Prop volumeTurnPage: boolean = false;
@@ -561,7 +563,7 @@ export struct PdfReaderControls {
           accentColor: ThemeRuntime.accentColor(this.darkMode), dark: this.darkMode, menuColor: this.solidPanelColor(),
           onSelect: (index: number): void => this.onContinuousChange(index === 0) })
         if (!this.continuous) {
-          ReaderSettingSelectRow({ title: '翻页动画', description: '点按与按键翻页时的效果，与书籍共用',
+          ReaderSettingSelectRow({ title: this.pageTurnAnimationTitle, description: '点按与按键翻页时的效果，与书籍共用',
             options: ReaderPageTurnAnimation.labels().map((label: string): SelectOption => ({ value: label })),
             selected: Math.max(0, ReaderPageTurnAnimation.types().indexOf(this.pageTurnAnimation)),
             textColor: ThemeRuntime.primaryTextColor(this.darkMode), subTextColor: ThemeRuntime.subTextColor(this.darkMode),
