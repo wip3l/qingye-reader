@@ -4,6 +4,7 @@ import { ExploreCoordinator, ExploreEntry } from './ExploreCoordinator';
 import { WebBookService } from './WebBookService';
 import { ReaderImageRequest } from './ReaderImageScheduler';
 import { ReaderImageMarker } from './ReaderImageMarker';
+import { SourceHostQueue } from './SourceHostQueue';
 
 export class ExploreReadingValidationResult {
   validationStatus: number = BookSource.VALIDATION_UNCHECKED;
@@ -39,6 +40,11 @@ class ExploreBookCandidate {
 export class ExploreReadingValidator {
   private static readonly EXPLORE_SAMPLE_LIMIT: number = 4;
   private static readonly CHAPTER_SAMPLE_LIMIT: number = 32;
+  // 每个书源要连续发好几次请求，几乎都在等网络：几个书源并行，同一站点一次只跑一个。
+  private static readonly SOURCE_CONCURRENCY: number = 3;
+  private static readonly SOURCE_PER_HOST: number = 1;
+  // 一个书源整条链路（发现、详情、目录、正文，最多换 4 本书）的总时限，超过记为临时错误。
+  private static readonly SOURCE_TIMEOUT_MS: number = 90000;
   private cancelled: boolean = false;
 
   cancel(): void {
@@ -51,21 +57,67 @@ export class ExploreReadingValidator {
     Promise<void> {
     this.cancelled = false;
     let done = 0;
-    for (const source of sources) {
-      if (this.cancelled) break;
-      this.publishProgress(onProgress, done, sources.length, source, '发现分类');
-      const result = await this.validateSource(source, (stage: string): void => {
-        this.publishProgress(onProgress, done, sources.length, source, stage);
+    const queue = new SourceHostQueue(sources, ExploreReadingValidator.SOURCE_PER_HOST);
+    const runWorker = async (): Promise<void> => {
+      while (!this.cancelled) {
+        const index = await queue.next((): boolean => this.cancelled);
+        if (index < 0) return;
+        const source = sources[index];
+        try {
+          this.publishProgress(onProgress, done, sources.length, source, '发现分类');
+          const result = await this.validateWithDeadline(source, (stage: string): void => {
+            this.publishProgress(onProgress, done, sources.length, source, stage);
+          });
+          if (this.cancelled) return;
+          done++;
+          if (onSourceComplete) {
+            try {
+              await onSourceComplete(source, result);
+            } catch (e) {
+              console.error('[ERV] source completion callback failed:', e);
+            }
+          }
+          this.publishProgress(onProgress, done, sources.length, source, '完成');
+        } finally {
+          queue.release(index);
+        }
+      }
+    };
+    const workers: Promise<void>[] = [];
+    const workerCount = Math.min(ExploreReadingValidator.SOURCE_CONCURRENCY, sources.length);
+    for (let i = 0; i < workerCount; i++) workers.push(runWorker());
+    await Promise.all(workers);
+  }
+
+  /** 超过总时限就先交回临时错误；被放弃的那次检查在下一个检查点停下，不再发新请求。 */
+  private async validateWithDeadline(source: BookSource, onStage: (stage: string) => void):
+    Promise<ExploreReadingValidationResult> {
+    let timedOut = false;
+    let timerId = -1;
+    const timeoutMs = ExploreReadingValidator.SOURCE_TIMEOUT_MS;
+    const timeout = new Promise<ExploreReadingValidationResult>(
+      (resolve: (result: ExploreReadingValidationResult) => void): void => {
+        timerId = setTimeout((): void => {
+          timerId = -1;
+          timedOut = true;
+          resolve(this.temporary(new ExploreReadingValidationResult(),
+            `链路检查超时（超过 ${Math.round(timeoutMs / 1000)} 秒）`));
+        }, timeoutMs);
       });
-      if (this.cancelled) break;
-      done++;
-      if (onSourceComplete) await onSourceComplete(source, result);
-      this.publishProgress(onProgress, done, sources.length, source, '完成');
+    const stop = (): boolean => timedOut;
+    const stage = (value: string): void => {
+      if (!timedOut) onStage(value);
+    };
+    try {
+      return await Promise.race([this.validateSource(source, stage, stop), timeout]);
+    } finally {
+      if (timerId >= 0) clearTimeout(timerId);
     }
   }
 
-  async validateSource(source: BookSource, onStage?: (stage: string) => void):
+  async validateSource(source: BookSource, onStage?: (stage: string) => void, stop?: () => boolean):
     Promise<ExploreReadingValidationResult> {
+    const stopped = (): boolean => this.cancelled || (!!stop && stop());
     const result = new ExploreReadingValidationResult();
     if (!source.enabledExplore || !(source.exploreUrl || '').trim()) {
       return this.finish(result, BookSource.VALIDATION_FAILED, '缺少发现地址或发现未启用');
@@ -73,7 +125,7 @@ export class ExploreReadingValidator {
     try {
       const explore = new ExploreCoordinator();
       const entries = await explore.getEntries('', source.bookSourceUrl);
-      if (this.cancelled) return this.temporary(result, '校验已取消');
+      if (stopped()) return this.temporary(result, '校验已取消');
       if (entries.length === 0) {
         return this.classifyFailure(result, explore.getNoticeMessage() || '没有解析出发现分类', '发现');
       }
@@ -83,7 +135,7 @@ export class ExploreReadingValidator {
       let lastNotice = '';
       const entryLimit = Math.min(entries.length, 8);
       for (let index = 0; index < entryLimit; index++) {
-        if (this.cancelled) return this.temporary(result, '校验已取消');
+        if (stopped()) return this.temporary(result, '校验已取消');
         const entry = entries[index];
         if (!entry.url || !entry.url.trim()) continue;
         if (onStage) onStage(`发现列表 ${index + 1}/${entryLimit}`);
@@ -105,9 +157,9 @@ export class ExploreReadingValidator {
       const persistedSource = await appDb.getBookSource(source.bookSourceUrl) || source;
       let bestResult: ExploreReadingValidationResult | null = null;
       for (let index = 0; index < candidates.length; index++) {
-        if (this.cancelled) return this.temporary(result, '校验已取消');
+        if (stopped()) return this.temporary(result, '校验已取消');
         const candidateResult = await this.validateCandidate(persistedSource, candidates[index], index,
-          candidates.length, onStage);
+          candidates.length, onStage, stopped);
         if (candidateResult.validationStatus === BookSource.VALIDATION_PASSED) return candidateResult;
         if (!bestResult || candidateResult.chapterCount > bestResult.chapterCount) bestResult = candidateResult;
         if (this.pendingVerification()) return candidateResult;
@@ -122,7 +174,8 @@ export class ExploreReadingValidator {
   }
 
   private async validateCandidate(source: BookSource, candidate: ExploreBookCandidate, candidateIndex: number,
-    candidateCount: number, onStage?: (stage: string) => void): Promise<ExploreReadingValidationResult> {
+    candidateCount: number, onStage: ((stage: string) => void) | undefined, stopped: () => boolean):
+    Promise<ExploreReadingValidationResult> {
     const result = new ExploreReadingValidationResult();
     result.entryTitle = candidate.entry.title;
     result.bookName = candidate.book.name;
@@ -132,7 +185,7 @@ export class ExploreReadingValidator {
       // 批量校验不弹验证网页，书源要验证时记为失败并留下「去验证」。
       const service = new WebBookService().setSourceInteraction((): boolean => false);
       const fullBook = await service.getBookInfo(source, book);
-      if (this.cancelled) return this.temporary(result, '校验已取消');
+      if (stopped()) return this.temporary(result, '校验已取消');
       result.bookName = fullBook.name || result.bookName;
       BookTypeSupport.applyBookType(fullBook, source);
       result.mediaType = BookTypeSupport.isAudio(fullBook) ? '音频' :
@@ -141,7 +194,7 @@ export class ExploreReadingValidator {
       if (onStage) onStage(`书籍目录 ${candidateIndex + 1}/${candidateCount}`);
       const chapters = await service.getChapterList(source, fullBook,
         ExploreReadingValidator.CHAPTER_SAMPLE_LIMIT, false);
-      if (this.cancelled) return this.temporary(result, '校验已取消');
+      if (stopped()) return this.temporary(result, '校验已取消');
       result.chapterCount = chapters.length;
       if (chapters.length === 0) {
         return this.classifyFailure(result, this.runtimeMessage('目录为空'), '目录');
@@ -163,7 +216,7 @@ export class ExploreReadingValidator {
         const nextChapter = position >= 0 ? chapters[position + 1] : undefined;
         content = await service.getContent(source, fullBook, chapter, null, null, ReaderImageRequest.DEFAULT,
           nextChapter?.url || '');
-        if (this.cancelled) return this.temporary(result, '校验已取消');
+        if (stopped()) return this.temporary(result, '校验已取消');
         contentIssue = this.contentIssue(fullBook, content, chapter.url);
         if (!contentIssue) break;
         if (this.isAccessControlMessage(contentIssue) || this.pendingVerification()) break;

@@ -2425,6 +2425,28 @@ export class AppDatabase implements BookSourceRuntimePersistence {
     }, predicates);
   }
 
+  /** 批量写校验状态：同一状态的书源合成一条 UPDATE，批量校验不必每个书源各写一次库。 */
+  async updateBookSourceValidationStatuses(statusByUrl: Map<string, number>): Promise<void> {
+    if (!this.store || statusByUrl.size === 0) return;
+    const urlsByStatus = new Map<number, string[]>();
+    statusByUrl.forEach((status: number, url: string): void => {
+      if (!url) return;
+      const normalized = this.normalizeBookSourceValidationStatus(status);
+      const urls = urlsByStatus.get(normalized);
+      if (urls) urls.push(url);
+      else urlsByStatus.set(normalized, [url]);
+    });
+    const chunkSize = 200;
+    for (const entry of urlsByStatus.entries()) {
+      const urls = entry[1];
+      for (let start = 0; start < urls.length; start += chunkSize) {
+        const predicates = new relationalStore.RdbPredicates('book_sources');
+        predicates.in('bookSourceUrl', urls.slice(start, start + chunkSize));
+        await this.store.update({ validationStatus: entry[0] }, predicates);
+      }
+    }
+  }
+
   /** Runtime source variables (for mirror selection/login actions) remain writable for locked rule definitions. */
   async updateBookSourceVariable(bookSourceUrl: string, variable: string): Promise<void> {
     if (!this.store || !bookSourceUrl) return;

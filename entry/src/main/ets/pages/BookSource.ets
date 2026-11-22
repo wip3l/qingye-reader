@@ -298,6 +298,8 @@ struct BookSourcePage {
   private checkCancelSubscriber: commonEventManager.CommonEventSubscriber | null = null;
   private checkUiUpdates: BookSourceCheckUiUpdate[] = [];
   private checkUiFlushTimer: number = -1;
+  // 校验状态随界面刷新一起成批写库；收尾刷新书源列表前要等它写完。
+  private checkStatusWrite: Promise<void> = Promise.resolve();
   private pageVisible: boolean = true;
   private selectedSourceUrlsSnapshot: string[] = [];
   private selectedSourceUrlLookup: Set<string> = new Set<string>();
@@ -6061,6 +6063,7 @@ struct BookSourcePage {
         return;
       }
       this.flushCheckedSourceUiUpdates();
+      await this.checkStatusWrite;
       const finishedInBackground = this.checkBackgroundMode;
       this.checkCoordinator = null;
       this.checkExploreValidator = null;
@@ -6305,12 +6308,6 @@ struct BookSourcePage {
     includePassedDetail: boolean = false): Promise<void> {
     source.validationStatus = result.validationStatus;
     this.recordCertificateTrustCandidate(source, result.reason || '');
-    try {
-      await AppDatabase.getInstance().updateBookSourceValidationStatus(
-        source.bookSourceUrl, source.validationStatus);
-    } catch (e) {
-      console.error('保存书源校验状态失败:', source.bookSourceName, e);
-    }
     let detail = '';
     if (source.validationStatus !== BookSource.VALIDATION_PASSED || includePassedDetail) {
       const sourceName = source.bookSourceName || source.bookSourceUrl;
@@ -6377,6 +6374,17 @@ struct BookSourcePage {
     this.checkUiFlushTimer = setTimeout(() => this.flushCheckedSourceUiUpdates(), 300);
   }
 
+  /** 接在上一批之后写，前后两批不会乱序；写失败只记日志，界面上的状态照常更新。 */
+  persistCheckedSourceStatuses(statusByUrl: Map<string, number>): void {
+    this.checkStatusWrite = this.checkStatusWrite.then(async (): Promise<void> => {
+      try {
+        await AppDatabase.getInstance().updateBookSourceValidationStatuses(statusByUrl);
+      } catch (e) {
+        console.error('保存书源校验状态失败:', e);
+      }
+    });
+  }
+
   resetCheckedSourceUiUpdates(): void {
     if (this.checkUiFlushTimer >= 0) clearTimeout(this.checkUiFlushTimer);
     this.checkUiFlushTimer = -1;
@@ -6395,6 +6403,7 @@ struct BookSourcePage {
       statusByUrl.set(update.bookSourceUrl, update.validationStatus);
       if (update.detail) details.push(update.detail);
     }
+    this.persistCheckedSourceStatuses(statusByUrl);
     this.allSources = this.allSources.map((item: BookSource) => {
       const status = statusByUrl.get(item.bookSourceUrl);
       if (status === undefined) return item;

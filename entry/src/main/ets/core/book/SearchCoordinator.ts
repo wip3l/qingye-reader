@@ -4,6 +4,7 @@ import { BookSourceDataUrlSupport } from './BookSourceDataUrlSupport';
 import { BookSourceMetadataSupport } from './BookSourceMetadataSupport';
 import { BookSourceStageRuleSupport } from './BookSourceStageRuleSupport';
 import { SearchChineseScript, SearchKeywordVariants, SearchSourcePlan } from './SearchChineseScript';
+import { SourceHostQueue } from './SourceHostQueue';
 
 export interface SearchProgress {
   done: number;
@@ -34,6 +35,11 @@ const MAX_SEARCH_CONCURRENCY = 12;
 const SEARCH_RATE_LIMIT_MAX_WAIT_MS = 60000;
 // Overall budget for one source: request, scripts and result parsing together.
 const SEARCH_SOURCE_TIMEOUT_MS = 60000;
+// 批量校验只需判断书源能不能用，死站不必等满搜索的时限；限速排队也给得更短。
+const VALIDATION_SOURCE_TIMEOUT_MS = 30000;
+const VALIDATION_RATE_LIMIT_MAX_WAIT_MS = 20000;
+// 校验找到一本合格的书就算通过：只看列表前面这些条目，只算书名、作者、详情地址。
+const VALIDATION_CANDIDATES_PER_SOURCE = 30;
 // The result-list rule runs synchronously on the main thread and cannot yield midway. Past this budget its remaining
 // per-element JS is skipped and the source fails, well before the 6-second freeze kill (AnalyzeRule.setDeadline).
 const SEARCH_LIST_RULE_DEADLINE_MS = 2000;
@@ -150,7 +156,10 @@ class PartialSearchSink {
     return { books: this.emitted.concat(result.books), validationStatus: BookSource.VALIDATION_PASSED, reason: '' };
   }
 }
-const MAX_VALIDATION_CONCURRENCY = 1;
+// 校验时间几乎都花在等网络上，并发几个书源可以重叠等待；同一站点最多同时 2 个，免得撞上站点限流。
+// 每个书源的主线程解析已有分片让出和列表规则时限，并发不会拉长单次阻塞。
+const MAX_VALIDATION_CONCURRENCY = 4;
+const MAX_VALIDATION_PER_HOST = 2;
 // Batch source results so background searching does not continuously interrupt list gestures.
 const SEARCH_PROGRESS_EMIT_INTERVAL_MS = 500;
 const MAX_SEARCH_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -332,59 +341,74 @@ export class SearchCoordinator {
       });
     };
 
+    const hostQueue = validationOnly ? new SourceHostQueue(sources, MAX_VALIDATION_PER_HOST) : null;
+    const runSource = async (sourceIndex: number): Promise<void> => {
+      currentSourceLabel = sources[sourceIndex].bookSourceName || `书源 ${sourceIndex + 1}`;
+      AppStorage.setOrCreate('searchLastSource', currentSourceLabel);
+      AppStorage.setOrCreate('searchLastSourceIndex', sourceIndex + 1);
+      // Books the source hands over while its script is still running go to the page right away; the final
+      // result leaves them out below so the page never sees a book twice.
+      const emittedKeys = new Set<string>();
+      const onPartial = validationOnly ? null : (books: SearchBook[]): void => {
+        if (this.cancelled || resultBudgetSpent()) return;
+        const fresh = books.filter((book: SearchBook): boolean => !emittedKeys.has(this.searchBookKey(book)));
+        const displayBooks = this.booksForDisplay(this.filterSearchResults(fresh, keyword, options), categoryLimit,
+          categoryCounts, Math.max(0, totalResultLimit - all.length));
+        if (displayBooks.length === 0) return;
+        for (const book of displayBooks) emittedKeys.add(this.searchBookKey(book));
+        pendingDeltaResults.push(...displayBooks);
+        all.push(...displayBooks);
+        emitProgress();
+      };
+      const sourceResult = await this.searchSourceForScript(sources[sourceIndex], keyword, options, onPartial);
+      if (sourceResult.books.length === 0 && sourceResult.reason && sourceResult.reason !== '未搜索到结果') {
+        this.lastFailureReason = `${sources[sourceIndex].bookSourceName || '书源'}：${sourceResult.reason}`;
+      }
+      const books = emittedKeys.size === 0 ? sourceResult.books :
+        sourceResult.books.filter((book: SearchBook): boolean => !emittedKeys.has(this.searchBookKey(book)));
+      if (this.cancelled) return;
+      if (options.onSourceComplete) {
+        try {
+          await options.onSourceComplete(sources[sourceIndex], sourceResult);
+        } catch (e) {
+          console.error('[SC] source completion callback failed:', e);
+        }
+      }
+      const matchedBooks = validationOnly ? [] : this.filterSearchResults(books, keyword, options);
+      if (options.debugContext && !validationOnly) options.debugContext.addLog('info',
+        `搜索展示过滤：有效记录 ${sourceResult.books.length}，相关性匹配 ${matchedBooks.length + emittedKeys.size}`);
+      const displayBooks = this.booksForDisplay(matchedBooks, categoryLimit, categoryCounts,
+        Math.max(0, totalResultLimit - all.length));
+      if (options.debugContext && !validationOnly) {
+        options.debugContext.addLog('info', `本书源纳入展示：${displayBooks.length + emittedKeys.size}`);
+      }
+
+      done++;
+      if (!validationOnly) {
+        pendingDeltaResults.push(...displayBooks);
+        all.push(...displayBooks);
+      }
+      emitProgress();
+    };
+
     const runWorker = async (): Promise<void> => {
       while (!this.cancelled) {
         if (resultBudgetSpent()) break;
-        const sourceIndex = nextIndex;
+        let sourceIndex = -1;
+        if (hostQueue) {
+          sourceIndex = await hostQueue.next((): boolean => this.cancelled);
+          if (sourceIndex < 0) break;
+          try {
+            await runSource(sourceIndex);
+          } finally {
+            hostQueue.release(sourceIndex);
+          }
+          continue;
+        }
+        sourceIndex = nextIndex;
         nextIndex++;
         if (sourceIndex >= sources.length) break;
-
-        currentSourceLabel = sources[sourceIndex].bookSourceName || `书源 ${sourceIndex + 1}`;
-        AppStorage.setOrCreate('searchLastSource', currentSourceLabel);
-        AppStorage.setOrCreate('searchLastSourceIndex', sourceIndex + 1);
-        // Books the source hands over while its script is still running go to the page right away; the final
-        // result leaves them out below so the page never sees a book twice.
-        const emittedKeys = new Set<string>();
-        const onPartial = validationOnly ? null : (books: SearchBook[]): void => {
-          if (this.cancelled || resultBudgetSpent()) return;
-          const fresh = books.filter((book: SearchBook): boolean => !emittedKeys.has(this.searchBookKey(book)));
-          const displayBooks = this.booksForDisplay(this.filterSearchResults(fresh, keyword, options), categoryLimit,
-            categoryCounts, Math.max(0, totalResultLimit - all.length));
-          if (displayBooks.length === 0) return;
-          for (const book of displayBooks) emittedKeys.add(this.searchBookKey(book));
-          pendingDeltaResults.push(...displayBooks);
-          all.push(...displayBooks);
-          emitProgress();
-        };
-        const sourceResult = await this.searchSourceForScript(sources[sourceIndex], keyword, options, onPartial);
-        if (sourceResult.books.length === 0 && sourceResult.reason && sourceResult.reason !== '未搜索到结果') {
-          this.lastFailureReason = `${sources[sourceIndex].bookSourceName || '书源'}：${sourceResult.reason}`;
-        }
-        const books = emittedKeys.size === 0 ? sourceResult.books :
-          sourceResult.books.filter((book: SearchBook): boolean => !emittedKeys.has(this.searchBookKey(book)));
-        if (this.cancelled) break;
-        if (options.onSourceComplete) {
-          try {
-            await options.onSourceComplete(sources[sourceIndex], sourceResult);
-          } catch (e) {
-            console.error('[SC] source completion callback failed:', e);
-          }
-        }
-        const matchedBooks = validationOnly ? [] : this.filterSearchResults(books, keyword, options);
-        if (options.debugContext && !validationOnly) options.debugContext.addLog('info',
-          `搜索展示过滤：有效记录 ${sourceResult.books.length}，相关性匹配 ${matchedBooks.length + emittedKeys.size}`);
-        const displayBooks = this.booksForDisplay(matchedBooks, categoryLimit, categoryCounts,
-          Math.max(0, totalResultLimit - all.length));
-        if (options.debugContext && !validationOnly) {
-          options.debugContext.addLog('info', `本书源纳入展示：${displayBooks.length + emittedKeys.size}`);
-        }
-
-        done++;
-        if (!validationOnly) {
-          pendingDeltaResults.push(...displayBooks);
-          all.push(...displayBooks);
-        }
-        emitProgress();
+        await runSource(sourceIndex);
       }
     };
 
@@ -456,7 +480,9 @@ export class SearchCoordinator {
     onPartial: ((books: SearchBook[]) => void) | null = null): Promise<SearchSourceResult> {
     const abort = new SearchSourceAbort();
     // Time spent queueing behind the source's own rate limit is capped separately and comes on top.
-    const deadlineMs = SEARCH_SOURCE_TIMEOUT_MS + (source.concurrentRate ? SEARCH_RATE_LIMIT_MAX_WAIT_MS : 0);
+    const validation = options.validationOnly === true;
+    const deadlineMs = (validation ? VALIDATION_SOURCE_TIMEOUT_MS : SEARCH_SOURCE_TIMEOUT_MS) +
+      (source.concurrentRate ? this.rateLimitMaxWaitMs(options) : 0);
     let timerId = -1;
     const timeout = new Promise<SearchSourceResult>((resolve: (result: SearchSourceResult) => void): void => {
       // The budget restarts whenever the source hands over a batch: an aggregating script that is still producing
@@ -566,7 +592,7 @@ export class SearchCoordinator {
     const searchSerial = this.searchSerial;
     const au = new AnalyzeUrl(source, this.http).trustSourceAuthoredUrl()
       .setCancelCheck((): boolean => stopped() || searchSerial !== this.searchSerial,
-        SEARCH_RATE_LIMIT_MAX_WAIT_MS);
+        this.rateLimitMaxWaitMs(options));
     const onPartialBody = partial.listener ? (text: string): void => {
       partial.enqueue(async (): Promise<SearchBook[]> => {
         if (stopped() || budget.full) return [];
@@ -694,8 +720,10 @@ export class SearchCoordinator {
       return parsed;
     }
     // A per-type search reads further down the list, so an aggregated source's later types are reached at all.
+    const validation = options.validationOnly === true;
     const candidateLimit = this.normalizedLimit(options.maxCandidatesPerSource,
-      options.leanResult === true ? 60 : options.maxResultsPerCategory !== undefined ? 200 : 120, 1, 200);
+      validation ? VALIDATION_CANDIDATES_PER_SOURCE : options.leanResult === true ? 60 :
+        options.maxResultsPerCategory !== undefined ? 200 : 120, 1, 200);
     const typedItems = allTypedItems.length > candidateLimit ?
       allTypedItems.slice(0, candidateLimit) : allTypedItems;
     const items = typedItems.map((item: RuleValue): string => item.asString());
@@ -722,14 +750,17 @@ export class SearchCoordinator {
       new RuleFieldRequest('name', searchRule.name || ''),
       new RuleFieldRequest('author', searchRule.author || ''),
       new RuleFieldRequest('bookUrl',
-        this.applySimpleSourceUrlConstants(searchRule.bookUrl || '', source.jsLib || ''), true),
+        this.applySimpleSourceUrlConstants(searchRule.bookUrl || '', source.jsLib || ''), true)
+    ];
+    // 校验只判断能否解析出书名和详情地址，其余字段的规则（常带逐条脚本）不必执行。
+    if (!validation) {
       // 换源搜索同样需要展示各书源当前提供的最新章节。该字段通常与书名、作者
       // 位于同一搜索结果节点中，保留它不会引入额外网络请求。
-      new RuleFieldRequest('lastChapter', searchRule.lastChapter || ''),
-      new RuleFieldRequest('status', searchRule.status || ''),
-      new RuleFieldRequest('updateTime', searchRule.updateTime || '')
-    ];
-    if (!options.leanResult) {
+      fieldRequest.fields.push(new RuleFieldRequest('lastChapter', searchRule.lastChapter || ''));
+      fieldRequest.fields.push(new RuleFieldRequest('status', searchRule.status || ''));
+      fieldRequest.fields.push(new RuleFieldRequest('updateTime', searchRule.updateTime || ''));
+    }
+    if (!options.leanResult && !validation) {
       fieldRequest.fields.push(new RuleFieldRequest('coverUrl',
         this.applySimpleSourceUrlConstants(searchRule.coverUrl || '', source.jsLib || '')));
       fieldRequest.fields.push(new RuleFieldRequest('intro', searchRule.intro || ''));
@@ -943,6 +974,11 @@ export class SearchCoordinator {
     if (options.debugContext) options.debugContext.addLog('info', `去重、精确匹配及上限后：${books.length}`);
     return books.length > 0 ? this.sourceResult(books, BookSource.VALIDATION_PASSED, '') :
       this.sourceResult([], BookSource.VALIDATION_NO_RESULTS, '未搜索到结果');
+  }
+
+  /** 书源自带限速时最多排队多久；超过就记为限速失败，换下一个书源。 */
+  private rateLimitMaxWaitMs(options: SearchOptions): number {
+    return options.validationOnly === true ? VALIDATION_RATE_LIMIT_MAX_WAIT_MS : SEARCH_RATE_LIMIT_MAX_WAIT_MS;
   }
 
   private sourceResult(books: SearchBook[], validationStatus: number, reason: string): SearchSourceResult {
