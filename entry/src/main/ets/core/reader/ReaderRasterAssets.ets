@@ -1,6 +1,7 @@
 import image from '@ohos.multimedia.image';
 import fs from '@ohos.file.fs';
 import { ThemeAssetRegistry } from '../../theme/ThemeAssetRegistry';
+import { AnimatedImagePolicy } from '../../utils/AnimatedImagePolicy';
 
 /**
  * Theme artwork decoded to PixelMaps for the self-drawn page raster: regex bubble caps and the built-in paper
@@ -18,6 +19,14 @@ export class ReaderRasterAssets {
   /** 阅读背景“完整显示”模糊垫底用的小图，单独缓存：界面上的 Image 正在显示它，不能被上面的缓存挤掉释放。 */
   private static readonly backdrops: Map<string, image.PixelMap> = new Map<string, image.PixelMap>();
   private static readonly MAX_BACKDROPS: number = 4;
+  /** 章首饰图是不是本机动图（GIF / 动态 WebP），按地址只读一次文件头。 */
+  private static readonly animatedArtwork: Map<string, boolean> = new Map<string, boolean>();
+  /**
+   * 动图饰图的第一帧，给阅读页叠加的 Image 当 alt：新页的 Image 解码动图前先显示它，不闪空。单独缓存，
+   * 界面正拿着用，不能被上面的缓存挤掉释放。
+   */
+  private static readonly animatedStills: Map<string, image.PixelMap> = new Map<string, image.PixelMap>();
+  private static readonly MAX_ANIMATED_STILLS: number = 8;
   /** 模糊垫底小图的宽（px），再大模糊后也看不出区别。 */
   static readonly BACKDROP_WIDTH: number = 96;
 
@@ -157,15 +166,53 @@ export class ReaderRasterAssets {
     const key = `${uri}_${width}x${height}`;
     const cached = ReaderRasterAssets.cache.get(key);
     if (cached) return cached;
+    const bitmap = ReaderRasterAssets.decodeFile(uri, width, height);
+    if (bitmap) ReaderRasterAssets.remember(key, bitmap);
+    return bitmap;
+  }
+
+  /**
+   * 章首饰图是本机动图时返回 true：常驻页不把它画进画布，由阅读页叠一个 Image 播放；翻页纹理和其他自绘层
+   * 照旧画第一帧。只看文件，不看“播放动图”开关——开关关着时叠加层显示静图，画布这边不用跟着重画。
+   */
+  static isAnimatedArtwork(uri: string): boolean {
+    if (!uri || uri.startsWith(ReaderRasterAssets.MEDIA_PREFIX)) return false;
+    const known = ReaderRasterAssets.animatedArtwork.get(uri);
+    if (known !== undefined) return known;
+    const animated = AnimatedImagePolicy.mayBeAnimatedFile(uri);
+    ReaderRasterAssets.animatedArtwork.set(uri, animated);
+    return animated;
+  }
+
+  /** 动图饰图按显示尺寸解码的第一帧（见 animatedStills）；解不出来返回 null。 */
+  static animatedStill(uri: string, widthPx: number, heightPx: number): image.PixelMap | null {
+    if (!uri) return null;
+    const width = Math.max(1, Math.round(widthPx));
+    const height = Math.max(1, Math.round(heightPx));
+    const key = `${uri}_${width}x${height}`;
+    const cached = ReaderRasterAssets.animatedStills.get(key);
+    if (cached) return cached;
+    const bitmap = ReaderRasterAssets.decodeFile(uri, width, height);
+    if (!bitmap) return null;
+    if (ReaderRasterAssets.animatedStills.size >= ReaderRasterAssets.MAX_ANIMATED_STILLS) {
+      const oldest = ReaderRasterAssets.animatedStills.keys().next().value as string | undefined;
+      if (oldest !== undefined) {
+        ReaderRasterAssets.animatedStills.get(oldest)?.release().catch((): void => {});
+        ReaderRasterAssets.animatedStills.delete(oldest);
+      }
+    }
+    ReaderRasterAssets.animatedStills.set(key, bitmap);
+    return bitmap;
+  }
+
+  private static decodeFile(uri: string, width: number, height: number): image.PixelMap | null {
     if (uri.startsWith(ReaderRasterAssets.MEDIA_PREFIX)) {
       try {
         const bytes = ReaderRasterAssets.mediaBytes(uri);
         if (!bytes) return null;
         const source = image.createImageSource(bytes);
         try {
-          const bitmap = source.createPixelMapSync({ desiredSize: { width: width, height: height } });
-          ReaderRasterAssets.remember(key, bitmap);
-          return bitmap;
+          return source.createPixelMapSync({ desiredSize: { width: width, height: height } });
         } finally {
           source.release();
         }
@@ -179,9 +226,7 @@ export class ReaderRasterAssets {
       file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
       const source = image.createImageSource(file.fd);
       try {
-        const bitmap = source.createPixelMapSync({ desiredSize: { width: width, height: height } });
-        ReaderRasterAssets.remember(key, bitmap);
-        return bitmap;
+        return source.createPixelMapSync({ desiredSize: { width: width, height: height } });
       } finally {
         source.release();
       }

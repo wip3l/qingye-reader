@@ -150,6 +150,7 @@ Object.assign(resized, { pageViewWidth: 80, pageViewHeight: 800, readerFooterEna
   parseAreaDimension: n => Number(n), getReaderPageContentTopPadding: () => 0,
   getReaderNavigationBottomReserve: () => 0, measureReaderPageAreaBottomGap: () => 0,
   getReaderStableReflowOffset: () => 380, cancelReaderContinuousMetricsTimers() {},
+  effectivePageTurnAnimationType: () => 0, resetSlidePageEffect() {},
   eyeTurn: () => ({ refreshForViewport() {} }), paginateContent() {}, syncCurrentPageText() {},
   normalizeReaderSpreadPageIndex: n => n, findPageIndexByOffset: () => 0,
   preloadNextChapterPaginationLater() {}, preloadPreviousChapterPaginationLater() {},

@@ -27,9 +27,11 @@ export class ReaderV2PageFrameNode extends FrameNode {
   private selectionStart: number = -1;
   private selectionEnd: number = -1;
   private selectionColor: number = 0x553B82F6;
+  private readonly liveArtwork: boolean;
 
-  constructor(uiContext: UIContext) {
+  constructor(uiContext: UIContext, liveArtwork: boolean = false) {
     super(uiContext);
+    this.liveArtwork = liveArtwork;
   }
 
   update(page: ReaderV2PageLayout | null, highlightStart: number, highlightEnd: number,
@@ -63,7 +65,7 @@ export class ReaderV2PageFrameNode extends FrameNode {
     if (!this.page) return;
     // The same painter rasterizes the settled page for simulation turns; see ReaderV2PagePainter.
     ReaderV2PagePainter.paint(context.canvas, this.page, this.highlightStart, this.highlightEnd,
-      this.highlightColor, this.selectionStart, this.selectionEnd, this.selectionColor);
+      this.highlightColor, this.selectionStart, this.selectionEnd, this.selectionColor, this.liveArtwork);
   }
 }
 
@@ -80,12 +82,19 @@ export class ReaderV2PageNodeController extends NodeController {
   private highlightEnd: number = -1;
   private selectionStart: number = -1;
   private selectionEnd: number = -1;
+  /** 为 true 时页面上的动图饰图不画进画布，由宿主叠 Image 播放（见 ReaderV2PagePainter.drawDecorations）。 */
+  private readonly liveArtwork: boolean;
+
+  constructor(liveArtwork: boolean = false) {
+    super();
+    this.liveArtwork = liveArtwork;
+  }
 
   makeNode(uiContext: UIContext): FrameNode | null {
     this.uiContext = uiContext;
     this.mountedHost = this.requestedHost;
     ReaderV2PageNodeController.onNodeCreated?.();
-    this.node = new ReaderV2PageFrameNode(uiContext);
+    this.node = new ReaderV2PageFrameNode(uiContext, this.liveArtwork);
     this.node.update(this.page, this.highlightStart, this.highlightEnd, this.selectionStart, this.selectionEnd);
     return this.node;
   }

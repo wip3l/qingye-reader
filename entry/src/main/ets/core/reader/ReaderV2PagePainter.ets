@@ -21,12 +21,12 @@ import {
 export class ReaderV2PagePainter {
   static paint(canvas: drawing.Canvas, page: ReaderV2PageLayout, highlightStart: number = -1,
     highlightEnd: number = -1, highlightColor: number = 0, selectionStart: number = -1, selectionEnd: number = -1,
-    selectionColor: number = 0): void {
+    selectionColor: number = 0, skipAnimatedArtwork: boolean = false): void {
     // Bubble decoration and glyphs must be submitted by the same retained node. The previous ArkUI overlay was
     // keyed independently from this FrameNode, so a forward/back turn could update the glyph page first while
     // leaving the old page's bubble rectangles mounted. Painting both layers here also removes dozens of
     // Row/Image nodes from simulation snapshots on dialogue-heavy chapters.
-    ReaderV2PagePainter.drawDecorations(canvas, page);
+    ReaderV2PagePainter.drawDecorations(canvas, page, skipAnimatedArtwork);
     for (const fragment of page.fragments) {
       for (const segment of fragment.regexBubbleSegments) {
         ReaderV2PagePainter.drawRegexBubble(canvas, segment);
@@ -64,14 +64,19 @@ export class ReaderV2PagePainter {
     if (hasAnnotations) ReaderV2AnnotationPainter.paintLines(canvas, page);
   }
 
-  /** Theme artwork under the text (chapter-head ornament). An image that cannot be decoded is skipped. */
-  private static drawDecorations(canvas: drawing.Canvas, page: ReaderV2PageLayout): void {
+  /**
+   * Theme artwork under the text (chapter-head ornament). An image that cannot be decoded is skipped.
+   * skipAnimatedArtwork: 常驻页上的动图饰图由阅读页叠加的 Image 播放（叠在画布下面，首字字形仍盖在上面），
+   * 这里不画，否则透明帧会露出底下的第一帧；翻页纹理等自绘层不传，照旧画第一帧。
+   */
+  private static drawDecorations(canvas: drawing.Canvas, page: ReaderV2PageLayout, skipAnimatedArtwork: boolean): void {
     for (const decoration of page.decorations) {
       const rect = decoration.rect;
       const width = rect.right - rect.left;
       const height = rect.bottom - rect.top;
       if (width <= 0.5 || height <= 0.5) continue;
-      const bitmap = decoration.image ? ReaderRasterAssets.fileImage(decoration.image, width, height) : null;
+      const live = skipAnimatedArtwork && ReaderRasterAssets.isAnimatedArtwork(decoration.image);
+      const bitmap = decoration.image && !live ? ReaderRasterAssets.fileImage(decoration.image, width, height) : null;
       if (bitmap) {
         const brush = new drawing.Brush();
         brush.setAntiAlias(true);

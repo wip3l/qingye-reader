@@ -66,6 +66,8 @@ let confirmedTime = 0, nextChapters = [chapter(1), chapter(2), chapter(3)];
 const engineDb = {
   recordBookChapterUpdate: async (url, time) => { confirmedTime = Math.max(confirmedTime, time); },
   updateBook: async () => {}, deleteBookChapters: async () => {}, insertBookChapters: async () => {},
+  realignCachedChapterContents: async () => {}, realignChapterMarks: async () => false,
+  deleteBookCachedContent: async () => {},
 };
 const Engine = compile(clean('core/book/ReadBookEngine.ts') + '\nReadBookEngine', {
   WebBookService: class { setSourceInteraction() { return this; } }, BookChapterUpdate: Updates, appDb: engineDb,
@@ -126,7 +128,8 @@ Backup.replaceRoot = value => value;
 assert.equal(Backup.hydrateBook({ confirmedChapterUpdateTime: 123 }, '', '').confirmedChapterUpdateTime, 123);
 assert.equal(Backup.hydrateBook({ latestChapterTime: 999 }, '', '').confirmedChapterUpdateTime, 0);
 const Sync = compile(`class CloudSyncCoordinator { ${method('account/CloudSyncCoordinator.ets', 'restoreBook')} }; CloudSyncCoordinator`,
-  { Book: class {}, BookIdentity: { keyOfBook: () => 'book' } });
+  { Book: class {}, BookIdentity: { keyOfBook: () => 'book' },
+    BookTypeSupport: { CATEGORY_VIDEO: 'video', isVideo: () => false } });
 let restored = { confirmedChapterUpdateTime: 500, bookUrl: 'book' };
 const syncDb = { getBook: async () => restored, restoreBook: async book => { restored = book; } };
 await Sync.restoreBook(syncDb, { bookUrl: 'book', origin: 'source' });

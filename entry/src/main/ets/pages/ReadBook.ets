@@ -127,6 +127,7 @@ import {
 } from '../core/reader/ReaderV2LayoutSnapshot';
 import {
   ReaderV2AnnotationMark,
+  ReaderV2PageDecoration,
   ReaderV2PageFragment,
   ReaderV2PageLayout,
   ReaderV2PageSet,
@@ -406,6 +407,8 @@ const READER_IDENTITY_FILTER: ColorFilter = new ColorFilter([
 @Component
 struct ReadBookPage {
   @StorageProp('immersiveLightLevel') immersiveLightLevel: string = 'adaptive';
+  // “播放动图”开关切换、或动图饰图的第一帧静图生成后递增，动图饰图重新经过 AnimatedImagePolicy 取地址。
+  @StorageProp('animatedImageRevision') animatedImageRevision: number = 0;
   // MiMo choices live in the floating voice list, so republish it whenever they change.
   @StorageProp('mimoEnabled') @Watch('onMimoVoiceStateChanged') mimoEnabledState: boolean = false;
   @StorageProp('mimoMulti') @Watch('onMimoVoiceStateChanged') mimoMultiState: boolean = false;
@@ -19592,7 +19595,7 @@ ${leading}` : leading;
     source: string): ReaderV2PageNodeController {
     let controller = this.readerV2Controllers.get(role);
     if (!controller) {
-      controller = new ReaderV2PageNodeController();
+      controller = new ReaderV2PageNodeController(true);
       this.readerV2Controllers.set(role, controller);
     }
     const page = this.readerV2Page(chapterIndex, pageIndex, source);
@@ -20674,6 +20677,7 @@ ${leading}` : leading;
       // NodeContainer for every spoken chunk can trigger a fresh safe-area measurement after a page
       // animation, moving all glyphs upward. Only the lightweight rectangle overlay below depends on
       // readerV2TtsPaintVersion.
+      this.readerV2AnimatedArtworkLayer(this.readerV2Page(chapterIndex, pageIndex, source))
       NodeContainer(this.readerV2Controller(role, chapterIndex, pageIndex, source))
         .width('100%')
         .height('100%')
@@ -20695,6 +20699,54 @@ ${leading}` : leading;
     .width(halfWidth ? this.getReaderPageColumnWidth() : '100%')
     .height('100%')
     .hitTestBehavior(HitTestMode.None)
+  }
+
+  // 章首饰图（含首字印章）是动图时由这里的 Image 播放，常驻页画布不画它（见 ReaderV2PagePainter.drawDecorations）。
+  // 放在正文节点下面，首字字形仍盖在印章上。翻页纹理画的是第一帧，翻完回到这里接着播；Image 不可见时系统自己停。
+  @Builder
+  readerV2AnimatedArtworkLayer(page: ReaderV2PageLayout | null) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      ForEach(this.readerV2AnimatedDecorations(page), (decoration: ReaderV2PageDecoration) => {
+        this.readerV2AnimatedArtwork(decoration)
+      }, (decoration: ReaderV2PageDecoration) => `reader_v2_artwork_${decoration.image}_` +
+        `${Math.round(decoration.rect.left)}_${Math.round(decoration.rect.top)}_` +
+        `${Math.round(decoration.rect.right)}_${Math.round(decoration.rect.bottom)}`)
+    }
+    .width('100%')
+    .height('100%')
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  readerV2AnimatedArtwork(decoration: ReaderV2PageDecoration) {
+    Image(this.readerV2AnimatedArtworkSource(decoration, this.animatedImageRevision))
+      // 新页的 Image 要异步解码动图，先用同尺寸的第一帧垫着，翻页落定时饰图不闪空。
+      .alt(this.readerV2AnimatedArtworkStill(decoration))
+      .width(px2vp(decoration.rect.right - decoration.rect.left))
+      .height(px2vp(decoration.rect.bottom - decoration.rect.top))
+      .position({ x: px2vp(decoration.rect.left), y: px2vp(decoration.rect.top) })
+      // 画布是把图拉伸到饰图框里画的，这里一致。
+      .objectFit(ImageFit.Fill)
+      .draggable(false)
+      .hitTestBehavior(HitTestMode.None)
+  }
+
+  readerV2AnimatedDecorations(page: ReaderV2PageLayout | null): ReaderV2PageDecoration[] {
+    if (!page || page.decorations.length === 0) return [];
+    return page.decorations.filter((decoration: ReaderV2PageDecoration): boolean =>
+      decoration.rect.right - decoration.rect.left > 0.5 && decoration.rect.bottom - decoration.rect.top > 0.5 &&
+        ReaderRasterAssets.isAnimatedArtwork(decoration.image));
+  }
+
+  /** “播放动图”关着或动图超过上限时换成第一帧静图；revision 只用来在它变化时重新取。 */
+  readerV2AnimatedArtworkSource(decoration: ReaderV2PageDecoration, revision: number): string {
+    if (revision < 0) return decoration.image;
+    return AnimatedImagePolicy.display(getContext(this), decoration.image);
+  }
+
+  readerV2AnimatedArtworkStill(decoration: ReaderV2PageDecoration): image.PixelMap | string {
+    return ReaderRasterAssets.animatedStill(decoration.image, decoration.rect.right - decoration.rect.left,
+      decoration.rect.bottom - decoration.rect.top) || '';
   }
 
   @Builder
@@ -21803,7 +21855,7 @@ ${leading}` : leading;
     const key = `${this.readerContinuousChapterOf(chapterIndex)}_${index}`;
     let controller = this.readerContinuousV2Controllers.get(key);
     if (!controller) {
-      controller = new ReaderV2PageNodeController();
+      controller = new ReaderV2PageNodeController(true);
       this.readerContinuousV2Controllers.set(key, controller);
     }
     controller.updatePage(this.readerContinuousV2Layout(index, text, chapterIndex));
@@ -22246,6 +22298,7 @@ ${leading}` : leading;
   @Builder
   readerContinuousV2Item(chapterIndex: number, index: number, text: string, renderVersion: number) {
     Stack({ alignContent: Alignment.TopStart }) {
+      this.readerV2AnimatedArtworkLayer(this.readerContinuousV2Layout(index, text, chapterIndex))
       NodeContainer(this.readerContinuousV2Controller(index, text, chapterIndex))
         .width('100%')
         .height('100%')
