@@ -85,6 +85,9 @@ import { PopupMenuAction } from '../common/PopupMenuAction';
 import { ReaderHaptics } from '../../utils/ReaderHaptics';
 import { BookMarkService } from '../../core/mark/BookMarkService';
 import { BookMark, BookMarkStatus } from '../../model/book/BookMark';
+import { BookMarkSheet } from '../book/BookMarkSheet';
+import { ReadingTicketLoader } from '../../core/ticket/ReadingTicketLoader';
+import { TicketAlbumStore } from '../../utils/TicketAlbumStore';
 import { BookIdentity } from '../../utils/BookIdentity';
 
 const SHELF_FULL_TEXT_CACHE_NOTIFICATION_INTERVAL_MS: number = 5000;
@@ -512,6 +515,16 @@ export struct BookshelfPage {
   private galleryCoverApplying: boolean = false;
   @State pendingDeleteBook: Book | null = null;
   @State pendingActionBook: Book | null = null;
+  /** 长按的这本已有标记：菜单项显示“编辑标记”。打开菜单时异步查，查到前按“添加标记”。 */
+  @State pendingActionHasMark: boolean = false;
+  @State showBookMarkSheet: boolean = false;
+  @State bookMarkSheetFocused: boolean = false;
+  private bookMarkDraft: BookMark = new BookMark();
+  private bookMarkKnownTags: string[] = [];
+  private bookMarkExisting: boolean = false;
+  private bookMarkCoverBookUrl: string = '';
+  private bookMarkCoverOrigin: string = '';
+  private bookMarkSheetOpening: boolean = false;
   @State @Watch('syncChangeSourceDialog') showShelfChangeSourceDialog: boolean = false;
   private shelfChangeSourceTarget: Book | null = null;
   @State contextMenuX: number = 16;
@@ -1306,7 +1319,113 @@ export struct BookshelfPage {
     this.captureContextMenuAnchor(event);
     this.pendingActionBook = book;
     this.bookActionCoverExpanded = false;
+    this.pendingActionHasMark = false;
     this.showActionDialog = true;
+    BookMarkService.markOf(book).then((mark: BookMark | null): void => {
+      if (this.pendingActionBook === book) this.pendingActionHasMark = mark !== null;
+    }).catch((error: Error): void => console.warn('读取书籍标记失败:', error.message));
+  }
+
+  /** 长按菜单“添加标记/编辑标记”：和详情页同一个标记面板，草稿准备好再升起（面板只在打开时读一次初值）。 */
+  async openShelfBookMarkSheet(book: Book): Promise<void> {
+    if (this.bookMarkSheetOpening || this.showBookMarkSheet) return;
+    if (!BookMarkService.keyOf(book)) {
+      HdsFeedback.showToast('这本书缺少书名，无法标记');
+      return;
+    }
+    this.bookMarkSheetOpening = true;
+    try {
+      const existing = await BookMarkService.markOf(book);
+      this.bookMarkKnownTags = await BookMarkService.knownTags();
+      this.bookMarkDraft = await BookMarkService.prepareDraft(book, existing);
+      this.bookMarkExisting = existing !== null;
+      this.bookMarkCoverBookUrl = book.bookUrl;
+      this.bookMarkCoverOrigin = book.origin;
+      this.bookMarkSheetFocused = false;
+      this.showBookMarkSheet = true;
+    } catch (error) {
+      console.warn('准备标记面板失败:', error);
+      HdsFeedback.showToast('打开标记失败');
+    } finally {
+      this.bookMarkSheetOpening = false;
+    }
+  }
+
+  async saveShelfBookMark(draft: BookMark): Promise<void> {
+    try {
+      const wasRead = this.bookMarkExisting && this.bookMarkDraft.status === BookMarkStatus.READ;
+      const saved = await BookMarkService.save(draft);
+      if (saved && !wasRead && saved.status === BookMarkStatus.READ) {
+        // 书架上不放出票动画（会被底栏压住），票照常收进票夹。
+        const context = getContext(this);
+        await TicketAlbumStore.load(context);
+        const ticket = await ReadingTicketLoader.loadOne(context, saved);
+        HdsFeedback.showToast(ticket && ticket.number > 0 ?
+          `标记已保存 · 第 ${ticket.number} 张票已收进票夹` : '标记已保存');
+      } else if (saved) {
+        HdsFeedback.showToast('标记已保存');
+      } else if (this.bookMarkExisting) {
+        HdsFeedback.showToast('已删除标记');
+      }
+    } catch (error) {
+      console.error('保存书籍标记失败:', error);
+      HdsFeedback.showToast('保存失败，请重试');
+    }
+  }
+
+  async deleteShelfBookMark(): Promise<void> {
+    try {
+      await BookMarkService.remove(this.bookMarkDraft.workKey);
+      HdsFeedback.showToast('已删除标记');
+    } catch (error) {
+      console.error('删除书籍标记失败:', error);
+      HdsFeedback.showToast('删除失败，请重试');
+    }
+  }
+
+  @Builder
+  shelfBookMarkSheet() {
+    BookMarkSheet({
+      initial: this.bookMarkDraft,
+      knownCategories: this.bookMarkKnownTags,
+      existing: this.bookMarkExisting,
+      coverBookUrl: this.bookMarkCoverBookUrl,
+      coverOrigin: this.bookMarkCoverOrigin,
+      onSave: (mark: BookMark): void => {
+        this.saveShelfBookMark(mark);
+      },
+      onDelete: (): void => {
+        this.deleteShelfBookMark();
+      },
+      onClose: (): void => {
+        this.showBookMarkSheet = false;
+      },
+      onFocusModeChange: (focused: boolean): void => {
+        this.bookMarkSheetFocused = focused;
+      }
+    })
+  }
+
+  /** 与详情页一致：写短评时拉到最高档，RESIZE_ONLY 让面板让出键盘。 */
+  shelfBookMarkSheetOptions(): SheetOptions {
+    const options: SheetOptions = {
+      detents: ['78%', SheetSize.LARGE],
+      detentSelection: this.bookMarkSheetFocused ? SheetSize.LARGE : '78%',
+      keyboardAvoidMode: SheetKeyboardAvoidMode.RESIZE_ONLY,
+      dragBar: true,
+      showClose: false,
+      backgroundColor: Color.Transparent,
+      blurStyle: BlurStyle.NONE,
+      borderWidth: 0,
+      radius: { topLeft: 28, topRight: 28, bottomLeft: 28, bottomRight: 28 },
+      shadow: { radius: 0, color: Color.Transparent },
+      onDisappear: () => {
+        this.showBookMarkSheet = false;
+        this.bookMarkSheetFocused = false;
+      }
+    };
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, options,
+      this.appDarkMode, this.accentColor());
   }
 
   async saveLocalBookSource(book: Book): Promise<void> {
@@ -2118,6 +2237,13 @@ export struct BookshelfPage {
         .position({ x: 0, y: 0 })
         .hitTestBehavior(HitTestMode.None)
         .bindSheet(this.showGalleryCoverSheet, this.galleryCoverSheet(), this.galleryCoverSheetOptions())
+
+      Column()
+        .width(1)
+        .height(1)
+        .position({ x: 0, y: 0 })
+        .hitTestBehavior(HitTestMode.None)
+        .bindSheet($$this.showBookMarkSheet, this.shelfBookMarkSheet(), this.shelfBookMarkSheetOptions())
 
       if (this.isBookMultiSelect) {
         this.bookMultiSelectBar()
@@ -3187,6 +3313,17 @@ export struct BookshelfPage {
                 }
               })
           }
+          this.contextActionItem($r('sys.symbol.star'), this.pendingActionHasMark ? '编辑标记' : '添加标记',
+            this.primaryTextColor(), () => {
+              if (this.pendingActionBook) {
+                const book = this.pendingActionBook;
+                this.closeBookActions();
+                // 等菜单气泡收起再升面板。
+                setTimeout(() => {
+                  this.openShelfBookMarkSheet(book);
+                }, 0);
+              }
+            })
           this.contextActionItem($r('sys.symbol.bookmark'), '自定义标签', this.primaryTextColor(), () => {
             if (this.pendingActionBook) {
               this.editingTags = BookDisplayHelper.getBookTags(this.pendingActionBook);
