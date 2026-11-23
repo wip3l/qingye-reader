@@ -262,12 +262,17 @@ struct AccountCenterPage {
     return !PlatformInfo.ANDROID;
   }
 
-  openPasswordLogin(): void {
+  /** 打开用户名登录页；register 为真时直接停在“注册”页签。 */
+  openPasswordLogin(register: boolean = false): void {
     if (!AccountCommerceConfig.isServerConfigured()) {
       HdsFeedback.showToast('请先配置账号服务端地址');
       return;
     }
-    router.pushUrl({ url: 'pages/AccountPasswordLogin' });
+    if (register) {
+      router.pushUrl({ url: 'pages/AccountPasswordLogin', params: { mode: 'register' } });
+    } else {
+      router.pushUrl({ url: 'pages/AccountPasswordLogin' });
+    }
   }
 
   openRecharge(): void {
@@ -1125,8 +1130,10 @@ struct AccountCenterPage {
           // 不限宽时 Row 按昵称全长排开，会越过右侧“编辑资料”；限宽后昵称先省略，徽章始终完整。
           .width('100%')
           .alignItems(VerticalAlign.Center)
+          // 新用户赠点只发给华为账号，安卓上只能用户名注册，不提赠点。
           Text(this.membershipSku ? MembershipIcons.label(this.membershipSku) :
-            (this.accountLoggedIn ? '普通用户' : '登录后新用户免费获得 300 点'))
+            (this.accountLoggedIn ? '普通用户' :
+              (this.huaweiServicesAvailable() ? '登录后新用户免费获得 300 点' : '注册或登录后，点数和会员随账号同步')))
             .fontSize(AppFontSize.CAPTION)
             .fontColor(MembershipIcons.cardSubTextColor(this.appDarkMode))
         }
@@ -1143,20 +1150,38 @@ struct AccountCenterPage {
             .onClick(() => {
               this.beginEditProfile();
             })
-        } else {
-          Button(this.loading ? '登录中' : (this.huaweiServicesAvailable() ? '华为账号登录' : '登录'))
+        } else if (this.huaweiServicesAvailable()) {
+          Button(this.loading ? '登录中' : '华为账号登录')
             .height(36)
             .fontSize(AppFontSize.BODY)
             .enabled(!this.loading)
             .backgroundColor(this.accentColor())
             .fontColor(ThemeRuntime.onAccentColor(this.accentColor()))
             .onClick(() => {
-              if (this.huaweiServicesAvailable()) {
-                this.login();
-              } else {
-                this.openPasswordLogin();
-              }
+              this.login();
             })
+        } else {
+          // 安卓上没有华为账号：注册、登录都走用户名，两个入口并排放在卡片上。
+          Row({ space: AppSpacing.SM }) {
+            Button('注册')
+              .height(36)
+              .fontSize(AppFontSize.BODY)
+              .backgroundColor(Color.Transparent)
+              .fontColor(MembershipIcons.cardTextColor(this.appDarkMode))
+              .border({ width: 1, color: MembershipIcons.cardSubTextColor(this.appDarkMode) })
+              .onClick(() => {
+                this.openPasswordLogin(true);
+              })
+            Button('登录')
+              .height(36)
+              .fontSize(AppFontSize.BODY)
+              .backgroundColor(this.accentColor())
+              .fontColor(ThemeRuntime.onAccentColor(this.accentColor()))
+              .onClick(() => {
+                this.openPasswordLogin();
+              })
+          }
+          .flexShrink(0)
         }
       }
       .width('100%')
@@ -2311,34 +2336,42 @@ struct AccountCenterPage {
         .fontWeight(FontWeight.Bold)
         .fontColor(this.primaryTextColor())
         .width('100%')
-      Text('• 每个华为账号首次登录赠送 300 点\n• 点数余额、会员和主题权益可跨终端同步')
+      Text(this.huaweiServicesAvailable() ?
+        '• 每个华为账号首次登录赠送 300 点\n• 点数余额、会员和主题权益可跨终端同步' :
+        '• 用户名和密码注册，注册后会给出恢复码，用来找回密码\n• 点数余额、会员和主题权益可跨终端同步，和鸿蒙设备上是同一个账号')
         .fontSize(AppFontSize.BODY)
         .fontColor(this.subTextColor())
         .lineHeight(22)
         .width('100%')
-      Row() {
-        Text('不用华为账号？用用户名登录或注册')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.accentColor())
-          .layoutWeight(1)
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(16)
-          .fontColor([this.accentColor()])
+      if (this.huaweiServicesAvailable()) {
+        this.loginGuideLink('不用华为账号？用用户名登录或注册', false)
+      } else {
+        this.loginGuideLink('没有账号？注册新账号', true)
+        this.loginGuideLink('已有账号，用户名登录', false)
       }
-      .width('100%')
-      .padding({ top: AppSpacing.XS })
-      .onClick(() => {
-        if (!AccountCommerceConfig.isServerConfigured()) {
-          HdsFeedback.showToast('请先配置账号服务端地址');
-          return;
-        }
-        router.pushUrl({ url: 'pages/AccountPasswordLogin' });
-      })
     }
     .width('100%')
     .padding(AppSpacing.XL)
     .borderRadius(ThemeRuntime.cardRadius())
     .backgroundColor(this.cardColor())
+  }
+
+  @Builder
+  loginGuideLink(label: string, register: boolean) {
+    Row() {
+      Text(label)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.accentColor())
+        .layoutWeight(1)
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(16)
+        .fontColor([this.accentColor()])
+    }
+    .width('100%')
+    .padding({ top: AppSpacing.XS })
+    .onClick(() => {
+      this.openPasswordLogin(register);
+    })
   }
 
   @Builder

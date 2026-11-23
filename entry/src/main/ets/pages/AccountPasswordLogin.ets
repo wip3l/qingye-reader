@@ -9,13 +9,17 @@ import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 import { HdsFeedback } from '../utils/HdsFeedback';
 import { syncSystemBars } from '../utils/SystemBars';
+import { PlatformInfo } from '../platform/PlatformInfo';
 
 const MODE_LOGIN = 'login';
 const MODE_REGISTER = 'register';
 const MODE_RECOVER = 'recover';
 const MODE_CODES = 'codes';
 
-/** 用户名登录、注册和用恢复码找回密码。注册成功后先展示恢复码，再回到会员与账号页。 */
+/**
+ * 用户名登录、注册和用恢复码找回密码。注册成功后先展示恢复码，再回到会员与账号页。
+ * 路由参数 `mode` 为 'register' 时打开即停在注册页签。
+ */
 @Entry
 @Component
 struct AccountPasswordLoginPage {
@@ -29,6 +33,13 @@ struct AccountPasswordLoginPage {
   @State errorText: string = '';
   @State busy: boolean = false;
   @State recoveryCodes: string[] = [];
+
+  aboutToAppear(): void {
+    const params = router.getParams() as Record<string, string>;
+    if (params && params['mode'] === MODE_REGISTER) {
+      this.mode = MODE_REGISTER;
+    }
+  }
 
   onPageShow(): void {
     syncSystemBars(getContext(this), this.appDarkMode, ThemeRuntime.pageColor(this.appDarkMode));
@@ -227,12 +238,17 @@ struct AccountPasswordLoginPage {
   }
 
   private noteText(): string {
+    // 安卓上没有华为账号服务：绑定华为账号、用华为账号登录只能在鸿蒙设备上做。
+    const huaweiWhere = PlatformInfo.ANDROID ? '在鸿蒙设备上' : '';
     if (this.mode === MODE_REGISTER) {
-      return '用户名注册的账号不送新用户点数；之后在“登录与账号安全”里绑定一个没领过的华为账号，可补领 300 点。' +
+      return `用户名注册的账号不送新用户点数；之后${huaweiWhere}在“登录与账号安全”里绑定一个没领过的华为账号，可补领 300 点。` +
         '服务端只保存用户名和加密后的密码。注册表示你同意应用的用户协议与隐私政策。';
     }
     if (this.mode === MODE_RECOVER) {
-      return '每个恢复码只能用一次。重设密码后，已登录的其他设备都会退出登录。恢复码也用完了的话，绑定过华为账号的可以用华为账号登录后在“登录与账号安全”里改密码。';
+      return `每个恢复码只能用一次。重设密码后，已登录的其他设备都会退出登录。恢复码也用完了的话，绑定过华为账号的可以${huaweiWhere}用华为账号登录后在“登录与账号安全”里改密码。`;
+    }
+    if (PlatformInfo.ANDROID) {
+      return '还没有账号？切到“注册”设置用户名和密码即可。鸿蒙设备上用华为账号登录过的，先在鸿蒙设备的“会员与账号 › 登录与账号安全”里设置用户名和密码，再用这里登录同一个账号。';
     }
     return '已在华为账号下的账号，可以在“会员与账号 › 登录与账号安全”里设置用户名和密码后用这里登录。';
   }
