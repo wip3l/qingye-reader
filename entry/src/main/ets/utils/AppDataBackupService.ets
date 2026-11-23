@@ -1083,6 +1083,7 @@ export class AppDataBackupService {
     rule.imageDecode = AppDataBackupService.ruleString(raw, 'imageDecode', 'imagedecode');
     rule.imageStyle = AppDataBackupService.ruleString(raw, 'imageStyle', 'imagestyle');
     rule.payAction = AppDataBackupService.ruleString(raw, 'payAction', 'payaction');
+    rule.callBackJs = AppDataBackupService.ruleString(raw, 'callBackJs', 'callbackjs');
     return rule;
   }
 
