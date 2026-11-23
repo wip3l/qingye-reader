@@ -5,6 +5,7 @@ import util from '@ohos.util';
 import { AccountSessionStore } from '../../account/AccountSessionStore';
 import { TtsVoiceAvailability } from '../TtsVoiceAvailability';
 import { LocalTtsSpeakerInfo, LocalTtsSpeakers } from './LocalTtsSpeakers';
+import { streamReadTimeout } from '../../platform/HttpTimeouts';
 
 /**
  * 离线神经网络音色（sherpa-onnx）的模型目录、下载、导入登记与校验。
@@ -790,7 +791,7 @@ export class LocalTtsModels {
           else if (Date.now() > deadline) fail('音色下载超时，请重试');
         }, 300);
         client.requestInStream(url, {
-          method: http.RequestMethod.GET, connectTimeout: 20000, readTimeout: 60000, usingProxy: false
+          method: http.RequestMethod.GET, connectTimeout: 20000, readTimeout: streamReadTimeout(60000, 20 * 60 * 1000), usingProxy: false
         }).then((status: number): void => {
           if (status !== 200) { fail(`音色下载失败（${status}）`); return; }
           accepted = true;

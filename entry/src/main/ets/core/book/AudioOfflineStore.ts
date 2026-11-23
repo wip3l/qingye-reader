@@ -5,6 +5,7 @@ import { connection } from '@kit.NetworkKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { AppDatabase, appDb, AudioOfflineFile, AudioOfflineUsage } from '../../model/data/AppDatabase';
 import { AudioOfflineEntry, AudioOfflinePolicy, AudioPartialMeta, HlsPlaylist, HlsSegment } from './AudioOfflinePolicy';
+import { streamReadTimeout } from '../../platform/HttpTimeouts';
 
 /** 一次下载的参数。 */
 export class AudioDownloadTask {
@@ -453,7 +454,7 @@ export class AudioOfflineStore {
           method: http.RequestMethod.GET,
           header: headers,
           connectTimeout: 20000,
-          readTimeout: 60000,
+          readTimeout: streamReadTimeout(60000, 30 * 60 * 1000),
           usingCache: false
         }).then((status: number): void => {
           if (status === 416) {

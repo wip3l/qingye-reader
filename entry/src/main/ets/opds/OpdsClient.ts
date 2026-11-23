@@ -13,6 +13,7 @@ import {
 import { OpdsXmlParser } from './OpdsXmlParser';
 import { OpdsError } from './OpdsError';
 import { OpdsKavita } from './OpdsKavita';
+import { streamReadTimeout } from '../platform/HttpTimeouts';
 
 export interface OpdsDownloadHandle {
   promise: Promise<void>;
@@ -487,7 +488,7 @@ export class OpdsClient {
       method: http.RequestMethod.GET,
       header: this.downloadHeaders(url, authorization),
       connectTimeout: this.timeout,
-      readTimeout: Math.max(this.timeout, 120000),
+      readTimeout: streamReadTimeout(Math.max(this.timeout, 120000), 30 * 60 * 1000),
       maxRedirects: OpdsClient.MAX_REDIRECTS
     };
     this.applyTlsTrust(options, url);

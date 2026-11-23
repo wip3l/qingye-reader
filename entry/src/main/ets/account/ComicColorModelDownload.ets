@@ -2,6 +2,7 @@ import http from '@ohos.net.http';
 import fs from '@ohos.file.fs';
 import { AccountCommerceApi } from './AccountCommerceApi';
 import { AccountSessionStore } from './AccountSessionStore';
+import { streamReadTimeout } from '../platform/HttpTimeouts';
 
 class ComicColorDownloadTicket {
   url: string = '';
@@ -60,7 +61,7 @@ export class ComicColorModelDownload {
         }, 200);
         // Never forward the account token to OBS. The short-lived URL is the only credential.
         client.requestInStream(ticket.url, { method: http.RequestMethod.GET,
-          connectTimeout: 20000, readTimeout: 120000, usingProxy: false })
+          connectTimeout: 20000, readTimeout: streamReadTimeout(120000, 15 * 60 * 1000), usingProxy: false })
           .then((status: number): void => {
             if (status !== 200) { fail('模型下载失败，请稍后重试'); return; }
             accepted = true;

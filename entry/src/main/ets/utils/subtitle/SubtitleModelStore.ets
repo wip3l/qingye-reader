@@ -5,6 +5,7 @@ import picker from '@ohos.file.picker';
 import statvfs from '@ohos.file.statvfs';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { selectDocuments } from '../../platform/Files';
+import { streamReadTimeout } from '../../platform/HttpTimeouts';
 
 /** 字幕模型的一个文件：本地文件名、下载来源（仓库按顺序试）、大小与 SHA-256。 */
 export class SubtitleModelFile {
@@ -404,7 +405,7 @@ export class SubtitleModelStore {
         const header: Record<string, string> = {};
         if (offset > 0) header['Range'] = `bytes=${offset}-`;
         client.requestInStream(url, {
-          method: http.RequestMethod.GET, header: header, connectTimeout: 20000, readTimeout: 60000, usingProxy: false
+          method: http.RequestMethod.GET, header: header, connectTimeout: 20000, readTimeout: streamReadTimeout(60000, 60 * 60 * 1000), usingProxy: false
         }).then((status: number): void => {
           if (status !== 200 && status !== 206) { fail(`模型下载失败（${status}）`); return; }
           accepted = true;

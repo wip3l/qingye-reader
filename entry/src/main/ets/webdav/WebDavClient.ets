@@ -14,6 +14,7 @@ import {
 import { WebDavSettingsStore } from './WebDavSettingsStore';
 import { WebDavError } from './WebDavError';
 import { digestHashHex, HttpDigestChallenge, HttpAuth } from '@legado/sourceengine';
+import { streamReadTimeout } from '../platform/HttpTimeouts';
 
 class WebDavHttpResponse {
   statusCode: number = 0;
@@ -215,7 +216,7 @@ export class WebDavClient {
         method: http.RequestMethod.GET,
         header: this.headers({}, authorization),
         connectTimeout: this.timeout,
-        readTimeout: Math.max(this.timeout, 120000),
+        readTimeout: streamReadTimeout(Math.max(this.timeout, 120000), 30 * 60 * 1000),
         usingProtocol: http.HttpProtocol.HTTP1_1,
         maxRedirects: WebDavClient.MAX_REDIRECTS
       });
