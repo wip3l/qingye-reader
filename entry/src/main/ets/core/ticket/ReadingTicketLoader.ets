@@ -9,6 +9,10 @@ import { readStatsTracker } from '../stats/ReadStatsTracker';
 import { BookReadStats, BookReadStatsDay, BookReadStatsMonth, BookReadStatsRecord } from '../stats/BookReadStats';
 import { ReadStatsPosterRenderer } from '../stats/ReadStatsPosterRenderer';
 import { ReadingTicket, ReadingTicketRules, TicketAccentRules } from './ReadingTicket';
+import { TicketKeepsake, TicketKeepsakeItem } from './TicketKeepsake';
+import { Book } from '@legado/sourceengine';
+import { BookIdentity } from '../../utils/BookIdentity';
+import { BookCoverCache } from '../../utils/BookCoverCache';
 
 /** 票背面要的内容：短评在票上，这里是一条摘录、划线数和阅读日历。 */
 export class ReadingTicketBack {
@@ -41,8 +45,40 @@ export class ReadingTicketLoader {
     const rows = await appDb.getTicketStatsRows(ownerId);
     const tickets = ReadingTicketRules.build(marks, rows);
     await ReadingTicketLoader.fillQuotes(tickets);
+    const keepsakes = await TicketKeepsake.all(context);
+    // 标记删掉的作品不会再有票，它的存根一起清掉。
+    await TicketKeepsake.prune(context, keepsakes,
+      new Set<string>(marks.map((mark: BookMark): string => mark.workKey)));
+    tickets.forEach((ticket: ReadingTicket): void => {
+      ReadingTicketLoader.applyKeepsakeCover(ticket, keepsakes.get(ticket.workKey));
+    });
     ReadingTicketLoader.applyCachedAccents(tickets);
     return tickets;
+  }
+
+  /**
+   * 删书前调用（AppDatabase.beforeBookDelete）：这部作品有标记时，把票上那句、划线条数和封面文件留一份。
+   * 重置隐私书架是要清掉痕迹，不留。
+   */
+  static async keepForDeletedBook(context: Context, book: Book, reason: string): Promise<void> {
+    if (reason === 'private_shelf_reset') return;
+    const workKey = BookIdentity.markKeyOf(book);
+    if (!workKey) return;
+    await appDb.init(context);
+    const mark = await appDb.getBookMark(workKey);
+    if (!mark) return;
+    const annotations = book.bookUrl ? await appDb.getBookAnnotations(book.bookUrl) : [];
+    const coverSource = mark.coverUrl || book.coverUrl || '';
+    const coverFile = await BookCoverCache.localCoverFile(context, coverSource);
+    await TicketKeepsake.save(context, workKey, coverSource, coverFile, ReadingTicketLoader.pickQuote(annotations),
+      annotations.length);
+  }
+
+  /** 存根里有这张封面的副本就用副本：是同一张图，删书后原地址的缓存或本地书文件可能已经没了。 */
+  private static applyKeepsakeCover(ticket: ReadingTicket, item: TicketKeepsakeItem | null | undefined): void {
+    if (!item) return;
+    const path = TicketKeepsake.coverFor(item, ticket.coverUrl);
+    if (path) ticket.coverUrl = path;
   }
 
   /** 每本书最近的一条摘录（按书的地址），没有摘录的书不填。 */
@@ -147,11 +183,14 @@ export class ReadingTicketLoader {
       }
     });
     const ticket = ReadingTicketRules.compose(mark, days, number);
+    const keepsake = await TicketKeepsake.get(context, mark.workKey);
+    ReadingTicketLoader.applyKeepsakeCover(ticket, keepsake);
     if (mark.bookUrl) {
       const annotations = await appDb.getBookAnnotations(mark.bookUrl);
       const quote = ReadingTicketLoader.pickQuote(annotations);
       if (quote) ticket.quote = quote;
     }
+    if (!ticket.quote && keepsake) ticket.quote = keepsake.quote;
     ticket.accent = await ReadingTicketLoader.accentOf(context, ticket.coverUrl);
     return ticket;
   }
@@ -190,6 +229,12 @@ export class ReadingTicketLoader {
       const annotations = await appDb.getBookAnnotations(ticket.bookUrl);
       back.annotationCount = annotations.length;
       back.quote = ReadingTicketLoader.pickQuote(annotations);
+    }
+    // 删书只留下摘录，想法划线和条数靠存根补回来。
+    const keepsake = await TicketKeepsake.get(context, ticket.workKey);
+    if (keepsake) {
+      back.annotationCount = Math.max(back.annotationCount, keepsake.annotationCount);
+      if (!back.quote) back.quote = keepsake.quote;
     }
     return back;
   }

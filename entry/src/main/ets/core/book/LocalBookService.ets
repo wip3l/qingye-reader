@@ -230,13 +230,14 @@ export class LocalBookService {
   // 并清理本地源文件与 EPUB 解压目录；远端书库（WebDAV/OPDS）文件不受影响。
   static async deleteBookWithFiles(context: Context, bookUrl: string): Promise<void> {
     const book = await appDb.getBook(bookUrl);
+    // 删库在前：删书前票夹要从本地书文件里留一份封面。
+    await appDb.deleteBook(bookUrl, 'remove_from_shelf');
     if (book) {
       const extractRoot = book.getVariable('localExtractRoot');
       if (extractRoot) LocalBookService.deleteLocalPath(context, extractRoot);
       const localPath = book.getVariable('localFilePath');
       if (localPath) LocalBookService.deleteLocalPath(context, localPath);
     }
-    await appDb.deleteBook(bookUrl, 'remove_from_shelf');
   }
 
   static getTxtCharsetOverride(book: Book | null): string {

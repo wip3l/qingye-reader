@@ -1192,9 +1192,10 @@ export struct BookshelfPage {
     try {
       const db = AppDatabase.getInstance();
       CloudAutoSync.onBookRemoved(getContext(this), book).catch(() => undefined);
-      LocalBookService.deleteLocalBookFiles(getContext(this), book);
       SourceShelfEvents.removed(book);
+      // 删库在前：删书前票夹要从本地书文件里留一份封面。
       await db.deleteBook(book.bookUrl, 'bookshelf_user_delete');
+      LocalBookService.deleteLocalBookFiles(getContext(this), book);
       await dissolve;
       this.commitShelfBookRemoval([book.bookUrl]);
       this.deleteBookCoverCache(book);
@@ -4823,9 +4824,9 @@ export struct BookshelfPage {
     try {
       for (const book of targets) {
         await CloudAutoSync.onBookRemoved(getContext(this), book).catch(() => undefined);
-        LocalBookService.deleteLocalBookFiles(getContext(this), book);
         SourceShelfEvents.removed(book);
         await db.deleteBook(book.bookUrl, 'bookshelf_batch_delete');
+        LocalBookService.deleteLocalBookFiles(getContext(this), book);
       }
     } finally {
       await dissolve;

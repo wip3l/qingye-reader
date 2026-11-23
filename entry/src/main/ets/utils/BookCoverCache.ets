@@ -180,6 +180,18 @@ export class BookCoverCache {
     return await BookCoverCache.copyCoverUriToCache(context, raw);
   }
 
+  /** 本机现成的封面文件路径（网络封面的缓存、本地封面本身或它的缓存副本），不联网；没有返回空串。 */
+  static async localCoverFile(context: Context, raw: string): Promise<string> {
+    if (!raw) return '';
+    const cachedPath = BookCoverCache.cachedCoverPath(context, raw);
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      return await BookCoverCache.existsAsync(cachedPath) ? cachedPath : '';
+    }
+    const localPath = BookCoverCache.localPathFromUri(raw);
+    if (localPath && await BookCoverCache.existsAsync(localPath)) return localPath;
+    return await BookCoverCache.existsAsync(cachedPath) ? cachedPath : '';
+  }
+
   static deleteCachedCover(context: Context, raw: string): void {
     if (!raw) {
       return;

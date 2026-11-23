@@ -149,6 +149,11 @@ const NATIVE_SOURCE_RULE_MARKER: string = 'native';
 export class AppDatabase implements BookSourceRuntimePersistence {
   private static readonly BATCH_INSERT_CHUNK_SIZE: number = 400;
   private static instance: AppDatabase | null = null;
+  /**
+   * 删书前回调：书和它的划线还在库里。票夹借它把封面和票上那句留一份（见 TicketKeepsake），
+   * 所以调用方要在 deleteBook 之后再删本地书文件和封面缓存。失败不影响删书。
+   */
+  static beforeBookDelete: ((book: Book, reason: string) => Promise<void>) | null = null;
   private store: relationalStore.RdbStore | null = null;
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
@@ -1146,6 +1151,14 @@ export class AppDatabase implements BookSourceRuntimePersistence {
   async deleteBook(bookUrl: string, reason: string = 'delete_book'): Promise<void> {
     if (!this.store) return;
     const existing = await this.getBook(bookUrl);
+    const beforeDelete = AppDatabase.beforeBookDelete;
+    if (existing && beforeDelete) {
+      try {
+        await beforeDelete(existing, reason);
+      } catch (e) {
+        console.warn('删书前回调失败:', e);
+      }
+    }
     await this.readStatsWriteTask.catch(() => {});
     if (existing) await this.saveReadStatsBookSnapshot(existing);
     const predicates = new relationalStore.RdbPredicates('books');
