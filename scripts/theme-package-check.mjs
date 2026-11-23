@@ -1035,3 +1035,48 @@ test('installed pack record keeps every parts field when read back', async () =>
     assert(body.includes(`parts.${key} = `), `ThemePackStore.normalizeParts 漏了 ${key}`);
   }
 });
+
+test('v2 theme: shelf frame and folder can be turned off per mode', () => {
+  const manifest = withAssets(manifestV2(), PARTS_FILES);
+  const decode = json => format.decodeTheme(JSON.stringify({ parts: json }), manifest).parts;
+  const byPath = parts => format.mapPartsAssetRefs(parts, ref => format.findAsset(manifest, format.assetIdFromRef(ref)).path);
+
+  // 老主题包没有这些字段：一样都不算“不用”，导出也不多出字段。
+  const legacy = byPath(decode(partsJson()));
+  assert.equal(format.bookHasOffParts(legacy.book), false);
+  assert.equal('noShelfFrame' in format.encodeParts(legacy).book, false);
+
+  // 浅色不用边框，深色没单独设：两种模式都不画；文件夹只是深色不用。
+  const json = { book: { covers: ['assets/cover_01.jpg'], noShelfFrame: true, shelfFolder: 'assets/folder.jpg', noShelfFolderDark: true },
+    logo: 'assets/logo.svg' };
+  const parts = byPath(decode(json));
+  assert.equal(format.bookShelfFrameOff(parts.book, false), true);
+  assert.equal(format.bookShelfFrameOff(parts.book, true), true);
+  assert.equal(format.bookShelfFrameFor(parts.book, true), '');
+  assert.equal(format.bookFolderOff(parts.book, false), false);
+  assert.equal(format.bookFolderFor(parts.book, false), 'assets/folder.jpg');
+  assert.equal(format.bookFolderOff(parts.book, true), true);
+  assert.equal(format.bookFolderFor(parts.book, true), '');
+  const encoded = format.encodeParts(parts).book;
+  assert.equal(encoded.noShelfFrame, true);
+  assert.equal('noShelfFrameDark' in encoded, false);
+  assert.equal(encoded.noShelfFolderDark, true);
+  assert.equal(format.describeParts(parts).includes('封面 1 张、文件夹插画、不用书架边框、不用文件夹插画'), true);
+
+  // 浅色不用、深色有图：深色那张不并到 shelfFrame（否则浅色也会显示它）。
+  const darkOnly = byPath(decode({ book: { noShelfFrame: true, shelfFrameDark: 'assets/frame.svg' }, logo: 'assets/logo.svg' }));
+  assert.equal(format.bookShelfFrameFor(darkOnly.book, false), '');
+  assert.equal(format.bookShelfFrameFor(darkOnly.book, true), 'assets/frame.svg');
+  const darkEncoded = format.encodeParts(darkOnly).book;
+  assert.equal('shelfFrame' in darkEncoded, false);
+  assert.equal(darkEncoded.shelfFrameDark, 'assets/frame.svg');
+  assert.equal(darkEncoded.noShelfFrame, true);
+
+  // 同一模式有图时“不用”不起作用；只带“不用”的 book 不算空。
+  const both = byPath(decode({ book: { shelfFrame: 'assets/frame.svg', noShelfFrame: true }, logo: 'assets/logo.svg' }));
+  assert.equal(both.book.noShelfFrame, false);
+  assert.equal(format.bookShelfFrameFor(both.book, false), 'assets/frame.svg');
+  const onlyOff = decode({ book: { noShelfFolder: true }, logo: 'assets/logo.svg' });
+  assert.notEqual(onlyOff.book, null);
+  assert.equal(format.bookIsEmpty(onlyOff.book), false);
+});

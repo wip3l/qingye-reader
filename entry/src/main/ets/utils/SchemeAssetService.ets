@@ -179,8 +179,13 @@ export class SchemeAssetService {
     return SchemeAssetService.update(context, schemeId, baseTheme, async (record: ThemePackRecord): Promise<void> => {
       const book = record.parts.book || new ThemePackageBook();
       const path = await ThemePackStore.importAsset(context, record.packageId, uri, SchemeAssetService.ARTWORK, '书架边框');
-      if (dark) book.shelfFrameDark = path;
-      else book.shelfFrame = path;
+      if (dark) {
+        book.shelfFrameDark = path;
+        book.noShelfFrameDark = false;
+      } else {
+        book.shelfFrame = path;
+        book.noShelfFrame = false;
+      }
       record.parts.book = book;
     });
   }
@@ -194,9 +199,11 @@ export class SchemeAssetService {
       if (dark) {
         book.shelfFolderDark = path;
         book.shelfFolderCropDark = SchemeAssetService.attachCrop(crop, path);
+        book.noShelfFolderDark = false;
       } else {
         book.shelfFolder = path;
         book.shelfFolderCrop = SchemeAssetService.attachCrop(crop, path);
+        book.noShelfFolder = false;
       }
       record.parts.book = book;
     });
@@ -976,6 +983,39 @@ export class SchemeAssetService {
       }
       SchemeAssetService.tidyBook(record);
     });
+  }
+
+  /**
+   * 书架边框（folder 为 false）或文件夹插画选“不用”（off 为 true）或取消“不用”。选“不用”时去掉这个模式自己的图；
+   * 取消后浅色回到跟随基底主题，深色回到沿用浅色。
+   */
+  static async setShelfPartOff(context: Context, schemeId: string, folder: boolean, dark: boolean, off: boolean,
+    baseTheme: string): Promise<SchemeAssetResult> {
+    return SchemeAssetService.update(context, schemeId, off ? baseTheme : '',
+      async (record: ThemePackRecord): Promise<void> => {
+        const book = record.parts.book || new ThemePackageBook();
+        if (folder && dark) {
+          if (off) {
+            book.shelfFolderDark = '';
+            book.shelfFolderCropDark = null;
+          }
+          book.noShelfFolderDark = off;
+        } else if (folder) {
+          if (off) {
+            book.shelfFolder = '';
+            book.shelfFolderCrop = null;
+          }
+          book.noShelfFolder = off;
+        } else if (dark) {
+          if (off) book.shelfFrameDark = '';
+          book.noShelfFrameDark = off;
+        } else {
+          if (off) book.shelfFrame = '';
+          book.noShelfFrame = off;
+        }
+        record.parts.book = book;
+        SchemeAssetService.tidyBook(record);
+      });
   }
 
   private static tidyBook(record: ThemePackRecord): void {

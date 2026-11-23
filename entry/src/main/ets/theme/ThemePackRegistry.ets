@@ -26,7 +26,9 @@ import {
   ThemePackageParts,
   ThemePackageShelfBackdrop,
   ThemePackageVariantParts,
-  NAVIGATION_ICON_KEYS
+  NAVIGATION_ICON_KEYS,
+  bookFolderOff,
+  bookShelfFrameOff
 } from './share/ThemePackageFormat';
 import { ThemePack, ThemeVariant } from './ThemeModels';
 import { ImageFileSize } from '../utils/ImageFileSize';
@@ -158,6 +160,15 @@ export class InstalledThemePack {
   shelfFolder: string = '';
   // 深色模式单独的文件夹插画；空着时深色也用 shelfFolder。
   shelfFolderDark: string = '';
+  // 选了“不用”的模式（见 bookShelfFrameOff / bookFolderOff）：这个模式不画边框、分组不用文件夹插画。
+  shelfFrameOffLight: boolean = false;
+  shelfFrameOffDark: boolean = false;
+  shelfFolderOffLight: boolean = false;
+  shelfFolderOffDark: boolean = false;
+  // 某个模式既没有图又没选“不用”时接着用的素材 ID（基底主题的），只要有一个模式有图或选了“不用”，
+  // 素材 ID 就指向本包，另一个模式靠它退回基底。
+  shelfFrameFallbackId: string = '';
+  shelfFolderFallbackId: string = '';
   startupLight: InstalledThemePackStartup | null = null;
   startupDark: InstalledThemePackStartup | null = null;
   bubbleLight: InstalledThemePackBubble = new InstalledThemePackBubble();
@@ -221,7 +232,16 @@ export class InstalledThemePack {
   }
 
   shelfFrameFor(darkMode: boolean): string {
+    if (this.shelfFrameOff(darkMode)) return '';
     return darkMode ? (this.shelfFrameDark || this.shelfFrame) : (this.shelfFrame || this.shelfFrameDark);
+  }
+
+  shelfFrameOff(darkMode: boolean): boolean {
+    return darkMode ? this.shelfFrameOffDark : this.shelfFrameOffLight;
+  }
+
+  shelfFolderOff(darkMode: boolean): boolean {
+    return darkMode ? this.shelfFolderOffDark : this.shelfFolderOffLight;
   }
 
   reader(darkMode: boolean): InstalledThemePackReader {
@@ -236,6 +256,7 @@ export class InstalledThemePack {
 
   /** 某个模式下显示的文件夹插画，规则同封面（同 bookFolderFor）。 */
   shelfFolderFor(darkMode: boolean): string {
+    if (this.shelfFolderOff(darkMode)) return '';
     return darkMode ? (this.shelfFolderDark || this.shelfFolder) : (this.shelfFolder || this.shelfFolderDark);
   }
 
@@ -490,9 +511,21 @@ export class ThemePackRegistry {
       const folderCropDark = parts.book.shelfFolderCropDark;
       installed.shelfFolderCropDark = folderCropDark && folderCropDark.image === parts.book.shelfFolderDark ?
         ThemePackRegistry.resolveCrop(folderCropDark, uri) : null;
+      installed.shelfFrameOffLight = bookShelfFrameOff(parts.book, false);
+      installed.shelfFrameOffDark = bookShelfFrameOff(parts.book, true);
+      installed.shelfFolderOffLight = bookFolderOff(parts.book, false);
+      installed.shelfFolderOffDark = bookFolderOff(parts.book, true);
+      if (pack.book.shelfFrameAssetId !== themeId) installed.shelfFrameFallbackId = pack.book.shelfFrameAssetId;
+      if (pack.book.shelfFolderAssetId !== themeId) installed.shelfFolderFallbackId = pack.book.shelfFolderAssetId;
       if (installed.coversFor(false).length > 0) pack.book.coverAssetId = themeId;
-      if (installed.shelfFrameFor(false)) pack.book.shelfFrameAssetId = themeId;
-      if (installed.shelfFolderFor(false)) pack.book.shelfFolderAssetId = themeId;
+      if (installed.shelfFrame || installed.shelfFrameDark || installed.shelfFrameOffLight ||
+        installed.shelfFrameOffDark) {
+        pack.book.shelfFrameAssetId = themeId;
+      }
+      if (installed.shelfFolder || installed.shelfFolderDark || installed.shelfFolderOffLight ||
+        installed.shelfFolderOffDark) {
+        pack.book.shelfFolderAssetId = themeId;
+      }
     }
     if (parts.startupLight) {
       installed.startupLight = new InstalledThemePackStartup();

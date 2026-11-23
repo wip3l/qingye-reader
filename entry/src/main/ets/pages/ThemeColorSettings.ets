@@ -52,7 +52,9 @@ import {
   ThemeImageCrop,
   ThemePackageBubble,
   ThemePackageCommentBubble,
-  ThemePackageLimits
+  ThemePackageLimits,
+  bookFolderOff,
+  bookShelfFrameOff
 } from '../theme/share/ThemePackageFormat';
 import {
   CHAPTER_HEAD_NONE,
@@ -4793,40 +4795,88 @@ struct ThemeColorSettingsPage {
     return (this.selectedMode === 'dark' ? book.shelfFolderDark : book.shelfFolder) || '';
   }
 
+  /**
+   * 书架边框 / 文件夹格子的状态：own 自己传的；off 这个模式选了“不用”；offInherited 深色没单独设、跟着浅色“不用”；
+   * inherit 跟随基底主题（深色是沿用浅色）；empty 什么都没有。
+   */
   shelfPartState(folder: boolean): string {
+    if (folder ? !!this.ownShelfFolderPath() : !!this.ownShelfFramePath()) return 'own';
     const pack = this.ownPack();
     const book = pack ? pack.record.parts.book : null;
-    if (folder ? !!this.ownShelfFolderPath() : !!this.ownShelfFramePath()) return 'own';
+    if (this.ownBookActive() && book) {
+      const dark = this.selectedMode === 'dark';
+      const chosen = folder ? (dark ? book.noShelfFolderDark : book.noShelfFolder) :
+        (dark ? book.noShelfFrameDark : book.noShelfFrame);
+      if (chosen) return 'off';
+      if (folder ? bookFolderOff(book, dark) : bookShelfFrameOff(book, dark)) return 'offInherited';
+    }
     return ThemeColorSettingsPage.hasImage(folder ? this.shelfFolderImage() : this.shelfFrameImage()) ? 'inherit' : 'empty';
   }
 
   shelfPartHint(): string {
     const base = '边框是 SVG 或透明底位图，与封面同比例、中心透明；文件夹是 450 × 660 位图';
     // 格子很窄，放不下“浅色 / 深色”，哪种模式用哪张写在这段说明里。
-    if (this.selectedMode !== 'dark') return `${base}，切到深色可以各再传一张只在深色模式用的`;
-    const frame = this.ownShelfFramePath() ? '边框用单独上传的这张' : '边框沿用浅色那张';
-    const folder = this.ownShelfFolderPath() ? '文件夹图用单独上传的这张' : '文件夹图沿用浅色那张';
-    return `${base}。深色模式${frame}，${folder}`;
+    if (this.selectedMode !== 'dark') return `${base}，切到深色可以各再传一张只在深色模式用的；点格子可以选“不用”`;
+    return `${base}。深色模式${this.darkShelfPartText(false, '边框')}，${this.darkShelfPartText(true, '文件夹图')}`;
+  }
+
+  darkShelfPartText(folder: boolean, name: string): string {
+    const state = this.shelfPartState(folder);
+    if (state === 'own') return `${name}用单独上传的这张`;
+    if (state === 'off') return `${name}不用`;
+    if (state === 'offInherited') return `${name}跟着浅色不用`;
+    return `${name}沿用浅色那张`;
   }
 
   async tapShelfPart(folder: boolean): Promise<void> {
-    if (this.shelfPartState(folder) !== 'own') {
+    const state = this.shelfPartState(folder);
+    // 什么都没有时“不用”没有意义，直接去传。
+    if (state === 'empty') {
       if (!(await this.ensureAdvanced())) return;
       if (folder) await this.uploadShelfFolder();
       else await this.uploadShelfFrame();
       return;
     }
-    // 菜单期间用户可能切换浅色/深色，文件夹插画操作的是点开时那个模式的那张。
+    // 菜单期间用户可能切换浅色/深色，操作的是点开时那个模式的那张。
     const dark = this.selectedMode === 'dark';
-    const choice = await this.slotMenu(`${dark ? '深色' : '浅色'} · ${folder ? '分组文件夹' : '书架边框'}`, '替换',
-      dark ? '移除，沿用浅色那张' : '移除');
-    if (choice === 0) {
-      await this.replaceGuarded(() => folder ? this.uploadShelfFolder(dark) : this.uploadShelfFrame(dark));
-    } else if (choice === 1) {
-      await this.runAssetClear((): Promise<SchemeAssetResult> => folder ?
-        SchemeAssetService.clearShelfFolder(getContext(this), this.schemeId, dark) :
-        SchemeAssetService.clearShelfFrame(getContext(this), this.schemeId, dark), 'book');
+    const title = `${dark ? '深色' : '浅色'} · ${folder ? '分组文件夹' : '书架边框'}`;
+    const offLabel = dark ? '深色不用' : '不用';
+    if (state === 'own') {
+      const choice = await this.slotMenu(title, '替换', dark ? '移除，沿用浅色' : '移除，改回跟随', offLabel);
+      if (choice === 0) {
+        await this.uploadShelfPartGuarded(folder, dark);
+      } else if (choice === 1) {
+        await this.runAssetClear((): Promise<SchemeAssetResult> => folder ?
+          SchemeAssetService.clearShelfFolder(getContext(this), this.schemeId, dark) :
+          SchemeAssetService.clearShelfFrame(getContext(this), this.schemeId, dark), 'book');
+      } else if (choice === 2) {
+        await this.setShelfPartOff(folder, dark, true);
+      }
+    } else if (state === 'off') {
+      const choice = await this.slotMenu(title, '上传', dark ? '沿用浅色' : '恢复跟随');
+      if (choice === 0) await this.uploadShelfPartGuarded(folder, dark);
+      else if (choice === 1) await this.setShelfPartOff(folder, dark, false);
+    } else {
+      const choice = await this.slotMenu(title, dark ? '上传深色专用' : '上传', offLabel);
+      if (choice === 0) await this.uploadShelfPartGuarded(folder, dark);
+      else if (choice === 1) await this.setShelfPartOff(folder, dark, true);
     }
+  }
+
+  async uploadShelfPartGuarded(folder: boolean, dark: boolean): Promise<void> {
+    await this.replaceGuarded(() => folder ? this.uploadShelfFolder(dark) : this.uploadShelfFrame(dark));
+  }
+
+  /** 选“不用”或取消；选“不用”和上传一样会让书籍素材来源指向方案自己的素材包。 */
+  async setShelfPartOff(folder: boolean, dark: boolean, off: boolean): Promise<void> {
+    if (off && !(await this.ensureAdvanced())) return;
+    const name = `${dark ? '深色' : ''}${folder ? '文件夹插画' : '书架边框'}`;
+    const notice = off ? `${name}不用了` : (dark ? `${name}改回沿用浅色` : `${name}恢复跟随`);
+    const action = (): Promise<SchemeAssetResult> =>
+      SchemeAssetService.setShelfPartOff(getContext(this), this.schemeId, folder, dark, off, this.sourceThemeId('book'));
+    // 取消后书籍素材可能一样都不剩：和移除素材一样，来源退回基底主题。
+    if (off) await this.runAssetUpload(action, 'book', true, true, notice);
+    else await this.runAssetClear(action, 'book', '', notice);
   }
 
   async tapCover(index: number): Promise<void> {
@@ -5237,17 +5287,22 @@ struct ThemeColorSettingsPage {
     return typeof value !== 'string' || value.length > 0;
   }
 
+  /** 素材格子显示缩略图：有图，且不是空着或选了“不用”。 */
+  static slotShowsImage(state: string, value: ResourceStr): boolean {
+    return state !== 'empty' && state !== 'off' && state !== 'offInherited' && ThemeColorSettingsPage.hasImage(value);
+  }
+
   /** 按引用传参（对象字面量），上传后的状态才会刷新（见“按值 @Builder 的下拉不刷新”）。 */
   @Builder
   assetSlot($$: AssetSlotOptions) {
     Column({ space: AppSpacing.XS }) {
       Stack({ alignContent: Alignment.BottomStart }) {
-        if ($$.state !== 'empty' && ThemeColorSettingsPage.hasImage($$.image) && $$.crop) {
+        if (ThemeColorSettingsPage.slotShowsImage($$.state, $$.image) && $$.crop) {
           ThemeCroppedImage({ src: $$.image, crop: $$.crop as ThemeImageCrop })
             .width('100%')
             .height('100%')
             .opacity($$.state === 'own' ? 1 : 0.5)
-        } else if ($$.state !== 'empty' && ThemeColorSettingsPage.hasImage($$.image) && $$.untinted) {
+        } else if (ThemeColorSettingsPage.slotShowsImage($$.state, $$.image) && $$.untinted) {
           Image($$.image)
             .width('100%')
             .height('100%')
@@ -5255,7 +5310,7 @@ struct ThemeColorSettingsPage {
             .rotate({ angle: $$.rotation || 0 })
             .opacity($$.state === 'own' ? 1 : 0.5)
             .draggable(false)
-        } else if ($$.state !== 'empty' && ThemeColorSettingsPage.hasImage($$.image)) {
+        } else if (ThemeColorSettingsPage.slotShowsImage($$.state, $$.image)) {
           Image($$.image)
             .width($$.icon ? '60%' : '100%')
             .height($$.icon ? '60%' : '100%')
@@ -5264,12 +5319,24 @@ struct ThemeColorSettingsPage {
             .rotate({ angle: $$.rotation || 0 })
             .opacity($$.state === 'own' ? 1 : 0.5)
             .draggable(false)
+        } else if ($$.state === 'off' || $$.state === 'offInherited') {
+          SymbolGlyph($r('sys.symbol.minus_circle'))
+            .fontSize(22)
+            .fontColor([this.subTextColor()])
         } else {
           SymbolGlyph($r('sys.symbol.plus'))
             .fontSize(20)
             .fontColor([this.subTextColor()])
         }
-        if ($$.state === 'own') {
+        if ($$.state === 'off' || $$.state === 'offInherited') {
+          Text($$.state === 'off' ? '不用' : '沿用')
+            .fontSize(9)
+            .fontColor(this.primaryTextColor())
+            .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
+            .borderRadius(5)
+            .backgroundColor(this.cardColor())
+            .margin(AppSpacing.XXS)
+        } else if ($$.state === 'own') {
           Text('自传')
             .fontSize(9)
             .fontColor(ThemeRuntime.onAccentColor())
@@ -5293,14 +5360,15 @@ struct ThemeColorSettingsPage {
       .borderRadius(12)
       .clip(true)
       .backgroundColor(this.inputColor())
-      .border($$.state === 'empty' || !ThemeColorSettingsPage.hasImage($$.image) ?
+      .border(!ThemeColorSettingsPage.slotShowsImage($$.state, $$.image) ?
         { width: 1.5, color: this.subTextColor(), style: BorderStyle.Dashed } : { width: 0 })
       Text($$.label)
         .fontSize(AppFontSize.MICRO)
         .fontColor(this.subTextColor())
         .maxLines(1)
     }
-    .accessibilityText(`${$$.label}，${$$.state === 'own' ? '已上传，点按替换或移除' : '点按上传'}`)
+    .accessibilityText(`${$$.label}，${$$.state === 'own' ? '已上传，点按替换或移除' :
+      ($$.state === 'off' || $$.state === 'offInherited' ? '不用，点按上传或恢复' : '点按上传')}`)
     .onClick(() => $$.onTap())
   }
 
@@ -5828,7 +5896,7 @@ struct ThemeColorSettingsPage {
   }
 
   async runAssetClear(action: () => Promise<SchemeAssetResult>, category: string,
-    fallbackThemeId: string = ''): Promise<void> {
+    fallbackThemeId: string = '', notice: string = '已移除上传的素材'): Promise<void> {
     const previous = this.ownThemeId();
     const fallback = fallbackThemeId || SchemeAssetService.baseThemeOf(this.ownPackageId);
     try {
@@ -5846,7 +5914,7 @@ struct ThemeColorSettingsPage {
           this.detachPackSource(item, previous, fallback);
         }
       }
-      HdsFeedback.showToast('已移除上传的素材');
+      HdsFeedback.showToast(notice);
       this.refreshAssetIssues();
     } catch (e) {
       console.error('移除方案素材失败:', e);

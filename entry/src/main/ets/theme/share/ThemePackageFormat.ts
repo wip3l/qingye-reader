@@ -653,6 +653,12 @@ export class ThemePackageBook {
   coverCropsDark: ThemeImageCrop[] = [];
   shelfFolderCrop: ThemeImageCrop | null = null;
   shelfFolderCropDark: ThemeImageCrop | null = null;
+  // 这个模式不用书架边框 / 文件夹插画，而不是没给图就沿用基底主题的那张；只在这个模式没有自己的图时起作用。
+  // 深色没有自己的图、也没单独选“不用”时跟着浅色。旧版本应用不认，照旧显示基底主题的那张。
+  noShelfFrame: boolean = false;
+  noShelfFrameDark: boolean = false;
+  noShelfFolder: boolean = false;
+  noShelfFolderDark: boolean = false;
 }
 
 /**
@@ -680,9 +686,33 @@ export function partsUseManyCovers(parts: ThemePackageParts | null | undefined):
   return !!parts && !!parts.book && bookCoversFor(parts.book, false).length > ThemePackageLimits.LEGACY_MAX_COVERS;
 }
 
-/** 某个模式下显示的文件夹插画，规则同封面：深色优先用 shelfFolderDark，没有就用 shelfFolder；只给了深色那张时浅色也用它。 */
+/**
+ * 某个模式下这一项选了“不用”：这个模式没有自己的图，并且自己选了不用；深色没单独设时跟着浅色
+ * （浅色既没图又选了不用，深色也不用）。
+ */
+function shelfPartOff(light: string, night: string, lightOff: boolean, nightOff: boolean, dark: boolean): boolean {
+  if (dark) return !night && (nightOff || (!light && lightOff));
+  return !light && lightOff;
+}
+
+/** 某个模式下不显示文件夹插画（选了“不用”），书架上的分组照普通样式画。 */
+export function bookFolderOff(book: ThemePackageBook | null | undefined, dark: boolean): boolean {
+  return !!book && shelfPartOff(book.shelfFolder || '', book.shelfFolderDark || '', !!book.noShelfFolder,
+    !!book.noShelfFolderDark, dark);
+}
+
+/** 某个模式下不显示书架边框（选了“不用”）。 */
+export function bookShelfFrameOff(book: ThemePackageBook | null | undefined, dark: boolean): boolean {
+  return !!book && shelfPartOff(book.shelfFrame || '', book.shelfFrameDark || '', !!book.noShelfFrame,
+    !!book.noShelfFrameDark, dark);
+}
+
+/**
+ * 某个模式下显示的文件夹插画，规则同封面：深色优先用 shelfFolderDark，没有就用 shelfFolder；只给了深色那张时浅色也用它。
+ * 选了“不用”时为空（见 bookFolderOff）。
+ */
 export function bookFolderFor(book: ThemePackageBook | null | undefined, dark: boolean): string {
-  if (!book) return '';
+  if (!book || bookFolderOff(book, dark)) return '';
   const light = book.shelfFolder || '';
   const night = book.shelfFolderDark || '';
   if (dark) return night || light;
@@ -691,16 +721,23 @@ export function bookFolderFor(book: ThemePackageBook | null | undefined, dark: b
 
 /** 某个模式下的书架边框，规则同文件夹插画。 */
 export function bookShelfFrameFor(book: ThemePackageBook | null | undefined, dark: boolean): string {
-  if (!book) return '';
+  if (!book || bookShelfFrameOff(book, dark)) return '';
   const light = book.shelfFrame || '';
   const night = book.shelfFrameDark || '';
   if (dark) return night || light;
   return light || night;
 }
 
-/** 封面、边框、文件夹插画一样都没有：整节可以去掉。 */
+/** 有边框或文件夹插画选了“不用”（任一模式）。 */
+export function bookHasOffParts(book: ThemePackageBook | null | undefined): boolean {
+  return !!book && (bookShelfFrameOff(book, false) || bookShelfFrameOff(book, true) ||
+    bookFolderOff(book, false) || bookFolderOff(book, true));
+}
+
+/** 封面、边框、文件夹插画一样都没有，也没有选“不用”的：整节可以去掉。 */
 export function bookIsEmpty(book: ThemePackageBook | null | undefined): boolean {
-  return !book || (bookHasNoCovers(book) && !bookShelfFrameFor(book, false) && !bookFolderFor(book, false));
+  return !book || (bookHasNoCovers(book) && !book.shelfFrame && !book.shelfFrameDark && !book.shelfFolder &&
+    !book.shelfFolderDark && !bookHasOffParts(book));
 }
 
 /** 书架的四种布局，取值同应用的 bookshelfLayoutMode。 */
@@ -1953,6 +1990,10 @@ export function decodeParts(record: Record<string, Object>, manifest: ThemePacka
     parts.book.shelfFolderCrop = decodeImageCrop(book['shelfFolderCrop'], manifest, 'parts.book.shelfFolderCrop');
     parts.book.shelfFolderCropDark = decodeImageCrop(book['shelfFolderCropDark'], manifest,
       'parts.book.shelfFolderCropDark');
+    parts.book.noShelfFrame = book['noShelfFrame'] === true && !parts.book.shelfFrame;
+    parts.book.noShelfFrameDark = book['noShelfFrameDark'] === true && !parts.book.shelfFrameDark;
+    parts.book.noShelfFolder = book['noShelfFolder'] === true && !parts.book.shelfFolder;
+    parts.book.noShelfFolderDark = book['noShelfFolderDark'] === true && !parts.book.shelfFolderDark;
     if (bookIsEmpty(parts.book)) {
       parts.book = null;
     }
@@ -2121,12 +2162,18 @@ export function encodeParts(parts: ThemePackageParts): Record<string, Object> {
     };
     book['covers'] = covers.slice();
     if (coversDark.length > 0) book['coversDark'] = coversDark.slice();
-    // 书架边框、文件夹插画同理：只有深色那张时写成 shelfFrame / shelfFolder。
+    // 书架边框、文件夹插画同理：只有深色那张时写成 shelfFrame / shelfFolder（浅色选了“不用”时除外）。
+    const frameLightOff = !parts.book.shelfFrame && !!parts.book.noShelfFrame;
+    const folderLightOff = !parts.book.shelfFolder && !!parts.book.noShelfFolder;
     const shelfFrame = bookShelfFrameFor(parts.book, false);
-    const shelfFrameDark = parts.book.shelfFrame ? (parts.book.shelfFrameDark || '') : '';
+    const shelfFrameDark = parts.book.shelfFrame || frameLightOff ? (parts.book.shelfFrameDark || '') : '';
     if (shelfFrame) book['shelfFrame'] = shelfFrame;
     if (shelfFrameDark && shelfFrameDark !== shelfFrame) book['shelfFrameDark'] = shelfFrameDark;
-    const onlyDarkFolder = !parts.book.shelfFolder;
+    if (frameLightOff) book['noShelfFrame'] = true;
+    if (!parts.book.shelfFrameDark && parts.book.noShelfFrameDark) book['noShelfFrameDark'] = true;
+    if (folderLightOff) book['noShelfFolder'] = true;
+    if (!parts.book.shelfFolderDark && parts.book.noShelfFolderDark) book['noShelfFolderDark'] = true;
+    const onlyDarkFolder = !parts.book.shelfFolder && !folderLightOff;
     const shelfFolder = bookFolderFor(parts.book, false);
     const shelfFolderDark = onlyDarkFolder ? '' : (parts.book.shelfFolderDark || '');
     if (shelfFolder) book['shelfFolder'] = shelfFolder;
@@ -2392,10 +2439,12 @@ export function describeParts(parts: ThemePackageParts): string[] {
     if (lightCovers > 0 && darkCovers > 0) book.push(`封面 浅色 ${lightCovers} 张、深色 ${darkCovers} 张`);
     else if (lightCovers > 0) book.push(`封面 ${lightCovers} 张`);
     if (parts.book.shelfFrame && parts.book.shelfFrameDark) book.push('书架边框（浅色、深色）');
-    else if (bookShelfFrameFor(parts.book, false)) book.push('书架边框');
+    else if (parts.book.shelfFrame || parts.book.shelfFrameDark) book.push('书架边框');
     if (parts.book.shelfFolder && parts.book.shelfFolderDark) book.push('文件夹插画（浅色、深色）');
-    else if (bookFolderFor(parts.book, false)) book.push('文件夹插画');
-    items.push(book.join('、'));
+    else if (parts.book.shelfFolder || parts.book.shelfFolderDark) book.push('文件夹插画');
+    if (bookShelfFrameOff(parts.book, false) || bookShelfFrameOff(parts.book, true)) book.push('不用书架边框');
+    if (bookFolderOff(parts.book, false) || bookFolderOff(parts.book, true)) book.push('不用文件夹插画');
+    if (book.length > 0) items.push(book.join('、'));
   }
   if (parts.startupLight || parts.startupDark) items.push('启动封面');
   const bubble = bubbleFor(parts, false);

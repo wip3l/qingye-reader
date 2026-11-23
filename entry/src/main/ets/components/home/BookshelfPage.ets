@@ -6083,17 +6083,17 @@ export struct BookshelfPage {
   @Builder
   shelfHardcoverFolder(previewBooks: Book[], elementId: string) {
     Stack({ alignContent: Alignment.TopStart }) {
-      if (this.shouldUseThemeBookCover() || previewBooks.length === 0) {
+      if (this.useThemeShelfFolder() || previewBooks.length === 0) {
         // 主题文件夹图没有单本封面可张开，做成一本以文件夹图为封面的精装书。
         Stack({ alignContent: Alignment.TopStart }) {
           this.shelfHardcoverSide(this.shelfTileHardcoverWidth(), this.shelfTileHardcoverHeight(), 24, 0.2)
           Stack({ alignContent: Alignment.TopStart }) {
-            if (this.shouldUseThemeBookCover() && this.themeImageCrop(ThemeImageSlots.FOLDER, this.activeThemeShelfFolder())) {
+            if (this.useThemeShelfFolder() && this.themeImageCrop(ThemeImageSlots.FOLDER, this.activeThemeShelfFolder())) {
               ThemeCroppedImage({ src: this.activeThemeShelfFolder(),
                 crop: this.themeImageCrop(ThemeImageSlots.FOLDER, this.activeThemeShelfFolder()) as ThemeImageCrop })
                 .width('100%')
                 .height('100%')
-            } else if (this.shouldUseThemeBookCover()) {
+            } else if (this.useThemeShelfFolder()) {
               Image(this.activeThemeShelfFolder())
                 .width('100%')
                 .height('100%')
@@ -6308,12 +6308,12 @@ export struct BookshelfPage {
   @Builder
   shelfFolderPreview(previewBooks: Book[], elementId: string) {
       Stack() {
-        if (this.shouldUseThemeBookCover() && this.themeImageCrop(ThemeImageSlots.FOLDER, this.activeThemeShelfFolder())) {
+        if (this.useThemeShelfFolder() && this.themeImageCrop(ThemeImageSlots.FOLDER, this.activeThemeShelfFolder())) {
           ThemeCroppedImage({ src: this.activeThemeShelfFolder(),
             crop: this.themeImageCrop(ThemeImageSlots.FOLDER, this.activeThemeShelfFolder()) as ThemeImageCrop })
             .width('100%')
             .height('100%')
-        } else if (this.shouldUseThemeBookCover()) {
+        } else if (this.useThemeShelfFolder()) {
           Image(this.activeThemeShelfFolder())
             .width('100%')
             .height('100%')
@@ -7701,6 +7701,13 @@ export struct BookshelfPage {
   themeImageCrop(slot: string, src: ResourceStr): ThemeImageCrop | null {
     if (!this.themeAssetsLive()) return null;
     return ThemeAssetRegistry.imageCrop(slot, src, this.appDarkMode);
+  }
+
+  /** 分组用主题文件夹插画：开着主题封面，且主题有这张图（自定义方案可以选“不用”，这时照普通分组画）。 */
+  useThemeShelfFolder(): boolean {
+    if (!this.shouldUseThemeBookCover()) return false;
+    const folder = this.activeThemeShelfFolder();
+    return typeof folder !== 'string' || folder.length > 0;
   }
 
   activeThemeShelfFolder(): ResourceStr {

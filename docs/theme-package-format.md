@@ -89,6 +89,7 @@ my-theme/
 | | `coversDark` | 可选：深色模式单独的一套封面（最多 16 张）。不写时深色模式也用 `covers`。和 `covers` 张数相同、顺序对应时，同一本书切换深浅色落在同一序号上，适合放同一幅画的两个版本。旧版本应用会忽略，两种模式都显示 `covers`，所以 `covers` 要始终写。 |
 | | `shelfFrameDark` | 可选：深色模式单独的书架边框，格式要求同 `shelfFrame`（这张是位图也要声明 `bitmap-cap-shelf-frame-v1`）。边框按原色显示，深色描边在深色书架上看不清时再给。不写时深色模式也用 `shelfFrame`。旧版本应用会忽略，两种模式都显示 `shelfFrame`。 |
 | | `shelfFolderDark` | 可选：深色模式单独的文件夹插画。不写时深色模式也用 `shelfFolder`。旧版本应用会忽略，两种模式都显示 `shelfFolder`。 |
+| | `noShelfFrame`、`noShelfFrameDark`、`noShelfFolder`、`noShelfFolderDark` | 可选，写 `true`：这个模式不画书架边框 / 分组不用文件夹插画（照普通分组样式画），而不是沿用基底主题的那张。只在同一模式没有对应图片时起作用；深色既没图又没写 `…Dark` 时跟着浅色。浅色写了 `noShelfFrame` 又给了 `shelfFrameDark` 时，深色那张照样写在 `shelfFrameDark`，不并到 `shelfFrame`（文件夹同理）。旧版本应用会忽略，显示基底主题的那张。 |
 | | `coverCrops`、`coverCropsDark`、`shelfFolderCrop`、`shelfFolderCropDark` | 可选的显示区域（见下文“显示区域”）：`coverCrops` 是数组，按 `image` 对应到 `covers` 里的某张封面；`coverCropsDark` 同理，对应 `coversDark`；`shelfFolderCrop`、`shelfFolderCropDark` 分别对应两张文件夹插画。 |
 | `startup` | `light` / `dark` | 启动封面：`image`（竖屏位图）、`title`、`subtitle`（各最多 40 个字符；省略 `title` 时启动页不显示标题）。 |
 | `bubble` | `frame`、`cap`、`frameSlice`、`frameRepeat`、`frameBreak`、`frameTint` | 强调气泡的端饰与边框（都是 SVG 或透明底位图），至少给一样；边框是位图或没有端饰时 `requires` 要包含 `bubble-frame-v1`，端饰是位图时（`bubbleDark` 里的也算）要包含 `bitmap-cap-shelf-frame-v1`，旧版本应用会提示先更新。写了这一节，`emphasis.bubbleStyle` 自动指向包内气泡。边框的拉伸设置见下文“气泡边框”，旧版本应用忽略这些字段、也不画边框。 |

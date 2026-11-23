@@ -294,6 +294,13 @@ export class ThemePackStore {
     if (parts.book && !parts.book.shelfFolderCrop) parts.book.shelfFolderCrop = null;
     if (parts.book && !parts.book.shelfFolderDark) parts.book.shelfFolderDark = '';
     if (parts.book && !parts.book.shelfFolderCropDark) parts.book.shelfFolderCropDark = null;
+    // 本机旧记录里没有“不用”标记。
+    if (parts.book) {
+      parts.book.noShelfFrame = parts.book.noShelfFrame === true;
+      parts.book.noShelfFrameDark = parts.book.noShelfFrameDark === true;
+      parts.book.noShelfFolder = parts.book.noShelfFolder === true;
+      parts.book.noShelfFolderDark = parts.book.noShelfFolderDark === true;
+    }
     parts.startupLight = source.startupLight || null;
     parts.startupDark = source.startupDark || null;
     parts.bubble = source.bubble || null;

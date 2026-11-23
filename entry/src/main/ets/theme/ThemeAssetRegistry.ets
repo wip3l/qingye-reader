@@ -780,10 +780,14 @@ export class ThemeAssetRegistry {
   }
 
   /** 默认浅深色共用一张；主题包的 shelfFrameDark 和两套超级会员专属主题在深色模式换另一张。 */
-  static themeShelfFrame(assetId: string, darkMode: boolean = false): ResourceStr {
+  static themeShelfFrame(assetId: string, darkMode: boolean = false, depth: number = 0): ResourceStr {
     if (ThemePackRegistry.isPackId(assetId)) {
       const pack = ThemePackRegistry.get(assetId);
-      return pack ? pack.shelfFrameFor(darkMode) : '';
+      if (!pack) return '';
+      // 这个模式没有自己的图、也没选“不用”：退回基底主题的那张。
+      const own = pack.shelfFrameFor(darkMode);
+      if (own || pack.shelfFrameOff(darkMode) || !pack.shelfFrameFallbackId || depth > 2) return own;
+      return ThemeAssetRegistry.themeShelfFrame(pack.shelfFrameFallbackId, darkMode, depth + 1);
     }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return '';
@@ -816,10 +820,13 @@ export class ThemeAssetRegistry {
   }
 
   /** 分组文件夹插画。和封面一样默认浅深色共用；有深色那张的主题（主题包的 shelfFolderDark、两套专属主题）深色模式换成它。 */
-  static themeShelfFolder(assetId: string, darkMode: boolean = false): ResourceStr {
+  static themeShelfFolder(assetId: string, darkMode: boolean = false, depth: number = 0): ResourceStr {
     if (ThemePackRegistry.isPackId(assetId)) {
       const pack = ThemePackRegistry.get(assetId);
-      return pack ? pack.shelfFolderFor(darkMode) : '';
+      if (!pack) return '';
+      const own = pack.shelfFolderFor(darkMode);
+      if (own || pack.shelfFolderOff(darkMode) || !pack.shelfFolderFallbackId || depth > 2) return own;
+      return ThemeAssetRegistry.themeShelfFolder(pack.shelfFolderFallbackId, darkMode, depth + 1);
     }
     switch ((assetId || '').trim().toLowerCase()) {
       case '': return '';
