@@ -39,6 +39,12 @@ import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { ImmersiveMaterialRuntime } from '../utils/ImmersiveMaterialRuntime';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
+import { SearchExplorePendingBook } from '../utils/SearchExplorePendingBook';
+import { SearchBookShelfHelper } from '../utils/SearchBookShelfHelper';
+import { NewBookGroupStore } from '../utils/NewBookGroupStore';
+import { NewBookGroup } from '../utils/NewBookGroup';
+import { BookMarkService } from '../core/mark/BookMarkService';
+import { PendingTrialBookCleanup } from '../utils/PendingTrialBookCleanup';
 
 /** 书源解析出音频地址的总时限。WebView 嗅探本身最多 15 秒，失败后还会回退 HTTP 规则。 */
 const AUDIO_URL_RESOLVE_TIMEOUT_MS = 30000;
@@ -85,6 +91,9 @@ struct AudioBookPage {
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @State book: Book | null = null;
+  /** 从搜索、发现试听的临时书为 false：播放面板右上角显示“加入书架”而不是“下载”。 */
+  @State bookOnShelf: boolean = true;
+  private addingToShelf: boolean = false;
   @State chapters: BookChapter[] = [];
   /** 已下载音频的章节序号 → 下载时间。 */
   @State offlineChapterDates: Map<number, number> = new Map();
@@ -272,6 +281,10 @@ struct AudioBookPage {
         onOpenVoice: () => this.openVoiceDialog(),
         onOpenCatalog: () => this.openChapterList(),
         hostDownloadAvailable: !!this.book && this.book.origin !== 'local',
+        hostOnShelf: !this.book || this.bookOnShelf,
+        onAddToShelf: () => {
+          this.addBookToShelf().catch((error: Error) => console.warn('听书页加入书架失败:', error));
+        },
         onOpenDownload: () => {
           this.openOfflineMenu(this.getUIContext()).catch((error: Error) => console.warn('打开离线下载菜单失败:', error));
         },
@@ -749,6 +762,7 @@ struct AudioBookPage {
       BookTypeSupport.applyBookType(storedBook, this.source);
       storedBook.type = storedBook.type || BookTypeSupport.AUDIO;
       this.book = storedBook;
+      this.bookOnShelf = !SearchExplorePendingBook.isPendingAddToShelf(storedBook);
       this.audioVoiceCode = storedBook.getVariable('custom') || '';
       this.refreshVoiceOptions();
       this.speed = this.savedSpeed(storedBook);
@@ -1988,6 +2002,10 @@ struct AudioBookPage {
       author: book.author || '',
       cachedLabel: '已下载',
       summary: this.offlineSummaryText(),
+      onShelf: this.bookOnShelf,
+      addToShelf: (): void => {
+        this.addBookToShelf().catch((error: Error) => console.warn('听书页加入书架失败:', error));
+      },
       openDownload: (ui: UIContext): void => {
         this.openOfflineMenu(ui).catch((error: Error) => console.warn('打开离线下载菜单失败:', error));
       },
@@ -1999,9 +2017,66 @@ struct AudioBookPage {
     });
   }
 
+  /**
+   * 试听的临时书转正入架，和详情页“加入书架”一样套新书默认分组、带上标记标签。
+   * 书架已有同一作品的别的来源时只提示，不在播放中换源。
+   */
+  async addBookToShelf(): Promise<void> {
+    const book = this.book;
+    if (!book || this.bookOnShelf || this.addingToShelf) return;
+    this.addingToShelf = true;
+    try {
+      const context = getContext(this);
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(context);
+      const sameWork = await SearchBookShelfHelper.findSameWorkShelfBook(book, book.bookUrl);
+      if (sameWork) {
+        HdsFeedback.showToast(`书架已有《${sameWork.name || book.name}》（来源：${sameWork.originName || '其他书源'}）`);
+        return;
+      }
+      const groupName = await NewBookGroupStore.apply(context, book);
+      SearchExplorePendingBook.clearPendingAddToShelf(book);
+      const engineBook = ReadBookEngine.get().book;
+      if (engineBook && engineBook !== book && engineBook.bookUrl === book.bookUrl) {
+        engineBook.group = book.group;
+        SearchExplorePendingBook.clearPendingAddToShelf(engineBook);
+      }
+      await BookMarkService.carryTagsToShelfBook(book);
+      await db.updateBook(book, true, 'audio_panel_add_to_shelf');
+      // 详情页“不加入”后留着等停播再删的临时书，现在不用删了。
+      PendingTrialBookCleanup.cancel(book.bookUrl);
+      this.bookOnShelf = true;
+      this.publishAudioOffline();
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      HdsFeedback.showToast(NewBookGroup.addedToast(groupName));
+    } catch (error) {
+      console.error('听书页加入书架失败:', error);
+      HdsFeedback.showToast('加入书架失败');
+    } finally {
+      this.addingToShelf = false;
+    }
+  }
+
   onShelfUpdateTimeChanged(): void {
     // 书架上的下载任务结束、删除已下载音频、边听边下完成一章后都会通知。
     this.refreshOfflineChapters();
+    if (!this.bookOnShelf) this.recheckBookOnShelf();
+  }
+
+  /** 试听中从详情页等别处加入了书架，面板右上角换回“下载”。 */
+  private async recheckBookOnShelf(): Promise<void> {
+    const book = this.book;
+    if (!book || this.addingToShelf) return;
+    try {
+      const stored = await AppDatabase.getInstance().getBook(book.bookUrl);
+      if (!stored || SearchExplorePendingBook.isPendingAddToShelf(stored) || this.book !== book) return;
+      book.group = stored.group;
+      SearchExplorePendingBook.clearPendingAddToShelf(book);
+      this.bookOnShelf = true;
+      this.publishAudioOffline();
+    } catch (error) {
+      console.warn('读取书架状态失败:', error);
+    }
   }
 
   /** 目录摘要行的离线说明。 */

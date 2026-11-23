@@ -9,6 +9,9 @@ export interface AudioOfflineCatalogInfo {
   author: string;
   cachedLabel: string;
   summary: string;
+  /** 试听的临时书为 false，播放面板右上角显示“加入书架”。 */
+  onShelf: boolean;
+  addToShelf: () => void;
   openDownload: (ui: UIContext) => void;
   chapterAction: (ui: UIContext, canonicalIndex: number) => void;
   /** 打开目录前调用：重新读取已下载章节，更新标记和摘要。 */

@@ -98,6 +98,9 @@ export struct ReaderTtsPlayerPanel {
   @Prop hostVoiceIndex: number = 0;
   /** 在线有声书显示"下载"：听书页自己，或书架胶囊打开的面板（听书页发布了离线信息时）。 */
   @Prop hostDownloadAvailable: boolean = false;
+  /** 试听、还没加入书架的有声书把右上角的“下载”换成“加入书架”。 */
+  @Prop hostOnShelf: boolean = true;
+  onAddToShelf: () => void = () => {};
   onSelectHostVoice: (index: number) => void = () => {};
 
   @StorageLink('globalTtsPaused') globalTtsPaused: boolean = false;
@@ -268,7 +271,9 @@ export struct ReaderTtsPlayerPanel {
       .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
       .alignItems(HorizontalAlign.Center)
       // 在线有声书的下载放在右上角；没有时用等宽占位让标题真正居中。
-      if (this.hostDownloadAvailable && this.isAudio()) {
+      if (this.hostDownloadAvailable && this.isAudio() && !this.hostOnShelf) {
+        this.circleButton($r('sys.symbol.bookshelf_badge_plus'), '加入书架', () => this.onAddToShelf())
+      } else if (this.hostDownloadAvailable && this.isAudio()) {
         this.circleButton($r('sys.symbol.download'), '下载', () => this.onOpenDownload())
       } else {
         Column()

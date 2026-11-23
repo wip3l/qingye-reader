@@ -229,6 +229,11 @@ struct SearchBookDetailPage {
     this.startHoldingHandTracking();
     this.syncBars();
     this.checkShelf().then(() => {
+      // 试听时在播放面板里已加入书架，返回就不再问。
+      if (this.isInShelf && this.pendingAddToShelfBookUrl === this.bookUrl) {
+        this.promptAddToShelfAfterRead = false;
+        this.pendingAddToShelfBookUrl = '';
+      }
       if (this.shouldPromptAddToShelfOnBack()) {
         this.showAddToShelfOnBackPrompt();
       }
@@ -1595,7 +1600,7 @@ struct SearchBookDetailPage {
   }
 
   shouldPromptAddToShelfOnBack(): boolean {
-    return this.promptAddToShelfOnBackFromResult && this.searchExplorePromptAddToShelfOnBack &&
+    return !this.isInShelf && this.promptAddToShelfOnBackFromResult && this.searchExplorePromptAddToShelfOnBack &&
       this.promptAddToShelfAfterRead && !this.isSaving && !this.showAddToShelfOnBackDialog &&
       !!this.bookUrl && this.bookUrl === this.pendingAddToShelfBookUrl;
   }

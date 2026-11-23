@@ -964,6 +964,8 @@ struct Index {
           onClose: () => this.closeGlobalTtsPanel(),
           onOpenCatalog: () => this.openGlobalTtsCatalog(),
           hostDownloadAvailable: this.globalAudioOffline() !== null,
+          hostOnShelf: this.globalAudioOffline()?.onShelf ?? true,
+          onAddToShelf: () => this.globalAudioOffline()?.addToShelf(),
           onOpenDownload: () => this.globalAudioOffline()?.openDownload(this.getUIContext()),
           showOpenReader: this.globalTtsMode !== 'audio' && this.globalTtsMode !== 'video',
           onOpenReader: () => this.openGlobalTtsReader()
