@@ -366,21 +366,10 @@ export struct ReadingTicketCard {
 
   // ---------- 影票 ----------
 
-  /** 纸纹铺底；背景色在调用处另设。 */
-  @Builder
-  grainLayer() {
-    Column()
-      .width('100%')
-      .height('100%')
-      .backgroundImage($r('app.media.ticket_grain'), ImageRepeat.XY)
-      .backgroundImageSize({ width: 96, height: 96 })
-      .hitTestBehavior(HitTestMode.None)
-  }
-
+  // 纸纹直接画在票自己的背景上。不要用 100% 高的子组件铺底：外层没有定高，放进列表会被撑到可视区那么高。
   @Builder
   paperTicket() {
     Stack({ alignContent: Alignment.TopStart }) {
-      this.grainLayer()
       Column() {
         Column() {
           this.cover('100%', '100%', this.u(10))
@@ -494,6 +483,8 @@ export struct ReadingTicketCard {
     }
     .width(this.cardWidth)
     .backgroundColor(PAPER)
+    .backgroundImage($r('app.media.ticket_grain'), ImageRepeat.XY)
+    .backgroundImageSize({ width: 96, height: 96 })
   }
 
   @Builder
