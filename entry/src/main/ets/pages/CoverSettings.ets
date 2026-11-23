@@ -131,7 +131,7 @@ struct CoverSettingsPage {
         }
       })
       if (this.themeBookCoverEnabled) {
-        this.hintText(this.themeCoverAvailable() ? '连同主题配套的书籍边框一起使用' :
+        this.hintText(this.themeCoverAvailable() ? '主题边框在主题页单独开关' :
           '当前主题没有封面套装，这一项暂时不起作用')
       } else if (this.bookshelfCoverReplaceAlbum) {
         Column() {

@@ -348,6 +348,7 @@ export class ThemePackageService {
       const settingsRecord = ThemePackageService.settingsRecord(scheme.settings);
       // 是否使用主题封面、应用时是否带排版是本机偏好，不随主题走。
       settingsRecord['themeBookCoverEnabled'] = false;
+      settingsRecord['themeBookFrameEnabled'] = false;
       settingsRecord['themeApplyLayoutEnabled'] = false;
       if (AppThemeSettingsStore.hasOverrides(scheme.settings)) {
         manifest.requires.push(ThemePackageFeatures.SCHEME_OVERRIDES);
@@ -753,6 +754,7 @@ export class ThemePackageService {
       }
       schemeSettings.themeId = ThemeIds.CUSTOM;
       schemeSettings.themeBookCoverEnabled = false;
+      schemeSettings.themeBookFrameEnabled = false;
       schemeSettings.themeApplyLayoutEnabled = false;
       const scheme = await CustomThemeSchemeStore.addImported(context, appSettings, manifest.name, schemeSettings,
         manifest.author, replaceSchemeId, parts ? manifest.packageId : '', manifest.description);

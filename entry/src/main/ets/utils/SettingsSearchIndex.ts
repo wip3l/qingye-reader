@@ -239,7 +239,7 @@ const NAVS: Nav[] = [
   ['我的', '书源管理', '导入、分组、校验书源', '书源 源', 'pages/BookSource', undefined, true],
   ['我的', '阅读与收听', '小说、漫画、PDF、有声书、朗读', '', 'pages/Settings', undefined, false],
   ['我的', '书架设置', '布局、卡片信息、封面、隐私书架', '', 'pages/BookshelfSettings', undefined, false],
-  ['我的', '主题', '主题库与自定义主题', '皮肤 配色 主题包', 'pages/ThemeSettings', undefined, false],
+  ['我的', '主题', '主题库与自定义主题', '皮肤 配色 主题包 主题封面 主题边框 书框', 'pages/ThemeSettings', undefined, false],
   ['我的', '外观', '显示模式、材质、底栏', '', 'pages/AppearanceSettings', undefined, false],
   ['我的', '其他设置', '数据导入导出、缓存、交互', '', 'pages/OtherSettings', undefined, false],
   ['我的', '实验室', '兼容与诊断、浏览器看书', '', 'pages/LabSettings', undefined, false],

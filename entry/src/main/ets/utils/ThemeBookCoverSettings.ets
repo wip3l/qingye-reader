@@ -72,4 +72,16 @@ export class ThemeBookCoverSettings {
   static frame(darkMode: boolean): ResourceStr {
     return ThemeAssetRegistry.themeShelfFrame(ThemeRuntime.bookTokens(darkMode).shelfFrameAssetId, darkMode);
   }
+
+  /**
+   * 书架封面套的主题边框：“主题边框”开着且主题有边框时返回边框图，否则空。和是否用主题封面无关，
+   * 书自带的封面、图集封面、单独设置的封面和首字占位都套。enabled 传组件里的状态变量才会随设置刷新。
+   */
+  static frameIf(darkMode: boolean, enabled: boolean = ThemeBookCoverSettings.frameEnabledFromStorage()): ResourceStr {
+    return enabled ? ThemeBookCoverSettings.frame(darkMode) : '';
+  }
+
+  static frameEnabledFromStorage(): boolean {
+    return AppStorage.get<boolean>('appThemeBookFrameEnabled') || false;
+  }
 }

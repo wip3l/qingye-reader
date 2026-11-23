@@ -15330,7 +15330,7 @@ struct ReadBookPage {
       currentText,
       textAfter,
       this.getTtsFloatingCover(),
-      this.shouldUseTtsThemeBookCover() ? this.activeTtsThemeShelfFrame() : '',
+      this.activeTtsThemeShelfFrame(),
       `${this.currentChapterIndex + 1}/${Math.max(1, this.chapters.length)}章`,
       this.ttsSpeed,
       this.ttsSleepTimerMinutes,
@@ -16298,8 +16298,9 @@ struct ReadBookPage {
     return this.book ? ThemeBookCoverSettings.covers(this.book, this.appDarkMode, this.bookshelfCoverMode) : [];
   }
 
+  /** 主题边框不论封面来源都套，开关见主题页“主题边框”。 */
   activeTtsThemeShelfFrame(): ResourceStr {
-    return ThemeBookCoverSettings.frame(this.appDarkMode);
+    return ThemeBookCoverSettings.frameIf(this.appDarkMode);
   }
 
   getTtsPanelCoverList(): string[] {

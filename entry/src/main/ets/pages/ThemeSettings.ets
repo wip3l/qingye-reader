@@ -267,6 +267,7 @@ struct ThemeSettingsPage {
   @StorageLink('appThemeId') appThemeId: string = AppThemeSettingsStore.DEFAULT_THEME_ID;
   @StorageLink('appIconId') appIconId: string = AppIconSettingsStore.DEFAULT_ICON_ID;
   @StorageLink('appThemeBookCoverEnabled') themeBookCoverEnabled: boolean = false;
+  @StorageLink('appThemeBookFrameEnabled') themeBookFrameEnabled: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
   @StorageLink('appCustomBaseThemeId') customBaseThemeId: string = AppThemeSettingsStore.DEFAULT_THEME_ID;
   @StorageLink('appCustomLightAccentColor') customLightAccentColor: string = '#007DFF';
@@ -1126,33 +1127,13 @@ struct ThemeSettingsPage {
         }
       }
       .width('100%')
-      if (this.currentHasCoverSetting()) {
-        Divider()
-          .strokeWidth(0.5)
-          .color(ThemeRuntime.dividerColor(this.appDarkMode))
-          .margin({ left: AppSpacing.LG })
-        Row({ space: AppSpacing.MD }) {
-          Column({ space: 2 }) {
-            Text('主题封面与书籍边框')
-              .fontSize(AppFontSize.BODY_LARGE)
-              .fontColor(this.primaryTextColor())
-            Text(this.themeBookCoverEnabled ? '书架使用主题封面和配套边框' : '保留每本书原有封面；可在封面设置里只给没有封面的书使用')
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.subTextColor())
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-          AdaptiveSwitch({
-            isOn: this.themeBookCoverEnabled,
-            switchEnabled: !this.isTrialTheme(this.appThemeId),
-            onChange: (enabled: boolean) => {
-              this.setThemeBookCoverEnabled(enabled);
-            }
-          })
+      if (this.currentHasCoverSetting() || this.currentHasFrameSetting()) {
+        if (this.currentHasCoverSetting()) {
+          this.coverSwitchRow('cover')
         }
-        .width('100%')
-        .constraintSize({ minHeight: 62 })
-        .padding({ left: AppSpacing.LG, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
+        if (this.currentHasFrameSetting()) {
+          this.coverSwitchRow('frame')
+        }
         Divider()
           .strokeWidth(0.5)
           .color(ThemeRuntime.dividerColor(this.appDarkMode))
@@ -1178,6 +1159,43 @@ struct ThemeSettingsPage {
     .borderRadius(ThemeRuntime.cardRadius())
     .backgroundColor(this.cardColor())
     .clip(true)
+  }
+
+  @Builder
+  /** kind 为 cover / frame；开关状态在这里直接读，按值传进来不会随切换刷新。 */
+  coverSwitchRow(kind: string) {
+    Divider()
+      .strokeWidth(0.5)
+      .color(ThemeRuntime.dividerColor(this.appDarkMode))
+      .margin({ left: AppSpacing.LG })
+    Row({ space: AppSpacing.MD }) {
+      Column({ space: 2 }) {
+        Text(kind === 'frame' ? '主题边框' : '主题封面')
+          .fontSize(AppFontSize.BODY_LARGE)
+          .fontColor(this.primaryTextColor())
+        Text(kind === 'frame' ? (this.themeBookFrameEnabled ? '书架上的封面套上主题的边框，原有封面也套' :
+          '封面不加主题边框') : (this.themeBookCoverEnabled ? '书架换成主题的封面' :
+          '保留每本书原有封面；可在封面设置里只给没有封面的书使用'))
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      AdaptiveSwitch({
+        isOn: kind === 'frame' ? this.themeBookFrameEnabled : this.themeBookCoverEnabled,
+        switchEnabled: !this.isTrialTheme(this.appThemeId),
+        onChange: (enabled: boolean) => {
+          if (kind === 'frame') {
+            this.setThemeBookFrameEnabled(enabled);
+          } else {
+            this.setThemeBookCoverEnabled(enabled);
+          }
+        }
+      })
+    }
+    .width('100%')
+    .constraintSize({ minHeight: 62 })
+    .padding({ left: AppSpacing.LG, right: AppSpacing.MD, top: AppSpacing.SM, bottom: AppSpacing.SM })
   }
 
   @Builder
@@ -2753,6 +2771,7 @@ struct ThemeSettingsPage {
       AppThemeSettingsStore.applyToStorage(settings);
       this.appThemeId = settings.themeId;
       this.themeBookCoverEnabled = settings.themeBookCoverEnabled;
+      this.themeBookFrameEnabled = settings.themeBookFrameEnabled;
       const readerSettings = await ReaderSettingsStore.load(getContext(this));
       ReaderSettingsStore.applyToStorage(readerSettings);
     } catch (e) {
@@ -2829,6 +2848,7 @@ struct ThemeSettingsPage {
       ThemeTrialManager.stop(getContext(this) as common.UIAbilityContext);
       this.appThemeId = AppStorage.get<string>('appThemeId') || AppThemeSettingsStore.DEFAULT_THEME_ID;
       this.themeBookCoverEnabled = AppStorage.get<boolean>('appThemeBookCoverEnabled') || false;
+      this.themeBookFrameEnabled = AppStorage.get<boolean>('appThemeBookFrameEnabled') || false;
     }
     if (themeId === this.appThemeId && themeId !== ThemeIds.CUSTOM) {
       return;
@@ -2858,7 +2878,9 @@ struct ThemeSettingsPage {
       if (customScheme) {
         settings = AppThemeSettingsStore.applyCustomSnapshot(settings, customScheme.settings);
       }
+      // 弹窗里“应用主题封面”管封面和边框两项，应用后可在主题页分别再改。
       settings.themeBookCoverEnabled = choice.applyCover;
+      settings.themeBookFrameEnabled = choice.applyCover;
       AppThemeSettingsStore.applyToStorage(settings);
       await AppThemeSettingsStore.save(getContext(this), settings);
       if (customScheme) {
@@ -2868,6 +2890,7 @@ struct ThemeSettingsPage {
       }
       this.appThemeId = settings.themeId;
       this.themeBookCoverEnabled = settings.themeBookCoverEnabled;
+      this.themeBookFrameEnabled = settings.themeBookFrameEnabled;
       if (themeId !== ThemeIds.CUSTOM) {
         await this.recordRecentUse(themeId);
       } else if (customScheme) {
@@ -3103,10 +3126,24 @@ struct ThemeSettingsPage {
       AppThemeSettingsStore.applyToStorage(settings);
       await AppThemeSettingsStore.save(getContext(this), settings);
       this.themeBookCoverEnabled = enabled;
-      HdsFeedback.showToast(enabled ? '已启用主题封面与书籍边框' : '已恢复图书原封面');
+      HdsFeedback.showToast(enabled ? '已启用主题封面' : '已恢复图书原封面');
     } catch (e) {
       console.error('保存主题封面设置失败:', e);
       HdsFeedback.showToast('保存主题封面设置失败');
+    }
+  }
+
+  async setThemeBookFrameEnabled(enabled: boolean): Promise<void> {
+    try {
+      const settings = await AppThemeSettingsStore.load(getContext(this));
+      settings.themeBookFrameEnabled = enabled;
+      AppThemeSettingsStore.applyToStorage(settings);
+      await AppThemeSettingsStore.save(getContext(this), settings);
+      this.themeBookFrameEnabled = enabled;
+      HdsFeedback.showToast(enabled ? '已启用主题边框' : '已去掉主题边框');
+    } catch (e) {
+      console.error('保存主题边框设置失败:', e);
+      HdsFeedback.showToast('保存主题边框设置失败');
     }
   }
 
@@ -3712,6 +3749,14 @@ struct ThemeSettingsPage {
 
   currentHasCoverSetting(): boolean {
     return this.appThemeId !== ThemeIds.CUSTOM && this.themeHasBookCover(BuiltinThemeRegistry.findById(this.appThemeId));
+  }
+
+  /** 当前主题自带书架边框（浅深任一套）时才显示“主题边框”开关。 */
+  currentHasFrameSetting(): boolean {
+    if (this.appThemeId === ThemeIds.CUSTOM) return false;
+    const frameId = BuiltinThemeRegistry.findById(this.appThemeId).book.shelfFrameAssetId;
+    return !!frameId && (!!ThemeAssetRegistry.themeShelfFrame(frameId, false) ||
+      !!ThemeAssetRegistry.themeShelfFrame(frameId, true));
   }
 
   currentCanEditStartupText(): boolean {
@@ -4383,7 +4428,7 @@ struct ThemeSettingsPage {
           .fontColor(this.primaryTextColor())
         Text(category === 'layout' ? (this.applyDialogApplyLayout ? this.applyDialogLayoutOnHint :
           this.applyDialogLayoutOffHint) : category === 'cover' ?
-          '书架使用主题封面与配套书籍边框' : AppIconManager.isSupported() ?
+          '书架使用主题封面与主题边框' : AppIconManager.isSupported() ?
           '桌面图标同步更换为主题图标' : AppIconManager.UNSUPPORTED_MESSAGE)
           .fontSize(AppFontSize.CAPTION)
           .fontColor(this.subTextColor())
@@ -4651,6 +4696,7 @@ struct ThemeSettingsPage {
       await ThemeTrialManager.start(getContext(this) as common.UIAbilityContext, theme.id);
       this.appThemeId = theme.id;
       this.themeBookCoverEnabled = !!theme.book.coverAssetId;
+      this.themeBookFrameEnabled = !!theme.book.coverAssetId;
       this.syncBars();
       HdsFeedback.showToast(`「${theme.name}」已开始试用，5分钟后自动恢复`);
     } catch (e) {
@@ -4665,6 +4711,7 @@ struct ThemeSettingsPage {
     ThemeTrialManager.stop(getContext(this) as common.UIAbilityContext);
     this.appThemeId = AppStorage.get<string>('appThemeId') || AppThemeSettingsStore.DEFAULT_THEME_ID;
     this.themeBookCoverEnabled = AppStorage.get<boolean>('appThemeBookCoverEnabled') || false;
+    this.themeBookFrameEnabled = AppStorage.get<boolean>('appThemeBookFrameEnabled') || false;
     this.syncBars();
   }
 

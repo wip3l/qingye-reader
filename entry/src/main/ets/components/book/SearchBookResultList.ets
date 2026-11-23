@@ -77,6 +77,7 @@ export struct SearchBookResultList {
   @StorageProp('appDarkMode') @Watch('onCoverSettingsChanged') appDarkMode: boolean = false;
   @StorageProp('themeRevision') @Watch('onCoverSettingsChanged') themeRevision: number = 0;
   @StorageProp('appThemeBookCoverEnabled') @Watch('onCoverSettingsChanged') themeCoverEnabled: boolean = false;
+  @StorageProp('appThemeBookFrameEnabled') @Watch('onCoverSettingsChanged') themeFrameEnabled: boolean = false;
   @StorageProp('bookshelfCoverAlbums') @Watch('onCoverSettingsChanged') coverAlbums: string = '';
   @StorageProp('bookshelfLightCoverAlbumId') @Watch('onCoverSettingsChanged') lightCoverAlbum: string = '';
   @StorageProp('bookshelfDarkCoverAlbumId') @Watch('onCoverSettingsChanged') darkCoverAlbum: string = '';

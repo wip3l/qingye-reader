@@ -62,6 +62,7 @@ export class MembershipThemeGuard {
       const fallback = AppThemeSettingsStore.activateTheme(AppThemeSettingsStore.DEFAULT_THEME_ID, settings);
       // 退回默认主题时不沿用原主题的“主题封面”开关：默认主题默认保留书的原封面。
       fallback.themeBookCoverEnabled = false;
+      fallback.themeBookFrameEnabled = false;
       await AppThemeSettingsStore.save(context, fallback);
       AppThemeSettingsStore.applyToStorage(fallback);
       await store.put(MembershipThemeGuard.KEY_GRANTED_THEME, '');

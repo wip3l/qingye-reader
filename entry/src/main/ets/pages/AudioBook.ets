@@ -80,6 +80,8 @@ struct AudioBookPage {
   @StorageLink('appDarkAccentColor') appDarkAccentColor: string = '#4E9BFF';
   @StorageLink('appThemeBookCoverEnabled') @Watch('onThemeBookCoverChanged')
   themeBookCoverEnabled: boolean = false;
+  @StorageLink('appThemeBookFrameEnabled') @Watch('onThemeBookCoverChanged')
+  themeBookFrameEnabled: boolean = false;
   @StorageProp('statusBarHeight') statusBarHeight: number = 0;
   @StorageProp('navBarHeight') navBarHeight: number = 0;
   @State book: Book | null = null;
@@ -1492,7 +1494,7 @@ struct AudioBookPage {
     ReaderTtsFloatingSession.updateDetails(
       this.floatingSessionOwnerId,
       this.displayIntro(), '', '', '', this.panelCover(),
-      this.shouldUseThemeBookCover() ? this.activeThemeShelfFrame() : '',
+      this.activeThemeShelfFrame(),
       `${this.chapterIndex + 1}/${Math.max(1, this.chapters.length)}章`,
       this.speed, this.sleepMinutes, this.sleepRemainingSeconds,
       this.chapterIndex > 0, this.chapterIndex < this.chapters.length - 1
@@ -1603,16 +1605,13 @@ struct AudioBookPage {
     this.updateFloatingSession();
   }
 
-  shouldUseThemeBookCover(): boolean {
-    return ThemeBookCoverSettings.enabledFor(this.book, this.appDarkMode, this.themeBookCoverEnabled);
-  }
-
   panelCover(): ResourceStr {
     return this.displayCover();
   }
 
+  /** 主题边框不论封面来源都套，开关见主题页“主题边框”。 */
   activeThemeShelfFrame(): ResourceStr {
-    return ThemeBookCoverSettings.frame(this.appDarkMode);
+    return ThemeBookCoverSettings.frameIf(this.appDarkMode);
   }
 
   formatDuration(valueMs: number): string {

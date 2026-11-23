@@ -34,6 +34,8 @@ import {
 export class AppThemeSettings {
   themeId: string = '';
   themeBookCoverEnabled: boolean = false;
+  // 书架封面套主题边框，和是否用主题封面分开；没存过时沿用 themeBookCoverEnabled（两者原来是一个开关）。
+  themeBookFrameEnabled: boolean = false;
   // Remembers the last choice made in the "apply theme" prompt. Defaults to off so
   // switching themes preserves the reader's current layout unless the user opts in.
   themeApplyLayoutEnabled: boolean = false;
@@ -85,6 +87,7 @@ export class AppThemeSettings {
 export class AppThemeSettingsStore {
   static readonly KEY_THEME_ID: string = ThemeRuntime.KEY_THEME_ID;
   static readonly KEY_THEME_BOOK_COVER_ENABLED: string = 'appThemeBookCoverEnabled';
+  static readonly KEY_THEME_BOOK_FRAME_ENABLED: string = 'appThemeBookFrameEnabled';
   static readonly KEY_THEME_APPLY_LAYOUT_ENABLED: string = 'appThemeApplyLayoutEnabled';
   static readonly KEY_LIGHT_ACCENT_COLOR: string = 'appLightAccentColor';
   static readonly KEY_DARK_ACCENT_COLOR: string = 'appDarkAccentColor';
@@ -145,6 +148,8 @@ export class AppThemeSettingsStore {
     settings.themeBookCoverEnabled = await AppThemeSettingsStore.getBoolean(
       store, AppThemeSettingsStore.KEY_THEME_BOOK_COVER_ENABLED,
       AppStorage.get<boolean>(AppThemeSettingsStore.KEY_THEME_BOOK_COVER_ENABLED) || false);
+    settings.themeBookFrameEnabled = await AppThemeSettingsStore.getBoolean(
+      store, AppThemeSettingsStore.KEY_THEME_BOOK_FRAME_ENABLED, settings.themeBookCoverEnabled);
     settings.themeApplyLayoutEnabled = await AppThemeSettingsStore.getBoolean(
       store, AppThemeSettingsStore.KEY_THEME_APPLY_LAYOUT_ENABLED, false);
     const customBaseFallback = BuiltinThemeRegistry.normalizeBuiltinId(settings.themeId);
@@ -262,6 +267,7 @@ export class AppThemeSettingsStore {
     const store = await preferences.getPreferences(context, AppThemeSettingsStore.STORE_NAME);
     await store.put(AppThemeSettingsStore.KEY_THEME_ID, normalized.themeId);
     await store.put(AppThemeSettingsStore.KEY_THEME_BOOK_COVER_ENABLED, normalized.themeBookCoverEnabled);
+    await store.put(AppThemeSettingsStore.KEY_THEME_BOOK_FRAME_ENABLED, normalized.themeBookFrameEnabled);
     await store.put(AppThemeSettingsStore.KEY_THEME_APPLY_LAYOUT_ENABLED, normalized.themeApplyLayoutEnabled);
     await store.put(AppThemeSettingsStore.KEY_LIGHT_ACCENT_COLOR, normalized.lightAccentColor);
     await store.put(AppThemeSettingsStore.KEY_DARK_ACCENT_COLOR, normalized.darkAccentColor);
@@ -339,6 +345,8 @@ export class AppThemeSettingsStore {
     AppStorage.setOrCreate(AppThemeSettingsStore.KEY_THEME_ID, normalized.themeId);
     AppStorage.setOrCreate(AppThemeSettingsStore.KEY_THEME_BOOK_COVER_ENABLED,
       normalized.themeBookCoverEnabled);
+    AppStorage.setOrCreate(AppThemeSettingsStore.KEY_THEME_BOOK_FRAME_ENABLED,
+      normalized.themeBookFrameEnabled);
     AppStorage.setOrCreate(AppThemeSettingsStore.KEY_LIGHT_ACCENT_COLOR, normalized.lightAccentColor);
     AppStorage.setOrCreate(AppThemeSettingsStore.KEY_DARK_ACCENT_COLOR, normalized.darkAccentColor);
     AppStorage.setOrCreate(AppThemeSettingsStore.KEY_LIGHT_BUTTON_COLOR, normalized.lightButtonColor);
@@ -458,6 +466,7 @@ export class AppThemeSettingsStore {
       previous.customBaseThemeId : normalizedThemeId);
     settings.themeId = normalizedThemeId;
     settings.themeBookCoverEnabled = previous.themeBookCoverEnabled;
+    settings.themeBookFrameEnabled = previous.themeBookFrameEnabled;
     AppThemeSettingsStore.copyCustom(previous, settings);
     if (normalizedThemeId === ThemeIds.CUSTOM) {
       AppThemeSettingsStore.useCustomColors(settings);
@@ -911,6 +920,9 @@ export class AppThemeSettingsStore {
       AppThemeSettingsStore.DEFAULT_THEME_ID;
     settings.themeId = AppThemeSettingsStore.normalizeThemeId(source.themeId || currentThemeId);
     settings.themeBookCoverEnabled = source.themeBookCoverEnabled === true;
+    // 旧版本或云端旧数据没有这一项：两者原来是同一个开关，沿用主题封面的值。
+    settings.themeBookFrameEnabled = typeof source.themeBookFrameEnabled === 'boolean' ?
+      source.themeBookFrameEnabled : settings.themeBookCoverEnabled;
     settings.themeApplyLayoutEnabled = source.themeApplyLayoutEnabled === true;
     settings.customBaseThemeId = BuiltinThemeRegistry.normalizeBuiltinId(source.customBaseThemeId);
     settings.customLightSources = AppThemeSettingsStore.normalizeSources(

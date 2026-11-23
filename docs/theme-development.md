@@ -6,7 +6,7 @@
 
 - **编译期主题包** `ThemePack`：一个主题的全部设计令牌，在 `BuiltinThemeRegistry` 中注册。
 - **运行时** `ThemeRuntime`：把当前主题展开为扁平的 `AppStorage` 令牌，供组件读取。
-- **持久化** `AppThemeSettingsStore`：保存 `themeId`、主题封面开关和用户颜色覆盖值。
+- **持久化** `AppThemeSettingsStore`：保存 `themeId`、主题封面与主题边框两个开关和用户颜色覆盖值。
 
 `Resource`、背景图片、封面和图标由 `ThemeAssetRegistry` 按 ID 解析，不写入 Preferences。
 
@@ -243,7 +243,7 @@ BuiltinThemeRegistry.register(theme);
    文件夹插画同理：`themeShelfFolder(assetId, darkMode)` 里给这个主题按模式返回两张（两套专属主题 `_light` 那张用于浅色），主题包字段是 `parts.book.shelfFolderDark`（`InstalledThemePack.shelfFolderFor()`）。
 3. 配置 `theme.book.coverAssetId`、`shelfFrameAssetId` 和 `shelfFolderAssetId`。
 
-是否启用主题封面由 `appThemeBookCoverEnabled` 持久化；是否套用主题排版由 `appThemeApplyLayoutEnabled` 持久化。
+是否启用主题封面由 `appThemeBookCoverEnabled` 持久化；书架封面是否套主题边框由 `appThemeBookFrameEnabled` 单独持久化，开着时不论封面来源（主题封面、书籍自带、图集、单独设置、首字占位）都套，取边框统一走 `ThemeBookCoverSettings.frameIf()`。旧数据没有边框这一项时沿用主题封面开关的值（`AppThemeSettingsStore.clone()`）。应用主题弹窗里的“应用主题封面”同时设置这两项。是否套用主题排版由 `appThemeApplyLayoutEnabled` 持久化。
 
 ### 导航图标包
 

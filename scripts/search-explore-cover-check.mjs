@@ -30,7 +30,7 @@ const cover = vm.runInContext(stripTypeScriptTypes(`({${[
 ].map(method).join(',')}})`), context);
 Object.assign(cover, {
   bookUrl: 'book-1', origin: 'source', coverUrl: 'source.jpg', shelfBook: null,
-  useBookshelfCover: true, appDarkMode: false, applyScope: 'all', targetBooks: '', themeCoverEnabled: false,
+  useBookshelfCover: true, appDarkMode: false, applyScope: 'all', targetBooks: '', themeCoverEnabled: false, themeFrameEnabled: true,
   replaceAlbum: true, albumMix: true, fallback: 'text', coverMode: 'sequence', lightAlbum: 'light', darkAlbum: 'dark',
   albums: JSON.stringify([{ id: 'light', covers: ['light-1.jpg', 'light-2.jpg'] }, { id: 'dark', covers: ['dark.jpg'] }]),
   covers: [], displayCovers: [], coverLoadSerial: 0, retryTimers: new Map(), retryCounts: new Map(), activeIndex: 0, loadedRevision: 0, loadedUrls: new Set(), mounted: true,
@@ -144,8 +144,22 @@ flushReady();
 assert.equal(ready.at(-1).id, cover.covers[0].id, 'theme Resource covers drive backdrop too');
 cover.themeCoverEnabled = false;
 cover.refreshCovers();
-assert.equal(cover.themeFrame, '');
+assert.equal(cover.themeCover, false);
+assert.equal(cover.themeFrame.id, 'frame', 'the theme frame is a separate switch and also wraps the own cover');
 assert.equal(cover.interval, 3500);
+cover.themeFrameEnabled = false;
+cover.refreshCovers();
+assert.equal(cover.themeFrame, '');
+cover.themeCoverEnabled = true;
+cover.refreshCovers();
+assert.equal(cover.themeCover, true);
+assert.equal(cover.themeFrame, '', 'theme covers can be shown without the frame');
+cover.themeCoverEnabled = false; cover.themeFrameEnabled = true;
+cover.useBookshelfCover = false;
+cover.refreshCovers();
+assert.equal(cover.themeFrame, '', 'result covers that do not follow the shelf get no frame');
+cover.useBookshelfCover = true;
+cover.refreshCovers();
 
 // Late shelf lookups must not apply another book's custom cover to a reused result cell.
 let resolveShelf;

@@ -32,6 +32,7 @@ export class ThemeTrialManager {
     const trialSettings = AppThemeSettingsStore.activateTheme(themeId, ThemeTrialManager.originalSettings);
     const theme = BuiltinThemeRegistry.findById(themeId);
     trialSettings.themeBookCoverEnabled = !!theme.book.coverAssetId;
+    trialSettings.themeBookFrameEnabled = trialSettings.themeBookCoverEnabled;
     ThemeTrialManager.trialContext = context;
     AppStorage.setOrCreate(ThemeTrialManager.STORAGE_TRIAL_THEME_ID, themeId);
     AppStorage.setOrCreate(ThemeTrialManager.STORAGE_TRIAL_ENDS_AT, endsAt);

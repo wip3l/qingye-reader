@@ -29,6 +29,7 @@ export class ResultCoverOptions {
   useBookshelf: boolean = false;
   darkMode: boolean = false;
   themeEnabled: boolean = false;
+  frameEnabled: boolean = false;
   themeRevision: number = 0;
   shelfRevision: number = 0;
   gallery: CoverGallerySnapshot = new CoverGallerySnapshot();
@@ -44,6 +45,7 @@ export class ResultCoverPreparation {
     options.useBookshelf = useBookshelf;
     options.darkMode = darkMode;
     options.themeEnabled = AppStorage.get<boolean>('appThemeBookCoverEnabled') || false;
+    options.frameEnabled = ThemeBookCoverSettings.frameEnabledFromStorage();
     options.themeRevision = AppStorage.get<number>('themeRevision') || 0;
     options.shelfRevision = AppStorage.get<number>('shelfUpdateTime') || 0;
     options.gallery = CoverGalleryStore.snapshotFromStorage();
@@ -73,7 +75,8 @@ export class ResultCoverPreparation {
     if (!options.showCover) return prepared;
     let book = ResultCoverPreparation.bookOf(result);
     let candidates: ResourceStr[] = [];
-    let frame: ResourceStr = '';
+    // 主题边框和封面来源无关，用书架封面时都套。
+    const frame: ResourceStr = options.useBookshelf ? ThemeBookCoverSettings.frameIf(options.darkMode, options.frameEnabled) : '';
     // 书架上的同一本书单独设置过封面时，搜索/发现结果也只显示那张，不走主题封面和图集。
     const customShelfBook = options.useBookshelf ?
       await ResultCoverPreparation.shelfBookWithCustomCover(context, book) : null;
@@ -82,7 +85,6 @@ export class ResultCoverPreparation {
       candidates = BookCoverResolver.sourceCovers(book, options.darkMode, options.gallery);
     } else if (options.useBookshelf && ThemeBookCoverSettings.enabled(options.darkMode, options.themeEnabled)) {
       candidates = ThemeBookCoverSettings.covers(book, options.darkMode, options.gallery.coverMode);
-      frame = ThemeBookCoverSettings.frame(options.darkMode);
       prepared.themeCover = true;
       prepared.interval = ThemeBookCoverSettings.interval(book);
     } else if (options.useBookshelf) {
@@ -96,7 +98,6 @@ export class ResultCoverPreparation {
         candidates = BookCoverResolver.sourceCovers(book, options.darkMode, options.gallery);
         if (candidates.length === 0 && ThemeBookCoverSettings.enabledFor(book, options.darkMode, false, options.gallery)) {
           candidates = ThemeBookCoverSettings.covers(book, options.darkMode, options.gallery.coverMode);
-          frame = ThemeBookCoverSettings.frame(options.darkMode);
           prepared.themeCover = true;
           prepared.interval = ThemeBookCoverSettings.interval(book);
         }
@@ -121,6 +122,8 @@ export class ResultCoverPreparation {
       fallback.darkMode = options.darkMode;
       return ResultCoverPreparation.prepare(context, result, fallback);
     }
+    // 没有图时显示首字占位，边框照样套，和书架一致。
+    if (frame) prepared.frame = await ResultCoverPreparation.prepareImage(context, frame);
     return prepared;
   }
 

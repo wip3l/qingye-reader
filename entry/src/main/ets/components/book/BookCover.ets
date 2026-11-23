@@ -46,6 +46,7 @@ export struct BookCover {
   @StorageProp('coverFailureRevision') @Watch('refreshCovers') coverFailureRevision: number = 0;
   @StorageProp('bookshelfCoverMode') @Watch('refreshCovers') coverMode: string = 'sequence';
   @StorageProp('appThemeBookCoverEnabled') @Watch('refreshCovers') themeCoverEnabled: boolean = false;
+  @StorageProp('appThemeBookFrameEnabled') @Watch('refreshCovers') themeFrameEnabled: boolean = false;
   @StorageProp('themeRevision') @Watch('refreshCovers') themeRevision: number = 0;
   @StorageProp('shelfCoverSlotRevision') @Watch('refreshCovers') shelfCoverSlotRevision: number = 0;
   @StorageProp('shelfUpdateTime') @Watch('onBookChanged') shelfUpdateTime: number = 0;
@@ -157,7 +158,7 @@ export struct BookCover {
     const themeCover = this.useBookshelfCover &&
       ThemeBookCoverSettings.enabledFor(this.coverBook(), this.appDarkMode, this.themeCoverEnabled);
     const covers: ResourceStr[] = themeCover ? ThemeBookCoverSettings.covers(this.coverBook(), this.appDarkMode, this.coverMode) : this.rawCoverList();
-    this.themeFrame = themeCover ? ThemeBookCoverSettings.frame(this.appDarkMode) : '';
+    this.themeFrame = this.useBookshelfCover ? ThemeBookCoverSettings.frameIf(this.appDarkMode, this.themeFrameEnabled) : '';
     this.themeCover = themeCover;
     this.interval = themeCover ? ThemeBookCoverSettings.interval(this.coverBook()) : 3500;
     if (JSON.stringify(covers) !== JSON.stringify(this.covers)) {
@@ -336,7 +337,7 @@ export struct BookCover {
         .syncLoad(this.preparedSync())
         .width('100%')
         .height('100%')
-        .objectFit(this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
+        .objectFit(this.themeCover && this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
         .sourceSize({ width: this.decodeWidth, height: this.decodeHeight })
         .borderRadius(this.cornerRadius)
         .onComplete(() => {
@@ -358,7 +359,7 @@ export struct BookCover {
           .width('100%')
           .height('100%')
           .sourceSize({ width: this.decodeWidth, height: this.decodeHeight })
-          .objectFit(this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
+          .objectFit(this.themeCover && this.themeFrame ? ImageFit.Fill : ImageFit.Cover)
       } else if (!this.isActiveCoverReady()) {
         Column() {
           Text((this.name || '书').substring(0, 1))

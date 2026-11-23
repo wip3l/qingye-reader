@@ -14,7 +14,8 @@ const context = vm.createContext({ ExploreRankStyle: { LAYOUT_RANK: 'rank', LIST
       (gallery.albumsRaw ? ['album-a', 'album-b'] : []) },
   ThemeBookCoverSettings: { enabled: (_dark, enabled) => enabled, covers: () => ['theme-a', 'theme-b'],
     enabledFor: (_book, _dark, _enabled, gallery) => gallery.fallback === 'theme',
-    frame: () => 'frame', interval: () => 3500 },
+    frame: () => 'frame', frameIf: (_dark, enabled) => enabled ? 'frame' : '', frameEnabledFromStorage: () => false,
+    interval: () => 3500 },
   AppDatabase: { getInstance: () => ({ initWithContext: async () => {}, getBookSource: async () => ({ bookInfoRule: { coverUrl: 'img' } }) }) },
   SearchBookShelfHelper: { findShelfBookByKey: async () => null,
     keyOf: b => `${b.origin}:${b.bookUrl}`, isInShelf: () => false },
@@ -36,10 +37,14 @@ const Options = vm.runInContext('ResultCoverOptions', context);
 const Ready = vm.runInContext('PreparedResultCover', context);
 const book = { origin: 'source', bookUrl: 'book', name: '测试书', author: '作者', coverUrl: '' };
 let opts = new Options();
-opts.useBookshelf = true; opts.themeEnabled = true;
+opts.useBookshelf = true; opts.themeEnabled = true; opts.frameEnabled = true;
 let ready = await prepare.prepare({}, book, opts);
 assert.equal(ready.firstImage, 'file:///cache/theme-a');
 assert.equal(ready.frame, 'file:///cache/frame');
+opts.frameEnabled = false;
+ready = await prepare.prepare({}, book, opts);
+assert.equal(ready.firstImage, 'file:///cache/theme-a');
+assert.equal(ready.frame, '', 'theme covers can go without the frame');
 assert.equal(details, 0, 'theme cover never waits for source detail lookup');
 opts.themeEnabled = false; opts.gallery.albumsRaw = 'album'; opts.gallery.replaceAlbum = true;
 ready = await prepare.prepare({}, book, opts);
@@ -71,7 +76,7 @@ assert.equal(ready.firstImage, '');
 assert.ok(!files.slice(previousFiles).includes('source-fallback'), 'replace-with-album preference is respected');
 // 没有封面的书用主题封面兜底：先确认书源也给不出封面，再用主题封面和书框。
 const fallbackOptions = new Options();
-fallbackOptions.useBookshelf = true; fallbackOptions.gallery.fallback = 'theme';
+fallbackOptions.useBookshelf = true; fallbackOptions.gallery.fallback = 'theme'; fallbackOptions.frameEnabled = true;
 context.CoverGallerySettings.replaceOnlyAlbumCovers = () => [];
 ready = await prepare.prepare({}, book, fallbackOptions);
 assert.equal(ready.firstImage, 'file:///cache/theme-a', 'coverless result falls back to the theme cover');
@@ -80,6 +85,7 @@ assert.equal(ready.frame, 'file:///cache/frame');
 ready = await prepare.prepare({}, { ...book, coverUrl: 'own-cover' }, fallbackOptions);
 assert.equal(ready.firstImage, 'file:///cache/own-cover', 'a book with its own cover keeps it');
 assert.equal(ready.themeCover, false);
+assert.equal(ready.frame, 'file:///cache/frame', 'the theme frame also wraps the own cover of a book');
 opts.showCover = false;
 const filesBeforeDisabled = files.length;
 await prepare.prepare({}, book, opts);

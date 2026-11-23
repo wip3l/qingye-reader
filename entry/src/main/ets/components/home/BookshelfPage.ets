@@ -313,6 +313,7 @@ export struct BookshelfPage {
   /** 首页每次“进入书架”（切回书架页签、从别的页面返回首页）加一，沉浸书架据此收起顶栏和底栏。 */
   @Prop @Watch('onShelfEnterTick') shelfEnterTick: number = 0;
   @StorageLink('appThemeBookCoverEnabled') themeBookCoverEnabled: boolean = false;
+  @StorageLink('appThemeBookFrameEnabled') themeBookFrameEnabled: boolean = false;
   @StorageLink('appThemeId') appThemeId: string = AppThemeSettingsStore.DEFAULT_THEME_ID;
   @StorageLink('appCustomBaseThemeId') appCustomBaseThemeId: string = AppThemeSettingsStore.DEFAULT_THEME_ID;
   @State books: Book[] = [];
@@ -6803,7 +6804,7 @@ export struct BookshelfPage {
     return cover.boundsWidth > 0 && cover.boundsHeight > 0 ? cover : null;
   }
 
-  /** 阅读页翻开的封面与书架上看到的一致：主题封面带书框，多图取第一张，没有封面时用首字色块。 */
+  /** 阅读页翻开的封面与书架上看到的一致：开着主题边框时带书框，多图取第一张，没有封面时用首字色块。 */
   shelfOpeningCover(book: Book, touchX: number = -1, touchY: number = -1): ShelfOpeningCover {
     const opening: ShelfOpeningCover = {
       bookUrl: book.bookUrl, cover: '', frame: '', color: this.getBookColor(book.name),
@@ -6815,7 +6816,6 @@ export struct BookshelfPage {
     if (this.shouldUseThemeBookCoverFor(book)) {
       const covers = this.activeThemeBookCovers(book);
       opening.cover = covers.length > 0 ? covers[0] : '';
-      opening.frame = this.activeThemeShelfFrame();
       // 不显示边框时书架上的主题封面没有底色，翻开的封面也不垫，不然起步那一帧闪出一块灰。
       opening.color = opening.frameless ? '#00000000' : this.inputColor();
       opening.themeCover = true;
@@ -6823,6 +6823,7 @@ export struct BookshelfPage {
       const covers = this.getShelfCoverList(book);
       opening.cover = covers.length > 0 ? this.imageCover(covers[0]) : '';
     }
+    opening.frame = this.activeThemeShelfFrame();
     return opening;
   }
 
@@ -7515,10 +7516,6 @@ export struct BookshelfPage {
           .indicator(false)
           .loop(true)
         }
-        Image(this.activeThemeShelfFrame())
-          .width(width)
-          .height(height)
-          .objectFit(ImageFit.Fill)
       } else if (this.getShelfCoverList(book).length === 0) {
         Column() {
           Text(book.name ? book.name.substring(0, 1) : '书')
@@ -7564,6 +7561,14 @@ export struct BookshelfPage {
       // 深色模式调暗封面：盖在图片上、角标和标记之下；主题封面不调暗。
       if (!this.shouldUseThemeBookCoverFor(book) && this.shelfCoverDimOpacity() > 0) {
         this.shelfCoverDimLayer()
+      }
+      // 主题边框不论封面来源都套，压在调暗层之上：深色边框是单独画的，不再调暗。
+      if (this.activeThemeShelfFrame()) {
+        Image(this.activeThemeShelfFrame())
+          .width(width)
+          .height(height)
+          .objectFit(ImageFit.Fill)
+          .hitTestBehavior(HitTestMode.None)
       }
       if (CloudAutoSync.isPlaceholder(book)) {
         // 云端占位书显示当前进度或排队位置，其他书仍可继续点选下载。
@@ -7686,9 +7691,10 @@ export struct BookshelfPage {
     return ThemeBookCoverSettings.interval(book);
   }
 
+  /** “主题边框”开着时的书框，所有封面都套；关着或主题没有边框时为空。 */
   activeThemeShelfFrame(): ResourceStr {
     if (!this.themeAssetsLive()) return '';
-    return ThemeBookCoverSettings.frame(this.appDarkMode);
+    return ThemeBookCoverSettings.frameIf(this.appDarkMode, this.themeBookFrameEnabled);
   }
 
   /** 主题包动图封面、文件夹插画取景时记下的显示区域；没有时按原来的方式整张显示。 */
