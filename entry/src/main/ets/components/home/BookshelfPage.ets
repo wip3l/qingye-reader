@@ -499,7 +499,9 @@ export struct BookshelfPage {
   @State contextMenuY: number = 96;
   @State contextViewportWidth: number = 360;
   @State contextViewportHeight: number = 720;
-  @State shelfTileViewportWidth: number = 360;
+  // 陪伴布局的书按这个宽度算好尺寸、按值传进 shelfHardcoverBook，宽度变了已建好的格子不会跟着变，
+  // 所以渲染 key 里带上它，变化时重载数据源让格子重建（见 onShelfTileViewportWidthChanged）。
+  @State @Watch('onShelfTileViewportWidthChanged') shelfTileViewportWidth: number = 360;
   @State cacheTargetBook: Book | null = null;
   @State cacheChapters: BookChapter[] = [];
   @State cacheStatus: string = '';
@@ -728,6 +730,7 @@ export struct BookshelfPage {
     ReaderOpenSnapshotStore.prepare(getContext(this)).catch((): void => {});
     this.shelfAppliedSearchKeyword = BookshelfPage.normalizeShelfSearchText(this.shelfSearchKeyword);
     this.reloadDisplaySettings();
+    this.seedShelfViewportWidth();
     const snapshot = ShelfPreload.take();
     if (snapshot) {
       // 排序和分类栏展开状态已由预读（或上一个书架页实例）放进 AppStorage。
@@ -895,6 +898,28 @@ export struct BookshelfPage {
   // 书的高矮、斜靠、分组叠法与投影都跟着“错落摆放”“封面阴影”变；渲染键带上开关值，重建数据源让已有的书和分组按新样式重画。
   onCompanionStaggerChanged(): void {
     this.reloadShelfDataSources(true);
+  }
+
+  onShelfTileViewportWidthChanged(): void {
+    this.reloadShelfDataSources(true);
+  }
+
+  /**
+   * 书架挂载时先按窗口宽度估一个格子宽度。默认的 360vp 比多数手机窄，冷启动第一屏的书按它建好后，
+   * 量到真实宽度前会小一圈；先估准了，量到时多半不变，也就不用重建。
+   */
+  seedShelfViewportWidth(): void {
+    try {
+      const ui = this.getUIContext();
+      const windowRect = window.findWindow(ui.getWindowName() || '').getWindowProperties().windowRect;
+      const width = ui.px2vp(windowRect.width);
+      if (width > 0) {
+        this.contextViewportWidth = width;
+        this.shelfTileViewportWidth = width;
+      }
+    } catch (_error) {
+      // 取不到窗口时沿用默认值，等量到真实宽度再重建。
+    }
   }
 
   onShelfTypeCategorySettingChanged(): void {
@@ -1692,7 +1717,7 @@ export struct BookshelfPage {
       `badges_${book.getVariable('shelfHasUpdate')}_${book.origin}_${book.originName}_` +
       `${progressChapterIndex}_${progressPageCount}_cover_${this.shelfCoverRenderVersions.get(book.bookUrl) || 0}_` +
       `stagger_${this.bookshelfCompanionStagger ? '1' : '0'}_shadow_${this.bookshelfCompanionCoverShadow ? '1' : '0'}_` +
-      `frame_${this.bookshelfTileCoverFrame ? '1' : '0'}`;
+      `frame_${this.bookshelfTileCoverFrame ? '1' : '0'}_vw_${Math.round(this.shelfTileViewportWidth)}`;
   }
 
   openCustomNetworkCoverDialog(): void {
@@ -5373,7 +5398,7 @@ export struct BookshelfPage {
           this.shelfBookRenderKey(entry.book, entry.key) :
           `${entry.key}_stagger_${this.bookshelfCompanionStagger ? '1' : '0'}_` +
             `shadow_${this.bookshelfCompanionCoverShadow ? '1' : '0'}_frame_${this.bookshelfTileCoverFrame ? '1' : '0'}_` +
-            `pin_${entry.pinned ? '1' : '0'}`)
+            `pin_${entry.pinned ? '1' : '0'}_vw_${Math.round(this.shelfTileViewportWidth)}`)
       } else {
         LazyForEach(this.shelfTileBookDataSource(pageKey), (book: Book) => {
           GridItem() {
