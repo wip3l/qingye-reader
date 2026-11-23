@@ -19,17 +19,27 @@ import { OpdsSecretStore } from '../opds/OpdsSecretStore';
 import { OpdsSettingsStore } from '../opds/OpdsSettingsStore';
 import { BookCoverCache } from '../utils/BookCoverCache';
 import { HdsFeedback } from '../utils/HdsFeedback';
-import { ImmersiveBackButton } from '../components/ImmersiveBackButton';
-import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
+import { PageScaffold } from '../components/common/PageScaffold';
+import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
+import { CollapsingHeader } from '../utils/CollapsingHeader';
+import { KeywordMatch } from '../utils/KeywordMatch';
 import { ThemeRuntime } from '../theme/ThemeRuntime';
 import { syncSystemBars } from '../utils/SystemBars';
 import { SystemDialogSession } from '../utils/SystemDialogSession';
 import { AppFontSize } from '../theme/AppFontSize';
 import { AppSpacing } from '../theme/AppSpacing';
 
+/** 路径上的一层。离开这一层时记下已加载的条目和滚动位置，返回时直接恢复，不用重新联网。 */
 class OpdsNavFrame {
   url: string = '';
   title: string = '';
+  savedAt: number = 0;
+  entries: OpdsEntry[] = [];
+  facets: OpdsFacetGroup[] = [];
+  nextUrl: string = '';
+  pageCount: number = 0;
+  hasMore: boolean = false;
+  scrollOffset: number = 0;
 }
 
 class OpdsDownloadRow {
@@ -79,6 +89,11 @@ struct OpdsBrowsePage {
   private static readonly FEED_TTL_MS: number = 5 * 60 * 1000;
   private static readonly MAX_PAGES: number = 50;
   private static readonly MAX_COVER_BYTES: number = 5 * 1024 * 1024;
+  private static readonly SEARCH_HEIGHT: number = 40;
+  private static readonly SEARCH_INPUT_ID: string = 'opds_browse_search_input';
+  /** 搜索范围：书库自己的搜索（OpenSearch）/ 只筛当前这一层已加载的条目。 */
+  private static readonly SCOPE_SERVER: string = 'server';
+  private static readonly SCOPE_LOCAL: string = 'local';
 
   @StorageLink('appDarkMode') appDarkMode: boolean = false;
   @StorageLink('themeRevision') themeRevision: number = 0;
@@ -102,7 +117,15 @@ struct OpdsBrowsePage {
   @State searchAvailable: boolean = false;
   @State searchMode: boolean = false;
   @State searchInput: string = '';
-  @State searchLabel: string = '';
+  @State searchScope: string = 'local';
+  /** “整个书库”范围下已按搜索键发出请求，列表显示书库返回的结果。 */
+  @State searchSubmitted: boolean = false;
+  @State searchCount: number = 0;
+  @State headerCollapse: number = 0;
+  @State searchEntryWidth: number = 0;
+  @State searchFieldWidth: number = 0;
+  @State loadingSweep: boolean = false;
+  @State shelfRevision: number = 0;
   @State coverMap: Map<string, string> = new Map();
   @State @Watch('onDetailFlagChanged') showDetail: boolean = false;
   @State detailEntry: OpdsEntry = new OpdsEntry();
@@ -133,6 +156,11 @@ struct OpdsBrowsePage {
   private initialized: boolean = false;
   private readonly detailDialogSession: SystemDialogSession = new SystemDialogSession();
   private readonly searchController: TextInputController = new TextInputController();
+  private readonly searchSource: OpdsEntryDataSource = new OpdsEntryDataSource();
+  private readonly listScroller: Scroller = new Scroller();
+  private readonly searchScroller: Scroller = new Scroller();
+  private readonly breadcrumbScroller: Scroller = new Scroller();
+  private shelfUrls: Set<string> = new Set();
 
   aboutToAppear(): void {
     this.syncBars();
@@ -143,6 +171,7 @@ struct OpdsBrowsePage {
 
   onPageShow(): void {
     this.syncBars();
+    if (this.client) this.loadShelfUrls();
     if (this.pendingPreviewBook) {
       const book = this.pendingPreviewBook;
       this.pendingPreviewBook = null;
@@ -167,18 +196,11 @@ struct OpdsBrowsePage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      Column() {
-        if (this.serverMissing || this.errorMessage) {
-          this.errorView();
-        } else {
-          this.browseBody();
-        }
-      }
-      .width('100%')
-      .height('100%')
-      .padding({ top: 56 + this.statusBarHeight })
-
-      this.titleBar()
+      PageScaffold({ title: this.rootTitle(), scrollable: false,
+        externalCollapse: this.searchMode ? 0 : this.headerCollapse,
+        onBack: (): void => this.goBack(), content: () => {
+        this.pageContent()
+      } })
 
       if (this.downloadBusy) {
         Column({ space: AppSpacing.LG }) {
@@ -212,233 +234,511 @@ struct OpdsBrowsePage {
   }
 
   @Builder
-  titleBar() {
-    Row() {
-      ImmersiveBackButton({ iconColor: this.primaryTextColor(), darkMode: this.appDarkMode,
-        buttonSize: 40, containerWidth: 56, materialScale: 0.83, compactLayout: true,
-        onBack: () => this.goBack() })
-      if (this.searchMode) {
-        this.searchBar()
-      } else {
-        Text(this.currentTitle())
-          .fontSize(AppFontSize.TITLE)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.primaryTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        ImmersiveHeaderAction({
-          icon: $r('sys.symbol.magnifyingglass'),
-          tint: this.searchAvailable ? this.accentColor() : this.subTextColor(),
-          accessibilityLabel: '搜索书库',
-          onTap: () => this.toggleSearch()
-        })
-          .margin({ right: AppSpacing.XL - AppSpacing.SM })
+  pageContent() {
+    if (this.serverMissing || (this.errorMessage && !this.searchMode)) {
+      this.errorView();
+    } else if (this.searchMode) {
+      Column() {
+        this.searchField()
+        this.searchScopeRow()
+        this.searchList()
       }
-    }
-    .width('100%')
-    .height(56 + this.statusBarHeight)
-    .padding({ top: this.statusBarHeight, right: AppSpacing.SM })
-    .backgroundColor(ThemeRuntime.topBarColor(this.appDarkMode))
-    .alignItems(VerticalAlign.Center)
-    .position({ x: 0, y: 0 })
-    .zIndex(3)
-  }
-
-  @Builder
-  searchBar() {
-    if (this.searchLabel) {
-      Row({ space: AppSpacing.MD }) {
-        SymbolGlyph($r('sys.symbol.magnifyingglass'))
-          .fontSize(16)
-          .fontColor([this.accentColor()])
-        Text(this.searchLabel)
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.primaryTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        Text('修改')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.accentColor())
-          .padding(AppSpacing.MD)
-          .onClick(() => {
-            this.searchLabel = '';
-          })
-      }
+      .width('100%')
       .layoutWeight(1)
-      .height(40)
     } else {
-      Row({ space: AppSpacing.MD }) {
-        TextInput({ text: this.searchInput, placeholder: '输入书名或作者',
-          controller: this.searchController })
-          .layoutWeight(1)
-          .height(38)
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.primaryTextColor())
-          .placeholderColor(this.subTextColor())
-          .backgroundColor(this.softColor())
-          .borderRadius(19)
-          .defaultFocus(true)
-          .onChange((value: string) => {
-            this.searchInput = value;
-          })
-          .onSubmit(() => {
-            this.submitSearch();
-          })
-        Text('取消')
-          .fontSize(AppFontSize.BODY)
-          .fontColor(this.subTextColor())
-          .padding(AppSpacing.MD)
-          .onClick(() => this.exitSearch())
-      }
-      .layoutWeight(1)
-      .height(40)
+      this.browseList();
     }
   }
 
+  /** 浏览时列表顶部的搜索入口：沉浸光感胶囊，随列表滚走；点开进入搜索。悬浮栏材质只接受具体宽度，先量出行宽。 */
   @Builder
-  browseBody() {
-    Column() {
-      if (this.facets.length > 0) {
-        this.facetBar();
-      }
-      if (this.loading && this.entries.length === 0) {
-        Column({ space: AppSpacing.MD }) {
-          LoadingProgress()
-            .width(32)
-            .height(32)
-            .color(this.accentColor())
-          Text('加载中...')
-            .fontSize(AppFontSize.BODY)
-            .fontColor(this.subTextColor())
+  searchEntry() {
+    Row() {
+      if (this.searchEntryWidth > 0) {
+        ImmersiveMaterialSurface({
+          surfaceWidth: this.searchEntryWidth,
+          surfaceHeight: OpdsBrowsePage.SEARCH_HEIGHT,
+          darkMode: this.appDarkMode,
+          fallbackColor: this.cardColor(),
+          glowColor: `#40${this.accentColor().substring(1)}`
+        }) {
+          Row({ space: AppSpacing.MD }) {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(18)
+              .fontColor([this.subTextColor()])
+            Text('搜索书名或作者')
+              .fontSize(AppFontSize.BODY)
+              .fontColor(this.subTextColor())
+              .maxLines(1)
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .height('100%')
+          .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+          .alignItems(VerticalAlign.Center)
         }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else if (this.entries.length === 0) {
-        Column({ space: AppSpacing.MD }) {
-          SymbolGlyph($r('sys.symbol.book'))
-            .fontSize(40)
-            .fontColor([this.subTextColor()])
-          Text(this.emptyHint)
-            .fontSize(AppFontSize.BODY)
-            .fontColor(this.subTextColor())
-            .textAlign(TextAlign.Center)
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else {
-        this.feedList();
       }
     }
     .width('100%')
-    .layoutWeight(1)
+    .height(OpdsBrowsePage.SEARCH_HEIGHT)
+    .margin({ top: AppSpacing.XS, bottom: AppSpacing.MD })
+    .onAreaChange((_oldValue: Area, newValue: Area) => {
+      const width = Math.floor(Number(newValue.width));
+      if (Number.isFinite(width) && width > 0 && width !== this.searchEntryWidth) this.searchEntryWidth = width;
+    })
+    .accessibilityGroup(true)
+    .accessibilityText('搜索书名或作者')
+    .onClick(() => {
+      this.enterSearch();
+    })
+  }
+
+  /** 搜索中固定在顶栏下的输入框，与“我的”页设置搜索里的输入框同款。 */
+  @Builder
+  searchField() {
+    Row({ space: AppSpacing.MD }) {
+      Row() {
+        if (this.searchFieldWidth > 0) {
+          ImmersiveMaterialSurface({
+            surfaceWidth: this.searchFieldWidth,
+            surfaceHeight: OpdsBrowsePage.SEARCH_HEIGHT,
+            darkMode: this.appDarkMode,
+            fallbackColor: this.cardColor(),
+            glowColor: `#40${this.accentColor().substring(1)}`
+          }) {
+            Row() {
+              SymbolGlyph($r('sys.symbol.magnifyingglass'))
+                .fontSize(18)
+                .fontColor([this.subTextColor()])
+                .margin({ left: AppSpacing.LG })
+              TextInput({ text: this.searchInput, placeholder: '搜索书名或作者', controller: this.searchController })
+                .id(OpdsBrowsePage.SEARCH_INPUT_ID)
+                .layoutWeight(1)
+                .height(OpdsBrowsePage.SEARCH_HEIGHT)
+                .enterKeyType(EnterKeyType.Search)
+                .backgroundColor(Color.Transparent)
+                .fontColor(this.primaryTextColor())
+                .placeholderColor(this.subTextColor())
+                .caretColor(this.accentColor())
+                .padding({ left: AppSpacing.SM, right: AppSpacing.XS })
+                .onChange((value: string) => {
+                  this.onSearchInputChange(value);
+                })
+                .onSubmit(() => {
+                  this.submitSearch();
+                })
+              if (this.searchInput) {
+                SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+                  .fontSize(18)
+                  .fontColor([this.subTextColor()])
+                  .width(36)
+                  .height(36)
+                  .margin({ right: AppSpacing.XS })
+                  .accessibilityText('清除搜索')
+                  .onClick(() => {
+                    this.onSearchInputChange('');
+                    this.focusSearchInputSoon();
+                  })
+              }
+            }
+            .width('100%')
+            .height('100%')
+            .alignItems(VerticalAlign.Center)
+          }
+        }
+      }
+      .layoutWeight(1)
+      .height(OpdsBrowsePage.SEARCH_HEIGHT)
+      .onAreaChange((_oldValue: Area, newValue: Area) => {
+        const width = Math.floor(Number(newValue.width));
+        if (Number.isFinite(width) && width > 0 && width !== this.searchFieldWidth) this.searchFieldWidth = width;
+      })
+
+      Text('取消')
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontColor(this.accentColor())
+        .height(OpdsBrowsePage.SEARCH_HEIGHT)
+        .padding({ left: AppSpacing.XS, right: AppSpacing.XS })
+        .onClick(() => {
+          this.exitSearch();
+        })
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.XS, bottom: AppSpacing.MD })
   }
 
   @Builder
-  facetBar() {
-    Column({ space: AppSpacing.XXS }) {
+  searchScopeRow() {
+    Row({ space: AppSpacing.MD }) {
+      if (this.searchAvailable) {
+        this.chip('整个书库', this.searchScope === OpdsBrowsePage.SCOPE_SERVER,
+          () => this.setSearchScope(OpdsBrowsePage.SCOPE_SERVER))
+      }
+      this.chip(`仅“${this.currentTitle()}”已加载`, this.searchScope === OpdsBrowsePage.SCOPE_LOCAL,
+        () => this.setSearchScope(OpdsBrowsePage.SCOPE_LOCAL))
+    }
+    .width('100%')
+    .height(36)
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+    .margin({ bottom: AppSpacing.XS })
+  }
+
+  @Builder
+  chip(label: string, selected: boolean, action: () => void) {
+    Text(label)
+      .fontSize(AppFontSize.BODY)
+      .fontColor(selected ? ThemeRuntime.onAccentColor(this.accentColor()) : this.accentColor())
+      .maxLines(1)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .constraintSize({ maxWidth: 200 })
+      .height(32)
+      .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+      .borderRadius(16)
+      .backgroundColor(selected ? this.accentColor() : ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+      .accessibilitySelected(selected)
+      .onClick(action)
+  }
+
+  /** 路径条：各级目录名，点任一级直接回到那一层；当前层加粗不可点。 */
+  @Builder
+  breadcrumbRow() {
+    Scroll(this.breadcrumbScroller) {
+      Row() {
+        ForEach(this.stack, (frame: OpdsNavFrame, index: number) => {
+          if (index > 0) {
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(12)
+              .fontColor([this.subTextColor()])
+          }
+          Text(index === 0 ? '书库首页' : (frame.title || '目录'))
+            .fontSize(AppFontSize.BODY)
+            .fontColor(index === this.stack.length - 1 ? this.primaryTextColor() : this.accentColor())
+            .fontWeight(index === this.stack.length - 1 ? FontWeight.Medium : FontWeight.Normal)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: 180 })
+            .height(36)
+            .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
+            .onClick(() => {
+              if (index < this.stack.length - 1) this.jumpToLevel(index);
+            })
+        }, (frame: OpdsNavFrame, index: number) => `${index}_${frame.url}`)
+      }
+      .alignItems(VerticalAlign.Center)
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.None)
+    .align(Alignment.Start)
+    .width('100%')
+    .height(36)
+    .margin({ bottom: AppSpacing.XS })
+  }
+
+  /** 书库给的筛选与排序（facet）：每组一行胶囊，随列表滚走。 */
+  @Builder
+  facetRows() {
+    Column({ space: AppSpacing.SM }) {
       ForEach(this.facets, (group: OpdsFacetGroup) => {
         Scroll() {
           Row({ space: AppSpacing.MD }) {
             ForEach(group.links, (link: OpdsLink) => {
-              Text(this.facetLabel(group, link))
-                .fontSize(AppFontSize.CAPTION)
-                .fontColor(link.activeFacet ? '#FFFFFF' : this.primaryTextColor())
-                .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
-                .backgroundColor(link.activeFacet ? this.accentColor() : this.softColor())
-                .borderRadius(ThemeRuntime.buttonRadius())
-                .onClick(() => this.openFacet(link))
+              this.chip(this.facetLabel(group, link), link.activeFacet, () => this.openFacet(link))
             }, (link: OpdsLink) => `${group.group}:${link.href}`)
           }
-          .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
         }
         .scrollable(ScrollDirection.Horizontal)
         .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.None)
+        .align(Alignment.Start)
         .width('100%')
         .height(34)
-        .align(Alignment.Start)
       }, (group: OpdsFacetGroup) => group.group)
     }
     .width('100%')
-    .padding({ top: AppSpacing.SM, bottom: AppSpacing.SM })
-    .backgroundColor(ThemeRuntime.topBarColor(this.appDarkMode))
+    .margin({ bottom: AppSpacing.SM })
   }
 
+  /** 列表加载中的细进度条；平时也占着 3vp，出现消失时下面的列表不跳。 */
   @Builder
-  feedList() {
-    List({ space: AppSpacing.MD }) {
-      LazyForEach(this.entrySource, (entry: OpdsEntry) => {
-        ListItem() {
-          this.feedItem(entry)
-        }
-      }, (entry: OpdsEntry, index: number) => this.entryKey(entry, index))
+  loadingBar() {
+    Stack({ alignContent: Alignment.Start }) {
+      if (this.loading && this.entries.length > 0) {
+        Row()
+          .width('35%')
+          .height(3)
+          .borderRadius(2)
+          .backgroundColor(this.accentColor())
+          .translate({ x: this.loadingSweep ? '290%' : '-100%' })
+          .animation({ duration: 1100, curve: Curve.EaseInOut, iterations: -1 })
+          .onAppear(() => {
+            this.loadingSweep = true;
+          })
+          .onDisAppear(() => {
+            this.loadingSweep = false;
+          })
+      }
+    }
+    .width('100%')
+    .height(3)
+    .clip(true)
+  }
 
-      if (this.loadingMore) {
-        ListItem() {
-          Row({ space: AppSpacing.MD }) {
-            LoadingProgress()
-              .width(18)
-              .height(18)
-              .color(this.accentColor())
-            Text('加载中...')
-              .fontSize(AppFontSize.CAPTION)
-              .fontColor(this.subTextColor())
-          }
+  /**
+   * 浏览列表：从页面顶部铺下来，顶部留出标题行高度；上滑时标题行跟手收起，
+   * 搜索入口、路径条和筛选在列表里随内容滚走。
+   */
+  @Builder
+  browseList() {
+    List({ scroller: this.listScroller }) {
+      ListItem() {
+        Row()
           .width('100%')
-          .height(40)
-          .justifyContent(FlexAlign.Center)
-        }
-      } else if (!this.hasMore) {
+          .height(this.listTopInset())
+          .hitTestBehavior(HitTestMode.None)
+      }
+      ListItem() {
+        this.searchEntry()
+      }
+      ListItem() {
+        this.breadcrumbRow()
+      }
+      if (this.facets.length > 0) {
         ListItem() {
-          Text('没有更多了')
-            .fontSize(AppFontSize.CAPTION)
-            .fontColor(this.subTextColor())
-            .width('100%')
-            .height(40)
-            .textAlign(TextAlign.Center)
+          this.facetRows()
         }
       }
-
       ListItem() {
-        Column()
-          .height(Math.max(12, this.navBarHeight))
+        this.loadingBar()
+      }
+      if (this.loading && this.entries.length === 0) {
+        ListItem() {
+          this.skeletonList()
+        }
+      } else if (this.entries.length === 0) {
+        ListItem() {
+          this.emptyView(this.emptyHint)
+        }
+      } else {
+        ListItem() {
+          this.groupHeader(this.entriesSummary())
+        }
+        LazyForEach(this.entrySource, (entry: OpdsEntry, index: number) => {
+          ListItem() {
+            this.feedItem(entry, index, this.entries.length, '')
+          }
+        }, (entry: OpdsEntry, index: number) => this.entryKey(entry, index))
+        ListItem() {
+          this.listFooter()
+        }
+      }
+      ListItem() {
+        Row()
+          .height(this.navBarHeight + AppSpacing.XXXL)
+          .hitTestBehavior(HitTestMode.None)
       }
     }
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     .width('100%')
     .layoutWeight(1)
-    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+    // 顶栏收起时外层留白同步减少，列表顶边保持贴住页面顶部。
+    .margin({ top: -(this.listTopInset() - this.headerCollapse) })
     .onReachEnd(() => this.onListReachEnd())
+    .onDidScroll((yOffset: number) => {
+      this.headerCollapse = CollapsingHeader.next(this.headerCollapse, yOffset,
+        this.listScroller.currentOffset().yOffset);
+    })
+    .onScrollStop(() => {
+      const target = CollapsingHeader.settle(this.headerCollapse, this.listScroller.currentOffset().yOffset);
+      if (target !== this.headerCollapse) {
+        animateTo({ duration: 200, curve: Curve.FastOutSlowIn }, () => {
+          this.headerCollapse = target;
+        });
+      }
+    })
   }
 
   @Builder
-  feedItem(entry: OpdsEntry) {
-    if (entry.isPublication()) {
-      this.bookItem(entry)
+  searchList() {
+    if (this.searchScope === OpdsBrowsePage.SCOPE_SERVER && !this.searchSubmitted) {
+      this.searchHint('输入书名或作者，按键盘上的搜索键在整个书库里查找')
+    } else if (this.searchScope === OpdsBrowsePage.SCOPE_LOCAL && !this.searchInput.trim()) {
+      this.searchHint(this.searchAvailable ? `输入书名或作者，筛选“${this.currentTitle()}”里已加载的条目` :
+        `这个书库不支持在线搜索，可以筛选“${this.currentTitle()}”里已加载的条目`)
     } else {
-      this.navItem(entry)
+      List({ scroller: this.searchScroller }) {
+        if (this.searchScope === OpdsBrowsePage.SCOPE_SERVER && this.loading && this.entries.length === 0) {
+          ListItem() {
+            this.skeletonList()
+          }
+        } else if (this.searchCount === 0) {
+          ListItem() {
+            this.emptyView(this.searchScope === OpdsBrowsePage.SCOPE_LOCAL ?
+              '已加载的条目里没有匹配项' : '没有找到相关书籍')
+          }
+        } else {
+          ListItem() {
+            this.groupHeader(this.searchScope === OpdsBrowsePage.SCOPE_LOCAL ?
+              `已加载的条目里找到 ${this.searchCount} 项` : `书库返回 ${this.searchCount} 项`)
+          }
+          LazyForEach(this.searchSource, (entry: OpdsEntry, index: number) => {
+            ListItem() {
+              this.feedItem(entry, index, this.searchCount, this.searchInput)
+            }
+          }, (entry: OpdsEntry, index: number) => `search_${this.entryKey(entry, index)}`)
+          if (this.searchScope === OpdsBrowsePage.SCOPE_SERVER) {
+            ListItem() {
+              this.listFooter()
+            }
+          }
+        }
+        ListItem() {
+          Row()
+            .height(this.navBarHeight + AppSpacing.XXXL)
+            .hitTestBehavior(HitTestMode.None)
+        }
+      }
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .width('100%')
+      .layoutWeight(1)
+      .padding({ left: AppSpacing.XL, right: AppSpacing.XL })
+      .onReachEnd(() => {
+        if (this.searchScope === OpdsBrowsePage.SCOPE_SERVER) this.onListReachEnd();
+      })
+      .onScrollStart(() => {
+        this.searchController.stopEditing();
+      })
     }
   }
 
   @Builder
-  navItem(entry: OpdsEntry) {
+  searchHint(text: string) {
+    Column({ space: AppSpacing.MD }) {
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(36)
+        .fontColor([this.subTextColor()])
+      Text(text)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.subTextColor())
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 36, right: 36, bottom: 80 })
+  }
+
+  @Builder
+  emptyView(text: string) {
+    Column({ space: AppSpacing.MD }) {
+      SymbolGlyph($r('sys.symbol.book'))
+        .fontSize(40)
+        .fontColor([this.subTextColor()])
+      Text(text)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.subTextColor())
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .padding({ top: 100, bottom: 40 })
+  }
+
+  @Builder
+  groupHeader(label: string) {
+    Text(label)
+      .fontSize(AppFontSize.CAPTION)
+      .fontColor(this.subTextColor())
+      .width('100%')
+      .padding({ left: AppSpacing.XS, top: AppSpacing.LG, bottom: AppSpacing.SM })
+  }
+
+  @Builder
+  listFooter() {
+    if (this.loadingMore) {
+      Row({ space: AppSpacing.MD }) {
+        LoadingProgress()
+          .width(18)
+          .height(18)
+          .color(this.accentColor())
+        Text('加载中...')
+          .fontSize(AppFontSize.CAPTION)
+          .fontColor(this.subTextColor())
+      }
+      .width('100%')
+      .height(44)
+      .justifyContent(FlexAlign.Center)
+    } else {
+      Text(this.hasMore ? '上滑加载更多' : '没有更多了')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.subTextColor())
+        .width('100%')
+        .height(44)
+        .textAlign(TextAlign.Center)
+    }
+  }
+
+  @Builder
+  skeletonList() {
+    Column() {
+      ForEach([0, 1, 2], (index: number) => {
+        Row({ space: AppSpacing.LG }) {
+          Row()
+            .width(48)
+            .height(64)
+            .borderRadius(4)
+            .backgroundColor(this.softColor())
+          Column({ space: AppSpacing.MD }) {
+            Row()
+              .width(index === 1 ? '46%' : '62%')
+              .height(12)
+              .borderRadius(6)
+              .backgroundColor(this.softColor())
+            Row()
+              .width('34%')
+              .height(10)
+              .borderRadius(5)
+              .backgroundColor(this.softColor())
+              .opacity(0.7)
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .height(84)
+        .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+        .border({ width: { bottom: index < 2 ? 0.5 : 0 }, color: ThemeRuntime.dividerColor(this.appDarkMode) })
+      }, (index: number) => `${index}`)
+    }
+    .width('100%')
+    .margin({ top: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .backgroundColor(this.cardColor())
+    .clip(true)
+    .accessibilityText('正在加载')
+  }
+
+  /** keyword 非空时（搜索结果）标题里高亮关键词。同一列表的行连成一张卡片。 */
+  @Builder
+  feedItem(entry: OpdsEntry, index: number, count: number, keyword: string) {
     Row({ space: AppSpacing.LG }) {
-      SymbolGlyph($r('sys.symbol.folder'))
-        .fontSize(26)
-        .fontColor([this.accentColor()])
+      if (entry.isPublication()) {
+        this.entryCover(entry)
+      } else {
+        Row() {
+          SymbolGlyph($r('sys.symbol.folder'))
+            .fontSize(26)
+            .fontColor([this.accentColor()])
+        }
+        .width(34)
+        .justifyContent(FlexAlign.Center)
+      }
       Column({ space: AppSpacing.XS }) {
-        Text(entry.title || '未命名目录')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.primaryTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        if (this.navSubtitle(entry)) {
-          Text(this.navSubtitle(entry))
+        this.entryTitle(entry, keyword)
+        if (this.entrySubtitle(entry)) {
+          Text(this.entrySubtitle(entry))
             .fontSize(AppFontSize.CAPTION)
             .fontColor(this.subTextColor())
             .maxLines(1)
@@ -448,53 +748,59 @@ struct OpdsBrowsePage {
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
-      SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(17)
-        .fontColor([this.subTextColor()])
+      if (!entry.isPublication()) {
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(16)
+          .fontColor([this.subTextColor()])
+      } else if (this.isOnShelf(entry)) {
+        Text('已在书架')
+          .fontSize(AppFontSize.MICRO)
+          .fontColor(this.accentColor())
+          .height(22)
+          .padding({ left: AppSpacing.MD, right: AppSpacing.MD })
+          .borderRadius(11)
+          .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+      }
     }
     .width('100%')
-    .height(60)
-    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, top: AppSpacing.MD, bottom: AppSpacing.MD })
+    .height(entry.isPublication() ? 84 : 62)
+    .padding({ left: entry.isPublication() ? AppSpacing.LG : AppSpacing.XL, right: AppSpacing.LG })
     .backgroundColor(this.cardColor())
-    .borderRadius(ThemeRuntime.cardRadius())
-    .onClick(() => this.openEntryLink(entry))
+    .borderRadius(this.rowRadius(index, count))
+    .border({ width: { bottom: index < count - 1 ? 0.5 : 0 }, color: ThemeRuntime.dividerColor(this.appDarkMode) })
+    .onClick(() => {
+      if (entry.isPublication()) {
+        this.searchController.stopEditing();
+        this.openDetail(entry);
+      } else {
+        this.openNavEntry(entry);
+      }
+    })
   }
 
   @Builder
-  bookItem(entry: OpdsEntry) {
-    Row({ space: AppSpacing.LG }) {
-      this.entryCover(entry)
-      Column({ space: AppSpacing.XS }) {
-        Text(entry.title || '未命名')
-          .fontSize(AppFontSize.BODY_LARGE)
-          .fontColor(this.primaryTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text(entry.displayAuthor() || entry.publisher || '作者未知')
-          .fontSize(AppFontSize.CAPTION)
-          .fontColor(this.subTextColor())
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-      if (this.bookFormatLabel(entry)) {
-        Text(this.bookFormatLabel(entry))
-          .fontSize(AppFontSize.CAPTION)
+  entryTitle(entry: OpdsEntry, keyword: string) {
+    if (keyword.trim()) {
+      Text() {
+        Span(KeywordMatch.split(this.entryDisplayTitle(entry), keyword).before)
+        Span(KeywordMatch.split(this.entryDisplayTitle(entry), keyword).hit)
           .fontColor(this.accentColor())
-          .padding({ left: AppSpacing.MD, right: AppSpacing.MD, top: AppSpacing.XS, bottom: AppSpacing.XS })
-          .backgroundColor(this.softColor())
-          .borderRadius(ThemeRuntime.mediumRadius())
+          .fontWeight(FontWeight.Medium)
+        Span(KeywordMatch.split(this.entryDisplayTitle(entry), keyword).after)
       }
+      .fontSize(AppFontSize.BODY_LARGE)
+      .fontColor(this.primaryTextColor())
+      .maxLines(1)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .width('100%')
+    } else {
+      Text(this.entryDisplayTitle(entry))
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontColor(this.primaryTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
     }
-    .width('100%')
-    .height(84)
-    .padding({ left: AppSpacing.LG, right: AppSpacing.LG, top: AppSpacing.MD, bottom: AppSpacing.MD })
-    .backgroundColor(this.cardColor())
-    .borderRadius(ThemeRuntime.cardRadius())
-    .onClick(() => this.openDetail(entry))
   }
 
   @Builder
@@ -728,6 +1034,7 @@ struct OpdsBrowsePage {
       }).then((book: Book): void => {
         row.downloading = false;
         row.exists = true;
+        this.loadShelfUrls();
         this.activeDownload = null;
         this.downloadBusy = false;
         this.pendingPreviewBook = book;
@@ -766,6 +1073,7 @@ struct OpdsBrowsePage {
         if (row) row.exists = false;
         this.refreshDownloadRows();
         HdsFeedback.showToast('已移出书架');
+        this.loadShelfUrls();
       } catch (error) {
         HdsFeedback.showToast(`移出失败：${OpdsError.message(error as Object)}`);
       }
@@ -790,6 +1098,7 @@ struct OpdsBrowsePage {
         try {
           await LocalBookService.deleteBookWithFiles(getContext(this), book.bookUrl);
           HdsFeedback.showToast('已移出书架');
+          this.loadShelfUrls();
         } catch (error) {
           HdsFeedback.showToast(`移出失败：${OpdsError.message(error as Object)}`);
         }
@@ -848,6 +1157,7 @@ struct OpdsBrowsePage {
       this.password = '';
     }
     this.client = new OpdsClient(found, this.password);
+    this.loadShelfUrls();
     const root = new OpdsNavFrame();
     root.url = found.baseUrl;
     root.title = pageTitle || found.name;
@@ -944,22 +1254,25 @@ struct OpdsBrowsePage {
     this.feedCache.set(url, entry);
   }
 
-  openEntryLink(entry: OpdsEntry): void {
+  openNavEntry(entry: OpdsEntry): void {
     const link = entry.navigationLink();
     if (!link) return;
+    if (this.searchMode) this.leaveSearchMode();
+    this.saveTopSnapshot();
     const frame = new OpdsNavFrame();
     frame.url = link.href;
     frame.title = entry.title || link.title || '目录';
     this.stack = [...this.stack, frame];
-    this.loadBrowseFeed(frame.url, true);
+    this.showFrame(frame, false);
   }
 
   openFacet(link: OpdsLink): void {
     if (this.stack.length === 0) return;
     const top = this.stack[this.stack.length - 1];
     top.url = link.href;
-    if (link.title) top.title = link.title;
+    top.savedAt = 0;
     this.stack = this.stack.slice();
+    // 筛选换的是同一层的内容：旧列表先留着，顶部细进度条表示在加载。
     this.loadBrowseFeed(link.href, true);
   }
 
@@ -969,12 +1282,71 @@ struct OpdsBrowsePage {
       return;
     }
     if (this.stack.length > 1) {
-      this.stack = this.stack.slice(0, this.stack.length - 1);
-      const top = this.stack[this.stack.length - 1];
-      this.loadBrowseFeed(top.url, true);
+      this.jumpToLevel(this.stack.length - 2);
       return;
     }
     router.back();
+  }
+
+  /** 回到路径上的第 index 层（返回手势或点路径条）。 */
+  jumpToLevel(index: number): void {
+    if (index < 0 || index >= this.stack.length - 1) return;
+    this.stack = this.stack.slice(0, index + 1);
+    this.showFrame(this.stack[index], false);
+  }
+
+  /** 离开当前层前记下它的列表和滚动位置。 */
+  private saveTopSnapshot(): void {
+    if (this.stack.length === 0) return;
+    const top = this.stack[this.stack.length - 1];
+    top.entries = this.entries;
+    top.facets = this.facets;
+    top.nextUrl = this.nextUrl;
+    top.pageCount = this.pageCount;
+    top.hasMore = this.hasMore;
+    top.scrollOffset = this.listScroller.currentOffset().yOffset;
+    top.savedAt = this.entries.length > 0 && !this.loading ? Date.now() : 0;
+  }
+
+  /**
+   * 显示某一层：记下的列表还新鲜（或 force）就直接恢复并滚回原处；
+   * 否则清空列表显示占位行，联网读取（5 分钟内读过的页面仍走 feedCache）。
+   */
+  private showFrame(frame: OpdsNavFrame, force: boolean): void {
+    this.headerCollapse = 0;
+    const fresh = frame.savedAt > 0 && (force || Date.now() - frame.savedAt < OpdsBrowsePage.FEED_TTL_MS);
+    if (fresh) {
+      this.requestSeq++;
+      this.loading = false;
+      this.loadingMore = false;
+      this.errorCode = '';
+      this.errorMessage = '';
+      this.entries = frame.entries;
+      this.facets = frame.facets;
+      this.nextUrl = frame.nextUrl;
+      this.pageCount = frame.pageCount;
+      this.hasMore = frame.hasMore;
+      const offset = frame.scrollOffset;
+      setTimeout(() => {
+        try {
+          this.listScroller.scrollTo({ xOffset: 0, yOffset: offset });
+        } catch (_) {
+        }
+      }, 50);
+    } else {
+      this.entries = [];
+      this.facets = [];
+      this.nextUrl = '';
+      this.hasMore = false;
+      try {
+        this.listScroller.scrollTo({ xOffset: 0, yOffset: 0 });
+      } catch (_) {
+      }
+      this.loadBrowseFeed(frame.url, true);
+    }
+    setTimeout(() => {
+      this.breadcrumbScroller.scrollEdge(Edge.End);
+    }, 50);
   }
 
   onListReachEnd(): void {
@@ -1012,37 +1384,68 @@ struct OpdsBrowsePage {
     run();
   }
 
-  toggleSearch(): void {
-    if (!this.searchAvailable || !this.searchTemplate) {
-      HdsFeedback.showToast('该书库不支持搜索');
+  /** 进入搜索：先记下当前层，书库自带搜索时默认搜整个书库，否则只筛已加载的条目。 */
+  enterSearch(): void {
+    if (this.searchMode) return;
+    this.saveTopSnapshot();
+    this.searchMode = true;
+    this.searchInput = '';
+    this.searchSubmitted = false;
+    this.searchScope = this.searchAvailable && this.searchTemplate ? OpdsBrowsePage.SCOPE_SERVER :
+      OpdsBrowsePage.SCOPE_LOCAL;
+    this.syncSearchSource();
+    this.focusSearchInputSoon();
+  }
+
+  focusSearchInputSoon(): void {
+    setTimeout(() => {
+      try {
+        this.getUIContext().getFocusController().requestFocus(OpdsBrowsePage.SEARCH_INPUT_ID);
+      } catch (_) {
+      }
+    }, 120);
+  }
+
+  onSearchInputChange(value: string): void {
+    this.searchInput = value;
+    if (this.searchScope === OpdsBrowsePage.SCOPE_LOCAL) this.syncSearchSource();
+  }
+
+  setSearchScope(scope: string): void {
+    if (this.searchScope === scope) return;
+    this.searchScope = scope;
+    if (scope === OpdsBrowsePage.SCOPE_SERVER && this.searchInput.trim()) {
+      this.submitSearch();
       return;
     }
-    this.searchMode = true;
-    this.searchLabel = '';
+    this.syncSearchSource();
   }
 
   submitSearch(): void {
     const query = this.searchInput.trim();
-    const template = this.searchTemplate;
     if (!query) {
       HdsFeedback.showToast('请输入搜索关键词');
       return;
     }
-    if (!template) return;
     this.searchController.stopEditing();
+    const template = this.searchTemplate;
+    if (this.searchScope !== OpdsBrowsePage.SCOPE_SERVER || !template) return;
     this.runSearch(query, template);
   }
 
+  /** 书库搜索结果放进 entries，沿用翻页逻辑；当前层在进入搜索时已记下，退出时恢复。 */
   runSearch(query: string, template: OpdsSearchTemplate): void {
     const client = this.client;
     if (!client) return;
     const seq = ++this.requestSeq;
     this.lastSearchQuery = query;
-    this.searchLabel = `搜索：${query}`;
+    this.searchSubmitted = true;
+    this.entries = [];
+    this.nextUrl = '';
+    this.hasMore = false;
     this.loading = true;
     this.errorCode = '';
     this.errorMessage = '';
-    this.emptyHint = '没有找到相关书籍';
     const run = async (): Promise<void> => {
       try {
         const feed = await client.search(template, query);
@@ -1059,12 +1462,39 @@ struct OpdsBrowsePage {
   }
 
   exitSearch(): void {
-    this.searchMode = false;
-    this.searchLabel = '';
+    this.leaveSearchMode();
+    if (this.stack.length > 0) this.showFrame(this.stack[this.stack.length - 1], true);
+  }
+
+  private leaveSearchMode(): void {
     this.requestSeq++;
-    if (this.stack.length > 0) {
-      this.loadBrowseFeed(this.stack[this.stack.length - 1].url, true);
+    this.searchMode = false;
+    this.searchSubmitted = false;
+    this.searchInput = '';
+    this.searchController.stopEditing();
+    try {
+      this.getUIContext().getFocusController().clearFocus();
+    } catch (_) {
     }
+  }
+
+  /** 搜索列表的数据：整个书库=书库返回的结果；当前列表=按书名、作者筛进入搜索时那一层已加载的条目。 */
+  syncSearchSource(): void {
+    let list: OpdsEntry[] = [];
+    if (this.searchMode) {
+      if (this.searchScope === OpdsBrowsePage.SCOPE_SERVER) {
+        list = this.searchSubmitted ? this.entries : [];
+      } else {
+        const keyword = this.searchInput.trim().toLowerCase();
+        const top = this.stack.length > 0 ? this.stack[this.stack.length - 1] : null;
+        const source = top && top.savedAt > 0 ? top.entries : this.entries;
+        list = keyword ? source.filter((entry: OpdsEntry): boolean =>
+          (entry.title || '').toLowerCase().includes(keyword) ||
+          entry.displayAuthor().toLowerCase().includes(keyword)) : [];
+      }
+    }
+    this.searchSource.replace(list);
+    this.searchCount = list.length;
   }
 
   retry(): void {
@@ -1209,6 +1639,7 @@ struct OpdsBrowsePage {
       }).then((_book: Book): void => {
         row.downloading = false;
         row.exists = true;
+        this.loadShelfUrls();
         this.activeDownload = null;
         this.downloadBusy = false;
         this.refreshDownloadRows();
@@ -1361,6 +1792,82 @@ struct OpdsBrowsePage {
 
   onEntriesChanged(): void {
     this.entrySource.replace(this.entries);
+    if (this.searchMode && this.searchScope === OpdsBrowsePage.SCOPE_SERVER) this.syncSearchSource();
+  }
+
+  rootTitle(): string {
+    return this.stack.length > 0 ? this.stack[0].title : this.server.name;
+  }
+
+  listTopInset(): number {
+    return PageScaffold.BAR_HEIGHT + this.statusBarHeight;
+  }
+
+  entriesSummary(): string {
+    const count = this.entries.length;
+    const books = this.entries.filter((entry: OpdsEntry): boolean => entry.isPublication()).length;
+    const loaded = this.hasMore ? '已加载 ' : '';
+    if (books === 0) return `目录 · ${loaded}${count}`;
+    if (books === count) return `书籍 · ${loaded}${count} 本`;
+    return `共 ${loaded}${count} 项`;
+  }
+
+  entryDisplayTitle(entry: OpdsEntry): string {
+    return entry.title || (entry.isPublication() ? '未命名' : '未命名目录');
+  }
+
+  /** 目录：书库给的说明；书：作者 · 格式 · 大小，只能购买/借阅的写明到网页端操作。 */
+  entrySubtitle(entry: OpdsEntry): string {
+    if (!entry.isPublication()) return this.navSubtitle(entry);
+    const parts: string[] = [];
+    const author = entry.displayAuthor() || entry.publisher;
+    if (author) parts.push(author);
+    const links = entry.acquisitionLinks();
+    const downloadable = links.filter((link: OpdsLink): boolean => {
+      const kind = link.acquisitionKind();
+      return OpdsBookService.isDownloadableFormat(OpdsBookService.formatOfLink(link)) &&
+        (kind === 'open-access' || kind === 'generic' || kind === '');
+    });
+    if (downloadable.length > 0) {
+      const formats: string[] = [];
+      downloadable.forEach((link: OpdsLink) => {
+        const format = (OpdsBookService.formatOfLink(link) || '').toUpperCase();
+        if (format && formats.indexOf(format) < 0) formats.push(format);
+      });
+      if (formats.length > 0) parts.push(formats.join(' / '));
+      if (downloadable[0].length > 0) parts.push(this.formatSize(downloadable[0].length));
+    } else if (links.length > 0) {
+      parts.push(`${this.acquisitionKindLabel(links[0])}，在书库网页端操作`);
+    }
+    return parts.length > 0 ? parts.join(' · ') : '作者未知';
+  }
+
+  rowRadius(index: number, count: number): BorderRadiuses {
+    const radius = ThemeRuntime.cardRadius();
+    const top = index === 0 ? radius : 0;
+    const bottom = index === count - 1 ? radius : 0;
+    return { topLeft: top, topRight: top, bottomLeft: bottom, bottomRight: bottom };
+  }
+
+  loadShelfUrls(): void {
+    const serverId = this.server.id;
+    if (!serverId) return;
+    const run = async (): Promise<void> => {
+      try {
+        const urls = await appDb.getBookUrlsWithPrefix(LocalBookService.opdsBookUrlPrefix(serverId));
+        this.shelfUrls = new Set(urls);
+        this.shelfRevision++;
+      } catch (_) {
+      }
+    };
+    run();
+  }
+
+  /** 任一获取链接对应的书已在书架即算。 */
+  isOnShelf(entry: OpdsEntry): boolean {
+    if (this.shelfRevision < 0 || this.shelfUrls.size === 0) return false;
+    return entry.acquisitionLinks().some((link: OpdsLink): boolean =>
+      this.shelfUrls.has(OpdsBookService.bookIdentityUrl(this.server.id, link.href)));
   }
 
   syncBars(): void {

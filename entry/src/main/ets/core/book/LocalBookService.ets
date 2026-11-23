@@ -629,7 +629,12 @@ export class LocalBookService {
   }
 
   static opdsBookUrl(serverId: string, acquisitionUrl: string): string {
-    return `opds://${serverId}/${LocalBookService.hashText(acquisitionUrl)}`;
+    return `${LocalBookService.opdsBookUrlPrefix(serverId)}${LocalBookService.hashText(acquisitionUrl)}`;
+  }
+
+  /** 某个 OPDS 书库下所有书的 bookUrl 共同前缀。 */
+  static opdsBookUrlPrefix(serverId: string): string {
+    return `opds://${serverId}/`;
   }
 
   static async importOpdsBook(context: Context, sourcePath: string, serverId: string,
