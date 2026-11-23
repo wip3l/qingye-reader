@@ -1,7 +1,7 @@
 import { router } from '@kit.ArkUI';
 import { motion } from '@kit.MultimodalAwarenessKit';
 import deviceInfo from '@ohos.deviceInfo';
-import { Book, SearchBook, BookChapter, BookFieldSanitizer, BookTypeSupport, BookUrlResolver } from '@legado/sourceengine';
+import { Book, BookGroup, SearchBook, BookChapter, BookFieldSanitizer, BookTypeSupport, BookUrlResolver } from '@legado/sourceengine';
 import { AppDatabase } from '../model/data/AppDatabase';
 import { WebBookService } from '../core/book/WebBookService';
 import { syncSystemBars } from '../utils/SystemBars';
@@ -45,6 +45,8 @@ import { ImmersiveHeaderAction } from '../components/ImmersiveHeaderAction';
 import { ImmersiveMaterialSurface } from '../components/ImmersiveMaterialSurface';
 import { BookReadStatsPanel } from '../components/book/BookReadStatsPanel';
 import { BookReadStatsLoader, BookReadStatsSnapshot } from '../core/stats/BookReadStatsLoader';
+import { NewBookGroup } from '../utils/NewBookGroup';
+import { NewBookGroupStore } from '../utils/NewBookGroupStore';
 
 @Entry
 @Component
@@ -93,6 +95,19 @@ struct SearchBookDetailPage {
   private holdingHandCallback: (status: motion.HoldingHandStatus) => void =
     (status: motion.HoldingHandStatus): void => this.onHoldingHandChanged(status);
   @State isInShelf: boolean = false;
+  /** 书在书架里的分组（> 0 为自定义分组，0 为未分组）与分组名；分组被删掉时名字为空、按未分组显示。 */
+  @State shelfGroupId: number = 0;
+  @State shelfGroupName: string = '';
+  /** “放进分组”面板与面板里列出的分组。 */
+  @State showGroupSheet: boolean = false;
+  @State shelfGroupOptions: BookGroup[] = [];
+  @State newShelfGroupEditing: boolean = false;
+  @State newShelfGroupName: string = '';
+  /** 点顶栏书架钮加入后，底部停留几秒的“已加入书架　放进分组”提示条。 */
+  @State groupNudgeVisible: boolean = false;
+  @State groupNudgeText: string = '';
+  private groupNudgeTimer: number = -1;
+  private static readonly GROUP_NUDGE_MS: number = 4000;
   /** 库里这本书已有阅读进度（含未入架的临时阅读书），阅读按钮显示“继续…”。 */
   @State hasReadProgress: boolean = false;
   @State isSaving: boolean = false;
@@ -228,6 +243,7 @@ struct SearchBookDetailPage {
       clearTimeout(this.bookInfoRetryTimerId);
       this.bookInfoRetryTimerId = -1;
     }
+    this.clearGroupNudgeTimer();
   }
 
   onPageHide(): void {
@@ -423,6 +439,21 @@ struct SearchBookDetailPage {
       .onAreaChange((_oldArea: Area, newArea: Area): void => {
         this.readButtonBarWidth = Number(newArea.width);
       })
+      // 外层 Stack 和正文 Scroll 已各绑了目录、标记半模态，分组面板挂在常驻的阅读按钮这一行。
+      .bindSheet($$this.showGroupSheet, this.shelfGroupSheet(), this.shelfGroupSheetOptions())
+
+      if (this.groupNudgeVisible) {
+        Row() {
+          this.shelfGroupNudge()
+        }
+        .width('100%')
+        .padding({ left: AppSpacing.XL, right: AppSpacing.XL,
+          bottom: AppSpacing.XL + this.navBarHeight + 56 + AppSpacing.MD })
+        .position({ x: 0, y: '100%' })
+        .translate({ y: '-100%' })
+        .hitTestBehavior(HitTestMode.Transparent)
+        .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.Friction }))
+      }
 
       BookSourceStageRuntimeHost()
 
@@ -536,7 +567,7 @@ struct SearchBookDetailPage {
             if (this.isInShelf) {
               this.removeFromShelf();
             } else {
-              this.addToShelf();
+              this.addToShelf(true);
             }
           }
         })
@@ -681,6 +712,10 @@ struct SearchBookDetailPage {
           .onClick(() => {
             this.showChangeSourcePrompt();
           })
+        }
+
+        if (this.isInShelf) {
+          this.shelfGroupChip()
         }
       }
       .layoutWeight(1)
@@ -1125,6 +1160,8 @@ struct SearchBookDetailPage {
       book.bookUrl = this.bookUrl;
       book.origin = this.origin;
       await SearchBookShelfHelper.removeFromShelf(getContext(this), book);
+      this.hideGroupNudge();
+      this.showGroupSheet = false;
       this.isInShelf = false;
       this.hasReadProgress = false;
       this.promptAddToShelfAfterRead = false;
@@ -1139,7 +1176,8 @@ struct SearchBookDetailPage {
     }
   }
 
-  async addToShelf(): Promise<boolean> {
+  /** fromHeader：点顶栏书架钮加入，加入后出“放进分组”提示条；其他入口（返回提示、开始阅读）只弹提示。 */
+  async addToShelf(fromHeader: boolean = false): Promise<boolean> {
     if (!this.bookUrl) {
       HdsFeedback.showToast('书籍地址为空');
       return false;
@@ -1152,7 +1190,8 @@ struct SearchBookDetailPage {
       const requestKey = BookIdentity.keyOfUrl(this.bookUrl, this.origin);
       const existing = await db.getBook(this.bookUrl) || await this.findShelfBookByKey(requestKey);
       if (existing) {
-        if (SearchExplorePendingBook.isPendingAddToShelf(existing)) {
+        const existingWasPending = SearchExplorePendingBook.isPendingAddToShelf(existing);
+        if (existingWasPending) {
           const resolved = await this.resolveSameWorkBeforeShelf(existing);
           if (resolved !== null) return resolved;
         }
@@ -1166,6 +1205,8 @@ struct SearchBookDetailPage {
         existing.latestChapterTitle = BookFieldSanitizer.prefer(this.latestChapterTitle, existing.latestChapterTitle);
         existing.wordCount = BookFieldSanitizer.prefer(this.wordCount, existing.wordCount);
         existing.updateTime = BookFieldSanitizer.prefer(this.updateTime, existing.updateTime);
+        // 试读过的书这时才真正入架，按新书套默认分组；本来就在书架的书不动分组。
+        const existingGroupName = existingWasPending ? await NewBookGroupStore.apply(getContext(this), existing) : '';
         SearchExplorePendingBook.clearPendingAddToShelf(existing);
         await BookMarkService.carryTagsToShelfBook(existing);
         await db.updateBook(existing, true, 'explicit_add_existing');
@@ -1174,6 +1215,7 @@ struct SearchBookDetailPage {
         this.isInShelf = true;
         this.promptAddToShelfAfterRead = false;
         this.pendingAddToShelfBookUrl = '';
+        this.announceAddedToShelf(existingGroupName, fromHeader, false);
         return true;
       }
 
@@ -1191,7 +1233,7 @@ struct SearchBookDetailPage {
       book.latestChapterTitle = BookFieldSanitizer.clean(this.latestChapterTitle);
       book.wordCount = BookFieldSanitizer.clean(this.wordCount);
       book.updateTime = BookFieldSanitizer.clean(this.updateTime);
-      book.group = -2147483645;
+      book.group = NewBookGroup.UNGROUPED;
       book.type = this.bookType;
       book.variable = this.bookVariable;
       BookTypeSupport.applyBookType(book);
@@ -1218,7 +1260,8 @@ struct SearchBookDetailPage {
 
       const resolvedExisting = await this.findShelfBookByKey(BookIdentity.keyOfBook(book));
       if (resolvedExisting) {
-        if (SearchExplorePendingBook.isPendingAddToShelf(resolvedExisting)) {
+        const resolvedWasPending = SearchExplorePendingBook.isPendingAddToShelf(resolvedExisting);
+        if (resolvedWasPending) {
           const resolved = await this.resolveSameWorkBeforeShelf(resolvedExisting);
           if (resolved !== null) return resolved;
         }
@@ -1232,6 +1275,8 @@ struct SearchBookDetailPage {
         resolvedExisting.latestChapterTitle = BookFieldSanitizer.prefer(book.latestChapterTitle, resolvedExisting.latestChapterTitle);
         resolvedExisting.updateTime = BookFieldSanitizer.prefer(book.updateTime, resolvedExisting.updateTime);
         resolvedExisting.wordCount = BookFieldSanitizer.prefer(book.wordCount, resolvedExisting.wordCount);
+        const resolvedGroupName = resolvedWasPending ?
+          await NewBookGroupStore.apply(getContext(this), resolvedExisting) : '';
         SearchExplorePendingBook.clearPendingAddToShelf(resolvedExisting);
         await BookMarkService.carryTagsToShelfBook(resolvedExisting);
         await db.updateBook(resolvedExisting, true, 'explicit_add_resolved_existing');
@@ -1240,11 +1285,13 @@ struct SearchBookDetailPage {
         this.isInShelf = true;
         this.promptAddToShelfAfterRead = false;
         this.pendingAddToShelfBookUrl = '';
+        this.announceAddedToShelf(resolvedGroupName, fromHeader, false);
         return true;
       }
 
       const resolved = await this.resolveSameWorkBeforeShelf(book);
       if (resolved !== null) return resolved;
+      const groupName = await NewBookGroupStore.apply(getContext(this), book);
       SearchExplorePendingBook.clearPendingAddToShelf(book);
       await BookMarkService.carryTagsToShelfBook(book);
       await db.insertBook(book, 'explicit_add_from_detail');
@@ -1255,7 +1302,7 @@ struct SearchBookDetailPage {
       this.pendingAddToShelfBookUrl = '';
       this.isSaving = false;
       AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-      HdsFeedback.showToast('已加入书架');
+      this.announceAddedToShelf(groupName, fromHeader, true);
       return true;
     } catch (e) {
       console.error('加入书架失败:', e);
@@ -1511,10 +1558,12 @@ struct SearchBookDetailPage {
       await db.initWithContext(getContext(this));
       const pendingBook = await db.getBook(this.pendingAddToShelfBookUrl);
       if (pendingBook) {
-        if (SearchExplorePendingBook.isPendingAddToShelf(pendingBook)) {
+        const pendingWasPending = SearchExplorePendingBook.isPendingAddToShelf(pendingBook);
+        if (pendingWasPending) {
           const resolved = await this.resolveSameWorkBeforeShelf(pendingBook);
           if (resolved !== null) return resolved;
         }
+        const pendingGroupName = pendingWasPending ? await NewBookGroupStore.apply(getContext(this), pendingBook) : '';
         SearchExplorePendingBook.clearPendingAddToShelf(pendingBook);
         await BookMarkService.carryTagsToShelfBook(pendingBook);
         await db.updateBook(pendingBook, true, 'temporary_read_kept');
@@ -1523,7 +1572,7 @@ struct SearchBookDetailPage {
         this.promptAddToShelfAfterRead = false;
         this.pendingAddToShelfBookUrl = '';
         AppStorage.setOrCreate('shelfUpdateTime', Date.now());
-        HdsFeedback.showToast('已加入书架');
+        HdsFeedback.showToast(NewBookGroup.addedToast(pendingGroupName));
         return true;
       }
     } catch (e) {
@@ -1693,7 +1742,7 @@ struct SearchBookDetailPage {
     book.intro = BookFieldSanitizer.clean(this.intro);
     book.latestChapterTitle = BookFieldSanitizer.clean(this.latestChapterTitle);
     book.wordCount = BookFieldSanitizer.clean(this.wordCount);
-    book.group = -2147483645;
+    book.group = NewBookGroup.UNGROUPED;
     book.type = this.bookType;
     book.variable = this.bookVariable;
     BookTypeSupport.applyBookType(book);
@@ -1745,6 +1794,324 @@ struct SearchBookDetailPage {
     if (BookTypeSupport.typeFromVariable(target.variable) !== bit || category === BookTypeSupport.CATEGORY_VIDEO) {
       const merged = SearchBookDetailPage.mergeVariableTab(target.variable, tab);
       if (merged) target.variable = merged;
+    }
+  }
+
+  /** 书已在书架时书源行下面的分组胶囊，点开“放进分组”面板改分组。 */
+  @Builder
+  shelfGroupChip() {
+    Row({ space: AppSpacing.XXS }) {
+      SymbolGlyph($r('sys.symbol.folder'))
+        .fontSize(12)
+        .fontColor([this.accentColor()])
+      Text(this.shelfGroupName || '未分组')
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(this.accentColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .flexShrink(1)
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(11)
+        .fontColor([this.accentColor()])
+    }
+    .height(24)
+    .padding({ left: AppSpacing.SM, right: AppSpacing.SM })
+    .borderRadius(12)
+    .backgroundColor(ThemeRuntime.accentSurfaceColor(this.appDarkMode))
+    .alignItems(VerticalAlign.Center)
+    .margin({ top: AppSpacing.SM })
+    .accessibilityText(`书架分组：${this.shelfGroupName || '未分组'}，点按更改`)
+    .onClick(() => {
+      this.openShelfGroupSheet();
+    })
+  }
+
+  /** 提示条宽度：材质底板要具体数值，借阅读按钮那一行量到的整页宽度，左右各让出页边距。 */
+  private groupNudgeWidth(): number {
+    return Math.max(0, this.readButtonBarWidth - AppSpacing.XL * 2);
+  }
+
+  /** 和返回、阅读按钮同一种沉浸光感胶囊底板，内容叠在上面。 */
+  @Builder
+  shelfGroupNudge() {
+    ImmersiveMaterialSurface({
+      surfaceWidth: this.groupNudgeWidth(),
+      surfaceHeight: 48,
+      darkMode: this.appDarkMode,
+      fallbackColor: this.cardColor(),
+      glowColor: `#40${this.accentColor().substring(1)}`
+    }) {
+      this.shelfGroupNudgeContent()
+    }
+  }
+
+  @Builder
+  shelfGroupNudgeContent() {
+    Row({ space: AppSpacing.MD }) {
+      Text(this.groupNudgeText)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(this.primaryTextColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      Text(this.shelfGroupName ? '换分组' : '放进分组')
+        .fontSize(AppFontSize.BODY)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ThemeRuntime.onAccentColor())
+        .height(32)
+        .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+        .borderRadius(16)
+        .backgroundColor(this.buttonColor())
+        .onClick(() => {
+          this.hideGroupNudge();
+          this.openShelfGroupSheet();
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.SM })
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 和同页的标记、目录面板同一种悬浮沉浸光感面板：四角圆、去掉系统默认底色和投影，由材质自己画。 */
+  shelfGroupSheetOptions(): SheetOptions {
+    const options: SheetOptions = {
+      height: SheetSize.FIT_CONTENT,
+      keyboardAvoidMode: SheetKeyboardAvoidMode.TRANSLATE_AND_RESIZE,
+      dragBar: true,
+      showClose: false,
+      backgroundColor: Color.Transparent,
+      blurStyle: BlurStyle.NONE,
+      borderWidth: 0,
+      radius: { topLeft: 28, topRight: 28, bottomLeft: 28, bottomRight: 28 },
+      shadow: { radius: 0, color: Color.Transparent },
+      onDisappear: (): void => {
+        this.showGroupSheet = false;
+        this.newShelfGroupEditing = false;
+      }
+    };
+    return ImmersiveMaterialRuntime.applySheetMaterial(this.immersiveLightLevel, options,
+      this.appDarkMode, this.accentColor());
+  }
+
+  /** 和书架“移动到分组”同样的列表；新建分组就地输入，建好直接放进去。 */
+  @Builder
+  shelfGroupSheet() {
+    Column({ space: AppSpacing.SM }) {
+      Text('放进分组')
+        .fontSize(AppFontSize.BODY_LARGE)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.primaryTextColor())
+        .width('100%')
+        .height(32)
+        .textAlign(TextAlign.Center)
+      Scroll() {
+        Column({ space: AppSpacing.XS }) {
+          this.shelfGroupSheetItem('未分组', 0)
+          ForEach(this.shelfGroupOptions, (group: BookGroup) => {
+            this.shelfGroupSheetItem(group.groupName, group.groupId)
+          }, (group: BookGroup) => `detail_group_${group.groupId}`)
+          if (this.newShelfGroupEditing) {
+            Row({ space: AppSpacing.SM }) {
+              TextInput({ placeholder: '输入分组名称', text: this.newShelfGroupName })
+                .layoutWeight(1)
+                .height(38)
+                .backgroundColor(this.inputColor())
+                .fontColor(this.primaryTextColor())
+                .borderRadius(ThemeRuntime.mediumRadius())
+                .defaultFocus(true)
+                .onChange((value: string) => {
+                  this.newShelfGroupName = value;
+                })
+                .onSubmit(() => {
+                  this.createShelfGroupAndAssign();
+                })
+              Button('新建并放入', { type: ButtonType.Normal })
+                .height(38)
+                .fontSize(AppFontSize.BODY)
+                .borderRadius(ThemeRuntime.buttonRadius())
+                .backgroundColor(this.buttonColor())
+                .fontColor(ThemeRuntime.onAccentColor())
+                .enabled(!!this.newShelfGroupName.trim())
+                .onClick(() => {
+                  this.createShelfGroupAndAssign();
+                })
+            }
+            .width('100%')
+          } else {
+            Row({ space: AppSpacing.SM }) {
+              SymbolGlyph($r('sys.symbol.plus'))
+                .fontSize(16)
+                .fontColor([this.accentColor()])
+              Text('新建分组')
+                .fontSize(AppFontSize.BODY)
+                .fontColor(this.accentColor())
+            }
+            .width('100%')
+            .height(38)
+            .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+            .borderRadius(ThemeRuntime.mediumRadius())
+            .backgroundColor(this.inputColor())
+            .accessibilityText('新建分组并放入')
+            .onClick(() => {
+              this.newShelfGroupName = '';
+              this.newShelfGroupEditing = true;
+            })
+          }
+        }
+        .width('100%')
+      }
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+      .width('100%')
+      .constraintSize({ maxHeight: 360 })
+      .scrollBar(BarState.Off)
+    }
+    .width('100%')
+    .padding({ left: AppSpacing.XL, right: AppSpacing.XL, bottom: Math.max(this.navBarHeight, 12) + 12 })
+  }
+
+  @Builder
+  shelfGroupSheetItem(label: string, groupId: number) {
+    Row({ space: AppSpacing.SM }) {
+      Text(label)
+        .fontSize(AppFontSize.BODY)
+        .fontColor(groupId === this.currentShelfGroupId() ? this.accentColor() : this.primaryTextColor())
+        .fontWeight(groupId === this.currentShelfGroupId() ? FontWeight.Medium : FontWeight.Regular)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      if (groupId === this.currentShelfGroupId()) {
+        SymbolGlyph($r('sys.symbol.checkmark'))
+          .fontSize(16)
+          .fontColor([this.accentColor()])
+      }
+    }
+    .width('100%')
+    .height(38)
+    .padding({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.mediumRadius())
+    .backgroundColor(groupId === this.currentShelfGroupId() ? ThemeRuntime.accentSurfaceColor(this.appDarkMode) :
+      this.inputColor())
+    .accessibilitySelected(groupId === this.currentShelfGroupId())
+    .onClick(() => {
+      this.assignShelfGroup(groupId);
+    })
+  }
+
+  /** 面板里该打勾的分组：分组已被删掉（找不到名字）时按未分组算。 */
+  private currentShelfGroupId(): number {
+    return this.shelfGroupId > 0 && this.shelfGroupName ? this.shelfGroupId : 0;
+  }
+
+  private async loadShelfGroupOptions(): Promise<BookGroup[]> {
+    const db = AppDatabase.getInstance();
+    await db.initWithContext(getContext(this));
+    const groups = await db.getCustomBookGroups();
+    this.shelfGroupOptions = groups;
+    return groups;
+  }
+
+  private async refreshShelfGroupName(): Promise<void> {
+    const groupId = this.shelfGroupId;
+    if (groupId <= 0) {
+      this.shelfGroupName = '';
+      return;
+    }
+    try {
+      const groups = await this.loadShelfGroupOptions();
+      if (groupId !== this.shelfGroupId) return;
+      this.shelfGroupName = groups.find((group: BookGroup): boolean => group.groupId === groupId)?.groupName ?? '';
+    } catch (e) {
+      console.warn('读取书架分组失败:', e);
+    }
+  }
+
+  openShelfGroupSheet(): void {
+    if (!this.isInShelf || !this.bookUrl) return;
+    this.newShelfGroupEditing = false;
+    this.newShelfGroupName = '';
+    this.loadShelfGroupOptions().then((): void => {
+      this.showGroupSheet = true;
+    }).catch((e: Error): void => {
+      console.warn('读取书架分组失败:', e);
+      HdsFeedback.showToast('读取分组失败');
+    });
+  }
+
+  async assignShelfGroup(groupId: number): Promise<void> {
+    this.showGroupSheet = false;
+    if (!this.bookUrl || !this.isInShelf) return;
+    const target = groupId > 0 ? groupId : 0;
+    // 选了就记成“上次选的分组”，包括选回未分组。
+    NewBookGroupStore.saveLastGroupId(getContext(this), target).catch((e: Error): void => {
+      console.warn('保存上次选的分组失败:', e);
+    });
+    if (target === this.currentShelfGroupId()) return;
+    try {
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(getContext(this));
+      await db.updateBooksGroup([this.bookUrl], target);
+      const groupName = target > 0 ?
+        (this.shelfGroupOptions.find((group: BookGroup): boolean => group.groupId === target)?.groupName ?? '') : '';
+      this.shelfGroupId = target;
+      this.shelfGroupName = groupName;
+      AppStorage.setOrCreate('shelfUpdateTime', Date.now());
+      HdsFeedback.showToast(`已放进“${groupName || '未分组'}”`);
+    } catch (e) {
+      console.error('设置书架分组失败:', e);
+      HdsFeedback.showToast('设置分组失败');
+    }
+  }
+
+  async createShelfGroupAndAssign(): Promise<void> {
+    const name = this.newShelfGroupName.trim();
+    if (!name) return;
+    try {
+      const db = AppDatabase.getInstance();
+      await db.initWithContext(getContext(this));
+      const group = await db.addBookGroup(name);
+      if (!group) {
+        HdsFeedback.showToast('已有同名分组');
+        return;
+      }
+      this.shelfGroupOptions = [...this.shelfGroupOptions, group];
+      this.newShelfGroupEditing = false;
+      this.newShelfGroupName = '';
+      await this.assignShelfGroup(group.groupId);
+    } catch (e) {
+      console.error('新建书架分组失败:', e);
+      HdsFeedback.showToast('新建分组失败');
+    }
+  }
+
+  /** 加入后的反馈：顶栏书架钮出提示条，其余入口按 toastOtherwise 决定是否弹提示。 */
+  private announceAddedToShelf(groupName: string, fromHeader: boolean, toastOtherwise: boolean): void {
+    if (fromHeader) {
+      this.showGroupNudge(groupName);
+    } else if (toastOtherwise) {
+      HdsFeedback.showToast(NewBookGroup.addedToast(groupName));
+    }
+  }
+
+  private showGroupNudge(groupName: string): void {
+    this.clearGroupNudgeTimer();
+    this.groupNudgeText = NewBookGroup.addedToast(groupName);
+    this.groupNudgeVisible = true;
+    this.groupNudgeTimer = setTimeout((): void => {
+      this.groupNudgeTimer = -1;
+      this.hideGroupNudge();
+    }, SearchBookDetailPage.GROUP_NUDGE_MS);
+  }
+
+  private hideGroupNudge(): void {
+    this.clearGroupNudgeTimer();
+    this.groupNudgeVisible = false;
+  }
+
+  private clearGroupNudgeTimer(): void {
+    if (this.groupNudgeTimer >= 0) {
+      clearTimeout(this.groupNudgeTimer);
+      this.groupNudgeTimer = -1;
     }
   }
 
@@ -1914,6 +2281,8 @@ struct SearchBookDetailPage {
     this.updateTime = book.updateTime || this.updateTime;
     this.bookType = book.type || this.bookType;
     this.bookVariable = book.variable || this.bookVariable;
+    this.shelfGroupId = book.group > 0 ? book.group : 0;
+    this.refreshShelfGroupName();
     this.bookInfoRenderVersion++;
     // 书籍信息补齐后作者可能才有，作品键随之变化。
     this.loadBookMark();

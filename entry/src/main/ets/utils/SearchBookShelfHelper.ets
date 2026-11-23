@@ -11,6 +11,8 @@ import { AppThemeSettingsStore } from './AppThemeSettingsStore';
 import { HdsFeedback } from './HdsFeedback';
 import { ShelfWorkDuplicatePrompt } from './ShelfWorkDuplicatePrompt';
 import { BookMarkService } from '../core/mark/BookMarkService';
+import { NewBookGroup } from './NewBookGroup';
+import { NewBookGroupStore } from './NewBookGroupStore';
 
 export class SearchBookShelfChange {
   requestKey: string = '';
@@ -148,11 +150,14 @@ export class SearchBookShelfHelper {
       existing.updateTime = BookFieldSanitizer.prefer(searchBook.updateTime, existing.updateTime);
       existing.latestChapterTitle = BookFieldSanitizer.prefer(searchBook.latestChapterTitle, existing.latestChapterTitle);
       existing.wordCount = BookFieldSanitizer.prefer(searchBook.wordCount, existing.wordCount);
+      // 试读过的书这时才真正入架，按新书套默认分组；本来就在书架的书不动分组。
+      const wasPending = SearchExplorePendingBook.isPendingAddToShelf(existing);
+      const groupName = wasPending ? await NewBookGroupStore.apply(context, existing) : '';
       SearchExplorePendingBook.clearPendingAddToShelf(existing);
       await BookMarkService.carryTagsToShelfBook(existing);
       await db.updateBook(existing, true, 'search_result_explicit_add_existing');
       SearchBookShelfHelper.markShelfChanged();
-      HdsFeedback.showToast('已在书架');
+      HdsFeedback.showToast(wasPending ? NewBookGroup.addedToast(groupName) : '已在书架');
       return new SearchBookShelfChange(searchKey, searchKey);
     }
 
@@ -160,11 +165,12 @@ export class SearchBookShelfHelper {
     // 结果信息已足够入架；详情、目录和书源变量由首次阅读时补齐，避免收藏等待网络。
     const resolvedKey = BookIdentity.keyOfBook(book);
 
+    const groupName = await NewBookGroupStore.apply(context, book);
     await BookMarkService.carryTagsToShelfBook(book);
     await db.insertBook(book, 'search_result_explicit_add');
     const shelfKey = resolvedKey || searchKey;
     SearchBookShelfHelper.markShelfChanged();
-    HdsFeedback.showToast('已加入书架');
+    HdsFeedback.showToast(NewBookGroup.addedToast(groupName));
     return new SearchBookShelfChange(searchKey, shelfKey);
   }
 
@@ -203,7 +209,7 @@ export class SearchBookShelfHelper {
     book.latestChapterTitle = BookFieldSanitizer.clean(searchBook.latestChapterTitle);
     book.wordCount = BookFieldSanitizer.clean(searchBook.wordCount);
     book.variable = searchBook.variable;
-    book.group = -2147483645;
+    book.group = NewBookGroup.UNGROUPED;
     book.type = searchBook.type || 0;
     BookTypeSupport.applyBookType(book);
     book.canUpdate = true;

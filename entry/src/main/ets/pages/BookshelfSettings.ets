@@ -21,6 +21,8 @@ import { ShelfGreetingEditor } from '../components/home/ShelfGreetingEditor';
 import { ShelfSectionTitleEditor } from '../components/home/ShelfSectionTitleEditor';
 import { ShelfGreetingSlot, ShelfGreetingTemplate } from '../utils/ShelfGreetingTemplate';
 import { BookshelfSortHelper } from '../utils/BookshelfSortHelper';
+import { NewBookGroup } from '../utils/NewBookGroup';
+import { NewBookGroupStore } from '../utils/NewBookGroupStore';
 
 @Entry
 @Component
@@ -77,6 +79,8 @@ struct BookshelfSettingsPage {
   @State privatePasswordConfirm: string = '';
   @State privatePasswordError: string = '';
   @State privateShelfBusy: boolean = false;
+  /** 新书默认分组：NewBookGroup.MODES 里的取值。 */
+  @State newBookGroupMode: string = 'none';
   private privatePasswordDialogSession: SystemDialogSession = new SystemDialogSession();
   private greetingEditorDialogSession: SystemDialogSession = new SystemDialogSession();
   private sectionTitleEditorDialogSession: SystemDialogSession = new SystemDialogSession();
@@ -84,6 +88,11 @@ struct BookshelfSettingsPage {
   aboutToAppear(): void {
     this.reloadDisplaySettings();
     this.reloadPrivateShelfSettings();
+    NewBookGroupStore.loadMode(getContext(this)).then((mode: string): void => {
+      this.newBookGroupMode = mode;
+    }).catch((e: Error): void => {
+      console.warn('读取新书默认分组失败:', e);
+    });
     this.syncBars();
   }
 
@@ -285,6 +294,23 @@ struct BookshelfSettingsPage {
         this.onDisplaySettingChanged();
       }
     })
+    }
+    .width('calc(100% - 24vp)')
+    .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
+    .borderRadius(ThemeRuntime.cardRadius())
+    .clip(true)
+    .backgroundColor(this.cardColor())
+
+    this.sectionTitle('加入书架')
+    Column() {
+    this.selectItem('新书默认分组', '在搜索、发现和书籍详情页加入书架时放进哪个分组；详情页加入后还可以再选',
+      this.newBookGroupOptions(), NewBookGroup.modeIndex(this.newBookGroupMode), (index: number) => {
+        const mode = NewBookGroup.MODES[index] ?? 'none';
+        this.newBookGroupMode = mode;
+        NewBookGroupStore.saveMode(getContext(this), mode).catch((e: Error): void => {
+          console.warn('保存新书默认分组失败:', e);
+        });
+      })
     }
     .width('calc(100% - 24vp)')
     .margin({ left: AppSpacing.LG, right: AppSpacing.LG })
@@ -660,6 +686,10 @@ struct BookshelfSettingsPage {
     BookshelfDisplaySettingsStore.save(getContext(this), settings).catch((e: Error) => {
       console.warn('保存书架显示设置失败:', e);
     });
+  }
+
+  newBookGroupOptions(): SelectOption[] {
+    return NewBookGroup.LABELS.map((label: string): SelectOption => ({ value: label }));
   }
 
   immersiveButtonsOptions(): SelectOption[] {

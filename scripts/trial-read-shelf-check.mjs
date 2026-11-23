@@ -44,7 +44,10 @@ function harness() {
     AppStorage: { setOrCreate: (key, value) => storage.set(key, value) },
     getContext: () => ({}), HdsFeedback: { showToast() {} },
     // 加入书架时把书籍标记的标签带过去；这里没有标记。
-    BookMarkService: { carryTagsToShelfBook: async () => {} }
+    BookMarkService: { carryTagsToShelfBook: async () => {} },
+    // 新书默认分组：这里按“未分组”设置，分组不变。
+    NewBookGroupStore: { apply: async () => '' },
+    NewBookGroup: { addedToast: name => name ? `已加入书架 · ${name}` : '已加入书架' }
   });
   vm.runInContext([
     'model/data/Book.ts', 'core/book/BookTypeSupport.ts', 'utils/SearchExplorePendingBook.ets',
