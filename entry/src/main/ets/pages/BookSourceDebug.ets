@@ -84,6 +84,8 @@ struct BookSourceDebugPage {
     this.initialized = true;
     const params = router.getParams() as Record<string, string>;
     this.sourceUrl = params && params['bookSourceUrl'] ? params['bookSourceUrl'] : '';
+    // 从阅读页进来时预填书名，作为全链路调试的搜索关键词。
+    if (params && params['debugKeyword']) this.keyword = params['debugKeyword'];
     const draft = AppStorage.get<string>('bookSourceDebugDraftJson') || '';
     if (draft) {
       try {

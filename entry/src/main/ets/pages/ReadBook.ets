@@ -555,7 +555,8 @@ struct ReadBookPage {
   // 音量键、智控键翻页按阅读类型生效，小说与漫画模式互切时要重新决定是否接管按键。
   @State @Watch('updateVolumeKeySubscription') readerComicMode: boolean = false;
   @State readerComicSettings: ReaderComicSettings = new ReaderComicSettings();
-  @State readerComicTitleCapsuleWidth: number = 0;
+  @State readerTitleCapsuleWidth: number = 0;
+  @State showReaderSourceCard: boolean = false;
   /** 本书单独选的漫画阅读方式（书籍变量 readerComicReadingMode）；空串跟随全局默认。 */
   @State readerComicBookMode: string = '';
   /** 本书漫画图片繁→简（书籍变量 readerComicTextConvert，没单独设置过时跟随漫画设置的默认值）。 */
@@ -3451,21 +3452,28 @@ struct ReadBookPage {
     this.scheduleReaderComicProgressSave();
   }
 
+  /**
+   * 顶栏中间的标题胶囊（小说与漫画相同）：第一行书名、第二行“书源 · 章节”。
+   * 点胶囊弹出书源信息卡（书源、本章网址与复制、原网页、编辑书源、调试书源）。换源在顶栏已有圆钮，卡里不重复。
+   */
   @Builder
-  readerComicTitleCapsule() {
+  readerTitleCapsule() {
     Stack({ alignContent: Alignment.Start }) {
-      if (ImmersiveMaterialRuntime.supportsHdsTabs() && this.readerComicTitleCapsuleWidth > 0) {
-        this.readerComicTitleCapsuleMaterial()
+      if (ImmersiveMaterialRuntime.supportsHdsTabs() && this.readerTitleCapsuleWidth > 0) {
+        this.readerTitleCapsuleMaterial()
       }
       Column({ space: 1 }) {
-        Text(this.getChapterTitle())
+        // 书名放不下时走马灯滚动：放得下的不动；每轮滚完停 1.5 秒再从头开始，两端渐隐。
+        Text(this.book?.name || '')
+          .width('100%')
           .fontSize(AppFontSize.BODY)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.readerPanelTextColor())
           .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        if (this.book?.name) {
-          Text(this.book.name)
+          .textOverflow({ overflow: TextOverflow.MARQUEE })
+          .marqueeOptions({ start: true, step: 1, loop: -1, fromStart: true, delay: 1500, fadeout: true })
+        if (this.readerTitleCapsuleSubtitle()) {
+          Text(this.readerTitleCapsuleSubtitle())
             .fontSize(AppFontSize.MICRO + 1)
             .fontColor(this.readerPanelSubTextColor())
             .maxLines(1)
@@ -3488,30 +3496,212 @@ struct ReadBookPage {
     .backgroundColor(ImmersiveMaterialRuntime.supportsHdsTabs() ? Color.Transparent : this.readerSolidFloatingColor())
     .border(ImmersiveMaterialRuntime.surfaceBorder(this.immersiveLightLevel, this.isReaderThemeDark(),
       ImmersiveMaterialRuntime.supportsHdsTabs() ? 0 : 0.5, this.readerPanelBorderColor()))
-    .onAreaChange((_oldArea: Area, newArea: Area) => {
-      const width = Math.round(Number(newArea.width));
-      if (width !== this.readerComicTitleCapsuleWidth) this.readerComicTitleCapsuleWidth = width;
+    .onSizeChange((_oldValue: SizeOptions, newValue: SizeOptions) => {
+      const width = Math.round(Number(newValue.width));
+      if (width !== this.readerTitleCapsuleWidth) this.readerTitleCapsuleWidth = width;
     })
+    .accessibilityText(`${this.book?.name || ''}，${this.readerTitleCapsuleSubtitle()}，查看书源信息`)
+    .onClick(() => {
+      this.showReaderActionMenu = false;
+      this.showReaderSourceCard = !this.showReaderSourceCard;
+    })
+    .bindPopup(this.showMenu && this.showReaderSourceCard && !this.showToc && !this.showSettings,
+      ImmersiveMaterialRuntime.popupMenuOptions(this.immersiveLightLevel, (): void => {
+        this.readerSourceCard()
+      }, Placement.Bottom, this.appDarkMode, this.accentColor(), () => {
+        this.showReaderSourceCard = false;
+      }))
+  }
+
+  /** 胶囊第二行（小说与漫画相同）：网络书“书源 · 章节”；本地书“本地 · 格式 · 章节”。 */
+  readerTitleCapsuleSubtitle(): string {
+    if (!this.book) return '';
+    const chapter = this.chapters.length > 0 ? this.getChapterTitle() : '';
+    const origin = LocalBookService.isLocalBook(this.book) ?
+      `本地 · ${LocalBookService.formatOf(this.book).toUpperCase()}` : this.readerSourceDisplayName();
+    return chapter ? `${origin} · ${chapter}` : origin;
+  }
+
+  readerSourceDisplayName(): string {
+    if (!this.book) return '';
+    return this.book.originName || this.currentReaderSource()?.bookSourceName || this.book.origin || '未知书源';
+  }
+
+  /** 本地书导入时的文件名：取原始地址最后一段（压缩包内的书取 # 后面的路径），取不到再用应用内副本。 */
+  readerLocalFileName(): string {
+    if (!this.book) return '';
+    const raw = this.book.getVariable('localSourceUri') || this.book.getVariable('localFilePath') || '';
+    let path = raw.includes('#') ? raw.substring(raw.lastIndexOf('#') + 1) : raw;
+    try {
+      path = decodeURIComponent(path);
+    } catch (_) {
+    }
+    const parts = path.split('/').filter((part: string) => part.length > 0);
+    return parts.length > 0 ? parts[parts.length - 1] : '';
+  }
+
+  readerSourceHost(): string {
+    const source = this.currentReaderSource();
+    const url = this.readerOriginalPageUrl() || source?.bookSourceUrl || '';
+    const match = url.match(/^https?:\/\/([^\/?#:]+)/i);
+    return match ? match[1].replace(/^www\./i, '') : '';
   }
 
   @Builder
-  readerComicTitleCapsuleMaterial() {
+  readerSourceCard() {
+    Column({ space: 10 }) {
+      Column({ space: 2 }) {
+        Text(this.book && LocalBookService.isLocalBook(this.book) ?
+          `本地 ${LocalBookService.formatOf(this.book).toUpperCase()}` : this.readerSourceDisplayName())
+          .fontSize(AppFontSize.SUBTITLE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (this.readerSourceHost()) {
+          Text(this.readerSourceHost())
+            .fontSize(AppFontSize.MICRO + 1)
+            .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+
+      Column({ space: 6 }) {
+        if (this.chapters.length > 0) {
+          this.readerSourceCardField('本章', this.getChapterTitle(), false)
+        }
+        if (this.book && LocalBookService.isLocalBook(this.book)) {
+          if (this.readerLocalFileName()) {
+            this.readerSourceCardField('文件', this.readerLocalFileName(), true)
+          }
+        } else if (this.readerOriginalPageUrl()) {
+          this.readerSourceCardField('链接', this.readerOriginalPageUrl(), true)
+        }
+      }
+      .width('100%')
+
+      if (this.book && !LocalBookService.isLocalBook(this.book)) {
+        Row({ space: 6 }) {
+          this.readerSourceCardAction($r('sys.symbol.link'), '复制链接', !!this.readerOriginalPageUrl(),
+            () => this.copyReaderOriginalPageUrl())
+          this.readerSourceCardAction($r('sys.symbol.arrow_right_up_and_square'), '原网页',
+            !!this.readerOriginalPageUrl(), () => this.openReaderOriginalPage())
+          this.readerSourceCardAction($r('sys.symbol.square_and_pencil'), '编辑书源', !!this.currentReaderSource(),
+            () => this.openReaderSourceEdit())
+          this.readerSourceCardAction($r('sys.symbol.stethoscope'), '调试书源', !!this.currentReaderSource(),
+            () => this.openReaderSourceDebug())
+        }
+        .width('100%')
+      }
+    }
+    .width(288)
+    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+  }
+
+  @Builder
+  readerSourceCardField(label: string, value: string, mono: boolean) {
+    Row({ space: 10 }) {
+      Text(label)
+        .fontSize(AppFontSize.CAPTION)
+        .fontColor(ThemeRuntime.subTextColor(this.appDarkMode))
+        .flexShrink(0)
+      Text(value)
+        .fontSize(mono ? AppFontSize.MICRO + 1 : AppFontSize.CAPTION)
+        .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+        .maxLines(mono ? 3 : 2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .wordBreak(mono ? WordBreak.BREAK_ALL : WordBreak.NORMAL)
+        .copyOption(CopyOptions.LocalDevice)
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+  }
+
+  @Builder
+  readerSourceCardAction(icon: Resource, label: string, enabled: boolean, action: () => void) {
+    Column({ space: 4 }) {
+      SymbolGlyph(icon)
+        .fontSize(18)
+        .fontColor([ThemeRuntime.primaryTextColor(this.appDarkMode)])
+      Text(label)
+        .fontSize(AppFontSize.MICRO + 1)
+        .fontColor(ThemeRuntime.primaryTextColor(this.appDarkMode))
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .padding({ top: 8, bottom: 8 })
+    .borderRadius(12)
+    .backgroundColor(ThemeRuntime.softFillColor(this.appDarkMode))
+    .opacity(enabled ? 1 : 0.4)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .accessibilityText(label)
+    .onClick(() => {
+      if (!enabled) return;
+      this.showReaderSourceCard = false;
+      action();
+    })
+  }
+
+  async copyReaderOriginalPageUrl(): Promise<void> {
+    const url = this.readerOriginalPageUrl();
+    if (!url) return;
+    try {
+      await pasteboard.getSystemPasteboard().setData(pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, url));
+      HdsFeedback.showToast('已复制链接');
+    } catch (error) {
+      HdsFeedback.showToast('复制失败，请重试');
+      console.warn('复制本章链接失败:', error);
+    }
+  }
+
+  openReaderSourceEdit(): void {
+    const source = this.currentReaderSource();
+    if (!source) return;
+    if (source.isLocked) {
+      HdsFeedback.showToast('请先在书源管理中解锁书源');
+      return;
+    }
+    this.hideReaderPanels();
+    router.pushUrl({
+      url: source.sourceFormat === 'native' ? 'pages/NativeSourceEdit' : 'pages/BookSourceEdit',
+      params: { bookSourceUrl: source.bookSourceUrl }
+    });
+  }
+
+  /** 打开当前书源的调试页，关键词预填书名，进去直接点“开始调试”就跑全链路。 */
+  openReaderSourceDebug(): void {
+    const source = this.currentReaderSource();
+    if (!source) return;
+    this.hideReaderPanels();
+    router.pushUrl({
+      url: 'pages/BookSourceDebug',
+      params: { bookSourceUrl: source.bookSourceUrl, debugKeyword: this.book?.name || '' }
+    });
+  }
+
+  @Builder
+  readerTitleCapsuleMaterial() {
     // Same HdsTabs material trick as ImmersiveBackButton so the capsule and the round buttons render one surface.
     HdsTabs({ barPosition: BarPosition.End, index: 0 }) {
       TabContent() {
         Column()
       }
       .height(40)
-      .tabBar(this.readerComicTitleCapsuleMaterialTab())
+      .tabBar(this.readerTitleCapsuleMaterialTab())
     }
     .barMode(BarMode.Fixed)
     .barHeight(40)
     .barOverlap(true)
     .barFloatingStyle({
       barWidth: {
-        smallWidth: this.readerComicTitleCapsuleWidth,
-        mediumWidth: this.readerComicTitleCapsuleWidth,
-        largeWidth: this.readerComicTitleCapsuleWidth
+        smallWidth: this.readerTitleCapsuleWidth,
+        mediumWidth: this.readerTitleCapsuleWidth,
+        largeWidth: this.readerTitleCapsuleWidth
       },
       systemMaterialEffect: {
         materialType: ImmersiveMaterialRuntime.materialType(),
@@ -3529,7 +3719,7 @@ struct ReadBookPage {
     })
     .scrollable(false)
     .onContentWillChange(() => false)
-    .width(this.readerComicTitleCapsuleWidth)
+    .width(this.readerTitleCapsuleWidth)
     .height(40)
     .borderRadius(20, RenderStrategy.OFFSCREEN)
     .clip(true)
@@ -3537,7 +3727,7 @@ struct ReadBookPage {
   }
 
   @Builder
-  readerComicTitleCapsuleMaterialTab() {
+  readerTitleCapsuleMaterialTab() {
     Stack()
       .width('100%')
       .height('100%')
@@ -4074,7 +4264,7 @@ struct ReadBookPage {
 
       if (this.showMenu && !this.showToc && !this.showSettings && this.chapters.length > 0 &&
         this.readerUseBrightnessQuickAction && !this.showLayoutElementSettings &&
-        !this.showReaderActionMenu && this.readerBrightnessControlHeight() >= 132) {
+        !this.showReaderActionMenu && !this.showReaderSourceCard && this.readerBrightnessControlHeight() >= 132) {
         this.readerBrightnessQuickControl()
       }
 
@@ -4418,8 +4608,8 @@ struct ReadBookPage {
         onBack: () => this.exitReaderPage()
       })
 
-      if (this.isReaderComicModeActive()) {
-        this.readerComicTitleCapsule()
+      if (this.book) {
+        this.readerTitleCapsule()
       } else {
         Blank()
           .layoutWeight(1)
@@ -4440,6 +4630,7 @@ struct ReadBookPage {
         Row() {
           this.readerRoundMenuButton($r('sys.symbol.more'), '更多操作', () => {
             if (!this.showReaderActionMenu) this.refreshTxtTocRuleMenuLabel();
+            this.showReaderSourceCard = false;
             this.showReaderActionMenu = !this.showReaderActionMenu;
           })
         }
@@ -5200,13 +5391,6 @@ struct ReadBookPage {
             () => this.openReaderContentSearch()
           )
         }
-        if (this.readerOriginalPageUrl()) {
-          this.readerActionMenuItem(
-            $r('sys.symbol.arrow_right_up_and_square'),
-            '查看原网页',
-            () => this.openReaderOriginalPage()
-          )
-        }
         if (this.readerSourceNeedsLogin()) {
           this.readerActionMenuItem(
             $r('sys.symbol.checkmark_shield'),
@@ -5667,7 +5851,7 @@ struct ReadBookPage {
 
   /**
    * 网页解析的书在这一页显示的内容来自哪个网页：依次取当前章节、目录、书籍详情里第一个完整的 http(s) 地址。
-   * 本地书和取不到完整地址的返回空串，菜单里不出现“查看原网页”。
+   * 本地书和取不到完整地址的返回空串，标题胶囊的书源信息卡里不显示链接，复制链接与原网页置灰。
    */
   readerOriginalPageUrl(): string {
     if (!this.book || LocalBookService.isLocalBook(this.book)) return '';
@@ -11455,7 +11639,10 @@ struct ReadBookPage {
   }
 
   onReaderShowMenuChange(): void {
-    if (!this.showMenu) this.clearReaderJumpUndo();
+    if (!this.showMenu) {
+      this.clearReaderJumpUndo();
+      this.showReaderSourceCard = false;
+    }
     this.applyReaderNavIndicator();
     this.restoreReaderKeyboardFocus();
   }
